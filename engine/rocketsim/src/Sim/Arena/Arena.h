@@ -1,5 +1,6 @@
 #pragma once
 #include "../../BaseInc.h"
+#include <set>
 #include "../Car/Car.h"
 #include "../Ball/Ball.h"
 #include "../BoostPad/BoostPad.h"
@@ -32,7 +33,14 @@ public:
 	GameMode gameMode;
 
 	uint32_t _lastCarID = 0;
-	std::unordered_set<Car*> _cars;
+	// RL PATCH: cars ordered by ID. An unordered_set of pointers iterates in memory-address order,
+	// so update order (e.g. who gets a contested boost pad) differed between runs, platforms and
+	// restored snapshots.
+	struct CarIDCompare {
+		bool operator()(const Car* a, const Car* b) const { return a->id < b->id; }
+	};
+	typedef std::set<Car*, CarIDCompare> CarSet;
+	CarSet _cars;
 	bool ownsCars = true; // If true, deleting this arena instance deletes all cars
 
 	std::unordered_map<uint32_t, Car*> _carIDMap;
@@ -63,7 +71,7 @@ public:
 	// Total ticks this arena instance has been simulated for, never resets
 	uint64_t tickCount = 0;
 
-	const std::unordered_set<Car*>& GetCars() { return _cars; }
+	const CarSet& GetCars() { return _cars; }
 	const std::vector<BoostPad*>& GetBoostPads() { return _boostPads; }
 
 	// Returns true if added, false if car was already added

@@ -43,23 +43,23 @@ btVector3 Math::RoundVec(btVector3 vec, float precision) {
 
 int Math::RandInt(int min, int max, int seed) {
 	if (seed != -1) {
-		std::default_random_engine tempEngine = std::default_random_engine(seed);
+		std::minstd_rand0 tempEngine = std::minstd_rand0(seed);
 		return min + (tempEngine() % (max - min));
 	} else {
-		std::default_random_engine& randEngine = GetRandEngine();
+		std::minstd_rand0& randEngine = GetRandEngine();
 		return min + (randEngine() % (max - min));
 	}
 }
 
 float Math::RandFloat(float min, float max) {
-	std::default_random_engine& randEngine = GetRandEngine();
+	std::minstd_rand0& randEngine = GetRandEngine();
 	return min + ((randEngine() / (float)randEngine.max()) * (max - min));
 }
 
-std::default_random_engine& Math::GetRandEngine() {
+std::minstd_rand0& Math::GetRandEngine() {
 	static thread_local auto hashThreadID = std::hash<std::thread::id>();
 	static thread_local uint64_t seed = RS_CUR_MS() + hashThreadID(std::this_thread::get_id());
-	static thread_local std::default_random_engine randEngine = std::default_random_engine(seed);
+	static thread_local std::minstd_rand0 randEngine = std::minstd_rand0(seed);
 	return randEngine;
 }
 

@@ -10,12 +10,61 @@ We chose to fork it anyway (decision 2026-10-06).
 
 ## Build and test
 ```sh
+# native
 cmake -S engine -B engine/build -DCMAKE_BUILD_TYPE=Release
 make -C engine/build -j
 engine/build/rl_patch_tests                                        # one check per patch (46 checks)
 engine/build/arena_smoketest out/arena/collision_meshes            # arena mesh in the sim
+engine/build/determinism out/arena/collision_meshes 120            # scripted 2v2, hash per second
+
+# WebAssembly (Arch: emscripten package; its bin dir is /usr/lib/emscripten)
+export PATH=/usr/lib/emscripten:$PATH
+emcmake cmake -S engine -B engine/build-wasm -DCMAKE_BUILD_TYPE=Release
+emmake make -C engine/build-wasm -j
+node engine/build-wasm/rl_patch_tests.js                           # same tests under Node
+node engine/build-wasm/determinism.js /collision_meshes 120
+node engine/wasm/test_node.mjs                                     # the JS module end to end
 ```
-The arena mesh comes from `scripts/arena_gen.py` (`out/arena/`). The tests find it via `ARENA_MESH_DIR`.
+The arena mesh comes from `scripts/arena_gen.py` (`out/arena/`). Native tests find it via `ARENA_MESH_DIR`;
+the WebAssembly test programs embed it at `/collision_meshes`.
+
+## JavaScript module (`engine/build-wasm/rlengine.mjs` + `rlengine.wasm`, ~620 KB)
+Bindings: `wasm/bindings.cpp` (embind). ES module; works in browsers, workers and Node.
+```js
+import createEngine from "./rlengine.mjs";
+const E = await createEngine();
+E.init([new Uint8Array(await (await fetch("soccar_arena.cmf")).arrayBuffer())]);  // once
+const sim = new E.Sim();
+const id = sim.addCar(0, 0);             // team 0 blue / 1 orange; type 0 Octane, 1 Dominus, 2 Plank, 3 Breakout, 4 Hybrid, 5 Merc
+sim.resetKickoff(seed);
+sim.setControls(id, throttle, steer, pitch, yaw, roll, jump, boost, handbrake);
+sim.step(1);                             // 1 tick = 1/120 s
+const car = sim.carState(id);            // Float32Array: E.CAR_POS, CAR_VEL, CAR_ANG_VEL, CAR_ROT (fwd, right, up), CAR_BOOST, flags...
+const ball = sim.ballState();            // Float32Array: E.BALL_POS, BALL_VEL, BALL_ANG_VEL, BALL_ROT
+const pads = sim.boostPads();            // 34 x E.PAD_SIZE: position, isBig, isActive, cooldown
+const events = sim.takeEvents();         // Int32Array of [type, a, b]: EVENT_GOAL (team), EVENT_BUMP / EVENT_DEMO (attacker, victim)
+const snapshot = sim.saveState();        // Uint8Array (~1.7 KB for 2 cars); sim.loadState(snapshot)
+sim.delete();                            // free the C++ object
+```
+Getters return copies. Offsets are exported as constants (`E.CAR_BOOST`, ...); see the `Layout` namespace
+in `bindings.cpp`. A goal is reported once, when the ball first crosses the line.
+
+## Determinism
+- **Run to run:** native and WebAssembly builds are each deterministic (identical 120 s scripted 2v2 runs).
+- **WebAssembly everywhere:** WebAssembly float semantics are fixed, so the same `.wasm` gives identical results in
+  every browser and in Node. **The server should run the same `.wasm` as the clients.**
+- **Native vs WebAssembly differ:** glibc and musl round `sinf`/`cosf`/`atanf` differently in the last bit
+  (e.g. the kickoff rotation on tick 0). Native builds are for tests and analysis. Making them match would
+  mean compiling musl's maths functions into the native build.
+- `-ffp-contract=off` everywhere (no fused multiply-add), so compiler flags can't change results.
+- **Snapshot restore** (`saveState`/`loadState`, `Arena::Serialize`/`DeserializeNew`) replays exactly for cars that
+  aren't touching anything. With contacts it drifts slightly, because Bullet's cached contact points aren't in the
+  snapshot (measured: 0.03 uu/s on the first tick, 0.19 uu after 2 s of busy play).
+
+## Performance
+- **Arena creation and first tick:** ~1 ms each (they were 260 ms and 520 ms with the whole-arena mesh before the broadphase fix).
+- **Per tick in WebAssembly** (Node 26): ~15–50 µs for 2 cars + ball, including JS-side state reads.
+- **First tick after loading the module:** a one-off ~0.7 s while V8 compiles the module. Warm up during loading.
 
 ## Patches
 | # | Change | Game source | Where |
@@ -33,6 +82,16 @@ The arena mesh comes from `scripts/arena_gen.py` (`out/arena/`). The tests find 
 | 11 | Merged ball–world contact: averaged normal re-normalised; friction/restitution averaged instead of last-wins | `FUN_1402b2720`, `FUN_1402be240` | `btSequentialImpulseConstraintSolver.cpp` |
 | 12 | Per-tick state quantization: location to 0.01; velocity truncated to 0.01 (+0.001 away from zero); angular velocity to 0.0001 (+0.00001); smallest-three quaternion with 18 bits | `FUN_140eed9e0` → `FUN_140e45c10` → `FUN_140e3e960` | `Sim/Quantize/`, `Car` and `Ball` `_FinishPhysicsTick` |
 
+Engine fixes (not game behaviour; needed for determinism, snapshots and speed):
+
+| # | Change | Where |
+|---|---|---|
+| 13 | Fixed random engine (`std::minstd_rand0`) and our own shuffle for kickoffs: `default_random_engine` and `std::shuffle` differ between standard libraries | `Math.cpp/.h`, `Arena.cpp` `ResetToRandomKickoff` |
+| 14 | Cars kept in a set ordered by ID (was pointer-ordered, so update order, e.g. contested boost pads, depended on memory addresses) | `Arena.h` |
+| 15 | `DeserializeNew` / `Clone` keep car IDs correctly (stock lost a car when the saved order wasn't ascending, and `Clone` broke the ID map) | `Arena.cpp` |
+| 16 | Snapshots keep everything that affects the next tick: boost (was reset to the spawn amount on load), `isSupersonic`, and the wheel values carried between ticks (steer angle, drive/brake force, friction) | `Car.h/.cpp`, `Arena.cpp` |
+| 17 | Grid broadphase finds a static mesh's cells by walking its triangles once, instead of querying the mesh per cell. Same cells, so results are bit-identical | `btRSBroadphase.cpp` |
+
 Driving, turning circles and jump height stay within 0.5% of stock (e.g. full-lock radius at 500 uu/s:
 300.3 vs 299.8; jump 234.9 vs 235.2). The patches change details, not the overall feel.
 
@@ -48,6 +107,8 @@ Driving, turning circles and jump height stay within 0.5% of stock (e.g. full-lo
 - **Quantization** follows the game's arithmetic, but the basis→quaternion conversion is Bullet's, so it is
   not bit-identical to the game.
 - The car-bump callback now fires for every bump, including zero-push side contacts (the game's `EventBumpedCar`).
+- **Demo collision:** in the demo tick the collision is still solved, so a 2300 uu/s attacker drops to ~1040
+  (same as stock). The game probably doesn't slow the attacker. Check against replays (attacker speed around demos).
 - Not ported: the reverse-gravity mutator's dodge direction flip.
 
 ## Updating from upstream

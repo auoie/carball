@@ -4,7 +4,8 @@
 **Plan:** patch RocketSim with verified differences → WASM; own arena mesh; Three.js; authoritative server.
 **Status (2026-10-06):** physics reverse engineering complete; our arena mesh is generated and validated
 (`out/arena/`); RocketSim is forked into `engine/` with every verified patch and tests (`engine/README.md`).
-Next: WebAssembly build (§8; the user installs Emscripten), then camera/controls/netcode reverse engineering (§3, §4, §6).
+The engine also builds to WebAssembly with a JS API (`engine/build-wasm/rlengine.mjs`).
+Next: browser freeplay (§8), then camera/controls/netcode reverse engineering (§3, §4, §6).
 
 Read in this order: `notes/roadmap.md` (what's left) → `notes/physics-values.md` (all values, formulas,
 RocketSim comparison) → `notes/arena.md` → `notes/findings.md` (binary/package internals, addresses).
@@ -52,6 +53,9 @@ python3 arena_gen.py ../out/arena                    # our arena mesh (.obj + Ro
 python3 arena_check.py ../out/arena/soccar_arena.obj ../out/arena_local   # deviation vs game meshes (local only)
 cmake -S ../engine -B ../engine/build -DCMAKE_BUILD_TYPE=Release && make -C ../engine/build -j
 ../engine/build/rl_patch_tests && ../engine/build/arena_smoketest ../out/arena/collision_meshes
+# WebAssembly: Emscripten is at /usr/lib/emscripten (not on PATH in non-login shells)
+PATH=/usr/lib/emscripten:$PATH emcmake cmake -S ../engine -B ../engine/build-wasm -DCMAKE_BUILD_TYPE=Release
+PATH=/usr/lib/emscripten:$PATH emmake make -C ../engine/build-wasm -j && node ../engine/wasm/test_node.mjs
 ```
 
 ## Gotchas

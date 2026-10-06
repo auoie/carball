@@ -27,7 +27,17 @@ struct CarState : public PhysState {
 	// Whether each of the 4 wheels have contact
 	// First two are front
 	// If your car has 3 wheels, the 4th bool will always be false
-	bool wheelsWithContact[4] = {}; 
+	bool wheelsWithContact[4] = {};
+
+	// RL PATCH: wheel values that carry over into the next tick. The vehicle's raycast/friction pass at
+	// the start of a tick uses the steering angle, drive/brake forces and friction set during the
+	// previous tick, so they are part of the state (a restored car then continues exactly).
+	struct WheelCarry {
+		float steerAngle = 0, engineForce = 0, brake = 0, latFriction = 0, longFriction = 0;
+	};
+	struct {
+		WheelCarry wheels[4] = {};
+	} wheelCarry; 
 
 	// Whether we jumped to get into the air
 	// Can be false while airborne, if we left the ground with a flip reset
@@ -125,7 +135,9 @@ flipRelTorque, jumpTime, isFlipping, flipTime, isJumping, airTimeSinceJump, \
 boost, isBoosting, boostingTime, timeSinceBoosted, supersonicTime, handbrakeVal, isAutoFlipping, \
 autoFlipTimer, autoFlipTorqueScale, isDemoed, demoRespawnTimer, lastControls, \
 worldContact.hasContact, worldContact.contactNormal, \
-carContact.otherCarID, carContact.cooldownTimer
+carContact.otherCarID, carContact.cooldownTimer, \
+isSupersonic /* RL PATCH: affects the next tick (supersonic is kept down to 2100 uu/s) */, \
+wheelCarry /* RL PATCH */
 
 enum class Team : byte {
 	BLUE = 0,

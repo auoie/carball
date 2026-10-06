@@ -18,7 +18,8 @@ namespace Math {
 
 	float RandFloat(float min = 0, float max = 1);
 
-	std::default_random_engine& GetRandEngine();
+	// RL PATCH: a fixed engine type (default_random_engine differs between standard libraries)
+	std::minstd_rand0& GetRandEngine();
 
 	float WrapNormalizeFloat(float val, float minmax);
 

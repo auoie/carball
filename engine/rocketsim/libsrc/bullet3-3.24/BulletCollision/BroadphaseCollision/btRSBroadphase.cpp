@@ -110,23 +110,49 @@ void _UpdateCellsStatic(btRSBroadphase* _this, btRSBroadphaseProxy* proxy) {
 	// We should check if each cell actually collides with the object
 	bool isTriMesh = colObj && colObj->m_collisionShape->getShapeType() == TRIANGLE_MESH_SHAPE_PROXYTYPE;
 
-	// For checking if an AABB has any containing triangles
-	struct BoolHitTriangleCallback : public btTriangleCallback {
+	// RL PATCH (performance only): find the cells that contain triangles by walking the triangles once
+	// and marking the cells each triangle's AABB overlaps, instead of querying the mesh once per cell.
+	// Same cells as before, but a mesh whose AABB spans the whole arena (mostly empty cells) no longer
+	// costs ~0.25 s to add or re-add (arena creation and its first tick).
+	int numI = iMax - iMin + 1, numJ = jMax - jMin + 1, numK = kMax - kMin + 1;
+	std::vector<char> usedCells(numI * numJ * numK, (ADD && isTriMesh) ? 0 : 1);
 
-		bool hit = false;
+	if (ADD && isTriMesh) {
+		struct MarkCellsCallback : public btTriangleCallback {
+			btRSBroadphase* bp;
+			int iMin, jMin, kMin, iMax, jMax, kMax, numJ, numK;
+			std::vector<char>* usedCells;
 
-		BoolHitTriangleCallback() {}
-		virtual void processTriangle(btVector3* triangle, int partId, int triangleIndex) {
-			hit = true;
-		}
-	};
-	BoolHitTriangleCallback callbackInst = {};
+			virtual void processTriangle(btVector3* triangle, int partId, int triangleIndex) {
+				btVector3 triMin = triangle[0], triMax = triangle[0];
+				triMin.setMin(triangle[1]); triMin.setMin(triangle[2]);
+				triMax.setMax(triangle[1]); triMax.setMax(triangle[2]);
 
-	int numSkipped = 0;
+				int i0, j0, k0, i1, j1, k1;
+				bp->GetCellIndices(triMin, i0, j0, k0);
+				bp->GetCellIndices(triMax, i1, j1, k1);
+				for (int i = btMax(i0, iMin); i <= btMin(i1, iMax); i++)
+					for (int j = btMax(j0, jMin); j <= btMin(j1, jMax); j++)
+						for (int k = btMax(k0, kMin); k <= btMin(k1, kMax); k++)
+							(*usedCells)[((i - iMin) * numJ + (j - jMin)) * numK + (k - kMin)] = 1;
+			}
+		};
+
+		MarkCellsCallback callback = {};
+		callback.bp = _this;
+		callback.iMin = iMin; callback.jMin = jMin; callback.kMin = kMin;
+		callback.iMax = iMax; callback.jMax = jMax; callback.kMax = kMax;
+		callback.numJ = numJ; callback.numK = numK;
+		callback.usedCells = &usedCells;
+		((btTriangleMeshShape*)colObj->m_collisionShape)->processAllTriangles(&callback, proxy->m_aabbMin, aabbMax);
+	}
+
 	for (int i = iMin; i <= iMax; i++) {
 		for (int j = jMin; j <= jMax; j++) {
 			for (int k = kMin; k <= kMax; k++) {
-				std::vector<btRSBroadphase::Cell*> cells = {};
+				if (!usedCells[((i - iMin) * numJ + (j - jMin)) * numK + (k - kMin)])
+					continue; // No tris in this cell (when adding; removal clears every cell)
+
 				for (int i1 = -1; i1 <= 1; i1++) {
 					for (int j1 = -1; j1 <= 1; j1++) {
 						for (int k1 = -1; k1 <= 1; k1++) {
@@ -137,43 +163,22 @@ void _UpdateCellsStatic(btRSBroadphase* _this, btRSBroadphaseProxy* proxy) {
 								continue;
 							if (ci >= _this->cellsX || cj >= _this->cellsY || ck >= _this->cellsZ)
 								continue;
-							cells.push_back(&_this->GetCell(ci, cj, ck));
-						}
-					}
-				}
-				
-				if (isTriMesh) {
-					auto triMeshShape = (btTriangleMeshShape*)colObj->m_collisionShape;
-					btVector3 cellMin = _this->GetCellMinPos(i, j, k);
-					btVector3 cellMax = cellMin + btVector3(_this->cellSize, _this->cellSize, _this->cellSize);
 
-					callbackInst.hit = false;
-					triMeshShape->processAllTriangles(&callbackInst, cellMin, cellMax);
-
-					if (!callbackInst.hit) {
-						numSkipped++;
-
-						if (ADD) {
-							continue; // No tris in this AABB, ignore
-						} else {
-							// Remove it anyway
-						}
-					}
-				}
-
-				for (auto cell : cells) {
-					if (ADD) {
-						bool alreadyExists = false;
-						for (auto staticHandle : cell->staticHandles) {
-							if (staticHandle == proxy) {
-								alreadyExists = true;
-								break;
+							btRSBroadphase::Cell* cell = &_this->GetCell(ci, cj, ck);
+							if (ADD) {
+								bool alreadyExists = false;
+								for (auto staticHandle : cell->staticHandles) {
+									if (staticHandle == proxy) {
+										alreadyExists = true;
+										break;
+									}
+								}
+								if (!alreadyExists)
+									cell->staticHandles.push_back(proxy);
+							} else {
+								cell->RemoveStatic(proxy);
 							}
 						}
-						if (!alreadyExists)
-							cell->staticHandles.push_back(proxy);
-					} else {
-						cell->RemoveStatic(proxy);
 					}
 				}
 			}

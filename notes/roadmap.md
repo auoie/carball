@@ -8,8 +8,8 @@ Values and formulas: `notes/physics-values.md`. Arena: `notes/arena.md`. Binary/
 Resuming in a new session: `notes/HANDOFF.md`. Generated constants: `out/rl_physics_constants.json`.
 
 ## Next up
-1. Compile the patched engine (`engine/`) to WebAssembly (§8). Needs Emscripten; the user installs it.
-2. Offline freeplay in the browser (§8), with the camera (§3) and controls (§4) reverse engineered alongside.
+1. Offline freeplay in the browser (§8): Three.js scene with our arena, the WebAssembly engine (`engine/build-wasm/`),
+   keyboard/gamepad input. Camera (§3) and controls (§4) reverse engineered alongside.
 3. Then netcode (§6) and the competitive layer (§9).
 
 ---
@@ -32,6 +32,7 @@ Resuming in a new session: `notes/HANDOFF.md`. Generated constants: `out/rl_phys
 - [x] Arena measured: planes, edge curves, corners, goal mouth and full goal interior (`notes/arena.md`)
 - [x] Our own arena collision mesh generated and validated (`scripts/arena_gen.py`, `out/arena/`)
 - [x] RocketSim forked into `engine/` with all verified patches and tests
+- [x] WebAssembly build of the engine with a JS API (`engine/build-wasm/rlengine.mjs`)
 - [x] Replay tools: `scripts/replay_extract` (Rust/boxcars) + `scripts/replay_measure.py`
 - [x] Camera tuning values (car cam, ball cam, presets, slider limits)
 - [x] Netcode tuning values (input redundancy, jitter buffer, sim-time scaling, correction rates)
@@ -65,7 +66,8 @@ throttle curve, hitbox sizes and wheel setup, ball radius, dodge-vs-double-jump 
 - [x] Special ball–world contact: re-normalised normal, averaged friction/restitution
 - [x] Per-tick state quantization
 - [x] Unit tests for each patch
-- [ ] Verify the flip-cancel tick alignment and the in-integration speed clamp against replays (see `engine/README.md`)
+- [ ] Verify against replays: flip-cancel tick alignment, in-integration speed clamp, attacker speed after a demo
+      (see `engine/README.md`)
 
 ## 3. Camera
 
@@ -102,7 +104,8 @@ throttle curve, hitbox sizes and wheel setup, ball radius, dodge-vs-double-jump 
 ## 8. Engine build
 
 - [x] Patched RocketSim builds natively with tests (`engine/`)
-- [ ] Compile it to WebAssembly (Emscripten); headless Node test. Keep FP deterministic (no FMA contraction).
+- [x] Compile it to WebAssembly (Emscripten) with JS bindings (`engine/wasm/bindings.cpp`); headless Node tests pass;
+      deterministic run to run (`-ffp-contract=off`); snapshots save/restore (`engine/README.md`)
 - [ ] Load our arena mesh; Three.js renderer; keyboard and gamepad input; offline freeplay.
 - [ ] Authoritative server running the same WASM build as the clients, fixed 120 Hz tick, with the game's per-tick
       state quantization so client and server stay bit-identical; client prediction and rollback.

@@ -17,6 +17,14 @@ CarState Car::GetState() {
 
 	_internalState.angVel = _rigidBody.m_angularVelocity;
 
+	// RL PATCH: wheel values carried into the next tick
+	for (int i = 0; i < _bulletVehicle.m_wheelInfo.size() && i < 4; i++) {
+		const btWheelInfoRL& wheel = _bulletVehicle.m_wheelInfo[i];
+		_internalState.wheelCarry.wheels[i] = {
+			wheel.m_steerAngle, wheel.m_engineForce, wheel.m_brake, wheel.m_latFriction, wheel.m_longFriction
+		};
+	}
+
 	return _internalState;
 }
 
@@ -31,6 +39,17 @@ void Car::SetState(const CarState& state) {
 	_rigidBody.updateInertiaTensor();
 
 	_velocityImpulseCache = { 0, 0, 0 };
+
+	// RL PATCH: wheel values carried into the next tick
+	for (int i = 0; i < _bulletVehicle.m_wheelInfo.size() && i < 4; i++) {
+		btWheelInfoRL& wheel = _bulletVehicle.m_wheelInfo[i];
+		const CarState::WheelCarry& carry = state.wheelCarry.wheels[i];
+		wheel.m_steerAngle = carry.steerAngle;
+		wheel.m_engineForce = carry.engineForce;
+		wheel.m_brake = carry.brake;
+		wheel.m_latFriction = carry.latFriction;
+		wheel.m_longFriction = carry.longFriction;
+	}
 
 	_internalState = state;
 	_internalState.tickCountSinceUpdate = 0;

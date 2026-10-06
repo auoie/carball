@@ -5,12 +5,10 @@ out/decrypted/
 out/rlupktool_key.bin
 *.key
 
-# Ghidra project database (embeds the full RocketLeague.exe, ~600 MB)
+# Ghidra project database (embeds the full RocketLeague.exe, ~600 MB; its .lock files live in ghidra/ too)
 ghidra/
 *.gpr
 *.rep/
-*.lock
-*.lock~
 
 # Arena collision meshes extracted for local measurement only (Psyonix geometry)
 out/arena_local/
@@ -19,6 +17,9 @@ out/arena_local/
 out/decomp/
 out/decomp_tokens/
 out/sub57.txt
+
+# Rocket League replays (third-party dataset; contain player names)
+*.replay
 
 # --- Regenerable / noise ---------------------------------------------------
 logs/
@@ -38,4 +39,8 @@ scripts/replay_extract/target/
 
 # engine build output
 engine/build/
+engine/build-wasm/
 engine/rocketsim/build/
+
+# JavaScript dependencies (web client)
+node_modules/

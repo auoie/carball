@@ -123,16 +123,18 @@ void Arena::ResetToRandomKickoff(int seed) {
 
 	auto kickoffOrder = KICKOFF_ORDER_TEMPLATE;
 
-	std::default_random_engine* randEngine;
+	// RL PATCH: fixed engine type and our own shuffle, so every platform picks the same kickoff
+	std::minstd_rand0* randEngine;
 	if (seed == -1) {
 		randEngine = &Math::GetRandEngine();
 	} else {
-		randEngine = new std::default_random_engine(seed);
+		randEngine = new std::minstd_rand0(seed);
 	}
 
 	int locationAmount = (gameMode == GameMode::HEATSEEKER) ? CAR_SPAWN_LOCATION_AMOUNT_HEATSEEKER : CAR_SPAWN_LOCATION_AMOUNT;
 
-	std::shuffle(kickoffOrder.begin(), kickoffOrder.begin() + locationAmount, *randEngine);
+	for (int i = locationAmount - 1; i > 0; i--) // Fisher-Yates (std::shuffle differs between standard libraries)
+		std::swap(kickoffOrder[i], kickoffOrder[(*randEngine)() % (i + 1)]);
 
 	const CarSpawnPos* CAR_SPAWN_LOCATIONS = CAR_SPAWN_LOCATIONS_SOCCAR;
 	const CarSpawnPos* CAR_RESPAWN_LOCATIONS = CAR_RESPAWN_LOCATIONS_SOCCAR;
@@ -636,12 +638,11 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
 				RS_ERR_CLOSE(ERROR_PREFIX << "Failed to load, got repeated car ID of " << id);
 #endif
 
+			// RL PATCH: give the car its saved ID directly. The old code re-numbered cars and then forced the
+			// ID, which lost a car whenever the saved order was not ascending.
+			newArena->_lastCarID = id - 1;
 			Car* newCar = newArena->DeserializeNewCar(in, team);
-
-			// Force ID
-			newArena->_carIDMap.erase(newCar->id);
-			newArena->_carIDMap[id] = newCar;
-			newCar->id = id;
+			assert(newCar->id == id);
 		}
 
 		newArena->_lastCarID = lastCarID;
@@ -690,10 +691,12 @@ Arena* Arena::Clone(bool copyCallbacks) {
 	newArena->ball->_velocityImpulseCache = this->ball->_velocityImpulseCache;
 
 	for (Car* car : this->_cars) {
+		// RL PATCH: keep the same ID (setting it after AddCar left the ID map pointing at the wrong IDs)
+		newArena->_lastCarID = car->id - 1;
 		Car* newCar = newArena->AddCar(car->team, car->config);
-		
+		assert(newCar->id == car->id);
+
 		newCar->SetState(car->GetState());
-		newCar->id = car->id;
 		newCar->controls = car->controls;
 		newCar->_velocityImpulseCache = car->_velocityImpulseCache;
 	}
@@ -713,10 +716,13 @@ Car* Arena::DeserializeNewCar(DataStreamIn& in, Team team) {
 	car->_Deserialize(in);
 	car->team = team;
 
+	// RL PATCH: _BulletSetup() resets the boost to the spawn amount, so keep the loaded state
+	CarState loadedState = car->_internalState;
+
 	_AddCarFromPtr(car);
 
 	car->_BulletSetup(gameMode, &_bulletWorld, _mutatorConfig);
-	car->SetState(car->_internalState);
+	car->SetState(loadedState);
 
 	return car;
 }
