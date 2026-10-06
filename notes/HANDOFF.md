@@ -1,13 +1,19 @@
 # Handoff: how to resume this project
 
 **Goal:** a web game cloning Rocket League's physics, camera, controls and competitive multiplayer.
-**Plan:** patch RocketSim with verified differences → WASM; own arena mesh; Three.js; authoritative server.
+**Plan:** forked RocketSim (`engine/`) with verified patches → native game server + WebAssembly clients
+(bit-identical); own arena mesh; Three.js browser client (`client/`).
 **Status (2026-10-06):** physics reverse engineering complete; our arena mesh is generated and validated
 (`out/arena/`); RocketSim is forked into `engine/` with every verified patch and tests (`engine/README.md`).
 The engine also builds to WebAssembly with a JS API (`engine/build-wasm/rlengine.mjs`). Native and WebAssembly
 builds simulate bit-identically (the game server will be native, the clients WebAssembly).
-Browser freeplay works (`client/`, TypeScript + Vite + Three.js; see `client/README.md`).
-Next: camera/controls reverse engineering (§3, §4), replay validation (§7), then netcode (§6).
+Browser freeplay works (`client/`, TypeScript + Vite + Three.js; see `client/README.md`). The camera is the
+game's own: decompiled from UnrealScript and ported (`client/src/camera/rlCamera.ts`, algorithm in `notes/camera.md`).
+**Last state (2026-10-06):** I had just shipped the ported camera after the user said the provisional one "feels
+terrible", and asked the user to try it and report what still feels off (walls / air / flips / ball cam). No
+reply yet. If they report problems, compare that part against `out/decomp/camera_script.txt`.
+Next options: camera extras (swivel/look, rear cam), controls/input shaping (§4), replay validation (§7),
+netcode + native server (§6), competitive layer (§9).
 
 Read in this order: `notes/roadmap.md` (what's left) → `notes/physics-values.md` (all values, formulas,
 RocketSim comparison) → `notes/arena.md` → `notes/camera.md` → `notes/findings.md` (binary/package internals, addresses)
@@ -63,6 +69,14 @@ PATH=/usr/lib/emscripten:$PATH emmake make -C ../engine/build-wasm -j && node ..
 cd ../client && npm run check && npm run build && npm run e2e   # web client: types, lint, tests, browser test
 ```
 
+## Session conventions and decisions
+- The user commits work themselves. Don't commit, and don't touch the git index (no `git rm --cached`, no staging).
+- RocketSim was forked knowingly, despite its README's request. The server will be native, the clients WebAssembly,
+  and they must stay bit-identical: run `engine/tests/check_native_wasm.sh` after engine changes.
+- The user values strict static analysis and tests: keep `cd client && npm run check` and `npm run e2e` green.
+- Decompiled game code stays local (`out/decomp/`, git-ignored): camera script in `out/decomp/camera_script.txt`
+  and `camera_base_script.txt`.
+
 ## Gotchas
 - Units: uu; Bullet = uu × 0.02. Forces/impulses in data are uu × mass (car 180, ball 30).
 - UE3 shapes get PhysX skin +0.025 BT (+1.25 uu/side); spheres then −0.04 in Psyonix's converter.
@@ -75,5 +89,17 @@ cd ../client && npm run check && npm run build && npm run e2e   # web client: ty
 - Addresses are valid for this exe build only.
 - Keep Psyonix material local: decrypted packages, key, meshes, decompiled code are git-ignored.
 - The user commits work themselves; leave changes uncommitted unless asked.
+- `pkill -f PATTERN` kills its own shell if PATTERN appears anywhere in the same command line. Use a bracket
+  trick (`pkill -f 'vite previe[w]'`) and don't start the process in the same command.
+- Emscripten: `PATH=/usr/lib/emscripten:$PATH` (not on PATH in non-login shells). Bindings generate TS types
+  (`--emit-tsd *.d.mts`; typed arrays via `EMSCRIPTEN_DECLARE_VAL_TYPE`). After changing `engine/wasm/bindings.cpp`,
+  rebuild `engine/build-wasm` (targets `rlengine`, `rlengine_web`) before running the client.
+- Determinism pitfalls (native vs WebAssembly): platform libm (fixed: `engine/detmath`), Bullet SSE paths (fixed:
+  `BT_DISABLE_SIMD`), `std::` random distributions/shuffle/`default_random_engine`, function-argument evaluation
+  order, uninitialized fields. Never `-ffast-math`.
+- UnrealScript disassembly: Rocket League's extended-native tokens are 0x70–0x7F (fixed in `ubytecode.py`).
+  Unknown tokens `0x52`, `0x5b` remain. Most game-feel logic (camera, car impacts) is script, not native.
+- Playwright uses the system Chrome (`channel: "chrome"`, swiftshader). Screenshots via a temporary spec file in
+  `client/e2e/` (delete after). Headless Chrome CLI screenshots also work (`--use-angle=swiftshader`).
 - The user chose to fork RocketSim despite its README's request (2026-10-06); don't re-ask.
 - Engine changes are marked `RL PATCH`; regenerate `engine/rocketsim-rl-patches.diff` after changing them.
