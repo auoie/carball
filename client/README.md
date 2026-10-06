@@ -37,7 +37,7 @@ npm run build && npm run e2e   # Playwright in the installed Chrome: load, drive
 | `src/engine/cmf.ts` | reads the arena collision mesh (also used for rendering) |
 | `src/input/` | bindings from Rocket League's `DefaultInput.ini`, deadzones, keyboard/mouse/gamepad → controls |
 | `src/loop/fixedStep.ts` | physics at a fixed 120 Hz; rendering interpolates between ticks |
-| `src/camera/` | car cam and ball cam with the game's tuning values; the follow logic is provisional (roadmap §3) |
+| `src/camera/` | the game's car cam, ball cam and transitions, ported from its UnrealScript (`notes/camera.md`) |
 | `src/render/` | Three.js scene; placeholder car (hitbox + wheels), ball, pads, arena |
 | `src/game/freeplay.ts` | freeplay rules: goals, ball reset, kickoff reset, ball-in-front / ball-on-car |
 

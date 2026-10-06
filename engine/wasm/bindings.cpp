@@ -36,7 +36,8 @@ namespace Layout {
 		CAR_IS_FLIPPING = 23, CAR_IS_JUMPING = 24, CAR_SUPERSONIC = 25, CAR_BOOSTING = 26, CAR_DEMOED = 27,
 		CAR_DEMO_RESPAWN_TIMER = 28, CAR_HANDBRAKE = 29, CAR_WHEEL_CONTACT = 30 /* 4 values */,
 		CAR_TEAM = 34, CAR_AUTO_FLIPPING = 35, CAR_LAST_BALL_HIT_TICK = 36 /* -1 = never */,
-		CAR_SIZE = 37;
+		CAR_GROUND_NORMAL = 37 /* 3 values: average contact normal of the wheels touching something, else up */,
+		CAR_SIZE = 40;
 
 	// Boost pad: position, isBig, isActive, cooldown
 	constexpr int PAD_POS = 0, PAD_BIG = 3, PAD_ACTIVE = 4, PAD_COOLDOWN = 5, PAD_SIZE = 6;
@@ -75,6 +76,26 @@ static Result CopyToJS(const char* arrayType, const std::vector<T>& data) {
 	val arr = val::global(arrayType).new_(data.size());
 	arr.call<void>("set", val(emscripten::typed_memory_view(data.size(), data.data())));
 	return Result(arr);
+}
+
+// Vehicle_TA.GetGroundNormal (native FUN_140ef00c0): the normalized average contact normal of the
+// wheels in contact, or straight up when no wheel touches anything. Used by the camera.
+static Vec GroundNormal(Car* car) {
+	btVector3 sum(0, 0, 0);
+	int contacts = 0;
+	for (int i = 0; i < car->_bulletVehicle.getNumWheels(); i++) {
+		const auto& wheel = car->_bulletVehicle.m_wheelInfo[i];
+		if (wheel.m_raycastInfo.m_isInContact) {
+			sum += wheel.m_raycastInfo.m_contactNormalWS;
+			contacts++;
+		}
+	}
+	if (contacts == 0)
+		return Vec(0, 0, 1);
+	float lengthSq = sum.length2() / (float)(contacts * contacts);
+	if (lengthSq < 1e-8f)
+		return Vec(0, 0, 0);
+	return Vec(sum.normalized());
 }
 
 static void WriteVec(float* out, Vec v) {
@@ -189,6 +210,7 @@ public:
 			f[Layout::CAR_TEAM] = (float)car->team;
 			f[Layout::CAR_AUTO_FLIPPING] = s.isAutoFlipping;
 			f[Layout::CAR_LAST_BALL_HIT_TICK] = s.ballHitInfo.isValid ? (float)s.ballHitInfo.tickCountWhenHit : -1;
+			WriteVec(f + Layout::CAR_GROUND_NORMAL, GroundNormal(car));
 		}
 		return CopyToJS<Float32ArrayVal>("Float32Array", _floats);
 	}
@@ -324,7 +346,7 @@ EMSCRIPTEN_BINDINGS(rlengine) {
 	LAYOUT(CAR_ON_GROUND); LAYOUT(CAR_HAS_JUMPED); LAYOUT(CAR_HAS_DOUBLE_JUMPED); LAYOUT(CAR_HAS_FLIPPED);
 	LAYOUT(CAR_IS_FLIPPING); LAYOUT(CAR_IS_JUMPING); LAYOUT(CAR_SUPERSONIC); LAYOUT(CAR_BOOSTING); LAYOUT(CAR_DEMOED);
 	LAYOUT(CAR_DEMO_RESPAWN_TIMER); LAYOUT(CAR_HANDBRAKE); LAYOUT(CAR_WHEEL_CONTACT); LAYOUT(CAR_TEAM);
-	LAYOUT(CAR_AUTO_FLIPPING); LAYOUT(CAR_LAST_BALL_HIT_TICK); LAYOUT(CAR_SIZE);
+	LAYOUT(CAR_AUTO_FLIPPING); LAYOUT(CAR_LAST_BALL_HIT_TICK); LAYOUT(CAR_GROUND_NORMAL); LAYOUT(CAR_SIZE);
 	LAYOUT(PAD_POS); LAYOUT(PAD_BIG); LAYOUT(PAD_ACTIVE); LAYOUT(PAD_COOLDOWN); LAYOUT(PAD_SIZE);
 	LAYOUT(EVENT_GOAL); LAYOUT(EVENT_BUMP); LAYOUT(EVENT_DEMO);
 	LAYOUT(CFG_HITBOX_SIZE); LAYOUT(CFG_HITBOX_OFFSET); LAYOUT(CFG_FRONT_WHEEL_OFFSET); LAYOUT(CFG_FRONT_WHEEL_RADIUS);

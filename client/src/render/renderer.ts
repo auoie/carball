@@ -10,7 +10,7 @@ import {
   Vector3,
   WebGLRenderer,
 } from "three";
-import type { CameraView } from "../camera/carCamera";
+import type { CameraView } from "../camera/rlCamera";
 import { horizontalToVerticalFov } from "../camera/interp";
 import { toThreeVector } from "./coords";
 
@@ -19,6 +19,7 @@ export class Renderer {
   readonly #camera = new PerspectiveCamera(60, 16 / 9, 5, 40000);
   readonly #gl: WebGLRenderer;
   readonly #target = new Vector3();
+  readonly #forward = new Vector3();
   readonly #observer: ResizeObserver;
 
   constructor(readonly canvas: HTMLCanvasElement) {
@@ -46,7 +47,8 @@ export class Renderer {
   render(view: CameraView): void {
     this.#camera.position.copy(toThreeVector(view.position));
     this.#camera.up.copy(toThreeVector(view.up));
-    this.#camera.lookAt(toThreeVector(view.target, this.#target));
+    this.#target.copy(this.#camera.position).add(toThreeVector(view.forward, this.#forward).multiplyScalar(1000));
+    this.#camera.lookAt(this.#target);
     const fov = horizontalToVerticalFov(view.horizontalFov, this.#camera.aspect);
     if (Math.abs(fov - this.#camera.fov) > 1e-3) {
       this.#camera.fov = fov;

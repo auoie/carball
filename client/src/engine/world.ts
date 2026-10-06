@@ -50,7 +50,10 @@ export interface CarState extends BodyState {
   readonly supersonic: boolean;
   readonly boosting: boolean;
   readonly demoed: boolean;
+  readonly jumping: boolean; // jump component active (first 0.2 s of a held jump)
   readonly wheelContact: readonly [boolean, boolean, boolean, boolean];
+  /** Average contact normal of the wheels touching something, else straight up (Vehicle_TA.GetGroundNormal). */
+  readonly groundNormal: Vec3;
 }
 
 export interface WheelConfig {
@@ -181,7 +184,9 @@ export class World {
       supersonic: flag(m.CAR_SUPERSONIC),
       boosting: flag(m.CAR_BOOSTING),
       demoed: flag(m.CAR_DEMOED),
+      jumping: flag(m.CAR_IS_JUMPING),
       wheelContact: [flag(wheel), flag(wheel + 1), flag(wheel + 2), flag(wheel + 3)],
+      groundNormal: readVec(a, m.CAR_GROUND_NORMAL),
     };
   }
 

@@ -19,7 +19,7 @@ from package import Package
 FUNC_NET = 0x40
 FUNC_OPERATOR = 0x1000
 FUNC_PREOPERATOR = 0x10
-FIRST_NATIVE = 0x70
+FIRST_NATIVE = 0x80
 
 
 def function_info(pkg, e):
@@ -131,8 +131,10 @@ class Disasm:
     # -- expressions --
     def expr(self):
         t = self.u8()
-        if t >= 0x60:
-            idx = ((t - 0x60) << 8 | self.u8()) if t < FIRST_NATIVE else t
+        if t >= 0x70:
+            # Rocket League: 0x70-0x7F are the extended-native tokens (stock UE3: 0x60-0x6F; GNatives has 16 identical
+            # dispatcher stubs there), single-byte natives start at 0x80
+            idx = ((t - 0x70) << 8 | self.u8()) if t < FIRST_NATIVE else t
             return self.native_call(idx)
         h = {
             0x01: lambda: self.obj(),                                  # InstanceVariable

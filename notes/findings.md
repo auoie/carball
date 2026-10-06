@@ -155,7 +155,11 @@ Physics values and the RocketSim comparison: `notes/physics-values.md`.
 
 ## UnrealScript bytecode (Rocket League token layout)
 
-`scripts/ubytecode.py` disassembles functions to pseudo-code. Token handlers were identified from the
+`scripts/ubytecode.py` disassembles functions to pseudo-code.
+**Natives:** in Rocket League the extended-native tokens are `0x70–0x7F` (`idx = (t − 0x70) << 8 | next byte`; GNatives
+holds 16 identical dispatcher stubs there), and single-byte natives start at `0x80`. Stock UE3 uses `0x60–0x6F` and `0x70`.
+Example: `0x71 0x14` = native 276 `>>` (vector by rotator). Unknown expression tokens still seen: `0x52`, `0x5b`.
+ Token handlers were identified from the
 GNatives static registrations (`scripts/dump_tokens.py` → `out/gnatives.csv`) and by reading each
 handler. Differences from stock UE3:
 

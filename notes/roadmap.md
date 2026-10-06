@@ -8,8 +8,8 @@ Values and formulas: `notes/physics-values.md`. Arena: `notes/arena.md`. Binary/
 Resuming in a new session: `notes/HANDOFF.md`. Generated constants: `out/rl_physics_constants.json`.
 
 ## Next up
-1. Camera (§3) and controls (§4): decompile the real car-cam / ball-cam update and the input shaping, replace the
-   provisional versions in `client/`.
+1. Controls (§4): decompile the input shaping (deadzones, mouse/keyboard steering), replace the provisional
+   version in `client/`. Camera extras (§3): swivel/look, rear camera.
 2. Physics validation against replays (§7).
 3. Then netcode (§6), the native game server, and the competitive layer (§9).
 
@@ -73,10 +73,11 @@ throttle curve, hitbox sizes and wheel setup, ball radius, dodge-vs-double-jump 
 
 ## 3. Camera
 
-- [ ] Decompile the car-cam and ball-cam update logic so the extracted values are used the game's way.
+- [x] Decompile the car-cam and ball-cam update logic (UnrealScript; `notes/camera.md` "Algorithm")
   - Start: `CameraState_Car_TA`, `CameraState_BallCam_TA` (natives and script); archetypes in `GameInfo_Soccar_SF.upk`.
 - [x] Extract camera values: player defaults, car-cam and ball-cam archetypes, swivel extents (`notes/camera.md`).
-- [x] Provisional car cam and ball cam using those rates (`client/src/camera/carCamera.ts`); replace with the real logic.
+- [x] Car cam, ball cam and transitions ported (`client/src/camera/rlCamera.ts`), with scenario tests
+- [ ] Not yet: swivel (right stick / mouse look), rear camera, bouncy-chassis wobble, demolished/goal cameras
 
 ## 4. Controls
 

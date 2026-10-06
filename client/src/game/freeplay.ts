@@ -1,14 +1,14 @@
 // Offline freeplay: one car, the ball, boost pads, goals. Runs the physics at a fixed 120 Hz and
 // renders interpolated states.
 import { Quaternion, Vector3 } from "three";
-import { CarCamera } from "../camera/carCamera";
+import { PlayerCamera } from "../camera/rlCamera";
 import type { BodyState, CarState, World } from "../engine/world";
 import type { Hud } from "../hud";
 import { DEFAULT_BINDINGS } from "../input/bindings";
 import type { InputDevices } from "../input/devices";
 import { type HeldActions, readControls, readHeldActions } from "../input/mapping";
 import { FixedStep, TICK_SECONDS } from "../loop/fixedStep";
-import { ZERO, add, lerp, scale, vec3 } from "../math/vec";
+import { type Rot3, ZERO, add, cross, dot, lerp, normalize, scale, sub, vec3 } from "../math/vec";
 import { toThreeQuaternion, toThreeVector } from "../render/coords";
 import { BALL_RADIUS, BallView, BoostPadsView, CarView } from "../render/entities";
 import type { Renderer } from "../render/renderer";
@@ -34,16 +34,25 @@ class Interpolated<T extends BodyState> {
     const a = toThreeQuaternion(this.previous.rot, tmpQuat);
     return toThreeQuaternion(this.current.rot, out).slerp(a, 1 - alpha);
   }
-  /** The state with interpolated position and velocity (for the camera). */
+  /** The state with interpolated position, velocity and rotation (for the camera). */
   blended(alpha: number): T {
     return {
       ...this.current,
       pos: lerp(this.previous.pos, this.current.pos, alpha),
       vel: lerp(this.previous.vel, this.current.vel, alpha),
+      rot: blendRotation(this.previous.rot, this.current.rot, alpha),
     };
   }
 }
 const tmpQuat = new Quaternion();
+
+/** Interpolates two orientations by their axes, re-orthonormalized (right = up x forward in this frame). */
+function blendRotation(a: Rot3, b: Rot3, t: number): Rot3 {
+  const forward = normalize(lerp(a.forward, b.forward, t), b.forward);
+  const upRaw = lerp(a.up, b.up, t);
+  const up = normalize(sub(upRaw, scale(forward, dot(upRaw, forward))), b.up);
+  return { forward, up, right: cross(up, forward) };
+}
 
 export class Freeplay {
   readonly #world: World;
@@ -52,7 +61,7 @@ export class Freeplay {
   readonly #hud: Hud;
   readonly #playerId: number;
   readonly #clock = new FixedStep();
-  readonly #camera = new CarCamera();
+  readonly #camera = new PlayerCamera();
   readonly #carView: CarView;
   readonly #ballView = new BallView();
   readonly #padsView: BoostPadsView;
@@ -166,7 +175,7 @@ export class Freeplay {
     this.#ballView.update(this.#ball.position(alpha, this.#pos), this.#ball.rotation(alpha, this.#rot));
     this.#padsView.update(this.#world.boostPads());
 
-    const view = this.#camera.update(frameSeconds, this.#car.blended(alpha), this.#ball.blended(alpha), this.#ballCam);
+    const view = this.#camera.update(frameSeconds, this.#car.blended(alpha), this.#ball.blended(alpha).pos, this.#ballCam);
     this.#renderer.render(view);
 
     if (frameSeconds > 0) this.#fps += (1 / frameSeconds - this.#fps) * 0.05;
