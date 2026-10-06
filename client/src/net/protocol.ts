@@ -61,15 +61,27 @@ export type DatagramMessage =
   | { readonly type: "inputs"; readonly timestamp: number; readonly firstFrame: number; readonly frames: readonly InputFrame[] }
   | ({ readonly type: "update" } & Update);
 
-/** round(v × 127), halves away from zero, clamped */
-export function quantizeAxis(v: number): number {
-  const q = Math.sign(v) * Math.floor(Math.abs(v) * 127 + 0.5);
-  return q === 0 ? 0 : Math.max(-127, Math.min(127, q)); // (no -0)
+/** Round half to even (the game's float-to-int conversion) */
+function roundHalfEven(x: number): number {
+  const r = Math.round(x); // (half up)
+  return x - Math.floor(x) === 0.5 && r % 2 !== 0 ? r - 1 : r;
 }
 
-/** q / 127 as a 32-bit float: exactly what the server applies */
+/**
+ * An input axis as the game's input byte (Vehicle_TA.SetVehicleInput): q = round(v × 127) for v ≥ 0 and round(v × 128)
+ * below, halves up, in 32-bit float arithmetic like the game. -128..127.
+ */
+export function quantizeAxis(v: number): number {
+  const x = Math.fround(Math.max(-1, Math.min(1, v)));
+  const f = x < 0 ? Math.max(Math.fround(x * 128), -128) : Math.min(Math.fround(x * 127), 127);
+  const y = Math.fround(f + 128);
+  const q = (roundHalfEven(Math.fround(Math.fround(y + y) + 0.5)) >> 1) - 128;
+  return q === 0 ? 0 : q; // (no -0)
+}
+
+/** q / 127 (q ≥ 0) or q / 128 as a 32-bit float: exactly what the engine applies */
 export function dequantizeAxis(q: number): number {
-  return Math.fround(q / 127);
+  return q < 0 ? Math.fround(q * 0.0078125) : Math.fround(q / 127);
 }
 
 export class DecodeError extends Error {}

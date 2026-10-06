@@ -6,6 +6,7 @@
 #include "Sim/Quantize/Quantize.h"
 
 #include <cmath>
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <functional>
@@ -377,6 +378,50 @@ static void TestSolverAndOneSided(Arena* arena) {
 	CHECK(arena->ball->GetState().vel.y < 0, "ball did not bounce off the back wall");
 }
 
+static void TestInputQuantization(Arena* arena, Car* car) {
+	puts("inputs: every axis is a byte, q / 127 above zero and q / 128 below (Vehicle_TA.SetVehicleInput)");
+	struct { float in, out; } cases[] = {
+		{ 1, 1 }, { -1, -1 }, { 0.25f, 32 / 127.f }, { -0.5f, -0.5f }, { -0.7f, -90 / 128.f }, { 0.7f, 89 / 127.f },
+		{ -63.5f / 128, -63 / 128.f }, { 63.5f / 127, 64 / 127.f }, // halves round up
+	};
+	for (auto& c : cases) {
+		float q = Quantize::InputAxis(c.in);
+		CHECK(q == c.out, "%.6f -> %.8f, expected %.8f", c.in, q, c.out);
+		CHECK(Quantize::InputAxis(q) == q, "%.8f not stable", q);
+	}
+	CarState s = CarAt({ 0, 0, 1500 }, { 1, 0, 0 }, { 0, 0, 1 });
+	car->SetState(s);
+	car->controls = CarControls();
+	car->controls.steer = -0.7f;
+	car->controls.pitch = 0.3f;
+	arena->Step(1);
+	CHECK(car->controls.steer == -90 / 128.f && car->controls.pitch == 38 / 127.f, "after a tick: steer %.8f pitch %.8f",
+		car->controls.steer, car->controls.pitch);
+}
+
+static void TestBallHitStartOfTick(Arena* arena, Car* car) {
+	puts("car-ball hit impulse from start-of-tick velocities (OldRBState): none for a ball landing at rest on a parked car");
+	car->SetState(CarAt({ 0, 0, 17.01f }, { 1, 0, 0 }, { 0, 0, 1 }));
+	car->controls = CarControls();
+	BallState away;
+	away.pos = { 3000, 4000, 93.15f };
+	arena->ball->SetState(away);
+	arena->Step(120); // the car settles
+	CarState c = car->GetState();
+	c.vel = c.angVel = Vec(); // both at rest at the start of the tick
+	car->SetState(c);
+	float roof = c.pos.z + car->config.hitboxPosOffset.z + car->config.hitboxSize.z / 2;
+	BallState b;
+	b.pos = { c.pos.x + car->config.hitboxPosOffset.x, c.pos.y, roof + 91.25f + 0.5f };
+	arena->ball->SetState(b);
+	arena->Step(1);
+	const BallHitInfo& hit = car->GetState().ballHitInfo;
+	bool touched = hit.isValid && hit.tickCountWhenHit == arena->tickCount - 1;
+	// Velocities read during the step (stock RocketSim) hold this tick's gravity and suspension push: ~3.5 uu/s
+	CHECK(touched && hit.extraHitVel.Length() < 0.01f, "touched %d, extra impulse %.3f uu/s", touched,
+		hit.extraHitVel.Length());
+}
+
 int main(int argc, char** argv) {
 	std::string meshes = argc > 1 ? argv[1] : ARENA_MESH_DIR;
 	RocketSim::Init(meshes, true);
@@ -400,6 +445,9 @@ int main(int argc, char** argv) {
 	TestAutoFlip(arena, car);
 	TestAckermann(arena, car);
 	TestSuspensionScale(arena);
+	TestBallHitStartOfTick(arena, car);
+	TestInputQuantization(arena, car);
+	arena->ball->SetState(BallState());
 
 	Car* victim = arena->AddCar(Team::ORANGE);
 	arena->ball->SetState([] { BallState b; b.pos = { 0, -4000, 93.15f }; return b; }());

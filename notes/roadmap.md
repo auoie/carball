@@ -8,7 +8,7 @@ Values and formulas: `notes/physics-values.md`. Arena: `notes/arena.md`. Binary/
 Resuming in a new session: `notes/HANDOFF.md`. Generated constants: `out/rl_physics_constants.json`.
 
 ## Next up
-1. Physics validation against replays (§7), whenever something feels off.
+1. Physics validation against replays (§7): extend to jumps/dodges and bumps when needed.
 2. Netcode (§6): in-process network tests (latency/jitter/loss), sim-time scaling, update size; then the
    competitive layer (§9).
 
@@ -118,8 +118,11 @@ throttle curve, hitbox sizes and wheel setup, ball radius, dodge-vs-double-jump 
 
 ## 7. Validation
 
-- [ ] Comparison harness: our sim vs replays vs RocketSim (kickoffs, ball bounces, throttle/boost acceleration, flips).
-  Replay tools exist (`scripts/replay_extract`, `scripts/replay_measure.py`); the 120k-replay dataset is available.
+- [x] Comparison harness (`engine/tools/replay_validate.cpp`, `notes/validation.md`): replay states into the engine,
+  step, compare with the next frame. Ball (free flight, arena contacts) exact; car driving within ~1%; car–ball
+  touches unbiased. Found and fixed: hit impulse from start-of-tick velocities (patch 28, the "bouncy" ball on the
+  car); found in the code on the way: input bytes (patch 29).
+- [ ] Extend: jumps/dodges (fit the start tick), car–car bumps, walls and ceiling, other hitboxes, kickoffs.
 
 ## 8. Engine build
 

@@ -11,6 +11,13 @@ RS_NS_START
 // (FUN_140eed9e0 -> FUN_140e45c10 -> FUN_140e3e960), so the simulation only ever continues from
 // states a client could receive exactly.
 namespace Quantize {
+	// An input axis as Vehicle_TA.SetVehicleInput stores it (FUN_140f30a70): a byte 128 + q with q = round(v × 127)
+	// for v >= 0 and round(v × 128) below (half up), read back as q / 127 or q × (1/128). Every axis the physics
+	// reads goes through this, on the server and for the local player.
+	int8_t InputAxisByte(float v); // q, -128..127
+	float InputAxisValue(int8_t q);
+	inline float InputAxis(float v) { return InputAxisValue(InputAxisByte(v)); }
+
 	// UE3 appRound(): floor(x + 0.5), computed the same way as the game
 	int RoundUE(float x);
 

@@ -270,7 +270,10 @@ void Ball::_OnHit(
 		ballHitInfo.tickCountWhenExtraImpulseApplied = tickCount;
 		Vec carForward = car->GetForwardDir();
 		Vec relPos = ballState.pos - carState.pos;
-		Vec relVel = ballState.vel - carState.vel;
+		// RL PATCH: Car_TA.ApplyBallImpactForces uses the bodies' start-of-tick velocities (OldRBState). During the
+		// step they already hold this tick's gravity and car forces, so a ball resting on a car's roof got pushed up
+		// (~3.5 uu/s every other tick); replays confirm the start-of-tick values (notes/validation.md)
+		Vec relVel = _startOfTickVel - car->_oldState.vel;
 
 		float relSpeed = RS_MIN(relVel.Length(), BALL_CAR_EXTRA_IMPULSE_MAXDELTAVEL_UU);
 

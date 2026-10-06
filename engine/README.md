@@ -13,10 +13,11 @@ We chose to fork it anyway (decision 2026-10-06).
 # native
 cmake -S engine -B engine/build -DCMAKE_BUILD_TYPE=Release
 make -C engine/build -j
-engine/build/rl_patch_tests                                        # one check per patch (57 checks)
+engine/build/rl_patch_tests                                        # one check per patch (75 checks)
 engine/build/arena_smoketest out/arena/collision_meshes            # arena mesh in the sim
 engine/build/determinism out/arena/collision_meshes 120            # scripted 2v2, hash per second
 engine/build/rollback out/arena/collision_meshes 300               # restored snapshots continue bit for bit
+engine/build/replay_validate out/replays/states.csv                # physics vs replays (notes/validation.md)
 
 # WebAssembly (Arch: emscripten package; its bin dir is /usr/lib/emscripten)
 export PATH=/usr/lib/emscripten:$PATH
@@ -111,6 +112,8 @@ builds pass, with identical output (`check_native_wasm.sh`).
 | 9 | Suspension force scale per car: mass × \|other axle x\| / wheelbase / 2 (Octane 35.735 / 54.265, Dominus 36.772 / 53.228) | Bullet vehicle `FUN_1402c52a0` | `Car.cpp` `_BulletSetup` |
 | 10 | Solver warm starting off (`solverMode = 0`); sphere–triangle contacts one-sided | world setup `FUN_140403cc0`; SphereTriangleDetector | `Arena.cpp`, `SphereTriangleDetector.cpp` |
 | 11 | Merged ball–world contact: averaged normal re-normalised; friction/restitution averaged instead of last-wins | `FUN_1402b2720`, `FUN_1402be240` | `btSequentialImpulseConstraintSolver.cpp` |
+| 28 | Car–ball extra hit impulse from the bodies' **start-of-tick** velocities (`OldRBState`). RocketSim read them during the step, when they already hold that tick's gravity and car forces: a ball resting on a car's roof got ~3.5 uu/s pushed up every other tick. Replays: the ball left the car +3.0 uu/s too fast along the hit direction (95%: 2.6–3.5), now +0.2; dribbles +2.6 → 0.0 | `Car_TA.ApplyBallImpactForces` (`OldRBState.LinearVelocity`) | `Ball.cpp` `_OnHit`, `Ball::_startOfTickVel`, `Car::_oldState` |
+| 29 | Inputs are bytes: every axis is stored as 128 + q, q = round(v × 127) for v ≥ 0 and round(v × 128) below (halves up), read back as q / 127 or q / 128, on the server and for the local player. Applied to the controls every tick (idempotent) | `Vehicle_TA.SetVehicleInput` `FUN_140f30a70` | `Quantize::InputAxis`, `Car.cpp` `_PreTickUpdate` |
 | 27 | Air throttle while boosting: the game uses ThrottleForce × (boost active ? 1 : throttle), so boosting in the air gives 1058.33 uu/s² whatever the throttle. RocketSim's air boost (1058.33) already includes that, then added throttle × 66.67 again: boost + throttle in the air was 6% too strong, boost + reverse 6% too weak | AirControl ApplyForces `FUN_140eb3400` (`BoostComponent.bActive`) | `Car.cpp` `_PreTickUpdate` |
 | 12 | Per-tick state quantization: location to 0.01; velocity truncated to 0.01 (+0.001 away from zero); angular velocity to 0.0001 (+0.00001); smallest-three quaternion with 18 bits | `FUN_140eed9e0` → `FUN_140e45c10` → `FUN_140e3e960` | `Sim/Quantize/`, `Car` and `Ball` `_FinishPhysicsTick` |
 | 21 | Player preferences in the physics, like the game's `PRI_TA.SetUserCarPreferences`: steering and air control shape their input with the player's sensitivity (`clamp(input × s, −1, 1)`, any input is full input at 10); dodge deadzone per car (was already a config value). The dodge check and direction use the raw stick | `FUN_140396ca0`, VehicleSim `FUN_140f1e830`, AirControl `FUN_140eb3400` | `CarConfig.h`, `Car.cpp` `ShapeInput` |

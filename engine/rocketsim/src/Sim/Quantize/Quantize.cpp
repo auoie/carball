@@ -8,6 +8,19 @@
 RS_NS_START
 
 namespace Quantize {
+	int8_t InputAxisByte(float v) {
+		v = RS_CLAMP(v, -1.f, 1.f);
+		float f = v < 0 ? RS_MAX(v * 128.f, -128.f) : RS_MIN(v * 127.f, 127.f);
+		float y = f + 128.f;
+		int b = (int)nearbyintf(y + y + 0.5f) >> 1; // (cvtss2si: round half to even)
+		return (int8_t)(b - 128);
+	}
+
+	float InputAxisValue(int8_t q) {
+		float v = (float)q;
+		return q < 0 ? v * 0.0078125f : v / 127.f;
+	}
+
 	constexpr int ROT_BITS = 18;
 	constexpr int ROT_MAX = (1 << ROT_BITS) - 1;
 

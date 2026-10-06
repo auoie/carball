@@ -83,6 +83,10 @@ public:
 	bool _groundStickApplied = false;
 	Vec _velocityImpulseCache = { 0,0,0 };
 
+	// RL PATCH: velocity at the start of the tick (UU/s; the game's OldRBState), for the car hit impulse.
+	// Taken from the state every tick before any forces, so snapshots don't need it.
+	Vec _startOfTickVel = { 0,0,0 };
+
 	// RL PATCH: the rotation as last quantized, as the network sends it (see Quantize::PackedRotation)
 	Quantize::PackedRotation _netRotation;
 	void _FinishPhysicsTick(const MutatorConfig& mutatorConfig);

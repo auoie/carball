@@ -90,8 +90,9 @@ describe("protocol", () => {
   });
 
   it("dequantizes axes to the same float32 values as the server", () => {
+    expect(vectors.dequantizedAxes.bits).toHaveLength(256);
     vectors.dequantizedAxes.bits.forEach((bits, i) => {
-      const q = i - 127;
+      const q = i - 128;
       const view = new DataView(new ArrayBuffer(4));
       view.setFloat32(0, dequantizeAxis(q));
       expect(view.getUint32(0).toString(16).padStart(8, "0")).toBe(bits);
@@ -99,10 +100,15 @@ describe("protocol", () => {
     });
   });
 
-  it("quantizes halves away from zero and clamps", () => {
+  it("quantizes like the game: 1/127 steps above zero, 1/128 below, halves up, clamped", () => {
     expect(quantizeAxis(-0.5)).toBe(-64);
     expect(quantizeAxis(0.5)).toBe(64);
+    expect(quantizeAxis(-0.7)).toBe(-90);
+    expect(quantizeAxis(0.7)).toBe(89);
+    expect(quantizeAxis(-63.5 / 128)).toBe(-63);
+    expect(quantizeAxis(63.5 / 127)).toBe(64);
     expect(quantizeAxis(2)).toBe(127);
+    expect(quantizeAxis(-2)).toBe(-128);
     expect(quantizeAxis(-0.001)).toBe(0);
   });
 

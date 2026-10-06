@@ -962,6 +962,9 @@ void Arena::Step(int ticksToSimulate) {
 
 		bool hasArenaStuff = (gameMode != GameMode::THE_VOID);
 		
+		// RL PATCH: the ball's start-of-tick velocity (OldRBState) for the car hit impulse (cars keep theirs in _oldState)
+		ball->_startOfTickVel = ball->_rigidBody.m_linearVelocity * BT_TO_UU;
+
 		for (Car* car : _cars)
 			car->_PreTickUpdate(gameMode, tickTime, _mutatorConfig);
 

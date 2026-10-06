@@ -13,7 +13,10 @@ game's own: decompiled from UnrealScript and ported (`client/src/camera/rlCamera
 `engine/tests/rollback.cpp`; in-place load ~5 µs). Step 2 done: the game's netcode is decoded (`notes/netcode.md`).
 Step 3 done: native server (`server/`, Rust, WebTransport; `server/README.md`), protocol v1 (`protocol/`), browser
 online mode with prediction and rollback (`client/src/game/online.ts`, `client/src/net/`); step 4's core (the
-predictor) is in and exact for the local car. Next: step 5. Agreed multiplayer plan: (1) exact restore ✓, (2) decode the
+predictor) is in and exact for the local car. Next: step 5.
+Replay validation (§7) done (`notes/validation.md`, `engine/build/replay_validate`): ball physics exact, driving within
+~1%; fixed the car–ball hit impulse (start-of-tick velocities, patch 28: the ball was bouncy on the car) and added the
+game's input bytes (patch 29). Agreed multiplayer plan: (1) exact restore ✓, (2) decode the
 game's netcode (input buffer, client sim-time adjustment, remote car/ball correction), (3) native authoritative
 server + browser transport, (4) client prediction + rollback, (5) in-process network tests with scripted
 latency/jitter/loss. Then replay validation (§7) with numbers, then the competitive layer (§9). The user wants
@@ -21,7 +24,7 @@ accuracy settled by deterministic, verifiable tests, not by their perception.
 
 Read in this order: `notes/roadmap.md` (what's left) → `notes/physics-values.md` (all values, formulas,
 RocketSim comparison) → `notes/arena.md` → `notes/camera.md` → `notes/findings.md` (binary/package internals, addresses)
-→ `notes/input.md` → `notes/netcode.md` → `engine/README.md` → `client/README.md`.
+→ `notes/input.md` → `notes/netcode.md` → `notes/validation.md` → `engine/README.md` → `client/README.md`.
 
 ## Locations
 | What | Where |
@@ -73,6 +76,8 @@ PATH=/usr/lib/emscripten:$PATH emmake make -C ../engine/build-wasm -j && node ..
 ../engine/build/rollback ../out/arena/collision_meshes 300   # restored snapshots continue bit for bit
 cd ../client && npm run check && npm run build && npm run e2e   # web client: types, lint, tests, browser tests
 cd ../server && cargo test && cargo clippy --all-targets -- -D warnings   # game server (cargo run --release to play)
+python3 replay_pull.py ../out/replays && replay_extract/target/release/replay_extract ../out/replays/states.csv ../out/replays/*.replay
+../engine/build/replay_validate ../out/replays/states.csv --cases ../out/replays/cases.csv && python3 validation_report.py ../out/replays/cases.csv
 ```
 
 ## Session conventions and decisions

@@ -181,7 +181,10 @@ The dodge-torque divisor `Car+0x438 → +0x238` is `Pawn.Mesh` → `PrimitiveCom
 Keyboard/mouse-only: `ApplyAirPitchSafety` zeroes nose-down pitch in the air until the player has
 pitched or rolled (an input aid, not physics).
 
-### Car–ball hit (`Car_TA.ApplyBallImpactForces`) — matches RocketSim exactly
+### Car–ball hit (`Car_TA.ApplyBallImpactForces`, called from `Car_TA.OnHitBall`)
+Applied at most every other physics frame while touching (`OnHitBall`: `CurrentFrame − LastBallImpactFrame > 1`).
+RocketSim had the same formula but read the velocities during the step instead of at the start of the tick: fixed
+(engine patch 28), confirmed by replays (`notes/validation.md`).
 ```
 RelVel = Car.Vel - Ball.Vel                       // start-of-tick (OldRBState) values
 RelSpeed = min(|RelVel|, 4600)
@@ -356,3 +359,20 @@ the mechanism producing the cutoff is still unidentified, but the behaviour is s
   threshold and settling with the velocity-only special contact). Use RocketSim's implementation
   or the measured 93.15.
 - Where the throttle cutoff above 1400 is implemented.
+
+## Input quantization (`Vehicle_TA.SetVehicleInput`, native `FUN_140f30a70`)
+For the server and the locally controlled car (`Role > ROLE_SimulatedProxy`), every input axis (throttle, steer,
+pitch, yaw, roll, dodge forward, dodge strafe) is clamped to [−1, 1] and stored as a byte:
+```
+f = v < 0 ? max(v * 128, -128) : min(v * 127, 127)
+b = round_half_even(2 * (f + 128) + 0.5) >> 1          // = round half up of f + 128
+v = b < 128 ? (b - 128) * (1/128) : (b - 128) / 127    // what the physics reads
+```
+`ReplicatedThrottle` / `ReplicatedSteer` are these bytes. `InputRestriction == 1` turns positive dodge-forward (and
+an AI's positive throttle) negative. Engine patch 29; the network protocol sends the same bytes.
+
+## Validated against replays (2026-10-06)
+See `notes/validation.md`: ball physics exact to the replays' precision (free flight and arena contacts); car driving
+(coasting 525.8 uu/s², throttle, steering) within about 1%; steering sensitivity applied in the physics; car–ball
+touches unbiased after patch 28.
+

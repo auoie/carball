@@ -30,9 +30,11 @@ input frame `frame` (0 before any). Engine snapshots: `Arena::Serialize` (exact,
 | `0x01 Inputs` | C→S | `u32 timestamp` (client ms), `u32 firstFrame`, `u8 count` (≤ 10), `count` × input frame |
 | `0x81 Update` | S→C | `u32 serverTick`, `u32 ackFrame`, `u32 receivedFrame`, `u32 echoTimestamp`, `u16 echoDelay` (ms), `u8 bufferTarget`, `u8 bufferSize`, `u8 part`, `u8 parts`, then network state bytes |
 
-**Input frame** (6 bytes, consecutive frames from `firstFrame`): `i8 throttle, steer, pitch, yaw, roll` as
-round(value × 127), then `u8` bits: 1 jump, 2 boost, 4 handbrake, 8 air pitch safety. Both sides use the decoded
-values (`q / 127` as a 32-bit float), so the client predicts with exactly what the server applies.
+**Input frame** (6 bytes, consecutive frames from `firstFrame`): `i8 throttle, steer, pitch, yaw, roll` as the
+game's input byte (`Vehicle_TA.SetVehicleInput`): q = round(value × 127) for value ≥ 0 and round(value × 128) below,
+halves up, −128..127; then `u8` bits: 1 jump, 2 boost, 4 handbrake, 8 air pitch safety. Decoded as `q / 127` or
+`q × (1/128)` (32-bit float). The engine quantizes every axis the same way each tick, so decoded values pass through
+unchanged and the client predicts with exactly what the server applies.
 The client sends its unacknowledged frames (the newest 10) at its input rate (60 Hz).
 
 **Update**: the network state (`engine/net/NetState.h`) is the server's world after `serverTick`; for this client

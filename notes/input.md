@@ -62,6 +62,11 @@ clamp((d − sign(d)·deadzone if |d| ≥ deadzone else 0) / max, −1, 1)`; gro
 `aMouseStrafe` into `Car.MouseAccel.Y` (max 250, deadzone 15% of max), decaying with `FInterpTo(…, 0, dt, 15)`;
 throttle max 1250; air uses `MouseAirAccel` with max 300.
 
+## Input bytes (`Vehicle_TA.SetVehicleInput`, native `FUN_140f30a70`)
+The vehicle stores every axis as a byte and the physics reads it back: q = round(v × 127) for v ≥ 0 and round(v × 128)
+below (halves up), value q / 127 or q / 128. Applies to the server and the locally controlled car. Our engine does it
+every tick (patch 29); the network protocol sends q. Details in `notes/physics-values.md`.
+
 ## Player preferences in the physics (`PRI_TA.SetUserCarPreferences`)
 The client sends `DodgeInputThreshold`, `SteeringSensitivity`, `AirControlSensitivity` to the server
 (`ServerSetUserCarPreferences` validates to 0–1, 1–10, 1–10). The car applies them:

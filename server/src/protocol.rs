@@ -58,12 +58,18 @@ pub const BIT_HANDBRAKE: u8 = 4;
 pub const BIT_AIR_PITCH_SAFETY: u8 = 8;
 
 /// round(v × 127), halves away from zero, clamped
+/// An input axis as the game's input byte (`Vehicle_TA.SetVehicleInput`): q = round(v × 127) for v ≥ 0 and
+/// round(v × 128) below, halves up (the engine applies the same, so decoded values pass through unchanged)
 pub fn quantize_axis(v: f32) -> i8 {
-    (v * 127.0).round().clamp(-127.0, 127.0) as i8
+    let v = v.clamp(-1.0, 1.0);
+    let f = if v < 0.0 { (v * 128.0).max(-128.0) } else { (v * 127.0).min(127.0) };
+    let y = f + 128.0;
+    ((((y + y) + 0.5).round_ties_even() as i32 >> 1) - 128) as i8
 }
 
 pub fn dequantize_axis(q: i8) -> f32 {
-    f32::from(q) / 127.0
+    let v = f32::from(q);
+    if q < 0 { v * 0.0078125 } else { v / 127.0 }
 }
 
 impl InputFrame {
@@ -394,12 +400,23 @@ mod tests {
     fn dequantized_axes_are_the_same_floats_everywhere() {
         let v = vectors();
         let bits = v["dequantizedAxes"]["bits"].as_array().unwrap();
+        assert_eq!(bits.len(), 256);
         for (i, b) in bits.iter().enumerate() {
-            let q = i as i32 - 127;
+            let q = i as i32 - 128;
             let expected = u32::from_str_radix(b.as_str().unwrap(), 16).unwrap();
             assert_eq!(dequantize_axis(q as i8).to_bits(), expected, "q = {q}");
             assert_eq!(quantize_axis(dequantize_axis(q as i8)), q as i8);
         }
+    }
+
+    #[test]
+    fn quantizes_like_the_game() {
+        assert_eq!(quantize_axis(-1.0), -128);
+        assert_eq!(quantize_axis(1.0), 127);
+        assert_eq!(quantize_axis(-0.7), -90);
+        assert_eq!(quantize_axis(0.7), 89);
+        assert_eq!(quantize_axis(-63.5 / 128.0), -63); // halves up
+        assert_eq!(quantize_axis(63.5 / 127.0), 64);
     }
 
     #[test]

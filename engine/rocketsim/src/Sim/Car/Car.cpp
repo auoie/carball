@@ -107,6 +107,13 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
 	controls.ClampFix();
 #endif
 
+	// RL PATCH: the game keeps every input axis as a byte (Vehicle_TA.SetVehicleInput)
+	controls.throttle = Quantize::InputAxis(controls.throttle);
+	controls.steer = Quantize::InputAxis(controls.steer);
+	controls.pitch = Quantize::InputAxis(controls.pitch);
+	controls.yaw = Quantize::InputAxis(controls.yaw);
+	controls.roll = Quantize::InputAxis(controls.roll);
+
 	assert(_bulletVehicle.getNumWheels() == 4 || _bulletVehicle.getNumWheels() == 3);
 
 	// RL PATCH: keep the start-of-tick state, like the game's OldRBState (used by car-car impacts)

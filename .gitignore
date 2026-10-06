@@ -52,3 +52,6 @@ client/playwright-report/
 
 # game server build output
 server/target/
+
+# Replays pulled from the dataset and data extracted from them (third-party; player data)
+out/replays/
