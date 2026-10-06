@@ -1,0 +1,408 @@
+{
+  "_meta": {
+    "units": "uu (1 uu = 1 cm); forces/impulses are uu*mass; steer curves in degrees (inner wheel)",
+    "bullet_scale": 0.02,
+    "source": "decrypted Rocket League packages; see notes/physics-values.md"
+  },
+  "simulation": {
+    "tick_rate_hz": 120.0,
+    "max_substeps": 5,
+    "gravity_z": -650.0,
+    "quantize_physics": true
+  },
+  "car": {
+    "mass": 180.0,
+    "max_linear_speed": 2300.0,
+    "max_angular_speed": 5.5,
+    "sticky_force": {
+      "ground": 0.5,
+      "wall": 1.5
+    },
+    "auto_roll": {
+      "torque": 80.0,
+      "force": 100.0
+    },
+    "max_time_for_dodge": 1.25,
+    "jump_leave_ground_time": 0.125,
+    "supersonic": {
+      "Speed": 2200.0,
+      "TurnoffSpeedBuffer": 100.0,
+      "TurnoffTime": 1.0
+    },
+    "material": {
+      "friction": 0.30000001192092896,
+      "restitution": 0.10000000149011612
+    },
+    "octane_front_wheel_radius": 12.5
+  },
+  "vehicle_sim": {
+    "drive_torque": 288000.0,
+    "drive_torque_per_wheel_scale": 0.25,
+    "drive_torque_scale_if_fewer_than_3_wheels": 0.25,
+    "drive_torque_curve_signed_speed": [
+      [
+        -1400.0,
+        0.10000000149011612
+      ],
+      [
+        0.0,
+        1.0
+      ],
+      [
+        1400.0,
+        0.10000000149011612
+      ]
+    ],
+    "brake_torque": 10500.0,
+    "steer_angle_curve_deg_inner_wheel": [
+      [
+        0.0,
+        35.0
+      ],
+      [
+        500.0,
+        20.0
+      ],
+      [
+        1000.0,
+        11.0
+      ],
+      [
+        1500.0,
+        6.25
+      ],
+      [
+        1750.0,
+        5.0
+      ],
+      [
+        3000.0,
+        2.0
+      ]
+    ],
+    "handbrake_steer_angle_curve_deg_inner_wheel": [
+      [
+        0.0,
+        25.0
+      ],
+      [
+        2500.0,
+        7.5
+      ]
+    ],
+    "ackermann_steering": true,
+    "handbrake_rate": {
+      "rise": 5.0,
+      "fall": 2.0
+    },
+    "stop_threshold": 25.0,
+    "idle_brake_factor": 0.15000000596046448,
+    "opposite_brake_factor": 1.0
+  },
+  "wheels": {
+    "front": {
+      "suspension_stiffness": 500.0,
+      "suspension_damping_compression": 25.0,
+      "suspension_damping_relaxation": 40.0,
+      "suspension_travel": 12.0,
+      "suspension_max_raise": 2.5,
+      "lat_friction_curve": [
+        [
+          0.0,
+          1.0
+        ],
+        [
+          1.0,
+          0.20000000298023224
+        ]
+      ],
+      "handbrake_lat_friction_curve": [
+        [
+          0.0,
+          0.10000000149011612
+        ]
+      ],
+      "handbrake_long_friction_curve": [
+        [
+          0.0,
+          0.5
+        ],
+        [
+          1.0,
+          0.8999999761581421
+        ]
+      ],
+      "wall_friction_curve": [
+        [
+          0.0,
+          0.10000000149011612
+        ],
+        [
+          0.7070000171661377,
+          0.5
+        ],
+        [
+          1.0,
+          1.0
+        ]
+      ],
+      "aerial_throttle_to_velocity_factor": 1000.0,
+      "aerial_acceleration_factor": 1.2999999523162842
+    },
+    "back": {
+      "suspension_stiffness": 500.0,
+      "suspension_damping_compression": 25.0,
+      "suspension_damping_relaxation": 40.0,
+      "suspension_travel": 12.0,
+      "suspension_max_raise": 2.5,
+      "lat_friction_curve": [
+        [
+          0.0,
+          1.0
+        ],
+        [
+          1.0,
+          0.20000000298023224
+        ]
+      ],
+      "handbrake_lat_friction_curve": [
+        [
+          0.0,
+          0.10000000149011612
+        ]
+      ],
+      "handbrake_long_friction_curve": [
+        [
+          0.0,
+          0.5
+        ],
+        [
+          1.0,
+          0.8999999761581421
+        ]
+      ],
+      "wall_friction_curve": [
+        [
+          0.0,
+          0.10000000149011612
+        ],
+        [
+          0.7070000171661377,
+          0.5
+        ],
+        [
+          1.0,
+          1.0
+        ]
+      ],
+      "aerial_throttle_to_velocity_factor": 1000.0,
+      "aerial_acceleration_factor": 1.2999999523162842
+    }
+  },
+  "boost": {
+    "force": 178500.0,
+    "accel_uu_s2": 991.6666666666666,
+    "modifier": 1.0,
+    "consumption_rate_per_s": 0.3330000042915344,
+    "max_amount": 1.0,
+    "start_amount": 0.3330000042915344,
+    "min_boost_time": 0.10000000149011612
+  },
+  "jump": {
+    "impulse": 52500.0,
+    "impulse_uu_s": 291.6666666666667,
+    "force": 262500.0,
+    "accel_uu_s2": 1458.3333333333333,
+    "force_time": 0.20000000298023224,
+    "min_jump_time": 0.024900000542402267,
+    "double_jump_impulse": 52500.0
+  },
+  "dodge": {
+    "DodgeInputThreshold": 0.5,
+    "SideDodgeImpulse": 90000.0,
+    "SideDodgeImpulseMaxSpeedScale": 1.899999976158142,
+    "ForwardDodgeImpulse": 90000.0,
+    "ForwardDodgeImpulseMaxSpeedScale": 1.0,
+    "BackwardDodgeImpulse": 96000.0,
+    "BackwardDodgeImpulseMaxSpeedScale": 2.5,
+    "SideDodgeTorque": 260.0,
+    "ForwardDodgeTorque": 224.0,
+    "DodgeTorqueTime": 0.6499999761581421,
+    "MinDodgeTorqueTime": 0.04100000113248825,
+    "DodgeZDamping": 0.3499999940395355,
+    "DodgeZDampingDelay": 0.15000000596046448,
+    "DodgeZDampingUpTime": 0.05999999865889549
+  },
+  "air_control": {
+    "torque_pyr": [
+      130,
+      95,
+      400
+    ],
+    "damping_pyr": [
+      30,
+      20,
+      50
+    ],
+    "torque_scalar": 1000.0,
+    "damping_scalar": 1000.0,
+    "throttle_force": 12000.0,
+    "throttle_accel_uu_s2": 66.66666666666667
+  },
+  "flip_car": {
+    "impulse_velocity_change": 200.0,
+    "torque_angular_velocity_change_per_tick": 1000.0,
+    "time": 0.4000000059604645
+  },
+  "ball": {
+    "mass": 30.0,
+    "radius": 92.0,
+    "visual_radius": 95.0,
+    "max_linear_speed": 6000.0,
+    "max_angular_speed": 6.0,
+    "friction": 0.3499999940395355,
+    "restitution": 0.6000000238418579,
+    "linear_damping": 0.029999999329447746,
+    "car_interaction": {
+      "push_factor_curve": [
+        [
+          0.0,
+          0.6499999761581421
+        ],
+        [
+          500.0,
+          0.6499999761581421
+        ],
+        [
+          1400.0,
+          0.6000000238418579
+        ],
+        [
+          2300.0,
+          0.550000011920929
+        ],
+        [
+          4600.0,
+          0.30000001192092896
+        ]
+      ],
+      "push_z_scale": 0.3499999940395355,
+      "push_forward_scale": 0.6499999761581421,
+      "max_relative_speed": 4600.0,
+      "friction": 2.0
+    }
+  },
+  "arena": {
+    "friction": 1.0,
+    "restitution": 0.30000001192092896,
+    "combine_rule_inferred": "friction=multiply, restitution=max"
+  },
+  "car_car": {
+    "bumper_push_curve_ground": [
+      [
+        0.0,
+        150.0
+      ],
+      [
+        1400.0,
+        200000.0
+      ],
+      [
+        2200.0,
+        275000.0
+      ]
+    ],
+    "bumper_push_curve_air": [
+      [
+        0.0,
+        150.0
+      ],
+      [
+        1400.0,
+        250000.0
+      ],
+      [
+        2200.0,
+        350000.0
+      ]
+    ],
+    "z_push_curve": [
+      [
+        0.0,
+        50.0
+      ],
+      [
+        1400.0,
+        50000.0
+      ],
+      [
+        2200.0,
+        75000.0
+      ]
+    ],
+    "bump_interval": 0.25,
+    "com_angle_check": {
+      "bEnabled": true,
+      "BumpAngleYaw": 70.0,
+      "BumpAnglePitch": 36.869895935058594,
+      "DemolishAngleYaw": 45.572994232177734,
+      "DemolishAnglePitch": 36.869895935058594
+    },
+    "friction": 0.09000000715255752
+  },
+  "boost_pads": {
+    "small": {
+      "amount": 0.11999999731779099,
+      "respawn": 4.0,
+      "radius": 96.0,
+      "height": 64.0
+    },
+    "big": {
+      "amount": 9999.0,
+      "respawn": 10.0,
+      "radius": 160.0,
+      "height": 64.0
+    }
+  },
+  "netcode": {
+    "client_prediction": true,
+    "max_uploaded_client_frames": 30,
+    "max_input_frames_per_packet": 10,
+    "input_send_rate_hz": 60.0,
+    "jitter": {
+      "MinTimeBetweenPackets": 0.01600000075995922,
+      "MaxTimeBetweenPackets": 0.25,
+      "BufferStdDeviations": 4.0,
+      "MinBufferTime": 0.05000000074505806,
+      "RollingAverageTime": 15.0,
+      "InputBufferTightenUpSizeFrequency": 10.0,
+      "MaxSingleAdjustmentFrames": 10
+    },
+    "sim_time_scale": {
+      "TimeDilations": 1.0255999565124512,
+      "TimeDilations[1]": 1.0062999725341797,
+      "TimeDilations[2]": 1.0,
+      "TimeDilations[3]": 0.9937999844551086,
+      "TimeDilations[4]": 0.975600004196167,
+      "Inputs_Starved": 2,
+      "Inputs_Good": 4,
+      "Inputs_Saturated": 6,
+      "Inputs_ExtremelySaturated": 14,
+      "Inputs_Max": 20,
+      "ExtraBufferMax": 8,
+      "ExtraBufferHistorySeconds": 30.0,
+      "ExtraBufferUpdatePeriod": 1.0
+    },
+    "fixed_adjust_sim_time_rate": 0.008999999612569809,
+    "rb_sync": {
+      "LocationFixRate": 4.0,
+      "AngularFixRate": 5.0,
+      "MinDeltaLocation": 5.0,
+      "WeldedLerpRate": 18.0,
+      "MinDeltaRotation": 100,
+      "MinDeltaLinearVelocity": 10.0,
+      "ForceReplicationDelay": 0.3499999940395355,
+      "bDebug": false
+    }
+  }
+}

@@ -1,0 +1,59 @@
+=== NetworkConfig_TA Default__NetworkConfig_TA  (archetype ProjectX.Default__OnlineConfig_X, parsed 146/146 bytes)
+  _net_index = 53727
+  MaxClientUploadFrames = 10
+  bForceNetPackets = True
+  bKickActorOverflow = True
+  ForcePacketSignificantDistance = 1000.0
+  MatchFailureSeconds = 8.0
+=== NetworkJitterSettings_TA Default__NetworkJitterSettings_TA  (archetype Core.Default__Object, parsed 208/208 bytes)
+  _net_index = 53881
+  MinTimeBetweenPackets = 0.01600000075995922
+  MaxTimeBetweenPackets = 0.25
+  BufferStdDeviations = 4.0
+  MinBufferTime = 0.05000000074505806
+  RollingAverageTime = 15.0
+  InputBufferTightenUpSizeFrequency = 10.0
+  MaxSingleAdjustmentFrames = 10
+=== ConnectionQualityConfig_TA Default__ConnectionQualityConfig_TA  (archetype ProjectX.Default__OnlineConfig_X, parsed 676/676 bytes)
+  _net_index = 20952
+  ClientPollRate = 0.3499999940395355
+  ClientDelayBeforePolling = 15.0
+  ClientUpdateDelay = 1.5
+  MediocrePing = 0.25
+  BadPing = 0.3499999940395355
+  RecentBadPingFlagPercent = 35.0
+  BadAckTime = 0.800000011920929
+  BadReceiveTime = 0.800000011920929
+  MediocreJitter = 0.03999999910593033
+  BadJitter = 0.05999999865889549
+  JitterRollingAverageTimespan = 2.0
+  RecentBadJitterFlagPercent = 10.0
+  MediocrePacketLossPercent = 5.0
+  BadPacketLossPercent = 9.0
+  PacketLossRollingAverageTimespan = 5.0
+  RecentBadPacketLossFlagPercent = 5.0
+  RecentPoorConnectionRollingTimespan = 900.0
+  NotificationDelayInDays = 5.0
+  bShouldProvidePoorConnectionHelp = True
+  BadPRIReadyTime = 5.0
+  PoorConnectionHelpNotificationURL = 'https://support.rocketleague.com/hc/en-us/categories/360001250553-Connectivity'
+=== ServerPerformanceConfig_TA Default__ServerPerformanceConfig_TA  (archetype ProjectX.Default__OnlineConfig_X, parsed 152/152 bytes)
+  _net_index = 69483
+  InternalLowFPS = 30.0
+  InternalLowFPSTimeThreshold = 10.0
+  PublicBadFPS = 40.0
+  PublicMediocreFPS = 50.0
+  FpsRollingAverageTime = 1.0
+=== NetworkInputBuffer_TA Default__NetworkInputBuffer_TA  (archetype Engine.Default__Actor, parsed 263/263 bytes)
+  _net_index = 53795
+  MaxInputFramesPerPacket = 10
+  RemoteRole = 'ENetRole::ROLE_AutonomousProxy'
+  CollisionType = 'ECollisionType::COLLIDE_CustomDefault'
+  TickGroup = 'ETickingGroup::TG_PostAsyncWork'
+  bOnlyRelevantToOwner = True
+  bOnlyDirtyReplication = True
+  bAlwaysTick = True
+  NetUpdateFrequency = 60.0
+=== NetworkInputBuffer_STS_TA Default__NetworkInputBuffer_STS_TA  (archetype Default__NetworkInputBuffer_TA, parsed 40/40 bytes)
+  _net_index = 53872
+  BufferSizeLowWatermark = -1

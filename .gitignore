@@ -1,0 +1,31 @@
+# --- Game-derived material: never commit ---------------------------------
+# Decrypted/decompressed Rocket League packages (copyrighted game data, ~370 MB)
+out/decrypted/
+# Package decryption key
+out/rlupktool_key.bin
+*.key
+
+# Ghidra project database (embeds the full RocketLeague.exe, ~600 MB)
+ghidra/
+*.gpr
+*.rep/
+*.lock
+*.lock~
+
+# Decompiled game code (derived from the exe; regenerate with scripts/Decomp.java)
+out/decomp/
+out/decomp_tokens/
+out/sub57.txt
+
+# --- Regenerable / noise ---------------------------------------------------
+logs/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store

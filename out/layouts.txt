@@ -1,0 +1,404 @@
+=== CarComponent_Boost_TA : CarComponent_AirActivate_TA (starts 0x328, computed end 0x390, exe sizeof 0x398)
+  0x0328  float                                    BoostConsumptionRate
+  0x032c  float                                    MaxBoostAmount
+  0x0330  float                                    StartBoostAmount
+  0x0334  float                                    BoostUsed
+  0x0338  float                                    CurrentBoostAmount
+  0x033c  float                                    BoostModifier
+  0x0340  float                                    LastBoostAmountRequestTime
+  0x0344  float                                    LastBoostAmount
+  0x0348  bool                                     bPendingConfirmBoostAmount
+  0x0348  bool:bit1                                bRechargeGroundOnly
+  0x0348  bool:bit2                                bNoBoost
+  0x034c  float                                    BoostForce
+  0x0350  float                                    MinBoostTime
+  0x0354  float                                    RechargeRate
+  0x0358  float                                    RechargeDelay
+  0x035c  int                                      UnlimitedBoostRefCount
+  0x0360  byte(EBoostRestriction)                  BoostRestriction
+  0x0361  byte                                     ReplicatedBoostAmount
+  0x0362  struct ReplicatedBoostData               ReplicatedBoost
+  0x0368  ProductAsset_Boost_TA*                   BoostAsset
+  0x0370  FXActorEvent_X*                          BoostShakeState
+  0x0378  ProfileControlsSave_TA*                  ControlsSave
+  0x0380  delegate                                 __EventBoostAmountChanged__Delegate
+=== CarComponent_Dodge_TA : CarComponent_AirActivate_TA (starts 0x328, computed end 0x3c0, exe sizeof 0x3c8)
+  0x0328  float                                    DodgeInputThreshold
+  0x032c  float                                    SideDodgeImpulse
+  0x0330  float                                    SideDodgeImpulseMaxSpeedScale
+  0x0334  float                                    ForwardDodgeImpulse
+  0x0338  float                                    ForwardDodgeImpulseMaxSpeedScale
+  0x033c  float                                    BackwardDodgeImpulse
+  0x0340  float                                    BackwardDodgeImpulseMaxSpeedScale
+  0x0344  float                                    SideDodgeTorque
+  0x0348  float                                    ForwardDodgeTorque
+  0x034c  float                                    DodgeTorqueTime
+  0x0350  float                                    MinDodgeTorqueTime
+  0x0354  float                                    DodgeZDamping
+  0x0358  float                                    DodgeZDampingDelay
+  0x035c  float                                    DodgeZDampingUpTime
+  0x0360  float                                    DodgeImpulseScale
+  0x0364  float                                    DodgeTorqueScale
+  0x0368  FXActorEvent_X*                          JumpEvent
+  0x0370  FXActorEvent_X*                          DoubleJumpEvent
+  0x0378  FXActorEvent_X*                          DodgeEvent
+  0x0380  struct Vector                            DodgeTorque
+  0x038c  struct Vector                            DodgeDirection
+  0x0398  struct Vector                            DodgeImpulse
+  0x03a4  int                                      DodgesCount
+  0x03a8  int                                      MaxDodgeStreak
+  0x03b0  delegate                                 __EventActivateDodge__Delegate
+=== CarComponent_FlipCar_TA : CarComponent_TA (starts 0x2e8, computed end 0x2f8, exe sizeof 0x2f8)
+  0x02e8  float                                    FlipCarImpulse
+  0x02ec  float                                    FlipCarTorque
+  0x02f0  float                                    FlipCarTime
+  0x02f4  bool                                     bFlipRight
+=== CarComponent_Jump_TA : CarComponent_TA (starts 0x2e8, computed end 0x310, exe sizeof 0x310)
+  0x02e8  float                                    MinJumpTime
+  0x02ec  float                                    JumpImpulse
+  0x02f0  float                                    JumpForce
+  0x02f4  float                                    JumpForceTime
+  0x02f8  float                                    PodiumJumpForceTime
+  0x02fc  float                                    JumpImpulseSpeed
+  0x0300  float                                    JumpAccel
+  0x0304  float                                    MaxJumpHeight
+  0x0308  float                                    MaxJumpHeightTime
+  0x030c  bool                                     bDeactivate
+=== CarComponent_AirControl_TA : CarComponent_TA (starts 0x2e8, computed end 0x328, exe sizeof 0x328)
+  0x02e8  struct Rotator                           AirTorque
+  0x02f4  struct Rotator                           AirDamping
+  0x0300  float                                    AirTorqueScalar
+  0x0304  float                                    AirDampingScalar
+  0x0308  float                                    ThrottleForce
+  0x030c  float                                    AirControlSensitivity
+  0x0310  bool                                     bAllowTargetFind
+  0x0314  float                                    JumpInactiveBuffer
+  0x0318  float                                    DodgeInactiveBuffer
+  0x0320  Actor*                                   AutoControlTarget
+=== CarComponent_DoubleJump_TA : CarComponent_AirActivate_TA (starts 0x328, computed end 0x33c, exe sizeof 0x340)
+  0x0328  float                                    JumpImpulse
+  0x032c  float                                    ImpulseScale
+  0x0330  struct Vector                            DoubleJumpImpulse
+=== CarComponent_TA : Actor (starts 0x268, computed end 0x2d8, exe sizeof 0x2e8)
+  0x0268  FXActor_X*                               FXActorArchetype
+  0x0270  FXActorEvent_X*                          FXEvent
+  0x0278  bool                                     bDisabled
+  0x0278  bool:bit1                                bAutoActivate
+  0x0278  bool:bit2                                bSimulateComponent
+  0x0278  bool:bit3                                bCreated
+  0x0278  bool:bit4                                bActive
+  0x0278  bool:bit5                                bRemovedFromCar
+  0x027c  byte                                     ComponentData
+  0x027d  byte                                     ReplicatedActive
+  0x0280  PRI_TA*                                  Activator
+  0x0288  Vehicle_TA*                              Vehicle
+  0x0290  Car_TA*                                  Car
+  0x0298  float                                    ActivityTime
+  0x029c  float                                    MinInactiveTime
+  0x02a0  float                                    ReplicatedActivityTime
+  0x02a8  FXActor_X*                               FXActor
+  0x02b0  GameEvent_Soccar_TA*                     GameEvent
+  0x02b8  delegate                                 __EventPreActivationChanged__Delegate
+  0x02c8  delegate                                 __EventPostActivationChanged__Delegate
+=== Vehicle_TA : RBActor_TA (starts 0x7c0, computed end 0x8c0, exe sizeof 0x8d0)
+  0x07c0  CarMeshComponent_TA*                     CarMesh
+  0x07c8  VehicleSim_TA*                           VehicleSim
+  0x07d0  struct StickyForceData                   StickyForce
+  0x07d8  struct AutoFlipData                      AutoFlip
+  0x07e0  bool                                     bDriving
+  0x07e0  bool:bit1                                bReplicatedHandbrake
+  0x07e0  bool:bit2                                bJumped
+  0x07e0  bool:bit3                                bDoubleJumped
+  0x07e0  bool:bit4                                bOnGround
+  0x07e0  bool:bit5                                bSupersonic
+  0x07e0  bool:bit6                                bPodiumMode
+  0x07e0  bool:bit7                                bHasPostMatchCelebration
+  0x07e4  struct VehicleInputs                     Input
+  0x0804  byte                                     ReplicatedThrottle
+  0x0805  byte                                     ReplicatedSteer
+  0x0806  byte(EInputRestriction)                  InputRestriction
+  0x0808  AIController_TA*                         AIController
+  0x0810  PlayerController_TA*                     PlayerController
+  0x0818  PRI_TA*                                  PRI
+  0x0820  int                                      VehicleUpdateTag
+  0x0828  struct CarInteractionData                CarInteraction
+  0x0838  struct Vector                            LocalCollisionOffset
+  0x0844  struct Vector                            LocalCollisionExtent
+  0x0850  int                                      LastBallTouchFrame
+  0x0854  int                                      LastBallImpactFrame
+  0x0858  CarComponent_Boost_TA*                   BoostComponent
+  0x0860  CarComponent_Dodge_TA*                   DodgeComponent
+  0x0868  CarComponent_AirControl_TA*              AirControlComponent
+  0x0870  CarComponent_Jump_TA*                    JumpComponent
+  0x0878  CarComponent_DoubleJump_TA*              DoubleJumpComponent
+  0x0880  int                                      PodiumSpot
+  0x0884  int                                      PMCAnimIdx
+  0x0888  PitchTekDrawingComponent_TA*             PitchTekComponent
+  0x0890  int                                      NumWheelsForGrounded
+  0x0898  LocalPlayerAudioParamsComponent_TA*      LocalPlayerAudioParamsComponent
+  0x08a0  float                                    TimeBelowSupersonicSpeed
+  0x08a8  NetworkConfig_TA*                        NetworkConfig
+  0x08b0  delegate                                 __EventPRIChanged__Delegate
+=== Car_TA : Vehicle_TA (starts 0x8d0, computed end 0xb78, exe sizeof unknown)
+  0x08d0  TArray<ObjectProperty>                   DefaultCarComponents
+  0x08e0  EngineAudioComponent_TA*                 EngineAudio
+  0x08e8  EngineAudioREVComponent_TA*              EngineAudioRev
+  0x08f0  ThrottleShakeComponent_TA*               ThrottleShake
+  0x08f8  CarComponent_FlipCar_TA*                 FlipComponent
+  0x0900  byte(EDemolishTarget)                    DemolishTarget
+  0x0901  byte(EDemolishSpeed)                     DemolishSpeed
+  0x0902  byte(EDemolishSource)                    DemolishSource
+  0x0908  ProductLoader_TA*                        Loadout
+  0x0910  bool                                     bLoadoutSet
+  0x0910  bool:bit1                                bUnlimitedTimeForDodge
+  0x0910  bool:bit2                                bUnlimitedJumps
+  0x0910  bool:bit3                                bDemolishOnOpposingGround
+  0x0910  bool:bit4                                bWasOnOpposingGround
+  0x0910  bool:bit5                                bDemolishOnGoalZone
+  0x0910  bool:bit6                                bWasInGoalZone
+  0x0910  bool:bit7                                bOverrideHandbrakeOn
+  0x0910  bool:bit8                                bTeamBumpsUseCarForceMultiplier
+  0x0910  bool:bit9                                bOverrideBoostOn
+  0x0910  bool:bit10                               bUseDefaultLoadout
+  0x0910  bool:bit11                               bDodgesRefreshed
+  0x0910  bool:bit12                               bDodgeCounterReplicated
+  0x0910  bool:bit13                               bConstrained3D
+  0x0918  FXActor_X*                               ExitFXArchetype
+  0x0920  Explosion_X*                             DemolishExplosionArchetype
+  0x0928  Explosion_X*                             DemolishExplosion
+  0x0930  Class*                                   TargetClass
+  0x0938  TargetIndicator_TA*                      TargetIndicatorArchetype
+  0x0940  TArray<ComponentProperty>                TargetIndicators
+  0x0950  float                                    MaxTimeForDodge
+  0x0954  int                                      MaxNumJumps
+  0x0958  AkSoundCue*                              GroundedJumpFailedSFX
+  0x0960  float                                    LastWheelsHitBallTime
+  0x0964  struct LoadoutTeamPaint                  TeamPaint
+  0x096c  struct ClubColorSet                      ClubColors
+  0x0970  float                                    ReplicatedCarScale
+  0x0978  struct DemolishDataExtended              ReplicatedDemolishExtended
+  0x0990  struct DemolishData                      ReplicatedDemolish
+  0x09b8  struct DemolishData2                     ReplicatedDemolish_CustomFX
+  0x09c0  struct DemolishDataGoalExplosion         ReplicatedDemolishGoalExplosion
+  0x09c8  FXActor_X*                               BodyFXActor
+  0x09d0  PRI_TA*                                  AttackerPRI
+  0x09d8  struct Vector                            MouseAccel
+  0x09e4  struct Vector                            MouseAirAccel
+  0x09f0  SpecialPickup_TA*                        AttachedPickup
+  0x09f8  RumblePickups_TA*                        RumblePickups
+  0x0a00  struct Vector                            ReplayFocusOffset
+  0x0a0c  float                                    AddedBallForceMultiplier
+  0x0a10  float                                    AddedCarForceMultiplier
+  0x0a18  CarTrajectoryComponent_TA*               CarTrajectoryComponent
+  0x0a20  GameEvent_TA*                            GameEvent
+  0x0a28  NameplateComponentCar_TA*                NameplateComponentCar
+  0x0a30  ExplosionHitHandler_TA*                  ExplosionHitHandler
+  0x0a38  float                                    ReplicatedCarMaxLinearSpeedScale
+  0x0a3c  name                                     PostMatchAnim
+  0x0a44  int                                      DoubleJumps
+  0x0a48  name                                     DoubleJumpKey
+  0x0a50  int                                      DodgesRefreshedCounter
+  0x0a58  FXActor_X*                               FlipResetFXActorArchetype
+  0x0a60  FXActor_X*                               FlipResetFXActor
+  0x0a68  TArray<StructProperty>                   DemolishInvulnerabilities
+  0x0a78  ViralItemFXComponent_TA*                 ViralItemFXComponent
+  0x0a80  DrawBoxComponent*                        HitboxDrawComponent
+  0x0a88  TArray<ComponentProperty>                HitboxWheelComponents
+  0x0a98  delegate                                 __EventVehicleSetup__Delegate
+  0x0aa8  delegate                                 __EventBumpedCar__Delegate
+  0x0ab8  delegate                                 __EventDemolished__Delegate
+  0x0ac8  delegate                                 __EventDemolishedExtended__Delegate
+  0x0ad8  delegate                                 __EventTeamSet__Delegate
+  0x0ae8  delegate                                 __EventTeamPaintChanged__Delegate
+  0x0af8  delegate                                 __EventHitBall__Delegate
+  0x0b08  delegate                                 __EventHitCar__Delegate
+  0x0b18  delegate                                 __EventLanded__Delegate
+  0x0b28  delegate                                 __EventSuperSonicChanged__Delegate
+  0x0b38  delegate                                 __EventHitWorld__Delegate
+  0x0b48  delegate                                 __EventPreparingDemoFX__Delegate
+  0x0b58  delegate                                 __EventPerformedFlipReset__Delegate
+  0x0b68  delegate                                 __RumblePickups__ChangeNotify
+=== VehicleSim_TA : ActorComponent (starts 0xa0, computed end 0x174, exe sizeof 0x178)
+  0x00a0  TArray<ComponentProperty>                Wheels
+  0x00b0  struct InterpCurveFloat                  SteerAngleCurve
+  0x00c8  float                                    DriveTorque
+  0x00d0  struct InterpCurveFloat                  DriveTorqueCurve
+  0x00e8  float                                    BrakeTorque
+  0x00f0  struct InterpCurveFloat                  HandbrakeSteerAngleCurve
+  0x0108  struct InputRate                         HandbrakeRate
+  0x0110  float                                    StopThreshold
+  0x0114  float                                    IdleBrakeFactor
+  0x0118  float                                    OppositeBrakeFactor
+  0x011c  bool                                     bUseAckermannSteering
+  0x011c  bool:bit1                                bWasAttached
+  0x0120  float                                    OutputThrottle
+  0x0124  float                                    OutputSteer
+  0x0128  float                                    OutputBrake
+  0x012c  float                                    OutputHandbrake
+  0x0130  Vehicle_TA*                              Vehicle
+  0x0138  Car_TA*                                  Car
+  0x0140  struct Pointer                           BulletVehicle
+  0x0148  float                                    SteeringSensitivity
+  0x0150  TArray<FloatProperty>                    WheelsSteer
+  0x0160  TArray<FloatProperty>                    TireFrictionScales
+  0x0170  float                                    TireFrictionScale
+=== Wheel_TA : Component (starts 0x70, computed end 0x1d8, exe sizeof 0x1e0)
+  0x0070  float                                    SteerFactor
+  0x0074  float                                    WheelRadius
+  0x0078  float                                    SuspensionStiffness
+  0x007c  float                                    SuspensionDampingCompression
+  0x0080  float                                    SuspensionDampingRelaxation
+  0x0084  float                                    SuspensionTravel
+  0x0088  float                                    SuspensionMaxRaise
+  0x008c  float                                    ContactForceDistance
+  0x0090  float                                    PushForceConstant
+  0x0094  float                                    SpinSpeedDecayRate
+  0x0098  struct InterpCurveFloat                  LatFrictionCurve
+  0x00b0  struct InterpCurveFloat                  LongFrictionCurve
+  0x00c8  struct InterpCurveFloat                  HandbrakeLatFrictionCurve
+  0x00e0  struct InterpCurveFloat                  HandbrakeLongFrictionCurve
+  0x00f8  struct InterpCurveFloat                  WallFrictionCurve
+  0x0110  name                                     BoneName
+  0x0118  name                                     PhysicsBoneName
+  0x0120  struct Vector                            BoneOffset
+  0x012c  struct Vector                            PresetRestPosition
+  0x0138  struct Vector                            LocalSuspensionRayStart
+  0x0144  struct Vector                            LocalRestPosition
+  0x0150  VehicleSim_TA*                           VehicleSim
+  0x0158  int                                      WheelIndex
+  0x0160  struct WheelContactData                  Contact
+  0x01b0  bool                                     bDrawDebug
+  0x01b0  bool:bit1                                bHadContact
+  0x01b4  float                                    FrictionCurveInput
+  0x01b8  float                                    AerialThrottleToVelocityFactor
+  0x01bc  float                                    AerialAccelerationFactor
+  0x01c0  float                                    SpinSpeed
+  0x01c8  delegate                                 __EventContactChanged__Delegate
+=== Ball_TA : RBActor_TA (starts 0x7c0, computed end 0xac0, exe sizeof 0xb30)
+  0x07c0  StaticMeshComponent*                     StaticMesh
+  0x07c8  StaticMeshComponent*                     TranslucentStaticMesh
+  0x07d0  float                                    MeshTranslucency
+  0x07d8  TArray<ObjectProperty>                   TranslucentMaterials
+  0x07e8  struct CarBallInteractionSettings        CarInteraction
+  0x0820  FXActor_X*                               EndOfGameFXArchetype
+  0x0828  FXActor_X*                               WarnFXActorArchetype
+  0x0830  FXActor_X*                               WarnFXActor
+  0x0838  Explosion_X*                             ExplosionArchetype
+  0x0840  Explosion_X*                             NoGoalExplosionArchetype
+  0x0848  bool                                     bAllowPlayerExplosionOverride
+  0x0848  bool:bit1                                bNotifyGroundHit
+  0x0848  bool:bit2                                bAwardDemolishCredit
+  0x0848  bool:bit3                                bEndOfGameHidden
+  0x0848  bool:bit4                                bFadeIn
+  0x0848  bool:bit5                                bFadeOut
+  0x0848  bool:bit6                                bPredictionOnGround
+  0x0848  bool:bit7                                bCanBeAttached
+  0x0848  bool:bit8                                bItemFreeze
+  0x0848  bool:bit9                                bWarnBallReset
+  0x0848  bool:bit10                               bCanBeScored
+  0x0848  bool:bit11                               bCanEndRoundOnGroundTouch
+  0x0848  bool:bit12                               bPossessionEnabled
+  0x084c  struct Vector                            MagnusCoefficient
+  0x0858  float                                    MagnusMinSpeed
+  0x085c  float                                    AngularVelocityDamping
+  0x0860  float                                    BallHitSpinScale
+  0x0868  BallCamTarget_TA*                        BallCamTarget
+  0x0870  float                                    Radius
+  0x0874  float                                    SpawnWidth
+  0x0878  float                                    VisualRadius
+  0x0880  TArray<StructProperty>                   Touches
+  0x0890  byte(EVehicleDemolishMode)               VehicleDemolishMode
+  0x0891  byte                                     HitTeamNum
+  0x0894  float                                    LastCalculateCarHit
+  0x0898  struct Vector                            InitialLocation
+  0x08a4  struct Rotator                           InitialRotation
+  0x08b0  float                                    LastHitWorldTime
+  0x08b4  float                                    ReplicatedBallScale
+  0x08b8  StaticMesh*                              ReplicatedBallMesh
+  0x08c0  float                                    ReplicatedWorldBounceScale
+  0x08c4  float                                    ReplicatedBallGravityScale
+  0x08c8  float                                    ReplicatedBallMaxLinearSpeedScale
+  0x08cc  float                                    ReplicatedAddedCarBounceScale
+  0x08d0  float                                    AdditionalCarGroundBounceScaleZ
+  0x08d4  float                                    AdditionalCarGroundBounceScaleXY
+  0x08d8  PhysicalMaterial*                        ReplicatedPhysMatOverride
+  0x08e0  int                                      GameBallIndex
+  0x08e8  GameEvent_Soccar_TA*                     GameEvent
+  0x08f0  struct ExplosionData                     ReplicatedExplosionData
+  0x0908  struct ExplosionDataExtended             ReplicatedExplosionDataExtended
+  0x0928  Explosion_X*                             Explosion
+  0x0930  float                                    ExplosionTime
+  0x0934  struct Vector                            OldLocation
+  0x0940  TArray<ObjectProperty>                   FadeMaterials
+  0x0950  float                                    PredictionTimestep
+  0x0958  TArray<StructProperty>                   PredictedPositions
+  0x0968  float                                    LastPredictionTime
+  0x0970  struct GoalPenetrationData               GoalPenetration
+  0x0998  float                                    GroundForce
+  0x09a0  Car_TA*                                  CurrentAffector
+  0x09a8  BallTrajectoryComponent_TA*              TrajectoryComponent
+  0x09b0  PitchTekDrawingComponent_TA*             PitchTekComponent
+  0x09b8  GoalExplosionOrientation_TA*             GoalExplosionOrientation
+  0x09c0  FXActor_X*                               PossessionFXActorArchetype
+  0x09c8  FXActor_X*                               PossessionFXActor
+  0x09d0  struct Vector                            AirResistance
+  0x09dc  struct Vector                            MinResistanceVelocity
+  0x09e8  float                                    SecondsSinceGroundedChanged
+  0x09f0  delegate                                 __EventCarTouch__Delegate
+  0x0a00  delegate                                 __EventHitWorld__Delegate
+  0x0a10  delegate                                 __EventHitGround__Delegate
+  0x0a20  delegate                                 __EventHitGoal__Delegate
+  0x0a30  delegate                                 __EventGameEventSet__Delegate
+  0x0a40  delegate                                 __EventExploded__Delegate
+  0x0a50  delegate                                 __EventHitTeamNumChanged__Delegate
+  0x0a60  delegate                                 __EventTrailIntensityChanged__Delegate
+  0x0a70  delegate                                 __EventBallTeleported__Delegate
+  0x0a80  delegate                                 __EventDemolishedCar__Delegate
+  0x0a90  delegate                                 __EventCrossbarHit__Delegate
+  0x0aa0  delegate                                 __EventScaleUpdated__Delegate
+  0x0ab0  delegate                                 __bItemFreeze__ChangeNotify
+=== RBActor_TA : Pawn_X (starts 0x558, computed end 0x6c8, exe sizeof 0x7c0)
+  0x0558  struct Pointer                           VfTable_IITickNotify_TA
+  0x0560  float                                    MaxLinearSpeed
+  0x0564  float                                    MaxAngularSpeed
+  0x0568  float                                    RollingFriction
+  0x056c  bool                                     bDisableSleeping
+  0x056c  bool:bit1                                bReplayActor
+  0x056c  bool:bit2                                bFrozen
+  0x056c  bool:bit3                                bAutoInitFXEffects
+  0x056c  bool:bit4                                bIgnoreSyncing
+  0x056c  bool:bit5                                bPhysInitialized
+  0x056c  bool:bit6                                bSkipNextErrorAccumulation
+  0x0570  struct NetworkSyncSettingsData           NetworkSyncSettings
+  0x0590  struct ReplicatedRBState                 OldRBState
+  0x0594  struct ReplicatedRBState                 RBState
+  0x0598  struct ReplicatedRBState                 ReplicatedRBState
+  0x059c  struct ReplicatedRBState                 ClientCorrectionRBState
+  0x05a0  struct WorldContactData                  WorldContact
+  0x05c8  struct Vector                            SyncErrorLocation
+  0x05d4  float                                    SyncErrorAngle
+  0x05d8  struct Vector                            SyncErrorAxis
+  0x05e8  AkParamGroup*                            Ak
+  0x05f0  FXActor_X*                               FXActorArchetype
+  0x05f8  FXActor_X*                               FXActor
+  0x0600  ImpactEffectsComponent_TA*               ImpactEffectsComponent
+  0x0608  TArray<StructProperty>                   RBCollisions
+  0x0618  Class*                                   RBHistoryClass
+  0x0620  RBHistory_TA*                            RBHistory
+  0x0628  int                                      LastRBCollisionsFrame
+  0x0630  ReplayComponent_TA*                      Replay
+  0x0638  struct WeldingInfo                       WeldedInfo
+  0x0660  RBActor_TA*                              WeldedActor
+  0x0668  RBActor_TA*                              WeldedTo
+  0x0670  float                                    PreWeldMass
+  0x0674  float                                    ReplicatedGravityScale
+  0x0678  float                                    ReplicatedCollisionScale
+  0x0680  struct Pointer                           Constraint2D
+  0x0688  struct Pointer                           Constraint3D
+  0x0690  struct Pointer                           BulletRigidBody
+  0x0698  PhysicsConfig_TA*                        PhysicsConfig
+  0x06a0  byte                                     TeleportCounter
+  0x06a8  FXActor_X*                               AttackerDemolishFX
+  0x06b0  float                                    GroundTraceDistance
+  0x06b4  float                                    GroundOffsetDistance
+  0x06b8  delegate                                 __EventRigidBodyCollision__Delegate

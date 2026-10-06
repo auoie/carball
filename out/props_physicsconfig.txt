@@ -1,0 +1,79 @@
+=== PhysicsConfig_TA Default__PhysicsConfig_TA  (archetype ProjectX.Default__OnlineConfig_X, parsed 5625/5625 bytes)
+  _net_index = 56920
+  CarInteractionSettings:
+    _struct = 'CarInteractionConfig'
+    PushFactor = 0.0
+    BumperPushFactorCurveGround:
+      curve 0->150 1400->200000 2200->275000
+    BumperPushFactorCurveAir:
+      curve 0->150 1400->250000 2200->350000
+    ZPushFactorCurve:
+      curve 0->50 1400->50000 2200->75000
+    BumpInterval = 0.25
+    COMAngleCheck:
+      _struct = 'BumpAngleCheckConfig'
+      bEnabled = True
+      BumpAngleYaw = 70.0
+      BumpAnglePitch = 36.869895935058594
+      DemolishAngleYaw = 45.572994232177734
+      DemolishAnglePitch = 36.869895935058594
+    VictimHitAngleCheck:
+      _struct = 'BumpAngleCheckConfig'
+      bEnabled = False
+      BumpAngleYaw = 90.0
+      BumpAnglePitch = 180.0
+      DemolishAngleYaw = 90.0
+      DemolishAnglePitch = 180.0
+    AttackerHitAngleCheck:
+      _struct = 'BumpAngleCheckConfig'
+      bEnabled = False
+      BumpAngleYaw = 45.0
+      BumpAnglePitch = 90.0
+      DemolishAngleYaw = 45.0
+      DemolishAnglePitch = 90.0
+    VictimHitAngleCurveCheck:
+      _struct = 'BumpAngleCurveCheckConfig'
+      bEnabled = False
+      BumpAngleCurveYaw:
+        curve 25->90 45->50
+      BumpAngleCurvePitch:
+        curve 25->180
+      DemolishAngleCurveYaw:
+        curve 25->90 45->50
+      DemolishAngleCurvePitch:
+        curve 25->90
+    bCheckImpactNormal = False
+    ImpactNormalDotProductDemo = 0.7070000171661377
+    ImpactNormalDotProductBump = 0.2590000033378601
+  SuperSonicSettings:
+    _struct = 'SuperSonicConfig'
+    Speed = 2200.0
+    TurnoffSpeedBuffer = 100.0
+    TurnoffTime = 1.0
+  bQuantizePhysics = True
+  bEnableCustomExplosionPhysics = True
+  bPodiumDoubleJumpsEnabled = True
+  JumpLeaveGroundTime = 0.125
+  STS:
+    _struct = 'SimTimeScaleSettings'
+    FixedAdjustSimTimeRate = 0.008999999612569809
+  CSTS:
+    _struct = 'ContinuousSimTimeScaleSettings'
+    TimeDilations = 1.0255999565124512
+    TimeDilations[1] = 1.0062999725341797
+    TimeDilations[2] = 1.0
+    TimeDilations[3] = 0.9937999844551086
+    TimeDilations[4] = 0.975600004196167
+    Inputs_Starved = 2
+    Inputs_Good = 4
+    Inputs_Saturated = 6
+    Inputs_ExtremelySaturated = 14
+    Inputs_Max = 20
+    ExtraBufferMax = 8
+    ExtraBufferHistorySeconds = 30.0
+    ExtraBufferUpdatePeriod = 1.0
+  PushForceConstantScale = 1.0
+  bAllowBackwardsDemolitions = 1
+  DemoSpeedThreshold[2] = 900.0
+  DemoSpeedThreshold[3] = 1300.0
+  DemoSpeedThreshold[4] = 1700.0

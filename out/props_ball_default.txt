@@ -1,0 +1,100 @@
+=== Ball_TA Archetypes.Ball.Ball_Default  (archetype None, parsed 1876/1876 bytes)
+  _net_index = 151
+  StaticMesh = 'obj:Archetypes.Ball.Ball_Default.DefaultMesh'
+  CarInteraction:
+    _struct = 'CarBallInteractionSettings'
+    PushFactorCurve:
+      _struct = 'InterpCurveFloat'
+      Points:
+        [0]
+          InVal = 0.0
+          OutVal = 0.6499999761581421
+          ArriveTangent = 0.0
+          LeaveTangent = 0.0
+          ArriveWeight = 0.0
+          LeaveWeight = 0.0
+          InterpMode = 'EInterpCurveMode::CIM_Linear'
+        [1]
+          InVal = 500.0
+          OutVal = 0.6499999761581421
+          ArriveTangent = 0.0
+          LeaveTangent = 0.0
+          ArriveWeight = 0.0
+          LeaveWeight = 0.0
+          InterpMode = 'EInterpCurveMode::CIM_Linear'
+        [2]
+          InVal = 1400.0
+          OutVal = 0.6000000238418579
+          ArriveTangent = 0.0
+          LeaveTangent = 0.0
+          ArriveWeight = 0.0
+          LeaveWeight = 0.0
+          InterpMode = 'EInterpCurveMode::CIM_Linear'
+        [3]
+          InVal = 2300.0
+          OutVal = 0.550000011920929
+          ArriveTangent = 0.0
+          LeaveTangent = 0.0
+          ArriveWeight = 0.0
+          LeaveWeight = 0.0
+          InterpMode = 'EInterpCurveMode::CIM_Linear'
+        [4]
+          InVal = 4600.0
+          OutVal = 0.30000001192092896
+          ArriveTangent = 0.0
+          LeaveTangent = 0.0
+          ArriveWeight = 0.0
+          LeaveWeight = 0.0
+          InterpMode = 'EInterpCurveMode::CIM_Linear'
+    PushZScale = 0.3499999940395355
+    PushForwardScale = 0.6499999761581421
+    MaxRelativeSpeed = 4600.0
+    Friction = 2.0
+  WarnFXActorArchetype = 'obj:Archetypes.Ball.FXActor_BallResetWarn'
+  ExplosionArchetype = 'obj:Archetypes.Ball.Ball_Default.ExplosionArchetype'
+  BallCamTarget = 'obj:Archetypes.Ball.Ball_Default.DefaultBallCamTarget'
+  VisualRadius = 95.0
+  FadeMaterials:
+    ['obj:Ball_FX.Materials.BallDissolve_Soccar']
+  TrajectoryComponent = 'obj:Archetypes.Ball.Ball_Default.TrajectoryComponent'
+  PitchTekComponent = 'obj:Archetypes.Ball.Ball_Default.DefaultPTDComponent'
+  PossessionFXActorArchetype = 'obj:Archetypes.Ball.FXActor_BallPossession'
+  MaxLinearSpeed = 6000.0
+  MaxAngularSpeed = 6.0
+  FXActorArchetype = 'obj:FXActors.Ball.Ball_FXActor'
+  ImpactEffectsComponent = 'obj:Archetypes.Ball.Ball_Default.ImpactEffectsComponent'
+  Replay = 'obj:Archetypes.Ball.Ball_Default.ReplayComponent0'
+  RegistryGroup = 'obj:Archetypes.Ball.Ball_Default.DefaultRegistryGroup'
+  Mass = 30.0
+  CylinderComponent = 'obj:Archetypes.Ball.Ball_Default.CollisionCylinder'
+  Components:
+    ['obj:None', 'obj:Archetypes.Ball.Ball_Default.CollisionCylinder', 'obj:None', 'obj:Archetypes.Ball.Ball_Default.DefaultRegistryGroup', 'obj:Archetypes.Ball.Ball_Default.ReplayComponent0', 'obj:Archetypes.Ball.Ball_Default.DefaultMesh', 'obj:Archetypes.Ball.Ball_Default.DefaultPTDComponent']
+  CollisionComponent = 'obj:Archetypes.Ball.Ball_Default.DefaultMesh'
+=== RB_BodySetup Ball_Default.Meshes.Ball_DefaultBall00.RB_BodySetup_0  (archetype None, parsed 290/294 bytes)
+  _net_index = -1
+  PreCachedPhysDataVersion = 34079889
+  AggGeom:
+    _struct = 'KAggregateGeom'
+    SphereElems:
+      [0]
+        TM:
+          _struct = 'Matrix'
+          M0 = 0.0
+          M1 = 1.0
+          M2 = 0.0
+          M3 = 0.0
+          M4 = 0.0
+          M5 = 0.0
+          M6 = 1.0
+          M7 = 0.0
+          M8 = 0.0
+          M9 = 0.0
+          M10 = 0.0
+          M11 = 1.0
+          M12 = 1.0
+          M13 = 0.0
+          M14 = 0.0
+          M15 = 0.0
+        Radius = 92.0
+        bNoRBCollision = False
+        bPerPolyShape = False

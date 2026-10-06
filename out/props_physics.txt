@@ -1,0 +1,132 @@
+=== Ball_TA Default__Ball_TA  (archetype Default__RBActor_TA, parsed 543/543 bytes)
+  _net_index = 11990
+  StaticMesh = 'obj:Default__Ball_TA.DefaultMesh'
+  bAllowPlayerExplosionOverride = True
+  bAwardDemolishCredit = True
+  bFadeIn = True
+  bFadeOut = True
+  bCanBeScored = True
+  bCanEndRoundOnGroundTouch = True
+  BallCamTarget = 'obj:Default__Ball_TA.DefaultBallCamTarget'
+  HitTeamNum = 255
+  PredictionTimestep = 0.05000000074505806
+  PitchTekComponent = 'obj:Default__Ball_TA.DefaultPTDComponent'
+  Replay = 'obj:Default__Ball_TA.ReplayComponent0'
+  RegistryGroup = 'obj:Default__Ball_TA.DefaultRegistryGroup'
+  CylinderComponent = 'obj:Default__Ball_TA.CollisionCylinder'
+  Components:
+    ['obj:None', 'obj:Default__Ball_TA.CollisionCylinder', 'obj:None', 'obj:Default__Ball_TA.DefaultRegistryGroup', 'obj:Default__Ball_TA.ReplayComponent0', 'obj:Default__Ball_TA.DefaultMesh', 'obj:Default__Ball_TA.DefaultPTDComponent']
+  HighContrastRenderingMode = 'EHighContrastRenderingMode::HighContrastRenderingMode_WorldAndHighContrastPass'
+  NetPriority = 10.0
+  CollisionComponent = 'obj:Default__Ball_TA.DefaultMesh'
+=== RBActor_TA Default__RBActor_TA  (archetype ProjectX.Default__Pawn_X, parsed 1216/1216 bytes)
+  _net_index = 11627
+  MaxLinearSpeed = 10000.0
+  MaxAngularSpeed = 10.0
+  bAutoInitFXEffects = True
+  NetworkSyncSettings:
+    _struct = 'NetworkSyncSettingsData'
+    LocationFixRate = 4.0
+    AngularFixRate = 5.0
+    MinDeltaLocation = 5.0
+    WeldedLerpRate = 18.0
+    MinDeltaRotation = 100
+    MinDeltaLinearVelocity = 10.0
+    ForceReplicationDelay = 0.3499999940395355
+    bDebug = False
+  ReplicatedRBState:
+    _struct = 'ReplicatedRBState'
+    Quaternion:
+      _struct = 'Quat'
+      X = 0.0
+      Y = 0.0
+      Z = 0.0
+      W = 1.0
+    Location:
+      _struct = 'Vector'
+      X = 0.0
+      Y = 0.0
+      Z = 0.0
+    LinearVelocity:
+      _struct = 'Vector'
+      X = 0.0
+      Y = 0.0
+      Z = 0.0
+    AngularVelocity:
+      _struct = 'Vector'
+      X = 0.0
+      Y = 0.0
+      Z = 0.0
+    Time = 0.0
+    bSleeping = False
+    bNewData = False
+  RBHistoryClass = 'obj:RBHistory_TA'
+  Replay = 'obj:Default__RBActor_TA.ReplayComponent0'
+  GroundTraceDistance = 5000.0
+  GroundOffsetDistance = -13.0
+  RegistryGroup = 'obj:Default__RBActor_TA.DefaultRegistryGroup'
+  bSimulateGravity = False
+  bCanBeBaseForPawns = True
+  bDontPossess = True
+  CylinderComponent = 'obj:Default__RBActor_TA.CollisionCylinder'
+  Components:
+    ['obj:None', 'obj:Default__RBActor_TA.CollisionCylinder', 'obj:None', 'obj:Default__RBActor_TA.DefaultRegistryGroup', 'obj:Default__RBActor_TA.ReplayComponent0']
+  Physics = 'EPhysics::PHYS_RigidBody'
+  CollisionType = 'ECollisionType::COLLIDE_CustomDefault'
+  TickGroup = 'ETickingGroup::TG_PostAsyncWork'
+  bAlwaysRelevant = True
+  bReplicateMovement = False
+  bNetInitialRotation = True
+  bNoEncroachCheck = True
+  bCollideAsEncroacher = True
+  CollisionComponent = 'obj:Default__RBActor_TA.CollisionCylinder'
+=== VehicleSim_TA Default__VehicleSim_TA  (archetype Engine.Default__ActorComponent, parsed 220/220 bytes)
+  _net_index = 17439
+  HandbrakeRate:
+    _struct = 'InputRate'
+    RiseRate = 5.0
+    FallRate = 5.0
+  StopThreshold = 25.0
+  OppositeBrakeFactor = 1.0
+  SteeringSensitivity = 1.0
+  TireFrictionScale = 1.0
+=== VehicleSim_TA Default__Car_TA.DefaultVehicleSim  (archetype None, parsed 28/24 bytes)
+  _net_index = 0
+  DefaultVehicleSim = '<EventChallengeMangerStateChanged_31459 >'
+=== Vehicle_TA Default__Vehicle_TA  (archetype Default__RBActor_TA, parsed 458/458 bytes)
+  _net_index = 16685
+  ReplicatedThrottle = 128
+  ReplicatedSteer = 128
+  PMCAnimIdx = -1
+  PitchTekComponent = 'obj:Default__Vehicle_TA.DefaultPTDComponent'
+  NumWheelsForGrounded = 3
+  RBHistoryClass = 'obj:RBVehicleHistory_TA'
+  Replay = 'obj:Default__Vehicle_TA.ReplayComponent0'
+  RegistryGroup = 'obj:Default__Vehicle_TA.DefaultRegistryGroup'
+  LandMovementState = 'Driving'
+  CylinderComponent = 'obj:Default__Vehicle_TA.CollisionCylinder'
+  Components:
+    ['obj:Default__Vehicle_TA.CollisionCylinder', 'obj:Default__Vehicle_TA.DefaultRegistryGroup', 'obj:Default__Vehicle_TA.ReplayComponent0', 'obj:Default__Vehicle_TA.DefaultPTDComponent']
+  HighContrastRenderingMode = 'EHighContrastRenderingMode::HighContrastRenderingMode_WorldAndHighContrastPass'
+  Physics = 'EPhysics::PHYS_None'
+  CollisionComponent = 'obj:Default__Vehicle_TA.CollisionCylinder'
+=== Wheel_TA Default__Wheel_TA  (archetype Core.Default__Component, parsed 12/12 bytes)
+  _net_index = 77703
+=== PhysicalMaterial PhysicalMaterials.Game.Physmat_Ball  (archetype None, parsed 124/124 bytes)
+  _net_index = 5
+  Friction = 0.3499999940395355
+  Restitution = 0.6000000238418579
+  LinearDamping = 0.029999999329447746
+  PhysicalMaterialProperty = 'obj:PhysicalMaterials.Game.Physmat_Ball.PhysicalMaterialProperty'
+=== PhysicalMaterial PhysicalMaterials.Game.Physmat_Car  (archetype None, parsed 124/124 bytes)
+  _net_index = 8
+  Friction = 0.30000001192092896
+  Restitution = 0.10000000149011612
+  LinearDamping = 0.0
+  PhysicalMaterialProperty = 'obj:PhysicalMaterials.Game.Physmat_Car.PhysicalMaterialProperty'
+=== PhysicalMaterialProperty_TA PhysicalMaterials.Game.Physmat_Ball.PhysicalMaterialProperty  (archetype None, parsed 44/44 bytes)
+  _net_index = 41
+  AkSwitchValue = 'Ball'
+=== PhysicalMaterialProperty_TA PhysicalMaterials.Game.Physmat_Car.PhysicalMaterialProperty  (archetype None, parsed 44/44 bytes)
+  _net_index = 44
+  AkSwitchValue = 'Car'

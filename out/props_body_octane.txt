@@ -1,0 +1,98 @@
+=== ProductAsset_Body_TA Body_Octane.Body_Octane  (archetype ProductSlots.Body.ProductAsset_Body_TA_2, parsed 1885/1885 bytes)
+  _net_index = -1
+  Mesh = 'obj:Body_Octane_Premium.Body_Octane_PremiumSkin_SK'
+  AnimTreeTemplate = 'obj:Body_AT.Body_AT'
+  HandlingPreset = 'obj:HandlingPresets.Presets.Octane'
+  FrontAxle:
+    _struct = 'VehicleAxleSettings'
+    WheelMeshRadius = 12.5
+    WheelWidth = 11.5
+    WheelMeshOffsetSide = 0.25
+    WheelRadius = 12.5
+  BackAxle:
+    _struct = 'VehicleAxleSettings'
+    WheelWidth = 13.0
+    WheelMeshOffsetSide = 0.25
+  ChassisRotationScale = 20.0
+  bUseLegacySuspensionOffsets = True
+  EngineAudioReference = 'obj:Body_Octane.Body_Octane.ProductAssetReference_TA_28'
+  FXActor = 'obj:Body_Octane.FXActor'
+  SkinMaterialIndex = 1
+  BoostEmitterSockets:
+    ['BoostEmitterLeft', 'BoostEmitterRight']
+  BoostFlapsAngle = -100.0
+  EquipProfile = 'obj:Body_Octane.Body_Octane.ProductEquipProfile_TA_0'
+  BoostParticleParameters:
+    [0]
+      Name = 'ConfettiRibbon'
+      ParamType = 'EParticleSysParamType::PSPT_Mesh'
+      Scalar = 0.0
+      Scalar_Low = 0.0
+      Vector:
+        _struct = 'Vector'
+        X = 0.0
+        Y = 0.0
+        Z = 0.0
+      Vector_Low:
+        _struct = 'Vector'
+        X = 0.0
+        Y = 0.0
+        Z = 0.0
+      Color:
+        _struct = 'Color'
+        B = 0
+        G = 0
+        R = 0
+        A = 0
+      Actor = 'obj:None'
+      Material = 'obj:None'
+      Mesh = 'obj:Boost_Sec.Global.Meshes.OctaneRibbons_SM'
+  SkinParameters:
+    _struct = 'MaterialParams'
+    TextureParameters:
+      [0]
+        Name = 'BodyMasks'
+        Value = 'obj:Body_Octane_Textures.Pepe_Body_BlankSkin'
+      [1]
+        Name = 'BodyNormalMap'
+        Value = 'obj:Body_Octane_Textures.Body_Octane_Bevel_N'
+      [2]
+        Name = 'Diffuse'
+        Value = 'obj:Body_Octane_Textures.Pepe_Body_D'
+      [3]
+        Name = 'FXMasks'
+        Value = 'obj:Body_Octane_Textures.Body_Octane_Bevel_RGB'
+      [4]
+        Name = 'CurvaturePack'
+        Value = 'obj:Body_Octane_Textures.Body_Octane_Curvature_New'
+    VectorParameters:
+      [0]
+        Name = 'TrimSheet1_Transform'
+        Value:
+          _struct = 'LinearColor'
+          R = 2.299999952316284
+          G = 1.5
+          B = 0.0
+          A = 0.675000011920929
+      [1]
+        Name = 'TrimSheet1Mirrored_Offset'
+        Value:
+          _struct = 'LinearColor'
+          R = 0.0
+          G = 0.0
+          B = 0.0
+          A = 0.0
+    ScalarParameters:
+      [0]
+        Name = 'TrimSheet1_Rotation'
+        Value = 0.0
+      [1]
+        Name = 'TrimSheet1Mirrored_Opacity'
+        Value = 0.0
+      [2]
+        Name = 'TrimSheet1Mirrored_RotationOffset'
+        Value = 0.0
+  ThumbnailWheelAsset = 'obj:Body_Octane.Body_Octane.ProductAssetReferenceWheel_TA_50'
+  ThumbnailKeyLightBrightnessScale = 1.0
+  Attributes:
+    ['obj:Body_Octane.Body_Octane.ProductAttribute_PaintSettings_TA_14']

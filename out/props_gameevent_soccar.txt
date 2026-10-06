@@ -1,0 +1,87 @@
+=== GameEvent_Soccar_TA Archetypes.GameEvent.GameEvent_Soccar  (archetype None, parsed 2273/2273 bytes)
+  _net_index = 1678
+  TestCarArchetype = 'obj:Archetypes.Car.Car_Test'
+  BallArchetype = 'obj:Archetypes.Ball.Ball_Default'
+  GoalIndicatorArchetype = 'obj:Archetypes.Misc.GoalIndicator'
+  bPlayReplays = True
+  StatFactoryArchetype = 'obj:Archetypes.GameEvent.StatFactory'
+  InitialEventState = 'WaitingForPlayers'
+  GameTime = 300
+  WarmupTime = 3
+  ScoreSlomoCurve:
+    _struct = 'InterpCurveFloat'
+    Points:
+      [0]
+        InVal = 0.125
+        OutVal = 1.0
+        ArriveTangent = 0.0
+        LeaveTangent = 0.0
+        ArriveWeight = 0.0
+        LeaveWeight = 0.0
+        InterpMode = 'EInterpCurveMode::CIM_Linear'
+      [1]
+        InVal = 0.22499999403953552
+        OutVal = 0.1875
+        ArriveTangent = 0.0
+        LeaveTangent = 0.0
+        ArriveWeight = 0.0
+        LeaveWeight = 0.0
+        InterpMode = 'EInterpCurveMode::CIM_Linear'
+      [2]
+        InVal = 0.625
+        OutVal = 1.0
+        ArriveTangent = 0.0
+        LeaveTangent = 0.0
+        ArriveWeight = 0.0
+        LeaveWeight = 0.0
+        InterpMode = 'EInterpCurveMode::CIM_Linear'
+  GoalScoredMessage = 'obj:Archetypes.GameEvent.GameEvent_Soccar.GoalScoredMessage'
+  OvertimeMessage = 'obj:Archetypes.GameEvent.GameEvent_Soccar.OvertimeMessage'
+  TwoMinRemainingMessage = 'obj:Archetypes.GameEvent.GameEvent_Soccar.TwoMinRemainingMessage'
+  OneMinRemainingMessage = 'obj:Archetypes.GameEvent.GameEvent_Soccar.OneMinRemainingMessage'
+  ThirtySecondsRemainingMessage = 'obj:Archetypes.GameEvent.GameEvent_Soccar.ThirtySecondsRemainingMessage'
+  GamePausedMessage = 'obj:Archetypes.GameEvent.GameEvent_Soccar.GamePausedMessage'
+  GameUnPausedMessage = 'obj:Archetypes.GameEvent.GameEvent_Soccar.GameUnPausedMessage'
+  OutOfBoundsMessage = 'obj:Archetypes.GameEvent.GameEvent_Soccar.OutOfBoundsMessage'
+  ReplayDirectorArchetype = 'obj:Archetypes.GameEvent.GameEvent_Soccar.ReplayDirectorArchetype'
+  PostGoalTime = 3.0
+  SecondsRemainingCountdown = 10
+  SecondsRemainingMessage = 'obj:Archetypes.GameEvent.GameEvent_Soccar.SecondsRemainingMessage'
+  AssistMaxTime = 5.0
+  SpawnPointsPodiumAnim = 'obj:Archetypes.GameEvent.GameEvent_Soccar.SpawnPointsPodiumAnim'
+  SpawnPointsPodium = 'obj:Archetypes.GameEvent.GameEvent_Soccar.SpawnPointsPodium'
+  PodiumDelay = 3.0
+  PodiumTime = 5.0
+  SpawnPointLobbyTeams:
+    ['obj:Archetypes.GameEvent.GameEvent_Soccar.1v1', 'obj:Archetypes.GameEvent.GameEvent_Soccar.2v2', 'obj:Archetypes.GameEvent.GameEvent_Soccar.3v3', 'obj:Archetypes.GameEvent.GameEvent_Soccar.4v4']
+  StatCategories:
+    ['obj:Archetypes.StatTitles.StatSingleInstance', 'obj:Archetypes.StatTitles.StatCompound', 'obj:Archetypes.StatTitles.StatStandard', 'obj:Archetypes.StatTitles.StatTracking']
+  BallTrajectoryArchetype = 'obj:Archetypes.Ball.Ball_Trajectory'
+  EndRoundComponentArchetype = 'obj:Archetypes.GameEvent.GameEvent_Soccar.EndRoundComponentArchetype'
+  MatchBroadcast = 'obj:Archetypes.GameEvent.GameEvent_Soccar.MatchBroadcast'
+  ImportantStatEvents:
+    ['obj:StatEvents.Events.Win', 'obj:StatEvents.Events.Loss', 'obj:StatEvents.Events.Goal', 'obj:StatEvents.Events.Save', 'obj:StatEvents.Events.EpicSave']
+  GameObserver = 'obj:Archetypes.GameEvent.GameEvent_Soccar.GameObserver_Default'
+  ActiveFpsRecorder = 'obj:Archetypes.GameEvent.GameEvent_Soccar.DefaultActiveFpsRecorder'
+  InactiveFpsRecorder = 'obj:Archetypes.GameEvent.GameEvent_Soccar.DefaultInactiveFpsRecorder'
+  CrowdSound = 'obj:Archetypes.GameEvent.GameEvent_Soccar.CrowdSound'
+  TeamArchetypes:
+    ['obj:Archetypes.Teams.Team0', 'obj:Archetypes.Teams.Team1']
+  RematchVoteArchetype = 'obj:Archetypes.GameEvent.GameEvent_Soccar.RematchVoteArchetype'
+  RegistryGroup = 'obj:Archetypes.GameEvent.GameEvent_Soccar.DefaultRegistryGroup'
+  EventType = 'Soccar'
+  CarArchetype = 'obj:Archetypes.Car.Car_Default'
+  FinishTime = 60
+  AIManagerArchetype = 'obj:Archetypes.AI.AIManager'
+  BotArchetype = 'obj:Archetypes.AI.Soccar.AIController_Soccar'
+  HUDArchetype = 'obj:Archetypes.GFx.GFxHUD_Soccar'
+  CountdownMessages:
+    ['obj:None', 'obj:Archetypes.GameEvent.GameEvent_Soccar.Countdown1', 'obj:Archetypes.GameEvent.GameEvent_Soccar.Countdown2', 'obj:Archetypes.GameEvent.GameEvent_Soccar.Countdown3', 'obj:Archetypes.GameEvent.GameEvent_Soccar.Countdown4', 'obj:Archetypes.GameEvent.GameEvent_Soccar.Countdown5']
+  GoMessage = 'obj:Archetypes.GameEvent.GameEvent_Soccar.GoMessage'
+  ReplacingBotCountdownMessages:
+    ['obj:None', 'obj:Archetypes.GameEvent.GameEvent_Soccar.Countdown1_65', 'obj:Archetypes.GameEvent.GameEvent_Soccar.Countdown2_66', 'obj:Archetypes.GameEvent.GameEvent_Soccar.Countdown3_67', 'obj:Archetypes.GameEvent.GameEvent_Soccar.Countdown4_68', 'obj:Archetypes.GameEvent.GameEvent_Soccar.Countdown5_69']
+  ReplacingBotGoMessage = 'obj:Archetypes.GameEvent.GameEvent_Soccar.ReplacingBotGoMessage'
+  GameStates:
+    ['obj:Archetypes.GameEvent.GameEvent_Soccar.WaitingForPlayers', 'obj:Archetypes.GameEvent.GameEvent_Soccar.Countdown', 'obj:Archetypes.GameEvent.GameEvent_Soccar.Active', 'obj:Archetypes.GameEvent.GameEvent_Soccar.Finished', 'obj:Archetypes.GameEvent.GameEvent_Soccar.PostGoalScored', 'obj:Archetypes.GameEvent.GameEvent_Soccar.PrePodiumSpotlight', 'obj:Archetypes.GameEvent.GameEvent_Soccar.PodiumSpotlight']
+  Components:
+    ['obj:Archetypes.GameEvent.GameEvent_Soccar.DefaultRegistryGroup']

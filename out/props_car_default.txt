@@ -1,0 +1,328 @@
+=== Car_TA Archetypes.Car.Car_Default  (archetype None, parsed 1085/1085 bytes)
+  _net_index = 1105
+  DefaultCarComponents:
+    ['obj:Archetypes.CarComponents.CarComponent_AirControl', 'obj:Archetypes.CarComponents.CarComponent_Boost', 'obj:Archetypes.CarComponents.CarComponent_Jump', 'obj:Archetypes.CarComponents.CarComponent_DoubleJump', 'obj:Archetypes.CarComponents.CarComponent_Dodge', 'obj:Archetypes.CarComponents.CarComponent_FlipCar']
+  EngineAudio = 'obj:Archetypes.Car.Car_Default.DefaultEngineAudio'
+  EngineAudioRev = 'obj:Archetypes.Car.Car_Default.EngineAudioRev'
+  ThrottleShake = 'obj:Archetypes.Car.Car_Default.ThrottleShake'
+  Loadout = 'obj:Archetypes.Car.Car_Default.DefaultCarLoadout'
+  ExitFXArchetype = 'obj:FX_LeaveGame.Leave_FXActor'
+  DemolishExplosionArchetype = 'obj:Archetypes.Car.Car_Default.DemolishExplosionArchetype'
+  TargetClass = 'obj:TAGame.BallCamTarget_TA'
+  TargetIndicatorArchetype = 'obj:Archetypes.Car.Car_Default.BallIndicator'
+  MaxTimeForDodge = 1.25
+  GroundedJumpFailedSFX = 'obj:SFX_UI_InGame.UI_JumpFail'
+  CarTrajectoryComponent = 'obj:Archetypes.Car.Car_Default.CarTrajectoryComponent0'
+  NameplateComponentCar = 'obj:Archetypes.Car.Car_Default.NameplateComponentCar0'
+  FlipResetFXActorArchetype = 'obj:Archetypes.Car.Car_Default.FlipResetFXActorArchetype'
+  ViralItemFXComponent = 'obj:Archetypes.Car.Car_Default.ViralItemFXComponent'
+  CarMesh = 'obj:Archetypes.Car.Car_Default.DefaultMesh'
+  VehicleSim = 'obj:Archetypes.Car.Car_Default.DefaultVehicleSim'
+  StickyForce:
+    _struct = 'StickyForceData'
+    Ground = 0.5
+    Wall = 1.5
+  AutoFlip:
+    _struct = 'AutoFlipData'
+    Torque = 80.0
+    Force = 100.0
+  PitchTekComponent = 'obj:Archetypes.Car.Car_Default.DefaultPTDComponent'
+  MaxLinearSpeed = 2300.0
+  MaxAngularSpeed = 5.5
+  bDisableSleeping = True
+  FXActorArchetype = 'obj:FXActors.Car.Car_FXActor'
+  ImpactEffectsComponent = 'obj:Archetypes.Car.Car_Default.ImpactEffectsComponent'
+  Replay = 'obj:Archetypes.Car.Car_Default.ReplayComponent0'
+  RegistryGroup = 'obj:Archetypes.Car.Car_Default.DefaultRegistryGroup'
+  Mass = 180.0
+  Mesh = 'obj:Archetypes.Car.Car_Default.DefaultMesh'
+  CylinderComponent = 'obj:Archetypes.Car.Car_Default.CollisionCylinder'
+  Components:
+    ['obj:Archetypes.Car.Car_Default.CollisionCylinder', 'obj:Archetypes.Car.Car_Default.DefaultRegistryGroup', 'obj:Archetypes.Car.Car_Default.ReplayComponent0', 'obj:Archetypes.Car.Car_Default.DefaultPTDComponent', 'obj:Archetypes.Car.Car_Default.CarTrajectoryComponent0']
+  CollisionComponent = 'obj:Archetypes.Car.Car_Default.CollisionCylinder'
+=== VehicleSim_TA Archetypes.Car.Car_Default.DefaultVehicleSim  (archetype TAGame.Default__Car_TA.DefaultVehicleSim, parsed 2817/2817 bytes)
+  _net_index = 0
+  _component_header = 4
+  Wheels:
+    ['obj:Archetypes.Car.Car_Default.DefaultVehicleSim.FrontLeft', 'obj:Archetypes.Car.Car_Default.DefaultVehicleSim.FrontRight', 'obj:Archetypes.Car.Car_Default.DefaultVehicleSim.BackLeft', 'obj:Archetypes.Car.Car_Default.DefaultVehicleSim.BackRight']
+  SteerAngleCurve:
+    _struct = 'InterpCurveFloat'
+    Points:
+      [0]
+        InVal = 0.0
+        OutVal = 35.0
+        ArriveTangent = 0.0
+        LeaveTangent = 0.0
+        ArriveWeight = 0.0
+        LeaveWeight = 0.0
+        InterpMode = 'EInterpCurveMode::CIM_Linear'
+      [1]
+        InVal = 500.0
+        OutVal = 20.0
+        ArriveTangent = 0.0
+        LeaveTangent = 0.0
+        ArriveWeight = 0.0
+        LeaveWeight = 0.0
+        InterpMode = 'EInterpCurveMode::CIM_Linear'
+      [2]
+        InVal = 1000.0
+        OutVal = 11.0
+        ArriveTangent = 0.0
+        LeaveTangent = 0.0
+        ArriveWeight = 0.0
+        LeaveWeight = 0.0
+        InterpMode = 'EInterpCurveMode::CIM_Linear'
+      [3]
+        InVal = 1500.0
+        OutVal = 6.25
+        ArriveTangent = 0.0
+        LeaveTangent = 0.0
+        ArriveWeight = 0.0
+        LeaveWeight = 0.0
+        InterpMode = 'EInterpCurveMode::CIM_Linear'
+      [4]
+        InVal = 1750.0
+        OutVal = 5.0
+        ArriveTangent = 0.0
+        LeaveTangent = 0.0
+        ArriveWeight = 0.0
+        LeaveWeight = 0.0
+        InterpMode = 'EInterpCurveMode::CIM_Linear'
+      [5]
+        InVal = 3000.0
+        OutVal = 2.0
+        ArriveTangent = 0.0
+        LeaveTangent = 0.0
+        ArriveWeight = 0.0
+        LeaveWeight = 0.0
+        InterpMode = 'EInterpCurveMode::CIM_Linear'
+  DriveTorque = 288000.0
+  DriveTorqueCurve:
+    _struct = 'InterpCurveFloat'
+    Points:
+      [0]
+        InVal = -1400.0
+        OutVal = 0.10000000149011612
+        ArriveTangent = 0.0
+        LeaveTangent = 0.0
+        ArriveWeight = 0.0
+        LeaveWeight = 0.0
+        InterpMode = 'EInterpCurveMode::CIM_Linear'
+      [1]
+        InVal = 0.0
+        OutVal = 1.0
+        ArriveTangent = 0.0
+        LeaveTangent = 0.0
+        ArriveWeight = 0.0
+        LeaveWeight = 0.0
+        InterpMode = 'EInterpCurveMode::CIM_Linear'
+      [2]
+        InVal = 1400.0
+        OutVal = 0.10000000149011612
+        ArriveTangent = 0.0
+        LeaveTangent = 0.0
+        ArriveWeight = 0.0
+        LeaveWeight = 0.0
+        InterpMode = 'EInterpCurveMode::CIM_Linear'
+  BrakeTorque = 10500.0
+  HandbrakeSteerAngleCurve:
+    _struct = 'InterpCurveFloat'
+    Points:
+      [0]
+        InVal = 0.0
+        OutVal = 25.0
+        ArriveTangent = 0.0
+        LeaveTangent = 0.0
+        ArriveWeight = 0.0
+        LeaveWeight = 0.0
+        InterpMode = 'EInterpCurveMode::CIM_Linear'
+      [1]
+        InVal = 2500.0
+        OutVal = 7.5
+        ArriveTangent = 0.0
+        LeaveTangent = 0.0
+        ArriveWeight = 0.0
+        LeaveWeight = 0.0
+        InterpMode = 'EInterpCurveMode::CIM_Linear'
+  HandbrakeRate:
+    _struct = 'InputRate'
+    FallRate = 2.0
+  IdleBrakeFactor = 0.15000000596046448
+  bUseAckermannSteering = True
+=== Wheel_TA Archetypes.Car.Car_Default.DefaultVehicleSim.FrontLeft  (archetype None, parsed 2296/2296 bytes)
+  _net_index = 0
+  _component_header = 4
+  SteerFactor = 1.0
+  SuspensionStiffness = 500.0
+  SuspensionDampingCompression = 25.0
+  SuspensionDampingRelaxation = 40.0
+  SuspensionTravel = 12.0
+  SuspensionMaxRaise = 2.5
+  PushForceConstant = 1.0
+  SpinSpeedDecayRate = 0.699999988079071
+  LatFrictionCurve:
+    _struct = 'InterpCurveFloat'
+    Points:
+      [0]
+        InVal = 0.0
+        OutVal = 1.0
+        ArriveTangent = 0.0
+        LeaveTangent = 0.0
+        ArriveWeight = 0.0
+        LeaveWeight = 0.0
+        InterpMode = 'EInterpCurveMode::CIM_Linear'
+      [1]
+        InVal = 1.0
+        OutVal = 0.20000000298023224
+        ArriveTangent = 0.0
+        LeaveTangent = 0.0
+        ArriveWeight = 0.0
+        LeaveWeight = 0.0
+        InterpMode = 'EInterpCurveMode::CIM_Linear'
+  HandbrakeLatFrictionCurve:
+    _struct = 'InterpCurveFloat'
+    Points:
+      [0]
+        InVal = 0.0
+        OutVal = 0.10000000149011612
+        ArriveTangent = 0.0
+        LeaveTangent = 0.0
+        ArriveWeight = 0.0
+        LeaveWeight = 0.0
+        InterpMode = 'EInterpCurveMode::CIM_Linear'
+  HandbrakeLongFrictionCurve:
+    _struct = 'InterpCurveFloat'
+    Points:
+      [0]
+        InVal = 0.0
+        OutVal = 0.5
+        ArriveTangent = 0.0
+        LeaveTangent = 0.0
+        ArriveWeight = 0.0
+        LeaveWeight = 0.0
+        InterpMode = 'EInterpCurveMode::CIM_Linear'
+      [1]
+        InVal = 1.0
+        OutVal = 0.8999999761581421
+        ArriveTangent = 0.0
+        LeaveTangent = 0.0
+        ArriveWeight = 0.0
+        LeaveWeight = 0.0
+        InterpMode = 'EInterpCurveMode::CIM_Linear'
+  WallFrictionCurve:
+    _struct = 'InterpCurveFloat'
+    Points:
+      [0]
+        InVal = 0.0
+        OutVal = 0.10000000149011612
+        ArriveTangent = 0.0
+        LeaveTangent = 0.0
+        ArriveWeight = 0.0
+        LeaveWeight = 0.0
+        InterpMode = 'EInterpCurveMode::CIM_Linear'
+      [1]
+        InVal = 0.7070000171661377
+        OutVal = 0.5
+        ArriveTangent = 0.0
+        LeaveTangent = 0.0
+        ArriveWeight = 0.0
+        LeaveWeight = 0.0
+        InterpMode = 'EInterpCurveMode::CIM_Linear'
+      [2]
+        InVal = 1.0
+        OutVal = 1.0
+        ArriveTangent = 0.0
+        LeaveTangent = 0.0
+        ArriveWeight = 0.0
+        LeaveWeight = 0.0
+        InterpMode = 'EInterpCurveMode::CIM_Linear'
+  AerialThrottleToVelocityFactor = 1000.0
+  AerialAccelerationFactor = 1.2999999523162842
+=== Wheel_TA Archetypes.Car.Car_Default.DefaultVehicleSim.BackLeft  (archetype None, parsed 2268/2268 bytes)
+  _net_index = 0
+  _component_header = 4
+  SuspensionStiffness = 500.0
+  SuspensionDampingCompression = 25.0
+  SuspensionDampingRelaxation = 40.0
+  SuspensionTravel = 12.0
+  SuspensionMaxRaise = 2.5
+  PushForceConstant = 1.0
+  SpinSpeedDecayRate = 0.699999988079071
+  LatFrictionCurve:
+    _struct = 'InterpCurveFloat'
+    Points:
+      [0]
+        InVal = 0.0
+        OutVal = 1.0
+        ArriveTangent = 0.0
+        LeaveTangent = 0.0
+        ArriveWeight = 0.0
+        LeaveWeight = 0.0
+        InterpMode = 'EInterpCurveMode::CIM_Linear'
+      [1]
+        InVal = 1.0
+        OutVal = 0.20000000298023224
+        ArriveTangent = 0.0
+        LeaveTangent = 0.0
+        ArriveWeight = 0.0
+        LeaveWeight = 0.0
+        InterpMode = 'EInterpCurveMode::CIM_Linear'
+  HandbrakeLatFrictionCurve:
+    _struct = 'InterpCurveFloat'
+    Points:
+      [0]
+        InVal = 0.0
+        OutVal = 0.10000000149011612
+        ArriveTangent = 0.0
+        LeaveTangent = 0.0
+        ArriveWeight = 0.0
+        LeaveWeight = 0.0
+        InterpMode = 'EInterpCurveMode::CIM_Linear'
+  HandbrakeLongFrictionCurve:
+    _struct = 'InterpCurveFloat'
+    Points:
+      [0]
+        InVal = 0.0
+        OutVal = 0.5
+        ArriveTangent = 0.0
+        LeaveTangent = 0.0
+        ArriveWeight = 0.0
+        LeaveWeight = 0.0
+        InterpMode = 'EInterpCurveMode::CIM_Linear'
+      [1]
+        InVal = 1.0
+        OutVal = 0.8999999761581421
+        ArriveTangent = 0.0
+        LeaveTangent = 0.0
+        ArriveWeight = 0.0
+        LeaveWeight = 0.0
+        InterpMode = 'EInterpCurveMode::CIM_Linear'
+  WallFrictionCurve:
+    _struct = 'InterpCurveFloat'
+    Points:
+      [0]
+        InVal = 0.0
+        OutVal = 0.10000000149011612
+        ArriveTangent = 0.0
+        LeaveTangent = 0.0
+        ArriveWeight = 0.0
+        LeaveWeight = 0.0
+        InterpMode = 'EInterpCurveMode::CIM_Linear'
+      [1]
+        InVal = 0.7070000171661377
+        OutVal = 0.5
+        ArriveTangent = 0.0
+        LeaveTangent = 0.0
+        ArriveWeight = 0.0
+        LeaveWeight = 0.0
+        InterpMode = 'EInterpCurveMode::CIM_Linear'
+      [2]
+        InVal = 1.0
+        OutVal = 1.0
+        ArriveTangent = 0.0
+        LeaveTangent = 0.0
+        ArriveWeight = 0.0
+        LeaveWeight = 0.0
+        InterpMode = 'EInterpCurveMode::CIM_Linear'
+  AerialThrottleToVelocityFactor = 1000.0
+  AerialAccelerationFactor = 1.2999999523162842

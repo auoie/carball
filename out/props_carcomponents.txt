@@ -1,0 +1,79 @@
+=== CarComponent_Jump_TA Archetypes.CarComponents.CarComponent_Jump  (archetype None, parsed 152/152 bytes)
+  _net_index = 1121
+  MinJumpTime = 0.024900000542402267
+  JumpImpulse = 52500.0
+  JumpForce = 262500.0
+  JumpForceTime = 0.20000000298023224
+  PodiumJumpForceTime = 0.08500000089406967
+=== CarComponent_DoubleJump_TA Archetypes.CarComponents.CarComponent_DoubleJump  (archetype None, parsed 40/40 bytes)
+  _net_index = 1116
+  JumpImpulse = 52500.0
+=== CarComponent_Dodge_TA Archetypes.CarComponents.CarComponent_Dodge  (archetype None, parsed 404/404 bytes)
+  _net_index = 1113
+  DodgeInputThreshold = 0.5
+  SideDodgeImpulse = 90000.0
+  SideDodgeImpulseMaxSpeedScale = 1.899999976158142
+  ForwardDodgeImpulse = 90000.0
+  ForwardDodgeImpulseMaxSpeedScale = 1.0
+  BackwardDodgeImpulse = 96000.0
+  BackwardDodgeImpulseMaxSpeedScale = 2.5
+  SideDodgeTorque = 260.0
+  ForwardDodgeTorque = 224.0
+  DodgeTorqueTime = 0.6499999761581421
+  MinDodgeTorqueTime = 0.04100000113248825
+  DodgeZDamping = 0.3499999940395355
+  DodgeZDampingDelay = 0.15000000596046448
+  DodgeZDampingUpTime = 0.05999999865889549
+=== CarComponent_AirControl_TA Archetypes.CarComponents.CarComponent_AirControl  (archetype None, parsed 128/128 bytes)
+  _net_index = 1108
+  AirTorque:
+    _struct = 'Rotator'
+    Pitch = 130
+    Yaw = 95
+    Roll = 400
+  AirDamping:
+    _struct = 'Rotator'
+    Pitch = 30
+    Yaw = 20
+    Roll = 50
+  ThrottleForce = 12000.0
+=== CarComponent_FlipCar_TA Archetypes.CarComponents.CarComponent_FlipCar  (archetype None, parsed 96/96 bytes)
+  _net_index = 1117
+  FlipCarImpulse = 200.0
+  FlipCarTorque = 1000.0
+  FlipCarTime = 0.4000000059604645
+=== CarComponent_Jump_TA Default__CarComponent_Jump_TA  (archetype Default__CarComponent_TA, parsed 40/40 bytes)
+  _net_index = 19086
+  FXEvent = 'obj:FXActorEvents.Jump'
+=== CarComponent_DoubleJump_TA Default__CarComponent_DoubleJump_TA  (archetype Default__CarComponent_AirActivate_TA, parsed 68/68 bytes)
+  _net_index = 19031
+  ImpulseScale = 1.0
+  FXEvent = 'obj:FXActorEvents.DoubleJump'
+=== CarComponent_Dodge_TA Default__CarComponent_Dodge_TA  (archetype Default__CarComponent_AirActivate_TA, parsed 96/96 bytes)
+  _net_index = 18997
+  DodgeImpulseScale = 1.0
+  DodgeTorqueScale = 1.0
+  FXEvent = 'obj:FXActorEvents.Dodge'
+=== CarComponent_AirControl_TA Default__CarComponent_AirControl_TA  (archetype Default__CarComponent_TA, parsed 192/192 bytes)
+  _net_index = 18822
+  AirTorqueScalar = 1000.0
+  AirDampingScalar = 1000.0
+  AirControlSensitivity = 1.0
+  JumpInactiveBuffer = 0.25
+  DodgeInactiveBuffer = 0.25
+  RemoteRole = 'ENetRole::ROLE_None'
+=== CarComponent_Torque_TA Default__CarComponent_Torque_TA  (archetype Default__CarComponent_TA, parsed 105/105 bytes)
+  _net_index = 19145
+  TorqueTimeScale = 0.75
+  bSimulateComponent = True
+  CollisionType = 'ECollisionType::COLLIDE_CustomDefault'
+=== CarComponent_TA Default__CarComponent_TA  (archetype Engine.Default__Actor, parsed 248/248 bytes)
+  _net_index = 18763
+  RemoteRole = 'ENetRole::ROLE_SimulatedProxy'
+  TickGroup = 'ETickingGroup::TG_PostAsyncWork'
+  bHidden = True
+  bTickIsDisabled = True
+  bAlwaysRelevant = True
+  bOnlyDirtyReplication = True
+  NetUpdateFrequency = 30.0
+  NetPriority = 5.0

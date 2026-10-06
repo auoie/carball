@@ -1,0 +1,81 @@
+=== CarComponent_Boost_TA : CarComponent_AirActivate_TA (starts 0x328, computed end 0x398, exe sizeof 0x398)
+  0x0328  float                                    BoostConsumptionRate
+  0x032c  float                                    MaxBoostAmount
+  0x0330  float                                    StartBoostAmount
+  0x0334  float                                    BoostUsed
+  0x0338  float                                    CurrentBoostAmount
+  0x033c  float                                    BoostModifier
+  0x0340  float                                    LastBoostAmountRequestTime
+  0x0344  float                                    LastBoostAmount
+  0x0348  bool                                     bPendingConfirmBoostAmount
+  0x0348  bool:bit1                                bRechargeGroundOnly
+  0x0348  bool:bit2                                bNoBoost
+  0x034c  float                                    BoostForce
+  0x0350  float                                    MinBoostTime
+  0x0354  float                                    RechargeRate
+  0x0358  float                                    RechargeDelay
+  0x035c  int                                      UnlimitedBoostRefCount
+  0x0360  byte(Default______GFxData_Clubs_TA__SetClubInvites_0x1____GFxData_Clubs_TA__SetClubInvites_0x1_0x1) BoostRestriction
+  0x0361  byte(EVoiceInputMode)                    ReplicatedBoostAmount
+  0x0368  struct ____GFxData_Clubs_TA__SetClubInvites_0x1____GFxData_Clubs_TA__SetClubInvites_0x1_0x1 ReplicatedBoost
+  0x0370  Default______ConsecutiveMatchTracker_TA__HandleGameEnded_0x1____ConsecutiveMatchTracker_TA__HandleGameEnded_0x1_0x1* BoostAsset
+  0x0378  ____GFxData_Clubs_TA__SetClubInvites_0x1____GFxData_Clubs_TA__SetClubInvites_0x1_0x1* BoostShakeState
+  0x0380  ReturnValue*                             ControlsSave
+  0x0388  delegate                                 __EventBoostAmountChanged__Delegate
+=== CarComponent_Dodge_TA : CarComponent_AirActivate_TA (starts 0x328, computed end 0x3a0, exe sizeof 0x3c8)
+  0x0328  float                                    DodgeInputThreshold
+  0x032c  float                                    SideDodgeImpulse
+  0x0330  float                                    SideDodgeImpulseMaxSpeedScale
+  0x0334  float                                    ForwardDodgeImpulse
+  0x0338  float                                    ForwardDodgeImpulseMaxSpeedScale
+  0x033c  float                                    BackwardDodgeImpulse
+  0x0340  float                                    BackwardDodgeImpulseMaxSpeedScale
+  0x0344  float                                    SideDodgeTorque
+  0x0348  float                                    ForwardDodgeTorque
+  0x034c  float                                    DodgeTorqueTime
+  0x0350  float                                    MinDodgeTorqueTime
+  0x0354  float                                    DodgeZDamping
+  0x0358  float                                    DodgeZDampingDelay
+  0x035c  float                                    DodgeZDampingUpTime
+  0x0360  float                                    DodgeImpulseScale
+  0x0364  float                                    DodgeTorqueScale
+  0x0368  ____ConsecutiveMatchTracker_TA__HandleGameEnded_0x1____ConsecutiveMatchTracker_TA__HandleGameEnded_0x1_0x1* JumpEvent
+  0x0370  ____GFxData_Clubs_TA__SetClubInvites_0x1____GFxData_Clubs_TA__SetClubInvites_0x1_0x1* DoubleJumpEvent
+  0x0378  Default______ConsecutiveMatchTracker_TA__HandleGameEnded_0x1____ConsecutiveMatchTracker_TA__HandleGameEnded_0x1_0x1* DodgeEvent
+  0x0380  struct ClubInvite                        DodgeTorque
+  0x0380  struct ____GFxData_Clubs_TA__SetClubInvites_0x1____GFxData_Clubs_TA__SetClubInvites_0x1_0x1 DodgeDirection
+  0x0388  struct ReturnValue                       DodgeImpulse
+  0x0388  int                                      DodgesCount
+  0x038c  int                                      MaxDodgeStreak
+  0x0390  delegate                                 __EventActivateDodge__Delegate
+=== CarComponent_FlipCar_TA : CarComponent_TA (starts 0x2e8, computed end 0x2f8, exe sizeof 0x2f8)
+  0x02e8  float                                    FlipCarImpulse
+  0x02ec  float                                    FlipCarTorque
+  0x02f0  float                                    FlipCarTime
+  0x02f4  bool                                     bFlipRight
+=== CarComponent_Jump_TA : CarComponent_TA (starts 0x2e8, computed end 0x310, exe sizeof 0x310)
+  0x02e8  float                                    MinJumpTime
+  0x02ec  float                                    JumpImpulse
+  0x02f0  float                                    JumpForce
+  0x02f4  float                                    JumpForceTime
+  0x02f8  float                                    PodiumJumpForceTime
+  0x02fc  float                                    JumpImpulseSpeed
+  0x0300  float                                    JumpAccel
+  0x0304  float                                    MaxJumpHeight
+  0x0308  float                                    MaxJumpHeightTime
+  0x030c  bool                                     bDeactivate
+=== CarComponent_AirControl_TA : CarComponent_TA (starts 0x2e8, computed end 0x310, exe sizeof 0x328)
+  0x02e8  struct ____ConsecutiveMatchTracker_TA__HandleGameEnded_0x1____ConsecutiveMatchTracker_TA__HandleGameEnded_0x1_0x1 AirTorque
+  0x02e8  struct Default______ConsecutiveMatchTracker_TA__HandleGameEnded_0x1____ConsecutiveMatchTracker_TA__HandleGameEnded_0x1_0x1 AirDamping
+  0x02e8  float                                    AirTorqueScalar
+  0x02ec  float                                    AirDampingScalar
+  0x02f0  float                                    ThrottleForce
+  0x02f4  float                                    AirControlSensitivity
+  0x02f8  bool                                     bAllowTargetFind
+  0x02fc  float                                    JumpInactiveBuffer
+  0x0300  float                                    DodgeInactiveBuffer
+  0x0308  ESettingsAutoUpdateReason*               AutoControlTarget
+=== CarComponent_DoubleJump_TA : CarComponent_AirActivate_TA (starts 0x328, computed end 0x330, exe sizeof 0x340)
+  0x0328  float                                    JumpImpulse
+  0x032c  float                                    ImpulseScale
+  0x0330  struct ESettingsAutoUpdateReason         DoubleJumpImpulse

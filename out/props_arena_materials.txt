@@ -1,0 +1,12 @@
+=== PhysicalMaterial PhysicalMaterials.Collision_Sticky  (archetype None, parsed 96/96 bytes)
+  Friction = 1.0
+  Parent = 'obj:PhysicalMaterials.World.World_Default'
+  PhysicalMaterialProperty = 'obj:PhysicalMaterials.Collision_Sticky.PhysicalMaterialProperty_TA_0'
+=== PhysicalMaterial PhysicalMaterials.Goalpost_Crossbar  (archetype None, parsed 96/96 bytes)
+  Friction = 1.0
+  Parent = 'obj:PhysicalMaterials.World.World_Default'
+  PhysicalMaterialProperty = 'obj:PhysicalMaterials.Goalpost_Crossbar.PhysicalMaterialProperty_TA_0'
+=== PhysicalMaterial PhysicalMaterials.Goalpost_Post  (archetype None, parsed 96/96 bytes)
+  Friction = 1.0
+  Parent = 'obj:PhysicalMaterials.World.World_Default'
+  PhysicalMaterialProperty = 'obj:PhysicalMaterials.Goalpost_Post.PhysicalMaterialProperty_TA_0'
