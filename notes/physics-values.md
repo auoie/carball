@@ -273,9 +273,8 @@ next dodge has no time limit. `IsOnRBActor` = grounded with ≤ 1 wheel on world
 | Breakout (LongCar) | 131.4924 × 80.521 × 30.3 | 12.5 | 51.5, 26.67, 13.5 | −35.75, 35, 15 |
 | Hybrid | 127.0192 × 82.1879 × 34.1591 | 13.8757 | 51.25, 25.9, 12.5 | −34.0, 29.5, 15 |
 | Merc | 120.7202 × 76.7103 × 41.6591 | 11.3757 | 51.25, 25.9, 15 | −33.75, 29.5, 15 |
-Wheel positions/radii match RocketSim exactly. Hitbox boxes are the data values (the commonly shared ones);
-RocketSim uses boxes exactly +2.5 larger on every axis to match the game's inertia. The code path builds the
-Bullet box from the data box (compound shape for the offset; inertia from its AABB) — the +2.5 is unexplained.
+Wheel positions/radii match RocketSim exactly. Hitbox boxes listed are the data (pre-skin) values; the game
+inflates them by +2.5 on every axis (PhysX skin width, see below), giving RocketSim's numbers exactly.
 Box offset Z and wheel suspension rest heights: see `out/handling_presets.txt` / `out/hitboxes.txt`.
 
 ### Suspension (Bullet vehicle `FUN_1402c2a40`, contact pass `FUN_1402c3360`, scale `FUN_1402c52a0`)
@@ -304,7 +303,7 @@ Iterations stay at 10. Rigid bodies: inertia from the shape, damping/friction/re
 ### Collision details
 - Sphere vs triangle uses Bullet's SphereTriangleDetector (no triangle margin), modified to be **one-sided**:
   a ball whose centre is behind a triangle gets no contact.
-- Ball sphere in Bullet = authored radius − 0.04 BT (−2 uu): 92 → **90**.
+- Ball sphere in Bullet = (authored radius + 1.25 skin) − 2: 92 → **91.25**.
 - Arena = flat planes (floor z 0, ceiling z 2048, side walls x ±4096) + `FieldCollision_Standard` curved meshes
   (SideTop, SideBot, Corner, Goal at y ±5120), mirrored by negative scale; one-sided triangles.
 
@@ -317,15 +316,40 @@ Every tick each body's state is written through the network serializer and read 
 - sleeping → zero velocities
 RocketSim does not do this.
 
-## Still open
+## Resolved with code + replays (2026-10-06)
 
-1. **Throttle top speed ~1410:** not produced by any code path read (input step, vehicle update,
-   wheel friction, curve evaluator). The data/code say 10% torque persists above 1400. RocketSim's
-   1410→0 is empirical. Needs in-game measurement (replays) to decide.
-2. **Ball collision radius:** code path gives a 90 uu Bullet sphere against one-sided arena triangles with
-   the floor at z 0, which conflicts with the in-game resting height of ~93. Candidates: 90 (code path),
-   91.25 (RocketSim, measured), ~92.5 (if the sphere came from mesh bounds 94.49 − 2). Needs measurement.
-3. **Car inertia:** code builds inertia from the data hitbox; RocketSim's +2.5 box matches the game's inertia.
+Replay measurements: `scripts/replay_extract` (Rust, boxcars) → `scripts/replay_measure.py`, run on
+30 ranked replays from Sept 2025.
 
-Replays can be parsed offline (`boxcars` / `rattletrap`) to measure both without touching the
-running game.
+### PhysX "skin width" (+0.025 Bullet units = +1.25 uu per side) — explains RocketSim's sizes
+UE3's shape builder (`FKAggregateGeom::InstanceNovodexGeom`, `FUN_140967480`) inflates every shape:
+sphere radius `r·0.02 + 0.025`, box half-extents `X·0.5·0.02 + 0.025` (same for capsules).
+Psyonix's Bullet converter then uses those sizes (spheres additionally `− 0.04`).
+- **Ball Bullet sphere = 92 + 1.25 − 2 = 91.25 uu** (= RocketSim).
+- **Car hitbox = data box + 2.5 uu on every axis** (Octane 120.507 × 86.6994 × 38.6591 = RocketSim);
+  inertia comes from this inflated box. Data values are pre-skin.
+
+### Ball vs world contact (custom "special" contact, `FUN_14040a5f0` → solver `FUN_1402b2720` / `FUN_1402be240`)
+- Psyonix's contact-added callback: friction = product (× global scale 1.0), **restitution = max**,
+  internal-edge smoothing, and flags sphere-vs-triangle / sphere-vs-plane contacts.
+- Flagged contacts are not solved individually: per ball, count/friction/restitution/normal/distance
+  are summed, then averaged (normal re-normalised) into **one** contact at `−normal × avgDistance`
+  with zero separation (velocity-only). RocketSim copies this design (it does not re-normalise the normal).
+- Floor, ceiling and flat walls are Psyonix finite planes (`bSimpleCollisionPlane`, shape type 28);
+  curved pieces are one-sided triangle meshes.
+- **Measured effective contact distance vs planes: 93.15** (ball rolling on floor: mode 93.15, n=5054;
+  side walls 93.11–93.15; back walls 93.12–93.15). Curved meshes: ~91.3–92.5 (faceting makes this noisy).
+- Ball vs car uses normal contacts (not flagged) with the 91.25 sphere.
+
+### Throttle top speed — measured
+Throttle-only acceleration on flat ground follows `1600 → 160 uu/s²` linearly to 1400 within 3–8%,
+then **0 at ≥ 1400–1410** (median ≈ 0; slight −2 uu/s² drift above). RocketSim's
+`0→1, 1400→0.1, 1410→0` curve is behaviourally correct. The game data/code clamp the curve at 0.1;
+the mechanism producing the cutoff is still unidentified, but the behaviour is settled.
+
+## Still open (minor)
+- Exact source of the ~1.9 uu ball–plane resting gap (depends on Bullet's contact-breaking
+  threshold and settling with the velocity-only special contact). Use RocketSim's implementation
+  or the measured 93.15.
+- Where the throttle cutoff above 1400 is implemented.
+- Goal interior shape (see `notes/arena.md`).

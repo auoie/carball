@@ -31,7 +31,7 @@ Generated constants: `out/rl_physics_constants.json` (`scripts/export_constants.
   - [ ] Measure the goal interior (side, back and roof curves) from `Goal_STD_Collision`
   - [ ] Generate our own arena mesh from the measurements (one-sided triangles, floor/ceiling/wall planes)
   - [ ] Check ball and car rest heights, wall rides and corner bounces against replays
-- [x] **Car hitboxes and wheel setup per body type** (extracted; inertia +2.5 question open) (Octane, Dominus, Plank, Breakout, Hybrid, Merc).
+- [x] **Car hitboxes and wheel setup per body type** (extracted; +2.5 skin explained) (Octane, Dominus, Plank, Breakout, Hybrid, Merc).
   - Box size and offset, wheel positions and radii, suspension rest lengths, inertia.
   - Start: `Body_*_SF.upk` (`ProductAsset_Body_TA`: `FrontAxle`/`BackAxle`, `bUseLegacySuspensionOffsets`); compare with RocketSim `CarConfig.cpp`.
 - [x] **Suspension and sticky force** (decoded; per-car suspension scale is new): decompile Psyonix's suspension raycasts and sticky-force application.
@@ -40,8 +40,9 @@ Generated constants: `out/rl_physics_constants.json` (`scripts/export_constants.
 - [x] **Jump / double jump / flip state machine** (decoded incl. flip resets): jump hold, 1.25 s flip window, flip resets, `JumpLeaveGroundTime` (0.125).
   - Start: Jump `ApplyForces` `0x140eb4ce0`, DoubleJump `0x140eb4800`, script in `Car_TA` / `CarComponent_*_TA`.
 - [x] **Bullet setup** (split impulse on, warm starting off; quantization decoded): solver iterations, collision margins, CCD, contact thresholds, and what `bQuantizePhysics` rounds (matters for client/server agreement).
-- [ ] **Open question: throttle top speed (~1410)**. No cutoff found in the code; data keeps 10% torque above 1400. Measure from replays.
-- [ ] **Open question: ball collision radius** (Bullet shape 90 vs RocketSim 91.25). Measure resting height and bounces from replays.
+- [x] **Throttle top speed**: measured from replays: acceleration 1600 → 160 to 1400, then 0 (RocketSim's curve is right)
+- [x] **Ball collision radius**: Bullet sphere 91.25 (skin width explains it); effective 93.15 vs flat surfaces via the special averaged contact (measured)
+- [x] **Car inertia / hitbox +2.5**: PhysX skin width (+1.25 per side)
 
 ## 2. Patch RocketSim with verified differences
 
@@ -55,6 +56,7 @@ Generated constants: `out/rl_physics_constants.json` (`scripts/export_constants.
 - [ ] Steering: per-wheel Ackermann angles instead of the averaged curve
 - [ ] Suspension scale per car from wheel positions (not Octane constants)
 - [ ] Turn off solver warm starting; one-sided sphere–triangle contacts
+- [ ] Special ball–world contact: re-normalise the averaged normal (RocketSim doesn't)
 - [ ] Per-tick state quantization (location ×100 round, velocities truncate, 18-bit quaternion)
 - [ ] Unit tests for each patch against the decoded formulas
 
@@ -86,9 +88,9 @@ Generated constants: `out/rl_physics_constants.json` (`scripts/export_constants.
 
 ## 7. Validation
 
-- [ ] Replay parser (`boxcars` / `rattletrap`) to pull ball and car states from real replays.
+- [x] Replay parser: `scripts/replay_extract` (Rust/boxcars) + `scripts/replay_measure.py`
 - [ ] Comparison harness: our sim vs replays vs RocketSim (kickoffs, ball bounces, throttle/boost acceleration, flips).
-- [ ] Measure the two open questions (throttle top speed, ball radius).
+- [x] Measure the two open questions (throttle top speed, ball radius)
 
 ## 8. Engine build
 

@@ -32,3 +32,6 @@ venv/
 .idea/
 *.swp
 .DS_Store
+
+# replay extractor build output
+scripts/replay_extract/target/
