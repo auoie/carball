@@ -8,6 +8,7 @@ export class InputDevices {
   readonly #tappedKeys = new Set<string>();
   readonly #tappedButtons = new Set<number>();
   readonly #abort = new AbortController();
+  #usingGamepad = false;
 
   /** `surface`: the element that receives mouse buttons (the game canvas). */
   constructor(surface: HTMLElement) {
@@ -16,6 +17,7 @@ export class InputDevices {
       "keydown",
       (e) => {
         if (e.code === "Space" || e.code === "Backspace") e.preventDefault(); // no page scroll/back
+        this.#usingGamepad = false;
         this.#keys.add(e.code);
         this.#tappedKeys.add(e.code);
       },
@@ -25,6 +27,8 @@ export class InputDevices {
     surface.addEventListener(
       "mousedown",
       (e) => {
+        if (e.button === 1) e.preventDefault(); // middle button = rear camera, not autoscroll
+        this.#usingGamepad = false;
         this.#mouseButtons.add(e.button);
         this.#tappedButtons.add(e.button);
       },
@@ -35,16 +39,25 @@ export class InputDevices {
     window.addEventListener("blur", () => { this.#keys.clear(); this.#mouseButtons.clear(); }, { signal });
   }
 
+  /** PlayerInput.bUsingGamepad: the gamepad was used more recently than the keyboard or mouse. */
+  get usingGamepad(): boolean {
+    return this.#usingGamepad;
+  }
+
   dispose(): void {
     this.#abort.abort();
   }
 
   /** Held inputs, plus anything pressed (even briefly) since the previous snapshot. */
   snapshot(): InputSnapshot {
+    const gamepad = readGamepad();
+    if (gamepad && (gamepad.buttons.some((v) => v > 0.5) || gamepad.axes.some((v) => Math.abs(v) > 0.5))) {
+      this.#usingGamepad = true;
+    }
     const snapshot = {
       keys: new Set([...this.#keys, ...this.#tappedKeys]),
       mouseButtons: new Set([...this.#mouseButtons, ...this.#tappedButtons]),
-      gamepad: readGamepad(),
+      gamepad,
     };
     this.#tappedKeys.clear();
     this.#tappedButtons.clear();

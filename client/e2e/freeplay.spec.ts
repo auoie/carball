@@ -60,6 +60,13 @@ test("controls can be rebound and are remembered", async ({ page }) => {
   const fov = page.locator('input[data-setting="fov"]');
   await fov.fill("105");
   await fov.dispatchEvent("change");
+  await page.locator('input[data-option="invertSwivelPitch"]').uncheck();
+
+  // Controller tab: the game's defaults
+  await page.locator(".settings-tab", { hasText: "Controller" }).click();
+  await expect(page.locator('input[data-setting="deadzone"]')).toHaveValue("0.2");
+  await expect(page.locator('input[data-setting="dodgeDeadzone"]')).toHaveValue("0.8");
+  await page.screenshot({ path: "test-results/settings-controller.png" });
   await page.keyboard.press("Escape");
   await expect(page.locator("#settings")).toBeHidden();
 
@@ -80,6 +87,8 @@ test("controls can be rebound and are remembered", async ({ page }) => {
   await expect(page.locator('.binding-slot[data-action="throttleForward"][data-device="keyboard"]')).toHaveText("I");
   await page.locator(".settings-tab", { hasText: "Camera" }).click();
   await expect(page.locator('input[data-setting="fov"]')).toHaveValue("105");
+  await expect(page.locator('input[data-option="invertSwivelPitch"]')).not.toBeChecked();
+  await expect(page.locator('input[data-option="ballCamToggle"]')).toBeChecked();
   await page.screenshot({ path: "test-results/settings.png" });
 
   // Reset restores the default

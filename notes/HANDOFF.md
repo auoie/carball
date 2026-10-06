@@ -9,17 +9,15 @@ The engine also builds to WebAssembly with a JS API (`engine/build-wasm/rlengine
 builds simulate bit-identically (the game server will be native, the clients WebAssembly).
 Browser freeplay works (`client/`, TypeScript + Vite + Three.js; see `client/README.md`). The camera is the
 game's own: decompiled from UnrealScript and ported (`client/src/camera/rlCamera.ts`, algorithm in `notes/camera.md`).
-**Last state (2026-10-06):** ported the game's camera (user had said the provisional one "feels terrible"), then
-added a settings menu (Esc) at the user's request so they can use their own controls/camera settings: rebinding,
-camera sliders, deadzones/sensitivities, saved in localStorage. If they report camera problems, compare against
-`out/decomp/camera_script.txt`. Possible follow-ups: dodge deadzone (engine CarConfig.dodgeDeadzone, not exposed),
-import of the game's own settings, mouse look/swivel.
-Next options: camera extras (swivel/look, rear cam), controls/input shaping (§4), replay validation (§7),
-netcode + native server (§6), competitive layer (§9).
+**Last state (2026-10-06):** controls finished (§4): the game's input pipeline is decoded (`notes/input.md`) and
+ported: per-axis controller deadzone, air roll rule, keyboard air pitch safety, sensitivities + dodge deadzone in the
+engine (patches 21–22, `setCarPreferences`), swivel and rear camera. Settings menu (Esc) has the game's defaults and
+slider ranges. Agreed plan with the user: netcode + native server (§6) next, replay validation (§7) when something
+feels off, then the competitive layer (§9). Optional: mouse steering (decoded, not ported).
 
 Read in this order: `notes/roadmap.md` (what's left) → `notes/physics-values.md` (all values, formulas,
 RocketSim comparison) → `notes/arena.md` → `notes/camera.md` → `notes/findings.md` (binary/package internals, addresses)
-→ `engine/README.md` → `client/README.md`.
+→ `notes/input.md` → `engine/README.md` → `client/README.md`.
 
 ## Locations
 | What | Where |

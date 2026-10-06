@@ -215,6 +215,7 @@ class Disasm:
             0x59: lambda: f"'{self.name()}'",                          # 8-byte constant
             0x5E: lambda: self.expr(),                                 # passthrough (clears None-check flag)
             0x57: lambda: self._arrayop(),                             # RL: dynamic-array op family (sub-op byte)
+            0x54: lambda: self._structlit(),                           # RL: inline struct literal (statements, then value)
         }.get(t)
         if h is None:
             raise ValueError(f"unknown token 0x{t:02x}")
@@ -315,17 +316,26 @@ class Disasm:
     # RL 0x57 sub-ops (from the 64-entry table filled by FUN_140367990): dynamic-array operations.
     # 0x01 = Length; 0x0b-0x0f and 0x20-0x33 carry a uint16 skip after the array expression.
     ARRAY_SUBOPS = {0x01: "Length", 0x02: "Insert", 0x03: "Remove", 0x04: "op04", 0x05: "op05",
-                    0x06: "Add", 0x07: "op07", 0x08: "op08", 0x09: "op09", 0x0a: "op0a"}
+                    0x06: "Add", 0x07: "AddItem", 0x08: "op08", 0x09: "op09", 0x0a: "op0a"}
 
     def _arrayop(self):
         sub = self.u8()
         arr = self.expr()
         if sub == 0x01:
             return f"{arr}.Length"
-        if 0x0b <= sub <= 0x0f or 0x20 <= sub <= 0x33:
+        if sub == 0x07 or 0x0b <= sub <= 0x0f or 0x20 <= sub <= 0x33:  # 0x07: AddItem
             self.u16()
         name = self.ARRAY_SUBOPS.get(sub, f"arrayop{sub:02x}")
         return f"{arr}.{name}({', '.join(self.params())})"
+
+    def _structlit(self):
+        # Statements filling a temporary until EndFunctionParms, then the temporary itself
+        stmts = []
+        while self.d[self.pos] != 0x16:
+            stmts.append(str(self.expr()).rstrip(";"))
+        self.u8()
+        value = self.expr()
+        return f"{{{'; '.join(stmts)}}} -> {value}"
 
     def _cstr(self):
         end = self.d.index(b"\0", self.pos)

@@ -286,3 +286,15 @@ body {
   justify-self: start;
   margin-top: 8px;
 }
+
+.options {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}

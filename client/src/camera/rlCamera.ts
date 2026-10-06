@@ -4,9 +4,9 @@
 //   CameraState_BallCam_TA  ball cam: overrides of UpdateFocusWorldOffset / UpdateFocus /
 //                           UpdateAirAndGroundCamera / UpdateRotationModifiers
 //   CameraStateBlender_X    transitions between the two
-//   Camera_X / Camera_TA    UpdateCamera, FinalizeOrientation, ClipToField
-// Not ported: swivel (right-stick/mouse look), rear camera, proximity distance, the "bouncy chassis"
-// wobble (driven by the car mesh's suspension spring bone), demolished/replay cameras.
+//   Camera_X / Camera_TA    UpdateCamera, FinalizeOrientation, ClipToField, swivel, rear camera
+// Not ported: proximity distance, the "bouncy chassis" wobble (driven by the car mesh's suspension
+// spring bone), demolished/replay cameras.
 import type { CarState } from "../engine/world";
 import { type Vec3, add, dot, scale, sub, vec3 } from "../math/vec";
 import {
@@ -125,6 +125,7 @@ export interface CameraInput {
   readonly car: CarState;
   readonly ball: Vec3;
   readonly settings: CameraSettings;
+  readonly rear: boolean; // CameraSettings.bUsingBehindView
 }
 
 /** CameraState_Car_TA, or CameraState_BallCam_TA when `ballCam` (its overrides are inlined). */
@@ -133,6 +134,7 @@ export class CarCameraState {
   #airGroundBlend = 0;
   #groundNormal = vec3(0, 0, 1);
   #firstExecution = true;
+  #wasRear = false;
   #viewOffset = { focusZ: 0, pitch: 0, distance: 0 };
   readonly #focusInterp = new InterpVector(CAR.focusInterpRate, CAR.focusInterpMaxDistance);
   readonly #distanceInterp = new InterpVector(CAR.distanceInterpRate);
@@ -155,11 +157,23 @@ export class CarCameraState {
   /** CameraState_Car_TA.UpdateValidPOV. */
   update(dt: number, input: CameraInput, pov: Pov): void {
     const { car, settings } = input;
+    if (this.ballCam) {
+      // CameraState_BallCam_TA.UpdateValidPOV: switching the rear camera on or off starts over
+      if (input.rear) {
+        this.#firstExecution = !this.#wasRear;
+        this.#wasRear = true;
+      } else {
+        this.#firstExecution ||= this.#wasRear;
+        this.#wasRear = false;
+      }
+    }
+    // With the rear camera on, the ball cam's overrides fall back to the car cam
+    const lookAtBall = this.ballCam && !input.rear;
     this.#updateViewOffset(settings);
     this.#updateAirGroundBlend(dt, car);
-    this.#updateFocusWorldOffset(dt, car);
-    this.#updateFocus(dt, car, settings, pov);
-    this.#updateAirAndGroundCamera(dt, input, pov);
+    this.#updateFocusWorldOffset(dt, car, lookAtBall);
+    this.#updateFocus(dt, car, settings, pov, lookAtBall);
+    this.#updateAirAndGroundCamera(dt, input, pov, lookAtBall);
     this.#updateDistance(dt, car, settings, pov);
     this.#updateFov(dt, car, settings, pov);
     if (!this.ballCam) this.#updateRotationModifiers(car, pov);
@@ -183,8 +197,8 @@ export class CarCameraState {
     this.#airGroundBlend = Math.min(1, Math.max(0, this.#airGroundBlend));
   }
 
-  #updateFocusWorldOffset(dt: number, car: CarState): void {
-    if (this.ballCam) {
+  #updateFocusWorldOffset(dt: number, car: CarState, lookAtBall: boolean): void {
+    if (lookAtBall) {
       this.#focusOffsetInterp.location = vec3(0, 0, this.#viewOffset.focusZ);
       return;
     }
@@ -194,9 +208,9 @@ export class CarCameraState {
     this.#focusOffsetInterp.update(offset, dt);
   }
 
-  #updateFocus(dt: number, car: CarState, s: CameraSettings, pov: Pov): void {
+  #updateFocus(dt: number, car: CarState, s: CameraSettings, pov: Pov, lookAtBall: boolean): void {
     // Ball cam: the focus may not lag behind the car at all
-    this.#focusInterp.maxDistance = this.ballCam ? 0.001 : CAR.focusInterpMaxDistance;
+    this.#focusInterp.maxDistance = lookAtBall ? 0.001 : CAR.focusInterpMaxDistance;
     const focus = add(car.pos, this.#focusOffsetInterp.location);
     this.#focusInterp.update(focus, dt);
     const forward = rotatorToVector(pov.rotation);
@@ -207,8 +221,8 @@ export class CarCameraState {
     pov.focus = vlerp(add(pov.calculatedLocation, focusOffset), focus, s.stiffness);
   }
 
-  #updateAirAndGroundCamera(dt: number, input: CameraInput, pov: Pov): void {
-    if (this.ballCam) {
+  #updateAirAndGroundCamera(dt: number, input: CameraInput, pov: Pov, lookAtBall: boolean): void {
+    if (lookAtBall) {
       this.#updateBallCamRotation(dt, input.ball, pov);
       return;
     }
@@ -422,6 +436,63 @@ class Blender {
   }
 }
 
+/** Camera_TA swivel data (Default__Camera_TA), rotator units. */
+const SWIVEL = {
+  slow: { pitchMin: -8900, pitchMax: 5500, yawMax: 22500 },
+  fast: { pitchMin: -8900, pitchMax: 5500, yawMax: 18000 },
+  fastSpeed: 2500, // car speed at which the fast extents apply
+  dieRate: 2, // speed multiplier while returning towards the centre
+} as const;
+
+/** Round to nearest, ties to even (x86 cvtss2si). */
+function roundHalfEven(x: number): number {
+  const r = Math.round(x);
+  return Math.abs(x % 1) === 0.5 && r % 2 !== 0 ? r - 1 : r;
+}
+
+/**
+ * The swivel input is replicated as a byte: Object.FloatToRangeByteSigned, then RangeByteToFloatSigned
+ * (natives 0x140362740 / 0x1403628b0).
+ */
+export function quantizeSwivelInput(v: number): number {
+  const f = v < 0 ? Math.max(v * 128, -128) : Math.min(v * 127, 127);
+  const b = roundHalfEven(2 * (f + 128) + 0.5) >> 1;
+  return b < 128 ? (b - 128) / 128 : (b - 128) / 127;
+}
+
+/** Camera_TA.UpdateSwivel / GetDesiredSwivel: look around, eased towards the stick's angle. */
+export class Swivel {
+  #pitch = 0;
+  #yaw = 0;
+
+  get rotation(): Rotator {
+    return rotator(this.#pitch, this.#yaw, 0);
+  }
+
+  /** `up`, `right`: the quantized input; `speed`: the car's speed; `swivelSpeed`: the player's setting. */
+  update(dt: number, up: number, right: number, speed: number, swivelSpeed: number): void {
+    const alpha = Math.min(1, Math.max(0, speed / SWIVEL.fastSpeed));
+    const pitchMax = Math.trunc(lerp(SWIVEL.slow.pitchMax, SWIVEL.fast.pitchMax, alpha));
+    const pitchMin = Math.trunc(lerp(SWIVEL.slow.pitchMin, SWIVEL.fast.pitchMin, alpha));
+    const yawMax = Math.trunc(lerp(SWIVEL.slow.yawMax, SWIVEL.fast.yawMax, alpha));
+    const desiredYaw = Math.trunc(right * yawMax);
+    const desiredPitch = Math.trunc(up > 0 ? up * pitchMax : Math.abs(up) * pitchMin);
+    const pitchSpeed = swivelSpeed * (Math.abs(desiredPitch) < Math.abs(this.#pitch) ? SWIVEL.dieRate : 1);
+    const yawSpeed = swivelSpeed * (Math.abs(desiredYaw) < Math.abs(this.#yaw) ? SWIVEL.dieRate : 1);
+    this.#pitch = Math.trunc(lerp(this.#pitch, desiredPitch, Math.min(pitchSpeed * dt, 1)));
+    this.#yaw = Math.trunc(lerp(this.#yaw, desiredYaw, Math.min(yawSpeed * dt, 1)));
+  }
+}
+
+/** What the player does with the camera this frame. */
+export interface CameraControls {
+  readonly ballCam: boolean;
+  readonly rear: boolean;
+  /** Swivel input, -1..1: positive looks up / right (the caller applies the pitch inversion option). */
+  readonly lookUp: number;
+  readonly lookRight: number;
+}
+
 export interface CameraView {
   readonly position: Vec3;
   readonly forward: Vec3;
@@ -435,6 +506,8 @@ export class PlayerCamera {
   readonly #carCam = new CarCameraState(false);
   readonly #ballCam = new CarCameraState(true);
   readonly #blender = new Blender();
+  readonly #swivel = new Swivel();
+  #fov = 90; // the last view's FOV (GetFOVAngle)
   #pov: Pov = { focus: vec3(0, 0, 0), rotation: ZERO_ROTATOR, distance: 0, fov: 90, calculatedLocation: vec3(0, 0, 0) };
 
   /** Start over (after a reset): the next update snaps instead of blending. */
@@ -442,18 +515,27 @@ export class PlayerCamera {
     this.#blender.state = null;
   }
 
-  update(dt: number, car: CarState, ball: Vec3, ballCam: boolean): CameraView {
-    const input: CameraInput = { car, ball, settings: this.settings };
+  update(dt: number, car: CarState, ball: Vec3, controls: CameraControls): CameraView {
+    const input: CameraInput = { car, ball, settings: this.settings, rear: controls.rear };
     // UpdateCameraState: the first state whose ShouldExecute() passes
-    const wanted = ballCam ? this.#ballCam : this.#carCam;
+    const wanted = controls.ballCam ? this.#ballCam : this.#carCam;
     if (this.#blender.state !== wanted) this.#blender.transitionTo(wanted, input);
     this.#blender.tick(dt, input);
     this.#blender.update(dt, input, this.#pov);
     finalize(this.#pov);
 
+    // Camera_TA.PostProcessCameraState: the blend offset, swivel, then the rear view
     const view = copyPov(this.#pov);
     this.#blender.postProcess(view);
+    // PlayerInput_TA scales the look input by FOV / 90, then it is replicated as a byte
+    const fovScale = this.#fov / 90;
+    const up = quantizeSwivelInput(controls.lookUp * fovScale);
+    const right = quantizeSwivelInput(controls.lookRight * fovScale);
+    this.#swivel.update(dt, up, right, lengthOf(car.vel), this.settings.swivelSpeed);
+    view.rotation = addRotators(view.rotation, this.#swivel.rotation);
+    if (controls.rear) view.rotation = rotator(view.rotation.pitch, view.rotation.yaw + 32768, view.rotation.roll);
     finalize(view);
+    this.#fov = view.fov;
     // Camera_TA.ClipToField (soccar: keep the camera GroundClampZOffset above the floor)
     const location = view.calculatedLocation;
     const clipped = vec3(location.x, location.y, Math.max(location.z, GROUND_CLAMP_Z_OFFSET));

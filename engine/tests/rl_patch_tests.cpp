@@ -7,6 +7,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <functional>
 #include <string>
 
@@ -121,6 +122,76 @@ static void TestDodgeThreshold(Arena* arena, Car* car) {
 	CarControls ok; ok.pitch = -0.2f; ok.yaw = 0.3f;
 	FlipAngVels(arena, car, ok, [](CarControls&, int) {}, 1);
 	CHECK(car->_internalState.hasFlipped, "0.5 should flip");
+}
+
+// --------------------------------------------------------------------------------------------
+// Runs `ticks` ticks from `state` with fixed controls.
+static CarState Run(Arena* arena, Car* car, CarState state, CarControls c, int ticks) {
+	car->SetState(state);
+	car->controls = c;
+	arena->Step(ticks);
+	return car->GetState();
+}
+
+static bool SameMotion(const CarState& a, const CarState& b) {
+	return memcmp(&a.pos, &b.pos, sizeof(Vec)) == 0 && memcmp(&a.vel, &b.vel, sizeof(Vec)) == 0 &&
+		memcmp(&a.angVel, &b.angVel, sizeof(Vec)) == 0;
+}
+
+static void TestSensitivity(Arena* arena, Car* car) {
+	puts("sensitivity: steering and air control shape the input (scale, clamp; digital at 10); dodges use the raw input");
+	CarState ground = CarAt({ 0, -2500, 17.01f }, { 0, 1, 0 }, { 0, 0, 1 }, { 0, 1000, 0 });
+	CarControls full; full.throttle = 1; full.steer = 1;
+	CarControls half = full; half.steer = 0.5f;
+	CarControls tiny = full; tiny.steer = 0.1f;
+	CarState ref = Run(arena, car, ground, full, 60);
+	CHECK(!SameMotion(ref, Run(arena, car, ground, half, 60)), "steer 0.5 should differ from steer 1");
+	car->config.steeringSensitivity = 2;
+	CHECK(SameMotion(ref, Run(arena, car, ground, half, 60)), "steer 0.5 at sensitivity 2 should equal steer 1");
+	car->config.steeringSensitivity = 10;
+	CHECK(SameMotion(ref, Run(arena, car, ground, tiny, 60)), "steer 0.1 at sensitivity 10 should be full steer");
+	car->config.steeringSensitivity = 1;
+
+	CarState air = CarAt({ 0, 0, 1200 }, { 1, 0, 0 }, { 0, 0, 1 });
+	CarControls a1; a1.pitch = 1; a1.yaw = -0.5f; a1.roll = 0.8f;
+	CarControls a2; a2.pitch = 0.5f; a2.yaw = -0.25f; a2.roll = 0.4f;
+	CarState airRef = Run(arena, car, air, a1, 20);
+	car->config.airControlSensitivity = 2;
+	CHECK(SameMotion(airRef, Run(arena, car, air, a2, 20)), "air input 0.5 at sensitivity 2 should equal input 1");
+
+	// The dodge check sees the raw stick: 0.2 + 0.2 = 0.4 < 0.5 double jumps even though shaped it would be 0.8
+	CarControls weak; weak.pitch = -0.2f; weak.yaw = 0.2f;
+	FlipAngVels(arena, car, weak, [](CarControls&, int) {}, 1);
+	CHECK(car->_internalState.hasDoubleJumped && !car->_internalState.hasFlipped, "raw 0.4 should double jump at sensitivity 2");
+	car->config.airControlSensitivity = 1;
+}
+
+static void TestDodgeDeadzone(Arena* arena, Car* car) {
+	puts("dodge deadzone: the player's DodgeInputThreshold");
+	car->config.dodgeDeadzone = 0.8f;
+	CarControls c; c.pitch = -0.4f; c.yaw = 0.39f;
+	FlipAngVels(arena, car, c, [](CarControls&, int) {}, 1);
+	CHECK(car->_internalState.hasDoubleJumped && !car->_internalState.hasFlipped, "0.79 should double jump at deadzone 0.8");
+	c.yaw = 0.4f;
+	FlipAngVels(arena, car, c, [](CarControls&, int) {}, 1);
+	CHECK(car->_internalState.hasFlipped, "0.8 should flip at deadzone 0.8");
+	car->config.dodgeDeadzone = 0.5f;
+}
+
+static void TestAirPitchSafety(Arena* arena, Car* car) {
+	puts("air pitch safety: air control ignores pitch, dodges still use it");
+	CarState air = CarAt({ 0, 0, 1200 }, { 1, 0, 0 }, { 0, 0, 1 });
+	CarControls none;
+	CarControls held; held.pitch = -1; held.airPitchSafety = true;
+	CHECK(SameMotion(Run(arena, car, air, none, 20), Run(arena, car, air, held, 20)), "safety should zero air pitch");
+
+	CarControls front; front.pitch = -1;
+	FlipAngVels(arena, car, front, [](CarControls&, int) {}, 1);
+	Vec plain = car->_internalState.flipRelTorque;
+	FlipAngVels(arena, car, held, [](CarControls&, int) {}, 1);
+	Vec safe = car->_internalState.flipRelTorque;
+	CHECK(car->_internalState.hasFlipped && plain.x == safe.x && plain.y == safe.y,
+		"front flip changed by the safety ((%.3f, %.3f) vs (%.3f, %.3f))", safe.x, safe.y, plain.x, plain.y);
 }
 
 static void TestAutoFlip(Arena* arena, Car* car) {
@@ -302,6 +373,9 @@ int main(int argc, char** argv) {
 	TestFlipCancelLock(arena, car);
 	TestDodgeTorque(arena, car);
 	TestDodgeThreshold(arena, car);
+	TestSensitivity(arena, car);
+	TestDodgeDeadzone(arena, car);
+	TestAirPitchSafety(arena, car);
 	TestAutoFlip(arena, car);
 	TestAckermann(arena, car);
 	TestSuspensionScale(arena);

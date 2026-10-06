@@ -29,7 +29,7 @@ const drive = () => {
     const c = sim.carState(id), b = sim.ballState();
     const dx = b[0] - c[E.CAR_POS], dy = b[1] - c[E.CAR_POS + 1];
     const side = c[E.CAR_ROT] * dy - c[E.CAR_ROT + 1] * dx; // forward x toBall (z)
-    sim.setControls(id, 1, side > 0 ? 1 : -1, 0, 0, 0, false, true, false);
+    sim.setControls(id, 1, side > 0 ? 1 : -1, 0, 0, 0, false, true, false, false);
   }
 };
 const t0 = performance.now();
@@ -48,8 +48,8 @@ console.log(`  360 ticks with state reads: ${ms.toFixed(1)} ms (${(ms / 360 * 10
 const saved = sim.saveState();
 const runInputs = () => {
   for (let i = 0; i < 240; i++) {
-    sim.setControls(blue, 1, Math.sin(i / 20) > 0 ? 1 : -1, -1, 0, 0, i % 50 === 0, i % 3 === 0, false);
-    sim.setControls(orange, 1, 0.5, 0, 1, 0, i % 70 === 0, true, i % 40 < 10);
+    sim.setControls(blue, 1, Math.sin(i / 20) > 0 ? 1 : -1, -1, 0, 0, i % 50 === 0, i % 3 === 0, false, false);
+    sim.setControls(orange, 1, 0.5, 0, 1, 0, i % 70 === 0, true, i % 40 < 10, false);
     sim.step(1);
   }
   return [...sim.ballState(), ...sim.carState(blue), ...sim.carState(orange)];
@@ -74,7 +74,7 @@ const v = new Float32Array(E.CAR_SIZE);
 v.set([0, 1, 0, -1, 0, 0, 0, 0, 1], E.CAR_ROT);
 v.set([400, 0, 17], E.CAR_POS);
 sim.setCarState(orange, v);
-for (let i = 0; i < 60; i++) { sim.setControls(blue, 1, 0, 0, 0, 0, false, true, false); sim.step(1); }
+for (let i = 0; i < 60; i++) { sim.setControls(blue, 1, 0, 0, 0, 0, false, true, false, false); sim.step(1); }
 const events = [...sim.takeEvents()];
 const demos = [];
 for (let i = 0; i < events.length; i += 3) if (events[i] === E.EVENT_DEMO) demos.push(events.slice(i, i + 3));

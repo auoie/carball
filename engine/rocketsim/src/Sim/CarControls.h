@@ -14,6 +14,11 @@ struct CarControls {
 	// Boolean action inputs
 	bool jump, boost, handbrake;
 
+	// RL PATCH: keyboard "air pitch safety" (PlayerController_TA.ApplyAirPitchSafety) is holding back
+	// nose-down pitch: air control ignores pitch, while dodges still use it (the game keeps
+	// VehicleInput.DodgeForward from before the safety zeroes VehicleInput.Pitch).
+	bool airPitchSafety;
+
 	// Maybe someday...
 	// bool useItem;
 
@@ -35,6 +40,6 @@ struct CarControls {
 #define CAR_CONTROLS_SERIALIZATION_FIELDS(name) \
 name.throttle, name.steer, \
 name.pitch, name.yaw, name.roll, \
-name.boost, name.jump, name.handbrake
+name.boost, name.jump, name.handbrake, name.airPitchSafety
 
 RS_NS_END

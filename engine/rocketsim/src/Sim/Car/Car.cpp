@@ -7,6 +7,14 @@
 
 RS_NS_START
 
+// RL PATCH: the game's input shaping (FUN_140396ca0) for steering and air control: scale by the
+// sensitivity, then clamp; at the maximum sensitivity (10) any input is full input.
+static float ShapeInput(float input, float sensitivity) {
+	if (sensitivity > 10 || abs(sensitivity - 10) < 0.001f)
+		input = (input > 0) ? 1.f : ((input < 0) ? -1.f : 0.f);
+	return RS_CLAMP(input * sensitivity, -1, 1);
+}
+
 // Update our internal state from bullet and return it
 CarState Car::GetState() {
 	_internalState.pos = _rigidBody.getWorldTransform().m_origin * BT_TO_UU;
@@ -456,7 +464,7 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int 
 				* _internalState.handbrakeVal;
 		}
 
-		steerAngle *= controls.steer;
+		steerAngle *= ShapeInput(controls.steer, config.steeringSensitivity); // RL PATCH: SteeringSensitivity
 		_bulletVehicle.m_wheelInfo[0].m_steerAngle = steerAngle;
 		_bulletVehicle.m_wheelInfo[1].m_steerAngle = steerAngle;
 	} else {
@@ -471,7 +479,7 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int 
 				* _internalState.handbrakeVal;
 		}
 
-		steerAngle *= controls.steer;
+		steerAngle *= ShapeInput(controls.steer, config.steeringSensitivity); // RL PATCH: SteeringSensitivity
 
 		float inner = abs(steerAngle), outer = 0;
 		if (inner > 0) {
@@ -710,8 +718,14 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
 
 		float pitchTorqueScale = 1;
 
+		// RL PATCH: air control uses shaped inputs (AirControlSensitivity); the air pitch safety zeroes pitch here only
+		float
+			airPitch = controls.airPitchSafety ? 0 : ShapeInput(controls.pitch, config.airControlSensitivity),
+			airYaw = ShapeInput(controls.yaw, config.airControlSensitivity),
+			airRoll = ShapeInput(controls.roll, config.airControlSensitivity);
+
 		btVector3 torque;
-		if (controls.pitch || controls.yaw || controls.roll) {
+		if (airPitch || airYaw || airRoll) {
 
 			if (_internalState.isFlipping) {
 				pitchTorqueScale = 0;
@@ -722,9 +736,9 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
 			}
 
 			// TODO: Use actual dot product operator functions (?)
-			torque = (controls.pitch * dirPitch_right * pitchTorqueScale * CAR_AIR_CONTROL_TORQUE.x) +
-				(controls.yaw * dirYaw_up * CAR_AIR_CONTROL_TORQUE.y) +
-				(controls.roll * dirRoll_forward * CAR_AIR_CONTROL_TORQUE.z);
+			torque = (airPitch * dirPitch_right * pitchTorqueScale * CAR_AIR_CONTROL_TORQUE.x) +
+				(airYaw * dirYaw_up * CAR_AIR_CONTROL_TORQUE.y) +
+				(airRoll * dirRoll_forward * CAR_AIR_CONTROL_TORQUE.z);
 		} else {
 			torque = { 0, 0, 0 };
 		}
@@ -733,8 +747,8 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
 
 		// TODO: Use actual dot product operator functions (?)
 		float
-			dampPitch = dirPitch_right.dot(angVel) * CAR_AIR_CONTROL_DAMPING.x * (1 - abs(doAirControl ? (controls.pitch * pitchTorqueScale) : 0)),
-			dampYaw = dirYaw_up.dot(angVel) * CAR_AIR_CONTROL_DAMPING.y * (1 - abs(doAirControl ? controls.yaw : 0)),
+			dampPitch = dirPitch_right.dot(angVel) * CAR_AIR_CONTROL_DAMPING.x * (1 - abs(doAirControl ? (airPitch * pitchTorqueScale) : 0)),
+			dampYaw = dirYaw_up.dot(angVel) * CAR_AIR_CONTROL_DAMPING.y * (1 - abs(doAirControl ? airYaw : 0)),
 			dampRoll = dirRoll_forward.dot(angVel) * CAR_AIR_CONTROL_DAMPING.z;
 
 		btVector3 damping =

@@ -5,8 +5,16 @@ import { PlayerCamera } from "../camera/rlCamera";
 import type { BodyState, CarState, World } from "../engine/world";
 import type { Hud } from "../hud";
 import type { InputDevices } from "../input/devices";
-import { EMPTY_INPUT, type HeldActions, readControls, readHeldActions } from "../input/mapping";
-import type { Settings } from "../settings/settings";
+import {
+  AirPitchSafety,
+  EMPTY_INPUT,
+  type HeldActions,
+  type LookInput,
+  readControls,
+  readHeldActions,
+  readLook,
+} from "../input/mapping";
+import type { ControllerSettings, Options, Settings } from "../settings/settings";
 import { FixedStep, TICK_SECONDS } from "../loop/fixedStep";
 import { type Rot3, ZERO, add, cross, dot, lerp, normalize, scale, sub, vec3 } from "../math/vec";
 import { toThreeQuaternion, toThreeVector } from "../render/coords";
@@ -68,8 +76,12 @@ export class Freeplay {
   readonly #car: Interpolated<CarState>;
   readonly #ball: Interpolated<BodyState>;
   readonly #score: [number, number] = [0, 0];
-  #held: HeldActions = { ballCam: false, reset: false, ballInFront: false, ballOnCar: false };
+  #held: HeldActions = { ballCam: false, rearCamera: false, reset: false, ballInFront: false, ballOnCar: false };
   #ballCam = false;
+  #rear = false;
+  #look: LookInput = { up: 0, right: 0 };
+  readonly #pitchSafety = new AirPitchSafety();
+  #preferences: ControllerSettings | null = null;
   #goalTimer = 0;
   #message: string | null = null;
   #kickoffSeed = 1;
@@ -103,10 +115,18 @@ export class Freeplay {
   /** One animation frame. `frameSeconds`: real time since the previous frame. */
   frame(frameSeconds: number): void {
     const settings = this.settings();
+    this.#applyPreferences(settings.controller);
     const polled = this.#input.snapshot();
     const snapshot = this.inputEnabled() ? polled : EMPTY_INPUT;
-    this.#handleActions(readHeldActions(snapshot, settings.bindings, settings.controller));
-    const controls = readControls(snapshot, settings.bindings, settings.controller);
+    const { bindings, controller, options } = settings;
+    this.#handleActions(readHeldActions(snapshot, bindings, controller.deadzone), options);
+    const raw = readControls(snapshot, bindings, controller.deadzone);
+    const onGround = this.#car.current.onGround;
+    const safety = this.#pitchSafety.update(options.airPitchSafety, this.#input.usingGamepad, onGround, raw);
+    const controls = { ...raw, airPitchSafety: safety };
+    const look = readLook(snapshot, bindings, controller.deadzone);
+    // PlayerController_TA.SwivelPitchDir
+    this.#look = { up: options.invertSwivelPitch ? -look.up : look.up, right: look.right };
     this.#camera.settings = settings.camera;
 
     const ticks = this.#clock.advance(frameSeconds);
@@ -122,9 +142,24 @@ export class Freeplay {
     this.#draw(frameSeconds);
   }
 
-  #handleActions(held: HeldActions): void {
+  /** The engine applies the sensitivities and dodge deadzone, like the game's PRI car preferences. */
+  #applyPreferences(c: ControllerSettings): void {
+    if (c === this.#preferences) return;
+    this.#preferences = c;
+    this.#world.setCarPreferences(this.#playerId, {
+      dodgeDeadzone: c.dodgeDeadzone,
+      steeringSensitivity: c.steeringSensitivity,
+      airControlSensitivity: c.aerialSensitivity,
+    });
+  }
+
+  #handleActions(held: HeldActions, options: Options): void {
     const pressed = (key: keyof HeldActions): boolean => held[key] && !this.#held[key];
-    if (pressed("ballCam")) this.#ballCam = !this.#ballCam;
+    // PressSecondaryCamera / PressRearCamera: toggle on press, or follow the button
+    if (!options.ballCamToggle) this.#ballCam = held.ballCam;
+    else if (pressed("ballCam")) this.#ballCam = !this.#ballCam;
+    if (!options.rearCameraToggle) this.#rear = held.rearCamera;
+    else if (pressed("rearCamera")) this.#rear = !this.#rear;
     if (pressed("reset")) this.#resetKickoff();
     if (pressed("ballInFront")) this.#placeBall(false);
     if (pressed("ballOnCar")) this.#placeBall(true);
@@ -186,7 +221,12 @@ export class Freeplay {
     this.#ballView.update(this.#ball.position(alpha, this.#pos), this.#ball.rotation(alpha, this.#rot));
     this.#padsView.update(this.#world.boostPads());
 
-    const view = this.#camera.update(frameSeconds, this.#car.blended(alpha), this.#ball.blended(alpha).pos, this.#ballCam);
+    const view = this.#camera.update(frameSeconds, this.#car.blended(alpha), this.#ball.blended(alpha).pos, {
+      ballCam: this.#ballCam,
+      rear: this.#rear,
+      lookUp: this.#look.up,
+      lookRight: this.#look.right,
+    });
     this.#renderer.render(view);
 
     if (frameSeconds > 0) this.#fps += (1 / frameSeconds - this.#fps) * 0.05;

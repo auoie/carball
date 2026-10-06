@@ -769,10 +769,10 @@ index 957b192..50f7d2a 100644
  	DropshotInfo dsInfo;
  
 diff --git upstream/src/Sim/Car/Car.cpp engine/rocketsim/src/Sim/Car/Car.cpp
-index 417ad9d..4b875b7 100644
+index 417ad9d..9060d06 100644
 --- upstream/src/Sim/Car/Car.cpp
 +++ engine/rocketsim/src/Sim/Car/Car.cpp
-@@ -3,6 +3,7 @@
+@@ -3,9 +3,18 @@
  
  #include "../../../libsrc/bullet3-3.24/BulletDynamics/Dynamics/btDynamicsWorld.h"
  #include "../CollisionMasks.h"
@@ -780,7 +780,18 @@ index 417ad9d..4b875b7 100644
  
  RS_NS_START
  
-@@ -16,6 +17,14 @@ CarState Car::GetState() {
++// RL PATCH: the game's input shaping (FUN_140396ca0) for steering and air control: scale by the
++// sensitivity, then clamp; at the maximum sensitivity (10) any input is full input.
++static float ShapeInput(float input, float sensitivity) {
++	if (sensitivity > 10 || abs(sensitivity - 10) < 0.001f)
++		input = (input > 0) ? 1.f : ((input < 0) ? -1.f : 0.f);
++	return RS_CLAMP(input * sensitivity, -1, 1);
++}
++
+ // Update our internal state from bullet and return it
+ CarState Car::GetState() {
+ 	_internalState.pos = _rigidBody.getWorldTransform().m_origin * BT_TO_UU;
+@@ -16,6 +25,14 @@ CarState Car::GetState() {
  
  	_internalState.angVel = _rigidBody.m_angularVelocity;
  
@@ -795,7 +806,7 @@ index 417ad9d..4b875b7 100644
  	return _internalState;
  }
  
-@@ -31,6 +40,17 @@ void Car::SetState(const CarState& state) {
+@@ -31,6 +48,17 @@ void Car::SetState(const CarState& state) {
  
  	_velocityImpulseCache = { 0, 0, 0 };
  
@@ -813,7 +824,7 @@ index 417ad9d..4b875b7 100644
  	_internalState = state;
  	_internalState.tickCountSinceUpdate = 0;
  }
-@@ -78,6 +98,12 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
+@@ -78,6 +106,12 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
  
  	assert(_bulletVehicle.getNumWheels() == 4 || _bulletVehicle.getNumWheels() == 3);
  
@@ -826,7 +837,7 @@ index 417ad9d..4b875b7 100644
  	{ // Update simulation state
  		if (_internalState.isDemoed) {
  			_internalState.demoRespawnTimer = RS_MAX(_internalState.demoRespawnTimer - tickTime, 0);
-@@ -202,6 +228,10 @@ void Car::_FinishPhysicsTick(const MutatorConfig& mutatorConfig) {
+@@ -202,6 +236,10 @@ void Car::_FinishPhysicsTick(const MutatorConfig& mutatorConfig) {
  		_rigidBody.m_angularVelocity = angVel;
  	}
  
@@ -837,7 +848,7 @@ index 417ad9d..4b875b7 100644
  	_internalState.tickCountSinceUpdate++;
  }
  
-@@ -295,7 +325,10 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
+@@ -295,7 +333,10 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
  					wheelInfo.m_maxSuspensionTravelCm = (MAX_SUSPENSION_TRAVEL * UU_TO_BT) * 100; // Same for all cars (hopefully)
  					wheelInfo.m_maxSuspensionForce = FLT_MAX; // Don't think there's a limit
  					wheelInfo.m_bIsFrontWheel = front;
@@ -849,7 +860,7 @@ index 417ad9d..4b875b7 100644
  				}
  			}
  		}
-@@ -414,8 +447,8 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
+@@ -414,8 +455,8 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
  		}
  	}
  
@@ -860,8 +871,12 @@ index 417ad9d..4b875b7 100644
  
  		if (_internalState.handbrakeVal) {
  			steerAngle +=
-@@ -426,6 +459,35 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
- 		steerAngle *= controls.steer;
+@@ -423,9 +464,38 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
+ 				* _internalState.handbrakeVal;
+ 		}
+ 
+-		steerAngle *= controls.steer;
++		steerAngle *= ShapeInput(controls.steer, config.steeringSensitivity); // RL PATCH: SteeringSensitivity
  		_bulletVehicle.m_wheelInfo[0].m_steerAngle = steerAngle;
  		_bulletVehicle.m_wheelInfo[1].m_steerAngle = steerAngle;
 +	} else {
@@ -876,7 +891,7 @@ index 417ad9d..4b875b7 100644
 +				* _internalState.handbrakeVal;
 +		}
 +
-+		steerAngle *= controls.steer;
++		steerAngle *= ShapeInput(controls.steer, config.steeringSensitivity); // RL PATCH: SteeringSensitivity
 +
 +		float inner = abs(steerAngle), outer = 0;
 +		if (inner > 0) {
@@ -896,7 +911,7 @@ index 417ad9d..4b875b7 100644
  	}
  
  	{ // Update friction
-@@ -613,7 +675,12 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -613,7 +683,12 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  		if (!_internalState.flipRelTorque.IsZero()) {
  			// Flip cancel check
  			float pitchScale = 1;
@@ -910,7 +925,47 @@ index 417ad9d..4b875b7 100644
  				if (RS_SGN(relDodgeTorque.y()) == RS_SGN(controls.pitch)) {
  
  #ifndef RS_MAX_SPEED
-@@ -736,7 +803,21 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
+@@ -643,8 +718,14 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+ 
+ 		float pitchTorqueScale = 1;
+ 
++		// RL PATCH: air control uses shaped inputs (AirControlSensitivity); the air pitch safety zeroes pitch here only
++		float
++			airPitch = controls.airPitchSafety ? 0 : ShapeInput(controls.pitch, config.airControlSensitivity),
++			airYaw = ShapeInput(controls.yaw, config.airControlSensitivity),
++			airRoll = ShapeInput(controls.roll, config.airControlSensitivity);
++
+ 		btVector3 torque;
+-		if (controls.pitch || controls.yaw || controls.roll) {
++		if (airPitch || airYaw || airRoll) {
+ 
+ 			if (_internalState.isFlipping) {
+ 				pitchTorqueScale = 0;
+@@ -655,9 +736,9 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+ 			}
+ 
+ 			// TODO: Use actual dot product operator functions (?)
+-			torque = (controls.pitch * dirPitch_right * pitchTorqueScale * CAR_AIR_CONTROL_TORQUE.x) +
+-				(controls.yaw * dirYaw_up * CAR_AIR_CONTROL_TORQUE.y) +
+-				(controls.roll * dirRoll_forward * CAR_AIR_CONTROL_TORQUE.z);
++			torque = (airPitch * dirPitch_right * pitchTorqueScale * CAR_AIR_CONTROL_TORQUE.x) +
++				(airYaw * dirYaw_up * CAR_AIR_CONTROL_TORQUE.y) +
++				(airRoll * dirRoll_forward * CAR_AIR_CONTROL_TORQUE.z);
+ 		} else {
+ 			torque = { 0, 0, 0 };
+ 		}
+@@ -666,8 +747,8 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+ 
+ 		// TODO: Use actual dot product operator functions (?)
+ 		float
+-			dampPitch = dirPitch_right.dot(angVel) * CAR_AIR_CONTROL_DAMPING.x * (1 - abs(doAirControl ? (controls.pitch * pitchTorqueScale) : 0)),
+-			dampYaw = dirYaw_up.dot(angVel) * CAR_AIR_CONTROL_DAMPING.y * (1 - abs(doAirControl ? controls.yaw : 0)),
++			dampPitch = dirPitch_right.dot(angVel) * CAR_AIR_CONTROL_DAMPING.x * (1 - abs(doAirControl ? (airPitch * pitchTorqueScale) : 0)),
++			dampYaw = dirYaw_up.dot(angVel) * CAR_AIR_CONTROL_DAMPING.y * (1 - abs(doAirControl ? airYaw : 0)),
+ 			dampRoll = dirRoll_forward.dot(angVel) * CAR_AIR_CONTROL_DAMPING.z;
+ 
+ 		btVector3 damping =
+@@ -736,7 +817,21 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
  							dodgeDir = dodgeDir.safeNormalized();
  						}
  
@@ -933,7 +988,7 @@ index 417ad9d..4b875b7 100644
  
  						if (abs(dodgeDir.x()) < 0.1f) dodgeDir.x() = 0;
  						if (abs(dodgeDir.y()) < 0.1f) dodgeDir.y() = 0;
-@@ -785,7 +866,7 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
+@@ -785,7 +880,7 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
  		_internalState.flipTime += tickTime;
  		if (_internalState.flipTime <= FLIP_TORQUE_TIME) {
  			if (_internalState.flipTime >= FLIP_Z_DAMP_START && (_rigidBody.m_linearVelocity.z() < 0 || _internalState.flipTime < FLIP_Z_DAMP_END)) {
@@ -942,7 +997,7 @@ index 417ad9d..4b875b7 100644
  			}
  		}
  	} else if (_internalState.hasFlipped) {
-@@ -824,7 +905,13 @@ void Car::_UpdateAutoFlip(float tickTime, const MutatorConfig& mutatorConfig, bo
+@@ -824,7 +919,13 @@ void Car::_UpdateAutoFlip(float tickTime, const MutatorConfig& mutatorConfig, bo
  			_internalState.isAutoFlipping = false;
  			_internalState.autoFlipTimer = 0;
  		} else {
@@ -1001,6 +1056,53 @@ index 90bcaa8..34ab8da 100644
  	// Get the forward direction as a unit vector
  	Vec GetForwardDir() const {
  		return _internalState.rotMat.forward;
+diff --git upstream/src/Sim/Car/CarConfig/CarConfig.h engine/rocketsim/src/Sim/Car/CarConfig/CarConfig.h
+index e0011b8..0dc0e98 100644
+--- upstream/src/Sim/Car/CarConfig/CarConfig.h
++++ engine/rocketsim/src/Sim/Car/CarConfig/CarConfig.h
+@@ -35,10 +35,16 @@ struct CarConfig {
+ 
+ 	// (|yaw| + |pitch| + |roll|) will need to be >= this in order to flip
+ 	float dodgeDeadzone = 0.5f;
++
++	// RL PATCH: the player's input sensitivities, which the game applies in the car's physics
++	// (PRI_TA.SetUserCarPreferences -> VehicleSim.SteeringSensitivity, AirControl AirControlSensitivity).
++	// The input is scaled, then clamped to [-1, 1]; at 10 (the maximum) any input is full input.
++	float steeringSensitivity = 1.f;
++	float airControlSensitivity = 1.f;
+ };
+ 
+ #define CAR_CONFIG_SERIALIZATION_FIELDS(name) \
+-name.dodgeDeadzone, name.hitboxPosOffset, name.hitboxSize, \
++name.dodgeDeadzone, name.steeringSensitivity, name.airControlSensitivity, name.hitboxPosOffset, name.hitboxSize, \
+ WHEEL_PAIR_CONFIG_SERIALIZATION_FIELDS(name.frontWheels), \
+ WHEEL_PAIR_CONFIG_SERIALIZATION_FIELDS(name.backWheels) \
+ 
+diff --git upstream/src/Sim/CarControls.h engine/rocketsim/src/Sim/CarControls.h
+index b70cb95..786e494 100644
+--- upstream/src/Sim/CarControls.h
++++ engine/rocketsim/src/Sim/CarControls.h
+@@ -14,6 +14,11 @@ struct CarControls {
+ 	// Boolean action inputs
+ 	bool jump, boost, handbrake;
+ 
++	// RL PATCH: keyboard "air pitch safety" (PlayerController_TA.ApplyAirPitchSafety) is holding back
++	// nose-down pitch: air control ignores pitch, while dodges still use it (the game keeps
++	// VehicleInput.DodgeForward from before the safety zeroes VehicleInput.Pitch).
++	bool airPitchSafety;
++
+ 	// Maybe someday...
+ 	// bool useItem;
+ 
+@@ -35,6 +40,6 @@ struct CarControls {
+ #define CAR_CONTROLS_SERIALIZATION_FIELDS(name) \
+ name.throttle, name.steer, \
+ name.pitch, name.yaw, name.roll, \
+-name.boost, name.jump, name.handbrake
++name.boost, name.jump, name.handbrake, name.airPitchSafety
+ 
+ RS_NS_END
+\ No newline at end of file
 diff --git engine/rocketsim/src/Sim/Quantize/Quantize.cpp engine/rocketsim/src/Sim/Quantize/Quantize.cpp
 new file mode 100644
 index 0000000..da0a3bc

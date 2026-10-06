@@ -46,6 +46,25 @@ describe("World", () => {
     world.dispose();
   });
 
+  it("applies the player's steering sensitivity in the physics", () => {
+    const drive = (steer: number, steeringSensitivity: number) => {
+      const world = World.create(engine);
+      const id = world.addCar(0, CarBody.Octane);
+      world.resetKickoff(3);
+      world.setCarPreferences(id, { dodgeDeadzone: 0.5, steeringSensitivity, airControlSensitivity: 1 });
+      for (let i = 0; i < 120; i++) {
+        world.setControls(id, { ...NO_CONTROLS, throttle: 1, steer });
+        world.step();
+      }
+      const pos = world.car(id).pos;
+      world.dispose();
+      return pos;
+    };
+    const full = drive(1, 1);
+    expect(drive(0.5, 2)).toEqual(full); // bit-identical: 0.5 x 2 = 1
+    expect(drive(0.5, 1)).not.toEqual(full);
+  });
+
   it("reports the car's hitbox and wheels", () => {
     const world = World.create(engine);
     const id = world.addCar(1, CarBody.Octane);

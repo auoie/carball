@@ -8,10 +8,8 @@ Values and formulas: `notes/physics-values.md`. Arena: `notes/arena.md`. Binary/
 Resuming in a new session: `notes/HANDOFF.md`. Generated constants: `out/rl_physics_constants.json`.
 
 ## Next up
-1. Controls (§4): decompile the input shaping (deadzones, mouse/keyboard steering), replace the provisional
-   version in `client/`. Camera extras (§3): swivel/look, rear camera.
-2. Physics validation against replays (§7).
-3. Then netcode (§6), the native game server, and the competitive layer (§9).
+1. Physics validation against replays (§7), whenever something feels off.
+2. Netcode (§6) and the native game server, then the competitive layer (§9).
 
 ---
 
@@ -77,13 +75,15 @@ throttle curve, hitbox sizes and wheel setup, ball radius, dodge-vs-double-jump 
   - Start: `CameraState_Car_TA`, `CameraState_BallCam_TA` (natives and script); archetypes in `GameInfo_Soccar_SF.upk`.
 - [x] Extract camera values: player defaults, car-cam and ball-cam archetypes, swivel extents (`notes/camera.md`).
 - [x] Car cam, ball cam and transitions ported (`client/src/camera/rlCamera.ts`), with scenario tests
-- [ ] Not yet: swivel (right stick / mouse look), rear camera, bouncy-chassis wobble, demolished/goal cameras
+- [x] Swivel (right stick) and rear camera, with the game's toggle/hold and invert options
+- [ ] Not yet: bouncy-chassis wobble, demolished/goal cameras, proximity distance
 
 ## 4. Controls
 
-- [ ] Stick input to car input: controller deadzone (sensitivity done: `clamp(input × sens, −1, 1)`, digital at 10).
-  - Start: `PlayerInput_TA`, `PlayerController_TA.PlayerMove` (already decoded).
-- [ ] Mouse/keyboard: `UpdateMouseGroundSteer`, `UpdateMouseGroundThrottle`, `ModifiedAirRotationByMouseInput`, `ApplyAirPitchSafety` (decoded).
+- [x] Input pipeline decoded and ported (`notes/input.md`): per-axis controller deadzone (profile default 0.2),
+      air roll replacing directional roll, keyboard air pitch safety, sensitivities and dodge deadzone applied in the
+      physics like the game's PRI car preferences (engine patches 21–22).
+- [ ] Optional mouse steering (`UpdateMouseGroundSteer` etc., decoded in `notes/input.md`; off by default in the game).
 - [x] Default bindings from `TAGame/Config/DefaultInput.ini` (`client/src/input/bindings.ts`, `notes/camera.md`).
 - [x] Settings menu: rebind controls, camera settings (game's limits), deadzones and sensitivities; saved locally.
 

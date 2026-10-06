@@ -5,7 +5,7 @@
 //   engine.init([new Uint8Array(cmfBytes)]);       // arena collision meshes (out/arena/...cmf)
 //   const sim = new engine.Sim();
 //   const id = sim.addCar(0, 0);                    // team (0 blue, 1 orange), car type (0 = Octane)
-//   sim.setControls(id, 1, 0, 0, 0, 0, false, true, false);
+//   sim.setControls(id, 1, 0, 0, 0, 0, false, true, false, false);
 //   sim.step(1);
 //   const car = sim.carState(id);                   // Float32Array view, see CAR_* offsets
 //
@@ -137,13 +137,25 @@ public:
 		return CopyToJS<Int32ArrayVal>("Int32Array", _ints);
 	}
 
-	void SetControls(int id, float throttle, float steer, float pitch, float yaw, float roll, bool jump, bool boost, bool handbrake) {
+	void SetControls(int id, float throttle, float steer, float pitch, float yaw, float roll, bool jump, bool boost, bool handbrake,
+		bool airPitchSafety) {
 		Car* car = _arena->GetCar((uint32_t)id);
 		if (!car)
 			return;
 		CarControls& c = car->controls;
 		c.throttle = throttle; c.steer = steer; c.pitch = pitch; c.yaw = yaw; c.roll = roll;
 		c.jump = jump; c.boost = boost; c.handbrake = handbrake;
+		c.airPitchSafety = airPitchSafety;
+	}
+
+	// The player's control preferences, applied in the car's physics like the game's PRI car preferences
+	void SetCarPreferences(int id, float dodgeDeadzone, float steeringSensitivity, float airControlSensitivity) {
+		Car* car = _arena->GetCar((uint32_t)id);
+		if (!car)
+			return;
+		car->config.dodgeDeadzone = dodgeDeadzone;
+		car->config.steeringSensitivity = steeringSensitivity;
+		car->config.airControlSensitivity = airControlSensitivity;
 	}
 
 	void Step(int ticks) {
@@ -326,6 +338,7 @@ EMSCRIPTEN_BINDINGS(rlengine) {
 		.function("removeCar", &Sim::RemoveCar)
 		.function("carIds", &Sim::CarIds)
 		.function("setControls", &Sim::SetControls)
+		.function("setCarPreferences", &Sim::SetCarPreferences)
 		.function("step", &Sim::Step)
 		.function("resetKickoff", &Sim::ResetKickoff)
 		.function("tickCount", &Sim::TickCount)

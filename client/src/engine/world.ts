@@ -23,6 +23,15 @@ export interface CarControls {
   readonly jump: boolean;
   readonly boost: boolean;
   readonly handbrake: boolean;
+  /** Keyboard air pitch safety is holding nose-down pitch back: air control ignores pitch, dodges still use it. */
+  readonly airPitchSafety: boolean;
+}
+
+/** The player's control preferences, applied in the car's physics (the game's PRI car preferences). */
+export interface CarPreferences {
+  readonly dodgeDeadzone: number; // |pitch| + |yaw| + |roll| needed to dodge instead of double jump
+  readonly steeringSensitivity: number;
+  readonly airControlSensitivity: number;
 }
 
 export const NO_CONTROLS: CarControls = {
@@ -34,6 +43,7 @@ export const NO_CONTROLS: CarControls = {
   jump: false,
   boost: false,
   handbrake: false,
+  airPitchSafety: false,
 };
 
 export interface BodyState {
@@ -135,7 +145,11 @@ export class World {
   }
 
   setControls(id: number, c: CarControls): void {
-    this.#sim.setControls(id, c.throttle, c.steer, c.pitch, c.yaw, c.roll, c.jump, c.boost, c.handbrake);
+    this.#sim.setControls(id, c.throttle, c.steer, c.pitch, c.yaw, c.roll, c.jump, c.boost, c.handbrake, c.airPitchSafety);
+  }
+
+  setCarPreferences(id: number, p: CarPreferences): void {
+    this.#sim.setCarPreferences(id, p.dodgeDeadzone, p.steeringSensitivity, p.airControlSensitivity);
   }
 
   step(ticks = 1): void {

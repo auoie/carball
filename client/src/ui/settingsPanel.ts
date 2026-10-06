@@ -3,11 +3,12 @@
 import type { CameraSettings } from "../camera/rlCamera";
 import { ACTIONS, type Action, type GamepadInput, type KeyboardInput, inputName } from "../input/bindings";
 import { readGamepad } from "../input/devices";
-import type { ControllerSettings } from "../input/mapping";
 import {
   CAMERA_LIMITS,
   CONTROLLER_LIMITS,
+  type ControllerSettings,
   DEFAULT_SETTINGS,
+  type Options,
   type Range,
   type Settings,
   saveSettings,
@@ -27,10 +28,17 @@ const CAMERA_LABELS: Readonly<Record<keyof CameraSettings, string>> = {
 };
 
 const CONTROLLER_LABELS: Readonly<Record<keyof ControllerSettings, string>> = {
-  stickDeadzone: "Stick deadzone",
-  triggerDeadzone: "Trigger deadzone",
+  deadzone: "Controller deadzone",
+  dodgeDeadzone: "Dodge deadzone",
   steeringSensitivity: "Steering sensitivity",
   aerialSensitivity: "Aerial sensitivity",
+};
+
+const OPTION_LABELS: Readonly<Record<keyof Options, string>> = {
+  ballCamToggle: "Ball camera toggles (off: hold)",
+  rearCameraToggle: "Rear camera toggles (off: hold)",
+  invertSwivelPitch: "Invert swivel pitch",
+  airPitchSafety: "Air pitch safety (keyboard: holding W off the ground doesn't pitch until released)",
 };
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -271,13 +279,15 @@ export class SettingsPanel {
   // --- sliders ---
 
   #cameraTab(): HTMLElement {
-    return this.#sliders(
+    const sliders = this.#sliders(
       this.#settings.camera,
       CAMERA_LIMITS,
       CAMERA_LABELS,
       (camera) => { this.#update({ ...this.#settings, camera }); },
       DEFAULT_SETTINGS.camera,
     );
+    sliders.append(this.#checkboxes(["ballCamToggle", "rearCameraToggle", "invertSwivelPitch"]));
+    return sliders;
   }
 
   #controllerTab(): HTMLElement {
@@ -291,10 +301,28 @@ export class SettingsPanel {
     sliders.prepend(
       el("p", {
         className: "settings-hint",
-        textContent: "Sensitivity multiplies the input before clamping (the game's input shaping); 10 makes it digital.",
+        textContent:
+          "The deadzone applies to each stick axis on its own. Sensitivity scales the input, then clamps it; at 10 any input is full input. " +
+          "Dodge deadzone: how far the stick must be pushed for a second jump to dodge instead of double jumping.",
       }),
     );
+    sliders.append(this.#checkboxes(["airPitchSafety"]));
     return sliders;
+  }
+
+  #checkboxes(keys: readonly (keyof Options)[]): HTMLElement {
+    const box = el("div", { className: "options" });
+    for (const key of keys) {
+      const input = el("input");
+      input.type = "checkbox";
+      input.checked = this.#settings.options[key];
+      input.dataset["option"] = key;
+      input.addEventListener("change", () => {
+        this.#update({ ...this.#settings, options: { ...this.#settings.options, [key]: input.checked } });
+      });
+      box.append(el("label", { className: "option" }, [input, el("span", { textContent: OPTION_LABELS[key] })]));
+    }
+    return box;
   }
 
   #sliders<T extends object>(

@@ -40,7 +40,8 @@ E.init([new Uint8Array(await (await fetch("soccar_arena.cmf")).arrayBuffer())]);
 const sim = new E.Sim();
 const id = sim.addCar(0, 0);             // team 0 blue / 1 orange; type 0 Octane, 1 Dominus, 2 Plank, 3 Breakout, 4 Hybrid, 5 Merc
 sim.resetKickoff(seed);
-sim.setControls(id, throttle, steer, pitch, yaw, roll, jump, boost, handbrake);
+sim.setControls(id, throttle, steer, pitch, yaw, roll, jump, boost, handbrake, airPitchSafety);
+sim.setCarPreferences(id, dodgeDeadzone, steeringSensitivity, airControlSensitivity);  // player settings (0.5, 1, 1)
 sim.step(1);                             // 1 tick = 1/120 s
 const car = sim.carState(id);            // Float32Array: E.CAR_POS, CAR_VEL, CAR_ANG_VEL, CAR_ROT (fwd, right, up), CAR_BOOST, flags...
 const ball = sim.ballState();            // Float32Array: E.BALL_POS, BALL_VEL, BALL_ANG_VEL, BALL_ROT
@@ -105,6 +106,8 @@ same on native and WebAssembly.
 | 10 | Solver warm starting off (`solverMode = 0`); sphere–triangle contacts one-sided | world setup `FUN_140403cc0`; SphereTriangleDetector | `Arena.cpp`, `SphereTriangleDetector.cpp` |
 | 11 | Merged ball–world contact: averaged normal re-normalised; friction/restitution averaged instead of last-wins | `FUN_1402b2720`, `FUN_1402be240` | `btSequentialImpulseConstraintSolver.cpp` |
 | 12 | Per-tick state quantization: location to 0.01; velocity truncated to 0.01 (+0.001 away from zero); angular velocity to 0.0001 (+0.00001); smallest-three quaternion with 18 bits | `FUN_140eed9e0` → `FUN_140e45c10` → `FUN_140e3e960` | `Sim/Quantize/`, `Car` and `Ball` `_FinishPhysicsTick` |
+| 21 | Player preferences in the physics, like the game's `PRI_TA.SetUserCarPreferences`: steering and air control shape their input with the player's sensitivity (`clamp(input × s, −1, 1)`, any input is full input at 10); dodge deadzone per car (was already a config value). The dodge check and direction use the raw stick | `FUN_140396ca0`, VehicleSim `FUN_140f1e830`, AirControl `FUN_140eb3400` | `CarConfig.h`, `Car.cpp` `ShapeInput` |
+| 22 | Keyboard air pitch safety: a control flag that makes air control ignore pitch while dodges still use it (the game zeroes `VehicleInput.Pitch` after copying it into `DodgeForward`). The client decides when it is on (`PlayerController_TA.ApplyAirPitchSafety`) | `PlayerController_TA.PlayerMove` | `CarControls.h`, `Car.cpp` `_UpdateAirTorque` |
 
 Engine fixes (not game behaviour; needed for determinism across builds, snapshots and speed):
 

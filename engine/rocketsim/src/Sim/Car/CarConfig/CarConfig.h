@@ -35,10 +35,16 @@ struct CarConfig {
 
 	// (|yaw| + |pitch| + |roll|) will need to be >= this in order to flip
 	float dodgeDeadzone = 0.5f;
+
+	// RL PATCH: the player's input sensitivities, which the game applies in the car's physics
+	// (PRI_TA.SetUserCarPreferences -> VehicleSim.SteeringSensitivity, AirControl AirControlSensitivity).
+	// The input is scaled, then clamped to [-1, 1]; at 10 (the maximum) any input is full input.
+	float steeringSensitivity = 1.f;
+	float airControlSensitivity = 1.f;
 };
 
 #define CAR_CONFIG_SERIALIZATION_FIELDS(name) \
-name.dodgeDeadzone, name.hitboxPosOffset, name.hitboxSize, \
+name.dodgeDeadzone, name.steeringSensitivity, name.airControlSensitivity, name.hitboxPosOffset, name.hitboxSize, \
 WHEEL_PAIR_CONFIG_SERIALIZATION_FIELDS(name.frontWheels), \
 WHEEL_PAIR_CONFIG_SERIALIZATION_FIELDS(name.backWheels) \
 

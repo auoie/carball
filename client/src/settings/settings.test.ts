@@ -19,7 +19,8 @@ describe("settings", () => {
       ...DEFAULT_SETTINGS,
       bindings: { ...DEFAULT_BINDINGS, jump: { keyboard: { kind: "key", code: "Space" } as const, gamepad: null } },
       camera: { ...DEFAULT_SETTINGS.camera, fov: 110, distance: 260, stiffness: 0.45 },
-      controller: { ...DEFAULT_SETTINGS.controller, stickDeadzone: 0.15, aerialSensitivity: 1.4 },
+      controller: { ...DEFAULT_SETTINGS.controller, deadzone: 0.15, aerialSensitivity: 1.4 },
+      options: { ...DEFAULT_SETTINGS.options, ballCamToggle: false, invertSwivelPitch: false },
     };
     saveSettings(custom, storage);
     expect(loadSettings(storage)).toEqual(custom);
@@ -33,11 +34,24 @@ describe("settings", () => {
   });
 
   it("clamps numbers to the game's slider limits and ignores junk", () => {
-    const s = parseSettings({ camera: { fov: 400, height: "high", pitch: -99 }, controller: { stickDeadzone: -1 } });
+    const s = parseSettings({
+      camera: { fov: 400, height: "high", pitch: -99 },
+      controller: { deadzone: -1, dodgeDeadzone: 5, aerialSensitivity: 0.5 },
+      options: { airPitchSafety: "no", rearCameraToggle: true },
+    });
     expect(s.camera.fov).toBe(110);
     expect(s.camera.height).toBe(DEFAULT_SETTINGS.camera.height);
     expect(s.camera.pitch).toBe(-15);
-    expect(s.controller.stickDeadzone).toBe(0);
+    expect(s.controller.deadzone).toBe(0);
+    expect(s.controller.dodgeDeadzone).toBe(1);
+    expect(s.controller.aerialSensitivity).toBe(1);
+    expect(s.options.airPitchSafety).toBe(true);
+    expect(s.options.rearCameraToggle).toBe(true);
+  });
+
+  it("defaults are the game's profile defaults", () => {
+    expect(DEFAULT_SETTINGS.controller).toEqual({ deadzone: 0.2, dodgeDeadzone: 0.8, steeringSensitivity: 1, aerialSensitivity: 1 });
+    expect(DEFAULT_SETTINGS.options).toEqual({ ballCamToggle: true, rearCameraToggle: false, invertSwivelPitch: true, airPitchSafety: true });
   });
 
   it("keeps defaults for missing bindings, clears invalid ones", () => {

@@ -50,9 +50,9 @@ The car-cam values above, plus:
 
 Demolished camera: InitialFOV 120, FOVBlendTime 1.0, MaxZoomInFOV 15, MaxFOVBlendDistance 5000, Distance 400.
 
-## Input (`TAGame/Config/DefaultInput.ini`, plain text in the install)
-- `PlayerInput_TA`: GamepadDeadzone 0.3, GamepadFreeLookDeadzone 0.3, triggers 0.1 (`GamepadDeadzones`),
-  MouseSensitivity 10, KeyboardAxisBlendTime 0.
+## Input (`TAGame/Config/DefaultInput.ini`, plain text in the install; full pipeline in `notes/input.md`)
+- `PlayerInput_TA`: GamepadDeadzone 0.3 (replaced by the profile's controller deadzone, default 0.2),
+  GamepadFreeLookDeadzone 0.3, triggers 0.1 (`GamepadDeadzones`), MouseSensitivity 10, KeyboardAxisBlendTime 0.
 - Default bindings: W/S throttle + pitch, A/D steer + yaw, Q/E roll, LMB boost, RMB jump, Left Shift powerslide +
   air roll, Space ball cam, MMB rear camera, Backspace reset training, 1/2/3 freeplay ball helpers.
   Gamepad: RT/LT, left stick, A jump, B boost, X powerslide, Y ball cam, RS click rear camera, RB reset,
@@ -107,5 +107,23 @@ linear.
 `Vehicle_TA.GetGroundNormal` (native `FUN_140ef00c0`) is the normalized average contact normal of the wheels in
 contact, or (0,0,1). `Camera_TA.ClipToField` keeps the camera ≥ ground + 10.
 
-**Not ported yet**: swivel (look input; extents above, SwivelSpeed, die rate 2), rear camera, proximity distance
-(off unless a proximity target class is set), bouncy chassis, demolished/replay/goal cameras.
+**Swivel** (`Camera_TA.PostProcessCameraState`, after the blend offset; states with `bCanSwivel`, car and ball cam):
+```
+UpdateSwivel(dt):                       // dt / TimeDilation
+  InputPitch, InputYaw = RangeByteToFloatSigned(CameraSettings.CameraPitch / CameraYaw)   // notes/input.md
+  PitchSpeed = YawSpeed = ProfileSettings.SwivelSpeed
+  Desired = GetDesiredSwivel(InputPitch, InputYaw):
+    Alpha = clamp(|car velocity| / SwivelFastSpeed, 0, 1); Extent = int(Lerp(Slow, Fast, Alpha)) per field
+    Yaw = int(InputYaw * Extent.YawMax)
+    Pitch = int(InputPitch > 0 ? InputPitch * Extent.PitchMax : |InputPitch| * Extent.PitchMin)
+  if |Desired.Pitch| < |Current.Pitch|: PitchSpeed *= SwivelDieRate      (same for yaw)
+  Current.Pitch = int(Lerp(Current.Pitch, Desired.Pitch, min(PitchSpeed * dt, 1)))  (same for yaw)
+ApplySwivel: OutPOV.Rotation += CurrentSwivel
+ApplyRearCameraView: if bUsingBehindView and state.bAllowRearCamera: OutPOV.Rotation.Yaw += 32768
+```
+With the rear camera on, the ball cam's overrides (`UpdateAirAndGroundCamera`, `UpdateFocusWorldOffset`, the focus
+max distance) fall back to the car cam's, and switching it on or off makes the ball cam start over (`bWasReverseCam`).
+The ball cam keeps no car roll either way.
+
+**Not ported yet**: proximity distance (off unless a proximity target class is set), bouncy chassis,
+demolished/replay/goal cameras.

@@ -9,12 +9,28 @@ import {
   type GamepadInput,
   type KeyboardInput,
 } from "../input/bindings";
-import type { ControllerSettings } from "../input/mapping";
+
+/** The game's Controls menu (ProfileGamepadSave_TA). The engine applies everything but the deadzone. */
+export interface ControllerSettings {
+  readonly deadzone: number; // controller deadzone, per stick axis (PlayerInput_X.GamepadDeadzone)
+  readonly dodgeDeadzone: number; // DodgeInputThreshold
+  readonly steeringSensitivity: number;
+  readonly aerialSensitivity: number; // AirControlSensitivity
+}
+
+/** On/off options (ProfileCameraSave_TA, ProfilePCSave_TA). */
+export interface Options {
+  readonly ballCamToggle: boolean; // bToggleSecondaryCamera: press toggles (else hold)
+  readonly rearCameraToggle: boolean; // bToggleRearCamera
+  readonly invertSwivelPitch: boolean; // bInvertSwivelPitch
+  readonly airPitchSafety: boolean; // bAirPitchSafetyEnabled (keyboard and mouse)
+}
 
 export interface Settings {
   readonly bindings: Bindings;
   readonly camera: CameraSettings;
   readonly controller: ControllerSettings;
+  readonly options: Options;
 }
 
 export interface Range {
@@ -34,25 +50,35 @@ export const CAMERA_LIMITS: Readonly<Record<keyof CameraSettings, Range>> = {
   transitionSpeed: { min: 1, max: 2, step: 0.1 },
 };
 
+/** Slider limits from the game (GFxData_Settings_TA *Limits). */
 export const CONTROLLER_LIMITS: Readonly<Record<keyof ControllerSettings, Range>> = {
-  stickDeadzone: { min: 0, max: 0.9, step: 0.01 },
-  triggerDeadzone: { min: 0, max: 0.9, step: 0.01 },
-  steeringSensitivity: { min: 0.1, max: 10, step: 0.1 },
-  aerialSensitivity: { min: 0.1, max: 10, step: 0.1 },
+  deadzone: { min: 0, max: 0.75, step: 0.01 },
+  dodgeDeadzone: { min: 0.1, max: 1, step: 0.01 },
+  steeringSensitivity: { min: 1, max: 10, step: 0.01 },
+  aerialSensitivity: { min: 1, max: 10, step: 0.01 },
 };
 
-/** PlayerInput_TA deadzones from DefaultInput.ini; sensitivities default to 1. */
+/** Default__ProfileGamepadSave_TA. */
 export const DEFAULT_CONTROLLER_SETTINGS: ControllerSettings = {
-  stickDeadzone: 0.3,
-  triggerDeadzone: 0.1,
+  deadzone: 0.2,
+  dodgeDeadzone: 0.8,
   steeringSensitivity: 1,
   aerialSensitivity: 1,
+};
+
+/** Default__ProfileCameraSave_TA, Default__ProfilePCSave_TA. */
+export const DEFAULT_OPTIONS: Options = {
+  ballCamToggle: true,
+  rearCameraToggle: false,
+  invertSwivelPitch: true,
+  airPitchSafety: true,
 };
 
 export const DEFAULT_SETTINGS: Settings = {
   bindings: DEFAULT_BINDINGS,
   camera: DEFAULT_CAMERA_SETTINGS,
   controller: DEFAULT_CONTROLLER_SETTINGS,
+  options: DEFAULT_OPTIONS,
 };
 
 const STORAGE_KEY = "rl-clone.settings.v1";
@@ -70,6 +96,16 @@ function readNumbers<T extends object>(v: unknown, defaults: T, limits: Readonly
   const out = { ...defaults };
   for (const k of Object.keys(limits) as (keyof T & string)[]) {
     out[k] = readNumber(src[k], defaults[k] as number, limits[k]) as T[keyof T & string];
+  }
+  return out;
+}
+
+function readBooleans<T extends object>(v: unknown, defaults: T): T {
+  const src = isRecord(v) ? v : {};
+  const out = { ...defaults };
+  for (const k of Object.keys(defaults) as (keyof T & string)[]) {
+    const value = src[k];
+    if (typeof value === "boolean") out[k] = value as T[keyof T & string];
   }
   return out;
 }
@@ -119,6 +155,7 @@ export function parseSettings(v: unknown): Settings {
     bindings: readBindings(src["bindings"]),
     camera: readNumbers(src["camera"], DEFAULT_CAMERA_SETTINGS, CAMERA_LIMITS),
     controller: readNumbers(src["controller"], DEFAULT_CONTROLLER_SETTINGS, CONTROLLER_LIMITS),
+    options: readBooleans(src["options"], DEFAULT_OPTIONS),
   };
 }
 
