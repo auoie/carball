@@ -37,10 +37,9 @@ async fn main() -> anyhow::Result<()> {
     let (to_game, messages) = tokio::sync::mpsc::unbounded_channel();
     std::thread::Builder::new().name("game".into()).spawn(move || game_loop::run(messages))?;
     tokio::spawn(net::serve_info(args.info_port, args.port, cert_hash));
-    println!(
-        "rl-server: WebTransport https://localhost:{}/play, dev info http://localhost:{}/info",
-        args.port, args.info_port
-    );
+    println!("rl-server: game on UDP port {} (WebTransport), dev info on http://localhost:{}/info", args.port, args.info_port);
+    let query = if args.info_port == 4434 { "server".to_string() } else { format!("server=localhost:{}", args.info_port) };
+    println!("To play: run the web client (cd client && npm run dev) and open http://localhost:5173/?{query}");
     net::accept_loop(server, to_game).await;
     Ok(())
 }

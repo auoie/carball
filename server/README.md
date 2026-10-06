@@ -10,8 +10,9 @@ cd server
 cargo run --release                    # WebTransport on :4433, dev info on http://localhost:4434/info
 cargo run --release -- --port 4433 --info-port 4434 --meshes ../out/arena/collision_meshes
 ```
-Then open the client with `?server` (this host, info port 4434) or `?server=host:infoPort`, e.g.
-`http://localhost:5173/?server`. The build compiles the engine with CMake (`build.rs`).
+The server has no web page of its own: the game connects to it over UDP. To play, also run the web client
+(`cd client && npm run dev`) and open `http://localhost:5173/?server` (or `?server=host:infoPort` for another
+machine or info port). The build compiles the engine with CMake (`build.rs`).
 
 Development identity: a self-signed certificate (valid 14 days, the WebTransport limit for certificate hashes) made at
 start-up. The info endpoint publishes its SHA-256 so the browser can connect with `serverCertificateHashes`. A public
