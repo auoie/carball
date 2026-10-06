@@ -239,7 +239,8 @@ RocketSim uses 91.25 too (rest Z 93.15, see "Ball vs world contact").
 k = AirTorqueScalar(1000) * 2π/65536
 torque  = (-pitch*AirTorque.Pitch(130))*Right + (yaw*AirTorque.Yaw(95))*Up + (-roll*AirTorque.Roll(400))*Fwd   [× k, angular accel]
 damping = -( (1-|pitch|)*Dot(ω,Right)*30*Right + (1-|yaw|)*Dot(ω,Up)*20*Up + Dot(ω,Fwd)*50*Fwd ) × AirDampingScalar(1000)*2π/65536
-air throttle = ThrottleForce(12000) * Fwd * (boosting ? 1 : throttle)                                  [force]
+air throttle = ThrottleForce(12000) * Fwd * (BoostComponent.bActive ? 1 : throttle)                    [force]
+// stock RocketSim added throttle × 66.67 on top of its air boost (which already includes the 66.67): engine patch 27
 ```
 
 ### Input shaping (`FUN_140396ca0`)

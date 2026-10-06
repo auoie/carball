@@ -177,6 +177,12 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
 	_bulletVehicle.updateVehicleSecond(tickTime);
 
 	_UpdateBoost(tickTime, mutatorConfig, forwardSpeed_UU);
+
+	// RL PATCH: the game's air throttle (AirControl ApplyForces FUN_140eb3400) is ThrottleForce x (boost active ? 1 :
+	// throttle). BOOST_ACCEL_AIR already includes that full air throttle (991.67 + 66.67), so nothing is added while
+	// boosting; stock RocketSim added throttle x 66.67 on top (boost + throttle in the air was 6% too strong).
+	if (numWheelsInContact < 3 && !_internalState.isBoosting && controls.throttle != 0)
+		_rigidBody.applyCentralForce(GetForwardDir() * controls.throttle * RLConst::THROTTLE_AIR_ACCEL * UU_TO_BT * RLConst::CAR_MASS_BT);
 }
 
 void Car::_PostTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig& mutatorConfig) {
@@ -766,8 +772,7 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
 		_rigidBody.applyTorque(_rigidBody.m_invInertiaTensorWorld.inverse() * (torque - damping) * CAR_TORQUE_SCALE);
 	}
 
-	if (controls.throttle != 0)
-		_rigidBody.applyCentralForce(GetForwardDir() * controls.throttle * THROTTLE_AIR_ACCEL * UU_TO_BT * CAR_MASS_BT);
+	// (air throttle: applied after the boost update, see _PreTickUpdate)
 }
 
 void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorConfig, bool jumpPressed, float forwardSpeed_UU) {

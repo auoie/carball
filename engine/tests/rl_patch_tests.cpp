@@ -194,6 +194,26 @@ static void TestAirPitchSafety(Arena* arena, Car* car) {
 		"front flip changed by the safety ((%.3f, %.3f) vs (%.3f, %.3f))", safe.x, safe.y, plain.x, plain.y);
 }
 
+static void TestAirThrottleWhileBoosting(Arena* arena, Car* car) {
+	puts("air throttle: full while boosting whatever the throttle (boost + air throttle = 1058.33 uu/s^2)");
+	auto accel = [&](float throttle, bool boost) {
+		CarState s = CarAt({ 0, 0, 1500 }, { 1, 0, 0 }, { 0, 0, 1 });
+		s.boost = 100;
+		car->SetState(s);
+		car->controls = CarControls();
+		car->controls.throttle = throttle;
+		car->controls.boost = boost;
+		arena->Step(10);
+		float v0 = car->GetState().vel.x;
+		arena->Step(60);
+		return (car->GetState().vel.x - v0) / 0.5f;
+	};
+	float full = accel(1, true), none = accel(0, true), back = accel(-1, true), coast = accel(1, false);
+	CHECK(Near(full, 3175.f / 3, 2) && Near(none, 3175.f / 3, 2) && Near(back, 3175.f / 3, 2),
+		"boosting: throttle 1 / 0 / -1 gave %.2f / %.2f / %.2f, expected 1058.33", full, none, back);
+	CHECK(Near(coast, 200.f / 3, 1), "air throttle without boost %.2f, expected 66.67", coast);
+}
+
 static void TestAutoFlip(Arena* arena, Car* car) {
 	puts("auto-flip: angular velocity jumps to the 5.5 rad/s cap");
 	CarState s;
@@ -376,6 +396,7 @@ int main(int argc, char** argv) {
 	TestSensitivity(arena, car);
 	TestDodgeDeadzone(arena, car);
 	TestAirPitchSafety(arena, car);
+	TestAirThrottleWhileBoosting(arena, car);
 	TestAutoFlip(arena, car);
 	TestAckermann(arena, car);
 	TestSuspensionScale(arena);

@@ -160,8 +160,10 @@ Physics values and the RocketSim comparison: `notes/physics-values.md`.
 holds 16 identical dispatcher stubs there), and single-byte natives start at `0x80`. Stock UE3 uses `0x60–0x6F` and `0x70`.
 Example: `0x71 0x14` = native 276 `>>` (vector by rotator). Unknown expression tokens still seen: `0x52`, `0x5b`.
 **Struct literals:** token `0x54` is an inline struct initializer: statements filling a temporary until `0x16`,
-then the temporary as the value. Array op `0x57` sub-op `0x07` is `AddItem` and carries a u16 skip. With these,
-4273 of 17250 TAGame functions still fail to decode (was 4573); most failures are tokens `0x00` (in context),
+then the temporary as the value. Array op `0x57` sub-op `0x07` is `AddItem` and carries a u16 skip. Token `0x5b` is a
+flag byte plus an expression (foreach items, out arguments). Array op `0x57` sub-ops: `0x00` element (flag byte,
+index, array), `0x07` AddItem / `0x08` RemoveItem / `0x09` InsertItem (each with a u16 skip), `0x0a` foreach (item,
+index or `0x48`, u16 end). With these, 2530 of 17250 TAGame functions still fail to decode (was 4573); most failures are tokens `0x00` (in context),
 `0x5b`, `0x52` (looks like delegate add: `52 <context to delegate property> <0x49 function name>`), `0x51`.
  Token handlers were identified from the
 GNatives static registrations (`scripts/dump_tokens.py` → `out/gnatives.csv`) and by reading each

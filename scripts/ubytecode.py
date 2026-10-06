@@ -216,6 +216,7 @@ class Disasm:
             0x5E: lambda: self.expr(),                                 # passthrough (clears None-check flag)
             0x57: lambda: self._arrayop(),                             # RL: dynamic-array op family (sub-op byte)
             0x54: lambda: self._structlit(),                           # RL: inline struct literal (statements, then value)
+            0x5B: lambda: (self.u8(), self.expr())[1],                 # RL: flag byte + expression (foreach items, out args)
         }.get(t)
         if h is None:
             raise ValueError(f"unknown token 0x{t:02x}")
@@ -316,14 +317,23 @@ class Disasm:
     # RL 0x57 sub-ops (from the 64-entry table filled by FUN_140367990): dynamic-array operations.
     # 0x01 = Length; 0x0b-0x0f and 0x20-0x33 carry a uint16 skip after the array expression.
     ARRAY_SUBOPS = {0x01: "Length", 0x02: "Insert", 0x03: "Remove", 0x04: "op04", 0x05: "op05",
-                    0x06: "Add", 0x07: "AddItem", 0x08: "op08", 0x09: "op09", 0x0a: "op0a"}
+                    0x06: "Add", 0x07: "AddItem", 0x08: "RemoveItem", 0x09: "InsertItem", 0x0a: "op0a"}
 
     def _arrayop(self):
         sub = self.u8()
+        if sub == 0x00:  # element: flag byte, index, then the array
+            self.u8()
+            index = self.expr()
+            return f"{self.expr()}[{index}]"
         arr = self.expr()
         if sub == 0x01:
             return f"{arr}.Length"
-        if sub == 0x07 or 0x0b <= sub <= 0x0f or 0x20 <= sub <= 0x33:  # 0x07: AddItem
+        if sub == 0x0a:  # foreach: item, index (0x48 = none), u16 end of loop
+            item = self.expr()
+            index = self.expr()
+            self.u16()
+            return f"foreach {arr}({item}{', ' + str(index) if index else ''})"
+        if 0x07 <= sub <= 0x09 or 0x0b <= sub <= 0x0f or 0x20 <= sub <= 0x33:  # 0x07 AddItem, 0x08 RemoveItem, 0x09 InsertItem
             self.u16()
         name = self.ARRAY_SUBOPS.get(sub, f"arrayop{sub:02x}")
         return f"{arr}.{name}({', '.join(self.params())})"

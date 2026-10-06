@@ -10,7 +10,7 @@ builds simulate bit-identically (the game server will be native, the clients Web
 Browser freeplay works (`client/`, TypeScript + Vite + Three.js; see `client/README.md`). The camera is the
 game's own: decompiled from UnrealScript and ported (`client/src/camera/rlCamera.ts`, algorithm in `notes/camera.md`).
 **Last state (2026-10-06):** multiplayer step 1 done: snapshot restore is exact (engine patches 23–26,
-`engine/tests/rollback.cpp`; in-place load ~5 µs). Agreed multiplayer plan: (1) exact restore ✓, (2) decode the
+`engine/tests/rollback.cpp`; in-place load ~5 µs). Step 2 done: the game's netcode is decoded (`notes/netcode.md`). Agreed multiplayer plan: (1) exact restore ✓, (2) decode the
 game's netcode (input buffer, client sim-time adjustment, remote car/ball correction), (3) native authoritative
 server + browser transport, (4) client prediction + rollback, (5) in-process network tests with scripted
 latency/jitter/loss. Then replay validation (§7) with numbers, then the competitive layer (§9). The user wants
@@ -18,7 +18,7 @@ accuracy settled by deterministic, verifiable tests, not by their perception.
 
 Read in this order: `notes/roadmap.md` (what's left) → `notes/physics-values.md` (all values, formulas,
 RocketSim comparison) → `notes/arena.md` → `notes/camera.md` → `notes/findings.md` (binary/package internals, addresses)
-→ `notes/input.md` → `engine/README.md` → `client/README.md`.
+→ `notes/input.md` → `notes/netcode.md` → `engine/README.md` → `client/README.md`.
 
 ## Locations
 | What | Where |
