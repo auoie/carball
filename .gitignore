@@ -44,3 +44,8 @@ engine/rocketsim/build/
 
 # JavaScript dependencies (web client)
 node_modules/
+
+# web client build and test output
+client/dist/
+client/test-results/
+client/playwright-report/

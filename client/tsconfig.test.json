@@ -1,0 +1,9 @@
+{
+  // Unit and integration tests (Vitest, Node): app settings plus Node types.
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "types": ["vite/client", "node"]
+  },
+  "include": ["src"],
+  "exclude": []
+}

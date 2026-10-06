@@ -1,0 +1,169 @@
+:root {
+  --blue: #3d8bff;
+  --orange: #ff8a1f;
+  --text: #f2f4f8;
+  --panel: rgba(10, 14, 22, 0.72);
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #0d1117;
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  user-select: none;
+}
+
+#game {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+}
+
+#loading {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 1.4rem;
+  background: #0d1117;
+}
+
+#hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+#score {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 4px;
+}
+
+.team {
+  min-width: 64px;
+  padding: 6px 12px;
+  text-align: center;
+  font-size: 1.8rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  border-radius: 6px;
+}
+
+.team.blue {
+  background: var(--blue);
+}
+
+.team.orange {
+  background: var(--orange);
+}
+
+#message {
+  position: absolute;
+  top: 30%;
+  width: 100%;
+  text-align: center;
+  font-size: 4rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+}
+
+#boost {
+  position: absolute;
+  right: 32px;
+  bottom: 32px;
+  width: 140px;
+  height: 140px;
+  display: grid;
+  place-items: center;
+}
+
+#boost svg {
+  position: absolute;
+  inset: 0;
+  transform: rotate(-90deg);
+}
+
+#boost circle {
+  fill: none;
+  stroke-width: 10;
+}
+
+#boost .track {
+  stroke: rgba(255, 255, 255, 0.15);
+}
+
+#boost-ring {
+  stroke: #ffb02e;
+  stroke-linecap: round;
+}
+
+#boost-value {
+  font-size: 2.6rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+#info {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  display: flex;
+  gap: 16px;
+  padding: 6px 10px;
+  background: var(--panel);
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
+
+#speed.supersonic {
+  color: #ffd166;
+}
+
+#hint {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  padding: 4px 8px;
+  background: var(--panel);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  opacity: 0.8;
+}
+
+#help {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 16px 24px;
+  background: var(--panel);
+  border-radius: 10px;
+}
+
+#help h2 {
+  margin: 0 0 8px;
+}
+
+#help td,
+#help th {
+  padding: 3px 12px 3px 0;
+  text-align: left;
+}
+
+[hidden] {
+  display: none !important;
+}

@@ -30,7 +30,9 @@ The arena mesh comes from `scripts/arena_gen.py` (`out/arena/`). Native tests fi
 the WebAssembly test programs embed it at `/collision_meshes`.
 
 ## JavaScript module (`engine/build-wasm/rlengine.mjs` + `rlengine.wasm`, ~620 KB)
-Bindings: `wasm/bindings.cpp` (embind). ES module; works in browsers, workers and Node.
+Bindings: `wasm/bindings.cpp` (embind). ES modules: `rlengine.mjs` (browsers, workers and Node; used by tests)
+and `rlengine_web.mjs` (browser-only; bundled by the client). Emscripten also generates TypeScript types from
+the bindings (`rlengine*.d.mts`; typed arrays via `EMSCRIPTEN_DECLARE_VAL_TYPE`), which the client type-checks against.
 ```js
 import createEngine from "./rlengine.mjs";
 const E = await createEngine();
@@ -42,6 +44,7 @@ sim.setControls(id, throttle, steer, pitch, yaw, roll, jump, boost, handbrake);
 sim.step(1);                             // 1 tick = 1/120 s
 const car = sim.carState(id);            // Float32Array: E.CAR_POS, CAR_VEL, CAR_ANG_VEL, CAR_ROT (fwd, right, up), CAR_BOOST, flags...
 const ball = sim.ballState();            // Float32Array: E.BALL_POS, BALL_VEL, BALL_ANG_VEL, BALL_ROT
+const cfg = sim.carConfig(id);           // Float32Array: E.CFG_HITBOX_SIZE, CFG_HITBOX_OFFSET, wheel offsets/radii/rest
 const pads = sim.boostPads();            // 34 x E.PAD_SIZE: position, isBig, isActive, cooldown
 const events = sim.takeEvents();         // Int32Array of [type, a, b]: EVENT_GOAL (team), EVENT_BUMP / EVENT_DEMO (attacker, victim)
 const snapshot = sim.saveState();        // Uint8Array (~1.7 KB for 2 cars); sim.loadState(snapshot)

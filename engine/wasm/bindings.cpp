@@ -18,6 +18,13 @@
 using namespace RocketSim;
 using emscripten::val;
 
+// Typed JS values, so the generated rlengine.d.ts has real types instead of `any`
+EMSCRIPTEN_DECLARE_VAL_TYPE(Float32ArrayVal);
+EMSCRIPTEN_DECLARE_VAL_TYPE(Int32ArrayVal);
+EMSCRIPTEN_DECLARE_VAL_TYPE(Uint8ArrayVal);
+EMSCRIPTEN_DECLARE_VAL_TYPE(NumberArrayVal); // ArrayLike<number>
+EMSCRIPTEN_DECLARE_VAL_TYPE(ByteArrayListVal); // Uint8Array[]
+
 namespace Layout {
 	// Ball: position, velocity, angular velocity, rotation (forward, right, up)
 	constexpr int BALL_POS = 0, BALL_VEL = 3, BALL_ANG_VEL = 6, BALL_ROT = 9, BALL_SIZE = 18;
@@ -34,6 +41,12 @@ namespace Layout {
 	// Boost pad: position, isBig, isActive, cooldown
 	constexpr int PAD_POS = 0, PAD_BIG = 3, PAD_ACTIVE = 4, PAD_COOLDOWN = 5, PAD_SIZE = 6;
 
+	// Car configuration (carConfig): hitbox and wheels in the car's local frame (x forward, y right, z up).
+	// Wheel offsets are the right-hand wheels; the left ones mirror y.
+	constexpr int CFG_HITBOX_SIZE = 0, CFG_HITBOX_OFFSET = 3,
+		CFG_FRONT_WHEEL_OFFSET = 6, CFG_FRONT_WHEEL_RADIUS = 9, CFG_FRONT_SUSPENSION_REST = 10,
+		CFG_BACK_WHEEL_OFFSET = 11, CFG_BACK_WHEEL_RADIUS = 14, CFG_BACK_SUSPENSION_REST = 15, CFG_SIZE = 16;
+
 	// Events from the last step() calls: [type, a, b] per event
 	constexpr int EVENT_GOAL = 0 /* a = scoring team */, EVENT_BUMP = 1 /* a = bumper id, b = victim id */,
 		EVENT_DEMO = 2 /* a = attacker id, b = victim id */;
@@ -47,7 +60,7 @@ static const CarConfig* CarConfigByIndex(int index) {
 	return (index >= 0 && index < 7) ? configs[index] : configs[0];
 }
 
-static void InitMeshes(val meshes) {
+static void InitMeshes(ByteArrayListVal meshes) {
 	std::vector<RocketSim::FileData> files;
 	int count = meshes["length"].as<int>();
 	for (int i = 0; i < count; i++) {
@@ -57,11 +70,11 @@ static void InitMeshes(val meshes) {
 	RocketSim::InitFromMem({ { GameMode::SOCCAR, files } }, true);
 }
 
-template <typename T>
-static val CopyToJS(const char* arrayType, const std::vector<T>& data) {
+template <typename Result, typename T>
+static Result CopyToJS(const char* arrayType, const std::vector<T>& data) {
 	val arr = val::global(arrayType).new_(data.size());
 	arr.call<void>("set", val(emscripten::typed_memory_view(data.size(), data.data())));
-	return arr;
+	return Result(arr);
 }
 
 static void WriteVec(float* out, Vec v) {
@@ -72,11 +85,11 @@ static void WriteRot(float* out, const RotMat& r) {
 	WriteVec(out, r.forward); WriteVec(out + 3, r.right); WriteVec(out + 6, r.up);
 }
 
-static Vec ReadVec(const val& arr, int offset) {
+static Vec ReadVec(const NumberArrayVal& arr, int offset) {
 	return Vec(arr[offset].as<float>(), arr[offset + 1].as<float>(), arr[offset + 2].as<float>());
 }
 
-static RotMat ReadRot(const val& arr, int offset) {
+static RotMat ReadRot(const NumberArrayVal& arr, int offset) {
 	return RotMat(ReadVec(arr, offset), ReadVec(arr, offset + 3), ReadVec(arr, offset + 6));
 }
 
@@ -95,12 +108,12 @@ public:
 
 	bool RemoveCar(int id) { return _arena->RemoveCar((uint32_t)id); }
 
-	val CarIds() {
+	Int32ArrayVal CarIds() {
 		_ints.clear();
 		for (Car* car : _arena->GetCars())
 			_ints.push_back((int)car->id);
 		std::sort(_ints.begin(), _ints.end());
-		return CopyToJS("Int32Array", _ints);
+		return CopyToJS<Int32ArrayVal>("Int32Array", _ints);
 	}
 
 	void SetControls(int id, float throttle, float steer, float pitch, float yaw, float roll, bool jump, bool boost, bool handbrake) {
@@ -130,17 +143,17 @@ public:
 
 	bool IsBallScored() const { return _arena->IsBallScored(); }
 
-	val BallState() {
+	Float32ArrayVal BallState() {
 		RocketSim::BallState s = _arena->ball->GetState();
 		_floats.assign(Layout::BALL_SIZE, 0);
 		WriteVec(&_floats[Layout::BALL_POS], s.pos);
 		WriteVec(&_floats[Layout::BALL_VEL], s.vel);
 		WriteVec(&_floats[Layout::BALL_ANG_VEL], s.angVel);
 		WriteRot(&_floats[Layout::BALL_ROT], s.rotMat);
-		return CopyToJS("Float32Array", _floats);
+		return CopyToJS<Float32ArrayVal>("Float32Array", _floats);
 	}
 
-	void SetBallState(val arr) {
+	void SetBallState(NumberArrayVal arr) {
 		RocketSim::BallState s;
 		s.pos = ReadVec(arr, Layout::BALL_POS);
 		s.vel = ReadVec(arr, Layout::BALL_VEL);
@@ -149,7 +162,7 @@ public:
 		_arena->ball->SetState(s);
 	}
 
-	val CarState(int id) {
+	Float32ArrayVal CarState(int id) {
 		_floats.assign(Layout::CAR_SIZE, 0);
 		Car* car = _arena->GetCar((uint32_t)id);
 		if (car) {
@@ -177,11 +190,11 @@ public:
 			f[Layout::CAR_AUTO_FLIPPING] = s.isAutoFlipping;
 			f[Layout::CAR_LAST_BALL_HIT_TICK] = s.ballHitInfo.isValid ? (float)s.ballHitInfo.tickCountWhenHit : -1;
 		}
-		return CopyToJS("Float32Array", _floats);
+		return CopyToJS<Float32ArrayVal>("Float32Array", _floats);
 	}
 
 	// Sets position, velocity, angular velocity, rotation and boost; flags reset to their defaults
-	void SetCarState(int id, val arr) {
+	void SetCarState(int id, NumberArrayVal arr) {
 		Car* car = _arena->GetCar((uint32_t)id);
 		if (!car)
 			return;
@@ -194,7 +207,25 @@ public:
 		car->SetState(s);
 	}
 
-	val BoostPads() {
+	Float32ArrayVal CarConfig(int id) {
+		_floats.assign(Layout::CFG_SIZE, 0);
+		Car* car = _arena->GetCar((uint32_t)id);
+		if (car) {
+			const RocketSim::CarConfig& c = car->config;
+			float* f = _floats.data();
+			WriteVec(f + Layout::CFG_HITBOX_SIZE, c.hitboxSize);
+			WriteVec(f + Layout::CFG_HITBOX_OFFSET, c.hitboxPosOffset);
+			WriteVec(f + Layout::CFG_FRONT_WHEEL_OFFSET, c.frontWheels.connectionPointOffset);
+			f[Layout::CFG_FRONT_WHEEL_RADIUS] = c.frontWheels.wheelRadius;
+			f[Layout::CFG_FRONT_SUSPENSION_REST] = c.frontWheels.suspensionRestLength;
+			WriteVec(f + Layout::CFG_BACK_WHEEL_OFFSET, c.backWheels.connectionPointOffset);
+			f[Layout::CFG_BACK_WHEEL_RADIUS] = c.backWheels.wheelRadius;
+			f[Layout::CFG_BACK_SUSPENSION_REST] = c.backWheels.suspensionRestLength;
+		}
+		return CopyToJS<Float32ArrayVal>("Float32Array", _floats);
+	}
+
+	Float32ArrayVal BoostPads() {
 		const auto& pads = _arena->GetBoostPads();
 		_floats.assign(pads.size() * Layout::PAD_SIZE, 0);
 		for (size_t i = 0; i < pads.size(); i++) {
@@ -205,26 +236,24 @@ public:
 			f[Layout::PAD_ACTIVE] = s.isActive;
 			f[Layout::PAD_COOLDOWN] = s.cooldown;
 		}
-		return CopyToJS("Float32Array", _floats);
+		return CopyToJS<Float32ArrayVal>("Float32Array", _floats);
 	}
 
 	// Events since the last call: Int32Array of [type, a, b] triples
-	val TakeEvents() {
+	Int32ArrayVal TakeEvents() {
 		_ints = _events;
 		_events.clear();
-		return CopyToJS("Int32Array", _ints);
+		return CopyToJS<Int32ArrayVal>("Int32Array", _ints);
 	}
 
 	// Full arena state (for rollback / replays). Returns a copy.
-	val SaveState() {
+	Uint8ArrayVal SaveState() {
 		DataStreamOut out;
 		_arena->Serialize(out);
-		val bytes = val::global("Uint8Array").new_(out.data.size());
-		bytes.call<void>("set", val(emscripten::typed_memory_view(out.data.size(), out.data.data())));
-		return bytes;
+		return CopyToJS<Uint8ArrayVal>("Uint8Array", out.data);
 	}
 
-	void LoadState(val bytes) {
+	void LoadState(Uint8ArrayVal bytes) {
 		std::vector<uint8_t> data = emscripten::convertJSArrayToNumberVector<uint8_t>(bytes);
 		DataStreamIn in;
 		in.data.assign(data.begin(), data.end());
@@ -261,6 +290,12 @@ EMSCRIPTEN_BINDINGS(rlengine) {
 	using namespace emscripten;
 	using namespace Layout;
 
+	register_type<Float32ArrayVal>("Float32Array");
+	register_type<Int32ArrayVal>("Int32Array");
+	register_type<Uint8ArrayVal>("Uint8Array");
+	register_type<NumberArrayVal>("ArrayLike<number>");
+	register_type<ByteArrayListVal>("Uint8Array[]");
+
 	function("init", &InitMeshes);
 
 	class_<Sim>("Sim")
@@ -277,6 +312,7 @@ EMSCRIPTEN_BINDINGS(rlengine) {
 		.function("setBallState", &Sim::SetBallState)
 		.function("carState", &Sim::CarState)
 		.function("setCarState", &Sim::SetCarState)
+		.function("carConfig", &Sim::CarConfig)
 		.function("boostPads", &Sim::BoostPads)
 		.function("takeEvents", &Sim::TakeEvents)
 		.function("saveState", &Sim::SaveState)
@@ -291,5 +327,8 @@ EMSCRIPTEN_BINDINGS(rlengine) {
 	LAYOUT(CAR_AUTO_FLIPPING); LAYOUT(CAR_LAST_BALL_HIT_TICK); LAYOUT(CAR_SIZE);
 	LAYOUT(PAD_POS); LAYOUT(PAD_BIG); LAYOUT(PAD_ACTIVE); LAYOUT(PAD_COOLDOWN); LAYOUT(PAD_SIZE);
 	LAYOUT(EVENT_GOAL); LAYOUT(EVENT_BUMP); LAYOUT(EVENT_DEMO);
+	LAYOUT(CFG_HITBOX_SIZE); LAYOUT(CFG_HITBOX_OFFSET); LAYOUT(CFG_FRONT_WHEEL_OFFSET); LAYOUT(CFG_FRONT_WHEEL_RADIUS);
+	LAYOUT(CFG_FRONT_SUSPENSION_REST); LAYOUT(CFG_BACK_WHEEL_OFFSET); LAYOUT(CFG_BACK_WHEEL_RADIUS);
+	LAYOUT(CFG_BACK_SUSPENSION_REST); LAYOUT(CFG_SIZE);
 #undef LAYOUT
 }

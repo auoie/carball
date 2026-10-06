@@ -8,9 +8,10 @@ Values and formulas: `notes/physics-values.md`. Arena: `notes/arena.md`. Binary/
 Resuming in a new session: `notes/HANDOFF.md`. Generated constants: `out/rl_physics_constants.json`.
 
 ## Next up
-1. Offline freeplay in the browser (§8): Three.js scene with our arena, the WebAssembly engine (`engine/build-wasm/`),
-   keyboard/gamepad input. Camera (§3) and controls (§4) reverse engineered alongside.
-3. Then netcode (§6) and the competitive layer (§9).
+1. Camera (§3) and controls (§4): decompile the real car-cam / ball-cam update and the input shaping, replace the
+   provisional versions in `client/`.
+2. Physics validation against replays (§7).
+3. Then netcode (§6), the native game server, and the competitive layer (§9).
 
 ---
 
@@ -33,6 +34,7 @@ Resuming in a new session: `notes/HANDOFF.md`. Generated constants: `out/rl_phys
 - [x] Our own arena collision mesh generated and validated (`scripts/arena_gen.py`, `out/arena/`)
 - [x] RocketSim forked into `engine/` with all verified patches and tests
 - [x] WebAssembly build of the engine with a JS API (`engine/build-wasm/rlengine.mjs`)
+- [x] Browser freeplay client (`client/`)
 - [x] Replay tools: `scripts/replay_extract` (Rust/boxcars) + `scripts/replay_measure.py`
 - [x] Camera tuning values (car cam, ball cam, presets, slider limits)
 - [x] Netcode tuning values (input redundancy, jitter buffer, sim-time scaling, correction rates)
@@ -73,15 +75,15 @@ throttle curve, hitbox sizes and wheel setup, ball radius, dodge-vs-double-jump 
 
 - [ ] Decompile the car-cam and ball-cam update logic so the extracted values are used the game's way.
   - Start: `CameraState_Car_TA`, `CameraState_BallCam_TA` (natives and script); archetypes in `GameInfo_Soccar_SF.upk`.
-- [ ] Extract full camera presets: distance, height, angle (FOV, stiffness, swivel, transition already extracted).
-- [ ] Implement car cam and ball cam with the extracted smoothing rates, speed/supersonic FOV boost and ball-cam pitch.
+- [x] Extract camera values: player defaults, car-cam and ball-cam archetypes, swivel extents (`notes/camera.md`).
+- [x] Provisional car cam and ball cam using those rates (`client/src/camera/carCamera.ts`); replace with the real logic.
 
 ## 4. Controls
 
 - [ ] Stick input to car input: controller deadzone (sensitivity done: `clamp(input × sens, −1, 1)`, digital at 10).
   - Start: `PlayerInput_TA`, `PlayerController_TA.PlayerMove` (already decoded).
 - [ ] Mouse/keyboard: `UpdateMouseGroundSteer`, `UpdateMouseGroundThrottle`, `ModifiedAirRotationByMouseInput`, `ApplyAirPitchSafety` (decoded).
-- [ ] Default bindings from `TAGame/Config/DefaultInput.ini`; air roll left/right, boost, jump, handbrake.
+- [x] Default bindings from `TAGame/Config/DefaultInput.ini` (`client/src/input/bindings.ts`, `notes/camera.md`).
 
 ## 5. Gameplay rules
 
@@ -106,7 +108,8 @@ throttle curve, hitbox sizes and wheel setup, ball radius, dodge-vs-double-jump 
 - [x] Patched RocketSim builds natively with tests (`engine/`)
 - [x] Compile it to WebAssembly (Emscripten) with JS bindings (`engine/wasm/bindings.cpp`); headless Node tests pass;
       deterministic run to run (`-ffp-contract=off`); snapshots save/restore (`engine/README.md`)
-- [ ] Load our arena mesh; Three.js renderer; keyboard and gamepad input; offline freeplay.
+- [x] Offline freeplay in the browser (`client/`): Three.js, our arena, keyboard/mouse/gamepad, 120 Hz fixed step
+      with interpolation, HUD, goals and freeplay helpers. Strict TypeScript + ESLint + Vitest + Playwright.
 - [x] Native and WebAssembly builds simulate bit-identically (`engine/detmath`, `BT_DISABLE_SIMD`;
       `engine/tests/check_native_wasm.sh`), so the server can be native
 - [ ] Native authoritative game server (decision 2026-10-06) at a fixed 120 Hz with the game's per-tick state

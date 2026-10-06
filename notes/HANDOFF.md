@@ -6,10 +6,12 @@
 (`out/arena/`); RocketSim is forked into `engine/` with every verified patch and tests (`engine/README.md`).
 The engine also builds to WebAssembly with a JS API (`engine/build-wasm/rlengine.mjs`). Native and WebAssembly
 builds simulate bit-identically (the game server will be native, the clients WebAssembly).
-Next: browser freeplay (§8), then camera/controls/netcode reverse engineering (§3, §4, §6).
+Browser freeplay works (`client/`, TypeScript + Vite + Three.js; see `client/README.md`).
+Next: camera/controls reverse engineering (§3, §4), replay validation (§7), then netcode (§6).
 
 Read in this order: `notes/roadmap.md` (what's left) → `notes/physics-values.md` (all values, formulas,
-RocketSim comparison) → `notes/arena.md` → `notes/findings.md` (binary/package internals, addresses).
+RocketSim comparison) → `notes/arena.md` → `notes/camera.md` → `notes/findings.md` (binary/package internals, addresses)
+→ `engine/README.md` → `client/README.md`.
 
 ## Locations
 | What | Where |
@@ -58,6 +60,7 @@ cmake -S ../engine -B ../engine/build -DCMAKE_BUILD_TYPE=Release && make -C ../e
 PATH=/usr/lib/emscripten:$PATH emcmake cmake -S ../engine -B ../engine/build-wasm -DCMAKE_BUILD_TYPE=Release
 PATH=/usr/lib/emscripten:$PATH emmake make -C ../engine/build-wasm -j && node ../engine/wasm/test_node.mjs
 ../engine/tests/check_native_wasm.sh 600     # native == WebAssembly, bit for bit (must stay identical)
+cd ../client && npm run check && npm run build && npm run e2e   # web client: types, lint, tests, browser test
 ```
 
 ## Gotchas

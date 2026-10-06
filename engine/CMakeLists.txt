@@ -53,13 +53,22 @@ add_test(NAME rl_patch_tests COMMAND rl_patch_tests)
 add_test(NAME arena_smoketest COMMAND arena_smoketest ${ARENA_MESH_DIR})
 
 if (EMSCRIPTEN)
-	# The browser/Node module: rlengine.mjs + rlengine.wasm (see wasm/bindings.cpp)
-	add_executable(rlengine wasm/bindings.cpp)
-	target_include_directories(rlengine PRIVATE rocketsim/src)
-	target_compile_options(rlengine PRIVATE -ffp-contract=off)
-	target_link_libraries(rlengine PRIVATE RocketSim)
-	set_target_properties(rlengine PROPERTIES SUFFIX ".mjs")
-	target_link_options(rlengine PRIVATE
-		-lembind -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createEngine
-		-sENVIRONMENT=web,worker,node -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=5MB)
+	# The engine module: rlengine.mjs + rlengine.wasm (+ rlengine.d.ts), see wasm/bindings.cpp.
+	# rlengine runs in browsers and Node (tests); rlengine_web is the browser-only build the client bundles.
+	foreach(variant rlengine rlengine_web)
+		add_executable(${variant} wasm/bindings.cpp)
+		target_include_directories(${variant} PRIVATE rocketsim/src)
+		target_compile_options(${variant} PRIVATE -ffp-contract=off)
+		target_link_libraries(${variant} PRIVATE RocketSim)
+		set_target_properties(${variant} PROPERTIES SUFFIX ".mjs")
+		if (variant STREQUAL "rlengine")
+			set(environment "web,worker,node")
+		else()
+			set(environment "web,worker")
+		endif()
+		target_link_options(${variant} PRIVATE
+			-lembind -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createEngine
+			-sENVIRONMENT=${environment} -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=5MB
+			"SHELL:--emit-tsd ${variant}.d.mts")
+	endforeach()
 endif()

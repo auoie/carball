@@ -1,0 +1,5 @@
+{
+  // Editors and tools: the actual settings are in the referenced projects.
+  "files": [],
+  "references": [{ "path": "./tsconfig.app.json" }, { "path": "./tsconfig.test.json" }, { "path": "./tsconfig.node.json" }]
+}

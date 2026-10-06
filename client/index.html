@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Freeplay</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Ccircle cx=%228%22 cy=%228%22 r=%227%22 fill=%22%23e8e8e8%22/%3E%3C/svg%3E" />
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+    <div id="loading">Loading…</div>
+    <div id="hud">
+      <div id="score">
+        <span id="score-blue" class="team blue">0</span>
+        <span id="score-orange" class="team orange">0</span>
+      </div>
+      <div id="message" hidden></div>
+      <div id="boost">
+        <svg viewBox="0 0 120 120" aria-hidden="true">
+          <circle class="track" cx="60" cy="60" r="50" />
+          <circle id="boost-ring" cx="60" cy="60" r="50" />
+        </svg>
+        <span id="boost-value">0</span>
+      </div>
+      <div id="info">
+        <span id="speed">0 uu/s</span>
+        <span id="camera-mode">Car cam</span>
+        <span id="fps">0 fps</span>
+      </div>
+      <div id="help" hidden>
+        <h2>Controls</h2>
+        <table>
+          <tr><th></th><th>Keyboard &amp; mouse</th><th>Gamepad</th></tr>
+          <tr><td>Throttle / reverse</td><td>W / S</td><td>RT / LT</td></tr>
+          <tr><td>Steer / yaw</td><td>A / D</td><td>Left stick</td></tr>
+          <tr><td>Pitch (air)</td><td>W / S</td><td>Left stick</td></tr>
+          <tr><td>Air roll left / right</td><td>Q / E</td><td></td></tr>
+          <tr><td>Jump</td><td>Right mouse</td><td>A</td></tr>
+          <tr><td>Boost</td><td>Left mouse</td><td>B</td></tr>
+          <tr><td>Powerslide / air roll</td><td>Left Shift</td><td>X</td></tr>
+          <tr><td>Ball cam</td><td>Space</td><td>Y</td></tr>
+          <tr><td>Reset to kickoff</td><td>Backspace</td><td>RB</td></tr>
+          <tr><td>Ball in front / on car</td><td>1 / 2</td><td>D-pad down / up</td></tr>
+          <tr><td>This help</td><td>H</td><td></td></tr>
+        </table>
+      </div>
+      <div id="hint">H: controls</div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
