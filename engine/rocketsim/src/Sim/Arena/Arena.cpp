@@ -336,7 +336,7 @@ static bool IsWithinForwardCone(const RotMat& rot, Vec dir, float yawDeg, float 
 		float lengthSq = d.LengthSq();
 		if (lengthSq != 1)
 			d = (lengthSq >= 1e-8f) ? d * (1 / sqrtf(lengthSq)) : Vec(0, 0, 0);
-		return acosf(RS_CLAMP(forward.Dot(d), -1, 1)) * 57.29578f;
+		return det_acosf(RS_CLAMP(forward.Dot(d), -1, 1)) * 57.29578f;
 	};
 
 	if (angleWithoutAxis(rot.right) > pitchDeg)

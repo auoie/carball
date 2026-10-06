@@ -3,7 +3,6 @@
 #include "RocketSim.h"
 #include <cstdio>
 #include <cmath>
-#include <random>
 using namespace RocketSim;
 
 static Arena* arena;
@@ -32,11 +31,20 @@ int main(int argc, char** argv) {
 	printf("ball up side wall: max z %.1f, max x %.1f (wall gap %.1f)\n", maxSideZ, maxX, 4096 - maxX);
 
 	// 4. random ball barrage: nothing may escape the arena
-	std::mt19937 rng(1);
-	std::uniform_real_distribution<float> U(-1, 1);
+	// Own generator: std::uniform_real_distribution differs between standard libraries, and this test
+	// must fire the same balls natively and in WebAssembly
+	uint32_t rngState = 1;
+	auto U = [&](int) {
+		rngState ^= rngState << 13; rngState ^= rngState >> 17; rngState ^= rngState << 5;
+		return (float)(rngState >> 8) / (float)(1 << 23) - 1.f; // [-1, 1)
+	};
+	int rng = 0;
 	int escapes = 0, deep = 0; float worst = -1e9;
 	for (int n = 0; n < 500; n++) {
-		arena->ball->SetState(ballAt({U(rng) * 3000, U(rng) * 4000, 1000 + U(rng) * 800}, {U(rng) * 6000, U(rng) * 6000, U(rng) * 6000}));
+		// (drawn into locals: the evaluation order of function arguments differs between compilers)
+		Vec pos = { U(rng) * 3000, U(rng) * 4000, 1000 + U(rng) * 800 };
+		Vec vel = { U(rng) * 6000, U(rng) * 6000, U(rng) * 6000 };
+		arena->ball->SetState(ballAt(pos, vel));
 		bool esc = false, dp = false;
 		for (int i = 0; i < 1200; i++) {
 			arena->Step();

@@ -1,5 +1,8 @@
 #pragma once
 
+// RL PATCH: deterministic maths for every transcendental function used by the simulation
+#include "../../detmath/detmath.h"
+
 #define RS_VERSION "2.2.1"
 
 #include <stdint.h>

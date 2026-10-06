@@ -107,8 +107,10 @@ throttle curve, hitbox sizes and wheel setup, ball radius, dodge-vs-double-jump 
 - [x] Compile it to WebAssembly (Emscripten) with JS bindings (`engine/wasm/bindings.cpp`); headless Node tests pass;
       deterministic run to run (`-ffp-contract=off`); snapshots save/restore (`engine/README.md`)
 - [ ] Load our arena mesh; Three.js renderer; keyboard and gamepad input; offline freeplay.
-- [ ] Authoritative server running the same WASM build as the clients, fixed 120 Hz tick, with the game's per-tick
-      state quantization so client and server stay bit-identical; client prediction and rollback.
+- [x] Native and WebAssembly builds simulate bit-identically (`engine/detmath`, `BT_DISABLE_SIMD`;
+      `engine/tests/check_native_wasm.sh`), so the server can be native
+- [ ] Native authoritative game server (decision 2026-10-06) at a fixed 120 Hz with the game's per-tick state
+      quantization; WebAssembly clients with prediction and rollback
 
 ## 9. Competitive layer
 

@@ -62,8 +62,8 @@ btCollisionShape* MakeBallCollisionShape(GameMode gameMode, const MutatorConfig&
 		float curAng = 0;
 		for (int i = 0; i < Snowday::PUCK_CIRCLE_POINT_AMOUNT; i++) {
 			Vec point = Vec(
-				cosf(curAng) * mutatorConfig.ballRadius * UU_TO_BT,
-				sinf(curAng) * mutatorConfig.ballRadius * UU_TO_BT,
+				det_cosf(curAng) * mutatorConfig.ballRadius * UU_TO_BT,
+				det_sinf(curAng) * mutatorConfig.ballRadius * UU_TO_BT,
 				Snowday::PUCK_HEIGHT / 2 * UU_TO_BT
 			);
 

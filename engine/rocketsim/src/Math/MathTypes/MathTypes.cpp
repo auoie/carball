@@ -81,10 +81,10 @@ Angle Angle::FromVec(const Vec& forward) {
 	float yaw, pitch;
 
 	if (abs(forward.y) > FLT_EPSILON || abs(forward.x) > FLT_EPSILON) {
-		yaw = atan2f(forward.y, forward.x);
+		yaw = det_atan2f(forward.y, forward.x);
 
 		float dist2D = sqrtf(forward.x * forward.x + forward.y * forward.y);
-		pitch = -atan2f(-forward.z, dist2D);
+		pitch = -det_atan2f(-forward.z, dist2D);
 	} else {
 		yaw = 0;
 		if (forward.z > FLT_EPSILON) {
@@ -101,10 +101,10 @@ Angle Angle::FromVec(const Vec& forward) {
 
 Vec Angle::GetForwardVec() const {
 	float
-		cp = cosf(-pitch),
-		cy = cosf(yaw),
-		sy = sinf(yaw),
-		sp = sinf(-pitch);
+		cp = det_cosf(-pitch),
+		cy = det_cosf(yaw),
+		sy = det_sinf(yaw),
+		sp = det_sinf(-pitch);
 
 	return Vec(cp * cy, cp * sy, -sp);
 }

@@ -24,6 +24,7 @@ emmake make -C engine/build-wasm -j
 node engine/build-wasm/rl_patch_tests.js                           # same tests under Node
 node engine/build-wasm/determinism.js /collision_meshes 120
 node engine/wasm/test_node.mjs                                     # the JS module end to end
+engine/tests/check_native_wasm.sh 600                              # native and WebAssembly must match bit for bit
 ```
 The arena mesh comes from `scripts/arena_gen.py` (`out/arena/`). Native tests find it via `ARENA_MESH_DIR`;
 the WebAssembly test programs embed it at `/collision_meshes`.
@@ -49,21 +50,41 @@ sim.delete();                            // free the C++ object
 Getters return copies. Offsets are exported as constants (`E.CAR_BOOST`, ...); see the `Layout` namespace
 in `bindings.cpp`. A goal is reported once, when the ball first crosses the line.
 
-## Determinism
-- **Run to run:** native and WebAssembly builds are each deterministic (identical 120 s scripted 2v2 runs).
-- **WebAssembly everywhere:** WebAssembly float semantics are fixed, so the same `.wasm` gives identical results in
-  every browser and in Node. **The server should run the same `.wasm` as the clients.**
-- **Native vs WebAssembly differ:** glibc and musl round `sinf`/`cosf`/`atanf` differently in the last bit
-  (e.g. the kickoff rotation on tick 0). Native builds are for tests and analysis. Making them match would
-  mean compiling musl's maths functions into the native build.
-- `-ffp-contract=off` everywhere (no fused multiply-add), so compiler flags can't change results.
-- **Snapshot restore** (`saveState`/`loadState`, `Arena::Serialize`/`DeserializeNew`) replays exactly for cars that
-  aren't touching anything. With contacts it drifts slightly, because Bullet's cached contact points aren't in the
-  snapshot (measured: 0.03 uu/s on the first tick, 0.19 uu after 2 s of busy play).
+## Determinism (native server == WebAssembly clients)
+The game server runs natively; browsers run WebAssembly. Both must simulate **bit-identically**, so the
+server and every client agree exactly. Verified with `engine/tests/check_native_wasm.sh` (run after
+building both): a scripted 10-minute 2v2 gives the same hash every second and the same snapshot bytes,
+and the arena smoke test (incl. 600,000 ticks of random ball bounces) prints identical results.
+A native Debug (-O0) build matches too.
+
+What makes this work:
+- **`detmath/`**: musl's `sinf, cosf, tanf, asinf, acosf, atanf, atan2f, expf, logf, powf` (MIT, from the musl in
+  Emscripten 6.0.10), prefixed `det_` and compiled into both builds. Bullet's `btSin`/`btCos`/... and RocketSim's
+  direct calls use them. The platform libm (glibc, musl, MSVC) is never called; `nm` shows no references.
+  (`sqrtf`, `fmodf`, `fabsf`, `floorf` and `lrintf` are exact by IEEE 754 and stay as they are.)
+- **`BT_DISABLE_SIMD`** (PUBLIC define): Bullet's hand-written SSE/NEON vector code is off. It reorders
+  operations and uses approximate reciprocal square roots, so native x86/ARM would differ from WebAssembly.
+- **`-ffp-contract=off -fno-fast-math`**: no fused multiply-adds, no reassociation.
+- No platform-dependent containers or algorithms in the simulation: a fixed random engine and shuffle, cars
+  ordered by ID, and no uninitialized state.
+
+Rules for server and client code that feeds the simulation:
+- Always pass an explicit kickoff seed (`resetKickoff(seed)`). Without one, the engine seeds from the clock.
+- Don't use `std::uniform_*_distribution`, `std::shuffle` or `std::default_random_engine` for anything that
+  affects the game; they differ between standard libraries.
+- Don't rely on the evaluation order of function arguments (GCC and Clang differ). Compute values into locals first.
+- Build both sides from the same commit with these CMake settings. Anything that adds `-ffast-math` or
+  `-march=native`-style FMA contraction breaks determinism.
+
+**Snapshot restore** (`saveState`/`loadState`, `Arena::Serialize`/`DeserializeNew`) replays exactly for cars
+that aren't touching anything. With contacts it drifts slightly, because Bullet's cached contact points
+aren't in the snapshot (measured: 0.03 uu/s on the first tick, 0.19 uu after 2 s of busy play). This is the
+same on native and WebAssembly.
 
 ## Performance
 - **Arena creation and first tick:** ~1 ms each (they were 260 ms and 520 ms with the whole-arena mesh before the broadphase fix).
-- **Per tick in WebAssembly** (Node 26): ~15–50 µs for 2 cars + ball, including JS-side state reads.
+- **Per tick, 2v2 + ball:** native ~13 µs, WebAssembly (Node 26) ~15 µs (scripted 20-minute match, 144,000 ticks).
+  At 120 Hz one core could step several hundred 2v2 matches in real time, so physics is a small part of server cost.
 - **First tick after loading the module:** a one-off ~0.7 s while V8 compiles the module. Warm up during loading.
 
 ## Patches
@@ -82,7 +103,7 @@ in `bindings.cpp`. A goal is reported once, when the ball first crosses the line
 | 11 | Merged ball–world contact: averaged normal re-normalised; friction/restitution averaged instead of last-wins | `FUN_1402b2720`, `FUN_1402be240` | `btSequentialImpulseConstraintSolver.cpp` |
 | 12 | Per-tick state quantization: location to 0.01; velocity truncated to 0.01 (+0.001 away from zero); angular velocity to 0.0001 (+0.00001); smallest-three quaternion with 18 bits | `FUN_140eed9e0` → `FUN_140e45c10` → `FUN_140e3e960` | `Sim/Quantize/`, `Car` and `Ball` `_FinishPhysicsTick` |
 
-Engine fixes (not game behaviour; needed for determinism, snapshots and speed):
+Engine fixes (not game behaviour; needed for determinism across builds, snapshots and speed):
 
 | # | Change | Where |
 |---|---|---|
@@ -91,6 +112,9 @@ Engine fixes (not game behaviour; needed for determinism, snapshots and speed):
 | 15 | `DeserializeNew` / `Clone` keep car IDs correctly (stock lost a car when the saved order wasn't ascending, and `Clone` broke the ID map) | `Arena.cpp` |
 | 16 | Snapshots keep everything that affects the next tick: boost (was reset to the spawn amount on load), `isSupersonic`, and the wheel values carried between ticks (steer angle, drive/brake force, friction) | `Car.h/.cpp`, `Arena.cpp` |
 | 17 | Grid broadphase finds a static mesh's cells by walking its triangles once, instead of querying the mesh per cell. Same cells, so results are bit-identical | `btRSBroadphase.cpp` |
+| 18 | All transcendental maths through `detmath` (musl, compiled into every build) | `btScalar.h`, `Framework.h`, direct calls in `Car`/`Arena`/`Ball`/`MathTypes` |
+| 19 | `BT_DISABLE_SIMD`: Bullet's SSE/NEON paths can be switched off (on in our builds) | `btScalar.h`, `engine/CMakeLists.txt` |
+| 20 | `BallState::DropshotInfo::lastDamageTick` initialized (was uninitialized, so snapshot bytes held garbage) | `Ball.h` |
 
 Driving, turning circles and jump height stay within 0.5% of stock (e.g. full-lock radius at 500 uu/s:
 300.3 vs 299.8; jump 234.9 vs 235.2). The patches change details, not the overall feel.

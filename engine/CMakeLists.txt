@@ -1,15 +1,25 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.13)
 
-project(RLEngine CXX)
+project(RLEngine C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Deterministic maths (musl's sinf/cosf/... compiled into every build, see detmath/detmath.h)
+file(GLOB DETMATH_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/detmath/src/*.c")
+add_library(detmath STATIC ${DETMATH_SOURCES})
+set_target_properties(detmath PROPERTIES C_STANDARD 99)
+target_compile_options(detmath PRIVATE -ffp-contract=off -fno-fast-math -Wno-unused -Wno-maybe-uninitialized)
+
 # Patched RocketSim (engine/rocketsim, changes marked "RL PATCH")
 add_subdirectory(rocketsim)
+target_link_libraries(RocketSim PUBLIC detmath)
 
-# Same float results everywhere: never fuse multiply-adds (client and server must agree)
-target_compile_options(RocketSim PRIVATE -ffp-contract=off)
+# Same float results on the native server and the WebAssembly clients: never fuse multiply-adds,
+# and all transcendental functions come from detmath
+target_compile_options(RocketSim PRIVATE -ffp-contract=off -fno-fast-math)
+# ...and Bullet's SSE/NEON vector code is off (PUBLIC: every user of the headers must agree on it)
+target_compile_definitions(RocketSim PUBLIC BT_DISABLE_SIMD)
 
 set(ARENA_MESH_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../out/arena/collision_meshes")
 

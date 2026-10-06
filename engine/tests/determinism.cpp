@@ -1,7 +1,7 @@
 // Determinism check: a fixed 2v2 match with scripted ball-chasing inputs, hashed every second.
-// Two runs of the same build (e.g. two WebAssembly runs, or WebAssembly in different engines) must
-// print identical lines. Native and WebAssembly builds differ: they use different libm
-// implementations (glibc vs musl), which round sin/cos/atan differently in the last bit.
+// Every build must print identical lines: native (any optimization level) and WebAssembly alike.
+// That is what lets a native server and WebAssembly clients agree bit for bit
+// (engine/detmath + BT_DISABLE_SIMD + -ffp-contract=off). Compare with tests/check_native_wasm.sh.
 //
 // Usage: determinism [collision_meshes dir] [seconds] [trace]   (trace: print every body each tick of second 1)
 #include "RocketSim.h"
@@ -44,6 +44,13 @@ int main(int argc, char** argv) {
 	for (int i = 0; i < 4; i++)
 		cars[i] = arena->AddCar(i < 2 ? Team::BLUE : Team::ORANGE, i % 2 ? CAR_CONFIG_DOMINUS : CAR_CONFIG_OCTANE);
 	arena->ResetToRandomKickoff(7);
+	if (trace) {
+		for (Car* car : cars) {
+			CarState s = car->GetState();
+			printf("kickoff car%u fwd %.9g %.9g %.9g right %.9g %.9g %.9g\n", car->id,
+				s.rotMat.forward.x, s.rotMat.forward.y, s.rotMat.forward.z, s.rotMat.right.x, s.rotMat.right.y, s.rotMat.right.z);
+		}
+	}
 
 	for (int sec = 1; sec <= seconds; sec++) {
 		for (int tick = 0; tick < 120; tick++) {
@@ -86,6 +93,16 @@ int main(int argc, char** argv) {
 			h.Add(s.pos); h.Add(s.vel); h.Add(s.angVel); h.Add(s.rotMat); h.Add(&s.boost, 4);
 		}
 		printf("%3d %016llx  ball %.4f %.4f %.4f\n", sec, (unsigned long long)h.h, b.pos.x, b.pos.y, b.pos.z);
+	}
+	{ // Snapshot bytes must match too (the server may send snapshots to WebAssembly clients)
+		DataStreamOut out;
+		arena->Serialize(out);
+		Hasher h;
+		h.Add(out.data.data(), out.data.size());
+		printf("snapshot %zu bytes %016llx\n", out.data.size(), (unsigned long long)h.h);
+		if (argc > 3 && std::string(argv[3]) == "dump")
+			for (size_t i = 0; i < out.data.size(); i++)
+				printf("%02x%s", out.data[i], (i % 32 == 31) ? "\n" : "");
 	}
 	return 0;
 }

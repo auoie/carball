@@ -42,7 +42,7 @@ struct BallState : public PhysState {
 		float yTargetDir = 0; // Which side of the field the ball can damage (0=none, -1=blue, 1=orange)
 		
 		bool hasDamaged = false;
-		uint64_t lastDamageTick; // Only valid if hasDamaged
+		uint64_t lastDamageTick = 0; // Only valid if hasDamaged (RL PATCH: was uninitialized, so snapshots held garbage)
 	};
 	DropshotInfo dsInfo;
 

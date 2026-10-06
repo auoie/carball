@@ -174,6 +174,86 @@ index f27a07f..0593ebf 100644
  	
  	int frictionIndex = m_tmpSolverContactConstraintPool.size();
  
+diff --git upstream/libsrc/bullet3-3.24/LinearMath/btScalar.h engine/rocketsim/libsrc/bullet3-3.24/LinearMath/btScalar.h
+index 927f3e9..3e17418 100644
+--- upstream/libsrc/bullet3-3.24/LinearMath/btScalar.h
++++ engine/rocketsim/libsrc/bullet3-3.24/LinearMath/btScalar.h
+@@ -20,6 +20,7 @@ subject to the following restrictions:
+ #pragma unmanaged
+ #endif
+ 
++#include "../../../../detmath/detmath.h" // RL PATCH
+ #include <math.h>
+ #include <stdlib.h>  //size_t for MSVC 6.0
+ #include <float.h>
+@@ -214,7 +215,9 @@ inline int btIsDoublePrecision()
+ 		#else//USE_LIBSPE2
+ 	//non-windows systems
+ 
+-			#if (!defined (BT_USE_DOUBLE_PRECISION))
++			// RL PATCH: BT_DISABLE_SIMD turns off Bullet's hand-written SSE/NEON paths (different operation order
++			// and approximate reciprocal square roots), so native builds compute exactly like WebAssembly
++			#if (!defined (BT_USE_DOUBLE_PRECISION)) && !defined(BT_DISABLE_SIMD)
+ 				#if defined (__i386__) || defined (__x86_64__)
+ 					#define BT_USE_SIMD_VECTOR3
+ 					#define BT_USE_SSE
+@@ -495,17 +498,19 @@ inline int btIsDoublePrecision()
+ 		return sqrtf(y);
+ 	#endif
+ 	}
++	// RL PATCH: deterministic maths (engine/detmath) so native and WebAssembly builds give identical
++	// results; the platform libm functions differ in the last bit between C libraries
+ 	SIMD_FORCE_INLINE btScalar btFabs(btScalar x) { return fabsf(x); }
+-	SIMD_FORCE_INLINE btScalar btCos(btScalar x) { return cosf(x); }
+-	SIMD_FORCE_INLINE btScalar btSin(btScalar x) { return sinf(x); }
+-	SIMD_FORCE_INLINE btScalar btTan(btScalar x) { return tanf(x); }
++	SIMD_FORCE_INLINE btScalar btCos(btScalar x) { return det_cosf(x); }
++	SIMD_FORCE_INLINE btScalar btSin(btScalar x) { return det_sinf(x); }
++	SIMD_FORCE_INLINE btScalar btTan(btScalar x) { return det_tanf(x); }
+ 	SIMD_FORCE_INLINE btScalar btAcos(btScalar x)
+ 	{
+ 		if (x < btScalar(-1))
+ 			x = btScalar(-1);
+ 		if (x > btScalar(1))
+ 			x = btScalar(1);
+-		return acosf(x);
++		return det_acosf(x);
+ 	}
+ 	SIMD_FORCE_INLINE btScalar btAsin(btScalar x)
+ 	{
+@@ -513,13 +518,13 @@ inline int btIsDoublePrecision()
+ 			x = btScalar(-1);
+ 		if (x > btScalar(1))
+ 			x = btScalar(1);
+-		return asinf(x);
++		return det_asinf(x);
+ 	}
+-	SIMD_FORCE_INLINE btScalar btAtan(btScalar x) { return atanf(x); }
+-	SIMD_FORCE_INLINE btScalar btAtan2(btScalar x, btScalar y) { return atan2f(x, y); }
+-	SIMD_FORCE_INLINE btScalar btExp(btScalar x) { return expf(x); }
+-	SIMD_FORCE_INLINE btScalar btLog(btScalar x) { return logf(x); }
+-	SIMD_FORCE_INLINE btScalar btPow(btScalar x, btScalar y) { return powf(x, y); }
++	SIMD_FORCE_INLINE btScalar btAtan(btScalar x) { return det_atanf(x); }
++	SIMD_FORCE_INLINE btScalar btAtan2(btScalar x, btScalar y) { return det_atan2f(x, y); }
++	SIMD_FORCE_INLINE btScalar btExp(btScalar x) { return det_expf(x); }
++	SIMD_FORCE_INLINE btScalar btLog(btScalar x) { return det_logf(x); }
++	SIMD_FORCE_INLINE btScalar btPow(btScalar x, btScalar y) { return det_powf(x, y); }
+ 	SIMD_FORCE_INLINE btScalar btFmod(btScalar x, btScalar y) { return fmodf(x, y); }
+ 
+ #endif//BT_USE_DOUBLE_PRECISION
+diff --git upstream/src/Framework.h engine/rocketsim/src/Framework.h
+index 16539af..fb8c1cb 100644
+--- upstream/src/Framework.h
++++ engine/rocketsim/src/Framework.h
+@@ -1,5 +1,8 @@
+ #pragma once
+ 
++// RL PATCH: deterministic maths for every transcendental function used by the simulation
++#include "../../detmath/detmath.h"
++
+ #define RS_VERSION "2.2.1"
+ 
+ #include <stdint.h>
 diff --git upstream/src/Math/Math.cpp engine/rocketsim/src/Math/Math.cpp
 index 8116de2..eea2fa2 100644
 --- upstream/src/Math/Math.cpp
@@ -221,6 +301,38 @@ index 4ddc6a1..0cdebbc 100644
  
  	float WrapNormalizeFloat(float val, float minmax);
  
+diff --git upstream/src/Math/MathTypes/MathTypes.cpp engine/rocketsim/src/Math/MathTypes/MathTypes.cpp
+index 888d7f9..cb5809c 100644
+--- upstream/src/Math/MathTypes/MathTypes.cpp
++++ engine/rocketsim/src/Math/MathTypes/MathTypes.cpp
+@@ -81,10 +81,10 @@ Angle Angle::FromVec(const Vec& forward) {
+ 	float yaw, pitch;
+ 
+ 	if (abs(forward.y) > FLT_EPSILON || abs(forward.x) > FLT_EPSILON) {
+-		yaw = atan2f(forward.y, forward.x);
++		yaw = det_atan2f(forward.y, forward.x);
+ 
+ 		float dist2D = sqrtf(forward.x * forward.x + forward.y * forward.y);
+-		pitch = -atan2f(-forward.z, dist2D);
++		pitch = -det_atan2f(-forward.z, dist2D);
+ 	} else {
+ 		yaw = 0;
+ 		if (forward.z > FLT_EPSILON) {
+@@ -101,10 +101,10 @@ Angle Angle::FromVec(const Vec& forward) {
+ 
+ Vec Angle::GetForwardVec() const {
+ 	float
+-		cp = cosf(-pitch),
+-		cy = cosf(yaw),
+-		sy = sinf(yaw),
+-		sp = sinf(-pitch);
++		cp = det_cosf(-pitch),
++		cy = det_cosf(yaw),
++		sy = det_sinf(yaw),
++		sp = det_sinf(-pitch);
+ 
+ 	return Vec(cp * cy, cp * sy, -sp);
+ }
 diff --git upstream/src/RLConst.h engine/rocketsim/src/RLConst.h
 index 8281ac9..ddd8627 100644
 --- upstream/src/RLConst.h
@@ -328,7 +440,7 @@ index 8281ac9..ddd8627 100644
  	};
  }
 diff --git upstream/src/Sim/Arena/Arena.cpp engine/rocketsim/src/Sim/Arena/Arena.cpp
-index a13cee0..d45d47a 100644
+index a13cee0..165f36a 100644
 --- upstream/src/Sim/Arena/Arena.cpp
 +++ engine/rocketsim/src/Sim/Arena/Arena.cpp
 @@ -123,16 +123,18 @@ void Arena::ResetToRandomKickoff(int seed) {
@@ -371,7 +483,7 @@ index a13cee0..d45d47a 100644
 +		float lengthSq = d.LengthSq();
 +		if (lengthSq != 1)
 +			d = (lengthSq >= 1e-8f) ? d * (1 / sqrtf(lengthSq)) : Vec(0, 0, 0);
-+		return acosf(RS_CLAMP(forward.Dot(d), -1, 1)) * 57.29578f;
++		return det_acosf(RS_CLAMP(forward.Dot(d), -1, 1)) * 57.29578f;
 +	};
 +
 +	if (angleWithoutAxis(rot.right) > pitchDeg)
@@ -613,7 +725,7 @@ index a3ebd3f..bfc6f43 100644
  
  	// Returns true if added, false if car was already added
 diff --git upstream/src/Sim/Ball/Ball.cpp engine/rocketsim/src/Sim/Ball/Ball.cpp
-index 46a006d..f620c47 100644
+index 46a006d..24a1a63 100644
 --- upstream/src/Sim/Ball/Ball.cpp
 +++ engine/rocketsim/src/Sim/Ball/Ball.cpp
 @@ -1,4 +1,5 @@
@@ -622,6 +734,17 @@ index 46a006d..f620c47 100644
  
  #include "../../RLConst.h"
  #include "../Car/Car.h"
+@@ -61,8 +62,8 @@ btCollisionShape* MakeBallCollisionShape(GameMode gameMode, const MutatorConfig&
+ 		float curAng = 0;
+ 		for (int i = 0; i < Snowday::PUCK_CIRCLE_POINT_AMOUNT; i++) {
+ 			Vec point = Vec(
+-				cosf(curAng) * mutatorConfig.ballRadius * UU_TO_BT,
+-				sinf(curAng) * mutatorConfig.ballRadius * UU_TO_BT,
++				det_cosf(curAng) * mutatorConfig.ballRadius * UU_TO_BT,
++				det_sinf(curAng) * mutatorConfig.ballRadius * UU_TO_BT,
+ 				Snowday::PUCK_HEIGHT / 2 * UU_TO_BT
+ 			);
+ 
 @@ -139,6 +140,9 @@ void Ball::_FinishPhysicsTick(const MutatorConfig& mutatorConfig) {
  		_rigidBody.m_angularVelocity = angVel;
  	}
@@ -632,8 +755,21 @@ index 46a006d..f620c47 100644
  	_internalState.tickCountSinceUpdate++;
  }
  
+diff --git upstream/src/Sim/Ball/Ball.h engine/rocketsim/src/Sim/Ball/Ball.h
+index 957b192..50f7d2a 100644
+--- upstream/src/Sim/Ball/Ball.h
++++ engine/rocketsim/src/Sim/Ball/Ball.h
+@@ -42,7 +42,7 @@ struct BallState : public PhysState {
+ 		float yTargetDir = 0; // Which side of the field the ball can damage (0=none, -1=blue, 1=orange)
+ 		
+ 		bool hasDamaged = false;
+-		uint64_t lastDamageTick; // Only valid if hasDamaged
++		uint64_t lastDamageTick = 0; // Only valid if hasDamaged (RL PATCH: was uninitialized, so snapshots held garbage)
+ 	};
+ 	DropshotInfo dsInfo;
+ 
 diff --git upstream/src/Sim/Car/Car.cpp engine/rocketsim/src/Sim/Car/Car.cpp
-index 417ad9d..40069c2 100644
+index 417ad9d..4b875b7 100644
 --- upstream/src/Sim/Car/Car.cpp
 +++ engine/rocketsim/src/Sim/Car/Car.cpp
 @@ -3,6 +3,7 @@
@@ -746,7 +882,7 @@ index 417ad9d..40069c2 100644
 +		if (inner > 0) {
 +			float wheelbase = config.frontWheels.connectionPointOffset.x - config.backWheels.connectionPointOffset.x;
 +			float track = config.frontWheels.connectionPointOffset.y * 2;
-+			outer = atanf(wheelbase / (track + wheelbase / tanf(inner)));
++			outer = det_atanf(wheelbase / (track + wheelbase / det_tanf(inner)));
 +		}
 +
 +		// Wheel 0 is front right: the inner wheel when turning right (positive steer)
@@ -797,6 +933,15 @@ index 417ad9d..40069c2 100644
  
  						if (abs(dodgeDir.x()) < 0.1f) dodgeDir.x() = 0;
  						if (abs(dodgeDir.y()) < 0.1f) dodgeDir.y() = 0;
+@@ -785,7 +866,7 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
+ 		_internalState.flipTime += tickTime;
+ 		if (_internalState.flipTime <= FLIP_TORQUE_TIME) {
+ 			if (_internalState.flipTime >= FLIP_Z_DAMP_START && (_rigidBody.m_linearVelocity.z() < 0 || _internalState.flipTime < FLIP_Z_DAMP_END)) {
+-				_rigidBody.m_linearVelocity.z() *= powf(1 - FLIP_Z_DAMP_120, tickTimeScale);
++				_rigidBody.m_linearVelocity.z() *= det_powf(1 - FLIP_Z_DAMP_120, tickTimeScale);
+ 			}
+ 		}
+ 	} else if (_internalState.hasFlipped) {
 @@ -824,7 +905,13 @@ void Car::_UpdateAutoFlip(float tickTime, const MutatorConfig& mutatorConfig, bo
  			_internalState.isAutoFlipping = false;
  			_internalState.autoFlipTimer = 0;

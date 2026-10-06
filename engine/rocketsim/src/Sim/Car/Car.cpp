@@ -477,7 +477,7 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int 
 		if (inner > 0) {
 			float wheelbase = config.frontWheels.connectionPointOffset.x - config.backWheels.connectionPointOffset.x;
 			float track = config.frontWheels.connectionPointOffset.y * 2;
-			outer = atanf(wheelbase / (track + wheelbase / tanf(inner)));
+			outer = det_atanf(wheelbase / (track + wheelbase / det_tanf(inner)));
 		}
 
 		// Wheel 0 is front right: the inner wheel when turning right (positive steer)
@@ -866,7 +866,7 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
 		_internalState.flipTime += tickTime;
 		if (_internalState.flipTime <= FLIP_TORQUE_TIME) {
 			if (_internalState.flipTime >= FLIP_Z_DAMP_START && (_rigidBody.m_linearVelocity.z() < 0 || _internalState.flipTime < FLIP_Z_DAMP_END)) {
-				_rigidBody.m_linearVelocity.z() *= powf(1 - FLIP_Z_DAMP_120, tickTimeScale);
+				_rigidBody.m_linearVelocity.z() *= det_powf(1 - FLIP_Z_DAMP_120, tickTimeScale);
 			}
 		}
 	} else if (_internalState.hasFlipped) {

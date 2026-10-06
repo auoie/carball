@@ -20,6 +20,7 @@ subject to the following restrictions:
 #pragma unmanaged
 #endif
 
+#include "../../../../detmath/detmath.h" // RL PATCH
 #include <math.h>
 #include <stdlib.h>  //size_t for MSVC 6.0
 #include <float.h>
@@ -214,7 +215,9 @@ inline int btIsDoublePrecision()
 		#else//USE_LIBSPE2
 	//non-windows systems
 
-			#if (!defined (BT_USE_DOUBLE_PRECISION))
+			// RL PATCH: BT_DISABLE_SIMD turns off Bullet's hand-written SSE/NEON paths (different operation order
+			// and approximate reciprocal square roots), so native builds compute exactly like WebAssembly
+			#if (!defined (BT_USE_DOUBLE_PRECISION)) && !defined(BT_DISABLE_SIMD)
 				#if defined (__i386__) || defined (__x86_64__)
 					#define BT_USE_SIMD_VECTOR3
 					#define BT_USE_SSE
@@ -495,17 +498,19 @@ inline int btIsDoublePrecision()
 		return sqrtf(y);
 	#endif
 	}
+	// RL PATCH: deterministic maths (engine/detmath) so native and WebAssembly builds give identical
+	// results; the platform libm functions differ in the last bit between C libraries
 	SIMD_FORCE_INLINE btScalar btFabs(btScalar x) { return fabsf(x); }
-	SIMD_FORCE_INLINE btScalar btCos(btScalar x) { return cosf(x); }
-	SIMD_FORCE_INLINE btScalar btSin(btScalar x) { return sinf(x); }
-	SIMD_FORCE_INLINE btScalar btTan(btScalar x) { return tanf(x); }
+	SIMD_FORCE_INLINE btScalar btCos(btScalar x) { return det_cosf(x); }
+	SIMD_FORCE_INLINE btScalar btSin(btScalar x) { return det_sinf(x); }
+	SIMD_FORCE_INLINE btScalar btTan(btScalar x) { return det_tanf(x); }
 	SIMD_FORCE_INLINE btScalar btAcos(btScalar x)
 	{
 		if (x < btScalar(-1))
 			x = btScalar(-1);
 		if (x > btScalar(1))
 			x = btScalar(1);
-		return acosf(x);
+		return det_acosf(x);
 	}
 	SIMD_FORCE_INLINE btScalar btAsin(btScalar x)
 	{
@@ -513,13 +518,13 @@ inline int btIsDoublePrecision()
 			x = btScalar(-1);
 		if (x > btScalar(1))
 			x = btScalar(1);
-		return asinf(x);
+		return det_asinf(x);
 	}
-	SIMD_FORCE_INLINE btScalar btAtan(btScalar x) { return atanf(x); }
-	SIMD_FORCE_INLINE btScalar btAtan2(btScalar x, btScalar y) { return atan2f(x, y); }
-	SIMD_FORCE_INLINE btScalar btExp(btScalar x) { return expf(x); }
-	SIMD_FORCE_INLINE btScalar btLog(btScalar x) { return logf(x); }
-	SIMD_FORCE_INLINE btScalar btPow(btScalar x, btScalar y) { return powf(x, y); }
+	SIMD_FORCE_INLINE btScalar btAtan(btScalar x) { return det_atanf(x); }
+	SIMD_FORCE_INLINE btScalar btAtan2(btScalar x, btScalar y) { return det_atan2f(x, y); }
+	SIMD_FORCE_INLINE btScalar btExp(btScalar x) { return det_expf(x); }
+	SIMD_FORCE_INLINE btScalar btLog(btScalar x) { return det_logf(x); }
+	SIMD_FORCE_INLINE btScalar btPow(btScalar x, btScalar y) { return det_powf(x, y); }
 	SIMD_FORCE_INLINE btScalar btFmod(btScalar x, btScalar y) { return fmodf(x, y); }
 
 #endif//BT_USE_DOUBLE_PRECISION
