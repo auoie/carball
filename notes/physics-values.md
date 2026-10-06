@@ -40,7 +40,7 @@ uu/s² or uu/s.
 |---|---|---|---|
 | DriveTorque | 288000 | code: × 0.25 per wheel = 72000 = 180 × 400 | ✓ `THROTTLE_TORQUE_AMOUNT` |
 | Fewer than 3 wheels on ground | drive torque × 0.25 again (code) | | ✓ |
-| DriveTorqueCurve (signed fwd speed) | −1400→0.1, 0→1, 1400→0.1, clamped beyond | | ⚠ RocketSim adds 1410→0 |
+| DriveTorqueCurve (signed fwd speed) | −1400→0.1, 0→1, 1400→0.1, clamped beyond | | ✓ RocketSim's 1410→0 matches replays (see "Throttle top speed") |
 | BrakeTorque | 10500 | × 0.25 per wheel = 2625 = 180 × 14.583 | ✓ `BRAKE_TORQUE_AMOUNT` |
 | SteerAngleCurve (deg, **inner** wheel) | 0→35, 500→20, 1000→11, 1500→6.25, 1750→5, 3000→2 | Ackermann average = RocketSim exactly | ✓ (see note) |
 | HandbrakeSteerAngleCurve (deg) | 0→25, 2500→7.5 | Ackermann average = RocketSim | ✓ |
@@ -104,7 +104,7 @@ authenticity, steer each front wheel separately.
 | Mass | 30 | ✓ (180/6) |
 | Max linear speed | 6000 | ✓ |
 | Max angular speed | 6 rad/s | ✓ |
-| **Collision sphere radius** | authored 92.0; Bullet shape 90 (converter subtracts 2); gameplay `Radius` ≈ 94.5 — see below | ⚠ 91.25 |
+| **Collision sphere radius** | authored 92.0; Bullet shape 91.25 (+1.25 skin, −2 in the converter); gameplay `Radius` ≈ 94.5 — see below | ✓ 91.25 |
 | Visual radius | 95 | – |
 | Friction / restitution / linear damping | 0.35 / 0.6 / 0.03 | ✓ |
 | Car-ball push factor curve | 0→0.65, 500→0.65, 1400→0.6, 2300→0.55, 4600→0.30 | ✓ (1400 point is collinear) |
@@ -195,13 +195,16 @@ Ball.AddForce(Impulse, VelocityChange)            // mutator terms are 0 in norm
 ```
 Speed = |Vel|; HitDir = Normal(Other.Pos - Pos); SpeedTowardsCar = Dot(HitDir, Vel)
 no effect unless SpeedTowardsCar > 0 and Dot(Other.Vel, Vel/Speed) < SpeedTowardsCar
-if ShouldDemolish: demolish
-  requires bSupersonic AND forward speed Dot(Vel, CarFwd) >= 2200 - 100 = 2100
-  AND victim centre inside forward elliptical cone yaw <= 45.57 deg, pitch <= 36.87 deg, other team
-else if Other != LastHitCar or time > LastHitTime + 0.25: bump
-  bumper hit = victim centre inside cone yaw <= 70 deg, pitch <= 36.87 deg
+if ShouldDemolish: demolish                      // checked before (and regardless of) the bump cooldown
+  requires bSupersonic AND |Dot(Vel, CarFwd)| >= 2200 - 100 = 2100   // bAllowBackwardsDemolitions = 1
+  AND victim inside cone yaw <= 45.57 deg, pitch <= 36.87 deg around the direction of travel (Fwd or -Fwd)
+  AND other team
+else if Other != LastHitCar or time > LastHitTime + 0.25: BumpCar (sets LastHitCar/Time, fires EventBumpedCar)
+  bumper hit = victim inside cone yaw <= 70 deg, pitch <= 36.87 deg (always the real forward)
+  Speed = |Vel| of the attacker (the curves do NOT use SpeedTowardsCar)
   Impulse = (Vel/Speed) * (Other on ground ? GroundCurve(Speed) : AirCurve(Speed))
-          + (Other on ground ? Other.Up * ZCurve(Speed) : 0)     // non-bumper hits: PushFactor 0
+          + (Other on ground ? Other.Up * ZCurve(Speed) : 0)     // non-bumper hits: PushFactor = 0
+All states are the start-of-tick OldRBState (the demo check sweeps to the time of impact first).
 ```
 Cone test (native `FUN_140f0d620`): direction d from attacker's hitbox centre to victim's at time of
 impact; pitch angle = angle(fwd, d with its right-axis component removed); yaw angle =
@@ -218,16 +221,16 @@ saturates at 5.5 rad/s (RocketSim ramps at 50 rad/s²).
 - drive force per wheel = DriveTorqueCurve(fwd speed) × throttle × 288000 × 0.25 (× 0.25 again with < 3 wheels).
 - friction solver: forward impulse = engineForce × dt (or clamp(−v_fwd × 113.74, ±brake) × dt × 60 when
   braking) × long friction; side impulse = bilateral impulse × dt × 60 × lat friction.
-- Searched every writer of OutputThrottle (script and native) and the friction solver: **no speed cutoff
-  exists**; the curve holds 0.1 above 1400.
+- No writer of OutputThrottle (script or native) and nothing in the friction solver applies a speed cutoff,
+  yet replays show zero throttle acceleration above ~1400 (see "Throttle top speed"). Where it comes from is unknown.
 
 ### Ball size (three different numbers in the game)
 | Use | Value | Source |
 |---|---|---|
 | Authored collision sphere | 92.0 | `RB_BodySetup` sphere |
-| Bullet collision sphere | 92 − 2 = **90** (radius×0.02 − 0.04 BT; margin = radius) | native shape converter `FUN_140409570`, case 1 |
+| Bullet collision sphere | 92 + 1.25 − 2 = **91.25** (UE3 skin +0.025 BT, then radius×0.02 − 0.04 BT; margin = radius) | `FUN_140967480` + converter `FUN_140409570` |
 | Gameplay `Ball.Radius` (prediction, AI, stats, goal checks) | ≈ 94.5 | `Ball_TA.UpdateRadius` = mesh bounds Z (94.49) |
-RocketSim uses 91.25 (measured, with rest Z 93.15).
+RocketSim uses 91.25 too (rest Z 93.15, see "Ball vs world contact").
 
 ### Air control (native `CarComponent_AirControl_TA` ApplyForces `0x140eb3400`) — matches RocketSim
 ```

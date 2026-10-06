@@ -8,7 +8,7 @@ Values and formulas: `notes/physics-values.md`. Arena: `notes/arena.md`. Binary/
 Resuming in a new session: `notes/HANDOFF.md`. Generated constants: `out/rl_physics_constants.json`.
 
 ## Next up
-1. Patch RocketSim (§2) and compile it to WebAssembly (§8), using our arena mesh (`out/arena/`).
+1. Compile the patched engine (`engine/`) to WebAssembly (§8). Needs Emscripten; the user installs it.
 2. Offline freeplay in the browser (§8), with the camera (§3) and controls (§4) reverse engineered alongside.
 3. Then netcode (§6) and the competitive layer (§9).
 
@@ -31,6 +31,7 @@ Resuming in a new session: `notes/HANDOFF.md`. Generated constants: `out/rl_phys
 - [x] Throttle top speed: 1600 → 160 uu/s² up to 1400, then 0 (measured from replays; RocketSim's curve is right)
 - [x] Arena measured: planes, edge curves, corners, goal mouth and full goal interior (`notes/arena.md`)
 - [x] Our own arena collision mesh generated and validated (`scripts/arena_gen.py`, `out/arena/`)
+- [x] RocketSim forked into `engine/` with all verified patches and tests
 - [x] Replay tools: `scripts/replay_extract` (Rust/boxcars) + `scripts/replay_measure.py`
 - [x] Camera tuning values (car cam, ball cam, presets, slider limits)
 - [x] Netcode tuning values (input redundancy, jitter buffer, sim-time scaling, correction rates)
@@ -40,33 +41,31 @@ Resuming in a new session: `notes/HANDOFF.md`. Generated constants: `out/rl_phys
 ## 1. Arena
 
 - [x] Generate our own arena mesh: `scripts/arena_gen.py` → `out/arena/` (RocketSim `.cmf` + `.obj`).
-      Within 2.6 uu of the game's surfaces everywhere (`scripts/arena_check.py`); loads and holds in RocketSim (`scripts/arena_smoketest.cpp`).
+      Within 2.6 uu of the game's surfaces everywhere (`scripts/arena_check.py`); loads and holds in RocketSim (`engine/tests/arena_smoketest.cpp`).
 - [ ] Check ball and car rest heights, wall rides and corner bounces against replays once the patched sim exists (§7).
       Done so far: goal ramp ride height matches replays (17.0).
 
 ## 2. Patch RocketSim with verified differences
 
+Done: `engine/` (patched RocketSim, `engine/README.md`, tests `engine/tests/rl_patch_tests.cpp`, 46 checks pass).
+
 Already correct in RocketSim (no change): boost, jump and double jump, air control, sticky force, car–ball push,
-throttle curve, hitbox sizes and wheel setup, ball radius, merged ball–world contact (apart from the normal),
-boost pads, gravity, 120 Hz tick.
+throttle curve, hitbox sizes and wheel setup, ball radius, dodge-vs-double-jump threshold, boost pads, gravity, 120 Hz tick.
 
-- [ ] Flip cancel: block pitch-cancel for the first 0.041 s (`MinDodgeTorqueTime`)
-- [ ] Dodge: torque from `Normal(-Pitch, Yaw + Roll)`, rounded to whole numbers
-- [ ] Dodge vs double jump: `Abs(DodgeForward) + Abs(DodgeRight) + Abs(Roll) >= threshold`
-- [ ] Auto-flip: angular velocity jumps to the 5.5 rad/s cap immediately (not a 50 rad/s² ramp)
-- [ ] Bumps/demos: elliptical cone test (bump yaw 70°, demo yaw 45.57°, pitch 36.87°) instead of the distance check
-- [ ] Demos: require supersonic **and** forward speed ≥ 2100
-- [ ] Bump curves: exact values (ground 150/200000/275000, air 150/250000/350000, Z 50/50000/75000, ÷ mass 180)
-- [ ] Steering: per-wheel Ackermann angles instead of the averaged curve
-- [ ] Suspension scale per car from wheel positions (not Octane constants)
-- [ ] Turn off solver warm starting; one-sided sphere–triangle contacts
-- [ ] Special ball–world contact: re-normalise the averaged normal (RocketSim doesn't)
-- [ ] Per-tick state quantization (location ×100 round, velocities truncate, 18-bit quaternion)
-- [ ] Unit tests for each patch against the decoded formulas
-
-Low priority (behaviour already measured, only the code location is unknown; revisit only if our sim disagrees with replays):
-- [ ] Where the throttle cutoff above 1400 is applied
-- [ ] Exact cause of the ball's 1.9 uu resting gap above its collision sphere
+- [x] Flip cancel: block pitch-cancel for the first 0.041 s (`MinDodgeTorqueTime`)
+- [x] Dodge: torque from `Normal(-Pitch, Yaw + Roll)`, rounded to whole numbers
+- [x] Dodge vs double jump: already identical in RocketSim (regression test)
+- [x] Auto-flip: angular velocity jumps to the 5.5 rad/s cap immediately (a car on its roof now turns over; stock didn't)
+- [x] Bumps/demos: forward cone test (bump yaw 70°, demo yaw 45.57°, pitch 36.87°) instead of the distance check
+- [x] Demos: supersonic **and** |forward speed| ≥ 2100; backwards demos allowed; bump cooldown doesn't block demos
+- [x] Bump impulse: exact curves at the attacker's speed; Z push only for grounded victims; side contacts push 0
+- [x] Steering: per-wheel Ackermann angles
+- [x] Suspension scale per car from wheel positions
+- [x] Solver warm starting off; one-sided sphere–triangle contacts
+- [x] Special ball–world contact: re-normalised normal, averaged friction/restitution
+- [x] Per-tick state quantization
+- [x] Unit tests for each patch
+- [ ] Verify the flip-cancel tick alignment and the in-integration speed clamp against replays (see `engine/README.md`)
 
 ## 3. Camera
 
@@ -102,7 +101,8 @@ Low priority (behaviour already measured, only the code location is unknown; rev
 
 ## 8. Engine build
 
-- [ ] Compile patched RocketSim to WebAssembly (Emscripten); headless Node test.
+- [x] Patched RocketSim builds natively with tests (`engine/`)
+- [ ] Compile it to WebAssembly (Emscripten); headless Node test. Keep FP deterministic (no FMA contraction).
 - [ ] Load our arena mesh; Three.js renderer; keyboard and gamepad input; offline freeplay.
 - [ ] Authoritative server running the same WASM build as the clients, fixed 120 Hz tick, with the game's per-tick
       state quantization so client and server stay bit-identical; client prediction and rollback.

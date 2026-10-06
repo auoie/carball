@@ -110,7 +110,7 @@ behind the side walls, or on the side-wall plane where the corner starts.
 
   The worst spot is the corner's floor-curve blend near the back wall (x 2748, y 5074, z 84). Game surfaces
   hidden behind another piece (overlaps) are excluded.
-- `scripts/arena_smoketest.cpp` in stock RocketSim:
+- `engine/tests/arena_smoketest.cpp` (stock RocketSim; same results with the patched engine, where ball–triangle contacts are one-sided):
   - 500 random balls at up to ~10,000 uu/s for 10 s each: none escaped; the closest any centre came to the outside was 51 uu.
   - A car on the goal ramp sits at ramp + 17.0 (replays: 17.0 ± 0.1).
   - A car drives up the side wall, and along the back wall through the corner onto the side wall.

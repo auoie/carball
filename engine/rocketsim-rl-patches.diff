@@ -1,0 +1,676 @@
+diff --git upstream/libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/SphereTriangleDetector.cpp engine/rocketsim/libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/SphereTriangleDetector.cpp
+index d004e1c..33eddc0 100644
+--- upstream/libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/SphereTriangleDetector.cpp
++++ engine/rocketsim/libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/SphereTriangleDetector.cpp
+@@ -158,9 +158,9 @@ bool SphereTriangleDetector::collide(const btVector3& sphereCenter, btVector3& p
+ 
+ 		if (distanceFromPlane < btScalar(0.))
+ 		{
+-			//triangle facing the other way
+-			distanceFromPlane *= btScalar(-1.);
+-			normal *= btScalar(-1.);
++			// RL PATCH: Rocket League's sphere-triangle test is one-sided:
++			// no contact when the sphere's centre is behind the triangle
++			return false;
+ 		}
+ 
+ 		bool isInsideContactPlane = distanceFromPlane < radiusWithThreshold;
+diff --git upstream/libsrc/bullet3-3.24/BulletDynamics/ConstraintSolver/btSequentialImpulseConstraintSolver.cpp engine/rocketsim/libsrc/bullet3-3.24/BulletDynamics/ConstraintSolver/btSequentialImpulseConstraintSolver.cpp
+index f27a07f..0593ebf 100644
+--- upstream/libsrc/bullet3-3.24/BulletDynamics/ConstraintSolver/btSequentialImpulseConstraintSolver.cpp
++++ engine/rocketsim/libsrc/bullet3-3.24/BulletDynamics/ConstraintSolver/btSequentialImpulseConstraintSolver.cpp
+@@ -1052,8 +1052,9 @@ void btSequentialImpulseConstraintSolver::convertContact(btPersistentManifold* m
+ 					if (colObj && !colObj->isStaticObject()) {
+ 						btCollisionObject::btSpecialResolveInfo& spri = colObj->m_specialResolveInfo;
+ 						spri.m_numSpecialCollisions++;
+-						spri.m_friction = cp.m_combinedFriction;
+-						spri.m_restitution = cp.m_combinedRestitution;
++						// RL PATCH: the game sums these and averages them in convertContactSpecial
++						spri.m_friction += cp.m_combinedFriction;
++						spri.m_restitution += cp.m_combinedRestitution;
+ 						spri.m_totalNormal += cp.m_normalWorldOnB;
+ 						spri.m_totalDist += (i ? rel_pos2 : rel_pos1).length();
+ 					}
+@@ -1170,12 +1171,16 @@ void btSequentialImpulseConstraintSolver::convertContactSpecial(btCollisionObjec
+ 	float distance = obj.m_specialResolveInfo.m_totalDist / obj.m_specialResolveInfo.m_numSpecialCollisions;
+ 	btVector3 normal = obj.m_specialResolveInfo.m_totalNormal / obj.m_specialResolveInfo.m_numSpecialCollisions;
+ 
++	// RL PATCH: the game re-normalises the averaged normal (FUN_1402be240)
++	if (normal.length2() > SIMD_EPSILON)
++		normal.normalize();
++
+ 	// Create a temporary manifold for this collision
+ 	btManifoldPoint specialTempManifold = {};
+ 	specialTempManifold.m_distance1 = distance;
+ 	specialTempManifold.m_normalWorldOnB = normal;
+-	specialTempManifold.m_combinedFriction = specialResolveInfo.m_friction;
+-	specialTempManifold.m_combinedRestitution = specialResolveInfo.m_restitution;
++	specialTempManifold.m_combinedFriction = specialResolveInfo.m_friction / specialResolveInfo.m_numSpecialCollisions;
++	specialTempManifold.m_combinedRestitution = specialResolveInfo.m_restitution / specialResolveInfo.m_numSpecialCollisions;
+ 	
+ 	int frictionIndex = m_tmpSolverContactConstraintPool.size();
+ 
+diff --git upstream/src/RLConst.h engine/rocketsim/src/RLConst.h
+index 8281ac9..ddd8627 100644
+--- upstream/src/RLConst.h
++++ engine/rocketsim/src/RLConst.h
+@@ -103,7 +103,7 @@ namespace RLConst {
+ 		FLIP_Z_DAMP_START = 0.15f,
+ 		FLIP_Z_DAMP_END = 0.21f,
+ 		FLIP_TORQUE_TIME = 0.65f,
+-		FLIP_TORQUE_MIN_TIME = 0.41f,
++		FLIP_TORQUE_MIN_TIME = 0.041f, // RL PATCH: MinDodgeTorqueTime is 0.041 s (was 0.41, and unused)
+ 		FLIP_PITCHLOCK_TIME = 1.f,
+ 		FLIP_PITCHLOCK_EXTRA_TIME = 0.3f,
+ 		FLIP_INITIAL_VEL_SCALE = 500.f,
+@@ -125,6 +125,7 @@ namespace RLConst {
+ 
+ 		CAR_AUTOFLIP_IMPULSE = 200,
+ 		CAR_AUTOFLIP_TORQUE = 50,
++		CAR_AUTOFLIP_ANGVEL_CHANGE = 1000, // RL PATCH: FlipCarTorque, an angular-velocity change every tick
+ 		CAR_AUTOFLIP_TIME = 0.4f,
+ 		CAR_AUTOFLIP_NORMZ_THRESH = M_SQRT1_2,
+ 		CAR_AUTOFLIP_ROLL_THRESH = 2.8f,
+@@ -142,7 +143,16 @@ namespace RLConst {
+ 		CAR_RESPAWN_Z = 36.f,
+ 
+ 		BUMP_COOLDOWN_TIME = 0.25f,
+-		BUMP_MIN_FORWARD_DIST = 64.5f,
++		BUMP_MIN_FORWARD_DIST = 64.5f, // No longer used, see the cone angles below
++
++		// RL PATCH: PhysicsConfig_TA.CarInteractionSettings.COMAngleCheck (degrees)
++		BUMP_CONE_YAW_DEG = 70.f,
++		BUMP_CONE_PITCH_DEG = 36.869895935058594f,
++		DEMO_CONE_YAW_DEG = 45.572994232177734f,
++		DEMO_CONE_PITCH_DEG = 36.869895935058594f,
++
++		// RL PATCH: forward speed needed for a demo (SuperSonic Speed - TurnoffSpeedBuffer)
++		DEMO_MIN_FORWARD_SPEED = 2200.f - 100.f,
+ 		DEMO_RESPAWN_TIME = 3.f;
+ 
+ 	// NOTE: Angle order is PYR
+@@ -426,6 +436,27 @@ namespace RLConst {
+ 		}
+ 	};
+ 
++	// RL PATCH: the game's curves are the inner front wheel's angle (Ackermann steering, VehicleSim.SteerAngleCurve)
++	// The curves above are the average of the inner and outer wheel for the Octane.
++	const static LinearPieceCurve STEER_ANGLE_INNER_FROM_SPEED_CURVE = {
++		{
++			{0,		35.f * (float)(M_PI / 180)},
++			{500,	20.f * (float)(M_PI / 180)},
++			{1000,	11.f * (float)(M_PI / 180)},
++			{1500,	6.25f * (float)(M_PI / 180)},
++			{1750,	5.f * (float)(M_PI / 180)},
++			{3000,	2.f * (float)(M_PI / 180)}
++		}
++	};
++
++	// RL PATCH: VehicleSim.HandbrakeSteerAngleCurve (inner front wheel)
++	const static LinearPieceCurve POWERSLIDE_STEER_ANGLE_INNER_FROM_SPEED_CURVE = {
++		{
++			{0,		25.f * (float)(M_PI / 180)},
++			{2500,	7.5f * (float)(M_PI / 180)}
++		}
++	};
++
+ 	const static LinearPieceCurve STEER_ANGLE_FROM_SPEED_CURVE_THREEWHEEL = {
+ 		{
+ 			{0,		0.342473f},
+@@ -502,27 +533,29 @@ namespace RLConst {
+ 		}
+ 	};
+ 
++	// RL PATCH: exact bump curves (CarInteractionSettings, impulse / car mass 180)
++	// Input: the attacker's speed (not its speed towards the other car)
+ 	const static LinearPieceCurve BUMP_VEL_AMOUNT_GROUND_CURVE = {
+ 		{
+-			{0.f, (5.f / 6.f)},
+-			{1400.f, 1100.f},
+-			{2200.f, 1530.f},
++			{0.f, 150.f / 180.f},
++			{1400.f, 200000.f / 180.f},
++			{2200.f, 275000.f / 180.f},
+ 		}
+ 	};
+ 
+ 	const static LinearPieceCurve BUMP_VEL_AMOUNT_AIR_CURVE = {
+ 		{
+-			{0.f, (5.f / 6.f)},
+-			{1400.f, 1390.f},
+-			{2200.f, 1945.f},
++			{0.f, 150.f / 180.f},
++			{1400.f, 250000.f / 180.f},
++			{2200.f, 350000.f / 180.f},
+ 		}
+ 	};
+ 
+ 	const static LinearPieceCurve BUMP_UPWARD_VEL_AMOUNT_CURVE = {
+ 		{
+-			{0.f, (2.f / 6.f)},
+-			{1400.f, 278.f},
+-			{2200.f, 417.f},
++			{0.f, 50.f / 180.f},
++			{1400.f, 50000.f / 180.f},
++			{2200.f, 75000.f / 180.f},
+ 		}
+ 	};
+ }
+diff --git upstream/src/Sim/Arena/Arena.cpp engine/rocketsim/src/Sim/Arena/Arena.cpp
+index a13cee0..e8291c0 100644
+--- upstream/src/Sim/Arena/Arena.cpp
++++ engine/rocketsim/src/Sim/Arena/Arena.cpp
+@@ -320,6 +320,30 @@ void Arena::_BtCallback_OnCarBallCollision(Car* car, Ball* ball, btManifoldPoint
+ 	ball->_OnHit(car, relBallPos, manifoldPoint.m_combinedFriction, manifoldPoint.m_combinedRestitution, gameMode, _mutatorConfig, tickCount);
+ }
+ 
++// RL PATCH: is `dir` inside the car's forward "elliptical cone" (native FUN_140f0d620)?
++// Pitch angle: angle between forward and dir with its right-axis component removed;
++// yaw angle: the same with the up-axis component removed. The game removes the component
++// divided by 1.01 (or times 1.01 when negative), so a tiny part of it remains.
++static bool IsWithinForwardCone(const RotMat& rot, Vec dir, float yawDeg, float pitchDeg, bool reverse) {
++	Vec forward = reverse ? -rot.forward : rot.forward;
++
++	auto angleWithoutAxis = [&](Vec axis) {
++		float c = dir.Dot(axis);
++		c = (c >= 0) ? (c / 1.01f) : (c * 1.01f);
++		Vec d = dir - axis * c;
++		float lengthSq = d.LengthSq();
++		if (lengthSq != 1)
++			d = (lengthSq >= 1e-8f) ? d * (1 / sqrtf(lengthSq)) : Vec(0, 0, 0);
++		return acosf(RS_CLAMP(forward.Dot(d), -1, 1)) * 57.29578f;
++	};
++
++	if (angleWithoutAxis(rot.right) > pitchDeg)
++		return false;
++	return angleWithoutAxis(rot.up) <= yawDeg;
++}
++
++// RL PATCH: car-car impacts follow Car_TA.ApplyCarImpactForces / ShouldDemolish / GetBumpImpulse,
++// using both cars' start-of-tick states (the game's OldRBState)
+ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint& manifoldPoint) {
+ 	using namespace RLConst;
+ 
+@@ -334,73 +358,81 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
+ 		if (isSwapped)
+ 			std::swap(car1, car2);
+ 
+-		CarState
+-			state = car1->GetState(),
+-			otherState = car2->GetState();
+-
+-		if (state.isDemoed || otherState.isDemoed)
++		if (car1->_internalState.isDemoed || car2->_internalState.isDemoed)
+ 			return;
+ 
+-		if ((state.carContact.otherCarID == car2->id) && (state.carContact.cooldownTimer > 0))
+-			continue; // In cooldown
+-
+-		Vec deltaPos = (otherState.pos - state.pos);
+-		if (state.vel.Dot(deltaPos) > 0) { // Going towards other car
++		bool canDemoTeam = _mutatorConfig.enableTeamDemos || (car1->team != car2->team);
+ 
+-			Vec velDir = state.vel.Normalized();
+-			Vec dirToOtherCar = deltaPos.Normalized();
++		if (_mutatorConfig.demoMode == DemoMode::ON_CONTACT) {
++			if (canDemoTeam) {
++				car2->Demolish(_mutatorConfig.respawnDelay);
++				if (_carBumpCallback.func)
++					_carBumpCallback.func(this, car1, car2, true, _carBumpCallback.userInfo);
++			}
++			continue;
++		}
+ 
+-			float speedTowardsOtherCar = state.vel.Dot(dirToOtherCar);
+-			float otherCarAwaySpeed = otherState.vel.Dot(velDir);
++		const PhysState& state = car1->_oldState;
++		const PhysState& otherState = car2->_oldState;
+ 
+-			if (speedTowardsOtherCar > otherCarAwaySpeed) { // Going towards other car faster than they are going away
++		float speed = state.vel.Length();
++		if (speed <= 0)
++			continue;
+ 
+-				Vec localPoint = isSwapped ? manifoldPoint.m_localPointB : manifoldPoint.m_localPointA;
+-				bool hitWithBumper = (localPoint.x * BT_TO_UU) > BUMP_MIN_FORWARD_DIST;
+-				if (hitWithBumper) {
++		Vec hitDir = (otherState.pos - state.pos).Normalized();
++		float speedTowardsOtherCar = hitDir.Dot(state.vel);
++		if (speedTowardsOtherCar <= 0)
++			continue;
+ 
+-					bool isDemo;
+-					switch (_mutatorConfig.demoMode) {
+-					case DemoMode::ON_CONTACT:
+-						isDemo = true; // BOOM
+-						break;
+-					case DemoMode::DISABLED:
+-						isDemo = false;
+-						break;
+-					default:
+-						isDemo = state.isSupersonic;
+-					}
++		Vec velDir = state.vel / speed;
++		float otherCarAwaySpeed = otherState.vel.Dot(velDir);
++		if (otherCarAwaySpeed >= speedTowardsOtherCar)
++			continue;
+ 
+-					if (isDemo && !_mutatorConfig.enableTeamDemos)
+-						isDemo = car1->team != car2->team;
+-
+-					if (isDemo) {
+-						car2->Demolish(_mutatorConfig.respawnDelay);
+-					} else {
+-						bool groundHit = car2->_internalState.isOnGround;
++		// Direction between the hitbox centres
++		auto hitboxCenter = [](const PhysState& s, const Vec& offset) {
++			return s.pos + s.rotMat.forward * offset.x + s.rotMat.right * offset.y + s.rotMat.up * offset.z;
++		};
++		Vec hitboxDir =
++			hitboxCenter(otherState, car2->config.hitboxPosOffset) - hitboxCenter(state, car1->config.hitboxPosOffset);
++
++		bool isDemo = false;
++		if (_mutatorConfig.demoMode == DemoMode::NORMAL && car1->_internalState.isSupersonic && canDemoTeam) {
++			// Backwards demolitions are allowed (PhysicsConfig_TA.bAllowBackwardsDemolitions)
++			float forwardSpeed = state.vel.Dot(state.rotMat.forward);
++			if (abs(forwardSpeed) >= DEMO_MIN_FORWARD_SPEED)
++				isDemo = IsWithinForwardCone(state.rotMat, hitboxDir, DEMO_CONE_YAW_DEG, DEMO_CONE_PITCH_DEG, forwardSpeed < 0);
++		}
+ 
+-						float baseScale =
+-							(groundHit ? BUMP_VEL_AMOUNT_GROUND_CURVE : BUMP_VEL_AMOUNT_AIR_CURVE).GetOutput(speedTowardsOtherCar);
++		if (isDemo) {
++			car2->Demolish(_mutatorConfig.respawnDelay);
++			if (_carBumpCallback.func)
++				_carBumpCallback.func(this, car1, car2, true, _carBumpCallback.userInfo);
++			continue;
++		}
+ 
+-						Vec hitUpDir =
+-							(otherState.isOnGround ? (Vec)car2->GetUpDir() : Vec(0, 0, 1));
++		if ((car1->_internalState.carContact.otherCarID == car2->id) && (car1->_internalState.carContact.cooldownTimer > 0))
++			continue; // In cooldown (BumpInterval)
+ 
+-						Vec bumpImpulse =
+-							velDir * baseScale +
+-							hitUpDir * BUMP_UPWARD_VEL_AMOUNT_CURVE.GetOutput(speedTowardsOtherCar)
+-							* _mutatorConfig.bumpForceScale;
++		// Only bumper hits push (PushFactor is 0 otherwise), but every bump starts the cooldown
++		Vec bumpImpulse = { 0, 0, 0 };
++		if (IsWithinForwardCone(state.rotMat, hitboxDir, BUMP_CONE_YAW_DEG, BUMP_CONE_PITCH_DEG, false)) {
++			if (car2->_internalState.isOnGround) {
++				bumpImpulse =
++					velDir * BUMP_VEL_AMOUNT_GROUND_CURVE.GetOutput(speed) +
++					otherState.rotMat.up * BUMP_UPWARD_VEL_AMOUNT_CURVE.GetOutput(speed);
++			} else {
++				bumpImpulse = velDir * BUMP_VEL_AMOUNT_AIR_CURVE.GetOutput(speed);
++			}
++		}
+ 
+-						car2->_velocityImpulseCache += bumpImpulse * UU_TO_BT;
+-					}
++		car2->_velocityImpulseCache += bumpImpulse * _mutatorConfig.bumpForceScale * UU_TO_BT;
+ 
+-					car1->_internalState.carContact.otherCarID = car2->id;
+-					car1->_internalState.carContact.cooldownTimer = _mutatorConfig.bumpCooldownTime;
++		car1->_internalState.carContact.otherCarID = car2->id;
++		car1->_internalState.carContact.cooldownTimer = _mutatorConfig.bumpCooldownTime;
+ 
+-					if (_carBumpCallback.func)
+-						_carBumpCallback.func(this, car1, car2, isDemo, _carBumpCallback.userInfo);
+-				}
+-			}
+-		}
++		if (_carBumpCallback.func)
++			_carBumpCallback.func(this, car1, car2, false, _carBumpCallback.userInfo);
+ 	}
+ }
+ 
+@@ -473,6 +505,9 @@ Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mu
+ 		auto& solverInfo = _bulletWorld.getSolverInfo();
+ 		solverInfo.m_splitImpulsePenetrationThreshold = 1.0e30f;
+ 		solverInfo.m_erp2 = 0.8f;
++
++		// RL PATCH: the game sets solverMode = 0 (no warm starting, no SIMD path) (FUN_140403cc0)
++		solverInfo.m_solverMode = 0;
+ 	}
+ 
+ 	bool loadArenaStuff = gameMode != GameMode::THE_VOID;
+diff --git upstream/src/Sim/Ball/Ball.cpp engine/rocketsim/src/Sim/Ball/Ball.cpp
+index 46a006d..f620c47 100644
+--- upstream/src/Sim/Ball/Ball.cpp
++++ engine/rocketsim/src/Sim/Ball/Ball.cpp
+@@ -1,4 +1,5 @@
+ #include "Ball.h"
++#include "../Quantize/Quantize.h"
+ 
+ #include "../../RLConst.h"
+ #include "../Car/Car.h"
+@@ -139,6 +140,9 @@ void Ball::_FinishPhysicsTick(const MutatorConfig& mutatorConfig) {
+ 		_rigidBody.m_angularVelocity = angVel;
+ 	}
+ 
++	// RL PATCH: round the state through the network serializer every tick (bQuantizePhysics)
++	Quantize::QuantizeRigidBody(_rigidBody);
++
+ 	_internalState.tickCountSinceUpdate++;
+ }
+ 
+diff --git upstream/src/Sim/Car/Car.cpp engine/rocketsim/src/Sim/Car/Car.cpp
+index 417ad9d..cf1e225 100644
+--- upstream/src/Sim/Car/Car.cpp
++++ engine/rocketsim/src/Sim/Car/Car.cpp
+@@ -3,6 +3,7 @@
+ 
+ #include "../../../libsrc/bullet3-3.24/BulletDynamics/Dynamics/btDynamicsWorld.h"
+ #include "../CollisionMasks.h"
++#include "../Quantize/Quantize.h"
+ 
+ RS_NS_START
+ 
+@@ -78,6 +79,12 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
+ 
+ 	assert(_bulletVehicle.getNumWheels() == 4 || _bulletVehicle.getNumWheels() == 3);
+ 
++	// RL PATCH: keep the start-of-tick state, like the game's OldRBState (used by car-car impacts)
++	_oldState.pos = _rigidBody.getWorldTransform().m_origin * BT_TO_UU;
++	_oldState.rotMat = _rigidBody.getWorldTransform().m_basis;
++	_oldState.vel = _rigidBody.m_linearVelocity * BT_TO_UU;
++	_oldState.angVel = _rigidBody.m_angularVelocity;
++
+ 	{ // Update simulation state
+ 		if (_internalState.isDemoed) {
+ 			_internalState.demoRespawnTimer = RS_MAX(_internalState.demoRespawnTimer - tickTime, 0);
+@@ -202,6 +209,10 @@ void Car::_FinishPhysicsTick(const MutatorConfig& mutatorConfig) {
+ 		_rigidBody.m_angularVelocity = angVel;
+ 	}
+ 
++	// RL PATCH: round the state through the network serializer every tick (bQuantizePhysics)
++	Quantize::QuantizeRigidBody(_rigidBody);
++	_internalState.rotMat = _rigidBody.getWorldTransform().m_basis;
++
+ 	_internalState.tickCountSinceUpdate++;
+ }
+ 
+@@ -295,7 +306,10 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
+ 					wheelInfo.m_maxSuspensionTravelCm = (MAX_SUSPENSION_TRAVEL * UU_TO_BT) * 100; // Same for all cars (hopefully)
+ 					wheelInfo.m_maxSuspensionForce = FLT_MAX; // Don't think there's a limit
+ 					wheelInfo.m_bIsFrontWheel = front;
+-					wheelInfo.m_suspensionForceScale = front ? SUSPENSION_FORCE_SCALE_FRONT : SUSPENSION_FORCE_SCALE_BACK;
++					// RL PATCH: each wheel carries its share of the car's weight (Bullet vehicle FUN_1402c52a0):
++					// mass * |other axle x| / wheelbase / 2 (Octane: 35.735 front, 54.265 back)
++					float frontX = config.frontWheels.connectionPointOffset.x, backX = config.backWheels.connectionPointOffset.x;
++					wheelInfo.m_suspensionForceScale = RLConst::CAR_MASS_BT * abs(front ? backX : frontX) / (frontX - backX) / 2;
+ 				}
+ 			}
+ 		}
+@@ -414,8 +428,8 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
+ 		}
+ 	}
+ 
+-	{ // Update steering
+-		float steerAngle = (config.threeWheels ? STEER_ANGLE_FROM_SPEED_CURVE_THREEWHEEL : STEER_ANGLE_FROM_SPEED_CURVE).GetOutput(absForwardSpeed_UU);
++	if (config.threeWheels) { // Update steering
++		float steerAngle = STEER_ANGLE_FROM_SPEED_CURVE_THREEWHEEL.GetOutput(absForwardSpeed_UU);
+ 
+ 		if (_internalState.handbrakeVal) {
+ 			steerAngle +=
+@@ -426,6 +440,35 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
+ 		steerAngle *= controls.steer;
+ 		_bulletVehicle.m_wheelInfo[0].m_steerAngle = steerAngle;
+ 		_bulletVehicle.m_wheelInfo[1].m_steerAngle = steerAngle;
++	} else {
++		// RL PATCH: Ackermann steering (VehicleSim update FUN_140f5ff00, helper FUN_140eca900).
++		// The curve gives the inner front wheel's angle; the outer wheel turns less:
++		// outer = atan(L / (W + L / tan(inner))), L = wheelbase, W = front track
++		float steerAngle = STEER_ANGLE_INNER_FROM_SPEED_CURVE.GetOutput(absForwardSpeed_UU);
++
++		if (_internalState.handbrakeVal) {
++			steerAngle +=
++				(POWERSLIDE_STEER_ANGLE_INNER_FROM_SPEED_CURVE.GetOutput(absForwardSpeed_UU) - steerAngle)
++				* _internalState.handbrakeVal;
++		}
++
++		steerAngle *= controls.steer;
++
++		float inner = abs(steerAngle), outer = 0;
++		if (inner > 0) {
++			float wheelbase = config.frontWheels.connectionPointOffset.x - config.backWheels.connectionPointOffset.x;
++			float track = config.frontWheels.connectionPointOffset.y * 2;
++			outer = atanf(wheelbase / (track + wheelbase / tanf(inner)));
++		}
++
++		// Wheel 0 is front right: the inner wheel when turning right (positive steer)
++		if (steerAngle >= 0) {
++			_bulletVehicle.m_wheelInfo[0].m_steerAngle = inner;
++			_bulletVehicle.m_wheelInfo[1].m_steerAngle = outer;
++		} else {
++			_bulletVehicle.m_wheelInfo[0].m_steerAngle = -outer;
++			_bulletVehicle.m_wheelInfo[1].m_steerAngle = -inner;
++		}
+ 	}
+ 
+ 	{ // Update friction
+@@ -613,7 +656,12 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+ 		if (!_internalState.flipRelTorque.IsZero()) {
+ 			// Flip cancel check
+ 			float pitchScale = 1;
+-			if (relDodgeTorque.y() != 0 && controls.pitch != 0) {
++
++			// RL PATCH: the pitch part can only be cancelled once the dodge has been active for
++			// MinDodgeTorqueTime (0.041 s). The game checks this with the same active time as the
++			// Z damping, which this code advances after the air torque, hence the extra tick.
++			float dodgeActiveTime = _internalState.flipTime + tickTime;
++			if (relDodgeTorque.y() != 0 && controls.pitch != 0 && dodgeActiveTime >= FLIP_TORQUE_MIN_TIME) {
+ 				if (RS_SGN(relDodgeTorque.y()) == RS_SGN(controls.pitch)) {
+ 
+ #ifndef RS_MAX_SPEED
+@@ -736,7 +784,21 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
+ 							dodgeDir = dodgeDir.safeNormalized();
+ 						}
+ 
+-						_internalState.flipRelTorque = btVector3(-dodgeDir.y() / tickTimeScale, dodgeDir.x() / tickTimeScale, 0);
++						{
++							// RL PATCH: CarComponent_Dodge_TA.SetDodgeSettings:
++							// DodgeDirection = Normal(-pitch, yaw + roll) (no deadzone),
++							// DodgeTorque = Round(224 * dir.X) pitch, Round(260 * -dir.Y) roll
++							Vec torqueDir = Vec(-controls.pitch, controls.yaw + controls.roll, 0);
++							float lengthSq = torqueDir.LengthSq();
++							torqueDir = (lengthSq >= 1e-8f) ? torqueDir / sqrtf(lengthSq) : Vec(0, 0, 0);
++
++							auto roundUE = [](float val) { return floorf(val + 0.5f); };
++							float torqueRoll = roundUE(FLIP_TORQUE_X * -torqueDir.y);
++							float torquePitch = roundUE(FLIP_TORQUE_Y * torqueDir.x);
++
++							_internalState.flipRelTorque =
++								btVector3(torqueRoll / FLIP_TORQUE_X / tickTimeScale, torquePitch / FLIP_TORQUE_Y / tickTimeScale, 0);
++						}
+ 
+ 						if (abs(dodgeDir.x()) < 0.1f) dodgeDir.x() = 0;
+ 						if (abs(dodgeDir.y()) < 0.1f) dodgeDir.y() = 0;
+@@ -824,7 +886,13 @@ void Car::_UpdateAutoFlip(float tickTime, const MutatorConfig& mutatorConfig, bo
+ 			_internalState.isAutoFlipping = false;
+ 			_internalState.autoFlipTimer = 0;
+ 		} else {
+-			_rigidBody.m_angularVelocity += GetForwardDir() * CAR_AUTOFLIP_TORQUE * _internalState.autoFlipTorqueScale * tickTime;
++			// RL PATCH: FlipCarTorque is applied as an angular-velocity change of 1000 every tick,
++			// which the car's max angular speed (5.5 rad/s) caps at once
++			btVector3 angVel = _rigidBody.m_angularVelocity +
++				GetForwardDir() * CAR_AUTOFLIP_ANGVEL_CHANGE * _internalState.autoFlipTorqueScale;
++			if (angVel.length2() > CAR_MAX_ANG_SPEED * CAR_MAX_ANG_SPEED)
++				angVel = angVel.normalized() * CAR_MAX_ANG_SPEED;
++			_rigidBody.m_angularVelocity = angVel;
+ 
+ 			_internalState.autoFlipTimer -= tickTime;
+ 		}
+diff --git upstream/src/Sim/Car/Car.h engine/rocketsim/src/Sim/Car/Car.h
+index 90bcaa8..2880097 100644
+--- upstream/src/Sim/Car/Car.h
++++ engine/rocketsim/src/Sim/Car/Car.h
+@@ -166,6 +166,9 @@ public:
+ 	// Those values are only updated when GetState() is called
+ 	CarState _internalState;
+ 
++	// RL PATCH: state at the start of the current tick (the game's OldRBState)
++	PhysState _oldState;
++
+ 	// Get the forward direction as a unit vector
+ 	Vec GetForwardDir() const {
+ 		return _internalState.rotMat.forward;
+diff --git engine/rocketsim/src/Sim/Quantize/Quantize.cpp engine/rocketsim/src/Sim/Quantize/Quantize.cpp
+new file mode 100644
+index 0000000..da0a3bc
+--- /dev/null
++++ engine/rocketsim/src/Sim/Quantize/Quantize.cpp
+@@ -0,0 +1,114 @@
++#include "Quantize.h"
++
++#include "../../BulletLink.h"
++#include "../../../libsrc/bullet3-3.24/BulletDynamics/Dynamics/btRigidBody.h"
++
++#include <cmath>
++
++RS_NS_START
++
++namespace Quantize {
++	constexpr int ROT_BITS = 18;
++	constexpr int ROT_MAX = (1 << ROT_BITS) - 1;
++
++	int RoundUE(float x) {
++		// appRound: cvtss2si(x + x + 0.5) >> 1 (round half up)
++		return (int)lrintf(x + x + 0.5f) >> 1;
++	}
++
++	float Location(float x) {
++		constexpr float SCALE = 100.f;
++		return (1.f / SCALE) * (float)RoundUE(SCALE * x);
++	}
++
++	float Velocity(float v, float scale) {
++		float invScale = 1.f / scale;
++		float result = invScale * (float)(int)(scale * v);
++		float sign = (result > 0) ? 1.f : ((result < 0) ? -1.f : 0.f);
++		return sign * (invScale * 0.1f) + result;
++	}
++
++	btQuaternion Rotation(const btQuaternion& qIn) {
++		// Normalize (identity if degenerate)
++		float q[4] = { qIn.x(), qIn.y(), qIn.z(), qIn.w() };
++		float lengthSq = q[1] * q[1] + q[0] * q[0] + q[2] * q[2] + q[3] * q[3];
++		if (lengthSq > 1e-8f) {
++			float invLength = 1.f / sqrtf(lengthSq);
++			for (float& c : q)
++				c *= invLength;
++		} else {
++			q[0] = q[1] = q[2] = 0;
++			q[3] = 1;
++		}
++
++		// Index of the largest component (ties: x over y, z over w, the x/y pair over the z/w pair)
++		int bestXY = (fabsf(q[0]) < fabsf(q[1])) ? 1 : 0;
++		int bestZW = (fabsf(q[2]) < fabsf(q[3])) ? 3 : 2;
++		int largest = (fabsf(q[bestZW]) <= fabsf(q[bestXY])) ? bestXY : bestZW;
++
++		// Compress the other three, flipped so the dropped component is positive
++		float sign = (q[largest] < 0) ? -1.f : 1.f;
++		int packed[3];
++		for (int i = 0, j = 0; i < 4; i++) {
++			if (i == largest)
++				continue;
++			float val = (q[i] * sign * 1.4142135f * 0.5f + 0.5f) * (float)ROT_MAX;
++			packed[j++] = RS_CLAMP(RoundUE(val), 0, ROT_MAX);
++		}
++
++		// Decompress
++		float out[4];
++		float sumSq = 0;
++		for (int i = 0, j = 0; i < 4; i++) {
++			if (i == largest)
++				continue;
++			float f = (float)packed[j++] / (float)ROT_MAX - 0.5f;
++			out[i] = (f + f) * 0.70710677f;
++		}
++		{
++			float rest = 1.f;
++			for (int i = 0; i < 4; i++)
++				if (i != largest)
++					rest -= out[i] * out[i];
++			out[largest] = (float)sqrt((double)RS_MAX(rest, 0.f));
++		}
++
++		lengthSq = out[0] * out[0] + out[1] * out[1] + out[2] * out[2] + out[3] * out[3];
++		if (lengthSq <= 1e-8f)
++			return btQuaternion(0, 0, 0, 1);
++		float invLength = 1.f / sqrtf(lengthSq);
++		return btQuaternion(out[0] * invLength, out[1] * invLength, out[2] * invLength, out[3] * invLength);
++	}
++
++	void QuantizeRigidBody(btRigidBody& rb) {
++		btTransform& transform = rb.getWorldTransform();
++
++		btVector3 pos = transform.getOrigin() * BT_TO_UU;
++		for (int i = 0; i < 3; i++)
++			pos[i] = Location(pos[i]);
++		transform.setOrigin(pos * UU_TO_BT);
++
++		btQuaternion rot;
++		transform.getBasis().getRotation(rot);
++		transform.setBasis(btMatrix3x3(Rotation(rot)));
++
++		int activationState = rb.getActivationState();
++		if (activationState == ISLAND_SLEEPING || activationState == DISABLE_SIMULATION) {
++			rb.m_linearVelocity = btVector3(0, 0, 0);
++			rb.m_angularVelocity = btVector3(0, 0, 0);
++		} else {
++			btVector3 vel = rb.m_linearVelocity * BT_TO_UU;
++			btVector3 angVel = rb.m_angularVelocity;
++			for (int i = 0; i < 3; i++) {
++				vel[i] = Velocity(vel[i], 100.f);
++				angVel[i] = Velocity(angVel[i], 10000.f);
++			}
++			rb.m_linearVelocity = vel * UU_TO_BT;
++			rb.m_angularVelocity = angVel;
++		}
++
++		rb.updateInertiaTensor();
++	}
++}
++
++RS_NS_END
+diff --git engine/rocketsim/src/Sim/Quantize/Quantize.h engine/rocketsim/src/Sim/Quantize/Quantize.h
+new file mode 100644
+index 0000000..2a80491
+--- /dev/null
++++ engine/rocketsim/src/Sim/Quantize/Quantize.h
+@@ -0,0 +1,31 @@
++#pragma once
++#include "../../BaseInc.h"
++
++class btRigidBody;
++class btQuaternion;
++
++RS_NS_START
++
++// RL PATCH: Rocket League's per-tick physics state quantization (PhysicsConfig_TA.bQuantizePhysics).
++// After every physics tick each body's state goes through the network serializer and back
++// (FUN_140eed9e0 -> FUN_140e45c10 -> FUN_140e3e960), so the simulation only ever continues from
++// states a client could receive exactly.
++namespace Quantize {
++	// UE3 appRound(): floor(x + 0.5), computed the same way as the game
++	int RoundUE(float x);
++
++	// Location in uu: nearest 0.01 (FUN_140380930, scale 100)
++	float Location(float x);
++
++	// Velocity component: truncated at 1/scale, then nudged 0.1/scale away from zero (FUN_140380a00).
++	// Scale 100 for linear velocity (uu/s), 10000 for angular velocity (rad/s)
++	float Velocity(float v, float scale);
++
++	// Rotation: "smallest three" quaternion, 18 bits per component (FUN_14037bf60 / FUN_1403738b0 / FUN_140380140)
++	btQuaternion Rotation(const btQuaternion& q);
++
++	// Applies all of the above to a Bullet rigid body (Bullet units are uu / 50)
++	void QuantizeRigidBody(btRigidBody& rb);
++}
++
++RS_NS_END

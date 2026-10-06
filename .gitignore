@@ -35,3 +35,7 @@ venv/
 
 # replay extractor build output
 scripts/replay_extract/target/
+
+# engine build output
+engine/build/
+engine/rocketsim/build/

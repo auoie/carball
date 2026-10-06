@@ -3,8 +3,8 @@
 **Goal:** a web game cloning Rocket League's physics, camera, controls and competitive multiplayer.
 **Plan:** patch RocketSim with verified differences → WASM; own arena mesh; Three.js; authoritative server.
 **Status (2026-10-06):** physics reverse engineering complete; our arena mesh is generated and validated
-(`out/arena/`). Next: building (roadmap §2 RocketSim patches, §8 engine), plus camera/controls/netcode
-reverse engineering (§3, §4, §6).
+(`out/arena/`); RocketSim is forked into `engine/` with every verified patch and tests (`engine/README.md`).
+Next: WebAssembly build (§8; the user installs Emscripten), then camera/controls/netcode reverse engineering (§3, §4, §6).
 
 Read in this order: `notes/roadmap.md` (what's left) → `notes/physics-values.md` (all values, formulas,
 RocketSim comparison) → `notes/arena.md` → `notes/findings.md` (binary/package internals, addresses).
@@ -50,7 +50,8 @@ replay_extract/target/release/replay_extract states.csv replays/*.replay   # bal
 python3 replay_measure.py states.csv                 # ball rest/wall gaps, throttle accel curve
 python3 arena_gen.py ../out/arena                    # our arena mesh (.obj + RocketSim .cmf), no Psyonix data
 python3 arena_check.py ../out/arena/soccar_arena.obj ../out/arena_local   # deviation vs game meshes (local only)
-# scripts/arena_smoketest.cpp: RocketSim smoke tests of the arena (build steps in its header)
+cmake -S ../engine -B ../engine/build -DCMAKE_BUILD_TYPE=Release && make -C ../engine/build -j
+../engine/build/rl_patch_tests && ../engine/build/arena_smoketest ../out/arena/collision_meshes
 ```
 
 ## Gotchas
@@ -65,3 +66,5 @@ python3 arena_check.py ../out/arena/soccar_arena.obj ../out/arena_local   # devi
 - Addresses are valid for this exe build only.
 - Keep Psyonix material local: decrypted packages, key, meshes, decompiled code are git-ignored.
 - The user commits work themselves; leave changes uncommitted unless asked.
+- The user chose to fork RocketSim despite its README's request (2026-10-06); don't re-ask.
+- Engine changes are marked `RL PATCH`; regenerate `engine/rocketsim-rl-patches.diff` after changing them.

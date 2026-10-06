@@ -1,9 +1,5 @@
-// Smoke tests of the generated arena mesh (scripts/arena_gen.py) in stock RocketSim.
-//
-//   git clone --depth 1 https://github.com/ZealanL/RocketSim && cmake -S RocketSim -B RocketSim/build -DCMAKE_BUILD_TYPE=Release
-//   make -C RocketSim/build -j
-//   g++ -O2 -std=c++20 -w -IRocketSim/src scripts/arena_smoketest.cpp RocketSim/build/libRocketSim.a -o arena_smoketest -lpthread
-//   ./arena_smoketest out/arena/collision_meshes
+// Smoke tests of the generated arena mesh (scripts/arena_gen.py) in the patched engine.
+// Built by engine/CMakeLists.txt:  engine/build/arena_smoketest out/arena/collision_meshes
 #include "RocketSim.h"
 #include <cstdio>
 #include <cmath>
