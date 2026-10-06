@@ -519,7 +519,7 @@ index 8281ac9..ddd8627 100644
  	};
  }
 diff --git upstream/src/Sim/Arena/Arena.cpp engine/rocketsim/src/Sim/Arena/Arena.cpp
-index a13cee0..327f062 100644
+index a13cee0..9ea6a70 100644
 --- upstream/src/Sim/Arena/Arena.cpp
 +++ engine/rocketsim/src/Sim/Arena/Arena.cpp
 @@ -36,7 +36,7 @@ void Arena::SetMutatorConfig(const MutatorConfig& mutatorConfig) {
@@ -619,11 +619,11 @@ index a13cee0..327f062 100644
 -
 -		Vec deltaPos = (otherState.pos - state.pos);
 -		if (state.vel.Dot(deltaPos) > 0) { // Going towards other car
--
--			Vec velDir = state.vel.Normalized();
--			Vec dirToOtherCar = deltaPos.Normalized();
 +		bool canDemoTeam = _mutatorConfig.enableTeamDemos || (car1->team != car2->team);
  
+-			Vec velDir = state.vel.Normalized();
+-			Vec dirToOtherCar = deltaPos.Normalized();
+-
 -			float speedTowardsOtherCar = state.vel.Dot(dirToOtherCar);
 -			float otherCarAwaySpeed = otherState.vel.Dot(velDir);
 +		if (_mutatorConfig.demoMode == DemoMode::ON_CONTACT) {
@@ -1058,7 +1058,23 @@ index a13cee0..327f062 100644
  
  	return car;
  }
-@@ -703,6 +962,9 @@ void Arena::Step(int ticksToSimulate) {
+@@ -691,18 +950,18 @@ void Arena::Step(int ticksToSimulate) {
+ 
+ 		_bulletWorld.setWorldUserInfo(this);
+ 
+-		{ // Ball zero-vel sleeping
+-			if (ball->_rigidBody.m_linearVelocity.length2() == 0 && ball->_rigidBody.m_angularVelocity.length2() == 0) {
+-				ball->_rigidBody.setActivationState(ISLAND_SLEEPING);
+-			} else {
+-				ball->_rigidBody.setActivationState(ACTIVE_TAG);
+-			}
+-		}
++		// RL PATCH: the ball sleeps through Bullet's own deactivation, as in the game (stock updateActivationState,
++		// FUN_1402c14a0): below 0.8 BU/s (40 uu/s) and 1 rad/s for gDeactivationTime (2 s), it falls asleep and its
++		// velocities are zeroed. RocketSim woke the ball here every tick unless its velocity was exactly zero, so a slow
++		// ball rolled on forever. Replays: a ball at rest falls asleep 2.0 s after being placed (782 of 795 kickoffs)
+ 
+ 		bool ballOnly = _cars.empty();
  
  		bool hasArenaStuff = (gameMode != GameMode::THE_VOID);
  		
@@ -1068,7 +1084,7 @@ index a13cee0..327f062 100644
  		for (Car* car : _cars)
  			car->_PreTickUpdate(gameMode, tickTime, _mutatorConfig);
  
-@@ -983,6 +1245,7 @@ btRigidBody* Arena::_AddStaticCollisionShape(btCollisionShape* shape, btVector3
+@@ -983,6 +1242,7 @@ btRigidBody* Arena::_AddStaticCollisionShape(btCollisionShape* shape, btVector3
  	} else {
  		_bulletWorld.addRigidBody(shapeRB);
  	}
@@ -1136,7 +1152,7 @@ index a3ebd3f..ac2a391 100644
  
  private:
 diff --git upstream/src/Sim/Ball/Ball.cpp engine/rocketsim/src/Sim/Ball/Ball.cpp
-index 46a006d..c794764 100644
+index 46a006d..9f77bae 100644
 --- upstream/src/Sim/Ball/Ball.cpp
 +++ engine/rocketsim/src/Sim/Ball/Ball.cpp
 @@ -1,4 +1,5 @@
@@ -1145,7 +1161,13 @@ index 46a006d..c794764 100644
  
  #include "../../RLConst.h"
  #include "../Car/Car.h"
-@@ -48,6 +49,7 @@ void Ball::SetState(const BallState& state) {
+@@ -43,11 +44,11 @@ void Ball::SetState(const BallState& state) {
+ 	_rigidBody.setLinearVelocity(state.vel * UU_TO_BT);
+ 	_rigidBody.setAngularVelocity(state.angVel);
+ 	_rigidBody.updateInertiaTensor();
+-	if (!state.vel.IsZero() || !state.angVel.IsZero())
+-		_rigidBody.setActivationState(ACTIVE_TAG);
++	_rigidBody.activate(true); // RL PATCH: awake with the sleep timer reset, like the game's WakeRigidBody on resets
  
  	_velocityImpulseCache = { 0,0,0 };
  	_internalState.tickCountSinceUpdate = 0;
@@ -1153,7 +1175,7 @@ index 46a006d..c794764 100644
  }
  
  btCollisionShape* MakeBallCollisionShape(GameMode gameMode, const MutatorConfig& mutatorConfig, btVector3& localIntertia) {
-@@ -61,8 +63,8 @@ btCollisionShape* MakeBallCollisionShape(GameMode gameMode, const MutatorConfig&
+@@ -61,8 +62,8 @@ btCollisionShape* MakeBallCollisionShape(GameMode gameMode, const MutatorConfig&
  		float curAng = 0;
  		for (int i = 0; i < Snowday::PUCK_CIRCLE_POINT_AMOUNT; i++) {
  			Vec point = Vec(
@@ -1164,7 +1186,7 @@ index 46a006d..c794764 100644
  				Snowday::PUCK_HEIGHT / 2 * UU_TO_BT
  			);
  
-@@ -100,6 +102,7 @@ void Ball::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const M
+@@ -100,6 +101,7 @@ void Ball::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const M
  	_rigidBody = btRigidBody(constructionInfo);
  	_rigidBody.setUserIndex(BT_USERINFO_TYPE_BALL);
  	_rigidBody.setUserPointer(this);
@@ -1172,7 +1194,7 @@ index 46a006d..c794764 100644
  
  	// Trigger the Arena::_BulletContactAddedCallback() when anything touches the ball
  	_rigidBody.m_collisionFlags |= btCollisionObject::CF_CUSTOM_MATERIAL_CALLBACK;
-@@ -139,6 +142,9 @@ void Ball::_FinishPhysicsTick(const MutatorConfig& mutatorConfig) {
+@@ -139,6 +141,9 @@ void Ball::_FinishPhysicsTick(const MutatorConfig& mutatorConfig) {
  		_rigidBody.m_angularVelocity = angVel;
  	}
  
@@ -1182,7 +1204,7 @@ index 46a006d..c794764 100644
  	_internalState.tickCountSinceUpdate++;
  }
  
-@@ -264,7 +270,10 @@ void Ball::_OnHit(
+@@ -264,7 +269,10 @@ void Ball::_OnHit(
  		ballHitInfo.tickCountWhenExtraImpulseApplied = tickCount;
  		Vec carForward = car->GetForwardDir();
  		Vec relPos = ballState.pos - carState.pos;

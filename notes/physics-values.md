@@ -376,3 +376,15 @@ See `notes/validation.md`: ball physics exact to the replays' precision (free fl
 (coasting 525.8 uu/s², throttle, steering) within about 1%; steering sensitivity applied in the physics; car–ball
 touches unbiased after patch 28.
 
+## Sleeping (Bullet deactivation, stock `updateActivationState` `FUN_1402c14a0`)
+`gDeactivationTime` = 2.0 (never written), `gDisableDeactivation` = false (only the debug drawer sets it). Bodies are
+built with `btRigidBodyConstructionInfo` defaults (`FUN_140409570`): linear threshold 0.8 BU/s (40 uu/s), angular
+1.0 rad/s, friction 0.5 and restitution 0 before the materials apply. Below both thresholds for 2 s a body falls asleep
+and Bullet zeroes its velocities (and the per-tick quantization reports sleeping bodies with zero velocity). The ball
+sleeps (replays: 2.0 s after a reset at rest); cars never do (`Car_Default.bDisableSleeping = True`). Resets wake the
+ball (`WakeRigidBody`). Engine patch 30.
+
+## Ball on the floor (replays, `notes/validation.md`)
+Sliding: ~230 uu/s² friction plus the 3%/s drag. Rolling: 2.3%/s (drag acting through the rolling constraint,
+0.03 × 5/7 for a solid sphere). Rolling is only possible below 6 rad/s × 91.25 = 547.5 uu/s.
+

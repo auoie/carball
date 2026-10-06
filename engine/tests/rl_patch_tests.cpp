@@ -422,6 +422,47 @@ static void TestBallHitStartOfTick(Arena* arena, Car* car) {
 		hit.extraHitVel.Length());
 }
 
+static void TestSleeping(Arena* arena, Car* car) {
+	puts("sleeping: the ball after 2 s below 40 uu/s and 1 rad/s (velocity zeroed); cars never");
+	car->SetState(CarAt({ -3000, -3000, 17.01f }, { 1, 0, 0 }, { 0, 0, 1 }));
+	car->controls = CarControls();
+	bool carSlept = false; // (cars never sleep: Car_Default bDisableSleeping; RocketSim keeps them active every tick)
+	auto ticksUntilAsleep = [&](BallState b, int maxTicks) {
+		arena->ball->SetState(b);
+		for (int t = 1; t <= maxTicks; t++) {
+			arena->Step(1);
+			carSlept |= car->_rigidBody.getActivationState() == ISLAND_SLEEPING;
+			if (arena->ball->_rigidBody.getActivationState() == ISLAND_SLEEPING) return t;
+		}
+		return -1;
+	};
+	BallState rest;
+	rest.pos = { 0, 0, 93.15f };
+	int restTicks = ticksUntilAsleep(rest, 600);
+	CHECK(restTicks >= 240 && restTicks <= 243, "ball placed at rest fell asleep after %d ticks (replays: 2.0 s)", restTicks);
+	BallState slow = rest;
+	slow.vel = { 30, 0, 0 };
+	slow.angVel = { 0, 30 / 91.25f, 0 }; // rolling
+	int slowTicks = ticksUntilAsleep(slow, 600);
+	BallState s = arena->ball->GetState();
+	CHECK(slowTicks >= 240 && slowTicks <= 243 && s.vel.IsZero() && s.angVel.IsZero(),
+		"ball rolling at 30 uu/s: asleep after %d ticks, velocity %.3f", slowTicks, s.vel.Length());
+	BallState faster = rest;
+	faster.vel = { 60, 0, 0 };
+	faster.angVel = { 0, 60 / 91.25f, 0 };
+	int fasterTicks = ticksUntilAsleep(faster, 600);
+	CHECK(fasterTicks == -1 && arena->ball->GetState().vel.Length() > 50, "ball rolling at 60 uu/s fell asleep after %d ticks",
+		fasterTicks);
+	CHECK(!carSlept, "a parked car fell asleep");
+	// A sleeping ball still gets hit
+	ticksUntilAsleep(rest, 600);
+	car->SetState(CarAt({ -400, 0, 17.01f }, { 1, 0, 0 }, { 0, 0, 1 }, { 1000, 0, 0 }));
+	car->controls.throttle = 1;
+	arena->Step(60);
+	CHECK(arena->ball->GetState().vel.x > 500, "sleeping ball hit at 1000 uu/s: velocity %.1f", arena->ball->GetState().vel.x);
+	car->controls = CarControls();
+}
+
 int main(int argc, char** argv) {
 	std::string meshes = argc > 1 ? argv[1] : ARENA_MESH_DIR;
 	RocketSim::Init(meshes, true);
@@ -447,6 +488,8 @@ int main(int argc, char** argv) {
 	TestSuspensionScale(arena);
 	TestBallHitStartOfTick(arena, car);
 	TestInputQuantization(arena, car);
+	TestSleeping(arena, car);
+	arena->ball->SetState(BallState());
 	arena->ball->SetState(BallState());
 
 	Car* victim = arena->AddCar(Team::ORANGE);

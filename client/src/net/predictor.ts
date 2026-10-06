@@ -45,6 +45,8 @@ export interface PredictorStats {
   corrections: number;
   resimulatedFrames: number;
   ignoredOld: number;
+  /** The server was ahead of this client (it fell behind real time): its state was taken as the present */
+  resyncs: number;
   /** Corrections that changed the local car's present state: the server disagreed with its prediction */
   localMispredictions: number;
 }
@@ -56,7 +58,7 @@ export class Predictor {
   #oldest: number; // corrections may not reach before this frame (history before a world reload is invalid)
   readonly #history: (RecordedFrame | undefined)[] = new Array<RecordedFrame | undefined>(HISTORY_FRAMES + 8);
   readonly #remote = new Map<number, RemoteBase>();
-  readonly stats: PredictorStats = { corrections: 0, resimulatedFrames: 0, ignoredOld: 0, localMispredictions: 0 };
+  readonly stats: PredictorStats = { corrections: 0, resimulatedFrames: 0, ignoredOld: 0, resyncs: 0, localMispredictions: 0 };
 
   /** `world` already holds the state after `frame`. */
   constructor(world: World, localCarId: number, frame: number) {
@@ -116,8 +118,12 @@ export class Predictor {
    * replays to the present. Returns the number of frames replayed (0 if the state was too old or did not apply).
    */
   correct(frame: number, states: readonly Uint8Array[]): number {
+    if (frame > this.#frame) {
+      this.#resync(frame, states);
+      return 0;
+    }
     const at = this.#recorded(frame);
-    if (frame > this.#frame || frame < this.#oldest || !at) {
+    if (frame < this.#oldest || !at) {
       this.stats.ignoredOld++;
       return 0;
     }
@@ -147,6 +153,27 @@ export class Predictor {
   #localState(): string {
     const c = this.#world.car(this.#localCar);
     return JSON.stringify([c.pos, c.vel, c.angVel, c.rot]);
+  }
+
+  /**
+   * The server's state is for a frame this client hasn't reached: it fell behind real time (a stalled tab) and the
+   * server, finding no input, repeated the last one and moved its frame count on (ServerConsume). Take the server's
+   * state as the present and continue from its frame.
+   */
+  #resync(frame: number, states: readonly Uint8Array[]): void {
+    const present = this.#recorded(this.#frame);
+    if (!states.every((s) => this.#world.applyNetState(s))) {
+      if (present) this.#world.loadState(present.snapshot);
+      return;
+    }
+    for (const car of this.#world.carIds()) {
+      if (car !== this.#localCar) this.#remote.set(car, { controls: this.#world.carControls(car), frame });
+    }
+    this.#history.fill(undefined);
+    this.#frame = frame;
+    this.#oldest = frame;
+    this.#record(frame, NO_INPUT);
+    this.stats.resyncs++;
   }
 
   /**

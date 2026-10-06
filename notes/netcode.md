@@ -127,3 +127,9 @@ replay, input fading). One consequence of `ServerConsume` worth knowing: when th
 the last input and still advances `LastProcessedFrame`; when it catches up it consumes two frames in one tick. Either
 way the server's state for a frame number is then one tick off the client's, so the next correction changes the
 local car once, after which the two timelines line up again.
+
+Client resync (ours): when a client falls behind real time (a stalled or background tab), the server keeps moving its
+`LastProcessedFrame` on with repeated input, so updates arrive for frames the client hasn't simulated. The predictor
+then takes the server's state as the present and continues from that frame (`Predictor` `#resync`; unit test "catches
+up after stalling"). Before this, the client ignored those updates and never caught up.
+

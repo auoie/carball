@@ -44,8 +44,7 @@ void Ball::SetState(const BallState& state) {
 	_rigidBody.setLinearVelocity(state.vel * UU_TO_BT);
 	_rigidBody.setAngularVelocity(state.angVel);
 	_rigidBody.updateInertiaTensor();
-	if (!state.vel.IsZero() || !state.angVel.IsZero())
-		_rigidBody.setActivationState(ACTIVE_TAG);
+	_rigidBody.activate(true); // RL PATCH: awake with the sleep timer reset, like the game's WakeRigidBody on resets
 
 	_velocityImpulseCache = { 0,0,0 };
 	_internalState.tickCountSinceUpdate = 0;

@@ -950,13 +950,10 @@ void Arena::Step(int ticksToSimulate) {
 
 		_bulletWorld.setWorldUserInfo(this);
 
-		{ // Ball zero-vel sleeping
-			if (ball->_rigidBody.m_linearVelocity.length2() == 0 && ball->_rigidBody.m_angularVelocity.length2() == 0) {
-				ball->_rigidBody.setActivationState(ISLAND_SLEEPING);
-			} else {
-				ball->_rigidBody.setActivationState(ACTIVE_TAG);
-			}
-		}
+		// RL PATCH: the ball sleeps through Bullet's own deactivation, as in the game (stock updateActivationState,
+		// FUN_1402c14a0): below 0.8 BU/s (40 uu/s) and 1 rad/s for gDeactivationTime (2 s), it falls asleep and its
+		// velocities are zeroed. RocketSim woke the ball here every tick unless its velocity was exactly zero, so a slow
+		// ball rolled on forever. Replays: a ball at rest falls asleep 2.0 s after being placed (782 of 795 kickoffs)
 
 		bool ballOnly = _cars.empty();
 

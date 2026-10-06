@@ -16,7 +16,9 @@ online mode with prediction and rollback (`client/src/game/online.ts`, `client/s
 predictor) is in and exact for the local car. Next: step 5.
 Replay validation (§7) done (`notes/validation.md`, `engine/build/replay_validate`): ball physics exact, driving within
 ~1%; fixed the car–ball hit impulse (start-of-tick velocities, patch 28: the ball was bouncy on the car) and added the
-game's input bytes (patch 29). Agreed multiplayer plan: (1) exact restore ✓, (2) decode the
+game's input bytes (patch 29). Then: the ball sleeps like in the game (patch 30); car wobble at goal walls traced to
+the vehicle model (same on the game's mesh); the client predictor resyncs when the server is ahead (stalled tab).
+Agreed multiplayer plan: (1) exact restore ✓, (2) decode the
 game's netcode (input buffer, client sim-time adjustment, remote car/ball correction), (3) native authoritative
 server + browser transport, (4) client prediction + rollback, (5) in-process network tests with scripted
 latency/jitter/loss. Then replay validation (§7) with numbers, then the competitive layer (§9). The user wants

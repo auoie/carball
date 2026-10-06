@@ -204,6 +204,73 @@ struct Arenas {
 	std::vector<uint8_t> carClean;
 };
 
+// Puts a replay car state into the car arena (and the ball). `warmup`: the wheels' forces use values from the previous
+// tick (wheel carry), which a replay doesn't have: compute them with one tick from this state (ball out of the way),
+// then put the state back.
+static Body Parked(const Body& ball, const CarRow& car) {
+	Body parked = ball;
+	parked.pos = Vec(car.b.pos.x > 0 ? -3000 : 3000, car.b.pos.y > 0 ? -4000 : 4000, 1000);
+	parked.vel = parked.angVel = Vec();
+	return parked;
+}
+
+static void SetupCar(Arenas& A, const CarRow& c0, const CarControls& controls, bool useSensitivity, bool warmup,
+                     const Body& ball) {
+	Restore(A.withCar, A.carClean);
+	CarConfig config = CAR_CONFIG_OCTANE;
+	config.steeringSensitivity = useSensitivity ? c0.sensitivity : 1.f;
+	A.car->config = config;
+	CarState s = A.car->GetState();
+	s.pos = c0.b.pos;
+	s.rotMat = c0.b.rot;
+	s.vel = c0.b.vel;
+	s.angVel = c0.b.angVel;
+	bool flat = s.pos.z < 60 && s.rotMat.up.z > 0.95f;
+	s.isOnGround = flat;
+	for (bool& w : s.wheelsWithContact) w = flat;
+	s.hasJumped = !flat;
+	s.boost = std::max(c0.boostAmount / 255.f * 100.f, c0.boosting ? 1.f : 0.f);
+	s.isBoosting = c0.boosting;
+	s.boostingTime = c0.boosting ? 1.f : 0.f;
+	s.handbrakeVal = c0.handbrake ? 1.f : 0.f;
+	s.isSupersonic = s.vel.Length() >= 2200;
+	s.lastControls = controls;
+	A.car->SetState(s);
+	A.car->controls = controls;
+	if (warmup) {
+		SetBall(A.withCar, Parked(ball, c0));
+		A.withCar->Step(1);
+		CarState warm = A.car->GetState();
+		warm.pos = s.pos;
+		warm.rotMat = s.rotMat;
+		warm.vel = s.vel;
+		warm.angVel = s.angVel;
+		warm.boost = s.boost;
+		warm.ballHitInfo = s.ballHitInfo;
+		A.car->SetState(warm);
+	}
+	SetBall(A.withCar, ball);
+}
+
+static CarControls ReplayControls(const CarRow& c) {
+	CarControls controls;
+	controls.throttle = DecodeAxis(c.throttle);
+	controls.steer = DecodeAxis(c.steer);
+	controls.handbrake = c.handbrake;
+	controls.boost = c.boosting;
+	return controls;
+}
+
+// Where a car is, for the car-alone report
+static std::string Place(const CarRow& c) {
+	const Vec& p = c.b.pos;
+	if (fabsf(p.y) > 5120) return fabsf(p.x) > 750 ? "in goal by the side wall" : "in goal";
+	if (p.z < 20 && c.b.rot.up.z > 0.99f) return "flat floor";
+	return "walls/curves/ceiling";
+}
+
+static bool OctaneHitbox(int body);
+
 // Steps up to KMAX ticks. The ball's errors are taken at its best tick count and the car's at its own: their states
 // in a replay frame can be from server ticks a few apart. `ballTicksBefore`: ticks the ball was advanced alone first.
 static Errors Run(Arena* arena, Car* car, const Frame& next, const CarRow* carNext, const Body& ballStart,
@@ -399,53 +466,9 @@ int main(int argc, char** argv) {
 				continue;
 			}
 
-			CarControls controls;
-			controls.throttle = DecodeAxis(c0->throttle);
-			controls.steer = DecodeAxis(c0->steer);
-			controls.handbrake = c0->handbrake;
-			controls.boost = c0->boosting;
+			CarControls controls = ReplayControls(*c0);
 
-			auto setup = [&]() {
-				Restore(A.withCar, A.carClean);
-				CarConfig config = CAR_CONFIG_OCTANE;
-				config.steeringSensitivity = useSensitivity ? c0->sensitivity : 1.f;
-				A.car->config = config;
-				CarState s = A.car->GetState();
-				s.pos = c0->b.pos;
-				s.rotMat = c0->b.rot;
-				s.vel = c0->b.vel;
-				s.angVel = c0->b.angVel;
-				bool flat = s.pos.z < 60 && s.rotMat.up.z > 0.95f;
-				s.isOnGround = flat;
-				for (bool& w : s.wheelsWithContact) w = flat;
-				s.hasJumped = !flat;
-				s.boost = std::max(c0->boostAmount / 255.f * 100.f, c0->boosting ? 1.f : 0.f);
-				s.isBoosting = c0->boosting;
-				s.boostingTime = c0->boosting ? 1.f : 0.f;
-				s.handbrakeVal = c0->handbrake ? 1.f : 0.f;
-				s.isSupersonic = s.vel.Length() >= 2200;
-				s.lastControls = controls;
-				A.car->SetState(s);
-				A.car->controls = controls;
-				if (warmup) {
-					// The wheels' forces use values from the previous tick (wheel carry), which a replay doesn't have:
-					// compute them with one tick from this state (ball out of the way), then put the state back
-					Body parked = f0.ball;
-					parked.pos = Vec(c0->b.pos.x > 0 ? -3000 : 3000, c0->b.pos.y > 0 ? -4000 : 4000, 1000);
-					parked.vel = parked.angVel = Vec();
-					SetBall(A.withCar, parked);
-					A.withCar->Step(1);
-					CarState warm = A.car->GetState();
-					warm.pos = s.pos;
-					warm.rotMat = s.rotMat;
-					warm.vel = s.vel;
-					warm.angVel = s.angVel;
-					warm.boost = s.boost;
-					warm.ballHitInfo = s.ballHitInfo;
-					A.car->SetState(warm);
-				}
-				SetBall(A.withCar, f0.ball);
-			};
+			auto setup = [&]() { SetupCar(A, *c0, controls, useSensitivity, warmup, f0.ball); };
 			// The car's and the ball's states can be from different server ticks: try offsets (the earlier body
 			// advanced alone first) and keep the one that fits both bodies best
 			auto runAligned = [&](bool blockImpulse, int& bestOffset) {
@@ -461,10 +484,7 @@ int main(int argc, char** argv) {
 						A.withCar->ball->SetState(A.ballOnly->ball->GetState());
 						ballTicksBefore = d;
 					} else if (d < 0) { // the ball's state is newer: the car catches up alone, the ball parked away
-						Body parked = f0.ball;
-						parked.pos = Vec(c0->b.pos.x > 0 ? -3000 : 3000, c0->b.pos.y > 0 ? -4000 : 4000, 1000);
-						parked.vel = parked.angVel = Vec();
-						SetBall(A.withCar, parked);
+						SetBall(A.withCar, Parked(f0.ball, *c0));
 						A.withCar->Step(-d);
 						SetBall(A.withCar, f0.ball);
 					}
@@ -500,6 +520,57 @@ int main(int argc, char** argv) {
 			std::string what = cs.dribble ? "dribble" : (cs.e.ballTouch ? "touch" : "no touch");
 			cs.category = "car " + where + "/" + what;
 			cases.push_back(cs);
+		}
+	}
+
+	// Cars alone: far from the ball and from the other cars (driving physics anywhere in the arena)
+	for (const Replay& r : replays) {
+		std::map<int, std::pair<CarRow, double>> lastCar;
+		const Body* ball = nullptr;
+		double ballTime = 0;
+		for (size_t i = 0; i + 1 < r.frames.size() && cases.size() < limit; i++) {
+			const Frame& f0 = r.frames[i];
+			for (const CarRow& c : f0.cars) lastCar[c.actor] = { c, f0.time };
+			if (f0.hasBall) {
+				ball = &f0.ball;
+				ballTime = f0.time;
+			}
+			if (!ball || f0.time - ballTime > 0.1) continue;
+			for (const CarRow& c0 : f0.cars) {
+				if (!OctaneHitbox(c0.body) || c0.jump || c0.doubleJump || c0.dodge || c0.b.sleeping) continue;
+				Vec ballPos = ball->pos + ball->vel * (float)(f0.time - ballTime);
+				if ((ballPos - c0.b.pos).Length() < 900) continue;
+				bool crowded = false;
+				for (auto& [actor, entry] : lastCar) {
+					double age = f0.time - entry.second;
+					if (actor == c0.actor || age > 2) continue;
+					Vec p = entry.first.b.pos + entry.first.b.vel * (float)age;
+					if ((p - c0.b.pos).Length() < 600 + (float)age * 2300) crowded = true;
+				}
+				if (crowded) continue;
+				const CarRow* c1 = nullptr;
+				const Frame* fNext = nullptr;
+				for (size_t j = i + 1; j < r.frames.size() && j <= i + 3 && !c1; j++) {
+					if (r.frames[j].time - f0.time > 0.15) break;
+					for (const CarRow& c : r.frames[j].cars) if (c.actor == c0.actor) c1 = &c;
+					if (c1) fNext = &r.frames[j];
+				}
+				if (!c1 || c1->jump || c1->doubleJump || c1->dodge || c0.throttle != c1->throttle ||
+				    c0.steer != c1->steer || c0.handbrake != c1->handbrake || c0.boosting != c1->boosting)
+					continue;
+				CarControls controls = ReplayControls(c0);
+				Body parked = Parked(*ball, c0);
+				SetupCar(A, c0, controls, useSensitivity, warmup, parked);
+				Case cs;
+				cs.replay = r.name;
+				cs.frame = f0.index;
+				cs.dt = fNext->time - f0.time;
+				cs.e = Run(A.withCar, A.car, *fNext, c1, parked);
+				cs.car = &c0;
+				cs.carNext = c1;
+				cs.category = std::string("car alone/") + (cs.e.carOnGround ? "" : "air (no air control) ") + Place(c0);
+				cases.push_back(cs);
+			}
 		}
 	}
 

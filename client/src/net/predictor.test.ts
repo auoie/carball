@@ -48,7 +48,8 @@ interface ServerUpdate {
   readonly state: Uint8Array;
 }
 
-function run(ticks: number, lossEvery = 0) {
+/** `stall`: client ticks during which the client doesn't run (a stalled tab) while the server goes on */
+function run(ticks: number, lossEvery = 0, stall: readonly [number, number] = [0, 0]) {
   const server = World.create(engine);
   const local = server.addCar(0);
   const bot = server.addCar(1);
@@ -72,10 +73,13 @@ function run(ticks: number, lossEvery = 0) {
 
   for (let t = 1; t <= ticks; t++) {
     // Client: one frame ahead with its own input
-    const input = localInput(t);
-    predictor.advance(input);
-    clientLocalPosAt.set(t, JSON.stringify(client.car(local).pos));
-    toServer.push({ at: t + UP, value: { frame: t, input } });
+    const stalled = t >= stall[0] && t < stall[1];
+    if (!stalled) {
+      const input = localInput(t);
+      predictor.advance(input);
+      clientLocalPosAt.set(predictor.frame, JSON.stringify(client.car(local).pos));
+      toServer.push({ at: t + UP, value: { frame: predictor.frame, input } });
+    }
 
     // Server: take what arrived, consume one frame per tick once a few are buffered
     while (toServer.length > 0 && (toServer[0]?.at ?? Infinity) <= t) {
@@ -102,7 +106,7 @@ function run(ticks: number, lossEvery = 0) {
     }
 
     // Client: apply arrived updates; a correction must not move the local car (nothing touched it)
-    while (toClient.length > 0 && (toClient[0]?.at ?? Infinity) <= t) {
+    while (!stalled && toClient.length > 0 && (toClient[0]?.at ?? Infinity) <= t) {
       const d = toClient.shift();
       if (!d) break;
       const before = client.car(local).pos;
@@ -146,6 +150,24 @@ describe("Predictor", () => {
     // Each correction replays at least the round trip (12 frames)
     expect(r.predictor.stats.resimulatedFrames / r.predictor.stats.corrections).toBeGreaterThanOrEqual(UP + DOWN);
     expect(r.largestBotCorrection).toBeGreaterThan(0.5); // the bot's steering changes were mispredicted
+    r.server.dispose();
+    r.client.dispose();
+  });
+
+  it("catches up after stalling while the server went on", () => {
+    // The client stops for 1 s; the server repeats its last input and moves its frame count past the client's
+    const r = run(480, 0, [120, 240]);
+    expect(r.predictor.stats.resyncs).toBeGreaterThan(0);
+    // Afterwards it follows the server again: its own car predicted exactly where the server put it, frame by frame
+    expect(r.predictor.stats.corrections).toBeGreaterThan(100);
+    let compared = 0;
+    for (let f = r.predictor.frame - 100; f <= r.predictor.frame; f++) {
+      const serverPos = r.serverLocalPosAt.get(f);
+      if (serverPos === undefined) continue;
+      expect(r.clientLocalPosAt.get(f), `frame ${String(f)}`).toBe(serverPos);
+      compared++;
+    }
+    expect(compared).toBeGreaterThan(80);
     r.server.dispose();
     r.client.dispose();
   });

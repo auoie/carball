@@ -77,6 +77,36 @@ Ground driving (engine − game, uu/s², flat floor; `validation_report.py`):
    (`Car_TA.OnHitBall`: `CurrentFrame − LastBallImpactFrame > 1`), as in RocketSim. The other variant (blocked on the
    first compared tick) fits worse: 7.1 vs 5.1 uu/s median.
 
+7. **The ball stops (fixed: engine patch 30).** The game uses Bullet's stock deactivation for the ball
+   (`updateActivationState` `FUN_1402c14a0`, `gDeactivationTime` = 2.0, default thresholds 0.8 BU/s = 40 uu/s and
+   1 rad/s): after 2 s below both, the ball falls asleep and its velocity is zeroed. Replays: a ball placed at rest falls
+   asleep 2.0 s later in 782 of 795 kickoffs (11 at 2.1 s). Competitive play never leaves the ball that slow during play,
+   so the rolling case comes from the code. RocketSim woke the ball every tick unless its velocity was exactly zero: a
+   slow ball rolled on forever. Cars never sleep (`Car_Default.bDisableSleeping`): no car fell asleep in 2,180 kickoff
+   waits of about 4 s.
+8. **Ball on the floor**, replays vs engine: sliding decelerates at about 230 uu/s² plus the 3%/s drag (replays 247 /
+   268 / 298 uu/s² at ~600 / 1400 / 2400 uu/s; engine 250 / 271 / 301); rolling at 2.3%/s (engine 2.31%/s). A sliding
+   ball can only start rolling below 6 rad/s × 91.25 = 547.5 uu/s (the ball's `MaxAngularSpeed`), so it slides until
+   then. (These match a summary the user found: "230 uu/s² sliding, rolling about 2.2%/s, stops below 40 uu/s and
+   10 RPM". The time before stopping is 2.0 s, not the 2.5 s it gave.)
+9. **Car jitter against goal walls: in the vehicle model, not in our arena mesh.** A car pressing into a goal side wall
+   with throttle, or resting on the curve where the goal floor meets its side or back, wobbles by up to 1.3 uu and
+   1.7° from tick to tick (a wheel ray alternating between neighbouring triangles). The same scan on the game's own
+   collision mesh (local measurement only) gives the same: 84 vs 93 spots with throttle, 29 vs 32 parked, same
+   magnitudes. Replays have only 27 cases of slow cars with throttle by a goal side wall; the engine predicts them as
+   well as elsewhere (0.32 uu median after ~4 ticks). Whether the game wobbles the same way can't be told from them.
+   Not changed.
+
+Cars alone (far from the ball and other cars), car position error after ~4 ticks, our mesh / the game's mesh:
+| Where | Cases | p50 | p90 |
+|---|---|---|---|
+| Flat floor | 95,490 | 0.050 / 0.050 | 2.99 / 3.00 |
+| Walls, curves, ceiling | 14,580 | 0.49 / 0.45 | 3.35 / 3.37 |
+| In a goal | 1,486 | 0.24 / 0.24 | 2.97 / 2.93 |
+| In a goal by the side wall | 351 | 0.35 / 0.33 | 1.46 / 1.45 |
+Walls and curves are less exact than the flat floor on either mesh: something in driving on curved surfaces (or state
+a replay doesn't carry) differs. Next to look at.
+
 ## Limits and next steps
 - Air control (pitch, yaw, roll) is not in replays: aerial touches and car rotation in the air can only be checked
   when the input was zero. Jumps, double jumps and dodges are skipped (the component flags say when they're active,
@@ -85,6 +115,7 @@ Ground driving (engine − game, uu/s², flat floor; `validation_report.py`):
   car/ball tick offset (fitted).
 - Not covered yet: car–car bumps and demos, cars on walls and the ceiling (included in "ground" when the wheels
   touch, not checked separately), non-Octane hitboxes, multi-car touches.
+- Car driving on walls and curves: ten times the flat-floor error (see above), on our mesh and the game's.
 - Not validated: a ball left on a parked car's roof slowly rolls forward and off, because the game's impulse direction
   leans forward (`PushForwardScale`) and each touch after a bounce adds a little. Competitive replays don't have that
   situation.
