@@ -8,10 +8,9 @@ Values and formulas: `notes/physics-values.md`. Arena: `notes/arena.md`. Binary/
 Resuming in a new session: `notes/HANDOFF.md`. Generated constants: `out/rl_physics_constants.json`.
 
 ## Next up
-1. Generate our own arena mesh from `notes/arena.md` (§1).
-2. Patch RocketSim (§2) and compile it to WebAssembly (§8).
-3. Offline freeplay in the browser (§8), with the camera (§3) and controls (§4) reverse engineered alongside.
-4. Then netcode (§6) and the competitive layer (§9).
+1. Patch RocketSim (§2) and compile it to WebAssembly (§8), using our arena mesh (`out/arena/`).
+2. Offline freeplay in the browser (§8), with the camera (§3) and controls (§4) reverse engineered alongside.
+3. Then netcode (§6) and the competitive layer (§9).
 
 ---
 
@@ -31,6 +30,7 @@ Resuming in a new session: `notes/HANDOFF.md`. Generated constants: `out/rl_phys
 - [x] Ball: Bullet sphere 91.25; rests at 93.15 on flat surfaces (measured from replays)
 - [x] Throttle top speed: 1600 → 160 uu/s² up to 1400, then 0 (measured from replays; RocketSim's curve is right)
 - [x] Arena measured: planes, edge curves, corners, goal mouth and full goal interior (`notes/arena.md`)
+- [x] Our own arena collision mesh generated and validated (`scripts/arena_gen.py`, `out/arena/`)
 - [x] Replay tools: `scripts/replay_extract` (Rust/boxcars) + `scripts/replay_measure.py`
 - [x] Camera tuning values (car cam, ball cam, presets, slider limits)
 - [x] Netcode tuning values (input redundancy, jitter buffer, sim-time scaling, correction rates)
@@ -39,9 +39,10 @@ Resuming in a new session: `notes/HANDOFF.md`. Generated constants: `out/rl_phys
 
 ## 1. Arena
 
-- [ ] Generate our own arena mesh from `notes/arena.md`: floor/ceiling/wall planes plus one-sided triangles for the
-      edge curves, corners and goals. Triangle normals point into the playable space; one copy of the goal (the game has it twice).
-- [ ] Check ball and car rest heights, wall rides, corner bounces and the goal floor ramp against replays.
+- [x] Generate our own arena mesh: `scripts/arena_gen.py` → `out/arena/` (RocketSim `.cmf` + `.obj`).
+      Within 2.6 uu of the game's surfaces everywhere (`scripts/arena_check.py`); loads and holds in RocketSim (`scripts/arena_smoketest.cpp`).
+- [ ] Check ball and car rest heights, wall rides and corner bounces against replays once the patched sim exists (§7).
+      Done so far: goal ramp ride height matches replays (17.0).
 
 ## 2. Patch RocketSim with verified differences
 
