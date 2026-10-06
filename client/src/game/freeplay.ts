@@ -4,9 +4,9 @@ import { Quaternion, Vector3 } from "three";
 import { PlayerCamera } from "../camera/rlCamera";
 import type { BodyState, CarState, World } from "../engine/world";
 import type { Hud } from "../hud";
-import { DEFAULT_BINDINGS } from "../input/bindings";
 import type { InputDevices } from "../input/devices";
-import { type HeldActions, readControls, readHeldActions } from "../input/mapping";
+import { EMPTY_INPUT, type HeldActions, readControls, readHeldActions } from "../input/mapping";
+import type { Settings } from "../settings/settings";
 import { FixedStep, TICK_SECONDS } from "../loop/fixedStep";
 import { type Rot3, ZERO, add, cross, dot, lerp, normalize, scale, sub, vec3 } from "../math/vec";
 import { toThreeQuaternion, toThreeVector } from "../render/coords";
@@ -77,7 +77,15 @@ export class Freeplay {
   readonly #pos = new Vector3();
   readonly #rot = new Quaternion();
 
-  constructor(world: World, renderer: Renderer, input: InputDevices, hud: Hud) {
+  constructor(
+    world: World,
+    renderer: Renderer,
+    input: InputDevices,
+    hud: Hud,
+    /** Current settings, and whether the player's input drives the car (false while a menu is open). */
+    private readonly settings: () => Settings,
+    private readonly inputEnabled: () => boolean,
+  ) {
     this.#world = world;
     this.#renderer = renderer;
     this.#input = input;
@@ -94,9 +102,12 @@ export class Freeplay {
 
   /** One animation frame. `frameSeconds`: real time since the previous frame. */
   frame(frameSeconds: number): void {
-    const snapshot = this.#input.snapshot();
-    this.#handleActions(readHeldActions(snapshot, DEFAULT_BINDINGS));
-    const controls = readControls(snapshot, DEFAULT_BINDINGS);
+    const settings = this.settings();
+    const polled = this.#input.snapshot();
+    const snapshot = this.inputEnabled() ? polled : EMPTY_INPUT;
+    this.#handleActions(readHeldActions(snapshot, settings.bindings, settings.controller));
+    const controls = readControls(snapshot, settings.bindings, settings.controller);
+    this.#camera.settings = settings.camera;
 
     const ticks = this.#clock.advance(frameSeconds);
     for (let i = 0; i < ticks; i++) {

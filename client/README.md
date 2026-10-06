@@ -35,7 +35,8 @@ npm run build && npm run e2e   # Playwright in the installed Chrome: load, drive
 |---|---|
 | `src/engine/world.ts` | typed wrapper around the engine (`World`: cars, ball, pads, events, snapshots) |
 | `src/engine/cmf.ts` | reads the arena collision mesh (also used for rendering) |
-| `src/input/` | bindings from Rocket League's `DefaultInput.ini`, deadzones, keyboard/mouse/gamepad → controls |
+| `src/input/` | actions + default bindings from Rocket League's `DefaultInput.ini`, deadzones, sensitivity, devices → controls |
+| `src/settings/`, `src/ui/` | player settings (bindings, camera, controller), storage, settings menu |
 | `src/loop/fixedStep.ts` | physics at a fixed 120 Hz; rendering interpolates between ticks |
 | `src/camera/` | the game's car cam, ball cam and transitions, ported from its UnrealScript (`notes/camera.md`) |
 | `src/render/` | Three.js scene; placeholder car (hitbox + wheels), ball, pads, arena |
@@ -44,8 +45,13 @@ npm run build && npm run e2e   # Playwright in the installed Chrome: load, drive
 Coordinates: the game's frame (x, y horizontal, z up, left-handed) maps to Three.js as `(x, z, y)`
 (`src/render/coords.ts`). Blue defends −y, orange +y.
 
-## Controls
-H in game shows them. Defaults follow the game: W/S throttle (and pitch in the air), A/D steer/yaw,
+## Controls and settings
+Esc opens the settings menu (`src/ui/settingsPanel.ts`): rebind every action (one keyboard/mouse and one gamepad
+input each; gamepad buttons, triggers and stick directions all bindable), the game's camera settings (with its slider
+limits), and controller settings (stick/trigger deadzones, steering/aerial sensitivity = the game's input shaping).
+Saved in localStorage (`src/settings/settings.ts`, validated field by field on load). H shows the current bindings.
+
+Defaults Defaults follow the game: W/S throttle (and pitch in the air), A/D steer/yaw,
 Q/E air roll, right mouse jump, left mouse boost, Left Shift powerslide/air roll, Space ball cam,
 Backspace reset, 1/2 ball in front / on car. Gamepad: RT/LT, left stick, A jump, B boost, X powerslide/air roll,
 Y ball cam, RB reset, D-pad down/up.

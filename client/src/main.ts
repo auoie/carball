@@ -7,6 +7,8 @@ import { Freeplay } from "./game/freeplay";
 import { Hud } from "./hud";
 import { InputDevices } from "./input/devices";
 import { buildArena } from "./render/arena";
+import { loadSettings } from "./settings/settings";
+import { SettingsPanel } from "./ui/settingsPanel";
 import { Renderer } from "./render/renderer";
 import "./style.css";
 
@@ -44,10 +46,14 @@ async function main(): Promise<void> {
   renderer.scene.add(buildArena(parseCmf(arenaBytes)));
   const hud = new Hud(required("#hud", HTMLElement));
   const input = new InputDevices(canvas);
-  const game = new Freeplay(world, renderer, input, hud);
+  let settings = loadSettings();
+  const panel = new SettingsPanel(document.body, settings, (next) => {
+    settings = next;
+  });
+  const game = new Freeplay(world, renderer, input, hud, () => settings, () => !panel.isOpen);
 
   window.addEventListener("keydown", (e) => {
-    if (e.code === "KeyH") hud.toggleHelp();
+    if (e.code === "KeyH" && !panel.isOpen) hud.toggleHelp(settings.bindings);
   });
 
   status.hidden = true;

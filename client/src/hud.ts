@@ -1,4 +1,5 @@
 // On-screen overlay: boost, speed, score, camera mode, help.
+import { ACTIONS, type Bindings, inputName } from "./input/bindings";
 
 export interface HudState {
   readonly boost: number;
@@ -43,8 +44,31 @@ export class Hud {
     this.#help = element(root, "#help", HTMLElement);
   }
 
-  toggleHelp(): void {
+  /** Shows or hides the controls list, filled from the current bindings. */
+  toggleHelp(bindings: Bindings): void {
     this.#help.hidden = !this.#help.hidden;
+    if (this.#help.hidden) return;
+    const rows = ACTIONS.map((a) => {
+      const b = bindings[a.id];
+      const row = document.createElement("tr");
+      for (const text of [a.label, inputName(b.keyboard), inputName(b.gamepad)]) {
+        const td = document.createElement("td");
+        td.textContent = text;
+        row.append(td);
+      }
+      return row;
+    });
+    const head = document.createElement("tr");
+    for (const text of ["", "Keyboard & mouse", "Gamepad"]) {
+      const th = document.createElement("th");
+      th.textContent = text;
+      head.append(th);
+    }
+    const table = document.createElement("table");
+    table.append(head, ...rows);
+    const title = document.createElement("h2");
+    title.textContent = "Controls (Esc: change them)";
+    this.#help.replaceChildren(title, table);
   }
 
   update(s: HudState): void {

@@ -85,6 +85,7 @@ throttle curve, hitbox sizes and wheel setup, ball radius, dodge-vs-double-jump 
   - Start: `PlayerInput_TA`, `PlayerController_TA.PlayerMove` (already decoded).
 - [ ] Mouse/keyboard: `UpdateMouseGroundSteer`, `UpdateMouseGroundThrottle`, `ModifiedAirRotationByMouseInput`, `ApplyAirPitchSafety` (decoded).
 - [x] Default bindings from `TAGame/Config/DefaultInput.ini` (`client/src/input/bindings.ts`, `notes/camera.md`).
+- [x] Settings menu: rebind controls, camera settings (game's limits), deadzones and sensitivities; saved locally.
 
 ## 5. Gameplay rules
 

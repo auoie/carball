@@ -1,15 +1,6 @@
 // Turns a snapshot of held keys/buttons/axes into car controls. Pure, so it is unit-tested.
 import type { CarControls } from "../engine/world";
-import {
-  type Bindings,
-  type ButtonInput,
-  GAMEPAD_STICK_DEADZONE,
-  GAMEPAD_TRIGGER_DEADZONE,
-  PAD_AXIS_LEFT_X,
-  PAD_AXIS_LEFT_Y,
-  PAD_BUTTON_LEFT_TRIGGER,
-  PAD_BUTTON_RIGHT_TRIGGER,
-} from "./bindings";
+import type { Action, Bindings, GamepadInput, KeyboardInput } from "./bindings";
 
 export interface GamepadSnapshot {
   readonly axes: readonly number[];
@@ -23,6 +14,14 @@ export interface InputSnapshot {
 }
 
 export const EMPTY_INPUT: InputSnapshot = { keys: new Set(), mouseButtons: new Set(), gamepad: null };
+
+/** Controller settings (the game's Controls menu). */
+export interface ControllerSettings {
+  readonly stickDeadzone: number; // circular, per stick
+  readonly triggerDeadzone: number; // analog buttons (triggers)
+  readonly steeringSensitivity: number; // shapes steer
+  readonly aerialSensitivity: number; // shapes pitch, yaw, roll
+}
 
 /** Held state of the non-driving actions; the caller detects presses. */
 export interface HeldActions {
@@ -49,56 +48,62 @@ export function radialDeadzone(x: number, y: number, deadzone: number): readonly
   return [(x / mag) * scaled, (y / mag) * scaled];
 }
 
-function isHeld(input: InputSnapshot, binding: ButtonInput): boolean {
-  switch (binding.kind) {
-    case "key":
-      return input.keys.has(binding.code);
-    case "mouse":
-      return input.mouseButtons.has(binding.button);
-    case "pad":
-      return (input.gamepad?.buttons[binding.button] ?? 0) > 0.5;
+/** The game's input shaping (FUN_140396ca0): clamp(input * sensitivity), or digital at the maximum (10). */
+export function shapeInput(v: number, sensitivity: number): number {
+  if (sensitivity >= 10) return Math.sign(v);
+  return clamp(v * sensitivity, -1, 1);
+}
+
+/** Stick axes after the circular deadzone (sticks are axis pairs 0/1, 2/3). */
+function stickAxes(pad: GamepadSnapshot, deadzone: number): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < pad.axes.length; i += 2) {
+    const [x, y] = radialDeadzone(pad.axes[i] ?? 0, pad.axes[i + 1] ?? 0, deadzone);
+    out.push(x, y);
   }
+  return out;
 }
 
-const anyHeld = (input: InputSnapshot, bindings: readonly ButtonInput[]): boolean =>
-  bindings.some((b) => isHeld(input, b));
-const digital = (input: InputSnapshot, bindings: readonly ButtonInput[]): number => (anyHeld(input, bindings) ? 1 : 0);
+function keyboardValue(input: InputSnapshot, binding: KeyboardInput | null): number {
+  if (binding === null) return 0;
+  return (binding.kind === "key" ? input.keys.has(binding.code) : input.mouseButtons.has(binding.button)) ? 1 : 0;
+}
 
-export function readControls(input: InputSnapshot, b: Bindings): CarControls {
-  const pad = input.gamepad;
-  const [stickX, stickY] = pad
-    ? radialDeadzone(pad.axes[PAD_AXIS_LEFT_X] ?? 0, pad.axes[PAD_AXIS_LEFT_Y] ?? 0, GAMEPAD_STICK_DEADZONE)
-    : [0, 0];
-  const rightTrigger = axisDeadzone(pad?.buttons[PAD_BUTTON_RIGHT_TRIGGER] ?? 0, GAMEPAD_TRIGGER_DEADZONE);
-  const leftTrigger = axisDeadzone(pad?.buttons[PAD_BUTTON_LEFT_TRIGGER] ?? 0, GAMEPAD_TRIGGER_DEADZONE);
+function gamepadValue(sticks: readonly number[], pad: GamepadSnapshot | null, binding: GamepadInput | null, s: ControllerSettings): number {
+  if (binding === null || pad === null) return 0;
+  if (binding.kind === "padButton") return axisDeadzone(pad.buttons[binding.button] ?? 0, s.triggerDeadzone);
+  return Math.max(0, (sticks[binding.axis] ?? 0) * binding.sign);
+}
 
-  const forward = digital(input, b.throttleForward);
-  const reverse = digital(input, b.throttleReverse);
-  const throttle = clamp(forward - reverse + rightTrigger - leftTrigger, -1, 1);
+/** How strongly each action is held, 0..1. */
+export function actionValues(input: InputSnapshot, bindings: Bindings, s: ControllerSettings): Record<Action, number> {
+  const sticks = input.gamepad ? stickAxes(input.gamepad, s.stickDeadzone) : [];
+  const values = {} as Record<Action, number>;
+  for (const action of Object.keys(bindings) as Action[]) {
+    const b = bindings[action];
+    values[action] = Math.max(keyboardValue(input, b.keyboard), gamepadValue(sticks, input.gamepad, b.gamepad, s));
+  }
+  return values;
+}
 
-  // Steering and yaw share one axis; pitch shares the throttle keys (forward = nose down).
-  const steer = clamp(digital(input, b.steerRight) - digital(input, b.steerLeft) + stickX, -1, 1);
-  const pitch = clamp(reverse - forward + stickY, -1, 1);
-  const directionalRoll = digital(input, b.rollRight) - digital(input, b.rollLeft);
-
-  const airRoll = anyHeld(input, b.airRoll);
+export function readControls(input: InputSnapshot, bindings: Bindings, s: ControllerSettings): CarControls {
+  const v = actionValues(input, bindings, s);
+  const yaw = v.yawRight - v.yawLeft;
+  const airRoll = v.airRoll > 0.5;
   return {
-    throttle,
-    steer,
-    pitch,
-    yaw: airRoll ? 0 : steer,
-    roll: clamp(directionalRoll + (airRoll ? steer : 0), -1, 1),
-    jump: anyHeld(input, b.jump),
-    boost: anyHeld(input, b.boost),
-    handbrake: anyHeld(input, b.handbrake),
+    throttle: clamp(v.throttleForward - v.throttleReverse, -1, 1),
+    steer: shapeInput(v.steerRight - v.steerLeft, s.steeringSensitivity),
+    pitch: shapeInput(v.pitchUp - v.pitchDown, s.aerialSensitivity),
+    // Holding air roll turns yaw input into roll
+    yaw: airRoll ? 0 : shapeInput(yaw, s.aerialSensitivity),
+    roll: shapeInput(v.rollRight - v.rollLeft + (airRoll ? yaw : 0), s.aerialSensitivity),
+    jump: v.jump > 0.5,
+    boost: v.boost > 0.5,
+    handbrake: v.handbrake > 0.5,
   };
 }
 
-export function readHeldActions(input: InputSnapshot, b: Bindings): HeldActions {
-  return {
-    ballCam: anyHeld(input, b.ballCam),
-    reset: anyHeld(input, b.reset),
-    ballInFront: anyHeld(input, b.ballInFront),
-    ballOnCar: anyHeld(input, b.ballOnCar),
-  };
+export function readHeldActions(input: InputSnapshot, bindings: Bindings, s: ControllerSettings): HeldActions {
+  const v = actionValues(input, bindings, s);
+  return { ballCam: v.ballCam > 0.5, reset: v.reset > 0.5, ballInFront: v.ballInFront > 0.5, ballOnCar: v.ballOnCar > 0.5 };
 }

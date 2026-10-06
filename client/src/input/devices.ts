@@ -53,7 +53,7 @@ export class InputDevices {
 }
 
 /** The first connected gamepad with the standard layout. */
-function readGamepad(): GamepadSnapshot | null {
+export function readGamepad(): GamepadSnapshot | null {
   for (const pad of navigator.getGamepads()) {
     if (pad?.connected && pad.mapping === "standard") {
       return { axes: [...pad.axes], buttons: pad.buttons.map((b) => b.value) };

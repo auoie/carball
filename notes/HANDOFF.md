@@ -9,9 +9,11 @@ The engine also builds to WebAssembly with a JS API (`engine/build-wasm/rlengine
 builds simulate bit-identically (the game server will be native, the clients WebAssembly).
 Browser freeplay works (`client/`, TypeScript + Vite + Three.js; see `client/README.md`). The camera is the
 game's own: decompiled from UnrealScript and ported (`client/src/camera/rlCamera.ts`, algorithm in `notes/camera.md`).
-**Last state (2026-10-06):** I had just shipped the ported camera after the user said the provisional one "feels
-terrible", and asked the user to try it and report what still feels off (walls / air / flips / ball cam). No
-reply yet. If they report problems, compare that part against `out/decomp/camera_script.txt`.
+**Last state (2026-10-06):** ported the game's camera (user had said the provisional one "feels terrible"), then
+added a settings menu (Esc) at the user's request so they can use their own controls/camera settings: rebinding,
+camera sliders, deadzones/sensitivities, saved in localStorage. If they report camera problems, compare against
+`out/decomp/camera_script.txt`. Possible follow-ups: dodge deadzone (engine CarConfig.dodgeDeadzone, not exposed),
+import of the game's own settings, mouse look/swivel.
 Next options: camera extras (swivel/look, rear cam), controls/input shaping (§4), replay validation (§7),
 netcode + native server (§6), competitive layer (§9).
 

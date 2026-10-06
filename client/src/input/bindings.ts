@@ -1,60 +1,107 @@
-// Default bindings: Rocket League's TAGame/Config/DefaultInput.ini ("Standard" preset).
-// Keys are KeyboardEvent.code values; mouse buttons are MouseEvent.button; gamepad buttons use the
-// browser's "standard" mapping (0 A, 1 B, 2 X, 3 Y, 5 RB, 12 D-pad up, 13 D-pad down).
+// Actions and bindings, modelled on Rocket League's control settings (TAGame/Config/DefaultInput.ini,
+// "Standard" preset). Every action has one keyboard/mouse input and one gamepad input.
+// Keys are KeyboardEvent.code values, mouse buttons MouseEvent.button, gamepad inputs use the browser's
+// "standard" mapping (buttons 0 A, 1 B, 2 X, 3 Y, 4 LB, 5 RB, 6 LT, 7 RT, ...; axes 0/1 left stick, 2/3 right).
 
-export type ButtonInput =
-  | { readonly kind: "key"; readonly code: string }
-  | { readonly kind: "mouse"; readonly button: number }
-  | { readonly kind: "pad"; readonly button: number };
+export type KeyboardInput = { readonly kind: "key"; readonly code: string } | { readonly kind: "mouse"; readonly button: number };
 
-const key = (code: string): ButtonInput => ({ kind: "key", code });
-const mouse = (button: number): ButtonInput => ({ kind: "mouse", button });
-const pad = (button: number): ButtonInput => ({ kind: "pad", button });
+export type GamepadInput =
+  | { readonly kind: "padButton"; readonly button: number } // analog for the triggers
+  | { readonly kind: "padAxis"; readonly axis: number; readonly sign: 1 | -1 }; // one direction of a stick axis
 
-export interface Bindings {
-  // Digital driving inputs (keyboard). Gamepad sticks and triggers are read as axes.
-  readonly throttleForward: readonly ButtonInput[]; // also pitch down in the air
-  readonly throttleReverse: readonly ButtonInput[]; // also pitch up in the air
-  readonly steerRight: readonly ButtonInput[]; // also yaw right
-  readonly steerLeft: readonly ButtonInput[];
-  readonly rollRight: readonly ButtonInput[];
-  readonly rollLeft: readonly ButtonInput[];
-  readonly jump: readonly ButtonInput[];
-  readonly boost: readonly ButtonInput[];
-  readonly handbrake: readonly ButtonInput[]; // powerslide
-  readonly airRoll: readonly ButtonInput[]; // "ToggleRoll": steer/yaw input rolls instead
-  // Camera and freeplay
-  readonly ballCam: readonly ButtonInput[]; // "SecondaryCamera"
-  readonly reset: readonly ButtonInput[]; // "ResetTraining"
-  readonly ballInFront: readonly ButtonInput[]; // "FreeplayBallInFront"
-  readonly ballOnCar: readonly ButtonInput[]; // "FreeplayBallOnCar"
+export interface Binding {
+  readonly keyboard: KeyboardInput | null;
+  readonly gamepad: GamepadInput | null;
 }
 
+export const ACTIONS = [
+  { id: "throttleForward", label: "Throttle", group: "Driving" },
+  { id: "throttleReverse", label: "Reverse", group: "Driving" },
+  { id: "steerRight", label: "Steer right", group: "Driving" },
+  { id: "steerLeft", label: "Steer left", group: "Driving" },
+  { id: "jump", label: "Jump", group: "Driving" },
+  { id: "boost", label: "Boost", group: "Driving" },
+  { id: "handbrake", label: "Powerslide", group: "Driving" },
+  { id: "pitchUp", label: "Pitch up (nose up)", group: "Aerial" },
+  { id: "pitchDown", label: "Pitch down (nose down)", group: "Aerial" },
+  { id: "yawRight", label: "Yaw right", group: "Aerial" },
+  { id: "yawLeft", label: "Yaw left", group: "Aerial" },
+  { id: "airRoll", label: "Air roll (hold: yaw rolls)", group: "Aerial" },
+  { id: "rollRight", label: "Air roll right", group: "Aerial" },
+  { id: "rollLeft", label: "Air roll left", group: "Aerial" },
+  { id: "ballCam", label: "Ball cam", group: "Camera" },
+  { id: "reset", label: "Reset to kickoff", group: "Freeplay" },
+  { id: "ballInFront", label: "Ball in front", group: "Freeplay" },
+  { id: "ballOnCar", label: "Ball on car", group: "Freeplay" },
+] as const;
+
+export type Action = (typeof ACTIONS)[number]["id"];
+export type Bindings = Readonly<Record<Action, Binding>>;
+
+const key = (code: string): KeyboardInput => ({ kind: "key", code });
+const mouse = (button: number): KeyboardInput => ({ kind: "mouse", button });
+const button = (b: number): GamepadInput => ({ kind: "padButton", button: b });
+const axis = (a: number, sign: 1 | -1): GamepadInput => ({ kind: "padAxis", axis: a, sign });
+const bind = (keyboard: KeyboardInput | null, gamepad: GamepadInput | null): Binding => ({ keyboard, gamepad });
+
+/** The game's defaults. (Gamepad air roll: the ini's base preset uses the left trigger, "Legacy" uses X;
+ *  X with powerslide is what players know.) */
 export const DEFAULT_BINDINGS: Bindings = {
-  throttleForward: [key("KeyW")],
-  throttleReverse: [key("KeyS")],
-  steerRight: [key("KeyD")],
-  steerLeft: [key("KeyA")],
-  rollRight: [key("KeyE")],
-  rollLeft: [key("KeyQ")],
-  jump: [mouse(2), pad(0)],
-  boost: [mouse(0), pad(1)],
-  // The ini binds gamepad air roll to the left trigger in the base preset and to X in "Legacy";
-  // X (with powerslide) is what players know as the default, so X is used here.
-  handbrake: [key("ShiftLeft"), pad(2)],
-  airRoll: [key("ShiftLeft"), pad(2)],
-  ballCam: [key("Space"), pad(3)],
-  reset: [key("Backspace"), pad(5)],
-  ballInFront: [key("Digit1"), pad(13)],
-  ballOnCar: [key("Digit2"), pad(12)],
+  throttleForward: bind(key("KeyW"), button(7)),
+  throttleReverse: bind(key("KeyS"), button(6)),
+  steerRight: bind(key("KeyD"), axis(0, 1)),
+  steerLeft: bind(key("KeyA"), axis(0, -1)),
+  jump: bind(mouse(2), button(0)),
+  boost: bind(mouse(0), button(1)),
+  handbrake: bind(key("ShiftLeft"), button(2)),
+  pitchUp: bind(key("KeyS"), axis(1, 1)), // stick pulled back
+  pitchDown: bind(key("KeyW"), axis(1, -1)), // stick pushed forward
+  yawRight: bind(key("KeyD"), axis(0, 1)),
+  yawLeft: bind(key("KeyA"), axis(0, -1)),
+  airRoll: bind(key("ShiftLeft"), button(2)),
+  rollRight: bind(key("KeyE"), null),
+  rollLeft: bind(key("KeyQ"), null),
+  ballCam: bind(key("Space"), button(3)),
+  reset: bind(key("Backspace"), button(5)),
+  ballInFront: bind(key("Digit1"), button(13)),
+  ballOnCar: bind(key("Digit2"), button(12)),
 };
 
-/** PlayerInput_TA defaults (DefaultInput.ini). Provisional until the input code is decompiled (roadmap §4). */
-export const GAMEPAD_STICK_DEADZONE = 0.3;
-export const GAMEPAD_TRIGGER_DEADZONE = 0.1;
+const PAD_BUTTON_NAMES = [
+  "A", "B", "X", "Y", "LB", "RB", "LT", "RT", "View", "Menu", "Left stick click", "Right stick click",
+  "D-pad up", "D-pad down", "D-pad left", "D-pad right", "Home",
+];
+const MOUSE_NAMES = ["Left mouse", "Middle mouse", "Right mouse", "Mouse 4", "Mouse 5"];
+const AXIS_NAMES: Record<number, readonly [string, string]> = {
+  0: ["Left stick left", "Left stick right"],
+  1: ["Left stick up", "Left stick down"],
+  2: ["Right stick left", "Right stick right"],
+  3: ["Right stick up", "Right stick down"],
+};
 
-/** Standard-mapping gamepad axes and analog buttons. */
-export const PAD_AXIS_LEFT_X = 0;
-export const PAD_AXIS_LEFT_Y = 1; // -1 when pushed up
-export const PAD_BUTTON_LEFT_TRIGGER = 6;
-export const PAD_BUTTON_RIGHT_TRIGGER = 7;
+/** "KeyW" -> "W", "ShiftLeft" -> "Left Shift", "Digit1" -> "1", "ArrowUp" -> "Up arrow". */
+export function keyName(code: string): string {
+  if (/^Key[A-Z]$/.test(code)) return code.slice(3);
+  if (/^Digit\d$/.test(code)) return code.slice(5);
+  const sided = /^(Shift|Control|Alt|Meta)(Left|Right)$/.exec(code);
+  if (sided) return `${sided[2] ?? ""} ${sided[1] === "Control" ? "Ctrl" : (sided[1] ?? "")}`;
+  if (code.startsWith("Arrow")) return `${code.slice(5)} arrow`;
+  if (code.startsWith("Numpad")) return `Numpad ${code.slice(6)}`;
+  return code;
+}
+
+export function inputName(input: KeyboardInput | GamepadInput | null): string {
+  if (input === null) return "—";
+  switch (input.kind) {
+    case "key":
+      return keyName(input.code);
+    case "mouse":
+      return MOUSE_NAMES[input.button] ?? `Mouse ${input.button + 1}`;
+    case "padButton":
+      return PAD_BUTTON_NAMES[input.button] ?? `Button ${input.button}`;
+    case "padAxis": {
+      const names = AXIS_NAMES[input.axis];
+      return names ? names[input.sign > 0 ? 1 : 0] : `Axis ${input.axis}${input.sign > 0 ? "+" : "-"}`;
+    }
+  }
+}

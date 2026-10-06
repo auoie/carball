@@ -40,3 +40,50 @@ test("freeplay loads, drives and resets", async ({ page }) => {
 
   expect(errors).toEqual([]);
 });
+
+test("controls can be rebound and are remembered", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+
+  // Open settings, rebind throttle (keyboard) to I
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#settings")).toBeVisible();
+  const slot = page.locator('.binding-slot[data-action="throttleForward"][data-device="keyboard"]');
+  await expect(slot).toHaveText("W");
+  await slot.click();
+  await expect(slot).toHaveClass(/capturing/);
+  await page.keyboard.press("KeyI");
+  await expect(slot).toHaveText("I");
+
+  // Camera FOV slider
+  await page.locator(".settings-tab", { hasText: "Camera" }).click();
+  const fov = page.locator('input[data-setting="fov"]');
+  await fov.fill("105");
+  await fov.dispatchEvent("change");
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#settings")).toBeHidden();
+
+  // I now drives; W no longer does
+  await page.keyboard.down("KeyW");
+  await page.waitForTimeout(600);
+  expect(await speed(page)).toBeLessThan(50);
+  await page.keyboard.up("KeyW");
+  await page.keyboard.down("KeyI");
+  await page.waitForTimeout(1200);
+  expect(await speed(page)).toBeGreaterThan(400);
+  await page.keyboard.up("KeyI");
+
+  // Remembered after a reload
+  await page.reload();
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+  await page.keyboard.press("Escape");
+  await expect(page.locator('.binding-slot[data-action="throttleForward"][data-device="keyboard"]')).toHaveText("I");
+  await page.locator(".settings-tab", { hasText: "Camera" }).click();
+  await expect(page.locator('input[data-setting="fov"]')).toHaveValue("105");
+  await page.screenshot({ path: "test-results/settings.png" });
+
+  // Reset restores the default
+  await page.locator(".settings-tab", { hasText: "Controls" }).click();
+  await page.locator("button", { hasText: "Reset controls to defaults" }).click();
+  await expect(page.locator('.binding-slot[data-action="throttleForward"][data-device="keyboard"]')).toHaveText("W");
+});
