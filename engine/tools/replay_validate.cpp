@@ -12,7 +12,8 @@
 //               replicated: cars in the air are simulated without air control and reported separately.
 //               Split: ground / air, touching the ball in the engine's run or not, dribble (ball resting on the roof)
 //
-// Usage: replay_validate STATES.csv [--meshes DIR] [--cases OUT.csv] [--no-sensitivity] [--no-warmup] [--limit N]
+// Usage: replay_validate STATES.csv [--meshes DIR] [--cases OUT.csv] [--no-sensitivity] [--no-warmup] [--zero-ball-spin]
+//                        [--limit N]
 //   STATES.csv from scripts/replay_extract.
 #include "RocketSim.h"
 #include "Sim/Quantize/Quantize.h"
@@ -351,7 +352,7 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 	std::string meshes = ARENA_MESH_DIR, casesPath;
-	bool useSensitivity = true, warmup = true;
+	bool useSensitivity = true, warmup = true, zeroBallSpin = false;
 	size_t limit = SIZE_MAX;
 	for (int i = 2; i < argc; i++) {
 		std::string a = argv[i];
@@ -359,6 +360,7 @@ int main(int argc, char** argv) {
 		else if (a == "--cases" && i + 1 < argc) casesPath = argv[++i];
 		else if (a == "--no-sensitivity") useSensitivity = false;
 		else if (a == "--no-warmup") warmup = false;
+		else if (a == "--zero-ball-spin") zeroBallSpin = true; // experiment: ball cases start without spin
 		else if (a == "--limit" && i + 1 < argc) limit = std::stoul(argv[++i]);
 	}
 
@@ -421,7 +423,9 @@ int main(int argc, char** argv) {
 			cs.dt = dt;
 			if (nearCount == 0) {
 				Restore(A.ballOnly, A.ballClean);
-				SetBall(A.ballOnly, f0.ball);
+				Body start = f0.ball;
+				if (zeroBallSpin) start.angVel = Vec();
+				SetBall(A.ballOnly, start);
 				cs.e = Run(A.ballOnly, nullptr, f1, nullptr, f0.ball);
 				cs.category = cs.e.worldContact ? "ball/arena contact" : "ball/free flight";
 				cases.push_back(cs);
