@@ -1,11 +1,17 @@
-# Roadmap: Rocket League physics, camera and controls
+# Roadmap: Rocket League physics, camera, controls and multiplayer
 
 Goal: a web game whose physics, camera, controls and competitive multiplayer feel like Rocket League.
 Plan: start from RocketSim (already right on nearly everything), patch in the differences found
-here, and build the remaining pieces (arena, camera, controls, netcode).
+here, and build the remaining pieces (arena, camera, controls, netcode, competitive layer).
 
-Values and formulas: `notes/physics-values.md`. Binary/package notes: `notes/findings.md`.
-Generated constants: `out/rl_physics_constants.json` (`scripts/export_constants.py`).
+Values and formulas: `notes/physics-values.md`. Arena: `notes/arena.md`. Binary/package notes: `notes/findings.md`.
+Resuming in a new session: `notes/HANDOFF.md`. Generated constants: `out/rl_physics_constants.json`.
+
+## Next up
+1. Generate our own arena mesh from `notes/arena.md` (§1).
+2. Patch RocketSim (§2) and compile it to WebAssembly (§8).
+3. Offline freeplay in the browser (§8), with the camera (§3) and controls (§4) reverse engineered alongside.
+4. Then netcode (§6) and the competitive layer (§9).
 
 ---
 
@@ -14,37 +20,34 @@ Generated constants: `out/rl_physics_constants.json` (`scripts/export_constants.
 - [x] Exe recon: UE3, unpacked, EAC present, Bullet ≥ 2.83
 - [x] Native names (4,145), class registrations and vtables (2,404), UE3 globals (`GNames`, `GObjObjects`, `GNatives`)
 - [x] Package decryption and parsing (names, imports, exports, tagged properties, native field offsets)
-- [x] All tuning values: car, components, wheels, suspension, steering/torque curves, ball, arena materials, boost pads, gravity, tick rate
 - [x] UnrealScript disassembler with Rocket League's shuffled token map
-- [x] Decoded: boost, dodge (inputs, torque rounding, 0.041 s cancel lock, Z damping), auto-flip, speed clamps
-- [x] Decoded: throttle/brake input logic, drive/brake torque, Ackermann steering, wheel friction solver
+- [x] All tuning values: car, components, wheels, suspension, steering/torque curves, ball, arena materials, boost pads, gravity, tick rate
+- [x] Car hitboxes and wheel setup for all six body types; the +2.5 hitbox / inertia difference is UE3's skin width (+1.25 uu per side)
+- [x] Decoded: boost, jump / double jump / flip state machine (incl. flip resets), dodge (inputs, torque rounding, 0.041 s cancel lock, Z damping), auto-flip, speed clamps
+- [x] Decoded: throttle/brake input logic, drive/brake torque, Ackermann steering, wheel friction solver, suspension, sticky force, air control
 - [x] Decoded: car–ball hit push, car–car bump impulse, bump/demo cone test, demo speed rules
+- [x] Bullet world: split impulse on, warm starting off, 10 iterations, one-sided triangles, friction product / restitution max,
+      merged "special" ball–world contact, per-tick state quantization (`bQuantizePhysics`)
+- [x] Ball: Bullet sphere 91.25; rests at 93.15 on flat surfaces (measured from replays)
+- [x] Throttle top speed: 1600 → 160 uu/s² up to 1400, then 0 (measured from replays; RocketSim's curve is right)
+- [x] Arena measured: planes, edge curves, corners, goal mouth and full goal interior (`notes/arena.md`)
+- [x] Replay tools: `scripts/replay_extract` (Rust/boxcars) + `scripts/replay_measure.py`
 - [x] Camera tuning values (car cam, ball cam, presets, slider limits)
 - [x] Netcode tuning values (input redundancy, jitter buffer, sim-time scaling, correction rates)
 
 ---
 
-## 1. Physics (blocking)
+## 1. Arena
 
-- [ ] **Arena geometry**: build our own collision mesh to Rocket League's dimensions.
-  - [x] Measure planes, edge curves (256.5 / 512.8 sides, 160.3 / 513 back), corners (|x|+|y| = 8064, r ≈ 863), goal mouth and depth → `notes/arena.md`
-  - [ ] Measure the goal interior (side, back and roof curves) from `Goal_STD_Collision`
-  - [ ] Generate our own arena mesh from the measurements (one-sided triangles, floor/ceiling/wall planes)
-  - [ ] Check ball and car rest heights, wall rides and corner bounces against replays
-- [x] **Car hitboxes and wheel setup per body type** (extracted; +2.5 skin explained) (Octane, Dominus, Plank, Breakout, Hybrid, Merc).
-  - Box size and offset, wheel positions and radii, suspension rest lengths, inertia.
-  - Start: `Body_*_SF.upk` (`ProductAsset_Body_TA`: `FrontAxle`/`BackAxle`, `bUseLegacySuspensionOffsets`); compare with RocketSim `CarConfig.cpp`.
-- [x] **Suspension and sticky force** (decoded; per-car suspension scale is new): decompile Psyonix's suspension raycasts and sticky-force application.
-  - Start: VehicleSim update `FUN_140f5ff00`, wheel update `FUN_140f584c0`, Bullet vehicle object at `VehicleSim+0x140`.
-- [x] **Air control** (decoded; matches RocketSim): decompile `CarComponent_AirControl_TA` `ApplyForces` (`0x140eb3400`) and `PrePhysicsStep` (`0x140f1b480`); compare with RocketSim's air-torque formula.
-- [x] **Jump / double jump / flip state machine** (decoded incl. flip resets): jump hold, 1.25 s flip window, flip resets, `JumpLeaveGroundTime` (0.125).
-  - Start: Jump `ApplyForces` `0x140eb4ce0`, DoubleJump `0x140eb4800`, script in `Car_TA` / `CarComponent_*_TA`.
-- [x] **Bullet setup** (split impulse on, warm starting off; quantization decoded): solver iterations, collision margins, CCD, contact thresholds, and what `bQuantizePhysics` rounds (matters for client/server agreement).
-- [x] **Throttle top speed**: measured from replays: acceleration 1600 → 160 to 1400, then 0 (RocketSim's curve is right)
-- [x] **Ball collision radius**: Bullet sphere 91.25 (skin width explains it); effective 93.15 vs flat surfaces via the special averaged contact (measured)
-- [x] **Car inertia / hitbox +2.5**: PhysX skin width (+1.25 per side)
+- [ ] Generate our own arena mesh from `notes/arena.md`: floor/ceiling/wall planes plus one-sided triangles for the
+      edge curves, corners and goals. Triangle normals point into the playable space; one copy of the goal (the game has it twice).
+- [ ] Check ball and car rest heights, wall rides, corner bounces and the goal floor ramp against replays.
 
 ## 2. Patch RocketSim with verified differences
+
+Already correct in RocketSim (no change): boost, jump and double jump, air control, sticky force, car–ball push,
+throttle curve, hitbox sizes and wheel setup, ball radius, merged ball–world contact (apart from the normal),
+boost pads, gravity, 120 Hz tick.
 
 - [ ] Flip cancel: block pitch-cancel for the first 0.041 s (`MinDodgeTorqueTime`)
 - [ ] Dodge: torque from `Normal(-Pitch, Yaw + Roll)`, rounded to whole numbers
@@ -59,6 +62,10 @@ Generated constants: `out/rl_physics_constants.json` (`scripts/export_constants.
 - [ ] Special ball–world contact: re-normalise the averaged normal (RocketSim doesn't)
 - [ ] Per-tick state quantization (location ×100 round, velocities truncate, 18-bit quaternion)
 - [ ] Unit tests for each patch against the decoded formulas
+
+Low priority (behaviour already measured, only the code location is unknown; revisit only if our sim disagrees with replays):
+- [ ] Where the throttle cutoff above 1400 is applied
+- [ ] Exact cause of the ball's 1.9 uu resting gap above its collision sphere
 
 ## 3. Camera
 
@@ -77,6 +84,7 @@ Generated constants: `out/rl_physics_constants.json` (`scripts/export_constants.
 ## 5. Gameplay rules
 
 - [ ] Kickoff spawn positions and countdown, goal detection, respawn and demo-respawn timing.
+  - Goal detection: replays confirm the goal is scored at ball |y| = 5124.25 + 91.25 = 5215.5 (RocketSim's threshold).
 - [ ] Boost pad pickup test (cylinder r 96 / 160, h 64 against the car), amounts and respawn times (done: 12 / full, 4 s / 10 s).
 - [ ] Verify against the game's scripts (`GameEvent_Soccar_TA`, `VehiclePickup_Boost_TA`).
 
@@ -88,12 +96,28 @@ Generated constants: `out/rl_physics_constants.json` (`scripts/export_constants.
 
 ## 7. Validation
 
-- [x] Replay parser: `scripts/replay_extract` (Rust/boxcars) + `scripts/replay_measure.py`
 - [ ] Comparison harness: our sim vs replays vs RocketSim (kickoffs, ball bounces, throttle/boost acceleration, flips).
-- [x] Measure the two open questions (throttle top speed, ball radius)
+  Replay tools exist (`scripts/replay_extract`, `scripts/replay_measure.py`); the 120k-replay dataset is available.
 
 ## 8. Engine build
 
 - [ ] Compile patched RocketSim to WebAssembly (Emscripten); headless Node test.
 - [ ] Load our arena mesh; Three.js renderer; keyboard and gamepad input; offline freeplay.
-- [ ] Authoritative server running the same WASM at 120 Hz; client prediction and rollback.
+- [ ] Authoritative server running the same WASM build as the clients, fixed 120 Hz tick, with the game's per-tick
+      state quantization so client and server stay bit-identical; client prediction and rollback.
+
+## 9. Competitive layer
+
+- [ ] Accounts and authentication.
+- [ ] Matchmaking queues (1v1, 2v2, 3v3) and skill rating (e.g. Glicko-2 or OpenSkill).
+- [ ] Lobbies and private matches.
+- [ ] Dedicated server hosting by region and latency-based server selection.
+- [ ] Replays and spectating (record inputs plus periodic snapshots).
+- [ ] Anti-cheat: largely covered by the authoritative server; add input-rate and sanity checks.
+
+## 10. Own assets (nothing from Psyonix ships)
+
+- [ ] Car models built around the six hitbox shapes (Octane, Dominus, Plank, Breakout, Hybrid, Merc dimensions).
+- [ ] Arena visuals, ball, boost pads and goal art.
+- [ ] Sound effects and music.
+- [ ] Original names and branding for the game, cars and arena.

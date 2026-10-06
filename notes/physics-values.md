@@ -347,9 +347,8 @@ then **0 at ≥ 1400–1410** (median ≈ 0; slight −2 uu/s² drift above). Ro
 `0→1, 1400→0.1, 1410→0` curve is behaviourally correct. The game data/code clamp the curve at 0.1;
 the mechanism producing the cutoff is still unidentified, but the behaviour is settled.
 
-## Still open (minor)
+## Still open (minor; behaviour is measured, only the code location is unknown)
 - Exact source of the ~1.9 uu ball–plane resting gap (depends on Bullet's contact-breaking
   threshold and settling with the velocity-only special contact). Use RocketSim's implementation
   or the measured 93.15.
 - Where the throttle cutoff above 1400 is implemented.
-- Goal interior shape (see `notes/arena.md`).
