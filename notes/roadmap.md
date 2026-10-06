@@ -27,19 +27,19 @@ Generated constants: `out/rl_physics_constants.json` (`scripts/export_constants.
 ## 1. Physics (blocking)
 
 - [ ] **Arena geometry**: build our own collision mesh to Rocket League's dimensions.
-  - Measure the soccar map's collision meshes locally: floor/wall/ceiling transitions, corner ramps, goal shape and depth.
-  - Never ship Psyonix meshes; fit our own geometry to the measurements.
-  - Start: `Stadium_P.upk` collision static meshes; arena materials in `Startup.upk` (`PhysicalMaterials.Collision_Sticky`).
-  - Done when: ball and car rest heights, wall rides and corner bounces match replays.
-- [ ] **Car hitboxes and wheel setup per body type** (Octane, Dominus, Plank, Breakout, Hybrid, Merc).
+  - [x] Measure planes, edge curves (256.5 / 512.8 sides, 160.3 / 513 back), corners (|x|+|y| = 8064, r ≈ 863), goal mouth and depth → `notes/arena.md`
+  - [ ] Measure the goal interior (side, back and roof curves) from `Goal_STD_Collision`
+  - [ ] Generate our own arena mesh from the measurements (one-sided triangles, floor/ceiling/wall planes)
+  - [ ] Check ball and car rest heights, wall rides and corner bounces against replays
+- [x] **Car hitboxes and wheel setup per body type** (extracted; inertia +2.5 question open) (Octane, Dominus, Plank, Breakout, Hybrid, Merc).
   - Box size and offset, wheel positions and radii, suspension rest lengths, inertia.
   - Start: `Body_*_SF.upk` (`ProductAsset_Body_TA`: `FrontAxle`/`BackAxle`, `bUseLegacySuspensionOffsets`); compare with RocketSim `CarConfig.cpp`.
-- [ ] **Suspension and sticky force**: decompile Psyonix's suspension raycasts and sticky-force application.
+- [x] **Suspension and sticky force** (decoded; per-car suspension scale is new): decompile Psyonix's suspension raycasts and sticky-force application.
   - Start: VehicleSim update `FUN_140f5ff00`, wheel update `FUN_140f584c0`, Bullet vehicle object at `VehicleSim+0x140`.
-- [ ] **Air control**: decompile `CarComponent_AirControl_TA` `ApplyForces` (`0x140eb3400`) and `PrePhysicsStep` (`0x140f1b480`); compare with RocketSim's air-torque formula.
-- [ ] **Jump / double jump / flip state machine**: jump hold, 1.25 s flip window, flip resets, `JumpLeaveGroundTime` (0.125).
+- [x] **Air control** (decoded; matches RocketSim): decompile `CarComponent_AirControl_TA` `ApplyForces` (`0x140eb3400`) and `PrePhysicsStep` (`0x140f1b480`); compare with RocketSim's air-torque formula.
+- [x] **Jump / double jump / flip state machine** (decoded incl. flip resets): jump hold, 1.25 s flip window, flip resets, `JumpLeaveGroundTime` (0.125).
   - Start: Jump `ApplyForces` `0x140eb4ce0`, DoubleJump `0x140eb4800`, script in `Car_TA` / `CarComponent_*_TA`.
-- [ ] **Bullet setup**: solver iterations, collision margins, CCD, contact thresholds, and what `bQuantizePhysics` rounds (matters for client/server agreement).
+- [x] **Bullet setup** (split impulse on, warm starting off; quantization decoded): solver iterations, collision margins, CCD, contact thresholds, and what `bQuantizePhysics` rounds (matters for client/server agreement).
 - [ ] **Open question: throttle top speed (~1410)**. No cutoff found in the code; data keeps 10% torque above 1400. Measure from replays.
 - [ ] **Open question: ball collision radius** (Bullet shape 90 vs RocketSim 91.25). Measure resting height and bounces from replays.
 
@@ -53,6 +53,9 @@ Generated constants: `out/rl_physics_constants.json` (`scripts/export_constants.
 - [ ] Demos: require supersonic **and** forward speed ≥ 2100
 - [ ] Bump curves: exact values (ground 150/200000/275000, air 150/250000/350000, Z 50/50000/75000, ÷ mass 180)
 - [ ] Steering: per-wheel Ackermann angles instead of the averaged curve
+- [ ] Suspension scale per car from wheel positions (not Octane constants)
+- [ ] Turn off solver warm starting; one-sided sphere–triangle contacts
+- [ ] Per-tick state quantization (location ×100 round, velocities truncate, 18-bit quaternion)
 - [ ] Unit tests for each patch against the decoded formulas
 
 ## 3. Camera
@@ -64,7 +67,7 @@ Generated constants: `out/rl_physics_constants.json` (`scripts/export_constants.
 
 ## 4. Controls
 
-- [ ] Stick input to car input: controller deadzone, sensitivity curves, steering smoothing (`FUN_140396ca0(steer, SteeringSensitivity, 10)`).
+- [ ] Stick input to car input: controller deadzone (sensitivity done: `clamp(input × sens, −1, 1)`, digital at 10).
   - Start: `PlayerInput_TA`, `PlayerController_TA.PlayerMove` (already decoded).
 - [ ] Mouse/keyboard: `UpdateMouseGroundSteer`, `UpdateMouseGroundThrottle`, `ModifiedAirRotationByMouseInput`, `ApplyAirPitchSafety` (decoded).
 - [ ] Default bindings from `TAGame/Config/DefaultInput.ini`; air roll left/right, boost, jump, handbrake.

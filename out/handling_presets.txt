@@ -1,0 +1,75 @@
+=== HandlingPresets.Presets.Hybrid  (archetype -, 252/252)
+  BackAxle: LocalRestPosition=(-34, 29.5, -4.3)
+  PhysAsset = 'obj:HandlingPresets.Physics.Physics_Hybrid'
+  ChassisSpringDefaults: Strength=(200, 50, 100), MaxDisplacement=(40, 20, 50)
+=== HandlingPresets.Presets.Hybrid_Skunkz  (archetype -, 252/252)
+  BackAxle: LocalRestPosition=(-34, 29.5, -4.3)
+  PhysAsset = 'obj:HandlingPresets.Physics.Physics_Hybrid_Skunkz'
+  ChassisSpringDefaults: Strength=(200, 50, 100), MaxDisplacement=(40, 20, 50)
+=== HandlingPresets.Presets.LongCar  (archetype -, 364/364)
+  FrontAxle: WheelRadius=13.5, LocalRestPosition=(51.5, 26.67, -5.95)
+  BackAxle: LocalRestPosition=(-35.75, 35, -5.91)
+  PhysAsset = 'obj:HandlingPresets.Physics.Physics_LongCar'
+  ChassisSpringDefaults: Strength=(200, 50, 100), MaxDisplacement=(20, 20, 20)
+=== HandlingPresets.Presets.LongCar_aa  (archetype -, 364/364)
+  FrontAxle: WheelRadius=13.5, LocalRestPosition=(51.5, 26.67, -5.95)
+  BackAxle: LocalRestPosition=(-35.75, 35, -5.91)
+  PhysAsset = 'obj:HandlingPresets.Physics.Physics_LongCar_Aa'
+  ChassisSpringDefaults: Strength=(200, 50, 100), MaxDisplacement=(20, 20, 20)
+=== HandlingPresets.Presets.LongCar_hero  (archetype -, 364/364)
+  FrontAxle: WheelRadius=13.5, LocalRestPosition=(51.5, 26.67, -5.95)
+  BackAxle: LocalRestPosition=(-35.75, 35, -5.91)
+  PhysAsset = 'obj:HandlingPresets.Physics.Physics_LongCar_hero'
+  ChassisSpringDefaults: Strength=(200, 50, 100), MaxDisplacement=(20, 20, 20)
+=== HandlingPresets.Presets.LongCar_Pete  (archetype -, 364/364)
+  FrontAxle: WheelRadius=13.5, LocalRestPosition=(51.5, 26.67, -5.95)
+  BackAxle: LocalRestPosition=(-35.75, 35, -5.91)
+  PhysAsset = 'obj:HandlingPresets.Physics.Physics_LongCar_Pete'
+  ChassisSpringDefaults: Strength=(200, 50, 100), MaxDisplacement=(20, 20, 20)
+=== HandlingPresets.Presets.LongCar_smoke  (archetype -, 364/364)
+  FrontAxle: WheelRadius=13.5, LocalRestPosition=(51.5, 26.67, -5.95)
+  BackAxle: LocalRestPosition=(-35.75, 35, -5.91)
+  PhysAsset = 'obj:HandlingPresets.Physics.Physics_LongCar_smoke'
+  ChassisSpringDefaults: Strength=(200, 50, 100), MaxDisplacement=(20, 20, 20)
+=== HandlingPresets.Presets.Merc  (archetype -, 320/320)
+  FrontAxle: WheelRadius=15.0
+  BackAxle: LocalRestPosition=(-33.75, 29.5, -5.6)
+  PhysAsset = 'obj:HandlingPresets.Physics.Physics_Merc'
+  ChassisSpringDefaults: Strength=(250, 50, 100), MaxDisplacement=(50, 25, 50)
+=== HandlingPresets.Presets.Merc_Tomato  (archetype -, 320/320)
+  FrontAxle: WheelRadius=15.0
+  BackAxle: LocalRestPosition=(-33.75, 29.5, -5.6)
+  PhysAsset = 'obj:HandlingPresets.Physics.Physics_Merc_Tomato'
+  ChassisSpringDefaults: Strength=(250, 50, 100), MaxDisplacement=(50, 25, 50)
+=== HandlingPresets.Presets.MuscleCar  (archetype -, 392/392)
+  FrontAxle: WheelRadius=12.0, LocalRestPosition=(50.3, 31.1, -6.2)
+  BackAxle: WheelRadius=13.5, LocalRestPosition=(-34.75, 33, -6.1)
+  PhysAsset = 'obj:HandlingPresets.Physics.Physics_MuscleCar'
+  ChassisSpringDefaults: Strength=(200, 50, 100), MaxDisplacement=(20, 20, 30)
+=== HandlingPresets.Presets.Octane  (archetype -, 252/252)
+  BackAxle: LocalRestPosition=(-33.75, 29.5, -4.3)
+  PhysAsset = 'obj:HandlingPresets.Physics.Physics_Octane'
+  ChassisSpringDefaults: Strength=(200, 50, 100), MaxDisplacement=(75, 25, 50)
+=== HandlingPresets.Presets.Octane_Skunkz  (archetype -, 252/252)
+  BackAxle: LocalRestPosition=(-33.75, 29.5, -4.3)
+  PhysAsset = 'obj:HandlingPresets.Physics.Physics_Octane_Skunkz'
+  ChassisSpringDefaults: Strength=(200, 50, 100), MaxDisplacement=(75, 25, 50)
+=== HandlingPresets.Presets.Pixie  (archetype -, 392/392)
+  FrontAxle: WheelRadius=12.0, LocalRestPosition=(50.3, 31.1, -6.2)
+  BackAxle: WheelRadius=13.5, LocalRestPosition=(-34.75, 33, -6.1)
+  PhysAsset = 'obj:HandlingPresets.Physics.Physics_Pixie'
+  ChassisSpringDefaults: Strength=(200, 50, 100), MaxDisplacement=(20, 20, 30)
+=== HandlingPresets.Presets.Plank  (archetype -, 420/420)
+  FrontAxle: WheelWidth=16.0, LocalRestPosition=(49.97, 27.7999, -7.83)
+  BackAxle: WheelRadius=17.0, WheelWidth=22.0, LocalRestPosition=(-35.43, 20.28, -3.83)
+  PhysAsset = 'obj:HandlingPresets.Physics.Physics_Plank'
+  ChassisSpringDefaults: Strength=(200, 50, 100), MaxDisplacement=(30, 20, 50)
+=== HandlingPresets.Presets.Plank_Cured  (archetype -, 420/420)
+  FrontAxle: WheelWidth=16.0, LocalRestPosition=(49.97, 27.7999, -7.83)
+  BackAxle: WheelRadius=17.0, WheelWidth=22.0, LocalRestPosition=(-35.43, 20.28, -3.83)
+  PhysAsset = 'obj:HandlingPresets.Physics.Physics_Plank_Cured'
+  ChassisSpringDefaults: Strength=(200, 50, 100), MaxDisplacement=(30, 20, 50)
+=== body_longboi.Presets.Octane_Lemonade  (archetype -, 252/252)
+  BackAxle: LocalRestPosition=(-33.75, 29.5, -4.3)
+  PhysAsset = 'obj:body_longboi.Physics.Physics_Octane_Lemonade'
+  ChassisSpringDefaults: Strength=(200, 50, 100), MaxDisplacement=(75, 25, 50)

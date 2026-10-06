@@ -12,6 +12,9 @@ ghidra/
 *.lock
 *.lock~
 
+# Arena collision meshes extracted for local measurement only (Psyonix geometry)
+out/arena_local/
+
 # Decompiled game code (derived from the exe; regenerate with scripts/Decomp.java)
 out/decomp/
 out/decomp_tokens/

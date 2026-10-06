@@ -1,0 +1,8 @@
+HandlingPresets.Physics.Physics_Hybrid.RB_BodySetup_1   BoxElems   center=(1.0, 13.8757, 0.0) dims={'X': 127.0192, 'Y': 82.1879, 'Z': 34.1591}
+HandlingPresets.Physics.Physics_LongCar.RB_BodySetup_0  BoxElems   center=(1.0, 12.5, 0.0) dims={'X': 131.4924, 'Y': 80.521, 'Z': 30.3}
+HandlingPresets.Physics.Physics_LongCar_Aa.RB_BodySetup_0 BoxElems   center=(1.0, 4.75, 0.0) dims={'X': 131.4924, 'Y': 80.521, 'Z': 30.3}
+HandlingPresets.Physics.Physics_Merc.RB_BodySetup_1     BoxElems   center=(1.0, 11.3757, 0.0) dims={'X': 120.7202, 'Y': 76.7103, 'Z': 41.6591}
+HandlingPresets.Physics.Physics_MuscleCar.RB_BodySetup_0 BoxElems   center=(1.0, 9.0, 0.0) dims={'X': 127.9268, 'Y': 83.28, 'Z': 31.3}
+HandlingPresets.Physics.Physics_Octane.RB_BodySetup_1   BoxElems   center=(1.0, 13.8757, 0.0) dims={'X': 118.0074, 'Y': 84.1994, 'Z': 36.1591}
+HandlingPresets.Physics.Physics_Pixie.RB_BodySetup_0    BoxElems   center=(1.0, 2.25, 0.0) dims={'X': 127.9268, 'Y': 83.28, 'Z': 31.3}
+HandlingPresets.Physics.Physics_Plank.RB_BodySetup_0    BoxElems   center=(1.0, 9.0086, 0.0) dims={'X': 128.8198, 'Y': 84.6704, 'Z': 29.3944}

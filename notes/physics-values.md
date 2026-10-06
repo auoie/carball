@@ -229,13 +229,103 @@ saturates at 5.5 rad/s (RocketSim ramps at 50 rad/s²).
 | Gameplay `Ball.Radius` (prediction, AI, stats, goal checks) | ≈ 94.5 | `Ball_TA.UpdateRadius` = mesh bounds Z (94.49) |
 RocketSim uses 91.25 (measured, with rest Z 93.15).
 
+### Air control (native `CarComponent_AirControl_TA` ApplyForces `0x140eb3400`) — matches RocketSim
+```
+// inputs: shaped = clamp(input * AirControlSensitivity, -1, 1); sensitivity >= 10 -> sign(input)
+// pitch input forced to 0 while the dodge is active and for 0.3 s after it ends (ActivityTime < 0.3)
+k = AirTorqueScalar(1000) * 2π/65536
+torque  = (-pitch*AirTorque.Pitch(130))*Right + (yaw*AirTorque.Yaw(95))*Up + (-roll*AirTorque.Roll(400))*Fwd   [× k, angular accel]
+damping = -( (1-|pitch|)*Dot(ω,Right)*30*Right + (1-|yaw|)*Dot(ω,Up)*20*Up + Dot(ω,Fwd)*50*Fwd ) × AirDampingScalar(1000)*2π/65536
+air throttle = ThrottleForce(12000) * Fwd * (boosting ? 1 : throttle)                                  [force]
+```
+
+### Input shaping (`FUN_140396ca0`)
+`shaped = clamp(input * sensitivity, -1, 1)`, or `sign(input)` when sensitivity ≥ 10 (max).
+Used for steering (`VehicleSim.SteeringSensitivity`, default 1.0) and aerials (`AirControlSensitivity`).
+
+### Jump / double jump / dodge state machine (script `Car_TA.OnJumpPressed` etc. + natives)
+```
+OnJumpPressed:
+  if auto-flip (FlipCar) can activate and no dodge active -> auto-flip instead
+  grounded = wheels in contact >= NumWheelsForGrounded (3)       // any surface, incl. ball/cars
+  if grounded and !bJumped: bJumped = true; Jump.Activate()
+  else if airborne and a double jump is available
+       and (!bJumped or within dodge window):                   // drove off a ledge: no time limit
+      bJumped = bDoubleJumped = true
+      HasDodgeInput ? Dodge.Activate() : DoubleJump.Activate()
+OnJumpReleased: Jump.bDeactivate = true
+dodge window: min(InactiveTime of Jump, Dodge, DoubleJump) <= MaxTimeForDodge (1.25 s)  // counts from jump end
+landing (grounded becomes true): bJumped = bDoubleJumped = false
+Jump: tick 0 impulse 52500·Up (291.67 uu/s); force 262500·Up while ActivityTime <= 0.2 s;
+      ends on release once ActivityTime > MinJumpTime (0.0249) or at 0.2 s
+DoubleJump: tick 0 impulse 52500·Up; component ends after 0.1 s
+Boost: consumes 0.333/s; stays on >= MinBoostTime (0.1 s); recharge only if RechargeRate set (not in soccar)
+```
+Flip reset: landing 3+ wheels on the ball counts as grounded, which clears bJumped/bDoubleJumped, so the
+next dodge has no time limit. `IsOnRBActor` = grounded with ≤ 1 wheel on world geometry (fires the flip-reset event).
+
+### Car hitboxes and wheels (`Startup.upk: HandlingPresets.Presets.*`, physics assets `HandlingPresets.Physics.*`)
+| Preset (body) | Hitbox box X×Y×Z | Box offset X | Front wheel (x, y, r) | Back wheel (x, y, r) |
+|---|---|---|---|---|
+| Octane | 118.0074 × 84.1994 × 36.1591 | 13.8757 | 51.25, 25.9, 12.5 | −33.75, 29.5, 15 |
+| Dominus (MuscleCar) | 127.9268 × 83.28 × 31.3 | 9.0 | 50.3, 31.1, 12 | −34.75, 33, 13.5 |
+| Plank | 128.8198 × 84.6704 × 29.3944 | 9.0086 | 49.97, 27.8, 12.5 | −35.43, 20.28, 17 |
+| Breakout (LongCar) | 131.4924 × 80.521 × 30.3 | 12.5 | 51.5, 26.67, 13.5 | −35.75, 35, 15 |
+| Hybrid | 127.0192 × 82.1879 × 34.1591 | 13.8757 | 51.25, 25.9, 12.5 | −34.0, 29.5, 15 |
+| Merc | 120.7202 × 76.7103 × 41.6591 | 11.3757 | 51.25, 25.9, 15 | −33.75, 29.5, 15 |
+Wheel positions/radii match RocketSim exactly. Hitbox boxes are the data values (the commonly shared ones);
+RocketSim uses boxes exactly +2.5 larger on every axis to match the game's inertia. The code path builds the
+Bullet box from the data box (compound shape for the offset; inertia from its AABB) — the +2.5 is unexplained.
+Box offset Z and wheel suspension rest heights: see `out/handling_presets.txt` / `out/hitboxes.txt`.
+
+### Suspension (Bullet vehicle `FUN_1402c2a40`, contact pass `FUN_1402c3360`, scale `FUN_1402c52a0`)
+```
+per wheel in contact:
+  damping = relVel < 0 ? DampingCompression(25) : DampingRelaxation(40)
+  force   = max(0, ((restLength - length) * Stiffness(500) * clippedInvContactDotSuspension - relVel*damping) * scale)
+  scale   = mass * (other axle's |x|) / wheelbase / 2      // per-wheel weight share
+  impulse = contactNormal * (force*dt + bottomOut) at the contact point
+  bottomOut = 0.25 * single-contact impulse when compressed beyond travel (opposite impulse to the ground body)
+```
+**New:** the suspension scale is computed per car from its wheel positions (Octane 35.735 / 54.265; Dominus
+36.77 / 53.23 …). RocketSim uses the Octane values for every car.
+
+### Sticky force (`Vehicle` `FUN_140eb70a0`) — matches RocketSim
+Only if a wheel touches a material with `bStickyWheels` (all arena surfaces).
+`accel = contactUpDir * GravityZ * (Ground·|n.z| + S·(1−|n.z|))`, S = Wall (1.5) when throttling or
+|fwd speed| > 25, else Ground (0.5). Flat floor: 325 uu/s²; wall while driving: 975 uu/s².
+
+### Bullet world (`FUN_140403cc0`)
+Axis-sweep broadphase (16,384 handles), stock dispatcher, sequential-impulse solver, discrete world.
+Solver settings changed from Bullet defaults: **splitImpulse = 1, splitImpulsePenetrationThreshold = 1e30**
+(always split impulse; RocketSim does the same) and **solverMode = 0 (warm starting off; RocketSim keeps it on)**.
+Iterations stay at 10. Rigid bodies: inertia from the shape, damping/friction/restitution from the material.
+
+### Collision details
+- Sphere vs triangle uses Bullet's SphereTriangleDetector (no triangle margin), modified to be **one-sided**:
+  a ball whose centre is behind a triangle gets no contact.
+- Ball sphere in Bullet = authored radius − 0.04 BT (−2 uu): 92 → **90**.
+- Arena = flat planes (floor z 0, ceiling z 2048, side walls x ±4096) + `FieldCollision_Standard` curved meshes
+  (SideTop, SideBot, Corner, Goal at y ±5120), mirrored by negative scale; one-sided triangles.
+
+### Physics state quantization (`bQuantizePhysics = True`; `FUN_140eed9e0` → `FUN_140e45c10`)
+Every tick each body's state is written through the network serializer and read back:
+- location: `round(x*100)/100` (round half up)
+- rotation: smallest-three quaternion, 2-bit index + 3 × 18 bits over ±1/√2
+- linear velocity: `trunc(v*100)/100 + sign*0.001`
+- angular velocity: `trunc(ω*10000)/10000 + sign*0.00001`
+- sleeping → zero velocities
+RocketSim does not do this.
+
 ## Still open
 
 1. **Throttle top speed ~1410:** not produced by any code path read (input step, vehicle update,
    wheel friction, curve evaluator). The data/code say 10% torque persists above 1400. RocketSim's
    1410→0 is empirical. Needs in-game measurement (replays) to decide.
-2. **Ball collision radius 90 vs 91.25:** the converter gives 90; matching the measured resting
-   height depends on the arena collision mesh and contact details not yet traced.
+2. **Ball collision radius:** code path gives a 90 uu Bullet sphere against one-sided arena triangles with
+   the floor at z 0, which conflicts with the in-game resting height of ~93. Candidates: 90 (code path),
+   91.25 (RocketSim, measured), ~92.5 (if the sphere came from mesh bounds 94.49 − 2). Needs measurement.
+3. **Car inertia:** code builds inertia from the data hitbox; RocketSim's +2.5 box matches the game's inertia.
 
 Replays can be parsed offline (`boxcars` / `rattletrap`) to measure both without touching the
 running game.
