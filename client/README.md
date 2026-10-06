@@ -19,7 +19,8 @@ npm run build        # production build in dist/ (typechecks first)
 ## Correctness checks
 ```sh
 npm run check        # tsc (3 projects) + ESLint (strict type-aware) + Vitest
-npm run build && npm run e2e   # Playwright in the installed Chrome: load, drive, ball cam, reset
+npm run build && npm run e2e   # Playwright in the installed Chrome: load, drive, ball cam, reset, settings
+                               # (e2e/fixtures.ts hides real gamepads from the page)
 ```
 - **TypeScript** (`tsconfig.app.json`): `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, no unused
   code, no implicit returns or fallthrough. Tests (`tsconfig.test.json`) and config/e2e files (`tsconfig.node.json`) are

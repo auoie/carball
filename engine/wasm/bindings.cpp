@@ -287,13 +287,17 @@ public:
 		return CopyToJS<Uint8ArrayVal>("Uint8Array", out.data);
 	}
 
+	// Restores a snapshot exactly. Loads in place (microseconds) when the snapshot has the same cars, otherwise
+	// builds a new arena (milliseconds).
 	void LoadState(Uint8ArrayVal bytes) {
 		std::vector<uint8_t> data = emscripten::convertJSArrayToNumberVector<uint8_t>(bytes);
 		DataStreamIn in;
 		in.data.assign(data.begin(), data.end());
-		Arena* loaded = Arena::DeserializeNew(in);
-		delete _arena;
-		_arena = loaded;
+		if (!_arena->DeserializeInPlace(in)) {
+			Arena* loaded = Arena::DeserializeNew(in);
+			delete _arena;
+			_arena = loaded;
+		}
 		_SetCallbacks();
 		_events.clear();
 	}

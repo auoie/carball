@@ -1,4 +1,5 @@
-import { type Page, expect, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 async function speed(page: Page): Promise<number> {
   const text = (await page.locator("#speed").textContent()) ?? "";

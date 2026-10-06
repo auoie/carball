@@ -124,6 +124,11 @@ public:
 	// Load new arena from serialized data
 	static Arena* DeserializeNew(DataStreamIn& in);
 
+	// RL PATCH: loads a snapshot into this arena, keeping its physics world: far faster than DeserializeNew(),
+	// which builds a whole arena (for rollback). The snapshot must have the same game mode, tick rate, arena
+	// config and cars (IDs, teams, car bodies). Returns false and changes nothing when it doesn't.
+	bool DeserializeInPlace(DataStreamIn& in);
+
 	Arena(const Arena& other) = delete; // No copy constructor, use Arena::Clone() instead
 	Arena& operator =(const Arena& other) = delete; // No copy operator, use Arena::Clone() instead
 
@@ -184,6 +189,10 @@ public:
 	}
 
 	DropshotTilesState GetDropshotTilesState() const { return _dropshotTilesState; };
+
+	// RL PATCH: Bullet's persistent contact points, part of snapshots (see Arena.cpp)
+	void _SerializeContacts(DataStreamOut& out);
+	void _DeserializeContacts(DataStreamIn& in);
 	void SetDropshotTilesState(const DropshotTilesState& tilesState);
 
 private:

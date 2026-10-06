@@ -36,7 +36,7 @@ void Arena::SetMutatorConfig(const MutatorConfig& mutatorConfig) {
 		for (Car* car : _cars) {
 			btVector3 newCarInertia;
 			car->_childHitboxShape.calculateLocalInertia(mutatorConfig.carMass, newCarInertia);
-			car->_rigidBody.setMassProps(mutatorConfig.ballMass, newCarInertia);
+			car->_rigidBody.setMassProps(mutatorConfig.carMass, newCarInertia); // RL PATCH: was ballMass
 		}
 	}
 
@@ -243,10 +243,16 @@ void Arena::SetDropshotTilesState(const DropshotTilesState& state) {
 	_dropshotTilesState = state;
 }
 
+// RL PATCH: set while a restored arena rebuilds Bullet's contact bookkeeping (no game effects then)
+static thread_local bool g_restoringContacts = false;
+
 bool Arena::_BulletContactAddedCallback(
 	btManifoldPoint& contactPoint,
 	const btCollisionObjectWrapper* objA, int partID_A, int indexA,
 	const btCollisionObjectWrapper* objB, int partID_B, int indexB) {
+
+	if (g_restoringContacts)
+		return true;
 
 	auto
 		bodyA = objA->m_collisionObject,
@@ -510,6 +516,15 @@ Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mu
 
 		// RL PATCH: the game sets solverMode = 0 (no warm starting, no SIMD path) (FUN_140403cc0)
 		solverInfo.m_solverMode = 0;
+
+		// RL PATCH: Bullet sets m_timeStep only inside stepSimulation, but the wheel pushback
+		// (btVehicleRL::rayCast -> resolveSingleCollision) reads it before that. Without this, a new or
+		// restored arena used Bullet's default 1/60 s for its first tick.
+		solverInfo.m_timeStep = tickTime;
+
+		// RL PATCH: process contact pairs and solve contacts in a fixed order (by the objects' sort keys,
+		// BulletLink.h) instead of one that depends on the world's history (see Arena::_SerializeContacts)
+		_bulletWorld.getDispatchInfo().m_deterministicOverlappingPairs = true;
 	}
 
 	bool loadArenaStuff = gameMode != GameMode::THE_VOID;
@@ -602,10 +617,108 @@ void Arena::Serialize(DataStreamOut& out) const {
 
 	{ // Serialize ball
 		ball->GetState().Serialize(out);
+		RawBodyState::From(ball->_rigidBody).Serialize(out); // RL PATCH: exact physics state
 	}
 
 	{ // Serialize mutators
 		_mutatorConfig.Serialize(out);
+	}
+
+	// RL PATCH: persistent contact points
+	const_cast<Arena*>(this)->_SerializeContacts(out);
+}
+
+// RL PATCH: Bullet keeps contact points from tick to tick (persistent manifolds), and some contacts, such as a
+// car resting on another car, depend on the previous tick's points. Snapshots save them, so a restored arena
+// continues bit for bit like the original.
+
+// Identifies a collision object in any arena of the same game mode: its sort key (see BulletLink.h)
+static int32_t ContactBodyKey(const btCollisionObject* o) {
+	return o->getUserIndex3();
+}
+
+static void WriteVec(DataStreamOut& out, const btVector3& v) { out.Write(v.x()); out.Write(v.y()); out.Write(v.z()); }
+static btVector3 ReadVec(DataStreamIn& in) {
+	float x = in.Read<float>(), y = in.Read<float>(), z = in.Read<float>();
+	return btVector3(x, y, z);
+}
+
+static void WriteContactPoint(DataStreamOut& out, const btManifoldPoint& p) {
+	WriteVec(out, p.m_localPointA); WriteVec(out, p.m_localPointB);
+	WriteVec(out, p.m_positionWorldOnB); WriteVec(out, p.m_positionWorldOnA); WriteVec(out, p.m_normalWorldOnB);
+	out.WriteMultiple(p.m_distance1, p.m_combinedFriction, p.m_combinedRollingFriction, p.m_combinedSpinningFriction,
+		p.m_combinedRestitution, p.m_partId0, p.m_partId1, p.m_index0, p.m_index1, p.m_contactPointFlags,
+		p.m_appliedImpulse, p.m_prevRHS, p.m_appliedImpulseLateral1, p.m_appliedImpulseLateral2,
+		p.m_contactMotion1, p.m_contactMotion2, p.m_contactCFM, p.m_contactERP, p.m_frictionCFM, p.m_lifeTime,
+		p.m_isSpecial);
+	WriteVec(out, p.m_lateralFrictionDir1); WriteVec(out, p.m_lateralFrictionDir2);
+}
+
+static btManifoldPoint ReadContactPoint(DataStreamIn& in) {
+	btManifoldPoint p;
+	p.m_localPointA = ReadVec(in); p.m_localPointB = ReadVec(in);
+	p.m_positionWorldOnB = ReadVec(in); p.m_positionWorldOnA = ReadVec(in); p.m_normalWorldOnB = ReadVec(in);
+	in.ReadMultiple(p.m_distance1, p.m_combinedFriction, p.m_combinedRollingFriction, p.m_combinedSpinningFriction,
+		p.m_combinedRestitution, p.m_partId0, p.m_partId1, p.m_index0, p.m_index1, p.m_contactPointFlags,
+		p.m_appliedImpulse, p.m_prevRHS, p.m_appliedImpulseLateral1, p.m_appliedImpulseLateral2,
+		p.m_contactMotion1, p.m_contactMotion2, p.m_contactCFM, p.m_contactERP, p.m_frictionCFM, p.m_lifeTime,
+		p.m_isSpecial);
+	p.m_lateralFrictionDir1 = ReadVec(in); p.m_lateralFrictionDir2 = ReadVec(in);
+	return p;
+}
+
+void Arena::_SerializeContacts(DataStreamOut& out) {
+	auto* dispatcher = _bulletWorld.getDispatcher();
+	uint32_t count = 0;
+	for (int i = 0; i < dispatcher->getNumManifolds(); i++)
+		count += dispatcher->getManifoldByIndexInternal(i)->getNumContacts() > 0;
+	out.Write(count);
+	for (int i = 0; i < dispatcher->getNumManifolds(); i++) {
+		btPersistentManifold* m = dispatcher->getManifoldByIndexInternal(i);
+		if (m->getNumContacts() == 0)
+			continue;
+		out.Write(ContactBodyKey(m->getBody0()));
+		out.Write(ContactBodyKey(m->getBody1()));
+		out.Write<int32_t>(m->getNumContacts());
+		for (int j = 0; j < m->getNumContacts(); j++)
+			WriteContactPoint(out, m->getContactPoint(j));
+	}
+}
+
+void Arena::_DeserializeContacts(DataStreamIn& in) {
+	struct Saved {
+		int32_t key0, key1;
+		std::vector<btManifoldPoint> points;
+	};
+	std::vector<Saved> saved(in.Read<uint32_t>());
+	for (Saved& s : saved) {
+		in.Read(s.key0);
+		in.Read(s.key1);
+		s.points.resize(in.Read<int32_t>());
+		for (btManifoldPoint& p : s.points)
+			p = ReadContactPoint(in);
+	}
+
+	// Let Bullet create its pairs, collision algorithms and manifolds for the current positions, without
+	// any game effects, then replace the contact points with the saved ones
+	g_restoringContacts = true;
+	_bulletWorld.performDiscreteCollisionDetection();
+	g_restoringContacts = false;
+
+	auto* dispatcher = _bulletWorld.getDispatcher();
+	for (int i = 0; i < dispatcher->getNumManifolds(); i++)
+		dispatcher->getManifoldByIndexInternal(i)->clearManifold();
+
+	for (const Saved& s : saved) {
+		for (int i = 0; i < dispatcher->getNumManifolds(); i++) {
+			btPersistentManifold* m = dispatcher->getManifoldByIndexInternal(i);
+			if (ContactBodyKey(m->getBody0()) != s.key0 || ContactBodyKey(m->getBody1()) != s.key1)
+				continue;
+			m->setNumContacts((int)s.points.size());
+			for (int j = 0; j < (int)s.points.size(); j++)
+				m->getContactPoint(j) = s.points[j];
+			break;
+		}
 	}
 }
 
@@ -665,18 +778,112 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
 		}
 	}
 
-	{ // Deserialize ball
-		BallState ballState = BallState();
-		ballState.Deserialize(in);
-		newArena->ball->SetState(ballState);
+	BallState ballState = BallState();
+	ballState.Deserialize(in);
+	RawBodyState ballBody;
+	ballBody.Deserialize(in);
+
+	{ // RL PATCH: apply the mutators before the ball state. Deserializing straight into _mutatorConfig made
+	  // SetMutatorConfig() see no change, so a different ball size or car mass was never applied.
+		MutatorConfig mutators = MutatorConfig(gameMode);
+		mutators.Deserialize(in);
+		newArena->SetMutatorConfig(mutators);
 	}
 
-	{ // Serialize mutators
-		newArena->_mutatorConfig.Deserialize(in);
-		newArena->SetMutatorConfig(newArena->_mutatorConfig);
-	}
+	newArena->ball->SetState(ballState);
+	ballBody.ApplyTo(newArena->ball->_rigidBody);
+	for (Car* car : newArena->_cars)
+		car->_loadedBody.ApplyTo(car->_rigidBody);
+
+	newArena->_DeserializeContacts(in); // RL PATCH: persistent contact points
 
 	return newArena;
+}
+
+// Whether two car configs give the same physics body (preferences such as the dodge deadzone may differ)
+static bool SameCarBody(const CarConfig& a, const CarConfig& b) {
+	auto same = [](const Vec& x, const Vec& y) { return x.x == y.x && x.y == y.y && x.z == y.z; };
+	auto sameWheels = [&](const WheelPairConfig& x, const WheelPairConfig& y) {
+		return x.wheelRadius == y.wheelRadius && x.suspensionRestLength == y.suspensionRestLength &&
+			same(x.connectionPointOffset, y.connectionPointOffset);
+	};
+	return same(a.hitboxSize, b.hitboxSize) && same(a.hitboxPosOffset, b.hitboxPosOffset) &&
+		sameWheels(a.frontWheels, b.frontWheels) && sameWheels(a.backWheels, b.backWheels) && a.threeWheels == b.threeWheels;
+}
+
+bool Arena::DeserializeInPlace(DataStreamIn& in) {
+	size_t start = in.pos;
+	auto reject = [&]() { in.pos = start; return false; };
+
+	GameMode loadedMode;
+	float loadedTickTime;
+	uint64_t loadedTickCount;
+	uint32_t loadedLastCarID;
+	in.ReadMultiple(loadedMode, loadedTickTime, loadedTickCount, loadedLastCarID);
+	ArenaConfig loadedConfig = {};
+	loadedConfig.Deserialize(in);
+	{
+		DataStreamOut ours, theirs;
+		_config.Serialize(ours);
+		loadedConfig.Serialize(theirs);
+		if (loadedMode != gameMode || loadedTickTime != tickTime || ours.data != theirs.data)
+			return reject();
+	}
+
+	struct LoadedCar {
+		uint32_t id;
+		CarControls controls;
+		CarConfig config;
+		CarState state;
+		RawBodyState body;
+	};
+	std::vector<LoadedCar> cars(in.Read<uint32_t>());
+	if (cars.size() != _cars.size())
+		return reject();
+	for (LoadedCar& c : cars) {
+		Team team;
+		in.Read(team);
+		in.Read(c.id);
+		Car::_ReadSerialized(in, c.controls, c.config, c.state, c.body);
+		Car* existing = GetCar(c.id);
+		if (!existing || existing->team != team || !SameCarBody(existing->config, c.config))
+			return reject();
+	}
+
+	std::vector<BoostPadState> pads;
+	if (_boostPads.size() > 0) {
+		pads.resize(in.Read<uint32_t>());
+		if (pads.size() != _boostPads.size())
+			return reject();
+		for (BoostPadState& pad : pads)
+			pad.Deserialize(in);
+	}
+
+	BallState ballState = BallState();
+	ballState.Deserialize(in);
+	RawBodyState ballBody;
+	ballBody.Deserialize(in);
+	MutatorConfig mutators = MutatorConfig(gameMode);
+	mutators.Deserialize(in);
+
+	// Everything matches: apply
+	tickCount = loadedTickCount;
+	_lastCarID = loadedLastCarID;
+	SetMutatorConfig(mutators);
+	for (LoadedCar& c : cars) {
+		Car* car = GetCar(c.id);
+		car->controls = c.controls;
+		car->config = c.config;
+		car->SetState(c.state);
+		c.body.ApplyTo(car->_rigidBody);
+	}
+	for (size_t i = 0; i < pads.size(); i++)
+		_boostPads[i]->SetState(pads[i]);
+	ball->SetState(ballState);
+	ballBody.ApplyTo(ball->_rigidBody);
+	ball->_velocityImpulseCache = { 0, 0, 0 };
+	_DeserializeContacts(in);
+	return true;
 }
 
 Arena* Arena::Clone(bool copyCallbacks) {
@@ -687,7 +894,9 @@ Arena* Arena::Clone(bool copyCallbacks) {
 		newArena->_carBumpCallback = this->_carBumpCallback;
 	}
 
+	newArena->SetMutatorConfig(this->_mutatorConfig); // RL PATCH: the clone kept default mutators
 	newArena->ball->SetState(this->ball->GetState());
+	RawBodyState::From(this->ball->_rigidBody).ApplyTo(newArena->ball->_rigidBody); // RL PATCH: exact state
 	newArena->ball->_velocityImpulseCache = this->ball->_velocityImpulseCache;
 
 	for (Car* car : this->_cars) {
@@ -697,6 +906,7 @@ Arena* Arena::Clone(bool copyCallbacks) {
 		assert(newCar->id == car->id);
 
 		newCar->SetState(car->GetState());
+		RawBodyState::From(car->_rigidBody).ApplyTo(newCar->_rigidBody); // RL PATCH: exact state
 		newCar->controls = car->controls;
 		newCar->_velocityImpulseCache = car->_velocityImpulseCache;
 	}
@@ -707,6 +917,14 @@ Arena* Arena::Clone(bool copyCallbacks) {
 
 	newArena->tickCount = this->tickCount;
 	newArena->_lastCarID = this->_lastCarID;
+
+	{ // RL PATCH: persistent contact points
+		DataStreamOut contactsOut;
+		this->_SerializeContacts(contactsOut);
+		DataStreamIn contactsIn;
+		contactsIn.data = contactsOut.data;
+		newArena->_DeserializeContacts(contactsIn);
+	}
 
 	return newArena;
 }
@@ -1024,6 +1242,7 @@ btRigidBody* Arena::_AddStaticCollisionShape(btCollisionShape* shape, btVector3 
 	} else {
 		_bulletWorld.addRigidBody(shapeRB);
 	}
+	shapeRB->setUserIndex3(BT_SORT_KEY_STATIC + (int)_worldCollisionRBs.size()); // RL PATCH: sort key
 	_worldCollisionRBs.push_back(shapeRB);
 	return shapeRB;
 }

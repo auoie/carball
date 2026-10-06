@@ -13,6 +13,7 @@ subject to the following restrictions:
 3. This notice may not be removed or altered from any source distribution.
 */
 
+#include "../CollisionDispatch/btCollisionObject.h" // RL PATCH: sort keys
 #include "btOverlappingPairCache.h"
 
 #include "../CollisionDispatch/btCollisionDispatcher.h"
@@ -381,11 +382,13 @@ void btHashedOverlappingPairCache::processAllOverlappingPairs(btOverlapCallback*
 			for (int i = 0; i < indices.size(); i++)
 			{
 				const btBroadphasePair& p = pa[i];
-				const int uidA0 = p.m_pProxy0 ? p.m_pProxy0->m_uniqueId : -1;
-				const int uidA1 = p.m_pProxy1 ? p.m_pProxy1->m_uniqueId : -1;
+				// RL PATCH: sort by the objects' fixed sort keys (user index 3) instead of the broadphase ids,
+				// which depend on the order proxies were created and freed
+				const int key0 = p.m_pProxy0 ? ((const btCollisionObject*)p.m_pProxy0->m_clientObject)->getUserIndex3() : -1;
+				const int key1 = p.m_pProxy1 ? ((const btCollisionObject*)p.m_pProxy1->m_clientObject)->getUserIndex3() : -1;
 
-				indices[i].m_uidA0 = uidA0;
-				indices[i].m_uidA1 = uidA1;
+				indices[i].m_uidA0 = btMin(key0, key1);
+				indices[i].m_uidA1 = btMax(key0, key1);
 				indices[i].m_orgIndex = i;
 			}
 			indices.quickSort(MyPairIndeSortPredicate());

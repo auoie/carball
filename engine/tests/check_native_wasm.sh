@@ -22,4 +22,12 @@ if cmp -s "$TMP/native_smoke.txt" "$TMP/wasm_smoke.txt"; then
 else
 	echo "arena smoke test: DIFFERENT"; diff "$TMP/native_smoke.txt" "$TMP/wasm_smoke.txt" | head -5; fail=1
 fi
+# Restored snapshots continue exactly, in both builds (rollback netcode)
+if build/rollback ../out/arena/collision_meshes 120 > "$TMP/native_rb.txt" &&
+	node build-wasm/rollback.js /collision_meshes 120 > "$TMP/wasm_rb.txt" &&
+	cmp -s "$TMP/native_rb.txt" "$TMP/wasm_rb.txt"; then
+	echo "rollback: identical, restores exact ($(head -1 "$TMP/native_rb.txt"))"
+else
+	echo "rollback: FAILED"; tail -3 "$TMP/native_rb.txt" "$TMP/wasm_rb.txt"; fail=1
+fi
 exit $fail

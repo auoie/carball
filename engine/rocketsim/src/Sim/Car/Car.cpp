@@ -29,7 +29,8 @@ CarState Car::GetState() {
 	for (int i = 0; i < _bulletVehicle.m_wheelInfo.size() && i < 4; i++) {
 		const btWheelInfoRL& wheel = _bulletVehicle.m_wheelInfo[i];
 		_internalState.wheelCarry.wheels[i] = {
-			wheel.m_steerAngle, wheel.m_engineForce, wheel.m_brake, wheel.m_latFriction, wheel.m_longFriction
+			wheel.m_steerAngle, wheel.m_engineForce, wheel.m_brake, wheel.m_latFriction, wheel.m_longFriction,
+			wheel.m_extraPushback
 		};
 	}
 
@@ -57,6 +58,7 @@ void Car::SetState(const CarState& state) {
 		wheel.m_brake = carry.brake;
 		wheel.m_latFriction = carry.latFriction;
 		wheel.m_longFriction = carry.longFriction;
+		wheel.m_extraPushback = carry.extraPushback;
 	}
 
 	_internalState = state;
@@ -266,6 +268,7 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
 	_rigidBody = btRigidBody(rbInfo);
 	_rigidBody.setUserIndex(BT_USERINFO_TYPE_CAR);
 	_rigidBody.setUserPointer(this);
+	_rigidBody.setUserIndex3(BT_SORT_KEY_CAR + (int)id); // RL PATCH: sort key
 
 	_rigidBody.m_collisionFlags |= btCollisionObject::CF_CUSTOM_MATERIAL_CALLBACK;
 
@@ -380,14 +383,19 @@ void Car::Serialize(DataStreamOut& out) {
 	out.WriteMultiple(CAR_CONTROLS_SERIALIZATION_FIELDS(controls));
 	out.WriteMultiple(CAR_CONFIG_SERIALIZATION_FIELDS(config));
 	GetState().Serialize(out);
+	RawBodyState::From(_rigidBody).Serialize(out); // RL PATCH: exact physics state
+}
+
+void Car::_ReadSerialized(DataStreamIn& in, CarControls& controls, CarConfig& config, CarState& state, RawBodyState& body) {
+	in.ReadMultiple(CAR_CONTROLS_SERIALIZATION_FIELDS(controls));
+	in.ReadMultiple(CAR_CONFIG_SERIALIZATION_FIELDS(config));
+	state = CarState();
+	state.Deserialize(in);
+	body.Deserialize(in); // RL PATCH: exact physics state
 }
 
 void Car::_Deserialize(DataStreamIn& in) {
-	in.ReadMultiple(CAR_CONTROLS_SERIALIZATION_FIELDS(controls));
-	in.ReadMultiple(CAR_CONFIG_SERIALIZATION_FIELDS(config));
-	CarState newState;
-	newState.Deserialize(in);
-	_internalState = newState;
+	_ReadSerialized(in, controls, config, _internalState, _loadedBody);
 }
 
 void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int numWheelsInContact, float forwardSpeed_UU) {

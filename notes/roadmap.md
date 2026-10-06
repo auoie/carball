@@ -96,6 +96,8 @@ throttle curve, hitbox sizes and wheel setup, ball radius, dodge-vs-double-jump 
 
 ## 6. Netcode (competitive play)
 
+- [x] Exact snapshot restore for rollback: bit for bit, new arena or in place (~5 µs) (`engine/README.md` patches 23–26,
+      `engine/tests/rollback.cpp`).
 - [ ] Server input buffer and client sim-time adjustment: decompile `NetworkInputBuffer_TA` / `NetworkInputBuffer_STS_TA` (`ClientAdjustSimTime` and friends).
 - [ ] Remote car and ball correction: how `NetworkSyncSettings` (fix rates, min deltas) are applied.
 - [ ] Design our transport (WebRTC/WebTransport unreliable channel), redundant inputs (up to 10 frames/packet), 60 Hz input rate.

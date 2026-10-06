@@ -1,4 +1,5 @@
 #pragma once
+#include "../PhysState/RawBodyState.h"
 #include "../PhysState/PhysState.h"
 #include "CarConfig/CarConfig.h"
 #include "../btVehicleRL/btVehicleRL.h"
@@ -34,6 +35,7 @@ struct CarState : public PhysState {
 	// previous tick, so they are part of the state (a restored car then continues exactly).
 	struct WheelCarry {
 		float steerAngle = 0, engineForce = 0, brake = 0, latFriction = 0, longFriction = 0;
+		float extraPushback = 0; // only reset when the wheel ray misses or the suspension bottoms out
 	};
 	struct {
 		WheelCarry wheels[4] = {};
@@ -200,6 +202,9 @@ public:
 	void _PostTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig& mutatorConfig);
 
 	Vec _velocityImpulseCache = { 0,0,0 };
+
+	// RL PATCH: exact rigid body state read by _Deserialize(), applied once the car is in the world
+	RawBodyState _loadedBody;
 	void _FinishPhysicsTick(const MutatorConfig& mutatorConfig);
 
 	void _BulletSetup(GameMode gameMode, class btDynamicsWorld* bulletWorld, const MutatorConfig& mutatorConfig);
@@ -209,6 +214,9 @@ public:
 
 	void Serialize(DataStreamOut& out);
 	void _Deserialize(DataStreamIn& in);
+
+	// RL PATCH: reads what Serialize() wrote, without a car (used by Arena::DeserializeInPlace)
+	static void _ReadSerialized(DataStreamIn& in, CarControls& controls, CarConfig& config, CarState& state, RawBodyState& body);
 
 	Car(const Car& other) = delete;
 	Car& operator=(const Car& other) = delete;

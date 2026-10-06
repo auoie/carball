@@ -14,6 +14,16 @@
 // Unreal Units (2cm) to BulletPhysics Units (1m) conversion scale
 #define UU_TO_BT (1.f/50.f)
 
+// RL PATCH: every collision object has a fixed sort key (btCollisionObject user index 3). Bullet processes
+// contact pairs and solves contacts in key order instead of an order that depends on the world's history,
+// so a world restored from a snapshot continues exactly like the original. Static world objects are keyed
+// by the order they are added in (always the same), then the ball, then cars by ID.
+enum : int {
+	BT_SORT_KEY_STATIC = 0,
+	BT_SORT_KEY_BALL = 1 << 20,
+	BT_SORT_KEY_CAR = 1 << 21,
+};
+
 // Enum values for Bullet btCollisionObject userinfo usage
 enum : int {
 	BT_USERINFO_NONE,

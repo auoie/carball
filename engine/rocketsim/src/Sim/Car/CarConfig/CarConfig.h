@@ -45,6 +45,7 @@ struct CarConfig {
 
 #define CAR_CONFIG_SERIALIZATION_FIELDS(name) \
 name.dodgeDeadzone, name.steeringSensitivity, name.airControlSensitivity, name.hitboxPosOffset, name.hitboxSize, \
+name.threeWheels /* RL PATCH: was missing, so a restored Psyclops got four wheels */, \
 WHEEL_PAIR_CONFIG_SERIALIZATION_FIELDS(name.frontWheels), \
 WHEEL_PAIR_CONFIG_SERIALIZATION_FIELDS(name.backWheels) \
 

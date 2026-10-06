@@ -101,6 +101,7 @@ void Ball::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const M
 	_rigidBody = btRigidBody(constructionInfo);
 	_rigidBody.setUserIndex(BT_USERINFO_TYPE_BALL);
 	_rigidBody.setUserPointer(this);
+	_rigidBody.setUserIndex3(BT_SORT_KEY_BALL); // RL PATCH: sort key
 
 	// Trigger the Arena::_BulletContactAddedCallback() when anything touches the ball
 	_rigidBody.m_collisionFlags |= btCollisionObject::CF_CUSTOM_MATERIAL_CALLBACK;

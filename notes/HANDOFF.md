@@ -9,11 +9,12 @@ The engine also builds to WebAssembly with a JS API (`engine/build-wasm/rlengine
 builds simulate bit-identically (the game server will be native, the clients WebAssembly).
 Browser freeplay works (`client/`, TypeScript + Vite + Three.js; see `client/README.md`). The camera is the
 game's own: decompiled from UnrealScript and ported (`client/src/camera/rlCamera.ts`, algorithm in `notes/camera.md`).
-**Last state (2026-10-06):** controls finished (§4): the game's input pipeline is decoded (`notes/input.md`) and
-ported: per-axis controller deadzone, air roll rule, keyboard air pitch safety, sensitivities + dodge deadzone in the
-engine (patches 21–22, `setCarPreferences`), swivel and rear camera. Settings menu (Esc) has the game's defaults and
-slider ranges. Agreed plan with the user: netcode + native server (§6) next, replay validation (§7) when something
-feels off, then the competitive layer (§9). Optional: mouse steering (decoded, not ported).
+**Last state (2026-10-06):** multiplayer step 1 done: snapshot restore is exact (engine patches 23–26,
+`engine/tests/rollback.cpp`; in-place load ~5 µs). Agreed multiplayer plan: (1) exact restore ✓, (2) decode the
+game's netcode (input buffer, client sim-time adjustment, remote car/ball correction), (3) native authoritative
+server + browser transport, (4) client prediction + rollback, (5) in-process network tests with scripted
+latency/jitter/loss. Then replay validation (§7) with numbers, then the competitive layer (§9). The user wants
+accuracy settled by deterministic, verifiable tests, not by their perception.
 
 Read in this order: `notes/roadmap.md` (what's left) → `notes/physics-values.md` (all values, formulas,
 RocketSim comparison) → `notes/arena.md` → `notes/camera.md` → `notes/findings.md` (binary/package internals, addresses)
@@ -66,6 +67,7 @@ cmake -S ../engine -B ../engine/build -DCMAKE_BUILD_TYPE=Release && make -C ../e
 PATH=/usr/lib/emscripten:$PATH emcmake cmake -S ../engine -B ../engine/build-wasm -DCMAKE_BUILD_TYPE=Release
 PATH=/usr/lib/emscripten:$PATH emmake make -C ../engine/build-wasm -j && node ../engine/wasm/test_node.mjs
 ../engine/tests/check_native_wasm.sh 600     # native == WebAssembly, bit for bit (must stay identical)
+../engine/build/rollback ../out/arena/collision_meshes 300   # restored snapshots continue bit for bit
 cd ../client && npm run check && npm run build && npm run e2e   # web client: types, lint, tests, browser test
 ```
 
@@ -99,6 +101,8 @@ cd ../client && npm run check && npm run build && npm run e2e   # web client: ty
   order, uninitialized fields. Never `-ffast-math`.
 - UnrealScript disassembly: Rocket League's extended-native tokens are 0x70–0x7F (fixed in `ubytecode.py`).
   Unknown tokens `0x52`, `0x5b` remain. Most game-feel logic (camera, car impacts) is script, not native.
+- Playwright's system Chrome reads real gamepads plugged into the machine (the user's controller once reset the
+  car mid-test). `client/e2e/fixtures.ts` stubs `navigator.getGamepads`; import `test` from there.
 - Playwright uses the system Chrome (`channel: "chrome"`, swiftshader). Screenshots via a temporary spec file in
   `client/e2e/` (delete after). Headless Chrome CLI screenshots also work (`--use-angle=swiftshader`).
 - The user chose to fork RocketSim despite its README's request (2026-10-06); don't re-ask.

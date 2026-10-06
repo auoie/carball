@@ -183,13 +183,21 @@ public:
 	}
 };
 
+// RL PATCH: within an island, order manifolds by the bodies' fixed sort keys (user index 3) instead of the
+// broadphase ids, which depend on the order proxies were created and freed
 class btPersistentManifoldSortPredicateDeterministic
 {
+	static int keyLow(const btPersistentManifold* m) { return btMin(m->getBody0()->getUserIndex3(), m->getBody1()->getUserIndex3()); }
+	static int keyHigh(const btPersistentManifold* m) { return btMax(m->getBody0()->getUserIndex3(), m->getBody1()->getUserIndex3()); }
+
 public:
 	SIMD_FORCE_INLINE bool operator()(const btPersistentManifold* lhs, const btPersistentManifold* rhs) const
 	{
-		return (
-			(getIslandId(lhs) < getIslandId(rhs)) || ((getIslandId(lhs) == getIslandId(rhs)) && lhs->getBody0()->getBroadphaseHandle()->m_uniqueId < rhs->getBody0()->getBroadphaseHandle()->m_uniqueId) || ((getIslandId(lhs) == getIslandId(rhs)) && (lhs->getBody0()->getBroadphaseHandle()->m_uniqueId == rhs->getBody0()->getBroadphaseHandle()->m_uniqueId) && (lhs->getBody1()->getBroadphaseHandle()->m_uniqueId < rhs->getBody1()->getBroadphaseHandle()->m_uniqueId)));
+		if (getIslandId(lhs) != getIslandId(rhs))
+			return getIslandId(lhs) < getIslandId(rhs);
+		if (keyLow(lhs) != keyLow(rhs))
+			return keyLow(lhs) < keyLow(rhs);
+		return keyHigh(lhs) < keyHigh(rhs);
 	}
 };
 

@@ -47,6 +47,7 @@ endfunction()
 engine_program(rl_patch_tests tests/rl_patch_tests.cpp)
 engine_program(arena_smoketest tests/arena_smoketest.cpp)
 engine_program(determinism tests/determinism.cpp)
+engine_program(rollback tests/rollback.cpp)
 
 enable_testing()
 add_test(NAME rl_patch_tests COMMAND rl_patch_tests)

@@ -109,4 +109,26 @@ describe("World", () => {
     expect(world.carIds()).toEqual([id]);
     world.dispose();
   });
+
+  it("continues bit for bit after a rollback", () => {
+    const world = World.create(engine);
+    const blue = world.addCar(0);
+    const orange = world.addCar(1);
+    world.resetKickoff(9);
+    const drive = (ticks: number) => {
+      for (let i = 0; i < ticks; i++) {
+        world.setControls(blue, { ...NO_CONTROLS, throttle: 1, boost: true, steer: Math.sin(i / 15) });
+        world.setControls(orange, { ...NO_CONTROLS, throttle: 1, jump: i % 40 === 0 });
+        world.step();
+      }
+    };
+    drive(150); // kickoff: cars and ball collide
+    const saved = world.saveState();
+    drive(240);
+    const expected = world.saveState();
+    world.loadState(saved);
+    drive(240);
+    expect(world.saveState()).toEqual(expected);
+    world.dispose();
+  });
 });

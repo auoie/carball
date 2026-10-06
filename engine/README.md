@@ -13,9 +13,10 @@ We chose to fork it anyway (decision 2026-10-06).
 # native
 cmake -S engine -B engine/build -DCMAKE_BUILD_TYPE=Release
 make -C engine/build -j
-engine/build/rl_patch_tests                                        # one check per patch (46 checks)
+engine/build/rl_patch_tests                                        # one check per patch (55 checks)
 engine/build/arena_smoketest out/arena/collision_meshes            # arena mesh in the sim
 engine/build/determinism out/arena/collision_meshes 120            # scripted 2v2, hash per second
+engine/build/rollback out/arena/collision_meshes 300               # restored snapshots continue bit for bit
 
 # WebAssembly (Arch: emscripten package; its bin dir is /usr/lib/emscripten)
 export PATH=/usr/lib/emscripten:$PATH
@@ -48,7 +49,7 @@ const ball = sim.ballState();            // Float32Array: E.BALL_POS, BALL_VEL, 
 const cfg = sim.carConfig(id);           // Float32Array: E.CFG_HITBOX_SIZE, CFG_HITBOX_OFFSET, wheel offsets/radii/rest
 const pads = sim.boostPads();            // 34 x E.PAD_SIZE: position, isBig, isActive, cooldown
 const events = sim.takeEvents();         // Int32Array of [type, a, b]: EVENT_GOAL (team), EVENT_BUMP / EVENT_DEMO (attacker, victim)
-const snapshot = sim.saveState();        // Uint8Array (~1.7 KB for 2 cars); sim.loadState(snapshot)
+const snapshot = sim.saveState();        // Uint8Array (~2 KB for 2 cars); sim.loadState(snapshot) restores it exactly
 sim.delete();                            // free the C++ object
 ```
 Getters return copies. Offsets are exported as constants (`E.CAR_BOOST`, ...); see the `Layout` namespace
@@ -80,16 +81,21 @@ Rules for server and client code that feeds the simulation:
 - Build both sides from the same commit with these CMake settings. Anything that adds `-ffast-math` or
   `-march=native`-style FMA contraction breaks determinism.
 
-**Snapshot restore** (`saveState`/`loadState`, `Arena::Serialize`/`DeserializeNew`) replays exactly for cars
-that aren't touching anything. With contacts it drifts slightly, because Bullet's cached contact points
-aren't in the snapshot (measured: 0.03 uu/s on the first tick, 0.19 uu after 2 s of busy play). This is the
-same on native and WebAssembly.
+**Snapshot restore is exact** (`saveState`/`loadState`; `Arena::Serialize`, `DeserializeNew`, `DeserializeInPlace`,
+`Clone`): a restored arena continues bit for bit like the original, which rollback netcode relies on. Snapshots
+carry the bodies' exact Bullet-unit values, the wheel values carried between ticks and Bullet's persistent contact
+points, and Bullet processes contacts in a fixed order (patches 23–25). `tests/rollback.cpp` checks it: a scripted
+2v2 restored every 150 ticks (new arena, in place into a long-lived arena, and cloned), and scenarios with lasting
+contacts (ball on a roof, cars stacked, a pile of cars and ball, a car on its roof) restored at every tick. Both
+builds pass, with identical output (`check_native_wasm.sh`).
 
 ## Performance
 - **Arena creation and first tick:** ~1 ms each (they were 260 ms and 520 ms with the whole-arena mesh before the broadphase fix).
 - **Per tick, 2v2 + ball:** native ~13 µs, WebAssembly (Node 26) ~15 µs (scripted 20-minute match, 144,000 ticks).
   At 120 Hz one core could step several hundred 2v2 matches in real time, so physics is a small part of server cost.
 - **First tick after loading the module:** a one-off ~0.7 s while V8 compiles the module. Warm up during loading.
+- **Snapshots (2v2):** ~3 KB; save ~3 µs; load in place ~5 µs (`DeserializeInPlace`, used by `loadState` when the
+  cars match); load into a new arena ~3.3 ms.
 
 ## Patches
 | # | Change | Game source | Where |
@@ -121,6 +127,10 @@ Engine fixes (not game behaviour; needed for determinism across builds, snapshot
 | 18 | All transcendental maths through `detmath` (musl, compiled into every build) | `btScalar.h`, `Framework.h`, direct calls in `Car`/`Arena`/`Ball`/`MathTypes` |
 | 19 | `BT_DISABLE_SIMD`: Bullet's SSE/NEON paths can be switched off (on in our builds) | `btScalar.h`, `engine/CMakeLists.txt` |
 | 20 | `BallState::DropshotInfo::lastDamageTick` initialized (was uninitialized, so snapshot bytes held garbage) | `Ball.h` |
+| 23 | Exact snapshots: the bodies' Bullet-unit values (converting game units back × 0.02 is not exact), the wheel pushback (kept between ticks unless the ray misses), and Bullet's persistent contact points (a car resting on another car depends on them), rebuilt on load with callbacks off. `Clone` copies the same. `DeserializeInPlace` loads into an existing arena in microseconds | `PhysState/RawBodyState.h`, `Car.h/.cpp`, `Arena.cpp` `_SerializeContacts` |
+| 24 | Fixed processing order: every collision object has a sort key (static pieces by build order, ball, cars by ID), and Bullet's deterministic mode sorts contact pairs and the solver's manifolds by it, instead of an order that depends on the world's history (pair creation and removal, reused broadphase slots) | `BulletLink.h`, `btOverlappingPairCache.cpp`, `btSimulationIslandManager.cpp`, `Arena.cpp` |
+| 25 | Solver time step set when the arena is built: the wheel pushback reads it before Bullet sets it, so the first tick of any new or restored arena used 1/60 s | `Arena.cpp` constructor |
+| 26 | Upstream fixes: `threeWheels` (Psyclops) was not in snapshots; the car-mass mutator gave cars the ball's mass; loading a snapshot never applied its mutators; `Clone` kept default mutators | `CarConfig.h`, `Arena.cpp` |
 
 Driving, turning circles and jump height stay within 0.5% of stock (e.g. full-lock radius at 500 uu/s:
 300.3 vs 299.8; jump 234.9 vs 235.2). The patches change details, not the overall feel.
