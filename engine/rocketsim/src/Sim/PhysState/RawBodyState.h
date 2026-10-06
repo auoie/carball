@@ -4,6 +4,7 @@
 #include "../../DataStream/DataStreamOut.h"
 
 #include "../../../libsrc/bullet3-3.24/BulletDynamics/Dynamics/btRigidBody.h"
+#include "../Quantize/Quantize.h"
 
 RS_NS_START
 
@@ -14,9 +15,11 @@ struct RawBodyState {
 	float origin[3] = {}, basis[9] = {}, linVel[3] = {}, angVel[3] = {};
 	int32_t activationState = 0;
 	float deactivationTime = 0;
+	Quantize::PackedRotation netRotation; // the rotation as last quantized (what the network sends)
 
-	static RawBodyState From(const btRigidBody& rb) {
+	static RawBodyState From(const btRigidBody& rb, const Quantize::PackedRotation& netRotation) {
 		RawBodyState s;
+		s.netRotation = netRotation;
 		const btTransform& t = rb.getWorldTransform();
 		for (int i = 0; i < 3; i++) {
 			s.origin[i] = t.getOrigin()[i];
@@ -30,7 +33,8 @@ struct RawBodyState {
 		return s;
 	}
 
-	void ApplyTo(btRigidBody& rb) const {
+	void ApplyTo(btRigidBody& rb, Quantize::PackedRotation& netRotationOut) const {
+		netRotationOut = netRotation;
 		btTransform t;
 		t.setOrigin(btVector3(origin[0], origin[1], origin[2]));
 		t.setBasis(btMatrix3x3(basis[0], basis[1], basis[2], basis[3], basis[4], basis[5], basis[6], basis[7], basis[8]));
@@ -52,6 +56,9 @@ struct RawBodyState {
 		for (float f : angVel) out.Write(f);
 		out.Write(activationState);
 		out.Write(deactivationTime);
+		out.Write(netRotation.largest);
+		for (uint32_t c : netRotation.c) out.Write(c);
+		out.Write(netRotation.valid);
 	}
 
 	void Deserialize(DataStreamIn& in) {
@@ -61,6 +68,9 @@ struct RawBodyState {
 		for (float& f : angVel) in.Read(f);
 		in.Read(activationState);
 		in.Read(deactivationTime);
+		in.Read(netRotation.largest);
+		for (uint32_t& c : netRotation.c) in.Read(c);
+		in.Read(netRotation.valid);
 	}
 };
 

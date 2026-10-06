@@ -4,6 +4,8 @@ import arenaUrl from "@arena/collision_meshes/soccar/soccar_arena.cmf?url";
 import { parseCmf } from "./engine/cmf";
 import { World, initEngine } from "./engine/world";
 import { Freeplay } from "./game/freeplay";
+import { Online } from "./game/online";
+import { Connection, devServerAddress } from "./net/connection";
 import { Hud } from "./hud";
 import { InputDevices } from "./input/devices";
 import { buildArena } from "./render/arena";
@@ -42,6 +44,9 @@ async function main(): Promise<void> {
   warmup.step(240);
   warmup.dispose();
 
+  // ?server=host:infoPort (or just ?server: this host, port 4434) plays online against an rl-server
+  const server = new URLSearchParams(location.search).get("server");
+
   const renderer = new Renderer(canvas);
   renderer.scene.add(buildArena(parseCmf(arenaBytes)));
   const hud = new Hud(required("#hud", HTMLElement));
@@ -50,7 +55,27 @@ async function main(): Promise<void> {
   const panel = new SettingsPanel(document.body, settings, (next) => {
     settings = next;
   });
-  const game = new Freeplay(world, renderer, input, hud, () => settings, () => !panel.isOpen);
+  let game: { frame(dt: number): void };
+  if (server === null) {
+    game = new Freeplay(world, renderer, input, hud, () => settings, () => !panel.isOpen);
+  } else {
+    status.textContent = "Connecting to the server…";
+    const [host = location.hostname, port = "4434"] = server === "" ? [] : server.split(":");
+    const address = await devServerAddress(host, Number(port));
+    const { controller } = settings;
+    const { connection, welcome } = await Connection.open(address, {
+      team: 255,
+      body: 0,
+      dodgeDeadzone: controller.dodgeDeadzone,
+      steeringSensitivity: controller.steeringSensitivity,
+      airControlSensitivity: controller.aerialSensitivity,
+    });
+    world.loadState(welcome.snapshot);
+    const online = new Online(world, renderer, input, hud, connection, welcome, () => settings, () => !panel.isOpen);
+    // For the browser tests
+    (window as unknown as { rlOnline?: () => unknown }).rlOnline = () => online.stats;
+    game = online;
+  }
 
   window.addEventListener("keydown", (e) => {
     if (e.code === "KeyH" && !panel.isOpen) hud.toggleHelp(settings.bindings);

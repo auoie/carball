@@ -10,6 +10,7 @@
 //   const car = sim.carState(id);                   // Float32Array view, see CAR_* offsets
 //
 // State getters return new typed arrays (copies), so they stay valid after later calls.
+#include "NetState.h"
 #include "RocketSim.h"
 
 #include <emscripten/bind.h>
@@ -146,6 +147,17 @@ public:
 		c.throttle = throttle; c.steer = steer; c.pitch = pitch; c.yaw = yaw; c.roll = roll;
 		c.jump = jump; c.boost = boost; c.handbrake = handbrake;
 		c.airPitchSafety = airPitchSafety;
+	}
+
+	// A car's current controls: throttle, steer, pitch, yaw, roll, jump, boost, handbrake, airPitchSafety (0/1)
+	Float32ArrayVal GetCarControls(int id) {
+		_floats.assign(9, 0.f);
+		if (Car* car = _arena->GetCar((uint32_t)id)) {
+			const RocketSim::CarControls& c = car->controls;
+			_floats = { c.throttle, c.steer, c.pitch, c.yaw, c.roll, (float)c.jump, (float)c.boost, (float)c.handbrake,
+				(float)c.airPitchSafety };
+		}
+		return CopyToJS<Float32ArrayVal>("Float32Array", _floats);
 	}
 
 	// The player's control preferences, applied in the car's physics like the game's PRI car preferences
@@ -287,6 +299,27 @@ public:
 		return CopyToJS<Uint8ArrayVal>("Uint8Array", out.data);
 	}
 
+	// Network state (net/NetState.h): what the server sends each update. The client applies it onto its own arena;
+	// writing is here for tests (the native server writes it).
+	Uint8ArrayVal WriteNetState(bool ball, Int32ArrayVal carIds, bool boostPads) {
+		NetState::WriteOptions options;
+		options.ball = ball;
+		options.boostPads = boostPads;
+		for (int id : emscripten::convertJSArrayToNumberVector<int>(carIds))
+			if (_arena->GetCar((uint32_t)id))
+				options.carIds.push_back((uint32_t)id);
+		DataStreamOut out;
+		NetState::Write(_arena, out, options);
+		return CopyToJS<Uint8ArrayVal>("Uint8Array", out.data);
+	}
+
+	bool ApplyNetState(Uint8ArrayVal bytes) {
+		std::vector<uint8_t> data = emscripten::convertJSArrayToNumberVector<uint8_t>(bytes);
+		DataStreamIn in;
+		in.data.assign(data.begin(), data.end());
+		return NetState::Read(_arena, in);
+	}
+
 	// Restores a snapshot exactly. Loads in place (microseconds) when the snapshot has the same cars, otherwise
 	// builds a new arena (milliseconds).
 	void LoadState(Uint8ArrayVal bytes) {
@@ -343,6 +376,7 @@ EMSCRIPTEN_BINDINGS(rlengine) {
 		.function("carIds", &Sim::CarIds)
 		.function("setControls", &Sim::SetControls)
 		.function("setCarPreferences", &Sim::SetCarPreferences)
+		.function("carControls", &Sim::GetCarControls)
 		.function("step", &Sim::Step)
 		.function("resetKickoff", &Sim::ResetKickoff)
 		.function("tickCount", &Sim::TickCount)
@@ -355,7 +389,9 @@ EMSCRIPTEN_BINDINGS(rlengine) {
 		.function("boostPads", &Sim::BoostPads)
 		.function("takeEvents", &Sim::TakeEvents)
 		.function("saveState", &Sim::SaveState)
-		.function("loadState", &Sim::LoadState);
+		.function("loadState", &Sim::LoadState)
+		.function("writeNetState", &Sim::WriteNetState)
+		.function("applyNetState", &Sim::ApplyNetState);
 
 #define LAYOUT(name) constant(#name, name)
 	LAYOUT(BALL_POS); LAYOUT(BALL_VEL); LAYOUT(BALL_ANG_VEL); LAYOUT(BALL_ROT); LAYOUT(BALL_SIZE);

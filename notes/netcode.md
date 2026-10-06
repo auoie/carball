@@ -121,3 +121,9 @@ and native == WebAssembly determinism (so a client replaying the server's inputs
 - Client: run ahead, upload inputs (60 Hz, up to 10 unacked frames per packet), keep a snapshot ring (120 frames),
   rewind on server data and replay; remote cars' inputs faded over 0.1 s.
 - Sim-time scaling: CSTS or STS keeps the server buffer near target.
+
+Implemented (step 3): `server/` (input buffer, update rates) and `client/src/net/predictor.ts` (history, rewind and
+replay, input fading). One consequence of `ServerConsume` worth knowing: when the buffer is empty the server repeats
+the last input and still advances `LastProcessedFrame`; when it catches up it consumes two frames in one tick. Either
+way the server's state for a frame number is then one tick off the client's, so the next correction changes the
+local car once, after which the two timelines line up again.

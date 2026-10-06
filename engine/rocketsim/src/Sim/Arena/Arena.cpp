@@ -617,7 +617,7 @@ void Arena::Serialize(DataStreamOut& out) const {
 
 	{ // Serialize ball
 		ball->GetState().Serialize(out);
-		RawBodyState::From(ball->_rigidBody).Serialize(out); // RL PATCH: exact physics state
+		RawBodyState::From(ball->_rigidBody, ball->_netRotation).Serialize(out); // RL PATCH: exact physics state
 	}
 
 	{ // Serialize mutators
@@ -791,9 +791,9 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
 	}
 
 	newArena->ball->SetState(ballState);
-	ballBody.ApplyTo(newArena->ball->_rigidBody);
+	ballBody.ApplyTo(newArena->ball->_rigidBody, newArena->ball->_netRotation);
 	for (Car* car : newArena->_cars)
-		car->_loadedBody.ApplyTo(car->_rigidBody);
+		car->_loadedBody.ApplyTo(car->_rigidBody, car->_netRotation);
 
 	newArena->_DeserializeContacts(in); // RL PATCH: persistent contact points
 
@@ -875,12 +875,12 @@ bool Arena::DeserializeInPlace(DataStreamIn& in) {
 		car->controls = c.controls;
 		car->config = c.config;
 		car->SetState(c.state);
-		c.body.ApplyTo(car->_rigidBody);
+		c.body.ApplyTo(car->_rigidBody, car->_netRotation);
 	}
 	for (size_t i = 0; i < pads.size(); i++)
 		_boostPads[i]->SetState(pads[i]);
 	ball->SetState(ballState);
-	ballBody.ApplyTo(ball->_rigidBody);
+	ballBody.ApplyTo(ball->_rigidBody, ball->_netRotation);
 	ball->_velocityImpulseCache = { 0, 0, 0 };
 	_DeserializeContacts(in);
 	return true;
@@ -896,7 +896,7 @@ Arena* Arena::Clone(bool copyCallbacks) {
 
 	newArena->SetMutatorConfig(this->_mutatorConfig); // RL PATCH: the clone kept default mutators
 	newArena->ball->SetState(this->ball->GetState());
-	RawBodyState::From(this->ball->_rigidBody).ApplyTo(newArena->ball->_rigidBody); // RL PATCH: exact state
+	RawBodyState::From(this->ball->_rigidBody, this->ball->_netRotation).ApplyTo(newArena->ball->_rigidBody, newArena->ball->_netRotation); // RL PATCH: exact state
 	newArena->ball->_velocityImpulseCache = this->ball->_velocityImpulseCache;
 
 	for (Car* car : this->_cars) {
@@ -906,7 +906,7 @@ Arena* Arena::Clone(bool copyCallbacks) {
 		assert(newCar->id == car->id);
 
 		newCar->SetState(car->GetState());
-		RawBodyState::From(car->_rigidBody).ApplyTo(newCar->_rigidBody); // RL PATCH: exact state
+		RawBodyState::From(car->_rigidBody, car->_netRotation).ApplyTo(newCar->_rigidBody, newCar->_netRotation); // RL PATCH: exact state
 		newCar->controls = car->controls;
 		newCar->_velocityImpulseCache = car->_velocityImpulseCache;
 	}

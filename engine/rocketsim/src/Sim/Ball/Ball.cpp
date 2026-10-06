@@ -49,6 +49,7 @@ void Ball::SetState(const BallState& state) {
 
 	_velocityImpulseCache = { 0,0,0 };
 	_internalState.tickCountSinceUpdate = 0;
+	_netRotation.valid = false; // RL PATCH: not a quantized state
 }
 
 btCollisionShape* MakeBallCollisionShape(GameMode gameMode, const MutatorConfig& mutatorConfig, btVector3& localIntertia) {
@@ -142,7 +143,7 @@ void Ball::_FinishPhysicsTick(const MutatorConfig& mutatorConfig) {
 	}
 
 	// RL PATCH: round the state through the network serializer every tick (bQuantizePhysics)
-	Quantize::QuantizeRigidBody(_rigidBody);
+	Quantize::QuantizeRigidBody(_rigidBody, &_netRotation);
 
 	_internalState.tickCountSinceUpdate++;
 }

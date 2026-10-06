@@ -28,7 +28,31 @@ namespace Quantize {
 		return sign * (invScale * 0.1f) + result;
 	}
 
-	btQuaternion Rotation(const btQuaternion& qIn) {
+	btQuaternion Unpack(const PackedRotation& packed) {
+		int largest = packed.largest;
+		float out[4];
+		for (int i = 0, j = 0; i < 4; i++) {
+			if (i == largest)
+				continue;
+			float f = (float)packed.c[j++] / (float)ROT_MAX - 0.5f;
+			out[i] = (f + f) * 0.70710677f;
+		}
+		{
+			float rest = 1.f;
+			for (int i = 0; i < 4; i++)
+				if (i != largest)
+					rest -= out[i] * out[i];
+			out[largest] = (float)sqrt((double)RS_MAX(rest, 0.f));
+		}
+
+		float lengthSq = out[0] * out[0] + out[1] * out[1] + out[2] * out[2] + out[3] * out[3];
+		if (lengthSq <= 1e-8f)
+			return btQuaternion(0, 0, 0, 1);
+		float invLength = 1.f / sqrtf(lengthSq);
+		return btQuaternion(out[0] * invLength, out[1] * invLength, out[2] * invLength, out[3] * invLength);
+	}
+
+	btQuaternion Rotation(const btQuaternion& qIn, PackedRotation* packedOut) {
 		// Normalize (identity if degenerate)
 		float q[4] = { qIn.x(), qIn.y(), qIn.z(), qIn.w() };
 		float lengthSq = q[1] * q[1] + q[0] * q[0] + q[2] * q[2] + q[3] * q[3];
@@ -48,39 +72,22 @@ namespace Quantize {
 
 		// Compress the other three, flipped so the dropped component is positive
 		float sign = (q[largest] < 0) ? -1.f : 1.f;
-		int packed[3];
+		PackedRotation packed;
+		packed.largest = (uint8_t)largest;
+		packed.valid = true;
 		for (int i = 0, j = 0; i < 4; i++) {
 			if (i == largest)
 				continue;
 			float val = (q[i] * sign * 1.4142135f * 0.5f + 0.5f) * (float)ROT_MAX;
-			packed[j++] = RS_CLAMP(RoundUE(val), 0, ROT_MAX);
+			packed.c[j++] = (uint32_t)RS_CLAMP(RoundUE(val), 0, ROT_MAX);
 		}
+		if (packedOut)
+			*packedOut = packed;
 
-		// Decompress
-		float out[4];
-		float sumSq = 0;
-		for (int i = 0, j = 0; i < 4; i++) {
-			if (i == largest)
-				continue;
-			float f = (float)packed[j++] / (float)ROT_MAX - 0.5f;
-			out[i] = (f + f) * 0.70710677f;
-		}
-		{
-			float rest = 1.f;
-			for (int i = 0; i < 4; i++)
-				if (i != largest)
-					rest -= out[i] * out[i];
-			out[largest] = (float)sqrt((double)RS_MAX(rest, 0.f));
-		}
-
-		lengthSq = out[0] * out[0] + out[1] * out[1] + out[2] * out[2] + out[3] * out[3];
-		if (lengthSq <= 1e-8f)
-			return btQuaternion(0, 0, 0, 1);
-		float invLength = 1.f / sqrtf(lengthSq);
-		return btQuaternion(out[0] * invLength, out[1] * invLength, out[2] * invLength, out[3] * invLength);
+		return Unpack(packed);
 	}
 
-	void QuantizeRigidBody(btRigidBody& rb) {
+	void QuantizeRigidBody(btRigidBody& rb, PackedRotation* packedRotation) {
 		btTransform& transform = rb.getWorldTransform();
 
 		btVector3 pos = transform.getOrigin() * BT_TO_UU;
@@ -90,7 +97,7 @@ namespace Quantize {
 
 		btQuaternion rot;
 		transform.getBasis().getRotation(rot);
-		transform.setBasis(btMatrix3x3(Rotation(rot)));
+		transform.setBasis(btMatrix3x3(Rotation(rot, packedRotation)));
 
 		int activationState = rb.getActivationState();
 		if (activationState == ISLAND_SLEEPING || activationState == DISABLE_SIMULATION) {

@@ -9,7 +9,8 @@ Resuming in a new session: `notes/HANDOFF.md`. Generated constants: `out/rl_phys
 
 ## Next up
 1. Physics validation against replays (§7), whenever something feels off.
-2. Netcode (§6) and the native game server, then the competitive layer (§9).
+2. Netcode (§6): in-process network tests (latency/jitter/loss), sim-time scaling, update size; then the
+   competitive layer (§9).
 
 ---
 
@@ -102,7 +103,18 @@ throttle curve, hitbox sizes and wheel setup, ball radius, dodge-vs-double-jump 
       buffer, client sim-time scaling (STS/CSTS), replication rates, client rewind-and-replay with per-frame history,
       remote-car input fading, correction thresholds.
 - [ ] Visual smoothing of corrections (`SyncErrorLocation`, fix rates 4/5): not decoded in detail.
-- [ ] Design our transport (WebRTC/WebTransport unreliable channel), redundant inputs (up to 10 frames/packet), 60 Hz input rate.
+- [x] Transport: WebTransport (datagrams + a control stream), protocol v1 (`protocol/README.md`, byte vectors shared by
+      server and client tests). Redundant inputs (up to 10 unacknowledged frames per packet), 60 Hz input rate.
+- [x] Native authoritative server (`server/`, Rust + the engine's C API): 120 Hz, the game's `ServerConsume` input
+      buffer and jitter buffer, update rates (near ball every update, others 15 Hz), splitting into datagrams.
+- [x] Browser online mode (`client/src/game/online.ts`) with client prediction and rollback
+      (`client/src/net/predictor.ts`): exact for the local car (unit test against a simulated server; browser test
+      with two players against a real server).
+- [ ] In-process network tests with scripted latency, jitter and loss, counting mispredictions exactly (step 5).
+- [ ] Client sim-time scaling (STS/CSTS) to keep the server's buffer at its target; until then the server's
+      catch-up and repeat rules do it, at one misprediction per event.
+- [ ] Update size: ~330 bytes per car (a 2v2 update is split over two datagrams); compress (deltas, fewer floats).
+- [ ] Car preferences can't change mid-match (sent once in Hello).
 
 ## 7. Validation
 

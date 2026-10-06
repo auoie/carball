@@ -49,3 +49,6 @@ node_modules/
 client/dist/
 client/test-results/
 client/playwright-report/
+
+# game server build output
+server/target/

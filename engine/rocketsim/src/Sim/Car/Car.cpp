@@ -63,6 +63,7 @@ void Car::SetState(const CarState& state) {
 
 	_internalState = state;
 	_internalState.tickCountSinceUpdate = 0;
+	_netRotation.valid = false; // RL PATCH: not a quantized state
 }
 
 void Car::Demolish(float respawnDelay) {
@@ -245,7 +246,7 @@ void Car::_FinishPhysicsTick(const MutatorConfig& mutatorConfig) {
 	}
 
 	// RL PATCH: round the state through the network serializer every tick (bQuantizePhysics)
-	Quantize::QuantizeRigidBody(_rigidBody);
+	Quantize::QuantizeRigidBody(_rigidBody, &_netRotation);
 	_internalState.rotMat = _rigidBody.getWorldTransform().m_basis;
 
 	_internalState.tickCountSinceUpdate++;
@@ -389,7 +390,7 @@ void Car::Serialize(DataStreamOut& out) {
 	out.WriteMultiple(CAR_CONTROLS_SERIALIZATION_FIELDS(controls));
 	out.WriteMultiple(CAR_CONFIG_SERIALIZATION_FIELDS(config));
 	GetState().Serialize(out);
-	RawBodyState::From(_rigidBody).Serialize(out); // RL PATCH: exact physics state
+	RawBodyState::From(_rigidBody, _netRotation).Serialize(out); // RL PATCH: exact physics state
 }
 
 void Car::_ReadSerialized(DataStreamIn& in, CarControls& controls, CarConfig& config, CarState& state, RawBodyState& body) {

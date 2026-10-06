@@ -1,4 +1,5 @@
 #pragma once
+#include "../Quantize/Quantize.h"
 #include "../PhysState/PhysState.h"
 
 #include "../../RLConst.h"
@@ -81,6 +82,9 @@ public:
 
 	bool _groundStickApplied = false;
 	Vec _velocityImpulseCache = { 0,0,0 };
+
+	// RL PATCH: the rotation as last quantized, as the network sends it (see Quantize::PackedRotation)
+	Quantize::PackedRotation _netRotation;
 	void _FinishPhysicsTick(const MutatorConfig& mutatorConfig);
 
 	bool IsSphere() const;

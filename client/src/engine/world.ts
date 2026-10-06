@@ -257,6 +257,32 @@ export class World {
     return this.#sim.saveState();
   }
 
+  /** The server's network state (engine/net/NetState.h): applies exactly onto this world. False if malformed. */
+  applyNetState(bytes: Uint8Array): boolean {
+    return this.#sim.applyNetState(bytes);
+  }
+
+  /** Writes a network state (what the server sends; for tests and local servers). */
+  writeNetState(options: { readonly ball: boolean; readonly carIds: readonly number[]; readonly pads: boolean }): Uint8Array {
+    return this.#sim.writeNetState(options.ball, Int32Array.from(options.carIds), options.pads);
+  }
+
+  /** A car's current controls. */
+  carControls(id: number): CarControls {
+    const c = this.#sim.carControls(id);
+    return {
+      throttle: at(c, 0),
+      steer: at(c, 1),
+      pitch: at(c, 2),
+      yaw: at(c, 3),
+      roll: at(c, 4),
+      jump: at(c, 5) !== 0,
+      boost: at(c, 6) !== 0,
+      handbrake: at(c, 7) !== 0,
+      airPitchSafety: at(c, 8) !== 0,
+    };
+  }
+
   loadState(bytes: Uint8Array): void {
     this.#sim.loadState(bytes);
   }

@@ -1,0 +1,20 @@
+[package]
+name = "rl-server"
+version = "0.1.0"
+edition = "2024"
+description = "Authoritative game server: the patched engine (C++) behind WebTransport"
+publish = false
+
+[dependencies]
+anyhow = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util"] }
+wtransport = "0.7"
+
+[dev-dependencies]
+serde_json = "1"
+
+[build-dependencies]
+cmake = "0.1"
+
+[profile.release]
+debug = 1

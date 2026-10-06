@@ -21,11 +21,22 @@ namespace Quantize {
 	// Scale 100 for linear velocity (uu/s), 10000 for angular velocity (rad/s)
 	float Velocity(float v, float scale);
 
+	// A rotation as the network sends it: the index of the dropped (largest) component and the other three in 18 bits.
+	// Kept per body after each tick, because recompressing the resulting rotation matrix is not always exact.
+	struct PackedRotation {
+		uint8_t largest = 0;
+		uint32_t c[3] = {};
+		bool valid = false; // false after a state was set directly (not by a tick)
+	};
+
 	// Rotation: "smallest three" quaternion, 18 bits per component (FUN_14037bf60 / FUN_1403738b0 / FUN_140380140)
-	btQuaternion Rotation(const btQuaternion& q);
+	btQuaternion Rotation(const btQuaternion& q, PackedRotation* packed = nullptr);
+
+	// The rotation a packed rotation stands for (the decompression half of Rotation())
+	btQuaternion Unpack(const PackedRotation& packed);
 
 	// Applies all of the above to a Bullet rigid body (Bullet units are uu / 50)
-	void QuantizeRigidBody(btRigidBody& rb);
+	void QuantizeRigidBody(btRigidBody& rb, PackedRotation* packedRotation = nullptr);
 }
 
 RS_NS_END

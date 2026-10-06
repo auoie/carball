@@ -10,7 +10,10 @@ builds simulate bit-identically (the game server will be native, the clients Web
 Browser freeplay works (`client/`, TypeScript + Vite + Three.js; see `client/README.md`). The camera is the
 game's own: decompiled from UnrealScript and ported (`client/src/camera/rlCamera.ts`, algorithm in `notes/camera.md`).
 **Last state (2026-10-06):** multiplayer step 1 done: snapshot restore is exact (engine patches 23–26,
-`engine/tests/rollback.cpp`; in-place load ~5 µs). Step 2 done: the game's netcode is decoded (`notes/netcode.md`). Agreed multiplayer plan: (1) exact restore ✓, (2) decode the
+`engine/tests/rollback.cpp`; in-place load ~5 µs). Step 2 done: the game's netcode is decoded (`notes/netcode.md`).
+Step 3 done: native server (`server/`, Rust, WebTransport; `server/README.md`), protocol v1 (`protocol/`), browser
+online mode with prediction and rollback (`client/src/game/online.ts`, `client/src/net/`); step 4's core (the
+predictor) is in and exact for the local car. Next: step 5. Agreed multiplayer plan: (1) exact restore ✓, (2) decode the
 game's netcode (input buffer, client sim-time adjustment, remote car/ball correction), (3) native authoritative
 server + browser transport, (4) client prediction + rollback, (5) in-process network tests with scripted
 latency/jitter/loss. Then replay validation (§7) with numbers, then the competitive layer (§9). The user wants
@@ -68,7 +71,8 @@ PATH=/usr/lib/emscripten:$PATH emcmake cmake -S ../engine -B ../engine/build-was
 PATH=/usr/lib/emscripten:$PATH emmake make -C ../engine/build-wasm -j && node ../engine/wasm/test_node.mjs
 ../engine/tests/check_native_wasm.sh 600     # native == WebAssembly, bit for bit (must stay identical)
 ../engine/build/rollback ../out/arena/collision_meshes 300   # restored snapshots continue bit for bit
-cd ../client && npm run check && npm run build && npm run e2e   # web client: types, lint, tests, browser test
+cd ../client && npm run check && npm run build && npm run e2e   # web client: types, lint, tests, browser tests
+cd ../server && cargo test && cargo clippy --all-targets -- -D warnings   # game server (cargo run --release to play)
 ```
 
 ## Session conventions and decisions

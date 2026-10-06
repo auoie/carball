@@ -9,6 +9,7 @@ export interface HudState {
   readonly ballCam: boolean;
   readonly message: string | null;
   readonly fps: number;
+  readonly net: string | null; // online: ping and buffer
 }
 
 function element<T extends HTMLElement>(root: ParentNode, selector: string, type: new () => T): T {
@@ -26,6 +27,7 @@ export class Hud {
   readonly #camera: HTMLElement;
   readonly #message: HTMLElement;
   readonly #fps: HTMLElement;
+  readonly #net: HTMLElement;
   readonly #help: HTMLElement;
   readonly #ringLength: number;
 
@@ -41,6 +43,7 @@ export class Hud {
     this.#camera = element(root, "#camera-mode", HTMLElement);
     this.#message = element(root, "#message", HTMLElement);
     this.#fps = element(root, "#fps", HTMLElement);
+    this.#net = element(root, "#net", HTMLElement);
     this.#help = element(root, "#help", HTMLElement);
   }
 
@@ -83,5 +86,7 @@ export class Hud {
     this.#message.textContent = s.message ?? "";
     this.#message.hidden = s.message === null;
     this.#fps.textContent = `${Math.round(s.fps)} fps`;
+    this.#net.textContent = s.net ?? "";
+    this.#net.hidden = s.net === null;
   }
 }

@@ -1,4 +1,4 @@
-// Browser end-to-end tests against the production build (`npm run build` first).
+// Browser end-to-end tests against the production build (`npm run build` first) and a local game server.
 // Uses the installed Google Chrome, with software WebGL so it also runs headless without a GPU.
 import { defineConfig } from "@playwright/test";
 
@@ -11,10 +11,19 @@ export default defineConfig({
     viewport: { width: 1280, height: 720 },
     launchOptions: { args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] },
   },
-  webServer: {
-    command: "npx vite preview --port 4173 --strictPort",
-    url: "http://localhost:4173",
-    reuseExistingServer: true,
-  },
+  webServer: [
+    {
+      command: "npx vite preview --port 4173 --strictPort",
+      url: "http://localhost:4173",
+      reuseExistingServer: true,
+    },
+    {
+      // The game server for the online tests (the first run builds it)
+      command: "cargo run --quiet --manifest-path ../server/Cargo.toml -- --port 14433 --info-port 14434",
+      url: "http://127.0.0.1:14434/info",
+      reuseExistingServer: false,
+      timeout: 600_000,
+    },
+  ],
   outputDir: "test-results",
 });

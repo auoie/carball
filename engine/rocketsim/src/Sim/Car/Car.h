@@ -205,6 +205,9 @@ public:
 
 	// RL PATCH: exact rigid body state read by _Deserialize(), applied once the car is in the world
 	RawBodyState _loadedBody;
+
+	// RL PATCH: the rotation as last quantized, as the network sends it (see Quantize::PackedRotation)
+	Quantize::PackedRotation _netRotation;
 	void _FinishPhysicsTick(const MutatorConfig& mutatorConfig);
 
 	void _BulletSetup(GameMode gameMode, class btDynamicsWorld* bulletWorld, const MutatorConfig& mutatorConfig);
