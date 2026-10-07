@@ -83,5 +83,22 @@ check(sim.carState(orange)[E.CAR_DEMOED] === 1, "victim demoed flag");
 console.log(`demo event: ${JSON.stringify(demos)}`);
 
 sim.delete();
+
+// Wheel contacts with world geometry vs cars, and the game's IsOnRBActor (grounded on a car or the ball)
+{
+  const s2 = new E.Sim();
+  const below = s2.addCar(0, 0), above = s2.addCar(0, 0);
+  const place = (id, z) => s2.setCarState(id, [0, 0, z, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 33]);
+  place(below, 17);
+  place(above, 80); // on the other car's roof
+  s2.step(60);
+  const b = s2.carState(below), a = s2.carState(above);
+  check(b[E.CAR_WORLD_WHEEL_CONTACTS] === 4 && b[E.CAR_ON_RB_ACTOR] === 0, `car on the floor: world wheels ${b[E.CAR_WORLD_WHEEL_CONTACTS]}, on RB actor ${b[E.CAR_ON_RB_ACTOR]}`);
+  check(a[E.CAR_ON_GROUND] === 1 && a[E.CAR_WORLD_WHEEL_CONTACTS] === 0 && a[E.CAR_ON_RB_ACTOR] === 1,
+    `car on a car's roof: grounded ${a[E.CAR_ON_GROUND]}, world wheels ${a[E.CAR_WORLD_WHEEL_CONTACTS]}, on RB actor ${a[E.CAR_ON_RB_ACTOR]}, z ${a[2].toFixed(1)}`);
+  check(b[E.CAR_HAS_FLIP_OR_JUMP] === 1, "grounded car can jump");
+  s2.delete();
+}
+
 console.log(failures ? `${failures} FAILED` : "all passed");
 process.exit(failures ? 1 : 0);

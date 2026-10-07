@@ -38,7 +38,12 @@ namespace Layout {
 		CAR_DEMO_RESPAWN_TIMER = 28, CAR_HANDBRAKE = 29, CAR_WHEEL_CONTACT = 30 /* 4 values */,
 		CAR_TEAM = 34, CAR_AUTO_FLIPPING = 35, CAR_LAST_BALL_HIT_TICK = 36 /* -1 = never */,
 		CAR_GROUND_NORMAL = 37 /* 3 values: average contact normal of the wheels touching something, else up */,
-		CAR_SIZE = 40;
+		CAR_AIR_TIME_SINCE_JUMP = 40 /* seconds in the air since the jump ended (the 1.25 s flip window) */,
+		CAR_HAS_FLIP_OR_JUMP = 41 /* the engine's HasFlipOrJump: a jump, double jump or flip is available */,
+		CAR_HAS_FLIP_RESET = 42 /* in the air with a flip from touching something (HasFlipReset) */,
+		CAR_WORLD_WHEEL_CONTACTS = 43 /* wheels touching world geometry (the others touching nothing or a car/ball) */,
+		CAR_ON_RB_ACTOR = 44 /* the game's IsOnRBActor: grounded with at most 1 wheel on world geometry (on a car/ball) */,
+		CAR_SIZE = 45;
 
 	// Boost pad: position, isBig, isActive, cooldown
 	constexpr int PAD_POS = 0, PAD_BIG = 3, PAD_ACTIVE = 4, PAD_COOLDOWN = 5, PAD_SIZE = 6;
@@ -239,6 +244,16 @@ public:
 			f[Layout::CAR_AUTO_FLIPPING] = s.isAutoFlipping;
 			f[Layout::CAR_LAST_BALL_HIT_TICK] = s.ballHitInfo.isValid ? (float)s.ballHitInfo.tickCountWhenHit : -1;
 			WriteVec(f + Layout::CAR_GROUND_NORMAL, GroundNormal(car));
+			f[Layout::CAR_AIR_TIME_SINCE_JUMP] = s.airTimeSinceJump;
+			f[Layout::CAR_HAS_FLIP_OR_JUMP] = s.HasFlipOrJump();
+			f[Layout::CAR_HAS_FLIP_RESET] = s.HasFlipReset();
+			int worldWheels = 0;
+			for (int i = 0; i < car->_bulletVehicle.getNumWheels() && i < 4; i++) {
+				const btWheelInfoRL& w = car->_bulletVehicle.m_wheelInfo[i];
+				worldWheels += w.m_raycastInfo.m_isInContact && w.m_isInContactWithWorld;
+			}
+			f[Layout::CAR_WORLD_WHEEL_CONTACTS] = (float)worldWheels;
+			f[Layout::CAR_ON_RB_ACTOR] = s.isOnGround && worldWheels <= 1;
 		}
 		return CopyToJS<Float32ArrayVal>("Float32Array", _floats);
 	}
@@ -405,7 +420,9 @@ EMSCRIPTEN_BINDINGS(rlengine) {
 	LAYOUT(CAR_ON_GROUND); LAYOUT(CAR_HAS_JUMPED); LAYOUT(CAR_HAS_DOUBLE_JUMPED); LAYOUT(CAR_HAS_FLIPPED);
 	LAYOUT(CAR_IS_FLIPPING); LAYOUT(CAR_IS_JUMPING); LAYOUT(CAR_SUPERSONIC); LAYOUT(CAR_BOOSTING); LAYOUT(CAR_DEMOED);
 	LAYOUT(CAR_DEMO_RESPAWN_TIMER); LAYOUT(CAR_HANDBRAKE); LAYOUT(CAR_WHEEL_CONTACT); LAYOUT(CAR_TEAM);
-	LAYOUT(CAR_AUTO_FLIPPING); LAYOUT(CAR_LAST_BALL_HIT_TICK); LAYOUT(CAR_GROUND_NORMAL); LAYOUT(CAR_SIZE);
+	LAYOUT(CAR_AUTO_FLIPPING); LAYOUT(CAR_LAST_BALL_HIT_TICK); LAYOUT(CAR_GROUND_NORMAL);
+	LAYOUT(CAR_AIR_TIME_SINCE_JUMP); LAYOUT(CAR_HAS_FLIP_OR_JUMP); LAYOUT(CAR_HAS_FLIP_RESET);
+	LAYOUT(CAR_WORLD_WHEEL_CONTACTS); LAYOUT(CAR_ON_RB_ACTOR); LAYOUT(CAR_SIZE);
 	LAYOUT(PAD_POS); LAYOUT(PAD_BIG); LAYOUT(PAD_ACTIVE); LAYOUT(PAD_COOLDOWN); LAYOUT(PAD_SIZE);
 	LAYOUT(EVENT_GOAL); LAYOUT(EVENT_BUMP); LAYOUT(EVENT_DEMO);
 	LAYOUT(CFG_HITBOX_SIZE); LAYOUT(CFG_HITBOX_OFFSET); LAYOUT(CFG_FRONT_WHEEL_OFFSET); LAYOUT(CFG_FRONT_WHEEL_RADIUS);

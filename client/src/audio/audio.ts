@@ -109,6 +109,12 @@ export class GameAudio {
     this.#synth.goal(this.#effects, this.#ctx.currentTime + 0.01);
   }
 
+  /** A flip reset (the player's car): a chime, up close. */
+  flipReset(): void {
+    this.#count("flipReset");
+    this.#synth.flipReset(this.#effects, this.#ctx.currentTime + 0.005);
+  }
+
   /** The kickoff countdown: `secondsLeft` 3, 2, 1, then 0 for go. */
   countdown(secondsLeft: number): void {
     this.#count(secondsLeft === 0 ? "go" : "countdown");

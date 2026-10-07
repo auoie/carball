@@ -61,8 +61,21 @@ export interface CarState extends BodyState {
   readonly boosting: boolean;
   readonly demoed: boolean;
   readonly jumping: boolean; // jump component active (first 0.2 s of a held jump)
+  readonly hasJumped: boolean; // jumped since it was last on the ground
   readonly doubleJumped: boolean; // used its second jump without dodging (until it lands)
+  readonly hasFlipped: boolean; // dodged since it was last on the ground
   readonly flipping: boolean; // a dodge is turning the car
+  /** Seconds in the air since the jump ended: a dodge must start within 1.25 s of it (DOUBLEJUMP_MAX_DELAY) */
+  readonly airTimeSinceJump: number;
+  /** A jump, double jump or dodge is available (CarState::HasFlipOrJump) */
+  readonly hasFlipOrJump: boolean;
+  /** In the air with a dodge from touching something, no time limit (CarState::HasFlipReset; also after driving off
+   *  something without jumping) */
+  readonly hasFlipReset: boolean;
+  /** Wheels whose ray hits the arena (the others hit nothing, or a car or the ball) */
+  readonly worldWheelContacts: number;
+  /** Grounded on a car or the ball: 3+ wheels down, at most 1 of them on the arena (the game's IsOnRBActor) */
+  readonly onRbActor: boolean;
   readonly wheelContact: readonly [boolean, boolean, boolean, boolean];
   /** Average contact normal of the wheels touching something, else straight up (Vehicle_TA.GetGroundNormal). */
   readonly groundNormal: Vec3;
@@ -189,6 +202,19 @@ export class World {
     this.#sim.setBallState(a);
   }
 
+  /** Places a car: position, velocity, rotation and boost; its jump and dodge state go back to the defaults. */
+  setCar(id: number, state: Pick<CarState, "pos" | "vel" | "angVel" | "rot" | "boost">): void {
+    const m = this.#m;
+    const a = new Float32Array(m.CAR_SIZE);
+    a.set([state.pos.x, state.pos.y, state.pos.z], m.CAR_POS);
+    a.set([state.vel.x, state.vel.y, state.vel.z], m.CAR_VEL);
+    a.set([state.angVel.x, state.angVel.y, state.angVel.z], m.CAR_ANG_VEL);
+    const { forward: f, right: r, up: u } = state.rot;
+    a.set([f.x, f.y, f.z, r.x, r.y, r.z, u.x, u.y, u.z], m.CAR_ROT);
+    a[m.CAR_BOOST] = state.boost;
+    this.#sim.setCarState(id, a);
+  }
+
   car(id: number): CarState {
     const m = this.#m;
     const a = this.#sim.carState(id);
@@ -206,7 +232,14 @@ export class World {
       boosting: flag(m.CAR_BOOSTING),
       demoed: flag(m.CAR_DEMOED),
       jumping: flag(m.CAR_IS_JUMPING),
+      hasJumped: flag(m.CAR_HAS_JUMPED),
       doubleJumped: flag(m.CAR_HAS_DOUBLE_JUMPED),
+      hasFlipped: flag(m.CAR_HAS_FLIPPED),
+      airTimeSinceJump: at(a, m.CAR_AIR_TIME_SINCE_JUMP),
+      hasFlipOrJump: flag(m.CAR_HAS_FLIP_OR_JUMP),
+      hasFlipReset: flag(m.CAR_HAS_FLIP_RESET),
+      worldWheelContacts: at(a, m.CAR_WORLD_WHEEL_CONTACTS),
+      onRbActor: flag(m.CAR_ON_RB_ACTOR),
       flipping: flag(m.CAR_IS_FLIPPING),
       wheelContact: [flag(wheel), flag(wheel + 1), flag(wheel + 2), flag(wheel + 3)],
       groundNormal: readVec(a, m.CAR_GROUND_NORMAL),

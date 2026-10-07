@@ -27,6 +27,7 @@ import { BallView, BoostPadsView, CarView } from "../render/entities";
 import type { ArenaView } from "../render/arena";
 import type { Renderer } from "../render/renderer";
 import type { GameAudio } from "../audio/audio";
+import { type Dodge, FlipTracker } from "./flipTracker";
 import type { Options, Settings } from "../settings/settings";
 import { Interpolated } from "./interpolated";
 
@@ -57,6 +58,9 @@ export class Online {
   readonly #hud: Hud;
   readonly #audio: GameAudio;
   #throttle = 0;
+  readonly #flipTracker = new FlipTracker();
+  #dodge: Dodge = { kind: "ground" };
+  #flipReset = false; // since the last frame drawn
   readonly #connection: Connection;
   readonly #localCar: number;
   readonly #predictor: Predictor;
@@ -164,6 +168,7 @@ export class Online {
       this.#predictor.advance(this.#disconnected === null ? input : { ...input, throttle: 0, bits: 0 });
       this.#world.takeEvents(); // goals come from the server
       this.#pushStates();
+      this.#trackFlip();
       if (this.#predictor.frame % SEND_EVERY_FRAMES === 0) this.#sendInputs();
     }
     if (this.#messageTimer > 0) {
@@ -243,6 +248,16 @@ export class Online {
     this.#ball.push(this.#ballSpin.advance(this.#world.ball(), TICK_SECONDS));
   }
 
+  /** Whether the player's car can dodge, after this tick (the flip indicator). */
+  #trackFlip(): void {
+    const local = this.#cars.get(this.#localCar)?.state.current;
+    if (!local) return;
+    const others = [...this.#cars].filter(([id]) => id !== this.#localCar).map(([, entry]) => entry.state.current);
+    const { dodge, reset } = this.#flipTracker.tick(local, this.#ball.current, others, TICK_SECONDS);
+    this.#dodge = dodge;
+    if (reset) this.#flipReset = true;
+  }
+
   #handleActions(held: HeldActions, options: Options): void {
     const pressed = (key: keyof HeldActions): boolean => held[key] && !this.#held[key];
     if (!options.ballCamToggle) this.#ballCam = held.ballCam;
@@ -294,6 +309,10 @@ export class Online {
       message: this.#disconnected === null ? this.#message : `Disconnected: ${this.#disconnected}`,
       fps: this.#fps,
       net: `${ping} · ${this.#bufferText} · ${String(this.#cars.size)} cars`,
+      flip: this.settings().options.flipIndicator ? this.#dodge : null,
+      flipReset: this.#flipReset,
     });
+    if (this.#flipReset) this.#audio.flipReset();
+    this.#flipReset = false;
   }
 }

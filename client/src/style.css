@@ -80,6 +80,81 @@ body {
   text-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
 }
 
+/* Flip indicator: whether the car can dodge (src/game/flipTracker.ts), left of the boost meter */
+#flip {
+  position: absolute;
+  right: 196px;
+  bottom: 52px;
+  width: 100px;
+  height: 100px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.15s;
+  --flip-color: #4fe3ff;
+}
+#flip svg {
+  position: absolute;
+  inset: 0;
+  transform: rotate(-90deg);
+}
+#flip circle {
+  fill: rgba(0, 0, 0, 0.25);
+  stroke-width: 8;
+}
+#flip .track {
+  stroke: rgba(255, 255, 255, 0.15);
+}
+#flip-ring {
+  fill: none;
+  stroke: var(--flip-color);
+  stroke-linecap: round;
+}
+#flip-label,
+#flip-detail {
+  position: relative; /* (above the ring's dark fill) */
+}
+#flip-label {
+  font-size: 1.15rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: var(--flip-color);
+}
+#flip-detail {
+  font-size: 0.8rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  min-height: 1em;
+  color: rgba(255, 255, 255, 0.85);
+}
+#flip[data-state="ground"] {
+  opacity: 0.22;
+}
+#flip[data-state="spent"] {
+  --flip-color: #8a8f98;
+  opacity: 0.7;
+}
+#flip[data-state="reset"] {
+  --flip-color: #ffcf3a;
+}
+#flip[data-state="reset"] svg {
+  filter: drop-shadow(0 0 8px rgba(255, 207, 58, 0.8));
+}
+#flip-toast {
+  position: absolute;
+  top: 62%;
+  width: 100%;
+  text-align: center;
+  font-size: 1.8rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: #ffcf3a;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7), 0 0 18px rgba(255, 207, 58, 0.5);
+  opacity: 0; /* (shown by an animation, src/hud.ts) */
+  pointer-events: none;
+}
+
 #boost {
   position: absolute;
   right: 32px;

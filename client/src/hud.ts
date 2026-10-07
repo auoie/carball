@@ -1,4 +1,5 @@
-// On-screen overlay: boost, speed, score, camera mode, help.
+// On-screen overlay: boost, the flip indicator, speed, score, camera mode, help.
+import { DODGE_WINDOW, type Dodge } from "./game/flipTracker";
 import { ACTIONS, type Bindings, inputName } from "./input/bindings";
 
 export interface HudState {
@@ -10,6 +11,10 @@ export interface HudState {
   readonly message: string | null;
   readonly fps: number;
   readonly net: string | null; // online: ping and buffer
+  /** Whether the car can dodge (null: the indicator is turned off) */
+  readonly flip: Dodge | null;
+  /** A flip reset happened since the last update */
+  readonly flipReset: boolean;
 }
 
 function element<T extends HTMLElement>(root: ParentNode, selector: string, type: new () => T): T {
@@ -30,6 +35,12 @@ export class Hud {
   readonly #net: HTMLElement;
   readonly #help: HTMLElement;
   readonly #ringLength: number;
+  readonly #flip: HTMLElement;
+  readonly #flipRing: SVGCircleElement;
+  readonly #flipLabel: HTMLElement;
+  readonly #flipDetail: HTMLElement;
+  readonly #flipToast: HTMLElement;
+  readonly #flipRingLength: number;
 
   constructor(root: HTMLElement) {
     this.#boostValue = element(root, "#boost-value", HTMLElement);
@@ -45,6 +56,14 @@ export class Hud {
     this.#fps = element(root, "#fps", HTMLElement);
     this.#net = element(root, "#net", HTMLElement);
     this.#help = element(root, "#help", HTMLElement);
+    this.#flip = element(root, "#flip", HTMLElement);
+    const flipRing = root.querySelector("#flip-ring");
+    if (!(flipRing instanceof SVGCircleElement)) throw new Error("HUD element #flip-ring missing");
+    this.#flipRing = flipRing;
+    this.#flipRingLength = 2 * Math.PI * flipRing.r.baseVal.value;
+    this.#flipLabel = element(root, "#flip-label", HTMLElement);
+    this.#flipDetail = element(root, "#flip-detail", HTMLElement);
+    this.#flipToast = element(root, "#flip-toast", HTMLElement);
   }
 
   /** Shows or hides the controls list, filled from the current bindings. */
@@ -88,5 +107,33 @@ export class Hud {
     this.#fps.textContent = `${Math.round(s.fps)} fps`;
     this.#net.textContent = s.net ?? "";
     this.#net.hidden = s.net === null;
+    this.#updateFlip(s.flip, s.flipReset);
+  }
+
+  #updateFlip(dodge: Dodge | null, reset: boolean): void {
+    this.#flip.hidden = dodge === null;
+    if (dodge === null) return;
+    // The ring: full when a dodge is there with no time limit, draining over the window after a jump
+    const fill = dodge.kind === "window" ? dodge.remaining / DODGE_WINDOW : dodge.kind === "spent" ? 0 : 1;
+    this.#flipRing.style.strokeDasharray = `${this.#flipRingLength * fill} ${this.#flipRingLength}`;
+    this.#flipRing.style.visibility = fill > 0 ? "visible" : "hidden"; // (an empty ring would still show its round cap)
+    const state = dodge.kind === "free" && dodge.reset ? "reset" : dodge.kind;
+    this.#flip.dataset["state"] = state;
+    this.#flipLabel.textContent = dodge.kind === "spent" ? "NO FLIP" : "FLIP";
+    this.#flipDetail.textContent =
+      dodge.kind === "window" ? `${dodge.remaining.toFixed(1)} s` : state === "reset" ? "RESET" : dodge.kind === "free" ? "∞" : "";
+    if (reset) {
+      // A pulse, and a toast rising and fading
+      this.#flip.animate([{ transform: "scale(1.35)" }, { transform: "scale(1)" }], { duration: 500, easing: "ease-out" });
+      this.#flipToast.animate(
+        [
+          { opacity: 0, transform: "translateY(12px) scale(0.9)" },
+          { opacity: 1, transform: "translateY(0) scale(1.05)", offset: 0.12 },
+          { opacity: 1, transform: "none", offset: 0.7 },
+          { opacity: 0, transform: "translateY(-8px)" },
+        ],
+        { duration: 1200, easing: "ease-out" },
+      );
+    }
   }
 }

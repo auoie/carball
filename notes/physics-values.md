@@ -150,6 +150,28 @@ in `Stadium_P` override CollisionRadius to 128, so small pads reach 176, not Roc
 and 204–210 for big pads in every speed band; respawns are 4.0 / 10.0 s. Pad positions match RocketSim
 (e.g. 2048, −1036).
 
+## Car bodies and presets (body packages, local only)
+How a body becomes a car (`CarMeshComponentBase_TA.InitBodyAsset`, `GetPhysicsAsset`; `VehicleSim_TA.SetupPresetAxle`
+/ `SetupWheelPreset`; wheel setup `FUN_140f044e0`):
+- The hitbox is the handling preset's physics asset when the body has a preset (the body's own `PhysicsAsset` only
+  otherwise). Wheel radius and rest position come from the preset's axles; the body's axle settings (`WheelRadius`,
+  `WheelOffsetForward/Side`, `WheelMeshRadius`) only place the visual wheels (bone names for the visual mesh; the physics
+  wheels have no `PhysicsBoneName`, so the setup takes `PresetRestPosition`). Wheel radius, travel and the hitbox box
+  are scaled by the mesh's scale (1 for the bodies checked).
+- `CalculatePresetSuspensionOffset` (`FUN_140ecaeb0`) only lifts the mesh so its wheels sit on the physics wheels (mesh
+  axle bones, preset axle heights, body wheel radii, `HandlingPresetZOffset`, `SuspensionTravelMin`, and
+  `bUseLegacySuspensionOffsets` choosing which radius).
+- `Car_TA.ApplyHitWallAdjustmentForces` (called on every car–world collision) is empty.
+- 134 body assets decoded (168 of 218 packages decrypt). Presets used: MuscleCar (Dominus) 42, Octane 38, LongCar
+  (Breakout) 16, Hybrid 14, Plank 8, Merc 6. Exceptions: `HandlingPresetXOffset` on body_aa (Breakout, 7.75), body_banjo
+  (Merc, 5.0), body_skunkz (Hybrid, 6.5); no preset (own physics asset, wheels from mesh bones): Body_Darkcar and the
+  mystery-body placeholder; `SteerScale` 0.449 on body_slime (not read by any car script; unknown whether physics).
+- The game's variant presets look like baked X offsets: `LongCar_Aa`'s hitbox centre is 4.75 = LongCar's 12.5 − 7.75
+  (body_aa's offset). How the offset moves the hitbox relative to the centre of mass is not confirmed (live game).
+- Product IDs (the replays' body numbers) are not in the packages (the product template is filled in online), so the
+  replay bodies are mapped by fitting (notes/validation.md finding 21). Per-body data does not explain the steering
+  residual of the Dominus/Plank/Breakout bodies: they use their presets unchanged.
+
 ## Kickoffs (replays)
 - Spawn spots and facing as RocketSim (±2048, ±2560 / ±256, ±3840 / 0, ±4608), cars at z 17.0 after landing (the
   game drops them from ~38.6).

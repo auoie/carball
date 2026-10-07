@@ -60,6 +60,7 @@ describe("settings", () => {
       invertSwivelPitch: true,
       airPitchSafety: true,
       muted: false,
+      flipIndicator: true,
     });
   });
 

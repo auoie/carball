@@ -42,6 +42,7 @@ const OPTION_LABELS: Readonly<Record<keyof Options, string>> = {
   invertSwivelPitch: "Invert swivel pitch",
   airPitchSafety: "Air pitch safety (keyboard: holding W off the ground doesn't pitch until released)",
   muted: "Mute all sound (M)",
+  flipIndicator: "Show the flip indicator (whether you can still dodge, and flip resets)",
 };
 
 const AUDIO_LABELS: Readonly<Record<keyof AudioSettings, string>> = {
@@ -328,7 +329,7 @@ export class SettingsPanel {
           "Dodge deadzone: how far the stick must be pushed for a second jump to dodge instead of double jumping.",
       }),
     );
-    sliders.append(this.#checkboxes(["airPitchSafety"]));
+    sliders.append(this.#checkboxes(["airPitchSafety", "flipIndicator"]));
     return sliders;
   }
 

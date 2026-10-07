@@ -50,17 +50,27 @@ test("freeplay loads, drives and resets", async ({ page }) => {
   await page.waitForTimeout(400);
   expect((await audio()).state).toBe("running");
   expect((await audio()).cars).toBe(1);
+  await expect(page.locator("#flip")).toHaveAttribute("data-state", "ground");
   await page.mouse.down({ button: "right" });
   await page.waitForTimeout(150);
   await page.mouse.up({ button: "right" });
+  // The flip indicator: the dodge window counting down in the air, back to the ground on landing
+  await expect(page.locator("#flip")).toHaveAttribute("data-state", "window");
+  await expect(page.locator("#flip-detail")).toHaveText(/^\d\.\d s$/);
+  await page.screenshot({ path: "test-results/flip-window.png" });
   await expect.poll(async () => (await audio()).played.land ?? 0, { timeout: 5000 }).toBeGreaterThan(0);
   expect((await audio()).played.jump).toBe(1);
+  await expect(page.locator("#flip")).toHaveAttribute("data-state", "ground");
   // M mutes (a setting like any other: the Audio tab shows it)
   await page.keyboard.press("KeyM");
   await page.keyboard.press("Escape");
   await page.locator(".settings-tab", { hasText: "Audio" }).click();
   await expect(page.locator('input[data-option="muted"]')).toBeChecked();
+  // The flip indicator can be turned off
+  await page.locator(".settings-tab", { hasText: "Controller" }).click();
+  await page.locator('input[data-option="flipIndicator"]').uncheck();
   await page.keyboard.press("Escape");
+  await expect(page.locator("#flip")).toBeHidden();
 
   expect(errors).toEqual([]);
 });

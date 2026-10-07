@@ -163,6 +163,15 @@ export class Synth {
     this.bump(out, when, 0.5);
   }
 
+  /** A flip reset: two quick, bright bell notes rising, with a sparkle. */
+  flipReset(out: AudioNode, when: number): void {
+    [1318.5, 1975.5].forEach((f, i) => {
+      this.#sweep("sine", f, f, 0.01, out, when + i * 0.07, 0.14, 0.35);
+      this.#sweep("sine", f * 2.01, f * 2.01, 0.01, out, when + i * 0.07, 0.04, 0.2);
+    });
+    this.#burst("highpass", 7000, 9500, 0.7, out, when, 0.03, 0.04, 0.3);
+  }
+
   /** The kickoff countdown: a beep for each second, a longer, higher one for go. */
   beep(out: AudioNode, when: number, go: boolean): void {
     const f = go ? 1318.5 : 880;

@@ -23,6 +23,7 @@ import { BALL_RADIUS, BallView, BoostPadsView, CarView } from "../render/entitie
 import type { ArenaView } from "../render/arena";
 import type { Renderer } from "../render/renderer";
 import type { GameAudio } from "../audio/audio";
+import { type Dodge, FlipTracker } from "./flipTracker";
 
 const GOAL_RESET_SECONDS = 2;
 
@@ -34,6 +35,9 @@ export class Freeplay {
   readonly #hud: Hud;
   readonly #audio: GameAudio;
   #throttle = 0;
+  readonly #flipTracker = new FlipTracker();
+  #dodge: Dodge = { kind: "ground" };
+  #flipReset = false; // since the last frame drawn
   readonly #playerId: number;
   readonly #clock = new FixedStep();
   readonly #camera = new PlayerCamera();
@@ -109,6 +113,7 @@ export class Freeplay {
       this.#world.step();
       this.#car.push(this.#world.car(this.#playerId));
       this.#pushBall();
+      this.#trackFlip();
       this.#handleEvents();
       this.#updateGoalTimer();
     }
@@ -181,6 +186,13 @@ export class Freeplay {
     this.#pushBall();
   }
 
+  /** Whether the car can dodge, after this tick (the flip indicator). */
+  #trackFlip(): void {
+    const { dodge, reset } = this.#flipTracker.tick(this.#car.current, this.#ball.current, [], TICK_SECONDS);
+    this.#dodge = dodge;
+    if (reset) this.#flipReset = true;
+  }
+
   /** The ball's latest state, with the orientation the client tracks for it (src/render/ballSpin.ts). */
   #pushBall(): void {
     this.#ball.push(this.#ballSpin.advance(this.#world.ball(), TICK_SECONDS));
@@ -230,6 +242,10 @@ export class Freeplay {
       message: this.#message,
       fps: this.#fps,
       net: null,
+      flip: this.settings().options.flipIndicator ? this.#dodge : null,
+      flipReset: this.#flipReset,
     });
+    if (this.#flipReset) this.#audio.flipReset();
+    this.#flipReset = false;
   }
 }

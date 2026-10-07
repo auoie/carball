@@ -25,6 +25,7 @@ export interface Options {
   readonly invertSwivelPitch: boolean; // bInvertSwivelPitch
   readonly airPitchSafety: boolean; // bAirPitchSafetyEnabled (keyboard and mouse)
   readonly muted: boolean; // all sound off (M)
+  readonly flipIndicator: boolean; // show whether the car can dodge, and flip resets
 }
 
 /** Volumes, 0..1. */
@@ -92,6 +93,7 @@ export const DEFAULT_OPTIONS: Options = {
   invertSwivelPitch: true,
   airPitchSafety: true,
   muted: false,
+  flipIndicator: true,
 };
 
 export const DEFAULT_SETTINGS: Settings = {
