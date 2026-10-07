@@ -41,6 +41,10 @@ namespace RLConst {
 		CARCAR_COLLISION_RESTITUTION = 0.1f,
 
 		BALL_REST_Z = 93.15f, // Greater than ball radius because of arena mesh collision margin
+		// RL PATCH: the kickoff ball (replays): it reappears at z 100.49, falls, and at its first floor contact
+		// (z 92.75, 18 ticks later) its velocity is cleared; it stays there and sleeps 2 s later. RocketSim placed
+		// it at BALL_REST_Z, the height a rolling ball settles at
+		BALL_KICKOFF_Z = 92.75f,
 		BALL_MAX_ANG_SPEED = 6.f, // Ball can never exceed this angular velocity (radians/s)
 		BALL_DRAG = 0.03f, // Net-velocity drag multiplier
 		BALL_FRICTION = 0.35f,
@@ -261,10 +265,14 @@ namespace RLConst {
 	namespace BoostPads {
 		// Mostly from a Rocket Science video: https://www.youtube.com/watch?v=xgfa-qZyInw
 		
+		// RL PATCH: a pickup is the overlap of the pad's collision cylinder (level instances: small r 128, big r 160,
+		// half-height 64; the small archetype's 96 is overridden) and the car's (Car_TA CollisionCylinder r 48,
+		// half-height 32), so the car's origin within 128 + 48 / 160 + 48 horizontally and 64 + 32 vertically.
+		// RocketSim had 144 (96 + 48) for small pads and 95. Replays: pickups fit 176 / 208 at every speed.
 		constexpr float
-			CYL_HEIGHT = 95,
+			CYL_HEIGHT = 96,
 			CYL_RAD_BIG = 208,
-			CYL_RAD_SMALL = 144,
+			CYL_RAD_SMALL = 176,
 
 			BOX_HEIGHT = 64,
 			BOX_RAD_BIG = 160,

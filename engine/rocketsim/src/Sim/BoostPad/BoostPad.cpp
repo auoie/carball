@@ -64,22 +64,12 @@ void BoostPad::_CheckCollide(Car* car) {
 
 	Vec carPosBT = car->_rigidBody.getWorldTransform().m_origin;
 
+	// RL PATCH: the same cylinder overlap while the car stays on the pad (the game's touching state); RocketSim
+	// switched to an AABB test against a box around the pad for the car that was touching last tick
 	bool colliding = false;
-	if (_internalState.prevLockedCarID == car->id) {
-		// Check with AABB-hitbox collision
-
-		btVector3 carMinBT, carMaxBT;
-		car->_rigidBody.getAabb(carMinBT, carMaxBT);
-
-		// TODO: Account for orientation
-		colliding = (_boxMaxBT > carMinBT) && (_boxMinBT < carMaxBT);
-	} else {
-		// Check with cylinder-origin collision
-
-		float rad = (config.isBig ? CYL_RAD_BIG : CYL_RAD_SMALL) * UU_TO_BT;
-		if (carPosBT.DistSq2D(this->_posBT) < (rad * rad))
-			colliding = abs(carPosBT.z - this->_posBT.z) < (CYL_HEIGHT * UU_TO_BT);
-	}
+	float rad = (config.isBig ? CYL_RAD_BIG : CYL_RAD_SMALL) * UU_TO_BT;
+	if (carPosBT.DistSq2D(this->_posBT) < (rad * rad))
+		colliding = abs(carPosBT.z - this->_posBT.z) < (CYL_HEIGHT * UU_TO_BT);
 
 	if (colliding)
 		_internalState.curLockedCar = car;

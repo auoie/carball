@@ -109,7 +109,7 @@ int main(int argc, char** argv) {
 		if (tick % interval != interval / 2) {
 			server->Step();
 			if (server->IsBallScored())
-				server->ResetToRandomKickoff((int)(Next() % 1000));
+				{ server->ResetToRandomKickoff((int)(Next() % 1000)); server->kickoffCountdownTicks = 480; } // (with the kickoff countdown)
 			continue;
 		}
 
@@ -179,7 +179,7 @@ int main(int argc, char** argv) {
 		tick += window;
 		delete client;
 		if (server->IsBallScored())
-			server->ResetToRandomKickoff((int)(Next() % 1000));
+			{ server->ResetToRandomKickoff((int)(Next() % 1000)); server->kickoffCountdownTicks = 480; } // (with the kickoff countdown)
 	}
 
 	printf("netstate: %d updates (max %zu bytes for ball + 4 cars + pads), %d not exact after applying\n", checks, maxBytes, exactFailures);

@@ -232,6 +232,34 @@ Ground driving (engine − game, uu/s², flat floor; `validation_report.py`):
     | Goal floor | 1,127 | 0.020 | 0.010 | 0.010 |
     All walls/curves/ceiling: 0.117 → 0.046 (p90 2.25 → 2.23).
 
+19. **Double jumps match; their errors were start timing too.** Like the jump flag, the double jump component's flag
+    can arrive before the state shows the impulse. Both passes now also try the double jump (jump pressed, no stick)
+    starting at each tick 0–8 of the run when the flag is under 0.1 s old. Cars alone: p90 12.7 → 0.25 uu (median
+    0.000); near the ball, no touch: median 2.24 → 0.000 (p90 5.8 → 2.0); touches: ball velocity p90 119 → 21 uu/s.
+20. **Boost pads and kickoffs (engine patches 35–37).** Pickups reach 176 uu for small pads (the level's 128 radius
+    + the car's 48), 208 for big ones; the kickoff ball sits at z 92.75; cars get no input for 4.0 s after a kickoff
+    reset (notes/physics-values.md, Boost pads and Kickoffs). Extractor: `--pickups PICKUPS.csv` writes every
+    replicated pad pickup state.
+
+21. **Other car bodies: RocketSim's presets fit; steering is a little off.** `--bodies OUT.csv` runs every
+    non-Octane-hitbox car alone with each of the six presets (the replays don't say which preset a body uses).
+    Over the 602 extra replays (~51,000 cases) every body has a clear best preset. Bodies 11603 and 6939 are
+    Octanes (0.010); 403, 4770, 1286 and 3426 are Dominus; 803 Plank; 11505 Breakout; 1919 is nearest the Plank but
+    fits it worse (0.090 on the floor), probably a preset variant RocketSim doesn't have (the game has many, some
+    with other hitbox offsets, e.g. `LongCar_Aa`). With the right preset, straight driving is exact (0.010 or
+    better), but steering is 0.032 (Dominus), 0.045 (Breakout) and 0.057 (Plank) against the Octane's 0.010. Not
+    the inertia: the Octane's inertia on the other presets makes them 4× worse. The presets match the game's data
+    (hitbox = PhysAsset box + 2.5; wheel x/y and radii equal; wheel z offset by the same 12 for every preset).
+    Open.
+22. **Input changes between frames: throttle matches; steering changes are inexact.** The car-alone pass now also
+    runs cases whose inputs change between the frames, switching from the first frame's inputs to the next frame's
+    at the best tick (0–8; ~275,000 cases, categories `car alone input change/...`). Flat floor: throttle changes
+    0.020 uu (median), boost 0.050, steering 0.090, handbrake 0.19 (its ramp is only known to a frame), several at
+    once 0.22. The best tick is often 0 or past the compared state: like the components, replicated inputs don't
+    line up with the states. Steering changes stay at 0.08–0.12 even when both values are digital (−1/0/+1), with
+    no steering rate in the vehicle data (`VehicleSim_TA` has only `HandbrakeRate`) or the input classes found.
+    Open; analog input also changes within a frame, which two samples can't show.
+
 Cars alone (far from the ball and other cars), car position error after ~4 ticks, our mesh / the game's mesh
 (before patch 31):
 | Where | Cases | p50 | p90 |
@@ -248,8 +276,7 @@ a replay doesn't carry) differs. Next to look at.
   when the input was zero, and flip cancels can't be modelled.
 - Touch residuals (~5 uu/s median) are dominated by what replays can't give: the car's exact sub-frame state and the
   car/ball tick offset (fitted).
-- Not covered yet: cars on walls and the ceiling (included in "ground" when the wheels touch, not checked
-  separately), non-Octane hitboxes, multi-car touches, bumps with three or more cars.
+- Not covered yet: multi-car touches, bumps with three or more cars.
 - Not validated: a ball left on a parked car's roof slowly rolls forward and off, because the game's impulse direction
   leans forward (`PushForwardScale`) and each touch after a bounce adds a little. Competitive replays don't have that
   situation.

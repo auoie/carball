@@ -71,6 +71,12 @@ public:
 	// Total ticks this arena instance has been simulated for, never resets
 	uint64_t tickCount = 0;
 
+	// RL PATCH: kickoff countdown: while non-zero, every car's controls are zeroed for the tick, then it counts down.
+	// The game freezes the cars for 4.0 s after a kickoff reset (replays: the first car moves 3.99-4.05 s after the
+	// reset; the "3-2-1" countdown, WarmupTime 3, plus a second). ResetToRandomKickoff leaves it alone (freeplay
+	// has no countdown); a match server sets it. Saved in snapshots and the network state.
+	uint32_t kickoffCountdownTicks = 0;
+
 	const CarSet& GetCars() { return _cars; }
 	const std::vector<BoostPad*>& GetBoostPads() { return _boostPads; }
 

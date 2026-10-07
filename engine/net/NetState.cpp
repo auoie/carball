@@ -212,6 +212,7 @@ enum : uint8_t { HAS_BALL = 1, HAS_PADS = 2 };
 void Write(Arena* arena, DataStreamOut& out, const WriteOptions& options) {
 	out.Write(VERSION);
 	out.Write<uint8_t>((options.ball ? HAS_BALL : 0) | (options.boostPads ? HAS_PADS : 0));
+	out.Write<uint16_t>((uint16_t)RS_MIN(arena->kickoffCountdownTicks, 65535u));
 
 	if (options.ball) {
 		Ball* ball = arena->ball;
@@ -245,6 +246,7 @@ bool Read(Arena* arena, DataStreamIn& in) {
 	if (in.Read<uint8_t>() != VERSION)
 		return false;
 	uint8_t has = in.Read<uint8_t>();
+	uint16_t countdown = in.Read<uint16_t>();
 
 	Body ballBody{};
 	BallState ballState = arena->ball->_internalState;
@@ -281,6 +283,7 @@ bool Read(Arena* arena, DataStreamIn& in) {
 		return false;
 
 	// Everything parsed: apply
+	arena->kickoffCountdownTicks = countdown;
 	if (has & HAS_BALL) {
 		Ball* ball = arena->ball;
 		ApplyBody(ballBody, ball->_rigidBody, ball->_netRotation);

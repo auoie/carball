@@ -37,6 +37,9 @@ void rl_step(RLArena* arena, int ticks);
 void rl_reset_kickoff(RLArena* arena, int seed);
 /* Ball to the centre, at rest (after a goal) */
 void rl_reset_ball(RLArena* arena);
+/* Kickoff countdown: while non-zero, cars get no input; counts down one per tick (part of the state) */
+void rl_set_kickoff_countdown(RLArena* arena, uint32_t ticks);
+uint32_t rl_kickoff_countdown(const RLArena* arena);
 uint64_t rl_tick_count(const RLArena* arena);
 int rl_is_ball_scored(RLArena* arena);
 void rl_ball_position(RLArena* arena, float out[3]);

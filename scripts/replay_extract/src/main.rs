@@ -14,10 +14,12 @@
 //! dodge_torque: the dodge component's replicated DodgeTorque (as decoded: /100). *_since: seconds since that
 //! component became active (same halfway estimate), empty when it is not active.
 //!
-//! Usage: replay_extract [--demos DEMOS.csv] OUT.csv REPLAY [REPLAY...]
+//! Usage: replay_extract [--demos DEMOS.csv] [--pickups PICKUPS.csv] OUT.csv REPLAY [REPLAY...]
 //!
 //! --demos: one row per replicated demolition (Car_TA ReplicatedDemolish, _CustomFX / GoalExplosion, Extended):
 //! replay,frame,time,attacker,victim,avx,avy,avz,vvx,vvy,vvz (the actors and their velocities as replicated).
+//! --pickups: one row per replicated boost pad pickup state (VehiclePickup_TA (New)ReplicatedPickupData):
+//! replay,frame,time,pad,instigator,picked_up (pad actor; instigator car actor or -1; the replicated value).
 
 use boxcars::{Attribute, ParserBuilder};
 use std::collections::HashMap;
@@ -83,11 +85,21 @@ struct Player {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args: Vec<String> = std::env::args().collect();
     let mut demos = None;
-    if args.len() > 2 && args[1] == "--demos" {
-        let mut d = BufWriter::new(fs::File::create(&args[2])?);
-        writeln!(d, "replay,frame,time,attacker,victim,avx,avy,avz,vvx,vvy,vvz")?;
-        demos = Some(d);
-        args.drain(1..3);
+    let mut pickups = None;
+    loop {
+        if args.len() > 2 && args[1] == "--demos" {
+            let mut d = BufWriter::new(fs::File::create(&args[2])?);
+            writeln!(d, "replay,frame,time,attacker,victim,avx,avy,avz,vvx,vvy,vvz")?;
+            demos = Some(d);
+            args.drain(1..3);
+        } else if args.len() > 2 && args[1] == "--pickups" {
+            let mut p = BufWriter::new(fs::File::create(&args[2])?);
+            writeln!(p, "replay,frame,time,pad,instigator,picked_up")?;
+            pickups = Some(p);
+            args.drain(1..3);
+        } else {
+            break;
+        }
     }
     let mut out = BufWriter::new(fs::File::create(&args[1])?);
     writeln!(
@@ -236,6 +248,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             demos.as_mut().unwrap(),
                             "{name},{fi},{},{attacker},{victim},{},{},{},{},{},{}",
                             frame.time, av.x, av.y, av.z, vv.x, vv.y, vv.z
+                        )?;
+                    }
+                    (Attribute::Pickup(_), _) | (Attribute::PickupNew(_), _) if pickups.is_some() => {
+                        let (instigator, picked) = match &ua.attribute {
+                            Attribute::Pickup(p) => (p.instigator, p.picked_up as u8),
+                            Attribute::PickupNew(p) => (p.instigator, p.picked_up),
+                            _ => unreachable!(),
+                        };
+                        writeln!(
+                            pickups.as_mut().unwrap(),
+                            "{name},{fi},{},{actor},{},{picked}",
+                            frame.time,
+                            instigator.map(|a| a.0).unwrap_or(-1)
                         )?;
                     }
                     (Attribute::RigidBody(rb), _) if kind == Kind::Ball || kind == Kind::Car => {

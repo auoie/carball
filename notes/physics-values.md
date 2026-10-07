@@ -140,11 +140,23 @@ so it isn't a real conflict.
 
 | Pad | Amount | Respawn | Pickup cylinder | RocketSim |
 |---|---|---|---|---|
-| Small (`BoostPad`) | 0.12 (12) | 4 s | r 96, h 64 | ✓ amount/respawn; RocketSim cyl r 144 = 96 + 48 |
-| Big (`BoostPill`) | 9999 (full) | 10 s | r 160, h 64 | ✓; RocketSim cyl r 208 = 160 + 48 |
+| Small (`BoostPad`) | 0.12 (12) | 4 s | **r 128** (level instances; archetype 96), half-height 64 | ✓ amount/respawn; RocketSim cyl r 144 = 96 + 48 (patch 35: 176) |
+| Big (`BoostPill`) | 9999 (full) | 10 s | r 160, half-height 64 | ✓; RocketSim cyl r 208 = 160 + 48 |
 
-RocketSim's pad radii are the data radius + 48, which looks like a correction for testing the
-car's origin point instead of its hitbox. Pad positions match RocketSim (e.g. 2048, −1036).
+A pickup is the overlap of the pad's collision cylinder and the car's (`Default__Car_TA.CollisionCylinder`:
+r 48, half-height 32): the car's origin within r + 48 horizontally and 64 + 32 = 96 vertically. All 28 small pads
+in `Stadium_P` override CollisionRadius to 128, so small pads reach 176, not RocketSim's 144. Replays (805 small /
+260 big pickups with the car's row in the pickup frame and the one before): the best radius is 174–178 for small
+and 204–210 for big pads in every speed band; respawns are 4.0 / 10.0 s. Pad positions match RocketSim
+(e.g. 2048, −1036).
+
+## Kickoffs (replays)
+- Spawn spots and facing as RocketSim (±2048, ±2560 / ±256, ±3840 / 0, ±4608), cars at z 17.0 after landing (the
+  game drops them from ~38.6).
+- Ball: reappears at z 100.49, falls, and its velocity is cleared at its first floor contact (z 92.75); asleep 2 s
+  later (patch 36). A rolling ball settles at 93.15 (= RocketSim's BALL_REST_Z).
+- Cars get no input for 4.0 s after the reset (691 kickoffs: first movement 3.99–4.05 s; patch 37).
+- After a goal: `PostGoalTime` 3.0 s, then the replay (skipped online here) and the reset.
 
 ## Netcode (`TAGame` config defaults)
 

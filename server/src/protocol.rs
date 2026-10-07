@@ -2,7 +2,7 @@
 
 use crate::engine::Controls;
 
-pub const VERSION: u16 = 1;
+pub const VERSION: u16 = 2; // 2: kickoff countdown in the state
 pub const MAX_INPUT_FRAMES: usize = 10;
 
 /// Control stream (reliable) messages

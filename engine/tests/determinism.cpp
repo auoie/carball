@@ -82,7 +82,7 @@ int main(int argc, char** argv) {
 				}
 			}
 			if (arena->IsBallScored())
-				arena->ResetToRandomKickoff((int)(Next() % 1000));
+				{ arena->ResetToRandomKickoff((int)(Next() % 1000)); arena->kickoffCountdownTicks = 480; } // (with the kickoff countdown)
 		}
 
 		Hasher h;

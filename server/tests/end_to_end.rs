@@ -49,7 +49,10 @@ async fn a_client_connects_drives_and_follows_the_world() {
     assert!(world.load_state(&snapshot));
     let start = world.car_position(car_id).unwrap();
 
-    // 1.5 s: inputs at 60 Hz (2 new frames each, resending the last 10), apply every update
+    // The kickoff countdown (cars get no input), then 1.5 s: inputs at 60 Hz (2 new frames each, resending the
+    // last 10), apply every update
+    let countdown = Duration::from_secs_f64(f64::from(world.kickoff_countdown()) / 120.0);
+    assert!(countdown >= Duration::from_secs(3), "kickoff countdown {countdown:?}");
     let begin = Instant::now();
     let mut frame = 0u32;
     let mut sent: Vec<InputFrame> = Vec::new();
@@ -57,7 +60,7 @@ async fn a_client_connects_drives_and_follows_the_world() {
     let mut last_ack = 0;
     let mut pings = Vec::new();
     let mut next_send = Instant::now();
-    while begin.elapsed() < Duration::from_millis(1500) {
+    while begin.elapsed() < countdown + Duration::from_millis(1500) {
         if Instant::now() >= next_send {
             next_send += Duration::from_micros(16_667);
             for _ in 0..2 {
@@ -88,7 +91,7 @@ async fn a_client_connects_drives_and_follows_the_world() {
     let end = world.car_position(car_id).unwrap();
     let driven = (end[0] - start[0]).hypot(end[1] - start[1]);
     println!("updates {updates}, last ack {last_ack} of {frame} frames sent, driven {driven:.0} uu, pings {:?}", &pings[pings.len().saturating_sub(5)..]);
-    assert!(updates > 60, "{updates} updates in 1.5 s (60 Hz expected)");
+    assert!(updates > 300, "{updates} updates in {:?} (60 Hz expected)", countdown + Duration::from_millis(1500));
     assert!(driven > 500.0, "client view of the car drove {driven} uu");
     assert!(last_ack + 30 > frame, "the server consumed our inputs (ack {last_ack}, sent {frame})");
     assert!(pings.iter().all(|&p| (0..100).contains(&p)), "ping on localhost {pings:?}");

@@ -100,9 +100,13 @@ void rl_reset_kickoff(RLArena* a, int seed) {
 
 void rl_reset_ball(RLArena* a) {
 	BallState s;
+	s.pos.z = RLConst::BALL_KICKOFF_Z;
 	a->arena->ball->SetState(s);
 	a->goalReported = false;
 }
+
+void rl_set_kickoff_countdown(RLArena* a, uint32_t ticks) { a->arena->kickoffCountdownTicks = ticks; }
+uint32_t rl_kickoff_countdown(const RLArena* a) { return a->arena->kickoffCountdownTicks; }
 
 uint64_t rl_tick_count(const RLArena* a) { return a->arena->tickCount; }
 

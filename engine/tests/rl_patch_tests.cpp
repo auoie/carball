@@ -327,6 +327,85 @@ static void TestDemos(Arena* arena, Car* attacker, Car* victim) {
 	arena->Step(4 * 120);
 }
 
+// Boost pads: the car's collision cylinder (r 48, half-height 32) overlapping the pad's (small r 128, big r 160,
+// half-height 64): origin within 176 / 208 horizontally and 96 vertically
+static void TestBoostPads() {
+	puts("boost pads: picked up within 176 (small) / 208 (big) uu and 96 uu of height");
+	Arena* arena = Arena::Create(GameMode::SOCCAR);
+	Car* car = arena->AddCar(Team::BLUE);
+	auto pickup = [&](Vec pos) {
+		CarState s = CarAt(pos, { 1, 0, 0 }, { 0, 0, 1 });
+		s.boost = 0;
+		car->SetState(s);
+		arena->Step(1);
+		return car->GetState().boost;
+	};
+	using namespace RLConst::BoostPads;
+	// one pad per case (each goes on cooldown)
+	float b = pickup(Vec(0, -2816 + 170, 17));
+	CHECK(Near(b, BOOST_AMOUNT_SMALL, 1e-3f), "small pad at 170 uu: boost %.2f", b);
+	b = pickup(Vec(940 + 180, -3308, 17));
+	CHECK(b == 0, "small pad at 180 uu: boost %.2f", b);
+	b = pickup(Vec(3584 - 205, 0, 17));
+	CHECK(Near(b, BOOST_AMOUNT_BIG, 1e-3f), "big pad at 205 uu: boost %.2f", b);
+	b = pickup(Vec(-3584 + 212, 0, 17));
+	CHECK(b == 0, "big pad at 212 uu: boost %.2f", b);
+	b = pickup(Vec(1792, -4184, 70 + 95));
+	CHECK(Near(b, BOOST_AMOUNT_SMALL, 1e-3f), "small pad 95 uu below: boost %.2f", b);
+	b = pickup(Vec(-1792, -4184, 70 + 97));
+	CHECK(b == 0, "small pad 97 uu below: boost %.2f", b);
+	delete arena;
+}
+
+// Kickoff ball: at z 92.75 (where the game leaves it), at rest, asleep 2 s later
+static void TestKickoffBall() {
+	puts("kickoff ball: z 92.75, stays there, asleep after 2 s");
+	Arena* arena = Arena::Create(GameMode::SOCCAR);
+	arena->ResetToRandomKickoff(1);
+	float z0 = arena->ball->GetState().pos.z;
+	arena->Step(230);
+	BallState b = arena->ball->GetState();
+	bool awake = arena->ball->_rigidBody.isActive();
+	arena->Step(30);
+	// (uu -> Bullet units -> uu rounds 92.75 to 92.749992; quantized to 0.01 that is 92.75)
+	CHECK(Near(z0, RLConst::BALL_KICKOFF_Z, 1e-4f) && Near(b.pos.z, RLConst::BALL_KICKOFF_Z, 1e-4f) && b.vel.IsZero(),
+		"kickoff ball z %.6f -> %.6f, vel (%g, %g, %g)", z0, b.pos.z, b.vel.x, b.vel.y, b.vel.z);
+	CHECK(awake && !arena->ball->_rigidBody.isActive(), "kickoff ball should sleep between 1.92 and 2.17 s");
+	delete arena;
+}
+
+// Kickoff countdown: no input while it runs (a match server sets it after a kickoff reset); kept in snapshots
+static void TestKickoffCountdown() {
+	puts("kickoff countdown: cars get no input for its ticks; snapshots keep it");
+	Arena* arena = Arena::Create(GameMode::SOCCAR);
+	Car* car = arena->AddCar(Team::BLUE);
+	arena->ResetToRandomKickoff(1);
+	arena->kickoffCountdownTicks = 480;
+	DataStreamOut snap;
+	arena->Serialize(snap);
+	CarControls go;
+	go.throttle = 1;
+	go.boost = true;
+	go.jump = true;
+	Vec start = car->GetState().pos;
+	for (int i = 0; i < 480; i++) {
+		car->controls = go;
+		arena->Step(1);
+	}
+	// (the car settles on its suspension after the spawn and creeps ~0.15 uu)
+	float moved = (car->GetState().pos - start).Length();
+	CHECK(moved < 1 && arena->kickoffCountdownTicks == 0, "moved %.3f uu during the countdown, ticks left %u", moved, arena->kickoffCountdownTicks);
+	for (int i = 0; i < 12; i++) {
+		car->controls = go;
+		arena->Step(1);
+	}
+	CHECK(car->GetState().vel.Length() > 50, "car should drive after the countdown (speed %.1f)", car->GetState().vel.Length());
+	DataStreamIn in;
+	in.data = snap.data;
+	CHECK(arena->DeserializeInPlace(in) && arena->kickoffCountdownTicks == 480, "restored countdown %u", arena->kickoffCountdownTicks);
+	delete arena;
+}
+
 // Supersonic: on from 2200; below that, kept for 1 s (TimeBelowSupersonicSpeed) while above 2100
 static void TestSupersonic(Arena* arena, Car* car) {
 	puts("supersonic: kept for 1 s below 2200 (above 2100), also after a long supersonic run");
@@ -535,6 +614,9 @@ int main(int argc, char** argv) {
 
 	TestQuantize();
 	TestBumpCurves();
+	TestBoostPads();
+	TestKickoffBall();
+	TestKickoffCountdown();
 
 	Arena* arena = Arena::Create(GameMode::SOCCAR);
 	Car* car = arena->AddCar(Team::BLUE);

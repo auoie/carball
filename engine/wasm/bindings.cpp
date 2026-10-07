@@ -184,6 +184,10 @@ public:
 		_goalReported = false;
 	}
 
+	// Kickoff countdown in ticks (cars get no input while it runs; the server sets it in matches)
+	uint32_t KickoffCountdown() { return _arena->kickoffCountdownTicks; }
+	void SetKickoffCountdown(uint32_t ticks) { _arena->kickoffCountdownTicks = ticks; }
+
 	double TickCount() const { return (double)_arena->tickCount; }
 
 	bool IsBallScored() const { return _arena->IsBallScored(); }
@@ -379,6 +383,8 @@ EMSCRIPTEN_BINDINGS(rlengine) {
 		.function("carControls", &Sim::GetCarControls)
 		.function("step", &Sim::Step)
 		.function("resetKickoff", &Sim::ResetKickoff)
+		.function("kickoffCountdown", &Sim::KickoffCountdown)
+		.function("setKickoffCountdown", &Sim::SetKickoffCountdown)
 		.function("tickCount", &Sim::TickCount)
 		.function("isBallScored", &Sim::IsBallScored)
 		.function("ballState", &Sim::BallState)

@@ -35,6 +35,8 @@ unsafe extern "C" {
     fn rl_step(arena: *mut RLArena, ticks: c_int);
     fn rl_reset_kickoff(arena: *mut RLArena, seed: c_int);
     fn rl_reset_ball(arena: *mut RLArena);
+    fn rl_set_kickoff_countdown(arena: *mut RLArena, ticks: u32);
+    fn rl_kickoff_countdown(arena: *const RLArena) -> u32;
     fn rl_tick_count(arena: *const RLArena) -> u64;
     fn rl_is_ball_scored(arena: *mut RLArena) -> c_int;
     fn rl_ball_position(arena: *mut RLArena, out: *mut f32);
@@ -108,6 +110,17 @@ impl Arena {
     pub fn reset_kickoff(&mut self, seed: i32) {
         // SAFETY: valid arena
         unsafe { rl_reset_kickoff(self.ptr(), seed) }
+    }
+
+    /// Kickoff countdown in ticks: cars get no input while it runs (part of the simulated state)
+    pub fn set_kickoff_countdown(&mut self, ticks: u32) {
+        // SAFETY: valid arena
+        unsafe { rl_set_kickoff_countdown(self.ptr(), ticks) }
+    }
+
+    pub fn kickoff_countdown(&self) -> u32 {
+        // SAFETY: valid arena
+        unsafe { rl_kickoff_countdown(self.ptr()) }
     }
 
     pub fn reset_ball(&mut self) {
@@ -244,7 +257,7 @@ pub(crate) mod tests {
         assert!(moved > 400.0, "moved {moved}");
         assert_eq!(arena.tick_count(), 120);
         let state = arena.write_net_state(true, &[car], true);
-        assert!(state.len() > 100 && state[0] == 1);
+        assert!(state.len() > 100 && state[0] == 2); // the network state format version
         assert!(arena.save_state().len() > 1000);
     }
 }

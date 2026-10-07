@@ -24,7 +24,10 @@ validator); steering reverted to the game's average angle (patch 8 revised: the 
 wall-grip condition (patch 32). Car–car checked with a new validator pass (`--carcar`, extractor `--demos`): bumps
 match; the demo cone is now tested at the time of impact (patch 33) and supersonic lasts 1 s below 2200 (patch 34),
 both from the code and confirmed by replay demos. The arena mesh now uses the game's tessellation (Bézier arcs;
-`notes/arena.md`), which brought walls/curves to 0.046 uu, as on the game's own mesh. Next steps: `notes/roadmap.md` §7 "Next, in order". Car position error vs replays
+`notes/arena.md`), which brought walls/curves to 0.046 uu, as on the game's own mesh. Then: double jumps (start
+timing), boost pad pickup radius (patch 35), kickoff ball height and the 4 s kickoff countdown (patches 36, 37;
+server waits 3.0 s after a goal; protocol version 2), other bodies (`--bodies`) and input changes checked.
+Open points: `notes/roadmap.md` §7 "Open". Car position error vs replays
 now ~0.010 uu flat, 0.046 walls/curves, 0.020 goals (median after ~4 ticks; `notes/validation.md`). A second Claude
 session did client visuals (ball spin, hex walls, placeholder car models) in client/src.
 Agreed multiplayer plan: (1) exact restore ✓, (2) decode the

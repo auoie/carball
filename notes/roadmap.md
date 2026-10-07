@@ -138,8 +138,12 @@ throttle curve, hitbox sizes and wheel setup, ball radius, dodge-vs-double-jump 
 - [x] Wall-grip condition (patch 32).
 - [x] Car–car pass (`--carcar`): bumps match (ground: 0.43 uu vs 28 without the bump), the attacker slows in a demo
       as the game does, demo cone at impact and supersonic rule fixed (patches 33, 34; validation.md finding 17).
-- [ ] Next, in order: double jumps on walls (timing), boost pads, kickoffs, other hitboxes, input changes between
-      frames. Open questions replays can't answer: goal-wall wobble, air control/flip cancels, ball on a parked
+- [x] Double jumps (start timing, like jumps); boost pad pickup radius (patch 35); kickoff ball height and the 4 s
+      kickoff countdown (patches 36, 37; server: 3.0 s after a goal).
+- [x] Other hitboxes checked (`--bodies`): right preset per body, straight driving exact; steering 0.03–0.06 uu
+      off for non-Octane presets (open).
+- [x] Input changes between frames checked (fitted switch tick): throttle matches; steering changes 0.08–0.12 (open).
+- [ ] Open: non-Octane steering, steering changes, body 1919's preset, goal-wall wobble, air control/flip cancels. Open questions replays can't answer: goal-wall wobble, air control/flip cancels, ball on a parked
       car's roof.
 
 ## 8. Engine build

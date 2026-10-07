@@ -203,6 +203,8 @@ void Arena::ResetToRandomKickoff(int seed) {
 	}
 
 	BallState ballState = BallState();
+	if (gameMode == GameMode::SOCCAR)
+		ballState.pos.z = BALL_KICKOFF_Z;
 	if (gameMode == GameMode::HEATSEEKER) {
 		int nextRand = (*randEngine)();
 		Vec scale = Vec(1, (nextRand % 2) ? 1 : -1, 1);
@@ -677,6 +679,7 @@ void Arena::Serialize(DataStreamOut& out) const {
 
 	// RL PATCH: persistent contact points
 	const_cast<Arena*>(this)->_SerializeContacts(out);
+	out.Write(kickoffCountdownTicks); // RL PATCH
 }
 
 // RL PATCH: Bullet keeps contact points from tick to tick (persistent manifolds), and some contacts, such as a
@@ -734,6 +737,7 @@ void Arena::_SerializeContacts(DataStreamOut& out) {
 		for (int j = 0; j < m->getNumContacts(); j++)
 			WriteContactPoint(out, m->getContactPoint(j));
 	}
+
 }
 
 void Arena::_DeserializeContacts(DataStreamIn& in) {
@@ -847,6 +851,7 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
 		car->_loadedBody.ApplyTo(car->_rigidBody, car->_netRotation);
 
 	newArena->_DeserializeContacts(in); // RL PATCH: persistent contact points
+	newArena->kickoffCountdownTicks = in.Read<uint32_t>(); // RL PATCH
 
 	return newArena;
 }
@@ -934,6 +939,7 @@ bool Arena::DeserializeInPlace(DataStreamIn& in) {
 	ballBody.ApplyTo(ball->_rigidBody, ball->_netRotation);
 	ball->_velocityImpulseCache = { 0, 0, 0 };
 	_DeserializeContacts(in);
+	kickoffCountdownTicks = in.Read<uint32_t>(); // RL PATCH
 	return true;
 }
 
@@ -968,6 +974,7 @@ Arena* Arena::Clone(bool copyCallbacks) {
 
 	newArena->tickCount = this->tickCount;
 	newArena->_lastCarID = this->_lastCarID;
+	newArena->kickoffCountdownTicks = this->kickoffCountdownTicks; // RL PATCH
 
 	{ // RL PATCH: persistent contact points
 		DataStreamOut contactsOut;
@@ -1012,6 +1019,10 @@ void Arena::Step(int ticksToSimulate) {
 		
 		// RL PATCH: the ball's start-of-tick velocity (OldRBState) for the car hit impulse (cars keep theirs in _oldState)
 		ball->_startOfTickVel = ball->_rigidBody.m_linearVelocity * BT_TO_UU;
+
+		if (kickoffCountdownTicks > 0) // RL PATCH: kickoff countdown, no input
+			for (Car* car : _cars)
+				car->controls = CarControls();
 
 		for (Car* car : _cars)
 			car->_PreTickUpdate(gameMode, tickTime, _mutatorConfig);
@@ -1062,6 +1073,8 @@ void Arena::Step(int ticksToSimulate) {
 		}
 
 		tickCount++;
+		if (kickoffCountdownTicks > 0)
+			kickoffCountdownTicks--;
 	}
 }
 

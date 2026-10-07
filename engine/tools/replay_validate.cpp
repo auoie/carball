@@ -272,6 +272,7 @@ struct Case {
 	float relVelN = 0;  // ball - car velocity along the direction from car to ball (negative: approaching)
 	float hbBest = 0, hbBestErr = 0; // car-alone with --fit-handbrake: the best ramp value and its error
 	int flipShift = 0; float flipBestErr = 0; // car-alone with --fit-flip-time
+	int switchTick = -1; // car-alone input changes: the fitted tick of the change
 };
 
 struct Arenas {
@@ -306,6 +307,10 @@ static bool PreJump(const CarRow& c) {
 	return c.jump && c.b.vel.Dot(c.b.rot.up) < 50;
 }
 static bool g_handbrakeHistory = true;
+// Run: the controls change to g_switchControls from this tick on (0 = the first), -1 = unchanged (input changes
+// between two replay frames happen at an unknown tick)
+static int g_switchAt = -1;
+static CarControls g_switchControls;
 // Experiment (--warmup-previous): the wheel carry comes from simulating the car's previous row up to this state
 // instead of one tick at this state. Set per case by the car-alone pass.
 static const CarRow* g_warmupFrom = nullptr;
@@ -314,7 +319,7 @@ static int g_warmupTicks = 0;
 static void SetupCar(Arenas& A, const CarRow& c0, const CarControls& controls, bool useSensitivity, bool warmup,
                      const Body& ball) {
 	Restore(A.withCar, A.carClean);
-	CarConfig config = CAR_CONFIG_OCTANE;
+	CarConfig config = A.car->config; // (the arena's car has its preset; only the player's sensitivity changes)
 	config.steeringSensitivity = useSensitivity ? c0.sensitivity : 1.f;
 	A.car->config = config;
 	CarState s = A.car->GetState();
@@ -444,6 +449,7 @@ static Errors Run(Arena* arena, Car* car, const Frame& next, const CarRow* carNe
 	uint64_t startTick = arena->tickCount;
 	for (int k = 1; k <= KMAX; k++) {
 		if (car && g_jumpPressAt >= 0) car->controls.jump = k > g_jumpPressAt;
+		if (car && g_switchAt >= 0 && k == g_switchAt + 1) car->controls = g_switchControls;
 		if (car && g_dodgePressAt >= 0) {
 			bool press = k == g_dodgePressAt + 1;
 			car->controls.jump = k > g_dodgePressAt;
@@ -511,6 +517,65 @@ static Errors Run(Arena* arena, Car* car, const Frame& next, const CarRow* carNe
 
 static bool OctaneHitbox(int body) {
 	return body == 23 || body == 4284; // Octane, Fennec
+}
+
+// ---- Other car bodies ----
+// Cars whose body isn't on the Octane hitbox, alone and with unchanged inputs, run once with each of RocketSim's
+// presets: the best fit names the body's preset, and its error says whether that preset matches the game.
+static void BodiesPass(const std::vector<Replay>& replays, std::vector<Arenas>& presets, const std::string& outPath,
+                       bool useSensitivity, bool warmup) {
+	FILE* out = fopen(outPath.c_str(), "w");
+	fprintf(out, "replay,frame,body,place,speed,throttle,steer,handbrake,boost,hb_ramp,octane,dominus,plank,breakout,hybrid,merc\n");
+	size_t n = 0;
+	for (const Replay& r : replays) {
+		std::map<int, std::pair<CarRow, double>> lastCar;
+		const Body* ball = nullptr;
+		double ballTime = 0;
+		for (size_t i = 0; i + 1 < r.frames.size(); i++) {
+			const Frame& f0 = r.frames[i];
+			for (const CarRow& c : f0.cars) lastCar[c.actor] = { c, f0.time };
+			if (f0.hasBall) {
+				ball = &f0.ball;
+				ballTime = f0.time;
+			}
+			if (!ball || f0.time - ballTime > 0.1) continue;
+			for (const CarRow& c0 : f0.cars) {
+				if (c0.body == 0 || OctaneHitbox(c0.body) || c0.b.sleeping || c0.jump || c0.doubleJump || c0.dodge) continue;
+				Vec ballPos = ball->pos + ball->vel * (float)(f0.time - ballTime);
+				if ((ballPos - c0.b.pos).Length() < 900) continue;
+				bool crowded = false;
+				for (auto& [actor, entry] : lastCar) {
+					double age = f0.time - entry.second;
+					if (actor == c0.actor || age > 2) continue;
+					Vec p = entry.first.b.pos + entry.first.b.vel * (float)age;
+					if ((p - c0.b.pos).Length() < 600 + (float)age * 2300) crowded = true;
+				}
+				if (crowded) continue;
+				const CarRow* c1 = nullptr;
+				const Frame* fNext = nullptr;
+				for (size_t j = i + 1; j < r.frames.size() && j <= i + 3 && !c1; j++) {
+					if (r.frames[j].time - f0.time > 0.15) break;
+					for (const CarRow& c : r.frames[j].cars) if (c.actor == c0.actor) c1 = &c;
+					if (c1) fNext = &r.frames[j];
+				}
+				if (!c1 || c1->jump || c1->doubleJump || c1->dodge || c0.throttle != c1->throttle || c0.steer != c1->steer ||
+				    c0.handbrake != c1->handbrake || c0.boosting != c1->boosting)
+					continue;
+				CarControls controls = ReplayControls(c0);
+				Body parked = Parked(*ball, c0);
+				fprintf(out, "%s,%d,%d,%s,%.1f,%d,%d,%d,%d,%.3f", r.name.c_str(), f0.index, c0.body, Place(c0).c_str(), c0.b.vel.Length(),
+				        c0.throttle, c0.steer, (int)c0.handbrake, (int)c0.boosting, c0.handbrakeVal);
+				for (Arenas& A : presets) {
+					SetupCar(A, c0, controls, useSensitivity, warmup, parked);
+					fprintf(out, ",%.4f", Run(A.withCar, A.car, *fNext, c1, parked).carPos);
+				}
+				fprintf(out, "\n");
+				n++;
+			}
+		}
+	}
+	fclose(out);
+	printf("bodies: %zu cases -> %s\n", n, outPath.c_str());
 }
 
 // ---- Car–car ----
@@ -912,7 +977,7 @@ int main(int argc, char** argv) {
 		fprintf(stderr, "usage: replay_validate STATES.csv [--meshes DIR] [--cases OUT.csv] [--no-sensitivity] [--limit N]\n");
 		return 1;
 	}
-	std::string meshes = ARENA_MESH_DIR, casesPath, carcarPath, demosPath;
+	std::string meshes = ARENA_MESH_DIR, casesPath, carcarPath, demosPath, bodiesPath;
 	bool useSensitivity = true, warmup = true, zeroBallSpin = false, fitHandbrake = false;
 	bool fitFlipTime = false, warmupPrevious = false;
 	float minReplayKick = 0; // only car-ball cases where the game's ball changed velocity by more than this
@@ -932,6 +997,7 @@ int main(int argc, char** argv) {
 		else if (a == "--carcar" && i + 1 < argc) carcarPath = argv[++i];
 		else if (a == "--warmup-previous") warmupPrevious = true; // experiment: wheel carry from the previous row
 		else if (a == "--demos" && i + 1 < argc) demosPath = argv[++i];
+		else if (a == "--bodies" && i + 1 < argc) bodiesPath = argv[++i]; // (only the other-bodies pass)
 	}
 
 	RocketSim::Init(meshes, true);
@@ -946,6 +1012,21 @@ int main(int argc, char** argv) {
 	A.car = A.withCar->AddCar(Team::BLUE, CAR_CONFIG_OCTANE);
 	A.carClean = Snapshot(A.withCar);
 
+	if (!bodiesPath.empty()) {
+		std::vector<Arenas> presets;
+		for (const CarConfig* config : { &CAR_CONFIG_OCTANE, &CAR_CONFIG_DOMINUS, &CAR_CONFIG_PLANK, &CAR_CONFIG_BREAKOUT,
+		                                 &CAR_CONFIG_HYBRID, &CAR_CONFIG_MERC }) {
+			Arenas P;
+			P.ballOnly = A.ballOnly;
+			P.ballClean = A.ballClean;
+			P.withCar = Arena::Create(GameMode::SOCCAR);
+			P.car = P.withCar->AddCar(Team::BLUE, *config);
+			P.carClean = Snapshot(P.withCar);
+			presets.push_back(P);
+		}
+		BodiesPass(replays, presets, bodiesPath, useSensitivity, warmup);
+		return 0;
+	}
 	if (!carcarPath.empty()) { // (only the car-car pass)
 		CarCarPass(replays, A, carcarPath, demosPath, useSensitivity, warmup, limit);
 		return 0;
@@ -1053,16 +1134,32 @@ int main(int argc, char** argv) {
 
 			CarControls controls = ReplayControls(*c0);
 
-			auto setup = [&]() { SetupCar(A, *c0, controls, useSensitivity, warmup, f0.ball); };
+			// A double jump flagged just now may not be in the state yet: also try it starting during the run
+			bool preDoubleJump = c0->doubleJump && c0->doubleJumpSince >= 0 && c0->doubleJumpSince < 0.1f && !c0->dodge;
+			CarRow beforeDoubleJump = *c0;
+			beforeDoubleJump.doubleJump = false;
+			beforeDoubleJump.doubleJumpSince = -1;
+			auto setup = [&](bool doubleJumpDuringRun) {
+				SetupCar(A, doubleJumpDuringRun ? beforeDoubleJump : *c0, controls, useSensitivity, warmup, f0.ball);
+				if (doubleJumpDuringRun) {
+					A.car->_internalState.hasJumped = true;
+					A.car->_internalState.isJumping = false;
+					A.car->_internalState.airTimeSinceJump = 0.3f;
+					A.car->_internalState.lastControls.jump = false;
+				}
+			};
 			// The car's and the ball's states can be from different server ticks: try offsets (the earlier body
 			// advanced alone first) and keep the one that fits both bodies best
 			auto runAligned = [&](bool blockImpulse, int& bestOffset) {
 				Errors best;
 				float bestScore = 1e30f;
 				for (int press = PreJump(*c0) ? 0 : -1; press <= (PreJump(*c0) ? 8 : -1); press++)
+				for (int djPress = -1; djPress <= (preDoubleJump ? 8 : -1); djPress++)
 				for (int d = -6; d <= 6; d++) {
 					g_jumpPressAt = press;
-					setup();
+					setup(djPress >= 0);
+					g_dodgePressAt = djPress;
+					g_dodgeStick = Vec();
 					int ballTicksBefore = 0;
 					if (d > 0) { // the car's state is newer: the ball catches up alone
 						Restore(A.ballOnly, A.ballClean);
@@ -1082,6 +1179,7 @@ int main(int argc, char** argv) {
 					}
 					Errors e = Run(A.withCar, A.car, *fNext, c1, f0.ball, ballTicksBefore, std::max(0, -d));
 					g_jumpPressAt = -1;
+					g_dodgePressAt = -1;
 					float score = e.ballPos + e.carPos;
 					if (score < bestScore) {
 						bestScore = score;
@@ -1151,9 +1249,12 @@ int main(int argc, char** argv) {
 					for (const CarRow& c : r.frames[j].cars) if (c.actor == c0.actor) c1 = &c;
 					if (c1) fNext = &r.frames[j];
 				}
-				if (!c1 || c0.jump != c1->jump || c0.doubleJump != c1->doubleJump || c0.dodge != c1->dodge ||
-				    c0.throttle != c1->throttle ||
-				    c0.steer != c1->steer || c0.handbrake != c1->handbrake || c0.boosting != c1->boosting)
+				if (!c1 || c0.jump != c1->jump || c0.doubleJump != c1->doubleJump || c0.dodge != c1->dodge)
+					continue;
+				// Inputs that change between the frames: switch at the fitted tick (0..8), no jump or dodge going on
+				bool inputChange = c0.throttle != c1->throttle || c0.steer != c1->steer || c0.handbrake != c1->handbrake ||
+				                   c0.boosting != c1->boosting;
+				if (inputChange && (c0.jump || c0.doubleJump || c0.dodge || PreJump(c0)))
 					continue;
 				CarControls controls = ReplayControls(c0);
 				Body parked = Parked(*ball, c0);
@@ -1175,6 +1276,19 @@ int main(int argc, char** argv) {
 				cs.frame = f0.index;
 				cs.dt = fNext->time - f0.time;
 				cs.e = Run(A.withCar, A.car, *fNext, c1, parked);
+				if (inputChange) {
+					g_switchControls = ReplayControls(*c1);
+					for (int t = 0; t <= 8; t++) {
+						SetupCar(A, c0, controls, useSensitivity, warmup, parked);
+						g_switchAt = t;
+						Errors e = Run(A.withCar, A.car, *fNext, c1, parked);
+						g_switchAt = -1;
+						if (t == 0 || e.carPos < cs.e.carPos) {
+							cs.e = e;
+							cs.switchTick = t;
+						}
+					}
+				}
 				if (PreJump(c0)) { // the jump starts during the interval: fit the tick
 					for (int press = 0; press <= 8; press++) {
 						SetupCar(A, c0, controls, useSensitivity, warmup, parked);
@@ -1186,6 +1300,29 @@ int main(int argc, char** argv) {
 				}
 				cs.flipShift = 0;
 				cs.flipBestErr = cs.e.carPos;
+				// Like the jump flag, the double jump component's flag can arrive before the state shows the impulse:
+				// also try the double jump (jump pressed, no stick) at each tick 0..8 of the run
+				if (c0.doubleJump && c0.doubleJumpSince >= 0 && c0.doubleJumpSince < 0.1f && !c0.dodge) {
+					CarRow pre = c0;
+					pre.doubleJump = false;
+					pre.doubleJumpSince = -1;
+					g_dodgeStick = Vec();
+					for (int d = 0; d <= 8; d++) {
+						SetupCar(A, pre, controls, useSensitivity, warmup, parked);
+						A.car->_internalState.hasJumped = true;
+						A.car->_internalState.isJumping = false;
+						A.car->_internalState.airTimeSinceJump = 0.3f;
+						A.car->_internalState.lastControls.jump = false;
+						g_dodgePressAt = d;
+						Errors e = Run(A.withCar, A.car, *fNext, c1, parked);
+						g_dodgePressAt = -1;
+						if (e.carPos < cs.e.carPos) {
+							cs.e = e;
+							cs.flipShift = 200 + d; // 200 + tick: the double jump started during the run
+							cs.flipBestErr = e.carPos;
+						}
+					}
+				}
 				if (fitFlipTime && c0.dodge && c0.dodgeSince >= 0) {
 					for (int t = -8; t <= 8; t++) {
 						g_flipTimeShift = t / 120.f;
@@ -1239,6 +1376,16 @@ int main(int argc, char** argv) {
 				std::string action = Action(c0);
 				cs.category = std::string("car alone/") +
 				              (!action.empty() ? action + " " : (cs.e.carOnGround ? "" : "air (no air control) ")) + Place(c0);
+				if (inputChange) {
+					int changed = (c0.throttle != c1->throttle) + (c0.steer != c1->steer) + (c0.handbrake != c1->handbrake) +
+					              (c0.boosting != c1->boosting);
+					std::string what = changed > 1                    ? "several"
+					                   : c0.throttle != c1->throttle ? "throttle"
+					                   : c0.steer != c1->steer       ? "steer"
+					                   : c0.handbrake != c1->handbrake ? "handbrake"
+					                                                   : "boost";
+					cs.category = "car alone input change/" + what + (cs.e.carOnGround ? " " : " air ") + Place(c0);
+				}
 				cases.push_back(cs);
 			}
 		}
@@ -1270,10 +1417,10 @@ int main(int argc, char** argv) {
 		FILE* out = fopen(casesPath.c_str(), "w");
 		fprintf(out, "replay,frame,dt,category,k,ball_pos,ball_vel,ball_ang,car_pos,car_vel,car_ang,car_rot,ballistic,"
 		             "dvx,dvy,dvz,touch,dribble,rel_speed,blocked_k,blocked_ball_pos,blocked_ball_vel,blocked_car_pos,"
-		             "blocked_dvx,blocked_dvy,blocked_dvz,k_ball,k_car,ball_pos_alone,car_pos_alone,offset,blocked_offset,throttle,steer,boost,handbrake,sensitivity,car_speed,car_z,car_up_z,car_kick_vz,dp_fwd,dp_right,dp_up,dv_fwd,dv_right,dv_up,replay_acc_fwd,replay_acc_right,yaw_rate,yaw_rate_err,car_ticks,v_fwd,rel_x,rel_y,rel_z,rel_fwd,rel_right,rel_up,first_touch,relvel_n,hb_recon,hb_best,hb_best_err,replay_kick,engine_kick,kick_angle,jump_since,dodge_since,wheels_start,flip_shift,flip_best_err\n");
+		             "blocked_dvx,blocked_dvy,blocked_dvz,k_ball,k_car,ball_pos_alone,car_pos_alone,offset,blocked_offset,throttle,steer,boost,handbrake,sensitivity,car_speed,car_z,car_up_z,car_kick_vz,dp_fwd,dp_right,dp_up,dv_fwd,dv_right,dv_up,replay_acc_fwd,replay_acc_right,yaw_rate,yaw_rate_err,car_ticks,v_fwd,rel_x,rel_y,rel_z,rel_fwd,rel_right,rel_up,first_touch,relvel_n,hb_recon,hb_best,hb_best_err,replay_kick,engine_kick,kick_angle,jump_since,dodge_since,wheels_start,flip_shift,flip_best_err,double_jump_since,switch_tick\n");
 		for (const Case& c : cases) {
 			fprintf(out, "%s,%d,%.5f,%s,%d,%.4f,%.3f,%.5f,%.4f,%.3f,%.5f,%.6f,%.3f,%.3f,%.3f,%.3f,%d,%d,%.2f,%d,%.4f,%.3f,%.4f,"
-			             "%.3f,%.3f,%.3f,%d,%d,%.4f,%.4f,%d,%d,%d,%d,%d,%d,%.3f,%.2f,%.2f,%.4f,%.2f,%.3f,%.3f,%.3f,%.2f,%.2f,%.2f,%.2f,%.2f,%.4f,%.4f,%d,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%d,%.2f,%.3f,%.3f,%.4f,%.2f,%.2f,%.3f,%.4f,%.4f,%d,%d,%.4f\n",
+			             "%.3f,%.3f,%.3f,%d,%d,%.4f,%.4f,%d,%d,%d,%d,%d,%d,%.3f,%.2f,%.2f,%.4f,%.2f,%.3f,%.3f,%.3f,%.2f,%.2f,%.2f,%.2f,%.2f,%.4f,%.4f,%d,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%d,%.2f,%.3f,%.3f,%.4f,%.2f,%.2f,%.3f,%.4f,%.4f,%d,%d,%.4f,%.4f,%d\n",
 			        c.replay.c_str(), c.frame, c.dt, c.category.c_str(), c.e.k, c.e.ballPos, c.e.ballVel, c.e.ballAng,
 			        c.e.carPos, c.e.carVel, c.e.carAng, c.e.carRot, c.e.ballisticPos, c.e.ballVelDiff.x,
 			        c.e.ballVelDiff.y, c.e.ballVelDiff.z, c.e.ballTouch, c.dribble, c.relSpeed, c.blocked.k,
@@ -1294,7 +1441,8 @@ int main(int argc, char** argv) {
 			            ? acosf(std::clamp(c.e.replayKick.Normalized().Dot(c.e.engineKick.Normalized()), -1.f, 1.f)) * 57.2958f
 			            : -1.f,
 			        c.car && c.car->jump ? c.car->jumpSince : -1.f, c.car && c.car->dodge ? c.car->dodgeSince : -1.f,
-			        c.e.wheelsStart, c.flipShift, c.flipBestErr);
+			        c.e.wheelsStart, c.flipShift, c.flipBestErr,
+			        c.car && c.car->doubleJump ? c.car->doubleJumpSince : -1.f, c.switchTick);
 		}
 		fclose(out);
 	}

@@ -19,8 +19,11 @@ const NEAR_BALL_DISTANCE: f32 = 1000.0;
 /// Datagram budget for an update (QUIC datagrams are limited by the path MTU, ~1200 bytes)
 pub const MAX_DATAGRAM: usize = 1100;
 const UPDATE_HEADER: usize = 25;
-/// After a goal, the next kickoff (seconds)
-const GOAL_RESET_SECONDS: f32 = 2.0;
+/// After a goal, the next kickoff (seconds; `GameEvent_Soccar_TA.PostGoalTime`, without the goal replay)
+const GOAL_RESET_SECONDS: f32 = 3.0;
+/// After a kickoff reset, the cars get no input for this long (replays: the first car moves 3.99-4.05 s after the
+/// reset; the "3-2-1" countdown plus a second)
+const KICKOFF_COUNTDOWN_SECONDS: f32 = 4.0;
 
 pub type PlayerId = u64;
 
@@ -139,6 +142,7 @@ impl Game {
 
     fn next_kickoff(&mut self) {
         self.arena.reset_kickoff(self.kickoff_seed);
+        self.arena.set_kickoff_countdown((KICKOFF_COUNTDOWN_SECONDS * TICK_RATE as f32) as u32);
         self.kickoff_seed += 1;
         self.reset_at_tick = None;
     }
@@ -288,12 +292,20 @@ mod tests {
         let Control::World { snapshot: world, .. } = Control::decode(match &first[1] { Outgoing::Control(b) => &b[2..], _ => panic!() }).unwrap() else { panic!() };
         assert!(client.load_state(&world));
 
-        // Player 1 sends 2 frames per 60 Hz packet (throttle 1), player 2 nothing; 2 seconds
+        // Player 1 sends 2 frames per 60 Hz packet (throttle 1), player 2 nothing; the 4 s kickoff countdown, then
+        // 2 seconds of driving
         let start = game.car_position(1).unwrap();
         let mut frame = 1u32;
         let mut last_update = None;
         let mut max_size = 0;
-        for tick in 0..240u32 {
+        let countdown = game.arena.kickoff_countdown();
+        assert_eq!(countdown, 480);
+        for tick in 0..countdown + 240 {
+            if tick == countdown {
+                let p = game.car_position(1).unwrap();
+                assert!((p[0] - start[0]).hypot(p[1] - start[1]) < 1.0, "the car moved during the countdown");
+                assert_eq!(client.kickoff_countdown(), 0, "the countdown reached the client through the updates");
+            }
             let now = f64::from(tick) / 120.0;
             if tick % 2 == 0 {
                 game.receive_inputs(1, tick, frame, &throttle_frames(2), now);
@@ -315,12 +327,21 @@ mod tests {
         assert!((end[0] - start[0]).hypot(end[1] - start[1]) > 1000.0, "the car drove");
         assert!(max_size <= MAX_DATAGRAM, "datagram of {max_size} bytes");
         let u = last_update.unwrap();
-        assert!(u.ack_frame > 200 && u.ack_frame < frame, "ack {}", u.ack_frame); // 1 frame per tick sent, ~all consumed
+        assert!(u.ack_frame > frame - 40 && u.ack_frame < frame, "ack {}", u.ack_frame); // 1 frame per tick sent, ~all consumed
         assert_eq!(u.received_frame, frame - 1);
         // The client's view of the server's car (updated at least every 8 ticks) is within a few ticks of driving
         let server_pos = game.arena.car_position(car_id).unwrap();
         let client_pos = client.car_position(car_id).unwrap();
         assert!((server_pos[0] - client_pos[0]).hypot(server_pos[1] - client_pos[1]) < 200.0);
+    }
+
+    #[test]
+    fn a_kickoff_starts_the_countdown() {
+        init_engine();
+        let mut game = Game::new();
+        let (tx, _rx) = unbounded_channel();
+        game.join(1, REQUEST, tx);
+        assert_eq!(game.arena.kickoff_countdown(), 480);
     }
 
     #[test]
