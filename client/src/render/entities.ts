@@ -9,10 +9,11 @@ import {
   CylinderGeometry,
   Group,
   IcosahedronGeometry,
+  InstancedMesh,
+  Matrix4,
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
-  type Object3D,
   type Quaternion,
   Vector3,
 } from "three";
@@ -110,34 +111,66 @@ export function patchedBallGeometry(): BufferGeometry {
   return geometry;
 }
 
-/** Boost pads: flat discs, big pads with an orb; dimmed while respawning. */
+/** Boost pads, instanced (six draw calls for all of them): flat discs, big pads with an orb, small ones with a low
+ *  cylinder; dimmed while respawning. */
 export class BoostPadsView {
   readonly root = new Group();
-  readonly #orbs: Object3D[] = [];
-  readonly #active = new MeshStandardMaterial({ color: 0xffc533, emissive: 0x996a00, roughness: 0.4 });
-  readonly #inactive = new MeshStandardMaterial({ color: 0x4a4130, roughness: 0.9 });
+  readonly #pads: readonly { readonly meshes: PadMeshes; readonly slot: number; readonly base: Matrix4; readonly orb: Matrix4 }[];
+  readonly #shown: (boolean | null)[];
 
   constructor(pads: readonly BoostPadState[]) {
-    for (const pad of pads) {
-      const base = new Mesh(new CylinderGeometry(pad.big ? 80 : 50, pad.big ? 90 : 55, 6, 24), this.#active);
-      base.position.copy(toThreeVector(pad.pos)).setY(3);
-      this.root.add(base);
-      const orb = pad.big
-        ? new Mesh(new IcosahedronGeometry(45, 1), this.#active)
-        : new Mesh(new CylinderGeometry(18, 18, 8, 12), this.#active);
-      orb.position.copy(toThreeVector(pad.pos)).setY(pad.big ? 70 : 12);
-      this.root.add(orb);
-      this.#orbs.push(base, orb);
-    }
+    const active = new MeshStandardMaterial({ color: 0xffc533, emissive: 0x996a00, roughness: 0.4 });
+    const inactive = new MeshStandardMaterial({ color: 0x4a4130, roughness: 0.9 });
+    const count = (big: boolean): number => pads.filter((p) => p.big === big).length;
+    const big = padMeshes(new CylinderGeometry(80, 90, 6, 24), new IcosahedronGeometry(45, 1), count(true), active, inactive);
+    const small = padMeshes(new CylinderGeometry(50, 55, 6, 24), new CylinderGeometry(18, 18, 8, 12), count(false), active, inactive);
+    const slots = { big: 0, small: 0 };
+    this.#pads = pads.map((pad) => {
+      const at = toThreeVector(pad.pos);
+      return {
+        meshes: pad.big ? big : small,
+        slot: pad.big ? slots.big++ : slots.small++,
+        base: new Matrix4().makeTranslation(at.x, 3, at.z),
+        orb: new Matrix4().makeTranslation(at.x, pad.big ? 70 : 12, at.z),
+      };
+    });
+    for (const m of [big, small]) this.root.add(m.active, m.inactive, m.orb);
+    this.#shown = pads.map(() => null);
+    this.update(pads);
   }
 
   update(pads: readonly BoostPadState[]): void {
     pads.forEach((pad, i) => {
-      for (const obj of [this.#orbs[i * 2], this.#orbs[i * 2 + 1]]) {
-        if (obj instanceof Mesh) obj.material = pad.active ? this.#active : this.#inactive;
-      }
-      const orb = this.#orbs[i * 2 + 1];
-      if (orb) orb.visible = pad.active;
+      const p = this.#pads[i];
+      if (!p || this.#shown[i] === pad.active) return;
+      this.#shown[i] = pad.active;
+      p.meshes.active.setMatrixAt(p.slot, pad.active ? p.base : HIDDEN);
+      p.meshes.inactive.setMatrixAt(p.slot, pad.active ? HIDDEN : p.base);
+      p.meshes.orb.setMatrixAt(p.slot, pad.active ? p.orb : HIDDEN);
+      for (const mesh of [p.meshes.active, p.meshes.inactive, p.meshes.orb]) mesh.instanceMatrix.needsUpdate = true;
     });
   }
+}
+
+/** One size of pad: its disc lit and dimmed, and its orb (only shown while lit). Unused instances are scaled to 0. */
+interface PadMeshes {
+  readonly active: InstancedMesh;
+  readonly inactive: InstancedMesh;
+  readonly orb: InstancedMesh;
+}
+const HIDDEN = new Matrix4().makeScale(0, 0, 0);
+
+function padMeshes(
+  base: BufferGeometry,
+  orb: BufferGeometry,
+  count: number,
+  active: MeshStandardMaterial,
+  inactive: MeshStandardMaterial,
+): PadMeshes {
+  const make = (geometry: BufferGeometry, material: MeshStandardMaterial): InstancedMesh => {
+    const mesh = new InstancedMesh(geometry, material, count);
+    mesh.frustumCulled = false; // (spread over the whole field)
+    return mesh;
+  };
+  return { active: make(base, active), inactive: make(base, inactive), orb: make(orb, active) };
 }

@@ -34,23 +34,25 @@ varying vec3 vWorldPosition;
 varying vec3 vWorldNormal;
 #include <fog_pars_fragment>
 
-// Distance from a hexagon's centre: 0.5 on its edges (cells 1 wide across the flat sides)
-float hexDistance(vec2 p) {
-  p = abs(p);
-  return max(dot(p, vec2(0.5, 0.8660254)), p.x);
-}
-
-// 1 on the hexagon edges, 0 inside the cells (anti-aliased)
-float hexLines(vec2 uv, float halfWidth) {
+// 1 on the hexagon edges, 0 inside the cells (cells 1 wide across the flat sides), anti-aliased. dx and dy: the
+// pattern coordinates' change per pixel, taken outside any branch (derivatives inside one are undefined).
+float hexLines(vec2 uv, vec2 dx, vec2 dy, float halfWidth) {
   const vec2 r = vec2(1.0, 1.7320508);
+  const vec2 slant = vec2(0.5, 0.8660254);
   vec2 a = mod(uv, r) - r * 0.5;
   vec2 b = mod(uv - r * 0.5, r) - r * 0.5;
   vec2 cell = dot(a, a) < dot(b, b) ? a : b;
-  float edge = 0.5 - hexDistance(cell);
-  float aa = fwidth(edge);
-  // Fade the lines out where they get thinner than a pixel, instead of shimmering
-  float fade = 1.0 - smoothstep(halfWidth * 0.5, halfWidth * 1.5, aa);
-  return (1.0 - smoothstep(halfWidth - aa, halfWidth + aa, edge)) * fade;
+  vec2 c = abs(cell);
+  float slanted = dot(c, slant);
+  float edge = 0.5 - max(slanted, c.x); // distance to the nearest edge
+  // Its change per pixel (what fwidth would give): its gradient is the nearest edge's normal
+  vec2 edgeNormal = slanted > c.x ? slant * sign(cell) : vec2(sign(cell.x), 0.0);
+  float aa = abs(dot(edgeNormal, dx)) + abs(dot(edgeNormal, dy));
+  // Lines thinner than a pixel are drawn a pixel wide and dimmer, instead of breaking up and shimmering
+  float width = max(halfWidth, aa);
+  float line = (1.0 - smoothstep(width - aa, width + aa, edge)) * (halfWidth / width);
+  // Where the cells shrink to a few pixels they can't be resolved: their average (lines cover 8 x halfWidth of a cell)
+  return mix(line, 8.0 * halfWidth, smoothstep(0.12, 0.3, aa));
 }
 
 void main() {
@@ -58,7 +60,14 @@ void main() {
   vec3 p = vWorldPosition / hexSize;
   vec3 weights = pow(abs(n), vec3(8.0));
   weights /= weights.x + weights.y + weights.z;
-  float lines = weights.x * hexLines(p.zy, 0.025) + weights.y * hexLines(p.xz, 0.025) + weights.z * hexLines(p.xy, 0.025);
+  // Only the projections that show are evaluated (one on flat surfaces)
+  vec3 dx = dFdx(p);
+  vec3 dy = dFdy(p);
+  const float halfWidth = 0.025;
+  float lines = 0.0;
+  if (weights.x > 0.004) lines += weights.x * hexLines(p.zy, dx.zy, dy.zy, halfWidth);
+  if (weights.y > 0.004) lines += weights.y * hexLines(p.xz, dx.xz, dy.xz, halfWidth);
+  if (weights.z > 0.004) lines += weights.z * hexLines(p.xy, dx.xy, dy.xy, halfWidth);
 
   // Team tint towards each end (Three z = the game's y; blue defends -y)
   float end = vWorldPosition.z;

@@ -19,6 +19,7 @@ import {
   Vector2,
 } from "three";
 import type { CarConfig, WheelConfig } from "../engine/world";
+import { mergeByMaterial } from "./merge";
 
 /** Suspension travel: at rest the wheels sit about this far above full extension. */
 const SUSPENSION_TRAVEL = 12;
@@ -37,6 +38,8 @@ function wheelRestPosition(wheel: WheelConfig, halfWidth: number): { x: number; 
   };
 }
 
+/** The model as one mesh per material (seven draw calls), named after the material: body, trim, glass, headlight,
+ *  taillight, tyre, rim. */
 export function buildCarModel(config: CarConfig, paint: Color): Group {
   const { hitboxSize: size, hitboxOffset: offset } = config;
   const length = size.x;
@@ -46,13 +49,14 @@ export function buildCarModel(config: CarConfig, paint: Color): Group {
   const top = offset.z + size.z / 2;
   const hitboxBottom = offset.z - size.z / 2;
 
-  const body = new MeshStandardMaterial({ color: paint, roughness: 0.35, metalness: 0.35 });
-  const trim = new MeshStandardMaterial({ color: 0x17191e, roughness: 0.7, metalness: 0.2 });
-  const glass = new MeshStandardMaterial({ color: 0x0b1018, roughness: 0.08, metalness: 0.8, side: DoubleSide });
-  const headlight = new MeshStandardMaterial({ color: 0xfff4d6, emissive: 0xfff0c0, emissiveIntensity: 0.9 });
-  const taillight = new MeshStandardMaterial({ color: 0xff2a2a, emissive: 0xc01010, emissiveIntensity: 0.8 });
-  const tyre = new MeshStandardMaterial({ color: 0x111214, roughness: 0.9 });
-  const rim = new MeshStandardMaterial({ color: 0xb8bec8, roughness: 0.3, metalness: 0.8 });
+  // (the merged meshes are named after their material)
+  const body = new MeshStandardMaterial({ name: "body", color: paint, roughness: 0.35, metalness: 0.35 });
+  const trim = new MeshStandardMaterial({ name: "trim", color: 0x17191e, roughness: 0.7, metalness: 0.2 });
+  const glass = new MeshStandardMaterial({ name: "glass", color: 0x0b1018, roughness: 0.08, metalness: 0.8, side: DoubleSide });
+  const headlight = new MeshStandardMaterial({ name: "headlight", color: 0xfff4d6, emissive: 0xfff0c0, emissiveIntensity: 0.9 });
+  const taillight = new MeshStandardMaterial({ name: "taillight", color: 0xff2a2a, emissive: 0xc01010, emissiveIntensity: 0.8 });
+  const tyre = new MeshStandardMaterial({ name: "tyre", color: 0x111214, roughness: 0.9 });
+  const rim = new MeshStandardMaterial({ name: "rim", color: 0xb8bec8, roughness: 0.3, metalness: 0.8 });
 
   const wheels = [
     { ...wheelRestPosition(config.backWheel, halfWidth), radius: config.backWheel.radius },
@@ -163,7 +167,7 @@ export function buildCarModel(config: CarConfig, paint: Color): Group {
       }
     }
   }
-  return group;
+  return mergeByMaterial(group);
 }
 
 /** x on the profile edge a→b at height y. */

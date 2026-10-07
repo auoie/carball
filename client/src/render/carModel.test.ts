@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import createEngine from "@engine/rlengine.mjs";
-import { Box3, Color, CylinderGeometry, Mesh } from "three";
+import { Box3, Color, Mesh } from "three";
 import { beforeAll, describe, expect, it } from "vitest";
 import { CarBody, type CarConfig, World, initEngine } from "../engine/world";
 import { buildCarModel } from "./carModel";
@@ -28,7 +28,7 @@ function bounds(config: CarConfig, withWheels: boolean): Box3 {
   const box = new Box3();
   for (const part of model.children) {
     if (!(part instanceof Mesh)) continue;
-    if (!withWheels && part.geometry instanceof CylinderGeometry) continue;
+    if (!withWheels && (part.name === "tyre" || part.name === "rim")) continue;
     box.union(new Box3().setFromObject(part));
   }
   return box;
@@ -37,6 +37,13 @@ function bounds(config: CarConfig, withWheels: boolean): Box3 {
 describe("car model", () => {
   it("covers the six hitboxes", () => {
     expect([...configs.keys()]).toEqual(["Octane", "Dominus", "Plank", "Breakout", "Hybrid", "Merc"]);
+  });
+
+  it("draws in one call per material", () => {
+    const octane = configs.get("Octane");
+    if (!octane) throw new Error("no Octane");
+    const names = buildCarModel(octane, new Color(0x1f6fff)).children.map((c) => c.name);
+    expect(names.sort()).toEqual(["body", "glass", "headlight", "rim", "taillight", "trim", "tyre"]);
   });
 
   it("has the hitbox's nose, tail, roof and sides (within 1 uu)", () => {

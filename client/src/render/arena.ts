@@ -19,6 +19,7 @@ import type { TriangleMesh } from "../engine/cmf";
 import { toThreeVector } from "./coords";
 import { BALL_RADIUS } from "./entities";
 import { HexWallMaterial } from "./hexWalls";
+import { mergeByMaterial } from "./merge";
 import { vec3 } from "../math/vec";
 
 const ARENA = { sideX: 4096, backY: 5120, goalDepthY: 6000, height: 2048, cornerTangentY: 3968 - 256 * Math.SQRT2 };
@@ -136,7 +137,7 @@ export class ArenaView {
   }
 }
 
-/** Centre line, centre circle and goal lines, just above the floor. */
+/** Centre line, centre circle and goal lines, just above the floor (merged: one draw call). */
 function buildFieldMarkings(): Group {
   const group = new Group();
   const line = new MeshStandardMaterial({ color: 0xd8e2d0, roughness: 0.9, side: DoubleSide });
@@ -160,7 +161,7 @@ function buildFieldMarkings(): Group {
     m.position.copy(toThreeVector(vec3(Math.cos(a) * radius, Math.sin(a) * radius, 0.5)));
     group.add(m);
   }
-  return group;
+  return mergeByMaterial(group);
 }
 
 /** Dark ground around the arena, so the see-through walls don't show a void. */
