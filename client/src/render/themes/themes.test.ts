@@ -54,7 +54,8 @@ describe("themes", () => {
           mesh.getMatrixAt(i, instance);
           box.copy(bounds).applyMatrix4(instance.premultiply(mesh.matrixWorld));
           box.max.y += 50;
-          expect.soft(box.intersectsBox(field), `${name}: instance ${i} of ${mesh.type} ${mesh.uuid}`).toBe(false);
+          const at = new Vector3().setFromMatrixPosition(instance).toArray().map(Math.round).join(", ");
+          expect.soft(box.intersectsBox(field), `${name}: instance ${i} of ${mesh.name || geometry.type} at ${at}`).toBe(false);
         }
       } else {
         const position = geometry.getAttribute("position");
@@ -105,6 +106,10 @@ describe("themes", () => {
 
   it("platformer: at most 20 draw calls for all its scenery", () => {
     expect(meshes(theme("platformer").root).length).toBeLessThanOrEqual(20);
+  });
+
+  it("haunted: at most 24 draw calls for all its scenery", () => {
+    expect(meshes(theme("haunted").root).length).toBeLessThanOrEqual(24);
   });
 
   it("meadow: the same scenery every time (seeded)", async () => {

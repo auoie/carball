@@ -21,8 +21,8 @@ Online: start the server (`cd server && cargo run --release`), then open `http:/
 
 Arena themes: `?theme=meadow` (a sunny countryside stadium), `?theme=forest` (a clearing on a forest route, with
 wildlife), `?theme=city` (a cyberpunk megacity at night), `?theme=infested` (a ruined zone overrun by a parasitic
-biomass), `?theme=kawaii` (a pastel candy land) or `?theme=platformer` (a bright, blocky platform-game world),
-combinable with `?server`; the default is `night`.
+biomass), `?theme=kawaii` (a pastel candy land), `?theme=platformer` (a bright, blocky platform-game world) or
+`?theme=haunted` (a haunted graveyard at night), combinable with `?server`; the default is `night`.
 
 ## Correctness checks
 ```sh
@@ -56,7 +56,8 @@ clearing in a mixed forest with a path, sunbeams and wild creatures wandering ou
 among neon-lit skyscrapers, with billboards, flying traffic, a train, searchlights and rain; `infested`: ruins and a
 wreck overrun by tendrils, spires and glowing pustules under an overcast haze, with drifting spores; `kawaii`: candy
 trees, cupcake houses, giant plush bears, a rainbow, floating hearts, stars and balloons; `platformer`: pixel-art
-brick and golden blocks, floating platforms, pipes, spinning coins, bump-hills and a castle); scenery stays out of the playing volume (tested) |
+brick and golden blocks, floating platforms, pipes, spinning coins, bump-hills and a castle; `haunted`: a moonlit
+mansion, fenced graves, bare trees, jack-o'-lanterns, lanterns, will-o'-wisps, bats and fog); scenery stays out of the playing volume (tested) |
 | `src/render/` | Three.js scene: a boxy Fennec-style car built around each hitbox (`carModel.ts`), the ball (its spin integrated client-side from the angular velocity, `ballSpin.ts`: the engine keeps RocketSim's `noBallRot`), pads, and the arena with see-through hexagon walls that light up around the ball (`hexWalls.ts`) |
 | `src/game/freeplay.ts` | freeplay rules: goals, ball reset, kickoff reset, ball-in-front / ball-on-car |
 | `src/game/online.ts` | online play: inputs out at 60 Hz, server updates in, prediction, HUD ping/buffer |
