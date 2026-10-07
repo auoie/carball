@@ -2,12 +2,14 @@
 //!
 //! One row per replicated RigidBody update:
 //! replay,frame,time,kind,actor,x,y,z,qx,qy,qz,qw,vx,vy,vz,wx,wy,wz,sleeping,throttle,steer,handbrake,boosting,
-//! jump,double_jump,dodge,boost_amount,body,steer_sensitivity,team
+//! jump,double_jump,dodge,boost_amount,body,steer_sensitivity,team,handbrake_ramp
 //!
 //! Units as replicated: positions uu, velocities uu/s, angular velocities rad/s × 100 (boxcars divides every vector by
 //! 100; the game sends angular velocity × 100). throttle/steer: the game's bytes (128 = 0; see `Vehicle_TA` input
 //! quantization in notes/physics-values.md). jump/double_jump/dodge/boosting: the car component is active.
 //! boost_amount 0–255 (255 = 100 boost). body: the loadout's body product id (23 Octane, 4284 Fennec, ...).
+//! handbrake_ramp: the car's handbrake value (rises 5/s while held, falls 2/s), integrated frame by frame from the
+//! replicated handbrake flag, each change taken halfway between the frame it arrived in and the one before.
 //!
 //! Usage: replay_extract OUT.csv REPLAY [REPLAY...]
 
@@ -38,6 +40,7 @@ struct CarInputs {
     dodge: bool,
     boost_amount: u8,
     team: u8,
+    handbrake_ramp: f32,
 }
 
 impl Default for CarInputs {
@@ -52,6 +55,7 @@ impl Default for CarInputs {
             dodge: false,
             boost_amount: 0,
             team: 255,
+            handbrake_ramp: 0.0,
         }
     }
 }
@@ -68,7 +72,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     writeln!(
         out,
         "replay,frame,time,kind,actor,x,y,z,qx,qy,qz,qw,vx,vy,vz,wx,wy,wz,sleeping,throttle,steer,handbrake,boosting,\
-         jump,double_jump,dodge,boost_amount,body,steer_sensitivity,team"
+         jump,double_jump,dodge,boost_amount,body,steer_sensitivity,team,handbrake_ramp"
     )?;
 
     for path in &args[2..] {
@@ -93,7 +97,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut car_pri: HashMap<i32, i32> = HashMap::new(); // car actor -> PRI actor
         let mut players: HashMap<i32, Player> = HashMap::new(); // PRI actor -> loadout and preferences
 
+        let mut prev_time = frames.first().map(|f| f.time).unwrap_or(0.0);
         for (fi, frame) in frames.iter().enumerate() {
+            // Handbrake ramps up to the middle of this frame interval with the state they had
+            let mid = (prev_time + frame.time) / 2.0;
+            for i in inputs.values_mut() {
+                let rate = if i.handbrake { 5.0 } else { -2.0 };
+                i.handbrake_ramp = (i.handbrake_ramp + rate * (mid - prev_time)).clamp(0.0, 1.0);
+            }
             for a in &frame.deleted_actors {
                 kinds.remove(&a.0);
                 inputs.remove(&a.0);
@@ -116,6 +127,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 };
                 kinds.insert(na.actor_id.0, kind);
             }
+            let mut bodies = Vec::new(); // rigid body updates, written once this frame's inputs are in
             for ua in &frame.updated_actors {
                 let actor = ua.actor_id.0;
                 let kind = *kinds.get(&actor).unwrap_or(&Kind::Other);
@@ -168,6 +180,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                     (Attribute::RigidBody(rb), _) if kind == Kind::Ball || kind == Kind::Car => {
+                        bodies.push((actor, kind, *rb));
+                    }
+                    _ => {}
+                }
+            }
+            // ... and from the middle of the interval to this frame with the new state
+            for i in inputs.values_mut() {
+                let rate = if i.handbrake { 5.0 } else { -2.0 };
+                i.handbrake_ramp = (i.handbrake_ramp + rate * (frame.time - mid)).clamp(0.0, 1.0);
+            }
+            prev_time = frame.time;
+            for (actor, kind, rb) in &bodies {
+                let (actor, kind) = (*actor, *kind);
+                {
                         let lv = rb.linear_velocity.unwrap_or(boxcars::Vector3f { x: 0.0, y: 0.0, z: 0.0 });
                         let av = rb.angular_velocity.unwrap_or(boxcars::Vector3f { x: 0.0, y: 0.0, z: 0.0 });
                         let inp = inputs.get(&actor).copied().unwrap_or_default();
@@ -180,7 +206,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let sens = player.steer_sensitivity.map(|s| s.to_string()).unwrap_or_default();
                         writeln!(
                             out,
-                            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+                            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{:.4}",
                             name,
                             fi,
                             frame.time,
@@ -192,10 +218,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             rb.sleeping as u8,
                             inp.throttle, inp.steer, inp.handbrake as u8, inp.boosting as u8,
                             inp.jump as u8, inp.double_jump as u8, inp.dodge as u8, inp.boost_amount,
-                            body, sens, inp.team
+                            body, sens, inp.team, inp.handbrake_ramp
                         )?;
-                    }
-                    _ => {}
                 }
             }
         }

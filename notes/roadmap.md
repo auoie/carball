@@ -124,7 +124,12 @@ throttle curve, hitbox sizes and wheel setup, ball radius, dodge-vs-double-jump 
   car); found in the code on the way: input bytes (patch 29).
 - [x] Ball sleeping (patch 30: a slow ball stops after 2 s, as in the game); floor friction and rolling checked.
 - [x] Vehicle update decompiled and matched (patch 31): wall/curve error 0.48 → 0.16 uu, goal 0.24 → 0.10.
-- [ ] Walls and curves still 5× the flat-floor error; goal-wall wobble reduced but not gone (up to 1.7°/tick).
+- [x] Powerslide checked: matches (fully engaged 0.015 uu); the apparent error was the unreplicated handbrake ramp,
+      now reconstructed by the extractor (all categories improved).
+- [ ] Low-speed turning: lateral acceleration 20 uu/s² (2.6%) short below 500 uu/s, shrinking with speed.
+- [ ] Walls and curves still 6× the flat-floor error; goal-wall wobble reduced but not gone (up to 1.7°/tick).
+- [ ] Next: jumps, double jumps, flips (fit the start tick); input changes between frames; bumps/demos; boost pads;
+      kickoffs; other hitboxes.
 - [ ] Wheels on dynamic bodies (car on car / ball): the game's pushback and reaction impulses not modelled.
 - [ ] Extend: jumps/dodges (fit the start tick), car–car bumps, other hitboxes, kickoffs.
 

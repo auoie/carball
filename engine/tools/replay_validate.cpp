@@ -48,6 +48,7 @@ struct CarRow {
 	bool handbrake = false, boosting = false, jump = false, doubleJump = false, dodge = false;
 	int boostAmount = 0, body = 0, team = 0;
 	float sensitivity = 1;
+	float handbrakeVal = 0; // reconstructed from the handbrake history (rises 5/s while held, falls 2/s)
 };
 
 struct Frame {
@@ -74,6 +75,8 @@ static RotMat FromQuat(float x, float y, float z, float w) {
 static float DecodeAxis(int b) {
 	return Quantize::InputAxisValue((int8_t)(b - 128));
 }
+
+static bool g_haveRampColumn = false;
 
 static std::vector<Replay> Load(const char* path) {
 	std::ifstream in(path);
@@ -129,10 +132,38 @@ static std::vector<Replay> Load(const char* path) {
 			c.body = f[27].empty() ? 0 : std::stoi(f[27]);
 			c.sensitivity = f[28].empty() ? 1 : num(28);
 			c.team = std::stoi(f[29]);
+			if (f.size() > 30 && !f[30].empty()) {
+				c.handbrakeVal = num(30); // from the extractor (frame-resolution history)
+				g_haveRampColumn = true;
+			}
 			fr.cars.push_back(c);
 		}
 	}
 	return replays;
+}
+
+// The handbrake ramps (POWERSLIDE_RISE_RATE 5/s, FALL_RATE 2/s) and replays only carry whether it is held:
+// integrate each car's history (coarse: at the car's own rows; the extractor does it per frame)
+static void ReconstructHandbrake(std::vector<Replay>& replays) {
+	for (Replay& r : replays) {
+		struct Track { double time; float val; bool held; };
+		std::map<int, Track> tracks;
+		for (Frame& f : r.frames) {
+			for (CarRow& c : f.cars) {
+				auto it = tracks.find(c.actor);
+				if (it == tracks.end()) {
+					tracks[c.actor] = { f.time, c.handbrake ? 1.f : 0.f, c.handbrake };
+				} else {
+					Track& t = it->second;
+					float dt = (float)(f.time - t.time);
+					t.val = std::clamp(t.val + (t.held ? 5.f : -2.f) * dt, 0.f, 1.f);
+					t.time = f.time;
+					t.held = c.handbrake;
+				}
+				c.handbrakeVal = tracks[c.actor].val;
+			}
+		}
+	}
 }
 
 static std::vector<uint8_t> Snapshot(Arena* arena) {
@@ -195,6 +226,7 @@ struct Case {
 	const CarRow* carNext = nullptr; // and its row in the compared frame
 	Vec rel, relLocal; // ball - car centre at the first frame: world, car frame (forward, right, up)
 	float relVelN = 0;  // ball - car velocity along the direction from car to ball (negative: approaching)
+	float hbBest = 0, hbBestErr = 0; // car-alone with --fit-handbrake: the best ramp value and its error
 };
 
 struct Arenas {
@@ -215,6 +247,9 @@ static Body Parked(const Body& ball, const CarRow& car) {
 	return parked;
 }
 
+static float g_handbrakeOverride = -1; // (diagnostic: force a handbrake ramp value)
+static bool g_handbrakeHistory = true;
+
 static void SetupCar(Arenas& A, const CarRow& c0, const CarControls& controls, bool useSensitivity, bool warmup,
                      const Body& ball) {
 	Restore(A.withCar, A.carClean);
@@ -233,7 +268,9 @@ static void SetupCar(Arenas& A, const CarRow& c0, const CarControls& controls, b
 	s.boost = std::max(c0.boostAmount / 255.f * 100.f, c0.boosting ? 1.f : 0.f);
 	s.isBoosting = c0.boosting;
 	s.boostingTime = c0.boosting ? 1.f : 0.f;
-	s.handbrakeVal = c0.handbrake ? 1.f : 0.f;
+	s.handbrakeVal = g_handbrakeOverride >= 0 ? g_handbrakeOverride
+	                 : g_handbrakeHistory     ? c0.handbrakeVal
+	                                          : (c0.handbrake ? 1.f : 0.f);
 	s.isSupersonic = s.vel.Length() >= 2200;
 	s.lastControls = controls;
 	A.car->SetState(s);
@@ -248,6 +285,7 @@ static void SetupCar(Arenas& A, const CarRow& c0, const CarControls& controls, b
 		warm.angVel = s.angVel;
 		warm.boost = s.boost;
 		warm.ballHitInfo = s.ballHitInfo;
+		warm.handbrakeVal = s.handbrakeVal;
 		A.car->SetState(warm);
 	}
 	SetBall(A.withCar, ball);
@@ -352,7 +390,7 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 	std::string meshes = ARENA_MESH_DIR, casesPath;
-	bool useSensitivity = true, warmup = true, zeroBallSpin = false;
+	bool useSensitivity = true, warmup = true, zeroBallSpin = false, fitHandbrake = false;
 	size_t limit = SIZE_MAX;
 	for (int i = 2; i < argc; i++) {
 		std::string a = argv[i];
@@ -360,12 +398,15 @@ int main(int argc, char** argv) {
 		else if (a == "--cases" && i + 1 < argc) casesPath = argv[++i];
 		else if (a == "--no-sensitivity") useSensitivity = false;
 		else if (a == "--no-warmup") warmup = false;
+		else if (a == "--no-handbrake-history") g_handbrakeHistory = false;
+		else if (a == "--fit-handbrake") fitHandbrake = true; // diagnostic: car-alone cases also try every ramp value
 		else if (a == "--zero-ball-spin") zeroBallSpin = true; // experiment: ball cases start without spin
 		else if (a == "--limit" && i + 1 < argc) limit = std::stoul(argv[++i]);
 	}
 
 	RocketSim::Init(meshes, true);
 	std::vector<Replay> replays = Load(argv[1]);
+	if (!g_haveRampColumn) ReconstructHandbrake(replays); // (older extracts: from the rows' handbrake flags)
 
 	Arenas A;
 	A.ballOnly = Arena::Create(GameMode::SOCCAR);
@@ -570,6 +611,20 @@ int main(int argc, char** argv) {
 				cs.frame = f0.index;
 				cs.dt = fNext->time - f0.time;
 				cs.e = Run(A.withCar, A.car, *fNext, c1, parked);
+				cs.hbBest = c0.handbrakeVal;
+				cs.hbBestErr = cs.e.carPos;
+				if (fitHandbrake && (c0.handbrake || c0.handbrakeVal > 0)) {
+					for (int v = 0; v <= 20; v++) {
+						g_handbrakeOverride = v / 20.f;
+						SetupCar(A, c0, controls, useSensitivity, warmup, parked);
+						Errors e = Run(A.withCar, A.car, *fNext, c1, parked);
+						if (e.carPos < cs.hbBestErr) {
+							cs.hbBestErr = e.carPos;
+							cs.hbBest = g_handbrakeOverride;
+						}
+					}
+					g_handbrakeOverride = -1;
+				}
 				cs.car = &c0;
 				cs.carNext = c1;
 				cs.category = std::string("car alone/") + (cs.e.carOnGround ? "" : "air (no air control) ") + Place(c0);
@@ -604,10 +659,10 @@ int main(int argc, char** argv) {
 		FILE* out = fopen(casesPath.c_str(), "w");
 		fprintf(out, "replay,frame,dt,category,k,ball_pos,ball_vel,ball_ang,car_pos,car_vel,car_ang,car_rot,ballistic,"
 		             "dvx,dvy,dvz,touch,dribble,rel_speed,blocked_k,blocked_ball_pos,blocked_ball_vel,blocked_car_pos,"
-		             "blocked_dvx,blocked_dvy,blocked_dvz,k_ball,k_car,ball_pos_alone,car_pos_alone,offset,blocked_offset,throttle,steer,boost,handbrake,sensitivity,car_speed,car_z,car_up_z,car_kick_vz,dp_fwd,dp_right,dp_up,dv_fwd,dv_right,dv_up,replay_acc_fwd,replay_acc_right,yaw_rate,yaw_rate_err,car_ticks,v_fwd,rel_x,rel_y,rel_z,rel_fwd,rel_right,rel_up,first_touch,relvel_n\n");
+		             "blocked_dvx,blocked_dvy,blocked_dvz,k_ball,k_car,ball_pos_alone,car_pos_alone,offset,blocked_offset,throttle,steer,boost,handbrake,sensitivity,car_speed,car_z,car_up_z,car_kick_vz,dp_fwd,dp_right,dp_up,dv_fwd,dv_right,dv_up,replay_acc_fwd,replay_acc_right,yaw_rate,yaw_rate_err,car_ticks,v_fwd,rel_x,rel_y,rel_z,rel_fwd,rel_right,rel_up,first_touch,relvel_n,hb_recon,hb_best,hb_best_err\n");
 		for (const Case& c : cases) {
 			fprintf(out, "%s,%d,%.5f,%s,%d,%.4f,%.3f,%.5f,%.4f,%.3f,%.5f,%.6f,%.3f,%.3f,%.3f,%.3f,%d,%d,%.2f,%d,%.4f,%.3f,%.4f,"
-			             "%.3f,%.3f,%.3f,%d,%d,%.4f,%.4f,%d,%d,%d,%d,%d,%d,%.3f,%.2f,%.2f,%.4f,%.2f,%.3f,%.3f,%.3f,%.2f,%.2f,%.2f,%.2f,%.2f,%.4f,%.4f,%d,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%d,%.2f\n",
+			             "%.3f,%.3f,%.3f,%d,%d,%.4f,%.4f,%d,%d,%d,%d,%d,%d,%.3f,%.2f,%.2f,%.4f,%.2f,%.3f,%.3f,%.3f,%.2f,%.2f,%.2f,%.2f,%.2f,%.4f,%.4f,%d,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%d,%.2f,%.3f,%.3f,%.4f\n",
 			        c.replay.c_str(), c.frame, c.dt, c.category.c_str(), c.e.k, c.e.ballPos, c.e.ballVel, c.e.ballAng,
 			        c.e.carPos, c.e.carVel, c.e.carAng, c.e.carRot, c.e.ballisticPos, c.e.ballVelDiff.x,
 			        c.e.ballVelDiff.y, c.e.ballVelDiff.z, c.e.ballTouch, c.dribble, c.relSpeed, c.blocked.k,
@@ -622,7 +677,8 @@ int main(int argc, char** argv) {
 			        c.car && c.e.carTicks ? (c.carNext->b.vel - c.car->b.vel).Dot(c.car->b.rot.right) / (c.e.carTicks / 120.f) : 0,
 			        c.car ? c.car->b.angVel.Dot(c.car->b.rot.up) : 0, c.e.carYawRateErr, c.e.carTicks,
 			        c.car ? c.car->b.vel.Dot(c.car->b.rot.forward) : 0, c.rel.x, c.rel.y, c.rel.z, c.relLocal.x,
-			        c.relLocal.y, c.relLocal.z, c.e.firstTouch, c.relVelN);
+			        c.relLocal.y, c.relLocal.z, c.e.firstTouch, c.relVelN, c.car ? c.car->handbrakeVal : 0, c.hbBest,
+			        c.hbBestErr);
 		}
 		fclose(out);
 	}

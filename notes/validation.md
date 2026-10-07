@@ -12,7 +12,7 @@ engine/build/replay_validate out/replays/states.csv --cases out/replays/cases.cs
 python3 scripts/validation_report.py out/replays/cases.csv                   # accelerations, touch bias
 ```
 `out/replays/` is git-ignored (replays hold player data). Options: `--no-sensitivity` (ignore the players' steering
-sensitivity), `--no-warmup` (see below).
+sensitivity), `--no-warmup`, `--no-handbrake-history`, `--fit-handbrake` (see below), `--zero-ball-spin`.
 
 ## Method (`engine/tools/replay_validate.cpp`)
 - Replays carry the server's physics states exactly as the game quantizes them every tick (positions and velocities in
@@ -28,27 +28,39 @@ sensitivity), `--no-warmup` (see below).
   are simulated without air control and reported separately.
 - Warm-up: a car's wheel forces use values from its previous tick (the "wheel carry"), which a replay doesn't have.
   Without it the first tick has no drive or brake force (one tick's worth of acceleration missing). The tool computes
-  them with one tick from the replay state, then puts the state back.
+  them with one tick from the replay state, then puts the state back. (Since patch 31 friction no longer uses the
+  previous tick's values; the warm-up still sets the other per-tick state.)
+- Handbrake ramp: the handbrake value rises 5/s while held and falls 2/s after release, and only the held flag is
+  replicated. The extractor integrates it frame by frame from the flag's history (each change taken halfway between
+  the frame it arrived in and the one before) into the `handbrake_ramp` column; `--no-handbrake-history` uses 0/1 instead,
+  `--fit-handbrake` also searches the best value for car-alone cases (diagnostic). The ramp is known to about a frame
+  (±0.08), which matters while it changes: lateral grip drops to 10% at full handbrake.
 
-## Results (all patches in)
+## Results (all patches in, handbrake ramp from the history; latest run)
 | Category | Cases | Ball position error p50 / p90 | Ball velocity error p50 / p90 | Car position error p50 / p90 |
 |---|---|---|---|---|
 | Ball in free flight | 174,058 | 0.000 / 0.001 uu | 0.00 / 0.01 uu/s | – |
 | Ball touching the arena | 46,449 | 0.000 / 0.010 | 0.00 / 0.01 | – |
-| Car on the ground, no touch | 5,453 | 0.000 / 0.010 | 0.00 / 0.01 | 0.19 / 3.1 uu |
-| Car on the ground, touch | 614 | 0.12 / 1.7 | 4.0 / 55 | 0.29 / 2.8 |
-| Car on the ground, dribble | 787 | 0.000 / 0.45 | 0.01 / 26 | 0.09 / 2.5 |
-| Car in the air, no touch (no air control) | 3,917 | 0.000 / 0.010 | 0.00 / 0.01 | 0.001 / 1.4 |
-| Car in the air, touch (no air control) | 258 | 0.77 / 3.8 | 25 / 163 | 0.21 / 3.8 |
+| Car near the ball, on the ground, no touch | 5,537 | 0.000 / 0.010 | 0.00 / 0.01 | 0.041 / 2.9 uu |
+| Car on the ground, touch | 626 | 0.086 / 1.7 | 0.85 / 61 | 0.050 / 2.8 |
+| Car on the ground, dribble | 790 | 0.000 / 0.40 | 0.01 / 20 | 0.014 / 2.1 |
+| Car in the air, no touch (no air control) | 4,111 | 0.000 / 0.010 | 0.00 / 0.01 | 0.000 / 1.2 |
+| Car in the air, touch (no air control) | 235 | 0.73 / 3.2 | 18 / 128 | 0.18 / 3.2 |
+| Car alone, flat floor | 95,526 | – | – | 0.020 / 2.2 |
+| Car alone, walls, curves, ceiling | 15,710 | – | – | 0.125 / 2.2 |
+| Car alone, in a goal (by the side wall) | 1,482 (346) | – | – | 0.076 / 1.5 (0.099 / 0.70) |
 (Errors after about 4 ticks. 0.01 is the replays' own precision. "Gravity only" for comparison: 0.1–0.4 uu
 without touches, 20 uu with them.)
+
+Flat floor by situation: straight, no handbrake ramp 0.000 / 0.52 (32,452); steering 0.030 / 0.42 (37,345);
+powerslide fully engaged 0.015 / 0.73 (157); handbrake ramping 0.97 / 4.9 (18,321: its value is only known to a frame).
 
 Ground driving (engine − game, uu/s², flat floor; `validation_report.py`):
 | | Game | Error |
 |---|---|---|
 | Coasting (no throttle) | −525.8 | 0.0 |
-| Full throttle, 400–800 / 800–1200 / 1200–1400 uu/s | 829 / 497 / 228 | +7 / +5 / +4 |
-| Full steer, lateral, 500–1000 / 1500–2400 uu/s | 1732 / 3204 | −1 / +16 |
+| Full throttle, 400–800 / 800–1200 / 1200–1400 uu/s | 847 / 506 / 238 | 0.0 / 0.0 / 0.0 |
+| Full steer, lateral, 100–500 / 500–1000 / 1500–2400 uu/s | 760 / 1702 / 3040 | −20 / −12 / −3 (our car turns slightly less at low speed: open) |
 
 ## Findings
 1. **Ball physics is exact.** Free flight and every contact with the arena (floor, walls, curves, goals) match to the
@@ -119,6 +131,13 @@ Ground driving (engine − game, uu/s², flat floor; `validation_report.py`):
     online config presumably overrides it), so patch 8 stays. Likewise `FUN_1402c58b0` appears to give the front-right
     wheel the front-left wheel's frame, which would make turning asymmetric; the game turns symmetrically (lateral
     acceleration 1615 / 1583 uu/s² left / right at low speed, 2712 / 2712 at medium).
+
+12. **Powerslide matches; its error was the hidden handbrake ramp.** With the handbrake held the error looked large
+    (median 4.27 uu with the ramp taken as 0/1). With the ramp reconstructed from the flag's history it is 0.43, the
+    best possible ramp value per case gives 0.054, and fully engaged powerslides (ramp certainly 1) are 0.015 with a
+    lateral acceleration error of −2 to −5 uu/s²: the slide physics is right. The ramp also explained much of what
+    looked like steering and wall error (cases just after a powerslide); accounting for it improved every category
+    (table above; e.g. touches 2.06 → 0.85 uu/s, flat floor 0.032 → 0.020 uu).
 
 Cars alone (far from the ball and other cars), car position error after ~4 ticks, our mesh / the game's mesh
 (before patch 31):
