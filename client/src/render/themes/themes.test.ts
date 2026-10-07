@@ -103,6 +103,10 @@ describe("themes", () => {
     expect(meshes(theme("kawaii").root).length).toBeLessThanOrEqual(24);
   });
 
+  it("platformer: at most 20 draw calls for all its scenery", () => {
+    expect(meshes(theme("platformer").root).length).toBeLessThanOrEqual(20);
+  });
+
   it("meadow: the same scenery every time (seeded)", async () => {
     const placements = (t: Theme): number[] =>
       meshes(t.root).flatMap((m) => (m instanceof InstancedMesh ? Array.from(m.instanceMatrix.array) : []));
