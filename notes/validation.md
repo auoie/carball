@@ -97,7 +97,31 @@ Ground driving (engine − game, uu/s², flat floor; `validation_report.py`):
    well as elsewhere (0.32 uu median after ~4 ticks). Whether the game wobbles the same way can't be told from them.
    Not changed.
 
-Cars alone (far from the ball and other cars), car position error after ~4 ticks, our mesh / the game's mesh:
+10. **The vehicle update (fixed: engine patch 31), found by reading the game's Bullet vehicle and confirmed here.**
+    Six differences from RocketSim, each tested alone and together on the replays (car position error, median uu):
+    | | Before | Pushback 1/60 alone | All six |
+    |---|---|---|---|
+    | Walls, curves, ceiling | 0.480 | 0.292 | 0.162 |
+    | In a goal | 0.238 | 0.131 | 0.099 |
+    | In a goal by the side wall (p90) | 0.348 (1.46) | 0.271 (1.27) | 0.124 (0.99) |
+    | Near the ball, on the ground | 0.186 | 0.143 | 0.102 |
+    | Flat floor | 0.050 | 0.050 | 0.032 |
+    | Ball velocity after ground touches | 3.91 uu/s | 2.54 | 2.06 |
+    The pushback's solver step (the game passes a default solver info: 1/60 s) mattered most; friction order, the raw
+    axle and the ray length each helped further; the pushback reset and the minimum hit distance a little (better in
+    more cases than worse in every category). Throttle acceleration error fell from +5–10 to +0.1 uu/s², and the last
+    touch bias (+0.18 uu/s along the hit direction) to 0.00 (95%: −0.01 to 0.02).
+    The goal-wall wobble is reduced (jittering spots in the scan 93 → 65, worst height wobble 1.34 → 0.69 uu) but a car
+    pressing into a goal side wall with throttle still tilts by up to 1.7° per tick.
+11. **Checks where the code alone would have misled.** `PhysicsConfig_TA.bUseAckermannSteering` is false in the
+    package, which turns the car's Ackermann steering into the average angle at setup (`FUN_140f17d30`,
+    `FUN_140ec7c00`). Replays say otherwise: per-wheel Ackermann fits better in 20,668 full-steer cases vs 3,907 (the
+    online config presumably overrides it), so patch 8 stays. Likewise `FUN_1402c58b0` appears to give the front-right
+    wheel the front-left wheel's frame, which would make turning asymmetric; the game turns symmetrically (lateral
+    acceleration 1615 / 1583 uu/s² left / right at low speed, 2712 / 2712 at medium).
+
+Cars alone (far from the ball and other cars), car position error after ~4 ticks, our mesh / the game's mesh
+(before patch 31):
 | Where | Cases | p50 | p90 |
 |---|---|---|---|
 | Flat floor | 95,490 | 0.050 / 0.050 | 2.99 / 3.00 |
@@ -115,7 +139,7 @@ a replay doesn't carry) differs. Next to look at.
   car/ball tick offset (fitted).
 - Not covered yet: car–car bumps and demos, cars on walls and the ceiling (included in "ground" when the wheels
   touch, not checked separately), non-Octane hitboxes, multi-car touches.
-- Car driving on walls and curves: ten times the flat-floor error (see above), on our mesh and the game's.
+- Car driving on walls and curves: 0.16 uu median error after patch 31, still five times the flat floor's.
 - Not validated: a ball left on a parked car's roof slowly rolls forward and off, because the game's impulse direction
   leans forward (`PushForwardScale`) and each touch after a bounce adds a little. Competitive replays don't have that
   situation.

@@ -129,6 +129,8 @@ public:
 	void updateSuspension(float deltaTime);
 
 	virtual void calcFrictionImpulses(float timeStep);
+	// RL PATCH: ray hits closer than this (squared, BU) to the wheel's hard point are ignored: inside the car's box
+	float m_minHitDistSq = 0;
 	void applyFrictionImpulses(float timeStep);
 
 	inline btRigidBody* getRigidBody() {

@@ -143,7 +143,7 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
 	if (_internalState.isDemoed)
 		return; // No other updates need to occur
 
-	// Do first part of the btVehicleRL update (update wheel transforms, do traces, calculate friction impulses) 
+	// Do first part of the btVehicleRL update (update wheel transforms, do traces) 
 	_bulletVehicle.updateVehicleFirst(tickTime);
 
 	btMatrix3x3 basis = _rigidBody.getWorldTransform().m_basis;
@@ -334,6 +334,10 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
 
 				suspensionRestLength -= RLConst::BTVehicle::MAX_SUSPENSION_TRAVEL;
 
+				{ // RL PATCH: the game ignores ray hits within the car's box: half its height (pre-skin) - 1 uu
+					float minDist = ((config.hitboxSize.z - 2.5f) / 2 - 1) * UU_TO_BT;
+					_bulletVehicle.m_minHitDistSq = minDist * minDist;
+				}
 				_bulletVehicle.addWheel(
 					wheelRayStartOffset * UU_TO_BT,
 					wheelDirectionCS, wheelAxleCS,

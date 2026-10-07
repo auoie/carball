@@ -123,9 +123,9 @@ throttle curve, hitbox sizes and wheel setup, ball radius, dodge-vs-double-jump 
   touches unbiased. Found and fixed: hit impulse from start-of-tick velocities (patch 28, the "bouncy" ball on the
   car); found in the code on the way: input bytes (patch 29).
 - [x] Ball sleeping (patch 30: a slow ball stops after 2 s, as in the game); floor friction and rolling checked.
-- [ ] Car driving on walls and curves: 10× the flat-floor error against replays, on our mesh and the game's.
-- [ ] Car wobble pressed against goal walls / on goal curves: in the vehicle model (same on the game's mesh); not
-      confirmed or ruled out against the game.
+- [x] Vehicle update decompiled and matched (patch 31): wall/curve error 0.48 → 0.16 uu, goal 0.24 → 0.10.
+- [ ] Walls and curves still 5× the flat-floor error; goal-wall wobble reduced but not gone (up to 1.7°/tick).
+- [ ] Wheels on dynamic bodies (car on car / ball): the game's pushback and reaction impulses not modelled.
 - [ ] Extend: jumps/dodges (fit the start tick), car–car bumps, other hitboxes, kickoffs.
 
 ## 8. Engine build

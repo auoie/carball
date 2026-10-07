@@ -399,6 +399,35 @@ static void TestInputQuantization(Arena* arena, Car* car) {
 		car->controls.steer, car->controls.pitch);
 }
 
+static void TestVehicleUpdate(Arena* arena, Car* car) {
+	puts("vehicle update as the game's: friction with this tick's inputs, full-length wheel rays, rest height");
+	BallState away;
+	away.pos = { 3000, 4000, 93.15f };
+	arena->ball->SetState(away);
+	car->SetState(CarAt({ 0, 0, 17.01f }, { 1, 0, 0 }, { 0, 0, 1 }));
+	car->controls = CarControls();
+	arena->Step(240);
+	float restZ = car->GetState().pos.z;
+	CHECK(restZ >= 16.995f && restZ <= 17.015f, "resting height %.3f (replays: 17.00-17.01)", restZ);
+	// Throttle acts on the tick it is pressed (RocketSim used the previous tick's engine force: nothing that tick)
+	CarState rest = car->GetState();
+	rest.vel = rest.angVel = Vec();
+	car->SetState(rest);
+	car->controls.throttle = 1;
+	arena->Step(1);
+	float v1 = car->GetState().vel.Dot(car->GetState().rotMat.forward);
+	CHECK(v1 > 5, "forward speed after the first tick of full throttle: %.2f uu/s", v1);
+	car->controls = CarControls();
+	// Wheel rays reach radius + rest + travel: a car held 1.25 uu below full extension still touches with all wheels
+	// (front: 12.5 + 26.755 + 12 = 51.255 uu from the hard point at 20.755 above the car's origin)
+	CarState high = CarAt({ 0, 0, 51.255f - 1.25f - 20.755f }, { 1, 0, 0 }, { 0, 0, 1 });
+	car->SetState(high);
+	arena->Step(1);
+	CarState h = car->GetState();
+	int contacts = h.wheelsWithContact[0] + h.wheelsWithContact[1] + h.wheelsWithContact[2] + h.wheelsWithContact[3];
+	CHECK(contacts == 4, "wheels touching 1.25 uu below full extension: %d", contacts);
+}
+
 static void TestBallHitStartOfTick(Arena* arena, Car* car) {
 	puts("car-ball hit impulse from start-of-tick velocities (OldRBState): none for a ball landing at rest on a parked car");
 	car->SetState(CarAt({ 0, 0, 17.01f }, { 1, 0, 0 }, { 0, 0, 1 }));
@@ -486,6 +515,7 @@ int main(int argc, char** argv) {
 	TestAutoFlip(arena, car);
 	TestAckermann(arena, car);
 	TestSuspensionScale(arena);
+	TestVehicleUpdate(arena, car);
 	TestBallHitStartOfTick(arena, car);
 	TestInputQuantization(arena, car);
 	TestSleeping(arena, car);

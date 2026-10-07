@@ -388,3 +388,25 @@ ball (`WakeRigidBody`). Engine patch 30.
 Sliding: ~230 uu/s² friction plus the 3%/s drag. Rolling: 2.3%/s (drag acting through the rolling constraint,
 0.03 × 5/7 for a solid sphere). Rolling is only possible below 6 rad/s × 91.25 = 547.5 uu/s.
 
+## Vehicle update (the game's Bullet vehicle; engine patch 31)
+Per tick (`FUN_1402c5340`): wheel hard points (`FUN_1402c38b0`), one broadphase query around all wheel rays
+(`FUN_1402c1730`), each wheel's ray tested per candidate object (`FUN_1402c3b50`), contact pass (`FUN_1402c3360`),
+the VehicleSim hook (`FUN_140eca840`: Wheel_TA updates, `FUN_140f1e830` throttle/brake, `FUN_140f5ff00` steering and
+wheel friction values, wheel frames updated with this tick's steering), suspension (`FUN_1402c2a40`), friction
+(`FUN_1402c49d0`).
+- Wheel setup (`FUN_140f044e0`, ×0.02): radius = WheelRadius, rest = hard point height − LocalRestPosition.z (hard
+  point at the hitbox centre height), travel = SuspensionTravel (12), max raise = SuspensionMaxRaise (2.5), friction
+  point offset = ContactForceDistance (0), minimum hit distance = hitbox height (pre-skin) / 2 − 1.
+- Ray: radius + rest + travel down the car's up axis; per object the closest hit, ignored if closer to the hard point
+  than the minimum distance; the closest remaining hit wins.
+- Contact pass: suspension length = trace − radius (no clamp); pushback reset to 0, and when trace < radius + rest −
+  max raise: `resolveSingleCollision` (impulse only, not applied) with a static default `btContactSolverInfo` (1/60 s,
+  erp 0.2), stored × 0.25 and added to the suspension impulse; on a dynamic ground body the opposite impulse goes to
+  it (not modelled: wheels on cars/ball). Relative velocity and 1/(n·up) clipped at 0.1 → 10.
+- Friction: lateral = `resolveSingleBilateral` against the fixed body along the wheel's axle (not projected) × dt ×
+  60 × lat friction; longitudinal = engine force × dt, or clamp(v_contact·fwd × 113.74, ±brake) × dt × 60, × long
+  friction, along normalize(normal × axle); applied at the contact point projected onto the plane through the car's
+  centre (minus up × ContactForceDistance = 0).
+- `PhysicsConfig_TA.bUseAckermannSteering` (package default false) would replace the car's Ackermann steering with the
+  average angle; replays show per-wheel Ackermann (see validation.md).
+

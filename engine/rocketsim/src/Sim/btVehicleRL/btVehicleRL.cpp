@@ -7,6 +7,36 @@
 
 RS_NS_START
 
+// RL PATCH (31): the vehicle as the game's Bullet vehicle does it (update FUN_1402c5340: ray FUN_1402c3b50, contact
+// pass FUN_1402c3360, VehicleSim hook, suspension FUN_1402c2a40, friction FUN_1402c49d0; wheels set up in
+// FUN_140f044e0). Replays confirm it (notes/validation.md).
+
+// Closest hit per collision object (the game tests each candidate object on its own, FUN_1402c3b50)
+struct PerObjectRayCallback : public btCollisionWorld::RayResultCallback {
+	struct Hit {
+		const btCollisionObject* obj;
+		btScalar fraction;
+		btVector3 normal;
+	};
+	Hit hits[16];
+	int count = 0;
+
+	btScalar addSingleResult(btCollisionWorld::LocalRayResult& r, bool normalInWorldSpace) override {
+		int i = 0;
+		while (i < count && hits[i].obj != r.m_collisionObject) i++;
+		if (i == count) {
+			if (count == 16) return 1;
+			hits[count++] = { r.m_collisionObject, 2, btVector3(0, 0, 0) };
+		}
+		if (r.m_hitFraction < hits[i].fraction) {
+			hits[i].fraction = r.m_hitFraction;
+			hits[i].normal = normalInWorldSpace ? r.m_hitNormalLocal : r.m_collisionObject->getWorldTransform().getBasis() * r.m_hitNormalLocal;
+		}
+		m_collisionObject = r.m_collisionObject;
+		return 1; // keep receiving every hit
+	}
+};
+
 btVehicleRL::btVehicleRL(
 	const btVehicleTuning& tuning, 
 	btRigidBody* chassis, btVehicleRaycaster* raycaster, btDynamicsWorld* world, 
@@ -121,9 +151,11 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
 	updateWheelTransformsWS(wheel);
 
 	float depth = -1;
+	wheel.m_extraPushback = 0; // RL PATCH: recomputed every tick (RocketSim kept it until the ray missed)
 
 	float suspensionTravel = wheel.m_maxSuspensionTravelCm / 100;
-	float realRayLength = wheel.getSuspensionRestLength() + suspensionTravel + wheel.m_wheelsRadius - RLConst::BTVehicle::SUSPENSION_SUBTRACTION;
+	// RL PATCH: radius + rest + travel (RocketSim subtracted the 2.5 uu max raise here too)
+	float realRayLength = wheel.getSuspensionRestLength() + suspensionTravel + wheel.m_wheelsRadius;
 
 	// See: I21
 	btVector3 source = wheel.m_raycastInfo.m_hardPointWS;
@@ -135,7 +167,29 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
 	btVehicleRaycaster::btVehicleRaycasterResult rayResults;
 	
 	btAssert(m_vehicleRaycaster);
-	btCollisionObject* object = (btCollisionObject*)m_vehicleRaycaster->castRay(source, target, m_chassisBody, rayResults);
+	// RL PATCH: each object's closest hit, ignored when it is within the car's box (closer than m_minHitDistSq)
+	btCollisionObject* object;
+	{
+		PerObjectRayCallback cb;
+		cb.m_ignoreObj = m_chassisBody;
+		cb.m_collisionFilterGroup |= m_vehicleRaycaster->addedFilterMask;
+		m_dynamicsWorld->rayTest(source, target, cb);
+		object = nullptr;
+		float best = 2;
+		for (int i = 0; i < cb.count; i++) {
+			const btRigidBody* body = btRigidBody::upcast(cb.hits[i].obj);
+			if (!body || !body->hasContactResponse()) continue;
+			btVector3 hit = source.lerp(target, cb.hits[i].fraction);
+			if ((hit - source).length2() < m_minHitDistSq) continue;
+			if (cb.hits[i].fraction < best) {
+				best = cb.hits[i].fraction;
+				object = (btCollisionObject*)cb.hits[i].obj;
+				rayResults.m_hitPointInWorld = hit;
+				rayResults.m_hitNormalInWorld = cb.hits[i].normal.normalized();
+				rayResults.m_distFraction = best;
+			}
+		}
+	}
 
 	// See: I23
 	if (object) {
@@ -152,14 +206,7 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
 		wheel.m_raycastInfo.m_suspensionLength = wheelTraceLenSq - wheel.m_wheelsRadius;
 
 		//clamp on max suspension travel
-		float minSuspensionLen = wheel.getSuspensionRestLength() - suspensionTravel;
-		float maxSuspensionLen = wheel.getSuspensionRestLength() + suspensionTravel;
-		wheel.m_raycastInfo.m_suspensionLength =
-			std::clamp(
-				wheel.m_raycastInfo.m_suspensionLength,
-				wheel.getSuspensionRestLength() - suspensionTravel,
-				wheel.getSuspensionRestLength() + suspensionTravel
-			);
+		// RL PATCH: not clamped to the travel (the ray's length and minimum hit distance bound it)
 
 		float denominator = wheel.m_raycastInfo.m_contactNormalWS.dot(getUpVector());
 
@@ -183,12 +230,15 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
 			if (wheelTraceLenSq < rayPushbackThresh) {
 
 				float wheelTraceDistDelta = wheelTraceLenSq - rayPushbackThresh;
+				// RL PATCH: the game passes a default solver info (static, so 1/60 s and erp 0.2), not the world's (1/120 s,
+				// which doubled the pushback's penetration term)
+				static const btContactSolverInfo gameSolverInfo;
 				float collisionResult = resolveSingleCollision(
 					m_chassisBody,
 					object,
 					rayResults.m_hitPointInWorld,
 					rayResults.m_hitNormalInWorld,
-					m_dynamicsWorld->getSolverInfo(),
+					gameSolverInfo,
 					wheelTraceDistDelta,
 					false
 				);
@@ -223,12 +273,20 @@ void btVehicleRL::updateVehicleFirst(float step) {
 
 	for (int i = 0; i < m_wheelInfo.size(); i++)
 		rayCast(m_wheelInfo[i]);
-
-	calcFrictionImpulses(step);
 }
 
 void btVehicleRL::updateVehicleSecond(float step) {
+	// RL PATCH: the wheels' friction uses this tick's VehicleSim values (steering, engine, brake, friction) and the
+	// velocities after the suspension impulse. RocketSim computed it before both, from the previous tick's values.
+	for (int i = 0; i < getNumWheels(); i++) {
+		btWheelInfoRL& wheel = m_wheelInfo[i];
+		bool contact = wheel.m_raycastInfo.m_isInContact, world = wheel.m_isInContactWithWorld;
+		updateWheelTransform(i); // this tick's steering (also resets the contact flags: keep them)
+		wheel.m_raycastInfo.m_isInContact = contact;
+		wheel.m_isInContactWithWorld = world;
+	}
 	updateSuspension(step);
+	calcFrictionImpulses(step);
 	applyFrictionImpulses(step);
 }
 
@@ -316,10 +374,8 @@ void btVehicleRL::calcFrictionImpulses(float timeStep) {
 			// Axle direction (includes steering turn)
 			btVector3 axleDir = wheel.m_worldTransform.getBasis().getColumn(m_indexRightAxis);
 
+			// RL PATCH: lateral friction along the wheel's own axle (RocketSim projected it onto the contact plane)
 			btVector3 surfNormalWS = wheel.m_raycastInfo.m_contactNormalWS;
-			float proj = axleDir.dot(surfNormalWS);
-			axleDir -= surfNormalWS * proj;
-			axleDir = axleDir.safeNormalized();
 
 			// Wheel forwards direction
 			btVector3 forwardDir = surfNormalWS.cross(axleDir).safeNormalized();
@@ -345,7 +401,7 @@ void btVehicleRL::calcFrictionImpulses(float timeStep) {
 					btVector3 groundObRelContactPoint = contactPoint - groundObject->getCenterOfMassPosition();
 
 					btVector3
-						v1 = m_chassisBody->getVelocityInLocalPoint(carRelContactPoint),
+						v1 = wheel.m_velAtContactPoint, // RL PATCH: as measured in the ray pass, before the suspension impulse
 						v2 = groundObject->getVelocityInLocalPoint(carRelContactPoint);
 					btVector3 contactVel = v1 - v2;
 					float relVel = contactVel.dot(forwardDir);
