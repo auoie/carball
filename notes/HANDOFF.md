@@ -21,8 +21,11 @@ the vehicle model (same on the game's mesh); the client predictor resyncs when t
 and matched to the game's Bullet vehicle (patch 31; replays: wall/curve error 3× lower). Then: powerslide,
 jumps, flips and pinches checked (all match; their errors were replay timing, now reconstructed or fitted by the
 validator); steering reverted to the game's average angle (patch 8 revised: the earlier replay test was confounded);
-wall-grip condition (patch 32). Next steps: `notes/roadmap.md` §7 "Next, in order". Car position error vs replays
-now ~0.010 uu flat, 0.117 walls/curves, 0.038 goals (median after ~4 ticks; `notes/validation.md`). A second Claude
+wall-grip condition (patch 32). Car–car checked with a new validator pass (`--carcar`, extractor `--demos`): bumps
+match; the demo cone is now tested at the time of impact (patch 33) and supersonic lasts 1 s below 2200 (patch 34),
+both from the code and confirmed by replay demos. The arena mesh now uses the game's tessellation (Bézier arcs;
+`notes/arena.md`), which brought walls/curves to 0.046 uu, as on the game's own mesh. Next steps: `notes/roadmap.md` §7 "Next, in order". Car position error vs replays
+now ~0.010 uu flat, 0.046 walls/curves, 0.020 goals (median after ~4 ticks; `notes/validation.md`). A second Claude
 session did client visuals (ball spin, hex walls, placeholder car models) in client/src.
 Agreed multiplayer plan: (1) exact restore ✓, (2) decode the
 game's netcode (input buffer, client sim-time adjustment, remote car/ball correction), (3) native authoritative

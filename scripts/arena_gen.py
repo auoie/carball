@@ -25,22 +25,49 @@ R_SIDE_FLOOR = 256.0       # side wall -> floor
 R_CEIL = 512.0             # every wall -> ceiling
 R_BACK_FLOOR = 160.0       # back wall -> floor (tapers to R_GOAL near the posts)
 DIAG = 8064.0              # corner diagonal |x| + |y|
-CORNER_D = 256.0 * math.sqrt(2)                        # corner arc tangent points from the line intersections
-CORNER_R = CORNER_D / math.tan(math.radians(22.5))     # = 874.04
+# Corner arcs (plan view): cubic Béziers sampled at t = i/8, both control arms CORNER_ARM long, tangent to the
+# walls and the diagonal at these ends (not circles: the wall ends are 384 from the line intersections, the
+# diagonal ends ~362)
+CORNER_SIDE = ((SIDE_X, 3584.0), (3840.471, 4223.529))  # side wall -> diagonal
+CORNER_BACK = ((3200.0, 4864.0), (2560.0, BACK_Y))       # diagonal -> back wall
+CORNER_ARM = 245.85
+# floor fillet radius across the back arc, from the diagonal (256) to the back wall (160), at t = i/8
+CORNER_BACK_FLOOR_R = [256.0, 251.668, 240.628, 225.399, 208.130, 190.816, 175.483, 164.355, 160.0]
 BACK_TAPER = (960.0, 1344.0)                           # |x| range of the 96 -> 160 back fillet taper
 # --- goal (local: y = depth behind the goal line, x >= 0 half) ---
 GOAL_X = 896.0             # inner side wall
 CHAMFER = 8.0              # 45° chamfer around the mouth (posts and crossbar)
 GOAL_TOP = 640.0           # crossbar underside / flat roof
 R_GOAL = 96.0              # every edge inside the goal
-RAMP = ((236.0, 0.0), (640.0, 16.0))
+RAMP = ((234.67, 0.0), (640.0, 16.0))
 BACK_C, BACK_R = (640.0, 256.0), 240.0
 BACK_TOP_DEG = 67.5        # upper back arc ends here, then the roof slopes to ROOF_FLAT_END
 ROOF_FLAT_END = 224.0
 # --- tessellation ---
 SEG90 = 8                  # segments per quarter circle (as in the game)
+BEZIER_K = 0.5518          # the game's quarter circles are cubic Béziers (controls at k·r) sampled at t = i/8
 EXT = 128.0                # end segments extended under/behind planes so no mesh edge is exposed
 WALL_LEVELS = [256.0 * k for k in range(1, 6)]
+
+
+def qc(k):
+    """Point k of SEG90 on a unit quarter circle from angle 0 to 90°, as the game tessellates every 90° arc: a cubic
+    Bézier with control points at BEZIER_K, sampled at equal parameter steps. Vertex angles 11.617°, 22.892°,
+    33.984°, 45°, … (not 11.25° steps); radius within +0.015% / −0.027% of the circle's. Returns (cos-like, sin-like)."""
+    t = k / SEG90
+    u = 1 - t
+    return (u ** 3 + 3 * u * u * t + 3 * u * t * t * BEZIER_K, 3 * u * u * t * BEZIER_K + 3 * u * t * t + t ** 3)
+
+
+def bezier(p0, d0, p3, d3, arm, t):
+    """Point and unit inward normal (tangent turned left) of the cubic Bézier from p0 (leaving along d0) to p3
+    (arriving along d3), control arms `arm` long."""
+    p1 = tuple(a + arm * d for a, d in zip(p0, d0))
+    p2 = tuple(a - arm * d for a, d in zip(p3, d3))
+    u = 1 - t
+    p = tuple(u ** 3 * a + 3 * u * u * t * b + 3 * u * t * t * c + t ** 3 * d for a, b, c, d in zip(p0, p1, p2, p3))
+    tan = norm(tuple(3 * u * u * (b - a) + 6 * u * t * (c - b) + 3 * t * t * (d - c) for a, b, c, d in zip(p0, p1, p2, p3)))
+    return p, (-tan[1], tan[0])
 
 
 def smoothstep(t):
@@ -135,15 +162,13 @@ def cum(P):
 # ---------------------------------------------------------------- profiles (o = distance from the wall, z)
 def floor_profile(r):
     """Floor fillet from the floor tangent to the wall tangent, with extensions under the floor and behind the wall."""
-    pts = [(r - r * math.sin(math.radians(90 * k / SEG90)), r - r * math.cos(math.radians(90 * k / SEG90)))
-           for k in range(SEG90 + 1)]
+    pts = [(r - r * qc(k)[1], r - r * qc(k)[0]) for k in range(SEG90 + 1)]
     return [extend(pts[0], pts[1])] + pts + [extend(pts[-1], pts[-2])]
 
 
 def ceil_profile(r=R_CEIL):
     """Ceiling fillet from the wall tangent to the ceiling tangent, with extensions behind the wall and above the ceiling."""
-    pts = [(r - r * math.cos(math.radians(90 * k / SEG90)), H - r + r * math.sin(math.radians(90 * k / SEG90)))
-           for k in range(SEG90 + 1)]
+    pts = [(r - r * qc(k)[0], H - r + r * qc(k)[1]) for k in range(SEG90 + 1)]
     return [extend(pts[0], pts[1])] + pts + [extend(pts[-1], pts[-2])]
 
 
@@ -157,26 +182,21 @@ def stations():
     """Plan contour from the side wall midline to the goal centre line: (point, inward normal, floor radius, kind)."""
     S = []
     # side wall (plane) -> only fillets, with extensions behind the wall plane
-    tangent_side = 3968.0 - CORNER_D
+    tangent_side = CORNER_SIDE[0][1]
     for y in [0, 512, 1024, 1536, 2048, 2560, 3072, tangent_side]:
         S.append(dict(p=(SIDE_X, y), n=(-1.0, 0.0), rf=R_SIDE_FLOOR, kind="side" if y < tangent_side else "side_end"))
     # corner: arc tangent to the side wall, diagonal, arc tangent to the back wall
-    c2 = (SIDE_X - CORNER_R, tangent_side)
+    d_side, d_diag, d_back = (0.0, 1.0), (-1 / math.sqrt(2), 1 / math.sqrt(2)), (-1.0, 0.0)
     for k in range(1, SEG90 + 1):
-        a = math.radians(45 * k / SEG90)
-        S.append(dict(p=(c2[0] + CORNER_R * math.cos(a), c2[1] + CORNER_R * math.sin(a)),
-                      n=(-math.cos(a), -math.sin(a)), rf=R_SIDE_FLOOR, kind="wall"))
-    d0 = S[-1]["p"]
-    c1 = (2944.0 - CORNER_D, BACK_Y - CORNER_R)
-    d1 = (c1[0] + CORNER_R * math.cos(math.radians(45)), c1[1] + CORNER_R * math.sin(math.radians(45)))
+        p, n = bezier(CORNER_SIDE[0], d_side, CORNER_SIDE[1], d_diag, CORNER_ARM, k / SEG90)
+        S.append(dict(p=p, n=n, rf=R_SIDE_FLOOR, kind="wall"))
+    d0, d1 = CORNER_SIDE[1], CORNER_BACK[0]
     n_diag = (-1 / math.sqrt(2), -1 / math.sqrt(2))
     for k in range(1, 4):
         S.append(dict(p=tuple(a + (b - a) * k / 4 for a, b in zip(d0, d1)), n=n_diag, rf=R_SIDE_FLOOR, kind="wall"))
-    for k in range(SEG90, -1, -1):          # k = 8 at the diagonal, 0 at the back wall
-        a = math.radians(90 - 45 * k / SEG90)
-        S.append(dict(p=(c1[0] + CORNER_R * math.cos(a), c1[1] + CORNER_R * math.sin(a)),
-                      n=(-math.cos(a), -math.sin(a)),
-                      rf=R_BACK_FLOOR + (R_SIDE_FLOOR - R_BACK_FLOOR) * smoothstep(k / SEG90), kind="wall"))
+    for k in range(SEG90 + 1):              # k = 0 at the diagonal, 8 at the back wall
+        p, n = bezier(CORNER_BACK[0], d_diag, CORNER_BACK[1], d_back, CORNER_ARM, k / SEG90)
+        S.append(dict(p=p, n=n, rf=CORNER_BACK_FLOOR_R[k], kind="wall"))
     # back wall to the post
     for x in [2304, 2048, 1792, 1536, 1344, 1280, 1216, 1152, 1088, 1024, 960, GOAL_X + CHAMFER]:
         S.append(dict(p=(float(x), BACK_Y), n=(0.0, -1.0), rf=back_floor_radius(x), kind="wall"))
@@ -187,8 +207,7 @@ def stations():
 def mouth_outline(r_extra):
     """Mouth outline (x, z) from the post top to the centre line; r_extra 8 = face (y 0), 0 = inside (y 8)."""
     r, c = R_GOAL + r_extra, (GOAL_X - R_GOAL, GOAL_TOP - R_GOAL)
-    pts = [(c[0] + r * math.sin(math.radians(90 - 90 * k / SEG90)), c[1] + r * math.cos(math.radians(90 - 90 * k / SEG90)))
-           for k in range(SEG90 + 1)]
+    pts = [(c[0] + r * qc(k)[0], c[1] + r * qc(k)[1]) for k in range(SEG90 + 1)]
     return pts + [(x, GOAL_TOP + r_extra) for x in (600.0, 400.0, 200.0, 0.0)]
 
 
@@ -235,11 +254,11 @@ def goal_path():
     """Centre-line profile (y, z) of the goal interior, from the mouth floor round the back to the mouth roof."""
     P = [(CHAMFER, 0.0), RAMP[0], RAMP[1]]
     for k in range(1, SEG90 + 1):                                   # lower back arc, -90° -> 0°
-        a = math.radians(-90 + 90 * k / SEG90)
-        P.append((BACK_C[0] + BACK_R * math.cos(a), BACK_C[1] + BACK_R * math.sin(a)))
-    for k in range(1, round(BACK_TOP_DEG / (90 / SEG90)) + 1):      # upper back arc, 0° -> 67.5°
-        a = math.radians(90 * k / SEG90)
-        P.append((BACK_C[0] + BACK_R * math.cos(a), BACK_C[1] + BACK_R * math.sin(a)))
+        c, s_ = qc(k)
+        P.append((BACK_C[0] + BACK_R * s_, BACK_C[1] - BACK_R * c))
+    for k in range(1, round(BACK_TOP_DEG / (90 / SEG90)) + 1):      # upper back arc, 0° -> ~67.5° (6 of 8 steps)
+        c, s_ = qc(k)
+        P.append((BACK_C[0] + BACK_R * c, BACK_C[1] + BACK_R * s_))
     P += [(ROOF_FLAT_END, GOAL_TOP), (CHAMFER, GOAL_TOP)]
     return P
 
@@ -276,9 +295,9 @@ def build_goal(m):
     def ring(i):
         pts = []
         for k in range(SEG90 + 1):
-            ph = math.radians(90 * k / SEG90)
-            yz = add(P[i], mul(off[i], 1 - math.cos(ph)))
-            pts.append((GOAL_X - R_GOAL + R_GOAL * math.sin(ph), yz[0], yz[1]))
+            c, s_ = qc(k)
+            yz = add(P[i], mul(off[i], 1 - c))
+            pts.append((GOAL_X - R_GOAL + R_GOAL * s_, yz[0], yz[1]))
         if i < floor_vertices:
             pts = [extend(pts[0], pts[1])] + pts
         return pts
@@ -305,8 +324,7 @@ def build_goal(m):
     prof = floor_profile(R_GOAL)[:-1]        # extension under the floor + fillet, no wall extension
     def wrap_ring(o, z):
         rho = CHAMFER + o
-        return [(axis[0] + rho * math.cos(math.radians(a)), axis[1] + rho * math.sin(math.radians(a)), z)
-                for a in [270 - 90 * j / SEG90 for j in range(SEG90 + 1)]]
+        return [(axis[0] - rho * qc(j)[1], axis[1] - rho * qc(j)[0], z) for j in range(SEG90 + 1)]   # 270° -> 180°
     W = [wrap_ring(o, z) for o, z in prof[:-1]] + [[(GOAL_X + CHAMFER, 0.0, R_GOAL), (GOAL_X, CHAMFER, R_GOAL)]]
     for a, b in zip(W, W[1:]):
         m.strip("post_base", a, b)

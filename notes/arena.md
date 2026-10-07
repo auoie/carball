@@ -30,24 +30,31 @@ included those extension points; the true radii are round numbers.)
 
 - The back-wall floor curve narrows from 160 to 96 between |x| = 1344 and 960:
   `r = 96 + 64·smoothstep((|x| − 960) / 384)`. It is 96 from |x| 960 to the post at 904.
-- Segment angles are slightly non-uniform in the game (11.6°, 11.3°, 11.1°, 11.0°, …). That makes
-  < 0.1 uu of difference against uniform 11.25° steps.
+- **Tessellation (every 90° arc in the arena and the goal):** a cubic Bézier quarter circle with its control
+  points at **0.5518 · r**, sampled at equal parameter steps t = i/8. Vertex angles 11.617°, 22.892°, 33.984°,
+  45°, … (not 11.25° steps); vertex radii +0.015% / −0.027% off the circle. It fits every measured arc to 0.002 uu.
+  The positions differ from uniform steps by < 0.1 uu, but the facet angles by up to 0.38°, and a car on a curve
+  sits on the facets: with uniform steps, cars on the side curves were 0.17 uu off the replays after ~4 ticks
+  (0.06 with the Bézier steps, as on the game's own mesh).
 
 ## Corners (plan view)
-- 45° diagonal wall on **|x| + |y| = 8064**.
-- Joined to the side wall and to the back wall by arcs tangent to both lines. Each arc's tangent points
-  are **256√2 = 362.04** from the line intersection, so **radius = 874.04**, 8 segments each.
-  - Side arc: centre (3221.96, 3605.96), from (4096, 3605.96) to (3840, 4224).
-  - Back arc: centre (2581.96, 4245.96), from (3200, 4864) to (2581.96, 5120).
-  - The game's vertices are within 1.4 uu of these circles (the best free fit is r ≈ 863, a little off-tangent).
+- 45° diagonal wall on **|x| + |y| = 8064**, from (3840.471, 4223.529) to (3200, 4864) in 4 equal segments.
+- Joined to the side wall and to the back wall by **cubic Bézier arcs** (not circles), tangent to the wall and the
+  diagonal, both control arms **245.85** long, sampled at t = i/8 (fit to 0.003 uu):
+  - Side arc: from **(4096, 3584)** to (3840.471, 4223.529).
+  - Back arc: from (3200, 4864) to **(2560, 5120)**.
+  - The wall ends are 384 from the line intersections, the diagonal ends ~362. (The earlier circle model, r 874.04
+    with tangent points 362.04 away, was within 1.4 uu but left cars in corners 0.42 uu off the replays; 0.09 now.)
+  - In the game the first and last segments run on behind the wall planes (no vertex at the wall end).
 - Wall vertical from the floor curve up to z 1536, then the 512 ceiling curve (constant all round).
 - Floor curve: 256 along the side arc and the diagonal. Across the back arc it narrows to the back wall's 160:
-  at station k (k = 0 at the back-wall tangent … 8 at the diagonal), `r = 160 + 96·smoothstep(k/8)`
-  (measured 164.5, 175.7, 191.0, 208.4, 225.7, 240.9, 252.0, 256; each cross-section is a true quarter circle).
+  from the diagonal (t = 0) to the back wall (t = 1) the radius at t = i/8 is **256, 251.668, 240.628, 225.399,
+  208.130, 190.816, 175.483, 164.355, 160** (read where each cross-section meets the vertical wall;
+  `160 + 96·smoothstep` is within 0.5).
 
 ## Goal
 Local coordinates of the +Y goal: x across, y = depth behind the goal line (world y = 5120 + y), z up.
-The −Y goal is the same mesh rotated 180°. Every edge below is a circular arc with 8 segments per 90°.
+The −Y goal is the same mesh rotated 180°. Every edge below is a quarter circle tessellated as above (Bézier, 8 steps per 90°).
 
 **Mouth**
 - Opening on the back-wall face (y = 0): x ±904, height 648, top corners rounded r 104 (centre x ±800, z 544).
@@ -59,8 +66,8 @@ The −Y goal is the same mesh rotated 180°. Every edge below is a circular arc
 **Profile at the centre line (side view)**
 | Piece | Shape |
 |---|---|
-| Floor | z = 0 (arena floor plane) to y = 236, then a straight ramp up to **z = 16 at y = 640** (≈2.3°) |
-| Back | arc r **240**, centre (y 640, z 256): bottom quarter from (640, 16) to (880, 256); top part continues to 67.5° at (732, 478) |
+| Floor | z = 0 (arena floor plane) to **y = 234.67**, then a straight ramp up to **z = 16 at y = 640** (≈2.3°) |
+| Back | arc r **240**, centre (y 640, z 256): bottom quarter from (640, 16) to (880, 256); top part continues for 6 of the 8 quarter-circle steps, to 67.1° at (733.4, 477.1) |
 | Back wall | furthest point **y = 880** (world 6000) at z = 256 |
 | Roof | flat z = 640 from y = 8 to 224, then slopes down (≈17.7°, z = 640 − 0.32·(y − 224)) to meet the back arc |
 
@@ -103,13 +110,17 @@ behind the side walls, or on the side-wall plane where the corner starts.
 - `scripts/arena_check.py` (local only; needs `out/arena_local/`) compares with the game's meshes in one quadrant:
   | | median | p99 | max |
   |---|---|---|---|
-  | game corner → ours | 0.19 | 1.77 | 2.56 |
-  | game side curves → ours | 0.06–0.12 | 0.7–1.1 | 2.0 |
-  | game goal + back wall → ours | 0.03 | 0.64 | 2.0 |
-  | ours → game | 0.06 | 1.43 | 2.62 |
+  | game corner → ours | 0.00 | 1.39 | 2.00 |
+  | game side curves → ours | 0.00 | 0.83–1.19 | 2.0 |
+  | game goal + back wall → ours | 0.00 | 0.64 | 2.0 |
+  | ours → game | 0.00 | 0.17 | 1.44 |
 
-  The worst spot is the corner's floor-curve blend near the back wall (x 2748, y 5074, z 84). Game surfaces
-  hidden behind another piece (overlaps) are excluded.
+  Game samples more than 2 uu from ours that lie behind our surface are dropped (the game's pieces overlap and run
+  on behind each other; ours is one welded mesh), so the game side's max is 2 by construction.
+- Replays (notes/validation.md finding 18): cars driving on walls, curves and corners are as close to the replays on
+  our mesh as on the game's own (0.046 uu median after ~4 ticks; corners 0.090 vs 0.084, side curves 0.058 vs
+  0.057). The one visible remainder is where the corner meets the back wall (|x| 2560–2700, 60 cases): the game's
+  corner and goal pieces overlap there and a wheel ray takes the nearer one.
 - `engine/tests/arena_smoketest.cpp` (stock RocketSim; same results with the patched engine, where ball–triangle contacts are one-sided):
   - 500 random balls at up to ~10,000 uu/s for 10 s each: none escaped; the closest any centre came to the outside was 51 uu.
   - A car on the goal ramp sits at ramp + 17.0 (replays: 17.0 ± 0.1).

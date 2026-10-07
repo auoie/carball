@@ -14,7 +14,10 @@
 //! dodge_torque: the dodge component's replicated DodgeTorque (as decoded: /100). *_since: seconds since that
 //! component became active (same halfway estimate), empty when it is not active.
 //!
-//! Usage: replay_extract OUT.csv REPLAY [REPLAY...]
+//! Usage: replay_extract [--demos DEMOS.csv] OUT.csv REPLAY [REPLAY...]
+//!
+//! --demos: one row per replicated demolition (Car_TA ReplicatedDemolish, _CustomFX / GoalExplosion, Extended):
+//! replay,frame,time,attacker,victim,avx,avy,avz,vvx,vvy,vvz (the actors and their velocities as replicated).
 
 use boxcars::{Attribute, ParserBuilder};
 use std::collections::HashMap;
@@ -78,7 +81,14 @@ struct Player {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = std::env::args().collect();
+    let mut args: Vec<String> = std::env::args().collect();
+    let mut demos = None;
+    if args.len() > 2 && args[1] == "--demos" {
+        let mut d = BufWriter::new(fs::File::create(&args[2])?);
+        writeln!(d, "replay,frame,time,attacker,victim,avx,avy,avz,vvx,vvy,vvz")?;
+        demos = Some(d);
+        args.drain(1..3);
+    }
     let mut out = BufWriter::new(fs::File::create(&args[1])?);
     writeln!(
         out,
@@ -210,6 +220,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if let Some(car) = component_car {
                             inputs.entry(car).or_default().boost_amount = *b;
                         }
+                    }
+                    (Attribute::Demolish(_), _) | (Attribute::DemolishFx(_), _) | (Attribute::DemolishExtended(_), _)
+                        if demos.is_some() =>
+                    {
+                        let (attacker, victim, av, vv) = match &ua.attribute {
+                            Attribute::Demolish(d) => (d.attacker.0, d.victim.0, d.attack_velocity, d.victim_velocity),
+                            Attribute::DemolishFx(d) => (d.attacker.0, d.victim.0, d.attack_velocity, d.victim_velocity),
+                            Attribute::DemolishExtended(d) => {
+                                (d.attacker.actor.0, d.victim.actor.0, d.attacker_velocity, d.victim_velocity)
+                            }
+                            _ => unreachable!(),
+                        };
+                        writeln!(
+                            demos.as_mut().unwrap(),
+                            "{name},{fi},{},{attacker},{victim},{},{},{},{},{},{}",
+                            frame.time, av.x, av.y, av.z, vv.x, vv.y, vv.z
+                        )?;
                     }
                     (Attribute::RigidBody(rb), _) if kind == Kind::Ball || kind == Kind::Car => {
                         bodies.push((actor, kind, *rb));

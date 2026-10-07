@@ -114,7 +114,9 @@ builds pass, with identical output (`check_native_wasm.sh`).
 | 11 | Merged ball–world contact: averaged normal re-normalised; friction/restitution averaged instead of last-wins | `FUN_1402b2720`, `FUN_1402be240` | `btSequentialImpulseConstraintSolver.cpp` |
 | 28 | Car–ball extra hit impulse from the bodies' **start-of-tick** velocities (`OldRBState`). RocketSim read them during the step, when they already hold that tick's gravity and car forces: a ball resting on a car's roof got ~3.5 uu/s pushed up every other tick. Replays: the ball left the car +3.0 uu/s too fast along the hit direction (95%: 2.6–3.5), now +0.2; dribbles +2.6 → 0.0 | `Car_TA.ApplyBallImpactForces` (`OldRBState.LinearVelocity`) | `Ball.cpp` `_OnHit`, `Ball::_startOfTickVel`, `Car::_oldState` |
 | 31 | The vehicle update as the game's Bullet vehicle: friction computed after this tick's VehicleSim values (steering, engine, brake, friction) and after the suspension impulse (RocketSim used the previous tick's values: forces lagged the inputs by a tick); lateral friction along the wheel's own axle (RocketSim projected it onto the contact plane); wheel rays radius + rest + travel (2.5 uu longer); each object's closest hit, ignored within the car's box (half its height − 1 uu); suspension length not clamped to the travel; the pushback recomputed every tick (RocketSim kept it until the ray missed) with a default solver info, 1/60 s (the world's 1/120 doubled its penetration term). Replays: car position error on walls and curves 0.48 → 0.16 uu (median), in goals 0.24 → 0.10, near the ball 0.19 → 0.10, flat floor 0.050 → 0.032; throttle acceleration error +5–10 → +0.1 uu/s² | vehicle update `FUN_1402c5340`, ray `FUN_1402c3b50`, contact pass `FUN_1402c3360`, suspension `FUN_1402c2a40`, friction `FUN_1402c49d0`, wheel setup `FUN_140f044e0` | `btVehicleRL.cpp`, `Car.cpp` `_BulletSetup` |
-| 32 | Wall-grip curve skipped only on a sticky surface (arena) with the raw throttle input non-zero (RocketSim: throttle or boost, any surface). Rare in replays (44 cases better, 31 worse) | Wheel_TA `FUN_140f588f0` | `Car.cpp` `_UpdateWheels` |
+| 32 | Wall-grip curve skipped only on a sticky surface (arena) with the raw throttle input non-zero (RocketSim: throttle or boost, any surface). Rare in replays (44 cases better, 31 worse). The sticky force's wall share likewise needs the raw throttle (or \|forward speed\| > 25), not throttle-or-boost (no replay case differs) | Wheel_TA `FUN_140f588f0`; Vehicle `FUN_140eb70a0` | `Car.cpp` `_UpdateWheels` |
+| 33 | Demo cone tested at the time of impact: both cars' start-of-tick states integrated one tick back and one forward, Bullet's continuous convex cast between the hitboxes (allowed penetration 0.04), positions lerped and rotations slerped at the fraction; start-of-tick states if the sweep misses. Bumps keep the start-of-tick states. Replays: 23 more of the game's demos reproduced, no new false ones | `Car_TA.ShouldDemolish`, `GetTimeOfImpact` `FUN_140efc840` / `FUN_140e9c2e0`; `IsBumperHit` uses `InitTimeOfImpactFromOldRBState` | `Arena.cpp` `SweepToImpact` |
+| 34 | Supersonic as in the game: on from 2200; below that it stays on until 1 s has been spent below 2200 or the speed drops under 2100 (`supersonicTime` = the game's `TimeBelowSupersonicSpeed`). RocketSim timed from becoming supersonic, so after 1 s supersonic it ended right below 2200. Replays: 128 demos by attackers at 2100–2200 that RocketSim's rule forbids | Car_TA `FUN_140f1c600` (`SuperSonicSettings`) | `Car.cpp` `_PostTickUpdate` |
 | 30 | The ball sleeps like in the game: Bullet's own deactivation (below 0.8 BU/s = 40 uu/s and 1 rad/s for 2 s, then velocities zeroed), and setting its state wakes it with the timer reset (`WakeRigidBody`). RocketSim woke the ball every tick unless its velocity was exactly zero, so a slow ball rolled forever, and put a ball at rest to sleep at once. Replays: a ball placed at rest falls asleep 2.0 s later (782 of 795 kickoffs). Cars never sleep (`Car_Default.bDisableSleeping`; RocketSim already keeps them active) | stock `btDiscreteDynamicsWorld::updateActivationState` (`FUN_1402c14a0`), `gDeactivationTime` 2.0, ball body built with the default thresholds (`FUN_140409570`) | `Arena.cpp` `Step`, `Ball.cpp` `SetState` |
 | 29 | Inputs are bytes: every axis is stored as 128 + q, q = round(v × 127) for v ≥ 0 and round(v × 128) below (halves up), read back as q / 127 or q / 128, on the server and for the local player. Applied to the controls every tick (idempotent) | `Vehicle_TA.SetVehicleInput` `FUN_140f30a70` | `Quantize::InputAxis`, `Car.cpp` `_PreTickUpdate` |
 | 27 | Air throttle while boosting: the game uses ThrottleForce × (boost active ? 1 : throttle), so boosting in the air gives 1058.33 uu/s² whatever the throttle. RocketSim's air boost (1058.33) already includes that, then added throttle × 66.67 again: boost + throttle in the air was 6% too strong, boost + reverse 6% too weak | AirControl ApplyForces `FUN_140eb3400` (`BoostComponent.bActive`) | `Car.cpp` `_PreTickUpdate` |
@@ -147,16 +149,18 @@ Before patches 28–31, driving, turning circles and jump height were within 0.5
 - **Cancel-lock timing:** the game checks the 0.041 s lock with the same active time it uses for the Z damping.
   Stock RocketSim advances that time after the air torque, so the patch adds one tick. With it, the first cancellable
   torque tick is the 4th. This is not yet verified against replays.
-- **Speed limits:** the game also "pushes the limits into the Bullet body", which may clamp during
-  integration. RocketSim clamps at the end of the tick. This is unverified, so it is unchanged (only the
-  auto-flip clamps immediately).
-- **Demo impact:** the game sweeps the cars to the time of impact (`GetTimeOfImpact`). We use the start-of-tick
-  states, which is what the game falls back to.
+- **Speed limits:** RocketSim clamps at the end of the tick (the auto-flip immediately), so a boosting car at 2300
+  integrates its position with ~2308 uu/s. Replays agree: top-speed boosting cars on the floor match to 0.010 uu
+  (median, 1,384 cases); a clamp during integration would leave us ~0.07 uu/tick ahead.
+- **Demo sweep:** the game's penetration-depth solver for the sweep is not identified (we use Bullet's GJK-EPA),
+  and it builds the impact rotation through an `FRotator`. Both only matter for boxes already overlapping a tick
+  before the start-of-tick states, or within a hair of the cone edge.
 - **Quantization** follows the game's arithmetic, but the basis→quaternion conversion is Bullet's, so it is
   not bit-identical to the game.
 - The car-bump callback now fires for every bump, including zero-push side contacts (the game's `EventBumpedCar`).
-- **Demo collision:** in the demo tick the collision is still solved, so a 2300 uu/s attacker drops to ~1040
-  (same as stock). The game probably doesn't slow the attacker. Check against replays (attacker speed around demos).
+- **Demo collision:** in the demo tick the collision is still solved, so the attacker loses speed. Replays agree:
+  for 1549 demos, the attacker's error is 1.33 uu (median) with the contact solved, against 6.99 uu with the
+  victim removed before the solve (solved fits better in 1050, removed-first in 27).
 - Not ported: the reverse-gravity mutator's dodge direction flip.
 
 ## Updating from upstream

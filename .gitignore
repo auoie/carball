@@ -13,6 +13,9 @@ ghidra/
 # Arena collision meshes extracted for local measurement only (Psyonix geometry)
 out/arena_local/
 
+# Experimental arena variants (scripts/arena_gen.py OUTDIR; regenerable). out/arena is the one the game uses.
+out/arena_*/
+
 # Decompiled game code (derived from the exe; regenerate with scripts/Decomp.java)
 out/decomp/
 out/decomp_tokens/
@@ -33,6 +36,8 @@ venv/
 .idea/
 *.swp
 .DS_Store
+# Claude Code's per-user settings (the shared .claude/settings.json can be committed)
+.claude/settings.local.json
 
 # replay extractor build output
 scripts/replay_extract/target/

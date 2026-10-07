@@ -10,6 +10,10 @@
 #include "../../../libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/btInternalEdgeUtility.h"
 #include "../../../libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btBoxShape.h"
 #include "../../../libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btSphereShape.h"
+#include "../../../libsrc/bullet3-3.24/BulletCollision/NarrowPhaseCollision/btContinuousConvexCollision.h"
+#include "../../../libsrc/bullet3-3.24/BulletCollision/NarrowPhaseCollision/btGjkEpaPenetrationDepthSolver.h"
+#include "../../../libsrc/bullet3-3.24/BulletCollision/NarrowPhaseCollision/btVoronoiSimplexSolver.h"
+#include "../../../libsrc/bullet3-3.24/LinearMath/btTransformUtil.h"
 #include "DropshotTiles/DropshotTiles.h"
 
 RS_NS_START
@@ -350,6 +354,47 @@ static bool IsWithinForwardCone(const RotMat& rot, Vec dir, float yawDeg, float 
 	return angleWithoutAxis(rot.up) <= yawDeg;
 }
 
+// RL PATCH: both cars at their time of impact, for the demo cone (Car_TA.ShouldDemolish -> GetTimeOfImpact, native
+// FUN_140efc840). Each car's start-of-tick state is integrated one tick back and one tick forward (FUN_140e9c2e0),
+// Bullet's continuous convex cast runs between the hitboxes over that span (allowed penetration 0.04), and the
+// positions are lerped and the rotations slerped at the fraction. A missed sweep keeps the start-of-tick states
+// (InitTimeOfImpactFromOldRBState).
+static void SweepToImpact(Car* car1, Car* car2, float tickTime, PhysState& impact1, PhysState& impact2) {
+	impact1 = car1->_oldState;
+	impact2 = car2->_oldState;
+
+	btTransform from[2], to[2];
+	Car* cars[2] = { car1, car2 };
+	for (int i = 0; i < 2; i++) {
+		const PhysState& s = cars[i]->_oldState;
+		btTransform t(s.rotMat, s.pos * UU_TO_BT);
+		btTransformUtil::integrateTransform(t, -(s.vel * UU_TO_BT), -s.angVel, tickTime, from[i]);
+		btTransformUtil::integrateTransform(t, s.vel * UU_TO_BT, s.angVel, tickTime, to[i]);
+	}
+
+	btVoronoiSimplexSolver simplexSolver;
+	btGjkEpaPenetrationDepthSolver penetrationSolver;
+	btContinuousConvexCollision cast(&car1->_childHitboxShape, &car2->_childHitboxShape, &simplexSolver, &penetrationSolver);
+	btConvexCast::CastResult result;
+	result.m_fraction = 1;
+	result.m_allowedPenetration = 0.04f;
+	btTransform child[2];
+	for (int i = 0; i < 2; i++)
+		child[i] = cars[i]->_compoundShape.getChildTransform(0);
+	if (!cast.calcTimeOfImpact(from[0] * child[0], to[0] * child[0], from[1] * child[1], to[1] * child[1], result) ||
+		result.m_fraction >= 1)
+		return;
+
+	float f = result.m_fraction;
+	PhysState* impacts[2] = { &impact1, &impact2 };
+	for (int i = 0; i < 2; i++) {
+		impacts[i]->pos = (from[i].getOrigin() + (to[i].getOrigin() - from[i].getOrigin()) * f) * BT_TO_UU;
+		btQuaternion q = from[i].getRotation().slerp(to[i].getRotation(), f);
+		if (q.length2() > 1e-8f)
+			impacts[i]->rotMat = btMatrix3x3(q.normalized());
+	}
+}
+
 // RL PATCH: car-car impacts follow Car_TA.ApplyCarImpactForces / ShouldDemolish / GetBumpImpulse,
 // using both cars' start-of-tick states (the game's OldRBState)
 void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint& manifoldPoint) {
@@ -408,8 +453,14 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
 		if (_mutatorConfig.demoMode == DemoMode::NORMAL && car1->_internalState.isSupersonic && canDemoTeam) {
 			// Backwards demolitions are allowed (PhysicsConfig_TA.bAllowBackwardsDemolitions)
 			float forwardSpeed = state.vel.Dot(state.rotMat.forward);
-			if (abs(forwardSpeed) >= DEMO_MIN_FORWARD_SPEED)
-				isDemo = IsWithinForwardCone(state.rotMat, hitboxDir, DEMO_CONE_YAW_DEG, DEMO_CONE_PITCH_DEG, forwardSpeed < 0);
+			if (abs(forwardSpeed) >= DEMO_MIN_FORWARD_SPEED) {
+				// The cone at the time of impact (the bump cone below uses the start-of-tick states)
+				PhysState impact, otherImpact;
+				SweepToImpact(car1, car2, tickTime, impact, otherImpact);
+				Vec impactDir =
+					hitboxCenter(otherImpact, car2->config.hitboxPosOffset) - hitboxCenter(impact, car1->config.hitboxPosOffset);
+				isDemo = IsWithinForwardCone(impact.rotMat, impactDir, DEMO_CONE_YAW_DEG, DEMO_CONE_PITCH_DEG, forwardSpeed < 0);
+			}
 		}
 
 		if (isDemo) {

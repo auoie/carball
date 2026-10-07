@@ -133,6 +133,8 @@ so it isn't a real conflict.
 | Bump interval | 0.25 s | | ✓ `BUMP_COOLDOWN_TIME` |
 | Centre-of-mass angle check (enabled) | bump: yaw 70°, pitch 36.87°; demo: yaw 45.57°, pitch 36.87° | | ⚠ different method (RocketSim: `BUMP_MIN_FORWARD_DIST` 64.5) |
 | Demolish condition | supersonic, other team (`Car_TA` defaults) | | ✓ |
+| Other angle checks | VictimHitAngle, AttackerHitAngle, VictimHitAngleCurve, ImpactNormal (0.707 demo / 0.259 bump) | | all disabled in the package |
+| Supersonic (`SuperSonicSettings`) | on from 2200; off after 1 s below 2200 (`TimeBelowSupersonicSpeed`) or under 2100 | | ⚠ RocketSim timed from becoming supersonic (patch 34) |
 
 ## Boost pads (`Stadium_P: Archetypes.VehiclePickup.*`)
 
@@ -207,8 +209,19 @@ else if Other != LastHitCar or time > LastHitTime + 0.25: BumpCar (sets LastHitC
   Speed = |Vel| of the attacker (the curves do NOT use SpeedTowardsCar)
   Impulse = (Vel/Speed) * (Other on ground ? GroundCurve(Speed) : AirCurve(Speed))
           + (Other on ground ? Other.Up * ZCurve(Speed) : 0)     // non-bumper hits: PushFactor = 0
-All states are the start-of-tick OldRBState (the demo check sweeps to the time of impact first).
+All states are the start-of-tick OldRBState, except the demo cone (below).
 ```
+Demo cone at the time of impact (`ShouldDemolish` → `GetTimeOfImpact`, native `FUN_140efc840`): for each car,
+`FUN_140e9c2e0` takes OldRBState (quaternion +0x590, location +0x5a0, velocity +0x5ac, angular velocity +0x5b8)
+and integrates it one tick back (negated velocities) and one tick forward (`btTransformUtil::integrateTransform`,
+`FUN_1402a9680`). `FUN_140efc5c0` runs Bullet's `btContinuousConvexCollision` (Voronoi simplex solver, a
+penetration-depth solver) between the compound children (the hitbox boxes) over that span, CastResult allowed
+penetration 0.04, keeping the smallest fraction < 1. Impact: locations lerped, quaternions slerped at the fraction;
+a missed sweep logs "ShouldDemolish() sweep check missed." and uses OldRBState (`InitTimeOfImpactFromOldRBState`).
+The cone (`FUN_140f0c940`) uses the attacker's impact rotation and the hitbox centres at impact (location +
+rotated `LocalCollisionOffset`, car +0x838). `IsBumperHit` always uses `InitTimeOfImpactFromOldRBState`.
+The demo itself (`OtherCar.Demolish(self)`) leaves the contact to the solver: the attacker loses speed (replays,
+notes/validation.md finding 17).
 Cone test (native `FUN_140f0d620`): direction d from attacker's hitbox centre to victim's at time of
 impact; pitch angle = angle(fwd, d with its right-axis component removed); yaw angle =
 angle(fwd, d with its up-axis component removed). (It removes 1/1.01 of the component.)
@@ -296,7 +309,7 @@ per wheel in contact:
 **New:** the suspension scale is computed per car from its wheel positions (Octane 35.735 / 54.265; Dominus
 36.77 / 53.23 …). RocketSim uses the Octane values for every car.
 
-### Sticky force (`Vehicle` `FUN_140eb70a0`) — matches RocketSim
+### Sticky force (`Vehicle` `FUN_140eb70a0`) — matches RocketSim (direction: sum of touching wheels' contact normals, normalized, `FUN_140eed3e0`; "throttling" = raw `Input.Throttle` ≠ 0, patch 32)
 Only if a wheel touches a material with `bStickyWheels` (all arena surfaces).
 `accel = contactUpDir * GravityZ * (Ground·|n.z| + S·(1−|n.z|))`, S = Wall (1.5) when throttling or
 |fwd speed| > 25, else Ground (0.5). Flat floor: 325 uu/s²; wall while driving: 975 uu/s².

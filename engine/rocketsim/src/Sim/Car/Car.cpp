@@ -216,21 +216,19 @@ void Car::_PostTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig
 
 	_internalState.rotMat = _rigidBody.getWorldTransform().m_basis;
 
-	{ // Update supersonic
+	{ // RL PATCH: update supersonic like the game (Car_TA FUN_140f1c600): on from 2200; below that it stays on until
+	  // 1 s has been spent below 2200 (TimeBelowSupersonicSpeed, here supersonicTime) or the speed drops under 2100.
+	  // RocketSim timed from becoming supersonic, so a car supersonic for over 1 s lost it right below 2200.
 		float speedSquared = (_rigidBody.m_linearVelocity * BT_TO_UU).length2();
 
-		if (_internalState.isSupersonic && _internalState.supersonicTime < RLConst::SUPERSONIC_MAINTAIN_MAX_TIME) {
-			_internalState.isSupersonic =
-				(speedSquared >= RLConst::SUPERSONIC_MAINTAIN_MIN_SPEED * RLConst::SUPERSONIC_MAINTAIN_MIN_SPEED);
-		} else {
-			_internalState.isSupersonic =
-				(speedSquared >= RLConst::SUPERSONIC_START_SPEED * RLConst::SUPERSONIC_START_SPEED);
-		}
-
-		if (_internalState.isSupersonic) {
-			_internalState.supersonicTime += tickTime;
-		} else {
+		if (speedSquared >= RLConst::SUPERSONIC_START_SPEED * RLConst::SUPERSONIC_START_SPEED) {
+			_internalState.isSupersonic = true;
 			_internalState.supersonicTime = 0;
+		} else if (_internalState.isSupersonic) {
+			_internalState.supersonicTime += tickTime;
+			if (_internalState.supersonicTime >= RLConst::SUPERSONIC_MAINTAIN_MAX_TIME ||
+				speedSquared < RLConst::SUPERSONIC_MAINTAIN_MIN_SPEED * RLConst::SUPERSONIC_MAINTAIN_MIN_SPEED)
+				_internalState.isSupersonic = false;
 		}
 	}
 
@@ -592,7 +590,9 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int 
 	if (wheelsHaveWorldContact) {
 		btVector3 upwardsDir = _bulletVehicle.getUpwardsDirFromWheelContacts();
 
-		bool fullStick = (realThrottle != 0) || (absForwardSpeed_UU > STOPPING_FORWARD_VEL);
+		// RL PATCH: the wall share needs the raw throttle input (Vehicle FUN_140eb70a0: Input.Throttle != 0 or
+		// |forward speed| > 25); RocketSim used the throttle including boost
+		bool fullStick = (controls.throttle != 0) || (absForwardSpeed_UU > STOPPING_FORWARD_VEL);
 
 		float stickyForceScale = config.threeWheels ? 0 : 0.5f;
 		if (fullStick)

@@ -12,8 +12,13 @@
 //               replicated: cars in the air are simulated without air control and reported separately.
 //               Split: ground / air, touching the ball in the engine's run or not, dribble (ball resting on the roof)
 //
+// Car–car cases (--carcar OUT.csv): two cars close together, far from the ball and the other cars, simulated together
+// and each alone (an alone error far above the pair error: the engine's bump/contact explains the game's). With
+// --demos DEMOS.csv (replay_extract --demos), demolitions between the frames are marked, and the attacker is also run
+// with the victim leaving before the demo tick's contact is solved.
+//
 // Usage: replay_validate STATES.csv [--meshes DIR] [--cases OUT.csv] [--no-sensitivity] [--no-warmup] [--zero-ball-spin]
-//                        [--limit N]
+//                        [--limit N] [--carcar OUT.csv [--demos DEMOS.csv]]
 //   STATES.csv from scripts/replay_extract.
 #include "RocketSim.h"
 #include "Sim/Quantize/Quantize.h"
@@ -51,6 +56,8 @@ struct CarRow {
 	float handbrakeVal = 0; // reconstructed from the handbrake history (rises 5/s while held, falls 2/s)
 	Vec dodgeTorque;        // replicated DodgeTorque /100: roll, pitch (e.g. 1.84, 1.58)
 	float jumpSince = -1, doubleJumpSince = -1, dodgeSince = -1; // seconds since that component became active
+	bool supersonic = false; // reconstructed from the speed history (ReconstructSupersonic)
+	float timeBelowSupersonic = 0;
 };
 
 struct Frame {
@@ -174,6 +181,33 @@ static void ReconstructHandbrake(std::vector<Replay>& replays) {
 	}
 }
 
+// The game's supersonic flag (on from 2200; off after 1 s below that or under 2100), from each car's rows
+static void ReconstructSupersonic(std::vector<Replay>& replays) {
+	for (Replay& r : replays) {
+		struct Track { double time; bool on; float below; };
+		std::map<int, Track> tracks;
+		for (Frame& f : r.frames) {
+			for (CarRow& c : f.cars) {
+				auto it = tracks.find(c.actor);
+				Track t = it == tracks.end() ? Track{ f.time, false, 0 } : it->second;
+				float speed = c.b.vel.Length();
+				if (speed >= RLConst::SUPERSONIC_START_SPEED) {
+					t.on = true;
+					t.below = 0;
+				} else if (t.on) {
+					t.below += (float)(f.time - t.time);
+					if (t.below >= RLConst::SUPERSONIC_MAINTAIN_MAX_TIME || speed < RLConst::SUPERSONIC_MAINTAIN_MIN_SPEED)
+						t.on = false;
+				}
+				t.time = f.time;
+				tracks[c.actor] = t;
+				c.supersonic = t.on;
+				c.timeBelowSupersonic = t.below;
+			}
+		}
+	}
+}
+
 static std::vector<uint8_t> Snapshot(Arena* arena) {
 	DataStreamOut out;
 	arena->Serialize(out);
@@ -272,6 +306,10 @@ static bool PreJump(const CarRow& c) {
 	return c.jump && c.b.vel.Dot(c.b.rot.up) < 50;
 }
 static bool g_handbrakeHistory = true;
+// Experiment (--warmup-previous): the wheel carry comes from simulating the car's previous row up to this state
+// instead of one tick at this state. Set per case by the car-alone pass.
+static const CarRow* g_warmupFrom = nullptr;
+static int g_warmupTicks = 0;
 
 static void SetupCar(Arenas& A, const CarRow& c0, const CarControls& controls, bool useSensitivity, bool warmup,
                      const Body& ball) {
@@ -294,7 +332,8 @@ static void SetupCar(Arenas& A, const CarRow& c0, const CarControls& controls, b
 	s.handbrakeVal = g_handbrakeOverride >= 0 ? g_handbrakeOverride
 	                 : g_handbrakeHistory     ? c0.handbrakeVal
 	                                          : (c0.handbrake ? 1.f : 0.f);
-	s.isSupersonic = s.vel.Length() >= 2200;
+	s.isSupersonic = c0.supersonic;
+	s.supersonicTime = c0.supersonic ? c0.timeBelowSupersonic : 0;
 	if (PreJump(c0)) { // the jump starts during the run (Run presses it at g_jumpPressAt)
 		s.hasJumped = false;
 		s.isJumping = false;
@@ -319,7 +358,21 @@ static void SetupCar(Arenas& A, const CarRow& c0, const CarControls& controls, b
 	if (PreJump(c0)) A.car->controls.jump = false; // (not during the warm-up)
 	if (warmup) {
 		SetBall(A.withCar, Parked(ball, c0));
-		A.withCar->Step(1);
+		if (g_warmupFrom) { // the previous row with its own one-tick carry, then simulated up to this state
+			auto place = [&](CarState q) {
+				q.pos = g_warmupFrom->b.pos;
+				q.rotMat = g_warmupFrom->b.rot;
+				q.vel = g_warmupFrom->b.vel;
+				q.angVel = g_warmupFrom->b.angVel;
+				A.car->SetState(q);
+			};
+			place(s);
+			A.withCar->Step(1);
+			place(A.car->GetState());
+			A.withCar->Step(g_warmupTicks);
+		} else {
+			A.withCar->Step(1);
+		}
 		CarState warm = A.car->GetState();
 		warm.pos = s.pos;
 		warm.rotMat = s.rotMat;
@@ -377,6 +430,7 @@ static std::string Place(const CarRow& c) {
 }
 
 static bool OctaneHitbox(int body);
+static float Percentile(std::vector<float> v, float p);
 
 // Steps up to KMAX ticks. The ball's errors are taken at its best tick count and the car's at its own: their states
 // in a replay frame can be from server ticks a few apart. `ballTicksBefore`: ticks the ball was advanced alone first.
@@ -459,6 +513,394 @@ static bool OctaneHitbox(int body) {
 	return body == 23 || body == 4284; // Octane, Fennec
 }
 
+// ---- Car–car ----
+
+struct Demo {
+	int frame, attacker, victim;
+};
+
+// Replicated demolitions, each once (the attribute is sent again with later updates)
+static std::map<std::string, std::vector<Demo>> LoadDemos(const std::string& path) {
+	std::map<std::string, std::vector<Demo>> demos;
+	std::ifstream in(path);
+	if (!in) {
+		fprintf(stderr, "cannot open %s\n", path.c_str());
+		exit(1);
+	}
+	std::string line;
+	std::getline(in, line);
+	std::map<std::string, bool> seen;
+	while (std::getline(in, line)) {
+		std::vector<std::string> f;
+		std::stringstream ss(line);
+		for (std::string x; std::getline(ss, x, ',');) f.push_back(x);
+		if (f.size() < 11 || f[3] == "-1") continue;
+		std::string key = f[0] + "," + f[4];
+		for (int i = 5; i < 11; i++) key += "," + f[i];
+		if (seen[key]) continue;
+		seen[key] = true;
+		demos[f[0]].push_back({ std::stoi(f[1]), std::stoi(f[3]), std::stoi(f[4]) });
+	}
+	return demos;
+}
+
+static int g_bumps = 0, g_demos = 0;
+static bool g_demoSkipsContact = false; // the victim leaves before the demo tick's contact is solved
+// The first event with car a as the bumper: its supersonic flag, forward speed and the victim's direction (hitbox
+// centres, start-of-tick) as yaw/pitch angles in its frame
+struct BumpEvent {
+	bool valid = false, supersonic = false;
+	float fwdSpeed = 0, yaw = 0, pitch = 0;
+};
+static Car* g_eventCar = nullptr;
+static BumpEvent g_event;
+static void OnBump(Arena*, Car* bumper, Car* victim, bool isDemo, void*) {
+	if (bumper == g_eventCar && !g_event.valid) {
+		const PhysState &s = bumper->_oldState, &o = victim->_oldState;
+		auto centre = [](const PhysState& st, const Vec& off) {
+			return st.pos + st.rotMat.forward * off.x + st.rotMat.right * off.y + st.rotMat.up * off.z;
+		};
+		Vec d = (centre(o, victim->config.hitboxPosOffset) - centre(s, bumper->config.hitboxPosOffset)).Normalized();
+		float fwd = s.vel.Dot(s.rotMat.forward);
+		Vec f = fwd < 0 ? -s.rotMat.forward : s.rotMat.forward;
+		g_event.valid = true;
+		g_event.supersonic = bumper->_internalState.isSupersonic;
+		g_event.fwdSpeed = fwd;
+		g_event.yaw = atan2f(fabsf(d.Dot(s.rotMat.right)), d.Dot(f)) * 57.2958f;
+		g_event.pitch = atan2f(fabsf(d.Dot(s.rotMat.up)), d.Dot(f)) * 57.2958f;
+	}
+	if (isDemo) {
+		g_demos++;
+		if (g_demoSkipsContact) victim->_rigidBody.m_collisionFlags |= btCollisionObject::CF_NO_CONTACT_RESPONSE;
+	} else {
+		g_bumps++;
+	}
+}
+
+struct PairArena {
+	Arena* arena;
+	Car *a, *b;
+	std::vector<uint8_t> clean;
+};
+
+struct PairErrors {
+	float a = 1e9f, b = 1e9f; // position error at each car's best tick count (b: 0 when not compared)
+	float aVel = 0, bVel = 0;
+	int kA = 0, kB = 0;
+	int bumps = 0, demos = 0;
+	float aSpeed = 0; // the attacker's (a's) engine speed at its best tick
+	BumpEvent event;
+};
+
+// Steps both cars up to KMAX ticks, comparing each with its next-frame row (b1 null: b not compared)
+static PairErrors RunPair(PairArena& P, const CarState& sa, const CarState& sb, const CarControls& ca,
+                          const CarControls& cb, const CarRow* a1, const CarRow* b1, const Body& ball) {
+	Restore(P.arena, P.clean);
+	P.a->SetState(sa);
+	P.b->SetState(sb);
+	P.a->controls = ca;
+	P.b->controls = cb;
+	SetBall(P.arena, ball);
+	g_bumps = g_demos = 0;
+	g_eventCar = P.a;
+	g_event = {};
+	PairErrors e;
+	if (!b1) e.b = 0;
+	for (int k = 1; k <= KMAX; k++) {
+		P.arena->Step(1);
+		CarState s = P.a->GetState();
+		float d = (s.pos - a1->b.pos).Length();
+		if (d < e.a) {
+			e.a = d;
+			e.kA = k;
+			e.aVel = (s.vel - a1->b.vel).Length();
+			e.aSpeed = s.vel.Length();
+		}
+		if (b1) {
+			CarState t = P.b->GetState();
+			float db = (t.pos - b1->b.pos).Length();
+			if (db < e.b) {
+				e.b = db;
+				e.kB = k;
+				e.bVel = (t.vel - b1->b.vel).Length();
+			}
+		}
+	}
+	e.bumps = g_bumps;
+	e.demos = g_demos;
+	e.event = g_event;
+	return e;
+}
+
+struct CarCarCase {
+	std::string replay;
+	int frame = 0;
+	double dt = 0;
+	bool demo = false, sameTeam = false;
+	const CarRow *a0 = nullptr, *b0 = nullptr, *a1 = nullptr, *b1 = nullptr; // a: the attacker in demo cases
+	float dist0 = 0, distMin = 0, closing = 0;
+	PairErrors pair, skip; // skip: demo cases, the victim leaving before the demo tick's contact is solved
+	int offset = 0, skipOffset = 0;
+	float aAlone = 0, bAlone = 0;
+	bool ballNear = false, inputsChanged = false;
+};
+
+static void CarCarPass(const std::vector<Replay>& replays, Arenas& A, const std::string& outPath,
+                       const std::string& demosPath, bool useSensitivity, bool warmup, size_t limit) {
+	auto demos = demosPath.empty() ? std::map<std::string, std::vector<Demo>>() : LoadDemos(demosPath);
+	PairArena diff, same;
+	diff.arena = Arena::Create(GameMode::SOCCAR);
+	diff.a = diff.arena->AddCar(Team::BLUE, CAR_CONFIG_OCTANE);
+	diff.b = diff.arena->AddCar(Team::ORANGE, CAR_CONFIG_OCTANE);
+	same.arena = Arena::Create(GameMode::SOCCAR);
+	same.a = same.arena->AddCar(Team::BLUE, CAR_CONFIG_OCTANE);
+	same.b = same.arena->AddCar(Team::BLUE, CAR_CONFIG_OCTANE);
+	for (PairArena* P : { &diff, &same }) {
+		P->arena->SetCarBumpCallback(OnBump);
+		P->clean = Snapshot(P->arena);
+	}
+
+	std::vector<CarCarCase> cases;
+	std::map<std::string, int> skipped;
+	for (const Replay& r : replays) {
+		std::map<int, std::pair<CarRow, double>> lastCar;
+		const Body* ball = nullptr;
+		double ballTime = 0;
+		const std::vector<Demo>& rd = demos[r.name];
+		std::map<int, bool> repeated; // actor -> its row in this frame repeats its previous one (a stale state)
+		for (size_t i = 0; i + 1 < r.frames.size() && cases.size() < limit; i++) {
+			const Frame& f0 = r.frames[i];
+			for (const CarRow& c : f0.cars) {
+				auto it = lastCar.find(c.actor);
+				repeated[c.actor] = it != lastCar.end() && c.b.vel.LengthSq() > 1 &&
+				                    memcmp(&it->second.first.b.pos, &c.b.pos, sizeof(Vec)) == 0 &&
+				                    memcmp(&it->second.first.b.vel, &c.b.vel, sizeof(Vec)) == 0;
+				lastCar[c.actor] = { c, f0.time };
+			}
+			if (f0.hasBall) {
+				ball = &f0.ball;
+				ballTime = f0.time;
+			}
+			if (!ball || f0.time - ballTime > 0.1) continue;
+			Vec ballPos = ball->pos + ball->vel * (float)(f0.time - ballTime);
+			for (size_t ia = 0; ia < f0.cars.size(); ia++)
+			for (size_t ib = ia + 1; ib < f0.cars.size(); ib++) {
+				const CarRow* a0 = &f0.cars[ia];
+				const CarRow* b0 = &f0.cars[ib];
+				Vec p = b0->b.pos - a0->b.pos, v = b0->b.vel - a0->b.vel;
+				float dist0 = p.Length();
+				if (dist0 > 600) continue;
+				float t = v.LengthSq() > 0 ? std::clamp(-p.Dot(v) / v.LengthSq(), 0.f, 0.15f) : 0.f;
+				float distMin = (p + v * t).Length();
+				if (distMin > 250) continue;
+				// A demolition between these two in the next few frames: the attacker becomes car a
+				const Demo* demo = nullptr;
+				for (const Demo& d : rd)
+					if (d.frame > f0.index && d.frame <= f0.index + 4 &&
+					    ((d.attacker == a0->actor && d.victim == b0->actor) || (d.attacker == b0->actor && d.victim == a0->actor)))
+						demo = &d;
+				if (demo && demo->attacker == b0->actor) std::swap(a0, b0);
+				auto skip = [&](const char* why) { skipped[std::string(demo ? "demo: " : "") + why]++; };
+				if (!OctaneHitbox(a0->body) || !OctaneHitbox(b0->body)) {
+					skip("car body not Octane/Fennec");
+					continue;
+				}
+				if (repeated[a0->actor] || repeated[b0->actor]) {
+					skip("a car state repeats its previous one (stale)");
+					continue;
+				}
+				if (a0->b.sleeping || b0->b.sleeping || PreJump(*a0) || PreJump(*b0)) {
+					skip("car asleep or jump starting");
+					continue;
+				}
+				bool ballNear = false;
+				for (const CarRow* c : { a0, b0 })
+					if ((ballPos - c->b.pos).Length() - 0.15f * (ball->vel - c->b.vel).Length() < 300) ballNear = true;
+				if (ballNear && !f0.hasBall) { // (near: simulated, from this frame's state)
+					skip("ball near, no state in this frame");
+					continue;
+				}
+				bool crowded = false;
+				for (auto& [actor, entry] : lastCar) {
+					double age = f0.time - entry.second;
+					if (actor == a0->actor || actor == b0->actor || age > 2) continue;
+					Vec q = entry.first.b.pos + entry.first.b.vel * (float)age;
+					for (const CarRow* c : { a0, b0 })
+						if ((q - c->b.pos).Length() < 500 + (float)age * 2300) crowded = true;
+				}
+				if (crowded) {
+					skip("a third car near");
+					continue;
+				}
+				// The next frame with both cars (demo: the attacker, at or after the demo frame)
+				const CarRow *a1 = nullptr, *b1 = nullptr;
+				const Frame* fNext = nullptr;
+				for (size_t j = i + 1; j < r.frames.size() && j <= i + 3 && !fNext; j++) {
+					const Frame& fj = r.frames[j];
+					if (fj.time - f0.time > 0.15) break;
+					const CarRow *x = nullptr, *y = nullptr;
+					for (const CarRow& c : fj.cars) {
+						if (c.actor == a0->actor) x = &c;
+						if (c.actor == b0->actor) y = &c;
+					}
+					if (demo ? (x && fj.index >= demo->frame) : (x && y)) {
+						a1 = x;
+						b1 = demo ? nullptr : y;
+						fNext = &fj;
+					}
+				}
+				if (!fNext) {
+					skip("car states missing in the next frames");
+					continue;
+				}
+				auto changed = [](const CarRow& c0, const CarRow& c1) {
+					return c0.jump != c1.jump || c0.doubleJump != c1.doubleJump || c0.dodge != c1.dodge ||
+					       c0.throttle != c1.throttle || c0.steer != c1.steer || c0.handbrake != c1.handbrake ||
+					       c0.boosting != c1.boosting;
+				};
+				bool inputsChanged = changed(*a0, *a1) || (b1 && changed(*b0, *b1));
+				if (inputsChanged && !demo) { // (demos: kept and flagged, the frames' first inputs used)
+					skip("inputs or jump/dodge changed between frames");
+					continue;
+				}
+
+				CarCarCase cs;
+				cs.replay = r.name;
+				cs.frame = f0.index;
+				cs.dt = fNext->time - f0.time;
+				cs.demo = demo != nullptr;
+				cs.sameTeam = a0->team == b0->team;
+				cs.a0 = a0;
+				cs.b0 = b0;
+				cs.a1 = a1;
+				cs.b1 = b1;
+				cs.dist0 = dist0;
+				cs.distMin = distMin;
+				cs.closing = -(b0->b.vel - a0->b.vel).Dot((b0->b.pos - a0->b.pos).Normalized());
+				cs.ballNear = ballNear;
+				cs.inputsChanged = inputsChanged;
+
+				// The ball out of the way: the ceiling corner farthest from both cars
+				Body parked = *ball;
+				parked.vel = parked.angVel = Vec();
+				float bestGap = -1;
+				for (float sx : { -3000.f, 3000.f })
+					for (float sy : { -4000.f, 4000.f }) {
+						Vec c(sx, sy, 1900);
+						float gap = std::min((c - a0->b.pos).Length(), (c - b0->b.pos).Length());
+						if (gap > bestGap) {
+							bestGap = gap;
+							parked.pos = c;
+						}
+					}
+				if (ballNear) parked = f0.ball;
+
+				// Each car alone
+				CarControls ca = ReplayControls(*a0), cb = ReplayControls(*b0);
+				SetupCar(A, *a0, ca, useSensitivity, warmup, parked);
+				cs.aAlone = Run(A.withCar, A.car, *fNext, a1, parked).carPosAlone;
+				if (b1) {
+					SetupCar(A, *b0, cb, useSensitivity, warmup, parked);
+					cs.bAlone = Run(A.withCar, A.car, *fNext, b1, parked).carPosAlone;
+				}
+
+				// Together, the older car's state advanced alone first (offset d > 0: b's state is newer)
+				auto prepared = [&](const CarRow& c, const CarControls& controls, int ticks) {
+					SetupCar(A, c, controls, useSensitivity, warmup, parked);
+					if (ticks > 0) A.withCar->Step(ticks);
+					return A.car->GetState();
+				};
+				PairArena& P = cs.sameTeam ? same : diff;
+				for (int variant = 0; variant < (cs.demo ? 2 : 1); variant++) {
+					g_demoSkipsContact = variant == 1;
+					PairErrors& best = variant ? cs.skip : cs.pair;
+					int& bestOffset = variant ? cs.skipOffset : cs.offset;
+					float bestScore = 1e30f;
+					for (int d = -6; d <= 6; d++) {
+						CarState sa = prepared(*a0, ca, std::max(d, 0));
+						CarState sb = prepared(*b0, cb, std::max(-d, 0));
+						PairErrors e = RunPair(P, sa, sb, ca, cb, a1, b1, parked);
+						float score = e.a + e.b;
+						if (score < bestScore) {
+							bestScore = score;
+							best = e;
+							bestOffset = d;
+						}
+					}
+				}
+				g_demoSkipsContact = false;
+				cases.push_back(cs);
+			}
+		}
+	}
+
+	// Summary: by what happened (replay demo; the engine bumped; the replay shows an interaction the engine lacks)
+	auto kind = [](const CarCarCase& c) -> std::string {
+		if (c.demo) return std::string("demo") + (c.ballNear ? " (ball near)" : "");
+		if (c.ballNear) return "ball near";
+		bool replayContact = std::max(c.aAlone, c.bAlone) > 5;
+		bool engineContact = c.pair.bumps > 0;
+		if (engineContact) return replayContact ? "bump (engine and game)" : "bump (engine only)";
+		return replayContact ? "contact (game only)" : "no contact";
+	};
+	std::map<std::string, std::vector<const CarCarCase*>> byKind;
+	for (const CarCarCase& c : cases) byKind[kind(c)].push_back(&c);
+	printf("\ncar-car: %zu cases\n%-24s %6s  %-26s %-26s %-26s\n", cases.size(), "kind", "n", "pair err a/b p50 (uu)",
+	       "pair err a/b p90", "alone err a/b p50");
+	for (auto& [k, list] : byKind) {
+		std::vector<float> pa, pb, aa, ab;
+		for (const CarCarCase* c : list) {
+			pa.push_back(c->pair.a);
+			aa.push_back(c->aAlone);
+			if (c->b1) {
+				pb.push_back(c->pair.b);
+				ab.push_back(c->bAlone);
+			}
+		}
+		auto pct = [](std::vector<float> v, float q) { return v.empty() ? 0.f : Percentile(v, q); };
+		printf("%-24s %6zu  %8.3f / %-15.3f %8.3f / %-15.3f %8.3f / %-15.3f\n", k.c_str(), list.size(), pct(pa, .5f),
+		       pct(pb, .5f), pct(pa, .9f), pct(pb, .9f), pct(aa, .5f), pct(ab, .5f));
+	}
+	if (byKind.count("demo") || byKind.count("demo (ball near)")) {
+		std::vector<float> solved, skip;
+		int skipBetter = 0, solvedBetter = 0, engineDemo = 0;
+		for (const CarCarCase& cc : cases) {
+			const CarCarCase* c = &cc;
+			if (!c->demo) continue;
+			solved.push_back(c->pair.a);
+			skip.push_back(c->skip.a);
+			if (c->skip.a < c->pair.a - 0.5f) skipBetter++;
+			if (c->pair.a < c->skip.a - 0.5f) solvedBetter++;
+			if (c->pair.demos > 0) engineDemo++;
+		}
+		printf("demos: attacker error p50 contact solved %.2f, victim leaves first %.2f (p90 %.2f / %.2f); better: "
+		       "solved %d, leaves first %d; the engine demolished in %d of %zu\n",
+		       Percentile(solved, .5f), Percentile(skip, .5f), Percentile(solved, .9f), Percentile(skip, .9f),
+		       solvedBetter, skipBetter, engineDemo, solved.size());
+	}
+	printf("car-car skipped:\n");
+	for (auto& [why, n] : skipped) printf("  %-44s %d\n", why.c_str(), n);
+
+	FILE* out = fopen(outPath.c_str(), "w");
+	fprintf(out, "replay,frame,dt,kind,same_team,demo,a_speed,b_speed,a_ground,b_ground,dist0,dist_min,closing,"
+	             "a_err,b_err,a_vel_err,b_vel_err,a_alone,b_alone,k_a,k_b,offset,bumps,demos,"
+	             "skip_a_err,skip_offset,skip_demos,a_speed_next,a_speed_engine,a_speed_skip,a_z,b_z,ball_near,inputs_changed,"
+	             "a_boost,a_fwd_speed,b_fwd_speed,ev,ev_super,ev_fwd,ev_yaw,ev_pitch\n");
+	for (const CarCarCase& c : cases) {
+		bool ga = c.a0->b.pos.z < 60 && c.a0->b.rot.up.z > 0.95f, gb = c.b0->b.pos.z < 60 && c.b0->b.rot.up.z > 0.95f;
+		fprintf(out, "%s,%d,%.4f,%s,%d,%d,%.1f,%.1f,%d,%d,%.1f,%.1f,%.1f,%.3f,%.3f,%.2f,%.2f,%.3f,%.3f,%d,%d,%d,%d,%d,"
+		             "%.3f,%d,%d,%.1f,%.1f,%.1f,%.1f,%.1f,%d,%d,%d,%.1f,%.1f,%d,%d,%.1f,%.2f,%.2f\n",
+		        c.replay.c_str(), c.frame, c.dt, kind(c).c_str(), c.sameTeam, c.demo, c.a0->b.vel.Length(),
+		        c.b0->b.vel.Length(), ga, gb, c.dist0, c.distMin, c.closing, c.pair.a, c.pair.b, c.pair.aVel,
+		        c.pair.bVel, c.aAlone, c.bAlone, c.pair.kA, c.pair.kB, c.offset, c.pair.bumps, c.pair.demos, c.skip.a,
+		        c.skipOffset, c.skip.demos, c.a1->b.vel.Length(), c.pair.aSpeed, c.skip.aSpeed, c.a0->b.pos.z,
+		        c.b0->b.pos.z, c.ballNear, c.inputsChanged, c.a0->boosting, c.a0->b.vel.Dot(c.a0->b.rot.forward),
+		        c.b0->b.vel.Dot(c.b0->b.rot.forward), c.pair.event.valid, c.pair.event.supersonic, c.pair.event.fwdSpeed,
+		        c.pair.event.yaw, c.pair.event.pitch);
+	}
+	fclose(out);
+}
+
 static float Percentile(std::vector<float> v, float p) {
 	if (v.empty()) return NAN;
 	std::sort(v.begin(), v.end());
@@ -470,9 +912,9 @@ int main(int argc, char** argv) {
 		fprintf(stderr, "usage: replay_validate STATES.csv [--meshes DIR] [--cases OUT.csv] [--no-sensitivity] [--limit N]\n");
 		return 1;
 	}
-	std::string meshes = ARENA_MESH_DIR, casesPath;
+	std::string meshes = ARENA_MESH_DIR, casesPath, carcarPath, demosPath;
 	bool useSensitivity = true, warmup = true, zeroBallSpin = false, fitHandbrake = false;
-	bool fitFlipTime = false;
+	bool fitFlipTime = false, warmupPrevious = false;
 	float minReplayKick = 0; // only car-ball cases where the game's ball changed velocity by more than this
 	size_t limit = SIZE_MAX;
 	for (int i = 2; i < argc; i++) {
@@ -487,11 +929,15 @@ int main(int argc, char** argv) {
 		else if (a == "--fit-flip-time") fitFlipTime = true; // diagnostic: car-alone flips also try start times ±8 ticks
 		else if (a == "--zero-ball-spin") zeroBallSpin = true; // experiment: ball cases start without spin
 		else if (a == "--limit" && i + 1 < argc) limit = std::stoul(argv[++i]);
+		else if (a == "--carcar" && i + 1 < argc) carcarPath = argv[++i];
+		else if (a == "--warmup-previous") warmupPrevious = true; // experiment: wheel carry from the previous row
+		else if (a == "--demos" && i + 1 < argc) demosPath = argv[++i];
 	}
 
 	RocketSim::Init(meshes, true);
 	std::vector<Replay> replays = Load(argv[1]);
 	if (!g_haveRampColumn) ReconstructHandbrake(replays); // (older extracts: from the rows' handbrake flags)
+	ReconstructSupersonic(replays);
 
 	Arenas A;
 	A.ballOnly = Arena::Create(GameMode::SOCCAR);
@@ -499,6 +945,11 @@ int main(int argc, char** argv) {
 	A.withCar = Arena::Create(GameMode::SOCCAR);
 	A.car = A.withCar->AddCar(Team::BLUE, CAR_CONFIG_OCTANE);
 	A.carClean = Snapshot(A.withCar);
+
+	if (!carcarPath.empty()) { // (only the car-car pass)
+		CarCarPass(replays, A, carcarPath, demosPath, useSensitivity, warmup, limit);
+		return 0;
+	}
 
 	std::vector<Case> cases;
 	std::map<std::string, int> skipped;
@@ -667,7 +1118,9 @@ int main(int argc, char** argv) {
 	}
 
 	// Cars alone: far from the ball and from the other cars (driving physics anywhere in the arena)
-	for (const Replay& r : minReplayKick > 0 ? std::vector<Replay>() : replays) {
+	const std::vector<Replay> noReplays;
+	// (both lvalues: a conditional with a temporary would copy the replays, and the cases point into them)
+	for (const Replay& r : minReplayKick > 0 ? noReplays : replays) {
 		std::map<int, std::pair<CarRow, double>> lastCar;
 		const Body* ball = nullptr;
 		double ballTime = 0;
@@ -704,6 +1157,18 @@ int main(int argc, char** argv) {
 					continue;
 				CarControls controls = ReplayControls(c0);
 				Body parked = Parked(*ball, c0);
+				g_warmupFrom = nullptr;
+				if (warmupPrevious && i > 0) { // the previous frame's row, same inputs, ~4 ticks back
+					const Frame& fp = r.frames[i - 1];
+					for (const CarRow& c : fp.cars)
+						if (c.actor == c0.actor && c.throttle == c0.throttle && c.steer == c0.steer &&
+						    c.handbrake == c0.handbrake && c.boosting == c0.boosting && c.jump == c0.jump &&
+						    c.dodge == c0.dodge && c.doubleJump == c0.doubleJump && f0.time - fp.time < 0.05) {
+							g_warmupFrom = &c;
+							g_warmupTicks = std::max(1, (int)lround((f0.time - fp.time) * 120));
+						}
+					if (!g_warmupFrom) continue;
+				}
 				SetupCar(A, c0, controls, useSensitivity, warmup, parked);
 				Case cs;
 				cs.replay = r.name;
@@ -768,6 +1233,7 @@ int main(int argc, char** argv) {
 					}
 					g_handbrakeOverride = -1;
 				}
+				g_warmupFrom = nullptr;
 				cs.car = &c0;
 				cs.carNext = c1;
 				std::string action = Action(c0);

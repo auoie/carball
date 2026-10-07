@@ -67,8 +67,10 @@ throttle curve, hitbox sizes and wheel setup, ball radius, dodge-vs-double-jump 
 - [x] Special ball–world contact: re-normalised normal, averaged friction/restitution
 - [x] Per-tick state quantization
 - [x] Unit tests for each patch
-- [ ] Verify against replays: flip-cancel tick alignment, in-integration speed clamp, attacker speed after a demo
-      (see `engine/README.md`)
+- [x] Demo cone at the time of impact (patch 33); supersonic kept 1 s below 2200 (patch 34)
+- [x] Attacker speed after a demo: slowed by the solved contact, as in the game (replays)
+- [x] Speed clamp timing: end of tick, as the game (replays: top-speed boosting cars exact)
+- [ ] Verify: flip-cancel tick alignment (not in replays; see `engine/README.md`)
 
 ## 3. Camera
 
@@ -127,18 +129,18 @@ throttle curve, hitbox sizes and wheel setup, ball radius, dodge-vs-double-jump 
 - [x] Powerslide checked: matches (fully engaged 0.015 uu); the apparent error was the unreplicated handbrake ramp,
       now reconstructed by the extractor (all categories improved).
 - [x] Low-speed turning: fixed by steering both front wheels at the average angle (patch 8 revised, as the code says).
-- [ ] Walls and curves still 6× the flat-floor error; goal-wall wobble reduced but not gone (up to 1.7°/tick).
+- [x] Walls and curves: the arena mesh's tessellation (Bézier arcs, as the game's); now as close as on the game's own mesh.
+- [ ] Goal-wall wobble reduced but not gone (up to 1.7°/tick); recheck with the new mesh.
 - [x] Pinches checked (303, incl. 74 wall pinches up to 5437 uu/s): engine kick = game kick within 0.1%.
 - [x] Flips, jumps, double jumps in the validator (state from the replicated components).
 - [x] Jumps and flips: match; the errors were start timing (jump press fitted; flip start diagnostic).
-- [ ] Next: input changes between frames; bumps/demos; boost pads; kickoffs; other hitboxes.
 - [ ] Wheels on dynamic bodies (car on car / ball): the game's pushback and reaction impulses not modelled.
 - [x] Wall-grip condition (patch 32).
-- [ ] Next, in order: car–car bumps and demos vs replays (incl. whether the attacker keeps its speed in a demo, time of
-      impact), speed-cap timing (supersonic cars), walls/curves error (0.117 vs 0.010 flat), double jumps on walls
-      (timing), boost pads, kickoffs, other hitboxes, input changes between frames. Open questions replays can't answer:
-      goal-wall wobble, air control/flip cancels, ball on a parked car's roof.
-- [ ] Extend: jumps/dodges (fit the start tick), car–car bumps, other hitboxes, kickoffs.
+- [x] Car–car pass (`--carcar`): bumps match (ground: 0.43 uu vs 28 without the bump), the attacker slows in a demo
+      as the game does, demo cone at impact and supersonic rule fixed (patches 33, 34; validation.md finding 17).
+- [ ] Next, in order: double jumps on walls (timing), boost pads, kickoffs, other hitboxes, input changes between
+      frames. Open questions replays can't answer: goal-wall wobble, air control/flip cancels, ball on a parked
+      car's roof.
 
 ## 8. Engine build
 

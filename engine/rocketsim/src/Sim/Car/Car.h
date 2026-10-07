@@ -86,7 +86,8 @@ struct CarState : public PhysState {
 
 	bool isSupersonic = false;
 
-	// Time spent supersonic, for checking with the supersonic maintain time (see RLConst.h)
+	// RL PATCH: time spent below the supersonic start speed while supersonic, for checking with the supersonic maintain
+	// time (see RLConst.h; the game's TimeBelowSupersonicSpeed). RocketSim: time spent supersonic
 	float supersonicTime = 0;
 
 	// This is a state variable due to the rise/fall rate of handbrake inputs (see RLConst.h)

@@ -14,6 +14,14 @@ python3 scripts/validation_report.py out/replays/cases.csv                   # a
 `out/replays/` is git-ignored (replays hold player data). Options: `--no-sensitivity` (ignore the players' steering
 sensitivity), `--no-warmup`, `--no-handbrake-history`, `--fit-handbrake` (see below), `--zero-ball-spin`.
 
+Car–car (bumps and demolitions, finding 17), here over the 602 replays in `out/replays/more` (2v2/3v3 heavy),
+states piped so no large CSV is written (~20 s with 8 batches in parallel):
+```sh
+scripts/replay_extract/target/release/replay_extract --demos out/replays/demos_more.csv /dev/null out/replays/more/*.replay
+scripts/replay_extract/target/release/replay_extract /dev/stdout BATCH.replay... \
+  | engine/build/replay_validate /dev/stdin --carcar BATCH.csv --demos out/replays/demos_more.csv
+```
+
 ## Method (`engine/tools/replay_validate.cpp`)
 - Replays carry the server's physics states exactly as the game quantizes them every tick (positions and velocities in
   0.01 steps, angular velocity × 100, 18-bit quaternion components). A replay frame's states go into the engine as they
@@ -36,19 +44,19 @@ sensitivity), `--no-warmup`, `--no-handbrake-history`, `--fit-handbrake` (see be
   `--fit-handbrake` also searches the best value for car-alone cases (diagnostic). The ramp is known to about a frame
   (±0.08), which matters while it changes: lateral grip drops to 10% at full handbrake.
 
-## Results (all patches in, handbrake ramp from the history; latest run)
+## Results (all patches in, handbrake ramp from the history; latest run, arena mesh with the game's tessellation)
 | Category | Cases | Ball position error p50 / p90 | Ball velocity error p50 / p90 | Car position error p50 / p90 |
 |---|---|---|---|---|
 | Ball in free flight | 174,058 | 0.000 / 0.001 uu | 0.00 / 0.01 uu/s | – |
 | Ball touching the arena | 46,449 | 0.000 / 0.010 | 0.00 / 0.01 | – |
-| Car near the ball, on the ground, no touch | 5,537 | 0.000 / 0.010 | 0.00 / 0.01 | 0.041 / 2.9 uu |
-| Car on the ground, touch | 626 | 0.086 / 1.7 | 0.85 / 61 | 0.050 / 2.8 |
-| Car on the ground, dribble | 790 | 0.000 / 0.40 | 0.01 / 20 | 0.014 / 2.1 |
+| Car near the ball, on the ground, no touch | 5,539 | 0.000 / 0.010 | 0.00 / 0.01 | 0.011 / 2.9 uu |
+| Car on the ground, touch | 546 | 0.075 / 1.5 | 0.46 / 54 | 0.022 / 2.8 |
+| Car on the ground, dribble | 790 | 0.000 / 0.40 | 0.01 / 20 | 0.010 / 2.1 |
 | Car in the air, no touch (no air control) | 4,111 | 0.000 / 0.010 | 0.00 / 0.01 | 0.000 / 1.2 |
-| Car in the air, touch (no air control) | 235 | 0.73 / 3.2 | 18 / 128 | 0.18 / 3.2 |
-| Car alone, flat floor | 95,526 | – | – | 0.020 / 2.2 |
-| Car alone, walls, curves, ceiling | 15,710 | – | – | 0.125 / 2.2 |
-| Car alone, in a goal (by the side wall) | 1,482 (346) | – | – | 0.076 / 1.5 (0.099 / 0.70) |
+| Car in the air, touch (no air control) | 228 | 0.69 / 2.9 | 17 / 106 | 0.16 / 2.7 |
+| Car alone, flat floor | 95,526 | – | – | 0.010 / 2.2 |
+| Car alone, walls, curves, ceiling | 15,708 | – | – | 0.046 / 2.2 |
+| Car alone, in a goal (by the side wall) | 1,482 (346) | – | – | 0.020 / 1.5 (0.030 / 0.58) |
 (Errors after about 4 ticks. 0.01 is the replays' own precision. "Gravity only" for comparison: 0.1–0.4 uu
 without touches, 20 uu with them.)
 
@@ -184,6 +192,46 @@ Ground driving (engine − game, uu/s², flat floor; `validation_report.py`):
     interval (stick direction from DodgeTorque) brings the median to ~0.02 uu and the p90 from 12–26 to 1.2–4.6.
     The dodge impulse, flip torque and Z damping are right.
 
+17. **Bumps and demolitions match (engine patches 33, 34 from the code).** The car–car pass takes two cars close
+    together (closest approach within 250 uu over the interval), far from other cars, and simulates them together
+    and each alone; the ball is simulated too when near. The tick offset between the two cars is fitted (−6..6).
+    Rows that exactly repeat a moving car's previous row (stale states) are skipped. Over the 692 replays (5,192
+    cases, deduplicated):
+    - **Bumps:** where both the engine and the game show one, with both cars on the ground, the worse car's error is
+      0.43 uu (median; p90 6.4) with our bump against 28 uu without it; velocity error 8 uu/s median. With a car in
+      the air: 2.2 vs 17.7 uu (air control isn't in replays).
+    - **The attacker loses speed in a demo, as in our engine.** The demo tick's contact is solved: attacker error
+      1.33 uu with it, 6.99 uu with the victim removed before the solve (1,549 demos; better in 1,050 vs 27).
+    - **The demo cone is tested at the time of impact (patch 33).** `ShouldDemolish` sweeps both cars (Bullet's
+      continuous convex cast) from one tick before to one tick after their start-of-tick states; bumps use the
+      start-of-tick states. It reproduced 23 more of the game's demos, with no new false ones.
+    - **Supersonic lasts 1 s below 2200 (patch 34).** The game's timer counts time spent below 2200 while
+      supersonic (`TimeBelowSupersonicSpeed`); RocketSim's counted from becoming supersonic, so after a second of
+      supersonic it ended just below 2200. 128 replay demos were made at 2100–2200 by attackers that RocketSim's
+      rule calls not supersonic. With both patches the engine demolishes in 1,219 of the 1,549 cases where the game
+      did (from 1,150) and in 49 of 3,248 opponent pairs where the game didn't (from 47). Most remaining misses
+      have the attacker's inputs changing between the frames (often starting to boost), which the run can't know.
+    - Speed clamp timing (not car–car, checked alongside): top-speed boosting cars on the flat floor match to
+      0.010 uu (median, 1,384 cases). The game, like the engine, clamps after integrating the position.
+    - Validator fix: the car-alone loop iterated over a temporary copy of the replays, so the descriptive columns
+      of 2.7% of car-alone rows in `cases.csv` (speed, inputs, handbrake) read freed memory. Errors were unaffected.
+
+18. **Walls and curves: the arena mesh's tessellation (fixed in `scripts/arena_gen.py`).** After patch 31, cars on
+    curves were still 0.22 uu off (median) against 0.010 on the flat floor, with 0.29° of rotation error, and it
+    didn't depend on inputs. Warming the wheels up from the previous replay frame changed nothing (0.193 → 0.197),
+    but the game's own mesh brought curves to 0.067: our generated mesh was the difference. Its shape was within
+    ~0.1 uu, but the game tessellates every 90° arc as a cubic Bézier sampled at t = i/8 (angles 11.617°, 22.892°,
+    …; facets up to 0.38° off uniform 11.25° steps), and its corner arcs are Béziers too, not the circles we had
+    (notes/arena.md). With both, and the goal ramp starting at 234.67, our mesh is as good as the game's:
+    | Where (cars alone) | Cases | before | now | game's mesh |
+    |---|---|---|---|---|
+    | Side-wall floor curve | 2,462 | 0.171 | 0.058 | 0.057 |
+    | Corner curve | 1,516 | 0.417 | 0.090 | 0.084 |
+    | Back-wall floor curve | 1,029 | 0.166 | 0.079 | 0.066 |
+    | Vertical walls | 6,511 | 0.036 | 0.020 | 0.020 |
+    | Goal floor | 1,127 | 0.020 | 0.010 | 0.010 |
+    All walls/curves/ceiling: 0.117 → 0.046 (p90 2.25 → 2.23).
+
 Cars alone (far from the ball and other cars), car position error after ~4 ticks, our mesh / the game's mesh
 (before patch 31):
 | Where | Cases | p50 | p90 |
@@ -200,9 +248,8 @@ a replay doesn't carry) differs. Next to look at.
   when the input was zero, and flip cancels can't be modelled.
 - Touch residuals (~5 uu/s median) are dominated by what replays can't give: the car's exact sub-frame state and the
   car/ball tick offset (fitted).
-- Not covered yet: car–car bumps and demos, cars on walls and the ceiling (included in "ground" when the wheels
-  touch, not checked separately), non-Octane hitboxes, multi-car touches.
-- Car driving on walls and curves: 0.16 uu median error after patch 31, still five times the flat floor's.
+- Not covered yet: cars on walls and the ceiling (included in "ground" when the wheels touch, not checked
+  separately), non-Octane hitboxes, multi-car touches, bumps with three or more cars.
 - Not validated: a ball left on a parked car's roof slowly rolls forward and off, because the game's impulse direction
   leans forward (`PushForwardScale`) and each touch after a bounce adds a little. Competitive replays don't have that
   situation.

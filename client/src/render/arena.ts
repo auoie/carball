@@ -29,7 +29,9 @@ import { mergeByMaterial } from "./merge";
 import type { ArenaStyle, Theme } from "./themes/theme";
 import { vec3 } from "../math/vec";
 
-const ARENA = { sideX: 4096, backY: 5120, goalDepthY: 6000, height: 2048, cornerTangentY: 3968 - 256 * Math.SQRT2 };
+/** The arena's dimensions (uu, the game's frame). The side walls are flat up to |y| = cornerTangentY, where the
+ *  corner curves of the mesh begin (the game's Bézier corners: tested against the mesh). */
+export const ARENA = { sideX: 4096, backY: 5120, goalDepthY: 6000, height: 2048, cornerTangentY: 3584 };
 const TEAM_COLORS = [new Color(0x2a7fff), new Color(0xff8a1f)] as const; // blue (-y goal), orange (+y goal)
 /** Width of the mown stripes across the field (uu) */
 const STRIPE_WIDTH = 512;

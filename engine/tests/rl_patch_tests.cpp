@@ -311,6 +311,43 @@ static void TestDemos(Arena* arena, Car* attacker, Car* victim) {
 		CarAt({ 300, 0, 17 }, { 0, 1, 0 }, { 0, 0, 1 }), 30);
 	CHECK(log.demos == 0, "team demo");
 	victim->team = RS_OPPOSITE_TEAM(attacker->team);
+	arena->Step(4 * 120);
+
+	// The demo cone is tested at the time of impact (ShouldDemolish sweeps both cars): the victim, side-on, moves away
+	// sideways. At the start of the tick its hitbox centre is 48 deg off the attacker's nose (a bump with the
+	// start-of-tick states); at the impact, a fraction of a tick earlier, about 39 deg (a demo).
+	CarState a = CarAt({ 0, 0, 17 }, { 1, 0, 0 }, { 0, 0, 1 }, { 2300, 0, 0 });
+	CarState v = CarAt({ 98.3f, 81.1f, 17 }, { 0, 1, 0 }, { 0, 0, 1 }, { 0, 1500, 0 });
+	const Vec& off = attacker->config.hitboxPosOffset;
+	Vec dir = (v.pos + Vec(-off.y, off.x, off.z)) - (a.pos + off);
+	float startYaw = atan2f(dir.y, dir.x) / DEG;
+	CHECK(startYaw > RLConst::DEMO_CONE_YAW_DEG, "start-of-tick yaw %.1f deg should be outside the demo cone", startYaw);
+	log = RunImpact(arena, attacker, victim, a, v, 2);
+	CHECK(log.demos == 1, "hit inside the cone at the time of impact should demo (demos %d bumps %d)", log.demos, log.bumps);
+	arena->Step(4 * 120);
+}
+
+// Supersonic: on from 2200; below that, kept for 1 s (TimeBelowSupersonicSpeed) while above 2100
+static void TestSupersonic(Arena* arena, Car* car) {
+	puts("supersonic: kept for 1 s below 2200 (above 2100), also after a long supersonic run");
+	CarControls c;
+	c.throttle = 1;
+	c.boost = true;
+	CarState s = Run(arena, car, CarAt({ 0, -4000, 17 }, { 0, 1, 0 }, { 0, 0, 1 }, { 0, 2300, 0 }), c, 180);
+	CHECK(s.isSupersonic && s.supersonicTime == 0, "supersonic after 1.5 s at 2300 (time below %.3f)", s.supersonicTime);
+	s.vel = s.rotMat.forward * 2150; // slower, throttle held (no acceleration and no coasting above 1410)
+	c.boost = false;
+	s = Run(arena, car, s, c, 90);
+	float speed = s.vel.Length();
+	CHECK(s.isSupersonic && speed > 2100 && speed < 2200, "still supersonic 0.75 s below 2200 (speed %.1f)", speed);
+	s = Run(arena, car, s, c, 36);
+	CHECK(!s.isSupersonic, "supersonic should end after 1 s below 2200 (time %.3f)", s.supersonicTime);
+	s.vel = s.rotMat.forward * 2300;
+	s = Run(arena, car, s, c, 2);
+	CHECK(s.isSupersonic, "supersonic again at 2300");
+	s.vel = s.rotMat.forward * 2050;
+	s = Run(arena, car, s, c, 1);
+	CHECK(!s.isSupersonic, "supersonic should end below 2100");
 }
 
 static void TestBumpCurves() {
@@ -519,6 +556,7 @@ int main(int argc, char** argv) {
 	TestBallHitStartOfTick(arena, car);
 	TestInputQuantization(arena, car);
 	TestSleeping(arena, car);
+	TestSupersonic(arena, car);
 	arena->ball->SetState(BallState());
 	arena->ball->SetState(BallState());
 
