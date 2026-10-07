@@ -78,6 +78,19 @@ describe("themes", () => {
     for (const kind of crowd) expect(kind.count, kind.name).toBeGreaterThan(250);
   });
 
+  it("forest: at most 24 draw calls for all its scenery", () => {
+    expect(meshes(theme("forest").root).length).toBeLessThanOrEqual(24);
+  });
+
+  it("forest: wild creatures of every kind around the clearing, and no stands", () => {
+    const wild = meshes(theme("forest").root).filter((m): m is InstancedMesh => m.name.startsWith("wildlife: "));
+    expect(wild.map((m) => m.name.slice("wildlife: ".length)).sort()).toEqual(
+      ["beetle", "butterfly", "caterpillar", "ember", "puff", "ripple", "sprout"],
+    );
+    for (const kind of wild) expect(kind.count, kind.name).toBeGreaterThan(5);
+    expect(meshes(theme("forest").root).some((m) => m.name.startsWith("crowd: "))).toBe(false);
+  });
+
   it("meadow: the same scenery every time (seeded)", async () => {
     const placements = (t: Theme): number[] =>
       meshes(t.root).flatMap((m) => (m instanceof InstancedMesh ? Array.from(m.instanceMatrix.array) : []));

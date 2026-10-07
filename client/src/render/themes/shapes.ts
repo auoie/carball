@@ -6,7 +6,6 @@ import {
   InstancedMesh,
   type Material,
   Matrix4,
-  type MeshLambertMaterial,
   Quaternion,
   Vector3,
 } from "three";
@@ -67,22 +66,27 @@ export function instances(
 
 /**
  * Adds vertex animation to a material: GLSL run after `begin_vertex`, which may move `transformed` (the vertex in the
- * model's own frame, before its instance matrix), with `time` (seconds) and the given extra uniforms available.
- * Returns the uniforms, to update.
+ * model's own frame, before its instance matrix), with `time` (seconds) and the given extra uniforms available; and
+ * optionally GLSL run after `beginnormal_vertex`, to turn `objectNormal` the same way (for lighting). Returns the
+ * uniforms, to update.
  */
 export function animate<U extends Record<string, { value: unknown }>>(
-  material: MeshLambertMaterial,
+  material: Material,
   glsl: string,
   declarations: string,
   extra: U,
+  normalGlsl = "",
 ): U & { time: { value: number } } {
   const uniforms = { ...extra, time: { value: 0 } };
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
-    shader.vertexShader = `uniform float time;\n${declarations}\n${shader.vertexShader}`.replace(
-      "#include <begin_vertex>",
-      `#include <begin_vertex>\n${glsl}`,
-    );
+    shader.vertexShader = `uniform float time;\n${declarations}\n${shader.vertexShader}`
+      .replace("#include <begin_vertex>", `#include <begin_vertex>\n${glsl}`)
+      .replace("#include <beginnormal_vertex>", `#include <beginnormal_vertex>\n${normalGlsl}`);
   };
+  // Three.js reuses compiled shaders by this key (by default the source of onBeforeCompile, the same for every
+  // animation): each animation gets its own
+  const key = `${declarations}|${glsl}|${normalGlsl}`;
+  material.customProgramCacheKey = () => key;
   return uniforms;
 }

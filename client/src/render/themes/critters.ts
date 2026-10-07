@@ -1,6 +1,7 @@
-// The crowd: round little creatures of four (original) kinds, a sprout, an ember, a ripple and a puff, sitting in the
-// stands, breathing gently (just enough to look alive without drawing the eye from the play). One draw call per kind.
-// Each is built facing +z, standing on y = 0, about 110 uu tall.
+// Round little creatures of four (original) kinds: a sprout, an ember, a ripple and a puff. Each is built facing +z,
+// standing on y = 0, about 110 uu tall (also used by the forest's wildlife). And the meadow's crowd of them, sitting in
+// the stands, breathing gently (just enough to look alive without drawing the eye from the play). One draw call per
+// kind.
 import {
   type BufferGeometry,
   Color,
@@ -30,7 +31,7 @@ function body(color: number): BufferGeometry[] {
   return parts;
 }
 
-function sprout(): BufferGeometry {
+export function sprout(): BufferGeometry {
   return combine([
     ...body(0x9be0a0),
     part(new CylinderGeometry(3, 4, 26, 5), 0x6b8f3a, { position: [0, 104, -4] }),
@@ -39,7 +40,7 @@ function sprout(): BufferGeometry {
   ]);
 }
 
-function ember(): BufferGeometry {
+export function ember(): BufferGeometry {
   return combine([
     ...body(0xff8f52),
     part(new ConeGeometry(22, 48, 7), 0xffc43d, { position: [0, 112, -6] }),
@@ -49,7 +50,7 @@ function ember(): BufferGeometry {
   ]);
 }
 
-function ripple(): BufferGeometry {
+export function ripple(): BufferGeometry {
   return combine([
     ...body(0x6cbcff),
     part(new SphereGeometry(32, 8, 6), 0xe9f6ff, { position: [0, 40, 30], scale: [1, 1, 0.45] }),
@@ -58,7 +59,7 @@ function ripple(): BufferGeometry {
   ]);
 }
 
-function puff(): BufferGeometry {
+export function puff(): BufferGeometry {
   const ears = [-1, 1].flatMap((s) => [
     part(new SphereGeometry(16, 6, 5), 0xd9b8ff, { position: [s * 30, 94, -6] }),
     part(new SphereGeometry(9, 6, 4), 0xffb3d6, { position: [s * 31, 95, 6], scale: [1, 1, 0.5] }),

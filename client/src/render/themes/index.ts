@@ -3,7 +3,7 @@
 import { nightTheme } from "./night";
 import type { Theme } from "./theme";
 
-export const THEMES = ["night", "meadow"] as const;
+export const THEMES = ["night", "meadow", "forest"] as const;
 export type ThemeName = (typeof THEMES)[number];
 
 /** The theme called `value`, or the default (night). */
@@ -17,5 +17,7 @@ export async function createTheme(name: ThemeName): Promise<Theme> {
       return nightTheme();
     case "meadow":
       return (await import("./meadow")).meadowTheme();
+    case "forest":
+      return (await import("./forest")).forestTheme();
   }
 }

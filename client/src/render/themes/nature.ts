@@ -1,5 +1,6 @@
-// Countryside around the stadium: rolling hills with a dirt path and a pond, puffy trees, patches of tall grass that
-// sway in the wind, flowers, rocks, and snowy mountains on the horizon. Three.js frame: ground in x/z, y up.
+// Countryside around the arena: rolling hills with a dirt path and a pond, puffy trees, patches of tall grass that
+// sway in the wind, flowers, rocks, and snowy mountains on the horizon. The land's shape, its colours and where things
+// grow are options, so themes can share these. Three.js frame: ground in x/z, y up.
 import {
   BufferGeometry,
   CircleGeometry,
@@ -20,7 +21,7 @@ import {
 import { fractalNoise, seededRandom, valueNoise } from "./random";
 import { type Placement, animate, combine, instances, part } from "./shapes";
 
-/** The land's shape: the stadium's flat ground, a pond, a path. */
+/** The land, as scenery sees it: the flat ground around the arena, a pond, a path, and its height. */
 export interface Land {
   /** Distance outside the flat ground around the stadium (negative inside) */
   readonly flatDistance: (x: number, z: number) => number;
@@ -30,28 +31,45 @@ export interface Land {
   readonly height: (x: number, z: number) => number;
 }
 
+/** The shape of the land: flat ground around the arena (a rounded rectangle), a pond, a path, and the hills beyond. */
+export interface LandShape {
+  readonly flat: { readonly halfX: number; readonly halfZ: number; readonly radius: number };
+  readonly pond: { readonly x: number; readonly z: number; readonly radius: number };
+  /** Distance from the path's centre line (Infinity away from it) */
+  readonly path: (x: number, z: number) => number;
+  /** The hills' height (lowest to highest), the distance over which they rise from the flat ground, and the extra
+   *  rise towards the horizon */
+  readonly hills: { readonly low: number; readonly high: number; readonly rise: number; readonly horizon: number };
+}
+
 export const GROUND_LEVEL = -6; // just under the field, which covers it inside the arena
 const WATER_LEVEL = -40;
-const PATH_HALF_WIDTH = 240;
+export const PATH_HALF_WIDTH = 240;
 
 export function meadowLand(seed: number): Land {
-  const noise = valueNoise(seed);
   const flat = { halfX: 7400, halfZ: 9400, radius: 2200 };
-  const pond = { x: -10800, z: 2600, radius: 1700 };
+  return landscape(seed, {
+    flat,
+    pond: { x: -10800, z: 2600, radius: 1700 },
+    // From the stadium's orange end out to the horizon, winding
+    path: (x, z) => (z < flat.halfZ - 600 ? Infinity : Math.abs(x - 1800 * Math.sin((z - flat.halfZ) / 4200))),
+    hills: { low: 380, high: 1480, rise: 5000, horizon: 1400 },
+  });
+}
+
+export function landscape(seed: number, { flat, pond, path: pathDistance, hills }: LandShape): Land {
+  const noise = valueNoise(seed);
   const flatDistance = (x: number, z: number): number => {
     const qx = Math.abs(x) - (flat.halfX - flat.radius);
     const qz = Math.abs(z) - (flat.halfZ - flat.radius);
     return Math.hypot(Math.max(qx, 0), Math.max(qz, 0)) + Math.min(Math.max(qx, qz), 0) - flat.radius;
   };
-  // From the stadium's orange end out to the horizon, winding
-  const pathDistance = (x: number, z: number): number =>
-    z < flat.halfZ - 600 ? Infinity : Math.abs(x - 1800 * Math.sin((z - flat.halfZ) / 4200));
   const height = (x: number, z: number): number => {
     const d = flatDistance(x, z);
     let h = 0;
     if (d > 0) {
-      const rolling = 380 + 1100 * (fractalNoise(noise, x / 7000, z / 7000, 3) * 0.5 + 0.5);
-      h = smoothstep(0, 5000, d) * rolling + smoothstep(9000, 22000, d) * 1400;
+      const rolling = hills.low + (hills.high - hills.low) * (fractalNoise(noise, x / 7000, z / 7000, 3) * 0.5 + 0.5);
+      h = smoothstep(0, hills.rise, d) * rolling + smoothstep(9000, 22000, d) * hills.horizon;
     }
     // A bowl for the pond, in gently levelled ground
     const toPond = Math.hypot(x - pond.x, z - pond.z);
@@ -64,23 +82,41 @@ export function meadowLand(seed: number): Land {
   return { flatDistance, pond, pathDistance, height };
 }
 
-function smoothstep(edge0: number, edge1: number, x: number): number {
+export function smoothstep(edge0: number, edge1: number, x: number): number {
   const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
   return t * t * (3 - 2 * t);
 }
 
+export interface GroundPalette {
+  readonly grassDark: number; // the ground varies between these
+  readonly grassLight: number;
+  readonly field: number; // the flat ground around the arena
+  readonly dirt: number; // the path
+  readonly sand: number; // around the pond
+  readonly water: number;
+}
+
+export const MEADOW_GROUND: GroundPalette = {
+  grassDark: 0x4c9a38,
+  grassLight: 0x7cc456,
+  field: 0x58a843,
+  dirt: 0xc8a26a,
+  sand: 0xe9dca4,
+  water: 0x3d9fe6,
+};
+
 /** Ground out to the horizon (70 km across), coloured: grass, the path, sand around the pond; and the pond. */
-export function buildGround(land: Land, seed: number): Group {
+export function buildGround(land: Land, seed: number, palette: GroundPalette = MEADOW_GROUND): Group {
   const noise = valueNoise(seed + 1);
   const geometry = new PlaneGeometry(70000, 70000, 220, 220);
   geometry.rotateX(-Math.PI / 2);
   const position = geometry.getAttribute("position");
   const colors = new Float32Array(position.count * 3);
-  const grassDark = new Color(0x4c9a38);
-  const grassLight = new Color(0x7cc456);
-  const field = new Color(0x58a843);
-  const dirt = new Color(0xc8a26a);
-  const sand = new Color(0xe9dca4);
+  const grassDark = new Color(palette.grassDark);
+  const grassLight = new Color(palette.grassLight);
+  const field = new Color(palette.field);
+  const dirt = new Color(palette.dirt);
+  const sand = new Color(palette.sand);
   const color = new Color();
   for (let i = 0; i < position.count; i++) {
     const x = position.getX(i);
@@ -99,7 +135,7 @@ export function buildGround(land: Land, seed: number): Group {
 
   const water = new Mesh(
     new CircleGeometry(land.pond.radius + 120, 48).rotateX(-Math.PI / 2),
-    new MeshStandardMaterial({ color: 0x3d9fe6, roughness: 0.12, metalness: 0.1 }),
+    new MeshStandardMaterial({ color: palette.water, roughness: 0.12, metalness: 0.1 }),
   );
   water.position.set(land.pond.x, WATER_LEVEL, land.pond.z);
   const group = new Group();
@@ -108,7 +144,7 @@ export function buildGround(land: Land, seed: number): Group {
 }
 
 /** Where scenery may stand: on the land outside the stadium's flat ground, off the path, out of the pond. */
-function free(land: Land, x: number, z: number, clearance: number): boolean {
+export function free(land: Land, x: number, z: number, clearance: number): boolean {
   return (
     land.flatDistance(x, z) > clearance &&
     land.pathDistance(x, z) > PATH_HALF_WIDTH + clearance &&
@@ -116,12 +152,20 @@ function free(land: Land, x: number, z: number, clearance: number): boolean {
   );
 }
 
-/** Points scattered around clusters: `clusters` centres between `minRadius` and `maxRadius` from the stadium. */
-function scatter(
-  random: () => number,
-  land: Land,
-  options: { clusters: number; perCluster: [number, number]; spread: number; minRadius: number; maxRadius: number; clearance: number },
-): [number, number][] {
+/** Where a kind of scenery grows: `clusters` clusters of `perCluster` things within `spread` of their centres, which
+ *  are between `minRadius` and `maxRadius` from the arena; each thing at least `clearance` from the flat ground, the
+ *  path and the pond. */
+export interface Area {
+  readonly clusters: number;
+  readonly perCluster: readonly [number, number];
+  readonly spread: number;
+  readonly minRadius: number;
+  readonly maxRadius: number;
+  readonly clearance: number;
+}
+
+/** Points scattered in clusters over an area. */
+export function scatter(random: () => number, land: Land, options: Area): [number, number][] {
   const points: [number, number][] = [];
   for (let c = 0; c < options.clusters; c++) {
     const angle = random() * Math.PI * 2;
@@ -170,7 +214,11 @@ export function buildTrees(land: Land, seed: number): InstancedMesh {
 }
 
 /** Patches of tall grass, swaying in the wind. Returns the mesh and its animation clock. */
-export function buildTallGrass(land: Land, seed: number): { mesh: InstancedMesh; time: { value: number } } {
+export function buildTallGrass(
+  land: Land,
+  seed: number,
+  area: Area = { clusters: 46, perCluster: [140, 280], spread: 1100, minRadius: 8200, maxRadius: 15000, clearance: 150 },
+): { mesh: InstancedMesh; time: { value: number } } {
   const random = seededRandom(seed);
   const blades: BufferGeometry[] = [];
   for (let i = 0; i < 7; i++) {
@@ -202,14 +250,7 @@ export function buildTallGrass(land: Land, seed: number): { mesh: InstancedMesh;
     "",
     {},
   );
-  const placements = scatter(random, land, {
-    clusters: 46,
-    perCluster: [140, 280],
-    spread: 1100,
-    minRadius: 8200,
-    maxRadius: 15000,
-    clearance: 150,
-  }).map(([x, z]): Placement => {
+  const placements = scatter(random, land, area).map(([x, z]): Placement => {
     const s = 1.1 + random() * 1.0;
     return { position: [x, land.height(x, z) - 4, z], rotation: [0, random() * Math.PI * 2, 0], scale: [s, s, s] };
   });
@@ -217,17 +258,14 @@ export function buildTallGrass(land: Land, seed: number): { mesh: InstancedMesh;
 }
 
 /** Flowers in drifts of colour: green stems, and blossoms tinted from a palette (two draw calls). */
-export function buildFlowers(land: Land, seed: number): Group {
+export function buildFlowers(
+  land: Land,
+  seed: number,
+  area: Area = { clusters: 40, perCluster: [40, 110], spread: 900, minRadius: 8000, maxRadius: 15500, clearance: 100 },
+): Group {
   const random = seededRandom(seed);
   const palette = [0xff5f6d, 0xffd23f, 0xffffff, 0xff9ad5, 0xb48cff].map((c) => new Color(c));
-  const placements = scatter(random, land, {
-    clusters: 40,
-    perCluster: [40, 110],
-    spread: 900,
-    minRadius: 8000,
-    maxRadius: 15500,
-    clearance: 100,
-  }).map(([x, z]): { position: [number, number, number]; scale: [number, number, number]; tint: Color } => {
+  const placements = scatter(random, land, area).map(([x, z]): { position: [number, number, number]; scale: [number, number, number]; tint: Color } => {
     const s = 1.2 + random() * 1.2;
     return {
       position: [x, land.height(x, z) - 2, z],
@@ -247,17 +285,14 @@ export function buildFlowers(land: Land, seed: number): Group {
 }
 
 /** Boulders, half buried. */
-export function buildRocks(land: Land, seed: number): InstancedMesh {
+export function buildRocks(
+  land: Land,
+  seed: number,
+  area: Area = { clusters: 30, perCluster: [2, 7], spread: 900, minRadius: 8500, maxRadius: 20000, clearance: 250 },
+): InstancedMesh {
   const random = seededRandom(seed);
   const rock = part(new DodecahedronGeometry(120, 0), 0xa3a39a);
-  const placements = scatter(random, land, {
-    clusters: 30,
-    perCluster: [2, 7],
-    spread: 900,
-    minRadius: 8500,
-    maxRadius: 20000,
-    clearance: 250,
-  }).map(([x, z]): Placement & { tint: Color } => {
+  const placements = scatter(random, land, area).map(([x, z]): Placement & { tint: Color } => {
     const s = 0.8 + random() * 1.8;
     return {
       position: [x, land.height(x, z) - 30 * s, z],

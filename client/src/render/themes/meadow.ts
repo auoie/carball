@@ -2,27 +2,13 @@
 // sky with drifting clouds, rolling green hills with tall grass, flowers, puffy trees and a pond, snowy mountains on
 // the horizon, colourful open-air stands full of little creatures, and birds circling overhead. Everything is
 // generated here (no downloads), seeded, and drawn in about twenty draw calls.
-import {
-  AmbientLight,
-  BufferGeometry,
-  Color,
-  DirectionalLight,
-  DoubleSide,
-  Float32BufferAttribute,
-  Fog,
-  Group,
-  HemisphereLight,
-  type InstancedMesh,
-  MeshLambertMaterial,
-  Vector3,
-} from "three";
+import { AmbientLight, Color, DirectionalLight, Fog, Group, HemisphereLight, Vector3 } from "three";
 import { buildCrowd } from "./critters";
 import { buildFlowers, buildGround, buildMountains, buildRocks, buildTallGrass, buildTrees, meadowLand } from "./nature";
-import { seededRandom } from "./random";
-import { type Placement, animate, instances, placementMatrix } from "./shapes";
 import { Sky } from "./sky";
 import { buildStands } from "./stands";
 import type { Theme } from "./theme";
+import { buildBirds } from "./wildlife";
 
 const SEED = 20261006;
 
@@ -40,7 +26,7 @@ export function meadowTheme(): Theme {
   const grass = buildTallGrass(land, SEED + 2);
   const stands = buildStands(SEED + 6);
   const crowd = buildCrowd(stands.seats, SEED + 7);
-  const birds = buildBirds(SEED + 8);
+  const birds = buildBirds(SEED + 8, { radius: [5500, 10000], height: [3300, 4500] });
   root.add(
     sky.mesh,
     buildGround(land, SEED + 1),
@@ -76,48 +62,4 @@ export function meadowTheme(): Theme {
       birds.update(seconds);
     },
   };
-}
-
-/** A flock circling high over the stadium, flapping. */
-function buildBirds(seed: number): { mesh: InstancedMesh; update(seconds: number): void } {
-  const random = seededRandom(seed);
-  const bird = new BufferGeometry();
-  // Two wings (spanning x) and a little body, flying along +z
-  bird.setAttribute(
-    "position",
-    new Float32BufferAttribute([0, 0, 18, -70, 0, -10, 0, 4, -14, 0, 0, 18, 0, 4, -14, 70, 0, -10, 0, -6, 22, 0, 6, -30, 0, -6, -30], 3),
-  );
-  bird.computeVertexNormals();
-  bird.setAttribute("color", new Float32BufferAttribute(new Array<number>(27).fill(0.95), 3));
-  const material = new MeshLambertMaterial({ vertexColors: true, side: DoubleSide });
-  const uniforms = animate(
-    material,
-    "transformed.y += abs(position.x) * 0.75 * sin(time * 9.0 + float(gl_InstanceID) * 1.37);",
-    "",
-    {},
-  );
-  const flock = Array.from({ length: 26 }, () => ({
-    radius: 5500 + random() * 4500,
-    height: 3300 + random() * 1200,
-    speed: (0.05 + random() * 0.04) * (random() < 0.3 ? -1 : 1),
-    phase: random() * Math.PI * 2,
-    bob: random() * Math.PI * 2,
-  }));
-  const placements = flock.map((): Placement => ({}));
-  const mesh = instances(bird, material, placements);
-  const update = (seconds: number): void => {
-    flock.forEach((b, i) => {
-      const a = b.phase + seconds * b.speed;
-      const x = Math.cos(a) * b.radius;
-      const z = Math.sin(a) * b.radius * 1.2;
-      const y = b.height + Math.sin(seconds * 0.7 + b.bob) * 150;
-      // Heading along the circle (the sign of the speed sets the direction)
-      const heading = -a + (b.speed < 0 ? Math.PI : 0);
-      mesh.setMatrixAt(i, placementMatrix({ position: [x, y, z], rotation: [0, heading, 0], scale: [1.4, 1.4, 1.4] }));
-    });
-    mesh.instanceMatrix.needsUpdate = true;
-    uniforms.time.value = seconds;
-  };
-  update(0);
-  return { mesh, update };
 }
