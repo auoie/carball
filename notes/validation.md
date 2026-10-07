@@ -139,6 +139,40 @@ Ground driving (engine − game, uu/s², flat floor; `validation_report.py`):
     looked like steering and wall error (cases just after a powerslide); accounting for it improved every category
     (table above; e.g. touches 2.06 → 0.85 uu/s, flat floor 0.032 → 0.020 uu).
 
+13. **Car touches are exact when the car is; the tail comes from the car's own prediction.** Ground touches where
+    both sides kicked the ball (967): median error 1.45 uu/s (0.4% of the kick, 0.09° in direction), p90 22% / 5.3°.
+    Split by how well the car itself was predicted (its position error at its own best tick):
+    | | Cases | Ball velocity error p50 / p90 | Of the kick p50 / p90 | Direction p50 / p90 |
+    |---|---|---|---|---|
+    | Distinct hits, car within 0.1 uu | 314 | 0.30 / 1.0 uu/s | 0.0% / 0.1% | 0.00° / 0.0° |
+    | Distinct hits, car off by ≥ 0.5 uu | 141 | 24 / 135 | 2.2% / 13% | 0.5° / 4.4° |
+    | Continuous contact (dribbles), car within 0.1 uu | 309 | 0.74 / 21 | 1.0% / 29% | 0.3° / 4.9° |
+    | Continuous contact, car off by ≥ 0.5 uu | 108 | 21 / 59 | 18% / 48% | 4.8° / 17° |
+    The car is mispredicted just as often without a touch (25.5% of cases near the ball vs 25.3% with one), and the car's
+    velocity error along the hit direction is unbiased (median −0.03 uu/s): the contact physics is right. In continuous
+    contact a tail remains even with a well-predicted car, from state a replay doesn't carry (persistent contact points,
+    the phase of the every-other-tick extra impulse). The car misprediction itself: handbrake ramping (63% of those cases
+    are off by ≥ 0.5 uu), walls and curves (35%), and otherwise ~20% — next to investigate.
+    (`replay_kick`, `engine_kick`, `kick_angle` in the cases file.)
+
+14. **Pinches match.** Pinch = a car touch with the ball against an arena surface (within 40 uu) and a kick over
+    1500 uu/s. Mined from 600 more 2v2/3v3 replays with `--min-replay-kick 2500` (`out/replays/more/`): 303 pinches,
+    74 with the car on a wall or curve, fastest 5437 uu/s (game) vs 5436 (engine). Engine kick / game kick:
+    | | Cases | p50 | p10–p90 | Direction p50 / p90 |
+    |---|---|---|---|---|
+    | All | 303 | 1.0000 | 0.997–1.002 | 0.03° / 0.4° |
+    | Car predicted within 0.1 uu | 212 | 1.0000 | 0.999–1.001 | 0.02° / 0.1° |
+    | Car on a wall or curve, predicted well | 40 | 1.0000 | 0.997–1.001 | 0.04° / 0.1° |
+    | Kick over 4000 uu/s, car predicted well | 36 | 1.0000 | 1.000–1.000 | 0.00° / 0.0° |
+    (The first 90 replays: 117 pinches, same result.) No ceiling pinches or 6000 uu/s pinches in these replays.
+15. **Flips, jumps and double jumps are now covered.** The extractor records the replicated DodgeTorque (×100 it is
+    the rounded flip torque, roll and pitch, e.g. 184 / 158) and when each jump, double jump and dodge component turned
+    on (frame resolution, halfway estimate); the validator sets the car's flip/jump state from them (flip torque for
+    0.65 s, Z damping, jump force while held). Cases where a component turns on or off between the two frames are
+    skipped (7018). Flip cancels can't be modelled (pitch input isn't replicated). Car position error after ~4 ticks:
+    flipping on walls/curves 0.010 / 5.9 uu (4464 cases), flipping near the ball 0.030 / 7.1; **jumping from the flat
+    floor 3.99 / 18 uu (146 cases): off, to investigate** (jumping on walls/curves 0.08).
+
 Cars alone (far from the ball and other cars), car position error after ~4 ticks, our mesh / the game's mesh
 (before patch 31):
 | Where | Cases | p50 | p90 |
@@ -152,8 +186,7 @@ a replay doesn't carry) differs. Next to look at.
 
 ## Limits and next steps
 - Air control (pitch, yaw, roll) is not in replays: aerial touches and car rotation in the air can only be checked
-  when the input was zero. Jumps, double jumps and dodges are skipped (the component flags say when they're active,
-  not on which tick they started); they could be added by fitting the start tick.
+  when the input was zero, and flip cancels can't be modelled.
 - Touch residuals (~5 uu/s median) are dominated by what replays can't give: the car's exact sub-frame state and the
   car/ball tick offset (fitted).
 - Not covered yet: car–car bumps and demos, cars on walls and the ceiling (included in "ground" when the wheels

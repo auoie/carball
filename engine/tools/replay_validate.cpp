@@ -49,6 +49,8 @@ struct CarRow {
 	int boostAmount = 0, body = 0, team = 0;
 	float sensitivity = 1;
 	float handbrakeVal = 0; // reconstructed from the handbrake history (rises 5/s while held, falls 2/s)
+	Vec dodgeTorque;        // replicated DodgeTorque /100: roll, pitch (e.g. 1.84, 1.58)
+	float jumpSince = -1, doubleJumpSince = -1, dodgeSince = -1; // seconds since that component became active
 };
 
 struct Frame {
@@ -136,6 +138,12 @@ static std::vector<Replay> Load(const char* path) {
 				c.handbrakeVal = num(30); // from the extractor (frame-resolution history)
 				g_haveRampColumn = true;
 			}
+			if (f.size() > 36) {
+				c.dodgeTorque = Vec(num(31), num(32), num(33));
+				c.jumpSince = f[34].empty() ? -1 : num(34);
+				c.doubleJumpSince = f[35].empty() ? -1 : num(35);
+				c.dodgeSince = f[36].empty() ? -1 : num(36);
+			}
 			fr.cars.push_back(c);
 		}
 	}
@@ -208,6 +216,7 @@ struct Errors {
 	bool worldContact = false, ballTouch = false, carOnGround = false;
 	int firstTouch = 0; // the tick the car first touched the ball (0: no touch)
 	Vec ballVelDiff; // engine - replay
+	Vec replayKick, engineKick; // the ball's velocity change over the interval beyond gravity: game, engine
 	Vec carPosLocal, carVelLocal; // engine - replay, in the replay car's frame (forward, right, up)
 	float carYawRateErr = 0; // engine - replay, about the car's up axis (rad/s)
 };
@@ -272,6 +281,19 @@ static void SetupCar(Arenas& A, const CarRow& c0, const CarControls& controls, b
 	                 : g_handbrakeHistory     ? c0.handbrakeVal
 	                                          : (c0.handbrake ? 1.f : 0.f);
 	s.isSupersonic = s.vel.Length() >= 2200;
+	if (c0.jump && c0.jumpSince >= 0) { // the jump component is active: its force applies while the jump is held
+		s.hasJumped = true;
+		s.isJumping = true;
+		s.jumpTime = c0.jumpSince;
+	}
+	if (c0.doubleJump || c0.doubleJumpSince >= 0) s.hasDoubleJumped = true;
+	if (c0.dodge && c0.dodgeSince >= 0) { // flipping: torque for 0.65 s from the start, from the replicated DodgeTorque
+		s.hasJumped = true;
+		s.hasFlipped = true;
+		s.flipTime = c0.dodgeSince;
+		s.isFlipping = c0.dodgeSince < RLConst::FLIP_TORQUE_TIME;
+		s.flipRelTorque = Vec(c0.dodgeTorque.x * 100 / RLConst::FLIP_TORQUE_X, c0.dodgeTorque.y * 100 / RLConst::FLIP_TORQUE_Y, 0);
+	}
 	s.lastControls = controls;
 	A.car->SetState(s);
 	A.car->controls = controls;
@@ -286,6 +308,14 @@ static void SetupCar(Arenas& A, const CarRow& c0, const CarControls& controls, b
 		warm.boost = s.boost;
 		warm.ballHitInfo = s.ballHitInfo;
 		warm.handbrakeVal = s.handbrakeVal;
+		warm.isJumping = s.isJumping;
+		warm.jumpTime = s.jumpTime;
+		warm.hasJumped = s.hasJumped;
+		warm.hasDoubleJumped = s.hasDoubleJumped;
+		warm.hasFlipped = s.hasFlipped;
+		warm.isFlipping = s.isFlipping;
+		warm.flipTime = s.flipTime;
+		warm.flipRelTorque = s.flipRelTorque;
 		A.car->SetState(warm);
 	}
 	SetBall(A.withCar, ball);
@@ -293,11 +323,28 @@ static void SetupCar(Arenas& A, const CarRow& c0, const CarControls& controls, b
 
 static CarControls ReplayControls(const CarRow& c) {
 	CarControls controls;
+	controls.jump = c.jump; // (held while the jump component is active)
 	controls.throttle = DecodeAxis(c.throttle);
 	controls.steer = DecodeAxis(c.steer);
 	controls.handbrake = c.handbrake;
 	controls.boost = c.boosting;
 	return controls;
+}
+
+// A car mid-action (its state reconstructed from the replicated components)
+static std::string Action(const CarRow& c) {
+	if (c.dodge) return c.dodgeSince < RLConst::FLIP_TORQUE_TIME ? "flipping" : "after a flip";
+	if (c.jump) return "jumping";
+	if (c.doubleJump) return "double jump";
+	return "";
+}
+
+// Distance from the ball's surface to the nearest flat arena surface (floor, ceiling, side walls, back walls)
+static float ArenaGap(const Vec& p) {
+	float g = std::min(p.z - 92.f, 2048.f - p.z - 92.f);
+	g = std::min(g, 4096.f - fabsf(p.x) - 92.f);
+	if (fabsf(p.x) > 893 || p.z > 642) g = std::min(g, 5120.f - fabsf(p.y) - 92.f);
+	return g;
 }
 
 // Where a car is, for the car-alone report
@@ -337,6 +384,9 @@ static Errors Run(Arena* arena, Car* car, const Frame& next, const CarRow* carNe
 			best.ballVel = (bs.vel - next.ball.vel).Length();
 			best.ballAng = (bs.angVel - next.ball.angVel).Length();
 			best.ballVelDiff = bs.vel - next.ball.vel;
+			Vec gravity(0, 0, -650.f * (k + ballTicksBefore) / 120.f);
+			best.replayKick = next.ball.vel - ballStart.vel - gravity;
+			best.engineKick = bs.vel - ballStart.vel - gravity;
 			float t = (k + ballTicksBefore) / 120.f;
 			Vec ballistic = ballStart.pos + ballStart.vel * t + Vec(0, 0, -325.f * t * t);
 			best.ballisticPos = (ballistic - next.ball.pos).Length();
@@ -391,6 +441,7 @@ int main(int argc, char** argv) {
 	}
 	std::string meshes = ARENA_MESH_DIR, casesPath;
 	bool useSensitivity = true, warmup = true, zeroBallSpin = false, fitHandbrake = false;
+	float minReplayKick = 0; // only car-ball cases where the game's ball changed velocity by more than this
 	size_t limit = SIZE_MAX;
 	for (int i = 2; i < argc; i++) {
 		std::string a = argv[i];
@@ -399,6 +450,7 @@ int main(int argc, char** argv) {
 		else if (a == "--no-sensitivity") useSensitivity = false;
 		else if (a == "--no-warmup") warmup = false;
 		else if (a == "--no-handbrake-history") g_handbrakeHistory = false;
+		else if (a == "--min-replay-kick" && i + 1 < argc) minReplayKick = std::stof(argv[++i]); // e.g. pinch mining
 		else if (a == "--fit-handbrake") fitHandbrake = true; // diagnostic: car-alone cases also try every ramp value
 		else if (a == "--zero-ball-spin") zeroBallSpin = true; // experiment: ball cases start without spin
 		else if (a == "--limit" && i + 1 < argc) limit = std::stoul(argv[++i]);
@@ -462,6 +514,10 @@ int main(int argc, char** argv) {
 			cs.replay = r.name;
 			cs.frame = f0.index;
 			cs.dt = dt;
+			if (minReplayKick > 0 && (nearCount == 0 || (f1.ball.vel - f0.ball.vel).Length() < minReplayKick)) {
+				skipped["below --min-replay-kick"]++;
+				continue;
+			}
 			if (nearCount == 0) {
 				Restore(A.ballOnly, A.ballClean);
 				Body start = f0.ball;
@@ -497,8 +553,8 @@ int main(int argc, char** argv) {
 				skipped["car body not Octane/Fennec"]++;
 				continue;
 			}
-			if (c0->jump || c1->jump || c0->doubleJump || c1->doubleJump || c0->dodge || c1->dodge) {
-				skipped["car jumping/dodging"]++;
+			if (c0->jump != c1->jump || c0->doubleJump != c1->doubleJump || c0->dodge != c1->dodge) {
+				skipped["car jump/dodge starts or ends between the frames"]++;
 				continue;
 			}
 			if (c0->throttle != c1->throttle || c0->steer != c1->steer || c0->handbrake != c1->handbrake ||
@@ -563,13 +619,19 @@ int main(int argc, char** argv) {
 			             fabsf(relLocal.y) < 70 && cs.relSpeed < 600;
 			std::string where = cs.e.carOnGround ? "ground" : "air (no air control)";
 			std::string what = cs.dribble ? "dribble" : (cs.e.ballTouch ? "touch" : "no touch");
+			std::string action = Action(*c0);
+			if (!action.empty()) where = action;
 			cs.category = "car " + where + "/" + what;
+			// Pinch: the ball against an arena surface and kicked hard (game or engine)
+			if (cs.e.ballTouch && ArenaGap(f0.ball.pos) < 40 &&
+			    (cs.e.replayKick.Length() > 1500 || cs.e.engineKick.Length() > 1500))
+				cs.category = "pinch/" + action + (action.empty() ? "no jump/flip" : "");
 			cases.push_back(cs);
 		}
 	}
 
 	// Cars alone: far from the ball and from the other cars (driving physics anywhere in the arena)
-	for (const Replay& r : replays) {
+	for (const Replay& r : minReplayKick > 0 ? std::vector<Replay>() : replays) {
 		std::map<int, std::pair<CarRow, double>> lastCar;
 		const Body* ball = nullptr;
 		double ballTime = 0;
@@ -582,7 +644,7 @@ int main(int argc, char** argv) {
 			}
 			if (!ball || f0.time - ballTime > 0.1) continue;
 			for (const CarRow& c0 : f0.cars) {
-				if (!OctaneHitbox(c0.body) || c0.jump || c0.doubleJump || c0.dodge || c0.b.sleeping) continue;
+				if (!OctaneHitbox(c0.body) || c0.b.sleeping) continue;
 				Vec ballPos = ball->pos + ball->vel * (float)(f0.time - ballTime);
 				if ((ballPos - c0.b.pos).Length() < 900) continue;
 				bool crowded = false;
@@ -600,7 +662,8 @@ int main(int argc, char** argv) {
 					for (const CarRow& c : r.frames[j].cars) if (c.actor == c0.actor) c1 = &c;
 					if (c1) fNext = &r.frames[j];
 				}
-				if (!c1 || c1->jump || c1->doubleJump || c1->dodge || c0.throttle != c1->throttle ||
+				if (!c1 || c0.jump != c1->jump || c0.doubleJump != c1->doubleJump || c0.dodge != c1->dodge ||
+				    c0.throttle != c1->throttle ||
 				    c0.steer != c1->steer || c0.handbrake != c1->handbrake || c0.boosting != c1->boosting)
 					continue;
 				CarControls controls = ReplayControls(c0);
@@ -627,7 +690,9 @@ int main(int argc, char** argv) {
 				}
 				cs.car = &c0;
 				cs.carNext = c1;
-				cs.category = std::string("car alone/") + (cs.e.carOnGround ? "" : "air (no air control) ") + Place(c0);
+				std::string action = Action(c0);
+				cs.category = std::string("car alone/") +
+				              (!action.empty() ? action + " " : (cs.e.carOnGround ? "" : "air (no air control) ")) + Place(c0);
 				cases.push_back(cs);
 			}
 		}
@@ -659,10 +724,10 @@ int main(int argc, char** argv) {
 		FILE* out = fopen(casesPath.c_str(), "w");
 		fprintf(out, "replay,frame,dt,category,k,ball_pos,ball_vel,ball_ang,car_pos,car_vel,car_ang,car_rot,ballistic,"
 		             "dvx,dvy,dvz,touch,dribble,rel_speed,blocked_k,blocked_ball_pos,blocked_ball_vel,blocked_car_pos,"
-		             "blocked_dvx,blocked_dvy,blocked_dvz,k_ball,k_car,ball_pos_alone,car_pos_alone,offset,blocked_offset,throttle,steer,boost,handbrake,sensitivity,car_speed,car_z,car_up_z,car_kick_vz,dp_fwd,dp_right,dp_up,dv_fwd,dv_right,dv_up,replay_acc_fwd,replay_acc_right,yaw_rate,yaw_rate_err,car_ticks,v_fwd,rel_x,rel_y,rel_z,rel_fwd,rel_right,rel_up,first_touch,relvel_n,hb_recon,hb_best,hb_best_err\n");
+		             "blocked_dvx,blocked_dvy,blocked_dvz,k_ball,k_car,ball_pos_alone,car_pos_alone,offset,blocked_offset,throttle,steer,boost,handbrake,sensitivity,car_speed,car_z,car_up_z,car_kick_vz,dp_fwd,dp_right,dp_up,dv_fwd,dv_right,dv_up,replay_acc_fwd,replay_acc_right,yaw_rate,yaw_rate_err,car_ticks,v_fwd,rel_x,rel_y,rel_z,rel_fwd,rel_right,rel_up,first_touch,relvel_n,hb_recon,hb_best,hb_best_err,replay_kick,engine_kick,kick_angle\n");
 		for (const Case& c : cases) {
 			fprintf(out, "%s,%d,%.5f,%s,%d,%.4f,%.3f,%.5f,%.4f,%.3f,%.5f,%.6f,%.3f,%.3f,%.3f,%.3f,%d,%d,%.2f,%d,%.4f,%.3f,%.4f,"
-			             "%.3f,%.3f,%.3f,%d,%d,%.4f,%.4f,%d,%d,%d,%d,%d,%d,%.3f,%.2f,%.2f,%.4f,%.2f,%.3f,%.3f,%.3f,%.2f,%.2f,%.2f,%.2f,%.2f,%.4f,%.4f,%d,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%d,%.2f,%.3f,%.3f,%.4f\n",
+			             "%.3f,%.3f,%.3f,%d,%d,%.4f,%.4f,%d,%d,%d,%d,%d,%d,%.3f,%.2f,%.2f,%.4f,%.2f,%.3f,%.3f,%.3f,%.2f,%.2f,%.2f,%.2f,%.2f,%.4f,%.4f,%d,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%d,%.2f,%.3f,%.3f,%.4f,%.2f,%.2f,%.3f\n",
 			        c.replay.c_str(), c.frame, c.dt, c.category.c_str(), c.e.k, c.e.ballPos, c.e.ballVel, c.e.ballAng,
 			        c.e.carPos, c.e.carVel, c.e.carAng, c.e.carRot, c.e.ballisticPos, c.e.ballVelDiff.x,
 			        c.e.ballVelDiff.y, c.e.ballVelDiff.z, c.e.ballTouch, c.dribble, c.relSpeed, c.blocked.k,
@@ -678,7 +743,10 @@ int main(int argc, char** argv) {
 			        c.car ? c.car->b.angVel.Dot(c.car->b.rot.up) : 0, c.e.carYawRateErr, c.e.carTicks,
 			        c.car ? c.car->b.vel.Dot(c.car->b.rot.forward) : 0, c.rel.x, c.rel.y, c.rel.z, c.relLocal.x,
 			        c.relLocal.y, c.relLocal.z, c.e.firstTouch, c.relVelN, c.car ? c.car->handbrakeVal : 0, c.hbBest,
-			        c.hbBestErr);
+			        c.hbBestErr, c.e.replayKick.Length(), c.e.engineKick.Length(),
+			        (c.e.replayKick.Length() > 1 && c.e.engineKick.Length() > 1)
+			            ? acosf(std::clamp(c.e.replayKick.Normalized().Dot(c.e.engineKick.Normalized()), -1.f, 1.f)) * 57.2958f
+			            : -1.f);
 		}
 		fclose(out);
 	}

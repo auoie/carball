@@ -2,7 +2,8 @@
 //!
 //! One row per replicated RigidBody update:
 //! replay,frame,time,kind,actor,x,y,z,qx,qy,qz,qw,vx,vy,vz,wx,wy,wz,sleeping,throttle,steer,handbrake,boosting,
-//! jump,double_jump,dodge,boost_amount,body,steer_sensitivity,team,handbrake_ramp
+//! jump,double_jump,dodge,boost_amount,body,steer_sensitivity,team,handbrake_ramp,
+//! dodge_torque_x,dodge_torque_y,dodge_torque_z,jump_since,double_jump_since,dodge_since
 //!
 //! Units as replicated: positions uu, velocities uu/s, angular velocities rad/s × 100 (boxcars divides every vector by
 //! 100; the game sends angular velocity × 100). throttle/steer: the game's bytes (128 = 0; see `Vehicle_TA` input
@@ -10,6 +11,8 @@
 //! boost_amount 0–255 (255 = 100 boost). body: the loadout's body product id (23 Octane, 4284 Fennec, ...).
 //! handbrake_ramp: the car's handbrake value (rises 5/s while held, falls 2/s), integrated frame by frame from the
 //! replicated handbrake flag, each change taken halfway between the frame it arrived in and the one before.
+//! dodge_torque: the dodge component's replicated DodgeTorque (as decoded: /100). *_since: seconds since that
+//! component became active (same halfway estimate), empty when it is not active.
 //!
 //! Usage: replay_extract OUT.csv REPLAY [REPLAY...]
 
@@ -41,6 +44,10 @@ struct CarInputs {
     boost_amount: u8,
     team: u8,
     handbrake_ramp: f32,
+    dodge_torque: [f32; 3],
+    jump_start: f32,
+    double_jump_start: f32,
+    dodge_start: f32,
 }
 
 impl Default for CarInputs {
@@ -56,6 +63,10 @@ impl Default for CarInputs {
             boost_amount: 0,
             team: 255,
             handbrake_ramp: 0.0,
+            dodge_torque: [0.0; 3],
+            jump_start: 0.0,
+            double_jump_start: 0.0,
+            dodge_start: 0.0,
         }
     }
 }
@@ -72,7 +83,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     writeln!(
         out,
         "replay,frame,time,kind,actor,x,y,z,qx,qy,qz,qw,vx,vy,vz,wx,wy,wz,sleeping,throttle,steer,handbrake,boosting,\
-         jump,double_jump,dodge,boost_amount,body,steer_sensitivity,team,handbrake_ramp"
+         jump,double_jump,dodge,boost_amount,body,steer_sensitivity,team,handbrake_ramp,\
+         dodge_torque_x,dodge_torque_y,dodge_torque_z,jump_since,double_jump_since,dodge_since"
     )?;
 
     for path in &args[2..] {
@@ -162,11 +174,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let i = inputs.entry(car).or_default();
                             match kind {
                                 Kind::Boost => i.boosting = active,
-                                Kind::Jump => i.jump = active,
-                                Kind::DoubleJump => i.double_jump = active,
-                                Kind::Dodge => i.dodge = active,
+                                Kind::Jump => {
+                                    if active && !i.jump {
+                                        i.jump_start = mid;
+                                    }
+                                    i.jump = active
+                                }
+                                Kind::DoubleJump => {
+                                    if active && !i.double_jump {
+                                        i.double_jump_start = mid;
+                                    }
+                                    i.double_jump = active
+                                }
+                                Kind::Dodge => {
+                                    if active && !i.dodge {
+                                        i.dodge_start = mid;
+                                    }
+                                    i.dodge = active
+                                }
                                 _ => {}
                             }
+                        }
+                    }
+                    (Attribute::Location(v), "TAGame.CarComponent_Dodge_TA:DodgeTorque") => {
+                        if let Some(car) = component_car {
+                            inputs.entry(car).or_default().dodge_torque = [v.x, v.y, v.z];
                         }
                     }
                     (Attribute::ReplicatedBoost(rb), "TAGame.CarComponent_Boost_TA:ReplicatedBoost") => {
@@ -191,6 +223,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 i.handbrake_ramp = (i.handbrake_ramp + rate * (frame.time - mid)).clamp(0.0, 1.0);
             }
             prev_time = frame.time;
+            let since = |active: bool, start: f32| if active { format!("{:.4}", frame.time - start) } else { String::new() };
             for (actor, kind, rb) in &bodies {
                 let (actor, kind) = (*actor, *kind);
                 {
@@ -206,7 +239,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let sens = player.steer_sensitivity.map(|s| s.to_string()).unwrap_or_default();
                         writeln!(
                             out,
-                            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{:.4}",
+                            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{:.4},{},{},{},{},{},{}",
                             name,
                             fi,
                             frame.time,
@@ -218,7 +251,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             rb.sleeping as u8,
                             inp.throttle, inp.steer, inp.handbrake as u8, inp.boosting as u8,
                             inp.jump as u8, inp.double_jump as u8, inp.dodge as u8, inp.boost_amount,
-                            body, sens, inp.team, inp.handbrake_ramp
+                            body, sens, inp.team, inp.handbrake_ramp,
+                            inp.dodge_torque[0], inp.dodge_torque[1], inp.dodge_torque[2],
+                            since(inp.jump, inp.jump_start), since(inp.double_jump, inp.double_jump_start),
+                            since(inp.dodge, inp.dodge_start)
                         )?;
                 }
             }

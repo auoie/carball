@@ -128,8 +128,10 @@ throttle curve, hitbox sizes and wheel setup, ball radius, dodge-vs-double-jump 
       now reconstructed by the extractor (all categories improved).
 - [ ] Low-speed turning: lateral acceleration 20 uu/s² (2.6%) short below 500 uu/s, shrinking with speed.
 - [ ] Walls and curves still 6× the flat-floor error; goal-wall wobble reduced but not gone (up to 1.7°/tick).
-- [ ] Next: jumps, double jumps, flips (fit the start tick); input changes between frames; bumps/demos; boost pads;
-      kickoffs; other hitboxes.
+- [x] Pinches checked (303, incl. 74 wall pinches up to 5437 uu/s): engine kick = game kick within 0.1%.
+- [x] Flips, jumps, double jumps in the validator (state from the replicated components).
+- [ ] Jumps from the flat floor: 4 uu median error (146 cases), to investigate.
+- [ ] Next: input changes between frames; bumps/demos; boost pads; kickoffs; other hitboxes.
 - [ ] Wheels on dynamic bodies (car on car / ball): the game's pushback and reaction impulses not modelled.
 - [ ] Extend: jumps/dodges (fit the start tick), car–car bumps, other hitboxes, kickoffs.
 
