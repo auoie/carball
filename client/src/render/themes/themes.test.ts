@@ -91,6 +91,10 @@ describe("themes", () => {
     expect(meshes(theme("forest").root).some((m) => m.name.startsWith("crowd: "))).toBe(false);
   });
 
+  it("city: at most 16 draw calls for all its scenery", () => {
+    expect(meshes(theme("city").root).length).toBeLessThanOrEqual(16);
+  });
+
   it("meadow: the same scenery every time (seeded)", async () => {
     const placements = (t: Theme): number[] =>
       meshes(t.root).flatMap((m) => (m instanceof InstancedMesh ? Array.from(m.instanceMatrix.array) : []));

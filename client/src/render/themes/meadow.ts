@@ -46,6 +46,7 @@ export function meadowTheme(): Theme {
     style: {
       floor: new Color(0x55a845),
       floorStripe: new Color(0x63b853),
+      markings: null,
       walls: {
         neutral: new Color(0xf2f8ff),
         blue: new Color(0x2a7fff),

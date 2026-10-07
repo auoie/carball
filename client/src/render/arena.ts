@@ -15,6 +15,7 @@ import {
   LinearFilter,
   LinearMipmapLinearFilter,
   Mesh,
+  MeshBasicMaterial,
   MeshStandardMaterial,
   PlaneGeometry,
   RepeatWrapping,
@@ -49,7 +50,7 @@ export class ArenaView {
     this.#theme = theme;
     this.#style = theme.style;
     this.#walls = new HexWallMaterial(BALL_RADIUS, theme.style.walls);
-    this.root.add(this.#buildMeshSurfaces(collision), this.#buildPlanes(), buildFieldMarkings(), theme.root);
+    this.root.add(this.#buildMeshSurfaces(collision), this.#buildPlanes(), buildFieldMarkings(theme.style.markings), theme.root);
   }
 
   /** Once per frame: lights the walls around the ball (Three.js frame) and animates the theme's scenery. */
@@ -157,10 +158,12 @@ export class ArenaView {
   }
 }
 
-/** Centre line, centre circle and goal lines, just above the floor (merged: one draw call). */
-function buildFieldMarkings(): Group {
+/** Centre line, centre circle and goal lines, just above the floor (merged: one draw call); glowing if `glow` is set. */
+function buildFieldMarkings(glow: Color | null): Group {
   const group = new Group();
-  const line = new MeshStandardMaterial({ color: 0xd8e2d0, roughness: 0.9, side: DoubleSide });
+  const line = glow
+    ? new MeshBasicMaterial({ color: glow, side: DoubleSide })
+    : new MeshStandardMaterial({ color: 0xd8e2d0, roughness: 0.9, side: DoubleSide });
   const strip = (lengthX: number, widthY: number, y: number, x = 0): Mesh => {
     const m = new Mesh(new PlaneGeometry(lengthX, widthY), line);
     m.rotation.x = -Math.PI / 2;

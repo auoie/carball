@@ -17,6 +17,8 @@ export interface ArenaStyle {
   readonly floor: Color;
   /** Mown stripes across the field: the second colour, or null for a plain floor */
   readonly floorStripe: Color | null;
+  /** Glowing field markings in this colour (for dark arenas), or null for plain white lines lit by the scene */
+  readonly markings: Color | null;
   readonly walls: WallStyle;
 }
 

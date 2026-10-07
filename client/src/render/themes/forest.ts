@@ -116,6 +116,7 @@ export function forestTheme(): Theme {
     style: {
       floor: new Color(0x4f9a3f),
       floorStripe: new Color(0x55a144), // (faint: a clearing, not a stadium)
+      markings: null,
       walls: {
         neutral: new Color(0xe9f7e4),
         blue: new Color(0x2a7fff),

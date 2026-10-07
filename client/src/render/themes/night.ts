@@ -34,6 +34,7 @@ export function nightTheme(): Theme {
     style: {
       floor: new Color(0x24402c),
       floorStripe: null,
+      markings: null,
       walls: {
         neutral: new Color(0x8fa6c8),
         blue: new Color(0x2a7fff),
