@@ -88,7 +88,7 @@ sim.delete();
 {
   const s2 = new E.Sim();
   const below = s2.addCar(0, 0), above = s2.addCar(0, 0);
-  const place = (id, z) => s2.setCarState(id, [0, 0, z, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 33]);
+  const place = (id, z) => s2.setCarState(id, [1500, 0, z, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 33]); // (away from the ball)
   place(below, 17);
   place(above, 80); // on the other car's roof
   s2.step(60);
@@ -97,7 +97,25 @@ sim.delete();
   check(a[E.CAR_ON_GROUND] === 1 && a[E.CAR_WORLD_WHEEL_CONTACTS] === 0 && a[E.CAR_ON_RB_ACTOR] === 1,
     `car on a car's roof: grounded ${a[E.CAR_ON_GROUND]}, world wheels ${a[E.CAR_WORLD_WHEEL_CONTACTS]}, on RB actor ${a[E.CAR_ON_RB_ACTOR]}, z ${a[2].toFixed(1)}`);
   check(b[E.CAR_HAS_FLIP_OR_JUMP] === 1, "grounded car can jump");
+  const wheels = (c) => [0, 1, 2, 3].map((i) => c[E.CAR_WHEEL_GROUND + i]).join("");
+  check(wheels(b) === "1111" && b[E.CAR_RB_ACTOR] === 0, `car on the floor: wheels ${wheels(b)}, RB actor ${b[E.CAR_RB_ACTOR]}`);
+  check(wheels(a) === "3333" && a[E.CAR_RB_ACTOR] === below, `car on a car: wheels ${wheels(a)}, RB actor ${a[E.CAR_RB_ACTOR]} (expected ${below})`);
   s2.delete();
+}
+{
+  // A car dropped onto the resting ball: while its wheels are on the ball it's on the ball (RB actor -1)
+  const s3 = new E.Sim();
+  const car = s3.addCar(0, 0);
+  s3.setCarState(car, [0, 0, 208, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 33]);
+  let seen = false;
+  for (let t = 0; t < 60 && !seen; t++) {
+    s3.step(1);
+    const c = s3.carState(car);
+    const onBall = [0, 1, 2, 3].filter((i) => c[E.CAR_WHEEL_GROUND + i] === 2).length;
+    seen = c[E.CAR_ON_RB_ACTOR] === 1 && c[E.CAR_RB_ACTOR] === -1 && onBall >= 3;
+  }
+  check(seen, "a car landing on the ball should report the ball as what it stands on");
+  s3.delete();
 }
 
 console.log(failures ? `${failures} FAILED` : "all passed");

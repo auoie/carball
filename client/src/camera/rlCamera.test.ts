@@ -29,6 +29,8 @@ function car(overrides: Partial<CarState> = {}): CarState {
     hasFlipReset: false,
     worldWheelContacts: 4,
     onRbActor: false,
+    wheelGround: ["arena", "arena", "arena", "arena"],
+    rbActor: null,
     wheelContact: [true, true, true, true],
     groundNormal: UP,
     ...overrides,

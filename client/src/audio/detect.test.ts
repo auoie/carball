@@ -110,6 +110,8 @@ const car = (pos: Vec3, vel: Vec3, extra: Partial<CarState> = {}): CarState => (
   hasFlipReset: false,
   worldWheelContacts: 4,
   onRbActor: false,
+  wheelGround: ["arena", "arena", "arena", "arena"],
+  rbActor: null,
   wheelContact: [true, true, true, true],
   groundNormal: vec3(0, 0, 1),
   ...extra,

@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import createEngine from "@engine/rlengine.mjs";
 import { beforeAll, describe, expect, it } from "vitest";
-import { type CarControls, NO_CONTROLS, World, initEngine } from "../engine/world";
+import { type CarControls, NO_CONTROLS, type RbActor, World, initEngine } from "../engine/world";
 import { type Rot3, ZERO, vec3 } from "../math/vec";
 import { DODGE_WINDOW, type FlipTick, FlipTracker } from "./flipTracker";
 
@@ -29,7 +29,7 @@ function rig(): { world: World; car: number; tracker: FlipTracker; step: (c?: Ca
   const step = (c: CarControls = NO_CONTROLS): FlipTick => {
     world.setControls(car, c);
     world.step();
-    return tracker.tick(world.car(car), world.ball(), [], TICK);
+    return tracker.tick(world.car(car), TICK);
   };
   return { world, car, tracker, step };
 }
@@ -95,13 +95,13 @@ describe("FlipTracker against the engine", () => {
     r.world.setBall({ pos: vec3(0, 0, 500), vel: vec3(0, 0, 1300), angVel: ZERO }); // (rising to meet it, hard enough to bounce it off)
     r.step();
     expect(r.step({ ...NO_CONTROLS, jump: true }).dodge.kind).toBe("spent");
-    const resets: string[] = [];
+    const resets: RbActor[] = [];
     let tick = r.step();
     for (let i = 0; i < 150 && tick.dodge.kind !== "free"; i++) {
       tick = r.step();
       if (tick.reset) resets.push(tick.reset);
     }
-    expect(resets).toEqual(["ball"]);
+    expect(resets).toEqual([{ kind: "ball" }]);
     expect(tick.dodge).toEqual({ kind: "free", reset: true });
     r.step({ ...NO_CONTROLS, jump: true, pitch: -1 });
     expect(r.world.car(r.car).hasFlipped).toBe(true);
@@ -116,14 +116,16 @@ describe("FlipTracker against the engine", () => {
     world.setCar(other, { pos: vec3(2000, 2000, 17), vel: ZERO, angVel: ZERO, rot: UPRIGHT, boost: 0 });
     world.setCar(car, { pos: vec3(2000, 2000, 300), vel: ZERO, angVel: ZERO, rot: UPRIGHT, boost: 0 });
     const tracker = new FlipTracker();
-    const resets: string[] = [];
+    const resets: RbActor[] = [];
     for (let i = 0; i < 120; i++) {
       world.step();
-      const tick = tracker.tick(world.car(car), world.ball(), [world.car(other)], TICK);
+      const tick = tracker.tick(world.car(car), TICK);
       if (tick.reset) resets.push(tick.reset);
     }
-    expect(world.car(car).onRbActor).toBe(true); // (resting on it)
-    expect(resets).toEqual(["car"]);
+    // Resting on it, all four wheels on that car; one reset, off that car
+    expect(world.car(car).rbActor).toEqual({ kind: "car", id: other });
+    expect(world.car(car).wheelGround).toEqual(["car", "car", "car", "car"]);
+    expect(resets).toEqual([{ kind: "car", id: other }]);
     world.dispose();
   });
 
@@ -131,7 +133,7 @@ describe("FlipTracker against the engine", () => {
     const r = rig();
     r.world.setBall({ pos: vec3(0, 0, 93), vel: ZERO, angVel: ZERO });
     r.world.setCar(r.car, { pos: vec3(0, 170, 400), vel: ZERO, angVel: ZERO, rot: UPRIGHT, boost: 0 });
-    const resets: string[] = [];
+    const resets: RbActor[] = [];
     for (let i = 0; i < 200; i++) {
       const tick = r.step();
       if (tick.reset) resets.push(tick.reset);

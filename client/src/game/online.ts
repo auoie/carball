@@ -252,8 +252,7 @@ export class Online {
   #trackFlip(): void {
     const local = this.#cars.get(this.#localCar)?.state.current;
     if (!local) return;
-    const others = [...this.#cars].filter(([id]) => id !== this.#localCar).map(([, entry]) => entry.state.current);
-    const { dodge, reset } = this.#flipTracker.tick(local, this.#ball.current, others, TICK_SECONDS);
+    const { dodge, reset } = this.#flipTracker.tick(local, TICK_SECONDS);
     this.#dodge = dodge;
     if (reset) this.#flipReset = true;
   }

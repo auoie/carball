@@ -188,7 +188,7 @@ export class Freeplay {
 
   /** Whether the car can dodge, after this tick (the flip indicator). */
   #trackFlip(): void {
-    const { dodge, reset } = this.#flipTracker.tick(this.#car.current, this.#ball.current, [], TICK_SECONDS);
+    const { dodge, reset } = this.#flipTracker.tick(this.#car.current, TICK_SECONDS);
     this.#dodge = dodge;
     if (reset) this.#flipReset = true;
   }

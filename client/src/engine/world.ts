@@ -53,6 +53,13 @@ export interface BodyState {
   readonly rot: Rot3;
 }
 
+/** What a wheel's ray touches. */
+export type WheelSurface = "none" | "arena" | "ball" | "car";
+const WHEEL_SURFACES: readonly WheelSurface[] = ["none", "arena", "ball", "car"];
+
+/** What a grounded car stands on, when it's not the arena: the ball, or a car (by id). */
+export type RbActor = { readonly kind: "ball" } | { readonly kind: "car"; readonly id: number };
+
 export interface CarState extends BodyState {
   readonly team: Team;
   readonly boost: number; // 0..100
@@ -76,6 +83,10 @@ export interface CarState extends BodyState {
   readonly worldWheelContacts: number;
   /** Grounded on a car or the ball: 3+ wheels down, at most 1 of them on the arena (the game's IsOnRBActor) */
   readonly onRbActor: boolean;
+  /** What each wheel touches (front left, front right, back left, back right, as wheelContact) */
+  readonly wheelGround: readonly [WheelSurface, WheelSurface, WheelSurface, WheelSurface];
+  /** When on a car or the ball: which (the one most wheels touch; a tie goes to the ball) */
+  readonly rbActor: RbActor | null;
   readonly wheelContact: readonly [boolean, boolean, boolean, boolean];
   /** Average contact normal of the wheels touching something, else straight up (Vehicle_TA.GetGroundNormal). */
   readonly groundNormal: Vec3;
@@ -220,6 +231,7 @@ export class World {
     const a = this.#sim.carState(id);
     const flag = (i: number): boolean => at(a, i) !== 0;
     const wheel = m.CAR_WHEEL_CONTACT;
+    const surface = (i: number): WheelSurface => WHEEL_SURFACES[at(a, m.CAR_WHEEL_GROUND + i)] ?? "none";
     return {
       pos: readVec(a, m.CAR_POS),
       vel: readVec(a, m.CAR_VEL),
@@ -240,6 +252,8 @@ export class World {
       hasFlipReset: flag(m.CAR_HAS_FLIP_RESET),
       worldWheelContacts: at(a, m.CAR_WORLD_WHEEL_CONTACTS),
       onRbActor: flag(m.CAR_ON_RB_ACTOR),
+      wheelGround: [surface(0), surface(1), surface(2), surface(3)],
+      rbActor: !flag(m.CAR_ON_RB_ACTOR) ? null : at(a, m.CAR_RB_ACTOR) < 0 ? { kind: "ball" } : { kind: "car", id: at(a, m.CAR_RB_ACTOR) },
       flipping: flag(m.CAR_IS_FLIPPING),
       wheelContact: [flag(wheel), flag(wheel + 1), flag(wheel + 2), flag(wheel + 3)],
       groundNormal: readVec(a, m.CAR_GROUND_NORMAL),
