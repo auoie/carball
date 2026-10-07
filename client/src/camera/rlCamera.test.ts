@@ -20,6 +20,8 @@ function car(overrides: Partial<CarState> = {}): CarState {
     boosting: false,
     demoed: false,
     jumping: false,
+    doubleJumped: false,
+    flipping: false,
     wheelContact: [true, true, true, true],
     groundNormal: UP,
     ...overrides,

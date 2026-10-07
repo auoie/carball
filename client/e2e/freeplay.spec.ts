@@ -1,4 +1,10 @@
 import type { Page } from "@playwright/test";
+
+interface AudioStats {
+  readonly state: string;
+  readonly played: { readonly jump?: number; readonly land?: number };
+  readonly cars: number;
+}
 import { expect, test } from "./fixtures";
 
 async function speed(page: Page): Promise<number> {
@@ -38,6 +44,23 @@ test("freeplay loads, drives and resets", async ({ page }) => {
   // H shows the controls
   await page.keyboard.press("KeyH");
   await expect(page.locator("#help")).toBeVisible();
+
+  // Sound: running since the first key press, the car's engine playing; a jump (right mouse) and its landing heard
+  const audio = async (): Promise<AudioStats> => page.evaluate(() => (window as unknown as { rlAudio: () => AudioStats }).rlAudio());
+  await page.waitForTimeout(400);
+  expect((await audio()).state).toBe("running");
+  expect((await audio()).cars).toBe(1);
+  await page.mouse.down({ button: "right" });
+  await page.waitForTimeout(150);
+  await page.mouse.up({ button: "right" });
+  await expect.poll(async () => (await audio()).played.land ?? 0, { timeout: 5000 }).toBeGreaterThan(0);
+  expect((await audio()).played.jump).toBe(1);
+  // M mutes (a setting like any other: the Audio tab shows it)
+  await page.keyboard.press("KeyM");
+  await page.keyboard.press("Escape");
+  await page.locator(".settings-tab", { hasText: "Audio" }).click();
+  await expect(page.locator('input[data-option="muted"]')).toBeChecked();
+  await page.keyboard.press("Escape");
 
   expect(errors).toEqual([]);
 });

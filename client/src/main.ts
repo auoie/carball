@@ -6,6 +6,7 @@ import { World, initEngine } from "./engine/world";
 import { Freeplay } from "./game/freeplay";
 import { Online } from "./game/online";
 import { Connection, devServerAddress } from "./net/connection";
+import { GameAudio } from "./audio/audio";
 import { Hud } from "./hud";
 import { InputDevices } from "./input/devices";
 import { ArenaView } from "./render/arena";
@@ -49,8 +50,9 @@ async function main(): Promise<void> {
   const params = new URLSearchParams(location.search);
   const server = params.get("server");
 
-  // ?theme=meadow: the arena's look (src/render/themes/)
-  const theme = await createTheme(themeName(params.get("theme")));
+  // ?theme=meadow: the arena's look (src/render/themes/), and its soundscape
+  const name = themeName(params.get("theme"));
+  const theme = await createTheme(name);
   const renderer = new Renderer(canvas);
   renderer.scene.background = theme.background;
   renderer.scene.fog = theme.fog;
@@ -59,12 +61,17 @@ async function main(): Promise<void> {
   const hud = new Hud(required("#hud", HTMLElement));
   const input = new InputDevices(canvas);
   let settings = loadSettings();
+  const audio = new GameAudio(name);
+  audio.apply(settings.audio, settings.options.muted);
   const panel = new SettingsPanel(document.body, settings, (next) => {
     settings = next;
+    audio.apply(next.audio, next.options.muted);
   });
+  // For the browser tests
+  (window as unknown as { rlAudio?: () => unknown }).rlAudio = () => audio.stats;
   let game: { frame(dt: number): void };
   if (server === null) {
-    game = new Freeplay(world, renderer, arena, input, hud, () => settings, () => !panel.isOpen);
+    game = new Freeplay(world, renderer, arena, input, hud, audio, () => settings, () => !panel.isOpen);
   } else {
     status.textContent = "Connecting to the server…";
     const [host = location.hostname, port = "4434"] = server === "" ? [] : server.split(":");
@@ -78,14 +85,16 @@ async function main(): Promise<void> {
       airControlSensitivity: controller.aerialSensitivity,
     });
     world.loadState(welcome.snapshot);
-    const online = new Online(world, renderer, arena, input, hud, connection, welcome, () => settings, () => !panel.isOpen);
+    const online = new Online(world, renderer, arena, input, hud, audio, connection, welcome, () => settings, () => !panel.isOpen);
     // For the browser tests
     (window as unknown as { rlOnline?: () => unknown }).rlOnline = () => online.stats;
     game = online;
   }
 
   window.addEventListener("keydown", (e) => {
-    if (e.code === "KeyH" && !panel.isOpen) hud.toggleHelp(settings.bindings);
+    if (panel.isOpen) return;
+    if (e.code === "KeyH") hud.toggleHelp(settings.bindings);
+    if (e.code === "KeyM") panel.apply({ ...settings, options: { ...settings.options, muted: !settings.options.muted } });
   });
 
   status.hidden = true;

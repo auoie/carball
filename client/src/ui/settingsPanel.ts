@@ -1,9 +1,11 @@
-// Settings menu (Escape): rebind controls, camera settings, controller settings. Changes apply at once
+// Settings menu (Escape): rebind controls, camera settings, controller settings, audio. Changes apply at once
 // and are saved in the browser.
 import type { CameraSettings } from "../camera/rlCamera";
 import { ACTIONS, type Action, type GamepadInput, type KeyboardInput, inputName } from "../input/bindings";
 import { readGamepad } from "../input/devices";
 import {
+  AUDIO_LIMITS,
+  type AudioSettings,
   CAMERA_LIMITS,
   CONTROLLER_LIMITS,
   type ControllerSettings,
@@ -14,7 +16,7 @@ import {
   saveSettings,
 } from "../settings/settings";
 
-type Tab = "controls" | "camera" | "controller";
+type Tab = "controls" | "camera" | "controller" | "audio";
 type Device = "keyboard" | "gamepad";
 
 const CAMERA_LABELS: Readonly<Record<keyof CameraSettings, string>> = {
@@ -39,6 +41,14 @@ const OPTION_LABELS: Readonly<Record<keyof Options, string>> = {
   rearCameraToggle: "Rear camera toggles (off: hold)",
   invertSwivelPitch: "Invert swivel pitch",
   airPitchSafety: "Air pitch safety (keyboard: holding W off the ground doesn't pitch until released)",
+  muted: "Mute all sound (M)",
+};
+
+const AUDIO_LABELS: Readonly<Record<keyof AudioSettings, string>> = {
+  master: "Master volume",
+  effects: "Effects (hits, jumps, pickups, goals)",
+  cars: "Cars (engines, boost)",
+  ambience: "Ambience",
 };
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -70,6 +80,7 @@ export class SettingsPanel {
       this.#tabButton("controls", "Controls"),
       this.#tabButton("camera", "Camera"),
       this.#tabButton("controller", "Controller"),
+      this.#tabButton("audio", "Audio"),
     ]);
     const close = el("button", { className: "settings-close", textContent: "Close (Esc)" });
     close.addEventListener("click", () => { this.close(); });
@@ -113,6 +124,11 @@ export class SettingsPanel {
     this.#root.hidden = true;
   }
 
+  /** Changes settings from outside the menu (a shortcut key): saved and applied like any change in it. */
+  apply(next: Settings): void {
+    this.#update(next);
+  }
+
   #update(next: Settings): void {
     this.#settings = next;
     saveSettings(next);
@@ -136,7 +152,13 @@ export class SettingsPanel {
       b.classList.toggle("active", b.dataset["tab"] === this.#tab);
     }
     const content =
-      this.#tab === "controls" ? this.#controls() : this.#tab === "camera" ? this.#cameraTab() : this.#controllerTab();
+      this.#tab === "controls"
+        ? this.#controls()
+        : this.#tab === "camera"
+          ? this.#cameraTab()
+          : this.#tab === "controller"
+            ? this.#controllerTab()
+            : this.#audioTab();
     this.#body.replaceChildren(content);
   }
 
@@ -307,6 +329,24 @@ export class SettingsPanel {
       }),
     );
     sliders.append(this.#checkboxes(["airPitchSafety"]));
+    return sliders;
+  }
+
+  #audioTab(): HTMLElement {
+    const sliders = this.#sliders(
+      this.#settings.audio,
+      AUDIO_LIMITS,
+      AUDIO_LABELS,
+      (audio) => { this.#update({ ...this.#settings, audio }); },
+      DEFAULT_SETTINGS.audio,
+    );
+    sliders.prepend(
+      el("p", {
+        className: "settings-hint",
+        textContent: "Every sound is made in the browser as you play. The ambience is the arena theme's own soundscape.",
+      }),
+    );
+    sliders.append(this.#checkboxes(["muted"]));
     return sliders;
   }
 

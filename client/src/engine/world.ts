@@ -61,6 +61,8 @@ export interface CarState extends BodyState {
   readonly boosting: boolean;
   readonly demoed: boolean;
   readonly jumping: boolean; // jump component active (first 0.2 s of a held jump)
+  readonly doubleJumped: boolean; // used its second jump without dodging (until it lands)
+  readonly flipping: boolean; // a dodge is turning the car
   readonly wheelContact: readonly [boolean, boolean, boolean, boolean];
   /** Average contact normal of the wheels touching something, else straight up (Vehicle_TA.GetGroundNormal). */
   readonly groundNormal: Vec3;
@@ -204,6 +206,8 @@ export class World {
       boosting: flag(m.CAR_BOOSTING),
       demoed: flag(m.CAR_DEMOED),
       jumping: flag(m.CAR_IS_JUMPING),
+      doubleJumped: flag(m.CAR_HAS_DOUBLE_JUMPED),
+      flipping: flag(m.CAR_IS_FLIPPING),
       wheelContact: [flag(wheel), flag(wheel + 1), flag(wheel + 2), flag(wheel + 3)],
       groundNormal: readVec(a, m.CAR_GROUND_NORMAL),
     };

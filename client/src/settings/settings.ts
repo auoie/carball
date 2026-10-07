@@ -1,4 +1,4 @@
-// Player settings: bindings, camera and controller. Saved in the browser (localStorage).
+// Player settings: bindings, camera, controller and audio. Saved in the browser (localStorage).
 import { DEFAULT_CAMERA_SETTINGS, type CameraSettings } from "../camera/rlCamera";
 import {
   ACTIONS,
@@ -24,6 +24,15 @@ export interface Options {
   readonly rearCameraToggle: boolean; // bToggleRearCamera
   readonly invertSwivelPitch: boolean; // bInvertSwivelPitch
   readonly airPitchSafety: boolean; // bAirPitchSafetyEnabled (keyboard and mouse)
+  readonly muted: boolean; // all sound off (M)
+}
+
+/** Volumes, 0..1. */
+export interface AudioSettings {
+  readonly master: number;
+  readonly effects: number; // hits, jumps, pickups, goals
+  readonly cars: number; // engines and boost
+  readonly ambience: number; // the arena's soundscape
 }
 
 export interface Settings {
@@ -31,6 +40,7 @@ export interface Settings {
   readonly camera: CameraSettings;
   readonly controller: ControllerSettings;
   readonly options: Options;
+  readonly audio: AudioSettings;
 }
 
 export interface Range {
@@ -58,6 +68,15 @@ export const CONTROLLER_LIMITS: Readonly<Record<keyof ControllerSettings, Range>
   aerialSensitivity: { min: 1, max: 10, step: 0.01 },
 };
 
+export const AUDIO_LIMITS: Readonly<Record<keyof AudioSettings, Range>> = {
+  master: { min: 0, max: 1, step: 0.05 },
+  effects: { min: 0, max: 1, step: 0.05 },
+  cars: { min: 0, max: 1, step: 0.05 },
+  ambience: { min: 0, max: 1, step: 0.05 },
+};
+
+export const DEFAULT_AUDIO_SETTINGS: AudioSettings = { master: 0.8, effects: 1, cars: 0.7, ambience: 0.6 };
+
 /** Default__ProfileGamepadSave_TA. */
 export const DEFAULT_CONTROLLER_SETTINGS: ControllerSettings = {
   deadzone: 0.2,
@@ -72,6 +91,7 @@ export const DEFAULT_OPTIONS: Options = {
   rearCameraToggle: false,
   invertSwivelPitch: true,
   airPitchSafety: true,
+  muted: false,
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -79,6 +99,7 @@ export const DEFAULT_SETTINGS: Settings = {
   camera: DEFAULT_CAMERA_SETTINGS,
   controller: DEFAULT_CONTROLLER_SETTINGS,
   options: DEFAULT_OPTIONS,
+  audio: DEFAULT_AUDIO_SETTINGS,
 };
 
 const STORAGE_KEY = "rl-clone.settings.v1";
@@ -156,6 +177,7 @@ export function parseSettings(v: unknown): Settings {
     camera: readNumbers(src["camera"], DEFAULT_CAMERA_SETTINGS, CAMERA_LIMITS),
     controller: readNumbers(src["controller"], DEFAULT_CONTROLLER_SETTINGS, CONTROLLER_LIMITS),
     options: readBooleans(src["options"], DEFAULT_OPTIONS),
+    audio: readNumbers(src["audio"], DEFAULT_AUDIO_SETTINGS, AUDIO_LIMITS),
   };
 }
 

@@ -20,7 +20,8 @@ describe("settings", () => {
       bindings: { ...DEFAULT_BINDINGS, jump: { keyboard: { kind: "key", code: "Space" } as const, gamepad: null } },
       camera: { ...DEFAULT_SETTINGS.camera, fov: 110, distance: 260, stiffness: 0.45 },
       controller: { ...DEFAULT_SETTINGS.controller, deadzone: 0.15, aerialSensitivity: 1.4 },
-      options: { ...DEFAULT_SETTINGS.options, ballCamToggle: false, invertSwivelPitch: false },
+      options: { ...DEFAULT_SETTINGS.options, ballCamToggle: false, invertSwivelPitch: false, muted: true },
+      audio: { master: 0.5, effects: 0.25, cars: 0, ambience: 1 },
     };
     saveSettings(custom, storage);
     expect(loadSettings(storage)).toEqual(custom);
@@ -38,6 +39,7 @@ describe("settings", () => {
       camera: { fov: 400, height: "high", pitch: -99 },
       controller: { deadzone: -1, dodgeDeadzone: 5, aerialSensitivity: 0.5 },
       options: { airPitchSafety: "no", rearCameraToggle: true },
+      audio: { master: 3, effects: -1, cars: "loud" },
     });
     expect(s.camera.fov).toBe(110);
     expect(s.camera.height).toBe(DEFAULT_SETTINGS.camera.height);
@@ -47,11 +49,18 @@ describe("settings", () => {
     expect(s.controller.aerialSensitivity).toBe(1);
     expect(s.options.airPitchSafety).toBe(true);
     expect(s.options.rearCameraToggle).toBe(true);
+    expect(s.audio).toEqual({ ...DEFAULT_SETTINGS.audio, master: 1, effects: 0 });
   });
 
   it("defaults are the game's profile defaults", () => {
     expect(DEFAULT_SETTINGS.controller).toEqual({ deadzone: 0.2, dodgeDeadzone: 0.8, steeringSensitivity: 1, aerialSensitivity: 1 });
-    expect(DEFAULT_SETTINGS.options).toEqual({ ballCamToggle: true, rearCameraToggle: false, invertSwivelPitch: true, airPitchSafety: true });
+    expect(DEFAULT_SETTINGS.options).toEqual({
+      ballCamToggle: true,
+      rearCameraToggle: false,
+      invertSwivelPitch: true,
+      airPitchSafety: true,
+      muted: false,
+    });
   });
 
   it("keeps defaults for missing bindings, clears invalid ones", () => {

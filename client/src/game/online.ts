@@ -7,7 +7,7 @@ import type { Vec3 } from "../math/vec";
 import type { Hud } from "../hud";
 import type { InputDevices } from "../input/devices";
 import { AirPitchSafety, EMPTY_INPUT, type HeldActions, type LookInput, readControls, readHeldActions, readLook } from "../input/mapping";
-import { FixedStep, TICK_SECONDS } from "../loop/fixedStep";
+import { FixedStep, TICK_RATE, TICK_SECONDS } from "../loop/fixedStep";
 import type { Connection } from "../net/connection";
 import { NO_INPUT, Predictor } from "../net/predictor";
 import {
@@ -26,6 +26,7 @@ import { BallSpin } from "../render/ballSpin";
 import { BallView, BoostPadsView, CarView } from "../render/entities";
 import type { ArenaView } from "../render/arena";
 import type { Renderer } from "../render/renderer";
+import type { GameAudio } from "../audio/audio";
 import type { Options, Settings } from "../settings/settings";
 import { Interpolated } from "./interpolated";
 
@@ -54,6 +55,8 @@ export class Online {
   readonly #arena: ArenaView;
   readonly #input: InputDevices;
   readonly #hud: Hud;
+  readonly #audio: GameAudio;
+  #throttle = 0;
   readonly #connection: Connection;
   readonly #localCar: number;
   readonly #predictor: Predictor;
@@ -78,6 +81,7 @@ export class Online {
   #bufferText = "";
   #message: string | null = null;
   #messageTimer = 0;
+  #countdownLeft = 0; // whole seconds of the kickoff countdown, for its beeps
   #disconnected: string | null = null;
   #fps = 60;
   readonly #pos = new Vector3();
@@ -90,6 +94,7 @@ export class Online {
     arena: ArenaView,
     input: InputDevices,
     hud: Hud,
+    audio: GameAudio,
     connection: Connection,
     welcome: { readonly carId: number; readonly frame: number },
     private readonly settings: () => Settings,
@@ -100,6 +105,7 @@ export class Online {
     this.#arena = arena;
     this.#input = input;
     this.#hud = hud;
+    this.#audio = audio;
     this.#connection = connection;
     this.#localCar = welcome.carId;
     this.#predictor = new Predictor(world, welcome.carId, welcome.frame);
@@ -151,6 +157,7 @@ export class Online {
     const look = readLook(snapshot, bindings, controller.deadzone);
     this.#look = { up: options.invertSwivelPitch ? -look.up : look.up, right: look.right };
     this.#camera.settings = settings.camera;
+    this.#throttle = Math.abs(raw.throttle);
 
     const ticks = this.#clock.advance(frameSeconds);
     for (let i = 0; i < ticks; i++) {
@@ -163,7 +170,11 @@ export class Online {
       this.#messageTimer -= frameSeconds;
       if (this.#messageTimer <= 0) this.#message = null;
     }
-    this.#draw(frameSeconds);
+    // The countdown beeps at 3, 2, 1 and go
+    const left = Math.ceil(this.#world.kickoffCountdown() / TICK_RATE);
+    if (left < this.#countdownLeft && left <= 3) this.#audio.countdown(left);
+    this.#countdownLeft = left;
+    this.#draw(frameSeconds, ticks * TICK_SECONDS);
   }
 
   /** The frames the server has not acknowledged yet, newest 10 at most */
@@ -200,6 +211,7 @@ export class Online {
       } else if (m.type === "event" && m.event.kind === "goal") {
         const team = m.event.team === 1 ? 1 : 0;
         this.#score[team] += 1;
+        this.#audio.goal();
         this.#message = team === 0 ? "BLUE SCORES!" : "ORANGE SCORES!";
         this.#messageTimer = GOAL_MESSAGE_SECONDS;
       }
@@ -240,7 +252,8 @@ export class Online {
     this.#held = held; // (freeplay's reset and ball placement do nothing online)
   }
 
-  #draw(frameSeconds: number): void {
+  /** `simulated`: seconds of physics run this frame. */
+  #draw(frameSeconds: number, simulated: number): void {
     const alpha = this.#clock.alpha;
     for (const { view, state } of this.#cars.values()) {
       view.update(state.position(alpha, this.#pos), state.rotation(alpha, this.#rot), state.current.boosting, state.current.demoed);
@@ -248,7 +261,8 @@ export class Online {
     const ball = this.#ball.position(alpha, this.#pos);
     this.#ballView.update(ball, this.#ball.rotation(alpha, this.#rot));
     this.#arena.update(ball, frameSeconds);
-    this.#padsView.update(this.#world.boostPads());
+    const pads = this.#world.boostPads();
+    this.#padsView.update(pads);
 
     const local = this.#cars.get(this.#localCar)?.state;
     if (local) {
@@ -259,6 +273,13 @@ export class Online {
         lookRight: this.#look.right,
       });
       this.#renderer.render(view);
+      this.#audio.frame({
+        world: { cars: new Map([...this.#cars].map(([id, entry]) => [id, entry.state.current])), ball: this.#ball.current, pads },
+        localCar: this.#localCar,
+        throttle: this.#throttle,
+        simulated,
+        camera: view,
+      });
     }
 
     if (frameSeconds > 0) this.#fps += (1 / frameSeconds - this.#fps) * 0.05;
