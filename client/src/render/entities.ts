@@ -19,6 +19,7 @@ import {
 } from "three";
 import type { BoostPadState, CarConfig, Team } from "../engine/world";
 import { buildCarModel } from "./carModel";
+import { SonicBoom, Trail } from "./supersonic";
 import { toThreeVector } from "./coords";
 import { vec3 } from "../math/vec";
 
@@ -26,13 +27,26 @@ export const BALL_RADIUS = 91.25;
 const TEAM_CAR_COLORS = [new Color(0x1f6fff), new Color(0xff7a12)] as const;
 
 /** A car: the boxy model built around its hitbox (src/render/carModel.ts) and a boost flame, in the car's local
- *  frame (x forward, y up, z right). */
+ *  frame (x forward, y up, z right); and, in the world, its supersonic trails and shockwave (src/render/supersonic.ts). */
 export class CarView {
+  /** Add this to the scene: the car and its effects */
   readonly root = new Group();
+  readonly #body = new Group(); // posed as the car
   readonly #flame: Mesh;
+  readonly #trails: readonly [Trail, Trail] = [new Trail(), new Trail()];
+  /** Where the trails leave the car: its rear corners, a little above the middle (local frame) */
+  readonly #trailFrom: readonly [Vector3, Vector3];
+  readonly #boom = new SonicBoom();
+  #supersonic = false;
+  readonly #point = new Vector3();
 
   constructor(config: CarConfig, team: Team) {
-    this.root.add(buildCarModel(config, TEAM_CAR_COLORS[team]));
+    this.#body.add(buildCarModel(config, TEAM_CAR_COLORS[team]));
+    this.root.add(this.#body, ...this.#trails.map((t) => t.mesh), this.#boom.mesh);
+    const rear = config.hitboxOffset.x - config.hitboxSize.x / 2 + 4;
+    const height = config.hitboxOffset.z + config.hitboxSize.z * 0.1;
+    const side = config.hitboxSize.y / 2 - 10;
+    this.#trailFrom = [new Vector3(rear, height, -side), new Vector3(rear, height, side)];
 
     this.#flame = new Mesh(
       new ConeGeometry(14, 70, 12),
@@ -42,14 +56,28 @@ export class CarView {
     this.#flame.position.copy(
       toThreeVector(vec3(config.hitboxOffset.x - config.hitboxSize.x / 2 - 35, 0, config.hitboxOffset.z)),
     );
-    this.root.add(this.#flame);
+    this.#body.add(this.#flame);
   }
 
-  update(position: Vector3, rotation: Quaternion, boosting: boolean, demoed: boolean): void {
-    this.root.position.copy(position);
-    this.root.quaternion.copy(rotation);
+  /** A frame: the car's pose and state; `seconds` since the last frame (for the trails). */
+  update(position: Vector3, rotation: Quaternion, boosting: boolean, demoed: boolean, supersonic = false, seconds = 0): void {
+    this.#body.position.copy(position);
+    this.#body.quaternion.copy(rotation);
     this.#flame.visible = boosting;
     this.root.visible = !demoed;
+    const sonic = supersonic && !demoed;
+    this.#trails.forEach((trail, i) => {
+      const from = this.#trailFrom[i];
+      if (from) trail.update(this.#point.copy(from).applyQuaternion(rotation).add(position), sonic, seconds);
+    });
+    if (sonic && !this.#supersonic) this.#boom.start(position, this.#point.set(1, 0, 0).applyQuaternion(rotation));
+    this.#supersonic = sonic;
+    this.#boom.update(seconds);
+  }
+
+  /** How many points the trails have (for tests). */
+  get trailLength(): number {
+    return Math.max(...this.#trails.map((t) => t.length));
   }
 }
 

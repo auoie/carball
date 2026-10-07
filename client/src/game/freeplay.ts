@@ -210,7 +210,14 @@ export class Freeplay {
   #draw(frameSeconds: number, simulated: number): void {
     const alpha = this.#clock.alpha;
     const car = this.#car.current;
-    this.#carView.update(this.#car.position(alpha, this.#pos), this.#car.rotation(alpha, this.#rot), car.boosting, car.demoed);
+    this.#carView.update(
+      this.#car.position(alpha, this.#pos),
+      this.#car.rotation(alpha, this.#rot),
+      car.boosting,
+      car.demoed,
+      car.supersonic,
+      frameSeconds,
+    );
     const ball = this.#ball.position(alpha, this.#pos);
     this.#ballView.update(ball, this.#ball.rotation(alpha, this.#rot));
     this.#arena.update(ball, frameSeconds);

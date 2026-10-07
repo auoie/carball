@@ -270,7 +270,8 @@ export class Online {
   #draw(frameSeconds: number, simulated: number): void {
     const alpha = this.#clock.alpha;
     for (const { view, state } of this.#cars.values()) {
-      view.update(state.position(alpha, this.#pos), state.rotation(alpha, this.#rot), state.current.boosting, state.current.demoed);
+      const { boosting, demoed, supersonic } = state.current;
+      view.update(state.position(alpha, this.#pos), state.rotation(alpha, this.#rot), boosting, demoed, supersonic, frameSeconds);
     }
     const ball = this.#ball.position(alpha, this.#pos);
     this.#ballView.update(ball, this.#ball.rotation(alpha, this.#rot));
