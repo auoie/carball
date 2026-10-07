@@ -65,6 +65,7 @@ engine_program(rollback tests/rollback.cpp)
 engine_program(netstate tests/netstate.cpp)
 if (NOT EMSCRIPTEN)
 	engine_program(replay_validate tools/replay_validate.cpp) # physics vs replays (notes/validation.md)
+	engine_program(live_validate tools/live_validate.cpp) # physics vs recordings of the live game (tools/physlog)
 endif()
 
 enable_testing()

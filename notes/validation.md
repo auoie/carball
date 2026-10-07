@@ -14,6 +14,16 @@ python3 scripts/validation_report.py out/replays/cases.csv                   # a
 `out/replays/` is git-ignored (replays hold player data). Options: `--no-sensitivity` (ignore the players' steering
 sensitivity), `--no-warmup`, `--no-handbrake-history`, `--fit-handbrake` (see below), `--zero-ball-spin`.
 
+Recordings of the live game (offline modes only; `tools/physlog/README.md`): a BakkesMod plugin records every tick's
+car and ball state and full input in freeplay, from your own driving or scripted scenarios (`tools/physlog/scenarios`).
+Copy the CSVs into `out/live/` (git-ignored) and compare:
+```sh
+engine/build/live_validate out/live/steer_<date>.csv              # state set from the recording every tick
+engine/build/live_validate out/live/air_<date>.csv --continuous   # runs on from its own state (drift)
+engine/build/live_validate --synth tools/physlog/scenarios/air.txt /tmp/air.csv   # our engine's own recording (exact)
+```
+It first reports the recording's tick spacing, angular velocity units and whether a row is the start of its tick.
+
 Car–car (bumps and demolitions, finding 17), here over the 602 replays in `out/replays/more` (2v2/3v3 heavy),
 states piped so no large CSV is written (~20 s with 8 batches in parallel):
 ```sh

@@ -143,7 +143,9 @@ throttle curve, hitbox sizes and wheel setup, ball radius, dodge-vs-double-jump 
 - [x] Other hitboxes checked (`--bodies`): right preset per body, straight driving exact; steering 0.03–0.06 uu
       off for non-Octane presets (open).
 - [x] Input changes between frames checked (fitted switch tick): throttle matches; steering changes 0.08–0.12 (open).
-- [ ] Open: non-Octane steering, steering changes, body 1919's preset, goal-wall wobble, air control/flip cancels. Open questions replays can't answer: goal-wall wobble, air control/flip cancels, ball on a parked
+- [ ] Open: non-Octane steering, steering changes, body 1919's preset, goal-wall wobble, air control/flip cancels.
+- [ ] Recordings of the live game (`tools/physlog`, BakkesMod, offline only) + `engine/tools/live_validate`: built;
+      waiting for the first recordings (scenarios: steer per body, air, jumps, walls, ball_roof, powerslide). Open questions replays can't answer: goal-wall wobble, air control/flip cancels, ball on a parked
       car's roof.
 
 ## 8. Engine build

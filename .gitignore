@@ -60,3 +60,5 @@ server/target/
 
 # Replays pulled from the dataset and data extracted from them (third-party; player data)
 out/replays/
+# Recordings from the live game (tools/physlog), kept local like the replays
+out/live/

@@ -234,9 +234,10 @@ static void SetBall(Arena* arena, const Body& b) {
 }
 
 static float AngleBetween(const RotMat& a, const RotMat& b) {
-	// rotation angle of a^T b
-	float trace = a.forward.Dot(b.forward) + a.right.Dot(b.right) + a.up.Dot(b.up);
-	return acosf(std::clamp((trace - 1) / 2, -1.f, 1.f));
+	// rotation angle of a^T b from the matrices' difference: |a - b|_F = 2 sqrt(2) sin(angle / 2) (acos of the trace
+	// loses small angles to float rounding, ~0.03 deg)
+	float d = sqrtf((a.forward - b.forward).LengthSq() + (a.right - b.right).LengthSq() + (a.up - b.up).LengthSq());
+	return 2 * asinf(std::min(1.f, d / (2 * sqrtf(2.f))));
 }
 
 struct Errors {

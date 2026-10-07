@@ -1,0 +1,10 @@
+# Handbrake: powerslide turns and the handbrake ramp
+ball -3500 -4500 93  0 0 0  0 0 0
+car 0 -3500 17  0 90 0  0 0 0  0 0 0  0
+wait 60
+input 120 1 0 0 0 0 0 0 0
+input 45 1 1 0 0 0 0 0 1        # full right with handbrake
+input 45 1 0 0 0 0 0 0 0
+input 30 1 -1 0 0 0 0 0 1       # left with handbrake
+input 15 1 -1 0 0 0 0 0 0       # handbrake released, still steering
+input 60 0 0 0 0 0 0 0 0

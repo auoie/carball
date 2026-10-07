@@ -1,0 +1,47 @@
+# Jumps, double jumps, flips and flip cancels from rest on the floor (stick: pitch -1 = forward)
+ball -3500 -4500 93  0 0 0  0 0 0
+car 0 -3000 17  0 90 0  0 0 0  0 0 0  100
+wait 60
+input 12 0 0 0 0 0 1 0 0        # jump, held 12 ticks
+input 45 0 0 0 0 0 0 0 0
+input 1 0 0 0 0 0 1 0 0         # double jump (no stick)
+input 150 0 0 0 0 0 0 0 0
+car 0 -3000 17  0 90 0  0 0 0  0 0 0  100
+wait 60
+input 4 0 0 0 0 0 1 0 0         # short jump
+input 20 0 0 0 0 0 0 0 0
+input 1 0 0 -1 0 0 1 0 0        # front flip
+input 150 0 0 0 0 0 0 0 0
+car 0 -3000 17  0 90 0  0 0 0  0 0 0  100
+wait 60
+input 4 0 0 0 0 0 1 0 0
+input 20 0 0 0 0 0 0 0 0
+input 1 0 0 -1 0 0 1 0 0        # front flip...
+input 4 0 0 0 0 0 0 0 0
+input 60 0 0 1 0 0 0 0 0        # ...cancelled (stick back from the 5th tick)
+input 90 0 0 0 0 0 0 0 0
+car 0 -3000 17  0 90 0  0 0 0  0 0 0  100
+wait 60
+input 4 0 0 0 0 0 1 0 0
+input 20 0 0 0 0 0 0 0 0
+input 1 0 0 0 1 0 1 0 0         # side flip (right)
+input 150 0 0 0 0 0 0 0 0
+car 0 -3000 17  0 90 0  0 0 0  0 0 0  100
+wait 60
+input 4 0 0 0 0 0 1 0 0
+input 20 0 0 0 0 0 0 0 0
+input 1 0 0 -1 -1 0 1 0 0       # diagonal flip (forward left)
+input 150 0 0 0 0 0 0 0 0
+car 0 -3000 17  0 90 0  0 0 0  0 0 0  100
+wait 60
+input 4 0 0 0 0 0 1 0 0
+input 20 0 0 0 0 0 0 0 0
+input 1 0 0 1 0 0 1 0 0         # back flip
+input 150 0 0 0 0 0 0 0 0
+car 0 -3000 17  0 90 0  1500 0 0  0 0 0  100
+wait 2
+input 30 1 0 0 0 0 0 1 0        # at speed (boosting), then a front flip
+input 4 1 0 0 0 0 1 1 0
+input 20 1 0 0 0 0 0 1 0
+input 1 1 0 -1 0 0 1 1 0
+input 120 1 0 0 0 0 0 0 0

@@ -1,0 +1,4 @@
+# A ball left on a parked car's roof (does it roll off, and how?)
+car 0 -1000 17  0 90 0  0 0 0  0 0 0  0
+ball 0 -986 160  0 0 0  0 0 0
+wait 480
