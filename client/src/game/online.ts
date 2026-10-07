@@ -45,6 +45,7 @@ export interface OnlineStats {
   readonly cars: readonly { readonly id: number; readonly pos: Vec3 }[];
   readonly corrections: number;
   readonly localMispredictions: number;
+  readonly kickoffCountdown: number; // ticks left (cars get no input)
 }
 
 export class Online {
@@ -122,6 +123,7 @@ export class Online {
       cars: [...this.#cars].map(([id, entry]) => ({ id, pos: entry.state.current.pos })),
       corrections: this.#predictor.stats.corrections,
       localMispredictions: this.#predictor.stats.localMispredictions,
+      kickoffCountdown: this.#world.kickoffCountdown(),
     };
   }
 

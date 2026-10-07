@@ -95,6 +95,14 @@ describe("themes", () => {
     expect(meshes(theme("city").root).length).toBeLessThanOrEqual(16);
   });
 
+  it("infested: at most 14 draw calls for all its scenery", () => {
+    expect(meshes(theme("infested").root).length).toBeLessThanOrEqual(14);
+  });
+
+  it("kawaii: at most 24 draw calls for all its scenery", () => {
+    expect(meshes(theme("kawaii").root).length).toBeLessThanOrEqual(24);
+  });
+
   it("meadow: the same scenery every time (seeded)", async () => {
     const placements = (t: Theme): number[] =>
       meshes(t.root).flatMap((m) => (m instanceof InstancedMesh ? Array.from(m.instanceMatrix.array) : []));

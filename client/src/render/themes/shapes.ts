@@ -49,16 +49,29 @@ export function placementMatrix({ position = [0, 0, 0], rotation = [0, 0, 0], sc
   return new Matrix4().compose(new Vector3(...position), q, new Vector3(...scale));
 }
 
-/** Copies of a geometry (one draw call), each placed and optionally tinted. Spread over the scenery: never culled. */
+/**
+ * Fog for additive (glowing) materials, in place of `#include <fog_fragment>`: their light fades out with distance.
+ * (Blending towards the fog's colour, as the standard chunk does, would add the haze colour instead: bright blotches.)
+ */
+export const ADDITIVE_FOG = /* glsl */ `
+  #ifdef USE_FOG
+    gl_FragColor.rgb *= 1.0 - smoothstep(fogNear, fogFar, vFogDepth);
+  #endif`;
+
+/**
+ * Copies of a geometry (one draw call), each placed and, if `tinted`, tinted by its placement's tint. Spread over the
+ * scenery: never culled.
+ */
 export function instances(
   geometry: BufferGeometry,
   material: Material,
   placements: readonly (Placement & { readonly tint?: Color })[],
+  tinted = true,
 ): InstancedMesh {
   const mesh = new InstancedMesh(geometry, material, placements.length);
   placements.forEach((p, i) => {
     mesh.setMatrixAt(i, placementMatrix(p));
-    if (p.tint) mesh.setColorAt(i, p.tint);
+    if (tinted && p.tint) mesh.setColorAt(i, p.tint);
   });
   mesh.frustumCulled = false;
   return mesh;
@@ -68,7 +81,7 @@ export function instances(
  * Adds vertex animation to a material: GLSL run after `begin_vertex`, which may move `transformed` (the vertex in the
  * model's own frame, before its instance matrix), with `time` (seconds) and the given extra uniforms available; and
  * optionally GLSL run after `beginnormal_vertex`, to turn `objectNormal` the same way (for lighting). Returns the
- * uniforms, to update.
+ * uniforms, to update. Pass a `time` in `extra` to share one clock between materials.
  */
 export function animate<U extends Record<string, { value: unknown }>>(
   material: Material,
@@ -77,7 +90,7 @@ export function animate<U extends Record<string, { value: unknown }>>(
   extra: U,
   normalGlsl = "",
 ): U & { time: { value: number } } {
-  const uniforms = { ...extra, time: { value: 0 } };
+  const uniforms = { time: { value: 0 }, ...extra };
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
     shader.vertexShader = `uniform float time;\n${declarations}\n${shader.vertexShader}`

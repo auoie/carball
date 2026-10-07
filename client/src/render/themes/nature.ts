@@ -42,8 +42,10 @@ export interface LandShape {
   readonly hills: { readonly low: number; readonly high: number; readonly rise: number; readonly horizon: number };
 }
 
-export const GROUND_LEVEL = -6; // just under the field, which covers it inside the arena
-const WATER_LEVEL = -40;
+/** The ground under the arena's field (which covers it), well below it: the field is pushed back in depth (to draw
+ *  under the arena mesh's floor pieces), and from above at an angle a ground just under it would show through. */
+export const GROUND_LEVEL = -40;
+const WATER_LEVEL = GROUND_LEVEL - 34;
 export const PATH_HALF_WIDTH = 240;
 
 export function meadowLand(seed: number): Land {

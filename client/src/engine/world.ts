@@ -161,6 +161,11 @@ export class World {
     this.#sim.resetKickoff(seed);
   }
 
+  /** Ticks left of the kickoff countdown (cars get no input while it runs; a match server starts it). */
+  kickoffCountdown(): number {
+    return this.#sim.kickoffCountdown();
+  }
+
   ball(): BodyState {
     const m = this.#m;
     const a = this.#sim.ballState();

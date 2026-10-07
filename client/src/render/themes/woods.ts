@@ -271,11 +271,18 @@ export function buildSunbeams(land: Land, seed: number, sunDirection: Vector3, c
   return new Mesh(geometry, material);
 }
 
-/** Pollen drifting in the air around the clearing: soft specks, slowly wandering. Returns them and their clock. */
+/** Pollen (or spores) drifting in the air: soft specks, slowly wandering. Returns them and their clock. */
 export function buildPollen(
   land: Land,
   seed: number,
-  options: { readonly count: number; readonly within: number; readonly beyond: (x: number, z: number) => boolean },
+  options: {
+    readonly count: number;
+    readonly within: number;
+    readonly beyond: (x: number, z: number) => boolean;
+    readonly color?: number; // default pale gold
+    readonly size?: number; // default 16 uu
+    readonly height?: number; // how high above the ground they float, at most (default 1360 uu)
+  },
 ): { points: Points; time: { value: number } } {
   const random = seededRandom(seed);
   const positions: number[] = [];
@@ -283,7 +290,7 @@ export function buildPollen(
     const x = (random() * 2 - 1) * options.within;
     const z = (random() * 2 - 1) * options.within * 1.25;
     if (!options.beyond(x, z)) continue;
-    positions.push(x, land.height(x, z) + 60 + random() * 1300, z);
+    positions.push(x, land.height(x, z) + 60 + random() * ((options.height ?? 1360) - 60), z);
   }
   const geometry = new BufferGeometry();
   geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
@@ -301,9 +308,9 @@ export function buildPollen(
   speck.minFilter = LinearFilter;
   speck.needsUpdate = true;
   const material = new PointsMaterial({
-    color: 0xfff4c8,
+    color: options.color ?? 0xfff4c8,
     map: speck,
-    size: 16,
+    size: options.size ?? 16,
     sizeAttenuation: true,
     transparent: true,
     depthWrite: false,

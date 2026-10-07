@@ -9,6 +9,7 @@ interface Stats {
   cars: { id: number; pos: { x: number; y: number; z: number } }[];
   corrections: number;
   localMispredictions: number;
+  kickoffCountdown: number;
 }
 
 const SERVER = "127.0.0.1:14434";
@@ -38,6 +39,9 @@ test("two players: one drives, the other sees it through the server", async ({ p
   await expect(page.locator("#net")).toContainText("2 cars", { timeout: 5_000 });
   await expect(other.locator("#net")).toContainText("2 cars");
   await expect(page.locator("#net")).toContainText(/ping \d+ ms/);
+
+  // The kickoff countdown (4 s from the first player's join) ends: cars take input again
+  await expect.poll(async () => (await stats(page)).kickoffCountdown, { timeout: 10_000 }).toBe(0);
 
   const me = await stats(page);
   const ids = me.cars.map((c) => c.id);

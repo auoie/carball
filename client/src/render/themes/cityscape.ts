@@ -27,11 +27,12 @@ import {
   Vector3,
 } from "three";
 import { seededRandom } from "./random";
-import { type Placement, animate, combine, instances, part } from "./shapes";
+import { ADDITIVE_FOG, type Placement, animate, combine, instances, part } from "./shapes";
 import { PLAYING_VOLUME } from "./theme";
 
 /** The rooftop deck around the arena (its top is the field's level), and the streets far below. */
-export const DECK = { halfX: PLAYING_VOLUME.halfX + 1800, halfZ: PLAYING_VOLUME.halfZ + 1800, top: -6 } as const;
+// (its top well below the field, which is pushed back in depth: see GROUND_LEVEL in nature.ts)
+export const DECK = { halfX: PLAYING_VOLUME.halfX + 1800, halfZ: PLAYING_VOLUME.halfZ + 1800, top: -40 } as const;
 export const STREET = -4000;
 /** City blocks: one every PITCH uu, with streets STREET_WIDTH wide between them (centred on PITCH / 2 + k PITCH). */
 const PITCH = 2600;
@@ -260,7 +261,7 @@ export function buildSigns(towers: readonly Tower[], seed: number): Group {
         float g = q.x * q.y;
         gl_FragColor = vec4(vTint * g * g * 0.6, 1.0);
         #include <colorspace_fragment>
-        #include <fog_fragment>
+        ${ADDITIVE_FOG}
       }`,
     uniforms: UniformsUtils.clone(UniformsLib.fog),
     fog: true,
@@ -327,7 +328,7 @@ void main() {
   color *= 0.85 + 0.15 * step(0.08, hash(floor(t * 12.0)));
   gl_FragColor = vec4(color, 1.0);
   #include <colorspace_fragment>
-  #include <fog_fragment>
+  ${ADDITIVE_FOG}
 }
 `;
 

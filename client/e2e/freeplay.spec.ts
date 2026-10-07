@@ -98,7 +98,7 @@ test("controls can be rebound and are remembered", async ({ page }) => {
   await expect(page.locator('.binding-slot[data-action="throttleForward"][data-device="keyboard"]')).toHaveText("W");
 });
 
-for (const theme of ["meadow", "forest", "city"]) {
+for (const theme of ["meadow", "forest", "city", "infested", "kawaii"]) {
   test(`the ${theme} theme loads and plays`, async ({ page }) => {
     await playTheme(page, theme);
   });

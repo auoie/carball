@@ -1,7 +1,7 @@
 // The game protocol (version 1): see protocol/README.md. Byte-exact samples in protocol/vectors.json (shared with
 // the Rust server's tests).
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2; // 2: kickoff countdown in the state
 export const MAX_INPUT_FRAMES = 10;
 
 export type GameEvent =

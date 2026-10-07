@@ -20,6 +20,8 @@ import {
   PlaneGeometry,
   RepeatWrapping,
   SRGBColorSpace,
+  Shape,
+  ShapeGeometry,
   type Vector3,
 } from "three";
 import type { TriangleMesh } from "../engine/cmf";
@@ -31,8 +33,18 @@ import type { ArenaStyle, Theme } from "./themes/theme";
 import { vec3 } from "../math/vec";
 
 /** The arena's dimensions (uu, the game's frame). The side walls are flat up to |y| = cornerTangentY, where the
- *  corner curves of the mesh begin (the game's Bézier corners: tested against the mesh). */
-export const ARENA = { sideX: 4096, backY: 5120, goalDepthY: 6000, height: 2048, cornerTangentY: 3584 };
+ *  corner curves of the mesh begin (the game's Bézier corners: tested against the mesh); the corners meet the back
+ *  walls at |x| = cornerTangentX. */
+export const ARENA = {
+  sideX: 4096,
+  backY: 5120,
+  height: 2048,
+  /** The goal posts; the goals' own floors (the mesh's) start this far behind the goal line */
+  goalHalfWidth: 893,
+  goalFloorStart: 107,
+  cornerTangentY: 3584,
+  cornerTangentX: 2560,
+};
 const TEAM_COLORS = [new Color(0x2a7fff), new Color(0xff8a1f)] as const; // blue (-y goal), orange (+y goal)
 /** Width of the mown stripes across the field (uu) */
 const STRIPE_WIDTH = 512;
@@ -133,10 +145,11 @@ export class ArenaView {
       polygonOffsetFactor: 1,
       polygonOffsetUnits: 4,
     });
-    if (floorStripe) floorMat.map = stripeTexture(floorColor, floorStripe, (ARENA.goalDepthY * 2) / (STRIPE_WIDTH * 2));
+    // (the floor's texture coordinates are in uu: one pair of stripes per 2 STRIPE_WIDTH)
+    if (floorStripe) floorMat.map = stripeTexture(floorColor, floorStripe, 1 / (STRIPE_WIDTH * 2));
 
-    // Floor (covers the goals too). PlaneGeometry faces +z; rotate it to face up (+y in Three)
-    const floor = new Mesh(new PlaneGeometry(ARENA.sideX * 2, ARENA.goalDepthY * 2), floorMat);
+    // Floor, in the arena's outline (goals included). The shape faces +z; rotate it to face up (+y in Three)
+    const floor = new Mesh(new ShapeGeometry(floorOutline(), 16), floorMat);
     floor.rotation.x = -Math.PI / 2;
     group.add(floor);
 
@@ -185,6 +198,32 @@ function buildFieldMarkings(glow: Color | null): Group {
     group.add(m);
   }
   return mergeByMaterial(group);
+}
+
+/**
+ * The field's outline (the game's x, y): straight sides and rounded corners (quarter circles between the corner
+ * curves' ends: within a few uu of the game's Bézier corners, under the ramps), and a shallow step into each goal
+ * mouth, reaching under the start of the goal's own floor (the mesh's; it draws over the field). The goals' backs
+ * curve up, so the field stops well short of them.
+ */
+function floorOutline(): Shape {
+  const { sideX: x, backY: y, cornerTangentX: cx, cornerTangentY: cy, goalHalfWidth: g } = ARENA;
+  const mouth = y + ARENA.goalFloorStart + 80;
+  const r = x - cx; // (= y - cy)
+  const s = new Shape();
+  s.moveTo(x, -cy);
+  s.lineTo(x, cy);
+  s.absarc(cx, cy, r, 0, Math.PI / 2, false);
+  for (const [px, py] of [[g, y], [g, mouth], [-g, mouth], [-g, y]] as const) s.lineTo(px, py);
+  s.lineTo(-cx, y);
+  s.absarc(-cx, cy, r, Math.PI / 2, Math.PI, false);
+  s.lineTo(-x, -cy);
+  s.absarc(-cx, -cy, r, Math.PI, Math.PI * 1.5, false);
+  for (const [px, py] of [[-g, -y], [-g, -mouth], [g, -mouth], [g, -y]] as const) s.lineTo(px, py);
+  s.lineTo(cx, -y);
+  s.absarc(cx, -cy, r, Math.PI * 1.5, Math.PI * 2, false);
+  s.closePath();
+  return s;
 }
 
 /** Stripes across the field (along the game's y): two colours with soft edges, `repeat` pairs over the floor. */
