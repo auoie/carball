@@ -194,6 +194,9 @@ export class GameAudio {
       case "land":
         s.land(out, when, event.strength);
         break;
+      case "impact":
+        s.impact(out, when, event.strength);
+        break;
       case "pad":
         s.pad(out, when, event.big);
         break;

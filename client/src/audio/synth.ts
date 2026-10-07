@@ -101,14 +101,21 @@ export class Synth {
     this.#sweep("sine", 150, 65, 0.25, out, when, 0.16, 0.3);
   }
 
-  /** Touching down: a thud through the suspension, as hard as the landing (0..1). */
+  /** Touching down on the wheels: a soft, rounded thump with a little squish of the tyres, as hard as the landing. */
   land(out: AudioNode, when: number, strength: number): void {
     const s = Math.min(1, Math.max(0, strength));
-    this.#sweep("sine", 95, 38, 0.16, out, when, 0.12 + 0.55 * s, 0.24);
-    this.#burst("lowpass", 600, 200, 0.7, out, when, 0.002, 0.05 + 0.25 * s, 0.06);
-    const clunk = this.gain(0, this.filter("lowpass", 700, 1, out));
-    envelope(clunk.gain, when, 0.002, 0.03 + 0.1 * s, 0.06);
-    this.tone("square", 150, clunk, when, 0.1);
+    this.#sweep("sine", 110, 44, 0.12, out, when, 0.16 + 0.45 * s, 0.22);
+    this.#sweep("triangle", 200, 120, 0.08, out, when, 0.04 + 0.1 * s, 0.1);
+    this.#burst("lowpass", 450, 180, 0.7, out, when, 0.004, 0.04 + 0.12 * s, 0.05);
+  }
+
+  /** The body hitting the arena (a pogo off the nose, a roof landing): a warm "thock", a low thump with two soft,
+   *  musical knocks (a fifth apart) and a tap on top. */
+  impact(out: AudioNode, when: number, strength: number): void {
+    const s = Math.min(1, Math.max(0, strength));
+    this.#sweep("sine", 165, 58, 0.08, out, when, 0.2 + 0.5 * s, 0.2);
+    for (const f of [329.6, 493.9]) this.#sweep("sine", f, f * 0.97, 0.12, out, when, 0.05 + 0.11 * s, 0.17);
+    this.#burst("bandpass", 1300, 900, 1.2, out, when, 0.001, 0.06 + 0.16 * s, 0.025);
   }
 
   /** Picking up boost: a bright two-note blip for a small pad, a rising arpeggio with a shimmer for a big one. */

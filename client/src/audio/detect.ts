@@ -1,5 +1,6 @@
 // What happened that makes a sound, found by comparing the game's state from one frame to the next: ball hits and
-// bounces, jumps, second jumps and dodges, landings, boost pickups, bumps and demolitions. The same for freeplay and
+// bounces, jumps, second jumps and dodges, landings, the car's body hitting the arena (a pogo off its nose, a roof
+// landing, a wall), boost pickups, bumps and demolitions. The same for freeplay and
 // online play (where the states are the predicted world), with no help from the engine.
 import type { BodyState, BoostPadState, CarState } from "../engine/world";
 import { type Vec3, dot, length, lerp, sub } from "../math/vec";
@@ -16,7 +17,8 @@ export type SoundEvent =
   | { readonly kind: "jump"; readonly car: number; readonly at: Vec3 }
   | { readonly kind: "doubleJump"; readonly car: number; readonly at: Vec3 }
   | { readonly kind: "flip"; readonly car: number; readonly at: Vec3 }
-  | { readonly kind: "land"; readonly car: number; readonly at: Vec3; readonly strength: number }
+  | { readonly kind: "land"; readonly car: number; readonly at: Vec3; readonly strength: number } // on its wheels
+  | { readonly kind: "impact"; readonly car: number; readonly at: Vec3; readonly strength: number } // its body hit the arena
   | { readonly kind: "pad"; readonly big: boolean; readonly at: Vec3 }
   | { readonly kind: "bump"; readonly at: Vec3; readonly strength: number }
   | { readonly kind: "demo"; readonly at: Vec3 };
@@ -30,8 +32,18 @@ const BALL_IMPACT = 160;
 const TOUCH_DISTANCE = 270;
 /** Moving further than this between frames is a teleport (a reset, a ball placed), not a hit. */
 const TELEPORT = 600;
-/** In the air at least this long before touching down counts as a landing (not a bump in the road). */
-const AIRBORNE_SECONDS = 0.25;
+/** In the air at least this long before touching down counts as a landing (not a bump in the road; short enough for
+ *  the hop after a pogo). */
+const AIRBORNE_SECONDS = 0.12;
+/** A change in a car's velocity (uu/s, beyond gravity) over IMPACT_WINDOW that nothing else explains: it hit the arena.
+ *  Much more for a car driving on its wheels (ramps, slides and turns change its velocity too). */
+const CAR_IMPACT = 450;
+const CAR_IMPACT_ON_WHEELS = 900;
+/** The time over which a car's change of velocity is measured (s): a collision spreads over a few ticks, and frames
+ *  can be shorter or longer than that. */
+const IMPACT_WINDOW = 0.035;
+/** One landing sound per this long, per car (touching down can bottom out the body too). */
+const LANDING_QUIET = 0.25;
 /** At most one ball sound per this long, so a dribble or a car pushing the ball doesn't rattle. */
 const BALL_COOLDOWN = 0.07;
 
@@ -43,6 +55,9 @@ export class SoundDetector {
   readonly #airborne = new Map<number, number>(); // seconds in the air, per car
   #ballQuiet = 0; // seconds until the next ball sound may play
   readonly #bumpQuiet = new Map<string, number>();
+  readonly #landQuiet = new Map<number, number>(); // per car
+  /** Per car: its recent velocities (newest last, with their age), and the time since it last jumped or dodged */
+  readonly #motion = new Map<number, { history: { vel: Vec3; age: number }[]; sinceAction: number }>();
 
   /** The sounds between the last state and this one, `seconds` of simulation apart (0: nothing new). */
   update(world: SoundWorld, seconds: number): SoundEvent[] {
@@ -51,12 +66,13 @@ export class SoundDetector {
     this.#previous = world;
     this.#ballQuiet = Math.max(0, this.#ballQuiet - seconds);
     for (const [key, t] of this.#bumpQuiet) this.#bumpQuiet.set(key, t - seconds);
+    for (const [id, t] of this.#landQuiet) this.#landQuiet.set(id, t - seconds);
     if (!previous) return [];
     const events: SoundEvent[] = [];
     this.#ballEvents(previous, world, seconds, events);
     for (const [id, car] of world.cars) {
       const before = previous.cars.get(id);
-      if (before) this.#carEvents(id, before, car, seconds, events);
+      if (before) this.#carEvents(id, before, car, seconds, world, events);
     }
     this.#bumps(previous, world, events);
     world.pads.forEach((pad, i) => {
@@ -82,29 +98,65 @@ export class SoundDetector {
     );
   }
 
-  #carEvents(id: number, before: CarState, now: CarState, seconds: number, events: SoundEvent[]): void {
+  #carEvents(id: number, before: CarState, now: CarState, seconds: number, world: SoundWorld, events: SoundEvent[]): void {
     if (now.demoed) {
       if (!before.demoed) events.push({ kind: "demo", at: before.pos });
       return;
     }
     if (length(sub(now.pos, before.pos)) > TELEPORT) {
       this.#airborne.delete(id); // (respawned, reset)
+      this.#motion.delete(id);
       return;
     }
-    if (now.jumping && !before.jumping) events.push({ kind: "jump", car: id, at: now.pos });
-    if (now.flipping && !before.flipping) events.push({ kind: "flip", car: id, at: now.pos });
-    else if (now.doubleJumped && !before.doubleJumped) events.push({ kind: "doubleJump", car: id, at: now.pos });
+    const jumped = now.jumping && !before.jumping;
+    const flipped = now.flipping && !before.flipping;
+    const doubleJumped = now.doubleJumped && !before.doubleJumped;
+    if (jumped) events.push({ kind: "jump", car: id, at: now.pos });
+    if (flipped) events.push({ kind: "flip", car: id, at: now.pos });
+    else if (doubleJumped) events.push({ kind: "doubleJump", car: id, at: now.pos });
+    // The body hitting the arena (a nose-first landing that pogos the car back up, a roof landing, a wall): a sharp
+    // change in velocity over the last few ticks that a jump, a dodge, the ball or another car doesn't explain. (Checked
+    // first: a slow frame can hold both a nose hitting the floor and the wheels coming down after it.)
+    const impact = this.#impact(id, before, now, seconds, jumped || flipped || doubleJumped, world);
+    if (impact !== null) {
+      events.push({ kind: "impact", car: id, at: now.pos, strength: impact });
+      this.#landQuiet.set(id, LANDING_QUIET);
+    }
     // Landing: wheels down after a while in the air, as hard as it was coming in against the surface
     const air = this.#airborne.get(id) ?? 0;
     if (wheelsDown(now) >= 2) {
-      if (wheelsDown(before) === 0 && air >= AIRBORNE_SECONDS) {
+      if (wheelsDown(before) === 0 && air >= AIRBORNE_SECONDS && (this.#landQuiet.get(id) ?? 0) <= 0) {
         const into = -dot(before.vel, now.groundNormal);
-        events.push({ kind: "land", car: id, at: now.pos, strength: clamp01(into / 1400) });
+        events.push({ kind: "land", car: id, at: now.pos, strength: clamp01(into / 1100) });
+        this.#landQuiet.set(id, LANDING_QUIET);
       }
       this.#airborne.set(id, 0);
     } else if (wheelsDown(now) === 0) {
       this.#airborne.set(id, air + seconds);
     }
+  }
+
+  /** How hard the car's body just hit the arena (0..1), or null if it didn't. Keeps the car's velocity history. */
+  #impact(id: number, before: CarState, now: CarState, seconds: number, acted: boolean, world: SoundWorld): number | null {
+    const motion = this.#motion.get(id) ?? { history: [], sinceAction: Infinity };
+    this.#motion.set(id, motion);
+    for (const h of motion.history) h.age += seconds;
+    motion.history.push({ vel: now.vel, age: 0 });
+    // (keeping the newest velocity at least the window old)
+    while (motion.history.length > 2 && (motion.history[1]?.age ?? 0) >= IMPACT_WINDOW) motion.history.shift();
+    motion.sinceAction = acted ? 0 : motion.sinceAction + seconds;
+    const oldest = motion.history[0];
+    if (!oldest || oldest.age === 0 || motion.sinceAction <= oldest.age || (this.#landQuiet.get(id) ?? 0) > 0) return null;
+    // Coming down flat on its wheels is a landing, however hard
+    if (wheelsDown(now) >= 2 && dot(now.rot.up, now.groundNormal) > 0.9) return null;
+    const change = sub(now.vel, oldest.vel);
+    const impulse = length({ ...change, z: change.z - GRAVITY * oldest.age });
+    if (impulse < (wheelsDown(before) >= 3 ? CAR_IMPACT_ON_WHEELS : CAR_IMPACT)) return null;
+    if (length(sub(now.pos, world.ball.pos)) < TOUCH_DISTANCE) return null;
+    for (const [other, car] of world.cars) {
+      if (other !== id && !car.demoed && length(sub(now.pos, car.pos)) < 300) return null;
+    }
+    return clamp01(impulse / 1500);
   }
 
   /** Two cars close together whose velocities just changed sharply: they hit each other. */

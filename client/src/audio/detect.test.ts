@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import createEngine from "@engine/rlengine.mjs";
 import { beforeAll, describe, expect, it } from "vitest";
 import { type BodyState, type BoostPadState, type CarControls, type CarState, NO_CONTROLS, World, initEngine } from "../engine/world";
-import { IDENTITY_ROT, type Vec3, ZERO, vec3 } from "../math/vec";
+import { IDENTITY_ROT, type Rot3, type Vec3, ZERO, vec3 } from "../math/vec";
 import { type SoundEvent, SoundDetector, type SoundWorld } from "./detect";
 
 let engine: Awaited<ReturnType<typeof createEngine>>;
@@ -14,8 +14,15 @@ beforeAll(async () => {
   initEngine(engine, [new Uint8Array(readFileSync(arenaPath))]);
 });
 
-/** Runs the world at 60 frames a second (two ticks each), with `controls(tick)` for its one car, collecting sounds. */
-function play(world: World, car: number | null, ticks: number, controls: (tick: number) => CarControls = () => NO_CONTROLS): SoundEvent[] {
+/** Runs the world at 120 / `perFrame` frames a second (`perFrame` ticks each; 60 by default), with `controls(tick)` for
+ *  its one car, collecting sounds. */
+function play(
+  world: World,
+  car: number | null,
+  ticks: number,
+  controls: (tick: number) => CarControls = () => NO_CONTROLS,
+  perFrame = 2,
+): SoundEvent[] {
   const detector = new SoundDetector();
   const events: SoundEvent[] = [];
   const observe = (): SoundWorld => ({
@@ -23,13 +30,13 @@ function play(world: World, car: number | null, ticks: number, controls: (tick: 
     ball: world.ball(),
     pads: world.boostPads(),
   });
-  detector.update(observe(), 1 / 60);
-  for (let t = 0; t < ticks; t += 2) {
-    for (let k = 0; k < 2; k++) {
+  detector.update(observe(), perFrame / 120);
+  for (let t = 0; t < ticks; t += perFrame) {
+    for (let k = 0; k < perFrame; k++) {
       if (car !== null) world.setControls(car, controls(t + k));
       world.step();
     }
-    events.push(...detector.update(observe(), 1 / 60));
+    events.push(...detector.update(observe(), perFrame / 120));
   }
   return events;
 }
@@ -84,6 +91,62 @@ describe("sound events from the engine", () => {
     };
     expect(second(0)).toEqual(["jump", "doubleJump"]);
     expect(second(-1)).toEqual(["jump", "flip"]);
+  });
+});
+
+describe("the car hitting the ground", () => {
+  const drop = (rot: Rot3, z: number, vz: number, perFrame = 2): SoundEvent[] => {
+    const world = World.create(engine);
+    const car = world.addCar(0);
+    world.resetKickoff(1);
+    world.setCar(car, { pos: vec3(2000, 2000, z), vel: vec3(0, 0, vz), angVel: ZERO, rot, boost: 0 });
+    const events = play(world, car, 240, () => NO_CONTROLS, perFrame);
+    world.dispose();
+    return events.filter((e) => e.kind === "land" || e.kind === "impact");
+  };
+  const pitched = (angle: number): Rot3 => ({
+    forward: vec3(Math.cos(angle), 0, Math.sin(angle)),
+    right: vec3(0, 1, 0),
+    up: vec3(-Math.sin(angle), 0, Math.cos(angle)),
+  });
+
+  it("nose first into the floor (as in a pogo): one impact, a firm one", () => {
+    const events = drop(pitched(-1.05), 400, -900);
+    expect(kinds(events)).toEqual(["impact"]);
+    if (events[0]?.kind === "impact") expect(events[0].strength).toBeGreaterThan(0.3);
+  });
+
+  it("landing on the roof is an impact", () => {
+    const events = drop({ forward: vec3(1, 0, 0), right: vec3(0, -1, 0), up: vec3(0, 0, -1) }, 400, -600);
+    expect(kinds(events)).toEqual(["impact"]);
+  });
+
+  it("the same at 120, 60 and 30 frames a second", () => {
+    const roof: Rot3 = { forward: vec3(1, 0, 0), right: vec3(0, -1, 0), up: vec3(0, 0, -1) };
+    for (const perFrame of [1, 2, 4]) {
+      expect(kinds(drop(pitched(-1.05), 400, -900, perFrame)), `nose, ${String(perFrame)} ticks a frame`).toEqual(["impact"]);
+      expect(kinds(drop(roof, 400, -600, perFrame)), `roof, ${String(perFrame)} ticks a frame`).toEqual(["impact"]);
+      expect(kinds(drop(IDENTITY_ROT, 400, -600, perFrame)), `wheels, ${String(perFrame)} ticks a frame`).toEqual(["land"]);
+    }
+  });
+
+  it("landing on the wheels: one landing sound, not an impact as well", () => {
+    expect(kinds(drop(IDENTITY_ROT, 400, -600))).toEqual(["land"]);
+  });
+
+  it("hard driving (steering, boosting, powersliding) makes no landing or impact sounds", () => {
+    const world = World.create(engine);
+    const car = world.addCar(0);
+    world.resetKickoff(1);
+    const events = play(world, car, 480, (t) => ({
+      ...NO_CONTROLS,
+      throttle: 1,
+      boost: t < 240,
+      steer: Math.sin(t / 25),
+      handbrake: t % 120 > 90,
+    })).filter((e) => e.kind === "land" || e.kind === "impact");
+    expect(events).toEqual([]);
+    world.dispose();
   });
 });
 
