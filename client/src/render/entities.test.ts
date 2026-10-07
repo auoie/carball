@@ -1,7 +1,7 @@
-import { InstancedMesh, Matrix4, Vector3 } from "three";
+import { InstancedMesh, Matrix4, Quaternion, Vector3 } from "three";
 import { describe, expect, it } from "vitest";
 import { vec3 } from "../math/vec";
-import { BALL_RADIUS, BoostPadsView, patchedBallGeometry } from "./entities";
+import { BALL_RADIUS, BallView, BoostPadsView, patchedBallGeometry } from "./entities";
 
 describe("ball", () => {
   it("has twelve five-triangle patches, so its spin shows", () => {
@@ -62,5 +62,20 @@ describe("boost pads", () => {
     view.update(pads);
     expect(drawn(view)[4]).toEqual([null, null]);
     expect(drawn(view)[5]).toEqual([[0, 12, -4240], [1788, 12, 2300]]);
+  });
+});
+
+describe("the ball's floor marker", () => {
+  it("stays under the ball, the ball's size at any height, a little fainter high up", () => {
+    const view = new BallView();
+    const at = (x: number, y: number, z: number): { x: number; z: number; fade: number } => {
+      view.update(new Vector3(x, y, z), new Quaternion());
+      return view.marker;
+    };
+    expect(at(500, BALL_RADIUS, -800)).toEqual({ x: 500, z: -800, fade: 1 });
+    const high = at(-1200, 1800, 300);
+    expect([high.x, high.z]).toEqual([-1200, 300]);
+    expect(high.fade).toBeLessThan(1);
+    expect(at(0, 2000, 0).fade).toBeGreaterThanOrEqual(0.45); // (never gone: it's where the ball will come down)
   });
 });

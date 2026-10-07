@@ -3,7 +3,6 @@
 import {
   BufferAttribute,
   type BufferGeometry,
-  CircleGeometry,
   Color,
   ConeGeometry,
   CylinderGeometry,
@@ -14,7 +13,9 @@ import {
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
+  PlaneGeometry,
   type Quaternion,
+  ShaderMaterial,
   Vector3,
 } from "three";
 import type { BoostPadState, CarConfig, Team } from "../engine/world";
@@ -81,35 +82,81 @@ export class CarView {
   }
 }
 
-/** The ball, faceted and patched so its spin is visible, plus a shadow straight below it (as in the game). */
+/** The ball, faceted and patched so its spin is visible, plus its marker on the floor straight below it. */
 export class BallView {
   readonly root = new Group();
   readonly #ball: Mesh;
-  readonly #shadow: Mesh;
+  readonly #marker: Mesh;
+  readonly #fade = { value: 1 };
 
   constructor() {
     this.#ball = new Mesh(
       patchedBallGeometry(),
       new MeshStandardMaterial({ vertexColors: true, roughness: 0.5, metalness: 0.1, flatShading: true }),
     );
-    this.#shadow = new Mesh(
-      new CircleGeometry(BALL_RADIUS, 32),
-      new MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35, depthWrite: false }),
+    // The ball's size, so it shows where the ball will come down; a plane a little bigger, to hold the rim
+    this.#marker = new Mesh(
+      new PlaneGeometry(BALL_RADIUS * 2 * MARKER_SPAN, BALL_RADIUS * 2 * MARKER_SPAN),
+      new ShaderMaterial({
+        vertexShader: MARKER_VERTEX,
+        fragmentShader: MARKER_FRAGMENT,
+        uniforms: { fade: this.#fade },
+        transparent: true,
+        depthWrite: false,
+      }),
     );
-    this.#shadow.rotation.x = -Math.PI / 2;
-    this.root.add(this.#ball, this.#shadow);
+    this.#marker.rotation.x = -Math.PI / 2;
+    this.#marker.renderOrder = 1; // (over the floor and its markings)
+    this.root.add(this.#ball, this.#marker);
   }
 
   update(position: Vector3, rotation: Quaternion): void {
     this.#ball.position.copy(position);
     this.#ball.quaternion.copy(rotation);
-    // Shadow on the floor, smaller and fainter the higher the ball
-    const height = Math.max(0, position.y - BALL_RADIUS);
-    const s = Math.max(0.35, 1 - height / 2500);
-    this.#shadow.position.set(position.x, 1, position.z);
-    this.#shadow.scale.setScalar(s);
+    // On the floor straight below the ball, the ball's size at any height; a little fainter the higher it is
+    this.#marker.position.set(position.x, 1, position.z);
+    this.#fade.value = markerFade(Math.max(0, position.y - BALL_RADIUS));
+  }
+
+  /** The marker's place on the floor, and how strongly it shows (for tests). */
+  get marker(): { readonly x: number; readonly z: number; readonly fade: number } {
+    return { x: this.#marker.position.x, z: this.#marker.position.z, fade: this.#fade.value };
   }
 }
+
+/** The marker's plane, in ball radii from its centre to its edge. */
+const MARKER_SPAN = 1.3;
+
+/** How strongly the marker shows with the ball `height` uu off the floor: fully on the floor, never below 0.45. */
+export function markerFade(height: number): number {
+  return Math.max(0.45, 1 - height / 3000);
+}
+
+const MARKER_VERTEX = /* glsl */ `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
+
+// A soft dark disc the ball's size with a light rim round it: one or the other shows on any floor, dark or light
+const MARKER_FRAGMENT = /* glsl */ `
+uniform float fade;
+varying vec2 vUv;
+void main() {
+  float r = length(vUv * 2.0 - 1.0) * ${MARKER_SPAN.toFixed(2)}; // 1 at the ball's radius
+  float core = (1.0 - smoothstep(0.5, 1.0, r)) * 0.6 * fade;
+  // The rim stays at least a pixel and a half wide however far away (it would vanish into the floor otherwise)
+  float width = max(0.09, fwidth(r) * 1.5);
+  float rim = (1.0 - smoothstep(width * 0.5, width, abs(r - 0.97))) * 0.8 * (0.4 + 0.6 * fade);
+  // The rim over the core
+  float alpha = rim + core * (1.0 - rim);
+  vec3 color = vec3(1.0, 0.97, 0.9) * rim / max(alpha, 1e-4);
+  gl_FragColor = vec4(color, alpha);
+  #include <colorspace_fragment>
+}
+`;
 
 /** An icosphere with a dark pentagon around each of the 12 icosahedron vertices, like a football. */
 export function patchedBallGeometry(): BufferGeometry {
