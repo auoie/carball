@@ -1,5 +1,5 @@
 // The crowd: round little creatures of four (original) kinds, a sprout, an ember, a ripple and a puff, sitting in the
-// stands. They bob in their seats and hop excitedly when the ball comes their way. One draw call per kind.
+// stands, breathing gently (just enough to look alive without drawing the eye from the play). One draw call per kind.
 // Each is built facing +z, standing on y = 0, about 110 uu tall.
 import {
   type BufferGeometry,
@@ -10,7 +10,6 @@ import {
   type InstancedMesh,
   MeshLambertMaterial,
   SphereGeometry,
-  Vector3,
 } from "three";
 import type { Seat } from "./stands";
 import { type Placement, animate, combine, instances, part } from "./shapes";
@@ -68,8 +67,8 @@ function puff(): BufferGeometry {
   return combine([...body(0xd9b8ff), ...ears]);
 }
 
-/** The crowd on `seats`, and its animation: call `update` with the time and the ball's centre (Three.js frame). */
-export function buildCrowd(seats: readonly Seat[], seed: number): { root: Group; update(seconds: number, ball: Vector3): void } {
+/** The crowd on `seats`, and its animation: call `update` with the time. */
+export function buildCrowd(seats: readonly Seat[], seed: number): { root: Group; update(seconds: number): void } {
   const random = seededRandom(seed);
   const kinds = [sprout(), ember(), ripple(), puff()];
   const names = ["sprout", "ember", "ripple", "puff"];
@@ -87,15 +86,14 @@ export function buildCrowd(seats: readonly Seat[], seed: number): { root: Group;
   const uniforms = animate(
     material,
     /* glsl */ `
-      // Each one bobs at its own pace; near the ball they hop faster and higher, squashing as they land
+      // Each one breathes slowly at its own pace: a slight stretch up from its feet, no movement across the screen
       vec3 seat = (instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
       float own = fract(sin(dot(seat.xz, vec2(12.9898, 78.233))) * 43758.5453);
-      float excited = 1.0 - smoothstep(1800.0, 6500.0, distance(seat.xz, ball.xz));
-      float hop = abs(sin(time * mix(2.0, 7.5, excited) * (0.8 + 0.4 * own) + own * 6.2832));
-      transformed.xz *= 1.0 + (1.0 - hop) * 0.08 * excited;
-      transformed.y = transformed.y * (1.0 - (1.0 - hop) * 0.08 * excited) + hop * mix(3.0, 40.0, excited);`,
-    "uniform vec3 ball;",
-    { ball: { value: new Vector3() } },
+      float breath = sin(time * (1.1 + 0.4 * own) + own * 6.2832);
+      transformed.y *= 1.0 + 0.025 * breath;
+      transformed.xz *= 1.0 - 0.012 * breath;`,
+    "",
+    {},
   );
   const root = new Group();
   kinds.forEach((geometry, i) => {
@@ -105,9 +103,8 @@ export function buildCrowd(seats: readonly Seat[], seed: number): { root: Group;
   });
   return {
     root,
-    update(seconds, ball) {
+    update(seconds) {
       uniforms.time.value = seconds;
-      uniforms.ball.value.copy(ball);
     },
   };
 }

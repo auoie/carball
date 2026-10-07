@@ -48,7 +48,7 @@ npm run build && npm run e2e   # Playwright in the installed Chrome: load, drive
 | `src/settings/`, `src/ui/` | player settings (bindings, camera, controller), storage, settings menu |
 | `src/loop/fixedStep.ts` | physics at a fixed 120 Hz; rendering interpolates between ticks |
 | `src/camera/` | the game's car cam, ball cam and transitions, ported from its UnrealScript (`notes/camera.md`) |
-| `src/render/themes/` | arena themes: sky, lighting, fog, scenery and the field's/walls' colours, generated in code and seeded (`night`, `meadow`: hills, trees, tall grass, a pond, mountains, stands with a cheering crowd of original creatures); scenery stays out of the playing volume (tested) |
+| `src/render/themes/` | arena themes: sky, lighting, fog, scenery and the field's/walls' colours, generated in code and seeded (`night`, `meadow`: hills, trees, tall grass, a pond, mountains, stands full of original creatures); scenery stays out of the playing volume (tested) |
 | `src/render/` | Three.js scene: a boxy Fennec-style car built around each hitbox (`carModel.ts`), the ball (its spin integrated client-side from the angular velocity, `ballSpin.ts`: the engine keeps RocketSim's `noBallRot`), pads, and the arena with see-through hexagon walls that light up around the ball (`hexWalls.ts`) |
 | `src/game/freeplay.ts` | freeplay rules: goals, ball reset, kickoff reset, ball-in-front / ball-on-car |
 | `src/game/online.ts` | online play: inputs out at 60 Hz, server updates in, prediction, HUD ping/buffer |

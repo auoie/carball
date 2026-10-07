@@ -1,7 +1,7 @@
 // A sunny countryside stadium in the spirit of creature-collecting adventure games (all original designs): bright
 // sky with drifting clouds, rolling green hills with tall grass, flowers, puffy trees and a pond, snowy mountains on
-// the horizon, colourful open-air stands full of little creatures who cheer when the ball comes their way, and birds
-// circling overhead. Everything is generated here (no downloads), seeded, and drawn in about twenty draw calls.
+// the horizon, colourful open-air stands full of little creatures, and birds circling overhead. Everything is
+// generated here (no downloads), seeded, and drawn in about twenty draw calls.
 import {
   AmbientLight,
   BufferGeometry,
@@ -69,10 +69,10 @@ export function meadowTheme(): Theme {
       },
     },
     root,
-    update(seconds, ball) {
+    update(seconds) {
       sky.update(seconds);
       grass.time.value = seconds;
-      crowd.update(seconds, ball);
+      crowd.update(seconds);
       birds.update(seconds);
     },
   };

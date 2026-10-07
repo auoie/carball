@@ -46,7 +46,7 @@ describe("themes", () => {
     for (const mesh of meshes(t.root)) {
       const geometry = mesh.geometry;
       if (mesh instanceof InstancedMesh) {
-        // Each copy's bounds, raised by the most any animation lifts it (the crowd's hops)
+        // Each copy's bounds, with room for the animation (the crowd's breathing, the grass swaying)
         geometry.computeBoundingBox();
         const bounds = geometry.boundingBox;
         if (!bounds) throw new Error("no bounds");
