@@ -568,7 +568,10 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int 
 					longFriction = 1; // If we aren't powersliding, it's not scaled down
 				}
 
-				bool isContactSticky = realThrottle != 0;
+				// RL PATCH: the wall-grip curve is skipped only on a sticky surface (the arena's materials) with the raw
+				// throttle input non-zero (Wheel_TA FUN_140f588f0: bStickyWheels && Vehicle.Input.Throttle != 0);
+				// RocketSim used throttle-or-boost on any surface
+				bool isContactSticky = controls.throttle != 0 && wheel.m_isInContactWithWorld;
 
 				if (isContactSticky) {
 					// Keep current friction values

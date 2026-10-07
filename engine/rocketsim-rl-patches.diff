@@ -1250,7 +1250,7 @@ index 957b192..2e52fa1 100644
  
  	bool IsSphere() const;
 diff --git upstream/src/Sim/Car/Car.cpp engine/rocketsim/src/Sim/Car/Car.cpp
-index 417ad9d..e90defc 100644
+index 417ad9d..089a872 100644
 --- upstream/src/Sim/Car/Car.cpp
 +++ engine/rocketsim/src/Sim/Car/Car.cpp
 @@ -3,9 +3,34 @@
@@ -1480,7 +1480,19 @@ index 417ad9d..e90defc 100644
  		_bulletVehicle.m_wheelInfo[0].m_steerAngle = steerAngle;
  		_bulletVehicle.m_wheelInfo[1].m_steerAngle = steerAngle;
  	}
-@@ -613,7 +716,12 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -465,7 +568,10 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
+ 					longFriction = 1; // If we aren't powersliding, it's not scaled down
+ 				}
+ 
+-				bool isContactSticky = realThrottle != 0;
++				// RL PATCH: the wall-grip curve is skipped only on a sticky surface (the arena's materials) with the raw
++				// throttle input non-zero (Wheel_TA FUN_140f588f0: bStickyWheels && Vehicle.Input.Throttle != 0);
++				// RocketSim used throttle-or-boost on any surface
++				bool isContactSticky = controls.throttle != 0 && wheel.m_isInContactWithWorld;
+ 
+ 				if (isContactSticky) {
+ 					// Keep current friction values
+@@ -613,7 +719,12 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  		if (!_internalState.flipRelTorque.IsZero()) {
  			// Flip cancel check
  			float pitchScale = 1;
@@ -1494,7 +1506,7 @@ index 417ad9d..e90defc 100644
  				if (RS_SGN(relDodgeTorque.y()) == RS_SGN(controls.pitch)) {
  
  #ifndef RS_MAX_SPEED
-@@ -643,8 +751,14 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -643,8 +754,14 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  
  		float pitchTorqueScale = 1;
  
@@ -1510,7 +1522,7 @@ index 417ad9d..e90defc 100644
  
  			if (_internalState.isFlipping) {
  				pitchTorqueScale = 0;
-@@ -655,9 +769,9 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -655,9 +772,9 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  			}
  
  			// TODO: Use actual dot product operator functions (?)
@@ -1523,7 +1535,7 @@ index 417ad9d..e90defc 100644
  		} else {
  			torque = { 0, 0, 0 };
  		}
-@@ -666,8 +780,8 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -666,8 +783,8 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  
  		// TODO: Use actual dot product operator functions (?)
  		float
@@ -1534,7 +1546,7 @@ index 417ad9d..e90defc 100644
  			dampRoll = dirRoll_forward.dot(angVel) * CAR_AIR_CONTROL_DAMPING.z;
  
  		btVector3 damping =
-@@ -677,8 +791,7 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -677,8 +794,7 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  		_rigidBody.applyTorque(_rigidBody.m_invInertiaTensorWorld.inverse() * (torque - damping) * CAR_TORQUE_SCALE);
  	}
  
@@ -1544,7 +1556,7 @@ index 417ad9d..e90defc 100644
  }
  
  void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorConfig, bool jumpPressed, float forwardSpeed_UU) {
-@@ -736,7 +849,21 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
+@@ -736,7 +852,21 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
  							dodgeDir = dodgeDir.safeNormalized();
  						}
  
@@ -1567,7 +1579,7 @@ index 417ad9d..e90defc 100644
  
  						if (abs(dodgeDir.x()) < 0.1f) dodgeDir.x() = 0;
  						if (abs(dodgeDir.y()) < 0.1f) dodgeDir.y() = 0;
-@@ -785,7 +912,7 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
+@@ -785,7 +915,7 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
  		_internalState.flipTime += tickTime;
  		if (_internalState.flipTime <= FLIP_TORQUE_TIME) {
  			if (_internalState.flipTime >= FLIP_Z_DAMP_START && (_rigidBody.m_linearVelocity.z() < 0 || _internalState.flipTime < FLIP_Z_DAMP_END)) {
@@ -1576,7 +1588,7 @@ index 417ad9d..e90defc 100644
  			}
  		}
  	} else if (_internalState.hasFlipped) {
-@@ -824,7 +951,13 @@ void Car::_UpdateAutoFlip(float tickTime, const MutatorConfig& mutatorConfig, bo
+@@ -824,7 +954,13 @@ void Car::_UpdateAutoFlip(float tickTime, const MutatorConfig& mutatorConfig, bo
  			_internalState.isAutoFlipping = false;
  			_internalState.autoFlipTimer = 0;
  		} else {

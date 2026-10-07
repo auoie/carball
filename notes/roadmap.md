@@ -133,6 +133,11 @@ throttle curve, hitbox sizes and wheel setup, ball radius, dodge-vs-double-jump 
 - [x] Jumps and flips: match; the errors were start timing (jump press fitted; flip start diagnostic).
 - [ ] Next: input changes between frames; bumps/demos; boost pads; kickoffs; other hitboxes.
 - [ ] Wheels on dynamic bodies (car on car / ball): the game's pushback and reaction impulses not modelled.
+- [x] Wall-grip condition (patch 32).
+- [ ] Next, in order: car–car bumps and demos vs replays (incl. whether the attacker keeps its speed in a demo, time of
+      impact), speed-cap timing (supersonic cars), walls/curves error (0.117 vs 0.010 flat), double jumps on walls
+      (timing), boost pads, kickoffs, other hitboxes, input changes between frames. Open questions replays can't answer:
+      goal-wall wobble, air control/flip cancels, ball on a parked car's roof.
 - [ ] Extend: jumps/dodges (fit the start tick), car–car bumps, other hitboxes, kickoffs.
 
 ## 8. Engine build
