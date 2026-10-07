@@ -306,19 +306,45 @@ export function buildRocks(
   return instances(rock, new MeshLambertMaterial({ vertexColors: true, flatShading: true }), placements);
 }
 
+/** How a mountain range looks: its colours bottom to top (forest, rock, snow), where the forest and the snow begin
+ *  (fractions of a peak's height), and where the range stands. */
+export interface Range {
+  readonly forest: number;
+  readonly rock: number;
+  readonly snow: number;
+  readonly treeline: number;
+  readonly snowline: number;
+  readonly distance: readonly [number, number];
+  readonly height: readonly [number, number];
+  readonly base: number; // the peaks' feet (y)
+  readonly count: number;
+}
+
+const MEADOW_RANGE: Range = {
+  forest: 0x5d8c4c,
+  rock: 0x8d929c,
+  snow: 0xf5f8fc,
+  treeline: 0.3,
+  snowline: 0.62,
+  distance: [24000, 29000],
+  height: [5000, 10000],
+  base: -600,
+  count: 20,
+};
+
 /** A ring of snowy, low-poly mountains on the horizon (one draw call). */
-export function buildMountains(seed: number): Mesh {
+export function buildMountains(seed: number, range: Range = MEADOW_RANGE): Mesh {
   const random = seededRandom(seed);
   const noise = valueNoise(seed);
   const peaks: BufferGeometry[] = [];
-  const forest = new Color(0x5d8c4c);
-  const rock = new Color(0x8d929c);
-  const snow = new Color(0xf5f8fc);
-  const count = 20;
+  const forest = new Color(range.forest);
+  const rock = new Color(range.rock);
+  const snow = new Color(range.snow);
+  const count = range.count;
   for (let i = 0; i < count; i++) {
     const angle = ((i + random() * 0.6) / count) * Math.PI * 2;
-    const distance = 24000 + random() * 5000;
-    const height = 5000 + random() * 5000;
+    const distance = range.distance[0] + random() * (range.distance[1] - range.distance[0]);
+    const height = range.height[0] + random() * (range.height[1] - range.height[0]);
     const radius = 4500 + random() * 3500;
     const cone = new ConeGeometry(radius, height, 9, 5);
     // Craggy: push the inner vertices about (the same vertex is shared, so faces stay joined)
@@ -338,12 +364,12 @@ export function buildMountains(seed: number): Mesh {
     for (let v = 0; v < p.count; v += 3) {
       // One colour per face, by its height: forest, rock, snow
       const y = (p.getY(v) + p.getY(v + 1) + p.getY(v + 2)) / 3 / height + 0.5;
-      color.copy(y < 0.3 ? forest : y < 0.62 + 0.08 * noise(i, v) ? rock : snow);
+      color.copy(y < range.treeline ? forest : y < range.snowline + 0.08 * noise(i, v) ? rock : snow);
       for (let k = 0; k < 3; k++) colors.set([color.r, color.g, color.b], (v + k) * 3);
     }
     flat.setAttribute("color", new Float32BufferAttribute(colors, 3));
     flat.deleteAttribute("uv");
-    flat.translate(Math.cos(angle) * distance, height / 2 - 600, Math.sin(angle) * distance);
+    flat.translate(Math.cos(angle) * distance, height / 2 + range.base, Math.sin(angle) * distance);
     peaks.push(flat);
   }
   return new Mesh(combine(peaks), new MeshLambertMaterial({ vertexColors: true, flatShading: true }));

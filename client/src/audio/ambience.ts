@@ -216,6 +216,287 @@ const toll = (synth: Synth, out: AudioNode, when: number): void => {
   bell(synth, at, when, 196, 0.06, 5, [1, 2, 2.4, 3, 4.2]);
 };
 
+/** A ghostly voice: a wordless "oooo" sliding up and down, wavering, through a vowel-like filter. */
+const ghostVoice = (synth: Synth, out: AudioNode, when: number): void => {
+  const at = synth.filter("bandpass", 650, 3, placed(synth, out));
+  const g = synth.gain(0, at);
+  const length = rand(2.2, 3.4);
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.linearRampToValueAtTime(0.09, when + length * 0.4);
+  g.gain.exponentialRampToValueAtTime(0.0001, when + length);
+  const base = rand(240, 330);
+  const vibrato = synth.gain(9);
+  synth.tone("sine", 5, vibrato, when, length + 0.1);
+  for (const [type, ratio] of [["triangle", 1], ["sine", 2.01]] as const) {
+    const o = synth.tone(type, base * ratio, g, when, length + 0.1);
+    o.frequency.setValueAtTime(base * ratio, when);
+    o.frequency.linearRampToValueAtTime(base * ratio * 1.35, when + length * 0.45);
+    o.frequency.linearRampToValueAtTime(base * ratio * 0.85, when + length);
+    vibrato.connect(o.frequency);
+  }
+};
+
+/** Wind chimes from the shrine: a few notes of a minor pentatonic, ringing. */
+const windChimes = (synth: Synth, out: AudioNode, when: number): void => {
+  const at = placed(synth, out);
+  const scale = [880, 1046.5, 1174.66, 1318.51, 1567.98, 1760];
+  for (let i = 0, t = when; i < 3 + Math.floor(Math.random() * 3); i++, t += rand(0.12, 0.4)) {
+    bell(synth, at, t, pick(scale), 0.025, 2.2, [1, 2.76, 5.4]);
+  }
+};
+
+/** A gong, far off: a low bell with a long decay. */
+const gong = (synth: Synth, out: AudioNode, when: number): void => {
+  bell(synth, synth.filter("lowpass", 1200, 0.7, out), when, 98, 0.07, 7, [1, 1.48, 2.1, 2.9, 3.7]);
+};
+
+/** A crow's caw: a rasping burst, twice. */
+const crow = (synth: Synth, out: AudioNode, when: number): void => {
+  const at = placed(synth, out);
+  for (const start of [0, 0.42]) {
+    const t = when + start;
+    const g = synth.gain(0, synth.filter("bandpass", 1300, 2.5, at));
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.05, t + 0.03);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+    // The rasp: the tone pulsed 38 times a second (before the envelope, so the envelope alone sets how loud it is)
+    const rasping = synth.gain(0.6, g);
+    const rasp = synth.gain(0.4);
+    synth.tone("square", 38, rasp, t, 0.32);
+    rasp.connect(rasping.gain);
+    const o = synth.tone("sawtooth", 520, rasping, t, 0.32);
+    o.frequency.exponentialRampToValueAtTime(380, t + 0.3);
+  }
+};
+
+/** A swell that seems to play backwards: noise rising and brightening, then cut off. */
+const reverseSwell = (synth: Synth, out: AudioNode, when: number): void => {
+  const at = placed(synth, out);
+  const length = rand(1.4, 2.4);
+  const g = synth.gain(0, at);
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.exponentialRampToValueAtTime(0.06, when + length);
+  g.gain.linearRampToValueAtTime(0.0001, when + length + 0.04);
+  const f = synth.filter("bandpass", 300, 2, g);
+  f.frequency.setValueAtTime(300, when);
+  f.frequency.exponentialRampToValueAtTime(2400, when + length);
+  synth.noise(f, when, length + 0.1);
+};
+
+/** The serpent, far off: a long, low, wavering call gliding up and back down. */
+const serpentCall = (synth: Synth, out: AudioNode, when: number): void => {
+  const at = synth.filter("lowpass", 700, 2, placed(synth, out));
+  const g = synth.gain(0, at);
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.linearRampToValueAtTime(0.07, when + 1.2);
+  g.gain.exponentialRampToValueAtTime(0.0001, when + 4);
+  const vibrato = synth.gain(4);
+  synth.tone("sine", 3.5, vibrato, when, 4.1);
+  for (const [type, ratio] of [["sawtooth", 1], ["sine", 1.5]] as const) {
+    const o = synth.tone(type, 90 * ratio, g, when, 4.1);
+    o.frequency.setValueAtTime(90 * ratio, when);
+    o.frequency.exponentialRampToValueAtTime(150 * ratio, when + 1.5);
+    o.frequency.exponentialRampToValueAtTime(70 * ratio, when + 4);
+    vibrato.connect(o.frequency);
+  }
+};
+
+/** Crystals chiming: a few high notes falling. */
+const crystalChime = (synth: Synth, out: AudioNode, when: number): void => {
+  const at = placed(synth, out);
+  const start = rand(2400, 3600);
+  for (let i = 0; i < 4; i++) bell(synth, at, when + i * 0.09, start * 0.84 ** i, 0.018, 1.2, [1, 2.4]);
+};
+
+/** A gust: wind rising and falling, its pitch sweeping. */
+const gust = (synth: Synth, out: AudioNode, when: number): void => {
+  const at = placed(synth, out);
+  const length = rand(2.5, 4.5);
+  const g = synth.gain(0, at);
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.linearRampToValueAtTime(0.09, when + length * 0.45);
+  g.gain.exponentialRampToValueAtTime(0.0001, when + length);
+  const f = synth.filter("bandpass", 500, 5, g);
+  f.frequency.setValueAtTime(400, when);
+  f.frequency.exponentialRampToValueAtTime(rand(800, 1300), when + length * 0.45);
+  f.frequency.exponentialRampToValueAtTime(350, when + length);
+  synth.noise(f, when, length + 0.1);
+};
+
+/** Ice cracking somewhere: a sharp snap, then a low groan. */
+const iceCrack = (synth: Synth, out: AudioNode, when: number): void => {
+  const at = placed(synth, out);
+  const snap = synth.gain(0, synth.filter("highpass", 1800, 0.7, at));
+  snap.gain.setValueAtTime(0.0001, when);
+  snap.gain.linearRampToValueAtTime(0.05, when + 0.003);
+  snap.gain.exponentialRampToValueAtTime(0.0001, when + 0.08);
+  synth.noise(snap, when, 0.1);
+  const creak = synth.gain(0, synth.filter("lowpass", 220, 3, at));
+  creak.gain.setValueAtTime(0.0001, when + 0.05);
+  creak.gain.linearRampToValueAtTime(0.04, when + 0.25);
+  creak.gain.exponentialRampToValueAtTime(0.0001, when + 1.2);
+  const o = synth.tone("sawtooth", 95, creak, when + 0.05, 1.2);
+  o.frequency.exponentialRampToValueAtTime(60, when + 1.2);
+};
+
+/** The ice bird, high above: a clear, glassy cry, gliding down. */
+const iceCry = (synth: Synth, out: AudioNode, when: number): void => {
+  const at = placed(synth, out);
+  for (const [start, from, to] of [[0, 1900, 1500], [0.55, 2100, 1300]] as const) {
+    const t = when + start;
+    const g = synth.gain(0, at);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.035, t + 0.05);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.6);
+    for (const ratio of [1, 2.01]) {
+      const o = synth.tone("sine", from * ratio, g, t, 0.65);
+      o.frequency.exponentialRampToValueAtTime(to * ratio, t + 0.6);
+    }
+  }
+};
+
+/** A crystal singing: a slow swell of two slightly detuned tones (they beat), fading over seconds, like a struck
+ *  singing bowl. */
+const singingCrystal = (synth: Synth, out: AudioNode, when: number): void => {
+  const at = placed(synth, out);
+  const f = pick([392, 440, 523.25, 587.33, 659.25]);
+  const g = synth.gain(0, at);
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.linearRampToValueAtTime(0.035, when + 0.9);
+  g.gain.exponentialRampToValueAtTime(0.0001, when + 6);
+  for (const [ratio, detune] of [[1, 0], [1, 3], [2.76, 0]] as const) {
+    const o = synth.tone("sine", f * ratio, g, when, 6.1);
+    o.detune.value = detune;
+  }
+};
+
+/** Water dripping into the pool, echoing off the crater walls. */
+const drip = (synth: Synth, out: AudioNode, when: number): void => {
+  const at = placed(synth, out);
+  const f = rand(900, 1400);
+  [0, 0.22, 0.44].forEach((delay, i) => { blip(synth, at, when + delay, "sine", f, f * 1.6, 0.05 / (1 + i * 2.2), 0.09); });
+};
+
+/** The station's radio: a short burst of beeps, far off. */
+const radio = (synth: Synth, out: AudioNode, when: number): void => {
+  const at = synth.filter("bandpass", 1800, 3, placed(synth, out));
+  for (let i = 0; i < 3; i++) blip(synth, at, when + i * 0.13, "square", 1760, 1760, 0.012, 0.07);
+};
+
+/** A temple bell, struck once, ringing long. */
+const templeBell = (synth: Synth, out: AudioNode, when: number): void => {
+  bell(synth, synth.filter("lowpass", 3000, 0.7, placed(synth, out)), when, pick([196, 220, 261.63]), 0.06, 6, [1, 2.0, 2.76, 4.07]);
+};
+
+/** A choir swelling, far off: a wordless chord through a vowel-like filter. */
+const choir = (synth: Synth, out: AudioNode, when: number): void => {
+  const at = synth.filter("bandpass", 800, 1.5, out);
+  const length = rand(4, 6);
+  const g = synth.gain(0, at);
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.linearRampToValueAtTime(0.035, when + length * 0.45);
+  g.gain.linearRampToValueAtTime(0.0001, when + length);
+  const root = pick([220, 246.94, 196]);
+  for (const ratio of [1, 1.26, 1.5, 2]) {
+    for (const detune of [-8, 8]) {
+      const o = synth.tone("sawtooth", root * ratio, g, when, length + 0.1);
+      o.detune.value = detune;
+    }
+  }
+};
+
+/** A whale's song, high above: long, gliding tones. */
+const whaleSong = (synth: Synth, out: AudioNode, when: number): void => {
+  const at = synth.filter("lowpass", 1200, 1, placed(synth, out));
+  let t = when;
+  for (let i = 0; i < 3; i++) {
+    const length = rand(1.2, 2.2);
+    const from = rand(180, 420);
+    const g = synth.gain(0, at);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.05, t + length * 0.3);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + length);
+    const o = synth.tone("sine", from, g, t, length + 0.05);
+    o.frequency.exponentialRampToValueAtTime(from * rand(0.6, 1.6), t + length);
+    t += length * 0.8;
+  }
+};
+
+/** A gull's cry: "kee-ow", gliding down, two or three times. */
+const gull = (synth: Synth, out: AudioNode, when: number): void => {
+  const at = synth.filter("bandpass", 2200, 1.5, placed(synth, out));
+  for (let i = 0; i < 2 + Math.floor(Math.random() * 2); i++) {
+    const t = when + i * 0.38;
+    const g = synth.gain(0, at);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.06, t + 0.04);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.32);
+    const o = synth.tone("triangle", 1800, g, t, 0.35);
+    o.frequency.exponentialRampToValueAtTime(950, t + 0.3);
+  }
+};
+
+/** A splash: a leaper back into the sea, far off. */
+const splash = (synth: Synth, out: AudioNode, when: number): void => {
+  const at = placed(synth, out);
+  const g = synth.gain(0, synth.filter("bandpass", 1400, 0.8, at));
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.linearRampToValueAtTime(0.06, when + 0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, when + 0.6);
+  synth.noise(g, when, 0.7);
+};
+
+/** The volcano rumbling, deep and far. */
+const rumble = (synth: Synth, out: AudioNode, when: number): void => {
+  const length = rand(2.5, 4);
+  const g = synth.gain(0, synth.filter("lowpass", 90, 1, out));
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.linearRampToValueAtTime(0.25, when + length * 0.3);
+  g.gain.exponentialRampToValueAtTime(0.0001, when + length);
+  synth.noise(g, when, length + 0.1);
+};
+
+/** A diver's call across the water: a long, wavering, haunting "oooo-ooo", rising then falling. */
+const lakeCall = (synth: Synth, out: AudioNode, when: number): void => {
+  const at = synth.filter("lowpass", 1600, 0.7, placed(synth, out));
+  const notes: [number, number, number, number][] = [
+    [0, 1.4, 520, 700],
+    [1.5, 1.8, 700, 560],
+  ];
+  for (const [start, length, from, to] of notes) {
+    const t = when + start;
+    const g = synth.gain(0, at);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.045, t + 0.2);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + length);
+    const vibrato = synth.gain(8);
+    synth.tone("sine", 5, vibrato, t, length + 0.1);
+    const o = synth.tone("sine", from, g, t, length + 0.1);
+    o.frequency.exponentialRampToValueAtTime(to, t + length);
+    vibrato.connect(o.frequency);
+  }
+};
+
+/** A frog somewhere in the reeds: a soft, low "rr-bit", two short purrs. */
+const croak = (synth: Synth, out: AudioNode, when: number): void => {
+  const at = synth.filter("lowpass", 520, 0.7, placed(synth, out));
+  const pitch = rand(105, 135);
+  for (const [start, length] of [[0, 0.11], [0.16, 0.08]] as const) {
+    const t = when + start;
+    const g = synth.gain(0, at);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.022, t + 0.015);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + length);
+    // The purr: the tone pulsed 30 times a second, between a fifth and all of its level (before the envelope, so
+    // the envelope alone sets how loud it is)
+    const purr = synth.gain(0.6, g);
+    const pulse = synth.gain(0.4);
+    synth.tone("square", 30, pulse, t, length + 0.02);
+    pulse.connect(purr.gain);
+    synth.tone("sawtooth", pitch, purr, t, length + 0.02);
+  }
+};
+
 // --- the recipes ---
 
 const breeze: Bed = { filter: "lowpass", frequency: 500, q: 0.5, gain: 0.05, lfo: { rate: 0.07, depth: 0.6, on: "gain" } };
@@ -281,6 +562,104 @@ const RECIPES: Readonly<Record<ThemeName, Recipe>> = {
     events: [
       { every: [7, 14], play: plucky },
       { every: [3, 8], play: birdChirps },
+    ],
+  },
+  lake: {
+    beds: [
+      // Water lapping at the deck's pillars, softly
+      { filter: "lowpass", frequency: 450, q: 0.6, gain: 0.03, lfo: { rate: 0.35, depth: 0.6, on: "gain" } },
+      { ...breeze, gain: 0.03 },
+    ],
+    drones: [],
+    events: [
+      { every: [1.5, 4], play: birdChirps },
+      { every: [14, 28], play: lakeCall },
+      { every: [12, 24], play: croak },
+      { every: [9, 18], play: splash },
+      { every: [35, 60], play: whaleSong }, // (the guardian, far out)
+    ],
+  },
+  island: {
+    beds: [
+      // Surf: waves rolling in and breaking, about every eight seconds
+      { filter: "lowpass", frequency: 700, q: 0.5, gain: 0.07, lfo: { rate: 0.12, depth: 0.75, on: "gain" } },
+      { filter: "highpass", frequency: 2500, q: 0.5, gain: 0.015, lfo: { rate: 0.12, depth: 0.8, on: "gain" } },
+      breeze,
+    ],
+    drones: [],
+    events: [
+      { every: [2, 6], play: birdChirps },
+      { every: [6, 14], play: gull },
+      { every: [8, 16], play: splash },
+      { every: [25, 50], play: rumble },
+    ],
+  },
+  temple: {
+    beds: [
+      // Wind at the summit, gentle
+      { filter: "bandpass", frequency: 650, q: 3, gain: 0.07, lfo: { rate: 0.07, depth: 0.4, on: "frequency" } },
+      { filter: "highpass", frequency: 5000, q: 0.5, gain: 0.008, lfo: { rate: 0.1, depth: 0.8, on: "gain" } },
+    ],
+    drones: [{ type: "triangle", frequencies: [110, 164.81, 220], gain: 0.01, lowpass: 900 }], // (an open, still chord)
+    events: [
+      { every: [14, 28], play: templeBell },
+      { every: [12, 22], play: choir },
+      { every: [18, 34], play: whaleSong },
+      { every: [7, 14], play: sparkle },
+    ],
+  },
+  crater: {
+    beds: [
+      { filter: "lowpass", frequency: 140, q: 0.7, gain: 0.07, lfo: { rate: 0.04, depth: 0.4, on: "gain" } }, // the crater's hum
+      { filter: "highpass", frequency: 5200, q: 0.5, gain: 0.01, lfo: { rate: 0.09, depth: 0.8, on: "gain" } }, // a shimmer
+    ],
+    drones: [{ type: "sine", frequencies: [65.4, 98, 130.8], gain: 0.014, lowpass: 500 }], // (the crystals resonating)
+    events: [
+      { every: [5, 11], play: singingCrystal },
+      { every: [3, 8], play: drip },
+      { every: [15, 30], play: radio },
+      { every: [6, 12], play: crystalChime },
+    ],
+  },
+  summit: {
+    beds: [
+      // The blizzard: a howl wandering in pitch over a rushing roar
+      { filter: "bandpass", frequency: 520, q: 6, gain: 0.16, lfo: { rate: 0.09, depth: 0.45, on: "frequency" } },
+      { filter: "lowpass", frequency: 900, q: 0.5, gain: 0.06, lfo: { rate: 0.13, depth: 0.5, on: "gain" } },
+      { filter: "highpass", frequency: 3500, q: 0.5, gain: 0.015 }, // snow hissing
+    ],
+    drones: [],
+    events: [
+      { every: [3, 7], play: gust },
+      { every: [14, 30], play: iceCrack },
+      { every: [18, 35], play: iceCry },
+    ],
+  },
+  dimension: {
+    beds: [
+      { filter: "lowpass", frequency: 160, q: 0.7, gain: 0.07, lfo: { rate: 0.05, depth: 0.4, on: "gain" } }, // the void's hum
+      { filter: "highpass", frequency: 4200, q: 0.5, gain: 0.012, lfo: { rate: 0.11, depth: 0.8, on: "gain" } }, // a shimmer
+    ],
+    drones: [{ type: "sine", frequencies: [41.2, 61.7, 82.4], gain: 0.018, lowpass: 400 }], // (open fifths)
+    events: [
+      { every: [5, 10], play: reverseSwell },
+      { every: [16, 30], play: serpentCall },
+      { every: [4, 9], play: crystalChime },
+    ],
+  },
+  ghosts: {
+    beds: [
+      // An eerie wind over the mountain, wandering in pitch
+      { filter: "bandpass", frequency: 380, q: 4, gain: 0.12, lfo: { rate: 0.06, depth: 0.4, on: "frequency" } },
+      { filter: "lowpass", frequency: 220, q: 0.5, gain: 0.05 },
+    ],
+    // Two low tones a little apart, slowly beating
+    drones: [{ type: "sine", frequencies: [55, 57.5], gain: 0.025, lowpass: 300 }],
+    events: [
+      { every: [6, 14], play: ghostVoice },
+      { every: [8, 16], play: windChimes },
+      { every: [30, 55], play: gong },
+      { every: [12, 25], play: crow },
     ],
   },
   haunted: {

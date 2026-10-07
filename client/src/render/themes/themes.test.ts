@@ -46,14 +46,17 @@ describe("themes", () => {
     for (const mesh of meshes(t.root)) {
       const geometry = mesh.geometry;
       if (mesh instanceof InstancedMesh) {
-        // Each copy's bounds, with room for the animation (the crowd's breathing, the grass swaying)
+        // Each copy's bounds, with room for the animation (the crowd's breathing, the grass swaying) and for how far it
+        // wanders from home (the ghosts)
         geometry.computeBoundingBox();
         const bounds = geometry.boundingBox;
         if (!bounds) throw new Error("no bounds");
+        const reach: unknown = mesh.userData["reach"];
         for (let i = 0; i < mesh.count; i++) {
           mesh.getMatrixAt(i, instance);
           box.copy(bounds).applyMatrix4(instance.premultiply(mesh.matrixWorld));
           box.max.y += 50;
+          if (typeof reach === "number") box.expandByScalar(reach);
           const at = new Vector3().setFromMatrixPosition(instance).toArray().map(Math.round).join(", ");
           expect.soft(box.intersectsBox(field), `${name}: instance ${i} of ${mesh.name || geometry.type} at ${at}`).toBe(false);
         }
@@ -110,6 +113,78 @@ describe("themes", () => {
 
   it("haunted: at most 24 draw calls for all its scenery", () => {
     expect(meshes(theme("haunted").root).length).toBeLessThanOrEqual(24);
+  });
+
+  it("ghosts: all three kinds of ghost, and at most 20 draw calls for all its scenery", () => {
+    const all = meshes(theme("ghosts").root);
+    expect(all.length).toBeLessThanOrEqual(20);
+    const ghosts = all.filter((m): m is InstancedMesh => m.name.startsWith("ghost: "));
+    expect(ghosts.map((m) => m.name).sort()).toEqual(["ghost: orb", "ghost: peeker", "ghost: sheet"]);
+    for (const kind of ghosts) expect(kind.count, kind.name).toBeGreaterThan(15);
+  });
+
+  it("dimension: its creatures are all there, and at most 28 draw calls for all its scenery", () => {
+    const all = meshes(theme("dimension").root);
+    expect(all.length).toBeLessThanOrEqual(28);
+    const names = new Set(all.map((m) => m.name));
+    for (const name of ["serpent", "watcher", "ghost: jelly", "wildlife: sprout", "wildlife: caterpillar"]) {
+      expect(names.has(name), name).toBe(true);
+    }
+    // The watchers face the ball: their eyes' shader is given its position
+    const t = theme("dimension");
+    t.update(1, new Vector3(1234, 93, 0));
+  });
+
+  it("summit: its creatures are all there, and at most 26 draw calls for all its scenery", () => {
+    const all = meshes(theme("summit").root);
+    expect(all.length).toBeLessThanOrEqual(26);
+    const names = new Set(all.map((m) => m.name));
+    for (const name of ["ice bird", "snow beast", "wildlife: snowpuff", "ghost: crystal", "wildlife: butterfly"]) {
+      expect(names.has(name), name).toBe(true);
+    }
+  });
+
+  it("crater: its creatures and landmarks are all there, and at most 28 draw calls for all its scenery", () => {
+    const all = meshes(theme("crater").root);
+    expect(all.length).toBeLessThanOrEqual(28);
+    const names = new Set(all.map((m) => m.name));
+    for (const name of ["colossus", "wildlife: tortoise", "ghost: crystal", "wildlife: butterfly", "crystals", "heart crystal"]) {
+      expect(names.has(name), name).toBe(true);
+    }
+  });
+
+  it("temple: its creatures and landmarks are all there, and at most 30 draw calls for all its scenery", () => {
+    const all = meshes(theme("temple").root);
+    expect(all.length).toBeLessThanOrEqual(30);
+    const names = new Set(all.map((m) => m.name));
+    for (const name of ["sky whale", "guardians", "ghost: orb", "sky ring"]) expect(names.has(name), name).toBe(true);
+    expect(all.filter((m) => m.name === "sky whale")).toHaveLength(2); // (a mother and her calf)
+  });
+
+  it("island: its creatures and landmarks are all there, and at most 26 draw calls for all its scenery", () => {
+    const all = meshes(theme("island").root);
+    expect(all.length).toBeLessThanOrEqual(26);
+    const names = new Set(all.map((m) => m.name));
+    for (const name of ["manta", "wildlife: leaper", "wildlife: crab", "wildlife: butterfly", "palms", "smoke", "sea"]) {
+      expect(names.has(name), name).toBe(true);
+    }
+  });
+
+  it("lake: its creatures and landmarks are all there, and at most 30 draw calls for all its scenery", () => {
+    const all = meshes(theme("lake").root);
+    expect(all.length).toBeLessThanOrEqual(30);
+    const names = new Set(all.map((m) => m.name));
+    for (const name of ["guardian", "wildlife: swan", "wildlife: frog", "wildlife: leaper", "lake", "deck", "islet", "lanterns"]) {
+      expect(names.has(name), name).toBe(true);
+    }
+  });
+
+  it("lake: the water reflects only the big scenery (a second render of the scene: kept to a dozen draw calls)", () => {
+    const all = meshes(theme("lake").root);
+    const reflected = all.filter((m) => m.layers.isEnabled(5));
+    expect(reflected.length).toBeGreaterThan(5);
+    expect(reflected.length).toBeLessThanOrEqual(14);
+    expect(reflected.map((m) => m.name)).not.toContain("wildlife: swan");
   });
 
   it("meadow: the same scenery every time (seeded)", async () => {

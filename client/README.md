@@ -22,7 +22,11 @@ Online: start the server (`cd server && cargo run --release`), then open `http:/
 Arena themes: `?theme=meadow` (a sunny countryside stadium), `?theme=forest` (a clearing on a forest route, with
 wildlife), `?theme=city` (a cyberpunk megacity at night), `?theme=infested` (a ruined zone overrun by a parasitic
 biomass), `?theme=kawaii` (a pastel candy land), `?theme=platformer` (a bright, blocky platform-game world) or
-`?theme=haunted` (a haunted graveyard at night), combinable with `?server`; the default is `night`.
+`?theme=haunted` (a haunted graveyard at night), `?theme=ghosts` (a haunted mountain of graves with ghosts) or
+`?theme=dimension` (an upside-down dimension of floating islands), `?theme=summit` (a frozen summit in a blizzard) or
+`?theme=crater` (a crystal crater at dusk), `?theme=temple` (a ruined temple on a summit under the stars) or
+`?theme=island` (a tropical volcanic island) or `?theme=lake` (a misty lake at dawn), combinable with `?server`; the
+default is `night`.
 
 ## Correctness checks
 ```sh
@@ -57,7 +61,18 @@ among neon-lit skyscrapers, with billboards, flying traffic, a train, searchligh
 wreck overrun by tendrils, spires and glowing pustules under an overcast haze, with drifting spores; `kawaii`: candy
 trees, cupcake houses, giant plush bears, a rainbow, floating hearts, stars and balloons; `platformer`: pixel-art
 brick and golden blocks, floating platforms, pipes, spinning coins, bump-hills and a castle; `haunted`: a moonlit
-mansion, fenced graves, bare trees, jack-o'-lanterns, lanterns, will-o'-wisps, bats and fog); scenery stays out of the playing volume (tested) |
+mansion, fenced graves, bare trees, jack-o'-lanterns, lanterns, will-o'-wisps, bats and fog; `ghosts`: terraced
+graves and ghost-flame lanterns up a mountain to a shrine tower at twilight, with ghosts drifting, circling and peeking;
+`dimension`: floating islands at odd angles, upward waterfalls, a swirling rift, a sky serpent, jellies, eye-orbs that
+watch the ball, critters walking upside down; `summit`: a snowy plateau with snow-laden pines, ice crystals, a frozen
+lake and a summit cairn in a blizzard, with an ice bird, a giant snow beast, snowpuffs, ice sprites and frost moths;
+`crater`: a crater's stratified walls studded with glowing crystals, a colossal crystal at the heart of the impact, a
+research station on the rim, stars, a colossal crystal tortoise and little ones, glimmer sprites, gem moths; `temple`: a
+paved plaza on a summit above the clouds, a ruined colonnade and arches, an altar with a portal, rings of light, a spiral
+galaxy, sky whales, guardian statues, star sprites; `island`: a pitch on a tropical island, palms, a sand beach, a
+turquoise lagoon with surf, a smoking volcano, manta rays, leapers, crabs, seabirds; `lake`: the arena on a wooden deck
+over a mirror-calm lake (a real reflection, of the big scenery only), mist, reeds, lily pads, floating lanterns, a cave
+on an islet, a long-necked guardian rising from the water, swans, frogs, fish); scenery stays out of the playing volume (tested) |
 | `src/render/` | Three.js scene: a boxy Fennec-style car built around each hitbox (`carModel.ts`), the ball (its spin integrated client-side from the angular velocity, `ballSpin.ts`: the engine keeps RocketSim's `noBallRot`), pads, and the arena with see-through hexagon walls that light up around the ball (`hexWalls.ts`) |
 | `src/game/freeplay.ts` | freeplay rules: goals, ball reset, kickoff reset, ball-in-front / ball-on-car |
 | `src/game/online.ts` | online play: inputs out at 60 Hz, server updates in, prediction, HUD ping/buffer |

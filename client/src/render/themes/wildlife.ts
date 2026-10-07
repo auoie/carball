@@ -71,6 +71,8 @@ export interface Home {
   readonly y: number;
   readonly z: number;
   readonly scale: number;
+  /** How the ground it walks on is turned (Euler XYZ; default upright): [π, 0, 0] walks upside down */
+  readonly rotation?: readonly [number, number, number];
 }
 
 // Shared GLSL. Each creature circles slowly around its home (in its own frame, so the radius scales with it), facing
@@ -89,8 +91,9 @@ vec3 wander(float speed, float radius) {
 vec2 turn(vec2 xz, float a) { float c = cos(a), s = sin(a); return vec2(c * xz.x + s * xz.y, -s * xz.x + c * xz.y); }
 `;
 
-/** Ground creatures circling at about `speed` (rad/s) within `radius` of home; `extra`: GLSL for their gait. */
-function walkers(
+/** Ground creatures circling at about `speed` (rad/s) within `radius` of home; `extra`: GLSL for their gait (with
+ *  `wanderSeed()` and `time`). */
+export function walkers(
   geometry: BufferGeometry,
   homes: readonly Home[],
   speed: number,
@@ -111,7 +114,7 @@ function walkers(
   const mesh = instances(
     geometry,
     material,
-    homes.map((h) => ({ position: [h.x, h.y, h.z], scale: [h.scale, h.scale, h.scale] })),
+    homes.map((h) => ({ position: [h.x, h.y, h.z], rotation: h.rotation ?? [0, 0, 0], scale: [h.scale, h.scale, h.scale] })),
   );
   return { mesh, time: uniforms.time };
 }
@@ -161,6 +164,7 @@ function butterfly(): BufferGeometry {
 export function buildWildlife(
   seed: number,
   homes: { readonly ground: readonly Home[]; readonly air: readonly Home[] },
+  butterflyColors: readonly number[] = [0xfff36b, 0xffffff, 0xffa94d, 0x74b9ff, 0xff8fc0],
 ): { root: Group; update(seconds: number): void } {
   const random = seededRandom(seed);
   // Ground homes shared out between the kinds: caterpillars, beetles, then the four critters
@@ -186,7 +190,7 @@ export function buildWildlife(
   });
 
   // Butterflies: loops over their patch of grass, bobbing up and down, wings beating
-  const palette = [0xfff36b, 0xffffff, 0xffa94d, 0x74b9ff, 0xff8fc0].map((c) => new Color(c));
+  const palette = butterflyColors.map((c) => new Color(c));
   const material = new MeshLambertMaterial({ vertexColors: true, side: DoubleSide });
   const flutter = /* glsl */ `
     float beat = sin(time * 11.0 + wanderSeed() * 40.0) * 0.8 + 0.35;

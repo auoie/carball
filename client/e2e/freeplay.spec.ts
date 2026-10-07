@@ -131,11 +131,35 @@ test("controls can be rebound and are remembered", async ({ page }) => {
   await expect(page.locator('.binding-slot[data-action="throttleForward"][data-device="keyboard"]')).toHaveText("W");
 });
 
-for (const theme of ["meadow", "forest", "city", "infested", "kawaii", "platformer", "haunted"]) {
+const THEMED = ["meadow", "forest", "city", "infested", "kawaii", "platformer", "haunted", "ghosts", "dimension", "summit", "crater", "temple", "island", "lake"];
+for (const theme of THEMED) {
   test(`the ${theme} theme loads and plays`, async ({ page }) => {
     await playTheme(page, theme);
   });
 }
+
+interface AmbienceLevels {
+  readonly peak: number;
+  readonly median: number;
+  readonly loudest: number;
+}
+
+test("every theme's ambience: no sound sticks out far above the rest, and none is too loud", async ({ page }) => {
+  test.setTimeout(240_000);
+  await page.goto("/");
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
+  for (const theme of ["night", ...THEMED]) {
+    // A minute of it, the same events every run (seeded)
+    const levels = await page.evaluate(
+      async (t) => (window as unknown as { rlAmbienceLevels: (t: string, s: number) => Promise<AmbienceLevels> }).rlAmbienceLevels(t, 60),
+      theme,
+    );
+    // (every theme's loudest half-second is under 3x its median, its peak under 0.16: an event built too loud, like
+    // a buzz added straight onto an envelope's gain, shows far above that)
+    expect(levels.peak, theme).toBeLessThan(0.2);
+    expect(levels.loudest / levels.median, theme).toBeLessThan(4);
+  }
+});
 
 async function playTheme(page: Page, theme: string): Promise<void> {
   const errors: string[] = [];

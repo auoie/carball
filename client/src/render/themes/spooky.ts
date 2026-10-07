@@ -316,7 +316,10 @@ export function buildLanternPosts(spots: readonly Spot[]): Mesh {
 }
 
 /** Will-o'-wisps: pale glows wandering in slow loops over the graves (one draw call). */
-export function buildWisps(homes: readonly [number, number, number][]): { mesh: InstancedMesh; time: { value: number } } {
+export function buildWisps(
+  homes: readonly [number, number, number][],
+  color: Color = new Color(0.55, 1.0, 0.85),
+): { mesh: InstancedMesh; time: { value: number } } {
   const time = { value: 0 };
   const material = new ShaderMaterial({
     vertexShader: /* glsl */ `
@@ -337,6 +340,7 @@ export function buildWisps(homes: readonly [number, number, number][]): { mesh: 
         #include <fog_vertex>
       }`,
     fragmentShader: /* glsl */ `
+      uniform vec3 tint;
       varying vec2 vUv;
       varying float vPulse;
       #include <fog_pars_fragment>
@@ -344,11 +348,11 @@ export function buildWisps(homes: readonly [number, number, number][]): { mesh: 
         float r = length(vUv * 2.0 - 1.0);
         float core = smoothstep(0.18, 0.0, r);
         float halo = pow(max(0.0, 1.0 - r), 3.0);
-        gl_FragColor = vec4(vec3(0.55, 1.0, 0.85) * (core * 1.2 + halo * 0.45) * vPulse, 1.0);
+        gl_FragColor = vec4(tint * (core * 1.2 + halo * 0.45) * vPulse, 1.0);
         #include <colorspace_fragment>
         ${ADDITIVE_FOG}
       }`,
-    uniforms: { ...UniformsUtils.clone(UniformsLib.fog), time },
+    uniforms: { ...UniformsUtils.clone(UniformsLib.fog), time, tint: { value: color } },
     fog: true,
     blending: AdditiveBlending,
     transparent: true,
@@ -359,7 +363,10 @@ export function buildWisps(homes: readonly [number, number, number][]): { mesh: 
 }
 
 /** Fog banks: soft, wide, low veils, turned to the camera, rolling slowly (one draw call). */
-export function buildFogBanks(banks: readonly [number, number, number][]): { mesh: InstancedMesh; time: { value: number } } {
+export function buildFogBanks(
+  banks: readonly [number, number, number][],
+  color: Color = new Color(0.55, 0.6, 0.72),
+): { mesh: InstancedMesh; time: { value: number } } {
   const time = { value: 0 };
   const material = new ShaderMaterial({
     vertexShader: /* glsl */ `
@@ -382,6 +389,7 @@ export function buildFogBanks(banks: readonly [number, number, number][]): { mes
       }`,
     fragmentShader: /* glsl */ `
       uniform float time;
+      uniform vec3 tint;
       varying vec2 vUv;
       varying float vSeed;
       varying float vLevel;
@@ -395,10 +403,10 @@ export function buildFogBanks(banks: readonly [number, number, number][]): { mes
         vec2 q = vUv * 2.0 - 1.0;
         float shape = (1.0 - smoothstep(0.4, 1.0, abs(q.x))) * (1.0 - smoothstep(-0.2, 1.0, q.y)) * smoothstep(-1.0, -0.7, q.y);
         float wisp = noise(vec2(vUv.x * 5.0 + time * 0.04 + vSeed * 9.0, vUv.y * 2.5)) * 0.6 + 0.4;
-        gl_FragColor = vec4(vec3(0.55, 0.6, 0.72), shape * wisp * 0.32 * vLevel);
+        gl_FragColor = vec4(tint, shape * wisp * 0.32 * vLevel);
         #include <colorspace_fragment>
       }`,
-    uniforms: { time },
+    uniforms: { time, tint: { value: color } },
     blending: NormalBlending,
     transparent: true,
     depthWrite: false,

@@ -10,7 +10,7 @@ import { GameAudio } from "./audio/audio";
 import { Hud } from "./hud";
 import { InputDevices } from "./input/devices";
 import { ArenaView } from "./render/arena";
-import { createTheme, themeName } from "./render/themes";
+import { type ThemeName, createTheme, themeName } from "./render/themes";
 import { loadSettings } from "./settings/settings";
 import { SettingsPanel } from "./ui/settingsPanel";
 import { Renderer } from "./render/renderer";
@@ -69,6 +69,8 @@ async function main(): Promise<void> {
   });
   // For the browser tests
   (window as unknown as { rlAudio?: () => unknown }).rlAudio = () => audio.stats;
+  (window as unknown as { rlAmbienceLevels?: (theme: ThemeName, seconds: number) => Promise<unknown> }).rlAmbienceLevels = async (t, seconds) =>
+    (await import("./audio/levels")).ambienceLevels(t, seconds);
   let game: { frame(dt: number): void };
   if (server === null) {
     game = new Freeplay(world, renderer, arena, input, hud, audio, () => settings, () => !panel.isOpen);
