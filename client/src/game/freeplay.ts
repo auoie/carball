@@ -18,7 +18,9 @@ import {
 import type { ControllerSettings, Options, Settings } from "../settings/settings";
 import { FixedStep, TICK_SECONDS } from "../loop/fixedStep";
 import { ZERO, add, scale, vec3 } from "../math/vec";
+import { BallSpin } from "../render/ballSpin";
 import { BALL_RADIUS, BallView, BoostPadsView, CarView } from "../render/entities";
+import type { ArenaView } from "../render/arena";
 import type { Renderer } from "../render/renderer";
 
 const GOAL_RESET_SECONDS = 2;
@@ -26,6 +28,7 @@ const GOAL_RESET_SECONDS = 2;
 export class Freeplay {
   readonly #world: World;
   readonly #renderer: Renderer;
+  readonly #arena: ArenaView;
   readonly #input: InputDevices;
   readonly #hud: Hud;
   readonly #playerId: number;
@@ -36,6 +39,7 @@ export class Freeplay {
   readonly #padsView: BoostPadsView;
   readonly #car: Interpolated<CarState>;
   readonly #ball: Interpolated<BodyState>;
+  readonly #ballSpin = new BallSpin();
   readonly #score: [number, number] = [0, 0];
   #held: HeldActions = { ballCam: false, rearCamera: false, reset: false, ballInFront: false, ballOnCar: false };
   #ballCam = false;
@@ -53,6 +57,7 @@ export class Freeplay {
   constructor(
     world: World,
     renderer: Renderer,
+    arena: ArenaView,
     input: InputDevices,
     hud: Hud,
     /** Current settings, and whether the player's input drives the car (false while a menu is open). */
@@ -61,6 +66,7 @@ export class Freeplay {
   ) {
     this.#world = world;
     this.#renderer = renderer;
+    this.#arena = arena;
     this.#input = input;
     this.#hud = hud;
     this.#playerId = world.addCar(0);
@@ -70,7 +76,7 @@ export class Freeplay {
     this.#padsView = new BoostPadsView(world.boostPads());
     renderer.scene.add(this.#carView.root, this.#ballView.root, this.#padsView.root);
     this.#car = new Interpolated(world.car(this.#playerId));
-    this.#ball = new Interpolated(world.ball());
+    this.#ball = new Interpolated(this.#ballSpin.advance(world.ball(), 0));
   }
 
   /** One animation frame. `frameSeconds`: real time since the previous frame. */
@@ -95,7 +101,7 @@ export class Freeplay {
       this.#world.setControls(this.#playerId, controls);
       this.#world.step();
       this.#car.push(this.#world.car(this.#playerId));
-      this.#ball.push(this.#world.ball());
+      this.#pushBall();
       this.#handleEvents();
       this.#updateGoalTimer();
     }
@@ -143,7 +149,7 @@ export class Freeplay {
     this.#goalTimer -= TICK_SECONDS;
     if (this.#goalTimer <= 0) {
       this.#world.setBall({ pos: vec3(0, 0, BALL_RADIUS + 1.9), vel: ZERO, angVel: ZERO });
-      this.#ball.push(this.#world.ball());
+      this.#pushBall();
       this.#message = null;
     }
   }
@@ -164,14 +170,19 @@ export class Freeplay {
       ? add(car.pos, vec3(0, 0, 200))
       : add(add(car.pos, scale(flatForward, 600)), vec3(0, 0, 300));
     this.#world.setBall({ pos, vel: onCar ? car.vel : ZERO, angVel: ZERO });
-    this.#ball.push(this.#world.ball());
+    this.#pushBall();
+  }
+
+  /** The ball's latest state, with the orientation the client tracks for it (src/render/ballSpin.ts). */
+  #pushBall(): void {
+    this.#ball.push(this.#ballSpin.advance(this.#world.ball(), TICK_SECONDS));
   }
 
   #snapViews(): void {
     this.#car.push(this.#world.car(this.#playerId));
     this.#car.push(this.#world.car(this.#playerId));
-    this.#ball.push(this.#world.ball());
-    this.#ball.push(this.#world.ball());
+    this.#pushBall();
+    this.#pushBall();
     this.#camera.reset();
   }
 
@@ -179,7 +190,9 @@ export class Freeplay {
     const alpha = this.#clock.alpha;
     const car = this.#car.current;
     this.#carView.update(this.#car.position(alpha, this.#pos), this.#car.rotation(alpha, this.#rot), car.boosting, car.demoed);
-    this.#ballView.update(this.#ball.position(alpha, this.#pos), this.#ball.rotation(alpha, this.#rot));
+    const ball = this.#ball.position(alpha, this.#pos);
+    this.#ballView.update(ball, this.#ball.rotation(alpha, this.#rot));
+    this.#arena.update(ball);
     this.#padsView.update(this.#world.boostPads());
 
     const view = this.#camera.update(frameSeconds, this.#car.blended(alpha), this.#ball.blended(alpha).pos, {

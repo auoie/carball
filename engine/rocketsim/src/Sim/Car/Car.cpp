@@ -15,6 +15,22 @@ static float ShapeInput(float input, float sensitivity) {
 	return RS_CLAMP(input * sensitivity, -1, 1);
 }
 
+// RL PATCH: VehicleSim's steering curves give the inner front wheel's angle. PhysicsConfig_TA.bUseAckermannSteering
+// is false, so at setup the game turns off the car's Ackermann steering and converts every curve point to the average
+// of the inner and the outer wheel's angle, outer = atan(L / (W + L / tan(inner))) with the car's wheelbase L and front
+// track W (FUN_140f17d30 -> FUN_140ec7c00); both front wheels then steer by it. Replays confirm the average over
+// per-wheel angles (notes/validation.md). For the Octane this gives stock RocketSim's curve.
+static LinearPieceCurve AverageSteerCurve(const LinearPieceCurve& inner, float wheelbase, float track) {
+	LinearPieceCurve out;
+	for (auto& [speed, angle] : inner.valueMappings) {
+		float x = abs(angle);
+		float outer = det_atanf(wheelbase / (track + wheelbase / det_tanf(x)));
+		float avg = (outer - x) * 0.5f + x;
+		out.valueMappings[speed] = angle < 0 ? -avg : avg;
+	}
+	return out;
+}
+
 // Update our internal state from bullet and return it
 CarState Car::GetState() {
 	_internalState.pos = _rigidBody.getWorldTransform().m_origin * BT_TO_UU;
@@ -260,6 +276,13 @@ void Car::_FinishPhysicsTick(const MutatorConfig& mutatorConfig) {
 }
 
 void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const MutatorConfig& mutatorConfig) {
+	{ // RL PATCH: this car's steering curves (inner-wheel curves -> inner/outer average for its geometry)
+		float wheelbase = config.frontWheels.connectionPointOffset.x - config.backWheels.connectionPointOffset.x;
+		float track = config.frontWheels.connectionPointOffset.y * 2;
+		_steerAngleCurve = AverageSteerCurve(RLConst::STEER_ANGLE_INNER_FROM_SPEED_CURVE, wheelbase, track);
+		_powerslideSteerAngleCurve = AverageSteerCurve(RLConst::POWERSLIDE_STEER_ANGLE_INNER_FROM_SPEED_CURVE, wheelbase, track);
+	}
+
 	// Set up rigidbody and collision shapes
 	_childHitboxShape = btBoxShape((config.hitboxSize * UU_TO_BT) / 2);
 	_compoundShape = btCompoundShape(false, 1);
@@ -494,34 +517,18 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int 
 		_bulletVehicle.m_wheelInfo[0].m_steerAngle = steerAngle;
 		_bulletVehicle.m_wheelInfo[1].m_steerAngle = steerAngle;
 	} else {
-		// RL PATCH: Ackermann steering (VehicleSim update FUN_140f5ff00, helper FUN_140eca900).
-		// The curve gives the inner front wheel's angle; the outer wheel turns less:
-		// outer = atan(L / (W + L / tan(inner))), L = wheelbase, W = front track
-		float steerAngle = STEER_ANGLE_INNER_FROM_SPEED_CURVE.GetOutput(absForwardSpeed_UU);
+		// RL PATCH: both front wheels steer by the car's average-angle curve (see AverageSteerCurve)
+		float steerAngle = _steerAngleCurve.GetOutput(absForwardSpeed_UU);
 
 		if (_internalState.handbrakeVal) {
 			steerAngle +=
-				(POWERSLIDE_STEER_ANGLE_INNER_FROM_SPEED_CURVE.GetOutput(absForwardSpeed_UU) - steerAngle)
+				(_powerslideSteerAngleCurve.GetOutput(absForwardSpeed_UU) - steerAngle)
 				* _internalState.handbrakeVal;
 		}
 
 		steerAngle *= ShapeInput(controls.steer, config.steeringSensitivity); // RL PATCH: SteeringSensitivity
-
-		float inner = abs(steerAngle), outer = 0;
-		if (inner > 0) {
-			float wheelbase = config.frontWheels.connectionPointOffset.x - config.backWheels.connectionPointOffset.x;
-			float track = config.frontWheels.connectionPointOffset.y * 2;
-			outer = det_atanf(wheelbase / (track + wheelbase / det_tanf(inner)));
-		}
-
-		// Wheel 0 is front right: the inner wheel when turning right (positive steer)
-		if (steerAngle >= 0) {
-			_bulletVehicle.m_wheelInfo[0].m_steerAngle = inner;
-			_bulletVehicle.m_wheelInfo[1].m_steerAngle = outer;
-		} else {
-			_bulletVehicle.m_wheelInfo[0].m_steerAngle = -outer;
-			_bulletVehicle.m_wheelInfo[1].m_steerAngle = -inner;
-		}
+		_bulletVehicle.m_wheelInfo[0].m_steerAngle = steerAngle;
+		_bulletVehicle.m_wheelInfo[1].m_steerAngle = steerAngle;
 	}
 
 	{ // Update friction

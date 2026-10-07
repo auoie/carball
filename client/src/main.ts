@@ -8,7 +8,7 @@ import { Online } from "./game/online";
 import { Connection, devServerAddress } from "./net/connection";
 import { Hud } from "./hud";
 import { InputDevices } from "./input/devices";
-import { buildArena } from "./render/arena";
+import { ArenaView } from "./render/arena";
 import { loadSettings } from "./settings/settings";
 import { SettingsPanel } from "./ui/settingsPanel";
 import { Renderer } from "./render/renderer";
@@ -48,7 +48,8 @@ async function main(): Promise<void> {
   const server = new URLSearchParams(location.search).get("server");
 
   const renderer = new Renderer(canvas);
-  renderer.scene.add(buildArena(parseCmf(arenaBytes)));
+  const arena = new ArenaView(parseCmf(arenaBytes));
+  renderer.scene.add(arena.root);
   const hud = new Hud(required("#hud", HTMLElement));
   const input = new InputDevices(canvas);
   let settings = loadSettings();
@@ -57,7 +58,7 @@ async function main(): Promise<void> {
   });
   let game: { frame(dt: number): void };
   if (server === null) {
-    game = new Freeplay(world, renderer, input, hud, () => settings, () => !panel.isOpen);
+    game = new Freeplay(world, renderer, arena, input, hud, () => settings, () => !panel.isOpen);
   } else {
     status.textContent = "Connecting to the server…";
     const [host = location.hostname, port = "4434"] = server === "" ? [] : server.split(":");
@@ -71,7 +72,7 @@ async function main(): Promise<void> {
       airControlSensitivity: controller.aerialSensitivity,
     });
     world.loadState(welcome.snapshot);
-    const online = new Online(world, renderer, input, hud, connection, welcome, () => settings, () => !panel.isOpen);
+    const online = new Online(world, renderer, arena, input, hud, connection, welcome, () => settings, () => !panel.isOpen);
     // For the browser tests
     (window as unknown as { rlOnline?: () => unknown }).rlOnline = () => online.stats;
     game = online;

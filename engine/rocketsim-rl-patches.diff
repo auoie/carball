@@ -1250,10 +1250,10 @@ index 957b192..2e52fa1 100644
  
  	bool IsSphere() const;
 diff --git upstream/src/Sim/Car/Car.cpp engine/rocketsim/src/Sim/Car/Car.cpp
-index 417ad9d..2428b45 100644
+index 417ad9d..e90defc 100644
 --- upstream/src/Sim/Car/Car.cpp
 +++ engine/rocketsim/src/Sim/Car/Car.cpp
-@@ -3,9 +3,18 @@
+@@ -3,9 +3,34 @@
  
  #include "../../../libsrc/bullet3-3.24/BulletDynamics/Dynamics/btDynamicsWorld.h"
  #include "../CollisionMasks.h"
@@ -1269,10 +1269,26 @@ index 417ad9d..2428b45 100644
 +	return RS_CLAMP(input * sensitivity, -1, 1);
 +}
 +
++// RL PATCH: VehicleSim's steering curves give the inner front wheel's angle. PhysicsConfig_TA.bUseAckermannSteering
++// is false, so at setup the game turns off the car's Ackermann steering and converts every curve point to the average
++// of the inner and the outer wheel's angle, outer = atan(L / (W + L / tan(inner))) with the car's wheelbase L and front
++// track W (FUN_140f17d30 -> FUN_140ec7c00); both front wheels then steer by it. Replays confirm the average over
++// per-wheel angles (notes/validation.md). For the Octane this gives stock RocketSim's curve.
++static LinearPieceCurve AverageSteerCurve(const LinearPieceCurve& inner, float wheelbase, float track) {
++	LinearPieceCurve out;
++	for (auto& [speed, angle] : inner.valueMappings) {
++		float x = abs(angle);
++		float outer = det_atanf(wheelbase / (track + wheelbase / det_tanf(x)));
++		float avg = (outer - x) * 0.5f + x;
++		out.valueMappings[speed] = angle < 0 ? -avg : avg;
++	}
++	return out;
++}
++
  // Update our internal state from bullet and return it
  CarState Car::GetState() {
  	_internalState.pos = _rigidBody.getWorldTransform().m_origin * BT_TO_UU;
-@@ -16,6 +25,15 @@ CarState Car::GetState() {
+@@ -16,6 +41,15 @@ CarState Car::GetState() {
  
  	_internalState.angVel = _rigidBody.m_angularVelocity;
  
@@ -1288,7 +1304,7 @@ index 417ad9d..2428b45 100644
  	return _internalState;
  }
  
-@@ -31,8 +49,21 @@ void Car::SetState(const CarState& state) {
+@@ -31,8 +65,21 @@ void Car::SetState(const CarState& state) {
  
  	_velocityImpulseCache = { 0, 0, 0 };
  
@@ -1310,7 +1326,7 @@ index 417ad9d..2428b45 100644
  }
  
  void Car::Demolish(float respawnDelay) {
-@@ -76,8 +107,21 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
+@@ -76,8 +123,21 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
  	controls.ClampFix();
  #endif
  
@@ -1332,7 +1348,7 @@ index 417ad9d..2428b45 100644
  	{ // Update simulation state
  		if (_internalState.isDemoed) {
  			_internalState.demoRespawnTimer = RS_MAX(_internalState.demoRespawnTimer - tickTime, 0);
-@@ -99,7 +143,7 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
+@@ -99,7 +159,7 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
  	if (_internalState.isDemoed)
  		return; // No other updates need to occur
  
@@ -1341,7 +1357,7 @@ index 417ad9d..2428b45 100644
  	_bulletVehicle.updateVehicleFirst(tickTime);
  
  	btMatrix3x3 basis = _rigidBody.getWorldTransform().m_basis;
-@@ -141,6 +185,12 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
+@@ -141,6 +201,12 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
  	_bulletVehicle.updateVehicleSecond(tickTime);
  
  	_UpdateBoost(tickTime, mutatorConfig, forwardSpeed_UU);
@@ -1354,7 +1370,7 @@ index 417ad9d..2428b45 100644
  }
  
  void Car::_PostTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig& mutatorConfig) {
-@@ -202,6 +252,10 @@ void Car::_FinishPhysicsTick(const MutatorConfig& mutatorConfig) {
+@@ -202,10 +268,21 @@ void Car::_FinishPhysicsTick(const MutatorConfig& mutatorConfig) {
  		_rigidBody.m_angularVelocity = angVel;
  	}
  
@@ -1365,7 +1381,18 @@ index 417ad9d..2428b45 100644
  	_internalState.tickCountSinceUpdate++;
  }
  
-@@ -228,6 +282,7 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
+ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const MutatorConfig& mutatorConfig) {
++	{ // RL PATCH: this car's steering curves (inner-wheel curves -> inner/outer average for its geometry)
++		float wheelbase = config.frontWheels.connectionPointOffset.x - config.backWheels.connectionPointOffset.x;
++		float track = config.frontWheels.connectionPointOffset.y * 2;
++		_steerAngleCurve = AverageSteerCurve(RLConst::STEER_ANGLE_INNER_FROM_SPEED_CURVE, wheelbase, track);
++		_powerslideSteerAngleCurve = AverageSteerCurve(RLConst::POWERSLIDE_STEER_ANGLE_INNER_FROM_SPEED_CURVE, wheelbase, track);
++	}
++
+ 	// Set up rigidbody and collision shapes
+ 	_childHitboxShape = btBoxShape((config.hitboxSize * UU_TO_BT) / 2);
+ 	_compoundShape = btCompoundShape(false, 1);
+@@ -228,6 +305,7 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
  	_rigidBody = btRigidBody(rbInfo);
  	_rigidBody.setUserIndex(BT_USERINFO_TYPE_CAR);
  	_rigidBody.setUserPointer(this);
@@ -1373,7 +1400,7 @@ index 417ad9d..2428b45 100644
  
  	_rigidBody.m_collisionFlags |= btCollisionObject::CF_CUSTOM_MATERIAL_CALLBACK;
  
-@@ -279,6 +334,10 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
+@@ -279,6 +357,10 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
  
  				suspensionRestLength -= RLConst::BTVehicle::MAX_SUSPENSION_TRAVEL;
  
@@ -1384,7 +1411,7 @@ index 417ad9d..2428b45 100644
  				_bulletVehicle.addWheel(
  					wheelRayStartOffset * UU_TO_BT,
  					wheelDirectionCS, wheelAxleCS,
-@@ -295,7 +354,10 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
+@@ -295,7 +377,10 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
  					wheelInfo.m_maxSuspensionTravelCm = (MAX_SUSPENSION_TRAVEL * UU_TO_BT) * 100; // Same for all cars (hopefully)
  					wheelInfo.m_maxSuspensionForce = FLT_MAX; // Don't think there's a limit
  					wheelInfo.m_bIsFrontWheel = front;
@@ -1396,7 +1423,7 @@ index 417ad9d..2428b45 100644
  				}
  			}
  		}
-@@ -339,14 +401,19 @@ void Car::Serialize(DataStreamOut& out) {
+@@ -339,14 +424,19 @@ void Car::Serialize(DataStreamOut& out) {
  	out.WriteMultiple(CAR_CONTROLS_SERIALIZATION_FIELDS(controls));
  	out.WriteMultiple(CAR_CONFIG_SERIALIZATION_FIELDS(config));
  	GetState().Serialize(out);
@@ -1420,7 +1447,7 @@ index 417ad9d..2428b45 100644
  }
  
  void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int numWheelsInContact, float forwardSpeed_UU) {
-@@ -414,8 +481,8 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
+@@ -414,8 +504,8 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
  		}
  	}
  
@@ -1431,47 +1458,29 @@ index 417ad9d..2428b45 100644
  
  		if (_internalState.handbrakeVal) {
  			steerAngle +=
-@@ -423,9 +490,38 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
+@@ -423,7 +513,20 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
  				* _internalState.handbrakeVal;
  		}
  
 -		steerAngle *= controls.steer;
 +		steerAngle *= ShapeInput(controls.steer, config.steeringSensitivity); // RL PATCH: SteeringSensitivity
- 		_bulletVehicle.m_wheelInfo[0].m_steerAngle = steerAngle;
- 		_bulletVehicle.m_wheelInfo[1].m_steerAngle = steerAngle;
++		_bulletVehicle.m_wheelInfo[0].m_steerAngle = steerAngle;
++		_bulletVehicle.m_wheelInfo[1].m_steerAngle = steerAngle;
 +	} else {
-+		// RL PATCH: Ackermann steering (VehicleSim update FUN_140f5ff00, helper FUN_140eca900).
-+		// The curve gives the inner front wheel's angle; the outer wheel turns less:
-+		// outer = atan(L / (W + L / tan(inner))), L = wheelbase, W = front track
-+		float steerAngle = STEER_ANGLE_INNER_FROM_SPEED_CURVE.GetOutput(absForwardSpeed_UU);
++		// RL PATCH: both front wheels steer by the car's average-angle curve (see AverageSteerCurve)
++		float steerAngle = _steerAngleCurve.GetOutput(absForwardSpeed_UU);
 +
 +		if (_internalState.handbrakeVal) {
 +			steerAngle +=
-+				(POWERSLIDE_STEER_ANGLE_INNER_FROM_SPEED_CURVE.GetOutput(absForwardSpeed_UU) - steerAngle)
++				(_powerslideSteerAngleCurve.GetOutput(absForwardSpeed_UU) - steerAngle)
 +				* _internalState.handbrakeVal;
 +		}
 +
 +		steerAngle *= ShapeInput(controls.steer, config.steeringSensitivity); // RL PATCH: SteeringSensitivity
-+
-+		float inner = abs(steerAngle), outer = 0;
-+		if (inner > 0) {
-+			float wheelbase = config.frontWheels.connectionPointOffset.x - config.backWheels.connectionPointOffset.x;
-+			float track = config.frontWheels.connectionPointOffset.y * 2;
-+			outer = det_atanf(wheelbase / (track + wheelbase / det_tanf(inner)));
-+		}
-+
-+		// Wheel 0 is front right: the inner wheel when turning right (positive steer)
-+		if (steerAngle >= 0) {
-+			_bulletVehicle.m_wheelInfo[0].m_steerAngle = inner;
-+			_bulletVehicle.m_wheelInfo[1].m_steerAngle = outer;
-+		} else {
-+			_bulletVehicle.m_wheelInfo[0].m_steerAngle = -outer;
-+			_bulletVehicle.m_wheelInfo[1].m_steerAngle = -inner;
-+		}
+ 		_bulletVehicle.m_wheelInfo[0].m_steerAngle = steerAngle;
+ 		_bulletVehicle.m_wheelInfo[1].m_steerAngle = steerAngle;
  	}
- 
- 	{ // Update friction
-@@ -613,7 +709,12 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -613,7 +716,12 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  		if (!_internalState.flipRelTorque.IsZero()) {
  			// Flip cancel check
  			float pitchScale = 1;
@@ -1485,7 +1494,7 @@ index 417ad9d..2428b45 100644
  				if (RS_SGN(relDodgeTorque.y()) == RS_SGN(controls.pitch)) {
  
  #ifndef RS_MAX_SPEED
-@@ -643,8 +744,14 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -643,8 +751,14 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  
  		float pitchTorqueScale = 1;
  
@@ -1501,7 +1510,7 @@ index 417ad9d..2428b45 100644
  
  			if (_internalState.isFlipping) {
  				pitchTorqueScale = 0;
-@@ -655,9 +762,9 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -655,9 +769,9 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  			}
  
  			// TODO: Use actual dot product operator functions (?)
@@ -1514,7 +1523,7 @@ index 417ad9d..2428b45 100644
  		} else {
  			torque = { 0, 0, 0 };
  		}
-@@ -666,8 +773,8 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -666,8 +780,8 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  
  		// TODO: Use actual dot product operator functions (?)
  		float
@@ -1525,7 +1534,7 @@ index 417ad9d..2428b45 100644
  			dampRoll = dirRoll_forward.dot(angVel) * CAR_AIR_CONTROL_DAMPING.z;
  
  		btVector3 damping =
-@@ -677,8 +784,7 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -677,8 +791,7 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  		_rigidBody.applyTorque(_rigidBody.m_invInertiaTensorWorld.inverse() * (torque - damping) * CAR_TORQUE_SCALE);
  	}
  
@@ -1535,7 +1544,7 @@ index 417ad9d..2428b45 100644
  }
  
  void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorConfig, bool jumpPressed, float forwardSpeed_UU) {
-@@ -736,7 +842,21 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
+@@ -736,7 +849,21 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
  							dodgeDir = dodgeDir.safeNormalized();
  						}
  
@@ -1558,7 +1567,7 @@ index 417ad9d..2428b45 100644
  
  						if (abs(dodgeDir.x()) < 0.1f) dodgeDir.x() = 0;
  						if (abs(dodgeDir.y()) < 0.1f) dodgeDir.y() = 0;
-@@ -785,7 +905,7 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
+@@ -785,7 +912,7 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
  		_internalState.flipTime += tickTime;
  		if (_internalState.flipTime <= FLIP_TORQUE_TIME) {
  			if (_internalState.flipTime >= FLIP_Z_DAMP_START && (_rigidBody.m_linearVelocity.z() < 0 || _internalState.flipTime < FLIP_Z_DAMP_END)) {
@@ -1567,7 +1576,7 @@ index 417ad9d..2428b45 100644
  			}
  		}
  	} else if (_internalState.hasFlipped) {
-@@ -824,7 +944,13 @@ void Car::_UpdateAutoFlip(float tickTime, const MutatorConfig& mutatorConfig, bo
+@@ -824,7 +951,13 @@ void Car::_UpdateAutoFlip(float tickTime, const MutatorConfig& mutatorConfig, bo
  			_internalState.isAutoFlipping = false;
  			_internalState.autoFlipTimer = 0;
  		} else {
@@ -1583,16 +1592,22 @@ index 417ad9d..2428b45 100644
  			_internalState.autoFlipTimer -= tickTime;
  		}
 diff --git upstream/src/Sim/Car/Car.h engine/rocketsim/src/Sim/Car/Car.h
-index 90bcaa8..ef52e68 100644
+index 90bcaa8..f5c9830 100644
 --- upstream/src/Sim/Car/Car.h
 +++ engine/rocketsim/src/Sim/Car/Car.h
-@@ -1,4 +1,5 @@
+@@ -1,9 +1,11 @@
  #pragma once
 +#include "../PhysState/RawBodyState.h"
  #include "../PhysState/PhysState.h"
  #include "CarConfig/CarConfig.h"
  #include "../btVehicleRL/btVehicleRL.h"
-@@ -27,7 +28,18 @@ struct CarState : public PhysState {
+ #include "../CarControls.h"
+ #include "../BallHitInfo/BallHitInfo.h"
++#include "../../Math/Math.h"
+ #include "../MutatorConfig/MutatorConfig.h"
+ 
+ #include "../../../libsrc/bullet3-3.24/BulletDynamics/Dynamics/btRigidBody.h"
+@@ -27,7 +29,18 @@ struct CarState : public PhysState {
  	// Whether each of the 4 wheels have contact
  	// First two are front
  	// If your car has 3 wheels, the 4th bool will always be false
@@ -1612,7 +1627,7 @@ index 90bcaa8..ef52e68 100644
  
  	// Whether we jumped to get into the air
  	// Can be false while airborne, if we left the ground with a flip reset
-@@ -125,7 +137,9 @@ flipRelTorque, jumpTime, isFlipping, flipTime, isJumping, airTimeSinceJump, \
+@@ -125,7 +138,9 @@ flipRelTorque, jumpTime, isFlipping, flipTime, isJumping, airTimeSinceJump, \
  boost, isBoosting, boostingTime, timeSinceBoosted, supersonicTime, handbrakeVal, isAutoFlipping, \
  autoFlipTimer, autoFlipTorqueScale, isDemoed, demoRespawnTimer, lastControls, \
  worldContact.hasContact, worldContact.contactNormal, \
@@ -1623,7 +1638,7 @@ index 90bcaa8..ef52e68 100644
  
  enum class Team : byte {
  	BLUE = 0,
-@@ -166,6 +180,9 @@ public:
+@@ -166,6 +181,9 @@ public:
  	// Those values are only updated when GetState() is called
  	CarState _internalState;
  
@@ -1633,10 +1648,13 @@ index 90bcaa8..ef52e68 100644
  	// Get the forward direction as a unit vector
  	Vec GetForwardDir() const {
  		return _internalState.rotMat.forward;
-@@ -185,6 +202,12 @@ public:
+@@ -185,6 +203,15 @@ public:
  	void _PostTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig& mutatorConfig);
  
  	Vec _velocityImpulseCache = { 0,0,0 };
++
++	// RL PATCH: the steering curves for this car (inner-wheel curves converted to the inner/outer average)
++	LinearPieceCurve _steerAngleCurve, _powerslideSteerAngleCurve;
 +
 +	// RL PATCH: exact rigid body state read by _Deserialize(), applied once the car is in the world
 +	RawBodyState _loadedBody;
@@ -1646,7 +1664,7 @@ index 90bcaa8..ef52e68 100644
  	void _FinishPhysicsTick(const MutatorConfig& mutatorConfig);
  
  	void _BulletSetup(GameMode gameMode, class btDynamicsWorld* bulletWorld, const MutatorConfig& mutatorConfig);
-@@ -195,6 +218,9 @@ public:
+@@ -195,6 +222,9 @@ public:
  	void Serialize(DataStreamOut& out);
  	void _Deserialize(DataStreamIn& in);
  

@@ -407,6 +407,7 @@ wheel friction values, wheel frames updated with this tick's steering), suspensi
   60 × lat friction; longitudinal = engine force × dt, or clamp(v_contact·fwd × 113.74, ±brake) × dt × 60, × long
   friction, along normalize(normal × axle); applied at the contact point projected onto the plane through the car's
   centre (minus up × ContactForceDistance = 0).
-- `PhysicsConfig_TA.bUseAckermannSteering` (package default false) would replace the car's Ackermann steering with the
-  average angle; replays show per-wheel Ackermann (see validation.md).
+- `PhysicsConfig_TA.bUseAckermannSteering` is false: at setup the car's Ackermann steering is turned off and its
+  inner-wheel steering curves are converted to the inner/outer average for its geometry; both front wheels steer by it
+  (engine patch 8; replays confirm, see validation.md).
 

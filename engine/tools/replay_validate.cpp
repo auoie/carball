@@ -214,6 +214,7 @@ struct Errors {
 	int carTicks = 0; // the car's ticks from its first-frame state to the compared one (incl. any catch-up alone)
 	float ballPosAlone = 0, carPosAlone = 0; // their errors there
 	bool worldContact = false, ballTouch = false, carOnGround = false;
+	int wheelsStart = 0; // wheels touching after the first tick
 	int firstTouch = 0; // the tick the car first touched the ball (0: no touch)
 	Vec ballVelDiff; // engine - replay
 	Vec replayKick, engineKick; // the ball's velocity change over the interval beyond gravity: game, engine
@@ -236,6 +237,7 @@ struct Case {
 	Vec rel, relLocal; // ball - car centre at the first frame: world, car frame (forward, right, up)
 	float relVelN = 0;  // ball - car velocity along the direction from car to ball (negative: approaching)
 	float hbBest = 0, hbBestErr = 0; // car-alone with --fit-handbrake: the best ramp value and its error
+	int flipShift = 0; float flipBestErr = 0; // car-alone with --fit-flip-time
 };
 
 struct Arenas {
@@ -257,6 +259,18 @@ static Body Parked(const Body& ball, const CarRow& car) {
 }
 
 static float g_handbrakeOverride = -1; // (diagnostic: force a handbrake ramp value)
+static float g_flipTimeShift = 0; // (diagnostic: added to the reconstructed flip time)
+static int g_jumpPressAt = -1;
+// Pre-dodge (diagnostic): the dodge starts during the run at this tick (0 = the first), with the stick direction that
+// gives the replicated DodgeTorque; -1 = off
+static int g_dodgePressAt = -1;
+static Vec g_dodgeStick; // pitch, yaw // Run: jump pressed from this tick on (0 = the first), -1 = controls unchanged
+
+// The jump component's flag can arrive before the car's state shows the jump (separate network actors): a car
+// flagged as jumping that isn't moving up yet hasn't jumped in this state
+static bool PreJump(const CarRow& c) {
+	return c.jump && c.b.vel.Dot(c.b.rot.up) < 50;
+}
 static bool g_handbrakeHistory = true;
 
 static void SetupCar(Arenas& A, const CarRow& c0, const CarControls& controls, bool useSensitivity, bool warmup,
@@ -281,7 +295,11 @@ static void SetupCar(Arenas& A, const CarRow& c0, const CarControls& controls, b
 	                 : g_handbrakeHistory     ? c0.handbrakeVal
 	                                          : (c0.handbrake ? 1.f : 0.f);
 	s.isSupersonic = s.vel.Length() >= 2200;
-	if (c0.jump && c0.jumpSince >= 0) { // the jump component is active: its force applies while the jump is held
+	if (PreJump(c0)) { // the jump starts during the run (Run presses it at g_jumpPressAt)
+		s.hasJumped = false;
+		s.isJumping = false;
+		s.jumpTime = 0;
+	} else if (c0.jump && c0.jumpSince >= 0) { // the jump component is active: its force applies while the jump is held
 		s.hasJumped = true;
 		s.isJumping = true;
 		s.jumpTime = c0.jumpSince;
@@ -290,13 +308,15 @@ static void SetupCar(Arenas& A, const CarRow& c0, const CarControls& controls, b
 	if (c0.dodge && c0.dodgeSince >= 0) { // flipping: torque for 0.65 s from the start, from the replicated DodgeTorque
 		s.hasJumped = true;
 		s.hasFlipped = true;
-		s.flipTime = c0.dodgeSince;
-		s.isFlipping = c0.dodgeSince < RLConst::FLIP_TORQUE_TIME;
+		s.flipTime = std::max(0.f, c0.dodgeSince + g_flipTimeShift);
+		s.isFlipping = s.flipTime < RLConst::FLIP_TORQUE_TIME;
 		s.flipRelTorque = Vec(c0.dodgeTorque.x * 100 / RLConst::FLIP_TORQUE_X, c0.dodgeTorque.y * 100 / RLConst::FLIP_TORQUE_Y, 0);
 	}
 	s.lastControls = controls;
+	if (PreJump(c0)) s.lastControls.jump = false;
 	A.car->SetState(s);
 	A.car->controls = controls;
+	if (PreJump(c0)) A.car->controls.jump = false; // (not during the warm-up)
 	if (warmup) {
 		SetBall(A.withCar, Parked(ball, c0));
 		A.withCar->Step(1);
@@ -316,6 +336,7 @@ static void SetupCar(Arenas& A, const CarRow& c0, const CarControls& controls, b
 		warm.isFlipping = s.isFlipping;
 		warm.flipTime = s.flipTime;
 		warm.flipRelTorque = s.flipRelTorque;
+		warm.lastControls = s.lastControls;
 		A.car->SetState(warm);
 	}
 	SetBall(A.withCar, ball);
@@ -368,6 +389,13 @@ static Errors Run(Arena* arena, Car* car, const Frame& next, const CarRow* carNe
 	BallState prev = arena->ball->GetState();
 	uint64_t startTick = arena->tickCount;
 	for (int k = 1; k <= KMAX; k++) {
+		if (car && g_jumpPressAt >= 0) car->controls.jump = k > g_jumpPressAt;
+		if (car && g_dodgePressAt >= 0) {
+			bool press = k == g_dodgePressAt + 1;
+			car->controls.jump = k > g_dodgePressAt;
+			car->controls.pitch = press ? g_dodgeStick.x : 0;
+			car->controls.yaw = press ? g_dodgeStick.y : 0;
+		}
 		arena->Step(1);
 		BallState bs = arena->ball->GetState();
 		bool touchedNow = car && car->_internalState.ballHitInfo.isValid &&
@@ -393,7 +421,10 @@ static Errors Run(Arena* arena, Car* car, const Frame& next, const CarRow* carNe
 		}
 		if (car) {
 			CarState cs = car->GetState(); // (refreshes the physical fields from the rigid body)
-			if (k == 1) ground = cs.isOnGround;
+			if (k == 1) {
+				ground = cs.isOnGround;
+				best.wheelsStart = cs.wheelsWithContact[0] + cs.wheelsWithContact[1] + cs.wheelsWithContact[2] + cs.wheelsWithContact[3];
+			}
 			if (touchedNow && !touch) {
 				touch = true;
 				firstTouch = k;
@@ -441,6 +472,7 @@ int main(int argc, char** argv) {
 	}
 	std::string meshes = ARENA_MESH_DIR, casesPath;
 	bool useSensitivity = true, warmup = true, zeroBallSpin = false, fitHandbrake = false;
+	bool fitFlipTime = false;
 	float minReplayKick = 0; // only car-ball cases where the game's ball changed velocity by more than this
 	size_t limit = SIZE_MAX;
 	for (int i = 2; i < argc; i++) {
@@ -452,6 +484,7 @@ int main(int argc, char** argv) {
 		else if (a == "--no-handbrake-history") g_handbrakeHistory = false;
 		else if (a == "--min-replay-kick" && i + 1 < argc) minReplayKick = std::stof(argv[++i]); // e.g. pinch mining
 		else if (a == "--fit-handbrake") fitHandbrake = true; // diagnostic: car-alone cases also try every ramp value
+		else if (a == "--fit-flip-time") fitFlipTime = true; // diagnostic: car-alone flips also try start times ±8 ticks
 		else if (a == "--zero-ball-spin") zeroBallSpin = true; // experiment: ball cases start without spin
 		else if (a == "--limit" && i + 1 < argc) limit = std::stoul(argv[++i]);
 	}
@@ -575,7 +608,9 @@ int main(int argc, char** argv) {
 			auto runAligned = [&](bool blockImpulse, int& bestOffset) {
 				Errors best;
 				float bestScore = 1e30f;
+				for (int press = PreJump(*c0) ? 0 : -1; press <= (PreJump(*c0) ? 8 : -1); press++)
 				for (int d = -6; d <= 6; d++) {
+					g_jumpPressAt = press;
 					setup();
 					int ballTicksBefore = 0;
 					if (d > 0) { // the car's state is newer: the ball catches up alone
@@ -595,6 +630,7 @@ int main(int argc, char** argv) {
 						hit.tickCountWhenHit = hit.tickCountWhenExtraImpulseApplied = A.withCar->tickCount - 1;
 					}
 					Errors e = Run(A.withCar, A.car, *fNext, c1, f0.ball, ballTicksBefore, std::max(0, -d));
+					g_jumpPressAt = -1;
 					float score = e.ballPos + e.carPos;
 					if (score < bestScore) {
 						bestScore = score;
@@ -674,6 +710,50 @@ int main(int argc, char** argv) {
 				cs.frame = f0.index;
 				cs.dt = fNext->time - f0.time;
 				cs.e = Run(A.withCar, A.car, *fNext, c1, parked);
+				if (PreJump(c0)) { // the jump starts during the interval: fit the tick
+					for (int press = 0; press <= 8; press++) {
+						SetupCar(A, c0, controls, useSensitivity, warmup, parked);
+						g_jumpPressAt = press;
+						Errors e = Run(A.withCar, A.car, *fNext, c1, parked);
+						g_jumpPressAt = -1;
+						if (press == 0 || e.carPos < cs.e.carPos) cs.e = e;
+					}
+				}
+				cs.flipShift = 0;
+				cs.flipBestErr = cs.e.carPos;
+				if (fitFlipTime && c0.dodge && c0.dodgeSince >= 0) {
+					for (int t = -8; t <= 8; t++) {
+						g_flipTimeShift = t / 120.f;
+						SetupCar(A, c0, controls, useSensitivity, warmup, parked);
+						Errors e = Run(A.withCar, A.car, *fNext, c1, parked);
+						if (e.carPos < cs.flipBestErr) {
+							cs.flipBestErr = e.carPos;
+							cs.flipShift = t;
+						}
+					}
+					g_flipTimeShift = 0;
+					if (c0.dodgeSince < 0.15f) { // or the dodge hasn't started in this state yet
+						Vec dir(c0.dodgeTorque.y * 100 / RLConst::FLIP_TORQUE_Y, -c0.dodgeTorque.x * 100 / RLConst::FLIP_TORQUE_X, 0);
+						g_dodgeStick = Vec(-dir.x, dir.y, 0);
+						CarRow pre = c0;
+						pre.dodge = false; // set up as before the dodge: jumped, not flipped
+						pre.dodgeSince = -1;
+						for (int d = 0; d <= 8; d++) {
+							SetupCar(A, pre, controls, useSensitivity, warmup, parked);
+							A.car->_internalState.hasJumped = true;
+							A.car->_internalState.isJumping = false;
+							A.car->_internalState.airTimeSinceJump = 0.3f;
+							A.car->_internalState.lastControls.jump = false;
+							g_dodgePressAt = d;
+							Errors e = Run(A.withCar, A.car, *fNext, c1, parked);
+							g_dodgePressAt = -1;
+							if (e.carPos < cs.flipBestErr) {
+								cs.flipBestErr = e.carPos;
+								cs.flipShift = 100 + d; // 100 + tick: the dodge started during the run
+							}
+						}
+					}
+				}
 				cs.hbBest = c0.handbrakeVal;
 				cs.hbBestErr = cs.e.carPos;
 				if (fitHandbrake && (c0.handbrake || c0.handbrakeVal > 0)) {
@@ -724,10 +804,10 @@ int main(int argc, char** argv) {
 		FILE* out = fopen(casesPath.c_str(), "w");
 		fprintf(out, "replay,frame,dt,category,k,ball_pos,ball_vel,ball_ang,car_pos,car_vel,car_ang,car_rot,ballistic,"
 		             "dvx,dvy,dvz,touch,dribble,rel_speed,blocked_k,blocked_ball_pos,blocked_ball_vel,blocked_car_pos,"
-		             "blocked_dvx,blocked_dvy,blocked_dvz,k_ball,k_car,ball_pos_alone,car_pos_alone,offset,blocked_offset,throttle,steer,boost,handbrake,sensitivity,car_speed,car_z,car_up_z,car_kick_vz,dp_fwd,dp_right,dp_up,dv_fwd,dv_right,dv_up,replay_acc_fwd,replay_acc_right,yaw_rate,yaw_rate_err,car_ticks,v_fwd,rel_x,rel_y,rel_z,rel_fwd,rel_right,rel_up,first_touch,relvel_n,hb_recon,hb_best,hb_best_err,replay_kick,engine_kick,kick_angle\n");
+		             "blocked_dvx,blocked_dvy,blocked_dvz,k_ball,k_car,ball_pos_alone,car_pos_alone,offset,blocked_offset,throttle,steer,boost,handbrake,sensitivity,car_speed,car_z,car_up_z,car_kick_vz,dp_fwd,dp_right,dp_up,dv_fwd,dv_right,dv_up,replay_acc_fwd,replay_acc_right,yaw_rate,yaw_rate_err,car_ticks,v_fwd,rel_x,rel_y,rel_z,rel_fwd,rel_right,rel_up,first_touch,relvel_n,hb_recon,hb_best,hb_best_err,replay_kick,engine_kick,kick_angle,jump_since,dodge_since,wheels_start,flip_shift,flip_best_err\n");
 		for (const Case& c : cases) {
 			fprintf(out, "%s,%d,%.5f,%s,%d,%.4f,%.3f,%.5f,%.4f,%.3f,%.5f,%.6f,%.3f,%.3f,%.3f,%.3f,%d,%d,%.2f,%d,%.4f,%.3f,%.4f,"
-			             "%.3f,%.3f,%.3f,%d,%d,%.4f,%.4f,%d,%d,%d,%d,%d,%d,%.3f,%.2f,%.2f,%.4f,%.2f,%.3f,%.3f,%.3f,%.2f,%.2f,%.2f,%.2f,%.2f,%.4f,%.4f,%d,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%d,%.2f,%.3f,%.3f,%.4f,%.2f,%.2f,%.3f\n",
+			             "%.3f,%.3f,%.3f,%d,%d,%.4f,%.4f,%d,%d,%d,%d,%d,%d,%.3f,%.2f,%.2f,%.4f,%.2f,%.3f,%.3f,%.3f,%.2f,%.2f,%.2f,%.2f,%.2f,%.4f,%.4f,%d,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%d,%.2f,%.3f,%.3f,%.4f,%.2f,%.2f,%.3f,%.4f,%.4f,%d,%d,%.4f\n",
 			        c.replay.c_str(), c.frame, c.dt, c.category.c_str(), c.e.k, c.e.ballPos, c.e.ballVel, c.e.ballAng,
 			        c.e.carPos, c.e.carVel, c.e.carAng, c.e.carRot, c.e.ballisticPos, c.e.ballVelDiff.x,
 			        c.e.ballVelDiff.y, c.e.ballVelDiff.z, c.e.ballTouch, c.dribble, c.relSpeed, c.blocked.k,
@@ -746,7 +826,9 @@ int main(int argc, char** argv) {
 			        c.hbBestErr, c.e.replayKick.Length(), c.e.engineKick.Length(),
 			        (c.e.replayKick.Length() > 1 && c.e.engineKick.Length() > 1)
 			            ? acosf(std::clamp(c.e.replayKick.Normalized().Dot(c.e.engineKick.Normalized()), -1.f, 1.f)) * 57.2958f
-			            : -1.f);
+			            : -1.f,
+			        c.car && c.car->jump ? c.car->jumpSince : -1.f, c.car && c.car->dodge ? c.car->dodgeSince : -1.f,
+			        c.e.wheelsStart, c.flipShift, c.flipBestErr);
 		}
 		fclose(out);
 	}

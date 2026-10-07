@@ -126,11 +126,11 @@ throttle curve, hitbox sizes and wheel setup, ball radius, dodge-vs-double-jump 
 - [x] Vehicle update decompiled and matched (patch 31): wall/curve error 0.48 → 0.16 uu, goal 0.24 → 0.10.
 - [x] Powerslide checked: matches (fully engaged 0.015 uu); the apparent error was the unreplicated handbrake ramp,
       now reconstructed by the extractor (all categories improved).
-- [ ] Low-speed turning: lateral acceleration 20 uu/s² (2.6%) short below 500 uu/s, shrinking with speed.
+- [x] Low-speed turning: fixed by steering both front wheels at the average angle (patch 8 revised, as the code says).
 - [ ] Walls and curves still 6× the flat-floor error; goal-wall wobble reduced but not gone (up to 1.7°/tick).
 - [x] Pinches checked (303, incl. 74 wall pinches up to 5437 uu/s): engine kick = game kick within 0.1%.
 - [x] Flips, jumps, double jumps in the validator (state from the replicated components).
-- [ ] Jumps from the flat floor: 4 uu median error (146 cases), to investigate.
+- [x] Jumps and flips: match; the errors were start timing (jump press fitted; flip start diagnostic).
 - [ ] Next: input changes between frames; bumps/demos; boost pads; kickoffs; other hitboxes.
 - [ ] Wheels on dynamic bodies (car on car / ball): the game's pushback and reaction impulses not modelled.
 - [ ] Extend: jumps/dodges (fit the start tick), car–car bumps, other hitboxes, kickoffs.
@@ -159,6 +159,8 @@ throttle curve, hitbox sizes and wheel setup, ball radius, dodge-vs-double-jump 
 ## 10. Own assets (nothing from Psyonix ships)
 
 - [ ] Car models built around the six hitbox shapes (Octane, Dominus, Plank, Breakout, Hybrid, Merc dimensions).
+      Partial: procedural placeholder bodies generated from each hitbox (`client/src/render/carModel.ts`; Fennec-style
+      hatchback, nose/tail/roof/sides match the hitbox within 1 uu, tested for all six); real modelled cars still to do.
 - [ ] Arena visuals, ball, boost pads and goal art.
 - [ ] Sound effects and music.
 - [ ] Original names and branding for the game, cars and arena.

@@ -7,7 +7,7 @@ import type { Vec3 } from "../math/vec";
 import type { Hud } from "../hud";
 import type { InputDevices } from "../input/devices";
 import { AirPitchSafety, EMPTY_INPUT, type HeldActions, type LookInput, readControls, readHeldActions, readLook } from "../input/mapping";
-import { FixedStep } from "../loop/fixedStep";
+import { FixedStep, TICK_SECONDS } from "../loop/fixedStep";
 import type { Connection } from "../net/connection";
 import { NO_INPUT, Predictor } from "../net/predictor";
 import {
@@ -22,7 +22,9 @@ import {
   quantizeAxis,
 } from "../net/protocol";
 import { UpdateAssembler } from "../net/updates";
+import { BallSpin } from "../render/ballSpin";
 import { BallView, BoostPadsView, CarView } from "../render/entities";
+import type { ArenaView } from "../render/arena";
 import type { Renderer } from "../render/renderer";
 import type { Options, Settings } from "../settings/settings";
 import { Interpolated } from "./interpolated";
@@ -48,6 +50,7 @@ export interface OnlineStats {
 export class Online {
   readonly #world: World;
   readonly #renderer: Renderer;
+  readonly #arena: ArenaView;
   readonly #input: InputDevices;
   readonly #hud: Hud;
   readonly #connection: Connection;
@@ -58,6 +61,7 @@ export class Online {
   readonly #cars = new Map<number, CarEntry>();
   readonly #ballView = new BallView();
   readonly #ball: Interpolated<BodyState>;
+  readonly #ballSpin = new BallSpin();
   readonly #padsView: BoostPadsView;
   readonly #updates = new UpdateAssembler();
   readonly #received: Update[] = [];
@@ -82,6 +86,7 @@ export class Online {
   constructor(
     world: World,
     renderer: Renderer,
+    arena: ArenaView,
     input: InputDevices,
     hud: Hud,
     connection: Connection,
@@ -91,13 +96,14 @@ export class Online {
   ) {
     this.#world = world;
     this.#renderer = renderer;
+    this.#arena = arena;
     this.#input = input;
     this.#hud = hud;
     this.#connection = connection;
     this.#localCar = welcome.carId;
     this.#predictor = new Predictor(world, welcome.carId, welcome.frame);
     this.#padsView = new BoostPadsView(world.boostPads());
-    this.#ball = new Interpolated(world.ball());
+    this.#ball = new Interpolated(this.#ballSpin.advance(world.ball(), 0));
     renderer.scene.add(this.#ballView.root, this.#padsView.root);
     this.#syncCars();
 
@@ -220,7 +226,7 @@ export class Online {
 
   #pushStates(): void {
     for (const [id, entry] of this.#cars) entry.state.push(this.#world.car(id));
-    this.#ball.push(this.#world.ball());
+    this.#ball.push(this.#ballSpin.advance(this.#world.ball(), TICK_SECONDS));
   }
 
   #handleActions(held: HeldActions, options: Options): void {
@@ -237,7 +243,9 @@ export class Online {
     for (const { view, state } of this.#cars.values()) {
       view.update(state.position(alpha, this.#pos), state.rotation(alpha, this.#rot), state.current.boosting, state.current.demoed);
     }
-    this.#ballView.update(this.#ball.position(alpha, this.#pos), this.#ball.rotation(alpha, this.#rot));
+    const ball = this.#ball.position(alpha, this.#pos);
+    this.#ballView.update(ball, this.#ball.rotation(alpha, this.#rot));
+    this.#arena.update(ball);
     this.#padsView.update(this.#world.boostPads());
 
     const local = this.#cars.get(this.#localCar)?.state;

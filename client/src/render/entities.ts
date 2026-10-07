@@ -1,6 +1,8 @@
-// Placeholder visuals built from the physics shapes: the car is its hitbox plus wheels,
-// the ball is its collision sphere. Real models come later (roadmap §10).
+// Visuals built from the physics shapes: the car is a body around its hitbox (src/render/carModel.ts), the ball is
+// its collision sphere. Real models come later (roadmap §10).
 import {
+  BufferAttribute,
+  type BufferGeometry,
   CircleGeometry,
   Color,
   ConeGeometry,
@@ -10,50 +12,26 @@ import {
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
-  BoxGeometry,
   type Object3D,
   type Quaternion,
-  type Vector3,
+  Vector3,
 } from "three";
 import type { BoostPadState, CarConfig, Team } from "../engine/world";
+import { buildCarModel } from "./carModel";
 import { toThreeVector } from "./coords";
 import { vec3 } from "../math/vec";
 
 export const BALL_RADIUS = 91.25;
 const TEAM_CAR_COLORS = [new Color(0x1f6fff), new Color(0xff7a12)] as const;
 
-/** A car: hitbox box, four wheels and a boost flame, in the car's local frame (x forward, y up, z right). */
+/** A car: the boxy model built around its hitbox (src/render/carModel.ts) and a boost flame, in the car's local
+ *  frame (x forward, y up, z right). */
 export class CarView {
   readonly root = new Group();
   readonly #flame: Mesh;
 
   constructor(config: CarConfig, team: Team) {
-    const body = new Mesh(
-      new BoxGeometry(config.hitboxSize.x, config.hitboxSize.z, config.hitboxSize.y),
-      new MeshStandardMaterial({ color: TEAM_CAR_COLORS[team], roughness: 0.45, metalness: 0.3 }),
-    );
-    body.position.copy(toThreeVector(config.hitboxOffset));
-    this.root.add(body);
-
-    // A darker roof stripe so the car's facing is readable
-    const roof = new Mesh(
-      new BoxGeometry(config.hitboxSize.x * 0.45, 2, config.hitboxSize.y * 0.8),
-      new MeshStandardMaterial({ color: 0x15181f, roughness: 0.6 }),
-    );
-    roof.position.copy(toThreeVector(vec3(config.hitboxOffset.x - 10, 0, config.hitboxOffset.z + config.hitboxSize.z / 2)));
-    this.root.add(roof);
-
-    const tyre = new MeshStandardMaterial({ color: 0x111111, roughness: 0.9 });
-    for (const wheel of [config.frontWheel, config.backWheel]) {
-      for (const side of [-1, 1]) {
-        const w = new Mesh(new CylinderGeometry(wheel.radius, wheel.radius, 9, 16), tyre);
-        w.rotation.x = Math.PI / 2; // axle along the car's right axis (Three z)
-        // At rest the suspension sits about 12 uu (its travel) above full extension
-        const restDrop = wheel.suspensionRest - 12;
-        w.position.copy(toThreeVector(vec3(wheel.offset.x, side * wheel.offset.y, wheel.offset.z - restDrop)));
-        this.root.add(w);
-      }
-    }
+    this.root.add(buildCarModel(config, TEAM_CAR_COLORS[team]));
 
     this.#flame = new Mesh(
       new ConeGeometry(14, 70, 12),
@@ -74,7 +52,7 @@ export class CarView {
   }
 }
 
-/** The ball, faceted so its spin is visible, plus a shadow straight below it (as in the game). */
+/** The ball, faceted and patched so its spin is visible, plus a shadow straight below it (as in the game). */
 export class BallView {
   readonly root = new Group();
   readonly #ball: Mesh;
@@ -82,8 +60,8 @@ export class BallView {
 
   constructor() {
     this.#ball = new Mesh(
-      new IcosahedronGeometry(BALL_RADIUS, 2),
-      new MeshStandardMaterial({ color: 0xe8e8e8, roughness: 0.5, metalness: 0.1, flatShading: true }),
+      patchedBallGeometry(),
+      new MeshStandardMaterial({ vertexColors: true, roughness: 0.5, metalness: 0.1, flatShading: true }),
     );
     this.#shadow = new Mesh(
       new CircleGeometry(BALL_RADIUS, 32),
@@ -102,6 +80,34 @@ export class BallView {
     this.#shadow.position.set(position.x, 1, position.z);
     this.#shadow.scale.setScalar(s);
   }
+}
+
+/** An icosphere with a dark pentagon around each of the 12 icosahedron vertices, like a football. */
+export function patchedBallGeometry(): BufferGeometry {
+  const geometry = new IcosahedronGeometry(BALL_RADIUS, 2); // non-indexed: three vertices per triangle
+  const t = (1 + Math.sqrt(5)) / 2;
+  const corners = [
+    [-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0],
+    [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t],
+    [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1],
+  ].map(([x = 0, y = 0, z = 0]) => new Vector3(x, y, z).normalize());
+  const position = geometry.getAttribute("position");
+  const colors = new Float32Array(position.count * 3);
+  const light = new Color(0xe8e8e8);
+  const dark = new Color(0x30343c);
+  const centre = new Vector3();
+  const v = new Vector3();
+  for (let i = 0; i < position.count; i += 3) {
+    centre.set(0, 0, 0);
+    for (let k = 0; k < 3; k++) centre.add(v.fromBufferAttribute(position, i + k));
+    centre.normalize();
+    // The five triangles around a corner have their centres within about 13 degrees of it
+    const patch = corners.some((c) => c.dot(centre) > Math.cos((18 * Math.PI) / 180));
+    const color = patch ? dark : light;
+    for (let k = 0; k < 3; k++) colors.set([color.r, color.g, color.b], (i + k) * 3);
+  }
+  geometry.setAttribute("color", new BufferAttribute(colors, 3));
+  return geometry;
 }
 
 /** Boost pads: flat discs, big pads with an orb; dimmed while respawning. */

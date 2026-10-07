@@ -5,6 +5,7 @@
 #include "../btVehicleRL/btVehicleRL.h"
 #include "../CarControls.h"
 #include "../BallHitInfo/BallHitInfo.h"
+#include "../../Math/Math.h"
 #include "../MutatorConfig/MutatorConfig.h"
 
 #include "../../../libsrc/bullet3-3.24/BulletDynamics/Dynamics/btRigidBody.h"
@@ -202,6 +203,9 @@ public:
 	void _PostTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig& mutatorConfig);
 
 	Vec _velocityImpulseCache = { 0,0,0 };
+
+	// RL PATCH: the steering curves for this car (inner-wheel curves converted to the inner/outer average)
+	LinearPieceCurve _steerAngleCurve, _powerslideSteerAngleCurve;
 
 	// RL PATCH: exact rigid body state read by _Deserialize(), applied once the car is in the world
 	RawBodyState _loadedBody;

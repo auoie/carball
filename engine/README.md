@@ -13,7 +13,7 @@ We chose to fork it anyway (decision 2026-10-06).
 # native
 cmake -S engine -B engine/build -DCMAKE_BUILD_TYPE=Release
 make -C engine/build -j
-engine/build/rl_patch_tests                                        # one check per patch (83 checks)
+engine/build/rl_patch_tests                                        # one check per patch (82 checks)
 engine/build/arena_smoketest out/arena/collision_meshes            # arena mesh in the sim
 engine/build/determinism out/arena/collision_meshes 120            # scripted 2v2, hash per second
 engine/build/rollback out/arena/collision_meshes 300               # restored snapshots continue bit for bit
@@ -108,7 +108,7 @@ builds pass, with identical output (`check_native_wasm.sh`).
 | 5 | Bump/demo direction test: forward cone between hitbox centres (bump yaw 70°, demo yaw 45.57°, pitch 36.87°) instead of the contact point's x > 64.5 | `IsCarWithinForwardEllipticalCone`, native `FUN_140f0d620` | `Arena.cpp` `IsWithinForwardCone` |
 | 6 | Demo needs supersonic **and** \|forward speed\| ≥ 2100. Backwards demos are allowed (`bAllowBackwardsDemolitions`), and the 0.25 s bump cooldown does not block demos | `Car_TA.ShouldDemolish`, `ApplyCarImpactForces` | `Arena.cpp` |
 | 7 | Bump impulse: exact curves (data / 180) evaluated at the attacker's **speed** (not speed towards the car); upward push only when the victim is on the ground; non-bumper contacts push 0 but still start the cooldown; both cars' start-of-tick states (`OldRBState`) | `Car_TA.GetBumpImpulse`, `BumpCar` | `Arena.cpp`, `RLConst.h`, `Car` `_oldState` |
-| 8 | Ackermann steering: the curves are the inner wheel's angle; outer = atan(L / (W + L / tan θ)) from the car's own wheelbase and track | VehicleSim `FUN_140f5ff00`, `FUN_140eca900` | `Car.cpp` `_UpdateWheels`, `RLConst.h` |
+| 8 | Steering: VehicleSim's curves give the inner front wheel's angle; with `PhysicsConfig_TA.bUseAckermannSteering` false the game converts each point to the average of inner and outer angle (outer = atan(L / (W + L / tan θ)), the car's own wheelbase and track) and steers both front wheels by it. For the Octane that is stock RocketSim's curve; other bodies differ slightly. (A per-wheel Ackermann version of this patch fitted replays better only while patch 31's issues were in; afterwards the average fits better in 35,026 cases vs 13,584 and removes a 3% low-speed turning deficit) | `FUN_140f17d30` → `FUN_140ec7c00`, VehicleSim `FUN_140f5ff00` | `Car.cpp` `AverageSteerCurve`, `_UpdateWheels` |
 | 9 | Suspension force scale per car: mass × \|other axle x\| / wheelbase / 2 (Octane 35.735 / 54.265, Dominus 36.772 / 53.228) | Bullet vehicle `FUN_1402c52a0` | `Car.cpp` `_BulletSetup` |
 | 10 | Solver warm starting off (`solverMode = 0`); sphere–triangle contacts one-sided | world setup `FUN_140403cc0`; SphereTriangleDetector | `Arena.cpp`, `SphereTriangleDetector.cpp` |
 | 11 | Merged ball–world contact: averaged normal re-normalised; friction/restitution averaged instead of last-wins | `FUN_1402b2720`, `FUN_1402be240` | `btSequentialImpulseConstraintSolver.cpp` |

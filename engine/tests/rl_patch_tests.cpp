@@ -323,7 +323,7 @@ static void TestBumpCurves() {
 
 // --------------------------------------------------------------------------------------------
 static void TestAckermann(Arena* arena, Car* car) {
-	puts("steering: per-wheel Ackermann angles");
+	puts("steering: inner-wheel curves converted to the inner/outer average, same angle on both front wheels");
 	car->SetState(CarAt({ 0, -2000, 17 }, { 1, 0, 0 }, { 0, 0, 1 }));
 	car->controls = CarControls();
 	car->controls.steer = 1;
@@ -332,13 +332,13 @@ static void TestAckermann(Arena* arena, Car* car) {
 	float W = car->config.frontWheels.connectionPointOffset.y * 2;
 	float inner = 35 * DEG, outer = atanf(L / (W + L / tanf(inner)));
 	float w0 = car->_bulletVehicle.m_wheelInfo[0].m_steerAngle, w1 = car->_bulletVehicle.m_wheelInfo[1].m_steerAngle;
-	CHECK(Near(w0, inner, 1e-4f) && Near(w1, outer, 1e-4f), "steer +1: %.4f %.4f, expected %.4f %.4f", w0, w1, inner, outer);
-	CHECK(Near(outer, 26.157f * DEG, 1e-3f), "Octane outer wheel %.3f deg", outer / DEG);
-	CHECK(Near((inner + outer) / 2, 0.53356f, 2e-4f), "average %.5f should equal stock RocketSim's 0.53356", (inner + outer) / 2);
+	CHECK(Near(w0, (inner + outer) / 2, 1e-4f) && w0 == w1, "steer +1 at rest: %.5f %.5f, expected both %.5f", w0, w1,
+		(inner + outer) / 2);
+	CHECK(Near(w0, 0.53356f, 2e-4f), "Octane at rest %.5f, stock RocketSim's curve 0.53356", w0);
 	car->controls.steer = -1;
 	arena->Step();
 	w0 = car->_bulletVehicle.m_wheelInfo[0].m_steerAngle; w1 = car->_bulletVehicle.m_wheelInfo[1].m_steerAngle;
-	CHECK(Near(w0, -outer, 1e-4f) && Near(w1, -inner, 1e-4f), "steer -1: %.4f %.4f", w0, w1);
+	CHECK(Near(w0, -(inner + outer) / 2, 1e-4f) && w0 == w1, "steer -1: %.5f %.5f", w0, w1);
 	car->controls = CarControls();
 }
 

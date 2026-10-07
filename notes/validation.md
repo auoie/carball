@@ -60,7 +60,7 @@ Ground driving (engine − game, uu/s², flat floor; `validation_report.py`):
 |---|---|---|
 | Coasting (no throttle) | −525.8 | 0.0 |
 | Full throttle, 400–800 / 800–1200 / 1200–1400 uu/s | 847 / 506 / 238 | 0.0 / 0.0 / 0.0 |
-| Full steer, lateral, 100–500 / 500–1000 / 1500–2400 uu/s | 760 / 1702 / 3040 | −20 / −12 / −3 (our car turns slightly less at low speed: open) |
+| Full steer, lateral, 100–500 / 500–1000 / 1500–2400 uu/s | 760 / 1702 / 3040 | −0.6 / −1.7 / −2.5 |
 
 ## Findings
 1. **Ball physics is exact.** Free flight and every contact with the arena (floor, walls, curves, goals) match to the
@@ -125,13 +125,16 @@ Ground driving (engine − game, uu/s², flat floor; `validation_report.py`):
     touch bias (+0.18 uu/s along the hit direction) to 0.00 (95%: −0.01 to 0.02).
     The goal-wall wobble is reduced (jittering spots in the scan 93 → 65, worst height wobble 1.34 → 0.69 uu) but a car
     pressing into a goal side wall with throttle still tilts by up to 1.7° per tick.
-11. **Checks where the code alone would have misled.** `PhysicsConfig_TA.bUseAckermannSteering` is false in the
-    package, which turns the car's Ackermann steering into the average angle at setup (`FUN_140f17d30`,
-    `FUN_140ec7c00`). Replays say otherwise: per-wheel Ackermann fits better in 20,668 full-steer cases vs 3,907 (the
-    online config presumably overrides it), so patch 8 stays. Likewise `FUN_1402c58b0` appears to give the front-right
-    wheel the front-left wheel's frame, which would make turning asymmetric; the game turns symmetrically (lateral
-    acceleration 1615 / 1583 uu/s² left / right at low speed, 2712 / 2712 at medium).
-
+11. **Steering: the average angle, as the code says (corrected).** `PhysicsConfig_TA.bUseAckermannSteering` is false in
+    the package, which turns the car's Ackermann steering into the average of inner and outer angle at setup
+    (`FUN_140f17d30`, `FUN_140ec7c00`). A first replay test favoured per-wheel Ackermann (20,668 vs 3,907 cases), but it
+    ran before patch 31 and the handbrake ramp: per-wheel angles were partly compensating the friction lag. Re-tested
+    afterwards, the average wins in every category (35,026 cases better, 13,584 worse) and removes a low-speed turning
+    deficit: full-steer lateral acceleration error −18 / −20 / −13 / −7 / −4 uu/s² (50–300 … 1500–2400 uu/s) became
+    +3 / +1 / +2 / 0 / −2; flat floor 0.020 → 0.010 uu, goals 0.075 → 0.038, near the ball 0.041 → 0.020. Lesson:
+    re-test earlier decisions after fixing other things. Separately, `FUN_1402c58b0` appears to give the front-right
+    wheel the front-left wheel's frame; with equal front angles that changes nothing, which fits the game's symmetric
+    turning (1615 / 1583 uu/s² left / right at low speed).
 12. **Powerslide matches; its error was the hidden handbrake ramp.** With the handbrake held the error looked large
     (median 4.27 uu with the ramp taken as 0/1). With the ramp reconstructed from the flag's history it is 0.43, the
     best possible ramp value per case gives 0.054, and fully engaged powerslides (ramp certainly 1) are 0.015 with a
@@ -172,6 +175,14 @@ Ground driving (engine − game, uu/s², flat floor; `validation_report.py`):
     skipped (7018). Flip cancels can't be modelled (pitch input isn't replicated). Car position error after ~4 ticks:
     flipping on walls/curves 0.010 / 5.9 uu (4464 cases), flipping near the ball 0.030 / 7.1; **jumping from the flat
     floor 3.99 / 18 uu (146 cases): off, to investigate** (jumping on walls/curves 0.08).
+
+16. **Jumps and flips match; their errors were start timing.** Like the jump flag, a car's components replicate
+    separately from its state, so the flag can arrive before the state shows the action. Jumps: a car flagged as
+    jumping that isn't moving up yet hasn't jumped in that state; pressing jump at a fitted tick (0–8) brought floor
+    jumps from 3.99 to 0.29 uu (median, p90 17.6 → 5.7). Flips (`--fit-flip-time`, diagnostic): late in the flip
+    (≥ 0.3 s) the engine is exact as is; earlier, fitting the start time (±8 ticks) or a dodge that starts during the
+    interval (stick direction from DodgeTorque) brings the median to ~0.02 uu and the p90 from 12–26 to 1.2–4.6.
+    The dodge impulse, flip torque and Z damping are right.
 
 Cars alone (far from the ball and other cars), car position error after ~4 ticks, our mesh / the game's mesh
 (before patch 31):
