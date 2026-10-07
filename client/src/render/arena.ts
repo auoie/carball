@@ -2,17 +2,23 @@
 // (floor, ceiling, side walls). All surfaces are one-sided, facing into the field, so the camera
 // can see through them from outside (just like the one-sided collision).
 // The floor is opaque; the walls and ceiling are see-through with a hexagon pattern (src/render/hexWalls.ts) that
-// lights up around the ball, so you can see how close it is to a wall.
+// lights up around the ball, so you can see how close it is to a wall. Around it all, the theme's scenery
+// (src/render/themes/).
 import {
   BufferAttribute,
   BufferGeometry,
   Color,
+  DataTexture,
   DoubleSide,
   FrontSide,
   Group,
+  LinearFilter,
+  LinearMipmapLinearFilter,
   Mesh,
   MeshStandardMaterial,
   PlaneGeometry,
+  RepeatWrapping,
+  SRGBColorSpace,
   type Vector3,
 } from "three";
 import type { TriangleMesh } from "../engine/cmf";
@@ -20,25 +26,35 @@ import { toThreeVector } from "./coords";
 import { BALL_RADIUS } from "./entities";
 import { HexWallMaterial } from "./hexWalls";
 import { mergeByMaterial } from "./merge";
+import type { ArenaStyle, Theme } from "./themes/theme";
 import { vec3 } from "../math/vec";
 
 const ARENA = { sideX: 4096, backY: 5120, goalDepthY: 6000, height: 2048, cornerTangentY: 3968 - 256 * Math.SQRT2 };
 const TEAM_COLORS = [new Color(0x2a7fff), new Color(0xff8a1f)] as const; // blue (-y goal), orange (+y goal)
-const FLOOR_COLOR = new Color(0x24402c);
+/** Width of the mown stripes across the field (uu) */
+const STRIPE_WIDTH = 512;
 /** Mesh triangles facing up below this height are floor (ramp bottoms, goal floors): drawn opaque like the floor. */
 const FLOOR_PIECE_MAX_Z = 30;
 
 export class ArenaView {
   readonly root = new Group();
-  readonly #walls = new HexWallMaterial(BALL_RADIUS);
+  readonly #walls: HexWallMaterial;
+  readonly #style: ArenaStyle;
+  readonly #theme: Theme;
+  #seconds = 0;
 
-  constructor(collision: TriangleMesh) {
-    this.root.add(this.#buildMeshSurfaces(collision), this.#buildPlanes(), buildFieldMarkings(), buildSurroundings());
+  constructor(collision: TriangleMesh, theme: Theme) {
+    this.#theme = theme;
+    this.#style = theme.style;
+    this.#walls = new HexWallMaterial(BALL_RADIUS, theme.style.walls);
+    this.root.add(this.#buildMeshSurfaces(collision), this.#buildPlanes(), buildFieldMarkings(), theme.root);
   }
 
-  /** Lights the walls around the ball (Three.js frame). */
-  update(ballPosition: Vector3): void {
+  /** Once per frame: lights the walls around the ball (Three.js frame) and animates the theme's scenery. */
+  update(ballPosition: Vector3, frameSeconds: number): void {
     this.#walls.ballPosition.copy(ballPosition);
+    this.#seconds += frameSeconds;
+    this.#theme.update(this.#seconds, ballPosition);
   }
 
   /** Curves, corners, back walls and goals: floor pieces opaque (team colour inside the goals), the rest see-through. */
@@ -85,7 +101,7 @@ export class ArenaView {
       const x = positions[i] ?? 0;
       const y = positions[i + 1] ?? 0;
       const inGoal = Math.abs(y) > ARENA.backY + 1 && Math.abs(x) < 920;
-      color.copy(inGoal ? TEAM_COLORS[y < 0 ? 0 : 1] : FLOOR_COLOR);
+      color.copy(inGoal ? TEAM_COLORS[y < 0 ? 0 : 1] : this.#style.floor);
       if (inGoal) color.multiplyScalar(0.4);
       colors.set([color.r, color.g, color.b], i);
     }
@@ -105,14 +121,16 @@ export class ArenaView {
   #buildPlanes(): Group {
     const group = new Group();
     // Pushed back in depth: the mesh's floor pieces lie in the same plane and draw over it
+    const { floor: floorColor, floorStripe } = this.#style;
     const floorMat = new MeshStandardMaterial({
-      color: FLOOR_COLOR,
+      color: floorStripe ? 0xffffff : floorColor,
       roughness: 0.95,
       side: FrontSide,
       polygonOffset: true,
       polygonOffsetFactor: 1,
       polygonOffsetUnits: 4,
     });
+    if (floorStripe) floorMat.map = stripeTexture(floorColor, floorStripe, (ARENA.goalDepthY * 2) / (STRIPE_WIDTH * 2));
 
     // Floor (covers the goals too). PlaneGeometry faces +z; rotate it to face up (+y in Three)
     const floor = new Mesh(new PlaneGeometry(ARENA.sideX * 2, ARENA.goalDepthY * 2), floorMat);
@@ -164,13 +182,24 @@ function buildFieldMarkings(): Group {
   return mergeByMaterial(group);
 }
 
-/** Dark ground around the arena, so the see-through walls don't show a void. */
-function buildSurroundings(): Mesh {
-  const ground = new Mesh(
-    new PlaneGeometry(40000, 40000),
-    new MeshStandardMaterial({ color: 0x10151d, roughness: 1, side: FrontSide }),
-  );
-  ground.rotation.x = -Math.PI / 2;
-  ground.position.y = -40;
-  return ground;
+/** Stripes across the field (along the game's y): two colours with soft edges, `repeat` pairs over the floor. */
+function stripeTexture(a: Color, b: Color, repeat: number): DataTexture {
+  const size = 64;
+  const data = new Uint8Array(size * 4);
+  const mixed = new Color();
+  for (let i = 0; i < size; i++) {
+    // Half the texture each colour, blended over a few texels at the edges
+    const t = Math.min(1, Math.max(0, (Math.abs(i + 0.5 - size / 2) - size / 4) / 3 + 0.5));
+    const hex = mixed.copy(a).lerp(b, t).getHex(); // (sRGB bytes)
+    data.set([(hex >> 16) & 255, (hex >> 8) & 255, hex & 255, 255], i * 4);
+  }
+  const texture = new DataTexture(data, 1, size);
+  texture.colorSpace = SRGBColorSpace;
+  texture.wrapT = RepeatWrapping;
+  texture.repeat.set(1, repeat);
+  texture.magFilter = LinearFilter;
+  texture.minFilter = LinearMipmapLinearFilter;
+  texture.generateMipmaps = true;
+  texture.needsUpdate = true;
+  return texture;
 }

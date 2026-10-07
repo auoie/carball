@@ -97,3 +97,23 @@ test("controls can be rebound and are remembered", async ({ page }) => {
   await page.locator("button", { hasText: "Reset controls to defaults" }).click();
   await expect(page.locator('.binding-slot[data-action="throttleForward"][data-device="keyboard"]')).toHaveText("W");
 });
+
+test("the meadow theme loads and plays", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  page.on("console", (m) => {
+    if (m.type() === "error") errors.push(m.text());
+  });
+
+  await page.goto("/?theme=meadow");
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
+  await page.locator("#game").click({ position: { x: 640, y: 360 }, button: "middle" }); // focus
+  // The car drives. (Slowly here: the tests render in software, a few frames a second for this scenery, and the
+  // physics only catches up 0.1 s per frame)
+  await page.keyboard.down("KeyW");
+  await page.waitForTimeout(1500);
+  expect(await speed(page)).toBeGreaterThan(100);
+  await page.keyboard.up("KeyW");
+  await page.screenshot({ path: "test-results/meadow.png" });
+  expect(errors).toEqual([]);
+});

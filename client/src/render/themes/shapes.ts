@@ -1,0 +1,88 @@
+// Building blocks for scenery: coloured parts merged into one geometry, instancing, and vertex animation.
+import {
+  type BufferGeometry,
+  Color,
+  Float32BufferAttribute,
+  InstancedMesh,
+  type Material,
+  Matrix4,
+  type MeshLambertMaterial,
+  Quaternion,
+  Vector3,
+} from "three";
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
+
+export interface Placement {
+  readonly position?: readonly [number, number, number];
+  readonly rotation?: readonly [number, number, number]; // Euler XYZ, radians
+  readonly scale?: readonly [number, number, number];
+}
+
+/**
+ * A part in one colour, placed: positions and normals only, indexed (so merged parts stay indexed, and shared vertices
+ * are shaded once).
+ */
+export function part(geometry: BufferGeometry, color: Color | number, placement: Placement = {}): BufferGeometry {
+  const g = geometry;
+  if (!g.index) g.setIndex(Array.from({ length: g.getAttribute("position").count }, (_, i) => i));
+  for (const name of Object.keys(g.attributes)) {
+    if (name !== "position" && name !== "normal") g.deleteAttribute(name);
+  }
+  g.applyMatrix4(placementMatrix(placement));
+  const c = typeof color === "number" ? new Color(color) : color;
+  const colors = new Float32Array(g.getAttribute("position").count * 3);
+  for (let i = 0; i < colors.length; i += 3) colors.set([c.r, c.g, c.b], i);
+  g.setAttribute("color", new Float32BufferAttribute(colors, 3));
+  return g;
+}
+
+/** Parts merged into one geometry (one draw call). */
+export function combine(parts: readonly BufferGeometry[]): BufferGeometry {
+  const merged = mergeGeometries([...parts]);
+  for (const p of parts) p.dispose();
+  return merged;
+}
+
+export function placementMatrix({ position = [0, 0, 0], rotation = [0, 0, 0], scale = [1, 1, 1] }: Placement): Matrix4 {
+  const q = new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), rotation[0]);
+  q.multiply(new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), rotation[1]));
+  q.multiply(new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), rotation[2]));
+  return new Matrix4().compose(new Vector3(...position), q, new Vector3(...scale));
+}
+
+/** Copies of a geometry (one draw call), each placed and optionally tinted. Spread over the scenery: never culled. */
+export function instances(
+  geometry: BufferGeometry,
+  material: Material,
+  placements: readonly (Placement & { readonly tint?: Color })[],
+): InstancedMesh {
+  const mesh = new InstancedMesh(geometry, material, placements.length);
+  placements.forEach((p, i) => {
+    mesh.setMatrixAt(i, placementMatrix(p));
+    if (p.tint) mesh.setColorAt(i, p.tint);
+  });
+  mesh.frustumCulled = false;
+  return mesh;
+}
+
+/**
+ * Adds vertex animation to a material: GLSL run after `begin_vertex`, which may move `transformed` (the vertex in the
+ * model's own frame, before its instance matrix), with `time` (seconds) and the given extra uniforms available.
+ * Returns the uniforms, to update.
+ */
+export function animate<U extends Record<string, { value: unknown }>>(
+  material: MeshLambertMaterial,
+  glsl: string,
+  declarations: string,
+  extra: U,
+): U & { time: { value: number } } {
+  const uniforms = { ...extra, time: { value: 0 } };
+  material.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, uniforms);
+    shader.vertexShader = `uniform float time;\n${declarations}\n${shader.vertexShader}`.replace(
+      "#include <begin_vertex>",
+      `#include <begin_vertex>\n${glsl}`,
+    );
+  };
+  return uniforms;
+}

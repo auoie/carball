@@ -9,6 +9,7 @@ import { Connection, devServerAddress } from "./net/connection";
 import { Hud } from "./hud";
 import { InputDevices } from "./input/devices";
 import { ArenaView } from "./render/arena";
+import { createTheme, themeName } from "./render/themes";
 import { loadSettings } from "./settings/settings";
 import { SettingsPanel } from "./ui/settingsPanel";
 import { Renderer } from "./render/renderer";
@@ -45,10 +46,15 @@ async function main(): Promise<void> {
   warmup.dispose();
 
   // ?server=host:infoPort (or just ?server: this host, port 4434) plays online against an rl-server
-  const server = new URLSearchParams(location.search).get("server");
+  const params = new URLSearchParams(location.search);
+  const server = params.get("server");
 
+  // ?theme=meadow: the arena's look (src/render/themes/)
+  const theme = await createTheme(themeName(params.get("theme")));
   const renderer = new Renderer(canvas);
-  const arena = new ArenaView(parseCmf(arenaBytes));
+  renderer.scene.background = theme.background;
+  renderer.scene.fog = theme.fog;
+  const arena = new ArenaView(parseCmf(arenaBytes), theme);
   renderer.scene.add(arena.root);
   const hud = new Hud(required("#hud", HTMLElement));
   const input = new InputDevices(canvas);

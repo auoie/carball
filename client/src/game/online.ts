@@ -245,7 +245,7 @@ export class Online {
     }
     const ball = this.#ball.position(alpha, this.#pos);
     this.#ballView.update(ball, this.#ball.rotation(alpha, this.#rot));
-    this.#arena.update(ball);
+    this.#arena.update(ball, frameSeconds);
     this.#padsView.update(this.#world.boostPads());
 
     const local = this.#cars.get(this.#localCar)?.state;

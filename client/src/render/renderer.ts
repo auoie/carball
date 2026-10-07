@@ -1,15 +1,5 @@
-// Three.js scene, lights and camera.
-import {
-  AmbientLight,
-  Color,
-  DirectionalLight,
-  Fog,
-  HemisphereLight,
-  PerspectiveCamera,
-  Scene,
-  Vector3,
-  WebGLRenderer,
-} from "three";
+// Three.js scene and camera. The lights, background and fog come with the arena's theme (src/render/themes/).
+import { PerspectiveCamera, Scene, Vector3, WebGLRenderer } from "three";
 import type { CameraView } from "../camera/rlCamera";
 import { horizontalToVerticalFov } from "../camera/interp";
 import { toThreeVector } from "./coords";
@@ -25,14 +15,6 @@ export class Renderer {
   constructor(readonly canvas: HTMLCanvasElement) {
     this.#gl = new WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
     this.#gl.setPixelRatio(Math.min(2, window.devicePixelRatio));
-    this.scene.background = new Color(0x0d1117);
-    this.scene.fog = new Fog(0x0d1117, 9000, 22000);
-
-    this.scene.add(new HemisphereLight(0xd6e4ff, 0x2a3a2a, 1.4));
-    this.scene.add(new AmbientLight(0xffffff, 0.25));
-    const sun = new DirectionalLight(0xffffff, 1.6);
-    sun.position.set(3000, 8000, 2000);
-    this.scene.add(sun);
 
     this.#observer = new ResizeObserver(() => { this.#resize(); });
     this.#observer.observe(canvas);

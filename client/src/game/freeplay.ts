@@ -192,7 +192,7 @@ export class Freeplay {
     this.#carView.update(this.#car.position(alpha, this.#pos), this.#car.rotation(alpha, this.#rot), car.boosting, car.demoed);
     const ball = this.#ball.position(alpha, this.#pos);
     this.#ballView.update(ball, this.#ball.rotation(alpha, this.#rot));
-    this.#arena.update(ball);
+    this.#arena.update(ball, frameSeconds);
     this.#padsView.update(this.#world.boostPads());
 
     const view = this.#camera.update(frameSeconds, this.#car.blended(alpha), this.#ball.blended(alpha).pos, {

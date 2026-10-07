@@ -1,9 +1,10 @@
 // See-through arena walls with a hexagon pattern, like the game's. Unlit; tinted towards each team's colour at its
-// end of the field and inside its goal. Around the ball the hexagons light up, and the ball's footprint shows on the
+// end of the field and inside its goal (colours and strengths from the theme). Around the ball the hexagons light up, and the ball's footprint shows on the
 // surface it is heading for, brighter the closer it gets: that's where it will touch.
 // Hexagons are projected along the surface's dominant axis (blended on the curves), in world space, so the pattern is
 // continuous across separate meshes.
-import { Color, FrontSide, ShaderMaterial, UniformsLib, UniformsUtils, Vector3 } from "three";
+import { FrontSide, ShaderMaterial, UniformsLib, UniformsUtils, Vector3 } from "three";
+import type { WallStyle } from "./themes/theme";
 
 /** Hexagon width across the flat sides (uu). */
 export const HEX_SIZE = 240;
@@ -30,6 +31,8 @@ uniform float hexSize;
 uniform vec3 neutralColor;
 uniform vec3 blueColor;
 uniform vec3 orangeColor;
+uniform float lineStrength;
+uniform float ceilingLineStrength;
 varying vec3 vWorldPosition;
 varying vec3 vWorldNormal;
 #include <fog_pars_fragment>
@@ -87,7 +90,7 @@ void main() {
 
   // The ceiling stays faint (it's mostly overhead, in the way of the view)
   float ceiling = smoothstep(0.5, 0.9, -n.y);
-  float lineAlpha = lines * (mix(0.2, 0.06, ceiling) + 0.75 * near);
+  float lineAlpha = lines * (mix(lineStrength, ceilingLineStrength, ceiling) + 0.75 * near);
   float fillAlpha = mix(mix(0.05, 0.02, ceiling), 0.28, inGoal) + 0.1 * near + 0.22 * footprint * footprint;
   vec3 lineColor = mix(tint, vec3(1.0), 0.2 + 0.6 * near);
   vec3 color = mix(tint * 0.7, lineColor, lineAlpha / max(lineAlpha + fillAlpha, 1e-4));
@@ -103,7 +106,7 @@ export class HexWallMaterial extends ShaderMaterial {
   /** The ball's centre (Three.js frame), shared by every surface using this material. */
   readonly ballPosition: Vector3;
 
-  constructor(ballRadius: number) {
+  constructor(ballRadius: number, style: WallStyle) {
     const ballPosition = new Vector3(0, -100_000, 0); // (far away until the first update)
     super({
       vertexShader,
@@ -113,9 +116,11 @@ export class HexWallMaterial extends ShaderMaterial {
         ballPosition: { value: ballPosition },
         ballRadius: { value: ballRadius },
         hexSize: { value: HEX_SIZE },
-        neutralColor: { value: new Color(0x8fa6c8) },
-        blueColor: { value: new Color(0x2a7fff) },
-        orangeColor: { value: new Color(0xff8a1f) },
+        neutralColor: { value: style.neutral },
+        blueColor: { value: style.blue },
+        orangeColor: { value: style.orange },
+        lineStrength: { value: style.lines },
+        ceilingLineStrength: { value: style.ceilingLines },
       },
       transparent: true,
       depthWrite: false,
