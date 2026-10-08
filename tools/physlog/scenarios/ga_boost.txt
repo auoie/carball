@@ -1,0 +1,22 @@
+# Static analysis GA-1 (notes/gameside-audit.md): the game's Car_TA.SetVehicleInput sets Throttle = 1 when the car is on
+# the ground (3+ wheels the tick before), boost is held and there is boost left, before anything reads the throttle:
+# drive, the sticky wheels' wall friction (skipped with throttle != 0), the sticky force's wall share, auto-roll.
+# And GA-8: air control reads the previous tick's boost state.
+ball -3000 -2000 92.75  0 0 0  0 0 0
+car 4079 0 600  0 90 90  0 0 0  0 0 0  100        # at rest on the side wall
+input 120 0 0 0 0 0 0 1 0                          # boost only
+car 4079 0 600  0 90 90  0 0 0  0 0 0  100
+input 120 1 0 0 0 0 0 1 0                          # control: throttle + boost
+car 2500 0 17  0 0 0  0 0 0  0 0 0  100            # drive up the side wall, then boost only (static G2-1a)
+wait 30
+input 150 1 0 0 0 0 0 0 0
+input 90 0 0 0 0 0 0 1 0
+input 40 0 0.5 0 0 0 0 1 0                         # boost only + half steer
+input 60 0 0 0 0 0 0 0 0
+car 0 -2000 60  0 90 0  0 1000 0  0 0 0  100       # landing while boosting, throttle 0 (static G2-1b)
+input 60 0 0 0 0 0 0 1 0
+car 0 -2000 60  0 90 20  0 1000 0  0 0 0  100      # rolled 20 deg: two wheels land first
+input 60 0 0 0 0 0 0 1 0
+car 0 0 1300  0 90 0  0 0 0  0 0 0  100            # in the air: boost 40 ticks, release (GA-8)
+input 40 0 0 0 0 0 0 1 0
+input 30 0 0 0 0 0 0 0 0

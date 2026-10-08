@@ -1,25 +1,24 @@
 // Integration test: the typed wrapper against the real WebAssembly engine (Node build).
 // Requires the engine build (engine/build-wasm) and the generated arena (out/arena).
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import createEngine from "@engine/rlengine.mjs";
 import { beforeAll, describe, expect, it } from "vitest";
 import { length, vec3 } from "../math/vec";
-import { parseCmf } from "./cmf";
+import { arenaMeshes } from "../testing/arena";
+import { mergeMeshes, parseCmf } from "./cmf";
 import { CarBody, NO_CONTROLS, World, initEngine } from "./world";
 
-const arenaPath = fileURLToPath(new URL("../../../out/arena/collision_meshes/soccar/soccar_arena.cmf", import.meta.url));
-const arenaBytes = new Uint8Array(readFileSync(arenaPath));
+const meshes = arenaMeshes(); // the generated arena: one .cmf per piece
 let engine: Awaited<ReturnType<typeof createEngine>>;
 
 beforeAll(async () => {
   engine = await createEngine();
-  initEngine(engine, [arenaBytes]);
+  initEngine(engine, meshes);
 });
 
 describe("arena mesh file", () => {
   it("parses the generated arena", () => {
-    const mesh = parseCmf(arenaBytes);
+    expect(meshes).toHaveLength(8); // four wall quadrants and four goal halves
+    const mesh = mergeMeshes(meshes.map(parseCmf));
     expect(mesh.indices.length / 3).toBe(10904);
     // Back of the goals is 6000 uu from centre
     let maxY = 0;

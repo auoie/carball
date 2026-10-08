@@ -1,5 +1,6 @@
 #include "btVehicleRL.h"
 #include "../../RLConst.h"
+#include "../../BulletLink.h"
 #define ROLLING_INFLUENCE_FIX
 
 #include "../../../libsrc/bullet3-3.24/BulletDynamics/Dynamics/btDynamicsWorld.h"
@@ -225,7 +226,11 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
 			wheel.m_clippedInvContactDotSuspension = 10;
 		}
 
-		if (object->isStaticObject()) { // Compute m_extraPushback when colliding with static object
+		// RL PATCH: also on another car (the game's contact pass bottoms out on a dynamic body whose collision group is in
+		// the vehicle's mask, FUN_1402c3360: cars, not the ball), and then the car under the wheel gets the full opposite
+		// impulse. Live (`car_car`, a car dropped onto another's roof): the lower car 19.7 uu/s off -> 0.08
+		bool carGround = object->getUserIndex() == BT_USERINFO_TYPE_CAR;
+		if (object->isStaticObject() || carGround) { // Compute m_extraPushback when colliding with static object
 			float rayPushbackThresh = (wheel.m_suspensionRestLength1 + wheel.m_wheelsRadius) - RLConst::BTVehicle::SUSPENSION_SUBTRACTION;
 			if (wheelTraceLenSq < rayPushbackThresh) {
 
@@ -244,6 +249,12 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
 				);
 
 				wheel.m_extraPushback = collisionResult / getNumWheels();
+				if (carGround) {
+					btRigidBody* ground = btRigidBody::upcast(object);
+					ground->applyImpulse(-rayResults.m_hitNormalInWorld * collisionResult,
+					                     rayResults.m_hitPointInWorld - ground->getCenterOfMassPosition());
+					ground->activate();
+				}
 			}
 		}
 

@@ -91,7 +91,9 @@ namespace RLConst {
 		STOPPING_FORWARD_VEL = 25.f, // If we are costing with less than this forward vel, we full-brake
 		COASTING_BRAKE_FACTOR = 0.15f, // How much the brake is applied when costing
 		BRAKING_NO_THROTTLE_SPEED_THRESH = 0.01f, // If we are braking and moving faster than this, disable throttle
-		THROTTLE_DEADZONE = 0.001f, // Throttle input of less than this is ignored
+		// RL PATCH: 0.01, as the game's VehicleSim (FUN_140f1e830: |throttle| > 0.01, static analysis GA-4), so a throttle
+		// byte of +-1 coasts; RocketSim's 0.001 drove (or braked) with it
+		THROTTLE_DEADZONE = 0.01f, // Throttle input of this or less is ignored
 		
 		THROTTLE_AIR_ACCEL = 200/3.f,
 

@@ -1,0 +1,14 @@
+# Static analysis GA-4 (notes/gameside-audit.md): throttle byte +-1 (|throttle| = 1/127 or 1/128 < 0.01) is coasting in the game (FUN_140f1e830 needs |t| > 0.01)
+ball -3000 -2000 92.75  0 0 0  0 0 0
+car 0 -2000 17  0 90 0  0 1000 0  0 0 0  0
+wait 10
+input 40 0.008 0 0 0 0 0 0 0     # byte +1 at 1000 uu/s: game coasts (-525 uu/s^2); engine drives (+~6 uu/s^2)
+car 0 -2000 17  0 90 0  0 1000 0  0 0 0  0
+wait 10
+input 40 -0.008 0 0 0 0 0 0 0    # byte -1 at 1000 uu/s: game coasts (-525); engine brakes (-3500)
+car 0 -2000 17  0 90 0  0 1000 0  0 0 0  0
+wait 10
+input 40 0.016 0 0 0 0 0 0 0     # byte +2: both drive (control)
+car 0 -2000 17  0 90 0  0 0 0  0 0 0  0
+wait 10
+input 60 0.008 0 0 0 0 0 0 0     # byte +1 from rest: game holds the car (full brake below 25 uu/s); engine creeps

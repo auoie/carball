@@ -1,0 +1,30 @@
+# Two cars and the ball (physlog_spawn 23 bot first): 50/50s, a kickoff, pinches
+# 1) 50/50 at 1400 each: both cars drive straight into the resting ball from opposite sides
+ball 0 0 92.75  0 0 0  0 0 0
+car 0 -1000 17  0 90 0  0 1400 0  0 0 0  0
+car2 0 1000 17  0 -90 0  0 -1400 0  0 0 0  0
+input2 1 0 0 0 0 0 0 0
+input 75 1 0 0 0 0 0 0 0
+input2 0 0 0 0 0 0 0 0
+wait 90
+# 2) a kickoff: the player from the left-back diagonal, the bot from the opposite one, both boosting at the ball
+ball 0 0 92.75  0 0 0  0 0 0
+car -2048 -2560 17  0 51.34 0  0 0 0  0 0 0  33
+car2 2048 2560 17  0 -128.66 0  0 0 0  0 0 0  33
+input2 1 0 0 0 0 0 1 0
+input 150 1 0 0 0 0 0 1 0
+input2 0 0 0 0 0 0 0 0
+wait 90
+# 3) offset 50/50: the bot hits the ball from the side as the player hits it head on
+ball 0 0 92.75  0 0 0  0 0 0
+car 0 -900 17  0 90 0  0 1200 0  0 0 0  0
+car2 -900 0 17  0 0 0  1200 0 0  0 0 0  0
+input2 1 0 0 0 0 0 0 0
+input 70 1 0 0 0 0 0 0 0
+input2 0 0 0 0 0 0 0 0
+wait 90
+# 4) the ball pinched between a car and the side wall
+ball 3800 0 92.75  0 0 0  0 0 0
+car 2600 0 17  0 0 0  1800 0 0  0 0 0  100
+input 60 1 0 0 0 0 0 1 0
+wait 90

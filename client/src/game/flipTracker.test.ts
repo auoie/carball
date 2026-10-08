@@ -1,13 +1,12 @@
 // The flip indicator's state against the real engine (requires engine/build-wasm and out/arena): what it says is
 // available is what the engine allows when the player presses, tick for tick, and flip resets are seen when the wheels
 // touch the ball.
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import createEngine from "@engine/rlengine.mjs";
 import { beforeAll, describe, expect, it } from "vitest";
 import { type CarControls, NO_CONTROLS, type RbActor, World, initEngine } from "../engine/world";
 import { type Rot3, ZERO, vec3 } from "../math/vec";
 import { DODGE_WINDOW, type FlipTick, FlipTracker } from "./flipTracker";
+import { arenaMeshes } from "../testing/arena";
 
 const TICK = 1 / 120;
 const UPRIGHT: Rot3 = { forward: vec3(1, 0, 0), right: vec3(0, 1, 0), up: vec3(0, 0, 1) };
@@ -15,9 +14,8 @@ const UPSIDE_DOWN: Rot3 = { forward: vec3(1, 0, 0), right: vec3(0, -1, 0), up: v
 
 let engine: Awaited<ReturnType<typeof createEngine>>;
 beforeAll(async () => {
-  const arenaPath = fileURLToPath(new URL("../../../out/arena/collision_meshes/soccar/soccar_arena.cmf", import.meta.url));
   engine = await createEngine();
-  initEngine(engine, [new Uint8Array(readFileSync(arenaPath))]);
+  initEngine(engine, arenaMeshes());
 });
 
 /** A world with one car, stepped tick by tick with the tracker following it. */

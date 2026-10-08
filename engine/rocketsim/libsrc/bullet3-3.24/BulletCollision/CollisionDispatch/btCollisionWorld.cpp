@@ -280,11 +280,15 @@ void btCollisionWorld::rayTestSingleInternal(const btTransform& rayFromTrans, co
 		btConvexCast::CastResult castResult;
 		castResult.m_fraction = resultCallback.m_closestHitFraction;
 
+		// RL PATCH: the GJK cast (conservative advancement to 0.001 BU, 64 iterations), as the game's rayTestSingle
+		// (Bullet 2.82's default; the subsimplex cast only with kF_UseSubSimplexConvexCastRaytest, which the wheel rays
+		// don't set). The subsimplex cast stopped up to ~0.05 uu short of a car's roof or the ball. Live (`car_car2`, a
+		// car parked on another's roof): 0.21 uu/s per tick off -> 0.01
 		btConvexShape* convexShape = (btConvexShape*)collisionShape;
 		btVoronoiSimplexSolver simplexSolver;
-		btSubsimplexConvexCast subSimplexConvexCaster(castShape, convexShape, &simplexSolver);
+		btGjkConvexCast gjkConvexCaster(castShape, convexShape, &simplexSolver);
 
-		if (subSimplexConvexCaster.calcTimeOfImpact(rayFromTrans, rayToTrans, colObjWorldTransform, colObjWorldTransform, castResult))
+		if (gjkConvexCaster.calcTimeOfImpact(rayFromTrans, rayToTrans, colObjWorldTransform, colObjWorldTransform, castResult))
 		{
 			//add hit
 			if (castResult.m_normal.length2() > btScalar(0.0001))

@@ -3,6 +3,7 @@
 # allowed for rcon; README "Driving it from WSL"), copies each recording (and its _bullet.csv) into out/live/ and
 # validates it.
 #   tools/physlog/run_wsl.sh SCENARIO... [-- LIVE_VALIDATE_OPTIONS...]
+#   RUN_ARGS=bot tools/physlog/run_wsl.sh ...   runs them on the spawned bot (physlog_spawn <body> bot)
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
@@ -17,9 +18,12 @@ log="$bm/bakkesmod.log"
 mkdir -p "$bm/data/physlog/scenarios" "$repo/out/live"
 cp "$here"/scenarios/*.txt "$bm/data/physlog/scenarios/"
 
+for sc in "${scenarios[@]}"; do python3 "$here/check_scenarios.py" "$here/scenarios/$sc.txt" > /dev/null || { python3 "$here/check_scenarios.py" "$here/scenarios/$sc.txt"; exit 1; }; done
 for sc in "${scenarios[@]}"; do
+	# The game must be answering and in offline freeplay (a dialog or menu blocks everything: see the screenshot)
+	"$here/check_game.sh" --freeplay || exit 1
 	start=$(wc -l < "$log")
-	python3 "$here/rcon.py" "physlog_run $sc" > /dev/null
+	python3 "$here/rcon.py" "physlog_run $sc ${RUN_ARGS:-}" > /dev/null
 	new=""
 	for _ in $(seq 1 240); do # the plugin logs "scenario done" when the script ends (2 minutes at most)
 		new="$(tail -n +$((start + 1)) "$log")"
@@ -30,7 +34,7 @@ for sc in "${scenarios[@]}"; do
 		fi
 		sleep 0.5
 	done
-	grep -q 'physlog: scenario done' <<<"$new" || { echo "$sc: no 'scenario done' in the log (is the game paused or minimized?)"; exit 1; }
+	grep -q 'physlog: scenario done' <<<"$new" || { echo "$sc: no 'scenario done' in the log"; "$here/check_game.sh" --freeplay; exit 1; }
 	win="$(grep -o 'recording to .*\.csv' <<<"$new" | tail -1 | sed 's/^recording to //')"
 	csv="$repo/out/live/$(basename "$(wslpath "$win")")"
 	cp "$(wslpath "$win")" "$csv"

@@ -1,0 +1,48 @@
+# More two-car contacts (physlog_spawn <body> bot first; the player's car vs the bot, opposite teams)
+ball 3000 -2000 92.75  0 0 0  0 0 0
+# 1) rear-end at 1200: the bot parked facing the same way
+car2 0 0 17  0 90 0  0 0 0  0 0 0  0
+input2 0 0 0 0 0 0 0 0
+car 0 -900 17  0 90 0  0 1200 0  0 0 0  0
+input 90 1 0 0 0 0 0 0 0
+wait 40
+# 2) side bump at 600
+car2 0 0 17  0 0 0  0 0 0  0 0 0  0
+car 0 -600 17  0 90 0  0 600 0  0 0 0  0
+input 120 1 0 0 0 0 0 0 0
+wait 40
+# 3) side bump at 2000 (not supersonic: a bump, no demolition)
+car2 0 0 17  0 0 0  0 0 0  0 0 0  0
+car 0 -1500 17  0 90 0  0 2000 0  0 0 0  0
+input 70 1 0 0 0 0 0 0 0
+wait 60
+# 4) crossing paths at 90 degrees, 1000 each
+car2 -700 0 17  0 0 0  1000 0 0  0 0 0  0
+input2 1 0 0 0 0 0 0 0
+car 0 -700 17  0 90 0  0 1000 0  0 0 0  0
+input 100 1 0 0 0 0 0 0 0
+input2 0 0 0 0 0 0 0 0
+wait 60
+# 5) the bot drives into the player's side at 1500
+car 0 0 17  0 0 0  0 0 0  0 0 0  0
+car2 0 -1100 17  0 90 0  0 1500 0  0 0 0  0
+input2 1 0 0 0 0 0 0 0
+input 90 0 0 0 0 0 0 0 0
+input2 0 0 0 0 0 0 0 0
+wait 60
+# 6) parked on the bot's roof: resting car on car
+car2 0 0 17  0 0 0  0 0 0  0 0 0  0
+car 0 0 75  0 0 0  0 0 0  0 0 0  0
+wait 150
+# 7) a jump into the bot's side
+car2 0 0 17  0 0 0  0 0 0  0 0 0  0
+car 0 -700 17  0 90 0  0 900 0  0 0 0  0
+input 10 1 0 0 0 0 0 0 0
+input 1 1 0 0 0 0 1 0 0
+input 89 1 0 0 0 0 0 0 0
+wait 40
+# 8) supersonic at 45 degrees into the bot's side (a demolition)
+car2 0 0 17  0 0 0  0 0 0  0 0 0  0
+car -1200 -1200 17  0 45 0  1626 1626 0  0 0 0  100
+input 80 1 0 0 0 0 0 1 0
+wait 120

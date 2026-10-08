@@ -1,19 +1,17 @@
 // The car model is built around the physics hitbox: what you see is what collides.
 // Requires the engine build (engine/build-wasm) and the generated arena (out/arena), for every body's dimensions.
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import createEngine from "@engine/rlengine.mjs";
 import { Box3, Color, Mesh } from "three";
 import { beforeAll, describe, expect, it } from "vitest";
 import { CarBody, type CarConfig, World, initEngine } from "../engine/world";
 import { buildCarModel } from "./carModel";
+import { arenaMeshes } from "../testing/arena";
 
 const configs = new Map<string, CarConfig>();
 
 beforeAll(async () => {
-  const arenaPath = fileURLToPath(new URL("../../../out/arena/collision_meshes/soccar/soccar_arena.cmf", import.meta.url));
   const engine = await createEngine();
-  initEngine(engine, [new Uint8Array(readFileSync(arenaPath))]);
+  initEngine(engine, arenaMeshes());
   const world = World.create(engine);
   for (const [name, body] of Object.entries(CarBody)) {
     if (typeof body === "number") configs.set(name, world.carConfig(world.addCar(0, body)));

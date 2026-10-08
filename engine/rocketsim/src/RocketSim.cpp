@@ -1,5 +1,7 @@
 #include "RocketSim.h"
 
+#include <algorithm>
+
 #include "../libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btBvhTriangleMeshShape.h"
 #include "../libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btTriangleMesh.h"
 #include "../libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/btInternalEdgeUtility.h"
@@ -81,13 +83,18 @@ void RocketSim::Init(std::filesystem::path collisionMeshesFolder, bool silent) {
 		MeshHashSet targetHashes = MeshHashSet(gameMode);
 
 		// Load collision meshes
-		auto dirItr = std::filesystem::directory_iterator(soccarMeshesFolder);
-		for (auto& entry : dirItr) {
+		// RL PATCH: in name order. Each file is its own static body, and the body order sets the order of the contact
+		// manifolds, so it must not depend on the filesystem (and must match the WebAssembly build's, given sorted)
+		std::vector<std::filesystem::path> meshPaths;
+		for (auto& entry : std::filesystem::directory_iterator(soccarMeshesFolder)) {
 			auto entryPath = entry.path();
-			if (entryPath.has_extension() && entryPath.extension() == COLLISION_MESH_FILE_EXTENSION) {
-				DataStreamIn streamIn = DataStreamIn(entryPath, false);
-				meshFileMap[gameMode].push_back(streamIn.data);
-			}
+			if (entryPath.has_extension() && entryPath.extension() == COLLISION_MESH_FILE_EXTENSION)
+				meshPaths.push_back(entryPath);
+		}
+		std::sort(meshPaths.begin(), meshPaths.end());
+		for (auto& entryPath : meshPaths) {
+			DataStreamIn streamIn = DataStreamIn(entryPath, false);
+			meshFileMap[gameMode].push_back(streamIn.data);
 		}
 	}
 

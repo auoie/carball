@@ -59,7 +59,7 @@ E unmatched/Psyonix additions). Status: "sent" = hypothesis sent to the live ses
 | B8 | `btAdjustInternalEdgeContacts` 0x1402867d0, `btNearestPointInLineSegment` 0x140288b40 | Closest-edge search on segments shrunk by 1e-5·length at both ends (runtime setting `m_btNearestPointInLineSegment_adjustment`, byte 0x142351e8d, default on); every edge the contact lies on (< FLT_EPSILON) is processed, not only the best one | Normal of mesh contacts at a mesh vertex (car and ball); on our soccar mesh a different edge in 49% of vertex-exact cases, different outcome in 28% | differs (stock) | sent; the 49% / 28% figures came from our generated mesh, whose quad diagonals differ from the game's in places (being fixed), so the real effect is likely smaller |
 | B9 | `btRigidBody::applyDamping` 0x1402c23a0; RB-state read-back `FUN_140eed9e0` | Two clamps: Bullet-side, \|v\| to body+0x368 (MaxLinearSpeed×0.02) and \|ω\| to +0x36c **before** the stock damping, at the start of each substep; game-side, the per-tick state read-back (which also quantises) clamps the state's velocities to the actor's MaxLinearSpeed (+0x560) / MaxAngularSpeed (+0x564) | The observable end-of-tick state is capped (2300.001, 5.50001 live); the substep clamp only matters when game code raises the velocity above the cap between ticks (dodge, jump, bumps, hits at max speed): the game integrates that tick from the clamped velocity | end-of-tick clamp matches; the substep clamp is absent | end-of-tick cap confirmed live; dodge-at-max test suggested |
 | B10 | Vehicle contact pass `FUN_1402c3360`, suspension `FUN_1402c2a40`, friction `FUN_1402c49d0` | (a) Each wheel touching a **dynamic** body: wake it, then impulse −PushForce·n at the contact every substep (not dt-scaled; PushForce = `Wheel_TA.PushForceConstant` 1.0 × config+0x1ec). (b) Bottom-out (trace < radius + rest − maxRaise) only against static ground or a dynamic body whose broadphase group is in the vehicle's u16 mask (+0x30): impulse = `resolveSingleCollision` vs that body (or the fixed body) with a private default solver info, not applied; car gets ¼ along n (wheel+0xe8), dynamic ground the full opposite impulse. (c) Friction treats every ground as **static and motionless**: `resolveSingleBilateral` against the fixed body (`FUN_1402c31f0`), brake friction from the chassis-only contact velocity; friction and suspension impulses go to the chassis only | Ball under a wheel (≈ 1.67 uu/s per wheel per tick); car perched on the ball or another car | (a) adopted; (b) not adopted (a version without the mask was worse); (c) engine used the ground body and its velocity | (a) **confirmed live** (`wheel_ball` p90 3.80 → 0.09 uu/s); (b), (c) answered, to test |
-| B11 | Car compound: `btCompoundShape(true)` (only construction, 0x140409a84) | The game's car compound has a dynamic AABB tree → car–car through `MycollideTT` (tree vs tree) then box–box with manifold (car0, car1) | Car–car contact points (btBoxBoxDetector is not symmetric) and near-miss contacts | differs (`btCompoundShape(false, 1)`: nested compound, manifold (car1, car0)) | tried with 3.24's tree path: car–car replays worse (70 better / 340 worse). Likely body order: the game's body0 is the proxy with the lower axis-sweep handle (spawn order, LIFO handle reuse), not the lower car ID; full 2.82 path sent |
+| B11 | Car compound: `btCompoundShape(true)` (only construction, 0x140409a84) | The game's car compound has a dynamic AABB tree → car–car through `MycollideTT` (tree vs tree) then box–box with manifold (car0, car1) | Car–car contact points (btBoxBoxDetector is not symmetric) and near-miss contacts | differs (`btCompoundShape(false, 1)`: nested compound, manifold (car1, car0)) | tried with 3.24's tree path: car–car replays worse (70 better / 340 worse). Likely body order: the game's body0 is the proxy with the lower axis-sweep handle (spawn order, LIFO handle reuse), not the lower car ID; full 2.82 path sent. 2026-10-08 (notes/gameside-audit.md GA-17): game scripts don't depend on the order; all 306 car–car manifold rows in the three two-car live recordings have body0 = the player's car (spawned first); predicted to flip at every kickoff reset (all cars destroyed and respawned, LIFO handles), not at demos |
 | B1 | `btSphereShape` vtable 0x141a4dd70: `getAabb` 0x1402a58c0, `getBoundingSphere` 0x1402a5c00 | AABB half extent and bounding radius `r·scale + 0.04 + 0.04`, centre 0 (stock: half extent r, radius √3·r); contact surface unchanged | Ball contact-breaking threshold 0.02 × (r·s + 0.08) BU = 1.905 uu for r = 91.25 uu | matches (r + 0.08) | **confirmed live** (ball–floor manifold threshold 1.905; patch 44's +0.12 had compensated for the box bug below and was reverted) |
 | B5 | `createPredictiveContacts` 0x1402b2e80 (+ ray callback 0x1402b0400 / 0x1402b7c30), setter `FUN_1402bad10` (world+0x1a5) | Gated by the Psyonix world flag +0x1a5; enabled with `m_ccdMotionThreshold` = 0.02 BU for **every RB actor** by `FUN_140f17910` (physics init) and by `EnableCCD`, except on network clients (net-mode byte 3). A **ray** (`rayTest`, static/kinematic objects only) from the centre − 0.04·dir (compounds: child 0) to the predicted centre instead of a sphere sweep; hit → point with distance = (remaining motion)·n ≤ 0, restitution 0 | Tunnelling guard only (centre path must cross geometry within a substep) | absent | sent |
 | – | `integrateTransforms` 0x1402b7640 | CCD motion-clamp branch removed (the threshold only feeds predictive contacts) | none in practice | inactive | – |
@@ -169,6 +169,16 @@ Differences that change results, beyond the Psyonix changes above (see each repo
 - GJK normal fix (B7): 2.82 flips by AABB centres (the game replaces it for triangles); 3.24 removed the workaround.
 - Compound without a tree (engine choice, B11) falls back to nested compound algorithms in 3.24.
 - `needsCollision` checks both bodies in 3.24; ray vs convex uses the subsimplex cast in 3.24, the GJK cast in the game.
+  Wheel rays (`FUN_1402c3b50` → stock `rayTestSingle` 0x14027ab20, `ClosestRayResultCallback` with `m_flags` 0) reach
+  `rayTestSingleInternal` 0x14027ab70, which builds a `btSphereShape(0)` point (margin 0) and both casters and takes the
+  subsimplex one only if `m_flags & 4`: so every convex target (box, sphere) goes through `btGjkConvexCast`
+  0x1402a0ac0 (ctor 0x14029a170; subsimplex ctor 0x14029a340). Its stop rule is stock 2.82 with the B14 cap:
+  conservative advancement on the GJK distance (margins included) `while (d > 0.001 BU)` (linear, not squared),
+  `λ' = λ − d/(r·n)`, miss if more than 64 steps, λ' outside [0, 1] or λ' ≤ λ; hit at λ' if a GJK distance < 0; final
+  miss if n·r ≥ 0. A ray whose closest feature is a face lands on it in one step (exact); only edge/vertex approaches
+  stop up to 0.001 BU outside. Wheel rays do see other cars (candidate filter `group & vehicle+0x32`,
+  `mask & chassis.group`), which made this matter live for a car resting on another car's roof (2026-10-08: 3.24's
+  subsimplex stop `v² ≤ 1e-4` left the ray ~0.05 uu short; the engine's `btGjkConvexCast`, cap 64, reproduces the game).
 - EPA in 3.24 retries 9 guess directions when both EPA and the fallback fail (rare).
 - Pair and manifold order: the game's depends on history (axis sweep, swap-on-remove); the engine sorts (patch 24).
 - Maths: the engine routes sqrt/sin/cos/pow through `detmath`; the game uses the MSVC CRT (`powf` in applyDamping,
@@ -222,11 +232,41 @@ through aligned references in matched functions), `dispmap.py` (field offsets fr
     `out/bsim/scripts/live_layout.py` (uses `out/bsim/live-20261006/classes.csv` from `dump_classes.py` on the live
     exe; UClass ctor 0x140328af0).
   - Physics tuning is unchanged in the update: `export_constants.py` on the live packages gives the same 232 values
-    (`out/bsim/live-20261006/rl_physics_constants.json`).
-- Changed cited game functions (logic aside from offsets not yet checked): car pre-physics `0x140f1c600` →
-  `0x140f21a90` (0.992: the offset shifts above), `SetVehicleInput` `0x140f30a70` → `0x140f36790` (0.978: the new input
-  dword), `0x140e386b0` → `0x140e39bc0` (0.937, input.md), `0x140eb6f80` → `0x140ebb410` (0.850, netcode.md),
-  `0x140f06e50` → `0x140f0c070` (0.963, Boost component constructor).
+    (`out/bsim/live-20261006/rl_physics_constants.json`), and a diff of every tagged property of the physics objects
+    (`out/bsim/scripts/constants_diff.py`: car/ball archetypes, components, `PhysicsConfig_TA`, VehicleSim, wheels,
+    handling presets, pads, `GameEvent_Soccar`, mutators, bodies) shows only non-physics additions
+    (`out/bsim/bindiff/constants.diff.txt`): `bUseDisadvantageSpawnAdjustment`, `bAllowDemoSpawnSelection`, a
+    boost-pad respawn-time mutator (`RespawnDelayScale`, default 1.0), free-look camera settings, BladeBall, podium and
+    UI fields, and three new bodies (Cobalt Dagger, Neon Marmot, Safari).
+  - Per-package AES keys (2026-10-08, `out/bsim/agents/keys/REPORT.md`): packages that fail with the public key use
+    content keys picked by package name from a map baked into the exe, from a key table also baked in (obfuscated);
+    `out/bsim/agents/keys/keys.py` decrypts 16,174 of the 18,142 live packages. The rest use keys delivered online
+    (PsyNet `ContentConfig`); the game's cached copy of that config (WebCache, read locally with the user's permission)
+    supplies 427 more (`webkeys.py`; 437 of its entries equal baked keys), so all old and 507 of 520 live body packages
+    decrypt. The same config's `ClassPropertyConfig_X` (online class-default overrides) holds only a music-player debug
+    flag, and its mutators apply only to limited-time playlists: online standard matches use the package values.
+- **No game-side physics logic changed** in the update (2026-10-08). `out/bsim/scripts/semantic_diff.py` compares every
+  matched function with addresses, field displacements, stack frames and register allocation normalised and with the
+  values of RIP-relative constants read from each exe; `triage_semdiff.py` sorts the hits. Ranges: TAGame natives
+  0x140e40000–0x140f70000 (391 of 3,731 flagged), the game's Bullet wrapper 0x1403f0000–0x140420000 (34 of 493), UE3
+  primitives/shape builder 0x140960000–0x1409c0000 (97 of 1,042); output `out/bsim/bindiff/semdiff_*.txt`, `triage.txt`.
+  No float constant changed in any of them (the one hit, 0x1409b9af0, is a BinDiff mismatch of a 2-instruction setter).
+  Every flagged function on the call trees (depth 2) of the physics classes' vtables and natives (Car/Vehicle/
+  VehicleSim/Wheel/CarComponent_*/Ball_*/RBActor/PhysicsConfig/VehiclePickup/Pylon/GameEvent_Soccar; 825 functions,
+  49 flagged) and every flagged function cited in the notes (11 of 167) was read; all are one of:
+  - layout: the `Vehicle_TA` shifts above, class sizes in StaticClass ctors (e.g. `Ball_Breakout_TA` 0xc90→0xcb0),
+    the per-wheel VehicleSim state stride 0x178→0x180 (`imul 0x178` → `lea*3; shl 7`; car pre-physics, auto-roll gate
+    `0x140f1c600`, air control `0x140eb3400`, `0x140f03980`, `0x140f5eaf0`), the input copy now moving the extra
+    `VehicleInputs` dword (`0x140f16550`, `0x140f1aa50`, `SetVehicleInput`), the input-history frame 0x28→0x2c
+    (`0x140eb6f80`), and `bAirRoll` now tested as bit 0 of the new word (was bit 7 of a byte);
+  - feature flags: the `UFeatureSystem` flag word (+0x70) gained a flag below the existing ones, so every tested bit
+    moved up by one (bits 7/9/22/28 → 8/10/23/29 at all mapped sites); this is the 0x400000 → 0x800000 test in the
+    Ackermann/steer function `0x140ec7c00` (same flag; `out/bsim/scripts/feature_bits.py`);
+  - versions: the physics-state quantiser `0x140e45c10` (and `0x140e421e0`) stamps its bit archive with the build's
+    versions, licensee 32 → 34 and net version 11 → 12. The RB-state serializer `0x140e3e960` and the 46 functions of
+    the quantiser/serializer/bit-archive trees are otherwise unchanged (the rest are tiny archive virtuals BinDiff
+    paired with identical-looking twins), so quantisation is the same;
+  - noise: IAT slots, string-literal lengths, BinDiff mismatches of tiny or folded functions.
 - Data: `UWorld*` 0x1424a1308 → **0x1424ae6d0**; `gContactBreakingThreshold` 0x14224e008 → 0x14225b008 (still 0.02);
   Bullet settings 0x142351e8c/d → 0x14235ed4c/d; `gContactAddedCallback` 0x142351e68 → 0x14235ed28; warning hook
   0x142352c20 → 0x14235fae0; vtables: sphere 0x141a4dd70 → 0x141a53d70, finite plane 0x141a4eef8 → 0x141a54ef8,
@@ -234,5 +274,6 @@ through aligned references in matched functions), `dispmap.py` (field offsets fr
 - Functions cited in this file, 2026-06-16 → live: `14026c000` → `14026caf0` (est.) · `140270430` → `140270f30` · `140272130` → `140272c30` · `140277900` → `140278400` · `140278c90` → `140279790` · `14027ab70` → `14027b670` · `14027f4a0` → `14027ffa0` · `1402812a0` → `140281da0` · `140281490` → `140281f90` · `140281860` → `140282360` · `140283370` → `140283e70` · `140284940` → `140285440` · `140284bc0` → `1402856c0` · `1402867d0` → `1402872d0` · `140288b40` → `140289640` · `1402890e0` → `140289be0` · `14028aaf0` → `14028b5f0` · `14028b2f0` → `14028bdf0` · `14028bfe0` → `14028cae0` · `14028c320` → `14028ce20` · `14028cc30` → `14028d730` · `14028ccc0` → `14028d7c0` · `14028d570` → `14028e070` · `140290550` → `140291050` · `1402944b0` → `140294fb0` · `1402980c0` → `140298bc0` · `140299300` → `140299e00` · `14029ebe0` → `14029f6e0` · `1402a0ac0` → `1402a15c0` · `1402a0ef0` → `1402a19f0` · `1402a3d30` → `1402a4830` · `1402a58c0` → `1402a63c0` · `1402a5c00` → `1402a6700` · `1402a62c0` → `1402a6dc0` · `1402a6540` → `1402a7040` · `1402a7005` → `1402a7b05` (instr.) · `1402a74a0` → `1402a7fa0` · `1402ac650` → `1402ad150` · `1402af960` → `1402b0460` · `1402aff40` → `1402b0a40` · `1402b0130` → `1402b0c30` · `1402b0400` → `1402b0f00` · `1402b0670` → `1402b1170` · `1402b2340` → `1402b2e40` · `1402b2390` → `1402b2e90` · `1402b2720` → `1402b3220` · `1402b2e80` → `1402b3980` · `1402b7640` → `1402b8140` · `1402b7b40` → `1402b8640` · `1402b7c30` → `1402b8730` · `1402b7c60` → `1402b8760` · `1402b8bb0` → `1402b96b0` · `1402ba8d0` → `1402bb3d0` · `1402bad10` → `1402bb810` · `1402badc0` → `1402bb8c0` · `1402bc020` → `1402bcb20` · `1402bd390` → `1402bde90` · `1402be240` → `1402bed40` · `1402bfda0` → `1402c08a0` · `1402c0f40` → `1402c1a40` · `1402c1430` → `1402c1f30` · `1402c23a0` → `1402c2ea0` · `1402c29b0` → `1402c34b0` · `1402c2a40` → `1402c3540` · `1402c31f0` → `1402c3cf0` · `1402c3360` → `1402c3e60` · `1402c3a40` → `1402c4540` · `1402c4380` → `1402c4e80` · `1402c44b0` → `1402c4fb0` · `1402c49d0` → `1402c54d0` · `1402c5340` → `1402c5e40` · `1402d4000` → `1402d7ff0` (est.) · `140403cc0` → `14040a6c0` · `140407f90` → `14040e990` · `140409570` → `14040ff70` · `140409a84` → `140410484` (instr.) · `14040a5f0` → `140410ff0` · `140415030` → `14041ba30` · `140987da0` → `14098cd40` · `1409af240` → `1409b45a0` · `140eb8560` → `140ebc9b0` · `140eddd00` → `140ee25f0` · `140eed9e0` → `140ef2770` · `140f13c80` → `140f190b0` · `140f17910` → `140f1cd50` · `140f19b30` → `140f1ef70` · `140f1c600` → `140f21a90` sim 0.992 · `140f55040` → `140f5b120`
 
 ## Pending
-- Logic review of the changed game functions above (beyond offsets), and the new `VehicleInputs` dword.
+- Game-side physics audit against the engine (car components, VehicleSim, ball touches, car-car, pads, bodies):
+  `notes/gameside-audit.md`.
 - Live tests of B1 and B5–B14 (live session).

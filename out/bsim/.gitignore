@@ -3,3 +3,4 @@
 !.gitignore
 !scripts/
 !scripts/**
+scripts/**/__pycache__/

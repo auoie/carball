@@ -1,0 +1,31 @@
+# Two cars: the player's and a bot (physlog_spawn <body> bot first). Bumps, landing on a roof, then a supersonic hit
+# (a demolition if the teams differ: the bot's columns are empty until it respawns). The bot's lines are car2 / input2.
+# The ball out of the way
+ball 3000 -2000 92.75  0 0 0  0 0 0
+# 1) side bump at 1400 uu/s: the bot parked crosswise, the player drives into its side
+car2 0 0 17  0 0 0  0 0 0  0 0 0  0
+input2 0 0 0 0 0 0 0 0
+car 0 -1400 17  0 90 0  0 1400 0  0 0 0  0
+input 120 1 0 0 0 0 0 0 0
+wait 60
+# 2) head-on at 1000 each
+car2 0 600 17  0 -90 0  0 -1000 0  0 0 0  0
+input2 1 0 0 0 0 0 0 0
+car 0 -600 17  0 90 0  0 1000 0  0 0 0  0
+input 90 1 0 0 0 0 0 0 0
+input2 0 0 0 0 0 0 0 0
+wait 60
+# 3) glancing: 30 degrees into the bot's front corner at 1200
+car2 0 0 17  0 0 0  0 0 0  0 0 0  0
+car -500 -866 17  0 60 0  600 1039 0  0 0 0  0
+input 100 1 0 0 0 0 0 0 0
+wait 60
+# 4) dropped onto the bot's roof
+car2 0 0 17  0 0 0  0 0 0  0 0 0  0
+car 0 0 250  0 90 0  0 0 0  0 0 0  0
+wait 150
+# 5) supersonic into the parked bot, boosting
+car2 0 0 17  0 0 0  0 0 0  0 0 0  0
+car 0 -1800 17  0 90 0  0 2300 0  0 0 0  100
+input 90 1 0 0 0 0 0 1 0
+wait 120

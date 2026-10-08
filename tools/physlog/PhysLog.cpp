@@ -8,13 +8,23 @@
 // Console commands:
 //   physlog_start [name]     record your own driving until physlog_stop
 //   physlog_stop
-//   physlog_run <scenario>   play a scripted scenario (data/physlog/scenarios/<scenario>.txt) and record it
+//   physlog_run <scenario> [bot]   play a scripted scenario (data/physlog/scenarios/<scenario>.txt) and record it;
+//                            with `bot`, on the car spawned with physlog_spawn (the player's car is parked aside)
+//   physlog_spawn <body> [bot], physlog_removebots, physlog_cars   a second car for two-car scenarios or other bodies
+//   physlog_body <product>   drive another car body (BakkesMod's item mod, offline only): e.g. 23 Octane, 403 Dominus,
+//                            24 Paladin (Plank), 22 Breakout, 31 Venom (Hybrid), 30 Merc; `physlog_body restore` puts
+//                            the player's own item-mod settings back
 //
 // Scenario files, one command per line (# comments):
 //   car x y z  pitch yaw roll  vx vy vz  wx wy wz  boost   place the car (degrees; rad/s; boost 0-100)
 //   ball x y z  vx vy vz  wx wy wz                         place the ball
 //   wait N                                                 N ticks with no input
 //   input N throttle steer pitch yaw roll jump boost handbrake   hold these inputs for N ticks (jump/boost/handbrake 0/1)
+//   target bot                                             script and record the spawned car (physlog_spawn ... bot)
+//                                                          instead of the player's; the player's becomes the other car
+//   car2 ...  / input2 throttle steer pitch yaw roll jump boost handbrake   place the other car / set its input (held
+//                                                          until the next input2; no ticks pass). With another car in
+//                                                          the game, every row also records it (o_ columns)
 //   repeat K ... end                                       (not nested) run the lines in between K times
 //
 // Next to each recording it writes <name>_bullet.csv: the game's own Bullet objects, read (never written) through the
@@ -37,6 +47,9 @@
 #include "bakkesmod/wrappers/GameObject/CarComponent/VehicleSimWrapper.h"
 #include "bakkesmod/wrappers/GameObject/CarComponent/WheelWrapper.h"
 #include "bakkesmod/wrappers/GameObject/CarWrapper.h"
+#include "bakkesmod/wrappers/AIControllerWrapper.h"
+#include "bakkesmod/wrappers/MenuStackWrapper.h"
+#include "utils/parser.h"
 
 #include <chrono>
 #include <cstdint>
@@ -52,13 +65,33 @@
 namespace {
 
 struct ScriptLine {
-	enum Kind { Car, Ball, Wait, Input } kind;
+	enum Kind { Car, Ball, Wait, Input, Car2, Input2 } kind;
 	float v[13] = {};
 	int ticks = 0;
 };
 
 // Rotator units: 65536 per turn
 int ToRotatorUnits(float degrees) { return (int)(degrees * 65536.f / 360.f); }
+
+// BakkesMod's item-mod loadout code (base64, bits LSB first): version (6 bits, 4), size in bytes (10), CRC (8: 0xff
+// xor the bytes after the header), then: both teams the same (1), item count (4), per item slot (5), product (13),
+// paint (6), then the colours. Returns the code with the body (slot 0, the first item) replaced, or "" if the code
+// doesn't have that layout.
+std::string WithBody(const std::string& code, int product) {
+	std::vector<BYTE> b = base64_decode_bytearr(code);
+	auto bit = [&](int i) { return (b[i / 8] >> (i % 8)) & 1; };
+	auto read = [&](int off, int n) { int v = 0; for (int i = 0; i < n; i++) v |= bit(off + i) << i; return v; };
+	if (b.size() < 8 || read(0, 6) != 4 || read(6, 10) != (int)b.size() || read(29, 5) != 0) return "";
+	for (int i = 0; i < 13; i++) {
+		int at = 34 + i;
+		if ((product >> i) & 1) b[at / 8] |= (BYTE)(1 << (at % 8));
+		else b[at / 8] &= (BYTE)~(1 << (at % 8));
+	}
+	BYTE crc = 0xff;
+	for (size_t i = 3; i < b.size(); i++) crc ^= b[i];
+	b[2] = crc;
+	return base64_encode(b.data(), (unsigned int)b.size());
+}
 
 // --- The game's Bullet objects, read only. Offsets for the 2026-10-06 build (notes/bullet-diff.md); 1 BU = 50 uu
 constexpr uintptr_t GWORLD_RVA = 0x24ae6d0;  // UWorld* GWorld
@@ -100,8 +133,9 @@ private:
 	bool Open(const std::string& name);
 	void Close(const char* why);
 	void OnInput(CarWrapper car, void* params);
-	void Header(CarWrapper car);
-	void Row(CarWrapper car, const ControllerInput& in);
+	void Header(CarWrapper car, CarWrapper other);
+	void Row(CarWrapper car, const ControllerInput& in, CarWrapper other, const ControllerInput& otherIn);
+	CarWrapper OtherCar(CarWrapper not_this);
 	bool LoadScenario(const std::string& name);
 	void ApplyCar(CarWrapper car, const float* v);
 	void ApplyBall(const float* v);
@@ -113,8 +147,15 @@ private:
 
 	std::ofstream out_;
 	std::ofstream bullet_;
-	uintptr_t carBody_ = 0, ballBody_ = 0, world_ = 0, dispatcher_ = 0;
+	uintptr_t carBody_ = 0, ballBody_ = 0, otherBody_ = 0, world_ = 0, dispatcher_ = 0;
 	std::string bulletInfo_;
+	std::string savedItemCode_, savedItemEnabled_; // the player's item-mod settings before physlog_body
+	bool targetBot_ = false;                       // record the spawned car, not the player's (scenario: target bot)
+	bool headerOther_ = false;                     // the header has the other car's columns
+	bool parkOther_ = false;                       // park the other car aside at the start (physlog_run ... bot)
+	ControllerInput input2_{};                     // the other car's scripted input
+	ControllerInput targetInput_{};                // the scripted input for the recorded car this tick
+	ControllerInput botApplied_{};                 // the input the spawned car last got
 	bool recording_ = false;
 	bool headerWritten_ = false;
 	unsigned long long tick_ = 0;
@@ -138,6 +179,10 @@ void PhysLog::onLoad() {
 		if (!Allowed()) { cvarManager->log("physlog: offline freeplay or custom training only"); return; }
 		if (args.size() < 2) { cvarManager->log("usage: physlog_run <scenario>"); return; }
 		if (!LoadScenario(args[1])) return;
+		if (args.size() > 2 && args[2] == "bot") {
+			targetBot_ = true;
+			parkOther_ = true; // the player's car out of the way, unless the scenario places it (car2)
+		}
 		scripted_ = true;
 		scriptPos_ = 0;
 		ticksLeft_ = 0;
@@ -145,6 +190,100 @@ void PhysLog::onLoad() {
 		if (gameWrapper->IsPaused()) gameWrapper->ExecuteUnrealCommand("pause");
 		Open(args[1]);
 	}, "Play a scripted scenario and record it", PERMISSION_ALL);
+	cvarManager->registerNotifier("physlog_body", [this](std::vector<std::string> args) {
+		if (!Allowed()) { cvarManager->log("physlog: offline freeplay or custom training only"); return; }
+		if (args.size() < 2) { cvarManager->log("usage: physlog_body <product id> | restore"); return; }
+		CVarWrapper code = cvarManager->getCvar("cl_itemmod_code"), enabled = cvarManager->getCvar("cl_itemmod_enabled");
+		if (code.IsNull() || enabled.IsNull()) { cvarManager->log("physlog: BakkesMod's item mod cvars not found"); return; }
+		// The player's own settings are kept in a file too, so a plugin reload doesn't lose them
+		std::filesystem::path savedPath = Folder() / "itemmod_saved.txt";
+		if (savedItemCode_.empty()) {
+			std::ifstream f(savedPath);
+			std::getline(f, savedItemCode_);
+			std::getline(f, savedItemEnabled_);
+		}
+		if (args[1] == "restore") {
+			if (savedItemCode_.empty()) { cvarManager->log("physlog: nothing to restore"); return; }
+			code.setValue(savedItemCode_);
+			enabled.setValue(savedItemEnabled_);
+			cvarManager->log("physlog: item mod restored (" + savedItemCode_ + ", enabled " + savedItemEnabled_ + ")");
+			savedItemCode_.clear();
+			std::filesystem::remove(savedPath);
+			return;
+		}
+		if (savedItemCode_.empty()) {
+			savedItemCode_ = code.getStringValue();
+			savedItemEnabled_ = enabled.getStringValue();
+			std::filesystem::create_directories(Folder());
+			std::ofstream(savedPath) << savedItemCode_ << "\n" << savedItemEnabled_ << "\n";
+		}
+		std::string next = WithBody(savedItemCode_, std::stoi(args[1]));
+		if (next.empty()) { cvarManager->log("physlog: unknown item-mod code layout: " + savedItemCode_); return; }
+		code.setValue(next);
+		enabled.setValue("1");
+		cvarManager->log("physlog: body " + args[1] + " (item mod code " + next + ")");
+	}, "Drive another car body through BakkesMod's item mod (offline)", PERMISSION_ALL);
+	cvarManager->registerNotifier("physlog_spawn", [this](std::vector<std::string> args) {
+		if (!Allowed()) { cvarManager->log("physlog: offline freeplay or custom training only"); return; }
+		ServerWrapper server = gameWrapper->GetGameEventAsServer();
+		if (server.IsNull() || args.size() < 2) { cvarManager->log("usage: physlog_spawn <body> [bot]"); return; }
+		int body = std::stoi(args[1]);
+		if (args.size() > 2 && args[2] == "bot") server.SpawnBot(body, "PhysLogBot");
+		else server.SpawnCar(body, "PhysLogCar");
+		cvarManager->log("physlog: spawned body " + args[1] + (args.size() > 2 ? " (bot)" : ""));
+	}, "Spawn a second car (offline)", PERMISSION_ALL);
+	// The player's car demolished: it respawns as a new car (which takes item mod's body)
+	cvarManager->registerNotifier("physlog_demolish", [this](std::vector<std::string>) {
+		if (!Allowed()) { cvarManager->log("physlog: offline freeplay or custom training only"); return; }
+		CarWrapper car = gameWrapper->GetLocalCar();
+		if (!car.IsNull()) car.Demolish();
+		cvarManager->log("physlog: demolished the player's car");
+	}, "Demolish the player's car (offline): it respawns", PERMISSION_ALL);
+	// Heartbeat for scripts (tools/physlog/check_game.sh): the reply only appears if the game is processing commands
+	cvarManager->registerNotifier("physlog_ping", [this](std::vector<std::string> args) {
+		std::string menus;
+		MenuStackWrapper stack = gameWrapper->GetMenuStack();
+		if (!stack.IsNull())
+			for (const std::string& m : stack.GetMenuStack()) menus += (menus.empty() ? "" : ",") + m;
+		cvarManager->log("physlog: pong " + (args.size() > 1 ? args[1] : std::string("-")) + " freeplay " +
+			std::to_string((int)gameWrapper->IsInFreeplay()) + " online " + std::to_string((int)gameWrapper->IsInOnlineGame()) +
+			" paused " + std::to_string((int)gameWrapper->IsPaused()) + " menus [" + menus + "]");
+	}, "Reply with the game's state (heartbeat)", PERMISSION_ALL);
+	cvarManager->registerNotifier("physlog_removebots", [this](std::vector<std::string>) {
+		if (!Allowed()) return;
+		ServerWrapper server = gameWrapper->GetGameEventAsServer();
+		if (server.IsNull()) return;
+		ArrayWrapper<CarWrapper> cars = server.GetCars();
+		int removed = 0;
+		for (int i = cars.Count() - 1; i >= 0; i--) {
+			CarWrapper c = cars.Get(i);
+			if (c.IsNull()) continue;
+			AIControllerWrapper ai = c.GetAIController();
+			if (!ai.IsNull()) { server.RemovePlayer(ai); removed++; }
+		}
+		cvarManager->log("physlog: removed " + std::to_string(removed) + " bots");
+	}, "Remove the bots (offline)", PERMISSION_ALL);
+	cvarManager->registerNotifier("physlog_cars", [this](std::vector<std::string>) {
+		ServerWrapper server = gameWrapper->GetGameEventAsServer();
+		if (server.IsNull()) return;
+		ArrayWrapper<CarWrapper> cars = server.GetCars();
+		CarWrapper local = gameWrapper->GetLocalCar();
+		for (int i = 0; i < cars.Count(); i++) {
+			CarWrapper c = cars.Get(i);
+			if (c.IsNull()) continue;
+			Vector l = c.GetLocation(), e = c.GetLocalCollisionExtent();
+			char b[256];
+			std::snprintf(b, sizeof b, "physlog: car %d body %d%s at %.0f %.0f %.0f extent %.4f %.4f %.4f", i, c.GetLoadoutBody(),
+				c.memory_address == local.memory_address ? " (local)" : "", l.X, l.Y, l.Z, e.X, e.Y, e.Z);
+			cvarManager->log(b);
+		}
+	}, "List the cars", PERMISSION_ALL);
+	cvarManager->registerNotifier("physlog_resetplayers", [this](std::vector<std::string>) {
+		if (!Allowed()) return;
+		ServerWrapper server = gameWrapper->GetGameEventAsServer();
+		if (!server.IsNull()) server.ResetPlayers();
+		cvarManager->log("physlog: players reset");
+	}, "Reset the players (offline)", PERMISSION_ALL);
 
 	gameWrapper->HookEventWithCaller<CarWrapper>("Function TAGame.Car_TA.SetVehicleInput",
 		[this](CarWrapper car, void* params, std::string) { OnInput(car, params); });
@@ -171,6 +310,7 @@ bool PhysLog::Open(const std::string& name) {
 	recording_ = true;
 	headerWritten_ = false;
 	tick_ = 0;
+	input2_ = targetInput_ = botApplied_ = ControllerInput{};
 	cvarManager->log("physlog: recording to " + path.string());
 	return true;
 }
@@ -189,6 +329,8 @@ bool PhysLog::LoadScenario(const std::string& name) {
 	std::ifstream in(path);
 	if (!in) { cvarManager->log("physlog: no scenario " + path.string()); return false; }
 	script_.clear();
+	targetBot_ = false;
+	parkOther_ = false;
 	std::vector<ScriptLine> block;
 	int repeat = 0;
 	std::string line;
@@ -201,7 +343,15 @@ bool PhysLog::LoadScenario(const std::string& name) {
 		if (!(ss >> cmd)) continue;
 		ScriptLine s;
 		int count = 0;
+		if (cmd == "target") {
+			std::string who;
+			ss >> who;
+			targetBot_ = who == "bot";
+			continue;
+		}
 		if (cmd == "car") { s.kind = ScriptLine::Car; count = 13; }
+		else if (cmd == "car2") { s.kind = ScriptLine::Car2; count = 13; }
+		else if (cmd == "input2") { s.kind = ScriptLine::Input2; count = 8; }
 		else if (cmd == "ball") { s.kind = ScriptLine::Ball; count = 9; }
 		else if (cmd == "wait") { s.kind = ScriptLine::Wait; ss >> s.ticks; }
 		else if (cmd == "input") { s.kind = ScriptLine::Input; ss >> s.ticks; count = 8; }
@@ -244,84 +394,145 @@ void PhysLog::ApplyBall(const float* v) {
 	ball.SetAngularVelocity(Vector(v[6], v[7], v[8]), false);
 }
 
+// The first car that isn't `not_this` (a car spawned with physlog_spawn, or the player's)
+CarWrapper PhysLog::OtherCar(CarWrapper not_this) {
+	ServerWrapper server = gameWrapper->GetGameEventAsServer();
+	if (server.IsNull()) return CarWrapper(0);
+	ArrayWrapper<CarWrapper> cars = server.GetCars();
+	for (int i = 0; i < cars.Count(); i++) {
+		CarWrapper c = cars.Get(i);
+		if (!c.IsNull() && c.memory_address != not_this.memory_address) return c;
+	}
+	return CarWrapper(0);
+}
+
+namespace {
+ControllerInput ScriptInput(const float* v) {
+	ControllerInput c{}; // the SDK struct has no initializers
+	c.Throttle = v[0];
+	c.Steer = v[1];
+	c.Pitch = v[2];
+	c.Yaw = v[3];
+	c.Roll = v[4];
+	c.DodgeForward = -v[2]; // as PlayerController_TA.PlayerMove sets them
+	c.DodgeStrafe = v[3];
+	c.Jump = v[5] != 0;
+	c.ActivateBoost = c.HoldingBoost = v[6] != 0;
+	c.Handbrake = v[7] != 0;
+	return c;
+}
+} // namespace
+
 void PhysLog::OnInput(CarWrapper car, void* params) {
 	if (!recording_ || car.IsNull() || !params) return;
 	if (!Allowed()) { Close("left offline play"); return; }
 	CarWrapper local = gameWrapper->GetLocalCar();
-	if (local.IsNull() || local.memory_address != car.memory_address) return;
+	if (local.IsNull()) return;
+	CarWrapper bot = OtherCar(local);
 	ControllerInput* in = reinterpret_cast<ControllerInput*>(params);
 
+	// A spawned car's input is set every rendered frame (several times per physics tick, and before the player's in a
+	// tick): it only gets its scripted input here, and the input it really got is what its row records
+	if (!bot.IsNull() && car.memory_address == bot.memory_address) {
+		if (scripted_) *in = targetBot_ ? targetInput_ : input2_;
+		botApplied_ = *in;
+		return;
+	}
+	if (car.memory_address != local.memory_address) return;
+
+	// The player's car: its input is set once per physics tick, so it is the clock for the script and the rows
+	CarWrapper target = targetBot_ ? bot : local, other = targetBot_ ? local : bot;
+	if (target.IsNull()) { Close("no spawned car to record (physlog_spawn <body> bot)"); return; }
+	if (scripted_ && parkOther_ && !other.IsNull()) {
+		const float park[13] = {-3500, 4300, 17, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}; // a corner of the field
+		ApplyCar(other, park);
+		parkOther_ = false;
+	}
 	if (scripted_) {
-		// Placement lines take effect now; wait/input lines hold for their ticks
+		// Placement lines and input2 take effect now; wait/input lines hold for their ticks
 		while (ticksLeft_ == 0 && scriptPos_ < script_.size()) {
 			const ScriptLine& s = script_[scriptPos_];
-			if (s.kind == ScriptLine::Car) { ApplyCar(car, s.v); scriptPos_++; }
+			if (s.kind == ScriptLine::Car) { ApplyCar(target, s.v); scriptPos_++; }
+			else if (s.kind == ScriptLine::Car2) { if (!other.IsNull()) ApplyCar(other, s.v); scriptPos_++; }
+			else if (s.kind == ScriptLine::Input2) { input2_ = ScriptInput(s.v); scriptPos_++; }
 			else if (s.kind == ScriptLine::Ball) { ApplyBall(s.v); scriptPos_++; }
 			else ticksLeft_ = s.ticks;
 		}
 		if (ticksLeft_ == 0) { Close("scenario done"); return; }
 		const ScriptLine& s = script_[scriptPos_];
-		ControllerInput c{}; // the SDK struct has no initializers: wait lines would send garbage
-		if (s.kind == ScriptLine::Input) {
-			c.Throttle = s.v[0];
-			c.Steer = s.v[1];
-			c.Pitch = s.v[2];
-			c.Yaw = s.v[3];
-			c.Roll = s.v[4];
-			c.DodgeForward = -s.v[2]; // as PlayerController_TA.PlayerMove sets them
-			c.DodgeStrafe = s.v[3];
-			c.Jump = s.v[5] != 0;
-			c.ActivateBoost = c.HoldingBoost = s.v[6] != 0;
-			c.Handbrake = s.v[7] != 0;
-		}
-		*in = c;
+		targetInput_ = s.kind == ScriptLine::Input ? ScriptInput(s.v) : ControllerInput{};
+		*in = targetBot_ ? input2_ : targetInput_;
 		if (--ticksLeft_ == 0) scriptPos_++;
 	}
 	if (!headerWritten_) {
-		Header(car);
-		bool found = FindBullet(car);
+		Header(target, other);
+		bool found = FindBullet(target);
 		bullet_ << "# " << bulletInfo_ << "\n";
 		if (found) BulletHeader();
 		else cvarManager->log("physlog: Bullet objects not found (" + bulletInfo_ + "); no _bullet.csv data");
 	}
-	Row(car, *in);
+	if (targetBot_) Row(target, botApplied_, other, *in);
+	else Row(target, *in, other, botApplied_);
 	if (world_) BulletContacts();
 	tick_++;
 }
 
-void PhysLog::Header(CarWrapper car) {
-	Vector ext = car.GetLocalCollisionExtent(), off = car.GetLocalCollisionOffset();
-	out_ << "# body " << car.GetLoadoutBody() << " extent " << ext.X << " " << ext.Y << " " << ext.Z << " offset " << off.X
-	     << " " << off.Y << " " << off.Z;
-	// The player's sensitivities shape the inputs inside the physics (steering in VehicleSim, aerials in AirControl)
-	VehicleSimWrapper sim = car.GetVehicleSim();
-	AirControlComponentWrapper air = car.GetAirControlComponent();
-	auto exact = [](float v) { char b[32]; std::snprintf(b, sizeof b, "%.9g", v); return std::string(b); };
-	if (!sim.IsNull()) out_ << " steer_sensitivity " << exact(sim.GetSteeringSensitivity());
-	if (!air.IsNull()) out_ << " air_sensitivity " << exact(air.GetAirControlSensitivity());
-	if (!sim.IsNull()) {
-		ArrayWrapper<WheelWrapper> wheels = sim.GetWheels();
-		for (int i = 0; i < wheels.Count(); i++) {
-			WheelWrapper w = wheels.Get(i);
-			if (w.IsNull()) continue;
-			Vector rest = w.GetLocalRestPosition(), ray = w.GetLocalSuspensionRayStart();
-			out_ << " wheel" << i << " radius " << w.GetWheelRadius() << " rest " << rest.X << " " << rest.Y << " " << rest.Z
-			     << " ray " << ray.X << " " << ray.Y << " " << ray.Z << " travel " << w.GetSuspensionTravel();
+namespace {
+// A car's columns after the ball's (the other car's get the prefix o_)
+const char* CAR_COLUMNS =
+	"throttle,steer,pitch,yaw,roll,dodge_fwd,dodge_strafe,handbrake,jump,activate_boost,holding_boost,jumped,"
+	"on_ground,wheel_world_contacts,b_jumped,b_double_jumped,has_flip,supersonic,time_below_supersonic,boost,"
+	"jump_active,jump_time,dj_active,dj_time,dodge_active,dodge_time,dodge_tx,dodge_ty,dodge_tz,"
+	"out_throttle,out_steer,out_handbrake,w0_steer,w1_steer,w0_contact,w1_contact,w2_contact,w3_contact,"
+	"w0_susp,w1_susp,w2_susp,w3_susp,wc_has,wc_nx,wc_ny,wc_nz";
+const char* BODY_COLUMNS = "qx,qy,qz,qw,x,y,z,vx,vy,vz,wx,wy,wz,sleep";
+std::string Prefixed(const std::string& prefix, const std::string& list) {
+	std::string out;
+	std::stringstream ss(list);
+	for (std::string name; std::getline(ss, name, ',');) out += (out.empty() ? "" : ",") + prefix + name;
+	return out;
+}
+} // namespace
+
+void PhysLog::Header(CarWrapper car, CarWrapper other) {
+	auto describe = [&](CarWrapper c, const std::string& prefix) {
+		Vector ext = c.GetLocalCollisionExtent(), off = c.GetLocalCollisionOffset();
+		out_ << prefix << "body " << c.GetLoadoutBody() << " " << prefix << "team " << (int)c.GetTeamNum2() << " " << prefix << "extent "
+		     << ext.X << " " << ext.Y << " " << ext.Z
+		     << " " << prefix << "offset " << off.X << " " << off.Y << " " << off.Z;
+		// The player's sensitivities shape the inputs inside the physics (steering in VehicleSim, aerials in AirControl)
+		VehicleSimWrapper sim = c.GetVehicleSim();
+		AirControlComponentWrapper air = c.GetAirControlComponent();
+		auto exact = [](float v) { char b[32]; std::snprintf(b, sizeof b, "%.9g", v); return std::string(b); };
+		if (!sim.IsNull()) out_ << " " << prefix << "steer_sensitivity " << exact(sim.GetSteeringSensitivity());
+		if (!air.IsNull()) out_ << " " << prefix << "air_sensitivity " << exact(air.GetAirControlSensitivity());
+		if (!sim.IsNull()) {
+			ArrayWrapper<WheelWrapper> wheels = sim.GetWheels();
+			for (int i = 0; i < wheels.Count(); i++) {
+				WheelWrapper w = wheels.Get(i);
+				if (w.IsNull()) continue;
+				Vector rest = w.GetLocalRestPosition(), ray = w.GetLocalSuspensionRayStart();
+				out_ << " " << prefix << "wheel" << i << " radius " << w.GetWheelRadius() << " rest " << rest.X << " " << rest.Y
+				     << " " << rest.Z << " ray " << ray.X << " " << ray.Y << " " << ray.Z << " travel " << w.GetSuspensionTravel();
+			}
 		}
+	};
+	out_ << "# ";
+	describe(car, "");
+	if (!other.IsNull()) {
+		out_ << " ";
+		describe(other, "o_");
 	}
 	out_ << "\n";
-	out_ << "tick,time,cqx,cqy,cqz,cqw,cx,cy,cz,cvx,cvy,cvz,cwx,cwy,cwz,csleep,"
-	        "bqx,bqy,bqz,bqw,bx,by,bz,bvx,bvy,bvz,bwx,bwy,bwz,bsleep,"
-	        "throttle,steer,pitch,yaw,roll,dodge_fwd,dodge_strafe,handbrake,jump,activate_boost,holding_boost,jumped,"
-	        "on_ground,wheel_world_contacts,b_jumped,b_double_jumped,has_flip,supersonic,time_below_supersonic,boost,"
-	        "jump_active,jump_time,dj_active,dj_time,dodge_active,dodge_time,dodge_tx,dodge_ty,dodge_tz,"
-	        "out_throttle,out_steer,out_handbrake,w0_steer,w1_steer,w0_contact,w1_contact,w2_contact,w3_contact,"
-	        "w0_susp,w1_susp,w2_susp,w3_susp,wc_has,wc_nx,wc_ny,wc_nz\n";
+	out_ << "tick,time," << Prefixed("c", BODY_COLUMNS) << "," << Prefixed("b", BODY_COLUMNS) << "," << CAR_COLUMNS;
+	headerOther_ = !other.IsNull();
+	if (headerOther_) out_ << "," << Prefixed("o_c", BODY_COLUMNS) << "," << Prefixed("o_", CAR_COLUMNS);
+	out_ << "\n";
 	headerWritten_ = true;
 }
 
-void PhysLog::Row(CarWrapper car, const ControllerInput& in) {
-	char buf[4096];
+void PhysLog::Row(CarWrapper car, const ControllerInput& in, CarWrapper other, const ControllerInput& otherIn) {
+	char buf[8192];
 	int n = 0;
 	auto put = [&](const char* fmt, auto... args) {
 		if (n < (int)sizeof(buf)) n += std::snprintf(buf + n, sizeof(buf) - n, fmt, args...);
@@ -332,6 +543,43 @@ void PhysLog::Row(CarWrapper car, const ControllerInput& in) {
 		put(",%.9g,%.9g,%.9g", s.LinearVelocity.X, s.LinearVelocity.Y, s.LinearVelocity.Z);
 		put(",%.9g,%.9g,%.9g,%d", s.AngularVelocity.X, s.AngularVelocity.Y, s.AngularVelocity.Z, (int)s.bSleeping);
 	};
+	auto fields = [&](CarWrapper c, const ControllerInput& in) {
+		put(",%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g", in.Throttle, in.Steer, in.Pitch, in.Yaw, in.Roll, in.DodgeForward, in.DodgeStrafe);
+		put(",%d,%d,%d,%d,%d", (int)in.Handbrake, (int)in.Jump, (int)in.ActivateBoost, (int)in.HoldingBoost, (int)in.Jumped);
+		put(",%d,%d,%d,%d,%d,%d,%.9g", (int)c.IsOnGround(), c.GetNumWheelWorldContacts(), (int)c.GetbJumped(),
+			(int)c.GetbDoubleJumped(), (int)c.HasFlip(), (int)c.GetbSuperSonic(), c.GetTimeBelowSupersonicSpeed());
+		BoostWrapper boost = c.GetBoostComponent();
+		put(",%.9g", boost.IsNull() ? -1.f : boost.GetCurrentBoostAmount());
+		JumpComponentWrapper jump = c.GetJumpComponent();
+		DoubleJumpComponentWrapper dj = c.GetDoubleJumpComponent();
+		DodgeComponentWrapper dodge = c.GetDodgeComponent();
+		put(",%d,%.9g", jump.IsNull() ? -1 : (int)jump.GetbActive(), jump.IsNull() ? 0.f : jump.GetActiveTime());
+		put(",%d,%.9g", dj.IsNull() ? -1 : (int)dj.GetbActive(), dj.IsNull() ? 0.f : dj.GetActiveTime());
+		Vector torque = dodge.IsNull() ? Vector(0, 0, 0) : dodge.GetDodgeTorque();
+		put(",%d,%.9g,%.9g,%.9g,%.9g", dodge.IsNull() ? -1 : (int)dodge.GetbActive(), dodge.IsNull() ? 0.f : dodge.GetActiveTime(),
+			torque.X, torque.Y, torque.Z);
+		VehicleSimWrapper sim = c.GetVehicleSim();
+		if (!sim.IsNull()) {
+			put(",%.9g,%.9g,%.9g", sim.GetOutputThrottle(), sim.GetOutputSteer(), sim.GetOutputHandbrake());
+			ArrayWrapper<WheelWrapper> wheels = sim.GetWheels();
+			float steer[2] = {}, susp[4] = {};
+			int contact[4] = {};
+			for (int i = 0; i < wheels.Count() && i < 4; i++) {
+				WheelWrapper w = wheels.Get(i);
+				if (w.IsNull()) continue;
+				if (i < 2) steer[i] = w.GetSteer2();
+				contact[i] = (int)w.GetbHadContact();
+				susp[i] = w.GetSuspensionDistance();
+			}
+			put(",%.9g,%.9g,%d,%d,%d,%d,%.9g,%.9g,%.9g,%.9g", steer[0], steer[1], contact[0], contact[1], contact[2], contact[3],
+				susp[0], susp[1], susp[2], susp[3]);
+		} else {
+			put(",,,,,,,,,,,,,");
+		}
+		// The game's WorldContact as the coming tick's auto-roll sees it (built after the previous tick)
+		uintptr_t wc = c.memory_address + CAR_WORLD_CONTACT;
+		put(",%d,%.6g,%.6g,%.6g", Get<int>(wc) & 1, Get<float>(wc + 0x1c), Get<float>(wc + 0x20), Get<float>(wc + 0x24));
+	};
 	RBState cs = car.GetRBState();
 	put("%llu,%.9g", tick_, cs.Time);
 	body(cs);
@@ -339,41 +587,13 @@ void PhysLog::Row(CarWrapper car, const ControllerInput& in) {
 	BallWrapper ball = server.IsNull() ? BallWrapper(0) : server.GetBall();
 	if (!ball.IsNull()) body(ball.GetRBState());
 	else put(",,,,,,,,,,,,,,");
-	put(",%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g", in.Throttle, in.Steer, in.Pitch, in.Yaw, in.Roll, in.DodgeForward, in.DodgeStrafe);
-	put(",%d,%d,%d,%d,%d", (int)in.Handbrake, (int)in.Jump, (int)in.ActivateBoost, (int)in.HoldingBoost, (int)in.Jumped);
-	put(",%d,%d,%d,%d,%d,%d,%.9g", (int)car.IsOnGround(), car.GetNumWheelWorldContacts(), (int)car.GetbJumped(),
-		(int)car.GetbDoubleJumped(), (int)car.HasFlip(), (int)car.GetbSuperSonic(), car.GetTimeBelowSupersonicSpeed());
-	BoostWrapper boost = car.GetBoostComponent();
-	put(",%.9g", boost.IsNull() ? -1.f : boost.GetCurrentBoostAmount());
-	JumpComponentWrapper jump = car.GetJumpComponent();
-	DoubleJumpComponentWrapper dj = car.GetDoubleJumpComponent();
-	DodgeComponentWrapper dodge = car.GetDodgeComponent();
-	put(",%d,%.9g", jump.IsNull() ? -1 : (int)jump.GetbActive(), jump.IsNull() ? 0.f : jump.GetActiveTime());
-	put(",%d,%.9g", dj.IsNull() ? -1 : (int)dj.GetbActive(), dj.IsNull() ? 0.f : dj.GetActiveTime());
-	Vector torque = dodge.IsNull() ? Vector(0, 0, 0) : dodge.GetDodgeTorque();
-	put(",%d,%.9g,%.9g,%.9g,%.9g", dodge.IsNull() ? -1 : (int)dodge.GetbActive(), dodge.IsNull() ? 0.f : dodge.GetActiveTime(),
-		torque.X, torque.Y, torque.Z);
-	VehicleSimWrapper sim = car.GetVehicleSim();
-	if (!sim.IsNull()) {
-		put(",%.9g,%.9g,%.9g", sim.GetOutputThrottle(), sim.GetOutputSteer(), sim.GetOutputHandbrake());
-		ArrayWrapper<WheelWrapper> wheels = sim.GetWheels();
-		float steer[2] = {}, susp[4] = {};
-		int contact[4] = {};
-		for (int i = 0; i < wheels.Count() && i < 4; i++) {
-			WheelWrapper w = wheels.Get(i);
-			if (w.IsNull()) continue;
-			if (i < 2) steer[i] = w.GetSteer2();
-			contact[i] = (int)w.GetbHadContact();
-			susp[i] = w.GetSuspensionDistance();
-		}
-		put(",%.9g,%.9g,%d,%d,%d,%d,%.9g,%.9g,%.9g,%.9g", steer[0], steer[1], contact[0], contact[1], contact[2], contact[3],
-			susp[0], susp[1], susp[2], susp[3]);
-	} else {
-		put(",,,,,,,,,,,,,");
+	fields(car, in);
+	if (!other.IsNull()) {
+		body(other.GetRBState());
+		fields(other, otherIn);
+	} else if (headerOther_) { // the other car is gone (demolished): its columns empty
+		for (int i = 0; i < 14 + 46; i++) put(",");
 	}
-	// The game's WorldContact as the coming tick's auto-roll sees it (built after the previous tick)
-	uintptr_t wc = car.memory_address + CAR_WORLD_CONTACT;
-	put(",%d,%.6g,%.6g,%.6g", Get<int>(wc) & 1, Get<float>(wc + 0x1c), Get<float>(wc + 0x20), Get<float>(wc + 0x24));
 	out_.write(buf, n < (int)sizeof(buf) ? n : (int)sizeof(buf) - 1);
 	out_ << "\n";
 }
@@ -381,10 +601,12 @@ void PhysLog::Row(CarWrapper car, const ControllerInput& in) {
 // The car's and the ball's bodies, and the physics world that holds the car (checked: the world's dispatcher is the
 // wrapper's, and the car's body is one of the world's collision objects)
 bool PhysLog::FindBullet(CarWrapper car) {
-	carBody_ = ballBody_ = world_ = dispatcher_ = 0;
+	carBody_ = ballBody_ = otherBody_ = world_ = dispatcher_ = 0;
 	char b[256];
 	uintptr_t actor = car.memory_address;
 	carBody_ = Get<uintptr_t>(actor + ACTOR_BODY);
+	CarWrapper other = OtherCar(car);
+	otherBody_ = other.IsNull() ? 0 : Get<uintptr_t>(other.memory_address + ACTOR_BODY);
 	ServerWrapper server = gameWrapper->GetGameEventAsServer();
 	BallWrapper ball = server.IsNull() ? BallWrapper(0) : server.GetBall();
 	if (!ball.IsNull()) ballBody_ = Get<uintptr_t>(ball.memory_address + ACTOR_BODY);
@@ -413,6 +635,7 @@ bool PhysLog::FindBullet(CarWrapper car) {
 std::string PhysLog::BodyName(uintptr_t body) {
 	if (body == carBody_) return "car";
 	if (body == ballBody_) return "ball";
+	if (body && body == otherBody_) return "car2";
 	char b[64];
 	std::snprintf(b, sizeof b, "shape%d", Get<int>(Get<uintptr_t>(body + BODY_SHAPE) + 0x8));
 	return b;
@@ -476,7 +699,8 @@ void PhysLog::BulletContacts() {
 		for (uintptr_t m = 0; m < count && m < 10000; m++) {
 			uintptr_t mf = Get<uintptr_t>(data + 8 * m);
 			uintptr_t b0 = Get<uintptr_t>(mf + 0x450), b1 = Get<uintptr_t>(mf + 0x458);
-			if (!mf || (b0 != carBody_ && b1 != carBody_ && b0 != ballBody_ && b1 != ballBody_)) continue;
+			auto ours = [&](uintptr_t b) { return b == carBody_ || b == ballBody_ || (b && b == otherBody_); };
+			if (!mf || (!ours(b0) && !ours(b1))) continue;
 			int points = Get<int>(mf + 0x460);
 			float threshold = Get<float>(mf + 0x464) * BU;
 			for (int i = points > 0 ? 0 : -1; i < points && i < 4; i++) {

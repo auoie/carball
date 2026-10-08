@@ -1,7 +1,6 @@
 // Entry point: load the WebAssembly engine and the arena, then run freeplay.
 import createEngine from "@engine/rlengine_web.mjs";
-import arenaUrl from "@arena/collision_meshes/soccar/soccar_arena.cmf?url";
-import { parseCmf } from "./engine/cmf";
+import { mergeMeshes, parseCmf } from "./engine/cmf";
 import { World, initEngine } from "./engine/world";
 import { Freeplay } from "./game/freeplay";
 import { Online } from "./game/online";
@@ -16,6 +15,11 @@ import { SettingsPanel } from "./ui/settingsPanel";
 import { Renderer } from "./render/renderer";
 import "./style.css";
 
+// Every arena collision mesh: scripts/arena_gen.py writes one file per piece (each its own static body, as in the game)
+const arenaUrls = Object.values(
+  import.meta.glob<string>("@arena/collision_meshes/soccar/*.cmf", { query: "?url", import: "default", eager: true }),
+);
+
 function required<T extends Element>(selector: string, type: new () => T): T {
   const el = document.querySelector(selector);
   if (!(el instanceof type)) throw new Error(`missing ${selector}`);
@@ -27,16 +31,20 @@ async function main(): Promise<void> {
   const canvas = required("#game", HTMLCanvasElement);
 
   status.textContent = "Loading physics engine…";
-  const [engine, arenaBytes] = await Promise.all([
+  const [engine, arenaMeshes] = await Promise.all([
     createEngine(),
-    fetch(arenaUrl).then(async (r) => {
-      if (!r.ok) throw new Error(`arena mesh: HTTP ${r.status}`);
-      return new Uint8Array(await r.arrayBuffer());
-    }),
+    Promise.all(
+      arenaUrls.map(async (url) => {
+        const r = await fetch(url);
+        if (!r.ok) throw new Error(`arena mesh ${url}: HTTP ${r.status}`);
+        return new Uint8Array(await r.arrayBuffer());
+      }),
+    ),
   ]);
+  if (arenaMeshes.length === 0) throw new Error("no arena meshes (run scripts/arena_gen.py)");
 
   status.textContent = "Building arena…";
-  initEngine(engine, [arenaBytes]);
+  initEngine(engine, arenaMeshes);
   const world = World.create(engine);
 
   // Warm up: the first ticks after loading are slow while the browser compiles the module
@@ -56,7 +64,7 @@ async function main(): Promise<void> {
   const renderer = new Renderer(canvas);
   renderer.scene.background = theme.background;
   renderer.scene.fog = theme.fog;
-  const arena = new ArenaView(parseCmf(arenaBytes), theme);
+  const arena = new ArenaView(mergeMeshes(arenaMeshes.map(parseCmf)), theme);
   renderer.scene.add(arena.root);
   const hud = new Hud(required("#hud", HTMLElement));
   const input = new InputDevices(canvas);

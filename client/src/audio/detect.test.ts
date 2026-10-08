@@ -1,17 +1,15 @@
 // Sound events found in the real engine's states (requires engine/build-wasm and out/arena), and in made-up ones.
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import createEngine from "@engine/rlengine.mjs";
 import { beforeAll, describe, expect, it } from "vitest";
 import { type BodyState, type BoostPadState, type CarControls, type CarState, NO_CONTROLS, World, initEngine } from "../engine/world";
 import { IDENTITY_ROT, type Rot3, type Vec3, ZERO, vec3 } from "../math/vec";
 import { type SoundEvent, SoundDetector, type SoundWorld } from "./detect";
+import { arenaMeshes } from "../testing/arena";
 
 let engine: Awaited<ReturnType<typeof createEngine>>;
 beforeAll(async () => {
-  const arenaPath = fileURLToPath(new URL("../../../out/arena/collision_meshes/soccar/soccar_arena.cmf", import.meta.url));
   engine = await createEngine();
-  initEngine(engine, [new Uint8Array(readFileSync(arenaPath))]);
+  initEngine(engine, arenaMeshes());
 });
 
 /** Runs the world at 120 / `perFrame` frames a second (`perFrame` ticks each; 60 by default), with `controls(tick)` for

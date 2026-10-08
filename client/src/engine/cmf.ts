@@ -32,3 +32,19 @@ export function parseCmf(bytes: Uint8Array): TriangleMesh {
   }
   return { positions, indices };
 }
+
+/** Several meshes as one (the arena is several .cmf files, one per piece). */
+export function mergeMeshes(meshes: readonly TriangleMesh[]): TriangleMesh {
+  const positions = new Float32Array(meshes.reduce((n, m) => n + m.positions.length, 0));
+  const indices = new Uint32Array(meshes.reduce((n, m) => n + m.indices.length, 0));
+  let p = 0;
+  let i = 0;
+  for (const mesh of meshes) {
+    const base = p / 3;
+    positions.set(mesh.positions, p);
+    for (let k = 0; k < mesh.indices.length; k++) indices[i + k] = (mesh.indices[k] ?? 0) + base;
+    p += mesh.positions.length;
+    i += mesh.indices.length;
+  }
+  return { positions, indices };
+}

@@ -22,7 +22,8 @@ subject to the following restrictions:
 #ifdef BT_USE_DOUBLE_PRECISION
 #define MAX_ITERATIONS 64
 #else
-#define MAX_ITERATIONS 32
+// RL PATCH: 64, as the game's build (static analysis B14; stock float builds stop at 32)
+#define MAX_ITERATIONS 64
 #endif
 
 btGjkConvexCast::btGjkConvexCast(const btConvexShape* convexA, const btConvexShape* convexB, btSimplexSolverInterface* simplexSolver)

@@ -1,7 +1,5 @@
 // The display orientation integrated from the ball's angular velocity, including against the real engine
 // (requires the engine build, engine/build-wasm, and the generated arena, out/arena).
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import createEngine from "@engine/rlengine.mjs";
 import { Vector3 } from "three";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -10,6 +8,7 @@ import { IDENTITY_ROT, type Vec3, ZERO, vec3 } from "../math/vec";
 import { BallSpin } from "./ballSpin";
 import { BALL_RADIUS } from "./entities";
 import { toThreeQuaternion } from "./coords";
+import { arenaMeshes } from "../testing/arena";
 
 const TICK = 1 / 120;
 const state = (angVel: Vec3): BodyState => ({ pos: ZERO, vel: ZERO, angVel, rot: IDENTITY_ROT });
@@ -49,9 +48,8 @@ describe("BallSpin", () => {
 describe("BallSpin on the engine's ball", () => {
   let engine: Awaited<ReturnType<typeof createEngine>>;
   beforeAll(async () => {
-    const arenaPath = fileURLToPath(new URL("../../../out/arena/collision_meshes/soccar/soccar_arena.cmf", import.meta.url));
     engine = await createEngine();
-    initEngine(engine, [new Uint8Array(readFileSync(arenaPath))]);
+    initEngine(engine, arenaMeshes());
   });
 
   it("rolls forwards: the top of the ball moves the way the ball travels", () => {

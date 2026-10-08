@@ -188,6 +188,13 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
 
 	bool jumpPressed = controls.jump && !_internalState.lastControls.jump;
 
+	// RL PATCH: the game's Car_TA.SetVehicleInput sets the input throttle to 1 while the car is on the ground (3+ wheels
+	// after the previous tick), boost is held and there is boost left (before this tick's use), so everything reading
+	// the throttle sees 1: VehicleSim's drive, the wheels' wall grip, the sticky force's wall share, auto-roll (static
+	// analysis GA-1). RocketSim made boost a full throttle in VehicleSim only, also in the air. Live (`ga_boost`):
+	// boosting on a wall with throttle 0, 7.5 uu/s per tick off
+	_inputThrottle = (_internalState.isOnGround && controls.boost && _internalState.boost > 0) ? 1 : controls.throttle;
+
 	// RL PATCH: the car's own pre-physics step (Car_TA FUN_140f1c600 and its components: jump, dodge, air control,
 	// auto-roll, sticky force, boost) runs before the vehicle casts this tick's wheel rays, so it works on the contacts
 	// the previous tick's rays found, and the vehicle's suspension and friction then see its impulses. RocketSim cast
@@ -221,7 +228,7 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
 	int numWheelsOnWorld = 0;
 	for (int i = 0; i < _bulletVehicle.m_wheelInfo.size(); i++)
 		numWheelsOnWorld += _bulletVehicle.m_wheelInfo[i].m_raycastInfo.m_isInContact && _bulletVehicle.m_wheelInfo[i].m_isInContactWithWorld;
-	if (controls.throttle && !_internalState.isFlipping && numWheelsOnWorld < _bulletVehicle.m_wheelInfo.size() &&
+	if (_inputThrottle && !_internalState.isFlipping && numWheelsOnWorld < _bulletVehicle.m_wheelInfo.size() &&
 	    (numWheelsOnWorld > 0 || _internalState.worldContact.hasContact))
 		_UpdateAutoRoll(tickTime, mutatorConfig, numWheelsOnWorld);
 
@@ -229,16 +236,21 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
 
 	_UpdateStickyForce(forwardSpeed_UU);
 
+	bool wasBoosting = _internalState.isBoosting; // (what the AirControl component sees: it runs before Boost)
 	_UpdateBoost(tickTime, mutatorConfig, forwardSpeed_UU);
 
 	// RL PATCH: the game's air throttle (AirControl ApplyForces FUN_140eb3400) is ThrottleForce x (boost active ? 1 :
-	// throttle). BOOST_ACCEL_AIR already includes that full air throttle (991.67 + 66.67), so nothing is added while
-	// boosting; stock RocketSim added throttle x 66.67 on top (boost + throttle in the air was 6% too strong).
+	// throttle), with the Boost component's state from before this tick's update (the components run AirControl first:
+	// static analysis GA-8), so a boost press adds only the boost's own 991.67 on its first tick and the release leaves
+	// the throttle's 66.67 for one more (live `ga_boost`: 0.55 uu/s on those ticks). BOOST_ACCEL_AIR includes the full
+	// air throttle (991.67 + 66.67), so _UpdateBoost applies the rest; stock RocketSim added throttle x 66.67 on top
+	// (boost + throttle in the air was 6% too strong).
 	// RL PATCH: the AirControl component is only active with no wheel touching anything (as RocketSim's own air
 	// control torque); RocketSim applied the air throttle with up to 2 wheels down. Live: 2 wheels on a wall, 0.56 uu/s
 	// per tick too fast
-	if (numWheelsInContact == 0 && !_internalState.isBoosting && controls.throttle != 0)
-		_rigidBody.applyCentralForce(GetForwardDir() * controls.throttle * RLConst::THROTTLE_AIR_ACCEL * UU_TO_BT * RLConst::CAR_MASS_BT);
+	float airThrottle = wasBoosting ? 1 : _inputThrottle;
+	if (numWheelsInContact == 0 && airThrottle != 0)
+		_rigidBody.applyCentralForce(GetForwardDir() * airThrottle * RLConst::THROTTLE_AIR_ACCEL * UU_TO_BT * RLConst::CAR_MASS_BT);
 
 	// RL PATCH: the speed caps between the car's own impulses (jump, dodge, auto-flip) and the vehicle's (the game's
 	// Bullet caps at the start of its substep, before the vehicle update: _LimitVelocities)
@@ -502,11 +514,8 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int 
 		_internalState.handbrakeVal = RS_CLAMP(_internalState.handbrakeVal, 0, 1);
 	}
 
-	float realThrottle = controls.throttle;
+	float realThrottle = _inputThrottle; // RL PATCH: with boost only on the ground (see _PreTickUpdate)
 	float realBrake = 0;
-
-	if (controls.boost && _internalState.boost > 0)
-		realThrottle = 1;
 
 	{ // Update throttle/brake forces
 		float driveSpeedScale = DRIVE_SPEED_TORQUE_FACTOR_CURVE.GetOutput(absForwardSpeed_UU);
@@ -518,7 +527,7 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int 
 		} else {
 			float absThrottle = abs(realThrottle);
 
-			if (absThrottle >= THROTTLE_DEADZONE) {
+			if (absThrottle > THROTTLE_DEADZONE) {
 				if (absForwardSpeed_UU > STOPPING_FORWARD_VEL && RS_SGN(realThrottle) != RS_SGN(forwardSpeed_UU)) {
 					// Full brake is applied if we are trying to drive in the opposite direction
 					realBrake = 1;
@@ -618,10 +627,10 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int 
 					longFriction = 1; // If we aren't powersliding, it's not scaled down
 				}
 
-				// RL PATCH: the wall-grip curve is skipped only on a sticky surface (the arena's materials) with the raw
-				// throttle input non-zero (Wheel_TA FUN_140f588f0: bStickyWheels && Vehicle.Input.Throttle != 0);
-				// RocketSim used throttle-or-boost on any surface
-				bool isContactSticky = controls.throttle != 0 && wheel.m_isInContactWithWorld;
+				// RL PATCH: the wall-grip curve is skipped only on a sticky surface (the arena's materials) with the input
+				// throttle non-zero (Wheel_TA FUN_140f588f0: bStickyWheels && Vehicle.Input.Throttle != 0; boosting on the
+				// ground counts, see _PreTickUpdate); RocketSim used throttle-or-boost on any surface
+				bool isContactSticky = _inputThrottle != 0 && wheel.m_isInContactWithWorld;
 
 				if (isContactSticky) {
 					// Keep current friction values
@@ -652,9 +661,9 @@ void Car::_UpdateStickyForce(float forwardSpeed_UU) {
 	if (wheelsHaveWorldContact) {
 		btVector3 upwardsDir = _bulletVehicle.getUpwardsDirFromWheelContacts();
 
-		// RL PATCH: the wall share needs the raw throttle input (Vehicle FUN_140eb70a0: Input.Throttle != 0 or
-		// |forward speed| > 25); RocketSim used the throttle including boost
-		bool fullStick = (controls.throttle != 0) || (abs(forwardSpeed_UU) > STOPPING_FORWARD_VEL);
+		// RL PATCH: the wall share needs the input throttle (Vehicle FUN_140eb70a0: Input.Throttle != 0 or |forward
+		// speed| > 25; boosting on the ground counts, see _PreTickUpdate); RocketSim used the throttle including boost
+		bool fullStick = (_inputThrottle != 0) || (abs(forwardSpeed_UU) > STOPPING_FORWARD_VEL);
 
 		float stickyForceScale = config.threeWheels ? 0 : 0.5f;
 		if (fullStick)
@@ -696,13 +705,14 @@ void Car::_UpdateBoost(float tickTime, const MutatorConfig& mutatorConfig, float
 	// Apply boosting force and consume boost
 	if (_internalState.isBoosting) {
 		_internalState.boost = RS_MAX(_internalState.boost - mutatorConfig.boostUsedPerSecond * tickTime, 0);
-		// RL PATCH: the air boost's extra (the AirControl component's full throttle) only with no wheel touching
-		// anything (the component's activation); RocketSim used it below 3 wheels
+		// RL PATCH: in the air (no wheel touching anything, the AirControl component's activation; RocketSim: below 3
+		// wheels) the boost's own force is boostAccelAir less the AirControl component's full throttle, which
+		// _PreTickUpdate applies (one tick behind the boost state, as the game)
 		bool anyWheelContact = false;
 		for (bool contact : _internalState.wheelsWithContact)
 			anyWheelContact |= contact;
 		_rigidBody.applyCentralForce(
-			(anyWheelContact ? mutatorConfig.boostAccelGround : mutatorConfig.boostAccelAir) * UU_TO_BT
+			(anyWheelContact ? mutatorConfig.boostAccelGround : mutatorConfig.boostAccelAir - THROTTLE_AIR_ACCEL) * UU_TO_BT
 			* GetForwardDir() * CAR_MASS_BT
 		);
 		_internalState.timeSinceBoosted = 0;

@@ -37,11 +37,9 @@ struct Body {
 	float quat[4] = { 0, 0, 0, 1 };
 };
 
-struct Row {
-	uint64_t tick = 0;
-	double time = 0;
-	Body car, ball;
-	bool hasBall = false;
+// One car's columns in a row (the recorded car's, or the other car's with the prefix o_)
+struct CarRow {
+	Body car;
 	CarControls in;
 	bool onGround = false, jumped = false, doubleJumped = false, hasFlip = false, supersonic = false;
 	int wheelContacts = 0;          // touching the arena
@@ -52,6 +50,15 @@ struct Row {
 	float boost = 0; // 0-1
 	bool jumpActive = false, djActive = false, dodgeActive = false;
 	float jumpTime = 0, djTime = 0, dodgeTime = 0;
+};
+
+struct Row : CarRow {
+	uint64_t tick = 0;
+	double time = 0;
+	Body ball;
+	bool hasBall = false;
+	bool hasOther = false; // a second car (PhysLog's o_ columns)
+	CarRow other;
 };
 
 struct Preset {
@@ -152,38 +159,46 @@ static bool Load(const char* path, std::string& header, std::vector<Row>& rows) 
 			b.angVel = Vec(num((s + "wx").c_str()), num((s + "wy").c_str()), num((s + "wz").c_str()));
 			return b;
 		};
+		auto carRow = [&](const std::string& p) {
+			auto n = [&](const char* name) { return num((p + name).c_str()); };
+			CarRow c;
+			c.car = body((p + "c").c_str());
+			c.in.throttle = n("throttle");
+			c.in.steer = n("steer");
+			c.in.pitch = n("pitch");
+			c.in.yaw = n("yaw");
+			c.in.roll = n("roll");
+			c.in.jump = n("jump") != 0;
+			c.in.boost = n("activate_boost") != 0 || n("holding_boost") != 0;
+			c.in.handbrake = n("handbrake") != 0;
+			c.onGround = n("on_ground") != 0;
+			c.wheelContacts = (int)n("wheel_world_contacts");
+			if (col.count(p + "wc_has") && !f[col[p + "wc_has"]].empty()) {
+				c.worldContact = (int)n("wc_has");
+				c.worldContactNormal = Vec(n("wc_nx"), n("wc_ny"), n("wc_nz"));
+			}
+			for (int i = 0; i < 4; i++) c.wheelContact[i ^ 1] = n(("w" + std::to_string(i) + "_contact").c_str()) != 0;
+			c.jumped = n("b_jumped") != 0;
+			c.doubleJumped = n("b_double_jumped") != 0;
+			c.hasFlip = n("has_flip") != 0;
+			c.supersonic = n("supersonic") != 0;
+			c.boost = n("boost");
+			c.jumpActive = n("jump_active") > 0;
+			c.jumpTime = n("jump_time");
+			c.djActive = n("dj_active") > 0;
+			c.djTime = n("dj_time");
+			c.dodgeActive = n("dodge_active") > 0;
+			c.dodgeTime = n("dodge_time");
+			return c;
+		};
 		Row r;
+		static_cast<CarRow&>(r) = carRow("");
 		r.tick = (uint64_t)num("tick");
 		r.time = num("time");
-		r.car = body("c");
 		r.ball = body("b");
-		r.hasBall = col.count("bx") && !f[col["bx"]].empty();
-		r.in.throttle = num("throttle");
-		r.in.steer = num("steer");
-		r.in.pitch = num("pitch");
-		r.in.yaw = num("yaw");
-		r.in.roll = num("roll");
-		r.in.jump = num("jump") != 0;
-		r.in.boost = num("activate_boost") != 0 || num("holding_boost") != 0;
-		r.in.handbrake = num("handbrake") != 0;
-		r.onGround = num("on_ground") != 0;
-		r.wheelContacts = (int)num("wheel_world_contacts");
-		if (col.count("wc_has") && !f[col["wc_has"]].empty()) {
-			r.worldContact = (int)num("wc_has");
-			r.worldContactNormal = Vec(num("wc_nx"), num("wc_ny"), num("wc_nz"));
-		}
-		for (int i = 0; i < 4; i++) r.wheelContact[i ^ 1] = num(("w" + std::to_string(i) + "_contact").c_str()) != 0;
-		r.jumped = num("b_jumped") != 0;
-		r.doubleJumped = num("b_double_jumped") != 0;
-		r.hasFlip = num("has_flip") != 0;
-		r.supersonic = num("supersonic") != 0;
-		r.boost = num("boost");
-		r.jumpActive = num("jump_active") > 0;
-		r.jumpTime = num("jump_time");
-		r.djActive = num("dj_active") > 0;
-		r.djTime = num("dj_time");
-		r.dodgeActive = num("dodge_active") > 0;
-		r.dodgeTime = num("dodge_time");
+		r.hasBall = col.count("bx") && col["bx"] < (int)f.size() && !f[col["bx"]].empty();
+		r.hasOther = col.count("o_cx") && col["o_cx"] < (int)f.size() && !f[col["o_cx"]].empty(); // (empty: demolished)
+		if (r.hasOther) r.other = carRow("o_");
 		rows.push_back(r);
 	}
 	// RBState.Time is only set by network replication, so offline recordings have 0 there: use the tick counter
@@ -199,14 +214,14 @@ static float Percentile(std::vector<float> v, float p) {
 }
 
 // The preset whose hitbox fits the recording's collision extent (2 x extent) and offset best
-static const Preset* PresetFromHeader(const std::string& header) {
+static const Preset* PresetFromHeader(const std::string& header, const std::string& prefix = "") {
 	std::istringstream ss(header);
 	std::string word;
 	Vec ext, off;
 	bool haveExt = false;
 	while (ss >> word) {
-		if (word == "extent") { ss >> ext.x >> ext.y >> ext.z; haveExt = true; }
-		else if (word == "offset") ss >> off.x >> off.y >> off.z;
+		if (word == prefix + "extent") { ss >> ext.x >> ext.y >> ext.z; haveExt = true; }
+		else if (word == prefix + "offset") ss >> off.x >> off.y >> off.z;
 	}
 	if (!haveExt) return &PRESETS[0];
 	const Preset* best = &PRESETS[0];
@@ -241,10 +256,11 @@ struct Sensitivities {
 	float steer = -1, air = -1;
 };
 
-static CarConfig ConfigFor(const Preset& preset, const std::string& header, const Sensitivities& given) {
+static CarConfig ConfigFor(const Preset& preset, const std::string& header, const Sensitivities& given,
+                           const std::string& prefix = "") {
 	CarConfig c = *preset.config;
-	c.steeringSensitivity = given.steer >= 0 ? given.steer : HeaderValue(header, "steer_sensitivity", 1);
-	c.airControlSensitivity = given.air >= 0 ? given.air : HeaderValue(header, "air_sensitivity", 1);
+	c.steeringSensitivity = given.steer >= 0 ? given.steer : HeaderValue(header, (prefix + "steer_sensitivity").c_str(), 1);
+	c.airControlSensitivity = given.air >= 0 ? given.air : HeaderValue(header, (prefix + "air_sensitivity").c_str(), 1);
 	return c;
 }
 
@@ -282,7 +298,7 @@ static void Describe(const std::vector<Row>& rows) {
 
 // The car's state from a recording row. The row's wheel contacts are the game's previous-tick ray results, which the
 // tick's pre-physics step uses (sticky force, air control, jump): where ours differ (after a placement), the row's.
-static void SetBody(Car* car, CarState s, const Row& r) {
+static void SetBody(Car* car, CarState s, const CarRow& r) {
 	s.pos = r.car.pos;
 	s.rotMat = r.car.rot;
 	s.vel = r.car.vel;
@@ -329,8 +345,11 @@ static std::map<uint64_t, std::vector<std::vector<std::string>>> LoadGameContact
 }
 static std::map<uint64_t, std::vector<std::vector<std::string>>> gameContacts;
 
+static Car* g_car2 = nullptr; // the second car, in two-car recordings
+
 static const char* BodyName(Arena* arena, Car* car, const btCollisionObject* o) {
 	if (o == &car->_rigidBody) return "car";
+	if (g_car2 && o == &g_car2->_rigidBody) return "car2";
 	if (o == &arena->ball->_rigidBody) return "ball";
 	switch (o->getCollisionShape()->getShapeType()) {
 	case STATIC_PLANE_PROXYTYPE: return "plane";
@@ -344,8 +363,9 @@ static void PrintContacts(Arena* arena, Car* car, uint64_t tick) {
 	for (int i = 0; i < dispatcher->getNumManifolds(); i++) {
 		btPersistentManifold* m = dispatcher->getManifoldByIndexInternal(i);
 		const btCollisionObject* ball = &arena->ball->_rigidBody;
+		const btCollisionObject* c2 = g_car2 ? &g_car2->_rigidBody : nullptr;
 		if (m->getBody0() != &car->_rigidBody && m->getBody1() != &car->_rigidBody && m->getBody0() != ball &&
-		    m->getBody1() != ball)
+		    m->getBody1() != ball && (!c2 || (m->getBody0() != c2 && m->getBody1() != c2)))
 			continue;
 		printf("  tick %llu manifold %d (%s-%s): %d points, breaking threshold %.3f uu\n", (unsigned long long)tick, i,
 		       BodyName(arena, car, m->getBody0()), BodyName(arena, car, m->getBody1()), m->getNumContacts(),
@@ -452,16 +472,28 @@ static int Validate(const char* path, const std::string& presetName, const Sensi
 	       config.airControlSensitivity);
 
 	Arena* arena = Arena::Create(GameMode::SOCCAR);
-	Car* car = arena->AddCar(Team::BLUE, config);
+	auto team = [&](const char* key) { return HeaderValue(header, key, 0) == 1 ? Team::ORANGE : Team::BLUE; };
+	Car* car = arena->AddCar(team("team"), config);
+	// A second car (PhysLog's o_ columns: a bot in two-car scenarios): its own preset and team from the header
+	Car* car2 = nullptr;
+	if (rows[0].hasOther) {
+		const Preset* preset2 = PresetFromHeader(header, "o_");
+		CarConfig config2 = ConfigFor(*preset2, header, Sensitivities{}, "o_");
+		car2 = arena->AddCar(team("o_team"), config2);
+		g_car2 = car2;
+		printf("second car: preset %s, team %d (the recorded car's: %d), steering sensitivity %g\n", preset2->name,
+		       (int)car2->team, (int)car->team, config2.steeringSensitivity);
+	}
 	FILE* ticksOut = ticksPath.empty() ? nullptr : fopen(ticksPath.c_str(), "w");
 	if (ticksOut)
 		fprintf(ticksOut, "tick,car_pos,car_vel,car_ang,car_rot_deg,ball_pos,ball_vel,on_ground_rec,on_ground_eng,"
 		                  "wheels_rec,wheels_eng,jump_rec,jump_eng,dodge_rec,dodge_eng,resync,"
 		                  "car_dvx,car_dvy,car_dvz,car_dwx,car_dwy,car_dwz,ball_dvx,ball_dvy,ball_dvz,ball_dwx,ball_dwy,ball_dwz,"
-		                  "world_contact_rec,world_contact_eng\n");
+		                  "world_contact_rec,world_contact_eng,car2_vel,car2_dvx,car2_dvy,car2_dvz\n");
 		                  // (signed: engine - recording)
 
-	std::vector<float> carPos, carVel, carAng, carRot, ballPos, ballVel;
+	std::vector<float> carPos, carVel, carAng, carRot, ballPos, ballVel, car2Pos, car2Vel, car2Ang;
+	std::vector<std::string> demos; // the second car demolished: by the game (its columns go empty) and by the engine
 	int groundMismatch = 0, wheelMismatch = 0, touchMismatch = 0, worldContactMismatch = 0, worldContactCompared = 0, jumpMismatch = 0, dodgeMismatch = 0, compared = 0, resyncs = 0, placements = 0;
 	bool started = false;
 	for (size_t i = 0; i + 1 < rows.size(); i++) {
@@ -474,9 +506,13 @@ static int Validate(const char* path, const std::string& presetName, const Sensi
 		                  ((b.ball.pos - a.ball.pos - a.ball.vel * (ticks / 120.f)).Length() > 60 ||
 		                   (b.ball.vel - a.ball.vel).Length() > 6000 * ticks);
 		// (and a car placed where it already was, turned: a rotation its angular velocity can't explain)
-		bool carTurned = AngleBetween(a.car.rot, b.car.rot) > a.car.angVel.Length() * (ticks / 120.f) * 2 + 0.2f;
-		if ((b.car.pos - a.car.pos - a.car.vel * (ticks / 120.f)).Length() > 60 ||
-		    (b.car.vel - a.car.vel).Length() > 2000 + 1000 * ticks || ballPlaced || carTurned) {
+		auto placed = [&](const CarRow& ra, const CarRow& rb) {
+			bool turned = AngleBetween(ra.car.rot, rb.car.rot) > ra.car.angVel.Length() * (ticks / 120.f) * 2 + 0.2f;
+			return (rb.car.pos - ra.car.pos - ra.car.vel * (ticks / 120.f)).Length() > 60 ||
+			       (rb.car.vel - ra.car.vel).Length() > 2000 + 1000 * ticks || turned;
+		};
+		bool car2Placed = car2 && a.hasOther && b.hasOther && placed(a.other, b.other);
+		if (placed(a, b) || ballPlaced || car2Placed) {
 			placements++;
 			started = false;
 			continue;
@@ -486,12 +522,20 @@ static int Validate(const char* path, const std::string& presetName, const Sensi
 		bool jump = (ours.pos - a.car.pos).Length() > 50 || (ours.vel - a.car.vel).Length() > 500;
 		bool resync = !started || !continuous || jump;
 		if (resync) {
+			// The boost component's state after the previous tick (this tick's air throttle reads it: Car::_PreTickUpdate)
+			// is ours, unless that tick wasn't simulated (a placement): then from its input
+			if (!started && i > 0 && ours.isBoosting != (rows[i - 1].in.boost && rows[i - 1].boost > 0)) {
+				ours.isBoosting = !ours.isBoosting;
+				ours.boostingTime = ours.isBoosting ? 1 / 120.f : 0;
+			}
 			SetBody(car, ours, a);
+			if (car2 && a.hasOther) SetBody(car2, car2->GetState(), a.other);
 			if (a.hasBall) SetBall(arena, a.ball);
 			resyncs += continuous && started;
 		}
 		started = true;
 		car->controls = a.in;
+		if (car2 && a.hasOther) car2->controls = a.other.in;
 		arena->Step(ticks);
 		if (a.tick >= contactsFrom && a.tick <= contactsTo) PrintContacts(arena, car, a.tick);
 		CarState s = car->GetState();
@@ -504,6 +548,18 @@ static int Validate(const char* path, const std::string& presetName, const Sensi
 		if (b.hasBall) {
 			ballPos.push_back((bs.pos - b.ball.pos).Length());
 			ballVel.push_back((bs.vel - b.ball.vel).Length());
+		}
+		CarState s2 = car2 ? car2->GetState() : CarState();
+		if (car2 && a.hasOther && (s2.isDemoed || !b.hasOther)) {
+			char d[128];
+			std::snprintf(d, sizeof d, "tick %llu: game %s, engine %s", (unsigned long long)a.tick, b.hasOther ? "no" : "yes",
+			              s2.isDemoed ? "yes" : "no");
+			demos.push_back(d);
+		}
+		if (car2 && b.hasOther) {
+			car2Pos.push_back((s2.pos - b.other.car.pos).Length());
+			car2Vel.push_back((s2.vel - b.other.car.vel).Length());
+			car2Ang.push_back((s2.angVel - b.other.car.angVel).Length());
 		}
 		// The game's count is of wheels touching the world (not the ball or a car): compare like with like, and each
 		// wheel's touching anything (its bHadContact) on its own
@@ -522,11 +578,13 @@ static int Validate(const char* path, const std::string& presetName, const Sensi
 			Vec dv = s.vel - b.car.vel, dw = s.angVel - b.car.angVel;
 			Vec bdv = b.hasBall ? bs.vel - b.ball.vel : Vec(), bdw = b.hasBall ? bs.angVel - b.ball.angVel : Vec();
 			fprintf(ticksOut, "%llu,%.5f,%.4f,%.6f,%.5f,%.5f,%.4f,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.4f,%.4f,%.4f,%.5f,%.5f,%.5f,"
-			                  "%.4f,%.4f,%.4f,%.5f,%.5f,%.5f,%d,%d\n",
+			                  "%.4f,%.4f,%.4f,%.5f,%.5f,%.5f,%d,%d,%.4f,%.4f,%.4f,%.4f\n",
 			        (unsigned long long)a.tick, carPos.back(), carVel.back(), carAng.back(), carRot.back(),
 			        b.hasBall ? ballPos.back() : 0.f, b.hasBall ? ballVel.back() : 0.f, b.onGround, s.isOnGround,
 			        b.wheelContacts, wheels, b.jumpActive, s.isJumping, b.dodgeActive, s.isFlipping, resync, dv.x, dv.y,
-			        dv.z, dw.x, dw.y, dw.z, bdv.x, bdv.y, bdv.z, bdw.x, bdw.y, bdw.z, b.worldContact, (int)s.worldContact.hasContact);
+			        dv.z, dw.x, dw.y, dw.z, bdv.x, bdv.y, bdv.z, bdw.x, bdw.y, bdw.z, b.worldContact, (int)s.worldContact.hasContact,
+			        car2 && b.hasOther ? car2Vel.back() : 0.f, car2 && b.hasOther ? s2.vel.x - b.other.car.vel.x : 0.f,
+			        car2 && b.hasOther ? s2.vel.y - b.other.car.vel.y : 0.f, car2 && b.hasOther ? s2.vel.z - b.other.car.vel.z : 0.f);
 		}
 	}
 	if (ticksOut) fclose(ticksOut);
@@ -543,6 +601,12 @@ static int Validate(const char* path, const std::string& presetName, const Sensi
 	line("car rotation", carRot, "deg");
 	line("ball position", ballPos, "uu");
 	line("ball velocity", ballVel, "uu/s");
+	for (const std::string& d : demos) printf("  second car demolished, %s\n", d.c_str());
+	if (car2) {
+		line("car2 position", car2Pos, "uu");
+		line("car2 velocity", car2Vel, "uu/s");
+		line("car2 angular velocity", car2Ang, "rad/s");
+	}
 	printf("  state mismatches: on ground %d, wheels on the world %d, wheel touches %d, jumping %d, flipping %d (of %d)\n",
 	       groundMismatch, wheelMismatch, touchMismatch, jumpMismatch, dodgeMismatch, compared);
 	if (worldContactCompared)

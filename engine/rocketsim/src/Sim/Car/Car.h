@@ -188,6 +188,10 @@ public:
 	// RL PATCH: state at the start of the current tick (the game's OldRBState)
 	PhysState _oldState;
 
+	// RL PATCH: this tick's throttle as the game's Vehicle.Input.Throttle (controls.throttle, or 1 while boosting on the
+	// ground: _PreTickUpdate)
+	float _inputThrottle = 0;
+
 	// Get the forward direction as a unit vector
 	Vec GetForwardDir() const {
 		return _internalState.rotMat.forward;

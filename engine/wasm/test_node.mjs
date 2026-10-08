@@ -1,16 +1,20 @@
 // Headless test of the WebAssembly engine module in Node.
-//   node engine/wasm/test_node.mjs [engine/build-wasm/rlengine.mjs] [out/arena/collision_meshes/soccar/soccar_arena.cmf]
-import { readFileSync } from "node:fs";
+//   node engine/wasm/test_node.mjs [engine/build-wasm/rlengine.mjs] [out/arena/collision_meshes/soccar]
+//   (the arena: a directory of .cmf files, one per piece, or a single .cmf)
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const root = new URL("../../", import.meta.url);
 const modulePath = process.argv[2] ?? new URL("engine/build-wasm/rlengine.mjs", root).pathname;
-const meshPath = process.argv[3] ?? new URL("out/arena/collision_meshes/soccar/soccar_arena.cmf", root).pathname;
+const meshPath = process.argv[3] ?? new URL("out/arena/collision_meshes/soccar", root).pathname;
+const meshFiles = statSync(meshPath).isDirectory()
+  ? readdirSync(meshPath).filter((n) => n.endsWith(".cmf")).sort().map((n) => `${meshPath}/${n}`)
+  : [meshPath];
 
 const { default: createEngine } = await import(pathToFileURL(resolve(modulePath)).href);
 const E = await createEngine();
-E.init([new Uint8Array(readFileSync(meshPath))]);
+E.init(meshFiles.map((f) => new Uint8Array(readFileSync(f))));
 
 let failures = 0;
 const check = (cond, msg) => { if (!cond) { failures++; console.log("  FAIL", msg); } };

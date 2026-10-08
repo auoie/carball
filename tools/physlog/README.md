@@ -23,7 +23,8 @@ In freeplay, open the BakkesMod console (F6) and load the plugin: `plugin load p
 - **Scripted scenarios** (most useful): `physlog_run steer`, `physlog_run steer_sweep`, `physlog_run air`,
   `physlog_run jumps`, `physlog_run flip_cancel`, `physlog_run body_drops`, `physlog_run ball_hits`,
   `physlog_run walls`, `physlog_run ball_roof`, `physlog_run powerslide`, `physlog_run wheel_ball`,
-  `physlog_run dodge_fast`. Each places the car (and the ball), plays exact inputs, and
+  `physlog_run dodge_fast`, `physlog_run ball_curves`, and with a bot spawned first (`physlog_spawn 23 bot`)
+  `physlog_run car_car`, `physlog_run car_car2`. Each places the car (and the ball), plays exact inputs, and
   stops when done. Keep your hands off the controller while one runs. Run `steer` again with each other car you
   have (Dominus, Batmobile/Plank, Breakout, Hybrid, Merc, and anything else): the file header records the body
   and its hitbox and wheels.
@@ -39,12 +40,27 @@ Claude Code in WSL can build, load and run everything while the game sits in fre
   "Invalid argument". `bash tools/physlog/build_wsl.sh` builds with MSVC and installs the DLL and the scenarios.
 - BakkesMod's rcon listens on 127.0.0.1:9002 (with WSL's mirrored networking): `python3 tools/physlog/rcon.py
   "plugin load physlog"` (password: `rcon_password` in BakkesMod's `cfg/config.cfg`, or `BAKKES_RCON_PASSWORD`).
-  Rcon only runs allowed commands: add `physlog_start`, `physlog_stop` and `physlog_run` as lines to
+  Rcon only runs allowed commands: add `physlog_start`, `physlog_stop`, `physlog_run`, `physlog_ping`,
+  `physlog_body`, `physlog_spawn`, `physlog_removebots`, `physlog_cars` and `physlog_resetplayers` as lines to
   `%APPDATA%\bakkesmod\bakkesmod\data\rcon_commands.cfg`, then send `rcon_refresh_allowed`. Rcon sends no console
   output back: read `%APPDATA%\bakkesmod\bakkesmod\bakkesmod.log`.
 - Play the game **windowed** (e.g. on a second monitor) and don't bring it to the front from a script (a fullscreen
   game covers everything). A minimized game doesn't tick. Freeplay pauses when its window loses focus; `physlog_run`
   unpauses it (the pause menu stays on screen, the physics runs normally).
+- `tools/physlog/check_game.sh [--freeplay]` checks that the game is answering (`physlog_ping`, whose reply carries
+  the freeplay/online/paused state and the open menus). If it isn't, or isn't in offline freeplay with `--freeplay`,
+  it saves a screenshot of the game window to `out/live/screens/` (`game_window.ps1`: `PrintWindow`, read-only; it
+  never activates the window) so the cause (a dialog, the main menu, a loading screen) can be seen. `run_wsl.sh` runs
+  it before every scenario.
+- **Never load a map from a script** (`start <map>`, from freeplay or the main menu): this offline game then reports
+  "Duplicate login detected", drops to the main menu and asks to reconnect to its servers (answer No). Only the menu's
+  own Free Play button starts freeplay cleanly, so starting it is the player's job. That dialog isn't in the menu stack
+  (`physlog_ping` still answers): a screenshot shows it.
+- Other cars: `physlog_spawn <body> bot` adds a bot (whose input PhysLog scripts and records: `o_` columns; scenario
+  lines `car2`, `input2`), `physlog_removebots`, `physlog_cars`. A spawned bot's hitbox doesn't follow the body asked
+  for (always 66.9962 / 41.5105 / 16.4 half extents), so other bodies need the player's own car: `physlog_body
+  <product>` sets BakkesMod's item mod to that body (it takes effect when the car is next created, e.g. when freeplay is
+  started again) and `physlog_body restore` puts the player's own item-mod settings back.
 
 ## File format
 A `#` header line (body id, collision extent and offset, the player's `steer_sensitivity` and `air_sensitivity`,
@@ -72,6 +88,9 @@ point (−1: an empty manifold), distance, lifetime, impulse, positionWorldOnA, 
 build), the file says so and stays empty.
 
 ## Scenario files
+`check_scenarios.py` checks every line's value count (the plugin stops a scenario at a bad line, mid-run);
+`run_wsl.sh` runs it first.
+
 One command per line, `#` comments: `car x y z pitch yaw roll vx vy vz wx wy wz boost` (degrees, rad/s, boost
 0-100), `ball x y z vx vy vz wx wy wz`, `wait N` (N ticks, no input), `input N throttle steer pitch yaw roll jump
 boost handbrake` (held N ticks), `repeat K` ... `end`. New scenarios need no rebuild: drop the file into the

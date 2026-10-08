@@ -1,12 +1,10 @@
 // The arena drawn around our generated collision mesh (requires out/arena).
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { parseCmf } from "../engine/cmf";
+import { mergeMeshes, parseCmf } from "../engine/cmf";
+import { arenaMeshes } from "../testing/arena";
 import { ARENA } from "./arena";
 
-const arenaPath = fileURLToPath(new URL("../../../out/arena/collision_meshes/soccar/soccar_arena.cmf", import.meta.url));
-const mesh = parseCmf(new Uint8Array(readFileSync(arenaPath)));
+const mesh = mergeMeshes(arenaMeshes().map(parseCmf));
 
 describe("arena surfaces", () => {
   it("draws the flat side walls up to where the mesh's corner curves begin", () => {

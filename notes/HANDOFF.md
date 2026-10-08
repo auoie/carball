@@ -12,11 +12,16 @@
 - **PhysLog reads the game's own Bullet objects** (`_bullet.csv`: shapes, body words, every contact manifold of the
   car and the ball each tick) through the static session's pointer chain; `live_validate --contacts A-B` prints the
   game's manifolds under ours. Offsets are for the 2026-10-06 build. Use it first when a contact question comes up.
-- **State (findings 27–39, engine patches 45–53):** every live recording is exact or nearly so, per tick: `jumps`,
+- **State (findings 27–40, engine patches 45–55):** every live recording is exact or nearly so, per tick: `jumps`,
   `flip_cancel`, `body_drops`, `steer`, `air`, `powerslide`, `ball_roof`, `dodge_fast` ≤ 0.12 uu/s; `ball_hits` ball
-  0.19; `walls` p99 0.041 (max 0.40, a segment's first tick); `wheel_ball` 2.7 (car on the ball). The big ones:
-  RocketSim's car box was 0.068 uu too small (46), contact points never merged (47), auto-roll's gate (53).
-  `PhysLog` also records the game's `WorldContact` (`wc_*` columns).
+  0.19; `walls` p99 0.041; `wheel_ball` p99 0.36; two cars (`car_car`, `car_car2`): bumps ≤ 0.07, demolitions on the
+  same tick. The big ones: RocketSim's car box was 0.068 uu too small (46), contact points never merged (47),
+  auto-roll's gate (53). `PhysLog` also records the game's `WorldContact` (`wc_*` columns) and a second car (`o_`).
+- **Driving the game:** `tools/physlog/check_game.sh` (heartbeat + read-only screenshot to `out/live/screens/`; look
+  at the screenshot when the game doesn't answer or isn't in freeplay). Never load maps from scripts (the game drops
+  to the menu and asks to reconnect online): starting freeplay is the user's job. Bots: `physlog_spawn 23 bot`,
+  `physlog_removebots`, `physlog_cars`. Other car bodies can't be switched from a script (item mod is visual; a bot's
+  hitbox ignores the body asked for): they need the user's loadout.
 - **Static analysis runs in a second session** (Ghidra BSim, stock Bullet vs the exe; it writes only `out/bsim/` and
   `notes/bullet-diff.md` and sends numbered hypotheses to test live). This session owns the game, PhysLog, `engine/`,
   scenarios, tests, client and server. Batch 2: B6, B7, B9, B10 adopted; B11 (car–car through an AABB tree) worse as

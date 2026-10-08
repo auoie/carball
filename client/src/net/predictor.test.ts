@@ -1,20 +1,17 @@
 // The client's prediction and rollback against a simulated server, using the real engine (Node build).
 // Network: inputs arrive 6 ticks (50 ms) after they are sent, updates 6 ticks after; the server consumes one input
 // frame per tick from a small buffer and sends the world every other tick, as the real server does.
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import createEngine from "@engine/rlengine.mjs";
 import { beforeAll, describe, expect, it } from "vitest";
 import { type CarControls, World, initEngine } from "../engine/world";
 import { NO_INPUT, Predictor, inputControls } from "./predictor";
 import { BIT_BOOST, BIT_JUMP, type InputFrame, quantizeAxis } from "./protocol";
-
-const arenaPath = fileURLToPath(new URL("../../../out/arena/collision_meshes/soccar/soccar_arena.cmf", import.meta.url));
+import { arenaMeshes } from "../testing/arena";
 let engine: Awaited<ReturnType<typeof createEngine>>;
 
 beforeAll(async () => {
   engine = await createEngine();
-  initEngine(engine, [new Uint8Array(readFileSync(arenaPath))]);
+  initEngine(engine, arenaMeshes());
 });
 
 const UP = 6;

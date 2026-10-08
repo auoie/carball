@@ -428,6 +428,8 @@ Ground driving (engine − game, uu/s², flat floor; `validation_report.py`):
     the same to demos, so that came from the car order, not the contact path. In 2.82 body0 is the car that entered
     the physics world first (its broadphase handle), which replays don't tell. Tree with the cars swapped: about
     neutral (96 better / 118 worse). Replays are too coarse for this; it needs a live recording with two cars.
+    Live (finding 40): with the tree our car–car manifold has the game's order, points and normal, and the errors
+    don't change at all (the solver treats the bodies alike). No effect: not adopted.
 38. **Auto-roll (engine patch 53).** PhysLog now also records the game's `Car_TA.WorldContact` (car +0x690; the flag
     the next tick's auto-roll reads). Our flag (set for any contact point added within the threshold, speculative ones
     included) matches it on every tick of `walls`, `dodge_fast` and `body_drops` (0 of 1,806; "only points with a
@@ -457,6 +459,21 @@ Ground driving (engine − game, uu/s², flat floor; `validation_report.py`):
     - `scripts/game_mesh_cmf.py` (local only) rebuilds the game-mesh reference with every triangle facing into the
       field (the earlier copy had mirrored quadrants reversed, so the ball went through them and patch 52 flipped the
       car's normals there).
+40. **Two cars, live (2026-10-08).** PhysLog spawns a BakkesMod bot in offline freeplay (`physlog_spawn <body> bot`),
+    scripts its inputs (`car2` / `input2` scenario lines) and records it in `o_` columns; `live_validate` simulates both
+    cars (each on its own team and preset) and reports `car2` and demolitions. A bot's input is set every rendered
+    frame (240 Hz here), so the player's car is the clock for the script and the rows. A bot's hitbox doesn't follow
+    the body asked for (Breakout in one session, Octane in the next), and BakkesMod's item mod is visual only (the
+    player's car keeps its body and hitbox), so other car bodies still need the player's own loadout.
+    - `car_car` (side bump at 1400, head-on at 1000 each, glancing, landing on the bot's roof, supersonic hit) and
+      `car_car2` (rear-end, side bumps at 600 and 2000, crossing paths, the bot driving into the player, parked on its
+      roof, a jump into it, a supersonic hit at 45°): bumps match to ≤ 0.07 uu/s per tick for the bot, both
+      demolitions land on the same tick in game and engine.
+    - A car dropped onto another's roof: 19.7 uu/s off until the car under the wheels also gets the bottom-out
+      pushback (engine patch 54); a car parked there: 0.21 uu/s per tick until wheel rays on convex shapes use the
+      game's caster, the GJK cast (patch 55; static session: rayTestSingle → btGjkConvexCast, 0.001 BU, 64 iterations).
+      The same fix makes `wheel_ball` (a car on the ball) exact: car p99 0.66 → 0.01, ball max 0.27 → 0.01. Left: 1–3 uu/s for a few ticks once the two bodies touch in the roof landing (the box–box
+      points are the game's; the solver's order of contacts, probably).
 
 Cars alone (far from the ball and other cars), car position error after ~4 ticks, our mesh / the game's mesh
 (before patch 31):
