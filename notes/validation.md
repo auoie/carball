@@ -436,6 +436,10 @@ Ground driving (engine − game, uu/s², flat floor; `validation_report.py`):
     is active; its direction comes from the world wheels' normals only. `walls` p99 0.83 → 0.041 uu/s: the steady
     0.8 uu/s "goal-wall wobble" seen since the replays was auto-roll pushing a car that climbed the goal's side
     fillet with all four wheels down. `dodge_fast` (a forward dodge at speed, front wheels touching): 11.1 → 0.05.
+    Replays for patches 48–53 together (paired, same arena): 3,860 better / 1,661 worse; cars alone on walls, curves
+    and the ceiling p50 0.0200 → 0.0143 uu (what the game's own mesh gave before), in the goal by the side wall
+    0.0103 → 0.0100, flipping on walls: better in 175 cases, worse in 63. All of 2026-10-08 (patches 45–53, the goal
+    fillet) against that morning's engine and arena: 114,165 better / 56,525 worse.
 39. **The ball at mesh seams and quad diagonals: the arena's pieces matter (open).** New scenario `ball_curves` (the
     ball rolled and thrown into corners and onto the side-wall curves). Every tick is exact except three where the
     ball reaches a curve:

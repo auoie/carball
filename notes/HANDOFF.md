@@ -30,7 +30,7 @@
 - **Open, from the live recordings:**
   - `ball_curves` ticks 235/240 (the two-manifold seam at y = 0), `wheel_ball`'s last 2.7 uu/s;
   - `steer` once per other car body (non-Octane steering, finding 21), `HandlingPresetXOffset`;
-  - replays: the paired run for patches 48–53 (`c8` in the scratchpad when this was written).
+  - (replays for patches 48–53: done, finding 38.)
 - **The live game updated on 2026-10-06:** the static analysis (Ghidra project, `out/decomp`, layouts, packages) is
   from the 2026-06-16 build in `documents/binaries`; the live exe is in
   `/mnt/c/Program Files (x86)/Steam/steamapps/common/rocketleague`. Physics functions look unchanged (finding 25),
