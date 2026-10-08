@@ -65,6 +65,17 @@ body {
   background: var(--blue);
 }
 
+#clock {
+  min-width: 96px;
+  padding: 6px 12px;
+  text-align: center;
+  font-size: 1.8rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  border-radius: 6px;
+  background: rgb(0 0 0 / 55%);
+}
+
 .team.orange {
   background: var(--orange);
 }

@@ -28,14 +28,16 @@ export class SyncError {
   accumulate(pre: { readonly pos: Vec3; readonly rot?: Rot3 }, post: { readonly pos: Vec3; readonly rot?: Rot3 }): void {
     this.location = add(this.location, sub(pre.pos, post.pos));
     if (pre.rot && post.rot) {
-      // error' = (pre x post^-1) x error: drawn = error' x post = pre (at the moment of the correction)
+      // error' = error x (pre x post^-1): drawn = error' x post = error x pre, what was drawn before the correction
+      // (the game's FUN_140eabb70: E' = E (x) d)
       const delta = toThreeQuaternion(pre.rot, tmpPre).multiply(toThreeQuaternion(post.rot, tmpPost).invert());
-      this.rotation.premultiply(delta).normalize();
+      this.rotation.multiply(delta).normalize();
     }
   }
 
   /** One rendered frame of `seconds`. */
   decay(seconds: number): void {
+    seconds = Math.max(0, seconds); // (a first frame's timestamp can be before the last one)
     this.location = scale(this.location, 1 - Math.min(seconds * LOCATION_FIX_RATE, 1));
     if (dot(this.location, this.location) < LOCATION_SNAP_SQ) this.location = ZERO;
     this.rotation.slerp(IDENTITY, Math.min(seconds * ANGULAR_FIX_RATE, 1));

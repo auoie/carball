@@ -4,7 +4,7 @@ use crate::engine::Controls;
 
 // 2: kickoff countdown in the state; 3: the wheels' previous contacts; 4: the jump's release; 5: respawn spot selection
 // and flip resets in the state
-pub const VERSION: u16 = 5;
+pub const VERSION: u16 = 6;
 pub const MAX_INPUT_FRAMES: usize = 10;
 
 /// Control stream (reliable) messages
@@ -17,6 +17,38 @@ pub enum Control {
     Welcome { version: u16, car_id: u32, tick_rate: u8, frame: u32, snapshot: Vec<u8> },
     World { frame: u32, snapshot: Vec<u8> },
     Event { server_tick: u32, event: GameEvent },
+    /// The match's state: sent when it changes and each second while the clock runs
+    Match(MatchState),
+}
+
+/// Where a match is (the game's GameEvent_Soccar_TA states)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Phase {
+    /// The kickoff countdown: cars frozen, the clock stopped
+    Countdown = 0,
+    /// Playing (the clock runs once the ball has been hit, or 5 s after "go")
+    Active = 1,
+    /// After a goal, until the next kickoff (the clock stopped)
+    PostGoal = 2,
+    /// Time is up: the round ends when the ball touches the ground (goals still count)
+    TimeUp = 3,
+    /// The match is over (`winner`); a new one starts after the podium
+    Ended = 4,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MatchState {
+    pub server_tick: u32,
+    pub phase: Phase,
+    /// Sudden death: `clock_ticks` counts up from the start of overtime
+    pub overtime: bool,
+    pub clock_running: bool,
+    /// Regulation: ticks left (120 per second); overtime: ticks played
+    pub clock_ticks: u32,
+    pub score: [u8; 2],
+    pub winner: Option<u8>,
+    /// The match ended because the losing team left (none of its players remained)
+    pub forfeit: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -54,6 +86,8 @@ pub struct InputFrame {
     pub pitch: i8,
     pub yaw: i8,
     pub roll: i8,
+    /// The dodge's forward input: -pitch made a byte on its own (q(-p), not -q(p): `VehicleInput.DodgeForward`)
+    pub dodge_forward: i8,
     pub bits: u8,
 }
 
@@ -89,6 +123,8 @@ impl InputFrame {
             boost: u8::from(self.bits & BIT_BOOST != 0),
             handbrake: u8::from(self.bits & BIT_HANDBRAKE != 0),
             air_pitch_safety: u8::from(self.bits & BIT_AIR_PITCH_SAFETY != 0),
+            dodge_forward: dequantize_axis(self.dodge_forward),
+            has_dodge_forward: 1,
         }
     }
 }
@@ -182,6 +218,16 @@ impl Control {
                 w.u32(*frame);
                 w.bytes_with_len(snapshot);
             }
+            Self::Match(m) => {
+                w.u8(0x84);
+                w.u32(m.server_tick);
+                w.u8(m.phase as u8);
+                w.u8(u8::from(m.overtime) | (u8::from(m.clock_running) << 1) | (u8::from(m.forfeit) << 2));
+                w.u32(m.clock_ticks);
+                w.u8(m.score[0]);
+                w.u8(m.score[1]);
+                w.u8(m.winner.unwrap_or(255));
+            }
             Self::Event { server_tick, event } => {
                 w.u8(0x83);
                 w.u32(*server_tick);
@@ -230,6 +276,31 @@ impl Control {
                 };
                 Self::Event { server_tick, event }
             }
+            0x84 => {
+                let server_tick = r.u32()?;
+                let phase = match r.u8()? {
+                    0 => Phase::Countdown,
+                    1 => Phase::Active,
+                    2 => Phase::PostGoal,
+                    3 => Phase::TimeUp,
+                    4 => Phase::Ended,
+                    t => return Err(DecodeError::UnknownType(t)),
+                };
+                let flags = r.u8()?;
+                let clock_ticks = r.u32()?;
+                let score = [r.u8()?, r.u8()?];
+                let winner = Some(r.u8()?).filter(|&w| w != 255);
+                Self::Match(MatchState {
+                    server_tick,
+                    phase,
+                    overtime: flags & 1 != 0,
+                    clock_running: flags & 2 != 0,
+                    clock_ticks,
+                    score,
+                    winner,
+                    forfeit: flags & 4 != 0,
+                })
+            }
             t => return Err(DecodeError::UnknownType(t)),
         })
     }
@@ -245,7 +316,7 @@ impl Datagram {
                 w.u32(*first_frame);
                 w.u8(frames.len() as u8);
                 for f in frames {
-                    for axis in [f.throttle, f.steer, f.pitch, f.yaw, f.roll] {
+                    for axis in [f.throttle, f.steer, f.pitch, f.yaw, f.roll, f.dodge_forward] {
                         w.i8(axis);
                     }
                     w.u8(f.bits);
@@ -280,7 +351,15 @@ impl Datagram {
                 }
                 let mut frames = Vec::with_capacity(count);
                 for _ in 0..count {
-                    frames.push(InputFrame { throttle: r.i8()?, steer: r.i8()?, pitch: r.i8()?, yaw: r.i8()?, roll: r.i8()?, bits: r.u8()? });
+                    frames.push(InputFrame {
+                        throttle: r.i8()?,
+                        steer: r.i8()?,
+                        pitch: r.i8()?,
+                        yaw: r.i8()?,
+                        roll: r.i8()?,
+                        dodge_forward: r.i8()?,
+                        bits: r.u8()?,
+                    });
                 }
                 Self::Inputs { timestamp, first_frame, frames }
             }
@@ -345,6 +424,22 @@ mod tests {
                     _ => GameEvent::Demo { attacker: u(&m["event"]["attacker"]), victim: u(&m["event"]["victim"]) },
                 },
             },
+            "match" => Control::Match(MatchState {
+                server_tick: u(&m["serverTick"]),
+                phase: match m["phase"].as_str().unwrap() {
+                    "countdown" => Phase::Countdown,
+                    "active" => Phase::Active,
+                    "postGoal" => Phase::PostGoal,
+                    "timeUp" => Phase::TimeUp,
+                    _ => Phase::Ended,
+                },
+                overtime: m["overtime"].as_bool().unwrap(),
+                clock_running: m["clockRunning"].as_bool().unwrap(),
+                clock_ticks: u(&m["clockTicks"]),
+                score: [u(&m["score"][0]) as u8, u(&m["score"][1]) as u8],
+                winner: m["winner"].as_u64().map(|w| w as u8),
+                forfeit: m["forfeit"].as_bool().unwrap(),
+            }),
             t => panic!("unknown {t}"),
         }
     }
@@ -366,6 +461,7 @@ mod tests {
                             pitch: quantize_axis(f(&fr["pitch"])),
                             yaw: quantize_axis(f(&fr["yaw"])),
                             roll: quantize_axis(f(&fr["roll"])),
+                            dodge_forward: quantize_axis(f(&fr["dodgeForward"])),
                             bits: bit("jump", BIT_JUMP) | bit("boost", BIT_BOOST) | bit("handbrake", BIT_HANDBRAKE) | bit("airPitchSafety", BIT_AIR_PITCH_SAFETY),
                         }
                     })

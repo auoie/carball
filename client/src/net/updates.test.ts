@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Update } from "./protocol";
-import { UpdateAssembler } from "./updates";
+import { type CompleteUpdate, UpdateAssembler } from "./updates";
 
 const part = (serverTick: number, index: number, parts: number): Update => ({
   serverTick,
@@ -15,40 +15,50 @@ const part = (serverTick: number, index: number, parts: number): Update => ({
   state: Uint8Array.of(serverTick, index),
 });
 
+/** [server tick, part numbers] of each yielded update */
+const summary = (us: readonly CompleteUpdate[]): [number, number[]][] =>
+  us.map((u) => [u.update.serverTick, u.states.map((s) => s[1] ?? -1)]);
+
 describe("UpdateAssembler", () => {
-  it("yields an update once all parts are in, in any order", () => {
+  it("yields an update once all parts are in, in any order; a part is yielded once", () => {
     const a = new UpdateAssembler();
-    expect(a.add(part(10, 1, 2))).toBeNull();
-    expect(a.add(part(10, 1, 2))).toBeNull(); // duplicate
-    const done = a.add(part(10, 0, 2));
-    expect(done?.states).toEqual([Uint8Array.of(10, 0), Uint8Array.of(10, 1)]);
-    expect(a.add(part(10, 0, 2))).toBeNull(); // already yielded
+    expect(a.add(part(10, 1, 2))).toEqual([]);
+    expect(a.add(part(10, 1, 2))).toEqual([]); // duplicate
+    expect(summary(a.add(part(10, 0, 2)))).toEqual([[10, [0, 1]]]);
+    expect(a.add(part(10, 0, 2))).toEqual([]); // already yielded
   });
 
-  it("drops updates older than the newest complete one, and incomplete leftovers", () => {
+  it("an older update missing a part is yielded before a newer complete one (its bodies may have nothing newer)", () => {
     const a = new UpdateAssembler();
-    expect(a.add(part(10, 0, 2))).toBeNull(); // its second part is lost
-    expect(a.add(part(12, 0, 1))?.update.serverTick).toBe(12);
-    expect(a.add(part(10, 1, 2))).toBeNull(); // too old now
-    expect(a.add(part(11, 0, 1))).toBeNull(); // reordered: older than 12
-    expect(a.add(part(14, 0, 1))?.update.serverTick).toBe(14);
+    expect(a.add(part(10, 0, 2))).toEqual([]); // its second part is late
+    expect(summary(a.add(part(12, 0, 1)))).toEqual([[10, [0]], [12, [0]]]);
+  });
+
+  it("a late part, or a reordered update, is yielded on its own", () => {
+    const a = new UpdateAssembler();
+    expect(a.add(part(10, 0, 2))).toEqual([]);
+    a.add(part(12, 0, 1));
+    expect(summary(a.add(part(10, 1, 2)))).toEqual([[10, [1]]]);
+    expect(a.add(part(10, 1, 2))).toEqual([]); // (once)
+    expect(summary(a.add(part(11, 0, 1)))).toEqual([[11, [0]]]);
+    expect(summary(a.add(part(14, 0, 1)))).toEqual([[14, [0]]]);
   });
 
   it("flush gives the parts that came of updates missing one (a lost datagram costs only its bodies)", () => {
     const a = new UpdateAssembler();
-    expect(a.add(part(10, 0, 2))).toBeNull();
-    expect(a.add(part(12, 1, 3))).toBeNull();
-    const flushed = a.flush();
-    expect(flushed.map((u) => [u.update.serverTick, u.states.map((s) => s[1])])).toEqual([[10, [0]], [12, [1]]]);
-    // Gone, and older updates than the newest flushed are dropped
+    expect(a.add(part(10, 0, 2))).toEqual([]);
+    expect(a.add(part(12, 1, 3))).toEqual([]);
+    expect(summary(a.flush())).toEqual([[10, [0]], [12, [1]]]);
     expect(a.flush()).toEqual([]);
-    expect(a.add(part(12, 0, 3))).toBeNull();
+    // A part arriving after its update was flushed still applies, once
+    expect(summary(a.add(part(12, 0, 3)))).toEqual([[12, [0]]]);
+    expect(a.add(part(12, 1, 3))).toEqual([]);
     expect(a.flush()).toEqual([]);
   });
 
   it("ignores malformed part numbers", () => {
     const a = new UpdateAssembler();
-    expect(a.add(part(10, 2, 2))).toBeNull();
-    expect(a.add(part(10, 0, 0))).toBeNull();
+    expect(a.add(part(10, 2, 2))).toEqual([]);
+    expect(a.add(part(10, 0, 0))).toEqual([]);
   });
 });

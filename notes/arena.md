@@ -132,3 +132,32 @@ behind the side walls, or on the side-wall plane where the corner starts.
   - A car on the goal ramp sits at ramp + 17.0 (replays: 17.0 ± 0.1).
   - A car drives up the side wall, and along the back wall through the corner onto the side wall.
   - A ball at the post bounces back.
+
+## The game's pieces, triangle for triangle (2026-10-08)
+The game's soccar collision is 16 meshes: 4 pieces (`Field_STD_Collision_Corner`, `_SideBot_Half`, `_SideTop_Half`,
+`Goal_STD_Collision_Half`), each placed in the four quadrants with a mirroring Scale3D baked in, and the goal halves
+in their own frame at y ±5120 (a body offset, not baked: baking it changes Bullet's float results). PhysX cooked each
+into a triangle order of its own (an AABB tree over the authored order), and Bullet's contacts depend on it where two
+triangles touch one body. Our generated arena now has the same 16 meshes:
+- **Vertices from our rules** (`scripts/arena_layout.py`): each piece is a profile swept along stations. Found on
+  the game's mesh: the arcs' profile offsets are mitred (offset / cos(half the angle between the two chords), along
+  the Bézier's normal; none at an arc's ends); a fillet's tangent vertex is left out where its last chord runs on
+  past the plane it meets (side halves: 10 behind the wall, 11.333 past wall and ceiling; corner and goal: 22.92 /
+  27.45 above the ceiling); the side halves run from y 0 to 3840 (no column at 3584); the corner runs from a cut
+  behind the side wall (4106.91, 3326.21) to one behind the back wall (2434.60, 5125.33), each a vertical plane with
+  the profile laid on it (constants measured on the game's mesh); the goal piece's back wall over the mouth, its
+  ceiling fillet and the goal's inside sit on a 256 grid in x; the goal's fillets run on under the floor to
+  z = −5.15 R / 96.
+- **Triangles from a table** (`scripts/arena_topology.json`, from `scripts/arena_topology_derive.py`, which reads the
+  local extraction of the game's cooked meshes): each mesh's triangles in the game's cooked order and winding, as
+  indices into our vertices. No coordinates of the game's are stored (the user agreed to such an order table, as for
+  the diagonals).
+- How close: every vertex in or at the edge of the playable space within 0.033 uu of the game's, except the
+  post-base ring and the mouth arc's two ends (up to 0.40: the game's own departures from its circles there). Below
+  the floor and above the ceiling (the skirts) our rules approximate the game's authored geometry (up to ~44 uu off;
+  nothing touches it, but it is in Bullet's trees).
+- The goal halves' meshes are written in their own frame with a body offset (`.cmf` trailer "RLOF" + 3 floats;
+  `CollisionMeshFile`, engine patch 73).
+- Live: `ball_curves` ball max 175 → 0.04 uu/s, `walls` 14.4 → 0.20 (0.40 on the game's own meshes), every other
+  recording unchanged (validation finding 45).
+

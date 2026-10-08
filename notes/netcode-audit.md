@@ -64,3 +64,22 @@ goals server-authoritative; render interpolation between the last two ticks; no 
 TcpNetDriver rate defaults (60 / 15000 from the user's log; per-connection enforcement not decoded); client roles
 (AutonomousProxy / SimulatedProxy) inferred from gates; remote components not simulated on clients (inferred, can't
 be tested offline); ack-before-state order in a packet (UE3 assumption).
+
+## Review of the live session's fixes (2026-10-08, sub-agent N2; files local in `out/bsim/agents/N2/`)
+N-2 (hitch reset) and N-5 (rebase only cars in the update) match the game; N-1 has the right constants and decay but:
+- **NR-1** `online.ts:261` shifts only `previous.pos`; the game's direct apply (`FUN_140f45e80`) shifts all of
+  OldRBState incl. `Old.q = (new.q ⊗ conj(pre.q)) ⊗ Old.q` → rotational corrections still pop by (1 − α)·|δ|.
+- **NR-7** `syncError.ts:33` composes E′ = d·E (`premultiply`); the game (`FUN_140eabb70`) E′ = E⊗d, so drawn = E·pre.
+- **NR-2** the "> 500 uu = teleport" test misfires both ways (unpredicted strong ball hits snap; kickoff moves under 500
+  uu glide). In the game every correction is smoothed; soccar "teleports" are new actors (kickoff `ResetPlayers`, ball
+  `Destroy` + `SpawnNewBall`, respawn); nothing native writes `TeleportCounter` (freeplay ball teleports only). Fix: a
+  per-body spawn counter in state/snapshots/NetState.
+- **NR-3** the camera uses the unsmoothed rotation (only `error.location` is applied); the game's camera follows the
+  smoothed actor.
+- **NR-4** a hidden tab piles up updates (thousands of resyncs on return); **NR-5** resync/reload snap and resync
+  leaves stale interpolation; **NR-6** N-3 still discards older partial updates and late parts; **NR-8** a predicted
+  respawn streaks one frame; **NR-9** no rate limit on the hitch reset (optional).
+- Confirmed: smoothing runs per render frame (`FUN_140f6a240` = `RBActor_TA::physRigidBody`, from
+  `APawn::performPhysics`); the hitch clock is a real-time per-frame stamp (`FUN_140394840`); the native `SetTimer`
+  (`FUN_140889b60`) restarts an existing timer, so the 2 s reset follows the last hitch; the server resets only the
+  jitter estimate (`ServerConsume.ResetInputBuffer` → `JitterBuffer.Reset`).

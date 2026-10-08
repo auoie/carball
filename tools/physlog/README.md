@@ -41,7 +41,8 @@ Claude Code in WSL can build, load and run everything while the game sits in fre
 - BakkesMod's rcon listens on 127.0.0.1:9002 (with WSL's mirrored networking): `python3 tools/physlog/rcon.py
   "plugin load physlog"` (password: `rcon_password` in BakkesMod's `cfg/config.cfg`, or `BAKKES_RCON_PASSWORD`).
   Rcon only runs allowed commands: add `physlog_start`, `physlog_stop`, `physlog_run`, `physlog_ping`,
-  `physlog_body`, `physlog_spawn`, `physlog_removebots`, `physlog_cars` and `physlog_resetplayers` as lines to
+  `physlog_body`, `physlog_spawn`, `physlog_removebots`, `physlog_removebot`, `physlog_cars`, `physlog_resetplayers`,
+  `physlog_demolish`, `physlog_products` and `physlog_vsim` as lines to
   `%APPDATA%\bakkesmod\bakkesmod\data\rcon_commands.cfg`, then send `rcon_refresh_allowed`. Rcon sends no console
   output back: read `%APPDATA%\bakkesmod\bakkesmod\bakkesmod.log`.
 - Play the game **windowed** (e.g. on a second monitor) and don't bring it to the front from a script (a fullscreen
@@ -57,10 +58,20 @@ Claude Code in WSL can build, load and run everything while the game sits in fre
   own Free Play button starts freeplay cleanly, so starting it is the player's job. That dialog isn't in the menu stack
   (`physlog_ping` still answers): a screenshot shows it.
 - Other cars: `physlog_spawn <body> bot` adds a bot (whose input PhysLog scripts and records: `o_` columns; scenario
-  lines `car2`, `input2`), `physlog_removebots`, `physlog_cars`. A spawned bot's hitbox doesn't follow the body asked
-  for (always 66.9962 / 41.5105 / 16.4 half extents), so other bodies need the player's own car: `physlog_body
-  <product>` sets BakkesMod's item mod to that body (it takes effect when the car is next created, e.g. when freeplay is
-  started again) and `physlog_body restore` puts the player's own item-mod settings back.
+  lines `car2`, `input2`), `physlog_removebots` (all bots; with a team argument, one bot of that team),
+  `physlog_removebot <team>`, `physlog_cars` (body, position, hitbox extent). A spawned bot's hitbox doesn't follow the
+  body asked for (always 66.9962 / 41.5105 / 16.4 half extents). `physlog_body <product>` sets BakkesMod's item mod to
+  that body, but that only changes how the car looks: its hitbox and handling stay the garage loadout's, so other
+  bodies need the player to equip them in the garage (`physlog_body restore` puts the item-mod settings back).
+- `physlog_demolish` demolishes the player's car (it respawns as a new car); `physlog_resetplayers` resets the players
+  (the game destroys and recreates their cars).
+- Read-only dumps: `physlog_products` writes every car body product (id, slot, label, asset package, unlocked, owned)
+  to `data/physlog/products.tsv` and logs the ones this profile has (`physlog_products goal`: the products of the slot
+  whose label has that word, here the goal explosions, to `products_goal.tsv`); `physlog_vsim` logs the player's car's VehicleSim
+  curves (steer angle, handbrake steer angle, drive torque; live layout of 2026-10-06). Also reachable as
+  `physlog_cars products` / `physlog_cars vsim`.
+- Recording works in freeplay, custom training and offline matches (exhibition against bots), never online. The
+  player's car is the row clock, so there are no rows while it is demolished.
 
 ## File format
 A `#` header line (body id, collision extent and offset, the player's `steer_sensitivity` and `air_sensitivity`,

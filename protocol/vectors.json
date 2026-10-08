@@ -75,6 +75,42 @@
       "hex": "0e008307000000010200000003000000"
     },
     {
+      "channel": "control",
+      "message": {
+        "type": "match",
+        "serverTick": 1000,
+        "phase": "active",
+        "overtime": false,
+        "clockRunning": true,
+        "clockTicks": 36000,
+        "score": [
+          2,
+          1
+        ],
+        "winner": null,
+        "forfeit": false
+      },
+      "hex": "0e0084e80300000102a08c00000201ff"
+    },
+    {
+      "channel": "control",
+      "message": {
+        "type": "match",
+        "serverTick": 5000,
+        "phase": "ended",
+        "overtime": true,
+        "clockRunning": false,
+        "clockTicks": 1234,
+        "score": [
+          3,
+          2
+        ],
+        "winner": 0,
+        "forfeit": true
+      },
+      "hex": "0e0084881300000405d2040000030200"
+    },
+    {
       "channel": "datagram",
       "message": {
         "type": "inputs",
@@ -90,7 +126,8 @@
             "jump": true,
             "boost": true,
             "handbrake": false,
-            "airPitchSafety": false
+            "airPitchSafety": false,
+            "dodgeForward": 0.7
           },
           {
             "throttle": 0.0,
@@ -101,12 +138,13 @@
             "jump": false,
             "boost": false,
             "handbrake": true,
-            "airPitchSafety": true
+            "airPitchSafety": true,
+            "dodgeForward": 0.0
           }
         ]
       },
-      "hex": "0140e2010064000000027fc0a620800300000000000c",
-      "note": "axes as the game's input byte: q = round(v * 127) for v >= 0, round(v * 128) below (halves up): -0.5 -> -64, -0.7 -> -90, -1 -> -128; decoded as q / 127 or q / 128"
+      "hex": "0140e2010064000000027fc0a6208059030000000000000c",
+      "note": "axes as the game's input byte: q = round(v * 127) for v >= 0, round(v * 128) below (halves up): -0.5 -> -64, -0.7 -> -90, -1 -> -128; decoded as q / 127 or q / 128; dodgeForward is the dodge's forward input (-pitch before quantising: 0.7 -> 89)"
     },
     {
       "channel": "datagram",

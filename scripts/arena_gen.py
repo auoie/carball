@@ -199,18 +199,27 @@ def stations():
     d_side, d_diag, d_back = (0.0, 1.0), (-1 / math.sqrt(2), 1 / math.sqrt(2)), (-1.0, 0.0)
     for k in range(1, SEG90 + 1):
         p, n = bezier(CORNER_SIDE[0], d_side, CORNER_SIDE[1], d_diag, CORNER_ARM, k / SEG90)
-        S.append(dict(p=p, n=n, rf=R_SIDE_FLOOR, kind="wall"))
+        S.append(dict(p=p, n=n, rf=R_SIDE_FLOOR, kind="wall", arc=k < SEG90))
     d0, d1 = CORNER_SIDE[1], CORNER_BACK[0]
     n_diag = (-1 / math.sqrt(2), -1 / math.sqrt(2))
     for k in range(1, 4):
         S.append(dict(p=tuple(a + (b - a) * k / 4 for a, b in zip(d0, d1)), n=n_diag, rf=R_SIDE_FLOOR, kind="wall"))
     for k in range(SEG90 + 1):              # k = 0 at the diagonal, 8 at the back wall
         p, n = bezier(CORNER_BACK[0], d_diag, CORNER_BACK[1], d_back, CORNER_ARM, k / SEG90)
-        S.append(dict(p=p, n=n, rf=CORNER_BACK_FLOOR_R[k], kind="wall"))
+        S.append(dict(p=p, n=n, rf=CORNER_BACK_FLOOR_R[k], kind="wall", arc=0 < k < SEG90))
     # back wall to the post
     for x in [2304, 2048, 1792, 1536, 1344, 1280, 1216, 1152, 1088, 1024, 960, GOAL_X + CHAMFER]:
         S.append(dict(p=(float(x), BACK_Y), n=(0.0, -1.0), rf=back_floor_radius(x), kind="wall"))
     S[-1]["kind"] = "post"
+    # The game sweeps the profiles along each arc as its own path, mitred: inside an arc a station's offsets go along
+    # the Bézier's normal, as long as the mitre between its two chords, offset / cos(half their angle) (measured on
+    # the game's mesh to 0.005 uu: 409.29-409.44 for the ceiling fillet's 408.88); at an arc's ends, none
+    for i, s in enumerate(S):
+        s["m"] = 1.0
+        if s.get("arc"):
+            (ax, ay), (bx, by), (cx, cy) = S[i - 1]["p"], s["p"], S[i + 1]["p"]
+            c1, c2 = norm((bx - ax, by - ay)), norm((cx - bx, cy - by))
+            s["m"] = 1 / math.cos(math.acos(max(-1.0, min(1.0, c1[0] * c2[0] + c1[1] * c2[1]))) / 2)
     return S
 
 
@@ -226,7 +235,7 @@ POST_LEVELS = [R_GOAL, 256.0, 512.0, GOAL_TOP - R_GOAL]   # post edge vertices (
 
 def build_walls(m):
     S = stations()
-    at = lambda s, o, z: (s["p"][0] + s["n"][0] * o, s["p"][1] + s["n"][1] * o, z)
+    at = lambda s, o, z: (s["p"][0] + s["n"][0] * o * s.get("m", 1.0), s["p"][1] + s["n"][1] * o * s.get("m", 1.0), z)
     # floor fillets
     for a, b in zip(S, S[1:]):
         pa, pb = floor_profile(a["rf"]), floor_profile(b["rf"])
@@ -401,6 +410,12 @@ def mirrored(m, transform_list):
 
 
 def build():
+    """The 16 pieces: the game's triangulation where arena_topology.json has it (table_piece), else our own."""
+    return [(name, table_piece(name) or part) for name, part in build_old()]
+
+
+def build_old():
+    """The 16 pieces as our own construction (the table's vertex pools start from it)."""
     walls = Mesh()
     build_walls(walls)
     goal = Mesh()
@@ -427,11 +442,39 @@ def build():
     return pieces
 
 
+TOPOLOGY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "arena_topology.json")
+
+
+def table_piece(name):
+    """A piece as the game's (arena_layout.py): our vertices, the game's triangles and order (arena_topology.json); None
+    if the table doesn't have it."""
+    import json
+    import arena_layout
+    if not os.path.exists(TOPOLOGY):
+        return None
+    pieces = json.load(open(TOPOLOGY))["pieces"]
+    piece, q = name.rsplit("_", 2)[0], "_".join(name.rsplit("_", 2)[1:])
+    if piece not in pieces:
+        return None
+    verts = arena_layout.quadrant(piece, q)
+    idx = pieces[piece][q]
+    m = Mesh()
+    if piece == "goal_and_back":   # in the goal's own frame, placed by its body (as the game's)
+        m.offset = (0.0, arena_layout.GOAL_BODY_OFFSET * arena_layout.QUADRANTS[q][1], 0.0)
+    for i in range(0, len(idx), 3):
+        m.tri(piece, verts[idx[i]], verts[idx[i + 1]], verts[idx[i + 2]])
+    assert len(m.tris) == len(idx) // 3, f"{name}: degenerate triangles in the table piece"
+    return m
+
+
 def merged(pieces):
-    """Every piece in one mesh (for the .obj and the checks)."""
+    """Every piece in one mesh, in place (for the .obj and the checks)."""
     arena = Mesh()
     for _, part in pieces:
-        append(arena, part)
+        off = getattr(part, "offset", (0.0, 0.0, 0.0))
+        for piece, idx in part.pieces.items():
+            for t in idx:
+                arena.tri(piece, *[tuple(c + o for c, o in zip(part.verts[i], off)) for i in part.tris[t]])
     return arena
 
 
@@ -454,6 +497,8 @@ def write(pieces, outdir):
                 f.write(struct.pack("<3i", *t))
             for v in piece.verts:
                 f.write(struct.pack("<3f", *(c * 0.02 for c in v)))
+            if hasattr(piece, "offset"):   # the body's position (the engine's CollisionMeshFile trailer)
+                f.write(b"RLOF" + struct.pack("<3f", *(c * 0.02 for c in piece.offset)))
     stale = [n for n in os.listdir(meshdir) if n.endswith(".cmf") and n not in {f"soccar_{name}.cmf" for name, _ in pieces}]
     if stale:
         print(f"note: other .cmf files in {meshdir} are loaded too: {stale}")

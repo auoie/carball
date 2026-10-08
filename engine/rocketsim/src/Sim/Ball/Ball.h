@@ -51,6 +51,10 @@ struct BallState : public PhysState {
 	// reset): frozen where it scored, so a round has one goal at most (Arena::_Tick; a ball state set clears it)
 	bool isExploded = false;
 
+	// RL PATCH: counts the ball's placements by a kickoff reset or a ball reset (the game spawns a new ball): see
+	// CarState::spawnCount
+	uint16_t spawnCount = 0;
+
 	BallState() : PhysState() {
 		pos.z = RLConst::BALL_REST_Z;
 	}
@@ -65,7 +69,7 @@ struct BallState : public PhysState {
 pos, rotMat, vel, angVel, \
 hsInfo.yTargetDir, hsInfo.curTargetSpeed, hsInfo.timeSinceHit, \
 dsInfo.chargeLevel, dsInfo.accumulatedHitForce, dsInfo.yTargetDir, dsInfo.hasDamaged, dsInfo.lastDamageTick, \
-isExploded /* RL PATCH */ \
+isExploded, spawnCount /* RL PATCH */ \
 
 class Ball {
 public:

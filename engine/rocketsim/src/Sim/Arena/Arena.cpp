@@ -218,7 +218,7 @@ void Arena::_UpdateDemolished(Car* car, std::vector<Car::RespawnSpot>& claimed) 
 	}
 
 	// The respawn this tick (Car::_PreTickUpdate): the locked spot if still free, else its offsets, else a fresh choice
-	if (timerAfter == 0) {
+	if (timerAfter == 0 && !respawnsHeld) {
 		Car::RespawnSpot s;
 		s.pos = st.prespawnPos;
 		s.yaw = st.prespawnYaw;
@@ -305,6 +305,125 @@ void Arena::ResetToRandomKickoff(int seed) {
 	for (int i = locationAmount - 1; i > 0; i--) // Fisher-Yates (std::shuffle differs between standard libraries)
 		std::swap(kickoffOrder[i], kickoffOrder[(*randEngine)() % (i + 1)]);
 
+	std::array<uint8_t, 5> orders[2];
+	for (int i = 0; i < CAR_SPAWN_LOCATION_AMOUNT; i++)
+		orders[0][i] = orders[1][i] = (uint8_t)kickoffOrder[i];
+	_ResetToKickoff(orders, 0, randEngine);
+
+	if (seed != -1) {
+		// Custom random engine was created for this seed, so we need to free it
+		delete randEngine;
+	}
+}
+
+// RL PATCH: a match's kickoff order (InitField: RandomizeSpawnPoints)
+void Arena::StartKickoffSequence(int seed, int teamSize) {
+	using namespace RLConst;
+	std::minstd_rand0 randEngine(seed);
+	std::array<uint8_t, 5> order = { 0, 1, 2, 3, 4 };
+	for (int i = CAR_SPAWN_LOCATION_AMOUNT - 1; i > 0; i--)
+		std::swap(order[i], order[randEngine() % (i + 1)]);
+	kickoffSequence = KickoffSequence();
+	kickoffSequence.order[0] = kickoffSequence.order[1] = order;
+	kickoffSequence.teamSize = (uint8_t)RS_CLAMP(teamSize, 0, CAR_SPAWN_LOCATION_AMOUNT);
+}
+
+// RL PATCH: the game's kickoff assignment (static analysis MR-4, MR-5)
+void Arena::ResetToNextKickoff() {
+	using namespace RLConst;
+	constexpr int SPOTS = CAR_SPAWN_LOCATION_AMOUNT;
+	KickoffSequence& seq = kickoffSequence;
+	int first = seq.next % SPOTS;
+	int members[2] = {};
+	for (Car* car : _cars)
+		members[car->team == Team::BLUE ? 0 : 1]++;
+	// (MaxTeamSize: the match's team size, grown to the larger team: CanIncreaseMaxTeamSize)
+	int maxTeamSize = RS_MIN(RS_MAX(RS_MAX(members[0], members[1]), (int)seq.teamSize), SPOTS);
+
+	// Uneven teams (bUseDisadvantageSpawnAdjustment, in the Countdown state: every kickoff but the match's first): of
+	// the window of MaxTeamSize spots from the index, the most central one (SortPreferableSpawn: smallest distance
+	// from the centre, a tie to x*y < 0, the player's own left) goes to the short team's last car, swapped into its
+	// copy of the order, unless one of its cars already has it
+	if (seq.kickoffs > 0 && gameMode == GameMode::SOCCAR) {
+		auto better = [](const CarSpawnPos& a, const CarSpawnPos& b) {
+			float da = a.x * a.x + a.y * a.y, db = b.x * b.x + b.y * b.y;
+			if (da != db)
+				return da < db;
+			return (a.x * a.y < 0) && !(b.x * b.y < 0);
+		};
+		for (int team = 0; team < 2; team++) {
+			int own = RS_MIN(members[team], SPOTS);
+			if (own == 0 || members[1 - team] <= members[team])
+				continue;
+			std::array<uint8_t, 5>& order = seq.order[team];
+			int best = first;
+			for (int k = 1; k < maxTeamSize; k++) {
+				int slot = (first + k) % SPOTS;
+				if (better(CAR_SPAWN_LOCATIONS_SOCCAR[order[slot]], CAR_SPAWN_LOCATIONS_SOCCAR[order[best]]))
+					best = slot;
+			}
+			int bestOffset = (best - first + SPOTS) % SPOTS;
+			if (bestOffset >= own) // (not among the spots its cars take already)
+				std::swap(order[best], order[(first + own - 1) % SPOTS]);
+		}
+	}
+
+	std::minstd_rand0 randEngine((unsigned)tickCount + 1); // (the other game modes' ball direction)
+	_ResetToKickoff(seq.order, first, &randEngine);
+	seq.next = (uint8_t)((first + 1) % SPOTS);
+	seq.kickoffs++;
+}
+
+void Arena::_UpdateGoalExplosion() {
+	using namespace RLConst;
+	GoalExplosion& ex = goalExplosion;
+	if (!ex.active)
+		return;
+	// (ExplosionComponent_X tick: the front from the life time before this tick; StartRadius 0, Speed 10000,
+	// EndRadius 3000, Falloff 0.1, RBVelocityChange 5000, MomentumOffset (-500, 0, -500) in the goal's frame, whose X
+	// points out of the goal)
+	constexpr float SPEED = 10000, END_RADIUS = 3000, FALLOFF = 0.1f, VEL_CHANGE = 5000;
+	float radius = ex.lifeTime * SPEED;
+	ex.lifeTime += tickTime;
+	if (radius > END_RADIUS) {
+		ex.active = false;
+		return;
+	}
+	float scale = powf(1 - radius / END_RADIUS, FALLOFF);
+	Vec momentumOrigin = ex.origin + Vec(0, 500 * ex.goalDir, -500);
+	for (Car* car : _cars) {
+		if (car->_internalState.isDemoed || std::find(ex.hitCars.begin(), ex.hitCars.end(), car->id) != ex.hitCars.end())
+			continue;
+		// The front touches the car's hitbox: the distance from the centre to the box
+		const btTransform& t = car->_rigidBody.getWorldTransform();
+		btVector3 boxCentre = t * (car->config.hitboxPosOffset * UU_TO_BT);
+		btVector3 local = t.getBasis().transpose() * ((btVector3)(ex.origin * UU_TO_BT) - boxCentre);
+		btVector3 half = car->config.hitboxSize * (UU_TO_BT / 2);
+		btVector3 clamped(RS_CLAMP(local.x(), -half.x(), half.x()), RS_CLAMP(local.y(), -half.y(), half.y()),
+			RS_CLAMP(local.z(), -half.z(), half.z()));
+		if ((local - clamped).length() * BT_TO_UU > radius)
+			continue;
+		ex.hitCars.push_back(car->id);
+		Vec pos = t.getOrigin() * BT_TO_UU; // (HitLocation = the car's location: no spin)
+		Vec dir = (pos - momentumOrigin).Normalized();
+		car->_rigidBody.m_linearVelocity += (btVector3)(dir * (VEL_CHANGE * scale)) * UU_TO_BT;
+		car->_rigidBody.activate(true);
+	}
+}
+
+void Arena::RedoKickoff() {
+	KickoffSequence& seq = kickoffSequence;
+	if (seq.kickoffs > 0) {
+		seq.next = (uint8_t)((seq.next + RLConst::CAR_SPAWN_LOCATION_AMOUNT - 1) % RLConst::CAR_SPAWN_LOCATION_AMOUNT);
+		seq.kickoffs--;
+	}
+	ResetToNextKickoff();
+}
+
+void Arena::_ResetToKickoff(const std::array<uint8_t, 5> orders[2], int first, std::minstd_rand0* randEngine) {
+	using namespace RLConst;
+	int locationAmount = (gameMode == GameMode::HEATSEEKER) ? CAR_SPAWN_LOCATION_AMOUNT_HEATSEEKER : CAR_SPAWN_LOCATION_AMOUNT;
+
 	const CarSpawnPos* CAR_SPAWN_LOCATIONS = CAR_SPAWN_LOCATIONS_SOCCAR;
 	const CarSpawnPos* CAR_RESPAWN_LOCATIONS = CAR_RESPAWN_LOCATIONS_SOCCAR;
 	if (gameMode == GameMode::HOOPS) {
@@ -330,7 +449,7 @@ void Arena::ResetToRandomKickoff(int seed) {
 		CarSpawnPos spawnPos;
 	
 		if (i < locationAmount) {
-			spawnPos = CAR_SPAWN_LOCATIONS[RS_MIN(kickoffOrder[i], locationAmount - 1)];
+			spawnPos = {}; // (per team below: RL PATCH, each team's own order)
 		} else {
 			int respawnPosIdx = (i - (locationAmount)) % locationAmount;
 			spawnPos = CAR_RESPAWN_LOCATIONS[respawnPosIdx];
@@ -349,6 +468,8 @@ void Arena::ResetToRandomKickoff(int seed) {
 			std::vector<Car*> teamCars = isBlue ? blueCars : orangeCars;
 
 			if (i < teamCars.size()) {
+				if (i < locationAmount) // RL PATCH
+					spawnPos = CAR_SPAWN_LOCATIONS[RS_MIN((int)orders[teamIndex][(first + i) % locationAmount], locationAmount - 1)];
 				CarState spawnState;
 				spawnState.boost = _mutatorConfig.carSpawnBoostAmount;
 				spawnState.pos = { spawnPos.x, spawnPos.y, CAR_SPAWN_REST_Z };
@@ -361,6 +482,7 @@ void Arena::ResetToRandomKickoff(int seed) {
 				}
 
 				spawnState.rotMat = angle.ToRotMat();
+				spawnState.spawnCount = teamCars[i]->_internalState.spawnCount + 1; // RL PATCH
 
 				teamCars[i]->SetState(spawnState);
 			}
@@ -368,6 +490,7 @@ void Arena::ResetToRandomKickoff(int seed) {
 	}
 
 	BallState ballState = BallState();
+	ballState.spawnCount = ball->_internalState.spawnCount + 1; // RL PATCH
 	if (gameMode == GameMode::SOCCAR)
 		ballState.pos.z = BALL_KICKOFF_Z;
 	if (gameMode == GameMode::HEATSEEKER) {
@@ -389,10 +512,7 @@ void Arena::ResetToRandomKickoff(int seed) {
 	if (gameMode == GameMode::DROPSHOT)
 		SetDropshotTilesState({});
 
-	if (seed != -1) {
-		// Custom random engine was created for this seed, so we need to free it
-		delete randEngine;
-	}
+	goalExplosion = GoalExplosion(); // RL PATCH
 }
 
 void Arena::SetDropshotTilesState(const DropshotTilesState& state) {
@@ -831,6 +951,51 @@ Arena* Arena::Create(GameMode gameMode, const ArenaConfig& arenaConfig, float ti
 	return new Arena(gameMode, arenaConfig, tickRate);
 }
 
+// RL PATCH: the match's kickoff order in snapshots
+static void _WriteKickoffSequence(DataStreamOut& out, const Arena::KickoffSequence& s) {
+	for (const auto& order : s.order)
+		for (uint8_t spot : order)
+			out.Write(spot);
+	out.Write(s.next);
+	out.Write(s.kickoffs);
+	out.Write(s.teamSize);
+}
+
+static void _ReadKickoffSequence(DataStreamIn& in, Arena::KickoffSequence& s) {
+	for (auto& order : s.order)
+		for (uint8_t& spot : order)
+			spot = in.Read<uint8_t>() % RLConst::CAR_SPAWN_LOCATION_AMOUNT;
+	s.next = in.Read<uint8_t>();
+	s.kickoffs = in.Read<uint16_t>();
+	s.teamSize = in.Read<uint8_t>();
+}
+
+// RL PATCH: the goal explosion's wave in snapshots (and the network state: NetState.cpp)
+void _WriteGoalExplosion(DataStreamOut& out, const Arena::GoalExplosion& ex) {
+	out.Write<uint8_t>(ex.active);
+	if (!ex.active)
+		return;
+	out.WriteMultiple(ex.origin.x, ex.origin.y, ex.origin.z);
+	out.Write(ex.goalDir);
+	out.Write(ex.lifeTime);
+	out.Write<uint8_t>((uint8_t)ex.hitCars.size());
+	for (uint32_t id : ex.hitCars)
+		out.Write(id);
+}
+
+void _ReadGoalExplosion(DataStreamIn& in, Arena::GoalExplosion& ex) {
+	ex = Arena::GoalExplosion();
+	ex.active = in.Read<uint8_t>() != 0;
+	if (!ex.active)
+		return;
+	in.ReadMultiple(ex.origin.x, ex.origin.y, ex.origin.z);
+	in.Read(ex.goalDir);
+	in.Read(ex.lifeTime);
+	ex.hitCars.resize(in.Read<uint8_t>());
+	for (uint32_t& id : ex.hitCars)
+		in.Read(id);
+}
+
 void Arena::Serialize(DataStreamOut& out) const {
 	out.WriteMultiple(gameMode, tickTime, tickCount, _lastCarID);
 
@@ -863,6 +1028,9 @@ void Arena::Serialize(DataStreamOut& out) const {
 	// RL PATCH: persistent contact points
 	const_cast<Arena*>(this)->_SerializeContacts(out);
 	out.Write(kickoffCountdownTicks); // RL PATCH
+	_WriteKickoffSequence(out, kickoffSequence); // RL PATCH
+	out.Write<uint8_t>(respawnsHeld); // RL PATCH
+	_WriteGoalExplosion(out, goalExplosion); // RL PATCH
 }
 
 // RL PATCH: Bullet keeps contact points from tick to tick (persistent manifolds), and some contacts, such as a
@@ -1056,6 +1224,9 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
 
 	newArena->_DeserializeContacts(in); // RL PATCH: persistent contact points
 	newArena->kickoffCountdownTicks = in.Read<uint32_t>(); // RL PATCH
+	_ReadKickoffSequence(in, newArena->kickoffSequence); // RL PATCH
+	newArena->respawnsHeld = in.Read<uint8_t>() != 0; // RL PATCH
+	_ReadGoalExplosion(in, newArena->goalExplosion); // RL PATCH
 
 	return newArena;
 }
@@ -1144,6 +1315,9 @@ bool Arena::DeserializeInPlace(DataStreamIn& in) {
 	ball->_velocityImpulseCache = { 0, 0, 0 };
 	_DeserializeContacts(in);
 	kickoffCountdownTicks = in.Read<uint32_t>(); // RL PATCH
+	_ReadKickoffSequence(in, kickoffSequence); // RL PATCH
+	respawnsHeld = in.Read<uint8_t>() != 0; // RL PATCH
+	_ReadGoalExplosion(in, goalExplosion); // RL PATCH
 	return true;
 }
 
@@ -1179,6 +1353,9 @@ Arena* Arena::Clone(bool copyCallbacks) {
 	newArena->tickCount = this->tickCount;
 	newArena->_lastCarID = this->_lastCarID;
 	newArena->kickoffCountdownTicks = this->kickoffCountdownTicks; // RL PATCH
+	newArena->kickoffSequence = this->kickoffSequence; // RL PATCH
+	newArena->respawnsHeld = this->respawnsHeld; // RL PATCH
+	newArena->goalExplosion = this->goalExplosion; // RL PATCH
 
 	{ // RL PATCH: persistent contact points
 		DataStreamOut contactsOut;
@@ -1237,7 +1414,7 @@ void Arena::Step(int ticksToSimulate) {
 		}
 
 		for (Car* car : _cars)
-			car->_PreTickUpdate(gameMode, tickTime, _mutatorConfig);
+			car->_PreTickUpdate(gameMode, tickTime, _mutatorConfig, respawnsHeld);
 
 		if (hasArenaStuff && !ballOnly) {
 			for (BoostPad* pad : _boostPads)
@@ -1249,6 +1426,8 @@ void Arena::Step(int ticksToSimulate) {
 
 		// RL PATCH: the ball's speed caps at the start of the step too (the cars': Car::_LimitVelocities)
 		ball->_LimitVelocities(_mutatorConfig);
+
+		_UpdateGoalExplosion(); // RL PATCH
 
 		// Update world
 		_bulletWorld.stepSimulation(tickTime, 0, tickTime);
@@ -1287,6 +1466,11 @@ void Arena::Step(int ticksToSimulate) {
 		if (gameMode != GameMode::THE_VOID && !ball->_internalState.isExploded && IsBallScored()) {
 			ball->_internalState.isExploded = true;
 			ball->_ApplyExploded();
+			// The explosion goes off where the ball is (Ball_TA.Explode), its wave from the next tick on
+			goalExplosion = GoalExplosion();
+			goalExplosion.active = true;
+			goalExplosion.origin = ball->_rigidBody.getWorldTransform().m_origin * BT_TO_UU;
+			goalExplosion.goalDir = goalExplosion.origin.y > 0 ? 1.f : -1.f;
 		}
 
 		if (_goalScoreCallback.func != NULL) { // Potentially fire goal score callback
@@ -1540,6 +1724,7 @@ void Arena::_SetupArenaCollisionShapes() {
 	bool isDropShot = gameMode == GameMode::DROPSHOT;
 
 	auto collisionMeshes = RocketSim::GetArenaCollisionShapes(gameMode);
+	auto collisionOffsets = RocketSim::GetArenaCollisionOffsets(gameMode);
 
 	if (collisionMeshes.empty()) {
 		RS_ERR_CLOSE(
@@ -1568,7 +1753,7 @@ void Arena::_SetupArenaCollisionShapes() {
 
 		int mask = isHoopsNet ? CollisionMasks::HOOPS_NET : 0;
 		_worldCollisionBvhShapes.push_back(mesh);
-		_AddStaticCollisionShape(mesh, btVector3(0, 0, 0), mask, mask);
+		_AddStaticCollisionShape(mesh, i < collisionOffsets.size() ? collisionOffsets[i] : btVector3(0, 0, 0), mask, mask);
 
 		// Don't free the BVH when we deconstruct this arena
 		mesh->m_ownsBvh = false;

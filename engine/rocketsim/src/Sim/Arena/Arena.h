@@ -77,6 +77,34 @@ public:
 	// has no countdown); a match server sets it. Saved in snapshots and the network state.
 	uint32_t kickoffCountdownTicks = 0;
 
+	// RL PATCH: a match's kickoff spots (the game's PrimaryStarts and NextSpawnIndex, static analysis MR-4): one random
+	// order of the 5 kickoff spots per match (InitField's RandomizeSpawnPoints), a copy per team (orange's mirrored;
+	// the uneven-teams adjustment changes the short team's copy), stepped by one each kickoff. Saved in snapshots.
+	struct KickoffSequence {
+		std::array<uint8_t, 5> order[2] = { { 0, 1, 2, 3, 4 }, { 0, 1, 2, 3, 4 } }; // CAR_SPAWN_LOCATIONS indices, per team
+		uint8_t next = 0;      // the next kickoff's index into the order (NextSpawnIndex)
+		uint16_t kickoffs = 0; // kickoffs since the match started (the uneven-teams adjustment skips the first)
+		uint8_t teamSize = 0;  // the match's team size (the playlist's MaxTeamSize; it grows to the larger team)
+	};
+	KickoffSequence kickoffSequence;
+
+	// RL PATCH: demolished cars aren't respawned while set (the game after a goal: PostGoalScored, until the kickoff
+	// resets every car; static analysis MR-6). A match server sets it. Saved in snapshots and the network state
+	bool respawnsHeld = false;
+
+	// RL PATCH: the goal explosion's knockback (the ball's ExplosionComponent_X, static analysis MR-6): a wave from where
+	// the ball scored, its front at 10000 uu/s up to 3000 uu; each car its front reaches (not demolished) gets one
+	// velocity change of 5000 x (1 - front/3000)^0.1 away from a point 500 uu behind the ball (into the goal) and 500 uu
+	// below it, no spin. Saved in snapshots and the network state
+	struct GoalExplosion {
+		bool active = false;
+		Vec origin;            // the ball's location at the goal
+		float goalDir = 0;     // the goal's side: +1 at +y, -1 at -y
+		float lifeTime = 0;    // game time since it went off (s)
+		std::vector<uint32_t> hitCars; // the cars it has pushed (DamagedActors: once each)
+	};
+	GoalExplosion goalExplosion;
+
 	const CarSet& GetCars() { return _cars; }
 	const std::vector<BoostPad*>& GetBoostPads() { return _boostPads; }
 
@@ -152,6 +180,17 @@ public:
 
 	void ResetToRandomKickoff(int seed = -1);
 
+	// RL PATCH: a new match's kickoff order, shuffled from `seed` (every platform the same); teamSize: the match's
+	// team size (the playlist's MaxTeamSize, 0: the larger team's)
+	void StartKickoffSequence(int seed, int teamSize = 0);
+	// RL PATCH: the match's next kickoff (as the game's): car k of each team (in ID order) at order[(next + k) % 5];
+	// from the second kickoff on, a team with fewer cars gets the most central spot of the other team's spots for its
+	// last car (bUseDisadvantageSpawnAdjustment); then the index steps
+	void ResetToNextKickoff();
+	// RL PATCH: the current kickoff again (a player joined during its countdown: the others keep their spots, the new
+	// car takes the next free one)
+	void RedoKickoff();
+
 	// Returns true if the ball is probably going in, does not account for wall or ceiling bounces
 	// NOTE: Purposefully overestimates, just like the real RL's shot prediction
 	// To check which goal it will score in, use the ball's velocity
@@ -208,6 +247,11 @@ public:
 	DropshotTilesState GetDropshotTilesState() const { return _dropshotTilesState; };
 
 	// RL PATCH: Bullet's persistent contact points, part of snapshots (see Arena.cpp)
+	// RL PATCH: cars at the kickoff spots: car k of team t at orders[t][(first + k) % spots] (beyond the spots, the
+	// respawn spots), the ball at the centre, pads reset
+	void _ResetToKickoff(const std::array<uint8_t, 5> orders[2], int first, std::minstd_rand0* randEngine);
+	// RL PATCH: one tick of the goal explosion's wave (before the physics step)
+	void _UpdateGoalExplosion();
 	void _SerializeContacts(DataStreamOut& out);
 	void _DeserializeContacts(DataStreamIn& in);
 	void SetDropshotTilesState(const DropshotTilesState& tilesState);
@@ -220,5 +264,9 @@ private:
 	// Making this private because horrible memory overflows can happen if you changed it
 	ArenaConfig _config;
 };
+
+// RL PATCH: the goal explosion's wave as bytes (snapshots, the network state)
+void _WriteGoalExplosion(DataStreamOut& out, const Arena::GoalExplosion& ex);
+void _ReadGoalExplosion(DataStreamIn& in, Arena::GoalExplosion& ex);
 
 RS_NS_END

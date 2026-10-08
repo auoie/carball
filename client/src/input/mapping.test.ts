@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { NO_CONTROLS } from "../engine/world";
 import { type Bindings, DEFAULT_BINDINGS, inputName, keyName } from "./bindings";
-import { AirPitchSafety, type InputSnapshot, axisDeadzone, readControls, readHeldActions, readLook } from "./mapping";
+import { AirPitchSafety, ButtonLatch, type InputSnapshot, axisDeadzone, readControls, readHeldActions, readLook } from "./mapping";
 
 const DZ = 0.2; // the game's default controller deadzone
 const keys = (...codes: string[]): InputSnapshot => ({ keys: new Set(codes), mouseButtons: new Set(), gamepad: null });
@@ -185,3 +185,39 @@ describe("input names", () => {
     expect(inputName(null)).toBe("—");
   });
 });
+
+describe("several inputs on one action (controls audit C-4)", () => {
+  const withPad = (codes: string[], buttons: Record<number, number>): InputSnapshot => ({
+    keys: new Set(codes),
+    mouseButtons: new Set(),
+    gamepad: { axes: [0, 0, 0, 0], buttons: Array.from({ length: 17 }, (_, i) => buttons[i] ?? 0) },
+  });
+
+  it("sums the axes of every input, then clamps the control", () => {
+    // W (throttle 1) and RT at 0.6 (throttle, after the trigger deadzone) against LT at 0.8 (reverse); taking the
+    // larger of W and RT instead would give 1 - LT
+    const trigger = (v: number) => axisDeadzone(v, 0.1);
+    expect(controls(withPad(["KeyW"], { 7: 0.6, 6: 0.8 })).throttle).toBeCloseTo(1 + trigger(0.6) - trigger(0.8), 6);
+    expect(controls(withPad(["KeyW"], { 7: 1 })).throttle).toBe(1);
+  });
+
+  it("buttons follow the last press or release: releasing one of two inputs releases the command", () => {
+    const latch = new ButtonLatch();
+    const read = (codes: string[], buttons: Record<number, number>) => readControls(withPad(codes, buttons), DEFAULT_BINDINGS, DZ, latch);
+    expect(read(["Space"], {}).jump).toBe(true);
+    expect(read(["Space"], { 0: 1 }).jump).toBe(true); // A too
+    expect(read(["Space"], {}).jump).toBe(false); // A let go: ToggleJump(false), Space still down
+    expect(read(["Space"], {}).jump).toBe(false);
+    expect(read([], {}).jump).toBe(false);
+    expect(read(["Space"], {}).jump).toBe(true);
+    // The alternative jump (left mouse) is the same command
+    const latch2 = new ButtonLatch();
+    const both2 = (codes: string[], buttons: number[]) =>
+      readControls({ keys: new Set(codes), mouseButtons: new Set(buttons), gamepad: null }, DEFAULT_BINDINGS, DZ, latch2);
+    expect(both2(["Space"], [0]).jump).toBe(true);
+    expect(both2(["Space"], []).jump).toBe(false);
+    // Without a latch: held while any input is
+    expect(controls(withPad(["Space"], {})).jump).toBe(true);
+  });
+});
+

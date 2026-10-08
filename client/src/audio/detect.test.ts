@@ -178,6 +178,7 @@ const car = (pos: Vec3, vel: Vec3, extra: Partial<CarState> = {}): CarState => (
   demoRespawnTimer: 0,
   spawnSelection: { side: null, index: 0, locked: null },
   flipResets: 0,
+  spawnCount: 0,
   ...extra,
 });
 const ball: BodyState = { pos: vec3(0, 0, 93), vel: ZERO, angVel: ZERO, rot: IDENTITY_ROT };

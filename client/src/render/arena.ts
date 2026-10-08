@@ -39,9 +39,9 @@ export const ARENA = {
   sideX: 4096,
   backY: 5120,
   height: 2048,
-  /** The goal posts; the goals' own floors (the mesh's) start this far behind the goal line */
+  /** The goal posts; the goals' own floors (the mesh's: the ramp up to the back) start this far behind the goal line */
   goalHalfWidth: 893,
-  goalFloorStart: 107,
+  goalFloorStart: 234.67,
   cornerTangentY: 3584,
   cornerTangentX: 2560,
 };

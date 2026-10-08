@@ -14,14 +14,16 @@
 //! dodge_torque: the dodge component's replicated DodgeTorque (as decoded: /100). *_since: seconds since that
 //! component became active (same halfway estimate), empty when it is not active.
 //!
-//! Usage: replay_extract [--demos DEMOS.csv] [--pickups PICKUPS.csv] OUT.csv REPLAY [REPLAY...]
+//! Usage: replay_extract [--demos DEMOS.csv] [--pickups PICKUPS.csv] [--goals GOALS.csv] OUT.csv REPLAY [REPLAY...]
 //!
 //! --demos: one row per replicated demolition (Car_TA ReplicatedDemolish, _CustomFX / GoalExplosion, Extended):
 //! replay,frame,time,attacker,victim,avx,avy,avz,vvx,vvy,vvz (the actors and their velocities as replicated).
 //! --pickups: one row per replicated boost pad pickup state (VehiclePickup_TA (New)ReplicatedPickupData):
 //! replay,frame,time,pad,instigator,picked_up (pad actor; instigator car actor or -1; the replicated value).
+//! --goals: one row per goal (the header's Goals): replay,frame,time,scorer,team,goal_explosion (the scorer's loadout
+//! goal explosion product id for their team: a cosmetic that can carry its own explosion physics).
 
-use boxcars::{Attribute, ParserBuilder};
+use boxcars::{Attribute, HeaderProp, ParserBuilder};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{BufWriter, Write};
@@ -80,17 +82,26 @@ impl Default for CarInputs {
 struct Player {
     bodies: Option<(u32, u32)>, // blue, orange loadout bodies
     steer_sensitivity: Option<f32>,
+    goal_explosions: Option<(Option<u32>, Option<u32>)>, // blue, orange loadout goal explosions (product ids)
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args: Vec<String> = std::env::args().collect();
     let mut demos = None;
     let mut pickups = None;
+    let mut goals = None;
     loop {
         if args.len() > 2 && args[1] == "--demos" {
             let mut d = BufWriter::new(fs::File::create(&args[2])?);
             writeln!(d, "replay,frame,time,attacker,victim,avx,avy,avz,vvx,vvy,vvz")?;
             demos = Some(d);
+            args.drain(1..3);
+        } else if args.len() > 2 && args[1] == "--goals" {
+            // One row per goal: the scorer (the header's Goals) and their loadout's goal explosion (a cosmetic that
+            // carries its own explosion physics: notes/validation.md finding 46)
+            let mut g = BufWriter::new(fs::File::create(&args[2])?);
+            writeln!(g, "replay,frame,time,scorer,team,goal_explosion")?;
+            goals = Some(g);
             args.drain(1..3);
         } else if args.len() > 2 && args[1] == "--pickups" {
             let mut p = BufWriter::new(fs::File::create(&args[2])?);
@@ -130,6 +141,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut owner: HashMap<i32, i32> = HashMap::new(); // car component -> car actor
         let mut car_pri: HashMap<i32, i32> = HashMap::new(); // car actor -> PRI actor
         let mut players: HashMap<i32, Player> = HashMap::new(); // PRI actor -> loadout and preferences
+        let mut names: HashMap<i32, String> = HashMap::new(); // PRI actor -> player name
 
         let mut prev_time = frames.first().map(|f| f.time).unwrap_or(0.0);
         for (fi, frame) in frames.iter().enumerate() {
@@ -182,7 +194,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         car_pri.insert(actor, aa.actor.0);
                     }
                     (Attribute::TeamLoadout(l), "TAGame.PRI_TA:ClientLoadouts") => {
-                        players.entry(actor).or_default().bodies = Some((l.blue.body, l.orange.body))
+                        let p = players.entry(actor).or_default();
+                        p.bodies = Some((l.blue.body, l.orange.body));
+                        p.goal_explosions = Some((l.blue.goal_explosion, l.orange.goal_explosion));
+                    }
+                    (Attribute::String(s), "Engine.PlayerReplicationInfo:PlayerName") => {
+                        names.insert(actor, s.clone());
                     }
                     (Attribute::Float(s), "TAGame.PRI_TA:SteeringSensitivity") => {
                         players.entry(actor).or_default().steer_sensitivity = Some(*s)
@@ -308,6 +325,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             since(inp.jump, inp.jump_start), since(inp.double_jump, inp.double_jump_start),
                             since(inp.dodge, inp.dodge_start)
                         )?;
+                }
+            }
+        }
+
+        if let Some(g) = goals.as_mut() {
+            for (key, prop) in &replay.properties {
+                let HeaderProp::Array(list) = prop else { continue };
+                if key != "Goals" {
+                    continue;
+                }
+                for goal in list {
+                    let field = |n: &str| goal.iter().find(|(k, _)| k == n).map(|(_, v)| v);
+                    let frame = match field("frame") {
+                        Some(HeaderProp::Int(f)) => *f,
+                        _ => continue,
+                    };
+                    let scorer = match field("PlayerName") {
+                        Some(HeaderProp::Str(s)) => s.clone(),
+                        _ => String::new(),
+                    };
+                    let team = match field("PlayerTeam") {
+                        Some(HeaderProp::Int(t)) => *t,
+                        _ => -1,
+                    };
+                    let explosion = names
+                        .iter()
+                        .find(|(_, n)| **n == scorer)
+                        .and_then(|(pri, _)| players.get(pri)?.goal_explosions)
+                        .and_then(|(blue, orange)| if team == 1 { orange } else { blue })
+                        .map(|id| id.to_string())
+                        .unwrap_or_default();
+                    let time = frames.get(frame as usize).map_or(0.0, |f| f.time);
+                    writeln!(g, "{name},{frame},{time},{},{team},{explosion}", scorer.replace(',', " "))?;
                 }
             }
         }

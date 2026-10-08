@@ -138,8 +138,8 @@ From the static session's netcode audit (notes/netcode-audit.md), 2026-10-08:
   (predicted − corrected) to a per-body offset that the body (and the camera following it) is drawn with, decaying
   each frame by min(dt × 4, 1) of itself for the position and × 5 for the rotation, snapping to 0 below 0.1 uu² and
   0.001 rad (`RBActor_TA.NetworkSyncSettings`). The interpolation's previous tick moves with the correction, so the
-  drawn pose doesn't jump. Teleports (over 500 uu: kickoffs, respawns), demolitions, resyncs and world reloads aren't
-  smoothed. `client/src/game/syncError.ts` (unit test: a 100 uu correction moves at most 6.7 uu in the first frame at
+  drawn pose doesn't jump. Only new placements aren't smoothed (kickoffs, respawns: a body's spawn counter changed,
+  see the review below), nor demolitions. `client/src/game/syncError.ts` (unit test: a 100 uu correction moves at most 6.7 uu in the first frame at
   60 fps, 1.6 uu are left after 60 frames, none after 83).
 - **Hitch reset (N-2).** After a frame over 0.1 s the client sends `ResetInputBuffer` 2 s later (2 s after the last
   of several), and the server's jitter buffer starts over from its initial estimate (mean 0.016 s, variance 0, size
@@ -153,4 +153,24 @@ From the static session's netcode audit (notes/netcode-audit.md), 2026-10-08:
   (`NetState::Read` reports them).
 - Not done: server-confirmed demolitions (N-4, the game's clients predict only a bump), resending until received
   rather than consumed (N-9), correcting from an ack older than the history (N-10).
+
+The static session's review of these fixes (notes/netcode-audit.md NR-1 to NR-9), all done 2026-10-08:
+- **NR-1, NR-7 (rotation).** A correction turns the interpolation's previous tick too (prev′ = post · pre⁻¹ · prev,
+  the game's OldRBState shift), and the rotation error composes on the right (E′ = E · pre · post⁻¹, the game's
+  `FUN_140eabb70`): two corrections in a row keep the drawn rotation exactly (unit test).
+- **NR-2 (teleports).** The "moved over 500 uu" guess is gone: each car and the ball carry a spawn counter (engine
+  patch 74; network state format 6, protocol 6), and only a correction that changes it is drawn at once. A strong
+  hit the client didn't predict now glides like any correction; a kickoff under 500 uu no longer does.
+- **NR-3 (camera).** The camera follows the drawn car: its rotation error too, not only its position.
+- **NR-4 (hidden tab).** At most 120 update parts wait for the next frame (about a second); the rest are dropped
+  instead of replayed all at once on return.
+- **NR-5, NR-8 (resyncs, reloads, predicted respawns).** A resync and a world reload are smoothed like any correction
+  and update the interpolation (before: they snapped and drew one stale tick); a respawn or reset predicted by the
+  client isn't interpolated across the field for a tick.
+- **NR-6 (older and late parts).** An older update's parts and a part arriving after its update was applied still
+  apply (their bodies may have nothing newer); duplicates are dropped. The predictor keeps every applied server state
+  in its history and puts it back when an older correction replays through its frame, so the older one can't undo
+  it (unit test: two updates delivered in either order give the same world). A remote car's input basis only moves
+  forward in time.
+- **NR-9.** The server resets a client's jitter buffer at most once a second.
 

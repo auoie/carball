@@ -21,12 +21,16 @@
   (GA-15/16, patches 65/66), the arena as the game's 16 pieces (56), the GJK wheel-ray cast (55), Bullet 2.82's
   manifold solve order, edge info and tree quantization (69–71), and the current game's respawn spot selection
   (64: steer left/right while demolished, locked 0.5 s before the respawn; deterministic, in snapshots and the
-  network state, format 5) plus the flip reset counter (68). `live_validate` fixes: the "2.71 uu/s teleport artifact"
+  network state) plus the flip reset counter (68). `live_validate` fixes: the "2.71 uu/s teleport artifact"
   was stale wheel normals after a placement (finding 43).
 - **Netcode (today, from the static session's audit `notes/netcode-audit.md`):** corrections smoothed for drawing
   (`client/src/game/syncError.ts`), hitch reset of the server's jitter buffer (protocol `ResetInputBuffer`), lost
-  update parts no longer drop the whole update, remote cars' input basis only from the cars in an update; see
-  `notes/netcode.md` (end). Client: boost pad warm-up (last second pulsing), respawn picker in the HUD, flip reset
+  update parts no longer drop the whole update, remote cars' input basis only from the cars in an update; then the
+  static session's review of those (NR-1 to NR-9, all done): rotation corrections shift the previous tick and compose
+  as the game's, a spawn counter per body (engine patch 74, network state format 6, protocol 6) replaces the 500 uu
+  teleport guess, the camera follows the smoothed rotation, resyncs and reloads are smoothed, older and late update
+  parts apply (the predictor keeps applied server states in its history), hidden-tab queue capped, server reset rate
+  limit; see `notes/netcode.md` (end). Client: boost pad warm-up (last second pulsing), respawn picker in the HUD, flip reset
   toast from the engine's counter, gamepad camera swivel direction fixed (C-1).
 - **Driving the game:** `tools/physlog/check_game.sh` (heartbeat + read-only screenshot to `out/live/screens/`; look
   at the screenshot when the game doesn't answer or isn't in freeplay). Never load maps from scripts (the game drops
@@ -38,25 +42,30 @@
   scenarios, tests, client and server. Batch 2: B6, B7, B9, B10 adopted; B11 (car–car through an AABB tree) worse as
   tried: the static session says the body order is probably the issue (2.82: body0 = the car added to the world
   first, by broadphase handle; try both orders); B8 (internal-edge choice) after the arena rework below.
-- **Arena (finding 41, 44):** our generated arena is now the game's 16 pieces (`scripts/arena_gen.py` writes one
-  `.cmf` each; the engine loads a folder in name order). Left on our mesh, and not fixable without the game's
-  triangulation and authored order (the static session's S1 rebuilt both from the game's data, local only, and gets
-  `ball_curves` and `walls` exact): `ball_curves` ticks 83/240, `walls` tick 243 (14.4 uu/s). Possible but not done:
-  our pieces' overlap bands (side floor / corner y 3373–3753, goal / corner x 2437–2688), the game's diagonals per
-  quad (a table from the game's mesh was approved by the user), the goal halves as bodies offset ±5120 uu.
+- **Arena (findings 41, 44, 45):** the generated arena is now the game's 16 meshes triangle for triangle: our own
+  vertices (`scripts/arena_layout.py`: rules plus a few constants measured on the game's mesh) and the game's
+  triangles in its cooked order (`scripts/arena_topology.json`, indices only; re-derive with
+  `scripts/arena_topology_derive.py out/arena_local/cooked` after changing a pool: it needs the local extraction,
+  `out/bsim/agents/S1/tools/cooked.py out/arena_local/cooked --local`). The goal halves are written in their own
+  frame with a body offset (`.cmf` trailer, engine patch 73). `ball_curves` and `walls` now match (0.04 / 0.20 uu/s).
+  Left approximate: the skirts below the floor and above the ceiling (hidden), the post-base ring and mouth-arc ends
+  (≤ 0.40 uu). A Python venv with numpy and scipy is at `.venv` (git-ignored) for fitting.
 - **Open:**
   - test the respawn spot selection in an offline exhibition match against bots (freeplay respawns cars its own way:
     the static session's BT-2), which only the user can start (the z 83 rows after a respawn are the body asset
     loading, not a rule: finding 43);
-  - GA-5 (pitch lock after a dodge ends by landing), GA-6 (spawn offset per body: needs the user's garage sitting);
-  - controls audit (`notes/controls-audit.md`): C-2 DodgeForward as its own input byte (protocol, engine, client),
-    C-3 the live default PC layout is "Modern" (a product decision for the user), C-5 air roll on LT, C-6 sub-frame
-    taps;
+  - GA-6 (spawn offset per body: needs the user's garage sitting) (GA-5, the pitch lock after a wavedash: patch 79,
+    confirmed live, finding 47);
+  - controls audit (`notes/controls-audit.md`): C-5 air roll on LT, C-6 sub-frame taps (done: C-2 DodgeForward as
+    its own byte, patch 78; C-3 the Modern layout as the default, the user's choice; C-4 one binding per action);
   - netcode N-4 (server-confirmed demos), N-9, N-10; the car state's size on the wire;
-  - match rules (`notes/match-rules-audit.md`; MR-2, the double goal, is fixed: patch 72): no match clock, overtime
-    or end yet (MR-1), match start (MR-3), the kickoff spot order shuffled once per match and stepped per kickoff
-    (MR-4; ours reshuffles every kickoff), uneven-team kickoffs (MR-5), goal knockback and post-goal timing (MR-6),
-    disconnect rules (MR-7);
+  - match rules (`notes/match-rules-audit.md`): done MR-1 (clock, 0:00 ball-on-ground, overtime, end and a new
+    match: `server/README.md`), MR-2 (one goal per round: patch 72), MR-4 and MR-5 (the kickoff order per match and
+    uneven teams: patch 75; the live uneven-teams check is in the user's sitting, `notes/live-sitting.md`), MR-3 (the
+    3 s warm-up before a match's first countdown, a joiner in a countdown on a kickoff spot), MR-6 (the
+    demolished wait for the kickoff after a goal: patch 76; the goal explosion's knockback: patch 77, direction and
+    timing confirmed by replays, its size not settled by them: finding 46), MR-7 in part (a team left empty
+    forfeits); open: slow motion and the goal replay, forfeit votes;
   - camera (`notes/camera-update-audit.md`): free look (CAM-1) and the live Modern camera preset (CAM-3/4: a
     decision like the keyboard layout), respawn cameras (CAM-6); CAM-2/7/8 are fixed;
   - `steer` once per other car body (finding 21), `HandlingPresetXOffset`.

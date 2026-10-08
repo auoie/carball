@@ -30,7 +30,7 @@ cargo clippy --all-targets -- -D warnings
 | `src/engine.rs` | safe wrapper around the engine's C API |
 | `src/protocol.rs` | messages; byte vectors shared with the client (`protocol/vectors.json`) |
 | `src/input_buffer.rs` | per-player input buffer (`ServerConsume`) and jitter buffer, as the game does them |
-| `src/game.rs` | the match: joins and leaves, inputs, goals and kickoffs, updates (rates, splitting into datagrams) |
+| `src/game.rs` | the match: joins and leaves, inputs, the match flow (below), updates (rates, splitting into datagrams) |
 | `src/game_loop.rs` | the 120 Hz game thread |
 | `src/net.rs` | WebTransport sessions, development identity and info endpoint |
 | `tests/end_to_end.rs` | a client connects over WebTransport, drives, and checks acks, ping and the updates |
@@ -38,3 +38,23 @@ cargo clippy --all-targets -- -D warnings
 When a player leaves, the server logs how many of their input frames it had to repeat (buffer empty) or skip
 (catching up). Each such event shifts the server's timeline for that player by a tick, which the client sees as one
 misprediction.
+
+## The match
+As the game's competitive match (`notes/match-rules-audit.md`, from the live scripts):
+- The first player starts a match: scores 0, the clock at 5:00, a new random order of the five kickoff spots (one per
+  match, stepped by one each kickoff; uneven teams get the game's adjustment: engine patch 75).
+- Kickoff: a 4 s countdown (cars frozen; the match's first kickoff waits 3 s more, `WarmupTime`), then play. A
+  player joining in a countdown takes a kickoff spot (the others stay on theirs); later joiners start at a respawn
+  spot. The clock runs from the first touch on the ball, or 5 s after
+  "go" (`BallHasBeenHitStartDelay`), and stops after a goal.
+- A goal: 3 s, then the next kickoff (one goal per round: the ball explodes); demolished cars wait for the kickoff.
+- 0:00: the round ends when the ball touches the ground (a world contact facing up, or the ball asleep); goals
+  still count until then. Then a different score ends the match; a tie goes to overtime: a kickoff, the clock counting
+  up, the first goal wins.
+- The end: the winner shown, the cars frozen for the podium (8.3 s), then a new match. A team left without
+  players forfeits: the other team wins at once. When everyone has left, the next player starts a new match.
+- The clients get the match state (`0x84 Match`: phase, clock, scores, winner) on each change.
+The goal explosion pushes the cars near the goal away (engine patch 77). Not yet: waiting for reserved players
+before the first kickoff (a drop-in server has none), the post-goal slow motion and replay, forfeit votes.
+`--team-size N` (default 3) is the playlist's team size: the uneven-teams kickoff adjustment uses it.
+

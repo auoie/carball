@@ -36,4 +36,7 @@ namespace RocketSim {
 	RocketSimStage GetStage();
 
 	std::vector<btBvhTriangleMeshShape*>& GetArenaCollisionShapes(GameMode gameMode);
+
+	// RL PATCH: each arena mesh's body position (Bullet units; CollisionMeshFile::offset), in the shapes' order
+	std::vector<btVector3>& GetArenaCollisionOffsets(GameMode gameMode);
 }

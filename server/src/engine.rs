@@ -22,6 +22,9 @@ pub struct Controls {
     pub boost: u8,
     pub handbrake: u8,
     pub air_pitch_safety: u8,
+    /// The dodge's forward input, as its own byte (the game's q(-pitch), C-2), if `has_dodge_forward`
+    pub dodge_forward: f32,
+    pub has_dodge_forward: u8,
 }
 
 unsafe extern "C" {
@@ -34,8 +37,15 @@ unsafe extern "C" {
     fn rl_set_car_preferences(arena: *mut RLArena, car_id: u32, dodge: f32, steer: f32, air: f32);
     fn rl_step(arena: *mut RLArena, ticks: c_int);
     fn rl_reset_kickoff(arena: *mut RLArena, seed: c_int);
+    fn rl_start_match(arena: *mut RLArena, seed: c_int, team_size: c_int);
+    fn rl_next_kickoff(arena: *mut RLArena);
+    fn rl_redo_kickoff(arena: *mut RLArena);
+    fn rl_last_ball_touch_tick(arena: *mut RLArena) -> i64;
+    fn rl_ball_on_ground(arena: *mut RLArena) -> c_int;
     fn rl_reset_ball(arena: *mut RLArena);
+    fn rl_set_ball(arena: *mut RLArena, pos: *const f32, vel: *const f32);
     fn rl_set_kickoff_countdown(arena: *mut RLArena, ticks: u32);
+    fn rl_set_respawns_held(arena: *mut RLArena, held: c_int);
     fn rl_kickoff_countdown(arena: *const RLArena) -> u32;
     fn rl_tick_count(arena: *const RLArena) -> u64;
     fn rl_is_ball_scored(arena: *mut RLArena) -> c_int;
@@ -112,15 +122,59 @@ impl Arena {
         unsafe { rl_reset_kickoff(self.ptr(), seed) }
     }
 
+    /// A new match: its kickoff spot order, shuffled once from `seed` (the game's `RandomizeSpawnPoints`);
+    /// `team_size`: the playlist's (the uneven-teams kickoff adjustment's window)
+    pub fn start_match(&mut self, seed: i32, team_size: u8) {
+        // SAFETY: valid arena
+        unsafe { rl_start_match(self.ptr(), seed, c_int::from(team_size)) }
+    }
+
+    /// The match's next kickoff (its spot order stepped; uneven teams as the game's)
+    pub fn next_kickoff(&mut self) {
+        // SAFETY: valid arena
+        unsafe { rl_next_kickoff(self.ptr()) }
+    }
+
+    /// The current kickoff again: a car that joined during its countdown takes the next free spot
+    pub fn redo_kickoff(&mut self) {
+        // SAFETY: valid arena
+        unsafe { rl_redo_kickoff(self.ptr()) }
+    }
+
+    /// The tick of the latest car touch on the ball (a kickoff clears them)
+    pub fn last_ball_touch_tick(&mut self) -> Option<u64> {
+        // SAFETY: valid arena
+        let tick = unsafe { rl_last_ball_touch_tick(self.ptr()) };
+        u64::try_from(tick).ok()
+    }
+
+    /// The ball rests on the ground (a world contact facing up, or asleep): ends a round at 0:00
+    pub fn ball_on_ground(&mut self) -> bool {
+        // SAFETY: valid arena
+        unsafe { rl_ball_on_ground(self.ptr()) != 0 }
+    }
+
     /// Kickoff countdown in ticks: cars get no input while it runs (part of the simulated state)
     pub fn set_kickoff_countdown(&mut self, ticks: u32) {
         // SAFETY: valid arena
         unsafe { rl_set_kickoff_countdown(self.ptr(), ticks) }
     }
 
+    /// While set, demolished cars aren't respawned (after a goal, until the kickoff; part of the simulated state)
+    pub fn set_respawns_held(&mut self, held: bool) {
+        // SAFETY: valid arena
+        unsafe { rl_set_respawns_held(self.ptr(), c_int::from(held)) }
+    }
+
     pub fn kickoff_countdown(&self) -> u32 {
         // SAFETY: valid arena
         unsafe { rl_kickoff_countdown(self.ptr()) }
+    }
+
+    /// The ball at `pos` moving at `vel` (uu, uu/s)
+    pub fn set_ball(&mut self, pos: [f32; 3], vel: [f32; 3]) {
+        // SAFETY: valid arena; both arrays hold 3 floats
+        unsafe { rl_set_ball(self.ptr(), pos.as_ptr(), vel.as_ptr()) }
     }
 
     pub fn reset_ball(&mut self) {
@@ -259,7 +313,7 @@ pub(crate) mod tests {
         assert!(moved > 400.0, "moved {moved}");
         assert_eq!(arena.tick_count(), 120);
         let state = arena.write_net_state(true, &[car], true);
-        assert!(state.len() > 100 && state[0] == 5); // the network state format version
+        assert!(state.len() > 100 && state[0] == 7); // the network state format version
         assert!(arena.save_state().len() > 1000);
     }
 }

@@ -19,6 +19,13 @@ struct CarControls {
 	// VehicleInput.DodgeForward from before the safety zeroes VehicleInput.Pitch).
 	bool airPitchSafety;
 
+	// RL PATCH: the dodge's forward input, when the caller has it (VehicleInput.DodgeForward: -Pitch from before the air
+	// pitch safety, made a byte on its own, so q(-p) where the engine would have -q(p): the byte scales by 127 up and by
+	// 128 down; static analysis C-2). Read by the dodge deadzone, the dodge's direction and the flip cancel. Without it,
+	// -pitch
+	float dodgeForward;
+	bool hasDodgeForward;
+
 	// Maybe someday...
 	// bool useItem;
 
@@ -40,6 +47,6 @@ struct CarControls {
 #define CAR_CONTROLS_SERIALIZATION_FIELDS(name) \
 name.throttle, name.steer, \
 name.pitch, name.yaw, name.roll, \
-name.boost, name.jump, name.handbrake, name.airPitchSafety
+name.boost, name.jump, name.handbrake, name.airPitchSafety, name.dodgeForward, name.hasDodgeForward
 
 RS_NS_END

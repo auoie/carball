@@ -11,6 +11,11 @@
 //   physlog_run <scenario> [bot]   play a scripted scenario (data/physlog/scenarios/<scenario>.txt) and record it;
 //                            with `bot`, on the car spawned with physlog_spawn (the player's car is parked aside)
 //   physlog_spawn <body> [bot], physlog_removebots, physlog_cars   a second car for two-car scenarios or other bodies
+//   physlog_removebot <team>   remove one bot of that team (uneven teams in an offline match)
+//   physlog_products [slot]    every car body product (id, label, package, unlocked, owned) to data/physlog/products.tsv;
+//                            with a slot (a word of its label, e.g. goal for Goal Explosion), that slot's products to
+//                            data/physlog/products_<slot>.tsv
+//   physlog_vsim               the player's car's VehicleSim curves (steer, handbrake steer, drive torque) to the log
 //   physlog_body <product>   drive another car body (BakkesMod's item mod, offline only): e.g. 23 Octane, 403 Dominus,
 //                            24 Paladin (Plank), 22 Breakout, 31 Venom (Hybrid), 30 Merc; `physlog_body restore` puts
 //                            the player's own item-mod settings back
@@ -49,8 +54,10 @@
 #include "bakkesmod/wrappers/GameObject/CarWrapper.h"
 #include "bakkesmod/wrappers/AIControllerWrapper.h"
 #include "bakkesmod/wrappers/MenuStackWrapper.h"
+#include "bakkesmod/wrappers/items/ItemsWrapper.h"
 #include "utils/parser.h"
 
+#include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -58,6 +65,7 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -249,8 +257,9 @@ void PhysLog::onLoad() {
 			std::to_string((int)gameWrapper->IsInFreeplay()) + " online " + std::to_string((int)gameWrapper->IsInOnlineGame()) +
 			" paused " + std::to_string((int)gameWrapper->IsPaused()) + " menus [" + menus + "]");
 	}, "Reply with the game's state (heartbeat)", PERMISSION_ALL);
-	cvarManager->registerNotifier("physlog_removebots", [this](std::vector<std::string>) {
+	cvarManager->registerNotifier("physlog_removebots", [this](std::vector<std::string> args) {
 		if (!Allowed()) return;
+		if (args.size() > 1) { cvarManager->executeCommand("physlog_removebot " + args[1], false); return; } // one bot of a team
 		ServerWrapper server = gameWrapper->GetGameEventAsServer();
 		if (server.IsNull()) return;
 		ArrayWrapper<CarWrapper> cars = server.GetCars();
@@ -263,7 +272,102 @@ void PhysLog::onLoad() {
 		}
 		cvarManager->log("physlog: removed " + std::to_string(removed) + " bots");
 	}, "Remove the bots (offline)", PERMISSION_ALL);
-	cvarManager->registerNotifier("physlog_cars", [this](std::vector<std::string>) {
+	cvarManager->registerNotifier("physlog_removebot", [this](std::vector<std::string> args) {
+		if (!Allowed()) return;
+		ServerWrapper server = gameWrapper->GetGameEventAsServer();
+		if (server.IsNull() || args.size() < 2) { cvarManager->log("usage: physlog_removebot <team 0|1>"); return; }
+		int team = std::stoi(args[1]);
+		ArrayWrapper<CarWrapper> cars = server.GetCars();
+		for (int i = cars.Count() - 1; i >= 0; i--) {
+			CarWrapper c = cars.Get(i);
+			if (c.IsNull() || c.GetTeamNum2() != team) continue;
+			AIControllerWrapper ai = c.GetAIController();
+			if (ai.IsNull()) continue;
+			server.RemovePlayer(ai);
+			cvarManager->log("physlog: removed a bot of team " + args[1]);
+			return;
+		}
+		cvarManager->log("physlog: no bot on team " + args[1]);
+	}, "Remove one bot of a team (offline)", PERMISSION_ALL);
+	// Read-only: the products the game knows, for picking car bodies (which ones this profile has)
+	cvarManager->registerNotifier("physlog_products", [this](std::vector<std::string> args) {
+		if (gameWrapper->IsInOnlineGame()) return;
+		ItemsWrapper items = gameWrapper->GetItemsWrapper();
+		if (items.IsNull()) { cvarManager->log("physlog: no items wrapper"); return; }
+		std::set<int> unlocked, owned;
+		ArrayWrapper<ProductWrapper> cached = items.GetCachedUnlockedProducts();
+		for (int i = 0; i < cached.Count(); i++) {
+			ProductWrapper p = cached.Get(i);
+			if (!p.IsNull()) unlocked.insert(p.GetID());
+		}
+		ArrayWrapper<OnlineProductWrapper> online = items.GetOwnedProducts();
+		for (int i = 0; i < online.Count(); i++) {
+			OnlineProductWrapper p = online.Get(i);
+			if (!p.IsNull()) owned.insert(p.GetProductID());
+		}
+		auto lower = [](std::string s) { for (char& ch : s) ch = (char)std::tolower((unsigned char)ch); return s; };
+		// (a slot asked for: its products, matched on a word of the slot's label; else the car bodies)
+		std::string want = args.size() > 1 ? lower(args[1]) : "";
+		std::filesystem::create_directories(Folder());
+		std::ofstream f(Folder() / (want.empty() ? "products.tsv" : "products_" + want + ".tsv"));
+		f << "id\tslot\tlabel\tpackage\tunlocked\towned\n";
+		ArrayWrapper<ProductWrapper> all = items.GetAllProducts();
+		int bodies = 0, have = 0;
+		std::string list;
+		for (int i = 0; i < all.Count(); i++) {
+			ProductWrapper p = all.Get(i);
+			if (p.IsNull()) continue;
+			// Car bodies: the "Body" slot, or a body_<name> asset package
+			UnrealStringWrapper slotLabel = p.GetDisplayLabelSlot();
+			std::string slot = slotLabel.IsNull() ? "" : slotLabel.ToString(), package = p.GetAssetPackageName();
+			if (!want.empty() ? lower(slot).find(want) == std::string::npos
+			                  : (lower(slot) != "body" && lower(package).rfind("body_", 0) != 0)) continue;
+			int id = p.GetID();
+			bool u = unlocked.count(id) > 0, o = owned.count(id) > 0;
+			UnrealStringWrapper label = p.GetLabel();
+			f << id << "\t" << slot << "\t" << (label.IsNull() ? "" : label.ToString()) << "\t" << package
+			  << "\t" << (int)u << "\t" << (int)o << "\n";
+			bodies++;
+			if (u || o) { have++; list += " " + std::to_string(id) + ":" + p.GetAssetPackageName(); }
+		}
+		cvarManager->log("physlog: " + std::to_string(bodies) + (want.empty() ? " bodies, " : " products in slot " + want + ", ")
+			+ std::to_string(have) + " unlocked or owned" + (want.empty() ? ":" + list : ""));
+	}, "Write the car body products (or a slot's: physlog_products <slot>) to data/physlog/products*.tsv (read-only)", PERMISSION_ALL);
+	// Read-only: the VehicleSim curves of the player's car (live layout 2026-10-06: TArrays of 0x1c-byte points,
+	// InVal +0, OutVal +4)
+	cvarManager->registerNotifier("physlog_vsim", [this](std::vector<std::string>) {
+		if (gameWrapper->IsInOnlineGame()) return;
+		CarWrapper car = gameWrapper->GetLocalCar();
+		if (car.IsNull()) return;
+		VehicleSimWrapper vsim = car.GetVehicleSim();
+		if (vsim.IsNull()) return;
+		uintptr_t base = vsim.memory_address;
+		auto curve = [&](const char* name, uintptr_t offset) {
+			uintptr_t data = *reinterpret_cast<uintptr_t*>(base + offset);
+			int count = *reinterpret_cast<int*>(base + offset + 8);
+			std::string line = std::string("physlog: vsim ") + name + " (" + std::to_string(count) + "):";
+			if (data && count > 0 && count <= 64)
+				for (int i = 0; i < count; i++) {
+					float in = *reinterpret_cast<float*>(data + i * 0x1c), outv = *reinterpret_cast<float*>(data + i * 0x1c + 4);
+					char b[64];
+					std::snprintf(b, sizeof b, " (%.4f, %.4f)", in, outv);
+					line += b;
+				}
+			cvarManager->log(line);
+		};
+		cvarManager->log("physlog: vsim body " + std::to_string(car.GetLoadoutBody()) + " flags+0x11c bit0 " +
+			std::to_string(*reinterpret_cast<uint32_t*>(base + 0x11c) & 1));
+		curve("SteerAngleCurve", 0xb0);
+		curve("HandbrakeSteerAngleCurve", 0xf0);
+		curve("DriveTorqueCurve", 0xd0);
+	}, "Log the player's car's VehicleSim curves (read-only)", PERMISSION_ALL);
+	cvarManager->registerNotifier("physlog_cars", [this](std::vector<std::string> args) {
+		// (also `physlog_cars products` / `physlog_cars vsim`: the same as physlog_products / physlog_vsim, for an rcon
+		// whitelist read before those commands existed)
+		if (args.size() > 1 && (args[1] == "products" || args[1] == "vsim")) {
+			cvarManager->executeCommand("physlog_" + args[1], false);
+			return;
+		}
 		ServerWrapper server = gameWrapper->GetGameEventAsServer();
 		if (server.IsNull()) return;
 		ArrayWrapper<CarWrapper> cars = server.GetCars();
@@ -292,7 +396,9 @@ void PhysLog::onLoad() {
 void PhysLog::onUnload() { Close("plugin unloaded"); }
 
 bool PhysLog::Allowed() {
-	return !gameWrapper->IsInOnlineGame() && (gameWrapper->IsInFreeplay() || gameWrapper->IsInCustomTraining());
+	// Offline only: freeplay, custom training, or an offline match (exhibition against bots)
+	return !gameWrapper->IsInOnlineGame() &&
+		(gameWrapper->IsInFreeplay() || gameWrapper->IsInCustomTraining() || gameWrapper->IsInGame());
 }
 
 std::filesystem::path PhysLog::Folder() { return gameWrapper->GetDataFolder() / "physlog"; }

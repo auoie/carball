@@ -1,0 +1,37 @@
+# Static analysis GA-5 (notes/gameside-audit.md): air control ignores pitch while a dodge is active and for 0.3 s after
+# it deactivates, also when landing deactivates it. A wavedash (placed just above the floor, nose up, falling: a
+# forward dodge that lands while active), then a ground jump with pitch up held: the game keeps the nose from pitching
+# until 36 ticks after the landing. RocketSim cleared the lock on landing. Timings picked in our engine so that the
+# landing ends an active dodge, the press after it is a ground jump and the lock covers ~20 air ticks (the pitch
+# differs by half with and without it). (The placement takes a tick: no input on it.)
+ball -3000 -2000 92.75  0 0 0  0 0 0
+car 0 -3000 17  0 90 0  0 0 0  0 0 0  100   # (on the floor first: the game's placement keeps the jump and flip flags)
+wait 60
+car 0 -3000 40  5 90 0  0 0 -300  0 0 0  100
+input 1 0 0 0 0 0 0 0 0
+input 1 0 0 -1 0 0 1 0 0          # (a) z 40 nose up 5: dodge forward, jump 8 ticks later with pitch up
+input 7 0 0 0 0 0 0 0 0
+input 10 0 0 1 0 0 1 0 0
+input 60 0 0 1 0 0 0 0 0
+input 90 0 0 0 0 0 0 0 0
+car 0 -3000 40  5 90 0  0 0 -300  0 0 0  100
+input 1 0 0 0 0 0 0 0 0
+input 1 0 0 -1 0 0 1 0 0          # (b) z 40 nose up 5: dodge forward, jump 10 ticks later with pitch up
+input 9 0 0 0 0 0 0 0 0
+input 10 0 0 1 0 0 1 0 0
+input 60 0 0 1 0 0 0 0 0
+input 90 0 0 0 0 0 0 0 0
+car 0 -3000 40  5 90 0  0 0 -300  0 0 0  100
+input 1 0 0 0 0 0 0 0 0
+input 1 0 0 -1 0 0 1 0 0          # (c) z 40 nose up 5: dodge forward, jump 16 ticks later with pitch up
+input 15 0 0 0 0 0 0 0 0
+input 10 0 0 1 0 0 1 0 0
+input 60 0 0 1 0 0 0 0 0
+input 90 0 0 0 0 0 0 0 0
+car 0 -3000 30  10 90 0  0 0 -300  0 0 0  100
+input 1 0 0 0 0 0 0 0 0
+input 1 0 0 -1 0 0 1 0 0          # (d) z 30 nose up 10: dodge forward, jump 10 ticks later with pitch up
+input 9 0 0 0 0 0 0 0 0
+input 10 0 0 1 0 0 1 0 0
+input 60 0 0 1 0 0 0 0 0
+input 90 0 0 0 0 0 0 0 0

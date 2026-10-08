@@ -58,14 +58,49 @@ function gamepadValue(pad: GamepadSnapshot | null, binding: GamepadInput | null,
   return Math.max(0, axisDeadzone(pad.axes[binding.axis] ?? 0, stickDeadzone) * binding.sign);
 }
 
-/** How strongly each action is held, 0..1. `stickDeadzone`: the player's controller deadzone. */
+/** How strongly each action is held: its keyboard and gamepad inputs summed (the game sums every binding's axis
+ *  input, then clamps the control: controls audit C-4). `stickDeadzone`: the player's controller deadzone. */
 export function actionValues(input: InputSnapshot, bindings: Bindings, stickDeadzone: number): Record<Action, number> {
   const values = {} as Record<Action, number>;
   for (const action of Object.keys(bindings) as Action[]) {
     const b = bindings[action];
-    values[action] = Math.max(keyboardValue(input, b.keyboard), gamepadValue(input.gamepad, b.gamepad, stickDeadzone));
+    values[action] = keyboardValue(input, b.keyboard) + gamepadValue(input.gamepad, b.gamepad, stickDeadzone);
   }
   return values;
+}
+
+/** Each input bound to an action, pressed or not (keyboard, then gamepad) */
+function buttonInputs(input: InputSnapshot, bindings: Bindings, stickDeadzone: number, ...actions: Action[]): boolean[] {
+  return actions.flatMap((a) => [
+    keyboardValue(input, bindings[a].keyboard) > 0.5,
+    gamepadValue(input.gamepad, bindings[a].gamepad, stickDeadzone) > 0.5,
+  ]);
+}
+
+/**
+ * The game's buttons are commands sent on each press and each release (ToggleJump true, OnRelease ToggleJump false),
+ * so with two inputs bound to one command (a key and a pad button, or jump and the alternative jump) the last event
+ * wins: releasing either releases it (controls audit C-4). Keeps each input's previous state to find the events.
+ */
+export class ButtonLatch {
+  readonly #inputs = new Map<string, boolean>();
+  readonly #commands = new Map<string, boolean>();
+
+  /** The command's state after this frame's inputs (a press and a release in one frame: pressed) */
+  update(command: string, inputs: readonly boolean[]): boolean {
+    let pressed = false;
+    let released = false;
+    for (const [i, down] of inputs.entries()) {
+      const key = `${command}:${String(i)}`;
+      const was = this.#inputs.get(key) ?? false;
+      if (down && !was) pressed = true;
+      if (!down && was) released = true;
+      this.#inputs.set(key, down);
+    }
+    const state = pressed ? true : released ? false : (this.#commands.get(command) ?? false);
+    this.#commands.set(command, state);
+    return state;
+  }
 }
 
 /**
@@ -73,19 +108,24 @@ export function actionValues(input: InputSnapshot, bindings: Bindings, stickDead
  * Holding air roll turns yaw into roll and replaces directional roll (PlayerInput_TA.PlayerInput:
  * aPositiveRoll = aPositiveYaw, ...; yaw = 0).
  */
-export function readControls(input: InputSnapshot, bindings: Bindings, stickDeadzone: number): CarControls {
+export function readControls(input: InputSnapshot, bindings: Bindings, stickDeadzone: number, latch?: ButtonLatch): CarControls {
   const v = actionValues(input, bindings, stickDeadzone);
+  // Buttons: with a latch, as the game's press and release commands; without, held while any input is
+  const button = (command: string, ...actions: Action[]): boolean => {
+    const inputs = buttonInputs(input, bindings, stickDeadzone, ...actions);
+    return latch ? latch.update(command, inputs) : inputs.some((down) => down);
+  };
   const yaw = v.yawRight - v.yawLeft;
-  const airRoll = v.airRoll > 0.5;
+  const airRoll = button("airRoll", "airRoll");
   return {
     throttle: clamp(v.throttleForward - v.throttleReverse, -1, 1),
     steer: clamp(v.steerRight - v.steerLeft, -1, 1),
     pitch: clamp(v.pitchUp - v.pitchDown, -1, 1),
     yaw: airRoll ? 0 : clamp(yaw, -1, 1),
     roll: clamp(airRoll ? yaw : v.rollRight - v.rollLeft, -1, 1),
-    jump: v.jump > 0.5 || v.jumpAlternative > 0.5,
-    boost: v.boost > 0.5,
-    handbrake: v.handbrake > 0.5,
+    jump: button("jump", "jump", "jumpAlternative"),
+    boost: button("boost", "boost"),
+    handbrake: button("handbrake", "handbrake"),
     airPitchSafety: false,
   };
 }

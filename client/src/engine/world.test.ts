@@ -20,7 +20,7 @@ describe("arena mesh file", () => {
     // The game's 16 pieces: per quadrant a corner, a side-wall floor half and ceiling half, a goal-and-back-wall half
     expect(meshes).toHaveLength(16);
     const mesh = mergeMeshes(meshes.map(parseCmf));
-    expect(mesh.indices.length / 3).toBe(10904);
+    expect(mesh.indices.length / 3).toBe(8020); // the game's 16 meshes: (880 + 126 + 16 + 983) x 4
     // Back of the goals is 6000 uu from centre
     let maxY = 0;
     for (let i = 1; i < mesh.positions.length; i += 3) maxY = Math.max(maxY, Math.abs(mesh.positions[i] ?? 0));

@@ -13,7 +13,7 @@ export const HISTORY_FRAMES = 120;
 /** Other cars' replicated axes fade to zero over this many frames (RBVehicleHistory_TA.InputFadeTime 0.1 s) */
 export const INPUT_FADE_FRAMES = 12;
 
-export const NO_INPUT: InputFrame = { throttle: 0, steer: 0, pitch: 0, yaw: 0, roll: 0, bits: 0 };
+export const NO_INPUT: InputFrame = { throttle: 0, steer: 0, pitch: 0, yaw: 0, roll: 0, dodgeForward: 0, bits: 0 };
 
 /** The controls the server applies for an input frame (dequantized exactly as on the server). */
 export function inputControls(f: InputFrame): CarControls {
@@ -23,6 +23,7 @@ export function inputControls(f: InputFrame): CarControls {
     pitch: dequantizeAxis(f.pitch),
     yaw: dequantizeAxis(f.yaw),
     roll: dequantizeAxis(f.roll),
+    dodgeForward: dequantizeAxis(f.dodgeForward),
     jump: (f.bits & BIT_JUMP) !== 0,
     boost: (f.bits & BIT_BOOST) !== 0,
     handbrake: (f.bits & BIT_HANDBRAKE) !== 0,
@@ -34,6 +35,9 @@ interface RecordedFrame {
   frame: number;
   snapshot: Uint8Array; // the world after this frame
   input: InputFrame; // the local player's input for this frame
+  /** The server's network states for after this frame, applied on top (put back when an older correction replays
+   *  through this frame, so it can't undo them: an older update or a late part still applies, NR-6) */
+  server?: readonly Uint8Array[];
 }
 
 interface RemoteBase {
@@ -83,13 +87,17 @@ export class Predictor {
     return r?.frame === frame ? r : undefined;
   }
 
-  #record(frame: number, input: InputFrame): void {
-    this.#history[this.#slot(frame)] = { frame, snapshot: this.#world.saveState(), input };
+  #record(frame: number, input: InputFrame, server?: readonly Uint8Array[]): void {
+    this.#history[this.#slot(frame)] = server
+      ? { frame, snapshot: this.#world.saveState(), input, server }
+      : { frame, snapshot: this.#world.saveState(), input };
   }
 
   /** Other cars' predicted controls at `frame`: the server's last values, axes fading out */
   #remoteControls(base: RemoteBase, frame: number): CarControls {
-    const keep = 1 - Math.min(1, (frame - base.frame) / INPUT_FADE_FRAMES);
+    // (a frame before the base, replayed for an older correction: the base's controls; the car's state is the
+    // server's again at the base's frame)
+    const keep = 1 - Math.min(1, Math.max(0, frame - base.frame) / INPUT_FADE_FRAMES);
     const c = base.controls;
     return { ...c, throttle: c.throttle * keep, steer: c.steer * keep, pitch: c.pitch * keep, yaw: c.yaw * keep, roll: c.roll * keep };
   }
@@ -136,11 +144,13 @@ export class Predictor {
       return 0;
     }
     this.#rebase(updated, frame);
-    this.#history[this.#slot(frame)] = { frame, snapshot: this.#world.saveState(), input: at.input };
+    this.#record(frame, at.input, [...(at.server ?? []), ...states]);
     for (let f = frame + 1; f <= present; f++) {
-      const input = this.#recorded(f)?.input ?? NO_INPUT;
+      const recorded = this.#recorded(f);
+      const input = recorded?.input ?? NO_INPUT;
       this.#simulate(f, input);
-      this.#record(f, input);
+      if (recorded?.server) this.#applyStates(recorded.server); // (the newer states: they win for their bodies)
+      this.#record(f, input, recorded?.server);
     }
     this.stats.corrections++;
     this.stats.resimulatedFrames += present - frame;
@@ -163,7 +173,9 @@ export class Predictor {
    *  never fade out). */
   #rebase(cars: ReadonlySet<number>, frame: number): void {
     for (const car of cars) {
-      if (car !== this.#localCar) this.#remote.set(car, { controls: this.#world.carControls(car), frame });
+      const base = this.#remote.get(car);
+      if (car === this.#localCar || (base && base.frame > frame)) continue; // (an older update: the newer basis stays)
+      this.#remote.set(car, { controls: this.#world.carControls(car), frame });
     }
   }
 

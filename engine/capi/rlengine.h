@@ -16,6 +16,8 @@ typedef struct RLControls {
 	float throttle, steer, pitch, yaw, roll; /* -1..1 */
 	uint8_t jump, boost, handbrake;
 	uint8_t air_pitch_safety; /* keyboard air pitch safety holds back nose-down pitch (engine patch 22) */
+	float dodge_forward; /* the dodge's forward input, made a byte on its own (q(-pitch)), if has_dodge_forward */
+	uint8_t has_dodge_forward;
 } RLControls;
 
 enum { RL_EVENT_GOAL = 0, RL_EVENT_BUMP = 1, RL_EVENT_DEMO = 2 };
@@ -35,10 +37,26 @@ void rl_set_car_preferences(RLArena* arena, uint32_t car_id, float dodge_deadzon
 
 void rl_step(RLArena* arena, int ticks);
 void rl_reset_kickoff(RLArena* arena, int seed);
+/* A match: its kickoff spot order shuffled once from `seed`; each rl_next_kickoff steps it (the game's kickoffs,
+ * uneven teams included). team_size: the match's team size (the playlist's, e.g. 3; it grows to the larger team) */
+void rl_start_match(RLArena* arena, int seed, int team_size);
+void rl_next_kickoff(RLArena* arena);
+/* The current kickoff again (a car joined during its countdown: it takes the next free spot) */
+void rl_redo_kickoff(RLArena* arena);
+/* The latest car touch on the ball, as rl_tick_count after that tick, or -1 (a kickoff reset clears the cars'
+ * touches) */
+int64_t rl_last_ball_touch_tick(RLArena* arena);
+/* The ball rests on the ground: a world contact with normal z > 0.96 (EndRoundComponent_TA.GroundToleranceZ), or
+ * the ball asleep (the end of a round at 0:00) */
+int rl_ball_on_ground(RLArena* arena);
 /* Ball to the centre, at rest (after a goal) */
 void rl_reset_ball(RLArena* arena);
+/* The ball at `pos` with velocity `vel` (uu, uu/s), not spinning (a placement: its spawn counter steps) */
+void rl_set_ball(RLArena* arena, const float pos[3], const float vel[3]);
 /* Kickoff countdown: while non-zero, cars get no input; counts down one per tick (part of the state) */
 void rl_set_kickoff_countdown(RLArena* arena, uint32_t ticks);
+/* While set, demolished cars aren't respawned (after a goal, until the kickoff; part of the state) */
+void rl_set_respawns_held(RLArena* arena, int held);
 uint32_t rl_kickoff_countdown(const RLArena* arena);
 uint64_t rl_tick_count(const RLArena* arena);
 int rl_is_ball_scored(RLArena* arena);

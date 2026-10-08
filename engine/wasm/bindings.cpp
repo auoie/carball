@@ -5,7 +5,7 @@
 //   engine.init([new Uint8Array(cmfBytes)]);       // arena collision meshes (out/arena/...cmf)
 //   const sim = new engine.Sim();
 //   const id = sim.addCar(0, 0);                    // team (0 blue, 1 orange), car type (0 = Octane)
-//   sim.setControls(id, 1, 0, 0, 0, 0, false, true, false, false);
+//   sim.setControls(id, 1, 0, 0, 0, 0, false, true, false, false, NaN);
 //   sim.step(1);
 //   const car = sim.carState(id);                   // Float32Array view, see CAR_* offsets
 //
@@ -31,7 +31,9 @@ EMSCRIPTEN_DECLARE_VAL_TYPE(ByteArrayListVal); // Uint8Array[]
 namespace Layout {
 	// Ball: position, velocity, angular velocity, rotation (forward, right, up)
 	constexpr int BALL_POS = 0, BALL_VEL = 3, BALL_ANG_VEL = 6, BALL_ROT = 9,
-		BALL_EXPLODED = 18 /* scored: frozen and not colliding until a reset (the game's Ball.Explode) */, BALL_SIZE = 19;
+		BALL_EXPLODED = 18 /* scored: frozen and not colliding until a reset (the game's Ball.Explode) */,
+		BALL_SPAWN_COUNT = 19 /* placements by a reset (wraps at 65536): a correction that changes it is a new ball */,
+		BALL_SIZE = 20;
 
 	// Car: as the ball, then boost (0-100) and flags (0/1)
 	constexpr int
@@ -54,7 +56,8 @@ namespace Layout {
 		CAR_PRESPAWN_SET = 52 /* the respawn spot is locked (0.5 s before the respawn): */,
 		CAR_PRESPAWN_POS = 53 /* 3 values */, CAR_PRESPAWN_YAW = 56,
 		CAR_FLIP_RESETS = 57 /* landings on the ball or a car that gave the jump back (count, wraps at 65536) */,
-		CAR_SIZE = 58;
+		CAR_SPAWN_COUNT = 58 /* placements by a kickoff or a respawn (wraps at 65536): a correction that changes it isn't smoothed */,
+		CAR_SIZE = 59;
 	constexpr int SPOT_POS = 0, SPOT_YAW = 3, SPOT_SIZE = 4;
 
 	// Boost pad: position, isBig, isActive, cooldown
@@ -155,8 +158,9 @@ public:
 		return CopyToJS<Int32ArrayVal>("Int32Array", _ints);
 	}
 
+	// dodgeForward: the dodge's forward input as its own byte (the game's q(-pitch); NaN: from the pitch)
 	void SetControls(int id, float throttle, float steer, float pitch, float yaw, float roll, bool jump, bool boost, bool handbrake,
-		bool airPitchSafety) {
+		bool airPitchSafety, float dodgeForward) {
 		Car* car = _arena->GetCar((uint32_t)id);
 		if (!car)
 			return;
@@ -164,15 +168,18 @@ public:
 		c.throttle = throttle; c.steer = steer; c.pitch = pitch; c.yaw = yaw; c.roll = roll;
 		c.jump = jump; c.boost = boost; c.handbrake = handbrake;
 		c.airPitchSafety = airPitchSafety;
+		c.hasDodgeForward = !std::isnan(dodgeForward);
+		c.dodgeForward = c.hasDodgeForward ? dodgeForward : 0.f;
 	}
 
-	// A car's current controls: throttle, steer, pitch, yaw, roll, jump, boost, handbrake, airPitchSafety (0/1)
+	// A car's current controls: throttle, steer, pitch, yaw, roll, jump, boost, handbrake, airPitchSafety (0/1),
+	// dodgeForward (NaN: from the pitch)
 	Float32ArrayVal GetCarControls(int id) {
-		_floats.assign(9, 0.f);
+		_floats.assign(10, 0.f);
 		if (Car* car = _arena->GetCar((uint32_t)id)) {
 			const RocketSim::CarControls& c = car->controls;
 			_floats = { c.throttle, c.steer, c.pitch, c.yaw, c.roll, (float)c.jump, (float)c.boost, (float)c.handbrake,
-				(float)c.airPitchSafety };
+				(float)c.airPitchSafety, c.hasDodgeForward ? c.dodgeForward : NAN };
 		}
 		return CopyToJS<Float32ArrayVal>("Float32Array", _floats);
 	}
@@ -217,6 +224,7 @@ public:
 		WriteVec(&_floats[Layout::BALL_ANG_VEL], s.angVel);
 		WriteRot(&_floats[Layout::BALL_ROT], s.rotMat);
 		_floats[Layout::BALL_EXPLODED] = s.isExploded;
+		_floats[Layout::BALL_SPAWN_COUNT] = s.spawnCount;
 		return CopyToJS<Float32ArrayVal>("Float32Array", _floats);
 	}
 
@@ -226,6 +234,7 @@ public:
 		s.vel = ReadVec(arr, Layout::BALL_VEL);
 		s.angVel = ReadVec(arr, Layout::BALL_ANG_VEL);
 		s.rotMat = ReadRot(arr, Layout::BALL_ROT);
+		s.spawnCount = _arena->ball->_internalState.spawnCount + 1; // (a placement)
 		_arena->ball->SetState(s);
 	}
 
@@ -266,6 +275,7 @@ public:
 			WriteVec(f + Layout::CAR_PRESPAWN_POS, s.prespawnPos);
 			f[Layout::CAR_PRESPAWN_YAW] = s.prespawnYaw;
 			f[Layout::CAR_FLIP_RESETS] = s.flipResets;
+			f[Layout::CAR_SPAWN_COUNT] = s.spawnCount;
 			int worldWheels = 0, ballWheels = 0;
 			std::map<uint32_t, int> carWheels; // car id -> wheels on it
 			for (int i = 0; i < car->_bulletVehicle.getNumWheels() && i < 4; i++) {
@@ -315,6 +325,7 @@ public:
 		s.angVel = ReadVec(arr, Layout::CAR_ANG_VEL);
 		s.rotMat = ReadRot(arr, Layout::CAR_ROT);
 		s.boost = arr[Layout::CAR_BOOST].as<float>();
+		s.spawnCount = car->_internalState.spawnCount + 1; // (a placement)
 		car->SetState(s);
 	}
 
@@ -481,7 +492,7 @@ EMSCRIPTEN_BINDINGS(rlengine) {
 		.function("netStateCars", &Sim::NetStateCars);
 
 #define LAYOUT(name) constant(#name, name)
-	LAYOUT(BALL_POS); LAYOUT(BALL_VEL); LAYOUT(BALL_ANG_VEL); LAYOUT(BALL_ROT); LAYOUT(BALL_EXPLODED); LAYOUT(BALL_SIZE);
+	LAYOUT(BALL_POS); LAYOUT(BALL_VEL); LAYOUT(BALL_ANG_VEL); LAYOUT(BALL_ROT); LAYOUT(BALL_EXPLODED); LAYOUT(BALL_SPAWN_COUNT); LAYOUT(BALL_SIZE);
 	LAYOUT(CAR_POS); LAYOUT(CAR_VEL); LAYOUT(CAR_ANG_VEL); LAYOUT(CAR_ROT); LAYOUT(CAR_BOOST);
 	LAYOUT(CAR_ON_GROUND); LAYOUT(CAR_HAS_JUMPED); LAYOUT(CAR_HAS_DOUBLE_JUMPED); LAYOUT(CAR_HAS_FLIPPED);
 	LAYOUT(CAR_IS_FLIPPING); LAYOUT(CAR_IS_JUMPING); LAYOUT(CAR_SUPERSONIC); LAYOUT(CAR_BOOSTING); LAYOUT(CAR_DEMOED);
@@ -490,7 +501,7 @@ EMSCRIPTEN_BINDINGS(rlengine) {
 	LAYOUT(CAR_AIR_TIME_SINCE_JUMP); LAYOUT(CAR_HAS_FLIP_OR_JUMP); LAYOUT(CAR_HAS_FLIP_RESET);
 	LAYOUT(CAR_WORLD_WHEEL_CONTACTS); LAYOUT(CAR_ON_RB_ACTOR); LAYOUT(CAR_WHEEL_GROUND); LAYOUT(CAR_RB_ACTOR);
 	LAYOUT(CAR_DEMO_SPAWN_SIDE); LAYOUT(CAR_DEMO_SPAWN_INDEX); LAYOUT(CAR_PRESPAWN_SET); LAYOUT(CAR_PRESPAWN_POS);
-	LAYOUT(CAR_PRESPAWN_YAW); LAYOUT(CAR_FLIP_RESETS); LAYOUT(CAR_SIZE);
+	LAYOUT(CAR_PRESPAWN_YAW); LAYOUT(CAR_FLIP_RESETS); LAYOUT(CAR_SPAWN_COUNT); LAYOUT(CAR_SIZE);
 	LAYOUT(SPOT_POS); LAYOUT(SPOT_YAW); LAYOUT(SPOT_SIZE);
 	LAYOUT(PAD_POS); LAYOUT(PAD_BIG); LAYOUT(PAD_ACTIVE); LAYOUT(PAD_COOLDOWN); LAYOUT(PAD_SIZE);
 	LAYOUT(EVENT_GOAL); LAYOUT(EVENT_BUMP); LAYOUT(EVENT_DEMO);

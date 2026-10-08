@@ -142,10 +142,11 @@ void Car::_RespawnAt(Vec pos, float yaw, float boostAmount) {
 	newState.pos = pos;
 	newState.rotMat = Angle(yaw, 0.f, 0.f).ToRotMat();
 	newState.boost = boostAmount;
+	newState.spawnCount = _internalState.spawnCount + 1;
 	this->SetState(newState);
 }
 
-void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig& mutatorConfig) {
+void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig& mutatorConfig, bool respawnHeld) {
 	using namespace RLConst;
 
 #ifndef RS_MAX_SPEED
@@ -159,6 +160,8 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
 	controls.pitch = Quantize::InputAxis(controls.pitch);
 	controls.yaw = Quantize::InputAxis(controls.yaw);
 	controls.roll = Quantize::InputAxis(controls.roll);
+	if (controls.hasDodgeForward)
+		controls.dodgeForward = Quantize::InputAxis(RS_CLAMP(controls.dodgeForward, -1, 1));
 
 	assert(_bulletVehicle.getNumWheels() == 4 || _bulletVehicle.getNumWheels() == 3);
 
@@ -171,7 +174,7 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
 	{ // Update simulation state
 		if (_internalState.isDemoed) {
 			_internalState.demoRespawnTimer = RS_MAX(_internalState.demoRespawnTimer - tickTime, 0);
-			if (_internalState.demoRespawnTimer == 0) {
+			if (_internalState.demoRespawnTimer == 0 && !respawnHeld) {
 				// RL PATCH: at the spot the arena chose (Arena::_UpdateDemolished: deterministic, not on another car)
 				if (_respawnSpot.valid)
 					_RespawnAt(_respawnSpot.pos, _respawnSpot.yaw, mutatorConfig.carSpawnBoostAmount);
@@ -833,13 +836,15 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
 			// RL PATCH: the pitch part can only be cancelled once the dodge has been active for
 			// MinDodgeTorqueTime (0.041 s), checked with the same active time as the Z damping (the time
 			// before this tick, see _UpdateFlipTime)
-			if (relDodgeTorque.y() != 0 && controls.pitch != 0 && _internalState.flipTime >= FLIP_TORQUE_MIN_TIME) {
-				if (RS_SGN(relDodgeTorque.y()) == RS_SGN(controls.pitch)) {
+			// (the dodge's forward input, C-2: a cancel pulls against it)
+			float dodgeForward = _DodgeForward();
+			if (relDodgeTorque.y() != 0 && dodgeForward != 0 && _internalState.flipTime >= FLIP_TORQUE_MIN_TIME) {
+				if (RS_SGN(relDodgeTorque.y()) == RS_SGN(-dodgeForward)) {
 
 #ifndef RS_MAX_SPEED
-					pitchScale = 1 - RS_MIN(abs(controls.pitch), 1); // Sanity clamp
+					pitchScale = 1 - RS_MIN(abs(dodgeForward), 1); // Sanity clamp
 #else
-					pitchScale = 1 - abs(controls.pitch); // No sanity check
+					pitchScale = 1 - abs(dodgeForward); // No sanity check
 #endif
 				}
 			}
@@ -875,6 +880,8 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
 				if (_internalState.flipTime < FLIP_TORQUE_TIME + FLIP_PITCHLOCK_EXTRA_TIME)
 					pitchTorqueScale = 0;
 			}
+			if (_internalState.dodgePitchLockTime > tickTime / 2) // RL PATCH: after a dodge ended by landing (GA-5)
+				pitchTorqueScale = 0;
 
 			// TODO: Use actual dot product operator functions (?)
 			torque = (airPitch * dirPitch_right * pitchTorqueScale * CAR_AIR_CONTROL_TORQUE.x) +
@@ -908,6 +915,9 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
 	float tickTimeScale = tickTime / (1 / 120.f);
 
 	if (_internalState.isOnGround) {
+		// RL PATCH: landing ends a dodge still active: its pitch lock goes on for 0.3 s (GA-5)
+		if (_internalState.isFlipping)
+			_internalState.dodgePitchLockTime = FLIP_PITCHLOCK_EXTRA_TIME;
 		_internalState.hasDoubleJumped = false;
 		_internalState.hasFlipped = false;
 		_internalState.airTime = 0;
@@ -923,7 +933,7 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
 		}
 
 		if (jumpPressed && _internalState.airTimeSinceJump < DOUBLEJUMP_MAX_DELAY) {
-			float inputMagnitude = abs(controls.yaw) + abs(controls.pitch) + abs(controls.roll);
+			float inputMagnitude = abs(controls.yaw) + abs(_DodgeForward()) + abs(controls.roll); // (RL PATCH C-2)
 			bool isFlipInput = inputMagnitude >= config.dodgeDeadzone;
 
 			bool canUse;
@@ -953,7 +963,7 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
 						// normalised, then each component of 0.1 or less zeroed. RocketSim zeroed the direction when both
 						// inputs were under 0.1 before normalising, so yaw 0.95 + roll -1 (side -0.05) had no impulse; the
 						// game's is a full side dodge. Live (`ga_jump`): 500 uu/s off
-						btVector3 dodgeDir = btVector3(-controls.pitch, controls.yaw + controls.roll, 0);
+						btVector3 dodgeDir = btVector3(_DodgeForward(), controls.yaw + controls.roll, 0);
 						float dodgeLengthSq = dodgeDir.length2();
 						dodgeDir = (dodgeLengthSq >= 1e-8f) ? dodgeDir / sqrtf(dodgeLengthSq) : btVector3(0, 0, 0);
 						for (int k = 0; k < 2; k++)
@@ -964,7 +974,7 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
 							// RL PATCH: CarComponent_Dodge_TA.SetDodgeSettings:
 							// DodgeDirection = Normal(-pitch, yaw + roll) (no deadzone),
 							// DodgeTorque = Round(224 * dir.X) pitch, Round(260 * -dir.Y) roll
-							Vec torqueDir = Vec(-controls.pitch, controls.yaw + controls.roll, 0);
+							Vec torqueDir = Vec(_DodgeForward(), controls.yaw + controls.roll, 0);
 							float lengthSq = torqueDir.LengthSq();
 							torqueDir = (lengthSq >= 1e-8f) ? torqueDir / sqrtf(lengthSq) : Vec(0, 0, 0);
 
@@ -1042,6 +1052,7 @@ void Car::_UpdateFlipTime(float tickTime) {
 		// We need to count the time after for FLIP_PITCHLOCK_EXTRA_TIME to work
 		_internalState.flipTime += tickTime;
 	}
+	_internalState.dodgePitchLockTime = RS_MAX(_internalState.dodgePitchLockTime - tickTime, 0); // RL PATCH (GA-5)
 }
 
 void Car::_UpdateAutoFlip(float tickTime, const MutatorConfig& mutatorConfig, bool jumpPressed) {

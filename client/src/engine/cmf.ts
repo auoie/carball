@@ -1,5 +1,6 @@
 // RocketSim collision mesh files (.cmf): int32 triangle count, int32 vertex count,
 // int32x3 indices per triangle, float32x3 vertices (Bullet units = uu / 50). Little-endian.
+// Optionally followed by "RLOF" and float32x3: where the mesh's body is placed (the goal halves, in their own frame).
 
 export interface TriangleMesh {
   readonly positions: Float32Array; // uu, Rocket League frame
@@ -14,9 +15,13 @@ export function parseCmf(bytes: Uint8Array): TriangleMesh {
   const numTris = view.getInt32(0, true);
   const numVerts = view.getInt32(4, true);
   const expected = 8 + numTris * 12 + numVerts * 12;
-  if (numTris <= 0 || numVerts <= 0 || bytes.byteLength !== expected) {
+  const trailer = bytes.byteLength === expected + 16;
+  if (numTris <= 0 || numVerts <= 0 || (bytes.byteLength !== expected && !trailer)) {
     throw new Error(`cmf: bad header (${numTris} tris, ${numVerts} verts, ${bytes.byteLength} bytes)`);
   }
+  const magic = trailer ? String.fromCharCode(...bytes.subarray(expected, expected + 4)) : "";
+  if (trailer && magic !== "RLOF") throw new Error("cmf: unknown trailer");
+  const offset = [0, 1, 2].map((i) => (trailer ? view.getFloat32(expected + 4 + i * 4, true) * BULLET_TO_UU : 0));
 
   const indices = new Uint32Array(numTris * 3);
   for (let i = 0; i < indices.length; i++) {
@@ -28,7 +33,7 @@ export function parseCmf(bytes: Uint8Array): TriangleMesh {
   const positions = new Float32Array(numVerts * 3);
   const vertexBase = 8 + numTris * 12;
   for (let i = 0; i < positions.length; i++) {
-    positions[i] = view.getFloat32(vertexBase + i * 4, true) * BULLET_TO_UU;
+    positions[i] = view.getFloat32(vertexBase + i * 4, true) * BULLET_TO_UU + (offset[i % 3] ?? 0);
   }
   return { positions, indices };
 }

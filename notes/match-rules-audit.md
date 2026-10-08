@@ -126,3 +126,30 @@ who reached prespawn 0.5 s before a goal could spawn at the respawn spot); array
 | Forfeit vote wait | 60 s casual / 90 s ranked | – | MatchType_Public_TA / MatchType_TA |
 | Wait for players | 30 s public / 90 s tournament | – | MatchType defaults |
 | Podium | delay 3.0 s, podium 5.3 s, finished 60 s, rematch vote 50 s | – | archetype |
+
+## Follow-ups (2026-10-08)
+- **Warm-up order:** `WaitingForPlayers.CheckStart` → once players are ready and `WarmupTime` (3) > 0,
+  `SetGameStateTime(WarmupTime)` (1 s repeating game-state timer, still in WaitingForPlayers) → `OnGameStateTimeLapsed`
+  → `StartInitialCountDown` → Countdown (1 s + 3). First kickoff: 3 s warm-up then 4 s countdown (840 ticks frozen);
+  later kickoffs 480.
+- **MaxTeamSize** (disadvantage window) is the playlist's team size (`GameEvent_Team_TA.UpdateMaxTeamSize` →
+  `MatchType.GetMaxTeamSize()`: NumPublicConnections / 2, else GameData default 3; soccar archetype 3; grows only if a
+  team has more humans), not the larger team's member count.
+- **Goal-explosion knockback** (`Ball_Default.ExplosionArchetype.DefaultExplosion`, `ExplosionComponent_X`:
+  RBVelocityChange 5000, StartRadius 0, EndRadius 3000, Speed 10000, Falloff 0.1, bPassThroughWorldGeometry,
+  MomentumOffset (−500, 0, −500)); native tick `FUN_140e5ad50`: radius = StartRadius + LifeTime·Speed (LifeTime before
+  this frame's dt, game time); while radius ≤ EndRadius, t = LifeTime·Speed/(EndRadius − StartRadius), DamageScale =
+  (1 − t)^Falloff; every actor whose collision the sphere overlaps (Physics > 1, not yet in `DamagedActors`; no trace for
+  the goal) is hit **once** with HitLocation = its own Location. Script `ProcessHit`: needs a collision component,
+  PHYS_RigidBody, DamageScale > 0; MomentumDir = Normal(HitLocation − (ExplosionLocation + MomentumOffset rotated by the
+  goal orientation)); `AddImpulse(dir·5000·DamageScale, HitLocation, VelChange)` at the centre of mass (no spin). Origin
+  = the ball's location at the goal (`Ball_TA.Explode`); the ball (Physics None by then) and demolished cars (no body)
+  are not affected; the scorer is. Δv ≈ 4900 at 500 uu, ≈ 3500 at 2900 uu, then the speed cap (2300) applies.
+- **Per-goal-explosion physics:** `Ball_TA.InitExplosionFX`: if the scorer's goal explosion product has
+  `ExplosionComponents` and `PhysicsConfig.bEnableCustomExplosionPhysics` (True, both builds), its handlers are attached
+  (`SetExplosionHandler`) and the default `ExplosionComponent` is **detached**: the knockback is then the product's
+  (`DefaultHitHandler_TA`: own RBVelocityChange·DamageScale at the explosion's location, optional pull toward it, or a
+  per-tick velocity drive; `ApplyVelocityHitHandler_TA`, Jiggle/Orbit/Stasis/FX/Demo handlers). The default product
+  slot has no components, so the Classic explosion keeps the base wave. The native AddImpulse path
+  (`FUN_1409801c0`: ×0.02, bVelChange → ×1/m_inverseMass, applyImpulse at HitLocation − origin) has no extra factor. Replay
+  fits that mix products (live session: ~0.82×, steeper falloff) need splitting by the scorer's goal-explosion ID.

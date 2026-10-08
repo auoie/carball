@@ -134,6 +134,14 @@ struct CarState : public PhysState {
 	// DodgesRefreshedCounter, for the flip reset indicator: Car::_PreTickUpdate). Wraps
 	uint16_t flipResets = 0;
 
+	// RL PATCH: counts the car's placements by a kickoff reset or a respawn (in the game each is a new actor or a
+	// teleport, never smoothed): a client draws a correction that changes it at once and smooths every other. Wraps
+	uint16_t spawnCount = 0;
+
+	// RL PATCH: seconds left of air control's pitch lock after a dodge that ended by landing (the game locks pitch
+	// for 0.3 s after the dodge deactivates, also when landing deactivates it: a wavedash, then a jump; GA-5)
+	float dodgePitchLockTime = 0;
+
 	BallHitInfo ballHitInfo = BallHitInfo();
 
 	// Controls from last tick, set to this->controls after simulation
@@ -162,7 +170,7 @@ pos, rotMat, vel, angVel, isOnGround, hasJumped, hasDoubleJumped, hasFlipped, \
 flipRelTorque, jumpTime, isFlipping, flipTime, isJumping, jumpReleased /* RL PATCH */, airTimeSinceJump, \
 boost, isBoosting, boostingTime, timeSinceBoosted, supersonicTime, handbrakeVal, isAutoFlipping, \
 autoFlipTimer, autoFlipTorqueScale, isDemoed, demoRespawnTimer, lastControls, \
-demoSpawnSelectLast, demoSpawnPreference, demoSpawnIndex, prespawnSet, prespawnPos, prespawnYaw, flipResets, /* RL PATCH */ \
+demoSpawnSelectLast, demoSpawnPreference, demoSpawnIndex, prespawnSet, prespawnPos, prespawnYaw, flipResets, spawnCount, dodgePitchLockTime, /* RL PATCH */ \
 worldContact.hasContact, worldContact.contactNormal, \
 carContact.otherCarID, carContact.cooldownTimer, \
 isSupersonic /* RL PATCH: affects the next tick (supersonic is kept down to 2100 uu/s) */
@@ -239,7 +247,11 @@ public:
 		return _internalState.rotMat.up;
 	}
 
-	void _PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig& mutatorConfig);
+	// RL PATCH: the dodge's forward input (CarControls::dodgeForward, else -pitch)
+	float _DodgeForward() const { return controls.hasDodgeForward ? controls.dodgeForward : -controls.pitch; }
+
+	// RL PATCH: respawnHeld: a demolished car stays demolished (after a goal, until the kickoff)
+	void _PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig& mutatorConfig, bool respawnHeld = false);
 	void _PostTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig& mutatorConfig);
 	void _LimitVelocities();
 

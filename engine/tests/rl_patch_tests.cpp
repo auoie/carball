@@ -178,6 +178,16 @@ static void TestDodgeDeadzone(Arena* arena, Car* car) {
 	c.yaw = 0.4f;
 	FlipAngVels(arena, car, c, [](CarControls&, int) {}, 1);
 	CHECK(car->_internalState.hasFlipped, "0.8 should flip at deadzone 0.8");
+
+	// The dodge's forward input as its own byte (C-2): stick forward 0.8 is pitch q(-0.8) = -102/128 = -0.797, under
+	// the deadzone, but DodgeForward q(0.8) = 102/127 = 0.803, over it: the game dodges
+	CarControls forward; forward.pitch = -0.8f;
+	FlipAngVels(arena, car, forward, [](CarControls&, int) {}, 1);
+	CHECK(car->_internalState.hasDoubleJumped && !car->_internalState.hasFlipped, "pitch -0.8 alone should double jump at deadzone 0.8");
+	forward.dodgeForward = 0.8f; forward.hasDodgeForward = true;
+	FlipAngVels(arena, car, forward, [](CarControls&, int) {}, 1);
+	CHECK(car->_internalState.hasFlipped && car->controls.dodgeForward == 102.f / 127, "DodgeForward 0.8 should flip at deadzone 0.8 (%.4f)",
+		car->controls.dodgeForward);
 	car->config.dodgeDeadzone = 0.5f;
 }
 
@@ -195,6 +205,33 @@ static void TestAirPitchSafety(Arena* arena, Car* car) {
 	Vec safe = car->_internalState.flipRelTorque;
 	CHECK(car->_internalState.hasFlipped && plain.x == safe.x && plain.y == safe.y,
 		"front flip changed by the safety ((%.3f, %.3f) vs (%.3f, %.3f))", safe.x, safe.y, plain.x, plain.y);
+}
+
+static void TestDodgePitchLockAfterLanding(Arena* arena, Car* car) {
+	puts("pitch lock after a dodge that ends by landing: air control ignores pitch for 0.3 s more (GA-5)");
+	using namespace RLConst;
+	// A dodge still active as the car lands (a wavedash)
+	CarState g = CarAt({ 0, 0, 17.01f }, { 1, 0, 0 }, { 0, 0, 1 });
+	g.isOnGround = true; g.hasJumped = true; g.hasFlipped = true; g.isFlipping = true; g.flipTime = 0.2f;
+	g.flipRelTorque = { 0, -1, 0 };
+	car->SetState(g);
+	car->controls = CarControls();
+	arena->Step(1);
+	float lock = car->GetState().dodgePitchLockTime;
+	CHECK(!car->GetState().isFlipping && lock > 0.28f && lock < 0.3f, "landing during a dodge: lock %.4f s, expected 0.3 less a tick", lock);
+	// In the air (jumped off at once): pitch does nothing until the lock runs out, 36 ticks after the landing
+	auto pitchRate = [&](float lockLeft, int ticks) {
+		CarState a = CarAt({ 0, 0, 800 }, { 1, 0, 0 }, { 0, 0, 1 });
+		a.isOnGround = false; a.hasJumped = true; a.dodgePitchLockTime = lockLeft;
+		car->SetState(a);
+		CarControls c; c.pitch = 1;
+		car->controls = c;
+		arena->Step(ticks);
+		return car->GetState().angVel.Dot(car->GetState().rotMat.right);
+	};
+	float locked = pitchRate(lock, 10), free = pitchRate(0, 10), after = pitchRate(lock, 40);
+	CHECK(abs(locked) < 0.01f && abs(free) > 0.5f, "pitch rate with the lock %.3f, without %.3f", locked, free);
+	CHECK(abs(after) > 0.2f, "after the lock (40 ticks): pitch rate %.3f, expected pitching", after);
 }
 
 static void TestAirThrottleWhileBoosting(Arena* arena, Car* car) {
@@ -492,6 +529,246 @@ static void TestDemos(Arena* arena, Car* attacker, Car* victim) {
 
 // Boost pads: the car's collision cylinder (r 48, half-height 32) overlapping the pad's (small r 128, big r 160,
 // half-height 64): origin within 176 / 208 horizontally and 96 vertically
+static void TestSpawnCount() {
+	puts("spawn counters: adding a car, a kickoff reset, a respawn and a ball reset are new placements (clients don't smooth them)");
+	using namespace RLConst;
+	Arena* arena = Arena::Create(GameMode::SOCCAR);
+	Car* car = arena->AddCar(Team::BLUE);
+	CHECK(car->GetState().spawnCount == 1 && arena->ball->GetState().spawnCount == 0, "a new arena and car: car %d, ball %d, expected 1 and 0",
+		car->GetState().spawnCount, arena->ball->GetState().spawnCount);
+	arena->ResetToRandomKickoff(7);
+	CHECK(car->GetState().spawnCount == 2 && arena->ball->GetState().spawnCount == 1, "a kickoff reset: car %d, ball %d, expected 2 and 1",
+		car->GetState().spawnCount, arena->ball->GetState().spawnCount);
+	arena->Step(10);
+	car->Demolish();
+	arena->Step((int)(DEMO_RESPAWN_TIME * 120) + 5);
+	CHECK(!car->GetState().isDemoed && car->GetState().spawnCount == 3, "a respawn: car %d, expected 3", car->GetState().spawnCount);
+	// Ticking and a clone keep it (a state set from outside the engine chooses its own)
+	Arena* clone = arena->Clone(false);
+	CHECK(clone->GetCar(car->id)->GetState().spawnCount == 3 && clone->ball->GetState().spawnCount == 1,
+		"a clone: car %d, ball %d, expected 3 and 1", clone->GetCar(car->id)->GetState().spawnCount, clone->ball->GetState().spawnCount);
+	delete clone;
+	delete arena;
+}
+
+// The kickoff spot (blue's frame) a car stands on, or -1
+static int KickoffSpotOf(Car* car) {
+	using namespace RLConst;
+	Vec p = car->GetState().pos;
+	if (car->team == Team::ORANGE)
+		p = { -p.x, -p.y, p.z };
+	for (int i = 0; i < CAR_SPAWN_LOCATION_AMOUNT; i++)
+		if (std::fabs(p.x - CAR_SPAWN_LOCATIONS_SOCCAR[i].x) < 0.01f && std::fabs(p.y - CAR_SPAWN_LOCATIONS_SOCCAR[i].y) < 0.01f)
+			return i;
+	return -1;
+}
+
+static void TestKickoffSequence() {
+	puts("kickoff sequence: one order per match, +1 per kickoff, orange mirrored, teammates on consecutive spots (MR-4)");
+	using namespace RLConst;
+	Arena* arena = Arena::Create(GameMode::SOCCAR);
+	Car* blue[2] = { arena->AddCar(Team::BLUE), arena->AddCar(Team::BLUE) };
+	Car* orange[2] = { arena->AddCar(Team::ORANGE), arena->AddCar(Team::ORANGE) };
+	arena->StartKickoffSequence(12345);
+	std::array<uint8_t, 5> order = arena->kickoffSequence.order[0];
+	int seen[5] = {};
+	for (int i = 0; i < CAR_SPAWN_LOCATION_AMOUNT; i++)
+		seen[order[i]]++;
+	CHECK(seen[0] == 1 && seen[1] == 1 && seen[2] == 1 && seen[3] == 1 && seen[4] == 1, "the order isn't a permutation");
+	for (int n = 0; n < 7; n++) {
+		arena->ResetToNextKickoff();
+		for (int k = 0; k < 2; k++) {
+			int want = order[(n + k) % 5];
+			CHECK(KickoffSpotOf(blue[k]) == want && KickoffSpotOf(orange[k]) == want,
+				"kickoff %d, car %d of each team: spots %d and %d, expected %d", n, k, KickoffSpotOf(blue[k]), KickoffSpotOf(orange[k]), want);
+		}
+		if (n == 2) { // a snapshot carries the sequence on
+			DataStreamOut out;
+			arena->Serialize(out);
+			DataStreamIn in;
+			in.data = out.data;
+			Arena* copy = Arena::DeserializeNew(in);
+			copy->ResetToNextKickoff();
+			arena->ResetToNextKickoff();
+			n++;
+			bool same = true;
+			for (Car* c : arena->GetCars())
+				same &= KickoffSpotOf(c) == KickoffSpotOf(copy->GetCar(c->id));
+			CHECK(same, "a restored snapshot's next kickoff differs");
+			delete copy;
+		}
+	}
+	// A car joining in the countdown: the kickoff again, the others where they were, the new car on the next spot
+	{
+		int before[2] = { KickoffSpotOf(blue[0]), KickoffSpotOf(blue[1]) };
+		int next = arena->kickoffSequence.next;
+		Car* late = arena->AddCar(Team::BLUE);
+		arena->RedoKickoff();
+		int n = (next + 4) % 5; // (the current kickoff's index)
+		CHECK(KickoffSpotOf(blue[0]) == before[0] && KickoffSpotOf(blue[1]) == before[1] && KickoffSpotOf(late) == order[(n + 2) % 5]
+			&& arena->kickoffSequence.next == next, "redo: cars on %d %d %d, expected %d %d %d", KickoffSpotOf(blue[0]),
+			KickoffSpotOf(blue[1]), KickoffSpotOf(late), before[0], before[1], order[(n + 2) % 5]);
+		arena->RemoveCar(late);
+	}
+	// Another seed, another order (the shuffle uses the seed)
+	arena->StartKickoffSequence(54321);
+	CHECK(arena->kickoffSequence.order[0] != order || arena->kickoffSequence.order[1] != order, "seeds 12345 and 54321 gave one order");
+	delete arena;
+}
+
+static void TestKickoffUnevenTeams() {
+	puts("kickoff with uneven teams: the short team's last car takes the most central of the full team's spots (MR-5)");
+	using namespace RLConst;
+	// distance from the centre, then x*y < 0 (SortPreferableSpawn)
+	auto rank = [](int spot) {
+		const CarSpawnPos& p = CAR_SPAWN_LOCATIONS_SOCCAR[spot];
+		return (double)(p.x * p.x + p.y * p.y) + (p.x * p.y < 0 ? 0 : 0.5);
+	};
+	{ // By hand: 3v1, order (back centre, left diagonal, right diagonal, ...): the short team's window holds both
+	  // diagonals (equally central), and the one with x*y < 0, (2048, -2560) in its own frame, wins
+		Arena* arena = Arena::Create(GameMode::SOCCAR);
+		for (int i = 0; i < 3; i++)
+			arena->AddCar(Team::BLUE);
+		Car* alone = arena->AddCar(Team::ORANGE);
+		arena->kickoffSequence.order[0] = arena->kickoffSequence.order[1] = { 4, 0, 1, 2, 3 };
+		arena->kickoffSequence.kickoffs = 1;
+		arena->ResetToNextKickoff();
+		Vec p = alone->GetState().pos;
+		CHECK(std::fabs(p.x + 2048) < 0.01f && std::fabs(p.y - 2560) < 0.01f, "3v1: the lone car at (%.0f, %.0f), expected (-2048, 2560)", p.x, p.y);
+		arena->kickoffSequence.kickoffs = 0; // (at the match's first kickoff: no adjustment)
+		arena->kickoffSequence.order[1] = { 4, 0, 1, 2, 3 };
+		arena->kickoffSequence.next = 0;
+		arena->ResetToNextKickoff();
+		CHECK(KickoffSpotOf(alone) == 4, "3v1 at the first kickoff: the lone car on spot %d, expected 4 (back centre)", KickoffSpotOf(alone));
+		delete arena;
+	}
+	// (the window: the match's team size, the playlist's MaxTeamSize, grown to the larger team; 0: the larger team)
+	for (int teamSize : { 0, 3 })
+	for (int shortSize = 1; shortSize <= 2; shortSize++) {
+		for (int fullSize = shortSize + 1; fullSize <= 3; fullSize++) {
+			for (int seed = 1; seed <= 20; seed++) {
+				Arena* arena = Arena::Create(GameMode::SOCCAR);
+				std::vector<Car*> shortTeam, fullTeam;
+				for (int i = 0; i < fullSize; i++)
+					fullTeam.push_back(arena->AddCar(Team::BLUE));
+				for (int i = 0; i < shortSize; i++)
+					shortTeam.push_back(arena->AddCar(Team::ORANGE));
+				arena->StartKickoffSequence(seed, teamSize);
+				int window = std::max(fullSize, teamSize);
+				std::array<uint8_t, 5> p = arena->kickoffSequence.order[1];
+				const std::array<uint8_t, 5> full = arena->kickoffSequence.order[0];
+				for (int n = 0; n < 6; n++) {
+					arena->ResetToNextKickoff();
+					// The full team: its order, unchanged
+					for (int k = 0; k < fullSize; k++)
+						CHECK(KickoffSpotOf(fullTeam[k]) == full[(n + k) % 5], "%dv%d seed %d kickoff %d: full team car %d on %d, expected %d",
+							fullSize, shortSize, seed, n, k, KickoffSpotOf(fullTeam[k]), full[(n + k) % 5]);
+					// The short team: from the second kickoff, the best of the window swapped into its last car's slot
+					if (n > 0) {
+						int best = n % 5;
+						for (int k = 1; k < window; k++)
+							if (rank(p[(n + k) % 5]) < rank(p[best]))
+								best = (n + k) % 5;
+						if ((best - n % 5 + 5) % 5 >= shortSize)
+							std::swap(p[best], p[(n + shortSize - 1) % 5]);
+					}
+					for (int k = 0; k < shortSize; k++)
+						CHECK(KickoffSpotOf(shortTeam[k]) == p[(n + k) % 5], "%dv%d seed %d kickoff %d: short team car %d on %d, expected %d",
+							fullSize, shortSize, seed, n, k, KickoffSpotOf(shortTeam[k]), p[(n + k) % 5]);
+				}
+				delete arena;
+			}
+		}
+	}
+}
+
+static void TestRespawnsHeld() {
+	puts("respawns held: after a goal a demolished car waits for the kickoff (PostGoalScored, MR-6)");
+	using namespace RLConst;
+	Arena* arena = Arena::Create(GameMode::SOCCAR);
+	Car* car = arena->AddCar(Team::BLUE);
+	arena->Step(10);
+	car->Demolish();
+	arena->respawnsHeld = true;
+	arena->Step((int)(DEMO_RESPAWN_TIME * 120) + 60);
+	CHECK(car->GetState().isDemoed, "held: the car respawned");
+	// A snapshot keeps the hold
+	DataStreamOut out;
+	arena->Serialize(out);
+	DataStreamIn in;
+	in.data = out.data;
+	Arena* copy = Arena::DeserializeNew(in);
+	CHECK(copy->respawnsHeld, "a snapshot lost the hold");
+	delete copy;
+	// The kickoff puts it back (and drives again), and the hold off lets the next demolition respawn
+	arena->StartKickoffSequence(3);
+	arena->ResetToNextKickoff();
+	arena->respawnsHeld = false;
+	CHECK(!car->GetState().isDemoed && KickoffSpotOf(car) >= 0, "the kickoff didn't place the demolished car");
+	car->controls.throttle = 1;
+	Vec start = car->GetState().pos;
+	arena->Step(60);
+	CHECK((car->GetState().pos - start).Length() > 50, "after the kickoff the car doesn't drive");
+	car->Demolish();
+	arena->Step((int)(DEMO_RESPAWN_TIME * 120) + 5);
+	CHECK(!car->GetState().isDemoed, "not held: no respawn");
+	delete arena;
+}
+
+static void TestGoalExplosion() {
+	puts("goal explosion: one push per car as the wave reaches it, away from the goal and up, 3000 uu at most (MR-6)");
+	using namespace RLConst;
+	Arena* arena = Arena::Create(GameMode::SOCCAR);
+	Car* near = arena->AddCar(Team::BLUE);
+	Car* far = arena->AddCar(Team::BLUE);
+	Car* demoed = arena->AddCar(Team::ORANGE);
+	near->SetState(CarAt({ 0, 4000, 17.01f }, { 1, 0, 0 }, { 0, 0, 1 }));
+	far->SetState(CarAt({ 0, 1500, 17.01f }, { 1, 0, 0 }, { 0, 0, 1 }));
+	demoed->SetState(CarAt({ 600, 4500, 17.01f }, { 1, 0, 0 }, { 0, 0, 1 }));
+	arena->Step(5);
+	demoed->Demolish();
+	BallState b;
+	b.pos = { 0, 5250, 300 };
+	b.vel = { 0, 1000, 0 };
+	arena->ball->SetState(b);
+	arena->Step(1);
+	CHECK(arena->goalExplosion.active, "the goal didn't set off the explosion");
+	int pushes = 0, pushTick = -1;
+	Vec pushed;
+	Arena* copy = nullptr;
+	for (int i = 0; i < 60; i++) {
+		Vec before = near->GetState().vel;
+		arena->Step(1);
+		Vec dv = near->GetState().vel - before;
+		if (dv.Length() > 500) {
+			pushes++;
+			pushTick = i;
+			pushed = near->GetState().vel;
+		}
+		if (i == 5) { // (mid-wave: a snapshot goes on the same)
+			DataStreamOut out;
+			arena->Serialize(out);
+			DataStreamIn in;
+			in.data = out.data;
+			copy = Arena::DeserializeNew(in);
+		}
+	}
+	// The front reaches the car's hitbox (about 1240 uu away) after about 0.124 s: tick 15 of the wave
+	CHECK(pushes == 1 && pushTick >= 12 && pushTick <= 16, "%d pushes, at wave tick %d (expected one, about 15)", pushes, pushTick);
+	// (from 500 uu behind and below the ball, (0, 5800, -200), to the car: up about 0.12 of the push)
+	CHECK(pushed.y < -1500 && pushed.z > 200 && pushed.Length() <= CAR_MAX_SPEED + 1,
+		"pushed to (%.0f, %.0f, %.0f): expected away from the goal, up, capped", pushed.x, pushed.y, pushed.z);
+	CHECK(far->GetState().vel.Length() < 1 && demoed->GetState().isDemoed, "the far car moved (%.1f uu/s)", far->GetState().vel.Length());
+	CHECK(!arena->goalExplosion.active, "the wave should be over after 0.3 s");
+	if (copy) {
+		copy->Step(60 - 6);
+		Vec a = arena->GetCar(near->id)->GetState().pos, c = copy->GetCar(near->id)->GetState().pos;
+		CHECK(memcmp(&a, &c, sizeof(Vec)) == 0, "a snapshot taken mid-wave went on differently");
+		delete copy;
+	}
+	delete arena;
+}
+
 static void TestRespawn() {
 	puts("respawn: a deterministic spot (tick count and car ID), never on another car (static analysis GA-18)");
 	using namespace RLConst;
@@ -901,6 +1178,11 @@ int main(int argc, char** argv) {
 	TestBumpCurves();
 	TestBoostPads();
 	TestRespawn();
+	TestSpawnCount();
+	TestKickoffSequence();
+	TestKickoffUnevenTeams();
+	TestRespawnsHeld();
+	TestGoalExplosion();
 	TestBallExplodesOnGoal();
 	TestDemoSpawnSelection();
 	TestKickoffBall();
@@ -919,6 +1201,7 @@ int main(int argc, char** argv) {
 	TestDodgeDeadzone(arena, car);
 	TestAirPitchSafety(arena, car);
 	TestAirThrottleWhileBoosting(arena, car);
+	TestDodgePitchLockAfterLanding(arena, car);
 	TestAutoFlip(arena, car);
 	TestAutoFlipContactNormal(arena, car);
 	TestBoostSetsThrottle(arena, car);

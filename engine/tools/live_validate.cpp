@@ -168,6 +168,10 @@ static bool Load(const char* path, std::string& header, std::vector<Row>& rows) 
 			c.in.pitch = n("pitch");
 			c.in.yaw = n("yaw");
 			c.in.roll = n("roll");
+			if (col.count(p + "dodge_fwd")) { // (the game's own DodgeForward: its byte, C-2)
+				c.in.dodgeForward = n("dodge_fwd");
+				c.in.hasDodgeForward = true;
+			}
 			c.in.jump = n("jump") != 0;
 			c.in.boost = n("activate_boost") != 0 || n("holding_boost") != 0;
 			c.in.handbrake = n("handbrake") != 0;

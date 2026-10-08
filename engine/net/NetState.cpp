@@ -102,9 +102,16 @@ struct CarData {
 
 static void WriteControls(DataStreamOut& out, const CarControls& c) {
 	out.Write(c.throttle); out.Write(c.steer); out.Write(c.pitch); out.Write(c.yaw); out.Write(c.roll);
+	out.Write<uint8_t>(c.hasDodgeForward);
+	if (c.hasDodgeForward)
+		out.Write(c.dodgeForward);
 }
 static void ReadControls(DataStreamIn& in, CarControls& c) {
 	in.Read(c.throttle); in.Read(c.steer); in.Read(c.pitch); in.Read(c.yaw); in.Read(c.roll);
+	c.hasDodgeForward = in.Read<uint8_t>() != 0;
+	c.dodgeForward = 0;
+	if (c.hasDodgeForward)
+		in.Read(c.dodgeForward);
 }
 
 static void WriteCar(Arena* arena, DataStreamOut& out, Car* car) {
@@ -129,7 +136,8 @@ static void WriteCar(Arena* arena, DataStreamOut& out, Car* car) {
 
 	WriteVec(out, s.flipRelTorque);
 	for (float f : { s.jumpTime, s.flipTime, s.airTime, s.airTimeSinceJump, s.boost, s.timeSinceBoosted, s.boostingTime,
-		s.supersonicTime, s.handbrakeVal, s.autoFlipTimer, s.autoFlipTorqueScale, s.carContact.cooldownTimer, s.demoRespawnTimer })
+		s.supersonicTime, s.handbrakeVal, s.autoFlipTimer, s.autoFlipTorqueScale, s.carContact.cooldownTimer, s.demoRespawnTimer,
+		s.dodgePitchLockTime })
 		out.Write(f);
 	WriteVec(out, s.worldContact.contactNormal);
 	out.Write(s.carContact.otherCarID);
@@ -152,6 +160,7 @@ static void WriteCar(Arena* arena, DataStreamOut& out, Car* car) {
 	out.Write(s.demoSpawnPreference);
 	out.Write(s.demoSpawnIndex);
 	out.Write(s.flipResets);
+	out.Write(s.spawnCount);
 	if (s.prespawnSet) {
 		WriteVec(out, s.prespawnPos);
 		out.Write(s.prespawnYaw);
@@ -178,7 +187,8 @@ static void ReadCar(Arena* arena, DataStreamIn& in, CarData& d) {
 
 	ReadVec(in, s.flipRelTorque);
 	for (float* f : { &s.jumpTime, &s.flipTime, &s.airTime, &s.airTimeSinceJump, &s.boost, &s.timeSinceBoosted, &s.boostingTime,
-		&s.supersonicTime, &s.handbrakeVal, &s.autoFlipTimer, &s.autoFlipTorqueScale, &s.carContact.cooldownTimer, &s.demoRespawnTimer })
+		&s.supersonicTime, &s.handbrakeVal, &s.autoFlipTimer, &s.autoFlipTorqueScale, &s.carContact.cooldownTimer, &s.demoRespawnTimer,
+		&s.dodgePitchLockTime })
 		in.Read(*f);
 	ReadVec(in, s.worldContact.contactNormal);
 	in.Read(s.carContact.otherCarID);
@@ -201,6 +211,7 @@ static void ReadCar(Arena* arena, DataStreamIn& in, CarData& d) {
 	in.Read(s.demoSpawnPreference);
 	in.Read(s.demoSpawnIndex);
 	in.Read(s.flipResets);
+	in.Read(s.spawnCount);
 	if (s.prespawnSet) {
 		ReadVec(in, s.prespawnPos);
 		in.Read(s.prespawnYaw);
@@ -242,6 +253,7 @@ void Write(Arena* arena, DataStreamOut& out, const WriteOptions& options) {
 	out.Write(VERSION);
 	out.Write<uint8_t>((options.ball ? HAS_BALL : 0) | (options.boostPads ? HAS_PADS : 0));
 	out.Write<uint16_t>((uint16_t)RS_MIN(arena->kickoffCountdownTicks, 65535u));
+	out.Write<uint8_t>(arena->respawnsHeld);
 
 	if (options.ball) {
 		Ball* ball = arena->ball;
@@ -253,6 +265,8 @@ void Write(Arena* arena, DataStreamOut& out, const WriteOptions& options) {
 		out.Write<uint8_t>(s.dsInfo.hasDamaged);
 		out.Write(Age(arena, s.dsInfo.lastDamageTick));
 		out.Write<uint8_t>(s.isExploded);
+		out.Write(s.spawnCount);
+		_WriteGoalExplosion(out, arena->goalExplosion);
 	}
 
 	out.Write<uint8_t>((uint8_t)options.carIds.size());
@@ -277,9 +291,11 @@ bool Read(Arena* arena, DataStreamIn& in, std::vector<uint32_t>* carIds) {
 		return false;
 	uint8_t has = in.Read<uint8_t>();
 	uint16_t countdown = in.Read<uint16_t>();
+	bool respawnsHeld = in.Read<uint8_t>() != 0;
 
 	Body ballBody{};
 	BallState ballState = arena->ball->_internalState;
+	Arena::GoalExplosion goalExplosion = arena->goalExplosion;
 	if (has & HAS_BALL) {
 		ReadBody(in, ballBody);
 		for (float* f : { &ballState.hsInfo.yTargetDir, &ballState.hsInfo.curTargetSpeed, &ballState.hsInfo.timeSinceHit,
@@ -289,6 +305,8 @@ bool Read(Arena* arena, DataStreamIn& in, std::vector<uint32_t>* carIds) {
 		ballState.dsInfo.hasDamaged = in.Read<uint8_t>() != 0;
 		ballState.dsInfo.lastDamageTick = FromAge(arena, in.Read<int64_t>());
 		ballState.isExploded = in.Read<uint8_t>() != 0;
+		in.Read(ballState.spawnCount);
+		_ReadGoalExplosion(in, goalExplosion);
 	}
 
 	std::vector<CarData> cars(in.Read<uint8_t>());
@@ -315,6 +333,8 @@ bool Read(Arena* arena, DataStreamIn& in, std::vector<uint32_t>* carIds) {
 
 	// Everything parsed: apply
 	arena->kickoffCountdownTicks = countdown;
+	arena->respawnsHeld = respawnsHeld;
+	arena->goalExplosion = goalExplosion;
 	if (has & HAS_BALL) {
 		Ball* ball = arena->ball;
 		ApplyBody(ballBody, ball->_rigidBody, ball->_netRotation);

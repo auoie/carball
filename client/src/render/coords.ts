@@ -18,3 +18,24 @@ export function toThreeQuaternion(rot: Rot3, out: Quaternion = new Quaternion())
   basis.set(f.x, u.x, r.x, 0, f.z, u.z, r.z, 0, f.y, u.y, r.y, 0, 0, 0, 0, 1);
   return out.setFromRotationMatrix(basis);
 }
+
+/** Back from Three's frame (rl = (x, z, y)). */
+export function fromThreeVector(v: Vector3): Vec3 {
+  return { x: v.x, y: v.z, z: v.y };
+}
+
+const axis = new Vector3();
+
+/** The car frame of a Three rotation (toThreeQuaternion's inverse). */
+export function fromThreeQuaternion(q: Quaternion): Rot3 {
+  const f = fromThreeVector(axis.set(1, 0, 0).applyQuaternion(q));
+  const u = fromThreeVector(axis.set(0, 1, 0).applyQuaternion(q));
+  const r = fromThreeVector(axis.set(0, 0, 1).applyQuaternion(q));
+  return { forward: f, up: u, right: r };
+}
+
+/** A vector (Rocket League frame) turned by a Three rotation. */
+export function rotateRl(v: Vec3, q: Quaternion): Vec3 {
+  return fromThreeVector(toThreeVector(v, axis).applyQuaternion(q));
+}
+

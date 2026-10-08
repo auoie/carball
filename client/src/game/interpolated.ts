@@ -12,8 +12,9 @@ export class Interpolated<T extends BodyState> {
     this.previous = state;
     this.current = state;
   }
-  push(state: T): void {
-    this.previous = this.current;
+  /** The next tick's state; `placed`: the body was put there (a respawn, a reset), not interpolated to it */
+  push(state: T, placed = false): void {
+    this.previous = placed ? state : this.current;
     this.current = state;
   }
   position(alpha: number, out: Vector3): Vector3 {

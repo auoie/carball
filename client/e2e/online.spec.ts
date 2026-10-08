@@ -39,6 +39,9 @@ test("two players: one drives, the other sees it through the server", async ({ p
   await expect(page.locator("#net")).toContainText("2 cars", { timeout: 5_000 });
   await expect(other.locator("#net")).toContainText("2 cars");
   await expect(page.locator("#net")).toContainText(/ping \d+ ms/);
+  // The match clock, from the server: full until the ball is first hit (or 5 s after go)
+  await expect(page.locator("#clock")).toHaveText("5:00");
+  await expect(other.locator("#clock")).toBeVisible();
 
   // The kickoff countdown (4 s from the first player's join) ends: cars take input again
   await expect.poll(async () => (await stats(page)).kickoffCountdown, { timeout: 10_000 }).toBe(0);

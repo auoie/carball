@@ -1,14 +1,33 @@
-// The game protocol (version 1): see protocol/README.md. Byte-exact samples in protocol/vectors.json (shared with
-// the Rust server's tests).
+// The game protocol: see protocol/README.md. Byte-exact samples in protocol/vectors.json (shared with the Rust
+// server's tests).
 
 // 2: kickoff countdown in the state; 3: the wheels' previous contacts; 4: the jump's release; 5: respawn spot selection
-// and flip resets in the state
-export const PROTOCOL_VERSION = 5;
+// and flip resets in the state; 6: spawn counters in the state, the match message
+export const PROTOCOL_VERSION = 6;
 export const MAX_INPUT_FRAMES = 10;
 
 export type GameEvent =
   | { readonly kind: "goal"; readonly team: number }
   | { readonly kind: "demo"; readonly attacker: number; readonly victim: number };
+
+/** Where a match is (the game's GameEvent_Soccar_TA states) */
+export type MatchPhase = "countdown" | "active" | "postGoal" | "timeUp" | "ended";
+const MATCH_PHASES: readonly MatchPhase[] = ["countdown", "active", "postGoal", "timeUp", "ended"];
+
+/** The match's state: sent when it changes and each second while the clock runs */
+export interface MatchState {
+  readonly serverTick: number;
+  readonly phase: MatchPhase;
+  /** Sudden death: clockTicks counts up from the start of overtime */
+  readonly overtime: boolean;
+  readonly clockRunning: boolean;
+  /** Regulation: ticks left (120 per second); overtime: ticks played */
+  readonly clockTicks: number;
+  readonly score: readonly [number, number];
+  readonly winner: number | null;
+  /** The match ended because the losing team left (none of its players remained) */
+  readonly forfeit: boolean;
+}
 
 export type ControlMessage =
   | {
@@ -32,7 +51,8 @@ export type ControlMessage =
    *  (NetworkInputBuffer_TA.ClientTick -> ServerResetInputBuffer) */
   | { readonly type: "resetInputBuffer" }
   | { readonly type: "world"; readonly frame: number; readonly snapshot: Uint8Array }
-  | { readonly type: "event"; readonly serverTick: number; readonly event: GameEvent };
+  | { readonly type: "event"; readonly serverTick: number; readonly event: GameEvent }
+  | ({ readonly type: "match" } & MatchState);
 
 /** One frame of inputs as sent: axes in 1/127 steps, bits for the buttons. */
 export interface InputFrame {
@@ -41,6 +61,8 @@ export interface InputFrame {
   readonly pitch: number;
   readonly yaw: number;
   readonly roll: number;
+  /** The dodge's forward input: -pitch made a byte on its own (q(-p), not -q(p): VehicleInput.DodgeForward) */
+  readonly dodgeForward: number;
   readonly bits: number;
 }
 
@@ -202,6 +224,16 @@ export function encodeControl(m: ControlMessage): Uint8Array {
         w.u32(m.event.victim);
       }
       break;
+    case "match":
+      w.u8(0x84);
+      w.u32(m.serverTick);
+      w.u8(MATCH_PHASES.indexOf(m.phase));
+      w.u8((m.overtime ? 1 : 0) | (m.clockRunning ? 2 : 0) | (m.forfeit ? 4 : 0));
+      w.u32(m.clockTicks);
+      w.u8(m.score[0]);
+      w.u8(m.score[1]);
+      w.u8(m.winner ?? 255);
+      break;
   }
   const body = w.done();
   const framed = new Uint8Array(body.byteLength + 2);
@@ -245,6 +277,26 @@ export function decodeControl(body: Uint8Array): ControlMessage {
       if (kind === 1) return { type: "event", serverTick, event: { kind: "demo", attacker: r.u32(), victim: r.u32() } };
       throw new DecodeError(`unknown event kind ${String(kind)}`);
     }
+    case 0x84: {
+      const serverTick = r.u32();
+      const phase = MATCH_PHASES[r.u8()];
+      if (!phase) throw new DecodeError("unknown match phase");
+      const flags = r.u8();
+      const clockTicks = r.u32();
+      const score = [r.u8(), r.u8()] as const;
+      const winner = r.u8();
+      return {
+        type: "match",
+        serverTick,
+        phase,
+        overtime: (flags & 1) !== 0,
+        clockRunning: (flags & 2) !== 0,
+        clockTicks,
+        score,
+        winner: winner === 255 ? null : winner,
+        forfeit: (flags & 4) !== 0,
+      };
+    }
     default:
       throw new DecodeError(`unknown control message 0x${type.toString(16)}`);
   }
@@ -258,7 +310,7 @@ export function encodeDatagram(m: DatagramMessage): Uint8Array {
     w.u32(m.firstFrame);
     w.u8(m.frames.length);
     for (const f of m.frames) {
-      for (const axis of [f.throttle, f.steer, f.pitch, f.yaw, f.roll]) w.i8(axis);
+      for (const axis of [f.throttle, f.steer, f.pitch, f.yaw, f.roll, f.dodgeForward]) w.i8(axis);
       w.u8(f.bits);
     }
   } else {
@@ -287,7 +339,7 @@ export function decodeDatagram(bytes: Uint8Array): DatagramMessage {
     if (count > MAX_INPUT_FRAMES) throw new DecodeError("too many input frames");
     const frames: InputFrame[] = [];
     for (let i = 0; i < count; i++) {
-      frames.push({ throttle: r.i8(), steer: r.i8(), pitch: r.i8(), yaw: r.i8(), roll: r.i8(), bits: r.u8() });
+      frames.push({ throttle: r.i8(), steer: r.i8(), pitch: r.i8(), yaw: r.i8(), roll: r.i8(), dodgeForward: r.i8(), bits: r.u8() });
     }
     return { type: "inputs", timestamp, firstFrame, frames };
   }

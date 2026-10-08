@@ -25,6 +25,9 @@ export interface CarControls {
   readonly handbrake: boolean;
   /** Keyboard air pitch safety is holding nose-down pitch back: air control ignores pitch, dodges still use it. */
   readonly airPitchSafety: boolean;
+  /** The dodge's forward input, made a byte on its own: the game's -pitch from before the air pitch safety, so
+   *  q(-pitch), not -q(pitch) (the byte scales by 127 up, 128 down; controls audit C-2). Without it: -pitch. */
+  readonly dodgeForward?: number;
 }
 
 /** The player's control preferences, applied in the car's physics (the game's PRI car preferences). */
@@ -114,6 +117,9 @@ export interface CarState extends BodyState {
   /** Landings on the ball or a car that gave the jump back (wraps at 65536): a change is a flip reset (the game's
    *  DodgesRefreshedCounter, which drives its indicator) */
   readonly flipResets: number;
+  /** Placements by a kickoff reset, a respawn or a state set (wraps at 65536): a server correction that changes it
+   *  is a new car there, drawn at once; every other correction is smoothed (as the game's) */
+  readonly spawnCount: number;
 }
 
 export interface WheelConfig {
@@ -197,7 +203,7 @@ export class World {
   }
 
   setControls(id: number, c: CarControls): void {
-    this.#sim.setControls(id, c.throttle, c.steer, c.pitch, c.yaw, c.roll, c.jump, c.boost, c.handbrake, c.airPitchSafety);
+    this.#sim.setControls(id, c.throttle, c.steer, c.pitch, c.yaw, c.roll, c.jump, c.boost, c.handbrake, c.airPitchSafety, c.dodgeForward ?? Number.NaN);
   }
 
   setCarPreferences(id: number, p: CarPreferences): void {
@@ -227,6 +233,11 @@ export class World {
       angVel: readVec(a, m.BALL_ANG_VEL),
       rot: readRot(a, m.BALL_ROT),
     };
+  }
+
+  /** Placements of the ball by a reset or a state set (see CarState.spawnCount) */
+  ballSpawnCount(): number {
+    return at(this.#sim.ballState(), this.#m.BALL_SPAWN_COUNT);
   }
 
   /** The ball scored and exploded: frozen and not colliding (not drawn) until a reset or a ball state set. */
@@ -295,6 +306,7 @@ export class World {
         locked: flag(m.CAR_PRESPAWN_SET) ? { pos: readVec(a, m.CAR_PRESPAWN_POS), yaw: at(a, m.CAR_PRESPAWN_YAW) } : null,
       },
       flipResets: at(a, m.CAR_FLIP_RESETS),
+      spawnCount: at(a, m.CAR_SPAWN_COUNT),
     };
   }
 
@@ -389,6 +401,7 @@ export class World {
       boost: at(c, 6) !== 0,
       handbrake: at(c, 7) !== 0,
       airPitchSafety: at(c, 8) !== 0,
+      ...(Number.isNaN(at(c, 9)) ? {} : { dodgeForward: at(c, 9) }),
     };
   }
 

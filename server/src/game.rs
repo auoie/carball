@@ -5,9 +5,9 @@ use std::collections::BTreeMap;
 
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::engine::{Arena, Event};
+use crate::engine::{Arena, Controls, Event};
 use crate::input_buffer::InputBuffer;
-use crate::protocol::{self, Control, Datagram, GameEvent, InputFrame, Update};
+use crate::protocol::{self, Control, Datagram, GameEvent, InputFrame, MatchState, Phase, Update};
 
 pub const TICK_RATE: u32 = 120;
 /// Updates go out every other tick (60 Hz)
@@ -24,6 +24,18 @@ const GOAL_RESET_SECONDS: f32 = 3.0;
 /// After a kickoff reset, the cars get no input for this long (replays: the first car moves 3.99-4.05 s after the
 /// reset; the "3-2-1" countdown plus a second)
 const KICKOFF_COUNTDOWN_SECONDS: f32 = 4.0;
+/// A client's jitter buffer resets at most this often (s)
+const MIN_RESET_INTERVAL: f64 = 1.0;
+/// Before a match's first kickoff countdown, the cars wait frozen at their spots (`WarmupTime` 3 s)
+const WARMUP_SECONDS: f32 = 3.0;
+/// A team's size (`GameEvent_Team_TA.MaxTeamSize`: the soccar archetype's 3; it grows when a team has more players)
+pub const TEAM_SIZE: u8 = 3;
+/// The match clock (`GameEvent_Soccar_TA.GameTime` 300 s)
+pub const MATCH_TICKS: u32 = 300 * TICK_RATE;
+/// The clock starts at the first touch, or this long after "go" (`BallHasBeenHitStartDelay` 5.0 s)
+const CLOCK_START_DELAY_TICKS: u64 = 5 * TICK_RATE as u64;
+/// After the match: the podium (`PrePodiumSpotlight` 3.0 s + `PodiumSpotlight` 5.3 s), then a new match
+const PODIUM_SECONDS: f32 = 8.3;
 
 pub type PlayerId = u64;
 
@@ -50,14 +62,31 @@ struct Player {
     out: UnboundedSender<Outgoing>,
     /// Newest input packet timestamp and when it arrived (for the ping echo)
     echo: Option<(u32, f64)>,
+    /// When its jitter buffer was last reset (s)
+    last_reset: Option<f64>,
 }
 
 pub struct Game {
     arena: Arena,
     players: BTreeMap<PlayerId, Player>,
-    kickoff_seed: i32,
-    reset_at_tick: Option<u64>,
+    /// Seeds each match's kickoff spot order (the game's is random: `RandomizeSpawnPoints`)
+    match_seed: i32,
+    /// The playlist's team size
+    team_size: u8,
+    phase: Phase,
+    /// PostGoal: the next round's tick; Ended: the next match's
+    phase_until: u64,
+    /// When the countdown ended ("go")
+    go_tick: u64,
+    /// Regulation: ticks left; overtime: ticks played
+    clock_ticks: u32,
+    overtime: bool,
+    clock_running: bool,
+    winner: Option<u8>,
+    forfeit: bool,
     pub score: [u32; 2],
+    /// The match state last sent
+    sent: Option<MatchState>,
 }
 
 impl Default for Game {
@@ -68,7 +97,50 @@ impl Default for Game {
 
 impl Game {
     pub fn new() -> Self {
-        Self { arena: Arena::new(), players: BTreeMap::new(), kickoff_seed: 1, reset_at_tick: None, score: [0, 0] }
+        Self::with_seed(1)
+    }
+
+    /// `seed`: the first match's kickoff order (then one more per match)
+    pub fn with_seed(seed: i32) -> Self {
+        Self::with_options(seed, TEAM_SIZE)
+    }
+
+    /// `team_size`: the playlist's (1 for 1v1, 2 for 2v2, ...)
+    pub fn with_options(seed: i32, team_size: u8) -> Self {
+        Self {
+            arena: Arena::new(),
+            players: BTreeMap::new(),
+            match_seed: seed,
+            team_size,
+            phase: Phase::Countdown,
+            phase_until: 0,
+            go_tick: 0,
+            clock_ticks: MATCH_TICKS,
+            overtime: false,
+            clock_running: false,
+            winner: None,
+            forfeit: false,
+            score: [0, 0],
+            sent: None,
+        }
+    }
+
+    pub fn phase(&self) -> Phase {
+        self.phase
+    }
+
+    /// The match state clients are sent
+    pub fn match_state(&self) -> MatchState {
+        MatchState {
+            server_tick: self.arena.tick_count() as u32,
+            phase: self.phase,
+            overtime: self.overtime,
+            clock_running: self.clock_running,
+            clock_ticks: self.clock_ticks,
+            score: self.score.map(|s| s.min(255) as u8),
+            winner: self.winner,
+            forfeit: self.forfeit,
+        }
     }
 
     pub fn player_count(&self) -> usize {
@@ -99,12 +171,15 @@ impl Game {
         let car_id = self.arena.add_car(team, request.body);
         self.arena.set_car_preferences(car_id, request.dodge_deadzone, request.steering_sensitivity, request.air_control_sensitivity);
         if self.players.is_empty() {
-            self.next_kickoff();
+            self.new_match();
+        } else if self.phase == Phase::Countdown {
+            self.arena.redo_kickoff(); // (joining in a kickoff countdown: a kickoff spot, the others where they were)
         }
-        let player = Player { car_id, team, input: InputBuffer::default(), out, echo: None };
+        let player = Player { car_id, team, input: InputBuffer::default(), out, echo: None, last_reset: None };
         let snapshot = self.arena.save_state();
         let welcome = Control::Welcome { version: protocol::VERSION, car_id, tick_rate: TICK_RATE as u8, frame: 0, snapshot: snapshot.clone() };
         let _ = player.out.send(Outgoing::Control(welcome.encode()));
+        let _ = player.out.send(Outgoing::Control(Control::Match(self.match_state()).encode()));
         self.players.insert(id, player);
         self.send_world_to_others(id, &snapshot);
     }
@@ -117,8 +192,15 @@ impl Game {
                 stats.under_buffer_frames, stats.over_buffer_frames
             );
             self.arena.remove_car(player.car_id);
+            // A team left without players forfeits (the game: 0.01 s after the leave); everyone gone: the match is
+            // over, the next player starts a new one
+            let left = |team: u8| self.players.values().filter(|p| p.team == team).count();
+            if self.phase != Phase::Ended && left(player.team) == 0 && left(1 - player.team.min(1)) > 0 {
+                self.end_match(1 - player.team.min(1), true);
+            }
             let snapshot = self.arena.save_state();
             self.send_world_to_others(id, &snapshot);
+            self.send_match_state();
         }
     }
 
@@ -140,18 +222,59 @@ impl Game {
         }
     }
 
-    /// The client had a hitch: its jitter buffer starts over (`ServerResetInputBuffer`)
-    pub fn reset_input_buffer(&mut self, id: PlayerId) {
-        if let Some(p) = self.players.get_mut(&id) {
+    /// The client had a hitch: its jitter buffer starts over (`ServerResetInputBuffer`). At most once per
+    /// `MIN_RESET_INTERVAL` (a client asks 2 s after its last hitch; more often is a broken or hostile client)
+    pub fn reset_input_buffer(&mut self, id: PlayerId, now: f64) {
+        if let Some(p) = self.players.get_mut(&id)
+            && p.last_reset.is_none_or(|last| now - last >= MIN_RESET_INTERVAL)
+        {
             p.input.jitter.reset();
+            p.last_reset = Some(now);
         }
     }
 
-    fn next_kickoff(&mut self) {
-        self.arena.reset_kickoff(self.kickoff_seed);
+    /// A new match: scores 0, the clock full, a new kickoff order, the first kickoff
+    fn new_match(&mut self) {
+        self.score = [0, 0];
+        self.clock_ticks = MATCH_TICKS;
+        self.overtime = false;
+        self.winner = None;
+        self.forfeit = false;
+        self.arena.start_match(self.match_seed, self.team_size);
+        self.match_seed = self.match_seed.wrapping_add(1);
+        self.kickoff();
+        let warmup = (WARMUP_SECONDS * TICK_RATE as f32) as u32;
+        self.arena.set_kickoff_countdown(self.arena.kickoff_countdown() + warmup);
+    }
+
+    fn kickoff(&mut self) {
+        self.arena.set_respawns_held(false);
+        self.arena.next_kickoff();
         self.arena.set_kickoff_countdown((KICKOFF_COUNTDOWN_SECONDS * TICK_RATE as f32) as u32);
-        self.kickoff_seed += 1;
-        self.reset_at_tick = None;
+        self.phase = Phase::Countdown;
+    }
+
+    /// The match is over: the winner shown, the cars frozen for the podium, then a new match (`EndGame`)
+    fn end_match(&mut self, winner: u8, forfeit: bool) {
+        self.winner = Some(winner);
+        self.forfeit = forfeit;
+        self.phase = Phase::Ended;
+        self.phase_until = self.arena.tick_count() + (PODIUM_SECONDS * TICK_RATE as f32) as u64;
+    }
+
+    /// A round ended (after a goal, or the ball down at 0:00): the match ends with a winner, goes to overtime when
+    /// tied at 0:00, or has another kickoff (`GameEvent_Soccar_TA.StartNewRound`)
+    fn new_round(&mut self) {
+        let time_up = self.overtime || self.clock_ticks == 0;
+        if time_up && self.score[0] != self.score[1] {
+            self.end_match(u8::from(self.score[1] > self.score[0]), false);
+        } else {
+            if time_up && !self.overtime {
+                self.overtime = true; // (sudden death, the clock counting up from 0)
+                self.clock_ticks = 0;
+            }
+            self.kickoff();
+        }
     }
 
     fn broadcast(&self, message: &Control) {
@@ -169,6 +292,8 @@ impl Game {
         let odd_tick = self.arena.tick_count() % 2 == 1;
         for p in self.players.values_mut() {
             let controls = p.input.tick(now, odd_tick);
+            // (after the match the cars are frozen: `EndGame` → `SetAllDriving(false)`)
+            let controls = if self.phase == Phase::Ended { Controls::default() } else { controls };
             self.arena.set_controls(p.car_id, &controls);
         }
         self.arena.step(1);
@@ -176,25 +301,84 @@ impl Game {
 
         for event in self.arena.take_events() {
             match event {
-                // (one goal per round: the engine explodes the ball on a goal, and none counts while the reset is pending)
-                Event::Goal { .. } if self.reset_at_tick.is_some() => {}
-                Event::Goal { team } => {
+                // (one goal per round: the engine explodes the ball on a goal; goals count while playing and at 0:00)
+                Event::Goal { team } if matches!(self.phase, Phase::Active | Phase::TimeUp) => {
                     self.score[usize::from(team.min(1))] += 1;
                     self.broadcast(&Control::Event { server_tick: tick as u32, event: GameEvent::Goal { team } });
-                    self.reset_at_tick = Some(tick + (GOAL_RESET_SECONDS * TICK_RATE as f32) as u64);
+                    self.phase = Phase::PostGoal;
+                    self.phase_until = tick + (GOAL_RESET_SECONDS * TICK_RATE as f32) as u64;
+                    self.arena.set_respawns_held(true); // (the demolished wait for the kickoff)
                 }
+                Event::Goal { .. } => {}
                 Event::Demo { attacker, victim } => {
                     self.broadcast(&Control::Event { server_tick: tick as u32, event: GameEvent::Demo { attacker, victim } });
                 }
                 Event::Bump { .. } => {}
             }
         }
-        if self.reset_at_tick.is_some_and(|t| tick >= t) {
-            self.next_kickoff();
-        }
+        self.update_match(tick);
+        self.send_match_state();
 
         if tick.is_multiple_of(UPDATE_EVERY_TICKS) {
             self.send_updates(now);
+        }
+    }
+
+    /// The match's clock and phases after a tick (`GameEvent_Soccar_TA`: Countdown, Active, PostGoalScored, the 0:00
+    /// `EndRoundComponent`, overtime, `EndGame`)
+    fn update_match(&mut self, tick: u64) {
+        self.clock_running = false;
+        match self.phase {
+            Phase::Countdown => {
+                if self.arena.kickoff_countdown() == 0 {
+                    self.phase = Phase::Active;
+                    self.go_tick = tick;
+                }
+            }
+            Phase::Active => {
+                // The clock runs once the ball has been hit (`bBallHasBeenHit`: a touch, or 5 s after "go")
+                let hit = self.arena.last_ball_touch_tick().is_some() || tick >= self.go_tick + CLOCK_START_DELAY_TICKS;
+                if hit && self.overtime {
+                    self.clock_ticks = self.clock_ticks.saturating_add(1);
+                    self.clock_running = true;
+                } else if hit && self.clock_ticks > 0 {
+                    self.clock_ticks -= 1;
+                    self.clock_running = true;
+                    if self.clock_ticks == 0 {
+                        self.phase = Phase::TimeUp;
+                    }
+                }
+            }
+            // At 0:00 the round ends when the ball touches the ground (or sleeps)
+            Phase::TimeUp => {
+                if self.arena.ball_on_ground() {
+                    self.new_round();
+                }
+            }
+            Phase::PostGoal => {
+                if tick >= self.phase_until {
+                    self.new_round();
+                }
+            }
+            Phase::Ended => {
+                if tick >= self.phase_until {
+                    self.new_match();
+                }
+            }
+        }
+    }
+
+    /// The match state to everyone when it changed (the clock: when its shown second changes)
+    fn send_match_state(&mut self) {
+        let state = self.match_state();
+        let shown = |s: &MatchState| if s.overtime { s.clock_ticks / TICK_RATE } else { s.clock_ticks.div_ceil(TICK_RATE) };
+        let changed = self.sent.is_none_or(|sent| {
+            (sent.phase, sent.overtime, sent.clock_running, sent.score, sent.winner, shown(&sent))
+                != (state.phase, state.overtime, state.clock_running, state.score, state.winner, shown(&state))
+        });
+        if changed {
+            self.broadcast(&Control::Match(state));
+            self.sent = Some(state);
         }
     }
 
@@ -298,17 +482,26 @@ mod tests {
         // A client-side arena: the welcome snapshot, then the world snapshot sent when player 2 joined
         let mut client = Arena::new();
         assert!(client.load_state(&snapshot));
-        let Control::World { snapshot: world, .. } = Control::decode(match &first[1] { Outgoing::Control(b) => &b[2..], _ => panic!() }).unwrap() else { panic!() };
+        let world = first
+            .iter()
+            .find_map(|m| match m {
+                Outgoing::Control(b) => match Control::decode(&b[2..]) {
+                    Ok(Control::World { snapshot, .. }) => Some(snapshot),
+                    _ => None,
+                },
+                Outgoing::Datagram(_) => None,
+            })
+            .unwrap();
         assert!(client.load_state(&world));
 
-        // Player 1 sends 2 frames per 60 Hz packet (throttle 1), player 2 nothing; the 4 s kickoff countdown, then
-        // 2 seconds of driving
+        // Player 1 sends 2 frames per 60 Hz packet (throttle 1), player 2 nothing; the match's first kickoff (3 s
+        // warm-up and the 4 s countdown), then 2 seconds of driving
         let start = game.car_position(1).unwrap();
         let mut frame = 1u32;
         let mut last_update = None;
         let mut max_size = 0;
         let countdown = game.arena.kickoff_countdown();
-        assert_eq!(countdown, 480);
+        assert_eq!(countdown, 840);
         for tick in 0..countdown + 240 {
             if tick == countdown {
                 let p = game.car_position(1).unwrap();
@@ -345,11 +538,208 @@ mod tests {
     }
 
     #[test]
-    fn a_kickoff_starts_the_countdown() {
+    fn input_buffer_resets_are_rate_limited() {
         init_engine();
         let mut game = Game::new();
         let (tx, _rx) = unbounded_channel();
         game.join(1, REQUEST, tx);
+        let inflate = |game: &mut Game| {
+            let p = game.players.get_mut(&1).unwrap();
+            p.input.jitter.buffer_size = 18; // (as after a long gap)
+        };
+        let size = |game: &Game| game.players[&1].input.jitter.buffer_size;
+        inflate(&mut game);
+        game.reset_input_buffer(1, 10.0);
+        assert_eq!(size(&game), 7);
+        inflate(&mut game);
+        game.reset_input_buffer(1, 10.5); // too soon: ignored
+        assert_eq!(size(&game), 18);
+        game.reset_input_buffer(1, 11.0);
+        assert_eq!(size(&game), 7);
+    }
+
+    /// One player, ticked until `until` says so (or `max` ticks); the tick count when it did
+    fn run_until(game: &mut Game, max: u32, mut until: impl FnMut(&mut Game) -> bool) -> u64 {
+        for _ in 0..max {
+            game.tick(game.tick_count() as f64 / 120.0);
+            if until(game) {
+                return game.tick_count();
+            }
+        }
+        panic!("not reached in {max} ticks (phase {:?}, clock {})", game.phase, game.clock_ticks);
+    }
+
+    fn match_states(rx: &mut UnboundedReceiver<Outgoing>) -> Vec<MatchState> {
+        drain(rx)
+            .iter()
+            .filter_map(|m| match m {
+                Outgoing::Control(b) => match Control::decode(&b[2..]) {
+                    Ok(Control::Match(state)) => Some(state),
+                    _ => None,
+                },
+                Outgoing::Datagram(_) => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_clock_waits_for_go_and_the_ball_being_hit() {
+        init_engine();
+        let mut game = Game::new();
+        let (tx, mut rx) = unbounded_channel();
+        game.join(1, REQUEST, tx);
+        assert_eq!(match_states(&mut rx).last().map(|m| (m.phase, m.clock_ticks)), Some((Phase::Countdown, MATCH_TICKS)));
+        // The match's first kickoff: the 3 s warm-up and the 4 s countdown, the clock stopped
+        let go = run_until(&mut game, 1000, |g| g.phase == Phase::Active);
+        assert_eq!(go, 840);
+        // Nobody touches the ball: the clock starts 5 s after go (BallHasBeenHitStartDelay)
+        let started = run_until(&mut game, 1000, |g| g.clock_ticks < MATCH_TICKS);
+        assert_eq!(started, go + CLOCK_START_DELAY_TICKS);
+        let states = match_states(&mut rx);
+        assert!(states.iter().any(|m| m.phase == Phase::Active && !m.clock_running));
+        assert!(states.last().is_some_and(|m| m.clock_running && m.clock_ticks == MATCH_TICKS - 1));
+        // Then a message each shown second
+        run_until(&mut game, 400, |g| g.clock_ticks == MATCH_TICKS - 3 * TICK_RATE);
+        let shown: Vec<u32> = match_states(&mut rx).iter().map(|m| m.clock_ticks.div_ceil(TICK_RATE)).collect();
+        assert_eq!(shown, vec![299, 298, 297]);
+    }
+
+    #[test]
+    fn a_touch_starts_the_clock() {
+        init_engine();
+        let mut game = Game::new();
+        let (tx, _rx) = unbounded_channel();
+        game.join(1, REQUEST, tx);
+        run_until(&mut game, 1000, |g| g.phase == Phase::Active);
+        // A ball rolling into the parked car
+        let car = game.car_position(1).unwrap();
+        game.arena.set_ball([car[0], car[1] + 400.0, 93.0], [0.0, -1500.0, 0.0]);
+        let started = run_until(&mut game, 300, |g| g.clock_ticks < MATCH_TICKS);
+        assert_eq!(game.arena.last_ball_touch_tick(), Some(started));
+    }
+
+    #[test]
+    fn at_zero_the_round_ends_when_the_ball_lands_then_a_tie_goes_to_overtime() {
+        init_engine();
+        let mut game = Game::new();
+        let (tx, mut rx) = unbounded_channel();
+        game.join(1, REQUEST, tx);
+        run_until(&mut game, 1000, |g| g.phase == Phase::Active);
+        run_until(&mut game, 1000, |g| g.clock_running);
+        game.clock_ticks = 2;
+        game.arena.set_ball([0.0, 0.0, 800.0], [0.0, 0.0, 0.0]);
+        let tick = game.tick_count();
+        run_until(&mut game, 10, |g| g.phase == Phase::TimeUp);
+        assert_eq!(game.clock_ticks, 0);
+        let z = game.arena.ball_position()[2];
+        assert!(z > 400.0, "time up with the ball high (z {z})");
+        // The round ends when the ball reaches the floor, not before; 0-0: overtime, a kickoff
+        let landed = run_until(&mut game, 400, |g| g.phase != Phase::TimeUp);
+        let z = game.arena.ball_position()[2];
+        assert!(z < 100.0, "the round ended with the ball at z {z}");
+        assert!(landed > tick + 120);
+        assert_eq!((game.phase, game.overtime, game.clock_ticks), (Phase::Countdown, true, 0));
+        assert!(match_states(&mut rx).last().is_some_and(|m| m.overtime && m.phase == Phase::Countdown));
+        // Overtime counts up from go (here at once: the clock starts at the delay or a touch, as in regulation)
+        run_until(&mut game, 1000, |g| g.phase == Phase::Active);
+        run_until(&mut game, 1000, |g| g.clock_ticks > 0);
+        run_until(&mut game, 200, |g| g.clock_ticks == 120);
+    }
+
+    #[test]
+    fn the_first_goal_in_overtime_wins_then_a_new_match_starts() {
+        init_engine();
+        let mut game = Game::new();
+        let (tx, mut rx) = unbounded_channel();
+        game.join(1, REQUEST, tx);
+        run_until(&mut game, 1000, |g| g.phase == Phase::Active);
+        game.overtime = true;
+        game.clock_ticks = 0;
+        game.arena.set_ball([0.0, 5000.0, 300.0], [0.0, 2000.0, 0.0]); // into orange's goal: blue scores
+        run_until(&mut game, 120, |g| g.phase == Phase::PostGoal);
+        assert_eq!(game.score, [1, 0]);
+        let ended = run_until(&mut game, 400, |g| g.phase == Phase::Ended);
+        assert_eq!(game.winner, Some(0));
+        assert!(match_states(&mut rx).last().is_some_and(|m| m.phase == Phase::Ended && m.winner == Some(0) && m.score == [1, 0]));
+        // Frozen on the podium, then a new match: 0-0, the full clock, a kickoff
+        let restarted = run_until(&mut game, 2000, |g| g.phase != Phase::Ended);
+        assert_eq!(restarted - ended, (PODIUM_SECONDS * TICK_RATE as f32) as u64);
+        assert_eq!((game.phase, game.score, game.clock_ticks, game.overtime, game.winner), (Phase::Countdown, [0, 0], MATCH_TICKS, false, None));
+    }
+
+    #[test]
+    fn a_team_left_without_players_forfeits() {
+        init_engine();
+        let mut game = Game::new();
+        let (tx1, mut rx1) = unbounded_channel();
+        let (tx2, _rx2) = unbounded_channel();
+        let (tx3, _rx3) = unbounded_channel();
+        game.join(1, JoinRequest { team: 0, ..REQUEST }, tx1);
+        game.join(2, JoinRequest { team: 1, ..REQUEST }, tx2);
+        game.join(3, JoinRequest { team: 1, ..REQUEST }, tx3);
+        run_until(&mut game, 1000, |g| g.phase == Phase::Active);
+        game.leave(2); // (orange still has a player)
+        assert_eq!(game.phase, Phase::Active);
+        drain(&mut rx1);
+        game.leave(3);
+        assert_eq!((game.phase, game.winner, game.forfeit), (Phase::Ended, Some(0), true));
+        assert!(match_states(&mut rx1).last().is_some_and(|m| m.phase == Phase::Ended && m.forfeit && m.winner == Some(0)));
+        // A new match after the podium, not a forfeit
+        run_until(&mut game, 2000, |g| g.phase == Phase::Countdown);
+        assert!(!game.forfeit && game.winner.is_none());
+    }
+
+    #[test]
+    fn a_goal_at_zero_counts_and_a_goal_with_time_left_is_a_kickoff() {
+        init_engine();
+        let mut game = Game::new();
+        let (tx, _rx) = unbounded_channel();
+        game.join(1, REQUEST, tx);
+        run_until(&mut game, 1000, |g| g.phase == Phase::Active);
+        // With time left: a goal, then the next kickoff with the clock where it stopped
+        game.clock_ticks = 5000;
+        game.arena.set_ball([0.0, -5000.0, 300.0], [0.0, -2000.0, 0.0]); // orange scores
+        run_until(&mut game, 120, |g| g.phase == Phase::PostGoal);
+        let clock = game.clock_ticks;
+        run_until(&mut game, 400, |g| g.phase == Phase::Countdown);
+        assert_eq!((game.score, game.clock_ticks, game.overtime), ([0, 1], clock, false));
+        // At 0:00 with the ball in the air: a goal still counts, and wins
+        run_until(&mut game, 1000, |g| g.phase == Phase::Active);
+        run_until(&mut game, 1000, |g| g.clock_running);
+        game.clock_ticks = 1;
+        game.arena.set_ball([0.0, 4500.0, 600.0], [0.0, 1500.0, 0.0]);
+        run_until(&mut game, 10, |g| g.phase == Phase::TimeUp);
+        run_until(&mut game, 200, |g| g.phase == Phase::PostGoal);
+        assert_eq!(game.score, [1, 1]);
+        // 1-1 at 0:00: overtime
+        run_until(&mut game, 400, |g| g.phase == Phase::Countdown);
+        assert!(game.overtime);
+    }
+
+    #[test]
+    fn a_kickoff_starts_the_countdown_and_a_joiner_in_it_gets_a_kickoff_spot() {
+        init_engine();
+        let mut game = Game::new();
+        let (tx, _rx) = unbounded_channel();
+        game.join(1, REQUEST, tx);
+        assert_eq!(game.arena.kickoff_countdown(), 840); // (the match's first: with the warm-up)
+        let first = game.car_position(1).unwrap();
+        for _ in 0..100 {
+            game.tick(0.0);
+        }
+        let (tx2, _rx2) = unbounded_channel();
+        game.join(2, JoinRequest { team: 0, ..REQUEST }, tx2);
+        // Both on kickoff spots (z 17, a spot's x and y), the first car where it was; the countdown goes on
+        let kickoff_spots = [(-2048.0, -2560.0), (2048.0, -2560.0), (-256.0, -3840.0), (256.0, -3840.0), (0.0, -4608.0)];
+        let on_spot = |p: [f32; 3]| kickoff_spots.iter().any(|&(x, y): &(f32, f32)| (p[0].abs() - x.abs()).abs() < 0.1 && (p[1].abs() - y.abs()).abs() < 0.1);
+        let second = game.car_position(2).unwrap();
+        assert!(on_spot(first) && on_spot(second), "{first:?} {second:?}");
+        assert_eq!(game.car_position(1).unwrap(), first);
+        assert_eq!(game.arena.kickoff_countdown(), 740);
+        // A goal's kickoff: the countdown alone
+        game.phase = Phase::PostGoal;
+        game.phase_until = game.tick_count() + 1;
+        game.tick(0.0);
         assert_eq!(game.arena.kickoff_countdown(), 480);
     }
 

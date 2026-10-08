@@ -32,6 +32,7 @@ interface JsonFrame {
   pitch: number;
   yaw: number;
   roll: number;
+  dodgeForward: number;
   jump: boolean;
   boost: boolean;
   handbrake: boolean;
@@ -58,6 +59,7 @@ function toMessage(m: Record<string, unknown>): ControlMessage | DatagramMessage
           pitch: quantizeAxis(f.pitch),
           yaw: quantizeAxis(f.yaw),
           roll: quantizeAxis(f.roll),
+          dodgeForward: quantizeAxis(f.dodgeForward),
           bits:
             (f.jump ? BIT_JUMP : 0) | (f.boost ? BIT_BOOST : 0) | (f.handbrake ? BIT_HANDBRAKE : 0) | (f.airPitchSafety ? BIT_AIR_PITCH_SAFETY : 0),
         })),

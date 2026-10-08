@@ -94,7 +94,10 @@ current bindings.
 
 Input follows the game (`notes/input.md`): the deadzone applies per stick axis; holding air roll turns yaw into
 roll and replaces directional roll; the sensitivities and dodge deadzone are applied by the engine
-(`World.setCarPreferences`), as the game applies them on the server; the right stick swivels the camera.
+(`World.setCarPreferences`), as the game applies them on the server; the right stick swivels the camera. With an
+action on both devices, their axes add up before the control is clamped, and a button is a press and a release
+command (the last one wins: releasing either of two held inputs releases it; `ButtonLatch`). The dodge's forward
+input goes as its own byte (-pitch made a byte on its own, as the game's DodgeForward).
 
 Defaults follow the live game's "Modern" layout (its default since the 2026-10-06 update): W/S throttle (and pitch
 in the air), A/D steer/yaw, Q/E air roll, Space jump (left mouse too: the alternative jump), Left Shift boost, right

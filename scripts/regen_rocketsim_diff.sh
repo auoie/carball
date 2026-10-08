@@ -1,17 +1,31 @@
 #!/bin/bash
 # Regenerates engine/rocketsim-rl-patches.diff without a pristine RocketSim checkout: rebuilds upstream from the tree
-# of the commit that last updated the diff, minus that diff (checked: it must reproduce it exactly), then diffs it
-# against the working tree.
+# of the newest commit whose diff matches its tree, minus that diff (checked: it must reproduce it exactly), then diffs
+# it against the working tree.
 #   bash scripts/regen_rocketsim_diff.sh "$PWD" /tmp/somewhere new.diff && cp new.diff engine/rocketsim-rl-patches.diff
 # Rebuild pristine upstream RocketSim from that commit's tree minus its patch diff, then diff it against today's tree.
 #   regen_diff.sh REPO WORKDIR OUT.diff
 set -euo pipefail
+SELF=$(realpath "$0")
 R=$1; S=$2; OUT=$3
 mkdir -p "$S"
 cd "$R"
-# The commit that last updated the diff: its tree matches its diff (later commits may have changed the engine without
-# regenerating it, so HEAD's diff need not apply to HEAD's tree)
-REV=$(git log -1 --format=%h -- engine/rocketsim-rl-patches.diff)
+# The newest commit whose tree matches its diff: the commits that updated the diff, newest first, until one reverses
+# cleanly (a commit can hold a diff older than its engine tree, and later commits may change the engine without
+# regenerating it). REV=... picks one.
+if [ -z "${REV:-}" ]; then
+    for rev in $(git log --format=%h -- engine/rocketsim-rl-patches.diff); do
+        if REV=$rev bash "$SELF" "$R" "$S/try_$rev" "$S/try_$rev.diff" > "$S/try_$rev.log" 2>&1 \
+            && grep -q "reproduced exactly" "$S/try_$rev.log"; then
+            cp "$S/try_$rev.diff" "$OUT"
+            cat "$S/try_$rev.log"
+            exit 0
+        fi
+        echo "$rev: its diff doesn't match its tree, trying an older one"
+    done
+    echo "no commit's diff matches its tree" >&2
+    exit 1
+fi
 git show "$REV":engine/rocketsim-rl-patches.diff > "$S/old.diff"
 # Files the patches added are absent upstream: leave them out of the extraction
 mapfile -t NEW < <(awk '/^diff --git/{f=$4} /^new file/{sub("^engine/rocketsim/","",f); print f}' "$S/old.diff")

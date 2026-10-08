@@ -3,6 +3,7 @@
 #include "NetState.h"
 #include "RocketSim.h"
 
+#include <algorithm>
 #include <cstring>
 #include <vector>
 
@@ -74,6 +75,7 @@ void rl_set_controls(RLArena* a, uint32_t id, const RLControls* c) {
 	CarControls& out = car->controls;
 	out.throttle = c->throttle; out.steer = c->steer; out.pitch = c->pitch; out.yaw = c->yaw; out.roll = c->roll;
 	out.jump = c->jump; out.boost = c->boost; out.handbrake = c->handbrake; out.airPitchSafety = c->air_pitch_safety;
+	out.dodgeForward = c->dodge_forward; out.hasDodgeForward = c->has_dodge_forward != 0;
 }
 
 void rl_set_car_preferences(RLArena* a, uint32_t id, float dodge, float steer, float air) {
@@ -98,14 +100,68 @@ void rl_reset_kickoff(RLArena* a, int seed) {
 	a->goalReported = false;
 }
 
+void rl_start_match(RLArena* a, int seed, int team_size) { a->arena->StartKickoffSequence(seed, team_size); }
+
+void rl_next_kickoff(RLArena* a) {
+	a->arena->ResetToNextKickoff();
+	a->goalReported = false;
+}
+
+void rl_redo_kickoff(RLArena* a) {
+	a->arena->RedoKickoff();
+	a->goalReported = false;
+}
+
+int64_t rl_last_ball_touch_tick(RLArena* a) {
+	int64_t last = -1;
+	for (Car* car : a->arena->GetCars()) {
+		const BallHitInfo& hit = car->_internalState.ballHitInfo;
+		if (hit.isValid) // (stamped during the tick, before the count steps: as rl_tick_count after it)
+			last = std::max(last, (int64_t)hit.tickCountWhenHit + 1);
+	}
+	return last;
+}
+
+int rl_ball_on_ground(RLArena* a) {
+	btRigidBody* ball = &a->arena->ball->_rigidBody;
+	if (ball->getActivationState() == ISLAND_SLEEPING)
+		return 1;
+	btCollisionDispatcher* dispatcher = a->arena->_bulletWorld.getDispatcher();
+	for (int i = 0; i < dispatcher->getNumManifolds(); i++) {
+		btPersistentManifold* m = dispatcher->getManifoldByIndexInternal(i);
+		bool ballIs0 = m->getBody0() == ball, ballIs1 = m->getBody1() == ball;
+		const btCollisionObject* other = ballIs0 ? m->getBody1() : m->getBody0();
+		if ((!ballIs0 && !ballIs1) || !other->isStaticObject())
+			continue;
+		for (int j = 0; j < m->getNumContacts(); j++) {
+			const btManifoldPoint& p = m->getContactPoint(j);
+			// (the normal on body 1, pointing to body 0: up from the ground when the ball is body 0)
+			float up = ballIs0 ? p.m_normalWorldOnB.z() : -p.m_normalWorldOnB.z();
+			if (p.getDistance() <= 0.02f && up > 0.96f)
+				return 1;
+		}
+	}
+	return 0;
+}
+
+void rl_set_ball(RLArena* a, const float pos[3], const float vel[3]) {
+	BallState s;
+	s.pos = Vec(pos[0], pos[1], pos[2]);
+	s.vel = Vec(vel[0], vel[1], vel[2]);
+	s.spawnCount = a->arena->ball->_internalState.spawnCount + 1;
+	a->arena->ball->SetState(s);
+}
+
 void rl_reset_ball(RLArena* a) {
 	BallState s;
 	s.pos.z = RLConst::BALL_KICKOFF_Z;
+	s.spawnCount = a->arena->ball->_internalState.spawnCount + 1;
 	a->arena->ball->SetState(s);
 	a->goalReported = false;
 }
 
 void rl_set_kickoff_countdown(RLArena* a, uint32_t ticks) { a->arena->kickoffCountdownTicks = ticks; }
+void rl_set_respawns_held(RLArena* a, int held) { a->arena->respawnsHeld = held != 0; }
 uint32_t rl_kickoff_countdown(const RLArena* a) { return a->arena->kickoffCountdownTicks; }
 
 uint64_t rl_tick_count(const RLArena* a) { return a->arena->tickCount; }

@@ -24,7 +24,7 @@ async fn a_client_connects_drives_and_follows_the_world() {
     let server = net::endpoint(identity, 0).unwrap();
     let port = server.local_addr().unwrap().port();
     let (to_game, messages) = tokio::sync::mpsc::unbounded_channel();
-    std::thread::spawn(move || game_loop::run(messages));
+    std::thread::spawn(move || game_loop::run(messages, rl_server::game::TEAM_SIZE));
     tokio::spawn(net::accept_loop(server, to_game));
 
     let config = ClientConfig::builder()

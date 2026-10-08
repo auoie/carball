@@ -35,6 +35,8 @@ export interface HudState {
   readonly speed: number; // uu/s
   readonly supersonic: boolean;
   readonly score: readonly [number, number];
+  /** The match clock (null: no match, as in freeplay) */
+  readonly clock: string | null;
   readonly ballCam: boolean;
   readonly message: string | null;
   readonly fps: number;
@@ -58,6 +60,7 @@ export class Hud {
   readonly #boostRing: SVGCircleElement;
   readonly #speed: HTMLElement;
   readonly #blue: HTMLElement;
+  readonly #clock: HTMLElement;
   readonly #orange: HTMLElement;
   readonly #camera: HTMLElement;
   readonly #message: HTMLElement;
@@ -86,6 +89,7 @@ export class Hud {
     this.#speed = element(root, "#speed", HTMLElement);
     this.#blue = element(root, "#score-blue", HTMLElement);
     this.#orange = element(root, "#score-orange", HTMLElement);
+    this.#clock = element(root, "#clock", HTMLElement);
     this.#camera = element(root, "#camera-mode", HTMLElement);
     this.#message = element(root, "#message", HTMLElement);
     this.#fps = element(root, "#fps", HTMLElement);
@@ -141,6 +145,8 @@ export class Hud {
     this.#speed.classList.toggle("supersonic", s.supersonic);
     this.#blue.textContent = String(s.score[0]);
     this.#orange.textContent = String(s.score[1]);
+    this.#clock.textContent = s.clock ?? "";
+    this.#clock.hidden = s.clock === null;
     this.#camera.textContent = s.ballCam ? "Ball cam" : "Car cam";
     this.#message.textContent = s.message ?? "";
     this.#message.hidden = s.message === null;

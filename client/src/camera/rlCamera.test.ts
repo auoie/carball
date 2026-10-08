@@ -36,6 +36,7 @@ function car(overrides: Partial<CarState> = {}): CarState {
     demoRespawnTimer: 0,
     spawnSelection: { side: null, index: 0, locked: null },
     flipResets: 0,
+    spawnCount: 0,
     ...overrides,
   };
 }

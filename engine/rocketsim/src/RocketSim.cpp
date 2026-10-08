@@ -49,6 +49,11 @@ RocketSimStage RocketSim::GetStage() {
 	return stage;
 }
 
+std::vector<btVector3>& RocketSim::GetArenaCollisionOffsets(GameMode gameMode) {
+	static std::map<GameMode, std::vector<btVector3>> offsets;
+	return offsets[gameMode];
+}
+
 std::vector<btBvhTriangleMeshShape*>& RocketSim::GetArenaCollisionShapes(GameMode gameMode) {
 	static std::map<GameMode, std::vector<btBvhTriangleMeshShape*>> arenaCollisionMeshes;
 
@@ -175,6 +180,7 @@ void RocketSim::InitFromMem(const std::map<GameMode, std::vector<FileData>>& mes
 				btGenerateInternalEdgeInfo(bvtMesh, infoMap);
 				bvtMesh->setTriangleInfoMap(infoMap);
 				meshes.push_back(bvtMesh);
+				GetArenaCollisionOffsets(gameMode).push_back(btVector3(meshFile.offset.x, meshFile.offset.y, meshFile.offset.z));
 
 				idx++;
 			}

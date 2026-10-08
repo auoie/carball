@@ -26,6 +26,7 @@ function localInput(frame: number): InputFrame {
     pitch: 0,
     yaw: 0,
     roll: 0,
+    dodgeForward: 0,
     bits: (frame % 90 < 3 ? BIT_JUMP : 0) | (frame % 50 < 20 ? BIT_BOOST : 0),
   };
 }
@@ -198,5 +199,38 @@ describe("Predictor", () => {
     expect(controls.steer).toBe(0);
     server.dispose();
     client.dispose();
+  });
+
+  it("an older update arriving after a newer one still applies, without undoing the newer one (NR-6)", () => {
+    // The server's states after frames 10 (the far car) and 20 (the near car), the cars steering in ways the client
+    // can't guess; delivered in order, and newer first: the client ends up in exactly the same world
+    const server = World.create(engine);
+    const local = server.addCar(0);
+    const near = server.addCar(1);
+    const far = server.addCar(1);
+    server.resetKickoff(4);
+    const start = server.saveState();
+    const states = new Map<number, Uint8Array>();
+    for (let f = 1; f <= 20; f++) {
+      server.setControls(near, { ...inputControls(NO_INPUT), throttle: 1, steer: f < 8 ? 1 : -1 });
+      server.setControls(far, { ...inputControls(NO_INPUT), throttle: 1, steer: f < 5 ? -1 : 1 });
+      server.step();
+      if (f === 10) states.set(f, server.writeNetState({ ball: true, carIds: [local, far], pads: true }));
+      if (f === 20) states.set(f, server.writeNetState({ ball: true, carIds: [local, near], pads: true }));
+    }
+    const replay = (order: readonly number[]): Uint8Array => {
+      const client = World.create(engine);
+      client.loadState(start);
+      const predictor = new Predictor(client, local, 0);
+      for (let f = 1; f <= 30; f++) predictor.advance(NO_INPUT);
+      for (const f of order) expect(predictor.correct(f, [states.get(f) ?? new Uint8Array()])).toBe(30 - f);
+      const world = client.saveState();
+      client.dispose();
+      return world;
+    };
+    const inOrder = replay([10, 20]);
+    expect(replay([20, 10])).toEqual(inOrder);
+    expect(replay([20])).not.toEqual(inOrder); // (the older update does tell the client something)
+    server.dispose();
   });
 });

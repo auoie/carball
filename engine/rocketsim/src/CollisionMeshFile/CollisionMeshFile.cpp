@@ -1,5 +1,7 @@
 #include "CollisionMeshFile.h"
 
+#include <cstring>
+
 #include "../DataStream/DataStreamIn.h"
 
 #include "../../libsrc/bullet3-3.24/BulletDynamics/Dynamics/btRigidBody.h"
@@ -33,6 +35,12 @@ void CollisionMeshFile::ReadFromStream(DataStreamIn& in, bool silent, std::strin
 
 	for (Vertex& vert : vertices)
 		vert = in.Read<Vertex>();
+
+	// RL PATCH: the optional body offset trailer ("RLOF", 3 floats)
+	if (!in.IsOverflown() && in.data.size() >= in.pos + 16 && std::memcmp(&in.data[in.pos], "RLOF", 4) == 0) {
+		in.pos += 4;
+		offset = in.Read<Vertex>();
+	}
 
 #ifndef RS_MAX_SPEED
 	if (in.IsOverflown()) {

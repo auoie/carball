@@ -547,6 +547,47 @@ Ground driving (engine − game, uu/s², flat floor; `validation_report.py`):
       rule reproduces without the game's own order.
     Replays with patches 57–62 (car components): 1,745 cases better, 474 worse; the air cases most (boosting in the
     air: 136 / 13, GA-8).
+45. **The arena triangle for triangle (engine patches 56, 73; 2026-10-08).** The user chose to take the game's
+    triangle order: our vertices (rules plus a few measured constants, `scripts/arena_layout.py`), the game's triangles
+    in its cooked order as an index table (`scripts/arena_topology.json`, no coordinates), the goal halves in their
+    own frame placed by their body (patch 73; baking the offset in changes Bullet's float results). Every playable
+    vertex within 0.033 uu of the game's, but the post-base ring and the mouth arc's ends (≤ 0.40).
+    - Live: `ball_curves` ball 175 → 0.041 uu/s (max), `walls` 14.4 → 0.197 (0.40 on the game's own meshes); every
+      other recording unchanged (`ball_5050` 0.22, `ball_hits` 0.19, `car_car` as before).
+    - Replays (paired, the same 648,870 cases on the previous arena and this one): 17,232 better, 13,567 worse (by
+      more than 0.01 uu), the gains on walls, curves and in goals: cars alone on walls / curves / ceiling p50 0.022 →
+      0.014 uu (1,505 better, 672 worse), steering there 0.101 → 0.092 (911 / 337), in a goal by the side wall p90
+      0.52 → 0.41; the ball against the arena 1,106 better, 153 worse. Flat floor and free flight unchanged.
+46. **The goal explosion's knockback against the replays (engine patch 77, 2026-10-08).** 1,033 car–goal pairs in 87
+    replays (each ball's last frame extrapolated to the goal line; the car's hitbox distance d from it; the biggest
+    velocity change in the 0.45 s after):
+    - Direction: the change against the model's, cosine 0.996–0.999 at every distance; fitting the push's origin
+      gives (499, −485) uu behind and below the ball, the decoded (500, −500).
+    - Timing: as the wave front, d / 10000 s (1500–2000 uu: 0.173 s both; 2000–2500: 0.224 / 0.220); no push past
+      3000 uu.
+    - Size: with the 2300 uu/s cap the change is the capped sum, so the push is fitted per car (in the air: 632 cars,
+      9–43 uu/s left): about 0.82 of the decoded 5000 × (1 − d/3000)^0.1 at every distance (4275 vs 4953 uu/s at
+      250 uu, 2750 vs 4026 at 2700), whatever the time to the next frame. A fit gives 4442 × (1 − d/3000)^0.18
+      (median error per car 117 uu/s, against 200 for the decoded values). The engine keeps the decoded values until
+      the static analysis finds what scales them (asked).
+    - By the scorer's goal explosion (`replay_extract --goals`; a cosmetic can carry explosion physics of its own,
+      `Ball_TA.InitExplosionFX`; products from the game: `physlog_products goal`): Reaper Ultra (11747) pushes nobody,
+      Air Strike (5287) a quarter, Butterflies (2700) its own way; about twenty others, Classic (1903, 13 cars: 4087)
+      among them, fit one push of 4000–4500 at falloff 0.1. The static analysis confirms the mechanism (Reaper
+      Ultra carries a visual handler, which detaches the default wave; Air Strike a 1500 push) and finds no factor in
+      the default chain (5000 × (1 − t)^0.1, a velocity change at the car's centre).
+    - Why the default products fit lower is unsettled: past the 2300 uu/s cap the push shows only in the angle of the
+      velocity after it, which a few uu/s of error in the origin or the velocity before biases; the cases under the
+      cap (205 cars) don't fit any push cleanly (median error 330–950 uu/s), so they can't decide it. The engine keeps
+      the decoded 5000 / 0.1. A clean check needs the engine run from each replay frame through the push (as
+      `replay_validate` does for touches), not a formula fit.
+47. **The pitch lock after a wavedash (engine patch 79, 2026-10-08; static analysis GA-5).** `ga_pitchlock`: the car
+    placed just above the floor, nose up and falling, dodges forward and lands while the dodge is active, then
+    jumps 8, 10 or 16 ticks later holding pitch up (timings picked in our engine so that the press is a ground jump
+    and the lock covers ~20 air ticks). The game ignores the pitch for 0.3 s after the landing: with the lock the
+    engine follows it (angular velocity p99 0.0001 rad/s, max 0.0002), without it p99 0.144. The scenario starts on
+    the floor: the game's placement keeps the car's jump and flip flags, so a car placed in the air after a used dodge
+    can't dodge (live_validate's placement starts fresh).
 
 Cars alone (far from the ball and other cars), car position error after ~4 ticks, our mesh / the game's mesh
 (before patch 31):

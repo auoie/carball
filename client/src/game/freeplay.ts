@@ -6,15 +6,7 @@ import { PlayerCamera } from "../camera/rlCamera";
 import type { BodyState, CarState, World } from "../engine/world";
 import { type Hud, respawnHud } from "../hud";
 import type { InputDevices } from "../input/devices";
-import {
-  AirPitchSafety,
-  EMPTY_INPUT,
-  type HeldActions,
-  type LookInput,
-  readControls,
-  readHeldActions,
-  readLook,
-} from "../input/mapping";
+import { AirPitchSafety, ButtonLatch, EMPTY_INPUT, type HeldActions, type LookInput, readControls, readHeldActions, readLook } from "../input/mapping";
 import type { ControllerSettings, Options, Settings } from "../settings/settings";
 import { FixedStep, TICK_SECONDS } from "../loop/fixedStep";
 import { ZERO, add, scale, vec3 } from "../math/vec";
@@ -53,6 +45,7 @@ export class Freeplay {
   #rear = false;
   #look: LookInput = { up: 0, right: 0 };
   readonly #pitchSafety = new AirPitchSafety();
+  readonly #buttons = new ButtonLatch(); // (buttons as the game's press and release commands: C-4)
   #preferences: ControllerSettings | null = null;
   #goalTimer = 0;
   #message: string | null = null;
@@ -96,10 +89,10 @@ export class Freeplay {
     const snapshot = this.inputEnabled() ? polled : EMPTY_INPUT;
     const { bindings, controller, options } = settings;
     this.#handleActions(readHeldActions(snapshot, bindings, controller.deadzone), options);
-    const raw = readControls(snapshot, bindings, controller.deadzone);
+    const raw = readControls(snapshot, bindings, controller.deadzone, this.#buttons);
     const onGround = this.#car.current.onGround;
     const safety = this.#pitchSafety.update(options.airPitchSafety, this.#input.usingGamepad, onGround, raw);
-    const controls = { ...raw, airPitchSafety: safety };
+    const controls = { ...raw, airPitchSafety: safety, dodgeForward: -raw.pitch }; // (its own byte: C-2)
     const look = readLook(snapshot, bindings, controller.deadzone);
     // PlayerController_TA.SwivelPitchDir
     this.#look = { up: options.invertSwivelPitch ? -look.up : look.up, right: look.right };
@@ -111,7 +104,8 @@ export class Freeplay {
     for (let i = 0; i < ticks; i++) {
       this.#world.setControls(this.#playerId, controls);
       this.#world.step();
-      this.#car.push(this.#world.car(this.#playerId));
+      const car = this.#world.car(this.#playerId);
+      this.#car.push(car, car.spawnCount !== this.#car.current.spawnCount);
       this.#pushBall();
       this.#trackFlip();
       this.#handleEvents();
@@ -246,6 +240,7 @@ export class Freeplay {
       speed: Math.hypot(car.vel.x, car.vel.y, car.vel.z),
       supersonic: car.supersonic,
       score: this.#score,
+      clock: null,
       ballCam: this.#ballCam,
       message: this.#message,
       fps: this.#fps,

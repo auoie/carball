@@ -2,6 +2,18 @@
 import { Quaternion, Vector3 } from "three";
 import { describe, expect, it } from "vitest";
 import { IDENTITY_ROT, type Rot3, length, vec3 } from "../math/vec";
+
+/** `angle` rad about the unit axis `axis` (Rocket League frame), as a car rotation */
+function turn(axis: Vector3, angle: number, of: Rot3 = IDENTITY_ROT): Rot3 {
+  const q = new Quaternion().setFromAxisAngle(new Vector3(axis.x, axis.z, axis.y), angle);
+  return { forward: rotateRl(of.forward, q), right: rotateRl(of.right, q), up: rotateRl(of.up, q) };
+}
+
+/** The drawn rotation: the error on top of the state's */
+function drawn(e: SyncError, rot: Rot3): Quaternion {
+  return e.applyRotation(toThreeQuaternion(rot));
+}
+import { fromThreeQuaternion, rotateRl, toThreeQuaternion } from "../render/coords";
 import { SyncError } from "./syncError";
 
 const FRAME = 1 / 60;
@@ -45,5 +57,32 @@ describe("SyncError", () => {
     for (let i = 0; i < 200; i++) e.decay(FRAME);
     expect(e.angle()).toBe(0);
     expect(e.applyRotation(new Quaternion()).equals(new Quaternion())).toBe(true);
+  });
+
+  it("a second rotation correction keeps the drawn pose too (the error composed on the right, as the game's)", () => {
+    // Two corrections about different axes (they don't commute): after each, the car is drawn where it was before it
+    const e = new SyncError();
+    const a = turn(new Vector3(0, 0, 1), 0.3);
+    const b = turn(new Vector3(1, 0, 0), 0.4, a);
+    const c = turn(new Vector3(0, 1, 0), -0.5, b);
+    e.accumulate({ pos: vec3(0, 0, 0), rot: a }, { pos: vec3(0, 0, 0), rot: b });
+    expect(drawn(e, b).angleTo(toThreeQuaternion(a))).toBeLessThan(1e-6);
+    e.accumulate({ pos: vec3(0, 0, 0), rot: b }, { pos: vec3(0, 0, 0), rot: c });
+    expect(drawn(e, c).angleTo(toThreeQuaternion(a))).toBeLessThan(1e-6);
+  });
+
+  it("converts rotations back from Three's frame", () => {
+    const r = turn(new Vector3(0.6, 0, 0.8), 1.1, turn(new Vector3(0, 0, 1), 0.7));
+    const back = fromThreeQuaternion(toThreeQuaternion(r));
+    for (const k of ["forward", "right", "up"] as const) {
+      expect(length(vec3(back[k].x - r[k].x, back[k].y - r[k].y, back[k].z - r[k].z))).toBeLessThan(1e-6);
+    }
+  });
+
+  it("ignores a negative frame time", () => {
+    const e = new SyncError();
+    e.accumulate({ pos: vec3(10, 0, 0) }, { pos: vec3(0, 0, 0) });
+    e.decay(-1);
+    expect(e.location.x).toBe(10);
   });
 });

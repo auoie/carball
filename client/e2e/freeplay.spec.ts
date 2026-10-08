@@ -174,8 +174,8 @@ async function playTheme(page: Page, theme: string): Promise<void> {
   // The car drives. (Slowly here: the tests render in software, a few frames a second for this scenery, and the
   // physics only catches up 0.1 s per frame)
   await page.keyboard.down("KeyW");
-  await page.waitForTimeout(1500);
-  expect(await speed(page)).toBeGreaterThan(100);
+  // (a heavy theme draws about a frame a second in software: wait for the car to move rather than a fixed time)
+  await expect.poll(async () => speed(page), { timeout: 15_000 }).toBeGreaterThan(100);
   await page.keyboard.up("KeyW");
   await page.screenshot({ path: `test-results/${theme}.png` });
   expect(errors).toEqual([]);

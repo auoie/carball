@@ -14,8 +14,9 @@
 
 namespace NetState {
 	// 2: kickoff countdown; 3: the wheels' previous contacts; 4: the jump's release; 5: respawn spot selection, flip
-	// resets, the ball exploded after a goal
-	constexpr uint8_t VERSION = 5;
+	// resets, the ball exploded after a goal; 6: the bodies' spawn counters; 7: respawns held (after a goal), the
+	// dodge's forward input, the goal explosion's wave, the pitch lock after a dodge that ended by landing
+	constexpr uint8_t VERSION = 7;
 
 	struct WriteOptions {
 		bool ball = true;
