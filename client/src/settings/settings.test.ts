@@ -86,6 +86,15 @@ describe("settings", () => {
     expect(parseSettings({}).bindings.jumpAlternative).toEqual(DEFAULT_BINDINGS.jumpAlternative);
   });
 
+  it("bindings saved before the Modern controller layout keep air roll where they had it (X)", () => {
+    const saved = { ...DEFAULT_BINDINGS, airRoll: { keyboard: { kind: "mouse", button: 2 }, gamepad: { kind: "padButton", button: 2 } } };
+    const s = parseSettings({ bindings: saved });
+    expect(s.bindings.airRoll.gamepad).toEqual({ kind: "padButton", button: 2 });
+    expect(s.bindings.throttleReverse.gamepad).toEqual({ kind: "padButton", button: 6 });
+    // A new player gets the game's: the left trigger on both
+    expect(parseSettings({}).bindings.airRoll.gamepad).toEqual({ kind: "padButton", button: 6 });
+  });
+
   it("treats non-objects as empty", () => {
     expect(parseSettings(null)).toEqual(DEFAULT_SETTINGS);
     expect(parseSettings([1, 2, 3])).toEqual(DEFAULT_SETTINGS);

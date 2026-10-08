@@ -104,5 +104,7 @@ input goes as its own byte (-pitch made a byte on its own, as the game's DodgeFo
 Defaults follow the live game's "Modern" layout (its default since the 2026-10-06 update): W/S throttle (and pitch
 in the air), A/D steer/yaw, Q/E air roll, Space jump (left mouse too: the alternative jump), Left Shift boost, right
 mouse powerslide/air roll, middle mouse ball cam, Left Ctrl rear camera, Backspace reset, 1/2 ball in front / on car.
-Gamepad (unchanged): RT/LT, left stick, A jump, B boost, X powerslide/air roll, Y ball cam, RB reset, D-pad down/up.
+Gamepad (the game's Modern controller layout): RT throttle, LT reverse and air roll (one input on both, as the game
+binds it), left stick, A jump, B boost, X powerslide, Y ball cam, RB reset, D-pad down/up. Saved bindings keep what
+was saved (air roll stays on X for a player who saved it there).
 Demolished online: steer left or right (A/D, left stick) picks the respawn spot for the first 2.5 s.

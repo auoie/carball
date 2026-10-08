@@ -94,13 +94,16 @@ describe("default gamepad (standard mapping)", () => {
     expect(d.pitch).toBe(0);
   });
 
-  it("A jumps, B boosts, X powerslides and air rolls", () => {
+  it("A jumps, B boosts, X powerslides, the left trigger air rolls (and reverses)", () => {
     expect(controls(pad([0, 0], { 0: 1 })).jump).toBe(true);
     expect(controls(pad([0, 0], { 1: 1 })).boost).toBe(true);
-    const c = controls(pad([1, 0], { 2: 1 }));
-    expect(c.handbrake).toBe(true);
+    const x = controls(pad([1, 0], { 2: 1 }));
+    expect(x.handbrake).toBe(true);
+    expect(x.roll).toBe(0); // (X no longer air rolls: the Modern layout)
+    const c = controls(pad([1, 0], { 6: 1 }));
     expect(c.roll).toBeCloseTo(1);
     expect(c.yaw).toBe(0);
+    expect(c.throttle).toBe(-1);
   });
 
   it("the right stick swivels the camera", () => {
@@ -237,6 +240,32 @@ describe("gamepad buttons and triggers as buttons (controls audit C-5)", () => {
 
   it("while a trigger driving an axis keeps its 0.1 deadzone (measured live)", () => {
     expect(controls(padWith({ 7: 0.13 })).throttle).toBeCloseTo(axisDeadzone(0.13, 0.1), 6);
+  });
+});
+
+describe("the controller default: the left trigger is reverse and air roll (the game's Modern layout)", () => {
+  const lt = (value: number, axes: number[] = [0, 0, 0, 0]): InputSnapshot => ({
+    keys: new Set(),
+    mouseButtons: new Set(),
+    gamepad: { axes, buttons: Array.from({ length: 17 }, (_, i) => (i === 6 ? value : 0)) },
+  });
+
+  it("binds both actions to it", () => {
+    expect(DEFAULT_BINDINGS.throttleReverse.gamepad).toEqual({ kind: "padButton", button: 6 });
+    expect(DEFAULT_BINDINGS.airRoll.gamepad).toEqual({ kind: "padButton", button: 6 });
+  });
+
+  it("drives both: reverse with the trigger's 0.1 deadzone, air roll past 30/255 (the stick's yaw becomes roll)", () => {
+    const half = controls(lt(0.5, [1, 0, 0, 0]));
+    expect(half.throttle).toBeCloseTo(-axisDeadzone(0.5, 0.1), 6);
+    expect(half.yaw).toBe(0);
+    expect(half.roll).toBeCloseTo(axisDeadzone(1, DZ), 6);
+    // Past the deadzone but under the digital threshold: a little reverse, no air roll
+    const light = controls(lt(0.115, [1, 0, 0, 0]));
+    expect(light.throttle).toBeCloseTo(-axisDeadzone(0.115, 0.1), 6);
+    expect(light.roll).toBe(0);
+    expect(light.yaw).toBeCloseTo(axisDeadzone(1, DZ), 6);
+    expect(controls(lt(0.12, [1, 0, 0, 0])).roll).toBeCloseTo(axisDeadzone(1, DZ), 6);
   });
 });
 

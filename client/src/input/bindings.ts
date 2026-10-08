@@ -52,8 +52,9 @@ const button = (b: number): GamepadInput => ({ kind: "padButton", button: b });
 const axis = (a: number, sign: 1 | -1): GamepadInput => ({ kind: "padAxis", axis: a, sign });
 const bind = (keyboard: KeyboardInput | null, gamepad: GamepadInput | null): Binding => ({ keyboard, gamepad });
 
-/** The game's defaults. (Gamepad air roll: the ini's base preset uses the left trigger, "Legacy" uses X;
- *  X with powerslide is what players know.) */
+/** The game's defaults: the live game's "Modern" layouts (keyboard and controller). On the controller the left
+ *  trigger is both reverse and air roll, as the game binds it (one input, two actions: the reverse axis with the
+ *  triggers' deadzone, air roll pressed past the digital threshold); "Legacy" had air roll on X with powerslide. */
 export const DEFAULT_BINDINGS: Bindings = {
   throttleForward: bind(key("KeyW"), button(7)),
   throttleReverse: bind(key("KeyS"), button(6)),
@@ -67,7 +68,7 @@ export const DEFAULT_BINDINGS: Bindings = {
   pitchDown: bind(key("KeyW"), axis(1, -1)), // stick pushed forward
   yawRight: bind(key("KeyD"), axis(0, 1)),
   yawLeft: bind(key("KeyA"), axis(0, -1)),
-  airRoll: bind(mouse(2), button(2)),
+  airRoll: bind(mouse(2), button(6)),
   rollRight: bind(key("KeyE"), null),
   rollLeft: bind(key("KeyQ"), null),
   ballCam: bind(mouse(1), button(3)),
