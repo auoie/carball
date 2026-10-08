@@ -722,15 +722,20 @@ static btManifoldPoint ReadContactPoint(DataStreamIn& in) {
 }
 
 void Arena::_SerializeContacts(DataStreamOut& out) {
+	// The manifolds with contacts, by the bodies' sort keys: the dispatcher's own order depends on when each manifold
+	// was created, which a restored arena doesn't share now that manifolds persist between ticks
 	auto* dispatcher = _bulletWorld.getDispatcher();
-	uint32_t count = 0;
+	std::vector<btPersistentManifold*> manifolds;
 	for (int i = 0; i < dispatcher->getNumManifolds(); i++)
-		count += dispatcher->getManifoldByIndexInternal(i)->getNumContacts() > 0;
-	out.Write(count);
-	for (int i = 0; i < dispatcher->getNumManifolds(); i++) {
-		btPersistentManifold* m = dispatcher->getManifoldByIndexInternal(i);
-		if (m->getNumContacts() == 0)
-			continue;
+		if (dispatcher->getManifoldByIndexInternal(i)->getNumContacts() > 0)
+			manifolds.push_back(dispatcher->getManifoldByIndexInternal(i));
+	std::sort(manifolds.begin(), manifolds.end(), [](const btPersistentManifold* a, const btPersistentManifold* b) {
+		int a0 = ContactBodyKey(a->getBody0()), a1 = ContactBodyKey(a->getBody1());
+		int b0 = ContactBodyKey(b->getBody0()), b1 = ContactBodyKey(b->getBody1());
+		return a0 != b0 ? a0 < b0 : a1 < b1;
+	});
+	out.Write((uint32_t)manifolds.size());
+	for (btPersistentManifold* m : manifolds) {
 		out.Write(ContactBodyKey(m->getBody0()));
 		out.Write(ContactBodyKey(m->getBody1()));
 		out.Write<int32_t>(m->getNumContacts());
@@ -755,10 +760,26 @@ void Arena::_DeserializeContacts(DataStreamIn& in) {
 	}
 
 	// Let Bullet create its pairs, collision algorithms and manifolds for the current positions, without
-	// any game effects, then replace the contact points with the saved ones
+	// any game effects, then replace the contact points with the saved ones. Sleeping bodies are woken for that
+	// pass: Bullet doesn't process a sleeping body against a static one, so their manifold (which the original kept
+	// from before the body fell asleep, with its points) would otherwise not exist here
+	struct Sleeper { btCollisionObject* obj; int state; btScalar deactivationTime; };
+	std::vector<Sleeper> sleepers;
+	btCollisionObjectArray& objects = _bulletWorld.getCollisionObjectArray();
+	for (int i = 0; i < objects.size(); i++) {
+		btCollisionObject* obj = objects[i];
+		if (!obj->isStaticObject() && obj->getActivationState() == ISLAND_SLEEPING) {
+			sleepers.push_back({ obj, obj->getActivationState(), obj->getDeactivationTime() });
+			obj->forceActivationState(ACTIVE_TAG);
+		}
+	}
 	g_restoringContacts = true;
 	_bulletWorld.performDiscreteCollisionDetection();
 	g_restoringContacts = false;
+	for (const Sleeper& sl : sleepers) {
+		sl.obj->forceActivationState(sl.state);
+		sl.obj->setDeactivationTime(sl.deactivationTime);
+	}
 
 	auto* dispatcher = _bulletWorld.getDispatcher();
 	for (int i = 0; i < dispatcher->getNumManifolds(); i++)

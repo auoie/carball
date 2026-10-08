@@ -373,6 +373,12 @@ Iterations stay at 10. Rigid bodies: inertia from the shape, damping/friction/re
 - Sphere vs triangle uses Bullet's SphereTriangleDetector (no triangle margin), modified to be **one-sided**:
   a ball whose centre is behind a triangle gets no contact.
 - Ball sphere in Bullet = (authored radius + 1.25 skin) − 2: 92 → **91.25**.
+- Convex vs plane (`FUN_1402944b0`, the algorithm for the finite planes): stock Bullet (the convex shape's deepest
+  vertex, one point per call, no perturbation: the collision configuration `FUN_140281860` keeps the defaults 1 / 0)
+  plus a bounds check: no contact unless that vertex lies within the plane's half extents (shape `+0x20`, `+0x24`)
+  plus the breaking threshold. The arena's planes reach past everything a car or ball can touch, so the engine's
+  infinite planes behave the same. Contact manifolds persist while the broadphase (axis sweep) keeps the pair: up to
+  4 points per manifold (engine patch 43).
 - Arena = flat planes (floor z 0, ceiling z 2048, side walls x ±4096) + `FieldCollision_Standard` curved meshes
   (SideTop, SideBot, Corner, Goal at y ±5120), mirrored by negative scale; one-sided triangles.
 
@@ -417,9 +423,10 @@ then **0 at ≥ 1400–1410** (median ≈ 0; slight −2 uu/s² drift above). Ro
 the mechanism producing the cutoff is still unidentified, but the behaviour is settled.
 
 ## Still open (minor; behaviour is measured, only the code location is unknown)
-- Exact source of the ~1.9 uu ball–plane resting gap (depends on Bullet's contact-breaking
-  threshold and settling with the velocity-only special contact). Use RocketSim's implementation
-  or the measured 93.15.
+- The ~1.9 uu ball–plane resting gap: the ball settles just under its contact-breaking threshold (the velocity-only
+  special contact stops it where the contact first appears). Live car–ball touches put that threshold at ~1.945 uu
+  (sphere bounding radius r + 0.12 BU, engine patch 44); the resting height stays at the measured 93.15. Where the
+  game's sphere gets that bounding radius is not located.
 - Where the throttle cutoff above 1400 is implemented.
 
 ## Input quantization (`Vehicle_TA.SetVehicleInput`, native `FUN_140f30a70`)

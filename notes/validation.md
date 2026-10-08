@@ -317,6 +317,40 @@ Ground driving (engine − game, uu/s², flat floor; `validation_report.py`):
       the flat floor", was largely the sticky force switching a tick early), in goal 0.020 → 0.011, jumping on walls 0.080 → 0.014, jumping
       dribbles 0.375 → 0.059, jumping without a touch 0.108 → 0.016; all categories 26,080 better / 15,667 worse.
       The air-control change (patch 42) is neutral there (replays carry no pitch/yaw/roll input).
+25. **Car body on the floor: contact points never persisted (engine patch 43).** `body_drops` drops the car with no
+    input onto its roof, nose, side, a corner while moving, its roof while sliding and while spinning
+    (`live_validate --continuous`; `--contacts FROM-TO` prints the car's contact points and lowest corners).
+    - Edge and corner hits matched (nose down 0.16 uu/s, corner 0.2), flat ones didn't: on a flat roof landing the
+      first tick matched exactly (one corner touches), the second was 176 uu/s off. The game's convex-vs-plane
+      contact code is stock Bullet plus a finite-plane bounds check (`FUN_1402944b0`), one new point per tick like
+      ours, and its collision configuration has no multipoint perturbation (adding it made the first tick 360 off).
+    - The difference was persistence: our manifold held one point per tick, always lifetime 1, cycling through the
+      roof's corners even at rest. RocketSim's broadphase removed every pair at the start of each tick (destroying
+      the algorithms and their manifolds); the game's axis sweep keeps them. Keeping overlapping pairs: the flat
+      landing's second tick 176 → 0.1 uu/s, the spinning roof landing 65 → 0.1, `body_drops` p90 46 → 6.8.
+      `jumps`, `flip_cancel`, `walls` and `ball_roof` are bit-identical either way (single-point contacts).
+    - Left in continuous mode: a flip driving the nose into the floor (`flip_cancel` tick 152, 88 uu/s) and the
+      tumble after it — single-corner contacts, so something else.
+    - The live game's executable changed on 2026-10-06 (39,389,184 bytes, vs 39,334,912 for the 2026-06-16 build the
+      static analysis used). Byte windows of the physics functions are mostly found in the new one (Bullet's 15–16
+      of 16, the game's 7–11, as expected for moved code); everything decompiled so far matched the live game.
+26. **Car–ball touches: exact, after the touch threshold (engine patch 44).** `ball_hits` (straight, glancing,
+    boosted, jumping, a ball rolling into a parked car, a ball dropped on a moving car): every touch tick exact per
+    tick, and run continuously the car stays within 0.05 uu and the ball within 0.16 uu over 869 ticks.
+    - `ball_roof` (a ball bouncing on a parked car's roof): the game adds the car's extra hit impulse (OnHitBall,
+      every other tick while touching) on ticks where our car–ball manifold has no point: Bullet's own distance at
+      the start of those ticks was 1.928, 1.921, 1.930, 1.943 uu, over our threshold of 1.905 (the ball's: RocketSim
+      gives the sphere a bounding radius of r + 0.08 BU). The game kicked at every start distance ≤ 1.943 and never
+      at ≥ 1.990: its car–ball threshold is 1.943–1.990. With the sphere's bounding radius at r + 0.118–0.122 BU
+      (threshold ~1.945 uu) every kick matches and the ball's continuous error drops 21.8 → 0.38 uu; at 0.125 a wrong
+      kick appears. The game's ball rests 1.90 uu above the floor, just under its threshold, which bounds the
+      ball's threshold to 1.90–1.95: consistent. Replays with +0.12 (paired): 91 better / 52 worse, dribbles 58 /
+      33, ball–arena contacts unchanged (13 cases move from free flight to arena contact; same percentiles).
+      Adopted (2026-10-08): `ball_roof` worst ball tick 95 → 6 uu/s, continuous 21.8 → 0.38 uu; dribbles' ball
+      velocity p90 20.0 → 15.2 uu/s. Left: two ticks of the ball rolling off the roof onto the floor (≤ 6 uu/s).
+    - The game's second global Bullet hook (`FUN_140407f90`) is its warning printer, not a contact callback; its
+      contact-added callback (`FUN_14040a5f0`) only sets friction/restitution and flags special contacts.
+    - `live_validate` now also treats a ball-only placement and a car turned in place as placements.
 
 Cars alone (far from the ball and other cars), car position error after ~4 ticks, our mesh / the game's mesh
 (before patch 31):

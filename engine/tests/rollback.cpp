@@ -16,6 +16,7 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include <algorithm>
 
 using namespace RocketSim;
 
@@ -93,6 +94,25 @@ static void PrintDifference(Arena* a, Arena* b) {
 		CMP(worldContact.hasContact) CMP(worldContact.contactNormal) CMP(carContact.otherCarID)
 		CMP(carContact.cooldownTimer) CMP(isDemoed) CMP(demoRespawnTimer) CMP(ballHitInfo.isValid) CMP(lastControls)
 		printf("\n");
+	}
+	// The contact manifolds with points, by body keys (each point: distance, lifetime)
+	for (Arena* arena : { a, b }) {
+		auto* dispatcher = arena->_bulletWorld.getDispatcher();
+		std::vector<std::string> lines;
+		for (int i = 0; i < dispatcher->getNumManifolds(); i++) {
+			btPersistentManifold* m = dispatcher->getManifoldByIndexInternal(i);
+			if (!m->getNumContacts())
+				continue;
+			char buf[512];
+			int n = snprintf(buf, sizeof buf, "      %d-%d:", m->getBody0()->getUserIndex3(), m->getBody1()->getUserIndex3());
+			for (int j = 0; j < m->getNumContacts() && n < 480; j++)
+				n += snprintf(buf + n, sizeof buf - n, " %.9g/%d", m->getContactPoint(j).getDistance(),
+				              m->getContactPoint(j).getLifeTime());
+			lines.push_back(buf);
+		}
+		std::sort(lines.begin(), lines.end());
+		printf("    %s contacts:\n", arena == a ? "original" : "copy");
+		for (const std::string& l : lines) printf("%s\n", l.c_str());
 	}
 }
 #undef CMP

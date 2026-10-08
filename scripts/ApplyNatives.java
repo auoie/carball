@@ -15,7 +15,8 @@ public class ApplyNatives extends GhidraScript {
 	@Override
 	protected void run() throws Exception {
 		String csv = getScriptArgs().length > 0 ? getScriptArgs()[0]
-				: "/home/arch/Documents/rocket-league-reverse-engineering/out/natives.csv";
+				: Paths.get(getSourceFile().getParentFile().getAbsolutePath()).resolve("../out/natives.csv").normalize()
+						.toString();
 		Map<String, List<String>> byAddr = new LinkedHashMap<>();
 		List<String> lines = Files.readAllLines(Paths.get(csv));
 		for (String line : lines.subList(1, lines.size())) {

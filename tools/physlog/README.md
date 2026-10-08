@@ -21,8 +21,8 @@ freeplay/custom training and stops if you leave. It doesn't touch EAC. Recording
 In freeplay, open the BakkesMod console (F6) and load the plugin: `plugin load physlog`.
 
 - **Scripted scenarios** (most useful): `physlog_run steer`, `physlog_run steer_sweep`, `physlog_run air`,
-  `physlog_run jumps`, `physlog_run flip_cancel`, `physlog_run walls`, `physlog_run ball_roof`,
-  `physlog_run powerslide`. Each places the car (and the ball), plays exact inputs, and
+  `physlog_run jumps`, `physlog_run flip_cancel`, `physlog_run body_drops`, `physlog_run ball_hits`,
+  `physlog_run walls`, `physlog_run ball_roof`, `physlog_run powerslide`. Each places the car (and the ball), plays exact inputs, and
   stops when done. Keep your hands off the controller while one runs. Run `steer` again with each other car you
   have (Dominus, Batmobile/Plank, Breakout, Hybrid, Merc, and anything else): the file header records the body
   and its hitbox and wheels.

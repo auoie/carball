@@ -128,9 +128,12 @@ void btCollisionShape::setMargin(btScalar margin) {
 void btCollisionShape::getBoundingSphere(btVector3& center, btScalar& radius) const {
 	switch (m_shapeType) {
 	// ROCKETSIM CHANGE: Add 0.08 to the radius if the object is a sphere
+	// RL PATCH: 0.12, so the ball's contact-breaking threshold (0.02 x this radius) is ~1.945 uu. Live recordings: the
+	// game's car-ball touches (its extra hit impulse) happen at start-of-tick distances up to 1.943 uu and never from
+	// 1.990; RocketSim's 1.905 missed them. The ball still rests ~1.90 uu above the floor, as measured in replays
 	case SPHERE_SHAPE_PROXYTYPE:
 		center = btVector3(0, 0, 0);
-		radius = ((btSphereShape*)this)->getRadius() + 0.08;
+		radius = ((btSphereShape*)this)->getRadius() + 0.12;
 		break;
 	default:
 		btTransform tr;

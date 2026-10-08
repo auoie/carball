@@ -14,6 +14,7 @@ subject to the following restrictions:
 */
 
 #include "btRSBroadphase.h"
+#include <algorithm>
 #include "btDispatcher.h"
 #include "btCollisionAlgorithm.h"
 
@@ -270,6 +271,10 @@ protected:
 void btRSBroadphase::destroyProxy(btBroadphaseProxy* proxyOrg, btCollisionDispatcher* dispatcher) {
 	btRSBroadphaseProxy* sbp = getRSProxyFromProxy(proxyOrg);
 	m_pairCache->removeOverlappingPairsContainingProxy(proxyOrg, dispatcher);
+	// RL PATCH: pairs now persist between ticks, so forget the proxy's ones
+	activePairs.erase(std::remove_if(activePairs.begin(), activePairs.end(),
+		[sbp](const std::pair<btRSBroadphaseProxy*, btRSBroadphaseProxy*>& p) { return p.first == sbp || p.second == sbp; }),
+		activePairs.end());
 	
 	if (sbp->isStatic) {
 		_UpdateCellsStatic<false>(this, sbp);
@@ -401,10 +406,18 @@ void btRSBroadphase::calculateOverlappingPairs(btCollisionDispatcher* dispatcher
 	bool shouldRemove = !m_pairCache->hasDeferredRemoval();
 
 	if (shouldRemove) {
+		// RL PATCH: keep the pairs that still overlap, so their collision algorithms and contact manifolds persist
+		// from tick to tick, like the game's broadphase (Bullet's axis sweep). RocketSim removed every pair each tick,
+		// so no contact point lived longer than a tick: a car on its roof rested on one corner at a time and a flat
+		// landing was solved one corner per tick
+		std::vector<std::pair<btRSBroadphaseProxy*, btRSBroadphaseProxy*>> kept;
 		for (auto pair : activePairs) {
-			m_pairCache->removeOverlappingPair(pair.first, pair.second, dispatcher);
+			if (pair.first->m_clientObject && pair.second->m_clientObject && aabbOverlap(pair.first, pair.second))
+				kept.push_back(pair);
+			else
+				m_pairCache->removeOverlappingPair(pair.first, pair.second, dispatcher);
 		}
-		activePairs.clear();
+		activePairs = std::move(kept);
 	} else {
 		THROW_ERR("Pair cache cannot have deferred removal");
 	}

@@ -16,7 +16,8 @@ import ghidra.program.model.symbol.*;
 public class Decomp extends GhidraScript {
 	@Override
 	protected void run() throws Exception {
-		Path outDir = Paths.get("/home/arch/Documents/rocket-league-reverse-engineering/out/decomp");
+		// out/decomp next to this script's folder (scripts/../out/decomp), wherever the repository is
+		Path outDir = Paths.get(getSourceFile().getParentFile().getAbsolutePath()).resolve("../out/decomp").normalize();
 		Files.createDirectories(outDir);
 
 		Set<Function> targets = new LinkedHashSet<>();

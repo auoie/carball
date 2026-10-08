@@ -29,10 +29,18 @@ index 8722587..5f2c70f 100644
  			}
  			indices.quickSort(MyPairIndeSortPredicate());
 diff --git upstream/libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btRSBroadphase.cpp engine/rocketsim/libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btRSBroadphase.cpp
-index 1eb7d88..db7bb8f 100644
+index 1eb7d88..e199288 100644
 --- upstream/libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btRSBroadphase.cpp
 +++ engine/rocketsim/libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btRSBroadphase.cpp
-@@ -110,23 +110,49 @@ void _UpdateCellsStatic(btRSBroadphase* _this, btRSBroadphaseProxy* proxy) {
+@@ -14,6 +14,7 @@ subject to the following restrictions:
+ */
+ 
+ #include "btRSBroadphase.h"
++#include <algorithm>
+ #include "btDispatcher.h"
+ #include "btCollisionAlgorithm.h"
+ 
+@@ -110,23 +111,49 @@ void _UpdateCellsStatic(btRSBroadphase* _this, btRSBroadphaseProxy* proxy) {
  	// We should check if each cell actually collides with the object
  	bool isTriMesh = colObj && colObj->m_collisionShape->getShapeType() == TRIANGLE_MESH_SHAPE_PROXYTYPE;
  
@@ -95,7 +103,7 @@ index 1eb7d88..db7bb8f 100644
  				for (int i1 = -1; i1 <= 1; i1++) {
  					for (int j1 = -1; j1 <= 1; j1++) {
  						for (int k1 = -1; k1 <= 1; k1++) {
-@@ -137,43 +163,22 @@ void _UpdateCellsStatic(btRSBroadphase* _this, btRSBroadphaseProxy* proxy) {
+@@ -137,43 +164,22 @@ void _UpdateCellsStatic(btRSBroadphase* _this, btRSBroadphaseProxy* proxy) {
  								continue;
  							if (ci >= _this->cellsX || cj >= _this->cellsY || ck >= _this->cellsZ)
  								continue;
@@ -152,6 +160,38 @@ index 1eb7d88..db7bb8f 100644
  					}
  				}
  			}
+@@ -265,6 +271,10 @@ protected:
+ void btRSBroadphase::destroyProxy(btBroadphaseProxy* proxyOrg, btCollisionDispatcher* dispatcher) {
+ 	btRSBroadphaseProxy* sbp = getRSProxyFromProxy(proxyOrg);
+ 	m_pairCache->removeOverlappingPairsContainingProxy(proxyOrg, dispatcher);
++	// RL PATCH: pairs now persist between ticks, so forget the proxy's ones
++	activePairs.erase(std::remove_if(activePairs.begin(), activePairs.end(),
++		[sbp](const std::pair<btRSBroadphaseProxy*, btRSBroadphaseProxy*>& p) { return p.first == sbp || p.second == sbp; }),
++		activePairs.end());
+ 	
+ 	if (sbp->isStatic) {
+ 		_UpdateCellsStatic<false>(this, sbp);
+@@ -396,10 +406,18 @@ void btRSBroadphase::calculateOverlappingPairs(btCollisionDispatcher* dispatcher
+ 	bool shouldRemove = !m_pairCache->hasDeferredRemoval();
+ 
+ 	if (shouldRemove) {
++		// RL PATCH: keep the pairs that still overlap, so their collision algorithms and contact manifolds persist
++		// from tick to tick, like the game's broadphase (Bullet's axis sweep). RocketSim removed every pair each tick,
++		// so no contact point lived longer than a tick: a car on its roof rested on one corner at a time and a flat
++		// landing was solved one corner per tick
++		std::vector<std::pair<btRSBroadphaseProxy*, btRSBroadphaseProxy*>> kept;
+ 		for (auto pair : activePairs) {
+-			m_pairCache->removeOverlappingPair(pair.first, pair.second, dispatcher);
++			if (pair.first->m_clientObject && pair.second->m_clientObject && aabbOverlap(pair.first, pair.second))
++				kept.push_back(pair);
++			else
++				m_pairCache->removeOverlappingPair(pair.first, pair.second, dispatcher);
+ 		}
+-		activePairs.clear();
++		activePairs = std::move(kept);
+ 	} else {
+ 		THROW_ERR("Pair cache cannot have deferred removal");
+ 	}
 diff --git upstream/libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/SphereTriangleDetector.cpp engine/rocketsim/libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/SphereTriangleDetector.cpp
 index d004e1c..33eddc0 100644
 --- upstream/libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/SphereTriangleDetector.cpp
@@ -197,6 +237,24 @@ index 3d894f4..4f47f87 100644
  	}
  };
  
+diff --git upstream/libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btCollisionShape.cpp engine/rocketsim/libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btCollisionShape.cpp
+index 062f1ee..a0b4d07 100644
+--- upstream/libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btCollisionShape.cpp
++++ engine/rocketsim/libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btCollisionShape.cpp
+@@ -128,9 +128,12 @@ void btCollisionShape::setMargin(btScalar margin) {
+ void btCollisionShape::getBoundingSphere(btVector3& center, btScalar& radius) const {
+ 	switch (m_shapeType) {
+ 	// ROCKETSIM CHANGE: Add 0.08 to the radius if the object is a sphere
++	// RL PATCH: 0.12, so the ball's contact-breaking threshold (0.02 x this radius) is ~1.945 uu. Live recordings: the
++	// game's car-ball touches (its extra hit impulse) happen at start-of-tick distances up to 1.943 uu and never from
++	// 1.990; RocketSim's 1.905 missed them. The ball still rests ~1.90 uu above the floor, as measured in replays
+ 	case SPHERE_SHAPE_PROXYTYPE:
+ 		center = btVector3(0, 0, 0);
+-		radius = ((btSphereShape*)this)->getRadius() + 0.08;
++		radius = ((btSphereShape*)this)->getRadius() + 0.12;
+ 		break;
+ 	default:
+ 		btTransform tr;
 diff --git upstream/libsrc/bullet3-3.24/BulletDynamics/ConstraintSolver/btSequentialImpulseConstraintSolver.cpp engine/rocketsim/libsrc/bullet3-3.24/BulletDynamics/ConstraintSolver/btSequentialImpulseConstraintSolver.cpp
 index f27a07f..0593ebf 100644
 --- upstream/libsrc/bullet3-3.24/BulletDynamics/ConstraintSolver/btSequentialImpulseConstraintSolver.cpp
@@ -547,7 +605,7 @@ index 8281ac9..83ab6b5 100644
  	};
  }
 diff --git upstream/src/Sim/Arena/Arena.cpp engine/rocketsim/src/Sim/Arena/Arena.cpp
-index a13cee0..5745c17 100644
+index a13cee0..c76a393 100644
 --- upstream/src/Sim/Arena/Arena.cpp
 +++ engine/rocketsim/src/Sim/Arena/Arena.cpp
 @@ -10,6 +10,10 @@
@@ -705,14 +763,14 @@ index a13cee0..5745c17 100644
  
 -		if ((state.carContact.otherCarID == car2->id) && (state.carContact.cooldownTimer > 0))
 -			continue; // In cooldown
--
++		bool canDemoTeam = _mutatorConfig.enableTeamDemos || (car1->team != car2->team);
+ 
 -		Vec deltaPos = (otherState.pos - state.pos);
 -		if (state.vel.Dot(deltaPos) > 0) { // Going towards other car
 -
 -			Vec velDir = state.vel.Normalized();
 -			Vec dirToOtherCar = deltaPos.Normalized();
-+		bool canDemoTeam = _mutatorConfig.enableTeamDemos || (car1->team != car2->team);
- 
+-
 -			float speedTowardsOtherCar = state.vel.Dot(dirToOtherCar);
 -			float otherCarAwaySpeed = otherState.vel.Dot(velDir);
 +		if (_mutatorConfig.demoMode == DemoMode::ON_CONTACT) {
@@ -851,7 +909,7 @@ index a13cee0..5745c17 100644
  	}
  
  	bool loadArenaStuff = gameMode != GameMode::THE_VOID;
-@@ -565,11 +670,111 @@ void Arena::Serialize(DataStreamOut& out) const {
+@@ -565,11 +670,132 @@ void Arena::Serialize(DataStreamOut& out) const {
  
  	{ // Serialize ball
  		ball->GetState().Serialize(out);
@@ -907,15 +965,20 @@ index a13cee0..5745c17 100644
 +}
 +
 +void Arena::_SerializeContacts(DataStreamOut& out) {
++	// The manifolds with contacts, by the bodies' sort keys: the dispatcher's own order depends on when each manifold
++	// was created, which a restored arena doesn't share now that manifolds persist between ticks
 +	auto* dispatcher = _bulletWorld.getDispatcher();
-+	uint32_t count = 0;
++	std::vector<btPersistentManifold*> manifolds;
 +	for (int i = 0; i < dispatcher->getNumManifolds(); i++)
-+		count += dispatcher->getManifoldByIndexInternal(i)->getNumContacts() > 0;
-+	out.Write(count);
-+	for (int i = 0; i < dispatcher->getNumManifolds(); i++) {
-+		btPersistentManifold* m = dispatcher->getManifoldByIndexInternal(i);
-+		if (m->getNumContacts() == 0)
-+			continue;
++		if (dispatcher->getManifoldByIndexInternal(i)->getNumContacts() > 0)
++			manifolds.push_back(dispatcher->getManifoldByIndexInternal(i));
++	std::sort(manifolds.begin(), manifolds.end(), [](const btPersistentManifold* a, const btPersistentManifold* b) {
++		int a0 = ContactBodyKey(a->getBody0()), a1 = ContactBodyKey(a->getBody1());
++		int b0 = ContactBodyKey(b->getBody0()), b1 = ContactBodyKey(b->getBody1());
++		return a0 != b0 ? a0 < b0 : a1 < b1;
++	});
++	out.Write((uint32_t)manifolds.size());
++	for (btPersistentManifold* m : manifolds) {
 +		out.Write(ContactBodyKey(m->getBody0()));
 +		out.Write(ContactBodyKey(m->getBody1()));
 +		out.Write<int32_t>(m->getNumContacts());
@@ -940,10 +1003,26 @@ index a13cee0..5745c17 100644
 +	}
 +
 +	// Let Bullet create its pairs, collision algorithms and manifolds for the current positions, without
-+	// any game effects, then replace the contact points with the saved ones
++	// any game effects, then replace the contact points with the saved ones. Sleeping bodies are woken for that
++	// pass: Bullet doesn't process a sleeping body against a static one, so their manifold (which the original kept
++	// from before the body fell asleep, with its points) would otherwise not exist here
++	struct Sleeper { btCollisionObject* obj; int state; btScalar deactivationTime; };
++	std::vector<Sleeper> sleepers;
++	btCollisionObjectArray& objects = _bulletWorld.getCollisionObjectArray();
++	for (int i = 0; i < objects.size(); i++) {
++		btCollisionObject* obj = objects[i];
++		if (!obj->isStaticObject() && obj->getActivationState() == ISLAND_SLEEPING) {
++			sleepers.push_back({ obj, obj->getActivationState(), obj->getDeactivationTime() });
++			obj->forceActivationState(ACTIVE_TAG);
++		}
++	}
 +	g_restoringContacts = true;
 +	_bulletWorld.performDiscreteCollisionDetection();
 +	g_restoringContacts = false;
++	for (const Sleeper& sl : sleepers) {
++		sl.obj->forceActivationState(sl.state);
++		sl.obj->setDeactivationTime(sl.deactivationTime);
++	}
 +
 +	auto* dispatcher = _bulletWorld.getDispatcher();
 +	for (int i = 0; i < dispatcher->getNumManifolds(); i++)
@@ -963,7 +1042,7 @@ index a13cee0..5745c17 100644
  }
  
  Arena* Arena::DeserializeNew(DataStreamIn& in) {
-@@ -601,12 +806,11 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
+@@ -601,12 +827,11 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
  				RS_ERR_CLOSE(ERROR_PREFIX << "Failed to load, got repeated car ID of " << id);
  #endif
  
@@ -980,7 +1059,7 @@ index a13cee0..5745c17 100644
  		}
  
  		newArena->_lastCarID = lastCarID;
-@@ -629,20 +833,116 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
+@@ -629,20 +854,116 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
  		}
  	}
  
@@ -1105,7 +1184,7 @@ index a13cee0..5745c17 100644
  Arena* Arena::Clone(bool copyCallbacks) {
  	Arena* newArena = new Arena(this->gameMode, this->_config, this->GetTickRate());
  	
-@@ -651,14 +951,19 @@ Arena* Arena::Clone(bool copyCallbacks) {
+@@ -651,14 +972,19 @@ Arena* Arena::Clone(bool copyCallbacks) {
  		newArena->_carBumpCallback = this->_carBumpCallback;
  	}
  
@@ -1127,7 +1206,7 @@ index a13cee0..5745c17 100644
  		newCar->controls = car->controls;
  		newCar->_velocityImpulseCache = car->_velocityImpulseCache;
  	}
-@@ -669,6 +974,15 @@ Arena* Arena::Clone(bool copyCallbacks) {
+@@ -669,6 +995,15 @@ Arena* Arena::Clone(bool copyCallbacks) {
  
  	newArena->tickCount = this->tickCount;
  	newArena->_lastCarID = this->_lastCarID;
@@ -1143,7 +1222,7 @@ index a13cee0..5745c17 100644
  
  	return newArena;
  }
-@@ -678,10 +992,13 @@ Car* Arena::DeserializeNewCar(DataStreamIn& in, Team team) {
+@@ -678,10 +1013,13 @@ Car* Arena::DeserializeNewCar(DataStreamIn& in, Team team) {
  	car->_Deserialize(in);
  	car->team = team;
  
@@ -1158,7 +1237,7 @@ index a13cee0..5745c17 100644
  
  	return car;
  }
-@@ -691,18 +1008,22 @@ void Arena::Step(int ticksToSimulate) {
+@@ -691,18 +1029,22 @@ void Arena::Step(int ticksToSimulate) {
  
  		_bulletWorld.setWorldUserInfo(this);
  
@@ -1188,7 +1267,7 @@ index a13cee0..5745c17 100644
  		for (Car* car : _cars)
  			car->_PreTickUpdate(gameMode, tickTime, _mutatorConfig);
  
-@@ -752,6 +1073,8 @@ void Arena::Step(int ticksToSimulate) {
+@@ -752,6 +1094,8 @@ void Arena::Step(int ticksToSimulate) {
  		}
  
  		tickCount++;
@@ -1197,7 +1276,7 @@ index a13cee0..5745c17 100644
  	}
  }
  
-@@ -983,6 +1306,7 @@ btRigidBody* Arena::_AddStaticCollisionShape(btCollisionShape* shape, btVector3
+@@ -983,6 +1327,7 @@ btRigidBody* Arena::_AddStaticCollisionShape(btCollisionShape* shape, btVector3
  	} else {
  		_bulletWorld.addRigidBody(shapeRB);
  	}

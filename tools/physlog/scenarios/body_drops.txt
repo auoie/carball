@@ -1,0 +1,15 @@
+# Car body against the floor (the hitbox, not the wheels), no input: drops onto the roof, the nose, the side, a
+# corner while moving, a roof slide and a spinning roof landing. Compare with live_validate --continuous.
+ball 3000 -2000 92.75  0 0 0  0 0 0      # at rest, clear of the car and the walls
+car 0 -2000 120  0 90 180  0 0 0  0 0 0  0          # upside down, flat
+wait 150
+car 0 -2000 140  -90 90 0  0 0 0  0 0 0  0          # nose down
+wait 150
+car 0 -2000 120  0 90 90  0 0 0  0 0 0  0           # on its side
+wait 150
+car 0 -2000 140  -35 90 25  0 600 0  0 0 0  0       # tilted onto the front-left corner, moving forward
+wait 150
+car 0 -2000 60  0 90 180  0 1200 -100  0 0 0  0     # upside down, sliding forward on the roof
+wait 150
+car 0 -2000 160  0 90 180  0 300 0  0 0 3  0        # upside down, spinning about the vertical axis
+wait 150

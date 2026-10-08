@@ -14,6 +14,7 @@
 //        live_validate --synth SCENARIO.txt OUT.csv [--preset NAME]   (a recording made by our own engine, for testing)
 //   presets: octane dominus plank breakout hybrid merc (default: from the recording's hitbox)
 //   --steer-sensitivity X, --air-sensitivity X: the player's settings (default: from the recording's header, else 1)
+//   --contacts FROM-TO: print the car's contact points (depth, lifetime, applied impulse) after those ticks
 #include "RocketSim.h"
 
 #include <algorithm>
@@ -297,8 +298,78 @@ static void SetBall(Arena* arena, const Body& b) {
 	arena->ball->SetState(s);
 }
 
+// The car's contact points after a tick (debugging contact differences): per manifold, each point's world position,
+// normal, depth, lifetime and the impulse the solver applied
+static void PrintContacts(Arena* arena, Car* car, uint64_t tick) {
+	auto* dispatcher = arena->_bulletWorld.getDispatcher();
+	for (int i = 0; i < dispatcher->getNumManifolds(); i++) {
+		btPersistentManifold* m = dispatcher->getManifoldByIndexInternal(i);
+		if (m->getBody0() != &car->_rigidBody && m->getBody1() != &car->_rigidBody) continue;
+		printf("  tick %llu manifold %d (%p): %d points, breaking threshold %.3f uu\n", (unsigned long long)tick, i,
+		       (void*)m, m->getNumContacts(), m->getContactBreakingThreshold() * BT_TO_UU);
+		for (int j = 0; j < m->getNumContacts(); j++) {
+			const btManifoldPoint& p = m->getContactPoint(j);
+			btVector3 pos = p.getPositionWorldOnB() * BT_TO_UU, n = p.m_normalWorldOnB;
+			printf("  tick %llu contact %d.%d at (%.2f %.2f %.2f) n (%.3f %.3f %.3f) depth %.3f uu life %d impulse %.4f\n",
+			       (unsigned long long)tick, i, j, pos.x(), pos.y(), pos.z(), n.x(), n.y(), n.z(), p.getDistance() * BT_TO_UU,
+			       p.getLifeTime(), p.getAppliedImpulse());
+		}
+	}
+	// The hitbox's four lowest corners: height and vertical velocity (v + w x r)
+	CarState s = car->GetState();
+	const CarConfig& c = car->config;
+	struct Corner { float z, vz; Vec p; };
+	std::vector<Corner> corners;
+	for (int i = 0; i < 8; i++) {
+		Vec local = c.hitboxPosOffset + Vec((i & 1 ? 1 : -1) * c.hitboxSize.x / 2, (i & 2 ? 1 : -1) * c.hitboxSize.y / 2,
+		                                    (i & 4 ? 1 : -1) * c.hitboxSize.z / 2);
+		Vec r = s.rotMat.forward * local.x + s.rotMat.right * local.y + s.rotMat.up * local.z;
+		Vec v = s.vel + s.angVel.Cross(r);
+		corners.push_back({ s.pos.z + r.z, v.z, s.pos + r });
+	}
+	// The ball's surface to the hitbox box (in the car's frame): the true car-ball gap
+	{
+		BallState bs = arena->ball->GetState();
+		Vec d = bs.pos - (s.pos + s.rotMat.forward * c.hitboxPosOffset.x + s.rotMat.right * c.hitboxPosOffset.y +
+		                  s.rotMat.up * c.hitboxPosOffset.z);
+		Vec local = Vec(d.Dot(s.rotMat.forward), d.Dot(s.rotMat.right), d.Dot(s.rotMat.up));
+		Vec half = c.hitboxSize / 2;
+		Vec closest = Vec(RS_CLAMP(local.x, -half.x, half.x), RS_CLAMP(local.y, -half.y, half.y), RS_CLAMP(local.z, -half.z, half.z));
+		printf("  tick %llu ball gap %.3f uu (ball z %.3f vz %.2f)\n", (unsigned long long)tick,
+		       (local - closest).Length() - arena->ball->GetRadius(), bs.pos.z, bs.vel.z);
+		// What Bullet's narrowphase itself computes for the pair (closest points up to 10 uu)
+		struct Closest : btCollisionWorld::ContactResultCallback {
+			float best = 1e30f;
+			btScalar addSingleResult(btManifoldPoint& cp, const btCollisionObjectWrapper*, int, int, const btCollisionObjectWrapper*,
+			                         int, int) override {
+				best = std::min(best, (float)cp.getDistance());
+				return 0;
+			}
+		} cb;
+		cb.m_closestDistanceThreshold = 10 * UU_TO_BT;
+		arena->_bulletWorld.contactPairTest(&car->_rigidBody, &arena->ball->_rigidBody, cb);
+		printf("  tick %llu bullet car-ball distance %.3f uu (at the end of the tick)\n", (unsigned long long)tick, cb.best * BT_TO_UU);
+		// The same against the floor plane (the static body whose plane normal is +z)
+		for (btRigidBody* rb : arena->_worldCollisionRBs) {
+			const btCollisionShape* shape = rb->getCollisionShape();
+			if (shape->getShapeType() != STATIC_PLANE_PROXYTYPE ||
+			    ((const btStaticPlaneShape*)shape)->getPlaneNormal().z() < 0.99f)
+				continue;
+			Closest floor;
+			floor.m_closestDistanceThreshold = 10 * UU_TO_BT;
+			arena->_bulletWorld.contactPairTest(&car->_rigidBody, rb, floor);
+			printf("  tick %llu bullet car-floor distance %.3f uu (at the end of the tick)\n", (unsigned long long)tick,
+			       floor.best * BT_TO_UU);
+		}
+	}
+	std::sort(corners.begin(), corners.end(), [](const Corner& a, const Corner& b) { return a.z < b.z; });
+	for (int i = 0; i < 4; i++)
+		printf("  tick %llu corner (%.2f %.2f) z %.3f vz %.2f\n", (unsigned long long)tick, corners[i].p.x, corners[i].p.y,
+		       corners[i].z, corners[i].vz);
+}
+
 static int Validate(const char* path, const std::string& presetName, const Sensitivities& sens, bool continuous,
-                    const std::string& ticksPath) {
+                    const std::string& ticksPath, uint64_t contactsFrom = 1, uint64_t contactsTo = 0) {
 	std::string header;
 	std::vector<Row> rows;
 	if (!Load(path, header, rows) || rows.size() < 2) {
@@ -319,7 +390,8 @@ static int Validate(const char* path, const std::string& presetName, const Sensi
 	if (ticksOut)
 		fprintf(ticksOut, "tick,car_pos,car_vel,car_ang,car_rot_deg,ball_pos,ball_vel,on_ground_rec,on_ground_eng,"
 		                  "wheels_rec,wheels_eng,jump_rec,jump_eng,dodge_rec,dodge_eng,resync,"
-		                  "car_dvx,car_dvy,car_dvz,car_dwx,car_dwy,car_dwz\n"); // signed: engine - recording
+		                  "car_dvx,car_dvy,car_dvz,car_dwx,car_dwy,car_dwz,ball_dvx,ball_dvy,ball_dvz,ball_dwx,ball_dwy,ball_dwz\n");
+		                  // (signed: engine - recording)
 
 	std::vector<float> carPos, carVel, carAng, carRot, ballPos, ballVel;
 	int groundMismatch = 0, wheelMismatch = 0, jumpMismatch = 0, dodgeMismatch = 0, compared = 0, resyncs = 0, placements = 0;
@@ -329,8 +401,14 @@ static int Validate(const char* path, const std::string& presetName, const Sensi
 		int ticks = (int)lround((b.time - a.time) * 120);
 		if (ticks < 1 || ticks > 4) { started = false; continue; } // a gap (pause, reset)
 		// A placement between the rows (a scenario's "car" line, a freeplay reset): not physics
+		// (the ball too: a scenario can place only the ball)
+		bool ballPlaced = a.hasBall && b.hasBall &&
+		                  ((b.ball.pos - a.ball.pos - a.ball.vel * (ticks / 120.f)).Length() > 60 ||
+		                   (b.ball.vel - a.ball.vel).Length() > 6000 * ticks);
+		// (and a car placed where it already was, turned: a rotation its angular velocity can't explain)
+		bool carTurned = AngleBetween(a.car.rot, b.car.rot) > a.car.angVel.Length() * (ticks / 120.f) * 2 + 0.2f;
 		if ((b.car.pos - a.car.pos - a.car.vel * (ticks / 120.f)).Length() > 60 ||
-		    (b.car.vel - a.car.vel).Length() > 2000 + 1000 * ticks) {
+		    (b.car.vel - a.car.vel).Length() > 2000 + 1000 * ticks || ballPlaced || carTurned) {
 			placements++;
 			started = false;
 			continue;
@@ -347,6 +425,7 @@ static int Validate(const char* path, const std::string& presetName, const Sensi
 		started = true;
 		car->controls = a.in;
 		arena->Step(ticks);
+		if (a.tick >= contactsFrom && a.tick <= contactsTo) PrintContacts(arena, car, a.tick);
 		CarState s = car->GetState();
 		BallState bs = arena->ball->GetState();
 		compared++;
@@ -366,11 +445,13 @@ static int Validate(const char* path, const std::string& presetName, const Sensi
 		dodgeMismatch += s.isFlipping != b.dodgeActive;
 		if (ticksOut) {
 			Vec dv = s.vel - b.car.vel, dw = s.angVel - b.car.angVel;
-			fprintf(ticksOut, "%llu,%.5f,%.4f,%.6f,%.5f,%.5f,%.4f,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.4f,%.4f,%.4f,%.5f,%.5f,%.5f\n",
+			Vec bdv = b.hasBall ? bs.vel - b.ball.vel : Vec(), bdw = b.hasBall ? bs.angVel - b.ball.angVel : Vec();
+			fprintf(ticksOut, "%llu,%.5f,%.4f,%.6f,%.5f,%.5f,%.4f,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.4f,%.4f,%.4f,%.5f,%.5f,%.5f,"
+			                  "%.4f,%.4f,%.4f,%.5f,%.5f,%.5f\n",
 			        (unsigned long long)a.tick, carPos.back(), carVel.back(), carAng.back(), carRot.back(),
 			        b.hasBall ? ballPos.back() : 0.f, b.hasBall ? ballVel.back() : 0.f, b.onGround, s.isOnGround,
 			        b.wheelContacts, wheels, b.jumpActive, s.isJumping, b.dodgeActive, s.isFlipping, resync, dv.x, dv.y,
-			        dv.z, dw.x, dw.y, dw.z);
+			        dv.z, dw.x, dw.y, dw.z, bdv.x, bdv.y, bdv.z, bdw.x, bdw.y, bdw.z);
 		}
 	}
 	if (ticksOut) fclose(ticksOut);
@@ -540,12 +621,19 @@ int main(int argc, char** argv) {
 	std::vector<std::string> positional;
 	bool synth = false, fitSteer = false;
 	Sensitivities sens;
+	uint64_t contactsFrom = 1, contactsTo = 0;
 	for (int i = 1; i < argc; i++) {
 		std::string a = argv[i];
 		if (a == "--meshes" && i + 1 < argc) meshes = argv[++i];
 		else if (a == "--preset" && i + 1 < argc) preset = argv[++i];
 		else if (a == "--ticks" && i + 1 < argc) ticksPath = argv[++i];
 		else if (a == "--steer-sensitivity" && i + 1 < argc) sens.steer = std::stof(argv[++i]);
+		else if (a == "--contacts" && i + 1 < argc) { // FROM-TO: print the car's contact points after these ticks
+			std::string r = argv[++i];
+			size_t dash = r.find('-');
+			contactsFrom = std::stoull(r.substr(0, dash));
+			contactsTo = dash == std::string::npos ? contactsFrom : std::stoull(r.substr(dash + 1));
+		}
 		else if (a == "--air-sensitivity" && i + 1 < argc) sens.air = std::stof(argv[++i]);
 		else if (a == "--continuous") continuous = true;
 		else if (a == "--synth") synth = true;
@@ -562,5 +650,5 @@ int main(int argc, char** argv) {
 	RocketSim::Init(meshes, true);
 	if (synth) return Synth(positional[0].c_str(), positional[1].c_str(), preset);
 	if (fitSteer) return FitSteer(positional[0].c_str(), preset, sens);
-	return Validate(positional[0].c_str(), preset, sens, continuous, ticksPath);
+	return Validate(positional[0].c_str(), preset, sens, continuous, ticksPath, contactsFrom, contactsTo);
 }

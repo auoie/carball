@@ -10,17 +10,23 @@
   windowed on the second monitor, never focused by scripts; rcon whitelist; the plugin unpauses itself). Results so
   far (`notes/validation.md` findings 23–24, engine patches 38–42): steering, air control, powerslide exact;
   jumps and flips exact except landings.
+- **Static analysis runs in a second session** (Ghidra BSim, stock Bullet vs the exe; it writes only `out/bsim/` and
+  `notes/bullet-diff.md` and sends numbered hypotheses to test live). This session owns the game, PhysLog, `engine/`,
+  scenarios, tests, client and server.
 - **Open, from the live recordings:**
-  - **car body vs floor** (the hitbox, not the wheels): in `--continuous` mode the only drift in `jumps`/`flip_cancel`
-    comes from a flip putting the nose into the floor and the car tumbling after a landing (up to 260 uu/s). Some
-    single-tick spikes in the per-tick mode are artifacts (Bullet's persistent contact carries our own history; the
-    nose-first landing at `flip_cancel` tick 456 is exact in continuous mode). Also ~1.3 uu/s for ~10 ticks after a
-    two-wheel sideways landing (wheel friction or braking with fewer than 3 wheels down);
+  - **car body vs floor:** flat landings fixed (contact points now persist, patch 43, finding 25). Left: a flip
+    driving the nose into the floor and the tumble after it (`flip_cancel` tick 152 onward, up to 260 uu/s in
+    `--continuous`; single-corner contacts, so not persistence), ~1.3 uu/s for ~10 ticks after a two-wheel sideways
+    landing (wheel friction or braking with fewer than 3 wheels down);
   - `walls` (p99 1.9 uu/s, one wheel-contact mismatch) and `ball_roof` (one ball tick of 95 uu/s at the contact);
   - a scenario for the ball rolling on the corner ramp (the old `steer_sweep` recording showed 1–14 uu/s per tick
     there, but its ball also started inside the wall);
   - `steer` once per other car body (non-Octane steering, finding 21), flip cancel exactly at the 4th vs 5th tick,
     the goal-wall wobble, `HandlingPresetXOffset`.
+- **The live game updated on 2026-10-06:** the static analysis (Ghidra project, `out/decomp`, layouts, packages) is
+  from the 2026-06-16 build in `documents/binaries`; the live exe is in
+  `/mnt/c/Program Files (x86)/Steam/steamapps/common/rocketleague`. Physics functions look unchanged (finding 25),
+  but trust the live recordings over the decompile where they disagree.
 - **Then, static:** diff stock Bullet (the version the game is based on, built with MSVC) against the executable
   function by function (Ghidra BSim or BinDiff), to list every Bullet function Psyonix changed. That finds physics
   changes systematically instead of one replay mismatch at a time.

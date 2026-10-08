@@ -24,6 +24,18 @@ out/sub57.txt
 # Rocket League replays (third-party dataset; contain player names)
 *.replay
 
+# Static analysis (out/bsim/ has its own .gitignore that keeps only its scripts). Wherever these land:
+# Windows binaries and debug symbols (the game's exe, stock Bullet built with MSVC, PhysLog.dll)
+*.exe
+*.dll
+*.pdb
+*.lib
+# BSim databases (H2) and BinDiff/BinExport output (function signatures and disassembly of the game's exe)
+*.mv.db
+*.trace.db
+*.BinExport
+*.BinDiff
+
 # --- Regenerable / noise ---------------------------------------------------
 logs/
 __pycache__/

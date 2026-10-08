@@ -1,0 +1,5 @@
+# Local BSim work (static session): Ghidra projects, BSim database, stock Bullet build, decompiled game code.
+*
+!.gitignore
+!scripts/
+!scripts/**
