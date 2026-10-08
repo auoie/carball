@@ -41,13 +41,21 @@ struct CarConfig {
 	// The input is scaled, then clamped to [-1, 1]; at 10 (the maximum) any input is full input.
 	float steeringSensitivity = 1.f;
 	float airControlSensitivity = 1.f;
+
+	// RL PATCH: where the game creates this body at a (re)spawn: the height (36.00, MoveToGround's, plus the body
+	// mesh's Tz) and an offset along the car's forward axis (the body's HandlingPresetXOffset plus its mesh's Origin.X:
+	// the Venom's mesh origin is (5, 0, 0)), from the preset's reference body; per body, not per preset (the Takumi and
+	// the Scarab, Octane-preset bodies, have +5 and +7). Live, each body respawned twice (validation finding 48)
+	float spawnZ = 36.f;
+	float spawnForwardOffset = 0;
 };
 
 #define CAR_CONFIG_SERIALIZATION_FIELDS(name) \
 name.dodgeDeadzone, name.steeringSensitivity, name.airControlSensitivity, name.hitboxPosOffset, name.hitboxSize, \
 name.threeWheels /* RL PATCH: was missing, so a restored Psyclops got four wheels */, \
 WHEEL_PAIR_CONFIG_SERIALIZATION_FIELDS(name.frontWheels), \
-WHEEL_PAIR_CONFIG_SERIALIZATION_FIELDS(name.backWheels) \
+WHEEL_PAIR_CONFIG_SERIALIZATION_FIELDS(name.backWheels), \
+name.spawnZ, name.spawnForwardOffset /* RL PATCH */ \
 
 // Global car configurations for all car type presets
 // NOTE: CAR_CONFIG_PLANK is the batmobile preset

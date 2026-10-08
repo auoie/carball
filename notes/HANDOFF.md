@@ -51,11 +51,10 @@
   Left approximate: the skirts below the floor and above the ceiling (hidden), the post-base ring and mouth-arc ends
   (≤ 0.40 uu). A Python venv with numpy and scipy is at `.venv` (git-ignored) for fitting.
 - **Open:**
-  - test the respawn spot selection in an offline exhibition match against bots (freeplay respawns cars its own way:
-    the static session's BT-2), which only the user can start (the z 83 rows after a respawn are the body asset
-    loading, not a rule: finding 43);
-  - GA-6 (spawn offset per body: needs the user's garage sitting) (GA-5, the pitch lock after a wavedash: patch 79,
-    confirmed live, finding 47);
+  - (the live sitting is done: finding 48; respawn spot choice, held respawns, kickoff order, uneven teams, the clock
+    and 0:00, per-body spawn heights, all six presets' steering confirmed or fixed)
+  - (GA-5, the pitch lock after a wavedash: patch 79, confirmed live, finding 47; GA-6, spawn height and offset per
+    body: patch 80, measured live, finding 48)
   - controls audit (`notes/controls-audit.md`): C-5 air roll on LT, C-6 sub-frame taps (done: C-2 DodgeForward as
     its own byte, patch 78; C-3 the Modern layout as the default, the user's choice; C-4 one binding per action);
   - netcode N-4 (server-confirmed demos), N-9, N-10; the car state's size on the wire;

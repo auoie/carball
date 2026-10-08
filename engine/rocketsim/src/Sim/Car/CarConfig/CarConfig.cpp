@@ -54,8 +54,9 @@ constexpr float FRONT_WHEEL_SUS_REST[7] = {
 	33.0f
 };
 
+// RL PATCH: the Breakout's back wheels rest 29.66 (live: rest z -5.91, ray z 11.75, travel 12); RocketSim had 29.666
 constexpr float BACK_WHEEL_SUS_REST[7] = {
-	37.055f, 33.85f, 27.9242f, 29.666f, 37.055f, 39.105f, 
+	37.055f, 33.85f, 27.9242f, 29.66f, 37.055f, 39.105f, 
 	31.3f
 };
 
@@ -81,6 +82,11 @@ const static Vec BACK_WHEELS_OFFSET[7] = {
 	{ -33.75f, 29.50f, 15.000f	},
 };
 
+// RL PATCH: the reference bodies' spawn height and forward offset (CarConfig::spawnZ): live, each respawned twice
+// (Octane 23, Dominus 403, Paladin 24, Breakout 22, Venom 31, Merc 30; Psyclops not measured)
+const static float SPAWN_Z[7] = { 36.02f, 36.01f, 38.84f, 36.00f, 38.94f, 35.05f, 36.f };
+const static float SPAWN_FORWARD_OFFSET[7] = { 0, 0, 0, 0, 5.f, 0, 0 };
+
 // Using a macro here for convenience
 #define MAKE_CAR_CONFIG(name, index, threeWheels) \
 	const CarConfig CAR_CONFIG_##name = { \
@@ -88,7 +94,8 @@ const static Vec BACK_WHEELS_OFFSET[7] = {
 		HITBOX_OFFSETS[index], \
 		{ FRONT_WHEEL_RADS[index], FRONT_WHEEL_SUS_REST[index], FRONT_WHEELS_OFFSET[index] }, \
 		{ BACK_WHEEL_RADS[index], BACK_WHEEL_SUS_REST[index], BACK_WHEELS_OFFSET[index] },    \
-		threeWheels \
+		threeWheels, 0.5f, 1.f, 1.f, \
+		SPAWN_Z[index], SPAWN_FORWARD_OFFSET[index] \
 	}
 
 MAKE_CAR_CONFIG(OCTANE, 0, false);

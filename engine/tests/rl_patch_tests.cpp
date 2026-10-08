@@ -642,6 +642,21 @@ static void TestKickoffUnevenTeams() {
 		CHECK(KickoffSpotOf(alone) == 4, "3v1 at the first kickoff: the lone car on spot %d, expected 4 (back centre)", KickoffSpotOf(alone));
 		delete arena;
 	}
+	{ // The live sitting (validation finding 48): a 1v2 exhibition, the match's order left diagonal, left off-centre,
+	  // right diagonal, right off-centre, back centre; the lone car at its six kickoffs
+		Arena* arena = Arena::Create(GameMode::SOCCAR);
+		Car* lone = arena->AddCar(Team::BLUE);
+		arena->AddCar(Team::ORANGE);
+		arena->AddCar(Team::ORANGE);
+		arena->StartKickoffSequence(1, 2);
+		arena->kickoffSequence.order[0] = arena->kickoffSequence.order[1] = { 0, 2, 1, 3, 4 };
+		const int seen[6] = { 0, 1, 1, 3, 0, 0 }; // left diagonal, right diagonal, right diagonal, right off-centre, left diagonal x2
+		for (int n = 0; n < 6; n++) {
+			arena->ResetToNextKickoff();
+			CHECK(KickoffSpotOf(lone) == seen[n], "1v2 kickoff %d: the lone car on spot %d, the game's %d", n + 1, KickoffSpotOf(lone), seen[n]);
+		}
+		delete arena;
+	}
 	// (the window: the match's team size, the playlist's MaxTeamSize, grown to the larger team; 0: the larger team)
 	for (int teamSize : { 0, 3 })
 	for (int shortSize = 1; shortSize <= 2; shortSize++) {
@@ -655,10 +670,11 @@ static void TestKickoffUnevenTeams() {
 					shortTeam.push_back(arena->AddCar(Team::ORANGE));
 				arena->StartKickoffSequence(seed, teamSize);
 				int window = std::max(fullSize, teamSize);
-				std::array<uint8_t, 5> p = arena->kickoffSequence.order[1];
+				const std::array<uint8_t, 5> match = arena->kickoffSequence.order[1];
 				const std::array<uint8_t, 5> full = arena->kickoffSequence.order[0];
 				for (int n = 0; n < 6; n++) {
 					arena->ResetToNextKickoff();
+					std::array<uint8_t, 5> p = match; // (each kickoff from the match's order: the swap doesn't stay)
 					// The full team: its order, unchanged
 					for (int k = 0; k < fullSize; k++)
 						CHECK(KickoffSpotOf(fullTeam[k]) == full[(n + k) % 5], "%dv%d seed %d kickoff %d: full team car %d on %d, expected %d",
@@ -767,6 +783,38 @@ static void TestGoalExplosion() {
 		delete copy;
 	}
 	delete arena;
+}
+
+static void TestSpawnHeights() {
+	puts("spawn heights and offsets per body: the reference bodies' (live: Octane 36.02, Paladin 38.84, Venom 38.94 and 5 uu ahead)");
+	using namespace RLConst;
+	struct { const CarConfig* config; float z, ahead; const char* name; } bodies[] = {
+		{ &CAR_CONFIG_OCTANE, 36.02f, 0, "Octane" }, { &CAR_CONFIG_DOMINUS, 36.01f, 0, "Dominus" }, { &CAR_CONFIG_PLANK, 38.84f, 0, "Paladin" },
+		{ &CAR_CONFIG_BREAKOUT, 36.00f, 0, "Breakout" }, { &CAR_CONFIG_HYBRID, 38.94f, 5, "Venom" }, { &CAR_CONFIG_MERC, 35.05f, 0, "Merc" } };
+	for (auto& b : bodies) {
+		Arena* arena = Arena::Create(GameMode::SOCCAR);
+		Car* car = arena->AddCar(Team::BLUE, *b.config);
+		car->Demolish();
+		for (int i = 0; i < 500 && car->GetState().isDemoed; i++)
+			arena->Step(1);
+		CarState s = car->GetState();
+		// The spot: the respawn spot nearest, the car ahead of it along its forward axis by the offset
+		Vec spot;
+		float best = 1e9f;
+		for (int i = 0; i < CAR_RESPAWN_LOCATION_AMOUNT; i++) {
+			Vec p(CAR_RESPAWN_LOCATIONS_SOCCAR[i].x, CAR_RESPAWN_LOCATIONS_SOCCAR[i].y, 0);
+			float d = Vec(s.pos.x - p.x, s.pos.y - p.y, 0).Length();
+			if (d < best) { best = d; spot = p; }
+		}
+		Vec ahead = Vec(s.pos.x - spot.x, s.pos.y - spot.y, 0);
+		CHECK(!s.isDemoed && abs(ahead.Dot(s.rotMat.forward) - b.ahead) < 0.05f, "%s: %.2f uu ahead of its spot, expected %.0f", b.name,
+			ahead.Dot(s.rotMat.forward), b.ahead);
+		// The respawn tick falls one tick from the creation height, as the game's row after the creation row (live:
+		// 36.02 then 35.97 with vz -5.41 for the Octane)
+		CHECK(abs(s.pos.z - (b.z - 650.f / 120 / 120)) < 0.01f && abs(s.vel.z + 650.f / 120) < 0.1f,
+			"%s: z %.3f vz %.2f a tick after the respawn, expected %.3f and -5.42", b.name, s.pos.z, s.vel.z, b.z - 650.f / 120 / 120);
+		delete arena;
+	}
 }
 
 static void TestRespawn() {
@@ -1179,6 +1227,7 @@ int main(int argc, char** argv) {
 	TestBoostPads();
 	TestRespawn();
 	TestSpawnCount();
+	TestSpawnHeights();
 	TestKickoffSequence();
 	TestKickoffUnevenTeams();
 	TestRespawnsHeld();

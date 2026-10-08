@@ -588,6 +588,29 @@ Ground driving (engine − game, uu/s², flat floor; `validation_report.py`):
     engine follows it (angular velocity p99 0.0001 rad/s, max 0.0002), without it p99 0.144. The scenario starts on
     the floor: the game's placement keeps the car's jump and flip flags, so a car placed in the air after a used dodge
     can't dodge (live_validate's placement starts fresh).
+48. **The live sitting (2026-10-08, offline: freeplay, a 2v2 and a 1v2 exhibition and a 5-minute 1v1 against
+    Rookie bots; the user at the controller).**
+    - Steering on the six presets' reference bodies (`steer`): exact on all once the Breakout's back suspension rest
+      is the game's 29.66 (it was 29.666: 0.0003 rad/s; engine patch 80). The VehicleSim curves logged per body.
+    - Respawn creation height per body (two `physlog_resetplayers` each): Octane 36.02, Dominus 36.01, Paladin 38.84,
+      Breakout 36.00, Venom 38.94, Merc 35.05, Fennec 38.61; the Venom 5 uu ahead of the spot along its forward axis,
+      also at kickoffs (patch 80). The static analysis: 36.00 plus each body mesh's Tz (within 0.005), and the offset
+      is the Venom mesh's Origin (5, 0, 0), not a handling offset (Takumi +5 and Scarab +7 too, owned: to confirm).
+      The rows at z 83 before are the asset loading (finding 43).
+    - Respawn spot choice (`physlog_demolish`, the user steering): no input → a random spot; one press left → the
+      inner left spot three times out of three (no re-pick); two presses → the outer one; one press right → the inner
+      right; a press after the on-screen bar has filled is ignored (an early left then a late right: inner left), so
+      the bar is the selection window (2.5 s), as the engine's lock.
+    - A goal while the player was demolished: no respawn, the car back at the kickoff (patch 76).
+    - Kickoffs: one spot order per match stepped by one each kickoff, back to the start after five (MR-4). Uneven
+      teams (1v2): the lone car took the most central spot of the two orange used at each kickoff but the first, from
+      the match's order every time: the swap doesn't carry over to the next kickoff (patch 75 corrected; the six
+      kickoffs are an engine test).
+    - The match clock (PhysLog's new `m_*` columns: the clock, overtime, ball hit, round active, scores): after each
+      goal the clock restarted on the first touch (2.0–2.2 s after go); at 0:00 the round went on while two cars hit
+      the ball in the air and ended the tick after its first floor contact (7.1 s later), as the server's rule.
+    - The gamepad trigger's deadzone is 0.1 (throttle values on a byte/256 grid remapped by 0.1: 45 % of them on the
+      grid, ~4 % for any other deadzone), as the client's; camera: right stick up looks up.
 
 Cars alone (far from the ball and other cars), car position error after ~4 ticks, our mesh / the game's mesh
 (before patch 31):

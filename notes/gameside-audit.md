@@ -259,3 +259,14 @@ Result in S1's engine copy with the game's cooked meshes, triangle order, goal-h
   loads (`Car_TA.HandleAssetLoaded`: `CollisionComponent = Mesh`, `SetPhysics(PHYS_RigidBody)`, `Mesh.InitRBPhys()`,
   at the grounded actor ⊗ T). Until then the logged RBState keeps the spawn value (no body: not simulated, not
   collidable). The delay is asset-load latency (frames), not a rule; the clone creates the body grounded at once.
+
+## Live sitting results (2026-10-08, notes/validation.md finding 48) and follow-ups
+- **GA-6 confirmed and refined:** creation height = **36.00** (the `MoveToGround` result) + Tz for all 7 bodies measured
+  (±0.005; G4's replay estimate 35.774 was biased by ≈ 0.23). The forward creation offset is
+  `HandlingPresetXOffset` **plus the SkeletalMesh's native `Origin.X`** (serialised after Bounds/Materials; part of the
+  mesh component's transform): Venom measured +5 uu = `Body_Venom_PremiumSkin_SK` Origin (5, 0, 0). Nonzero mesh
+  Origins (all X, RotOrigin 0; `out/bsim/work/mesh_origin_live.tsv`, local): Body_Import (Takumi) +5, Body_Scarab +7,
+  Body_Venom +5, body_takumi_ii +5, body_flatbread +5. Store the offset per body, not per preset.
+- **GA-9 confirmed** (Breakout back rest 29.66). **C-5:** trigger axis deadzone 0.1 (live). **DS**, **MR-1**, **MR-4**,
+  **MR-6** as decoded. **MR-5** is recomputed per kickoff: `SpawnSpots` is a local of
+  `GameEvent_Soccar_TA.GetSpawnOrientation`, copied from `Team.PrimaryStarts` on every call.

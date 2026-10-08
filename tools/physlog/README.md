@@ -98,6 +98,11 @@ point (−1: an empty manifold), distance, lifetime, impulse, positionWorldOnA, 
 (uu). `live_validate --contacts` prints them under the engine's own. If the chain doesn't check out (another game
 build), the file says so and stays empty.
 
+## Match columns
+Every row ends with the match's state when there is one (an offline match; freeplay has its own clock):
+`m_time` (game time left, s), `m_seconds` (as shown, rounded up), `m_countdown`, `m_round_active`, `m_ball_hit`,
+`m_overtime`, `m_match_ended`, `m_score0`, `m_score1`. Rows stop while the recorded car is demolished.
+
 ## Scenario files
 `check_scenarios.py` checks every line's value count (the plugin stops a scenario at a bad line, mid-run);
 `run_wsl.sh` runs it first.

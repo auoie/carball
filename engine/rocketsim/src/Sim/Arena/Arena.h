@@ -79,7 +79,8 @@ public:
 
 	// RL PATCH: a match's kickoff spots (the game's PrimaryStarts and NextSpawnIndex, static analysis MR-4): one random
 	// order of the 5 kickoff spots per match (InitField's RandomizeSpawnPoints), a copy per team (orange's mirrored;
-	// the uneven-teams adjustment changes the short team's copy), stepped by one each kickoff. Saved in snapshots.
+	// the same order: the uneven-teams adjustment works on a copy for each kickoff), stepped by one each kickoff. Saved
+	// in snapshots.
 	struct KickoffSequence {
 		std::array<uint8_t, 5> order[2] = { { 0, 1, 2, 3, 4 }, { 0, 1, 2, 3, 4 } }; // CAR_SPAWN_LOCATIONS indices, per team
 		uint8_t next = 0;      // the next kickoff's index into the order (NextSpawnIndex)

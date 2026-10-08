@@ -139,7 +139,8 @@ void Car::Respawn(GameMode gameMode, int seed, float boostAmount) {
 
 void Car::_RespawnAt(Vec pos, float yaw, float boostAmount) {
 	CarState newState = CarState();
-	newState.pos = pos;
+	// RL PATCH: the body is created at its own height above the spot, and its forward offset ahead (CarConfig)
+	newState.pos = Vec(pos.x + cosf(yaw) * config.spawnForwardOffset, pos.y + sinf(yaw) * config.spawnForwardOffset, config.spawnZ);
 	newState.rotMat = Angle(yaw, 0.f, 0.f).ToRotMat();
 	newState.boost = boostAmount;
 	newState.spawnCount = _internalState.spawnCount + 1;

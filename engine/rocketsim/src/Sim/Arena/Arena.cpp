@@ -342,8 +342,10 @@ void Arena::ResetToNextKickoff() {
 
 	// Uneven teams (bUseDisadvantageSpawnAdjustment, in the Countdown state: every kickoff but the match's first): of
 	// the window of MaxTeamSize spots from the index, the most central one (SortPreferableSpawn: smallest distance
-	// from the centre, a tie to x*y < 0, the player's own left) goes to the short team's last car, swapped into its
-	// copy of the order, unless one of its cars already has it
+	// from the centre, a tie to x*y < 0, the player's own left) goes to the short team's last car, unless one of its
+	// cars already has it. For this kickoff only: the next one starts from the match's order again (live, a 1v2
+	// exhibition: the lone car took the window's most central spot at every kickoff; validation finding 48)
+	std::array<uint8_t, 5> orders[2] = { seq.order[0], seq.order[1] };
 	if (seq.kickoffs > 0 && gameMode == GameMode::SOCCAR) {
 		auto better = [](const CarSpawnPos& a, const CarSpawnPos& b) {
 			float da = a.x * a.x + a.y * a.y, db = b.x * b.x + b.y * b.y;
@@ -355,7 +357,7 @@ void Arena::ResetToNextKickoff() {
 			int own = RS_MIN(members[team], SPOTS);
 			if (own == 0 || members[1 - team] <= members[team])
 				continue;
-			std::array<uint8_t, 5>& order = seq.order[team];
+			std::array<uint8_t, 5>& order = orders[team];
 			int best = first;
 			for (int k = 1; k < maxTeamSize; k++) {
 				int slot = (first + k) % SPOTS;
@@ -369,7 +371,7 @@ void Arena::ResetToNextKickoff() {
 	}
 
 	std::minstd_rand0 randEngine((unsigned)tickCount + 1); // (the other game modes' ball direction)
-	_ResetToKickoff(seq.order, first, &randEngine);
+	_ResetToKickoff(orders, first, &randEngine);
 	seq.next = (uint8_t)((first + 1) % SPOTS);
 	seq.kickoffs++;
 }
@@ -482,6 +484,7 @@ void Arena::_ResetToKickoff(const std::array<uint8_t, 5> orders[2], int first, s
 				}
 
 				spawnState.rotMat = angle.ToRotMat();
+				spawnState.pos += spawnState.rotMat.forward * teamCars[i]->config.spawnForwardOffset; // RL PATCH (CarConfig)
 				spawnState.spawnCount = teamCars[i]->_internalState.spawnCount + 1; // RL PATCH
 
 				teamCars[i]->SetState(spawnState);

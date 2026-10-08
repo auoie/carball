@@ -633,6 +633,9 @@ void PhysLog::Header(CarWrapper car, CarWrapper other) {
 	out_ << "tick,time," << Prefixed("c", BODY_COLUMNS) << "," << Prefixed("b", BODY_COLUMNS) << "," << CAR_COLUMNS;
 	headerOther_ = !other.IsNull();
 	if (headerOther_) out_ << "," << Prefixed("o_c", BODY_COLUMNS) << "," << Prefixed("o_", CAR_COLUMNS);
+	// The match's state (an offline match: the clock, the round, the scores; empty in freeplay's terms where the
+	// game has none)
+	out_ << ",m_time,m_seconds,m_countdown,m_round_active,m_ball_hit,m_overtime,m_match_ended,m_score0,m_score1";
 	out_ << "\n";
 	headerWritten_ = true;
 }
@@ -699,6 +702,17 @@ void PhysLog::Row(CarWrapper car, const ControllerInput& in, CarWrapper other, c
 		fields(other, otherIn);
 	} else if (headerOther_) { // the other car is gone (demolished): its columns empty
 		for (int i = 0; i < 14 + 46; i++) put(",");
+	}
+	if (!server.IsNull()) {
+		int score[2] = {};
+		ArrayWrapper<TeamWrapper> teams = server.GetTeams();
+		for (int i = 0; i < teams.Count() && i < 2; i++)
+			if (!teams.Get(i).IsNull()) score[i] = teams.Get(i).GetScore();
+		put(",%.6g,%d,%d,%d,%d,%d,%d,%d,%d", server.GetGameTimeRemaining(), server.GetSecondsRemaining(),
+		    server.GetSecondsRemainingCountdown(), (int)server.GetbRoundActive(), (int)server.GetbBallHasBeenHit(),
+		    (int)server.GetbOverTime(), (int)server.GetbMatchEnded(), score[0], score[1]);
+	} else {
+		put(",,,,,,,,,");
 	}
 	out_.write(buf, n < (int)sizeof(buf) ? n : (int)sizeof(buf) - 1);
 	out_ << "\n";
