@@ -1,9 +1,11 @@
-# Run once per Windows session in an ADMIN PowerShell: attaches the Arch NVMe and the 18 TB data drives to WSL
-# (bare, so LVM sees them), then mounts them inside the Arch WSL distro with the same paths as under Arch.
+# Run once per Windows session in an ADMIN PowerShell: attaches the 18 TB data drives to WSL (bare, so LVM sees them)
+# and mounts them inside the Arch WSL distro at the same paths as under Arch (/mnt/primary, /mnt/other).
+# The Arch NVMe is not attached: Windows boots through the EFI partition on it, so Windows keeps that disk in use.
+# The repository lives on the data drive (/mnt/primary/home/arch/rocket-league-reverse-engineering), for both systems.
 #
 #   powershell -ExecutionPolicy Bypass -File attach.ps1
 #
-# Arch must have been shut down fully (not suspended or hibernated): its disk is mounted read-write.
+# Arch must have been shut down fully (not suspended or hibernated): the data drives are mounted read-write.
 #Requires -RunAsAdministrator
 param([string]$Distro = "archlinux")
 
@@ -12,8 +14,8 @@ $attached = 0
 foreach ($d in Get-Disk) {
     if ($d.Number -eq $windowsDisk) { continue }
     $gib = [math]::Round($d.Size / 1GB)
-    # The 1.8 TB Arch NVMe (~1863 GiB) and the two 18 TB data drives (~18630 GiB)
-    if (($gib -gt 1700 -and $gib -lt 2100) -or $gib -gt 18000) {
+    # The two 18 TB data drives (~18630 GiB)
+    if ($gib -gt 18000) {
         Write-Host "attaching disk $($d.Number): $($d.FriendlyName), $gib GiB"
         wsl --mount "\\.\PHYSICALDRIVE$($d.Number)" --bare
         $attached++
@@ -25,4 +27,4 @@ if ($attached -eq 0) { Write-Host "no matching disks found (Get-Disk lists them)
 $mount = Get-Content -Raw (Join-Path $PSScriptRoot "mount-arch.sh")
 ($mount -replace "`r", "") | wsl -d $Distro -u root -- bash -s
 if ($LASTEXITCODE -ne 0) { Write-Host "mounting inside WSL failed (see above)"; exit 1 }
-Write-Host "done: in WSL, cd ~/Documents/rocket-league-reverse-engineering and run claude"
+Write-Host "done: in WSL (su - arch), cd /mnt/primary/home/arch/rocket-league-reverse-engineering and run claude"
