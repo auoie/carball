@@ -817,6 +817,72 @@ static void TestSpawnHeights() {
 	}
 }
 
+static void TestBallRotation() {
+	puts("ball rotation: the ball turns as it moves (the game's does); the play the same as without it (noBallRot)");
+	using namespace RLConst;
+	// A ball spinning at the cap (6 rad/s) turns 0.5 rad in 10 ticks
+	{
+		Arena* arena = Arena::Create(GameMode::SOCCAR);
+		BallState b;
+		b.pos = { 0, 0, 800 };
+		b.angVel = { 0, 6, 0 };
+		arena->ball->SetState(b);
+		arena->Step(10);
+		BallState after = arena->ball->GetState();
+		float turned = acosf(RS_CLAMP(after.rotMat.forward.Dot(Vec(1, 0, 0)), -1.f, 1.f));
+		CHECK(abs(turned - 0.5f) < 0.01f, "a ball spinning at 6 rad/s turned %.4f rad in 10 ticks, expected 0.5", turned);
+		delete arena;
+	}
+	// The same play with and without the rotation: bounces off the floor, a wall and the ceiling, two cars driving into
+	// it and jumping: bit for bit the same. (Later in a long roll the spin can differ in its last bits now and then: the
+	// floor contact turns with the ball, as in the game's Bullet, which has no RocketSim no-rotation shortcut)
+	ArenaConfig rot, noRot;
+	rot.noBallRot = false;
+	noRot.noBallRot = true;
+	Arena* a = Arena::Create(GameMode::SOCCAR, rot);
+	Arena* b = Arena::Create(GameMode::SOCCAR, noRot);
+	for (Arena* arena : { a, b }) {
+		Car* c1 = arena->AddCar(Team::BLUE);
+		Car* c2 = arena->AddCar(Team::ORANGE);
+		c1->SetState(CarAt({ -1500, -400, 17.01f }, { 1, 0, 0 }, { 0, 0, 1 }));
+		c2->SetState(CarAt({ 1500, 300, 17.01f }, { -1, 0, 0 }, { 0, 0, 1 }));
+		BallState ball;
+		ball.pos = { 0, 0, 600 };
+		ball.vel = { 300, 2600, 900 };
+		ball.angVel = { 2, -3, 5 };
+		arena->ball->SetState(ball);
+	}
+	bool same = true;
+	int firstDiff = -1;
+	for (int t = 0; t < 1100 && same; t++) {
+		for (Arena* arena : { a, b }) {
+			int i = 0;
+			for (Car* car : arena->GetCars()) {
+				CarControls c;
+				c.throttle = 1;
+				c.boost = t < 200;
+				c.steer = (i == 0 ? 0.3f : -0.2f) * ((t / 90) % 2 ? 1 : -1);
+				c.jump = (t % 150) < 10;
+				car->controls = c;
+				i++;
+			}
+			arena->Step(1);
+		}
+		BallState ba = a->ball->GetState(), bb = b->ball->GetState();
+		same &= memcmp(&ba.pos, &bb.pos, sizeof(Vec)) == 0 && memcmp(&ba.vel, &bb.vel, sizeof(Vec)) == 0 &&
+			memcmp(&ba.angVel, &bb.angVel, sizeof(Vec)) == 0;
+		auto ca = a->GetCars().begin(), cb = b->GetCars().begin();
+		for (; ca != a->GetCars().end(); ++ca, ++cb) {
+			CarState x = (*ca)->GetState(), y = (*cb)->GetState();
+			same &= memcmp(&x.pos, &y.pos, sizeof(Vec)) == 0 && memcmp(&x.vel, &y.vel, sizeof(Vec)) == 0;
+		}
+		if (!same) firstDiff = t;
+	}
+	CHECK(same, "with the ball's rotation the play differs from tick %d", firstDiff);
+	delete a;
+	delete b;
+}
+
 static void TestRespawn() {
 	puts("respawn: a deterministic spot (tick count and car ID), never on another car (static analysis GA-18)");
 	using namespace RLConst;
@@ -1232,6 +1298,7 @@ int main(int argc, char** argv) {
 	TestKickoffUnevenTeams();
 	TestRespawnsHeld();
 	TestGoalExplosion();
+	TestBallRotation();
 	TestBallExplodesOnGoal();
 	TestDemoSpawnSelection();
 	TestKickoffBall();

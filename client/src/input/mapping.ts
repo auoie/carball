@@ -17,8 +17,11 @@ export interface InputSnapshot {
 
 export const EMPTY_INPUT: InputSnapshot = { keys: new Set(), mouseButtons: new Set(), gamepad: null };
 
-/** PlayerInput_TA GamepadDeadzones: the triggers' own deadzone (fixed; not a player setting). */
+/** PlayerInput_TA GamepadDeadzones: the triggers' own deadzone (fixed; not a player setting; live: 0.1). */
 export const TRIGGER_DEADZONE = 0.1;
+/** A gamepad button or trigger bound to a button action counts as pressed past this much of its travel (the game's
+ *  digital threshold: raw 30 of 255; controls audit C-5) */
+export const BUTTON_PRESS_THRESHOLD = 30 / 255;
 
 /** Held state of the non-driving actions; the caller detects presses. */
 export interface HeldActions {
@@ -69,11 +72,19 @@ export function actionValues(input: InputSnapshot, bindings: Bindings, stickDead
   return values;
 }
 
+/** Whether a gamepad input bound to a button action is down: a button or trigger past the game's digital threshold
+ *  (raw, before any deadzone), a stick direction past half its travel */
+function gamepadPressed(pad: GamepadSnapshot | null, binding: GamepadInput | null, stickDeadzone: number): boolean {
+  if (binding === null || pad === null) return false;
+  if (binding.kind === "padButton") return (pad.buttons[binding.button] ?? 0) > BUTTON_PRESS_THRESHOLD;
+  return gamepadValue(pad, binding, stickDeadzone) > 0.5;
+}
+
 /** Each input bound to an action, pressed or not (keyboard, then gamepad) */
 function buttonInputs(input: InputSnapshot, bindings: Bindings, stickDeadzone: number, ...actions: Action[]): boolean[] {
   return actions.flatMap((a) => [
     keyboardValue(input, bindings[a].keyboard) > 0.5,
-    gamepadValue(input.gamepad, bindings[a].gamepad, stickDeadzone) > 0.5,
+    gamepadPressed(input.gamepad, bindings[a].gamepad, stickDeadzone),
   ]);
 }
 
@@ -131,13 +142,13 @@ export function readControls(input: InputSnapshot, bindings: Bindings, stickDead
 }
 
 export function readHeldActions(input: InputSnapshot, bindings: Bindings, stickDeadzone: number): HeldActions {
-  const v = actionValues(input, bindings, stickDeadzone);
+  const held = (action: Action): boolean => buttonInputs(input, bindings, stickDeadzone, action).some((down) => down);
   return {
-    ballCam: v.ballCam > 0.5,
-    rearCamera: v.rearCamera > 0.5,
-    reset: v.reset > 0.5,
-    ballInFront: v.ballInFront > 0.5,
-    ballOnCar: v.ballOnCar > 0.5,
+    ballCam: held("ballCam"),
+    rearCamera: held("rearCamera"),
+    reset: held("reset"),
+    ballInFront: held("ballInFront"),
+    ballOnCar: held("ballOnCar"),
   };
 }
 

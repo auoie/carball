@@ -221,3 +221,22 @@ describe("several inputs on one action (controls audit C-4)", () => {
   });
 });
 
+describe("gamepad buttons and triggers as buttons (controls audit C-5)", () => {
+  const padWith = (buttons: Record<number, number>): InputSnapshot => ({
+    keys: new Set(),
+    mouseButtons: new Set(),
+    gamepad: { axes: [0, 0, 0, 0], buttons: Array.from({ length: 17 }, (_, i) => buttons[i] ?? 0) },
+  });
+  const boostButton = DEFAULT_BINDINGS.boost.gamepad;
+
+  it("count as pressed past raw 30/255 of their travel, as the game's digital threshold", () => {
+    if (boostButton?.kind !== "padButton") throw new Error("boost isn't on a pad button");
+    expect(controls(padWith({ [boostButton.button]: 0.11 })).boost).toBe(false);
+    expect(controls(padWith({ [boostButton.button]: 0.13 })).boost).toBe(true);
+  });
+
+  it("while a trigger driving an axis keeps its 0.1 deadzone (measured live)", () => {
+    expect(controls(padWith({ 7: 0.13 })).throttle).toBeCloseTo(axisDeadzone(0.13, 0.1), 6);
+  });
+});
+

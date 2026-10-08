@@ -157,7 +157,8 @@ From the static session's netcode audit (notes/netcode-audit.md), 2026-10-08:
 The static session's review of these fixes (notes/netcode-audit.md NR-1 to NR-9), all done 2026-10-08:
 - **NR-1, NR-7 (rotation).** A correction turns the interpolation's previous tick too (prev′ = post · pre⁻¹ · prev,
   the game's OldRBState shift), and the rotation error composes on the right (E′ = E · pre · post⁻¹, the game's
-  `FUN_140eabb70`): two corrections in a row keep the drawn rotation exactly (unit test).
+  `FUN_140eabb70`): two corrections in a row keep the drawn rotation exactly (unit test). The ball's too, since the
+  engine turns it (engine patch 81; before, the client integrated a spin of its own and smoothed only the position).
 - **NR-2 (teleports).** The "moved over 500 uu" guess is gone: each car and the ball carry a spawn counter (engine
   patch 74; network state format 6, protocol 6), and only a correction that changes it is drawn at once. A strong
   hit the client didn't predict now glides like any correction; a kickoff under 500 uu no longer does.

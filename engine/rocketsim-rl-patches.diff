@@ -2261,6 +2261,20 @@ index a3ebd3f..1de1ab0 100644
 +
  RS_NS_END
 \ No newline at end of file
+diff --git upstream/src/Sim/Arena/ArenaConfig/ArenaConfig.h engine/rocketsim/src/Sim/Arena/ArenaConfig/ArenaConfig.h
+index 79b1996..b850206 100644
+--- upstream/src/Sim/Arena/ArenaConfig/ArenaConfig.h
++++ engine/rocketsim/src/Sim/Arena/ArenaConfig/ArenaConfig.h
+@@ -30,7 +30,8 @@ struct ArenaConfig {
+ 
+ 	// Ball rotation updates are skipped to improve performance
+ 	// Disabled in snowday
+-	bool noBallRot = true;
++	// RL PATCH: off: the ball turns as the game's (its orientation is part of the state the game replicates)
++	bool noBallRot = false;
+ 
+ 	// Use a custom broadphase designed for RocketSim
+ 	// Improves performance, but becomes inefficient on giant maps
 diff --git upstream/src/Sim/Ball/Ball.cpp engine/rocketsim/src/Sim/Ball/Ball.cpp
 index 46a006d..585bf58 100644
 --- upstream/src/Sim/Ball/Ball.cpp

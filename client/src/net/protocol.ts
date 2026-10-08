@@ -2,8 +2,9 @@
 // server's tests).
 
 // 2: kickoff countdown in the state; 3: the wheels' previous contacts; 4: the jump's release; 5: respawn spot selection
-// and flip resets in the state; 6: spawn counters in the state, the match message
-export const PROTOCOL_VERSION = 6;
+// and flip resets in the state; 6: spawn counters in the state, the match message; 7: the engine turns the ball (its
+// orientation is simulated state: the network state's format is unchanged)
+export const PROTOCOL_VERSION = 7;
 export const MAX_INPUT_FRAMES = 10;
 
 export type GameEvent =

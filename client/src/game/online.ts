@@ -23,7 +23,6 @@ import {
   quantizeAxis,
 } from "../net/protocol";
 import { type CompleteUpdate, UpdateAssembler } from "../net/updates";
-import { BallSpin } from "../render/ballSpin";
 import { BallView, BoostPadsView, CarView } from "../render/entities";
 import type { ArenaView } from "../render/arena";
 import type { Renderer } from "../render/renderer";
@@ -89,7 +88,7 @@ export class Online {
   readonly #ballView = new BallView();
   readonly #ball: Interpolated<BodyState>;
   readonly #ballError = new SyncError();
-  readonly #ballSpin = new BallSpin();
+  #ballSpawns = 0; // the ball's spawn counter last tick (a reset places it: not interpolated)
   readonly #padsView: BoostPadsView;
   readonly #updates = new UpdateAssembler();
   readonly #received: Update[] = [];
@@ -139,7 +138,8 @@ export class Online {
     this.#localCar = welcome.carId;
     this.#predictor = new Predictor(world, welcome.carId, welcome.frame);
     this.#padsView = new BoostPadsView(world.boostPads());
-    this.#ball = new Interpolated(this.#ballSpin.advance(world.ball(), 0));
+    this.#ball = new Interpolated(world.ball());
+    this.#ballSpawns = world.ballSpawnCount();
     renderer.scene.add(this.#ballView.root, this.#padsView.root);
     this.#syncCars();
 
@@ -300,10 +300,18 @@ export class Online {
     const ball = this.#world.ball();
     const moved = sub(pre.ball.pos, ball.pos);
     const teleport = this.#world.ballSpawnCount() !== pre.ballSpawns;
-    if (teleport) this.#ballError.clear();
-    else this.#ballError.accumulate(pre.ball, ball); // (position only: the ball's drawn spin is its own)
-    this.#ball.previous = { ...this.#ball.previous, pos: teleport ? ball.pos : sub(this.#ball.previous.pos, moved) };
-    this.#ball.current = { ...this.#ball.current, pos: ball.pos, vel: ball.vel };
+    if (teleport) {
+      this.#ballError.clear();
+      this.#ball.previous = ball;
+    } else {
+      // As a car's (NR-1): the error keeps the drawn pose, rotation included; the previous tick moves with the correction
+      this.#ballError.accumulate(pre.ball, ball);
+      const turn = toThreeQuaternion(ball.rot, this.#q1).multiply(toThreeQuaternion(pre.ball.rot, this.#q2).invert());
+      const prevRot = fromThreeQuaternion(turn.multiply(toThreeQuaternion(this.#ball.previous.rot, this.#q2)));
+      this.#ball.previous = { ...this.#ball.previous, pos: sub(this.#ball.previous.pos, moved), rot: prevRot };
+    }
+    this.#ball.current = ball;
+    this.#ballSpawns = this.#world.ballSpawnCount();
   }
 
   #handleControlMessages(): void {
@@ -349,7 +357,9 @@ export class Online {
       const car = this.#world.car(id);
       entry.state.push(car, car.spawnCount !== entry.state.current.spawnCount);
     }
-    this.#ball.push(this.#ballSpin.advance(this.#world.ball(), TICK_SECONDS));
+    const ballSpawns = this.#world.ballSpawnCount();
+    this.#ball.push(this.#world.ball(), ballSpawns !== this.#ballSpawns);
+    this.#ballSpawns = ballSpawns;
   }
 
   /** Whether the player's car can dodge, after this tick (the flip indicator). */
@@ -382,7 +392,7 @@ export class Online {
     this.#ballError.decay(frameSeconds);
     const ball = this.#ballError.applyPosition(this.#ball.position(alpha, this.#pos));
     this.#ballView.root.visible = !this.#world.ballExploded(); // (a goal explodes it until the reset)
-    this.#ballView.update(ball, this.#ball.rotation(alpha, this.#rot));
+    this.#ballView.update(ball, this.#ballError.applyRotation(this.#ball.rotation(alpha, this.#rot)));
     this.#arena.update(ball, frameSeconds);
     const pads = this.#world.boostPads();
     this.#padsView.update(pads);

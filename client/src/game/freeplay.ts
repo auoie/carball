@@ -10,7 +10,6 @@ import { AirPitchSafety, ButtonLatch, EMPTY_INPUT, type HeldActions, type LookIn
 import type { ControllerSettings, Options, Settings } from "../settings/settings";
 import { FixedStep, TICK_SECONDS } from "../loop/fixedStep";
 import { ZERO, add, scale, vec3 } from "../math/vec";
-import { BallSpin } from "../render/ballSpin";
 import { BALL_RADIUS, BallView, BoostPadsView, CarView } from "../render/entities";
 import type { ArenaView } from "../render/arena";
 import type { Renderer } from "../render/renderer";
@@ -38,7 +37,7 @@ export class Freeplay {
   readonly #padsView: BoostPadsView;
   readonly #car: Interpolated<CarState>;
   readonly #ball: Interpolated<BodyState>;
-  readonly #ballSpin = new BallSpin();
+  #ballSpawns = 0; // the ball's spawn counter last tick (a reset places it: not interpolated)
   readonly #score: [number, number] = [0, 0];
   #held: HeldActions = { ballCam: false, rearCamera: false, reset: false, ballInFront: false, ballOnCar: false };
   #ballCam = false;
@@ -78,7 +77,8 @@ export class Freeplay {
     this.#padsView = new BoostPadsView(world.boostPads());
     renderer.scene.add(this.#carView.root, this.#ballView.root, this.#padsView.root);
     this.#car = new Interpolated(world.car(this.#playerId));
-    this.#ball = new Interpolated(this.#ballSpin.advance(world.ball(), 0));
+    this.#ball = new Interpolated(world.ball());
+    this.#ballSpawns = world.ballSpawnCount();
   }
 
   /** One animation frame. `frameSeconds`: real time since the previous frame. */
@@ -187,9 +187,11 @@ export class Freeplay {
     if (reset) this.#flipReset = true;
   }
 
-  /** The ball's latest state, with the orientation the client tracks for it (src/render/ballSpin.ts). */
+  /** The ball's latest state (its orientation the engine's); a reset places it, not interpolated across the field */
   #pushBall(): void {
-    this.#ball.push(this.#ballSpin.advance(this.#world.ball(), TICK_SECONDS));
+    const spawns = this.#world.ballSpawnCount();
+    this.#ball.push(this.#world.ball(), spawns !== this.#ballSpawns);
+    this.#ballSpawns = spawns;
   }
 
   #snapViews(): void {

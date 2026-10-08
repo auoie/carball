@@ -55,8 +55,10 @@
     and 0:00, per-body spawn heights, all six presets' steering confirmed or fixed)
   - (GA-5, the pitch lock after a wavedash: patch 79, confirmed live, finding 47; GA-6, spawn height and offset per
     body: patch 80, measured live, finding 48)
-  - controls audit (`notes/controls-audit.md`): C-5 air roll on LT, C-6 sub-frame taps (done: C-2 DodgeForward as
-    its own byte, patch 78; C-3 the Modern layout as the default, the user's choice; C-4 one binding per action);
+  - controls audit (`notes/controls-audit.md`): C-6 sub-frame taps; the default pad layout's air roll (the audit:
+    Standard/Modern pads put it on LT; ours on X) (done: C-2 DodgeForward as its own byte, patch 78; C-3 the Modern
+    keyboard layout, the user's choice; C-4 several inputs per action; C-5 the trigger deadzone 0.1, measured live, and
+    the digital press threshold 30/255);
   - netcode N-4 (server-confirmed demos), N-9, N-10; the car state's size on the wire;
   - match rules (`notes/match-rules-audit.md`): done MR-1 (clock, 0:00 ball-on-ground, overtime, end and a new
     match: `server/README.md`), MR-2 (one goal per round: patch 72), MR-4 and MR-5 (the kickoff order per match and
@@ -74,8 +76,6 @@
   but trust the live recordings over the decompile where they disagree.
 - **Done by the static session (2026-10-08):** stock Bullet 2.82 diffed against the executable function by function
   (BSim); its findings are in `notes/bullet-diff.md` and `out/bsim/reports/`, adopted ones in engine patches 46–53.
-- **Later, low priority:** track the ball's orientation in the engine (`ArenaConfig::noBallRot = false`; physics
-  unchanged, but the orientation becomes synced state, so the client's `ballSpin.ts` integration could go).
 
 **Goal:** a web game cloning Rocket League's physics, camera, controls and competitive multiplayer.
 **Plan:** forked RocketSim (`engine/`) with verified patches → native game server + WebAssembly clients

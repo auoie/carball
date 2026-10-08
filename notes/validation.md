@@ -611,6 +611,16 @@ Ground driving (engine − game, uu/s², flat floor; `validation_report.py`):
       the ball in the air and ended the tick after its first floor contact (7.1 s later), as the server's rule.
     - The gamepad trigger's deadzone is 0.1 (throttle values on a byte/256 grid remapped by 0.1: 45 % of them on the
       grid, ~4 % for any other deadzone), as the client's; camera: right stick up looks up.
+49. **The ball turns (engine patch 81, 2026-10-08).** RocketSim froze the ball's orientation for speed
+    (`noBallRot`); the game's Bullet ball is a full rigid body. With it turning:
+    - Live: all 58 recordings validate byte for byte the same (per-tick output compared).
+    - Replays (paired, the same 648,870 cases): 462 change. The ball's speed after the step is better in 265 (median
+      by 42 uu/s, 117 by more than 50) and worse in 99 (median 15, 24 by more than 50); the ball against the arena
+      (372 changed) 23.8 → 0.03 uu/s median, 0.36 → 0.001 uu; ground cars near a free ball (28) 6.0 → 0.02 uu/s.
+      Cars unchanged but a few touches (small either way).
+    - Free running (engine test): bit for bit the same through bounces, wall and ceiling hits and car touches; in a
+      long roll the spin first differs by one quantum (0.0001 rad/s) after ~10 s, as the floor contact now turns with
+      the ball.
 
 Cars alone (far from the ball and other cars), car position error after ~4 ticks, our mesh / the game's mesh
 (before patch 31):

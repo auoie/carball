@@ -73,7 +73,7 @@ galaxy, sky whales, guardian statues, star sprites; `island`: a pitch on a tropi
 turquoise lagoon with surf, a smoking volcano, manta rays, leapers, crabs, seabirds; `lake`: the arena on a wooden deck
 over a mirror-calm lake (a real reflection, of the big scenery only), mist, reeds, lily pads, floating lanterns, a cave
 on an islet, a long-necked guardian rising from the water, swans, frogs, fish); scenery stays out of the playing volume (tested) |
-| `src/render/` | Three.js scene: a boxy Fennec-style car built around each hitbox (`carModel.ts`), the ball (its spin integrated client-side from the angular velocity, `ballSpin.ts`: the engine keeps RocketSim's `noBallRot`), pads, and the arena with see-through hexagon walls that light up around the ball (`hexWalls.ts`) |
+| `src/render/` | Three.js scene: a boxy Fennec-style car built around each hitbox (`carModel.ts`), the ball (drawn with the engine's orientation: the engine turns it, as the game does), pads, and the arena with see-through hexagon walls that light up around the ball (`hexWalls.ts`) |
 | `src/game/freeplay.ts` | freeplay rules: goals, ball reset, kickoff reset, ball-in-front / ball-on-car |
 | `src/game/online.ts` | online play: inputs out at 60 Hz, server updates in, prediction, HUD ping/buffer |
 | `src/net/protocol.ts` | protocol v1 codec (`protocol/README.md`) |
@@ -96,7 +96,9 @@ Input follows the game (`notes/input.md`): the deadzone applies per stick axis; 
 roll and replaces directional roll; the sensitivities and dodge deadzone are applied by the engine
 (`World.setCarPreferences`), as the game applies them on the server; the right stick swivels the camera. With an
 action on both devices, their axes add up before the control is clamped, and a button is a press and a release
-command (the last one wins: releasing either of two held inputs releases it; `ButtonLatch`). The dodge's forward
+command (the last one wins: releasing either of two held inputs releases it; `ButtonLatch`). A gamepad button or
+trigger bound to a button action is down past raw 30/255 of its travel (the game's digital threshold); a trigger
+driving an axis (throttle, reverse) has the triggers' 0.1 deadzone (measured live). The dodge's forward
 input goes as its own byte (-pitch made a byte on its own, as the game's DodgeForward).
 
 Defaults follow the live game's "Modern" layout (its default since the 2026-10-06 update): W/S throttle (and pitch

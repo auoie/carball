@@ -87,6 +87,15 @@ describe("World", () => {
     world.dispose();
   });
 
+  it("the engine turns the ball: its orientation follows its spin (the client draws it as is)", () => {
+    const world = World.create(engine);
+    world.setBall({ pos: vec3(0, 0, 800), vel: vec3(0, 0, 0), angVel: vec3(0, 0, 6) }); // 6 rad/s about z (the cap)
+    world.step(10);
+    const f = world.ball().rot.forward;
+    expect(Math.atan2(f.y, f.x)).toBeCloseTo(0.5, 2); // 10 ticks at 6 rad/s
+    world.dispose();
+  });
+
   it("a goal explodes the ball: it stays where it scored, even moving back out, until it is set again", () => {
     const world = World.create(engine);
     world.setBall({ pos: vec3(0, 5300, 300), vel: vec3(0, -1500, 0), angVel: vec3(0, 0, 0) }); // in, on its way out
