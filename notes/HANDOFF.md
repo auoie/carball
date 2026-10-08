@@ -1,5 +1,25 @@
 # Handoff: how to resume this project
 
+## Next (2026-10-07)
+- **Where:** the repository moved to the data drive, `/mnt/primary/home/arch/rocket-league-reverse-engineering`, used
+  from both Arch and WSL. `~/Documents/rocket-league-reverse-engineering` on the Arch NVMe is an old backup.
+- **Live game (Windows, WSL):** setup in `tools/wsl/README.md`. Rules: offline modes only, the game started without
+  EAC, nothing touching EAC. In WSL:
+  1. Build into fresh build directories: the copied ones point at the old path. Rename them, never delete.
+  2. `tools/physlog/build_wsl.sh` builds and installs the PhysLog plugin.
+  3. `tools/physlog/rcon.py "plugin load physlog" "physlog_run <scenario>"` runs the scenarios: `steer` once per
+     car body, `air`, `jumps`, `walls`, `ball_roof`, `powerslide`.
+  4. Copy the recordings to `out/live/` and run `engine/build/live_validate`.
+
+  The recordings target the open points (`notes/roadmap.md` §7 "Open"): non-Octane steering, steering changes, the
+  goal-wall wobble, air control and flip cancels, the ball on a parked car's roof, and how a body's
+  `HandlingPresetXOffset` moves its hitbox. None of the Windows-side scripts had run yet: expect fixes.
+- **Then, static:** diff stock Bullet (the version the game is based on, built with MSVC) against the executable
+  function by function (Ghidra BSim or BinDiff), to list every Bullet function Psyonix changed. That finds physics
+  changes systematically instead of one replay mismatch at a time.
+- **Later, low priority:** track the ball's orientation in the engine (`ArenaConfig::noBallRot = false`; physics
+  unchanged, but the orientation becomes synced state, so the client's `ballSpin.ts` integration could go).
+
 **Goal:** a web game cloning Rocket League's physics, camera, controls and competitive multiplayer.
 **Plan:** forked RocketSim (`engine/`) with verified patches → native game server + WebAssembly clients
 (bit-identical); own arena mesh; Three.js browser client (`client/`).

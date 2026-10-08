@@ -41,8 +41,11 @@ from the data drive (`/mnt/primary/home/arch/claude-wsl-handoff/memory`).
    ```sh
    mkdir -p ~/.claude/projects/-mnt-primary-home-arch-rocket-league-reverse-engineering
    cp -r /mnt/primary/home/arch/claude-wsl-handoff/memory ~/.claude/projects/-mnt-primary-home-arch-rocket-league-reverse-engineering/
-   cd /mnt/primary/home/arch/rocket-league-reverse-engineering && claude   # log in
+   cp /mnt/primary/home/arch/claude-wsl-handoff/session/*.jsonl ~/.claude/projects/-mnt-primary-home-arch-rocket-league-reverse-engineering/
+   cd /mnt/primary/home/arch/rocket-league-reverse-engineering && claude --resume   # log in; pick the last session
    ```
+   (`--resume` continues the last Arch conversation if Claude Code accepts the copied transcript; if not, plain
+   `claude` starts fresh with the memory and `notes/HANDOFF.md`, which hold what's needed.)
 
 ## Every session
 1. Boot Windows, start Rocket League (without EAC) with BakkesMod, go to freeplay.
