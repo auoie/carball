@@ -209,8 +209,20 @@ through aligned references in matched functions), `dispmap.py` (field offsets fr
     everything from 0x808 on **+0x20** (`BoostComponent` 0x858→0x878, `DodgeComponent` 0x860→0x880, `AirControl`
     0x868→0x888, `JumpComponent` 0x870→0x890, `DoubleJump` 0x878→0x898, `NumWheelsForGrounded` 0x890→0x8b0,
     `TimeBelowSupersonicSpeed` 0x8a0→0x8c0).
-  - The live packages no longer decrypt with `decrypt_upk.py` ("unknown compression method"), so layouts can't be
-    recomputed from them yet.
+  - Live packages (licensee 34, was 32) now decrypt: same AES key and zlib, but each entry of the chunk table inside the
+    decrypted header grew from 24 to 36 bytes (12 extra zero bytes; `scripts/upk.py` picks the size by checking that
+    the chunks are contiguous). Decrypted copies: `out/bsim/live-20261006/decrypted/`. The summary also has 12 extra
+    (zero) bytes after `LastBlockSize`, and every `BoolProperty` gained a trailing u32 (1 on 67 of 5,833 bools).
+  - `scripts/layout.py` fixes (validated: classes whose computed end fits the exe sizeof went 324 → 365 of 373 in the
+    old build, 324 → 362 in the live one, and live `Vehicle_TA` matches the code): `DelegateProperty` is 0x18 bytes in
+    RL (was 0x10); a subclass starts at its superclass's real end when the exe sizeof is just that end rounded up to
+    16 (live `RBActor_TA` ends 0x7d8, sizeof 0x7e0, gained `__EventWeldedActorChanged__Delegate` at 0x7c0); bools with
+    the new flag start a new storage word (`VehicleInputs` 0x24 bytes, `bAirRoll` in the word at +0x20; the bit order of
+    `bButtonMash`/`bAirRoll` in that word is unverified, the code tests `bAirRoll` as bit 0). Live layouts:
+    `out/bsim/scripts/live_layout.py` (uses `out/bsim/live-20261006/classes.csv` from `dump_classes.py` on the live
+    exe; UClass ctor 0x140328af0).
+  - Physics tuning is unchanged in the update: `export_constants.py` on the live packages gives the same 232 values
+    (`out/bsim/live-20261006/rl_physics_constants.json`).
 - Changed cited game functions (logic aside from offsets not yet checked): car pre-physics `0x140f1c600` →
   `0x140f21a90` (0.992: the offset shifts above), `SetVehicleInput` `0x140f30a70` → `0x140f36790` (0.978: the new input
   dword), `0x140e386b0` → `0x140e39bc0` (0.937, input.md), `0x140eb6f80` → `0x140ebb410` (0.850, netcode.md),

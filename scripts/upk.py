@@ -126,16 +126,32 @@ def aes_ecb_decrypt(key, data):
     return dec.update(data) + dec.finalize()
 
 
+def read_chunk_table(dec, s):
+    """The real chunk table inside the decrypted header. Licensee 32 (builds up to 2026-06) uses 24-byte entries
+    {i64 UncompressedOffset, i32 UncompressedSize, i64 CompressedOffset, i32 CompressedSize}; licensee 34 (2026-10-06)
+    appends 12 more bytes per entry (zero so far). The entry size is picked by checking that the chunks are contiguous."""
+    count = struct.unpack_from("<i", dec, s.compressed_chunk_info_offset)[0]
+    for size in ((24, 36) if s.wide else (16,)):
+        chunks = []
+        for i in range(count):
+            p = s.compressed_chunk_info_offset + 4 + i * size
+            if not s.wide:
+                uoff, usize, coff, csize = struct.unpack_from("<iiii", dec, p)
+            else:
+                uoff, usize, coff, csize = struct.unpack_from("<qiqi", dec, p)
+            chunks.append((uoff, usize, coff, csize))
+        if all(b[0] == a[0] + a[1] and b[2] == a[2] + a[3] for a, b in zip(chunks, chunks[1:])):
+            return chunks
+    raise ValueError("chunk table entries are neither 24 nor 36 bytes")
+
+
 def decrypt_package(data, key):
     """Return a plain UE3 package: header decrypted, chunks decompressed, compression flags cleared."""
     s = Summary(data)
     enc = data[s.name_offset:s.name_offset + s.encrypted_size]
     dec = aes_ecb_decrypt(key, enc)
 
-    r = Reader(dec, s.compressed_chunk_info_offset)
-    chunks = []
-    for _ in range(r.i32()):
-        chunks.append(s._chunk_info(r))
+    chunks = read_chunk_table(dec, s)
 
     total = max([s.total_header_size] + [u + n for (u, n, _, _) in chunks])
     out = bytearray(total)

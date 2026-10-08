@@ -33,7 +33,7 @@ NATIVE_STRUCTS = {
 SIMPLE = {
     "ByteProperty": (1, 1), "IntProperty": (4, 4), "FloatProperty": (4, 4), "QWordProperty": (8, 8),
     "NameProperty": (8, 4), "StrProperty": (16, 8), "ObjectProperty": (8, 8), "ClassProperty": (8, 8),
-    "ComponentProperty": (8, 8), "InterfaceProperty": (16, 8), "DelegateProperty": (16, 8),
+    "ComponentProperty": (8, 8), "InterfaceProperty": (16, 8), "DelegateProperty": (24, 8),  # RL's FScriptDelegate is 0x18 bytes
     "ArrayProperty": (16, 8), "MapProperty": (80, 8),
 }
 
@@ -89,6 +89,12 @@ class Layout:
         slen = self.i32(f, pos)
         pos += 4 + (slen if slen >= 0 else -2 * slen)
         if cn == "BoolProperty":
+            # Licensee 34 (2026-10-06 build) appends a u32 to every BoolProperty. Value 1 (67 of 5,833 bools, always
+            # the last properties of their owner): these bools start a new 4-byte storage word, consecutive ones
+            # sharing it. Checked on VehicleInputs only: struct size 0x24 and bAirRoll in the new word at +0x20 (the
+            # live code tests bit 0 there, so the bit order inside that word is not verified).
+            if self.p.s.licensee_version >= 34 and self.i32(f, f["size"] - 4) == 1:
+                return 4, 4, "bool", "new", arraydim
             return 4, 4, "bool", True, arraydim
         if cn == "StructProperty":
             sref = self.i32(f, pos)
@@ -130,7 +136,7 @@ class Layout:
         fields = []
         for f in self.chain(e):
             size, align, typ, is_bool, dim = self.prop_info(f)
-            if is_bool and last_bool and bitpos < 32:
+            if ((is_bool is True and last_bool) or (is_bool == "new" and last_bool == "new")) and bitpos < 32:
                 fields.append((off - 4, f["name"], f"bool:bit{bitpos}"))
                 bitpos += 1
                 continue
@@ -148,6 +154,14 @@ class Layout:
         super_ref = self.i32(e, 8)
         super_name = self.p.obj_name(super_ref)
         start = self.exe_sizes.get(super_name)
+        # The exe's sizeof can be the superclass's real end rounded up to 16; subclass fields start at the real
+        # end (live RBActor_TA: fields end 0x7d8, sizeof 0x7e0, Vehicle_TA.CarMesh at 0x7d8).
+        try:
+            _, _, _, super_end = self.class_layout(super_name)
+            if start is not None and super_end <= start and (super_end + 15) // 16 * 16 == start:
+                start = super_end
+        except KeyError:
+            pass
         if start is None:
             raise KeyError(f"no exe sizeof for superclass {super_name}")
         fields, end, _ = self.compute(e, start)
