@@ -25,6 +25,7 @@ if ($attached -eq 0) { Write-Host "no matching disks found (Get-Disk lists them)
 
 # mount-arch.sh sits next to this script (the Arch disk isn't readable before it's mounted); fed to bash as root
 $mount = Get-Content -Raw (Join-Path $PSScriptRoot "mount-arch.sh")
-($mount -replace "`r", "") | wsl -d $Distro -u root -- bash -s
+# (the trailing exit stops bash before the CRLF PowerShell appends when piping to a native command)
+(($mount -replace "`r", "") + "exit`n") | wsl -d $Distro -u root -- bash -s
 if ($LASTEXITCODE -ne 0) { Write-Host "mounting inside WSL failed (see above)"; exit 1 }
 Write-Host "done: in WSL (su - arch), cd /mnt/primary/home/arch/rocket-league-reverse-engineering and run claude"
