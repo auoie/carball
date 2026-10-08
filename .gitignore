@@ -42,9 +42,8 @@ venv/
 # replay extractor build output
 scripts/replay_extract/target/
 
-# engine build output
-engine/build/
-engine/build-wasm/
+# engine build output (build, build-wasm and any other build-* directory)
+engine/build*/
 engine/rocketsim/build/
 
 # JavaScript dependencies (web client)

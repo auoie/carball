@@ -21,6 +21,7 @@
 #include "bakkesmod/plugin/bakkesmodplugin.h"
 #include "bakkesmod/wrappers/GameEvent/ServerWrapper.h"
 #include "bakkesmod/wrappers/GameObject/BallWrapper.h"
+#include "bakkesmod/wrappers/GameObject/CarComponent/AirControlComponentWrapper.h"
 #include "bakkesmod/wrappers/GameObject/CarComponent/BoostWrapper.h"
 #include "bakkesmod/wrappers/GameObject/CarComponent/DodgeComponentWrapper.h"
 #include "bakkesmod/wrappers/GameObject/CarComponent/DoubleJumpComponentWrapper.h"
@@ -95,6 +96,8 @@ void PhysLog::onLoad() {
 		scripted_ = true;
 		scriptPos_ = 0;
 		ticksLeft_ = 0;
+		// Freeplay pauses when the window loses focus; the pause menu itself does not stop physics
+		if (gameWrapper->IsPaused()) gameWrapper->ExecuteUnrealCommand("pause");
 		Open(args[1]);
 	}, "Play a scripted scenario and record it", PERMISSION_ALL);
 
@@ -211,7 +214,7 @@ void PhysLog::OnInput(CarWrapper car, void* params) {
 		}
 		if (ticksLeft_ == 0) { Close("scenario done"); return; }
 		const ScriptLine& s = script_[scriptPos_];
-		ControllerInput c;
+		ControllerInput c{}; // the SDK struct has no initializers: wait lines would send garbage
 		if (s.kind == ScriptLine::Input) {
 			c.Throttle = s.v[0];
 			c.Steer = s.v[1];
@@ -236,7 +239,12 @@ void PhysLog::Header(CarWrapper car) {
 	Vector ext = car.GetLocalCollisionExtent(), off = car.GetLocalCollisionOffset();
 	out_ << "# body " << car.GetLoadoutBody() << " extent " << ext.X << " " << ext.Y << " " << ext.Z << " offset " << off.X
 	     << " " << off.Y << " " << off.Z;
+	// The player's sensitivities shape the inputs inside the physics (steering in VehicleSim, aerials in AirControl)
 	VehicleSimWrapper sim = car.GetVehicleSim();
+	AirControlComponentWrapper air = car.GetAirControlComponent();
+	auto exact = [](float v) { char b[32]; std::snprintf(b, sizeof b, "%.9g", v); return std::string(b); };
+	if (!sim.IsNull()) out_ << " steer_sensitivity " << exact(sim.GetSteeringSensitivity());
+	if (!air.IsNull()) out_ << " air_sensitivity " << exact(air.GetAirControlSensitivity());
 	if (!sim.IsNull()) {
 		ArrayWrapper<WheelWrapper> wheels = sim.GetWheels();
 		for (int i = 0; i < wheels.Count(); i++) {

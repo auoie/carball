@@ -21,8 +21,12 @@ Copy the CSVs into `out/live/` (git-ignored) and compare:
 engine/build/live_validate out/live/steer_<date>.csv              # state set from the recording every tick
 engine/build/live_validate out/live/air_<date>.csv --continuous   # runs on from its own state (drift)
 engine/build/live_validate --synth tools/physlog/scenarios/air.txt /tmp/air.csv   # our engine's own recording (exact)
+engine/build/live_validate out/live/steer_sweep_<date>.csv --fit-steer         # per tick, the steer our engine needs
 ```
 It first reports the recording's tick spacing, angular velocity units and whether a row is the start of its tick.
+The player's steering and air control sensitivities shape the inputs inside the physics: PhysLog writes them into the
+header and the validator applies them (`--steer-sensitivity`/`--air-sensitivity` for older recordings). Offline the
+game leaves `RBState.Time` at 0, so rows are timed by their tick counter.
 
 Car–car (bumps and demolitions, finding 17), here over the 602 replays in `out/replays/more` (2v2/3v3 heavy),
 states piped so no large CSV is written (~20 s with 8 batches in parallel):
@@ -268,7 +272,51 @@ Ground driving (engine − game, uu/s², flat floor; `validation_report.py`):
     once 0.22. The best tick is often 0 or past the compared state: like the components, replicated inputs don't
     line up with the states. Steering changes stay at 0.08–0.12 even when both values are digital (−1/0/+1), with
     no steering rate in the vehicle data (`VehicleSim_TA` has only `HandbrakeRate`) or the input classes found.
-    Open; analog input also changes within a frame, which two samples can't show.
+    Analog input also changes within a frame, which two samples can't show. Finding 23 found one cause (a steer
+    change gripped too hard for one tick, engine patch 38); it moves these medians only by ~0.003 uu, so the rest is
+    what replays can't show.
+23. **Live recordings (2026-10-07): steering exact, after one fix.** Scripted freeplay runs through the PhysLog plugin
+    (`steer`, `steer_sweep`: held steer values 0.05–0.9 at ~1000 and ~1850 uu/s), state set from the recording every
+    tick:
+    - The game used `min(1, 1.40 × steer)` — the player's steering sensitivity (1.4 in this profile), applied in the
+      physics on the byte-quantized input (`out_steer` = 1.4 × 13/127 for 0.1, 1.4 × −26/128 for −0.2): finding 3's
+      shaping and the input quantization, confirmed live. Front wheel angles change at once (no steering rate).
+    - With the sensitivity applied, steady steering matched exactly, but the first tick after a steer change was off
+      by up to 1.6 uu/s: the game responded only ~95% as strongly (~98–99% at 1850 uu/s). VehicleSim rebuilds the
+      wheels' bases from the new angle before measuring their slip; RocketSim measured along the previous tick's
+      axles (engine patch 38). After it, worst tick 0.04 uu/s and 0.0006 rad/s, position 0.01 uu — the game's own
+      per-tick quantization.
+    - Replays, paired per case: steering changes on the floor better in 18,747 cases, worse in 13,734 (median
+      −0.006 uu); handbrake changes 1,987 / 1,076; no category worse beyond noise.
+24. **Live recordings: jumps, flips and landings tick-exact (engine patches 39–42).** The `jumps` scenario (jump,
+    double jump, front/back/side/diagonal flips, a flip cancel, a flip at speed while boosting), signed per-axis
+    errors (`--ticks`) per tick, state set from the recording every tick:
+    - Flip press tick: the game turns the car by exactly the dodge torque for one tick (224/120 = 1.867 rad/s); ours
+      ran air control first. Z damping in the game from the 18th tick after the press to the 78th (vz held at
+      −15.48, the fixed point of damping then gravity); ours a tick earlier at both ends (35 and 5.4 uu/s). The
+      decompiled dodge gets one ActiveTime for cancel and damping: the time active before the tick (patch 39).
+    - Air control keeps running during the dodge with pitch forced to 0: yaw torque on a side flip's press tick
+      (95 × CAR_TORQUE_SCALE / 120 = 0.076 rad/s), pitch damping after a front flip's press tick (0.045) (patch 42).
+    - Jumps: the game gains 291.67 + (1458.33 − 650 − 325)/120 uu/s on the press tick and 4.02 per tick after:
+      full jump force from the start (RocketSim's 0.62 ramp, patch 40), and no suspension support on the press
+      tick. The sticky force still acts on the first tick the rays find no contact and not yet on the first tick
+      they find one (2.71 = 325/120 uu/s), and a boosted liftoff tick still uses the ground boost (0.55 uu/s):
+      the car's pre-physics step runs on the previous tick's contacts, before the vehicle's rays (patch 41).
+    - Recorded wheel contacts equal ours on every tick (0 mismatches over 14 liftoffs and landings): the game casts
+      its rays at the start of the tick, like the engine.
+    - After: car velocity p99 4.9 → 1.07 uu/s, angular velocity p99 0.045 → 0.002 rad/s; left is the car body
+      meeting the floor. Run continuously (`--continuous`), the engine stays on the game's path through every jump,
+      flip and wheel landing; it drifts only where the hitbox strikes the floor (a flip's nose into the floor, the
+      tumble after a landing, up to 260 uu/s). The per-tick mode's single-tick spike on a nose-first landing is an
+      artifact of resetting the state (Bullet's persistent contact carries our own history): that landing is exact
+      when run continuously. `steer`, `steer_sweep`, `air` and `powerslide` stay exact.
+    - `flip_cancel`: stick back from the 4th tick after the press doesn't cancel, from the 5th it does, as patch 39
+      has it (no error on either tick).
+    - Replays, paired per case against patch 38 alone: cars alone on walls/curves/ceiling 0.046 → 0.024 uu (better
+      in 4,916 cases, worse in 1,651; the note under finding 22's table, "walls and curves are less exact than
+      the flat floor", was largely the sticky force switching a tick early), in goal 0.020 → 0.011, jumping on walls 0.080 → 0.014, jumping
+      dribbles 0.375 → 0.059, jumping without a touch 0.108 → 0.016; all categories 26,080 better / 15,667 worse.
+      The air-control change (patch 42) is neutral there (replays carry no pitch/yaw/roll input).
 
 Cars alone (far from the ball and other cars), car position error after ~4 ticks, our mesh / the game's mesh
 (before patch 31):

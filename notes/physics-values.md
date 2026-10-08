@@ -212,6 +212,7 @@ if GetGravityZ() > 0: DodgeDirection.Y *= -1                                    
 // every tick while active (native): angular accel = DodgeTorque (car frame) / Car.Mesh.Scale
 // pitch part may be cancelled by opposing pitch input only once ActiveTime >= MinDodgeTorqueTime (0.041 s)
 // Z damping: from 0.15 s, vz -= vz*0.35 per tick while falling; while rising only until 0.21 s
+// (ActiveTime: the time active before this tick, 0 on the press tick; see "Timing within a tick" below)
 ```
 The dodge-torque divisor `Car+0x438 → +0x238` is `Pawn.Mesh` → `PrimitiveComponent.Scale` (1.0 normally).
 Keyboard/mouse-only: `ApplyAirPitchSafety` zeroes nose-down pitch in the air until the player has
@@ -317,6 +318,20 @@ Boost: consumes 0.333/s; stays on >= MinBoostTime (0.1 s); recharge only if Rech
 ```
 Flip reset: landing 3+ wheels on the ball counts as grounded, which clears bJumped/bDoubleJumped, so the
 next dodge has no time limit. `IsOnRBActor` = grounded with ≤ 1 wheel on world geometry (fires the flip-reset event).
+
+Timing within a tick (live recordings, notes/validation.md finding 24; engine patches 39–41):
+- The input handlers above and the car's pre-physics step (`Car_TA` `FUN_140f1c600`: auto-roll `FUN_140eb8560`,
+  sticky force `FUN_140eb70a0`, supersonic; the components' ApplyForces: jump, dodge, air control, boost) run
+  before the vehicle casts the tick's wheel rays. So "grounded", the sticky force, air control, boost (ground or air
+  acceleration) all use the contacts the previous tick's rays found, and the vehicle's contact pass, suspension and
+  friction see the impulses (on a jump's press tick the suspension gives no support: the car gains exactly
+  291.67 + (1458.33 − 650 − 325)/120 uu/s).
+- The jump force is the full 1458.33 uu/s² from the press tick (no ramp; RocketSim scaled it by 0.62 for 0.025 s).
+- A component's ApplyForces gets the time it has been active before this tick: 0 on the press tick. The dodge torque
+  starts on the press tick (pitch 224/120 = 1.867 rad/s that tick); pitch cancel from active time ≥ 0.041 (the 5th
+  tick after the press); Z damping while active time ≥ 0.15 (18th tick) and the dodge active (< 0.65 s: up to the
+  78th tick, since 78 float additions of 1/120 make 0.6499997), while rising only below 0.21 s. With the damping
+  applied before gravity a falling dodge settles at vz = −(650/120)/0.35 = −15.48 uu/s.
 
 ### Car hitboxes and wheels (`Startup.upk: HandlingPresets.Presets.*`, physics assets `HandlingPresets.Physics.*`)
 | Preset (body) | Hitbox box X×Y×Z | Box offset X | Front wheel (x, y, r) | Back wheel (x, y, r) |
@@ -454,6 +469,12 @@ wheel friction values, wheel frames updated with this tick's steering), suspensi
   60 × lat friction; longitudinal = engine force × dt, or clamp(v_contact·fwd × 113.74, ±brake) × dt × 60, × long
   friction, along normalize(normal × axle); applied at the contact point projected onto the plane through the car's
   centre (minus up × ContactForceDistance = 0).
+- Inside `FUN_140f5ff00`, in this order: the steer angle (speed curve × shaped input) is written to each Bullet wheel
+  (`+0xbc`, × the wheel's SteerFactor); `FUN_1402c58b0` rebuilds the wheels' bases from it (front-left: the chassis
+  basis rotated about the chassis up axis by its angle, `FUN_1402c54b0`; front-right: a copy; rear: the chassis
+  basis); then per wheel `FUN_140f584c0` caches the basis' second column as the lateral axis (longitudinal =
+  contact normal × lateral) and `FUN_140f588f0` measures the slip along them for the friction curves. So the slip
+  uses this tick's steer angle (engine patch 38; RocketSim used the ray pass's axles, last tick's angle).
 - `PhysicsConfig_TA.bUseAckermannSteering` is false: at setup the car's Ackermann steering is turned off and its
   inner-wheel steering curves are converted to the inner/outer average for its geometry; both front wheels steer by it
   (engine patch 8; replays confirm, see validation.md).

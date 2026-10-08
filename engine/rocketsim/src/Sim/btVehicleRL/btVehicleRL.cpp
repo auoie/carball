@@ -275,16 +275,20 @@ void btVehicleRL::updateVehicleFirst(float step) {
 		rayCast(m_wheelInfo[i]);
 }
 
-void btVehicleRL::updateVehicleSecond(float step) {
-	// RL PATCH: the wheels' friction uses this tick's VehicleSim values (steering, engine, brake, friction) and the
-	// velocities after the suspension impulse. RocketSim computed it before both, from the previous tick's values.
+void btVehicleRL::updateWheelBases() {
 	for (int i = 0; i < getNumWheels(); i++) {
 		btWheelInfoRL& wheel = m_wheelInfo[i];
 		bool contact = wheel.m_raycastInfo.m_isInContact, world = wheel.m_isInContactWithWorld;
-		updateWheelTransform(i); // this tick's steering (also resets the contact flags: keep them)
+		updateWheelTransform(i); // (also resets the contact flags: keep them)
 		wheel.m_raycastInfo.m_isInContact = contact;
 		wheel.m_isInContactWithWorld = world;
 	}
+}
+
+void btVehicleRL::updateVehicleSecond(float step) {
+	// RL PATCH: the wheels' friction uses this tick's VehicleSim values (steering, engine, brake, friction) and the
+	// velocities after the suspension impulse. RocketSim computed it before both, from the previous tick's values.
+	updateWheelBases(); // this tick's steering
 	updateSuspension(step);
 	calcFrictionImpulses(step);
 	applyFrictionImpulses(step);

@@ -44,9 +44,12 @@ CarState Car::GetState() {
 	// RL PATCH: wheel values carried into the next tick
 	for (int i = 0; i < _bulletVehicle.m_wheelInfo.size() && i < 4; i++) {
 		const btWheelInfoRL& wheel = _bulletVehicle.m_wheelInfo[i];
+		// (a wheel's normal only matters while it touches something: otherwise a fixed one, so equal states compare equal)
+		bool contact = wheel.m_raycastInfo.m_isInContact;
 		_internalState.wheelCarry.wheels[i] = {
 			wheel.m_steerAngle, wheel.m_engineForce, wheel.m_brake, wheel.m_latFriction, wheel.m_longFriction,
-			wheel.m_extraPushback
+			wheel.m_extraPushback, contact && wheel.m_isInContactWithWorld,
+			contact ? Vec(wheel.m_raycastInfo.m_contactNormalWS) : Vec(0, 0, 1)
 		};
 	}
 
@@ -75,6 +78,9 @@ void Car::SetState(const CarState& state) {
 		wheel.m_latFriction = carry.latFriction;
 		wheel.m_longFriction = carry.longFriction;
 		wheel.m_extraPushback = carry.extraPushback;
+		wheel.m_raycastInfo.m_isInContact = state.wheelsWithContact[i];
+		wheel.m_isInContactWithWorld = carry.worldContact;
+		wheel.m_raycastInfo.m_contactNormalWS = carry.contactNormal;
 	}
 
 	_internalState = state;
@@ -159,46 +165,39 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
 	if (_internalState.isDemoed)
 		return; // No other updates need to occur
 
-	// Do first part of the btVehicleRL update (update wheel transforms, do traces) 
-	_bulletVehicle.updateVehicleFirst(tickTime);
-
-	btMatrix3x3 basis = _rigidBody.getWorldTransform().m_basis;
-
 	bool jumpPressed = controls.jump && !_internalState.lastControls.jump;
 
-	// Update wheelsWithContact
-	int numWheelsInContact = 0;
-	for (int i = 0; i < _bulletVehicle.m_wheelInfo.size(); i++) {
-		bool inContact = _bulletVehicle.m_wheelInfo[i].m_raycastInfo.m_isInContact;
-		_internalState.wheelsWithContact[i] = inContact;
-		numWheelsInContact += inContact;
-	}
-
-	{ // Update isOnGround
-		_internalState.isOnGround = numWheelsInContact >= 3;
-	}
-
+	// RL PATCH: the car's own pre-physics step (Car_TA FUN_140f1c600 and its components: jump, dodge, air control,
+	// auto-roll, sticky force, boost) runs before the vehicle casts this tick's wheel rays, so it works on the contacts
+	// the previous tick's rays found, and the vehicle's suspension and friction then see its impulses. RocketSim cast
+	// the rays first: a jump's first tick kept the suspension's support, and the sticky force, air control and boost
+	// switched between ground and air a tick early. Live recordings: exact on every tick of jumps, landings and flips.
+	int numWheelsInContact = 0; // (the previous tick's rays)
+	for (int i = 0; i < _bulletVehicle.m_wheelInfo.size() && i < 4; i++)
+		numWheelsInContact += _internalState.wheelsWithContact[i];
 	float forwardSpeed_UU = _bulletVehicle.getForwardSpeed() * BT_TO_UU;
-	_UpdateWheels(tickTime, mutatorConfig, numWheelsInContact, forwardSpeed_UU);
-
-	if (numWheelsInContact < 3) {
-		_UpdateAirTorque(tickTime, mutatorConfig, numWheelsInContact == 0);
-	} else {
-		_internalState.isFlipping = false;
-	}
 
 	_UpdateJump(tickTime, mutatorConfig, jumpPressed);
 	_UpdateAutoFlip(tickTime, mutatorConfig, jumpPressed);
 
 	_UpdateDoubleJumpOrFlip(tickTime, mutatorConfig, jumpPressed, forwardSpeed_UU);
 
+	// RL PATCH: air control and the dodge torque come after this tick's jump, flip and auto-flip starts (the game
+	// activates those from the input before any component applies its forces), so a dodge already turns the car on
+	// its press tick; RocketSim ran air control first and started the dodge torque a tick late
+	if (numWheelsInContact < 3) {
+		_UpdateAirTorque(tickTime, mutatorConfig, numWheelsInContact == 0);
+	} else {
+		_internalState.isFlipping = false;
+	}
+	_UpdateFlipTime(tickTime);
+
 	if (controls.throttle && ((numWheelsInContact > 0 && numWheelsInContact < 4) || _internalState.worldContact.hasContact))
 		_UpdateAutoRoll(tickTime, mutatorConfig, numWheelsInContact);
 
 	_internalState.worldContact.hasContact = false;
 
-	// Complete the btVehicleRL update (does suspension and applies wheel forces)
-	_bulletVehicle.updateVehicleSecond(tickTime);
+	_UpdateStickyForce(forwardSpeed_UU);
 
 	_UpdateBoost(tickTime, mutatorConfig, forwardSpeed_UU);
 
@@ -207,6 +206,22 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
 	// boosting; stock RocketSim added throttle x 66.67 on top (boost + throttle in the air was 6% too strong).
 	if (numWheelsInContact < 3 && !_internalState.isBoosting && controls.throttle != 0)
 		_rigidBody.applyCentralForce(GetForwardDir() * controls.throttle * RLConst::THROTTLE_AIR_ACCEL * UU_TO_BT * RLConst::CAR_MASS_BT);
+
+	// The vehicle: this tick's wheel rays and contacts, then VehicleSim, the suspension and the wheels' friction
+	_bulletVehicle.updateVehicleFirst(tickTime);
+
+	numWheelsInContact = 0;
+	for (int i = 0; i < _bulletVehicle.m_wheelInfo.size(); i++) {
+		bool inContact = _bulletVehicle.m_wheelInfo[i].m_raycastInfo.m_isInContact;
+		_internalState.wheelsWithContact[i] = inContact;
+		numWheelsInContact += inContact;
+	}
+	_internalState.isOnGround = numWheelsInContact >= 3;
+
+	forwardSpeed_UU = _bulletVehicle.getForwardSpeed() * BT_TO_UU;
+	_UpdateWheels(tickTime, mutatorConfig, numWheelsInContact, forwardSpeed_UU);
+
+	_bulletVehicle.updateVehicleSecond(tickTime);
 }
 
 void Car::_PostTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig& mutatorConfig) {
@@ -407,6 +422,13 @@ void CarState::Serialize(DataStreamOut& out) const {
 	out.WriteMultiple(
 		CARSTATE_SERIALIZATION_FIELDS
 	);
+	// RL PATCH: the wheel values the next tick uses (written field by field: WriteMultiple passes its arguments by value,
+	// so it can't take the contact array, and the carry struct has padding that a raw copy would write)
+	for (bool contact : wheelsWithContact)
+		out.Write(contact);
+	for (const WheelCarry& w : wheelCarry.wheels)
+		out.WriteMultiple(w.steerAngle, w.engineForce, w.brake, w.latFriction, w.longFriction, w.extraPushback,
+			w.worldContact, w.contactNormal);
 }
 
 void CarState::Deserialize(DataStreamIn& in) {
@@ -416,6 +438,11 @@ void CarState::Deserialize(DataStreamIn& in) {
 	in.ReadMultiple(
 		CARSTATE_SERIALIZATION_FIELDS
 	);
+	for (bool& contact : wheelsWithContact) // RL PATCH
+		in.Read(contact);
+	for (WheelCarry& w : wheelCarry.wheels)
+		in.ReadMultiple(w.steerAngle, w.engineForce, w.brake, w.latFriction, w.longFriction, w.extraPushback,
+			w.worldContact, w.contactNormal);
 }
 
 void Car::Serialize(DataStreamOut& out) {
@@ -441,10 +468,6 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int 
 	using namespace RLConst;
 
 	float absForwardSpeed_UU = abs(forwardSpeed_UU);
-
-	bool wheelsHaveWorldContact = false;
-	for (int i = 0; i < _bulletVehicle.m_wheelInfo.size(); i++)
-		wheelsHaveWorldContact |= _bulletVehicle.m_wheelInfo[i].m_isInContactWithWorld;
 
 	{ // Increase/decrease handbrake value from input
 		if (controls.handbrake) {
@@ -529,6 +552,11 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int 
 		_bulletVehicle.m_wheelInfo[1].m_steerAngle = steerAngle;
 	}
 
+	// RL PATCH: the wheels are turned to this tick's steer angle before their slip is measured (VehicleSim FUN_140f5ff00
+	// calls FUN_1402c58b0 between writing the angle and the friction pass); RocketSim measured it along the ray pass's
+	// axles, which still had the previous tick's angle
+	_bulletVehicle.updateWheelBases();
+
 	{ // Update friction
 		for (int i = 0; i < _bulletVehicle.m_wheelInfo.size(); i++) {
 			auto& wheel = _bulletVehicle.m_wheelInfo[i];
@@ -585,6 +613,16 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int 
 			}
 		}
 	}
+}
+
+// RL PATCH: part of the car's pre-physics step (Vehicle FUN_140eb70a0), so on the wheel contacts the previous tick's
+// rays found (still in the wheels: _PreTickUpdate casts this tick's rays after it)
+void Car::_UpdateStickyForce(float forwardSpeed_UU) {
+	using namespace RLConst;
+
+	bool wheelsHaveWorldContact = false;
+	for (int i = 0; i < _bulletVehicle.m_wheelInfo.size(); i++)
+		wheelsHaveWorldContact |= _bulletVehicle.m_wheelInfo[i].m_isInContactWithWorld;
 
 	// Update sticky forces if at least 1 wheel has world contact
 	if (wheelsHaveWorldContact) {
@@ -592,7 +630,7 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int 
 
 		// RL PATCH: the wall share needs the raw throttle input (Vehicle FUN_140eb70a0: Input.Throttle != 0 or
 		// |forward speed| > 25); RocketSim used the throttle including boost
-		bool fullStick = (controls.throttle != 0) || (absForwardSpeed_UU > STOPPING_FORWARD_VEL);
+		bool fullStick = (controls.throttle != 0) || (abs(forwardSpeed_UU) > STOPPING_FORWARD_VEL);
 
 		float stickyForceScale = config.threeWheels ? 0 : 0.5f;
 		if (fullStick)
@@ -684,14 +722,10 @@ void Car::_UpdateJump(float tickTime, const MutatorConfig& mutatorConfig, bool j
 		_internalState.hasJumped = true;
 
 		// Apply extra long-jump force
+		// RL PATCH: the full JumpForce from the press tick on (CarComponent_Jump_TA); RocketSim scaled it by 0.62 for the
+		// first 0.025 s. Live recordings: the car gains 4.02 uu/s per tick on the floor from the first tick
+		// (1458.33 - gravity - sticky force)
 		btVector3 totalJumpForce = GetUpDir() * mutatorConfig.jumpAccel;
-
-		if (_internalState.jumpTime < JUMP_MIN_TIME) {
-			// TODO: Either move to RLConst or preferably don't use this system at all
-			constexpr float JUMP_PRE_MIN_ACCEL_SCALE = 0.62f;
-			totalJumpForce *= JUMP_PRE_MIN_ACCEL_SCALE;
-		}
-
 		_rigidBody.applyCentralForce(totalJumpForce * UU_TO_BT * CAR_MASS_BT);
 	}
 
@@ -708,7 +742,11 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
 		dirYaw_up = GetUpDir(),
 		dirRoll_forward = -GetForwardDir();
 
-	bool doAirControl = false;
+	// RL PATCH: air control also runs during a dodge, with the pitch input taken as 0 (AirControl ApplyForces
+	// FUN_140eb3400; pitchTorqueScale below): yaw and roll steer, and all three axes are damped. RocketSim switched
+	// it off for the dodge unless it was cancelled. Live recordings: the yaw torque on a side flip's press tick and the
+	// pitch damping on the next ticks (1.867 rad/s x 30 x CAR_TORQUE_SCALE = 0.045 rad/s per tick)
+	bool doAirControl = true;
 	if (_internalState.isFlipping)
 		_internalState.isFlipping = _internalState.hasFlipped && _internalState.flipTime < FLIP_TORQUE_TIME;
 
@@ -721,10 +759,9 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
 			float pitchScale = 1;
 
 			// RL PATCH: the pitch part can only be cancelled once the dodge has been active for
-			// MinDodgeTorqueTime (0.041 s). The game checks this with the same active time as the
-			// Z damping, which this code advances after the air torque, hence the extra tick.
-			float dodgeActiveTime = _internalState.flipTime + tickTime;
-			if (relDodgeTorque.y() != 0 && controls.pitch != 0 && dodgeActiveTime >= FLIP_TORQUE_MIN_TIME) {
+			// MinDodgeTorqueTime (0.041 s), checked with the same active time as the Z damping (the time
+			// before this tick, see _UpdateFlipTime)
+			if (relDodgeTorque.y() != 0 && controls.pitch != 0 && _internalState.flipTime >= FLIP_TORQUE_MIN_TIME) {
 				if (RS_SGN(relDodgeTorque.y()) == RS_SGN(controls.pitch)) {
 
 #ifndef RS_MAX_SPEED
@@ -732,7 +769,6 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
 #else
 					pitchScale = 1 - abs(controls.pitch); // No sanity check
 #endif
-					doAirControl = true;
 				}
 			}
 
@@ -740,12 +776,7 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
 
 			btVector3 dodgeTorque = relDodgeTorque * btVector3(FLIP_TORQUE_X, FLIP_TORQUE_Y, 0);
 			_rigidBody.applyTorque(_rigidBody.m_invInertiaTensorWorld.inverse() * _rigidBody.getWorldTransform().m_basis * dodgeTorque);
-		} else {
-			// Stall, allow air control
-			doAirControl = true;
 		}
-	} else {
-		doAirControl = true;
 	}
 
 	doAirControl &= !_internalState.isAutoFlipping;
@@ -911,13 +942,24 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
 		}
 	}
 
+}
+
+// RL PATCH: the dodge component's forces get the time it has been active before this tick (0 on its press tick,
+// CarComponent_Dodge_TA FUN_140eb72b0): its torque and Z damping run while that is under 0.65 s, the damping from
+// 0.15 s (while rising only until 0.21 s), and the clock advances after. RocketSim advanced it first, so the damping
+// started and ended a tick early. Live recordings: damping from the 18th tick after the press to the 78th.
+void Car::_UpdateFlipTime(float tickTime) {
+	using namespace RLConst;
+
+	float tickTimeScale = tickTime / (1 / 120.f);
+
 	if (_internalState.isFlipping) {
-		_internalState.flipTime += tickTime;
 		if (_internalState.flipTime <= FLIP_TORQUE_TIME) {
 			if (_internalState.flipTime >= FLIP_Z_DAMP_START && (_rigidBody.m_linearVelocity.z() < 0 || _internalState.flipTime < FLIP_Z_DAMP_END)) {
 				_rigidBody.m_linearVelocity.z() *= det_powf(1 - FLIP_Z_DAMP_120, tickTimeScale);
 			}
 		}
+		_internalState.flipTime += tickTime;
 	} else if (_internalState.hasFlipped) {
 		// Increment flip time even after we are done flipping
 		// We need to count the time after for FLIP_PITCHLOCK_EXTRA_TIME to work

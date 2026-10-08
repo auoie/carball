@@ -1,6 +1,6 @@
 # Air control from rest in the air: each axis alone (torque, then damping after release), combinations,
 # air throttle and boost
-ball -3500 -4500 93  0 0 0  0 0 0
+ball 3000 -2000 92.75  0 0 0  0 0 0      # at rest, clear of the car and the walls
 car 0 0 1300  0 90 0  0 0 0  0 0 0  100
 input 40 0 0 1 0 0 0 0 0        # pitch up
 input 40 0 0 0 0 0 0 0 0        # release

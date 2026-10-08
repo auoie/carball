@@ -1,0 +1,25 @@
+# Partial steering: hold each steer value for 20 ticks, alternating sign to keep the heading, at two speeds.
+# live_validate --fit-steer recovers the steer input our engine needs on each tick (the game's steer mapping).
+ball 3000 -2000 92.75  0 0 0  0 0 0      # at rest, clear of the car and the walls
+car 0 -4000 17  0 90 0  0 0 0  0 0 0  100
+wait 60
+input 100 1 0 0 0 0 0 0 0       # throttle to ~1000 uu/s
+input 20 1 0.1 0 0 0 0 0 0
+input 20 1 -0.2 0 0 0 0 0 0
+input 20 1 0.3 0 0 0 0 0 0
+input 20 1 -0.4 0 0 0 0 0 0
+input 20 1 0.6 0 0 0 0 0 0
+input 20 1 -0.7 0 0 0 0 0 0
+input 20 1 0.8 0 0 0 0 0 0
+input 20 1 -0.9 0 0 0 0 0 0
+input 20 1 0.05 0 0 0 0 0 0
+input 60 1 0 0 0 0 0 1 0         # boost to ~1800 uu/s
+input 20 1 0.1 0 0 0 0 0 0
+input 20 1 -0.2 0 0 0 0 0 0
+input 20 1 0.3 0 0 0 0 0 0
+input 20 1 -0.4 0 0 0 0 0 0
+input 20 1 0.6 0 0 0 0 0 0
+input 20 1 -0.7 0 0 0 0 0 0
+input 20 1 0.8 0 0 0 0 0 0
+input 20 1 -0.9 0 0 0 0 0 0
+input 20 0 0 0 0 0 0 0 0

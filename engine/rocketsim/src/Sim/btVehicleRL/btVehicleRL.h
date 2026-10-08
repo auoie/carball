@@ -92,6 +92,9 @@ public:
 	void updateVehicleFirst(float step);
 	void updateVehicleSecond(float step);
 
+	// RL PATCH: the wheels' world transforms with their current steer angle, keeping the ray pass's contact flags
+	void updateWheelBases();
+
 	void resetSuspension();
 
 	float getSteeringValue(int wheel) const;

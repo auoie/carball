@@ -37,6 +37,10 @@ struct CarState : public PhysState {
 	struct WheelCarry {
 		float steerAngle = 0, engineForce = 0, brake = 0, latFriction = 0, longFriction = 0;
 		float extraPushback = 0; // only reset when the wheel ray misses or the suspension bottoms out
+		// The previous tick's ray result, which the car's pre-physics step (sticky force) uses; whether the wheel
+		// touched any object is wheelsWithContact
+		bool worldContact = false;
+		Vec contactNormal = Vec(0, 0, 1);
 	};
 	struct {
 		WheelCarry wheels[4] = {};
@@ -140,8 +144,7 @@ boost, isBoosting, boostingTime, timeSinceBoosted, supersonicTime, handbrakeVal,
 autoFlipTimer, autoFlipTorqueScale, isDemoed, demoRespawnTimer, lastControls, \
 worldContact.hasContact, worldContact.contactNormal, \
 carContact.otherCarID, carContact.cooldownTimer, \
-isSupersonic /* RL PATCH: affects the next tick (supersonic is kept down to 2100 uu/s) */, \
-wheelCarry /* RL PATCH */
+isSupersonic /* RL PATCH: affects the next tick (supersonic is kept down to 2100 uu/s) */
 
 enum class Team : byte {
 	BLUE = 0,
@@ -237,6 +240,8 @@ private:
 	void _UpdateJump(float tickTime, const MutatorConfig& mutatorConfig, bool jumpPressed);
 	void _UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, bool doAirControl);
 	void _UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorConfig, bool jumpPressed, float forwardSpeed_UU);
+	void _UpdateFlipTime(float tickTime);
+	void _UpdateStickyForce(float forwardSpeed_UU);
 	void _UpdateAutoFlip(float tickTime, const MutatorConfig& mutatorConfig, bool jumpPressed);
 	void _UpdateAutoRoll(float tickTime, const MutatorConfig& mutatorConfig, int numWheelsInContact);
 

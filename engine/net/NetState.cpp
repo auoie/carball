@@ -119,6 +119,8 @@ static void WriteCar(Arena* arena, DataStreamOut& out, Car* car) {
 		s.isAutoFlipping, s.worldContact.hasContact, s.isDemoed, s.ballHitInfo.isValid,
 		c.jump, c.boost, c.handbrake, c.airPitchSafety,
 		s.lastControls.jump, s.lastControls.boost, s.lastControls.handbrake, s.lastControls.airPitchSafety,
+		s.wheelCarry.wheels[0].worldContact, s.wheelCarry.wheels[1].worldContact, s.wheelCarry.wheels[2].worldContact,
+		s.wheelCarry.wheels[3].worldContact,
 	};
 	uint32_t flags = 0;
 	for (int i = 0; i < (int)(sizeof(bits) / sizeof(bits[0])); i++)
@@ -136,6 +138,9 @@ static void WriteCar(Arena* arena, DataStreamOut& out, Car* car) {
 	for (const CarState::WheelCarry& w : s.wheelCarry.wheels)
 		for (float f : { w.steerAngle, w.engineForce, w.brake, w.latFriction, w.longFriction, w.extraPushback })
 			out.Write(f);
+	for (int i = 0; i < 4; i++) // (only touching wheels' normals are used)
+		if (s.wheelsWithContact[i])
+			WriteVec(out, s.wheelCarry.wheels[i].contactNormal);
 	if (s.ballHitInfo.isValid) {
 		WriteVec(out, s.ballHitInfo.relativePosOnBall);
 		WriteVec(out, s.ballHitInfo.ballPos);
@@ -157,6 +162,8 @@ static void ReadCar(Arena* arena, DataStreamIn& in, CarData& d) {
 		&s.isAutoFlipping, &s.worldContact.hasContact, &s.isDemoed, &s.ballHitInfo.isValid,
 		&c.jump, &c.boost, &c.handbrake, &c.airPitchSafety,
 		&s.lastControls.jump, &s.lastControls.boost, &s.lastControls.handbrake, &s.lastControls.airPitchSafety,
+		&s.wheelCarry.wheels[0].worldContact, &s.wheelCarry.wheels[1].worldContact, &s.wheelCarry.wheels[2].worldContact,
+		&s.wheelCarry.wheels[3].worldContact,
 	};
 	for (int i = 0; i < (int)(sizeof(bits) / sizeof(bits[0])); i++)
 		*bits[i] = (flags >> i) & 1;
@@ -172,6 +179,9 @@ static void ReadCar(Arena* arena, DataStreamIn& in, CarData& d) {
 	for (CarState::WheelCarry& w : s.wheelCarry.wheels)
 		for (float* f : { &w.steerAngle, &w.engineForce, &w.brake, &w.latFriction, &w.longFriction, &w.extraPushback })
 			in.Read(*f);
+	for (int i = 0; i < 4; i++)
+		if (s.wheelsWithContact[i])
+			ReadVec(in, s.wheelCarry.wheels[i].contactNormal);
 	if (s.ballHitInfo.isValid) {
 		ReadVec(in, s.ballHitInfo.relativePosOnBall);
 		ReadVec(in, s.ballHitInfo.ballPos);
@@ -199,6 +209,9 @@ static void ApplyCar(const CarData& d, Car* car) {
 		wheel.m_latFriction = w.latFriction;
 		wheel.m_longFriction = w.longFriction;
 		wheel.m_extraPushback = w.extraPushback;
+		wheel.m_raycastInfo.m_isInContact = s.wheelsWithContact[i];
+		wheel.m_isInContactWithWorld = w.worldContact;
+		wheel.m_raycastInfo.m_contactNormalWS = w.contactNormal;
 	}
 	car->_internalState = s;
 	car->_velocityImpulseCache = { 0, 0, 0 };

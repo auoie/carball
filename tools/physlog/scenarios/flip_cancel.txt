@@ -1,0 +1,27 @@
+# Flip cancel threshold (MinDodgeTorqueTime 0.041 s): stick back from the 4th tick after the press (active time
+# 4/120 = 0.033: no cancel yet), then from the 5th (5/120 = 0.042: cancels at once)
+ball 3000 -2000 92.75  0 0 0  0 0 0      # at rest, clear of the car and the walls
+car 0 -3000 17  0 90 0  0 0 0  0 0 0  100
+wait 60
+input 4 0 0 0 0 0 1 0 0
+input 20 0 0 0 0 0 0 0 0
+input 1 0 0 -1 0 0 1 0 0        # front flip (press tick)
+input 3 0 0 0 0 0 0 0 0
+input 60 0 0 1 0 0 0 0 0        # stick back from the 4th tick after the press
+input 90 0 0 0 0 0 0 0 0
+car 0 -3000 17  0 90 0  0 0 0  0 0 0  100
+wait 60
+input 4 0 0 0 0 0 1 0 0
+input 20 0 0 0 0 0 0 0 0
+input 1 0 0 -1 0 0 1 0 0        # front flip (press tick)
+input 4 0 0 0 0 0 0 0 0
+input 60 0 0 1 0 0 0 0 0        # stick back from the 5th tick after the press
+input 90 0 0 0 0 0 0 0 0
+car 0 -3000 17  0 90 0  0 0 0  0 0 0  100
+wait 60
+input 4 0 0 0 0 0 1 0 0
+input 20 0 0 0 0 0 0 0 0
+input 1 0 0 1 0 0 1 0 0         # back flip (press tick)
+input 3 0 0 0 0 0 0 0 0
+input 60 0 0 -1 0 0 0 0 0       # stick forward from the 4th tick after the press
+input 90 0 0 0 0 0 0 0 0

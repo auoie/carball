@@ -1,4 +1,4 @@
-# Game protocol (version 2)
+# Game protocol (version 3)
 
 Client ↔ server over **WebTransport** (HTTP/3, QUIC). All integers little-endian. Implemented in
 `server/src/protocol.rs` (Rust) and `client/src/net/protocol.ts` (TypeScript); `vectors.json` holds byte-exact
@@ -43,7 +43,8 @@ that is the state after its input frame `ackFrame` (the last frame the server co
 `echoTimestamp` is the newest `Inputs.timestamp` received and `echoDelay` how long the server held it, so
 ping = now − echoTimestamp − echoDelay. A large update is split into `parts`, each a complete network state for
 some of the bodies; parts apply independently. Every network state also carries the kickoff countdown (ticks left;
-cars get no input while it runs; version 2).
+cars get no input while it runs; version 2), and each car's wheel contacts from its previous tick with their normals
+(the car's next tick uses them; version 3).
 
 What an update carries (the game's rates, `notes/netcode.md`): the ball every update (60 Hz); cars within 1000 uu of
 the ball every update, other cars and the boost pads every 8 ticks (15 Hz).

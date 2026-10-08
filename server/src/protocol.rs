@@ -2,7 +2,7 @@
 
 use crate::engine::Controls;
 
-pub const VERSION: u16 = 2; // 2: kickoff countdown in the state
+pub const VERSION: u16 = 3; // 2: kickoff countdown in the state; 3: the wheels' previous contacts
 pub const MAX_INPUT_FRAMES: usize = 10;
 
 /// Control stream (reliable) messages

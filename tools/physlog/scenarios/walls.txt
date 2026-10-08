@@ -1,5 +1,5 @@
 # Car against walls: pressing into a goal side wall with throttle (the wobble), and driving up a side wall
-ball -3500 -4500 93  0 0 0  0 0 0
+ball -3000 -2000 92.75  0 0 0  0 0 0     # at rest, clear of the car and the walls
 car 600 5500 30  0 0 0  0 0 0  0 0 0  0
 wait 60
 input 240 1 0 0 0 0 0 0 0       # into the goal's side wall (x 896)

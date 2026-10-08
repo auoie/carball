@@ -93,10 +93,11 @@ static void TestFlipCancelLock(Arena* arena, Car* car) {
 	CarControls front; front.pitch = -1;
 	auto noCancel = FlipAngVels(arena, car, front, [](CarControls& c, int) { c.pitch = 0; }, 8);
 	auto cancel = FlipAngVels(arena, car, front, [](CarControls& c, int) { c.pitch = 1; }, 8);
-	for (int i = 0; i < 3; i++)
+	// The dodge's active time on the i-th tick after the press is i/120 (0 on the press tick): 4/120 < 0.041 <= 5/120
+	for (int i = 0; i < 4; i++)
 		CHECK(Near(noCancel[i].y, cancel[i].y, 1e-4f), "torque tick %d: cancelled too early (%.4f vs %.4f)", i + 1, cancel[i].y, noCancel[i].y);
-	// (by tick 4 the flip is already at the 5.5 rad/s cap, so the cancel shows as a small difference)
-	CHECK(fabsf(cancel[3].y - noCancel[3].y) > 0.05f, "torque tick 4: cancel had no effect (%.4f vs %.4f)", cancel[3].y, noCancel[3].y);
+	// (by tick 5 the flip is already at the 5.5 rad/s cap, so the cancel shows as a small difference)
+	CHECK(fabsf(cancel[4].y - noCancel[4].y) > 0.05f, "torque tick 5: cancel had no effect (%.4f vs %.4f)", cancel[4].y, noCancel[4].y);
 }
 
 static void TestDodgeTorque(Arena* arena, Car* car) {

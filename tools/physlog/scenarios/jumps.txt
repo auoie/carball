@@ -1,5 +1,5 @@
 # Jumps, double jumps, flips and flip cancels from rest on the floor (stick: pitch -1 = forward)
-ball -3500 -4500 93  0 0 0  0 0 0
+ball 3000 -2000 92.75  0 0 0  0 0 0      # at rest, clear of the car and the walls
 car 0 -3000 17  0 90 0  0 0 0  0 0 0  100
 wait 60
 input 12 0 0 0 0 0 1 0 0        # jump, held 12 ticks

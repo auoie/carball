@@ -257,7 +257,7 @@ pub(crate) mod tests {
         assert!(moved > 400.0, "moved {moved}");
         assert_eq!(arena.tick_count(), 120);
         let state = arena.write_net_state(true, &[car], true);
-        assert!(state.len() > 100 && state[0] == 2); // the network state format version
+        assert!(state.len() > 100 && state[0] == 3); // the network state format version
         assert!(arena.save_state().len() > 1000);
     }
 }

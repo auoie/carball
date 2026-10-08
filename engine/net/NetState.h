@@ -13,7 +13,7 @@
 #include <vector>
 
 namespace NetState {
-	constexpr uint8_t VERSION = 2; // 2: kickoff countdown
+	constexpr uint8_t VERSION = 3; // 2: kickoff countdown; 3: the wheels' previous contacts
 
 	struct WriteOptions {
 		bool ball = true;

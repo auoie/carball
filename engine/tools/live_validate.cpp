@@ -10,8 +10,10 @@
 // quaternions), and whether a row's state is the start of its tick (position change against the velocities).
 //
 // Usage: live_validate LOG.csv [--continuous] [--preset NAME] [--ticks OUT.csv] [--meshes DIR]
+//        live_validate LOG.csv --fit-steer [--preset NAME]   (per grounded tick, the steer our engine needs)
 //        live_validate --synth SCENARIO.txt OUT.csv [--preset NAME]   (a recording made by our own engine, for testing)
 //   presets: octane dominus plank breakout hybrid merc (default: from the recording's hitbox)
+//   --steer-sensitivity X, --air-sensitivity X: the player's settings (default: from the recording's header, else 1)
 #include "RocketSim.h"
 
 #include <algorithm>
@@ -39,7 +41,8 @@ struct Row {
 	bool hasBall = false;
 	CarControls in;
 	bool onGround = false, jumped = false, doubleJumped = false, hasFlip = false, supersonic = false;
-	int wheelContacts = 0;
+	int wheelContacts = 0;          // touching the arena
+	bool wheelContact[4] = {};      // touching anything
 	float boost = 0; // 0-1
 	bool jumpActive = false, djActive = false, dodgeActive = false;
 	float jumpTime = 0, djTime = 0, dodgeTime = 0;
@@ -159,6 +162,7 @@ static bool Load(const char* path, std::string& header, std::vector<Row>& rows) 
 		r.in.handbrake = num("handbrake") != 0;
 		r.onGround = num("on_ground") != 0;
 		r.wheelContacts = (int)num("wheel_world_contacts");
+		for (int i = 0; i < 4; i++) r.wheelContact[i] = num(("w" + std::to_string(i) + "_contact").c_str()) != 0;
 		r.jumped = num("b_jumped") != 0;
 		r.doubleJumped = num("b_double_jumped") != 0;
 		r.hasFlip = num("has_flip") != 0;
@@ -172,6 +176,9 @@ static bool Load(const char* path, std::string& header, std::vector<Row>& rows) 
 		r.dodgeTime = num("dodge_time");
 		rows.push_back(r);
 	}
+	// RBState.Time is only set by network replication, so offline recordings have 0 there: use the tick counter
+	if (rows.size() > 1 && rows.front().time == rows.back().time)
+		for (Row& r : rows) r.time = r.tick / 120.0;
 	return true;
 }
 
@@ -208,6 +215,29 @@ static const Preset* PresetByName(const std::string& name) {
 	return nullptr;
 }
 
+static float HeaderValue(const std::string& header, const char* key, float fallback) {
+	std::istringstream ss(header);
+	for (std::string word; ss >> word;)
+		if (word == key) {
+			float v;
+			if (ss >> v) return v;
+		}
+	return fallback;
+}
+
+// The player's sensitivities shape steering and aerial inputs inside the physics. PhysLog records them in the header;
+// a negative value here means "from the header" (1 if the recording predates that).
+struct Sensitivities {
+	float steer = -1, air = -1;
+};
+
+static CarConfig ConfigFor(const Preset& preset, const std::string& header, const Sensitivities& given) {
+	CarConfig c = *preset.config;
+	c.steeringSensitivity = given.steer >= 0 ? given.steer : HeaderValue(header, "steer_sensitivity", 1);
+	c.airControlSensitivity = given.air >= 0 ? given.air : HeaderValue(header, "air_sensitivity", 1);
+	return c;
+}
+
 // What the recording looks like: tick spacing, angular velocity units, whether a row is the start of its tick
 static void Describe(const std::vector<Row>& rows) {
 	std::map<int, int> spacing;
@@ -240,12 +270,21 @@ static void Describe(const std::vector<Row>& rows) {
 	       Percentile(startErr, .5f), Percentile(endErr, .5f));
 }
 
-static void SetBody(Car* car, CarState s, const Body& b, float boost) {
-	s.pos = b.pos;
-	s.rotMat = b.rot;
-	s.vel = b.vel;
-	s.angVel = b.angVel;
-	s.boost = boost * 100;
+// The car's state from a recording row. The row's wheel contacts are the game's previous-tick ray results, which the
+// tick's pre-physics step uses (sticky force, air control, jump): where ours differ (after a placement), the row's.
+static void SetBody(Car* car, CarState s, const Row& r) {
+	s.pos = r.car.pos;
+	s.rotMat = r.car.rot;
+	s.vel = r.car.vel;
+	s.angVel = r.car.angVel;
+	s.boost = r.boost * 100;
+	for (int i = 0; i < 4; i++)
+		if (s.wheelsWithContact[i] != r.wheelContact[i]) {
+			s.wheelsWithContact[i] = r.wheelContact[i];
+			s.wheelCarry.wheels[i].worldContact = r.wheelContact[i] && r.wheelContacts > 0;
+			s.wheelCarry.wheels[i].contactNormal = r.car.rot.up;
+		}
+	s.isOnGround = r.onGround;
 	car->SetState(s);
 }
 
@@ -258,7 +297,8 @@ static void SetBall(Arena* arena, const Body& b) {
 	arena->ball->SetState(s);
 }
 
-static int Validate(const char* path, const std::string& presetName, bool continuous, const std::string& ticksPath) {
+static int Validate(const char* path, const std::string& presetName, const Sensitivities& sens, bool continuous,
+                    const std::string& ticksPath) {
 	std::string header;
 	std::vector<Row> rows;
 	if (!Load(path, header, rows) || rows.size() < 2) {
@@ -268,14 +308,18 @@ static int Validate(const char* path, const std::string& presetName, bool contin
 	Describe(rows);
 	const Preset* preset = presetName.empty() ? PresetFromHeader(header) : PresetByName(presetName);
 	if (!preset) { fprintf(stderr, "unknown preset %s\n", presetName.c_str()); return 1; }
-	printf("preset %s (%s)\n", preset->name, presetName.empty() ? "from the recording's hitbox" : "given");
+	CarConfig config = ConfigFor(*preset, header, sens);
+	printf("preset %s (%s), steering sensitivity %g, air control sensitivity %g\n", preset->name,
+	       presetName.empty() ? "from the recording's hitbox" : "given", config.steeringSensitivity,
+	       config.airControlSensitivity);
 
 	Arena* arena = Arena::Create(GameMode::SOCCAR);
-	Car* car = arena->AddCar(Team::BLUE, *preset->config);
+	Car* car = arena->AddCar(Team::BLUE, config);
 	FILE* ticksOut = ticksPath.empty() ? nullptr : fopen(ticksPath.c_str(), "w");
 	if (ticksOut)
 		fprintf(ticksOut, "tick,car_pos,car_vel,car_ang,car_rot_deg,ball_pos,ball_vel,on_ground_rec,on_ground_eng,"
-		                  "wheels_rec,wheels_eng,jump_rec,jump_eng,dodge_rec,dodge_eng,resync\n");
+		                  "wheels_rec,wheels_eng,jump_rec,jump_eng,dodge_rec,dodge_eng,resync,"
+		                  "car_dvx,car_dvy,car_dvz,car_dwx,car_dwy,car_dwz\n"); // signed: engine - recording
 
 	std::vector<float> carPos, carVel, carAng, carRot, ballPos, ballVel;
 	int groundMismatch = 0, wheelMismatch = 0, jumpMismatch = 0, dodgeMismatch = 0, compared = 0, resyncs = 0, placements = 0;
@@ -296,7 +340,7 @@ static int Validate(const char* path, const std::string& presetName, bool contin
 		bool jump = (ours.pos - a.car.pos).Length() > 50 || (ours.vel - a.car.vel).Length() > 500;
 		bool resync = !started || !continuous || jump;
 		if (resync) {
-			SetBody(car, ours, a.car, a.boost);
+			SetBody(car, ours, a);
 			if (a.hasBall) SetBall(arena, a.ball);
 			resyncs += continuous && started;
 		}
@@ -320,11 +364,14 @@ static int Validate(const char* path, const std::string& presetName, bool contin
 		wheelMismatch += wheels != b.wheelContacts;
 		jumpMismatch += s.isJumping != b.jumpActive;
 		dodgeMismatch += s.isFlipping != b.dodgeActive;
-		if (ticksOut)
-			fprintf(ticksOut, "%llu,%.5f,%.4f,%.6f,%.5f,%.5f,%.4f,%d,%d,%d,%d,%d,%d,%d,%d,%d\n", (unsigned long long)a.tick,
-			        carPos.back(), carVel.back(), carAng.back(), carRot.back(), b.hasBall ? ballPos.back() : 0.f,
-			        b.hasBall ? ballVel.back() : 0.f, b.onGround, s.isOnGround, b.wheelContacts, wheels, b.jumpActive,
-			        s.isJumping, b.dodgeActive, s.isFlipping, resync);
+		if (ticksOut) {
+			Vec dv = s.vel - b.car.vel, dw = s.angVel - b.car.angVel;
+			fprintf(ticksOut, "%llu,%.5f,%.4f,%.6f,%.5f,%.5f,%.4f,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.4f,%.4f,%.4f,%.5f,%.5f,%.5f\n",
+			        (unsigned long long)a.tick, carPos.back(), carVel.back(), carAng.back(), carRot.back(),
+			        b.hasBall ? ballPos.back() : 0.f, b.hasBall ? ballVel.back() : 0.f, b.onGround, s.isOnGround,
+			        b.wheelContacts, wheels, b.jumpActive, s.isJumping, b.dodgeActive, s.isFlipping, resync, dv.x, dv.y,
+			        dv.z, dw.x, dw.y, dw.z);
+		}
 	}
 	if (ticksOut) fclose(ticksOut);
 	printf("%d ticks compared (%s%s), %d placements skipped\n", compared,
@@ -342,6 +389,55 @@ static int Validate(const char* path, const std::string& presetName, bool contin
 	line("ball velocity", ballVel, "uu/s");
 	printf("  state mismatches: on ground %d, wheel contacts %d, jumping %d, flipping %d (of %d)\n", groundMismatch,
 	       wheelMismatch, jumpMismatch, dodgeMismatch, compared);
+	return 0;
+}
+
+// ---- --fit-steer: the steer input our engine needs on each grounded tick to reach the recording's next state ----
+
+static int FitSteer(const char* path, const std::string& presetName, const Sensitivities& sens) {
+	std::string header;
+	std::vector<Row> rows;
+	if (!Load(path, header, rows) || rows.size() < 2) {
+		fprintf(stderr, "cannot read %s\n", path);
+		return 1;
+	}
+	const Preset* preset = presetName.empty() ? PresetFromHeader(header) : PresetByName(presetName);
+	if (!preset) { fprintf(stderr, "unknown preset %s\n", presetName.c_str()); return 1; }
+	Arena* arena = Arena::Create(GameMode::SOCCAR);
+	Car* car = arena->AddCar(Team::BLUE, ConfigFor(*preset, header, sens));
+	printf("tick,steer,fit,err_given,err_fit,speed\n");
+	for (size_t i = 0; i + 1 < rows.size(); i++) {
+		const Row &a = rows[i], &b = rows[i + 1];
+		if (lround((b.time - a.time) * 120) != 1 || (b.car.pos - a.car.pos - a.car.vel / 120.f).Length() > 60) continue;
+		CarState base = car->GetState();
+		// Velocity and angular velocity (weighted to similar size) after one tick with this steer
+		auto err = [&](float steer) {
+			SetBody(car, base, a);
+			if (a.hasBall) SetBall(arena, a.ball);
+			car->controls = a.in;
+			car->controls.steer = steer;
+			arena->Step(1);
+			CarState s = car->GetState();
+			return (s.vel - b.car.vel).Length() + 100 * (s.angVel - b.car.angVel).Length();
+		};
+		if (a.onGround && b.onGround) {
+			float best = 0, bestErr = 1e30f;
+			for (int k = -100; k <= 100; k++)
+				if (float e = err(k / 100.f); e < bestErr) bestErr = e, best = k / 100.f;
+			for (float step = 0.005f; step > 1e-5f; step /= 2) // refine
+				for (float c : {best - step, best + step})
+					if (c >= -1 && c <= 1)
+						if (float e = err(c); e < bestErr) bestErr = e, best = c;
+			float given = err(a.in.steer);
+			printf("%llu,%.4f,%.5f,%.4f,%.4f,%.1f\n", (unsigned long long)a.tick, a.in.steer, best, given, bestErr,
+			       a.car.vel.Length());
+		}
+		// Advance with the recorded input from the recorded state, as the per-tick validation does
+		SetBody(car, base, a);
+		if (a.hasBall) SetBall(arena, a.ball);
+		car->controls = a.in;
+		arena->Step(1);
+	}
 	return 0;
 }
 
@@ -442,22 +538,29 @@ int main(int argc, char** argv) {
 	std::string meshes = ARENA_MESH_DIR, preset, ticksPath;
 	bool continuous = false;
 	std::vector<std::string> positional;
-	bool synth = false;
+	bool synth = false, fitSteer = false;
+	Sensitivities sens;
 	for (int i = 1; i < argc; i++) {
 		std::string a = argv[i];
 		if (a == "--meshes" && i + 1 < argc) meshes = argv[++i];
 		else if (a == "--preset" && i + 1 < argc) preset = argv[++i];
 		else if (a == "--ticks" && i + 1 < argc) ticksPath = argv[++i];
+		else if (a == "--steer-sensitivity" && i + 1 < argc) sens.steer = std::stof(argv[++i]);
+		else if (a == "--air-sensitivity" && i + 1 < argc) sens.air = std::stof(argv[++i]);
 		else if (a == "--continuous") continuous = true;
 		else if (a == "--synth") synth = true;
+		else if (a == "--fit-steer") fitSteer = true;
 		else positional.push_back(a);
 	}
 	if (positional.size() < (synth ? 2u : 1u)) {
 		fprintf(stderr, "usage: live_validate LOG.csv [--continuous] [--preset NAME] [--ticks OUT.csv]\n"
+		                "                     [--steer-sensitivity X] [--air-sensitivity X]   (default: the recording's)\n"
+		                "       live_validate LOG.csv --fit-steer [--preset NAME]\n"
 		                "       live_validate --synth SCENARIO.txt OUT.csv [--preset NAME]\n");
 		return 1;
 	}
 	RocketSim::Init(meshes, true);
 	if (synth) return Synth(positional[0].c_str(), positional[1].c_str(), preset);
-	return Validate(positional[0].c_str(), preset, continuous, ticksPath);
+	if (fitSteer) return FitSteer(positional[0].c_str(), preset, sens);
+	return Validate(positional[0].c_str(), preset, sens, continuous, ticksPath);
 }

@@ -1,19 +1,26 @@
 # Handoff: how to resume this project
 
-## Next (2026-10-07)
-- **Where:** the repository moved to the data drive, `/mnt/primary/home/arch/rocket-league-reverse-engineering`, used
-  from both Arch and WSL. `~/Documents/rocket-league-reverse-engineering` on the Arch NVMe is an old backup.
-- **Live game (Windows, WSL):** setup in `tools/wsl/README.md`. Rules: offline modes only, the game started without
-  EAC, nothing touching EAC. In WSL:
-  1. Build into fresh build directories: the copied ones point at the old path. Rename them, never delete.
-  2. `tools/physlog/build_wsl.sh` builds and installs the PhysLog plugin.
-  3. `tools/physlog/rcon.py "plugin load physlog" "physlog_run <scenario>"` runs the scenarios: `steer` once per
-     car body, `air`, `jumps`, `walls`, `ball_roof`, `powerslide`.
-  4. Copy the recordings to `out/live/` and run `engine/build/live_validate`.
-
-  The recordings target the open points (`notes/roadmap.md` §7 "Open"): non-Octane steering, steering changes, the
-  goal-wall wobble, air control and flip cancels, the ball on a parked car's roof, and how a body's
-  `HandlingPresetXOffset` moves its hitbox. None of the Windows-side scripts had run yet: expect fixes.
+## Next (2026-10-07, evening)
+- **Where:** the repository is on the data drive, `/mnt/primary/home/arch/rocket-league-reverse-engineering`, the
+  same path from Arch and WSL. `engine/build` and `engine/build-wasm` were rebuilt at this path (the old ones are
+  renamed `*-old-documents-path`, and `engine/build-wsl`, `engine/build-wasm-wsl` are leftovers: all can be deleted).
+  `~/Documents/rocket-league-reverse-engineering` on the Arch NVMe is an old backup.
+- **Live game (Windows, WSL) works:** `tools/physlog/run_wsl.sh SCENARIO...` plays scenarios in freeplay over rcon,
+  copies the recordings to `out/live/` and validates them (`tools/physlog/README.md` "Driving it from WSL": game
+  windowed on the second monitor, never focused by scripts; rcon whitelist; the plugin unpauses itself). Results so
+  far (`notes/validation.md` findings 23–24, engine patches 38–42): steering, air control, powerslide exact;
+  jumps and flips exact except landings.
+- **Open, from the live recordings:**
+  - **car body vs floor** (the hitbox, not the wheels): in `--continuous` mode the only drift in `jumps`/`flip_cancel`
+    comes from a flip putting the nose into the floor and the car tumbling after a landing (up to 260 uu/s). Some
+    single-tick spikes in the per-tick mode are artifacts (Bullet's persistent contact carries our own history; the
+    nose-first landing at `flip_cancel` tick 456 is exact in continuous mode). Also ~1.3 uu/s for ~10 ticks after a
+    two-wheel sideways landing (wheel friction or braking with fewer than 3 wheels down);
+  - `walls` (p99 1.9 uu/s, one wheel-contact mismatch) and `ball_roof` (one ball tick of 95 uu/s at the contact);
+  - a scenario for the ball rolling on the corner ramp (the old `steer_sweep` recording showed 1–14 uu/s per tick
+    there, but its ball also started inside the wall);
+  - `steer` once per other car body (non-Octane steering, finding 21), flip cancel exactly at the 4th vs 5th tick,
+    the goal-wall wobble, `HandlingPresetXOffset`.
 - **Then, static:** diff stock Bullet (the version the game is based on, built with MSVC) against the executable
   function by function (Ghidra BSim or BinDiff), to list every Bullet function Psyonix changed. That finds physics
   changes systematically instead of one replay mismatch at a time.
