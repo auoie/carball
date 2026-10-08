@@ -346,15 +346,17 @@ public:
 		///@todo: double-check this
 		if (isMax)
 		{
-			out[0] = (unsigned short)(((unsigned short)(v.getX() + btScalar(1.)) | 1));
-			out[1] = (unsigned short)(((unsigned short)(v.getY() + btScalar(1.)) | 1));
-			out[2] = (unsigned short)(((unsigned short)(v.getZ() + btScalar(1.)) | 1));
+			// RL PATCH: through int, as the game's build ((ushort)(int)(x + 1) | 1): a value past 65535 wraps (defined)
+			// instead of the undefined float -> unsigned short conversion (setQuantizationValues relies on the wrap)
+			out[0] = (unsigned short)(((unsigned short)(int)(v.getX() + btScalar(1.)) | 1));
+			out[1] = (unsigned short)(((unsigned short)(int)(v.getY() + btScalar(1.)) | 1));
+			out[2] = (unsigned short)(((unsigned short)(int)(v.getZ() + btScalar(1.)) | 1));
 		}
 		else
 		{
-			out[0] = (unsigned short)(((unsigned short)(v.getX()) & 0xfffe));
-			out[1] = (unsigned short)(((unsigned short)(v.getY()) & 0xfffe));
-			out[2] = (unsigned short)(((unsigned short)(v.getZ()) & 0xfffe));
+			out[0] = (unsigned short)(((unsigned short)(int)(v.getX()) & 0xfffe));
+			out[1] = (unsigned short)(((unsigned short)(int)(v.getY()) & 0xfffe));
+			out[2] = (unsigned short)(((unsigned short)(int)(v.getZ()) & 0xfffe));
 		}
 
 #ifdef DEBUG_CHECK_DEQUANTIZATION

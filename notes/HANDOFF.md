@@ -12,11 +12,22 @@
 - **PhysLog reads the game's own Bullet objects** (`_bullet.csv`: shapes, body words, every contact manifold of the
   car and the ball each tick) through the static session's pointer chain; `live_validate --contacts A-B` prints the
   game's manifolds under ours. Offsets are for the 2026-10-06 build. Use it first when a contact question comes up.
-- **State (findings 27–40, engine patches 45–55):** every live recording is exact or nearly so, per tick: `jumps`,
-  `flip_cancel`, `body_drops`, `steer`, `air`, `powerslide`, `ball_roof`, `dodge_fast` ≤ 0.12 uu/s; `ball_hits` ball
-  0.19; `walls` p99 0.041; `wheel_ball` p99 0.36; two cars (`car_car`, `car_car2`): bumps ≤ 0.07, demolitions on the
-  same tick. The big ones: RocketSim's car box was 0.068 uu too small (46), contact points never merged (47),
-  auto-roll's gate (53). `PhysLog` also records the game's `WorldContact` (`wc_*` columns) and a second car (`o_`).
+- **State (findings 27–44, engine patches 45–71):** every live recording is exact or nearly so, per tick: `jumps`,
+  `flip_cancel`, `body_drops`, `steer`, `air`, `powerslide`, `ball_roof`, `dodge_fast`, `wheel_ball`, `car_car2`,
+  `ga_boost`, `ga_jump`, `ga_throttle` ≤ 0.14 uu/s; `ball_5050` (50/50s, kickoff, pinch) cars 0.07, ball 0.22; `car_car`
+  0.43 / bot 3.0. Today: the car components against the static session's audit (GA-1 boost sets the input throttle,
+  GA-2 jump re-press, GA-3 auto-flip, GA-4 throttle deadzone, GA-7 dodge direction, GA-8 air throttle timing:
+  patches 57–62, replays 1,745 better / 474 worse), car–car demolitions both ways and the strict bump cooldown
+  (GA-15/16, patches 65/66), the arena as the game's 16 pieces (56), the GJK wheel-ray cast (55), Bullet 2.82's
+  manifold solve order, edge info and tree quantization (69–71), and the current game's respawn spot selection
+  (64: steer left/right while demolished, locked 0.5 s before the respawn; deterministic, in snapshots and the
+  network state, format 5) plus the flip reset counter (68). `live_validate` fixes: the "2.71 uu/s teleport artifact"
+  was stale wheel normals after a placement (finding 43).
+- **Netcode (today, from the static session's audit `notes/netcode-audit.md`):** corrections smoothed for drawing
+  (`client/src/game/syncError.ts`), hitch reset of the server's jitter buffer (protocol `ResetInputBuffer`), lost
+  update parts no longer drop the whole update, remote cars' input basis only from the cars in an update; see
+  `notes/netcode.md` (end). Client: boost pad warm-up (last second pulsing), respawn picker in the HUD, flip reset
+  toast from the engine's counter, gamepad camera swivel direction fixed (C-1).
 - **Driving the game:** `tools/physlog/check_game.sh` (heartbeat + read-only screenshot to `out/live/screens/`; look
   at the screenshot when the game doesn't answer or isn't in freeplay). Never load maps from scripts (the game drops
   to the menu and asks to reconnect online): starting freeplay is the user's job. Bots: `physlog_spawn 23 bot`,
@@ -27,15 +38,28 @@
   scenarios, tests, client and server. Batch 2: B6, B7, B9, B10 adopted; B11 (car–car through an AABB tree) worse as
   tried: the static session says the body order is probably the issue (2.82: body0 = the car added to the world
   first, by broadphase handle; try both orders); B8 (internal-edge choice) after the arena rework below.
-- **Next: the arena as the game's 16 pieces** (finding 39). The ball's contacts at seams and quad diagonals differ
-  from the game's (`ball_curves`: 3 ticks of 40–175 uu/s); on the game's own mesh (`scripts/game_mesh_cmf.py`,
-  local) tick 83 is exact. Generate 4 corners + 4 × 3 halves as separate CMF files (RocketSim loads each file as a
-  static body), each with the game's vertex layout and diagonals by rule, and overlapping where the game's do.
-  `scripts` edge-match tool: scratchpad `edge_match.py` (to be moved into scripts/ if kept).
-- **Open, from the live recordings:**
-  - `ball_curves` ticks 235/240 (the two-manifold seam at y = 0), `wheel_ball`'s last 2.7 uu/s;
-  - `steer` once per other car body (non-Octane steering, finding 21), `HandlingPresetXOffset`;
-  - (replays for patches 48–53: done, finding 38.)
+- **Arena (finding 41, 44):** our generated arena is now the game's 16 pieces (`scripts/arena_gen.py` writes one
+  `.cmf` each; the engine loads a folder in name order). Left on our mesh, and not fixable without the game's
+  triangulation and authored order (the static session's S1 rebuilt both from the game's data, local only, and gets
+  `ball_curves` and `walls` exact): `ball_curves` ticks 83/240, `walls` tick 243 (14.4 uu/s). Possible but not done:
+  our pieces' overlap bands (side floor / corner y 3373–3753, goal / corner x 2437–2688), the game's diagonals per
+  quad (a table from the game's mesh was approved by the user), the goal halves as bodies offset ±5120 uu.
+- **Open:**
+  - test the respawn spot selection in an offline exhibition match against bots (freeplay respawns cars its own way:
+    the static session's BT-2), which only the user can start (the z 83 rows after a respawn are the body asset
+    loading, not a rule: finding 43);
+  - GA-5 (pitch lock after a dodge ends by landing), GA-6 (spawn offset per body: needs the user's garage sitting);
+  - controls audit (`notes/controls-audit.md`): C-2 DodgeForward as its own input byte (protocol, engine, client),
+    C-3 the live default PC layout is "Modern" (a product decision for the user), C-5 air roll on LT, C-6 sub-frame
+    taps;
+  - netcode N-4 (server-confirmed demos), N-9, N-10; the car state's size on the wire;
+  - match rules (`notes/match-rules-audit.md`; MR-2, the double goal, is fixed: patch 72): no match clock, overtime
+    or end yet (MR-1), match start (MR-3), the kickoff spot order shuffled once per match and stepped per kickoff
+    (MR-4; ours reshuffles every kickoff), uneven-team kickoffs (MR-5), goal knockback and post-goal timing (MR-6),
+    disconnect rules (MR-7);
+  - camera (`notes/camera-update-audit.md`): free look (CAM-1) and the live Modern camera preset (CAM-3/4: a
+    decision like the keyboard layout), respawn cameras (CAM-6); CAM-2/7/8 are fixed;
+  - `steer` once per other car body (finding 21), `HandlingPresetXOffset`.
 - **The live game updated on 2026-10-06:** the static analysis (Ghidra project, `out/decomp`, layouts, packages) is
   from the 2026-06-16 build in `documents/binaries`; the live exe is in
   `/mnt/c/Program Files (x86)/Steam/steamapps/common/rocketleague`. Physics functions look unchanged (finding 25),

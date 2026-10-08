@@ -1,6 +1,34 @@
 // On-screen overlay: boost, the flip indicator, speed, score, camera mode, help.
+import type { SpawnSide } from "./engine/world";
 import { DODGE_WINDOW, type Dodge } from "./game/flipTracker";
 import { ACTIONS, type Bindings, inputName } from "./input/bindings";
+
+/** The local car demolished: its respawn and the respawn spot selection (the steer input picks a side). */
+export interface RespawnHud {
+  readonly secondsLeft: number;
+  /** What's left of the 2.5 s to pick a spot, 1 .. 0 (0 once the spot is locked) */
+  readonly pickLeft: number;
+  readonly side: SpawnSide | null;
+  readonly inner: boolean; // the inner spot of that side (else the outer)
+  readonly locked: boolean;
+}
+
+/** RLConst DEMO_PRESPAWN_STATE_LENGTH: the spot locks this long before the respawn; the pick takes the rest. */
+const PRESPAWN_SECONDS = 0.5;
+const PICK_SECONDS = 2.5;
+
+/** The HUD's respawn panel from a demolished car's state (null when it isn't). */
+export function respawnHud(car: { readonly demoed: boolean; readonly demoRespawnTimer: number; readonly spawnSelection: { readonly side: SpawnSide | null; readonly index: number; readonly locked: unknown } }): RespawnHud | null {
+  if (!car.demoed) return null;
+  const locked = car.spawnSelection.locked !== null;
+  return {
+    secondsLeft: car.demoRespawnTimer,
+    pickLeft: locked ? 0 : Math.min(1, Math.max(0, (car.demoRespawnTimer - PRESPAWN_SECONDS) / PICK_SECONDS)),
+    side: car.spawnSelection.side,
+    inner: car.spawnSelection.index === 0,
+    locked,
+  };
+}
 
 export interface HudState {
   readonly boost: number;
@@ -15,6 +43,8 @@ export interface HudState {
   readonly flip: Dodge | null;
   /** A flip reset happened since the last update */
   readonly flipReset: boolean;
+  /** The local car is demolished (null: it isn't) */
+  readonly respawn: RespawnHud | null;
 }
 
 function element<T extends HTMLElement>(root: ParentNode, selector: string, type: new () => T): T {
@@ -41,6 +71,11 @@ export class Hud {
   readonly #flipDetail: HTMLElement;
   readonly #flipToast: HTMLElement;
   readonly #flipRingLength: number;
+  readonly #respawn: HTMLElement;
+  readonly #respawnTime: HTMLElement;
+  readonly #respawnLeft: HTMLElement;
+  readonly #respawnRight: HTMLElement;
+  readonly #respawnFill: HTMLElement;
 
   constructor(root: HTMLElement) {
     this.#boostValue = element(root, "#boost-value", HTMLElement);
@@ -64,6 +99,11 @@ export class Hud {
     this.#flipLabel = element(root, "#flip-label", HTMLElement);
     this.#flipDetail = element(root, "#flip-detail", HTMLElement);
     this.#flipToast = element(root, "#flip-toast", HTMLElement);
+    this.#respawn = element(root, "#respawn", HTMLElement);
+    this.#respawnTime = element(root, "#respawn-time", HTMLElement);
+    this.#respawnLeft = element(root, "#respawn-left", HTMLElement);
+    this.#respawnRight = element(root, "#respawn-right", HTMLElement);
+    this.#respawnFill = element(root, "#respawn-fill", HTMLElement);
   }
 
   /** Shows or hides the controls list, filled from the current bindings. */
@@ -108,6 +148,20 @@ export class Hud {
     this.#net.textContent = s.net ?? "";
     this.#net.hidden = s.net === null;
     this.#updateFlip(s.flip, s.flipReset);
+    this.#updateRespawn(s.respawn);
+  }
+
+  #updateRespawn(r: RespawnHud | null): void {
+    this.#respawn.hidden = r === null;
+    if (r === null) return;
+    this.#respawnTime.textContent = `Respawning in ${r.secondsLeft.toFixed(1)} s`;
+    const spot = r.inner ? "inner" : "outer";
+    this.#respawnLeft.textContent = r.side === "left" ? `◀ LEFT · ${spot}` : "◀ LEFT";
+    this.#respawnRight.textContent = r.side === "right" ? `RIGHT · ${spot} ▶` : "RIGHT ▶";
+    this.#respawnLeft.classList.toggle("picked", r.side === "left");
+    this.#respawnRight.classList.toggle("picked", r.side === "right");
+    this.#respawn.classList.toggle("locked", r.locked);
+    this.#respawnFill.style.width = `${String(r.pickLeft * 100)}%`;
   }
 
   #updateFlip(dodge: Dodge | null, reset: boolean): void {

@@ -22,7 +22,7 @@ test("freeplay loads, drives and resets", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
   await expect(page.locator("#boost-value")).toHaveText("33"); // kickoff boost
-  await page.locator("#game").click({ position: { x: 640, y: 360 }, button: "middle" }); // focus
+  await page.locator("#game").click({ position: { x: 640, y: 360 }, button: "right" }); // focus (right mouse: powerslide)
 
   // Hold W: the car accelerates (about 1350 uu/s after 2 s of throttle)
   await page.keyboard.down("KeyW");
@@ -31,8 +31,8 @@ test("freeplay loads, drives and resets", async ({ page }) => {
   await page.keyboard.up("KeyW");
   await page.screenshot({ path: "test-results/driving.png" });
 
-  // Space toggles ball cam
-  await page.keyboard.press("Space");
+  // Middle mouse toggles ball cam (the Modern layout)
+  await page.locator("#game").click({ position: { x: 640, y: 360 }, button: "middle" });
   await expect(page.locator("#camera-mode")).toHaveText("Ball cam");
 
   // Backspace resets to a kickoff: stopped, 33 boost
@@ -45,15 +45,15 @@ test("freeplay loads, drives and resets", async ({ page }) => {
   await page.keyboard.press("KeyH");
   await expect(page.locator("#help")).toBeVisible();
 
-  // Sound: running since the first key press, the car's engine playing; a jump (right mouse) and its landing heard
+  // Sound: running since the first key press, the car's engine playing; a jump (space) and its landing heard
   const audio = async (): Promise<AudioStats> => page.evaluate(() => (window as unknown as { rlAudio: () => AudioStats }).rlAudio());
   await page.waitForTimeout(400);
   expect((await audio()).state).toBe("running");
   expect((await audio()).cars).toBe(1);
   await expect(page.locator("#flip")).toHaveAttribute("data-state", "ground");
-  await page.mouse.down({ button: "right" });
+  await page.keyboard.down("Space");
   await page.waitForTimeout(150);
-  await page.mouse.up({ button: "right" });
+  await page.keyboard.up("Space");
   // The flip indicator: the dodge window counting down in the air, back to the ground on landing
   await expect(page.locator("#flip")).toHaveAttribute("data-state", "window");
   await expect(page.locator("#flip-detail")).toHaveText(/^\d\.\d s$/);
@@ -170,7 +170,7 @@ async function playTheme(page: Page, theme: string): Promise<void> {
 
   await page.goto(`/?theme=${theme}`);
   await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
-  await page.locator("#game").click({ position: { x: 640, y: 360 }, button: "middle" }); // focus
+  await page.locator("#game").click({ position: { x: 640, y: 360 }, button: "right" }); // focus (right mouse: powerslide)
   // The car drives. (Slowly here: the tests render in software, a few frames a second for this scenery, and the
   // physics only catches up 0.1 s per frame)
   await page.keyboard.down("KeyW");

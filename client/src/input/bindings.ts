@@ -1,5 +1,7 @@
-// Actions and bindings, modelled on Rocket League's control settings (TAGame/Config/DefaultInput.ini,
-// "Standard" preset). Every action has one keyboard/mouse input and one gamepad input.
+// Actions and bindings, modelled on Rocket League's control settings (TAGame/Config/DefaultInput.ini). The keyboard
+// defaults are the live game's "Modern" preset (its default since the 2026-10-06 update, ControlPreset_X
+// DefaultPresetName); the gamepad's are unchanged. Every action has one keyboard/mouse input and one gamepad input
+// (as the game's menu); a second jump key is its own action, as the game's JumpAlternative.
 // Keys are KeyboardEvent.code values, mouse buttons MouseEvent.button, gamepad inputs use the browser's
 // "standard" mapping (buttons 0 A, 1 B, 2 X, 3 Y, 4 LB, 5 RB, 6 LT, 7 RT, ...; axes 0/1 left stick, 2/3 right).
 
@@ -20,6 +22,7 @@ export const ACTIONS = [
   { id: "steerRight", label: "Steer right", group: "Driving" },
   { id: "steerLeft", label: "Steer left", group: "Driving" },
   { id: "jump", label: "Jump", group: "Driving" },
+  { id: "jumpAlternative", label: "Jump (alternative)", group: "Driving" },
   { id: "boost", label: "Boost", group: "Driving" },
   { id: "handbrake", label: "Powerslide", group: "Driving" },
   { id: "pitchUp", label: "Pitch up (nose up)", group: "Aerial" },
@@ -56,21 +59,24 @@ export const DEFAULT_BINDINGS: Bindings = {
   throttleReverse: bind(key("KeyS"), button(6)),
   steerRight: bind(key("KeyD"), axis(0, 1)),
   steerLeft: bind(key("KeyA"), axis(0, -1)),
-  jump: bind(mouse(2), button(0)),
-  boost: bind(mouse(0), button(1)),
-  handbrake: bind(key("ShiftLeft"), button(2)),
+  jump: bind(key("Space"), button(0)),
+  jumpAlternative: bind(mouse(0), null),
+  boost: bind(key("ShiftLeft"), button(1)),
+  handbrake: bind(mouse(2), button(2)),
   pitchUp: bind(key("KeyS"), axis(1, 1)), // stick pulled back
   pitchDown: bind(key("KeyW"), axis(1, -1)), // stick pushed forward
   yawRight: bind(key("KeyD"), axis(0, 1)),
   yawLeft: bind(key("KeyA"), axis(0, -1)),
-  airRoll: bind(key("ShiftLeft"), button(2)),
+  airRoll: bind(mouse(2), button(2)),
   rollRight: bind(key("KeyE"), null),
   rollLeft: bind(key("KeyQ"), null),
-  ballCam: bind(key("Space"), button(3)),
-  rearCamera: bind(mouse(1), button(11)),
-  // Camera swivel: right stick (the game binds no keyboard keys)
-  swivelUp: bind(null, axis(3, -1)),
-  swivelDown: bind(null, axis(3, 1)),
+  ballCam: bind(mouse(1), button(3)),
+  rearCamera: bind(key("ControlLeft"), button(11)),
+  // Camera swivel: right stick (the game binds no keyboard keys). As the game's: SwivelUp is the stick pulled down
+  // (RightY positive, as the browser's axis 3), and the default inverted swivel pitch (bInvertSwivelPitch) turns that
+  // into looking down, so pushing the stick up looks up
+  swivelUp: bind(null, axis(3, 1)),
+  swivelDown: bind(null, axis(3, -1)),
   swivelLeft: bind(null, axis(2, -1)),
   swivelRight: bind(null, axis(2, 1)),
   reset: bind(key("Backspace"), button(5)),

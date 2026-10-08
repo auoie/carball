@@ -20,9 +20,9 @@ describe("ball", () => {
 
 describe("boost pads", () => {
   const pads = [
-    { pos: vec3(0, -4240, 70), big: false, active: true },
-    { pos: vec3(-3584, 0, 73), big: true, active: true },
-    { pos: vec3(1788, 2300, 70), big: false, active: true },
+    { pos: vec3(0, -4240, 70), big: false, active: true, cooldown: 0 },
+    { pos: vec3(-3584, 0, 73), big: true, active: true, cooldown: 0 },
+    { pos: vec3(1788, 2300, 70), big: false, active: true, cooldown: 0 },
   ];
   /** Where each mesh draws a pad (Three's x, y, z), or null where it's hidden. */
   const drawn = (view: BoostPadsView): Record<string, ([number, number, number] | null)[]> => {
@@ -39,10 +39,10 @@ describe("boost pads", () => {
     return out;
   };
 
-  it("draws every pad in six instanced meshes, lit, with its orb", () => {
+  it("draws every pad in ten instanced meshes, lit, with its orb", () => {
     const view = new BoostPadsView(pads);
-    expect(view.root.children).toHaveLength(6);
-    // Big: lit discs, dim discs, orbs; then small
+    expect(view.root.children).toHaveLength(10);
+    // Big: lit discs, dim discs, orbs; then small; then the warm-up ghosts (big, big last-second, small, small)
     expect(drawn(view)).toEqual({
       0: [[-3584, 3, 0]],
       1: [null],
@@ -50,7 +50,33 @@ describe("boost pads", () => {
       3: [[0, 3, -4240], [1788, 3, 2300]],
       4: [null, null],
       5: [[0, 12, -4240], [1788, 12, 2300]],
+      6: [null],
+      7: [null],
+      8: [null, null],
+      9: [null, null],
     });
+  });
+
+  it("warms a taken pad up over its delay, and pulses in the last second (the game's AlmostSpawnedTime)", () => {
+    const view = new BoostPadsView(pads);
+    const scale = (mesh: number, slot: number): number => {
+      const m = new Matrix4();
+      (view.root.children[mesh] as InstancedMesh).getMatrixAt(slot, m);
+      return Math.cbrt(m.determinant());
+    };
+    // The small pad at slot 1, taken: 2 s of its 4 left; then 0.5 s left
+    view.update(pads.map((p, i) => (i === 2 ? { ...p, active: false, cooldown: 2 } : p)));
+    const half = scale(8, 1);
+    expect(half).toBeGreaterThan(0.2);
+    expect(half).toBeLessThan(0.5); // (the glow eases in: 1 - sqrt(1 - 0.5^2) = 0.13)
+    expect(scale(9, 1)).toBe(0);
+    view.update(pads.map((p, i) => (i === 2 ? { ...p, active: false, cooldown: 0.5 } : p)));
+    expect(scale(8, 1)).toBeGreaterThan(half);
+    expect(scale(9, 1)).toBeGreaterThan(0.8);
+    // Back: the ghosts go
+    view.update(pads);
+    expect(scale(8, 1)).toBe(0);
+    expect(scale(9, 1)).toBe(0);
   });
 
   it("dims a pad that was taken and hides its orb, until it is back", () => {

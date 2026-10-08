@@ -140,6 +140,13 @@ impl Game {
         }
     }
 
+    /// The client had a hitch: its jitter buffer starts over (`ServerResetInputBuffer`)
+    pub fn reset_input_buffer(&mut self, id: PlayerId) {
+        if let Some(p) = self.players.get_mut(&id) {
+            p.input.jitter.reset();
+        }
+    }
+
     fn next_kickoff(&mut self) {
         self.arena.reset_kickoff(self.kickoff_seed);
         self.arena.set_kickoff_countdown((KICKOFF_COUNTDOWN_SECONDS * TICK_RATE as f32) as u32);
@@ -169,6 +176,8 @@ impl Game {
 
         for event in self.arena.take_events() {
             match event {
+                // (one goal per round: the engine explodes the ball on a goal, and none counts while the reset is pending)
+                Event::Goal { .. } if self.reset_at_tick.is_some() => {}
                 Event::Goal { team } => {
                     self.score[usize::from(team.min(1))] += 1;
                     self.broadcast(&Control::Event { server_tick: tick as u32, event: GameEvent::Goal { team } });

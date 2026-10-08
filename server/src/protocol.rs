@@ -2,13 +2,18 @@
 
 use crate::engine::Controls;
 
-pub const VERSION: u16 = 3; // 2: kickoff countdown in the state; 3: the wheels' previous contacts
+// 2: kickoff countdown in the state; 3: the wheels' previous contacts; 4: the jump's release; 5: respawn spot selection
+// and flip resets in the state
+pub const VERSION: u16 = 5;
 pub const MAX_INPUT_FRAMES: usize = 10;
 
 /// Control stream (reliable) messages
 #[derive(Clone, Debug, PartialEq)]
 pub enum Control {
     Hello { version: u16, team: u8, body: u8, dodge_deadzone: f32, steering_sensitivity: f32, air_control_sensitivity: f32 },
+    /// The client had a hitch (over 0.1 s between its ticks) 2 s ago: the server resets its jitter buffer
+    /// (`NetworkInputBuffer_TA.ClientTick` → `ServerResetInputBuffer`)
+    ResetInputBuffer,
     Welcome { version: u16, car_id: u32, tick_rate: u8, frame: u32, snapshot: Vec<u8> },
     World { frame: u32, snapshot: Vec<u8> },
     Event { server_tick: u32, event: GameEvent },
@@ -163,6 +168,7 @@ impl Control {
                 w.f32(*steering_sensitivity);
                 w.f32(*air_control_sensitivity);
             }
+            Self::ResetInputBuffer => w.u8(0x02),
             Self::Welcome { version, car_id, tick_rate, frame, snapshot } => {
                 w.u8(0x81);
                 w.u16(*version);
@@ -212,6 +218,7 @@ impl Control {
                 steering_sensitivity: r.f32()?,
                 air_control_sensitivity: r.f32()?,
             },
+            0x02 => Self::ResetInputBuffer,
             0x81 => Self::Welcome { version: r.u16()?, car_id: r.u32()?, tick_rate: r.u8()?, frame: r.u32()?, snapshot: r.bytes_with_len()? },
             0x82 => Self::World { frame: r.u32()?, snapshot: r.bytes_with_len()? },
             0x83 => {
@@ -329,6 +336,7 @@ mod tests {
                 frame: u(&m["frame"]),
                 snapshot: bytes(&m["snapshot"]),
             },
+            "resetInputBuffer" => Control::ResetInputBuffer,
             "world" => Control::World { frame: u(&m["frame"]), snapshot: bytes(&m["snapshot"]) },
             "event" => Control::Event {
                 server_tick: u(&m["serverTick"]),
@@ -376,6 +384,13 @@ mod tests {
                 state: bytes(&m["state"]),
             }),
         }
+    }
+
+    #[test]
+    fn reset_input_buffer_round_trips() {
+        let bytes = Control::ResetInputBuffer.encode();
+        assert_eq!(bytes, vec![1, 0, 0x02]);
+        assert_eq!(Control::decode(&bytes[2..]).unwrap(), Control::ResetInputBuffer);
     }
 
     #[test]

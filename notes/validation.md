@@ -442,7 +442,7 @@ Ground driving (engine − game, uu/s², flat floor; `validation_report.py`):
     and the ceiling p50 0.0200 → 0.0143 uu (what the game's own mesh gave before), in the goal by the side wall
     0.0103 → 0.0100, flipping on walls: better in 175 cases, worse in 63. All of 2026-10-08 (patches 45–53, the goal
     fillet) against that morning's engine and arena: 114,165 better / 56,525 worse.
-39. **The ball at mesh seams and quad diagonals: the arena's pieces matter (open).** New scenario `ball_curves` (the
+39. **The ball at mesh seams and quad diagonals: the arena's pieces matter (see 41).** New scenario `ball_curves` (the
     ball rolled and thrown into corners and onto the side-wall curves). Every tick is exact except three where the
     ball reaches a curve:
     - Tick 83 (into a corner): the game has 3 contact points, we 2. The game splits that corner's planar quads along
@@ -472,8 +472,81 @@ Ground driving (engine − game, uu/s², flat floor; `validation_report.py`):
     - A car dropped onto another's roof: 19.7 uu/s off until the car under the wheels also gets the bottom-out
       pushback (engine patch 54); a car parked there: 0.21 uu/s per tick until wheel rays on convex shapes use the
       game's caster, the GJK cast (patch 55; static session: rayTestSingle → btGjkConvexCast, 0.001 BU, 64 iterations).
-      The same fix makes `wheel_ball` (a car on the ball) exact: car p99 0.66 → 0.01, ball max 0.27 → 0.01. Left: 1–3 uu/s for a few ticks once the two bodies touch in the roof landing (the box–box
-      points are the game's; the solver's order of contacts, probably).
+      The same fix makes `wheel_ball` (a car on the ball) exact: car p99 0.66 → 0.01, ball max 0.27 → 0.01. Left:
+      1–3 uu/s for a few ticks once the two bodies touch in the roof landing (the box–box points are the game's; the
+      solver's order of contacts, probably).
+    - `ball_5050` (body 23 bot): 50/50s at 1400 each, a kickoff with both cars boosting, an offset 50/50, and the ball
+      pinched between the player and the side wall. Cars ≤ 1.72 uu/s, the ball exact but for two ticks: the pinch
+      (80.25 uu/s, fixed by finding 41) and the first 50/50's touch (20.06 uu/s, both cars on the ball in one tick;
+      open).
+
+41. **The arena as the game's 16 pieces (engine patch 56).** The game's soccar collision is 16 static mesh bodies
+    (per quadrant a corner, a side-wall floor half, a ceiling half and a goal-and-back-wall half); the flat floor,
+    the side wall's middle and the ceiling are planes. Our one merged mesh joined the pieces, so at a seam (the side
+    wall's halves meet at y = 0, the goal halves at x = 0) the ball got one manifold where the game gets one per
+    piece, each with its own points. `ball_5050`'s pinch at y = 0: 80.25 uu/s → 0.96 (the game's own meshes written as
+    16 pieces match its manifolds point for point there). Replays neutral (573 better / 522 worse). Left, and not
+    fixable without the game's triangulation (our mesh reproduces about 30% of its triangles exactly; the surface
+    matches): `ball_curves` ticks 83 (corner floor fillet on its diagonal) and 240 (side floor fillet at the seam),
+    where the game's triangles give a contact ours don't; and `walls` tick 243 (14.4 uu/s, 0.40 with the merged
+    mesh): two triangles of the goal's roof both touch, and which one's point the manifold keeps depends on the
+    order the mesh's tree visits them (the game's own pieces give the same 14.4, so the game's tree order differs
+    from Bullet 3's for the same triangles; static session S1 is looking at how the game builds its pieces).
+
+42. **Car components against the static analysis (engine patches 57–62, 2026-10-08).** The static session read the
+    game's car components (notes/gameside-audit.md, GA-1 to GA-14); new scenarios test each live:
+    - `ga_boost`: boost only, throttle 0, at rest on the side wall, driving up it, and landing (flat, rolled 20°):
+      the game sets the input throttle to 1 while boosting on the ground (GA-1, patch 57): p90 7.46 → 0.0001 uu/s.
+      And in the air, boost pressed and released: the air throttle uses the previous tick's boost state (GA-8, patch
+      59): 0.55 → 0 on those ticks.
+    - `ga_throttle`: throttle bytes ±1 at 1000 uu/s and from rest coast in the game (deadzone 0.01, GA-4, patch 58):
+      4.42 uu/s per tick → 0.00006.
+    - `ga_jump`: a second press while the wheels still touch after a short jump, at 4 to 7 ticks after the first,
+      and a press after a 1-tick release: the game neither jumps again nor extends the jump (GA-2, patch 60): 304
+      uu/s and 79 jump-state mismatches → 0. A dodge with yaw 0.95 and roll −1 is a full side dodge (GA-7, patch
+      61): 500 → 0.
+    - `ga_autoflip`: on the roof (no input, roll held either way), at 162° on the floor (it rolls onto its roof while
+      waiting), and roof down on the side curve at 30°: the game's FlipCar needs the car's up within 15° of the
+      contact normal's opposite, ends on the ground or by its timer (measured: 48 ticks on a flat roof, 40 at world
+      roll 150°, so the timer uses the world roll), and keeps air control on (GA-3, patch 62): the curve 110 uu/s →
+      0, the flip's spin 0.21 rad/s per tick → 0.01. Left: 2.4–3.1 uu/s on the ticks right after a car is placed
+      onto its roof edge, where the game's manifold already holds a point from the placement tick that
+      `live_validate` doesn't simulate (a test artifact).
+    `live_validate` now takes the boost state after a skipped placement tick from that tick's input (the air
+    throttle reads it).
+
+43. **Two cars against the static analysis (engine patches 64–66, 2026-10-08).** `ga_carcar` (body 23 bot): a T-bone,
+    a pin against the side wall, a supersonic demolition of a slower bot driving at the player, and a mutual
+    supersonic head-on.
+    - The demolition: the player is thrown back from 2300 to −503 uu/s on that tick (the bot's own impact bumps it:
+      GA-15, patch 65), matched; the mutual head-on demolishes both cars in the game (`live_validate` can't compare
+      that tick: the player's car stops the recording until it respawns; a unit test covers it).
+    - The respawn: 360 ticks after the demolition in game and engine. The recording then shows the car at the spot's
+      z 83 with zero velocity for a few ticks (5 for the bot) before it appears at 35.774 + the body's visual Z offset
+      (36.02 for the bot, 38.61 for the player's body 4284) and falls: the game sets the car on the ground at once
+      (MoveToGround), but its Bullet body only exists once the body asset has loaded (Car_TA.HandleAssetLoaded:
+      asynchronous, a machine-dependent latency, not a rule; static session). The engine spawns at 36 at once. The
+      750 uu/s tick is the bot reappearing elsewhere: freeplay respawns cars its own way (at kickoff spots, and all
+      cars at once after the player's demolition), so the spot rules need an exhibition match.
+    - The pin (GA-16) didn't test anything: at x 4050 the bot sat inside the side wall's floor curve and the player
+      drove up the curve over it. Patch 66 rests on the static analysis and a unit test.
+    `live_validate`: after a placement the touching wheels' contact normals are the row's (they were left from before
+    the placement when the wheels touched on both sides, so the sticky force pulled toward the old surface): the
+    "2.71 uu/s teleport artifact" in `wheel_ball`, `car_car2` and `ga_boost` was this (2.71 → 0.01).
+
+44. **Bullet as the game's build: solver order, edge info, tree quantization (engine patches 69–71).** From the static
+    session's arena agent (S1, which also rebuilt the game's own cooked meshes and their order):
+    - The solver's manifold order (patch 70, 2.82's unstable quickSort): `ball_5050`'s first 50/50 (both cars on the
+      ball in one tick) ball 20.06 uu/s → 0.22, cars 1.72 → 0.07; nothing else changes.
+    - The edge angles starting at 0 (patch 69) and 2.82's quantization range (patch 71) change no recording on our
+      arena; with the game's meshes they complete S1's exact results (`ball_curves` max 175 → 0.0001 uu/s, `walls`
+      14.4 → 0.40). On our generated arena those two ticks stay: our pieces aren't the game's triangulation
+      (side floor 63 of 80 vertices shared, 23 quads with the other diagonal; corner 219 of 483), and the game's
+      pieces overlap (side floor and corner over y 3373–3753, goal and corner over x 2437–2688), where ours only
+      touch. The game's triangle order is PhysX cooking's (an AABB tree built from the authored order), which no
+      rule reproduces without the game's own order.
+    Replays with patches 57–62 (car components): 1,745 cases better, 474 worse; the air cases most (boosting in the
+    air: 136 / 13, GA-8).
 
 Cars alone (far from the ball and other cars), car position error after ~4 ticks, our mesh / the game's mesh
 (before patch 31):

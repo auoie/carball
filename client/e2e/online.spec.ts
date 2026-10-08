@@ -48,7 +48,7 @@ test("two players: one drives, the other sees it through the server", async ({ p
   const start = (await stats(other)).cars;
 
   // The first player holds W
-  await page.locator("#game").click({ position: { x: 640, y: 360 }, button: "middle" });
+  await page.locator("#game").click({ position: { x: 640, y: 360 }, button: "right" }); // focus (right mouse: powerslide)
   await page.keyboard.down("KeyW");
   await page.waitForTimeout(1500);
   await page.keyboard.up("KeyW");

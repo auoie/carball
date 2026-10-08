@@ -130,14 +130,12 @@ export class Predictor {
     const present = this.#frame;
     const predicted = this.#localState();
     this.#world.loadState(at.snapshot);
-    if (!states.every((s) => this.#world.applyNetState(s))) {
+    const updated = this.#applyStates(states);
+    if (!updated) {
       this.#world.loadState(this.#recorded(present)?.snapshot ?? at.snapshot);
       return 0;
     }
-    // The server's controls for the other cars in this update are the new basis for predicting them
-    for (const car of this.#world.carIds()) {
-      if (car !== this.#localCar) this.#remote.set(car, { controls: this.#world.carControls(car), frame });
-    }
+    this.#rebase(updated, frame);
     this.#history[this.#slot(frame)] = { frame, snapshot: this.#world.saveState(), input: at.input };
     for (let f = frame + 1; f <= present; f++) {
       const input = this.#recorded(f)?.input ?? NO_INPUT;
@@ -148,6 +146,25 @@ export class Predictor {
     this.stats.resimulatedFrames += present - frame;
     if (this.#localState() !== predicted) this.stats.localMispredictions++;
     return present - frame;
+  }
+
+  /** Applies an update's network states; the cars they held, or null if one didn't apply. */
+  #applyStates(states: readonly Uint8Array[]): Set<number> | null {
+    const cars = new Set<number>();
+    for (const s of states) {
+      if (!this.#world.applyNetState(s)) return null;
+      for (const id of this.#world.netStateCars()) cars.add(id);
+    }
+    return cars;
+  }
+
+  /** The server's controls for the other cars in an update are the new basis for predicting them. Only those cars:
+   *  the others in the world hold their own faded prediction, which mustn't become a new basis (their inputs would
+   *  never fade out). */
+  #rebase(cars: ReadonlySet<number>, frame: number): void {
+    for (const car of cars) {
+      if (car !== this.#localCar) this.#remote.set(car, { controls: this.#world.carControls(car), frame });
+    }
   }
 
   #localState(): string {
@@ -162,13 +179,12 @@ export class Predictor {
    */
   #resync(frame: number, states: readonly Uint8Array[]): void {
     const present = this.#recorded(this.#frame);
-    if (!states.every((s) => this.#world.applyNetState(s))) {
+    const updated = this.#applyStates(states);
+    if (!updated) {
       if (present) this.#world.loadState(present.snapshot);
       return;
     }
-    for (const car of this.#world.carIds()) {
-      if (car !== this.#localCar) this.#remote.set(car, { controls: this.#world.carControls(car), frame });
-    }
+    this.#rebase(updated, frame);
     this.#history.fill(undefined);
     this.#frame = frame;
     this.#oldest = frame;

@@ -28,8 +28,53 @@ index 8722587..5f2c70f 100644
  				indices[i].m_orgIndex = i;
  			}
  			indices.quickSort(MyPairIndeSortPredicate());
+diff --git upstream/libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btQuantizedBvh.cpp engine/rocketsim/libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btQuantizedBvh.cpp
+index e132df2..740bbc0 100644
+--- upstream/libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btQuantizedBvh.cpp
++++ engine/rocketsim/libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btQuantizedBvh.cpp
+@@ -92,8 +92,10 @@ void btQuantizedBvh::setQuantizationValues(const btVector3& bvhAabbMin, const bt
+ 			v = unQuantize(vecIn);
+ 			m_bvhAabbMin.setMin(v - clampValue);
+ 		}
+-		aabbSize = m_bvhAabbMax - m_bvhAabbMin;
+-		m_bvhQuantization = btVector3(btScalar(65533.0), btScalar(65533.0), btScalar(65533.0)) / aabbSize;
++		// RL PATCH: no new factor here, as the game's build (Bullet 2.82, setQuantizationValues 0x14027e180): the max
++		// is quantized with the factor from before the min was lowered, wraps past 65535 and so isn't raised, which
++		// gives the range [min - 2, max + 1] BU (3.24: [min - 2, max + 2 + e]) and so the game's node boxes and
++		// traversal order (static analysis S1)
+ 		{
+ 			quantize(vecIn, m_bvhAabbMax, true);
+ 			v = unQuantize(vecIn);
+diff --git upstream/libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btQuantizedBvh.h engine/rocketsim/libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btQuantizedBvh.h
+index 8821fa3..fb8078e 100644
+--- upstream/libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btQuantizedBvh.h
++++ engine/rocketsim/libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btQuantizedBvh.h
+@@ -346,15 +346,17 @@ public:
+ 		///@todo: double-check this
+ 		if (isMax)
+ 		{
+-			out[0] = (unsigned short)(((unsigned short)(v.getX() + btScalar(1.)) | 1));
+-			out[1] = (unsigned short)(((unsigned short)(v.getY() + btScalar(1.)) | 1));
+-			out[2] = (unsigned short)(((unsigned short)(v.getZ() + btScalar(1.)) | 1));
++			// RL PATCH: through int, as the game's build ((ushort)(int)(x + 1) | 1): a value past 65535 wraps (defined)
++			// instead of the undefined float -> unsigned short conversion (setQuantizationValues relies on the wrap)
++			out[0] = (unsigned short)(((unsigned short)(int)(v.getX() + btScalar(1.)) | 1));
++			out[1] = (unsigned short)(((unsigned short)(int)(v.getY() + btScalar(1.)) | 1));
++			out[2] = (unsigned short)(((unsigned short)(int)(v.getZ() + btScalar(1.)) | 1));
+ 		}
+ 		else
+ 		{
+-			out[0] = (unsigned short)(((unsigned short)(v.getX()) & 0xfffe));
+-			out[1] = (unsigned short)(((unsigned short)(v.getY()) & 0xfffe));
+-			out[2] = (unsigned short)(((unsigned short)(v.getZ()) & 0xfffe));
++			out[0] = (unsigned short)(((unsigned short)(int)(v.getX()) & 0xfffe));
++			out[1] = (unsigned short)(((unsigned short)(int)(v.getY()) & 0xfffe));
++			out[2] = (unsigned short)(((unsigned short)(int)(v.getZ()) & 0xfffe));
+ 		}
+ 
+ #ifdef DEBUG_CHECK_DEQUANTIZATION
 diff --git upstream/libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btRSBroadphase.cpp engine/rocketsim/libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btRSBroadphase.cpp
-index 1eb7d88..e199288 100644
+index 1eb7d88..92ba314 100644
 --- upstream/libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btRSBroadphase.cpp
 +++ engine/rocketsim/libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btRSBroadphase.cpp
 @@ -14,6 +14,7 @@ subject to the following restrictions:
@@ -40,7 +85,7 @@ index 1eb7d88..e199288 100644
  #include "btDispatcher.h"
  #include "btCollisionAlgorithm.h"
  
-@@ -110,23 +111,49 @@ void _UpdateCellsStatic(btRSBroadphase* _this, btRSBroadphaseProxy* proxy) {
+@@ -110,23 +111,56 @@ void _UpdateCellsStatic(btRSBroadphase* _this, btRSBroadphaseProxy* proxy) {
  	// We should check if each cell actually collides with the object
  	bool isTriMesh = colObj && colObj->m_collisionShape->getShapeType() == TRIANGLE_MESH_SHAPE_PROXYTYPE;
  
@@ -63,12 +108,16 @@ index 1eb7d88..e199288 100644
 +	std::vector<char> usedCells(numI * numJ * numK, (ADD && isTriMesh) ? 0 : 1);
 +
 +	if (ADD && isTriMesh) {
++		// RL PATCH: the triangles are in the mesh's local space: placed by the body's transform (the cells were the
++		// local ones, wrong for a mesh body not at the origin)
 +		struct MarkCellsCallback : public btTriangleCallback {
 +			btRSBroadphase* bp;
++			btTransform xf;
 +			int iMin, jMin, kMin, iMax, jMax, kMax, numJ, numK;
 +			std::vector<char>* usedCells;
 +
-+			virtual void processTriangle(btVector3* triangle, int partId, int triangleIndex) {
++			virtual void processTriangle(btVector3* local, int partId, int triangleIndex) {
++				btVector3 triangle[3] = { xf(local[0]), xf(local[1]), xf(local[2]) };
 +				btVector3 triMin = triangle[0], triMax = triangle[0];
 +				triMin.setMin(triangle[1]); triMin.setMin(triangle[2]);
 +				triMax.setMax(triangle[1]); triMax.setMax(triangle[2]);
@@ -85,11 +134,14 @@ index 1eb7d88..e199288 100644
 +
 +		MarkCellsCallback callback = {};
 +		callback.bp = _this;
++		callback.xf = colObj->getWorldTransform();
 +		callback.iMin = iMin; callback.jMin = jMin; callback.kMin = kMin;
 +		callback.iMax = iMax; callback.jMax = jMax; callback.kMax = kMax;
 +		callback.numJ = numJ; callback.numK = numK;
 +		callback.usedCells = &usedCells;
-+		((btTriangleMeshShape*)colObj->m_collisionShape)->processAllTriangles(&callback, proxy->m_aabbMin, aabbMax);
++		btVector3 localMin, localMax;
++		colObj->m_collisionShape->getAabb(btTransform::getIdentity(), localMin, localMax);
++		((btTriangleMeshShape*)colObj->m_collisionShape)->processAllTriangles(&callback, localMin, localMax);
 +	}
  
 -	int numSkipped = 0;
@@ -103,7 +155,7 @@ index 1eb7d88..e199288 100644
  				for (int i1 = -1; i1 <= 1; i1++) {
  					for (int j1 = -1; j1 <= 1; j1++) {
  						for (int k1 = -1; k1 <= 1; k1++) {
-@@ -137,43 +164,22 @@ void _UpdateCellsStatic(btRSBroadphase* _this, btRSBroadphaseProxy* proxy) {
+@@ -137,43 +171,22 @@ void _UpdateCellsStatic(btRSBroadphase* _this, btRSBroadphaseProxy* proxy) {
  								continue;
  							if (ci >= _this->cellsX || cj >= _this->cellsY || ck >= _this->cellsZ)
  								continue;
@@ -160,7 +212,7 @@ index 1eb7d88..e199288 100644
  					}
  				}
  			}
-@@ -265,6 +271,10 @@ protected:
+@@ -265,6 +278,10 @@ protected:
  void btRSBroadphase::destroyProxy(btBroadphaseProxy* proxyOrg, btCollisionDispatcher* dispatcher) {
  	btRSBroadphaseProxy* sbp = getRSProxyFromProxy(proxyOrg);
  	m_pairCache->removeOverlappingPairsContainingProxy(proxyOrg, dispatcher);
@@ -171,7 +223,7 @@ index 1eb7d88..e199288 100644
  	
  	if (sbp->isStatic) {
  		_UpdateCellsStatic<false>(this, sbp);
-@@ -396,10 +406,18 @@ void btRSBroadphase::calculateOverlappingPairs(btCollisionDispatcher* dispatcher
+@@ -396,10 +413,18 @@ void btRSBroadphase::calculateOverlappingPairs(btCollisionDispatcher* dispatcher
  	bool shouldRemove = !m_pairCache->hasDeferredRemoval();
  
  	if (shouldRemove) {
@@ -209,8 +261,47 @@ index d004e1c..33eddc0 100644
  		}
  
  		bool isInsideContactPlane = distanceFromPlane < radiusWithThreshold;
+diff --git upstream/libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/btCollisionWorld.cpp engine/rocketsim/libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/btCollisionWorld.cpp
+index 80096a9..7b54b94 100644
+--- upstream/libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/btCollisionWorld.cpp
++++ engine/rocketsim/libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/btCollisionWorld.cpp
+@@ -280,11 +280,15 @@ void btCollisionWorld::rayTestSingleInternal(const btTransform& rayFromTrans, co
+ 		btConvexCast::CastResult castResult;
+ 		castResult.m_fraction = resultCallback.m_closestHitFraction;
+ 
++		// RL PATCH: the GJK cast (conservative advancement to 0.001 BU, 64 iterations), as the game's rayTestSingle
++		// (Bullet 2.82's default; the subsimplex cast only with kF_UseSubSimplexConvexCastRaytest, which the wheel rays
++		// don't set). The subsimplex cast stopped up to ~0.05 uu short of a car's roof or the ball. Live (`car_car2`, a
++		// car parked on another's roof): 0.21 uu/s per tick off -> 0.01
+ 		btConvexShape* convexShape = (btConvexShape*)collisionShape;
+ 		btVoronoiSimplexSolver simplexSolver;
+-		btSubsimplexConvexCast subSimplexConvexCaster(castShape, convexShape, &simplexSolver);
++		btGjkConvexCast gjkConvexCaster(castShape, convexShape, &simplexSolver);
+ 
+-		if (subSimplexConvexCaster.calcTimeOfImpact(rayFromTrans, rayToTrans, colObjWorldTransform, colObjWorldTransform, castResult))
++		if (gjkConvexCaster.calcTimeOfImpact(rayFromTrans, rayToTrans, colObjWorldTransform, colObjWorldTransform, castResult))
+ 		{
+ 			//add hit
+ 			if (castResult.m_normal.length2() > btScalar(0.0001))
+diff --git upstream/libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/btInternalEdgeUtility.cpp engine/rocketsim/libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/btInternalEdgeUtility.cpp
+index 0aa06ad..4dd4864 100644
+--- upstream/libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/btInternalEdgeUtility.cpp
++++ engine/rocketsim/libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/btInternalEdgeUtility.cpp
+@@ -137,6 +137,12 @@ struct btConnectivityProcessor : public btTriangleCallback
+ 				if (!info)
+ 				{
+ 					btTriangleInfo tmp;
++					// RL PATCH: the game's build inserts the info with all three edge angles 0 (stock: 2 pi), so in a
++					// triangle with a neighbour, an edge with none in its mesh piece (a piece boundary, a seam) is a
++					// planar internal edge: a contact near it is snapped to the face normal (static analysis B15,
++					// btConnectivityProcessor::processTriangle 0x140295b60). Live (ball_5050, the ball on the side
++					// wall's y = 0 seam): the game's contact normal there has y = 0; stock kept -0.0028
++					tmp.m_edgeV0V1Angle = tmp.m_edgeV1V2Angle = tmp.m_edgeV2V0Angle = 0;
+ 					m_triangleInfoMap->insert(hash, tmp);
+ 					info = m_triangleInfoMap->find(hash);
+ 				}
 diff --git upstream/libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/btSimulationIslandManager.cpp engine/rocketsim/libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/btSimulationIslandManager.cpp
-index 3d894f4..4f47f87 100644
+index 3d894f4..bc814be 100644
 --- upstream/libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/btSimulationIslandManager.cpp
 +++ engine/rocketsim/libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/btSimulationIslandManager.cpp
 @@ -183,13 +183,21 @@ public:
@@ -237,6 +328,19 @@ index 3d894f4..4f47f87 100644
  	}
  };
  
+@@ -376,6 +384,12 @@ void btSimulationIslandManager::processIslands(btCollisionDispatcher* dispatcher
+ 		if (collisionWorld->getDispatchInfo().m_deterministicOverlappingPairs)
+ 		{
+ 			m_islandmanifold.quickSort(btPersistentManifoldSortPredicateDeterministic());
++			// RL PATCH: then the game's own sort, Bullet 2.82's quickSort on the island id alone, which is unstable: it
++			// reorders manifolds of the same island (three in a row come out reversed), and the solver works through
++			// them in that order (static analysis S-6, btSimulationIslandManager::buildAndProcessIslands). Its input
++			// in the game is the dispatcher's manifold array (creation order, swap-remove); here the fixed order
++			// above. Live (ball_5050, both cars on the ball in one tick): the ball 20.06 uu/s off -> 0.22
++			m_islandmanifold.quickSort(btPersistentManifoldSortPredicate());
+ 		}
+ 		else
+ 		{
 diff --git upstream/libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btBoxShape.cpp engine/rocketsim/libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btBoxShape.cpp
 index 80608be..889cfb6 100644
 --- upstream/libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btBoxShape.cpp
@@ -266,6 +370,20 @@ index 062f1ee..dbd918d 100644
  	case SPHERE_SHAPE_PROXYTYPE:
  		center = btVector3(0, 0, 0);
  		radius = ((btSphereShape*)this)->getRadius() + 0.08;
+diff --git upstream/libsrc/bullet3-3.24/BulletCollision/NarrowPhaseCollision/btGjkConvexCast.cpp engine/rocketsim/libsrc/bullet3-3.24/BulletCollision/NarrowPhaseCollision/btGjkConvexCast.cpp
+index f31716e..ded643a 100644
+--- upstream/libsrc/bullet3-3.24/BulletCollision/NarrowPhaseCollision/btGjkConvexCast.cpp
++++ engine/rocketsim/libsrc/bullet3-3.24/BulletCollision/NarrowPhaseCollision/btGjkConvexCast.cpp
+@@ -22,7 +22,8 @@ subject to the following restrictions:
+ #ifdef BT_USE_DOUBLE_PRECISION
+ #define MAX_ITERATIONS 64
+ #else
+-#define MAX_ITERATIONS 32
++// RL PATCH: 64, as the game's build (static analysis B14; stock float builds stop at 32)
++#define MAX_ITERATIONS 64
+ #endif
+ 
+ btGjkConvexCast::btGjkConvexCast(const btConvexShape* convexA, const btConvexShape* convexB, btSimplexSolverInterface* simplexSolver)
 diff --git upstream/libsrc/bullet3-3.24/BulletCollision/NarrowPhaseCollision/btGjkPairDetector.cpp engine/rocketsim/libsrc/bullet3-3.24/BulletCollision/NarrowPhaseCollision/btGjkPairDetector.cpp
 index a56f38a..24b07e9 100644
 --- upstream/libsrc/bullet3-3.24/BulletCollision/NarrowPhaseCollision/btGjkPairDetector.cpp
@@ -529,7 +647,7 @@ index 888d7f9..cb5809c 100644
  	return Vec(cp * cy, cp * sy, -sp);
  }
 diff --git upstream/src/RLConst.h engine/rocketsim/src/RLConst.h
-index 8281ac9..5993d03 100644
+index 8281ac9..2532afa 100644
 --- upstream/src/RLConst.h
 +++ engine/rocketsim/src/RLConst.h
 @@ -41,6 +41,10 @@ namespace RLConst {
@@ -543,7 +661,27 @@ index 8281ac9..5993d03 100644
  		BALL_MAX_ANG_SPEED = 6.f, // Ball can never exceed this angular velocity (radians/s)
  		BALL_DRAG = 0.03f, // Net-velocity drag multiplier
  		BALL_FRICTION = 0.35f,
-@@ -103,7 +107,7 @@ namespace RLConst {
+@@ -87,14 +91,17 @@ namespace RLConst {
+ 		STOPPING_FORWARD_VEL = 25.f, // If we are costing with less than this forward vel, we full-brake
+ 		COASTING_BRAKE_FACTOR = 0.15f, // How much the brake is applied when costing
+ 		BRAKING_NO_THROTTLE_SPEED_THRESH = 0.01f, // If we are braking and moving faster than this, disable throttle
+-		THROTTLE_DEADZONE = 0.001f, // Throttle input of less than this is ignored
++		// RL PATCH: 0.01, as the game's VehicleSim (FUN_140f1e830: |throttle| > 0.01, static analysis GA-4), so a throttle
++		// byte of +-1 coasts; RocketSim's 0.001 drove (or braked) with it
++		THROTTLE_DEADZONE = 0.01f, // Throttle input of this or less is ignored
+ 		
+ 		THROTTLE_AIR_ACCEL = 200/3.f,
+ 
+ 		JUMP_ACCEL = 4375.f / 3.f,
+ 		JUMP_IMMEDIATE_FORCE = 875.f / 3.f,
+ 		JUMP_MIN_TIME = 0.025f,
+-		JUMP_RESET_TIME_PAD = (1 / 40.f),
++		JUMP_RESET_TIME_PAD = (1 / 40.f), // (RL PATCH: unused; the game's rule is JUMP_LEAVE_GROUND_TIME, see Car::_UpdateJump)
++		JUMP_LEAVE_GROUND_TIME = 0.125f, // RL PATCH: CarComponent_Jump_TA JumpLeaveGroundTime
+ 		JUMP_MAX_TIME = 0.2f,
+ 		DOUBLEJUMP_MAX_DELAY = 1.25f, // Can be at most 1.25 seconds after the jump is finished
+ 
+@@ -103,7 +110,7 @@ namespace RLConst {
  		FLIP_Z_DAMP_START = 0.15f,
  		FLIP_Z_DAMP_END = 0.21f,
  		FLIP_TORQUE_TIME = 0.65f,
@@ -552,19 +690,26 @@ index 8281ac9..5993d03 100644
  		FLIP_PITCHLOCK_TIME = 1.f,
  		FLIP_PITCHLOCK_EXTRA_TIME = 0.3f,
  		FLIP_INITIAL_VEL_SCALE = 500.f,
-@@ -125,6 +129,7 @@ namespace RLConst {
+@@ -125,9 +132,11 @@ namespace RLConst {
  
  		CAR_AUTOFLIP_IMPULSE = 200,
  		CAR_AUTOFLIP_TORQUE = 50,
 +		CAR_AUTOFLIP_ANGVEL_CHANGE = 1000, // RL PATCH: FlipCarTorque, an angular-velocity change every tick
  		CAR_AUTOFLIP_TIME = 0.4f,
  		CAR_AUTOFLIP_NORMZ_THRESH = M_SQRT1_2,
- 		CAR_AUTOFLIP_ROLL_THRESH = 2.8f,
-@@ -142,7 +147,16 @@ namespace RLConst {
+-		CAR_AUTOFLIP_ROLL_THRESH = 2.8f,
++		CAR_AUTOFLIP_ROLL_THRESH = 2.8f, // (RL PATCH: unused, see CAR_AUTOFLIP_UP_DOT_THRESH)
++		CAR_AUTOFLIP_UP_DOT_THRESH = -0.966f, // RL PATCH: FlipCar CanActivate: Dot(contact normal, car up) below this
+ 
+ 		CAR_AUTOROLL_FORCE = 100,
+ 		CAR_AUTOROLL_TORQUE = 80,
+@@ -142,8 +151,24 @@ namespace RLConst {
  		CAR_RESPAWN_Z = 36.f,
  
  		BUMP_COOLDOWN_TIME = 0.25f,
 -		BUMP_MIN_FORWARD_DIST = 64.5f,
+-		DEMO_RESPAWN_TIME = 3.f;
++		BUMP_COOLDOWN_EPSILON = 1e-5f, // RL PATCH: a cooldown timer above -this is still running (Arena.cpp, GA-16)
 +		BUMP_MIN_FORWARD_DIST = 64.5f, // No longer used, see the cone angles below
 +
 +		// RL PATCH: PhysicsConfig_TA.CarInteractionSettings.COMAngleCheck (degrees)
@@ -575,10 +720,17 @@ index 8281ac9..5993d03 100644
 +
 +		// RL PATCH: forward speed needed for a demo (SuperSonic Speed - TurnoffSpeedBuffer)
 +		DEMO_MIN_FORWARD_SPEED = 2200.f - 100.f,
- 		DEMO_RESPAWN_TIME = 3.f;
++		DEMO_RESPAWN_TIME = 3.f,
++		// RL PATCH: respawn spot selection (PrespawnConfig_TA, Car CollisionCylinder; Arena::_UpdateDemolished)
++		DEMO_PRESPAWN_STATE_LENGTH = 0.5f, // the spot locks this long before the respawn
++		DEMO_PRESPAWN_MIN_DELAY = 3.f, // no selection or lock with a shorter respawn delay
++		DEMO_SPAWN_SELECT_THRESHOLD = 0.3f, // the steer input past this picks a side (DemoSpawnSelectThreshold)
++		DEMO_SPAWN_ENCROACH_RADIUS = 48, // a spot is taken if a car (or the ball) is within this
++		DEMO_SPAWN_OFFSET = 4 * 48; // the 8 fallback spots around a taken one
  
  	// NOTE: Angle order is PYR
-@@ -162,7 +176,12 @@ namespace RLConst {
+ 	constexpr Vec
+@@ -162,7 +187,12 @@ namespace RLConst {
  			WHEELS_DAMPING_COMPRESSION = 25.f,
  			WHEELS_DAMPING_RELAXATION = 40.f,
  			MAX_SUSPENSION_TRAVEL = 12.f, // TODO: Are we sure this is the same for all cars?
@@ -592,7 +744,7 @@ index 8281ac9..5993d03 100644
  	}
  
  	namespace Heatseeker {
-@@ -251,10 +270,14 @@ namespace RLConst {
+@@ -251,10 +281,14 @@ namespace RLConst {
  	namespace BoostPads {
  		// Mostly from a Rocket Science video: https://www.youtube.com/watch?v=xgfa-qZyInw
  		
@@ -609,7 +761,7 @@ index 8281ac9..5993d03 100644
  
  			BOX_HEIGHT = 64,
  			BOX_RAD_BIG = 160,
-@@ -426,6 +449,27 @@ namespace RLConst {
+@@ -426,6 +460,27 @@ namespace RLConst {
  		}
  	};
  
@@ -637,7 +789,7 @@ index 8281ac9..5993d03 100644
  	const static LinearPieceCurve STEER_ANGLE_FROM_SPEED_CURVE_THREEWHEEL = {
  		{
  			{0,		0.342473f},
-@@ -502,27 +546,29 @@ namespace RLConst {
+@@ -502,27 +557,29 @@ namespace RLConst {
  		}
  	};
  
@@ -676,11 +828,55 @@ index 8281ac9..5993d03 100644
  		}
  	};
  }
+diff --git upstream/src/RocketSim.cpp engine/rocketsim/src/RocketSim.cpp
+index 2274167..9b75881 100644
+--- upstream/src/RocketSim.cpp
++++ engine/rocketsim/src/RocketSim.cpp
+@@ -1,5 +1,7 @@
+ #include "RocketSim.h"
+ 
++#include <algorithm>
++
+ #include "../libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btBvhTriangleMeshShape.h"
+ #include "../libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btTriangleMesh.h"
+ #include "../libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/btInternalEdgeUtility.h"
+@@ -81,13 +83,18 @@ void RocketSim::Init(std::filesystem::path collisionMeshesFolder, bool silent) {
+ 		MeshHashSet targetHashes = MeshHashSet(gameMode);
+ 
+ 		// Load collision meshes
+-		auto dirItr = std::filesystem::directory_iterator(soccarMeshesFolder);
+-		for (auto& entry : dirItr) {
++		// RL PATCH: in name order. Each file is its own static body, and the body order sets the order of the contact
++		// manifolds, so it must not depend on the filesystem (and must match the WebAssembly build's, given sorted)
++		std::vector<std::filesystem::path> meshPaths;
++		for (auto& entry : std::filesystem::directory_iterator(soccarMeshesFolder)) {
+ 			auto entryPath = entry.path();
+-			if (entryPath.has_extension() && entryPath.extension() == COLLISION_MESH_FILE_EXTENSION) {
+-				DataStreamIn streamIn = DataStreamIn(entryPath, false);
+-				meshFileMap[gameMode].push_back(streamIn.data);
+-			}
++			if (entryPath.has_extension() && entryPath.extension() == COLLISION_MESH_FILE_EXTENSION)
++				meshPaths.push_back(entryPath);
++		}
++		std::sort(meshPaths.begin(), meshPaths.end());
++		for (auto& entryPath : meshPaths) {
++			DataStreamIn streamIn = DataStreamIn(entryPath, false);
++			meshFileMap[gameMode].push_back(streamIn.data);
+ 		}
+ 	}
+ 
 diff --git upstream/src/Sim/Arena/Arena.cpp engine/rocketsim/src/Sim/Arena/Arena.cpp
-index a13cee0..dbd6742 100644
+index a13cee0..70b6e0a 100644
 --- upstream/src/Sim/Arena/Arena.cpp
 +++ engine/rocketsim/src/Sim/Arena/Arena.cpp
-@@ -10,6 +10,10 @@
+@@ -1,4 +1,6 @@
+ #include "Arena.h"
++
++#include <algorithm>
+ #include "../../RocketSim.h"
+ 
+ #include "../../../libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btAxisSweep3.h"
+@@ -10,6 +12,10 @@
  #include "../../../libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/btInternalEdgeUtility.h"
  #include "../../../libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btBoxShape.h"
  #include "../../../libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btSphereShape.h"
@@ -691,7 +887,7 @@ index a13cee0..dbd6742 100644
  #include "DropshotTiles/DropshotTiles.h"
  
  RS_NS_START
-@@ -36,7 +40,7 @@ void Arena::SetMutatorConfig(const MutatorConfig& mutatorConfig) {
+@@ -36,7 +42,7 @@ void Arena::SetMutatorConfig(const MutatorConfig& mutatorConfig) {
  		for (Car* car : _cars) {
  			btVector3 newCarInertia;
  			car->_childHitboxShape.calculateLocalInertia(mutatorConfig.carMass, newCarInertia);
@@ -700,7 +896,183 @@ index a13cee0..dbd6742 100644
  		}
  	}
  
-@@ -123,16 +127,18 @@ void Arena::ResetToRandomKickoff(int seed) {
+@@ -56,11 +62,174 @@ Car* Arena::AddCar(Team team, const CarConfig& config) {
+ 	_AddCarFromPtr(car);
+ 
+ 	car->_BulletSetup(gameMode, &_bulletWorld, _mutatorConfig);
+-	car->Respawn(gameMode, -1, _mutatorConfig.carSpawnBoostAmount);
++	// RL PATCH: a deterministic spot (RocketSim: Respawn with a clock-seeded random spot)
++	Car::RespawnSpot spot = _ChooseSpawn(car, {}, false);
++	car->_RespawnAt(spot.pos, spot.yaw, _mutatorConfig.carSpawnBoostAmount);
+ 
+ 	return car;
+ }
+ 
++// RL PATCH: respawning as the game (its scripts, 2026-10-06; static analysis GA-18, DS-1 to DS-7). A demolished
++// player can pick a spot for the first 2.5 s of the 3 s: a press left or right picks that side's next spot (the inner
++// one first; "left" is the player's own: x * y <= 0), and 0.5 s before the respawn the spot locks in: the picked one,
++// or the team's respawn spots tried from a random one, the first no car or ball is within 48 uu of, else the first
++// free spot 192 uu away in one of 8 directions (GetSpawnOrientation). At the respawn the locked spot is checked again
++// (its offsets, else a fresh choice). RocketSim picked a random spot from a clock-seeded generator that isn't in
++// snapshots (server, clients and rollbacks each chose their own) and didn't look for cars; the random start here comes
++// from the tick count and the car's ID. Not modelled: the offsets' line-of-sight check (open floor at every spot)
++std::vector<Car::RespawnSpot> Arena::_RespawnSpots(Team team, int side) {
++	using namespace RLConst;
++	const CarSpawnPos* spots;
++	switch (gameMode) {
++	case GameMode::HOOPS:
++		spots = CAR_RESPAWN_LOCATIONS_HOOPS;
++		break;
++	case GameMode::DROPSHOT:
++		spots = CAR_RESPAWN_LOCATIONS_DROPSHOT;
++		break;
++	default:
++		spots = CAR_RESPAWN_LOCATIONS_SOCCAR;
++	}
++	bool blue = team == Team::BLUE;
++	std::vector<Car::RespawnSpot> out;
++	for (int i = 0; i < CAR_RESPAWN_LOCATION_AMOUNT; i++) {
++		Car::RespawnSpot s;
++		s.pos = Vec(spots[i].x, spots[i].y * (blue ? 1 : -1), CAR_RESPAWN_Z);
++		s.yaw = spots[i].yawAng + (blue ? 0 : M_PI);
++		s.valid = true;
++		bool left = s.pos.x * s.pos.y <= 0;
++		if (side == 0 || (side == 1) == left)
++			out.push_back(s);
++	}
++	if (side != 0) // inner first (SortSecondary)
++		std::stable_sort(out.begin(), out.end(), [](const Car::RespawnSpot& a, const Car::RespawnSpot& b) {
++			return abs(a.pos.x) < abs(b.pos.x);
++		});
++	return out;
++}
++
++bool Arena::_SpawnTaken(Vec pos, Car* car, const std::vector<Car::RespawnSpot>& claimed) {
++	using namespace RLConst;
++	auto nearHitbox = [&](Vec carPos, const RotMat& rot, const CarConfig& config) {
++		Vec centre = carPos + rot.forward * config.hitboxPosOffset.x + rot.right * config.hitboxPosOffset.y +
++			rot.up * config.hitboxPosOffset.z;
++		Vec d = pos - centre, h = config.hitboxSize / 2;
++		Vec local = Vec(d.Dot(rot.forward), d.Dot(rot.right), d.Dot(rot.up));
++		Vec outside = local - Vec(RS_CLAMP(local.x, -h.x, h.x), RS_CLAMP(local.y, -h.y, h.y), RS_CLAMP(local.z, -h.z, h.z));
++		return outside.LengthSq() < DEMO_SPAWN_ENCROACH_RADIUS * DEMO_SPAWN_ENCROACH_RADIUS;
++	};
++	for (Car* other : _cars) {
++		if (other == car || other->_internalState.isDemoed)
++			continue;
++		const btTransform& t = other->_rigidBody.getWorldTransform();
++		if (nearHitbox(t.m_origin * BT_TO_UU, t.m_basis, other->config))
++			return true;
++	}
++	for (const Car::RespawnSpot& s : claimed)
++		if (nearHitbox(s.pos, Angle(s.yaw, 0, 0).ToRotMat(), car->config))
++			return true;
++	if (ball) {
++		float r = DEMO_SPAWN_ENCROACH_RADIUS + ball->GetRadius();
++		if ((ball->_rigidBody.getWorldTransform().m_origin * BT_TO_UU - (btVector3)pos).length2() < r * r)
++			return true;
++	}
++	return false;
++}
++
++bool Arena::_SpawnOffset(Car* car, const Car::RespawnSpot& spot, const std::vector<Car::RespawnSpot>& claimed,
++	Car::RespawnSpot& out) {
++	// FindValidCarSpawnOffset: the spot's yaw + i x 45 degrees, 4 x 48 uu away
++	for (int i = 0; i < 8; i++) {
++		float yaw = spot.yaw + i * (float)(M_PI / 4);
++		Car::RespawnSpot s = spot;
++		s.pos += Vec(det_cosf(yaw), det_sinf(yaw), 0) * RLConst::DEMO_SPAWN_OFFSET;
++		if (!_SpawnTaken(s.pos, car, claimed)) {
++			out = s;
++			return true;
++		}
++	}
++	return false;
++}
++
++bool Arena::_SpawnFromSpots(Car* car, const std::vector<Car::RespawnSpot>& spots, int start,
++	const std::vector<Car::RespawnSpot>& claimed, Car::RespawnSpot& out) {
++	// GetSpawnOrientationFromLocations: a spot no one is on, else one with a free offset, both from `start` round
++	int n = (int)spots.size();
++	for (int k = 0; k < n; k++)
++		if (!_SpawnTaken(spots[(start + k) % n].pos, car, claimed)) {
++			out = spots[(start + k) % n];
++			return true;
++		}
++	for (int k = 0; k < n; k++)
++		if (_SpawnOffset(car, spots[(start + k) % n], claimed, out))
++			return true;
++	return false;
++}
++
++Car::RespawnSpot Arena::_ChooseSpawn(Car* car, const std::vector<Car::RespawnSpot>& claimed, bool usePreference) {
++	// GetSpawnOrientation: the picked spot if any, else the team's from a random one; then the picked side, then all
++	std::vector<Car::RespawnSpot> all = _RespawnSpots(car->team), spots = all;
++	const CarState& st = car->_internalState;
++	bool picked = false;
++	if (usePreference && st.demoSpawnPreference) {
++		std::vector<Car::RespawnSpot> side = _RespawnSpots(car->team, st.demoSpawnPreference);
++		if (st.demoSpawnIndex < side.size()) {
++			spots = { side[st.demoSpawnIndex] };
++			picked = true;
++		}
++	}
++	int start = Math::RandInt(0, (int)spots.size(), (int)((tickCount * 31 + car->id) & 0x7fffffff));
++	Car::RespawnSpot out;
++	if (_SpawnFromSpots(car, spots, start, claimed, out))
++		return out;
++	if (picked && _SpawnFromSpots(car, _RespawnSpots(car->team, st.demoSpawnPreference), 0, claimed, out))
++		return out;
++	if (_SpawnFromSpots(car, all, 0, claimed, out))
++		return out;
++	return all[start % all.size()];
++}
++
++void Arena::_UpdateDemolished(Car* car, std::vector<Car::RespawnSpot>& claimed) {
++	using namespace RLConst;
++	CarState& st = car->_internalState;
++	bool prespawn = _mutatorConfig.respawnDelay >= DEMO_PRESPAWN_MIN_DELAY;
++
++	// Selection, until the lock: the steer input (the game binds aDemoSpawnSelect to the same A / D and left stick X),
++	// a push past 0.3 to a side
++	float steer = car->controls.steer;
++	int8_t select = steer < -DEMO_SPAWN_SELECT_THRESHOLD ? -1 : (steer > DEMO_SPAWN_SELECT_THRESHOLD ? 1 : 0);
++	int8_t lastSelect = st.demoSpawnSelectLast;
++	st.demoSpawnSelectLast = select;
++	if (prespawn && !st.prespawnSet && select != 0 && lastSelect == 0) {
++		uint8_t side = select < 0 ? 1 : 2;
++		size_t sideSize = _RespawnSpots(car->team, side).size();
++		st.demoSpawnIndex = (st.demoSpawnPreference != side || st.demoSpawnIndex + 1u >= sideSize) ? 0 : st.demoSpawnIndex + 1;
++		st.demoSpawnPreference = side;
++	}
++
++	// The lock (EventPrespawn), on the tick the timer reaches DEMO_PRESPAWN_STATE_LENGTH (half a tick of slack for the
++	// float timer)
++	float timerAfter = RS_MAX(st.demoRespawnTimer - tickTime, 0);
++	if (prespawn && !st.prespawnSet && timerAfter <= DEMO_PRESPAWN_STATE_LENGTH + tickTime / 2) {
++		Car::RespawnSpot s = _ChooseSpawn(car, claimed, true);
++		st.prespawnSet = true;
++		st.prespawnPos = s.pos;
++		st.prespawnYaw = s.yaw;
++	}
++
++	// The respawn this tick (Car::_PreTickUpdate): the locked spot if still free, else its offsets, else a fresh choice
++	if (timerAfter == 0) {
++		Car::RespawnSpot s;
++		s.pos = st.prespawnPos;
++		s.yaw = st.prespawnYaw;
++		s.valid = true;
++		if (!st.prespawnSet || (_SpawnTaken(s.pos, car, claimed) && !_SpawnOffset(car, s, claimed, s)))
++			s = _ChooseSpawn(car, claimed, false);
++		car->_respawnSpot = s;
++		claimed.push_back(s);
++	}
++}
++
+ bool Arena::_AddCarFromPtr(Car* car) {
+ 
+ 	car->id = ++_lastCarID;
+@@ -123,16 +292,18 @@ void Arena::ResetToRandomKickoff(int seed) {
  
  	auto kickoffOrder = KICKOFF_ORDER_TEMPLATE;
  
@@ -722,7 +1094,7 @@ index a13cee0..dbd6742 100644
  
  	const CarSpawnPos* CAR_SPAWN_LOCATIONS = CAR_SPAWN_LOCATIONS_SOCCAR;
  	const CarSpawnPos* CAR_RESPAWN_LOCATIONS = CAR_RESPAWN_LOCATIONS_SOCCAR;
-@@ -197,6 +203,8 @@ void Arena::ResetToRandomKickoff(int seed) {
+@@ -197,6 +368,8 @@ void Arena::ResetToRandomKickoff(int seed) {
  	}
  
  	BallState ballState = BallState();
@@ -731,7 +1103,7 @@ index a13cee0..dbd6742 100644
  	if (gameMode == GameMode::HEATSEEKER) {
  		int nextRand = (*randEngine)();
  		Vec scale = Vec(1, (nextRand % 2) ? 1 : -1, 1);
-@@ -241,11 +249,17 @@ void Arena::SetDropshotTilesState(const DropshotTilesState& state) {
+@@ -241,11 +414,17 @@ void Arena::SetDropshotTilesState(const DropshotTilesState& state) {
  	_dropshotTilesState = state;
  }
  
@@ -749,7 +1121,7 @@ index a13cee0..dbd6742 100644
  	auto
  		bodyA = objA->m_collisionObject,
  		bodyB = objB->m_collisionObject;
-@@ -320,6 +334,71 @@ void Arena::_BtCallback_OnCarBallCollision(Car* car, Ball* ball, btManifoldPoint
+@@ -320,6 +499,71 @@ void Arena::_BtCallback_OnCarBallCollision(Car* car, Ball* ball, btManifoldPoint
  	ball->_OnHit(car, relBallPos, manifoldPoint.m_combinedFriction, manifoldPoint.m_combinedRestitution, gameMode, _mutatorConfig, tickCount);
  }
  
@@ -821,7 +1193,23 @@ index a13cee0..dbd6742 100644
  void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint& manifoldPoint) {
  	using namespace RLConst;
  
-@@ -334,73 +413,87 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
+@@ -327,6 +571,15 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
+ 	manifoldPoint.m_combinedFriction = RLConst::CARCAR_COLLISION_FRICTION;
+ 	manifoldPoint.m_combinedRestitution = RLConst::CARCAR_COLLISION_RESTITUTION;
+ 
++	if (car1->_internalState.isDemoed || car2->_internalState.isDemoed)
++		return;
++
++	// RL PATCH: demolitions apply after both directions (the game's Demolish only queues the demolition, finished in
++	// EventPostPhysicsStep, so the victim's own impact handling still runs that tick: a mutual supersonic head-on
++	// demolishes both cars, and a victim driving at its attacker still bumps it; static analysis GA-15). RocketSim
++	// stopped at the first demolition, so the result depended on the pair's order
++	Car* demolished[2] = {};
++
+ 	// Test collision both ways
+ 	for (int i = 0; i < 2; i++) {
+ 
+@@ -334,74 +587,93 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
  		if (isSwapped)
  			std::swap(car1, car2);
  
@@ -830,44 +1218,36 @@ index a13cee0..dbd6742 100644
 -			otherState = car2->GetState();
 -
 -		if (state.isDemoed || otherState.isDemoed)
-+		if (car1->_internalState.isDemoed || car2->_internalState.isDemoed)
- 			return;
- 
+-			return;
+-
 -		if ((state.carContact.otherCarID == car2->id) && (state.carContact.cooldownTimer > 0))
 -			continue; // In cooldown
 -
 -		Vec deltaPos = (otherState.pos - state.pos);
 -		if (state.vel.Dot(deltaPos) > 0) { // Going towards other car
-+		bool canDemoTeam = _mutatorConfig.enableTeamDemos || (car1->team != car2->team);
- 
+-
 -			Vec velDir = state.vel.Normalized();
 -			Vec dirToOtherCar = deltaPos.Normalized();
++		bool canDemoTeam = _mutatorConfig.enableTeamDemos || (car1->team != car2->team);
+ 
+-			float speedTowardsOtherCar = state.vel.Dot(dirToOtherCar);
+-			float otherCarAwaySpeed = otherState.vel.Dot(velDir);
+-
+-			if (speedTowardsOtherCar > otherCarAwaySpeed) { // Going towards other car faster than they are going away
 +		if (_mutatorConfig.demoMode == DemoMode::ON_CONTACT) {
 +			if (canDemoTeam) {
-+				car2->Demolish(_mutatorConfig.respawnDelay);
++				demolished[i] = car2;
 +				if (_carBumpCallback.func)
 +					_carBumpCallback.func(this, car1, car2, true, _carBumpCallback.userInfo);
 +			}
 +			continue;
 +		}
  
--			float speedTowardsOtherCar = state.vel.Dot(dirToOtherCar);
--			float otherCarAwaySpeed = otherState.vel.Dot(velDir);
-+		const PhysState& state = car1->_oldState;
-+		const PhysState& otherState = car2->_oldState;
- 
--			if (speedTowardsOtherCar > otherCarAwaySpeed) { // Going towards other car faster than they are going away
-+		float speed = state.vel.Length();
-+		if (speed <= 0)
-+			continue;
- 
 -				Vec localPoint = isSwapped ? manifoldPoint.m_localPointB : manifoldPoint.m_localPointA;
 -				bool hitWithBumper = (localPoint.x * BT_TO_UU) > BUMP_MIN_FORWARD_DIST;
 -				if (hitWithBumper) {
-+		Vec hitDir = (otherState.pos - state.pos).Normalized();
-+		float speedTowardsOtherCar = hitDir.Dot(state.vel);
-+		if (speedTowardsOtherCar <= 0)
-+			continue;
++		const PhysState& state = car1->_oldState;
++		const PhysState& otherState = car2->_oldState;
  
 -					bool isDemo;
 -					switch (_mutatorConfig.demoMode) {
@@ -880,18 +1260,28 @@ index a13cee0..dbd6742 100644
 -					default:
 -						isDemo = state.isSupersonic;
 -					}
++		float speed = state.vel.Length();
++		if (speed <= 0)
++			continue;
+ 
+-					if (isDemo && !_mutatorConfig.enableTeamDemos)
+-						isDemo = car1->team != car2->team;
++		Vec hitDir = (otherState.pos - state.pos).Normalized();
++		float speedTowardsOtherCar = hitDir.Dot(state.vel);
++		if (speedTowardsOtherCar <= 0)
++			continue;
+ 
+-					if (isDemo) {
+-						car2->Demolish(_mutatorConfig.respawnDelay);
+-					} else {
+-						bool groundHit = car2->_internalState.isOnGround;
 +		Vec velDir = state.vel / speed;
 +		float otherCarAwaySpeed = otherState.vel.Dot(velDir);
 +		if (otherCarAwaySpeed >= speedTowardsOtherCar)
 +			continue;
  
--					if (isDemo && !_mutatorConfig.enableTeamDemos)
--						isDemo = car1->team != car2->team;
--
--					if (isDemo) {
--						car2->Demolish(_mutatorConfig.respawnDelay);
--					} else {
--						bool groundHit = car2->_internalState.isOnGround;
+-						float baseScale =
+-							(groundHit ? BUMP_VEL_AMOUNT_GROUND_CURVE : BUMP_VEL_AMOUNT_AIR_CURVE).GetOutput(speedTowardsOtherCar);
 +		// Direction between the hitbox centres
 +		auto hitboxCenter = [](const PhysState& s, const Vec& offset) {
 +			return s.pos + s.rotMat.forward * offset.x + s.rotMat.right * offset.y + s.rotMat.up * offset.z;
@@ -913,24 +1303,26 @@ index a13cee0..dbd6742 100644
 +			}
 +		}
  
--						float baseScale =
--							(groundHit ? BUMP_VEL_AMOUNT_GROUND_CURVE : BUMP_VEL_AMOUNT_AIR_CURVE).GetOutput(speedTowardsOtherCar);
+-						Vec hitUpDir =
+-							(otherState.isOnGround ? (Vec)car2->GetUpDir() : Vec(0, 0, 1));
 +		if (isDemo) {
-+			car2->Demolish(_mutatorConfig.respawnDelay);
++			demolished[i] = car2;
 +			if (_carBumpCallback.func)
 +				_carBumpCallback.func(this, car1, car2, true, _carBumpCallback.userInfo);
 +			continue;
 +		}
  
--						Vec hitUpDir =
--							(otherState.isOnGround ? (Vec)car2->GetUpDir() : Vec(0, 0, 1));
-+		if ((car1->_internalState.carContact.otherCarID == car2->id) && (car1->_internalState.carContact.cooldownTimer > 0))
-+			continue; // In cooldown (BumpInterval)
- 
 -						Vec bumpImpulse =
 -							velDir * baseScale +
 -							hitUpDir * BUMP_UPWARD_VEL_AMOUNT_CURVE.GetOutput(speedTowardsOtherCar)
 -							* _mutatorConfig.bumpForceScale;
++		// RL PATCH: in cooldown until strictly more than BumpInterval has passed (the game: PhysicsTime > LastHitTime +
++		// 0.25, so a hit exactly 30 ticks later is still in cooldown, the next comes at 31; static analysis GA-16). The
++		// timer runs on below 0 by up to a tick (Car::_PostTickUpdate), so "exactly over" (~0) still blocks
++		if ((car1->_internalState.carContact.otherCarID == car2->id) &&
++		    (car1->_internalState.carContact.cooldownTimer > -BUMP_COOLDOWN_EPSILON))
++			continue; // In cooldown (BumpInterval)
++
 +		// Only bumper hits push (PushFactor is 0 otherwise), but every bump starts the cooldown
 +		Vec bumpImpulse = { 0, 0, 0 };
 +		if (IsWithinForwardCone(state.rotMat, hitboxDir, BUMP_CONE_YAW_DEG, BUMP_CONE_PITCH_DEG, false)) {
@@ -960,9 +1352,14 @@ index a13cee0..dbd6742 100644
 +		if (_carBumpCallback.func)
 +			_carBumpCallback.func(this, car1, car2, false, _carBumpCallback.userInfo);
  	}
++
++	for (Car* victim : demolished)
++		if (victim)
++			victim->Demolish(_mutatorConfig.respawnDelay);
  }
  
-@@ -473,6 +566,22 @@ Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mu
+ void Arena::_BtCallback_OnCarWorldCollision(Car* car, btCollisionObject* world, btManifoldPoint& manifoldPoint) {
+@@ -473,6 +745,22 @@ Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mu
  		auto& solverInfo = _bulletWorld.getSolverInfo();
  		solverInfo.m_splitImpulsePenetrationThreshold = 1.0e30f;
  		solverInfo.m_erp2 = 0.8f;
@@ -985,7 +1382,7 @@ index a13cee0..dbd6742 100644
  	}
  
  	bool loadArenaStuff = gameMode != GameMode::THE_VOID;
-@@ -565,11 +674,132 @@ void Arena::Serialize(DataStreamOut& out) const {
+@@ -565,11 +853,132 @@ void Arena::Serialize(DataStreamOut& out) const {
  
  	{ // Serialize ball
  		ball->GetState().Serialize(out);
@@ -1118,7 +1515,7 @@ index a13cee0..dbd6742 100644
  }
  
  Arena* Arena::DeserializeNew(DataStreamIn& in) {
-@@ -601,12 +831,11 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
+@@ -601,12 +1010,11 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
  				RS_ERR_CLOSE(ERROR_PREFIX << "Failed to load, got repeated car ID of " << id);
  #endif
  
@@ -1135,7 +1532,7 @@ index a13cee0..dbd6742 100644
  		}
  
  		newArena->_lastCarID = lastCarID;
-@@ -629,20 +858,116 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
+@@ -629,20 +1037,116 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
  		}
  	}
  
@@ -1260,7 +1657,7 @@ index a13cee0..dbd6742 100644
  Arena* Arena::Clone(bool copyCallbacks) {
  	Arena* newArena = new Arena(this->gameMode, this->_config, this->GetTickRate());
  	
-@@ -651,14 +976,19 @@ Arena* Arena::Clone(bool copyCallbacks) {
+@@ -651,14 +1155,19 @@ Arena* Arena::Clone(bool copyCallbacks) {
  		newArena->_carBumpCallback = this->_carBumpCallback;
  	}
  
@@ -1282,7 +1679,7 @@ index a13cee0..dbd6742 100644
  		newCar->controls = car->controls;
  		newCar->_velocityImpulseCache = car->_velocityImpulseCache;
  	}
-@@ -669,6 +999,15 @@ Arena* Arena::Clone(bool copyCallbacks) {
+@@ -669,6 +1178,15 @@ Arena* Arena::Clone(bool copyCallbacks) {
  
  	newArena->tickCount = this->tickCount;
  	newArena->_lastCarID = this->_lastCarID;
@@ -1298,7 +1695,7 @@ index a13cee0..dbd6742 100644
  
  	return newArena;
  }
-@@ -678,10 +1017,13 @@ Car* Arena::DeserializeNewCar(DataStreamIn& in, Team team) {
+@@ -678,10 +1196,13 @@ Car* Arena::DeserializeNewCar(DataStreamIn& in, Team team) {
  	car->_Deserialize(in);
  	car->team = team;
  
@@ -1313,7 +1710,7 @@ index a13cee0..dbd6742 100644
  
  	return car;
  }
-@@ -691,18 +1033,22 @@ void Arena::Step(int ticksToSimulate) {
+@@ -691,18 +1212,30 @@ void Arena::Step(int ticksToSimulate) {
  
  		_bulletWorld.setWorldUserInfo(this);
  
@@ -1340,10 +1737,18 @@ index a13cee0..dbd6742 100644
 +			for (Car* car : _cars)
 +				car->controls = CarControls();
 +
++		{ // RL PATCH: demolished cars' respawn spot selection, lock and respawn spot (in ID order, each respawning car
++		  // avoiding the ones before; _UpdateDemolished)
++			std::vector<Car::RespawnSpot> claimed;
++			for (Car* car : _cars)
++				if (car->_internalState.isDemoed)
++					_UpdateDemolished(car, claimed);
++		}
++
  		for (Car* car : _cars)
  			car->_PreTickUpdate(gameMode, tickTime, _mutatorConfig);
  
-@@ -714,6 +1060,9 @@ void Arena::Step(int ticksToSimulate) {
+@@ -714,6 +1247,9 @@ void Arena::Step(int ticksToSimulate) {
  		// Update ball
  		ball->_PreTickUpdate(gameMode, tickTime);
  
@@ -1353,7 +1758,7 @@ index a13cee0..dbd6742 100644
  		// Update world
  		_bulletWorld.stepSimulation(tickTime, 0, tickTime);
  
-@@ -752,6 +1101,8 @@ void Arena::Step(int ticksToSimulate) {
+@@ -752,6 +1288,8 @@ void Arena::Step(int ticksToSimulate) {
  		}
  
  		tickCount++;
@@ -1362,7 +1767,7 @@ index a13cee0..dbd6742 100644
  	}
  }
  
-@@ -983,6 +1334,7 @@ btRigidBody* Arena::_AddStaticCollisionShape(btCollisionShape* shape, btVector3
+@@ -983,6 +1521,7 @@ btRigidBody* Arena::_AddStaticCollisionShape(btCollisionShape* shape, btVector3
  	} else {
  		_bulletWorld.addRigidBody(shapeRB);
  	}
@@ -1371,7 +1776,7 @@ index a13cee0..dbd6742 100644
  	return shapeRB;
  }
 diff --git upstream/src/Sim/Arena/Arena.h engine/rocketsim/src/Sim/Arena/Arena.h
-index a3ebd3f..806ff2b 100644
+index a3ebd3f..e4b077c 100644
 --- upstream/src/Sim/Arena/Arena.h
 +++ engine/rocketsim/src/Sim/Arena/Arena.h
 @@ -1,5 +1,6 @@
@@ -1424,7 +1829,25 @@ index a3ebd3f..806ff2b 100644
  	Arena(const Arena& other) = delete; // No copy constructor, use Arena::Clone() instead
  	Arena& operator =(const Arena& other) = delete; // No copy operator, use Arena::Clone() instead
  
-@@ -176,6 +195,10 @@ public:
+@@ -155,6 +174,17 @@ public:
+ 
+ 	void _SetupArenaCollisionShapes();
+ 
++	// RL PATCH: respawning (see Arena.cpp): the team's respawn spots (side 0 all, 1 left, 2 right: inner first), whether
++	// a spot is taken (`claimed`: spots of cars respawning this tick), the game's spot choice, and a demolished car's
++	// selection, prespawn lock and respawn spot
++	std::vector<Car::RespawnSpot> _RespawnSpots(Team team, int side = 0);
++	bool _SpawnTaken(Vec pos, Car* car, const std::vector<Car::RespawnSpot>& claimed);
++	bool _SpawnFromSpots(Car* car, const std::vector<Car::RespawnSpot>& spots, int start,
++		const std::vector<Car::RespawnSpot>& claimed, Car::RespawnSpot& out);
++	bool _SpawnOffset(Car* car, const Car::RespawnSpot& spot, const std::vector<Car::RespawnSpot>& claimed, Car::RespawnSpot& out);
++	Car::RespawnSpot _ChooseSpawn(Car* car, const std::vector<Car::RespawnSpot>& claimed, bool usePreference);
++	void _UpdateDemolished(Car* car, std::vector<Car::RespawnSpot>& claimed);
++
+ 	// Static function called by Bullet internally when adding a collision point
+ 	static bool _BulletContactAddedCallback(
+ 		btManifoldPoint& cp,
+@@ -176,6 +206,10 @@ public:
  	}
  
  	DropshotTilesState GetDropshotTilesState() const { return _dropshotTilesState; };
@@ -1614,7 +2037,7 @@ index c87d449..d9d1ad0 100644
  	if (colliding)
  		_internalState.curLockedCar = car;
 diff --git upstream/src/Sim/Car/Car.cpp engine/rocketsim/src/Sim/Car/Car.cpp
-index 417ad9d..b6806d2 100644
+index 417ad9d..23b1136 100644
 --- upstream/src/Sim/Car/Car.cpp
 +++ engine/rocketsim/src/Sim/Car/Car.cpp
 @@ -3,9 +3,34 @@
@@ -1720,7 +2143,33 @@ index 417ad9d..b6806d2 100644
  }
  
  void Car::Demolish(float respawnDelay) {
-@@ -76,8 +150,21 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
+@@ -43,8 +117,6 @@ void Car::Demolish(float respawnDelay) {
+ void Car::Respawn(GameMode gameMode, int seed, float boostAmount) {
+ 	using namespace RLConst;
+ 
+-	CarState newState = CarState();
+-
+ 	int spawnPosIndex = Math::RandInt(0, CAR_RESPAWN_LOCATION_AMOUNT, seed);
+ 
+ 	const CarSpawnPos* spawnPosArray;
+@@ -61,9 +133,14 @@ void Car::Respawn(GameMode gameMode, int seed, float boostAmount) {
+ 
+ 	CarSpawnPos spawnPos = spawnPosArray[spawnPosIndex];
+ 
+-	newState.pos = Vec(spawnPos.x, spawnPos.y * (team == Team::BLUE ? 1 : -1), CAR_RESPAWN_Z);
+-	newState.rotMat = Angle(spawnPos.yawAng + (team == Team::BLUE ? 0 : M_PI), 0.f, 0.f).ToRotMat();
++	_RespawnAt(Vec(spawnPos.x, spawnPos.y * (team == Team::BLUE ? 1 : -1), CAR_RESPAWN_Z),
++		spawnPos.yawAng + (team == Team::BLUE ? 0 : M_PI), boostAmount);
++}
+ 
++void Car::_RespawnAt(Vec pos, float yaw, float boostAmount) {
++	CarState newState = CarState();
++	newState.pos = pos;
++	newState.rotMat = Angle(yaw, 0.f, 0.f).ToRotMat();
+ 	newState.boost = boostAmount;
+ 	this->SetState(newState);
+ }
+@@ -76,13 +153,32 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
  	controls.ClampFix();
  #endif
  
@@ -1742,7 +2191,20 @@ index 417ad9d..b6806d2 100644
  	{ // Update simulation state
  		if (_internalState.isDemoed) {
  			_internalState.demoRespawnTimer = RS_MAX(_internalState.demoRespawnTimer - tickTime, 0);
-@@ -99,48 +186,79 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
+-			if (_internalState.demoRespawnTimer == 0)
+-				Respawn(gameMode, -1, mutatorConfig.carSpawnBoostAmount);
++			if (_internalState.demoRespawnTimer == 0) {
++				// RL PATCH: at the spot the arena chose (Arena::_FindRespawnSpot: deterministic, not on another car)
++				if (_respawnSpot.valid)
++					_RespawnAt(_respawnSpot.pos, _respawnSpot.yaw, mutatorConfig.carSpawnBoostAmount);
++				else
++					Respawn(gameMode, -1, mutatorConfig.carSpawnBoostAmount);
++				_respawnSpot.valid = false;
++			}
+ 
+ 			// Disable rigidbody simulation
+ 			_rigidBody.m_activationState1 = DISABLE_SIMULATION;
+@@ -99,48 +195,105 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
  	if (_internalState.isDemoed)
  		return; // No other updates need to occur
  
@@ -1760,6 +2222,13 @@ index 417ad9d..b6806d2 100644
 -		_internalState.wheelsWithContact[i] = inContact;
 -		numWheelsInContact += inContact;
 -	}
++	// RL PATCH: the game's Car_TA.SetVehicleInput sets the input throttle to 1 while the car is on the ground (3+ wheels
++	// after the previous tick), boost is held and there is boost left (before this tick's use), so everything reading
++	// the throttle sees 1: VehicleSim's drive, the wheels' wall grip, the sticky force's wall share, auto-roll (static
++	// analysis GA-1). RocketSim made boost a full throttle in VehicleSim only, also in the air. Live (`ga_boost`):
++	// boosting on a wall with throttle 0, 7.5 uu/s per tick off
++	_inputThrottle = (_internalState.isOnGround && controls.boost && _internalState.boost > 0) ? 1 : controls.throttle;
++
 +	// RL PATCH: the car's own pre-physics step (Car_TA FUN_140f1c600 and its components: jump, dodge, air control,
 +	// auto-roll, sticky force, boost) runs before the vehicle casts this tick's wheel rays, so it works on the contacts
 +	// the previous tick's rays found, and the vehicle's suspension and friction then see its impulses. RocketSim cast
@@ -1789,6 +2258,7 @@ index 417ad9d..b6806d2 100644
  		_internalState.isFlipping = false;
  	}
 +	_UpdateFlipTime(tickTime);
++	_UpdateAutoFlipTorque(tickTime);
 +
 +	// RL PATCH: auto-roll as the game gates it (Car_TA pre-physics FUN_140f1c600): throttle held, no dodge active, fewer
 +	// than all wheels on world geometry (wheels on the ball or a car don't count), and at least one, or else the body
@@ -1798,7 +2268,7 @@ index 417ad9d..b6806d2 100644
 +	int numWheelsOnWorld = 0;
 +	for (int i = 0; i < _bulletVehicle.m_wheelInfo.size(); i++)
 +		numWheelsOnWorld += _bulletVehicle.m_wheelInfo[i].m_raycastInfo.m_isInContact && _bulletVehicle.m_wheelInfo[i].m_isInContactWithWorld;
-+	if (controls.throttle && !_internalState.isFlipping && numWheelsOnWorld < _bulletVehicle.m_wheelInfo.size() &&
++	if (_inputThrottle && !_internalState.isFlipping && numWheelsOnWorld < _bulletVehicle.m_wheelInfo.size() &&
 +	    (numWheelsOnWorld > 0 || _internalState.worldContact.hasContact))
 +		_UpdateAutoRoll(tickTime, mutatorConfig, numWheelsOnWorld);
  
@@ -1811,36 +2281,54 @@ index 417ad9d..b6806d2 100644
  
 -	if (controls.throttle && ((numWheelsInContact > 0 && numWheelsInContact < 4) || _internalState.worldContact.hasContact))
 -		_UpdateAutoRoll(tickTime, mutatorConfig, numWheelsInContact);
++	bool wasBoosting = _internalState.isBoosting; // (what the AirControl component sees: it runs before Boost)
 +	_UpdateBoost(tickTime, mutatorConfig, forwardSpeed_UU);
  
 -	_internalState.worldContact.hasContact = false;
 +	// RL PATCH: the game's air throttle (AirControl ApplyForces FUN_140eb3400) is ThrottleForce x (boost active ? 1 :
-+	// throttle). BOOST_ACCEL_AIR already includes that full air throttle (991.67 + 66.67), so nothing is added while
-+	// boosting; stock RocketSim added throttle x 66.67 on top (boost + throttle in the air was 6% too strong).
++	// throttle), with the Boost component's state from before this tick's update (the components run AirControl first:
++	// static analysis GA-8), so a boost press adds only the boost's own 991.67 on its first tick and the release leaves
++	// the throttle's 66.67 for one more (live `ga_boost`: 0.55 uu/s on those ticks). BOOST_ACCEL_AIR includes the full
++	// air throttle (991.67 + 66.67), so _UpdateBoost applies the rest; stock RocketSim added throttle x 66.67 on top
++	// (boost + throttle in the air was 6% too strong).
 +	// RL PATCH: the AirControl component is only active with no wheel touching anything (as RocketSim's own air
 +	// control torque); RocketSim applied the air throttle with up to 2 wheels down. Live: 2 wheels on a wall, 0.56 uu/s
 +	// per tick too fast
-+	if (numWheelsInContact == 0 && !_internalState.isBoosting && controls.throttle != 0)
-+		_rigidBody.applyCentralForce(GetForwardDir() * controls.throttle * RLConst::THROTTLE_AIR_ACCEL * UU_TO_BT * RLConst::CAR_MASS_BT);
- 
--	// Complete the btVehicleRL update (does suspension and applies wheel forces)
--	_bulletVehicle.updateVehicleSecond(tickTime);
++	float airThrottle = wasBoosting ? 1 : _inputThrottle;
++	if (numWheelsInContact == 0 && airThrottle != 0)
++		_rigidBody.applyCentralForce(GetForwardDir() * airThrottle * RLConst::THROTTLE_AIR_ACCEL * UU_TO_BT * RLConst::CAR_MASS_BT);
++
 +	// RL PATCH: the speed caps between the car's own impulses (jump, dodge, auto-flip) and the vehicle's (the game's
 +	// Bullet caps at the start of its substep, before the vehicle update: _LimitVelocities)
 +	_LimitVelocities();
- 
--	_UpdateBoost(tickTime, mutatorConfig, forwardSpeed_UU);
++
 +	// The vehicle: this tick's wheel rays and contacts, then VehicleSim, the suspension and the wheels' friction
 +	_bulletVehicle.updateVehicleFirst(tickTime);
-+
+ 
+-	// Complete the btVehicleRL update (does suspension and applies wheel forces)
+-	_bulletVehicle.updateVehicleSecond(tickTime);
 +	numWheelsInContact = 0;
 +	for (int i = 0; i < _bulletVehicle.m_wheelInfo.size(); i++) {
 +		bool inContact = _bulletVehicle.m_wheelInfo[i].m_raycastInfo.m_isInContact;
 +		_internalState.wheelsWithContact[i] = inContact;
 +		numWheelsInContact += inContact;
 +	}
++	// RL PATCH: a landing (the game's OnGroundChanged) clears hasJumped (bJumped): see _UpdateJump. If the jump or
++	// dodge had been used and at most one wheel is on world geometry (the rest on the ball or a car: IsOnRBActor), it
++	// counts as a flip reset (UpdateDodgeAvailable: DodgesRefreshedCounter, which drives the game's indicator)
++	if (numWheelsInContact >= 3 && !_internalState.isOnGround) {
++		if (_internalState.hasJumped || _internalState.hasDoubleJumped || _internalState.hasFlipped) {
++			int wheelsOnWorld = 0;
++			for (int i = 0; i < _bulletVehicle.m_wheelInfo.size(); i++)
++				wheelsOnWorld += _bulletVehicle.m_wheelInfo[i].m_raycastInfo.m_isInContact && _bulletVehicle.m_wheelInfo[i].m_isInContactWithWorld;
++			if (wheelsOnWorld <= 1)
++				_internalState.flipResets++;
++		}
++		_internalState.hasJumped = false;
++	}
 +	_internalState.isOnGround = numWheelsInContact >= 3;
-+
+ 
+-	_UpdateBoost(tickTime, mutatorConfig, forwardSpeed_UU);
 +	forwardSpeed_UU = _bulletVehicle.getForwardSpeed() * BT_TO_UU;
 +	_UpdateWheels(tickTime, mutatorConfig, numWheelsInContact, forwardSpeed_UU);
 +
@@ -1848,7 +2336,7 @@ index 417ad9d..b6806d2 100644
  }
  
  void Car::_PostTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig& mutatorConfig) {
-@@ -150,21 +268,19 @@ void Car::_PostTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig
+@@ -150,27 +303,27 @@ void Car::_PostTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig
  
  	_internalState.rotMat = _rigidBody.getWorldTransform().m_basis;
  
@@ -1880,7 +2368,17 @@ index 417ad9d..b6806d2 100644
  		}
  	}
  
-@@ -187,25 +303,23 @@ void Car::_FinishPhysicsTick(const MutatorConfig& mutatorConfig) {
+ 	// Update car contact cooldown timer
+-	if (_internalState.carContact.cooldownTimer > 0)
+-		_internalState.carContact.cooldownTimer = RS_MAX(_internalState.carContact.cooldownTimer - tickTime, 0);
++	// RL PATCH: it runs on to a tick below 0, so the arena can tell a cooldown exactly over (still blocking: the game's
++	// test is strict) from one over by a tick (Arena::_BtCallback_OnCarCarCollision)
++	if (_internalState.carContact.cooldownTimer > -tickTime)
++		_internalState.carContact.cooldownTimer = RS_MAX(_internalState.carContact.cooldownTimer - tickTime, -tickTime);
+ 
+ 	_internalState.lastControls = controls;
+ }
+@@ -187,25 +340,23 @@ void Car::_FinishPhysicsTick(const MutatorConfig& mutatorConfig) {
  		_velocityImpulseCache = { 0,0,0 };
  	}
  
@@ -1888,14 +2386,14 @@ index 417ad9d..b6806d2 100644
 -		btVector3
 -			vel = _rigidBody.m_linearVelocity,
 -			angVel = _rigidBody.m_angularVelocity;
-+	_LimitVelocities();
- 
+-
 -		if (vel.length2() > (CAR_MAX_SPEED * UU_TO_BT) * (CAR_MAX_SPEED * UU_TO_BT))
 -			vel = vel.normalized() * (CAR_MAX_SPEED * UU_TO_BT);
 -
 -		if (angVel.length2() > (CAR_MAX_ANG_SPEED * CAR_MAX_ANG_SPEED))
 -			angVel = angVel.normalized() * CAR_MAX_ANG_SPEED;
--
++	_LimitVelocities();
+ 
 -		_rigidBody.m_linearVelocity = vel;
 -		_rigidBody.m_angularVelocity = angVel;
 -	}
@@ -1917,7 +2415,7 @@ index 417ad9d..b6806d2 100644
  	// Set up rigidbody and collision shapes
  	_childHitboxShape = btBoxShape((config.hitboxSize * UU_TO_BT) / 2);
  	_compoundShape = btCompoundShape(false, 1);
-@@ -228,6 +342,7 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
+@@ -228,6 +379,7 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
  	_rigidBody = btRigidBody(rbInfo);
  	_rigidBody.setUserIndex(BT_USERINFO_TYPE_CAR);
  	_rigidBody.setUserPointer(this);
@@ -1925,7 +2423,7 @@ index 417ad9d..b6806d2 100644
  
  	_rigidBody.m_collisionFlags |= btCollisionObject::CF_CUSTOM_MATERIAL_CALLBACK;
  
-@@ -279,6 +394,10 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
+@@ -279,6 +431,10 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
  
  				suspensionRestLength -= RLConst::BTVehicle::MAX_SUSPENSION_TRAVEL;
  
@@ -1936,7 +2434,7 @@ index 417ad9d..b6806d2 100644
  				_bulletVehicle.addWheel(
  					wheelRayStartOffset * UU_TO_BT,
  					wheelDirectionCS, wheelAxleCS,
-@@ -295,7 +414,10 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
+@@ -295,7 +451,10 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
  					wheelInfo.m_maxSuspensionTravelCm = (MAX_SUSPENSION_TRAVEL * UU_TO_BT) * 100; // Same for all cars (hopefully)
  					wheelInfo.m_maxSuspensionForce = FLT_MAX; // Don't think there's a limit
  					wheelInfo.m_bIsFrontWheel = front;
@@ -1948,7 +2446,7 @@ index 417ad9d..b6806d2 100644
  				}
  			}
  		}
-@@ -324,6 +446,13 @@ void CarState::Serialize(DataStreamOut& out) const {
+@@ -324,6 +483,13 @@ void CarState::Serialize(DataStreamOut& out) const {
  	out.WriteMultiple(
  		CARSTATE_SERIALIZATION_FIELDS
  	);
@@ -1962,7 +2460,7 @@ index 417ad9d..b6806d2 100644
  }
  
  void CarState::Deserialize(DataStreamIn& in) {
-@@ -333,20 +462,30 @@ void CarState::Deserialize(DataStreamIn& in) {
+@@ -333,20 +499,30 @@ void CarState::Deserialize(DataStreamIn& in) {
  	in.ReadMultiple(
  		CARSTATE_SERIALIZATION_FIELDS
  	);
@@ -1997,7 +2495,7 @@ index 417ad9d..b6806d2 100644
  }
  
  void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int numWheelsInContact, float forwardSpeed_UU) {
-@@ -354,10 +493,6 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
+@@ -354,10 +530,6 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
  
  	float absForwardSpeed_UU = abs(forwardSpeed_UU);
  
@@ -2008,7 +2506,30 @@ index 417ad9d..b6806d2 100644
  	{ // Increase/decrease handbrake value from input
  		if (controls.handbrake) {
  			_internalState.handbrakeVal += POWERSLIDE_RISE_RATE * tickTime;
-@@ -414,8 +549,8 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
+@@ -367,12 +539,9 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
+ 		_internalState.handbrakeVal = RS_CLAMP(_internalState.handbrakeVal, 0, 1);
+ 	}
+ 
+-	float realThrottle = controls.throttle;
++	float realThrottle = _inputThrottle; // RL PATCH: with boost only on the ground (see _PreTickUpdate)
+ 	float realBrake = 0;
+ 
+-	if (controls.boost && _internalState.boost > 0)
+-		realThrottle = 1;
+-
+ 	{ // Update throttle/brake forces
+ 		float driveSpeedScale = DRIVE_SPEED_TORQUE_FACTOR_CURVE.GetOutput(absForwardSpeed_UU);
+ 
+@@ -383,7 +552,7 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
+ 		} else {
+ 			float absThrottle = abs(realThrottle);
+ 
+-			if (absThrottle >= THROTTLE_DEADZONE) {
++			if (absThrottle > THROTTLE_DEADZONE) {
+ 				if (absForwardSpeed_UU > STOPPING_FORWARD_VEL && RS_SGN(realThrottle) != RS_SGN(forwardSpeed_UU)) {
+ 					// Full brake is applied if we are trying to drive in the opposite direction
+ 					realBrake = 1;
+@@ -414,8 +583,8 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
  		}
  	}
  
@@ -2019,7 +2540,7 @@ index 417ad9d..b6806d2 100644
  
  		if (_internalState.handbrakeVal) {
  			steerAngle +=
-@@ -423,11 +558,29 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
+@@ -423,11 +592,29 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
  				* _internalState.handbrakeVal;
  		}
  
@@ -2050,19 +2571,19 @@ index 417ad9d..b6806d2 100644
  	{ // Update friction
  		for (int i = 0; i < _bulletVehicle.m_wheelInfo.size(); i++) {
  			auto& wheel = _bulletVehicle.m_wheelInfo[i];
-@@ -465,7 +618,10 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
+@@ -465,7 +652,10 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
  					longFriction = 1; // If we aren't powersliding, it's not scaled down
  				}
  
 -				bool isContactSticky = realThrottle != 0;
-+				// RL PATCH: the wall-grip curve is skipped only on a sticky surface (the arena's materials) with the raw
-+				// throttle input non-zero (Wheel_TA FUN_140f588f0: bStickyWheels && Vehicle.Input.Throttle != 0);
-+				// RocketSim used throttle-or-boost on any surface
-+				bool isContactSticky = controls.throttle != 0 && wheel.m_isInContactWithWorld;
++				// RL PATCH: the wall-grip curve is skipped only on a sticky surface (the arena's materials) with the input
++				// throttle non-zero (Wheel_TA FUN_140f588f0: bStickyWheels && Vehicle.Input.Throttle != 0; boosting on the
++				// ground counts, see _PreTickUpdate); RocketSim used throttle-or-boost on any surface
++				bool isContactSticky = _inputThrottle != 0 && wheel.m_isInContactWithWorld;
  
  				if (isContactSticky) {
  					// Keep current friction values
-@@ -481,12 +637,24 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
+@@ -481,12 +671,24 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
  			}
  		}
  	}
@@ -2082,28 +2603,73 @@ index 417ad9d..b6806d2 100644
  		btVector3 upwardsDir = _bulletVehicle.getUpwardsDirFromWheelContacts();
  
 -		bool fullStick = (realThrottle != 0) || (absForwardSpeed_UU > STOPPING_FORWARD_VEL);
-+		// RL PATCH: the wall share needs the raw throttle input (Vehicle FUN_140eb70a0: Input.Throttle != 0 or
-+		// |forward speed| > 25); RocketSim used the throttle including boost
-+		bool fullStick = (controls.throttle != 0) || (abs(forwardSpeed_UU) > STOPPING_FORWARD_VEL);
++		// RL PATCH: the wall share needs the input throttle (Vehicle FUN_140eb70a0: Input.Throttle != 0 or |forward
++		// speed| > 25; boosting on the ground counts, see _PreTickUpdate); RocketSim used the throttle including boost
++		bool fullStick = (_inputThrottle != 0) || (abs(forwardSpeed_UU) > STOPPING_FORWARD_VEL);
  
  		float stickyForceScale = config.threeWheels ? 0 : 0.5f;
  		if (fullStick)
-@@ -528,8 +696,13 @@ void Car::_UpdateBoost(float tickTime, const MutatorConfig& mutatorConfig, float
+@@ -528,8 +730,14 @@ void Car::_UpdateBoost(float tickTime, const MutatorConfig& mutatorConfig, float
  	// Apply boosting force and consume boost
  	if (_internalState.isBoosting) {
  		_internalState.boost = RS_MAX(_internalState.boost - mutatorConfig.boostUsedPerSecond * tickTime, 0);
-+		// RL PATCH: the air boost's extra (the AirControl component's full throttle) only with no wheel touching
-+		// anything (the component's activation); RocketSim used it below 3 wheels
++		// RL PATCH: in the air (no wheel touching anything, the AirControl component's activation; RocketSim: below 3
++		// wheels) the boost's own force is boostAccelAir less the AirControl component's full throttle, which
++		// _PreTickUpdate applies (one tick behind the boost state, as the game)
 +		bool anyWheelContact = false;
 +		for (bool contact : _internalState.wheelsWithContact)
 +			anyWheelContact |= contact;
  		_rigidBody.applyCentralForce(
 -			(_internalState.isOnGround ? mutatorConfig.boostAccelGround : mutatorConfig.boostAccelAir) * UU_TO_BT
-+			(anyWheelContact ? mutatorConfig.boostAccelGround : mutatorConfig.boostAccelAir) * UU_TO_BT
++			(anyWheelContact ? mutatorConfig.boostAccelGround : mutatorConfig.boostAccelAir - THROTTLE_AIR_ACCEL) * UU_TO_BT
  			* GetForwardDir() * CAR_MASS_BT
  		);
  		_internalState.timeSinceBoosted = 0;
-@@ -578,14 +751,10 @@ void Car::_UpdateJump(float tickTime, const MutatorConfig& mutatorConfig, bool j
+@@ -547,28 +755,31 @@ void Car::_UpdateBoost(float tickTime, const MutatorConfig& mutatorConfig, float
+ 
+ void Car::_UpdateJump(float tickTime, const MutatorConfig& mutatorConfig, bool jumpPressed) {
+ 	using namespace RLConst;
+-	if (_internalState.isOnGround && !_internalState.isJumping) {
+-		if (_internalState.hasJumped && _internalState.jumpTime < JUMP_MIN_TIME + JUMP_RESET_TIME_PAD) {
+-			// Don't reset the jump just yet, we might still be leaving the ground
+-			// This fixes the bug where jump is reset before we actually leave the ground after a minimum-time jump
+-			// TODO: RL does something similar to this time-pad, but not exactly the same
+-		} else {
+-			_internalState.hasJumped = false;
+-			_internalState.jumpTime = 0;
+-		}
+-	}
++
++	// RL PATCH: the game's jump rules (CarComponent_Jump_TA, static analysis GA-2): a ground jump needs !bJumped
++	// (hasJumped), which clears on a real landing (OnGroundChanged: _PreTickUpdate) or once the jump has been over for
++	// JumpLeaveGroundTime with the car still on the ground; releasing the button (bDeactivate) ends the jump once past
++	// its minimum time even if it is pressed again. RocketSim started a new ground jump on any press with the wheels
++	// down (they touch for up to 6 ticks after a short jump: a second jump) and followed the current button. Live
++	// (`ga_jump`): jump 3 ticks, release 1, press again: 304 uu/s off, then 12 per tick
++	if (_internalState.isOnGround && !_internalState.isJumping && _internalState.hasJumped &&
++	    _internalState.jumpTime >= JUMP_LEAVE_GROUND_TIME)
++		_internalState.hasJumped = false;
+ 
+ 	if (_internalState.isJumping) {
+-		if (_internalState.jumpTime < JUMP_MIN_TIME || (controls.jump && _internalState.jumpTime < JUMP_MAX_TIME)) {
++		_internalState.jumpReleased |= !controls.jump;
++		if (_internalState.jumpTime < JUMP_MIN_TIME || (!_internalState.jumpReleased && _internalState.jumpTime < JUMP_MAX_TIME)) {
+ 			// Continue jump
+ 			_internalState.isJumping = true;
+ 		} else {
+ 			// We can't keep jumping any longer
+ 			_internalState.isJumping = false;
++			_internalState.jumpTime = 0; // (from now on the time since the jump ended)
+ 		}
+-	} else if (_internalState.isOnGround && jumpPressed) {
++	} else if (_internalState.isOnGround && jumpPressed && !_internalState.hasJumped) {
+ 		// Start jumping
+ 		_internalState.isJumping = true;
++		_internalState.jumpReleased = false;
+ 		_internalState.jumpTime = 0;
+ 		btVector3 jumpStartForce = GetUpDir() * mutatorConfig.jumpImmediateForce * UU_TO_BT * CAR_MASS_BT;
+ 		_rigidBody.applyCentralImpulse(jumpStartForce);
+@@ -578,14 +789,10 @@ void Car::_UpdateJump(float tickTime, const MutatorConfig& mutatorConfig, bool j
  		_internalState.hasJumped = true;
  
  		// Apply extra long-jump force
@@ -2121,7 +2687,7 @@ index 417ad9d..b6806d2 100644
  		_rigidBody.applyCentralForce(totalJumpForce * UU_TO_BT * CAR_MASS_BT);
  	}
  
-@@ -602,7 +771,11 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -602,7 +809,11 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  		dirYaw_up = GetUpDir(),
  		dirRoll_forward = -GetForwardDir();
  
@@ -2134,7 +2700,7 @@ index 417ad9d..b6806d2 100644
  	if (_internalState.isFlipping)
  		_internalState.isFlipping = _internalState.hasFlipped && _internalState.flipTime < FLIP_TORQUE_TIME;
  
-@@ -613,7 +786,11 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -613,7 +824,11 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  		if (!_internalState.flipRelTorque.IsZero()) {
  			// Flip cancel check
  			float pitchScale = 1;
@@ -2147,7 +2713,7 @@ index 417ad9d..b6806d2 100644
  				if (RS_SGN(relDodgeTorque.y()) == RS_SGN(controls.pitch)) {
  
  #ifndef RS_MAX_SPEED
-@@ -621,7 +798,6 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -621,7 +836,6 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  #else
  					pitchScale = 1 - abs(controls.pitch); // No sanity check
  #endif
@@ -2155,7 +2721,7 @@ index 417ad9d..b6806d2 100644
  				}
  			}
  
-@@ -629,12 +805,7 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -629,22 +843,25 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  
  			btVector3 dodgeTorque = relDodgeTorque * btVector3(FLIP_TORQUE_X, FLIP_TORQUE_Y, 0);
  			_rigidBody.applyTorque(_rigidBody.m_invInertiaTensorWorld.inverse() * _rigidBody.getWorldTransform().m_basis * dodgeTorque);
@@ -2167,8 +2733,12 @@ index 417ad9d..b6806d2 100644
 -		doAirControl = true;
  	}
  
- 	doAirControl &= !_internalState.isAutoFlipping;
-@@ -643,8 +814,14 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+-	doAirControl &= !_internalState.isAutoFlipping;
++	// RL PATCH: air control stays on during an auto-flip (the AirControl component is active with no wheel touching;
++	// static analysis GA-3): its damping holds the flip at 5.29 rad/s, not 5.5, and the player's input acts. Live
++	// (`ga_autoflip`): 0.21 rad/s per tick off
+ 	doAirControl &= updateAirControl;
+ 	if (doAirControl) {
  
  		float pitchTorqueScale = 1;
  
@@ -2184,7 +2754,7 @@ index 417ad9d..b6806d2 100644
  
  			if (_internalState.isFlipping) {
  				pitchTorqueScale = 0;
-@@ -655,9 +832,9 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -655,9 +872,9 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  			}
  
  			// TODO: Use actual dot product operator functions (?)
@@ -2197,7 +2767,7 @@ index 417ad9d..b6806d2 100644
  		} else {
  			torque = { 0, 0, 0 };
  		}
-@@ -666,8 +843,8 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -666,8 +883,8 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  
  		// TODO: Use actual dot product operator functions (?)
  		float
@@ -2208,7 +2778,7 @@ index 417ad9d..b6806d2 100644
  			dampRoll = dirRoll_forward.dot(angVel) * CAR_AIR_CONTROL_DAMPING.z;
  
  		btVector3 damping =
-@@ -677,8 +854,7 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -677,8 +894,7 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  		_rigidBody.applyTorque(_rigidBody.m_invInertiaTensorWorld.inverse() * (torque - damping) * CAR_TORQUE_SCALE);
  	}
  
@@ -2218,11 +2788,26 @@ index 417ad9d..b6806d2 100644
  }
  
  void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorConfig, bool jumpPressed, float forwardSpeed_UU) {
-@@ -736,7 +912,21 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
- 							dodgeDir = dodgeDir.safeNormalized();
- 						}
+@@ -728,16 +944,33 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
+ 					{
+ 						float forwardSpeedRatio = abs(forwardSpeed_UU) / CAR_MAX_SPEED;
  
--						_internalState.flipRelTorque = btVector3(-dodgeDir.y() / tickTimeScale, dodgeDir.x() / tickTimeScale, 0);
++						// RL PATCH: as the game's GetDodgeImpulse (FUN_140eef310, static analysis GA-7): the direction
++						// normalised, then each component of 0.1 or less zeroed. RocketSim zeroed the direction when both
++						// inputs were under 0.1 before normalising, so yaw 0.95 + roll -1 (side -0.05) had no impulse; the
++						// game's is a full side dodge. Live (`ga_jump`): 500 uu/s off
+ 						btVector3 dodgeDir = btVector3(-controls.pitch, controls.yaw + controls.roll, 0);
+-
+-						if (abs(controls.yaw + controls.roll) < 0.1f && abs(controls.pitch) < 0.1f) {
+-							dodgeDir = { 0, 0, 0 };
+-						} else {
+-							dodgeDir = dodgeDir.safeNormalized();
++						float dodgeLengthSq = dodgeDir.length2();
++						dodgeDir = (dodgeLengthSq >= 1e-8f) ? dodgeDir / sqrtf(dodgeLengthSq) : btVector3(0, 0, 0);
++						for (int k = 0; k < 2; k++)
++							if (abs(dodgeDir[k]) <= 0.1f)
++								dodgeDir[k] = 0;
++
 +						{
 +							// RL PATCH: CarComponent_Dodge_TA.SetDodgeSettings:
 +							// DodgeDirection = Normal(-pitch, yaw + roll) (no deadzone),
@@ -2237,11 +2822,14 @@ index 417ad9d..b6806d2 100644
 +
 +							_internalState.flipRelTorque =
 +								btVector3(torqueRoll / FLIP_TORQUE_X / tickTimeScale, torquePitch / FLIP_TORQUE_Y / tickTimeScale, 0);
-+						}
+ 						}
  
+-						_internalState.flipRelTorque = btVector3(-dodgeDir.y() / tickTimeScale, dodgeDir.x() / tickTimeScale, 0);
+-
  						if (abs(dodgeDir.x()) < 0.1f) dodgeDir.x() = 0;
  						if (abs(dodgeDir.y()) < 0.1f) dodgeDir.y() = 0;
-@@ -781,13 +971,24 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
+ 
+@@ -781,13 +1014,24 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
  		}
  	}
  
@@ -2268,7 +2856,54 @@ index 417ad9d..b6806d2 100644
  	} else if (_internalState.hasFlipped) {
  		// Increment flip time even after we are done flipping
  		// We need to count the time after for FLIP_PITCHLOCK_EXTRA_TIME to work
-@@ -824,7 +1025,13 @@ void Car::_UpdateAutoFlip(float tickTime, const MutatorConfig& mutatorConfig, bo
+@@ -798,33 +1042,50 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
+ void Car::_UpdateAutoFlip(float tickTime, const MutatorConfig& mutatorConfig, bool jumpPressed) {
+ 	using namespace RLConst;
+ 
+-	// TODO: Improve accuracy
+-
++	// RL PATCH: the game's FlipCar component (static analysis GA-3): it activates on a jump press with the dodge
++	// inactive and no auto-flip running, when the body touches the world with a contact normal of z > 0.707 and the
++	// car's up within 15 degrees of the normal's opposite (CanActivate); it ends when the car is on the ground (3+
++	// wheels) or by its timer, CAR_AUTOFLIP_TIME x |world roll| / pi (live: 48 ticks on a flat roof, 40 roof down on
++	// the side curve at world roll 150). RocketSim activated on |world roll| > 2.8 rad (no flip roof down on a curve,
++	// a flip at 160-165 degrees on flat ground, where the game double jumps), could restart mid-flip and ran the timer
++	// only. Live (`ga_autoflip`, roof down on the 30-degree side curve): 110 uu/s off
+ 	if (
+ 		jumpPressed &&
++		!_internalState.isAutoFlipping && !_internalState.isFlipping &&
+ 		_internalState.worldContact.hasContact &&
+-		_internalState.worldContact.contactNormal.z > CAR_AUTOFLIP_NORMZ_THRESH
++		_internalState.worldContact.contactNormal.z > CAR_AUTOFLIP_NORMZ_THRESH &&
++		_internalState.worldContact.contactNormal.Dot(GetUpDir()) < CAR_AUTOFLIP_UP_DOT_THRESH
+ 		) {
+ 
+ 		// TODO: Slow :(
+ 		Angle angles = Angle::FromRotMat(_internalState.rotMat);
+ 
+ 		float absRoll = abs(angles.roll);
+-		if (absRoll > CAR_AUTOFLIP_ROLL_THRESH) {
+-			_internalState.autoFlipTimer = CAR_AUTOFLIP_TIME * (absRoll / M_PI);
+-			_internalState.autoFlipTorqueScale = (angles.roll > 0) ? 1 : -1;
+-			_internalState.isAutoFlipping = true;
++		_internalState.autoFlipTimer = CAR_AUTOFLIP_TIME * (absRoll / M_PI);
++		_internalState.autoFlipTorqueScale = (angles.roll > 0) ? 1 : -1;
++		_internalState.isAutoFlipping = true;
+ 
+-			_rigidBody.applyCentralImpulse(-GetUpDir() * CAR_AUTOFLIP_IMPULSE * UU_TO_BT * CAR_MASS_BT);
+-		}
++		_rigidBody.applyCentralImpulse(-GetUpDir() * CAR_AUTOFLIP_IMPULSE * UU_TO_BT * CAR_MASS_BT);
+ 	}
++}
++
++// RL PATCH: the FlipCar component's force (an angular-velocity change), applied after the other components' (its
++// ApplyForces runs last: AirControl first, so air control's damping works on the angular velocity from before it)
++void Car::_UpdateAutoFlipTorque(float tickTime) {
++	using namespace RLConst;
+ 
+ 	if (_internalState.isAutoFlipping) {
+-		if (_internalState.autoFlipTimer <= 0) {
++		if (_internalState.autoFlipTimer <= 0 || _internalState.isOnGround) {
  			_internalState.isAutoFlipping = false;
  			_internalState.autoFlipTimer = 0;
  		} else {
@@ -2284,7 +2919,7 @@ index 417ad9d..b6806d2 100644
  			_internalState.autoFlipTimer -= tickTime;
  		}
 diff --git upstream/src/Sim/Car/Car.h engine/rocketsim/src/Sim/Car/Car.h
-index 90bcaa8..8684cbd 100644
+index 90bcaa8..5d36c7f 100644
 --- upstream/src/Sim/Car/Car.h
 +++ engine/rocketsim/src/Sim/Car/Car.h
 @@ -1,9 +1,11 @@
@@ -2323,7 +2958,28 @@ index 90bcaa8..8684cbd 100644
  
  	// Whether we jumped to get into the air
  	// Can be false while airborne, if we left the ground with a flip reset
-@@ -73,7 +90,8 @@ struct CarState : public PhysState {
+@@ -44,7 +61,8 @@ struct CarState : public PhysState {
+ 	// Forward flip will have positive Y
+ 	Vec flipRelTorque = { 0, 0, 0 };
+ 
+-	float jumpTime = 0; // When currently jumping, the time since we started jumping, else 0
++	// RL PATCH: while jumping, the time since we started jumping; after a jump (hasJumped), the time since it ended
++	float jumpTime = 0;
+ 	float flipTime = 0; // When currently flipping, the time since we started flipping, else 0
+ 
+ 	// True during a flip (not an auto-flip, and not after a flip)
+@@ -53,6 +71,10 @@ struct CarState : public PhysState {
+ 	// True during a jump
+ 	bool isJumping = false;
+ 
++	// RL PATCH: the jump button was released during the current jump (the game's bDeactivate): the jump then ends once
++	// past its minimum time, even if pressed again
++	bool jumpReleased = false;
++
+ 	// Total time spent in the air
+ 	float airTime = 0;
+ 
+@@ -73,7 +95,8 @@ struct CarState : public PhysState {
  
  	bool isSupersonic = false;
  
@@ -2333,9 +2989,37 @@ index 90bcaa8..8684cbd 100644
  	float supersonicTime = 0;
  
  	// This is a state variable due to the rise/fall rate of handbrake inputs (see RLConst.h)
-@@ -125,7 +143,8 @@ flipRelTorque, jumpTime, isFlipping, flipTime, isJumping, airTimeSinceJump, \
+@@ -96,6 +119,21 @@ struct CarState : public PhysState {
+ 	bool isDemoed = false;
+ 	float demoRespawnTimer = 0;
+ 
++	// RL PATCH: respawn spot selection while demolished (the game's PRI_TA.DemoSelectionData and
++	// PlayerController_TA.Prespawn; Arena::_UpdateDemolished): the steer input's side last tick (-1, 0, 1: a push past
++	// 0.3 picks), the side picked (0 none, 1 left, 2 right) and the spot on it (0 the inner one); then,
++	// DEMO_PRESPAWN_STATE_LENGTH before the respawn, the spot locked in
++	int8_t demoSpawnSelectLast = 0;
++	uint8_t demoSpawnPreference = 0;
++	uint8_t demoSpawnIndex = 0;
++	bool prespawnSet = false;
++	Vec prespawnPos = { 0, 0, 0 };
++	float prespawnYaw = 0;
++
++	// RL PATCH: how many times landing on the ball or another car gave the car its jump and dodge back (the game's
++	// DodgesRefreshedCounter, for the flip reset indicator: Car::_PreTickUpdate). Wraps
++	uint16_t flipResets = 0;
++
+ 	BallHitInfo ballHitInfo = BallHitInfo();
+ 
+ 	// Controls from last tick, set to this->controls after simulation
+@@ -121,11 +159,13 @@ struct CarState : public PhysState {
+ 
+ #define CARSTATE_SERIALIZATION_FIELDS \
+ pos, rotMat, vel, angVel, isOnGround, hasJumped, hasDoubleJumped, hasFlipped, \
+-flipRelTorque, jumpTime, isFlipping, flipTime, isJumping, airTimeSinceJump, \
++flipRelTorque, jumpTime, isFlipping, flipTime, isJumping, jumpReleased /* RL PATCH */, airTimeSinceJump, \
  boost, isBoosting, boostingTime, timeSinceBoosted, supersonicTime, handbrakeVal, isAutoFlipping, \
  autoFlipTimer, autoFlipTorqueScale, isDemoed, demoRespawnTimer, lastControls, \
++demoSpawnSelectLast, demoSpawnPreference, demoSpawnIndex, prespawnSet, prespawnPos, prespawnYaw, flipResets, /* RL PATCH */ \
  worldContact.hasContact, worldContact.contactNormal, \
 -carContact.otherCarID, carContact.cooldownTimer
 +carContact.otherCarID, carContact.cooldownTimer, \
@@ -2343,17 +3027,39 @@ index 90bcaa8..8684cbd 100644
  
  enum class Team : byte {
  	BLUE = 0,
-@@ -166,6 +185,9 @@ public:
+@@ -156,6 +196,17 @@ public:
+ 	// Respawn the car, called after we have been demolished and waited for the respawn timer
+ 	void Respawn(GameMode gameMode, int seed = -1, float boostAmount = RLConst::BOOST_SPAWN_AMOUNT);
+ 
++	// RL PATCH: a fresh car at this spot (the respawn's new state)
++	void _RespawnAt(Vec pos, float yaw, float boostAmount);
++
++	// RL PATCH: where the car respawns when its demolition timer runs out this tick (chosen by the arena before the
++	// cars' pre-physics step: Arena::_FindRespawnSpot)
++	struct RespawnSpot {
++		Vec pos;
++		float yaw = 0;
++		bool valid = false;
++	} _respawnSpot;
++
+ 	btVehicleRL _bulletVehicle;
+ 	btDefaultVehicleRaycaster _bulletVehicleRaycaster;
+ 	btRigidBody _rigidBody;
+@@ -166,6 +217,13 @@ public:
  	// Those values are only updated when GetState() is called
  	CarState _internalState;
  
 +	// RL PATCH: state at the start of the current tick (the game's OldRBState)
 +	PhysState _oldState;
 +
++	// RL PATCH: this tick's throttle as the game's Vehicle.Input.Throttle (controls.throttle, or 1 while boosting on the
++	// ground: _PreTickUpdate)
++	float _inputThrottle = 0;
++
  	// Get the forward direction as a unit vector
  	Vec GetForwardDir() const {
  		return _internalState.rotMat.forward;
-@@ -183,8 +205,18 @@ public:
+@@ -183,8 +241,18 @@ public:
  
  	void _PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig& mutatorConfig);
  	void _PostTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig& mutatorConfig);
@@ -2372,7 +3078,7 @@ index 90bcaa8..8684cbd 100644
  	void _FinishPhysicsTick(const MutatorConfig& mutatorConfig);
  
  	void _BulletSetup(GameMode gameMode, class btDynamicsWorld* bulletWorld, const MutatorConfig& mutatorConfig);
-@@ -195,6 +227,9 @@ public:
+@@ -195,6 +263,9 @@ public:
  	void Serialize(DataStreamOut& out);
  	void _Deserialize(DataStreamIn& in);
  
@@ -2382,15 +3088,17 @@ index 90bcaa8..8684cbd 100644
  	Car(const Car& other) = delete;
  	Car& operator=(const Car& other) = delete;
  
-@@ -206,6 +241,8 @@ private:
+@@ -206,7 +277,10 @@ private:
  	void _UpdateJump(float tickTime, const MutatorConfig& mutatorConfig, bool jumpPressed);
  	void _UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, bool doAirControl);
  	void _UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorConfig, bool jumpPressed, float forwardSpeed_UU);
 +	void _UpdateFlipTime(float tickTime);
 +	void _UpdateStickyForce(float forwardSpeed_UU);
  	void _UpdateAutoFlip(float tickTime, const MutatorConfig& mutatorConfig, bool jumpPressed);
++	void _UpdateAutoFlipTorque(float tickTime);
  	void _UpdateAutoRoll(float tickTime, const MutatorConfig& mutatorConfig, int numWheelsInContact);
  
+ 	Car() {}
 diff --git upstream/src/Sim/Car/CarConfig/CarConfig.h engine/rocketsim/src/Sim/Car/CarConfig/CarConfig.h
 index e0011b8..4522fce 100644
 --- upstream/src/Sim/Car/CarConfig/CarConfig.h
@@ -2718,10 +3426,17 @@ index 0000000..b357e54
 +
 +RS_NS_END
 diff --git upstream/src/Sim/btVehicleRL/btVehicleRL.cpp engine/rocketsim/src/Sim/btVehicleRL/btVehicleRL.cpp
-index 3289666..6cfa548 100644
+index 3289666..46df5c9 100644
 --- upstream/src/Sim/btVehicleRL/btVehicleRL.cpp
 +++ engine/rocketsim/src/Sim/btVehicleRL/btVehicleRL.cpp
-@@ -7,6 +7,36 @@
+@@ -1,5 +1,6 @@
+ #include "btVehicleRL.h"
+ #include "../../RLConst.h"
++#include "../../BulletLink.h"
+ #define ROLLING_INFLUENCE_FIX
+ 
+ #include "../../../libsrc/bullet3-3.24/BulletDynamics/Dynamics/btDynamicsWorld.h"
+@@ -7,6 +8,36 @@
  
  RS_NS_START
  
@@ -2758,7 +3473,7 @@ index 3289666..6cfa548 100644
  btVehicleRL::btVehicleRL(
  	const btVehicleTuning& tuning, 
  	btRigidBody* chassis, btVehicleRaycaster* raycaster, btDynamicsWorld* world, 
-@@ -121,9 +151,11 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
+@@ -121,9 +152,11 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
  	updateWheelTransformsWS(wheel);
  
  	float depth = -1;
@@ -2771,7 +3486,7 @@ index 3289666..6cfa548 100644
  
  	// See: I21
  	btVector3 source = wheel.m_raycastInfo.m_hardPointWS;
-@@ -135,7 +167,29 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
+@@ -135,7 +168,29 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
  	btVehicleRaycaster::btVehicleRaycasterResult rayResults;
  	
  	btAssert(m_vehicleRaycaster);
@@ -2802,7 +3517,7 @@ index 3289666..6cfa548 100644
  
  	// See: I23
  	if (object) {
-@@ -152,14 +206,7 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
+@@ -152,14 +207,7 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
  		wheel.m_raycastInfo.m_suspensionLength = wheelTraceLenSq - wheel.m_wheelsRadius;
  
  		//clamp on max suspension travel
@@ -2818,7 +3533,17 @@ index 3289666..6cfa548 100644
  
  		float denominator = wheel.m_raycastInfo.m_contactNormalWS.dot(getUpVector());
  
-@@ -183,12 +230,15 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
+@@ -178,22 +226,35 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
+ 			wheel.m_clippedInvContactDotSuspension = 10;
+ 		}
+ 
+-		if (object->isStaticObject()) { // Compute m_extraPushback when colliding with static object
++		// RL PATCH: also on another car (the game's contact pass bottoms out on a dynamic body whose collision group is in
++		// the vehicle's mask, FUN_1402c3360: cars, not the ball), and then the car under the wheel gets the full opposite
++		// impulse. Live (`car_car`, a car dropped onto another's roof): the lower car 19.7 uu/s off -> 0.08
++		bool carGround = object->getUserIndex() == BT_USERINFO_TYPE_CAR;
++		if (object->isStaticObject() || carGround) { // Compute m_extraPushback when colliding with static object
+ 			float rayPushbackThresh = (wheel.m_suspensionRestLength1 + wheel.m_wheelsRadius) - RLConst::BTVehicle::SUSPENSION_SUBTRACTION;
  			if (wheelTraceLenSq < rayPushbackThresh) {
  
  				float wheelTraceDistDelta = wheelTraceLenSq - rayPushbackThresh;
@@ -2835,7 +3560,18 @@ index 3289666..6cfa548 100644
  					wheelTraceDistDelta,
  					false
  				);
-@@ -223,12 +273,24 @@ void btVehicleRL::updateVehicleFirst(float step) {
+ 
+ 				wheel.m_extraPushback = collisionResult / getNumWheels();
++				if (carGround) {
++					btRigidBody* ground = btRigidBody::upcast(object);
++					ground->applyImpulse(-rayResults.m_hitNormalInWorld * collisionResult,
++					                     rayResults.m_hitPointInWorld - ground->getCenterOfMassPosition());
++					ground->activate();
++				}
+ 			}
+ 		}
+ 
+@@ -223,12 +284,24 @@ void btVehicleRL::updateVehicleFirst(float step) {
  
  	for (int i = 0; i < m_wheelInfo.size(); i++)
  		rayCast(m_wheelInfo[i]);
@@ -2861,7 +3597,7 @@ index 3289666..6cfa548 100644
  	applyFrictionImpulses(step);
  }
  
-@@ -300,6 +362,18 @@ void btVehicleRL::updateSuspension(float deltaTime) {
+@@ -300,6 +373,18 @@ void btVehicleRL::updateSuspension(float deltaTime) {
  			m_chassisBody->applyImpulse(force, contactPointOffset);
  		}
  	}
@@ -2880,7 +3616,7 @@ index 3289666..6cfa548 100644
  }
  
  // See: I25
-@@ -316,10 +390,8 @@ void btVehicleRL::calcFrictionImpulses(float timeStep) {
+@@ -316,10 +401,8 @@ void btVehicleRL::calcFrictionImpulses(float timeStep) {
  			// Axle direction (includes steering turn)
  			btVector3 axleDir = wheel.m_worldTransform.getBasis().getColumn(m_indexRightAxis);
  
@@ -2892,7 +3628,7 @@ index 3289666..6cfa548 100644
  
  			// Wheel forwards direction
  			btVector3 forwardDir = surfNormalWS.cross(axleDir).safeNormalized();
-@@ -327,9 +399,12 @@ void btVehicleRL::calcFrictionImpulses(float timeStep) {
+@@ -327,9 +410,12 @@ void btVehicleRL::calcFrictionImpulses(float timeStep) {
  			float sideImpulse;
  
  			// Get sideways friction force
@@ -2906,7 +3642,7 @@ index 3289666..6cfa548 100644
  				0,
  				axleDir,
  				sideImpulse,
-@@ -340,15 +415,9 @@ void btVehicleRL::calcFrictionImpulses(float timeStep) {
+@@ -340,15 +426,9 @@ void btVehicleRL::calcFrictionImpulses(float timeStep) {
  			if (wheel.m_engineForce == 0) {
  				if (wheel.m_brake) {
  					// Simplified variation of calcRollingFriction()
@@ -2925,7 +3661,7 @@ index 3289666..6cfa548 100644
  
  					// This will round off small rolling friction amounts when at sub-80 TPS to prevent stuttering (to an extent)
  					// TODO: Improve and clarify
-@@ -395,9 +464,11 @@ void btVehicleRL::applyFrictionImpulses(float timeStep) {
+@@ -395,9 +475,11 @@ void btVehicleRL::applyFrictionImpulses(float timeStep) {
  }
  
  btVector3 btVehicleRL::getUpwardsDirFromWheelContacts() {

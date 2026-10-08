@@ -60,6 +60,24 @@ const WHEEL_SURFACES: readonly WheelSurface[] = ["none", "arena", "ball", "car"]
 /** What a grounded car stands on, when it's not the arena: the ball, or a car (by id). */
 export type RbActor = { readonly kind: "ball" } | { readonly kind: "car"; readonly id: number };
 
+/** A respawn spot (respawnSpots, SpawnSelection). */
+export interface RespawnSpot {
+  readonly pos: Vec3;
+  readonly yaw: number;
+}
+
+/** A side of the field for respawning, from the car's team's own point of view (as it faces the other goal). */
+export type SpawnSide = "left" | "right";
+const SPAWN_SIDES: readonly (SpawnSide | null)[] = [null, "left", "right"];
+
+/** A demolished car's respawn spot selection: for the first 2.5 s of the 3 s, a push of the steer input past 0.3
+ *  picks the next spot on that side (the inner one first); 0.5 s before the respawn the spot locks in. */
+export interface SpawnSelection {
+  readonly side: SpawnSide | null;
+  readonly index: number; // the spot on that side: respawnSpots(team, side)[index]
+  readonly locked: RespawnSpot | null;
+}
+
 export interface CarState extends BodyState {
   readonly team: Team;
   readonly boost: number; // 0..100
@@ -90,6 +108,12 @@ export interface CarState extends BodyState {
   readonly wheelContact: readonly [boolean, boolean, boolean, boolean];
   /** Average contact normal of the wheels touching something, else straight up (Vehicle_TA.GetGroundNormal). */
   readonly groundNormal: Vec3;
+  /** Seconds until a demolished car respawns */
+  readonly demoRespawnTimer: number;
+  readonly spawnSelection: SpawnSelection;
+  /** Landings on the ball or a car that gave the jump back (wraps at 65536): a change is a flip reset (the game's
+   *  DodgesRefreshedCounter, which drives its indicator) */
+  readonly flipResets: number;
 }
 
 export interface WheelConfig {
@@ -109,6 +133,8 @@ export interface BoostPadState {
   readonly pos: Vec3;
   readonly big: boolean;
   readonly active: boolean;
+  /** Seconds until a taken pad is back (4 small, 10 big) */
+  readonly cooldown: number;
 }
 
 export type GameEvent =
@@ -203,6 +229,11 @@ export class World {
     };
   }
 
+  /** The ball scored and exploded: frozen and not colliding (not drawn) until a reset or a ball state set. */
+  ballExploded(): boolean {
+    return at(this.#sim.ballState(), this.#m.BALL_EXPLODED) !== 0;
+  }
+
   setBall(state: Pick<BodyState, "pos" | "vel" | "angVel">): void {
     const m = this.#m;
     const a = new Float32Array(m.BALL_SIZE);
@@ -257,6 +288,13 @@ export class World {
       flipping: flag(m.CAR_IS_FLIPPING),
       wheelContact: [flag(wheel), flag(wheel + 1), flag(wheel + 2), flag(wheel + 3)],
       groundNormal: readVec(a, m.CAR_GROUND_NORMAL),
+      demoRespawnTimer: at(a, m.CAR_DEMO_RESPAWN_TIMER),
+      spawnSelection: {
+        side: SPAWN_SIDES[at(a, m.CAR_DEMO_SPAWN_SIDE)] ?? null,
+        index: at(a, m.CAR_DEMO_SPAWN_INDEX),
+        locked: flag(m.CAR_PRESPAWN_SET) ? { pos: readVec(a, m.CAR_PRESPAWN_POS), yaw: at(a, m.CAR_PRESPAWN_YAW) } : null,
+      },
+      flipResets: at(a, m.CAR_FLIP_RESETS),
     };
   }
 
@@ -288,9 +326,19 @@ export class World {
         pos: readVec(a, i + m.PAD_POS),
         big: at(a, i + m.PAD_BIG) !== 0,
         active: at(a, i + m.PAD_ACTIVE) !== 0,
+        cooldown: at(a, i + m.PAD_COOLDOWN),
       });
     }
     return pads;
+  }
+
+  /** A team's respawn spots: all, or one side's (the team's own left or right; the inner spot first). */
+  respawnSpots(team: Team, side: SpawnSide | null = null): RespawnSpot[] {
+    const m = this.#m;
+    const a = this.#sim.respawnSpots(team, side === null ? 0 : side === "left" ? 1 : 2);
+    const spots: RespawnSpot[] = [];
+    for (let i = 0; i < a.length; i += m.SPOT_SIZE) spots.push({ pos: readVec(a, i + m.SPOT_POS), yaw: at(a, i + m.SPOT_YAW) });
+    return spots;
   }
 
   /** Goals, bumps and demos since the last call. */
@@ -321,6 +369,11 @@ export class World {
   /** Writes a network state (what the server sends; for tests and local servers). */
   writeNetState(options: { readonly ball: boolean; readonly carIds: readonly number[]; readonly pads: boolean }): Uint8Array {
     return this.#sim.writeNetState(options.ball, Int32Array.from(options.carIds), options.pads);
+  }
+
+  /** The cars the last applied network state held. */
+  netStateCars(): number[] {
+    return Array.from(this.#sim.netStateCars());
   }
 
   /** A car's current controls. */

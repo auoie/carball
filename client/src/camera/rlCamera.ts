@@ -373,6 +373,7 @@ class Blender {
         next.begin(input);
       }
     } else {
+      this.#delta = EMPTY_DELTA; // (the live game clears it on the first state too: camera-update-audit CAM-8)
       next.begin(input);
     }
     this.state = next;
@@ -407,6 +408,9 @@ class Blender {
       this.#started = true;
       const snapshot = copyPov(pov);
       this.#from?.update(dt, input, snapshot);
+      // The live game keeps the outgoing view's rotation from the previous frame (its blender resets the snapshot's
+      // rotation after the state's last update: camera-update-audit CAM-7)
+      snapshot.rotation = pov.rotation;
       this.state?.begin(input);
       this.#from = null;
       this.state?.update(dt, input, pov);
@@ -420,7 +424,11 @@ class Blender {
     } else {
       this.state?.update(dt, input, pov);
     }
-    const blendPct = this.#remaining / this.#blendTime; // CameraUtils_X.GetBlendPercent, linear
+    // CameraUtils_X.GetBlendPercent with the states' blend params: the car and ball-cam archetypes override only
+    // BlendTime, so the base Default__CameraState_X.DefaultBlendParams apply, VTBlend_EaseIn with BlendExp 2: the
+    // offset fades as (remaining / BlendTime)^2 (a quarter at mid-blend, landing with zero slope), not linearly
+    // (camera-update-audit CAM-2)
+    const blendPct = (this.#remaining / this.#blendTime) ** 2;
     this.#delta = {
       focus: scale(this.#snapshot.focus, blendPct),
       rotation: scaleRotator(this.#snapshot.rotation, blendPct),

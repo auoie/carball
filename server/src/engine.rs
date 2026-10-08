@@ -156,11 +156,13 @@ impl Arena {
         // SAFETY: valid arena and buffer
         let n = unsafe { rl_take_events(self.ptr(), ints.as_mut_ptr(), ints.len()) };
         ints[..n]
-            .chunks_exact(3)
-            .filter_map(|e| match e[0] {
-                0 => Some(Event::Goal { team: e[1] as u8 }),
-                1 => Some(Event::Bump { attacker: e[1] as u32, victim: e[2] as u32 }),
-                2 => Some(Event::Demo { attacker: e[1] as u32, victim: e[2] as u32 }),
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .filter_map(|&[kind, a, b]| match kind {
+                0 => Some(Event::Goal { team: a as u8 }),
+                1 => Some(Event::Bump { attacker: a as u32, victim: b as u32 }),
+                2 => Some(Event::Demo { attacker: a as u32, victim: b as u32 }),
                 _ => None,
             })
             .collect()
@@ -257,7 +259,7 @@ pub(crate) mod tests {
         assert!(moved > 400.0, "moved {moved}");
         assert_eq!(arena.tick_count(), 120);
         let state = arena.write_net_state(true, &[car], true);
-        assert!(state.len() > 100 && state[0] == 3); // the network state format version
+        assert!(state.len() > 100 && state[0] == 5); // the network state format version
         assert!(arena.save_state().len() > 1000);
     }
 }

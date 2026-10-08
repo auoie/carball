@@ -186,19 +186,35 @@ export function patchedBallGeometry(): BufferGeometry {
   return geometry;
 }
 
-/** Boost pads, instanced (six draw calls for all of them): flat discs, big pads with an orb, small ones with a low
- *  cylinder; dimmed while respawning. */
+/** Seconds a taken pad stays down (VehiclePickup RespawnDelay x RespawnDelayScale 1): the engine's pad cooldown. */
+export const PAD_RESPAWN_SECONDS = { big: 10, small: 4 } as const;
+/** The game's second warm-up stage starts this long before a pad is back (VehiclePickup_Boost_TA AlmostSpawnedTime) */
+export const PAD_ALMOST_SPAWNED_SECONDS = 1;
+
+/** Boost pads, instanced (ten draw calls for all of them): flat discs, big pads with an orb, small ones with a low
+ *  cylinder; dimmed while respawning, with a warm-up as the game's: a ghost of the orb growing over the whole delay
+ *  (its glow eases in: EaseInCirc), and in the last second a brighter, pulsing one (AlmostSpawnedEvent). */
 export class BoostPadsView {
   readonly root = new Group();
-  readonly #pads: readonly { readonly meshes: PadMeshes; readonly slot: number; readonly base: Matrix4; readonly orb: Matrix4 }[];
+  readonly #pads: readonly {
+    readonly meshes: PadMeshes;
+    readonly slot: number;
+    readonly base: Matrix4;
+    readonly orb: Matrix4;
+    readonly delay: number;
+  }[];
   readonly #shown: (boolean | null)[];
+  readonly #scale = new Matrix4();
+  readonly #m = new Matrix4();
 
   constructor(pads: readonly BoostPadState[]) {
     const active = new MeshStandardMaterial({ color: 0xffc533, emissive: 0x996a00, roughness: 0.4 });
     const inactive = new MeshStandardMaterial({ color: 0x4a4130, roughness: 0.9 });
+    const warmup = new MeshBasicMaterial({ color: 0xffb020, transparent: true, opacity: 0.3, depthWrite: false });
+    const almost = new MeshBasicMaterial({ color: 0xffe9a0, transparent: true, opacity: 0.65, depthWrite: false });
     const count = (big: boolean): number => pads.filter((p) => p.big === big).length;
-    const big = padMeshes(new CylinderGeometry(80, 90, 6, 24), new IcosahedronGeometry(45, 1), count(true), active, inactive);
-    const small = padMeshes(new CylinderGeometry(50, 55, 6, 24), new CylinderGeometry(18, 18, 8, 12), count(false), active, inactive);
+    const big = padMeshes(new CylinderGeometry(80, 90, 6, 24), new IcosahedronGeometry(45, 1), count(true), active, inactive, warmup, almost);
+    const small = padMeshes(new CylinderGeometry(50, 55, 6, 24), new CylinderGeometry(18, 18, 8, 12), count(false), active, inactive, warmup, almost);
     const slots = { big: 0, small: 0 };
     this.#pads = pads.map((pad) => {
       const at = toThreeVector(pad.pos);
@@ -207,9 +223,11 @@ export class BoostPadsView {
         slot: pad.big ? slots.big++ : slots.small++,
         base: new Matrix4().makeTranslation(at.x, 3, at.z),
         orb: new Matrix4().makeTranslation(at.x, pad.big ? 70 : 12, at.z),
+        delay: pad.big ? PAD_RESPAWN_SECONDS.big : PAD_RESPAWN_SECONDS.small,
       };
     });
     for (const m of [big, small]) this.root.add(m.active, m.inactive, m.orb);
+    for (const m of [big, small]) this.root.add(m.warmup, m.almost);
     this.#shown = pads.map(() => null);
     this.update(pads);
   }
@@ -217,21 +235,48 @@ export class BoostPadsView {
   update(pads: readonly BoostPadState[]): void {
     pads.forEach((pad, i) => {
       const p = this.#pads[i];
-      if (!p || this.#shown[i] === pad.active) return;
-      this.#shown[i] = pad.active;
-      p.meshes.active.setMatrixAt(p.slot, pad.active ? p.base : HIDDEN);
-      p.meshes.inactive.setMatrixAt(p.slot, pad.active ? HIDDEN : p.base);
-      p.meshes.orb.setMatrixAt(p.slot, pad.active ? p.orb : HIDDEN);
-      for (const mesh of [p.meshes.active, p.meshes.inactive, p.meshes.orb]) mesh.instanceMatrix.needsUpdate = true;
+      if (!p) return;
+      if (this.#shown[i] !== pad.active) {
+        this.#shown[i] = pad.active;
+        p.meshes.active.setMatrixAt(p.slot, pad.active ? p.base : HIDDEN);
+        p.meshes.inactive.setMatrixAt(p.slot, pad.active ? HIDDEN : p.base);
+        p.meshes.orb.setMatrixAt(p.slot, pad.active ? p.orb : HIDDEN);
+        for (const mesh of [p.meshes.active, p.meshes.inactive, p.meshes.orb]) mesh.instanceMatrix.needsUpdate = true;
+        if (pad.active) {
+          p.meshes.warmup.setMatrixAt(p.slot, HIDDEN);
+          p.meshes.almost.setMatrixAt(p.slot, HIDDEN);
+          p.meshes.warmup.instanceMatrix.needsUpdate = p.meshes.almost.instanceMatrix.needsUpdate = true;
+        }
+      }
+      if (pad.active) return;
+      // The warm-up: how far through the delay (the game's normalized time), the glow easing in
+      const t = Math.min(1, Math.max(0, 1 - pad.cooldown / p.delay));
+      const glow = 1 - Math.sqrt(1 - t * t);
+      this.#setScaled(p.meshes.warmup, p.slot, p.orb, 0.2 + 0.8 * glow);
+      if (pad.cooldown <= PAD_ALMOST_SPAWNED_SECONDS) {
+        const pulse = Math.sin((PAD_ALMOST_SPAWNED_SECONDS - pad.cooldown) * 2 * Math.PI * 3); // three pulses
+        this.#setScaled(p.meshes.almost, p.slot, p.orb, 1 + 0.12 * pulse);
+      } else {
+        p.meshes.almost.setMatrixAt(p.slot, HIDDEN);
+        p.meshes.almost.instanceMatrix.needsUpdate = true;
+      }
     });
+  }
+
+  #setScaled(mesh: InstancedMesh, slot: number, at: Matrix4, scale: number): void {
+    mesh.setMatrixAt(slot, this.#m.copy(at).multiply(this.#scale.makeScale(scale, scale, scale)));
+    mesh.instanceMatrix.needsUpdate = true;
   }
 }
 
-/** One size of pad: its disc lit and dimmed, and its orb (only shown while lit). Unused instances are scaled to 0. */
+/** One size of pad: its disc lit and dimmed, its orb (only shown while lit) and the orb's warm-up ghosts (while down).
+ *  Unused instances are scaled to 0. */
 interface PadMeshes {
   readonly active: InstancedMesh;
   readonly inactive: InstancedMesh;
   readonly orb: InstancedMesh;
+  readonly warmup: InstancedMesh;
+  readonly almost: InstancedMesh;
 }
 const HIDDEN = new Matrix4().makeScale(0, 0, 0);
 
@@ -241,11 +286,20 @@ function padMeshes(
   count: number,
   active: MeshStandardMaterial,
   inactive: MeshStandardMaterial,
+  warmup: MeshBasicMaterial,
+  almost: MeshBasicMaterial,
 ): PadMeshes {
-  const make = (geometry: BufferGeometry, material: MeshStandardMaterial): InstancedMesh => {
+  const make = (geometry: BufferGeometry, material: MeshStandardMaterial | MeshBasicMaterial, hidden = false): InstancedMesh => {
     const mesh = new InstancedMesh(geometry, material, count);
     mesh.frustumCulled = false; // (spread over the whole field)
+    if (hidden) for (let i = 0; i < count; i++) mesh.setMatrixAt(i, HIDDEN);
     return mesh;
   };
-  return { active: make(base, active), inactive: make(base, inactive), orb: make(orb, active) };
+  return {
+    active: make(base, active),
+    inactive: make(base, inactive),
+    orb: make(orb, active),
+    warmup: make(orb, warmup, true),
+    almost: make(orb, almost, true),
+  };
 }

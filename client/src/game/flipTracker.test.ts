@@ -110,7 +110,33 @@ describe("FlipTracker against the engine", () => {
     const world = World.create(engine);
     const [car, other] = [world.addCar(0), world.addCar(1)];
     world.resetKickoff(1);
-    // The other car parked on the floor, away from the ball; this one dropped onto its roof, wheels down
+    // The other car parked on the floor, away from the ball; this one in the air above it double jumps (its jump spent),
+    // then comes down onto its roof, wheels down
+    world.setCar(other, { pos: vec3(2000, 2000, 17), vel: ZERO, angVel: ZERO, rot: UPRIGHT, boost: 0 });
+    world.setCar(car, { pos: vec3(2000, 2000, 300), vel: ZERO, angVel: ZERO, rot: UPRIGHT, boost: 0 });
+    const tracker = new FlipTracker();
+    const resets: RbActor[] = [];
+    world.step();
+    world.setControls(car, { ...NO_CONTROLS, jump: true });
+    world.step();
+    world.setControls(car, NO_CONTROLS);
+    expect(world.car(car).doubleJumped).toBe(true);
+    for (let i = 0; i < 300; i++) {
+      world.step();
+      const tick = tracker.tick(world.car(car), TICK);
+      if (tick.reset) resets.push(tick.reset);
+    }
+    // Resting on it, all four wheels on that car; one reset, off that car
+    expect(world.car(car).rbActor).toEqual({ kind: "car", id: other });
+    expect(world.car(car).wheelGround).toEqual(["car", "car", "car", "car"]);
+    expect(resets).toEqual([{ kind: "car", id: other }]);
+    world.dispose();
+  });
+
+  it("dropped onto another car without having jumped: the dodge comes back, but it isn't signalled (as the game)", () => {
+    const world = World.create(engine);
+    const [car, other] = [world.addCar(0), world.addCar(1)];
+    world.resetKickoff(1);
     world.setCar(other, { pos: vec3(2000, 2000, 17), vel: ZERO, angVel: ZERO, rot: UPRIGHT, boost: 0 });
     world.setCar(car, { pos: vec3(2000, 2000, 300), vel: ZERO, angVel: ZERO, rot: UPRIGHT, boost: 0 });
     const tracker = new FlipTracker();
@@ -120,10 +146,8 @@ describe("FlipTracker against the engine", () => {
       const tick = tracker.tick(world.car(car), TICK);
       if (tick.reset) resets.push(tick.reset);
     }
-    // Resting on it, all four wheels on that car; one reset, off that car
     expect(world.car(car).rbActor).toEqual({ kind: "car", id: other });
-    expect(world.car(car).wheelGround).toEqual(["car", "car", "car", "car"]);
-    expect(resets).toEqual([{ kind: "car", id: other }]);
+    expect(resets).toEqual([]);
     world.dispose();
   });
 

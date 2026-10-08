@@ -117,8 +117,6 @@ void Car::Demolish(float respawnDelay) {
 void Car::Respawn(GameMode gameMode, int seed, float boostAmount) {
 	using namespace RLConst;
 
-	CarState newState = CarState();
-
 	int spawnPosIndex = Math::RandInt(0, CAR_RESPAWN_LOCATION_AMOUNT, seed);
 
 	const CarSpawnPos* spawnPosArray;
@@ -135,9 +133,14 @@ void Car::Respawn(GameMode gameMode, int seed, float boostAmount) {
 
 	CarSpawnPos spawnPos = spawnPosArray[spawnPosIndex];
 
-	newState.pos = Vec(spawnPos.x, spawnPos.y * (team == Team::BLUE ? 1 : -1), CAR_RESPAWN_Z);
-	newState.rotMat = Angle(spawnPos.yawAng + (team == Team::BLUE ? 0 : M_PI), 0.f, 0.f).ToRotMat();
+	_RespawnAt(Vec(spawnPos.x, spawnPos.y * (team == Team::BLUE ? 1 : -1), CAR_RESPAWN_Z),
+		spawnPos.yawAng + (team == Team::BLUE ? 0 : M_PI), boostAmount);
+}
 
+void Car::_RespawnAt(Vec pos, float yaw, float boostAmount) {
+	CarState newState = CarState();
+	newState.pos = pos;
+	newState.rotMat = Angle(yaw, 0.f, 0.f).ToRotMat();
 	newState.boost = boostAmount;
 	this->SetState(newState);
 }
@@ -168,9 +171,20 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
 	{ // Update simulation state
 		if (_internalState.isDemoed) {
 			_internalState.demoRespawnTimer = RS_MAX(_internalState.demoRespawnTimer - tickTime, 0);
-			if (_internalState.demoRespawnTimer == 0)
-				Respawn(gameMode, -1, mutatorConfig.carSpawnBoostAmount);
+			if (_internalState.demoRespawnTimer == 0) {
+				// RL PATCH: at the spot the arena chose (Arena::_UpdateDemolished: deterministic, not on another car)
+				if (_respawnSpot.valid)
+					_RespawnAt(_respawnSpot.pos, _respawnSpot.yaw, mutatorConfig.carSpawnBoostAmount);
+				else
+					Respawn(gameMode, -1, mutatorConfig.carSpawnBoostAmount);
+				_respawnSpot.valid = false;
+			}
+		}
 
+		// RL PATCH: a car respawned this tick is simulated from this tick on (the game sets it on the ground at once;
+		// the frames before its body exists are its asset loading, a machine-dependent latency; static analysis).
+		// RocketSim kept it frozen for the respawn tick
+		if (_internalState.isDemoed) {
 			// Disable rigidbody simulation
 			_rigidBody.m_activationState1 = DISABLE_SIMULATION;
 			_rigidBody.m_collisionFlags |= btCollisionObject::CF_NO_CONTACT_RESPONSE;
@@ -219,6 +233,7 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
 		_internalState.isFlipping = false;
 	}
 	_UpdateFlipTime(tickTime);
+	_UpdateAutoFlipTorque(tickTime);
 
 	// RL PATCH: auto-roll as the game gates it (Car_TA pre-physics FUN_140f1c600): throttle held, no dodge active, fewer
 	// than all wheels on world geometry (wheels on the ball or a car don't count), and at least one, or else the body
@@ -265,6 +280,19 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
 		_internalState.wheelsWithContact[i] = inContact;
 		numWheelsInContact += inContact;
 	}
+	// RL PATCH: a landing (the game's OnGroundChanged) clears hasJumped (bJumped): see _UpdateJump. If the jump or
+	// dodge had been used and at most one wheel is on world geometry (the rest on the ball or a car: IsOnRBActor), it
+	// counts as a flip reset (UpdateDodgeAvailable: DodgesRefreshedCounter, which drives the game's indicator)
+	if (numWheelsInContact >= 3 && !_internalState.isOnGround) {
+		if (_internalState.hasJumped || _internalState.hasDoubleJumped || _internalState.hasFlipped) {
+			int wheelsOnWorld = 0;
+			for (int i = 0; i < _bulletVehicle.m_wheelInfo.size(); i++)
+				wheelsOnWorld += _bulletVehicle.m_wheelInfo[i].m_raycastInfo.m_isInContact && _bulletVehicle.m_wheelInfo[i].m_isInContactWithWorld;
+			if (wheelsOnWorld <= 1)
+				_internalState.flipResets++;
+		}
+		_internalState.hasJumped = false;
+	}
 	_internalState.isOnGround = numWheelsInContact >= 3;
 
 	forwardSpeed_UU = _bulletVehicle.getForwardSpeed() * BT_TO_UU;
@@ -297,8 +325,10 @@ void Car::_PostTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig
 	}
 
 	// Update car contact cooldown timer
-	if (_internalState.carContact.cooldownTimer > 0)
-		_internalState.carContact.cooldownTimer = RS_MAX(_internalState.carContact.cooldownTimer - tickTime, 0);
+	// RL PATCH: it runs on to a tick below 0, so the arena can tell a cooldown exactly over (still blocking: the game's
+	// test is strict) from one over by a tick (Arena::_BtCallback_OnCarCarCollision)
+	if (_internalState.carContact.cooldownTimer > -tickTime)
+		_internalState.carContact.cooldownTimer = RS_MAX(_internalState.carContact.cooldownTimer - tickTime, -tickTime);
 
 	_internalState.lastControls = controls;
 }
@@ -730,28 +760,31 @@ void Car::_UpdateBoost(float tickTime, const MutatorConfig& mutatorConfig, float
 
 void Car::_UpdateJump(float tickTime, const MutatorConfig& mutatorConfig, bool jumpPressed) {
 	using namespace RLConst;
-	if (_internalState.isOnGround && !_internalState.isJumping) {
-		if (_internalState.hasJumped && _internalState.jumpTime < JUMP_MIN_TIME + JUMP_RESET_TIME_PAD) {
-			// Don't reset the jump just yet, we might still be leaving the ground
-			// This fixes the bug where jump is reset before we actually leave the ground after a minimum-time jump
-			// TODO: RL does something similar to this time-pad, but not exactly the same
-		} else {
-			_internalState.hasJumped = false;
-			_internalState.jumpTime = 0;
-		}
-	}
+
+	// RL PATCH: the game's jump rules (CarComponent_Jump_TA, static analysis GA-2): a ground jump needs !bJumped
+	// (hasJumped), which clears on a real landing (OnGroundChanged: _PreTickUpdate) or once the jump has been over for
+	// JumpLeaveGroundTime with the car still on the ground; releasing the button (bDeactivate) ends the jump once past
+	// its minimum time even if it is pressed again. RocketSim started a new ground jump on any press with the wheels
+	// down (they touch for up to 6 ticks after a short jump: a second jump) and followed the current button. Live
+	// (`ga_jump`): jump 3 ticks, release 1, press again: 304 uu/s off, then 12 per tick
+	if (_internalState.isOnGround && !_internalState.isJumping && _internalState.hasJumped &&
+	    _internalState.jumpTime >= JUMP_LEAVE_GROUND_TIME)
+		_internalState.hasJumped = false;
 
 	if (_internalState.isJumping) {
-		if (_internalState.jumpTime < JUMP_MIN_TIME || (controls.jump && _internalState.jumpTime < JUMP_MAX_TIME)) {
+		_internalState.jumpReleased |= !controls.jump;
+		if (_internalState.jumpTime < JUMP_MIN_TIME || (!_internalState.jumpReleased && _internalState.jumpTime < JUMP_MAX_TIME)) {
 			// Continue jump
 			_internalState.isJumping = true;
 		} else {
 			// We can't keep jumping any longer
 			_internalState.isJumping = false;
+			_internalState.jumpTime = 0; // (from now on the time since the jump ended)
 		}
-	} else if (_internalState.isOnGround && jumpPressed) {
+	} else if (_internalState.isOnGround && jumpPressed && !_internalState.hasJumped) {
 		// Start jumping
 		_internalState.isJumping = true;
+		_internalState.jumpReleased = false;
 		_internalState.jumpTime = 0;
 		btVector3 jumpStartForce = GetUpDir() * mutatorConfig.jumpImmediateForce * UU_TO_BT * CAR_MASS_BT;
 		_rigidBody.applyCentralImpulse(jumpStartForce);
@@ -818,7 +851,9 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
 		}
 	}
 
-	doAirControl &= !_internalState.isAutoFlipping;
+	// RL PATCH: air control stays on during an auto-flip (the AirControl component is active with no wheel touching;
+	// static analysis GA-3): its damping holds the flip at 5.29 rad/s, not 5.5, and the player's input acts. Live
+	// (`ga_autoflip`): 0.21 rad/s per tick off
 	doAirControl &= updateAirControl;
 	if (doAirControl) {
 
@@ -914,13 +949,16 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
 					{
 						float forwardSpeedRatio = abs(forwardSpeed_UU) / CAR_MAX_SPEED;
 
+						// RL PATCH: as the game's GetDodgeImpulse (FUN_140eef310, static analysis GA-7): the direction
+						// normalised, then each component of 0.1 or less zeroed. RocketSim zeroed the direction when both
+						// inputs were under 0.1 before normalising, so yaw 0.95 + roll -1 (side -0.05) had no impulse; the
+						// game's is a full side dodge. Live (`ga_jump`): 500 uu/s off
 						btVector3 dodgeDir = btVector3(-controls.pitch, controls.yaw + controls.roll, 0);
-
-						if (abs(controls.yaw + controls.roll) < 0.1f && abs(controls.pitch) < 0.1f) {
-							dodgeDir = { 0, 0, 0 };
-						} else {
-							dodgeDir = dodgeDir.safeNormalized();
-						}
+						float dodgeLengthSq = dodgeDir.length2();
+						dodgeDir = (dodgeLengthSq >= 1e-8f) ? dodgeDir / sqrtf(dodgeLengthSq) : btVector3(0, 0, 0);
+						for (int k = 0; k < 2; k++)
+							if (abs(dodgeDir[k]) <= 0.1f)
+								dodgeDir[k] = 0;
 
 						{
 							// RL PATCH: CarComponent_Dodge_TA.SetDodgeSettings:
@@ -1009,29 +1047,40 @@ void Car::_UpdateFlipTime(float tickTime) {
 void Car::_UpdateAutoFlip(float tickTime, const MutatorConfig& mutatorConfig, bool jumpPressed) {
 	using namespace RLConst;
 
-	// TODO: Improve accuracy
-
+	// RL PATCH: the game's FlipCar component (static analysis GA-3): it activates on a jump press with the dodge
+	// inactive and no auto-flip running, when the body touches the world with a contact normal of z > 0.707 and the
+	// car's up within 15 degrees of the normal's opposite (CanActivate); it ends when the car is on the ground (3+
+	// wheels) or by its timer, CAR_AUTOFLIP_TIME x |world roll| / pi (live: 48 ticks on a flat roof, 40 roof down on
+	// the side curve at world roll 150). RocketSim activated on |world roll| > 2.8 rad (no flip roof down on a curve,
+	// a flip at 160-165 degrees on flat ground, where the game double jumps), could restart mid-flip and ran the timer
+	// only. Live (`ga_autoflip`, roof down on the 30-degree side curve): 110 uu/s off
 	if (
 		jumpPressed &&
+		!_internalState.isAutoFlipping && !_internalState.isFlipping &&
 		_internalState.worldContact.hasContact &&
-		_internalState.worldContact.contactNormal.z > CAR_AUTOFLIP_NORMZ_THRESH
+		_internalState.worldContact.contactNormal.z > CAR_AUTOFLIP_NORMZ_THRESH &&
+		_internalState.worldContact.contactNormal.Dot(GetUpDir()) < CAR_AUTOFLIP_UP_DOT_THRESH
 		) {
 
 		// TODO: Slow :(
 		Angle angles = Angle::FromRotMat(_internalState.rotMat);
 
 		float absRoll = abs(angles.roll);
-		if (absRoll > CAR_AUTOFLIP_ROLL_THRESH) {
-			_internalState.autoFlipTimer = CAR_AUTOFLIP_TIME * (absRoll / M_PI);
-			_internalState.autoFlipTorqueScale = (angles.roll > 0) ? 1 : -1;
-			_internalState.isAutoFlipping = true;
+		_internalState.autoFlipTimer = CAR_AUTOFLIP_TIME * (absRoll / M_PI);
+		_internalState.autoFlipTorqueScale = (angles.roll > 0) ? 1 : -1;
+		_internalState.isAutoFlipping = true;
 
-			_rigidBody.applyCentralImpulse(-GetUpDir() * CAR_AUTOFLIP_IMPULSE * UU_TO_BT * CAR_MASS_BT);
-		}
+		_rigidBody.applyCentralImpulse(-GetUpDir() * CAR_AUTOFLIP_IMPULSE * UU_TO_BT * CAR_MASS_BT);
 	}
+}
+
+// RL PATCH: the FlipCar component's force (an angular-velocity change), applied after the other components' (its
+// ApplyForces runs last: AirControl first, so air control's damping works on the angular velocity from before it)
+void Car::_UpdateAutoFlipTorque(float tickTime) {
+	using namespace RLConst;
 
 	if (_internalState.isAutoFlipping) {
-		if (_internalState.autoFlipTimer <= 0) {
+		if (_internalState.autoFlipTimer <= 0 || _internalState.isOnGround) {
 			_internalState.isAutoFlipping = false;
 			_internalState.autoFlipTimer = 0;
 		} else {

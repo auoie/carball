@@ -13,7 +13,9 @@
 #include <vector>
 
 namespace NetState {
-	constexpr uint8_t VERSION = 3; // 2: kickoff countdown; 3: the wheels' previous contacts
+	// 2: kickoff countdown; 3: the wheels' previous contacts; 4: the jump's release; 5: respawn spot selection, flip
+	// resets, the ball exploded after a goal
+	constexpr uint8_t VERSION = 5;
 
 	struct WriteOptions {
 		bool ball = true;
@@ -24,6 +26,6 @@ namespace NetState {
 	void Write(RocketSim::Arena* arena, RocketSim::DataStreamOut& out, const WriteOptions& options);
 
 	// Applies a state written by Write(). Every included car must exist in the arena. Returns false, leaving the
-	// arena unchanged, when the data is malformed or names an unknown car.
-	bool Read(RocketSim::Arena* arena, RocketSim::DataStreamIn& in);
+	// arena unchanged, when the data is malformed or names an unknown car. `carIds`, if given, gets the cars it held.
+	bool Read(RocketSim::Arena* arena, RocketSim::DataStreamIn& in, std::vector<uint32_t>* carIds = nullptr);
 }

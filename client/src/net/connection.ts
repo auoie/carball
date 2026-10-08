@@ -43,6 +43,7 @@ type Welcome = Extract<ControlMessage, { type: "welcome" }>;
 export class Connection {
   readonly #transport: WebTransport;
   readonly #datagrams: WritableStreamDefaultWriter<Uint8Array>;
+  #control: WritableStreamDefaultWriter<Uint8Array> | null = null; // the control stream (after the hello)
   #closed = false;
   /** Reliable messages after the welcome (world reloads, events) */
   onControl: (m: ControlMessage) => void = () => undefined;
@@ -66,6 +67,7 @@ export class Connection {
     const stream = await transport.createBidirectionalStream();
     const writer = stream.writable.getWriter();
     await writer.write(encodeControl({ type: "hello", version: PROTOCOL_VERSION, ...preferences }));
+    connection.#control = writer;
 
     const welcome = await new Promise<Welcome>((resolve, reject) => {
       let first = true;
@@ -143,6 +145,12 @@ export class Connection {
     const bytes = encodeDatagram({ type: "inputs", timestamp: timestamp >>> 0, firstFrame, frames });
     // Unreliable: if the browser drops it (congestion), the frames go again in the next packets
     this.#datagrams.write(bytes).catch(() => undefined);
+  }
+
+  /** After a hitch: the server starts its estimate of this client's packet timing over (reliable) */
+  resetInputBuffer(): void {
+    if (this.#closed || !this.#control) return;
+    this.#control.write(encodeControl({ type: "resetInputBuffer" })).catch(() => undefined);
   }
 
   close(): void {

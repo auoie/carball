@@ -92,8 +92,10 @@ void btQuantizedBvh::setQuantizationValues(const btVector3& bvhAabbMin, const bt
 			v = unQuantize(vecIn);
 			m_bvhAabbMin.setMin(v - clampValue);
 		}
-		aabbSize = m_bvhAabbMax - m_bvhAabbMin;
-		m_bvhQuantization = btVector3(btScalar(65533.0), btScalar(65533.0), btScalar(65533.0)) / aabbSize;
+		// RL PATCH: no new factor here, as the game's build (Bullet 2.82, setQuantizationValues 0x14027e180): the max
+		// is quantized with the factor from before the min was lowered, wraps past 65535 and so isn't raised, which
+		// gives the range [min - 2, max + 1] BU (3.24: [min - 2, max + 2 + e]) and so the game's node boxes and
+		// traversal order (static analysis S1)
 		{
 			quantize(vecIn, m_bvhAabbMax, true);
 			v = unQuantize(vecIn);

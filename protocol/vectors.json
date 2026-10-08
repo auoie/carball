@@ -17,6 +17,13 @@
     {
       "channel": "control",
       "message": {
+        "type": "resetInputBuffer"
+      },
+      "hex": "010002"
+    },
+    {
+      "channel": "control",
+      "message": {
         "type": "welcome",
         "version": 1,
         "carId": 3,

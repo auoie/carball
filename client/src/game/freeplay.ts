@@ -4,7 +4,7 @@ import { Quaternion, Vector3 } from "three";
 import { Interpolated } from "./interpolated";
 import { PlayerCamera } from "../camera/rlCamera";
 import type { BodyState, CarState, World } from "../engine/world";
-import type { Hud } from "../hud";
+import { type Hud, respawnHud } from "../hud";
 import type { InputDevices } from "../input/devices";
 import {
   AirPitchSafety,
@@ -219,6 +219,7 @@ export class Freeplay {
       frameSeconds,
     );
     const ball = this.#ball.position(alpha, this.#pos);
+    this.#ballView.root.visible = !this.#world.ballExploded(); // (a goal explodes it until the reset)
     this.#ballView.update(ball, this.#ball.rotation(alpha, this.#rot));
     this.#arena.update(ball, frameSeconds);
     const pads = this.#world.boostPads();
@@ -251,6 +252,7 @@ export class Freeplay {
       net: null,
       flip: this.settings().options.flipIndicator ? this.#dodge : null,
       flipReset: this.#flipReset,
+      respawn: respawnHud(car),
     });
     if (this.#flipReset) this.#audio.flipReset();
     this.#flipReset = false;

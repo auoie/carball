@@ -120,7 +120,7 @@ static void WriteCar(Arena* arena, DataStreamOut& out, Car* car) {
 		c.jump, c.boost, c.handbrake, c.airPitchSafety,
 		s.lastControls.jump, s.lastControls.boost, s.lastControls.handbrake, s.lastControls.airPitchSafety,
 		s.wheelCarry.wheels[0].worldContact, s.wheelCarry.wheels[1].worldContact, s.wheelCarry.wheels[2].worldContact,
-		s.wheelCarry.wheels[3].worldContact,
+		s.wheelCarry.wheels[3].worldContact, s.jumpReleased, s.prespawnSet,
 	};
 	uint32_t flags = 0;
 	for (int i = 0; i < (int)(sizeof(bits) / sizeof(bits[0])); i++)
@@ -148,6 +148,14 @@ static void WriteCar(Arena* arena, DataStreamOut& out, Car* car) {
 		out.Write(Age(arena, s.ballHitInfo.tickCountWhenHit));
 		out.Write(Age(arena, s.ballHitInfo.tickCountWhenExtraImpulseApplied));
 	}
+	out.Write(s.demoSpawnSelectLast);
+	out.Write(s.demoSpawnPreference);
+	out.Write(s.demoSpawnIndex);
+	out.Write(s.flipResets);
+	if (s.prespawnSet) {
+		WriteVec(out, s.prespawnPos);
+		out.Write(s.prespawnYaw);
+	}
 }
 
 static void ReadCar(Arena* arena, DataStreamIn& in, CarData& d) {
@@ -163,7 +171,7 @@ static void ReadCar(Arena* arena, DataStreamIn& in, CarData& d) {
 		&c.jump, &c.boost, &c.handbrake, &c.airPitchSafety,
 		&s.lastControls.jump, &s.lastControls.boost, &s.lastControls.handbrake, &s.lastControls.airPitchSafety,
 		&s.wheelCarry.wheels[0].worldContact, &s.wheelCarry.wheels[1].worldContact, &s.wheelCarry.wheels[2].worldContact,
-		&s.wheelCarry.wheels[3].worldContact,
+		&s.wheelCarry.wheels[3].worldContact, &s.jumpReleased, &s.prespawnSet,
 	};
 	for (int i = 0; i < (int)(sizeof(bits) / sizeof(bits[0])); i++)
 		*bits[i] = (flags >> i) & 1;
@@ -188,6 +196,14 @@ static void ReadCar(Arena* arena, DataStreamIn& in, CarData& d) {
 		ReadVec(in, s.ballHitInfo.extraHitVel);
 		s.ballHitInfo.tickCountWhenHit = FromAge(arena, in.Read<int64_t>());
 		s.ballHitInfo.tickCountWhenExtraImpulseApplied = FromAge(arena, in.Read<int64_t>());
+	}
+	in.Read(s.demoSpawnSelectLast);
+	in.Read(s.demoSpawnPreference);
+	in.Read(s.demoSpawnIndex);
+	in.Read(s.flipResets);
+	if (s.prespawnSet) {
+		ReadVec(in, s.prespawnPos);
+		in.Read(s.prespawnYaw);
 	}
 }
 
@@ -236,6 +252,7 @@ void Write(Arena* arena, DataStreamOut& out, const WriteOptions& options) {
 		out.Write<int32_t>(s.dsInfo.chargeLevel);
 		out.Write<uint8_t>(s.dsInfo.hasDamaged);
 		out.Write(Age(arena, s.dsInfo.lastDamageTick));
+		out.Write<uint8_t>(s.isExploded);
 	}
 
 	out.Write<uint8_t>((uint8_t)options.carIds.size());
@@ -255,7 +272,7 @@ void Write(Arena* arena, DataStreamOut& out, const WriteOptions& options) {
 	}
 }
 
-bool Read(Arena* arena, DataStreamIn& in) {
+bool Read(Arena* arena, DataStreamIn& in, std::vector<uint32_t>* carIds) {
 	if (in.Read<uint8_t>() != VERSION)
 		return false;
 	uint8_t has = in.Read<uint8_t>();
@@ -271,6 +288,7 @@ bool Read(Arena* arena, DataStreamIn& in) {
 		ballState.dsInfo.chargeLevel = in.Read<int32_t>();
 		ballState.dsInfo.hasDamaged = in.Read<uint8_t>() != 0;
 		ballState.dsInfo.lastDamageTick = FromAge(arena, in.Read<int64_t>());
+		ballState.isExploded = in.Read<uint8_t>() != 0;
 	}
 
 	std::vector<CarData> cars(in.Read<uint8_t>());
@@ -306,9 +324,15 @@ bool Read(Arena* arena, DataStreamIn& in) {
 		ballState.angVel = ball->_rigidBody.getAngularVelocity();
 		ball->_internalState = ballState;
 		ball->_velocityImpulseCache = { 0, 0, 0 };
+		ball->_ApplyExploded();
 	}
 	for (const CarData& d : cars)
 		ApplyCar(d, arena->GetCar(d.id));
+	if (carIds) {
+		carIds->clear();
+		for (const CarData& d : cars)
+			carIds->push_back(d.id);
+	}
 	for (size_t i = 0; i < pads.size(); i++) {
 		BoostPadState s = arena->GetBoostPads()[i]->GetState();
 		s.isActive = pads[i].active;

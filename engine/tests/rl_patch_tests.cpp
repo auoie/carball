@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstring>
 #include <functional>
+#include <vector>
 #include <string>
 
 using namespace RocketSim;
@@ -239,6 +240,132 @@ static void TestAutoFlip(Arena* arena, Car* car) {
 	car->controls.jump = false;
 }
 
+static void TestAutoFlipContactNormal(Arena* arena, Car* car) {
+	puts("auto-flip: needs the car's up within 15 degrees of the contact normal's opposite (FlipCar CanActivate)");
+	// Roof down on the side wall's 30-degree curve (live ga_autoflip: the game flips; RocketSim's |roll| > 2.8 didn't)
+	Vec n = { -0.5f, 0, 0.8660254f };
+	car->SetState(CarAt({ 3946, 0, 73 }, { 0, 1, 0 }, n * -1));
+	car->controls = CarControls();
+	arena->Step();
+	CHECK(car->_internalState.worldContact.hasContact, "roof down on the curve: no world contact");
+	car->controls.jump = true;
+	arena->Step();
+	CHECK(car->_internalState.isAutoFlipping, "roof down on the curve: no auto-flip");
+	// 162 degrees on the floor: 18 degrees off, so no auto-flip (the game double jumps; RocketSim flipped above 160.4)
+	float r = 162 * DEG;
+	car->SetState(CarAt({ 0, 0, 52 }, { 0, 1, 0 }, { sinf(r), 0, cosf(r) }));
+	car->controls = CarControls();
+	arena->Step();
+	CHECK(car->_internalState.worldContact.hasContact, "162 degrees: no world contact");
+	car->controls.jump = true;
+	arena->Step();
+	CHECK(!car->_internalState.isAutoFlipping && car->_internalState.hasDoubleJumped,
+		"162 degrees: expected a double jump, not an auto-flip (auto-flipping %d)", (int)car->_internalState.isAutoFlipping);
+	car->controls.jump = false;
+}
+
+static void TestBoostSetsThrottle(Arena* arena, Car* car) {
+	puts("boost on the ground: the input throttle becomes 1 for everything (Car_TA.SetVehicleInput), on walls too");
+	auto run = [&](CarState s, float throttle, int ticks) {
+		s.boost = 100;
+		CarControls c; c.throttle = throttle; c.boost = true;
+		return Run(arena, car, s, c, ticks);
+	};
+	CarState floor = CarAt({ 0, -2500, 17.01f }, { 0, 1, 0 }, { 0, 0, 1 });
+	CHECK(SameMotion(run(floor, 0, 60), run(floor, 1, 60)), "boost only on the floor should drive as boost + throttle");
+	// On the side wall: without the override the wheels lose the sticky grip (x0.1 on a wall) and the car slides
+	CarState wall = CarAt({ 4079, 0, 600 }, { 0, 1, 0 }, { -1, 0, 0 });
+	CHECK(SameMotion(run(wall, 0, 120), run(wall, 1, 120)), "boost only on the side wall should hold as boost + throttle");
+}
+
+static void TestThrottleDeadzone(Arena* arena, Car* car) {
+	puts("throttle deadzone: |throttle| <= 0.01 coasts (VehicleSim), so a throttle byte of +-1 does");
+	CarState moving = CarAt({ 0, -2500, 17.01f }, { 0, 1, 0 }, { 0, 0, 1 }, { 0, 1000, 0 });
+	CarControls coast, plus1, minus1, plus2;
+	plus1.throttle = 1 / 127.f; minus1.throttle = -1 / 127.f; plus2.throttle = 2 / 127.f;
+	CarState ref = Run(arena, car, moving, coast, 40);
+	CHECK(SameMotion(ref, Run(arena, car, moving, plus1, 40)), "throttle byte +1 should coast");
+	CHECK(SameMotion(ref, Run(arena, car, moving, minus1, 40)), "throttle byte -1 should coast");
+	CHECK(!SameMotion(ref, Run(arena, car, moving, plus2, 40)), "throttle byte +2 should drive");
+}
+
+static void TestJumpRepress(Arena* arena, Car* car) {
+	puts("jump: no new ground jump before a landing (bJumped); a release ends the jump even if pressed again");
+	CarState floor = CarAt({ 0, -2500, 17.01f }, { 0, 1, 0 }, { 0, 0, 1 });
+	auto run = [&](std::vector<int> pattern) { // n > 0: jump held n ticks, n < 0: released -n ticks
+		car->SetState(floor);
+		car->controls = CarControls();
+		arena->Step(30);
+		for (int n : pattern) {
+			car->controls.jump = n > 0;
+			arena->Step(abs(n));
+		}
+		car->controls.jump = false;
+		return car->GetState();
+	};
+	// (the wheels still touch for a few ticks after a short jump: RocketSim jumped again)
+	CHECK(SameMotion(run({ 3, -21 }), run({ 3, -1, 20 })), "a second press with the wheels still down jumped again");
+	CHECK(SameMotion(run({ 1, -21 }), run({ 1, -1, 20 })), "a press after a release extended the jump");
+	CarState again = run({ 3, -150, 3 });
+	CHECK(again.vel.z > 200, "after landing a press should jump again (vz %.1f)", again.vel.z);
+}
+
+static void TestDodgeDirectionNormalised(Arena* arena, Car* car) {
+	puts("dodge impulse: the direction normalised, then components of 0.1 or less zeroed (yaw 0.95 + roll -1 dodges sideways)");
+	CarControls c; c.yaw = 0.95f; c.roll = -1;
+	FlipAngVels(arena, car, c, [](CarControls&, int) {}, 0);
+	CarState s = car->GetState();
+	CHECK(car->_internalState.isFlipping && fabsf(s.vel.Dot(s.rotMat.right)) > 400,
+		"expected a full side dodge (sideways %.1f uu/s)", s.vel.Dot(s.rotMat.right));
+}
+
+static void TestAirThrottleBoostLag(Arena* arena, Car* car) {
+	puts("air throttle: follows the boost state of the tick before (AirControl runs before Boost)");
+	CarState s = CarAt({ 0, 0, 1500 }, { 1, 0, 0 }, { 0, 0, 1 });
+	s.boost = 100;
+	car->SetState(s);
+	car->controls = CarControls();
+	arena->Step(2);
+	auto accel = [&](bool boost) {
+		float v0 = car->GetState().vel.x;
+		car->controls.boost = boost;
+		arena->Step();
+		return (car->GetState().vel.x - v0) * 120;
+	};
+	float press = accel(true), held = accel(true);
+	for (int i = 0; i < 20; i++) accel(true); // (past the boost's minimum time)
+	float release = accel(false), after = accel(false);
+	CHECK(Near(press, 2975.f / 3, 1), "press tick %.2f uu/s^2, expected 991.67 (the boost alone)", press);
+	CHECK(Near(held, 3175.f / 3, 1), "held %.2f uu/s^2, expected 1058.33", held);
+	CHECK(Near(release, 200.f / 3, 1), "release tick %.2f uu/s^2, expected 66.67 (the air throttle alone)", release);
+	CHECK(Near(after, 0, 0.5f), "after the release %.2f uu/s^2, expected 0", after);
+	car->controls.boost = false;
+}
+
+static void TestFlipResetCounter(Arena* arena, Car* car) {
+	puts("flip reset counter: a landing after a jump with 3+ wheels, at most one on world geometry (DodgesRefreshedCounter)");
+	BallState b;
+	b.pos = { 0, 0, 92.75f };
+	arena->ball->SetState(b);
+	CarState s = CarAt({ 0, 0, 92.75f * 2 + 40 }, { 1, 0, 0 }, { 0, 0, 1 });
+	s.hasJumped = true;
+	s.isOnGround = false;
+	car->SetState(s);
+	car->controls = CarControls();
+	for (int i = 0; i < 60 && car->GetState().flipResets == 0; i++)
+		arena->Step();
+	CHECK(car->GetState().flipResets == 1, "landing on the ball after a jump: %d flip resets, expected 1", car->GetState().flipResets);
+	// The floor gives the jump back too, but isn't a flip reset
+	s = CarAt({ 0, -2000, 60 }, { 1, 0, 0 }, { 0, 0, 1 });
+	s.hasJumped = true;
+	s.isOnGround = false;
+	car->SetState(s);
+	arena->Step(60);
+	CHECK(car->GetState().isOnGround && car->GetState().flipResets == 0, "landing on the floor: %d flip resets, expected 0",
+		car->GetState().flipResets);
+	arena->ball->SetState(BallState());
+}
+
 // --------------------------------------------------------------------------------------------
 struct BumpLog { int bumps = 0, demos = 0; };
 
@@ -280,6 +407,41 @@ static void TestBumpCone(Arena* arena, Car* attacker, Car* victim) {
 		CarAt({ 20, 130, 17 }, { 1, 0, 0 }, { 0, 0, 1 }), 30, &vz);
 	CHECK(log.bumps >= 1, "side contact should still count as a (zero-push) bump");
 	CHECK(vz < 60, "side contact pushed the victim up (max vz %.1f)", vz);
+}
+
+static void TestDemoBothWays(Arena* arena, Car* attacker, Car* victim) {
+	puts("demos: the victim's own impact still counts that tick (mutual head-on demos; the victim bumps its attacker)");
+	// Both supersonic, head-on (live ga_carcar L3: both demolished in the same tick)
+	BumpLog log = RunImpact(arena, attacker, victim,
+		CarAt({ 0, -300, 17 }, { 0, 1, 0 }, { 0, 0, 1 }, { 0, 2250, 0 }),
+		[] { CarState v = CarAt({ 0, 300, 17 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, -2250, 0 }); v.isSupersonic = true; return v; }(), 30);
+	CHECK(log.demos == 2 && attacker->GetState().isDemoed && victim->GetState().isDemoed,
+		"mutual head-on: demos %d, attacker demoed %d, victim demoed %d", log.demos, (int)attacker->GetState().isDemoed,
+		(int)victim->GetState().isDemoed);
+	arena->Step(4 * 120);
+	// A slower victim driving at its attacker (live ga_carcar L2): the victim is demolished and bumps the attacker
+	log = RunImpact(arena, attacker, victim,
+		CarAt({ 0, -300, 17 }, { 0, 1, 0 }, { 0, 0, 1 }, { 0, 2250, 0 }),
+		CarAt({ 0, 300, 17 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, -1000, 0 }), 30);
+	CHECK(log.demos == 1 && log.bumps == 1 && victim->GetState().isDemoed && !attacker->GetState().isDemoed,
+		"slower victim: demos %d bumps %d", log.demos, log.bumps);
+	arena->Step(4 * 120);
+}
+
+static void TestBumpCooldown(Arena* arena, Car* car, Car* other) {
+	puts("bump cooldown: over strictly after 0.25 s (a repeat bump 30 ticks later is still blocked, 31 is not)");
+	CarState s = CarAt({ 0, -2000, 17 }, { 0, 1, 0 }, { 0, 0, 1 });
+	s.carContact.otherCarID = other->id;
+	s.carContact.cooldownTimer = RLConst::BUMP_COOLDOWN_TIME; // (as set on a bump)
+	car->SetState(s);
+	other->SetState(CarAt({ 0, 2000, 17 }, { 0, 1, 0 }, { 0, 0, 1 }));
+	car->controls = other->controls = CarControls();
+	arena->Step(30);
+	float t30 = car->GetState().carContact.cooldownTimer;
+	CHECK(t30 > -RLConst::BUMP_COOLDOWN_EPSILON, "30 ticks after a bump the cooldown should still run (timer %g)", t30);
+	arena->Step(1);
+	float t31 = car->GetState().carContact.cooldownTimer;
+	CHECK(t31 <= -RLConst::BUMP_COOLDOWN_EPSILON, "31 ticks after a bump the cooldown should be over (timer %g)", t31);
 }
 
 static void TestDemos(Arena* arena, Car* attacker, Car* victim) {
@@ -330,6 +492,128 @@ static void TestDemos(Arena* arena, Car* attacker, Car* victim) {
 
 // Boost pads: the car's collision cylinder (r 48, half-height 32) overlapping the pad's (small r 128, big r 160,
 // half-height 64): origin within 176 / 208 horizontally and 96 vertically
+static void TestRespawn() {
+	puts("respawn: a deterministic spot (tick count and car ID), never on another car (static analysis GA-18)");
+	using namespace RLConst;
+	auto respawnAt = [](std::vector<int> parkedSpots) {
+		Arena* arena = Arena::Create(GameMode::SOCCAR);
+		for (int i : parkedSpots) {
+			Car* parked = arena->AddCar(Team::BLUE);
+			const CarSpawnPos& p = CAR_RESPAWN_LOCATIONS_SOCCAR[i];
+			parked->SetState(CarAt({ p.x, p.y, 17.01f }, { 1, 0, 0 }, { 0, 0, 1 }));
+		}
+		Car* car = arena->AddCar(Team::BLUE);
+		arena->Step(10);
+		car->Demolish();
+		arena->Step((int)(DEMO_RESPAWN_TIME * 120) + 5);
+		CarState s = car->GetState();
+		delete arena;
+		return s;
+	};
+	CarState first = respawnAt({}), again = respawnAt({});
+	CHECK(!first.isDemoed && memcmp(&first.pos, &again.pos, sizeof(Vec)) == 0,
+		"two identical runs respawned at (%.1f, %.1f) and (%.1f, %.1f)", first.pos.x, first.pos.y, again.pos.x, again.pos.y);
+	for (int free = 0; free < CAR_RESPAWN_LOCATION_AMOUNT; free++) {
+		std::vector<int> parked;
+		for (int i = 0; i < CAR_RESPAWN_LOCATION_AMOUNT; i++)
+			if (i != free)
+				parked.push_back(i);
+		CarState s = respawnAt(parked);
+		const CarSpawnPos& p = CAR_RESPAWN_LOCATIONS_SOCCAR[free];
+		CHECK(Vec(s.pos.x - p.x, s.pos.y - p.y, 0).Length() < 5,
+			"spots taken but %d: respawned at (%.1f, %.1f), the free spot is (%.1f, %.1f)", free, s.pos.x, s.pos.y, p.x, p.y);
+	}
+}
+
+static void TestDemoSpawnSelection() {
+	puts("respawn spot selection: left/right presses for 2.5 s pick that side's spot (inner first), locked 0.5 s before");
+	using namespace RLConst;
+	// presses: (tick after the demolition, -1 left / 1 right); `blocker`: a car parked on the locked spot after the lock
+	auto respawn = [](std::vector<std::pair<int, int>> presses, float respawnDelay = DEMO_RESPAWN_TIME, bool blocker = false) {
+		Arena* arena = Arena::Create(GameMode::SOCCAR);
+		MutatorConfig m = arena->GetMutatorConfig();
+		m.respawnDelay = respawnDelay;
+		arena->SetMutatorConfig(m);
+		Car* car = arena->AddCar(Team::BLUE);
+		Car* other = blocker ? arena->AddCar(Team::ORANGE) : nullptr;
+		if (other) other->SetState(CarAt({ 0, 3000, 17.01f }, { 1, 0, 0 }, { 0, 0, 1 }));
+		arena->Step(10);
+		car->Demolish(respawnDelay);
+		int ticks = (int)(respawnDelay * 120) + 5;
+		for (int t = 0; t < ticks; t++) {
+			car->controls = CarControls();
+			for (auto& p : presses)
+				if (p.first == t) car->controls.steer = (float)p.second;
+			if (other && t == 330) { // locked at 300: put a car on the locked spot
+				CarState s = car->GetState();
+				other->SetState(CarAt(s.prespawnPos + Vec(0, 0, -19), { 1, 0, 0 }, { 0, 0, 1 }));
+			}
+			arena->Step();
+		}
+		CarState s = car->GetState();
+		delete arena;
+		return s;
+	};
+	auto at = [](const CarState& s, float x) { return !s.isDemoed && fabsf(s.pos.x - x) < 5 && fabsf(s.pos.y + 4608) < 5; };
+	// Blue's own left is +x
+	CarState s = respawn({ { 20, -1 } });
+	CHECK(at(s, 2304), "left: expected the inner left spot (2304, -4608), got (%.1f, %.1f)", s.pos.x, s.pos.y);
+	s = respawn({ { 20, -1 }, { 40, -1 } });
+	CHECK(at(s, 2688), "left, left: expected the outer left spot (2688, -4608), got (%.1f, %.1f)", s.pos.x, s.pos.y);
+	s = respawn({ { 20, -1 }, { 40, -1 }, { 60, -1 } });
+	CHECK(at(s, 2304), "left x3: expected back to the inner left spot, got (%.1f, %.1f)", s.pos.x, s.pos.y);
+	s = respawn({ { 20, 1 } });
+	CHECK(at(s, -2304), "right: expected the inner right spot (-2304, -4608), got (%.1f, %.1f)", s.pos.x, s.pos.y);
+	s = respawn({ { 20, -1 }, { 40, -1 }, { 60, 1 } });
+	CHECK(at(s, -2304), "left, left, right: expected the inner right spot, got (%.1f, %.1f)", s.pos.x, s.pos.y);
+	// After the lock (2.5 s) a press changes nothing: the same spot as with no press
+	CarState none = respawn({});
+	s = respawn({ { 320, 1 } });
+	CHECK(memcmp(&s.pos, &none.pos, sizeof(Vec)) == 0, "a press after the lock moved the spot");
+	// A respawn delay under 3 s: no selection
+	CarState shortNone = respawn({}, 2.f);
+	s = respawn({ { 20, shortNone.pos.x > 0 ? 1 : -1 } }, 2.f); // a press toward the other side
+	CHECK(memcmp(&s.pos, &shortNone.pos, sizeof(Vec)) == 0, "selection with a 2 s respawn delay");
+	// A car on the locked spot at the respawn: 192 uu away (an offset of the locked spot)
+	CarState free = respawn({ { 20, -1 } }, DEMO_RESPAWN_TIME, false);
+	s = respawn({ { 20, -1 } }, DEMO_RESPAWN_TIME, true);
+	float d = Vec(s.pos.x - free.pos.x, s.pos.y - free.pos.y, 0).Length();
+	CHECK(!s.isDemoed && fabsf(d - DEMO_SPAWN_OFFSET) < 5, "locked spot taken: respawned %.1f uu from it, expected 192", d);
+}
+
+static void TestBallExplodesOnGoal() {
+	puts("goal: the ball explodes (frozen, no collision) until a reset, so it can't come back out and score again");
+	Arena* arena = Arena::Create(GameMode::SOCCAR);
+	Car* car = arena->AddCar(Team::BLUE);
+	int goals = 0;
+	arena->SetGoalScoreCallback([](Arena*, Team, void* n) { ++*(int*)n; }, &goals);
+	BallState b;
+	b.pos = { 0, 5300, 300 };
+	b.vel = { 0, -1500, 0 }; // in the goal, on its way back out
+	arena->ball->SetState(b);
+	arena->Step(1);
+	BallState exploded = arena->ball->GetState();
+	CHECK(exploded.isExploded, "the ball should have exploded on the goal");
+	// A car driving into it: the ball neither moves nor pushes back
+	car->SetState(CarAt({ 0, 5000, 300 }, { 0, 1, 0 }, { 0, 0, 1 }, { 0, 1500, 0 }));
+	arena->Step(120);
+	BallState after = arena->ball->GetState();
+	CHECK((after.pos - exploded.pos).Length() == 0 && after.vel.Length() == 0, "the exploded ball moved from y %.1f to %.1f (vel %.1f)",
+		exploded.pos.y, after.pos.y, after.vel.Length());
+	CHECK(goals >= 1, "no goal reported");
+	CHECK(arena->IsBallScored(), "the exploded ball should stay in the goal");
+	// A reset brings it back, simulated again
+	arena->ResetToRandomKickoff(1);
+	arena->Step(10);
+	CHECK(!arena->ball->GetState().isExploded && !arena->IsBallScored(), "a reset should bring the ball back");
+	BallState up;
+	up.pos = { 0, 0, 500 };
+	arena->ball->SetState(up);
+	arena->Step(10);
+	CHECK(arena->ball->GetState().pos.z < 500, "after the reset the ball should fall again (z %.1f)", arena->ball->GetState().pos.z);
+	delete arena;
+}
+
 static void TestBoostPads() {
 	puts("boost pads: picked up within 176 (small) / 208 (big) uu and 96 uu of height");
 	Arena* arena = Arena::Create(GameMode::SOCCAR);
@@ -616,6 +900,9 @@ int main(int argc, char** argv) {
 	TestQuantize();
 	TestBumpCurves();
 	TestBoostPads();
+	TestRespawn();
+	TestBallExplodesOnGoal();
+	TestDemoSpawnSelection();
 	TestKickoffBall();
 	TestKickoffCountdown();
 
@@ -633,6 +920,13 @@ int main(int argc, char** argv) {
 	TestAirPitchSafety(arena, car);
 	TestAirThrottleWhileBoosting(arena, car);
 	TestAutoFlip(arena, car);
+	TestAutoFlipContactNormal(arena, car);
+	TestBoostSetsThrottle(arena, car);
+	TestThrottleDeadzone(arena, car);
+	TestJumpRepress(arena, car);
+	TestDodgeDirectionNormalised(arena, car);
+	TestAirThrottleBoostLag(arena, car);
+	TestFlipResetCounter(arena, car);
 	TestAckermann(arena, car);
 	TestSuspensionScale(arena);
 	TestVehicleUpdate(arena, car);
@@ -647,6 +941,8 @@ int main(int argc, char** argv) {
 	arena->ball->SetState([] { BallState b; b.pos = { 0, -4000, 93.15f }; return b; }());
 	TestBumpCone(arena, car, victim);
 	TestDemos(arena, car, victim);
+	TestDemoBothWays(arena, car, victim);
+	TestBumpCooldown(arena, car, victim);
 	arena->RemoveCar(victim);
 	arena->RemoveCar(car);
 

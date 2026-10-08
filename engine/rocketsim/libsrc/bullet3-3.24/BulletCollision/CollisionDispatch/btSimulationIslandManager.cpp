@@ -384,6 +384,12 @@ void btSimulationIslandManager::processIslands(btCollisionDispatcher* dispatcher
 		if (collisionWorld->getDispatchInfo().m_deterministicOverlappingPairs)
 		{
 			m_islandmanifold.quickSort(btPersistentManifoldSortPredicateDeterministic());
+			// RL PATCH: then the game's own sort, Bullet 2.82's quickSort on the island id alone, which is unstable: it
+			// reorders manifolds of the same island (three in a row come out reversed), and the solver works through
+			// them in that order (static analysis S-6, btSimulationIslandManager::buildAndProcessIslands). Its input
+			// in the game is the dispatcher's manifold array (creation order, swap-remove); here the fixed order
+			// above. Live (ball_5050, both cars on the ball in one tick): the ball 20.06 uu/s off -> 0.22
+			m_islandmanifold.quickSort(btPersistentManifoldSortPredicate());
 		}
 		else
 		{

@@ -7,7 +7,11 @@ Addresses are for the 2026-06-16 build; the 2026-10-06 update changed no game-si
 `engine/rocketsim/src/Sim/Car/Car.cpp` unless stated. Sub-agent working files (decompiles, scenario files, engine
 predictions, body tables) are local under `out/bsim/agents/G1…G4/`.
 
-Status column: **open** = hypothesis, not yet tested live; values in parentheses are engine-only predictions.
+Status (2026-10-08, live session): **GA-1, GA-2, GA-3, GA-4, GA-7, GA-8 confirmed live and fixed** (engine patches
+57–62; engine/README.md, notes/validation.md findings 41–42; scenarios `tools/physlog/scenarios/ga_*.txt`). GA-3
+correction from the live data: the flip duration uses the **world** roll, 0.4·|world roll|/π (48 ticks on a flat roof,
+40 roof-down on a curve at world roll −150°), and the FlipCar Δω applies after air control. GA-5, GA-6 and GA-15…20
+not yet tested. Values in parentheses are engine-only predictions.
 
 ## Hypotheses
 
@@ -164,7 +168,94 @@ and whenever it changes: `*(int*)(*(uintptr_t*)(body + 0xc8) + 0x18)`.
 - Non-Octane steering residual (validation finding 21) is not explained by the curves (G2 L5 above).
 - `PhysicsConfig_TA` is online-overridable (`OnlineConfig_X`); the cached config has no override.
 - GA-17's kickoff reversal assumes `Destroy()` frees the broadphase handle synchronously and that the body is created at
-  spawn; GA-18's ~38.6 respawn height is assumed from kickoffs; the tail of `GetSpawnOrientation` (uneven teams) is not
-  decoded; goal detection (`FUN_140f59720`, ball radius ≈ 94.5) not compared with the engine.
+  spawn; GA-18's ~38.6 respawn height is assumed from kickoffs; the uneven-team tail of `GetSpawnOrientation` and goal detection
+  (`FUN_140f59720`: sphere fully inside the goal volume, gameplay radius 95.49) are now in `notes/match-rules-audit.md`.
 - Only Collision_Sticky (+_ForceBallGround), Goalpost_Post, Goalpost_Crossbar, Fence_Sticky and Glass_Sticky have
   `bStickyWheels`; the soccar arena collision is Collision_Sticky (27 refs in Stadium_P).
+
+## Live-build additions (2026-10-06 scripts, decoded 2026-10-08)
+Full live TAGame script dump (local): `out/bsim/work/tagame_live_all.txt`; `out/bsim/work/resync.py` decodes past
+decoder errors.
+
+### Demo spawn selection (sent as DS-1…DS-8; engine patch 64)
+- **Offered** when the demolition's spawn ticket (`PlayerSpawnSystem_TA.CreateSpawnTicket`, `RespawnDelaySeconds` 3)
+  qualifies for prespawn (`PrespawnConfig_TA.bPrespawnFeatureEnabled`, `GameEvent.bAllowPrespawn`, delay ≥
+  `MinRespawnDelayThreshold` 3.0, human controller): prespawn at delay − `PrespawnStateLength` 0.5 = 2.5 s; and, for a
+  player on a team with `CanSelectDemoSpawn()` (Active state, `bAllowDemoSpawnSelection` = GameEvent && Pylon, both
+  True; `Mutator_RespawnTime_TA` clears it for times < 3), `DemoSelectionData.SelectionState` = 2 (Active),
+  PercentageTimeLeft 100. Bots never.
+- **Choosing:** axis `aDemoSpawnSelect` (PC A/D, pad LeftX, SteamInput LB/RB), rising edge of |v| > 0.3 →
+  `ServerSelectDemoSpawn(bLeft = v < 0)` (reliable) → if state 2: `SetDemoSpawnPreference(Left 1 / Right 2)` →
+  `Team.GetNextSpawnActor`: within a side, cycle (not in the list or last → [0], else next).
+- **Sides:** `Team_Soccar_TA.InitSpawnPoints`: Left = SecondaryStarts with X·Y ≤ 0, Right = X·Y > 0 (the player's own
+  left/right for both teams), each sorted by `SortSecondary` (|B.X| − |A.X|; verified natively: RL's array sort calls qsort with −delegate(A, B), so the
+  inner spot comes first); PrimaryStarts if no secondary starts.
+- **Timer:** `TickSpawn` per frame; PercentageTimeLeft = clamp(int(remaining/2.5·100), 0, 100) while Active; at 2.5 s
+  `EventPrespawn` → `HandlePrespawn` → `GetSpawnOrientation` → `PlayerController.Prespawn` {bPrespawnSet, Location,
+  Rotation}, then state 1 (Locked) and 0 at once; at 3.0 s `RestartPlayer`: the prespawn spot if not encroached, else
+  `FindValidCarSpawnOffset` around it, else a fresh choice. Open: nothing in script clears `bWantsPrespawn`, so as
+  decoded the prespawn would re-fire every frame for the last 0.5 s (with state 0: random spot); assumed once.
+- **Spot choice** (`GetSpawnOrientation`, round active): secondary starts; with a preference → [SpawnActor];
+  StartingIndex = Rand(n); `GetSpawnOrientationFromLocations`: cyclic from it, first not encroached, then first with a
+  valid offset; then the chosen side from [0]; then all secondary starts from [0]; then `GameEvent_TA` (Rand over all).
+- **Occupied:** `SpotIsEncroached` = any `!bWorldGeometry && bBlockActors` actor within the car cylinder radius 48;
+  `FindValidCarSpawnOffset`: 8 directions from the spot's yaw (45° steps) at 4·48 = 192 uu, clear `FastTrace` and not
+  encroached.
+- **Replicated:** `PRI_TA.DemoSelectionData` (Net, RepNotify: SelectionState 0 None / 1 Locked / 2 Active,
+  SpawnPreference 0/1/2, SpawnIndex, PercentageTimeLeft, SpawnActor, SpawnLocation, SpawnRotation),
+  `PlayerController_TA.Prespawn` (Net, RepNotify; the prespawn camera). Replication conditions not checked.
+
+### Boost pad respawn indicator
+Only `VehiclePickup_TA.NewReplicatedPickupData` {PickedUp byte counter (++ on pickup and on respawn; odd = picked
+up), Instigator} replicates (Net, RepNotify); no remaining time. Each machine starts its own `Respawn` state timer
+(`RespawnDelay × RespawnDelayScale`) on entering `PickedUp`, so a client's indicator lags by one-way latency.
+`VehiclePickup_Boost_TA.PickedUp`: warmup FX actor from the pickup (state WarmupEvent), per frame normalized = 1 −
+remaining/delay drives the pan animation (×0.5), glow (EaseInCirc(n)·WarmupGlowPower + 1), colours and sound RTPC;
+**`AlmostSpawnedEvent` once when remaining ≤ `AlmostSpawnedTime` 1.0 s** (new), removed at the respawn. Even delta ≥ 2
+on the counter → state DeltaFix.
+
+### Flip reset
+Regaining the flip: `Car_TA.OnGroundChanged` (bOnGround → true) clears `bJumped` and `bDoubleJumped`; bOnGround =
+gate && `IsOnGround()` (≥ 3 wheel contacts on anything not welded to the car, `FUN_140ef4040`), updated in car
+pre-physics every tick (`FUN_140f5bd60`; the gate is an unresolved ProcessEvent, assumed true in soccar) = the
+engine's isOnGround rule. Indicator: `Car_TA.UpdateDodgeAvailable` (server): on bDodgesRefreshed (= !(bJumped ‖
+bDoubleJumped)) turning true while `IsOnRBActor()` (≥ 3 wheel contacts and at most one wheel with
+`bHasContactWithWorldGeometry`, 0x140e82950) → ++`DodgesRefreshedCounter` (replicated) → `EventPerformedFlipReset`
+(FX per the FlipResetIndicator setting) and ++`PRI.MatchFlipResets`. So it is an event at a 3-wheel landing on the
+ball or another car after a jump; the engine's `HasFlipReset()` is a state (also true after driving off a ledge).
+
+### Backwards demos
+`Car_TA.ShouldDemolish` is byte-identical in both builds; live `PhysicsConfig_TA`: `bAllowBackwardsDemolitions` 1,
+COMAngleCheck on (45.573°, 36.870°), other checks off; supersonic required, |forward speed| ≥ 2200 − 100 = 2100, cone at
+the time of impact with the forward reversed when moving backwards = engine `Arena.cpp:623-633`.
+
+
+## Arena seams (S1, 2026-10-08; files local in `out/bsim/agents/S1/`)
+Result in S1's engine copy with the game's cooked meshes, triangle order, goal-half frame, B15 and 2.82's manifold quickSort: `ball_curves` 175 → 0.0001 uu/s, `walls` 14.4 → 0.40, `ball_5050` ball 20.06 → 0.22 / cars 1.72 → 0.07, `car_car_041358` ball 5.41 → 0.00002, `steer_040131` car2 1.11 → 0.30; no regressions in the other 31 recordings.
+- **S-1 geometry:** our generated pieces differ from the game's (side_floor 63/80 vertices shared, 23 quads with the other diagonal; side_ceiling 7/18; corner 219/483, 47 flipped; extents y 3584 / x 2560 vs 3840 / 2426 / 2688), e.g. facet 2's diagonal at y 0…512 (ball_curves t240, t83). The game's pieces overlap within 2 uu in bands (side floor / corner y 3373…3753, side ceiling / corner y 3433…3736, goal / corner x 2437…2688 y 4617…5120), giving double manifolds there; the y = 0 and x = 0 seams only touch.
+- **S-2 triangle order:** PhysX (Opcode) cooking order per piece (the rule in bullet-diff.md "2.82 vs 3.24"); the authored render order matters too, so an exact match needs a per-piece order from the game's mesh (ball_curves t91, walls t243).
+- **S-3 solve order:** 2.82's unstable manifold quickSort on the dispatcher's creation order (ball_5050 t72, t626).
+- **S-4 goal halves:** bodies translated ±102.4 BU in y, meshes in actor space (walls t127 would be 58.7 uu/s baked); the grid broadphase must apply the body transform.
+- **S-5 = B15:** zero initial triangle-info angles (ball_5050 t633).
+- **S-6:** 2.82 BVH quantization (no recording changes). **S-7:** B8 ported: no effect here.
+
+## Bots as test partners (2026-10-08, from `out/live/ga_carcar_20261008_051348*.csv`)
+- A BakkesMod-spawned bot is a valid physics partner: same Car archetype (`bDisableSleeping`, mass 180), same component
+  simulation, Role_Authority offline like the player's car; AIController_TA (native behaviour tree) calls
+  `SetVehicleInput` every rendered frame and PhysLog's hook overrides each call. L0 (T-bone) and L2 (demo of the bot)
+  behave normally. Only the training Kismet `SeqAct_SpawnBot` disables bot collision (`SetRBCollidesWithChannel`).
+- Per-car differences the engine must take: the bot's assigned body/hitbox (not the requested one), steer/air
+  sensitivity 1.0 (the player's profile 1.4 here), dodge deadzone 0.5 (`CarComponent_Dodge_TA`; player 0.8), no demo
+  spawn selection.
+- `ga_carcar` L1 (bot at (4050, 0, 17)) is invalid: inside the side-wall curve (surface ≈ z 110 at x 4050), behind the
+  one-sided mesh; the player drove up the curve over it (no car–car manifold in ticks 131–400). Soccar has no vertical
+  wall meeting the floor (side curves; goal fillets up to z ≈ 59), so GA-16 needs replays or a two-bot sandwich.
+- L3: the head-on demo at tick 908/909 triggers freeplay's reset of all cars (both teleported to the orange (0, 4608)
+  spot, the second 192 uu off it; ball untouched); only the demo tick is comparable. Freeplay respawns use kickoff spots
+  (L2: bot back after 441 ticks at (−2048, 2560)); soccar respawn rules need an exhibition match.
+- Respawn "hold" (bot rows 798–802 at the spawn spot's z 83, then z 36.02): `GameEvent_TA.RestartPlayer` →
+  `SpawnCar` → `MoveToGround` in the same frame (box trace of the car cylinder, radius 48 / height 32, from Location +
+  (0,0,32) down 4096 → `SetLocation(HitLoc)`, `SetRBPosition`), but the Bullet body only exists after the body asset
+  loads (`Car_TA.HandleAssetLoaded`: `CollisionComponent = Mesh`, `SetPhysics(PHYS_RigidBody)`, `Mesh.InitRBPhys()`,
+  at the grounded actor ⊗ T). Until then the logged RBState keeps the spawn value (no body: not simulated, not
+  collidable). The delay is asset-load latency (frames), not a rule; the clone creates the body grounded at once.

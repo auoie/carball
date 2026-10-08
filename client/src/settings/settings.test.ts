@@ -77,6 +77,15 @@ describe("settings", () => {
     expect(s.bindings.throttleForward).toEqual(DEFAULT_BINDINGS.throttleForward);
   });
 
+  it("an action saved bindings don't know doesn't take an input they already use (left mouse saved as boost)", () => {
+    const saved = Object.fromEntries(Object.entries(DEFAULT_BINDINGS).filter(([id]) => id !== "jumpAlternative"));
+    const s = parseSettings({ bindings: { ...saved, boost: { keyboard: { kind: "mouse", button: 0 }, gamepad: null } } });
+    expect(s.bindings.boost.keyboard).toEqual({ kind: "mouse", button: 0 });
+    expect(s.bindings.jumpAlternative.keyboard).toBeNull();
+    // With nothing saved, every default applies
+    expect(parseSettings({}).bindings.jumpAlternative).toEqual(DEFAULT_BINDINGS.jumpAlternative);
+  });
+
   it("treats non-objects as empty", () => {
     expect(parseSettings(null)).toEqual(DEFAULT_SETTINGS);
     expect(parseSettings([1, 2, 3])).toEqual(DEFAULT_SETTINGS);

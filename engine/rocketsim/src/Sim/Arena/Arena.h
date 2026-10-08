@@ -174,6 +174,17 @@ public:
 
 	void _SetupArenaCollisionShapes();
 
+	// RL PATCH: respawning (see Arena.cpp): the team's respawn spots (side 0 all, 1 left, 2 right: inner first), whether
+	// a spot is taken (`claimed`: spots of cars respawning this tick), the game's spot choice, and a demolished car's
+	// selection, prespawn lock and respawn spot
+	std::vector<Car::RespawnSpot> _RespawnSpots(Team team, int side = 0);
+	bool _SpawnTaken(Vec pos, Car* car, const std::vector<Car::RespawnSpot>& claimed);
+	bool _SpawnFromSpots(Car* car, const std::vector<Car::RespawnSpot>& spots, int start,
+		const std::vector<Car::RespawnSpot>& claimed, Car::RespawnSpot& out);
+	bool _SpawnOffset(Car* car, const Car::RespawnSpot& spot, const std::vector<Car::RespawnSpot>& claimed, Car::RespawnSpot& out);
+	Car::RespawnSpot _ChooseSpawn(Car* car, const std::vector<Car::RespawnSpot>& claimed, bool usePreference);
+	void _UpdateDemolished(Car* car, std::vector<Car::RespawnSpot>& claimed);
+
 	// Static function called by Bullet internally when adding a collision point
 	static bool _BulletContactAddedCallback(
 		btManifoldPoint& cp,

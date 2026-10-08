@@ -24,6 +24,7 @@ pub fn run(mut messages: UnboundedReceiver<ToGame>) {
                 Ok(ToGame::Inputs { id, timestamp, first_frame, frames, at }) => {
                     game.receive_inputs(id, timestamp, first_frame, &frames, seconds(at));
                 }
+                Ok(ToGame::ResetInputBuffer { id }) => game.reset_input_buffer(id),
                 Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
                 Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => return,
             }

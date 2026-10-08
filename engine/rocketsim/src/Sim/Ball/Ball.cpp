@@ -49,6 +49,22 @@ void Ball::SetState(const BallState& state) {
 	_velocityImpulseCache = { 0,0,0 };
 	_internalState.tickCountSinceUpdate = 0;
 	_netRotation.valid = false; // RL PATCH: not a quantized state
+	_ApplyExploded();
+}
+
+void Ball::_ApplyExploded() {
+	if (_internalState.isExploded) {
+		_rigidBody.setLinearVelocity(btVector3(0, 0, 0));
+		_rigidBody.setAngularVelocity(btVector3(0, 0, 0));
+		_rigidBody.m_activationState1 = DISABLE_SIMULATION;
+		_rigidBody.m_collisionFlags |= btCollisionObject::CF_NO_CONTACT_RESPONSE;
+	} else {
+		_rigidBody.m_collisionFlags &= ~btCollisionObject::CF_NO_CONTACT_RESPONSE;
+		if (_rigidBody.m_activationState1 == DISABLE_SIMULATION) { // (activate() can't leave DISABLE_SIMULATION)
+			_rigidBody.forceActivationState(ACTIVE_TAG);
+			_rigidBody.m_deactivationTime = 0;
+		}
+	}
 }
 
 btCollisionShape* MakeBallCollisionShape(GameMode gameMode, const MutatorConfig& mutatorConfig, btVector3& localIntertia) {

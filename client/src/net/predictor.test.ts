@@ -175,4 +175,28 @@ describe("Predictor", () => {
     r.server.dispose();
     r.client.dispose();
   });
+
+  it("only cars in an update get a new prediction basis: a far car's inputs still fade out", () => {
+    const server = World.create(engine);
+    const local = server.addCar(0);
+    const near = server.addCar(1);
+    const far = server.addCar(1);
+    server.resetKickoff(4);
+    for (const car of [near, far]) server.setControls(car, { ...inputControls(NO_INPUT), throttle: 1, steer: 1 });
+    server.step();
+    const client = World.create(engine);
+    client.loadState(server.saveState()); // (frame 0: both cars driving with full throttle and steer)
+    const predictor = new Predictor(client, local, 0);
+    predictor.correct(0, [server.writeNetState({ ball: true, carIds: [local, near, far], pads: true })]);
+    // Updates that hold only the near car, while the far car's inputs fade (INPUT_FADE_FRAMES)
+    for (let f = 1; f <= 30; f++) {
+      predictor.advance(NO_INPUT);
+      if (f % 2 === 0) predictor.correct(f, [server.writeNetState({ ball: true, carIds: [local, near], pads: true })]);
+    }
+    const controls = client.carControls(far);
+    expect(controls.throttle).toBe(0);
+    expect(controls.steer).toBe(0);
+    server.dispose();
+    client.dispose();
+  });
 });

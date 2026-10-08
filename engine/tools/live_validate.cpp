@@ -297,15 +297,16 @@ static void Describe(const std::vector<Row>& rows) {
 }
 
 // The car's state from a recording row. The row's wheel contacts are the game's previous-tick ray results, which the
-// tick's pre-physics step uses (sticky force, air control, jump): where ours differ (after a placement), the row's.
-static void SetBody(Car* car, CarState s, const CarRow& r) {
+// tick's pre-physics step uses (sticky force, air control, jump): where ours differ, or after a placement (`placed`:
+// the touching wheels' normals are from before it), the row's.
+static void SetBody(Car* car, CarState s, const CarRow& r, bool placed = false) {
 	s.pos = r.car.pos;
 	s.rotMat = r.car.rot;
 	s.vel = r.car.vel;
 	s.angVel = r.car.angVel;
 	s.boost = r.boost * 100;
 	for (int i = 0; i < 4; i++)
-		if (s.wheelsWithContact[i] != r.wheelContact[i]) {
+		if (s.wheelsWithContact[i] != r.wheelContact[i] || placed) {
 			s.wheelsWithContact[i] = r.wheelContact[i];
 			s.wheelCarry.wheels[i].worldContact = r.wheelContact[i] && r.wheelContacts > 0;
 			s.wheelCarry.wheels[i].contactNormal = r.car.rot.up;
@@ -528,8 +529,8 @@ static int Validate(const char* path, const std::string& presetName, const Sensi
 				ours.isBoosting = !ours.isBoosting;
 				ours.boostingTime = ours.isBoosting ? 1 / 120.f : 0;
 			}
-			SetBody(car, ours, a);
-			if (car2 && a.hasOther) SetBody(car2, car2->GetState(), a.other);
+			SetBody(car, ours, a, !started);
+			if (car2 && a.hasOther) SetBody(car2, car2->GetState(), a.other, !started);
 			if (a.hasBall) SetBall(arena, a.ball);
 			resyncs += continuous && started;
 		}

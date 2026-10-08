@@ -34,6 +34,18 @@ describe("UpdateAssembler", () => {
     expect(a.add(part(14, 0, 1))?.update.serverTick).toBe(14);
   });
 
+  it("flush gives the parts that came of updates missing one (a lost datagram costs only its bodies)", () => {
+    const a = new UpdateAssembler();
+    expect(a.add(part(10, 0, 2))).toBeNull();
+    expect(a.add(part(12, 1, 3))).toBeNull();
+    const flushed = a.flush();
+    expect(flushed.map((u) => [u.update.serverTick, u.states.map((s) => s[1])])).toEqual([[10, [0]], [12, [1]]]);
+    // Gone, and older updates than the newest flushed are dropped
+    expect(a.flush()).toEqual([]);
+    expect(a.add(part(12, 0, 3))).toBeNull();
+    expect(a.flush()).toEqual([]);
+  });
+
   it("ignores malformed part numbers", () => {
     const a = new UpdateAssembler();
     expect(a.add(part(10, 2, 2))).toBeNull();

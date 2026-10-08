@@ -119,12 +119,16 @@ void _UpdateCellsStatic(btRSBroadphase* _this, btRSBroadphaseProxy* proxy) {
 	std::vector<char> usedCells(numI * numJ * numK, (ADD && isTriMesh) ? 0 : 1);
 
 	if (ADD && isTriMesh) {
+		// RL PATCH: the triangles are in the mesh's local space: placed by the body's transform (the cells were the
+		// local ones, wrong for a mesh body not at the origin)
 		struct MarkCellsCallback : public btTriangleCallback {
 			btRSBroadphase* bp;
+			btTransform xf;
 			int iMin, jMin, kMin, iMax, jMax, kMax, numJ, numK;
 			std::vector<char>* usedCells;
 
-			virtual void processTriangle(btVector3* triangle, int partId, int triangleIndex) {
+			virtual void processTriangle(btVector3* local, int partId, int triangleIndex) {
+				btVector3 triangle[3] = { xf(local[0]), xf(local[1]), xf(local[2]) };
 				btVector3 triMin = triangle[0], triMax = triangle[0];
 				triMin.setMin(triangle[1]); triMin.setMin(triangle[2]);
 				triMax.setMax(triangle[1]); triMax.setMax(triangle[2]);
@@ -141,11 +145,14 @@ void _UpdateCellsStatic(btRSBroadphase* _this, btRSBroadphaseProxy* proxy) {
 
 		MarkCellsCallback callback = {};
 		callback.bp = _this;
+		callback.xf = colObj->getWorldTransform();
 		callback.iMin = iMin; callback.jMin = jMin; callback.kMin = kMin;
 		callback.iMax = iMax; callback.jMax = jMax; callback.kMax = kMax;
 		callback.numJ = numJ; callback.numK = numK;
 		callback.usedCells = &usedCells;
-		((btTriangleMeshShape*)colObj->m_collisionShape)->processAllTriangles(&callback, proxy->m_aabbMin, aabbMax);
+		btVector3 localMin, localMax;
+		colObj->m_collisionShape->getAabb(btTransform::getIdentity(), localMin, localMax);
+		((btTriangleMeshShape*)colObj->m_collisionShape)->processAllTriangles(&callback, localMin, localMax);
 	}
 
 	for (int i = iMin; i <= iMax; i++) {

@@ -3,8 +3,8 @@
 import { Quaternion, Vector3 } from "three";
 import { PlayerCamera } from "../camera/rlCamera";
 import type { BodyState, CarState, World } from "../engine/world";
-import type { Vec3 } from "../math/vec";
-import type { Hud } from "../hud";
+import { type Vec3, add, dot, sub } from "../math/vec";
+import { type Hud, respawnHud } from "../hud";
 import type { InputDevices } from "../input/devices";
 import { AirPitchSafety, EMPTY_INPUT, type HeldActions, type LookInput, readControls, readHeldActions, readLook } from "../input/mapping";
 import { FixedStep, TICK_RATE, TICK_SECONDS } from "../loop/fixedStep";
@@ -21,7 +21,7 @@ import {
   type Update,
   quantizeAxis,
 } from "../net/protocol";
-import { UpdateAssembler } from "../net/updates";
+import { type CompleteUpdate, UpdateAssembler } from "../net/updates";
 import { BallSpin } from "../render/ballSpin";
 import { BallView, BoostPadsView, CarView } from "../render/entities";
 import type { ArenaView } from "../render/arena";
@@ -30,14 +30,23 @@ import type { GameAudio } from "../audio/audio";
 import { type Dodge, FlipTracker } from "./flipTracker";
 import type { Options, Settings } from "../settings/settings";
 import { Interpolated } from "./interpolated";
+import { SyncError } from "./syncError";
 
 /** Client input packets: one per two physics ticks (60 Hz) */
 const SEND_EVERY_FRAMES = 2;
 const GOAL_MESSAGE_SECONDS = 2;
+/** A correction moving a body further than this is a teleport (a kickoff, a respawn): drawn at once, not smoothed */
+const TELEPORT_DISTANCE = 500;
+/** A frame this long is a hitch: the server's jitter buffer is reset this long after the last one (the game:
+ *  NetworkInputBuffer_TA.ClientTick, "Hitch detected!", SetTimer(2, ServerResetInputBuffer)) */
+const HITCH_SECONDS = 0.1;
+const HITCH_RESET_DELAY = 2;
 
 interface CarEntry {
   readonly view: CarView;
   readonly state: Interpolated<CarState>;
+  /** How far its drawn pose still is from its corrected one (src/game/syncError.ts) */
+  readonly error: SyncError;
 }
 
 export interface OnlineStats {
@@ -69,6 +78,7 @@ export class Online {
   readonly #cars = new Map<number, CarEntry>();
   readonly #ballView = new BallView();
   readonly #ball: Interpolated<BodyState>;
+  readonly #ballError = new SyncError();
   readonly #ballSpin = new BallSpin();
   readonly #padsView: BoostPadsView;
   readonly #updates = new UpdateAssembler();
@@ -87,6 +97,7 @@ export class Online {
   #messageTimer = 0;
   #countdownLeft = 0; // whole seconds of the kickoff countdown, for its beeps
   #disconnected: string | null = null;
+  #hitchReset: number | null = null; // seconds until the server's input buffer is reset after a hitch
   #fps = 60;
   readonly #pos = new Vector3();
   readonly #rot = new Quaternion();
@@ -141,6 +152,7 @@ export class Online {
   frame(frameSeconds: number): void {
     this.#handleControlMessages();
     this.#applyUpdates();
+    this.#watchHitches(frameSeconds);
 
     const settings = this.settings();
     const snapshot = this.inputEnabled() ? this.#input.snapshot() : EMPTY_INPUT;
@@ -182,6 +194,19 @@ export class Online {
     this.#draw(frameSeconds, ticks * TICK_SECONDS);
   }
 
+  /** After a hitch the gap inflated the server's jitter buffer (one 300 ms gap: 7 -> 18 frames, ~40 s to come back):
+   *  2 s after the last hitch the server resets it */
+  #watchHitches(frameSeconds: number): void {
+    if (frameSeconds > HITCH_SECONDS) this.#hitchReset = HITCH_RESET_DELAY;
+    else if (this.#hitchReset !== null) {
+      this.#hitchReset -= frameSeconds;
+      if (this.#hitchReset <= 0) {
+        this.#hitchReset = null;
+        this.#connection.resetInputBuffer();
+      }
+    }
+  }
+
   /** The frames the server has not acknowledged yet, newest 10 at most */
   #sendInputs(): void {
     if (this.#disconnected !== null) return;
@@ -196,22 +221,66 @@ export class Online {
   #applyUpdates(): void {
     for (const part of this.#received.splice(0)) {
       const update = this.#updates.add(part);
-      if (!update) continue;
-      const u = update.update;
-      this.#ackFrame = Math.max(this.#ackFrame, u.ackFrame);
-      this.#bufferText = `buffer ${String(u.bufferSize)}/${String(u.bufferTarget)}`;
-      if (u.echoTimestamp > 0) {
-        const rtt = ((Math.round(performance.now()) - u.echoTimestamp) >>> 0) - u.echoDelay;
-        if (rtt >= 0 && rtt < 10_000) this.#ping = this.#ping === null ? rtt : this.#ping + (rtt - this.#ping) * 0.1;
-      }
-      this.#predictor.correct(u.ackFrame, update.states);
+      if (update) this.#applyUpdate(update);
     }
+    for (const update of this.#updates.flush()) this.#applyUpdate(update); // (a part was lost: the others still apply)
+  }
+
+  #applyUpdate(update: CompleteUpdate): void {
+    const u = update.update;
+    this.#ackFrame = Math.max(this.#ackFrame, u.ackFrame);
+    this.#bufferText = `buffer ${String(u.bufferSize)}/${String(u.bufferTarget)}`;
+    if (u.echoTimestamp > 0) {
+      const rtt = ((Math.round(performance.now()) - u.echoTimestamp) >>> 0) - u.echoDelay;
+      if (rtt >= 0 && rtt < 10_000) this.#ping = this.#ping === null ? rtt : this.#ping + (rtt - this.#ping) * 0.1;
+    }
+    this.#correct(u.ackFrame, update.states);
+  }
+
+  /** A server correction, smoothed for drawing: each body's drawn pose keeps where it was and glides to the corrected
+   *  one (SyncError); the interpolation's previous tick moves with the correction, so nothing jumps. */
+  #correct(frame: number, states: readonly Uint8Array[]): void {
+    const pre = new Map([...this.#cars.keys()].map((id) => [id, this.#world.car(id)]));
+    const preBall = this.#world.ball();
+    const resyncs = this.#predictor.stats.resyncs;
+    this.#predictor.correct(frame, states);
+    if (this.#predictor.stats.resyncs !== resyncs) {
+      this.#clearErrors();
+      return;
+    }
+    for (const [id, entry] of this.#cars) {
+      const before = pre.get(id);
+      if (!before) continue;
+      const after = this.#world.car(id);
+      const moved = sub(before.pos, after.pos);
+      if (before.demoed || after.demoed || dot(moved, moved) > TELEPORT_DISTANCE * TELEPORT_DISTANCE) {
+        entry.error.clear();
+        entry.state.previous = after;
+      } else {
+        entry.error.accumulate(before, after);
+        entry.state.previous = { ...entry.state.previous, pos: sub(entry.state.previous.pos, moved) };
+      }
+      entry.state.current = after;
+    }
+    const ball = this.#world.ball();
+    const moved = sub(preBall.pos, ball.pos);
+    const teleport = dot(moved, moved) > TELEPORT_DISTANCE * TELEPORT_DISTANCE;
+    if (teleport) this.#ballError.clear();
+    else this.#ballError.accumulate(preBall, ball); // (position only: the ball's drawn spin is its own)
+    this.#ball.previous = { ...this.#ball.previous, pos: teleport ? ball.pos : sub(this.#ball.previous.pos, moved) };
+    this.#ball.current = { ...this.#ball.current, pos: ball.pos, vel: ball.vel };
+  }
+
+  #clearErrors(): void {
+    for (const entry of this.#cars.values()) entry.error.clear();
+    this.#ballError.clear();
   }
 
   #handleControlMessages(): void {
     for (const m of this.#controlMessages.splice(0)) {
       if (m.type === "world") {
         this.#predictor.reload(m.frame, m.snapshot);
+        this.#clearErrors();
         this.#syncCars();
       } else if (m.type === "event" && m.event.kind === "goal") {
         const team = m.event.team === 1 ? 1 : 0;
@@ -237,7 +306,7 @@ export class Online {
       const state = this.#world.car(id);
       const view = new CarView(this.#world.carConfig(id), state.team);
       this.#renderer.scene.add(view.root);
-      this.#cars.set(id, { view, state: new Interpolated(state) });
+      this.#cars.set(id, { view, state: new Interpolated(state), error: new SyncError() });
     }
     this.#pushStates();
     this.#pushStates();
@@ -269,19 +338,27 @@ export class Online {
   /** `simulated`: seconds of physics run this frame. */
   #draw(frameSeconds: number, simulated: number): void {
     const alpha = this.#clock.alpha;
-    for (const { view, state } of this.#cars.values()) {
+    for (const { view, state, error } of this.#cars.values()) {
+      error.decay(frameSeconds);
       const { boosting, demoed, supersonic } = state.current;
-      view.update(state.position(alpha, this.#pos), state.rotation(alpha, this.#rot), boosting, demoed, supersonic, frameSeconds);
+      const pos = error.applyPosition(state.position(alpha, this.#pos));
+      view.update(pos, error.applyRotation(state.rotation(alpha, this.#rot)), boosting, demoed, supersonic, frameSeconds);
     }
-    const ball = this.#ball.position(alpha, this.#pos);
+    this.#ballError.decay(frameSeconds);
+    const ball = this.#ballError.applyPosition(this.#ball.position(alpha, this.#pos));
+    this.#ballView.root.visible = !this.#world.ballExploded(); // (a goal explodes it until the reset)
     this.#ballView.update(ball, this.#ball.rotation(alpha, this.#rot));
     this.#arena.update(ball, frameSeconds);
     const pads = this.#world.boostPads();
     this.#padsView.update(pads);
 
-    const local = this.#cars.get(this.#localCar)?.state;
+    const local = this.#cars.get(this.#localCar);
     if (local) {
-      const view = this.#camera.update(frameSeconds, local.blended(alpha), this.#ball.blended(alpha).pos, {
+      // The camera follows the drawn (smoothed) car and ball
+      const car = local.state.blended(alpha);
+      const drawnCar = { ...car, pos: add(car.pos, local.error.location) };
+      const drawnBall = add(this.#ball.blended(alpha).pos, this.#ballError.location);
+      const view = this.#camera.update(frameSeconds, drawnCar, drawnBall, {
         ballCam: this.#ballCam,
         rear: this.#rear,
         lookUp: this.#look.up,
@@ -298,7 +375,7 @@ export class Online {
     }
 
     if (frameSeconds > 0) this.#fps += (1 / frameSeconds - this.#fps) * 0.05;
-    const car = local?.current;
+    const car = local?.state.current;
     const ping = this.#ping === null ? "ping –" : `ping ${String(Math.round(this.#ping))} ms`;
     this.#hud.update({
       boost: car?.boost ?? 0,
@@ -311,6 +388,7 @@ export class Online {
       net: `${ping} · ${this.#bufferText} · ${String(this.#cars.size)} cars`,
       flip: this.settings().options.flipIndicator ? this.#dodge : null,
       flipReset: this.#flipReset,
+      respawn: car ? respawnHud(car) : null,
     });
     if (this.#flipReset) this.#audio.flipReset();
     this.#flipReset = false;

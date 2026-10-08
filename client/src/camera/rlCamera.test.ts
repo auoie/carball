@@ -33,6 +33,9 @@ function car(overrides: Partial<CarState> = {}): CarState {
     rbActor: null,
     wheelContact: [true, true, true, true],
     groundNormal: UP,
+    demoRespawnTimer: 0,
+    spawnSelection: { side: null, index: 0, locked: null },
+    flipResets: 0,
     ...overrides,
   };
 }
@@ -114,6 +117,20 @@ describe("ball cam", () => {
     expect(Math.hypot(switched.position.x - before.position.x, switched.position.y - before.position.y)).toBeLessThan(15);
     const after = settle(camera, car(), ball, BALL_CAM, 1);
     expect(after.forward.y).toBeGreaterThan(0.9); // now looking at the ball (+y)
+  });
+
+  it("the switch eases in: a quarter of the offset is left at mid-blend (VTBlend_EaseIn, exponent 2)", () => {
+    const yaw = (v: { forward: Vec3 }) => Math.atan2(v.forward.y, v.forward.x);
+    const ball = vec3(0, 3000, 93);
+    const carYaw = yaw(settle(new PlayerCamera(), car(), ball));
+    const ballYaw = yaw(settle(new PlayerCamera(), car(), ball, BALL_CAM));
+    const camera = new PlayerCamera();
+    settle(camera, car(), ball);
+    let view = camera.update(1 / 120, car(), ball, BALL_CAM);
+    for (let i = 1; i < 30; i++) view = camera.update(1 / 120, car(), ball, BALL_CAM); // 0.25 s of the 0.5
+    const left = (yaw(view) - ballYaw) / (carYaw - ballYaw);
+    expect(left).toBeGreaterThan(0.2);
+    expect(left).toBeLessThan(0.3); // (linear: 0.5)
   });
 });
 

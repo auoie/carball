@@ -133,3 +133,24 @@ Client resync (ours): when a client falls behind real time (a stalled or backgro
 then takes the server's state as the present and continues from that frame (`Predictor` `#resync`; unit test "catches
 up after stalling"). Before this, the client ignored those updates and never caught up.
 
+From the static session's netcode audit (notes/netcode-audit.md), 2026-10-08:
+- **Corrections are smoothed for drawing (N-1).** As the game's RBActor sync error: a correction adds
+  (predicted − corrected) to a per-body offset that the body (and the camera following it) is drawn with, decaying
+  each frame by min(dt × 4, 1) of itself for the position and × 5 for the rotation, snapping to 0 below 0.1 uu² and
+  0.001 rad (`RBActor_TA.NetworkSyncSettings`). The interpolation's previous tick moves with the correction, so the
+  drawn pose doesn't jump. Teleports (over 500 uu: kickoffs, respawns), demolitions, resyncs and world reloads aren't
+  smoothed. `client/src/game/syncError.ts` (unit test: a 100 uu correction moves at most 6.7 uu in the first frame at
+  60 fps, 1.6 uu are left after 60 frames, none after 83).
+- **Hitch reset (N-2).** After a frame over 0.1 s the client sends `ResetInputBuffer` 2 s later (2 s after the last
+  of several), and the server's jitter buffer starts over from its initial estimate (mean 0.016 s, variance 0, size
+  7; `NetworkInputBuffer_TA.ClientTick` → `ServerResetInputBuffer`). Before, one 300 ms gap kept the buffer at
+  ~18 frames, still 9 after 30 s.
+- **Lost parts (N-3).** An update split over several datagrams applies the parts that came when one is lost (each
+  part is a complete state for its bodies; at the end of the client's frame). Before, the whole update was dropped.
+  Not done: the size of the car state (~273–373 B per car; the game's is ~250 B per update in all).
+- **Remote cars' input basis (N-5, a bug).** A correction re-anchored every other car's predicted inputs, also cars
+  not in that update (their own faded prediction), so their inputs never faded out; now only the cars in the update
+  (`NetState::Read` reports them).
+- Not done: server-confirmed demolitions (N-4, the game's clients predict only a bump), resending until received
+  rather than consumed (N-9), correcting from an ack older than the history (N-10).
+

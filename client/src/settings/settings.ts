@@ -159,14 +159,30 @@ function readGamepadInput(v: unknown): GamepadInput | null | undefined {
 function readBindings(v: unknown): Bindings {
   const src = isRecord(v) ? v : {};
   const out = { ...DEFAULT_BINDINGS } as Record<Action, Binding>;
+  const saved = new Set<Action>();
   for (const { id } of ACTIONS) {
     const b = src[id];
     if (!isRecord(b)) continue;
+    saved.add(id);
     // A missing slot keeps the default; an invalid one is cleared
     out[id] = {
       keyboard: "keyboard" in b ? (readKeyboardInput(b["keyboard"]) ?? null) : DEFAULT_BINDINGS[id].keyboard,
       gamepad: "gamepad" in b ? (readGamepadInput(b["gamepad"]) ?? null) : DEFAULT_BINDINGS[id].gamepad,
     };
+  }
+  // An action the saved bindings don't know (added since) doesn't take its default where they already use that input
+  // (saved before the Modern layout, left mouse is boost: not also the alternative jump)
+  if (saved.size > 0) {
+    const same = (a: KeyboardInput | GamepadInput | null, b: KeyboardInput | GamepadInput | null): boolean =>
+      a !== null && b !== null && JSON.stringify(a) === JSON.stringify(b);
+    for (const { id } of ACTIONS) {
+      if (saved.has(id)) continue;
+      const used = [...saved].map((s) => out[s]);
+      out[id] = {
+        keyboard: used.some((b) => same(b.keyboard, out[id].keyboard)) ? null : out[id].keyboard,
+        gamepad: used.some((b) => same(b.gamepad, out[id].gamepad)) ? null : out[id].gamepad,
+      };
+    }
   }
   return out;
 }

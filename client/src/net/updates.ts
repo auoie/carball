@@ -1,4 +1,7 @@
-// The server splits a large world update into parts (one datagram each); a correction needs all of them.
+// The server splits a large world update into parts (one datagram each). Each part is a complete network state for
+// some of the bodies, so a part that never arrives costs only its bodies that update: the parts that did come still
+// apply (flush, at the end of the client's frame: an update's parts are sent together, so one that misses the frame is
+// as good as lost). As the game, where actors replicate independently (notes/netcode-audit.md N-3).
 import type { Update } from "./protocol";
 
 export interface CompleteUpdate {
@@ -6,7 +9,8 @@ export interface CompleteUpdate {
   readonly states: readonly Uint8Array[];
 }
 
-/** Collects update parts; yields each update once all its parts are in. Updates older than one already yielded are dropped. */
+/** Collects update parts; yields each update once all its parts are in, and on flush() the parts in of incomplete ones.
+ *  Updates older than one already yielded are dropped. */
 export class UpdateAssembler {
   readonly #pending = new Map<number, { update: Update; states: (Uint8Array | undefined)[]; received: number }>();
   #lastTick = -1;
@@ -26,5 +30,14 @@ export class UpdateAssembler {
     this.#lastTick = u.serverTick;
     for (const tick of this.#pending.keys()) if (tick <= u.serverTick) this.#pending.delete(tick); // incl. lost-part leftovers
     return { update: pending.update, states: pending.states.filter((s) => s !== undefined) };
+  }
+
+  /** The updates still missing a part, oldest first, with the parts that came (and forgets them). */
+  flush(): CompleteUpdate[] {
+    const incomplete = [...this.#pending.entries()].sort(([a], [b]) => a - b);
+    this.#pending.clear();
+    const last = incomplete.at(-1);
+    if (last) this.#lastTick = last[0];
+    return incomplete.map(([, p]) => ({ update: p.update, states: p.states.filter((s) => s !== undefined) }));
   }
 }

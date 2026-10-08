@@ -61,7 +61,8 @@ struct CarState : public PhysState {
 	// Forward flip will have positive Y
 	Vec flipRelTorque = { 0, 0, 0 };
 
-	float jumpTime = 0; // When currently jumping, the time since we started jumping, else 0
+	// RL PATCH: while jumping, the time since we started jumping; after a jump (hasJumped), the time since it ended
+	float jumpTime = 0;
 	float flipTime = 0; // When currently flipping, the time since we started flipping, else 0
 
 	// True during a flip (not an auto-flip, and not after a flip)
@@ -69,6 +70,10 @@ struct CarState : public PhysState {
 
 	// True during a jump
 	bool isJumping = false;
+
+	// RL PATCH: the jump button was released during the current jump (the game's bDeactivate): the jump then ends once
+	// past its minimum time, even if pressed again
+	bool jumpReleased = false;
 
 	// Total time spent in the air
 	float airTime = 0;
@@ -114,6 +119,21 @@ struct CarState : public PhysState {
 	bool isDemoed = false;
 	float demoRespawnTimer = 0;
 
+	// RL PATCH: respawn spot selection while demolished (the game's PRI_TA.DemoSelectionData and
+	// PlayerController_TA.Prespawn; Arena::_UpdateDemolished): the steer input's side last tick (-1, 0, 1: a push past
+	// 0.3 picks), the side picked (0 none, 1 left, 2 right) and the spot on it (0 the inner one); then,
+	// DEMO_PRESPAWN_STATE_LENGTH before the respawn, the spot locked in
+	int8_t demoSpawnSelectLast = 0;
+	uint8_t demoSpawnPreference = 0;
+	uint8_t demoSpawnIndex = 0;
+	bool prespawnSet = false;
+	Vec prespawnPos = { 0, 0, 0 };
+	float prespawnYaw = 0;
+
+	// RL PATCH: how many times landing on the ball or another car gave the car its jump and dodge back (the game's
+	// DodgesRefreshedCounter, for the flip reset indicator: Car::_PreTickUpdate). Wraps
+	uint16_t flipResets = 0;
+
 	BallHitInfo ballHitInfo = BallHitInfo();
 
 	// Controls from last tick, set to this->controls after simulation
@@ -139,9 +159,10 @@ struct CarState : public PhysState {
 
 #define CARSTATE_SERIALIZATION_FIELDS \
 pos, rotMat, vel, angVel, isOnGround, hasJumped, hasDoubleJumped, hasFlipped, \
-flipRelTorque, jumpTime, isFlipping, flipTime, isJumping, airTimeSinceJump, \
+flipRelTorque, jumpTime, isFlipping, flipTime, isJumping, jumpReleased /* RL PATCH */, airTimeSinceJump, \
 boost, isBoosting, boostingTime, timeSinceBoosted, supersonicTime, handbrakeVal, isAutoFlipping, \
 autoFlipTimer, autoFlipTorqueScale, isDemoed, demoRespawnTimer, lastControls, \
+demoSpawnSelectLast, demoSpawnPreference, demoSpawnIndex, prespawnSet, prespawnPos, prespawnYaw, flipResets, /* RL PATCH */ \
 worldContact.hasContact, worldContact.contactNormal, \
 carContact.otherCarID, carContact.cooldownTimer, \
 isSupersonic /* RL PATCH: affects the next tick (supersonic is kept down to 2100 uu/s) */
@@ -174,6 +195,17 @@ public:
 
 	// Respawn the car, called after we have been demolished and waited for the respawn timer
 	void Respawn(GameMode gameMode, int seed = -1, float boostAmount = RLConst::BOOST_SPAWN_AMOUNT);
+
+	// RL PATCH: a fresh car at this spot (the respawn's new state)
+	void _RespawnAt(Vec pos, float yaw, float boostAmount);
+
+	// RL PATCH: where the car respawns when its demolition timer runs out this tick (chosen by the arena before the
+	// cars' pre-physics step: Arena::_FindRespawnSpot)
+	struct RespawnSpot {
+		Vec pos;
+		float yaw = 0;
+		bool valid = false;
+	} _respawnSpot;
 
 	btVehicleRL _bulletVehicle;
 	btDefaultVehicleRaycaster _bulletVehicleRaycaster;
@@ -248,6 +280,7 @@ private:
 	void _UpdateFlipTime(float tickTime);
 	void _UpdateStickyForce(float forwardSpeed_UU);
 	void _UpdateAutoFlip(float tickTime, const MutatorConfig& mutatorConfig, bool jumpPressed);
+	void _UpdateAutoFlipTorque(float tickTime);
 	void _UpdateAutoRoll(float tickTime, const MutatorConfig& mutatorConfig, int numWheelsInContact);
 
 	Car() {}

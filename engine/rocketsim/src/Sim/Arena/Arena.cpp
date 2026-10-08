@@ -1,4 +1,6 @@
 #include "Arena.h"
+
+#include <algorithm>
 #include "../../RocketSim.h"
 
 #include "../../../libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btAxisSweep3.h"
@@ -60,9 +62,172 @@ Car* Arena::AddCar(Team team, const CarConfig& config) {
 	_AddCarFromPtr(car);
 
 	car->_BulletSetup(gameMode, &_bulletWorld, _mutatorConfig);
-	car->Respawn(gameMode, -1, _mutatorConfig.carSpawnBoostAmount);
+	// RL PATCH: a deterministic spot (RocketSim: Respawn with a clock-seeded random spot)
+	Car::RespawnSpot spot = _ChooseSpawn(car, {}, false);
+	car->_RespawnAt(spot.pos, spot.yaw, _mutatorConfig.carSpawnBoostAmount);
 
 	return car;
+}
+
+// RL PATCH: respawning as the game (its scripts, 2026-10-06; static analysis GA-18, DS-1 to DS-7). A demolished
+// player can pick a spot for the first 2.5 s of the 3 s: a press left or right picks that side's next spot (the inner
+// one first; "left" is the player's own: x * y <= 0), and 0.5 s before the respawn the spot locks in: the picked one,
+// or the team's respawn spots tried from a random one, the first no car or ball is within 48 uu of, else the first
+// free spot 192 uu away in one of 8 directions (GetSpawnOrientation). At the respawn the locked spot is checked again
+// (its offsets, else a fresh choice). RocketSim picked a random spot from a clock-seeded generator that isn't in
+// snapshots (server, clients and rollbacks each chose their own) and didn't look for cars; the random start here comes
+// from the tick count and the car's ID. Not modelled: the offsets' line-of-sight check (open floor at every spot)
+std::vector<Car::RespawnSpot> Arena::_RespawnSpots(Team team, int side) {
+	using namespace RLConst;
+	const CarSpawnPos* spots;
+	switch (gameMode) {
+	case GameMode::HOOPS:
+		spots = CAR_RESPAWN_LOCATIONS_HOOPS;
+		break;
+	case GameMode::DROPSHOT:
+		spots = CAR_RESPAWN_LOCATIONS_DROPSHOT;
+		break;
+	default:
+		spots = CAR_RESPAWN_LOCATIONS_SOCCAR;
+	}
+	bool blue = team == Team::BLUE;
+	std::vector<Car::RespawnSpot> out;
+	for (int i = 0; i < CAR_RESPAWN_LOCATION_AMOUNT; i++) {
+		Car::RespawnSpot s;
+		s.pos = Vec(spots[i].x, spots[i].y * (blue ? 1 : -1), CAR_RESPAWN_Z);
+		s.yaw = spots[i].yawAng + (blue ? 0 : M_PI);
+		s.valid = true;
+		bool left = s.pos.x * s.pos.y <= 0;
+		if (side == 0 || (side == 1) == left)
+			out.push_back(s);
+	}
+	if (side != 0) // inner first (SortSecondary)
+		std::stable_sort(out.begin(), out.end(), [](const Car::RespawnSpot& a, const Car::RespawnSpot& b) {
+			return abs(a.pos.x) < abs(b.pos.x);
+		});
+	return out;
+}
+
+bool Arena::_SpawnTaken(Vec pos, Car* car, const std::vector<Car::RespawnSpot>& claimed) {
+	using namespace RLConst;
+	auto nearHitbox = [&](Vec carPos, const RotMat& rot, const CarConfig& config) {
+		Vec centre = carPos + rot.forward * config.hitboxPosOffset.x + rot.right * config.hitboxPosOffset.y +
+			rot.up * config.hitboxPosOffset.z;
+		Vec d = pos - centre, h = config.hitboxSize / 2;
+		Vec local = Vec(d.Dot(rot.forward), d.Dot(rot.right), d.Dot(rot.up));
+		Vec outside = local - Vec(RS_CLAMP(local.x, -h.x, h.x), RS_CLAMP(local.y, -h.y, h.y), RS_CLAMP(local.z, -h.z, h.z));
+		return outside.LengthSq() < DEMO_SPAWN_ENCROACH_RADIUS * DEMO_SPAWN_ENCROACH_RADIUS;
+	};
+	for (Car* other : _cars) {
+		if (other == car || other->_internalState.isDemoed)
+			continue;
+		const btTransform& t = other->_rigidBody.getWorldTransform();
+		if (nearHitbox(t.m_origin * BT_TO_UU, t.m_basis, other->config))
+			return true;
+	}
+	for (const Car::RespawnSpot& s : claimed)
+		if (nearHitbox(s.pos, Angle(s.yaw, 0, 0).ToRotMat(), car->config))
+			return true;
+	if (ball) {
+		float r = DEMO_SPAWN_ENCROACH_RADIUS + ball->GetRadius();
+		if ((ball->_rigidBody.getWorldTransform().m_origin * BT_TO_UU - (btVector3)pos).length2() < r * r)
+			return true;
+	}
+	return false;
+}
+
+bool Arena::_SpawnOffset(Car* car, const Car::RespawnSpot& spot, const std::vector<Car::RespawnSpot>& claimed,
+	Car::RespawnSpot& out) {
+	// FindValidCarSpawnOffset: the spot's yaw + i x 45 degrees, 4 x 48 uu away
+	for (int i = 0; i < 8; i++) {
+		float yaw = spot.yaw + i * (float)(M_PI / 4);
+		Car::RespawnSpot s = spot;
+		s.pos += Vec(det_cosf(yaw), det_sinf(yaw), 0) * RLConst::DEMO_SPAWN_OFFSET;
+		if (!_SpawnTaken(s.pos, car, claimed)) {
+			out = s;
+			return true;
+		}
+	}
+	return false;
+}
+
+bool Arena::_SpawnFromSpots(Car* car, const std::vector<Car::RespawnSpot>& spots, int start,
+	const std::vector<Car::RespawnSpot>& claimed, Car::RespawnSpot& out) {
+	// GetSpawnOrientationFromLocations: a spot no one is on, else one with a free offset, both from `start` round
+	int n = (int)spots.size();
+	for (int k = 0; k < n; k++)
+		if (!_SpawnTaken(spots[(start + k) % n].pos, car, claimed)) {
+			out = spots[(start + k) % n];
+			return true;
+		}
+	for (int k = 0; k < n; k++)
+		if (_SpawnOffset(car, spots[(start + k) % n], claimed, out))
+			return true;
+	return false;
+}
+
+Car::RespawnSpot Arena::_ChooseSpawn(Car* car, const std::vector<Car::RespawnSpot>& claimed, bool usePreference) {
+	// GetSpawnOrientation: the picked spot if any, else the team's from a random one; then the picked side, then all
+	std::vector<Car::RespawnSpot> all = _RespawnSpots(car->team), spots = all;
+	const CarState& st = car->_internalState;
+	bool picked = false;
+	if (usePreference && st.demoSpawnPreference) {
+		std::vector<Car::RespawnSpot> side = _RespawnSpots(car->team, st.demoSpawnPreference);
+		if (st.demoSpawnIndex < side.size()) {
+			spots = { side[st.demoSpawnIndex] };
+			picked = true;
+		}
+	}
+	int start = Math::RandInt(0, (int)spots.size(), (int)((tickCount * 31 + car->id) & 0x7fffffff));
+	Car::RespawnSpot out;
+	if (_SpawnFromSpots(car, spots, start, claimed, out))
+		return out;
+	if (picked && _SpawnFromSpots(car, _RespawnSpots(car->team, st.demoSpawnPreference), 0, claimed, out))
+		return out;
+	if (_SpawnFromSpots(car, all, 0, claimed, out))
+		return out;
+	return all[start % all.size()];
+}
+
+void Arena::_UpdateDemolished(Car* car, std::vector<Car::RespawnSpot>& claimed) {
+	using namespace RLConst;
+	CarState& st = car->_internalState;
+	bool prespawn = _mutatorConfig.respawnDelay >= DEMO_PRESPAWN_MIN_DELAY;
+
+	// Selection, until the lock: the steer input (the game binds aDemoSpawnSelect to the same A / D and left stick X),
+	// a push past 0.3 to a side
+	float steer = car->controls.steer;
+	int8_t select = steer < -DEMO_SPAWN_SELECT_THRESHOLD ? -1 : (steer > DEMO_SPAWN_SELECT_THRESHOLD ? 1 : 0);
+	int8_t lastSelect = st.demoSpawnSelectLast;
+	st.demoSpawnSelectLast = select;
+	if (prespawn && !st.prespawnSet && select != 0 && lastSelect == 0) {
+		uint8_t side = select < 0 ? 1 : 2;
+		size_t sideSize = _RespawnSpots(car->team, side).size();
+		st.demoSpawnIndex = (st.demoSpawnPreference != side || st.demoSpawnIndex + 1u >= sideSize) ? 0 : st.demoSpawnIndex + 1;
+		st.demoSpawnPreference = side;
+	}
+
+	// The lock (EventPrespawn), on the tick the timer reaches DEMO_PRESPAWN_STATE_LENGTH (half a tick of slack for the
+	// float timer)
+	float timerAfter = RS_MAX(st.demoRespawnTimer - tickTime, 0);
+	if (prespawn && !st.prespawnSet && timerAfter <= DEMO_PRESPAWN_STATE_LENGTH + tickTime / 2) {
+		Car::RespawnSpot s = _ChooseSpawn(car, claimed, true);
+		st.prespawnSet = true;
+		st.prespawnPos = s.pos;
+		st.prespawnYaw = s.yaw;
+	}
+
+	// The respawn this tick (Car::_PreTickUpdate): the locked spot if still free, else its offsets, else a fresh choice
+	if (timerAfter == 0) {
+		Car::RespawnSpot s;
+		s.pos = st.prespawnPos;
+		s.yaw = st.prespawnYaw;
+		s.valid = true;
+		if (!st.prespawnSet || (_SpawnTaken(s.pos, car, claimed) && !_SpawnOffset(car, s, claimed, s)))
+			s = _ChooseSpawn(car, claimed, false);
+		car->_respawnSpot = s;
+		claimed.push_back(s);
+	}
 }
 
 bool Arena::_AddCarFromPtr(Car* car) {
@@ -406,6 +571,15 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
 	manifoldPoint.m_combinedFriction = RLConst::CARCAR_COLLISION_FRICTION;
 	manifoldPoint.m_combinedRestitution = RLConst::CARCAR_COLLISION_RESTITUTION;
 
+	if (car1->_internalState.isDemoed || car2->_internalState.isDemoed)
+		return;
+
+	// RL PATCH: demolitions apply after both directions (the game's Demolish only queues the demolition, finished in
+	// EventPostPhysicsStep, so the victim's own impact handling still runs that tick: a mutual supersonic head-on
+	// demolishes both cars, and a victim driving at its attacker still bumps it; static analysis GA-15). RocketSim
+	// stopped at the first demolition, so the result depended on the pair's order
+	Car* demolished[2] = {};
+
 	// Test collision both ways
 	for (int i = 0; i < 2; i++) {
 
@@ -413,14 +587,11 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
 		if (isSwapped)
 			std::swap(car1, car2);
 
-		if (car1->_internalState.isDemoed || car2->_internalState.isDemoed)
-			return;
-
 		bool canDemoTeam = _mutatorConfig.enableTeamDemos || (car1->team != car2->team);
 
 		if (_mutatorConfig.demoMode == DemoMode::ON_CONTACT) {
 			if (canDemoTeam) {
-				car2->Demolish(_mutatorConfig.respawnDelay);
+				demolished[i] = car2;
 				if (_carBumpCallback.func)
 					_carBumpCallback.func(this, car1, car2, true, _carBumpCallback.userInfo);
 			}
@@ -466,13 +637,17 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
 		}
 
 		if (isDemo) {
-			car2->Demolish(_mutatorConfig.respawnDelay);
+			demolished[i] = car2;
 			if (_carBumpCallback.func)
 				_carBumpCallback.func(this, car1, car2, true, _carBumpCallback.userInfo);
 			continue;
 		}
 
-		if ((car1->_internalState.carContact.otherCarID == car2->id) && (car1->_internalState.carContact.cooldownTimer > 0))
+		// RL PATCH: in cooldown until strictly more than BumpInterval has passed (the game: PhysicsTime > LastHitTime +
+		// 0.25, so a hit exactly 30 ticks later is still in cooldown, the next comes at 31; static analysis GA-16). The
+		// timer runs on below 0 by up to a tick (Car::_PostTickUpdate), so "exactly over" (~0) still blocks
+		if ((car1->_internalState.carContact.otherCarID == car2->id) &&
+		    (car1->_internalState.carContact.cooldownTimer > -BUMP_COOLDOWN_EPSILON))
 			continue; // In cooldown (BumpInterval)
 
 		// Only bumper hits push (PushFactor is 0 otherwise), but every bump starts the cooldown
@@ -495,6 +670,10 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
 		if (_carBumpCallback.func)
 			_carBumpCallback.func(this, car1, car2, false, _carBumpCallback.userInfo);
 	}
+
+	for (Car* victim : demolished)
+		if (victim)
+			victim->Demolish(_mutatorConfig.respawnDelay);
 }
 
 void Arena::_BtCallback_OnCarWorldCollision(Car* car, btCollisionObject* world, btManifoldPoint& manifoldPoint) {
@@ -1049,6 +1228,14 @@ void Arena::Step(int ticksToSimulate) {
 			for (Car* car : _cars)
 				car->controls = CarControls();
 
+		{ // RL PATCH: demolished cars' respawn spot selection, lock and respawn spot (in ID order, each respawning car
+		  // avoiding the ones before; _UpdateDemolished)
+			std::vector<Car::RespawnSpot> claimed;
+			for (Car* car : _cars)
+				if (car->_internalState.isDemoed)
+					_UpdateDemolished(car, claimed);
+		}
+
 		for (Car* car : _cars)
 			car->_PreTickUpdate(gameMode, tickTime, _mutatorConfig);
 
@@ -1093,6 +1280,14 @@ void Arena::Step(int ticksToSimulate) {
 		if (gameMode == GameMode::DROPSHOT)
 			if (ball->_internalState.dsInfo.lastDamageTick && ball->_internalState.dsInfo.lastDamageTick == tickCount)
 				SetDropshotTilesState(_dropshotTilesState);
+
+		// RL PATCH: a goal explodes the ball (the game's Active.HandleHitGoal -> Ball.Explode: physics none, no
+		// collision) until the kickoff reset, so it can't come back out and score again (match-rules audit MR-2).
+		// RocketSim's ball played on
+		if (gameMode != GameMode::THE_VOID && !ball->_internalState.isExploded && IsBallScored()) {
+			ball->_internalState.isExploded = true;
+			ball->_ApplyExploded();
+		}
 
 		if (_goalScoreCallback.func != NULL) { // Potentially fire goal score callback
 			if (IsBallScored()) {

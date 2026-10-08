@@ -1,8 +1,10 @@
 // Whether a car can dodge, for the flip indicator, from the engine's own flip state (CarState::HasFlipOrJump,
 // HasFlipReset, airTimeSinceJump): in the air a car can dodge (or double jump) once, within 1.25 s of its jump ending;
 // in the air without having jumped (it drove off something, or got a flip reset) there is no time limit. Its wheels
-// touching anything (3 or more of them: "on the ground"), the ball or another car included, give the dodge back:
-// touching the ball or a car in mid-air is a flip reset (notes/physics-values.md, "Flip reset").
+// touching anything (3 or more of them: "on the ground"), the ball or another car included, give the dodge back.
+// A flip reset is the game's signal for it (its indicator): a landing on the ball or a car, at most one wheel on the
+// arena, after the jump or dodge was used (the engine's flipResets count, the game's DodgesRefreshedCounter; not after
+// driving off something without jumping) (notes/physics-values.md, "Flip reset").
 import type { CarState, RbActor } from "../engine/world";
 
 /** RLConst::DOUBLEJUMP_MAX_DELAY: how long after a jump ends the car can still dodge (s). */
@@ -16,7 +18,7 @@ export type Dodge =
 
 export interface FlipTick {
   readonly dodge: Dodge;
-  /** A flip reset this tick: the wheels just touched the ball or another car in mid-air */
+  /** A flip reset this tick: what the wheels landed on (the ball or another car) */
   readonly reset: RbActor | null;
 }
 
@@ -24,16 +26,16 @@ export interface FlipTick {
 export class FlipTracker {
   #airborne = false; // in the air last tick
   #fromReset = false; // this time in the air started with a flip reset
+  #flipResets: number | null = null; // the engine's count last tick
 
   /** One physics tick of `seconds`: the car's state after it. */
   tick(car: CarState, seconds: number): FlipTick {
+    const counted = this.#flipResets !== null && car.flipResets !== this.#flipResets;
+    this.#flipResets = car.flipResets;
     if (car.onGround) {
-      // Touching down from the air onto the ball or a car (the game's IsOnRBActor): a flip reset
-      let reset: FlipTick["reset"] = null;
-      if (this.#airborne) {
-        reset = car.rbActor;
-        this.#fromReset = reset !== null;
-      }
+      // (the count goes up on the landing tick, on the ball or a car: the game's IsOnRBActor)
+      const reset: FlipTick["reset"] = counted ? (car.rbActor ?? { kind: "ball" }) : null;
+      if (this.#airborne || counted) this.#fromReset = counted;
       this.#airborne = false;
       return { dodge: { kind: "ground" }, reset };
     }

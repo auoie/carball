@@ -27,7 +27,7 @@ interps), disassembled with `scripts/ubytecode.py` (local output: `out/decomp/ca
 | SupersonicFOV / SupersonicFOVInterpSpeed | 10 / 40 |
 | BouncyChassisScale / RollScale | 0.065 / 0.1 |
 | GroundNormalInterpRate | 10.46 |
-| DefaultBlendParams.BlendTime | 0.5 |
+| DefaultBlendParams.BlendTime | 0.5 (the archetypes override only this; the base `Default__CameraState_X.DefaultBlendParams` is VTBlend_EaseIn, BlendExp 2, so a state switch's offset fades as (remaining / 0.5)², not linearly: static session CAM-2, client fixed 2026-10-08) |
 
 ## Ball cam (`Archetypes.Camera.CameraState_Ballcam`, class `CameraState_BallCam_TA`)
 The car-cam values above, plus:
@@ -52,9 +52,13 @@ Demolished camera: InitialFOV 120, FOVBlendTime 1.0, MaxZoomInFOV 15, MaxFOVBlen
 
 ## Input (`TAGame/Config/DefaultInput.ini`, plain text in the install; full pipeline in `notes/input.md`)
 - `PlayerInput_TA`: GamepadDeadzone 0.3 (replaced by the profile's controller deadzone, default 0.2),
-  GamepadFreeLookDeadzone 0.3, triggers 0.1 (`GamepadDeadzones`), MouseSensitivity 10, KeyboardAxisBlendTime 0.
-- Default bindings: W/S throttle + pitch, A/D steer + yaw, Q/E roll, LMB boost, RMB jump, Left Shift powerslide +
-  air roll, Space ball cam, MMB rear camera, Backspace reset training, 1/2/3 freeplay ball helpers.
+  GamepadFreeLookDeadzone 0.3 (a dead ini key: the live profile field `PlayerInput_X.GamepadFreeLookDeadzone` is 0.1,
+  menu 0–0.75; static session CAM-9), triggers 0.1 (`GamepadDeadzones`), MouseSensitivity 10, KeyboardAxisBlendTime 0.
+- Default bindings ("Standard" preset): W/S throttle + pitch, A/D steer + yaw, Q/E roll, LMB boost, RMB jump, Left
+  Shift powerslide + air roll, Space ball cam, MMB rear camera, Backspace reset training, 1/2/3 freeplay ball helpers.
+  The live game's default since the 2026-10-06 update is "Modern" (the client's default): Space jump (LMB the
+  alternative jump), Left Shift boost, RMB powerslide + air roll, MMB ball cam, Left Ctrl rear camera (static
+  session C-3, notes/controls-audit.md).
   Gamepad: RT/LT, left stick, A jump, B boost, X powerslide, Y ball cam, RS click rear camera, RB reset,
   D-pad down/up ball helpers. The base preset puts gamepad air roll on the left trigger; "Legacy" puts it on X.
 

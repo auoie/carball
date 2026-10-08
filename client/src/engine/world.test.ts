@@ -17,7 +17,8 @@ beforeAll(async () => {
 
 describe("arena mesh file", () => {
   it("parses the generated arena", () => {
-    expect(meshes).toHaveLength(8); // four wall quadrants and four goal halves
+    // The game's 16 pieces: per quadrant a corner, a side-wall floor half and ceiling half, a goal-and-back-wall half
+    expect(meshes).toHaveLength(16);
     const mesh = mergeMeshes(meshes.map(parseCmf));
     expect(mesh.indices.length / 3).toBe(10904);
     // Back of the goals is 6000 uu from centre
@@ -83,6 +84,21 @@ describe("World", () => {
       goals.push(...world.takeEvents().filter((e) => e.type === "goal"));
     }
     expect(goals).toEqual([{ type: "goal", scoringTeam: 0 }]);
+    world.dispose();
+  });
+
+  it("a goal explodes the ball: it stays where it scored, even moving back out, until it is set again", () => {
+    const world = World.create(engine);
+    world.setBall({ pos: vec3(0, 5300, 300), vel: vec3(0, -1500, 0), angVel: vec3(0, 0, 0) }); // in, on its way out
+    world.step();
+    expect(world.ballExploded()).toBe(true);
+    const at = world.ball().pos;
+    world.step(240);
+    expect(world.ball().pos).toEqual(at);
+    world.setBall({ pos: vec3(0, 0, 300), vel: vec3(0, 0, 0), angVel: vec3(0, 0, 0) });
+    world.step(10);
+    expect(world.ballExploded()).toBe(false);
+    expect(world.ball().pos.z).toBeLessThan(300); // falling again
     world.dispose();
   });
 

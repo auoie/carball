@@ -47,6 +47,10 @@ struct BallState : public PhysState {
 	};
 	DropshotInfo dsInfo;
 
+	// RL PATCH: the ball scored and exploded (the game's Ball.Explode: no physics, no collision, until the kickoff
+	// reset): frozen where it scored, so a round has one goal at most (Arena::_Tick; a ball state set clears it)
+	bool isExploded = false;
+
 	BallState() : PhysState() {
 		pos.z = RLConst::BALL_REST_Z;
 	}
@@ -60,13 +64,17 @@ struct BallState : public PhysState {
 #define BALLSTATE_SERIALIZATION_FIELDS \
 pos, rotMat, vel, angVel, \
 hsInfo.yTargetDir, hsInfo.curTargetSpeed, hsInfo.timeSinceHit, \
-dsInfo.chargeLevel, dsInfo.accumulatedHitForce, dsInfo.yTargetDir, dsInfo.hasDamaged, dsInfo.lastDamageTick \
+dsInfo.chargeLevel, dsInfo.accumulatedHitForce, dsInfo.yTargetDir, dsInfo.hasDamaged, dsInfo.lastDamageTick, \
+isExploded /* RL PATCH */ \
 
 class Ball {
 public:
 
 	BallState _internalState;
 	BallState GetState();
+	// RL PATCH: the body as the state's isExploded says (frozen and not colliding while exploded)
+	void _ApplyExploded();
+
 	void SetState(const BallState& state);
 
 	btRigidBody _rigidBody;

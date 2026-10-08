@@ -6,6 +6,7 @@ import { AirPitchSafety, type InputSnapshot, axisDeadzone, readControls, readHel
 const DZ = 0.2; // the game's default controller deadzone
 const keys = (...codes: string[]): InputSnapshot => ({ keys: new Set(codes), mouseButtons: new Set(), gamepad: null });
 const mouse = (...buttons: number[]): InputSnapshot => ({ keys: new Set(), mouseButtons: new Set(buttons), gamepad: null });
+const both = (codes: string[], buttons: number[]): InputSnapshot => ({ keys: new Set(codes), mouseButtons: new Set(buttons), gamepad: null });
 
 function pad(axes: number[], pressed: Record<number, number> = {}): InputSnapshot {
   const buttons = Array.from({ length: 17 }, (_, i) => pressed[i] ?? 0);
@@ -15,7 +16,7 @@ function pad(axes: number[], pressed: Record<number, number> = {}): InputSnapsho
 const controls = (input: InputSnapshot, bindings: Bindings = DEFAULT_BINDINGS, deadzone = DZ) =>
   readControls(input, bindings, deadzone);
 
-describe("default keyboard and mouse (DefaultInput.ini Standard preset)", () => {
+describe("default keyboard and mouse (the live game's Modern preset)", () => {
   it("W drives forward and pitches the nose down", () => {
     const c = controls(keys("KeyW"));
     expect(c.throttle).toBe(1);
@@ -36,15 +37,15 @@ describe("default keyboard and mouse (DefaultInput.ini Standard preset)", () => 
   });
 
   it("holding air roll turns yaw input into roll", () => {
-    const c = controls(keys("KeyA", "ShiftLeft"));
+    const c = controls(both(["KeyA"], [2]));
     expect(c.yaw).toBe(0);
     expect(c.roll).toBe(-1);
-    expect(c.handbrake).toBe(true); // same key powerslides on the ground
+    expect(c.handbrake).toBe(true); // same button (right mouse) powerslides on the ground
   });
 
   it("free air roll replaces directional roll (PlayerInput_TA.PlayerInput)", () => {
-    expect(controls(keys("KeyE", "ShiftLeft")).roll).toBe(0);
-    expect(controls(keys("KeyE", "KeyA", "ShiftLeft")).roll).toBe(-1);
+    expect(controls(both(["KeyE"], [2])).roll).toBe(0);
+    expect(controls(both(["KeyE", "KeyA"], [2])).roll).toBe(-1);
   });
 
   it("Q/E roll directly", () => {
@@ -52,14 +53,16 @@ describe("default keyboard and mouse (DefaultInput.ini Standard preset)", () => 
     expect(controls(keys("KeyQ")).roll).toBe(-1);
   });
 
-  it("left mouse boosts, right mouse jumps", () => {
-    expect(controls(mouse(0)).boost).toBe(true);
-    expect(controls(mouse(2)).jump).toBe(true);
+  it("space and left mouse (the alternative jump) jump, left shift boosts", () => {
+    expect(controls(keys("Space")).jump).toBe(true);
+    expect(controls(mouse(0)).jump).toBe(true);
+    expect(controls(mouse(0)).boost).toBe(false);
+    expect(controls(keys("ShiftLeft")).boost).toBe(true);
   });
 
-  it("actions: space is ball cam, middle mouse rear camera, backspace resets", () => {
-    expect(readHeldActions(keys("Space"), DEFAULT_BINDINGS, DZ).ballCam).toBe(true);
-    expect(readHeldActions(mouse(1), DEFAULT_BINDINGS, DZ).rearCamera).toBe(true);
+  it("actions: middle mouse is ball cam, left ctrl rear camera, backspace resets", () => {
+    expect(readHeldActions(mouse(1), DEFAULT_BINDINGS, DZ).ballCam).toBe(true);
+    expect(readHeldActions(keys("ControlLeft"), DEFAULT_BINDINGS, DZ).rearCamera).toBe(true);
     expect(readHeldActions(keys("Backspace"), DEFAULT_BINDINGS, DZ).reset).toBe(true);
   });
 
@@ -101,7 +104,8 @@ describe("default gamepad (standard mapping)", () => {
   });
 
   it("the right stick swivels the camera", () => {
-    expect(readLook(pad([0, 0, 0, -1]), DEFAULT_BINDINGS, DZ)).toEqual({ up: 1, right: 0 });
+    // Pushed up: SwivelDown (the game's binding), which the default inverted swivel pitch turns into looking up
+    expect(readLook(pad([0, 0, 0, -1]), DEFAULT_BINDINGS, DZ)).toEqual({ up: -1, right: 0 });
     expect(readLook(pad([0, 0, 1, 0]), DEFAULT_BINDINGS, DZ)).toEqual({ up: 0, right: 1 });
     expect(readLook(pad([0, 0, 0.1, 0.1]), DEFAULT_BINDINGS, DZ)).toEqual({ up: 0, right: 0 });
   });

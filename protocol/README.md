@@ -1,4 +1,4 @@
-# Game protocol (version 3)
+# Game protocol (version 5)
 
 Client ↔ server over **WebTransport** (HTTP/3, QUIC). All integers little-endian. Implemented in
 `server/src/protocol.rs` (Rust) and `client/src/net/protocol.ts` (TypeScript); `vectors.json` holds byte-exact
@@ -17,6 +17,7 @@ Framed as `u16 length` + message (`length` counts the message, which starts with
 | Type | Direction | Fields |
 |---|---|---|
 | `0x01 Hello` | C→S | `u16 version`, `u8 team` (0 blue, 1 orange, 255 any), `u8 body` (0 Octane … 5 Merc), `f32 dodgeDeadzone`, `f32 steeringSensitivity`, `f32 airControlSensitivity` |
+| `0x02 ResetInputBuffer` | C→S | nothing: the client had a hitch (over 0.1 s between its frames) 2 s ago; the server resets its jitter buffer to the initial estimate (as the game's `ServerResetInputBuffer`) |
 | `0x81 Welcome` | S→C | `u16 version`, `u32 carId`, `u8 tickRate` (120), `u32 frame`, `u32 n`, `n` bytes engine snapshot |
 | `0x82 World` | S→C | `u32 frame`, `u32 n`, `n` bytes engine snapshot (the set of cars changed: load it as the state after `frame`) |
 | `0x83 Event` | S→C | `u32 serverTick`, `u8 kind` (0 goal, 1 demo), then goal: `u8 team`; demo: `u32 attacker`, `u32 victim` |
@@ -44,7 +45,10 @@ that is the state after its input frame `ackFrame` (the last frame the server co
 ping = now − echoTimestamp − echoDelay. A large update is split into `parts`, each a complete network state for
 some of the bodies; parts apply independently. Every network state also carries the kickoff countdown (ticks left;
 cars get no input while it runs; version 2), and each car's wheel contacts from its previous tick with their normals
-(the car's next tick uses them; version 3).
+(the car's next tick uses them; version 3), and whether the jump button was released during the car's current jump
+(the jump then ends at its minimum time; version 4), and a demolished car's respawn spot selection (the steer input
+past ±0.3 picks the next spot on that side for the first 2.5 s of the 3 s, then the spot locks) and its flip reset
+count (version 5).
 
 What an update carries (the game's rates, `notes/netcode.md`): the ball every update (60 Hz); cars within 1000 uu of
 the ball every update, other cars and the boost pads every 8 ticks (15 Hz).

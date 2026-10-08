@@ -41,6 +41,13 @@ impl Default for JitterBuffer {
 }
 
 impl JitterBuffer {
+    /// Back to the initial estimate (`JitterBuffer.Reset`: mean 0.016 s, variance 0, size 7), keeping the time of the
+    /// last packet. After a client hitch (`ServerResetInputBuffer`): one long gap would otherwise keep the buffer large
+    /// for tens of seconds (a 300 ms gap: size 18, still 9 after 30 s)
+    pub fn reset(&mut self) {
+        *self = Self { last_packet_time: self.last_packet_time, ..Self::default() };
+    }
+
     pub fn received_packet(&mut self, now: f64) {
         if let Some(last) = self.last_packet_time {
             let gap = ((now - last) as f32).clamp(MIN_TIME_BETWEEN_PACKETS, MAX_TIME_BETWEEN_PACKETS);
@@ -169,6 +176,28 @@ mod tests {
 
     fn frame(throttle: i8) -> InputFrame {
         InputFrame { throttle, ..InputFrame::default() }
+    }
+
+    #[test]
+    fn a_hitch_reset_brings_the_buffer_back_at_once() {
+        let mut j = JitterBuffer::default();
+        for i in 0..=600 {
+            j.received_packet(f64::from(i) / 60.0);
+        }
+        // One 300 ms gap: the buffer grows, and stays large for tens of seconds of regular packets
+        let mut t = 10.0 + 0.3;
+        j.received_packet(t);
+        assert!(j.buffer_size >= 15, "size after the gap {}", j.buffer_size);
+        for _ in 0..(30 * 60) {
+            t += 1.0 / 60.0;
+            j.received_packet(t);
+        }
+        assert!(j.buffer_size > 7, "size 30 s later {}", j.buffer_size);
+        // The reset: the initial estimate, and the next packet's gap measured from the last one (not from 0)
+        j.reset();
+        assert_eq!(j.buffer_size, 7);
+        j.received_packet(t + 1.0 / 60.0);
+        assert_eq!(j.buffer_size, 7);
     }
 
     #[test]

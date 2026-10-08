@@ -83,7 +83,7 @@ export function readControls(input: InputSnapshot, bindings: Bindings, stickDead
     pitch: clamp(v.pitchUp - v.pitchDown, -1, 1),
     yaw: airRoll ? 0 : clamp(yaw, -1, 1),
     roll: clamp(airRoll ? yaw : v.rollRight - v.rollLeft, -1, 1),
-    jump: v.jump > 0.5,
+    jump: v.jump > 0.5 || v.jumpAlternative > 0.5,
     boost: v.boost > 0.5,
     handbrake: v.handbrake > 0.5,
     airPitchSafety: false,

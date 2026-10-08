@@ -100,7 +100,8 @@ namespace RLConst {
 		JUMP_ACCEL = 4375.f / 3.f,
 		JUMP_IMMEDIATE_FORCE = 875.f / 3.f,
 		JUMP_MIN_TIME = 0.025f,
-		JUMP_RESET_TIME_PAD = (1 / 40.f),
+		JUMP_RESET_TIME_PAD = (1 / 40.f), // (RL PATCH: unused; the game's rule is JUMP_LEAVE_GROUND_TIME, see Car::_UpdateJump)
+		JUMP_LEAVE_GROUND_TIME = 0.125f, // RL PATCH: CarComponent_Jump_TA JumpLeaveGroundTime
 		JUMP_MAX_TIME = 0.2f,
 		DOUBLEJUMP_MAX_DELAY = 1.25f, // Can be at most 1.25 seconds after the jump is finished
 
@@ -134,7 +135,8 @@ namespace RLConst {
 		CAR_AUTOFLIP_ANGVEL_CHANGE = 1000, // RL PATCH: FlipCarTorque, an angular-velocity change every tick
 		CAR_AUTOFLIP_TIME = 0.4f,
 		CAR_AUTOFLIP_NORMZ_THRESH = M_SQRT1_2,
-		CAR_AUTOFLIP_ROLL_THRESH = 2.8f,
+		CAR_AUTOFLIP_ROLL_THRESH = 2.8f, // (RL PATCH: unused, see CAR_AUTOFLIP_UP_DOT_THRESH)
+		CAR_AUTOFLIP_UP_DOT_THRESH = -0.966f, // RL PATCH: FlipCar CanActivate: Dot(contact normal, car up) below this
 
 		CAR_AUTOROLL_FORCE = 100,
 		CAR_AUTOROLL_TORQUE = 80,
@@ -149,6 +151,7 @@ namespace RLConst {
 		CAR_RESPAWN_Z = 36.f,
 
 		BUMP_COOLDOWN_TIME = 0.25f,
+		BUMP_COOLDOWN_EPSILON = 1e-5f, // RL PATCH: a cooldown timer above -this is still running (Arena.cpp, GA-16)
 		BUMP_MIN_FORWARD_DIST = 64.5f, // No longer used, see the cone angles below
 
 		// RL PATCH: PhysicsConfig_TA.CarInteractionSettings.COMAngleCheck (degrees)
@@ -159,7 +162,13 @@ namespace RLConst {
 
 		// RL PATCH: forward speed needed for a demo (SuperSonic Speed - TurnoffSpeedBuffer)
 		DEMO_MIN_FORWARD_SPEED = 2200.f - 100.f,
-		DEMO_RESPAWN_TIME = 3.f;
+		DEMO_RESPAWN_TIME = 3.f,
+		// RL PATCH: respawn spot selection (PrespawnConfig_TA, Car CollisionCylinder; Arena::_UpdateDemolished)
+		DEMO_PRESPAWN_STATE_LENGTH = 0.5f, // the spot locks this long before the respawn
+		DEMO_PRESPAWN_MIN_DELAY = 3.f, // no selection or lock with a shorter respawn delay
+		DEMO_SPAWN_SELECT_THRESHOLD = 0.3f, // the steer input past this picks a side (DemoSpawnSelectThreshold)
+		DEMO_SPAWN_ENCROACH_RADIUS = 48, // a spot is taken if a car (or the ball) is within this
+		DEMO_SPAWN_OFFSET = 4 * 48; // the 8 fallback spots around a taken one
 
 	// NOTE: Angle order is PYR
 	constexpr Vec

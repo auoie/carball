@@ -1,19 +1,23 @@
 #!/bin/bash
-# Regenerates engine/rocketsim-rl-patches.diff without a pristine RocketSim checkout: rebuilds upstream from HEAD's
-# tree minus HEAD's diff (checked: it must reproduce HEAD's diff exactly), then diffs it against the working tree.
+# Regenerates engine/rocketsim-rl-patches.diff without a pristine RocketSim checkout: rebuilds upstream from the tree
+# of the commit that last updated the diff, minus that diff (checked: it must reproduce it exactly), then diffs it
+# against the working tree.
 #   bash scripts/regen_rocketsim_diff.sh "$PWD" /tmp/somewhere new.diff && cp new.diff engine/rocketsim-rl-patches.diff
-# Rebuild pristine upstream RocketSim from HEAD's tree minus HEAD's patch diff, then diff it against today's tree.
+# Rebuild pristine upstream RocketSim from that commit's tree minus its patch diff, then diff it against today's tree.
 #   regen_diff.sh REPO WORKDIR OUT.diff
 set -euo pipefail
 R=$1; S=$2; OUT=$3
 mkdir -p "$S"
 cd "$R"
-git show HEAD:engine/rocketsim-rl-patches.diff > "$S/old.diff"
+# The commit that last updated the diff: its tree matches its diff (later commits may have changed the engine without
+# regenerating it, so HEAD's diff need not apply to HEAD's tree)
+REV=$(git log -1 --format=%h -- engine/rocketsim-rl-patches.diff)
+git show "$REV":engine/rocketsim-rl-patches.diff > "$S/old.diff"
 # Files the patches added are absent upstream: leave them out of the extraction
 mapfile -t NEW < <(awk '/^diff --git/{f=$4} /^new file/{sub("^engine/rocketsim/","",f); print f}' "$S/old.diff")
 EXC=()
 for f in "${NEW[@]}"; do EXC+=("--exclude=engine/rocketsim/$f"); done
-git archive HEAD engine/rocketsim | tar -x -C "$S" "${EXC[@]}"
+git archive "$REV" engine/rocketsim | tar -x -C "$S" "${EXC[@]}"
 mv "$S/engine/rocketsim" "$S/upstream"
 python3 - "$S/old.diff" "$S/old_ab.diff" <<'EOF'
 import re, sys
@@ -29,11 +33,11 @@ open(sys.argv[2], 'w').write(''.join(out))
 EOF
 (cd "$S/upstream" && git apply -R -p1 --whitespace=nowarn ../old_ab.diff)
 echo "upstream rebuilt (${#NEW[@]} added files left out)"
-# Sanity check: HEAD's tree against the rebuilt upstream must reproduce HEAD's diff
+# Sanity check: that commit's tree against the rebuilt upstream must reproduce its diff
 mkdir -p "$S/head/engine"
-git archive HEAD engine/rocketsim | tar -x -C "$S/head"
+git archive "$REV" engine/rocketsim | tar -x -C "$S/head"
 (cd "$S" && git diff --no-index --no-prefix upstream head/engine/rocketsim | sed 's#head/engine/rocketsim#engine/rocketsim#g' > check.diff) || true
-if cmp -s "$S/check.diff" "$S/old.diff"; then echo "check: HEAD's diff reproduced exactly"; else echo "check: DIFFERS from HEAD's diff"; diff "$S/old.diff" "$S/check.diff" | head -5; fi
+if cmp -s "$S/check.diff" "$S/old.diff"; then echo "check: $REV's diff reproduced exactly"; else echo "check: DIFFERS from $REV's diff"; diff "$S/old.diff" "$S/check.diff" | head -5; fi
 # Today's tree: the files git sees (tracked and untracked, ignored ones left out)
 mkdir -p "$S/now"
 git ls-files -co --exclude-standard -z engine/rocketsim | tar -C "$R" --null -T - -cf - | tar -x -C "$S/now"

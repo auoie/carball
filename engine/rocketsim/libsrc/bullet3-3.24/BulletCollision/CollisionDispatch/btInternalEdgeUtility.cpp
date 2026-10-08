@@ -137,6 +137,12 @@ struct btConnectivityProcessor : public btTriangleCallback
 				if (!info)
 				{
 					btTriangleInfo tmp;
+					// RL PATCH: the game's build inserts the info with all three edge angles 0 (stock: 2 pi), so in a
+					// triangle with a neighbour, an edge with none in its mesh piece (a piece boundary, a seam) is a
+					// planar internal edge: a contact near it is snapped to the face normal (static analysis B15,
+					// btConnectivityProcessor::processTriangle 0x140295b60). Live (ball_5050, the ball on the side
+					// wall's y = 0 seam): the game's contact normal there has y = 0; stock kept -0.0028
+					tmp.m_edgeV0V1Angle = tmp.m_edgeV1V2Angle = tmp.m_edgeV2V0Angle = 0;
 					m_triangleInfoMap->insert(hash, tmp);
 					info = m_triangleInfoMap->find(hash);
 				}

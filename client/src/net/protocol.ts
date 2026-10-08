@@ -1,7 +1,9 @@
 // The game protocol (version 1): see protocol/README.md. Byte-exact samples in protocol/vectors.json (shared with
 // the Rust server's tests).
 
-export const PROTOCOL_VERSION = 3; // 2: kickoff countdown in the state; 3: the wheels' previous contacts
+// 2: kickoff countdown in the state; 3: the wheels' previous contacts; 4: the jump's release; 5: respawn spot selection
+// and flip resets in the state
+export const PROTOCOL_VERSION = 5;
 export const MAX_INPUT_FRAMES = 10;
 
 export type GameEvent =
@@ -26,6 +28,9 @@ export type ControlMessage =
       readonly frame: number;
       readonly snapshot: Uint8Array;
     }
+  /** The client had a hitch (over 0.1 s between its ticks) 2 s ago: the server resets its jitter buffer
+   *  (NetworkInputBuffer_TA.ClientTick -> ServerResetInputBuffer) */
+  | { readonly type: "resetInputBuffer" }
   | { readonly type: "world"; readonly frame: number; readonly snapshot: Uint8Array }
   | { readonly type: "event"; readonly serverTick: number; readonly event: GameEvent };
 
@@ -167,6 +172,9 @@ export function encodeControl(m: ControlMessage): Uint8Array {
       w.f32(m.steeringSensitivity);
       w.f32(m.airControlSensitivity);
       break;
+    case "resetInputBuffer":
+      w.u8(0x02);
+      break;
     case "welcome":
       w.u8(0x81);
       w.u16(m.version);
@@ -217,6 +225,8 @@ export function decodeControl(body: Uint8Array): ControlMessage {
         steeringSensitivity: r.f32(),
         airControlSensitivity: r.f32(),
       };
+    case 0x02:
+      return { type: "resetInputBuffer" };
     case 0x81: {
       const version = r.u16();
       const carId = r.u32();

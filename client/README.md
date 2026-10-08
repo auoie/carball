@@ -96,7 +96,8 @@ Input follows the game (`notes/input.md`): the deadzone applies per stick axis; 
 roll and replaces directional roll; the sensitivities and dodge deadzone are applied by the engine
 (`World.setCarPreferences`), as the game applies them on the server; the right stick swivels the camera.
 
-Defaults follow the game: W/S throttle (and pitch in the air), A/D steer/yaw,
-Q/E air roll, right mouse jump, left mouse boost, Left Shift powerslide/air roll, Space ball cam,
-Backspace reset, 1/2 ball in front / on car. Gamepad: RT/LT, left stick, A jump, B boost, X powerslide/air roll,
-Y ball cam, RB reset, D-pad down/up.
+Defaults follow the live game's "Modern" layout (its default since the 2026-10-06 update): W/S throttle (and pitch
+in the air), A/D steer/yaw, Q/E air roll, Space jump (left mouse too: the alternative jump), Left Shift boost, right
+mouse powerslide/air roll, middle mouse ball cam, Left Ctrl rear camera, Backspace reset, 1/2 ball in front / on car.
+Gamepad (unchanged): RT/LT, left stick, A jump, B boost, X powerslide/air roll, Y ball cam, RB reset, D-pad down/up.
+Demolished online: steer left or right (A/D, left stick) picks the respawn spot for the first 2.5 s.

@@ -175,10 +175,13 @@ const car = (pos: Vec3, vel: Vec3, extra: Partial<CarState> = {}): CarState => (
   rbActor: null,
   wheelContact: [true, true, true, true],
   groundNormal: vec3(0, 0, 1),
+  demoRespawnTimer: 0,
+  spawnSelection: { side: null, index: 0, locked: null },
+  flipResets: 0,
   ...extra,
 });
 const ball: BodyState = { pos: vec3(0, 0, 93), vel: ZERO, angVel: ZERO, rot: IDENTITY_ROT };
-const pads = (active: boolean): BoostPadState[] => [{ pos: vec3(0, -4240, 70), big: false, active }];
+const pads = (active: boolean): BoostPadState[] => [{ pos: vec3(0, -4240, 70), big: false, active, cooldown: active ? 0 : 4 }];
 const world = (cars: [number, CarState][], padsActive = true): SoundWorld => ({ cars: new Map(cars), ball, pads: pads(padsActive) });
 
 describe("sound events from made-up states", () => {

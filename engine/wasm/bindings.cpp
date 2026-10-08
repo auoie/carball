@@ -30,7 +30,8 @@ EMSCRIPTEN_DECLARE_VAL_TYPE(ByteArrayListVal); // Uint8Array[]
 
 namespace Layout {
 	// Ball: position, velocity, angular velocity, rotation (forward, right, up)
-	constexpr int BALL_POS = 0, BALL_VEL = 3, BALL_ANG_VEL = 6, BALL_ROT = 9, BALL_SIZE = 18;
+	constexpr int BALL_POS = 0, BALL_VEL = 3, BALL_ANG_VEL = 6, BALL_ROT = 9,
+		BALL_EXPLODED = 18 /* scored: frozen and not colliding until a reset (the game's Ball.Explode) */, BALL_SIZE = 19;
 
 	// Car: as the ball, then boost (0-100) and flags (0/1)
 	constexpr int
@@ -48,7 +49,13 @@ namespace Layout {
 		CAR_WHEEL_GROUND = 45 /* 4 values, what each wheel touches: 0 nothing, 1 arena, 2 ball, 3 a car */,
 		CAR_RB_ACTOR = 49 /* when CAR_ON_RB_ACTOR: -1 the ball, else the id of the car it stands on (the one most wheels
 		                     touch; a tie goes to the ball); 0 otherwise */,
-		CAR_SIZE = 50;
+		CAR_DEMO_SPAWN_SIDE = 50 /* demolished: the respawn side picked, 0 none, 1 left, 2 right (respawnSpots) */,
+		CAR_DEMO_SPAWN_INDEX = 51 /* and the spot on that side (0 the inner one) */,
+		CAR_PRESPAWN_SET = 52 /* the respawn spot is locked (0.5 s before the respawn): */,
+		CAR_PRESPAWN_POS = 53 /* 3 values */, CAR_PRESPAWN_YAW = 56,
+		CAR_FLIP_RESETS = 57 /* landings on the ball or a car that gave the jump back (count, wraps at 65536) */,
+		CAR_SIZE = 58;
+	constexpr int SPOT_POS = 0, SPOT_YAW = 3, SPOT_SIZE = 4;
 
 	// Boost pad: position, isBig, isActive, cooldown
 	constexpr int PAD_POS = 0, PAD_BIG = 3, PAD_ACTIVE = 4, PAD_COOLDOWN = 5, PAD_SIZE = 6;
@@ -209,6 +216,7 @@ public:
 		WriteVec(&_floats[Layout::BALL_VEL], s.vel);
 		WriteVec(&_floats[Layout::BALL_ANG_VEL], s.angVel);
 		WriteRot(&_floats[Layout::BALL_ROT], s.rotMat);
+		_floats[Layout::BALL_EXPLODED] = s.isExploded;
 		return CopyToJS<Float32ArrayVal>("Float32Array", _floats);
 	}
 
@@ -252,6 +260,12 @@ public:
 			f[Layout::CAR_AIR_TIME_SINCE_JUMP] = s.airTimeSinceJump;
 			f[Layout::CAR_HAS_FLIP_OR_JUMP] = s.HasFlipOrJump();
 			f[Layout::CAR_HAS_FLIP_RESET] = s.HasFlipReset();
+			f[Layout::CAR_DEMO_SPAWN_SIDE] = s.demoSpawnPreference;
+			f[Layout::CAR_DEMO_SPAWN_INDEX] = s.demoSpawnIndex;
+			f[Layout::CAR_PRESPAWN_SET] = s.prespawnSet;
+			WriteVec(f + Layout::CAR_PRESPAWN_POS, s.prespawnPos);
+			f[Layout::CAR_PRESPAWN_YAW] = s.prespawnYaw;
+			f[Layout::CAR_FLIP_RESETS] = s.flipResets;
 			int worldWheels = 0, ballWheels = 0;
 			std::map<uint32_t, int> carWheels; // car id -> wheels on it
 			for (int i = 0; i < car->_bulletVehicle.getNumWheels() && i < 4; i++) {
@@ -336,6 +350,17 @@ public:
 		return CopyToJS<Float32ArrayVal>("Float32Array", _floats);
 	}
 
+	// A team's respawn spots (team 0 blue, 1 orange; side 0 all, 1 its own left, 2 right, inner first), SPOT_SIZE floats each
+	Float32ArrayVal RespawnSpots(int team, int side) {
+		std::vector<Car::RespawnSpot> spots = _arena->_RespawnSpots(team == 1 ? Team::ORANGE : Team::BLUE, side);
+		_floats.assign(spots.size() * Layout::SPOT_SIZE, 0);
+		for (size_t i = 0; i < spots.size(); i++) {
+			WriteVec(&_floats[i * Layout::SPOT_SIZE + Layout::SPOT_POS], spots[i].pos);
+			_floats[i * Layout::SPOT_SIZE + Layout::SPOT_YAW] = spots[i].yaw;
+		}
+		return CopyToJS<Float32ArrayVal>("Float32Array", _floats);
+	}
+
 	// Events since the last call: Int32Array of [type, a, b] triples
 	Int32ArrayVal TakeEvents() {
 		_ints = _events;
@@ -368,7 +393,13 @@ public:
 		std::vector<uint8_t> data = emscripten::convertJSArrayToNumberVector<uint8_t>(bytes);
 		DataStreamIn in;
 		in.data.assign(data.begin(), data.end());
-		return NetState::Read(_arena, in);
+		return NetState::Read(_arena, in, &_netStateCars);
+	}
+
+	// The cars the last applied network state held
+	Int32ArrayVal NetStateCars() {
+		_ints.assign(_netStateCars.begin(), _netStateCars.end());
+		return CopyToJS<Int32ArrayVal>("Int32Array", _ints);
 	}
 
 	// Restores a snapshot exactly. Loads in place (microseconds) when the snapshot has the same cars, otherwise
@@ -391,6 +422,7 @@ private:
 	std::vector<float> _floats;
 	std::vector<int> _ints;
 	std::vector<int> _events;
+	std::vector<uint32_t> _netStateCars;
 	bool _goalReported = false;
 
 	void _SetCallbacks() {
@@ -440,14 +472,16 @@ EMSCRIPTEN_BINDINGS(rlengine) {
 		.function("setCarState", &Sim::SetCarState)
 		.function("carConfig", &Sim::CarConfig)
 		.function("boostPads", &Sim::BoostPads)
+		.function("respawnSpots", &Sim::RespawnSpots)
 		.function("takeEvents", &Sim::TakeEvents)
 		.function("saveState", &Sim::SaveState)
 		.function("loadState", &Sim::LoadState)
 		.function("writeNetState", &Sim::WriteNetState)
-		.function("applyNetState", &Sim::ApplyNetState);
+		.function("applyNetState", &Sim::ApplyNetState)
+		.function("netStateCars", &Sim::NetStateCars);
 
 #define LAYOUT(name) constant(#name, name)
-	LAYOUT(BALL_POS); LAYOUT(BALL_VEL); LAYOUT(BALL_ANG_VEL); LAYOUT(BALL_ROT); LAYOUT(BALL_SIZE);
+	LAYOUT(BALL_POS); LAYOUT(BALL_VEL); LAYOUT(BALL_ANG_VEL); LAYOUT(BALL_ROT); LAYOUT(BALL_EXPLODED); LAYOUT(BALL_SIZE);
 	LAYOUT(CAR_POS); LAYOUT(CAR_VEL); LAYOUT(CAR_ANG_VEL); LAYOUT(CAR_ROT); LAYOUT(CAR_BOOST);
 	LAYOUT(CAR_ON_GROUND); LAYOUT(CAR_HAS_JUMPED); LAYOUT(CAR_HAS_DOUBLE_JUMPED); LAYOUT(CAR_HAS_FLIPPED);
 	LAYOUT(CAR_IS_FLIPPING); LAYOUT(CAR_IS_JUMPING); LAYOUT(CAR_SUPERSONIC); LAYOUT(CAR_BOOSTING); LAYOUT(CAR_DEMOED);
@@ -455,7 +489,9 @@ EMSCRIPTEN_BINDINGS(rlengine) {
 	LAYOUT(CAR_AUTO_FLIPPING); LAYOUT(CAR_LAST_BALL_HIT_TICK); LAYOUT(CAR_GROUND_NORMAL);
 	LAYOUT(CAR_AIR_TIME_SINCE_JUMP); LAYOUT(CAR_HAS_FLIP_OR_JUMP); LAYOUT(CAR_HAS_FLIP_RESET);
 	LAYOUT(CAR_WORLD_WHEEL_CONTACTS); LAYOUT(CAR_ON_RB_ACTOR); LAYOUT(CAR_WHEEL_GROUND); LAYOUT(CAR_RB_ACTOR);
-	LAYOUT(CAR_SIZE);
+	LAYOUT(CAR_DEMO_SPAWN_SIDE); LAYOUT(CAR_DEMO_SPAWN_INDEX); LAYOUT(CAR_PRESPAWN_SET); LAYOUT(CAR_PRESPAWN_POS);
+	LAYOUT(CAR_PRESPAWN_YAW); LAYOUT(CAR_FLIP_RESETS); LAYOUT(CAR_SIZE);
+	LAYOUT(SPOT_POS); LAYOUT(SPOT_YAW); LAYOUT(SPOT_SIZE);
 	LAYOUT(PAD_POS); LAYOUT(PAD_BIG); LAYOUT(PAD_ACTIVE); LAYOUT(PAD_COOLDOWN); LAYOUT(PAD_SIZE);
 	LAYOUT(EVENT_GOAL); LAYOUT(EVENT_BUMP); LAYOUT(EVENT_DEMO);
 	LAYOUT(CFG_HITBOX_SIZE); LAYOUT(CFG_HITBOX_OFFSET); LAYOUT(CFG_FRONT_WHEEL_OFFSET); LAYOUT(CFG_FRONT_WHEEL_RADIUS);

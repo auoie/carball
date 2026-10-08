@@ -17,6 +17,7 @@ pub enum ToGame {
     Join { id: PlayerId, request: JoinRequest, out: UnboundedSender<Outgoing> },
     Leave { id: PlayerId },
     Inputs { id: PlayerId, timestamp: u32, first_frame: u32, frames: Vec<InputFrame>, at: std::time::Instant },
+    ResetInputBuffer { id: PlayerId },
 }
 
 /// Development identity: self-signed for localhost, valid 14 days (the browser limit for certificate hashes)
@@ -99,8 +100,24 @@ async fn session(incoming: IncomingSession, id: PlayerId, to_game: &UnboundedSen
         }
     });
 
-    // Client -> game: input datagrams; the control stream closing ends the session
-    let mut scratch = [0u8; 256];
+    // Client -> game: control messages (in their own task: a framed read mustn't be cancelled halfway); the control
+    // stream closing ends the session
+    let control_to_game = to_game.clone();
+    let mut control_reader = tokio::spawn(async move {
+        loop {
+            match read_control(&mut recv).await {
+                Ok(Control::ResetInputBuffer) => {
+                    if control_to_game.send(ToGame::ResetInputBuffer { id }).is_err() {
+                        break;
+                    }
+                }
+                Ok(_) => {} // (nothing else is expected from a client)
+                Err(_) => break,
+            }
+        }
+    });
+
+    // Client -> game: input datagrams
     let result = loop {
         tokio::select! {
             datagram = connection.receive_datagram() => match datagram {
@@ -111,13 +128,10 @@ async fn session(incoming: IncomingSession, id: PlayerId, to_game: &UnboundedSen
                 }
                 Err(e) => break Err(e.into()),
             },
-            read = recv.read(&mut scratch) => match read {
-                Ok(Some(_)) => {} // nothing else is sent on the control stream yet
-                Ok(None) => break Ok(()),
-                Err(e) => break Err(e.into()),
-            },
+            _ = &mut control_reader => break Ok(()),
         }
     };
+    control_reader.abort();
     writer.abort();
     result
 }
