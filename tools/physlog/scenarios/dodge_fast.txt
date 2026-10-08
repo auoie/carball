@@ -1,0 +1,23 @@
+# Jumps and dodges at full speed (static analysis B9: the game also caps the velocity at the start of each Bullet
+# substep, so an impulse that takes the car over 2300 uu/s moves it as if from the cap)
+# 1) boosting at 2300, a forward dodge
+car 0 -4500 17  0 90 0  0 2290 0  0 0 0  100
+input 20 1 0 0 0 0 0 1 0
+input 1 1 0 0 0 0 1 1 0
+input 8 1 0 0 0 0 0 1 0
+input 1 1 0 -1 0 0 1 1 0
+input 70 1 0 0 0 0 0 1 0
+# 2) boosting at 2300, a side dodge
+car 0 -4500 17  0 90 0  0 2290 0  0 0 0  100
+input 20 1 0 0 0 0 0 1 0
+input 1 1 0 0 0 0 1 1 0
+input 8 1 0 0 0 0 0 1 0
+input 1 1 0 0 1 0 1 1 0
+input 70 1 0 0 0 0 0 1 0
+# 3) at 2300 without boost, a plain jump and a double jump
+car 0 -4500 17  0 90 0  0 2300 0  0 0 0  100
+input 10 1 0 0 0 0 0 0 0
+input 1 1 0 0 0 0 1 0 0
+input 8 1 0 0 0 0 0 0 0
+input 1 1 0 0 0 0 1 0 0
+input 70 1 0 0 0 0 0 0 0

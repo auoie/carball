@@ -17,7 +17,15 @@
 //   input N throttle steer pitch yaw roll jump boost handbrake   hold these inputs for N ticks (jump/boost/handbrake 0/1)
 //   repeat K ... end                                       (not nested) run the lines in between K times
 //
+// Next to each recording it writes <name>_bullet.csv: the game's own Bullet objects, read (never written) through the
+// pointer chain from the static analysis (notes/bullet-diff.md): a header with the car's and the ball's collision shapes
+// and rigid-body fields, then every tick the contact manifolds that touch the car or the ball.
+//
 // It never runs in online games, and it never touches EAC: load it in a game started without EAC (offline only).
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+
 #include "bakkesmod/plugin/bakkesmodplugin.h"
 #include "bakkesmod/wrappers/GameEvent/ServerWrapper.h"
 #include "bakkesmod/wrappers/GameObject/BallWrapper.h"
@@ -31,7 +39,9 @@
 #include "bakkesmod/wrappers/GameObject/CarWrapper.h"
 
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -49,6 +59,33 @@ struct ScriptLine {
 
 // Rotator units: 65536 per turn
 int ToRotatorUnits(float degrees) { return (int)(degrees * 65536.f / 360.f); }
+
+// --- The game's Bullet objects, read only. Offsets for the 2026-10-06 build (notes/bullet-diff.md); 1 BU = 50 uu
+constexpr uintptr_t GWORLD_RVA = 0x24ae6d0;  // UWorld* GWorld
+constexpr uintptr_t ACTOR_BODY = 0x780;      // RBActor_TA -> btRigidBody*
+constexpr uintptr_t BODY_SHAPE = 0xd0;       // btCollisionObject -> btCollisionShape*
+constexpr uintptr_t BODY_SIZE = 0x3e0;       // the game's btRigidBody (stock 2.82: 0x2c0)
+constexpr int POINT_SIZE = 0x110;            // the game's btManifoldPoint (stock: 0xc0)
+constexpr float BU = 50.f;
+// Car_TA.WorldContact (rebuilt after each tick from the rigid-body collision notifications with world geometry, read by
+// the next tick's auto-roll): flags (bit 0 bHasContact), location +0x04, velocity +0x10, normal +0x1c (2026-06-16 layout)
+constexpr uintptr_t CAR_WORLD_CONTACT = 0x690;
+
+// Copies n bytes from addr; false (and no crash) if any of it isn't readable
+bool SafeRead(uintptr_t addr, void* out, size_t n) {
+	if (addr < 0x10000) return false;
+	__try {
+		memcpy(out, (const void*)addr, n);
+		return true;
+	} __except (EXCEPTION_EXECUTE_HANDLER) {
+		return false;
+	}
+}
+
+template <class T> T Get(uintptr_t addr) {
+	T v{};
+	return SafeRead(addr, &v, sizeof v) ? v : T{};
+}
 
 } // namespace
 
@@ -68,8 +105,16 @@ private:
 	bool LoadScenario(const std::string& name);
 	void ApplyCar(CarWrapper car, const float* v);
 	void ApplyBall(const float* v);
+	bool FindBullet(CarWrapper car);
+	void BulletHeader();
+	void BulletShape(const char* who, uintptr_t shape, int depth);
+	void BulletContacts();
+	std::string BodyName(uintptr_t body);
 
 	std::ofstream out_;
+	std::ofstream bullet_;
+	uintptr_t carBody_ = 0, ballBody_ = 0, world_ = 0, dispatcher_ = 0;
+	std::string bulletInfo_;
 	bool recording_ = false;
 	bool headerWritten_ = false;
 	unsigned long long tick_ = 0;
@@ -122,6 +167,7 @@ bool PhysLog::Open(const std::string& name) {
 	std::filesystem::path path = Folder() / (name + "_" + stamp + ".csv");
 	out_.open(path);
 	if (!out_) { cvarManager->log("physlog: cannot write " + path.string()); return false; }
+	bullet_.open(Folder() / (name + "_" + stamp + "_bullet.csv"));
 	recording_ = true;
 	headerWritten_ = false;
 	tick_ = 0;
@@ -132,6 +178,7 @@ bool PhysLog::Open(const std::string& name) {
 void PhysLog::Close(const char* why) {
 	if (!recording_) return;
 	out_.close();
+	bullet_.close();
 	recording_ = false;
 	scripted_ = false;
 	cvarManager->log(std::string("physlog: ") + why + ", " + std::to_string(tick_) + " ticks");
@@ -230,8 +277,15 @@ void PhysLog::OnInput(CarWrapper car, void* params) {
 		*in = c;
 		if (--ticksLeft_ == 0) scriptPos_++;
 	}
-	if (!headerWritten_) Header(car);
+	if (!headerWritten_) {
+		Header(car);
+		bool found = FindBullet(car);
+		bullet_ << "# " << bulletInfo_ << "\n";
+		if (found) BulletHeader();
+		else cvarManager->log("physlog: Bullet objects not found (" + bulletInfo_ + "); no _bullet.csv data");
+	}
 	Row(car, *in);
+	if (world_) BulletContacts();
 	tick_++;
 }
 
@@ -262,7 +316,7 @@ void PhysLog::Header(CarWrapper car) {
 	        "on_ground,wheel_world_contacts,b_jumped,b_double_jumped,has_flip,supersonic,time_below_supersonic,boost,"
 	        "jump_active,jump_time,dj_active,dj_time,dodge_active,dodge_time,dodge_tx,dodge_ty,dodge_tz,"
 	        "out_throttle,out_steer,out_handbrake,w0_steer,w1_steer,w0_contact,w1_contact,w2_contact,w3_contact,"
-	        "w0_susp,w1_susp,w2_susp,w3_susp\n";
+	        "w0_susp,w1_susp,w2_susp,w3_susp,wc_has,wc_nx,wc_ny,wc_nz\n";
 	headerWritten_ = true;
 }
 
@@ -317,6 +371,132 @@ void PhysLog::Row(CarWrapper car, const ControllerInput& in) {
 	} else {
 		put(",,,,,,,,,,,,,");
 	}
+	// The game's WorldContact as the coming tick's auto-roll sees it (built after the previous tick)
+	uintptr_t wc = car.memory_address + CAR_WORLD_CONTACT;
+	put(",%d,%.6g,%.6g,%.6g", Get<int>(wc) & 1, Get<float>(wc + 0x1c), Get<float>(wc + 0x20), Get<float>(wc + 0x24));
 	out_.write(buf, n < (int)sizeof(buf) ? n : (int)sizeof(buf) - 1);
 	out_ << "\n";
+}
+
+// The car's and the ball's bodies, and the physics world that holds the car (checked: the world's dispatcher is the
+// wrapper's, and the car's body is one of the world's collision objects)
+bool PhysLog::FindBullet(CarWrapper car) {
+	carBody_ = ballBody_ = world_ = dispatcher_ = 0;
+	char b[256];
+	uintptr_t actor = car.memory_address;
+	carBody_ = Get<uintptr_t>(actor + ACTOR_BODY);
+	ServerWrapper server = gameWrapper->GetGameEventAsServer();
+	BallWrapper ball = server.IsNull() ? BallWrapper(0) : server.GetBall();
+	if (!ball.IsNull()) ballBody_ = Get<uintptr_t>(ball.memory_address + ACTOR_BODY);
+	uintptr_t gworld = Get<uintptr_t>((uintptr_t)GetModuleHandleW(nullptr) + GWORLD_RVA);
+	uintptr_t scene = Get<uintptr_t>(gworld + 0x208);
+	uintptr_t wrappers = Get<uintptr_t>(scene + 0xb0);
+	int count = Get<int>(scene + 0xb8);
+	int index = Get<uint8_t>(Get<uintptr_t>(actor + 0x208) + 0x80);
+	uintptr_t wrapper = index < count ? Get<uintptr_t>(wrappers + 8 * index) : 0;
+	uintptr_t world = Get<uintptr_t>(wrapper + 0x20), dispatcher = Get<uintptr_t>(wrapper + 0x08);
+	bool sameDispatcher = world && Get<uintptr_t>(world + 0x28) == dispatcher;
+	int objects = Get<int>(world + 0xc);
+	uintptr_t objectData = Get<uintptr_t>(world + 0x18);
+	bool carInWorld = false;
+	for (int i = 0; i < objects && i < 100000 && !carInWorld; i++) carInWorld = Get<uintptr_t>(objectData + 8 * i) == carBody_;
+	std::snprintf(b, sizeof b, "bullet gworld %p scene %p wrappers %d index %d world %p dispatcher %p (%s) objects %d car %s",
+		(void*)gworld, (void*)scene, count, index, (void*)world, (void*)dispatcher, sameDispatcher ? "matches" : "MISMATCH",
+		objects, carInWorld ? "in the world" : "NOT in the world");
+	bulletInfo_ = b;
+	if (!carBody_ || !sameDispatcher || !carInWorld) return false;
+	world_ = world;
+	dispatcher_ = dispatcher;
+	return true;
+}
+
+std::string PhysLog::BodyName(uintptr_t body) {
+	if (body == carBody_) return "car";
+	if (body == ballBody_) return "ball";
+	char b[64];
+	std::snprintf(b, sizeof b, "shape%d", Get<int>(Get<uintptr_t>(body + BODY_SHAPE) + 0x8));
+	return b;
+}
+
+// One shape (and a compound's children): type, local scaling, implicit dimensions and margin, all in uu
+void PhysLog::BulletShape(const char* who, uintptr_t shape, int depth) {
+	int type = Get<int>(shape + 0x8);
+	auto vec = [&](uintptr_t a) { return std::to_string(Get<float>(a) * BU) + " " + std::to_string(Get<float>(a + 4) * BU) + " " +
+		                                 std::to_string(Get<float>(a + 8) * BU); };
+	auto raw = [&](uintptr_t a) { char b[96]; std::snprintf(b, sizeof b, "%.9g %.9g %.9g", Get<float>(a), Get<float>(a + 4),
+		                                                   Get<float>(a + 8)); return std::string(b); };
+	char b[64];
+	std::snprintf(b, sizeof b, "%.9g", Get<float>(shape + 0x40) * BU);
+	bullet_ << "# " << who << " shape " << (void*)shape << " type " << type << " scaling " << raw(shape + 0x20)
+	        << " implicit_uu " << vec(shape + 0x30) << " margin_uu " << b << "\n";
+	if (type == 31 && depth == 0) { // compound
+		int n = Get<int>(shape + 0x1c);
+		uintptr_t data = Get<uintptr_t>(shape + 0x28);
+		std::snprintf(b, sizeof b, "%.9g", Get<float>(shape + 0x6c) * BU);
+		bullet_ << "# " << who << " compound children " << n << " aabb_min_uu " << vec(shape + 0x40) << " aabb_max_uu "
+		        << vec(shape + 0x50) << " margin_uu " << b << "\n";
+		for (int i = 0; i < n && i < 8; i++) {
+			uintptr_t c = data + 0x60 * i;
+			bullet_ << "# " << who << " child " << i << " basis " << raw(c) << " | " << raw(c + 0x10) << " | " << raw(c + 0x20)
+			        << " origin_uu " << vec(c + 0x30) << " child_type " << Get<int>(c + 0x48) << "\n";
+			BulletShape(who, Get<uintptr_t>(c + 0x40), depth + 1);
+		}
+	}
+}
+
+// Once per recording: the shapes, every word of the car's and the ball's btRigidBody (as float and as int, to find
+// fields like the inverse inertia), the CCD settings and the world's predictive-contact flag
+void PhysLog::BulletHeader() {
+	const std::pair<const char*, uintptr_t> bodies[2] = {{"car", carBody_}, {"ball", ballBody_}};
+	for (auto [who, body] : bodies) {
+		if (!body) continue;
+		BulletShape(who, Get<uintptr_t>(body + BODY_SHAPE), 0);
+		for (uintptr_t off = 0; off < BODY_SIZE; off += 16) {
+			char b[256];
+			int n = std::snprintf(b, sizeof b, "# %s body +0x%03x", who, (unsigned)off);
+			for (uintptr_t k = 0; k < 16; k += 4)
+				n += std::snprintf(b + n, sizeof b - n, " %.9g/%d", Get<float>(body + off + k), Get<int>(body + off + k));
+			bullet_ << b << "\n";
+		}
+	}
+	bullet_ << "# world predictive_flag(+0x1a5) " << (int)Get<uint8_t>(world_ + 0x1a5) << " predictive_manifolds "
+	        << Get<int>(world_ + 0x1ac) << "\n";
+	bullet_ << "tick,manifold,body0,body1,points,threshold,point,distance,lifetime,impulse,ax,ay,az,bx,by,bz,nx,ny,nz,"
+	           "lax,lay,laz\n";
+}
+
+// Every tick (before its physics, like the main row): each contact manifold with the car or the ball in it, one line
+// per point (point -1 for an empty manifold), from the dispatcher and from the world's predictive list. uu.
+void PhysLog::BulletContacts() {
+	const std::pair<uintptr_t, uintptr_t> lists[2] = {
+		{Get<uintptr_t>(dispatcher_ + 0x20), (uintptr_t)Get<int>(dispatcher_ + 0x14)},
+		{Get<uintptr_t>(world_ + 0x1b8), (uintptr_t)Get<int>(world_ + 0x1ac)}};
+	for (int l = 0; l < 2; l++) {
+		auto [data, count] = lists[l];
+		for (uintptr_t m = 0; m < count && m < 10000; m++) {
+			uintptr_t mf = Get<uintptr_t>(data + 8 * m);
+			uintptr_t b0 = Get<uintptr_t>(mf + 0x450), b1 = Get<uintptr_t>(mf + 0x458);
+			if (!mf || (b0 != carBody_ && b1 != carBody_ && b0 != ballBody_ && b1 != ballBody_)) continue;
+			int points = Get<int>(mf + 0x460);
+			float threshold = Get<float>(mf + 0x464) * BU;
+			for (int i = points > 0 ? 0 : -1; i < points && i < 4; i++) {
+				char b[512];
+				int n = std::snprintf(b, sizeof b, "%llu,%s%p,%s,%s,%d,%.6g,%d", tick_, l ? "pred:" : "", (void*)mf,
+					BodyName(b0).c_str(), BodyName(b1).c_str(), points, threshold, i);
+				if (i >= 0) {
+					uintptr_t p = mf + 0x10 + POINT_SIZE * i;
+					auto v = [&](uintptr_t a) { n += std::snprintf(b + n, sizeof b - n, ",%.6f,%.6f,%.6f", Get<float>(a) * BU,
+						                                              Get<float>(a + 4) * BU, Get<float>(a + 8) * BU); };
+					n += std::snprintf(b + n, sizeof b - n, ",%.6f,%d,%.6g", Get<float>(p + 0x70) * BU, Get<int>(p + 0xb8),
+						Get<float>(p + 0x9c));
+					v(p + 0x30); // positionWorldOnA
+					v(p + 0x20); // positionWorldOnB
+					n += std::snprintf(b + n, sizeof b - n, ",%.6f,%.6f,%.6f", Get<float>(p + 0x40), Get<float>(p + 0x44),
+						Get<float>(p + 0x48));
+					v(p + 0x00); // localPointA
+				}
+				bullet_ << b << "\n";
+			}
+		}
+	}
 }

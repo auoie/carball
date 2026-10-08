@@ -19,6 +19,12 @@ btBoxShape::btBoxShape(const btVector3& boxHalfExtents)
 {
 	m_shapeType = BOX_SHAPE_PROXYTYPE;
 
+	// RL PATCH: the safe margin first, as Bullet 2.82 (the game's): the inner dimensions then subtract the margin the box
+	// keeps. RocketSim's setMargin isn't virtual, so the later setSafeMargin didn't correct them: every car's box was
+	// 0.04 BU - 0.1 x its smallest half extent too small (Octane 0.0677 uu per half extent). Read live from the game:
+	// inner 58.3207 / 41.4167 / 17.3966 uu + margin 1.9330 = the hitbox's half extents
+	setSafeMargin(boxHalfExtents);
+
 	btVector3 margin(getMargin(), getMargin(), getMargin());
 	m_implicitShapeDimensions = boxHalfExtents - margin;
 

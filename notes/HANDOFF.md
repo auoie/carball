@@ -1,35 +1,42 @@
 # Handoff: how to resume this project
 
-## Next (2026-10-07, evening)
+## Next (2026-10-08)
 - **Where:** the repository is on the data drive, `/mnt/primary/home/arch/rocket-league-reverse-engineering`, the
   same path from Arch and WSL. `engine/build` and `engine/build-wasm` were rebuilt at this path (the old ones are
   renamed `*-old-documents-path`, and `engine/build-wsl`, `engine/build-wasm-wsl` are leftovers: all can be deleted).
   `~/Documents/rocket-league-reverse-engineering` on the Arch NVMe is an old backup.
 - **Live game (Windows, WSL) works:** `tools/physlog/run_wsl.sh SCENARIO...` plays scenarios in freeplay over rcon,
-  copies the recordings to `out/live/` and validates them (`tools/physlog/README.md` "Driving it from WSL": game
-  windowed on the second monitor, never focused by scripts; rcon whitelist; the plugin unpauses itself). Results so
-  far (`notes/validation.md` findings 23–24, engine patches 38–42): steering, air control, powerslide exact;
-  jumps and flips exact except landings.
+  copies the recordings (and their `_bullet.csv`) to `out/live/` and validates them (`tools/physlog/README.md`
+  "Driving it from WSL": game windowed on the second monitor, never focused by scripts; rcon whitelist, which
+  includes `plugin`, so `plugin unload physlog` / build / `plugin load physlog` works from WSL).
+- **PhysLog reads the game's own Bullet objects** (`_bullet.csv`: shapes, body words, every contact manifold of the
+  car and the ball each tick) through the static session's pointer chain; `live_validate --contacts A-B` prints the
+  game's manifolds under ours. Offsets are for the 2026-10-06 build. Use it first when a contact question comes up.
+- **State (findings 27–39, engine patches 45–53):** every live recording is exact or nearly so, per tick: `jumps`,
+  `flip_cancel`, `body_drops`, `steer`, `air`, `powerslide`, `ball_roof`, `dodge_fast` ≤ 0.12 uu/s; `ball_hits` ball
+  0.19; `walls` p99 0.041 (max 0.40, a segment's first tick); `wheel_ball` 2.7 (car on the ball). The big ones:
+  RocketSim's car box was 0.068 uu too small (46), contact points never merged (47), auto-roll's gate (53).
+  `PhysLog` also records the game's `WorldContact` (`wc_*` columns).
 - **Static analysis runs in a second session** (Ghidra BSim, stock Bullet vs the exe; it writes only `out/bsim/` and
   `notes/bullet-diff.md` and sends numbered hypotheses to test live). This session owns the game, PhysLog, `engine/`,
-  scenarios, tests, client and server.
+  scenarios, tests, client and server. Batch 2: B6, B7, B9, B10 adopted; B11 (car–car through an AABB tree) worse as
+  tried: the static session says the body order is probably the issue (2.82: body0 = the car added to the world
+  first, by broadphase handle; try both orders); B8 (internal-edge choice) after the arena rework below.
+- **Next: the arena as the game's 16 pieces** (finding 39). The ball's contacts at seams and quad diagonals differ
+  from the game's (`ball_curves`: 3 ticks of 40–175 uu/s); on the game's own mesh (`scripts/game_mesh_cmf.py`,
+  local) tick 83 is exact. Generate 4 corners + 4 × 3 halves as separate CMF files (RocketSim loads each file as a
+  static body), each with the game's vertex layout and diagonals by rule, and overlapping where the game's do.
+  `scripts` edge-match tool: scratchpad `edge_match.py` (to be moved into scripts/ if kept).
 - **Open, from the live recordings:**
-  - **car body vs floor:** flat landings fixed (contact points now persist, patch 43, finding 25). Left: a flip
-    driving the nose into the floor and the tumble after it (`flip_cancel` tick 152 onward, up to 260 uu/s in
-    `--continuous`; single-corner contacts, so not persistence), ~1.3 uu/s for ~10 ticks after a two-wheel sideways
-    landing (wheel friction or braking with fewer than 3 wheels down);
-  - `walls` (p99 1.9 uu/s, one wheel-contact mismatch) and `ball_roof` (one ball tick of 95 uu/s at the contact);
-  - a scenario for the ball rolling on the corner ramp (the old `steer_sweep` recording showed 1–14 uu/s per tick
-    there, but its ball also started inside the wall);
-  - `steer` once per other car body (non-Octane steering, finding 21), flip cancel exactly at the 4th vs 5th tick,
-    the goal-wall wobble, `HandlingPresetXOffset`.
+  - `ball_curves` ticks 235/240 (the two-manifold seam at y = 0), `wheel_ball`'s last 2.7 uu/s;
+  - `steer` once per other car body (non-Octane steering, finding 21), `HandlingPresetXOffset`;
+  - replays: the paired run for patches 48–53 (`c8` in the scratchpad when this was written).
 - **The live game updated on 2026-10-06:** the static analysis (Ghidra project, `out/decomp`, layouts, packages) is
   from the 2026-06-16 build in `documents/binaries`; the live exe is in
   `/mnt/c/Program Files (x86)/Steam/steamapps/common/rocketleague`. Physics functions look unchanged (finding 25),
   but trust the live recordings over the decompile where they disagree.
-- **Then, static:** diff stock Bullet (the version the game is based on, built with MSVC) against the executable
-  function by function (Ghidra BSim or BinDiff), to list every Bullet function Psyonix changed. That finds physics
-  changes systematically instead of one replay mismatch at a time.
+- **Done by the static session (2026-10-08):** stock Bullet 2.82 diffed against the executable function by function
+  (BSim); its findings are in `notes/bullet-diff.md` and `out/bsim/reports/`, adopted ones in engine patches 46–53.
 - **Later, low priority:** track the ball's orientation in the engine (`ArenaConfig::noBallRot = false`; physics
   unchanged, but the orientation becomes synced state, so the client's `ballSpin.ts` integration could go).
 

@@ -176,7 +176,12 @@ namespace RLConst {
 			WHEELS_DAMPING_COMPRESSION = 25.f,
 			WHEELS_DAMPING_RELAXATION = 40.f,
 			MAX_SUSPENSION_TRAVEL = 12.f, // TODO: Are we sure this is the same for all cars?
-			SUSPENSION_SUBTRACTION = 0.05f;
+			SUSPENSION_SUBTRACTION = 0.05f,
+
+			// RL PATCH: impulse (BT mass x BU/s) each wheel gives a dynamic body it touches (the ball, another car), every
+			// tick, into it along the contact normal: Wheel_TA.PushForceConstant 1.0 (x a physics-config scale, 1). On
+			// the ball (mass 30) that is 1.67 uu/s per wheel per tick. Live: a car resting on a ball, 3.8 uu/s p90 -> 0.09
+			WHEEL_PUSH_IMPULSE = 1.f;
 	}
 
 	namespace Heatseeker {

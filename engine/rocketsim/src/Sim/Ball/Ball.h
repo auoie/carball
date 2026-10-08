@@ -105,6 +105,7 @@ public:
 	float GetMass() const;
 
 	void _PreTickUpdate(GameMode gameMode, float tickTime);
+	void _LimitVelocities(const MutatorConfig& mutatorConfig);
 	void _OnHit(
 		class Car* car, Vec relPos,
 		float& outFriction, float& outRestitution,

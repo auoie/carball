@@ -1,0 +1,15 @@
+# Wheels on the ball: does a wheel resting on a dynamic body push it? (static analysis B10: each wheel touching a
+# dynamic body gives it an impulse -PushForce x normal every tick)
+# 1) the car dropped flat onto a resting ball, centred
+ball 0 0 92.75  0 0 0  0 0 0
+car 0 0 230  0 90 0  0 0 0  0 0 0  0
+wait 120
+# 2) driving slowly into a resting ball: the front wheels climb it
+ball 0 300 92.75  0 0 0  0 0 0
+car 0 0 17  0 90 0  0 0 0  0 0 0  0
+input 150 0.5 0 0 0 0 0 0 0
+wait 60
+# 3) dropped onto the ball off to one side (the wheels of one side on it)
+ball 0 0 92.75  0 0 0  0 0 0
+car 45 0 240  0 90 0  0 0 0  0 0 0  0
+wait 120

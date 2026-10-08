@@ -77,7 +77,13 @@ The −Y goal is the same mesh rotated 180°. Every edge below is a quarter circ
 - side wall ↔ floor ramp: centre 96 in from the wall, 96 above the floor
 - side wall ↔ roof: same, following the roof slope
 - side wall ↔ back (plan view): centre (x ±800, y 784)
-- at profile kinks the offset is mitred (the game's vertex at the back is 96.5 from the wall)
+- the swept quarter circle has one ring per profile vertex, offset from it by a vector (measured vertex by vertex
+  on the game's mesh): on the back arc, along the arc's own Bézier normal at that vertex (to 0.005°), as long as the
+  mitre between its two chords (96.44–96.49; the arc's last vertex before the roof slope as if the arc went on).
+  At the three kinks the offsets are measured (no rule found): floor → ramp (y 234.67) (−0.017, 96.040), ramp →
+  arc (y 640) (−0.041, 96.121), roof slope → flat roof (y 224) (−10.309, −96.0); the plain mitre is up to 6.7 uu off
+  there. Each quad of the sweep is split from point k of one ring to point k + 1 of the next. All fillet vertices are
+  within 0.02 uu of the game's, five at the mouth's floor corner within 0.10 (2026-10-08)
 
 **Other**
 - Back-wall pieces beside the goal: x ±896…±2688 (overlapping the corner pieces from |x| 2426).

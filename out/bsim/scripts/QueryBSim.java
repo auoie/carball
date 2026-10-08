@@ -73,7 +73,7 @@ public class QueryBSim extends GhidraScript {
 						for (SimilarityNote note : sim) {
 							FunctionDescription m = note.getFunctionDescription();
 							out.printf("%s\t%x\t%d\t%s\t%s\t%x\t%.4f\t%.2f%n", base.getFunctionName(),
-								base.getAddress(), size, m.getExecutableRecord().getNameExec(),
+								base.getAddress(), size, (m.getExecutableRecord().getPath() == null ? "" : m.getExecutableRecord().getPath() + "/") + m.getExecutableRecord().getNameExec(),
 								m.getFunctionName(), m.getAddress(), note.getSimilarity(), note.getSignificance());
 						}
 					}

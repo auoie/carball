@@ -265,6 +265,10 @@ angle(fwd, d with its up-axis component removed). (It removes 1/1.01 of the comp
 Linear and angular velocity are clamped by scaling the whole vector to MaxLinearSpeed / MaxAngularSpeed;
 the limits are also pushed into the Bullet body. So FlipCar's per-tick Δω = 1000·fwd immediately
 saturates at 5.5 rad/s (RocketSim ramps at 50 rad/s²).
+Two clamps per tick: the game's Bullet caps each body at the start of every substep (`applyDamping` `FUN_1402c23a0`,
+body +0x368 / +0x36c), after the car components' impulses and before the vehicle update; the RB-state read-back
+(`FUN_140eed9e0`) caps the result again. A dodge or jump that takes the car over 2300 moves it from the cap (engine
+patch 51); recorded speeds never exceed 2300.001 uu/s.
 
 ### Throttle/brake (native `FUN_140f1e830`, `FUN_140f5ff00`, friction solver `FUN_1402c49d0`)
 - throttle against motion beyond 25 uu/s → brake = OppositeBrakeFactor (1.0); no throttle → brake 0.15
@@ -372,7 +376,14 @@ Iterations stay at 10. Rigid bodies: inertia from the shape, damping/friction/re
 ### Collision details
 - Sphere vs triangle uses Bullet's SphereTriangleDetector (no triangle margin), modified to be **one-sided**:
   a ball whose centre is behind a triangle gets no contact.
-- Ball sphere in Bullet = (authored radius + 1.25 skin) − 2: 92 → **91.25**.
+- Ball sphere in Bullet = (authored radius + 1.25 skin) − 2: 92 → **91.25**. Its bounding radius (for the contact
+  threshold) is r + 0.04 + 0.04 BU: threshold 1.905 uu (read live).
+- New contact points merge with a cached point within the threshold (stock `getCacheEntry`; engine patch 47).
+- Restitution applies at every approach speed (2.82's `restitutionCurve` has no threshold; engine patch 48).
+- Wheels on a dynamic body (ball, car): each pushes it with an impulse of 1.0 into its surface every tick and wakes
+  it; the wheels' friction treats every ground as static and motionless (Bullet's fixed body, no ground velocity);
+  the suspension's bottom-out impulse reaches a dynamic body only if its collision group is in the vehicle's mask
+  (+0x30), which the ball's isn't (engine patches 49, 50).
 - Convex vs plane (`FUN_1402944b0`, the algorithm for the finite planes): stock Bullet (the convex shape's deepest
   vertex, one point per call, no perturbation: the collision configuration `FUN_140281860` keeps the defaults 1 / 0)
   plus a bounds check: no contact unless that vertex lies within the plane's half extents (shape `+0x20`, `+0x24`)
@@ -403,6 +414,9 @@ Psyonix's Bullet converter then uses those sizes (spheres additionally `− 0.04
 - **Ball Bullet sphere = 92 + 1.25 − 2 = 91.25 uu** (= RocketSim).
 - **Car hitbox = data box + 2.5 uu on every axis** (Octane 120.507 × 86.6994 × 38.6591 = RocketSim);
   inertia comes from this inflated box. Data values are pre-skin.
+- Read live (PhysLog's `_bullet.csv`, 2026-10-08): the car's Bullet box is exactly that (inner 58.3207 / 41.4167 /
+  17.3966 uu + margin 1.9330 = 60.2537 / 43.3497 / 19.3295), inverse inertia 0.0184953 / 0.0104059 / 0.0075624
+  (BU), contact threshold 2.0334 uu; RocketSim's box came out 0.068 uu smaller per half extent (engine patch 46).
 
 ### Ball vs world contact (custom "special" contact, `FUN_14040a5f0` → solver `FUN_1402b2720` / `FUN_1402be240`)
 - Psyonix's contact-added callback: friction = product (× global scale 1.0), **restitution = max**,

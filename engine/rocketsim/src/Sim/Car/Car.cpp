@@ -56,6 +56,27 @@ CarState Car::GetState() {
 	return _internalState;
 }
 
+// The speed caps (CAR_MAX_SPEED, CAR_MAX_ANG_SPEED). RL PATCH: also before the vehicle update (_PreTickUpdate), as the
+// game's Bullet caps at the start of each substep in applyDamping (FUN_1402c23a0, MaxLinearSpeed / MaxAngularSpeed on
+// the body), after the car's own impulses and before the vehicle's: a dodge or jump impulse that takes the car over the
+// cap moves it from the cap. The end-of-tick cap is the game's RB-state read-back (FUN_140eed9e0). Live: a forward dodge
+// at 2300 uu/s moved the car 4.16 uu too far on its press tick
+void Car::_LimitVelocities() {
+	using namespace RLConst;
+	btVector3
+		vel = _rigidBody.m_linearVelocity,
+		angVel = _rigidBody.m_angularVelocity;
+
+	if (vel.length2() > (CAR_MAX_SPEED * UU_TO_BT) * (CAR_MAX_SPEED * UU_TO_BT))
+		vel = vel.normalized() * (CAR_MAX_SPEED * UU_TO_BT);
+
+	if (angVel.length2() > (CAR_MAX_ANG_SPEED * CAR_MAX_ANG_SPEED))
+		angVel = angVel.normalized() * CAR_MAX_ANG_SPEED;
+
+	_rigidBody.m_linearVelocity = vel;
+	_rigidBody.m_angularVelocity = angVel;
+}
+
 // Update our bullet stuff to this new state, replace our internal state with it
 void Car::SetState(const CarState& state) {
 	btTransform rbTransform;
@@ -192,8 +213,17 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
 	}
 	_UpdateFlipTime(tickTime);
 
-	if (controls.throttle && ((numWheelsInContact > 0 && numWheelsInContact < 4) || _internalState.worldContact.hasContact))
-		_UpdateAutoRoll(tickTime, mutatorConfig, numWheelsInContact);
+	// RL PATCH: auto-roll as the game gates it (Car_TA pre-physics FUN_140f1c600): throttle held, no dodge active, fewer
+	// than all wheels on world geometry (wheels on the ball or a car don't count), and at least one, or else the body
+	// touching the world. RocketSim counted any wheel contact, rolled during dodges, and rolled with all four wheels
+	// down whenever the body touched the world. Live: climbing a goal's side wall 0.8 uu/s per tick off; a forward
+	// dodge at speed with the front wheels touching, 0.83
+	int numWheelsOnWorld = 0;
+	for (int i = 0; i < _bulletVehicle.m_wheelInfo.size(); i++)
+		numWheelsOnWorld += _bulletVehicle.m_wheelInfo[i].m_raycastInfo.m_isInContact && _bulletVehicle.m_wheelInfo[i].m_isInContactWithWorld;
+	if (controls.throttle && !_internalState.isFlipping && numWheelsOnWorld < _bulletVehicle.m_wheelInfo.size() &&
+	    (numWheelsOnWorld > 0 || _internalState.worldContact.hasContact))
+		_UpdateAutoRoll(tickTime, mutatorConfig, numWheelsOnWorld);
 
 	_internalState.worldContact.hasContact = false;
 
@@ -204,8 +234,15 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
 	// RL PATCH: the game's air throttle (AirControl ApplyForces FUN_140eb3400) is ThrottleForce x (boost active ? 1 :
 	// throttle). BOOST_ACCEL_AIR already includes that full air throttle (991.67 + 66.67), so nothing is added while
 	// boosting; stock RocketSim added throttle x 66.67 on top (boost + throttle in the air was 6% too strong).
-	if (numWheelsInContact < 3 && !_internalState.isBoosting && controls.throttle != 0)
+	// RL PATCH: the AirControl component is only active with no wheel touching anything (as RocketSim's own air
+	// control torque); RocketSim applied the air throttle with up to 2 wheels down. Live: 2 wheels on a wall, 0.56 uu/s
+	// per tick too fast
+	if (numWheelsInContact == 0 && !_internalState.isBoosting && controls.throttle != 0)
 		_rigidBody.applyCentralForce(GetForwardDir() * controls.throttle * RLConst::THROTTLE_AIR_ACCEL * UU_TO_BT * RLConst::CAR_MASS_BT);
+
+	// RL PATCH: the speed caps between the car's own impulses (jump, dodge, auto-flip) and the vehicle's (the game's
+	// Bullet caps at the start of its substep, before the vehicle update: _LimitVelocities)
+	_LimitVelocities();
 
 	// The vehicle: this tick's wheel rays and contacts, then VehicleSim, the suspension and the wheels' friction
 	_bulletVehicle.updateVehicleFirst(tickTime);
@@ -266,20 +303,7 @@ void Car::_FinishPhysicsTick(const MutatorConfig& mutatorConfig) {
 		_velocityImpulseCache = { 0,0,0 };
 	}
 
-	{ // Limit velocities
-		btVector3
-			vel = _rigidBody.m_linearVelocity,
-			angVel = _rigidBody.m_angularVelocity;
-
-		if (vel.length2() > (CAR_MAX_SPEED * UU_TO_BT) * (CAR_MAX_SPEED * UU_TO_BT))
-			vel = vel.normalized() * (CAR_MAX_SPEED * UU_TO_BT);
-
-		if (angVel.length2() > (CAR_MAX_ANG_SPEED * CAR_MAX_ANG_SPEED))
-			angVel = angVel.normalized() * CAR_MAX_ANG_SPEED;
-
-		_rigidBody.m_linearVelocity = vel;
-		_rigidBody.m_angularVelocity = angVel;
-	}
+	_LimitVelocities();
 
 	// RL PATCH: round the state through the network serializer every tick (bQuantizePhysics)
 	Quantize::QuantizeRigidBody(_rigidBody, &_netRotation);
@@ -672,8 +696,13 @@ void Car::_UpdateBoost(float tickTime, const MutatorConfig& mutatorConfig, float
 	// Apply boosting force and consume boost
 	if (_internalState.isBoosting) {
 		_internalState.boost = RS_MAX(_internalState.boost - mutatorConfig.boostUsedPerSecond * tickTime, 0);
+		// RL PATCH: the air boost's extra (the AirControl component's full throttle) only with no wheel touching
+		// anything (the component's activation); RocketSim used it below 3 wheels
+		bool anyWheelContact = false;
+		for (bool contact : _internalState.wheelsWithContact)
+			anyWheelContact |= contact;
 		_rigidBody.applyCentralForce(
-			(_internalState.isOnGround ? mutatorConfig.boostAccelGround : mutatorConfig.boostAccelAir) * UU_TO_BT
+			(anyWheelContact ? mutatorConfig.boostAccelGround : mutatorConfig.boostAccelAir) * UU_TO_BT
 			* GetForwardDir() * CAR_MASS_BT
 		);
 		_internalState.timeSinceBoosted = 0;

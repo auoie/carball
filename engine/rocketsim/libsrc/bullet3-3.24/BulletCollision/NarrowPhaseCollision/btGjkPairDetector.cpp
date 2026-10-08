@@ -14,6 +14,7 @@ subject to the following restrictions:
 */
 
 #include "btGjkPairDetector.h"
+#include "../CollisionShapes/btTriangleShape.h"
 #include "../CollisionShapes/btConvexShape.h"
 #include "../NarrowPhaseCollision/btSimplexSolverInterface.h"
 #include "../NarrowPhaseCollision/btConvexPenetrationDepthSolver.h"
@@ -944,7 +945,14 @@ void btGjkPairDetector::getClosestPointsNonVirtual(const ClosestPointInput &inpu
 			btVector3 posB = (aabbMin + aabbMax) * btScalar(0.5);
 
 			btVector3 diff = posA - posB;
-			if (diff.dot(normalInB) < 0.f)
+			// RL PATCH: against a triangle, the triangle's own face normal (e1 x e2 in world space, no sign check) instead
+			// of the AABB-centre sign flip; distance and the point on B stay (the game's GJK, FUN_1402a6540). It differs
+			// only where GJK's closest feature is an edge or a vertex: a car's edge at a seam. Live: `walls` 1.0 -> 0.4 uu/s
+			if (m_minkowskiB->getShapeType() == TRIANGLE_SHAPE_PROXYTYPE) {
+				const btTriangleShape* triangle = (const btTriangleShape*)m_minkowskiB;
+				btVector3 faceNormal = (triangle->m_vertices1[1] - triangle->m_vertices1[0]).cross(triangle->m_vertices1[2] - triangle->m_vertices1[0]);
+				normalInB = (localTransB.getBasis() * faceNormal).normalized();
+			} else if (diff.dot(normalInB) < 0.f)
 				normalInB *= -1.f;
 		}
 		m_cachedSeparatingAxis = normalInB;

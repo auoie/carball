@@ -570,6 +570,10 @@ Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mu
 		// RL PATCH: the game sets solverMode = 0 (no warm starting, no SIMD path) (FUN_140403cc0)
 		solverInfo.m_solverMode = 0;
 
+		// RL PATCH: restitution at every contact speed, as Bullet 2.82's restitutionCurve (rest = e x -v); 3.24 drops it below
+		// this threshold (default 0.2 BU/s = 10 uu/s). Live: a ball settling on a parked car's roof was 4.9 uu/s off
+		solverInfo.m_restitutionVelocityThreshold = 0;
+
 		// RL PATCH: Bullet sets m_timeStep only inside stepSimulation, but the wheel pushback
 		// (btVehicleRL::rayCast -> resolveSingleCollision) reads it before that. Without this, a new or
 		// restored arena used Bullet's default 1/60 s for its first tick.
@@ -1055,6 +1059,9 @@ void Arena::Step(int ticksToSimulate) {
 
 		// Update ball
 		ball->_PreTickUpdate(gameMode, tickTime);
+
+		// RL PATCH: the ball's speed caps at the start of the step too (the cars': Car::_LimitVelocities)
+		ball->_LimitVelocities(_mutatorConfig);
 
 		// Update world
 		_bulletWorld.stepSimulation(tickTime, 0, tickTime);

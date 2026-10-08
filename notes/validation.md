@@ -351,6 +351,108 @@ Ground driving (engine − game, uu/s², flat floor; `validation_report.py`):
     - The game's second global Bullet hook (`FUN_140407f90`) is its warning printer, not a contact callback; its
       contact-added callback (`FUN_14040a5f0`) only sets friction/restitution and flags special contacts.
     - `live_validate` now also treats a ball-only placement and a car turned in place as placements.
+    - **Withdrawn (2026-10-08).** Read live (finding 29), the game's ball–floor manifold threshold is 1.905 uu
+      (r + 0.08 BU, as RocketSim had it). The late touches came from our car box being 0.068 uu too small
+      (finding 27); with that fixed, every touch matches at r + 0.08, and `ball_roof` is better than with +0.12.
+27. **Car body vs floor: the "contradictory threshold" was our box, 0.068 uu too small (engine patch 46).** The game
+    made car–floor contacts at our start-of-tick distances of up to 2.126 uu, over our 2.031 threshold, yet removed a
+    point that had slid 2.0575 uu sideways. Read live (finding 29), the game's car box is the hitbox exactly: inner
+    58.3207 / 41.4167 / 17.3966 uu + margin 1.9330 = 60.2537 / 43.3497 / 19.3295. Ours was 60.186 / 43.283 / 19.263:
+    RocketSim's `btBoxShape` constructor subtracts the default 0.04 BU margin from the half extents and then lowers
+    the margin to 0.1 × the smallest half extent (`setSafeMargin`) through a `setMargin` that isn't virtual there, so
+    the inner box is never corrected. Bullet 2.82 sets the safe margin first. The game's corners therefore reach up to
+    ~0.12 uu further: contacts we made late, a threshold of 2.0334 (ours 2.031) and, since the inertia comes from the
+    box, slightly more inertia. Fixed (constructor order): per tick, `jumps` worst 130.5 → 1.55 uu/s, `flip_cancel`
+    130.5 → 0.01, `body_drops` 5.9 → 2.7, `steer` p99 0.036 → 0.0001, `powerslide` 0.041 → 0.0001, `ball_hits` ball
+    0.43 → 0.19. Continuous: `flip_cancel` p90 4.05 → 0.02 uu, `body_drops` max 2.48 → 0.25. With patch 47 and
+    patch 44 withdrawn, replays (paired, cases on the same arena): 106,929 better / 56,598 worse; cars alone on the
+    flat floor p50 0.0100 → 0.0003 uu, on the ground near the ball 0.0101 → 0.0005, dribbles 0.0100 → 0.0005.
+28. **The goal mesh's side-wall fillet (arena fix, 2026-10-08).** `walls` (a car driving into a goal's side wall and
+    up it): spikes of 16–72 uu/s per tick on our arena, ≤ 0.9 on the game's own meshes (`--meshes
+    out/arena_local/collision_meshes_game`). Our sweep of the r-96 fillet between the goal's side wall and its floor
+    ramp, back and roof was mitred at every profile vertex. The game's rings follow the back arc's own Bézier normal
+    with the mitre's length, and its quads are split along the other diagonal (notes/arena.md); at the profile's three
+    kinks the offsets are measured. Every fillet vertex is now within 0.02 uu of the game's (five at the mouth's
+    floor corner within 0.10). `walls` worst tick 72 → 1.07 uu/s with the engine fixes (the same as on the game's
+    mesh); replays in the goal by the side wall 179 better / 104 worse.
+29. **The game's own Bullet objects, read live (2026-10-08).** PhysLog now writes `<recording>_bullet.csv` next to
+    each recording, through the static session's pointer chain (notes/bullet-diff.md): once, both bodies' shapes and
+    every word of their `btRigidBody`; then every tick, each contact manifold that touches the car or the ball (its
+    threshold; each point's distance, lifetime, impulse, positions, normal). `live_validate --contacts` prints the
+    game's manifolds under ours for the same ticks. Values: car child box as in finding 27, at the hitbox offset;
+    inverse inertia 0.0184953 / 0.0104059 / 0.0075624 (BU), the same as ours from the same box; mass 180,
+    friction 0.3, restitution 0.1, no damping, max speeds 46 BU/s and 5.5 rad/s; CCD motion threshold 0.02 BU on cars
+    and the ball (a ray from the centre: a tunnelling guard). Ball: implicit radius 91.25 uu, margin = radius,
+    ball–floor threshold 1.905. After a teleport, the body's world inertia tensor keeps the old rotation until the
+    next integration (as stock Bullet).
+30. **Contact points merge (engine patch 47).** RocketSim never merged a new contact point with a cached one
+    (`getCacheEntry` returned −1). That didn't matter while its broadphase rebuilt every manifold each tick (before
+    patch 43). Read live, the game merges: a resting ball keeps one floor point whose lifetime counts up (ours piled
+    up 4), and with merging our car–floor manifold has the game's points and lifetimes exactly. `body_drops` (a new
+    recording) tick 88: 43.5 uu/s → 0; `walls` p99 1.10 → 1.01.
+31. **Restitution at every speed (engine patch 48).** Bullet 3.24 drops restitution below 0.2 BU/s (10 uu/s) of
+    approach speed; 2.82 has no threshold (static session, B6). `ball_roof` (a ball settling on a parked car): worst
+    ball tick 4.87 → 0.01 uu/s; `walls` 1.67 → 1.47.
+32. **Wheels on the ball (engine patches 49, 50).** New scenario `wheel_ball`: the car dropped onto a resting ball
+    (centred and off to one side) and driven slowly up onto one.
+    - Each wheel touching a dynamic body pushes it into its surface with an impulse of 1.0 (BT mass × BU/s) every tick
+      and wakes it (static session, B10): the ball's error p90 3.80 → 0.09 uu/s, max 5.55 → 0.73.
+    - The wheels' friction treats every ground as static and motionless (the game passes Bullet's fixed body, and the
+      ground's velocity is ignored): the car stays perched like the game's. Car p90 5.53 → 0.20 uu/s, max 14.8 → 2.7.
+    - The game skips the suspension's bottom-out impulse on the ball (a collision-group mask on the vehicle); giving
+      the ball the full opposite impulse made it 79 uu/s worse, so the engine keeps it for static ground only.
+33. **Speed caps also before the vehicle update (engine patch 51).** The game's Bullet caps each body's speed at the
+    start of every substep (after the car's own impulses, before the vehicle's). The RB-state read-back caps it again
+    after the tick, which is why recorded speeds never exceed 2300.001 uu/s or 5.50001 rad/s (27 boosting ticks at the
+    cap in `ball_hits`). New scenario `dodge_fast` (dodges and jumps at 2300): the forward dodge's press tick moved
+    the car 4.16 uu too far (from ~2800 uu/s), side dodge 1.55, jump 0.18; now ≤ 0.09. Capped after the vehicle
+    update instead, `walls` (where |ω| sits at 5.5) got 12 uu/s worse.
+34. **`live_validate` had the wheels mirrored (tool fix).** The game numbers its wheels front left, front right, back
+    left, back right; RocketSim right before left (game wheel i = ours i ^ 1). The validator set each recorded wheel's
+    contact on the opposite wheel. Fixed: `jumps` worst tick 1.55 → 0.12 uu/s, `body_drops` 2.71 → 0.0001. It also now
+    compares the game's count of wheels on the world (not the ball or a car) with ours, and each wheel's touch flag
+    on its own.
+35. **Air throttle and the air boost's extra only with no wheel down (engine patch 45).** The AirControl component is
+    active only while no wheel touches anything, as RocketSim's own air-control torque already assumed; RocketSim
+    applied the air throttle (66.67 uu/s²) with up to two wheels down and the air boost (1058.33 instead of 991.67)
+    below three. Live: two wheels on a wall were 0.56 uu/s per tick too fast; `walls` better on 15 ticks, `ball_hits`
+    on 4, none worse. Replays (paired): 11,161 better / 2,719 worse, all in airborne and wall categories (throttle
+    changes in the air on walls p50 0.0099 → 0.0005 uu; cars in the air in the goal by the side wall 0.129 → 0.030).
+36. **Car vs mesh triangles: the face normal (engine patch 52).** The game's GJK replaces the contact normal against a
+    triangle with the triangle's face normal (static session, B7). `walls` (with the auto-roll fix below): worst tick
+    1.04 → 0.40 uu/s, p99 0.085 → 0.042; nothing else changes. What is left in `walls` is a segment's first tick.
+37. **Car–car with an AABB tree in the car's compound (B11): not adopted.** The game builds the car compound with a
+    dynamic AABB tree, so car–car goes compound-compound, then box-box. Doing the same in Bullet 3.24
+    (`createAabbTreeFromChildren`, its compound-compound algorithm) made the replay car–car pass worse: 70 better /
+    340 worse; demo attackers p90 15.5 → 35.5 uu. But swapping only the order the two cars are added (no tree) does
+    the same to demos, so that came from the car order, not the contact path. In 2.82 body0 is the car that entered
+    the physics world first (its broadphase handle), which replays don't tell. Tree with the cars swapped: about
+    neutral (96 better / 118 worse). Replays are too coarse for this; it needs a live recording with two cars.
+38. **Auto-roll (engine patch 53).** PhysLog now also records the game's `Car_TA.WorldContact` (car +0x690; the flag
+    the next tick's auto-roll reads). Our flag (set for any contact point added within the threshold, speculative ones
+    included) matches it on every tick of `walls`, `dodge_fast` and `body_drops` (0 of 1,806; "only points with a
+    solver impulse" was 470 off). What differed was auto-roll's gate (static session, `FUN_140f1c600`): the game needs
+    fewer than four wheels on world geometry, counts only world wheels, and skips auto-roll while the dodge component
+    is active; its direction comes from the world wheels' normals only. `walls` p99 0.83 → 0.041 uu/s: the steady
+    0.8 uu/s "goal-wall wobble" seen since the replays was auto-roll pushing a car that climbed the goal's side
+    fillet with all four wheels down. `dodge_fast` (a forward dodge at speed, front wheels touching): 11.1 → 0.05.
+39. **The ball at mesh seams and quad diagonals: the arena's pieces matter (open).** New scenario `ball_curves` (the
+    ball rolled and thrown into corners and onto the side-wall curves). Every tick is exact except three where the
+    ball reaches a curve:
+    - Tick 83 (into a corner): the game has 3 contact points, we 2. The game splits that corner's planar quads along
+      the other diagonal; a sphere gets one contact per triangle (the second triangle's an edge contact on the
+      diagonal). On the game's own mesh our engine gives the game's 3 points and the tick is exact.
+    - Ticks 235 and 240 (fast along y = 0 into the side-wall curve): the game's ball gets two identical manifolds,
+      one per side-wall half. The game's arena is 16 separate mesh bodies (4 corners, 4 × 3 halves; the live dump's
+      22 world objects = car, ball, 4 planes, 16 meshes) whose seams and overlaps (y = 0, x = 0, corner and back-wall
+      pieces from |x| 2426) give each piece its own contacts. Ours is one merged mesh whose triangles cross y = 0.
+    - So the generated arena should be built as the game's pieces, with the game's vertex layout and diagonals (the
+      floor-level side-curve half: columns every 512 uu to 3072, then 3840, rows on the 256 Bézier; the ceiling half
+      one 3840 uu strip). Per piece, our quad diagonals match the game's in 1,100 of 2,544 (wall) to 844 of 880 (goal
+      fillet); many of our vertices aren't the game's at all (`edge_match`, local tool).
+    - `scripts/game_mesh_cmf.py` (local only) rebuilds the game-mesh reference with every triangle facing into the
+      field (the earlier copy had mirrored quadrants reversed, so the ball went through them and patch 52 flipped the
+      car's normals there).
 
 Cars alone (far from the ball and other cars), car position error after ~4 ticks, our mesh / the game's mesh
 (before patch 31):

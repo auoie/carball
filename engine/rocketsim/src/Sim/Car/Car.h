@@ -205,6 +205,7 @@ public:
 
 	void _PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig& mutatorConfig);
 	void _PostTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig& mutatorConfig);
+	void _LimitVelocities();
 
 	Vec _velocityImpulseCache = { 0,0,0 };
 

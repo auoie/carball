@@ -190,10 +190,10 @@ int btPersistentManifold::sortCachedPoints(const btManifoldPoint& pt)
 
 int btPersistentManifold::getCacheEntry(const btManifoldPoint& newPoint) const
 {
-	// ROCKETSIM CHANGE: Don't overwrite old manifolds with new manifolds
-	// Disabling this return makes ball-arena collisions far less accurate to the game
-	return -1;
-
+	// RL PATCH: stock again (RocketSim returned -1 here, never merging, when its broadphase rebuilt every manifold each
+	// tick). A new point within the threshold of a cached one (on body A) replaces it and keeps its lifetime, as the
+	// game's (read live: a resting ball keeps one floor point, lifetime counting up; a car on the floor the same 2 points
+	// with the same lifetimes as the game's)
 	btScalar shortestDist = getContactBreakingThreshold() * getContactBreakingThreshold();
 	int size = getNumContacts();
 	int nearestPoint = -1;

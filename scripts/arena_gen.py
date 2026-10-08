@@ -43,6 +43,9 @@ RAMP = ((234.67, 0.0), (640.0, 16.0))
 BACK_C, BACK_R = (640.0, 256.0), 240.0
 BACK_TOP_DEG = 67.5        # upper back arc ends here, then the roof slopes to ROOF_FLAT_END
 ROOF_FLAT_END = 224.0
+# The side fillet's offset (y, z) at the goal profile's three kinks: measured on the game's mesh (no rule found; the
+# mitre is up to 6.7 uu off). Floor -> ramp, ramp -> back arc, roof slope -> flat roof
+KINK_OFFSETS = {"ramp_start": (-0.017, 96.040), "ramp_end": (-0.041, 96.121), "roof": (-10.309, -96.0)}
 # --- tessellation ---
 SEG90 = 8                  # segments per quarter circle (as in the game)
 BEZIER_K = 0.5518          # the game's quarter circles are cubic Béziers (controls at k·r) sampled at t = i/8
@@ -282,6 +285,24 @@ def miter_offsets(P, d):
 def build_goal(m):
     P = goal_path()
     off = miter_offsets(P, R_GOAL)
+    # The game's fillet rings (measured vertex by vertex on its mesh, to 0.005°): on the back arc along the Bézier's own
+    # normal at the vertex, as long as the mitre between its two chords (the arc's last vertex before the roof: as if
+    # the arc went on); at the profile's kinks, measured offsets
+    arm = BEZIER_K * BACK_R
+    arcs = [((RAMP[1]), (1.0, 0.0), (BACK_C[0] + BACK_R, BACK_C[1]), (0.0, 1.0)),                      # lower quarter
+            ((BACK_C[0] + BACK_R, BACK_C[1]), (0.0, 1.0), (BACK_C[0], BACK_C[1] + BACK_R), (-1.0, 0.0))]  # upper quarter
+    last_arc = len(P) - 3                    # P[2] .. P[last_arc] are the arc's vertices (SEG90 steps per quarter)
+    for i in range(3, last_arc + 1):
+        a, t = (0, i - 2) if i - 2 <= SEG90 else (1, i - 2 - SEG90)
+        _, n = bezier(*arcs[a], arm, t / SEG90)
+        nxt = P[i + 1] if i < last_arc else bezier(*arcs[a], arm, (t + 1) / SEG90)[0]
+        na = norm((-(P[i][1] - P[i - 1][1]), P[i][0] - P[i - 1][0]))
+        nb = norm((-(nxt[1] - P[i][1]), nxt[0] - P[i][0]))
+        bisector = norm(add(na, nb))
+        off[i] = mul(n, R_GOAL / sum(x * y for x, y in zip(bisector, na)))
+    off[1] = KINK_OFFSETS["ramp_start"]      # P[1]: (RAMP[0], 0)
+    off[2] = KINK_OFFSETS["ramp_end"]        # P[2]: RAMP[1], the arc's start
+    off[-2] = KINK_OFFSETS["roof"]           # P[-2]: (ROOF_FLAT_END, GOAL_TOP)
     floor_vertices = 2                       # P[0], P[1] lie on the floor plane
     xs = [0.0, 200.0, 400.0, 600.0, GOAL_X - R_GOAL]
     g = lambda x, yz: (x, yz[0], yz[1])
@@ -306,7 +327,10 @@ def build_goal(m):
         a, b = rings[i], rings[i + 1]
         if len(a) != len(b):
             a = a[1:]
-        m.strip("goal_fillet", a, b)
+        # the game's diagonal in every quad: point k of one ring to point k + 1 of the next
+        for k in range(len(a) - 1):
+            m.tri("goal_fillet", a[k], b[k], b[k + 1])
+            m.tri("goal_fillet", a[k], b[k + 1], a[k + 1])
     # side wall (convex polygon): offset path + front edge down the post
     loop = [g(GOAL_X, add(P[i], off[i])) for i in range(len(P))]
     loop += [(GOAL_X, CHAMFER, z) for z in reversed(POST_LEVELS[1:-1])]

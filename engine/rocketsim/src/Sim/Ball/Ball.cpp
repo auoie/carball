@@ -116,6 +116,24 @@ void Ball::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const M
 	);
 }
 
+// The speed caps, also at the start of the physics step (RL PATCH, as the car's: Car::_LimitVelocities)
+void Ball::_LimitVelocities(const MutatorConfig& mutatorConfig) {
+	using namespace RLConst;
+	btVector3
+		vel = _rigidBody.m_linearVelocity,
+		angVel = _rigidBody.m_angularVelocity;
+
+	float ballMaxSpeedBT = mutatorConfig.ballMaxSpeed * UU_TO_BT;
+	if (vel.length2() > ballMaxSpeedBT * ballMaxSpeedBT)
+		vel = vel.normalized() * ballMaxSpeedBT;
+
+	if (angVel.length2() > (BALL_MAX_ANG_SPEED * BALL_MAX_ANG_SPEED))
+		angVel = angVel.normalized() * BALL_MAX_ANG_SPEED;
+
+	_rigidBody.m_linearVelocity = vel;
+	_rigidBody.m_angularVelocity = angVel;
+}
+
 void Ball::_FinishPhysicsTick(const MutatorConfig& mutatorConfig) {
 	using namespace RLConst;
 
@@ -125,21 +143,7 @@ void Ball::_FinishPhysicsTick(const MutatorConfig& mutatorConfig) {
 		_velocityImpulseCache = { 0,0,0 };
 	}
 
-	{ // Limit velocities
-		btVector3
-			vel = _rigidBody.m_linearVelocity,
-			angVel = _rigidBody.m_angularVelocity;
-
-		float ballMaxSpeedBT = mutatorConfig.ballMaxSpeed * UU_TO_BT;
-		if (vel.length2() > ballMaxSpeedBT * ballMaxSpeedBT)
-			vel = vel.normalized() * ballMaxSpeedBT;
-
-		if (angVel.length2() > (BALL_MAX_ANG_SPEED * BALL_MAX_ANG_SPEED))
-			angVel = angVel.normalized() * BALL_MAX_ANG_SPEED;
-
-		_rigidBody.m_linearVelocity = vel;
-		_rigidBody.m_angularVelocity = angVel;
-	}
+	_LimitVelocities(mutatorConfig);
 
 	// RL PATCH: round the state through the network serializer every tick (bQuantizePhysics)
 	Quantize::QuantizeRigidBody(_rigidBody, &_netRotation);

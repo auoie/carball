@@ -14,7 +14,9 @@
 //        live_validate --synth SCENARIO.txt OUT.csv [--preset NAME]   (a recording made by our own engine, for testing)
 //   presets: octane dominus plank breakout hybrid merc (default: from the recording's hitbox)
 //   --steer-sensitivity X, --air-sensitivity X: the player's settings (default: from the recording's header, else 1)
-//   --contacts FROM-TO: print the car's contact points (depth, lifetime, applied impulse) after those ticks
+//   --contacts FROM-TO: print the car's and the ball's contact points (depth, lifetime, applied impulse) after those
+//     ticks, and the game's own for the same ticks from the recording's _bullet.csv (PhysLog reads the game's Bullet
+//     manifolds) when there is one
 #include "RocketSim.h"
 
 #include <algorithm>
@@ -43,7 +45,10 @@ struct Row {
 	CarControls in;
 	bool onGround = false, jumped = false, doubleJumped = false, hasFlip = false, supersonic = false;
 	int wheelContacts = 0;          // touching the arena
-	bool wheelContact[4] = {};      // touching anything
+	int worldContact = -1;          // the game's WorldContact after the tick before this row (-1: not recorded)
+	Vec worldContactNormal;
+	bool wheelContact[4] = {};      // touching anything, in our wheel order (the game's wheel i is our i ^ 1: it numbers
+	                                // front left, front right, back left, back right; RocketSim right before left)
 	float boost = 0; // 0-1
 	bool jumpActive = false, djActive = false, dodgeActive = false;
 	float jumpTime = 0, djTime = 0, dodgeTime = 0;
@@ -163,7 +168,11 @@ static bool Load(const char* path, std::string& header, std::vector<Row>& rows) 
 		r.in.handbrake = num("handbrake") != 0;
 		r.onGround = num("on_ground") != 0;
 		r.wheelContacts = (int)num("wheel_world_contacts");
-		for (int i = 0; i < 4; i++) r.wheelContact[i] = num(("w" + std::to_string(i) + "_contact").c_str()) != 0;
+		if (col.count("wc_has") && !f[col["wc_has"]].empty()) {
+			r.worldContact = (int)num("wc_has");
+			r.worldContactNormal = Vec(num("wc_nx"), num("wc_ny"), num("wc_nz"));
+		}
+		for (int i = 0; i < 4; i++) r.wheelContact[i ^ 1] = num(("w" + std::to_string(i) + "_contact").c_str()) != 0;
 		r.jumped = num("b_jumped") != 0;
 		r.doubleJumped = num("b_double_jumped") != 0;
 		r.hasFlip = num("has_flip") != 0;
@@ -286,6 +295,10 @@ static void SetBody(Car* car, CarState s, const Row& r) {
 			s.wheelCarry.wheels[i].contactNormal = r.car.rot.up;
 		}
 	s.isOnGround = r.onGround;
+	if (r.worldContact >= 0) { // what this tick's auto-roll sees
+		s.worldContact.hasContact = r.worldContact != 0;
+		s.worldContact.contactNormal = r.worldContactNormal;
+	}
 	car->SetState(s);
 }
 
@@ -300,19 +313,67 @@ static void SetBall(Arena* arena, const Body& b) {
 
 // The car's contact points after a tick (debugging contact differences): per manifold, each point's world position,
 // normal, depth, lifetime and the impulse the solver applied
+// The game's contact points from a recording's _bullet.csv, by the row they were written with
+static std::map<uint64_t, std::vector<std::vector<std::string>>> LoadGameContacts(const std::string& path) {
+	std::map<uint64_t, std::vector<std::vector<std::string>>> out;
+	std::ifstream in(path);
+	std::string line;
+	while (std::getline(in, line)) {
+		if (line.empty() || line[0] == '#' || line.rfind("tick", 0) == 0) continue;
+		std::vector<std::string> f;
+		std::stringstream ss(line);
+		for (std::string x; std::getline(ss, x, ',');) f.push_back(x);
+		if (f.size() >= 7) out[std::stoull(f[0])].push_back(f);
+	}
+	return out;
+}
+static std::map<uint64_t, std::vector<std::vector<std::string>>> gameContacts;
+
+static const char* BodyName(Arena* arena, Car* car, const btCollisionObject* o) {
+	if (o == &car->_rigidBody) return "car";
+	if (o == &arena->ball->_rigidBody) return "ball";
+	switch (o->getCollisionShape()->getShapeType()) {
+	case STATIC_PLANE_PROXYTYPE: return "plane";
+	case TRIANGLE_MESH_SHAPE_PROXYTYPE: return "mesh";
+	default: return "other";
+	}
+}
+
 static void PrintContacts(Arena* arena, Car* car, uint64_t tick) {
 	auto* dispatcher = arena->_bulletWorld.getDispatcher();
 	for (int i = 0; i < dispatcher->getNumManifolds(); i++) {
 		btPersistentManifold* m = dispatcher->getManifoldByIndexInternal(i);
-		if (m->getBody0() != &car->_rigidBody && m->getBody1() != &car->_rigidBody) continue;
-		printf("  tick %llu manifold %d (%p): %d points, breaking threshold %.3f uu\n", (unsigned long long)tick, i,
-		       (void*)m, m->getNumContacts(), m->getContactBreakingThreshold() * BT_TO_UU);
+		const btCollisionObject* ball = &arena->ball->_rigidBody;
+		if (m->getBody0() != &car->_rigidBody && m->getBody1() != &car->_rigidBody && m->getBody0() != ball &&
+		    m->getBody1() != ball)
+			continue;
+		printf("  tick %llu manifold %d (%s-%s): %d points, breaking threshold %.3f uu\n", (unsigned long long)tick, i,
+		       BodyName(arena, car, m->getBody0()), BodyName(arena, car, m->getBody1()), m->getNumContacts(),
+		       m->getContactBreakingThreshold() * BT_TO_UU);
 		for (int j = 0; j < m->getNumContacts(); j++) {
 			const btManifoldPoint& p = m->getContactPoint(j);
 			btVector3 pos = p.getPositionWorldOnB() * BT_TO_UU, n = p.m_normalWorldOnB;
 			printf("  tick %llu contact %d.%d at (%.2f %.2f %.2f) n (%.3f %.3f %.3f) depth %.3f uu life %d impulse %.4f\n",
 			       (unsigned long long)tick, i, j, pos.x(), pos.y(), pos.z(), n.x(), n.y(), n.z(), p.getDistance() * BT_TO_UU,
 			       p.getLifeTime(), p.getAppliedImpulse());
+		}
+	}
+	// The game's, from the same state: PhysLog writes them with the next row (before that tick's physics)
+	auto game = gameContacts.find(tick + 1);
+	if (game != gameContacts.end()) {
+		std::string last;
+		for (const auto& f : game->second) {
+			// tick,manifold,body0,body1,points,threshold,point,distance,lifetime,impulse,ax,ay,az,bx,by,bz,nx,ny,nz,...
+			auto name = [](const std::string& b) { return b == "shape28" ? std::string("plane") : b.rfind("shape", 0) == 0 ? "mesh" : b; };
+			if (f[1] != last)
+				printf("  tick %llu game manifold %s (%s-%s): %s points, breaking threshold %s uu\n", (unsigned long long)tick,
+				       f[1].substr(f[1].size() - 4).c_str(), name(f[2]).c_str(), name(f[3]).c_str(), f[4].c_str(), f[5].c_str());
+			last = f[1];
+			if (f[6] != "-1" && f.size() >= 19)
+				printf("  tick %llu game contact %s.%s at (%.2f %.2f %.2f) n (%.3f %.3f %.3f) depth %.3f uu life %s impulse %.4f\n",
+				       (unsigned long long)tick, f[1].substr(f[1].size() - 4).c_str(), f[6].c_str(), std::stof(f[13]),
+				       std::stof(f[14]), std::stof(f[15]), std::stof(f[16]), std::stof(f[17]), std::stof(f[18]), std::stof(f[7]),
+				       f[8].c_str(), std::stof(f[9]));
 		}
 	}
 	// The hitbox's four lowest corners: height and vertical velocity (v + w x r)
@@ -377,6 +438,12 @@ static int Validate(const char* path, const std::string& presetName, const Sensi
 		return 1;
 	}
 	Describe(rows);
+	if (contactsTo >= contactsFrom) {
+		std::string side = path;
+		if (side.size() > 4 && side.substr(side.size() - 4) == ".csv") side = side.substr(0, side.size() - 4);
+		gameContacts = LoadGameContacts(side + "_bullet.csv");
+		if (!gameContacts.empty()) printf("the game's contacts: %s_bullet.csv\n", side.c_str());
+	}
 	const Preset* preset = presetName.empty() ? PresetFromHeader(header) : PresetByName(presetName);
 	if (!preset) { fprintf(stderr, "unknown preset %s\n", presetName.c_str()); return 1; }
 	CarConfig config = ConfigFor(*preset, header, sens);
@@ -390,11 +457,12 @@ static int Validate(const char* path, const std::string& presetName, const Sensi
 	if (ticksOut)
 		fprintf(ticksOut, "tick,car_pos,car_vel,car_ang,car_rot_deg,ball_pos,ball_vel,on_ground_rec,on_ground_eng,"
 		                  "wheels_rec,wheels_eng,jump_rec,jump_eng,dodge_rec,dodge_eng,resync,"
-		                  "car_dvx,car_dvy,car_dvz,car_dwx,car_dwy,car_dwz,ball_dvx,ball_dvy,ball_dvz,ball_dwx,ball_dwy,ball_dwz\n");
+		                  "car_dvx,car_dvy,car_dvz,car_dwx,car_dwy,car_dwz,ball_dvx,ball_dvy,ball_dvz,ball_dwx,ball_dwy,ball_dwz,"
+		                  "world_contact_rec,world_contact_eng\n");
 		                  // (signed: engine - recording)
 
 	std::vector<float> carPos, carVel, carAng, carRot, ballPos, ballVel;
-	int groundMismatch = 0, wheelMismatch = 0, jumpMismatch = 0, dodgeMismatch = 0, compared = 0, resyncs = 0, placements = 0;
+	int groundMismatch = 0, wheelMismatch = 0, touchMismatch = 0, worldContactMismatch = 0, worldContactCompared = 0, jumpMismatch = 0, dodgeMismatch = 0, compared = 0, resyncs = 0, placements = 0;
 	bool started = false;
 	for (size_t i = 0; i + 1 < rows.size(); i++) {
 		const Row &a = rows[i], &b = rows[i + 1];
@@ -437,21 +505,28 @@ static int Validate(const char* path, const std::string& presetName, const Sensi
 			ballPos.push_back((bs.pos - b.ball.pos).Length());
 			ballVel.push_back((bs.vel - b.ball.vel).Length());
 		}
+		// The game's count is of wheels touching the world (not the ball or a car): compare like with like, and each
+		// wheel's touching anything (its bHadContact) on its own
 		int wheels = 0;
-		for (bool w : s.wheelsWithContact) wheels += w;
+		for (const auto& w : s.wheelCarry.wheels) wheels += w.worldContact;
 		groundMismatch += s.isOnGround != b.onGround;
 		wheelMismatch += wheels != b.wheelContacts;
+		for (int i = 0; i < 4; i++) touchMismatch += s.wheelsWithContact[i] != b.wheelContact[i];
 		jumpMismatch += s.isJumping != b.jumpActive;
 		dodgeMismatch += s.isFlipping != b.dodgeActive;
+		if (b.worldContact >= 0) {
+			worldContactCompared++;
+			worldContactMismatch += s.worldContact.hasContact != (b.worldContact != 0);
+		}
 		if (ticksOut) {
 			Vec dv = s.vel - b.car.vel, dw = s.angVel - b.car.angVel;
 			Vec bdv = b.hasBall ? bs.vel - b.ball.vel : Vec(), bdw = b.hasBall ? bs.angVel - b.ball.angVel : Vec();
 			fprintf(ticksOut, "%llu,%.5f,%.4f,%.6f,%.5f,%.5f,%.4f,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.4f,%.4f,%.4f,%.5f,%.5f,%.5f,"
-			                  "%.4f,%.4f,%.4f,%.5f,%.5f,%.5f\n",
+			                  "%.4f,%.4f,%.4f,%.5f,%.5f,%.5f,%d,%d\n",
 			        (unsigned long long)a.tick, carPos.back(), carVel.back(), carAng.back(), carRot.back(),
 			        b.hasBall ? ballPos.back() : 0.f, b.hasBall ? ballVel.back() : 0.f, b.onGround, s.isOnGround,
 			        b.wheelContacts, wheels, b.jumpActive, s.isJumping, b.dodgeActive, s.isFlipping, resync, dv.x, dv.y,
-			        dv.z, dw.x, dw.y, dw.z, bdv.x, bdv.y, bdv.z, bdw.x, bdw.y, bdw.z);
+			        dv.z, dw.x, dw.y, dw.z, bdv.x, bdv.y, bdv.z, bdw.x, bdw.y, bdw.z, b.worldContact, (int)s.worldContact.hasContact);
 		}
 	}
 	if (ticksOut) fclose(ticksOut);
@@ -468,8 +543,11 @@ static int Validate(const char* path, const std::string& presetName, const Sensi
 	line("car rotation", carRot, "deg");
 	line("ball position", ballPos, "uu");
 	line("ball velocity", ballVel, "uu/s");
-	printf("  state mismatches: on ground %d, wheel contacts %d, jumping %d, flipping %d (of %d)\n", groundMismatch,
-	       wheelMismatch, jumpMismatch, dodgeMismatch, compared);
+	printf("  state mismatches: on ground %d, wheels on the world %d, wheel touches %d, jumping %d, flipping %d (of %d)\n",
+	       groundMismatch, wheelMismatch, touchMismatch, jumpMismatch, dodgeMismatch, compared);
+	if (worldContactCompared)
+		printf("  world contact (the car's body on world geometry, after the tick): %d mismatches of %d\n", worldContactMismatch,
+		       worldContactCompared);
 	return 0;
 }
 

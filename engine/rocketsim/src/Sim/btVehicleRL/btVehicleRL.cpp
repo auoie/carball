@@ -362,6 +362,18 @@ void btVehicleRL::updateSuspension(float deltaTime) {
 			m_chassisBody->applyImpulse(force, contactPointOffset);
 		}
 	}
+
+	// RL PATCH: each wheel touching a dynamic body pushes it into its surface at the contact point, and wakes it (the
+	// game's vehicle update, FUN_1402c3360 / FUN_1402c2a40 family; RocketSim's vehicle never touched the ground body)
+	for (int i = 0; i < getNumWheels(); i++) {
+		btWheelInfoRL& wheel = m_wheelInfo[i];
+		if (!wheel.m_raycastInfo.m_isInContact || !wheel.m_raycastInfo.m_groundObject) continue;
+		btRigidBody* ground = btRigidBody::upcast((btCollisionObject*)wheel.m_raycastInfo.m_groundObject);
+		if (!ground || ground->isStaticOrKinematicObject()) continue;
+		ground->applyImpulse(-wheel.m_raycastInfo.m_contactNormalWS * RLConst::BTVehicle::WHEEL_PUSH_IMPULSE,
+		                     wheel.m_raycastInfo.m_contactPointWS - ground->getCenterOfMassPosition());
+		ground->activate();
+	}
 }
 
 // See: I25
@@ -387,9 +399,12 @@ void btVehicleRL::calcFrictionImpulses(float timeStep) {
 			float sideImpulse;
 
 			// Get sideways friction force
+			// RL PATCH: against Bullet's fixed body: the game treats every ground as static and motionless (FUN_1402c49d0
+			// passes FUN_1402c31f0, the fixed body), so a ball or car under the wheel neither moves the contact nor shares
+			// the impulse. Live: a car resting on a ball slid off 8 uu/s per tick too fast
 			resolveSingleBilateral(
 				*m_chassisBody, wheel.m_raycastInfo.m_contactPointWS,
-				*groundObject, wheel.m_raycastInfo.m_contactPointWS,
+				btTypedConstraint::getFixedBody(), wheel.m_raycastInfo.m_contactPointWS,
 				0,
 				axleDir,
 				sideImpulse,
@@ -400,15 +415,9 @@ void btVehicleRL::calcFrictionImpulses(float timeStep) {
 			if (wheel.m_engineForce == 0) {
 				if (wheel.m_brake) {
 					// Simplified variation of calcRollingFriction()
-					btVector3 contactPoint = wheel.m_raycastInfo.m_contactPointWS;
-					btVector3 carRelContactPoint = contactPoint - m_chassisBody->getCenterOfMassPosition();
-					btVector3 groundObRelContactPoint = contactPoint - groundObject->getCenterOfMassPosition();
-
-					btVector3
-						v1 = wheel.m_velAtContactPoint, // RL PATCH: as measured in the ray pass, before the suspension impulse
-						v2 = groundObject->getVelocityInLocalPoint(carRelContactPoint);
-					btVector3 contactVel = v1 - v2;
-					float relVel = contactVel.dot(forwardDir);
+					// RL PATCH: the chassis's velocity at the contact as measured in the ray pass, before the suspension
+					// impulse; the ground's velocity ignored, as for the side friction
+					float relVel = wheel.m_velAtContactPoint.dot(forwardDir);
 
 					// This will round off small rolling friction amounts when at sub-80 TPS to prevent stuttering (to an extent)
 					// TODO: Improve and clarify
@@ -455,9 +464,11 @@ void btVehicleRL::applyFrictionImpulses(float timeStep) {
 }
 
 btVector3 btVehicleRL::getUpwardsDirFromWheelContacts() {
+	// RL PATCH: the wheels on world geometry only (the game's FUN_140eed3e0, for the sticky force and auto-roll); a wheel
+	// on the ball or a car doesn't count
 	btVector3 sumContactDir = btVector3(0, 0, 0);
 	for (int i = 0; i < m_wheelInfo.size(); i++)
-		if (m_wheelInfo[i].m_raycastInfo.m_isInContact)
+		if (m_wheelInfo[i].m_raycastInfo.m_isInContact && m_wheelInfo[i].m_isInContactWithWorld)
 			sumContactDir += m_wheelInfo[i].m_raycastInfo.m_contactNormalWS;
 
 	if (sumContactDir == btVector3(0, 0, 0)) {

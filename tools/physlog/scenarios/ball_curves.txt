@@ -1,0 +1,18 @@
+# The ball on the arena's curved meshes (corners, side-wall curves): ball vs triangles (SphereTriangleDetector).
+# The car waits out of the way.
+car -3000 -3000 17  0 0 0  0 0 0  0 0 0  0
+# 1) rolling diagonally into a corner
+ball 2800 3800 92.75  900 900 0  0 0 0
+wait 150
+# 2) fast, straight into the side-wall curve
+ball 2500 0 92.75  2000 0 0  0 0 0
+wait 120
+# 3) dropped onto the side-wall curve
+ball 3950 -1000 400  0 0 0  0 0 0
+wait 150
+# 4) thrown into a back corner from the air
+ball 3000 4000 600  800 800 -300  0 0 0
+wait 150
+# 5) spinning, rolling along the side wall's curve
+ball 3800 -3000 150  0 1200 0  5 0 0
+wait 150
