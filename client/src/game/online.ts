@@ -10,7 +10,7 @@ import { type Vec3, add, scale as scaleVec, sub } from "../math/vec";
 import { type Hud, respawnHud } from "../hud";
 import type { InputDevices } from "../input/devices";
 import { AirPitchSafety, ButtonLatch, EMPTY_INPUT, type HeldActions, type InputSnapshot, JumpLatch, type LookInput, readControls, readHeldActions } from "../input/mapping";
-import { FixedStep, TICK_RATE, TICK_SECONDS, worldSeconds } from "../loop/fixedStep";
+import { FixedStep, TICK_RATE, TICK_SECONDS, frameTimes } from "../loop/fixedStep";
 import type { Connection } from "../net/connection";
 import { NO_INPUT, Predictor } from "../net/predictor";
 import {
@@ -32,7 +32,7 @@ import type { ArenaView } from "../render/arena";
 import type { Renderer } from "../render/renderer";
 import type { GameAudio } from "../audio/audio";
 import { type Dodge, FlipTracker } from "./flipTracker";
-import { cameraInputs } from "./cameraInput";
+import { SendClock, cameraInputs, newCar, updateSwitches } from "./cameraInput";
 import type { FreeLookControls } from "../camera/rlCamera";
 import type { Options, Settings } from "../settings/settings";
 import { Interpolated } from "./interpolated";
@@ -44,8 +44,7 @@ import { type RecordedCar, type RecordedFrame, ReplayRecorder, recordCar } from 
 import { ReplayCamera } from "../camera/replayCamera";
 import { Fade } from "../render/fade";
 
-/** Client input packets: one per two physics ticks (60 Hz) */
-const SEND_EVERY_FRAMES = 2;
+
 const GOAL_MESSAGE_SECONDS = 2;
 /** Each body's present state before a correction or reload (Online.#smooth) */
 interface Captured {
@@ -134,6 +133,7 @@ export class Online {
   readonly #pitchSafety = new AirPitchSafety();
   readonly #buttons = new ButtonLatch(); // (buttons as the game's press and release commands: C-4)
   readonly #jump = new JumpLatch(); // (a jump press is a tick of jump however short: LT-4)
+  readonly #sendClock = new SendClock();
   #ackFrame = 0;
   #ping: number | null = null;
   #bufferText = "";
@@ -223,11 +223,11 @@ export class Online {
     };
   }
 
-  /** One animation frame. `frameSeconds`: real time since the previous frame. */
-  frame(frameSeconds: number): void {
+  /** One animation frame. `rawSeconds`: time since the previous frame, unclamped. */
+  frame(rawSeconds: number): void {
     this.#handleControlMessages();
     this.#applyUpdates();
-    this.#watchHitches(frameSeconds);
+    this.#watchHitches(rawSeconds);
 
     const settings = this.settings();
     const polled = this.#input.snapshot(); // (every frame: a menu's presses mustn't wait for it to close)
@@ -261,7 +261,7 @@ export class Online {
     // The frame's world time: slowed after a goal (the dilation the next tick has, as the game applies the curve's
     // value from the frame after)
     const dilation = this.#goalFrame === null ? 1 : postGoalDilation(this.#predictor.frame + 1 - this.#goalFrame);
-    const world = worldSeconds(frameSeconds, dilation);
+    const { world, real } = frameTimes(rawSeconds, dilation);
     this.#minDilation = Math.min(this.#minDilation, dilation);
     const ticks = this.#clock.advance(world);
     for (let i = 0; i < ticks; i++) {
@@ -273,19 +273,20 @@ export class Online {
       this.#world.takeEvents(); // goals come from the server
       this.#pushStates();
       this.#trackFlip();
-      if (this.#predictor.frame % SEND_EVERY_FRAMES === 0) this.#sendInputs();
     }
+    // Input packets at 60 Hz of real time, once a frame (slowed ticks after a goal don't stretch them: RV-4)
+    if (this.#sendClock.due(real)) this.#sendInputs();
     if (this.#messageTimer > 0) {
-      this.#messageTimer -= frameSeconds;
+      this.#messageTimer -= real;
       if (this.#messageTimer <= 0) this.#message = null;
     }
     // The countdown beeps at 3, 2, 1 and go
     const left = Math.ceil(this.#world.kickoffCountdown() / TICK_RATE);
     if (left < this.#countdownLeft && left <= 3) this.#audio.countdown(left);
     this.#countdownLeft = left;
-    this.#fade.update(frameSeconds);
-    if (this.#replay) this.#drawReplay(frameSeconds, this.#replay);
-    else this.#draw(world, ticks * TICK_SECONDS, frameSeconds);
+    this.#fade.update(real);
+    if (this.#replay) this.#drawReplay(real, this.#replay);
+    else this.#draw(world, ticks * TICK_SECONDS, real);
   }
 
   /** Skip the goal replay: a press of Space or the pad's A (ReadyUp, ReplaySkip bindings), once */
@@ -317,7 +318,8 @@ export class Online {
 
   /** After a hitch the gap inflated the server's jitter buffer (one 300 ms gap: 7 -> 18 frames, ~40 s to come back):
    *  2 s after the last hitch the server resets it */
-  #watchHitches(frameSeconds: number): void {
+  #watchHitches(rawSeconds: number): void {
+    const frameSeconds = Math.max(0, rawSeconds);
     if (frameSeconds > HITCH_SECONDS) this.#hitchReset = HITCH_RESET_DELAY;
     else if (this.#hitchReset !== null) {
       this.#hitchReset -= frameSeconds;
@@ -500,11 +502,11 @@ export class Online {
   }
 
   #handleActions(held: HeldActions, options: Options, ballCamToggle: boolean): void {
-    const pressed = (key: keyof HeldActions): boolean => held[key] && !this.#held[key];
-    if (!ballCamToggle) this.#ballCam = held.ballCam;
-    else if (pressed("ballCam")) this.#ballCam = !this.#ballCam;
-    if (!options.rearCameraToggle) this.#rear = held.rearCamera;
-    else if (pressed("rearCamera")) this.#rear = !this.#rear;
+    const phase = this.#match?.phase;
+    const blocked = phase === "replay" || phase === "ended";
+    const next = updateSwitches({ ballCam: this.#ballCam, rear: this.#rear }, held, this.#held, { ballCamToggle, rearCameraToggle: options.rearCameraToggle, blocked });
+    this.#ballCam = next.ballCam;
+    this.#rear = next.rear;
     this.#held = held; // (freeplay's reset and ball placement do nothing online)
   }
 
@@ -533,6 +535,7 @@ export class Online {
     if (spawns !== undefined && spawns !== this.#localSpawns) {
       this.#localSpawns = spawns;
       if (this.#world.kickoffCountdown() > 0) this.#camera.reset();
+      this.#rear = newCar({ ballCam: this.#ballCam, rear: this.#rear }).rear;
     }
     if (local) {
       // The camera follows the drawn (smoothed) car and ball, its rotation too

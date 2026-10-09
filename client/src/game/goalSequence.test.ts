@@ -2,7 +2,8 @@
 // out/bsim/agents/K2/work/gs_slomo.py).
 import { describe, expect, it } from "vitest";
 import type { ReplayPlan } from "../net/protocol";
-import { POST_GOAL_TICKS, postGoalDilation, postGoalTickSeconds, replayDilation, replaySeconds, scoreSlomo } from "./goalSequence";
+import { FixedStep } from "../loop/fixedStep";
+import { POST_GOAL_TICKS, PostGoalClock, postGoalDilation, postGoalTickSeconds, replayDilation, replaySeconds, scoreSlomo } from "./goalSequence";
 
 describe("the slow motion after a goal", () => {
   it("follows ScoreSlomoCurve: 1 until 0.125 s, down to 0.1875 at 0.225 s, back to 1 at 0.625 s, clamped", () => {
@@ -53,5 +54,37 @@ describe("the goal replay's length", () => {
   it("with the defender's stretch too: 10.8 s", () => {
     const hit = 120 * 99;
     expect(replaySeconds(plan([[hit - 30, hit + 12], [120 * 100 - 30, 120 * 100]]))).toBeCloseTo(10.8, 10);
+  });
+});
+
+describe("freeplay's goal clock on game time (RV-1)", () => {
+  /** Frames of the given raw times from a goal: ticks run until PostGoalTime is up, and how many were slowed */
+  const run = (frames: (i: number) => number): { ticks: number; slowed: number } => {
+    const clock = new PostGoalClock();
+    const step = new FixedStep();
+    clock.start();
+    let ticks = 0;
+    let slowed = 0;
+    for (let i = 0; i < 10_000; i++) {
+      const { world, done } = clock.frame(frames(i));
+      if (done) return { ticks, slowed };
+      const n = step.advance(world);
+      ticks += n;
+      if (world < frames(i) - 1e-12) slowed += n;
+    }
+    throw new Error("PostGoalTime never came");
+  };
+
+  it("at 60 fps: 360 ticks, as the server's", () => {
+    expect(Math.abs(run(() => 1 / 60).ticks - 360)).toBeLessThanOrEqual(2);
+  });
+
+  it("at 10 fps (5 ticks a frame at most) the 3 s pass in about 174 ticks, not 360", () => {
+    expect(run(() => 0.1).ticks).toBeGreaterThan(165);
+    expect(run(() => 0.1).ticks).toBeLessThan(180);
+  });
+
+  it("a 1 s hitch 0.15 s after the goal ends the slow motion at once: under 20 slowed ticks", () => {
+    expect(run((i) => (i === 9 ? 1 : 1 / 60)).slowed).toBeLessThan(20);
   });
 });

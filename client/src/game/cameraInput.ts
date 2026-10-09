@@ -36,3 +36,50 @@ export function cameraInputs(settings: Settings, snapshot: InputSnapshot, device
     : null;
   return { device, look: { up: device.invertPitch ? -look.up : look.up, right: look.right }, freeLook };
 }
+
+/** The ball cam and rear camera switches (PressSecondaryCamera / PressRearCamera and their releases) */
+export interface CameraSwitches {
+  readonly ballCam: boolean;
+  readonly rear: boolean;
+}
+
+/**
+ * The switches after this frame's buttons (`held`, `before`: the buttons now and last frame): a toggle flips on its
+ * press; held mode follows the button, the rear camera from its press to its release (a new car turns it off until
+ * the next press: newCar). `blocked`: the goal replay or after the match, when the ball cam ignores its button
+ * (PressSecondaryCamera returns: RV-9).
+ */
+export function updateSwitches(
+  state: CameraSwitches,
+  held: { readonly ballCam: boolean; readonly rearCamera: boolean },
+  before: { readonly ballCam: boolean; readonly rearCamera: boolean },
+  o: { readonly ballCamToggle: boolean; readonly rearCameraToggle: boolean; readonly blocked: boolean },
+): CameraSwitches {
+  const ballPressed = held.ballCam && !before.ballCam;
+  const rearPressed = held.rearCamera && !before.rearCamera;
+  const ballCam = o.blocked ? state.ballCam : o.ballCamToggle ? (ballPressed ? !state.ballCam : state.ballCam) : held.ballCam;
+  const rear = o.rearCameraToggle ? (rearPressed ? !state.rear : state.rear) : held.rearCamera && (state.rear || rearPressed);
+  return { ballCam, rear };
+}
+
+/** A new car (a kickoff, a respawn, a reset: PlayerController_TA.OnPawnChange → SetUsingBehindView(false), RV-10) */
+export function newCar(state: CameraSwitches): CameraSwitches {
+  return { ...state, rear: false };
+}
+
+/**
+ * When to send input packets (NetworkInputBuffer_TA.ShouldSendClientMovePackets): once a frame, when 1/60 s of real
+ * time (DeltaSeconds / TimeDilation) has passed since the last; the leftover carried, at most one interval (RV-4).
+ */
+export class SendClock {
+  #since = 0;
+
+  constructor(readonly interval = 1 / 60) {}
+
+  due(realSeconds: number): boolean {
+    this.#since += realSeconds;
+    if (this.#since < this.interval) return false;
+    this.#since = Math.min(this.interval, Math.max(0, this.#since - this.interval));
+    return true;
+  }
+}

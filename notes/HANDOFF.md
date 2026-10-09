@@ -45,9 +45,21 @@
     sounds wait for the sound spec.
   - **Specs waiting (not started):** `notes/visual-timing.md` (VT-2..30), `notes/sound-behaviour.md` (SND-1..17),
     `notes/hud-menus.md` (HUD-1..16, MENU-1..11), `notes/arena-visuals.md` (HEX-1..4: the lower glass's hex tiling,
-    18 columns per 576 uu panel; AV-1..22), `notes/car-paint.md` (PNT; team paint colours, gamma), `notes/bots.md`
-    (BOT-1..32: a behaviour-tree interpreter on the server). Shader-derived parts of the arena and paint specs are held
-    by the static session until the user rules on its shader-cache decoder. `notes/wheel-kick-t125.md` (walls_021027
+    18 columns per 576 uu panel; AV-1..22, and the shader formulas H-1..11 the user released), `notes/bots.md`
+    (BOT-1..32: a behaviour-tree interpreter on the server). Shader-derived values may be used as values and formulas
+    only (the user's condition); the unpacked caches, the decoder and exported assets stay local.
+  - **Car paint (`notes/car-paint.md`):** done for both models: the game's team paint (linear), the Glossy finish
+    (paint × 0.734, clear coat), the rubber trim, the lights' colours; on the dev server the static session's painted
+    Fennec per team (`fennec_body_painted_*.glb`). Not done: the windows' environment reflection, the chassis boost
+    glow (PNT-12).
+  - **Reviews:** the static session reviews committed snapshots only (RV-n findings); tell it "ready for review: <ids>
+    @ <commit>" once the user has committed. RV-1..13 (on c0324b6) are fixed, uncommitted: send it the hash after
+    the next commit. Its Q-1 (what offline freeplay does after a goal: car reset? replay or countdown? the ball's
+    delay) needs a goal scored in live freeplay.
+  - **Local assets from the static session** (dev-only, git-ignored, load when present like the Fennec; each with a
+    README and manifest): `out/bsim/assets_local/fx/` (ball GLB and material formula, the boost trail and the goal
+    explosion as emitter JSON, schema rl-fx/1), `cars/` (six cars painted per team with their hitbox presets and
+    wheels), `sound/` (1098 Ogg files and a Wwise manifest: events, containers, curves). Not used yet. `notes/wheel-kick-t125.md` (walls_021027
     t125: a hitbox nose contact, not a wheel) needs per-wheel and per-manifold PhysLog columns and a recording of
     `walls_goal_wheels.txt`, with the user in freeplay.
   - **Settled with the static session:** the game's jitter buffer measures in real time too (it widens after a goal,

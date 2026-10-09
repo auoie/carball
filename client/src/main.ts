@@ -1,7 +1,6 @@
 // Entry point: load the WebAssembly engine and the arena, then run freeplay.
 import createEngine from "@engine/rlengine_web.mjs";
-import { Color } from "three";
-import { World, initEngine } from "./engine/world";
+import { CarBody, World, initEngine } from "./engine/world";
 import { Freeplay } from "./game/freeplay";
 import { Online } from "./game/online";
 import { Connection, devServerAddress } from "./net/connection";
@@ -11,6 +10,7 @@ import { InputDevices } from "./input/devices";
 import { ArenaView } from "./render/arena";
 import { loadGameCage } from "./render/cage";
 import { loadFennec } from "./render/fennec";
+import { TEAM_CAR_COLORS } from "./render/entities";
 import { type ThemeName, createTheme, themeName } from "./render/themes";
 import { loadSettings } from "./settings/settings";
 import { SettingsPanel } from "./ui/settingsPanel";
@@ -60,12 +60,15 @@ async function main(): Promise<void> {
 
   // ?server=host:infoPort (or just ?server: this host, port 4434) plays online against an rl-server
   const params = new URLSearchParams(location.search);
-  // ?viewer=car: the car model alone on a turntable (for comparing it with the game's)
+  // ?viewer=car: the car model alone on a turntable (for comparing it with the game's); &team=1: orange; &body=N: another
+  // hitbox preset (the Octane's wears the Fennec where the dev server has it)
   if (params.get("viewer") === "car") {
     const viewerWorld = World.create(engine);
-    const id = viewerWorld.addCar(0);
+    const team = params.get("team") === "1" ? 1 : 0;
+    const bodies = [CarBody.Octane, CarBody.Dominus, CarBody.Plank, CarBody.Breakout, CarBody.Hybrid, CarBody.Merc];
+    const id = viewerWorld.addCar(team, bodies[Number(params.get("body") ?? 0)] ?? CarBody.Octane);
     const { showCarViewer } = await import("./debug/carViewer");
-    const view = showCarViewer(new Renderer(canvas), viewerWorld.carConfig(id), new Color(0xff7a1a));
+    const view = showCarViewer(new Renderer(canvas), viewerWorld.carConfig(id), TEAM_CAR_COLORS[team], team);
     (window as unknown as { rlCarViewer?: unknown }).rlCarViewer = { view };
     view(-140, 15);
     status.hidden = true;
@@ -144,8 +147,8 @@ async function main(): Promise<void> {
   status.hidden = true;
   let last = performance.now();
   const frame = (now: number): void => {
-    // (the games clamp their world time, LT-3: 0.0005 .. 0.4 s)
-    const dt = Math.min(0.4, (now - last) / 1000);
+    // (raw: the games take their clamped real and world times from it, LT-3)
+    const dt = (now - last) / 1000;
     last = now;
     game.frame(dt);
     requestAnimationFrame(frame);

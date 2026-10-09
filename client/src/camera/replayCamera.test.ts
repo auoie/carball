@@ -52,3 +52,14 @@ describe("the goal replay's camera", () => {
     expect(focus.y).toBeCloseTo(3000, 6);
   });
 });
+
+describe("the replay camera's focus speed (RV-5)", () => {
+  it("keeps its pace when the focus goes to the ball alone: 4/s, 6.7 % of the way in a 60 fps frame", () => {
+    const camera = new ReplayCamera(0);
+    const at = vec3(0, 3000, 300);
+    for (let i = 0; i < 120; i++) camera.update(1 / 60, { car: { pos: at, vel: vec3(0, 0, 0) }, ball: { pos: at, vel: vec3(0, 0, 0) }, carId: 1 }, 1);
+    const view = camera.update(1 / 60, { car: null, ball: { pos: vec3(1000, 3000, 300), vel: vec3(0, 0, 0) }, carId: null }, 1);
+    const focus = view.position.x + view.forward.x * 1800;
+    expect(focus).toBeCloseTo(1000 * (4 / 60), 0);
+  });
+});

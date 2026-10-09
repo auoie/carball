@@ -3,7 +3,7 @@
 // later the goal replay starts, or the next kickoff. The physics keeps its 120 ticks per game second; only their real
 // length changes, the same on the server (server/src/game.rs) and every client, keyed to the goal's server tick.
 // The goal replay plays the recording at its own speed: 0.25 round the scoring hit (ReplayDirector_TA.ShouldSlomo).
-import { TICK_RATE, TICK_SECONDS } from "../loop/fixedStep";
+import { TICK_RATE, TICK_SECONDS, frameTimes } from "../loop/fixedStep";
 import type { ReplayPlan } from "../net/protocol";
 
 /** PostGoalTime 3.0 game s: the goal replay (or the next kickoff) starts this many ticks after the goal */
@@ -38,6 +38,51 @@ export function postGoalDilation(n: number): number {
 /** Real seconds the `n`-th tick after a goal's lasts */
 export function postGoalTickSeconds(n: number): number {
   return TICK_SECONDS / postGoalDilation(n);
+}
+
+/** PostGoalTime: game seconds from the goal to the replay (or the next round) */
+export const POST_GOAL_SECONDS = 3;
+
+/**
+ * The goal's slow motion on game time, as the game runs it where nothing else keys it (freeplay; RV-1):
+ * GameEvent_Soccar_TA.PostGoalScored.Tick adds each frame's world time (UWorld's DeltaSeconds: dilated, clamped) to the
+ * time since the goal and sets the next frame's dilation from the curve; the state timer fires PostGoalTime 3.0 s of
+ * that time in. A frame whose ticks are capped at 5 still counts its whole world time, so at a low frame rate, or across
+ * a hitch, the 3 s pass in fewer ticks. (Online, server and clients key the same curve to the goal's tick instead: equal
+ * while no tick is dropped.)
+ */
+export class PostGoalClock {
+  #seconds: number | null = null;
+  #dilation = 1;
+
+  /** A goal in this frame's ticks: its Tick runs from the next frame */
+  start(): void {
+    this.#seconds = 0;
+  }
+
+  /** No goal any more (a reset): full speed from the next frame */
+  stop(): void {
+    this.#seconds = null;
+    this.#dilation = 1;
+  }
+
+  get active(): boolean {
+    return this.#seconds !== null;
+  }
+
+  /** The frame's times (from its raw time, at the dilation the last frame set), and whether PostGoalTime is up */
+  frame(rawSeconds: number): { readonly world: number; readonly real: number; readonly done: boolean } {
+    const times = frameTimes(rawSeconds, this.#dilation);
+    if (this.#seconds === null) return { ...times, done: false };
+    this.#seconds += times.world;
+    if (this.#seconds >= POST_GOAL_SECONDS) {
+      this.#seconds = null;
+      this.#dilation = 1;
+      return { ...times, done: true };
+    }
+    this.#dilation = scoreSlomo(this.#seconds);
+    return { ...times, done: false };
+  }
 }
 
 /** ReplayDirector archetype SlomoTimeDilation: the goal replay's speed round the scoring hit */

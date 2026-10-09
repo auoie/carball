@@ -330,3 +330,70 @@ describe("free look (notes/camera-respawn-goal.md CAM-10..15)", () => {
     expect(yawOf(view.forward) - before).toBeGreaterThan(0.5);
   });
 });
+
+describe("review fixes (RV-6..8, 11, 13)", () => {
+  const SETTINGS = { smoothing: true, accelRate: 5.8, decelRate: 10.8, freeLookSpeed: 2.5 };
+  const look = (yaw: number): CameraControls => ({ ...CAR_CAM, freeLook: { axes: { pitch: 0, yaw, source: "stick" }, settings: SETTINGS, ballCamHold: false } });
+  const yawDeg = (v: Vec3) => (Math.atan2(v.y, v.x) * 180) / Math.PI;
+  const ball = vec3(0, 3000, 93);
+  const spot = (x: number, yaw: number) => ({ pos: vec3(x, -4608, 17), yaw });
+  const wreck = (timer: number) => car({ demoed: true, demoRespawnTimer: timer });
+
+  it("RV-6: the free-look ball cam faces the ball at once, the old view fading out EaseIn²: a quarter short at mid-blend", () => {
+    const camera = new PlayerCamera();
+    settle(camera, car(), ball, look(0), 1);
+    let view = camera.update(1 / 120, car(), ball, { ...look(0), ballCam: true });
+    for (let i = 1; i < 30; i++) view = camera.update(1 / 120, car(), ball, { ...look(0), ballCam: true });
+    expect(yawDeg(view.forward)).toBeGreaterThan(90 - 22.5 - 3);
+    expect(yawDeg(view.forward)).toBeLessThan(90 - 22.5 + 3);
+  });
+
+  it("RV-7: a new pick moves from the view shown, even mid-move: no jump, and its first frame is where it was", () => {
+    const camera = new PlayerCamera();
+    settle(camera, car(), ball, CAR_CAM, 1);
+    camera.update(1 / 120, wreck(3), ball, CAR_CAM);
+    let view = camera.update(1 / 120, wreck(2.9), ball, CAR_CAM, { held: false, selected: spot(-2000, Math.PI / 2) });
+    for (let i = 0; i < 60; i++) view = camera.update(1 / 120, wreck(2.8), ball, CAR_CAM, { held: false, selected: spot(-2000, Math.PI / 2) });
+    const steps: number[] = [];
+    let last = view.position;
+    for (let i = 0; i < 20; i++) {
+      const pick = i < 6 ? spot(0, Math.PI / 2) : spot(2000, Math.PI / 2);
+      view = camera.update(1 / 120, wreck(2.7), ball, CAR_CAM, { held: false, selected: pick });
+      steps.push(Math.hypot(view.position.x - last.x, view.position.y - last.y));
+      last = view.position;
+    }
+    expect(steps[0]).toBeCloseTo(0, 6); // (the change's frame: where it was)
+    expect(steps[6]).toBeCloseTo(0, 6);
+    expect(Math.max(...steps)).toBeLessThan(400); // (no jump: 2000 uu in 0.1 s at most ~170 a frame)
+  });
+
+  it("RV-8: with no spot locked, the new car cuts in: its first frame is a fresh car cam's", () => {
+    const camera = new PlayerCamera();
+    settle(camera, car(), ball, CAR_CAM, 1);
+    for (let i = 0; i < 240; i++) camera.update(1 / 120, wreck(2 - i / 120), ball, CAR_CAM);
+    const respawned = car({ pos: vec3(-2304, -4608, 17) });
+    const view = camera.update(1 / 120, respawned, ball, CAR_CAM);
+    const fresh = new PlayerCamera().update(1 / 120, respawned, ball, CAR_CAM);
+    expect(view.position.x).toBeCloseTo(fresh.position.x, 6);
+    expect(view.position.y).toBeCloseTo(fresh.position.y, 6);
+    expect(view.position.z).toBeCloseTo(fresh.position.z, 6);
+  });
+
+  it("RV-11: the free look still turning in the wreck view doesn't carry into the spot's view", () => {
+    const camera = new PlayerCamera();
+    settle(camera, car(), ball, look(0), 1);
+    for (let i = 0; i < 60; i++) camera.update(1 / 120, wreck(3 - i / 120), ball, look(1));
+    let view = camera.update(1 / 120, wreck(2.4), ball, look(0), { held: false, selected: spot(-2000, Math.PI / 2) });
+    for (let i = 0; i < 60; i++) view = camera.update(1 / 120, wreck(2.4 - i / 120), ball, look(0), { held: false, selected: spot(-2000, Math.PI / 2) });
+    expect(yawDeg(view.forward)).toBeCloseTo(90, 6);
+  });
+
+  it("RV-13: free-look mode keeps the swivel as it was: back in classic, it's there on the first frame", () => {
+    const camera = new PlayerCamera();
+    const swivel = { ...CAR_CAM, lookRight: 1 };
+    const before = settle(camera, car(), ball, swivel, 4); // (the swivel settled: the next frame adds nothing)
+    settle(camera, car(), ball, { ...look(0), lookRight: 1 }, 1);
+    const after = camera.update(1 / 120, car(), ball, swivel);
+    expect(yawDeg(after.forward)).toBeCloseTo(yawDeg(before.forward), 1);
+  });
+});

@@ -76,11 +76,18 @@ export function buildCarModel(config: CarConfig, paint: Color, team = 0): Group 
   const trim = new MeshStandardMaterial({ name: "trim", roughness: 0.75, metalness: 0 });
   trim.color.setRGB(0.09, 0.09, 0.09, LinearSRGBColorSpace);
   const glass = new MeshStandardMaterial({ name: "glass", color: 0x0b1018, roughness: 0.08, metalness: 0.8, side: DoubleSide });
-  // (MAT_Chassis_Grain: HeadlightColor x 2.5, TailLightColor x 1.33, linear: PNT-12)
-  const headlight = new MeshStandardMaterial({ name: "headlight", color: 0x000000 });
-  headlight.emissive.setRGB(0.583 * 2.5, 0.823 * 2.5, 0.978 * 2.5, LinearSRGBColorSpace);
-  const taillight = new MeshStandardMaterial({ name: "taillight", color: 0x000000 });
-  taillight.emissive.setRGB(3 * 1.33, 0.448 * 1.33, 0.448 * 1.33, LinearSRGBColorSpace);
+  // MAT_Chassis_Grain's HeadlightColor (0.583, 0.823, 0.978) x 2.5 and TailLightColor (3, 0.448, 0.448) x 1.33 (linear,
+  // PNT-12) are HDR, for its bloom; without one they'd clip (the tail lights to pink): their hue at full brightness
+  const lights = (r: number, g: number, b: number): MeshStandardMaterial => {
+    const m = new MeshStandardMaterial({ color: 0x000000 });
+    const peak = Math.max(r, g, b);
+    m.emissive.setRGB(r / peak, g / peak, b / peak, LinearSRGBColorSpace);
+    return m;
+  };
+  const headlight = lights(0.583, 0.823, 0.978);
+  headlight.name = "headlight";
+  const taillight = lights(3, 0.448, 0.448);
+  taillight.name = "taillight";
   const tyre = new MeshStandardMaterial({ name: "tyre", color: 0x111214, roughness: 0.9 });
   const rim = new MeshStandardMaterial({ name: "rim", color: 0xb8bec8, roughness: 0.3, metalness: 0.8 });
 

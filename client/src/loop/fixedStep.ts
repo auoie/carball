@@ -9,9 +9,15 @@ export const TICK_SECONDS = 1 / TICK_RATE;
 /** MaxPhysicsSubsteps (EngineShare_TA): ticks per frame, the rest dropped */
 export const MAX_TICKS_PER_FRAME = 5;
 
-/** A frame's world time (UWorld::Tick's DeltaSeconds): the real frame time times the time dilation, clamped */
-export function worldSeconds(realSeconds: number, dilation = 1): number {
-  return Math.min(0.4, Math.max(0.0005, realSeconds * dilation));
+/** A frame's world time (UWorld::Tick's DeltaSeconds): the raw frame time times the time dilation, clamped */
+export function worldSeconds(rawSeconds: number, dilation = 1): number {
+  return Math.min(0.4, Math.max(0.0005, rawSeconds * dilation));
+}
+
+/** A frame's times from its raw (unclamped) frame time, as UWorld::Tick's: the world's (dilated, clamped) and the real
+ *  one (RealDeltaSeconds: clamped alike), so a zero or negative raw time never reaches the camera (RV-2) */
+export function frameTimes(rawSeconds: number, dilation = 1): { readonly world: number; readonly real: number } {
+  return { world: worldSeconds(rawSeconds, dilation), real: worldSeconds(rawSeconds) };
 }
 
 const f32 = Math.fround;

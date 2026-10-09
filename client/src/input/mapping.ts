@@ -20,10 +20,17 @@ export interface InputSnapshot {
   /** Let go since the previous snapshot: still full value this frame for axis actions (LT-6) */
   readonly releasedKeys?: ReadonlySet<string>;
   readonly releasedMouseButtons?: ReadonlySet<number>;
+  /** The key and mouse button presses and releases since the previous snapshot, in the order they came (the game acts
+   *  on each when it comes: with two inputs on one command, the last event wins; RV-3) */
+  readonly events?: readonly InputEvent[];
   /** The captured mouse's motion since the previous snapshot (counts; y down) */
   readonly mouse?: { readonly x: number; readonly y: number };
   readonly gamepad: GamepadSnapshot | null;
 }
+
+export type InputEvent =
+  | { readonly kind: "key"; readonly code: string; readonly down: boolean }
+  | { readonly kind: "mouse"; readonly button: number; readonly down: boolean };
 
 export const EMPTY_INPUT: InputSnapshot = { keys: new Set(), mouseButtons: new Set(), gamepad: null };
 
@@ -74,15 +81,17 @@ function keyboardValue(input: InputSnapshot, binding: KeyboardInput | null): num
 function keyboardButton(input: InputSnapshot, binding: KeyboardInput | null): ButtonInput {
   if (binding === null) return { down: false, pressed: false };
   return binding.kind === "key"
-    ? { down: input.keys.has(binding.code), pressed: input.pressedKeys?.has(binding.code) ?? false }
-    : { down: input.mouseButtons.has(binding.button), pressed: input.pressedMouseButtons?.has(binding.button) ?? false };
+    ? { down: input.keys.has(binding.code), pressed: input.pressedKeys?.has(binding.code) ?? false, keyboard: true }
+    : { down: input.mouseButtons.has(binding.button), pressed: input.pressedMouseButtons?.has(binding.button) ?? false, keyboard: true };
 }
 
 /** One input bound to a button action: down now; `pressed`: a press event since the last frame (a keyboard tap
- *  shows as pressed without being down; the gamepad, polled once a frame, has no events: its presses are edges) */
+ *  shows as pressed without being down; the gamepad, polled once a frame, has no events: its presses are edges);
+ *  `keyboard`: a key or mouse button (its events come in the snapshot's ordered list, when it has one) */
 interface ButtonInput {
   readonly down: boolean;
   readonly pressed: boolean;
+  readonly keyboard?: boolean;
 }
 
 function gamepadValue(pad: GamepadSnapshot | null, binding: GamepadInput | null, stickDeadzone: number): number {
@@ -111,6 +120,15 @@ function gamepadPressed(pad: GamepadSnapshot | null, binding: GamepadInput | nul
   return gamepadValue(pad, binding, stickDeadzone) > 0.5;
 }
 
+/** The ordered key and mouse events of the inputs bound to `actions` (down or up), or null: the snapshot has no list */
+function orderedKeyEvents(input: InputSnapshot, bindings: Bindings, actions: readonly Action[]): boolean[] | null {
+  if (!input.events) return null;
+  const bound = actions.map((a) => bindings[a].keyboard).filter((b): b is KeyboardInput => b !== null);
+  return input.events
+    .filter((e) => bound.some((b) => (b.kind === "key" ? e.kind === "key" && e.code === b.code : e.kind === "mouse" && e.button === b.button)))
+    .map((e) => e.down);
+}
+
 /** Each input bound to an action (keyboard, then gamepad) */
 function buttonInputs(input: InputSnapshot, bindings: Bindings, stickDeadzone: number, ...actions: Action[]): ButtonInput[] {
   return actions.flatMap((a) => [
@@ -131,23 +149,23 @@ export class ButtonLatch {
   readonly #commands = new Map<string, boolean>();
   readonly #pressed = new Set<string>();
 
-  /** The command's state after this frame's events */
-  update(command: string, inputs: readonly ButtonInput[]): boolean {
-    let pressed = false; // an input whose last event was a press
-    let released = false;
-    let anyPress = false;
+  /** The command's state after this frame's events: `keyEvents`, the keys' and mouse buttons' presses (true) and
+   *  releases in the order they came, then the gamepad's (its poll's edges); without an ordered list, each input's
+   *  edges in turn */
+  update(command: string, inputs: readonly ButtonInput[], keyEvents: readonly boolean[] | null = null): boolean {
+    const events: boolean[] = keyEvents ? [...keyEvents] : [];
     for (const [i, input] of inputs.entries()) {
       const key = `${command}:${String(i)}`;
       const was = this.#inputs.get(key) ?? false;
-      const press = input.pressed || (input.down && !was);
-      if (press) anyPress = true;
-      if (press && input.down) pressed = true;
-      else if (!input.down && (was || input.pressed)) released = true;
       this.#inputs.set(key, input.down);
+      if (keyEvents && input.keyboard) continue; // (in the ordered list)
+      if (input.pressed && !input.down) events.push(true, false); // (a tap)
+      else if (input.down && (!was || input.pressed)) events.push(true);
+      else if (!input.down && was) events.push(false);
     }
-    const state = pressed ? true : released ? false : (this.#commands.get(command) ?? false);
+    const state = events.at(-1) ?? this.#commands.get(command) ?? false;
     this.#commands.set(command, state);
-    if (anyPress) this.#pressed.add(command);
+    if (events.includes(true)) this.#pressed.add(command);
     else this.#pressed.delete(command);
     return state;
   }
@@ -189,7 +207,7 @@ export function readControls(input: InputSnapshot, bindings: Bindings, stickDead
   // Buttons: with a latch, as the game's press and release commands; without, held while any input is
   const button = (command: string, ...actions: Action[]): boolean => {
     const inputs = buttonInputs(input, bindings, stickDeadzone, ...actions);
-    return latch ? latch.update(command, inputs) : inputs.some((i) => i.down);
+    return latch ? latch.update(command, inputs, orderedKeyEvents(input, bindings, actions)) : inputs.some((i) => i.down);
   };
   const yaw = v.yawRight - v.yawLeft;
   const airRoll = button("airRoll", "airRoll");

@@ -488,8 +488,9 @@ impl Game {
             Some(plan) if wanted => {
                 self.phase = Phase::Replay;
                 self.phase_until = tick + (replay_seconds(&plan) * f64::from(TICK_RATE)).round() as u64;
+                // (`SetAllowReadyUp`: everyone unready, then `AutoReadyPlayers`)
                 for p in self.players.values_mut() {
-                    p.ready = false;
+                    p.ready = p.auto_skip_replay;
                 }
                 self.broadcast(&Control::Replay(plan));
                 self.ready_sent = None;
@@ -501,7 +502,7 @@ impl Game {
 
     /// The replay's ready count to everyone when it changed
     fn send_ready(&mut self) {
-        let ready = self.players.values().filter(|p| p.ready || p.auto_skip_replay).count().min(255) as u8;
+        let ready = self.players.values().filter(|p| p.ready).count().min(255) as u8;
         let state = (ready, self.players.len().min(255) as u8);
         if self.ready_sent != Some(state) {
             self.broadcast(&Control::ReplayReady { ready: state.0, total: state.1 });
@@ -601,9 +602,13 @@ impl Game {
                     self.start_replay(tick);
                 }
             }
-            // `CheckPlayersReady` (every 0.01 s; here every tick) or the replay's end
+            // `CheckPlayersReady` (every 0.01 s; here every tick): `AutoReadyPlayers` readies the auto-skippers (a ready
+            // player stays ready: turning auto-skip off doesn't undo it, RV-12); all ready, or the replay's end
             Phase::Replay => {
-                if tick >= self.phase_until || self.players.values().all(|p| p.ready || p.auto_skip_replay) {
+                for p in self.players.values_mut() {
+                    p.ready |= p.auto_skip_replay;
+                }
+                if tick >= self.phase_until || self.players.values().all(|p| p.ready) {
                     self.new_round();
                 } else {
                     self.send_ready();
@@ -1155,5 +1160,25 @@ mod tests {
         // Its real length: a hit 1 s before the goal, 9 s shown with 0.35 s of it slowed: 10.05 s (gs_slomo.py)
         let seconds = replay_seconds(&ReplayPlan { start_tick: 0, goal_tick: 0, end_tick: 1080, scoring_team: 0, slomo: vec![(100, 142)], focus: vec![] });
         assert!((seconds - 10.05).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_player_ready_by_auto_skip_stays_ready_when_turning_it_off() {
+        init_engine();
+        let mut game = Game::new();
+        let (tx1, _rx1) = unbounded_channel();
+        let (tx2, _rx2) = unbounded_channel();
+        game.join(1, WANTS_REPLAYS, tx1);
+        game.join(2, REQUEST, tx2); // (auto-skips)
+        run_until(&mut game, 1000, |g| g.phase == Phase::Active);
+        game.arena.set_ball([0.0, 5000.0, 300.0], [0.0, 2000.0, 0.0]);
+        run_until(&mut game, 120, |g| g.phase == Phase::PostGoal);
+        run_until(&mut game, 400, |g| g.phase == Phase::Replay);
+        game.set_auto_skip_replay(2, false);
+        game.tick(0.0);
+        assert_eq!(game.phase, Phase::Replay);
+        game.ready_up(1);
+        game.tick(0.0);
+        assert_eq!(game.phase, Phase::Countdown);
     }
 }

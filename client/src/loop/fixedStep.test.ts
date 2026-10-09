@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { FixedStep, TICK_SECONDS, worldSeconds } from "./fixedStep";
+import { FixedStep, TICK_SECONDS, frameTimes, worldSeconds } from "./fixedStep";
 
 describe("FixedStep", () => {
   it("runs 120 ticks per second regardless of frame rate", () => {
@@ -43,5 +43,11 @@ describe("FixedStep", () => {
     expect(worldSeconds(1 / 60, 0.25)).toBe(1 / 240);
     expect(worldSeconds(2)).toBe(0.4);
     expect(worldSeconds(0)).toBe(0.0005);
+  });
+
+  it("takes both of a frame's times from the raw one, each clamped: the dilation before the clamp (RV-2)", () => {
+    expect(frameTimes(1, 0.25)).toEqual({ world: 0.25, real: 0.4 });
+    expect(frameTimes(0, 1)).toEqual({ world: 0.0005, real: 0.0005 });
+    expect(frameTimes(-0.002, 1)).toEqual({ world: 0.0005, real: 0.0005 });
   });
 });

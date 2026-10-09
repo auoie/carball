@@ -1,5 +1,5 @@
 // Collects keyboard, mouse and gamepad state from the browser into snapshots.
-import type { GamepadSnapshot, InputSnapshot } from "./mapping";
+import type { GamepadSnapshot, InputEvent, InputSnapshot } from "./mapping";
 
 export class InputDevices {
   readonly #keys = new Set<string>();
@@ -9,6 +9,7 @@ export class InputDevices {
   readonly #pressedButtons = new Set<number>();
   readonly #releasedKeys = new Set<string>();
   readonly #releasedButtons = new Set<number>();
+  readonly #events: InputEvent[] = []; // (in the order they came)
   readonly #abort = new AbortController();
   #usingGamepad = false;
   /** bDeviceOwnerIsGamepad: the device of the last key or button event (sticks and the mouse's motion don't count) */
@@ -30,14 +31,21 @@ export class InputDevices {
         this.#usingGamepad = false;
         this.#ownerIsGamepad = false;
         this.#keys.add(e.code);
-        if (!e.repeat) this.#pressedKeys.add(e.code); // (the OS's key repeat is no new press)
+        if (!e.repeat) {
+          // (the OS's key repeat is no new press)
+          this.#pressedKeys.add(e.code);
+          this.#events.push({ kind: "key", code: e.code, down: true });
+        }
       },
       { signal },
     );
     window.addEventListener(
       "keyup",
       (e) => {
-        if (this.#keys.delete(e.code)) this.#releasedKeys.add(e.code);
+        if (this.#keys.delete(e.code)) {
+          this.#releasedKeys.add(e.code);
+          this.#events.push({ kind: "key", code: e.code, down: false });
+        }
       },
       { signal },
     );
@@ -55,13 +63,17 @@ export class InputDevices {
         }
         this.#mouseButtons.add(e.button);
         this.#pressedButtons.add(e.button);
+        this.#events.push({ kind: "mouse", button: e.button, down: true });
       },
       { signal },
     );
     window.addEventListener(
       "mouseup",
       (e) => {
-        if (this.#mouseButtons.delete(e.button)) this.#releasedButtons.add(e.button);
+        if (this.#mouseButtons.delete(e.button)) {
+          this.#releasedButtons.add(e.button);
+          this.#events.push({ kind: "mouse", button: e.button, down: false });
+        }
       },
       { signal },
     );
@@ -78,8 +90,14 @@ export class InputDevices {
     window.addEventListener(
       "blur",
       () => {
-        for (const k of this.#keys) this.#releasedKeys.add(k);
-        for (const b of this.#mouseButtons) this.#releasedButtons.add(b);
+        for (const k of this.#keys) {
+          this.#releasedKeys.add(k);
+          this.#events.push({ kind: "key", code: k, down: false });
+        }
+        for (const b of this.#mouseButtons) {
+          this.#releasedButtons.add(b);
+          this.#events.push({ kind: "mouse", button: b, down: false });
+        }
         this.#keys.clear();
         this.#mouseButtons.clear();
       },
@@ -118,6 +136,7 @@ export class InputDevices {
       pressedMouseButtons: new Set(this.#pressedButtons),
       releasedKeys: new Set(this.#releasedKeys),
       releasedMouseButtons: new Set(this.#releasedButtons),
+      events: this.#events.splice(0),
       mouse: { x: this.#mouseX, y: this.#mouseY },
       gamepad,
     };

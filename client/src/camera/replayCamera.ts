@@ -51,7 +51,8 @@ export class ReplayCamera {
   readonly #goal: { origin: Vec3; yaw: number; y: number };
   #focus: Vec3 | null = null;
   #focusCar: number | null = null;
-  #sinceFocusChange = 0; // game seconds
+  /** Game seconds since a focus car was last taken (none yet: the curve's end, full speed) */
+  #sinceFocusChange = Infinity;
   #slomoTime = 0;
 
   /** `scoringTeam`: the goal scored into is the other team's */
@@ -68,9 +69,10 @@ export class ReplayCamera {
     const fov = lerp(LIVE_REPLAY.fov, LIVE_REPLAY.slomoFov, a);
     let distance = lerp(LIVE_REPLAY.distance, LIVE_REPLAY.slomoDistance, a);
 
+    // (LastFocusChangeTime moves only when a new car is taken, not when the focus goes to the ball alone: RV-5)
     if (focus.carId !== this.#focusCar) {
       this.#focusCar = focus.carId;
-      this.#sinceFocusChange = 0;
+      if (focus.carId !== null) this.#sinceFocusChange = 0;
     }
     this.#sinceFocusChange += realSeconds * dilation;
     const predict = (b: ReplayBody): Vec3 => {
