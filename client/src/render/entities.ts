@@ -1,23 +1,6 @@
 // Visuals built from the physics shapes: the car is a body around its hitbox (src/render/carModel.ts), the ball is
 // its collision sphere. Real models come later (roadmap §10).
-import {
-  BufferAttribute,
-  type BufferGeometry,
-  Color,
-  ConeGeometry,
-  CylinderGeometry,
-  Group,
-  IcosahedronGeometry,
-  InstancedMesh,
-  Matrix4,
-  Mesh,
-  MeshBasicMaterial,
-  MeshStandardMaterial,
-  PlaneGeometry,
-  type Quaternion,
-  ShaderMaterial,
-  Vector3,
-} from "three";
+import { BufferAttribute, type BufferGeometry, Color, ConeGeometry, CylinderGeometry, Group, IcosahedronGeometry, InstancedMesh, LinearSRGBColorSpace, Matrix4, Mesh, MeshBasicMaterial, MeshStandardMaterial, PlaneGeometry, type Quaternion, ShaderMaterial, Vector3 } from "three";
 import type { BoostPadState, CarConfig, Team } from "../engine/world";
 import { buildCarModel } from "./carModel";
 import { SonicBoom, Trail } from "./supersonic";
@@ -25,7 +8,12 @@ import { toThreeVector } from "./coords";
 import { vec3 } from "../math/vec";
 
 export const BALL_RADIUS = 91.25;
-const TEAM_CAR_COLORS = [new Color(0x1f6fff), new Color(0xff7a12)] as const;
+/** The default loadout's team paint (CarColorSet BlueTeamV3[35] / OrangeTeamV3[33], ^2.2 as GetCorrectedPaintColor
+ *  hands it to the material: linear; notes/car-paint.md PNT-3/4) */
+export const TEAM_CAR_COLORS = [
+  new Color().setRGB(0.001343, 0.25301, 0.978132, LinearSRGBColorSpace),
+  new Color().setRGB(0.978132, 0.206684, 0.001343, LinearSRGBColorSpace),
+] as const;
 
 /** A car: the boxy model built around its hitbox (src/render/carModel.ts) and a boost flame, in the car's local
  *  frame (x forward, y up, z right); and, in the world, its supersonic trails and shockwave (src/render/supersonic.ts). */
@@ -42,7 +30,7 @@ export class CarView {
   readonly #point = new Vector3();
 
   constructor(config: CarConfig, team: Team) {
-    this.#body.add(buildCarModel(config, TEAM_CAR_COLORS[team]));
+    this.#body.add(buildCarModel(config, TEAM_CAR_COLORS[team], team));
     this.root.add(this.#body, ...this.#trails.map((t) => t.mesh), this.#boom.mesh);
     const rear = config.hitboxOffset.x - config.hitboxSize.x / 2 + 4;
     const height = config.hitboxOffset.z + config.hitboxSize.z * 0.1;

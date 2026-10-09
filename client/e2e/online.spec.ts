@@ -10,6 +10,9 @@ interface Stats {
   corrections: number;
   localMispredictions: number;
   kickoffCountdown: number;
+  phases: { phase: string; at: number; frame: number }[];
+  replaying: boolean;
+  goal: { frame: number | null; explodedFrame: number | null; minDilation: number };
 }
 
 const SERVER = "127.0.0.1:14434";
@@ -85,5 +88,45 @@ test("two players: one drives, the other sees it through the server", async ({ p
   expect(ids).toContain((await movedCars())[0]);
 
   await otherContext.close();
+  expect(errors).toEqual([]);
+});
+
+test("a goal: the game slows down for 3.53 s, the goal replay plays, Space skips it, then the kickoff", async ({ page }) => {
+  await page.setViewportSize({ width: 640, height: 360 }); // (software rendering: keep over 24 fps, LT-2)
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  // (this server knocks the ball into a goal 1 s after each go)
+  await page.goto("/?server=127.0.0.1:14436");
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+  await expect.poll(async () => (await stats(page)).replaying, { timeout: 30_000 }).toBe(true);
+  await expect(page.locator("#message")).toContainText("REPLAY");
+  const { phases } = await stats(page);
+  const goal = phases.findLast((p) => p.phase === "postGoal");
+  const replay = phases.findLast((p) => p.phase === "replay");
+  expect(goal && replay).toBeTruthy();
+  if (!goal || !replay) return;
+  // 360 ticks after the goal, slowed at first: 3.53 s of real time (the server's clock)
+  expect((replay.at - goal.at) / 1000).toBeGreaterThan(3.25);
+  expect((replay.at - goal.at) / 1000).toBeLessThan(3.85);
+  // This client's clock slowed with it, down to the curve's 0.1875, keyed to the server's goal tick: the frame its own
+  // prediction saw the goal in (how many frames it ran depends on its frame rate: under 24 fps, the game's 5 ticks a
+  // frame fall behind real time, as software rendering here does)
+  const { goal: slowed } = await stats(page);
+  // (sampled once a frame: a slow page may step past the curve's lowest point)
+  expect(slowed.minDilation).toBeGreaterThanOrEqual(0.1875);
+  expect(slowed.minDilation).toBeLessThan(0.3);
+  expect(slowed.frame).not.toBeNull();
+  // (within a few frames: the server tick to client frame mapping moves by a frame each time the server repeats or
+  // skips an input, which a stalling software-rendered page makes it do often)
+  expect(Math.abs((slowed.frame ?? 0) - (slowed.explodedFrame ?? 0)), JSON.stringify(slowed)).toBeLessThanOrEqual(8);
+  await page.waitForTimeout(1000);
+  await page.screenshot({ path: "test-results/replay.png" });
+
+  // Space: the only player is ready, so the replay ends and the next kickoff counts down
+  await page.locator("#game").click({ position: { x: 320, y: 180 }, button: "right" });
+  await page.keyboard.press("Space");
+  await expect.poll(async () => (await stats(page)).replaying, { timeout: 3_000 }).toBe(false);
+  await expect.poll(async () => (await stats(page)).phases.at(-1)?.phase).toBe("countdown");
+  await expect(page.locator("#message")).not.toContainText("REPLAY");
   expect(errors).toEqual([]);
 });

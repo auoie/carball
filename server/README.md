@@ -47,7 +47,13 @@ As the game's competitive match (`notes/match-rules-audit.md`, from the live scr
   player joining in a countdown takes a kickoff spot (the others stay on theirs); later joiners start at a respawn
   spot. The clock runs from the first touch on the ball, or 5 s after
   "go" (`BallHasBeenHitStartDelay`), and stops after a goal.
-- A goal: 3 s, then the next kickoff (one goal per round: the ball explodes); demolished cars wait for the kickoff.
+- A goal (one per round: the ball explodes; demolished cars wait for the kickoff): 360 ticks (`PostGoalTime` 3.0 game
+  s) of which the first slow down along the game's `ScoreSlomoCurve`, so they last 3.53 s of real time
+  (`Game::next_tick_seconds`; the clients slow down with it, keyed to the goal's tick). Then the goal replay
+  (`0x85 Replay`: the window and slow-motion stretches from `GetReplayStartTime`/`ShouldSlomo`, whom the camera
+  follows), the cars frozen out of sight, unless every player skips replays (`Hello`'s auto-skip). It ends after its
+  real length, or as soon as every player is ready (`0x03 ReadyUp`: Space / pad A); then the next kickoff.
+  `notes/camera-respawn-goal.md` §3.
 - 0:00: the round ends when the ball touches the ground (a world contact facing up, or the ball asleep); goals
   still count until then. Then a different score ends the match; a tie goes to overtime: a kickoff, the clock counting
   up, the first goal wins.
@@ -55,6 +61,7 @@ As the game's competitive match (`notes/match-rules-audit.md`, from the live scr
   players forfeits: the other team wins at once. When everyone has left, the next player starts a new match.
 - The clients get the match state (`0x84 Match`: phase, clock, scores, winner) on each change.
 The goal explosion pushes the cars near the goal away (engine patch 77). Not yet: waiting for reserved players
-before the first kickoff (a drop-in server has none), the post-goal slow motion and replay, forfeit votes.
+before the first kickoff (a drop-in server has none), forfeit votes.
 `--team-size N` (default 3) is the playlist's team size: the uneven-teams kickoff adjustment uses it.
+`--test-goal-after SECONDS` (browser tests only): each round, the ball is knocked into a goal that long after "go".
 

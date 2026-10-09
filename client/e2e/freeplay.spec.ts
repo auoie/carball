@@ -24,16 +24,19 @@ test("freeplay loads, drives and resets", async ({ page }) => {
   await expect(page.locator("#boost-value")).toHaveText("33"); // kickoff boost
   await page.locator("#game").click({ position: { x: 640, y: 360 }, button: "right" }); // focus (right mouse: powerslide)
 
-  // Hold W: the car accelerates (about 1350 uu/s after 2 s of throttle)
+  // Hold W: the car accelerates (about 1350 uu/s after 2 s of throttle; under 24 fps, as software rendering here, the
+  // game's 5 ticks a frame run slower than real time: LT-2)
   await page.keyboard.down("KeyW");
-  await page.waitForTimeout(1500);
-  expect(await speed(page)).toBeGreaterThan(500);
+  await expect.poll(async () => speed(page), { timeout: 6_000 }).toBeGreaterThan(500);
   await page.keyboard.up("KeyW");
   await page.screenshot({ path: "test-results/driving.png" });
 
-  // Middle mouse toggles ball cam (the Modern layout)
-  await page.locator("#game").click({ position: { x: 640, y: 360 }, button: "middle" });
+  // Middle mouse is the ball cam (the Modern layout), held on keyboard and mouse (the Modern camera preset)
+  await page.mouse.move(640, 360);
+  await page.mouse.down({ button: "middle" });
   await expect(page.locator("#camera-mode")).toHaveText("Ball cam");
+  await page.mouse.up({ button: "middle" });
+  await expect(page.locator("#camera-mode")).toHaveText("Car cam");
 
   // Backspace resets to a kickoff: stopped, 33 boost
   await page.keyboard.press("Backspace");
@@ -94,7 +97,9 @@ test("controls can be rebound and are remembered", async ({ page }) => {
   const fov = page.locator('input[data-setting="fov"]');
   await fov.fill("105");
   await fov.dispatchEvent("change");
-  await page.locator('input[data-option="invertSwivelPitch"]').uncheck();
+  // (a new profile is Modern: keyboard-and-mouse free look on, the ball cam held; the controller's toggled)
+  await expect(page.locator('input[data-camera="cameraKbm"][data-option="freeLook"]')).toBeChecked();
+  await page.locator('input[data-camera="cameraKbm"][data-option="freeLook"]').uncheck();
 
   // Controller tab: the game's defaults
   await page.locator(".settings-tab", { hasText: "Controller" }).click();
@@ -110,8 +115,7 @@ test("controls can be rebound and are remembered", async ({ page }) => {
   expect(await speed(page)).toBeLessThan(50);
   await page.keyboard.up("KeyW");
   await page.keyboard.down("KeyI");
-  await page.waitForTimeout(1200);
-  expect(await speed(page)).toBeGreaterThan(400);
+  await expect.poll(async () => speed(page), { timeout: 6_000 }).toBeGreaterThan(400);
   await page.keyboard.up("KeyI");
 
   // Remembered after a reload
@@ -121,8 +125,9 @@ test("controls can be rebound and are remembered", async ({ page }) => {
   await expect(page.locator('.binding-slot[data-action="throttleForward"][data-device="keyboard"]')).toHaveText("I");
   await page.locator(".settings-tab", { hasText: "Camera" }).click();
   await expect(page.locator('input[data-setting="fov"]')).toHaveValue("105");
-  await expect(page.locator('input[data-option="invertSwivelPitch"]')).not.toBeChecked();
-  await expect(page.locator('input[data-option="ballCamToggle"]')).toBeChecked();
+  await expect(page.locator('input[data-camera="cameraKbm"][data-option="freeLook"]')).not.toBeChecked();
+  await expect(page.locator('input[data-camera="cameraKbm"][data-option="ballCamToggle"]')).not.toBeChecked();
+  await expect(page.locator('input[data-camera="cameraPad"][data-option="ballCamToggle"]')).toBeChecked();
   await page.screenshot({ path: "test-results/settings.png" });
 
   // Reset restores the default

@@ -36,6 +36,7 @@ export interface JoinPreferences {
   readonly dodgeDeadzone: number;
   readonly steeringSensitivity: number;
   readonly airControlSensitivity: number;
+  readonly autoSkipReplay: boolean;
 }
 
 type Welcome = Extract<ControlMessage, { type: "welcome" }>;
@@ -149,8 +150,22 @@ export class Connection {
 
   /** After a hitch: the server starts its estimate of this client's packet timing over (reliable) */
   resetInputBuffer(): void {
+    this.#sendControl({ type: "resetInputBuffer" });
+  }
+
+  /** Skip the goal replay (ReadyUp) */
+  readyUp(): void {
+    this.#sendControl({ type: "readyUp" });
+  }
+
+  /** The auto-skip setting changed */
+  setAutoSkipReplay(on: boolean): void {
+    this.#sendControl({ type: "autoSkipReplay", on });
+  }
+
+  #sendControl(m: ControlMessage): void {
     if (this.#closed || !this.#control) return;
-    this.#control.write(encodeControl({ type: "resetInputBuffer" })).catch(() => undefined);
+    this.#control.write(encodeControl(m)).catch(() => undefined);
   }
 
   close(): void {

@@ -13,8 +13,10 @@ import {
   ExtrudeGeometry,
   Float32BufferAttribute,
   Group,
+  LinearSRGBColorSpace,
   type Material,
   Mesh,
+  MeshPhysicalMaterial,
   MeshStandardMaterial,
   Shape,
   ShapeGeometry,
@@ -49,8 +51,8 @@ function wheelRestPosition(wheel: WheelConfig, halfWidth: number): { x: number; 
 
 /** The model as one mesh per material (seven draw calls), named after the material: body, trim, glass, headlight,
  *  taillight, tyre, rim; or the game's Fennec where it is loaded (src/render/fennec.ts). */
-export function buildCarModel(config: CarConfig, paint: Color): Group {
-  const fennec = fennecModel(config, paint);
+export function buildCarModel(config: CarConfig, paint: Color, team = 0): Group {
+  const fennec = fennecModel(config, paint, team);
   if (fennec) return fennec;
   const { hitboxSize: size, hitboxOffset: offset } = config;
   const length = size.x;
@@ -61,11 +63,24 @@ export function buildCarModel(config: CarConfig, paint: Color): Group {
   const hitboxBottom = offset.z - size.z / 2;
 
   // (the merged meshes are named after their material)
-  const body = new MeshStandardMaterial({ name: "body", color: paint, roughness: 0.35, metalness: 0.35 });
-  const trim = new MeshStandardMaterial({ name: "trim", color: 0x17191e, roughness: 0.7, metalness: 0.2 });
+  // The game's default Glossy finish (notes/car-paint.md PNT-6/10): the paint area takes the team colour itself, shaded
+  // 0.734; Lambert with a tight highlight and a clear coat. Rubber trim: 0.75 x TrimColor 0.12 facing
+  const body = new MeshPhysicalMaterial({
+    name: "body",
+    color: paint.clone().multiplyScalar(0.734),
+    roughness: 0.3,
+    metalness: 0,
+    clearcoat: 1,
+    clearcoatRoughness: 0.06,
+  });
+  const trim = new MeshStandardMaterial({ name: "trim", roughness: 0.75, metalness: 0 });
+  trim.color.setRGB(0.09, 0.09, 0.09, LinearSRGBColorSpace);
   const glass = new MeshStandardMaterial({ name: "glass", color: 0x0b1018, roughness: 0.08, metalness: 0.8, side: DoubleSide });
-  const headlight = new MeshStandardMaterial({ name: "headlight", color: 0xfff4d6, emissive: 0xfff0c0, emissiveIntensity: 0.9 });
-  const taillight = new MeshStandardMaterial({ name: "taillight", color: 0xff2a2a, emissive: 0xc01010, emissiveIntensity: 0.8 });
+  // (MAT_Chassis_Grain: HeadlightColor x 2.5, TailLightColor x 1.33, linear: PNT-12)
+  const headlight = new MeshStandardMaterial({ name: "headlight", color: 0x000000 });
+  headlight.emissive.setRGB(0.583 * 2.5, 0.823 * 2.5, 0.978 * 2.5, LinearSRGBColorSpace);
+  const taillight = new MeshStandardMaterial({ name: "taillight", color: 0x000000 });
+  taillight.emissive.setRGB(3 * 1.33, 0.448 * 1.33, 0.448 * 1.33, LinearSRGBColorSpace);
   const tyre = new MeshStandardMaterial({ name: "tyre", color: 0x111214, roughness: 0.9 });
   const rim = new MeshStandardMaterial({ name: "rim", color: 0xb8bec8, roughness: 0.3, metalness: 0.8 });
 

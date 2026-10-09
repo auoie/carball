@@ -1,4 +1,4 @@
-# Game protocol (version 8)
+# Game protocol (version 9)
 
 Client ↔ server over **WebTransport** (HTTP/3, QUIC). All integers little-endian. Implemented in
 `server/src/protocol.rs` (Rust) and `client/src/net/protocol.ts` (TypeScript); `vectors.json` holds byte-exact
@@ -16,12 +16,24 @@ Framed as `u16 length` + message (`length` counts the message, which starts with
 
 | Type | Direction | Fields |
 |---|---|---|
-| `0x01 Hello` | C→S | `u16 version`, `u8 team` (0 blue, 1 orange, 255 any), `u8 body` (0 Octane … 5 Merc), `f32 dodgeDeadzone`, `f32 steeringSensitivity`, `f32 airControlSensitivity` |
+| `0x01 Hello` | C→S | `u16 version`, `u8 team` (0 blue, 1 orange, 255 any), `u8 body` (0 Octane … 5 Merc), `f32 dodgeDeadzone`, `f32 steeringSensitivity`, `f32 airControlSensitivity`, `u8 autoSkipReplay` (1: always ready to skip goal replays, `bAutoSkipGoalReplay`) |
 | `0x02 ResetInputBuffer` | C→S | nothing: the client had a hitch (over 0.1 s between its frames) 2 s ago; the server resets its jitter buffer to the initial estimate (as the game's `ServerResetInputBuffer`) |
+| `0x03 ReadyUp` | C→S | nothing: skip the goal replay (the game's `ReadyUp`, Space / pad A); counts only during one |
+| `0x04 AutoSkipReplay` | C→S | `u8 on`: the auto-skip setting changed (turned on during a replay, it readies the player) |
 | `0x81 Welcome` | S→C | `u16 version`, `u32 carId`, `u8 tickRate` (120), `u32 frame`, `u32 n`, `n` bytes engine snapshot |
 | `0x82 World` | S→C | `u32 frame`, `u32 n`, `n` bytes engine snapshot (the set of cars changed: load it as the state after `frame`) |
 | `0x83 Event` | S→C | `u32 serverTick`, `u8 kind` (0 goal, 1 demo), then goal: `u8 team`; demo: `u32 attacker`, `u32 victim` |
 | `0x84 Match` | S→C | `u32 serverTick`, `u8 phase` (0 kickoff countdown, 1 playing, 2 after a goal, 3 time up: the round ends when the ball touches the ground, 4 ended), `u8 flags` (1 overtime, 2 clock running, 4 forfeit: the losing team left), `u32 clockTicks` (regulation: ticks left of 36000; overtime: ticks played), `u8 scoreBlue`, `u8 scoreOrange`, `u8 winner` (255 none). Sent after the welcome, and whenever the phase, the scores, the flags or the clock's shown second change (regulation rounds up, overtime down) |
+
+| `0x85 Replay` | S→C | the goal replay starts (`StartReplay` → `ReplayPlayback`): `u32 startTick`, `u32 goalTick`, `u32 endTick` (server ticks: the window shown), `u8 scoringTeam`, `u8 n`, `n` × (`u32 from`, `u32 to`): stretches played at 0.25 speed (exclusive), `u8 m`, `m` × (`u32 carId`, `u32 tick`): whom the replay camera follows with the ball, until when. The client plays its own recording of those ticks |
+| `0x86 ReplayReady` | S→C | `u8 ready`, `u8 total`: players ready to skip the replay (sent when it changes during one) |
+
+Phase 5 (version 9) is the goal replay: the cars are frozen out of sight (the client predicts them with no input) until
+it ends, after its real length (its length, each slowed stretch four times over), or every player is ready.
+**Time after a goal:** the server's ticks keep their count (120 per game second) but the n-th of the 360 after a goal
+lasts (1/120) / D((n − 1)/120) real seconds, D the game's `ScoreSlomoCurve` (1 until 0.125 s, 0.1875 at 0.225 s, 1 again
+at 0.625 s): 3.53 s in all. Clients slow their own clock the same way from the goal event's `serverTick` (mapped to
+their frame by the updates' `serverTick − ackFrame`), so their input frames keep pace.
 
 `frame` is in the **client's** frame numbering: the snapshot is the world after the server applied that client's
 input frame `frame` (0 before any). Engine snapshots: `Arena::Serialize` (exact, `engine/README.md`).
@@ -55,7 +67,8 @@ reset: a client draws a correction that changes it at once and smooths every oth
 respawns are held (after a goal, until the kickoff), with the match message (version 6). Version 7: the engine turns
 the ball (its orientation, already in every network state and snapshot, is now simulated), so the client draws it.
 Version 8: each body's world inverse inertia tensor (9 floats), which the game doesn't recompute after the tick's
-rounding or a placement, so it isn't a function of the state's rotation.
+rounding or a placement, so it isn't a function of the state's rotation. Version 9: the goal replay (phase 5, `0x85 Replay`,
+`0x86 ReplayReady`, `0x03 ReadyUp`, `0x04 AutoSkipReplay`, Hello's auto-skip) and the slowed ticks after a goal.
 
 What an update carries (the game's rates, `notes/netcode.md`): the ball every update (60 Hz); cars within 1000 uu of
 the ball every update, other cars and the boost pads every 8 ticks (15 Hz).

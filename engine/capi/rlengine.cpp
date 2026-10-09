@@ -122,6 +122,13 @@ int64_t rl_last_ball_touch_tick(RLArena* a) {
 	return last;
 }
 
+int64_t rl_car_last_ball_touch_tick(RLArena* a, uint32_t car_id) {
+	Car* car = a->arena->GetCar(car_id);
+	if (!car || !car->_internalState.ballHitInfo.isValid)
+		return -1;
+	return (int64_t)car->_internalState.ballHitInfo.tickCountWhenHit + 1;
+}
+
 int rl_ball_on_ground(RLArena* a) {
 	btRigidBody* ball = &a->arena->ball->_rigidBody;
 	if (ball->getActivationState() == ISLAND_SLEEPING)

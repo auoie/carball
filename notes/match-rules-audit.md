@@ -153,3 +153,11 @@ who reached prespawn 0.5 s before a goal could spawn at the respawn spot); array
   slot has no components, so the Classic explosion keeps the base wave. The native AddImpulse path
   (`FUN_1409801c0`: ×0.02, bVelChange → ×1/m_inverseMass, applyImpulse at HitLocation − origin) has no extra factor. Replay
   fits that mix products (live session: ~0.82×, steeper falloff) need splitting by the scorer's goal-explosion ID.
+
+## Live build (2026-10-06) addresses
+
+Checked 2026-10-08. Each function cited here was mapped through BinDiff (out/bsim/bindiff/function_map.tsv) and
+semantic-diffed old vs live (out/bsim/scripts/semantic_diff.py; offsets, addresses and stack frames ignored);
+key ones were re-decompiled in the live project out/bsim/rl-20261006.
+
+Same apart from layout (old → live): `140366160` → `14036c7b0` · `14036ac80` → `1403712d0` · `1409801c0` → `140985160` · `140e5ad50` → `140e5dcb0` · `140f2f610` → `140f35330` · `140f59720` → `140f5f800`.

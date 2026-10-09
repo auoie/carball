@@ -1,5 +1,5 @@
 {
-  "protocolVersion": 1,
+  "protocolVersion": 9,
   "vectors": [
     {
       "channel": "control",
@@ -10,9 +10,10 @@
         "body": 0,
         "dodgeDeadzone": 0.8,
         "steeringSensitivity": 1.0,
-        "airControlSensitivity": 1.25
+        "airControlSensitivity": 1.25,
+        "autoSkipReplay": true
       },
-      "hex": "11000101000000cdcc4c3f0000803f0000a03f"
+      "hex": "12000101000000cdcc4c3f0000803f0000a03f01"
     },
     {
       "channel": "control",
@@ -20,6 +21,21 @@
         "type": "resetInputBuffer"
       },
       "hex": "010002"
+    },
+    {
+      "channel": "control",
+      "message": {
+        "type": "readyUp"
+      },
+      "hex": "010003"
+    },
+    {
+      "channel": "control",
+      "message": {
+        "type": "autoSkipReplay",
+        "on": true
+      },
+      "hex": "02000401"
     },
     {
       "channel": "control",
@@ -109,6 +125,64 @@
         "forfeit": true
       },
       "hex": "0e0084881300000405d2040000030200"
+    },
+    {
+      "channel": "control",
+      "message": {
+        "type": "match",
+        "serverTick": 6000,
+        "phase": "replay",
+        "overtime": false,
+        "clockRunning": false,
+        "clockTicks": 4321,
+        "score": [
+          1,
+          0
+        ],
+        "winner": null,
+        "forfeit": false
+      },
+      "hex": "0e0084701700000500e11000000100ff"
+    },
+    {
+      "channel": "control",
+      "message": {
+        "type": "replay",
+        "startTick": 4280,
+        "goalTick": 5000,
+        "endTick": 5360,
+        "scoringTeam": 0,
+        "slomo": [
+          [
+            4670,
+            4712
+          ],
+          [
+            4970,
+            5000
+          ]
+        ],
+        "focus": [
+          {
+            "car": 2,
+            "tick": 4500
+          },
+          {
+            "car": 1,
+            "tick": 4700
+          }
+        ]
+      },
+      "hex": "300085b810000088130000f014000000023e120000681200006a13000088130000020200000094110000010000005c120000"
+    },
+    {
+      "channel": "control",
+      "message": {
+        "type": "replayReady",
+        "ready": 1,
+        "total": 3
+      },
+      "hex": "0300860103"
     },
     {
       "channel": "datagram",

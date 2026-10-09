@@ -24,6 +24,13 @@ export default defineConfig({
       reuseExistingServer: false,
       timeout: 600_000,
     },
+    {
+      // One whose rounds end in a goal 1 s after go (the goal sequence's test)
+      command: "cargo run --quiet --manifest-path ../server/Cargo.toml -- --port 14435 --info-port 14436 --test-goal-after 1",
+      url: "http://127.0.0.1:14436/info",
+      reuseExistingServer: false,
+      timeout: 600_000,
+    },
   ],
   outputDir: "test-results",
 });

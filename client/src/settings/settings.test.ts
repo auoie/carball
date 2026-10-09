@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_BINDINGS } from "../input/bindings";
-import { DEFAULT_SETTINGS, loadSettings, parseSettings, saveSettings } from "./settings";
+import { DEFAULT_CAMERA_SETTINGS } from "../camera/rlCamera";
+import { DEFAULT_SETTINGS, MODERN_CAMERA_KBM, MODERN_CAMERA_PAD, loadSettings, parseSettings, saveSettings } from "./settings";
 
 class MemoryStorage {
   readonly data = new Map<string, string>();
@@ -13,6 +14,17 @@ class MemoryStorage {
 }
 
 describe("settings", () => {
+  it("settings saved before the per-input cameras migrate as the game's old profiles: no free look, their toggle and inversion kept", () => {
+    const old = parseSettings({ camera: { ...DEFAULT_CAMERA_SETTINGS, distance: 270 }, options: { ballCamToggle: false, invertSwivelPitch: true } });
+    for (const input of [old.cameraKbm, old.cameraPad]) {
+      expect(input).toEqual({ freeLook: false, ballCamToggle: false, invertPitch: true, smoothing: true, accelRate: 5.8, decelRate: 10.8, freeLookSpeed: 2.5 });
+    }
+    expect(old.camera.distance).toBe(270);
+    // (the old defaults, toggle and inversion on, where they weren't saved)
+    const bare = parseSettings({ controller: { deadzone: 0.3 } });
+    expect([bare.cameraKbm.ballCamToggle, bare.cameraKbm.invertPitch, bare.cameraKbm.freeLook]).toEqual([true, true, false]);
+  });
+
   it("round-trips through storage", () => {
     const storage = new MemoryStorage();
     const custom = {
@@ -20,7 +32,9 @@ describe("settings", () => {
       bindings: { ...DEFAULT_BINDINGS, jump: { keyboard: { kind: "key", code: "Space" } as const, gamepad: null } },
       camera: { ...DEFAULT_SETTINGS.camera, fov: 110, distance: 260, stiffness: 0.45 },
       controller: { ...DEFAULT_SETTINGS.controller, deadzone: 0.15, aerialSensitivity: 1.4 },
-      options: { ...DEFAULT_SETTINGS.options, ballCamToggle: false, invertSwivelPitch: false, muted: true },
+      cameraKbm: { ...DEFAULT_SETTINGS.cameraKbm, freeLook: false, accelRate: 7.5 },
+      cameraPad: { ...DEFAULT_SETTINGS.cameraPad, freeLook: true, invertPitch: true, freeLookSpeed: 4 },
+      options: { ...DEFAULT_SETTINGS.options, rearCameraToggle: true, muted: true },
       audio: { master: 0.5, effects: 0.25, cars: 0, ambience: 1 },
     };
     saveSettings(custom, storage);
@@ -52,15 +66,33 @@ describe("settings", () => {
     expect(s.audio).toEqual({ ...DEFAULT_SETTINGS.audio, master: 1, effects: 0 });
   });
 
-  it("defaults are the game's profile defaults", () => {
-    expect(DEFAULT_SETTINGS.controller).toEqual({ deadzone: 0.2, dodgeDeadzone: 0.8, steeringSensitivity: 1, aerialSensitivity: 1 });
+  it("defaults are the game's profile defaults: a new profile's camera is the Modern preset", () => {
+    expect(DEFAULT_SETTINGS.controller).toEqual({
+      deadzone: 0.2,
+      dodgeDeadzone: 0.8,
+      steeringSensitivity: 1,
+      aerialSensitivity: 1,
+      freeLookDeadzone: 0.1,
+      mouseSensitivity: 10,
+    });
+    expect(DEFAULT_SETTINGS.camera).toEqual({ ...DEFAULT_CAMERA_SETTINGS, distance: 290 });
+    expect(DEFAULT_SETTINGS.cameraKbm).toEqual({
+      freeLook: true,
+      ballCamToggle: false,
+      invertPitch: false,
+      smoothing: true,
+      accelRate: 10.8,
+      decelRate: 10.8,
+      freeLookSpeed: 2.5,
+    });
+    expect(DEFAULT_SETTINGS.cameraPad).toEqual({ ...MODERN_CAMERA_KBM, freeLook: false, ballCamToggle: true, accelRate: 5.8 });
+    expect(MODERN_CAMERA_PAD).toEqual(DEFAULT_SETTINGS.cameraPad);
     expect(DEFAULT_SETTINGS.options).toEqual({
-      ballCamToggle: true,
       rearCameraToggle: false,
-      invertSwivelPitch: true,
       airPitchSafety: true,
       muted: false,
       flipIndicator: true,
+      autoSkipReplay: false, // (ProfileGameplaySave bAutoSkipGoalReplay)
     });
   });
 

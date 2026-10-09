@@ -27,6 +27,15 @@ body {
   height: 100vh;
 }
 
+/* The camera's fade (the goal replay's start and end: from black) */
+#fade {
+  position: fixed;
+  inset: 0;
+  background: #000;
+  opacity: 0;
+  pointer-events: none;
+}
+
 #loading {
   position: fixed;
   inset: 0;
@@ -89,6 +98,17 @@ body {
   font-weight: 800;
   letter-spacing: 0.05em;
   text-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+}
+
+/* A line under the message (the goal replay: how to skip it, who's ready) */
+#message-hint {
+  position: absolute;
+  top: calc(30% + 5.5rem);
+  width: 100%;
+  text-align: center;
+  font-size: 1.1rem;
+  font-weight: 600;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
 }
 
 /* Flip indicator: whether the car can dodge (src/game/flipTracker.ts), left of the boost meter */

@@ -3,6 +3,7 @@
 // Pure, so it is unit-tested.
 import type { CarControls } from "../engine/world";
 import type { Action, Bindings, GamepadInput, KeyboardInput } from "./bindings";
+import { type FreeLookAxes, freeLookStick } from "../camera/freeLook";
 
 export interface GamepadSnapshot {
   readonly axes: readonly number[];
@@ -10,8 +11,17 @@ export interface GamepadSnapshot {
 }
 
 export interface InputSnapshot {
+  /** Held now */
   readonly keys: ReadonlySet<string>;
   readonly mouseButtons: ReadonlySet<number>;
+  /** Pressed since the previous snapshot, also those let go again (a tap): the game's press events */
+  readonly pressedKeys?: ReadonlySet<string>;
+  readonly pressedMouseButtons?: ReadonlySet<number>;
+  /** Let go since the previous snapshot: still full value this frame for axis actions (LT-6) */
+  readonly releasedKeys?: ReadonlySet<string>;
+  readonly releasedMouseButtons?: ReadonlySet<number>;
+  /** The captured mouse's motion since the previous snapshot (counts; y down) */
+  readonly mouse?: { readonly x: number; readonly y: number };
   readonly gamepad: GamepadSnapshot | null;
 }
 
@@ -49,9 +59,30 @@ export function axisDeadzone(v: number, deadzone: number): number {
   return (Math.sign(v) * Math.max(0, Math.abs(v) - deadzone)) / (1 - deadzone);
 }
 
+/** A keyboard or mouse input as an axis: full while held, and in the frame it was let go (UInput::Tick sends a key
+ *  released since the last frame as down for that frame, then up: notes/client-loop-timing.md LT-6) */
 function keyboardValue(input: InputSnapshot, binding: KeyboardInput | null): number {
   if (binding === null) return 0;
-  return (binding.kind === "key" ? input.keys.has(binding.code) : input.mouseButtons.has(binding.button)) ? 1 : 0;
+  const down =
+    binding.kind === "key"
+      ? input.keys.has(binding.code) || (input.releasedKeys?.has(binding.code) ?? false)
+      : input.mouseButtons.has(binding.button) || (input.releasedMouseButtons?.has(binding.button) ?? false);
+  return down ? 1 : 0;
+}
+
+/** A keyboard or mouse input as a button: held now, and whether it was pressed since the last frame */
+function keyboardButton(input: InputSnapshot, binding: KeyboardInput | null): ButtonInput {
+  if (binding === null) return { down: false, pressed: false };
+  return binding.kind === "key"
+    ? { down: input.keys.has(binding.code), pressed: input.pressedKeys?.has(binding.code) ?? false }
+    : { down: input.mouseButtons.has(binding.button), pressed: input.pressedMouseButtons?.has(binding.button) ?? false };
+}
+
+/** One input bound to a button action: down now; `pressed`: a press event since the last frame (a keyboard tap
+ *  shows as pressed without being down; the gamepad, polled once a frame, has no events: its presses are edges) */
+interface ButtonInput {
+  readonly down: boolean;
+  readonly pressed: boolean;
 }
 
 function gamepadValue(pad: GamepadSnapshot | null, binding: GamepadInput | null, stickDeadzone: number): number {
@@ -80,37 +111,71 @@ function gamepadPressed(pad: GamepadSnapshot | null, binding: GamepadInput | nul
   return gamepadValue(pad, binding, stickDeadzone) > 0.5;
 }
 
-/** Each input bound to an action, pressed or not (keyboard, then gamepad) */
-function buttonInputs(input: InputSnapshot, bindings: Bindings, stickDeadzone: number, ...actions: Action[]): boolean[] {
+/** Each input bound to an action (keyboard, then gamepad) */
+function buttonInputs(input: InputSnapshot, bindings: Bindings, stickDeadzone: number, ...actions: Action[]): ButtonInput[] {
   return actions.flatMap((a) => [
-    keyboardValue(input, bindings[a].keyboard) > 0.5,
-    gamepadPressed(input.gamepad, bindings[a].gamepad, stickDeadzone),
+    keyboardButton(input, bindings[a].keyboard),
+    { down: gamepadPressed(input.gamepad, bindings[a].gamepad, stickDeadzone), pressed: false },
   ]);
 }
 
 /**
  * The game's buttons are commands sent on each press and each release (ToggleJump true, OnRelease ToggleJump false),
- * so with two inputs bound to one command (a key and a pad button, or jump and the alternative jump) the last event
- * wins: releasing either releases it (controls audit C-4). Keeps each input's previous state to find the events.
+ * acted on when they happen, before the frame's ticks: with two inputs bound to one command (a key and a pad button,
+ * or jump and the alternative jump) the last event wins, so releasing either releases it (controls audit C-4), and a
+ * press and release within one frame leaves it released: the tap is lost (LT-5; the jump's own latch keeps it: LT-4).
+ * Keeps each input's previous state to find the gamepad's events.
  */
 export class ButtonLatch {
   readonly #inputs = new Map<string, boolean>();
   readonly #commands = new Map<string, boolean>();
+  readonly #pressed = new Set<string>();
 
-  /** The command's state after this frame's inputs (a press and a release in one frame: pressed) */
-  update(command: string, inputs: readonly boolean[]): boolean {
-    let pressed = false;
+  /** The command's state after this frame's events */
+  update(command: string, inputs: readonly ButtonInput[]): boolean {
+    let pressed = false; // an input whose last event was a press
     let released = false;
-    for (const [i, down] of inputs.entries()) {
+    let anyPress = false;
+    for (const [i, input] of inputs.entries()) {
       const key = `${command}:${String(i)}`;
       const was = this.#inputs.get(key) ?? false;
-      if (down && !was) pressed = true;
-      if (!down && was) released = true;
-      this.#inputs.set(key, down);
+      const press = input.pressed || (input.down && !was);
+      if (press) anyPress = true;
+      if (press && input.down) pressed = true;
+      else if (!input.down && (was || input.pressed)) released = true;
+      this.#inputs.set(key, input.down);
     }
     const state = pressed ? true : released ? false : (this.#commands.get(command) ?? false);
     this.#commands.set(command, state);
+    if (anyPress) this.#pressed.add(command);
+    else this.#pressed.delete(command);
     return state;
+  }
+
+  /** Whether the command was pressed in the last update (even if released again: the jump's latch) */
+  pressed(command: string): boolean {
+    return this.#pressed.has(command);
+  }
+}
+
+/**
+ * The jump's latch (PlayerController_TA.bJumped; notes/client-loop-timing.md LT-4): a press sets it, and the first
+ * tick after takes the jump as held even if it was let go already, then clears it. So a tap is exactly one tick of
+ * jump, never lost however short, and a frame with no tick keeps it for the next.
+ */
+export class JumpLatch {
+  #latched = false;
+
+  /** After reading the frame's controls */
+  frame(latch: ButtonLatch): void {
+    if (latch.pressed("jump")) this.#latched = true;
+  }
+
+  /** A tick's jump: held, or latched (which the tick consumes) */
+  tick(held: boolean): boolean {
+    const jump = held || this.#latched;
+    this.#latched = false;
+    return jump;
   }
 }
 
@@ -124,7 +189,7 @@ export function readControls(input: InputSnapshot, bindings: Bindings, stickDead
   // Buttons: with a latch, as the game's press and release commands; without, held while any input is
   const button = (command: string, ...actions: Action[]): boolean => {
     const inputs = buttonInputs(input, bindings, stickDeadzone, ...actions);
-    return latch ? latch.update(command, inputs) : inputs.some((down) => down);
+    return latch ? latch.update(command, inputs) : inputs.some((i) => i.down);
   };
   const yaw = v.yawRight - v.yawLeft;
   const airRoll = button("airRoll", "airRoll");
@@ -142,7 +207,8 @@ export function readControls(input: InputSnapshot, bindings: Bindings, stickDead
 }
 
 export function readHeldActions(input: InputSnapshot, bindings: Bindings, stickDeadzone: number): HeldActions {
-  const held = (action: Action): boolean => buttonInputs(input, bindings, stickDeadzone, action).some((down) => down);
+  // (held, or pressed since the last frame: a tap still toggles, as the game's press commands do)
+  const held = (action: Action): boolean => buttonInputs(input, bindings, stickDeadzone, action).some((i) => i.down || i.pressed);
   return {
     ballCam: held("ballCam"),
     rearCamera: held("rearCamera"),
@@ -155,6 +221,39 @@ export function readHeldActions(input: InputSnapshot, bindings: Bindings, stickD
 export function readLook(input: InputSnapshot, bindings: Bindings, stickDeadzone: number): LookInput {
   const v = actionValues(input, bindings, stickDeadzone);
   return { up: v.swivelUp - v.swivelDown, right: v.swivelRight - v.swivelLeft };
+}
+
+export interface FreeLookOptions {
+  /** The device that owns the free look (the other's input is dropped: CAM-16) */
+  readonly gamepad: boolean;
+  /** The last view's FOV (PlayerInput_TA scales the look input by FOV / 90) */
+  readonly fov: number;
+  readonly invertPitch: boolean;
+  readonly mouseSensitivity: number;
+  readonly freeLookDeadzone: number;
+}
+
+/** The free look's input this frame (PlayerInput_TA.PlayerInput, ReplicateCameraRotation; notes/camera-respawn-goal.md
+ *  CAM-11): the stick bound to the look, past its free-look deadzone; or the mouse's counts times its sensitivity
+ *  (forward looks up), else keys bound to the look; scaled by FOV / 90, the pitch by the input's inversion. */
+export function readFreeLook(input: InputSnapshot, bindings: Bindings, stickDeadzone: number, o: FreeLookOptions): FreeLookAxes {
+  const fovScale = o.fov / 90;
+  const pitchDir = o.invertPitch ? -1 : 1;
+  if (o.gamepad) {
+    const pad = (a: Action): number => gamepadValue(input.gamepad, bindings[a].gamepad, stickDeadzone);
+    const up = freeLookStick((pad("swivelUp") - pad("swivelDown")) * fovScale, o.freeLookDeadzone);
+    const right = freeLookStick((pad("swivelRight") - pad("swivelLeft")) * fovScale, o.freeLookDeadzone);
+    return { pitch: up * pitchDir, yaw: right, source: "stick" };
+  }
+  const mouse = input.mouse ?? { x: 0, y: 0 };
+  if (mouse.x !== 0 || mouse.y !== 0) {
+    const counts = o.mouseSensitivity * fovScale;
+    return { pitch: -mouse.y * counts * pitchDir, yaw: mouse.x * counts, source: "mouse" };
+  }
+  const key = (a: Action): number => keyboardValue(input, bindings[a].keyboard);
+  const up = (key("swivelUp") - key("swivelDown")) * fovScale;
+  const right = (key("swivelRight") - key("swivelLeft")) * fovScale;
+  return { pitch: up * pitchDir, yaw: right, source: up !== 0 || right !== 0 ? "keys" : "mouse" };
 }
 
 /**

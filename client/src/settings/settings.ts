@@ -16,16 +16,29 @@ export interface ControllerSettings {
   readonly dodgeDeadzone: number; // DodgeInputThreshold
   readonly steeringSensitivity: number;
   readonly aerialSensitivity: number; // AirControlSensitivity
+  readonly freeLookDeadzone: number; // ControllerFreeLookDeadzone: a hard cut after the stick's deadzone
+  readonly mouseSensitivity: number; // MouseSensitivity (free look: counts × this × FOV/90)
+}
+
+/** The camera's per-input settings (ProfileCameraInputSettings: CameraKBM and CameraController); the one for the
+ *  input in use applies (notes/camera-respawn-goal.md CAM-17) */
+export interface InputCameraSettings {
+  readonly freeLook: boolean; // bUnconstrainRotation: the view turns only by the look input
+  readonly ballCamToggle: boolean; // bToggleSecondaryCamera: press toggles (else hold)
+  readonly invertPitch: boolean; // bInvertSwivelPitch
+  readonly smoothing: boolean; // bFreeLookSmoothing
+  readonly accelRate: number; // CameraAccelRate: the free look's speed eases in at this rate (1/s)
+  readonly decelRate: number; // CameraDecelRate: and out at this
+  readonly freeLookSpeed: number; // FreeLookSpeed
 }
 
 /** On/off options (ProfileCameraSave_TA, ProfilePCSave_TA). */
 export interface Options {
-  readonly ballCamToggle: boolean; // bToggleSecondaryCamera: press toggles (else hold)
   readonly rearCameraToggle: boolean; // bToggleRearCamera
-  readonly invertSwivelPitch: boolean; // bInvertSwivelPitch
   readonly airPitchSafety: boolean; // bAirPitchSafetyEnabled (keyboard and mouse)
   readonly muted: boolean; // all sound off (M)
   readonly flipIndicator: boolean; // show whether the car can dodge, and flip resets
+  readonly autoSkipReplay: boolean; // bAutoSkipGoalReplay: always ready to skip goal replays
 }
 
 /** Volumes, 0..1. */
@@ -39,6 +52,8 @@ export interface AudioSettings {
 export interface Settings {
   readonly bindings: Bindings;
   readonly camera: CameraSettings;
+  readonly cameraKbm: InputCameraSettings;
+  readonly cameraPad: InputCameraSettings;
   readonly controller: ControllerSettings;
   readonly options: Options;
   readonly audio: AudioSettings;
@@ -67,7 +82,38 @@ export const CONTROLLER_LIMITS: Readonly<Record<keyof ControllerSettings, Range>
   dodgeDeadzone: { min: 0.1, max: 1, step: 0.01 },
   steeringSensitivity: { min: 1, max: 10, step: 0.01 },
   aerialSensitivity: { min: 1, max: 10, step: 0.01 },
+  freeLookDeadzone: { min: 0, max: 0.75, step: 0.01 },
+  mouseSensitivity: { min: 1, max: 100, step: 1 },
 };
+
+/** The per-input camera sliders' limits (the menu's: accel and decel 1–15, speed 1–10) */
+export const INPUT_CAMERA_LIMITS: Readonly<Record<"accelRate" | "decelRate" | "freeLookSpeed", Range>> = {
+  accelRate: { min: 1, max: 15, step: 0.1 },
+  decelRate: { min: 1, max: 15, step: 0.1 },
+  freeLookSpeed: { min: 1, max: 10, step: 0.1 },
+};
+
+/** A per-input camera's defaults (Default__ProfileCameraInputSettings): classic, no free look */
+const INPUT_CAMERA_DEFAULTS: InputCameraSettings = {
+  freeLook: false,
+  ballCamToggle: true,
+  invertPitch: false,
+  smoothing: true,
+  accelRate: 5.8,
+  decelRate: 10.8,
+  freeLookSpeed: 2.5,
+};
+
+/** The Modern preset (a new profile's: ProfileCameraSave_TA.OnCreate → ApplyCameraPreset(Modern)): distance 290, and
+ *  per input (RegisterPresetInputOverrides) keyboard and mouse with free look, the ball cam held, accel 10.8; the
+ *  controller classic, the ball cam toggled (notes/camera-update-audit.md CAM-3) */
+export const MODERN_CAMERA: CameraSettings = { ...DEFAULT_CAMERA_SETTINGS, distance: 290 };
+export const MODERN_CAMERA_KBM: InputCameraSettings = { ...INPUT_CAMERA_DEFAULTS, freeLook: true, ballCamToggle: false, accelRate: 10.8 };
+export const MODERN_CAMERA_PAD: InputCameraSettings = { ...INPUT_CAMERA_DEFAULTS };
+
+/** The Default preset (and Balanced, Wide, Legacy alike): the camera's defaults, free look off for both inputs */
+export const DEFAULT_PRESET = { camera: DEFAULT_CAMERA_SETTINGS, cameraKbm: INPUT_CAMERA_DEFAULTS, cameraPad: INPUT_CAMERA_DEFAULTS } as const;
+export const MODERN_PRESET = { camera: MODERN_CAMERA, cameraKbm: MODERN_CAMERA_KBM, cameraPad: MODERN_CAMERA_PAD } as const;
 
 export const AUDIO_LIMITS: Readonly<Record<keyof AudioSettings, Range>> = {
   master: { min: 0, max: 1, step: 0.05 },
@@ -84,21 +130,22 @@ export const DEFAULT_CONTROLLER_SETTINGS: ControllerSettings = {
   dodgeDeadzone: 0.8,
   steeringSensitivity: 1,
   aerialSensitivity: 1,
+  freeLookDeadzone: 0.1,
+  mouseSensitivity: 10,
 };
 
 /** Default__ProfileCameraSave_TA, Default__ProfilePCSave_TA. */
 export const DEFAULT_OPTIONS: Options = {
-  ballCamToggle: true,
   rearCameraToggle: false,
-  invertSwivelPitch: true,
   airPitchSafety: true,
   muted: false,
   flipIndicator: true,
+  autoSkipReplay: false,
 };
 
 export const DEFAULT_SETTINGS: Settings = {
   bindings: DEFAULT_BINDINGS,
-  camera: DEFAULT_CAMERA_SETTINGS,
+  ...MODERN_PRESET,
   controller: DEFAULT_CONTROLLER_SETTINGS,
   options: DEFAULT_OPTIONS,
   audio: DEFAULT_AUDIO_SETTINGS,
@@ -190,9 +237,27 @@ function readBindings(v: unknown): Bindings {
 /** Settings from untrusted data (storage, imports): every invalid or missing field takes its default. */
 export function parseSettings(v: unknown): Settings {
   const src = isRecord(v) ? v : {};
+  // Saved before the per-input cameras: migrated as the game migrates its old profiles (free look off for both
+  // inputs; the old single ball-cam toggle and swivel inversion, which defaulted to on, kept for both)
+  const old = isRecord(src["options"]) ? src["options"] : {};
+  const migrated: InputCameraSettings = {
+    ...INPUT_CAMERA_DEFAULTS,
+    ballCamToggle: typeof old["ballCamToggle"] === "boolean" ? old["ballCamToggle"] : true,
+    invertPitch: typeof old["invertSwivelPitch"] === "boolean" ? old["invertSwivelPitch"] : true,
+  };
+  const saved = Object.keys(src).length > 0;
+  const inputCamera = (key: string, fresh: InputCameraSettings): InputCameraSettings => {
+    const value = src[key];
+    const base = readBooleans(value, isRecord(value) || !saved ? fresh : migrated);
+    const numbers = isRecord(value) ? value : {};
+    const limited = (k: keyof typeof INPUT_CAMERA_LIMITS): number => readNumber(numbers[k], base[k], INPUT_CAMERA_LIMITS[k]);
+    return { ...base, accelRate: limited("accelRate"), decelRate: limited("decelRate"), freeLookSpeed: limited("freeLookSpeed") };
+  };
   return {
     bindings: readBindings(src["bindings"]),
-    camera: readNumbers(src["camera"], DEFAULT_CAMERA_SETTINGS, CAMERA_LIMITS),
+    camera: readNumbers(src["camera"], saved ? DEFAULT_CAMERA_SETTINGS : MODERN_CAMERA, CAMERA_LIMITS),
+    cameraKbm: inputCamera("cameraKbm", MODERN_CAMERA_KBM),
+    cameraPad: inputCamera("cameraPad", MODERN_CAMERA_PAD),
     controller: readNumbers(src["controller"], DEFAULT_CONTROLLER_SETTINGS, CONTROLLER_LIMITS),
     options: readBooleans(src["options"], DEFAULT_OPTIONS),
     audio: readNumbers(src["audio"], DEFAULT_AUDIO_SETTINGS, AUDIO_LIMITS),

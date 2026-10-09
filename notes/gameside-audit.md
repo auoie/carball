@@ -270,3 +270,18 @@ Result in S1's engine copy with the game's cooked meshes, triangle order, goal-h
 - **GA-9 confirmed** (Breakout back rest 29.66). **C-5:** trigger axis deadzone 0.1 (live). **DS**, **MR-1**, **MR-4**,
   **MR-6** as decoded. **MR-5** is recomputed per kickoff: `SpawnSpots` is a local of
   `GameEvent_Soccar_TA.GetSpawnOrientation`, copied from `Team.PrimaryStarts` on every call.
+
+## Live build (2026-10-06) addresses
+
+Checked 2026-10-08. Each function cited here was mapped through BinDiff (out/bsim/bindiff/function_map.tsv) and
+semantic-diffed old vs live (out/bsim/scripts/semantic_diff.py; offsets, addresses and stack frames ignored);
+key ones were re-decompiled in the live project out/bsim/rl-20261006.
+
+Same apart from layout (old → live): `1402c2a40` → `1402c3540` · `1402c3360` → `1402c3e60` · `1402c49d0` → `1402c54d0` · `1402c5340` → `1402c5e40` · `140418cf0` → `14041f6f0` · `14097f5c0` → `140984560` · `14098cf10` → `140991eb0` · `1409a7db0` → `1409ad0e0` · `140e71b90` → `140e731f0` · `140e82950` → `140e840c0` · `140eb0fa0` → `140eb5410` · `140eb70a0` → `140ebb4f0` · `140ecaeb0` → `140ecf5b0` · `140ed91b0` → `140eddaa0` · `140eed9e0` → `140ef2770` · `140eef310` → `140ef40a0` · `140ef4040` → `140ef8dd0` · `140f044e0` → `140f097c0` · `140f13c80` → `140f190b0` · `140f17d30` → `140f1d170` · `140f19b30` → `140f1ef70` · `140f1b970` → `140f20dc0` · `140f1ba00` → `140f20e50` · `140f1ba60` → `140f20eb0` · `140f1c3c0` → `140f21850` · `140f1e830` → `140f24270` · `140f2aeb0` → `140f30970` · `140f2f370` → `140f35090` · `140f2f610` → `140f35330` · `140f51e30` → `140f57f10` · `140f55040` → `140f5b120` · `140f588f0` → `140f5e9d0` · `140f59720` → `140f5f800` · `140f5bd60` → `140f61e50`.
+
+Changed:
+- `140409570` → `14040ff70`: data decoded as code (not compared)
+- `140964d80` → `140969d20`: import slot only
+- `140eb3400` → `140eb7880`: a flag bit moved (bitfield layout)
+- `140ec7c00` → `140ecc300`: one call now goes to a different (unmatched) thunk; logic otherwise the same
+- `140f1c600` → `140f21a90`: struct stride 0x178 → 0x180 (layout)

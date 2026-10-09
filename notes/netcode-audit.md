@@ -83,3 +83,18 @@ N-2 (hitch reset) and N-5 (rebase only cars in the update) match the game; N-1 h
   `APawn::performPhysics`); the hitch clock is a real-time per-frame stamp (`FUN_140394840`); the native `SetTimer`
   (`FUN_140889b60`) restarts an existing timer, so the 2 s reset follows the last hitch; the server resets only the
   jitter estimate (`ServerConsume.ResetInputBuffer` → `JitterBuffer.Reset`).
+
+## Live build (2026-10-06) addresses
+
+Checked 2026-10-08. Each function cited here was mapped through BinDiff (out/bsim/bindiff/function_map.tsv) and
+semantic-diffed old vs live (out/bsim/scripts/semantic_diff.py; offsets, addresses and stack frames ignored);
+key ones were re-decompiled in the live project out/bsim/rl-20261006.
+
+Same apart from layout (old → live): `1402c47d0` → `1402c52d0` · `140394840` → `14039afb0` · `140889b60` → `14088eaf0` · `140e3e960` → `140e3ff20` · `140eabb70` → `140eaffe0` · `140ee89f0` → `140eed780` · `140f11c60` → `140f16f50` · `140f16460` → `140f1b890` · `140f164d0` → `140f1b900` · `140f1a670` → `140f1fab0` · `140f1a9e0` → `140f1fe20` · `140f1e780` → `140f23c10` · `140f45e80` → `140f4bac0` · `140f4ec60` → `140f54bd0` · `140f5e2f0` → `140f643f0` · `140f6a240` → `140f704b0`.
+
+Changed:
+- `140eb31f0` → `140eb7660`: zero-input action: the zeroed input struct is one dword larger (new input field); the caller 0x140f23c10 still zeroes input after 1.0 s (re-decompiled)
+- `140eb6f80` → `140ebb410`: bAirRoll moved to bit 0 of a new word (see notes/bullet-diff.md "Live build")
+- `140f03070` → `140f08340`: a flag bit moved (bitfield layout)
+- `140f1c600` → `140f21a90`: struct stride 0x178 → 0x180 (layout)
+- `140f5eaf0` → `140f64bf0`: struct stride 0x178 → 0x180 (layout)

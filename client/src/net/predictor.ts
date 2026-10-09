@@ -63,6 +63,9 @@ export class Predictor {
   readonly #history: (RecordedFrame | undefined)[] = new Array<RecordedFrame | undefined>(HISTORY_FRAMES + 8);
   readonly #remote = new Map<number, RemoteBase>();
   readonly stats: PredictorStats = { corrections: 0, resimulatedFrames: 0, ignoredOld: 0, resyncs: 0, localMispredictions: 0 };
+  /** Called with each frame once the world holds its state: when first simulated, and again whenever a correction
+   *  replays it (the goal replay's recording) */
+  onFrame: ((frame: number) => void) | null = null;
 
   /** `world` already holds the state after `frame`. */
   constructor(world: World, localCarId: number, frame: number) {
@@ -91,6 +94,7 @@ export class Predictor {
     this.#history[this.#slot(frame)] = server
       ? { frame, snapshot: this.#world.saveState(), input, server }
       : { frame, snapshot: this.#world.saveState(), input };
+    this.onFrame?.(frame);
   }
 
   /** Other cars' predicted controls at `frame`: the server's last values, axes fading out */

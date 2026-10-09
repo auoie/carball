@@ -126,6 +126,7 @@ async function main(): Promise<void> {
       dodgeDeadzone: controller.dodgeDeadzone,
       steeringSensitivity: controller.steeringSensitivity,
       airControlSensitivity: controller.aerialSensitivity,
+      autoSkipReplay: settings.options.autoSkipReplay,
     });
     world.loadState(welcome.snapshot);
     const online = new Online(world, renderer, arena, input, hud, audio, connection, welcome, () => settings, () => !panel.isOpen);
@@ -143,7 +144,8 @@ async function main(): Promise<void> {
   status.hidden = true;
   let last = performance.now();
   const frame = (now: number): void => {
-    const dt = Math.min(0.25, (now - last) / 1000);
+    // (the games clamp their world time, LT-3: 0.0005 .. 0.4 s)
+    const dt = Math.min(0.4, (now - last) / 1000);
     last = now;
     game.frame(dt);
     requestAnimationFrame(frame);

@@ -39,6 +39,8 @@ export interface HudState {
   readonly clock: string | null;
   readonly ballCam: boolean;
   readonly message: string | null;
+  /** A smaller line under the message (null: none) */
+  readonly hint?: string | null;
   readonly fps: number;
   readonly net: string | null; // online: ping and buffer
   /** Whether the car can dodge (null: the indicator is turned off) */
@@ -64,6 +66,7 @@ export class Hud {
   readonly #orange: HTMLElement;
   readonly #camera: HTMLElement;
   readonly #message: HTMLElement;
+  readonly #hint: HTMLElement;
   readonly #fps: HTMLElement;
   readonly #net: HTMLElement;
   readonly #help: HTMLElement;
@@ -92,6 +95,7 @@ export class Hud {
     this.#clock = element(root, "#clock", HTMLElement);
     this.#camera = element(root, "#camera-mode", HTMLElement);
     this.#message = element(root, "#message", HTMLElement);
+    this.#hint = element(root, "#message-hint", HTMLElement);
     this.#fps = element(root, "#fps", HTMLElement);
     this.#net = element(root, "#net", HTMLElement);
     this.#help = element(root, "#help", HTMLElement);
@@ -150,6 +154,8 @@ export class Hud {
     this.#camera.textContent = s.ballCam ? "Ball cam" : "Car cam";
     this.#message.textContent = s.message ?? "";
     this.#message.hidden = s.message === null;
+    this.#hint.textContent = s.hint ?? "";
+    this.#hint.hidden = (s.hint ?? null) === null;
     this.#fps.textContent = `${Math.round(s.fps)} fps`;
     this.#net.textContent = s.net ?? "";
     this.#net.hidden = s.net === null;

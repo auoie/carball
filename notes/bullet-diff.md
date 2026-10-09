@@ -300,3 +300,5 @@ through aligned references in matched functions), `dispmap.py` (field offsets fr
 - Game-side physics audit against the engine (car components, VehicleSim, ball touches, car-car, pads, bodies):
   `notes/gameside-audit.md`.
 - Live tests of B1 and B5–B14 (live session).
+
+- Re-checked 2026-10-08 against the live reference project (out/bsim/rl-20261006): every function cited in this file is the same as the 2026-06-16 build apart from layout, except those explained under "Live build" above (semantic diff in out/bsim/work/livenames/cited/semdiff.txt).

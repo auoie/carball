@@ -49,3 +49,17 @@ that frame. `FUN_140e386b0`, `FUN_140f1c190`, `FUN_140f30a70` unchanged in the u
 Whether `PlayerMove` runs before or after the frame's physics steps (0 vs 1 frame of input latency); the platform
 type a PC XInput pad reports (C-5); whether new live profiles apply the Modern camera preset and their invert setting;
 last-event-wins buttons and summed axes (inferred); live per-device ownership of free-look axes.
+
+## Live build (2026-10-06) addresses
+
+Checked 2026-10-08. Each function cited here was mapped through BinDiff (out/bsim/bindiff/function_map.tsv) and
+semantic-diffed old vs live (out/bsim/scripts/semantic_diff.py; offsets, addresses and stack frames ignored);
+key ones were re-decompiled in the live project out/bsim/rl-20261006.
+
+Same apart from layout (old → live): `140396ca0` → `14039d410` · `140eb72b0` → `140ebb700`.
+
+Changed:
+- `140dc5440` → `140dc4ac0`: data decoded as code (not compared); live 0x140dc4ac0 re-decompiled for notes/client-loop-timing.md
+- `140e386b0` → `140e39bc0`: per-device axis ownership added (notes/camera-respawn-goal.md CAM-16)
+- `140f1c190` → `140f215f0`: copies one more dword (the new input field); jump latch unchanged (mask 0xffffffeb, re-decompiled)
+- `140f30a70` → `140f36790`: one more field; quantisation unchanged (×128 / ×127, round half up; re-decompiled)

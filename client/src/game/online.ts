@@ -1,13 +1,16 @@
 // Online play against the game server: the world is predicted locally with the player's inputs and corrected by the
 // server's updates (src/net/predictor.ts). Inputs go out at 60 Hz, two frames per packet plus the unacknowledged ones.
+// After a goal the clock slows with the game's (src/game/goalSequence.ts, keyed to the goal's server tick as the
+// server's is), then the goal replay plays from this client's own recording of what it drew, until it ends or every
+// player skips it (Space / pad A).
 import { Quaternion, Vector3 } from "three";
 import { PlayerCamera } from "../camera/rlCamera";
 import type { BodyState, CarState, World } from "../engine/world";
-import { type Vec3, add, sub } from "../math/vec";
+import { type Vec3, add, scale as scaleVec, sub } from "../math/vec";
 import { type Hud, respawnHud } from "../hud";
 import type { InputDevices } from "../input/devices";
-import { AirPitchSafety, ButtonLatch, EMPTY_INPUT, type HeldActions, type LookInput, readControls, readHeldActions, readLook } from "../input/mapping";
-import { FixedStep, TICK_RATE, TICK_SECONDS } from "../loop/fixedStep";
+import { AirPitchSafety, ButtonLatch, EMPTY_INPUT, type HeldActions, type InputSnapshot, JumpLatch, type LookInput, readControls, readHeldActions } from "../input/mapping";
+import { FixedStep, TICK_RATE, TICK_SECONDS, worldSeconds } from "../loop/fixedStep";
 import type { Connection } from "../net/connection";
 import { NO_INPUT, Predictor } from "../net/predictor";
 import {
@@ -19,6 +22,7 @@ import {
   type InputFrame,
   type MatchState,
   MAX_INPUT_FRAMES,
+  type ReplayPlan,
   type Update,
   quantizeAxis,
 } from "../net/protocol";
@@ -28,11 +32,17 @@ import type { ArenaView } from "../render/arena";
 import type { Renderer } from "../render/renderer";
 import type { GameAudio } from "../audio/audio";
 import { type Dodge, FlipTracker } from "./flipTracker";
+import { cameraInputs } from "./cameraInput";
+import type { FreeLookControls } from "../camera/rlCamera";
 import type { Options, Settings } from "../settings/settings";
 import { Interpolated } from "./interpolated";
 import { SyncError } from "./syncError";
 import { formatClock, matchMessage } from "./matchClock";
 import { fromThreeQuaternion, rotateRl, toThreeQuaternion } from "../render/coords";
+import { postGoalDilation, replayDilation } from "./goalSequence";
+import { type RecordedCar, type RecordedFrame, ReplayRecorder, recordCar } from "./replayRecorder";
+import { ReplayCamera } from "../camera/replayCamera";
+import { Fade } from "../render/fade";
 
 /** Client input packets: one per two physics ticks (60 Hz) */
 const SEND_EVERY_FRAMES = 2;
@@ -51,6 +61,20 @@ const MAX_QUEUED_UPDATES = 120;
 const HITCH_SECONDS = 0.1;
 const HITCH_RESET_DELAY = 2;
 
+/** Samples of server tick − client frame kept (one per update: 20 s) */
+const MAX_TICK_OFFSETS = 1200;
+/** Camera_TA.ClipToField: the camera stays this far above the floor */
+const GROUND_CLAMP_Z = 10;
+
+/** The goal replay playing */
+interface Playback {
+  readonly plan: ReplayPlan;
+  /** Where it is (server ticks, fractional) */
+  tick: number;
+  readonly camera: ReplayCamera;
+  goalShown: boolean;
+}
+
 interface CarEntry {
   readonly view: CarView;
   readonly state: Interpolated<CarState>;
@@ -66,6 +90,13 @@ export interface OnlineStats {
   readonly corrections: number;
   readonly localMispredictions: number;
   readonly kickoffCountdown: number; // ticks left (cars get no input)
+  /** The match's phase changes as they arrived: when (performance.now(), ms) and at which client frame */
+  readonly phases: readonly { readonly phase: MatchState["phase"]; readonly at: number; readonly frame: number }[];
+  /** A goal replay is playing */
+  readonly replaying: boolean;
+  /** The last goal: the client frame its slow motion is keyed to (the server's goal tick), the frame this client's own
+   *  prediction saw the ball explode, and the slowest dilation its clock has run at since */
+  readonly goal: { readonly frame: number | null; readonly explodedFrame: number | null; readonly minDilation: number };
 }
 
 export class Online {
@@ -99,8 +130,10 @@ export class Online {
   #ballCam = false;
   #rear = false;
   #look: LookInput = { up: 0, right: 0 };
+  #freeLook: FreeLookControls | null = null;
   readonly #pitchSafety = new AirPitchSafety();
   readonly #buttons = new ButtonLatch(); // (buttons as the game's press and release commands: C-4)
+  readonly #jump = new JumpLatch(); // (a jump press is a tick of jump however short: LT-4)
   #ackFrame = 0;
   #ping: number | null = null;
   #bufferText = "";
@@ -109,6 +142,22 @@ export class Online {
   #countdownLeft = 0; // whole seconds of the kickoff countdown, for its beeps
   #disconnected: string | null = null;
   #hitchReset: number | null = null; // seconds until the server's input buffer is reset after a hitch
+  /** Server tick − client frame (the update's ackFrame was consumed at its serverTick), oldest first */
+  readonly #tickOffsets: { readonly serverTick: number; readonly offset: number }[] = [];
+  /** The client frame of the last goal's server tick (the slow motion after it) */
+  #goalFrame: number | null = null;
+  readonly #recorder = new ReplayRecorder();
+  #replay: Playback | null = null;
+  #replayReady: { readonly ready: number; readonly total: number } | null = null;
+  #skipped = false; // asked to skip this replay
+  #skipHeld = true; // the skip button down last frame (a press skips)
+  #autoSkipSent: boolean;
+  readonly #fade = new Fade();
+  #localSpawns: number; // the local car's spawn counter last drawn (a kickoff's new car: the camera starts over)
+  readonly #phases: { phase: MatchState["phase"]; at: number; frame: number }[] = [];
+  #explodedFrame: number | null = null; // (for the browser tests)
+  #wasExploded = false;
+  #minDilation = 1;
   #fps = 60;
   readonly #pos = new Vector3();
   readonly #rot = new Quaternion();
@@ -140,8 +189,13 @@ export class Online {
     this.#padsView = new BoostPadsView(world.boostPads());
     this.#ball = new Interpolated(world.ball());
     this.#ballSpawns = world.ballSpawnCount();
+    this.#autoSkipSent = settings().options.autoSkipReplay;
+    this.#localSpawns = world.car(welcome.carId).spawnCount;
     renderer.scene.add(this.#ballView.root, this.#padsView.root);
     this.#syncCars();
+    this.#predictor.onFrame = (frame) => {
+      this.#recordFrame(frame);
+    };
 
     connection.onUpdate = (u) => {
       // (a hidden tab doesn't draw frames: keep only the newest second of updates, not a backlog to replay at once)
@@ -163,6 +217,9 @@ export class Online {
       corrections: this.#predictor.stats.corrections,
       localMispredictions: this.#predictor.stats.localMispredictions,
       kickoffCountdown: this.#world.kickoffCountdown(),
+      phases: this.#phases,
+      replaying: this.#replay !== null,
+      goal: { frame: this.#goalFrame, explodedFrame: this.#explodedFrame, minDilation: this.#minDilation },
     };
   }
 
@@ -173,10 +230,13 @@ export class Online {
     this.#watchHitches(frameSeconds);
 
     const settings = this.settings();
-    const snapshot = this.inputEnabled() ? this.#input.snapshot() : EMPTY_INPUT;
+    const polled = this.#input.snapshot(); // (every frame: a menu's presses mustn't wait for it to close)
+    const snapshot = this.inputEnabled() ? polled : EMPTY_INPUT;
     const { bindings, controller, options } = settings;
-    this.#handleActions(readHeldActions(snapshot, bindings, controller.deadzone), options);
+    const camera = cameraInputs(settings, snapshot, this.#input, this.#camera.fov);
+    this.#handleActions(readHeldActions(snapshot, bindings, controller.deadzone), options, camera.device.ballCamToggle);
     const raw = readControls(snapshot, bindings, controller.deadzone, this.#buttons);
+    this.#jump.frame(this.#buttons);
     const local = this.#cars.get(this.#localCar)?.state.current;
     const safety = this.#pitchSafety.update(options.airPitchSafety, this.#input.usingGamepad, local?.onGround ?? true, raw);
     const input: InputFrame = {
@@ -186,19 +246,30 @@ export class Online {
       yaw: quantizeAxis(raw.yaw),
       roll: quantizeAxis(raw.roll),
       dodgeForward: quantizeAxis(-raw.pitch), // (its own byte, from before the air pitch safety: C-2)
-      bits:
-        (raw.jump ? BIT_JUMP : 0) | (raw.boost ? BIT_BOOST : 0) | (raw.handbrake ? BIT_HANDBRAKE : 0) | (safety ? BIT_AIR_PITCH_SAFETY : 0),
+      bits: (raw.boost ? BIT_BOOST : 0) | (raw.handbrake ? BIT_HANDBRAKE : 0) | (safety ? BIT_AIR_PITCH_SAFETY : 0),
     };
-    const look = readLook(snapshot, bindings, controller.deadzone);
-    this.#look = { up: options.invertSwivelPitch ? -look.up : look.up, right: look.right };
+    this.#look = camera.look;
+    this.#freeLook = camera.freeLook;
     this.#camera.settings = settings.camera;
     this.#throttle = Math.abs(raw.throttle);
+    this.#watchSkip(snapshot);
+    if (options.autoSkipReplay !== this.#autoSkipSent) {
+      this.#autoSkipSent = options.autoSkipReplay;
+      this.#connection.setAutoSkipReplay(options.autoSkipReplay);
+    }
 
-    const ticks = this.#clock.advance(frameSeconds);
+    // The frame's world time: slowed after a goal (the dilation the next tick has, as the game applies the curve's
+    // value from the frame after)
+    const dilation = this.#goalFrame === null ? 1 : postGoalDilation(this.#predictor.frame + 1 - this.#goalFrame);
+    const world = worldSeconds(frameSeconds, dilation);
+    this.#minDilation = Math.min(this.#minDilation, dilation);
+    const ticks = this.#clock.advance(world);
     for (let i = 0; i < ticks; i++) {
-      // (after the match the server freezes every car: send it nothing then, so the prediction agrees)
-      const frozen = this.#match?.phase === "ended";
-      this.#predictor.advance(frozen ? NO_INPUT : this.#disconnected === null ? input : { ...input, throttle: 0, bits: 0 });
+      // (after the match the server freezes every car, and in the goal replay the cars are gone: send it nothing then,
+      // so the prediction agrees)
+      const frozen = this.#match?.phase === "ended" || this.#match?.phase === "replay";
+      const jumped = { ...input, bits: input.bits | (this.#jump.tick(raw.jump) ? BIT_JUMP : 0) };
+      this.#predictor.advance(frozen ? NO_INPUT : this.#disconnected === null ? jumped : { ...input, throttle: 0, bits: 0 });
       this.#world.takeEvents(); // goals come from the server
       this.#pushStates();
       this.#trackFlip();
@@ -212,7 +283,36 @@ export class Online {
     const left = Math.ceil(this.#world.kickoffCountdown() / TICK_RATE);
     if (left < this.#countdownLeft && left <= 3) this.#audio.countdown(left);
     this.#countdownLeft = left;
-    this.#draw(frameSeconds, ticks * TICK_SECONDS);
+    this.#fade.update(frameSeconds);
+    if (this.#replay) this.#drawReplay(frameSeconds, this.#replay);
+    else this.#draw(world, ticks * TICK_SECONDS, frameSeconds);
+  }
+
+  /** Skip the goal replay: a press of Space or the pad's A (ReadyUp, ReplaySkip bindings), once */
+  #watchSkip(snapshot: InputSnapshot): void {
+    const held = snapshot.keys.has("Space") || (snapshot.pressedKeys?.has("Space") ?? false) || (snapshot.gamepad?.buttons[0] ?? 0) > 0.5;
+    if (held && !this.#skipHeld && this.#replay && !this.#skipped) {
+      this.#skipped = true;
+      this.#connection.readyUp();
+    }
+    this.#skipHeld = held;
+  }
+
+  /** The client frame that was consumed at a server tick (by the update nearest it) */
+  #frameAt(serverTick: number): number {
+    let best = this.#tickOffsets.at(-1);
+    for (const sample of this.#tickOffsets) {
+      if (!best || Math.abs(sample.serverTick - serverTick) < Math.abs(best.serverTick - serverTick)) best = sample;
+    }
+    return serverTick - (best?.offset ?? 0);
+  }
+
+  /** What a frame drew, for the goal replay (not while one plays: its frames must stay) */
+  #recordFrame(frame: number): void {
+    if (this.#replay) return;
+    const cars = new Map<number, RecordedCar>();
+    for (const id of this.#world.carIds()) cars.set(id, recordCar(this.#world.car(id)));
+    this.#recorder.record(frame, { cars, ball: this.#world.ball(), ballExploded: this.#world.ballExploded() });
   }
 
   /** After a hitch the gap inflated the server's jitter buffer (one 300 ms gap: 7 -> 18 frames, ~40 s to come back):
@@ -250,6 +350,10 @@ export class Online {
     const u = update.update;
     this.#ackFrame = Math.max(this.#ackFrame, u.ackFrame);
     this.#bufferText = `buffer ${String(u.bufferSize)}/${String(u.bufferTarget)}`;
+    if (u.ackFrame > 0) {
+      this.#tickOffsets.push({ serverTick: u.serverTick, offset: u.serverTick - u.ackFrame });
+      if (this.#tickOffsets.length > MAX_TICK_OFFSETS) this.#tickOffsets.splice(0, this.#tickOffsets.length - MAX_TICK_OFFSETS);
+    }
     if (u.echoTimestamp > 0) {
       const rtt = ((Math.round(performance.now()) - u.echoTimestamp) >>> 0) - u.echoDelay;
       if (rtt >= 0 && rtt < 10_000) this.#ping = this.#ping === null ? rtt : this.#ping + (rtt - this.#ping) * 0.1;
@@ -323,12 +427,33 @@ export class Online {
         this.#syncCars();
         this.#smooth(pre);
       } else if (m.type === "match") {
+        // The replay over (its end, or everyone skipped): the next camera cuts in from black
+        if (this.#replay && m.phase !== "replay") {
+          this.#replay = null;
+          this.#fade.fromBlack();
+        }
+        if (m.phase !== this.#match?.phase) {
+          this.#phases.push({ phase: m.phase, at: performance.now(), frame: this.#predictor.frame });
+          if (this.#phases.length > 16) this.#phases.shift();
+        }
         this.#match = m; // (the score too: the server's)
       } else if (m.type === "event" && m.event.kind === "goal") {
         const team = m.event.team === 1 ? 1 : 0;
         this.#audio.goal();
         this.#message = team === 0 ? "BLUE SCORES!" : "ORANGE SCORES!";
         this.#messageTimer = GOAL_MESSAGE_SECONDS;
+        this.#goalFrame = this.#frameAt(m.serverTick);
+        this.#minDilation = 1;
+      } else if (m.type === "replay") {
+        // (the cut in from black: LiveReplay's Begin)
+        this.#replay = { plan: m, tick: m.startTick, camera: new ReplayCamera(m.scoringTeam), goalShown: false };
+        this.#replayReady = null;
+        this.#skipped = false;
+        this.#skipHeld = true;
+        this.#message = null;
+        this.#fade.fromBlack();
+      } else if (m.type === "replayReady") {
+        this.#replayReady = { ready: m.ready, total: m.total };
       }
     }
   }
@@ -357,6 +482,9 @@ export class Online {
       const car = this.#world.car(id);
       entry.state.push(car, car.spawnCount !== entry.state.current.spawnCount);
     }
+    const exploded = this.#world.ballExploded();
+    if (exploded && !this.#wasExploded) this.#explodedFrame = this.#predictor.frame;
+    this.#wasExploded = exploded;
     const ballSpawns = this.#world.ballSpawnCount();
     this.#ball.push(this.#world.ball(), ballSpawns !== this.#ballSpawns);
     this.#ballSpawns = ballSpawns;
@@ -371,17 +499,18 @@ export class Online {
     if (reset) this.#flipReset = true;
   }
 
-  #handleActions(held: HeldActions, options: Options): void {
+  #handleActions(held: HeldActions, options: Options, ballCamToggle: boolean): void {
     const pressed = (key: keyof HeldActions): boolean => held[key] && !this.#held[key];
-    if (!options.ballCamToggle) this.#ballCam = held.ballCam;
+    if (!ballCamToggle) this.#ballCam = held.ballCam;
     else if (pressed("ballCam")) this.#ballCam = !this.#ballCam;
     if (!options.rearCameraToggle) this.#rear = held.rearCamera;
     else if (pressed("rearCamera")) this.#rear = !this.#rear;
     this.#held = held; // (freeplay's reset and ball placement do nothing online)
   }
 
-  /** `simulated`: seconds of physics run this frame. */
-  #draw(frameSeconds: number, simulated: number): void {
+  /** `frameSeconds`: the frame's world time (slowed after a goal); `simulated`: seconds of physics run this frame;
+   *  `realSeconds`: real time since the last frame. */
+  #draw(frameSeconds: number, simulated: number, realSeconds: number): void {
     const alpha = this.#clock.alpha;
     for (const { view, state, error } of this.#cars.values()) {
       error.decay(frameSeconds);
@@ -398,6 +527,13 @@ export class Online {
     this.#padsView.update(pads);
 
     const local = this.#cars.get(this.#localCar);
+    // A kickoff's new car (the game destroys the cars and spawns new ones): the camera starts over behind it (GS-16);
+    // a respawn after a demolition blends as usual
+    const spawns = local?.state.current.spawnCount;
+    if (spawns !== undefined && spawns !== this.#localSpawns) {
+      this.#localSpawns = spawns;
+      if (this.#world.kickoffCountdown() > 0) this.#camera.reset();
+    }
     if (local) {
       // The camera follows the drawn (smoothed) car and ball, its rotation too
       const car = local.state.blended(alpha);
@@ -405,12 +541,18 @@ export class Online {
       const rot = { forward: rotateRl(car.rot.forward, e), right: rotateRl(car.rot.right, e), up: rotateRl(car.rot.up, e) };
       const drawnCar = { ...car, pos: add(car.pos, local.error.location), rot };
       const drawnBall = add(this.#ball.blended(alpha).pos, this.#ballError.location);
-      const view = this.#camera.update(frameSeconds, drawnCar, drawnBall, {
-        ballCam: this.#ballCam,
-        rear: this.#rear,
-        lookUp: this.#look.up,
-        lookRight: this.#look.right,
-      });
+      // Demolished: the respawn cameras follow the spot picked (respawns wait after a goal: CAM-29)
+      const { demoed, spawnSelection: pick, team } = local.state.current;
+      const phase = this.#match?.phase;
+      const respawn = demoed
+        ? {
+            held: phase === "postGoal" || phase === "replay",
+            selected: pick.side === null ? null : (this.#world.respawnSpots(team, pick.side)[pick.index] ?? null),
+          }
+        : null;
+      const controls = { ballCam: this.#ballCam, rear: this.#rear, lookUp: this.#look.up, lookRight: this.#look.right, freeLook: this.#freeLook };
+      const view = this.#camera.update(frameSeconds, drawnCar, drawnBall, controls, respawn, realSeconds);
+      if (this.#camera.takeBallCamExit()) this.#ballCam = false; // (free look left the toggled ball cam)
       this.#renderer.render(view);
       this.#audio.frame({
         world: { cars: new Map([...this.#cars].map(([id, entry]) => [id, entry.state.current])), ball: this.#ball.current, pads },
@@ -421,8 +563,13 @@ export class Online {
       });
     }
 
-    if (frameSeconds > 0) this.#fps += (1 / frameSeconds - this.#fps) * 0.05;
-    const car = local?.state.current;
+    this.#updateHud(null, realSeconds);
+  }
+
+  /** The HUD; `message`: what it says instead of the match's messages (null: those); `hint`: a line under it */
+  #updateHud(message: string | null, realSeconds: number, hint: string | null = null): void {
+    if (realSeconds > 0) this.#fps += (1 / realSeconds - this.#fps) * 0.05;
+    const car = this.#cars.get(this.#localCar)?.state.current;
     const ping = this.#ping === null ? "ping –" : `ping ${String(Math.round(this.#ping))} ms`;
     this.#hud.update({
       boost: car?.boost ?? 0,
@@ -434,14 +581,68 @@ export class Online {
       message:
         this.#disconnected !== null
           ? `Disconnected: ${this.#disconnected}`
-          : (this.#message ?? (this.#match ? matchMessage(this.#match) : null)),
+          : (message ?? this.#message ?? (this.#match ? matchMessage(this.#match) : null)),
       fps: this.#fps,
       net: `${ping} · ${this.#bufferText} · ${String(this.#cars.size)} cars`,
       flip: this.settings().options.flipIndicator ? this.#dodge : null,
       flipReset: this.#flipReset,
       respawn: car ? respawnHud(car) : null,
+      hint,
     });
     if (this.#flipReset) this.#audio.flipReset();
     this.#flipReset = false;
+  }
+
+  /** The goal replay: the recorded frames from its start, at its speed (slowed round the scoring hit), seen from the
+   *  replay camera. `realSeconds`: real time since the last frame. */
+  #drawReplay(realSeconds: number, playback: Playback): void {
+    const { plan } = playback;
+    const dilation = replayDilation(plan, playback.tick);
+    playback.tick = Math.min(plan.endTick, playback.tick + realSeconds * TICK_RATE * dilation);
+    if (!playback.goalShown && playback.tick >= plan.goalTick) {
+      playback.goalShown = true; // (TriggerGoalScoreEvent: the goal's effects again)
+      this.#audio.goal();
+    }
+    const at = this.#frameAt(playback.tick);
+    const base = Math.floor(at);
+    const alpha = at - base;
+    const a = this.#recorder.before(base);
+    const b = this.#recorder.at(base + 1) ?? a;
+    if (a && b) this.#drawRecorded(a, b, alpha, realSeconds * dilation);
+    // The camera's focus: the next car to touch the ball, with the ball; after the scoring touch the ball alone; once
+    // it has exploded, the field's centre
+    const next = plan.focus.find((f) => playback.tick < f.tick);
+    const pose = (from: RecordedCar | BodyState | undefined, to: RecordedCar | BodyState | undefined): { pos: Vec3; vel: Vec3 } | null =>
+      from && to ? { pos: add(from.pos, scaleVec(sub(to.pos, from.pos), alpha)), vel: to.vel } : null;
+    const car = next ? pose(a?.cars.get(next.car), b?.cars.get(next.car)) : null;
+    const ball = a && b && !b.ballExploded ? pose(a.ball, b.ball) : null;
+    const view = playback.camera.update(realSeconds, { car, ball, carId: car ? (next?.car ?? null) : null }, dilation);
+    const clipped = { ...view, position: { ...view.position, z: Math.max(view.position.z, GROUND_CLAMP_Z) } };
+    this.#renderer.render(clipped);
+
+    const ready = this.#replayReady;
+    const count = ready ? ` · ${String(ready.ready)}/${String(ready.total)} ready` : "";
+    this.#updateHud("REPLAY", realSeconds, `${this.#skipped ? "Waiting for the others" : "Space / (A) to skip"}${count}`);
+  }
+
+  /** The cars and the ball between two recorded frames */
+  #drawRecorded(a: RecordedFrame, b: RecordedFrame, alpha: number, seconds: number): void {
+    for (const [id, entry] of this.#cars) {
+      const from = a.cars.get(id);
+      const to = b.cars.get(id) ?? from;
+      if (!from || !to) {
+        entry.view.root.visible = false;
+        continue;
+      }
+      const between = new Interpolated<RecordedCar>(from);
+      between.push(to);
+      entry.view.update(between.position(alpha, this.#pos), between.rotation(alpha, this.#rot), to.boosting, to.demoed, to.supersonic, seconds);
+    }
+    const ball = new Interpolated<BodyState>(a.ball);
+    ball.push(b.ball);
+    const position = ball.position(alpha, this.#pos);
+    this.#ballView.root.visible = !b.ballExploded;
+    this.#ballView.update(position, ball.rotation(alpha, this.#rot));
+    this.#arena.update(position, seconds);
   }
 }

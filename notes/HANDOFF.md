@@ -33,6 +33,29 @@
   (broadphase: plane AABB sign bug, island/sleep risks), RS-8/RS-9 (edge cases), RS-12's walls_021027 t125
   per-wheel error (needs per-wheel PhysLog columns and a re-recording), and whether the game's own teleports keep the
   stale tensor.
+- **The user's "feel" round (2026-10-08), the static session's specs:**
+  - **Done:** the client loop (`notes/client-loop-timing.md`: the f32 accumulator, 5 ticks a frame at most, the
+    dilated and clamped frame time, the jump latch, lost button taps, released axis keys; LT-2..6, 8); the goal
+    sequence (`notes/camera-respawn-goal.md` §3: the slow motion on the server's ticks and every client's clock,
+    protocol 9's goal replay with the client playing its own recording through the LiveReplay camera, skip votes,
+    auto-skip, the kickoff camera cut, fades; freeplay's 3.0 game s; GS-1..10, 12..14, 16); the respawn cameras
+    (CAM-20..29) and free look (CAM-10..18: per-input camera settings, the Modern preset for new profiles, old saved
+    settings migrated with free look off, Pointer Lock mouse, the device owner by key and button events).
+  - **Left:** GS-11 (the scorer view) and CAM-19 (remote free look, for spectators) not needed yet; the replay's own
+    sounds wait for the sound spec.
+  - **Specs waiting (not started):** `notes/visual-timing.md` (VT-2..30), `notes/sound-behaviour.md` (SND-1..17),
+    `notes/hud-menus.md` (HUD-1..16, MENU-1..11), `notes/arena-visuals.md` (HEX-1..4: the lower glass's hex tiling,
+    18 columns per 576 uu panel; AV-1..22), `notes/car-paint.md` (PNT; team paint colours, gamma), `notes/bots.md`
+    (BOT-1..32: a behaviour-tree interpreter on the server). Shader-derived parts of the arena and paint specs are held
+    by the static session until the user rules on its shader-cache decoder. `notes/wheel-kick-t125.md` (walls_021027
+    t125: a hitbox nose contact, not a wheel) needs per-wheel and per-manifold PhysLog columns and a recording of
+    `walls_goal_wheels.txt`, with the user in freeplay.
+  - **Settled with the static session:** the game's jitter buffer measures in real time too (it widens after a goal,
+    as ours); `bSlomoForDefender` stays set for the match (one replay director per game event); the replay's earliest
+    start is the round's countdown, when the ball spawns.
+  - **Browser tests:** under 24 fps (software WebGL here: about 11 fps at 1280×720) the game's 5-tick cap runs the
+    simulation slower than real time, so tests wait for outcomes instead of timing them; the goal test uses a second
+    server (`--test-goal-after 1`, ports 14435/14436).
 - **Netcode (today, from the static session's audit `notes/netcode-audit.md`):** corrections smoothed for drawing
   (`client/src/game/syncError.ts`), hitch reset of the server's jitter buffer (protocol `ResetInputBuffer`), lost
   update parts no longer drop the whole update, remote cars' input basis only from the cars in an update; then the
@@ -86,10 +109,17 @@
     `?cage=topology` skips it). Left: the lower glass. Ours carries the cage's wall cells down to the trim beside the
     goals (the user's ask); the game's is a separate, smaller hex texture on a few panels (UV mappings in the static
     session's message of 2026-10-08; the tiling factor needs a screenshot count of hex columns across a 576 uu panel).
-- **The live game updated on 2026-10-06:** the static analysis (Ghidra project, `out/decomp`, layouts, packages) is
-  from the 2026-06-16 build in `documents/binaries`; the live exe is in
-  `/mnt/c/Program Files (x86)/Steam/steamapps/common/rocketleague`. Physics functions look unchanged (finding 25),
-  but trust the live recordings over the decompile where they disagree.
+- **The live game updated on 2026-10-06; decompile the live build** (the user's standing rule, for this and any later
+  update). Static reads (exe, packages, texture caches) use the user's snapshot of it,
+  `/mnt/primary/home/arch/documents/binaries/rocket-league/rocketleague-20261006/` (identical to the Steam folder;
+  exe sha256 bfeba09f0e82db0b…); the Steam install (`/mnt/c/Program Files (x86)/Steam/steamapps/common/rocketleague`)
+  only for live recordings, since the game runs from it. Each update gets its own snapshot folder
+  (`rocketleague-YYYYMMDD`), made before analysing it; the old build stays at `rocketleague/`. Its Ghidra project is
+  `out/bsim/rl-20261006` (project RocketLeague, fully analysed, natives named from the live exe), its dumps
+  `out/bsim/live-20261006/` (natives.csv, gnatives.csv, classes.csv), the old→live function map
+  `out/bsim/bindiff/function_map.tsv`. The old 2026-06-16 project (`ghidra/RocketLeague`, `out/bsim/rl-20260616`,
+  `out/decomp`) is older evidence only; leave `out/bsim/rl-20260616` untouched (shared with the Arch desktop). Physics
+  functions look unchanged (finding 25), but trust the live recordings over the decompile where they disagree.
 - **Done by the static session (2026-10-08):** stock Bullet 2.82 diffed against the executable function by function
   (BSim); its findings are in `notes/bullet-diff.md` and `out/bsim/reports/`, adopted ones in engine patches 46–53.
 
@@ -136,11 +166,14 @@ RocketSim comparison) → `notes/arena.md` → `notes/camera.md` → `notes/find
 ## Locations
 | What | Where |
 |---|---|
-| Game install (Windows copy) | `/mnt/primary/home/arch/documents/binaries/rocket-league/rocketleague` |
-| Exe | `.../Binaries/Win64/RocketLeague.exe` (build 2026-06-16, image base 0x140000000) |
-| Packages | `.../TAGame/CookedPCConsole/*.upk` |
+| Live build snapshot (2026-10-06): static reads | `/mnt/primary/home/arch/documents/binaries/rocket-league/rocketleague-20261006` |
+| Live game (Steam): recordings only | `/mnt/c/Program Files (x86)/Steam/steamapps/common/rocketleague` |
+| Old build (2026-06-16) | `/mnt/primary/home/arch/documents/binaries/rocket-league/rocketleague` |
+| Exe | `<build>/Binaries/Win64/RocketLeague.exe` (image base 0x140000000) |
+| Packages | `<build>/TAGame/CookedPCConsole/*.upk` (decrypt from the live snapshot) |
 | Replay dataset (116 GB zip, ~120k replays 2021–Sep 2025, `1v1/ 2v2/ 3v3/` + `metadata.jsonl`) | `/mnt/primary/home/arch/documents/rocket_league_replays/high-level-rocket-league-replay-dataset.zip` |
-| Ghidra project (fully analysed, natives named) | `ghidra/RocketLeague` (git-ignored) |
+| Ghidra project, live build 2026-10-06 (fully analysed, natives named): use this one | `out/bsim/rl-20261006` (git-ignored) |
+| Ghidra project, old build 2026-06-16 | `ghidra/RocketLeague` (git-ignored) |
 | Decrypted packages | `out/decrypted/` (git-ignored): TAGame, GameInfo_Soccar_SF, GameInfo_Default_SF, Body_Octane_SF, Stadium_P, Engine, Core, ProjectX, Mutators_SF, Startup |
 | Package AES key | `out/rlupktool_key.bin` (public RLUPKTool key; git-ignored) |
 | Decompiled C | `out/decomp/<name>@<addr>.c` (git-ignored) |
@@ -152,9 +185,14 @@ from the dataset zip (newest by `metadata.jsonl` `data.date`).
 
 ## Tools (run Python scripts from `scripts/`; plain `python3`, not `-I`)
 ```sh
-# Ghidra: decompile functions (addresses or Class::func or re:REGEX) -> out/decomp/
-GHIDRA_HEADLESS_MAXMEM=24G /opt/ghidra/support/analyzeHeadless ghidra RocketLeague -process RocketLeague.exe \
-  -noanalysis -readOnly -scriptPath scripts -postScript Decomp.java 0x140eb72b0 0x140f5ff00
+# Ghidra on the live build. -readOnly still locks the project: work on a copy per job, and cap its memory.
+# DecompAt decompiles the functions containing the addresses, plus their callers to DEPTH, into OUTDIR.
+cp -r out/bsim/rl-20261006 JOB/rl-live
+systemd-run --user --scope -p MemoryMax=10G -p MemorySwapMax=1G env MAXMEM=8G \
+  /opt/ghidra/support/analyzeHeadless JOB/rl-live RocketLeague -process RocketLeague.exe -noanalysis -readOnly \
+  -scriptPath out/bsim/work/ghidra_scripts -postScript DecompAt.java OUTDIR DEPTH 0x140f54bd0
+# Old build (older evidence): the same with project ghidra/RocketLeague and -scriptPath scripts -postScript Decomp.java
+# ADDR.. (-> out/decomp/).
 # other Ghidra scripts (same invocation): FindDisp.java <disp..> [min=N]  (functions using offsets)
 #   FindStore.java <disp..> [lo= hi=] (stores to [reg+disp]); FindCallArg.java <target> <disp..>
 #   (calls whose RCX = lea [reg+disp]); Refs.java <addr..> (all xrefs); ApplyNatives.java (names)

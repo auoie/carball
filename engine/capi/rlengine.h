@@ -46,6 +46,8 @@ void rl_redo_kickoff(RLArena* arena);
 /* The latest car touch on the ball, as rl_tick_count after that tick, or -1 (a kickoff reset clears the cars'
  * touches) */
 int64_t rl_last_ball_touch_tick(RLArena* arena);
+/* The car's latest touch on the ball (as rl_last_ball_touch_tick), or -1 (none since the kickoff, or no such car) */
+int64_t rl_car_last_ball_touch_tick(RLArena* arena, uint32_t car_id);
 /* The ball rests on the ground: a world contact with normal z > 0.96 (EndRoundComponent_TA.GroundToleranceZ), or
  * the ball asleep (the end of a round at 0:00) */
 int rl_ball_on_ground(RLArena* arena);

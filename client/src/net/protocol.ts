@@ -3,8 +3,9 @@
 
 // 2: kickoff countdown in the state; 3: the wheels' previous contacts; 4: the jump's release; 5: respawn spot selection
 // and flip resets in the state; 6: spawn counters in the state, the match message; 7: the engine turns the ball (its
-// orientation is simulated state: the network state's format is unchanged)
-export const PROTOCOL_VERSION = 8;
+// orientation is simulated state: the network state's format is unchanged); 8: the bodies' inverse inertia tensors;
+// 9: the goal replay (its phase, plan and skip votes; Hello's auto-skip)
+export const PROTOCOL_VERSION = 9;
 export const MAX_INPUT_FRAMES = 10;
 
 export type GameEvent =
@@ -12,8 +13,23 @@ export type GameEvent =
   | { readonly kind: "demo"; readonly attacker: number; readonly victim: number };
 
 /** Where a match is (the game's GameEvent_Soccar_TA states) */
-export type MatchPhase = "countdown" | "active" | "postGoal" | "timeUp" | "ended";
-const MATCH_PHASES: readonly MatchPhase[] = ["countdown", "active", "postGoal", "timeUp", "ended"];
+export type MatchPhase = "countdown" | "active" | "postGoal" | "timeUp" | "ended" | "replay";
+const MATCH_PHASES: readonly MatchPhase[] = ["countdown", "active", "postGoal", "timeUp", "ended", "replay"];
+
+/** A goal replay (server ticks; ReplayDirector_TA: notes/camera-respawn-goal.md GS-7..9) */
+export interface ReplayPlan {
+  /** First recorded tick shown (GetReplayStartTime) */
+  readonly startTick: number;
+  readonly goalTick: number;
+  /** The recording's end: the goal + PostGoalTime */
+  readonly endTick: number;
+  readonly scoringTeam: number;
+  /** Stretches played at 0.25 speed (from, to: exclusive), in order: round the scoring hit (-0.25, +0.1 s), and before
+   *  the goal when a defender was close (-0.25 s) */
+  readonly slomo: readonly (readonly [number, number])[];
+  /** Whom the camera follows with the ball, until when: each run of touches by one car up to the scoring touch */
+  readonly focus: readonly { readonly car: number; readonly tick: number }[];
+}
 
 /** The match's state: sent when it changes and each second while the clock runs */
 export interface MatchState {
@@ -39,7 +55,13 @@ export type ControlMessage =
       readonly dodgeDeadzone: number;
       readonly steeringSensitivity: number;
       readonly airControlSensitivity: number;
+      /** Skips every goal replay (bAutoSkipGoalReplay) */
+      readonly autoSkipReplay: boolean;
     }
+  /** Skip the goal replay (ReadyUp: Space / pad A); counts only during one */
+  | { readonly type: "readyUp" }
+  /** The auto-skip setting changed (turned on during a replay, it readies the player) */
+  | { readonly type: "autoSkipReplay"; readonly on: boolean }
   | {
       readonly type: "welcome";
       readonly version: number;
@@ -53,7 +75,11 @@ export type ControlMessage =
   | { readonly type: "resetInputBuffer" }
   | { readonly type: "world"; readonly frame: number; readonly snapshot: Uint8Array }
   | { readonly type: "event"; readonly serverTick: number; readonly event: GameEvent }
-  | ({ readonly type: "match" } & MatchState);
+  | ({ readonly type: "match" } & MatchState)
+  /** The goal replay starts: what to play from this client's own recording */
+  | ({ readonly type: "replay" } & ReplayPlan)
+  /** How many players are ready to skip the goal replay, of how many */
+  | { readonly type: "replayReady"; readonly ready: number; readonly total: number };
 
 /** One frame of inputs as sent: axes in 1/127 steps, bits for the buttons. */
 export interface InputFrame {
@@ -194,9 +220,39 @@ export function encodeControl(m: ControlMessage): Uint8Array {
       w.f32(m.dodgeDeadzone);
       w.f32(m.steeringSensitivity);
       w.f32(m.airControlSensitivity);
+      w.u8(m.autoSkipReplay ? 1 : 0);
       break;
     case "resetInputBuffer":
       w.u8(0x02);
+      break;
+    case "readyUp":
+      w.u8(0x03);
+      break;
+    case "autoSkipReplay":
+      w.u8(0x04);
+      w.u8(m.on ? 1 : 0);
+      break;
+    case "replay":
+      w.u8(0x85);
+      w.u32(m.startTick);
+      w.u32(m.goalTick);
+      w.u32(m.endTick);
+      w.u8(m.scoringTeam);
+      w.u8(Math.min(m.slomo.length, 255));
+      for (const [from, to] of m.slomo.slice(0, 255)) {
+        w.u32(from);
+        w.u32(to);
+      }
+      w.u8(Math.min(m.focus.length, 255));
+      for (const { car, tick } of m.focus.slice(0, 255)) {
+        w.u32(car);
+        w.u32(tick);
+      }
+      break;
+    case "replayReady":
+      w.u8(0x86);
+      w.u8(m.ready);
+      w.u8(m.total);
       break;
     case "welcome":
       w.u8(0x81);
@@ -257,9 +313,25 @@ export function decodeControl(body: Uint8Array): ControlMessage {
         dodgeDeadzone: r.f32(),
         steeringSensitivity: r.f32(),
         airControlSensitivity: r.f32(),
+        autoSkipReplay: r.u8() !== 0,
       };
     case 0x02:
       return { type: "resetInputBuffer" };
+    case 0x03:
+      return { type: "readyUp" };
+    case 0x04:
+      return { type: "autoSkipReplay", on: r.u8() !== 0 };
+    case 0x85: {
+      const startTick = r.u32();
+      const goalTick = r.u32();
+      const endTick = r.u32();
+      const scoringTeam = r.u8();
+      const slomo = Array.from({ length: r.u8() }, (): [number, number] => [r.u32(), r.u32()]);
+      const focus = Array.from({ length: r.u8() }, () => ({ car: r.u32(), tick: r.u32() }));
+      return { type: "replay", startTick, goalTick, endTick, scoringTeam, slomo, focus };
+    }
+    case 0x86:
+      return { type: "replayReady", ready: r.u8(), total: r.u8() };
     case 0x81: {
       const version = r.u16();
       const carId = r.u32();

@@ -1,13 +1,13 @@
 //! The match: one arena, its players, the 120 Hz tick, and what each player is sent (`protocol/README.md`,
 //! `notes/netcode.md`). No networking here: messages go out through each player's channel, so this is testable.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::engine::{Arena, Controls, Event};
 use crate::input_buffer::InputBuffer;
-use crate::protocol::{self, Control, Datagram, GameEvent, InputFrame, MatchState, Phase, Update};
+use crate::protocol::{self, Control, Datagram, GameEvent, InputFrame, MatchState, Phase, ReplayPlan, Update};
 
 pub const TICK_RATE: u32 = 120;
 /// Updates go out every other tick (60 Hz)
@@ -19,8 +19,28 @@ const NEAR_BALL_DISTANCE: f32 = 1000.0;
 /// Datagram budget for an update (QUIC datagrams are limited by the path MTU, ~1200 bytes)
 pub const MAX_DATAGRAM: usize = 1100;
 const UPDATE_HEADER: usize = 25;
-/// After a goal, the next kickoff (seconds; `GameEvent_Soccar_TA.PostGoalTime`, without the goal replay)
-const GOAL_RESET_SECONDS: f32 = 3.0;
+/// After a goal, the goal replay or the next kickoff (`GameEvent_Soccar_TA.PostGoalTime` 3.0 game s; ticks, which keep
+/// their 120 per game second through the slow motion)
+const POST_GOAL_TICKS: u64 = 3 * TICK_RATE as u64;
+/// The slow motion after a goal (`ScoreSlomoCurve`: game seconds since the goal, time dilation; linear, clamped):
+/// `notes/camera-respawn-goal.md` GS-2, the same as the client's `src/game/goalSequence.ts`
+const SCORE_SLOMO_CURVE: [(f64, f64); 3] = [(0.125, 1.0), (0.225, 0.1875), (0.625, 1.0)];
+/// The goal replay (`ReplayDirector` archetype; ticks): shown from the scoring touch less `REPLAY_PADDING`, at most
+/// `MAX_REPLAY` before the goal, at least `MIN_REPLAY` + the padding
+const MIN_REPLAY_TICKS: i64 = 4 * TICK_RATE as i64;
+const MAX_REPLAY_TICKS: i64 = 10 * TICK_RATE as i64;
+const REPLAY_PADDING_TICKS: i64 = 2 * TICK_RATE as i64;
+/// Slowed round the scoring touch (`SlomoPreScoreTime` 0.25 s, `SlomoPostScoreTime` 0.1 s) and before the goal when a
+/// defender was close (`SlomoDefendTime` 0.25 s), to `SlomoTimeDilation`
+const SLOMO_PRE_SCORE_TICKS: i64 = 30;
+const SLOMO_POST_SCORE_TICKS: i64 = 12;
+const SLOMO_DEFEND_TICKS: i64 = 30;
+const SLOMO_TIME_DILATION: f64 = 0.25;
+/// A defender this close to the ball at the goal (`SlomoDefendDistance` 200 + the car's cylinder radius 48 + the
+/// ball's radius 95.49: `SetSlomoForDefender`)
+const SLOMO_DEFEND_DISTANCE: f32 = 200.0 + 48.0 + 95.49;
+/// Ball touches kept (`Ball_TA` keeps 50)
+const MAX_TOUCHES: usize = 50;
 /// After a kickoff reset, the cars get no input for this long (replays: the first car moves 3.99-4.05 s after the
 /// reset; the "3-2-1" countdown plus a second)
 const KICKOFF_COUNTDOWN_SECONDS: f32 = 4.0;
@@ -53,6 +73,36 @@ pub struct JoinRequest {
     pub dodge_deadzone: f32,
     pub steering_sensitivity: f32,
     pub air_control_sensitivity: f32,
+    pub auto_skip_replay: bool,
+}
+
+/// A run of one car's touches on the ball (`Ball_TA` touches, consecutive ones by a car merged): its last tick
+#[derive(Clone, Copy, Debug)]
+struct Touch {
+    car: u32,
+    team: u8,
+    tick: u64,
+}
+
+/// The time dilation `game_seconds` after a goal (`ScoreSlomoCurve`)
+fn score_slomo(game_seconds: f64) -> f64 {
+    let [(x0, y0), (x1, y1), (x2, y2)] = SCORE_SLOMO_CURVE;
+    if game_seconds <= x0 {
+        y0
+    } else if game_seconds <= x1 {
+        y0 + (y1 - y0) * (game_seconds - x0) / (x1 - x0)
+    } else if game_seconds <= x2 {
+        y1 + (y2 - y1) * (game_seconds - x1) / (x2 - x1)
+    } else {
+        y2
+    }
+}
+
+/// Real seconds the replay lasts: its length, each slowed stretch 1 / 0.25 times over
+fn replay_seconds(plan: &ReplayPlan) -> f64 {
+    let length = f64::from(plan.end_tick - plan.start_tick);
+    let slowed: f64 = plan.slomo.iter().map(|&(from, to)| f64::from(to - from)).sum();
+    (length + slowed * (1.0 / SLOMO_TIME_DILATION - 1.0)) / f64::from(TICK_RATE)
 }
 
 struct Player {
@@ -64,6 +114,10 @@ struct Player {
     echo: Option<(u32, f64)>,
     /// When its jitter buffer was last reset (s)
     last_reset: Option<f64>,
+    /// Skips every goal replay (auto-ready)
+    auto_skip_replay: bool,
+    /// Ready to skip this goal replay
+    ready: bool,
 }
 
 pub struct Game {
@@ -74,8 +128,23 @@ pub struct Game {
     /// The playlist's team size
     team_size: u8,
     phase: Phase,
-    /// PostGoal: the next round's tick; Ended: the next match's
+    /// PostGoal: the replay's (or the next round's) tick; Replay: its end; Ended: the next match's
     phase_until: u64,
+    /// The last goal's tick (the slow motion after it)
+    goal_tick: u64,
+    /// The ball's touches this round, oldest first
+    touches: VecDeque<Touch>,
+    /// Each car's latest touch seen (the engine's)
+    last_touch: BTreeMap<u32, u64>,
+    /// When the ball was last placed (the kickoff reset: the replay starts no earlier)
+    ball_spawn_tick: u64,
+    /// A defender was close to the ball at a goal: replays slow down before the goal (`bSlomoForDefender`, which
+    /// nothing in the game's script clears: for the rest of the match)
+    slomo_for_defender: bool,
+    /// The last goal's replay, until it plays
+    replay: Option<ReplayPlan>,
+    /// The ready count last sent in a replay (ready, total)
+    ready_sent: Option<(u8, u8)>,
     /// When the countdown ended ("go")
     go_tick: u64,
     /// Regulation: ticks left; overtime: ticks played
@@ -87,6 +156,8 @@ pub struct Game {
     pub score: [u32; 2],
     /// The match state last sent
     sent: Option<MatchState>,
+    /// Browser tests: each round, the ball is knocked into orange's goal this many ticks after "go"
+    pub test_goal_after: Option<u64>,
 }
 
 impl Default for Game {
@@ -114,6 +185,14 @@ impl Game {
             team_size,
             phase: Phase::Countdown,
             phase_until: 0,
+            goal_tick: 0,
+            touches: VecDeque::new(),
+            last_touch: BTreeMap::new(),
+            ball_spawn_tick: 0,
+            slomo_for_defender: false,
+            replay: None,
+            ready_sent: None,
+            test_goal_after: None,
             go_tick: 0,
             clock_ticks: MATCH_TICKS,
             overtime: false,
@@ -175,7 +254,16 @@ impl Game {
         } else if self.phase == Phase::Countdown {
             self.arena.redo_kickoff(); // (joining in a kickoff countdown: a kickoff spot, the others where they were)
         }
-        let player = Player { car_id, team, input: InputBuffer::default(), out, echo: None, last_reset: None };
+        let player = Player {
+            car_id,
+            team,
+            input: InputBuffer::default(),
+            out,
+            echo: None,
+            last_reset: None,
+            auto_skip_replay: request.auto_skip_replay,
+            ready: false,
+        };
         let snapshot = self.arena.save_state();
         let welcome = Control::Welcome { version: protocol::VERSION, car_id, tick_rate: TICK_RATE as u8, frame: 0, snapshot: snapshot.clone() };
         let _ = player.out.send(Outgoing::Control(welcome.encode()));
@@ -233,8 +321,43 @@ impl Game {
         }
     }
 
+    /// Skip the goal replay (`ServerReadyUp`: only while one plays)
+    pub fn ready_up(&mut self, id: PlayerId) {
+        if self.phase == Phase::Replay
+            && let Some(p) = self.players.get_mut(&id)
+        {
+            p.ready = true;
+        }
+    }
+
+    /// The player's auto-skip setting (`ServerSetAutoSkipGoalReplay`: turned on during a replay, it readies them)
+    pub fn set_auto_skip_replay(&mut self, id: PlayerId, on: bool) {
+        if let Some(p) = self.players.get_mut(&id) {
+            p.auto_skip_replay = on;
+            if on && self.phase == Phase::Replay {
+                p.ready = true;
+            }
+        }
+    }
+
+    /// Real seconds until the next tick: 1/120, but for the 360 ticks after a goal, the n-th of which lasts
+    /// (1/120) / D((n - 1) / 120) with D the slow-motion curve (the game's dilated frame time steps its physics, so its
+    /// ticks slow down with the world: notes/camera-respawn-goal.md GS-2/3, notes/client-loop-timing.md LT-3)
+    pub fn next_tick_seconds(&self) -> f64 {
+        let base = 1.0 / f64::from(TICK_RATE);
+        if self.phase != Phase::PostGoal {
+            return base;
+        }
+        let n = self.arena.tick_count() + 1 - self.goal_tick;
+        if n > POST_GOAL_TICKS {
+            return base;
+        }
+        base / score_slomo((n - 1) as f64 / f64::from(TICK_RATE))
+    }
+
     /// A new match: scores 0, the clock full, a new kickoff order, the first kickoff
     fn new_match(&mut self) {
+        self.slomo_for_defender = false;
         self.score = [0, 0];
         self.clock_ticks = MATCH_TICKS;
         self.overtime = false;
@@ -250,6 +373,11 @@ impl Game {
     fn kickoff(&mut self) {
         self.arena.set_respawns_held(false);
         self.arena.next_kickoff();
+        // (a new ball: its touches start over, as the engine's cars' do)
+        self.ball_spawn_tick = self.arena.tick_count();
+        self.touches.clear();
+        self.last_touch.clear();
+        self.replay = None;
         self.arena.set_kickoff_countdown((KICKOFF_COUNTDOWN_SECONDS * TICK_RATE as f32) as u32);
         self.phase = Phase::Countdown;
     }
@@ -277,6 +405,110 @@ impl Game {
         }
     }
 
+    /// Each car's new touches on the ball this tick, as runs per car (the game's touches, consecutive ones merged)
+    fn track_touches(&mut self) {
+        for p in self.players.values() {
+            let Some(tick) = self.arena.car_last_ball_touch_tick(p.car_id) else { continue };
+            if self.last_touch.insert(p.car_id, tick) == Some(tick) {
+                continue;
+            }
+            match self.touches.back_mut() {
+                Some(last) if last.car == p.car_id => last.tick = tick,
+                _ => self.touches.push_back(Touch { car: p.car_id, team: p.team, tick }),
+            }
+            if self.touches.len() > MAX_TOUCHES {
+                self.touches.pop_front();
+            }
+        }
+    }
+
+    /// The goal's replay (`ReplayDirector_TA`: `GoalScored`, `GetReplayStartTime`, `ShouldSlomo`, `BuildFocusCars`;
+    /// notes/camera-respawn-goal.md GS-7..9)
+    fn plan_replay(&mut self, goal: u64, team: u8) -> ReplayPlan {
+        // The scoring touch: the newest by the scoring team, else the newest (`DetermineScoreTouchIndex`)
+        let score_hit = self.touches.iter().rposition(|t| t.team == team).or_else(|| self.touches.len().checked_sub(1));
+        let hit = score_hit.and_then(|i| self.touches.get(i)).map(|t| t.tick as i64);
+        let goal_tick = goal as i64;
+        let start = (hit.unwrap_or(0).min(goal_tick - MIN_REPLAY_TICKS) - REPLAY_PADDING_TICKS)
+            .max(0)
+            .max(goal_tick - MAX_REPLAY_TICKS)
+            .max(self.ball_spawn_tick as i64);
+        let end = goal_tick + POST_GOAL_TICKS as i64;
+        // A defender close to the ball (`SetSlomoForDefender`: at the goal's frame)
+        let ball = self.arena.ball_position();
+        let defenders: Vec<u32> = self.players.values().filter(|p| p.team != team).map(|p| p.car_id).collect();
+        for car in defenders {
+            if let Some(p) = self.arena.car_position(car) {
+                let d = [p[0] - ball[0], p[1] - ball[1], p[2] - ball[2]];
+                if (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt() < SLOMO_DEFEND_DISTANCE {
+                    self.slomo_for_defender = true;
+                }
+            }
+        }
+        let mut windows: Vec<(i64, i64)> = Vec::new();
+        if let Some(h) = hit {
+            windows.push((h - SLOMO_PRE_SCORE_TICKS, h + SLOMO_POST_SCORE_TICKS));
+        }
+        if self.slomo_for_defender {
+            windows.push((goal_tick - SLOMO_DEFEND_TICKS, goal_tick));
+        }
+        windows.sort_unstable();
+        let mut slomo: Vec<(u32, u32)> = Vec::new();
+        for (from, to) in windows {
+            let (from, to) = (from.max(start) as u32, to.min(end) as u32);
+            if to <= from {
+                continue;
+            }
+            match slomo.last_mut() {
+                Some(last) if from <= last.1 => last.1 = last.1.max(to),
+                _ => slomo.push((from, to)),
+            }
+        }
+        // The camera follows each car that touched the ball in the replay, in turn, up to the scoring touch
+        let focus = score_hit
+            .map(|last| {
+                let mut runs: Vec<(u32, u32)> = Vec::new();
+                for t in self.touches.iter().take(last + 1).filter(|t| t.tick as i64 >= start) {
+                    match runs.last_mut() {
+                        Some(run) if run.0 == t.car => run.1 = t.tick as u32,
+                        _ => runs.push((t.car, t.tick as u32)),
+                    }
+                }
+                runs
+            })
+            .unwrap_or_default();
+        ReplayPlan { start_tick: start as u32, goal_tick: goal as u32, end_tick: end as u32, scoring_team: team, slomo, focus }
+    }
+
+    /// 360 ticks after the goal (`StartReplay`): the goal replay if any player wants it (`ShouldPlayReplayPlayback`),
+    /// the ready votes cleared (`SetAllowReadyUp`), else the next round at once
+    fn start_replay(&mut self, tick: u64) {
+        let wanted = self.players.values().any(|p| !p.auto_skip_replay);
+        match self.replay.take() {
+            Some(plan) if wanted => {
+                self.phase = Phase::Replay;
+                self.phase_until = tick + (replay_seconds(&plan) * f64::from(TICK_RATE)).round() as u64;
+                for p in self.players.values_mut() {
+                    p.ready = false;
+                }
+                self.broadcast(&Control::Replay(plan));
+                self.ready_sent = None;
+                self.send_ready();
+            }
+            _ => self.new_round(),
+        }
+    }
+
+    /// The replay's ready count to everyone when it changed
+    fn send_ready(&mut self) {
+        let ready = self.players.values().filter(|p| p.ready || p.auto_skip_replay).count().min(255) as u8;
+        let state = (ready, self.players.len().min(255) as u8);
+        if self.ready_sent != Some(state) {
+            self.broadcast(&Control::ReplayReady { ready: state.0, total: state.1 });
+            self.ready_sent = Some(state);
+        }
+    }
+
     fn broadcast(&self, message: &Control) {
         let bytes = message.encode();
         for p in self.players.values() {
@@ -290,14 +522,17 @@ impl Game {
             return;
         }
         let odd_tick = self.arena.tick_count() % 2 == 1;
+        // (after the match the cars are frozen: `EndGame` → `SetAllDriving(false)`; in the goal replay they're gone:
+        // `StartReplay` → `DestroyCars`, here frozen out of sight until the kickoff places them)
+        let frozen = matches!(self.phase, Phase::Ended | Phase::Replay);
         for p in self.players.values_mut() {
             let controls = p.input.tick(now, odd_tick);
-            // (after the match the cars are frozen: `EndGame` → `SetAllDriving(false)`)
-            let controls = if self.phase == Phase::Ended { Controls::default() } else { controls };
+            let controls = if frozen { Controls::default() } else { controls };
             self.arena.set_controls(p.car_id, &controls);
         }
         self.arena.step(1);
         let tick = self.arena.tick_count();
+        self.track_touches();
 
         for event in self.arena.take_events() {
             match event {
@@ -306,10 +541,13 @@ impl Game {
                     self.score[usize::from(team.min(1))] += 1;
                     self.broadcast(&Control::Event { server_tick: tick as u32, event: GameEvent::Goal { team } });
                     self.phase = Phase::PostGoal;
-                    self.phase_until = tick + (GOAL_RESET_SECONDS * TICK_RATE as f32) as u64;
+                    self.goal_tick = tick;
+                    self.phase_until = tick + POST_GOAL_TICKS;
                     self.arena.set_respawns_held(true); // (the demolished wait for the kickoff)
+                    self.replay = Some(self.plan_replay(tick, team));
                 }
                 Event::Goal { .. } => {}
+                Event::Demo { .. } if self.phase == Phase::Replay => {} // (the cars are gone)
                 Event::Demo { attacker, victim } => {
                     self.broadcast(&Control::Event { server_tick: tick as u32, event: GameEvent::Demo { attacker, victim } });
                 }
@@ -336,6 +574,9 @@ impl Game {
                 }
             }
             Phase::Active => {
+                if self.test_goal_after.is_some_and(|after| tick == self.go_tick + after) {
+                    self.arena.set_ball([0.0, 4900.0, 300.0], [0.0, 2000.0, 0.0]);
+                }
                 // The clock runs once the ball has been hit (`bBallHasBeenHit`: a touch, or 5 s after "go")
                 let hit = self.arena.last_ball_touch_tick().is_some() || tick >= self.go_tick + CLOCK_START_DELAY_TICKS;
                 if hit && self.overtime {
@@ -357,7 +598,15 @@ impl Game {
             }
             Phase::PostGoal => {
                 if tick >= self.phase_until {
+                    self.start_replay(tick);
+                }
+            }
+            // `CheckPlayersReady` (every 0.01 s; here every tick) or the replay's end
+            Phase::Replay => {
+                if tick >= self.phase_until || self.players.values().all(|p| p.ready || p.auto_skip_replay) {
                     self.new_round();
+                } else {
+                    self.send_ready();
                 }
             }
             Phase::Ended => {
@@ -449,8 +698,16 @@ mod tests {
     use crate::engine::tests::init_engine;
     use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
-    const REQUEST: JoinRequest =
-        JoinRequest { team: 255, body: 0, dodge_deadzone: 0.5, steering_sensitivity: 1.0, air_control_sensitivity: 1.0 };
+    /// (skipping goal replays: a goal goes straight to the next kickoff; the replay's tests ask for them)
+    const REQUEST: JoinRequest = JoinRequest {
+        team: 255,
+        body: 0,
+        dodge_deadzone: 0.5,
+        steering_sensitivity: 1.0,
+        air_control_sensitivity: 1.0,
+        auto_skip_replay: true,
+    };
+    const WANTS_REPLAYS: JoinRequest = JoinRequest { auto_skip_replay: false, ..REQUEST };
 
     fn drain(rx: &mut UnboundedReceiver<Outgoing>) -> Vec<Outgoing> {
         let mut out = Vec::new();
@@ -757,5 +1014,146 @@ mod tests {
         assert!(world.iter().any(|m| matches!(m, Outgoing::Control(b) if b[2] == 0x82)));
         assert_eq!(game.player_count(), 1);
         drop(rx2);
+    }
+
+    fn replay_plans(rx: &mut UnboundedReceiver<Outgoing>) -> Vec<ReplayPlan> {
+        drain(rx)
+            .into_iter()
+            .filter_map(|m| match m {
+                Outgoing::Control(b) => match Control::decode(&b[2..]) {
+                    Ok(Control::Replay(plan)) => Some(plan),
+                    _ => None,
+                },
+                Outgoing::Datagram(_) => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_slow_motion_after_a_goal_makes_its_360_ticks_last_3_53_s() {
+        init_engine();
+        let mut game = Game::new();
+        let (tx, _rx) = unbounded_channel();
+        game.join(1, REQUEST, tx);
+        run_until(&mut game, 1000, |g| g.phase == Phase::Active);
+        assert_eq!(game.next_tick_seconds(), 1.0 / 120.0);
+        game.arena.set_ball([0.0, 5000.0, 300.0], [0.0, 2000.0, 0.0]);
+        run_until(&mut game, 120, |g| g.phase == Phase::PostGoal);
+        let mut real = 0.0;
+        let mut slowest: f64 = 0.0;
+        for _ in 0..POST_GOAL_TICKS {
+            let seconds = game.next_tick_seconds();
+            real += seconds;
+            slowest = slowest.max(seconds);
+            game.tick(0.0);
+        }
+        // (notes/camera-respawn-goal.md: per tick 3.5317 s; the slowest at dilation 0.1875)
+        assert!((real - 3.5317).abs() < 1e-4, "{real}");
+        assert!((slowest - 1.0 / 120.0 / 0.1875).abs() < 1e-12);
+        assert_eq!(game.phase, Phase::Countdown);
+        assert_eq!(game.next_tick_seconds(), 1.0 / 120.0);
+    }
+
+    #[test]
+    fn a_goal_replay_plays_with_the_cars_frozen_until_every_player_skips_it() {
+        init_engine();
+        let mut game = Game::new();
+        let (tx1, mut rx1) = unbounded_channel();
+        let (tx2, _rx2) = unbounded_channel();
+        game.join(1, WANTS_REPLAYS, tx1);
+        game.join(2, WANTS_REPLAYS, tx2);
+        run_until(&mut game, 1000, |g| g.phase == Phase::Active);
+        game.arena.set_ball([0.0, 5000.0, 300.0], [0.0, 2000.0, 0.0]);
+        run_until(&mut game, 120, |g| g.phase == Phase::PostGoal);
+        let goal = game.goal_tick;
+        game.ready_up(1); // (too early: only during the replay)
+        drain(&mut rx1);
+        let started = run_until(&mut game, 400, |g| g.phase == Phase::Replay);
+        assert_eq!(started, goal + POST_GOAL_TICKS);
+        let plans = replay_plans(&mut rx1);
+        assert_eq!(plans.len(), 1);
+        let plan = &plans[0];
+        // No touch: from 10 s before the goal, but not before the ball's kickoff placement; to 3 s after it
+        assert_eq!((plan.goal_tick, plan.end_tick, plan.scoring_team), (goal as u32, (goal + POST_GOAL_TICKS) as u32, 0));
+        assert_eq!(plan.start_tick, game.ball_spawn_tick.max(goal.saturating_sub(1200)) as u32);
+        assert!(plan.slomo.is_empty() && plan.focus.is_empty());
+        // The cars get no input
+        game.receive_inputs(1, 1, 1, &throttle_frames(10), 0.0);
+        let before = game.car_position(1).unwrap();
+        for _ in 0..10 {
+            game.tick(0.0);
+        }
+        let after = game.car_position(1).unwrap();
+        assert!((after[0] - before[0]).abs() + (after[1] - before[1]).abs() < 1.0, "{before:?} {after:?}");
+        // One player ready: the replay goes on; both: the kickoff
+        game.ready_up(1);
+        game.tick(0.0);
+        assert_eq!(game.phase, Phase::Replay);
+        assert!(drain(&mut rx1).iter().any(|m| matches!(m, Outgoing::Control(b) if matches!(Control::decode(&b[2..]), Ok(Control::ReplayReady { ready: 1, total: 2 })))));
+        game.ready_up(2);
+        game.tick(0.0);
+        assert_eq!(game.phase, Phase::Countdown);
+        assert_eq!(game.arena.kickoff_countdown(), 480);
+    }
+
+    #[test]
+    fn a_goal_replay_ends_after_its_real_length_and_auto_skippers_are_ready() {
+        init_engine();
+        let mut game = Game::new();
+        let (tx1, _rx1) = unbounded_channel();
+        let (tx2, _rx2) = unbounded_channel();
+        game.join(1, WANTS_REPLAYS, tx1);
+        game.join(2, REQUEST, tx2); // (skips replays: one is still played for player 1)
+        run_until(&mut game, 1000, |g| g.phase == Phase::Active);
+        game.arena.set_ball([0.0, -5000.0, 300.0], [0.0, -2000.0, 0.0]);
+        run_until(&mut game, 120, |g| g.phase == Phase::PostGoal);
+        let started = run_until(&mut game, 400, |g| g.phase == Phase::Replay);
+        // (no touch, no slow motion: from the ball's spawn or 10 s before the goal, to 3 s after it, in real time)
+        let ticks = game.goal_tick + POST_GOAL_TICKS - game.ball_spawn_tick.max(game.goal_tick.saturating_sub(1200));
+        let ended = run_until(&mut game, 3000, |g| g.phase != Phase::Replay);
+        assert_eq!(ended - started, ticks);
+        assert_eq!(game.phase, Phase::Countdown);
+        // Turning auto-skip on in a replay readies the player
+        run_until(&mut game, 1000, |g| g.phase == Phase::Active);
+        game.arena.set_ball([0.0, -5000.0, 300.0], [0.0, -2000.0, 0.0]);
+        run_until(&mut game, 1000, |g| g.phase == Phase::PostGoal);
+        run_until(&mut game, 400, |g| g.phase == Phase::Replay);
+        game.set_auto_skip_replay(1, true);
+        game.tick(0.0);
+        assert_eq!(game.phase, Phase::Countdown);
+    }
+
+    #[test]
+    fn the_replay_starts_two_seconds_before_the_scoring_touch_and_slows_round_it() {
+        init_engine();
+        let mut game = Game::new();
+        let (tx1, _rx1) = unbounded_channel();
+        let (tx2, _rx2) = unbounded_channel();
+        game.join(1, JoinRequest { team: 0, ..WANTS_REPLAYS }, tx1);
+        game.join(2, JoinRequest { team: 1, ..WANTS_REPLAYS }, tx2);
+        let [blue, orange] = [game.car_id(1).unwrap(), game.car_id(2).unwrap()];
+        game.ball_spawn_tick = 1000;
+        let goal = 5000;
+        let touch = |car, team, tick| Touch { car, team, tick };
+        // Blue, orange, blue twice (one run), orange (after the scoring touch): blue scores
+        game.touches = [touch(blue, 0, 3000), touch(orange, 1, 4000), touch(blue, 0, 4700), touch(orange, 1, 4900)].into();
+        game.slomo_for_defender = false;
+        game.arena.set_ball([0.0, 0.0, 1500.0], [0.0, 0.0, 0.0]); // (no defender near)
+        let plan = game.plan_replay(goal, 0);
+        // The scoring touch at 4700: min(4700, goal - 4 s = 4520) - 2 s = 4280 (not before goal - 10 s, the ball's spawn)
+        assert_eq!(plan.start_tick, 4280);
+        assert_eq!(plan.end_tick, 5360);
+        assert_eq!(plan.slomo, vec![(4700 - 30, 4700 + 12)]);
+        assert_eq!(plan.focus, vec![(blue, 4700)]); // (orange's touch at 4000 is before the start)
+        // A touch long before: the replay is capped at 10 s; the defender's stretch before the goal joins in
+        game.touches = [touch(blue, 0, 2000)].into();
+        game.slomo_for_defender = true;
+        let plan = game.plan_replay(goal, 0);
+        assert_eq!(plan.start_tick, 3800);
+        assert_eq!(plan.slomo, vec![(4970, 5000)]); // (the hit's stretch is before the start)
+        assert!(plan.focus.is_empty());
+        // Its real length: a hit 1 s before the goal, 9 s shown with 0.35 s of it slowed: 10.05 s (gs_slomo.py)
+        let seconds = replay_seconds(&ReplayPlan { start_tick: 0, goal_tick: 0, end_tick: 1080, scoring_team: 0, slomo: vec![(100, 142)], focus: vec![] });
+        assert!((seconds - 10.05).abs() < 1e-9);
     }
 }

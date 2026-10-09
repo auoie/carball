@@ -41,6 +41,7 @@ unsafe extern "C" {
     fn rl_next_kickoff(arena: *mut RLArena);
     fn rl_redo_kickoff(arena: *mut RLArena);
     fn rl_last_ball_touch_tick(arena: *mut RLArena) -> i64;
+    fn rl_car_last_ball_touch_tick(arena: *mut RLArena, car_id: u32) -> i64;
     fn rl_ball_on_ground(arena: *mut RLArena) -> c_int;
     fn rl_reset_ball(arena: *mut RLArena);
     fn rl_set_ball(arena: *mut RLArena, pos: *const f32, vel: *const f32);
@@ -145,6 +146,13 @@ impl Arena {
     pub fn last_ball_touch_tick(&mut self) -> Option<u64> {
         // SAFETY: valid arena
         let tick = unsafe { rl_last_ball_touch_tick(self.ptr()) };
+        u64::try_from(tick).ok()
+    }
+
+    /// The car's latest touch on the ball (as `last_ball_touch_tick`), if any since the kickoff
+    pub fn car_last_ball_touch_tick(&mut self, car_id: u32) -> Option<u64> {
+        // SAFETY: valid arena (an unknown car gives -1)
+        let tick = unsafe { rl_car_last_ball_touch_tick(self.ptr(), car_id) };
         u64::try_from(tick).ok()
     }
 

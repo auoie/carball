@@ -18,6 +18,9 @@ pub enum ToGame {
     Leave { id: PlayerId },
     Inputs { id: PlayerId, timestamp: u32, first_frame: u32, frames: Vec<InputFrame>, at: std::time::Instant },
     ResetInputBuffer { id: PlayerId },
+    /// Skip the goal replay
+    ReadyUp { id: PlayerId },
+    AutoSkipReplay { id: PlayerId, on: bool },
 }
 
 /// Development identity: self-signed for localhost, valid 14 days (the browser limit for certificate hashes)
@@ -69,7 +72,7 @@ async fn session(incoming: IncomingSession, id: PlayerId, to_game: &UnboundedSen
     }
     let connection = request.accept().await?;
     let (mut send, mut recv) = connection.accept_bi().await.context("no control stream")?;
-    let Control::Hello { version, team, body, dodge_deadzone, steering_sensitivity, air_control_sensitivity } =
+    let Control::Hello { version, team, body, dodge_deadzone, steering_sensitivity, air_control_sensitivity, auto_skip_replay } =
         tokio::time::timeout(Duration::from_secs(5), read_control(&mut recv)).await.context("no hello")??
     else {
         bail!("expected hello");
@@ -79,7 +82,7 @@ async fn session(incoming: IncomingSession, id: PlayerId, to_game: &UnboundedSen
     }
 
     let (out_tx, mut out_rx) = unbounded_channel();
-    let request = JoinRequest { team, body, dodge_deadzone, steering_sensitivity, air_control_sensitivity };
+    let request = JoinRequest { team, body, dodge_deadzone, steering_sensitivity, air_control_sensitivity, auto_skip_replay };
     to_game.send(ToGame::Join { id, request, out: out_tx })?;
 
     // Game -> client
@@ -105,14 +108,15 @@ async fn session(incoming: IncomingSession, id: PlayerId, to_game: &UnboundedSen
     let control_to_game = to_game.clone();
     let mut control_reader = tokio::spawn(async move {
         loop {
-            match read_control(&mut recv).await {
-                Ok(Control::ResetInputBuffer) => {
-                    if control_to_game.send(ToGame::ResetInputBuffer { id }).is_err() {
-                        break;
-                    }
-                }
-                Ok(_) => {} // (nothing else is expected from a client)
+            let message = match read_control(&mut recv).await {
+                Ok(Control::ResetInputBuffer) => ToGame::ResetInputBuffer { id },
+                Ok(Control::ReadyUp) => ToGame::ReadyUp { id },
+                Ok(Control::AutoSkipReplay { on }) => ToGame::AutoSkipReplay { id, on },
+                Ok(_) => continue, // (nothing else is expected from a client)
                 Err(_) => break,
+            };
+            if control_to_game.send(message).is_err() {
+                break;
             }
         }
     });

@@ -9,7 +9,11 @@ import {
   CAMERA_LIMITS,
   CONTROLLER_LIMITS,
   type ControllerSettings,
+  DEFAULT_PRESET,
   DEFAULT_SETTINGS,
+  INPUT_CAMERA_LIMITS,
+  type InputCameraSettings,
+  MODERN_PRESET,
   type Options,
   type Range,
   type Settings,
@@ -33,16 +37,27 @@ const CONTROLLER_LABELS: Readonly<Record<keyof ControllerSettings, string>> = {
   deadzone: "Controller deadzone",
   dodgeDeadzone: "Dodge deadzone",
   steeringSensitivity: "Steering sensitivity",
+  freeLookDeadzone: "Free look deadzone (the stick past the deadzone above)",
+  mouseSensitivity: "Mouse sensitivity (free look)",
   aerialSensitivity: "Aerial sensitivity",
 };
 
-const OPTION_LABELS: Readonly<Record<keyof Options, string>> = {
+const INPUT_CAMERA_LABELS: Readonly<Record<keyof InputCameraSettings, string>> = {
+  freeLook: "Free look (the view turns only with the look input; no swivel)",
   ballCamToggle: "Ball camera toggles (off: hold)",
+  invertPitch: "Invert look pitch",
+  smoothing: "Free look smoothing",
+  accelRate: "Free look acceleration",
+  decelRate: "Free look deceleration",
+  freeLookSpeed: "Free look speed",
+};
+
+const OPTION_LABELS: Readonly<Record<keyof Options, string>> = {
   rearCameraToggle: "Rear camera toggles (off: hold)",
-  invertSwivelPitch: "Invert swivel pitch",
   airPitchSafety: "Air pitch safety (keyboard: holding W off the ground doesn't pitch until released)",
   muted: "Mute all sound (M)",
   flipIndicator: "Show the flip indicator (whether you can still dodge, and flip resets)",
+  autoSkipReplay: "Skip goal replays (online: always ready to skip; Space or (A) skips one)",
 };
 
 const AUDIO_LABELS: Readonly<Record<keyof AudioSettings, string>> = {
@@ -116,6 +131,8 @@ export class SettingsPanel {
   }
 
   open(): void {
+    // (the free look's captured mouse is let go: the menu needs the pointer)
+    if (document.pointerLockElement) document.exitPointerLock();
     this.#root.hidden = false;
     this.#render();
   }
@@ -309,8 +326,50 @@ export class SettingsPanel {
       (camera) => { this.#update({ ...this.#settings, camera }); },
       DEFAULT_SETTINGS.camera,
     );
-    sliders.append(this.#checkboxes(["ballCamToggle", "rearCameraToggle", "invertSwivelPitch"]));
+    sliders.append(this.#checkboxes(["rearCameraToggle"]));
+    const presets = el("div", { className: "options" });
+    for (const [name, preset] of [["Modern", MODERN_PRESET], ["Default", DEFAULT_PRESET]] as const) {
+      const button = el("button", { textContent: `${name} preset` });
+      button.dataset["preset"] = name.toLowerCase();
+      button.addEventListener("click", () => { this.#update({ ...this.#settings, ...preset }); });
+      presets.append(button);
+    }
+    sliders.prepend(
+      el("p", {
+        className: "settings-hint",
+        textContent:
+          "Modern (the game's for a new profile): free look with the mouse on keyboard and mouse, the ball camera held; the controller swivels, " +
+          "the ball camera toggles. Default: swivel and toggle on both. Each input keeps its own camera settings below.",
+      }),
+      presets,
+    );
+    sliders.append(this.#inputCamera("cameraKbm", "Keyboard and mouse"), this.#inputCamera("cameraPad", "Controller"));
     return sliders;
+  }
+
+  /** One input's camera settings (ProfileCameraInputSettings) */
+  #inputCamera(key: "cameraKbm" | "cameraPad", title: string): HTMLElement {
+    const current = this.#settings[key];
+    const apply = (next: InputCameraSettings): void => { this.#update({ ...this.#settings, [key]: next }); };
+    const box = el("div", { className: "options" });
+    for (const option of ["freeLook", "ballCamToggle", "invertPitch", "smoothing"] as const) {
+      const input = el("input");
+      input.type = "checkbox";
+      input.checked = current[option];
+      input.dataset["camera"] = key;
+      input.dataset["option"] = option;
+      input.addEventListener("change", () => { apply({ ...current, [option]: input.checked }); });
+      box.append(el("label", { className: "option" }, [input, el("span", { textContent: INPUT_CAMERA_LABELS[option] })]));
+    }
+    const numbers = (c: InputCameraSettings) => ({ accelRate: c.accelRate, decelRate: c.decelRate, freeLookSpeed: c.freeLookSpeed });
+    const sliders = this.#sliders(
+      numbers(current),
+      INPUT_CAMERA_LIMITS,
+      INPUT_CAMERA_LABELS,
+      (next) => { apply({ ...current, ...next }); },
+      numbers(DEFAULT_SETTINGS[key]),
+    );
+    return el("div", { className: "input-camera" }, [el("h3", { textContent: title }), box, sliders]);
   }
 
   #controllerTab(): HTMLElement {
@@ -329,7 +388,7 @@ export class SettingsPanel {
           "Dodge deadzone: how far the stick must be pushed for a second jump to dodge instead of double jumping.",
       }),
     );
-    sliders.append(this.#checkboxes(["airPitchSafety", "flipIndicator"]));
+    sliders.append(this.#checkboxes(["airPitchSafety", "flipIndicator", "autoSkipReplay"]));
     return sliders;
   }
 

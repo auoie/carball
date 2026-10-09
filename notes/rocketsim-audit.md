@@ -14,7 +14,10 @@ an engine copy against the live recordings (`out/live/*_20261008_*`, per-tick an
 - **Kickoffs and respawns refresh the tensor; plain SetState keeps it** (as Car_TA.Teleport does).
 - **A replay regression was the validator's warm-up re-placement** keeping a one-tick-ahead tensor, now fixed.
   Afterwards the batch against HEAD is 470 better / 396 worse (all small); live is 28 better / 9 worse.
-- **Open:** walls_021027 t125 needs per-wheel PhysLog columns and a re-recording.
+- **walls_021027 t125: not a wheel** (notes/wheel-kick-t125.md). The game's code allows no FL/FR difference there:
+  both rays hit the same triangle. The tick is dominated by the hitbox nose contact with the curve (about 60 uu/s), and
+  the error fits a 0.25–0.35 % change in that contact's impulse. "Little pitch" is the 5.5 rad/s angular cap.
+  Still open: the PhysLog per-wheel and contact fields plus a re-recording.
 
 ## Findings (ranked by expected effect)
 

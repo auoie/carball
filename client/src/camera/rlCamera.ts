@@ -3,12 +3,15 @@
 //   CameraState_Car_TA      car cam: UpdateValidPOV and the functions it calls
 //   CameraState_BallCam_TA  ball cam: overrides of UpdateFocusWorldOffset / UpdateFocus /
 //                           UpdateAirAndGroundCamera / UpdateRotationModifiers
-//   CameraStateBlender_X    transitions between the two
+//   CameraStateBlender_X    transitions between the states
 //   Camera_X / Camera_TA    UpdateCamera, FinalizeOrientation, ClipToField, swivel, rear camera
-// Not ported: proximity distance, the "bouncy chassis" wobble (driven by the car mesh's suspension
-// spring bone), demolished/replay cameras.
-import type { CarState } from "../engine/world";
+//   CameraState_Demolished_TA, CameraState_DemoSpawnSelect_TA, CameraState_Prespawn_TA
+//                           after a demolition (notes/camera-respawn-goal.md CAM-20..29)
+// The goal replay's camera is src/camera/replayCamera.ts. Not ported: proximity distance, the "bouncy chassis"
+// wobble (driven by the car mesh's suspension spring bone).
+import type { CarState, RespawnSpot } from "../engine/world";
 import { type Vec3, add, dot, scale, sub, vec3 } from "../math/vec";
+import { type FreeLookAxes, FreeLookRate, type FreeLookSettings, MAX_FREE_LOOK_PITCH, type RotatorOffset } from "./freeLook";
 import {
   type Rotator,
   ZERO_ROTATOR,
@@ -106,6 +109,13 @@ class InterpVector {
     public maxDistance = 0,
   ) {}
 
+  clone(): InterpVector {
+    const copy = new InterpVector(this.rate, this.maxDistance);
+    copy.location = this.location;
+    copy.initialized = this.initialized;
+    return copy;
+  }
+
   update(newValue: Vec3, dt: number): void {
     if (!this.initialized) {
       this.initialized = true;
@@ -126,19 +136,141 @@ export interface CameraInput {
   readonly ball: Vec3;
   readonly settings: CameraSettings;
   readonly rear: boolean; // CameraSettings.bUsingBehindView
+  /** The local car's respawn, while it's demolished */
+  readonly respawn: RespawnCameraInput | null;
+  /** Free look running in this state: this frame's offset (rotator units); null: off (classic, or not allowed) */
+  readonly freeLook: RotatorOffset | null;
+}
+
+/** ApplyFreeLook: the offset added, the pitch clamped to ±75° (truncated), no roll */
+function applyFreeLook(rotation: Rotator, offset: RotatorOffset): Rotator {
+  const pitch = Math.trunc(Math.min(MAX_FREE_LOOK_PITCH, Math.max(-MAX_FREE_LOOK_PITCH, rotation.pitch + offset.pitch)));
+  return rotator(pitch, rotation.yaw + offset.yaw, 0);
+}
+
+/** What the respawn cameras follow (the local car demolished) */
+export interface RespawnCameraInput {
+  /** Where the car was demolished (its drawn position then) */
+  readonly wreck: Vec3;
+  /** The spot picked so far (DemoSpawnSelect), null before the first pick */
+  readonly selected: RespawnSpot | null;
+  /** The spot locked in for the respawn (Prespawn), null before */
+  readonly locked: RespawnSpot | null;
+}
+
+/** A camera state (CameraState_X): BeginCameraState, then UpdatePOV each frame on the persistent POV */
+interface CameraState {
+  begin(input: CameraInput): void;
+  update(dt: number, input: CameraInput, pov: Pov): void;
+}
+
+/** Spawn actors stand at z 83 (the respawn cameras' focus is that + Height) */
+const SPAWN_Z = 83;
+const RADIANS_TO_UNITS = 32768 / Math.PI;
+
+/** CameraState_Demolished_TA: on its first frame the focus goes above the wreck, 400 away at FOV 120; the rotation is
+ *  never written (the car cam's last one stays, its roll too) */
+class DemolishedCameraState implements CameraState {
+  #first = true;
+
+  begin(): void {
+    this.#first = true;
+  }
+
+  update(_dt: number, input: CameraInput, pov: Pov): void {
+    if (this.#first && input.respawn) {
+      this.#first = false;
+      pov.focus = add(input.respawn.wreck, vec3(0, 0, input.settings.height));
+      pov.distance = 400;
+      pov.fov = 120;
+    }
+    if (input.freeLook) pov.rotation = applyFreeLook(pov.rotation, input.freeLook);
+  }
+}
+
+/** CameraState_DemoSpawnSelect_TA: above the picked spot, facing its way (pitch 0), at the player's distance and FOV;
+ *  a new pick moves there over DemoSelectChangeSpawnTime 0.1 s */
+class SpawnSelectCameraState implements CameraState {
+  static readonly CHANGE_SECONDS = 0.1;
+  #since = SpawnSelectCameraState.CHANGE_SECONDS;
+  #spot: RespawnSpot | null = null;
+  #previous: RespawnSpot | null = null;
+  #look: Rotator = ZERO_ROTATOR; // the free look accumulated on the spot's view
+
+  begin(input: CameraInput): void {
+    this.#look = ZERO_ROTATOR;
+    this.#since = SpawnSelectCameraState.CHANGE_SECONDS; // (no move on entry)
+    this.#spot = input.respawn?.selected ?? null;
+    this.#previous = this.#spot;
+  }
+
+  update(dt: number, input: CameraInput, pov: Pov): void {
+    const spot = input.respawn?.selected ?? this.#spot;
+    if (!spot) return;
+    if (this.#spot && (spot.pos.x !== this.#spot.pos.x || spot.pos.y !== this.#spot.pos.y)) {
+      this.#previous = this.#spot;
+      this.#since = 0;
+    }
+    this.#spot = spot;
+    this.#since += dt;
+    const at = (s: RespawnSpot): { focus: Vec3; rotation: Rotator } => ({
+      focus: vec3(s.pos.x, s.pos.y, SPAWN_Z),
+      rotation: rotator(0, Math.trunc(s.yaw * RADIANS_TO_UNITS), 0),
+    });
+    const to = at(spot);
+    const t = this.#since / SpawnSelectCameraState.CHANGE_SECONDS;
+    if (t < 1 && this.#previous) {
+      const from = at(this.#previous);
+      pov.focus = vlerp(from.focus, to.focus, t);
+      pov.rotation = rlerp(from.rotation, to.rotation, t);
+    } else {
+      pov.focus = to.focus;
+      pov.rotation = to.rotation;
+    }
+    pov.focus = add(pov.focus, vec3(0, 0, input.settings.height));
+    pov.distance = input.settings.distance;
+    pov.fov = input.settings.fov;
+    this.#look = input.freeLook ? applyFreeLook(this.#look, input.freeLook) : ZERO_ROTATOR;
+    pov.rotation = rotator(pov.rotation.pitch + this.#look.pitch, pov.rotation.yaw + this.#look.yaw, 0);
+  }
+}
+
+/** CameraState_Prespawn_TA: above the spot locked in for the respawn, facing its way, at the player's distance and FOV */
+class PrespawnCameraState implements CameraState {
+  begin(): void {
+    // (nothing kept)
+  }
+
+  update(_dt: number, input: CameraInput, pov: Pov): void {
+    const spot = input.respawn?.locked;
+    if (!spot) return;
+    pov.focus = vec3(spot.pos.x, spot.pos.y, SPAWN_Z + input.settings.height);
+    pov.rotation = rotator(0, Math.trunc(spot.yaw * RADIANS_TO_UNITS), 0);
+    pov.distance = input.settings.distance;
+    pov.fov = input.settings.fov;
+  }
 }
 
 /** CameraState_Car_TA, or CameraState_BallCam_TA when `ballCam` (its overrides are inlined). */
-export class CarCameraState {
+export class CarCameraState implements CameraState {
   #onGround = false;
   #airGroundBlend = 0;
   #groundNormal = vec3(0, 0, 1);
   #firstExecution = true;
   #wasRear = false;
   #viewOffset = { focusZ: 0, pitch: 0, distance: 0 };
-  readonly #focusInterp = new InterpVector(CAR.focusInterpRate, CAR.focusInterpMaxDistance);
-  readonly #distanceInterp = new InterpVector(CAR.distanceInterpRate);
-  readonly #focusOffsetInterp = new InterpVector(CAR.focusOffsetInterpRate);
+  #focusInterp = new InterpVector(CAR.focusInterpRate, CAR.focusInterpMaxDistance);
+  #distanceInterp = new InterpVector(CAR.distanceInterpRate);
+  #focusOffsetInterp = new InterpVector(CAR.focusOffsetInterpRate);
+  /** InterpRotationGround / InterpRotationWall: the ground view's two smoothed rotations; with free look they smooth
+   *  from their own last values and make the car-facing frame (GetCarFacingRotation) */
+  #interpGround: Rotator = ZERO_ROTATOR;
+  #interpWall: Rotator = ZERO_ROTATOR;
+  /** The view offset's pitch last applied to a free-look rotation */
+  #appliedAnglePitch = 0;
+  /** The next begin keeps the view's rotation and the other state's smoothing (free look: from the free-look ball cam
+   *  to the car cam and back, CAM-14/15) */
+  carryFrom: CarCameraState | null = null;
 
   constructor(readonly ballCam: boolean) {}
 
@@ -148,10 +280,28 @@ export class CarCameraState {
     this.#onGround = isOnGround(input.car);
     this.#airGroundBlend = this.#onGround ? 1 : 0;
     this.#groundNormal = input.car.groundNormal;
+    const from = this.carryFrom;
+    this.carryFrom = null;
+    if (from) {
+      // (copies its interp state: no jump in the smoothing; the rotation stays as it is)
+      this.#focusInterp = from.#focusInterp.clone();
+      this.#distanceInterp = from.#distanceInterp.clone();
+      this.#focusOffsetInterp = from.#focusOffsetInterp.clone();
+      this.#interpGround = from.#interpGround;
+      this.#interpWall = from.#interpWall;
+      this.#appliedAnglePitch = from.#appliedAnglePitch;
+      this.#firstExecution = false;
+      return;
+    }
     this.#firstExecution = true;
     this.#focusInterp.initialized = false;
     this.#distanceInterp.initialized = false;
     this.#focusOffsetInterp.initialized = false;
+  }
+
+  /** The car-facing frame (free look): RLerp(InterpRotationGround, InterpRotationWall, 1 - |ground normal z|) */
+  #carFacing(): Rotator {
+    return rlerp(this.#interpGround, this.#interpWall, 1 - Math.abs(this.#groundNormal.z));
   }
 
   /** CameraState_Car_TA.UpdateValidPOV. */
@@ -169,14 +319,21 @@ export class CarCameraState {
     }
     // With the rear camera on, the ball cam's overrides fall back to the car cam
     const lookAtBall = this.ballCam && !input.rear;
+    // Free look (the car cam only): the view turns only by the look input; focus and distance follow the car-facing
+    // frame (UpdateValidPOV's free-look order, notes/camera-respawn-goal.md CAM-13)
+    const freeLook = this.ballCam ? null : input.freeLook;
     this.#updateViewOffset(settings);
     this.#updateAirGroundBlend(dt, car);
     this.#updateFocusWorldOffset(dt, car, lookAtBall);
-    this.#updateFocus(dt, car, settings, pov, lookAtBall);
-    this.#updateAirAndGroundCamera(dt, input, pov, lookAtBall);
-    this.#updateDistance(dt, car, settings, pov);
+    this.#updateFocus(dt, car, settings, pov, lookAtBall, freeLook !== null);
+    const saved = freeLook && !this.#firstExecution ? pov.rotation : null;
+    this.#updateAirAndGroundCamera(dt, input, pov, lookAtBall, freeLook !== null);
+    if (saved) pov.rotation = rotator(saved.pitch + this.#viewOffset.pitch - this.#appliedAnglePitch, saved.yaw, saved.roll);
+    this.#appliedAnglePitch = this.#viewOffset.pitch;
+    this.#updateDistance(dt, car, settings, pov, freeLook !== null);
     this.#updateFov(dt, car, settings, pov);
-    if (!this.ballCam) this.#updateRotationModifiers(car, pov);
+    if (freeLook) pov.rotation = applyFreeLook(pov.rotation, freeLook);
+    else if (!this.ballCam) this.#updateRotationModifiers(car, pov);
     this.#firstExecution = false;
   }
 
@@ -208,33 +365,35 @@ export class CarCameraState {
     this.#focusOffsetInterp.update(offset, dt);
   }
 
-  #updateFocus(dt: number, car: CarState, s: CameraSettings, pov: Pov, lookAtBall: boolean): void {
+  #updateFocus(dt: number, car: CarState, s: CameraSettings, pov: Pov, lookAtBall: boolean, freeLook: boolean): void {
     // Ball cam: the focus may not lag behind the car at all
     this.#focusInterp.maxDistance = lookAtBall ? 0.001 : CAR.focusInterpMaxDistance;
     const focus = add(car.pos, this.#focusOffsetInterp.location);
     this.#focusInterp.update(focus, dt);
-    const forward = rotatorToVector(pov.rotation);
+    // (free look: along the car-facing frame, from where that frame would put the camera)
+    const forward = rotatorToVector(freeLook ? this.#carFacing() : pov.rotation);
+    const location = freeLook ? sub(pov.focus, scale(forward, pov.distance)) : pov.calculatedLocation;
     // Lagged focus sideways/vertically, but at the real focus's depth along the view
-    let focusOffset = sub(this.#focusInterp.location, pov.calculatedLocation);
+    let focusOffset = sub(this.#focusInterp.location, location);
     focusOffset = sub(focusOffset, scale(forward, dot(forward, focusOffset)));
-    focusOffset = add(focusOffset, scale(forward, dot(forward, sub(focus, pov.calculatedLocation))));
-    pov.focus = vlerp(add(pov.calculatedLocation, focusOffset), focus, s.stiffness);
+    focusOffset = add(focusOffset, scale(forward, dot(forward, sub(focus, location))));
+    pov.focus = vlerp(add(location, focusOffset), focus, s.stiffness);
   }
 
-  #updateAirAndGroundCamera(dt: number, input: CameraInput, pov: Pov, lookAtBall: boolean): void {
+  #updateAirAndGroundCamera(dt: number, input: CameraInput, pov: Pov, lookAtBall: boolean, freeLook: boolean): void {
     if (lookAtBall) {
       this.#updateBallCamRotation(dt, input.ball, pov);
       return;
     }
     const { car, settings } = input;
     if (this.#airGroundBlend >= 1) {
-      this.#updateGroundPov(dt, car, settings, pov);
+      this.#updateGroundPov(dt, car, settings, pov, freeLook);
     } else if (this.#airGroundBlend <= 0) {
       this.#updateAirPov(car, pov);
     } else {
       const air = copyPov(pov);
       const ground = copyPov(pov);
-      this.#updateGroundPov(dt, car, settings, ground);
+      this.#updateGroundPov(dt, car, settings, ground, freeLook);
       this.#updateAirPov(car, air);
       // Camera_X.BlendCameraOrientations(Air, Ground, AirGroundBlend)
       const a = this.#airGroundBlend;
@@ -247,7 +406,7 @@ export class CarCameraState {
   }
 
   /** Look along the car's forward direction projected onto the (smoothed) ground plane. */
-  #updateGroundPov(dt: number, car: CarState, s: CameraSettings, pov: Pov): void {
+  #updateGroundPov(dt: number, car: CarState, s: CameraSettings, pov: Pov, freeLook: boolean): void {
     this.#groundNormal = normal(vSmoothInterpTo(this.#groundNormal, car.groundNormal, CAR.groundNormalInterpRate, dt));
     const u = this.#groundNormal;
     const r = cross(u, car.rot.forward);
@@ -260,12 +419,19 @@ export class CarCameraState {
 
     if (this.#firstExecution) {
       pov.rotation = newRot;
+      this.#interpGround = newRot;
+      this.#interpWall = newRot;
       return;
     }
     const rateScale = lerp(1, 3.427, s.stiffness);
+    // (free look: each from its own last value, toward the car's forward and the angle, no roll; else from the view's)
+    const fromGround = freeLook ? this.#interpGround : pov.rotation;
+    const fromWall = freeLook ? this.#interpWall : pov.rotation;
     const ground =
-      s.stiffness < 1 ? rSmoothInterpTo(pov.rotation, newRot, CAR.groundRotationInterpRate * rateScale, dt) : newRot;
-    const wall = rSmoothInterpTo(pov.rotation, newRot, CAR.groundRotationInterpRateWall * rateScale, dt);
+      s.stiffness < 1 ? rSmoothInterpTo(fromGround, newRot, CAR.groundRotationInterpRate * rateScale, dt) : newRot;
+    const wall = rSmoothInterpTo(fromWall, newRot, CAR.groundRotationInterpRateWall * rateScale, dt);
+    this.#interpGround = ground;
+    this.#interpWall = wall;
     pov.rotation = rlerp(ground, wall, 1 - Math.abs(u.z));
   }
 
@@ -304,8 +470,8 @@ export class CarCameraState {
     pov.rotation = this.#firstExecution ? toBall : rSmoothInterpTo(pov.rotation, toBall, BALL.rotationRate, dt);
   }
 
-  #updateDistance(dt: number, car: CarState, s: CameraSettings, pov: Pov): void {
-    const viewDir = rotatorToVector(pov.rotation);
+  #updateDistance(dt: number, car: CarState, s: CameraSettings, pov: Pov, freeLook: boolean): void {
+    const viewDir = rotatorToVector(freeLook ? this.#carFacing() : pov.rotation);
     const newDistance =
       this.#viewOffset.distance +
       Math.max(dot(car.vel, viewDir) * CAR.distanceSpeedScale * (1 - s.stiffness), CAR.distanceOffsetMin);
@@ -350,21 +516,20 @@ const EMPTY_DELTA: PovDelta = { focus: vec3(0, 0, 0), rotation: ZERO_ROTATOR, di
 
 /** CameraStateBlender_X: blends a camera switch by fading out the offset between the two views. */
 class Blender {
-  state: CarCameraState | null = null;
-  #from: CarCameraState | null = null;
+  state: CameraState | null = null;
+  #from: CameraState | null = null;
   #remaining = 0;
   #blendTime = 0;
   #started = false;
   #snapshot: PovDelta = EMPTY_DELTA;
   #delta: PovDelta = EMPTY_DELTA;
 
-  /** TransitionToState; blend time from CameraState_Car_TA.StaticOverrideBlendParams. */
-  transitionTo(next: CarCameraState, input: CameraInput): void {
+  /** TransitionToState, blending over `blendTime` (the states' blend params: blendTimeBetween) */
+  transitionTo(next: CameraState, input: CameraInput, blendTime: number): void {
     if (next === this.state) return;
     this.#clearTransition();
     if (this.state) {
-      const transitionSpeed = Math.min(2, Math.max(1, input.settings.transitionSpeed));
-      this.#blendTime = lerp(0.5, 0, Math.min(1, Math.max(0, transitionSpeed - 1)));
+      this.#blendTime = blendTime;
       if (this.#blendTime > 0) {
         this.#from = this.state;
         this.#remaining = this.#blendTime;
@@ -377,6 +542,11 @@ class Blender {
       next.begin(input);
     }
     this.state = next;
+  }
+
+  /** A transition is still blending in */
+  get blending(): boolean {
+    return this.#remaining > 0;
   }
 
   tick(dt: number, input: CameraInput): void {
@@ -499,7 +669,21 @@ export interface CameraControls {
   /** Swivel input, -1..1: positive looks up / right (the caller applies the pitch inversion option). */
   readonly lookUp: number;
   readonly lookRight: number;
+  /** Free-look mode (the input in use has free look on: bUnconstrainRotation): its input; null or absent: classic */
+  readonly freeLook?: FreeLookControls | null;
 }
+
+export interface FreeLookControls {
+  readonly axes: FreeLookAxes;
+  readonly settings: FreeLookSettings;
+  /** The ball cam is held, not toggled (it then lasts at least its blend in) */
+  readonly ballCamHold: boolean;
+}
+
+/** FreeLookExitSpeedFloor / FreeLookExitDuration: in toggle mode, mouse free look this fast (input per second) for this
+ *  long leaves the free-look ball cam; a stick past its free-look deadzone leaves it at once */
+const FREE_LOOK_EXIT_SPEED = 30;
+const FREE_LOOK_EXIT_SECONDS = 0.15;
 
 export interface CameraView {
   readonly position: Vec3;
@@ -508,26 +692,86 @@ export interface CameraView {
   readonly horizontalFov: number;
 }
 
-/** Camera_X.UpdateCamera with the car cam and ball cam states. */
+/** The local car's respawn as the cameras need it (each frame while it's demolished) */
+export interface RespawnState {
+  /** Respawns wait (after a goal, until the kickoff): no prespawn, the demolished camera stays */
+  readonly held: boolean;
+  /** The spot picked so far (respawnSpots(team, side)[index]), null before the first pick */
+  readonly selected: RespawnSpot | null;
+}
+
+/** RLConst DEMO_PRESPAWN_STATE_LENGTH: the spot locks this long before the respawn */
+const PRESPAWN_SECONDS = 0.5;
+
+/** Camera_X.UpdateCamera with the game's states (Camera_Default.States, in order: Prespawn, Demolished,
+ *  DemoSpawnSelect, the ball cam, the car cam): the current one runs while it ShouldKeepExecuting, else the first that
+ *  ShouldExecute. */
 export class PlayerCamera {
   settings: CameraSettings = DEFAULT_CAMERA_SETTINGS;
   readonly #carCam = new CarCameraState(false);
   readonly #ballCam = new CarCameraState(true);
+  readonly #demolished = new DemolishedCameraState();
+  readonly #spawnSelect = new SpawnSelectCameraState();
+  readonly #prespawn = new PrespawnCameraState();
   readonly #blender = new Blender();
   readonly #swivel = new Swivel();
   #fov = 90; // the last view's FOV (GetFOVAngle)
   #pov: Pov = { focus: vec3(0, 0, 0), rotation: ZERO_ROTATOR, distance: 0, fov: 90, calculatedLocation: vec3(0, 0, 0) };
+  /** Camera_TA.bDemolished: set by the demolition (Camera_TA.Demolished), cleared when its state ends */
+  #demolishedFlag = false;
+  #wreck: Vec3 | null = null;
+  #wasDemoed = false;
+  readonly #freeLook = new FreeLookRate();
+  #fastLook = 0; // seconds the mouse free look has been past the exit speed (the ball cam's exit)
+  #ballCamExit = false;
 
   /** Start over (after a reset): the next update snaps instead of blending. */
   reset(): void {
     this.#blender.state = null;
   }
 
-  update(dt: number, car: CarState, ball: Vec3, controls: CameraControls): CameraView {
-    const input: CameraInput = { car, ball, settings: this.settings, rear: controls.rear };
-    // UpdateCameraState: the first state whose ShouldExecute() passes
-    const wanted = controls.ballCam ? this.#ballCam : this.#carCam;
-    if (this.#blender.state !== wanted) this.#blender.transitionTo(wanted, input);
+  /** The last view's FOV (GetFOVAngle: the look input scales by FOV / 90) */
+  get fov(): number {
+    return this.#fov;
+  }
+
+  /** Whether free look left the ball cam since the last call (toggle mode: the caller turns its toggle off) */
+  takeBallCamExit(): boolean {
+    const exit = this.#ballCamExit;
+    this.#ballCamExit = false;
+    return exit;
+  }
+
+  /** `respawn`: while the car is demolished (null otherwise); `realDt`: real time (the swivel's; `dt` is the world's,
+   *  slowed after a goal: Camera_TA.UpdateSwivel divides by the time dilation) */
+  update(dt: number, car: CarState, ball: Vec3, controls: CameraControls, respawn: RespawnState | null = null, realDt = dt): CameraView {
+    if (car.demoed && !this.#wasDemoed) {
+      this.#demolishedFlag = true;
+      this.#wreck = car.pos;
+    }
+    this.#wasDemoed = car.demoed;
+    const respawnInput: RespawnCameraInput | null =
+      car.demoed && this.#wreck ? { wreck: this.#wreck, selected: respawn?.selected ?? null, locked: car.spawnSelection.locked } : null;
+    const mode = controls.freeLook ?? null;
+    const current = this.#blender.state;
+    // Free-look mode, ball cam held: a release while it still blends in is ignored (it lasts at least its blend)
+    const holding = mode !== null && mode.ballCamHold && current === this.#ballCam && this.#blender.blending;
+    const wanted = this.#select(car, { ...controls, ballCam: controls.ballCam || holding }, respawn);
+    // Free look runs in the car cam (not in rear view), the demolished and the spot-selection views; elsewhere, or with
+    // free look off, it's turned off (TurnOffFreeLook), as on entering the demolished view
+    const canFreeLook = wanted === this.#carCam || wanted === this.#demolished || wanted === this.#spawnSelect;
+    if ((mode === null || !canFreeLook || controls.rear) || (wanted === this.#demolished && current !== this.#demolished)) this.#freeLook.reset();
+    const freeLook = mode !== null && canFreeLook && !controls.rear ? this.#freeLook.update(dt, mode.axes, mode.settings) : null;
+    const input: CameraInput = { car, ball, settings: this.settings, rear: controls.rear, respawn: respawnInput, freeLook };
+    if (current !== wanted) {
+      // Free look: between the free-look ball cam (LookAtBall) and the car cam the view keeps its rotation and smoothing
+      const cams = [this.#carCam, this.#ballCam];
+      const from = cams.find((c) => c === current);
+      const to = cams.find((c) => c === wanted);
+      if (mode && from && to) to.carryFrom = from;
+      this.#blender.transitionTo(wanted, input, this.#blendTime(current, wanted));
+    }
+    this.#watchBallCamExit(dt, mode, controls);
     this.#blender.tick(dt, input);
     this.#blender.update(dt, input, this.#pov);
     finalize(this.#pov);
@@ -539,8 +783,9 @@ export class PlayerCamera {
     const fovScale = this.#fov / 90;
     const up = quantizeSwivelInput(controls.lookUp * fovScale);
     const right = quantizeSwivelInput(controls.lookRight * fovScale);
-    this.#swivel.update(dt, up, right, lengthOf(car.vel), this.settings.swivelSpeed);
-    view.rotation = addRotators(view.rotation, this.#swivel.rotation);
+    // (no swivel in free-look mode: bCanSwivel && !bUnconstrainRotation)
+    this.#swivel.update(realDt, mode ? 0 : up, mode ? 0 : right, lengthOf(car.vel), this.settings.swivelSpeed);
+    if (!mode) view.rotation = addRotators(view.rotation, this.#swivel.rotation);
     if (controls.rear) view.rotation = rotator(view.rotation.pitch, view.rotation.yaw + 32768, view.rotation.roll);
     finalize(view);
     this.#fov = view.fov;
@@ -550,5 +795,57 @@ export class PlayerCamera {
 
     const axes = rotationAxes(view.rotation);
     return { position: clipped, forward: axes.forward, up: axes.up, horizontalFov: view.fov };
+  }
+
+  /** SelectCameraState: the current state while it keeps executing, else the first in order that executes */
+  #select(car: CarState, controls: CameraControls, respawn: RespawnState | null): CameraState {
+    const demoed = car.demoed;
+    const held = respawn?.held ?? false;
+    const locked = car.spawnSelection.locked !== null || car.demoRespawnTimer <= PRESPAWN_SECONDS;
+    // PC.Prespawn.bPrespawnSet (HandlePrespawn, 0.5 s before the respawn); the spot selection while it's open, once a
+    // spot was picked (HasDemoSelection)
+    const prespawnSet = demoed && !held && locked;
+    const selecting = demoed && !held && !locked && (respawn?.selected ?? null) !== null;
+    const current = this.#blender.state;
+    const keeps =
+      (current === this.#prespawn && (prespawnSet || demoed)) || // (… || waiting for the new car)
+      (current === this.#demolished && demoed && !prespawnSet && !selecting) ||
+      (current === this.#spawnSelect && selecting);
+    if (current && keeps) return current;
+    if (current === this.#demolished) this.#demolishedFlag = false; // (its EndCameraState: it doesn't come back)
+    if (prespawnSet && !selecting) return this.#prespawn;
+    if (demoed && this.#demolishedFlag) return this.#demolished;
+    if (selecting) return this.#spawnSelect;
+    if (demoed) return current ?? this.#demolished; // (nothing else runs without a car: the view stays)
+    return controls.ballCam ? this.#ballCam : this.#carCam;
+  }
+
+  /** The blend between two states (their start and end blend params; all EaseIn, exponent 2): into the demolished
+   *  view 0.25 s; from it 0.25 s to the spot selection, 0.5 s to the prespawn (PrespawnLerpSpeed), else a cut; out of
+   *  the selection and the prespawn, and between the car and ball cams, by the transition speed (0.5 s at 1) */
+  #blendTime(from: CameraState | null, to: CameraState): number {
+    const transition = lerp(0.5, 0, Math.min(1, Math.max(0, this.settings.transitionSpeed - 1)));
+    if (to === this.#demolished) return 0.25;
+    if (from === this.#demolished) return to === this.#spawnSelect ? 0.25 : to === this.#prespawn ? 0.5 : 0;
+    return transition;
+  }
+
+  /** The free-look ball cam's exit by looking around (toggle mode; never while it blends in): the mouse past
+   *  FREE_LOOK_EXIT_SPEED for FREE_LOOK_EXIT_SECONDS, a stick past its deadzone at once */
+  #watchBallCamExit(dt: number, mode: FreeLookControls | null, controls: CameraControls): void {
+    if (!mode || mode.ballCamHold || !controls.ballCam || this.#blender.state !== this.#ballCam || this.#blender.blending || dt <= 0) {
+      this.#fastLook = 0;
+      return;
+    }
+    const { pitch, yaw, source } = mode.axes;
+    if (source === "stick") {
+      if (pitch !== 0 || yaw !== 0) this.#ballCamExit = true;
+      return;
+    }
+    this.#fastLook = Math.hypot(pitch, yaw) / dt > FREE_LOOK_EXIT_SPEED ? this.#fastLook + dt : 0;
+    if (this.#fastLook >= FREE_LOOK_EXIT_SECONDS) {
+      this.#fastLook = 0;
+      this.#ballCamExit = true;
+    }
   }
 }

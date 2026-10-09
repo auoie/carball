@@ -6,17 +6,18 @@ import { PlayerCamera } from "../camera/rlCamera";
 import type { BodyState, CarState, World } from "../engine/world";
 import { type Hud, respawnHud } from "../hud";
 import type { InputDevices } from "../input/devices";
-import { AirPitchSafety, ButtonLatch, EMPTY_INPUT, type HeldActions, type LookInput, readControls, readHeldActions, readLook } from "../input/mapping";
+import { AirPitchSafety, ButtonLatch, EMPTY_INPUT, type HeldActions, JumpLatch, type LookInput, readControls, readHeldActions } from "../input/mapping";
 import type { ControllerSettings, Options, Settings } from "../settings/settings";
-import { FixedStep, TICK_SECONDS } from "../loop/fixedStep";
+import { FixedStep, TICK_SECONDS, worldSeconds } from "../loop/fixedStep";
 import { type Vec3, ZERO, add, scale, vec3 } from "../math/vec";
 import { BALL_RADIUS, BallView, BoostPadsView, CarView } from "../render/entities";
 import type { ArenaView } from "../render/arena";
 import type { Renderer } from "../render/renderer";
 import type { GameAudio } from "../audio/audio";
 import { type Dodge, FlipTracker } from "./flipTracker";
-
-const GOAL_RESET_SECONDS = 2;
+import { cameraInputs } from "./cameraInput";
+import type { FreeLookControls } from "../camera/rlCamera";
+import { POST_GOAL_TICKS, postGoalDilation } from "./goalSequence";
 
 export class Freeplay {
   readonly #world: World;
@@ -43,10 +44,14 @@ export class Freeplay {
   #ballCam = false;
   #rear = false;
   #look: LookInput = { up: 0, right: 0 };
+  #freeLook: FreeLookControls | null = null;
   readonly #pitchSafety = new AirPitchSafety();
   readonly #buttons = new ButtonLatch(); // (buttons as the game's press and release commands: C-4)
+  readonly #jump = new JumpLatch(); // (a jump press is a tick of jump however short: LT-4)
   #preferences: ControllerSettings | null = null;
-  #goalTimer = 0;
+  #tick = 0; // ticks run
+  /** The last goal's tick, until the ball's reset (the game's PostGoalScored: 3.0 game s, slowed at first) */
+  #goalTick: number | null = null;
   #message: string | null = null;
   #kickoffSeed = 1;
   #fps = 60;
@@ -88,22 +93,27 @@ export class Freeplay {
     const polled = this.#input.snapshot();
     const snapshot = this.inputEnabled() ? polled : EMPTY_INPUT;
     const { bindings, controller, options } = settings;
-    this.#handleActions(readHeldActions(snapshot, bindings, controller.deadzone), options);
+    const camera = cameraInputs(settings, snapshot, this.#input, this.#camera.fov);
+    this.#handleActions(readHeldActions(snapshot, bindings, controller.deadzone), options, camera.device.ballCamToggle);
     const raw = readControls(snapshot, bindings, controller.deadzone, this.#buttons);
+    this.#jump.frame(this.#buttons);
     const onGround = this.#car.current.onGround;
     const safety = this.#pitchSafety.update(options.airPitchSafety, this.#input.usingGamepad, onGround, raw);
     const controls = { ...raw, airPitchSafety: safety, dodgeForward: -raw.pitch }; // (its own byte: C-2)
-    const look = readLook(snapshot, bindings, controller.deadzone);
-    // PlayerController_TA.SwivelPitchDir
-    this.#look = { up: options.invertSwivelPitch ? -look.up : look.up, right: look.right };
+    this.#look = camera.look;
+    this.#freeLook = camera.freeLook;
     this.#camera.settings = settings.camera;
 
     this.#throttle = Math.abs(controls.throttle);
 
-    const ticks = this.#clock.advance(frameSeconds);
+    // The frame's world time: slowed after a goal (the next tick's dilation)
+    const dilation = this.#goalTick === null ? 1 : postGoalDilation(this.#tick + 1 - this.#goalTick);
+    const world = worldSeconds(frameSeconds, dilation);
+    const ticks = this.#clock.advance(world);
     for (let i = 0; i < ticks; i++) {
-      this.#world.setControls(this.#playerId, controls);
+      this.#world.setControls(this.#playerId, { ...controls, jump: this.#jump.tick(controls.jump) });
       this.#world.step();
+      this.#tick++;
       const car = this.#world.car(this.#playerId);
       this.#car.push(car, car.spawnCount !== this.#car.current.spawnCount);
       this.#pushBall();
@@ -112,7 +122,7 @@ export class Freeplay {
       this.#updateGoalTimer();
     }
 
-    this.#draw(frameSeconds, ticks * TICK_SECONDS);
+    this.#draw(world, ticks * TICK_SECONDS, frameSeconds);
   }
 
   /** The engine applies the sensitivities and dodge deadzone, like the game's PRI car preferences. */
@@ -126,10 +136,10 @@ export class Freeplay {
     });
   }
 
-  #handleActions(held: HeldActions, options: Options): void {
+  #handleActions(held: HeldActions, options: Options, ballCamToggle: boolean): void {
     const pressed = (key: keyof HeldActions): boolean => held[key] && !this.#held[key];
     // PressSecondaryCamera / PressRearCamera: toggle on press, or follow the button
-    if (!options.ballCamToggle) this.#ballCam = held.ballCam;
+    if (!ballCamToggle) this.#ballCam = held.ballCam;
     else if (pressed("ballCam")) this.#ballCam = !this.#ballCam;
     if (!options.rearCameraToggle) this.#rear = held.rearCamera;
     else if (pressed("rearCamera")) this.#rear = !this.#rear;
@@ -141,20 +151,21 @@ export class Freeplay {
 
   #handleEvents(): void {
     for (const event of this.#world.takeEvents()) {
-      if (event.type === "goal" && this.#goalTimer <= 0) {
+      if (event.type === "goal" && this.#goalTick === null) {
         this.#score[event.scoringTeam] += 1;
         this.#audio.goal();
         this.#message = event.scoringTeam === 0 ? "BLUE SCORES!" : "ORANGE SCORES!";
-        this.#goalTimer = GOAL_RESET_SECONDS;
+        this.#goalTick = this.#tick;
       }
     }
   }
 
-  /** After a goal the ball goes back to the centre; the car stays where it is (as in freeplay). */
+  /** After a goal (PostGoalTime 3.0 game s, the first of them slowed) the ball goes back to the centre; the car stays
+   *  where it is (as in freeplay). */
   #updateGoalTimer(): void {
-    if (this.#goalTimer <= 0) return;
-    this.#goalTimer -= TICK_SECONDS;
-    if (this.#goalTimer <= 0) {
+    if (this.#goalTick === null) return;
+    if (this.#tick - this.#goalTick >= POST_GOAL_TICKS) {
+      this.#goalTick = null;
       this.#world.setBall({ pos: vec3(0, 0, BALL_RADIUS + 1.9), vel: ZERO, angVel: ZERO });
       this.#pushBall();
       this.#message = null;
@@ -164,7 +175,7 @@ export class Freeplay {
   #resetKickoff(): void {
     this.#kickoffSeed += 1;
     this.#world.resetKickoff(this.#kickoffSeed);
-    this.#goalTimer = 0;
+    this.#goalTick = null;
     this.#message = null;
     this.#snapViews();
   }
@@ -212,8 +223,9 @@ export class Freeplay {
     this.#camera.reset();
   }
 
-  /** `simulated`: seconds of physics run this frame. */
-  #draw(frameSeconds: number, simulated: number): void {
+  /** `frameSeconds`: the frame's world time (slowed after a goal); `simulated`: seconds of physics run this frame;
+   *  `realSeconds`: real time since the last frame. */
+  #draw(frameSeconds: number, simulated: number, realSeconds: number): void {
     const alpha = this.#clock.alpha;
     const car = this.#car.current;
     this.#carView.update(
@@ -231,12 +243,9 @@ export class Freeplay {
     const pads = this.#world.boostPads();
     this.#padsView.update(pads);
 
-    const view = this.#camera.update(frameSeconds, this.#car.blended(alpha), this.#ball.blended(alpha).pos, {
-      ballCam: this.#ballCam,
-      rear: this.#rear,
-      lookUp: this.#look.up,
-      lookRight: this.#look.right,
-    });
+    const controls = { ballCam: this.#ballCam, rear: this.#rear, lookUp: this.#look.up, lookRight: this.#look.right, freeLook: this.#freeLook };
+    const view = this.#camera.update(frameSeconds, this.#car.blended(alpha), this.#ball.blended(alpha).pos, controls, null, realSeconds);
+    if (this.#camera.takeBallCamExit()) this.#ballCam = false; // (free look left the toggled ball cam)
     this.#renderer.render(view);
     this.#audio.frame({
       world: { cars: new Map([[this.#playerId, car]]), ball: this.#ball.current, pads },
@@ -246,7 +255,7 @@ export class Freeplay {
       camera: view,
     });
 
-    if (frameSeconds > 0) this.#fps += (1 / frameSeconds - this.#fps) * 0.05;
+    if (realSeconds > 0) this.#fps += (1 / realSeconds - this.#fps) * 0.05;
     this.#hud.update({
       boost: car.boost,
       speed: Math.hypot(car.vel.x, car.vel.y, car.vel.z),

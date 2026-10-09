@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { NO_CONTROLS } from "../engine/world";
 import { type Bindings, DEFAULT_BINDINGS, inputName, keyName } from "./bindings";
-import { AirPitchSafety, ButtonLatch, type InputSnapshot, axisDeadzone, readControls, readHeldActions, readLook } from "./mapping";
+import { AirPitchSafety, ButtonLatch, type InputSnapshot, JumpLatch, axisDeadzone, readControls, readHeldActions, readLook } from "./mapping";
 
 const DZ = 0.2; // the game's default controller deadzone
 const keys = (...codes: string[]): InputSnapshot => ({ keys: new Set(codes), mouseButtons: new Set(), gamepad: null });
@@ -269,3 +269,63 @@ describe("the controller default: the left trigger is reverse and air roll (the 
   });
 });
 
+
+describe("inputs between frames (notes/client-loop-timing.md LT-4..6)", () => {
+  /** A frame's snapshot: held keys, and keys pressed and let go since the last one */
+  const frame = (held: string[], pressed: string[] = [], released: string[] = []): InputSnapshot => ({
+    keys: new Set(held),
+    mouseButtons: new Set(),
+    pressedKeys: new Set(pressed),
+    releasedKeys: new Set(released),
+    gamepad: null,
+  });
+  const boostKey = DEFAULT_BINDINGS.boost.keyboard;
+  const boostCode = boostKey?.kind === "key" ? boostKey.code : "ShiftLeft";
+
+  it("a boost or powerslide tap within one frame is lost: the release comes before the frame's ticks (LT-5)", () => {
+    const latch = new ButtonLatch();
+    expect(readControls(frame([], [boostCode], [boostCode]), DEFAULT_BINDINGS, DZ, latch).boost).toBe(false);
+    expect(readControls(frame([boostCode], [boostCode]), DEFAULT_BINDINGS, DZ, latch).boost).toBe(true);
+    expect(readControls(frame([], [], [boostCode]), DEFAULT_BINDINGS, DZ, latch).boost).toBe(false);
+  });
+
+  it("a jump tap within one frame is exactly one tick of jump, at 30 fps too (LT-4)", () => {
+    const latch = new ButtonLatch();
+    const jump = new JumpLatch();
+    const c = readControls(frame([], ["Space"], ["Space"]), DEFAULT_BINDINGS, DZ, latch);
+    jump.frame(latch);
+    expect(c.jump).toBe(false);
+    // 30 fps: four ticks this frame
+    expect([0, 1, 2, 3].map(() => jump.tick(c.jump))).toEqual([true, false, false, false]);
+  });
+
+  it("a jump tap in a frame with no tick jumps on the next tick (LT-4)", () => {
+    const latch = new ButtonLatch();
+    const jump = new JumpLatch();
+    readControls(frame([], ["Space"], ["Space"]), DEFAULT_BINDINGS, DZ, latch);
+    jump.frame(latch); // (no tick: 144 Hz)
+    const next = readControls(frame([]), DEFAULT_BINDINGS, DZ, latch);
+    jump.frame(latch);
+    expect(jump.tick(next.jump)).toBe(true);
+    expect(jump.tick(next.jump)).toBe(false);
+  });
+
+  it("a held jump is held every tick; the key's repeat is no new press", () => {
+    const latch = new ButtonLatch();
+    const jump = new JumpLatch();
+    readControls(frame(["Space"], ["Space"]), DEFAULT_BINDINGS, DZ, latch);
+    jump.frame(latch);
+    const held = readControls(frame(["Space"]), DEFAULT_BINDINGS, DZ, latch);
+    jump.frame(latch);
+    expect(latch.pressed("jump")).toBe(false);
+    expect([jump.tick(held.jump), jump.tick(held.jump)]).toEqual([true, true]);
+  });
+
+  it("a keyboard axis key let go since the last frame still counts in full this frame, then not (LT-6)", () => {
+    expect(controls(frame([], [], ["KeyW"])).throttle).toBe(1);
+    expect(controls(frame([], ["KeyD"], ["KeyD"])).steer).toBe(1); // (a tap too)
+    expect(controls(frame([])).throttle).toBe(0);
+    // Not buttons: a boost key let go is let go
+    expect(readControls(frame([], [], [boostCode]), DEFAULT_BINDINGS, DZ, new ButtonLatch()).boost).toBe(false);
+  });
+});

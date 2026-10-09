@@ -3,14 +3,27 @@
 use crate::engine::Controls;
 
 // 2: kickoff countdown in the state; 3: the wheels' previous contacts; 4: the jump's release; 5: respawn spot selection
-// and flip resets in the state
-pub const VERSION: u16 = 8;
+// and flip resets in the state; 9: the goal replay (its phase, plan and skip votes; Hello's auto-skip)
+pub const VERSION: u16 = 9;
 pub const MAX_INPUT_FRAMES: usize = 10;
 
 /// Control stream (reliable) messages
 #[derive(Clone, Debug, PartialEq)]
 pub enum Control {
-    Hello { version: u16, team: u8, body: u8, dodge_deadzone: f32, steering_sensitivity: f32, air_control_sensitivity: f32 },
+    Hello {
+        version: u16,
+        team: u8,
+        body: u8,
+        dodge_deadzone: f32,
+        steering_sensitivity: f32,
+        air_control_sensitivity: f32,
+        /// The player skips goal replays (`bAutoSkipGoalReplay`): auto-ready in every one
+        auto_skip_replay: bool,
+    },
+    /// Skip the goal replay (`ReadyUp`: Space / pad A); counts only during one
+    ReadyUp,
+    /// The auto-skip setting changed (`ServerSetAutoSkipGoalReplay`: turned on during a replay, it readies the player)
+    AutoSkipReplay { on: bool },
     /// The client had a hitch (over 0.1 s between its ticks) 2 s ago: the server resets its jitter buffer
     /// (`NetworkInputBuffer_TA.ClientTick` → `ServerResetInputBuffer`)
     ResetInputBuffer,
@@ -19,6 +32,26 @@ pub enum Control {
     Event { server_tick: u32, event: GameEvent },
     /// The match's state: sent when it changes and each second while the clock runs
     Match(MatchState),
+    /// The goal replay starts (`StartReplay` → `ReplayPlayback`): what the clients play from their own recording
+    Replay(ReplayPlan),
+    /// How many players are ready to skip the goal replay, of how many (sent when it changes during one)
+    ReplayReady { ready: u8, total: u8 },
+}
+
+/// A goal replay (server ticks; `ReplayDirector_TA`): `notes/camera-respawn-goal.md` GS-7..9
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReplayPlan {
+    /// The first tick shown (`GetReplayStartTime`)
+    pub start_tick: u32,
+    pub goal_tick: u32,
+    /// The recording's end: the goal + PostGoalTime
+    pub end_tick: u32,
+    pub scoring_team: u8,
+    /// Stretches played at 0.25 speed (from, to: exclusive), in order
+    pub slomo: Vec<(u32, u32)>,
+    /// Whom the camera follows with the ball, until when (car id, tick): each run of touches by one car up to the
+    /// scoring touch, in order
+    pub focus: Vec<(u32, u32)>,
 }
 
 /// Where a match is (the game's GameEvent_Soccar_TA states)
@@ -34,6 +67,8 @@ pub enum Phase {
     TimeUp = 3,
     /// The match is over (`winner`); a new one starts after the podium
     Ended = 4,
+    /// The goal replay (`ReplayPlayback`): the cars gone, until it ends or every player skips it
+    Replay = 5,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -195,7 +230,7 @@ impl Control {
     pub fn encode(&self) -> Vec<u8> {
         let mut w = Writer::default();
         match self {
-            Self::Hello { version, team, body, dodge_deadzone, steering_sensitivity, air_control_sensitivity } => {
+            Self::Hello { version, team, body, dodge_deadzone, steering_sensitivity, air_control_sensitivity, auto_skip_replay } => {
                 w.u8(0x01);
                 w.u16(*version);
                 w.u8(*team);
@@ -203,8 +238,36 @@ impl Control {
                 w.f32(*dodge_deadzone);
                 w.f32(*steering_sensitivity);
                 w.f32(*air_control_sensitivity);
+                w.u8(u8::from(*auto_skip_replay));
             }
             Self::ResetInputBuffer => w.u8(0x02),
+            Self::ReadyUp => w.u8(0x03),
+            Self::AutoSkipReplay { on } => {
+                w.u8(0x04);
+                w.u8(u8::from(*on));
+            }
+            Self::Replay(plan) => {
+                w.u8(0x85);
+                w.u32(plan.start_tick);
+                w.u32(plan.goal_tick);
+                w.u32(plan.end_tick);
+                w.u8(plan.scoring_team);
+                w.u8(plan.slomo.len().min(255) as u8);
+                for (from, to) in plan.slomo.iter().take(255) {
+                    w.u32(*from);
+                    w.u32(*to);
+                }
+                w.u8(plan.focus.len().min(255) as u8);
+                for (car, tick) in plan.focus.iter().take(255) {
+                    w.u32(*car);
+                    w.u32(*tick);
+                }
+            }
+            Self::ReplayReady { ready, total } => {
+                w.u8(0x86);
+                w.u8(*ready);
+                w.u8(*total);
+            }
             Self::Welcome { version, car_id, tick_rate, frame, snapshot } => {
                 w.u8(0x81);
                 w.u16(*version);
@@ -263,8 +326,18 @@ impl Control {
                 dodge_deadzone: r.f32()?,
                 steering_sensitivity: r.f32()?,
                 air_control_sensitivity: r.f32()?,
+                auto_skip_replay: r.u8()? != 0,
             },
             0x02 => Self::ResetInputBuffer,
+            0x03 => Self::ReadyUp,
+            0x04 => Self::AutoSkipReplay { on: r.u8()? != 0 },
+            0x85 => {
+                let (start_tick, goal_tick, end_tick, scoring_team) = (r.u32()?, r.u32()?, r.u32()?, r.u8()?);
+                let slomo = (0..r.u8()?).map(|_| Ok((r.u32()?, r.u32()?))).collect::<Result<_, DecodeError>>()?;
+                let focus = (0..r.u8()?).map(|_| Ok((r.u32()?, r.u32()?))).collect::<Result<_, DecodeError>>()?;
+                Self::Replay(ReplayPlan { start_tick, goal_tick, end_tick, scoring_team, slomo, focus })
+            }
+            0x86 => Self::ReplayReady { ready: r.u8()?, total: r.u8()? },
             0x81 => Self::Welcome { version: r.u16()?, car_id: r.u32()?, tick_rate: r.u8()?, frame: r.u32()?, snapshot: r.bytes_with_len()? },
             0x82 => Self::World { frame: r.u32()?, snapshot: r.bytes_with_len()? },
             0x83 => {
@@ -284,6 +357,7 @@ impl Control {
                     2 => Phase::PostGoal,
                     3 => Phase::TimeUp,
                     4 => Phase::Ended,
+                    5 => Phase::Replay,
                     t => return Err(DecodeError::UnknownType(t)),
                 };
                 let flags = r.u8()?;
@@ -407,7 +481,22 @@ mod tests {
                 dodge_deadzone: f(&m["dodgeDeadzone"]),
                 steering_sensitivity: f(&m["steeringSensitivity"]),
                 air_control_sensitivity: f(&m["airControlSensitivity"]),
+                auto_skip_replay: m["autoSkipReplay"].as_bool().unwrap(),
             },
+            "readyUp" => Control::ReadyUp,
+            "autoSkipReplay" => Control::AutoSkipReplay { on: m["on"].as_bool().unwrap() },
+            "replay" => {
+                let pairs = |v: &Value| v.as_array().unwrap().iter().map(|p| (u(&p[0]), u(&p[1]))).collect();
+                Control::Replay(ReplayPlan {
+                    start_tick: u(&m["startTick"]),
+                    goal_tick: u(&m["goalTick"]),
+                    end_tick: u(&m["endTick"]),
+                    scoring_team: u(&m["scoringTeam"]) as u8,
+                    slomo: pairs(&m["slomo"]),
+                    focus: m["focus"].as_array().unwrap().iter().map(|p| (u(&p["car"]), u(&p["tick"]))).collect(),
+                })
+            }
+            "replayReady" => Control::ReplayReady { ready: u(&m["ready"]) as u8, total: u(&m["total"]) as u8 },
             "welcome" => Control::Welcome {
                 version: u(&m["version"]) as u16,
                 car_id: u(&m["carId"]),
@@ -431,6 +520,7 @@ mod tests {
                     "active" => Phase::Active,
                     "postGoal" => Phase::PostGoal,
                     "timeUp" => Phase::TimeUp,
+                    "replay" => Phase::Replay,
                     _ => Phase::Ended,
                 },
                 overtime: m["overtime"].as_bool().unwrap(),

@@ -188,3 +188,145 @@ describe("swivel and rear camera", () => {
     expect(view.forward.x).toBeLessThan(-0.99);
   });
 });
+
+describe("respawn cameras (notes/camera-respawn-goal.md CAM-20..29)", () => {
+  const wreck = vec3(1000, -2000, 17);
+  const demoed = (timer: number, locked: { pos: Vec3; yaw: number } | null = null) =>
+    car({ pos: wreck, demoed: true, demoRespawnTimer: timer, spawnSelection: { side: null, index: 0, locked } });
+  const ball = vec3(0, 3000, 93);
+  const spot = { pos: vec3(-2304, -4608, 17), yaw: Math.PI / 2 };
+  const angle = (a: Vec3, b: Vec3) => Math.acos(Math.min(1, a.x * b.x + a.y * b.y + a.z * b.z));
+
+  it("a demolition blends over 0.25 s (EaseIn²) to above the wreck: 400 away at FOV 120, the view's rotation held", () => {
+    const camera = new PlayerCamera();
+    const before = settle(camera, car({ pos: wreck }), ball, CAR_CAM, 2);
+    let view = camera.update(1 / 120, demoed(3), ball, CAR_CAM);
+    for (let i = 1; i < 15; i++) view = camera.update(1 / 120, demoed(3), ball, CAR_CAM);
+    // Half way: a quarter of the FOV's change left
+    expect(view.horizontalFov).toBeCloseTo(120 + (before.horizontalFov - 120) * 0.25, 0);
+    for (let i = 0; i < 20; i++) view = camera.update(1 / 120, demoed(3), ball, CAR_CAM);
+    expect(view.horizontalFov).toBe(120);
+    expect(angle(view.forward, before.forward)).toBeLessThan(1e-6);
+    const focus = vec3(view.position.x + view.forward.x * 400, view.position.y + view.forward.y * 400, view.position.z + view.forward.z * 400);
+    expect(focus.x).toBeCloseTo(wreck.x, 6);
+    expect(focus.y).toBeCloseTo(wreck.y, 6);
+    expect(focus.z).toBeCloseTo(wreck.z + 100, 6);
+  });
+
+  it("a spot picked: 0.25 s to above it (z 83 + height), facing its way level, at the player's distance and FOV", () => {
+    const camera = new PlayerCamera();
+    settle(camera, car({ pos: wreck }), ball, CAR_CAM, 1);
+    let view = camera.update(1 / 120, demoed(3), ball, CAR_CAM);
+    for (let i = 0; i < 60; i++) view = camera.update(1 / 120, demoed(2.5), ball, CAR_CAM);
+    for (let i = 0; i < 31; i++) view = camera.update(1 / 120, demoed(2), ball, CAR_CAM, { held: false, selected: spot });
+    expect(view.horizontalFov).toBeCloseTo(90, 6);
+    expect(view.forward.y).toBeCloseTo(1, 6);
+    expect(view.position.x).toBeCloseTo(spot.pos.x, 6);
+    expect(view.position.y).toBeCloseTo(spot.pos.y - 270, 6);
+    expect(view.position.z).toBeCloseTo(83 + 100, 6);
+  });
+
+  it("0.5 s before the respawn: the locked spot's view; then the new car blends in over 0.5 s, from behind it", () => {
+    const camera = new PlayerCamera();
+    settle(camera, car({ pos: wreck }), ball, CAR_CAM, 1);
+    for (let i = 0; i < 300; i++) camera.update(1 / 120, demoed(3 - i / 120), ball, CAR_CAM);
+    let view = camera.update(1 / 120, demoed(0.49, spot), ball, CAR_CAM);
+    for (let i = 0; i < 59; i++) view = camera.update(1 / 120, demoed(0.49 - i / 120, spot), ball, CAR_CAM);
+    // (blended 0.5 s from the wreck view: there)
+    expect(view.position.x).toBeCloseTo(spot.pos.x, 3);
+    expect(view.position.z).toBeCloseTo(183, 3);
+    const respawned = car({ pos: vec3(spot.pos.x, spot.pos.y, 17), rot: { forward: vec3(0, 1, 0), right: vec3(-1, 0, 0), up: UP } });
+    view = camera.update(1 / 120, respawned, ball, CAR_CAM);
+    expect(view.position.x).toBeCloseTo(spot.pos.x, 0); // (no cut)
+    for (let i = 0; i < 61; i++) view = camera.update(1 / 120, respawned, ball, CAR_CAM);
+    expect(view.forward.y).toBeGreaterThan(0.99); // behind the new car
+    expect(view.position.y).toBeLessThan(spot.pos.y - 200);
+  });
+
+  it("after a goal (respawns held) the wreck view stays, past the prespawn time", () => {
+    const camera = new PlayerCamera();
+    settle(camera, car({ pos: wreck }), ball, CAR_CAM, 1);
+    let view = camera.update(1 / 120, demoed(3), ball, CAR_CAM);
+    for (let i = 0; i < 400; i++) view = camera.update(1 / 120, demoed(0), ball, CAR_CAM, { held: true, selected: null });
+    expect(view.horizontalFov).toBe(120);
+  });
+});
+
+describe("free look (notes/camera-respawn-goal.md CAM-10..15)", () => {
+  const SETTINGS = { smoothing: true, accelRate: 5.8, decelRate: 10.8, freeLookSpeed: 2.5 };
+  const look = (yaw: number, pitch = 0, source: "stick" | "mouse" = "stick", ballCamHold = false): CameraControls => ({
+    ...CAR_CAM,
+    freeLook: { axes: { pitch, yaw, source }, settings: SETTINGS, ballCamHold },
+  });
+  const yawOf = (v: Vec3) => Math.atan2(v.y, v.x);
+  const ball = vec3(0, 3000, 93);
+  const turned = car({ rot: { forward: vec3(0, 1, 0), right: vec3(-1, 0, 0), up: UP } });
+
+  it("the view turns only by the look input: the car turning under it doesn't turn it", () => {
+    const camera = new PlayerCamera();
+    settle(camera, car(), ball, look(0), 1);
+    const view = settle(camera, turned, ball, look(0), 2);
+    expect(Math.abs(yawOf(view.forward))).toBeLessThan(1e-3); // (still along +x; the classic camera follows to +y)
+    expect(yawOf(settle(new PlayerCamera(), turned, ball, CAR_CAM, 2).forward)).toBeCloseTo(Math.PI / 2, 2);
+  });
+
+  it("a full stick for a second turns it 20745 units (114°), round the car (the focus stays above it)", () => {
+    const camera = new PlayerCamera();
+    let view = settle(camera, car(), ball, look(0), 1);
+    const before = yawOf(view.forward);
+    for (let i = 0; i < 120; i++) view = camera.update(1 / 120, car(), ball, look(1));
+    expect((yawOf(view.forward) - before) * (32768 / Math.PI)).toBeCloseTo(20745, -1);
+  });
+
+  it("its pitch stops at 75°; no swivel in free-look mode", () => {
+    const camera = new PlayerCamera();
+    let view = settle(camera, car(), ball, look(0), 1);
+    for (let i = 0; i < 240; i++) view = camera.update(1 / 120, car(), ball, look(0, 1));
+    expect(Math.asin(view.forward.z)).toBeCloseTo((13653 * Math.PI) / 32768, 4);
+    const still = settle(new PlayerCamera(), car(), ball, look(0), 1);
+    const swivelled = settle(new PlayerCamera(), car(), ball, { ...look(0), lookRight: 1 }, 1);
+    expect(swivelled.forward.y).toBeCloseTo(still.forward.y, 9);
+  });
+
+  it("the rear camera suspends it; let go, the view is behind the car again (recentred)", () => {
+    const camera = new PlayerCamera();
+    settle(camera, car(), ball, look(0), 1);
+    for (let i = 0; i < 60; i++) camera.update(1 / 120, car(), ball, look(1));
+    const rear = settle(camera, car(), ball, { ...look(0), rear: true }, 1);
+    expect(rear.forward.x).toBeLessThan(-0.99); // (the classic rear view: backwards)
+    const after = settle(camera, car(), ball, look(0), 0.1);
+    expect(after.forward.x).toBeGreaterThan(0.99);
+  });
+
+  it("toggled, the free-look ball cam is left by a stick past its deadzone (not while it blends in)", () => {
+    const camera = new PlayerCamera();
+    settle(camera, car(), ball, look(0), 1);
+    const ballCam = (yaw: number): CameraControls => ({ ...look(yaw), ballCam: true });
+    camera.update(1 / 120, car(), ball, ballCam(0.5));
+    expect(camera.takeBallCamExit()).toBe(false); // (blending in)
+    for (let i = 0; i < 70; i++) camera.update(1 / 120, car(), ball, ballCam(0));
+    expect(camera.takeBallCamExit()).toBe(false);
+    camera.update(1 / 120, car(), ball, ballCam(0.5));
+    expect(camera.takeBallCamExit()).toBe(true);
+  });
+
+  it("held, the free-look ball cam lasts at least its blend in", () => {
+    const camera = new PlayerCamera();
+    settle(camera, car(), ball, look(0, 0, "mouse", true), 1);
+    let view = camera.update(1 / 120, car(), ball, { ...look(0, 0, "mouse", true), ballCam: true });
+    for (let i = 0; i < 30; i++) view = camera.update(1 / 120, car(), ball, look(0, 0, "mouse", true)); // (let go at once)
+    for (let i = 0; i < 40; i++) view = camera.update(1 / 120, car(), ball, look(0, 0, "mouse", true));
+    expect(view.forward.y).toBeGreaterThan(0.9); // (it reached the ball before it ended: the view kept its rotation)
+  });
+
+  it("turns the demolished view too", () => {
+    const camera = new PlayerCamera();
+    settle(camera, car(), ball, look(0), 1);
+    const wrecked = car({ demoed: true, demoRespawnTimer: 3 });
+    let view = camera.update(1 / 120, wrecked, ball, look(0));
+    for (let i = 0; i < 60; i++) view = camera.update(1 / 120, wrecked, ball, look(0));
+    const before = yawOf(view.forward);
+    for (let i = 0; i < 60; i++) view = camera.update(1 / 120, car({ demoed: true, demoRespawnTimer: 2.4 }), ball, look(1));
+    expect(yawOf(view.forward) - before).toBeGreaterThan(0.5);
+  });
+});
