@@ -106,12 +106,10 @@ export const FREEPLAY_COUNTDOWN_TICKS = 2;
 export const FREEPLAY_PAD_RESET_TICKS = 12;
 /** The player's reset (Backspace): at most once per game second */
 export const FREEPLAY_RESET_COOLDOWN = 1;
-/** The ball at its spawn falls from z 100.49; at its first floor contact (18 ticks later) its velocity is cleared and
- *  it stays at this height (replays: RLConst BALL_KICKOFF_Z) */
-export const BALL_SETTLED_Z = 92.75;
+/** Freeplay's new ball stays at its spawn (z 100.49, at rest) for this many ticks, then falls and bounces (live,
+ *  2026-10-09: held one tick, the floor 18 ticks later at -97 uu/s, a 2.85 uu hop; no freeze on landing, RV-57) */
+export const FREEPLAY_BALL_HOLD_TICKS = 1;
 
-/** Whether the spawned ball, falling, has reached the floor this tick: down to its settled height, or already
- *  bouncing back up */
-export function ballLanded(ball: { readonly pos: { readonly z: number }; readonly vel: { readonly z: number } }): boolean {
-  return ball.pos.z <= BALL_SETTLED_Z + 1e-3 || ball.vel.z > 0;
-}
+/** Both of freeplay's nets have TeamNum 1, so either scores for the player's team (0): the explosion in its colour,
+ *  the replay camera on a team-1 net's side (static analysis RV-41) */
+export const FREEPLAY_NET_TEAM = 1;

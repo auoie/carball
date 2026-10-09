@@ -258,6 +258,14 @@ export function buildArenaSurface(): ArenaSurface {
   };
 }
 
+/** The wall's line round a quadrant (x, y >= 0), from the side wall's middle round the corner to the back wall beside
+ *  the goal (where the wall stands on the floor), with the inward normal at each point */
+export function wallLine(): readonly { readonly p: Pt; readonly n: Pt }[] {
+  return stations()
+    .filter((s) => s.bottom === 0)
+    .map((s) => ({ p: s.p, n: s.n }));
+}
+
 let footStations: Station[] | undefined;
 
 /** How high the trim reaches up the wall nearest (x, y) (game frame; uu): its floor fillet's radius there (256 along the

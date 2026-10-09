@@ -82,9 +82,7 @@ void BoostPad::_PostTickUpdate(float tickTime, const MutatorConfig& mutatorConfi
 	if (_internalState.curLockedCar) {
 		lockedCarID = _internalState.curLockedCar->id;
 
-		// RL PATCH: no pickup at full boost (VehiclePickup_Boost_TA.CanPickup: !BoostComponent.IsFull(), IsFull =
-		// CurrentBoostAmount >= MaxBoostAmount; static analysis RV-40): RocketSim took the pad and clamped
-		if (_internalState.isActive && _internalState.curLockedCar->_internalState.boost < RLConst::BOOST_MAX) {
+		if (_internalState.isActive) {
 			float boostToAdd = config.isBig ? BOOST_AMOUNT_BIG : BOOST_AMOUNT_SMALL;
 			_internalState.curLockedCar->_internalState.boost = RS_MIN(_internalState.curLockedCar->_internalState.boost + boostToAdd, RLConst::BOOST_MAX);
 

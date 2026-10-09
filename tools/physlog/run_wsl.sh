@@ -1,7 +1,7 @@
 #!/bin/bash
 # From WSL: plays PhysLog scenarios in the running game (offline freeplay, plugin loaded, the physlog_* commands
-# allowed for rcon; README "Driving it from WSL"), copies each recording (and its _bullet.csv) into out/live/ and
-# validates it.
+# allowed for rcon; README "Driving it from WSL"), copies each recording (and its _bullet.csv and _wheels.csv) into
+# out/live/ and validates it.
 #   tools/physlog/run_wsl.sh SCENARIO... [-- LIVE_VALIDATE_OPTIONS...]
 #   RUN_ARGS=bot tools/physlog/run_wsl.sh ...   runs them on the spawned bot (physlog_spawn <body> bot)
 set -euo pipefail
@@ -40,6 +40,8 @@ for sc in "${scenarios[@]}"; do
 	cp "$(wslpath "$win")" "$csv"
 	side="$(wslpath "$win" | sed 's/\.csv$/_bullet.csv/')"
 	[ -f "$side" ] && cp "$side" "${csv%.csv}_bullet.csv"
+	wheels="$(wslpath "$win" | sed 's/\.csv$/_wheels.csv/')"
+	[ -f "$wheels" ] && cp "$wheels" "${csv%.csv}_wheels.csv"
 	echo "== $sc: $(grep -o 'scenario done, [0-9]* ticks' <<<"$new"), $csv"
 	"$repo/engine/build/live_validate" "$csv" "$@"
 done

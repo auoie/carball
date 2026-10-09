@@ -4,9 +4,12 @@ import type { CameraView } from "../camera/rlCamera";
 import { horizontalToVerticalFov } from "../camera/interp";
 import { toThreeVector } from "./coords";
 
+/** The camera's far plane (uu): scenery farther from the camera isn't drawn */
+export const CAMERA_FAR = 40000;
+
 export class Renderer {
   readonly scene = new Scene();
-  readonly #camera = new PerspectiveCamera(60, 16 / 9, 5, 40000);
+  readonly #camera = new PerspectiveCamera(60, 16 / 9, 5, CAMERA_FAR);
   readonly #gl: WebGLRenderer;
   readonly #target = new Vector3();
   readonly #forward = new Vector3();

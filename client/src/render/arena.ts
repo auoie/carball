@@ -31,7 +31,7 @@ import {
 } from "three";
 import { toThreeVector } from "./coords";
 import { BALL_RADIUS } from "./entities";
-import { type ArenaSurface, buildArenaSurface, floorOutline, mouthOutline, trimTop } from "./arenaSurface";
+import { type ArenaSurface, buildArenaSurface, floorOutline, mouthOutline, wallLine } from "./arenaSurface";
 import { addBallShadow } from "./ballShadow";
 import { cageGraph } from "./cage";
 import { CageBeams, shockWave } from "./cageBeams";
@@ -56,7 +56,9 @@ export const ARENA = {
   cornerTangentY: 3584,
   cornerTangentX: 2560,
 };
-const TEAM_COLORS = [new Color(0x2a7fff), new Color(0xff8a1f)] as const; // blue (-y goal), orange (+y goal)
+const TEAM_COLORS: readonly [Color, Color] = [new Color(0x2a7fff), new Color(0xff8a1f)]; // blue (-y goal), orange (+y goal)
+/** The game's goal floors (Reflective_Floor_V2: plain metal) and lip (the frame's grey), before the light */
+const GOAL_METAL = new Color(0x5a5f66);
 /** Width of the mown stripes across the field (uu) */
 const STRIPE_WIDTH = 512;
 
@@ -67,6 +69,8 @@ export class ArenaView {
   readonly #net: HexWallMaterial | HexGlassMaterial; // the goals' insides (a finer pattern, as a net; or the game's glass)
   readonly #style: ArenaStyle;
   readonly #theme: Theme;
+  /** The teams' colours on the arena: the theme's (the game's: the linear primaries, AV-2), else ours */
+  readonly #teamColors: readonly [Color, Color];
   #seconds = 0;
   /** World seconds since the ball exploded (a goal), null with a ball in play: the cage's shockwave (AV-15) */
   #sinceExplosion: number | null = null;
@@ -74,6 +78,7 @@ export class ArenaView {
   constructor(theme: Theme) {
     this.#theme = theme;
     this.#style = theme.style;
+    this.#teamColors = theme.style.walls.game ? [theme.style.walls.blue, theme.style.walls.orange] : TEAM_COLORS;
     const surface = buildArenaSurface();
     const goals = buildGoalSurface(GOAL_NET_HEX);
     const { walls } = theme.style;
@@ -160,19 +165,22 @@ export class ArenaView {
    *  team's colour, the post bases grey like the trim they join) and a frame round each mouth. */
   #buildGoals(goals: GoalSurface): Group {
     const { positions, uvs } = goals;
+    const game = this.#style.walls.game === true;
     const threePositions = new Float32Array(positions.length);
     const colors = new Float32Array(positions.length);
     const color = new Color();
     for (let i = 0; i < positions.length; i += 3) {
       threePositions.set([positions[i] ?? 0, positions[i + 2] ?? 0, positions[i + 1] ?? 0], i);
-      color.copy(TEAM_COLORS[(positions[i + 1] ?? 0) < 0 ? 0 : 1]);
+      // (the game's goals: no team colour on the floor or the lip, plain metal and the grey frame: AV-13, RV-63)
+      color.copy(game ? GOAL_METAL : TEAM_COLORS[(positions[i + 1] ?? 0) < 0 ? 0 : 1]);
       colors.set([color.r, color.g, color.b], i);
     }
-    // The game's glass on the net: its tiles at UV0 x (3, 7/3), UV0 about GOAL_GLASS_UV uu a unit (HEX-1, HEX-4)
+    // The game's glass on the net: its tiles at UV0 x (3, 7/3), its U along the profile and V across the goal, about
+    // GOAL_GLASS_UV uu a unit (HEX-1, HEX-4; RV-67: ours has u across, v along the profile)
     const glassTiles = new Float32Array(uvs.length);
     for (let i = 0; i < uvs.length; i += 2) {
-      glassTiles[i] = (3 * (uvs[i] ?? 0)) / GOAL_GLASS_UV[0];
-      glassTiles[i + 1] = ((7 / 3) * (uvs[i + 1] ?? 0)) / GOAL_GLASS_UV[1];
+      glassTiles[i] = (3 * (uvs[i + 1] ?? 0)) / GOAL_GLASS_UV[0];
+      glassTiles[i + 1] = ((7 / 3) * (uvs[i] ?? 0)) / GOAL_GLASS_UV[1];
     }
     // Swapping y and z mirrors the winding: two indices swapped per triangle keep it facing into the goal
     const geometry = (triangles: Uint32Array): BufferGeometry => {
@@ -190,7 +198,10 @@ export class ArenaView {
       return g;
     };
     const floorMaterial = new MeshStandardMaterial({ vertexColors: true, roughness: 0.95, side: FrontSide });
-    floorMaterial.color.setScalar(0.4); // (the team's colour, dimmed)
+    if (game) {
+      floorMaterial.roughness = 0.45;
+      floorMaterial.metalness = 0.6;
+    } else floorMaterial.color.setScalar(0.4); // (the team's colour, dimmed)
     addBallShadow(floorMaterial, this.#cage.ballPosition, BALL_RADIUS);
     const net = new Mesh(geometry(goals.net), this.#net);
     net.renderOrder = 1;
@@ -202,8 +213,8 @@ export class ArenaView {
       net,
       new Mesh(geometry(goals.lip), new MeshBasicMaterial({ vertexColors: true, side: FrontSide })),
       new Mesh(geometry(goals.postBase), postMaterial),
-      goalFrame(0),
-      goalFrame(1),
+      goalFrame(0, this.#teamColors[0]),
+      goalFrame(1, this.#teamColors[1]),
     );
     return group;
   }
@@ -233,15 +244,16 @@ export class ArenaView {
 
 /** The hexagons inside the goals: smaller, like a net (uu across) */
 const GOAL_NET_HEX = 180;
-/** The game's goal glass: uu per UV0 unit across the goal and along its profile (HEX-4: side walls (204.2, 211.3),
- *  back and roof (~198, 204.2)) */
-const GOAL_GLASS_UV = [200, 207] as const;
-/** The game's glass panel beside each goal mouth (HEX-3: y = +-5124, |x| 960-1536, up to z 624; UV0 U 6 at |x| 960
- *  to 3 at 1536, about 202.8 uu a V) from the trim's top */
-const BACK_GLASS = { x0: 960, x1: 1536, top: 624, uPerUu: 3 / 576, vUu: 202.8 } as const;
-/** The game's team glow sheets (AV-11): 16 uu behind the side walls, from the trim's cap (z 272) to 400, along
- *  |y| 128-5264 */
-const GLOW_SHEET = { x: 4112, z0: 272, z1: 400, y0: 128, y1: 5264 } as const;
+/** The game's goal glass: uu per UV0 unit, U along the profile and V across the goal (HEX-4: back and roof ~197 and
+ *  204.2; the side walls 204.2 and 211.3) */
+const GOAL_GLASS_UV = [197, 204.2] as const;
+/** The game's glass panel beside each goal mouth (Goal_STD_Glass: y = +-5124; RV-66): its outline in (|x|, z), (960,
+ *  127) to (1536, 127), up to 256, back to (1360, 256), then the slant up to (960, 624); UV0 U 6 at |x| 960, 213 uu a U to
+ *  1280, then 170 (3 at 1536); V = 1.327 - z / 201.7 */
+const BACK_GLASS = { y: 5124, u: (x: number): number => (x <= 1280 ? 6 - (x - 960) / 213 : 4.498 - (x - 1280) / 170), v: (z: number): number => 1.327 - z / 201.7 } as const;
+/** The game's team glow sheets (AV-11, Field_STD_Glow): 16 uu behind the walls, from the trim's cap (z 272) to 400,
+ *  from |y| 128 on the side walls round the corners and along the back walls to |x| 2048 */
+const GLOW_SHEET = { behind: 16, z0: 272, z1: 400, y0: 128, x1: 2048 } as const;
 /** The trim's grey (the game's: a light, slightly metallic grey round the wall's foot) */
 const TRIM_COLOR = 0x9aa0a8;
 /** The light along the trim's top: this tall on the wall (uu), in each team's colour on its half */
@@ -303,23 +315,56 @@ function trimLight(surface: ArenaSurface): Mesh {
   return new Mesh(g, new MeshBasicMaterial({ vertexColors: true, side: FrontSide }));
 }
 
-/** The game's team glow sheets (H-5): one each side of midfield along each side wall, attached at the bottom */
+/** The game's team glow sheets (H-5): one per quadrant, 16 uu behind the wall's line (wallLine: the side wall, the
+ *  corner and the back wall), cut at |y| 128 and |x| 2048, attached at the bottom (RV-59) */
+export function glowContour(): readonly (readonly [number, number])[] {
+  const out: [number, number][] = [];
+  const line = wallLine();
+  const at = (k: number): [number, number] | null => {
+    const s = line[k];
+    return s ? [s.p[0] - s.n[0] * GLOW_SHEET.behind, s.p[1] - s.n[1] * GLOW_SHEET.behind] : null;
+  };
+  for (let k = 0; k < line.length; k++) {
+    const q = at(k);
+    const next = at(k + 1);
+    if (!q) continue;
+    if (q[1] >= GLOW_SHEET.y0 && q[0] >= GLOW_SHEET.x1) out.push(q);
+    // (the cuts exactly where the line crosses them)
+    if (next) {
+      if (q[1] < GLOW_SHEET.y0 && next[1] > GLOW_SHEET.y0) {
+        const f = (GLOW_SHEET.y0 - q[1]) / (next[1] - q[1]);
+        out.push([q[0] + (next[0] - q[0]) * f, GLOW_SHEET.y0]);
+      }
+      if (q[0] > GLOW_SHEET.x1 && next[0] < GLOW_SHEET.x1) {
+        const f = (q[0] - GLOW_SHEET.x1) / (q[0] - next[0]);
+        out.push([GLOW_SHEET.x1, q[1] + (next[1] - q[1]) * f]);
+      }
+    }
+  }
+  return out;
+}
+
 function glowSheets(style: ArenaStyle): Mesh[] {
   const { blue, orange } = style.walls;
+  const contour = glowContour();
   const sheets: Mesh[] = [];
   for (const [team, primary] of [blue, orange].entries()) {
     const material = new GlowStripMaterial(primary, linear(fullBright([primary.r, primary.g, primary.b])));
     const sy = team === 0 ? -1 : 1;
     for (const sx of [-1, 1]) {
-      const { x, z0, z1, y0, y1 } = GLOW_SHEET;
+      const pos: number[] = [];
+      const glow: number[] = [];
+      const idx: number[] = [];
+      contour.forEach(([x, y], k) => {
+        // (Three's frame: x, z up, y)
+        pos.push(sx * x, GLOW_SHEET.z0, sy * y, sx * x, GLOW_SHEET.z1, sy * y);
+        glow.push(1, 0);
+        if (k > 0) idx.push(2 * k - 2, 2 * k - 1, 2 * k, 2 * k - 1, 2 * k + 1, 2 * k);
+      });
       const g = new BufferGeometry();
-      // (Three's frame: x, z up, y)
-      g.setAttribute(
-        "position",
-        new BufferAttribute(new Float32Array([sx * x, z0, sy * y0, sx * x, z0, sy * y1, sx * x, z1, sy * y1, sx * x, z1, sy * y0]), 3),
-      );
-      g.setAttribute("glow", new BufferAttribute(new Float32Array([1, 1, 0, 0]), 1));
-      g.setIndex([0, 1, 2, 0, 2, 3]);
+      g.setAttribute("position", new BufferAttribute(new Float32Array(pos), 3));
+      g.setAttribute("glow", new BufferAttribute(new Float32Array(glow), 1));
+      g.setIndex(idx);
       const mesh = new Mesh(g, material);
       mesh.renderOrder = 1;
       sheets.push(mesh);
@@ -329,23 +374,27 @@ function glowSheets(style: ArenaStyle): Mesh[] {
 }
 
 /** The game's hex glass beside a goal's mouth on the back wall (team 0: blue, at -y), both sides, just behind the
- *  wall's surface: from the trim's top up to z 624, |x| 960-1536 (the goal's frame covers its inner corner) */
+ *  wall's surface (the goal's frame covers its inner corner) */
 function backGlass(team: 0 | 1): Mesh {
   const side = team === 0 ? -1 : 1;
-  const y = side * (ARENA.backY + 1);
-  const { x0, x1, top, uPerUu, vUu } = BACK_GLASS;
-  const bottom = trimTop(1200, ARENA.backY);
+  // (the outline, split where U's scale changes, |x| 1280: the slant crosses it at z 329.6)
+  const slantAt1280 = 256 + ((1360 - 1280) * (624 - 256)) / (1360 - 960);
+  const points: readonly (readonly [number, number])[] = [
+    [960, 127], [1280, 127], [1536, 127], [1536, 256], [1360, 256], [1280, 256], [960, 256], [1280, slantAt1280], [960, 624],
+  ];
+  // (triangles over the points' indices: the rectangle's two quads, the slanted top's quad and its corner triangle)
+  const triangles = [0, 1, 5, 0, 5, 6, 1, 2, 3, 1, 3, 5, 5, 3, 4, 6, 5, 7, 6, 7, 8, 5, 4, 7];
   const pos: number[] = [];
   const tiles: number[] = [];
   const idx: number[] = [];
   for (const sx of [-1, 1]) {
     const base = pos.length / 3;
-    for (const [ax, z] of [[x0, bottom], [x1, bottom], [x1, top], [x0, top]] as const) {
-      pos.push(sx * ax, z, y);
-      // (U 6 at |x| 960 down to 3 at 1536, mirrored about x = 0; tiles at UV0 x (3, 7/3))
-      tiles.push(3 * (6 - (ax - x0) * uPerUu), ((7 / 3) * (z - 127)) / vUu);
+    for (const [ax, z] of points) {
+      pos.push(sx * ax, z, side * BACK_GLASS.y);
+      // (tiles at UV0 x (3, 7/3))
+      tiles.push(3 * BACK_GLASS.u(ax), (7 / 3) * BACK_GLASS.v(z));
     }
-    idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+    for (const t of triangles) idx.push(base + t);
   }
   const g = new BufferGeometry();
   g.setAttribute("position", new BufferAttribute(new Float32Array(pos), 3));
@@ -359,7 +408,7 @@ function backGlass(team: 0 | 1): Mesh {
 
 /** The frame round a goal's mouth on the back wall (team 0: blue, at -y): a light along the opening's edge in the
  *  team's colour and a grey band outside it, flat on the wall just in front of it (nothing the ball could hit). */
-function goalFrame(team: 0 | 1): Group {
+function goalFrame(team: 0 | 1, light: Color): Group {
   const side = team === 0 ? -1 : 1;
   const y = side * (ARENA.backY - 1.5);
   // The opening's edge (x, z) round from one post's foot to the other's, with its outward normal
@@ -398,7 +447,7 @@ function goalFrame(team: 0 | 1): Group {
   };
   const group = new Group();
   group.add(
-    band(0, FRAME_LIGHT_WIDTH, new MeshBasicMaterial({ color: TEAM_COLORS[team], side: FrontSide })),
+    band(0, FRAME_LIGHT_WIDTH, new MeshBasicMaterial({ color: light, side: FrontSide })),
     band(FRAME_LIGHT_WIDTH, FRAME_WIDTH, new MeshStandardMaterial({ color: TRIM_COLOR, roughness: 0.5, metalness: 0.4, side: FrontSide })),
   );
   return group;

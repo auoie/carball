@@ -654,7 +654,7 @@ static void TestFreeplayKickoff() {
 }
 
 static void TestNoPickupAtFullBoost() {
-	puts("pads: a car at full boost leaves a pad (CanPickup: !IsFull, RV-40); below it takes it");
+	puts("pads: a car at full boost leaves a pad (CanPickup: !IsFull; RocketSim's BoostPadGrid gate); below it takes it");
 	Arena* arena = Arena::Create(GameMode::SOCCAR);
 	Car* car = arena->AddCar(Team::BLUE);
 	arena->ball->SetState(BallState());
@@ -1122,6 +1122,32 @@ static void TestKickoffBall() {
 }
 
 // Kickoff countdown: no input while it runs (a match server sets it after a kickoff reset); kept in snapshots
+// RV-55: a jump held through the countdown doesn't fire at the release; a fresh press afterwards does
+static void TestCountdownHeldJump() {
+	puts("kickoff countdown: a jump held through it doesn't jump at the release (RV-55); a fresh press does");
+	Arena* arena = Arena::Create(GameMode::SOCCAR);
+	Car* car = arena->AddCar(Team::BLUE);
+	for (int ticks : { 2, 480 }) {
+		arena->ResetToRandomKickoff(1);
+		arena->kickoffCountdownTicks = ticks;
+		CarControls held;
+		held.jump = true;
+		car->controls = held;
+		for (int i = 0; i < ticks + 30; i++) {
+			car->controls = held;
+			arena->Step(1);
+		}
+		float vz = car->GetState().vel.z;
+		CHECK(std::fabs(vz) < 1 && car->GetState().isOnGround, "countdown %d, jump held: vz %.2f after the release", ticks, vz);
+		car->controls = CarControls();
+		arena->Step(1);
+		car->controls = held;
+		arena->Step(3);
+		CHECK(car->GetState().vel.z > 200, "a fresh press after the countdown %d: vz %.2f", ticks, car->GetState().vel.z);
+	}
+	delete arena;
+}
+
 static void TestKickoffCountdown() {
 	puts("kickoff countdown: cars get no input for its ticks; snapshots keep it");
 	Arena* arena = Arena::Create(GameMode::SOCCAR);
@@ -1467,6 +1493,7 @@ int main(int argc, char** argv) {
 	TestDemoSpawnSelection();
 	TestKickoffBall();
 	TestKickoffCountdown();
+	TestCountdownHeldJump();
 
 	Arena* arena = Arena::Create(GameMode::SOCCAR);
 	Car* car = arena->AddCar(Team::BLUE);

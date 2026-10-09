@@ -45,7 +45,7 @@ export function islandTheme(): Theme {
   const sun = new DirectionalLight(0xfff4dc, 2.6);
   sun.position.copy(sunDirection).multiplyScalar(10000);
   root.add(new HemisphereLight(0xcfeaff, 0x7aa860, 1.5), new AmbientLight(0xffffff, 0.2), sun);
-  const sky = new Sky({ zenith: new Color(0x2f86e0), horizon, sunDirection, sunStrength: 0.9, radius: 34000, clouds: { color: new Color(0xffffff), cover: 0.4 } });
+  const sky = new Sky({ zenith: new Color(0x2f86e0), horizon, sunDirection, sunStrength: 0.9, radius: 32000, clouds: { color: new Color(0xffffff), cover: 0.4 } });
 
   // Palms along the beach and inland, leaning seaward-ish
   const palmSpots = [...band(land, random, 70, 40, 420, 1500), ...band(land, random, 30, 420, 900, 1800)].map((p) => ({

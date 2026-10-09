@@ -1,8 +1,10 @@
 // Particles, after the game's Cascade emitters as the static session described them (notes/visual-timing.md; its
 // rl-fx/1 summaries: spawn rate, bursts and spawning per distance; lifetime; start size, colour and alpha and their
-// curves over life; start velocity, the velocity a spawn sphere gives, acceleration). The values are the game's; the
-// look is our own (a soft procedural sprite). Positions in the game's frame (x, y, z up); HDR colours, tone-mapped in
-// the shader (1 - e^-c) as there is no bloom. One instanced quad per particle, two draw calls (additive, translucent).
+// curves over life; start velocity, the velocity a spawn sphere gives, acceleration; local-space emitters, whose
+// particles move with them). The values are the game's; the look is our own (a soft procedural sprite, with the
+// materials' colour over life where the data gives the formula). Positions in the game's frame (x, y, z up); HDR
+// colours, tone-mapped in the shader (1 - e^-c) as there is no bloom: additive ones as I = colour x alpha x shape,
+// unclamped (the game's rgb = I C.rgb C.a). One instanced quad per particle, two draw calls (additive, translucent).
 import {
   AdditiveBlending,
   Group,
@@ -42,8 +44,9 @@ export interface EmitterSpec {
   readonly loops?: boolean;
   readonly rate?: number;
   readonly bursts?: readonly { readonly time: number; readonly count: number }[];
-  /** Spawning by distance: `count` per `unit` uu the emitter moves, at most `maxFrame` uu counted a frame */
-  readonly perUnit?: { readonly unit: number; readonly count: number; readonly maxFrame?: number };
+  /** Spawning by distance: `count` (drawn each frame) per `unit` uu the emitter moves; a frame's move over `maxFrame` uu
+   *  (a teleport) spawns none */
+  readonly perUnit?: { readonly unit: number; readonly count: Range; readonly maxFrame?: number };
   readonly lifetime: Range;
   /** Start size (uu): width, and the length for a sprite stretched along its velocity */
   readonly size: Range;
@@ -53,9 +56,10 @@ export interface EmitterSpec {
   readonly lengthOverLife?: Curve;
   /** Start velocity (uu/s), in the emitter's frame (`local`) or the world's */
   readonly velocity?: VecRange;
+  /** A local-space emitter: its particles live in its frame and move with it (bUseLocalSpace) */
   readonly local?: boolean;
   /** A spawn sphere: radius (or a curve over emitter time), only on its surface; its offset times `velocityScale` as a
-   *  start velocity */
+   *  start velocity. Directions as the game draws them: normalize(U(-1, 1)^3), biased towards the cube's corners */
   readonly sphere?: { readonly radius: number | Curve; readonly surface?: boolean; readonly velocityScale?: Range };
   readonly offset?: readonly [number, number, number];
   readonly velocityOverLife?: Curve | Curve3;
@@ -67,8 +71,13 @@ export interface EmitterSpec {
   /** Linear HDR colour (the emitter's colour parameter's default; `colour` at the emitter overrides) */
   readonly color: readonly [number, number, number];
   readonly colorOverLife?: Curve | Curve3 | number;
+  /** The material's colour over life: P C + (1 - P) `to` (x `toScale`), P the material's parameter curve (SmokePuff:
+   *  lerp(0.5, C, P1); Smoke_Explosion: P1 C + (1 - P1) P2 (0.558, 0.502, 0.401)) */
+  readonly colorFade?: { readonly to: readonly [number, number, number]; readonly param: Curve; readonly toScale?: Curve };
   readonly alpha?: Range;
   readonly alphaOverLife?: Curve;
+  /** The sprite's falloff: (1 - |uv - 0.5|)^falloff (FlashGradient: 24, a hot point); else our soft disc */
+  readonly falloff?: number;
 }
 
 const MAX_PARTICLES = 4096;
@@ -109,16 +118,49 @@ function channels(curve: Curve | Curve3, t: number): readonly [number, number, n
   return [v, v, v];
 }
 
+/** A particle's linear HDR colour at `t` of its life: its start colour, the colour scale over life, the material's
+ *  fade (for tests and the shader's input) */
+export function particleColor(spec: EmitterSpec, start: readonly number[], t: number): readonly [number, number, number] {
+  const over = spec.colorOverLife;
+  const scale = over === undefined ? ([1, 1, 1] as const) : typeof over === "number" ? ([over, over, over] as const) : channels(over, t);
+  const c = [0, 1, 2].map((k) => (start[k] ?? 1) * (scale[k] ?? 1));
+  const fade = spec.colorFade;
+  if (!fade) return [c[0] ?? 0, c[1] ?? 0, c[2] ?? 0];
+  const p = evaluate(fade.param, t);
+  const s = fade.toScale ? evaluate(fade.toScale, t) : 1;
+  const mix = (k: number): number => p * (c[k] ?? 0) + (1 - p) * (fade.to[k] ?? 0) * s;
+  return [mix(0), mix(1), mix(2)];
+}
+
+/** An additive sprite's output at `t` of its life, as the shader has it: 1 - exp(-I), I = colour x alpha x the sprite's
+ *  shape there (1 at its centre); the alpha an intensity, unclamped (the game's rgb = I C.rgb C.a) */
+export function additiveOutput(spec: EmitterSpec, start: readonly number[], alpha: number, t: number, shape = 1): readonly [number, number, number] {
+  const c = particleColor(spec, start, t);
+  const a = alpha * (spec.alphaOverLife ? evaluate(spec.alphaOverLife, t) : 1);
+  const tone = (v: number): number => 1 - Math.exp(-Math.max(0, v) * Math.max(0, a) * shape);
+  return [tone(c[0]), tone(c[1]), tone(c[2])];
+}
+
+/** The game's random unit direction (DetermineUnitDirection): normalize(U(-1, 1)^3) (a zero draw: straight up) */
+export function unitDirection(random: () => number): Vec3 {
+  const v = { x: random() * 2 - 1, y: random() * 2 - 1, z: random() * 2 - 1 };
+  const n = Math.hypot(v.x, v.y, v.z);
+  return n > 1e-6 ? { x: v.x / n, y: v.y / n, z: v.z / n } : { x: 0, y: 0, z: 1 };
+}
+
 const vertexShader = /* glsl */ `
 attribute vec3 center;
 attribute vec2 size; // width, length (stretched along axis when axis is set)
 attribute vec3 axis;
 attribute vec4 tint;
+attribute float falloff;
 varying vec2 vUv;
 varying vec4 vTint;
+varying float vFalloff;
 void main() {
   vUv = uv;
   vTint = tint;
+  vFalloff = falloff;
   vec3 toCamera = normalize(cameraPosition - center);
   vec3 right;
   vec3 up;
@@ -140,19 +182,39 @@ void main() {
 const fragmentShader = /* glsl */ `
 varying vec2 vUv;
 varying vec4 vTint;
+varying float vFalloff;
 uniform bool additive;
 void main() {
-  // A soft round sprite (translucent ones softer and thinner: the game's smoke textures cover about half their quad);
-  // the HDR colour tone-mapped (there's no bloom)
-  float r = length(vUv - 0.5) * 2.0;
-  float shape = clamp(1.0 - r, 0.0, 1.0);
+  // A soft round sprite (translucent ones softer and thinner: the game's smoke textures cover about half their quad),
+  // or the material's own falloff; the HDR colour tone-mapped (there's no bloom)
+  float r = length(vUv - 0.5);
+  float shape = clamp(1.0 - 2.0 * r, 0.0, 1.0);
   shape = additive ? shape * shape : shape * shape * shape * 0.5;
-  vec3 colour = 1.0 - exp(-max(vTint.rgb, 0.0));
-  float alpha = clamp(vTint.a * shape, 0.0, 1.0);
-  gl_FragColor = additive ? vec4(colour * alpha, 1.0) : vec4(colour, alpha);
+  if (vFalloff > 0.0) shape = pow(clamp(1.0 - r, 0.0, 1.0), vFalloff);
+  vec3 rgb = max(vTint.rgb, 0.0);
+  if (additive) {
+    // (rgb = I C.rgb C.a: the alpha an intensity, not clamped before the tone map)
+    gl_FragColor = vec4(1.0 - exp(-rgb * max(vTint.a, 0.0) * shape), 1.0);
+  } else {
+    gl_FragColor = vec4(1.0 - exp(-rgb), clamp(vTint.a * shape, 0.0, 1.0));
+  }
   #include <colorspace_fragment>
 }
 `;
+
+/** Where a local-space emitter is: its particles are placed by it every frame */
+interface FrameRef {
+  origin: Vec3;
+  forward: Vec3;
+  right: Vec3;
+  up: Vec3;
+}
+
+const toWorld = (f: FrameRef, x: number, y: number, z: number): Vec3 => ({
+  x: f.origin.x + f.forward.x * x + f.right.x * y + f.up.x * z,
+  y: f.origin.y + f.forward.y * x + f.right.y * y + f.up.y * z,
+  z: f.origin.z + f.forward.z * x + f.right.z * y + f.up.z * z,
+});
 
 /** One draw call's particles (additive or translucent) */
 class Pool {
@@ -161,8 +223,9 @@ class Pool {
   readonly #size: InstancedBufferAttribute;
   readonly #axis: InstancedBufferAttribute;
   readonly #tint: InstancedBufferAttribute;
+  readonly #falloff: InstancedBufferAttribute;
   readonly #geometry: InstancedBufferGeometry;
-  // Per particle (structure of arrays)
+  // Per particle (structure of arrays); a local-space particle's position, velocity and acceleration in its frame
   count = 0;
   readonly pos = new Float32Array(MAX_PARTICLES * 3);
   readonly vel = new Float32Array(MAX_PARTICLES * 3);
@@ -175,6 +238,8 @@ class Pool {
   readonly alpha = new Float32Array(MAX_PARTICLES);
   readonly color = new Float32Array(MAX_PARTICLES * 3);
   readonly spec: (EmitterSpec | undefined)[] = new Array<EmitterSpec | undefined>(MAX_PARTICLES);
+  readonly frame: (FrameRef | null)[] = new Array<FrameRef | null>(MAX_PARTICLES).fill(null);
+  readonly owner: (object | null)[] = new Array<object | null>(MAX_PARTICLES).fill(null);
 
   constructor(additive: boolean) {
     const quad = new PlaneGeometry(1, 1);
@@ -186,11 +251,13 @@ class Pool {
     this.#size = new InstancedBufferAttribute(new Float32Array(MAX_PARTICLES * 2), 2);
     this.#axis = new InstancedBufferAttribute(new Float32Array(MAX_PARTICLES * 3), 3);
     this.#tint = new InstancedBufferAttribute(new Float32Array(MAX_PARTICLES * 4), 4);
+    this.#falloff = new InstancedBufferAttribute(new Float32Array(MAX_PARTICLES), 1);
     for (const [name, a] of [
       ["center", this.#center],
       ["size", this.#size],
       ["axis", this.#axis],
       ["tint", this.#tint],
+      ["falloff", this.#falloff],
     ] as const) {
       a.setUsage(35048); // (DynamicDrawUsage)
       g.setAttribute(name, a);
@@ -212,7 +279,19 @@ class Pool {
     this.mesh.renderOrder = 2;
   }
 
-  spawn(spec: EmitterSpec, p: Vec3, v: Vec3, a: Vec3, life: number, width: number, length: number, alpha: number, color: readonly number[]): void {
+  spawn(
+    spec: EmitterSpec,
+    p: Vec3,
+    v: Vec3,
+    a: Vec3,
+    life: number,
+    width: number,
+    length: number,
+    alpha: number,
+    color: readonly number[],
+    frame: FrameRef | null,
+    owner: object | null,
+  ): void {
     if (this.count >= MAX_PARTICLES) return;
     const i = this.count++;
     this.pos.set([p.x, p.y, p.z], i * 3);
@@ -226,6 +305,8 @@ class Pool {
     this.alpha[i] = alpha;
     this.color.set([color[0] ?? 1, color[1] ?? 1, color[2] ?? 1], i * 3);
     this.spec[i] = spec;
+    this.frame[i] = frame;
+    this.owner[i] = owner;
   }
 
   update(dt: number): void {
@@ -256,11 +337,34 @@ class Pool {
     this.#write();
   }
 
+  /** Every particle of `owner` gone at once (KillParticlesForced) */
+  kill(owner: object): void {
+    let n = this.count;
+    for (let i = 0; i < n; ) {
+      if (this.owner[i] === owner) {
+        this.#move(n - 1, i);
+        n--;
+      } else i++;
+    }
+    this.count = n;
+    this.#write();
+  }
+
+  /** The particle's position in the world (game frame) */
+  worldPosition(i: number): Vec3 {
+    const k = i * 3;
+    const [x, y, z] = [this.pos[k] ?? 0, this.pos[k + 1] ?? 0, this.pos[k + 2] ?? 0];
+    const f = this.frame[i];
+    return f ? toWorld(f, x, y, z) : { x, y, z };
+  }
+
   #move(from: number, to: number): void {
     if (from === to) return;
     for (const a of [this.pos, this.vel, this.acc, this.startVel, this.color]) a.copyWithin(to * 3, from * 3, from * 3 + 3);
     for (const a of [this.age, this.life, this.width, this.length, this.alpha]) a[to] = a[from] ?? 0;
     this.spec[to] = this.spec[from];
+    this.frame[to] = this.frame[from] ?? null;
+    this.owner[to] = this.owner[from] ?? null;
   }
 
   #write(): void {
@@ -269,36 +373,43 @@ class Pool {
     const size = this.#size.array as Float32Array;
     const axis = this.#axis.array as Float32Array;
     const tint = this.#tint.array as Float32Array;
+    const falloff = this.#falloff.array as Float32Array;
     for (let i = 0; i < n; i++) {
       const spec = this.spec[i];
       const t = (this.age[i] ?? 0) / (this.life[i] ?? 1);
       const grow = spec?.sizeOverLife ? evaluate(spec.sizeOverLife, t) : 1;
       const stretch = spec?.lengthOverLife ? evaluate(spec.lengthOverLife, t) : grow;
-      const over = spec?.colorOverLife;
-      const colourScale = over === undefined ? ([1, 1, 1] as const) : typeof over === "number" ? ([over, over, over] as const) : channels(over, t);
       const alphaScale = spec?.alphaOverLife ? evaluate(spec.alphaOverLife, t) : 1;
       const k = i * 3;
+      const p = this.worldPosition(i);
       // (to Three's frame: (x, z, y))
-      center[k] = this.pos[k] ?? 0;
-      center[k + 1] = this.pos[k + 2] ?? 0;
-      center[k + 2] = this.pos[k + 1] ?? 0;
+      center[k] = p.x;
+      center[k + 1] = p.z;
+      center[k + 2] = p.y;
       const length = this.length[i] ?? 0;
       const width = (this.width[i] ?? 0) * grow;
       size[i * 2] = width;
       size[i * 2 + 1] = length > 0 ? length * stretch : width;
       if (length > 0) {
-        axis[k] = this.vel[k] ?? 0;
-        axis[k + 1] = this.vel[k + 2] ?? 0;
-        axis[k + 2] = this.vel[k + 1] ?? 0;
+        const f = this.frame[i];
+        const [vx, vy, vz] = [this.vel[k] ?? 0, this.vel[k + 1] ?? 0, this.vel[k + 2] ?? 0];
+        const v = f ? { x: f.forward.x * vx + f.right.x * vy + f.up.x * vz, y: f.forward.y * vx + f.right.y * vy + f.up.y * vz, z: f.forward.z * vx + f.right.z * vy + f.up.z * vz } : { x: vx, y: vy, z: vz };
+        axis[k] = v.x;
+        axis[k + 1] = v.z;
+        axis[k + 2] = v.y;
       } else {
         axis[k] = axis[k + 1] = axis[k + 2] = 0;
       }
-      tint[i * 4] = (this.color[k] ?? 1) * colourScale[0];
-      tint[i * 4 + 1] = (this.color[k + 1] ?? 1) * colourScale[1];
-      tint[i * 4 + 2] = (this.color[k + 2] ?? 1) * colourScale[2];
+      const colour: readonly [number, number, number] = spec
+        ? particleColor(spec, [this.color[k] ?? 1, this.color[k + 1] ?? 1, this.color[k + 2] ?? 1], t)
+        : [1, 1, 1];
+      tint[i * 4] = colour[0];
+      tint[i * 4 + 1] = colour[1];
+      tint[i * 4 + 2] = colour[2];
       tint[i * 4 + 3] = (this.alpha[i] ?? 1) * alphaScale;
+      falloff[i] = spec?.falloff ?? 0;
     }
-    for (const a of [this.#center, this.#size, this.#axis, this.#tint]) {
+    for (const a of [this.#center, this.#size, this.#axis, this.#tint, this.#falloff]) {
       a.addUpdateRange(0, n * a.itemSize);
       a.needsUpdate = true;
     }
@@ -323,6 +434,15 @@ export class Particles {
     return this.#additive.count + this.#translucent.count;
   }
 
+  /** Every live particle: its emitter's spec, position in the world (game frame) and start width (for tests) */
+  list(): { readonly spec: EmitterSpec | undefined; readonly pos: Vec3; readonly width: number }[] {
+    const out: { spec: EmitterSpec | undefined; pos: Vec3; width: number }[] = [];
+    for (const pool of [this.#additive, this.#translucent]) {
+      for (let i = 0; i < pool.count; i++) out.push({ spec: pool.spec[i], pos: pool.worldPosition(i), width: pool.width[i] ?? 0 });
+    }
+    return out;
+  }
+
   /** `seconds`: the world's time (slowed after a goal) */
   update(seconds: number): void {
     const dt = Math.max(0, seconds);
@@ -332,6 +452,12 @@ export class Particles {
 
   pool(spec: EmitterSpec): Pool {
     return spec.blend === "additive" ? this.#additive : this.#translucent;
+  }
+
+  /** Every particle an emitter spawned, gone now */
+  kill(owner: object): void {
+    this.#additive.kill(owner);
+    this.#translucent.kill(owner);
   }
 }
 
@@ -353,6 +479,8 @@ export class Emitter {
   #last: Vec3 | null = null;
   #burstsDone = 0;
   #sourceVelocity: Vec3 | null = null;
+  /** A local-space emitter's frame, which its particles follow */
+  readonly #frame: FrameRef | null;
   readonly #color: readonly number[];
 
   /** `color`: the emitter's colour parameter (linear HDR; else the spec's) */
@@ -362,6 +490,7 @@ export class Emitter {
     color?: readonly [number, number, number],
   ) {
     this.#color = color ?? spec.color;
+    this.#frame = spec.local ? { origin: { x: 0, y: 0, z: 0 }, ...WORLD } : null;
   }
 
   /** Starts it over (a one-shot) */
@@ -371,6 +500,12 @@ export class Emitter {
     this.#rateDebt = 0;
     this.#burstsDone = 0;
     this.#last = null;
+  }
+
+  /** Its particles gone at once (KillParticlesForced: the car demolished) */
+  kill(): void {
+    this.active = false;
+    this.particles.kill(this);
   }
 
   /** Whether a one-shot has spawned all it will */
@@ -384,6 +519,13 @@ export class Emitter {
   update(seconds: number, at: Vec3, frame: EmitterFrame = WORLD, velocity: Vec3 | null = null): void {
     this.#sourceVelocity = velocity;
     const { spec } = this;
+    if (this.#frame) {
+      // (its particles move with it, spawning or not)
+      this.#frame.origin = at;
+      this.#frame.forward = frame.forward;
+      this.#frame.right = frame.right;
+      this.#frame.up = frame.up;
+    }
     const last = this.#last;
     this.#last = at;
     if (!this.active) {
@@ -413,13 +555,16 @@ export class Emitter {
     }
     if (spawning && spec.perUnit && last) {
       const moved = Math.hypot(at.x - last.x, at.y - last.y, at.z - last.z);
-      this.#unitDebt += (Math.min(moved, spec.perUnit.maxFrame ?? Infinity) / spec.perUnit.unit) * spec.perUnit.count;
-      const n = Math.floor(this.#unitDebt);
-      this.#unitDebt -= n;
-      // (spread along the way it moved this frame)
-      for (let k = 0; k < n; k++) {
-        const f = (k + 1) / n;
-        this.#spawnOne({ x: last.x + (at.x - last.x) * f, y: last.y + (at.y - last.y) * f, z: last.z + (at.z - last.z) * f }, frame, local);
+      // (a move over the frame's limit is a teleport: not filled)
+      if (moved <= (spec.perUnit.maxFrame ?? Infinity)) {
+        this.#unitDebt += (moved / spec.perUnit.unit) * pick(spec.perUnit.count, this.particles.random);
+        const n = Math.floor(this.#unitDebt);
+        this.#unitDebt -= n;
+        // (spread along the way it moved this frame)
+        for (let k = 0; k < n; k++) {
+          const f = (k + 1) / n;
+          this.#spawnOne({ x: last.x + (at.x - last.x) * f, y: last.y + (at.y - last.y) * f, z: last.z + (at.z - last.z) * f }, frame, local);
+        }
       }
     }
     for (let k = 0; k < count; k++) this.#spawnOne(at, frame, local);
@@ -429,8 +574,10 @@ export class Emitter {
   #spawnOne(at: Vec3, frame: EmitterFrame, emitterTime: number): void {
     const { spec, particles } = this;
     const random = particles.random;
-    const toWorld = (v: readonly number[]): Vec3 =>
-      spec.local
+    // A local-space particle keeps its own coordinates in the emitter's frame; a world one is turned into the world
+    const local = this.#frame !== null;
+    const axes = (v: readonly number[]): Vec3 =>
+      spec.local && !local
         ? {
             x: frame.forward.x * (v[0] ?? 0) + frame.right.x * (v[1] ?? 0) + frame.up.x * (v[2] ?? 0),
             y: frame.forward.y * (v[0] ?? 0) + frame.right.y * (v[1] ?? 0) + frame.up.y * (v[2] ?? 0),
@@ -438,22 +585,20 @@ export class Emitter {
           }
         : { x: v[0] ?? 0, y: v[1] ?? 0, z: v[2] ?? 0 };
     const between = (r: VecRange): number[] => [0, 1, 2].map((c) => (r.min[c] ?? 0) + ((r.max[c] ?? 0) - (r.min[c] ?? 0)) * random());
-    const offset = spec.offset ? toWorld(spec.offset) : { x: 0, y: 0, z: 0 };
-    let p = { x: at.x + offset.x, y: at.y + offset.y, z: at.z + offset.z };
-    let v = spec.velocity ? toWorld(between(spec.velocity)) : { x: 0, y: 0, z: 0 };
+    const offset = spec.offset ? axes(spec.offset) : { x: 0, y: 0, z: 0 };
+    const origin = local ? { x: 0, y: 0, z: 0 } : at;
+    let p = { x: origin.x + offset.x, y: origin.y + offset.y, z: origin.z + offset.z };
+    let v = spec.velocity ? axes(between(spec.velocity)) : { x: 0, y: 0, z: 0 };
     const source = this.#sourceVelocity;
     if (spec.inheritVelocity && source) {
       const k = spec.inheritVelocity;
       v = { x: v.x + source.x * k, y: v.y + source.y * k, z: v.z + source.z * k };
     }
     if (spec.sphere) {
-      // A random direction, on the sphere's surface or inside it
-      const u = random() * 2 - 1;
-      const theta = random() * Math.PI * 2;
-      const s = Math.sqrt(1 - u * u);
+      const dir = unitDirection(random);
       const radius = typeof spec.sphere.radius === "number" ? spec.sphere.radius : evaluate(spec.sphere.radius, Math.max(0, emitterTime));
       const r = radius * (spec.sphere.surface ? 1 : Math.cbrt(random()));
-      const d = { x: s * Math.cos(theta) * r, y: s * Math.sin(theta) * r, z: u * r };
+      const d = { x: dir.x * r, y: dir.y * r, z: dir.z * r };
       p = { x: p.x + d.x, y: p.y + d.y, z: p.z + d.z };
       if (spec.sphere.velocityScale !== undefined) {
         const k = pick(spec.sphere.velocityScale, random);
@@ -467,6 +612,6 @@ export class Emitter {
     }
     const width = pick(spec.size, random);
     const length = spec.length === undefined ? 0 : pick(spec.length, random);
-    particles.pool(spec).spawn(spec, p, v, a, pick(spec.lifetime, random), width, length, pick(spec.alpha ?? 1, random), this.#color);
+    particles.pool(spec).spawn(spec, p, v, a, pick(spec.lifetime, random), width, length, pick(spec.alpha ?? 1, random), this.#color, this.#frame, this);
   }
 }

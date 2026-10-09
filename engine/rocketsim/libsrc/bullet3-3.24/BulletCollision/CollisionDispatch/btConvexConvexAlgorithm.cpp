@@ -312,7 +312,9 @@ void btConvexConvexAlgorithm ::processCollision(const btCollisionObjectWrapper* 
 			//	input.m_maximumDistanceSquared = min0->getMargin() + min1->getMargin() + m_manifoldPtr->getContactProcessingThreshold();
 			//} else
 			//{
-			input.m_maximumDistanceSquared = min0->getMargin() + min1->getMargin() + m_manifoldPtr->getContactBreakingThreshold();
+			// RL PATCH: summed as the game's 2.82 build does, (threshold + margin A) + margin B (float rounding; static
+			// analysis F3)
+			input.m_maximumDistanceSquared = (m_manifoldPtr->getContactBreakingThreshold() + min0->getMargin()) + min1->getMargin();
 			//		}
 
 			input.m_maximumDistanceSquared *= input.m_maximumDistanceSquared;

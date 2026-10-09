@@ -18,6 +18,7 @@
 //     ticks, and the game's own for the same ticks from the recording's _bullet.csv (PhysLog reads the game's Bullet
 //     manifolds) when there is one
 #include "RocketSim.h"
+#include "../libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btBvhTriangleMeshShape.h"
 
 #include <algorithm>
 #include <cmath>
@@ -25,6 +26,7 @@
 #include <cstring>
 #include <fstream>
 #include <map>
+#include <random>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -70,14 +72,15 @@ static const Preset PRESETS[] = {
 	{ "breakout", &CAR_CONFIG_BREAKOUT }, { "hybrid", &CAR_CONFIG_HYBRID }, { "merc", &CAR_CONFIG_MERC },
 };
 
-static RotMat FromQuat(float x, float y, float z, float w) {
-	return RotMat(
-		Vec(1 - 2 * (y * y + z * z), 2 * (x * y + w * z), 2 * (x * z - w * y)),
-		Vec(2 * (x * y - w * z), 1 - 2 * (x * x + z * z), 2 * (y * z + w * x)),
-		Vec(2 * (x * z + w * y), 2 * (y * z - w * x), 1 - 2 * (x * x + y * y)));
+// A recording's rotation as the game sets its body from it: RBActor's write-back builds btMatrix3x3(btQuaternion(q))
+// (0x140f35870 -> setRotation 0x14027efd0: 2 / |q|^2 and its own order of products, not this formula's), the same
+// matrix to the last bits only (static analysis F2)
+static RotMat FromQuatAsGame(float x, float y, float z, float w) {
+	btMatrix3x3 m(btQuaternion(x, y, z, w));
+	return RotMat(Vec(m[0][0], m[1][0], m[2][0]), Vec(m[0][1], m[1][1], m[2][1]), Vec(m[0][2], m[1][2], m[2][2]));
 }
 
-// The inverse of FromQuat (for writing recordings from our engine)
+// The inverse of FromQuatAsGame (for writing recordings from our engine)
 static void ToQuat(const RotMat& m, float q[4]) {
 	// m.forward = (1-2(y²+z²), 2(xy+wz), 2(xz-wy)), m.right = (2(xy-wz), 1-2(x²+z²), 2(yz+wx)), m.up = (2(xz+wy), 2(yz-wx), 1-2(x²+y²))
 	float trace = m.forward.x + m.right.y + m.up.z;
@@ -153,7 +156,7 @@ static bool Load(const char* path, std::string& header, std::vector<Row>& rows) 
 			Body b;
 			b.quat[0] = num((s + "qx").c_str()); b.quat[1] = num((s + "qy").c_str());
 			b.quat[2] = num((s + "qz").c_str()); b.quat[3] = num((s + "qw").c_str());
-			b.rot = FromQuat(b.quat[0], b.quat[1], b.quat[2], b.quat[3]);
+			b.rot = FromQuatAsGame(b.quat[0], b.quat[1], b.quat[2], b.quat[3]);
 			b.pos = Vec(num((s + "x").c_str()), num((s + "y").c_str()), num((s + "z").c_str()));
 			b.vel = Vec(num((s + "vx").c_str()), num((s + "vy").c_str()), num((s + "vz").c_str()));
 			b.angVel = Vec(num((s + "wx").c_str()), num((s + "wy").c_str()), num((s + "wz").c_str()));
@@ -381,9 +384,9 @@ static void PrintContacts(Arena* arena, Car* car, uint64_t tick) {
 		for (int j = 0; j < m->getNumContacts(); j++) {
 			const btManifoldPoint& p = m->getContactPoint(j);
 			btVector3 pos = p.getPositionWorldOnB() * BT_TO_UU, n = p.m_normalWorldOnB;
-			printf("  tick %llu contact %d.%d at (%.2f %.2f %.2f) n (%.3f %.3f %.3f) depth %.3f uu life %d impulse %.4f\n",
+			printf("  tick %llu contact %d.%d at (%.2f %.2f %.2f) n (%.3f %.3f %.3f) depth %.3f uu life %d impulse %.4f tri %d/%d\n",
 			       (unsigned long long)tick, i, j, pos.x(), pos.y(), pos.z(), n.x(), n.y(), n.z(), p.getDistance() * BT_TO_UU,
-			       p.getLifeTime(), p.getAppliedImpulse());
+			       p.getLifeTime(), p.getAppliedImpulse(), p.m_index0, p.m_index1);
 		}
 	}
 	// The game's, from the same state: PhysLog writes them with the next row (before that tick's physics)
@@ -397,11 +400,13 @@ static void PrintContacts(Arena* arena, Car* car, uint64_t tick) {
 				printf("  tick %llu game manifold %s (%s-%s): %s points, breaking threshold %s uu\n", (unsigned long long)tick,
 				       f[1].substr(f[1].size() - 4).c_str(), name(f[2]).c_str(), name(f[3]).c_str(), f[4].c_str(), f[5].c_str());
 			last = f[1];
+			// (recordings since 2026-10-09 add the pre-solve velocities, part and triangle indices: tri index0/index1)
+			std::string tri = f.size() >= 32 ? " tri " + f[30] + "/" + f[31] : "";
 			if (f[6] != "-1" && f.size() >= 19)
-				printf("  tick %llu game contact %s.%s at (%.2f %.2f %.2f) n (%.3f %.3f %.3f) depth %.3f uu life %s impulse %.4f\n",
+				printf("  tick %llu game contact %s.%s at (%.2f %.2f %.2f) n (%.3f %.3f %.3f) depth %.3f uu life %s impulse %.4f%s\n",
 				       (unsigned long long)tick, f[1].substr(f[1].size() - 4).c_str(), f[6].c_str(), std::stof(f[13]),
 				       std::stof(f[14]), std::stof(f[15]), std::stof(f[16]), std::stof(f[17]), std::stof(f[18]), std::stof(f[7]),
-				       f[8].c_str(), std::stof(f[9]));
+				       f[8].c_str(), std::stof(f[9]), tri.c_str());
 		}
 	}
 	// The hitbox's four lowest corners: height and vertical velocity (v + w x r)
@@ -457,6 +462,68 @@ static void PrintContacts(Arena* arena, Car* car, uint64_t tick) {
 		       corners[i].z, corners[i].vz);
 }
 
+// --- Ill-conditioned contacts (static analysis, notes/bullet-diff.md: the car's box nearly parallel to a facet, where
+// GJK converges to a corner or a mid-edge witness on the last bits). Per tick with a car-mesh contact, the tick is run
+// again from the same state with the nearby mesh vertices jittered a few ulps, or the car's origin by 0.001 uu: if the
+// car's contact set (each point's triangle, after the cache's merges) differs between runs and one of them matches the
+// game, the tick is indeterminate: not counted as a physics error.
+static int g_jitter = 8;
+
+// The car's contact points with the arena's meshes after a tick: each point's triangle, sorted
+static std::vector<int> MeshContacts(Arena* arena, Car* car) {
+	std::vector<int> out;
+	auto* dispatcher = arena->_bulletWorld.getDispatcher();
+	for (int i = 0; i < dispatcher->getNumManifolds(); i++) {
+		btPersistentManifold* m = dispatcher->getManifoldByIndexInternal(i);
+		bool carFirst = m->getBody0() == &car->_rigidBody;
+		const btCollisionObject* other = carFirst ? m->getBody1() : (m->getBody1() == &car->_rigidBody ? m->getBody0() : nullptr);
+		if (!other || other->getCollisionShape()->getShapeType() != TRIANGLE_MESH_SHAPE_PROXYTYPE) continue;
+		for (int j = 0; j < m->getNumContacts(); j++) {
+			const btManifoldPoint& p = m->getContactPoint(j);
+			out.push_back(carFirst ? p.m_index1 : p.m_index0);
+		}
+	}
+	std::sort(out.begin(), out.end());
+	return out;
+}
+
+// Jitters every mesh vertex within `radius` uu of `at` by 1-4 ulps per float (seeded); returns how to put them back
+struct JitteredFloat { float* at; float was; };
+static std::vector<JitteredFloat> JitterVertices(Arena* arena, Vec at, float radius, uint32_t seed) {
+	std::vector<JitteredFloat> undo;
+	std::minstd_rand0 random(seed);
+	btVector3 world(at.x * UU_TO_BT, at.y * UU_TO_BT, at.z * UU_TO_BT);
+	float r2 = radius * UU_TO_BT * radius * UU_TO_BT;
+	for (btRigidBody* rb : arena->_worldCollisionRBs) {
+		auto* bvh = dynamic_cast<btBvhTriangleMeshShape*>(rb->getCollisionShape());
+		if (!bvh) continue;
+		btVector3 local = rb->getWorldTransform().inverse() * world;
+		btStridingMeshInterface* mesh = bvh->getMeshInterface();
+		for (int part = 0; part < mesh->getNumSubParts(); part++) {
+			unsigned char* vertices; int numVerts, stride;
+			unsigned char* indices; int indexStride, numFaces;
+			mesh->getLockedVertexIndexBase(&vertices, numVerts, stride, &indices, indexStride, numFaces, part);
+			for (int v = 0; v < numVerts; v++) { // (floats: RocketSim's meshes)
+				float* f = reinterpret_cast<float*>(vertices + v * stride);
+				btVector3 p(f[0], f[1], f[2]);
+				if ((p - local).length2() > r2) continue;
+				for (int c = 0; c < 3; c++) {
+					undo.push_back({ f + c, f[c] });
+					int ulps = 1 + (int)(random() % 4);
+					bool up = random() % 2;
+					for (int k = 0; k < ulps; k++) f[c] = std::nextafter(f[c], up ? INFINITY : -INFINITY);
+				}
+			}
+			mesh->unLockVertexBase(part);
+		}
+	}
+	return undo;
+}
+
+static void Unjitter(const std::vector<JitteredFloat>& undo) {
+	for (auto it = undo.rbegin(); it != undo.rend(); ++it) *it->at = it->was;
+}
+
 static int Validate(const char* path, const std::string& presetName, const Sensitivities& sens, bool continuous,
                     const std::string& ticksPath, uint64_t contactsFrom = 1, uint64_t contactsTo = 0) {
 	std::string header;
@@ -502,6 +569,7 @@ static int Validate(const char* path, const std::string& presetName, const Sensi
 
 	std::vector<float> carPos, carVel, carAng, carRot, ballPos, ballVel, car2Pos, car2Vel, car2Ang;
 	std::vector<std::string> demos; // the second car demolished: by the game (its columns go empty) and by the engine
+	std::vector<uint64_t> indeterminateTicks; // ill-conditioned contacts: not counted
 	int groundMismatch = 0, wheelMismatch = 0, touchMismatch = 0, worldContactMismatch = 0, worldContactCompared = 0, jumpMismatch = 0, dodgeMismatch = 0, compared = 0, resyncs = 0, placements = 0;
 	bool started = false;
 	for (size_t i = 0; i + 1 < rows.size(); i++) {
@@ -548,10 +616,54 @@ static int Validate(const char* path, const std::string& presetName, const Sensi
 		started = true;
 		car->controls = a.in;
 		if (car2 && a.hasOther) car2->controls = a.other.in;
+		// Ill-conditioned contacts: the tick again from the same state with tiny jitters (per-tick mode only)
+		bool indeterminate = false;
+		if (g_jitter > 0 && !continuous) {
+			DataStreamOut snapshot;
+			arena->Serialize(snapshot);
+			auto restore = [&]() {
+				DataStreamIn in;
+				in.data = snapshot.data;
+				arena->DeserializeInPlace(in);
+				car->controls = a.in;
+				if (car2 && a.hasOther) car2->controls = a.other.in;
+			};
+			arena->Step(ticks);
+			std::vector<int> first = MeshContacts(arena, car);
+			float best = (car->GetState().vel - b.car.vel).Length();
+			bool varies = false;
+			if (!first.empty()) {
+				for (int v = 0; v < g_jitter; v++) {
+					restore();
+					std::vector<JitteredFloat> undo;
+					if (v % 2 == 0) {
+						undo = JitterVertices(arena, car->GetState().pos, 300, (uint32_t)(a.tick * 131 + v));
+					} else { // (the car's origin, 0.001 uu along a seeded direction)
+						std::minstd_rand0 random((uint32_t)(a.tick * 977 + v));
+						Vec d((float)random() / random.max() - 0.5f, (float)random() / random.max() - 0.5f, (float)random() / random.max() - 0.5f);
+						CarState cs = car->GetState();
+						cs.pos += d * (0.001f / std::max(d.Length(), 1e-6f));
+						car->SetState(cs);
+						car->controls = a.in;
+					}
+					arena->Step(ticks);
+					varies |= MeshContacts(arena, car) != first;
+					best = std::min(best, (car->GetState().vel - b.car.vel).Length());
+					Unjitter(undo);
+				}
+			}
+			// (indeterminate only where one of the runs matches the game: a tick every variant misses is a real error)
+			indeterminate = varies && best < 1.0f;
+			restore();
+		}
 		arena->Step(ticks);
 		if (a.tick >= contactsFrom && a.tick <= contactsTo) PrintContacts(arena, car, a.tick);
 		CarState s = car->GetState();
 		BallState bs = arena->ball->GetState();
+		if (indeterminate) {
+			indeterminateTicks.push_back(a.tick);
+			continue;
+		}
 		compared++;
 		carPos.push_back((s.pos - b.car.pos).Length());
 		carVel.push_back((s.vel - b.car.vel).Length());
@@ -603,6 +715,11 @@ static int Validate(const char* path, const std::string& presetName, const Sensi
 	printf("%d ticks compared (%s%s), %d placements skipped\n", compared,
 	       continuous ? "continuous" : "state set from the recording every tick",
 	       continuous ? (", " + std::to_string(resyncs) + " resyncs").c_str() : "", placements);
+	if (!indeterminateTicks.empty()) {
+		std::string list;
+		for (uint64_t t : indeterminateTicks) list += (list.empty() ? "" : " ") + std::to_string(t);
+		printf("%zu indeterminate ticks (ill-conditioned contacts, not counted): %s\n", indeterminateTicks.size(), list.c_str());
+	}
 	auto line = [](const char* name, const std::vector<float>& v, const char* unit) {
 		printf("  %-22s p50 %10.5f  p90 %10.5f  p99 %10.5f  max %10.5f %s\n", name, Percentile(v, .5f), Percentile(v, .9f),
 		       Percentile(v, .99f), v.empty() ? 0.f : *std::max_element(v.begin(), v.end()), unit);
@@ -791,6 +908,7 @@ int main(int argc, char** argv) {
 		}
 		else if (a == "--air-sensitivity" && i + 1 < argc) sens.air = std::stof(argv[++i]);
 		else if (a == "--continuous") continuous = true;
+		else if (a == "--jitter" && i + 1 < argc) g_jitter = std::stoi(argv[++i]); // (0: no indeterminate ticks)
 		else if (a == "--synth") synth = true;
 		else if (a == "--fit-steer") fitSteer = true;
 		else positional.push_back(a);
@@ -802,6 +920,8 @@ int main(int argc, char** argv) {
 		                "       live_validate --synth SCENARIO.txt OUT.csv [--preset NAME]\n");
 		return 1;
 	}
+	// (the generated arena by default; --meshes out/arena_local/cooked: the game's cooked meshes, local only, for exactness)
+	printf("arena meshes: %s\n", meshes.c_str());
 	RocketSim::Init(meshes, true);
 	if (synth) return Synth(positional[0].c_str(), positional[1].c_str(), preset);
 	if (fitSteer) return FitSteer(positional[0].c_str(), preset, sens);

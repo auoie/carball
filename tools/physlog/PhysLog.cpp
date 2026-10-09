@@ -151,10 +151,13 @@ private:
 	void BulletHeader();
 	void BulletShape(const char* who, uintptr_t shape, int depth);
 	void BulletContacts();
+	void WheelsHeader(CarWrapper car);
+	void Wheels(CarWrapper car);
 	std::string BodyName(uintptr_t body);
 
 	std::ofstream out_;
 	std::ofstream bullet_;
+	std::ofstream wheels_;
 	uintptr_t carBody_ = 0, ballBody_ = 0, otherBody_ = 0, world_ = 0, dispatcher_ = 0;
 	std::string bulletInfo_;
 	std::string savedItemCode_, savedItemEnabled_; // the player's item-mod settings before physlog_body
@@ -413,6 +416,7 @@ bool PhysLog::Open(const std::string& name) {
 	out_.open(path);
 	if (!out_) { cvarManager->log("physlog: cannot write " + path.string()); return false; }
 	bullet_.open(Folder() / (name + "_" + stamp + "_bullet.csv"));
+	wheels_.open(Folder() / (name + "_" + stamp + "_wheels.csv"));
 	recording_ = true;
 	headerWritten_ = false;
 	tick_ = 0;
@@ -425,6 +429,7 @@ void PhysLog::Close(const char* why) {
 	if (!recording_) return;
 	out_.close();
 	bullet_.close();
+	wheels_.close();
 	recording_ = false;
 	scripted_ = false;
 	cvarManager->log(std::string("physlog: ") + why + ", " + std::to_string(tick_) + " ticks");
@@ -576,10 +581,12 @@ void PhysLog::OnInput(CarWrapper car, void* params) {
 		bullet_ << "# " << bulletInfo_ << "\n";
 		if (found) BulletHeader();
 		else cvarManager->log("physlog: Bullet objects not found (" + bulletInfo_ + "); no _bullet.csv data");
+		WheelsHeader(target);
 	}
 	if (targetBot_) Row(target, botApplied_, other, *in);
 	else Row(target, *in, other, botApplied_);
 	if (world_) BulletContacts();
+	Wheels(target);
 	tick_++;
 }
 
@@ -804,8 +811,11 @@ void PhysLog::BulletHeader() {
 	}
 	bullet_ << "# world predictive_flag(+0x1a5) " << (int)Get<uint8_t>(world_ + 0x1a5) << " predictive_manifolds "
 	        << Get<int>(world_ + 0x1ac) << "\n";
+	// (impulse is never written by the game: 2.82 writes the applied impulse back only with warm starting, and its
+	// solverMode is 0; kept so the columns before the new ones stay where live_validate reads them)
 	bullet_ << "tick,manifold,body0,body1,points,threshold,point,distance,lifetime,impulse,ax,ay,az,bx,by,bz,nx,ny,nz,"
-	           "lax,lay,laz\n";
+	           "lax,lay,laz,v1x,v1y,v1z,v2x,v2y,v2z,part0,part1,index0,index1,friction,restitution,restitution_vel,"
+	           "lat1x,lat1y,lat1z\n";
 }
 
 // Every tick (before its physics, like the main row): each contact manifold with the car or the ball in it, one line
@@ -824,7 +834,7 @@ void PhysLog::BulletContacts() {
 			int points = Get<int>(mf + 0x460);
 			float threshold = Get<float>(mf + 0x464) * BU;
 			for (int i = points > 0 ? 0 : -1; i < points && i < 4; i++) {
-				char b[512];
+				char b[1024];
 				int n = std::snprintf(b, sizeof b, "%llu,%s%p,%s,%s,%d,%.6g,%d", tick_, l ? "pred:" : "", (void*)mf,
 					BodyName(b0).c_str(), BodyName(b1).c_str(), points, threshold, i);
 				if (i >= 0) {
@@ -838,9 +848,116 @@ void PhysLog::BulletContacts() {
 					n += std::snprintf(b + n, sizeof b - n, ",%.6f,%.6f,%.6f", Get<float>(p + 0x40), Get<float>(p + 0x44),
 						Get<float>(p + 0x48));
 					v(p + 0x00); // localPointA
+					// (notes/wheel-kick-t125.md: the pre-solve velocities at the point, uu/s; which triangle; the combined
+					// friction and restitution; the first lateral friction direction)
+					v(p + 0xe0); // m_vel1
+					v(p + 0xf0); // m_vel2
+					n += std::snprintf(b + n, sizeof b - n, ",%d,%d,%d,%d,%.6g,%.6g,%.6g", Get<int>(p + 0x80), Get<int>(p + 0x84),
+						Get<int>(p + 0x88), Get<int>(p + 0x8c), Get<float>(p + 0x74), Get<float>(p + 0x7c), Get<float>(p + 0x100) * BU);
+					n += std::snprintf(b + n, sizeof b - n, ",%.6f,%.6f,%.6f", Get<float>(p + 0xc0), Get<float>(p + 0xc4),
+						Get<float>(p + 0xc8));
 				}
 				bullet_ << b << "\n";
 			}
 		}
 	}
 }
+
+// --- The vehicle's wheels as the game's btRaycastVehicle holds them (notes/wheel-kick-t125.md, live build 2026-10-06;
+// the old build's offsets are the same for every vehicle and wheel native). Read only. Raw Bullet units (BU; x 50 for
+// uu; a car dv in uu/s = impulse x 50 / 180). The row written before tick T+1's physics holds tick T's values.
+namespace {
+struct WheelPtrs {
+	uintptr_t w = 0, bv = 0, b = 0, fi = 0, ch = 0;
+	int index = -1;
+};
+// W = the WheelWrapper, VS = *(W+0x150) (VehicleSim), BV = *(VS+0x140) (the btRaycastVehicle), i = *(int*)(W+0x158)
+// (the game's order: 0 FL, 1 FR, 2 RL, 3 RR), B = *(BV+0x60) + 0xf0 i (btWheelInfo), FI = *(BV+0x18) + 0x10 i (the
+// friction impulse), CH = *(BV+0x40) (the chassis: the car's body)
+WheelPtrs WheelPointers(uintptr_t w) {
+	WheelPtrs p;
+	p.w = w;
+	uintptr_t vs = Get<uintptr_t>(w + 0x150);
+	p.bv = Get<uintptr_t>(vs + 0x140);
+	p.index = Get<int>(w + 0x158);
+	if (!p.bv || p.index < 0 || p.index > 3) return p;
+	p.b = Get<uintptr_t>(p.bv + 0x60) + 0xf0 * p.index;
+	p.fi = Get<uintptr_t>(p.bv + 0x18) + 0x10 * p.index;
+	p.ch = Get<uintptr_t>(p.bv + 0x40);
+	return p;
+}
+} // namespace
+
+void PhysLog::WheelsHeader(CarWrapper car) {
+	VehicleSimWrapper sim = car.GetVehicleSim();
+	if (sim.IsNull()) { wheels_ << "# no VehicleSim\n"; return; }
+	ArrayWrapper<WheelWrapper> wheels = sim.GetWheels();
+	// Once: the vehicle's and each wheel's constants, a sanity check of the pointers (expected: BV+0x54 4; per wheel
+	// +0xa0 0.25, +0xa4 0.5351, +0xa8 0.24, +0xac 0.05, +0xb0 500, +0xb4 25, +0xb8 40, +0xc8 ~35.735 front / 54.265 rear,
+	// +0xcc 0)
+	for (int k = 0; k < wheels.Count() && k < 4; k++) {
+		WheelWrapper w = wheels.Get(k);
+		if (w.IsNull()) continue;
+		WheelPtrs p = WheelPointers(w.memory_address);
+		char b[512];
+		std::snprintf(b, sizeof b, "# wheel %d game_index %d bv %p b %p ch %p (body %p) bv+0x54 %d", k, p.index, (void*)p.bv,
+			(void*)p.b, (void*)p.ch, (void*)carBody_, Get<int>(p.bv + 0x54));
+		wheels_ << b;
+		for (uintptr_t off = 0xa0; off <= 0xcc; off += 4) {
+			std::snprintf(b, sizeof b, " +0x%02x %.9g", (unsigned)off, Get<float>(p.b + off));
+			wheels_ << b;
+		}
+		wheels_ << "\n";
+	}
+	wheels_ << "tick,wheel,game_index,inc,obj,obj_x,obj_y,obj_z,nx,ny,nz,px,py,pz,hpx,hpy,hpz,len,vcx,vcy,vcz,inv,relv,push,"
+	           "force,fix,fiy,fiz,lat,long,eng,brake,steer,axle_x,axle_y,axle_z,cflags,sticky,slip,longdir_x,longdir_y,"
+	           "longdir_z,bv48,ch_inv_mass,ii00,ii01,ii02,ii10,ii11,ii12,ii20,ii21,ii22\n";
+}
+
+void PhysLog::Wheels(CarWrapper car) {
+	VehicleSimWrapper sim = car.GetVehicleSim();
+	if (sim.IsNull()) return;
+	ArrayWrapper<WheelWrapper> wheels = sim.GetWheels();
+	for (int k = 0; k < wheels.Count() && k < 4; k++) {
+		WheelWrapper w = wheels.Get(k);
+		if (w.IsNull()) continue;
+		WheelPtrs p = WheelPointers(w.memory_address);
+		if (!p.b) continue;
+		char b[2048];
+		int n = 0;
+		auto put = [&](const char* fmt, auto... args) {
+			if (n < (int)sizeof(b)) n += std::snprintf(b + n, sizeof b - n, fmt, args...);
+		};
+		auto v3 = [&](uintptr_t a) { put(",%.9g,%.9g,%.9g", Get<float>(a), Get<float>(a + 4), Get<float>(a + 8)); };
+		auto f = [&](uintptr_t a) { put(",%.9g", Get<float>(a)); };
+		uintptr_t obj = Get<uintptr_t>(p.b + 0x48);
+		put("%llu,%d,%d,%d,%s", tick_, k, p.index, (int)Get<uint8_t>(p.b + 0x40), obj ? BodyName(obj).c_str() : "none");
+		v3(obj + 0x40);         // (the ground object's +0x40..0x48)
+		v3(p.b + 0x00);         // contact normal
+		v3(p.b + 0x10);         // contact point
+		v3(p.b + 0x30);         // hard point
+		f(p.b + 0x50);          // suspension length (unclamped)
+		v3(p.b + 0x20);         // chassis velocity at the contact point
+		f(p.b + 0xd4);          // clippedInvContactDotSuspension
+		f(p.b + 0xd8);          // suspension relative velocity
+		f(p.b + 0xe8);          // bottom-out pushback (x 0.25 already)
+		f(p.b + 0xdc);          // suspension force
+		v3(p.fi);               // friction impulse (long + lateral), world
+		f(p.b + 0xe0);          // lateral friction scale
+		f(p.b + 0xe4);          // longitudinal friction scale
+		f(p.b + 0xc0);          // engine force
+		f(p.b + 0xc4);          // brake
+		f(p.b + 0xbc);          // physics steer angle
+		put(",%.9g,%.9g,%.9g", Get<float>(p.b + 0x64), Get<float>(p.b + 0x74), Get<float>(p.b + 0x84)); // basis column 1
+		uintptr_t mat = Get<uintptr_t>(p.w + 0x1a8);
+		put(",%d,%d", Get<int>(p.w + 0x160) & 3, mat ? (int)(Get<uint8_t>(mat + 0x68) & 1) : -1);
+		f(p.w + 0x1b4);         // FrictionCurveInput (slip)
+		v3(p.w + 0x19c);        // Contact.LongDirection
+		put(",%d", (int)Get<uint8_t>(p.bv + 0x48));
+		f(p.ch + 0x180);        // inverse mass
+		for (uintptr_t row = 0; row < 3; row++) v3(p.ch + 0x130 + 0x10 * row); // world inverse inertia
+		wheels_.write(b, n < (int)sizeof(b) ? n : (int)sizeof(b) - 1);
+		wheels_ << "\n";
+	}
+}
+

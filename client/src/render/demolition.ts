@@ -20,7 +20,7 @@ import {
 import { rotationAxes } from "../camera/unreal";
 import type { Vec3 } from "../math/vec";
 import { toThreeQuaternion, toThreeVector } from "./coords";
-import { type Curve, type Curve3, Emitter, type EmitterSpec, type Particles, evaluate, evaluate3 } from "./particles";
+import { type Curve, type Curve3, Emitter, type EmitterSpec, type Particles, evaluate, evaluate3, unitDirection } from "./particles";
 
 const curve = (times: readonly number[], values: readonly number[]): Curve => ({ times, values });
 const curve3 = (times: readonly number[], values: readonly (readonly [number, number, number])[]): Curve3 => ({ times, values });
@@ -194,10 +194,12 @@ const PLUME: EmitterSpec = {
   alphaOverLife: curve([0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.7, 0.75, 0.875, 0.95, 1], [0.859, 0.859, 0.853, 0.851, 0.866, 0.91, 0.908, 0.899, 0.709, 0.314, 0]),
 };
 
-/** The flash: an additive 2048 uu sprite for 0.5 s, (4, 1, 0.2) x 3 at half alpha, peaking at a tenth of its life */
+/** The flash: an additive 2048 uu sprite for 0.5 s, (4, 1, 0.2) x 3 at half alpha, peaking at a tenth of its life;
+ *  FlashGradient_MAT's hot point: (1 - |uv - 0.5|)^12, squared (29 % at 5 % of its size) */
 const FLASH: EmitterSpec = {
   name: "demolition flash",
   blend: "additive",
+  falloff: 24,
   duration: 1,
   bursts: [{ time: 0, count: 1 }],
   lifetime: 0.5,
@@ -470,10 +472,7 @@ export class Demolition {
       return e;
     });
     for (let i = 0; i < SOURCES.count; i++) {
-      const u = uniform(random, -1, 1);
-      const theta = random() * Math.PI * 2;
-      const s = Math.sqrt(1 - u * u);
-      const d = { x: s * Math.cos(theta), y: s * Math.sin(theta), z: u };
+      const d = unitDirection(random); // (the game's: normalize(U(-1, 1)^3))
       const k = SOURCES.radius * uniform(random, SOURCES.speedScale.min, SOURCES.speedScale.max);
       const emitter = new Emitter(particles, STREAM);
       emitter.start();

@@ -95,8 +95,24 @@ dimensions and margin in uu; a compound's children and AABB), and every word of 
 the main row (before the tick's physics, so a row holds the contacts the previous tick's collision pass made):
 `tick, manifold (address), body0, body1 (car, ball or shape<type>: 28 plane, 21 mesh), points, threshold,
 point (−1: an empty manifold), distance, lifetime, impulse, positionWorldOnA, positionWorldOnB, normal, localPointA`
-(uu). `live_validate --contacts` prints them under the engine's own. If the chain doesn't check out (another game
-build), the file says so and stays empty.
+(uu; impulse is always 0: the game's solver never writes it back); then (since 2026-10-09) the pre-solve velocities at
+the point on A and B (uu/s), `part0, part1, index0, index1` (for a mesh, the triangle), the combined friction and
+restitution, the restitution velocity and the first lateral friction direction. `live_validate --contacts` prints
+them under the engine's own, with the triangles. If the chain doesn't check out (another game build), the file says so
+and stays empty.
+
+**Wheels file** (`<name>_<date>_<time>_wheels.csv`, since 2026-10-09; notes/wheel-kick-t125.md): the vehicle's
+btRaycastVehicle read through each WheelWrapper, live-build offsets, raw Bullet units (x 50 for uu). Header lines dump
+each wheel's pointers and constants (a sanity check); then per tick and wheel (`wheel` our order, `game_index` the
+game's: 0 FL, 1 FR, 2 RL, 3 RR): `inc` (ray in contact), `obj` (what it hit) and its +0x40..48, the contact normal and
+point, the hard point, the suspension length, the chassis velocity at the point, clippedInvContactDotSuspension, the
+suspension's relative velocity, the bottom-out pushback, the suspension force, the friction impulse, the lateral and
+longitudinal friction scales, engine force, brake, steer, the axle, the contact flags, sticky wheels, slip,
+LongDirection; and the chassis' `bv48`, inverse mass and world inverse inertia. A row holds the previous tick's values
+(as the main file's).
+
+`tools/physlog/spawn_offsets.py <recording.csv>`: after `physlog_start`, `physlog_resetplayers` and `physlog_stop`, each
+reset's creation height and how far ahead of its kickoff spot the car sits (the rows at z 83 while it loads skipped).
 
 ## Match columns
 Every row ends with the match's state when there is one (an offline match; freeplay has its own clock):

@@ -33,4 +33,20 @@ describe("shake triggers", () => {
     frame(car({ hasJumped: true, spawnCount: 2 }), car({ demoed: true }), [pad(false)]);
     expect(shakes.count).toBe(5);
   });
+
+  it("online (the server's Demo events start them: RV-47): a predicted demolition, rolled back or not, starts nothing", () => {
+    const shakes = new CameraShakes();
+    const triggers = new ShakeTriggers({ demolitions: false });
+    const demolished: CarState[] = [];
+    const frame = (other: CarState): void => {
+      triggers.frame(shakes, car(), new Map([[1, car()], [2, other]]), [], (c) => demolished.push(c));
+    };
+    frame(car());
+    frame(car({ demoed: true })); // (predicted)
+    frame(car()); // (rolled back)
+    frame(car({ demoed: true }));
+    expect(demolished).toHaveLength(0);
+    expect(shakes.count).toBe(0);
+  });
 });
+

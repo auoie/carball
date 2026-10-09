@@ -302,3 +302,37 @@ through aligned references in matched functions), `dispmap.py` (field offsets fr
 - Live tests of B1 and B5–B14 (live session).
 
 - Re-checked 2026-10-08 against the live reference project (out/bsim/rl-20261006): every function cited in this file is the same as the 2026-06-16 build apart from layout, except those explained under "Live build" above (semantic diff in out/bsim/work/livenames/cited/semdiff.txt).
+
+## Convex–triangle contact candidates and the near-parallel GJK case (2026-10-09, live build)
+Asked by the live session for walls_goal_wheels_20261009_044534, ticks 307/310/487, where nose points on the goal
+surround differ.
+- **The chain is the same as our engine's** (decompiled; addresses are live):
+  - compound 0x140291c10;
+  - convex–concave 0x1402935b0 (triangle margin 0);
+  - setTimeStepAndCounters 0x140299ef0 (query = the box getAabb with margin, in mesh space; no threshold term);
+  - processAllTriangles 0x140291bb0 → reportAabbOverlappingNodex 0x14027c970 (quantized, clamped; min & 0xfffe,
+    max + 1 | 1; stackless walk 0x140280a80, inclusive);
+  - processTriangle 0x1402978a0 with an exact TestTriangleAgainstAabb2 (x, z, y);
+  - convex–convex 0x1402936e0 (plain GJK, maxDist² = (thr + mA + mB)²);
+  - GJK 0x1402a7040 (inSimplex 0x1402a8700, …);
+  - addContactPoint 0x1402856c0 → getCacheEntry 0x1402a6dc0 (nearest m_localPointA within thr).
+- **The arena BVHs:** one btBvhTriangleMeshShape per piece (16), built at load from the cooked points and triangles
+  (0x140410d20, 0x14029fbb0), quantization margin 1.0 over the piece bounds. Ours matches. The candidate sets at those
+  ticks are identical on both sides.
+- **What decides those ticks:** the car box's bottom edge is almost parallel to the 405 uu goal-surround triangles,
+  where GJK is ill-conditioned. At iteration 4 it either converges to the box corner (local y ±41.42) or exits on
+  inSimplex with a mid-edge witness (distance over by 0.06–0.14 uu). getCacheEntry then merges or keeps the next
+  triangle's point. The outcome depends on the last bits of the inputs: ±4 ulps on the vertices or ±0.001 uu on the car
+  flips it in 29–57 % of trials.
+- **Inputs to make bit-identical:**
+  - the Octane box floats (half extents 0x3f954d13, 0x3f540dc2, 0x3eb22419; margin 0x3d1e58fa);
+  - the per-tick rotation via btMatrix3x3(btQuaternion) (the game's write-back 0x140f35870 → setRotation 0x14027efd0);
+  - the sum order (thr + mA) + mB at btConvexConvexAlgorithm.cpp:315;
+  - and decisively the arena vertex floats.
+  Even with the game's cooked mesh, 8 of 65 recorded points still differ, so one input remains unidentified.
+- Sub-agent files (local): out/bsim/agents/BT2/.
+- **Decision (user, 2026-10-09):**
+  - Shipped builds keep our generated arena meshes.
+  - The local validator may use the game's cooked meshes (out/arena_local/cooked and git-ignored copies) for
+    exactness checks only; they are never committed or shipped.
+  - Ticks whose contact set flips under ±4-ulp vertex jitter count as "indeterminate", not as physics errors.

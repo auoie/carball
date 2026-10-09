@@ -1,4 +1,5 @@
 #include "Car.h"
+#include <cstring>
 #include "../../RLConst.h"
 
 #include "../../../libsrc/bullet3-3.24/BulletDynamics/Dynamics/btDynamicsWorld.h"
@@ -379,6 +380,14 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
 
 	// Set up rigidbody and collision shapes
 	_childHitboxShape = btBoxShape((config.hitboxSize * UU_TO_BT) / 2);
+	// RL PATCH: the Octane box's floats exactly as the game's (read live: inner half extents 0x3f954d13, 0x3f540dc2,
+	// 0x3eb22419, margin 0x3d1e58fa); from the rounded uu sizes they come out 2/0/8 and 7 ulps off, and a nose contact
+	// nearly parallel to a facet flips on bits like these (static analysis, notes/bullet-diff.md: ticks 307/310/487)
+	if (config.hitboxSize == CAR_CONFIG_OCTANE.hitboxSize) {
+		auto bits = [](uint32_t u) { float f; memcpy(&f, &u, sizeof f); return f; };
+		_childHitboxShape.btConvexInternalShape::setMargin(bits(0x3d1e58fa));
+		_childHitboxShape.setImplicitShapeDimensions(btVector3(bits(0x3f954d13), bits(0x3f540dc2), bits(0x3eb22419)));
+	}
 	_compoundShape = btCompoundShape(false, 1);
 
 	btTransform hitboxOffsetTransform = btTransform();

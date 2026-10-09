@@ -766,10 +766,12 @@ export class PlayerCamera {
     // takes no free-look input (RV-11)
     const canFreeLook = wanted === this.#carCam || wanted === this.#demolished || wanted === this.#spawnSelect;
     // (back from the free-look ball cam the car cam carries on: no TurnOffFreeLook, and its first frame takes input,
-    // bFirstExecution false: RV-27; nothing turns free look off while the ball cam runs)
+    // bFirstExecution false: RV-27; but the car cam's end turned free look off and reset it, EndCameraState:
+    // TurnOffFreeLook + ResetFreeLookOffset, so its rate builds up from 0 again: RV-54)
     const fromLookAtBall = mode !== null && current === this.#ballCam && wanted === this.#carCam;
     const begins = current !== wanted && canFreeLook && !fromLookAtBall;
-    if (canFreeLook && (mode === null || controls.rear || begins)) this.#freeLook.reset();
+    const carCamEnds = current === this.#carCam && wanted !== this.#carCam;
+    if ((canFreeLook && (mode === null || controls.rear || begins)) || carCamEnds) this.#freeLook.reset();
     // (a fresh car cam's first frame stays in free-look mode, bFreeLookActive, with no input: RV-19)
     const firstCarFrame = current !== wanted && wanted === this.#carCam && !fromLookAtBall;
     const active = mode !== null && canFreeLook && !controls.rear;

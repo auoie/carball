@@ -7,7 +7,13 @@ import {
   AdditiveBlending,
   BufferAttribute,
   BufferGeometry,
+  DataTexture,
+  DataUtils,
   DoubleSide,
+  HalfFloatType,
+  LinearFilter,
+  RedFormat,
+  RepeatWrapping,
   Mesh,
   ShaderMaterial,
   UniformsLib,
@@ -159,8 +165,8 @@ uniform vec3 bright1;
 uniform float opacity;
 uniform float shockWave;
 uniform float time;
-uniform float fire[32];
-uniform float smoke[32];
+uniform sampler2D fire;
+uniform sampler2D smoke;
 varying vec3 vWorldPosition;
 varying vec3 vWorldNormal;
 varying float vAcross;
@@ -168,15 +174,8 @@ varying float vFade;
 #include <fog_pars_fragment>
 
 float saturate1(float x) { return clamp(x, 0.0, 1.0); }
-// The game's 1D gradient textures (Curve_Fire_01 R, Curve_Smoke_01 G), sampled at 32 points, wrapping
-float curve32(float table[32], float v) {
-  float x = fract(v) * 32.0 - 0.5;
-  int i = int(floor(x));
-  float f = x - float(i);
-  int a = i < 0 ? 31 : i;
-  int b = i + 1 > 31 ? 0 : i + 1;
-  return mix(table[a], table[b], f);
-}
+// The game's 1D gradients (Curve_Fire_01 R, Curve_Smoke_01 G), wrapping
+float curve(sampler2D table, float v) { return texture2D(table, vec2(fract(v), 0.5)).r; }
 
 void main() {
   // (Three's frame: y up, z the game's y)
@@ -194,28 +193,60 @@ void main() {
   float prox2 = max(0.0, 0.75 - 12.0 * d2);
   float ring = 1.0 - abs(1.0 - 2.0 * max(0.0, 8.0 * (saturate1(1.0 - d2 + shockWave) - 0.875)));
   // Scan stripes up the walls (along y on surfaces facing up or down), rings contracting towards the ball
-  bool facesUp = abs(normalize(vWorldNormal).y) > 0.52;
-  float F = curve32(fire, (facesUp ? y : z) / 4.0 + fract(3.0 * time));
-  float S = curve32(smoke, 128.0 * (1.0 - d2) - time);
+  // (blended by the normal: sat(64 (n.z - 0.5)), on |n.z| as the quads' signs aren't known: RV-70e)
+  float up = saturate1(64.0 * (abs(normalize(vWorldNormal).y) - 0.5));
+  float F = mix(curve(fire, z / 4.0 + fract(3.0 * time)), curve(fire, y / 4.0 + fract(3.0 * time)), up);
+  float S = curve(smoke, 128.0 * (1.0 - d2) - time);
   float I = 24.0 * (prox2 * prox2 + 0.09375) * (w + 0.5) * opacity
     * ((1.0 - prox) * 0.25 * p + prox * p * (F * (S * (prox + 0.25) + 0.25) + 4.0 * ring * prox));
   I = clamp(I, 0.0, 5.0) * vFade;
   // (additive: HDR, tone-mapped here as there's no bloom)
   gl_FragColor = vec4(1.0 - exp(-I * colour), 1.0);
   #include <colorspace_fragment>
-  #include <fog_fragment>
+  // (fog only dims an additive beam, rgb x fog.w: no blend towards the fog's colour, RV-70d)
+  #ifdef USE_FOG
+    gl_FragColor.rgb *= 1.0 - smoothstep(fogNear, fogFar, vFogDepth);
+  #endif
 }
 `;
 
-/** Curve_Fire_01_Pack.R and Curve_Smoke_01_Pack.G at 32 points (values measured from the game's textures) */
+/** Curve_Fire_01_Pack.R and Curve_Smoke_01_Pack.G (both sRGB: decoded, as the GPU reads them, RV-60) at 256 points
+ *  (values measured from the game's 1-D gradients; 256 keeps the rings' sharp edge, RV-70f), drawn as small data textures */
 const FIRE_CURVE = [
-  0, 0, 0, 0, 0, 0, 0, 0.012, 0.082, 0.176, 0.286, 0.404, 0.522, 0.639, 0.749, 0.843, 0.918, 0.973, 1, 1, 1, 1, 1, 1, 1, 1, 0.996,
-  0.973, 0.922, 0.804, 0.51, 0.075,
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.0005, 0.0011, 0.0017, 0.0021, 0.0029, 0.0035,
+  0.0044, 0.0056, 0.0068, 0.008, 0.0097, 0.0113, 0.0137, 0.0156, 0.0181, 0.0212, 0.0242, 0.0273, 0.0307, 0.0356,
+  0.0396, 0.0452, 0.0505, 0.0561, 0.063, 0.0685, 0.0762, 0.0844, 0.0909, 0.0999, 0.1095, 0.117, 0.1275, 0.1384,
+  0.1485, 0.162, 0.1715, 0.1845, 0.1981, 0.2122, 0.2251, 0.2384, 0.2542, 0.2705, 0.2832, 0.3006, 0.3186, 0.3348,
+  0.3516, 0.3713, 0.389, 0.4073, 0.4233, 0.4452, 0.4649, 0.4822, 0.5029, 0.5241, 0.5457, 0.5647, 0.5808, 0.6005,
+  0.624, 0.641, 0.6654, 0.6831, 0.7047, 0.7231, 0.7417, 0.7567, 0.7758, 0.7952, 0.8109, 0.8308, 0.8509, 0.8632,
+  0.8796, 0.8963, 0.9089, 0.9216, 0.9344, 0.943, 0.956, 0.9647, 0.9734, 0.9823, 0.9867, 0.9911, 1, 1, 1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.9956, 0.9911, 0.9911, 0.9823, 0.9823, 0.9734, 0.9647,
+  0.9603, 0.9516, 0.9387, 0.9301, 0.9216, 0.9047, 0.8921, 0.8796, 0.8591, 0.8428, 0.8228, 0.803, 0.7797, 0.753,
+  0.7268, 0.6975, 0.6689, 0.6308, 0.6006, 0.5616, 0.518, 0.4736, 0.4288, 0.3763, 0.3233, 0.2687, 0.2106, 0.1578,
+  0.1086, 0.0706, 0.044, 0.0264, 0.0157, 0.0092, 0.0056, 0.0034, 0.0018, 0.0005
 ];
 const SMOKE_CURVE = [
-  0, 0, 0, 0, 0, 0.008, 0.016, 0.027, 0.035, 0.047, 0.059, 0.071, 0.082, 0.094, 0.106, 0.122, 0.137, 0.153, 0.169, 0.188, 0.208, 0.235,
-  0.267, 0.337, 0.408, 0.475, 0.541, 0.608, 0.678, 0.753, 0.831, 0.925,
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0, 0, 0.0003, 0.0003, 0.0003, 0.0003, 0.0006, 0.0006, 0.0006, 0.0009, 0.0009, 0.0009, 0.0009, 0.0012, 0.0012,
+  0.0012, 0.0015, 0.0015, 0.0015, 0.0018, 0.0018, 0.0018, 0.0021, 0.0021, 0.0021, 0.0024, 0.0024, 0.0024, 0.0024,
+  0.0027, 0.0027, 0.0027, 0.003, 0.003, 0.003, 0.0033, 0.0033, 0.0033, 0.0037, 0.0037, 0.004, 0.004, 0.004, 0.0044,
+  0.0044, 0.0044, 0.0048, 0.0048, 0.0048, 0.0052, 0.0052, 0.0052, 0.0056, 0.0056, 0.006, 0.006, 0.006, 0.0065,
+  0.0065, 0.007, 0.007, 0.007, 0.0075, 0.0075, 0.008, 0.008, 0.008, 0.0086, 0.0086, 0.0091, 0.0091, 0.0091, 0.0097,
+  0.0097, 0.0103, 0.0103, 0.011, 0.011, 0.011, 0.0116, 0.0116, 0.0123, 0.0123, 0.013, 0.013, 0.0137, 0.0137, 0.0137,
+  0.0144, 0.0144, 0.0152, 0.0152, 0.016, 0.016, 0.0168, 0.0168, 0.0176, 0.0176, 0.0185, 0.0185, 0.0194, 0.0194,
+  0.0203, 0.0203, 0.0212, 0.0212, 0.0222, 0.0232, 0.0232, 0.0242, 0.0242, 0.0252, 0.0252, 0.0262, 0.0273, 0.0273,
+  0.0284, 0.0284, 0.0296, 0.0307, 0.0307, 0.0319, 0.0331, 0.0331, 0.0343, 0.0356, 0.0356, 0.0369, 0.0382, 0.0395,
+  0.0395, 0.0409, 0.0423, 0.0437, 0.0452, 0.0452, 0.0467, 0.0482, 0.0497, 0.0513, 0.0529, 0.0561, 0.0578, 0.0595,
+  0.063, 0.0666, 0.0723, 0.0782, 0.0823, 0.0887, 0.0931, 0.0976, 0.1022, 0.1095, 0.1144, 0.1195, 0.1248, 0.1301,
+  0.1384, 0.1441, 0.15, 0.1559, 0.162, 0.1683, 0.1746, 0.1845, 0.1912, 0.1981, 0.2051, 0.2122, 0.2195, 0.227, 0.2346,
+  0.2462, 0.2542, 0.2623, 0.2705, 0.2789, 0.2874, 0.3005, 0.3095, 0.3185, 0.3278, 0.3372, 0.3467, 0.3613, 0.3712,
+  0.3813, 0.3916, 0.4072, 0.4179, 0.4287, 0.4397, 0.4564, 0.4678, 0.4793, 0.4969, 0.5089, 0.5271, 0.5395, 0.552,
+  0.5711, 0.5841, 0.6038, 0.624, 0.6376, 0.6584, 0.6795, 0.6939, 0.7157, 0.7379, 0.7605, 0.7835, 0.8148, 0.8388,
+  0.8714, 0.9131, 0.956
 ];
+
 
 /** The goal explosion's ShockWave (AV-15) `sinceExplosion` world seconds after it (null: no explosion): -0.25 at rest,
  *  then lerp(-0.25, 1, min(1, t / 2.5)) */
@@ -228,6 +259,16 @@ export function shockWave(sinceExplosion: number | null): number {
 export function shockRing(d2: number, wave: number): number {
   const x = Math.min(1, Math.max(0, 1 - d2 + wave));
   return 1 - Math.abs(1 - 2 * Math.max(0, 8 * (x - 0.875)));
+}
+
+/** A 1-D curve as a texture (half floats: filterable everywhere WebGL2 is; linear filtering, wrapping) */
+function curveTexture(values: readonly number[]): DataTexture {
+  const texture = new DataTexture(new Uint16Array(values.map((v) => DataUtils.toHalfFloat(v))), values.length, 1, RedFormat, HalfFloatType);
+  texture.wrapS = RepeatWrapping;
+  texture.magFilter = LinearFilter;
+  texture.minFilter = LinearFilter;
+  texture.needsUpdate = true;
+  return texture;
 }
 
 /** The game frame (x, y, z up) to Three's (x, z up, y) */
@@ -245,7 +286,10 @@ export class CageBeams {
     const acrosses: number[] = [];
     const normals: number[] = [];
     const indices: number[] = [];
-    for (const beam of graph.beams) {
+    // The game's beams are two crossed quads (FFCage_Full, AV-14): one in the surface, one along its normal (additive:
+    // it adds, and keeps a beam seen edge-on as wide: RV-62); ours one ribbon in the surface
+    const crossings: readonly boolean[] = style.game ? [false, true] : [false];
+    for (const beam of graph.beams) for (const alongNormal of crossings) {
       const { points, normals: beamNormals } = beam;
       const n = points.length;
       points.forEach((point, k) => {
@@ -253,7 +297,7 @@ export class CageBeams {
         const after = points[Math.min(n - 1, k + 1)] ?? point;
         const tangent = new Vector3(...three(after)).sub(new Vector3(...three(before))).normalize();
         const normal = new Vector3(...three(beamNormals[k] ?? [0, 0, 1]));
-        const side = new Vector3().crossVectors(tangent, normal).normalize();
+        const side = alongNormal ? normal.clone().normalize() : new Vector3().crossVectors(tangent, normal).normalize();
         // (the ends reach a core's half width on, so beams meeting at a point overlap there instead of leaving a notch)
         const reach = style.game ? 0 : k === 0 ? -CORE_HALF_WIDTH : k === n - 1 ? CORE_HALF_WIDTH : 0;
         const centre = new Vector3(...three(point)).addScaledVector(tangent, reach);
@@ -291,8 +335,8 @@ export class CageBeams {
         opacity: { value: 1 },
         shockWave: { value: -0.25 },
         time: { value: 0 },
-        fire: { value: FIRE_CURVE },
-        smoke: { value: SMOKE_CURVE },
+        fire: { value: curveTexture(FIRE_CURVE) },
+        smoke: { value: curveTexture(SMOKE_CURVE) },
       };
       const gameMaterial = new ShaderMaterial({
         vertexShader: gameVertexShader,

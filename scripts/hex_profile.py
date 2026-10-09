@@ -6,9 +6,10 @@ odd columns half a row down, the grid offset (0, 0.25) tiles). This fits each te
 mean of each channel over 32 steps of hex radius (0 at the centre, 1 at the edge): 16 over r 0-0.8, 16 over 0.8-1.
 Values only: the textures are local (out/bsim/...) and never committed.
 
-Usage: .venv/bin/python scripts/hex_profile.py TEXTURE.png TILES_ACROSS CHANNELS
+Usage: .venv/bin/python scripts/hex_profile.py TEXTURE.png TILES_ACROSS CHANNELS [--srgb]
   TILES_ACROSS: tiles of the layout above in the texture's width (1 for the Hexagons packs, 8 for ForcefieldHex)
   CHANNELS: e.g. RG
+  --srgb: the texture is sRGB (the GPU decodes it before the shader reads it: arena/textures/stats.json): decode first
 """
 
 import sys
@@ -37,6 +38,9 @@ def hex_radius(u: np.ndarray, v: np.ndarray) -> np.ndarray:
 def main() -> None:
     path, tiles, channels = sys.argv[1], float(sys.argv[2]), sys.argv[3]
     image = np.asarray(Image.open(path).convert("RGBA")).astype(float) / 255
+    if "--srgb" in sys.argv[4:]:
+        rgb = image[..., :3]
+        image[..., :3] = np.where(rgb <= 0.04045, rgb / 12.92, ((rgb + 0.055) / 1.055) ** 2.4)
     h, w, _ = image.shape
     v, u = np.mgrid[0:h, 0:w]
     r = hex_radius((u + 0.5) / w * tiles, (v + 0.5) / h * tiles)

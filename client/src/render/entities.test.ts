@@ -130,7 +130,11 @@ describe("the ball's look on a goal and at a kickoff (VT-15, VT-30)", () => {
     view.fade(true, 1 / 60);
     expect(view.opacity).toBeCloseTo(1 - 3 / 60, 9);
     expect(view.alpha).toBe(1); // (the dissolve keeps it solid at first: RV-31)
-    for (let i = 0; i < 19; i++) view.fade(true, 1 / 60);
+    // (mid-way, alpha = clamp((D - 0.5) / 0.214): after 8 frames D 0.6, alpha 0.467)
+    for (let i = 0; i < 7; i++) view.fade(true, 1 / 60);
+    expect(view.opacity).toBeCloseTo(0.6, 9);
+    expect(view.alpha).toBeCloseTo(0.1 / 0.214, 9);
+    for (let i = 0; i < 12; i++) view.fade(true, 1 / 60);
     expect(view.opacity).toBe(0);
     const slow = new BallView();
     slow.fade(true, 0.2); // (a long frame counts 1/30)

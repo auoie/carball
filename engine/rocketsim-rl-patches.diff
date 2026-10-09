@@ -1052,7 +1052,7 @@ index 5805611..3ceaa22 100644
  }
 \ No newline at end of file
 diff --git upstream/src/Sim/Arena/Arena.cpp engine/rocketsim/src/Sim/Arena/Arena.cpp
-index a13cee0..ee612ff 100644
+index a13cee0..9de2a1b 100644
 --- upstream/src/Sim/Arena/Arena.cpp
 +++ engine/rocketsim/src/Sim/Arena/Arena.cpp
 @@ -1,4 +1,6 @@
@@ -1629,14 +1629,14 @@ index a13cee0..ee612ff 100644
 -
 -		Vec deltaPos = (otherState.pos - state.pos);
 -		if (state.vel.Dot(deltaPos) > 0) { // Going towards other car
--
++		bool canDemoTeam = _mutatorConfig.enableTeamDemos || (car1->team != car2->team);
+ 
 -			Vec velDir = state.vel.Normalized();
 -			Vec dirToOtherCar = deltaPos.Normalized();
 -
 -			float speedTowardsOtherCar = state.vel.Dot(dirToOtherCar);
 -			float otherCarAwaySpeed = otherState.vel.Dot(velDir);
-+		bool canDemoTeam = _mutatorConfig.enableTeamDemos || (car1->team != car2->team);
- 
+-
 -			if (speedTowardsOtherCar > otherCarAwaySpeed) { // Going towards other car faster than they are going away
 +		if (_mutatorConfig.demoMode == DemoMode::ON_CONTACT) {
 +			if (canDemoTeam) {
@@ -2233,7 +2233,7 @@ index a13cee0..ee612ff 100644
  
  	return car;
  }
-@@ -691,20 +1487,32 @@ void Arena::Step(int ticksToSimulate) {
+@@ -691,20 +1487,40 @@ void Arena::Step(int ticksToSimulate) {
  
  		_bulletWorld.setWorldUserInfo(this);
  
@@ -2256,9 +2256,17 @@ index a13cee0..ee612ff 100644
 +		// RL PATCH: the ball's start-of-tick velocity (OldRBState) for the car hit impulse (cars keep theirs in _oldState)
 +		ball->_startOfTickVel = ball->_rigidBody.m_linearVelocity * BT_TO_UU;
 +
-+		if (kickoffCountdownTicks > 0) // RL PATCH: kickoff countdown, no input
-+			for (Car* car : _cars)
++		// RL PATCH: kickoff countdown, no input. The jump's edge still follows the real input (Car_TA.SetVehicleInput
++		// calls OnJumpPressed only when Input.bJump changes, and OnJumpPressed returns while !bDriving: a press during the
++		// countdown is swallowed, and one held through it doesn't jump at the release; static analysis RV-55)
++		const bool countdown = kickoffCountdownTicks > 0;
++		std::vector<bool> countdownJump;
++		if (countdown) {
++			for (Car* car : _cars) {
++				countdownJump.push_back(car->controls.jump);
 +				car->controls = CarControls();
++			}
++		}
 +
 +		{ // RL PATCH: demolished cars' respawn spot selection, lock and respawn spot (in ID order, each respawning car
 +		  // avoiding the ones before; _UpdateDemolished)
@@ -2274,7 +2282,7 @@ index a13cee0..ee612ff 100644
  
  		if (hasArenaStuff && !ballOnly) {
  			for (BoostPad* pad : _boostPads)
-@@ -714,9 +1522,16 @@ void Arena::Step(int ticksToSimulate) {
+@@ -714,11 +1530,24 @@ void Arena::Step(int ticksToSimulate) {
  		// Update ball
  		ball->_PreTickUpdate(gameMode, tickTime);
  
@@ -2288,10 +2296,18 @@ index a13cee0..ee612ff 100644
  
 +		_UpdateWorldContacts(); // RL PATCH
 +
++		size_t carIndex = 0;
  		for (Car* car : _cars) {
  			car->_PostTickUpdate(gameMode, tickTime, _mutatorConfig);
++			// RL PATCH (RV-55): through the countdown the last input's jump is the real one held, so its press at the
++			// release doesn't count
++			if (countdown && carIndex < countdownJump.size())
++				car->_internalState.lastControls.jump = countdownJump[carIndex];
++			carIndex++;
  			car->_FinishPhysicsTick(_mutatorConfig);
-@@ -745,6 +1560,19 @@ void Arena::Step(int ticksToSimulate) {
+ 			if (hasArenaStuff) {
+ 				if (_config.useCustomBoostPads) {
+@@ -745,6 +1574,19 @@ void Arena::Step(int ticksToSimulate) {
  			if (ball->_internalState.dsInfo.lastDamageTick && ball->_internalState.dsInfo.lastDamageTick == tickCount)
  				SetDropshotTilesState(_dropshotTilesState);
  
@@ -2311,7 +2327,7 @@ index a13cee0..ee612ff 100644
  		if (_goalScoreCallback.func != NULL) { // Potentially fire goal score callback
  			if (IsBallScored()) {
  				_goalScoreCallback.func(this, RS_TEAM_FROM_Y(-ball->_rigidBody.getWorldTransform().m_origin.y()), _goalScoreCallback.userInfo);
-@@ -752,6 +1580,8 @@ void Arena::Step(int ticksToSimulate) {
+@@ -752,6 +1594,8 @@ void Arena::Step(int ticksToSimulate) {
  		}
  
  		tickCount++;
@@ -2320,7 +2336,7 @@ index a13cee0..ee612ff 100644
  	}
  }
  
-@@ -983,6 +1813,7 @@ btRigidBody* Arena::_AddStaticCollisionShape(btCollisionShape* shape, btVector3
+@@ -983,6 +1827,7 @@ btRigidBody* Arena::_AddStaticCollisionShape(btCollisionShape* shape, btVector3
  	} else {
  		_bulletWorld.addRigidBody(shapeRB);
  	}
@@ -2328,7 +2344,7 @@ index a13cee0..ee612ff 100644
  	_worldCollisionRBs.push_back(shapeRB);
  	return shapeRB;
  }
-@@ -993,6 +1824,7 @@ void Arena::_SetupArenaCollisionShapes() {
+@@ -993,6 +1838,7 @@ void Arena::_SetupArenaCollisionShapes() {
  	bool isDropShot = gameMode == GameMode::DROPSHOT;
  
  	auto collisionMeshes = RocketSim::GetArenaCollisionShapes(gameMode);
@@ -2336,7 +2352,7 @@ index a13cee0..ee612ff 100644
  
  	if (collisionMeshes.empty()) {
  		RS_ERR_CLOSE(
-@@ -1021,7 +1853,7 @@ void Arena::_SetupArenaCollisionShapes() {
+@@ -1021,7 +1867,7 @@ void Arena::_SetupArenaCollisionShapes() {
  
  		int mask = isHoopsNet ? CollisionMasks::HOOPS_NET : 0;
  		_worldCollisionBvhShapes.push_back(mesh);
@@ -2705,7 +2721,7 @@ index 957b192..11ddf8c 100644
  		class Car* car, Vec relPos,
  		float& outFriction, float& outRestitution,
 diff --git upstream/src/Sim/BoostPad/BoostPad.cpp engine/rocketsim/src/Sim/BoostPad/BoostPad.cpp
-index c87d449..60c16a7 100644
+index c87d449..d9d1ad0 100644
 --- upstream/src/Sim/BoostPad/BoostPad.cpp
 +++ engine/rocketsim/src/Sim/BoostPad/BoostPad.cpp
 @@ -64,22 +64,12 @@ void BoostPad::_CheckCollide(Car* car) {
@@ -2736,17 +2752,6 @@ index c87d449..60c16a7 100644
  
  	if (colliding)
  		_internalState.curLockedCar = car;
-@@ -92,7 +82,9 @@ void BoostPad::_PostTickUpdate(float tickTime, const MutatorConfig& mutatorConfi
- 	if (_internalState.curLockedCar) {
- 		lockedCarID = _internalState.curLockedCar->id;
- 
--		if (_internalState.isActive) {
-+		// RL PATCH: no pickup at full boost (VehiclePickup_Boost_TA.CanPickup: !BoostComponent.IsFull(), IsFull =
-+		// CurrentBoostAmount >= MaxBoostAmount; static analysis RV-40): RocketSim took the pad and clamped
-+		if (_internalState.isActive && _internalState.curLockedCar->_internalState.boost < RLConst::BOOST_MAX) {
- 			float boostToAdd = config.isBig ? BOOST_AMOUNT_BIG : BOOST_AMOUNT_SMALL;
- 			_internalState.curLockedCar->_internalState.boost = RS_MIN(_internalState.curLockedCar->_internalState.boost + boostToAdd, RLConst::BOOST_MAX);
- 
 diff --git upstream/src/Sim/Car/Car.cpp engine/rocketsim/src/Sim/Car/Car.cpp
 index 417ad9d..da2801b 100644
 --- upstream/src/Sim/Car/Car.cpp

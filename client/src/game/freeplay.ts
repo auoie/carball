@@ -26,17 +26,13 @@ import { TouchLog, planReplay } from "./replayPlan";
 import { ReplayPlayback, explosionTeam } from "./replayPlayback";
 import { ReplayRecorder, recordCar } from "./replayRecorder";
 import {
-  BALL_SETTLED_Z,
+  FREEPLAY_BALL_HOLD_TICKS,
   FREEPLAY_COUNTDOWN_TICKS,
+  FREEPLAY_NET_TEAM,
   FREEPLAY_PAD_RESET_TICKS,
   FREEPLAY_RESET_COOLDOWN,
   PostGoalClock,
-  ballLanded,
 } from "./goalSequence";
-
-/** Both of freeplay's nets have TeamNum 1, so either scores for the player's team (0): the explosion in its colour,
- *  the replay camera on a team-1 net's side (static analysis RV-41) */
-const FREEPLAY_NET_TEAM = 1;
 
 export class Freeplay {
   readonly #world: World;
@@ -78,8 +74,9 @@ export class Freeplay {
   #spawnIndex = 0;
   /** Ticks to freeplay's second pad reset (0: none due) */
   #padResetTicks = 0;
-  /** The new ball falling from its spawn until it lands (then it stays put: BALL_SETTLED_Z) */
-  #ballFalling = false;
+  /** The new ball held at its spawn this many more ticks, and where that is */
+  #ballHold = 0;
+  #ballSpawn: Vec3 = ZERO;
   /** Game seconds since the player's last reset (Backspace: a cooldown) */
   #sinceReset = Infinity;
   /** The goal replay (no freeplay special case: unless the player skips goal replays): what each tick drew, the
@@ -91,8 +88,6 @@ export class Freeplay {
   #replay: ReplayPlayback | null = null;
   readonly #fade = new Fade();
   #skipHeld = true;
-  /** After skipping a replay with jump's key: no jump until it's let go (the car was gone when it was pressed) */
-  #jumpBlocked = false;
   #fps = 60;
   readonly #pos = new Vector3();
   readonly #rot = new Quaternion();
@@ -181,8 +176,7 @@ export class Freeplay {
     if (!skipped && !replay.done) return;
     this.#replay = null;
     this.#fade.fromBlack();
-    this.#resetKickoff();
-    this.#jumpBlocked = skipped;
+    this.#resetKickoff(); // (the skip's jump press, held into the countdown, doesn't jump: the engine, RV-55)
   }
 
   /** A frame of play: `world` its world time (slowed after a goal), `real` its real time */
@@ -198,7 +192,6 @@ export class Freeplay {
     this.#handleActions(readHeldActions(snapshot, bindings, controller.deadzone), options, camera.device.ballCamToggle);
     const raw = readControls(snapshot, bindings, controller.deadzone, this.#buttons);
     this.#jump.frame(this.#buttons);
-    if (this.#jumpBlocked && !raw.jump) this.#jumpBlocked = false;
     const onGround = this.#car.current.onGround;
     const safety = this.#pitchSafety.update(options.airPitchSafety, this.#input.usingGamepad, onGround, raw);
     const controls = { ...raw, airPitchSafety: safety, dodgeForward: -raw.pitch }; // (its own byte: C-2)
@@ -212,8 +205,7 @@ export class Freeplay {
     const ticks = this.#clock.advance(world);
     for (let i = 0; i < ticks; i++) {
       const held = this.#world.kickoffCountdown() > 0;
-      const jump = this.#jump.tick(controls.jump) && !this.#jumpBlocked;
-      this.#world.setControls(this.#playerId, { ...controls, jump });
+      this.#world.setControls(this.#playerId, { ...controls, jump: this.#jump.tick(controls.jump) });
       this.#world.step();
       this.#roundTick(held);
       const car = this.#world.car(this.#playerId);
@@ -257,7 +249,7 @@ export class Freeplay {
     this.#held = held;
   }
 
-  /** After a tick: the round's countdown ending (the spot index steps), the second pad reset, the new ball landing; the
+  /** After a tick: the round's countdown ending (the spot index steps), the second pad reset, the new ball's hold; the
    *  ball's touches and the frame recorded for a replay */
   #roundTick(heldBefore: boolean): void {
     const tick = this.#world.tick;
@@ -273,13 +265,9 @@ export class Freeplay {
       this.#padResetTicks -= 1;
       if (this.#padResetTicks === 0) this.#world.resetBoostPads();
     }
-    if (this.#ballFalling) {
-      const ball = this.#world.ball();
-      if (this.#world.ballExploded()) this.#ballFalling = false;
-      else if (ballLanded(ball)) {
-        this.#ballFalling = false;
-        this.#world.setBall({ pos: vec3(ball.pos.x, ball.pos.y, BALL_SETTLED_Z), vel: ZERO, angVel: ZERO });
-      }
+    if (this.#ballHold > 0) {
+      this.#ballHold -= 1;
+      this.#world.setBall({ pos: this.#ballSpawn, vel: ZERO, angVel: ZERO });
     }
   }
 
@@ -314,7 +302,8 @@ export class Freeplay {
     this.#world.resetFreeplay(this.#sessionSeed, this.#spawnIndex);
     this.#world.setKickoffCountdown(FREEPLAY_COUNTDOWN_TICKS);
     this.#padResetTicks = FREEPLAY_PAD_RESET_TICKS;
-    this.#ballFalling = true;
+    this.#ballHold = FREEPLAY_BALL_HOLD_TICKS;
+    this.#ballSpawn = this.#world.ball().pos;
     this.#ballSpawnTick = this.#world.tick;
     this.#touches.clear();
     this.#replayPlan = null;
@@ -328,7 +317,7 @@ export class Freeplay {
     // (100: freeplay's Unlimited boost)
     this.#world.setCar(this.#playerId, { pos: vec3(car.x, car.y, 17.01), vel: ZERO, angVel: ZERO, rot, boost: 100 });
     if (ball) {
-      this.#ballFalling = false;
+      this.#ballHold = 0;
       this.#world.setBall({ pos: ball, vel: ZERO, angVel: ZERO });
     }
     this.#snapViews();
@@ -357,7 +346,7 @@ export class Freeplay {
     const pos = onCar
       ? add(car.pos, vec3(0, 0, 200))
       : add(add(car.pos, scale(flatForward, 600)), vec3(0, 0, 300));
-    this.#ballFalling = false;
+    this.#ballHold = 0;
     this.#world.setBall({ pos, vel: onCar ? car.vel : ZERO, angVel: ZERO });
     this.#pushBall();
   }

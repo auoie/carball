@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { TouchLog, type Touch, planReplay } from "./replayPlan";
-import { replaySeconds } from "./goalSequence";
+import { FREEPLAY_NET_TEAM, replaySeconds } from "./goalSequence";
+import { explosionTeam } from "./replayPlayback";
 
 const touch = (car: number, team: number, tick: number): Touch => ({ car, team, tick });
 
@@ -62,5 +63,13 @@ describe("the ball's touches", () => {
     for (let i = 0; i < 60; i++) log.update(i % 2, i % 2, i + 1);
     expect(log.touches).toHaveLength(50);
     expect(log.touches[0]?.tick).toBe(11);
+  });
+});
+
+describe("freeplay's nets (RV-41)", () => {
+  it("both TeamNum 1: the explosion in the player's colour (team 0) at either; a match's net gives its scorer's", () => {
+    expect(explosionTeam(FREEPLAY_NET_TEAM)).toBe(0);
+    expect(explosionTeam(0)).toBe(1); // (a match: blue's net, orange scored)
+    expect(explosionTeam(1)).toBe(0);
   });
 });

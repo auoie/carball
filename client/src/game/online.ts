@@ -43,7 +43,7 @@ import { type RecordedCar, ReplayRecorder, recordCar } from "./replayRecorder";
 import { ReplayPlayback } from "./replayPlayback";
 import { Fade } from "../render/fade";
 import { SceneEffects } from "../render/effects";
-import { EXPLOSION_LARGE } from "../camera/shake";
+import { EXPLOSION_LARGE, EXPLOSION_MEDIUM } from "../camera/shake";
 import { ShakeTriggers } from "./shakeTriggers";
 
 
@@ -148,7 +148,7 @@ export class Online {
   #autoSkipSent: boolean;
   readonly #fade = new Fade();
   readonly #effects: SceneEffects;
-  readonly #shakeTriggers = new ShakeTriggers();
+  readonly #shakeTriggers = new ShakeTriggers({ demolitions: false }); // (the server's Demo events: RV-47)
   #localSpawns: number; // the local car's spawn counter last drawn (a kickoff's new car: the camera starts over)
   readonly #phases: { phase: MatchState["phase"]; at: number; frame: number }[] = [];
   #minDilation = 1;
@@ -458,10 +458,21 @@ export class Online {
         this.#messageTimer = BANNER_SECONDS;
         this.#goalFrame = this.#frameAt(m.serverTick);
         this.#serverExploded = true;
-        this.#effects.goal(this.#world.ball().pos, team);
+        // (where the ball was at the goal's tick, as this client drew it: RV-52h)
+        const at = this.#recorder.before(Math.floor(this.#goalFrame))?.ball.pos ?? this.#world.ball().pos;
+        this.#effects.goal(at, team);
         this.#arena.explode();
-        this.#camera.shakes.play(EXPLOSION_LARGE, this.#world.ball().pos);
+        this.#camera.shakes.play(EXPLOSION_LARGE, at);
         this.#minDilation = 1;
+      } else if (m.type === "event" && m.event.kind === "demo") {
+        // A demolition as the server says (QueueDemolish from the replicated demolish): its effect and shake where the
+        // victim was at that tick, as this client drew it (RV-47)
+        const recorded = this.#recorder.before(Math.floor(this.#frameAt(m.serverTick)))?.cars.get(m.event.victim);
+        const at = recorded?.pos ?? this.#cars.get(m.event.victim)?.state.current.pos;
+        if (at) {
+          this.#effects.demolition(at);
+          this.#camera.shakes.play(EXPLOSION_MEDIUM, at);
+        }
       } else if (m.type === "replay") {
         // (the cut in from black: LiveReplay's Begin)
         this.#replay = new ReplayPlayback(m, this.#recorder, (tick) => this.#frameAt(tick));
@@ -552,9 +563,7 @@ export class Online {
     this.#effects.update(frameSeconds);
     const pads = this.#world.boostPads();
     const states = new Map([...this.#cars].map(([id, entry]) => [id, entry.state.current]));
-    this.#shakeTriggers.frame(this.#camera.shakes, this.#cars.get(this.#localCar)?.state.current, states, pads, (car) => {
-      this.#effects.demolition(car.pos);
-    });
+    this.#shakeTriggers.frame(this.#camera.shakes, this.#cars.get(this.#localCar)?.state.current, states, pads, () => undefined);
     this.#padsView.update(pads, frameSeconds);
 
     const local = this.#cars.get(this.#localCar);

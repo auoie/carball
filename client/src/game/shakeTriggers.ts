@@ -1,14 +1,21 @@
 // What starts the camera shakes and the demolition effects, from the states drawn (notes/camera-shakes.md,
 // notes/visual-timing.md VT-19): a pad taken (any car, BoostOrb_Used where the pad is), a car demolished (any car:
-// Explosion_Medium at the wreck, and its debris), the player's own jumps, double jumps and dodges. (The goal's shake
+// Explosion_Medium at the wreck, and its debris; offline only: online the server's Demo event starts them, so a
+// mispredicted demolition shows nothing, RV-47), the player's own jumps, double jumps and dodges. (The goal's shake
 // starts with its explosion; an impact's waits for the hit detection's contact data.)
 import { DODGE, EXPLOSION_MEDIUM, JUMP, BOOST_ORB_USED, type CameraShakes } from "../camera/shake";
 import type { BoostPadState, CarState } from "../engine/world";
 
 export class ShakeTriggers {
+  readonly #demolitions: boolean;
   #pads: readonly boolean[] | null = null;
   readonly #demoed = new Map<number, boolean>();
   #own: { readonly hasJumped: boolean; readonly doubleJumped: boolean; readonly hasFlipped: boolean; readonly spawnCount: number } | null = null;
+
+  /** `demolitions`: the cars' demolitions from their states (false online: from the server's events) */
+  constructor(options: { readonly demolitions?: boolean } = {}) {
+    this.#demolitions = options.demolitions ?? true;
+  }
 
   /** This frame's states: `onDemolition` for each car newly demolished (the debris) */
   frame(
@@ -23,7 +30,7 @@ export class ShakeTriggers {
     });
     this.#pads = pads.map((p) => p.active);
     for (const [id, car] of cars) {
-      if (car.demoed && this.#demoed.get(id) === false) {
+      if (this.#demolitions && car.demoed && this.#demoed.get(id) === false) {
         shakes.play(EXPLOSION_MEDIUM, car.pos);
         onDemolition(car);
       }

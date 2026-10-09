@@ -50,7 +50,7 @@ export function dimensionTheme(): Theme {
     horizon: new Color(0x2a143f),
     sunDirection: new Vector3(0, -1, 0),
     sunStrength: 0,
-    radius: 34000,
+    radius: 32000, // (inside the camera's far plane from anywhere in the arena, the goals too)
     clouds: { color: new Color(0x1a4a3e), cover: 0.45 }, // (a green nebula drifting)
   });
 

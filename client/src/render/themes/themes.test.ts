@@ -1,7 +1,8 @@
-import { Box3, InstancedMesh, Matrix4, Mesh, type Object3D, Vector3 } from "three";
+import { BackSide, Box3, InstancedMesh, type Material, Matrix4, Mesh, type Object3D, Vector3 } from "three";
 import { beforeAll, describe, expect, it } from "vitest";
 import { THEMES, createTheme, themeName } from ".";
 import { PLAYING_VOLUME, type Theme } from "./theme";
+import { CAMERA_FAR } from "../renderer";
 
 const built = new Map<string, Theme>();
 beforeAll(async () => {
@@ -70,6 +71,22 @@ describe("themes", () => {
         }
       }
     }
+  });
+
+  it.each(THEMES)("%s: its sky within the camera's far plane from anywhere in the arena (RV-58)", (name) => {
+    const t = theme(name);
+    t.update(12.3, new Vector3(0, 93, 0));
+    // (the camera within the playing volume: its farthest corner from the centre)
+    const reach = Math.hypot(PLAYING_VOLUME.halfX, PLAYING_VOLUME.height, PLAYING_VOLUME.halfZ);
+    const v = new Vector3();
+    let farthest = 0;
+    // The sky domes (drawn from inside: their back faces); ground and terrain may reach past it, fogged out
+    const domes = meshes(t.root).filter((m) => !(m instanceof InstancedMesh) && (m.material as Material).side === BackSide);
+    for (const mesh of domes) {
+      const position = mesh.geometry.getAttribute("position");
+      for (let i = 0; i < position.count; i++) farthest = Math.max(farthest, v.fromBufferAttribute(position, i).applyMatrix4(mesh.matrixWorld).length());
+    }
+    expect(farthest + reach).toBeLessThan(CAMERA_FAR);
   });
 
   it("meadow: at most 16 draw calls for all its scenery", () => {

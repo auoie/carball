@@ -419,20 +419,25 @@ describe("leaving the free-look ball cam (RV-19)", () => {
   });
 });
 
-describe("back from the free-look ball cam with the look held (RV-27)", () => {
-  it("the car cam carries the look's rate on (no TurnOffFreeLook): after its 0.5 s blend it has turned ~12700 units", () => {
+describe("back from the free-look ball cam with the look held (RV-27, RV-54)", () => {
+  it("the car cam takes the look at once, its rate built up from 0 again (the car cam's end reset it): ~8700 units", () => {
     const SETTINGS = { smoothing: true, accelRate: 5.8, decelRate: 10.8, freeLookSpeed: 2.5 };
     const look = (yaw: number): CameraControls => ({ ...CAR_CAM, freeLook: { axes: { pitch: 0, yaw, source: "stick" }, settings: SETTINGS, ballCamHold: false } });
     const ball = vec3(0, 3000, 93);
     const yaw = (v: Vec3) => Math.atan2(v.y, v.x) * (32768 / Math.PI);
-    const camera = new PlayerCamera();
-    settle(camera, car(), ball, look(1), 1); // (the look's rate built up)
-    const inBallCam = settle(camera, car(), ball, { ...look(1), ballCam: true }, 1);
-    let back = camera.update(1 / 120, car(), ball, look(1));
-    for (let i = 0; i < 60; i++) back = camera.update(1 / 120, car(), ball, look(1));
-    // (the rate kept: ~25000 units/s for 0.508 s; restarted from zero it would ease in: ~8400)
-    const turned = yaw(back.forward) - yaw(inBallCam.forward);
-    expect(turned).toBeGreaterThan(11000);
-    expect(turned).toBeLessThan(13500);
+    const turnedAfter = (lookBefore: number): number => {
+      const camera = new PlayerCamera();
+      settle(camera, car(), ball, look(lookBefore), 1); // (with the look held: its rate built up)
+      const inBallCam = settle(camera, car(), ball, { ...look(lookBefore), ballCam: true }, 1);
+      let back = camera.update(1 / 120, car(), ball, look(1));
+      for (let i = 0; i < 60; i++) back = camera.update(1 / 120, car(), ball, look(1));
+      return yaw(back.forward) - yaw(inBallCam.forward);
+    };
+    // (the rate restarted from zero, easing in over the blend's 0.5 s: the game's ~8691; kept, it would be ~12700)
+    const turned = turnedAfter(1);
+    expect(turned).toBeGreaterThan(8400);
+    expect(turned).toBeLessThan(9000);
+    // (the same as with no look before the ball cam: nothing carried over)
+    expect(turned).toBeCloseTo(turnedAfter(0), 0);
   });
 });

@@ -1,0 +1,16 @@
+# The goal side wall's curve per wheel (notes/wheel-kick-t125.md): four segments, each the first 180 ticks of walls.txt.
+# The front wheels reach the curve about 57 ticks into the throttle; the hitbox's nose hits it around ticks 65, 67, 71.
+# Record with the per-wheel (_wheels.csv) and per-contact (_bullet.csv) columns.
+ball -3000 -2000 92.75  0 0 0  0 0 0     # at rest, clear of the car and the walls
+car 600 5500 30  0 0 0  0 0 0  0 0 0  0
+wait 60
+input 120 1 0 0 0 0 0 0 0
+car -600 5500 30  0 180 0  0 0 0  0 0 0  0   # the mirror: a geometric roll/yaw error should flip
+wait 60
+input 120 1 0 0 0 0 0 0 0
+car 600 5440 30  0 0 0  0 0 0  0 0 0  0      # the nose's points shifted against the 825/831 diagonal
+wait 60
+input 120 1 0 0 0 0 0 0 0
+car 600 5500 30  0 0 0  0 0 0  0 0 0  0
+wait 60
+input 120 0.5 0 0 0 0 0 0 0                   # a slower entry: less or no nose contact

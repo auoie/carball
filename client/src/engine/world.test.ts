@@ -196,21 +196,29 @@ describe("freeplay's new round (notes/camera-respawn-goal.md, RV-26, RV-39)", ()
     world.dispose();
   });
 
-  it("the ball at its spawn, z 100.49 at rest; it falls and lands 18-19 ticks later", async () => {
-    const { ballLanded } = await import("../game/goalSequence");
+  it("the ball at its spawn, z 100.49 at rest; it falls, and bounces as the game's (no freeze on landing: RV-57)", () => {
     const world = World.create(engine);
     world.addCar(0);
     world.resetFreeplay(5, 0);
     expect(world.ball().pos).toEqual(vec3(0, 0, expect.closeTo(100.49, 3) as number));
-    let ticks = 0;
-    while (!ballLanded(world.ball()) && ticks < 100) {
+    // (live: the floor at -97.2 uu/s, up at +58.3, the hop's top at z 95.60)
+    let lowest = Infinity;
+    let up = 0;
+    let top = 0;
+    for (let i = 0; i < 60; i++) {
       world.step();
-      ticks++;
+      const { pos, vel } = world.ball();
+      lowest = Math.min(lowest, pos.z);
+      if (up === 0 && vel.z > 0) up = vel.z;
+      if (up > 0) top = Math.max(top, pos.z);
     }
-    expect(ticks).toBeGreaterThanOrEqual(17);
-    expect(ticks).toBeLessThanOrEqual(20);
+    expect(lowest).toBeLessThan(93.2);
+    expect(up).toBeGreaterThan(55);
+    expect(up).toBeLessThan(62);
+    expect(top).toBeCloseTo(95.6, 0);
     world.dispose();
   });
+
 
   it("unlimited boost: 100 at the spawn and never used up", () => {
     const world = World.create(engine);

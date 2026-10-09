@@ -1499,9 +1499,17 @@ void Arena::Step(int ticksToSimulate) {
 		// RL PATCH: the ball's start-of-tick velocity (OldRBState) for the car hit impulse (cars keep theirs in _oldState)
 		ball->_startOfTickVel = ball->_rigidBody.m_linearVelocity * BT_TO_UU;
 
-		if (kickoffCountdownTicks > 0) // RL PATCH: kickoff countdown, no input
-			for (Car* car : _cars)
+		// RL PATCH: kickoff countdown, no input. The jump's edge still follows the real input (Car_TA.SetVehicleInput
+		// calls OnJumpPressed only when Input.bJump changes, and OnJumpPressed returns while !bDriving: a press during the
+		// countdown is swallowed, and one held through it doesn't jump at the release; static analysis RV-55)
+		const bool countdown = kickoffCountdownTicks > 0;
+		std::vector<bool> countdownJump;
+		if (countdown) {
+			for (Car* car : _cars) {
+				countdownJump.push_back(car->controls.jump);
 				car->controls = CarControls();
+			}
+		}
 
 		{ // RL PATCH: demolished cars' respawn spot selection, lock and respawn spot (in ID order, each respawning car
 		  // avoiding the ones before; _UpdateDemolished)
@@ -1532,8 +1540,14 @@ void Arena::Step(int ticksToSimulate) {
 
 		_UpdateWorldContacts(); // RL PATCH
 
+		size_t carIndex = 0;
 		for (Car* car : _cars) {
 			car->_PostTickUpdate(gameMode, tickTime, _mutatorConfig);
+			// RL PATCH (RV-55): through the countdown the last input's jump is the real one held, so its press at the
+			// release doesn't count
+			if (countdown && carIndex < countdownJump.size())
+				car->_internalState.lastControls.jump = countdownJump[carIndex];
+			carIndex++;
 			car->_FinishPhysicsTick(_mutatorConfig);
 			if (hasArenaStuff) {
 				if (_config.useCustomBoostPads) {

@@ -61,7 +61,19 @@
     RV-40 (no pad pickup at full boost, engine patch 91: matches too), RV-41 (freeplay's nets are TeamNum 1: the
     explosion in the player's colour, the replay camera on a team-1 net's side), Backspace's 1.0 game s cooldown,
     Unlimited boost (freeplay's default), and the goal replay in freeplay unless "Skip goal replays" is on (Q-1: the
-    user's in-game setting is on, hence no replay seen; no freeplay special case). Left: RV-16
+    user's in-game setting is on, hence no replay seen; no freeplay special case). Committed in 2f7dd07; its reviews
+    (RV-42..70) and the live sitting's follow-ups are in, uncommitted: RV-54 (the free-look rate reset when the car
+    cam ends), RV-55 (engine patch 92: a jump held through a countdown doesn't fire), RV-56 (patch 91 withdrawn:
+    BoostPadGrid already skips full cars), RV-57 (the freeplay ball held a tick, then it bounces: validation finding
+    51), RV-58 (sky domes inside the far plane, every theme tested), RV-42..53 (particles: local-space exhaust, the
+    Fennec's per-socket trail size and spawn rate, the smoke materials' grey fade, unclamped additive intensity, the
+    data's own curve knots, cube-biased directions, teleports not filled, a demolished car's puffs killed, dual
+    exhausts always, the cone's delay, online demolitions and the goal explosion from the server's events; table tests
+    against the local fx JSONs), RV-59..70 (stadium: glow sheets on the wall line, textures decoded from sRGB, the
+    glass's ENVPack colour as a radial statistic, crossed beam quads, metal goal floors, the goal-side glass polygon and
+    UVs, the net's UV axes, the overlay's charts and extent, FullBright quantised, the sky's sun-side pull). Left:
+    RV-52c (spark collision), RV-64's single global tone map (with AV-21's bloom), RV-68's directional fog (nothing in
+    the stadium is beyond 10240 uu yet), RV-70g. Left: RV-16
     (the tail lights' brake glow: needs a brake signal), RV-18 (the masks' zero alpha: only off Chrome), RV-34/35 (HUD).
   - **Visual timing part 2 (done, uncommitted):** particles (`client/src/render/particles.ts`, `effects.ts`) with the
     game's emitter values: the boost trail by distance and the idle exhaust, the goal explosion (no ribbons), a
@@ -83,6 +95,9 @@
     measured by `scripts/hex_profile.py` (values only). Next: the floor regions (AV-5), markings (H-2), panels (H-3),
     frames (H-4), generators (H-7), the advert band and grate (AV-10, H-11), goal floors as metal (AV-13), tone mapping
     and bloom (AV-21); then ask the user whether `stadium` becomes the default.
+  - **Live sitting 2026-10-09 (validation finding 51):** the per-wheel/per-contact PhysLog columns recorded
+    (`walls_goal_wheels`: three nose-contact ticks a facet's point a tick apart; the static session is decompiling the
+    candidate filter), Takumi +5.00 / Scarab +7.00 uu spawn offsets, the freeplay ball bouncing (RV-57).
   - **Local assets from the static session** (dev-only, git-ignored, load when present like the Fennec; each with a
     README and manifest): `out/bsim/assets_local/fx/` (ball GLB and material formula, the boost trail and the goal
     explosion as emitter JSON, schema rl-fx/1), `cars/` (six cars painted per team with their hitbox presets and

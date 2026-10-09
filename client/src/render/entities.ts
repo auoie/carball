@@ -41,9 +41,15 @@ export const TEAM_CAR_COLORS = [
 
 /** A car: the boxy model built around its hitbox (src/render/carModel.ts) and a boost flame, in the car's local
  *  frame (x forward, y up, z right); and, in the world, its supersonic trails and shockwave (src/render/supersonic.ts). */
-/** The Fennec's exhausts, where its boost trail and idle exhaust come out (the BoostEmitterLeft/Right sockets,
- *  (-57, -+20.43, 10.25) in its mesh's frame, the mesh 2.6115 uu above the car's origin), in the car's Three.js frame */
-const FENNEC_EXHAUSTS = [new Vector3(-57, 10.25 + 2.6115, -20.43), new Vector3(-57, 10.25 + 2.6115, 20.43)] as const;
+/** The exhausts, where the boost trail and idle exhaust come out: the Fennec's BoostEmitterLeft/Right sockets,
+ *  (-57, -+20.43, 10.25) in its mesh's frame, the mesh 2.6115 uu above the car's origin (every car here is drawn
+ *  Fennec-style: for another hitbox, as far behind its rear as the Fennec's, 11.88 uu: RV-50), in the car's Three.js frame */
+function exhausts(config: CarConfig): readonly [Vector3, Vector3] {
+  const x = config.hitboxOffset.x - config.hitboxSize.x / 2 - 11.88;
+  return [new Vector3(x, 10.25 + 2.6115, -20.43), new Vector3(x, 10.25 + 2.6115, 20.43)];
+}
+/** The boost cone shows this long after the boost starts (body_grain BoostConeMesh: AttachDelay 0.1 s) */
+const CONE_DELAY = 0.1;
 
 export class CarView {
   /** Add this to the scene: the car and its effects */
@@ -58,15 +64,16 @@ export class CarView {
   /** Each exhaust's boost trail and idle exhaust (with a scene's particles) */
   readonly #exhausts: readonly { readonly at: Vector3; readonly trail: Emitter; readonly idle: Emitter }[];
   readonly #axis = new Vector3();
+  #wasDemoed = false;
+  /** World seconds the boost has been on (the cone's delay) */
+  #boosted = 0;
 
   /** `particles`: the scene's, for the boost trail and the idle exhaust (none: no particles) */
   constructor(config: CarConfig, team: Team, particles: Particles | null = null) {
     const model = buildCarModel(config, TEAM_CAR_COLORS[team], team);
     this.#body.add(model);
-    const tail = new Vector3(config.hitboxOffset.x - config.hitboxSize.x / 2 - 10, config.hitboxOffset.z, 0);
-    const exhausts = model.userData["fennec"] === true ? FENNEC_EXHAUSTS : [tail];
     this.#exhausts = particles
-      ? exhausts.map((at) => ({ at, trail: new Emitter(particles, BOOST_TRAIL), idle: new Emitter(particles, IDLE_EXHAUST) }))
+      ? exhausts(config).map((at) => ({ at, trail: new Emitter(particles, BOOST_TRAIL), idle: new Emitter(particles, IDLE_EXHAUST) }))
       : [];
     this.root.add(this.#body, ...this.#trails.map((t) => t.mesh));
     // The rear tyres' contact points at rest (car frame: the bottom of each, as the model draws them)
@@ -107,7 +114,13 @@ export class CarView {
         return vec3(a.x, a.z, a.y);
       };
       const frame = { forward: axis(1, 0, 0), right: axis(0, 0, 1), up: axis(0, 1, 0) };
+      // (demolished: its trail and exhaust gone at once, StopAllEffects + KillParticlesForced: RV-52f)
+      const killed = demoed && !this.#wasDemoed;
       for (const { at, trail, idle } of this.#exhausts) {
+        if (killed) {
+          trail.kill();
+          idle.kill();
+        }
         const p = this.#point.copy(at).applyQuaternion(rotation).add(position);
         const game = vec3(p.x, p.z, p.y);
         trail.active = boosting && !demoed;
@@ -116,7 +129,9 @@ export class CarView {
         idle.update(seconds, game, frame);
       }
     }
-    this.#flame.visible = boosting;
+    this.#wasDemoed = demoed;
+    this.#boosted = boosting && !demoed ? this.#boosted + Math.max(0, seconds) : 0;
+    this.#flame.visible = this.#boosted >= CONE_DELAY;
     this.root.visible = !demoed;
     // Each rear wheel's trail: supersonic, picked by the direction rule, touching the ground (back left, back right)
     const picked = ground ? trailingRearWheels(ground.forwardSpeed, ground.sideSpeed) : [false, false];

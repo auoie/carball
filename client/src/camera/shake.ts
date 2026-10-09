@@ -72,6 +72,7 @@ export const BOOST_ORB_USED: ShakeSpec = {
   inner: 512,
   outer: 1024,
   falloff: 1,
+  attenuate: true, // (bAttenuate: the distance measured every tick, RV-49)
 };
 
 /** Jump and double jump (each its own component, which may overlap): the player's own car */
@@ -158,18 +159,21 @@ export class CameraShakes {
         if (spec.attenuate) scale = distanceScale(spec, d);
         else scale = a.scale ??= distanceScale(spec, d);
       }
-      const w = shakeWeight(spec, a.t) * scale;
-      if (w <= 0) continue;
+      const w = shakeWeight(spec, a.t);
+      if (w <= 0 || scale <= 0) continue;
       const A = (spec.amplitudeScale ?? 1) * a.amplitude;
       const F = spec.frequencyScale ?? 1;
+      // (the oscillator's output weighted by its blend: Location w v, Rotation trunc(w v); then summed scaled by the
+      // distance: Loc s, trunc(Rot s), so a rotation is truncated twice)
       const axis = (o: Oscillator | undefined, k: number): number =>
         o ? o.amp * A * Math.sin((a.t + (o.random ? (a.phase[k] ?? 0) : 0)) * o.freq * F) * w : 0;
-      pitch += Math.trunc(axis(spec.rot?.pitch, 0));
-      yaw += Math.trunc(axis(spec.rot?.yaw, 1));
-      roll += Math.trunc(axis(spec.rot?.roll, 2));
-      loc.x += axis(spec.loc?.x, 3);
-      loc.y += axis(spec.loc?.y, 4);
-      loc.z += axis(spec.loc?.z, 5);
+      const rot = (o: Oscillator | undefined, k: number): number => Math.trunc(Math.trunc(axis(o, k)) * scale);
+      pitch += rot(spec.rot?.pitch, 0);
+      yaw += rot(spec.rot?.yaw, 1);
+      roll += rot(spec.rot?.roll, 2);
+      loc.x += axis(spec.loc?.x, 3) * scale;
+      loc.y += axis(spec.loc?.y, 4) * scale;
+      loc.z += axis(spec.loc?.z, 5) * scale;
     }
     return { rotation: { pitch, yaw, roll }, location: loc };
   }

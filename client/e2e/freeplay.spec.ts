@@ -237,12 +237,16 @@ test("a goal in freeplay, skipping replays: no message, 3 s later a kickoff spot
   await expect(page.locator("#message")).toBeHidden();
   await page.waitForTimeout(500);
   expect((await hook()).speed).toBeLessThan(1);
-  // Backspace: the next spot of the session's cycle, in the other half (RV-39)
+  // Backspace: the next spot of the session's cycle, in the other half (RV-39); again at once: ignored (at most once a
+  // game second)
   const half = Math.sign((await hook()).pos.y);
   await page.locator("#game").click({ position: { x: 640, y: 360 }, button: "right" });
   await page.keyboard.press("Backspace");
   await expect.poll(async () => Math.sign((await hook()).pos.y), { timeout: 10_000 }).toBe(-half);
   expect(Math.abs((await hook()).pos.y)).toBeGreaterThan(2000);
+  await page.keyboard.press("Backspace");
+  await page.waitForTimeout(150);
+  expect(Math.sign((await hook()).pos.y)).toBe(-half);
   // W: it drives off
   await page.keyboard.down("KeyW");
   await expect.poll(async () => (await hook()).speed, { timeout: 6_000 }).toBeGreaterThan(100);

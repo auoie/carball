@@ -11,7 +11,6 @@ import {
   replayDilation,
   replaySeconds,
   scoreSlomo,
-  ballLanded,
 } from "./goalSequence";
 
 describe("the slow motion after a goal", () => {
@@ -98,13 +97,4 @@ describe("freeplay's goal clock on game time (RV-1)", () => {
   });
 });
 
-describe("freeplay's new ball", () => {
-  it("lands when it reaches its settled height or bounces back up (then it stays put)", () => {
-    const at = (z: number, vz: number) => ({ pos: { z }, vel: { z: vz } });
-    expect(ballLanded(at(100.49, 0))).toBe(false); // (just spawned)
-    expect(ballLanded(at(96, -300))).toBe(false);
-    expect(ballLanded(at(92.75, -100))).toBe(true);
-    expect(ballLanded(at(93.4, 60))).toBe(true); // (it bounced between ticks)
-  });
-});
 

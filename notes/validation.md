@@ -675,6 +675,26 @@ Cars alone (far from the ball and other cars), car position error after ~4 ticks
 Walls and curves are less exact than the flat floor on either mesh: something in driving on curved surfaces (or state
 a replay doesn't carry) differs. Next to look at.
 
+51. **The live sitting (2026-10-09, offline freeplay): per-wheel and per-contact data, spawns, the freeplay ball.**
+    PhysLog now writes `<name>_wheels.csv` (each wheel's btWheelInfo: ray contact, object, normal, point, hard
+    point, suspension length and velocities, force, pushback, friction impulse and scales, engine, brake, steer,
+    axle, contact flags, sticky, slip, LongDirection; the chassis' inverse mass and inertia; a sanity dump of each
+    wheel's constants, which read exactly as the static analysis predicted) and per manifold point in `_bullet.csv`
+    the pre-solve velocities, part and triangle indices, combined friction and restitution, restitution velocity and
+    the first lateral friction direction (notes/wheel-kick-t125.md).
+    - `walls_goal_wheels` (four runs into the goal's side-wall curve: as walls.txt, mirrored, nudged 60 uu, slower):
+      per tick p99 0.10 uu/s; the original run exact. Three ticks off (307, 310 mirrored; 487 nudged; up to 58 uu/s),
+      all the hitbox's nose on the curve's steeper facets: a contact point on a near facet (positive distance,
+      0.87-1.46 uu, inside the 2.03 breaking threshold, life 1) appears a tick apart (the engine first on tri 645 at
+      307; the game first on tri 648 at 310 and tri 823 at 487; triangle indices the same on both sides, the meshes
+      in the game's cooked order). Not the wheels. The static session is decompiling the convex-triangle candidate
+      filter (the quantized BVH walk is its hypothesis).
+    - Spawns (two `physlog_resetplayers` each): Takumi z 35.71, 5.00 uu ahead of its spot; Scarab z 39.06, 7.00 ahead
+      (as the static analysis predicted from the meshes; `tools/physlog/spawn_offsets.py`).
+    - The freeplay ball after Backspace (RV-57): held a tick at (0, 0, 100.49), then it falls (5.41 uu/s a tick), lands
+      18 ticks later at -97.2 uu/s and bounces at +58.3 (restitution 0.6) to z 95.60, and on. No freeze on landing:
+      the engine reproduces the bounce; the client holds the ball the one tick.
+
 ## Limits and next steps
 - Air control (pitch, yaw, roll) is not in replays: aerial touches and car rotation in the air can only be checked
   when the input was zero, and flip cancels can't be modelled.
