@@ -3,10 +3,8 @@
 // (The game marks where the ball is with its shadow on the floor only: src/render/entities.ts.)
 // The hexagons are laid on the surface's own coordinates (`surfaceUv`: in the goals uu across the goal and along its
 // profile, src/render/goalSurface.ts), so they run unbroken over the curves as one structure. On the walls and ceiling
-// the cage is beams (src/render/cageBeams.ts) and the material draws the see-through fill, and hexagons only on the
-// lower glass below the cage (`glass`, as the game's hex-textured glass: up to z 256 all round, round the goal mouths
-// up to the cage's lowest row there), in the cage's own lattice (`surfaceUv`: src/render/arenaSurface.ts) so its cells
-// carry on down to the trim.
+// the cage is beams (src/render/cage.ts, cageBeams.ts) and the material draws only the see-through fill (`lines:
+// false`).
 
 import { DoubleSide, ShaderMaterial, UniformsLib, UniformsUtils, Vector3 } from "three";
 import type { WallStyle } from "./themes/theme";
@@ -70,12 +68,6 @@ void main() {
   // (the first coordinate across the hexagons' flat sides)
   vec2 uv = vSurfaceUv * latticeScale;
   float lines = hexLines(uv, dFdx(uv), dFdy(uv), halfWidth);
-  #ifdef GLASS
-  // Only below the cage: z 256 (its lowest row), round the goal mouths z 768
-  float height = vWorldPosition.y;
-  float goalSide = step(abs(vWorldPosition.x), 1140.0) * step(5000.0, abs(vWorldPosition.z));
-  lines *= step(height, mix(256.0, 768.0, goalSide));
-  #endif
   #ifdef NO_LINES
   lines = 0.0;
   #endif
@@ -108,17 +100,17 @@ export class HexWallMaterial extends ShaderMaterial {
   readonly ballPosition: Vector3;
 
   /** Hexagons on the mesh's `surfaceUv` attribute times `scale` (in cells: 1 across the flat sides), their lines
-   *  `halfWidth` (cells) wide either side; `lines`: "glass" only on the lower glass (see above), "none" only the fill. */
+   *  `halfWidth` (cells) wide either side; `lines: false`: only the fill. */
   constructor(
     ballRadius: number,
     style: WallStyle,
-    options: { readonly scale?: number; readonly halfWidth?: number; readonly lines?: "all" | "glass" | "none" },
+    options: { readonly scale?: number; readonly halfWidth?: number; readonly lines?: boolean },
   ) {
     const ballPosition = new Vector3(0, -100_000, 0); // (far away until the first update)
     super({
       vertexShader,
       fragmentShader,
-      defines: options.lines === "glass" ? { GLASS: "" } : options.lines === "none" ? { NO_LINES: "" } : {},
+      defines: options.lines === false ? { NO_LINES: "" } : {},
       uniforms: {
         ...UniformsUtils.clone(UniformsLib.fog),
         ballPosition: { value: ballPosition },

@@ -80,16 +80,11 @@
   - camera (`notes/camera-update-audit.md`): free look (CAM-1) and the live Modern camera preset (CAM-3/4: a
     decision like the keyboard layout), respawn cameras (CAM-6); CAM-2/7/8 are fixed;
   - `steer` once per other car body (finding 21), `HandlingPresetXOffset`.
-  - **Cage pattern (TODO, parked by the user 2026-10-08):** the client draws the cage as beams (`client/src/render/
-    cage.ts`, `cageBeams.ts`): on the dev server the game's own lattice from the static session's local export
-    (`out/bsim/assets_local/cage/`, never shipped), else our generated lattice (the game's measured layout, seams
-    zipped with pentagons/heptagons; `notes/arena.md`, "The cage's hexagon layout"). Next: the shippable form is
-    ready (user-approved, 2026-10-08): `scripts/cage_topology.json` (topology, integer lattice addresses, defects, a few
-    rule parameters and half-period marks; no coordinates) with its reference generator `scripts/cage_layout.py` (the
-    game's cage is our arena surface pushed 16 uu out: with offset 0 its beams lie on our drawn surface; median 0.5 uu,
-    p90 11 against the game's lattice, the 28 relaxed corner-fan nodes up to 66). Port the generator to the client to
-    replace our generated lattice in builds (the local export stays for the dev server). The lower glass: ours carries the cage's wall cells down to the trim beside the goals
-    (the user's ask), the game's is a separate smaller hex texture on a few panels (its UV mappings are in the static
+  - **Cage pattern (done 2026-10-08):** builds draw the game's lattice laid out from the shippable topology
+    (`client/src/render/cageLayout.ts`, a port of `scripts/cage_layout.py`; `scripts/cage_topology.json`, user-approved
+    derived data); the dev server prefers the static session's local export (`out/bsim/assets_local/cage/`;
+    `?cage=topology` skips it). Left: the lower glass. Ours carries the cage's wall cells down to the trim beside the
+    goals (the user's ask); the game's is a separate, smaller hex texture on a few panels (UV mappings in the static
     session's message of 2026-10-08; the tiling factor needs a screenshot count of hex columns across a 576 uu panel).
 - **The live game updated on 2026-10-06:** the static analysis (Ghidra project, `out/decomp`, layouts, packages) is
   from the 2026-06-16 build in `documents/binaries`; the live exe is in

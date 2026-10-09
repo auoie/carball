@@ -183,7 +183,9 @@ its line renders stay local in `out/bsim/work/cage/`). Drawn by `client/src/rend
 - **Seams:** along the top of each back curve (the back walls' lattice meets the ceiling's, turned 90°, through a
   row of irregular cells) and in the corners (a fan of big irregular cells and a few dangling beams). The side
   walls run into the ceiling without one.
-- **Ours** (`client/src/render/cage.ts`): whole cells of both lattices, the ceiling's kept 110 uu in from its edge
-  over the corners and back walls; the loose ends either side zipped with joining beams by a non-crossing shortest
-  matching (four-sided cells penalised). Along the back seams the cells come out alternating pentagon / heptagon (a
-  grain boundary), in the corners bigger cells of 8–9 sides.
+- **Ours** (`client/src/render/cageLayout.ts`, `cage.ts`): the game's lattice itself, laid out from its shippable
+  topology (`scripts/cage_topology.json`: lattice addresses, beams as node chains, cells, a few rules; derived by the
+  static session, `scripts/cage_layout.py` the reference): the game's cage is our arena surface pushed 16 uu out, so
+  rows, steps (896 / 6 along each row's own curve, between measured half-period marks past the side straight),
+  ceiling columns and seam rows are stated on our surface; the 28 corner-fan nodes are relaxed. Against the game's
+  lattice: median 0.4 uu, p90 11, max 66 (those fan nodes).

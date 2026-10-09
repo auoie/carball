@@ -43,6 +43,8 @@ export default defineConfig({
       // The WebAssembly engine (build it first: see engine/README.md) and our generated arena
       "@engine": here("../engine/build-wasm"),
       "@arena": here("../out/arena"),
+      // Derived game data that ships (the cage's topology: scripts/cage_topology.json)
+      "@scripts": here("../scripts"),
     },
   },
   server: {

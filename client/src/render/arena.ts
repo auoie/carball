@@ -30,7 +30,7 @@ import { toThreeVector } from "./coords";
 import { BALL_RADIUS } from "./entities";
 import { type ArenaSurface, buildArenaSurface, floorOutline, mouthOutline } from "./arenaSurface";
 import { addBallShadow } from "./ballShadow";
-import { cageGraph, gameCageLoaded } from "./cage";
+import { cageGraph } from "./cage";
 import { CageBeams } from "./cageBeams";
 import { type GoalSurface, buildGoalSurface } from "./goalSurface";
 import { HexWallMaterial } from "./hexWalls";
@@ -69,9 +69,7 @@ export class ArenaView {
     this.#style = theme.style;
     const surface = buildArenaSurface();
     const goals = buildGoalSurface(GOAL_NET_HEX);
-    // (the lower glass's hexagons: with the game's cage, its beams carry them; with ours, drawn here, their lines as
-    // wide as the beams' cores: 8 uu, of cells 512 across)
-    this.#cage = new HexWallMaterial(BALL_RADIUS, theme.style.walls, { lines: gameCageLoaded() ? "none" : "glass", halfWidth: 4 / 512 });
+    this.#cage = new HexWallMaterial(BALL_RADIUS, theme.style.walls, { lines: false });
     this.#net = new HexWallMaterial(BALL_RADIUS, theme.style.walls, { scale: 1 / goals.hexSize });
     this.#beams = new CageBeams(cageGraph(), BALL_RADIUS, theme.style.walls);
     this.root.add(
@@ -95,7 +93,7 @@ export class ArenaView {
 
   /** The swept walls: the hexagon cage above the floor fillet, the grey trim on it, a light along the trim's top. */
   #buildWalls(surface: ArenaSurface): Group {
-    const { positions, uvs, bands, indices } = surface;
+    const { positions, bands, indices } = surface;
     const threePositions = new Float32Array(positions.length);
     for (let i = 0; i < positions.length; i += 3) {
       threePositions.set([positions[i] ?? 0, positions[i + 2] ?? 0, positions[i + 1] ?? 0], i);
@@ -111,7 +109,6 @@ export class ArenaView {
     const geometry = (triangles: number[]): BufferGeometry => {
       const g = new BufferGeometry();
       g.setAttribute("position", new BufferAttribute(threePositions, 3));
-      g.setAttribute("surfaceUv", new BufferAttribute(uvs, 2));
       g.setIndex(triangles);
       g.computeVertexNormals();
       return g;

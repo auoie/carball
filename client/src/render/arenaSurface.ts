@@ -1,22 +1,19 @@
 // The arena's walls and ceiling for drawing: one continuous surface swept round the field (the floor fillet, the wall,
 // the ceiling fillet) and the ceiling inside it, as the game's arena reads as one cage. Built from the same rules as
 // the collision mesh (scripts/arena_gen.py: the plan contour's stations and each one's profile), but without the
-// collision pieces' overlaps and hidden skirts. Every vertex carries the coordinates of the game's cage lattice (see
-// CAGE: rows up the profile, along the perimeter), so the hexagons flow unbroken round the corners, over the curve
-// and, from the side walls, onto the ceiling, as the game's do; the pattern breaks only where the game's does, along
-// the ceiling's edge over the corners and the back walls. `band`: on the floor fillet (the game wraps the wall's foot
-// in a grey trim) how far up it the point is, 0 at the floor to 1 at the wall; -1 above it. Positions in the game's
-// frame (x, y, z up); triangles face into the field.
+// collision pieces' overlaps and hidden skirts (the cage's beams are laid out on it too: src/render/cageLayout.ts).
+// `band`: on the floor fillet (the game wraps the wall's foot in a grey trim) how far up it the point is, 0 at the
+// floor to 1 at the wall; -1 above it. Positions in the game's frame (x, y, z up); triangles face into the field.
 
-const H = 2048; // ceiling
-const SIDE_X = 4096;
-const BACK_Y = 5120;
+export const H = 2048; // ceiling
+export const SIDE_X = 4096;
+export const BACK_Y = 5120;
 const R_SIDE_FLOOR = 256;
-const R_CEIL = 512;
+export const R_CEIL = 512;
 const R_BACK_FLOOR = 160;
-const CORNER_SIDE: readonly [Pt, Pt] = [[SIDE_X, 3584], [3840.471, 4223.529]];
-const CORNER_BACK: readonly [Pt, Pt] = [[3200, 4864], [2560, BACK_Y]];
-const CORNER_ARM = 245.85;
+export const CORNER_SIDE: readonly [Pt, Pt] = [[SIDE_X, 3584], [3840.471, 4223.529]];
+export const CORNER_BACK: readonly [Pt, Pt] = [[3200, 4864], [2560, BACK_Y]];
+export const CORNER_ARM = 245.85;
 const CORNER_BACK_FLOOR_R = [256.0, 251.668, 240.628, 225.399, 208.13, 190.816, 175.483, 164.355, 160.0];
 const BACK_TAPER: Pt = [960, 1344];
 /** The goal mouth: the opening's half width with its chamfer, the crossbar's underside, the radius inside the goal */
@@ -166,81 +163,34 @@ function profile(s: Station): { o: number; z: number; t: number; band: number }[
 
 export interface ArenaSurface {
   readonly positions: Float32Array; // game frame
-  /** The cage lattice's coordinates (see CAGE): rows up the walls (or across the ceiling), along the perimeter */
-  readonly uvs: Float32Array;
   readonly bands: Float32Array;
   readonly indices: Uint32Array;
 }
 
-/** The game's cage (Stadium_P's FFCage: beams; measured on its mesh by the static session) as a hexagon lattice in
- *  coordinates where its cells are regular, 1 across the flat sides (u1) and sqrt(3) a period along them (u2):
- *  flat-topped hexagons, their horizontal edges along the perimeter 298.67 long, a row of them every 256 up the wall
- *  (u1 = z / 512: rows at z 256, 512, ...) and on up the curve (three more rows), a period of 896 along the side
- *  walls (u2 0 at their middle); round the corners and the back walls squeezed so that a quarter of the field holds
- *  exactly 10 periods. The ceiling carries on the side walls' lattice, flat: its rows across x a little closer
- *  (8.5 of them, about 211 uu apart, from the curve's top row to the middle, a row line), u2 still along y. */
-const CAGE = {
-  rowSpacing: 256,
-  along: 896 / Math.sqrt(3),
-  halfPeriod: 448,
-  /** Half periods per quadrant: the side straight's (at 448 each), the corner's, the back wall's */
-  sideHalves: 8,
-  cornerHalves: 6,
-  /** The back wall's half-period marks: x from its middle (the game's, at its edges' centres) */
-  backMarks: [0, 448, 891, 1312, 1728, 2144, 2560],
-  /** Rows on the curve (the ceiling fillet), and over the ceiling from its edge to the middle */
-  curveRows: 3,
-  ceilingRows: 17,
-} as const;
-
 /** The swept surface, all four quadrants: triangles between consecutive stations' columns, then over the ceiling,
- *  facing inward, with the cage lattice's coordinates. */
+ *  facing inward. */
 export function buildArenaSurface(): ArenaSurface {
   const S = stations();
-  // s along the quadrant (on the wall line)
-  const sq: number[] = [0];
-  for (let i = 1; i < S.length; i++) {
-    const a = S[i - 1];
-    const b = S[i];
-    if (a && b) sq.push((sq[i - 1] ?? 0) + Math.hypot(b.p[0] - a.p[0], b.p[1] - a.p[1]));
-  }
-  const halves = latticeHalves(S, sq);
-  const quarterHalves = QUARTER_HALVES;
-  const halfAlong = HALF_ALONG;
   const positions: number[] = [];
-  const uvs: number[] = [];
   const bands: number[] = [];
   const indices: number[] = [];
-  // Quadrants in order round the field: (+x,+y) forwards, (-x,+y) backwards, (-x,-y) forwards, (+x,-y) backwards
-  const quadrants: { sx: number; sy: number; reverse: boolean; base: number }[] = [
-    { sx: 1, sy: 1, reverse: false, base: 0 },
-    { sx: -1, sy: 1, reverse: true, base: 2 * quarterHalves },
-    { sx: -1, sy: -1, reverse: false, base: 2 * quarterHalves },
-    { sx: 1, sy: -1, reverse: true, base: 4 * quarterHalves },
+  const quadrants: readonly { sx: number; sy: number }[] = [
+    { sx: 1, sy: 1 },
+    { sx: -1, sy: 1 },
+    { sx: -1, sy: -1 },
+    { sx: 1, sy: -1 },
   ];
-  const wallTop = H - R_CEIL;
-  const ceilingEdge = SIDE_X - R_CEIL;
   for (const q of quadrants) {
-    const columns = S.map((s, i) => {
-      const u2 = (q.reverse ? q.base - (halves[i] ?? 0) : q.base + (halves[i] ?? 0)) * halfAlong;
-      const points = profile(s);
-      // Up the curve: its rows evenly by arc length, from the wall's top row to the ceiling's edge
-      const curveFrom = points.find((pt) => pt.z >= wallTop - 1e-6)?.t ?? 0;
-      const curveTo = points.at(-1)?.t ?? 1;
-      return points.map((pt) => {
+    const columns = S.map((s) =>
+      profile(s).map((pt) => {
         const index = positions.length / 3;
         const x = s.p[0] + s.n[0] * pt.o * s.m;
         const y = s.p[1] + s.n[1] * pt.o * s.m;
-        const u1 =
-          pt.z <= wallTop
-            ? pt.z / (2 * CAGE.rowSpacing)
-            : wallTop / (2 * CAGE.rowSpacing) + (CAGE.curveRows / 2) * ((pt.t - curveFrom) / (curveTo - curveFrom));
         positions.push(x * q.sx, y * q.sy, pt.z);
-        uvs.push(u1, u2);
         bands.push(pt.band);
         return { index, t: pt.t, band: pt.band };
-      });
-    });
+      }),
+    );
     // A mirrored quadrant flips the winding
     const flip = q.sx * q.sy < 0;
     const tri = (a: number, b: number, c: number): void => {
@@ -297,42 +247,15 @@ export function buildArenaSurface(): ArenaSurface {
     });
     foldInward(edges, CEILING_LINES, CEILING_DEPTH_STEP, tri, (p) => {
       positions.push(p[0] * q.sx, p[1] * q.sy, H);
-      uvs.push(CEILING_EDGE_ROW + (CAGE.ceilingRows / 2) * (1 - p[0] / ceilingEdge), (p[1] * q.sy) / CAGE.along);
       bands.push(-1);
       return positions.length / 3 - 1;
     });
   }
   return {
     positions: new Float32Array(positions),
-    uvs: new Float32Array(uvs),
     bands: new Float32Array(bands),
     indices: new Uint32Array(indices),
   };
-}
-
-const QUARTER_HALVES = CAGE.sideHalves + CAGE.cornerHalves + CAGE.backMarks.length - 1;
-/** u2 per half period (sqrt(3) / 2) */
-const HALF_ALONG = CAGE.halfPeriod / CAGE.along;
-/** u1 at the walls' top (the curve's last row), where the ceiling starts */
-const CEILING_EDGE_ROW = (H - R_CEIL) / (2 * CAGE.rowSpacing) + CAGE.curveRows / 2;
-/** The ceiling's rows' spacing across x (uu per unit of u1) */
-const CEILING_ROW = (SIDE_X - R_CEIL) / (CAGE.ceilingRows / 2);
-
-/** Half periods of the lattice along the quadrant at each station: the side straight at 448 uu each, the corner (both
- *  arcs and the diagonal) evenly, the back wall by the game's marks. `sq`: the stations' distances along the wall. */
-function latticeHalves(S: readonly Station[], sq: readonly number[]): number[] {
-  const sideEnd = sq[S.findIndex((s) => s.p[1] >= CORNER_SIDE[0][1] - 1e-6)] ?? 0;
-  const backStart = sq[S.findIndex((s) => s.n[1] === -1 && s.n[0] === 0)] ?? 0;
-  const backHalves = CAGE.backMarks.length - 1;
-  return S.map((s, i) => {
-    const at = sq[i] ?? 0;
-    if (at <= sideEnd) return at / CAGE.halfPeriod;
-    if (at < backStart) return CAGE.sideHalves + (CAGE.cornerHalves * (at - sideEnd)) / (backStart - sideEnd);
-    const x = s.p[0];
-    const k = Math.min(backHalves - 1, CAGE.backMarks.findLastIndex((m) => m <= x));
-    const [lo, hi] = [CAGE.backMarks[k] ?? 0, CAGE.backMarks[k + 1] ?? 1];
-    return CAGE.sideHalves + CAGE.cornerHalves + backHalves - (k + (x - lo) / (hi - lo));
-  });
 }
 
 let footStations: Station[] | undefined;
@@ -385,121 +308,6 @@ export function floorOutline(): Pt[] {
 }
 
 export type Vec3Tuple = readonly [number, number, number];
-
-/** A point of the cage lattice on the surface: where (game frame), and the surface's normal there (into the field). */
-export interface ChartPoint {
-  readonly p: Vec3Tuple;
-  readonly n: Vec3Tuple;
-}
-
-/** Where the cage lattice's coordinates (see CAGE) lie on the drawn surface. */
-export interface CageCharts {
-  /** The walls' lattice: u1 up the profile (z / 512 up the wall, the curve's rows on it, beyond its top on over the
-   *  ceiling at the ceiling's row spacing), u2 round the field (0 at the +x side's middle, `loop` once round). */
-  wall(u1: number, u2: number): ChartPoint;
-  /** The ceiling's: u1 across it (`edgeRow` at the +x edge, rising towards -x), u2 = y over the side walls' period. */
-  ceiling(u1: number, u2: number): ChartPoint;
-  /** Where along its quadrant's side straight a u2 is (its half periods from the side's middle: 0 to sideHalves),
-   *  or null off the side straights (the corners and back walls). */
-  alongSide(u2: number): number | null;
-  readonly loop: number;
-  readonly halfAlong: number;
-  readonly sideHalves: number;
-  readonly edgeRow: number;
-  /** The ceiling's outline (game frame, once round) with, for each segment from a point to the next, whether it runs
-   *  over a side straight (where the walls' lattice carries on over it) */
-  readonly outline: readonly { readonly p: readonly [number, number]; readonly side: boolean }[];
-}
-
-export function cageCharts(): CageCharts {
-  const S = stations();
-  const sq: number[] = [0];
-  for (let i = 1; i < S.length; i++) {
-    const a = S[i - 1];
-    const b = S[i];
-    if (a && b) sq.push((sq[i - 1] ?? 0) + Math.hypot(b.p[0] - a.p[0], b.p[1] - a.p[1]));
-  }
-  const halves = latticeHalves(S, sq);
-  const signs: readonly (readonly [number, number])[] = [
-    [1, 1],
-    [-1, 1],
-    [-1, -1],
-    [1, -1],
-  ];
-  /** A loop position (half periods) as its quadrant's signs and the half periods along that quadrant */
-  const local = (u2: number): { sx: number; sy: number; h: number } => {
-    const total = 4 * QUARTER_HALVES;
-    const h = (((u2 / HALF_ALONG) % total) + total) % total;
-    const q = Math.min(3, Math.floor(h / QUARTER_HALVES));
-    const [sx, sy] = signs[q] ?? [1, 1];
-    const along = [h, 2 * QUARTER_HALVES - h, h - 2 * QUARTER_HALVES, 4 * QUARTER_HALVES - h][q] ?? h;
-    return { sx, sy, h: along };
-  };
-  const wall = (u1: number, u2: number): ChartPoint => {
-    const { sx, sy, h } = local(u2);
-    let i = 0;
-    while (i < halves.length - 2 && (halves[i + 1] ?? 0) < h) i++;
-    const a = S[i];
-    const b = S[i + 1];
-    if (!a || !b) throw new Error("no station");
-    const f = Math.min(1, Math.max(0, (h - (halves[i] ?? 0)) / ((halves[i + 1] ?? 1) - (halves[i] ?? 0))));
-    const p: Pt = [a.p[0] + (b.p[0] - a.p[0]) * f, a.p[1] + (b.p[1] - a.p[1]) * f];
-    const n = normalize([a.n[0] + (b.n[0] - a.n[0]) * f, a.n[1] + (b.n[1] - a.n[1]) * f]);
-    const m = a.m + (b.m - a.m) * f;
-    const wallTopRow = (H - R_CEIL) / (2 * CAGE.rowSpacing);
-    let o = 0;
-    let z = u1 * 2 * CAGE.rowSpacing;
-    let normal: Vec3Tuple = [n[0], n[1], 0];
-    if (u1 > CEILING_EDGE_ROW) {
-      o = R_CEIL * m + (u1 - CEILING_EDGE_ROW) * CEILING_ROW;
-      z = H;
-      normal = [0, 0, -1];
-    } else if (u1 > wallTopRow) {
-      const angle = ((u1 - wallTopRow) / (CAGE.curveRows / 2)) * (Math.PI / 2);
-      o = R_CEIL * (1 - Math.cos(angle)) * m;
-      z = H - R_CEIL + R_CEIL * Math.sin(angle);
-      normal = [n[0] * Math.cos(angle), n[1] * Math.cos(angle), -Math.sin(angle)];
-    }
-    return {
-      p: [(p[0] + n[0] * o) * sx, (p[1] + n[1] * o) * sy, z],
-      n: [normal[0] * sx, normal[1] * sy, normal[2]],
-    };
-  };
-  const ceiling = (u1: number, u2: number): ChartPoint => ({
-    p: [SIDE_X - R_CEIL - (u1 - CEILING_EDGE_ROW) * CEILING_ROW, u2 * CAGE.along, H],
-    n: [0, 0, -1],
-  });
-  const alongSide = (u2: number): number | null => {
-    const { h } = local(u2);
-    return h <= CAGE.sideHalves + 1e-9 ? h : null;
-  };
-  // The outline: each station's ceiling edge point, round the four quadrants in loop order
-  const quarter = S.map((s): { p: Pt; side: boolean } => ({
-    p: [s.p[0] + s.n[0] * R_CEIL * s.m, s.p[1] + s.n[1] * R_CEIL * s.m],
-    side: s.n[0] === -1 && s.n[1] === 0,
-  }));
-  const outline: { p: [number, number]; side: boolean }[] = [];
-  signs.forEach(([sx, sy], q) => {
-    const ordered = q % 2 === 0 ? quarter : [...quarter].reverse();
-    ordered.forEach((e, k) => {
-      if (k === 0 && outline.length > 0) return; // (shared with the last quadrant's end)
-      // (a segment over a side straight: between two of its points)
-      const next = ordered[k + 1];
-      outline.push({ p: [e.p[0] * sx, e.p[1] * sy], side: e.side && (next?.side ?? true) });
-    });
-  });
-  outline.pop(); // (the first point again)
-  return {
-    wall,
-    ceiling,
-    alongSide,
-    loop: 4 * QUARTER_HALVES * HALF_ALONG,
-    halfAlong: HALF_ALONG,
-    sideHalves: CAGE.sideHalves,
-    edgeRow: CEILING_EDGE_ROW,
-    outline,
-  };
-}
 
 /** The ceiling's edge lines in a quadrant (x, y >= 0), at the ceiling fillet's top, with the mirrored side and back
  *  walls' (where the columns from the other quadrants come in: the ridge and the far end) */

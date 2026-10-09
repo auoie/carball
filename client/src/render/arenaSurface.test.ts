@@ -1,6 +1,6 @@
 // The drawn walls, ceiling and goals against the collision mesh (requires out/arena): the same surfaces the ball
 // bounces off, facing into the field (or the goal) everywhere, covering the ceiling and the goals' side walls once
-// (no gaps or overlaps where the pattern's parts meet), with the game's cage lattice laid on them.
+// (no gaps or overlaps where the pattern's parts meet).
 import { describe, expect, it } from "vitest";
 import { mergeMeshes, parseCmf } from "../engine/cmf";
 import { arenaMeshes } from "../testing/arena";
@@ -172,57 +172,6 @@ describe("the drawn arena walls", () => {
     expect(points.length).toBeGreaterThan(15000);
     expect(counts.filter((c) => c === 0).length, "gaps").toBe(0);
     expect(counts.filter((c) => c > 1).length, "overlaps").toBe(0);
-  });
-
-  it("carry the game's cage lattice: rows every 256 up the walls, 896 a period along the side walls, 10 a quarter", () => {
-    const along = 896 / Math.sqrt(3);
-    let side = 0;
-    for (let i = 0; i < surface.positions.length / 3; i++) {
-      const [x, y, z] = at(surface.positions, i);
-      const [u1, u2] = [surface.uvs[i * 2] ?? 0, surface.uvs[i * 2 + 1] ?? 0];
-      if (Math.abs(Math.abs(x) - 4096) < 1e-3 && Math.abs(y) < 3584 && z > 256 && z < 1536) {
-        expect.soft(u1).toBeCloseTo(z / 512, 4);
-        // (round the field: u2 0 at the +x side's middle, half way round at the -x side's)
-        const expected = x > 0 ? y / along : 20 * Math.sqrt(3) - y / along;
-        const period = 40 * Math.sqrt(3);
-        expect.soft(((u2 - expected) % period + period + period / 2) % period - period / 2).toBeCloseTo(0, 3);
-        side++;
-      }
-      if (Math.abs(x) < 1e-3 && Math.abs(y - 5120) < 1e-3 && z > 1000 && z < 1536) {
-        expect.soft(u2).toBeCloseTo(10 * Math.sqrt(3), 4); // (a quarter round: 10 periods)
-      }
-    }
-    expect(side).toBeGreaterThan(50);
-  });
-
-  it("carry the side walls' lattice on over the ceiling, mirror-symmetric down its middle", () => {
-    const along = 896 / Math.sqrt(3);
-    let edge = 0;
-    let middle = 0;
-    for (let i = 0; i < surface.positions.length / 3; i++) {
-      const [x, y, z] = at(surface.positions, i);
-      if (Math.abs(z - 2048) > 1e-3 || !onCeiling(i)) continue;
-      const [u1, u2] = [surface.uvs[i * 2] ?? 0, surface.uvs[i * 2 + 1] ?? 0];
-      expect.soft(u2).toBeCloseTo(y / along, 3);
-      // Over the side walls the ceiling starts on the curve's top row (u1 4.5); its middle is a row (a mirror line)
-      if (Math.abs(Math.abs(x) - 3584) < 1e-3 && Math.abs(y) < 3584) {
-        expect.soft(u1).toBeCloseTo(4.5, 4);
-        edge++;
-      }
-      if (Math.abs(x) < 1e-3) {
-        expect.soft(u1).toBeCloseTo(13, 4);
-        middle++;
-      }
-    }
-    // The curve's top (the walls' last row) over the side walls: the same coordinates as the ceiling's edge there
-    for (let i = 0; i < surface.positions.length / 3; i++) {
-      const [x, y, z] = at(surface.positions, i);
-      if (x > 0 && Math.abs(x - 3584) < 1e-3 && Math.abs(z - 2048) < 1e-3 && Math.abs(y) < 3584 && !onCeiling(i)) {
-        expect.soft(surface.uvs[i * 2] ?? 0).toBeCloseTo(4.5, 4);
-      }
-    }
-    expect(edge).toBeGreaterThan(20);
-    expect(middle).toBeGreaterThan(10);
   });
 });
 
