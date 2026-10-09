@@ -5,6 +5,7 @@ import type { Theme } from "./theme";
 
 export const THEMES = [
   "night",
+  "stadium",
   "meadow",
   "forest",
   "city",
@@ -31,6 +32,8 @@ export async function createTheme(name: ThemeName): Promise<Theme> {
   switch (name) {
     case "night":
       return nightTheme();
+    case "stadium":
+      return (await import("./stadium")).stadiumTheme();
     case "meadow":
       return (await import("./meadow")).meadowTheme();
     case "forest":

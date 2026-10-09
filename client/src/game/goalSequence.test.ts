@@ -11,7 +11,7 @@ import {
   replayDilation,
   replaySeconds,
   scoreSlomo,
-  startsFreeplayRound,
+  ballLanded,
 } from "./goalSequence";
 
 describe("the slow motion after a goal", () => {
@@ -98,14 +98,13 @@ describe("freeplay's goal clock on game time (RV-1)", () => {
   });
 });
 
-describe("freeplay's countdown (ShouldStartRound)", () => {
-  const none = { throttle: 0, jump: false, boost: false };
-  it("ends on any throttle (reverse, a light trigger), a jump, or boost held with boost left", () => {
-    expect(startsFreeplayRound(none, 33)).toBe(false);
-    expect(startsFreeplayRound({ ...none, throttle: -1 }, 33)).toBe(true);
-    expect(startsFreeplayRound({ ...none, throttle: 0.05 }, 33)).toBe(true);
-    expect(startsFreeplayRound({ ...none, jump: true }, 33)).toBe(true);
-    expect(startsFreeplayRound({ ...none, boost: true }, 33)).toBe(true);
-    expect(startsFreeplayRound({ ...none, boost: true }, 0)).toBe(false);
+describe("freeplay's new ball", () => {
+  it("lands when it reaches its settled height or bounces back up (then it stays put)", () => {
+    const at = (z: number, vz: number) => ({ pos: { z }, vel: { z: vz } });
+    expect(ballLanded(at(100.49, 0))).toBe(false); // (just spawned)
+    expect(ballLanded(at(96, -300))).toBe(false);
+    expect(ballLanded(at(92.75, -100))).toBe(true);
+    expect(ballLanded(at(93.4, 60))).toBe(true); // (it bounced between ticks)
   });
 });
+

@@ -104,10 +104,11 @@ export interface CarState extends BodyState {
   readonly worldWheelContacts: number;
   /** Grounded on a car or the ball: 3+ wheels down, at most 1 of them on the arena (the game's IsOnRBActor) */
   readonly onRbActor: boolean;
-  /** What each wheel touches (front left, front right, back left, back right, as wheelContact) */
+  /** What each wheel touches (RocketSim's order, as wheelContact: front right, front left, back right, back left) */
   readonly wheelGround: readonly [WheelSurface, WheelSurface, WheelSurface, WheelSurface];
   /** When on a car or the ball: which (the one most wheels touch; a tie goes to the ball) */
   readonly rbActor: RbActor | null;
+  /** Each wheel touching something (RocketSim's order: front right, front left, back right, back left) */
   readonly wheelContact: readonly [boolean, boolean, boolean, boolean];
   /** Average contact normal of the wheels touching something, else straight up (Vehicle_TA.GetGroundNormal). */
   readonly groundNormal: Vec3;
@@ -217,6 +218,28 @@ export class World {
   /** Puts every car on a kickoff spot and the ball in the centre. Always pass a seed (determinism). */
   resetKickoff(seed: number): void {
     this.#sim.resetKickoff(seed);
+  }
+
+  /** Freeplay's new round: car i at the session's kickoff spots S[(spawnIndex + i) mod 10] (S: each of the 5 spots,
+   *  shuffled from `seed`, as blue's, then mirrored), the ball at its spawn (z 100.49, at rest, to fall), the pads back. */
+  resetFreeplay(seed: number, spawnIndex: number): void {
+    this.#sim.resetFreeplay(seed, spawnIndex);
+  }
+
+  /** The tick (as `tick` after it) a car last touched the ball, or null: never (for the goal replay's plan). */
+  carLastBallTouchTick(id: number): number | null {
+    const tick = this.#sim.carLastBallTouchTick(id);
+    return tick < 0 ? null : tick;
+  }
+
+  /** Every pad back (freeplay's second ResetPickups, 0.1 s after the new round). */
+  resetBoostPads(): void {
+    this.#sim.resetBoostPads();
+  }
+
+  /** Freeplay's Unlimited boost: never used up, 100 at every spawn (every car at 100 now); off: the game's rates. */
+  setUnlimitedBoost(on: boolean): void {
+    this.#sim.setUnlimitedBoost(on);
   }
 
   /** Ticks left of the kickoff countdown (cars get no input while it runs; a match server starts it). */

@@ -15,6 +15,7 @@ import {
   type InputCameraSettings,
   MODERN_PRESET,
   type Options,
+  PRESET_CAMERA_SHAKE,
   type Range,
   type Settings,
   saveSettings,
@@ -54,6 +55,7 @@ const INPUT_CAMERA_LABELS: Readonly<Record<keyof InputCameraSettings, string>> =
 
 const OPTION_LABELS: Readonly<Record<keyof Options, string>> = {
   rearCameraToggle: "Rear camera toggles (off: hold)",
+  cameraShake: "Camera shake (goals, demolitions, pickups, jumps; the Default preset's, off with Modern)",
   airPitchSafety: "Air pitch safety (keyboard: holding W off the ground doesn't pitch until released)",
   muted: "Mute all sound (M)",
   flipIndicator: "Show the flip indicator (whether you can still dodge, and flip resets)",
@@ -326,12 +328,15 @@ export class SettingsPanel {
       (camera) => { this.#update({ ...this.#settings, camera }); },
       DEFAULT_SETTINGS.camera,
     );
-    sliders.append(this.#checkboxes(["rearCameraToggle"]));
+    sliders.append(this.#checkboxes(["rearCameraToggle", "cameraShake"]));
     const presets = el("div", { className: "options" });
     for (const [name, preset] of [["Modern", MODERN_PRESET], ["Default", DEFAULT_PRESET]] as const) {
       const button = el("button", { textContent: `${name} preset` });
       button.dataset["preset"] = name.toLowerCase();
-      button.addEventListener("click", () => { this.#update({ ...this.#settings, ...preset }); });
+      const shake = name === "Modern" ? PRESET_CAMERA_SHAKE.modern : PRESET_CAMERA_SHAKE.default;
+      button.addEventListener("click", () => {
+        this.#update({ ...this.#settings, ...preset, options: { ...this.#settings.options, cameraShake: shake } });
+      });
       presets.append(button);
     }
     sliders.prepend(

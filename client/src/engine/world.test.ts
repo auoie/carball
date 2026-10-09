@@ -156,3 +156,80 @@ describe("World", () => {
     world.dispose();
   });
 });
+
+describe("freeplay's new round (notes/camera-respawn-goal.md, RV-26, RV-39)", () => {
+  it("held two ticks (CountdownTime 0: a 0.01 s timer), then the car takes input", async () => {
+    const { FREEPLAY_COUNTDOWN_TICKS } = await import("../game/goalSequence");
+    const world = World.create(engine);
+    const id = world.addCar(0);
+    world.resetFreeplay(5, 0);
+    world.setKickoffCountdown(FREEPLAY_COUNTDOWN_TICKS);
+    for (let i = 0; i < 2; i++) world.step();
+    expect(world.kickoffCountdown()).toBe(0);
+    world.setControls(id, { ...NO_CONTROLS, throttle: 1 });
+    for (let i = 0; i < 30; i++) world.step();
+    expect(length(world.car(id).vel)).toBeGreaterThan(50);
+    world.dispose();
+  });
+
+  it("consecutive rounds alternate halves, each spot once as blue's and once mirrored in ten", () => {
+    const world = World.create(engine);
+    const id = world.addCar(0);
+    // (each spot in blue's frame: the odd rounds' mirrored back)
+    const spot = (k: number): string => {
+      const { pos } = world.car(id);
+      const s = k % 2 === 0 ? 1 : -1;
+      return `${Math.round(s * pos.x).toString()},${Math.round(s * pos.y).toString()}`;
+    };
+    const spots: string[] = [];
+    for (let k = 0; k < 10; k++) {
+      world.resetFreeplay(5, k);
+      const { pos } = world.car(id);
+      expect(pos.y < 0, `round ${String(k)} at y ${pos.y.toFixed(0)}`).toBe(k % 2 === 0);
+      expect(Math.abs(pos.y)).toBeGreaterThan(2000);
+      spots.push(spot(k));
+      if (k % 2 === 1) expect(spots[k]).toBe(spots[k - 1]); // (the mirror of the round before's)
+    }
+    expect(new Set(spots).size).toBe(5);
+    world.resetFreeplay(5, 10);
+    expect(spot(10)).toBe(spots[0]);
+    world.dispose();
+  });
+
+  it("the ball at its spawn, z 100.49 at rest; it falls and lands 18-19 ticks later", async () => {
+    const { ballLanded } = await import("../game/goalSequence");
+    const world = World.create(engine);
+    world.addCar(0);
+    world.resetFreeplay(5, 0);
+    expect(world.ball().pos).toEqual(vec3(0, 0, expect.closeTo(100.49, 3) as number));
+    let ticks = 0;
+    while (!ballLanded(world.ball()) && ticks < 100) {
+      world.step();
+      ticks++;
+    }
+    expect(ticks).toBeGreaterThanOrEqual(17);
+    expect(ticks).toBeLessThanOrEqual(20);
+    world.dispose();
+  });
+
+  it("unlimited boost: 100 at the spawn and never used up", () => {
+    const world = World.create(engine);
+    const id = world.addCar(0);
+    world.setUnlimitedBoost(true);
+    world.resetFreeplay(5, 0);
+    expect(world.car(id).boost).toBe(100);
+    for (let i = 0; i < 240; i++) {
+      world.setControls(id, { ...NO_CONTROLS, throttle: 1, boost: true });
+      world.step();
+    }
+    expect(world.car(id).boost).toBe(100);
+    expect(length(world.car(id).vel)).toBeGreaterThan(1500);
+    world.setUnlimitedBoost(false);
+    for (let i = 0; i < 120; i++) {
+      world.setControls(id, { ...NO_CONTROLS, throttle: 1, boost: true });
+      world.step();
+    }
+    expect(world.car(id).boost).toBeLessThan(70);
+    world.dispose();
+  });
+});

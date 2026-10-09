@@ -11,6 +11,9 @@ export interface WallStyle {
   /** Opacity of the hexagon lines on the walls, and on the ceiling */
   readonly lines: number;
   readonly ceilingLines: number;
+  /** The game's own arena materials (notes/arena-visuals.md H-1..11: the cage's beams, the walls' overlay round the
+   *  ball, the glass), with `blue` and `orange` as the teams' linear primaries; else our own look */
+  readonly game?: boolean;
 }
 
 export interface ArenaStyle {

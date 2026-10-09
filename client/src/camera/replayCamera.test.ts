@@ -31,6 +31,17 @@ describe("the goal replay's camera", () => {
     }
   });
 
+  it("freeplay's nets (TeamNum 1 both): at blue's net the camera takes the other side, -x (RV-41)", () => {
+    const out = (scoringTeam: number, netTeamNum?: number): number => {
+      const camera = new ReplayCamera(scoringTeam, netTeamNum);
+      const goalY = scoringTeam === 0 ? 5120 : -5120;
+      return camera.update(1 / 60, { car: null, ball: still(0, goalY - Math.sign(goalY) * 9000, 320), carId: null }, 1).position.x;
+    };
+    expect(out(1)).toBeGreaterThan(1000); // (a match: blue's net, TeamNum 0)
+    expect(out(1, 1)).toBeLessThan(-1000);
+    expect(out(0, 1)).toBeGreaterThan(1000); // (orange's net: TeamNum 1 either way)
+  });
+
   it("zooms in over a second of slowed replay: FOV 75 to 25", () => {
     const camera = new ReplayCamera(0);
     const focus = { car: null, ball: still(0, 4000, 300), carId: null };

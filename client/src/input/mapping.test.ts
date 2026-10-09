@@ -392,3 +392,42 @@ describe("inputs between frames, from the ordered event list (LT-4/5 as the brow
     expect([jump.tick(next.jump), jump.tick(next.jump)]).toEqual([true, false]);
   });
 });
+
+describe("more inputs from the ordered event list (review test gaps)", () => {
+  const frame = (o: Partial<InputSnapshot>): InputSnapshot => ({ keys: new Set(), mouseButtons: new Set(), events: [], gamepad: null, ...o });
+
+  it("a right-mouse tap within one frame is lost: neither powerslide nor air roll (LT-5)", () => {
+    const tap = frame({
+      pressedMouseButtons: new Set([2]),
+      releasedMouseButtons: new Set([2]),
+      events: [
+        { kind: "mouse", button: 2, down: true },
+        { kind: "mouse", button: 2, down: false },
+      ],
+    });
+    const c = readControls(tap, DEFAULT_BINDINGS, DZ, new ButtonLatch());
+    expect(c.handbrake).toBe(false);
+    expect(c.roll).toBe(0);
+  });
+
+  it("the alternative jump pressed while Space is held: jump stays held and its press latches a tick (LT-4)", () => {
+    const latch = new ButtonLatch();
+    readControls(frame({ keys: new Set(["Space"]), events: [{ kind: "key", code: "Space", down: true }] }), DEFAULT_BINDINGS, DZ, latch);
+    const second = readControls(
+      frame({ keys: new Set(["Space"]), mouseButtons: new Set([0]), events: [{ kind: "mouse", button: 0, down: true }] }),
+      DEFAULT_BINDINGS,
+      DZ,
+      latch,
+    );
+    expect(second.jump).toBe(true);
+    expect(latch.pressed("jump")).toBe(true);
+  });
+
+  it("the pad's buttons, polled once a frame, press past raw 30/255 with an event list too (C-5)", () => {
+    const bButton = (value: number) => ({ axes: [0, 0, 0, 0], buttons: Array.from({ length: 17 }, (_, i) => (i === 1 ? value : 0)) });
+    const latch = new ButtonLatch();
+    expect(readControls(frame({ gamepad: bButton(0.1) }), DEFAULT_BINDINGS, DZ, latch).boost).toBe(false);
+    expect(readControls(frame({ gamepad: bButton(0.2) }), DEFAULT_BINDINGS, DZ, latch).boost).toBe(true);
+    expect(readControls(frame({ gamepad: bButton(0) }), DEFAULT_BINDINGS, DZ, latch).boost).toBe(false);
+  });
+});

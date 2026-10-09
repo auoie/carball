@@ -30,8 +30,10 @@ interface FennecAssets {
   /** The bodies painted for each team (blue, orange), if exported */
   readonly painted: readonly [Group, Group] | null;
   readonly wheel: Group;
-  /** The paint regions (Body_Grain_PaintRegions: R paint, G trim, B glass), for the plain body */
+  /** The paint regions (Body_Grain_PaintRegions_linear: R paint, G trim, B glass, decoded), and the Glossy finish's
+   *  AO, roughness and metalness (Body_Grain_ORM_glossy), for the plain body */
   readonly regions: Texture | null;
+  readonly orm: Texture | null;
 }
 
 /** The game's rubber trim as it shows facing the camera: 0.75 x TrimColor 0.12 (PNT-7) */
@@ -41,8 +43,9 @@ const GLOSSY_SHADE = 0.734;
 
 /**
  * The plain body's albedo from its diffuse (linear), its paint regions and the team's paint (linear), as the game's
- * combine (notes/car-paint.md PNT-6/7/15): the paint area takes the team's colour itself, shaded 0.734; the trim 0.09;
- * the glass black. Mirrored by the shader below (FENNEC_ALBEDO_GLSL).
+ * combine (notes/car-paint.md PNT-6/7/15): lerp(D, (1 - glass) · P, paint) — the paint area takes the team's colour
+ * itself, black where it's glass —, then the trim 0.09, then the Glossy shade 0.734 (none on the trim). Mirrored by
+ * the shader below (FENNEC_ALBEDO_GLSL).
  */
 export function fennecAlbedo(
   diffuse: readonly [number, number, number],
@@ -51,15 +54,16 @@ export function fennecAlbedo(
 ): [number, number, number] {
   const [r, g, b] = regions;
   return [0, 1, 2].map((k) => {
-    const base = (diffuse[k] ?? 0) + ((paint[k] ?? 0) - (diffuse[k] ?? 0)) * r;
+    const d = diffuse[k] ?? 0;
+    const base = d + ((1 - b) * (paint[k] ?? 0) - d) * r;
     const trimmed = base + (TRIM - base) * g;
-    return trimmed * (GLOSSY_SHADE + (1 - GLOSSY_SHADE) * g) * (1 - b);
+    return trimmed * (GLOSSY_SHADE + (1 - GLOSSY_SHADE) * g);
   }) as [number, number, number];
 }
 
 const FENNEC_ALBEDO_GLSL = `vec4 paintRegions = texture2D(paintRegionsMap, vMapUv);
-vec3 paintBase = mix(diffuseColor.rgb, paintColor, paintRegions.r);
-diffuseColor.rgb = mix(paintBase, vec3(${TRIM.toFixed(4)}), paintRegions.g) * mix(${GLOSSY_SHADE.toFixed(4)}, 1.0, paintRegions.g) * (1.0 - paintRegions.b);`;
+vec3 paintBase = mix(diffuseColor.rgb, (1.0 - paintRegions.b) * paintColor, paintRegions.r);
+diffuseColor.rgb = mix(paintBase, vec3(${TRIM.toFixed(4)}), paintRegions.g) * mix(${GLOSSY_SHADE.toFixed(4)}, 1.0, paintRegions.g);`;
 
 let assets: FennecAssets | null = null;
 const painted = new Map<number, Material>();
@@ -76,15 +80,18 @@ export async function loadFennec(): Promise<boolean> {
       () => null,
     );
     if (teams) {
-      assets = { body: null, painted: [teams[0] ?? new Group(), teams[1] ?? new Group()], wheel: wheel.scene, regions: null };
+      assets = { body: null, painted: [teams[0] ?? new Group(), teams[1] ?? new Group()], wheel: wheel.scene, regions: null, orm: null };
       return true;
     }
     const body = await loader.loadAsync(`${BASE}fennec_body.glb`);
-    // (without its paint regions the plain body isn't painted as the game's: the generated car instead, RV-14)
-    const regions = await new TextureLoader().loadAsync(`${BASE}textures/Body_Grain_PaintRegions.png`).catch(() => null);
+    // (without its paint regions the plain body isn't painted as the game's: the generated car instead, RV-14; read
+    // raw: the masks already decoded, RGB, RV-24)
+    const textures = new TextureLoader();
+    const regions = await textures.loadAsync(`${BASE}textures/Body_Grain_PaintRegions_linear.png`).catch(() => null);
     if (!regions) return false;
-    regions.flipY = false; // (the glTF's UVs: origin top-left)
-    assets = { body: body.scene, painted: null, wheel: wheel.scene, regions };
+    const orm = await textures.loadAsync(`${BASE}textures/Body_Grain_ORM_glossy.png`).catch(() => null);
+    for (const t of [regions, orm]) if (t) t.flipY = false; // (the glTF's UVs: origin top-left)
+    assets = { body: body.scene, painted: null, wheel: wheel.scene, regions, orm };
     return true;
   } catch {
     return false;
@@ -93,16 +100,20 @@ export async function loadFennec(): Promise<boolean> {
 
 /** The plain body's paint as the game's (fennecAlbedo; PNT-6/7/10): its diffuse map recoloured by the paint regions, no
  *  normal map (the game's body shader takes none), not metallic, a clear coat on the paint; one material per colour. */
-function paintedMaterial(original: MeshStandardMaterial, paint: Color, regions: Texture): Material {
+function paintedMaterial(original: MeshStandardMaterial, paint: Color, regions: Texture, orm: Texture | null): Material {
   const key = paint.getHex();
   const known = painted.get(key);
   if (known) return known;
   const material = new MeshPhysicalMaterial({
     name: original.name,
     map: original.map,
-    aoMap: original.aoMap,
-    roughness: 0.3,
-    metalness: 0,
+    // (the Glossy finish's AO, roughness and metalness, RV-25: AO the diffuse's alpha, roughness paint 0.32, trim 0.75,
+    // glass 0.05)
+    aoMap: orm,
+    roughnessMap: orm,
+    metalnessMap: orm,
+    roughness: orm ? 1 : 0.3,
+    metalness: orm ? 1 : 0,
     clearcoat: 1,
     clearcoatRoughness: 0.06,
     clearcoatMap: regions, // (its R channel: the paint)
@@ -126,14 +137,14 @@ export function fennecModel(config: CarConfig, paint: Color, team = 0): Group | 
   const { hitboxSize: s, hitboxOffset: o } = config;
   const near = (a: readonly number[], b: readonly number[]): boolean => a.every((v, i) => Math.abs(v - (b[i] ?? 0)) < 0.05);
   if (!near([s.x, s.y, s.z], OCTANE_HITBOX.size) || !near([o.x, o.y, o.z], OCTANE_HITBOX.offset)) return null;
-  const { regions } = assets;
+  const { regions, orm } = assets;
   const source = assets.painted?.[team === 1 ? 1 : 0] ?? assets.body;
   if (!source) return null;
   const body = source.clone(true);
   if (!assets.painted && regions) {
     body.traverse((part) => {
       if (part instanceof Mesh && part.material instanceof MeshStandardMaterial && part.material.name === PAINTED_MATERIAL) {
-        part.material = paintedMaterial(part.material, paint, regions);
+        part.material = paintedMaterial(part.material, paint, regions, orm);
       }
     });
   }
@@ -146,5 +157,6 @@ export function fennecModel(config: CarConfig, paint: Color, team = 0): Group | 
   }
   const car = new Group();
   car.add(body);
+  car.userData["fennec"] = true; // (its exhausts are the game's sockets: CarView)
   return car;
 }

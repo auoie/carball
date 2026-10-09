@@ -6,6 +6,9 @@
 // team-coloured frame round each mouth; the floor. The cage shows from both sides (the game's is visible from outside
 // the arena too); the trim and frames only from inside, so they never hide a car driving on the wall from the camera
 // behind it. Around it all, the theme's scenery (src/render/themes/).
+// With the game's materials (a theme's `walls.game`, notes/arena-visuals.md): the walls carry the game's overlay round
+// the ball (H-9) instead of our fill, the beams stop at the wall's foot, hex glass (H-6) beside the goal mouths and as
+// the goals' nets, and team glow sheets (H-5) behind the side walls instead of the light along the trim.
 import {
   BufferAttribute,
   BufferGeometry,
@@ -28,12 +31,14 @@ import {
 } from "three";
 import { toThreeVector } from "./coords";
 import { BALL_RADIUS } from "./entities";
-import { type ArenaSurface, buildArenaSurface, floorOutline, mouthOutline } from "./arenaSurface";
+import { type ArenaSurface, buildArenaSurface, floorOutline, mouthOutline, trimTop } from "./arenaSurface";
 import { addBallShadow } from "./ballShadow";
 import { cageGraph } from "./cage";
-import { CageBeams } from "./cageBeams";
+import { CageBeams, shockWave } from "./cageBeams";
 import { type GoalSurface, buildGoalSurface } from "./goalSurface";
+import { ForceFieldMaterial, GlowStripMaterial, HexGlassMaterial } from "./gameSurfaces";
 import { HexWallMaterial } from "./hexWalls";
+import { fullBright, linear } from "./teamColors";
 import { mergeByMaterial } from "./merge";
 import type { ArenaStyle, Theme } from "./themes/theme";
 import { vec3 } from "../math/vec";
@@ -57,21 +62,29 @@ const STRIPE_WIDTH = 512;
 
 export class ArenaView {
   readonly root = new Group();
-  readonly #cage: HexWallMaterial; // the walls' and ceiling's see-through fill, hexagons on the lower glass
+  readonly #cage: HexWallMaterial | ForceFieldMaterial; // the walls' and ceiling's see-through fill (or the game's overlay)
   readonly #beams: CageBeams; // the cage on them
-  readonly #net: HexWallMaterial; // the goals' insides (a finer pattern, as a net)
+  readonly #net: HexWallMaterial | HexGlassMaterial; // the goals' insides (a finer pattern, as a net; or the game's glass)
   readonly #style: ArenaStyle;
   readonly #theme: Theme;
   #seconds = 0;
+  /** World seconds since the ball exploded (a goal), null with a ball in play: the cage's shockwave (AV-15) */
+  #sinceExplosion: number | null = null;
 
   constructor(theme: Theme) {
     this.#theme = theme;
     this.#style = theme.style;
     const surface = buildArenaSurface();
     const goals = buildGoalSurface(GOAL_NET_HEX);
-    this.#cage = new HexWallMaterial(BALL_RADIUS, theme.style.walls, { lines: false });
-    this.#net = new HexWallMaterial(BALL_RADIUS, theme.style.walls, { scale: 1 / goals.hexSize });
-    this.#beams = new CageBeams(cageGraph(), BALL_RADIUS, theme.style.walls);
+    const { walls } = theme.style;
+    if (walls.game) {
+      this.#cage = new ForceFieldMaterial(walls.blue, walls.orange);
+      this.#net = new HexGlassMaterial();
+    } else {
+      this.#cage = new HexWallMaterial(BALL_RADIUS, walls, { lines: false });
+      this.#net = new HexWallMaterial(BALL_RADIUS, walls, { scale: 1 / goals.hexSize });
+    }
+    this.#beams = new CageBeams(cageGraph(!walls.game), BALL_RADIUS, walls);
     this.root.add(
       this.#buildWalls(surface),
       this.#beams.mesh,
@@ -86,9 +99,27 @@ export class ArenaView {
   update(ballPosition: Vector3, frameSeconds: number): void {
     this.#cage.ballPosition.copy(ballPosition);
     this.#beams.ballPosition.copy(ballPosition);
-    this.#net.ballPosition.copy(ballPosition);
+    if (this.#net instanceof HexWallMaterial) this.#net.ballPosition.copy(ballPosition);
     this.#seconds += frameSeconds;
+    if (this.#sinceExplosion !== null) this.#sinceExplosion += Math.max(0, frameSeconds);
+    this.#beams.shockWave = shockWave(this.#sinceExplosion);
+    this.#beams.time = this.#seconds;
     this.#theme.update(this.#seconds, ballPosition);
+  }
+
+  /** The ball exploded (a goal): the cage's shockwave starts */
+  explode(): void {
+    this.#sinceExplosion = 0;
+  }
+
+  /** The cage's shockwave now (AV-15) */
+  get shockWave(): number {
+    return shockWave(this.#sinceExplosion);
+  }
+
+  /** A new ball: the shockwave is over */
+  newBall(): void {
+    this.#sinceExplosion = null;
   }
 
   /** The swept walls: the hexagon cage above the floor fillet, the grey trim on it, a light along the trim's top. */
@@ -119,7 +150,9 @@ export class ArenaView {
     addBallShadow(trimMaterial, this.#cage.ballPosition, BALL_RADIUS); // (the ball's shadow reaches up the trim)
     const trim = new Mesh(geometry(trimIndices), trimMaterial);
     const group = new Group();
-    group.add(cage, trim, trimLight(surface));
+    group.add(cage, trim);
+    if (this.#style.walls.game) group.add(...glowSheets(this.#style), backGlass(0), backGlass(1));
+    else group.add(trimLight(surface));
     return group;
   }
 
@@ -135,6 +168,12 @@ export class ArenaView {
       color.copy(TEAM_COLORS[(positions[i + 1] ?? 0) < 0 ? 0 : 1]);
       colors.set([color.r, color.g, color.b], i);
     }
+    // The game's glass on the net: its tiles at UV0 x (3, 7/3), UV0 about GOAL_GLASS_UV uu a unit (HEX-1, HEX-4)
+    const glassTiles = new Float32Array(uvs.length);
+    for (let i = 0; i < uvs.length; i += 2) {
+      glassTiles[i] = (3 * (uvs[i] ?? 0)) / GOAL_GLASS_UV[0];
+      glassTiles[i + 1] = ((7 / 3) * (uvs[i + 1] ?? 0)) / GOAL_GLASS_UV[1];
+    }
     // Swapping y and z mirrors the winding: two indices swapped per triangle keep it facing into the goal
     const geometry = (triangles: Uint32Array): BufferGeometry => {
       const swapped = new Uint32Array(triangles.length);
@@ -144,6 +183,7 @@ export class ArenaView {
       const g = new BufferGeometry();
       g.setAttribute("position", new BufferAttribute(threePositions, 3));
       g.setAttribute("surfaceUv", new BufferAttribute(uvs, 2));
+      g.setAttribute("glassTile", new BufferAttribute(glassTiles, 2));
       g.setAttribute("color", new BufferAttribute(colors, 3));
       g.setIndex(new BufferAttribute(swapped, 1));
       g.computeVertexNormals();
@@ -193,6 +233,15 @@ export class ArenaView {
 
 /** The hexagons inside the goals: smaller, like a net (uu across) */
 const GOAL_NET_HEX = 180;
+/** The game's goal glass: uu per UV0 unit across the goal and along its profile (HEX-4: side walls (204.2, 211.3),
+ *  back and roof (~198, 204.2)) */
+const GOAL_GLASS_UV = [200, 207] as const;
+/** The game's glass panel beside each goal mouth (HEX-3: y = +-5124, |x| 960-1536, up to z 624; UV0 U 6 at |x| 960
+ *  to 3 at 1536, about 202.8 uu a V) from the trim's top */
+const BACK_GLASS = { x0: 960, x1: 1536, top: 624, uPerUu: 3 / 576, vUu: 202.8 } as const;
+/** The game's team glow sheets (AV-11): 16 uu behind the side walls, from the trim's cap (z 272) to 400, along
+ *  |y| 128-5264 */
+const GLOW_SHEET = { x: 4112, z0: 272, z1: 400, y0: 128, y1: 5264 } as const;
 /** The trim's grey (the game's: a light, slightly metallic grey round the wall's foot) */
 const TRIM_COLOR = 0x9aa0a8;
 /** The light along the trim's top: this tall on the wall (uu), in each team's colour on its half */
@@ -252,6 +301,60 @@ function trimLight(surface: ArenaSurface): Mesh {
   g.setAttribute("color", new BufferAttribute(new Float32Array(colors), 3));
   g.setIndex(idx);
   return new Mesh(g, new MeshBasicMaterial({ vertexColors: true, side: FrontSide }));
+}
+
+/** The game's team glow sheets (H-5): one each side of midfield along each side wall, attached at the bottom */
+function glowSheets(style: ArenaStyle): Mesh[] {
+  const { blue, orange } = style.walls;
+  const sheets: Mesh[] = [];
+  for (const [team, primary] of [blue, orange].entries()) {
+    const material = new GlowStripMaterial(primary, linear(fullBright([primary.r, primary.g, primary.b])));
+    const sy = team === 0 ? -1 : 1;
+    for (const sx of [-1, 1]) {
+      const { x, z0, z1, y0, y1 } = GLOW_SHEET;
+      const g = new BufferGeometry();
+      // (Three's frame: x, z up, y)
+      g.setAttribute(
+        "position",
+        new BufferAttribute(new Float32Array([sx * x, z0, sy * y0, sx * x, z0, sy * y1, sx * x, z1, sy * y1, sx * x, z1, sy * y0]), 3),
+      );
+      g.setAttribute("glow", new BufferAttribute(new Float32Array([1, 1, 0, 0]), 1));
+      g.setIndex([0, 1, 2, 0, 2, 3]);
+      const mesh = new Mesh(g, material);
+      mesh.renderOrder = 1;
+      sheets.push(mesh);
+    }
+  }
+  return sheets;
+}
+
+/** The game's hex glass beside a goal's mouth on the back wall (team 0: blue, at -y), both sides, just behind the
+ *  wall's surface: from the trim's top up to z 624, |x| 960-1536 (the goal's frame covers its inner corner) */
+function backGlass(team: 0 | 1): Mesh {
+  const side = team === 0 ? -1 : 1;
+  const y = side * (ARENA.backY + 1);
+  const { x0, x1, top, uPerUu, vUu } = BACK_GLASS;
+  const bottom = trimTop(1200, ARENA.backY);
+  const pos: number[] = [];
+  const tiles: number[] = [];
+  const idx: number[] = [];
+  for (const sx of [-1, 1]) {
+    const base = pos.length / 3;
+    for (const [ax, z] of [[x0, bottom], [x1, bottom], [x1, top], [x0, top]] as const) {
+      pos.push(sx * ax, z, y);
+      // (U 6 at |x| 960 down to 3 at 1536, mirrored about x = 0; tiles at UV0 x (3, 7/3))
+      tiles.push(3 * (6 - (ax - x0) * uPerUu), ((7 / 3) * (z - 127)) / vUu);
+    }
+    idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  }
+  const g = new BufferGeometry();
+  g.setAttribute("position", new BufferAttribute(new Float32Array(pos), 3));
+  g.setAttribute("glassTile", new BufferAttribute(new Float32Array(tiles), 2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  const mesh = new Mesh(g, new HexGlassMaterial());
+  mesh.renderOrder = 1;
+  return mesh;
 }
 
 /** The frame round a goal's mouth on the back wall (team 0: blue, at -y): a light along the opening's edge in the

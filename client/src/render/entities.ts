@@ -4,6 +4,8 @@ import { BufferAttribute, type BufferGeometry, Color, ConeGeometry, CylinderGeom
 import type { BoostPadState, CarConfig, Team } from "../engine/world";
 import { buildCarModel } from "./carModel";
 import { Trail, trailingRearWheels } from "./supersonic";
+import { BOOST_TRAIL, IDLE_EXHAUST } from "./effects";
+import { Emitter, type Particles } from "./particles";
 import { toThreeVector } from "./coords";
 import { type Rot3, type Vec3, vec3 } from "../math/vec";
 
@@ -20,7 +22,8 @@ export interface TrailGround {
 export function trailGround(car: { readonly vel: Vec3; readonly rot: Rot3; readonly wheelContact: readonly boolean[] }): TrailGround {
   const along = (a: Vec3): number => car.vel.x * a.x + car.vel.y * a.y + car.vel.z * a.z;
   return {
-    rearContact: [car.wheelContact[2] ?? false, car.wheelContact[3] ?? false],
+    // (RocketSim's order: front right, front left, back right, back left)
+    rearContact: [car.wheelContact[3] ?? false, car.wheelContact[2] ?? false],
     forwardSpeed: along(car.rot.forward),
     sideSpeed: along(car.rot.right),
   };
@@ -38,6 +41,10 @@ export const TEAM_CAR_COLORS = [
 
 /** A car: the boxy model built around its hitbox (src/render/carModel.ts) and a boost flame, in the car's local
  *  frame (x forward, y up, z right); and, in the world, its supersonic trails and shockwave (src/render/supersonic.ts). */
+/** The Fennec's exhausts, where its boost trail and idle exhaust come out (the BoostEmitterLeft/Right sockets,
+ *  (-57, -+20.43, 10.25) in its mesh's frame, the mesh 2.6115 uu above the car's origin), in the car's Three.js frame */
+const FENNEC_EXHAUSTS = [new Vector3(-57, 10.25 + 2.6115, -20.43), new Vector3(-57, 10.25 + 2.6115, 20.43)] as const;
+
 export class CarView {
   /** Add this to the scene: the car and its effects */
   readonly root = new Group();
@@ -48,9 +55,19 @@ export class CarView {
   readonly #trailFrom: readonly [Vector3, Vector3];
 
   readonly #point = new Vector3();
+  /** Each exhaust's boost trail and idle exhaust (with a scene's particles) */
+  readonly #exhausts: readonly { readonly at: Vector3; readonly trail: Emitter; readonly idle: Emitter }[];
+  readonly #axis = new Vector3();
 
-  constructor(config: CarConfig, team: Team) {
-    this.#body.add(buildCarModel(config, TEAM_CAR_COLORS[team], team));
+  /** `particles`: the scene's, for the boost trail and the idle exhaust (none: no particles) */
+  constructor(config: CarConfig, team: Team, particles: Particles | null = null) {
+    const model = buildCarModel(config, TEAM_CAR_COLORS[team], team);
+    this.#body.add(model);
+    const tail = new Vector3(config.hitboxOffset.x - config.hitboxSize.x / 2 - 10, config.hitboxOffset.z, 0);
+    const exhausts = model.userData["fennec"] === true ? FENNEC_EXHAUSTS : [tail];
+    this.#exhausts = particles
+      ? exhausts.map((at) => ({ at, trail: new Emitter(particles, BOOST_TRAIL), idle: new Emitter(particles, IDLE_EXHAUST) }))
+      : [];
     this.root.add(this.#body, ...this.#trails.map((t) => t.mesh));
     // The rear tyres' contact points at rest (car frame: the bottom of each, as the model draws them)
     const back = config.backWheel;
@@ -79,9 +96,26 @@ export class CarView {
     supersonic = false,
     seconds = 0,
     ground: TrailGround | null = null,
+    throttling = false,
   ): void {
     this.#body.position.copy(position);
     this.#body.quaternion.copy(rotation);
+    // The boost trail while boosting, the idle exhaust while throttling and not boosting (Drive_PS), from each exhaust
+    if (this.#exhausts.length > 0) {
+      const axis = (x: number, y: number, z: number): Vec3 => {
+        const a = this.#axis.set(x, y, z).applyQuaternion(rotation);
+        return vec3(a.x, a.z, a.y);
+      };
+      const frame = { forward: axis(1, 0, 0), right: axis(0, 0, 1), up: axis(0, 1, 0) };
+      for (const { at, trail, idle } of this.#exhausts) {
+        const p = this.#point.copy(at).applyQuaternion(rotation).add(position);
+        const game = vec3(p.x, p.z, p.y);
+        trail.active = boosting && !demoed;
+        trail.update(seconds, game, frame);
+        idle.active = throttling && !boosting && !demoed;
+        idle.update(seconds, game, frame);
+      }
+    }
     this.#flame.visible = boosting;
     this.root.visible = !demoed;
     // Each rear wheel's trail: supersonic, picked by the direction rule, touching the ground (back left, back right)
@@ -144,23 +178,30 @@ export class BallView {
     this.#show(false);
   }
 
-  /** This frame's look: exploded, the ball dissolves at 3/s, the frame time capped at 1/30 (Ball_TA's BallFadeOutSpeed
-   *  -3: 0.333 s, VT-15), its marker gone at once; else it fades in at 1/s (after a spawn) */
+  /** This frame's look: exploded, the ball's Dissolve falls at 3/s (Ball_TA's BallFadeOutSpeed -3: 0.333 s, VT-15),
+   *  its marker gone at once; else it rises at 1/s (after a spawn); the frame time capped at 1/30 either way (RV-30) */
   fade(exploded: boolean, seconds: number): void {
-    const dt = Math.max(0, seconds);
-    this.#opacity = exploded ? Math.max(0, this.#opacity - 3 * Math.min(dt, 1 / 30)) : Math.min(1, this.#opacity + dt);
+    const dt = Math.min(Math.max(0, seconds), 1 / 30);
+    this.#opacity = exploded ? Math.max(0, this.#opacity - 3 * dt) : Math.min(1, this.#opacity + dt);
     this.#show(exploded);
   }
 
-  /** How opaque the ball is, 0..1 (for tests) */
+  /** The ball's Dissolve parameter, 0..1 (for tests) */
   get opacity(): number {
     return this.#opacity;
   }
 
+  /** How opaque it's drawn: the material's dissolve keeps the ball solid while Dissolve ≥ ~0.714, a noise front eating
+   *  it below; as a uniform fade, clamp((D - 0.5) / 0.214) (RV-31) */
+  get alpha(): number {
+    return Math.min(1, Math.max(0, (this.#opacity - 0.5) / 0.214));
+  }
+
   #show(exploded: boolean): void {
-    this.#material.opacity = this.#opacity;
-    this.#material.depthWrite = this.#opacity >= 1;
-    this.#ball.visible = this.#opacity > 0;
+    const alpha = this.alpha;
+    this.#material.opacity = alpha;
+    this.#material.depthWrite = alpha >= 1;
+    this.#ball.visible = alpha > 0;
     this.#marker.visible = !exploded;
   }
 
@@ -240,9 +281,9 @@ export const PAD_ALMOST_SPAWNED_SECONDS = 1;
 /** A pad's light fades out on a pickup and in on its return over this long (notes/visual-timing.md VT-12/13) */
 export const PAD_FADE_SECONDS = 0.1;
 
-/** Boost pads, instanced (eight draw calls for all of them): flat discs, big pads with an orb, small ones with a low
- *  cylinder. Taken, a pad's light fades out over 0.1 s (a big pad's orb goes at once, a small pad stays, dark) and it
- *  shows dimmed; back, its light fades in over 0.1 s. Only big pads warm up while down, as the game's: a ghost of the
+/** Boost pads, instanced (six draw calls for all of them): flat discs, big pads with an orb, small ones with a low
+ *  cylinder. Taken, a pad's light fades out over 0.1 s to its dim look (a big pad's orb goes at once, a small pad
+ *  stays, dark); back, its light fades in over 0.1 s. Only big pads warm up while down, as the game's: a ghost of the
  *  orb growing over the whole delay (its glow eases in: EaseInCirc), and in the last second a brighter, pulsing one
  *  (AlmostSpawnedEvent). */
 export class BoostPadsView {
@@ -263,20 +304,28 @@ export class BoostPadsView {
   readonly #m = new Matrix4();
 
   constructor(pads: readonly BoostPadState[]) {
+    // Each pad's light (the game's Brightness, 0..1) by its instance colour: from the dim look (0: taken, waiting) to
+    // the lit one, the glow too, so the end of a fade is the resting look (RV-33)
     const active = new MeshStandardMaterial({ color: 0xffc533, emissive: 0x996a00, roughness: 0.4 });
-    // (each pad's light by its instance colour: the glow too, so a fading pad really darkens)
+    const dim = new Color(0x4a4130);
     active.onBeforeCompile = (shader) => {
-      shader.fragmentShader = shader.fragmentShader.replace(
-        "#include <emissivemap_fragment>",
-        "#include <emissivemap_fragment>\n#ifdef USE_INSTANCING_COLOR\ntotalEmissiveRadiance *= vColor;\n#endif",
-      );
+      shader.uniforms["dimColor"] = { value: dim };
+      shader.fragmentShader = shader.fragmentShader
+        .replace("#include <common>", "#include <common>\nuniform vec3 dimColor;")
+        .replace(
+          "#include <color_fragment>",
+          "#ifdef USE_INSTANCING_COLOR\ndiffuseColor.rgb = mix(dimColor, diffuseColor.rgb, vColor.r);\n#endif",
+        )
+        .replace(
+          "#include <emissivemap_fragment>",
+          "#include <emissivemap_fragment>\n#ifdef USE_INSTANCING_COLOR\ntotalEmissiveRadiance *= vColor;\n#endif",
+        );
     };
-    const inactive = new MeshStandardMaterial({ color: 0x4a4130, roughness: 0.9 });
     const warmup = new MeshBasicMaterial({ color: 0xffb020, transparent: true, opacity: 0.3, depthWrite: false });
     const almost = new MeshBasicMaterial({ color: 0xffe9a0, transparent: true, opacity: 0.65, depthWrite: false });
     const count = (big: boolean): number => pads.filter((p) => p.big === big).length;
-    const big = padMeshes(new CylinderGeometry(80, 90, 6, 24), new IcosahedronGeometry(45, 1), count(true), active, inactive, warmup, almost);
-    const small = padMeshes(new CylinderGeometry(50, 55, 6, 24), new CylinderGeometry(18, 18, 8, 12), count(false), active, inactive, warmup, almost);
+    const big = padMeshes(new CylinderGeometry(80, 90, 6, 24), new IcosahedronGeometry(45, 1), count(true), active, warmup, almost);
+    const small = padMeshes(new CylinderGeometry(50, 55, 6, 24), new CylinderGeometry(18, 18, 8, 12), count(false), active, warmup, almost);
     const slots = { big: 0, small: 0 };
     this.#pads = pads.map((pad) => {
       const at = toThreeVector(pad.pos);
@@ -289,7 +338,7 @@ export class BoostPadsView {
         delay: pad.big ? PAD_RESPAWN_SECONDS.big : PAD_RESPAWN_SECONDS.small,
       };
     });
-    for (const m of [big, small]) this.root.add(m.active, m.inactive, m.orb);
+    for (const m of [big, small]) this.root.add(m.active, m.orb);
     this.root.add(big.warmup, big.almost);
     this.#shown = pads.map(() => null);
     this.#fading = pads.map(() => 0);
@@ -301,17 +350,16 @@ export class BoostPadsView {
     pads.forEach((pad, i) => {
       const p = this.#pads[i];
       if (!p) return;
-      const { active, inactive, orb, warmup, almost } = p.meshes;
+      const { active, orb, warmup, almost } = p.meshes;
       const changed = this.#shown[i] !== pad.active;
       const first = this.#shown[i] === null;
       if (changed) {
         this.#shown[i] = pad.active;
         this.#fading[i] = first ? 0 : PAD_FADE_SECONDS;
-        // Taken: the big orb goes at once, the lit disc fades out; back: the orb and the lit disc at once, fading in
+        // Taken: the big orb goes at once, the light fades out; back: the orb at once, the light fading in
         active.setMatrixAt(p.slot, p.base);
-        inactive.setMatrixAt(p.slot, HIDDEN);
         orb.setMatrixAt(p.slot, pad.active || !p.big ? p.orb : HIDDEN);
-        for (const mesh of [active, inactive, orb]) mesh.instanceMatrix.needsUpdate = true;
+        for (const mesh of [active, orb]) mesh.instanceMatrix.needsUpdate = true;
         if (pad.active && p.big) {
           warmup.setMatrixAt(p.slot, HIDDEN);
           almost.setMatrixAt(p.slot, HIDDEN);
@@ -328,12 +376,6 @@ export class BoostPadsView {
         orb.setColorAt(p.slot, this.#color);
         if (active.instanceColor) active.instanceColor.needsUpdate = true;
         if (orb.instanceColor) orb.instanceColor.needsUpdate = true;
-        if (left === 0 && !pad.active) {
-          // (faded out: the dimmed disc)
-          active.setMatrixAt(p.slot, HIDDEN);
-          inactive.setMatrixAt(p.slot, p.base);
-          active.instanceMatrix.needsUpdate = inactive.instanceMatrix.needsUpdate = true;
-        }
       }
       if (pad.active || !p.big) return;
       // The warm-up: how far through the delay (the game's normalized time), the glow easing in
@@ -356,11 +398,10 @@ export class BoostPadsView {
   }
 }
 
-/** One size of pad: its disc lit and dimmed, its orb (only shown while lit) and the orb's warm-up ghosts (while down).
- *  Unused instances are scaled to 0. */
+/** One size of pad: its disc (lit to dim by each pad's light), its orb (a big pad's only shown while lit) and the orb's
+ *  warm-up ghosts (while down). Unused instances are scaled to 0. */
 interface PadMeshes {
   readonly active: InstancedMesh;
-  readonly inactive: InstancedMesh;
   readonly orb: InstancedMesh;
   readonly warmup: InstancedMesh;
   readonly almost: InstancedMesh;
@@ -372,7 +413,6 @@ function padMeshes(
   orb: BufferGeometry,
   count: number,
   active: MeshStandardMaterial,
-  inactive: MeshStandardMaterial,
   warmup: MeshBasicMaterial,
   almost: MeshBasicMaterial,
 ): PadMeshes {
@@ -384,7 +424,6 @@ function padMeshes(
   };
   return {
     active: make(base, active),
-    inactive: make(base, inactive),
     orb: make(orb, active),
     warmup: make(orb, warmup, true),
     almost: make(orb, almost, true),

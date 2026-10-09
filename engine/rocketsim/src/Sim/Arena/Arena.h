@@ -191,6 +191,13 @@ public:
 	// RL PATCH: the current kickoff again (a player joined during its countdown: the others keep their spots, the new
 	// car takes the next free one)
 	void RedoKickoff();
+	// RL PATCH: freeplay's new round (after a goal or the player's reset; notes/camera-respawn-goal.md "Freeplay after
+	// a goal"): the ball at its spawn (BALL_SPAWN_Z, at rest), car i (in ID order) at S[(spawnIndex + i) mod 10] with
+	// S = [B(P0), O(P0), B(P1), O(P1), ...], P the session's kickoff spots shuffled from `seed`, B a spot as blue's,
+	// O its mirror (-x, -y, yaw + 180 degrees), whatever the car's team; the pads reset
+	void ResetToFreeplayKickoff(int seed, int spawnIndex);
+	// RL PATCH: every pad back (ResetPickups)
+	void ResetBoostPads();
 
 	// Returns true if the ball is probably going in, does not account for wall or ceiling bounces
 	// NOTE: Purposefully overestimates, just like the real RL's shot prediction

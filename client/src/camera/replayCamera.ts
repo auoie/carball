@@ -26,11 +26,13 @@ function focusSpeed(seconds: number): number {
   return lerp(0.1, 4, Math.min(1, Math.max(0, seconds)));
 }
 
-/** Goal_TA.GetReplayOrientation: the goal scored into, its point and facing (pitch zeroed) */
-function goalFrame(goalTeam: number): { origin: Vec3; yaw: number; y: number } {
-  // Blue's (team 0) goal at y -5120 faces +y (yaw +90°), orange's at y +5120 faces -y; the camera's side offset puts it
-  // on the field's +x side for both
-  return goalTeam === 0 ? { origin: vec3(0, -5120, 320), yaw: Math.PI / 2, y: -4000 } : { origin: vec3(0, 5120, 320), yaw: -Math.PI / 2, y: 4000 };
+/** Goal_TA.GetReplayOrientation: the goal scored into (the net at -y for team 0's), its point and facing (pitch
+ *  zeroed); LocationOffset.Y's sign by the net's TeamNum (0: -Y, else +Y) */
+function goalFrame(goal: number, teamNum: number): { origin: Vec3; yaw: number; y: number } {
+  // Blue's (team 0) goal at y -5120 faces +y (yaw +90°), orange's at y +5120 faces -y; with each net's own TeamNum the
+  // camera's side offset puts it on the field's +x side for both
+  const y = teamNum === 0 ? -4000 : 4000;
+  return goal === 0 ? { origin: vec3(0, -5120, 320), yaw: Math.PI / 2, y } : { origin: vec3(0, 5120, 320), yaw: -Math.PI / 2, y };
 }
 
 export interface ReplayBody {
@@ -55,9 +57,10 @@ export class ReplayCamera {
   #sinceFocusChange = Infinity;
   #slomoTime = 0;
 
-  /** `scoringTeam`: the goal scored into is the other team's */
-  constructor(scoringTeam: number) {
-    this.#goal = goalFrame(scoringTeam === 0 ? 1 : 0);
+  /** `scoringTeam`: the goal scored into is the other team's; `netTeamNum`: that net's TeamNum (its own team's in a
+   *  match; 1 for both of freeplay's, so at blue's net the camera takes the other side: static analysis RV-41) */
+  constructor(scoringTeam: number, netTeamNum = scoringTeam === 0 ? 1 : 0) {
+    this.#goal = goalFrame(scoringTeam === 0 ? 1 : 0, netTeamNum);
   }
 
   /** `realSeconds`: real time since the last frame; `dilation`: the replay's speed now (0.25 slowed, else 1) */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatClock, matchMessage } from "./matchClock";
+import { countdownStep, formatClock, matchMessage } from "./matchClock";
 
 describe("match clock", () => {
   it("shows int(t) + 1 seconds, as the game's (5:00 until the clock runs; at a whole second, still the one before)", () => {
@@ -25,5 +25,24 @@ describe("match clock", () => {
     expect(matchMessage({ phase: "ended", overtime: false, clockTicks: 0, winner: 0, forfeit: false })).toBe("BLUE WINS!");
     expect(matchMessage({ phase: "active", overtime: false, clockTicks: 100, winner: null, forfeit: false })).toBeNull();
     expect(matchMessage({ phase: "ended", overtime: false, clockTicks: 9000, winner: 0, forfeit: true })).toBe("BLUE WINS BY FORFEIT!");
+  });
+});
+
+describe("the kickoff countdown's announcements (VT-24, RV-36)", () => {
+  it("3 after a second of the 4, then 2, 1 and GO! as the cars can drive; a restart says nothing until 3", () => {
+    let left = 0;
+    const said: [number, string][] = [];
+    const run = (from: number): void => {
+      for (let ticks = from; ticks >= 0; ticks--) {
+        const step = countdownStep(left, ticks);
+        left = step.left;
+        if (step.say !== null) said.push([from - ticks, step.say]);
+      }
+    };
+    run(480);
+    expect(said).toEqual([[120, "3"], [240, "2"], [360, "1"], [480, "GO!"]]);
+    said.length = 0;
+    run(480);
+    expect(said[0]).toEqual([120, "3"]);
   });
 });

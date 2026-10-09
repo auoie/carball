@@ -53,13 +53,36 @@
     Fennec per team (`fennec_body_painted_*.glb`). Not done: the windows' environment reflection, the chassis boost
     glow (PNT-12).
   - **Reviews:** the static session reviews committed snapshots only (RV-n findings); tell it "ready for review: <ids>
-    @ <commit>" once the user has committed. RV-1..13 fixed in 354e481 (re-checked by it). RV-14, 15, 17, 19..22 fixed
-    since, uncommitted: send it the hash after the next commit, with the visual-timing items done (VT-7, 12/13
-    fades, 15, 21, 23, 24, 30). Left: RV-16 (the tail lights' brake glow: needs a brake signal), RV-18 (the masks'
-    zero alpha: only matters off Chrome). Its Q-1 (does offline freeplay play a goal replay after a goal?) needs a
-    goal scored in live freeplay; the rest of Q-1 is settled by the script (RV-21: a kickoff reset, waiting for input).
-  - **Camera shakes:** `notes/camera-shakes.md` (RL's own shake components, summed after the swivel; off unless the
-    camera preset is Default, so off for Modern profiles). Not implemented yet.
+    @ <commit>" once the user has committed. RV-1..22 committed (354e481, 505b41a); RV-23..25, 27..33, 36, 37 and the
+    event-list test gaps fixed since, uncommitted: send it the hash after the next commit, with visual timing part 2.
+    The final freeplay rule (`notes/camera-respawn-goal.md` "Freeplay after a goal", 2026-10-09) is in, uncommitted:
+    RV-26 (released after 2 ticks), RV-38 (no scored message; either net scores for the player), RV-39 (the session's
+    kickoff spots S[k mod 10], engine patch 90; the ball from z 100.49, stopped at 92.75 on landing; pads reset twice),
+    RV-40 (no pad pickup at full boost, engine patch 91: matches too), RV-41 (freeplay's nets are TeamNum 1: the
+    explosion in the player's colour, the replay camera on a team-1 net's side), Backspace's 1.0 game s cooldown,
+    Unlimited boost (freeplay's default), and the goal replay in freeplay unless "Skip goal replays" is on (Q-1: the
+    user's in-game setting is on, hence no replay seen; no freeplay special case). Left: RV-16
+    (the tail lights' brake glow: needs a brake signal), RV-18 (the masks' zero alpha: only off Chrome), RV-34/35 (HUD).
+  - **Visual timing part 2 (done, uncommitted):** particles (`client/src/render/particles.ts`, `effects.ts`) with the
+    game's emitter values: the boost trail by distance and the idle exhaust, the goal explosion (no ribbons), a
+    demolition from the static session's export (`client/src/render/demolition.ts`: every emitter's values, the spark
+    streams from 8 moving sources, the flipbooks' colour, size and fade measured as values, "BOOM!", the husks as
+    Cascade mesh particles: their motion matches the export's simulation, rest distance p50 834 vs 842 uu; colliding
+    only within 1000 uu of the camera; the game's husk meshes on the dev server); camera shakes
+    (`notes/camera-shakes.md`, `client/src/camera/shake.ts`) off by default (the Modern preset), on with Default. Left:
+    the impact shake and ball-hit sparks (need contact data: with the sound work), pickup bursts, wheel dust, the ball
+    trail, the explosion's ribbons.
+  - **Arena visuals (in progress, uncommitted; `notes/arena-visuals.md`):** a `stadium` theme (`?theme=stadium`, not
+    the default) with the game's arena materials, switched on by the theme's `walls.game`: cage beams per H-8/H-8b
+    (additive, 8 uu, the scan stripes and contracting rings from the measured Curve_Fire/Smoke profiles, the
+    shockwave from the goal explosion: `ArenaView.explode()` / `newBall()`), the wall overlay per H-9 (the ball
+    tracker is CS_FX Hexagons_Pack_01_T, the static session's answer), the lower glass per H-6 beside the goal mouths
+    and as the nets (replacing the cage cells carried down there, for this theme only), glow sheets per H-5, the
+    teams' linear primaries and FullBright (AV-2), the sky (H-10), sun and fog (AV-17..19). The hex textures are a
+    procedural grid fitted to the game's (offset (0, 0.25), across flats / edge 1.5) with 32-step channel profiles
+    measured by `scripts/hex_profile.py` (values only). Next: the floor regions (AV-5), markings (H-2), panels (H-3),
+    frames (H-4), generators (H-7), the advert band and grate (AV-10, H-11), goal floors as metal (AV-13), tone mapping
+    and bloom (AV-21); then ask the user whether `stadium` becomes the default.
   - **Local assets from the static session** (dev-only, git-ignored, load when present like the Fennec; each with a
     README and manifest): `out/bsim/assets_local/fx/` (ball GLB and material formula, the boost trail and the goal
     explosion as emitter JSON, schema rl-fx/1), `cars/` (six cars painted per team with their hitbox presets and

@@ -15,7 +15,13 @@ describe("the Fennec's paint", () => {
 
   it("the trim 0.09 grey (rubber, facing), the glass black, the rest its diffuse shaded", () => {
     expect(fennecAlbedo(DIFFUSE, [0, 1, 0], BLUE)).toEqual([0.09, 0.09, 0.09].map((v) => expect.closeTo(v, 9) as number));
-    expect(fennecAlbedo(DIFFUSE, [1, 0, 1], BLUE)).toEqual([0, 0, 0]);
+    expect(fennecAlbedo(DIFFUSE, [1, 0, 1], BLUE)).toEqual([0, 0, 0]); // (painted glass)
+    // Glass outside the paint keeps its diffuse; trim over glass is trim (RV-24)
+    const glass = fennecAlbedo(DIFFUSE, [0, 0, 1], BLUE);
+    DIFFUSE.forEach((c, k) => {
+      expect(glass[k]).toBeCloseTo(c * 0.734, 9);
+    });
+    expect(fennecAlbedo(DIFFUSE, [0, 1, 1], BLUE)).toEqual([0.09, 0.09, 0.09].map((v) => expect.closeTo(v, 9) as number));
     const plain = fennecAlbedo(DIFFUSE, [0, 0, 0], BLUE);
     DIFFUSE.forEach((c, k) => {
       expect(plain[k]).toBeCloseTo(c * 0.734, 9);

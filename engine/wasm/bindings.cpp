@@ -208,6 +208,37 @@ public:
 		_goalReported = false;
 	}
 
+	// Freeplay's new round: the cars at the session's kickoff spots S[(spawnIndex + i) mod 10] (shuffled from
+	// `seed`), the ball at its spawn, the pads back (Arena::ResetToFreeplayKickoff)
+	void ResetFreeplay(int seed, int spawnIndex) {
+		_arena->ResetToFreeplayKickoff(seed, spawnIndex);
+		_events.clear();
+		_goalReported = false;
+	}
+
+	// The tick a car last touched the ball (as the tick count after that tick: rl_car_last_ball_touch_tick), -1: never
+	double CarLastBallTouchTick(int id) {
+		Car* car = _arena->GetCar((uint32_t)id);
+		if (!car || !car->_internalState.ballHitInfo.isValid)
+			return -1;
+		return (double)car->_internalState.ballHitInfo.tickCountWhenHit + 1;
+	}
+
+	// Every pad back (freeplay's second ResetPickups, 0.1 s after the new round)
+	void ResetBoostPads() { _arena->ResetBoostPads(); }
+
+	// Freeplay's Unlimited boost (its default): boost never used up, 100 at every spawn, every car at 100 now; off:
+	// the game's rates
+	void SetUnlimitedBoost(bool on) {
+		MutatorConfig config = _arena->GetMutatorConfig();
+		config.boostUsedPerSecond = on ? 0.f : RLConst::BOOST_USED_PER_SECOND;
+		config.carSpawnBoostAmount = on ? RLConst::BOOST_MAX : RLConst::BOOST_SPAWN_AMOUNT;
+		_arena->SetMutatorConfig(config);
+		if (on)
+			for (Car* car : _arena->GetCars())
+				car->_internalState.boost = RLConst::BOOST_MAX;
+	}
+
 	// Kickoff countdown in ticks (cars get no input while it runs; the server sets it in matches)
 	uint32_t KickoffCountdown() { return _arena->kickoffCountdownTicks; }
 	void SetKickoffCountdown(uint32_t ticks) { _arena->kickoffCountdownTicks = ticks; }
@@ -473,6 +504,10 @@ EMSCRIPTEN_BINDINGS(rlengine) {
 		.function("carControls", &Sim::GetCarControls)
 		.function("step", &Sim::Step)
 		.function("resetKickoff", &Sim::ResetKickoff)
+		.function("resetFreeplay", &Sim::ResetFreeplay)
+		.function("resetBoostPads", &Sim::ResetBoostPads)
+		.function("carLastBallTouchTick", &Sim::CarLastBallTouchTick)
+		.function("setUnlimitedBoost", &Sim::SetUnlimitedBoost)
 		.function("kickoffCountdown", &Sim::KickoffCountdown)
 		.function("setKickoffCountdown", &Sim::SetKickoffCountdown)
 		.function("tickCount", &Sim::TickCount)

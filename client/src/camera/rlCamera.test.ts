@@ -418,3 +418,21 @@ describe("leaving the free-look ball cam (RV-19)", () => {
     expect(Math.abs(right.z)).toBeLessThan(1e-6);
   });
 });
+
+describe("back from the free-look ball cam with the look held (RV-27)", () => {
+  it("the car cam carries the look's rate on (no TurnOffFreeLook): after its 0.5 s blend it has turned ~12700 units", () => {
+    const SETTINGS = { smoothing: true, accelRate: 5.8, decelRate: 10.8, freeLookSpeed: 2.5 };
+    const look = (yaw: number): CameraControls => ({ ...CAR_CAM, freeLook: { axes: { pitch: 0, yaw, source: "stick" }, settings: SETTINGS, ballCamHold: false } });
+    const ball = vec3(0, 3000, 93);
+    const yaw = (v: Vec3) => Math.atan2(v.y, v.x) * (32768 / Math.PI);
+    const camera = new PlayerCamera();
+    settle(camera, car(), ball, look(1), 1); // (the look's rate built up)
+    const inBallCam = settle(camera, car(), ball, { ...look(1), ballCam: true }, 1);
+    let back = camera.update(1 / 120, car(), ball, look(1));
+    for (let i = 0; i < 60; i++) back = camera.update(1 / 120, car(), ball, look(1));
+    // (the rate kept: ~25000 units/s for 0.508 s; restarted from zero it would ease in: ~8400)
+    const turned = yaw(back.forward) - yaw(inBallCam.forward);
+    expect(turned).toBeGreaterThan(11000);
+    expect(turned).toBeLessThan(13500);
+  });
+});

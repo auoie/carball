@@ -89,6 +89,7 @@ describe("settings", () => {
     expect(MODERN_CAMERA_PAD).toEqual(DEFAULT_SETTINGS.cameraPad);
     expect(DEFAULT_SETTINGS.options).toEqual({
       rearCameraToggle: false,
+      cameraShake: false, // (the Modern preset's: only the Default preset turns it on)
       airPitchSafety: true,
       muted: false,
       flipIndicator: true,

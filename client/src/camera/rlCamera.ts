@@ -12,6 +12,7 @@
 import type { CarState, RespawnSpot } from "../engine/world";
 import { type Vec3, add, dot, scale, sub, vec3 } from "../math/vec";
 import { type FreeLookAxes, FreeLookRate, type FreeLookSettings, MAX_FREE_LOOK_PITCH, type RotatorOffset } from "./freeLook";
+import { CameraShakes } from "./shake";
 import {
   type Rotator,
   ZERO_ROTATOR,
@@ -708,6 +709,9 @@ export interface RespawnState {
  *  ShouldExecute. */
 export class PlayerCamera {
   settings: CameraSettings = DEFAULT_CAMERA_SETTINGS;
+  /** The camera shakes playing (src/camera/shake.ts); applied only with `shake` on (the Default preset's camera shake) */
+  readonly shakes = new CameraShakes();
+  shake = false;
   readonly #carCam = new CarCameraState(false);
   readonly #ballCam = new CarCameraState(true);
   readonly #demolished = new DemolishedCameraState();
@@ -761,10 +765,13 @@ export class PlayerCamera {
     // free look off, it's turned off (TurnOffFreeLook), as when any of those three begins; the car cam's first frame
     // takes no free-look input (RV-11)
     const canFreeLook = wanted === this.#carCam || wanted === this.#demolished || wanted === this.#spawnSelect;
-    const begins = current !== wanted && canFreeLook;
-    if (mode === null || !canFreeLook || controls.rear || begins) this.#freeLook.reset();
-    // (the car cam's first frame stays in free-look mode, bFreeLookActive, with no input: its rotation is kept: RV-19)
-    const firstCarFrame = current !== wanted && wanted === this.#carCam;
+    // (back from the free-look ball cam the car cam carries on: no TurnOffFreeLook, and its first frame takes input,
+    // bFirstExecution false: RV-27; nothing turns free look off while the ball cam runs)
+    const fromLookAtBall = mode !== null && current === this.#ballCam && wanted === this.#carCam;
+    const begins = current !== wanted && canFreeLook && !fromLookAtBall;
+    if (canFreeLook && (mode === null || controls.rear || begins)) this.#freeLook.reset();
+    // (a fresh car cam's first frame stays in free-look mode, bFreeLookActive, with no input: RV-19)
+    const firstCarFrame = current !== wanted && wanted === this.#carCam && !fromLookAtBall;
     const active = mode !== null && canFreeLook && !controls.rear;
     const freeLook = active ? (firstCarFrame ? { pitch: 0, yaw: 0 } : this.#freeLook.update(dt, mode.axes, mode.settings)) : null;
     const input: CameraInput = { car, ball, settings: this.settings, rear: controls.rear, respawn: respawnInput, freeLook };
@@ -796,6 +803,13 @@ export class PlayerCamera {
     }
     if (controls.rear) view.rotation = rotator(view.rotation.pitch, view.rotation.yaw + 32768, view.rotation.roll);
     finalize(view);
+    // Camera_X.ApplyCameraModifiers: the shakes, summed, after the swivel and the rear camera, before ClipToField
+    this.shakes.update(dt);
+    if (this.shake) {
+      const { rotation, location } = this.shakes.offsets(car.pos);
+      view.rotation = addRotators(view.rotation, rotation);
+      view.calculatedLocation = add(view.calculatedLocation, location);
+    }
     this.#fov = view.fov;
     // Camera_TA.ClipToField (soccar: keep the camera GroundClampZOffset above the floor)
     const location = view.calculatedLocation;

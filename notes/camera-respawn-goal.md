@@ -209,7 +209,7 @@ With a replay, tick 360 is the replay's start, not the kickoff.
 | GS-11 | Scorer view | `ScorerLiveReplay`: ball cam from the scorer's proxy (FOV 110, Height 70, Stiffness 0.3), toggled with `ToggleScoreView` [S][A] | none | Optional |
 | GS-12 | Kickoff reset (critical) | `StartNewRound` (TA:3015), same frame as the replay end or skip (no replay: tick 360): winner → EndGame; time ≤ 0 → Overtime; Countdown (1 + 3 s = 480 ticks); ResetBalls (0, 0, 100.49); ResetPlayers (destroy + RestartPlayer at kickoff spots); ResetPickups [S] | `game.rs:250-255, 267-279` | Run it after the replay |
 | GS-13 | View before tick 360 | own car cam on the dilated dt; goal message, light bar [S] | `online.ts:327-331`, `:394` | Apply GS-2 to rendering and camera dt |
-| GS-14 | Offline vs online | Same flow offline (bots auto-ready). The freeplay "goal reset" option skips PostGoalScored (immediate ball reset). Offline PostGoalTime 3.0 [S][A] | `freeplay.ts:19, 144-149`: 2 s | 3.0 game s with the slow-mo |
+| GS-14 | Offline vs online | Same flow offline (bots auto-ready). Offline PostGoalTime 3.0 [S][A]. **Freeplay (corrected 2026-10-09; see "Freeplay after a goal" below):** a goal runs the full sequence (PostGoalScored 3.0 s with slow-mo, then a replay unless the local Skip Goal Replay is on, then a new round), and the car is released 0.01 s after the reset without input. GoalResetType: 0 Standard (default); 1 Ball Reset (instant ball respawn, car untouched, no PostGoalScored; online freeplay only); 2 Disabled (= the offline "Disable Goal Reset" toggle: goals disabled entirely) [S] | `freeplay.ts:19, 144-149`: 2 s | 3.0 game s with the slow-mo |
 | GS-15 | MatchTimeDilation | default 1 (game-speed mutators) [A][S] | none | Only if game speed is added |
 | GS-16 | Camera at the kickoff | The old car is destroyed, so no state runs (POV frozen); the new car begins fresh (a cut behind it). After a replay, LiveReplay (blend 0), then the fade [I][S] | online: no reset on kickoff | `camera.reset()` on the kickoff spawn (not on a demolition respawn) |
 
@@ -227,3 +227,50 @@ With a replay, tick 360 is the replay's start, not the kickoff.
 - **`bSlomoForDefender`:** never cleared in script.
 - **Live checks:** full-stick free look ≈ 114° in 1 s; 0.114° per mouse count (sens 10, FOV 90); FOV 90 → 120 within
   0.25 s after a demolition.
+
+## Freeplay after a goal (offline, goal reset on), added 2026-10-09
+Sources:
+- the script dump (TA = out/bsim/work/tagame_live_all.txt) and live natives;
+- the user's live checks: after a goal, the explosion, then a reset with no replay; A/D turns the front wheels after a
+  reset;
+- sub-agent notes in out/bsim/agents/FPQ1/.
+
+Offline freeplay is GameInfo_Soccar_TA + GameEvent_Soccar + Mutator_Freeplay_TA (?GameTags=Freeplay).
+
+1. **Goal tick G.** HandleHitGoal (TA:4061): ball explosion as in matches. Either net scores for the player's team
+   (both goals TeamNum 1, TA:70293). **No scored message:** ShowScorerGoalMessage is false in offline freeplay
+   (TA:4592).
+2. **PostGoalScored, 3.0 game s = 360 ticks,** with the ScoreSlomoCurve slow-mo; the car stays drivable. Backspace
+   (FreeplayCommands_TA.ResetTraining, TA:29964; 1.0 game s cooldown) goes straight to step 4, also during this state.
+3. **Tick G + 360: StartReplay** (TA:4262): DestroyBalls, DestroyCars.
+   - A replay plays iff ShouldPlayReplayPlayback: any PRI that's not a bot and not bAutoSkipGoalReplay (TA:3654).
+     Freeplay has no special case, so it follows the player's Gameplay → "Skip Goal Replay" (default off).
+   - The user saw no replay, in freeplay and in offline exhibitions alike: their "Skip Goal Replay" is on
+     (confirmed 2026-10-09). So the rule is no freeplay special case: our "Skip goal replays" setting drives it
+     the same way as in matches.
+   - Otherwise StartNewRound in the same tick.
+4. **New round** (StartNewRound TA:3015; shared with Backspace): StartCountDown, ResetBalls, ResetPlayers, ResetPickups.
+   Soccar Countdown.BeginState also resets pickups again 0.1 s later (TA:3948).
+   - **Ball** at its spawn (0, 0, 100.49), at rest, XY-locked until Active.StartRound (Z free).
+   - **Car** re-created at spot S[k mod 10], with k = NextSpawnIndex (++ per countdown end, TA:3969). The 10 spots are
+     [B(P0), O(P0), B(P1), O(P1), …]: P is the session's shuffled 5 kickoff spots, B blue, O the mirrored orange
+     (−x, −y, yaw + 180°). So consecutive resets alternate field halves (DistributeSpawnPointsEvenly / HandleTeams,
+     TA:70341/70343; GetSpawnOrientation TA:2707).
+   - **Boost** per Boost Options: Unlimited (default) = 100 and no drain; Standard = 33.3; Auto-Refill = 33.3 refilling
+     at 100/s after 1.5 s on the ground.
+5. **Countdown with CountdownTime 0** (Mutator_Freeplay_Base_TA.Init, TA:70297): InitCountDown arms a 0.01 s timer
+   (TA:1867) → StartEvent → Active, so the **car is released after one frame (0–2 ticks) without input**. The
+   ShouldStartRound poll (throttle/jump/boost, every 1/60 s) exists but the timer fires first. No GO!/countdown text
+   (bCountdownMessagesDisabled, TA:70307).
+   - **While held (bDriving false):** horizontal XY lock on car and ball (a 6-DOF constraint; gravity and suspension
+     act); throttle, brake, handbrake and physics steer are 0; no jump (OnJumpPressed returns, TA:20440), boost, dodge or
+     air control.
+   - **Still active while held:** **visual front-wheel steer** follows the steer input (wheel bones ease to
+     WheelsSteer × SteerFactor, no gate; natives 0x140f66000, 0x140f664a0), and the engine sound follows throttle. So
+     "A/D turns the wheels" doesn't tell held from released.
+6. **Total from goal to driving:** about 362 ticks (≈ 3.55 s real at speed 1, without a replay).
+7. **"Disable Goal Reset" ON** (TrainingDisableGoals → GameplaySettingsSave.bDisableFreeplayGoals, default False; type
+   2): goals disabled entirely (Goal_TA.bEnabled false). No detection, explosion, score, slow-mo or reset; only
+   Backspace resets.
+8. **Live confirmation of step 5, no mods:** after a reset, wait about 2 s without input, then tap Jump once. If it
+   jumps on the first tap, the car was already released (expected). If only the second tap jumps, it was held.

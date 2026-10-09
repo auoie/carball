@@ -45,10 +45,11 @@ void main() {
 /** Which rear wheels trail, back left and back right (SetWheelEffectActive's direction rule): with `forward` and `side`
  *  the car's speed along its forward and right axes, a car going mostly straight picks its rear wheels when going
  *  forwards (its front ones reversing, which have no trail); sliding sideways (side speed past 500 and past the forward
- *  speed), the wheel on the side it slides towards (which side the rule picks is our reading of "by the sign"). */
+ *  speed), its left wheels when sliding to its right and its right wheels otherwise (the live exe's slide branch:
+ *  SetWheelEffectActive(0) and (2) for side speed > 0; RV-29). */
 export function trailingRearWheels(forward: number, side: number): readonly [boolean, boolean] {
   if (Math.abs(side) <= 500 || Math.abs(side) <= forward) return forward > -50 ? [true, true] : [false, false];
-  return side > 0 ? [false, true] : [true, false];
+  return side > 0 ? [true, false] : [false, true];
 }
 
 /** One streak: the points it passed through, newest first, as a camera-facing ribbon. */

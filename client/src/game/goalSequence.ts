@@ -99,8 +99,19 @@ export function replaySeconds(plan: ReplayPlan): number {
   return (plan.endTick - plan.startTick + slowed * (1 / REPLAY_SLOMO - 1)) / TICK_RATE;
 }
 
-/** Freeplay's countdown ends (Mutator_Freeplay_Base_TA.ShouldStartRound, polled every 1/60 s; no 3-2-1): any throttle,
- *  either way and however little, a jump, or boost held with boost in the tank */
-export function startsFreeplayRound(controls: { readonly throttle: number; readonly jump: boolean; readonly boost: boolean }, boost: number): boolean {
-  return controls.throttle !== 0 || controls.jump || (controls.boost && boost > 0);
+/** Freeplay's countdown: Mutator_Freeplay_Base_TA sets CountdownTime 0, so Countdown's timer fires after 0.01 s and
+ *  play starts by itself, the car held for the ticks in between (RV-26: not waiting for input) */
+export const FREEPLAY_COUNTDOWN_TICKS = 2;
+/** Freeplay's second ResetPickups, 0.1 s after the new round */
+export const FREEPLAY_PAD_RESET_TICKS = 12;
+/** The player's reset (Backspace): at most once per game second */
+export const FREEPLAY_RESET_COOLDOWN = 1;
+/** The ball at its spawn falls from z 100.49; at its first floor contact (18 ticks later) its velocity is cleared and
+ *  it stays at this height (replays: RLConst BALL_KICKOFF_Z) */
+export const BALL_SETTLED_Z = 92.75;
+
+/** Whether the spawned ball, falling, has reached the floor this tick: down to its settled height, or already
+ *  bouncing back up */
+export function ballLanded(ball: { readonly pos: { readonly z: number }; readonly vel: { readonly z: number } }): boolean {
+  return ball.pos.z <= BALL_SETTLED_Z + 1e-3 || ball.vel.z > 0;
 }

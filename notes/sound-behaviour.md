@@ -3,6 +3,14 @@
 Behaviour only; no audio was extracted. Live build (2026-10-06). Every bank, package and script is from the live
 install; every native was decompiled in the live project, and the addresses are live.
 
+**Tool provenance (local only; the user's decision of 2026-10-09).**
+- **The bank parser:** out/bsim/agents/S2/wwbank.py takes its HIRC layout from reading the public source of wwiser (a
+  third-party Wwise bank tool). It stays local and git-ignored, and is never committed, copied into tracked paths or
+  shipped. Only the facts it produced (event names, timings, curves) go into specs, such as this note.
+- **Decoded audio for testing:** out/bsim/assets_local/sound/ was decoded with our own Wwise Vorbis rebuilder
+  (out/bsim/agents/SND1/tools/wwvorbis.py, from the Xiph Vorbis I spec, RFC 3533 and the exe). It is also local only.
+- **Same rule elsewhere:** the Oodle decoder is covered in notes/car-paint.md.
+
 **Scope parsed.**
 - 1341 Wwise banks, all BKHD version 150 (Wwise 2023.1): 32,197 HIRC objects with 0 size errors.
   - SFX/AMB/VO: 951 banks, 2,878 events, 7,720 sounds.

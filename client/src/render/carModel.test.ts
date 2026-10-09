@@ -90,6 +90,7 @@ describe("the car's lights (RV-15)", () => {
     const head = emissive("headlight");
     const tail = emissive("taillight");
     expect(head && [head.r, head.g, head.b]).toEqual([1, 1, 1]);
-    expect(tail && [tail.r, tail.g, tail.b]).toEqual([1, 0.1, 0].map((v) => expect.closeTo(v, 6) as number));
+    // (on screen, as the painted bake's: sRGB ff1a00)
+    expect(tail?.getHexString()).toBe("ff1a00");
   });
 });

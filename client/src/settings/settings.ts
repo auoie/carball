@@ -35,6 +35,7 @@ export interface InputCameraSettings {
 /** On/off options (ProfileCameraSave_TA, ProfilePCSave_TA). */
 export interface Options {
   readonly rearCameraToggle: boolean; // bToggleRearCamera
+  readonly cameraShake: boolean; // bEnableCameraShake: on with the Default camera preset, off with Modern
   readonly airPitchSafety: boolean; // bAirPitchSafetyEnabled (keyboard and mouse)
   readonly muted: boolean; // all sound off (M)
   readonly flipIndicator: boolean; // show whether the car can dodge, and flip resets
@@ -114,6 +115,8 @@ export const MODERN_CAMERA_PAD: InputCameraSettings = { ...INPUT_CAMERA_DEFAULTS
 /** The Default preset (and Balanced, Wide, Legacy alike): the camera's defaults, free look off for both inputs */
 export const DEFAULT_PRESET = { camera: DEFAULT_CAMERA_SETTINGS, cameraKbm: INPUT_CAMERA_DEFAULTS, cameraPad: INPUT_CAMERA_DEFAULTS } as const;
 export const MODERN_PRESET = { camera: MODERN_CAMERA, cameraKbm: MODERN_CAMERA_KBM, cameraPad: MODERN_CAMERA_PAD } as const;
+/** Camera shake per preset (ProfileCameraSave_TA.ApplyCameraPreset: bEnableCameraShake = preset == Default) */
+export const PRESET_CAMERA_SHAKE = { default: true, modern: false } as const;
 
 export const AUDIO_LIMITS: Readonly<Record<keyof AudioSettings, Range>> = {
   master: { min: 0, max: 1, step: 0.05 },
@@ -137,6 +140,7 @@ export const DEFAULT_CONTROLLER_SETTINGS: ControllerSettings = {
 /** Default__ProfileCameraSave_TA, Default__ProfilePCSave_TA. */
 export const DEFAULT_OPTIONS: Options = {
   rearCameraToggle: false,
+  cameraShake: false,
   airPitchSafety: true,
   muted: false,
   flipIndicator: true,

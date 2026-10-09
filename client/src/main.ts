@@ -9,6 +9,7 @@ import { Hud } from "./hud";
 import { InputDevices } from "./input/devices";
 import { ArenaView } from "./render/arena";
 import { loadGameCage } from "./render/cage";
+import { loadDemolitionHusks } from "./render/demolition";
 import { loadFennec } from "./render/fennec";
 import { TEAM_CAR_COLORS } from "./render/entities";
 import { type ThemeName, createTheme, themeName } from "./render/themes";
@@ -48,7 +49,7 @@ async function main(): Promise<void> {
   status.textContent = "Building arena…";
   initEngine(engine, arenaMeshes);
   // (the game's Fennec and cage, where the dev server has them: src/render/fennec.ts, src/render/cage.ts)
-  await Promise.all([loadFennec(), loadGameCage()]);
+  await Promise.all([loadFennec(), loadGameCage(), loadDemolitionHusks()]);
   const world = World.create(engine);
 
   // Warm up: the first ticks after loading are slow while the browser compiles the module
@@ -117,6 +118,10 @@ async function main(): Promise<void> {
         freeplay.debugPlace(car, ball);
       },
       car: () => freeplay.debugCar(),
+      demolition: (at: { x: number; y: number; z: number }) => {
+        freeplay.debugDemolition(at);
+      },
+      particles: () => freeplay.debugParticles(),
     };
     game = freeplay;
   } else {

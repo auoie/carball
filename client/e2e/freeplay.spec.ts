@@ -21,7 +21,7 @@ test("freeplay loads, drives and resets", async ({ page }) => {
 
   await page.goto("/");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
-  await expect(page.locator("#boost-value")).toHaveText("33"); // kickoff boost
+  await expect(page.locator("#boost-value")).toHaveText("100"); // (freeplay's Unlimited boost)
   await page.locator("#game").click({ position: { x: 640, y: 360 }, button: "right" }); // focus (right mouse: powerslide)
 
   // Hold W: the car accelerates (about 1350 uu/s after 2 s of throttle; under 24 fps, as software rendering here, the
@@ -38,11 +38,11 @@ test("freeplay loads, drives and resets", async ({ page }) => {
   await page.mouse.up({ button: "middle" });
   await expect(page.locator("#camera-mode")).toHaveText("Car cam");
 
-  // Backspace resets to a kickoff: stopped, 33 boost
+  // Backspace resets to a kickoff: stopped, boost still 100 (Unlimited)
   await page.keyboard.press("Backspace");
   await page.waitForTimeout(200);
   expect(await speed(page)).toBeLessThan(5);
-  await expect(page.locator("#boost-value")).toHaveText("33");
+  await expect(page.locator("#boost-value")).toHaveText("100");
 
   // H shows the controls
   await page.keyboard.press("KeyH");
@@ -136,7 +136,7 @@ test("controls can be rebound and are remembered", async ({ page }) => {
   await expect(page.locator('.binding-slot[data-action="throttleForward"][data-device="keyboard"]')).toHaveText("W");
 });
 
-const THEMED = ["meadow", "forest", "city", "infested", "kawaii", "platformer", "haunted", "ghosts", "dimension", "summit", "crater", "temple", "island", "lake"];
+const THEMED = ["stadium", "meadow", "forest", "city", "infested", "kawaii", "platformer", "haunted", "ghosts", "dimension", "summit", "crater", "temple", "island", "lake"];
 for (const theme of THEMED) {
   test(`the ${theme} theme loads and plays`, async ({ page }) => {
     await playTheme(page, theme);
@@ -191,9 +191,36 @@ interface Hook {
   car: () => { pos: { x: number; y: number }; speed: number };
 }
 
-test("a goal in freeplay: 3 s later the car is back on a kickoff spot, waiting until it drives", async ({ page }) => {
+test("a goal in freeplay with goal replays on: the replay plays, Space skips it, then a kickoff spot, no jump", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto("/");
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+  const hook = async (): Promise<{ pos: { x: number; y: number }; speed: number }> =>
+    page.evaluate(() => (window as unknown as { rlFreeplay: Hook }).rlFreeplay.car());
+  await page.evaluate(() => {
+    (window as unknown as { rlFreeplay: Hook }).rlFreeplay.place({ x: 3000, y: 0, yaw: 0 }, { x: 0, y: 5300, z: 200 });
+  });
+  await expect(page.locator("#score-blue")).toHaveText("1", { timeout: 10_000 });
+  // After PostGoalTime the replay (no freeplay special case: ShouldPlayReplayPlayback)
+  await expect(page.locator("#message")).toHaveText("REPLAY", { timeout: 20_000 });
+  await expect(page.locator("#message-hint")).toContainText("skip");
+  await page.locator("#game").click({ position: { x: 640, y: 360 }, button: "right" });
+  await page.keyboard.press("Space");
+  await expect(page.locator("#message")).toBeHidden({ timeout: 10_000 });
+  // The new round straight after, the car at rest on its spot: the skip's Space doesn't make it jump
+  await expect.poll(async () => Math.abs((await hook()).pos.y), { timeout: 10_000 }).toBeGreaterThan(2000);
+  await page.waitForTimeout(500);
+  expect((await hook()).speed).toBeLessThan(1);
+  expect(errors).toEqual([]);
+});
+
+test("a goal in freeplay, skipping replays: no message, 3 s later a kickoff spot (released after 0.01 s), Backspace: the other half", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.addInitScript(() => {
+    localStorage.setItem("rl-clone.settings.v1", JSON.stringify({ options: { autoSkipReplay: true } }));
+  });
   await page.goto("/");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
   const hook = async (): Promise<{ pos: { x: number; y: number }; speed: number }> =>
@@ -202,13 +229,21 @@ test("a goal in freeplay: 3 s later the car is back on a kickoff spot, waiting u
   await page.evaluate(() => {
     (window as unknown as { rlFreeplay: Hook }).rlFreeplay.place({ x: 3000, y: 0, yaw: 0 }, { x: 0, y: 5300, z: 200 });
   });
-  await expect(page.locator("#message")).toHaveText("BLUE SCORES!", { timeout: 10_000 });
-  // The new round: the car on a kickoff spot (|y| 2560 .. 4608), held there
+  // Scored for the player's team, with no message (offline freeplay: RV-38)
+  await expect(page.locator("#score-blue")).toHaveText("1", { timeout: 10_000 });
+  await expect(page.locator("#message")).toBeHidden();
+  // The new round: the car on a kickoff spot (|y| 2560 .. 4608), released with no input: at rest
   await expect.poll(async () => Math.abs((await hook()).pos.y), { timeout: 20_000 }).toBeGreaterThan(2000);
+  await expect(page.locator("#message")).toBeHidden();
   await page.waitForTimeout(500);
   expect((await hook()).speed).toBeLessThan(1);
-  // W: it drives off
+  // Backspace: the next spot of the session's cycle, in the other half (RV-39)
+  const half = Math.sign((await hook()).pos.y);
   await page.locator("#game").click({ position: { x: 640, y: 360 }, button: "right" });
+  await page.keyboard.press("Backspace");
+  await expect.poll(async () => Math.sign((await hook()).pos.y), { timeout: 10_000 }).toBe(-half);
+  expect(Math.abs((await hook()).pos.y)).toBeGreaterThan(2000);
+  // W: it drives off
   await page.keyboard.down("KeyW");
   await expect.poll(async () => (await hook()).speed, { timeout: 6_000 }).toBeGreaterThan(100);
   await page.keyboard.up("KeyW");

@@ -40,9 +40,9 @@ const FLARE = 3;
 type Point = readonly [x: number, y: number];
 
 /** The lights' emissive colours (linear), as the game's appear on screen: the painted Fennec's bake shows its tail
- *  lights (255, 26, 0) and its headlights clipped white */
+ *  lights sRGB (255, 26, 0), linear (1, 0.0103, 0) (RV-23), and its headlights clipped white */
 export const HEADLIGHT = [1, 1, 1] as const;
-export const TAILLIGHT = [1, 0.1, 0] as const;
+export const TAILLIGHT = [1, 0.0103, 0] as const;
 
 /** Where a wheel is drawn at rest (Three.js local frame, the right-hand wheel). */
 function wheelRestPosition(wheel: WheelConfig, halfWidth: number): { x: number; y: number; z: number } {

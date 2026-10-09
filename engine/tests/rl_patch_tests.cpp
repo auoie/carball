@@ -617,6 +617,62 @@ static void TestKickoffSequence() {
 	delete arena;
 }
 
+static void TestFreeplayKickoff() {
+	puts("freeplay's new round: S[k mod 10] over the session's shuffled spots, blue's then the mirror; ball at 100.49");
+	using namespace RLConst;
+	Arena* arena = Arena::Create(GameMode::SOCCAR);
+	Car* car = arena->AddCar(Team::BLUE);
+	// The session's order: StartKickoffSequence shuffles the same way from the same seed
+	arena->StartKickoffSequence(777);
+	std::array<uint8_t, 5> order = arena->kickoffSequence.order[0];
+	for (int k = 0; k < 12; k++) {
+		arena->ResetToFreeplayKickoff(777, k);
+		Vec p = car->GetState().pos;
+		bool mirrored = k % 2 == 1;
+		// (KickoffSpotOf mirrors orange's: the car is blue, so mirror the odd ones by hand)
+		Vec own = mirrored ? Vec(-p.x, -p.y, p.z) : p;
+		int spot = -1;
+		for (int i = 0; i < CAR_SPAWN_LOCATION_AMOUNT; i++)
+			if (std::fabs(own.x - CAR_SPAWN_LOCATIONS_SOCCAR[i].x) < 0.01f && std::fabs(own.y - CAR_SPAWN_LOCATIONS_SOCCAR[i].y) < 0.01f)
+				spot = i;
+		CHECK(spot == order[(k % 10) / 2], "reset %d: spot %d, expected %d", k, spot, order[(k % 10) / 2]);
+		CHECK((p.y < 0) == !mirrored, "reset %d: y %.1f on the wrong half", k, p.y);
+		float yaw = Angle::FromRotMat(car->GetState().rotMat).yaw;
+		float want = CAR_SPAWN_LOCATIONS_SOCCAR[order[(k % 10) / 2]].yawAng + (mirrored ? (float)M_PI : 0.f);
+		CHECK(Near(std::remainder(yaw - want, 2 * (float)M_PI), 0, 1e-4f), "reset %d: yaw %.4f, expected %.4f", k, yaw, want);
+	}
+	BallState b = arena->ball->GetState();
+	CHECK(Near(b.pos.z, BALL_SPAWN_Z, 1e-3f) && b.pos.x == 0 && b.pos.y == 0 && b.vel.IsZero(), "ball at (%g, %g, %g)", b.pos.x, b.pos.y, b.pos.z);
+	// Pads: taken, then back with the reset
+	arena->GetBoostPads()[0]->SetState({ false, 4.f });
+	arena->ResetToFreeplayKickoff(777, 0);
+	CHECK(arena->GetBoostPads()[0]->GetState().isActive, "a taken pad stays taken through the reset");
+	arena->GetBoostPads()[0]->SetState({ false, 4.f });
+	arena->ResetBoostPads();
+	CHECK(arena->GetBoostPads()[0]->GetState().isActive, "ResetBoostPads leaves a pad taken");
+	delete arena;
+}
+
+static void TestNoPickupAtFullBoost() {
+	puts("pads: a car at full boost leaves a pad (CanPickup: !IsFull, RV-40); below it takes it");
+	Arena* arena = Arena::Create(GameMode::SOCCAR);
+	Car* car = arena->AddCar(Team::BLUE);
+	arena->ball->SetState(BallState());
+	BoostPad* pad = arena->GetBoostPads()[0];
+	auto onPad = [&](float boost) {
+		pad->SetState(BoostPadState());
+		CarState s = CarAt(Vec(pad->config.pos.x, pad->config.pos.y, 17.01f), Vec(1, 0, 0), Vec(0, 0, 1));
+		s.boost = boost;
+		car->SetState(s);
+		arena->Step(2);
+	};
+	onPad(100);
+	CHECK(pad->GetState().isActive && car->GetState().boost == 100, "at 100: the pad was taken (active %d)", pad->GetState().isActive);
+	onPad(99.9f);
+	CHECK(!pad->GetState().isActive && car->GetState().boost == 100, "at 99.9: the pad is still there (active %d, boost %g)", pad->GetState().isActive, car->GetState().boost);
+	delete arena;
+}
+
 static void TestKickoffUnevenTeams() {
 	puts("kickoff with uneven teams: the short team's last car takes the most central of the full team's spots (MR-5)");
 	using namespace RLConst;
@@ -1402,6 +1458,8 @@ int main(int argc, char** argv) {
 	TestSpawnHeights();
 	TestKickoffSequence();
 	TestKickoffUnevenTeams();
+	TestFreeplayKickoff();
+	TestNoPickupAtFullBoost();
 	TestRespawnsHeld();
 	TestGoalExplosion();
 	TestBallRotation();

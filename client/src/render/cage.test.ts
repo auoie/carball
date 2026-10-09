@@ -113,6 +113,13 @@ describe("the cage laid out from its shippable topology", () => {
     expect(missing).toBe(0);
   });
 
+  it("leaves the lower glass's beams out when asked (the game's own glass is drawn there instead)", () => {
+    const bare = graphFromExport(shipped, false);
+    expect(bare.beams.length).toBe(shipped.edges.length);
+    expect(graph.beams.length).toBeGreaterThan(bare.beams.length);
+    expect(Math.min(...bare.beams.flatMap((b) => b.points.map((p) => p[2])))).toBeGreaterThan(255);
+  });
+
   it("has beams only where the game's are: from z 256 up, off the goal mouths below z 704; carried down to the trim", () => {
     const own = graph.beams.slice(0, CAGE_TOPOLOGY.edges.length);
     for (const beam of own) {

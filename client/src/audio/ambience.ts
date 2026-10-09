@@ -507,6 +507,12 @@ const RECIPES: Readonly<Record<ThemeName, Recipe>> = {
     drones: [{ type: "sine", frequencies: [55, 82.5], gain: 0.012, lowpass: 400 }],
     events: [],
   },
+  // (a placeholder until the game's crowd model: notes/sound-behaviour.md SND-17)
+  stadium: {
+    beds: [{ filter: "bandpass", frequency: 600, q: 0.7, gain: 0.08, lfo: { rate: 0.2, depth: 0.3, on: "gain" } }],
+    drones: [],
+    events: [],
+  },
   meadow: {
     beds: [
       breeze,

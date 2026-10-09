@@ -45,6 +45,9 @@ namespace RLConst {
 		// (z 92.75, 18 ticks later) its velocity is cleared; it stays there and sleeps 2 s later. RocketSim placed
 		// it at BALL_REST_Z, the height a rolling ball settles at
 		BALL_KICKOFF_Z = 92.75f,
+		// RL PATCH: the ball's spawn (ResetBalls: (0, 0, 100.49) at rest, free to fall in z; freeplay's new round
+		// places it there, its 0.01 s countdown too short for it to settle: notes/camera-respawn-goal.md)
+		BALL_SPAWN_Z = 100.49f,
 		BALL_MAX_ANG_SPEED = 6.f, // Ball can never exceed this angular velocity (radians/s)
 		BALL_DRAG = 0.03f, // Net-velocity drag multiplier
 		BALL_FRICTION = 0.35f,

@@ -25,3 +25,12 @@ export function matchMessage(state: Pick<MatchState, "phase" | "overtime" | "clo
   if (state.phase === "countdown" && state.overtime && state.clockTicks === 0) return "OVERTIME";
   return null;
 }
+
+/** The kickoff countdown's announcements (VT-24): "3", "2", "1" a second apart from a second in, "GO!" when the cars
+ *  can drive, each with its beep. `before`: the whole seconds left last frame; `ticks`: the countdown's ticks left now.
+ *  Returns the whole seconds left now, and what to announce (null: nothing). */
+export function countdownStep(before: number, ticks: number): { readonly left: number; readonly say: string | null } {
+  const left = Math.ceil(ticks / TICK_RATE);
+  const say = left < before && left <= 3 ? (left === 0 ? "GO!" : String(left)) : null;
+  return { left, say };
+}

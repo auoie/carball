@@ -123,8 +123,8 @@ function clip(p: Vec3Tuple, q: Vec3Tuple): [Vec3Tuple, Vec3Tuple][] {
 }
 
 /** The beams of an exported cage (one per cell edge, along its polyline; normals turned to face into the field), and
- *  its lower glass's (glassBeams). */
-export function graphFromExport(cage: CageExport): CageGraph {
+ *  unless `glass` is false its lower glass's (glassBeams: the game draws hex glass there, gameSurfaces.ts). */
+export function graphFromExport(cage: CageExport, glass = true): CageGraph {
   const inward = (i: number): Vec3Tuple => {
     const n = cage.node_normals[i] ?? [0, 0, 1];
     return [-n[0], -n[1], -n[2]];
@@ -140,14 +140,14 @@ export function graphFromExport(cage: CageExport): CageGraph {
   }
   // The glass's beams as vertices and edges of their own
   const vertices = [...cage.nodes];
-  const glass = glassBeams(cage, beams);
-  for (const beam of glass) {
+  const below = glass ? glassBeams(cage, beams) : [];
+  for (const beam of below) {
     const [a, b] = [beam.points[0], beam.points.at(-1)];
     if (!a || !b) continue;
     vertices.push(a, b);
     edges.push([vertices.length - 2, vertices.length - 1]);
   }
-  return { vertices, edges, beams: [...beams, ...glass] };
+  return { vertices, edges, beams: [...beams, ...below] };
 }
 
 function isCageExport(data: unknown): data is CageExport {
@@ -156,7 +156,7 @@ function isCageExport(data: unknown): data is CageExport {
   return Array.isArray(nodes) && Array.isArray(normals) && Array.isArray(edges) && nodes.length === normals.length;
 }
 
-let gameCage: CageGraph | null = null;
+let gameCage: CageExport | null = null;
 
 /** Loads the game's own cage if the dev server has it (/local-assets/, vite.config.ts); whether it did. `?cage=topology`
  *  keeps the one laid out from the shippable topology (what builds draw), for comparing. */
@@ -167,7 +167,8 @@ export async function loadGameCage(): Promise<boolean> {
     if (!response.ok) return false;
     const data: unknown = await response.json();
     if (!isCageExport(data)) return false;
-    gameCage = graphFromExport(data);
+    gameCage = data;
+    graphs.clear();
     return true;
   } catch {
     return false;
@@ -186,11 +187,15 @@ export function shippableCage(): CageExport {
   };
 }
 
-let shippable: CageGraph | null = null;
+const graphs = new Map<boolean, CageGraph>();
 
-/** The cage to draw: the game's own where it is loaded (the dev server), else laid out from the topology. */
-export function cageGraph(): CageGraph {
-  if (gameCage) return gameCage;
-  shippable ??= graphFromExport(shippableCage());
-  return shippable;
+/** The cage to draw: the game's own where it is loaded (the dev server), else laid out from the topology; with its
+ *  beams carried down over the lower glass unless `glass` is false. */
+export function cageGraph(glass = true): CageGraph {
+  let graph = graphs.get(glass);
+  if (!graph) {
+    graph = graphFromExport(gameCage ?? shippableCage(), glass);
+    graphs.set(glass, graph);
+  }
+  return graph;
 }

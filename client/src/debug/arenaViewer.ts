@@ -18,6 +18,8 @@ export interface ArenaShot {
   readonly ball?: Vec3;
   readonly car?: Vec3 & { readonly yaw: number };
   readonly fov?: number;
+  /** World seconds since the ball exploded: the cage's shockwave then (none if left out) */
+  readonly sinceExplosion?: number;
 }
 
 /** Shows the arena and returns the view setter. */
@@ -31,7 +33,9 @@ export function showArenaViewer(renderer: Renderer, theme: Theme, config: CarCon
   return (shot) => {
     const ballAt = toThreeVector(shot.ball ?? vec3(0, 0, -10_000));
     ball.update(ballAt, new Quaternion());
-    arena.update(ballAt, 0);
+    arena.newBall();
+    if (shot.sinceExplosion !== undefined) arena.explode();
+    arena.update(ballAt, shot.sinceExplosion ?? 0);
     car.visible = shot.car !== undefined;
     if (shot.car) {
       toThreeVector(shot.car, car.position);

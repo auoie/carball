@@ -700,10 +700,10 @@ index 888d7f9..cb5809c 100644
  	return Vec(cp * cy, cp * sy, -sp);
  }
 diff --git upstream/src/RLConst.h engine/rocketsim/src/RLConst.h
-index 8281ac9..05116a5 100644
+index 8281ac9..d3e25f1 100644
 --- upstream/src/RLConst.h
 +++ engine/rocketsim/src/RLConst.h
-@@ -41,6 +41,10 @@ namespace RLConst {
+@@ -41,6 +41,13 @@ namespace RLConst {
  		CARCAR_COLLISION_RESTITUTION = 0.1f,
  
  		BALL_REST_Z = 93.15f, // Greater than ball radius because of arena mesh collision margin
@@ -711,10 +711,13 @@ index 8281ac9..05116a5 100644
 +		// (z 92.75, 18 ticks later) its velocity is cleared; it stays there and sleeps 2 s later. RocketSim placed
 +		// it at BALL_REST_Z, the height a rolling ball settles at
 +		BALL_KICKOFF_Z = 92.75f,
++		// RL PATCH: the ball's spawn (ResetBalls: (0, 0, 100.49) at rest, free to fall in z; freeplay's new round
++		// places it there, its 0.01 s countdown too short for it to settle: notes/camera-respawn-goal.md)
++		BALL_SPAWN_Z = 100.49f,
  		BALL_MAX_ANG_SPEED = 6.f, // Ball can never exceed this angular velocity (radians/s)
  		BALL_DRAG = 0.03f, // Net-velocity drag multiplier
  		BALL_FRICTION = 0.35f,
-@@ -87,14 +91,17 @@ namespace RLConst {
+@@ -87,14 +94,17 @@ namespace RLConst {
  		STOPPING_FORWARD_VEL = 25.f, // If we are costing with less than this forward vel, we full-brake
  		COASTING_BRAKE_FACTOR = 0.15f, // How much the brake is applied when costing
  		BRAKING_NO_THROTTLE_SPEED_THRESH = 0.01f, // If we are braking and moving faster than this, disable throttle
@@ -734,7 +737,7 @@ index 8281ac9..05116a5 100644
  		JUMP_MAX_TIME = 0.2f,
  		DOUBLEJUMP_MAX_DELAY = 1.25f, // Can be at most 1.25 seconds after the jump is finished
  
-@@ -103,7 +110,7 @@ namespace RLConst {
+@@ -103,7 +113,7 @@ namespace RLConst {
  		FLIP_Z_DAMP_START = 0.15f,
  		FLIP_Z_DAMP_END = 0.21f,
  		FLIP_TORQUE_TIME = 0.65f,
@@ -743,7 +746,7 @@ index 8281ac9..05116a5 100644
  		FLIP_PITCHLOCK_TIME = 1.f,
  		FLIP_PITCHLOCK_EXTRA_TIME = 0.3f,
  		FLIP_INITIAL_VEL_SCALE = 500.f,
-@@ -125,9 +132,11 @@ namespace RLConst {
+@@ -125,9 +135,11 @@ namespace RLConst {
  
  		CAR_AUTOFLIP_IMPULSE = 200,
  		CAR_AUTOFLIP_TORQUE = 50,
@@ -756,7 +759,7 @@ index 8281ac9..05116a5 100644
  
  		CAR_AUTOROLL_FORCE = 100,
  		CAR_AUTOROLL_TORQUE = 80,
-@@ -142,8 +151,24 @@ namespace RLConst {
+@@ -142,8 +154,24 @@ namespace RLConst {
  		CAR_RESPAWN_Z = 36.f,
  
  		BUMP_COOLDOWN_TIME = 0.25f,
@@ -783,7 +786,7 @@ index 8281ac9..05116a5 100644
  
  	// NOTE: Angle order is PYR
  	constexpr Vec
-@@ -162,7 +187,12 @@ namespace RLConst {
+@@ -162,7 +190,12 @@ namespace RLConst {
  			WHEELS_DAMPING_COMPRESSION = 25.f,
  			WHEELS_DAMPING_RELAXATION = 40.f,
  			MAX_SUSPENSION_TRAVEL = 12.f, // TODO: Are we sure this is the same for all cars?
@@ -797,7 +800,7 @@ index 8281ac9..05116a5 100644
  	}
  
  	namespace Heatseeker {
-@@ -251,10 +281,14 @@ namespace RLConst {
+@@ -251,10 +284,14 @@ namespace RLConst {
  	namespace BoostPads {
  		// Mostly from a Rocket Science video: https://www.youtube.com/watch?v=xgfa-qZyInw
  		
@@ -814,7 +817,7 @@ index 8281ac9..05116a5 100644
  
  			BOX_HEIGHT = 64,
  			BOX_RAD_BIG = 160,
-@@ -271,44 +305,49 @@ namespace RLConst {
+@@ -271,44 +308,49 @@ namespace RLConst {
  			LOCS_AMOUNT_SMALL_HOOPS = 14,
  			LOCS_AMOUNT_BIG = 6;
  
@@ -898,7 +901,7 @@ index 8281ac9..05116a5 100644
  		};
  
  		constexpr Vec LOCS_SMALL_HOOPS[LOCS_AMOUNT_SMALL_HOOPS] = {
-@@ -426,6 +465,27 @@ namespace RLConst {
+@@ -426,6 +468,27 @@ namespace RLConst {
  		}
  	};
  
@@ -926,7 +929,7 @@ index 8281ac9..05116a5 100644
  	const static LinearPieceCurve STEER_ANGLE_FROM_SPEED_CURVE_THREEWHEEL = {
  		{
  			{0,		0.342473f},
-@@ -452,10 +512,11 @@ namespace RLConst {
+@@ -452,10 +515,11 @@ namespace RLConst {
  		}
  	};
  
@@ -939,7 +942,7 @@ index 8281ac9..05116a5 100644
  			{1,			1.0f}
  		}
  	};
-@@ -502,27 +563,29 @@ namespace RLConst {
+@@ -502,27 +566,29 @@ namespace RLConst {
  		}
  	};
  
@@ -1049,7 +1052,7 @@ index 5805611..3ceaa22 100644
  }
 \ No newline at end of file
 diff --git upstream/src/Sim/Arena/Arena.cpp engine/rocketsim/src/Sim/Arena/Arena.cpp
-index a13cee0..512abc3 100644
+index a13cee0..ee612ff 100644
 --- upstream/src/Sim/Arena/Arena.cpp
 +++ engine/rocketsim/src/Sim/Arena/Arena.cpp
 @@ -1,4 +1,6 @@
@@ -1260,7 +1263,7 @@ index a13cee0..512abc3 100644
  bool Arena::_AddCarFromPtr(Car* car) {
  
  	car->id = ++_lastCarID;
-@@ -123,16 +293,139 @@ void Arena::ResetToRandomKickoff(int seed) {
+@@ -123,16 +293,188 @@ void Arena::ResetToRandomKickoff(int seed) {
  
  	auto kickoffOrder = KICKOFF_ORDER_TEMPLATE;
  
@@ -1289,6 +1292,55 @@ index a13cee0..512abc3 100644
 +		// Custom random engine was created for this seed, so we need to free it
 +		delete randEngine;
 +	}
++}
++
++// RL PATCH: a car on a kickoff spot (blue's, or its mirror), as a new body
++static void PlaceAtKickoffSpot(Car* car, const RLConst::CarSpawnPos& spawnPos, bool mirrored, float boost) {
++	using namespace RLConst;
++	CarState spawnState;
++	spawnState.boost = boost;
++	spawnState.pos = { spawnPos.x, spawnPos.y, CAR_SPAWN_REST_Z };
++	Angle angle = Angle(spawnPos.yawAng, 0, 0);
++	spawnState.isOnGround = true;
++	if (mirrored) {
++		spawnState.pos *= { -1, -1, 1 };
++		angle.yaw += M_PI;
++	}
++	spawnState.rotMat = angle.ToRotMat();
++	spawnState.pos += spawnState.rotMat.forward * car->config.spawnForwardOffset; // (CarConfig)
++	spawnState.spawnCount = car->_internalState.spawnCount + 1;
++	// (a new body, so its inertia tensor from the spawn: the game's ResetPlayers destroys the cars and spawns new
++	// ones: InitBody -> setMassProps computes it; static analysis RS-12)
++	spawnState.refreshInertia = true;
++	car->SetState(spawnState);
++}
++
++// RL PATCH: freeplay's new round (Arena.h)
++void Arena::ResetToFreeplayKickoff(int seed, int spawnIndex) {
++	using namespace RLConst;
++	std::minstd_rand0 randEngine(seed);
++	std::array<uint8_t, 5> order = { 0, 1, 2, 3, 4 };
++	for (int i = CAR_SPAWN_LOCATION_AMOUNT - 1; i > 0; i--) // (as StartKickoffSequence)
++		std::swap(order[i], order[randEngine() % (i + 1)]);
++	int i = 0;
++	for (Car* car : _cars) {
++		int k = (spawnIndex + i++) % (2 * CAR_SPAWN_LOCATION_AMOUNT);
++		if (k < 0)
++			k += 2 * CAR_SPAWN_LOCATION_AMOUNT;
++		PlaceAtKickoffSpot(car, CAR_SPAWN_LOCATIONS_SOCCAR[order[k / 2]], k % 2 == 1, _mutatorConfig.carSpawnBoostAmount);
++	}
++	BallState ballState = BallState();
++	ballState.spawnCount = ball->_internalState.spawnCount + 1;
++	ballState.pos.z = BALL_SPAWN_Z;
++	ball->SetState(ballState);
++	ResetBoostPads();
++	goalExplosion = GoalExplosion();
++}
++
++// RL PATCH: ResetPickups
++void Arena::ResetBoostPads() {
++	for (BoostPad* boostPad : _boostPads)
++		boostPad->SetState(BoostPadState());
 +}
 +
 +// RL PATCH: a match's kickoff order (InitField: RandomizeSpawnPoints)
@@ -1403,7 +1455,7 @@ index a13cee0..512abc3 100644
  
  	const CarSpawnPos* CAR_SPAWN_LOCATIONS = CAR_SPAWN_LOCATIONS_SOCCAR;
  	const CarSpawnPos* CAR_RESPAWN_LOCATIONS = CAR_RESPAWN_LOCATIONS_SOCCAR;
-@@ -159,7 +452,7 @@ void Arena::ResetToRandomKickoff(int seed) {
+@@ -159,7 +501,7 @@ void Arena::ResetToRandomKickoff(int seed) {
  		CarSpawnPos spawnPos;
  	
  		if (i < locationAmount) {
@@ -1412,7 +1464,7 @@ index a13cee0..512abc3 100644
  		} else {
  			int respawnPosIdx = (i - (locationAmount)) % locationAmount;
  			spawnPos = CAR_RESPAWN_LOCATIONS[respawnPosIdx];
-@@ -178,6 +471,8 @@ void Arena::ResetToRandomKickoff(int seed) {
+@@ -178,6 +520,8 @@ void Arena::ResetToRandomKickoff(int seed) {
  			std::vector<Car*> teamCars = isBlue ? blueCars : orangeCars;
  
  			if (i < teamCars.size()) {
@@ -1421,7 +1473,7 @@ index a13cee0..512abc3 100644
  				CarState spawnState;
  				spawnState.boost = _mutatorConfig.carSpawnBoostAmount;
  				spawnState.pos = { spawnPos.x, spawnPos.y, CAR_SPAWN_REST_Z };
-@@ -190,6 +485,11 @@ void Arena::ResetToRandomKickoff(int seed) {
+@@ -190,6 +534,11 @@ void Arena::ResetToRandomKickoff(int seed) {
  				}
  
  				spawnState.rotMat = angle.ToRotMat();
@@ -1433,7 +1485,7 @@ index a13cee0..512abc3 100644
  
  				teamCars[i]->SetState(spawnState);
  			}
-@@ -197,6 +497,9 @@ void Arena::ResetToRandomKickoff(int seed) {
+@@ -197,6 +546,9 @@ void Arena::ResetToRandomKickoff(int seed) {
  	}
  
  	BallState ballState = BallState();
@@ -1443,7 +1495,7 @@ index a13cee0..512abc3 100644
  	if (gameMode == GameMode::HEATSEEKER) {
  		int nextRand = (*randEngine)();
  		Vec scale = Vec(1, (nextRand % 2) ? 1 : -1, 1);
-@@ -216,10 +519,7 @@ void Arena::ResetToRandomKickoff(int seed) {
+@@ -216,10 +568,7 @@ void Arena::ResetToRandomKickoff(int seed) {
  	if (gameMode == GameMode::DROPSHOT)
  		SetDropshotTilesState({});
  
@@ -1455,7 +1507,7 @@ index a13cee0..512abc3 100644
  }
  
  void Arena::SetDropshotTilesState(const DropshotTilesState& state) {
-@@ -241,11 +541,17 @@ void Arena::SetDropshotTilesState(const DropshotTilesState& state) {
+@@ -241,11 +590,17 @@ void Arena::SetDropshotTilesState(const DropshotTilesState& state) {
  	_dropshotTilesState = state;
  }
  
@@ -1473,7 +1525,7 @@ index a13cee0..512abc3 100644
  	auto
  		bodyA = objA->m_collisionObject,
  		bodyB = objB->m_collisionObject;
-@@ -320,6 +626,71 @@ void Arena::_BtCallback_OnCarBallCollision(Car* car, Ball* ball, btManifoldPoint
+@@ -320,6 +675,71 @@ void Arena::_BtCallback_OnCarBallCollision(Car* car, Ball* ball, btManifoldPoint
  	ball->_OnHit(car, relBallPos, manifoldPoint.m_combinedFriction, manifoldPoint.m_combinedRestitution, gameMode, _mutatorConfig, tickCount);
  }
  
@@ -1545,7 +1597,7 @@ index a13cee0..512abc3 100644
  void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint& manifoldPoint) {
  	using namespace RLConst;
  
-@@ -327,6 +698,15 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
+@@ -327,6 +747,15 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
  	manifoldPoint.m_combinedFriction = RLConst::CARCAR_COLLISION_FRICTION;
  	manifoldPoint.m_combinedRestitution = RLConst::CARCAR_COLLISION_RESTITUTION;
  
@@ -1561,7 +1613,7 @@ index a13cee0..512abc3 100644
  	// Test collision both ways
  	for (int i = 0; i < 2; i++) {
  
-@@ -334,85 +714,146 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
+@@ -334,85 +763,146 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
  		if (isSwapped)
  			std::swap(car1, car2);
  
@@ -1766,7 +1818,7 @@ index a13cee0..512abc3 100644
  Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mutatorConfig(gameMode), _config(config) {
  
  	// Tickrate must be from 15 to 120tps
-@@ -473,6 +914,22 @@ Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mu
+@@ -473,6 +963,22 @@ Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mu
  		auto& solverInfo = _bulletWorld.getSolverInfo();
  		solverInfo.m_splitImpulsePenetrationThreshold = 1.0e30f;
  		solverInfo.m_erp2 = 0.8f;
@@ -1789,7 +1841,7 @@ index a13cee0..512abc3 100644
  	}
  
  	bool loadArenaStuff = gameMode != GameMode::THE_VOID;
-@@ -543,6 +1000,51 @@ Arena* Arena::Create(GameMode gameMode, const ArenaConfig& arenaConfig, float ti
+@@ -543,6 +1049,51 @@ Arena* Arena::Create(GameMode gameMode, const ArenaConfig& arenaConfig, float ti
  	return new Arena(gameMode, arenaConfig, tickRate);
  }
  
@@ -1841,7 +1893,7 @@ index a13cee0..512abc3 100644
  void Arena::Serialize(DataStreamOut& out) const {
  	out.WriteMultiple(gameMode, tickTime, tickCount, _lastCarID);
  
-@@ -565,11 +1067,135 @@ void Arena::Serialize(DataStreamOut& out) const {
+@@ -565,11 +1116,135 @@ void Arena::Serialize(DataStreamOut& out) const {
  
  	{ // Serialize ball
  		ball->GetState().Serialize(out);
@@ -1977,7 +2029,7 @@ index a13cee0..512abc3 100644
  }
  
  Arena* Arena::DeserializeNew(DataStreamIn& in) {
-@@ -601,12 +1227,11 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
+@@ -601,12 +1276,11 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
  				RS_ERR_CLOSE(ERROR_PREFIX << "Failed to load, got repeated car ID of " << id);
  #endif
  
@@ -1994,7 +2046,7 @@ index a13cee0..512abc3 100644
  		}
  
  		newArena->_lastCarID = lastCarID;
-@@ -629,20 +1254,122 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
+@@ -629,20 +1303,122 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
  		}
  	}
  
@@ -2125,7 +2177,7 @@ index a13cee0..512abc3 100644
  Arena* Arena::Clone(bool copyCallbacks) {
  	Arena* newArena = new Arena(this->gameMode, this->_config, this->GetTickRate());
  	
-@@ -651,14 +1378,19 @@ Arena* Arena::Clone(bool copyCallbacks) {
+@@ -651,14 +1427,19 @@ Arena* Arena::Clone(bool copyCallbacks) {
  		newArena->_carBumpCallback = this->_carBumpCallback;
  	}
  
@@ -2147,7 +2199,7 @@ index a13cee0..512abc3 100644
  		newCar->controls = car->controls;
  		newCar->_velocityImpulseCache = car->_velocityImpulseCache;
  	}
-@@ -669,6 +1401,18 @@ Arena* Arena::Clone(bool copyCallbacks) {
+@@ -669,6 +1450,18 @@ Arena* Arena::Clone(bool copyCallbacks) {
  
  	newArena->tickCount = this->tickCount;
  	newArena->_lastCarID = this->_lastCarID;
@@ -2166,7 +2218,7 @@ index a13cee0..512abc3 100644
  
  	return newArena;
  }
-@@ -678,10 +1422,13 @@ Car* Arena::DeserializeNewCar(DataStreamIn& in, Team team) {
+@@ -678,10 +1471,13 @@ Car* Arena::DeserializeNewCar(DataStreamIn& in, Team team) {
  	car->_Deserialize(in);
  	car->team = team;
  
@@ -2181,7 +2233,7 @@ index a13cee0..512abc3 100644
  
  	return car;
  }
-@@ -691,20 +1438,32 @@ void Arena::Step(int ticksToSimulate) {
+@@ -691,20 +1487,32 @@ void Arena::Step(int ticksToSimulate) {
  
  		_bulletWorld.setWorldUserInfo(this);
  
@@ -2222,7 +2274,7 @@ index a13cee0..512abc3 100644
  
  		if (hasArenaStuff && !ballOnly) {
  			for (BoostPad* pad : _boostPads)
-@@ -714,9 +1473,16 @@ void Arena::Step(int ticksToSimulate) {
+@@ -714,9 +1522,16 @@ void Arena::Step(int ticksToSimulate) {
  		// Update ball
  		ball->_PreTickUpdate(gameMode, tickTime);
  
@@ -2239,7 +2291,7 @@ index a13cee0..512abc3 100644
  		for (Car* car : _cars) {
  			car->_PostTickUpdate(gameMode, tickTime, _mutatorConfig);
  			car->_FinishPhysicsTick(_mutatorConfig);
-@@ -745,6 +1511,19 @@ void Arena::Step(int ticksToSimulate) {
+@@ -745,6 +1560,19 @@ void Arena::Step(int ticksToSimulate) {
  			if (ball->_internalState.dsInfo.lastDamageTick && ball->_internalState.dsInfo.lastDamageTick == tickCount)
  				SetDropshotTilesState(_dropshotTilesState);
  
@@ -2259,7 +2311,7 @@ index a13cee0..512abc3 100644
  		if (_goalScoreCallback.func != NULL) { // Potentially fire goal score callback
  			if (IsBallScored()) {
  				_goalScoreCallback.func(this, RS_TEAM_FROM_Y(-ball->_rigidBody.getWorldTransform().m_origin.y()), _goalScoreCallback.userInfo);
-@@ -752,6 +1531,8 @@ void Arena::Step(int ticksToSimulate) {
+@@ -752,6 +1580,8 @@ void Arena::Step(int ticksToSimulate) {
  		}
  
  		tickCount++;
@@ -2268,7 +2320,7 @@ index a13cee0..512abc3 100644
  	}
  }
  
-@@ -983,6 +1764,7 @@ btRigidBody* Arena::_AddStaticCollisionShape(btCollisionShape* shape, btVector3
+@@ -983,6 +1813,7 @@ btRigidBody* Arena::_AddStaticCollisionShape(btCollisionShape* shape, btVector3
  	} else {
  		_bulletWorld.addRigidBody(shapeRB);
  	}
@@ -2276,7 +2328,7 @@ index a13cee0..512abc3 100644
  	_worldCollisionRBs.push_back(shapeRB);
  	return shapeRB;
  }
-@@ -993,6 +1775,7 @@ void Arena::_SetupArenaCollisionShapes() {
+@@ -993,6 +1824,7 @@ void Arena::_SetupArenaCollisionShapes() {
  	bool isDropShot = gameMode == GameMode::DROPSHOT;
  
  	auto collisionMeshes = RocketSim::GetArenaCollisionShapes(gameMode);
@@ -2284,7 +2336,7 @@ index a13cee0..512abc3 100644
  
  	if (collisionMeshes.empty()) {
  		RS_ERR_CLOSE(
-@@ -1021,7 +1804,7 @@ void Arena::_SetupArenaCollisionShapes() {
+@@ -1021,7 +1853,7 @@ void Arena::_SetupArenaCollisionShapes() {
  
  		int mask = isHoopsNet ? CollisionMasks::HOOPS_NET : 0;
  		_worldCollisionBvhShapes.push_back(mesh);
@@ -2294,7 +2346,7 @@ index a13cee0..512abc3 100644
  		// Don't free the BVH when we deconstruct this arena
  		mesh->m_ownsBvh = false;
 diff --git upstream/src/Sim/Arena/Arena.h engine/rocketsim/src/Sim/Arena/Arena.h
-index a3ebd3f..04ab4fb 100644
+index a3ebd3f..973a29d 100644
 --- upstream/src/Sim/Arena/Arena.h
 +++ engine/rocketsim/src/Sim/Arena/Arena.h
 @@ -1,5 +1,6 @@
@@ -2376,7 +2428,7 @@ index a3ebd3f..04ab4fb 100644
  	Arena(const Arena& other) = delete; // No copy constructor, use Arena::Clone() instead
  	Arena& operator =(const Arena& other) = delete; // No copy operator, use Arena::Clone() instead
  
-@@ -133,6 +181,17 @@ public:
+@@ -133,6 +181,24 @@ public:
  
  	void ResetToRandomKickoff(int seed = -1);
  
@@ -2390,11 +2442,18 @@ index a3ebd3f..04ab4fb 100644
 +	// RL PATCH: the current kickoff again (a player joined during its countdown: the others keep their spots, the new
 +	// car takes the next free one)
 +	void RedoKickoff();
++	// RL PATCH: freeplay's new round (after a goal or the player's reset; notes/camera-respawn-goal.md "Freeplay after
++	// a goal"): the ball at its spawn (BALL_SPAWN_Z, at rest), car i (in ID order) at S[(spawnIndex + i) mod 10] with
++	// S = [B(P0), O(P0), B(P1), O(P1), ...], P the session's kickoff spots shuffled from `seed`, B a spot as blue's,
++	// O its mirror (-x, -y, yaw + 180 degrees), whatever the car's team; the pads reset
++	void ResetToFreeplayKickoff(int seed, int spawnIndex);
++	// RL PATCH: every pad back (ResetPickups)
++	void ResetBoostPads();
 +
  	// Returns true if the ball is probably going in, does not account for wall or ceiling bounces
  	// NOTE: Purposefully overestimates, just like the real RL's shot prediction
  	// To check which goal it will score in, use the ball's velocity
-@@ -155,6 +214,17 @@ public:
+@@ -155,6 +221,17 @@ public:
  
  	void _SetupArenaCollisionShapes();
  
@@ -2412,7 +2471,7 @@ index a3ebd3f..04ab4fb 100644
  	// Static function called by Bullet internally when adding a collision point
  	static bool _BulletContactAddedCallback(
  		btManifoldPoint& cp,
-@@ -176,6 +246,16 @@ public:
+@@ -176,6 +253,16 @@ public:
  	}
  
  	DropshotTilesState GetDropshotTilesState() const { return _dropshotTilesState; };
@@ -2429,7 +2488,7 @@ index a3ebd3f..04ab4fb 100644
  	void SetDropshotTilesState(const DropshotTilesState& tilesState);
  
  private:
-@@ -187,4 +267,8 @@ private:
+@@ -187,4 +274,8 @@ private:
  	ArenaConfig _config;
  };
  
@@ -2646,7 +2705,7 @@ index 957b192..11ddf8c 100644
  		class Car* car, Vec relPos,
  		float& outFriction, float& outRestitution,
 diff --git upstream/src/Sim/BoostPad/BoostPad.cpp engine/rocketsim/src/Sim/BoostPad/BoostPad.cpp
-index c87d449..d9d1ad0 100644
+index c87d449..60c16a7 100644
 --- upstream/src/Sim/BoostPad/BoostPad.cpp
 +++ engine/rocketsim/src/Sim/BoostPad/BoostPad.cpp
 @@ -64,22 +64,12 @@ void BoostPad::_CheckCollide(Car* car) {
@@ -2677,6 +2736,17 @@ index c87d449..d9d1ad0 100644
  
  	if (colliding)
  		_internalState.curLockedCar = car;
+@@ -92,7 +82,9 @@ void BoostPad::_PostTickUpdate(float tickTime, const MutatorConfig& mutatorConfi
+ 	if (_internalState.curLockedCar) {
+ 		lockedCarID = _internalState.curLockedCar->id;
+ 
+-		if (_internalState.isActive) {
++		// RL PATCH: no pickup at full boost (VehiclePickup_Boost_TA.CanPickup: !BoostComponent.IsFull(), IsFull =
++		// CurrentBoostAmount >= MaxBoostAmount; static analysis RV-40): RocketSim took the pad and clamped
++		if (_internalState.isActive && _internalState.curLockedCar->_internalState.boost < RLConst::BOOST_MAX) {
+ 			float boostToAdd = config.isBig ? BOOST_AMOUNT_BIG : BOOST_AMOUNT_SMALL;
+ 			_internalState.curLockedCar->_internalState.boost = RS_MIN(_internalState.curLockedCar->_internalState.boost + boostToAdd, RLConst::BOOST_MAX);
+ 
 diff --git upstream/src/Sim/Car/Car.cpp engine/rocketsim/src/Sim/Car/Car.cpp
 index 417ad9d..da2801b 100644
 --- upstream/src/Sim/Car/Car.cpp

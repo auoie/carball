@@ -317,6 +317,55 @@ void Arena::ResetToRandomKickoff(int seed) {
 	}
 }
 
+// RL PATCH: a car on a kickoff spot (blue's, or its mirror), as a new body
+static void PlaceAtKickoffSpot(Car* car, const RLConst::CarSpawnPos& spawnPos, bool mirrored, float boost) {
+	using namespace RLConst;
+	CarState spawnState;
+	spawnState.boost = boost;
+	spawnState.pos = { spawnPos.x, spawnPos.y, CAR_SPAWN_REST_Z };
+	Angle angle = Angle(spawnPos.yawAng, 0, 0);
+	spawnState.isOnGround = true;
+	if (mirrored) {
+		spawnState.pos *= { -1, -1, 1 };
+		angle.yaw += M_PI;
+	}
+	spawnState.rotMat = angle.ToRotMat();
+	spawnState.pos += spawnState.rotMat.forward * car->config.spawnForwardOffset; // (CarConfig)
+	spawnState.spawnCount = car->_internalState.spawnCount + 1;
+	// (a new body, so its inertia tensor from the spawn: the game's ResetPlayers destroys the cars and spawns new
+	// ones: InitBody -> setMassProps computes it; static analysis RS-12)
+	spawnState.refreshInertia = true;
+	car->SetState(spawnState);
+}
+
+// RL PATCH: freeplay's new round (Arena.h)
+void Arena::ResetToFreeplayKickoff(int seed, int spawnIndex) {
+	using namespace RLConst;
+	std::minstd_rand0 randEngine(seed);
+	std::array<uint8_t, 5> order = { 0, 1, 2, 3, 4 };
+	for (int i = CAR_SPAWN_LOCATION_AMOUNT - 1; i > 0; i--) // (as StartKickoffSequence)
+		std::swap(order[i], order[randEngine() % (i + 1)]);
+	int i = 0;
+	for (Car* car : _cars) {
+		int k = (spawnIndex + i++) % (2 * CAR_SPAWN_LOCATION_AMOUNT);
+		if (k < 0)
+			k += 2 * CAR_SPAWN_LOCATION_AMOUNT;
+		PlaceAtKickoffSpot(car, CAR_SPAWN_LOCATIONS_SOCCAR[order[k / 2]], k % 2 == 1, _mutatorConfig.carSpawnBoostAmount);
+	}
+	BallState ballState = BallState();
+	ballState.spawnCount = ball->_internalState.spawnCount + 1;
+	ballState.pos.z = BALL_SPAWN_Z;
+	ball->SetState(ballState);
+	ResetBoostPads();
+	goalExplosion = GoalExplosion();
+}
+
+// RL PATCH: ResetPickups
+void Arena::ResetBoostPads() {
+	for (BoostPad* boostPad : _boostPads)
+		boostPad->SetState(BoostPadState());
+}
+
 // RL PATCH: a match's kickoff order (InitField: RandomizeSpawnPoints)
 void Arena::StartKickoffSequence(int seed, int teamSize) {
 	using namespace RLConst;
