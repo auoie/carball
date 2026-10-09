@@ -1,4 +1,4 @@
-# Game protocol (version 7)
+# Game protocol (version 8)
 
 Client ↔ server over **WebTransport** (HTTP/3, QUIC). All integers little-endian. Implemented in
 `server/src/protocol.rs` (Rust) and `client/src/net/protocol.ts` (TypeScript); `vectors.json` holds byte-exact
@@ -54,6 +54,8 @@ count (version 5), and each car's and the ball's spawn counter (placements by a 
 reset: a client draws a correction that changes it at once and smooths every other), and whether demolished cars'
 respawns are held (after a goal, until the kickoff), with the match message (version 6). Version 7: the engine turns
 the ball (its orientation, already in every network state and snapshot, is now simulated), so the client draws it.
+Version 8: each body's world inverse inertia tensor (9 floats), which the game doesn't recompute after the tick's
+rounding or a placement, so it isn't a function of the state's rotation.
 
 What an update carries (the game's rates, `notes/netcode.md`): the ball every update (60 Hz); cars within 1000 uu of
 the ball every update, other cars and the boost pads every 8 ticks (15 Hz).

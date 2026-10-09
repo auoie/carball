@@ -305,44 +305,49 @@ namespace RLConst {
 			LOCS_AMOUNT_SMALL_HOOPS = 14,
 			LOCS_AMOUNT_BIG = 6;
 
+		// RL PATCH: the pads where Stadium_P's prefabs put them (static analysis RS-4): small pads at z 64.082016 and big
+		// ones at z 72 (RocketSim: 70 and 73), and the four small pads by the midfield corners at |y| 2302 (2300). With
+		// the pickup's vertical reach (CYL_HEIGHT 96) the car's origin must be below z 160.08 / 168, as in the game
+		constexpr float PAD_Z_SMALL = 64.082016f, PAD_Z_BIG = 72.f;
+
 		constexpr Vec LOCS_SMALL_SOCCAR[LOCS_AMOUNT_SMALL_SOCCAR] = {
-			{0.f,		-4240.f,	70.f },
-			{-1792.f,	-4184.f,	70.f },
-			{1792.f,	-4184.f,	70.f },
-			{-940.f,	-3308.f,	70.f },
-			{940.f,		-3308.f,	70.f },
-			{0.f,		-2816.f,	70.f },
-			{-3584.f,	-2484.f,	70.f },
-			{3584.f,	-2484.f,	70.f },
-			{-1788.f,	-2300.f,	70.f },
-			{1788.f,	-2300.f,	70.f },
-			{-2048.f,	-1036.f,	70.f },
-			{0.f,		-1024.f,	70.f },
-			{2048.f,	-1036.f,	70.f },
-			{-1024.f,	0.f,		70.f },
-			{1024.f,	0.f,		70.f },
-			{-2048.f,	1036.f,		70.f },
-			{0.f,		1024.f,		70.f },
-			{2048.f,	1036.f,		70.f },
-			{-1788.f,	2300.f,		70.f },
-			{1788.f,	2300.f,		70.f },
-			{-3584.f,	2484.f,		70.f },
-			{3584.f,	2484.f,		70.f },
-			{0.f,		2816.f,		70.f },
-			{-940.f,	3308.f,		70.f },
-			{940.f,		3308.f,		70.f },
-			{-1792.f,	4184.f,		70.f },
-			{1792.f,	4184.f,		70.f },
-			{0.f,		4240.f,		70.f }
+			{0.f,		-4240.f,	PAD_Z_SMALL },
+			{-1792.f,	-4184.f,	PAD_Z_SMALL },
+			{1792.f,	-4184.f,	PAD_Z_SMALL },
+			{-940.f,	-3308.f,	PAD_Z_SMALL },
+			{940.f,		-3308.f,	PAD_Z_SMALL },
+			{0.f,		-2816.f,	PAD_Z_SMALL },
+			{-3584.f,	-2484.f,	PAD_Z_SMALL },
+			{3584.f,	-2484.f,	PAD_Z_SMALL },
+			{-1788.f,	-2302.f,	PAD_Z_SMALL },
+			{1788.f,	-2302.f,	PAD_Z_SMALL },
+			{-2048.f,	-1036.f,	PAD_Z_SMALL },
+			{0.f,		-1024.f,	PAD_Z_SMALL },
+			{2048.f,	-1036.f,	PAD_Z_SMALL },
+			{-1024.f,	0.f,		PAD_Z_SMALL },
+			{1024.f,	0.f,		PAD_Z_SMALL },
+			{-2048.f,	1036.f,		PAD_Z_SMALL },
+			{0.f,		1024.f,		PAD_Z_SMALL },
+			{2048.f,	1036.f,		PAD_Z_SMALL },
+			{-1788.f,	2302.f,		PAD_Z_SMALL },
+			{1788.f,	2302.f,		PAD_Z_SMALL },
+			{-3584.f,	2484.f,		PAD_Z_SMALL },
+			{3584.f,	2484.f,		PAD_Z_SMALL },
+			{0.f,		2816.f,		PAD_Z_SMALL },
+			{-940.f,	3308.f,		PAD_Z_SMALL },
+			{940.f,		3308.f,		PAD_Z_SMALL },
+			{-1792.f,	4184.f,		PAD_Z_SMALL },
+			{1792.f,	4184.f,		PAD_Z_SMALL },
+			{0.f,		4240.f,		PAD_Z_SMALL }
 		};
 
 		constexpr Vec LOCS_BIG_SOCCAR[LOCS_AMOUNT_BIG] = {
-			{-3584.f,     0.f, 73.f },
-			{ 3584.f,     0.f, 73.f },
-			{-3072.f,  4096.f, 73.f },
-			{ 3072.f,  4096.f, 73.f },
-			{-3072.f, -4096.f, 73.f },
-			{ 3072.f, -4096.f, 73.f }
+			{-3584.f,     0.f, PAD_Z_BIG },
+			{ 3584.f,     0.f, PAD_Z_BIG },
+			{-3072.f,  4096.f, PAD_Z_BIG },
+			{ 3072.f,  4096.f, PAD_Z_BIG },
+			{-3072.f, -4096.f, PAD_Z_BIG },
+			{ 3072.f, -4096.f, PAD_Z_BIG }
 		};
 
 		constexpr Vec LOCS_SMALL_HOOPS[LOCS_AMOUNT_SMALL_HOOPS] = {
@@ -507,10 +512,11 @@ namespace RLConst {
 		}
 	};
 
+	// RL PATCH: the game's WallFrictionCurve breaks at 0.707 (the package; RocketSim had 0.7075)
 	const static LinearPieceCurve NON_STICKY_FRICTION_FACTOR_CURVE = {
 		{
 			{0,			0.1f},
-			{0.7075f,	0.5f},
+			{0.707f,	0.5f},
 			{1,			1.0f}
 		}
 	};

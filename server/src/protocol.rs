@@ -4,7 +4,7 @@ use crate::engine::Controls;
 
 // 2: kickoff countdown in the state; 3: the wheels' previous contacts; 4: the jump's release; 5: respawn spot selection
 // and flip resets in the state
-pub const VERSION: u16 = 7;
+pub const VERSION: u16 = 8;
 pub const MAX_INPUT_FRAMES: usize = 10;
 
 /// Control stream (reliable) messages

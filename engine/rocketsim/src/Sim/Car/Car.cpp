@@ -85,7 +85,14 @@ void Car::SetState(const CarState& state) {
 	_rigidBody.getWorldTransform() = rbTransform;
 	_rigidBody.m_linearVelocity = state.vel * UU_TO_BT;
 	_rigidBody.m_angularVelocity = state.angVel;
-	_rigidBody.updateInertiaTensor();
+	// RL PATCH: a placement keeps the world inverse inertia tensor (the game's teleports, Car_TA.Teleport, write the
+	// transform and velocities only: it stays from the pose before, for one step), but for the body's first (the game
+	// computes it when it creates the body, at its spawn) or when asked (`refreshInertia`: kickoff resets and respawns,
+	// which in the game spawn new cars, and a placement with no pose before it, as a validator's) (static analysis
+	// RS-1, RS-12)
+	if (!_bodyPlaced || state.refreshInertia)
+		_rigidBody.updateInertiaTensor();
+	_bodyPlaced = true;
 
 	_velocityImpulseCache = { 0, 0, 0 };
 
@@ -106,6 +113,7 @@ void Car::SetState(const CarState& state) {
 
 	_internalState = state;
 	_internalState.tickCountSinceUpdate = 0;
+	_internalState.refreshInertia = false;
 	_netRotation.valid = false; // RL PATCH: not a quantized state
 }
 
@@ -139,11 +147,15 @@ void Car::Respawn(GameMode gameMode, int seed, float boostAmount) {
 
 void Car::_RespawnAt(Vec pos, float yaw, float boostAmount) {
 	CarState newState = CarState();
-	// RL PATCH: the body is created at its own height above the spot, and its forward offset ahead (CarConfig)
-	newState.pos = Vec(pos.x + cosf(yaw) * config.spawnForwardOffset, pos.y + sinf(yaw) * config.spawnForwardOffset, config.spawnZ);
+	// RL PATCH: the body is created at its own height above the spot, and its forward offset ahead (CarConfig); the
+	// deterministic cos/sin (detmath), so the native server and WebAssembly clients agree to the bit
+	newState.pos = Vec(pos.x + det_cosf(yaw) * config.spawnForwardOffset, pos.y + det_sinf(yaw) * config.spawnForwardOffset, config.spawnZ);
 	newState.rotMat = Angle(yaw, 0.f, 0.f).ToRotMat();
 	newState.boost = boostAmount;
 	newState.spawnCount = _internalState.spawnCount + 1;
+	// RL PATCH: a new body, so its inertia tensor from the spawn (the game's respawn spawns a new car: InitBody ->
+	// setMassProps; static analysis RS-12)
+	newState.refreshInertia = true;
 	this->SetState(newState);
 }
 
@@ -349,10 +361,9 @@ void Car::_FinishPhysicsTick(const MutatorConfig& mutatorConfig) {
 		_velocityImpulseCache = { 0,0,0 };
 	}
 
-	_LimitVelocities();
-
-	// RL PATCH: round the state through the network serializer every tick (bQuantizePhysics)
-	Quantize::QuantizeRigidBody(_rigidBody, &_netRotation);
+	// RL PATCH: round the state through the network serializer every tick (bQuantizePhysics), capped as the game's
+	// read-back caps it (in uu, its operation order: Quantize::CapReadBack; RocketSim capped in Bullet units here)
+	Quantize::QuantizeRigidBody(_rigidBody, &_netRotation, CAR_MAX_SPEED, CAR_MAX_ANG_SPEED);
 	_internalState.rotMat = _rigidBody.getWorldTransform().m_basis;
 
 	_internalState.tickCountSinceUpdate++;

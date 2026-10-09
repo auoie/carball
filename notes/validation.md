@@ -622,6 +622,48 @@ Ground driving (engine − game, uu/s², flat floor; `validation_report.py`):
       long roll the spin first differs by one quantum (0.0001 rad/s) after ~10 s, as the floor contact now turns with
       the ball.
 
+50. **RocketSim's own code against the exe (engine patches 82–89, 2026-10-08).** The static session's audit
+    (`notes/rocketsim-audit.md`, RS-1 to RS-12), adopted one patch at a time; each against the live recordings
+    (all 69, per tick and continuous) and the replays (paired, the same 648,870 cases):
+    - Patches 82–85 (exact hitbox constants, the wall friction breakpoint 0.707, the boost pads' heights and the four
+      moved pads, deterministic cos/sin/pow): replays neutral (366 better, 334 worse, all tiny); live per tick nearly
+      the same, `body_drops` continuous 5.1 → 0.13 uu/s (the exact box's inertia).
+    - **Continuous wall runs flip at contact thresholds.** With the exact box (offsets 1e-4 uu apart: 13.87562 …
+      13.87576) each `walls` recording's continuous run lands at either ~0.2–0.56 or ~20–25 uu/s p99, at a different
+      threshold per recording: a near contact that the runs' own drift (0.01–0.1 uu) decides. Per tick they don't
+      move. So continuous wall runs can't judge changes this small; per-tick and the replays do.
+    - Patch 86 (the speed cap in the game's read-back, in uu, its operation order): live 5 better, none worse (as the
+      audit predicted).
+    - Patch 87 (the BVH walked stackless in node order): live unchanged; replays (the batch with and without it) 15
+      better, 5 worse.
+    - Patch 88 (the world contact rebuilt from the manifolds after the step): live states unchanged (it gates
+      auto-roll and auto-flip; the audit measured it against the game's own WorldContact, which the validator
+      doesn't compare). Summing the manifolds in the dispatcher's order made a restored arena diverge from the
+      original in the normal's last bits (a car on two world pieces): summed in world-object order, rollback is exact.
+    - **Patch 89 (the inertia tensor kept through the rounding and placements).** Per tick (the state set from the
+      recording every tick, the tensor kept from our own step) every recording that changes is closer: angular
+      velocity maxima 0.0001 → 0 (`flip_cancel`, `ga_pitchlock`, `steer`): the game's tensor is the step's, not the
+      rounded rotation's, confirmed. Continuous: `car_car2` 0.139 → 0.045 uu/s, `walls_021027` 19.6 → 0.26.
+    - **The placement's tensor: not the header's.** Seeding the first placement with the tensor PhysLog's header dumps
+      (the game's after its opening placement, from the pose before: the world basis is already the placement's)
+      made the first simulated tick worse (steer: 0.0096 rad/s, else 0), and every continuous run after it
+      (`jumps` 0.12 → 28 uu/s). Refreshing it from the placed rotation fits that tick exactly. The static session
+      found why: the header is dumped after the placement write and before the step the validator skips as the
+      placement (row 0 → 1); that step's integration refreshes the tensor, so our first simulated step (row 1 → 2) has
+      the refreshed one. Its direct test (the skipped step from the header's body): the stale tensor gives row 1's
+      angular velocity exactly in 15 of 15 recordings, a refreshed one misses all (0.004–0.11 rad/s). So a teleport
+      keeps it for one step, and the validators' placements refresh. The game's kickoff resets and respawns spawn new
+      cars (InitBody → setMassProps): fresh tensors, as ours now.
+    - **A validator artifact first made the replays look worse** (the batch against HEAD 5,745 better, 9,234 worse;
+      cars on walls p50 0.0103 → 0.0142 uu). Bisected by reverting one patch at a time: patch 89 alone. The replay
+      validator's warm-up steps a case once from its own pose, then places it back: kept (patch 89), the tensor was
+      a tick ahead, wrong by ω/120 every case (the static session spotted it). Every replay placement now refreshes
+      (the game's tensor at a frame is from the rotation just before that frame's rounding: the case's, within it).
+    - All batch, replays against HEAD: 470 better, 396 worse, all small (patches 86–89 over 82–85: 140 better, 100
+      worse; without patch 87: 15 worse, 5 better; without 88: 36 worse, 21 better; without 86: about even). Live 28
+      better, 9 worse (the threshold-flipping wall runs and human driving), 84 unchanged; native and WebAssembly
+      identical (determinism, smoke test, network state, rollback); 3100 engine checks.
+
 Cars alone (far from the ball and other cars), car position error after ~4 ticks, our mesh / the game's mesh
 (before patch 31):
 | Where | Cases | p50 | p90 |

@@ -43,7 +43,8 @@ namespace Quantize {
 	btQuaternion Unpack(const PackedRotation& packed);
 
 	// Applies all of the above to a Bullet rigid body (Bullet units are uu / 50)
-	void QuantizeRigidBody(btRigidBody& rb, PackedRotation* packedRotation = nullptr);
+	// `maxSpeed` (uu/s) and `maxAngSpeed` (rad/s): the body's caps, applied as the game's read-back does (0: none)
+	void QuantizeRigidBody(btRigidBody& rb, PackedRotation* packedRotation = nullptr, float maxSpeed = 0, float maxAngSpeed = 0);
 }
 
 RS_NS_END

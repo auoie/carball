@@ -1,20 +1,25 @@
-// See-through arena walls with a hexagon pattern, like the game's. Unlit; tinted towards each team's colour at its
-// end of the field and inside its goal (colours and strengths from the theme). Around the ball the hexagons light up, and the ball's footprint shows on the
-// surface it is heading for, brighter the closer it gets: that's where it will touch.
-// Hexagons are projected along the surface's dominant axis (blended on the curves), in world space, so the pattern is
-// continuous across separate meshes.
-import { FrontSide, ShaderMaterial, UniformsLib, UniformsUtils, Vector3 } from "three";
-import type { WallStyle } from "./themes/theme";
+// See-through arena walls with a hexagon pattern, like the game's cage. Unlit; tinted towards each team's colour at its
+// end of the field and inside its goal (colours and strengths from the theme). Around the ball the hexagons light up.
+// (The game marks where the ball is with its shadow on the floor only: src/render/entities.ts.)
+// The hexagons are laid on the surface's own coordinates (`surfaceUv`: in the goals uu across the goal and along its
+// profile, src/render/goalSurface.ts), so they run unbroken over the curves as one structure. On the walls and ceiling
+// the cage is beams (src/render/cageBeams.ts) and the material draws the see-through fill, and hexagons only on the
+// lower glass below the cage (`glass`, as the game's hex-textured glass: up to z 256 all round, round the goal mouths
+// up to the cage's lowest row there), in the cage's own lattice (`surfaceUv`: src/render/arenaSurface.ts) so its cells
+// carry on down to the trim.
 
-/** Hexagon width across the flat sides (uu). */
-export const HEX_SIZE = 240;
+import { DoubleSide, ShaderMaterial, UniformsLib, UniformsUtils, Vector3 } from "three";
+import type { WallStyle } from "./themes/theme";
 
 const vertexShader = /* glsl */ `
 varying vec3 vWorldPosition;
 varying vec3 vWorldNormal;
+attribute vec2 surfaceUv;
+varying vec2 vSurfaceUv;
 #include <fog_pars_vertex>
 
 void main() {
+  vSurfaceUv = surfaceUv;
   vec4 world = modelMatrix * vec4(position, 1.0);
   vWorldPosition = world.xyz;
   vWorldNormal = normalize(mat3(modelMatrix) * normal);
@@ -27,7 +32,8 @@ void main() {
 const fragmentShader = /* glsl */ `
 uniform vec3 ballPosition;
 uniform float ballRadius;
-uniform float hexSize;
+uniform float latticeScale;
+uniform float halfWidth;
 uniform vec3 neutralColor;
 uniform vec3 blueColor;
 uniform vec3 orangeColor;
@@ -35,10 +41,11 @@ uniform float lineStrength;
 uniform float ceilingLineStrength;
 varying vec3 vWorldPosition;
 varying vec3 vWorldNormal;
+varying vec2 vSurfaceUv;
 #include <fog_pars_fragment>
 
 // 1 on the hexagon edges, 0 inside the cells (cells 1 wide across the flat sides), anti-aliased. dx and dy: the
-// pattern coordinates' change per pixel, taken outside any branch (derivatives inside one are undefined).
+// pattern coordinates' change per pixel.
 float hexLines(vec2 uv, vec2 dx, vec2 dy, float halfWidth) {
   const vec2 r = vec2(1.0, 1.7320508);
   const vec2 slant = vec2(0.5, 0.8660254);
@@ -60,17 +67,18 @@ float hexLines(vec2 uv, vec2 dx, vec2 dy, float halfWidth) {
 
 void main() {
   vec3 n = normalize(vWorldNormal);
-  vec3 p = vWorldPosition / hexSize;
-  vec3 weights = pow(abs(n), vec3(8.0));
-  weights /= weights.x + weights.y + weights.z;
-  // Only the projections that show are evaluated (one on flat surfaces)
-  vec3 dx = dFdx(p);
-  vec3 dy = dFdy(p);
-  const float halfWidth = 0.025;
-  float lines = 0.0;
-  if (weights.x > 0.004) lines += weights.x * hexLines(p.zy, dx.zy, dy.zy, halfWidth);
-  if (weights.y > 0.004) lines += weights.y * hexLines(p.xz, dx.xz, dy.xz, halfWidth);
-  if (weights.z > 0.004) lines += weights.z * hexLines(p.xy, dx.xy, dy.xy, halfWidth);
+  // (the first coordinate across the hexagons' flat sides)
+  vec2 uv = vSurfaceUv * latticeScale;
+  float lines = hexLines(uv, dFdx(uv), dFdy(uv), halfWidth);
+  #ifdef GLASS
+  // Only below the cage: z 256 (its lowest row), round the goal mouths z 768
+  float height = vWorldPosition.y;
+  float goalSide = step(abs(vWorldPosition.x), 1140.0) * step(5000.0, abs(vWorldPosition.z));
+  lines *= step(height, mix(256.0, 768.0, goalSide));
+  #endif
+  #ifdef NO_LINES
+  lines = 0.0;
+  #endif
 
   // Team tint towards each end (Three z = the game's y; blue defends -y)
   float end = vWorldPosition.z;
@@ -78,24 +86,17 @@ void main() {
   vec3 tint = mix(neutralColor, team, smoothstep(1000.0, 4800.0, abs(end)));
   float inGoal = step(5121.0, abs(end)) * step(abs(vWorldPosition.x), 920.0);
 
-  // The ball: hexagons light up within a few metres, and its footprint on the surface grows brighter as it closes in
-  vec3 toBall = ballPosition - vWorldPosition;
-  float ballDistance = length(toBall);
-  float height = dot(toBall, n); // the ball centre's distance in front of the surface
-  float lateral = length(toBall - n * height);
+  // The ball: hexagons light up within a few metres
+  float ballDistance = length(ballPosition - vWorldPosition);
   float near = 1.0 - smoothstep(ballRadius, ballRadius + 1100.0, ballDistance);
-  float closing = (1.0 - smoothstep(ballRadius, ballRadius + 1400.0, height)) * step(-ballRadius, height);
-  float footprint = (1.0 - smoothstep(ballRadius * 0.7, ballRadius * 1.05, lateral)) * closing;
-  float ring = (1.0 - smoothstep(0.0, 6.0 + 0.004 * ballDistance, abs(lateral - ballRadius))) * closing;
 
   // The ceiling stays faint (it's mostly overhead, in the way of the view)
   float ceiling = smoothstep(0.5, 0.9, -n.y);
   float lineAlpha = lines * (mix(lineStrength, ceilingLineStrength, ceiling) + 0.75 * near);
-  float fillAlpha = mix(mix(0.05, 0.02, ceiling), 0.28, inGoal) + 0.1 * near + 0.22 * footprint * footprint;
+  float fillAlpha = mix(mix(0.05, 0.02, ceiling), 0.28, inGoal) + 0.1 * near;
   vec3 lineColor = mix(tint, vec3(1.0), 0.2 + 0.6 * near);
   vec3 color = mix(tint * 0.7, lineColor, lineAlpha / max(lineAlpha + fillAlpha, 1e-4));
-  color = mix(color, vec3(1.0), max(footprint * 0.5, ring));
-  gl_FragColor = vec4(color, clamp(fillAlpha + lineAlpha + ring * 0.8, 0.0, 1.0));
+  gl_FragColor = vec4(color, clamp(fillAlpha + lineAlpha, 0.0, 1.0));
 
   #include <colorspace_fragment>
   #include <fog_fragment>
@@ -106,16 +107,24 @@ export class HexWallMaterial extends ShaderMaterial {
   /** The ball's centre (Three.js frame), shared by every surface using this material. */
   readonly ballPosition: Vector3;
 
-  constructor(ballRadius: number, style: WallStyle) {
+  /** Hexagons on the mesh's `surfaceUv` attribute times `scale` (in cells: 1 across the flat sides), their lines
+   *  `halfWidth` (cells) wide either side; `lines`: "glass" only on the lower glass (see above), "none" only the fill. */
+  constructor(
+    ballRadius: number,
+    style: WallStyle,
+    options: { readonly scale?: number; readonly halfWidth?: number; readonly lines?: "all" | "glass" | "none" },
+  ) {
     const ballPosition = new Vector3(0, -100_000, 0); // (far away until the first update)
     super({
       vertexShader,
       fragmentShader,
+      defines: options.lines === "glass" ? { GLASS: "" } : options.lines === "none" ? { NO_LINES: "" } : {},
       uniforms: {
         ...UniformsUtils.clone(UniformsLib.fog),
         ballPosition: { value: ballPosition },
         ballRadius: { value: ballRadius },
-        hexSize: { value: HEX_SIZE },
+        latticeScale: { value: options.scale ?? 1 },
+        halfWidth: { value: options.halfWidth ?? 0.012 },
         neutralColor: { value: style.neutral },
         blueColor: { value: style.blue },
         orangeColor: { value: style.orange },
@@ -124,7 +133,7 @@ export class HexWallMaterial extends ShaderMaterial {
       },
       transparent: true,
       depthWrite: false,
-      side: FrontSide,
+      side: DoubleSide, // (the game's cage shows from outside the arena too)
       fog: true,
     });
     this.ballPosition = ballPosition;

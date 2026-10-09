@@ -9,7 +9,7 @@ import type { InputDevices } from "../input/devices";
 import { AirPitchSafety, ButtonLatch, EMPTY_INPUT, type HeldActions, type LookInput, readControls, readHeldActions, readLook } from "../input/mapping";
 import type { ControllerSettings, Options, Settings } from "../settings/settings";
 import { FixedStep, TICK_SECONDS } from "../loop/fixedStep";
-import { ZERO, add, scale, vec3 } from "../math/vec";
+import { type Vec3, ZERO, add, scale, vec3 } from "../math/vec";
 import { BALL_RADIUS, BallView, BoostPadsView, CarView } from "../render/entities";
 import type { ArenaView } from "../render/arena";
 import type { Renderer } from "../render/renderer";
@@ -166,6 +166,16 @@ export class Freeplay {
     this.#world.resetKickoff(this.#kickoffSeed);
     this.#goalTimer = 0;
     this.#message = null;
+    this.#snapViews();
+  }
+
+  /** For screenshots and browser tests: the car on the floor at (x, y) facing `yaw` (rad, the game's), at rest, and
+   *  the ball at `ball` if given. */
+  debugPlace(car: { readonly x: number; readonly y: number; readonly yaw: number }, ball?: Vec3): void {
+    const forward = vec3(Math.cos(car.yaw), Math.sin(car.yaw), 0);
+    const rot = { forward, right: vec3(-forward.y, forward.x, 0), up: vec3(0, 0, 1) };
+    this.#world.setCar(this.#playerId, { pos: vec3(car.x, car.y, 17.01), vel: ZERO, angVel: ZERO, rot, boost: 33 });
+    if (ball) this.#world.setBall({ pos: ball, vel: ZERO, angVel: ZERO });
     this.#snapViews();
   }
 

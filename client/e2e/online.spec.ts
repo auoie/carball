@@ -39,8 +39,12 @@ test("two players: one drives, the other sees it through the server", async ({ p
   await expect(page.locator("#net")).toContainText("2 cars", { timeout: 5_000 });
   await expect(other.locator("#net")).toContainText("2 cars");
   await expect(page.locator("#net")).toContainText(/ping \d+ ms/);
-  // The match clock, from the server: full until the ball is first hit (or 5 s after go)
-  await expect(page.locator("#clock")).toHaveText("5:00");
+  // The match clock, from the server: full until the ball is first hit or 5 s after go, then counting down (how far
+  // depends on how long the test took to get here: not the point; a fresh match, so within its first minute)
+  await expect(page.locator("#clock")).toHaveText(/^[45]:\d\d$/);
+  const [minutes = 0, seconds = 0] = ((await page.locator("#clock").textContent()) ?? "").split(":").map(Number);
+  expect(minutes * 60 + seconds).toBeLessThanOrEqual(300);
+  expect(minutes * 60 + seconds).toBeGreaterThan(240);
   await expect(other.locator("#clock")).toBeVisible();
 
   // The kickoff countdown (4 s from the first player's join) ends: cars take input again

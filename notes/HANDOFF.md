@@ -23,6 +23,16 @@
   (64: steer left/right while demolished, locked 0.5 s before the respawn; deterministic, in snapshots and the
   network state) plus the flip reset counter (68). `live_validate` fixes: the "2.71 uu/s teleport artifact"
   was stale wheel normals after a placement (finding 43).
+- **RocketSim's own code against the exe (2026-10-08, engine patches 82–89, validation finding 50):** the static
+  session's audit `notes/rocketsim-audit.md` (RS-1 to RS-12) adopted: exact hitbox constants, wall friction 0.707, the
+  game's pad heights and the four moved pads, deterministic maths in respawns and the goal explosion, the speed cap in
+  the game's read-back, the BVH's stackless walk, the world contact rebuilt from the manifolds, and the inertia
+  tensor kept through the rounding and placements (in snapshots and the network state: format 8, protocol 8;
+  `CarState::refreshInertia` for placements with no pose before, as the validators'). Validate with the live
+  recordings per tick and the replays: continuous wall runs flip at contact thresholds (finding 50). Left: RS-6
+  (broadphase: plane AABB sign bug, island/sleep risks), RS-8/RS-9 (edge cases), RS-12's walls_021027 t125
+  per-wheel error (needs per-wheel PhysLog columns and a re-recording), and whether the game's own teleports keep the
+  stale tensor.
 - **Netcode (today, from the static session's audit `notes/netcode-audit.md`):** corrections smoothed for drawing
   (`client/src/game/syncError.ts`), hitch reset of the server's jitter buffer (protocol `ResetInputBuffer`), lost
   update parts no longer drop the whole update, remote cars' input basis only from the cars in an update; then the
@@ -70,6 +80,17 @@
   - camera (`notes/camera-update-audit.md`): free look (CAM-1) and the live Modern camera preset (CAM-3/4: a
     decision like the keyboard layout), respawn cameras (CAM-6); CAM-2/7/8 are fixed;
   - `steer` once per other car body (finding 21), `HandlingPresetXOffset`.
+  - **Cage pattern (TODO, parked by the user 2026-10-08):** the client draws the cage as beams (`client/src/render/
+    cage.ts`, `cageBeams.ts`): on the dev server the game's own lattice from the static session's local export
+    (`out/bsim/assets_local/cage/`, never shipped), else our generated lattice (the game's measured layout, seams
+    zipped with pentagons/heptagons; `notes/arena.md`, "The cage's hexagon layout"). Next: the shippable form is
+    ready (user-approved, 2026-10-08): `scripts/cage_topology.json` (topology, integer lattice addresses, defects, a few
+    rule parameters and half-period marks; no coordinates) with its reference generator `scripts/cage_layout.py` (the
+    game's cage is our arena surface pushed 16 uu out: with offset 0 its beams lie on our drawn surface; median 0.5 uu,
+    p90 11 against the game's lattice, the 28 relaxed corner-fan nodes up to 66). Port the generator to the client to
+    replace our generated lattice in builds (the local export stays for the dev server). The lower glass: ours carries the cage's wall cells down to the trim beside the goals
+    (the user's ask), the game's is a separate smaller hex texture on a few panels (its UV mappings are in the static
+    session's message of 2026-10-08; the tiling factor needs a screenshot count of hex columns across a 576 uu panel).
 - **The live game updated on 2026-10-06:** the static analysis (Ghidra project, `out/decomp`, layouts, packages) is
   from the 2026-06-16 build in `documents/binaries`; the live exe is in
   `/mnt/c/Program Files (x86)/Steam/steamapps/common/rocketleague`. Physics functions look unchanged (finding 25),
@@ -193,6 +214,12 @@ python3 replay_pull.py ../out/replays && replay_extract/target/release/replay_ex
 - The user commits work themselves; leave changes uncommitted unless asked.
 - `pkill -f PATTERN` kills its own shell if PATTERN appears anywhere in the same command line. Use a bracket
   trick (`pkill -f 'vite previe[w]'`) and don't start the process in the same command.
+- Never wait for a run to finish with `pgrep -f` on command names (`while pgrep -f "npm run chec[k]"; do sleep`):
+  the bracket only keeps the pattern from matching its own text. A waiting shell whose command line also holds the
+  real command it launches next (`...; npm run check ...`) matches itself forever, and so do other waiting shells
+  (2026-10-08: three such loops deadlocked, so client runs 28–30 never started). Wait on the job instead: a single
+  background job (`run_in_background`, notified when it exits) or `$!` / `wait`, or poll a status file the job writes.
+  Type check and unit tests after each change; the full build and e2e (5–8 min) once at the end of a batch.
 - Emscripten: `PATH=/usr/lib/emscripten:$PATH` (not on PATH in non-login shells). Bindings generate TS types
   (`--emit-tsd *.d.mts`; typed arrays via `EMSCRIPTEN_DECLARE_VAL_TYPE`). After changing `engine/wasm/bindings.cpp`,
   rebuild `engine/build-wasm` (targets `rlengine`, `rlengine_web`) before running the client.

@@ -303,7 +303,10 @@ static void Describe(const std::vector<Row>& rows) {
 // The car's state from a recording row. The row's wheel contacts are the game's previous-tick ray results, which the
 // tick's pre-physics step uses (sticky force, air control, jump): where ours differ, or after a placement (`placed`:
 // the touching wheels' normals are from before it), the row's.
-static void SetBody(Car* car, CarState s, const CarRow& r, bool placed = false) {
+// `refreshInertia`: the body's world inverse inertia tensor from this rotation (else it keeps its own, as the game's
+// placements do: Car::SetState).
+static void SetBody(Car* car, CarState s, const CarRow& r, bool placed = false, bool refreshInertia = false) {
+	s.refreshInertia = refreshInertia;
 	s.pos = r.car.pos;
 	s.rotMat = r.car.rot;
 	s.vel = r.car.vel;
@@ -463,9 +466,9 @@ static int Validate(const char* path, const std::string& presetName, const Sensi
 		return 1;
 	}
 	Describe(rows);
+	std::string side = path;
+	if (side.size() > 4 && side.substr(side.size() - 4) == ".csv") side = side.substr(0, side.size() - 4);
 	if (contactsTo >= contactsFrom) {
-		std::string side = path;
-		if (side.size() > 4 && side.substr(side.size() - 4) == ".csv") side = side.substr(0, side.size() - 4);
 		gameContacts = LoadGameContacts(side + "_bullet.csv");
 		if (!gameContacts.empty()) printf("the game's contacts: %s_bullet.csv\n", side.c_str());
 	}
@@ -533,8 +536,12 @@ static int Validate(const char* path, const std::string& presetName, const Sensi
 				ours.isBoosting = !ours.isBoosting;
 				ours.boostingTime = ours.isBoosting ? 1 / 120.f : 0;
 			}
-			SetBody(car, ours, a, !started);
-			if (car2 && a.hasOther) SetBody(car2, car2->GetState(), a.other, !started);
+			// The inertia tensor: from the placed rotation at a placement (the recording's tick after it fits that
+			// exactly, where the game's tensor before its first step, which its _bullet.csv header dumps, is a
+			// different one: validation finding 50); kept from our own step at the per-tick resets, as the game keeps
+			// its own through the tick's rounding (Quantize)
+			SetBody(car, ours, a, !started, !started);
+			if (car2 && a.hasOther) SetBody(car2, car2->GetState(), a.other, !started, !started);
 			if (a.hasBall) SetBall(arena, a.ball);
 			resyncs += continuous && started;
 		}
@@ -639,8 +646,9 @@ static int FitSteer(const char* path, const std::string& presetName, const Sensi
 		if (lround((b.time - a.time) * 120) != 1 || (b.car.pos - a.car.pos - a.car.vel / 120.f).Length() > 60) continue;
 		CarState base = car->GetState();
 		// Velocity and angular velocity (weighted to similar size) after one tick with this steer
+		// (each trial from this row's rotation's inertia tensor, so all start alike)
 		auto err = [&](float steer) {
-			SetBody(car, base, a);
+			SetBody(car, base, a, false, true);
 			if (a.hasBall) SetBall(arena, a.ball);
 			car->controls = a.in;
 			car->controls.steer = steer;
@@ -661,7 +669,7 @@ static int FitSteer(const char* path, const std::string& presetName, const Sensi
 			       a.car.vel.Length());
 		}
 		// Advance with the recorded input from the recorded state, as the per-tick validation does
-		SetBody(car, base, a);
+		SetBody(car, base, a, false, true);
 		if (a.hasBall) SetBall(arena, a.ball);
 		car->controls = a.in;
 		arena->Step(1);

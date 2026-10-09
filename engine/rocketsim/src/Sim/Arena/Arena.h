@@ -253,6 +253,7 @@ public:
 	void _ResetToKickoff(const std::array<uint8_t, 5> orders[2], int first, std::minstd_rand0* randEngine);
 	// RL PATCH: one tick of the goal explosion's wave (before the physics step)
 	void _UpdateGoalExplosion();
+	void _UpdateWorldContacts();
 	void _SerializeContacts(DataStreamOut& out);
 	void _DeserializeContacts(DataStreamIn& in);
 	void SetDropshotTilesState(const DropshotTilesState& tilesState);

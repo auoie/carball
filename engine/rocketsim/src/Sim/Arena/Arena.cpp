@@ -8,6 +8,7 @@
 #include "../../../libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btSimpleBroadphase.h"
 #include "../../../libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btRSBroadphase.h"
 #include "../../../libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btOverlappingPairCache.h"
+#include "../../../libsrc/bullet3-3.24/BulletCollision/NarrowPhaseCollision/btPersistentManifold.h"
 #include "../../../libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/btDefaultCollisionConfiguration.h"
 #include "../../../libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/btInternalEdgeUtility.h"
 #include "../../../libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btBoxShape.h"
@@ -391,7 +392,7 @@ void Arena::_UpdateGoalExplosion() {
 		ex.active = false;
 		return;
 	}
-	float scale = powf(1 - radius / END_RADIUS, FALLOFF);
+	float scale = det_powf(1 - radius / END_RADIUS, FALLOFF); // (deterministic: server and clients agree to the bit)
 	Vec momentumOrigin = ex.origin + Vec(0, 500 * ex.goalDir, -500);
 	for (Car* car : _cars) {
 		if (car->_internalState.isDemoed || std::find(ex.hitCars.begin(), ex.hitCars.end(), car->id) != ex.hitCars.end())
@@ -486,6 +487,9 @@ void Arena::_ResetToKickoff(const std::array<uint8_t, 5> orders[2], int first, s
 				spawnState.rotMat = angle.ToRotMat();
 				spawnState.pos += spawnState.rotMat.forward * teamCars[i]->config.spawnForwardOffset; // RL PATCH (CarConfig)
 				spawnState.spawnCount = teamCars[i]->_internalState.spawnCount + 1; // RL PATCH
+				// RL PATCH: a new body, so its inertia tensor from the spawn (the game's ResetPlayers destroys the cars and
+				// spawns new ones: InitBody -> setMassProps computes it; static analysis RS-12)
+				spawnState.refreshInertia = true;
 
 				teamCars[i]->SetState(spawnState);
 			}
@@ -800,12 +804,54 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
 }
 
 void Arena::_BtCallback_OnCarWorldCollision(Car* car, btCollisionObject* world, btManifoldPoint& manifoldPoint) {
-	car->_internalState.worldContact.hasContact = true;
-	car->_internalState.worldContact.contactNormal = manifoldPoint.m_normalWorldOnB;
+	// (the car's world contact is rebuilt after the step: _UpdateWorldContacts)
 
 	// Manually override manifold friction/restitution
 	manifoldPoint.m_combinedFriction = _mutatorConfig.carWorldFriction;
 	manifoldPoint.m_combinedRestitution = _mutatorConfig.carWorldRestitution;
+}
+
+// RL PATCH: each car's world contact as the game rebuilds it after the step (FUN_140f55040, FUN_140f13c80; all world
+// geometry is one RBCollision record): in contact if any of its manifolds with static geometry has points (persisted
+// ones too), the normal the normalised sum of all those points' normals, towards the car. RocketSim took the normal of
+// the last point added during the step, and missed contacts that only persisted. Read by auto-roll and auto-flip at
+// the next tick (static analysis RS-7). The manifolds are added up in the order of the world objects they touch, not
+// the dispatcher's (which differs in a restored or cloned arena, and float addition doesn't commute in its last bits)
+void Arena::_UpdateWorldContacts() {
+	btCollisionDispatcher* dispatcher = _bulletWorld.getDispatcher();
+	std::vector<std::pair<int, btPersistentManifold*>> touching;
+	for (Car* car : _cars) {
+		touching.clear();
+		for (int i = 0; i < dispatcher->getNumManifolds(); i++) {
+			btPersistentManifold* manifold = dispatcher->getManifoldByIndexInternal(i);
+			if (manifold->getNumContacts() == 0)
+				continue;
+			bool first = manifold->getBody0() == &car->_rigidBody, second = manifold->getBody1() == &car->_rigidBody;
+			if (!first && !second)
+				continue;
+			const btCollisionObject* other = first ? manifold->getBody1() : manifold->getBody0();
+			if (other->isStaticObject())
+				touching.emplace_back(other->getWorldArrayIndex(), manifold);
+		}
+		std::sort(touching.begin(), touching.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+		btVector3 sum(0, 0, 0);
+		int count = 0;
+		for (const auto& [index, manifold] : touching) {
+			bool first = manifold->getBody0() == &car->_rigidBody;
+			for (int j = 0; j < manifold->getNumContacts(); j++) {
+				// (the normal on B points towards A: towards the car when it is A)
+				const btVector3& normal = manifold->getContactPoint(j).m_normalWorldOnB;
+				sum += first ? normal : -normal;
+				count++;
+			}
+		}
+		car->_internalState.worldContact.hasContact = count > 0;
+		if (count > 0) {
+			float length = sum.length();
+			if (length > 1e-6f)
+				car->_internalState.worldContact.contactNormal = sum / length;
+		}
+	}
 }
 
 Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mutatorConfig(gameMode), _config(config) {
@@ -1434,6 +1480,8 @@ void Arena::Step(int ticksToSimulate) {
 
 		// Update world
 		_bulletWorld.stepSimulation(tickTime, 0, tickTime);
+
+		_UpdateWorldContacts(); // RL PATCH
 
 		for (Car* car : _cars) {
 			car->_PostTickUpdate(gameMode, tickTime, _mutatorConfig);

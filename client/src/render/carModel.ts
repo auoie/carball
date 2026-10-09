@@ -1,6 +1,8 @@
 // A boxy hatchback in the style of the game's Fennec (which uses the Octane hitbox), built around the physics
-// hitbox: its nose, tail, roof and sides are the hitbox's, so what you see is what collides. Our own low-poly model,
-// generated from the car's dimensions, so other hitboxes get a matching body too.
+// hitbox: its nose, roof and sides are the hitbox's; the tail reaches a little past it to cover the rear wheels, as
+// the Fennec's does. Angular wheel arches with black flares, black lower cladding and a side vent, a roof spoiler.
+// Our own low-poly model, generated from the car's dimensions, so other hitboxes get a matching body too. (On the dev
+// server with the game's own Fennec exported locally, cars of its hitbox wear that instead: src/render/fennec.ts.)
 // Local frame (Three.js): x forward, y up, z right; the origin is the car's centre of mass.
 import {
   BoxGeometry,
@@ -18,6 +20,7 @@ import {
   ShapeGeometry,
   Vector2,
 } from "three";
+import { fennecModel } from "./fennec";
 import type { CarConfig, WheelConfig } from "../engine/world";
 import { mergeByMaterial } from "./merge";
 
@@ -25,6 +28,12 @@ import { mergeByMaterial } from "./merge";
 const SUSPENSION_TRAVEL = 12;
 const TYRE_WIDTH = 14;
 const BEVEL = 2.5;
+/** The tail past the hitbox's back (uu): the Fennec's body covers its rear wheels, which stick out of the hitbox */
+export const TAIL_PAST_HITBOX = 10;
+/** The wheel arches: half width past the tyre, height over it, and the black flares round them (uu) */
+const ARCH_PAST_TYRE = 3;
+const ARCH_OVER_TYRE = 4;
+const FLARE = 3;
 
 type Point = readonly [x: number, y: number];
 
@@ -39,13 +48,15 @@ function wheelRestPosition(wheel: WheelConfig, halfWidth: number): { x: number; 
 }
 
 /** The model as one mesh per material (seven draw calls), named after the material: body, trim, glass, headlight,
- *  taillight, tyre, rim. */
+ *  taillight, tyre, rim; or the game's Fennec where it is loaded (src/render/fennec.ts). */
 export function buildCarModel(config: CarConfig, paint: Color): Group {
+  const fennec = fennecModel(config, paint);
+  if (fennec) return fennec;
   const { hitboxSize: size, hitboxOffset: offset } = config;
   const length = size.x;
   const halfWidth = size.y / 2;
   const front = offset.x + length / 2;
-  const rear = offset.x - length / 2;
+  const rear = offset.x - length / 2 - TAIL_PAST_HITBOX;
   const top = offset.z + size.z / 2;
   const hitboxBottom = offset.z - size.z / 2;
 
@@ -63,11 +74,25 @@ export function buildCarModel(config: CarConfig, paint: Color): Group {
     { ...wheelRestPosition(config.frontWheel, halfWidth), radius: config.frontWheel.radius },
   ] as const;
   const [backWheel, frontWheel] = wheels;
-  const archRadius = (wheel: { readonly radius: number }): number => wheel.radius + 3.5;
+  const archHalfWidth = (wheel: { readonly radius: number }): number => wheel.radius + ARCH_PAST_TYRE;
 
   const bottom = Math.min(hitboxBottom, Math.min(frontWheel.y, backWheel.y) - 3); // sills below the axles
-  const archTop = (wheel: (typeof wheels)[number]): number => wheel.y + archRadius(wheel) + 2;
-  const nose = Math.max(hitboxBottom + 0.4 * size.z, archTop(frontWheel)); // top of the front face
+  const archTop = (wheel: (typeof wheels)[number]): number => wheel.y + wheel.radius + ARCH_OVER_TYRE;
+  // An arch's outline (x, y) from its back foot to its front foot: square shoulders, chamfered top corners
+  const archOutline = (wheel: (typeof wheels)[number], grow: number): Point[] => {
+    const w = archHalfWidth(wheel) + grow;
+    const crest = archTop(wheel) + grow;
+    const shoulder = wheel.y + 0.2 * wheel.radius;
+    return [
+      [wheel.x - w, bottom],
+      [wheel.x - w, shoulder],
+      [wheel.x - 0.55 * w, crest],
+      [wheel.x + 0.55 * w, crest],
+      [wheel.x + w, shoulder],
+      [wheel.x + w, bottom],
+    ];
+  };
+  const nose = Math.max(hitboxBottom + 0.48 * size.z, archTop(frontWheel) + 2); // top of the front face
   const belt = Math.max(hitboxBottom + 0.53 * size.z, archTop(frontWheel), archTop(backWheel)); // where the windows start
   const cowl = front - 0.3 * length; // base of the windscreen
   const roofFront = front - 0.5 * length;
@@ -84,22 +109,20 @@ export function buildCarModel(config: CarConfig, paint: Color): Group {
   };
 
   // Lower body: side profile with the wheel arches cut out, extruded across the car's width. An arch reaching past
-  // the tail (the rear tyres stick out behind some hitboxes) opens through the rear face.
+  // the tail opens through the rear face.
   const lower = new Shape();
   let tailBottom = bottom + 4; // where the rear face ends
+  let started = false;
   for (const wheel of wheels) {
-    const radius = archRadius(wheel);
-    const above = bottom - wheel.y;
-    const half = Math.sqrt(Math.max(0, radius * radius - above * above));
-    const throughTail = wheel.x - half < rear + 3; // (no room for the tail's bottom corner)
-    const startX = throughTail ? rear + 1 : wheel.x - half;
-    const startY = throughTail ? wheel.y + Math.sqrt(Math.max(0, radius ** 2 - (startX - wheel.x) ** 2)) : bottom;
-    if (wheel === backWheel) {
-      if (throughTail) tailBottom = startY;
-      lower.moveTo(throughTail ? startX : rear + 2, startY);
+    const outline = archOutline(wheel, 0).filter(([x]) => x > rear + 1);
+    const [firstX = rear + 1, firstY = bottom] = outline[0] ?? [];
+    if (!started) {
+      if (outline.length < 6) tailBottom = firstY; // (cut by the tail: the rear face ends where the arch meets it)
+      lower.moveTo(outline.length < 6 ? rear + 1 : rear + 2, outline.length < 6 ? firstY : bottom);
+      started = true;
     }
-    if (wheel !== backWheel || !throughTail) lower.lineTo(startX, startY);
-    lower.absarc(wheel.x, wheel.y, radius, Math.atan2(startY - wheel.y, startX - wheel.x), Math.atan2(above, half), true);
+    if (outline.length === 6) lower.lineTo(firstX, firstY);
+    for (const [x, y] of outline) lower.lineTo(x, y);
   }
   lower.lineTo(front - 2, bottom);
   lower.lineTo(front, bottom + 4);
@@ -140,17 +163,33 @@ export function buildCarModel(config: CarConfig, paint: Color): Group {
   }
   group.add(paneAlong(windscreen, cabinHalfWidth - 3, glass), paneAlong(hatch, cabinHalfWidth - 3, glass));
 
-  // Roof spoiler, grille, lights, bumpers, sills
-  box(trim, 6, 1.6, cabinHalfWidth * 2 + 1, roofBack + 1, top - 0.8, 0);
+  // Roof spoiler (on the roof, not in it: a face in the roof's plane flickers against it), reaching past the hatch
+  box(trim, 9, 1.8, cabinHalfWidth * 2 + 2, roofBack - 1.5, top + 0.9, 0);
   box(trim, 1, 6, halfWidth * 2 - 46, front + 0.1, nose - 6, 0);
   box(trim, 4, 4, halfWidth * 2 - 1, front - 1.5, bottom + 2, 0);
   box(trim, 4, 4, halfWidth * 2 - 1, rear + 1.5, tailBottom + 2, 0);
-  const sillStart = backWheel.x + archRadius(backWheel);
-  const sillEnd = frontWheel.x - archRadius(frontWheel);
+  // Black cladding along the sills (between the arches' flares), a side vent behind the front wheel, the flares
+  const sillStart = backWheel.x + archHalfWidth(backWheel) + FLARE;
+  const sillEnd = frontWheel.x - archHalfWidth(frontWheel) - FLARE;
+  const ventOutline: Point[] = [
+    [sillEnd - 3, bottom + 9],
+    [sillEnd - 15, bottom + 9],
+    [sillEnd - 8, belt - 10],
+    [sillEnd - 1, belt - 10],
+  ];
   for (const side of [-1, 1]) {
     box(headlight, 1, 5, 11, front + 0.2, nose - 6, side * (halfWidth - 12));
     box(taillight, 1, 4, 12, rear - 0.2, belt - 5, side * (halfWidth - 10));
-    box(trim, sillEnd - sillStart, 3, 1, (sillStart + sillEnd) / 2, bottom + 1.5, side * (halfWidth - 0.6));
+    box(trim, sillEnd - sillStart, 7, 1.6, (sillStart + sillEnd) / 2, bottom + 3.5, side * (halfWidth - 0.5));
+    // (the left one turned round to face out: built from its x negated, which the turn puts back)
+    const vent = new Shape(ventOutline.map(([x, y]) => new Vector2(side * x, y)));
+    const ventMesh = new Mesh(new ShapeGeometry(vent), trim);
+    ventMesh.position.z = side * (halfWidth - 0.7);
+    if (side < 0) ventMesh.rotation.y = Math.PI;
+    group.add(ventMesh);
+    for (const wheel of wheels) {
+      group.add(flare(archOutline(wheel, 0), archOutline(wheel, FLARE), rear + 1, bottom + 6, side * (halfWidth - 1.8), trim));
+    }
   }
 
   // Wheels: tyre and rim, axle along the car's right axis (Three z)
@@ -168,6 +207,16 @@ export function buildCarModel(config: CarConfig, paint: Color): Group {
     }
   }
   return mergeByMaterial(group);
+}
+
+/** A wheel arch's flare: the band between the arch's outline and the same grown by its width, 3 uu thick at `z` (its
+ *  inner face), clipped at the tail and above `foot` (where the sill's cladding starts). */
+function flare(inner: readonly Point[], outer: readonly Point[], tail: number, foot: number, z: number, material: Material): Mesh {
+  const clip = ([x, y]: Point): Vector2 => new Vector2(Math.max(x, tail), Math.max(y, foot));
+  const shape = new Shape([...outer.map(clip), ...[...inner].reverse().map(clip)]);
+  const geometry = new ExtrudeGeometry(shape, { depth: 3, bevelEnabled: false });
+  geometry.translate(0, 0, z < 0 ? z - 3 : z);
+  return new Mesh(geometry, material);
 }
 
 /** x on the profile edge a→b at height y. */

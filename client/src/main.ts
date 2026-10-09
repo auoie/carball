@@ -1,6 +1,6 @@
 // Entry point: load the WebAssembly engine and the arena, then run freeplay.
 import createEngine from "@engine/rlengine_web.mjs";
-import { mergeMeshes, parseCmf } from "./engine/cmf";
+import { Color } from "three";
 import { World, initEngine } from "./engine/world";
 import { Freeplay } from "./game/freeplay";
 import { Online } from "./game/online";
@@ -9,6 +9,8 @@ import { GameAudio } from "./audio/audio";
 import { Hud } from "./hud";
 import { InputDevices } from "./input/devices";
 import { ArenaView } from "./render/arena";
+import { loadGameCage } from "./render/cage";
+import { loadFennec } from "./render/fennec";
 import { type ThemeName, createTheme, themeName } from "./render/themes";
 import { loadSettings } from "./settings/settings";
 import { SettingsPanel } from "./ui/settingsPanel";
@@ -45,6 +47,8 @@ async function main(): Promise<void> {
 
   status.textContent = "Building arena…";
   initEngine(engine, arenaMeshes);
+  // (the game's Fennec and cage, where the dev server has them: src/render/fennec.ts, src/render/cage.ts)
+  await Promise.all([loadFennec(), loadGameCage()]);
   const world = World.create(engine);
 
   // Warm up: the first ticks after loading are slow while the browser compiles the module
@@ -56,6 +60,28 @@ async function main(): Promise<void> {
 
   // ?server=host:infoPort (or just ?server: this host, port 4434) plays online against an rl-server
   const params = new URLSearchParams(location.search);
+  // ?viewer=car: the car model alone on a turntable (for comparing it with the game's)
+  if (params.get("viewer") === "car") {
+    const viewerWorld = World.create(engine);
+    const id = viewerWorld.addCar(0);
+    const { showCarViewer } = await import("./debug/carViewer");
+    const view = showCarViewer(new Renderer(canvas), viewerWorld.carConfig(id), new Color(0xff7a1a));
+    (window as unknown as { rlCarViewer?: unknown }).rlCarViewer = { view };
+    view(-140, 15);
+    status.hidden = true;
+    return;
+  }
+  // ?viewer=arena: the arena alone under a free camera (for comparing it with the game's)
+  if (params.get("viewer") === "arena") {
+    const viewerWorld = World.create(engine);
+    const id = viewerWorld.addCar(0);
+    const { showArenaViewer } = await import("./debug/arenaViewer");
+    const view = showArenaViewer(new Renderer(canvas), await createTheme(themeName(params.get("theme"))), viewerWorld.carConfig(id));
+    (window as unknown as { rlArenaViewer?: unknown }).rlArenaViewer = { view };
+    view({ eye: { x: 0, y: -4000, z: 600 }, target: { x: 0, y: 0, z: 600 } });
+    status.hidden = true;
+    return;
+  }
   const server = params.get("server");
 
   // ?theme=meadow: the arena's look (src/render/themes/), and its soundscape
@@ -64,7 +90,7 @@ async function main(): Promise<void> {
   const renderer = new Renderer(canvas);
   renderer.scene.background = theme.background;
   renderer.scene.fog = theme.fog;
-  const arena = new ArenaView(mergeMeshes(arenaMeshes.map(parseCmf)), theme);
+  const arena = new ArenaView(theme);
   renderer.scene.add(arena.root);
   const hud = new Hud(required("#hud", HTMLElement));
   const input = new InputDevices(canvas);
@@ -81,7 +107,14 @@ async function main(): Promise<void> {
     (await import("./audio/levels")).ambienceLevels(t, seconds);
   let game: { frame(dt: number): void };
   if (server === null) {
-    game = new Freeplay(world, renderer, arena, input, hud, audio, () => settings, () => !panel.isOpen);
+    const freeplay = new Freeplay(world, renderer, arena, input, hud, audio, () => settings, () => !panel.isOpen);
+    // For screenshots and the browser tests
+    (window as unknown as { rlFreeplay?: unknown }).rlFreeplay = {
+      place: (car: { x: number; y: number; yaw: number }, ball?: { x: number; y: number; z: number }) => {
+        freeplay.debugPlace(car, ball);
+      },
+    };
+    game = freeplay;
   } else {
     status.textContent = "Connecting to the server…";
     const [host = location.hostname, port = "4434"] = server === "" ? [] : server.split(":");

@@ -159,10 +159,9 @@ void Ball::_FinishPhysicsTick(const MutatorConfig& mutatorConfig) {
 		_velocityImpulseCache = { 0,0,0 };
 	}
 
-	_LimitVelocities(mutatorConfig);
-
-	// RL PATCH: round the state through the network serializer every tick (bQuantizePhysics)
-	Quantize::QuantizeRigidBody(_rigidBody, &_netRotation);
+	// RL PATCH: round the state through the network serializer every tick (bQuantizePhysics), capped as the game's
+	// read-back caps it (in uu, its operation order: Quantize::CapReadBack)
+	Quantize::QuantizeRigidBody(_rigidBody, &_netRotation, mutatorConfig.ballMaxSpeed, RLConst::BALL_MAX_ANG_SPEED);
 
 	_internalState.tickCountSinceUpdate++;
 }

@@ -359,22 +359,27 @@ static void SetupCar(Arenas& A, const CarRow& c0, const CarControls& controls, b
 	}
 	s.lastControls = controls;
 	if (PreJump(c0)) s.lastControls.jump = false;
+	// (every placement here: the inertia tensor from the placed rotation, as near as we can get to the game's, which is
+	// from the rotation just before this frame's rounding. Never kept from a warm-up step: that one is a tick ahead)
+	s.refreshInertia = true;
 	A.car->SetState(s);
+	s.refreshInertia = false;
 	A.car->controls = controls;
 	if (PreJump(c0)) A.car->controls.jump = false; // (not during the warm-up)
 	if (warmup) {
 		SetBall(A.withCar, Parked(ball, c0));
 		if (g_warmupFrom) { // the previous row with its own one-tick carry, then simulated up to this state
-			auto place = [&](CarState q) {
+			auto place = [&](CarState q, bool refresh) {
 				q.pos = g_warmupFrom->b.pos;
 				q.rotMat = g_warmupFrom->b.rot;
 				q.vel = g_warmupFrom->b.vel;
 				q.angVel = g_warmupFrom->b.angVel;
+				q.refreshInertia = refresh;
 				A.car->SetState(q);
 			};
-			place(s);
+			place(s, true);
 			A.withCar->Step(1);
-			place(A.car->GetState());
+			place(A.car->GetState(), true);
 			A.withCar->Step(g_warmupTicks);
 		} else {
 			A.withCar->Step(1);
@@ -396,6 +401,7 @@ static void SetupCar(Arenas& A, const CarRow& c0, const CarControls& controls, b
 		warm.flipTime = s.flipTime;
 		warm.flipRelTorque = s.flipRelTorque;
 		warm.lastControls = s.lastControls;
+		warm.refreshInertia = true;
 		A.car->SetState(warm);
 	}
 	SetBall(A.withCar, ball);
@@ -662,8 +668,11 @@ struct PairErrors {
 static PairErrors RunPair(PairArena& P, const CarState& sa, const CarState& sb, const CarControls& ca,
                           const CarControls& cb, const CarRow* a1, const CarRow* b1, const Body& ball) {
 	Restore(P.arena, P.clean);
-	P.a->SetState(sa);
-	P.b->SetState(sb);
+	// (placements with no pose before them: their inertia tensors from these rotations)
+	CarState placeA = sa, placeB = sb;
+	placeA.refreshInertia = placeB.refreshInertia = true;
+	P.a->SetState(placeA);
+	P.b->SetState(placeB);
 	P.a->controls = ca;
 	P.b->controls = cb;
 	SetBall(P.arena, ball);

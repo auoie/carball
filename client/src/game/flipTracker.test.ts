@@ -106,6 +106,23 @@ describe("FlipTracker against the engine", () => {
     r.world.dispose();
   });
 
+  it("a reset after a flip reset isn't another one (the new car's count starts at 0)", () => {
+    const r = rig();
+    r.world.setCar(r.car, { pos: vec3(0, 0, 1100), vel: ZERO, angVel: ZERO, rot: UPRIGHT, boost: 0 });
+    r.world.setBall({ pos: vec3(0, 0, 500), vel: vec3(0, 0, 1300), angVel: ZERO });
+    r.step();
+    r.step({ ...NO_CONTROLS, jump: true });
+    let resets = 0;
+    for (let i = 0; i < 150; i++) if (r.step().reset) resets++;
+    expect(resets).toBe(1);
+    expect(r.world.car(r.car).flipResets).toBe(1);
+    // Reset the shot (freeplay's reset: a kickoff), and set the ball again: no flip reset signalled
+    r.world.resetKickoff(2);
+    r.world.setBall({ pos: vec3(0, 600, 300), vel: ZERO, angVel: ZERO });
+    for (let i = 0; i < 60; i++) expect(r.step().reset).toBeNull();
+    r.world.dispose();
+  });
+
   it("a flip reset off another car's roof", () => {
     const world = World.create(engine);
     const [car, other] = [world.addCar(0), world.addCar(1)];

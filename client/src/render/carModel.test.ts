@@ -1,10 +1,11 @@
-// The car model is built around the physics hitbox: what you see is what collides.
+// The car model is built around the physics hitbox: what you see is what collides, but for the Fennec's tail (past
+// the hitbox's back, over the rear wheels) and its flares and spoiler (a couple of uu proud of it).
 // Requires the engine build (engine/build-wasm) and the generated arena (out/arena), for every body's dimensions.
 import createEngine from "@engine/rlengine.mjs";
 import { Box3, Color, Mesh } from "three";
 import { beforeAll, describe, expect, it } from "vitest";
 import { CarBody, type CarConfig, World, initEngine } from "../engine/world";
-import { buildCarModel } from "./carModel";
+import { TAIL_PAST_HITBOX, buildCarModel } from "./carModel";
 import { arenaMeshes } from "../testing/arena";
 
 const configs = new Map<string, CarConfig>();
@@ -44,7 +45,7 @@ describe("car model", () => {
     expect(names.sort()).toEqual(["body", "glass", "headlight", "rim", "taillight", "trim", "tyre"]);
   });
 
-  it("has the hitbox's nose, tail, roof and sides (within 1 uu)", () => {
+  it("has the hitbox's nose, roof and sides (within 2 uu: the flares and spoiler stand proud), the tail past it", () => {
     for (const [name, c] of configs) {
       const box = bounds(c, false);
       const hitbox = {
@@ -53,11 +54,11 @@ describe("car model", () => {
         top: c.hitboxOffset.z + c.hitboxSize.z / 2,
         side: c.hitboxSize.y / 2,
       };
-      expect.soft(Math.abs(box.max.x - hitbox.front), `${name} front`).toBeLessThan(1);
-      expect.soft(Math.abs(box.min.x - hitbox.rear), `${name} rear`).toBeLessThan(1);
-      expect.soft(Math.abs(box.max.y - hitbox.top), `${name} roof`).toBeLessThan(1);
-      expect.soft(Math.abs(box.max.z - hitbox.side), `${name} right side`).toBeLessThan(1);
-      expect.soft(Math.abs(box.min.z + hitbox.side), `${name} left side`).toBeLessThan(1);
+      expect.soft(Math.abs(box.max.x - hitbox.front), `${name} front`).toBeLessThan(2);
+      expect.soft(Math.abs(box.min.x - (hitbox.rear - TAIL_PAST_HITBOX)), `${name} rear`).toBeLessThan(1);
+      expect.soft(Math.abs(box.max.y - hitbox.top), `${name} roof`).toBeLessThan(2);
+      expect.soft(Math.abs(box.max.z - hitbox.side), `${name} right side`).toBeLessThan(2);
+      expect.soft(Math.abs(box.min.z + hitbox.side), `${name} left side`).toBeLessThan(2);
     }
   });
 
@@ -65,7 +66,11 @@ describe("car model", () => {
     for (const [name, c] of configs) {
       const box = bounds(c, true);
       for (const v of [box.min, box.max]) expect(Number.isFinite(v.x + v.y + v.z), name).toBe(true);
-      expect(box.max.z, name).toBeLessThanOrEqual(c.hitboxSize.y / 2);
+      const model = buildCarModel(c, new Color(0x1f6fff));
+      model.updateMatrixWorld(true);
+      const tyres = model.children.find((p) => p.name === "tyre");
+      if (!tyres) throw new Error("no tyres");
+      expect(new Box3().setFromObject(tyres).max.z, name).toBeLessThanOrEqual(c.hitboxSize.y / 2);
     }
   });
 });

@@ -100,7 +100,30 @@ namespace Quantize {
 		return Unpack(packed);
 	}
 
-	void QuantizeRigidBody(btRigidBody& rb, PackedRotation* packedRotation) {
+	// RL PATCH: the game's speed cap in its read-back of the body (FUN_140eed9e0), in uu after the x50: the squared
+	// length summed y, x, z; strictly over the cap, the components times the inverse square root, then times the cap
+	// (left as they are at length 1, zero below 1e-8) (static analysis RS-5)
+	static void CapReadBack(btVector3& v, float max) {
+		if (!(max > 0))
+			return;
+		float x = v.x(), y = v.y(), z = v.z();
+		float lengthSq = y * y + x * x + z * z;
+		if (!(max * max < lengthSq))
+			return;
+		if (lengthSq == 1.f) {
+			// (unchanged)
+		} else if (lengthSq >= 1e-8f) {
+			float inv = 1.f / sqrtf(lengthSq);
+			x = inv * x;
+			y = inv * y;
+			z = inv * z;
+		} else {
+			x = y = z = 0;
+		}
+		v = btVector3(max * x, max * y, max * z);
+	}
+
+	void QuantizeRigidBody(btRigidBody& rb, PackedRotation* packedRotation, float maxSpeed, float maxAngSpeed) {
 		btTransform& transform = rb.getWorldTransform();
 
 		btVector3 pos = transform.getOrigin() * BT_TO_UU;
@@ -119,6 +142,8 @@ namespace Quantize {
 		} else {
 			btVector3 vel = rb.m_linearVelocity * BT_TO_UU;
 			btVector3 angVel = rb.m_angularVelocity;
+			CapReadBack(vel, maxSpeed);
+			CapReadBack(angVel, maxAngSpeed);
 			for (int i = 0; i < 3; i++) {
 				vel[i] = Velocity(vel[i], 100.f);
 				angVel[i] = Velocity(angVel[i], 10000.f);
@@ -127,7 +152,9 @@ namespace Quantize {
 			rb.m_angularVelocity = angVel;
 		}
 
-		rb.updateInertiaTensor();
+		// RL PATCH: no inertia refresh: the game's write-back (FUN_140f2fb50) sets the position, the rotation and the
+		// velocities only, so the world inverse inertia tensor stays as the step's integration left it (from the
+		// rotation before this rounding). RocketSim (and our patch 12) recomputed it here (static analysis RS-1)
 	}
 }
 

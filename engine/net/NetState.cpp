@@ -28,6 +28,7 @@ struct Body {
 	float origin[3], linVel[3], angVel[3];
 	Quantize::PackedRotation rotation; // when valid; otherwise the raw basis
 	float basis[9];
+	float invInertia[9]; // the world inverse inertia tensor as it is (not recomputed from the rotation: see Quantize)
 	uint8_t activationState;
 	float deactivationTime;
 };
@@ -47,6 +48,8 @@ static void WriteBody(DataStreamOut& out, const btRigidBody& rb, const Quantize:
 		for (int r = 0; r < 3; r++)
 			for (int c = 0; c < 3; c++) out.Write((float)t.getBasis()[r][c]);
 	}
+	for (int r = 0; r < 3; r++)
+		for (int c = 0; c < 3; c++) out.Write((float)rb.m_invInertiaTensorWorld[r][c]);
 	out.Write<uint8_t>((uint8_t)rb.getActivationState());
 	out.Write((float)rb.getDeactivationTime());
 }
@@ -68,6 +71,7 @@ static void ReadBody(DataStreamIn& in, Body& b) {
 	} else {
 		for (float& f : b.basis) in.Read(f);
 	}
+	for (float& f : b.invInertia) in.Read(f);
 	in.Read(b.activationState);
 	in.Read(b.deactivationTime);
 }
@@ -85,7 +89,8 @@ static void ApplyBody(const Body& b, btRigidBody& rb, Quantize::PackedRotation& 
 	rb.setAngularVelocity(btVector3(b.angVel[0], b.angVel[1], b.angVel[2]));
 	rb.setInterpolationLinearVelocity(rb.getLinearVelocity());
 	rb.setInterpolationAngularVelocity(rb.getAngularVelocity());
-	rb.updateInertiaTensor();
+	const float* m = b.invInertia;
+	rb.m_invInertiaTensorWorld = btMatrix3x3(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
 	rb.forceActivationState(b.activationState);
 	rb.setDeactivationTime(b.deactivationTime);
 	netRotation = b.rotation;

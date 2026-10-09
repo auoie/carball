@@ -130,6 +130,7 @@ static void TestDodgeThreshold(Arena* arena, Car* car) {
 // --------------------------------------------------------------------------------------------
 // Runs `ticks` ticks from `state` with fixed controls.
 static CarState Run(Arena* arena, Car* car, CarState state, CarControls c, int ticks) {
+	state.refreshInertia = true; // (every run from the same start: its inertia tensor from this rotation, not the last run's)
 	car->SetState(state);
 	car->controls = c;
 	arena->Step(ticks);
@@ -1026,10 +1027,24 @@ static void TestBoostPads() {
 	CHECK(Near(b, BOOST_AMOUNT_BIG, 1e-3f), "big pad at 205 uu: boost %.2f", b);
 	b = pickup(Vec(-3584 + 212, 0, 17));
 	CHECK(b == 0, "big pad at 212 uu: boost %.2f", b);
-	b = pickup(Vec(1792, -4184, 70 + 95));
+	b = pickup(Vec(1792, -4184, PAD_Z_SMALL + 95));
 	CHECK(Near(b, BOOST_AMOUNT_SMALL, 1e-3f), "small pad 95 uu below: boost %.2f", b);
-	b = pickup(Vec(-1792, -4184, 70 + 97));
+	b = pickup(Vec(-1792, -4184, PAD_Z_SMALL + 97));
 	CHECK(b == 0, "small pad 97 uu below: boost %.2f", b);
+	// The game's pads (static analysis RS-4): a small pad's reach ends at z 160.08 (z 64.082016 + 96), a big pad's at
+	// 168 (72 + 96); the small pads by the midfield corners are at |y| 2302, so 177 uu from (1788, -2125)
+	b = pickup(Vec(0, -1024, 160.0f));
+	CHECK(Near(b, BOOST_AMOUNT_SMALL, 1e-3f), "small pad, car at z 160.0: boost %.2f", b);
+	b = pickup(Vec(0, 1024, 160.2f));
+	CHECK(b == 0, "small pad, car at z 160.2: boost %.2f", b);
+	b = pickup(Vec(3072, 4096, 167.9f));
+	CHECK(Near(b, BOOST_AMOUNT_BIG, 1e-3f), "big pad, car at z 167.9: boost %.2f", b);
+	b = pickup(Vec(-3072, 4096, 168.1f));
+	CHECK(b == 0, "big pad, car at z 168.1: boost %.2f", b);
+	b = pickup(Vec(1788, -2125, 17));
+	CHECK(b == 0, "small pad at (1788, -2302), car at (1788, -2125): boost %.2f", b);
+	b = pickup(Vec(-1788, 2127, 17));
+	CHECK(Near(b, BOOST_AMOUNT_SMALL, 1e-3f), "small pad at (-1788, 2302), car 175 uu away: boost %.2f", b);
 	delete arena;
 }
 
@@ -1284,6 +1299,97 @@ static void TestSleeping(Arena* arena, Car* car) {
 	car->controls = CarControls();
 }
 
+// The static session's audit of RocketSim's own code against the exe (notes/rocketsim-audit.md): RS-1, 3, 5, 7, 10
+static void TestRocketSimAudit(Arena* arena, Car* car) {
+	puts("RS-1: the world inverse inertia tensor is the step's (from the rotation before its rounding), kept through placements");
+	{
+		CarState s = CarAt({ 0, 0, 600 }, { 1, 0, 0 }, { 0, 0, 1 });
+		s.angVel = { 1.3f, -2.1f, 0.7f };
+		s.refreshInertia = true;
+		car->SetState(s);
+		car->controls = CarControls();
+		arena->Step(1);
+		btRigidBody& rb = car->_rigidBody;
+		const btMatrix3x3& b = rb.getInterpolationWorldTransform().getBasis();
+		btMatrix3x3 fromStep = b.scaled(rb.getInvInertiaDiagLocal()) * b.transpose();
+		const btMatrix3x3& w = rb.getWorldTransform().getBasis();
+		btMatrix3x3 fromRounded = w.scaled(rb.getInvInertiaDiagLocal()) * w.transpose();
+		auto same = [](const btMatrix3x3& x, const btMatrix3x3& y) {
+			for (int i = 0; i < 3; i++)
+				for (int j = 0; j < 3; j++)
+					if (x[i][j] != y[i][j]) return false;
+			return true;
+		};
+		CHECK(same(rb.m_invInertiaTensorWorld, fromStep), "after a tick: the tensor from the step's rotation, before its rounding");
+		CHECK(!same(fromStep, fromRounded), "(the test's spin should make the rounding change the tensor)");
+		btMatrix3x3 before = rb.m_invInertiaTensorWorld;
+		CarState turned = CarAt({ 0, 0, 600 }, { 0, 1, 0 }, { 0, 0, 1 });
+		car->SetState(turned);
+		CHECK(same(rb.m_invInertiaTensorWorld, before), "a placement keeps it (the game's teleports don't recompute it)");
+		turned.refreshInertia = true;
+		car->SetState(turned);
+		const btMatrix3x3& t = rb.getWorldTransform().getBasis();
+		CHECK(same(rb.m_invInertiaTensorWorld, t.scaled(rb.getInvInertiaDiagLocal()) * t.transpose()), "refreshInertia recomputes it");
+		CHECK(!car->GetState().refreshInertia, "refreshInertia is a request, not state");
+		arena->Step(3);
+		Arena* copy = arena->Clone(false);
+		CHECK(same(copy->GetCar(car->id)->_rigidBody.m_invInertiaTensorWorld, rb.m_invInertiaTensorWorld), "a clone carries it");
+		delete copy;
+		// Kickoff resets and respawns spawn new cars in the game (InitBody -> setMassProps): computed from the spawn
+		arena->Step(2);
+		arena->ResetToRandomKickoff(7);
+		const btMatrix3x3& k = rb.getWorldTransform().getBasis();
+		CHECK(same(rb.m_invInertiaTensorWorld, k.scaled(rb.getInvInertiaDiagLocal()) * k.transpose()), "a kickoff reset computes it");
+	}
+
+	puts("RS-3: the wall friction curve breaks at 0.707 (the package's WallFrictionCurve)");
+	CHECK(RLConst::NON_STICKY_FRICTION_FACTOR_CURVE.GetOutput(0.707f) == 0.5f, "0.707 -> %g", RLConst::NON_STICKY_FRICTION_FACTOR_CURVE.GetOutput(0.707f));
+
+	puts("RS-10: the Octane's box exactly: 118.0074 + 2.5 long, offset (13.875660, 20.754988) as read live");
+	CHECK(CAR_CONFIG_OCTANE.hitboxSize.x == 120.5074f && CAR_CONFIG_OCTANE.hitboxPosOffset.x == 13.875660f &&
+	      CAR_CONFIG_OCTANE.hitboxPosOffset.z == 20.754988f, "size %g, offset %g %g", CAR_CONFIG_OCTANE.hitboxSize.x,
+	      CAR_CONFIG_OCTANE.hitboxPosOffset.x, CAR_CONFIG_OCTANE.hitboxPosOffset.z);
+
+	puts("RS-5: the speed cap as the game's read-back: in uu, the length summed y, x, z, then x (1 / sqrt) x cap");
+	{
+		CarState s = CarAt({ 0, 0, 800 }, { 1, 0, 0 }, { 0, 0, 1 }, { 1700.37f, -1600.41f, -300.13f });
+		s.refreshInertia = true;
+		car->SetState(s);
+		car->controls = CarControls();
+		arena->Step(1);
+		// The velocity the step left (gravity only: no contacts), capped and rounded as the game does it
+		btVector3 v = car->_rigidBody.getInterpolationLinearVelocity() * BT_TO_UU;
+		float x = v.x(), y = v.y(), z = v.z(), l2 = y * y + x * x + z * z;
+		CHECK(l2 > RLConst::CAR_MAX_SPEED * RLConst::CAR_MAX_SPEED, "(over the cap)");
+		float inv = 1.f / sqrtf(l2);
+		float cap = RLConst::CAR_MAX_SPEED;
+		Vec expected(Quantize::Velocity(cap * (inv * x), 100), Quantize::Velocity(cap * (inv * y), 100), Quantize::Velocity(cap * (inv * z), 100));
+		// (compared in Bullet units, as the body holds it: back in uu the last bit can move)
+		btVector3 got = car->_rigidBody.m_linearVelocity;
+		btVector3 want = btVector3(expected.x, expected.y, expected.z) * UU_TO_BT;
+		CHECK(got.x() == want.x() && got.y() == want.y() && got.z() == want.z(), "velocity %.9g %.9g %.9g, expected %.9g %.9g %.9g",
+		      got.x(), got.y(), got.z(), want.x(), want.y(), want.z());
+	}
+
+	puts("RS-7: the world contact rebuilt after the step, persisting contacts too (a car resting on its roof)");
+	{
+		// (the box's top, 40.08 above the origin, on the floor; settled for 30 ticks, then counted)
+		CarState roof = CarAt({ 0, 2000, 40.5f }, { 1, 0, 0 }, { 0, 0, -1 });
+		roof.refreshInertia = true;
+		car->SetState(roof);
+		car->controls = CarControls();
+		arena->Step(30);
+		int touching = 0;
+		for (int i = 0; i < 60; i++) {
+			arena->Step(1);
+			touching += car->GetState().worldContact.hasContact;
+		}
+		CHECK(touching == 60, "in contact every tick while resting (%d of 60)", touching);
+		Vec n = car->GetState().worldContact.contactNormal;
+		CHECK(Near(n.z, 1, 1e-3f), "the floor's normal (towards the car): %g %g %g", n.x, n.y, n.z);
+	}
+}
+
 int main(int argc, char** argv) {
 	std::string meshes = argc > 1 ? argv[1] : ARENA_MESH_DIR;
 	RocketSim::Init(meshes, true);
@@ -1333,6 +1439,7 @@ int main(int argc, char** argv) {
 	TestInputQuantization(arena, car);
 	TestSleeping(arena, car);
 	TestSupersonic(arena, car);
+	TestRocketSimAudit(arena, car);
 	arena->ball->SetState(BallState());
 	arena->ball->SetState(BallState());
 

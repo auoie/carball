@@ -13,6 +13,8 @@ RS_NS_START
 // arena then continues bit for bit like the original.
 struct RawBodyState {
 	float origin[3] = {}, basis[9] = {}, linVel[3] = {}, angVel[3] = {};
+	// The world inverse inertia tensor as it is (it isn't recomputed from the rotation each tick: see Quantize)
+	float invInertia[9] = {};
 	int32_t activationState = 0;
 	float deactivationTime = 0;
 	Quantize::PackedRotation netRotation; // the rotation as last quantized (what the network sends)
@@ -25,8 +27,10 @@ struct RawBodyState {
 			s.origin[i] = t.getOrigin()[i];
 			s.linVel[i] = rb.getLinearVelocity()[i];
 			s.angVel[i] = rb.getAngularVelocity()[i];
-			for (int j = 0; j < 3; j++)
+			for (int j = 0; j < 3; j++) {
 				s.basis[i * 3 + j] = t.getBasis()[i][j];
+				s.invInertia[i * 3 + j] = rb.m_invInertiaTensorWorld[i][j];
+			}
 		}
 		s.activationState = rb.getActivationState();
 		s.deactivationTime = rb.getDeactivationTime();
@@ -44,7 +48,8 @@ struct RawBodyState {
 		rb.setAngularVelocity(btVector3(angVel[0], angVel[1], angVel[2]));
 		rb.setInterpolationLinearVelocity(rb.getLinearVelocity());
 		rb.setInterpolationAngularVelocity(rb.getAngularVelocity());
-		rb.updateInertiaTensor();
+		rb.m_invInertiaTensorWorld = btMatrix3x3(invInertia[0], invInertia[1], invInertia[2], invInertia[3], invInertia[4],
+			invInertia[5], invInertia[6], invInertia[7], invInertia[8]);
 		rb.forceActivationState(activationState);
 		rb.setDeactivationTime(deactivationTime);
 	}
@@ -54,6 +59,7 @@ struct RawBodyState {
 		for (float f : basis) out.Write(f);
 		for (float f : linVel) out.Write(f);
 		for (float f : angVel) out.Write(f);
+		for (float f : invInertia) out.Write(f);
 		out.Write(activationState);
 		out.Write(deactivationTime);
 		out.Write(netRotation.largest);
@@ -66,6 +72,7 @@ struct RawBodyState {
 		for (float& f : basis) in.Read(f);
 		for (float& f : linVel) in.Read(f);
 		for (float& f : angVel) in.Read(f);
+		for (float& f : invInertia) in.Read(f);
 		in.Read(activationState);
 		in.Read(deactivationTime);
 		in.Read(netRotation.largest);

@@ -23,6 +23,10 @@ struct CarState : public PhysState {
 	// Not serialized
 	uint64_t tickCountSinceUpdate = 0;
 
+	// RL PATCH: SetState() recomputes the body's world inverse inertia tensor from this rotation (else it keeps it, as
+	// the game's placements do: see Car::SetState). A request, not part of the state: not serialized, reset on setting
+	bool refreshInertia = false;
+
 	// True if 3 or more wheels have contact
 	bool isOnGround = true;
 
@@ -265,6 +269,8 @@ public:
 
 	// RL PATCH: the rotation as last quantized, as the network sends it (see Quantize::PackedRotation)
 	Quantize::PackedRotation _netRotation;
+	// RL PATCH: whether SetState() has placed the body (its first placement computes the inertia tensor: Car::SetState)
+	bool _bodyPlaced = false;
 	void _FinishPhysicsTick(const MutatorConfig& mutatorConfig);
 
 	void _BulletSetup(GameMode gameMode, class btDynamicsWorld* bulletWorld, const MutatorConfig& mutatorConfig);

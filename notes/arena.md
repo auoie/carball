@@ -161,3 +161,29 @@ triangles touch one body. Our generated arena now has the same 16 meshes:
 - Live: `ball_curves` ball max 175 → 0.04 uu/s, `walls` 14.4 → 0.20 (0.40 on the game's own meshes), every other
   recording unchanged (validation finding 45).
 
+
+## The cage's hexagon layout (visual; 2026-10-08)
+Measured by the static session on Stadium_P's `FFCage_Full` (material `ForceField_HexGage_MIC`; derived facts only,
+its line renders stay local in `out/bsim/work/cage/`). Drawn by `client/src/render/arenaSurface.ts` (`CAGE`).
+- **Geometry, not a texture:** 501 beams, each two 8 uu quads with their own 0..1 UVs (the texture is only a glow
+  across a beam). One quadrant mesh placed four times (mirrors through edge midpoints: seamless at x = 0, y = 0).
+- **Shape:** vertical wall at x 4112 / y 5136 (16 uu outside the collision walls) from z 256 to 1539; the curve as
+  three facets (joints (4045, 1786), (3879, 1973), (3644, 2056); the back the same at y 5068, 4903, 4668); flat
+  ceiling at z 2064. No beams below z 256, nor over the goals below z ≈ 704 for |x| < ~1140.
+- **Walls:** one lattice in unrolled coordinates (s along the perimeter from the side's y = 0, t up the profile):
+  flat-topped cells, horizontal edges along the perimeter 298.67 long, diagonals 149.33 along × 256 up; cell
+  597.33 × 512, period 896 × 512. Rows z 256 / 768 / 1280: horizontal edges centred at s = 896k; rows 512 / 1024 /
+  1536 at 448 + 896k. Three more rows up the curve (~250–256 apart): the curve is no seam.
+- **Round the corners:** no seam; a quarter holds exactly 10 periods (8497 uu at the cage: 850 average). The side
+  straight is at the full 896; the corner and back walls are squeezed (local periods 760–870; back-wall edge centres
+  at x = 0, 448, 891, 1312, 1728, 2144).
+- **Ceiling:** the side walls' lattice carried on flat (edges along y with the side wall's phase), rows across x
+  216 apart (cells 597.33 × 432; hand-fit: 227 at the centre, 205 at ~1840, 176 at the edge). Straight through at
+  x = 0 and y = 0 (no ridge or hips).
+- **Seams:** along the top of each back curve (the back walls' lattice meets the ceiling's, turned 90°, through a
+  row of irregular cells) and in the corners (a fan of big irregular cells and a few dangling beams). The side
+  walls run into the ceiling without one.
+- **Ours** (`client/src/render/cage.ts`): whole cells of both lattices, the ceiling's kept 110 uu in from its edge
+  over the corners and back walls; the loose ends either side zipped with joining beams by a non-crossing shortest
+  matching (four-sided cells penalised). Along the back seams the cells come out alternating pentagon / heptagon (a
+  grain boundary), in the corners bigger cells of 8–9 sides.

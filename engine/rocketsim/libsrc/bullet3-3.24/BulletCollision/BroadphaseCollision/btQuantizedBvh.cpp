@@ -318,7 +318,10 @@ void btQuantizedBvh::reportAabbOverlappingNodex(btNodeOverlapCallback* nodeCallb
 		quantizeWithClamp(quantizedQueryAabbMin, aabbMin, 0);
 		quantizeWithClamp(quantizedQueryAabbMax, aabbMax, 1);
 
-		walkStacklessQuantizedTreeCacheFriendly(nodeCallback, quantizedQueryAabbMin, quantizedQueryAabbMax);
+		// RL PATCH: the game's traversal mode is TRAVERSAL_STACKLESS (its constructor sets m_traversalMode 0 and nothing
+		// changes it): the whole node array walked in order, which gives the triangles (and so the contact manifolds'
+		// points) in the game's order; RocketSim always walked the subtrees cache-friendly (static analysis RS-2)
+		walkStacklessQuantizedTree(nodeCallback, quantizedQueryAabbMin, quantizedQueryAabbMax, 0, m_curNodeIndex);
 	}
 	else
 	{

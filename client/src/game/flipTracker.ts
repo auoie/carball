@@ -27,11 +27,16 @@ export class FlipTracker {
   #airborne = false; // in the air last tick
   #fromReset = false; // this time in the air started with a flip reset
   #flipResets: number | null = null; // the engine's count last tick
+  #spawnCount: number | null = null; // the car's placements last tick
 
   /** One physics tick of `seconds`: the car's state after it. */
   tick(car: CarState, seconds: number): FlipTick {
-    const counted = this.#flipResets !== null && car.flipResets !== this.#flipResets;
+    // A reset or a respawn makes a new car (its count back at 0): not a flip reset
+    const placed = this.#spawnCount !== null && car.spawnCount !== this.#spawnCount;
+    this.#spawnCount = car.spawnCount;
+    const counted = !placed && this.#flipResets !== null && car.flipResets !== this.#flipResets;
     this.#flipResets = car.flipResets;
+    if (placed) this.#fromReset = false;
     if (car.onGround) {
       // (the count goes up on the landing tick, on the ball or a car: the game's IsOnRBActor)
       const reset: FlipTick["reset"] = counted ? (car.rbActor ?? { kind: "ball" }) : null;
