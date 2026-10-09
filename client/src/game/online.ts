@@ -27,7 +27,7 @@ import {
   quantizeAxis,
 } from "../net/protocol";
 import { type CompleteUpdate, UpdateAssembler } from "../net/updates";
-import { BallView, BoostPadsView, CarView } from "../render/entities";
+import { BallView, BoostPadsView, CarView, trailGround } from "../render/entities";
 import type { ArenaView } from "../render/arena";
 import type { Renderer } from "../render/renderer";
 import type { GameAudio } from "../audio/audio";
@@ -45,7 +45,8 @@ import { ReplayCamera } from "../camera/replayCamera";
 import { Fade } from "../render/fade";
 
 
-const GOAL_MESSAGE_SECONDS = 2;
+/** A banner message stays this long after the last one (HUD-8: then a 0.3 s fade, not yet drawn) */
+const BANNER_SECONDS = 4;
 /** Each body's present state before a correction or reload (Online.#smooth) */
 interface Captured {
   readonly cars: ReadonlyMap<number, CarState>;
@@ -93,8 +94,8 @@ export interface OnlineStats {
   readonly phases: readonly { readonly phase: MatchState["phase"]; readonly at: number; readonly frame: number }[];
   /** A goal replay is playing */
   readonly replaying: boolean;
-  /** The last goal: the client frame its slow motion is keyed to (the server's goal tick), the frame this client's own
-   *  prediction saw the ball explode, and the slowest dilation its clock has run at since */
+  /** The last goal: the client frame its slow motion is keyed to (the server's goal tick), the first frame its recorded
+   *  history has the ball exploded in, and the slowest dilation its clock has run at since */
   readonly goal: { readonly frame: number | null; readonly explodedFrame: number | null; readonly minDilation: number };
 }
 
@@ -119,6 +120,7 @@ export class Online {
   readonly #ball: Interpolated<BodyState>;
   readonly #ballError = new SyncError();
   #ballSpawns = 0; // the ball's spawn counter last tick (a reset places it: not interpolated)
+  #drawnBallSpawns = 0; // the ball's spawn counter last drawn (a new ball fades in)
   readonly #padsView: BoostPadsView;
   readonly #updates = new UpdateAssembler();
   readonly #received: Update[] = [];
@@ -155,8 +157,6 @@ export class Online {
   readonly #fade = new Fade();
   #localSpawns: number; // the local car's spawn counter last drawn (a kickoff's new car: the camera starts over)
   readonly #phases: { phase: MatchState["phase"]; at: number; frame: number }[] = [];
-  #explodedFrame: number | null = null; // (for the browser tests)
-  #wasExploded = false;
   #minDilation = 1;
   #fps = 60;
   readonly #pos = new Vector3();
@@ -189,6 +189,7 @@ export class Online {
     this.#padsView = new BoostPadsView(world.boostPads());
     this.#ball = new Interpolated(world.ball());
     this.#ballSpawns = world.ballSpawnCount();
+    this.#drawnBallSpawns = this.#ballSpawns;
     this.#autoSkipSent = settings().options.autoSkipReplay;
     this.#localSpawns = world.car(welcome.carId).spawnCount;
     renderer.scene.add(this.#ballView.root, this.#padsView.root);
@@ -219,7 +220,7 @@ export class Online {
       kickoffCountdown: this.#world.kickoffCountdown(),
       phases: this.#phases,
       replaying: this.#replay !== null,
-      goal: { frame: this.#goalFrame, explodedFrame: this.#explodedFrame, minDilation: this.#minDilation },
+      goal: { frame: this.#goalFrame, explodedFrame: this.#explodedFrame(), minDilation: this.#minDilation },
     };
   }
 
@@ -275,14 +276,19 @@ export class Online {
       this.#trackFlip();
     }
     // Input packets at 60 Hz of real time, once a frame (slowed ticks after a goal don't stretch them: RV-4)
-    if (this.#sendClock.due(real)) this.#sendInputs();
+    // (DeltaSeconds / TimeDilation: the world time undilated, RV-22)
+    if (this.#sendClock.due(world / dilation)) this.#sendInputs();
     if (this.#messageTimer > 0) {
       this.#messageTimer -= real;
       if (this.#messageTimer <= 0) this.#message = null;
     }
-    // The countdown beeps at 3, 2, 1 and go
+    // The countdown: 3, 2, 1 and GO!, a second apart from a second in, each with its beep (VT-24)
     const left = Math.ceil(this.#world.kickoffCountdown() / TICK_RATE);
-    if (left < this.#countdownLeft && left <= 3) this.#audio.countdown(left);
+    if (left < this.#countdownLeft && left <= 3) {
+      this.#audio.countdown(left);
+      this.#message = left === 0 ? "GO!" : String(left);
+      this.#messageTimer = BANNER_SECONDS;
+    }
     this.#countdownLeft = left;
     this.#fade.update(real);
     if (this.#replay) this.#drawReplay(real, this.#replay);
@@ -297,6 +303,14 @@ export class Online {
       this.#connection.readyUp();
     }
     this.#skipHeld = held;
+  }
+
+  /** The first frame the recording (the history as corrections settled it) has the ball exploded in, near the last
+   *  goal's (for the browser tests) */
+  #explodedFrame(): number | null {
+    if (this.#goalFrame === null) return null;
+    for (let f = this.#goalFrame - 120; f <= this.#goalFrame + 120; f++) if (this.#recorder.at(f)?.ballExploded) return f;
+    return null;
   }
 
   /** The client frame that was consumed at a server tick (by the update nearest it) */
@@ -443,12 +457,13 @@ export class Online {
         const team = m.event.team === 1 ? 1 : 0;
         this.#audio.goal();
         this.#message = team === 0 ? "BLUE SCORES!" : "ORANGE SCORES!";
-        this.#messageTimer = GOAL_MESSAGE_SECONDS;
+        this.#messageTimer = BANNER_SECONDS;
         this.#goalFrame = this.#frameAt(m.serverTick);
         this.#minDilation = 1;
       } else if (m.type === "replay") {
         // (the cut in from black: LiveReplay's Begin)
         this.#replay = { plan: m, tick: m.startTick, camera: new ReplayCamera(m.scoringTeam), goalShown: false };
+        this.#ballView.spawn(true);
         this.#replayReady = null;
         this.#skipped = false;
         this.#skipHeld = true;
@@ -484,9 +499,6 @@ export class Online {
       const car = this.#world.car(id);
       entry.state.push(car, car.spawnCount !== entry.state.current.spawnCount);
     }
-    const exploded = this.#world.ballExploded();
-    if (exploded && !this.#wasExploded) this.#explodedFrame = this.#predictor.frame;
-    this.#wasExploded = exploded;
     const ballSpawns = this.#world.ballSpawnCount();
     this.#ball.push(this.#world.ball(), ballSpawns !== this.#ballSpawns);
     this.#ballSpawns = ballSpawns;
@@ -518,15 +530,20 @@ export class Online {
       error.decay(frameSeconds);
       const { boosting, demoed, supersonic } = state.current;
       const pos = error.applyPosition(state.position(alpha, this.#pos));
-      view.update(pos, error.applyRotation(state.rotation(alpha, this.#rot)), boosting, demoed, supersonic, frameSeconds);
+      view.update(pos, error.applyRotation(state.rotation(alpha, this.#rot)), boosting, demoed, supersonic, frameSeconds, trailGround(state.current));
     }
     this.#ballError.decay(frameSeconds);
     const ball = this.#ballError.applyPosition(this.#ball.position(alpha, this.#pos));
-    this.#ballView.root.visible = !this.#world.ballExploded(); // (a goal explodes it until the reset)
+    // (a goal explodes it until the reset: it dissolves; a kickoff's new ball fades in)
+    if (this.#world.ballSpawnCount() !== this.#drawnBallSpawns) {
+      this.#drawnBallSpawns = this.#world.ballSpawnCount();
+      this.#ballView.spawn();
+    }
+    this.#ballView.fade(this.#world.ballExploded(), frameSeconds);
     this.#ballView.update(ball, this.#ballError.applyRotation(this.#ball.rotation(alpha, this.#rot)));
     this.#arena.update(ball, frameSeconds);
     const pads = this.#world.boostPads();
-    this.#padsView.update(pads);
+    this.#padsView.update(pads, frameSeconds);
 
     const local = this.#cars.get(this.#localCar);
     // A kickoff's new car (the game destroys the cars and spawns new ones): the camera starts over behind it (GS-16);
@@ -639,12 +656,13 @@ export class Online {
       }
       const between = new Interpolated<RecordedCar>(from);
       between.push(to);
-      entry.view.update(between.position(alpha, this.#pos), between.rotation(alpha, this.#rot), to.boosting, to.demoed, to.supersonic, seconds);
+      const view = { pos: between.position(alpha, this.#pos), rot: between.rotation(alpha, this.#rot) };
+      entry.view.update(view.pos, view.rot, to.boosting, to.demoed, to.supersonic, seconds, trailGround(to));
     }
     const ball = new Interpolated<BodyState>(a.ball);
     ball.push(b.ball);
     const position = ball.position(alpha, this.#pos);
-    this.#ballView.root.visible = !b.ballExploded;
+    this.#ballView.fade(b.ballExploded, seconds); // (no fade in: the replay's ball is shown as recorded)
     this.#ballView.update(position, ball.rotation(alpha, this.#rot));
     this.#arena.update(position, seconds);
   }

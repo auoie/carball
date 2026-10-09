@@ -10,14 +10,14 @@ import { AirPitchSafety, ButtonLatch, EMPTY_INPUT, type HeldActions, JumpLatch, 
 import type { ControllerSettings, Options, Settings } from "../settings/settings";
 import { FixedStep, TICK_SECONDS } from "../loop/fixedStep";
 import { type Vec3, ZERO, add, scale, vec3 } from "../math/vec";
-import { BALL_RADIUS, BallView, BoostPadsView, CarView } from "../render/entities";
+import { BallView, BoostPadsView, CarView, trailGround } from "../render/entities";
 import type { ArenaView } from "../render/arena";
 import type { Renderer } from "../render/renderer";
 import type { GameAudio } from "../audio/audio";
 import { type Dodge, FlipTracker } from "./flipTracker";
 import { cameraInputs, newCar, updateSwitches } from "./cameraInput";
 import type { FreeLookControls } from "../camera/rlCamera";
-import { PostGoalClock } from "./goalSequence";
+import { PostGoalClock, startsFreeplayRound } from "./goalSequence";
 
 export class Freeplay {
   readonly #world: World;
@@ -51,6 +51,8 @@ export class Freeplay {
   #preferences: ControllerSettings | null = null;
   /** After a goal, until the ball's reset (PostGoalScored: 3.0 game s, slowed at first, on game time: RV-1) */
   readonly #postGoal = new PostGoalClock();
+  /** Frozen on the kickoff spot until the player drives, jumps or boosts */
+  #waiting = true;
   #message: string | null = null;
   #kickoffSeed = 1;
   #fps = 60;
@@ -87,9 +89,9 @@ export class Freeplay {
 
   /** One animation frame. `rawSeconds`: time since the previous frame, unclamped. */
   frame(rawSeconds: number): void {
-    // The frame's times (slowed after a goal); PostGoalTime up: the ball goes back to the centre
+    // The frame's times (slowed after a goal); PostGoalTime up: a new round, the car on a kickoff spot (RV-21)
     const { world, real, done } = this.#postGoal.frame(rawSeconds);
-    if (done) this.#resetBall();
+    if (done) this.#resetKickoff();
     const settings = this.settings();
     this.#applyPreferences(settings.controller);
     const polled = this.#input.snapshot();
@@ -109,7 +111,10 @@ export class Freeplay {
     this.#throttle = Math.abs(controls.throttle);
 
     const ticks = this.#clock.advance(world);
+    // After a reset the car waits on its spot for throttle, jump or boost (freeplay's countdown: Mutator_Freeplay_Base)
+    if (this.#waiting && startsFreeplayRound(controls, this.#car.current.boost)) this.#waiting = false;
     for (let i = 0; i < ticks; i++) {
+      this.#world.setKickoffCountdown(this.#waiting ? 1 : 0);
       this.#world.setControls(this.#playerId, { ...controls, jump: this.#jump.tick(controls.jump) });
       this.#world.step();
       const car = this.#world.car(this.#playerId);
@@ -161,18 +166,14 @@ export class Freeplay {
     }
   }
 
-  /** After a goal (PostGoalTime 3.0 game s, the first of them slowed) the ball goes back to the centre; the car stays
-   *  where it is (as in freeplay). */
-  #resetBall(): void {
-    this.#world.setBall({ pos: vec3(0, 0, BALL_RADIUS + 1.9), vel: ZERO, angVel: ZERO });
-    this.#pushBall();
-    this.#message = null;
-  }
-
+  /** A new round (a goal's end, or the player's reset: StartNewRound → ResetPlayers, ResetBalls): the car on a kickoff
+   *  spot, waiting for the player, a new ball fading in */
   #resetKickoff(): void {
     this.#kickoffSeed += 1;
     this.#world.resetKickoff(this.#kickoffSeed);
+    this.#waiting = true;
     this.#postGoal.stop(); // (a reset ends the goal's wait)
+    this.#ballView.spawn(); // (a new ball fades in)
     this.#message = null;
     this.#snapViews();
   }
@@ -185,6 +186,12 @@ export class Freeplay {
     this.#world.setCar(this.#playerId, { pos: vec3(car.x, car.y, 17.01), vel: ZERO, angVel: ZERO, rot, boost: 33 });
     if (ball) this.#world.setBall({ pos: ball, vel: ZERO, angVel: ZERO });
     this.#snapViews();
+  }
+
+  /** For the browser tests: where the car is and how fast it goes */
+  debugCar(): { readonly pos: Vec3; readonly speed: number } {
+    const car = this.#world.car(this.#playerId);
+    return { pos: car.pos, speed: Math.hypot(car.vel.x, car.vel.y, car.vel.z) };
   }
 
   /** Freeplay helpers: ball in front of the car, or dropped onto its roof. */
@@ -233,13 +240,14 @@ export class Freeplay {
       car.demoed,
       car.supersonic,
       frameSeconds,
+      trailGround(car),
     );
     const ball = this.#ball.position(alpha, this.#pos);
-    this.#ballView.root.visible = !this.#world.ballExploded(); // (a goal explodes it until the reset)
+    this.#ballView.fade(this.#world.ballExploded(), frameSeconds); // (a goal explodes it until the reset: it dissolves)
     this.#ballView.update(ball, this.#ball.rotation(alpha, this.#rot));
     this.#arena.update(ball, frameSeconds);
     const pads = this.#world.boostPads();
-    this.#padsView.update(pads);
+    this.#padsView.update(pads, frameSeconds);
 
     const controls = { ballCam: this.#ballCam, rear: this.#rear, lookUp: this.#look.up, lookRight: this.#look.right, freeLook: this.#freeLook };
     const view = this.#camera.update(frameSeconds, this.#car.blended(alpha), this.#ball.blended(alpha).pos, controls, null, realSeconds);

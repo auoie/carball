@@ -2,7 +2,7 @@
 // the hitbox's back, over the rear wheels) and its flares and spoiler (a couple of uu proud of it).
 // Requires the engine build (engine/build-wasm) and the generated arena (out/arena), for every body's dimensions.
 import createEngine from "@engine/rlengine.mjs";
-import { Box3, Color, Mesh } from "three";
+import { Box3, Color, Mesh, MeshStandardMaterial } from "three";
 import { beforeAll, describe, expect, it } from "vitest";
 import { CarBody, type CarConfig, World, initEngine } from "../engine/world";
 import { TAIL_PAST_HITBOX, buildCarModel } from "./carModel";
@@ -72,5 +72,24 @@ describe("car model", () => {
       if (!tyres) throw new Error("no tyres");
       expect(new Box3().setFromObject(tyres).max.z, name).toBeLessThanOrEqual(c.hitboxSize.y / 2);
     }
+  });
+});
+
+describe("the car's lights (RV-15)", () => {
+  it("show as the game's: headlights a white core, tail lights deep red", () => {
+    const octane = configs.get("Octane");
+    if (!octane) throw new Error("no Octane");
+    const model = buildCarModel(octane, new Color(0x1f6fff));
+    const emissive = (name: string) => {
+      let found: Color | null = null;
+      model.traverse((o) => {
+        if (o instanceof Mesh && o.material instanceof MeshStandardMaterial && o.material.name === name) found = o.material.emissive;
+      });
+      return found as Color | null;
+    };
+    const head = emissive("headlight");
+    const tail = emissive("taillight");
+    expect(head && [head.r, head.g, head.b]).toEqual([1, 1, 1]);
+    expect(tail && [tail.r, tail.g, tail.b]).toEqual([1, 0.1, 0].map((v) => expect.closeTo(v, 6) as number));
   });
 });

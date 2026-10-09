@@ -763,8 +763,10 @@ export class PlayerCamera {
     const canFreeLook = wanted === this.#carCam || wanted === this.#demolished || wanted === this.#spawnSelect;
     const begins = current !== wanted && canFreeLook;
     if (mode === null || !canFreeLook || controls.rear || begins) this.#freeLook.reset();
+    // (the car cam's first frame stays in free-look mode, bFreeLookActive, with no input: its rotation is kept: RV-19)
     const firstCarFrame = current !== wanted && wanted === this.#carCam;
-    const freeLook = mode !== null && canFreeLook && !controls.rear && !firstCarFrame ? this.#freeLook.update(dt, mode.axes, mode.settings) : null;
+    const active = mode !== null && canFreeLook && !controls.rear;
+    const freeLook = active ? (firstCarFrame ? { pitch: 0, yaw: 0 } : this.#freeLook.update(dt, mode.axes, mode.settings)) : null;
     const input: CameraInput = { car, ball, settings: this.settings, rear: controls.rear, respawn: respawnInput, freeLook };
     if (current !== wanted) {
       // Free look: between the free-look ball cam (LookAtBall) and the car cam the view keeps its rotation and smoothing

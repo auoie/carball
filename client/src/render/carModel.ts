@@ -39,6 +39,11 @@ const FLARE = 3;
 
 type Point = readonly [x: number, y: number];
 
+/** The lights' emissive colours (linear), as the game's appear on screen: the painted Fennec's bake shows its tail
+ *  lights (255, 26, 0) and its headlights clipped white */
+export const HEADLIGHT = [1, 1, 1] as const;
+export const TAILLIGHT = [1, 0.1, 0] as const;
+
 /** Where a wheel is drawn at rest (Three.js local frame, the right-hand wheel). */
 function wheelRestPosition(wheel: WheelConfig, halfWidth: number): { x: number; y: number; z: number } {
   return {
@@ -76,18 +81,15 @@ export function buildCarModel(config: CarConfig, paint: Color, team = 0): Group 
   const trim = new MeshStandardMaterial({ name: "trim", roughness: 0.75, metalness: 0 });
   trim.color.setRGB(0.09, 0.09, 0.09, LinearSRGBColorSpace);
   const glass = new MeshStandardMaterial({ name: "glass", color: 0x0b1018, roughness: 0.08, metalness: 0.8, side: DoubleSide });
-  // MAT_Chassis_Grain's HeadlightColor (0.583, 0.823, 0.978) x 2.5 and TailLightColor (3, 0.448, 0.448) x 1.33 (linear,
-  // PNT-12) are HDR, for its bloom; without one they'd clip (the tail lights to pink): their hue at full brightness
-  const lights = (r: number, g: number, b: number): MeshStandardMaterial => {
-    const m = new MeshStandardMaterial({ color: 0x000000 });
-    const peak = Math.max(r, g, b);
-    m.emissive.setRGB(r / peak, g / peak, b / peak, LinearSRGBColorSpace);
+  // The lights as the game's show (MAT_Chassis_Grain squares its light term and blends it in by the same, so its
+  // HeadlightColor and TailLightColor come out clipped: PNT-12, RV-15): headlights a near-white core, tail lights deep red
+  const lights = (name: string, [r, g, b]: readonly [number, number, number]): MeshStandardMaterial => {
+    const m = new MeshStandardMaterial({ name, color: 0x000000 });
+    m.emissive.setRGB(r, g, b, LinearSRGBColorSpace);
     return m;
   };
-  const headlight = lights(0.583, 0.823, 0.978);
-  headlight.name = "headlight";
-  const taillight = lights(3, 0.448, 0.448);
-  taillight.name = "taillight";
+  const headlight = lights("headlight", HEADLIGHT);
+  const taillight = lights("taillight", TAILLIGHT);
   const tyre = new MeshStandardMaterial({ name: "tyre", color: 0x111214, roughness: 0.9 });
   const rim = new MeshStandardMaterial({ name: "rim", color: 0xb8bec8, roughness: 0.3, metalness: 0.8 });
 

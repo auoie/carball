@@ -98,6 +98,15 @@ fn score_slomo(game_seconds: f64) -> f64 {
     }
 }
 
+/// The seconds the clock shows (`Active.UpdateGameTime`: int(t) + 1, 0 at t ≤ 0; regulation 300 before it first runs:
+/// notes/visual-timing.md VT-23): an update goes out when it changes, so clients show it on time
+fn shown_seconds(s: &MatchState) -> u32 {
+    if !s.overtime && s.clock_ticks >= MATCH_TICKS {
+        return MATCH_TICKS / TICK_RATE;
+    }
+    if s.clock_ticks == 0 { 0 } else { s.clock_ticks / TICK_RATE + 1 }
+}
+
 /// Real seconds the replay lasts: its length, each slowed stretch 1 / 0.25 times over
 fn replay_seconds(plan: &ReplayPlan) -> f64 {
     let length = f64::from(plan.end_tick - plan.start_tick);
@@ -625,7 +634,7 @@ impl Game {
     /// The match state to everyone when it changed (the clock: when its shown second changes)
     fn send_match_state(&mut self) {
         let state = self.match_state();
-        let shown = |s: &MatchState| if s.overtime { s.clock_ticks / TICK_RATE } else { s.clock_ticks.div_ceil(TICK_RATE) };
+        let shown = shown_seconds;
         let changed = self.sent.is_none_or(|sent| {
             (sent.phase, sent.overtime, sent.clock_running, sent.score, sent.winner, shown(&sent))
                 != (state.phase, state.overtime, state.clock_running, state.score, state.winner, shown(&state))
@@ -861,8 +870,8 @@ mod tests {
         assert!(states.iter().any(|m| m.phase == Phase::Active && !m.clock_running));
         assert!(states.last().is_some_and(|m| m.clock_running && m.clock_ticks == MATCH_TICKS - 1));
         // Then a message each shown second
-        run_until(&mut game, 400, |g| g.clock_ticks == MATCH_TICKS - 3 * TICK_RATE);
-        let shown: Vec<u32> = match_states(&mut rx).iter().map(|m| m.clock_ticks.div_ceil(TICK_RATE)).collect();
+        run_until(&mut game, 400, |g| g.clock_ticks == MATCH_TICKS - 3 * TICK_RATE - 1);
+        let shown: Vec<u32> = match_states(&mut rx).iter().map(shown_seconds).collect();
         assert_eq!(shown, vec![299, 298, 297]);
     }
 

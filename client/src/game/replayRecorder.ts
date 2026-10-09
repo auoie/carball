@@ -9,6 +9,7 @@ export interface RecordedCar extends BodyState {
   readonly boosting: boolean;
   readonly demoed: boolean;
   readonly supersonic: boolean;
+  readonly wheelContact: CarState["wheelContact"];
 }
 
 export interface RecordedFrame {
@@ -49,6 +50,6 @@ export class ReplayRecorder {
 
 /** A car as recorded */
 export function recordCar(car: CarState): RecordedCar {
-  const { pos, vel, angVel, rot, team, boosting, demoed, supersonic } = car;
-  return { pos, vel, angVel, rot, team, boosting, demoed, supersonic };
+  const { pos, vel, angVel, rot, team, boosting, demoed, supersonic, wheelContact } = car;
+  return { pos, vel, angVel, rot, team, boosting, demoed, supersonic, wheelContact };
 }

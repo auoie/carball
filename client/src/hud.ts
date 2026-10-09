@@ -30,6 +30,12 @@ export function respawnHud(car: { readonly demoed: boolean; readonly demoRespawn
   };
 }
 
+/** The boost meter's number (GFxHUD_TA.GetBoostAmountForUI): floor(pct · 100), at least 1 while any is left
+ *  (notes/visual-timing.md VT-21) */
+export function boostShown(boost: number): number {
+  return boost <= 0 ? 0 : Math.min(100, Math.max(1, Math.floor(boost)));
+}
+
 export interface HudState {
   readonly boost: number;
   readonly speed: number; // uu/s
@@ -142,7 +148,7 @@ export class Hud {
   }
 
   update(s: HudState): void {
-    const boost = Math.round(s.boost);
+    const boost = boostShown(s.boost);
     this.#boostValue.textContent = String(boost);
     this.#boostRing.style.strokeDasharray = `${(this.#ringLength * boost) / 100} ${this.#ringLength}`;
     this.#speed.textContent = `${Math.round(s.speed)} uu/s`;

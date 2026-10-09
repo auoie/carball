@@ -185,3 +185,32 @@ async function playTheme(page: Page, theme: string): Promise<void> {
   await page.screenshot({ path: `test-results/${theme}.png` });
   expect(errors).toEqual([]);
 }
+
+interface Hook {
+  place: (car: object, ball?: object) => void;
+  car: () => { pos: { x: number; y: number }; speed: number };
+}
+
+test("a goal in freeplay: 3 s later the car is back on a kickoff spot, waiting until it drives", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto("/");
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+  const hook = async (): Promise<{ pos: { x: number; y: number }; speed: number }> =>
+    page.evaluate(() => (window as unknown as { rlFreeplay: Hook }).rlFreeplay.car());
+  // The car out on the side, the ball dropped into orange's goal
+  await page.evaluate(() => {
+    (window as unknown as { rlFreeplay: Hook }).rlFreeplay.place({ x: 3000, y: 0, yaw: 0 }, { x: 0, y: 5300, z: 200 });
+  });
+  await expect(page.locator("#message")).toHaveText("BLUE SCORES!", { timeout: 10_000 });
+  // The new round: the car on a kickoff spot (|y| 2560 .. 4608), held there
+  await expect.poll(async () => Math.abs((await hook()).pos.y), { timeout: 20_000 }).toBeGreaterThan(2000);
+  await page.waitForTimeout(500);
+  expect((await hook()).speed).toBeLessThan(1);
+  // W: it drives off
+  await page.locator("#game").click({ position: { x: 640, y: 360 }, button: "right" });
+  await page.keyboard.down("KeyW");
+  await expect.poll(async () => (await hook()).speed, { timeout: 6_000 }).toBeGreaterThan(100);
+  await page.keyboard.up("KeyW");
+  expect(errors).toEqual([]);
+});

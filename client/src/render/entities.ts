@@ -3,11 +3,32 @@
 import { BufferAttribute, type BufferGeometry, Color, ConeGeometry, CylinderGeometry, Group, IcosahedronGeometry, InstancedMesh, LinearSRGBColorSpace, Matrix4, Mesh, MeshBasicMaterial, MeshStandardMaterial, PlaneGeometry, type Quaternion, ShaderMaterial, Vector3 } from "three";
 import type { BoostPadState, CarConfig, Team } from "../engine/world";
 import { buildCarModel } from "./carModel";
-import { SonicBoom, Trail } from "./supersonic";
+import { Trail, trailingRearWheels } from "./supersonic";
 import { toThreeVector } from "./coords";
-import { vec3 } from "../math/vec";
+import { type Rot3, type Vec3, vec3 } from "../math/vec";
 
 export const BALL_RADIUS = 91.25;
+/** What the supersonic trails need of a car: its rear wheels' contact (back left, back right) and its speed along its
+ *  forward and right axes (uu/s) */
+export interface TrailGround {
+  readonly rearContact: readonly [boolean, boolean];
+  readonly forwardSpeed: number;
+  readonly sideSpeed: number;
+}
+
+/** A car state's TrailGround */
+export function trailGround(car: { readonly vel: Vec3; readonly rot: Rot3; readonly wheelContact: readonly boolean[] }): TrailGround {
+  const along = (a: Vec3): number => car.vel.x * a.x + car.vel.y * a.y + car.vel.z * a.z;
+  return {
+    rearContact: [car.wheelContact[2] ?? false, car.wheelContact[3] ?? false],
+    forwardSpeed: along(car.rot.forward),
+    sideSpeed: along(car.rot.right),
+  };
+}
+
+/** Suspension travel: at rest the wheels sit about this far above full extension (as carModel.ts draws them) */
+const WHEEL_TRAVEL = 12;
+
 /** The default loadout's team paint (CarColorSet BlueTeamV3[35] / OrangeTeamV3[33], ^2.2 as GetCorrectedPaintColor
  *  hands it to the material: linear; notes/car-paint.md PNT-3/4) */
 export const TEAM_CAR_COLORS = [
@@ -25,17 +46,17 @@ export class CarView {
   readonly #trails: readonly [Trail, Trail] = [new Trail(), new Trail()];
   /** Where the trails leave the car: its rear corners, a little above the middle (local frame) */
   readonly #trailFrom: readonly [Vector3, Vector3];
-  readonly #boom = new SonicBoom();
-  #supersonic = false;
+
   readonly #point = new Vector3();
 
   constructor(config: CarConfig, team: Team) {
     this.#body.add(buildCarModel(config, TEAM_CAR_COLORS[team], team));
-    this.root.add(this.#body, ...this.#trails.map((t) => t.mesh), this.#boom.mesh);
-    const rear = config.hitboxOffset.x - config.hitboxSize.x / 2 + 4;
-    const height = config.hitboxOffset.z + config.hitboxSize.z * 0.1;
-    const side = config.hitboxSize.y / 2 - 10;
-    this.#trailFrom = [new Vector3(rear, height, -side), new Vector3(rear, height, side)];
+    this.root.add(this.#body, ...this.#trails.map((t) => t.mesh));
+    // The rear tyres' contact points at rest (car frame: the bottom of each, as the model draws them)
+    const back = config.backWheel;
+    const height = back.offset.z - (back.suspensionRest - WHEEL_TRAVEL) - back.radius;
+    const side = config.hitboxSize.y / 2 - 8;
+    this.#trailFrom = [new Vector3(back.offset.x, height, -side), new Vector3(back.offset.x, height, side)];
 
     this.#flame = new Mesh(
       new ConeGeometry(14, 70, 12),
@@ -48,20 +69,29 @@ export class CarView {
     this.#body.add(this.#flame);
   }
 
-  /** A frame: the car's pose and state; `seconds` since the last frame (for the trails). */
-  update(position: Vector3, rotation: Quaternion, boosting: boolean, demoed: boolean, supersonic = false, seconds = 0): void {
+  /** A frame: the car's pose and state; `seconds` since the last frame (for the trails); `ground`: its rear wheels'
+   *  contact and its speed along and across itself (the supersonic trails; none: no trail) */
+  update(
+    position: Vector3,
+    rotation: Quaternion,
+    boosting: boolean,
+    demoed: boolean,
+    supersonic = false,
+    seconds = 0,
+    ground: TrailGround | null = null,
+  ): void {
     this.#body.position.copy(position);
     this.#body.quaternion.copy(rotation);
     this.#flame.visible = boosting;
     this.root.visible = !demoed;
-    const sonic = supersonic && !demoed;
+    // Each rear wheel's trail: supersonic, picked by the direction rule, touching the ground (back left, back right)
+    const picked = ground ? trailingRearWheels(ground.forwardSpeed, ground.sideSpeed) : [false, false];
+    const trailing = ground && supersonic && !demoed ? [picked[0] && ground.rearContact[0], picked[1] && ground.rearContact[1]] : [false, false];
     this.#trails.forEach((trail, i) => {
       const from = this.#trailFrom[i];
-      if (from) trail.update(this.#point.copy(from).applyQuaternion(rotation).add(position), sonic, seconds);
+      const active = trailing[i] ?? false;
+      if (from) trail.update(this.#point.copy(from).applyQuaternion(rotation).add(position), active, seconds);
     });
-    if (sonic && !this.#supersonic) this.#boom.start(position, this.#point.set(1, 0, 0).applyQuaternion(rotation));
-    this.#supersonic = sonic;
-    this.#boom.update(seconds);
   }
 
   /** How many points the trails have (for tests). */
@@ -74,14 +104,15 @@ export class CarView {
 export class BallView {
   readonly root = new Group();
   readonly #ball: Mesh;
+  readonly #material: MeshStandardMaterial;
   readonly #marker: Mesh;
   readonly #fade = { value: 1 };
+  #opacity = 1;
 
   constructor() {
-    this.#ball = new Mesh(
-      patchedBallGeometry(),
-      new MeshStandardMaterial({ vertexColors: true, roughness: 0.5, metalness: 0.1, flatShading: true }),
-    );
+    // (transparent throughout: it dissolves on a goal and fades in at a kickoff)
+    this.#material = new MeshStandardMaterial({ vertexColors: true, roughness: 0.5, metalness: 0.1, flatShading: true, transparent: true });
+    this.#ball = new Mesh(patchedBallGeometry(), this.#material);
     // The ball's size, so it shows where the ball will come down; a plane a little bigger, to hold the rim
     this.#marker = new Mesh(
       new PlaneGeometry(BALL_RADIUS * 2 * MARKER_SPAN, BALL_RADIUS * 2 * MARKER_SPAN),
@@ -104,6 +135,33 @@ export class BallView {
     // On the floor straight below the ball, the ball's size at any height; a little fainter the higher it is
     this.#marker.position.set(position.x, 1, position.z);
     this.#fade.value = markerFade(Math.max(0, position.y - BALL_RADIUS));
+  }
+
+  /** A new ball (a kickoff, a goal's reset): it fades in over 1 s (VT-30); `instant`: shown at once (a replay's,
+   *  freeplay's placements) */
+  spawn(instant = false): void {
+    this.#opacity = instant ? 1 : 0;
+    this.#show(false);
+  }
+
+  /** This frame's look: exploded, the ball dissolves at 3/s, the frame time capped at 1/30 (Ball_TA's BallFadeOutSpeed
+   *  -3: 0.333 s, VT-15), its marker gone at once; else it fades in at 1/s (after a spawn) */
+  fade(exploded: boolean, seconds: number): void {
+    const dt = Math.max(0, seconds);
+    this.#opacity = exploded ? Math.max(0, this.#opacity - 3 * Math.min(dt, 1 / 30)) : Math.min(1, this.#opacity + dt);
+    this.#show(exploded);
+  }
+
+  /** How opaque the ball is, 0..1 (for tests) */
+  get opacity(): number {
+    return this.#opacity;
+  }
+
+  #show(exploded: boolean): void {
+    this.#material.opacity = this.#opacity;
+    this.#material.depthWrite = this.#opacity >= 1;
+    this.#ball.visible = this.#opacity > 0;
+    this.#marker.visible = !exploded;
   }
 
   /** The marker's place on the floor, and how strongly it shows (for tests). */
@@ -179,24 +237,40 @@ export const PAD_RESPAWN_SECONDS = { big: 10, small: 4 } as const;
 /** The game's second warm-up stage starts this long before a pad is back (VehiclePickup_Boost_TA AlmostSpawnedTime) */
 export const PAD_ALMOST_SPAWNED_SECONDS = 1;
 
-/** Boost pads, instanced (ten draw calls for all of them): flat discs, big pads with an orb, small ones with a low
- *  cylinder; dimmed while respawning, with a warm-up as the game's: a ghost of the orb growing over the whole delay
- *  (its glow eases in: EaseInCirc), and in the last second a brighter, pulsing one (AlmostSpawnedEvent). */
+/** A pad's light fades out on a pickup and in on its return over this long (notes/visual-timing.md VT-12/13) */
+export const PAD_FADE_SECONDS = 0.1;
+
+/** Boost pads, instanced (eight draw calls for all of them): flat discs, big pads with an orb, small ones with a low
+ *  cylinder. Taken, a pad's light fades out over 0.1 s (a big pad's orb goes at once, a small pad stays, dark) and it
+ *  shows dimmed; back, its light fades in over 0.1 s. Only big pads warm up while down, as the game's: a ghost of the
+ *  orb growing over the whole delay (its glow eases in: EaseInCirc), and in the last second a brighter, pulsing one
+ *  (AlmostSpawnedEvent). */
 export class BoostPadsView {
   readonly root = new Group();
   readonly #pads: readonly {
     readonly meshes: PadMeshes;
+    readonly big: boolean;
     readonly slot: number;
     readonly base: Matrix4;
     readonly orb: Matrix4;
     readonly delay: number;
   }[];
   readonly #shown: (boolean | null)[];
+  /** Seconds left of each pad's light fading (out after a pickup, in after its return) */
+  readonly #fading: number[];
+  readonly #color = new Color();
   readonly #scale = new Matrix4();
   readonly #m = new Matrix4();
 
   constructor(pads: readonly BoostPadState[]) {
     const active = new MeshStandardMaterial({ color: 0xffc533, emissive: 0x996a00, roughness: 0.4 });
+    // (each pad's light by its instance colour: the glow too, so a fading pad really darkens)
+    active.onBeforeCompile = (shader) => {
+      shader.fragmentShader = shader.fragmentShader.replace(
+        "#include <emissivemap_fragment>",
+        "#include <emissivemap_fragment>\n#ifdef USE_INSTANCING_COLOR\ntotalEmissiveRadiance *= vColor;\n#endif",
+      );
+    };
     const inactive = new MeshStandardMaterial({ color: 0x4a4130, roughness: 0.9 });
     const warmup = new MeshBasicMaterial({ color: 0xffb020, transparent: true, opacity: 0.3, depthWrite: false });
     const almost = new MeshBasicMaterial({ color: 0xffe9a0, transparent: true, opacity: 0.65, depthWrite: false });
@@ -208,6 +282,7 @@ export class BoostPadsView {
       const at = toThreeVector(pad.pos);
       return {
         meshes: pad.big ? big : small,
+        big: pad.big,
         slot: pad.big ? slots.big++ : slots.small++,
         base: new Matrix4().makeTranslation(at.x, 3, at.z),
         orb: new Matrix4().makeTranslation(at.x, pad.big ? 70 : 12, at.z),
@@ -215,38 +290,62 @@ export class BoostPadsView {
       };
     });
     for (const m of [big, small]) this.root.add(m.active, m.inactive, m.orb);
-    for (const m of [big, small]) this.root.add(m.warmup, m.almost);
+    this.root.add(big.warmup, big.almost);
     this.#shown = pads.map(() => null);
+    this.#fading = pads.map(() => 0);
     this.update(pads);
   }
 
-  update(pads: readonly BoostPadState[]): void {
+  /** `seconds`: since the last update (the lights' fades; none given: at their end at once) */
+  update(pads: readonly BoostPadState[], seconds = Infinity): void {
     pads.forEach((pad, i) => {
       const p = this.#pads[i];
       if (!p) return;
-      if (this.#shown[i] !== pad.active) {
+      const { active, inactive, orb, warmup, almost } = p.meshes;
+      const changed = this.#shown[i] !== pad.active;
+      const first = this.#shown[i] === null;
+      if (changed) {
         this.#shown[i] = pad.active;
-        p.meshes.active.setMatrixAt(p.slot, pad.active ? p.base : HIDDEN);
-        p.meshes.inactive.setMatrixAt(p.slot, pad.active ? HIDDEN : p.base);
-        p.meshes.orb.setMatrixAt(p.slot, pad.active ? p.orb : HIDDEN);
-        for (const mesh of [p.meshes.active, p.meshes.inactive, p.meshes.orb]) mesh.instanceMatrix.needsUpdate = true;
-        if (pad.active) {
-          p.meshes.warmup.setMatrixAt(p.slot, HIDDEN);
-          p.meshes.almost.setMatrixAt(p.slot, HIDDEN);
-          p.meshes.warmup.instanceMatrix.needsUpdate = p.meshes.almost.instanceMatrix.needsUpdate = true;
+        this.#fading[i] = first ? 0 : PAD_FADE_SECONDS;
+        // Taken: the big orb goes at once, the lit disc fades out; back: the orb and the lit disc at once, fading in
+        active.setMatrixAt(p.slot, p.base);
+        inactive.setMatrixAt(p.slot, HIDDEN);
+        orb.setMatrixAt(p.slot, pad.active || !p.big ? p.orb : HIDDEN);
+        for (const mesh of [active, inactive, orb]) mesh.instanceMatrix.needsUpdate = true;
+        if (pad.active && p.big) {
+          warmup.setMatrixAt(p.slot, HIDDEN);
+          almost.setMatrixAt(p.slot, HIDDEN);
+          warmup.instanceMatrix.needsUpdate = almost.instanceMatrix.needsUpdate = true;
         }
       }
-      if (pad.active) return;
+      const fading = this.#fading[i] ?? 0;
+      if (fading > 0 || changed) {
+        const left = Math.max(0, fading - seconds);
+        this.#fading[i] = left;
+        const light = pad.active ? 1 - left / PAD_FADE_SECONDS : left / PAD_FADE_SECONDS;
+        this.#color.setRGB(light, light, light);
+        active.setColorAt(p.slot, this.#color);
+        orb.setColorAt(p.slot, this.#color);
+        if (active.instanceColor) active.instanceColor.needsUpdate = true;
+        if (orb.instanceColor) orb.instanceColor.needsUpdate = true;
+        if (left === 0 && !pad.active) {
+          // (faded out: the dimmed disc)
+          active.setMatrixAt(p.slot, HIDDEN);
+          inactive.setMatrixAt(p.slot, p.base);
+          active.instanceMatrix.needsUpdate = inactive.instanceMatrix.needsUpdate = true;
+        }
+      }
+      if (pad.active || !p.big) return;
       // The warm-up: how far through the delay (the game's normalized time), the glow easing in
       const t = Math.min(1, Math.max(0, 1 - pad.cooldown / p.delay));
       const glow = 1 - Math.sqrt(1 - t * t);
-      this.#setScaled(p.meshes.warmup, p.slot, p.orb, 0.2 + 0.8 * glow);
+      this.#setScaled(warmup, p.slot, p.orb, 0.2 + 0.8 * glow);
       if (pad.cooldown <= PAD_ALMOST_SPAWNED_SECONDS) {
         const pulse = Math.sin((PAD_ALMOST_SPAWNED_SECONDS - pad.cooldown) * 2 * Math.PI * 3); // three pulses
-        this.#setScaled(p.meshes.almost, p.slot, p.orb, 1 + 0.12 * pulse);
+        this.#setScaled(almost, p.slot, p.orb, 1 + 0.12 * pulse);
       } else {
-        p.meshes.almost.setMatrixAt(p.slot, HIDDEN);
-        p.meshes.almost.instanceMatrix.needsUpdate = true;
+        almost.setMatrixAt(p.slot, HIDDEN);
+        almost.instanceMatrix.needsUpdate = true;
       }
     });
   }

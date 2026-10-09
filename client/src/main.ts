@@ -116,6 +116,7 @@ async function main(): Promise<void> {
       place: (car: { x: number; y: number; yaw: number }, ball?: { x: number; y: number; z: number }) => {
         freeplay.debugPlace(car, ball);
       },
+      car: () => freeplay.debugCar(),
     };
     game = freeplay;
   } else {

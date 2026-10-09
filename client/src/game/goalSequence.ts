@@ -98,3 +98,9 @@ export function replaySeconds(plan: ReplayPlan): number {
   const slowed = plan.slomo.reduce((s, [from, to]) => s + Math.max(0, Math.min(to, plan.endTick) - Math.max(from, plan.startTick)), 0);
   return (plan.endTick - plan.startTick + slowed * (1 / REPLAY_SLOMO - 1)) / TICK_RATE;
 }
+
+/** Freeplay's countdown ends (Mutator_Freeplay_Base_TA.ShouldStartRound, polled every 1/60 s; no 3-2-1): any throttle,
+ *  either way and however little, a jump, or boost held with boost in the tank */
+export function startsFreeplayRound(controls: { readonly throttle: number; readonly jump: boolean; readonly boost: boolean }, boost: number): boolean {
+  return controls.throttle !== 0 || controls.jump || (controls.boost && boost > 0);
+}

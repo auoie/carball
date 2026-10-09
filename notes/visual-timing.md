@@ -42,7 +42,7 @@ Particle lifetimes "x–y" are uniform ranges. Sub-agent files, local in out/bsi
 ## Ball hits
 | # | What | Game | Ours | Implement |
 |---|---|---|---|---|
-| VT-9 | Car–ball sparks | Each rigid-body collision builds an impact record [N 140f03160]: momentum = **\|v_rel · n\|**. The effect plays if ≥ MinImpactMomentum (car 50) and ≥ **MinImpactDelay 0.15 s** since the last impact of that kind; world and actor hits have separate cooldowns [N 140f1b080, A].<br>Ball physmat: BallCollisionEffects.Metal_PS, a 0.125 s emitter at 1024/s × lerp(0.25, 1, ImpactVel/6000), life 0.125–0.25 s, plus a 0.2 s flash.<br>Camera shake Impact_Medium 0.15 s, scaled 0 at ≤ 200, 0.1 at 201, 1 at 4000 (local view [I]). Sound: notes/sound-behaviour.md SND-6 | no visual; sound from Δv ≥ 160 with a 0.07 s cooldown (`client/src/audio/detect.ts:30,49`) | Sparks at the contact when \|v_rel·n\| ≥ 50 with a 0.15 s cooldown, intensity ∝ speed/6000; match the sound gate |
+| VT-9 | Car–ball sparks | Each rigid-body collision builds an impact record [N 140f03160]: momentum = **\|v_rel · n\|**. The effect plays if ≥ MinImpactMomentum (car 50) and ≥ **MinImpactDelay 0.15 s** since the last impact of that kind; world and actor hits have separate cooldowns [N 140f1b080, A].<br>Ball physmat: BallCollisionEffects.Metal_PS, a 0.125 s emitter at 1024/s × lerp(0.25, 1, ImpactVel/6000), life 0.125–0.25 s, plus a 0.2 s flash.<br>Camera shake Impact_Medium 0.15 s, scaled 0 at ≤ 200, 0.1 at 201, 1 at 4000 (local car only, confirmed; notes/camera-shakes.md). Sound: notes/sound-behaviour.md SND-6 | no visual; sound from Δv ≥ 160 with a 0.07 s cooldown (`client/src/audio/detect.ts:30,49`) | Sparks at the contact when \|v_rel·n\| ≥ 50 with a 0.15 s cooldown, intensity ∝ speed/6000; match the sound gate |
 | VT-10 | Ball trail colour | RecordCarHit sets HitTeamNum (replicated). The trail takes the team colour normalised to full brightness; white before the first touch [S GetActiveTeamColor, N execUpdateTrailColor 140e76b80] | – | Tint on touch |
 
 ## Boost pads (standard arena; team-independent)
@@ -57,7 +57,7 @@ Particle lifetimes "x–y" are uniform ranges. Sub-agent files, local in out/bsi
 | # | What | Game | Ours | Implement |
 |---|---|---|---|---|
 | VT-15 | Ball | At t0, Explode: physics and collision off; ball FX deactivated (the trail ribbon finishes: life 1.0 / 0.5 s). The ball **dissolves**: opacity 1 → 0 at 3/s = **0.333 s**, dt capped at 1/30 per frame [N 140f5c880, verified; A BallFadeOutSpeed −3]. Destroyed at t0 + 3.0 game s [S] | hidden instantly (`game/online.ts:493`, `freeplay.ts:234`) | 0.333 s dissolve |
-| VT-16 | Explosion | Spawned at the ball with the goal's orientation, in the **scoring** team's colour [S SetExplosionFXActor].<br>Explosion_Default [A]: flash bursts 0.1 / 0.5 s; 64 spark parents (0.25–0.5 s); 256 outer sparks (0.5–1.0 s); smoke puffs (start 0.1 s, 2–5 s); smoke trails 4–6 s; light trails 0.5–1 s. LifeSpan 5 s. Knockback wave 10000 uu/s to 3000 uu.<br>**Camera shake** Explosion_Large: 1.0 s, blend out 1.0 s, rotation amplitude 1000/2000/1000 at 12 Hz, to 6000 uu with falloff 2.<br>Arena shockwave material parameter = lerp(−0.25, 1, (t − t0)/2.5 s) [N 140f5cda0] | sound only | Particle burst, 1 s shake, 5 s cleanup |
+| VT-16 | Explosion | Spawned at the ball with the goal's orientation, in the **scoring** team's colour [S SetExplosionFXActor].<br>Explosion_Default [A]: flash bursts 0.1 / 0.5 s; 64 spark parents (0.25–0.5 s); 256 outer sparks (0.5–1.0 s); smoke puffs (start 0.1 s, 2–5 s); smoke trails 4–6 s; light trails 0.5–1 s. LifeSpan 5 s. Knockback wave 10000 uu/s to 3000 uu.<br>**Camera shake** Explosion_Large: 1.0 s, blend out 1.0 s, rotation amplitude 1000/2000/1000 at 12 rad/s (≈ 1.9 Hz; full parameters in notes/camera-shakes.md), to 6000 uu with falloff 2.<br>Arena shockwave material parameter = lerp(−0.25, 1, (t − t0)/2.5 s) [N 140f5cda0] | sound only | Particle burst, 1 s shake, 5 s cleanup |
 | VT-17 | Slow-mo and replay | ScoreSlomoCurve (0.125, 1) → (0.225, 0.1875) → (0.625, 1) on game time (notes/camera-respawn-goal.md GS-2). While slowed, the ball trail's SpawnRate = clamp(1/dilation, 1, 4) [N 140f52560]. Replay or kickoff at +3.0 game s | `goalSequence.ts:10-17` ✓ | ✓ |
 | VT-18 | Goal message | GoalScoredMessage broadcast at t0 (scorer, or team); the banner's duration lives in Flash (unknown); the controller light bar strobes [S] | 2 s text | Keep (duration open) |
 
@@ -79,7 +79,7 @@ Particle lifetimes "x–y" are uniform ranges. Sub-agent files, local in out/bsi
 ## Other effects
 | # | What | Game | Ours | Implement |
 |---|---|---|---|---|
-| VT-26 | Landing | Per-wheel contact edge 0 → 1 with \|v·n\| > 50: wheel impact sound and a landing camera shake (local cars only; scaled 0 at ≤ 199, 0.1 at 200, 1 at 2200) [N 140f66850, 140f1b580] | airborne ≥ 0.12 s, sound only (`detect.ts`) | Optional |
+| VT-26 | Landing | Per-wheel contact edge 0 → 1 with \|v·n\| > 50: wheel impact sound and a landing shake (rumble only: Land_CameraShake has duration 0, so no camera motion, notes/camera-shakes.md; local cars only; scaled 0 at ≤ 199, 0.1 at 200, 1 at 2200) [N 140f66850, 140f1b580] | airborne ≥ 0.12 s, sound only (`detect.ts`) | Optional |
 | VT-27 | Wheel dust and powerslide | Same direction rule as VT-7, needs contact. The particle comes from the contact material: field = Grass, so Grass_PS with rate ramping 0 → 1 as SideSpeed goes **80 → 100 uu/s** (only while sliding), life 0.19–0.75 s; walls = Metal, so Rock_PS (70 → 80). The material refreshes for one car per frame [N/A] | – | Dust at the chosen wheels when side slip > 80 uu/s |
 | VT-28 | Jump, double jump, dodge | **Jump:** burst life 0.125–1 s + 0.15 s shake. **Double jump:** dodge ribbon. **Dodge:** ribbons over 0.5 s (life 1 s) + 0.1 s shake. A double jump also leaves a jump-blast decal on the pitch [A/S] | – | Optional |
 | VT-29 | Pitch marks | PitchTekDrawingComponent (tyre tracks, jump blasts, goal and demo decals), entirely native | – | Open |
@@ -88,8 +88,8 @@ Particle lifetimes "x–y" are uniform ranges. Sub-agent files, local in out/bsi
 ## Open
 - **Flash-only:** the boost-meter animation, the banner, the countdown and clock layout, and how long messages show.
 - **Car+0x560:** the BoostGlowIntensity divisor (probably 2300).
-- **Land_CameraShake:** OscillationDuration is unset (0), so its effect is unclear.
+- **Land_CameraShake:** answered 2026-10-09: duration 0 means no camera output; only the Land_FF rumble plays (notes/camera-shakes.md).
 - **SideSpeed / ForwardSpeed:** the exact formula for the wheel FX parameters.
-- **Car-impact shake:** assumed local-view only.
+- **Car-impact shake:** confirmed local car only (notes/camera-shakes.md).
 - **Remote boost:** whether simulated proxies also start boost from replicated input bits.
 - **PitchTek decals:** persistence and fade.

@@ -1,21 +1,13 @@
-// The supersonic look: two white streaks trailing from the back of the car along the path it took, tapering and
-// fading, and a quick shockwave ring as it breaks the threshold. World space (Three.js frame); fed the car's attachment
-// points every frame.
-import {
-  AdditiveBlending,
-  BufferAttribute,
-  BufferGeometry,
-  DoubleSide,
-  Mesh,
-  MeshBasicMaterial,
-  RingGeometry,
-  ShaderMaterial,
-  Vector3,
-} from "three";
+// The supersonic look, as the game's (notes/visual-timing.md VT-7): a short white streak from each rear wheel that
+// touches the ground while the car is supersonic (the game's trail actors sit on the rear wheels only, each active by
+// SetWheelEffectActive: contact, supersonic and the direction rule), a ribbon living 0.1 s, so it stops at once in
+// the air. World space (Three.js frame); fed the wheels' contact points every frame.
+import { AdditiveBlending, BufferAttribute, BufferGeometry, DoubleSide, Mesh, ShaderMaterial, Vector3 } from "three";
 
-/** How long a point of the trail lasts (s). */
-export const TRAIL_SECONDS = 0.35;
-const MAX_SAMPLES = 96;
+/** How long a point of the trail lasts (SS_Default's ribbons: 0.1 s) */
+export const TRAIL_SECONDS = 0.1;
+/** At most this many points a ribbon (the game's 100) */
+const MAX_SAMPLES = 100;
 const WIDTH = 13; // at the head (uu)
 
 const vertexShader = /* glsl */ `
@@ -49,6 +41,15 @@ void main() {
   #include <colorspace_fragment>
 }
 `;
+
+/** Which rear wheels trail, back left and back right (SetWheelEffectActive's direction rule): with `forward` and `side`
+ *  the car's speed along its forward and right axes, a car going mostly straight picks its rear wheels when going
+ *  forwards (its front ones reversing, which have no trail); sliding sideways (side speed past 500 and past the forward
+ *  speed), the wheel on the side it slides towards (which side the rule picks is our reading of "by the sign"). */
+export function trailingRearWheels(forward: number, side: number): readonly [boolean, boolean] {
+  if (Math.abs(side) <= 500 || Math.abs(side) <= forward) return forward > -50 ? [true, true] : [false, false];
+  return side > 0 ? [false, true] : [true, false];
+}
 
 /** One streak: the points it passed through, newest first, as a camera-facing ribbon. */
 export class Trail {
@@ -100,7 +101,7 @@ export class Trail {
     for (const s of samples) s.age += seconds;
     while (samples.length > 0 && (samples.at(-1)?.age ?? 0) > TRAIL_SECONDS) samples.pop();
     // A jump (teleport, reset) breaks the trail rather than drawing a streak across the arena
-    if (samples[0] && samples[0].point.distanceTo(point) > 400) samples.length = 0;
+    if (active && samples[0] && samples[0].point.distanceTo(point) > 400) samples.length = 0;
     if (active) {
       samples.unshift({ point: point.clone(), age: 0 });
       if (samples.length > MAX_SAMPLES) samples.length = MAX_SAMPLES;
@@ -135,42 +136,5 @@ export class Trail {
 
   dispose(): void {
     this.#geometry.dispose();
-  }
-}
-
-/** The shockwave: a faint ring at the car's nose, expanding to about the car's size and fading, as it goes supersonic
- *  (subtle: the player's own car is right in front of the camera). */
-export class SonicBoom {
-  readonly mesh: Mesh;
-  readonly #material = new MeshBasicMaterial({
-    color: 0xd8f2ff,
-    transparent: true,
-    opacity: 0,
-    blending: AdditiveBlending,
-    depthWrite: false,
-    side: DoubleSide,
-  });
-  #age = Infinity;
-
-  constructor() {
-    this.mesh = new Mesh(new RingGeometry(46, 56, 48), this.#material);
-    this.mesh.visible = false;
-  }
-
-  /** Starts it at the car's centre `at`, the ring facing along `heading` (a unit vector), just ahead of the nose. */
-  start(at: Vector3, heading: Vector3): void {
-    this.#age = 0;
-    const nose = at.clone().addScaledVector(heading, 90);
-    this.mesh.position.copy(nose);
-    this.mesh.lookAt(nose.clone().add(heading));
-  }
-
-  update(seconds: number): void {
-    this.#age += seconds;
-    const t = this.#age / 0.35;
-    this.mesh.visible = t < 1;
-    if (t >= 1) return;
-    this.mesh.scale.setScalar(1 + 1.3 * t);
-    this.#material.opacity = 0.32 * (1 - t) * (1 - t);
   }
 }

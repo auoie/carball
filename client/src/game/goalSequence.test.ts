@@ -3,7 +3,16 @@
 import { describe, expect, it } from "vitest";
 import type { ReplayPlan } from "../net/protocol";
 import { FixedStep } from "../loop/fixedStep";
-import { POST_GOAL_TICKS, PostGoalClock, postGoalDilation, postGoalTickSeconds, replayDilation, replaySeconds, scoreSlomo } from "./goalSequence";
+import {
+  POST_GOAL_TICKS,
+  PostGoalClock,
+  postGoalDilation,
+  postGoalTickSeconds,
+  replayDilation,
+  replaySeconds,
+  scoreSlomo,
+  startsFreeplayRound,
+} from "./goalSequence";
 
 describe("the slow motion after a goal", () => {
   it("follows ScoreSlomoCurve: 1 until 0.125 s, down to 0.1875 at 0.225 s, back to 1 at 0.625 s, clamped", () => {
@@ -86,5 +95,17 @@ describe("freeplay's goal clock on game time (RV-1)", () => {
 
   it("a 1 s hitch 0.15 s after the goal ends the slow motion at once: under 20 slowed ticks", () => {
     expect(run((i) => (i === 9 ? 1 : 1 / 60)).slowed).toBeLessThan(20);
+  });
+});
+
+describe("freeplay's countdown (ShouldStartRound)", () => {
+  const none = { throttle: 0, jump: false, boost: false };
+  it("ends on any throttle (reverse, a light trigger), a jump, or boost held with boost left", () => {
+    expect(startsFreeplayRound(none, 33)).toBe(false);
+    expect(startsFreeplayRound({ ...none, throttle: -1 }, 33)).toBe(true);
+    expect(startsFreeplayRound({ ...none, throttle: 0.05 }, 33)).toBe(true);
+    expect(startsFreeplayRound({ ...none, jump: true }, 33)).toBe(true);
+    expect(startsFreeplayRound({ ...none, boost: true }, 33)).toBe(true);
+    expect(startsFreeplayRound({ ...none, boost: true }, 0)).toBe(false);
   });
 });

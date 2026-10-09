@@ -45,9 +45,9 @@ export interface CameraSwitches {
 
 /**
  * The switches after this frame's buttons (`held`, `before`: the buttons now and last frame): a toggle flips on its
- * press; held mode follows the button, the rear camera from its press to its release (a new car turns it off until
- * the next press: newCar). `blocked`: the goal replay or after the match, when the ball cam ignores its button
- * (PressSecondaryCamera returns: RV-9).
+ * press; held mode is on from the press to the release (the rear camera: a new car turns it off until the next press,
+ * newCar). `blocked`: the goal replay or after the match, when the ball cam ignores its presses (PressSecondaryCamera
+ * returns, RV-9) but not its release (ReleaseSecondaryCamera isn't blocked, RV-20).
  */
 export function updateSwitches(
   state: CameraSwitches,
@@ -57,7 +57,8 @@ export function updateSwitches(
 ): CameraSwitches {
   const ballPressed = held.ballCam && !before.ballCam;
   const rearPressed = held.rearCamera && !before.rearCamera;
-  const ballCam = o.blocked ? state.ballCam : o.ballCamToggle ? (ballPressed ? !state.ballCam : state.ballCam) : held.ballCam;
+  const press = ballPressed && !o.blocked;
+  const ballCam = o.ballCamToggle ? (press ? !state.ballCam : state.ballCam) : held.ballCam && (state.ballCam || press);
   const rear = o.rearCameraToggle ? (rearPressed ? !state.rear : state.rear) : held.rearCamera && (state.rear || rearPressed);
   return { ballCam, rear };
 }

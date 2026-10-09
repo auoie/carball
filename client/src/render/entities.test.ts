@@ -1,4 +1,4 @@
-import { InstancedMesh, Matrix4, Quaternion, Vector3 } from "three";
+import { Color, InstancedMesh, Matrix4, Quaternion, Vector3 } from "three";
 import { describe, expect, it } from "vitest";
 import { vec3 } from "../math/vec";
 import { BALL_RADIUS, BallView, BoostPadsView, patchedBallGeometry } from "./entities";
@@ -39,10 +39,10 @@ describe("boost pads", () => {
     return out;
   };
 
-  it("draws every pad in ten instanced meshes, lit, with its orb", () => {
+  it("draws every pad in eight instanced meshes, lit, with its orb", () => {
     const view = new BoostPadsView(pads);
-    expect(view.root.children).toHaveLength(10);
-    // Big: lit discs, dim discs, orbs; then small; then the warm-up ghosts (big, big last-second, small, small)
+    expect(view.root.children).toHaveLength(8);
+    // Big: lit discs, dim discs, orbs; then small; then the big pads' warm-up ghosts (all the delay, the last second)
     expect(drawn(view)).toEqual({
       0: [[-3584, 3, 0]],
       1: [null],
@@ -52,42 +52,60 @@ describe("boost pads", () => {
       5: [[0, 12, -4240], [1788, 12, 2300]],
       6: [null],
       7: [null],
-      8: [null, null],
-      9: [null, null],
     });
   });
 
-  it("warms a taken pad up over its delay, and pulses in the last second (the game's AlmostSpawnedTime)", () => {
+  it("warms a taken big pad up over its delay, and pulses in the last second (the game's AlmostSpawnedTime)", () => {
     const view = new BoostPadsView(pads);
     const scale = (mesh: number, slot: number): number => {
       const m = new Matrix4();
       (view.root.children[mesh] as InstancedMesh).getMatrixAt(slot, m);
       return Math.cbrt(m.determinant());
     };
-    // The small pad at slot 1, taken: 2 s of its 4 left; then 0.5 s left
-    view.update(pads.map((p, i) => (i === 2 ? { ...p, active: false, cooldown: 2 } : p)));
-    const half = scale(8, 1);
+    // The big pad, taken: 5 s of its 10 left; then 0.5 s left
+    view.update(pads.map((p, i) => (i === 1 ? { ...p, active: false, cooldown: 5 } : p)));
+    const half = scale(6, 0);
     expect(half).toBeGreaterThan(0.2);
     expect(half).toBeLessThan(0.5); // (the glow eases in: 1 - sqrt(1 - 0.5^2) = 0.13)
-    expect(scale(9, 1)).toBe(0);
-    view.update(pads.map((p, i) => (i === 2 ? { ...p, active: false, cooldown: 0.5 } : p)));
-    expect(scale(8, 1)).toBeGreaterThan(half);
-    expect(scale(9, 1)).toBeGreaterThan(0.8);
+    expect(scale(7, 0)).toBe(0);
+    view.update(pads.map((p, i) => (i === 1 ? { ...p, active: false, cooldown: 0.5 } : p)));
+    expect(scale(6, 0)).toBeGreaterThan(half);
+    expect(scale(7, 0)).toBeGreaterThan(0.8);
     // Back: the ghosts go
     view.update(pads);
-    expect(scale(8, 1)).toBe(0);
-    expect(scale(9, 1)).toBe(0);
+    expect(scale(6, 0)).toBe(0);
+    expect(scale(7, 0)).toBe(0);
   });
 
-  it("dims a pad that was taken and hides its orb, until it is back", () => {
+  it("small pads don't warm up (VT-13)", () => {
     const view = new BoostPadsView(pads);
-    view.update(pads.map((p, i) => ({ ...p, active: i !== 2 })));
-    expect(drawn(view)[3]).toEqual([[0, 3, -4240], null]);
-    expect(drawn(view)[4]).toEqual([null, [1788, 3, 2300]]);
-    expect(drawn(view)[5]).toEqual([[0, 12, -4240], null]);
-    view.update(pads);
-    expect(drawn(view)[4]).toEqual([null, null]);
-    expect(drawn(view)[5]).toEqual([[0, 12, -4240], [1788, 12, 2300]]);
+    view.update(pads.map((p, i) => (i === 2 ? { ...p, active: false, cooldown: 0.5 } : p)));
+    expect(view.root.children.length).toBe(8); // (no small ghosts at all)
+  });
+
+  it("taken: the light fades over 0.1 s (a big orb goes at once, a small pad stays, dark), then the dimmed disc", () => {
+    const view = new BoostPadsView(pads);
+    const light = (mesh: number, slot: number): number => {
+      const c = new Color();
+      (view.root.children[mesh] as InstancedMesh).getColorAt(slot, c);
+      return c.r;
+    };
+    const taken = pads.map((p) => ({ ...p, active: false }));
+    view.update(taken, 0.05);
+    expect(drawn(view)[2]).toEqual([null]); // (the big orb at once)
+    expect(drawn(view)[0]).toEqual([[-3584, 3, 0]]); // (its lit disc still fading)
+    expect(light(0, 0)).toBeCloseTo(0.5, 6);
+    expect(drawn(view)[5]).toEqual([[0, 12, -4240], [1788, 12, 2300]]); // (the small pads stay)
+    view.update(taken, 0.06);
+    expect(drawn(view)[0]).toEqual([null]);
+    expect(drawn(view)[1]).toEqual([[-3584, 3, 0]]);
+    expect(light(5, 1)).toBe(0); // (dark)
+    // Back: the orb at once, the light fading in
+    view.update(pads, 0.025);
+    expect(drawn(view)[2]).toEqual([[-3584, 70, 0]]);
+    expect(light(2, 0)).toBeCloseTo(0.25, 6);
+    view.update(pads, 0.1);
+    expect(light(2, 0)).toBe(1);
   });
 });
 
@@ -103,5 +121,30 @@ describe("the ball's floor marker", () => {
     expect([high.x, high.z]).toEqual([-1200, 300]);
     expect(high.fade).toBeLessThan(1);
     expect(at(0, 2000, 0).fade).toBeGreaterThanOrEqual(0.45); // (never gone: it's where the ball will come down)
+  });
+});
+
+describe("the ball's look on a goal and at a kickoff (VT-15, VT-30)", () => {
+  it("dissolves in 0.333 s once exploded (each frame's time capped at 1/30), its marker gone at once", () => {
+    const view = new BallView();
+    view.fade(true, 1 / 60);
+    expect(view.opacity).toBeCloseTo(1 - 3 / 60, 9);
+    for (let i = 0; i < 19; i++) view.fade(true, 1 / 60);
+    expect(view.opacity).toBe(0);
+    const slow = new BallView();
+    slow.fade(true, 0.2); // (a long frame counts 1/30)
+    expect(slow.opacity).toBeCloseTo(0.9, 9);
+  });
+
+  it("a new ball fades in over a second; a replay's is shown at once", () => {
+    const view = new BallView();
+    view.spawn();
+    expect(view.opacity).toBe(0);
+    view.fade(false, 0.5);
+    expect(view.opacity).toBeCloseTo(0.5, 9);
+    view.fade(false, 0.6);
+    expect(view.opacity).toBe(1);
+    view.spawn(true);
+    expect(view.opacity).toBe(1);
   });
 });

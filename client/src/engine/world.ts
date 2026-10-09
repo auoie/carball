@@ -224,6 +224,11 @@ export class World {
     return this.#sim.kickoffCountdown();
   }
 
+  /** Starts (or ends, 0) the kickoff countdown: cars get no input while it runs. */
+  setKickoffCountdown(ticks: number): void {
+    this.#sim.setKickoffCountdown(ticks);
+  }
+
   ball(): BodyState {
     const m = this.#m;
     const a = this.#sim.ballState();

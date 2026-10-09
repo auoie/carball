@@ -108,9 +108,9 @@ test("a goal: the game slows down for 3.53 s, the goal replay plays, Space skips
   // 360 ticks after the goal, slowed at first: 3.53 s of real time (the server's clock)
   expect((replay.at - goal.at) / 1000).toBeGreaterThan(3.25);
   expect((replay.at - goal.at) / 1000).toBeLessThan(3.85);
-  // This client's clock slowed with it, down to the curve's 0.1875, keyed to the server's goal tick: the frame its own
-  // prediction saw the goal in (how many frames it ran depends on its frame rate: under 24 fps, the game's 5 ticks a
-  // frame fall behind real time, as software rendering here does)
+  // This client's clock slowed with it, down to the curve's 0.1875, keyed to the server's goal tick: the frame its
+  // corrected history has the goal in (how many frames it ran depends on its frame rate: under 24 fps, the game's 5
+  // ticks a frame fall behind real time, as software rendering here does)
   const { goal: slowed } = await stats(page);
   // (sampled once a frame: a slow page may step past the curve's lowest point)
   expect(slowed.minDilation).toBeGreaterThanOrEqual(0.1875);

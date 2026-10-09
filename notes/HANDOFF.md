@@ -53,9 +53,13 @@
     Fennec per team (`fennec_body_painted_*.glb`). Not done: the windows' environment reflection, the chassis boost
     glow (PNT-12).
   - **Reviews:** the static session reviews committed snapshots only (RV-n findings); tell it "ready for review: <ids>
-    @ <commit>" once the user has committed. RV-1..13 (on c0324b6) are fixed, uncommitted: send it the hash after
-    the next commit. Its Q-1 (what offline freeplay does after a goal: car reset? replay or countdown? the ball's
-    delay) needs a goal scored in live freeplay.
+    @ <commit>" once the user has committed. RV-1..13 fixed in 354e481 (re-checked by it). RV-14, 15, 17, 19..22 fixed
+    since, uncommitted: send it the hash after the next commit, with the visual-timing items done (VT-7, 12/13
+    fades, 15, 21, 23, 24, 30). Left: RV-16 (the tail lights' brake glow: needs a brake signal), RV-18 (the masks'
+    zero alpha: only matters off Chrome). Its Q-1 (does offline freeplay play a goal replay after a goal?) needs a
+    goal scored in live freeplay; the rest of Q-1 is settled by the script (RV-21: a kickoff reset, waiting for input).
+  - **Camera shakes:** `notes/camera-shakes.md` (RL's own shake components, summed after the swivel; off unless the
+    camera preset is Default, so off for Modern profiles). Not implemented yet.
   - **Local assets from the static session** (dev-only, git-ignored, load when present like the Fennec; each with a
     README and manifest): `out/bsim/assets_local/fx/` (ball GLB and material formula, the boost trail and the goal
     explosion as emitter JSON, schema rl-fx/1), `cars/` (six cars painted per team with their hitbox presets and

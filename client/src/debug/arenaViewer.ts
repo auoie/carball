@@ -1,13 +1,13 @@
 // A free camera round the arena (?viewer=arena): the arena and its theme, the ball and a car placed anywhere, seen from
 // anywhere (inside or out), for comparing it with the game's (screenshots: window.rlArenaViewer.view({eye, target,
 // ball, car})). Not part of the game.
-import { Color, Quaternion } from "three";
+import { Quaternion } from "three";
 import type { CarConfig } from "../engine/world";
 import { type Vec3, normalize, sub, vec3 } from "../math/vec";
 import { ArenaView } from "../render/arena";
 import { buildCarModel } from "../render/carModel";
 import { toThreeVector } from "../render/coords";
-import { BallView } from "../render/entities";
+import { BallView, TEAM_CAR_COLORS } from "../render/entities";
 import type { Renderer } from "../render/renderer";
 import type { Theme } from "../render/themes/theme";
 
@@ -26,7 +26,7 @@ export function showArenaViewer(renderer: Renderer, theme: Theme, config: CarCon
   renderer.scene.fog = theme.fog;
   const arena = new ArenaView(theme);
   const ball = new BallView();
-  const car = buildCarModel(config, new Color(0x1f6fff));
+  const car = buildCarModel(config, TEAM_CAR_COLORS[0], 0);
   renderer.scene.add(arena.root, ball.root, car);
   return (shot) => {
     const ballAt = toThreeVector(shot.ball ?? vec3(0, 0, -10_000));

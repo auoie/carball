@@ -2,7 +2,7 @@ import { type BufferAttribute, Mesh, Quaternion, Vector3 } from "three";
 import { describe, expect, it } from "vitest";
 import { vec3 } from "../math/vec";
 import { CarView } from "./entities";
-import { TRAIL_SECONDS, Trail } from "./supersonic";
+import { TRAIL_SECONDS, Trail, trailingRearWheels } from "./supersonic";
 
 const FRAME = 1 / 60;
 const OCTANE = {
@@ -34,16 +34,30 @@ describe("supersonic trail", () => {
   it("a supersonic car leaves its trails behind it, and they go when it slows", () => {
     const car = new CarView(OCTANE, 0);
     const facingX = new Quaternion(); // (the car faces +x in its own frame)
-    for (let i = 0; i < 30; i++) car.update(new Vector3(i * 38, 17, 0), facingX, true, false, true, FRAME);
-    expect(car.trailLength).toBeGreaterThan(10);
-    // Every point of the trails is behind the car's rear
+    const ground = { rearContact: [true, true] as const, forwardSpeed: 2300, sideSpeed: 0 };
+    for (let i = 0; i < 30; i++) car.update(new Vector3(i * 38, 17, 0), facingX, true, false, true, FRAME, ground);
+    expect(car.trailLength).toBe(Math.floor(TRAIL_SECONDS / FRAME) + 1); // (0.1 s of points)
+    // Every point of the trails is behind the rear wheels
     const child = car.root.children[1];
     if (!(child instanceof Mesh)) throw new Error("no trail");
     const trail = child as Mesh;
     const position = trail.geometry.getAttribute("position") as BufferAttribute;
-    const front = 29 * 38 + OCTANE.hitboxOffset.x - OCTANE.hitboxSize.x / 2 + 5;
+    // (from the rear tyres' contact points back)
+    const front = 29 * 38 + OCTANE.backWheel.offset.x + 1;
     for (let v = 0; v < car.trailLength * 2; v++) expect(position.getX(v)).toBeLessThan(front);
-    for (let i = 0; i < 30; i++) car.update(new Vector3(1140 + i * 30, 17, 0), facingX, false, false, false, FRAME);
+    for (let i = 0; i < 30; i++) car.update(new Vector3(1140 + i * 30, 17, 0), facingX, false, false, false, FRAME, ground);
+    expect(car.trailLength).toBe(0);
+  });
+
+  it("none in the air, nor from a wheel off the ground; sliding sideways, the wheel on the side it slides towards", () => {
+    expect(trailingRearWheels(2300, 0)).toEqual([true, true]);
+    expect(trailingRearWheels(-2300, 0)).toEqual([false, false]); // (reversing: the front wheels, which have no trail)
+    expect(trailingRearWheels(400, 900)).toEqual([false, true]);
+    expect(trailingRearWheels(400, -900)).toEqual([true, false]);
+    expect(trailingRearWheels(1500, 900)).toEqual([true, true]); // (|side| under the forward speed)
+    const car = new CarView(OCTANE, 0);
+    const air = { rearContact: [false, false] as const, forwardSpeed: 2300, sideSpeed: 0 };
+    for (let i = 0; i < 10; i++) car.update(new Vector3(i * 38, 300, 0), new Quaternion(), true, false, true, FRAME, air);
     expect(car.trailLength).toBe(0);
   });
 });

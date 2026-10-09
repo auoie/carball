@@ -360,3 +360,35 @@ describe("events in the order they came (RV-3)", () => {
     expect(readControls(frame([], [0], []), DEFAULT_BINDINGS, DZ, latch).jump).toBe(true);
   });
 });
+
+describe("inputs between frames, from the ordered event list (LT-4/5 as the browser delivers them)", () => {
+  const boostKey = DEFAULT_BINDINGS.boost.keyboard;
+  const boostCode = boostKey?.kind === "key" ? boostKey.code : "ShiftLeft";
+  const tap = (code: string): InputSnapshot => ({
+    keys: new Set(),
+    mouseButtons: new Set(),
+    pressedKeys: new Set([code]),
+    releasedKeys: new Set([code]),
+    events: [
+      { kind: "key", code, down: true },
+      { kind: "key", code, down: false },
+    ],
+    gamepad: null,
+  });
+  const idle: InputSnapshot = { keys: new Set(), mouseButtons: new Set(), events: [], gamepad: null };
+
+  it("a boost tap within one frame is lost (LT-5)", () => {
+    expect(readControls(tap(boostCode), DEFAULT_BINDINGS, DZ, new ButtonLatch()).boost).toBe(false);
+  });
+
+  it("a jump tap within one frame is one tick of jump, also from a frame with no tick (LT-4)", () => {
+    const latch = new ButtonLatch();
+    const jump = new JumpLatch();
+    const c = readControls(tap("Space"), DEFAULT_BINDINGS, DZ, latch);
+    jump.frame(latch);
+    expect(c.jump).toBe(false);
+    const next = readControls(idle, DEFAULT_BINDINGS, DZ, latch);
+    jump.frame(latch);
+    expect([jump.tick(next.jump), jump.tick(next.jump)]).toEqual([true, false]);
+  });
+});

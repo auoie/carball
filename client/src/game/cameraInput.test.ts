@@ -1,6 +1,6 @@
 // The camera switches and the input packets' clock (review findings RV-4, RV-9, RV-10).
 import { describe, expect, it } from "vitest";
-import { worldSeconds } from "../loop/fixedStep";
+import { frameTimes, worldSeconds } from "../loop/fixedStep";
 import { SendClock, newCar, updateSwitches } from "./cameraInput";
 import { postGoalDilation } from "./goalSequence";
 
@@ -15,6 +15,16 @@ describe("camera switches", () => {
     expect(updateSwitches(off, BALL, UP, OPTIONS).ballCam).toBe(true);
     expect(updateSwitches(off, BALL, UP, { ...OPTIONS, blocked: true }).ballCam).toBe(false);
     expect(updateSwitches(off, BALL, UP, { ...OPTIONS, ballCamToggle: false, blocked: true }).ballCam).toBe(false);
+  });
+
+  it("RV-20: held, a press while blocked doesn't count even held on after; a release while blocked does", () => {
+    const hold = { ...OPTIONS, ballCamToggle: false };
+    const off = { ballCam: false, rear: false };
+    const pressedBlocked = updateSwitches(off, BALL, UP, { ...hold, blocked: true });
+    expect(updateSwitches(pressedBlocked, BALL, BALL, hold).ballCam).toBe(false);
+    const on = updateSwitches(off, BALL, UP, hold);
+    expect(on.ballCam).toBe(true);
+    expect(updateSwitches(on, UP, BALL, { ...hold, blocked: true }).ballCam).toBe(false);
   });
 
   it("RV-10: a new car turns the rear camera off; held, it stays off until the button is pressed again", () => {
@@ -52,5 +62,16 @@ describe("input packets (RV-4)", () => {
     let sent = 0;
     for (let frame = 0; frame < 144 * 10; frame++) if (clock.due(1 / 144)) sent++;
     expect(Math.abs(sent - 600)).toBeLessThanOrEqual(2);
+  });
+
+  it("RV-22: count the world time undilated (DeltaSeconds / TimeDilation): 2 ms frames at 0.1875 send about 79 a second", () => {
+    const clock = new SendClock();
+    let sent = 0;
+    for (let frame = 0; frame < 500; frame++) {
+      const dilation = 0.1875;
+      if (clock.due(frameTimes(0.002, dilation).world / dilation)) sent++;
+    }
+    expect(sent).toBeGreaterThanOrEqual(78);
+    expect(sent).toBeLessThanOrEqual(81);
   });
 });
