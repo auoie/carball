@@ -4,6 +4,7 @@
 // Usage: rl_patch_tests [collision_meshes dir]   (default: ARENA_MESH_DIR from CMake)
 #include "RocketSim.h"
 #include "Sim/Quantize/Quantize.h"
+#include "Sim/GameRotator/GameRotator.h"
 
 #include <cmath>
 #include <algorithm>
@@ -673,8 +674,6 @@ static void TestNoPickupAtFullBoost() {
 	delete arena;
 }
 
-// The ball's own impacts (notes/impact-triggers.md §2b, RV-172): dropped on the floor, a world impact at its speed
-// before the step, its normal up; resting, none; with a car, the car's event only
 // A car added after the ball moved alone still collides with it (the broadphase patch): the ball placed away from the
 // centre in an arena without cars, left to rest, then a car driven into it
 static void TestLateCarMeetsBall() {
@@ -691,6 +690,8 @@ static void TestLateCarMeetsBall() {
 	delete arena;
 }
 
+// The ball's own impacts (notes/impact-triggers.md §2b, RV-172): dropped on the floor, a world impact at its speed
+// before the step, its normal up; resting, none; with a car, the car's event only
 static void TestBallImpacts() {
 	puts("the ball's impacts (RV-172): with the world its own, at |vz| before the step; with a car the car's only");
 	Arena* arena = Arena::Create(GameMode::SOCCAR);
@@ -767,21 +768,30 @@ static void TestImpactFilters() {
 			body.forceActivationState(DISABLE_SIMULATION);
 		if (mode == 2)
 			body.setCollisionFlags(body.getCollisionFlags() | btCollisionObject::CF_NO_CONTACT_RESPONSE);
-		int hits = 0;
+		int hits = 0, before = 0;
 		for (int t = 0; t < 30; t++) {
 			arena->Step(1);
 			for (const auto& e : arena->impacts)
 				if (e.carId == car->id && e.partnerKind == 1)
 					hits++;
+			arena->impacts.clear();
+			// (mode 3: the flag set once they touch: the persisting points keep the last setup's velocities, RV-211)
+			if (mode == 3 && hits > 0 && before == 0) {
+				before = hits;
+				body.setCollisionFlags(body.getCollisionFlags() | btCollisionObject::CF_NO_CONTACT_RESPONSE);
+			}
 		}
 		delete arena;
-		return hits;
+		return hits - before;
 	};
 	CHECK(ballHits(0) > 0, "no ball impact from a car driving into it");
 	CHECK(ballHits(1) == 0, "a disabled ball gave %d", ballHits(1));
 	// (without contact response there's no solver contact, so no point velocities either: none with or without that
 	// filter)
 	CHECK(ballHits(2) == 0, "a ball without contact response gave %d", ballHits(2));
+	// (losing its response while in contact: its manifold's points persist a while, with their last solver setup's
+	// velocities: the filter keeps them out)
+	CHECK(ballHits(3) == 0, "a ball losing its contact response mid-contact gave %d more", ballHits(3));
 }
 
 static void TestImpacts() {
@@ -822,8 +832,9 @@ static void TestImpacts() {
 			arena->impacts.clear();
 			vzBefore = car->GetState().vel.z;
 			arena->Step(1);
+			// (the car's: the ball's own world events share the partner kind, RV-211)
 			for (const auto& e : arena->impacts)
-				if (e.partnerKind == 0)
+				if (e.carId == car->id && e.partnerKind == 0)
 					hit = &e;
 		}
 		CHECK(hit != nullptr, "no world impact");
@@ -840,7 +851,7 @@ static void TestImpacts() {
 		arena->Step(120);
 		size_t resting = 0;
 		for (const auto& e : arena->impacts)
-			resting += e.partnerKind == 0;
+			resting += e.carId == car->id && e.partnerKind == 0;
 		CHECK(resting == 0, "%zu impacts resting", resting);
 		// (sliding on its roof at 1000 uu/s: little along the normal, the slide across it kept: RV-164)
 		arena->collectImpacts = true;
@@ -852,7 +863,7 @@ static void TestImpacts() {
 		arena->Step(2);
 		bool slid = false;
 		for (const auto& e : arena->impacts)
-			slid |= e.partnerKind == 0 && e.speed < 50 && e.slide > 900 && e.slide < 1050;
+			slid |= e.carId == car->id && e.partnerKind == 0 && e.speed < 50 && e.slide > 900 && e.slide < 1050;
 		CHECK(slid, "no slide entry (%zu impacts)", arena->impacts.size());
 		// (off, the default: nothing kept)
 		arena->impacts.clear();
@@ -863,8 +874,9 @@ static void TestImpacts() {
 		delete arena;
 	}
 	{
-		// A car's corner into another's side, the first turned 45 degrees: for the struck car the line check through the
-		// averaged point meets the corner's face, so its normal leans 45 degrees, not the side's own (IT-3, RV-165)
+		// A car's corner into another's side, the first turned 45 degrees: no line check against a car (its collision
+		// component is its skeletal mesh: RV-215), so the struck car's normal is the contacts' averaged one, its side's,
+		// and the two cars' events agree: the same speed, opposite normals (a ray met the corner's turned face)
 		Arena* arena = Arena::Create(GameMode::SOCCAR);
 		arena->collectImpacts = true;
 		arena->SetMutatorConfig([&] { MutatorConfig m = arena->GetMutatorConfig(); m.demoMode = DemoMode::DISABLED; return m; }());
@@ -875,17 +887,23 @@ static void TestImpacts() {
 		// (in the air, clear of the tyres' grip)
 		a->SetState(CarAt({ 0, -400, 600 }, { c45, c45, 0 }, { 0, 0, 1 }, { 0, 1200, 0 }));
 		b->SetState(CarAt({ 0, 0, 600 }, { 1, 0, 0 }, { 0, 0, 1 }));
-		const Arena::ImpactEvent* struck = nullptr;
+		const Arena::ImpactEvent *struck = nullptr, *striking = nullptr;
 		for (int t = 0; t < 60 && !struck; t++) {
+			arena->impacts.clear();
 			arena->Step(1);
-			for (const auto& e : arena->impacts)
+			for (const auto& e : arena->impacts) {
 				if (e.carId == b->id && e.partnerKind == 2)
 					struck = &e;
+				if (e.carId == a->id && e.partnerKind == 2)
+					striking = &e;
+			}
 		}
-		CHECK(struck != nullptr, "no car-car impact");
-		if (struck) {
+		CHECK(struck != nullptr && striking != nullptr, "no car-car impact (struck %d, striking %d)", struck != nullptr, striking != nullptr);
+		if (struck && striking) {
 			CHECK(struck->partnerId == a->id, "partner %u", struck->partnerId);
-			CHECK(fabsf(struck->normal.x) > 0.5f && fabsf(struck->normal.y) > 0.5f, "normal %g %g %g", struck->normal.x, struck->normal.y, struck->normal.z);
+			CHECK(fabsf(struck->normal.y) > 0.99f, "normal %g %g %g: expected the side's own", struck->normal.x, struck->normal.y, struck->normal.z);
+			CHECK(fabsf(struck->speed - striking->speed) < 1e-3f * RS_MAX(1.f, struck->speed), "speeds %.4f vs %.4f", struck->speed, striking->speed);
+			CHECK(struck->normal.Dot(striking->normal) < -0.9999f, "normals not opposite (dot %.6f)", struck->normal.Dot(striking->normal));
 		}
 		delete arena;
 	}
@@ -1030,18 +1048,27 @@ static void TestGoalExplosion() {
 	arena->ball->SetState(b);
 	arena->Step(1);
 	CHECK(arena->goalExplosion.active, "the goal didn't set off the explosion");
+	// (KNB-7: where the ball was as the scoring step began, one tick short of the line)
+	CHECK(arena->goalExplosion.origin.y == 5250 && arena->goalExplosion.origin.z == 300, "the explosion at (%.2f, %.2f, %.2f): expected the ball's start of the step",
+		arena->goalExplosion.origin.x, arena->goalExplosion.origin.y, arena->goalExplosion.origin.z);
 	int pushes = 0, pushTick = -1;
-	Vec pushed;
+	Vec pushed, pushedAt;
+	float nextMove = -1;
 	Arena* copy = nullptr;
 	for (int i = 0; i < 60; i++) {
 		Vec before = near->GetState().vel;
+		Vec at = near->GetState().pos;
 		arena->Step(1);
 		Vec dv = near->GetState().vel - before;
-		if (dv.Length() > 500) {
+		if (pushTick >= 0 && nextMove < 0)
+			nextMove = (near->GetState().pos - at).Length();
+		// (the push away from the goal; the next tick's cap takes speed off along it, not a push)
+		if (dv.y < -500) {
 			pushes++;
 			pushTick = i;
-			pushed = near->GetState().vel;
 		}
+		if (pushTick >= 0 && i == pushTick + 1)
+			pushed = near->GetState().vel;
 		if (i == 5) { // (mid-wave: a snapshot goes on the same)
 			DataStreamOut out;
 			arena->Serialize(out);
@@ -1050,9 +1077,11 @@ static void TestGoalExplosion() {
 			copy = Arena::DeserializeNew(in);
 		}
 	}
-	// The front reaches the car's hitbox (about 1240 uu away) after about 0.124 s: tick 15 of the wave
-	CHECK(pushes == 1 && pushTick >= 12 && pushTick <= 16, "%d pushes, at wave tick %d (expected one, about 15)", pushes, pushTick);
-	// (from 500 uu behind and below the ball, (0, 5800, -200), to the car: up about 0.12 of the push)
+	// The front reaches the car's box (1228 uu away: KNB-9) at the end of loop step 14, 15 x 83.3 uu out
+	CHECK(pushes == 1 && pushTick == 14, "%d pushes, at loop step %d (expected one, at 14)", pushes, pushTick);
+	// (KNB-5: pushed between ticks, capped as the next one starts: it moves no more than the top speed allows)
+	CHECK(nextMove >= 0 && nextMove <= CAR_MAX_SPEED / 120 + 0.5f, "the tick after the push moved %.2f uu (capped: %.2f at most)", nextMove, CAR_MAX_SPEED / 120);
+	// (from 500 uu behind and below the ball, (0, 5750, -200), to the car: up about 0.12 of the push)
 	CHECK(pushed.y < -1500 && pushed.z > 200 && pushed.Length() <= CAR_MAX_SPEED + 1,
 		"pushed to (%.0f, %.0f, %.0f): expected away from the goal, up, capped", pushed.x, pushed.y, pushed.z);
 	CHECK(far->GetState().vel.Length() < 1 && demoed->GetState().isDemoed, "the far car moved (%.1f uu/s)", far->GetState().vel.Length());
@@ -1064,6 +1093,52 @@ static void TestGoalExplosion() {
 		delete copy;
 	}
 	delete arena;
+}
+
+static void TestGoalExplosionLocation() {
+	puts("goal explosion: the push at the car's actor Location, a tick behind (a moving car spins, a resting one doesn't); its reach to that Location's cylinder box (KNB-6, KNB-9)");
+	using namespace RLConst;
+	// (the ball low through the goal mouth, a car side-on to it 1256 uu from the cylinder box, so the box (48, 48, 32)
+	// and the hitbox are reached on different ticks)
+	auto run = [](Vec carPos, Vec carVel, float yaw, int& pushTick, Vec& dAngVel) {
+		Arena* arena = Arena::Create(GameMode::SOCCAR);
+		Car* car = arena->AddCar(Team::BLUE);
+		CarState s = CarAt(carPos, { cosf(yaw), sinf(yaw), 0 }, { 0, 0, 1 });
+		car->SetState(s);
+		// (settled on its wheels first: a car still bouncing has a lever of its own)
+		arena->Step(120);
+		s = car->GetState();
+		s.vel = carVel;
+		car->SetState(s);
+		BallState b;
+		b.pos = { 0, 5250, 100 };
+		b.vel = { 0, 1000, 0 };
+		arena->ball->SetState(b);
+		arena->Step(1);
+		pushTick = -1;
+		for (int i = 0; i < 40 && pushTick < 0; i++) {
+			Vec v0 = car->GetState().vel, w0 = car->GetState().angVel;
+			car->controls = CarControls();
+			arena->Step(1);
+			if ((car->GetState().vel - v0).y < -500) {
+				pushTick = i;
+				dAngVel = car->GetState().angVel - w0;
+			}
+		}
+		delete arena;
+	};
+	int restTick = -1, moveTick = -1;
+	Vec restSpin, moveSpin;
+	// (yaw 90: the hitbox's 59 half length and 13.88 offset along y reach 25 uu nearer than the box's 48)
+	run({ 0, 3947, 17.01f }, { 0, 0, 0 }, 1.5707964f, restTick, restSpin);
+	const float box = sqrtf(1255.f * 1255.f + 51.f * 51.f);
+	const int want = (int)ceilf(box / (10000.f / 120.f)) - 1; // (the radius at loop step i: (i + 1) x 83.3)
+	CHECK(restTick == want, "a resting car pushed at loop step %d (the cylinder box at %.1f uu: %d)", restTick, box, want);
+	// (no lever: its Location is its body's)
+	CHECK(restSpin.Length() < 1e-3f, "a resting car spun by %.4f rad/s", restSpin.Length());
+	// (moving 1000 uu/s across the push: its Location 8.3 uu behind, the impulse there turns it)
+	run({ 0, 3947, 17.01f }, { 1000, 0, 0 }, 1.5707964f, moveTick, moveSpin);
+	CHECK(moveTick >= 0 && moveSpin.Length() > 0.05f, "a moving car spun by %.4f rad/s (expected the lever's spin)", moveSpin.Length());
 }
 
 static void TestSpawnHeights() {
@@ -1776,6 +1851,205 @@ static void TestGoalBodyOrigins() {
 	delete arena;
 }
 
+// --------------------------------------------------------------------------------------------
+// RL PATCH tests (CCR1, the car-car residual): states recorded live (PhysLog), as live_validate sets them
+struct Rec { float q[4], p[3], v[3], w[3]; };
+
+// A body state as the game's RBState sets it (the rotation btMatrix3x3(btQuaternion(q)), as live_validate)
+static CarState CarFrom(const Rec& r, CarState s, bool onGround, int wheels /* bit i: our wheel i touches */) {
+	s.pos = Vec(r.p[0], r.p[1], r.p[2]);
+	s.rotMat = RotMat(btMatrix3x3(btQuaternion(r.q[0], r.q[1], r.q[2], r.q[3])));
+	s.vel = Vec(r.v[0], r.v[1], r.v[2]);
+	s.angVel = Vec(r.w[0], r.w[1], r.w[2]);
+	s.isOnGround = onGround;
+	for (int i = 0; i < 4; i++) {
+		s.wheelsWithContact[i] = (wheels >> i) & 1;
+		s.wheelCarry.wheels[i].worldContact = s.wheelsWithContact[i] && onGround;
+		s.wheelCarry.wheels[i].contactNormal = s.rotMat.up;
+	}
+	s.refreshInertia = true;
+	return s;
+}
+static BallState BallFrom(const Rec& r) {
+	BallState b;
+	b.pos = Vec(r.p[0], r.p[1], r.p[2]);
+	b.rotMat = RotMat(btMatrix3x3(btQuaternion(r.q[0], r.q[1], r.q[2], r.q[3])));
+	b.vel = Vec(r.v[0], r.v[1], r.v[2]);
+	b.angVel = Vec(r.w[0], r.w[1], r.w[2]);
+	return b;
+}
+static float DistV(Vec a, Vec b) { return (a - b).Length(); }
+
+// One tick from the recorded state first (the cars apart, the ball far), then the state set again: the wheels' values
+// carried between ticks are then the ones this state gives, as in live_validate's per-tick runs
+static void WarmUp(Arena* arena, Car* car, const Rec& r, bool onGround, int wheels, Vec shift = Vec()) {
+	Rec w = r;
+	for (int i = 0; i < 3; i++) w.p[i] += shift[i];
+	car->SetState(CarFrom(w, car->GetState(), onGround, wheels));
+}
+
+// CCR-1: a car dropped across a parked car's roof (live `car_car` 2026-10-08 04:17, segment 4: rows 492 -> 585, run
+// on from row 492 without resetting). Both back wheels bottom out on the lower car's roof: each wheel's pushback
+// (resolveSingleCollision against the lower car, which gets the opposite impulse at once) and its 1.0 push read the
+// lower car's velocity after the wheels before it, in the game's order (front left, front right, back left, back right).
+static void TestRoofLanding() {
+	puts("CCR-1: a car landing across another's roof (live car_car rows 492-585, run on)");
+	Arena* arena = Arena::Create(GameMode::SOCCAR);
+	Car* car = arena->AddCar(Team::BLUE, CAR_CONFIG_OCTANE);
+	Car* bot = arena->AddCar(Team::ORANGE, CAR_CONFIG_OCTANE);
+	CarConfig c = car->config; (void)c;
+	BallState far; far.pos = Vec(3000, -2000, 92.75f); arena->ball->SetState(far);
+	arena->Step(4); // (ticks before the scenario: none of this tick-count dependent)
+	const Rec carRow = { { 2.69739849e-06f, 2.69739849e-06f, 0.707106829f, 0.707106829f }, { 0, 0, 249.819992f }, { 0, 0, -13.5310001f }, { 0, 0, 0 } };
+	const Rec botRow = { { 0.000126777712f, 0.000666257343f, -2.42765836e-05f, 0.999999762f }, { 0.00999999978f, 0, 17.039999f },
+	                     { 1.51100004f, -0.0710000023f, 1.90100002f }, { 0.0120099997f, 0.0890099928f, -0.00160999992f } };
+	car->SetState(CarFrom(carRow, car->GetState(), false, 0));
+	bot->SetState(CarFrom(botRow, bot->GetState(), true, 15));
+	car->controls = bot->controls = CarControls();
+	// The recorded velocities (uu/s) at rows 581-585 (the landing: the back wheels bottom out from 580, the bodies
+	// touch from 582)
+	struct Want { int row; Vec carVel, botVel; };
+	const Want want[] = {
+		{ 581, { 1.671f, 36.0009995f, -282.381012f }, { -10.0410004f, -1.43099999f, -18.0509987f } },
+		{ 582, { 1.66100001f, 38.0109978f, -267.181f }, { -0.370999992f, -2.16099977f, -16.6209984f } },
+		{ 583, { 2.07099986f, 79.1009979f, -139.201004f }, { 2.02099991f, -41.4510002f, -125.480995f } },
+		{ 584, { 1.98099995f, 81.1909943f, -101.431f }, { 2.01099992f, -42.230999f, -84.9710007f } },
+		{ 585, { 1.671f, 83.8610001f, -70.3409958f }, { -0.550999999f, -40.8209991f, -53.5709991f } },
+	};
+	int row = 492;
+	for (const Want& w : want) {
+		arena->Step(w.row - row);
+		row = w.row;
+		float eCar = DistV(car->GetState().vel, w.carVel), eBot = DistV(bot->GetState().vel, w.botVel);
+		printf("    row %d: car %.4f, lower car %.4f uu/s off\n", w.row, eCar, eBot);
+		CHECK(eCar < 0.1f && eBot < 0.1f, "row %d: car %.3f, lower car %.3f uu/s from the game", w.row, eCar, eBot);
+	}
+	delete arena;
+}
+
+// CCR-2: the bump's up push along the victim's up as the game's GetBumpImpulse takes it,
+// GetRotatorAxis(QuatToRotator(OldRBState.Quaternion), 2): the rotator's whole units and the 16384-entry sine table.
+// Live `car_car` row 110 -> 111 (a side bump at 1400): the parked bot's up is 0.0097 off vertical in x; the exact axis
+// pushes 2.70 uu/s along x, the rotator's 2.79 (the game: 2.751 + 0.035 from the step)
+static void TestBumpUpRotator() {
+	puts("CCR-2: the bump's up push through the victim's rotator (live car_car row 110 -> 111)");
+	Arena* arena = Arena::Create(GameMode::SOCCAR);
+	Car* car = arena->AddCar(Team::BLUE, CAR_CONFIG_OCTANE);
+	Car* bot = arena->AddCar(Team::ORANGE, CAR_CONFIG_OCTANE);
+	BallState far; far.pos = Vec(3000, -2000, 92.75f); arena->ball->SetState(far);
+	arena->Step(4);
+	const Rec carRow = { { -0.00339062954f, 0.00339062954f, 0.707101345f, 0.707095981f }, { 0, -108.009995f, 17 }, { 0, 1410.01099f, 0.370999992f }, { 0, 0, 0 } };
+	const Rec botRow = { { -1.88817903e-05f, 0.00482564606f, 1.34869933e-05f, 0.999988437f }, { 0.119999997f, 0, 17.0200005f },
+	                     { -0.0109999999f, 0, 0.120999999f }, { 0.000309999974f, -0.000609999988f, 0 } };
+	// The bump's own velocity change: the tick with bumps on, less the same tick with the bump force scaled to 0
+	auto run = [&](float bumpScale) {
+		MutatorConfig m = arena->GetMutatorConfig();
+		m.bumpForceScale = bumpScale;
+		arena->SetMutatorConfig(m);
+		car->controls = CarControls(); car->controls.throttle = 1;
+		bot->controls = CarControls();
+		WarmUp(arena, car, carRow, true, 15);
+		WarmUp(arena, bot, botRow, true, 15, Vec(1500, 0, 0));
+		arena->Step(1);
+		car->SetState(CarFrom(carRow, car->GetState(), true, 15));
+		bot->SetState(CarFrom(botRow, bot->GetState(), true, 15));
+		arena->Step(1);
+		Vec v = bot->GetState().vel;
+		car->SetState(CarFrom(carRow, car->GetState(), true, 15)); // (apart again for the next run's cooldown)
+		bot->SetState(CarFrom(botRow, bot->GetState(), true, 15));
+		car->SetState([&] { CarState s = car->GetState(); s.pos = s.pos + Vec(0, -2000, 0); return s; }());
+		arena->Step(40);
+		return v;
+	};
+	Vec without = run(0), with = run(1);
+	Vec bump = with - without;
+	// The game's: its velocity after the tick (2.751, 1890.171, 279.821) less what the engine's own step gives without
+	// the bump in the per-tick validator (x -0.0351): x 2.786 +- 0.01 (rows are truncated to 0.01, then +0.001)
+	printf("    bump (%.4f %.4f %.4f) uu/s; the game's x 2.786 (the rotator's 2.7896, the exact axis' 2.7003)\n", bump.x, bump.y, bump.z);
+	CHECK(fabsf(bump.x - 2.786f) < 0.015f, "bump x %.4f", bump.x);
+	CHECK(fabsf(bump.y - 1116.3f) < 0.2f && fabsf(bump.z - 279.79f) < 0.05f, "bump (%.3f %.3f %.3f)", bump.x, bump.y, bump.z);
+	delete arena;
+}
+
+// CCR-3: the ball hit's forward adjustment along the car's forward as ApplyBallImpactForces takes it,
+// GetRotatorAxis(QuatToRotator(OldRBState.Quaternion), 0). Live `ball_hits` row 351 -> 352 (boosting at 2221 into a
+// resting ball): the ball's z velocity 0.18 uu/s off with the exact axis
+static void TestBallHitForwardRotator() {
+	puts("CCR-3: the ball hit's forward through the car's rotator (live ball_hits row 351 -> 352)");
+	Arena* arena = Arena::Create(GameMode::SOCCAR);
+	Car* car = arena->AddCar(Team::BLUE, CAR_CONFIG_OCTANE);
+	BallState far; far.pos = Vec(3000, -2000, 92.75f); arena->ball->SetState(far);
+	arena->Step(4);
+	const Rec carRow = { { -0.00341760367f, 0.00341220875f, 0.707101107f, 0.707095981f }, { 0, -1143.71997f, 17 }, { 0, 2221.26099f, 0.130999997f },
+	                     { 0.000609999988f, 0.000109999994f, 0 } };
+	const Rec ballRow = { { -0.488438636f, 0.605203867f, -0.426085323f, -0.462176681f }, { 0, -1000, 92.75f }, { 0, 0, 0 }, { 0, 0, 0 } };
+	car->controls = CarControls(); car->controls.throttle = 1; car->controls.boost = true;
+	WarmUp(arena, car, carRow, true, 15);
+	arena->Step(1);
+	CarState s = CarFrom(carRow, car->GetState(), true, 15);
+	s.boost = 100;
+	car->SetState(s);
+	arena->ball->SetState(BallFrom(ballRow));
+	car->controls = CarControls(); car->controls.throttle = 1; car->controls.boost = true;
+	arena->Step(1);
+	Vec cv = car->GetState().vel, cgame(0, 1963.10095f, -98.3509979f);
+	printf("    car (%.4f %.4f %.4f), the game's (%.4f %.4f %.4f)\n", cv.x, cv.y, cv.z, cgame.x, cgame.y, cgame.z);
+	Vec v = arena->ball->GetState().vel, game(-0.0109999999f, 2781.54102f, 927.300964f);
+	printf("    ball (%.4f %.4f %.4f), the game's (%.4f %.4f %.4f)\n", v.x, v.y, v.z, game.x, game.y, game.z);
+	CHECK(DistV(v, game) < 0.05f, "%.4f uu/s off", DistV(v, game)); // (the car itself 0.02 off in this fresh arena: per tick in live_validate the ball is 0.0003 off)
+	delete arena;
+}
+
+// CCR-4: the demo cone as the game's (FUN_140f11c30 from Impact.Rotation = QuatToRotator): the hitbox centres are the
+// location plus LocalCollisionOffset multiplied by the rotator matrix's rows (the transpose of the rotation), the axes
+// from the rotator. A supersonic attacker (2250 uu/s) at yaw A, a parked victim at yaw B, (dx, dy) to the attacker's
+// left and ahead: the two cases sit mid-way in 12 uu wide bands where the rules disagree
+static void TestDemoConeCentres() {
+	puts("CCR-4: the demo cone's hitbox centres with the offset times the transposed rotation");
+	Arena* arena = Arena::Create(GameMode::SOCCAR);
+	Car* a = arena->AddCar(Team::BLUE, CAR_CONFIG_OCTANE);
+	Car* b = arena->AddCar(Team::ORANGE, CAR_CONFIG_OCTANE);
+	BallState far; far.pos = Vec(3000, -4000, 92.75f); arena->ball->SetState(far);
+	auto demolished = [&](float yawA, float yawB, float dx, float dy) {
+		float ya = yawA * (float)M_PI / 180, yb = yawB * (float)M_PI / 180;
+		Vec fa(cosf(ya), sinf(ya), 0), fb(cosf(yb), sinf(yb), 0), left = Vec(0, 0, 1).Cross(fa);
+		CarState sa; sa.pos = Vec(0, 0, 17); sa.rotMat = RotMat(fa, left, Vec(0, 0, 1)); sa.vel = fa * 2250;
+		sa.isSupersonic = true; sa.refreshInertia = true;
+		CarState sb; sb.pos = Vec(0, 0, 17) + fa * dy + left * dx; sb.rotMat = RotMat(fb, Vec(0, 0, 1).Cross(fb), Vec(0, 0, 1));
+		sb.refreshInertia = true;
+		a->SetState(sa); b->SetState(sb);
+		a->controls = b->controls = CarControls();
+		for (int t = 0; t < 12 && !b->GetState().isDemoed; t++) arena->Step(1);
+		bool d = b->GetState().isDemoed;
+		arena->Step(1);
+		CarState r = b->GetState(); r.isDemoed = false; b->SetState(r);
+		r = a->GetState(); r.isDemoed = false; a->SetState(r);
+		arena->Step(1);
+		return d;
+	};
+	bool d1 = demolished(60, 0, -86, 180), d2 = demolished(30, 90, -91, 180);
+	CHECK(d1, "attacker yaw 60, victim yaw 0, 86 uu to the right: the game's cone demolishes (RocketSim's: no)");
+	CHECK(!d2, "attacker yaw 30, victim yaw 90, 91 uu to the right: the game's cone doesn't (RocketSim's: demolishes)");
+	delete arena;
+}
+
+
+// RL PATCH (CCR-2..4): the game's rotators: QuatToRotator's whole units and FRotationMatrix's 16384-entry sine table
+static void TestGameRotator() {
+	puts("CCR-2..4: the game's rotators (QuatToRotator, the sine table)");
+	CHECK(UESinTab(0) == 0 && UESinTab(0x4000) == 1.f && UESinTab(0x8000) == det_sinf(3.1415927f), "sine table ends");
+	// The parked bot of live car_car row 110: rotator (-101, 0, 0); its up's x 0.00997033 (exact axis 0.0096512)
+	RotMat m(btMatrix3x3(btQuaternion(-1.88817903e-05f, 0.00482564606f, 1.34869933e-05f, 0.999988437f)));
+	GameRotator r = UERotatorFromMatrix(m);
+	CHECK(r.pitch == -101 && r.yaw == 0 && r.roll == 0, "rotator (%d %d %d)", r.pitch, r.yaw, r.roll);
+	RotMat g = GameRotatorBasis(m);
+	CHECK(fabsf(g.up.x - 0.00997033f) < 1e-7f && g.up.y == 0, "up (%.8f %.8f %.8f)", g.up.x, g.up.y, g.up.z);
+	// The cone's centre: the offset times the rows (yaw 90: the Octane's 13.88 forward lands behind the origin)
+	RotMat yaw90 = UERotationMatrix({ 0, 0x4000, 0 });
+	Vec c = GameConeCentre(Vec(0, 0, 17), yaw90, Vec(13.87566f, 0, 20.754988f));
+	CHECK(fabsf(c.x) < 1e-5f && fabsf(c.y + 13.87566f) < 1e-4f && fabsf(c.z - 37.754988f) < 1e-4f, "centre (%f %f %f)", c.x, c.y, c.z);
+}
+
 int main(int argc, char** argv) {
 	std::string meshes = argc > 1 ? argv[1] : ARENA_MESH_DIR;
 	RocketSim::Init(meshes, true);
@@ -1798,12 +2072,18 @@ int main(int argc, char** argv) {
 	TestNoPickupAtFullBoost();
 	TestRespawnsHeld();
 	TestGoalExplosion();
+	TestGoalExplosionLocation();
 	TestBallRotation();
 	TestBallExplodesOnGoal();
 	TestDemoSpawnSelection();
 	TestKickoffBall();
 	TestKickoffCountdown();
 	TestCountdownHeldJump();
+	TestGameRotator();
+	TestRoofLanding();
+	TestBumpUpRotator();
+	TestBallHitForwardRotator();
+	TestDemoConeCentres();
 
 	Arena* arena = Arena::Create(GameMode::SOCCAR);
 	Car* car = arena->AddCar(Team::BLUE);

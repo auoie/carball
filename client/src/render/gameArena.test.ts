@@ -9,10 +9,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { ENV_GLSL, ENV_RADIAL, ENV_SPREAD, GOAL_SIDE_CHART, GlowStripMaterial, HexGlassMaterial, ForceFieldMaterial, envG, goalSideV, netSideUv, overlayUv } from "./gameSurfaces";
 import { GOAL_BASE_LIGHT, GoalFloorMaterial, goalBaseZ, goalFloorZone, underGlassV } from "./goalInterior";
 import { GOAL_PROFILE_CHART, goalPath, goalProfileU } from "./goalSurface";
-import { HexFloorMaterial } from "./stadiumField";
+import { HexFloorMaterial, SIDE_TRIM, SideTrimMaterial } from "./stadiumField";
 import { HexWallMaterial } from "./hexWalls";
 import { nightTheme } from "./themes/night";
 import { stadiumTheme } from "./themes/stadium";
+import { ARENA_PRIORITY } from "./translucentSort";
 
 /** The materials drawn in the main view (not the reflection capture's own hotspots, hidden but while it captures) */
 function materials(root: Object3D): Material[] {
@@ -30,8 +31,8 @@ describe("the game's arena materials", () => {
   it("the stadium: the game's overlay on the walls, glass beside the goals and in them, glow sheets, additive beams", () => {
     const all = materials(stadium.root);
     expect(all.filter((m) => m instanceof ForceFieldMaterial)).toHaveLength(1);
-    // (beside each goal, and the nets)
-    expect(all.filter((m) => m instanceof HexGlassMaterial)).toHaveLength(3);
+    // (beside each goal, and the nets: each goal's own mesh, TRN1)
+    expect(all.filter((m) => m instanceof HexGlassMaterial)).toHaveLength(4);
     // (each side wall, each team's half; each goal's glows: RV-77)
     expect(all.filter((m) => m instanceof GlowStripMaterial)).toHaveLength(6);
     expect(all.filter((m) => m instanceof HexWallMaterial)).toHaveLength(0);
@@ -80,9 +81,45 @@ describe("the game's arena materials", () => {
     expect(last?.[1]).toBeCloseTo(5136, 0);
   });
 
+  it("the arena's translucents at the game's TranslucencySortPriority (TRN1): the under glass -3, the centre lines -2, the field glows -1, the rest 0 (the cage's lines right after its fill); each goal's pieces their own", () => {
+    const orders = new Map<string, Set<number>>();
+    stadium.root.traverseVisible((o) => {
+      if (!(o instanceof Mesh) || !(o.material as Material).transparent) return;
+      const key = o.name || (o.material as Material).constructor.name;
+      orders.set(key, (orders.get(key) ?? new Set()).add(o.renderOrder));
+    });
+    const of = (key: string): number[] => [...(orders.get(key) ?? [])];
+    expect(of("goal under glass")).toEqual([ARENA_PRIORITY.goalGlassOuter]);
+    expect(of("markings: centre")).toEqual([ARENA_PRIORITY.centreLines]);
+    expect(of("markings: goal")).toEqual([ARENA_PRIORITY.base]);
+    expect(of("ForceFieldMaterial")).toEqual([ARENA_PRIORITY.base]);
+    expect(of("GoalFloorMaterial")).toEqual([ARENA_PRIORITY.base]);
+    expect(of("HexGlassMaterial")).toEqual([ARENA_PRIORITY.base]);
+    expect(of("GlowStripMaterial").sort((a, b) => a - b)).toEqual([ARENA_PRIORITY.fieldGlow]);
+    expect(of("goal glow 0")).toEqual([ARENA_PRIORITY.base]);
+    // (each goal its own net and floor: their bounds on their own side)
+    const nets: Mesh[] = [];
+    stadium.root.traverseVisible((o) => {
+      if (o instanceof Mesh && o.material instanceof HexGlassMaterial && "glassTile" in (o.geometry as BufferGeometry).attributes) nets.push(o as Mesh);
+    });
+    expect(nets).toHaveLength(2);
+    expect(nets.map((n) => Math.sign(n.geometry.boundingSphere?.center.z ?? 0)).sort()).toEqual([-1, 1]);
+  });
+
+  it("the stadium's wall foot as the game's frame (AV-10, H-4: Side_Trim, its tire marks 0.904, its baked light, the capture along its own reflection); other themes' lit", () => {
+    const trims = materials(stadium.root).filter((m): m is SideTrimMaterial => m instanceof SideTrimMaterial);
+    expect(trims).toHaveLength(1);
+    const fragment = trims[0]?.fragmentShader ?? "";
+    expect(fragment).toContain("reflect(-toCamera, normalize(vNormal))");
+    expect(fragment).toContain(`vec3(${SIDE_TRIM.light.map((v) => v.toFixed(3)).join(", ")})`);
+    expect(SIDE_TRIM.m).toBe(0.904);
+    expect(materials(night.root).filter((m) => m instanceof SideTrimMaterial)).toHaveLength(0);
+  });
+
   it("other themes keep our own look", () => {
     const all = materials(night.root);
-    expect(all.filter((m) => m instanceof HexWallMaterial)).toHaveLength(2);
+    // (the walls, and each goal's net)
+    expect(all.filter((m) => m instanceof HexWallMaterial)).toHaveLength(3);
     expect(all.filter((m) => m instanceof GlowStripMaterial || m instanceof HexGlassMaterial || m instanceof ForceFieldMaterial)).toHaveLength(0);
     expect(all.filter((m) => m.blending === AdditiveBlending)).toHaveLength(0);
   });
@@ -185,9 +222,9 @@ describe("the goals' insides (RV-76, RV-77)", () => {
     }
     expect(checked).toBeGreaterThan(10);
     // (under it: the lower glass, the glows, OOBFloor)
-    expect(meshes.filter((m) => m.name === "goal under glass")).toHaveLength(1);
+    expect(meshes.filter((m) => m.name === "goal under glass")).toHaveLength(2);
     expect(meshes.filter((m) => m.name === "goal base bevels")).toHaveLength(2);
-    expect(meshes.filter((m) => m.material instanceof GoalFloorMaterial)).toHaveLength(2);
+    expect(meshes.filter((m) => m.material instanceof GoalFloorMaterial)).toHaveLength(4);
     // (the frame's tire marks inside its saturate, as H-4's: sat((R + 4 (0.125 + 0.625 G) cube) m) x its light, both
     // places: RV-168d)
     const frame = new GoalFloorMaterial({ value: null as never }).fragmentShader;

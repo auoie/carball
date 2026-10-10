@@ -6,12 +6,13 @@ import {
   Color,
   CylinderGeometry,
   DataTexture,
+  DataUtils,
   DirectionalLight,
   FloatType,
   Mesh,
+  MeshBasicMaterial,
   MeshStandardMaterial,
   NearestFilter,
-  MeshBasicMaterial,
   OrthographicCamera,
   PerspectiveCamera,
   PlaneGeometry,
@@ -19,8 +20,8 @@ import {
   Scene,
   ShaderMaterial,
   Vector3,
-  WebGLRenderTarget,
   WebGLRenderer,
+  WebGLRenderTarget,
 } from "three";
 import { BoostPadsView, PAD_LOOK } from "../render/entities";
 import { CUBE_FOG_CAP, HEIGHT_FOG_GLSL, fogCd, heightFog, opaqueDelta, skyDelta } from "../render/heightFog";
@@ -28,6 +29,7 @@ import { PostProcess, REMAP_GLSL, TONEMAP_GLSL, display, unclippedNodes } from "
 import { ENV_GLSL, ENV_RADIAL, ENV_SPREAD, NET_SIDE_GLSL, OVERLAY_UV_GLSL, envG, netSideUv, overlayUv } from "../render/gameSurfaces";
 import { UNDER_GLASS_V_GLSL, underGlassV } from "../render/goalInterior";
 import { GRASS_REFLECTION_GLSL, grassReflection } from "../render/stadiumField";
+import { CUBE_FACE, CubeChain, chainTwin, rawCube, storedCube } from "../render/cubeChain";
 
 /** One function under test: its GLSL (with any uniforms it reads), the call from the inputs `i`, `j` (two vec4s) to a
  *  vec4, the twin on the same inputs, the inputs to try, and how near the two must agree (float32 on the GPU) */
@@ -161,6 +163,10 @@ export function shaderProbe(canvas: HTMLCanvasElement): {
   /** The bloom target's sum (linear) for a large patch at linear `level` on black (RV-161: the soft knee from 2, the
    *  colour times its weight, no subtraction) */
   bloomSum: (level: number) => number;
+  /** The capture's chain (CAP1: box, blur, bilinear up, store) on the GPU against its CPU twin (chainTwin) on a pattern
+   *  of ramps and an HDR spot per face: the share of stored 8-bit codes equal, and the largest difference in codes
+   *  (RV-201) */
+  chain: () => { texels: number; exact: number; maxCodes: number };
   names: () => string[];
   compare: (name: string) => { count: number; maxError: number; tolerance: number; worst: { i: number[]; j: number[]; gpu: number[]; cpu: number[] } | null };
 } {
@@ -314,10 +320,65 @@ export function shaderProbe(canvas: HTMLCanvasElement): {
     for (let k = 0; k < (bloom?.data.length ?? 0); k += 4) sum += bloom?.data[k] ?? 0;
     return sum;
   };
+  const chain = (): { texels: number; exact: number; maxCodes: number } => {
+    const raw = rawCube();
+    const out = storedCube();
+    // (per face: ramps across and up, an HDR spot moving face to face; written at each texel's centre)
+    const material = new ShaderMaterial({
+      vertexShader,
+      fragmentShader: /* glsl */ `
+        precision highp float;
+        uniform int face;
+        void main() {
+          vec2 st = gl_FragCoord.xy / ${CUBE_FACE.toFixed(1)};
+          float f = float(face);
+          float spot = 3.0 * exp(-(pow(st.x - 0.3 - 0.05 * f, 2.0) + pow(st.y - 0.6, 2.0)) / 0.004);
+          gl_FragColor = vec4(0.1 + 0.8 * st.x + spot, 0.05 + 0.5 * st.y + 0.3 * spot, 0.2 + 0.6 * st.x * (1.0 - st.y) + 0.1 * f, 1.0);
+        }`,
+      uniforms: { face: { value: 0 } },
+    });
+    const scene = new Scene();
+    const quad = new Mesh(new PlaneGeometry(2, 2), material);
+    quad.frustumCulled = false;
+    scene.add(quad);
+    for (let face = 0; face < 6; face++) {
+      material.uniforms["face"] = { value: face };
+      gl.setRenderTarget(raw, face);
+      gl.render(scene, camera);
+    }
+    const runner = new CubeChain(gl);
+    runner.run(raw.texture, out);
+    gl.setRenderTarget(null);
+    const read = (target: typeof raw, face: number): Float32Array => {
+      const halves = new Uint16Array(CUBE_FACE * CUBE_FACE * 4);
+      gl.readRenderTargetPixels(target, 0, 0, CUBE_FACE, CUBE_FACE, halves, face);
+      return Float32Array.from(halves, (h) => DataUtils.fromHalfFloat(h));
+    };
+    const faces = [0, 1, 2, 3, 4, 5];
+    // (the twin from the raw faces as the GPU holds them: its half floats)
+    const twin = chainTwin(faces.map((f) => read(raw, f)));
+    const code = (v: number): number => Math.round(255 * (v <= 0.0031308 ? 12.92 * v : 1.055 * v ** (1 / 2.4) - 0.055));
+    let [texels, exact, maxCodes] = [0, 0, 0];
+    faces.forEach((f) => {
+      const gpu = read(out, f);
+      const cpu = twin[f] ?? new Float32Array(0);
+      for (let k = 0; k < gpu.length; k++) {
+        if (k % 4 === 3) continue;
+        const d = Math.abs(code(gpu[k] ?? 0) - code(cpu[k] ?? 0));
+        texels++;
+        if (d === 0) exact++;
+        maxCodes = Math.max(maxCodes, d);
+      }
+    });
+    runner.dispose();
+    for (const d of [raw, out, material, quad.geometry]) d.dispose();
+    return { texels, exact: exact / texels, maxCodes };
+  };
   return {
     pads,
     post,
     bloomSum,
+    chain,
     names: () => Object.keys(PROBES),
     compare: (name) => {
       const probe = PROBES[name];

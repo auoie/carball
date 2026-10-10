@@ -126,8 +126,9 @@ export class ImpactTriggers {
 }
 
 /** The intensities' full scales (the game's RTPCs, SND-5/6: RV-173): Impact_Body one event, 0-2000, whichever the
- *  partner (the world an impact, a car a bump); Impact_Ball at 0 dB by 1300 (its Car material's); a wheel's landing */
-export const IMPACT_SCALES = { body: 2000, ball: 1300, wheel: 1100 } as const;
+ *  partner (the world an impact, a car a bump); Impact_Ball at 0 dB by 1200 off the world (its base Volume curve) and by
+ *  1300 off a car (the Car MaterialType's extra curve: RV-205); a wheel's landing */
+export const IMPACT_SCALES = { body: 2000, ball: 1300, ballBounce: 1200, wheel: 1100 } as const;
 
 /** The triggers' sounds for the synth (its strengths 0..1 from the speeds on IMPACT_SCALES): a car's body on the world
  *  an impact, on a car a bump, the ball's off a car a ball hit and off the arena a bounce; each wheel touching down a landing of its own (the game posts one
@@ -140,7 +141,7 @@ export function triggerSounds(triggers: readonly Trigger[]): SoundEvent[] {
       const s = strength(t.speed, IMPACT_SCALES.body);
       out.push(t.partner === "car" ? { kind: "bump", at: t.at, strength: s } : { kind: "impact", car: t.car, at: t.at, strength: s });
     } else if (t.kind === "ballImpact") {
-      out.push({ kind: t.partner === "car" ? "ballHit" : "ballBounce", at: t.at, strength: strength(t.speed, IMPACT_SCALES.ball) });
+      out.push(t.partner === "car" ? { kind: "ballHit", at: t.at, strength: strength(t.speed, IMPACT_SCALES.ball) } : { kind: "ballBounce", at: t.at, strength: strength(t.speed, IMPACT_SCALES.ballBounce) });
     } else if (t.kind === "landing") {
       out.push({ kind: "land", car: t.car, at: t.at, strength: strength(t.speed, IMPACT_SCALES.wheel) });
     }

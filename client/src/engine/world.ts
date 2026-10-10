@@ -419,8 +419,7 @@ export class World {
     return spots;
   }
 
-  /** Goals, bumps and demos since the last call. */
-  /** The impacts since the last call (engine patch 96), oldest first */
+  /** The impacts since the last call (engine patch 96: the ball's own too, as BALL_IMPACT), oldest first */
   takeImpacts(): Impact[] {
     const m = this.#m;
     const a = this.#sim.takeImpacts();
@@ -440,6 +439,7 @@ export class World {
     return out;
   }
 
+  /** Goals, bumps and demos since the last call. */
   takeEvents(): GameEvent[] {
     const m = this.#m;
     const a = this.#sim.takeEvents();

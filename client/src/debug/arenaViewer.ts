@@ -8,6 +8,7 @@ import { ArenaView } from "../render/arena";
 import { buildCarModel } from "../render/carModel";
 import { toThreeVector } from "../render/coords";
 import { BallView, TEAM_CAR_COLORS } from "../render/entities";
+import type { PostOptions } from "../render/postProcess";
 import type { Renderer } from "../render/renderer";
 import type { Theme } from "../render/themes/theme";
 
@@ -20,6 +21,8 @@ export interface ArenaShot {
   readonly fov?: number;
   /** World seconds since the ball exploded: the cage's shockwave then (none if left out) */
   readonly sinceExplosion?: number;
+  /** Post-processing (bloom, depth of field) for this view: as the game's settings being compared (kept if left out) */
+  readonly post?: PostOptions;
 }
 
 /** Shows the arena and returns the view setter, the arena's reflection captures so far, the last capture's faces
@@ -37,6 +40,8 @@ export function showArenaViewer(
 } {
   renderer.scene.background = theme.background;
   renderer.scene.fog = theme.fog;
+  // (the theme's height fog, as the game view has it: comparing corner shots needs it, RV-203)
+  renderer.heightFog = theme.heightFog ?? false;
   const arena = new ArenaView(theme);
   renderer.beforeNextFrame((gl, scene) => {
     arena.capture(gl, scene);
@@ -50,6 +55,7 @@ export function showArenaViewer(
     arena.newBall();
     if (shot.sinceExplosion !== undefined) arena.explode();
     arena.update(ballAt, shot.sinceExplosion ?? 0);
+    if (shot.post) renderer.postOptions = shot.post;
     car.visible = shot.car !== undefined;
     if (shot.car) {
       toThreeVector(shot.car, car.position);
@@ -77,8 +83,11 @@ export function showArenaViewer(
     new Promise((resolve) => {
       renderer.beforeNextFrame((gl, scene) => {
         const named: Object3D[] = [];
+        // (by name, or by material class: the arena's pieces go unnamed)
         scene.traverse((o) => {
-          if (hide.some((prefix) => o.name.startsWith(prefix))) named.push(o);
+          const material = (o as { material?: unknown }).material;
+          const kind = material && !Array.isArray(material) ? material.constructor.name : "";
+          if (hide.some((prefix) => o.name.startsWith(prefix) || kind === prefix)) named.push(o);
         });
         const was = new Map<Object3D, boolean>();
         for (const o of named) for (const h of [o, ...o.children]) if (!was.has(h)) was.set(h, h.visible);

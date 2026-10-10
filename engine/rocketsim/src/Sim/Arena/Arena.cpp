@@ -1,4 +1,5 @@
 #include "Arena.h"
+#include "../GameRotator/GameRotator.h"
 
 #include <algorithm>
 #include "../../RocketSim.h"
@@ -434,7 +435,15 @@ void Arena::_UpdateGoalExplosion() {
 	// (ExplosionComponent_X tick: the front from the life time before this tick; StartRadius 0, Speed 10000,
 	// EndRadius 3000, Falloff 0.1, RBVelocityChange 5000, MomentumOffset (-500, 0, -500) in the goal's frame, whose X
 	// points out of the goal)
+	// RL PATCH (KNB-5..7, 9; match-rules audit): it runs between ticks (here at the end of one), so the next tick's
+	// start-of-step cap (_LimitVelocities, the game's applyDamping) clamps a pushed car before it moves (it moved one
+	// tick uncapped: replays, position 2.8 -> 0.17 uu); each car's HitLocation is its actor Location, one tick behind
+	// its body (where it was at this tick's start: _oldState), and AddImpulse applies the push there, so the lever
+	// spins it (angular velocity 4.85 -> 0.83 rad/s), the direction from there too; the front reaches a car when it
+	// reaches that Location's collision cylinder's box, Location +- (48, 48, 32) (the octree's point-to-box test), not
+	// the hitbox
 	constexpr float SPEED = 10000, END_RADIUS = 3000, FALLOFF = 0.1f, VEL_CHANGE = 5000;
+	constexpr float BOX_XY = 48, BOX_Z = 32;
 	float radius = ex.lifeTime * SPEED;
 	ex.lifeTime += tickTime;
 	if (radius > END_RADIUS) {
@@ -446,19 +455,18 @@ void Arena::_UpdateGoalExplosion() {
 	for (Car* car : _cars) {
 		if (car->_internalState.isDemoed || std::find(ex.hitCars.begin(), ex.hitCars.end(), car->id) != ex.hitCars.end())
 			continue;
-		// The front touches the car's hitbox: the distance from the centre to the box
-		const btTransform& t = car->_rigidBody.getWorldTransform();
-		btVector3 boxCentre = t * (car->config.hitboxPosOffset * UU_TO_BT);
-		btVector3 local = t.getBasis().transpose() * ((btVector3)(ex.origin * UU_TO_BT) - boxCentre);
-		btVector3 half = car->config.hitboxSize * (UU_TO_BT / 2);
-		btVector3 clamped(RS_CLAMP(local.x(), -half.x(), half.x()), RS_CLAMP(local.y(), -half.y(), half.y()),
-			RS_CLAMP(local.z(), -half.z(), half.z()));
-		if ((local - clamped).length() * BT_TO_UU > radius)
+		const Vec at = car->_oldState.pos; // (the actor Location: one tick behind the body)
+		Vec gap(
+			RS_MAX(abs(ex.origin.x - at.x) - BOX_XY, 0.f),
+			RS_MAX(abs(ex.origin.y - at.y) - BOX_XY, 0.f),
+			RS_MAX(abs(ex.origin.z - at.z) - BOX_Z, 0.f));
+		if (gap.LengthSq() > radius * radius)
 			continue;
 		ex.hitCars.push_back(car->id);
-		Vec pos = t.getOrigin() * BT_TO_UU; // (HitLocation = the car's location: no spin)
-		Vec dir = (pos - momentumOrigin).Normalized();
-		car->_rigidBody.m_linearVelocity += (btVector3)(dir * (VEL_CHANGE * scale)) * UU_TO_BT;
+		Vec dir = (at - momentumOrigin).Normalized();
+		// (VelChange: the change in velocity, so an impulse of it times the mass, at the Location)
+		btVector3 impulse = (btVector3)(dir * (VEL_CHANGE * scale)) * (UU_TO_BT / car->_rigidBody.getInvMass());
+		car->_rigidBody.applyImpulse(impulse, (btVector3)(at * UU_TO_BT) - car->_rigidBody.getCenterOfMassPosition());
 		car->_rigidBody.activate(true);
 	}
 }
@@ -792,8 +800,11 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
 			continue;
 
 		// Direction between the hitbox centres
+		// RL PATCH: as the game's cone (FUN_140f11c30, from Impact.Rotation = QuatToRotator(...)): each car's axes from its
+		// rotator through the sine table, and its hitbox centre the location plus the offset times the transpose of that
+		// rotation (the native multiplies the offset by the matrix's rows); the attacker's cone axes from the same rotator
 		auto hitboxCenter = [](const PhysState& s, const Vec& offset) {
-			return s.pos + s.rotMat.forward * offset.x + s.rotMat.right * offset.y + s.rotMat.up * offset.z;
+			return GameConeCentre(s.pos, GameRotatorBasis(s.rotMat), offset);
 		};
 		Vec hitboxDir =
 			hitboxCenter(otherState, car2->config.hitboxPosOffset) - hitboxCenter(state, car1->config.hitboxPosOffset);
@@ -801,14 +812,15 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
 		bool isDemo = false;
 		if (_mutatorConfig.demoMode == DemoMode::NORMAL && car1->_internalState.isSupersonic && canDemoTeam) {
 			// Backwards demolitions are allowed (PhysicsConfig_TA.bAllowBackwardsDemolitions)
-			float forwardSpeed = state.vel.Dot(state.rotMat.forward);
+			// RL PATCH: CarForward = Vector(QuatToRotator(OldRBState.Quaternion)) (ShouldDemolish)
+			float forwardSpeed = state.vel.Dot(GameRotatorBasis(state.rotMat).forward);
 			if (abs(forwardSpeed) >= DEMO_MIN_FORWARD_SPEED) {
 				// The cone at the time of impact (the bump cone below uses the start-of-tick states)
 				PhysState impact, otherImpact;
 				SweepToImpact(car1, car2, tickTime, impact, otherImpact);
 				Vec impactDir =
 					hitboxCenter(otherImpact, car2->config.hitboxPosOffset) - hitboxCenter(impact, car1->config.hitboxPosOffset);
-				isDemo = IsWithinForwardCone(impact.rotMat, impactDir, DEMO_CONE_YAW_DEG, DEMO_CONE_PITCH_DEG, forwardSpeed < 0);
+				isDemo = IsWithinForwardCone(GameRotatorBasis(impact.rotMat), impactDir, DEMO_CONE_YAW_DEG, DEMO_CONE_PITCH_DEG, forwardSpeed < 0);
 			}
 		}
 
@@ -828,11 +840,13 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
 
 		// Only bumper hits push (PushFactor is 0 otherwise), but every bump starts the cooldown
 		Vec bumpImpulse = { 0, 0, 0 };
-		if (IsWithinForwardCone(state.rotMat, hitboxDir, BUMP_CONE_YAW_DEG, BUMP_CONE_PITCH_DEG, false)) {
+		if (IsWithinForwardCone(GameRotatorBasis(state.rotMat), hitboxDir, BUMP_CONE_YAW_DEG, BUMP_CONE_PITCH_DEG, false)) {
 			if (car2->_internalState.isOnGround) {
+				// RL PATCH: UpDir = GetRotatorAxis(QuatToRotator(OtherCar.OldRBState.Quaternion), 2) (GetBumpImpulse): the
+				// rotator's whole units and the sine table. Live (`car_car` tick 110, a side bump at 1400): 0.09 -> 0.01 uu/s
 				bumpImpulse =
 					velDir * BUMP_VEL_AMOUNT_GROUND_CURVE.GetOutput(speed) +
-					otherState.rotMat.up * BUMP_UPWARD_VEL_AMOUNT_CURVE.GetOutput(speed);
+					GameRotatorBasis(otherState.rotMat).up * BUMP_UPWARD_VEL_AMOUNT_CURVE.GetOutput(speed);
 			} else {
 				bumpImpulse = velDir * BUMP_VEL_AMOUNT_AIR_CURVE.GetOutput(speed);
 			}
@@ -978,17 +992,27 @@ void Arena::_UpdateImpacts() {
 			btVector3 n;
 			if (!_ImpactNormal(e.normal, n))
 				continue;
-			// (the line check: from 10 uu on the body's side through the point to 10 uu into the partner; a hit's normal
-			// and point replace the contact's)
-			btVector3 from = pos + n * (10 * UU_TO_BT), to = pos - n * (10 * UU_TO_BT);
-			// (the body itself left out: the game's source)
-			btCollisionWorld::ClosestRayResultCallback ray(from, to, self);
-			ray.m_collisionFilterGroup = -1;
-			ray.m_collisionFilterMask = -1;
-			_bulletWorld.rayTest(from, to, ray);
-			if (ray.hasHit()) {
-				n = ray.m_hitNormalWorld.normalized();
-				pos = ray.m_hitPointWorld;
+			// RL PATCH (RV-215, IT-2): the line check only against the static world (SingleLineCheck from 10 uu on the
+			// body's side through the point to 10 uu into the partner; a hit's normal and point replace the contact's). A
+			// car's collision component is its skeletal mesh, which HandleCollision checks none of: the averaged normal
+			// stays (a ray hit the other car's box face at its edges: the bump speed, the sound, the sparks wrong); a ball's
+			// check runs from the point toward its centre over its mesh: the radial normal there
+			const int otherKind = e.other->getUserIndex();
+			if (otherKind == BT_USERINFO_TYPE_BALL) {
+				btVector3 radial = pos - e.other->getWorldTransform().getOrigin();
+				if (radial.length2() > 1e-12f)
+					n = radial.normalized();
+			} else if (otherKind != BT_USERINFO_TYPE_CAR) {
+				btVector3 from = pos + n * (10 * UU_TO_BT), to = pos - n * (10 * UU_TO_BT);
+				// (the body itself left out: the game's source)
+				btCollisionWorld::ClosestRayResultCallback ray(from, to, self);
+				ray.m_collisionFilterGroup = -1;
+				ray.m_collisionFilterMask = -1;
+				_bulletWorld.rayTest(from, to, ray);
+				if (ray.hasHit()) {
+					n = ray.m_hitNormalWorld.normalized();
+					pos = ray.m_hitPointWorld;
+				}
 			}
 			// (kept with 50 uu/s or more along the normal or across it: the impacts' effects, or the slides', RV-164)
 			float speed = abs(dv.dot(n)), slide = dv.length() - speed;
@@ -1643,7 +1667,9 @@ void Arena::Step(int ticksToSimulate) {
 		// RL PATCH: the ball's speed caps at the start of the step too (the cars': Car::_LimitVelocities)
 		ball->_LimitVelocities(_mutatorConfig);
 
-		_UpdateGoalExplosion(); // RL PATCH
+		// RL PATCH (KNB-7): the ball's location as the step starts: the explosion's (Ball_TA.Explode's ExplodeLocation
+		// is its actor Location, one tick behind the body that crossed the line)
+		const Vec ballAtStart = ball->_rigidBody.getWorldTransform().m_origin * BT_TO_UU;
 
 		// Update world
 		_bulletWorld.stepSimulation(tickTime, 0, tickTime);
@@ -1697,12 +1723,15 @@ void Arena::Step(int ticksToSimulate) {
 		if (gameMode != GameMode::THE_VOID && !ball->_internalState.isExploded && IsBallScored()) {
 			ball->_internalState.isExploded = true;
 			ball->_ApplyExploded();
-			// The explosion goes off where the ball is (Ball_TA.Explode), its wave from the next tick on
+			// The explosion goes off where the ball was as this step began (KNB-7: one tick short of the line), its
+			// front from now on (between ticks)
 			goalExplosion = GoalExplosion();
 			goalExplosion.active = true;
-			goalExplosion.origin = ball->_rigidBody.getWorldTransform().m_origin * BT_TO_UU;
+			goalExplosion.origin = ballAtStart;
 			goalExplosion.goalDir = goalExplosion.origin.y > 0 ? 1.f : -1.f;
 		}
+
+		_UpdateGoalExplosion(); // RL PATCH (KNB-5: between ticks, before the next one's cap)
 
 		if (_goalScoreCallback.func != NULL) { // Potentially fire goal score callback
 			if (IsBallScored()) {

@@ -25,6 +25,7 @@ import {
 import type { CageGraph } from "./cage";
 import type { WallStyle } from "./themes/theme";
 import { fullBright, linear } from "./teamColors";
+import { ARENA_PRIORITY } from "./translucentSort";
 
 /** The ribbon's half width (uu): the beam's core (the game's beams are 8 uu wide) and its glow round it */
 const HALF_WIDTH = 10;
@@ -358,7 +359,8 @@ export class CageBeams {
       });
       this.mesh = new Mesh(geometry, gameMaterial);
       this.mesh.frustumCulled = false;
-      this.mesh.renderOrder = 2;
+      // (the cage's lines right after its fill: the game's one primitive, FFCage_Full at 0 (TRN1), as our two)
+      this.mesh.renderOrder = ARENA_PRIORITY.base + 0.001;
       this.mesh.onBeforeRender = (renderer: WebGLRenderer) => {
         renderer.getDrawingBufferSize(viewport);
       };
@@ -391,7 +393,7 @@ export class CageBeams {
     });
     this.mesh = new Mesh(geometry, material);
     this.mesh.frustumCulled = false; // (it surrounds the field: always in view)
-    this.mesh.renderOrder = 2; // (over the walls' see-through fill)
+    this.mesh.renderOrder = ARENA_PRIORITY.base + 0.001; // (over the walls' see-through fill, right after it: FFCage_Full)
     this.mesh.onBeforeRender = (renderer: WebGLRenderer) => {
       renderer.getDrawingBufferSize(viewport);
     };

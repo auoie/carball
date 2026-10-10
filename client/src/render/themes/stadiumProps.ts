@@ -1,6 +1,6 @@
 // The stadium's screens, ads and near-field props (notes/arena-surroundings.md SUR-9, 10, 13, 17..19): the panels with
 // their formulas and our own emblems (no ad artwork), the scaffolds' banners, the corner flags and the light arrows.
-import { BoxGeometry, BufferGeometry, type Color, DoubleSide, Float32BufferAttribute, Group, Mesh, PlaneGeometry, ShaderMaterial, Vector3 } from "three";
+import { BoxGeometry, BufferGeometry, type Color, CylinderGeometry, DoubleSide, Float32BufferAttribute, Group, Mesh, PlaneGeometry, ShaderMaterial, Vector3 } from "three";
 import { fullBright } from "../teamColors";
 import { BOWL_COLOURS, seenMaterial } from "./stadiumSurroundings";
 
@@ -356,21 +356,21 @@ export function buildScreensAndProps(primary0: Color, primary1: Color): { group:
       const [ox, oy] = [Math.cos(a), Math.sin(a)];
       const [tx, ty] = [-oy, ox];
       const at = (out: number, along: number, z: number): Vector3 => new Vector3(out * ox + along * tx, z, out * oy + along * ty);
-      const pole = new Mesh(new BoxGeometry(F.poleShape.width, F.poleShape.z[1] - F.poleShape.z[0], F.poleShape.width), poleMaterial);
+      // (round, the pole and the sleeve: as wide from every side, the pole inside the sleeve: RV-199)
+      const pole = new Mesh(new CylinderGeometry(F.poleShape.width / 2, F.poleShape.width / 2, F.poleShape.z[1] - F.poleShape.z[0], 12), poleMaterial);
       pole.position.copy(at(F.r - F.poleShape.toward, F.poleShape.along, (F.poleShape.z[0] + F.poleShape.z[1]) / 2));
-      pole.lookAt(0, pole.position.y, 0);
       const banner = new Mesh(new PlaneGeometry(F.banner.width, F.banner.z[1] - F.banner.z[0]), cloth);
       banner.position.copy(at(F.r, 0, (F.banner.z[0] + F.banner.z[1]) / 2));
       banner.lookAt(0, banner.position.y, 0);
       // (the strip: a sleeve up the pole and along its arm, rising over the cloth's top: RV-179)
       const S = F.strip;
       const top = new Group();
-      const up = new Mesh(new BoxGeometry(S.width, S.pole[1] - S.pole[0], S.width), strip);
+      const up = new Mesh(new CylinderGeometry(S.width / 2, S.width / 2, S.pole[1] - S.pole[0], 12), strip);
       up.position.copy(at(F.r - F.poleShape.toward, F.poleShape.along, (S.pole[0] + S.pole[1]) / 2));
       const [from, to] = [at(F.r - F.poleShape.toward, F.poleShape.along, S.arm[0]), at(F.r - F.poleShape.toward, F.poleShape.along + F.poleShape.arm, S.arm[1])];
-      const arm = new Mesh(new BoxGeometry(from.distanceTo(to), S.width, S.width), strip);
+      const arm = new Mesh(new CylinderGeometry(S.width / 2, S.width / 2, from.distanceTo(to), 12), strip);
       arm.position.copy(from).add(to).multiplyScalar(0.5);
-      arm.quaternion.setFromUnitVectors(new Vector3(1, 0, 0), to.clone().sub(from).normalize());
+      arm.quaternion.setFromUnitVectors(new Vector3(0, 1, 0), to.clone().sub(from).normalize());
       top.add(up, arm);
       top.position.copy(at(F.r - F.poleShape.toward, F.poleShape.along, 0));
       up.position.sub(top.position);

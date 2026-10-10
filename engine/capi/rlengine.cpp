@@ -78,6 +78,16 @@ void rl_set_controls(RLArena* a, uint32_t id, const RLControls* c) {
 	out.dodgeForward = c->dodge_forward; out.hasDodgeForward = c->has_dodge_forward != 0;
 }
 
+void rl_car_repress_jump(RLArena* a, uint32_t id) {
+	Car* car = a->arena->GetCar(id);
+	if (!car)
+		return;
+	// (the game fires SetVehicleInput per consumed frame: the release's bDeactivate, then the press's edge)
+	if (car->_internalState.isJumping)
+		car->_internalState.jumpReleased = true;
+	car->_internalState.lastControls.jump = false;
+}
+
 void rl_set_car_preferences(RLArena* a, uint32_t id, float dodge, float steer, float air) {
 	Car* car = a->arena->GetCar(id);
 	if (!car)

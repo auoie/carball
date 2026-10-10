@@ -138,6 +138,8 @@ interface Num {
   /** written as an integer: no point, no exponent ("164.00" isn't) */
   readonly integer: boolean;
   readonly at: number;
+  /** where it ends in the text */
+  readonly end: number;
 }
 
 /** The numeric literals in a text (leading dots, exponents and separators too: 1_234.5, RV-140); their places counted
@@ -145,7 +147,7 @@ interface Num {
 function numbers(text: string): Num[] {
   return [...text.matchAll(/(?<![A-Za-z_$\d.])-?(?:0[xX]([\da-fA-F_]+)|\d[\d_]*(\.[\d_]*)?|(\.\d[\d_]*))(?:[eE]([-+]?\d+))?/g)].map((m) => {
     // (a hex literal an integer: RV-183)
-    if (m[1] !== undefined) return { value: parseInt(m[1].replace(/_/g, ""), 16) * (m[0].startsWith("-") ? -1 : 1), decimals: 0, written: 0, integer: true, at: m.index };
+    if (m[1] !== undefined) return { value: parseInt(m[1].replace(/_/g, ""), 16) * (m[0].startsWith("-") ? -1 : 1), decimals: 0, written: 0, integer: true, at: m.index, end: m.index + m[0].length };
     const mantissa = m[0].replace(/_/g, "").replace(/^-/, "").replace(/[eE].*$/, "");
     const point = mantissa.indexOf(".");
     const digits = mantissa.replace(".", "");
@@ -157,6 +159,7 @@ function numbers(text: string): Num[] {
       written: places(digits),
       integer: m[2] === undefined && m[3] === undefined && m[4] === undefined,
       at: m.index,
+      end: m.index + m[0].length,
     };
   });
 }
@@ -461,15 +464,22 @@ interface TextureForm {
   /** a coarse form: its windows must wiggle (wiggles) */
   readonly wiggle?: boolean;
 }
+/** A coarse form's tolerance a hair wider than half its step: a writer rounding a half-level tie (the box's means keep
+ *  their .5) lands just past it (RV-213) */
+const TIE = 1.01;
 const TEXTURE_FORMS: readonly TextureForm[] = [
   // (0 to 1, 3 decimals or more, as stored or decoded)
   { window: TEXTURE_WINDOW, value: (x) => (!x.integer && x.written >= 3 && x.value >= 0 && x.value <= 1 ? x.value : null), decimals: true, tolerance: 0, span: 0 },
   // (8-bit levels: four or more of them off black and white)
-  { window: TEXTURE_LEVELS_WINDOW, value: (x) => (x.integer && x.value >= 0 && x.value <= 255 ? x.value / 255 : null), decimals: false, tolerance: 0.5 / 255, span: TEXTURE_LEVELS_SPAN, interior: 4 },
+  { window: TEXTURE_LEVELS_WINDOW, value: (x) => (x.integer && x.value >= 0 && x.value <= 255 ? x.value / 255 : null), decimals: false, tolerance: (TIE * 0.5) / 255, span: TEXTURE_LEVELS_SPAN, interior: 4 },
   // (percent)
-  { window: 8, value: (x) => (x.integer && x.value >= 0 && x.value <= 100 ? x.value / 100 : null), decimals: false, tolerance: 0.5 / 100, span: 0.25, interior: 3, wiggle: true },
+  { window: 8, value: (x) => (x.integer && x.value >= 0 && x.value <= 100 ? x.value / 100 : null), decimals: false, tolerance: (TIE * 0.5) / 100, span: 0.25, interior: 3, wiggle: true },
+  // (fractions to 2 decimals, percent's twin: RV-213)
+  { window: 8, value: (x) => (!x.integer && x.written === 2 && x.value >= 0 && x.value <= 1 ? x.value : null), decimals: false, tolerance: TIE * 0.005, span: 0.25, interior: 3, wiggle: true },
+  // (the box's means unrounded, 0-255 with a decimal or two: the 8-bit levels' twin, RV-213)
+  { window: 8, value: (x) => (!x.integer && x.written >= 1 && x.written <= 2 && x.value >= 0 && x.value <= 255 ? x.value / 255 : null), decimals: false, tolerance: (TIE * 0.05) / 255, span: TEXTURE_LEVELS_SPAN, interior: 4, wiggle: true },
   // (4-bit levels: a longer run, a 16-level space being denser still)
-  { window: 12, value: (x) => (x.integer && x.value >= 0 && x.value <= 15 ? x.value / 15 : null), decimals: false, tolerance: 0.5 / 15, span: 0.2, interior: 3, wiggle: true },
+  { window: 12, value: (x) => (x.integer && x.value >= 0 && x.value <= 15 ? x.value / 15 : null), decimals: false, tolerance: (TIE * 0.5) / 15, span: 0.2, interior: 3, wiggle: true },
 ];
 
 /** Whether a window's values are spread: half of them distinct or more, none taking more than 40 % (a tiled row
@@ -750,11 +760,19 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
     // (a downsampled texture's row or column, a value every `stride`: TEXTURE_WINDOW values along one place of the
     // textures' streams, 0 to 1 to 3 decimals or more (as stored or decoded) or 8-bit levels 2 to 253, bending somewhere;
     // RV-157)
+    // (numbers k to l written as a list: only commas, spaces and brackets between them)
+    const listed = (k: number, l: number): boolean => {
+      for (let j = k; j < l; j++) {
+        if (!/^[\s,[\]]*$/.test(text.slice(n[j]?.end ?? 0, n[j + 1]?.at ?? 0))) return false;
+      }
+      return true;
+    };
     const textureRow = (i: number, s: number): boolean => TEXTURE_FORMS.some((form) => {
       // (a coarse form's rows written row by row, channels interleaved at most four: wider strides pick code's
-      // integers apart)
+      // integers apart; and as a list, data: small integers run through code's expressions everywhere)
       if (form.wiggle === true && s > 4) return false;
       if (i + (form.window - 1) * s >= n.length) return false;
+      if (form.wiggle === true && !listed(i, i + (form.window - 1) * s)) return false;
       const m = Array.from({ length: form.window }, (_, j) => n[i + j * s]);
       const w = m.map((x) => (x ? form.value(x) : null));
       if (w.some((x) => x === null)) return false;
@@ -877,10 +895,10 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
     // RV-182, RV-183), each in the forms a row might be written in, and each found as a texture's (not by another check
     // by chance: a low-contrast row's 4 decimals meet the UVs)
     const textureControls: [string, string][] = [];
-    const picks = JSON.parse(readFileSync(join(REFERENCE, "texture_controls.json"), "utf8")) as Record<"logo" | "mask" | "twelve" | "low", number[] | null>;
-    const { logo, mask, twelve, low } = picks;
-    expect([logo, mask, twelve, low].every((row) => row !== null)).toBe(true);
-    if (logo && mask && twelve && low) {
+    const picks = JSON.parse(readFileSync(join(REFERENCE, "texture_controls.json"), "utf8")) as Record<"logo" | "mask" | "lightmap" | "twelve" | "low", number[] | null>;
+    const { logo, mask, lightmap, twelve, low } = picks;
+    expect([logo, mask, lightmap, twelve, low].every((row) => row !== null)).toBe(true);
+    if (logo && mask && lightmap && twelve && low) {
       const row = logo.slice(0, 16);
       const start = logo[16] ?? 0;
       const [eight, window] = [row.slice(start, start + 8), row.slice(start, start + 12)];
@@ -897,7 +915,10 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
         ["the logo's row as a base64 string", `"${Buffer.from(bytes).toString("base64")}"`],
         ["the logo's row as percent", list(eight.map((x) => Math.round(x * 100)))],
         ["the logo's row as 4-bit levels", list(window.map((x) => Math.round(x * 15)))],
+        ["the logo's row as 2-decimal fractions", list(eight.map((x) => x.toFixed(2)))],
+        ["the logo's row as its unrounded means", list(eight.map((x) => (x * 255).toFixed(1)))],
         ["a 12 px row to 3 decimals", list(twelve.slice(0, 8).map((x) => x.toFixed(3)))],
+        ["a lightmap's row as 8-bit levels", list(levels(lightmap.slice(0, 8)))],
         ["a mask's row touching 0 as levels", list(levels(mask.slice(0, 8)))],
         ["a low-contrast row to 4 decimals", list(low.slice(0, 8).map((x) => x.toFixed(4)))],
       );
@@ -979,7 +1000,7 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
 
   // (every text file it ships: our chunks, its page and its styles, any JSON or SVG (RV-140, RV-167f); three.js's
   // chunk is the library's, its lookup tables meeting the statistics by chance)
-  const bundle = files(DIST, (n) => kind(n) === "text" && !n.startsWith("three."));
+  const bundle = files(DIST, (n) => kind(n) === "text" && !/^three[-.]/.test(n));
   it.skipIf(bundle.length === 0)(
     "the built bundle (dist, as it ships: its shaders' comments too)",
     () => {

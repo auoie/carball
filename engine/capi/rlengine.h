@@ -32,6 +32,10 @@ void rl_arena_destroy(RLArena* arena);
 uint32_t rl_add_car(RLArena* arena, int team, int body);
 int rl_remove_car(RLArena* arena, uint32_t car_id);
 void rl_set_controls(RLArena* arena, uint32_t car_id, const RLControls* controls);
+/* The jump button released and pressed again within this tick's input frames (the server consumed two: NET-2): the
+ * car sees the release (a jump in progress ends once past its minimum time) and a fresh press, though its controls hold
+ * jump across the ticks. Call after rl_set_controls, before rl_step */
+void rl_car_repress_jump(RLArena* arena, uint32_t car_id);
 void rl_set_car_preferences(RLArena* arena, uint32_t car_id, float dodge_deadzone, float steering_sensitivity,
 	float air_control_sensitivity);
 

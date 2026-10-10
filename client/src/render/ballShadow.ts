@@ -3,7 +3,8 @@
 // size with a light rim, fainter the higher the ball is over the surface (the floor marker's look: markerFade).
 import type { MeshStandardMaterial, Vector3 } from "three";
 
-const SHADOW = /* glsl */ `
+/** The shadow's chunk (gl_FragColor darkened under the ball: `vShadowWorld`, `shadowBall`, `shadowRadius` given) */
+export const BALL_SHADOW_GLSL = /* glsl */ `
 {
   float r = length(vShadowWorld.xz - shadowBall.xz) / shadowRadius; // 1 at the ball's radius
   float above = step(vShadowWorld.y, shadowBall.y);
@@ -27,7 +28,7 @@ export function addBallShadow(material: MeshStandardMaterial, ballPosition: Vect
       .replace("#include <project_vertex>", "#include <project_vertex>\nvShadowWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;");
     shader.fragmentShader = shader.fragmentShader
       .replace("#include <common>", "#include <common>\nvarying vec3 vShadowWorld;\nuniform vec3 shadowBall;\nuniform float shadowRadius;")
-      .replace("#include <opaque_fragment>", `#include <opaque_fragment>\n${SHADOW}`);
+      .replace("#include <opaque_fragment>", `#include <opaque_fragment>\n${BALL_SHADOW_GLSL}`);
   };
   material.customProgramCacheKey = () => "ballShadow";
 }

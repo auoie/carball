@@ -5,7 +5,7 @@
 // materials sample it at level 0.
 import {
   type CubeTexture,
-  FloatType,
+  DataUtils,
   HalfFloatType,
   LinearFilter,
   Mesh,
@@ -18,8 +18,8 @@ import {
   type Texture,
   Vector2,
   WebGLCubeRenderTarget,
-  WebGLRenderTarget,
   type WebGLRenderer,
+  WebGLRenderTarget,
 } from "three";
 
 /** The blur's 9 taps' weights, the centre's first (exp(-i² / 6.4), normalised: the exe's r = 3.2 kernel) */
@@ -48,8 +48,9 @@ export function faceDirection(f: number, s: number, t: number): [number, number,
   return table[f] ?? [1, 0, 0];
 }
 
-/** One face's 64² blur with its weight channel (the shader's, for tests): rows of RGB, the taps off the face nothing */
-export function blurFace(face: readonly (readonly number[])[], size = CUBE_BLUR_SIZE): number[][] {
+/** One face's 64² blur with its weight channel (the shader's, for tests): rows of RGB, the taps off the face nothing;
+ *  the weight divided out, or (`divide` false) kept as a fourth channel, as the GPU passes it on */
+export function blurFace(face: readonly (readonly number[])[], size = CUBE_BLUR_SIZE, divide = true, half: (v: number) => number = (v) => v): number[][] {
   const w = (i: number): number => CUBE_BLUR_WEIGHTS[Math.abs(i)] ?? 0;
   const pass = (src: readonly (readonly number[])[], horizontal: boolean): number[][] =>
     src.map((_, k) => {
@@ -64,9 +65,50 @@ export function blurFace(face: readonly (readonly number[])[], size = CUBE_BLUR_
         b += w(i) * (c[2] ?? 0);
         a += w(i) * (c[3] ?? 1);
       }
-      return [r, g, b, a];
+      return [r, g, b, a].map(half);
     });
-  return pass(pass(face, true), false).map(([r = 0, g = 0, b = 0, a = 1]) => [r / a, g / a, b / a]);
+  const blurred = pass(pass(face, true), false);
+  return divide ? blurred.map(([r = 0, g = 0, b = 0, a = 1]) => [r / a, g / a, b / a]) : blurred;
+}
+
+/** The whole chain on the CPU (the GPU's twin, for its test): six raw faces (CUBE_FACE² RGBA, rows from the bottom, as
+ *  read back) to the stored faces' values (what the materials sample), each step's half floats as the GPU's targets */
+export function chainTwin(raw: readonly Float32Array[]): Float32Array[] {
+  const half = (v: number): number => DataUtils.fromHalfFloat(DataUtils.toHalfFloat(v));
+  const [n, m] = [CUBE_FACE, CUBE_BLUR_SIZE];
+  return raw.map((face) => {
+    // (the 4 x 4 mean)
+    const small = Array.from({ length: m * m }, (_, k) => {
+      const [X, Y] = [k % m, Math.floor(k / m)];
+      const sum = [0, 0, 0];
+      for (let j = 0; j < 4; j++) {
+        for (let i = 0; i < 4; i++) {
+          const at = 4 * ((4 * Y + j) * n + 4 * X + i);
+          for (let c = 0; c < 3; c++) sum[c] = (sum[c] ?? 0) + (face[at + c] ?? 0);
+        }
+      }
+      return [...sum.map((v) => half(v / 16)), 1];
+    });
+    const blurred = blurFace(small, m, false, half);
+    // (bilinear at each face texel's centre, clamped at the edges; the weight divided out, then the store)
+    const out = new Float32Array(n * n * 4);
+    const texel = (x: number, y: number): number[] => blurred[Math.min(Math.max(y, 0), m - 1) * m + Math.min(Math.max(x, 0), m - 1)] ?? [0, 0, 0, 1];
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) {
+        const [u, v] = [((x + 0.5) / n) * m - 0.5, ((y + 0.5) / n) * m - 0.5];
+        const [x0, y0] = [Math.floor(u), Math.floor(v)];
+        const [fx, fy] = [u - x0, v - y0];
+        const s = [0, 1, 2, 3].map((c) => {
+          const at = (dx: number, dy: number): number => texel(x0 + dx, y0 + dy)[c] ?? 0;
+          return (1 - fy) * ((1 - fx) * at(0, 0) + fx * at(1, 0)) + fy * ((1 - fx) * at(0, 1) + fx * at(1, 1));
+        });
+        const a = Math.max(s[3] ?? 1, 1e-6);
+        for (let c = 0; c < 3; c++) out[4 * (y * n + x) + c] = cubeStore((s[c] ?? 0) / a);
+        out[4 * (y * n + x) + 3] = 1;
+      }
+    }
+    return out;
+  });
 }
 
 const quadVertex = /* glsl */ `
@@ -103,8 +145,10 @@ export class CubeChain {
 
   constructor(gl: WebGLRenderer) {
     this.#gl = gl;
+    // (half floats: filterable in core WebGL2, where 32-bit floats need OES_texture_float_linear (without it the bilinear
+    // upsample reads black: RV-200); 11 bits of mantissa, ample before the 8-bit store)
     const small = (): WebGLRenderTarget =>
-      new WebGLRenderTarget(CUBE_BLUR_SIZE, CUBE_BLUR_SIZE, { type: FloatType, format: RGBAFormat, minFilter: NearestFilter, magFilter: LinearFilter, depthBuffer: false, generateMipmaps: false });
+      new WebGLRenderTarget(CUBE_BLUR_SIZE, CUBE_BLUR_SIZE, { type: HalfFloatType, format: RGBAFormat, minFilter: NearestFilter, magFilter: LinearFilter, depthBuffer: false, generateMipmaps: false });
     this.#small = [small(), small()];
     // (the 4 x 4 mean of the face's texels about each 64² texel, sampled at the texels' centres: weight 1)
     this.#down = new ShaderMaterial({

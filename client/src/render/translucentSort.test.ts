@@ -1,8 +1,8 @@
 // The game's translucent order (SUR-32, TRN1): priority first, then the view-space depth of the bounds origin, farthest
 // first, behind the camera last; the true depth for a sprite drawn nearer than it is.
-import { BoxGeometry, Group, Mesh, PerspectiveCamera, Scene, ShaderMaterial, type WebGLRenderer } from "three";
+import { BoxGeometry, Group, Mesh, PerspectiveCamera, Scene, ShaderMaterial, Vector3, type WebGLRenderer } from "three";
 import { describe, expect, it } from "vitest";
-import { PRIORITY, type SortItem, gameTranslucentSort, sortFor, useGameTranslucentSort, viewDepth, withTrueDepth } from "./translucentSort";
+import { PRIORITY, type SortItem, drawnNearer, gameTranslucentSort, sortFor, useGameTranslucentSort, viewDepth, withTrueDepth } from "./translucentSort";
 
 /** A camera at the origin looking down -z (Three's), and a box whose geometry sits at `at` (its mesh at the origin:
  *  the bounds origin is the geometry's, not the object's place) */
@@ -55,6 +55,21 @@ describe("the game's translucent order (TRN1)", () => {
     turned.updateMatrixWorld(true);
     scene.onBeforeRender(gl, scene, turned, new BoxGeometry(), new ShaderMaterial(), new Group());
     expect(viewDepth(boxAt([0, 0, 700]))).toBeCloseTo(700, 6);
+  });
+
+  it("a mesh drawn nearer about each view's camera (RV-198): each vertex at k of its true distance from that camera, along its true direction; never culled by its last view", () => {
+    const mesh = boxAt([0, 0, -30000]);
+    const placer = drawnNearer(mesh, 0.25, new Vector3(0, 928, 0));
+    expect(mesh.frustumCulled).toBe(false);
+    for (const eye of [new Vector3(0, 928, 0), new Vector3(3000, 200, -4000)]) {
+      const cam = new PerspectiveCamera(90, 1, 1, 40000);
+      cam.position.copy(eye);
+      cam.updateMatrixWorld(true);
+      mesh.onBeforeRender(null as never, new Scene(), cam, mesh.geometry, mesh.material as ShaderMaterial, new Group());
+      const drawn = new Vector3(0, 0, -30000).applyMatrix4(placer.matrixWorld);
+      const want = eye.clone().add(new Vector3(0, 0, -30000).sub(eye).multiplyScalar(0.25));
+      expect(drawn.distanceTo(want)).toBeLessThan(1e-6 * 30000);
+    }
   });
 
   it("a sprite drawn nearer than it is: its fragments' depth as at its true place, scaled back out from the point it's placed toward, past the far plane just short of it", () => {

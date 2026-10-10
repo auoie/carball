@@ -2,7 +2,7 @@
 """The local game textures, downsampled, for the client's shipped-data guard (client/src/render/shippedData.test.ts,
 RV-157: no module may carry a downsampled texture). Every texture under out/bsim/assets_local (the arena's, its
 surroundings', the cage's, the cars'), as PNG or as a cached 8-bit array (.npy, there and in the static session's
-texture caches: the logos, the city's, the lightmaps: RV-182), is box-downsampled to 8, 12, 16, 24, 32, 48 and 64 px a
+texture caches: the logos, the city's, the lightmaps, LMP's lm_* and LMP3's TireMarks: RV-182, RV-212), is box-downsampled to 8, 12, 16, 24, 32, 48 and 64 px a
 side (RV-183); each level's rows and columns,
 per channel, are written as streams (NaN between them) of their raw 8-bit values / 255 and of their sRGB-decoded
 values. Little-endian float32 to out/arena_local/reference/textures.f32 (git-ignored: it is the textures' data); the
@@ -20,7 +20,8 @@ from PIL import Image
 SOURCES = ["out/bsim/assets_local/arena/textures", "out/bsim/assets_local/arena/sur1_textures", "out/bsim/assets_local/cage",
            "out/bsim/assets_local/cars"]
 # (the static session's cached textures, 8-bit RGBA arrays)
-CACHES = ["out/bsim/agents/SUR1/mat_lights/texcache", "out/bsim/agents/CAL1/texcache"]
+CACHES = ["out/bsim/agents/SUR1/mat_lights/texcache", "out/bsim/agents/CAL1/texcache", "out/bsim/agents/LMP",
+          "out/bsim/agents/LMP3"]
 OUT = "out/arena_local/reference"
 SIZES = (8, 12, 16, 24, 32, 48, 64)
 
@@ -131,9 +132,13 @@ def row_at(img, size, low=False):
 
 
 def controls():
-    """The guard's named controls (local, as the reference): rows of the logo, its alpha, a 12 px row, a low-contrast one"""
+    """The guard's named controls (local, as the reference): rows of the logo, its alpha, a lightmap, a 12 px row, a
+    low-contrast one"""
     logo = np.load(f"{CACHES[0]}/GFX_Shared_Logos.Logo_RocketLeague.npy").astype(np.float64) / 255
     picks = {"logo": logo_row(logo), "mask": mask_row(logo)}
+    # (a lightmap's (LMP: RV-212))
+    lightmap = np.load(f"{CACHES[2]}/lm_DirectionalMaxComponent0_6.npy").astype(np.float64) / 255
+    picks["lightmap"] = row_at(lightmap, 16)
     for img in images():
         if picks.get("twelve") is None:
             picks["twelve"] = row_at(img, 12)

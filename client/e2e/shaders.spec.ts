@@ -71,3 +71,15 @@ test("the bloom's soft knee (PP-7, RV-161): nothing under linear 2; at 3 against
   expect(four).toBeGreaterThan(0);
   expect(Math.abs(three / four - 0.375), `${String(three)} / ${String(four)}`).toBeLessThan(0.03);
 });
+
+test("the reflection capture's chain on the GPU stores what its CPU twin does (RV-201: CAP1's box, blur, bilinear up and 8-bit store)", async ({ page }) => {
+  await page.goto("/?viewer=shaders");
+  await page.waitForFunction(() => "rlShaderProbe" in window, null, { timeout: 30_000 });
+  const r = await page.evaluate(() => (window as unknown as { rlShaderProbe: { chain: () => { texels: number; exact: number; maxCodes: number } } }).rlShaderProbe.chain());
+  expect(r.texels).toBe(6 * 256 * 256 * 3);
+  // (never more than one 8-bit code apart, and the same code in most texels: one off at a rounding edge, where the GPU's
+  // float32 sums and its bilinear weights (about 8 bits of sub-texel precision) land the other side; smooth ramps sit on
+  // edges often, 95 % exact here)
+  expect(r.exact, JSON.stringify(r)).toBeGreaterThanOrEqual(0.9);
+  expect(r.maxCodes, JSON.stringify(r)).toBeLessThanOrEqual(1);
+});

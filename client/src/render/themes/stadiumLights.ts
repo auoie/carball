@@ -4,22 +4,18 @@
 import {
   AdditiveBlending,
   type Color,
-  CustomBlending,
   DoubleSide,
   Float32BufferAttribute,
   Group,
   Mesh,
   NormalBlending,
-  OneFactor,
-  OneMinusSrcAlphaFactor,
   PlaneGeometry,
   ShaderMaterial,
-  SrcAlphaFactor,
   Vector3,
   BufferGeometry,
 } from "three";
-import { CAMERA_FAR } from "../renderer";
-import { PLAYING_VOLUME } from "./theme";
+import { PRIORITY, drawnNearer, scaleWithin, withTrueDepth } from "../translucentSort";
+import { FAR_ROOM } from "./theme";
 import { withHeightFog } from "../heightFog";
 import { fullBright } from "../teamColors";
 import { GRASS_CUBE_AT } from "../grassCube";
@@ -39,7 +35,7 @@ export const LIGHTS = {
   /** The floodlights' flare sheets (Stadium_LightCones, StadiumLight_Flare_Mat, SUR-8, 13): additive white, from each
    *  bank (az 80-130) down toward the field (r 5k, z -2k), 1.5k wide; 0.62 at the bank fading as (1 - t)^6 (area mean
    *  about 0.03, the game's 0.025) */
-  flares: { az: [80, 130] as const, count: 6, to: [5000, -2000] as const, width: 1500, peak: 0.62, falloff: 6 },
+  flares: { az: [80, 130] as const, count: 6, to: [5000, -2000] as const, width: 1500, peak: 0.62, falloff: 6, vertex: [255, 222, 147] as const },
   /** LightBulbs_01/02 (SUR-8, RV-130): 8 clusters per end along the roof's inner edge (az 65-155), 600 under it, 700
    *  across; 8 P their bulbs, seen as a whole as the spec's front means */
   bulbs: { perEnd: 8, az: [65, 155] as const, under: 600, size: 700, seen: [[0.09, 0.4, 0.89], [0.73, 0.37, 0.09]] as const },
@@ -49,40 +45,23 @@ export const LIGHTS = {
   mullions: { every: 5, width: 120, diffuse: 0.154, dotEvery: 400, dotLength: 0.07, dotAcross: 0.57 },
   /** StadiumFog (FogMesh_01, SUR-23): not team-coloured; colour h = sat(z / 8197); alpha 0.19 low, 0.15 from el 10
    *  degrees from the capture point, none from 30: a shell just outside the cage (r 9k), z -1k to 13k */
-  haze: { r: 9000, z: [-1000, 13000] as const, alpha: [0.19, 0.15] as const, el: [10, 20, 30] as const, hScale: 8197 },
+  haze: { r: 9000, z: [-1000, 13000] as const, alpha: [0.19, 0.15] as const, el: [10, 20, 30] as const, hScale: 8197, vertex: [25, 35, 38] as const },
   /** The fog sheets (FogSheet_Mat, SUR-23 corrected: RV-194, 195): (0.533, 0.686, 0.725), alpha FillFlare.G (its disc's
    *  mean 0.33, no factor); six seen: behind each goal, over the -X plaza, and the three DetailMode Medium ones (drawn at
    *  the default High too) far out; each vertical, facing the capture point turned by `yaw` (+ toward +az), `size` its
-   *  visible disc (uu); the far ones placed nearer (fogSheetPlace: their angular size kept, their fog at their true
-   *  vertices) and drawn as background (farSheetOrder) */
+   *  visible disc (uu); the far ones placed nearer (scaleWithin: their angular size kept, their fog and depth at their
+   *  true vertices); `big` the four at TranslucencySortPriority -10, the low pair behind the goals at -5 (TRN1);
+   *  `vertex` its painted vertex colour (SUR-23 v2: rgb v.rgb, alpha G v.a; RGBA bytes), not the mesh's */
   fogSheets: [
-    { at: [48, -7696, -192] as const, size: [21226, 5306] as const, yaw: -0.36 },
-    { at: [48, 7728, -192] as const, size: [21226, 5306] as const, yaw: 0.36 },
-    { at: [-20880, 49, 3728] as const, size: [21226, 6191] as const, yaw: 0.13 },
-    { at: [-2441, -30406, 6784] as const, size: [84902, 56602] as const, yaw: 7.4 },
-    { at: [-41904, 49, 1200] as const, size: [169805, 49526] as const, yaw: 0.07 },
-    { at: [-416, 29904, 6720] as const, size: [84902, 56602] as const, yaw: -0.8 },
+    { at: [48, -7696, -192] as const, size: [21226, 5306] as const, yaw: -0.36, big: false, vertex: [23, 31, 33, 185] as const },
+    { at: [48, 7728, -192] as const, size: [21226, 5306] as const, yaw: 0.36, big: false, vertex: [23, 31, 33, 185] as const },
+    { at: [-20880, 49, 3728] as const, size: [21226, 6191] as const, yaw: 0.13, big: true, vertex: [255, 205, 116, 142] as const },
+    { at: [-2441, -30406, 6784] as const, size: [84902, 56602] as const, yaw: 7.4, big: true, vertex: [255, 193, 91, 61] as const },
+    { at: [-41904, 49, 1200] as const, size: [169805, 49526] as const, yaw: 0.07, big: true, vertex: [255, 205, 116, 142] as const },
+    { at: [-416, 29904, 6720] as const, size: [84902, 56602] as const, yaw: -0.8, big: true, vertex: [255, 193, 91, 61] as const },
   ],
-  fogSheet: { colour: [0.533, 0.686, 0.725] as const },
 } as const;
 
-/** The far fog sheets' place in the opaque pass: after the sky (-1) and the far layer (FAR_LAYER_ORDER), before the
- *  rest, so whatever is nearer covers them wherever they're placed (they're the farthest things but the city and the
- *  FogCylinder, and the sky) */
-export const FAR_SHEET_ORDER = -0.5;
-
-/** How far toward the capture point a sheet is drawn: all of its hexagon within the camera's far plane from anywhere in
- *  the playing volume (500 uu to spare), 1 for those already inside (drawn at their true place) */
-export function fogSheetPlace(mesh: Mesh, C: Vector3): number {
-  const V = PLAYING_VOLUME;
-  const room = CAMERA_FAR - Math.hypot(V.halfX, V.height, V.halfZ) - 500 - C.length();
-  mesh.updateMatrixWorld(true);
-  const position = mesh.geometry.getAttribute("position");
-  const v = new Vector3();
-  let out = 0;
-  for (let i = 0; i < position.count; i++) out = Math.max(out, v.fromBufferAttribute(position, i).applyMatrix4(mesh.matrixWorld).distanceTo(C));
-  return Math.min(1, room / out);
-}
 
 /** The haze shell's rows' height (its vertex fog per row) */
 export const HAZE_ROW = 500;
@@ -203,7 +182,8 @@ export function buildStadiumLights(primary0: Color, primary1: Color): Group {
         void main() {
           float across = 1.0 - abs(2.0 * vUv.x - 1.0);
           float g = ${L.flares.peak} * pow(1.0 - vUv.y, ${L.flares.falloff.toFixed(1)}) * across * across;
-          gl_FragColor = vec4(vec3(g), 1.0);
+          // (times their painted vertex colour: SUR-23 v2)
+          gl_FragColor = vec4(g * vec3(${L.flares.vertex.map((v) => (v / 255).toFixed(4)).join(", ")}), 1.0);
           #include <colorspace_fragment>
         }`,
       transparent: true,
@@ -213,6 +193,7 @@ export function buildStadiumLights(primary0: Color, primary1: Color): Group {
     }),
   );
   flares.name = "lights: flare sheets";
+  flares.renderOrder = PRIORITY.flares;
   group.add(flares);
   // The bulb clusters along the roof's inner edge, facing the capture point
   const centre = new Vector3(GRASS_CUBE_AT.x, GRASS_CUBE_AT.z, GRASS_CUBE_AT.y);
@@ -332,7 +313,8 @@ export function buildStadiumLights(primary0: Color, primary1: Color): Group {
           float z = vWorld.y;
           float alpha = z < levels.x ? alphas.x : z < levels.y ? alphas.y : alphas.y * (1.0 - smoothstep(levels.y, levels.z, z));
           float h = clamp(z / hScale, 0.0, 1.0);
-          gl_FragColor = vec4(vec3(h), alpha);
+          // (times its painted vertex colour, SUR-23 v2; its alpha the painted per-vertex alpha, our table by height)
+          gl_FragColor = vec4(h * vec3(${haze.vertex.map((v) => (v / 255).toFixed(4)).join(", ")}), alpha);
           #include <colorspace_fragment>
         }`,
       uniforms: {
@@ -346,6 +328,7 @@ export function buildStadiumLights(primary0: Color, primary1: Color): Group {
     }),
   );
   shell.name = "lights: haze";
+  shell.renderOrder = PRIORITY.haze;
   group.add(shell);
   // The fog sheets: each a Circle_Sprite hexagon facing the capture point, turned by its yaw; its vertex fog at its true
   // vertices (RV-188)
@@ -358,43 +341,43 @@ export function buildStadiumLights(primary0: Color, primary1: Color): Group {
       m.lookAt(C.x, m.position.y, C.z);
       m.rotateOnWorldAxis(new Vector3(0, 1, 0), (-sheet.yaw * Math.PI) / 180);
     };
-    const whole = new Mesh(circleSprite(sheet.size[0], sheet.size[1]));
-    whole.position.copy(at3);
-    orient(whole);
-    const k = fogSheetPlace(whole, C);
+    const mesh = new Mesh(circleSprite(sheet.size[0], sheet.size[1]));
+    mesh.position.copy(at3);
+    orient(mesh);
+    const k = scaleWithin(mesh, C, FAR_ROOM);
     const sheetMaterial = new ShaderMaterial({
       vertexShader: quadVertex,
       fragmentShader: /* glsl */ `
         uniform vec3 colour;
         uniform float flare[10];
+        uniform float alphaScale;
         varying vec2 vUv;
         void main() {
           float x = length(vUv - 0.5) * 20.0;
           int i = int(min(floor(x), 9.0));
           float g = x >= 10.0 ? 0.0 : mix(flare[i], i < 9 ? flare[i + 1] : 0.0, x - float(i));
-          gl_FragColor = vec4(colour, g);
+          gl_FragColor = vec4(colour, g * alphaScale);
           #include <colorspace_fragment>
         }`,
-      uniforms: { colour: { value: new Vector3(...L.fogSheet.colour) }, flare: { value: FLARE_G } },
-      // (a far one as background: in the opaque pass, blended by its alpha all the same)
-      transparent: k === 1,
-      blending: k === 1 ? NormalBlending : CustomBlending,
-      blendSrc: SrcAlphaFactor,
-      blendDst: OneMinusSrcAlphaFactor,
-      blendSrcAlpha: OneFactor,
-      blendDstAlpha: OneMinusSrcAlphaFactor,
+      uniforms: {
+        colour: { value: new Vector3(sheet.vertex[0] / 255, sheet.vertex[1] / 255, sheet.vertex[2] / 255) },
+        flare: { value: FLARE_G },
+        alphaScale: { value: sheet.vertex[3] / 255 },
+      },
+      transparent: true,
       depthWrite: false,
       side: DoubleSide,
     });
-    withHeightFog(sheetMaterial, "translucent", k < 1 ? { scale: 1 / k, about: [C.x, C.y, C.z] } : {});
-    const mesh = new Mesh(circleSprite(sheet.size[0] * k, sheet.size[1] * k), sheetMaterial);
-    mesh.position.copy(C).addScaledVector(at3.clone().sub(C), k);
-    orient(mesh);
+    // (a far one drawn nearer about the camera, its fog and its depth as at its true place: what stands between covers
+    // it)
+    withHeightFog(sheetMaterial, "translucent", k < 1 ? { scale: 1 / k } : {});
+    if (k < 1) withTrueDepth(sheetMaterial, 1 / k, "camera");
+    mesh.material = sheetMaterial;
     mesh.name = "lights: fog sheet";
-    // (a near one drawn first among the translucents, as the sky and the far layer: sorted by its own position against
-    // the layers at the origin it popped in and out as the view turned; a far one as background)
-    mesh.renderOrder = k === 1 ? -1 : FAR_SHEET_ORDER;
-    group.add(mesh);
+    // (its TranslucencySortPriority, TRN1: below the canopy's glass, the fog bowl and the haze, so it no longer sorts
+    // against them by position, which popped it in and out as the view turned)
+    mesh.renderOrder = sheet.big ? PRIORITY.bigFogSheet : PRIORITY.lowFogSheet;
+    group.add(k < 1 ? drawnNearer(mesh, k, C) : mesh);
   }
   return group;
 }

@@ -1,4 +1,5 @@
 #include "Ball.h"
+#include "../GameRotator/GameRotator.h"
 #include "../Quantize/Quantize.h"
 
 #include "../../RLConst.h"
@@ -286,7 +287,9 @@ void Ball::_OnHit(
 	if ((tickCount > ballHitInfo.tickCountWhenExtraImpulseApplied + 1) || (ballHitInfo.tickCountWhenExtraImpulseApplied > tickCount)) {
 		// Apply extra hit impulse
 		ballHitInfo.tickCountWhenExtraImpulseApplied = tickCount;
-		Vec carForward = car->GetForwardDir();
+		// RL PATCH: ForwardDir = GetRotatorAxis(QuatToRotator(OldRBState.Quaternion), 0) (ApplyBallImpactForces): the
+		// rotator's whole units and the sine table, not the body's exact axis. Live (`ball_hits`): ball 0.187 -> 0.0003 uu/s
+		Vec carForward = GameRotatorBasis(car->_oldState.rotMat).forward;
 		Vec relPos = ballState.pos - carState.pos;
 		// RL PATCH: Car_TA.ApplyBallImpactForces uses the bodies' start-of-tick velocities (OldRBState). During the
 		// step they already hold this tick's gravity and car forces, so a ball resting on a car's roof got pushed up

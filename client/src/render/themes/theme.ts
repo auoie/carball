@@ -3,6 +3,7 @@
 // collision mesh.
 // Scenery is in the Three.js frame (x, y up, z = the game's y) and stays out of the playing volume.
 import type { Color, Fog, Group, Object3D, Vector3 } from "three";
+import { CAMERA_FAR } from "../renderer";
 
 export interface WallStyle {
   readonly neutral: Color; // hexagon colour around midfield
@@ -44,3 +45,7 @@ export interface Theme {
  *  (halfX, halfZ, height), and the cage within it, the field (to |z| = fieldHalfZ, its corners cut at |x| + |z| =
  *  cornerSum: the corner curves lie inside that line) and the goals behind (|x| < goalHalfWidth, y < goalHeight). */
 export const PLAYING_VOLUME = { halfX: 4096, halfZ: 6000, height: 2048, fieldHalfZ: 5120, cornerSum: 8064, goalHalfWidth: 893, goalHeight: 643 } as const;
+
+/** How far from the field's centre a vertex may be drawn: inside the camera's far plane from anywhere in the playing
+ *  volume, 500 uu to spare (what's farther is drawn nearer: scaleWithin) */
+export const FAR_ROOM = CAMERA_FAR - Math.hypot(PLAYING_VOLUME.halfX, PLAYING_VOLUME.height, PLAYING_VOLUME.halfZ) - 500;

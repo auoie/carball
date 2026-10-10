@@ -11,6 +11,7 @@ import { ENV_GLSL, ENV_RADIAL, ENV_SPREAD, PACK_G, PACK_G_MEAN } from "./gameSur
 import { GRASS_CUBE_BLUR_LOD } from "./grassCube";
 import { HexFloorMaterial } from "./stadiumField";
 import type { LightProfile } from "./stadiumFieldRules";
+import { ARENA_PRIORITY, fitIndexedBounds } from "./translucentSort";
 
 /** The zones (|x|, |y| in uu): the hex glass on the ramp, the grate (behind the goal line's strip, and beside and under
  *  the glass along the ramp); the frame elsewhere */
@@ -205,13 +206,17 @@ export class GoalFloorMaterial extends ShaderMaterial {
   }
 }
 
-/** Under each goal's floor (`floor`: its geometry, Three's frame): the lower glass (the floor 16 uu down), and OOBFloor
- *  under it all, each goal's slope in its own light and the bevels beside them (`primaries`: the teams' linear
+/** Under each goal's floor (`floors`: each goal's geometry, Three's frame): the lower glass (the floor 16 uu down), and
+ *  OOBFloor under it all, each goal's slope in its own light and the bevels beside them (`primaries`: the teams' linear
  *  primaries) */
-export function goalUnderlayers(floor: BufferGeometry, cube: { value: Texture }, primaries: readonly [Color, Color]): Mesh[] {
-  const under = new Mesh(floor.clone().translate(0, -GOAL_UNDER_GLASS.depth, 0), new GoalFloorMaterial(cube, true));
-  under.renderOrder = 1;
-  under.name = "goal under glass";
+export function goalUnderlayers(floors: readonly BufferGeometry[], cube: { value: Texture }, primaries: readonly [Color, Color]): Mesh[] {
+  const glass = new GoalFloorMaterial(cube, true);
+  const unders = floors.map((floor) => {
+    const under = new Mesh(fitIndexedBounds(floor.clone().translate(0, -GOAL_UNDER_GLASS.depth, 0)), glass);
+    under.renderOrder = ARENA_PRIORITY.goalGlassOuter; // (Goal_STD_Glass_Outer: TRN1)
+    under.name = "goal under glass";
+    return under;
+  });
   const { y0, y1, x0, x1 } = GOAL_BASE;
   // (Three's frame: x, up, the game's y; quads as two triangles)
   const quad = (out: number[], a: number[], b: number[], c: number[], d: number[]): void => {
@@ -242,5 +247,5 @@ export function goalUnderlayers(floor: BufferGeometry, cube: { value: Texture },
     dark.name = "goal base bevels";
     return [mesh, dark];
   });
-  return [under, ...meshes];
+  return [...unders, ...meshes];
 }

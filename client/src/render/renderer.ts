@@ -3,6 +3,7 @@
 // mapping or sRGB encoding (PP-19).
 import { LinearSRGBColorSpace, NoToneMapping, PerspectiveCamera, Scene, Vector3, WebGLRenderer } from "three";
 import { fogAll } from "./heightFog";
+import { useGameTranslucentSort } from "./translucentSort";
 import { PostProcess, type PostOptions } from "./postProcess";
 import type { CameraView } from "../camera/rlCamera";
 import { horizontalToVerticalFov } from "../camera/interp";
@@ -39,6 +40,8 @@ export class Renderer {
     this.#gl.setPixelRatio(Math.min(2, window.devicePixelRatio));
     this.#gl.toneMapping = NoToneMapping;
     this.#gl.outputColorSpace = LinearSRGBColorSpace;
+    // (the translucents in the game's order, the reflection capture's faces too: TRN1)
+    useGameTranslucentSort(this.#gl, this.scene);
     this.#post = new PostProcess(this.#gl);
 
     this.#observer = new ResizeObserver(() => { this.#resize(); });

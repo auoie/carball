@@ -5,11 +5,13 @@ import { TEAM_PRIMARY_LINEAR, fullBright, linear } from "../teamColors";
 import { skyVQ, stadiumTheme } from "./stadium";
 import { CROWD, SECONDARY, buildCrowd, crowdSeen } from "./stadiumCrowd";
 import { AD_EMBLEM, PANELS, PANEL_LIGHT, PLAZA, PROPS, bannerBase, bannerColour, buildScreensAndProps, flagColours, panelColour, screenLogo } from "./stadiumProps";
-import { buildBowl, buildCaptureHotspots, FAR_LAYER, FAR_LAYER_ORDER, FILL_FLARE_G, fixtureOffsets, FLOODLIGHT, floodlightE, lensMean, plazaCityTop, STANDS, STRUCTURES, supportHead } from "./stadiumSurroundings";
+import { buildBowl, buildCaptureHotspots, FILL_FLARE_G, fixtureOffsets, FLOODLIGHT, floodlightE, hotspotLook, HOTSPOTS, lensMean, STANDS, STRUCTURES, supportHead, TEAM_HOTSPOTS } from "./stadiumSurroundings";
+import { FAR_LAYER, fogCylinder, plazaCityTop } from "./stadiumFarLayer";
 import { fogAll, fogCd, heightFog } from "../heightFog";
-import { beamAlpha, buildStadiumLights, FAR_SHEET_ORDER, HAZE_ROW, LIGHTS } from "./stadiumLights";
+import { beamAlpha, buildStadiumLights, HAZE_ROW, LIGHTS } from "./stadiumLights";
 import { fogBowlAlpha } from "./stadiumSky";
 import { ArenaView } from "../arena";
+import { PRIORITY } from "../translucentSort";
 
 /** The capture point in Three's frame */
 const C = new Vector3(GRASS_CUBE_AT.x, GRASS_CUBE_AT.z, GRASS_CUBE_AT.y);
@@ -160,30 +162,87 @@ describe("the fog layers (SUR-23, FOG-10)", () => {
 
   it("six fog sheets, hexagons, their alpha FillFlare's G alone; the far ones' fog at their true vertices (RV-188, 194, 195)", () => {
     const lights = buildStadiumLights(new Color(0.1, 0.4, 1), new Color(1, 0.4, 0.1));
-    const sheets = lights.children.filter((m) => m.name === "lights: fog sheet") as Mesh[];
+    lights.updateMatrixWorld(true);
+    const sheets: Mesh[] = [];
+    lights.traverse((m) => {
+      if (m instanceof Mesh && m.name === "lights: fog sheet") sheets.push(m as Mesh);
+    });
     expect(sheets).toHaveLength(6);
     for (const sheet of sheets) {
       expect(sheet.geometry.getAttribute("position").count).toBe(18);
       const material = sheet.material as ShaderMaterial;
-      expect(material.fragmentShader).toContain("gl_FragColor = vec4(colour, g);");
-      // (the true centre: placed at a fraction toward C, its fog scaled back out)
+      // (its painted vertex colour: rgb v.rgb, alpha G v.a, SUR-23 v2)
+      expect(material.fragmentShader).toContain("gl_FragColor = vec4(colour, g * alphaScale);");
+      // (the true centre: placed at a fraction toward the camera (C until the first view), its fog scaled back out)
       const scale = (material.userData["fogScale"] as number | undefined) ?? 1;
-      const centre = C.clone().addScaledVector(sheet.position.clone().sub(C), scale);
+      const centre = C.clone().addScaledVector(sheet.getWorldPosition(new Vector3()).sub(C), scale);
       const game = LIGHTS.fogSheets.map((s) => new Vector3(s.at[0], s.at[2], s.at[1]));
       expect(Math.min(...game.map((g) => g.distanceTo(centre)))).toBeLessThan(1);
-      // (a far one as background: blended in the opaque pass after the sky's dome and the far layer, so whatever is
-      // nearer covers it wherever it's drawn; a near one first among the translucents, at its true place)
-      if (scale > 1) {
-        expect([material.transparent, material.blending, sheet.renderOrder]).toEqual([false, CustomBlending, FAR_SHEET_ORDER]);
-        expect(FAR_SHEET_ORDER).toBeGreaterThan(FAR_LAYER_ORDER);
-      } else {
-        expect([material.transparent, sheet.renderOrder]).toEqual([true, -1]);
-      }
+      // (a far one's depth as at its true place too, so what stands between covers it; the big four at -10, the low
+      // pair behind the goals at -5: TRN1)
+      expect(material.userData["trueDepth"]).toBe(scale > 1 ? scale : undefined);
+      if (scale > 1) expect(material.fragmentShader).toContain("gl_FragDepth");
+      const low = Math.abs(centre.x) < 100 && Math.abs(centre.z) > 7000 && centre.y < 0;
+      expect(sheet.renderOrder).toBe(low ? PRIORITY.lowFogSheet : PRIORITY.bigFogSheet);
     }
     // (the three DetailMode Medium ones far out, the rest at their place)
     expect(sheets.filter((s) => ((s.material as ShaderMaterial).userData["fogScale"] ?? 1) > 1)).toHaveLength(3);
-    expect(FAR_LAYER_ORDER).toBeGreaterThan(-1);
   });
+
+  it("every hotspot and fog layer in its painted vertex colour, not the mesh's (SUR-23, SUR-33 v2): the plain hotspots 8 v.rgb with alpha sat(8 v.a G), the team ones 8 a² G FB, the fog sheets v.rgb with alpha G v.a, the band, the bowl, the haze and the flares tinted", () => {
+    // (the plain ones: _13's warm and faint, the -X pair's warmer, the ends' dim, the +-35 grey)
+    expect(HOTSPOTS.map((h) => h.vertex)).toEqual([[176, 132, 70, 9], [255, 210, 133, 4], [255, 192, 101, 12], [74, 55, 29, 4], [74, 55, 29, 4], [54, 54, 54, 7], [54, 54, 54, 7]]);
+    const look = hotspotLook([176, 132, 70, 9]);
+    expect(look.colour.map((c) => Number(c.toFixed(3)))).toEqual([5.522, 4.141, 2.196]);
+    expect(Math.min(1, 8 * look.alpha)).toBeCloseTo(0.282, 3);
+    const theme = stadiumTheme();
+    const spots: ShaderMaterial[] = [];
+    theme.root.traverse((m) => {
+      if (m instanceof Mesh && m.parent?.name === "capture hotspots") spots.push(m.material as ShaderMaterial);
+    });
+    const plain = spots.filter((s) => s.uniforms["additive"]?.value === false);
+    expect(plain.map((s) => Number((s.uniforms["alphaScale"]?.value as number).toFixed(4)))).toEqual([9, 4, 12, 4, 4, 7, 7].map((a) => Number((a / 255).toFixed(4))));
+    // (the team ones: a 61/255, 8 a² = 0.458 times FB)
+    const team = spots.filter((s) => s.uniforms["additive"]?.value === true);
+    expect(team).toHaveLength(2);
+    const fb = (team[0]?.uniforms["colour"]?.value as Vector3).length();
+    expect(TEAM_HOTSPOTS.map((h) => h.vertex[3])).toEqual([61, 61]);
+    expect(8 * fb).toBeLessThan(8 * 0.06 * Math.sqrt(3) * 4);
+    // (the fog sheets' own, the band's, the bowl's and the haze's and flares' tints)
+    expect(LIGHTS.fogSheets.map((f) => f.vertex)).toEqual([[23, 31, 33, 185], [23, 31, 33, 185], [255, 205, 116, 142], [255, 193, 91, 61], [255, 205, 116, 142], [255, 193, 91, 61]]);
+    expect(FAR_LAYER.cylinderVertex).toEqual([255, 180, 89, 92]);
+    const band = theme.root.getObjectByName("far layer: band") as Mesh;
+    expect((band.material as ShaderMaterial).fragmentShader).toContain("gl_FragColor = vec4(1.0000, 0.7059, 0.3490, band * 0.3608);");
+    expect(LIGHTS.haze.vertex).toEqual([25, 35, 38]);
+    expect(LIGHTS.flares.vertex).toEqual([255, 222, 147]);
+  }, 30000);
+
+  it("the stadium's translucents in the game's order (TRN1): the big hotspots, the far layer, the big fog sheets, the canopy, the fog bowl, the low fog sheets, the haze and flares, the beams and other hotspots, the team hotspots", () => {
+    const theme = stadiumTheme();
+    const order = (name: string): number[] => {
+      const out = new Set<number>();
+      theme.root.traverse((m) => {
+        if (m instanceof Mesh && (m.name === name || m.parent?.name === name)) out.add(m.renderOrder);
+      });
+      return [...out].sort((a, b) => a - b);
+    };
+    expect(order("capture hotspots")).toEqual([PRIORITY.bigHotspot, PRIORITY.base, PRIORITY.teamHotspot]);
+    expect(HOTSPOTS.filter((h) => h.priority === PRIORITY.bigHotspot).map((h) => Math.round(h.az))).toEqual([2, 180, 180, 107]);
+    expect(order("far layer: band")).toEqual([PRIORITY.fogCylinder]);
+    expect(order("lights: fog sheet")).toEqual([PRIORITY.bigFogSheet, PRIORITY.lowFogSheet]);
+    expect(order("bowl: canopy")).toEqual([PRIORITY.canopy]);
+    expect(order("sky: fog bowl")).toEqual([PRIORITY.fogBowl]);
+    expect(order("lights: haze")).toEqual([PRIORITY.haze]);
+    expect(order("lights: flare sheets")).toEqual([PRIORITY.flares]);
+    expect(order("lights: team beam")).toEqual([PRIORITY.base]);
+    // (and every translucent: none left at another order)
+    const others: string[] = [];
+    theme.root.traverse((m) => {
+      if (!(m instanceof Mesh) || !(m.material as { transparent: boolean }).transparent) return;
+      if (!(Object.values(PRIORITY) as number[]).includes(m.renderOrder)) others.push(`${m.name || (m.parent?.name ?? "?")} ${String(m.renderOrder)}`);
+    });
+    expect(others).toEqual([]);
+  }, 30000);
 
   it("the fog bowl: down from z 4054, 11,796 out, 5,898 deep; its colour the vertex fog alone, its alpha Curve_FogDusk.A (RV-189)", () => {
     const bowl = stadiumTheme().root.children.find((m) => m.name === "sky: fog bowl") as Mesh | undefined;
@@ -198,7 +257,8 @@ describe("the fog layers (SUR-23, FOG-10)", () => {
     expect([top, bottom, out].map(Math.round)).toEqual([4054, 4054 - 5898, 11796]);
     const material = bowl?.material as ShaderMaterial;
     expect(material.transparent).toBe(true);
-    expect(material.fragmentShader).toContain("vec4(0.0, 0.0, 0.0, fogDusk(vV))");
+    // (its alpha times its painted vertex alpha, 184/255: SUR-23 v2)
+    expect(material.fragmentShader).toContain("vec4(0.0, 0.0, 0.0, fogDusk(vV) * 0.7216)");
     expect(material.userData["heightFog"]).toBe("translucent");
     expect([0.3, 0.56, 0.63, 0.75, 0.88, 1].map((v) => Number(fogBowlAlpha(v).toFixed(3)))).toEqual([0.88, 0.88, 0.7, 0.29, 0.035, 0]);
   }, 30000);
@@ -309,21 +369,39 @@ describe("the screens (SUR-9)", () => {
       // (the strip in front of the cloth where they overlap, not in its plane)
       expect(cloth.position.clone().sub(strip.position).dot(out)).toBeGreaterThanOrEqual(1);
     });
-    // (each corner's mean in the capture's LDR (per pixel min(c, 1): SUR-35): its parts by their visible areas: the cloth
-    // whole, the sleeve up the pole and along its arm, the pole outside the sleeve (RV-179); its light band 43 % of it)
+    // (each corner's mean in the capture's LDR (per pixel min(c, 1): SUR-35): its parts by what C sees of them, rays over
+    // each flag (the cloth's cut discarded as its shader does): the cloth 0.80-0.82 of it, as the game's; the sleeve,
+    // round now (RV-199), 0.14 against the game's 0.10-0.12: an 18-wide sleeve over 464 of pole and its arm is that
+    // much, so its measures are what's open (with the static session), not its shape; its light band 43 % of the cloth)
     const F = PROPS.flags;
     const S = F.strip;
-    const armLength = Math.hypot(F.poleShape.arm, S.arm[1] - S.arm[0]);
-    const areas = {
-      pole: F.poleShape.width * (F.poleShape.z[1] - F.poleShape.z[0] - (S.pole[1] - S.pole[0])),
-      strip: S.width * (S.pole[1] - S.pole[0] + armLength),
-      cloth: F.banner.cloth * F.banner.width * (F.banner.z[1] - F.banner.z[0]),
-    };
-    const total = areas.pole + areas.strip + areas.cloth;
-    // (the sleeve thin, and a small share of the group's parts (the cloth's rectangle, the pole, the sleeve): RV-179)
     expect(S.width).toBeLessThanOrEqual(30);
-    const parts = F.banner.width * (F.banner.z[1] - F.banner.z[0]) + F.poleShape.width * (F.poleShape.z[1] - F.poleShape.z[0]) + areas.strip;
-    expect(areas.strip / parts).toBeLessThanOrEqual(0.13);
+    const C3 = new Vector3(GRASS_CUBE_AT.x, GRASS_CUBE_AT.z, GRASS_CUBE_AT.y);
+    const ray = new Raycaster();
+    const flagParts = [...poles, ...cloths, ...group.children.filter((m) => m.name === "props: flag strip").flatMap((g) => g.children as Mesh[])];
+    const seen = { pole: 0, strip: 0, cloth: 0 };
+    for (const cloth of cloths) {
+      const centre = cloth.getWorldPosition(new Vector3()).sub(C3);
+      const [az0, el0] = [Math.atan2(centre.z, centre.x), Math.asin(centre.y / centre.length())];
+      for (let da = -1.2; da <= 1.2; da += 0.03) {
+        for (let de = -3.2; de <= 3.6; de += 0.03) {
+          const [a, e] = [az0 + (da * Math.PI) / 180, el0 + (de * Math.PI) / 180];
+          ray.set(C3, new Vector3(Math.cos(e) * Math.cos(a), Math.sin(e), Math.cos(e) * Math.sin(a)));
+          const hit = ray.intersectObjects(flagParts, false).find((h) => h.object.name !== "props: flag cloth" || !h.uv || h.uv.y >= 0.38 * (1 - Math.abs(2 * h.uv.x - 1)));
+          if (!hit) continue;
+          const name = hit.object.name || (hit.object.parent?.name ?? "");
+          if (name === "props: flag pole") seen.pole++;
+          else if (name === "props: flag cloth") seen.cloth++;
+          else if (name === "props: flag strip") seen.strip++;
+        }
+      }
+    }
+    const total = seen.pole + seen.strip + seen.cloth;
+    expect(seen.strip / total, JSON.stringify(seen)).toBeGreaterThanOrEqual(0.09);
+    expect(seen.strip / total, JSON.stringify(seen)).toBeLessThanOrEqual(0.145);
+    expect(seen.cloth / total, JSON.stringify(seen)).toBeGreaterThanOrEqual(0.79);
+    expect(seen.cloth / total, JSON.stringify(seen)).toBeLessThanOrEqual(0.83);
+    const areas = seen;
     // (the shader's band: its share of the cloth)
     expect(Math.abs((F.albedo.band[1] - F.albedo.band[0]) / F.banner.cloth - F.albedo.lightShare)).toBeLessThan(0.01);
     const cal1: [number, [number, number, number]][] = [
@@ -453,7 +531,7 @@ describe("the crowd (SUR-26..31)", () => {
   });
 
   it("the stands top out under 7k at the upper tiers' ends (az 76-85, 130-139): no top tier there (RV-123)", () => {
-    const bowl = buildBowl(linear(p0), linear(p1));
+    const bowl = buildBowl();
     bowl.updateMatrixWorld(true);
     const v = new Vector3();
     const ends = (az: number): boolean => (az >= 76 && az <= 85) || (az >= 130 && az <= 139);
@@ -651,10 +729,29 @@ describe("the -X plaza (SUR-1, 4, 25)", () => {
     expect(STANDS.plaza).toEqual({ from: [12000, 1200], to: [19200, 1310] });
   });
 
-  it("the far layer's fog: the city 100k out, the FogCylinder's band at 57.3k, its alpha by elevation SUR-23's (RV-193)", () => {
-    expect(FAR_LAYER.fog).toEqual({ city: 100000, band: 57300 });
+  it("the far layer's fog: the city 100k out, its alpha by elevation SUR-23's (RV-193); the FogCylinder the game's mesh, its fog per vertex at its true corners (F 0.10 at the bottom, about 0.4 at the top: TRN1), drawn nearer inside the far plane", () => {
+    expect(FAR_LAYER.fog).toEqual({ city: 100000 });
     expect(FAR_LAYER.fogBand).toEqual([[0, 0.9], [7.5, 0.73], [12.5, 0.43], [17.5, 0.19], [22.5, 0.06], [30, 0]]);
-  });
+    const g = fogCylinder();
+    expect([g.getAttribute("position").count, (g.getIndex()?.count ?? 0) / 3]).toEqual([16, 16]);
+    const band = (stadiumTheme().root.getObjectByName("far layer: band") ?? null) as Mesh | null;
+    expect(band).not.toBeNull();
+    const material = band?.material as ShaderMaterial;
+    expect(material.userData["heightFog"]).toBe("translucent");
+    expect(band?.renderOrder).toBe(PRIORITY.fogCylinder);
+    // (its true corners' fog: the bottom's at the floor, the top's about 0.4)
+    const cd = fogCd(GRASS_CUBE_AT.z);
+    const corner = (z: number): number => heightFog([FAR_LAYER.cylinder.r, z - GRASS_CUBE_AT.z, 0], cd).F;
+    expect(corner(FAR_LAYER.cylinder.z[0])).toBeCloseTo(0.1, 3);
+    expect(corner(FAR_LAYER.cylinder.z[1])).toBeGreaterThan(0.35);
+    expect(corner(FAR_LAYER.cylinder.z[1])).toBeLessThan(0.45);
+    // (drawn at a fraction of its distance about the camera, its fog and depth scaled back out)
+    const k = band?.parent?.scale.x ?? 1;
+    expect(k).toBeLessThan(1);
+    expect(material.userData["fogScale"]).toBeCloseTo(1 / k, 6);
+    expect(material.userData["trueDepth"]).toBeCloseTo(1 / k, 6);
+    expect(material.vertexShader).toContain("cameraPosition + (rlWorld - cameraPosition)");
+  }, 30000);
 
   it("its nine poplars where the game's are (RV-181): within 0.15 degrees and 300 uu of SUR-1's list", () => {
     const game: [number, number][] = [[175.67, 17466], [176.26, 16534], [176.94, 15645], [183.38, 15672], [183.83, 16533], [184.5, 17453], [175.55, 20742], [184.24, 20656], [179.88, 19880]];

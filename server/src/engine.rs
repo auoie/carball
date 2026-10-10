@@ -34,6 +34,7 @@ unsafe extern "C" {
     fn rl_add_car(arena: *mut RLArena, team: c_int, body: c_int) -> u32;
     fn rl_remove_car(arena: *mut RLArena, car_id: u32) -> c_int;
     fn rl_set_controls(arena: *mut RLArena, car_id: u32, controls: *const Controls);
+    fn rl_car_repress_jump(arena: *mut RLArena, car_id: u32);
     fn rl_set_car_preferences(arena: *mut RLArena, car_id: u32, dodge: f32, steer: f32, air: f32);
     fn rl_step(arena: *mut RLArena, ticks: c_int);
     fn rl_reset_kickoff(arena: *mut RLArena, seed: c_int);
@@ -106,6 +107,13 @@ impl Arena {
     pub fn set_controls(&mut self, car_id: u32, controls: &Controls) {
         // SAFETY: valid arena; the engine copies the controls
         unsafe { rl_set_controls(self.ptr(), car_id, controls) }
+    }
+
+    /// The jump released and pressed again within this tick's frames: a fresh press though jump is held (NET-2). After
+    /// `set_controls`, before `step`
+    pub fn repress_jump(&mut self, car_id: u32) {
+        // SAFETY: valid arena; an unknown car is ignored
+        unsafe { rl_car_repress_jump(self.ptr(), car_id) }
     }
 
     pub fn set_car_preferences(&mut self, car_id: u32, dodge_deadzone: f32, steering_sensitivity: f32, air_control_sensitivity: f32) {
@@ -323,5 +331,28 @@ pub(crate) mod tests {
         let state = arena.write_net_state(true, &[car], true);
         assert!(state.len() > 100 && state[0] == 8); // the network state format version
         assert!(arena.save_state().len() > 1000);
+    }
+
+    #[test]
+    fn a_repressed_jump_is_a_fresh_press() {
+        // Jump held from the ground through the jump and on in the air: no second jump; the same with a release and a
+        // press inside one tick (NET-2): the double jump fires though the button never reads up
+        init_engine();
+        let height = |repress: bool| -> f32 {
+            let mut arena = Arena::new();
+            let car = arena.add_car(0, 0);
+            arena.reset_kickoff(3);
+            let held = Controls { jump: 1, ..Controls::default() };
+            for tick in 0..90 {
+                arena.set_controls(car, &held);
+                if repress && tick == 40 {
+                    arena.repress_jump(car);
+                }
+                arena.step(1);
+            }
+            arena.car_position(car).unwrap()[2]
+        };
+        let (held, repressed) = (height(false), height(true));
+        assert!(repressed > held + 50.0, "held {held}, repressed {repressed}");
     }
 }

@@ -14,8 +14,8 @@
   game's manifolds under ours. Offsets are for the 2026-10-06 build. Use it first when a contact question comes up.
 - **State (findings 27–44, engine patches 45–71):** every live recording is exact or nearly so, per tick: `jumps`,
   `flip_cancel`, `body_drops`, `steer`, `air`, `powerslide`, `ball_roof`, `dodge_fast`, `wheel_ball`, `car_car2`,
-  `ga_boost`, `ga_jump`, `ga_throttle` ≤ 0.14 uu/s; `ball_5050` (50/50s, kickoff, pinch) cars 0.07, ball 0.22; `car_car`
-  0.43 / bot 3.0. Today: the car components against the static session's audit (GA-1 boost sets the input throttle,
+  `ga_boost`, `ga_jump`, `ga_throttle` ≤ 0.14 uu/s; `ball_5050` (50/50s, kickoff, pinch) cars 0.028, ball 0.020; `car_car`
+  0.00014 / bot 0.010 (patches 97/98, 2026-10-10: the wheel order and the rotators; were 0.43 / 3.0). Earlier: the car components against the static session's audit (GA-1 boost sets the input throttle,
   GA-2 jump re-press, GA-3 auto-flip, GA-4 throttle deadzone, GA-7 dodge direction, GA-8 air throttle timing:
   patches 57–62, replays 1,745 better / 474 worse), car–car demolitions both ways and the strict bump cooldown
   (GA-15/16, patches 65/66), the arena as the game's 16 pieces (56), the GJK wheel-ray cast (55), Bullet 2.82's
@@ -265,11 +265,31 @@
     touching 0 and 255, low-contrast rows to 4 decimals (each with a control the check alone catches:
     `out/arena_local/reference/texture_controls.json`). The dev arena viewer's `recapture(hide)` re-captures with named
     objects hidden (what each part brings to the capture).
-    **Open (calibration, asked by the user: the stadium too bright and glossy):** the capture's +X sector reads +0.3..0.5
-    over the profile at el −3..20, all from hotspot _13 (az 2.3, 150k) drawn after every translucent (renderOrder 2, a
-    c222307 fit). CAP1's profile composites translucents as a weighted average (a modelling choice), so the right order
-    isn't settled; the static session is extracting the exe's sort for the capture and rendering an in-order profile.
-    Hotspots sorted by position instead: +X still +0.3..0.42 at 6–20, ±90 at −3..3 −0.2 (the team glows under the haze).
+  - **In 3314a85:** all of the above. **Since 3314a85 (uncommitted): the arena's finish line** (the user, 2026-10-10:
+    no new arena work after it unless asked; post-processing part 2 deferred). The capture calibration (the user: the
+    stadium too bright and glossy) against SUR-35 v2, the in-order profile with the painted vertex colours (confirmed by
+    the user's screenshot): all 180 ldr cells within 0.1 (`e2e/capture.spec.ts` bins the capture against it). What it
+    took: the game's translucent sort (`render/translucentSort.ts`: TranslucencySortPriority as renderOrder, then the
+    view-space depth of the bounds origin, every view; the stadium's and the arena's priorities, each goal's pieces their
+    own meshes and bounds); every hotspot and fog layer in its painted vertex colour (OverrideVertexColors: the team
+    glows were 17.5x too bright); the far city opaque with the depth of its 100k (it hides _13 below el 3); sprites drawn
+    nearer given their true depth (`withTrueDepth`); the FogCylinder as the game's 16-triangle mesh with per-vertex fog;
+    the far fog sheets and the band re-placed about each view's camera (`drawnNearer`, RV-198); the wall's foot as the
+    game's frame (Side_Trim, H-4: `SideTrimMaterial`). The arena's last pieces: the canopy as the game's 8 panels
+    (one-sided) and 8 fins (two-sided) a side, an open wedge over each end (`stadiumCanopy.ts`); the roof arch's 49
+    flags by the game's rule in our own designs matched to the atlas's statistics, their baked light and wind
+    (`stadiumFlags.ts`); the far layer in its own module (`stadiumFarLayer.ts`). Engine: the static session's CCR patch
+    (README rows 97/98: the wheel order, the rotators; `car_car` exact), the goal explosion's KNB-5..7, 9 (row 77:
+    between ticks, the lagged Location, the ball a tick back, the cylinder box), the broadphase row 99. Server: NET-2
+    (a jump tap kept through a double consume; `rl_car_repress_jump`). Review fixes RV-197..205, 208..213, 215 (the impact's
+    line check against the static world only: a car partner keeps the averaged normal, a ball the radial one; RV-206
+    closed with no change, the game checks no line against a car; RV-207, the goalpost sound switch, queued with the gameplay work; RV-214 a known limit: the dist check
+    runs at each batch). The guard: three.js in its own chunk (`three-*`), coarse forms as lists only, 2-decimal
+    fractions and unrounded means, the LMP lightmaps and TireMarks in the reference. Note: the user's game runs World
+    Detail "Performance" (DetailMode 0), which hides the canopy, the FogCylinder, the haze, most fog sheets, the
+    poplars and banners: compare screenshots at "High Quality".
+    Next (the user's order): MR-6/7 (post-goal slow motion, replay, forfeits), quick chat, match stats and the
+    scoreboard, the match intro and outro, the HUD and menus, mutators, custom training, bots.
   - **Decided (user, 2026-10-10): no controller rumble.** notes/rumble.md stays as a reference spec only. The contact
     detection it asked about (the static session's Q-RMB-a: HandleCollision's cadence, the contact's point and normal,
     the landing speed) is still wanted, for the Impact_Medium camera shake and the impact and landing sounds; don't

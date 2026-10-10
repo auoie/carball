@@ -46,10 +46,11 @@ import { fullBright, linear } from "./teamColors";
 import { mergeByMaterial } from "./merge";
 import { GoalFloorMaterial, goalUnderlayers } from "./goalInterior";
 import { GrassCube } from "./grassCube";
-import { buildStadiumField, frameFloorMaterial } from "./stadiumField";
+import { buildStadiumField, frameFloorMaterial, SideTrimMaterial } from "./stadiumField";
 import { fieldPlan } from "./stadiumFieldRules";
 import type { ArenaStyle, Theme } from "./themes/theme";
 import { vec3 } from "../math/vec";
+import { ARENA_PRIORITY, fitIndexedBounds } from "./translucentSort";
 
 /** The arena's dimensions (uu, the game's frame). The side walls are flat up to |y| = cornerTangentY, where the
  *  corner curves of the mesh begin (the game's Bézier corners: tested against the mesh); the corners meet the back
@@ -195,9 +196,14 @@ export class ArenaView {
       return g;
     };
     const cage = new Mesh(geometry(cageIndices), this.#cage);
-    cage.renderOrder = 1;
-    const trimMaterial = new MeshStandardMaterial({ color: TRIM_COLOR, roughness: 0.6, metalness: 0.3, side: FrontSide });
-    addBallShadow(trimMaterial, this.#cage.ballPosition, BALL_RADIUS); // (the ball's shadow reaches up the trim)
+    cage.renderOrder = ARENA_PRIORITY.base; // (FFCage_Full: TRN1)
+    // (the game's arena: the wall's foot its baked frame (Side_Trim: AV-10, H-4); ours lit, the ball's shadow up it)
+    const capture = this.#grassCube?.uniform;
+    const trimMaterial =
+      this.#style.walls.game && capture
+        ? new SideTrimMaterial(capture, this.#cage.ballPosition, BALL_RADIUS)
+        : new MeshStandardMaterial({ color: TRIM_COLOR, roughness: 0.6, metalness: 0.3, side: FrontSide });
+    if (trimMaterial instanceof MeshStandardMaterial) addBallShadow(trimMaterial, this.#cage.ballPosition, BALL_RADIUS);
     const trim = new Mesh(geometry(trimIndices), trimMaterial);
     const group = new Group();
     group.add(cage, trim);
@@ -248,21 +254,37 @@ export class ArenaView {
       floorMaterial.metalness = 0.6;
     } else floorMaterial.color.setScalar(0.4); // (the team's colour, dimmed)
     addBallShadow(floorMaterial, this.#cage.ballPosition, BALL_RADIUS);
-    const net = new Mesh(geometry(goals.net), this.#net);
-    net.renderOrder = 1;
+    // (each goal's own pieces, sorted by their own bounds as the game's per-goal primitives: TRN1)
+    const perGoal = (triangles: Uint32Array): Uint32Array[] =>
+      ([-1, 1] as const).map((sy) => {
+        const kept: number[] = [];
+        for (let i = 0; i < triangles.length; i += 3) {
+          if (Math.sign(positions[3 * (triangles[i] ?? 0) + 1] ?? 0) === sy) kept.push(triangles[i] ?? 0, triangles[i + 1] ?? 0, triangles[i + 2] ?? 0);
+        }
+        return Uint32Array.from(kept);
+      });
+    const nets = perGoal(goals.net).map((t) => {
+      const net = new Mesh(fitIndexedBounds(geometry(t)), this.#net);
+      net.renderOrder = ARENA_PRIORITY.base; // (the nets, Goal_STD_Glass: TRN1)
+      return net;
+    });
     const postMaterial = new MeshStandardMaterial({ color: TRIM_COLOR, roughness: 0.6, metalness: 0.3, side: FrontSide });
     addBallShadow(postMaterial, this.#cage.ballPosition, BALL_RADIUS);
     // The game's goal floors: see-through and layered (RV-76): the frame, the grate, the glass on the ramp, and under them
     // a second glass, the glows and dark metal
     const cube = this.#grassCube?.uniform;
-    const floorGeometry = geometry(goals.floor);
-    const floor = new Mesh(floorGeometry, game && cube ? new GoalFloorMaterial(cube) : floorMaterial);
-    if (game) floor.renderOrder = 3;
+    const floorGeometries = perGoal(goals.floor).map((t) => fitIndexedBounds(geometry(t)));
+    const goalFloor = game && cube ? new GoalFloorMaterial(cube) : floorMaterial;
+    const floors = floorGeometries.map((g) => {
+      const floor = new Mesh(g, goalFloor);
+      floor.renderOrder = ARENA_PRIORITY.base; // (Goal_STD_Glass: TRN1)
+      return floor;
+    });
     const group = new Group();
     group.add(
-      floor,
-      ...(game && cube ? goalUnderlayers(floorGeometry, cube, this.#teamColors) : []),
-      net,
+      ...floors,
+      ...(game && cube ? goalUnderlayers(floorGeometries, cube, this.#teamColors) : []),
+      ...nets,
       new Mesh(geometry(goals.lip), new MeshBasicMaterial({ vertexColors: true, side: FrontSide })),
       new Mesh(geometry(goals.postBase), postMaterial),
       // (the game's: its glows, not our lit band: RV-77)
@@ -433,7 +455,7 @@ function goalGlows(style: ArenaStyle): Mesh[] {
     g.setAttribute("glow", new BufferAttribute(new Float32Array(glow), 1));
     g.setIndex(idx);
     const mesh = new Mesh(g, new GlowStripMaterial(primary, linear(fullBright([primary.r, primary.g, primary.b]))));
-    mesh.renderOrder = 2;
+    mesh.renderOrder = ARENA_PRIORITY.base; // (Goal_STD_Glow: TRN1)
     mesh.name = `goal glow ${String(team)}`;
     return mesh;
   });
@@ -461,7 +483,7 @@ function glowSheets(style: ArenaStyle): Mesh[] {
       g.setAttribute("glow", new BufferAttribute(new Float32Array(glow), 1));
       g.setIndex(idx);
       const mesh = new Mesh(g, material);
-      mesh.renderOrder = 1;
+      mesh.renderOrder = ARENA_PRIORITY.fieldGlow; // (Field_STD_Glow: TRN1)
       sheets.push(mesh);
     }
   }
@@ -488,7 +510,7 @@ function backGlass(team: 0 | 1): Mesh {
   g.computeVertexNormals();
   // (its glass tiles from the position: the shader's goal-side chart)
   const mesh = new Mesh(g, new HexGlassMaterial({ goalSide: true }));
-  mesh.renderOrder = 1;
+  mesh.renderOrder = ARENA_PRIORITY.base; // (Goal_STD_Glass: TRN1)
   return mesh;
 }
 

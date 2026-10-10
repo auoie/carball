@@ -25,6 +25,8 @@ import { FIELD_LIGHT, type FieldPlan, type FieldRegion, type FloorPiece, type Fr
 import { ENV_GLSL, ENV_RADIAL, ENV_SPREAD } from "./gameSurfaces";
 import { GRASS_CUBE_BLUR_LOD } from "./grassCube";
 import { fullBright } from "./teamColors";
+import { ARENA_PRIORITY } from "./translucentSort";
+import { BALL_SHADOW_GLSL } from "./ballShadow";
 
 /** FieldSkin_FutureGrid_1x1_D's mean albedo (sRGB-flagged: decoded) (H-1) */
 export const GRASS_ALBEDO = [0.068, 0.11, 0.056] as const;
@@ -502,6 +504,51 @@ export class FrameMaterial extends ShaderMaterial {
   }
 }
 
+/** AV-10, H-4: the wall's foot (Side_Trim[0], Frame_01_V2: the r 256 fillet up to its cap at z 256-272) as the frames'
+ *  material: sat(m (R + 4 (0.125 + 0.625 G) cube)) x its baked light, the capture along the fillet's own reflection
+ *  (it curves up from the floor), m Side_Trim's tire marks, its light Side_Trim's up-facing mean; its texture's means
+ *  Field_STD_Trim's (Side_Trim's own aren't measured) */
+export const SIDE_TRIM = { m: 0.904, light: [0.735, 0.677, 0.524] as const, texture: FRAME_TEXTURE.trim } as const;
+
+export class SideTrimMaterial extends ShaderMaterial {
+  /** `ballPosition`: the ball (Three's frame), read every frame, for its shadow up the fillet */
+  constructor(cube: { value: Texture }, ballPosition: Vector3, ballRadius: number) {
+    super({
+      vertexShader: /* glsl */ `
+        varying vec3 vWorld;
+        varying vec3 vNormal;
+        #include <fog_pars_vertex>
+        void main() {
+          vec4 world = modelMatrix * vec4(position, 1.0);
+          vWorld = world.xyz;
+          vNormal = mat3(modelMatrix) * normal;
+          vec4 mvPosition = viewMatrix * world;
+          gl_Position = projectionMatrix * mvPosition;
+          #include <fog_vertex>
+        }`,
+      fragmentShader: /* glsl */ `
+        uniform samplerCube grassCube;
+        uniform vec3 shadowBall;
+        uniform float shadowRadius;
+        varying vec3 vWorld;
+        varying vec3 vNormal;
+        #include <fog_pars_fragment>
+        void main() {
+          vec3 toCamera = normalize(cameraPosition - vWorld);
+          vec3 cube = textureLod(grassCube, reflect(-toCamera, normalize(vNormal)), ${GRASS_CUBE_BLUR_LOD.toFixed(1)}).rgb;
+          vec3 diffuse = clamp(${SIDE_TRIM.m.toFixed(3)} * (vec3(${SIDE_TRIM.texture.r.toFixed(3)}) + 4.0 * (0.125 + 0.625 * ${SIDE_TRIM.texture.g.toFixed(3)}) * cube), 0.0, 1.0);
+          gl_FragColor = vec4(diffuse * vec3(${SIDE_TRIM.light.map((v) => v.toFixed(3)).join(", ")}), 1.0);
+          vec3 vShadowWorld = vWorld;
+          ${BALL_SHADOW_GLSL}
+          #include <colorspace_fragment>
+          #include <fog_fragment>
+        }`,
+      uniforms: { ...shared(cube), shadowBall: { value: ballPosition }, shadowRadius: { value: ballRadius } },
+      fog: true,
+    });
+  }
+}
+
 export class MarkingMaterial extends ShaderMaterial {
   /** `group`: which mesh's (its baked light) */
   constructor(readonly group: MarkingGroup) {
@@ -733,5 +780,8 @@ export function buildStadiumField(primary0: Color, primary1: Color, cube: { valu
     }
     add(markings, new MarkingMaterial(mesh), `markings: ${mesh}`);
   }
+  // (the markings' TranslucencySortPriority, TRN1: Field_Center_Lines -2, Goal_Lines and Field_Side_Lines 0)
+  const centre = group.getObjectByName("markings: centre");
+  if (centre) centre.renderOrder = ARENA_PRIORITY.centreLines;
   return group;
 }

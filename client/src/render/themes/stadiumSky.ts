@@ -6,6 +6,7 @@
 // formula. Values and formulas only.
 import { withHeightFog } from "../heightFog";
 import { BackSide, BufferGeometry, DataTexture, DoubleSide, Float32BufferAttribute, LinearFilter, LinearMipmapLinearFilter, Mesh, RepeatWrapping, RGBAFormat, SRGBColorSpace, ShaderMaterial, SphereGeometry, UnsignedByteType, Vector3 } from "three";
+import { PRIORITY } from "../translucentSort";
 
 /** H-10's colours (linear): the zenith, the horizon's q^4 term, the sun side's pull target, the clouds' base */
 export const SKY_COLOURS = {
@@ -455,6 +456,8 @@ export const FOG_BOWL = {
   radius: 11796,
   depth: 5898,
   alpha: [[0.56, 0.88], [0.63, 0.7], [0.69, 0.5], [0.75, 0.29], [0.81, 0.12], [0.88, 0.035], [1, 0]] as readonly (readonly [number, number])[],
+  /** its painted vertex colour (SUR-23 v2): its alpha times 184/255 */
+  vertex: [39, 39, 39, 184] as const,
 } as const;
 
 /** Curve_FogDusk.A at v (the shader's, for tests) */
@@ -513,7 +516,7 @@ export function buildFogBowl(): Mesh {
         return 0.0;
       }
       void main() {
-        gl_FragColor = vec4(0.0, 0.0, 0.0, fogDusk(vV));
+        gl_FragColor = vec4(0.0, 0.0, 0.0, fogDusk(vV) * ${(FOG_BOWL.vertex[3] / 255).toFixed(4)});
       }`,
     transparent: true,
     depthWrite: false,
@@ -523,5 +526,7 @@ export function buildFogBowl(): Mesh {
   withHeightFog(material, "translucent");
   const mesh = new Mesh(geometry, material);
   mesh.name = "sky: fog bowl";
+  // (FogHemisphere_V2's TranslucencySortPriority: TRN1)
+  mesh.renderOrder = PRIORITY.fogBowl;
   return mesh;
 }

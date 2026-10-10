@@ -5,27 +5,22 @@
 // screens, ads and props in stadiumProps.ts.
 import {
   AdditiveBlending,
-  BackSide,
   BufferGeometry,
   type Color,
-  CustomBlending,
   DoubleSide,
   Float32BufferAttribute,
   Group,
   Mesh,
   NormalBlending,
-  OneFactor,
-  OneMinusSrcAlphaFactor,
   Path,
   ShaderMaterial,
   Shape,
   ShapeGeometry,
-  SphereGeometry,
-  SrcAlphaFactor,
   Vector2,
   Vector3,
 } from "three";
 import { withHeightFog } from "../heightFog";
+import { PRIORITY, withTrueDepth } from "../translucentSort";
 import { GRASS_CUBE_AT } from "../grassCube";
 import { fullBright } from "../teamColors";
 
@@ -41,29 +36,36 @@ export interface Hotspot {
   readonly distance: number;
   readonly pitch?: number;
   readonly yaw?: number;
+  /** its TranslucencySortPriority (TRN1: the four big ones first, under every fog layer; the team ones last) */
+  readonly priority: number;
+  /** its painted vertex colour (OverrideVertexColors, RGBA bytes: SUR-33 v2), what its shader reads, not the mesh's */
+  readonly vertex: readonly [number, number, number, number];
 }
 
 /** CubeMap_HotSpot_Mat's glows (SUR-33, corrected: ellipses; ten Circle_Sprites the game shows only to its cube
  *  capture): the +X horizon's (fogged only near the horizon: RV-120), two over the back (-X), one over each end, one
  *  each side of the open +X. HotSpot_Mat's at 490k is fogged out in the game */
 export const HOTSPOTS: readonly Hotspot[] = [
-  { az: 2.26, el: 1.71, radius: [48.6, 26.8], distance: 149873, pitch: 35.7, yaw: -0.1 },
-  { az: 179.52, el: 7.08, radius: [59.6, 29.6], distance: 24934, pitch: 14.74, yaw: 3.79 },
-  { az: 179.53, el: 6.99, radius: [5.3, 30.0], distance: 36841, pitch: 35.7, yaw: 0.93 },
-  { az: 107.08, el: 22.12, radius: [57.1, 27.3], distance: 13729, pitch: 14.74, yaw: -2.51 },
-  { az: -107.89, el: 25.56, radius: [46.3, 19.2], distance: 15210, pitch: 9.71, yaw: 0 },
-  { az: 35.37, el: 14.92, radius: [18.6, 18.6], distance: 15729, pitch: 9.71, yaw: 3.0 },
-  { az: -33.68, el: 15.22, radius: [19.0, 19.0], distance: 15434, pitch: 9.71, yaw: -1.08 },
+  { az: 2.26, el: 1.71, radius: [48.6, 26.8], distance: 149873, pitch: 35.7, yaw: -0.1, priority: PRIORITY.bigHotspot, vertex: [176, 132, 70, 9] },
+  { az: 179.52, el: 7.08, radius: [59.6, 29.6], distance: 24934, pitch: 14.74, yaw: 3.79, priority: PRIORITY.bigHotspot, vertex: [255, 210, 133, 4] },
+  { az: 179.53, el: 6.99, radius: [5.3, 30.0], distance: 36841, pitch: 35.7, yaw: 0.93, priority: PRIORITY.bigHotspot, vertex: [255, 192, 101, 12] },
+  { az: 107.08, el: 22.12, radius: [57.1, 27.3], distance: 13729, pitch: 14.74, yaw: -2.51, priority: PRIORITY.bigHotspot, vertex: [74, 55, 29, 4] },
+  { az: -107.89, el: 25.56, radius: [46.3, 19.2], distance: 15210, pitch: 9.71, yaw: 0, priority: PRIORITY.base, vertex: [74, 55, 29, 4] },
+  { az: 35.37, el: 14.92, radius: [18.6, 18.6], distance: 15729, pitch: 9.71, yaw: 3.0, priority: PRIORITY.base, vertex: [54, 54, 54, 7] },
+  { az: -33.68, el: 15.22, radius: [19.0, 19.0], distance: 15434, pitch: 9.71, yaw: -1.08, priority: PRIORITY.base, vertex: [54, 54, 54, 7] },
 ];
 /** The farthest a sprite is placed (inside the concourse's wall and the sky's dome; its angular size kept, its fog
  *  its own distance's) */
 export const HOTSPOT_PLACE_MAX = 29000;
-/** Their colour: 8 (0.533, 0.686, 0.725) (clamped by the capture's 8 bits); alpha sat(8 FillFlare.G) */
-export const HOTSPOT_COLOR = [4.27, 5.49, 5.8] as const;
+/** A plain hotspot's colour and alpha factor from its painted vertex colour (CubeMap_HotSpot_Mat: rgb 8 v.rgb, alpha
+ *  sat(8 v.a G): SUR-33 v2; the bytes as they are, no sRGB) */
+export function hotspotLook(vertex: readonly [number, number, number, number]): { colour: [number, number, number]; alpha: number } {
+  return { colour: [8 * vertex[0] / 255, 8 * vertex[1] / 255, 8 * vertex[2] / 255], alpha: vertex[3] / 255 };
+}
 /** The team hotspots (additive, 8 FillFlare.G FB(team)): low over each goal, 8k out */
 export const TEAM_HOTSPOTS: readonly (Hotspot & { readonly team: 0 | 1 })[] = [
-  { team: 0, az: -89.67, el: 8.87, radius: [23.6, 18.2], distance: 8087, pitch: 35.66, yaw: -2.52 },
-  { team: 1, az: 89.72, el: 7.61, radius: [20.6, 15.7], distance: 9421, pitch: 35.66, yaw: -0.91 },
+  { team: 0, az: -89.67, el: 8.87, radius: [23.6, 18.2], distance: 8087, pitch: 35.66, yaw: -2.52, priority: PRIORITY.teamHotspot, vertex: [94, 161, 255, 61] },
+  { team: 1, az: 89.72, el: 7.61, radius: [20.6, 15.7], distance: 9421, pitch: 35.66, yaw: -0.91, priority: PRIORITY.teamHotspot, vertex: [94, 161, 255, 61] },
 ];
 /** FillFlare's G at radius r = 0, 0.1, ... 0.9 (point values, sRGB-decoded: SUR-41 corrected, RV-196; 0 by r 1) */
 export const FILL_FLARE_G = [1.0, 0.994, 0.944, 0.871, 0.748, 0.58, 0.393, 0.226, 0.088, 0.014];
@@ -85,20 +87,21 @@ const fragmentShader = /* glsl */ `
 uniform vec3 colour;
 uniform float flare[10];
 uniform bool additive;
+uniform float alphaScale;
 varying vec2 vUv;
 void main() {
   float x = length(vUv - 0.5) * 20.0;
   int i = int(min(floor(x), 9.0));
   float g = x >= 10.0 ? 0.0 : mix(flare[i], i < 9 ? flare[i + 1] : 0.0, x - float(i));
   if (additive) gl_FragColor = vec4(8.0 * g * colour, 1.0);
-  else gl_FragColor = vec4(colour, clamp(8.0 * g, 0.0, 1.0));
+  else gl_FragColor = vec4(colour, clamp(8.0 * alphaScale * g, 0.0, 1.0));
   #include <colorspace_fragment>
 }
 `;
 
 /** A glow's sprite: a quad along (az, el) from the capture point (at its distance, or HOTSPOT_PLACE_MAX if nearer),
  *  facing it, `radius` across and up there, rolled by `tilt` */
-function hotspotMesh(spot: Hotspot, colour: readonly [number, number, number], additive: boolean): Mesh {
+function hotspotMesh(spot: Hotspot, colour: readonly [number, number, number], additive: boolean, alphaScale = 1): Mesh {
   const rad = Math.PI / 180;
   const [az, el] = [spot.az * rad, spot.el * rad];
   const [ax, ay] = [spot.radius[0] * rad, spot.radius[1] * rad];
@@ -112,6 +115,7 @@ function hotspotMesh(spot: Hotspot, colour: readonly [number, number, number], a
       colour: { value: new Vector3(...colour) },
       flare: { value: FILL_FLARE_G },
       additive: { value: additive },
+      alphaScale: { value: alphaScale },
     },
     transparent: true,
     depthWrite: false,
@@ -120,6 +124,8 @@ function hotspotMesh(spot: Hotspot, colour: readonly [number, number, number], a
   });
   // (its vertex fog at its true vertices: placed at `at`, it is `distance` out: RV-188)
   withHeightFog(material, additive ? "additive" : "translucent", { scale: spot.distance / at });
+  // (and its depth as there: the opaque city nearer than it covers it, _13's below el 3 at +X)
+  if (at < spot.distance) withTrueDepth(material, spot.distance / at, [centre.x, centre.y, centre.z]);
   const disc: [number, number] = [2 * at * Math.tan(ax), 2 * at * Math.tan(ay)];
   const mesh = new Mesh(circleSprite(disc[0], disc[1]), material);
   // (its disc's size, for tests)
@@ -129,9 +135,8 @@ function hotspotMesh(spot: Hotspot, colour: readonly [number, number, number], a
   mesh.lookAt(centre);
   // (its yaw off facing the capture point, about the vertical: + toward +az, RV-184)
   if (spot.yaw) mesh.rotateOnWorldAxis(new Vector3(0, 1, 0), -spot.yaw * rad);
-  // (drawn over the canopy and the rest of the translucent surroundings, which sort as near: their geometry's in world
-  // space round the origin; the glows are in front of them in the game)
-  mesh.renderOrder = 2;
+  // (its TranslucencySortPriority: TRN1)
+  mesh.renderOrder = spot.priority;
   // (its top toward the arena: the instance's world pitch, so to the line of sight that less the sight line's
   // elevation, RV-149)
   if (spot.pitch) mesh.rotateX((spot.pitch - spot.el) * rad);
@@ -163,10 +168,15 @@ export function circleSprite(width: number, height: number): BufferGeometry {
 export function buildCaptureHotspots(primary0: Color, primary1: Color): Group {
   const group = new Group();
   group.name = "capture hotspots";
-  for (const spot of HOTSPOTS) group.add(hotspotMesh(spot, HOTSPOT_COLOR, false));
+  for (const spot of HOTSPOTS) {
+    const look = hotspotLook(spot.vertex);
+    group.add(hotspotMesh(spot, look.colour, false, look.alpha));
+  }
+  // (the team ones: 8 a G (a FB) F, a their painted vertex alpha (0.239): SUR-33 v2)
   for (const spot of TEAM_HOTSPOTS) {
     const p = spot.team === 0 ? primary0 : primary1;
-    group.add(hotspotMesh(spot, fullBright([p.r, p.g, p.b]), true));
+    const a2 = (spot.vertex[3] / 255) ** 2;
+    group.add(hotspotMesh(spot, fullBright([p.r, p.g, p.b]).map((c) => c * a2) as [number, number, number], true));
   }
   group.visible = false;
   return group;
@@ -483,33 +493,6 @@ function stripMaterial(): ShaderMaterial {
   });
 }
 
-/** SUR-15: the glass canopy, unlit, alpha 0.5, emissive 2 (R^2 + R + 1/16) FB(team), R = sat(1.12 - 1.13e-4 z) (the
- *  team's at its low outer edge, 0.125 FB at its top); the team by the side (y < 0 blue) */
-function canopyMaterial(bright0: readonly [number, number, number], bright1: readonly [number, number, number]): ShaderMaterial {
-  return new ShaderMaterial({
-    vertexShader: /* glsl */ `
-      varying vec3 vWorld;
-      void main() {
-        vec4 world = modelMatrix * vec4(position, 1.0);
-        vWorld = world.xyz;
-        gl_Position = projectionMatrix * viewMatrix * world;
-      }`,
-    fragmentShader: /* glsl */ `
-      uniform vec3 bright0;
-      uniform vec3 bright1;
-      varying vec3 vWorld;
-      void main() {
-        float r = clamp(1.12 - 1.13e-4 * vWorld.y, 0.0, 1.0);
-        vec3 fb = vWorld.z < 0.0 ? bright0 : bright1;
-        gl_FragColor = vec4(2.0 * (r * r + r + 0.0625) * fb, 0.5);
-        #include <colorspace_fragment>
-      }`,
-    uniforms: { bright0: { value: new Vector3(...bright0) }, bright1: { value: new Vector3(...bright1) } },
-    transparent: true,
-    depthWrite: false,
-    side: DoubleSide,
-  });
-}
 
 /** SUR-12, RV-125: the floodlight banks: 42 fixtures a bank in 6 groups of 7 (each half three: from 2592, 4787 and 6950
  *  out from the end's centre along the bank, pitch 241, 237.8, 233.2), the halves over az 77.6-98.07 and 117.96-138.4
@@ -619,7 +602,7 @@ function floodlightMaterial(r: number): ShaderMaterial {
 }
 
 /** The bowl and its structures */
-export function buildBowl(primary0: Color, primary1: Color): Group {
+export function buildBowl(): Group {
   const group = new Group();
   group.name = "stadium bowl";
   const add = (geometry: BufferGeometry, material: ShaderMaterial, name: string): void => {
@@ -751,21 +734,11 @@ export function buildBowl(primary0: Color, primary1: Color): Group {
     return [[concourse.r[0], concourse.z], [concourse.r[1], concourse.z], [concourse.r[1], concourse.wallTop + (plaza.wallTop - concourse.wallTop) * f]];
   }), seenMaterial(BOWL_COLOURS.sidewalk, 0.1), "bowl: concourse");
   // The roof's band (inner edge high, outer low), the canopy, the floodlight banks
-  const { roof, canopy, lights } = STRUCTURES;
+  const { roof, lights } = STRUCTURES;
   add(sweep(roof.az[0], roof.az[1], 54, (az) => [
     [edgeAt(roof.rIn, az), edgeAt(roof.zHi, az)],
     [edgeAt(roof.rOut, az), Math.max(edgeAt(roof.zLo, az), roof.zMin)],
   ]), seenMaterial(BOWL_COLOURS.roof), "bowl: roof");
-  const bright = (c: Color): [number, number, number] => fullBright([c.r, c.g, c.b]);
-  add(sweep(canopy.az[0], canopy.az[1], 88, (az) => {
-    const inner: RZ = [edgeAt(canopy.rIn, az), edgeAt(canopy.zHi, az)];
-    // (over the end's centre only the top strip: blended over a few degrees at its sides)
-    const { strip } = canopy;
-    const inStrip = Math.min(Math.max(Math.min(az - strip.az[0], strip.az[1] - az) / strip.blend + 0.5, 0), 1);
-    const full = canopy.outer;
-    const short: RZ = [inner[0] + strip.depth, inner[1] - strip.drop];
-    return [inner, [full[0] + (short[0] - full[0]) * inStrip, full[1] + (short[1] - full[1]) * inStrip]];
-  }), canopyMaterial(bright(primary0), bright(primary1)), "bowl: canopy");
   // (the two halves of each end's bank, the fixtures' radius for their along-bank distances)
   const bankR = (edgeAt(lights.rIn, FLOODLIGHT.centre) + edgeAt(lights.rOut, FLOODLIGHT.centre)) / 2;
   const banks = floodlightMaterial(bankR);
@@ -803,146 +776,4 @@ export function buildBowl(primary0: Color, primary1: Color): Group {
   ribGeometry.setAttribute("position", new Float32BufferAttribute(ribs, 3));
   add(ribGeometry, seenMaterial(BOWL_COLOURS.steel, 0.02), "bowl: supports");
   return group;
-}
-
-// --- The far layer: the skyline, the city's glow, the horizon's fog band (SUR-11, 22, 23) -----------------------------
-
-/** The skyline (SkyScrapers_01 on the -Y side, _02 on the +Y side: az -176..-5 and 3..176 from the capture point, their
- *  tops up to el 51 and 65 degrees; most of them lower: SUR-34's city fraction 0.29 at el 20-25, 0.07 at 50-65), drawn on
- *  a layer just inside the sky's dome (the real towers are 57-200k out, past the camera's reach) with our own window
- *  grid at its mean (0.20, 0.17, 0.11). Below the horizon the city's warm glow, v (0.748, 0.574, 0.265) toward the rim;
- *  over the horizon FogCylinder's white band, alpha by elevation (SUR-23: 0.9 at 0, 0.73 at 7.5, 0.43 at 12.5, 0.19 at
- *  17.5, 0.06 at 22.5, none from 30) */
-export const FAR_LAYER = {
-  radius: 31600,
-  /** Where its parts are for the height fog (FOG-10, SUR-23): the city and its glow 100k out (its towers 57-200k), the
-   *  FogCylinder's white band at its radius, 57.3k */
-  fog: { city: 100000, band: 57300 },
-  skyline: { minusY: [-176, -5] as const, plusY: [3, 176] as const, maxEl: [51, 65] as const },
-  windows: [0.2, 0.17, 0.11] as const,
-  ground: [0.748, 0.574, 0.265] as const,
-  fogBand: [[0, 0.9], [7.5, 0.73], [12.5, 0.43], [17.5, 0.19], [22.5, 0.06], [30, 0]] as readonly (readonly [number, number])[],
-} as const;
-
-const farVertex = /* glsl */ `
-uniform vec3 from;
-varying vec3 vDirection;
-void main() {
-  vec4 world = modelMatrix * vec4(position, 1.0);
-  vDirection = world.xyz - from;
-  gl_Position = projectionMatrix * viewMatrix * world;
-}
-`;
-
-/** The city over the -X plaza (City_OOB_A, SUR-1, RV-154a): from az 180.5 (the -Y side of the gap: none over 177-180),
- *  its tops el 8 to 181.5, then 14.9 to 188.5 (the game's first open sky there: 8.6 at 181, about 15 at 182-188) */
-export const PLAZA_CITY = { from: 180.5, step: 181.5, to: 188.5, low: 8, high: 14.9 } as const;
-
-/** Its top at az (degrees, 0-360; none outside it: the shader's, for tests) */
-export function plazaCityTop(az: number): number | null {
-  const C = PLAZA_CITY;
-  return az >= C.from && az < C.to ? (az < C.step ? C.low : C.high) : null;
-}
-
-const farFragment = /* glsl */ `
-uniform vec3 windows;
-uniform vec3 ground;
-uniform float fogEl[6];
-uniform float fogAlpha[6];
-varying vec3 vDirection;
-float hash1(float x) { return fract(sin(x * 127.1) * 43758.5453); }
-float hash2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-void main() {
-  vec3 d = normalize(vDirection);
-  // (the game's az = atan2(y, x), el; Three's y is up, its z the game's y)
-  float az = degrees(atan(d.z, d.x));
-  float el = degrees(asin(clamp(d.y, -1.0, 1.0)));
-  vec3 colour = vec3(0.0);
-  float alpha = 0.0;
-  // The skyline: towers 1-4 degrees wide; their tops mostly low, a few tall
-  bool minusY = az >= -${(360 - PLAZA_CITY.to).toFixed(1)} && az <= -5.0;
-  bool plusY = az >= 3.0 && az <= 176.0;
-  // (and over the -X plaza, beyond the gap in the stands, City_OOB_A, by rule: plazaCityTop)
-  float g = az < 0.0 ? az + 360.0 : az;
-  bool plaza = g >= ${PLAZA_CITY.from.toFixed(1)} && g < ${PLAZA_CITY.to.toFixed(1)};
-  if ((minusY || plusY || plaza) && el > -2.0) {
-    float bin = floor(az / 2.5);
-    float u = hash1(bin + (minusY ? 17.0 : 0.0));
-    float top = plaza ? (g < ${PLAZA_CITY.step.toFixed(1)} ? ${PLAZA_CITY.low.toFixed(1)} : ${PLAZA_CITY.high.toFixed(1)}) : 10.0 + (minusY ? 41.0 : 55.0) * u * u * u;
-    if (el < top) {
-      // (windows: columns 0.18 degrees, rows 0.3; a third lit, warm)
-      vec2 cell = vec2(floor(az / 0.18), floor(el / 0.3));
-      float lit = step(0.66, hash2(cell));
-      vec2 f = fract(vec2(az / 0.18, el / 0.3));
-      float pane = step(0.2, f.x) * step(f.x, 0.8) * step(0.25, f.y) * step(f.y, 0.85);
-      // (lit panes 0.12 of the face: their mean the windows' (0.20, 0.17, 0.11), RV-127c)
-      colour = vec3(0.022, 0.02, 0.018) + lit * pane * windows * 7.3;
-      alpha = 1.0;
-    }
-  }
-  // Below the horizon: the city's glow toward the rim
-  if (el < 0.0 && alpha < 1.0) {
-    float v = 0.95 * exp(el / 1.5);
-    float sparkle = step(0.97, hash2(floor(vec2(az * 3.0, el * 6.0)))) * (1.0 - v);
-    colour = v * ground + sparkle * vec3(0.9, 0.7, 0.4);
-    alpha = 1.0;
-  }
-  // (the city and its glow: opaque, in the height fog at their distance, along the drawing camera's sight line)
-  vec3 sight = normalize(vFogWorld - uFogCam);
-  if (alpha > 0.0) {
-    vec4 cityFog = rlHeightFog(rlOpaqueDelta(uFogCam + sight * ${FAR_LAYER.fog.city.toFixed(1)}));
-    colour = colour * cityFog.a + cityFog.rgb;
-  }
-  // The horizon's fog band over it all: FogCylinder, white, alpha by elevation, in the height fog at its radius per its
-  // own translucency (c F + fog: FOG-10, SUR-23)
-  float e = abs(el);
-  float band = 0.0;
-  for (int i = 0; i < 5; i++) {
-    if (e >= fogEl[i] && e < fogEl[i + 1]) band = mix(fogAlpha[i], fogAlpha[i + 1], (e - fogEl[i]) / (fogEl[i + 1] - fogEl[i]));
-  }
-  vec4 bandFog = rlHeightFog(sight * ${FAR_LAYER.fog.band.toFixed(1)});
-  // (the band over the city, as two layers: what's drawn its colour over their joint alpha)
-  float joint = band + alpha * (1.0 - band);
-  colour = joint > 0.0 ? (colour * alpha * (1.0 - band) + (vec3(1.0) * bandFog.a + bandFog.rgb) * band) / joint : vec3(0.0);
-  alpha = joint;
-  if (alpha <= 0.0) discard;
-  gl_FragColor = vec4(colour, alpha);
-  #include <colorspace_fragment>
-}
-`;
-
-/** The far layer's place in the opaque pass: after the sky's dome (-1), before the far fog sheets (in front of it) and
- *  the rest, which cover it */
-export const FAR_LAYER_ORDER = -0.75;
-
-/** The far layer (background: over the sky's dome, under everything else; centred on the field, inside the dome and the
- *  camera's far plane from anywhere in the arena) */
-export function buildFarLayer(): Mesh {
-  const L = FAR_LAYER;
-  const material = new ShaderMaterial({
-    vertexShader: farVertex,
-    fragmentShader: farFragment,
-    uniforms: {
-      // (its elevations as seen from the capture point; Three's frame)
-      from: { value: new Vector3(GRASS_CUBE_AT.x, GRASS_CUBE_AT.z, GRASS_CUBE_AT.y) },
-      windows: { value: new Vector3(...L.windows) },
-      ground: { value: new Vector3(...L.ground) },
-      fogEl: { value: L.fogBand.map(([e]) => e) },
-      fogAlpha: { value: L.fogBand.map(([, a]) => a) },
-    },
-    side: BackSide,
-    // (as background: in the opaque pass, blended by its alpha all the same)
-    blending: CustomBlending,
-    blendSrc: SrcAlphaFactor,
-    blendDst: OneMinusSrcAlphaFactor,
-    blendSrcAlpha: OneFactor,
-    blendDstAlpha: OneMinusSrcAlphaFactor,
-    depthWrite: false,
-    fog: false,
-  });
-  withHeightFog(material, "custom");
-  const mesh = new Mesh(new SphereGeometry(L.radius, 96, 48), material);
-  mesh.name = "far layer";
-  mesh.renderOrder = FAR_LAYER_ORDER;
-  return mesh;
 }

@@ -1,6 +1,6 @@
 // Sound events found in the real engine's states (requires engine/build-wasm and out/arena), and in made-up ones: the
-// detector's (the ball's bounces, jumps, dodges, pads, demolitions) and the impact and landing triggers' (the engine's
-// contacts: game/impactTriggers.ts), as the game loop runs them.
+// detector's (jumps, dodges, pads, demolitions) and the impact and landing triggers' (the engine's contacts, the ball's
+// bounces too: game/impactTriggers.ts), as the game loop runs them.
 import createEngine from "@engine/rlengine.mjs";
 import { beforeAll, describe, expect, it } from "vitest";
 import { type BodyState, type BoostPadState, type CarControls, type CarState, NO_CONTROLS, World, initEngine } from "../engine/world";

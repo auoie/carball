@@ -3,8 +3,8 @@
 // each primitive's bounds origin, farthest first. Not three's default, the projected z of the same point: behind the
 // camera (a big object's origin behind a cube face) that misorders. And for a sprite drawn nearer than it is, its depth
 // as if at its true place (withTrueDepth), so what stands between covers it.
-import type { Camera, InstancedMesh, Mesh, Object3D, Scene, ShaderMaterial, WebGLRenderer } from "three";
-import { Matrix4, Vector3 } from "three";
+import type { BufferGeometry, Camera, InstancedMesh, Mesh, Object3D, Scene, ShaderMaterial, WebGLRenderer } from "three";
+import { Box3, Group, Matrix4, Sphere, Vector3 } from "three";
 
 /** TranslucencySortPriority as the game sets it (TRN1; the class default 0): the stadium's layers */
 export const PRIORITY = {
@@ -99,15 +99,42 @@ export function useGameTranslucentSort(gl: WebGLRenderer, scene: Scene): void {
   gl.setTransparentSort(gameTranslucentSort as (a: unknown, b: unknown) => number);
 }
 
+/** A geometry's bounds (its box and sphere) fitted to the vertices its index uses: one piece of a shared vertex buffer
+ *  sorts (and culls) by its own bounds, not the whole buffer's (three's own bounds take every vertex) */
+export function fitIndexedBounds(geometry: BufferGeometry): BufferGeometry {
+  const position = geometry.getAttribute("position");
+  const index = geometry.getIndex();
+  const box = new Box3();
+  const v = new Vector3();
+  const count = index ? index.count : position.count;
+  for (let k = 0; k < count; k++) box.expandByPoint(v.fromBufferAttribute(position, index ? index.getX(k) : k));
+  geometry.boundingBox = box;
+  const sphere = new Sphere(box.getCenter(new Vector3()), 0);
+  for (let k = 0; k < count; k++) sphere.radius = Math.max(sphere.radius, sphere.center.distanceTo(v.fromBufferAttribute(position, index ? index.getX(k) : k)));
+  geometry.boundingSphere = sphere;
+  return geometry;
+}
+
+/** The fraction of its distance from `about` a mesh is drawn at so that all of it lies within `room` of the origin (1
+ *  if it does already): its shape and its angular size from `about` kept */
+export function scaleWithin(mesh: Mesh, about: Vector3, room: number): number {
+  mesh.updateMatrixWorld(true);
+  const position = mesh.geometry.getAttribute("position");
+  const v = new Vector3();
+  let out = 0;
+  for (let i = 0; i < position.count; i++) out = Math.max(out, v.fromBufferAttribute(position, i).applyMatrix4(mesh.matrixWorld).distanceTo(about));
+  return Math.min(1, (room - about.length()) / out);
+}
+
 /** The largest depth written short of the far plane's (a true place past it: in front of nothing but the sky) */
 const DEPTH_MAX = 1 - 2 ** -22;
 
-/** A sprite drawn at `scale`'s fraction of its distance from `about` (Three's frame) given the depth of its true place:
- *  each fragment's own point scaled back out (its triangle's barycentrics kept: the scaling is affine), past the far
- *  plane held just short of it. Depth-tested as there, so whatever stands between covers it (a shader material's own
- *  shaders, no instancing) */
-export function withTrueDepth(material: ShaderMaterial, scale: number, about: readonly [number, number, number]): ShaderMaterial {
-  const a = `vec3(${about.map((v) => v.toFixed(3)).join(", ")})`;
+/** A sprite drawn at `scale`'s fraction of its distance from `about` (Three's frame, or the drawing camera: drawnNearer)
+ *  given the depth of its true place: each fragment's own point scaled back out (its triangle's barycentrics kept: the
+ *  scaling is affine), past the far plane held just short of it. Depth-tested as there, so whatever stands between
+ *  covers it (a shader material's own shaders, no instancing) */
+export function withTrueDepth(material: ShaderMaterial, scale: number, about: readonly [number, number, number] | "camera"): ShaderMaterial {
+  const a = about === "camera" ? "cameraPosition" : `vec3(${about.map((v) => v.toFixed(3)).join(", ")})`;
   material.vertexShader = wrap(
     `varying vec4 vTrueClip;\n${material.vertexShader}`,
     `  vec3 rlWorld = (modelMatrix * vec4(position, 1.0)).xyz;\n  vTrueClip = projectionMatrix * viewMatrix * vec4(${a} + (rlWorld - ${a}) * ${scale.toFixed(6)}, 1.0);`,
@@ -118,6 +145,27 @@ export function withTrueDepth(material: ShaderMaterial, scale: number, about: re
   );
   material.userData["trueDepth"] = scale;
   return material;
+}
+
+/** A mesh built at its true size and place drawn at `k` of its distance from the camera drawing it, re-placed for each
+ *  view (the capture's faces, the game's camera), so its direction and angular size hold from wherever it's seen
+ *  (RV-198): a group scaled about the camera round it (`initial`: about where until the first view). Its fog and depth
+ *  scaled back out about the camera too (withHeightFog's default, withTrueDepth's "camera"); never culled by its last
+ *  view's place */
+export function drawnNearer(mesh: Mesh, k: number, initial: Vector3): Group {
+  const placer = new Group();
+  placer.scale.setScalar(k);
+  placer.position.copy(initial).multiplyScalar(1 - k);
+  placer.add(mesh);
+  mesh.frustumCulled = false;
+  const eye = new Vector3();
+  const before = mesh.onBeforeRender.bind(mesh);
+  mesh.onBeforeRender = (renderer, scene, camera, geometry, material, group) => {
+    placer.position.copy(camera.getWorldPosition(eye)).multiplyScalar(1 - k);
+    placer.updateMatrixWorld(true);
+    before(renderer, scene, camera, geometry, material, group);
+  };
+  return placer;
 }
 
 /** A shader's main renamed, and a new main calling it, then `after` */

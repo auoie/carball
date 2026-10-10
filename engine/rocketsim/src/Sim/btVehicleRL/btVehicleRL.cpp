@@ -258,6 +258,19 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
 			}
 		}
 
+		// RL PATCH: a wheel on a dynamic body (the ball, another car) pushes it into its surface at the contact point with
+		// an impulse of 1.0 and wakes it, in the contact pass right after this wheel's pushback (FUN_1402c3e60: activate,
+		// then the wheel's +0xd0 impulse along -normal), so the next wheel's pushback sees it. It was applied after the
+		// whole pass, with the suspension. Live (`car_car`, a car landing across another's roof with both back wheels
+		// bottomed out on it): with the game's wheel order, the lower car 3.04 -> 0.09 uu/s
+		if (btRigidBody* ground = btRigidBody::upcast(object)) {
+			if (!ground->isStaticOrKinematicObject()) {
+				ground->applyImpulse(-wheel.m_raycastInfo.m_contactNormalWS * RLConst::BTVehicle::WHEEL_PUSH_IMPULSE,
+				                     wheel.m_raycastInfo.m_contactPointWS - ground->getCenterOfMassPosition());
+				ground->activate();
+			}
+		}
+
 	} else {
 		wheel.m_raycastInfo.m_suspensionLength = wheel.getSuspensionRestLength() + suspensionTravel;
 		wheel.m_suspensionRelativeVelocity = 0;
@@ -282,8 +295,9 @@ void btVehicleRL::updateVehicleFirst(float step) {
 	// simulate suspension
 	//
 
+	// RL PATCH: the contact pass in the game's wheel order (see GameWheel)
 	for (int i = 0; i < m_wheelInfo.size(); i++)
-		rayCast(m_wheelInfo[i]);
+		rayCast(m_wheelInfo[GameWheel(i)]);
 }
 
 void btVehicleRL::updateWheelBases() {
@@ -364,8 +378,8 @@ void btVehicleRL::updateSuspension(float deltaTime) {
 		}
 	}
 
-	for (int i = 0; i < getNumWheels(); i++) {
-		btWheelInfoRL& wheel = m_wheelInfo[i];
+	for (int k = 0; k < getNumWheels(); k++) { // RL PATCH: the game's wheel order
+		btWheelInfoRL& wheel = m_wheelInfo[GameWheel(k)];
 		if (wheel.m_wheelsSuspensionForce != 0) {
 			btVector3 contactPointOffset = wheel.m_raycastInfo.m_contactPointWS - getRigidBody()->getCenterOfMassPosition();
 			float baseForceScale = (wheel.m_wheelsSuspensionForce * deltaTime) + wheel.m_extraPushback;
@@ -374,17 +388,7 @@ void btVehicleRL::updateSuspension(float deltaTime) {
 		}
 	}
 
-	// RL PATCH: each wheel touching a dynamic body pushes it into its surface at the contact point, and wakes it (the
-	// game's vehicle update, FUN_1402c3360 / FUN_1402c2a40 family; RocketSim's vehicle never touched the ground body)
-	for (int i = 0; i < getNumWheels(); i++) {
-		btWheelInfoRL& wheel = m_wheelInfo[i];
-		if (!wheel.m_raycastInfo.m_isInContact || !wheel.m_raycastInfo.m_groundObject) continue;
-		btRigidBody* ground = btRigidBody::upcast((btCollisionObject*)wheel.m_raycastInfo.m_groundObject);
-		if (!ground || ground->isStaticOrKinematicObject()) continue;
-		ground->applyImpulse(-wheel.m_raycastInfo.m_contactNormalWS * RLConst::BTVehicle::WHEEL_PUSH_IMPULSE,
-		                     wheel.m_raycastInfo.m_contactPointWS - ground->getCenterOfMassPosition());
-		ground->activate();
-	}
+	// (the push of a wheel on a dynamic body: in the contact pass, rayCast)
 }
 
 // See: I25
@@ -463,8 +467,8 @@ void btVehicleRL::calcFrictionImpulses(float timeStep) {
 void btVehicleRL::applyFrictionImpulses(float timeStep) {
 	// Apply impulses
 	btVector3 upDir = m_chassisBody->getWorldTransform().getBasis().getColumn(m_indexUpAxis);
-	for (int i = 0; i < m_wheelInfo.size(); i++) {
-		btWheelInfoRL& wheel = m_wheelInfo[i];
+	for (int k = 0; k < m_wheelInfo.size(); k++) { // RL PATCH: the game's wheel order
+		btWheelInfoRL& wheel = m_wheelInfo[GameWheel(k)];
 		if (!wheel.m_impulse.isZero()) {
 			btVector3 wheelContactOffset = wheel.m_raycastInfo.m_contactPointWS - m_chassisBody->getWorldTransform().getOrigin();
 			float contactUpDot = upDir.dot(wheelContactOffset);
@@ -478,16 +482,25 @@ btVector3 btVehicleRL::getUpwardsDirFromWheelContacts() {
 	// RL PATCH: the wheels on world geometry only (the game's FUN_140eed3e0, for the sticky force and auto-roll); a wheel
 	// on the ball or a car doesn't count
 	btVector3 sumContactDir = btVector3(0, 0, 0);
-	for (int i = 0; i < m_wheelInfo.size(); i++)
-		if (m_wheelInfo[i].m_raycastInfo.m_isInContact && m_wheelInfo[i].m_isInContactWithWorld)
-			sumContactDir += m_wheelInfo[i].m_raycastInfo.m_contactNormalWS;
+	for (int k = 0; k < m_wheelInfo.size(); k++) { // (summed in the game's wheel order)
+		const btWheelInfoRL& w = m_wheelInfo[GameWheel(k)];
+		if (w.m_raycastInfo.m_isInContact && w.m_isInContactWithWorld)
+			sumContactDir += w.m_raycastInfo.m_contactNormalWS;
+	}
 
 	if (sumContactDir == btVector3(0, 0, 0)) {
 		// No wheels had world contact, just return basic upward direction
 		return this->getUpVector();
 	} else {
 		// Average normal of contact
-		return sumContactDir.safeNormalized();
+		// RL PATCH: normalised as the game's SafeNormal (FUN_140ef2170): kept when its squared length is exactly 1, else
+		// times 1 / sqrt (Bullet divides by the root: the last bit differs); zero below 1e-8
+		float lengthSq = sumContactDir.length2();
+		if (lengthSq == 1)
+			return sumContactDir;
+		if (lengthSq < 1e-8f)
+			return btVector3(0, 0, 0);
+		return sumContactDir * (1 / sqrtf(lengthSq));
 	}
 }
 

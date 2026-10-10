@@ -264,7 +264,11 @@ Ground driving (engine − game, uu/s², flat floor; `validation_report.py`):
     better), but steering is 0.032 (Dominus), 0.045 (Breakout) and 0.057 (Plank) against the Octane's 0.010. Not
     the inertia: the Octane's inertia on the other presets makes them 4× worse. The presets match the game's data
     (hitbox = PhysAsset box + 2.5; wheel x/y and radii equal; wheel z offset by the same 12 for every preset).
-    Open.
+    **Superseded (2026-10-10, static analysis CCR-7):** with the current engine it doesn't reproduce: Dominus 403
+    0.0002 / 0.0003, Breakout 11505 0.0002 / 0.010, Batmobile 803 0.0002 / 0.0098, Centio 1919 0.0001–0.0005 (straight
+    / steering). What's left is per replay, not per body; the figures above predate patches 38 and 80 and the body
+    mapping. No live body uses the variant presets (`LongCar_aa` etc.); 18 bodies set `HandlingPresetXOffset` and 5 a
+    mesh `Origin.X`, which only move the creation point.
 22. **Input changes between frames: throttle matches; steering changes are inexact.** The car-alone pass now also
     runs cases whose inputs change between the frames, switching from the first frame's inputs to the next frame's
     at the best tick (0–8; ~275,000 cases, categories `car alone input change/...`). Flat floor: throttle changes
@@ -472,13 +476,16 @@ Ground driving (engine − game, uu/s², flat floor; `validation_report.py`):
     - A car dropped onto another's roof: 19.7 uu/s off until the car under the wheels also gets the bottom-out
       pushback (engine patch 54); a car parked there: 0.21 uu/s per tick until wheel rays on convex shapes use the
       game's caster, the GJK cast (patch 55; static session: rayTestSingle → btGjkConvexCast, 0.001 BU, 64 iterations).
-      The same fix makes `wheel_ball` (a car on the ball) exact: car p99 0.66 → 0.01, ball max 0.27 → 0.01. Left:
-      1–3 uu/s for a few ticks once the two bodies touch in the roof landing (the box–box points are the game's; the
-      solver's order of contacts, probably).
+      The same fix makes `wheel_ball` (a car on the ball) exact: car p99 0.66 → 0.01, ball max 0.27 → 0.01. Left
+      then: 1–3 uu/s for a few ticks in the roof landing, starting a tick before the bodies touch: the wheels' contact
+      pass in the game's order (front left, front right, back left, back right) with each wheel's push on a dynamic
+      ground right after its pushback (patch 97, static analysis CCR-1): car 0.433 → 0.00014, the bot 3.04 → 0.010 uu/s
+      per tick.
     - `ball_5050` (body 23 bot): 50/50s at 1400 each, a kickoff with both cars boosting, an offset 50/50, and the ball
       pinched between the player and the side wall. Cars ≤ 1.72 uu/s, the ball exact but for two ticks: the pinch
-      (80.25 uu/s, fixed by finding 41) and the first 50/50's touch (20.06 uu/s, both cars on the ball in one tick;
-      open).
+      (80.25 uu/s, fixed by finding 41) and the first 50/50's touch (20.06 uu/s, both cars on the ball in one tick):
+      the ball hit's forward through the game's rotator (patch 98, CCR-3), the ball 0.216 → 0.020. (`car_car_041358`'s
+      ball error is the validator's scored-ball freeze: the ball starts in the net.)
 
 41. **The arena as the game's 16 pieces (engine patch 56).** The game's soccar collision is 16 static mesh bodies
     (per quadrant a corner, a side-wall floor half, a ceiling half and a goal-and-back-wall half); the flat floor,
@@ -565,22 +572,23 @@ Ground driving (engine − game, uu/s², flat floor; `validation_report.py`):
       gives (499, −485) uu behind and below the ball, the decoded (500, −500).
     - Timing: as the wave front, d / 10000 s (1500–2000 uu: 0.173 s both; 2000–2500: 0.224 / 0.220); no push past
       3000 uu.
-    - Size: with the 2300 uu/s cap the change is the capped sum, so the push is fitted per car (in the air: 632 cars,
-      9–43 uu/s left): about 0.82 of the decoded 5000 × (1 − d/3000)^0.1 at every distance (4275 vs 4953 uu/s at
-      250 uu, 2750 vs 4026 at 2700), whatever the time to the next frame. A fit gives 4442 × (1 − d/3000)^0.18
-      (median error per car 117 uu/s, against 200 for the decoded values). The engine keeps the decoded values until
-      the static analysis finds what scales them (asked).
+    - Size: running the engine from each replay frame through the push (the static analysis's KNB1, `goal_push`), the
+      decoded size fits: s = 1.02 (IQR 1.007–1.045, 615 pushes; Classic 1.024; a free fit 5143 × (1 − d/3000)^0.109;
+      4442 / 0.18 has a median residual of 837 uu/s against 105). The 0.82 an earlier formula fit gave came from taking
+      the push's direction from the car's row before the push instead of its position at the push tick (0.92 → 1.04 on
+      the same cases), plus gravity left out (25 → 5 uu/s residual). The engine keeps 5000 / 0.1, and the same runs
+      found three model errors, now fixed (patch 77, 2026-10-10): the push is capped as the next tick starts, before it
+      moves the car (KNB-5: position 2.8 → 0.17 uu median, velocity 27 → 6 uu/s); it lands at the car's actor
+      Location, a tick behind its body, so it spins the car (KNB-6: angular velocity 4.85 → 0.83 rad/s); the wave starts
+      where the ball was a tick before the goal was detected (KNB-7: position 0.35 → 0.17 uu). With s = 1 and all three
+      the median errors are 0.50 uu and 18 uu/s; about 2 % excess remains inside 750 uu (KNB-10, open).
     - By the scorer's goal explosion (`replay_extract --goals`; a cosmetic can carry explosion physics of its own,
-      `Ball_TA.InitExplosionFX`; products from the game: `physlog_products goal`): Reaper Ultra (11747) pushes nobody,
-      Air Strike (5287) a quarter, Butterflies (2700) its own way; about twenty others, Classic (1903, 13 cars: 4087)
-      among them, fit one push of 4000–4500 at falloff 0.1. The static analysis confirms the mechanism (Reaper
-      Ultra carries a visual handler, which detaches the default wave; Air Strike a 1500 push) and finds no factor in
-      the default chain (5000 × (1 − t)^0.1, a velocity change at the car's centre).
-    - Why the default products fit lower is unsettled: past the 2300 uu/s cap the push shows only in the angle of the
-      velocity after it, which a few uu/s of error in the origin or the velocity before biases; the cases under the
-      cap (205 cars) don't fit any push cleanly (median error 330–950 uu/s), so they can't decide it. The engine keeps
-      the decoded 5000 / 0.1. A clean check needs the engine run from each replay frame through the push (as
-      `replay_validate` does for touches), not a formula fit.
+      `Ball_TA.InitExplosionFX`; products from the game: `physlog_products goal`): Reaper Ultra (11747) and Brimstone
+      (8536) push nobody (visual handlers only), Air Strike (5287) a quarter (a 1500 push of its own), Sweet Score
+      (9805) its own 3500 push with falloff 0; the rest push with the base wave. "Butterflies (2700) its own way" was
+      one player's 9 goals with no push (likely a misattributed product); its other goals push normally. The static
+      analysis confirms the mechanism (a product with explosion components detaches the default wave) and finds no
+      factor in the default chain (5000 × (1 − t)^0.1, a velocity change).
 47. **The pitch lock after a wavedash (engine patch 79, 2026-10-08; static analysis GA-5).** `ga_pitchlock`: the car
     placed just above the floor, nose up and falling, dodges forward and lands while the dodge is active, then
     jumps 8, 10 or 16 ticks later holding pitch up (timings picked in our engine so that the press is a ground jump

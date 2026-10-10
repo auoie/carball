@@ -539,6 +539,10 @@ impl Game {
             let controls = p.input.tick(now, odd_tick);
             let controls = if frozen { Controls::default() } else { controls };
             self.arena.set_controls(p.car_id, &controls);
+            // (a release and a press inside this tick's frames: a fresh press, NET-2)
+            if p.input.repress_jump && !frozen {
+                self.arena.repress_jump(p.car_id);
+            }
         }
         self.arena.step(1);
         let tick = self.arena.tick_count();

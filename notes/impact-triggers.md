@@ -10,7 +10,9 @@ out/bsim/agents/RMB1/e1..e26). The static session re-checked the v ≤ 200 early
 - **IT-1. Cadence.** Impacts are processed every 120 Hz physics step while a pair touches; there is no touch-start
   debounce. The impact shake skips v ≤ 200 (no restart), so resting contact never cuts a hit short.
 - **IT-2. Speed.** v = |(v̄_self − v̄_other)·n|: averaged point velocities (v + ω×r) taken before the step's forces and impulses, over all contact points
-  with that partner in the step; n is the averaged normal, replaced by a ±10 uu line-check hit normal.
+  with that partner in the step; n is the averaged normal. It is replaced by a line-check hit normal only for static
+  world partners (±10 uu) and for a ball partner (per-polygon, toward its centre); **never for a car partner**
+  (corrected 2026-10-10, CBL1; see §1).
 - **IT-3. Batching.** One HandleCollision per (car, partner actor) per physics step; the last restart in a frame wins.
 - **IT-4. Paths.** Car–ball, car–car and car–world share the chain. The ball's SoundPriority 100 means car–ball hits
   play only Impact_Ball; car–car plays one body sound. Sparks and sound need v ≥ 50 and a 0.15 s game-time cooldown,
@@ -136,7 +138,9 @@ dv = entry.vSelf - entry.vOther                            # uu/s
 if |dv.x|, |dv.y| and |dv.z| are all < 1e-4: return       # nothing at all
 n, loc, mat = entry.normal, entry.pos, entry.mat
 if partner owner is bMovable (+0xfc bit 18, 0x40000):          # a car or a ball
-    hit = partner component LineCheck(loc + 10 n → loc − 10 n)  # vtable +0x350
+    if Cast<SkeletalMeshComponent>(partner component) (0x140460fb0): no check   # a car (CarMeshComponent_TA): n stays
+    else: hit = partner component LineCheck(Result, End = component.Bounds.Origin (+0xa4), Start = loc,
+                                             Extent 0, flags 0x220df)          # vtable +0x350; the ball: per-polygon
 else:                                                          # static world geometry
     hit = SingleLineCheck(start = loc + 10 n, end = loc - 10 n, source = self, flags 0x220d3)
 if hit (Time < 1): n, loc, mat = hit.Normal, hit.Location, hit.PhysMaterial   # the hit replaces the contact normal
@@ -204,9 +208,17 @@ if soundSide and AkImpactSound:
 - The velocities are **point velocities v + ω × r** of each body at each contact point. They are taken at the solver's
   contact setup: **before** the step's forces and gravity (Bullet 2.82 applies them inside the solver) and before its
   impulses, i.e. the previous step's end velocities. Units uu/s (BU × 50). (Corrected 2026-10-10.)
-- The normal is the averaged contact normal (partner → self), **replaced by the hit normal** of a ±10 uu line check
-  from the self side through the averaged point toward the partner, when that check hits. For world and ball this is
-  the partner's surface normal [I that it rarely differs much].
+- The normal is the averaged contact normal (partner → self). **Corrected 2026-10-10 (CBL1, live asm 0x140f03335–
+  0x140f03504) [N]:** it is replaced by a hit normal only when a check hits:
+  - **static world:** SingleLineCheck from loc + 10 n to loc − 10 n (flags 0x220d3);
+  - **a car partner: no check at all.** The car's collision component is its Mesh (CarMeshComponent_TA, a
+    SkeletalMeshComponent), and HandleCollision skips the LineCheck for skeletal meshes (0x140f03351/59). n stays the
+    averaged normal;
+  - **a ball partner:** the ball's StaticMeshComponent LineCheck along the segment from the contact point to the
+    component's Bounds.Origin (≈ 4.3 uu off the centre), per-polygon on the grooved LOD0 mesh (radius 88.1–94.8). A hit
+    gives a facet normal a median 3–4° off radial; with a sphere the clone's equivalent is the radial normal;
+  - on a miss: the averaged normal, the averaged position and the entry's material (or the partner's
+    PhysMaterialOverride if that is null).
 - v = |(v̄_self − v̄_other) · n|.
 - Processing-threshold value: BT_LARGE_FLOAT assumed [I; medium].
 
@@ -230,7 +242,8 @@ if soundSide and AkImpactSound:
   - The ball side plays Impact_Ball with its own cooldown.
   - The ball-touch gameplay event (hit registration, stats) is a separate path, not traced here.
 - **Car–car:**
-  - Both cars run it with swapped velocities and negated normal (same \|Δv·n\| up to the line-check substitution).
+  - Both cars run it with swapped velocities and negated normal, with no line check (cars are skeletal meshes), so
+    both get **exactly the same** \|Δv·n\| (corrected 2026-10-10, CBL1).
   - Both spawn sparks; each local car shakes.
   - Only one body sound: equal SoundPriority 0, so the side with the larger +0x38 integer plays it [I on the field].
 - **Early-outs:** a hidden/flagged car (+0xf8 & 2), linked actors (+0x750), and missing car sub-objects.
@@ -292,7 +305,9 @@ shared OnRigidBodyCollision 0x140f190b0).
 6. ImpactEffects 0x140f1b080: v ≥ 50; the **LastWorldImpactTime** slot, 0.15 s game time; switch MaterialType from
    the material (+0x60), RTPC ImpactIntensity = v; post Impact_Ball. No sparks.
 
-**Car–ball, ball side:** the same chain with a LineCheck against the car's component. The car's SoundPriority 0 <
+**Car–ball, ball side:** the same chain, **with no line check** (the car's component is a skeletal mesh; corrected
+2026-10-10, CBL1): n is the averaged contact normal, so v equals the car side's raw value exactly, and the car side's
+event may stand in when it uses its own raw normal. The car's SoundPriority 0 <
 the ball's 100, so the ball plays Impact_Ball on its **LastActorImpactTime** slot and the car side is silent. Not
 traced: whether the separate ball-touch path also plays a sound.
 

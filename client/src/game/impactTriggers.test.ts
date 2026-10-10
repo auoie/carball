@@ -58,7 +58,9 @@ describe("the impact triggers (IT-1..4)", () => {
     expect(kinds(t.frame(0.1, [own(13, 800), impact(13, 7, "ball", 800)], new Map(), new Map(), null))).toEqual(["sparks", "ballImpact"]);
     expect(kinds(t.frame(0.06, [own(20, 40)], new Map(), new Map(), null))).toEqual([]);
     expect(kinds(t.frame(0.01, [own(21, 600)], new Map(), new Map(), null))).toEqual(["ballImpact"]);
-    expect(triggerSounds([{ kind: "ballImpact", at: vec3(0, 0, 0), speed: 650, partner: "world" }])).toEqual([{ kind: "ballBounce", at: vec3(0, 0, 0), strength: 0.5 }]);
+    // (a bounce full at 1200, its base curve; a car's hit at 1300, the Car material's: RV-205)
+    expect(triggerSounds([{ kind: "ballImpact", at: vec3(0, 0, 0), speed: 600, partner: "world" }])).toEqual([{ kind: "ballBounce", at: vec3(0, 0, 0), strength: 0.5 }]);
+    expect(triggerSounds([{ kind: "ballImpact", at: vec3(0, 0, 0), speed: 650, partner: "car" }])).toEqual([{ kind: "ballHit", at: vec3(0, 0, 0), strength: 0.5 }]);
   });
 
   it("skips ticks already handled (a prediction's re-simulation)", () => {

@@ -9,8 +9,11 @@ import { buildCrowd } from "./stadiumCrowd";
 import { buildStadiumLights } from "./stadiumLights";
 import { buildPlaza, buildScreensAndProps } from "./stadiumProps";
 import { buildFogBowl, buildSkyDome } from "./stadiumSky";
-import { buildBowl, buildCaptureHotspots, buildFarLayer } from "./stadiumSurroundings";
+import { buildFarLayer } from "./stadiumFarLayer";
+import { buildBowl, buildCaptureHotspots } from "./stadiumSurroundings";
 import type { Theme } from "./theme";
+import { buildFlagRing, updateFlagRing } from "./stadiumFlags";
+import { buildCanopy } from "./stadiumCanopy";
 
 /** The sky's v and q (H-10: stadiumSky.ts) */
 export { skyVQ } from "./stadiumSky";
@@ -35,9 +38,14 @@ export function stadiumTheme(): Theme {
   const props = buildScreensAndProps(linear(p0), linear(p1));
   // The skyline, the city's glow and the horizon's fog band beyond (SUR-11, 22, 23)
   // The team beams, flare sheets, bulbs, the canopy's light dots, the haze and the near fog sheets (SUR-8, 13, 14, 23)
-  root.add(sun, sky, dome, buildFogBowl(), hotspots, buildBowl(linear(p0), linear(p1)), crowd.mesh, props.group, buildPlaza(), buildStadiumLights(linear(p0), linear(p1)), buildFarLayer());
+  // The roof arch's ring of flags (SUR-11, FLG1)
+  const flags = buildFlagRing();
+  // The glass canopy's panels and fins (SUR-6, 15)
+  root.add(buildCanopy(linear(p0), linear(p1)));
+  root.add(sun, sky, dome, buildFogBowl(), hotspots, buildBowl(), crowd.mesh, props.group, buildPlaza(), buildStadiumLights(linear(p0), linear(p1)), buildFarLayer(), flags);
   // (the height fog in every material out here: opaque per pixel, translucent per vertex; the sky, the far layer and
-  // the hotspots their own ways, set where they're built. The arena within 10240 uu of any camera there takes none)
+  // the hotspots their own ways, set where they're built. The arena's, the cars' and the ball's the renderer fogs each
+  // frame (renderer.heightFog: RV-187); nothing within 10240 uu of the camera takes any)
   fogAll(root);
   return {
     background: new Color(0x0b1418),
@@ -62,6 +70,7 @@ export function stadiumTheme(): Theme {
       skyDome.update(elapsedSeconds);
       crowd.update(elapsedSeconds);
       props.update(elapsedSeconds);
+      updateFlagRing(flags, elapsedSeconds);
     },
   };
 }

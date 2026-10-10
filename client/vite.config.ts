@@ -54,6 +54,9 @@ export default defineConfig({
   build: {
     target: "es2023",
     chunkSizeWarningLimit: 700, // three.js alone is ~600 KB minified
+    // (three.js in a chunk of its own, named for it: otherwise it takes the name of whichever of our modules imports it
+    // first, and the shipped-data guard tells the library's chunk by its name)
+    rolldownOptions: { output: { advancedChunks: { groups: [{ name: "three", test: /node_modules[\\/]three[\\/]/ }] } } },
   },
   test: {
     environment: "node",

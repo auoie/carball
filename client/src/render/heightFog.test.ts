@@ -1,6 +1,6 @@
 // The height fog against the spec's values (notes/arena-surroundings.md FOG-5, 7, 13, 14), and how materials take it
 // (FOG-10).
-import { AdditiveBlending, type Blending, Group, Mesh, MeshBasicMaterial, NormalBlending, PerspectiveCamera, PlaneGeometry, ShaderMaterial } from "three";
+import { AdditiveBlending, type Blending, Group, Mesh, MeshBasicMaterial, MeshStandardMaterial, NormalBlending, PerspectiveCamera, PlaneGeometry, ShaderMaterial } from "three";
 import { describe, expect, it } from "vitest";
 import { CUBE_FOG_CAP, HEIGHT_FOG, HEIGHT_FOG_UNIFORMS, fogAll, fogCd, heightFog, opaqueDelta, skyDelta, updateHeightFog, withHeightFog } from "./heightFog";
 
@@ -167,5 +167,20 @@ describe("the fog wherever it's drawn (RV-187, 190)", () => {
   it("the arena's far corner from a corner camera fogged as the game's: F 0.784 (12.9k off, from z 150)", () => {
     // (from (-3900, -5000, 150) to the field's corner (4096, 5120, 0); Three's axes)
     expect(heightFog([4096 + 3900, -150, 5120 + 5000], fogCd(150)).F).toBeCloseTo(0.784, 2);
+  });
+  it("built-in materials keep their own programs once fogged: the key from their onBeforeCompile as it was, or their own key (RV-209)", () => {
+    const a = new MeshStandardMaterial();
+    const b = new MeshStandardMaterial();
+    b.onBeforeCompile = (shader) => {
+      shader.fragmentShader = shader.fragmentShader.replace("#include <common>", "#include <common>\n// b");
+    };
+    expect(a.customProgramCacheKey()).not.toBe(b.customProgramCacheKey());
+    withHeightFog(a, "opaque");
+    withHeightFog(b, "opaque");
+    expect(a.customProgramCacheKey()).not.toBe(b.customProgramCacheKey());
+    const c = new MeshStandardMaterial();
+    c.customProgramCacheKey = () => "own";
+    withHeightFog(c, "opaque");
+    expect(c.customProgramCacheKey()).toMatch(/^own\|rlHeightFog:opaque/);
   });
 });

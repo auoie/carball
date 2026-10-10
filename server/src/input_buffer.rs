@@ -84,6 +84,9 @@ pub struct InputBuffer {
     pub jitter: JitterBuffer,
     /// The controls the car currently drives with (repeated when no frame is available)
     pub controls: Controls,
+    /// This tick consumed two frames, the first releasing the jump and the second pressing it again: the car must see a
+    /// fresh press though jump reads held (`Arena::repress_jump`: NET-2)
+    pub repress_jump: bool,
     pub stats: Stats,
 }
 
@@ -147,7 +150,15 @@ impl InputBuffer {
 
     /// One server physics tick (`NetworkInputBuffer_ServerConsume_TA`, `FUN_140f1e780`). `odd_tick`: the server's
     /// physics frame number is odd (while refilling, frames are consumed only on even ticks).
+    ///
+    /// Two frames consumed in one tick (over the jitter target): the game fires SetVehicleInput for each, so the first
+    /// one's jump edges still count though its axes, boost and handbrake give way to the second's (NET-2): a press in the
+    /// first released in the second still jumps this tick (released the next), and a release in the first pressed again
+    /// in the second is a fresh press (`repress_jump`). (The first frame's axes at a press, the dodge's direction in the
+    /// game, are the second's here.)
     pub fn tick(&mut self, now: f64, odd_tick: bool) -> Controls {
+        self.repress_jump = false;
+        let previous = self.controls;
         if self.frames.is_empty() {
             if now - self.last_packet_time > INPUT_TIMEOUT {
                 self.controls = Controls::default();
@@ -156,14 +167,23 @@ impl InputBuffer {
             self.skip_one();
             self.stats.under_buffer_frames += 1;
         } else {
+            let mut first = None;
             if !self.filling || !odd_tick {
                 self.consume_one();
+                first = Some(self.controls);
             } else {
                 self.skip_one();
             }
             if (self.jitter.buffer_size as usize) < self.frames.len() {
                 self.consume_one();
                 self.stats.over_buffer_frames += 1;
+                if let Some(a) = first {
+                    let (p, a, b) = (previous.jump != 0, a.jump != 0, self.controls.jump != 0);
+                    if !p && a && !b {
+                        return Controls { jump: 1, ..self.controls };
+                    }
+                    self.repress_jump = p && !a && b;
+                }
             }
         }
         self.controls
@@ -259,6 +279,42 @@ mod tests {
         b.tick(0.0, false); // 10 buffered > 7: two consumed
         assert_eq!(b.len(), 8);
         assert_eq!(b.stats.over_buffer_frames, 1);
+    }
+
+    fn jump(on: bool) -> InputFrame {
+        InputFrame { bits: if on { crate::protocol::BIT_JUMP } else { 0 }, ..InputFrame::default() }
+    }
+
+    #[test]
+    fn a_jump_tap_survives_a_double_consume() {
+        // A one-frame tap in the first of two frames consumed together: the tick still jumps, the next releases (NET-2)
+        let mut b = InputBuffer::default();
+        b.receive(1, 1, &[jump(false)], 0.0);
+        b.tick(0.0, false);
+        // (9 at once, over the target of 7: the tap's frame and the release's consumed together)
+        let mut frames = vec![jump(true), jump(false)];
+        frames.extend(vec![jump(false); 7]);
+        b.receive(2, 2, &frames, 0.01);
+        assert_eq!(b.tick(0.02, false).jump, 1, "the tap was lost");
+        assert_eq!(b.stats.over_buffer_frames, 1);
+        assert_eq!(b.tick(0.03, false).jump, 0, "released after the tap");
+    }
+
+    #[test]
+    fn a_release_and_a_press_in_one_tick_are_a_fresh_press() {
+        let mut b = InputBuffer::default();
+        b.receive(1, 1, &[jump(true)], 0.0);
+        b.tick(0.0, false);
+        assert_eq!(b.controls.jump, 1);
+        // (then 9 frames at once: the first two consumed together, a release then a press)
+        let mut frames = vec![jump(false), jump(true)];
+        frames.extend(vec![jump(true); 7]);
+        b.receive(2, 2, &frames, 0.01);
+        let out = b.tick(0.02, false);
+        assert_eq!(out.jump, 1);
+        assert!(b.repress_jump, "the release between the two frames was lost");
+        b.tick(0.03, false);
+        assert!(!b.repress_jump, "only for that tick");
     }
 
     #[test]

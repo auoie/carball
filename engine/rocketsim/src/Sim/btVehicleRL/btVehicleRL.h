@@ -29,6 +29,12 @@ struct btWheelInfoRL : public btWheelInfo {
 // This is a modified version of btRaycastVehicle to more accurately follow Rocket League
 class btVehicleRL : public btActionInterface {
 public:
+	// RL PATCH: the game's wheel order. Its vehicle holds the wheels front left, front right, back left, back right
+	// (UWheel_TA::Init 0x140f097c0 adds them in Vehicle.Wheels' order); RocketSim right before left. The game's i-th
+	// wheel is our wheel GameWheel(i). Every per-wheel pass that applies impulses runs in the game's order: the contact
+	// pass (FUN_1402c3e60), whose impulses on a dynamic ground each change what the next wheel's pushback sees, and the
+	// suspension and friction passes (FUN_1402c3540, FUN_1402c54d0: the chassis' velocity summed in that order)
+	int GameWheel(int i) const { return m_wheelInfo.size() == 4 ? (i ^ 1) : i; }
 	btAlignedObjectArray<btVector3> m_forwardWS;
 	btAlignedObjectArray<btVector3> m_axle;
 	btAlignedObjectArray<float> m_forwardImpulse;

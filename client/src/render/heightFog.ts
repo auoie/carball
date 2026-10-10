@@ -3,7 +3,7 @@
 // the sight line, floored at 0.1; its colour from the fog actor's own direction (not the sun), weakly orange toward the
 // -X horizon, blue elsewhere. Opaque geometry and the sky take it as a pass (in the cube capture its view depth capped
 // at 31,887 uu), translucents per vertex. Three's axes (x, y up, z = the game's y), uu.
-import { AdditiveBlending, type Camera, type Material, type Object3D, type ShaderMaterial, Vector3 } from "three";
+import { AdditiveBlending, type Camera, type Material, Material as MaterialClass, type Object3D, type ShaderMaterial, Vector3 } from "three";
 
 /** The fog's constants (FOG-5): Cd's base (Density / 1000) and height, f (Falloff / 1000), the start, the floor (1 -
  *  MaxOpacity), p (the exe's -0.30103 / ln(0.5 - 0.5 cos 22.5)), the light vector (Rotation(-2131, -32905, 2467)
@@ -113,6 +113,9 @@ export interface FogPlace {
   readonly distance?: number;
   readonly scale?: number;
   readonly about?: readonly [number, number, number];
+  /** the vertex's world position as the shader computes it, a GLSL expression valid after its main (a varying it sets:
+   *  a billboard built from its own centre, not from `position`: RV-208) */
+  readonly world?: string;
 }
 
 /** The uniforms every fogged material shares (one object each, set from the camera drawing: updateHeightFog) */
@@ -152,11 +155,15 @@ export function fogShaders(vertex: string, fragment: string, mode: FogMode, plac
         : "vFogWorld - uFogCam";
   const perVertex = mode === "translucent" || mode === "additive";
   const world = `
-  #ifdef USE_INSTANCING
+  ${
+    place.world !== undefined
+      ? `vFogWorld = ${place.world};`
+      : `#ifdef USE_INSTANCING
     vFogWorld = (modelMatrix * instanceMatrix * vec4(position, 1.0)).xyz;
   #else
     vFogWorld = (modelMatrix * vec4(position, 1.0)).xyz;
-  #endif
+  #endif`
+  }
   ${perVertex ? `vFog = rlHeightFog(${delta});` : ""}`;
   const apply = {
     custom: "",
@@ -196,6 +203,11 @@ export function withHeightFog<T extends Material>(material: T, mode: FogMode, pl
     shader.vertexShader = fogged.vertex;
     shader.fragmentShader = fogged.fragment;
   } else {
+    // (the program's key: the material's own if it has one, else its onBeforeCompile's source as it was before ours
+    // wraps it (three's default key reads it when called: ours then for every material, RV-209))
+    const own = material.customProgramCacheKey !== MaterialClass.prototype.customProgramCacheKey;
+    const source = material.onBeforeCompile.toString();
+    const key = material.customProgramCacheKey.bind(material);
     const before = material.onBeforeCompile.bind(material);
     material.onBeforeCompile = (parameters, renderer) => {
       before(parameters, renderer);
@@ -204,8 +216,7 @@ export function withHeightFog<T extends Material>(material: T, mode: FogMode, pl
       parameters.vertexShader = fogged.vertex;
       parameters.fragmentShader = fogged.fragment;
     };
-    const key = material.customProgramCacheKey.bind(material);
-    material.customProgramCacheKey = () => `${key()}|rlHeightFog:${mode}`;
+    material.customProgramCacheKey = () => `${own ? key() : source}|rlHeightFog:${mode}:${JSON.stringify(place)}`;
   }
   material.needsUpdate = true;
   return material;
@@ -221,7 +232,8 @@ export function fogAll(root: Object3D): void {
     let fogged = false;
     for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
       const mode: FogMode = !m.transparent ? "opaque" : m.blending === AdditiveBlending ? "additive" : "translucent";
-      withHeightFog(m, (m.userData as { heightFog?: FogMode }).heightFog ?? mode);
+      // (a material may say where its vertices are: userData.fogPlace, RV-208)
+      withHeightFog(m, (m.userData as { heightFog?: FogMode }).heightFog ?? mode, (m.userData as { fogPlace?: FogPlace }).fogPlace ?? {});
       fogged ||= (m.userData as { heightFog?: FogMode }).heightFog !== "none";
     }
     if (fogged) {
