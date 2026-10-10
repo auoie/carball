@@ -224,8 +224,10 @@ describe("the goals' insides (RV-76, RV-77)", () => {
     // to out in every 256 strip)
     expect(goalFloorZone(300, 5760)).toBe("frame");
     expect(goalFloorZone(640, 5790)).toBe("frame");
-    expect(underGlassV(64)).toBeCloseTo(0.75, 9);
-    expect(underGlassV(320)).toBeCloseTo(0.75, 9);
+    expect(underGlassV(64)).toBeCloseTo(2.75, 9);
+    expect(underGlassV(320)).toBeCloseTo(2.75, 9);
+    // (RV-168b: Goal_STD_Trim's up-facing strip along the sides)
+    expect(goalFloorZone(750, 5600)).toBe("frame");
   });
 
   it("under each goal OOBFloor, a hex metal slope (RV-104): z -105.5 at |y| 5300, -30.5 at 5900, in its goal's light", () => {

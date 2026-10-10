@@ -112,6 +112,8 @@ export interface CarState extends BodyState {
   readonly wheelContact: readonly [boolean, boolean, boolean, boolean];
   /** Average contact normal of the wheels touching something, else straight up (Vehicle_TA.GetGroundNormal). */
   readonly groundNormal: Vec3;
+  /** Each wheel's suspension ray-hit normal, zero when not touching (RocketSim's order: the landing trigger's, IT-5) */
+  readonly wheelNormals: readonly [Vec3, Vec3, Vec3, Vec3];
   /** Seconds until a demolished car respawns */
   readonly demoRespawnTimer: number;
   readonly spawnSelection: SpawnSelection;
@@ -134,6 +136,24 @@ export interface CarConfig {
   readonly hitboxOffset: Vec3;
   readonly frontWheel: WheelConfig;
   readonly backWheel: WheelConfig;
+}
+
+/** What a car touched (takeImpacts) */
+export type ImpactPartner = "world" | "ball" | "car";
+
+/** One car's contacts with one partner in one physics step, as the game's HandleCollision gets them (engine patch 96:
+ *  notes/impact-triggers.md IT-1..3; speeds of 50 uu/s or more) */
+export interface Impact {
+  readonly tick: number;
+  readonly car: number;
+  readonly partner: ImpactPartner;
+  /** the partner car's id, for a car */
+  readonly partnerId: number;
+  /** |dv . n|, uu/s */
+  readonly speed: number;
+  readonly pos: Vec3;
+  /** from the partner toward the car */
+  readonly normal: Vec3;
 }
 
 /** A car's boost at a kickoff or respawn (RLConst BOOST_SPAWN_AMOUNT: a third of the tank) */
@@ -340,6 +360,7 @@ export class World {
       flipping: flag(m.CAR_IS_FLIPPING),
       wheelContact: [flag(wheel), flag(wheel + 1), flag(wheel + 2), flag(wheel + 3)],
       groundNormal: readVec(a, m.CAR_GROUND_NORMAL),
+      wheelNormals: [readVec(a, m.CAR_WHEEL_NORMALS), readVec(a, m.CAR_WHEEL_NORMALS + 3), readVec(a, m.CAR_WHEEL_NORMALS + 6), readVec(a, m.CAR_WHEEL_NORMALS + 9)],
       demoRespawnTimer: at(a, m.CAR_DEMO_RESPAWN_TIMER),
       spawnSelection: {
         side: SPAWN_SIDES[at(a, m.CAR_DEMO_SPAWN_SIDE)] ?? null,
@@ -395,6 +416,26 @@ export class World {
   }
 
   /** Goals, bumps and demos since the last call. */
+  /** The impacts since the last call (engine patch 96), oldest first */
+  takeImpacts(): Impact[] {
+    const m = this.#m;
+    const a = this.#sim.takeImpacts();
+    const out: Impact[] = [];
+    for (let i = 0; i + m.IMPACT_SIZE <= a.length; i += m.IMPACT_SIZE) {
+      const kind = at(a, i + m.IMPACT_KIND);
+      out.push({
+        tick: at(a, i + m.IMPACT_TICK),
+        car: at(a, i + m.IMPACT_CAR),
+        partner: kind === 1 ? "ball" : kind === 2 ? "car" : "world",
+        partnerId: at(a, i + m.IMPACT_PARTNER),
+        speed: at(a, i + m.IMPACT_SPEED),
+        pos: readVec(a, i + m.IMPACT_POS),
+        normal: readVec(a, i + m.IMPACT_NORMAL),
+      });
+    }
+    return out;
+  }
+
   takeEvents(): GameEvent[] {
     const m = this.#m;
     const a = this.#sim.takeEvents();

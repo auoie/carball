@@ -22,7 +22,7 @@ import {
   WebGLRenderer,
 } from "three";
 import { BoostPadsView, PAD_LOOK } from "../render/entities";
-import { PostProcess, REMAP_GLSL, TONEMAP_GLSL, display, remapNodes } from "../render/postProcess";
+import { PostProcess, REMAP_GLSL, TONEMAP_GLSL, display, unclippedNodes } from "../render/postProcess";
 import { ENV_GLSL, ENV_RADIAL, ENV_SPREAD, NET_SIDE_GLSL, OVERLAY_UV_GLSL, envG, netSideUv, overlayUv } from "../render/gameSurfaces";
 import { UNDER_GLASS_V_GLSL, underGlassV } from "../render/goalInterior";
 import { GRASS_REFLECTION_GLSL, grassReflection } from "../render/stadiumField";
@@ -81,11 +81,16 @@ export const PROBES: Readonly<Record<string, Probe>> = {
   },
   display: {
     glsl: `uniform float remapR[16];\nuniform float remapG[16];\nuniform float remapB[16];\n${TONEMAP_GLSL}\n${REMAP_GLSL}`,
-    uniforms: { remapR: { value: remapNodes(0) }, remapG: { value: remapNodes(1) }, remapB: { value: remapNodes(2) } },
-    call: "vec4(rlRemap(rlTonemap(i.rgb)), 0.0)",
-    twin: (i) => [...display([i[0] ?? 0, i[1] ?? 0, i[2] ?? 0]), 0],
-    // (linear 0 to 10, log spaced, each channel apart; off the tone map's 1e-4-wide step at Z)
-    inputs: () => grid(-4, 1, 60).map((e): [number[], number[]] => [[10 ** e, 0.7 * 10 ** e, 1.3 * 10 ** e, 0], [0, 0, 0, 0]]).filter(([i]) => i.every((x) => Math.abs(x - 0.255447) > 2e-4)),
+    uniforms: { remapR: { value: unclippedNodes(0) }, remapG: { value: unclippedNodes(1) }, remapB: { value: unclippedNodes(2) } },
+    call: "vec4(rlRemap(rlTonemap(i.rgb), i.a), 0.0)",
+    twin: (i) => [...display([i[0] ?? 0, i[1] ?? 0, i[2] ?? 0], i[3] ?? 0), 0],
+    // (linear 0 to 10, log spaced, each channel apart, at fades 0, 0.5 and 0.9; off the tone map's 1e-4-wide step at Z)
+    inputs: () =>
+      [0, 0.5, 0.9].flatMap((fade) =>
+        grid(-4, 1, 60)
+          .map((e): [number[], number[]] => [[10 ** e, 0.7 * 10 ** e, 1.3 * 10 ** e, fade], [0, 0, 0, 0]])
+          .filter(([i]) => i.slice(0, 3).every((x) => Math.abs(x - 0.255447) > 2e-4)),
+      ),
     tolerance: 2e-4,
   },
   underGlassV: {
@@ -113,6 +118,9 @@ export function shaderProbe(canvas: HTMLCanvasElement): {
    *  the centre, with the depth of field and bloom on), and a small patch at linear 50 on black (the mean display
    *  value in a ring round it, with bloom on and off) */
   post: (grey: number) => { grey: number; expected: number; ringBloom: number; ringNoBloom: number };
+  /** The bloom target's sum (linear) for a large patch at linear `level` on black (RV-161: the soft knee from 2, the
+   *  colour times its weight, no subtraction) */
+  bloomSum: (level: number) => number;
   names: () => string[];
   compare: (name: string) => { count: number; maxError: number; tolerance: number; worst: { i: number[]; j: number[]; gpu: number[]; cpu: number[] } | null };
 } {
@@ -248,9 +256,28 @@ export function shaderProbe(canvas: HTMLCanvasElement): {
     const [r, g, b] = display([grey, grey, grey]);
     return { grey: greyOut, expected: 0.2126 * r + 0.7152 * g + 0.0722 * b, ringBloom, ringNoBloom };
   };
+  const bloomSum = (level: number): number => {
+    const [w, h] = [320, 180];
+    gl.setSize(w, h, false);
+    gl.setPixelRatio(1);
+    const chain = new PostProcess(gl);
+    const view = new PerspectiveCamera(60, w / h, 5, 40000);
+    view.position.set(0, 0, 1000);
+    view.lookAt(0, 0, 0);
+    const scene = new Scene();
+    scene.background = new Color(0, 0, 0);
+    scene.add(new Mesh(new PlaneGeometry(240, 240), new MeshBasicMaterial({ color: new Color().setRGB(level, level, level) })));
+    chain.render(scene, view, { bloom: true, depthOfField: false });
+    const bloom = chain.readBloom();
+    chain.dispose();
+    let sum = 0;
+    for (let k = 0; k < (bloom?.data.length ?? 0); k += 4) sum += bloom?.data[k] ?? 0;
+    return sum;
+  };
   return {
     pads,
     post,
+    bloomSum,
     names: () => Object.keys(PROBES),
     compare: (name) => {
       const probe = PROBES[name];

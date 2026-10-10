@@ -167,12 +167,12 @@ export function dimensionTheme(): Theme {
       },
     },
     root,
-    update(seconds, ball) {
-      sky.update(seconds);
-      for (const clock of [upfalls.time, drifting.time, rift.time, motes.time, jellies.time]) clock.value = seconds;
-      serpent.update(seconds);
-      watchers.update(seconds, ball);
-      critters.update(seconds);
+    update(elapsedSeconds, ball) {
+      sky.update(elapsedSeconds);
+      for (const clock of [upfalls.time, drifting.time, rift.time, motes.time, jellies.time]) clock.value = elapsedSeconds;
+      serpent.update(elapsedSeconds);
+      watchers.update(elapsedSeconds, ball);
+      critters.update(elapsedSeconds);
     },
   };
 }

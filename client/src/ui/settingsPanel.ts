@@ -21,7 +21,7 @@ import {
   saveSettings,
 } from "../settings/settings";
 
-type Tab = "controls" | "camera" | "controller" | "video" | "audio";
+type Tab = "controls" | "camera" | "controller" | "gameplay" | "video" | "audio";
 type Device = "keyboard" | "gamepad";
 
 const CAMERA_LABELS: Readonly<Record<keyof CameraSettings, string>> = {
@@ -101,6 +101,7 @@ export class SettingsPanel {
       this.#tabButton("controls", "Controls"),
       this.#tabButton("camera", "Camera"),
       this.#tabButton("controller", "Controller"),
+      this.#tabButton("gameplay", "Gameplay"),
       this.#tabButton("video", "Video"),
       this.#tabButton("audio", "Audio"),
     ]);
@@ -182,9 +183,11 @@ export class SettingsPanel {
           ? this.#cameraTab()
           : this.#tab === "controller"
             ? this.#controllerTab()
-            : this.#tab === "video"
-              ? this.#videoTab()
-              : this.#audioTab();
+            : this.#tab === "gameplay"
+              ? this.#gameplayTab()
+              : this.#tab === "video"
+                ? this.#videoTab()
+                : this.#audioTab();
     this.#body.replaceChildren(content);
   }
 
@@ -399,8 +402,15 @@ export class SettingsPanel {
           "Dodge deadzone: how far the stick must be pushed for a second jump to dodge instead of double jumping.",
       }),
     );
-    sliders.append(this.#checkboxes(["airPitchSafety", "flipIndicator", "autoSkipReplay", "unlimitedBoost"]));
+    sliders.append(this.#checkboxes(["airPitchSafety"]));
     return sliders;
+  }
+
+  /** The game's Gameplay settings (MENU-9): the flip indicator, goal replays, free play's boost */
+  #gameplayTab(): HTMLElement {
+    const box = el("div", { className: "sliders" });
+    box.append(this.#checkboxes(["flipIndicator", "autoSkipReplay", "unlimitedBoost"]));
+    return box;
   }
 
   #videoTab(): HTMLElement {

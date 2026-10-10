@@ -171,6 +171,35 @@ describe("World", () => {
     expect(taken(100)?.active).toBe(true);
   });
 
+  it("each wheel's ray-hit normal (IT-5): straight up on the floor, zero in the air", () => {
+    const world = World.create(engine);
+    const id = world.addCar(0);
+    world.resetKickoff(1);
+    world.step(120);
+    for (const n of world.car(id).wheelNormals) expect([n.x, n.y, n.z].map((c) => Math.round(c * 1000) / 1000)).toEqual([0, 0, 1]);
+    const rot = { forward: vec3(1, 0, 0), right: vec3(0, 1, 0), up: vec3(0, 0, 1) };
+    world.setCar(id, { pos: vec3(0, 0, 800), vel: vec3(0, 0, 0), angVel: vec3(0, 0, 0), rot, boost: 0 });
+    world.step(2);
+    for (const n of world.car(id).wheelNormals) expect(n).toEqual(vec3(0, 0, 0));
+    world.dispose();
+  });
+
+  it("takeImpacts after a loadState: the ticks simulated again come once (RV-163)", () => {
+    const world = World.create(engine);
+    const id = world.addCar(0);
+    world.resetKickoff(1);
+    const rot = { forward: vec3(1, 0, 0), right: vec3(0, -1, 0), up: vec3(0, 0, -1) };
+    world.setCar(id, { pos: vec3(1000, 1000, 120), vel: vec3(0, 0, -1500), angVel: vec3(0, 0, 0), rot, boost: 0 });
+    const saved = world.saveState();
+    world.step(20);
+    world.loadState(saved);
+    world.step(20);
+    const ticks = world.takeImpacts().map((i) => i.tick);
+    expect(ticks.length).toBeGreaterThan(0);
+    expect(new Set(ticks).size).toBe(ticks.length);
+    world.dispose();
+  });
+
   it("restores a saved state", () => {
     const world = World.create(engine);
     const id = world.addCar(0);

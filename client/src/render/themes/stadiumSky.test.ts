@@ -2,7 +2,7 @@
 // elevation band (the static session's evaluator with the game's textures, at four pan times), and our noises' own
 // statistics against the textures' quantiles.
 import { describe, expect, it } from "vitest";
-import { NOISE_QUANTILES, QUANTILE_P, fromSrgbByte, sampleNoise, skyColour, skyNoise, skyVQ } from "./stadiumSky";
+import { NOISE_MEASURES, NOISE_QUANTILES, QUANTILE_P, fromSrgbByte, makeSkyNoise, sampleNoise, skyColour, skyNoise, skyVQ } from "./stadiumSky";
 
 const noise = skyNoise();
 const lum = (c: readonly number[]): number => 0.2126 * (c[0] ?? 0) + 0.7152 * (c[1] ?? 0) + 0.0722 * (c[2] ?? 0);
@@ -42,7 +42,35 @@ describe("the stadium's sky (H-10, SUR-25)", () => {
     }
   });
 
-  it("its mean luminance by elevation band within 15 % of the game's (the clouds darkening the low sky, the stars lifting the zenith)", () => {
+  it("our noises' correlations as the textures' after the quantiles (RV-156): the smoke's red with its green and blue, the neighbour correlations, within 0.03", () => {
+    const n = noise.size;
+    const channel = (bytes: Uint8Array, c: number): Float64Array => Float64Array.from({ length: n * n }, (_, k) => fromSrgbByte(bytes[4 * k + c] ?? 0));
+    const corr = (a: Float64Array, b: Float64Array): number => {
+      const mean = (x: Float64Array): number => x.reduce((s, v) => s + v, 0) / x.length;
+      const [ma, mb] = [mean(a), mean(b)];
+      let [sab, saa, sbb] = [0, 0, 0];
+      for (let k = 0; k < a.length; k++) {
+        const [da, db] = [(a[k] ?? 0) - ma, (b[k] ?? 0) - mb];
+        sab += da * db;
+        saa += da * da;
+        sbb += db * db;
+      }
+      return sab / Math.sqrt(saa * sbb);
+    };
+    // (lag 1 along x, wrapped)
+    const lag1 = (x: Float64Array): number => corr(x, Float64Array.from({ length: x.length }, (_, k) => x[Math.floor(k / n) * n + ((k % n) + 1) % n] ?? 0));
+    const r = channel(noise.smoke, 0);
+    const got = {
+      smokeRG: corr(r, channel(noise.smoke, 1)),
+      smokeRB: corr(r, channel(noise.smoke, 2)),
+      speckleRLag1: lag1(channel(noise.speckle, 0)),
+      speckleGLag1: lag1(channel(noise.speckle, 1)),
+      fireLag1: lag1(channel(noise.fire, 0)),
+    };
+    for (const [k, want] of Object.entries(NOISE_MEASURES)) expect(Math.abs(((got as Record<string, number>)[k] ?? 0) - want), `${k}: ${JSON.stringify(got)}`).toBeLessThan(0.03);
+  });
+
+  it("its mean luminance by elevation band within 10 % of the game's (the clouds darkening the low sky, the stars lifting the zenith; RV-156)", () => {
     const report: string[] = [];
     const ratios: number[] = [];
     for (const [a, b, game] of GAME_BANDS) {
@@ -63,8 +91,15 @@ describe("the stadium's sky (H-10, SUR-25)", () => {
       report.push(`${String(a)}-${String(b)} ${(sum / weights).toFixed(4)} game ${game.toFixed(4)}`);
       ratios.push(sum / weights / game);
     }
-    for (const r of ratios) expect(Math.abs(r - 1), report.join("; ")).toBeLessThan(0.15);
+    for (const r of ratios) expect(Math.abs(r - 1), report.join("; ")).toBeLessThan(0.1);
   }, 120000);
+
+  it("makes its noises within a second (RV-160: work on the main thread at the stadium's load)", () => {
+    const t0 = performance.now();
+    makeSkyNoise();
+    const ms = performance.now() - t0;
+    expect(ms).toBeLessThan(1000);
+  }, 10000);
 
   it("keeps v and q as the game's dome", () => {
     expect(skyVQ(5).v).toBeCloseTo(0.908, 3);

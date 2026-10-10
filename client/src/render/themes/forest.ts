@@ -126,13 +126,13 @@ export function forestTheme(): Theme {
       },
     },
     root,
-    update(seconds) {
-      sky.update(seconds);
-      grass.time.value = seconds;
-      ferns.time.value = seconds;
-      pollen.time.value = seconds;
-      wildlife.update(seconds);
-      birds.update(seconds);
+    update(elapsedSeconds) {
+      sky.update(elapsedSeconds);
+      grass.time.value = elapsedSeconds;
+      ferns.time.value = elapsedSeconds;
+      pollen.time.value = elapsedSeconds;
+      wildlife.update(elapsedSeconds);
+      birds.update(elapsedSeconds);
     },
   };
 }

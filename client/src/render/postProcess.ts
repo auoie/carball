@@ -3,6 +3,7 @@
 // blur 0.25 everywhere, up to 0.6 far off), the bloom (a soft knee from 2, three Gaussian sizes), then one tone map
 // and colour remap to display values. Scalars and closed forms only (PP-20).
 import {
+  DataUtils,
   DepthTexture,
   FloatType,
   HalfFloatType,
@@ -62,27 +63,33 @@ export function tonemap(x: number): number {
   return Math.min(Math.max(p + t * (r - p), 0), 1);
 }
 
-/** The remap's 16 nodes for a channel (PP-5, §5.6: at g = i / 15, display space): sat(g - shadows) / highLights, to
- *  the midTones' power; stored clipped to 1 (as the spec's list: an 8-bit LUT; a float one differs by 0.0046 at most,
- *  its open question 4) */
-export function remapNodes(channel: 0 | 1 | 2): number[] {
+/** The remap's 16 nodes for a channel before storage (PP-5, §5.6: at g = i / 15, display space): sat(g - shadows) /
+ *  highLights, to the midTones' power (over 1 from node 12) */
+export function unclippedNodes(channel: 0 | 1 | 2): number[] {
   return Array.from({ length: 16 }, (_, i) => {
     const c = Math.min(Math.max(i / 15 - REMAP.shadows[channel], 0), 1) / REMAP.highLights;
-    return Math.min(Math.max(c, 1e-8) ** REMAP.midTones, 1);
+    return Math.max(c, 1e-8) ** REMAP.midTones;
   });
 }
 
-/** The remap of a display value (the LUT: per channel, linear between its 16 nodes) */
-export function remap(d: number, channel: 0 | 1 | 2): number {
-  const nodes = remapNodes(channel);
+/** The nodes as the LUT stores them: the camera's fade folded in (times 1 - fade), then clipped to 1 (an 8-bit LUT:
+ *  §5.6; RV-159: the fade before the clip) */
+export function remapNodes(channel: 0 | 1 | 2, fade = 0): number[] {
+  return unclippedNodes(channel).map((v) => Math.min(v * (1 - fade), 1));
+}
+
+/** The remap of a display value (the LUT: per channel, linear between its 16 nodes), with the camera's fade */
+export function remap(d: number, channel: 0 | 1 | 2, fade = 0): number {
+  const nodes = remapNodes(channel, fade);
   const x = Math.min(Math.max(d, 0), 1) * 15;
   const i = Math.min(Math.floor(x), 14);
   return (nodes[i] ?? 0) + ((nodes[i + 1] ?? 0) - (nodes[i] ?? 0)) * (x - i);
 }
 
-/** Linear scene colour to the display (the tone map, then the remap; no bloom, no depth of field) */
-export function display(rgb: readonly [number, number, number]): [number, number, number] {
-  return [remap(tonemap(rgb[0]), 0), remap(tonemap(rgb[1]), 1), remap(tonemap(rgb[2]), 2)];
+/** Linear scene colour to the display (the tone map, then the remap; no bloom, no depth of field), with the camera's
+ *  fade (0 clear .. 1 black) */
+export function display(rgb: readonly [number, number, number], fade = 0): [number, number, number] {
+  return [remap(tonemap(rgb[0]), 0, fade), remap(tonemap(rgb[1]), 1, fade), remap(tonemap(rgb[2]), 2, fade)];
 }
 
 /** The depth of field's blur amount at linear view depth `d` (PP-10, §6) */
@@ -137,15 +144,17 @@ vec3 rlTonemap(vec3 x) {
 }
 `;
 
-/** The remap in GLSL: needs uniforms remapR[16], remapG[16], remapB[16] (remapNodes) */
+/** The remap in GLSL with the camera's fade (remapNodes): needs uniforms remapR[16], remapG[16], remapB[16] (the
+ *  unclipped nodes) */
 export const REMAP_GLSL = /* glsl */ `
-float rlRemap1(float d, float nodes[16]) {
+float rlRemap1(float d, float nodes[16], float keep) {
   float x = clamp(d, 0.0, 1.0) * 15.0;
   int i = int(min(floor(x), 14.0));
-  return mix(nodes[i], nodes[i + 1], x - float(i));
+  return mix(min(nodes[i] * keep, 1.0), min(nodes[i + 1] * keep, 1.0), x - float(i));
 }
-vec3 rlRemap(vec3 d) {
-  return vec3(rlRemap1(d.r, remapR), rlRemap1(d.g, remapG), rlRemap1(d.b, remapB));
+vec3 rlRemap(vec3 d, float fade) {
+  float keep = 1.0 - fade;
+  return vec3(rlRemap1(d.r, remapR, keep), rlRemap1(d.g, remapG, keep), rlRemap1(d.b, remapB, keep));
 }
 `;
 
@@ -250,10 +259,11 @@ void main() {
 }
 `;
 
-/** One direction of a Gaussian (gaussTaps' offsets in texels along `step`); a tap outside the view counts as black */
+/** One direction of a Gaussian (gaussTaps' offsets in texels along `direction`); a tap outside the view counts as black
+ *  (no GLSL built-in names: RV-158) */
 const blurFragment = /* glsl */ `
 uniform sampler2D tSource;
-uniform vec2 step;
+uniform vec2 direction;
 uniform float offsets[16];
 uniform float weights[16];
 uniform int count;
@@ -262,7 +272,7 @@ void main() {
   vec4 acc = vec4(0.0);
   for (int i = 0; i < 16; i++) {
     if (i >= count) break;
-    vec2 uv = vUv + step * offsets[i];
+    vec2 uv = vUv + direction * offsets[i];
     if (uv.x >= 0.0 && uv.y >= 0.0 && uv.x <= 1.0 && uv.y <= 1.0) acc += weights[i] * texture2D(tSource, uv);
   }
   gl_FragColor = acc;
@@ -282,7 +292,8 @@ void main() {
 `;
 
 /** The full-res blend (FUberPostProcessBlendPixelShader02000): the soft layer by its share, the bloom added under the
- *  screen-blend factor, the tone map, the remap; the camera's fade through the remap (PP-18) */
+ *  screen-blend factor, the tone map, the remap; the camera's fade through the remap's nodes, before their clip (PP-18,
+ *  RV-159) */
 const blendFragment = /* glsl */ `
 uniform sampler2D tScene;
 uniform sampler2D tHalf;
@@ -310,7 +321,7 @@ void main() {
     float k = clamp(${BLOOM.screenBlend.toFixed(1)} * exp2(-3.0 * dot(C1, vec3(0.30, 0.59, 0.11))), 0.0, 1.0);
     C1 += texture2D(tBloom, vUv).rgb * ${BLOOM.scale.toFixed(2)} * k;
   }
-  gl_FragColor = vec4(rlRemap(rlTonemap(C1)) * (1.0 - fade), 1.0);
+  gl_FragColor = vec4(rlRemap(rlTonemap(C1), fade), 1.0);
 }
 `;
 
@@ -350,7 +361,7 @@ export class PostProcess {
     composite: this.#material(halfCompositeFragment, { tHalf: null, tDof: null }),
     gather: this.#material(bloomGatherFragment, { tHalf: null, halfTexel: new Vector2() }),
     box: this.#material(boxFragment, { tSource: null, texel: new Vector2() }),
-    blur: this.#material(blurFragment, { tSource: null, step: new Vector2(), offsets: new Array<number>(16).fill(0), weights: new Array<number>(16).fill(0), count: 0 }),
+    blur: this.#material(blurFragment, { tSource: null, direction: new Vector2(), offsets: new Array<number>(16).fill(0), weights: new Array<number>(16).fill(0), count: 0 }),
     combine: this.#material(bloomCombineFragment, { tSmall: null, tMedium: null, tLarge: null }),
     blend: this.#material(blendFragment, {
       tScene: null,
@@ -361,9 +372,9 @@ export class PostProcess {
       useHalf: true,
       useBloom: true,
       fade: 0,
-      remapR: remapNodes(0),
-      remapG: remapNodes(1),
-      remapB: remapNodes(2),
+      remapR: unclippedNodes(0),
+      remapG: unclippedNodes(1),
+      remapB: unclippedNodes(2),
     }),
   };
 
@@ -432,8 +443,8 @@ export class PostProcess {
     const [a, b] = pair;
     const fill = (v: number[]): number[] => [...v, ...new Array<number>(16 - v.length).fill(0)];
     const common = { offsets: fill(offsets), weights: fill(weights), count: offsets.length };
-    this.#pass(this.#materials.blur, { ...common, tSource: a.texture, step: new Vector2(1 / a.width, 0) }, b);
-    this.#pass(this.#materials.blur, { ...common, tSource: b.texture, step: new Vector2(0, 1 / a.height) }, a);
+    this.#pass(this.#materials.blur, { ...common, tSource: a.texture, direction: new Vector2(1 / a.width, 0) }, b);
+    this.#pass(this.#materials.blur, { ...common, tSource: b.texture, direction: new Vector2(0, 1 / a.height) }, a);
   }
 
   #box(from: Texture, fromWidth: number, fromHeight: number, to: WebGLRenderTarget): void {
@@ -487,6 +498,17 @@ export class PostProcess {
       null,
     );
     gl.autoClear = autoClear;
+  }
+
+  /** For the GPU tests: the last frame's bloom target (linear, unscaled), its width and height, RGBA floats */
+  readBloom(): { width: number; height: number; data: Float32Array } | null {
+    const t = this.#targets;
+    if (!t) return null;
+    const [w, h] = [t.bloom[0].width, t.bloom[0].height];
+    // (a half-float target reads as half floats)
+    const half = new Uint16Array(w * h * 4);
+    this.#gl.readRenderTargetPixels(t.bloom[0], 0, 0, w, h, half);
+    return { width: w, height: h, data: Float32Array.from(half, (v) => DataUtils.fromHalfFloat(v)) };
   }
 
   dispose(): void {

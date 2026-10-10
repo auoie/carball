@@ -69,7 +69,7 @@ export function puff(): BufferGeometry {
 }
 
 /** The crowd on `seats`, and its animation: call `update` with the time. */
-export function buildCrowd(seats: readonly Seat[], seed: number): { root: Group; update(seconds: number): void } {
+export function buildCrowd(seats: readonly Seat[], seed: number): { root: Group; update(elapsedSeconds: number): void } {
   const random = seededRandom(seed);
   const kinds = [sprout(), ember(), ripple(), puff()];
   const names = ["sprout", "ember", "ripple", "puff"];
@@ -104,8 +104,8 @@ export function buildCrowd(seats: readonly Seat[], seed: number): { root: Group;
   });
   return {
     root,
-    update(seconds) {
-      uniforms.time.value = seconds;
+    update(elapsedSeconds) {
+      uniforms.time.value = elapsedSeconds;
     },
   };
 }

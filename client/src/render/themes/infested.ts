@@ -126,9 +126,9 @@ export function infestedTheme(): Theme {
       },
     },
     root,
-    update(seconds) {
-      sky.update(seconds);
-      for (const clock of [spireMesh.time, tendrils.time, biomass.time, pustules.time, spores.time]) clock.value = seconds;
+    update(elapsedSeconds) {
+      sky.update(elapsedSeconds);
+      for (const clock of [spireMesh.time, tendrils.time, biomass.time, pustules.time, spores.time]) clock.value = elapsedSeconds;
     },
   };
 }

@@ -8,12 +8,14 @@ import { STRUCTURES, edgeAt } from "./stadiumSurroundings";
 
 export const LIGHTS = {
   /** The team uplight beams (LightCone_Team1/2_MIC, SUR-13): beside the side walls (x +-4560, y -128 blue, +128
-   *  orange), 4096 tall from z -848, 128 wide; behind the goals two 6144 x 256 at (+-1136, -+5361); translucent, mean
-   *  alpha 0.022 */
+   *  orange), 4096 tall from z -848, 128 wide; behind the goals two 6144 x 256 at (+-1136, -+5361); 10 more per end
+   *  behind the corners (FieldSpotLights_Team1/2: x +-4288, |y| 3520 to 5489, 5 a side; RV-155), as the side ones;
+   *  translucent: a = `peak` (our soft profile, its mean a ninth of its peak: the game's mean 0.022) */
   beams: {
     side: { at: [4560, 128] as const, z: -848, height: 4096, width: 128 },
     long: { at: [1136, 5361] as const, z: -848, height: 6144, width: 256 },
-    alpha: 0.13,
+    corners: { x: 4288, y: [3520, 5489] as const, perSide: 5 },
+    peak: 0.198,
   },
   /** The floodlights' flare sheets (Stadium_LightCones, StadiumLight_Flare_Mat, SUR-8, 13): additive white, from each
    *  bank (az 80-130) down toward the field (r 5k, z -2k), 1.5k wide; 0.62 at the bank fading as (1 - t)^6 (area mean
@@ -61,8 +63,15 @@ function standing(x: number, y: number, z0: number, width: number, height: numbe
   return mesh;
 }
 
-/** The team uplight beams: a = B (1 - u)^2 (B our soft profile across, u up the beam), k = sat(a - 0.25), colour P +
- *  k (FB - P) + k */
+/** A beam's a at `across` (0 to 1 over its width) and `up` (0 to 1): B (1 - u)^2, B our soft profile across scaled to
+ *  the game's mean (the shader's, for tests) */
+export function beamAlpha(across: number, up: number): number {
+  const b = 1 - Math.abs(2 * across - 1);
+  return LIGHTS.beams.peak * b * b * (1 - up) * (1 - up);
+}
+
+/** The team uplight beams: a = B (1 - u)^2 (B our soft profile across, scaled: beamAlpha; u up the beam), k = sat(a -
+ *  0.25) from that a (RV-155), colour P + k (FB - P) + k */
 function beamMaterial(p: Color): ShaderMaterial {
   const fb = fullBright([p.r, p.g, p.b]);
   return new ShaderMaterial({
@@ -70,16 +79,16 @@ function beamMaterial(p: Color): ShaderMaterial {
     fragmentShader: /* glsl */ `
       uniform vec3 primary;
       uniform vec3 bright;
-      uniform float alphaScale;
+      uniform float peak;
       varying vec2 vUv;
       void main() {
         float across = 1.0 - abs(2.0 * vUv.x - 1.0);
-        float a = across * across * (1.0 - vUv.y) * (1.0 - vUv.y);
+        float a = peak * across * across * (1.0 - vUv.y) * (1.0 - vUv.y);
         float k = clamp(a - 0.25, 0.0, 1.0);
-        gl_FragColor = vec4(primary + k * (bright - primary) + k, alphaScale * a);
+        gl_FragColor = vec4(primary + k * (bright - primary) + k, a);
         #include <colorspace_fragment>
       }`,
-    uniforms: { primary: { value: new Vector3(p.r, p.g, p.b) }, bright: { value: new Vector3(...fb) }, alphaScale: { value: LIGHTS.beams.alpha } },
+    uniforms: { primary: { value: new Vector3(p.r, p.g, p.b) }, bright: { value: new Vector3(...fb) }, peak: { value: LIGHTS.beams.peak } },
     transparent: true,
     depthWrite: false,
     blending: NormalBlending,
@@ -102,6 +111,14 @@ export function buildStadiumLights(primary0: Color, primary1: Color): Group {
     }
     const [x, y] = [sx * long.at[0], -sx * long.at[1]];
     group.add(Object.assign(standing(x, y, long.z, long.width, long.height, beamMaterial(team(y))), { name: "lights: team beam" }));
+    // (behind the corners, each end's, as the side ones)
+    const c = L.beams.corners;
+    for (const sy of [-1, 1]) {
+      for (let k = 0; k < c.perSide; k++) {
+        const cy = sy * (c.y[0] + ((c.y[1] - c.y[0]) * k) / (c.perSide - 1));
+        group.add(Object.assign(standing(sx * c.x, cy, side.z, side.width, side.height, beamMaterial(team(cy))), { name: "lights: team beam" }));
+      }
+    }
   }
   // The flare sheets: quads from the bank down toward the field, along their azimuth
   const flarePos: number[] = [];
@@ -224,8 +241,8 @@ export function buildStadiumLights(primary0: Color, primary1: Color): Group {
         varying float vSide;
         void main() {
           float along = fract(vUv.y / ${L.mullions.dotEvery.toFixed(1)});
-          bool dot = abs(along - 0.245) < ${(L.mullions.dotLength / 2).toFixed(3)} && abs(vUv.x - 0.5) < ${(L.mullions.dotAcross / 2).toFixed(3)};
-          vec3 c = dot ? 4.0 * mix(bright0, bright1, vSide) : vec3(${L.mullions.diffuse});
+          bool lit = abs(along - 0.245) < ${(L.mullions.dotLength / 2).toFixed(3)} && abs(vUv.x - 0.5) < ${(L.mullions.dotAcross / 2).toFixed(3)};
+          vec3 c = lit ? 4.0 * mix(bright0, bright1, vSide) : vec3(${L.mullions.diffuse});
           gl_FragColor = vec4(c, 1.0);
           #include <colorspace_fragment>
         }`,

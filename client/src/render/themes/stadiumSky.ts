@@ -32,11 +32,14 @@ export const NOISE_QUANTILES = {
   fireR: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 8, 20, 37, 55, 76, 98, 123, 151, 184, 207, 227, 252, 255],
 } as const;
 
-/** The noises' structure (our own, to the textures' measures): the smoke's lattices (red's own part 8 cells a tile, green
- *  and blue 16; 4 octaves; red = (green + blue + sqrt 2 own) / 2, so 0.5 with each: the textures' 0.49 and 0.51), the
- *  speckles' neighbour kernels [a, 1, a] (lag-1 correlation 0.44 and 0.42), the fire's lattice (80 cells: its 0.87 at a
- *  texel) */
-export const NOISE_SHAPE = { size: 512, smokeOwn: 8, smokeGB: 16, octaves: 4, speckleR: 0.2468, speckleG: 0.4, fire: 80 } as const;
+/** The noises' structure (our own, to NOISE_MEASURES after the quantiles: RV-156): the smoke's lattices (red's own part 8
+ *  cells a tile, green and blue 16; 4 octaves; red = 1.25 (green + blue) + its own), the speckles' neighbour kernels
+ *  [a, 1, a], the fire's lattice (110 cells) */
+export const NOISE_SHAPE = { size: 512, smokeOwn: 8, smokeGB: 16, octaves: 4, smokeMix: 1.25, speckleR: 0.29, speckleG: 0.4, fire: 110 } as const;
+
+/** The textures' own measures our noises are made to (after their quantiles: RV-156): the smoke's red against its
+ *  green and blue, the speckles' and the fire's neighbour correlation */
+export const NOISE_MEASURES = { smokeRG: 0.49, smokeRB: 0.51, speckleRLag1: 0.45, speckleGLag1: 0.42, fireLag1: 0.87 } as const;
 
 /** mulberry32: a seeded generator */
 function generator(seed: number): () => number {
@@ -66,23 +69,36 @@ function standardise(f: Float64Array): Float64Array {
 function valueNoise(n: number, cells: number, octaves: number, seed: number): Float64Array {
   const out = new Float64Array(n * n);
   let amp = 1;
+  const ix = new Int32Array(n);
+  const sx = new Float64Array(n);
   for (let o = 0; o < octaves; o++) {
     const c = cells * 2 ** o;
     const next = generator(seed + 101 * o);
-    const lattice = Float64Array.from({ length: c * c }, () => next());
+    const lattice = new Float64Array(c * c);
+    for (let k = 0; k < lattice.length; k++) lattice[k] = next();
+    // (each column's lattice cell and smoothstep weight, once)
+    for (let x = 0; x < n; x++) {
+      const f = ((x + 0.5) / n) * c;
+      const i = Math.floor(f);
+      const t = f - i;
+      ix[x] = i;
+      sx[x] = t * t * (3 - 2 * t);
+    }
     for (let y = 0; y < n; y++) {
-      const fy0 = ((y + 0.5) / n) * c;
-      const iy = Math.floor(fy0);
-      const ty = fy0 - iy;
+      const f = ((y + 0.5) / n) * c;
+      const iy = Math.floor(f);
+      const ty = f - iy;
       const sy = ty * ty * (3 - 2 * ty);
+      const row0 = (iy % c) * c;
+      const row1 = ((iy + 1) % c) * c;
       for (let x = 0; x < n; x++) {
-        const fx0 = ((x + 0.5) / n) * c;
-        const ix = Math.floor(fx0);
-        const tx = fx0 - ix;
-        const sx = tx * tx * (3 - 2 * tx);
-        const at = (i: number, j: number): number => lattice[((j % c) * c + (i % c)) % (c * c)] ?? 0;
-        const top = at(ix, iy) + (at(ix + 1, iy) - at(ix, iy)) * sx;
-        const bottom = at(ix, iy + 1) + (at(ix + 1, iy + 1) - at(ix, iy + 1)) * sx;
+        const i0 = (ix[x] ?? 0) % c;
+        const i1 = ((ix[x] ?? 0) + 1) % c;
+        const w = sx[x] ?? 0;
+        const a0 = lattice[row0 + i0] ?? 0;
+        const top = a0 + ((lattice[row0 + i1] ?? 0) - a0) * w;
+        const b0 = lattice[row1 + i0] ?? 0;
+        const bottom = b0 + ((lattice[row1 + i1] ?? 0) - b0) * w;
         out[y * n + x] = (out[y * n + x] ?? 0) + amp * (top + (bottom - top) * sy);
       }
     }
@@ -102,28 +118,63 @@ function speckle(n: number, a: number, seed: number): Float64Array {
     z[i] = r * Math.cos(t);
     z[i + 1] = r * Math.sin(t);
   }
-  const pass = (f: Float64Array, dx: number, dy: number): Float64Array =>
-    f.map((v, k) => {
-      const [x, y] = [k % n, Math.floor(k / n)];
-      const at = (i: number, j: number): number => f[((j + n) % n) * n + ((i + n) % n)] ?? 0;
-      return v + a * (at(x - dx, y - dy) + at(x + dx, y + dy));
-    });
-  return standardise(pass(pass(z, 1, 0), 0, 1));
+  const across = new Float64Array(n * n);
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      const k = y * n + x;
+      across[k] = (z[k] ?? 0) + a * ((z[y * n + ((x + n - 1) % n)] ?? 0) + (z[y * n + ((x + 1) % n)] ?? 0));
+    }
+  }
+  const out = new Float64Array(n * n);
+  for (let y = 0; y < n; y++) {
+    const up = ((y + n - 1) % n) * n;
+    const down = ((y + 1) % n) * n;
+    for (let x = 0; x < n; x++) out[y * n + x] = (across[y * n + x] ?? 0) + a * ((across[up + x] ?? 0) + (across[down + x] ?? 0));
+  }
+  return standardise(out);
 }
 
-/** A field's values as their ranks, 0 to 1 (uniform whatever the field's own distribution) */
+/** A field's values as their ranks, 0 to 1 (uniform whatever the field's own distribution): from a 65536-bin
+ *  histogram's cumulative counts, each bin's values at its middle rank */
 function ranks(f: Float64Array): Float64Array {
-  const order = Array.from(f.keys()).sort((i, j) => (f[i] ?? 0) - (f[j] ?? 0));
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const v of f) {
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  const bins = 65536;
+  const scale = hi > lo ? (bins - 1) / (hi - lo) : 0;
+  const bin = new Uint32Array(f.length);
+  const counts = new Float64Array(bins);
+  for (let k = 0; k < f.length; k++) {
+    const i = Math.round(((f[k] ?? 0) - lo) * scale);
+    bin[k] = i;
+    counts[i] = (counts[i] ?? 0) + 1;
+  }
+  // (each bin's middle rank, 0 to 1)
+  const middle = new Float64Array(bins);
+  let below = 0;
+  for (let i = 0; i < bins; i++) {
+    const c = counts[i] ?? 0;
+    middle[i] = (below + (c - 1) / 2) / (f.length - 1);
+    below += c;
+  }
   const out = new Float64Array(f.length);
-  order.forEach((k, r) => {
-    out[k] = r / (f.length - 1);
-  });
+  for (let k = 0; k < f.length; k++) out[k] = middle[bin[k] ?? 0] ?? 0;
   return out;
 }
 
-/** A uniform value through a channel's quantiles (its levels decoded: interpolated linear) */
-function quantile(levels: readonly number[], u: number): number {
+/** A channel's bytes by rank: its quantiles (decoded, interpolated linear) encoded back as 8-bit sRGB, at 65536 ranks */
+function byteTable(levels: readonly number[]): Uint8Array {
   const table = levels.map(fromSrgbByte);
+  const out = new Uint8Array(65536);
+  for (let i = 0; i < out.length; i++) out[i] = toSrgbByte(quantile(table, i / (out.length - 1)));
+  return out;
+}
+
+/** A uniform value through a channel's quantiles (`table`: its levels decoded, interpolated linear) */
+function quantile(table: readonly number[], u: number): number {
   const p = u * 100;
   for (let k = 1; k < QUANTILE_P.length; k++) {
     const [p0 = 0, p1 = 100] = [QUANTILE_P[k - 1], QUANTILE_P[k]];
@@ -153,8 +204,16 @@ export interface SkyNoise {
   readonly fire: Uint8Array;
 }
 
-/** Makes the noises (deterministic: the same textures every time) */
+let made: SkyNoise | null = null;
+
+/** The noises (deterministic: made once, the same textures every time) */
 export function skyNoise(): SkyNoise {
+  made ??= makeSkyNoise();
+  return made;
+}
+
+/** The noises made afresh (skyNoise keeps the first) */
+export function makeSkyNoise(): SkyNoise {
   const { size: n, smokeOwn, smokeGB, octaves } = NOISE_SHAPE;
   const own = valueNoise(n, smokeOwn, octaves, 11);
   const g = valueNoise(n, smokeGB, octaves, 22);
@@ -165,13 +224,32 @@ export function skyNoise(): SkyNoise {
   const smoke = new Uint8Array(n * n * 4);
   const speck = new Uint8Array(n * n * 4);
   const fireBytes = new Uint8Array(n * n * 4);
-  // (each field to its ranks, then through its channel's quantiles: the textures' distributions exactly)
-  const [ur, ug, ub] = [ranks(g.map((v, k) => (v + (b[k] ?? 0) + Math.SQRT2 * (own[k] ?? 0)) / 2)), ranks(g), ranks(b)];
+  // (each field to its ranks, then through its channel's quantiles to bytes: the textures' distributions)
+  const t = {
+    smokeR: byteTable(NOISE_QUANTILES.smokeR),
+    smokeG: byteTable(NOISE_QUANTILES.smokeG),
+    smokeB: byteTable(NOISE_QUANTILES.smokeB),
+    speckleR: byteTable(NOISE_QUANTILES.speckleR),
+    speckleG: byteTable(NOISE_QUANTILES.speckleG),
+    fireR: byteTable(NOISE_QUANTILES.fireR),
+  };
+  const mix = NOISE_SHAPE.smokeMix;
+  const red = new Float64Array(n * n);
+  for (let k = 0; k < red.length; k++) red[k] = mix * ((g[k] ?? 0) + (b[k] ?? 0)) + (own[k] ?? 0);
+  const [ur, ug, ub] = [ranks(red), ranks(g), ranks(b)];
   const [usr, usg, uf] = [ranks(sr), ranks(sg), ranks(fire)];
+  const at = (u: Float64Array, k: number): number => Math.round((u[k] ?? 0) * 65535);
   for (let k = 0; k < n * n; k++) {
-    smoke.set([toSrgbByte(quantile(NOISE_QUANTILES.smokeR, ur[k] ?? 0)), toSrgbByte(quantile(NOISE_QUANTILES.smokeG, ug[k] ?? 0)), toSrgbByte(quantile(NOISE_QUANTILES.smokeB, ub[k] ?? 0)), 255], 4 * k);
-    speck.set([toSrgbByte(quantile(NOISE_QUANTILES.speckleR, usr[k] ?? 0)), toSrgbByte(quantile(NOISE_QUANTILES.speckleG, usg[k] ?? 0)), 0, 255], 4 * k);
-    fireBytes.set([toSrgbByte(quantile(NOISE_QUANTILES.fireR, uf[k] ?? 0)), 0, 0, 255], 4 * k);
+    const o = 4 * k;
+    smoke[o] = t.smokeR[at(ur, k)] ?? 0;
+    smoke[o + 1] = t.smokeG[at(ug, k)] ?? 0;
+    smoke[o + 2] = t.smokeB[at(ub, k)] ?? 0;
+    smoke[o + 3] = 255;
+    speck[o] = t.speckleR[at(usr, k)] ?? 0;
+    speck[o + 1] = t.speckleG[at(usg, k)] ?? 0;
+    speck[o + 3] = 255;
+    fireBytes[o] = t.fireR[at(uf, k)] ?? 0;
+    fireBytes[o + 3] = 255;
   }
   return { size: n, smoke, speckle: speck, fire: fireBytes };
 }
@@ -304,7 +382,7 @@ const texture = (bytes: Uint8Array, size: number): DataTexture => {
 };
 
 /** The sky dome (inside the camera's far plane from anywhere in the arena: RV-58) and its clock */
-export function buildSkyDome(noise: SkyNoise = skyNoise()): { mesh: Mesh; update: (seconds: number) => void } {
+export function buildSkyDome(noise: SkyNoise = skyNoise()): { mesh: Mesh; update: (elapsedSeconds: number) => void } {
   const vec = (c: readonly number[]): Vector3 => new Vector3(c[0], c[1], c[2]);
   const material = new ShaderMaterial({
     vertexShader,
@@ -332,8 +410,8 @@ export function buildSkyDome(noise: SkyNoise = skyNoise()): { mesh: Mesh; update
   const pan = (p: readonly [number, number]): number[] => [fract(p[0] * time), fract(p[1] * time)];
   return {
     mesh,
-    update: (seconds) => {
-      time += seconds;
+    update: (elapsedSeconds) => {
+      time = elapsedSeconds;
       const u = material.uniforms;
       if (u["pan1"]) u["pan1"].value = pan(SKY_PANS.smoke1);
       if (u["pan2"]) u["pan2"].value = pan(SKY_PANS.smoke2);

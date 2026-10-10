@@ -2,7 +2,7 @@ import type { Page } from "@playwright/test";
 
 interface AudioStats {
   readonly state: string;
-  readonly played: { readonly jump?: number; readonly land?: number };
+  readonly played: { readonly jump?: number; readonly land?: number; readonly ballHit?: number };
   readonly cars: number;
 }
 import { expect, test } from "./fixtures";
@@ -70,7 +70,8 @@ test("freeplay loads, drives and resets", async ({ page }) => {
   await expect(page.locator("#flip")).toHaveAttribute("data-state", "window");
   await expect(page.locator("#flip-detail")).toHaveText(/^\d\.\d s$/);
   await page.screenshot({ path: "test-results/flip-window.png" });
-  await expect.poll(async () => (await audio()).played.land ?? 0, { timeout: 5000 }).toBeGreaterThan(0);
+  // (software rendering here: a few frames a second, the 5-tick cap running the jump slower than real time: wait for it)
+  await expect.poll(async () => (await audio()).played.land ?? 0, { timeout: 20_000 }).toBeGreaterThan(0);
   expect((await audio()).played.jump).toBe(1);
   await expect(page.locator("#flip")).toHaveAttribute("data-state", "ground");
   // M mutes (a setting like any other: the Audio tab shows it)
@@ -78,8 +79,8 @@ test("freeplay loads, drives and resets", async ({ page }) => {
   await page.keyboard.press("Escape");
   await page.locator(".settings-tab", { hasText: "Audio" }).click();
   await expect(page.locator('input[data-option="muted"]')).toBeChecked();
-  // The flip indicator can be turned off
-  await page.locator(".settings-tab", { hasText: "Controller" }).click();
+  // The flip indicator can be turned off (the Gameplay tab: MENU-9, RV-169)
+  await page.locator(".settings-tab", { hasText: "Gameplay" }).click();
   await page.locator('input[data-option="flipIndicator"]').uncheck();
   await page.keyboard.press("Escape");
   await expect(page.locator("#flip")).toBeHidden();
@@ -292,12 +293,12 @@ test("Unlimited boost in free play: on (the default) a full car takes no pad; of
   await page.waitForTimeout(1500);
   expect(await pads()).toEqual({ active: true, boost: 100 });
 
-  // Off, in the settings' Controller tab (the car off the pad first: at 33 it would take it at once): the tank at a
+  // Off, in the settings' Gameplay tab (the car off the pad first: at 33 it would take it at once): the tank at a
   // round's 33
   await place(behind);
   await page.keyboard.press("Escape");
   await expect(page.locator("#settings")).toBeVisible();
-  await page.locator('.settings-tab[data-tab="controller"]').click();
+  await page.locator('.settings-tab[data-tab="gameplay"]').click();
   const box = page.locator('input[data-option="unlimitedBoost"]');
   await expect(box).toBeChecked();
   await box.uncheck();
@@ -345,5 +346,25 @@ test("Unlimited boost in free play: on (the default) a full car takes no pad; of
   );
   expect(change.darker, JSON.stringify(change)).toBeGreaterThan(150);
   expect(change.brighter, JSON.stringify(change)).toBeLessThan(change.darker / 4);
+  expect(errors).toEqual([]);
+});
+
+test("the engine's contacts as the game's impact triggers: driving into the ball sounds it (Impact_Ball)", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto("/");
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+  await page.waitForFunction(() => "rlFreeplay" in window);
+  await page.locator("#game").click({ position: { x: 640, y: 360 }, button: "right" }); // (focus; the sound unlocked)
+  const audio = async (): Promise<AudioStats> => page.evaluate(() => (window as unknown as { rlAudio: () => AudioStats }).rlAudio());
+  // The ball 500 uu ahead of the car, resting; then full throttle into it
+  await page.evaluate(() => {
+    (window as unknown as { rlFreeplay: PadsHook }).rlFreeplay.place({ x: 0, y: -1500, yaw: Math.PI / 2 }, { x: 0, y: -1000, z: 93 });
+  });
+  await page.waitForTimeout(300);
+  const before = (await audio()).played.ballHit ?? 0;
+  await page.keyboard.down("KeyW");
+  await expect.poll(async () => (await audio()).played.ballHit ?? 0, { timeout: 10_000 }).toBeGreaterThan(before);
+  await page.keyboard.up("KeyW");
   expect(errors).toEqual([]);
 });

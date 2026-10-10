@@ -106,7 +106,7 @@ describe.each(plans)("the stadium's field, %s", (_name, plan) => {
       }
     }
     expect(covered).toBeGreaterThan(5000);
-  });
+  }, 30000); // (8,000 points through every zone: seconds under a full parallel run)
 
   it("the markings: the strips 16 uu wide (AV-7; the hatch bars, single segments: 16.3 in the built plan, RV-103c, the traced plan's estimator reading 19.7-22.1), `across` 0 to 1 across", () => {
     const all = Object.values(plan.markings).flat();

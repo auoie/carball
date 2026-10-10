@@ -5,7 +5,7 @@
 // player skips it (Space / pad A).
 import { Quaternion, Vector3 } from "three";
 import { PlayerCamera } from "../camera/rlCamera";
-import type { BodyState, CarState, World } from "../engine/world";
+import type { BodyState, CarConfig, CarState, World } from "../engine/world";
 import { type Vec3, add, sub } from "../math/vec";
 import { type Hud, respawnHud } from "../hud";
 import type { InputDevices } from "../input/devices";
@@ -43,7 +43,8 @@ import { type RecordedCar, ReplayRecorder, recordCar } from "./replayRecorder";
 import { ReplayPlayback } from "./replayPlayback";
 import { Fade } from "../render/fade";
 import { SceneEffects } from "../render/effects";
-import { EXPLOSION_LARGE, EXPLOSION_MEDIUM } from "../camera/shake";
+import { EXPLOSION_LARGE, EXPLOSION_MEDIUM, IMPACT_MEDIUM } from "../camera/shake";
+import { ImpactTriggers, triggerSounds } from "./impactTriggers";
 import { ServerDemolitions } from "./serverDemolitions";
 import { ShakeTriggers } from "./shakeTriggers";
 
@@ -150,6 +151,10 @@ export class Online {
   readonly #fade = new Fade();
   readonly #effects: SceneEffects;
   readonly #shakeTriggers = new ShakeTriggers({ demolitions: false }); // (the server's Demo events: RV-47)
+  /** The predicted world's contacts as the game's impact and landing triggers (notes/impact-triggers.md: every car's,
+   *  re-simulated ticks skipped) */
+  readonly #impactTriggers = new ImpactTriggers();
+  readonly #carConfigs = new Map<number, CarConfig>();
   readonly #demolitions = new ServerDemolitions(); // (the cars drawn demolished: RV-84)
   #localSpawns: number; // the local car's spawn counter last drawn (a kickoff's new car: the camera starts over)
   readonly #phases: { phase: MatchState["phase"]; at: number; frame: number }[] = [];
@@ -294,6 +299,7 @@ export class Online {
     }
     this.#countdownLeft = left;
     this.#fade.update(real);
+    this.#renderer.cameraFade = this.#fade.opacity;
     if (this.#replay) this.#drawReplay(real, this.#replay);
     else this.#draw(world, ticks * TICK_SECONDS, real);
   }
@@ -586,6 +592,9 @@ export class Online {
     const pads = this.#world.boostPads();
     const states = new Map([...this.#cars].map(([id, entry]) => [id, entry.state.current]));
     this.#shakeTriggers.frame(this.#camera.shakes, this.#cars.get(this.#localCar)?.state.current, states, pads, () => undefined);
+    for (const id of states.keys()) if (!this.#carConfigs.has(id)) this.#carConfigs.set(id, this.#world.carConfig(id));
+    const triggers = this.#impactTriggers.frame(frameSeconds, this.#world.takeImpacts(), states, this.#carConfigs, this.#localCar);
+    for (const t of triggers) if (t.kind === "shake") this.#camera.shakes.play(IMPACT_MEDIUM, null, t.scale, `impact:${String(t.car)}`);
     this.#padsView.update(pads, frameSeconds);
 
     const local = this.#cars.get(this.#localCar);
@@ -630,6 +639,7 @@ export class Online {
         throttle: this.#throttle,
         simulated,
         camera: view,
+        triggered: triggerSounds(triggers),
       });
     }
 

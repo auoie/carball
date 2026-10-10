@@ -64,7 +64,7 @@ describe("the arena's reflection capture (GrassCube)", () => {
     const theme = stadiumTheme();
     expect(theme.captureOnly?.visible).toBe(false);
     expect(theme.captureOnly?.children).toHaveLength(HOTSPOTS.length + TEAM_HOTSPOTS.length);
-  });
+  }, 30000); // (it builds the stadium theme: RV-160)
 
   it("drawn into the target the materials aren't sampling; then they sample it (two in turn)", () => {
     const scene = new Scene();

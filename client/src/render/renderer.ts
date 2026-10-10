@@ -25,6 +25,9 @@ export class Renderer {
   postOptions: PostOptions = { bloom: true, depthOfField: true };
   /** When the first frame was drawn: the camera fades in from black over a second (PP-18) */
   #firstFrame: number | null = null;
+  /** The camera's fade (0 clear .. 1 black: the goal replay's cuts, fade.ts), through the post-processing's remap as the
+   *  game's LUT (RV-159) */
+  cameraFade = 0;
 
   constructor(readonly canvas: HTMLCanvasElement) {
     // (no anti-aliasing: the game's default is Off, PP-16; the scene goes to an HDR target anyway)
@@ -63,7 +66,7 @@ export class Renderer {
     }
     const now = performance.now() / 1000;
     this.#firstFrame ??= now;
-    this.#post.render(this.scene, this.#camera, this.postOptions, 1 - (now - this.#firstFrame));
+    this.#post.render(this.scene, this.#camera, this.postOptions, Math.max(1 - (now - this.#firstFrame), this.cameraFade));
   }
 
   #resize(): void {

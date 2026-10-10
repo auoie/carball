@@ -215,6 +215,9 @@ export const FIELD_MEASURES = {
     wallY: 5136,
     fieldY: 5119,
     out: 51,
+    /** the field side's loop up the posts and over (RV-168c: its own measures, not the opening's outline offset): the
+     *  posts at |x| 944, the top at z 688, its corners r 144 */
+    fieldSide: { x: 944, top: 688, cornerR: 144 },
     crossbar: { z: 639, x: 704 },
     /** the field side's loop on the floor (RV-143): the fillet onto it, the lines round the mouth piece's front (y = a |x|
      *  + b) and their fillets' radii */
@@ -389,7 +392,6 @@ function arcPoints(r: number, from: number, to: number, steps = 24): P2[] {
   });
 }
 
-/** A hatch group: bars (each `bar` long from its start), the starts `step` apart */
 /** An open polyline with its corners rounded: `radii[i]` at `points[i]` (0, and at its ends: sharp) */
 function rounded(points: readonly P2[], radii: readonly number[]): P2[] {
   const out: P2[] = [];
@@ -600,7 +602,8 @@ function centreArcMarking(): P2[] {
   const m = FIELD_MEASURES.marking;
   const { r, from, to, leg } = m.arc;
   const arc = arcPoints(r, from, to);
-  // (the legs along 45 degrees: the +x one on x - y = 441 in to x 611.5, the +y one on y - x = 441 in to x 128)
+  // (the legs along 45 degrees: the +x one on x - y = 441 in to x 590 and down it, the +y one on y - x = 441 in to x 96
+  // and down it; their joins rounded: RV-141)
   const toX: P2[] = [...[...m.hookX.tail].reverse(), [m.hookX.to, m.hookX.to - leg]];
   const toY: P2[] = [[m.hookY.to, m.hookY.to + leg], [m.hookY.to, m.hookY.end]];
   // (the joins rounded: the legs into the arc's ends, and into the downs)
@@ -684,9 +687,15 @@ function goalGlowRibbons(): GlowRibbon[] {
   // On its field side, one loop (RV-143): 51 out from the opening up the posts and over, down to the fillet, onto the
   // floor and round the mouth piece's front; its free edge 63 toward the field on the wall, the fillet's concentric arc
   // (r 32) round it, 63 up on the floor
-  const over = whole.map(([x, z], k): P2 => [x + (outward[k]?.[0] ?? 0) * g.out, z + (outward[k]?.[1] ?? 0) * g.out]).filter(([, z]) => z > mf.fillet.z);
-  const sideX = Math.abs(over[0]?.[0] ?? 944);
-  const postsAndTop: P2[] = [[sideX, mf.fillet.z], ...over, [-sideX, mf.fillet.z]];
+  const fs = g.fieldSide;
+  const sideX = fs.x;
+  // (up the +x post, round its corner, across the top, round the other, down the -x post to the fillet)
+  const postCorner = (cx: number, sx: number): P2[] =>
+    Array.from({ length: 13 }, (_, k): P2 => {
+      const t = (k / 12) * (Math.PI / 2);
+      return sx > 0 ? [cx + fs.cornerR * Math.cos(t), fs.top - fs.cornerR + fs.cornerR * Math.sin(t)] : [cx - fs.cornerR * Math.sin(t), fs.top - fs.cornerR + fs.cornerR * Math.cos(t)];
+    });
+  const postsAndTop: P2[] = [[sideX, mf.fillet.z], ...postCorner(sideX - fs.cornerR, 1), ...postCorner(-(sideX - fs.cornerR), -1), [-sideX, mf.fillet.z]];
   // (the floor's path, the -x side's end to the +x side's: its corners where its lines meet, rounded)
   const [diagonalSlope, diagonalAt] = mf.diagonal;
   const [slantSlope, slantAt] = mf.slant;

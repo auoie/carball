@@ -441,7 +441,7 @@ export function buildTrain(trackX: number, trackY: number): { mesh: InstancedMes
 }
 
 /** Searchlights on far roofs, sweeping the smog (always leaning away from the arena). CPU-driven, five matrices. */
-export function buildSearchlights(towers: readonly Tower[], seed: number): { mesh: InstancedMesh; update(seconds: number): void } {
+export function buildSearchlights(towers: readonly Tower[], seed: number): { mesh: InstancedMesh; update(elapsedSeconds: number): void } {
   const random = seededRandom(seed);
   // (9600 long: from the farthest roofs the beams' faded tips stay inside the camera's far plane all through their
   // sweeps, RV-90, RV-113)

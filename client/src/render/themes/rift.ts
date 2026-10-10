@@ -369,7 +369,7 @@ export function buildRisingMotes(count: number, seed: number, keepOut: (x: numbe
  *  horned head first, eyes aglow. Moved on the CPU (one matrix per segment, every frame). */
 export function buildSerpent(path: (t: number) => Vector3, segments: number, length: number, loopSeconds: number): {
   root: Group;
-  update(seconds: number): void;
+  update(elapsedSeconds: number): void;
 } {
   const body = new InstancedMesh(new SphereGeometry(1, 14, 10), new MeshLambertMaterial({ color: 0x2c1f45, flatShading: true }), segments);
   const rings = new InstancedMesh(new TorusGeometry(1.08, 0.08, 6, 20), new MeshBasicMaterial({ color: 0x6bf3d0 }), Math.floor(segments / 4));
@@ -428,7 +428,7 @@ export function buildSerpent(path: (t: number) => Vector3, segments: number, len
 }
 
 /** Eye-orbs: floating spheres with one big eye each, turning to watch the ball (two draw calls: body, eye). */
-export function buildWatchers(homes: readonly Vector3[], seed: number): { root: Group; update(seconds: number, ball: Vector3): void } {
+export function buildWatchers(homes: readonly Vector3[], seed: number): { root: Group; update(elapsedSeconds: number, ball: Vector3): void } {
   const random = seededRandom(seed);
   const time = { value: 0 };
   const target = { value: new Vector3() };
@@ -477,8 +477,8 @@ export function buildWatchers(homes: readonly Vector3[], seed: number): { root: 
   for (const child of root.children) child.name = "watcher";
   return {
     root,
-    update(seconds, ball) {
-      time.value = seconds;
+    update(elapsedSeconds, ball) {
+      time.value = elapsedSeconds;
       target.value.copy(ball);
     },
   };

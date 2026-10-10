@@ -67,6 +67,13 @@ describe("the colour remap (PP-5, §5.6)", () => {
     expect(display([0.774, 0.774, 0.774])[0]).toBeGreaterThan(0.999);
   });
 
+  it("the camera's fade folded into the LUT before its clip (RV-159): at 0.5, linear 2 shows 0.6045, not 0.5", () => {
+    expect(display([2, 2, 2], 0.5)[0]).toBeCloseTo(0.6045, 4);
+    expect(display([8, 8, 8], 0.5)[0]).toBeGreaterThan(0.66);
+    expect(display([0.18, 0.18, 0.18], 0.5)[0]).toBeCloseTo(display([0.18, 0.18, 0.18])[0] * 0.5, 9);
+    expect(display([2, 2, 2], 1)).toEqual([0, 0, 0]);
+  });
+
   it("the sample colours (0-255): grey (124, 124, 125), orange (255, 153, 24), blue (23, 133, 255)", () => {
     const bytes = (rgb: [number, number, number]): number[] => display(rgb).map((v) => Math.round(v * 255));
     const near = (got: number[], want: number[]): void => { got.forEach((v, i) => { expect(Math.abs(v - (want[i] ?? 0))).toBeLessThanOrEqual(1); }); };

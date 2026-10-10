@@ -56,11 +56,11 @@ export function meadowTheme(): Theme {
       },
     },
     root,
-    update(seconds) {
-      sky.update(seconds);
-      grass.time.value = seconds;
-      crowd.update(seconds);
-      birds.update(seconds);
+    update(elapsedSeconds) {
+      sky.update(elapsedSeconds);
+      grass.time.value = elapsedSeconds;
+      crowd.update(elapsedSeconds);
+      birds.update(elapsedSeconds);
     },
   };
 }

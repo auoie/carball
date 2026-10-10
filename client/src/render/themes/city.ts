@@ -95,12 +95,12 @@ export function cityTheme(): Theme {
       },
     },
     root,
-    update(seconds) {
-      sky.update(seconds);
+    update(elapsedSeconds) {
+      sky.update(elapsedSeconds);
       for (const clock of [towerMesh.time, beacons.time, billboards.time, traffic.time, train.time, rain.time]) {
-        clock.value = seconds;
+        clock.value = elapsedSeconds;
       }
-      searchlights.update(seconds);
+      searchlights.update(elapsedSeconds);
     },
   };
 }

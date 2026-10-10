@@ -167,11 +167,11 @@ export function summitTheme(): Theme {
       },
     },
     root,
-    update(seconds) {
-      sky.update(seconds);
-      for (const clock of [puffs.time, sprites.time, blizzard.time, drifts.time, clouds.time, beast.time]) clock.value = seconds;
-      moths.update(seconds);
-      bird.update(seconds);
+    update(elapsedSeconds) {
+      sky.update(elapsedSeconds);
+      for (const clock of [puffs.time, sprites.time, blizzard.time, drifts.time, clouds.time, beast.time]) clock.value = elapsedSeconds;
+      moths.update(elapsedSeconds);
+      bird.update(elapsedSeconds);
     },
   };
 }

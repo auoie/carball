@@ -34,7 +34,7 @@ export interface Theme {
   /** Drawn only into the arena's reflection capture (the game's cube-only hotspots: SUR-33), kept hidden otherwise */
   readonly captureOnly?: Object3D;
   /** Animates the scenery: seconds since it was built, and the ball's centre (Three.js frame) */
-  update(seconds: number, ball: Vector3): void;
+  update(elapsedSeconds: number, ball: Vector3): void;
 }
 
 /** The playing volume in the Three.js frame (x, y up, z), goals included, that scenery must stay out of: its bounding box

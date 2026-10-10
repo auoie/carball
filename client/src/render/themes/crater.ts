@@ -210,13 +210,13 @@ export function craterTheme(): Theme {
       },
     },
     root,
-    update(seconds) {
-      sky.update(seconds);
+    update(elapsedSeconds) {
+      sky.update(elapsedSeconds);
       for (const clock of [pillars.time, colossus.time, tortoises.time, sprites.time, glows.time, ...orbs.map((o) => o.time)]) {
-        clock.value = seconds;
+        clock.value = elapsedSeconds;
       }
-      moths.update(seconds);
-      station.update(seconds);
+      moths.update(elapsedSeconds);
+      station.update(elapsedSeconds);
     },
   };
 }

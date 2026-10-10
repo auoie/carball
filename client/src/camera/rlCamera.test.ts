@@ -34,6 +34,7 @@ function car(overrides: Partial<CarState> = {}): CarState {
     rbActor: null,
     wheelContact: [true, true, true, true],
     groundNormal: UP,
+    wheelNormals: [UP, UP, UP, UP],
     demoRespawnTimer: 0,
     spawnSelection: { side: null, index: 0, locked: null },
     flipResets: 0,

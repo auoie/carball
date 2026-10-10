@@ -188,9 +188,9 @@ export function hauntedTheme(): Theme {
       },
     },
     root,
-    update(seconds) {
-      sky.update(seconds);
-      for (const clock of [glows.time, wisps.time, fog.time, bats.time]) clock.value = seconds;
+    update(elapsedSeconds) {
+      sky.update(elapsedSeconds);
+      for (const clock of [glows.time, wisps.time, fog.time, bats.time]) clock.value = elapsedSeconds;
     },
   };
 }

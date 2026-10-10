@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { NOISE_QUANTILES } from "./themes/stadiumSky";
 
 /** What ships carries no game data (RV-99, RV-114, RV-131): no mesh's vertices or UVs, no traced shapes, no tables of
  *  the meshes' per-azimuth extents, in any module under src/ or the JSON they import, nor in the built bundle (the
@@ -15,6 +16,10 @@ const REFERENCE = join(ROOT, "out/arena_local/reference");
 /** The surroundings' per-azimuth statistics and crowd tiers (local: the static session's SUR-1 exports) */
 const SUR1 = join(ROOT, "out/bsim/agents/SUR1");
 const DIST = join(SRC, "../dist");
+/** Our generated arena (scripts/arena_gen.py): the collision meshes that ship */
+const ARENA = join(ROOT, "out/arena");
+/** The game's own meshes, cooked and exported (local only) */
+const ARENA_LOCAL = join(ROOT, "out/arena_local");
 
 function files(dir: string, keep: (name: string) => boolean): string[] {
   if (!existsSync(dir)) return [];
@@ -31,19 +36,59 @@ function aliases(): [string, string][] {
   return [...config.matchAll(/"(@[\w-]+\/)\*"\s*:\s*\[\s*"([^"]+)\/\*"/g)].map((m) => [m[1] ?? "", join(SRC, "..", m[2] ?? "")]);
 }
 
-/** The JSON the modules import (it ships in the bundle), through the aliases too (RV-140) */
-function importedJson(): string[] {
-  const found = new Set<string>();
-  const alias = aliases();
-  for (const path of modules()) {
-    for (const m of readFileSync(path, "utf8").matchAll(/from\s+["']([^"']+\.json)["']/g)) {
-      const spec = m[1] ?? "";
-      const [prefix, dir] = alias.find(([a]) => spec.startsWith(a)) ?? ["", ""];
-      found.add(prefix ? join(dir, spec.slice(prefix.length)) : resolve(dirname(path), spec));
-    }
+/** The specifiers a module's text imports, in every form the build follows (RV-167f): static and side-effect imports,
+ *  import(), import.meta.glob's patterns, new URL(..., import.meta.url); queries (?raw, ?url) kept */
+function importSpecifiers(text: string): string[] {
+  const out: string[] = [];
+  for (const re of [/\bfrom\s*["']([^"']+)["']/g, /\bimport\s*["']([^"']+)["']/g, /\bimport\s*\(\s*["']([^"']+)["']/g, /\bnew\s+URL\s*\(\s*["']([^"']+)["']\s*,\s*import\.meta\.url/g]) {
+    for (const m of text.matchAll(re)) out.push(m[1] ?? "");
   }
-  return [...found].filter((p) => existsSync(p));
+  for (const m of text.matchAll(/import\.meta\.glob\s*(?:<[^>]*>)?\s*\(\s*(\[[^\]]*\]|["'][^"']+["'])/g)) {
+    for (const s of (m[1] ?? "").matchAll(/["']([^"']+)["']/g)) out.push(s[1] ?? "");
+  }
+  return out;
 }
+
+/** The files a glob pattern (an absolute path with * and ** in it) matches */
+function globFiles(pattern: string): string[] {
+  const parts = pattern.split("/");
+  const fixed = parts.findIndex((s) => s.includes("*"));
+  const base = parts.slice(0, fixed).join("/");
+  const rest = parts
+    .slice(fixed)
+    .join("/")
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .split("**/")
+    .map((piece) => piece.replace(/\*/g, "[^/]*"))
+    .join("(?:.*/)?");
+  const re = new RegExp(`^${rest}$`);
+  return files(base, () => true).filter((f) => re.test(relative(base, f)));
+}
+
+/** A specifier from a module to the files it ships (none for a package's, or for our own modules: scanned as modules) */
+function resolveSpecifier(spec: string, from: string): string[] {
+  const bare = spec.replace(/\?.*$/, "");
+  const [prefix, dir] = aliases().find(([a]) => bare.startsWith(a)) ?? ["", ""];
+  if (!prefix && !bare.startsWith(".") && !bare.startsWith("/")) return [];
+  const path = prefix ? join(dir, bare.slice(prefix.length)) : resolve(dirname(from), bare);
+  const found = path.includes("*") ? globFiles(path) : existsSync(path) && statSync(path).isFile() ? [path] : [];
+  return found.filter((f) => !f.endsWith(".ts"));
+}
+
+/** Every file the modules import that isn't a module of ours (it ships in the bundle, inlined or as an asset): JSON,
+ *  styles, raw text, the engine's glue and binary, the arena's meshes; through the aliases too (RV-140, RV-167f) */
+function shippedImports(): string[] {
+  const found = new Set<string>();
+  for (const path of modules()) {
+    for (const spec of importSpecifiers(stripComments(readFileSync(path, "utf8")))) for (const f of resolveSpecifier(spec, path)) found.add(f);
+  }
+  return [...found].sort();
+}
+/** What ships as text (scanned as the modules are), and what as binary (each kind pinned or allowed by name) */
+const TEXT = /\.(json|css|js|mjs|html|txt|glsl|svg|csv|map|webmanifest)$/;
+type Kind = "text" | "cmf" | "wasm" | "unknown";
+/** cmf: the arena's collision meshes (pinned to our generated ones); wasm: the engine, our build (engine/build-wasm) */
+const kind = (path: string): Kind => (TEXT.test(path) ? "text" : path.endsWith(".cmf") ? "cmf" : path.endsWith(".wasm") ? "wasm" : "unknown");
 
 /** A module's text with its comments blanked: strings and template literals kept whole (a shader's comments ship) */
 function stripComments(source: string): string {
@@ -78,32 +123,52 @@ function stripComments(source: string): string {
 
 interface Num {
   readonly value: number;
-  /** its decimals as written, trailing zeros aside ("0.65580" has 4: RV-139) */
+  /** its decimal places, trailing zeros aside ("0.65580" has 4: RV-139; "6.5580e-1" 4 too: RV-167c) */
   readonly decimals: number;
+  /** its decimal places as written ("0.65580" has 5): what makes it eligible as a UV's (RV-167a) */
+  readonly written: number;
   /** written as an integer: no point, no exponent ("164.00" isn't) */
   readonly integer: boolean;
   readonly at: number;
 }
 
-/** The numeric literals in a text (leading dots, exponents and separators too: 1_234.5, RV-140) */
+/** The numeric literals in a text (leading dots, exponents and separators too: 1_234.5, RV-140); their places counted
+ *  with the exponent's shift (RV-167c) */
 function numbers(text: string): Num[] {
-  return [...text.matchAll(/(?<![A-Za-z_$\d.])-?(?:\d[\d_]*(\.[\d_]*)?|(\.\d[\d_]*))(?:[eE][-+]?\d+)?/g)].map((m) => ({
-    value: Number(m[0].replace(/_/g, "")),
-    decimals: (m[1] ?? m[2] ?? ".").replace(/_/g, "").replace(/0+$/, "").length - 1,
-    integer: m[1] === undefined && m[2] === undefined && !/[eE]/.test(m[0]),
-    at: m.index,
-  }));
+  return [...text.matchAll(/(?<![A-Za-z_$\d.])-?(?:\d[\d_]*(\.[\d_]*)?|(\.\d[\d_]*))(?:[eE]([-+]?\d+))?/g)].map((m) => {
+    const mantissa = m[0].replace(/_/g, "").replace(/^-/, "").replace(/[eE].*$/, "");
+    const point = mantissa.indexOf(".");
+    const digits = mantissa.replace(".", "");
+    const before = point < 0 ? digits.length : point;
+    const places = (d: string): number => Math.max(0, d.length - before - Number(m[3] ?? 0));
+    return {
+      value: Number(m[0].replace(/_/g, "")),
+      decimals: places(digits.replace(/0+$/, "")),
+      written: places(digits),
+      integer: m[1] === undefined && m[2] === undefined && m[3] === undefined,
+      at: m.index,
+    };
+  });
 }
 
 /** scripts/cage_topology.json: the cage's topology, derived and shipped (its lattice, edges, cells and boundary as
  *  indices into its own nodes) */
 const TOPOLOGY = join(ROOT, "scripts/cage_topology.json");
 interface Topology {
-  nodes: { q: number[] }[];
+  params: Record<string, unknown>;
+  rows: Record<string, { corner_marks: number[] }>;
+  nodes: { q: number[]; a: (string | number)[] }[];
   edges: number[][];
-  cells: { nodes: number[] }[];
-  defects: { cell: number; wall_rows: number[] }[];
+  cells: { nodes: number[]; sides: number }[];
+  defects: { cell: number; sides: number; wall_rows: number[] }[];
   boundary: number[][];
+}
+
+/** The topology's free numbers, its parameters and its rows' marks: the rest is indices and labels, proven so by the
+ *  structural test below, and is left out of the scan (a field read across its cells meets some texture's row) */
+function topologyFree(text: string): string {
+  const t = JSON.parse(text) as Topology;
+  return JSON.stringify({ params: t.params, rows: t.rows });
 }
 
 /** Its index arrays, each as "a,b,c" */
@@ -118,6 +183,24 @@ function withoutTopology(text: string, arrays: ReadonlySet<string>): string {
   return text.replace(/\[\s*\d+(?:\s*,\s*\d+)*\s*\]/g, (m) => (arrays.has(m.replace(/[\s[\]]/g, "")) ? " ".repeat(m.length) : m));
 }
 
+/** The bundle's binaries: its asset files by kind, and the data URLs inlined in its text (small assets, under the
+ *  build's inline limit), as base64; inlined data a collision mesh when it is one of ours by content */
+function bundleBinaries(): { kind: Kind; base64: string; where: string }[] {
+  const out: { kind: Kind; base64: string; where: string }[] = [];
+  const ours = new Set(globFiles(join(ARENA, "**/*.cmf")).map((p) => readFileSync(p).toString("base64")));
+  for (const path of files(DIST, () => true)) {
+    const k = kind(path);
+    if (k === "cmf" || k === "wasm" || k === "unknown") out.push({ kind: k, base64: readFileSync(path).toString("base64"), where: path.slice(ROOT.length) });
+    else {
+      for (const m of readFileSync(path, "utf8").matchAll(/data:application\/octet-stream;base64,([A-Za-z0-9+/=]+)/g)) {
+        const base64 = m[1] ?? "";
+        out.push({ kind: ours.has(base64) ? "cmf" : "unknown", base64, where: `${path.slice(ROOT.length)} (inlined)` });
+      }
+    }
+  }
+  return out;
+}
+
 const FIELD_AND_GOAL = [
   "render/stadiumFieldRules.ts",
   "render/stadiumField.ts",
@@ -126,6 +209,8 @@ const FIELD_AND_GOAL = [
   "render/themes/stadiumSurroundings.ts",
   "render/themes/stadiumCrowd.ts",
   "render/themes/stadiumProps.ts",
+  "render/themes/stadiumSky.ts",
+  "render/themes/stadiumLights.ts",
 ];
 
 describe("what ships carries no game data (RV-99)", () => {
@@ -138,18 +223,58 @@ describe("what ships carries no game data (RV-99)", () => {
     }
   });
 
-  it("the comment stripper keeps strings and shaders, the number reader every form (RV-114, RV-139, RV-140)", () => {
+  it("the comment stripper keeps strings and shaders, the number reader every form (RV-114, RV-139, RV-140, RV-167a, c)", () => {
     expect(stripComments('const u = "http://x"; // gone\nconst s = `// kept in a shader`;')).toBe('const u = "http://x";        \nconst s = `// kept in a shader`;');
-    expect(numbers("a(.6558, 6.558E-1, -12, 0.5, 1_234.5, 0.65580)").map((n) => n.value)).toEqual([0.6558, 0.6558, -12, 0.5, 1234.5, 0.6558]);
-    expect(numbers("0.65580, 1_234.50, 2.").map((n) => n.decimals)).toEqual([4, 1, 0]);
+    expect(numbers("a(.6558, 6.558E-1, -12, 0.5, 1_234.5, 0.65580, 6.5580e-1, 6558e-4)").map((n) => n.value)).toEqual([0.6558, 0.6558, -12, 0.5, 1234.5, 0.6558, 0.6558, 0.6558]);
+    expect(numbers("0.65580, 1_234.50, 2., 6.5580e-1, 6558e-4, 1200, 1e3").map((n) => n.decimals)).toEqual([4, 1, 0, 4, 4, 0, 0]);
+    expect(numbers("0.65580, 1_234.50, 2., 6.5580e-1, 0.6500").map((n) => n.written)).toEqual([5, 2, 0, 5, 4]);
+    expect(numbers("12, 1.0, 1e3").map((n) => n.integer)).toEqual([true, false, false]);
   });
 
-  it("the JSON imported through the build's aliases is scanned too (RV-140)", () => {
-    expect(importedJson().map((p) => p.slice(ROOT.length))).toContain("scripts/cage_topology.json");
+  it("the files imported in every form are scanned too: JSON through the aliases, the arena's meshes through a glob (RV-140, RV-167f)", () => {
+    const sample = [
+      'import a from "./a.json";',
+      'import "./style.css";',
+      'import b from "./shader.glsl?raw";',
+      'const c = await import("./lazy");',
+      'const d = import.meta.glob<string>("@arena/x/*.cmf", { query: "?url", eager: true });',
+      'const e = import.meta.glob(["./p/*.json", "./q/**/*.txt"]);',
+      'const f = new URL("./data.bin", import.meta.url);',
+      'import type { G } from "three";',
+    ].join("\n");
+    expect(importSpecifiers(sample)).toEqual(["./a.json", "./shader.glsl?raw", "three", "./style.css", "./lazy", "./data.bin", "@arena/x/*.cmf", "./p/*.json", "./q/**/*.txt"]);
+    const shipped = shippedImports().map((p) => p.slice(ROOT.length));
+    expect(shipped).toContain("scripts/cage_topology.json");
+    expect(shipped).toContain("client/src/style.css");
+    expect(shipped.filter((p) => p.startsWith("out/arena/collision_meshes/soccar/") && p.endsWith(".cmf")).length).toBe(16);
+    // (every shipped file a kind this guard knows: text it scans, binary it pins or allows)
+    expect(shipped.filter((p) => kind(p) === "unknown")).toEqual([]);
+    expect(globFiles(join(SRC, "render/themes/stadium*.ts")).map((f) => f.slice(SRC.length))).toContain("render/themes/stadiumSky.ts");
+  });
+
+  it("the arena's collision meshes that ship are our generated ones: imported from out/arena, the bundle's (files or inlined) the same bytes (RV-167f)", () => {
+    const cmf = shippedImports().filter((p) => kind(p) === "cmf");
+    expect(cmf.length).toBeGreaterThan(0);
+    for (const p of cmf) expect(p.startsWith(`${ARENA}/`), p).toBe(true);
+    const ours = new Set(cmf.map((p) => readFileSync(p).toString("base64")));
+    const bundled = bundleBinaries();
+    // (every binary the bundle carries a kind it knows: inlined data a mesh of ours)
+    expect(bundled.filter((b) => b.kind === "unknown").map((b) => b.where)).toEqual([]);
+    const meshes = bundled.filter((b) => b.kind === "cmf");
+    if (bundled.length === 0) return; // (no build)
+    for (const b of meshes) expect(ours.has(b.base64), b.where).toBe(true);
+    expect(new Set(meshes.map((b) => b.base64)).size).toBe(ours.size);
+  });
+
+  it("the noise's quantile tables are distributions, not a texture's rows: 24 levels each, never decreasing (RV-157)", () => {
+    for (const [channel, levels] of Object.entries(NOISE_QUANTILES)) {
+      expect(levels.length, channel).toBe(24);
+      expect(levels.every((v, k) => k === 0 || v >= (levels[k - 1] ?? 0)), channel).toBe(true);
+    }
   });
 
   it("the cage's topology is topology: integer indices into its own nodes, its lattice integers; only its parameters and row marks otherwise", () => {
-    const t = JSON.parse(readFileSync(TOPOLOGY, "utf8")) as Topology & { params: Record<string, unknown>; rows: Record<string, { corner_marks: number[] }> };
+    const t = JSON.parse(readFileSync(TOPOLOGY, "utf8")) as Topology;
     const count = t.nodes.length;
     const index = (k: number): boolean => Number.isInteger(k) && k >= 0 && k < count;
     // (an edge a chain of nodes, a beam)
@@ -158,6 +283,11 @@ describe("what ships carries no game data (RV-99)", () => {
     expect(t.boundary.every((b) => b.every(index))).toBe(true);
     expect(t.nodes.every((n) => n.q.length === 2 && n.q.every(Number.isInteger))).toBe(true);
     expect(t.defects.every((d) => Number.isInteger(d.cell) && d.cell < t.cells.length && d.wall_rows.every(Number.isInteger))).toBe(true);
+    // (a cell's corners, 3 to its nodes (some on its edges); a defect's its cell's; a node's label its surface and
+    // integer lattice rows and columns)
+    expect(t.cells.every((c) => Number.isInteger(c.sides) && c.sides >= 3 && c.sides <= c.nodes.length)).toBe(true);
+    expect(t.defects.every((d) => d.sides === t.cells[d.cell]?.sides)).toBe(true);
+    expect(t.nodes.every((nd) => ["free", "clip", "wall", "seam", "ceil"].includes(String(nd.a[0])) && nd.a.slice(1).every((x) => Number.isInteger(x)))).toBe(true);
     // (its numbers otherwise: a handful of parameters and the rows' corner marks)
     const rest = Object.keys(t.params).length + Object.values(t.rows).reduce((s, r) => s + r.corner_marks.length + 2, 0);
     expect(rest).toBeLessThan(100);
@@ -212,37 +342,60 @@ class Grid3 {
 }
 
 /** Every three consecutive values of a set of streams (NaN between streams), looked up by their cells: a column or a row
- *  of the game's data written out in its order (RV-138) */
+ *  of the game's data written out in its order (RV-138). Typed buckets (the textures' streams are ten million values) */
 class Sequences {
-  readonly #index = new Map<number, number[]>();
-  readonly #values: Float64Array;
+  readonly #values: Float32Array;
+  /** each bucket's first place in `#order` (and the end) */
+  readonly #start: Uint32Array;
+  /** the streams' positions by bucket */
+  readonly #order: Uint32Array;
+  readonly #mask: number;
   constructor(
     values: readonly number[] | Float32Array,
     readonly cell: number,
   ) {
-    this.#values = Float64Array.from(values);
-    const v = this.#values;
+    const v = (this.#values = Float32Array.from(values));
+    let size = 1024;
+    while (size < v.length) size *= 2;
+    this.#mask = size - 1;
+    const bucket = new Int32Array(v.length).fill(-1);
+    const start = (this.#start = new Uint32Array(size + 1));
     for (let i = 0; i + 2 < v.length; i++) {
       const [a = NaN, b = NaN, c = NaN] = [v[i], v[i + 1], v[i + 2]];
       if (Number.isNaN(a + b + c)) continue;
-      const key = this.#key(Math.floor(a / cell), Math.floor(b / cell), Math.floor(c / cell));
-      const at = this.#index.get(key);
-      if (at) at.push(i);
-      else this.#index.set(key, [i]);
+      const k = this.#key(Math.floor(a / cell), Math.floor(b / cell), Math.floor(c / cell));
+      bucket[i] = k;
+      start[k + 1] = (start[k + 1] ?? 0) + 1;
+    }
+    for (let k = 0; k < size; k++) start[k + 1] = (start[k + 1] ?? 0) + (start[k] ?? 0);
+    const fill = start.slice(0, size);
+    const order = (this.#order = new Uint32Array(start[size] ?? 0));
+    for (let i = 0; i < bucket.length; i++) {
+      const k = bucket[i] ?? -1;
+      if (k < 0) continue;
+      order[fill[k] ?? 0] = i;
+      fill[k] = (fill[k] ?? 0) + 1;
     }
   }
   #key(i: number, j: number, k: number): number {
-    return (Math.imul(i, 73856093) ^ Math.imul(j, 19349663) ^ Math.imul(k, 83492791)) >>> 0;
+    return ((Math.imul(i, 73856093) ^ Math.imul(j, 19349663) ^ Math.imul(k, 83492791)) >>> 0) & this.#mask;
   }
   /** Whether a, b, c lie each within `tolerance` (at most half a cell) of three consecutive values */
   near(a: number, b: number, c: number, tolerance: number): boolean {
-    const [ca, cb, cc] = [a, b, c].map((x) => Math.floor(x / this.cell)) as [number, number, number];
+    return this.along([a, b, c], tolerance);
+  }
+  /** Whether the values (three or more) lie each within `tolerance` (at most half a cell) of consecutive values from one
+   *  place in a stream */
+  along(w: readonly number[], tolerance: number): boolean {
+    const [ca, cb, cc] = w.slice(0, 3).map((x) => Math.floor(x / this.cell)) as [number, number, number];
     const v = this.#values;
     for (let i = -1; i <= 1; i++) {
       for (let j = -1; j <= 1; j++) {
         for (let k = -1; k <= 1; k++) {
-          for (const at of this.#index.get(this.#key(ca + i, cb + j, cc + k)) ?? []) {
-            if (Math.abs((v[at] ?? 0) - a) <= tolerance && Math.abs((v[at + 1] ?? 0) - b) <= tolerance && Math.abs((v[at + 2] ?? 0) - c) <= tolerance) return true;
+          const key = this.#key(ca + i, cb + j, cc + k);
+          for (let m = this.#start[key] ?? 0, end = this.#start[key + 1] ?? 0; m < end; m++) {
+            const at = this.#order[m] ?? 0;
+            if (w.every((x, q) => Math.abs((v[at + q] ?? NaN) - x) <= tolerance)) return true;
           }
         }
       }
@@ -252,21 +405,33 @@ class Sequences {
 }
 
 const OBJS = files(join(ASSETS, "meshes"), (n) => n.endsWith(".obj"));
+/** The run a check needs from integer pairs and triples all under 300 (RV-167e) */
+const SMALL_RUN = 4;
+/** A texture's row as the guard looks for it (RV-157): this many values along one place of its streams, bending
+ *  somewhere by this much (|a - 2b + c|: a picture's row, not a ramp; smooth curves meet some texture's gradient
+ *  anywhere, and a ramp is a profile) */
+const TEXTURE_WINDOW = 6;
+const TEXTURE_BEND = 0.02;
+/** As 8-bit levels, a whole 8 px row, spanning this much too: code's integers (offsets, indices, coefficients), dense
+ *  in a 256-level space, meet a row of six somewhere */
+const TEXTURE_LEVELS_WINDOW = 8;
+const TEXTURE_LEVELS_SPAN = 0.1;
 const floats = (path: string): Float32Array => {
   if (!existsSync(path)) return new Float32Array(0);
   const b = readFileSync(path);
   return new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
 };
 
-/** The longest run of hits among a text's numbers, a hit every `stride` numbers from 1 to `strides` (8), from any start
- *  (RV-138: a record's fields interleaved with others' repeat at its stride); `hit(i, stride)`. With `key`, a hit with
+/** The longest run of hits among a text's numbers, a hit every `stride` numbers from 1 to `strides` (16: a vertex's
+ *  record of 9, 12 or 16 floats, RV-167d), from any start (RV-138: a record's fields interleaved with others' repeat at
+ *  its stride); `hit(i, stride)`. With `key`, a hit with
  *  its predecessor's key starts the run over: a table's rows are distinct (one vertex's edges in an index list, [315,
  *  320], [315, 318], are no per-azimuth table) */
 function longestRun(
   text: string,
   n: readonly Num[],
   hit: (i: number, stride: number) => boolean,
-  { strides = 8, key }: { strides?: number; key?: (i: number) => string } = {},
+  { strides = 16, key }: { strides?: number; key?: (i: number) => string } = {},
 ): { length: number; at: string } {
   let best = { length: 0, at: "" };
   for (let stride = 1; stride <= strides; stride++) {
@@ -284,9 +449,11 @@ function longestRun(
         last = k;
         if (run === 0) first = i;
         run++;
-        if (run > best.length) {
+        // (past 8, a run one hit longer: a wide stride meets its hits among more numbers, RV-167d)
+        const length = stride > 8 ? run - 1 : run;
+        if (length > best.length) {
           const at = n[first]?.at ?? 0;
-          best = { length: run, at: `${text.slice(at, at + 80).replace(/\s+/g, " ")} (every ${String(stride)})` };
+          best = { length, at: `${text.slice(at, at + 80).replace(/\s+/g, " ")} (every ${String(stride)})` };
         }
       }
     }
@@ -298,7 +465,7 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
   // (where the game's meshes are, the rest of the local reference must be too: a guard that skips its own data is no
   // guard, RV-140)
   it("has its local reference (scripts/reference_vertices.py; the static session's SUR-1 exports)", () => {
-    const needed = ["vertices.f32", "uvs.f32", "rz.f32", "az.f32", "columns.f32", "index.json"].map((n) => join(REFERENCE, n));
+    const needed = ["vertices.f32", "uvs.f32", "rz.f32", "az.f32", "columns.f32", "index.json", "textures.f32"].map((n) => join(REFERENCE, n));
     for (const path of [...needed, join(SUR1, "outline_az.json"), join(SUR1, "surroundings_geometry.json"), PLAN]) expect(existsSync(path), path.slice(ROOT.length)).toBe(true);
   });
 
@@ -378,6 +545,10 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
     azValues.set(key, [...(azValues.get(key) ?? []), azPairs[i + 1] ?? 0]);
   }
   const columns = new Sequences(floats(join(REFERENCE, "columns.f32")), 50);
+  // The game's textures box-downsampled to 8-64 px, their rows and columns, as stored and decoded (RV-157:
+  // scripts/reference_textures.py); cells of 1/250, for 8-bit levels' half-level tolerance
+  const textureStreams = floats(join(REFERENCE, "textures.f32"));
+  const textures = new Sequences(textureStreams, 0.004);
   const topology = topologyArrays();
   const sorted = Float64Array.from(uvValues).sort();
   const nearUv = (x: number, tolerance: number): boolean => {
@@ -391,23 +562,26 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
     return Math.abs((sorted[lo] ?? Infinity) - x) <= tolerance || Math.abs((sorted[lo - 1] ?? Infinity) - x) <= tolerance;
   };
 
-  // (a pair or triple counts when it could be a traced point: its coordinates 10 uu or more, one 100 or more (RV-139),
-  // or 300 for integers (small ones are indices as often as not: the cage's topology's edges); one off the 16 uu grid
-  // the arena's design measures share with our rules, 128, 256, 512 ...)
-  const traced = (integers: boolean, ...v: readonly number[]): boolean => {
+  // (a pair or triple counts when it could be a traced point: its coordinates 10 uu or more, one 100 or more (RV-139);
+  // one off the 16 uu grid the arena's design measures share with our rules, 128, 256, 512 ...)
+  const traced = (...v: readonly number[]): boolean => {
     const a = v.map(Math.abs);
-    return Math.max(...a) >= (integers ? 300 : 100) && Math.min(...a) >= 10 && a.some((x) => x % 16 !== 0);
+    return Math.max(...a) >= 100 && Math.min(...a) >= 10 && a.some((x) => x % 16 !== 0);
   };
-  // (UV values: written to `places` decimals or more, and not the small ones under 0.05, as dense among the UVs as in a
-  // measured profile's tail, Curve_Smoke's)
-  const large = (x: Num | undefined, places: number): boolean => !!x && x.decimals >= places && Math.abs(x.value) >= 0.05;
-  /** Half the last written decimal of the least precise */
-  const tolerance = (...x: readonly (Num | undefined)[]): number => 0.5 * 10 ** -Math.min(...x.map((m) => m?.decimals ?? 0));
+  // (integers all under 300: small ones are indices as often as not (the cage's topology's edges), so their runs must be
+  // longer, RV-167e)
+  const small = (integers: boolean, ...v: readonly number[]): boolean => integers && Math.max(...v.map(Math.abs)) < 300;
+  // (UV values: written to `places` decimals or more (as written, trailing zeros too: RV-167a), and not the small ones
+  // under 0.05, as dense among the UVs as in a measured profile's tail, Curve_Smoke's)
+  const large = (x: Num | undefined, places: number): boolean => !!x && x.written >= places && Math.abs(x.value) >= 0.05;
+  /** Half the last decimal of the least precise, its trailing zeros aside, at most 0.0005 (RV-167a) */
+  const tolerance = (...x: readonly (Num | undefined)[]): number => 0.5 * 10 ** -Math.max(3, Math.min(...x.map((m) => m?.decimals ?? 0)));
 
   /** Every check on one text: what it found (none for a clean text) */
   function findings(text: string): string[] {
     const n = numbers(withoutTopology(text, topology));
     const value = (k: number): number => Math.abs(n[k]?.value ?? 0);
+    const signed = (k: number): number => n[k]?.value ?? 0;
     const integers = (i: number, count: number): boolean => n.slice(i, i + count).every((m) => m.integer);
     const found: string[] = [];
     const report = (what: string, run: { length: number; at: string }, limit: number): void => {
@@ -422,17 +596,21 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
         return h;
       };
     };
-    const pair = once((i) => i + 1 < n.length && traced(integers(i, 2), value(i), value(i + 1)) && coords.near(value(i), value(i + 1), 0.6));
-    report("coordinate pairs", longestRun(text, n, pair), 3);
-    const triple = once((i) => i + 2 < n.length && traced(integers(i, 3), value(i), value(i + 1), value(i + 2)) && points.near(value(i), value(i + 1), value(i + 2), 0.6));
-    report("(x, y, z) triples", longestRun(text, n, triple), 3);
-    // (UV pairs written to 3 decimals or more, each within half its last decimal (RV-139), u and v apart: a run of the
-    // same pair is one point)
+    const pairAt = once((i) => i + 1 < n.length && traced(value(i), value(i + 1)) && coords.near(value(i), value(i + 1), 0.6));
+    const pairSmall = (i: number): boolean => small(integers(i, 2), value(i), value(i + 1));
+    report("coordinate pairs", longestRun(text, n, (i) => pairAt(i) && !pairSmall(i)), 3);
+    report("small integer coordinate pairs", longestRun(text, n, (i) => pairAt(i) && pairSmall(i)), SMALL_RUN);
+    const tripleAt = once((i) => i + 2 < n.length && traced(value(i), value(i + 1), value(i + 2)) && points.near(value(i), value(i + 1), value(i + 2), 0.6));
+    const tripleSmall = (i: number): boolean => small(integers(i, 3), value(i), value(i + 1), value(i + 2));
+    report("(x, y, z) triples", longestRun(text, n, (i) => tripleAt(i) && !tripleSmall(i)), 3);
+    report("small integer (x, y, z) triples", longestRun(text, n, (i) => tripleAt(i) && tripleSmall(i)), SMALL_RUN);
+    // (UV pairs written to 3 decimals or more, each within half its last decimal (RV-139), u and v apart, signed as the
+    // meshes' (RV-167b): a run of the same pair is one point)
     const uvPair = once((i) => {
       const t = tolerance(n[i], n[i + 1]);
-      return large(n[i], 3) && large(n[i + 1], 3) && Math.abs(value(i) - value(i + 1)) > 2 * t && uvPairs.near(value(i) * 10000, value(i + 1) * 10000, 10000 * t);
+      return large(n[i], 3) && large(n[i + 1], 3) && Math.abs(signed(i) - signed(i + 1)) > 2 * t && uvPairs.near(signed(i) * 10000, signed(i + 1) * 10000, 10000 * t);
     });
-    report("UV pairs", longestRun(text, n, uvPair, { key: (i) => `${String(value(i))},${String(value(i + 1))}` }), 3);
+    report("UV pairs", longestRun(text, n, uvPair, { key: (i) => `${String(signed(i))},${String(signed(i + 1))}` }), 3);
     // (each within half its last written decimal of a UV component: the old goal-side glass chart's V row, RV-99; in a
     // row only, the arena's UV components too dense for a strided one to mean anything, which the rows below catch)
     const uvValue = once((i) => large(n[i], 4) && nearUv(n[i]?.value ?? 0, tolerance(n[i])));
@@ -464,13 +642,30 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
       };
       report("per-azimuth columns", longestRun(text, n, column), 2);
     }
+    // (a downsampled texture's row or column, a value every `stride`: TEXTURE_WINDOW values along one place of the
+    // textures' streams, 0 to 1 to 3 decimals or more (as stored or decoded) or 8-bit levels 2 to 253, bending somewhere;
+    // RV-157)
+    const textureRow = (i: number, s: number): boolean => {
+      // (levels clear of black and white, where the textures' rows are densest: a run of 0s and 1s meets one anywhere)
+      const levels = n[i]?.integer === true;
+      const length = levels ? TEXTURE_LEVELS_WINDOW : TEXTURE_WINDOW;
+      if (i + (length - 1) * s >= n.length) return false;
+      const m = Array.from({ length }, (_, j) => n[i + j * s]);
+      if (levels && !m.every((x) => x?.integer === true && x.value >= 2 && x.value <= 253)) return false;
+      if (!levels && !m.every((x) => x !== undefined && !x.integer && x.written >= 3 && x.value >= 0 && x.value <= 1)) return false;
+      const w = m.map((x) => (x?.value ?? 0) / (levels ? 255 : 1));
+      const bends = w.some((x, j) => j >= 2 && Math.abs((w[j - 2] ?? 0) - 2 * (w[j - 1] ?? 0) + x) >= TEXTURE_BEND);
+      if (!bends || (levels && Math.max(...w) - Math.min(...w) < TEXTURE_LEVELS_SPAN)) return false;
+      return textures.along(w, levels ? 0.5 / 255 : tolerance(...m));
+    };
+    if (textureStreams.length > 0) report("texture rows", longestRun(text, n, textureRow), 1);
     if (rzValues.length > 0) {
       // (the tables and profiles carry a radius of 11k or more: a pair 2000 or more out, not the small ones the 25 uu
       // tolerance would find among indices; any adjacent pair, 4 of any 8, so a table's azimuth column between its
       // rows' pairs doesn't hide it)
       const hits = n.map((a, i) => {
         const [x, y] = [Math.abs(a.value), value(i + 1)];
-        return i + 1 < n.length && traced(integers(i, 2), x, y) && Math.max(x, y) >= 2000 && rz.near(x, y, 25);
+        return i + 1 < n.length && traced(x, y) && Math.max(x, y) >= 2000 && rz.near(x, y, 25);
       });
       for (let i = 0; i < hits.length; i++) {
         const window = hits.slice(i, i + 8).filter(Boolean).length;
@@ -502,8 +697,44 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
       const a = q.map(Math.abs);
       return Math.max(...a) < 300 && Math.max(...a) >= 100 && Math.min(a[0] ?? 0, a[1] ?? 0) >= 10;
     });
+    // (UVs with a negative component, every 7th of a mesh's (out of its order, so only the pairs' check can see them):
+    // RV-167b; V values whose 4 places end in a zero: RV-167a)
+    const allUvs = OBJS.flatMap((path) => obj(path.replace(/^.*\//, "").replace(/\.obj$/, "")).vt);
+    const sparse = allUvs.filter((_, k) => k % 7 === 0);
+    const negative = sparse.filter((q) => Math.min(q[0] ?? 0, q[1] ?? 0) <= -0.05 && Math.abs((q[0] ?? 0) - (q[1] ?? 0)) > 0.01).slice(0, 8);
+    expect(negative.length).toBe(8);
+    // (V values 0.1 to 1 in exponent form, their mantissa to 3 places: 4 decimal places in all, RV-167c)
+    const exponents = [...new Set(sparse.map((q) => (q[1] ?? 0).toFixed(4)))].map(Number).filter((x) => x >= 0.1 && x < 1).slice(0, 8);
+    expect(exponents.length).toBe(8);
+    const zeros = OBJS.flatMap((path) => obj(path.replace(/^.*\//, "").replace(/\.obj$/, "")).vt.map((q) => q[1] ?? 0))
+      .filter((x) => Math.abs(x) >= 0.05 && x.toFixed(4).endsWith("0") && !x.toFixed(4).endsWith("00"))
+      .slice(0, 8);
+    expect(zeros.length).toBe(8);
+    // (a vertex record of 9, 12 and 16 floats: its position, then the rest: RV-167d)
+    const record = (extra: number): string => `[${v.map((p) => `${xyz(p)}, ${Array.from({ length: extra }, (_, k) => (k % 3 === 2 ? "1" : "0")).join(", ")}`).join(", ")}]`;
+    // (a downsampled texture's row, the first 8 values of its streams varying by 0.1 and stepping by 0.005 or more:
+    // RV-157)
+    const textureRow = ((): number[] => {
+      for (let k = 0; k + 8 < textureStreams.length; k++) {
+        const w = Array.from(textureStreams.subarray(k, k + 8));
+        if (w.some(Number.isNaN)) continue;
+        if (Math.max(...w) - Math.min(...w) >= 0.1 && w.every((x, j) => j === 0 || Math.abs(x - (w[j - 1] ?? 0)) >= 0.005)) return w;
+      }
+      return [];
+    })();
+    expect(textureRow.length).toBe(8);
     const controls: [string, string][] = [
       ["vertices as Vector3s", v.map((p) => `new Vector3(${xyz(p)})`).join(", ")],
+      ["vertices in records of 9", record(6)],
+      ["vertices in records of 12", record(9)],
+      ["vertices in records of 16", record(13)],
+      ["the vent's (x, y) pairs as integers", `[${vent.slice(0, 8).map(([x = 0, y = 0]) => `[${String(Math.round(x))}, ${String(Math.round(y))}]`).join(", ")}]`],
+      ["UV pairs with a negative component", `[${negative.map(([a = 0, b = 0]) => `${a.toFixed(3)}, ${b.toFixed(3)}`).join(", ")}]`],
+      ["UV values with a trailing zero", `[${zeros.map((x) => x.toFixed(4)).join(", ")}]`],
+      ["UV values in exponent form", `[${exponents.map((x) => x.toExponential(3)).join(", ")}]`],
+      ["a texture's row to 3 decimals", `[${textureRow.map((x) => x.toFixed(3)).join(", ")}]`],
+      ["a texture's row as 8-bit levels", `[${textureRow.map((x) => String(Math.round(x * 255))).join(", ")}]`],
+      ["a texture's row interleaved", `[${textureRow.map((x) => `${x.toFixed(4)}, 0.5, 1`).join(", ")}]`],
       ["vertices' (y, x) pairs", v.map(([x = 0, y = 0]) => `[${y.toFixed(1)}, ${x.toFixed(1)}]`).join(", ")],
       ["vertices as [x, y, z, 1]", `[${v.map((p) => `${xyz(p)}, 1`).join(", ")}]`],
       ["vertices with normals", `[${v.map((p) => `${xyz(p)}, 0, 0, 1`).join(", ")}]`],
@@ -577,13 +808,19 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
     check(path, stripComments(readFileSync(join(SRC, path), "utf8")));
   });
 
-  it.each(importedJson().map((p) => p.slice(ROOT.length)))("%s (imported): no run of the game's vertices, UVs or traced points", (path) => {
-    check(path, readFileSync(join(ROOT, path), "utf8"));
+  it.each(shippedImports().filter((p) => kind(p) === "text").map((p) => p.slice(ROOT.length)))("%s (imported): no run of the game's vertices, UVs or traced points", (path) => {
+    const text = readFileSync(join(ROOT, path), "utf8");
+    check(path, join(ROOT, path) === TOPOLOGY ? topologyFree(text) : text);
   });
 
-  // (our own chunks, its page and its styles (RV-140): three.js's is the library's, its lookup tables meeting the
-  // statistics by chance)
-  const bundle = files(DIST, (n) => (n.endsWith(".js") && !n.startsWith("three.")) || n.endsWith(".css") || n.endsWith(".html"));
+  it("our generated arena's collision meshes are none of the game's cooked ones (RV-167f)", () => {
+    const game = new Set(files(ARENA_LOCAL, (n) => n.endsWith(".cmf")).map((p) => readFileSync(p).toString("base64")));
+    for (const p of globFiles(join(ARENA, "**/*.cmf"))) expect(game.has(readFileSync(p).toString("base64")), p.slice(ROOT.length)).toBe(false);
+  });
+
+  // (every text file it ships: our chunks, its page and its styles, any JSON or SVG (RV-140, RV-167f); three.js's
+  // chunk is the library's, its lookup tables meeting the statistics by chance)
+  const bundle = files(DIST, (n) => kind(n) === "text" && !n.startsWith("three."));
   it.skipIf(bundle.length === 0)(
     "the built bundle (dist, as it ships: its shaders' comments too)",
     () => {

@@ -384,7 +384,7 @@ function guardianShape(): BufferGeometry {
 }
 
 /** The guardian rising from the water, lingering, looking about, and sinking away again, on a slow cycle. */
-export function buildGuardian(at: Vector3, facing: number, size: number, cycleSeconds: number): { root: Group; update(seconds: number): void } {
+export function buildGuardian(at: Vector3, facing: number, size: number, cycleSeconds: number): { root: Group; update(elapsedSeconds: number): void } {
   const body = new Mesh(guardianShape(), new MeshLambertMaterial({ vertexColors: true }));
   body.name = "guardian";
   const root = new Group();

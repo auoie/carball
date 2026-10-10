@@ -28,7 +28,7 @@ import { GRASS_CUBE_AT } from "../grassCube";
 import { fullBright } from "../teamColors";
 
 /** A glow seen from the capture point: its direction (az = atan2(y, x), el, degrees), its angular half sizes across and
- *  up (degrees: atan(256 Scale3D.y / d) x atan(256 Scale3D.z / d)), its distance (uu), its pitch (degrees, its top
+ *  up (degrees: atan(256 Scale3D.y / d) x atan(256 Scale3D.z / d)), its distance (uu), its world pitch (degrees, its top
  *  toward the arena: the instances' rotation, RV-119); `clear`: unfogged, faded instead by elevation (clearFade) */
 export interface Hotspot {
   readonly az: number;
@@ -146,8 +146,9 @@ function hotspotMesh(spot: Hotspot, colour: readonly [number, number, number], a
   // (drawn over the canopy and the rest of the translucent surroundings, which sort as near: their geometry's in world
   // space round the origin; the glows are in front of them in the game)
   mesh.renderOrder = 2;
-  // (its top toward the arena)
-  if (spot.pitch) mesh.rotateX(spot.pitch * rad);
+  // (its top toward the arena: the instance's world pitch, so to the line of sight that less the sight line's
+  // elevation, RV-149)
+  if (spot.pitch) mesh.rotateX((spot.pitch - spot.el) * rad);
   return mesh;
 }
 
@@ -231,10 +232,10 @@ export const STANDS = {
   backR: 21500,
   concourse: { r: [21500, 30000] as const, z: 500, wallTop: 8000, plaza: { az: [166, 172] as const, wallTop: 1260 } },
   /** The ground between the cage and the stands (Stadium_Base's apron, z just under the field's), to the front wall, 12k
-   *  across the open +X (|az| < 27) and the -X plaza (beyond 171); the plaza's sidewalk there, rising from z 1.3k at r
-   *  12k to 1.8k at 20k (SUR-4) */
+   *  across the open +X (|az| < 27) and the -X plaza (beyond 171); the plaza's ground there, z 1.2k at r 12k to 1.31k at
+   *  19.2k (SUR-4, corrected: RV-154e) */
   apron: { z: -2, out: 12000, openAz: 27, plazaAz: 171 },
-  plaza: { from: [12000, 1300] as RZ, to: [20000, 1800] as RZ },
+  plaza: { from: [12000, 1200] as RZ, to: [19200, 1310] as RZ },
 } as const;
 
 /** The structures over the stands: each edge a low-order fit in t = (az - 110) / 70 (coefficients from t^0 up), fitted
@@ -268,10 +269,21 @@ export const STRUCTURES = {
     zHi: [10434, -183, -4083],
   },
   /** The steel trusses (Stadium_Supports, SUR-7, RV-128a): from the ground at r 25.6k (z 1.4k) up to under the roof's
-   *  inner edge, 2.25k below its top to az 145, rising to z 10.4k by 155; every 10 degrees from 45, and one at 173,
-   *  the two joined over the -X plaza */
-  supports: { foot: [25600, 1400] as RZ, every: 10, az: [45, 165] as const, last: 173, below: 2250, high: { from: 145, to: 155, z: 10400 }, width: 160 },
+   *  inner edge, 2.25k below its top to az 145; from there onto the supports' ring by 155 (r 15.6k, z 10.6k: the game's
+   *  15.2-16.0k and 10.2-10.75k, not the receding roof's edge, RV-151); every 10 degrees from 45 to 165; the ring on
+   *  round over the -X plaza (crossing it at el 32 from the capture point: the game's 31.6-32.9; no rib there: the game
+   *  shows its supports only at el 2.4-3.6 and 32, RV-151) */
+  supports: { foot: [25600, 1400] as RZ, every: 10, az: [45, 165] as const, below: 2250, ring: { from: 145, to: 155, r: 15600, z: 10600 }, width: 160 },
 } as const;
+
+/** A support's head (r, z) at az: under the roof's inner edge, then onto the ring (RV-151) */
+export function supportHead(az: number): RZ {
+  const { below, ring } = STRUCTURES.supports;
+  const { roof } = STRUCTURES;
+  const f = Math.min(Math.max((az - ring.from) / (ring.to - ring.from), 0), 1);
+  const edge = Math.min(az, ring.from);
+  return [(1 - f) * edgeAt(roof.rIn, edge) + f * ring.r, (1 - f) * (edgeAt(roof.zHi, edge) - below) + f * ring.z];
+}
 
 /** A fit's value at az */
 export function edgeAt(coefficients: readonly number[], az: number): number {
@@ -762,13 +774,8 @@ export function buildBowl(primary0: Color, primary1: Color): Group {
   const ribs: number[] = [];
   const ribAz: number[] = [];
   for (let az: number = span[0]; az <= span[1]; az += every) ribAz.push(az);
-  ribAz.push(sup.last);
-  const headAt = (az: number): RZ => {
-    const f = Math.min(Math.max((az - sup.high.from) / (sup.high.to - sup.high.from), 0), 1);
-    return [edgeAt(roof.rIn, az), (1 - f) * (edgeAt(roof.zHi, az) - sup.below) + f * sup.high.z];
-  };
   for (const az of ribAz) {
-    const head = headAt(az);
+    const head = supportHead(az);
     for (const sign of [1, -1]) {
       const a = (sign * az * Math.PI) / 180;
       const [c, s] = [Math.cos(a), Math.sin(a)];
@@ -777,11 +784,14 @@ export function buildBowl(primary0: Color, primary1: Color): Group {
       ribs.push(...p(foot[0], foot[1], -1), ...p(foot[0], foot[1], 1), ...p(head[0], head[1], 1), ...p(foot[0], foot[1], -1), ...p(head[0], head[1], 1), ...p(head[0], head[1], -1));
     }
   }
-  // (the beam over the plaza between the last two, at their heads)
-  const [lr, lz] = headAt(sup.last);
-  const a = (sup.last * Math.PI) / 180;
-  const [bx, by] = [lr * Math.cos(a), lr * Math.sin(a)];
-  ribs.push(bx, lz - width / 2, by, bx, lz + width / 2, by, bx, lz + width / 2, -by, bx, lz - width / 2, by, bx, lz + width / 2, -by, bx, lz - width / 2, -by);
+  // (the ring on round over the plaza, from where the heads reach it: a band `width` tall)
+  const { ring } = sup;
+  for (let az = ring.to; az < 360 - ring.to; az += 2) {
+    const [a0, a1] = [(az * Math.PI) / 180, (Math.min(az + 2, 360 - ring.to) * Math.PI) / 180];
+    const p = (a: number, z: number): number[] => [ring.r * Math.cos(a), z, ring.r * Math.sin(a)];
+    const [lo, hi] = [ring.z - width / 2, ring.z + width / 2];
+    ribs.push(...p(a0, lo), ...p(a1, lo), ...p(a1, hi), ...p(a0, lo), ...p(a1, hi), ...p(a0, hi));
+  }
   const ribGeometry = new BufferGeometry();
   ribGeometry.setAttribute("position", new Float32BufferAttribute(ribs, 3));
   add(ribGeometry, seenMaterial(BOWL_COLOURS.steel, 0.02), "bowl: supports");
@@ -814,6 +824,16 @@ void main() {
 }
 `;
 
+/** The city over the -X plaza (City_OOB_A, SUR-1, RV-154a): from az 180.5 (the -Y side of the gap: none over 177-180),
+ *  its tops el 8 to 181.5, then 14.9 to 188.5 (the game's first open sky there: 8.6 at 181, about 15 at 182-188) */
+export const PLAZA_CITY = { from: 180.5, step: 181.5, to: 188.5, low: 8, high: 14.9 } as const;
+
+/** Its top at az (degrees, 0-360; none outside it: the shader's, for tests) */
+export function plazaCityTop(az: number): number | null {
+  const C = PLAZA_CITY;
+  return az >= C.from && az < C.to ? (az < C.step ? C.low : C.high) : null;
+}
+
 const farFragment = /* glsl */ `
 uniform vec3 windows;
 uniform vec3 ground;
@@ -830,14 +850,15 @@ void main() {
   vec3 colour = vec3(0.0);
   float alpha = 0.0;
   // The skyline: towers 1-4 degrees wide; their tops mostly low, a few tall
-  bool minusY = az >= -176.0 && az <= -5.0;
+  bool minusY = az >= -${(360 - PLAZA_CITY.to).toFixed(1)} && az <= -5.0;
   bool plusY = az >= 3.0 && az <= 176.0;
-  // (and over the -X plaza, beyond the gap in the stands, the city lower: tops el 6.6-17, RV-133)
-  bool plaza = abs(az) > 176.0;
+  // (and over the -X plaza, beyond the gap in the stands, City_OOB_A, by rule: plazaCityTop)
+  float g = az < 0.0 ? az + 360.0 : az;
+  bool plaza = g >= ${PLAZA_CITY.from.toFixed(1)} && g < ${PLAZA_CITY.to.toFixed(1)};
   if ((minusY || plusY || plaza) && el > -2.0) {
     float bin = floor(az / 2.5);
     float u = hash1(bin + (minusY ? 17.0 : 0.0));
-    float top = plaza ? 6.6 + 10.4 * u : 10.0 + (minusY ? 41.0 : 55.0) * u * u * u;
+    float top = plaza ? (g < ${PLAZA_CITY.step.toFixed(1)} ? ${PLAZA_CITY.low.toFixed(1)} : ${PLAZA_CITY.high.toFixed(1)}) : 10.0 + (minusY ? 41.0 : 55.0) * u * u * u;
     if (el < top) {
       // (windows: columns 0.18 degrees, rows 0.3; a third lit, warm)
       vec2 cell = vec2(floor(az / 0.18), floor(el / 0.3));

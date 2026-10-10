@@ -23,7 +23,7 @@ import { type Placement, animate, combine, instances, part, placementMatrix } fr
 export function buildBirds(
   seed: number,
   flight: { readonly radius: readonly [number, number]; readonly height: readonly [number, number]; readonly count?: number },
-): { mesh: InstancedMesh; update(seconds: number): void } {
+): { mesh: InstancedMesh; update(elapsedSeconds: number): void } {
   const random = seededRandom(seed);
   const bird = new BufferGeometry();
   // Two wings (spanning x) and a little body, flying along +z
@@ -165,7 +165,7 @@ export function buildWildlife(
   seed: number,
   homes: { readonly ground: readonly Home[]; readonly air: readonly Home[] },
   butterflyColors: readonly number[] = [0xfff36b, 0xffffff, 0xffa94d, 0x74b9ff, 0xff8fc0],
-): { root: Group; update(seconds: number): void } {
+): { root: Group; update(elapsedSeconds: number): void } {
   const random = seededRandom(seed);
   // Ground homes shared out between the kinds: caterpillars, beetles, then the four critters
   const groups: Home[][] = Array.from({ length: 6 }, () => []);
@@ -225,8 +225,8 @@ export function buildWildlife(
   const clocks = [uniforms.time, ...kinds.map((k) => k.time)];
   return {
     root,
-    update(seconds) {
-      for (const clock of clocks) clock.value = seconds;
+    update(elapsedSeconds) {
+      for (const clock of clocks) clock.value = elapsedSeconds;
     },
   };
 }

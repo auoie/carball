@@ -241,7 +241,7 @@ export function buildAltar(at: Vector3): { mesh: Mesh; flames: Vector3[]; top: n
 /** Great rings of light, each turning slowly about its own axis (unlit, one mesh each). */
 export function buildSkyRings(rings: readonly { at: Vector3; radius: number; tilt: number; speed: number }[]): {
   root: Group;
-  update(seconds: number): void;
+  update(elapsedSeconds: number): void;
 } {
   const root = new Group();
   const material = new MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.75, blending: AdditiveBlending, depthWrite: false });
@@ -261,8 +261,8 @@ export function buildSkyRings(rings: readonly { at: Vector3; radius: number; til
   });
   return {
     root,
-    update(seconds) {
-      for (const { ring, speed } of meshes) ring.rotation.z = seconds * speed;
+    update(elapsedSeconds) {
+      for (const { ring, speed } of meshes) ring.rotation.z = elapsedSeconds * speed;
     },
   };
 }
@@ -349,7 +349,7 @@ const SWIM = `transformed.y += sin(time * 0.9 - position.z * 0.7) * 0.22 * smoot
 /** Sky whales swimming a slow loop through the sky (a mother and a calf, following): moved on the CPU. */
 export function buildSkyWhales(path: (t: number) => Vector3, loopSeconds: number, whales: readonly { size: number; lag: number }[]): {
   root: Group;
-  update(seconds: number): void;
+  update(elapsedSeconds: number): void;
 } {
   const shape = whale();
   const root = new Group();

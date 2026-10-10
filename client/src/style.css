@@ -27,15 +27,6 @@ body {
   height: 100vh;
 }
 
-/* The camera's fade (the goal replay's start and end: from black) */
-#fade {
-  position: fixed;
-  inset: 0;
-  background: #000;
-  opacity: 0;
-  pointer-events: none;
-}
-
 #loading {
   position: fixed;
   inset: 0;

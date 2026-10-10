@@ -60,3 +60,14 @@ test("the post-processing chain (PP-1..10): a uniform grey at its display value,
     expect(r.ringNoBloom, JSON.stringify(r)).toBeLessThan(0.01);
   }
 });
+
+test("the bloom's soft knee (PP-7, RV-161): nothing under linear 2; at 3 against 4 the colour times its weight, 0.375 (0.5 if it subtracted)", async ({ page }) => {
+  await page.goto("/?viewer=shaders");
+  await page.waitForFunction(() => "rlShaderProbe" in window, null, { timeout: 30_000 });
+  const sum = async (level: number): Promise<number> =>
+    page.evaluate((l) => (window as unknown as { rlShaderProbe: { bloomSum: (level: number) => number } }).rlShaderProbe.bloomSum(l), level);
+  expect(await sum(1.9)).toBe(0);
+  const [three, four] = [await sum(3), await sum(4)];
+  expect(four).toBeGreaterThan(0);
+  expect(Math.abs(three / four - 0.375), `${String(three)} / ${String(four)}`).toBeLessThan(0.03);
+});

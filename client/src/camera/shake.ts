@@ -76,6 +76,16 @@ export const BOOST_ORB_USED: ShakeSpec = {
 };
 
 /** Jump and double jump (each its own component, which may overlap): the player's own car */
+/** Impact_Medium: the local car hitting the ball, a car or the world (Car_Default.ImpactEffectsComponent; its amplitude
+ *  the impact's curve, each hit restarting the one per-car component: notes/impact-triggers.md, game/impactTriggers.ts) */
+export const IMPACT_MEDIUM: ShakeSpec = {
+  name: "Impact_Medium",
+  duration: 0.15,
+  blendIn: 0.05,
+  blendOut: 0.05,
+  rot: { pitch: { amp: 300, freq: 900 }, yaw: { amp: 150, freq: 600 } },
+  loc: { x: { amp: 10, freq: 32 } },
+};
 export const JUMP: ShakeSpec = { name: "Jump", duration: 0.15, blendIn: 0.05, blendOut: 0.05, loc: { z: { amp: 5, freq: 30 } } };
 
 /** Dodge: the player's own car */

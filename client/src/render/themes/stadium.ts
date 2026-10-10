@@ -54,10 +54,10 @@ export function stadiumTheme(): Theme {
     },
     root,
     captureOnly: hotspots,
-    update: (seconds) => {
-      skyDome.update(seconds);
-      crowd.update(seconds);
-      props.update(seconds);
+    update: (elapsedSeconds) => {
+      skyDome.update(elapsedSeconds);
+      crowd.update(elapsedSeconds);
+      props.update(elapsedSeconds);
     },
   };
 }

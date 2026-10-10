@@ -1,11 +1,12 @@
-import { Color, Matrix4, Mesh, type PlaneGeometry, Raycaster, Vector3 } from "three";
+import { Color, Matrix4, Mesh, type PlaneGeometry, Raycaster, type ShaderMaterial, Vector3 } from "three";
 import { describe, expect, it } from "vitest";
 import { GRASS_CUBE_AT } from "../grassCube";
 import { TEAM_PRIMARY_LINEAR, fullBright, linear } from "../teamColors";
 import { skyVQ, stadiumTheme } from "./stadium";
 import { CROWD, SECONDARY, buildCrowd, crowdSeen } from "./stadiumCrowd";
-import { AD_EMBLEM, PANELS, PANEL_LIGHT, bannerColour, buildScreensAndProps, panelColour, screenLogo } from "./stadiumProps";
-import { FLOODLIGHT, buildBowl, buildCaptureHotspots, clearFade, fixtureOffsets, floodlightE, lensMean } from "./stadiumSurroundings";
+import { AD_EMBLEM, PANELS, PANEL_LIGHT, PROPS, bannerColour, buildScreensAndProps, flagColours, panelColour, screenLogo } from "./stadiumProps";
+import { FLOODLIGHT, buildBowl, buildCaptureHotspots, clearFade, fixtureOffsets, floodlightE, lensMean, plazaCityTop, supportHead } from "./stadiumSurroundings";
+import { beamAlpha, buildStadiumLights } from "./stadiumLights";
 
 /** The capture point in Three's frame */
 const C = new Vector3(GRASS_CUBE_AT.x, GRASS_CUBE_AT.z, GRASS_CUBE_AT.y);
@@ -70,12 +71,24 @@ describe("the reflection capture's hotspots (SUR-33)", () => {
     const back = extents(sprite(2));
     expect(Math.abs(back.az[0] - 173.0)).toBeLessThan(2);
     expect(Math.abs(back.az[1] - 186.4)).toBeLessThan(2);
-    // (its low end 2.6 short of the review's -16.9, but on the instance's own world bounds, -14.7: within 3)
-    expect(Math.abs(back.el[0] - -16.9)).toBeLessThan(3);
-    expect(Math.abs(back.el[1] - 47.7)).toBeLessThan(2);
-    const plusX = extents(sprite(0));
-    expect(Math.abs(plusX.el[0] - -18.4)).toBeLessThan(2);
-    expect(Math.abs(plusX.el[1] - 37.6)).toBeLessThan(2);
+    // (each one's el extents within 1 degree of the game's (RV-149: its tilt to the line of sight the world pitch less
+    // the sight line's elevation): _13, _2, _12, _3, _5, _0, _7, blue, orange)
+    const game = [
+      [-18.4, 37.6],
+      [-23.9, 42.6],
+      [-16.9, 47.7],
+      [-10.5, 51.0],
+      [2.0, 44.8],
+      [-7.0, 35.5],
+      [-7.2, 36.1],
+      [-7.3, 31.1],
+      [-6.4, 26.4],
+    ];
+    const got = game.map((_, k) => extents(sprite(k)).el.map((x) => Number(x.toFixed(1))));
+    game.forEach(([lo = 0, hi = 0], k) => {
+      expect(Math.abs((got[k]?.[0] ?? 0) - lo), `hotspot ${String(k)} low: ${JSON.stringify(got)}`).toBeLessThan(1);
+      expect(Math.abs((got[k]?.[1] ?? 0) - hi), `hotspot ${String(k)} high: ${JSON.stringify(got)}`).toBeLessThan(1);
+    });
   });
 
   it("the +X one through the haze by elevation (RV-120): the game's pass fractions at the bands' centres", () => {
@@ -126,6 +139,81 @@ describe("the screens (SUR-9)", () => {
     });
     bannerColour(linear(p1)).forEach((c, k) => {
       expect(Math.abs(c - ([1.5, 0.9, 0.27][k] ?? 0))).toBeLessThan(0.06);
+    });
+  });
+
+  it("the scaffolds' banners in their placements' light (RV-150): the team's colour times L, the orange seen R 0.9 at most", () => {
+    const [p0 = [0, 0, 1], p1 = [1, 0.5, 0]] = TEAM_PRIMARY_LINEAR;
+    const { group } = buildScreensAndProps(linear(p0), linear(p1));
+    const banners = group.children.filter((m) => m.name === "props: scaffold banner") as Mesh[];
+    expect(banners).toHaveLength(PROPS.scaffolds.length);
+    banners.forEach((m, k) => {
+      const [, y = 0] = PROPS.scaffolds[k] ?? [];
+      const want = bannerColour(linear(y < 0 ? p0 : p1)).map((c, i) => c * (PROPS.scaffoldLight[k]?.[i] ?? 0));
+      const got = ((m.material as ShaderMaterial).uniforms["colour"]?.value as Vector3).toArray();
+      got.forEach((c, i) => {
+        expect(c).toBeCloseTo(want[i] ?? 0, 6);
+      });
+      if (y > 0) expect(got[0]).toBeLessThanOrEqual(0.9);
+    });
+  });
+
+  it("the corner flags as the game's (RV-153): the -Y ones turned, poles beside their banners, the strip off the cloth, each corner's LDR mean within 0.06 of CAL1", () => {
+    const [p0 = [0, 0, 1], p1 = [1, 0.5, 0]] = TEAM_PRIMARY_LINEAR;
+    const { group } = buildScreensAndProps(linear(p0), linear(p1));
+    group.updateMatrixWorld(true);
+    const named = (name: string): Mesh[] => group.children.filter((m) => m.name === name) as Mesh[];
+    const [poles, cloths, strips] = [named("props: flag pole"), named("props: flag cloth"), named("props: flag strip")];
+    expect([poles.length, cloths.length, strips.length]).toEqual([20, 20, 20]);
+    const az = (m: Mesh): number => (((Math.atan2(m.position.z, m.position.x) * 180) / Math.PI) % 360 + 360) % 360;
+    // (the -Y corners at the game's 294.9-317.5 and 222.6-245.1)
+    const game = [294.9, 300.5, 306.1, 311.8, 317.5, 222.6, 228.2, 233.8, 239.5, 245.1];
+    for (const want of game) expect(Math.min(...cloths.map((m) => Math.abs(az(m) - want)))).toBeLessThan(0.5);
+    cloths.forEach((cloth, k) => {
+      const pole = poles[k];
+      const strip = strips[k];
+      if (!pole || !strip) throw new Error("a flag's parts");
+      // (the pole 70 or more along the arc from the cloth's centre, toward the field)
+      const out = new Vector3(cloth.position.x, 0, cloth.position.z).normalize();
+      const along = new Vector3(-out.z, 0, out.x);
+      const d = pole.position.clone().sub(cloth.position);
+      expect(Math.abs(d.dot(along))).toBeGreaterThanOrEqual(70);
+      expect(d.dot(out)).toBeLessThan(-10);
+      // (the strip in front of the cloth where they overlap, not in its plane)
+      expect(cloth.position.clone().sub(strip.position).dot(out)).toBeGreaterThanOrEqual(1);
+    });
+    // (each corner's mean in the capture's LDR (per pixel min(c, 1): SUR-35): its parts by their visible areas, the
+    // cloth's top under the strip, its light band 43 % of what shows)
+    const F = PROPS.flags;
+    const stripWidth = F.banner.width / 2 - F.poleShape.along;
+    const areas = {
+      pole: F.poleShape.width * (F.poleShape.z[1] - F.poleShape.z[0]),
+      strip: stripWidth * (F.strip.z[1] - F.strip.z[0]),
+      cloth: F.banner.cloth * F.banner.width * (F.banner.z[1] - F.banner.z[0]) - F.banner.width * (F.banner.z[1] - F.strip.z[0]),
+    };
+    const total = areas.pole + areas.strip + areas.cloth;
+    // (the shader's band: its share of the cloth that shows under the strip)
+    const shows = F.banner.cloth - (F.banner.z[1] - F.strip.z[0]) / (F.banner.z[1] - F.banner.z[0]);
+    expect(Math.abs((F.albedo.band[1] - F.albedo.band[0]) / shows - F.albedo.lightShare)).toBeLessThan(0.01);
+    const cal1: [number, [number, number, number]][] = [
+      [54, [0.83, 0.76, 0.28]],
+      [125, [0.71, 0.47, 0.17]],
+      [235, [0.24, 0.52, 0.68]],
+      [306, [0.41, 0.74, 0.71]],
+    ];
+    const got = cal1.map(([corner]) => {
+      const orange = corner < 180;
+      const c = flagColours(linear(orange ? p1 : p0), corner < 90 || corner > 270, orange);
+      const shown = (rgb: number[]): number[] => rgb.map((v) => Math.min(v, 1));
+      const share = F.albedo.lightShare;
+      const [pole, strip, team, light] = [shown(c.pole), shown(c.strip), shown(c.team), shown(c.light)];
+      const cloth = team.map((v, i) => (1 - share) * v + share * (light[i] ?? 0));
+      return [0, 1, 2].map((i) => ((pole[i] ?? 0) * areas.pole + (strip[i] ?? 0) * areas.strip + (cloth[i] ?? 0) * areas.cloth) / total);
+    });
+    cal1.forEach(([corner, want], k) => {
+      want.forEach((w, i) => {
+        expect(Math.abs((got[k]?.[i] ?? 0) - w), `az ${String(corner)}: ${JSON.stringify(got.map((g) => g.map((v) => v.toFixed(3))))}`).toBeLessThan(0.06);
+      });
     });
   });
 
@@ -196,6 +284,42 @@ describe("the crowd (SUR-26..31)", () => {
     for (const [k, n] of Object.entries(want)) expect.soft(Math.abs((got[k] ?? 0) / n - 1), `${k}: ${String(got[k])} vs ${String(n)}`).toBeLessThan(0.15);
   });
 
+  it("its aisles where the game's are (RV-152): no main-rake card within 0.75 degrees of a centre, through all 34 rows (the last to 18), 1.5-3.1 degrees between the cards each side", () => {
+    const crowd = buildCrowd(new Color(0.1, 0.4, 1), new Color(1, 0.4, 0.1)).mesh;
+    const tiers = crowd.userData["tiers"] as string[];
+    const rows = crowd.userData["rows"] as number[];
+    const m = new Matrix4();
+    const p = new Vector3();
+    const main: { az: number; row: number }[] = [];
+    for (let i = 0; i < crowd.count; i++) {
+      if (tiers[i] !== "main") continue;
+      crowd.getMatrixAt(i, m);
+      p.setFromMatrixPosition(m);
+      main.push({ az: Math.abs(deg(Math.atan2(p.z, p.x))), row: rows[i] ?? 0 });
+    }
+    const centres: [number, number][] = [
+      [45.6, 34],
+      [71.9, 34],
+      [98.1, 34],
+      [117.6, 34],
+      [143.9, 18],
+    ];
+    for (const [centre, through] of centres) {
+      for (let row = 0; row < through; row++) {
+        const seats = main.filter((c) => c.row === row).map((c) => c.az);
+        if (seats.length === 0) continue;
+        expect(Math.min(...seats.map((az) => Math.abs(az - centre))), `aisle ${String(centre)} row ${String(row)}`).toBeGreaterThanOrEqual(0.75);
+        // (the gap between the nearest cards either side, where there are cards both sides)
+        const below = Math.max(...seats.filter((az) => az < centre));
+        const above = Math.min(...seats.filter((az) => az > centre));
+        if (Number.isFinite(below) && Number.isFinite(above) && above - below < 5) {
+          expect(above - below, `aisle ${String(centre)} row ${String(row)}`).toBeGreaterThanOrEqual(1.5);
+          expect(above - below, `aisle ${String(centre)} row ${String(row)}`).toBeLessThanOrEqual(3.1);
+        }
+      }
+    }
+  });
+
   it("the stands top out under 7k at the upper tiers' ends (az 76-85, 130-139): no top tier there (RV-123)", () => {
     const bowl = buildBowl(linear(p0), linear(p1));
     bowl.updateMatrixWorld(true);
@@ -251,6 +375,26 @@ describe("the crowd (SUR-26..31)", () => {
   });
 });
 
+describe("the team uplight beams (SUR-13)", () => {
+  it("all 26 of them, 10 more per end behind the corners; their mean alpha the game's 0.022, never whitened (RV-155)", () => {
+    const lights = buildStadiumLights(new Color(0.1, 0.4, 1), new Color(1, 0.4, 0.1));
+    expect(lights.children.filter((m) => m.name === "lights: team beam")).toHaveLength(26);
+    let sum = 0;
+    let peak = 0;
+    const n = 200;
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n; j++) {
+        const a = beamAlpha((i + 0.5) / n, (j + 0.5) / n);
+        sum += a / (n * n);
+        peak = Math.max(peak, a);
+      }
+    }
+    expect(Math.abs(sum - 0.022)).toBeLessThan(0.004);
+    // (k = sat(a - 0.25) from the scaled a: none)
+    expect(peak).toBeLessThan(0.25);
+  });
+});
+
 describe("the floodlights (SUR-12)", () => {
   it("as bright as the game's (RV-125: its fixtures and v-profile): a half's mean E within 20 % of SUR-12's front (0.61, 0.58, 0.39), E > 1 on 0.11 +- 0.03 of it", () => {
     const r = 15500;
@@ -295,6 +439,17 @@ describe("the -X plaza (SUR-1, 4, 25)", () => {
     return ray.intersectObjects(targets, false).length > 0;
   };
 
+  it("the supports past az 145 on their ring, not the receding roof (RV-151): heads within 1k of the game's r 15.2-16.0k, z 10.2-10.75k; the plaza beam at el 32.5 +- 1.5", () => {
+    for (const az of [155, 165, 175]) {
+      const [r, z] = supportHead(az);
+      expect(Math.abs(r - 15600), `az ${String(az)} r ${r.toFixed(0)}`).toBeLessThan(1000);
+      expect(Math.abs(z - 10475), `az ${String(az)} z ${z.toFixed(0)}`).toBeLessThan(1000);
+    }
+    // (the ring where it crosses the -X axis)
+    const [r, z] = supportHead(180);
+    expect(Math.abs(deg(Math.atan2(z - C.y, r)) - 32.5)).toBeLessThan(1.5);
+  });
+
   it("no open sightline low over it (RV-133): rays from the capture point at az 176-184, el 1-6 meet the plinth, walls, trees or the roof's ends", () => {
     let hit = 0;
     let n = 0;
@@ -306,6 +461,41 @@ describe("the -X plaza (SUR-1, 4, 25)", () => {
     }
     expect(hit / n).toBeGreaterThanOrEqual(0.8);
   });
+
+  it("its first open sky as the game's (RV-154: CAL1's table, within 1.5 degrees; the far layer's plaza city by its rule)", () => {
+    const cal1: [number, number][] = [[177, 6.9], [178, 9.4], [179, 11.9], [180, 14.4], [181, 8.6], [182, 15], [183, 15], [184, 15], [185, 15], [186, 15], [187, 15], [188, 15]];
+    for (const [az, want] of cal1) {
+      let first = NaN;
+      for (let el = 0; el <= 30; el += 0.1) {
+        if (el > (plazaCityTop(az) ?? -90) && !hits(az, el)) {
+          first = el;
+          break;
+        }
+      }
+      expect(Math.abs(first - want), `az ${String(az)}: ${first.toFixed(1)}`).toBeLessThan(1.5);
+    }
+    // (none of the city over az 177-180)
+    for (const az of [177, 178, 179, 180]) expect(plazaCityTop(az)).toBeNull();
+  }, 30000); // (thousands of rays through the theme)
+
+  it("the statue a figure, not a block (RV-154c): 14-21 % of az 175-185 over its own elevations", () => {
+    const statue = targets.filter((m) => m.name === "plaza: statue");
+    expect(statue.length).toBeGreaterThan(0);
+    const statueRay = new Raycaster();
+    const on = (az: number, el: number): boolean => {
+      const [a, e] = [(az * Math.PI) / 180, (el * Math.PI) / 180];
+      statueRay.set(C, new Vector3(Math.cos(e) * Math.cos(a), Math.sin(e), Math.cos(e) * Math.sin(a)));
+      return statueRay.intersectObjects(statue, false).length > 0;
+    };
+    const cells: [number, number][] = [];
+    for (let az = 175; az <= 185; az += 0.1) for (let el = 0; el <= 30; el += 0.1) cells.push([az, el]);
+    const seen = cells.filter(([az, el]) => on(az, el));
+    const [lo, hi] = [Math.min(...seen.map(([, el]) => el)), Math.max(...seen.map(([, el]) => el))];
+    const window = cells.filter(([, el]) => el >= lo && el <= hi).length;
+    const cover = seen.length / window;
+    expect(cover).toBeGreaterThanOrEqual(0.14);
+    expect(cover).toBeLessThanOrEqual(0.21);
+  }, 30000); // (thirty thousand rays)
 
   it("open sky above the statue (RV-124, RV-133: the first open sky at az 180 from el 14.4)", () => {
     for (let az = 179.5; az <= 180.5; az += 0.5) {

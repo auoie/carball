@@ -146,7 +146,7 @@ export function buildHeartCrystal(at: Vector3, size: number, color: Color): Mesh
 
 /** The research station on the rim, facing the crater: two domes, a lab joined by a tube, a mast with a blinking
  *  light, a radar dish turning. Returns its parts and a per-frame update (the dish, the light). */
-export function buildStation(at: Vector3, facing: number): { root: Group; lights: Vector3[]; update(seconds: number): void } {
+export function buildStation(at: Vector3, facing: number): { root: Group; lights: Vector3[]; update(elapsedSeconds: number): void } {
   const place = (dx: number, dy: number, dz: number): [number, number, number] => [
     at.x + dx * Math.cos(facing) + dz * Math.sin(facing),
     at.y + dy,
@@ -194,9 +194,9 @@ export function buildStation(at: Vector3, facing: number): { root: Group; lights
   return {
     root,
     lights,
-    update(seconds) {
-      dish.rotation.y = seconds * 0.25;
-      beacon.visible = seconds % 1.6 < 0.35;
+    update(elapsedSeconds) {
+      dish.rotation.y = elapsedSeconds * 0.25;
+      beacon.visible = elapsedSeconds % 1.6 < 0.35;
     },
   };
 }

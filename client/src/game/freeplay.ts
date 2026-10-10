@@ -3,7 +3,7 @@
 import { Quaternion, Vector3 } from "three";
 import { Interpolated } from "./interpolated";
 import { PlayerCamera } from "../camera/rlCamera";
-import { BOOST_SPAWN_AMOUNT, type BodyState, type CarState, type World } from "../engine/world";
+import { BOOST_SPAWN_AMOUNT, type BodyState, type CarConfig, type CarState, type World } from "../engine/world";
 import { type Hud, respawnHud } from "../hud";
 import type { InputDevices } from "../input/devices";
 import { AirPitchSafety, ButtonLatch, EMPTY_INPUT, type HeldActions, JumpLatch, type LookInput, readControls, readHeldActions } from "../input/mapping";
@@ -12,7 +12,8 @@ import { FixedStep, TICK_SECONDS, frameTimes } from "../loop/fixedStep";
 import { type Vec3, ZERO, add, scale, vec3 } from "../math/vec";
 import { BallView, BoostPadsView, CarView, trailGround } from "../render/entities";
 import { SceneEffects } from "../render/effects";
-import { EXPLOSION_LARGE } from "../camera/shake";
+import { EXPLOSION_LARGE, IMPACT_MEDIUM } from "../camera/shake";
+import { ImpactTriggers, triggerSounds } from "./impactTriggers";
 import { ShakeTriggers } from "./shakeTriggers";
 import type { ArenaView } from "../render/arena";
 import type { Renderer } from "../render/renderer";
@@ -51,6 +52,9 @@ export class Freeplay {
   readonly #carView: CarView;
   readonly #effects: SceneEffects;
   readonly #shakeTriggers = new ShakeTriggers();
+  /** The engine's contacts as the game's impact and landing triggers (notes/impact-triggers.md) */
+  readonly #impactTriggers = new ImpactTriggers();
+  readonly #carConfigs: ReadonlyMap<number, CarConfig>;
   readonly #ballView = new BallView();
   readonly #padsView: BoostPadsView;
   readonly #car: Interpolated<CarState>;
@@ -118,6 +122,7 @@ export class Freeplay {
 
     this.#effects = new SceneEffects(renderer.scene);
     this.#carView = new CarView(world.carConfig(this.#playerId), 0, this.#effects.particles);
+    this.#carConfigs = new Map([[this.#playerId, world.carConfig(this.#playerId)]]);
     this.#padsView = new BoostPadsView(world.boostPads());
     renderer.scene.add(this.#carView.root, this.#ballView.root, this.#padsView.root);
     this.#car = new Interpolated(world.car(this.#playerId));
@@ -164,6 +169,7 @@ export class Freeplay {
   #playReplay(rawSeconds: number, replay: ReplayPlayback): void {
     const { real } = frameTimes(rawSeconds, 1);
     this.#fade.update(real);
+    this.#renderer.cameraFade = this.#fade.opacity;
     const snapshot = this.inputEnabled() ? this.#input.snapshot() : EMPTY_INPUT;
     const held = snapshot.keys.has("Space") || (snapshot.pressedKeys?.has("Space") ?? false) || (snapshot.gamepad?.buttons[0] ?? 0) > 0.5;
     const skipped = held && !this.#skipHeld;
@@ -187,6 +193,7 @@ export class Freeplay {
   #play(world: number, real: number): void {
     this.#sinceReset += world;
     this.#fade.update(real);
+    this.#renderer.cameraFade = this.#fade.opacity;
     const settings = this.settings();
     this.#applyPreferences(settings.controller);
     const polled = this.#input.snapshot();
@@ -421,6 +428,9 @@ export class Freeplay {
     this.#shakeTriggers.frame(this.#camera.shakes, own, new Map([[this.#playerId, own]]), this.#world.boostPads(), (c) => {
       this.#effects.demolition(c.pos);
     });
+    // The impacts and landings: the local car's Impact_Medium restarts, the sounds
+    const triggers = this.#impactTriggers.frame(frameSeconds, this.#world.takeImpacts(), new Map([[this.#playerId, own]]), this.#carConfigs, this.#playerId);
+    for (const t of triggers) if (t.kind === "shake") this.#camera.shakes.play(IMPACT_MEDIUM, null, t.scale, `impact:${String(t.car)}`);
     this.#ballView.update(ball, this.#ball.rotation(alpha, this.#rot));
     this.#arena.update(ball, frameSeconds);
     const pads = this.#world.boostPads();
@@ -437,6 +447,7 @@ export class Freeplay {
       throttle: this.#throttle,
       simulated,
       camera: view,
+      triggered: triggerSounds(triggers),
     });
 
     this.#updateHud(car, realSeconds);

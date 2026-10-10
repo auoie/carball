@@ -125,13 +125,13 @@ export function islandTheme(): Theme {
       },
     },
     root,
-    update(seconds) {
-      sky.update(seconds);
-      for (const clock of [sea.time, palms.time, smoke.time, glows.time, crabs.time]) clock.value = seconds;
-      mantas.update(seconds);
-      leapers.update(seconds);
-      birds.update(seconds);
-      butterflies.update(seconds);
+    update(elapsedSeconds) {
+      sky.update(elapsedSeconds);
+      for (const clock of [sea.time, palms.time, smoke.time, glows.time, crabs.time]) clock.value = elapsedSeconds;
+      mantas.update(elapsedSeconds);
+      leapers.update(elapsedSeconds);
+      birds.update(elapsedSeconds);
+      butterflies.update(elapsedSeconds);
     },
   };
 }

@@ -32,6 +32,19 @@ Live addresses throughout. Field names come from the class layouts:
 - Wheel_TA: VehicleSim +0x150, WheelIndex +0x158, Contact +0x160 (bHasContact bit 0, bHasContactWithWorldGeometry
   bit 1, HasContactChangeTime +0x164, Actor +0x168, Component +0x170, Location +0x178, Normal +0x184).
 
+**Clarifications (2026-10-10)**
+- **The sleeping/disabled filter covers rigid bodies only** [N 0x140eddaa0]: the activation test (+0xf4 == 2 or 5) runs
+  only when the object's internal-type byte (+0x108) has bit 2 (CO_RIGID_BODY). RL's arena statics are plain
+  btCollisionObjects (activation state 5, CF_STATIC_OBJECT; notes/bullet-diff.md), so they are never filtered. In an
+  engine whose statics are btRigidBody (ISLAND_SLEEPING at insertion), apply the filter to non-static bodies only.
+  The equivalent effect: a sleeping ball or car (state 2) still suppresses the event.
+- **Impact component values** [A GameInfo_Soccar_SF; TAGame class defaults]:
+  - Ball_Default: SoundPriority 100, AkImpactSound Impact_Ball, MinImpactMomentum 50, MinImpactDelay 0.15 (class
+    default);
+  - Car_Default: SoundPriority 0 (class default), Impact_Body, MinImpactMomentum 50, MinImpactDelay 0.15 (class default),
+    Impact_Medium_CameraShake;
+  - Default__ImpactEffectsComponent_TA: MinImpactMomentum 1.0, MinImpactDelay 0.15.
+
 ## 1. Where impacts come from: one physics step (120 Hz) [N]
 
 `FUN_140f30970` is one fixed physics step of RL's physics manager (DAT_1424c4038). It runs once per 120 Hz step, so

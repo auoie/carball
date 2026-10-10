@@ -903,6 +903,16 @@ void Arena::_UpdateWorldContacts() {
 	}
 }
 
+// RL PATCH (IT-2, RV-166): the contacts' normal from their sum, as the game's SafeNormal: a sum near zero (contacts from
+// opposite sides) has none, so no speed and no event
+bool Arena::_ImpactNormal(const btVector3& sum, btVector3& out) {
+	float length = sum.length();
+	if (length <= 1e-4f)
+		return false;
+	out = sum / length;
+	return true;
+}
+
 // RL PATCH (impact triggers, notes/impact-triggers.md IT-1..3): the game's manifold scan after each physics step
 // (FUN_140eddaa0), its accumulation per partner actor (ARBActor_TA::OnRigidBodyCollision) and HandleCollision's speed:
 // skipped are manifolds with no point, with a no-contact-response body or a sleeping or disabled one
@@ -963,8 +973,9 @@ void Arena::_UpdateImpacts() {
 			btVector3 pos = e.pos * k, dv = (e.vSelf - e.vOther) * k * BT_TO_UU;
 			if (abs(dv.x()) < 1e-4f && abs(dv.y()) < 1e-4f && abs(dv.z()) < 1e-4f)
 				continue;
-			float length = e.normal.length();
-			btVector3 n = length > 1e-6f ? e.normal / length : btVector3(0, 0, 1);
+			btVector3 n;
+			if (!_ImpactNormal(e.normal, n))
+				continue;
 			// (the line check: from 10 uu on the car's side through the point to 10 uu into the partner; a hit's normal
 			// and point replace the contact's)
 			btVector3 from = pos + n * (10 * UU_TO_BT), to = pos - n * (10 * UU_TO_BT);
@@ -977,8 +988,9 @@ void Arena::_UpdateImpacts() {
 				n = ray.m_hitNormalWorld.normalized();
 				pos = ray.m_hitPointWorld;
 			}
-			float speed = abs(dv.dot(n));
-			if (speed < 50)
+			// (kept with 50 uu/s or more along the normal or across it: the impacts' effects, or the slides', RV-164)
+			float speed = abs(dv.dot(n)), slide = dv.length() - speed;
+			if (speed < 50 && slide < 50)
 				continue;
 			int kind = 0;
 			uint32_t partnerId = 0;
@@ -988,7 +1000,7 @@ void Arena::_UpdateImpacts() {
 				kind = 2;
 				partnerId = ((Car*)e.other->getUserPointer())->id;
 			}
-			impacts.push_back(ImpactEvent{ tickCount, car->id, kind, partnerId, speed, dv.length() - speed, Vec(pos) * BT_TO_UU, Vec(n) });
+			impacts.push_back(ImpactEvent{ tickCount, car->id, kind, partnerId, speed, slide, Vec(pos) * BT_TO_UU, Vec(n) });
 		}
 	}
 }

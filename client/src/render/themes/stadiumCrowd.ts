@@ -10,12 +10,13 @@ import { STANDS, type TierName, rowsAt, tierOf, tierRows } from "./stadiumSurrou
 
 /** The cards: 126 x 146.8 uu, 144 apart along a row, facing the centre; rows on the tiers (card centres, r and z):
  *  the lower bowl's 4 front rows and its main rake (az 27-171), the upper tiers' (az 76-139). No gaps but the open +X
- *  (|az| < 27) and the back's plaza (beyond 171); aisles (SUR-26, RV-134) at |az| 46, 72, 98, 118 and 145, breaking the
- *  main rake's first 12 rows */
+ *  (|az| < 27) and the back's plaza (beyond 171); aisles (SUR-26, RV-134, RV-152) centred at |az| 45.6, 71.9, 98.1, 117.6
+ *  and 143.9, 576 uu wide (no card centre within 288 of the line: the game's 2.0-3.1 degrees between cards in the first
+ *  rows, 1.5-2.4 above), through all 34 of the main rake's rows, the last to its row 18 */
 export const CROWD = {
   card: [126, 146.8] as const,
   pitch: 144,
-  aisle: { at: [46, 72, 98, 118, 145] as const, width: 1.0, rows: 12 },
+  aisle: { at: [45.6, 71.9, 98.1, 117.6, 143.9] as const, half: 288, rows: [34, 34, 34, 34, 18] as const },
   /** The stands' tiers the cards sit on (their rows: STANDS; which of them at each az: rowsAt) */
   tiers: [
     { az: STANDS.lower.az, name: "front" },
@@ -149,14 +150,15 @@ void main() {
 }
 `;
 
-/** The crowd: one instanced draw of every card; `update(seconds)` bobs them */
-export function buildCrowd(primary0: Color, primary1: Color, seed = 7): { mesh: InstancedMesh; update(seconds: number): void } {
+/** The crowd: one instanced draw of every card; `update(elapsedSeconds)` bobs them */
+export function buildCrowd(primary0: Color, primary1: Color, seed = 7): { mesh: InstancedMesh; update(elapsedSeconds: number): void } {
   const random = seededRandom(seed);
   const seatings: Matrix4[] = [];
   const cards: number[] = [];
   const seats: number[] = [];
   const { card, pitch, aisle, tiers, light } = CROWD;
   const cardTiers: TierName[] = [];
+  const cardRows: number[] = [];
   for (const { az: span, name } of tiers) {
     const tier = tierOf(name);
     tierRows(tier).forEach(([r, z], row) => {
@@ -164,10 +166,11 @@ export function buildCrowd(primary0: Color, primary1: Color, seed = 7): { mesh: 
       for (const sign of [1, -1]) {
         for (let az = span[0] + step / 2; az < span[1]; az += step) {
           // (the aisles, through the main rake's first rows; the rows with seats here)
-          if (name === "main" && row < aisle.rows && aisle.at.some((a) => Math.abs(az - a) < aisle.width / 2)) continue;
+          if (name === "main" && aisle.at.some((a, k) => row < (aisle.rows[k] ?? 0) && (Math.abs(az - a) * Math.PI * r) / 180 < aisle.half)) continue;
           const [from, to] = rowsAt(name, az);
           if (row < from || row >= to) continue;
           cardTiers.push(name);
+          cardRows.push(row);
           const a = (sign * az * Math.PI) / 180;
           // (Three's frame: x, z up, the game's y; the card's right along the row, its face toward the centre)
           seatings.push(new Matrix4().makeRotationY(-a - Math.PI / 2).setPosition(r * Math.cos(a), z, r * Math.sin(a)));
@@ -210,14 +213,15 @@ export function buildCrowd(primary0: Color, primary1: Color, seed = 7): { mesh: 
   mesh.name = "crowd";
   // (each card's tier, for tests)
   mesh.userData["tiers"] = cardTiers;
+  mesh.userData["rows"] = cardRows;
   // (the bob above each card's seat)
   mesh.userData["reach"] = CROWD.bob;
   // (all round the camera)
   mesh.frustumCulled = false;
   return {
     mesh,
-    update: (seconds: number) => {
-      time.value = seconds;
+    update: (elapsedSeconds: number) => {
+      time.value = elapsedSeconds;
     },
   };
 }

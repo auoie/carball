@@ -82,7 +82,7 @@
     Cascade mesh particles: their motion matches the export's simulation, rest distance p50 834 vs 842 uu; colliding
     only within 1000 uu of the camera; the game's husk meshes on the dev server); camera shakes
     (`notes/camera-shakes.md`, `client/src/camera/shake.ts`) off by default (the Modern preset), on with Default. Left:
-    the impact shake and ball-hit sparks (need contact data: with the sound work), pickup bursts, wheel dust, the ball
+    the ball-hit sparks (the impact triggers give their moments: no impact particle yet), pickup bursts, wheel dust, the ball
     trail, the explosion's ribbons.
   - **Arena visuals (in progress, committed through 02cf5c4; `notes/arena-visuals.md`):** a `stadium` theme (`?theme=stadium`, not
     the default) with the game's arena materials, switched on by the theme's `walls.game`: cage beams per H-8/H-8b
@@ -155,7 +155,7 @@
       open; the floodlights' bulbs on the middle row; per-placement panel light, the logo at 14 %, two-row TV strips,
       brighter windows, the banners' texture term; ribs to the roof's edge; sunk cards hidden; the bob phase shared.
       The crowd and the screens and props now in `stadiumCrowd.ts` and `stadiumProps.ts`.
-  - **Since a1ab6a0 (uncommitted):**
+  - **In c222307 (since a1ab6a0):**
     - the SUR-35 calibration: the dev arena viewer's `cubeFaces()` (`GrassCube.readCapture`) reads the capture back;
       a script bins it as the game's reflection profile (`reflection_profile.json`, local): RMS luminance 0.148 ->
       0.089 over 180 cells. What moved it: the capture in two passes, the second with a constant cube of the first's
@@ -214,9 +214,27 @@
       the line check's normal, speed |dv . n| (50 or more kept); `takeImpacts` (collection on in the browser engine
       only: the server and tools don't take them; capped); each wheel's ray-hit normal in the car state for the landing
       trigger (IT-5). Tests: TestImpacts (native and WASM).
-    Next: the triggers' client half (the Impact_Medium shake for the local car, the impact sounds with their 0.15 s
-    world/actor cooldowns and the car-ball rule, the landings per wheel per frame; replacing audio/detect.ts's guesses),
-    then quick chat (notes/quick-chat.md CHAT-1..22) and match stats (notes/match-stats.md STAT-1..24).
+  - **Since c222307 (uncommitted):** the impact triggers' client half (`game/impactTriggers.ts`): the local car's
+    Impact_Medium shake (restarted by every hit over 200 uu/s, scaled by the curve), the sparks' and body sound's gate (50
+    uu/s, 0.15 s game-time cooldowns per world/actor slot; car–ball sounds the ball's Impact_Ball on its own cooldown;
+    car–car one side, the larger index [I]), the landings per wheel per frame (the previous frame's chassis velocity at
+    the hard point along the ray-hit normal, over 50; every car, no cooldown); re-simulated ticks skipped online. They
+    replace audio/detect.ts's guessed impacts, landings, bumps and car–ball hits (the ball's bounces off the arena stay
+    guessed). Sparks aren't drawn yet (no impact particle). The sky's noise is made once (memoised, ~0.5 s).
+    The engine's review fixes RV-162..166 (native and WASM 3256/0). The client's review fixes RV-149..161, 167..169:
+    hotspots' tilt to the line of sight; banners and corner flags lit per placement (flags as rotations, poles beside
+    the cloth, a two-tone cloth so the capture's per-pixel clip matches CAL1); supports onto their ring past 145 (no
+    rib at 173); aisles 576 uu wide through all rows; the plaza (wider plinth, the statue as its outline seen from C,
+    spindle poplars, the city by rule from az 180.5); 26 team beams at the game's mean alpha; the camera fade folded
+    into the remap's nodes before their clip (the replay's fade now drawn there, not by a CSS overlay); the sky's
+    noise to the textures' correlations (~0.4 s); the goal floor's trim strip and V offset; the field glow loop from
+    its own measures; a Gameplay settings tab. The shipped-data guard: every import form scanned (glob, ?raw, ?url,
+    import(), new URL), the arena's .cmf pinned to out/arena, exponent forms, signed UV pairs, strides to 16, small
+    integers on longer runs, and a texture check against `out/arena_local/reference/textures.f32`
+    (scripts/reference_textures.py: rows along one stream place, bending; ramps are profiles and allowed).
+    Next: quick chat (notes/quick-chat.md CHAT-1..22), match stats (notes/match-stats.md STAT-1..24), custom training,
+    mutators, the match intro/outro (notes/match-intro-outro.md: its text cleared verbatim) and the car's look
+    (notes/car-paint.md PNT-16..33).
   - **Decided (user, 2026-10-10): no controller rumble.** notes/rumble.md stays as a reference spec only. The contact
     detection it asked about (the static session's Q-RMB-a: HandleCollision's cadence, the contact's point and normal,
     the landing speed) is still wanted, for the Impact_Medium camera shake and the impact and landing sounds; don't

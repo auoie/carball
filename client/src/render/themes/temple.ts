@@ -187,12 +187,12 @@ export function templeTheme(): Theme {
       },
     },
     root,
-    update(seconds) {
-      sky.update(seconds);
-      for (const clock of [portal.time, fragments.time, sprites.time, glows.time]) clock.value = seconds;
-      rings.update(seconds);
-      whales.update(seconds);
-      birds.update(seconds);
+    update(elapsedSeconds) {
+      sky.update(elapsedSeconds);
+      for (const clock of [portal.time, fragments.time, sprites.time, glows.time]) clock.value = elapsedSeconds;
+      rings.update(elapsedSeconds);
+      whales.update(elapsedSeconds);
+      birds.update(elapsedSeconds);
     },
   };
 }

@@ -330,7 +330,7 @@ function manta(): BufferGeometry {
 /** Manta rays gliding in slow loops over the lagoon, wings beating: moved on the CPU. */
 export function buildMantas(paths: readonly ((t: number) => Vector3)[], loopSeconds: number, size: number): {
   root: Group;
-  update(seconds: number): void;
+  update(elapsedSeconds: number): void;
 } {
   const material = new MeshLambertMaterial({ vertexColors: true, side: DoubleSide });
   const uniforms = animate(material, "transformed.y += abs(position.x) * abs(position.x) * 0.09 * sin(time * 1.3 - abs(position.x) * 0.5);", "", {});
@@ -382,7 +382,7 @@ export function buildLeapers(
   arc: { readonly height: number; readonly length: number } = { height: 1100, length: 1700 },
 ): {
   mesh: InstancedMesh;
-  update(seconds: number): void;
+  update(elapsedSeconds: number): void;
 } {
   const mesh = instances(leaper(), new MeshLambertMaterial({ vertexColors: true }), homes.map((): Placement => ({})));
   mesh.name = "wildlife: leaper";

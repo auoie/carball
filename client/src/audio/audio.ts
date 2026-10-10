@@ -21,6 +21,8 @@ export interface AudioFrame {
   /** Simulated seconds since the last frame (0: no physics ticks this frame) */
   readonly simulated: number;
   readonly camera: CameraView;
+  /** The impacts' and landings' sounds this frame (game/impactTriggers.ts) */
+  readonly triggered?: readonly SoundEvent[];
 }
 
 export interface AudioStats {
@@ -99,6 +101,7 @@ export class GameAudio {
   frame(f: AudioFrame): void {
     this.#listen(f.camera);
     for (const event of this.#detector.update(f.world, f.simulated)) this.#play(event);
+    for (const event of f.triggered ?? []) this.#play(event);
     this.#steerVoices(f);
     this.#ambience.tick();
   }

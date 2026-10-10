@@ -167,13 +167,13 @@ export function lakeTheme(): Theme {
       },
     },
     root,
-    update(seconds) {
-      sky.update(seconds);
-      for (const clock of [lake.time, reeds.time, lanterns.time, swans.time, frogs.time, glows.time, mistBanks.time]) clock.value = seconds;
-      guardian.update(seconds);
-      fish.update(seconds);
-      dragonflies.update(seconds);
-      birds.update(seconds);
+    update(elapsedSeconds) {
+      sky.update(elapsedSeconds);
+      for (const clock of [lake.time, reeds.time, lanterns.time, swans.time, frogs.time, glows.time, mistBanks.time]) clock.value = elapsedSeconds;
+      guardian.update(elapsedSeconds);
+      fish.update(elapsedSeconds);
+      dragonflies.update(elapsedSeconds);
+      birds.update(elapsedSeconds);
     },
   };
 }

@@ -19,28 +19,42 @@ export const GOAL_GRATE = { x: 768, y0: 5264, y1: 5809 } as const;
 /** The lower glass (Goal_STD_Glass_Outer): this far under the top, over |x| 768, |y| 5264-5860; its V across x 256 uu a
  *  unit in 256 uu strips (RV-111, RV-142: underGlassV) */
 export const GOAL_UNDER_GLASS = { depth: 16, x: 768, y0: 5264, y1: 5860, strip: 256 } as const;
-/** The opaque strips over the goal floor (RV-111, RV-142): Goal_STD_Frame and Goal_STD_Trim across the front to |y| 5280
- *  and beside (|x| from 672) to 5344; AdvertStrip_Frame's bars, 12 wide, across at |y| 5338-5350 and 5754-5766 and
- *  along |x| 634-646 from 5264 to 5808 */
-export const GOAL_STRIPS = { front: 5280, sideX: 672, sideTo: 5344, across: [[5338, 5350], [5754, 5766]], along: { x: [634, 646], y: [5264, 5808] } } as const;
+/** The opaque strips over the goal floor (RV-111, RV-142, RV-168b): Goal_STD_Frame and Goal_STD_Trim across the front to
+ *  |y| 5280 and beside (|x| from 672) to 5344; Goal_STD_Trim's up-facing strip along the sides (|x| 735-768, |y|
+ *  5307-5831); AdvertStrip_Frame's bars, 12 wide, across at |y| 5338-5350 and 5754-5766 and along |x| 634-646 from 5264
+ *  to 5808 */
+export const GOAL_STRIPS = {
+  front: 5280,
+  sideX: 672,
+  sideTo: 5344,
+  trim: { x: [735, 768], y: [5307, 5831] },
+  across: [[5338, 5350], [5754, 5766]],
+  along: { x: [634, 646], y: [5264, 5808] },
+} as const;
 
-/** The lower glass's V across x: 1 - fract(|x| / 256), from 3 inside to 2 out in each 256 strip (RV-142; the
- *  shader's UNDER_GLASS_V_GLSL, for tests) */
+/** The lower glass's V across x: 3 - fract(|x| / 256), from 3 inside to 2 out in each 256 strip, as the mesh's (its
+ *  whole part counts: the tiles' V scale 7/3 makes a unit a third of a period, RV-142, RV-168a; the shader's
+ *  UNDER_GLASS_V_GLSL, for tests) */
 export function underGlassV(ax: number): number {
   const f = ax / GOAL_UNDER_GLASS.strip;
-  return 1 - (f - Math.floor(f));
+  return 3 - (f - Math.floor(f));
 }
 
 export const UNDER_GLASS_V_GLSL = /* glsl */ `
 float underGlassV(float ax) {
-  return 1.0 - fract(ax / ${GOAL_UNDER_GLASS.strip.toFixed(1)});
+  return 3.0 - fract(ax / ${GOAL_UNDER_GLASS.strip.toFixed(1)});
 }
 `;
 
 /** What the goal floor's top layer is at |x|, |y| (the shader's zones, for tests) */
 export function goalFloorZone(ax: number, ay: number): "frame" | "glass" | "grate" {
   const s = GOAL_STRIPS;
-  const strip = ay < s.front || (ax > s.sideX && ay < s.sideTo) || s.across.some(([a, b]) => ay >= a && ay <= b) || (ax >= s.along.x[0] && ax <= s.along.x[1] && ay >= s.along.y[0] && ay <= s.along.y[1]);
+  const strip =
+    ay < s.front ||
+    (ax > s.sideX && ay < s.sideTo) ||
+    (ax >= s.trim.x[0] && ax <= s.trim.x[1] && ay >= s.trim.y[0] && ay <= s.trim.y[1]) ||
+    s.across.some(([a, b]) => ay >= a && ay <= b) ||
+    (ax >= s.along.x[0] && ax <= s.along.x[1] && ay >= s.along.y[0] && ay <= s.along.y[1]);
   if (strip) return "frame";
   if (ax <= GOAL_GLASS.x && ay >= GOAL_GLASS.y0 && ay <= GOAL_GLASS.y1) return "glass";
   if (ax <= GOAL_GRATE.x && ay >= GOAL_GRATE.y0 && ay <= GOAL_GRATE.y1) return "grate";
@@ -116,18 +130,19 @@ void main() {
   vec3 toCamera = normalize(cameraPosition - vWorld);
   vec4 colour;
   #ifdef UNDER
-    // Goal_STD_Glass_Outer: glass only (its chart along y as the mesh's; across x the top glass's)
+    // Goal_STD_Glass_Outer: glass only (its chart along y as the mesh's, across x underGlassV)
     if (ax > ${GOAL_UNDER_GLASS.x.toFixed(1)} || ay < ${GOAL_UNDER_GLASS.y0.toFixed(1)} || ay > ${GOAL_UNDER_GLASS.y1.toFixed(1)}) discard;
     colour = glass(vec2(0.003424 * ay - 18.0243, underGlassV(ax)), toCamera);
   #else
     // (the opaque strips: goalFloorZone)
     bool strip = ay < ${GOAL_STRIPS.front.toFixed(1)} || (ax > ${GOAL_STRIPS.sideX.toFixed(1)} && ay < ${GOAL_STRIPS.sideTo.toFixed(1)})
+      || (ax >= ${GOAL_STRIPS.trim.x[0].toFixed(1)} && ax <= ${GOAL_STRIPS.trim.x[1].toFixed(1)} && ay >= ${GOAL_STRIPS.trim.y[0].toFixed(1)} && ay <= ${GOAL_STRIPS.trim.y[1].toFixed(1)})
       || (ay >= ${GOAL_STRIPS.across[0][0].toFixed(1)} && ay <= ${GOAL_STRIPS.across[0][1].toFixed(1)})
       || (ay >= ${GOAL_STRIPS.across[1][0].toFixed(1)} && ay <= ${GOAL_STRIPS.across[1][1].toFixed(1)})
       || (ax >= ${GOAL_STRIPS.along.x[0].toFixed(1)} && ax <= ${GOAL_STRIPS.along.x[1].toFixed(1)} && ay >= ${GOAL_STRIPS.along.y[0].toFixed(1)} && ay <= ${GOAL_STRIPS.along.y[1].toFixed(1)});
     if (strip) {
       vec3 cube = textureLod(grassCube, vec3(-toCamera.x, toCamera.y, -toCamera.z), ${GRASS_CUBE_BLUR_LOD.toFixed(1)}).rgb;
-      colour = vec4(clamp(vec3(${FRAME.r}) + 4.0 * (0.125 + 0.625 * ${FRAME.g}) * cube, 0.0, 1.0) * frameLight * ${FRAME.tireMarks}, 1.0);
+      colour = vec4(clamp((vec3(${FRAME.r}) + 4.0 * (0.125 + 0.625 * ${FRAME.g}) * cube) * ${FRAME.tireMarks}, 0.0, 1.0) * frameLight, 1.0);
     } else if (ax <= ${GOAL_GLASS.x.toFixed(1)} && ay >= ${GOAL_GLASS.y0.toFixed(1)} && ay <= ${GOAL_GLASS.y1.toFixed(1)}) {
       // Goal_STD_Glass[0]'s chart: u along y, v across x
       colour = glass(vec2(0.005172 * ay - 26.2292, -0.004896 * xy.x + 3.761), toCamera);
@@ -142,9 +157,10 @@ void main() {
       alpha = mix(alpha, 0.573, smoothstep(0.12, 0.3, length(fwidth(cell))));
       colour = vec4(vec3(0.03) * frameLight, alpha);
     } else {
-      // H-4's frame (off its stripes): sat(R + 4 (0.125 + 0.625 G) cube) x its baked light
+      // H-4's frame (off its stripes): sat((R + 4 (0.125 + 0.625 G) cube) m) x its baked light (the tire marks inside the
+      // saturate: RV-144, RV-168d)
       vec3 cube = textureLod(grassCube, vec3(-toCamera.x, toCamera.y, -toCamera.z), ${GRASS_CUBE_BLUR_LOD.toFixed(1)}).rgb;
-      colour = vec4(clamp(vec3(${FRAME.r}) + 4.0 * (0.125 + 0.625 * ${FRAME.g}) * cube, 0.0, 1.0) * frameLight * ${FRAME.tireMarks}, 1.0);
+      colour = vec4(clamp((vec3(${FRAME.r}) + 4.0 * (0.125 + 0.625 * ${FRAME.g}) * cube) * ${FRAME.tireMarks}, 0.0, 1.0) * frameLight, 1.0);
     }
   #endif
   gl_FragColor = colour;

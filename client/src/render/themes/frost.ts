@@ -202,7 +202,7 @@ export function snowpuff(): BufferGeometry {
 
 /** The great ice bird: crystalline wings, a crest and long trailing tail streamers; circles the summit, wings beating
  *  slowly. Moved on the CPU. */
-export function buildIceBird(centre: Vector3, radius: number, lapSeconds: number): { root: Group; update(seconds: number): void } {
+export function buildIceBird(centre: Vector3, radius: number, lapSeconds: number): { root: Group; update(elapsedSeconds: number): void } {
   const body = combine([
     part(new SphereGeometry(1, 14, 10), 0xcfe6ff, { scale: [0.55, 0.5, 1.4] }),
     part(new SphereGeometry(0.42, 12, 8), 0xe2f0ff, { position: [0, 0.35, 1.45] }), // head

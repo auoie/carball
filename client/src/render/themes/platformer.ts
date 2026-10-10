@@ -194,10 +194,10 @@ export function platformerTheme(): Theme {
       },
     },
     root,
-    update(seconds) {
-      sky.update(seconds);
-      coinMesh.time.value = seconds;
-      clouds.time.value = seconds;
+    update(elapsedSeconds) {
+      sky.update(elapsedSeconds);
+      coinMesh.time.value = elapsedSeconds;
+      clouds.time.value = elapsedSeconds;
     },
   };
 }

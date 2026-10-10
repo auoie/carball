@@ -706,14 +706,19 @@ static void TestImpacts() {
 		arena->ball->SetState(BallState());
 		car->SetState(CarAt({ 1000, 1000, 120 }, { 1, 0, 0 }, { 0, 0, -1 }, { 0, 0, -1500 }));
 		const Arena::ImpactEvent* hit = nullptr;
+		float vzBefore = 0;
 		for (int t = 0; t < 30 && !hit; t++) {
 			arena->impacts.clear();
+			vzBefore = car->GetState().vel.z;
 			arena->Step(1);
 			for (const auto& e : arena->impacts)
 				if (e.partnerKind == 0)
 					hit = &e;
 		}
 		CHECK(hit != nullptr, "no world impact");
+		// (the approach speed with the step's gravity in, as the game's Bullet 2.82 integrates it first: RV-162)
+		if (hit)
+			CHECK(Near(hit->speed, fabsf(vzBefore) + 650.f / 120, 0.01f), "speed %.4f vs %.4f", hit->speed, fabsf(vzBefore) + 650.f / 120);
 		if (hit) {
 			CHECK(hit->normal.z > 0.95f, "normal %g %g %g", hit->normal.x, hit->normal.y, hit->normal.z);
 			CHECK(hit->speed > 1450 && hit->speed < 1600, "speed %g", hit->speed);
@@ -726,12 +731,58 @@ static void TestImpacts() {
 		for (const auto& e : arena->impacts)
 			resting += e.partnerKind == 0;
 		CHECK(resting == 0, "%zu impacts resting", resting);
+		// (sliding on its roof at 1000 uu/s: little along the normal, the slide across it kept: RV-164)
+		arena->collectImpacts = true;
+		CarState sliding = car->GetState();
+		sliding.vel = { 1000, 0, 0 };
+		sliding.angVel = {};
+		car->SetState(sliding);
+		arena->impacts.clear();
+		arena->Step(2);
+		bool slid = false;
+		for (const auto& e : arena->impacts)
+			slid |= e.partnerKind == 0 && e.speed < 50 && e.slide > 900 && e.slide < 1050;
+		CHECK(slid, "no slide entry (%zu impacts)", arena->impacts.size());
 		// (off, the default: nothing kept)
+		arena->impacts.clear();
 		arena->collectImpacts = false;
 		car->SetState(CarAt({ 1000, 1000, 120 }, { 1, 0, 0 }, { 0, 0, -1 }, { 0, 0, -1500 }));
 		arena->Step(30);
 		CHECK(arena->impacts.empty(), "%zu impacts collected while off", arena->impacts.size());
 		delete arena;
+	}
+	{
+		// A car's corner into another's side, the first turned 45 degrees: for the struck car the line check through the
+		// averaged point meets the corner's face, so its normal leans 45 degrees, not the side's own (IT-3, RV-165)
+		Arena* arena = Arena::Create(GameMode::SOCCAR);
+		arena->collectImpacts = true;
+		arena->SetMutatorConfig([&] { MutatorConfig m = arena->GetMutatorConfig(); m.demoMode = DemoMode::DISABLED; return m; }());
+		Car* a = arena->AddCar(Team::BLUE);
+		Car* b = arena->AddCar(Team::ORANGE);
+		arena->ball->SetState(BallState());
+		float c45 = cosf(45 * DEG);
+		// (in the air, clear of the tyres' grip)
+		a->SetState(CarAt({ 0, -400, 600 }, { c45, c45, 0 }, { 0, 0, 1 }, { 0, 1200, 0 }));
+		b->SetState(CarAt({ 0, 0, 600 }, { 1, 0, 0 }, { 0, 0, 1 }));
+		const Arena::ImpactEvent* struck = nullptr;
+		for (int t = 0; t < 60 && !struck; t++) {
+			arena->Step(1);
+			for (const auto& e : arena->impacts)
+				if (e.carId == b->id && e.partnerKind == 2)
+					struck = &e;
+		}
+		CHECK(struck != nullptr, "no car-car impact");
+		if (struck) {
+			CHECK(struck->partnerId == a->id, "partner %u", struck->partnerId);
+			CHECK(fabsf(struck->normal.x) > 0.5f && fabsf(struck->normal.y) > 0.5f, "normal %g %g %g", struck->normal.x, struck->normal.y, struck->normal.z);
+		}
+		delete arena;
+	}
+	{
+		// The normal from the contacts' sum: none when they cancel (RV-166)
+		btVector3 n;
+		CHECK(!Arena::_ImpactNormal(btVector3(0, 0, 1e-5f), n), "a near-zero sum gave a normal");
+		CHECK(Arena::_ImpactNormal(btVector3(0, 0, 3), n) && Near(n.z(), 1, 1e-6f), "the sum's direction");
 	}
 }
 

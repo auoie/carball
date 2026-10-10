@@ -410,7 +410,8 @@ public:
 		return CopyToJS<Float32ArrayVal>("Float32Array", _floats);
 	}
 
-	// Every car's impacts since the last call (IMPACT_SIZE floats each; speeds of 50 uu/s or more), then cleared
+	// Every car's impacts since the last call or the last loadState (IMPACT_SIZE floats each; 50 uu/s or more along
+	// the normal or sliding), then cleared
 	Float32ArrayVal TakeImpacts() {
 		const auto& list = _arena->impacts;
 		_floats.assign(list.size() * Layout::IMPACT_SIZE, 0);
@@ -494,6 +495,7 @@ public:
 			_arena = loaded;
 		}
 		_arena->collectImpacts = true; // (a new arena's is off)
+		_arena->impacts.clear(); // (the ticks after the snapshot are simulated again: RV-163)
 		_SetCallbacks();
 		_events.clear();
 	}

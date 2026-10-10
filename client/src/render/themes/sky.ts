@@ -97,8 +97,8 @@ export class Sky {
     this.mesh.frustumCulled = false;
   }
 
-  update(seconds: number): void {
+  update(elapsedSeconds: number): void {
     const time = this.#material.uniforms["time"];
-    if (time) time.value = seconds;
+    if (time) time.value = elapsedSeconds;
   }
 }

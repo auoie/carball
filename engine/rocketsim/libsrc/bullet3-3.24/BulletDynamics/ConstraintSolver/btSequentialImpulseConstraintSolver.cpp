@@ -903,9 +903,11 @@ void btSequentialImpulseConstraintSolver::setupContactConstraint(btSolverConstra
 
 		vel1 = rb0 ? rb0->getVelocityInLocalPoint(rel_pos1) : btVector3(0, 0, 0);
 		vel2 = rb1 ? rb1->getVelocityInLocalPoint(rel_pos2) : btVector3(0, 0, 0);
-		// RL PATCH (IT-2): kept on the point, as the game's setup keeps them: the impact triggers' approach velocities
-		cp.m_rlVel1 = vel1;
-		cp.m_rlVel2 = vel2;
+		// RL PATCH (IT-2, RV-162): kept on the point, as the game's setup keeps them (the impact triggers' approach
+		// velocities), with this step's forces in: the game's Bullet 2.82 integrates them before the solver, Bullet 3
+		// holds them as the solver bodies' external impulses
+		bodyA->getVelocityInLocalPointNoDelta(rel_pos1, cp.m_rlVel1);
+		bodyB->getVelocityInLocalPointNoDelta(rel_pos2, cp.m_rlVel2);
 
 		//			btVector3 vel2 = rb1 ? rb1->getVelocityInLocalPoint(rel_pos2) : btVector3(0,0,0);
 		btVector3 vel = vel1 - vel2;

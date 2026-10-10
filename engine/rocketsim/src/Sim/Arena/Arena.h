@@ -74,7 +74,8 @@ public:
 	// RL PATCH (impact triggers, IT-1..3): a car's contacts with one partner (the ball, a car, the world) in one physics
 	// step, as the game's HandleCollision gets them: every point of every manifold with that partner averaged (position,
 	// the normals' normalised sum, each side's point velocity at the solver's setup), the normal replaced by a +-10 uu
-	// line check's through the averaged point. Only speeds of 50 uu/s or more (below, nothing in the game uses one);
+	// line check's through the averaged point. Only speeds of 50 uu/s or more along the normal or across it (below,
+	// nothing in the game uses one);
 	// appended every step while collectImpacts is on (off by default: the server and tools don't take them), taken (and
 	// cleared) by the caller; the oldest dropped past IMPACT_LIMIT
 	struct ImpactEvent {
@@ -283,6 +284,7 @@ public:
 	void _UpdateWorldContacts();
 	// RL PATCH (impact triggers, notes/impact-triggers.md IT-1..3): each car's contact with each partner this step
 	void _UpdateImpacts();
+	static bool _ImpactNormal(const btVector3& sum, btVector3& out);
 	void _SerializeContacts(DataStreamOut& out);
 	void _DeserializeContacts(DataStreamIn& in);
 	void SetDropshotTilesState(const DropshotTilesState& tilesState);

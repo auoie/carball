@@ -344,10 +344,10 @@ export function ghostsTheme(): Theme {
       },
     },
     root,
-    update(seconds) {
-      sky.update(seconds);
+    update(elapsedSeconds) {
+      sky.update(elapsedSeconds);
       for (const clock of [glows.time, wisps.time, mist.time, crows.time, motes.time, ...ghosts.map((g) => g.time)]) {
-        clock.value = seconds;
+        clock.value = elapsedSeconds;
       }
     },
   };
