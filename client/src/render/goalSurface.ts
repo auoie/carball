@@ -123,6 +123,34 @@ function goalOffsets(P: readonly Pt[]): Pt[] {
   return off;
 }
 
+/** The game's goal glass chart along the profile (RV-110): U a unit every 193.4 uu on the floor, 195.8 round the back,
+ *  203.1 on the roof, 5.5 at the back's middle (the lower arc's end, z 256) */
+export const GOAL_PROFILE_CHART = { floor: 193.4, back: 195.8, roof: 203.1, atBack: 5.5 } as const;
+
+/** The profile's sections along it (arc length from the floor's front): the floor's end (the lower back arc's start),
+ *  the back's middle (that arc's end), the back's end (the upper arc's); half its length */
+let profileMarks: { floorEnd: number; middle: number; backEnd: number; half: number } | null = null;
+
+/** The game's U at `v` along the profile (arc length, 0 halfway: GoalSurface's v) */
+export function goalProfileU(v: number): number {
+  if (!profileMarks) {
+    const P = goalPath();
+    const along: number[] = [0];
+    for (let i = 1; i < P.length; i++) {
+      const a = P[i - 1] ?? [0, 0];
+      const b = P[i] ?? a;
+      along.push((along[i - 1] ?? 0) + Math.hypot(b[0] - a[0], b[1] - a[1]));
+    }
+    profileMarks = { floorEnd: along[2] ?? 0, middle: along[2 + SEG90] ?? 0, backEnd: along[P.length - 3] ?? 0, half: (along.at(-1) ?? 0) / 2 };
+  }
+  const { floorEnd, middle, backEnd, half } = profileMarks;
+  const s = v + half;
+  const c = GOAL_PROFILE_CHART;
+  if (s < floorEnd) return c.atBack + (floorEnd - middle) / c.back + (s - floorEnd) / c.floor;
+  if (s > backEnd) return c.atBack + (backEnd - middle) / c.back + (s - backEnd) / c.roof;
+  return c.atBack + (s - middle) / c.back;
+}
+
 /** Both goals' insides, their net's hexagon size near `hexTarget` (see GoalSurface.hexSize). */
 export function buildGoalSurface(hexTarget: number): GoalSurface {
   const P = goalPath();

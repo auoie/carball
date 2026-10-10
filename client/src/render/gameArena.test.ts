@@ -5,8 +5,11 @@ import { ArenaView, glowContour } from "./arena";
 import { wallLine } from "./arenaSurface";
 import type { CageGraph } from "./cage";
 import { CageBeams, shockRing, shockWave } from "./cageBeams";
-import { ENV_GLSL, ENV_RADIAL, ENV_SPREAD, GOAL_SIDE_CHART, GlowStripMaterial, HexGlassMaterial, ForceFieldMaterial, goalSideV } from "./gameSurfaces";
-import { GoalFloorMaterial } from "./goalInterior";
+import { existsSync, readFileSync } from "node:fs";
+import { ENV_GLSL, ENV_RADIAL, ENV_SPREAD, GOAL_SIDE_CHART, GlowStripMaterial, HexGlassMaterial, ForceFieldMaterial, envG, goalSideV } from "./gameSurfaces";
+import { GOAL_BASE_LIGHT, GoalFloorMaterial, goalBaseZ, goalFloorZone } from "./goalInterior";
+import { GOAL_PROFILE_CHART, goalPath, goalProfileU } from "./goalSurface";
+import { HexFloorMaterial } from "./stadiumField";
 import { HexWallMaterial } from "./hexWalls";
 import { nightTheme } from "./themes/night";
 import { stadiumTheme } from "./themes/stadium";
@@ -180,10 +183,58 @@ describe("the goals' insides (RV-76, RV-77)", () => {
       }
     }
     expect(checked).toBeGreaterThan(10);
-    // (under it: the lower glass, the glows, dark metal)
+    // (under it: the lower glass, the glows, OOBFloor)
     expect(meshes.filter((m) => m.name === "goal under glass")).toHaveLength(1);
-    expect(meshes.filter((m) => m.name === "goal base")).toHaveLength(1);
+    expect(meshes.filter((m) => m.name === "goal base bevels")).toHaveLength(1);
     expect(meshes.filter((m) => m.material instanceof GoalFloorMaterial)).toHaveLength(2);
+  });
+
+  it("the net's glass chart along the profile is the game's (RV-110): 193.4 uu a unit on the floor, 195.8 round the back, 203.1 on the roof, 5.5 at the back's middle", () => {
+    const P = goalPath();
+    const along = [0];
+    for (let i = 1; i < P.length; i++) along.push((along[i - 1] ?? 0) + Math.hypot((P[i]?.[0] ?? 0) - (P[i - 1]?.[0] ?? 0), (P[i]?.[1] ?? 0) - (P[i - 1]?.[1] ?? 0)));
+    const half = (along.at(-1) ?? 0) / 2;
+    const v = (s: number): number => s - half;
+    const c = GOAL_PROFILE_CHART;
+    // (continuous, its slope each section's, rising floor to roof)
+    expect(goalProfileU(v(10) + 1) - goalProfileU(v(10))).toBeCloseTo(1 / c.floor, 9);
+    expect(goalProfileU(v((along.at(-1) ?? 0) - 10) + 1) - goalProfileU(v((along.at(-1) ?? 0) - 10))).toBeCloseTo(1 / c.roof, 9);
+    const floorEnd = along[2] ?? 0;
+    expect(goalProfileU(v(floorEnd) + 1e-6) - goalProfileU(v(floorEnd) - 1e-6)).toBeCloseTo(0, 5);
+    expect(goalProfileU(v(floorEnd) + 2) - goalProfileU(v(floorEnd) + 1)).toBeCloseTo(1 / c.back, 9);
+    expect(Math.min(...along.map((s) => Math.abs(goalProfileU(v(s)) - c.atBack)))).toBeLessThan(1e-9);
+  });
+
+  it("the goal floor's opaque strips where the game's are (RV-111): the frame and trim, the advert strip's bars", () => {
+    // (the frame across the front, the trim to 5280, the frame beside to 5344)
+    expect(goalFloorZone(0, 5200)).toBe("frame");
+    expect(goalFloorZone(300, 5270)).toBe("frame");
+    expect(goalFloorZone(700, 5300)).toBe("frame");
+    expect(goalFloorZone(700, 5290)).toBe("frame");
+    expect(goalFloorZone(600, 5300)).toBe("grate");
+    // (the bars: across at 5338-5350, along |x| 634-646)
+    expect(goalFloorZone(300, 5344)).toBe("frame");
+    expect(goalFloorZone(640, 5500)).toBe("frame");
+    // (the glass and the grate between them)
+    expect(goalFloorZone(300, 5500)).toBe("glass");
+    expect(goalFloorZone(700, 5500)).toBe("grate");
+    expect(goalFloorZone(300, 5900)).toBe("frame");
+  });
+
+  it("under each goal OOBFloor, a hex metal slope (RV-104): z -105.5 at |y| 5300, -30.5 at 5900, in its goal's light", () => {
+    expect(goalBaseZ(5300)).toBeCloseTo(-105.5, 6);
+    expect(goalBaseZ(-5900)).toBeCloseTo(-30.5, 6);
+    for (const team of [0, 1]) {
+      const base = meshes.find((m) => m.name === `goal base ${String(team)}`);
+      expect(base?.material).toBeInstanceOf(HexFloorMaterial);
+      expect((base?.material as HexFloorMaterial).piece).toBe(GOAL_BASE_LIGHT[team]);
+      // (its vertices on the slope, on its goal's side)
+      const position = base?.geometry.getAttribute("position");
+      for (let i = 0; position && i < position.count; i++) {
+        expect(position.getY(i)).toBeCloseTo(goalBaseZ(position.getZ(i)), 3);
+        expect(Math.sign(position.getZ(i))).toBe(team === 0 ? -1 : 1);
+      }
+    }
   });
 
   it("each goal's glows in its team's colour, its ribbons glowing 1 at the attached edge, 0 at the free (RV-77)", () => {
@@ -230,5 +281,42 @@ describe("ENVPack.G's stand-in (RV-71: our own smooth environment)", () => {
     expect(goalSideV(bottom.from, bottom.z)).toBeCloseTo(bottom.v0, 6);
     expect(goalSideV(bottom.from + bottom.span / 2, bottom.z)).toBeCloseTo(bottom.v0 + bottom.rise / 2, 6);
     expect(goalSideV(bottom.from + bottom.span + 200, bottom.z)).toBeCloseTo(bottom.v0 + bottom.rise, 6);
+  });
+
+  it("envG's rings have ENVPack.G's means and spreads (RV-71, RV-113: our smooth stand-in, one period round each)", () => {
+    // (each table entry's ring: s = 0, then 0.0625 + 0.125 (k - 1))
+    ENV_RADIAL.forEach((mean, k) => {
+      const s = k === 0 ? 0 : 0.0625 + 0.125 * (k - 1);
+      const values = Array.from({ length: 720 }, (_, i) => envG(s * Math.cos((i / 720) * 2 * Math.PI), s * Math.sin((i / 720) * 2 * Math.PI)));
+      const m = values.reduce((a, b) => a + b, 0) / values.length;
+      const sd = Math.sqrt(values.reduce((a, b) => a + (b - m) ** 2, 0) / values.length);
+      // (the clamp to 0..1 trims a ring whose mean +- sqrt 2 spread leaves it)
+      const clamped = mean - Math.SQRT2 * (ENV_SPREAD[k] ?? 0) < 0 || mean + Math.SQRT2 * (ENV_SPREAD[k] ?? 0) > 1;
+      if (!clamped) {
+        expect(m, `ring ${String(k)} mean`).toBeCloseTo(mean, 3);
+        expect(sd, `ring ${String(k)} spread`).toBeCloseTo(ENV_SPREAD[k] ?? 0, 3);
+      }
+    });
+  });
+
+  // The goal-side glass's fitted chart against the mesh's own UVs (local: the game's mesh, never shipped; RV-72, RV-115)
+  const glassObj = new URL("../../../out/bsim/assets_local/arena/meshes/Goal_STD_Glass.obj", import.meta.url);
+  it.skipIf(!existsSync(glassObj))("the goal-side glass's fitted V within 0.05 of the mesh's UVs (local)", () => {
+    const lines = readFileSync(glassObj, "utf8").split("\n");
+    const v = lines.filter((l) => l.startsWith("v ")).map((l) => l.split(/\s+/).slice(1, 4).map(Number));
+    const vt = lines.filter((l) => l.startsWith("vt ")).map((l) => l.split(/\s+/).slice(1, 3).map(Number));
+    let checked = 0;
+    for (const f of lines.filter((l) => l.startsWith("f "))) {
+      for (const corner of f.split(/\s+/).slice(1)) {
+        const [vi = 0, ti = 0] = corner.split("/").map(Number);
+        const [x = 0, y = 0, z = 0] = v[vi - 1] ?? [];
+        const [, tv = 0] = vt[ti - 1] ?? [];
+        // (the panel beside the mouth: y +-5124, |x| 960-1344, from its bottom row up)
+        if (Math.abs(Math.abs(y) - 5124) > 2 || Math.abs(x) < 960 || Math.abs(x) > 1344 || z < 126) continue;
+        expect(Math.abs(goalSideV(Math.abs(x), z) - tv), `at |x| ${x.toFixed(0)}, z ${z.toFixed(0)}`).toBeLessThan(0.05);
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThan(10);
   });
 });

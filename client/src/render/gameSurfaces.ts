@@ -108,11 +108,14 @@ void main() {
   if (p.z < lowest) discard;
   // UV, 256 uu a unit (the FF meshes' charts: side walls, and FF_Side's strip down the fillet, u = 1 + |y| / 256, v = 1
   // - z / 256; the roof u = -30.978 - |x| / 256, v = |y| / 256 + 1.002; the back walls u = -30.978 - |x| / 256, v =
-  // 0.999 - z / 256: RV-70c, RV-74); the corners along the surface's plane
+  // 0.999 - z / 256: RV-70c, RV-74). The corners (RV-109): FF_Goal's vertical ones the side walls' u to the 45-degree
+  // seam (3843, 4226), the back walls' beyond, v = 0.9988 - 0.003902 z; the wall-ceiling fillets the walls' charts
+  bool corner = n.z < 0.3;
   vec2 uv = n.z > 0.7 ? vec2(-30.978 - ax / 256.0, ay / 256.0 + 1.002)
     : n.y > 0.97 ? vec2(-30.978 - ax / 256.0, 0.999 - p.z / 256.0)
     : n.x > 0.97 || (midfield && p.z < 256.0) ? vec2(1.0 + ay / 256.0, 1.0 - p.z / 256.0)
-    : (n.x > n.y ? p.yz : p.xz) / 256.0;
+    : n.x >= n.y ? vec2(1.0 + ay / 256.0, corner ? 0.9988 - 0.003902 * p.z : 1.0 - p.z / 256.0)
+    : vec2(-30.978 - ax / 256.0, corner ? 0.9988 - 0.003902 * p.z : 0.999 - p.z / 256.0);
   float d = length(p - ballPosition.xzy);
   float F = saturate1(1.0 - 0.04 * (d - 300.0));
   float outside = saturate1(12.0 * (0.5 - F));
@@ -145,6 +148,17 @@ export const ENV_SPREAD = [0, 0.155, 0.117, 0.251, 0.3, 0.249, 0.236, 0.216, 0.2
 /** Our own smooth environment for ENVPack.G (RV-71: the user's choice (c); the texture can't ship, and no low-order fit of
  *  it holds): at |uv| its rings' mean, and round each ring one cosine with the ring's spread, its phase turning with the
  *  radius (ours, not the texture's), clamped 0..1. Needs uniforms envRadial[9], envSpread[9] */
+/** ENV_GLSL's envG at uv (the shader's, for tests: RV-71, RV-113) */
+export function envG(u: number, v: number): number {
+  const s = Math.min(Math.hypot(u, v), 1);
+  const x = s < 0.0625 ? s / 0.0625 : 1 + (s - 0.0625) / 0.125;
+  const i = Math.min(Math.max(Math.floor(x), 0), 7);
+  const f = Math.min(Math.max(x - i, 0), 1);
+  const mean = (ENV_RADIAL[i] ?? 0) + ((ENV_RADIAL[i + 1] ?? 0) - (ENV_RADIAL[i] ?? 0)) * f;
+  const spread = (ENV_SPREAD[i] ?? 0) + ((ENV_SPREAD[i + 1] ?? 0) - (ENV_SPREAD[i] ?? 0)) * f;
+  return Math.min(Math.max(mean + 1.4142 * spread * Math.cos(Math.atan2(v, u) - 6.2832 * s), 0), 1);
+}
+
 export const ENV_GLSL = /* glsl */ `
 float envG(vec2 uv) {
   float s = min(length(uv), 1.0);
@@ -158,8 +172,9 @@ float envG(vec2 uv) {
 `;
 
 /** The goal-side glass panel's chart (RV-72) as fitted rules, not the mesh's own UVs (RV-99): U a unit every 213.3 uu
- *  from 6 at |x| 960 to |x| 1344, then every 160 uu; V up the face a line in z, within 0.03 of the chart from z 256 up;
- *  below that down to the bottom row (z 127), whose V rises with |x| as a smoothstep, within 0.005 */
+ *  from 6 at |x| 960 to |x| 1344, then every 160 uu; V up the face a line in z (within 0.045 of the mesh's UVs from z 256
+ *  up, about 0.1 of a hex tile: RV-115); below that down to the bottom row (z 127), whose V rises with |x| as a
+ *  smoothstep, within 0.005 */
 export const GOAL_SIDE_CHART = {
   u: { at: 960, value: 6, bend: 1344, inner: 213.33, outer: 160 },
   face: { v0: 1.293, perZ: -0.004873, from: 256 },
@@ -207,10 +222,10 @@ void main() {
     tile = vec2(3.0 * u, (7.0 / 3.0) * v);
   #endif
   #ifdef NET_SIDE_WALLS
-    // The goal net's flat side walls: the game's planar chart there, U along y (68.1 uu a tile), V down z (90.6 uu a
-    // tile), not the swept profile's carried on (RV-73)
+    // The goal net's flat side walls: the game's planar chart there, U = 0.004898 |y| - 25.7024, V = 1.21 - 0.004732 z
+    // (the swept profile's not carried on: RV-73, RV-110)
     vec3 n = normalize(vWorldNormal);
-    if (abs(n.x) > 0.97) tile = vec2(abs(vWorldPosition.z) / 68.1, -vWorldPosition.y / 90.6);
+    if (abs(n.x) > 0.97) tile = vec2(3.0 * (0.004898 * abs(vWorldPosition.z) - 25.7024), (7.0 / 3.0) * (1.21 - 0.004732 * vWorldPosition.y));
   #endif
   float g = profile32(packG, hexRadius(tile));
   // (cells under a few pixels: the tile's average)

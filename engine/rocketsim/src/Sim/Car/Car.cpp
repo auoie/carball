@@ -406,7 +406,11 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
 
 	btTransform hitboxOffsetTransform = btTransform();
 	hitboxOffsetTransform.setIdentity();
-	hitboxOffsetTransform.setOrigin(config.hitboxPosOffset * UU_TO_BT);
+	// RL PATCH: the child's origin as the game makes it (single precision: x 0.02 into PhysX, x 50 back, x 0.02 into
+	// Bullet: 0x14096c420, 0x14040ff70; the same as x 0.02 for the six presets, not for every value: RV-95)
+	auto gameLocal = [](float uu) { return ((uu * 0.02f) * 50.0f) * 0.02f; };
+	const Vec& hitboxOffset = config.hitboxPosOffset;
+	hitboxOffsetTransform.setOrigin(btVector3(gameLocal(hitboxOffset.x), gameLocal(hitboxOffset.y), gameLocal(hitboxOffset.z)));
 	_compoundShape.addChildShape(hitboxOffsetTransform, &_childHitboxShape);
 
 	btVector3 localInertia(0, 0, 0);

@@ -1,18 +1,16 @@
 // DFH Stadium's surroundings (notes/arena-surroundings.md, SUR-1..44): what's outside the cage. Built from the spec's
 // numbers (placements, measures, formulas, statistics) and rules; nothing traced from the game's meshes, no game
-// artwork (the user's rule: SUR-37..44's stand-ins). This part: the reflection capture's hotspots (SUR-33).
+// artwork (the user's rule: SUR-37..44's stand-ins). Here: the reflection capture's hotspots (SUR-33), the stands and the
+// structures over them (SUR-2..8, 12, 15, 16), the far layer (SUR-11, 22, 23); the crowd in stadiumCrowd.ts, the
+// screens, ads and props in stadiumProps.ts.
 import {
   AdditiveBlending,
   BackSide,
-  BoxGeometry,
   BufferGeometry,
   type Color,
   DoubleSide,
   Float32BufferAttribute,
   Group,
-  InstancedBufferAttribute,
-  InstancedMesh,
-  Matrix4,
   Mesh,
   NormalBlending,
   PlaneGeometry,
@@ -20,91 +18,122 @@ import {
   SphereGeometry,
   UniformsLib,
   UniformsUtils,
+  Vector2,
   Vector3,
 } from "three";
 import { GRASS_CUBE_AT } from "../grassCube";
 import { fullBright } from "../teamColors";
-import { seededRandom } from "./random";
 
 /** A glow seen from the capture point: its direction (az = atan2(y, x), el, degrees), its angular half sizes across and
- *  up (degrees), its distance (uu) */
+ *  up (degrees: atan(256 Scale3D.y / d) x atan(256 Scale3D.z / d)), its distance (uu), its roll about the view
+ *  (degrees); `clear`: unfogged, faded instead by elevation from 0 at `clear[0]` to 1 at `clear[1]` degrees */
 export interface Hotspot {
   readonly az: number;
   readonly el: number;
   readonly radius: readonly [number, number];
   readonly distance: number;
+  readonly tilt?: number;
+  readonly clear?: readonly [number, number];
 }
 
-/** CubeMap_HotSpot_Mat's glows (SUR-33: ten Circle_Sprites the game shows only to its cube capture), the ones our fog
- *  doesn't swallow (the +X horizon's at 150k, and HotSpot_Mat's at 490k, are fogged out in the game too): over the back
- *  (-X) two, over each end one, one each side of the open +X */
+/** CubeMap_HotSpot_Mat's glows (SUR-33, corrected: ellipses; ten Circle_Sprites the game shows only to its cube
+ *  capture): the +X horizon's (fogged only near the horizon: RV-120), two over the back (-X), one over each end, one
+ *  each side of the open +X. HotSpot_Mat's at 490k is fogged out in the game */
 export const HOTSPOTS: readonly Hotspot[] = [
-  { az: 180, el: 7, radius: [63, 63], distance: 25000 },
-  { az: 180, el: 7, radius: [30, 30], distance: 37000 },
-  { az: 107, el: 22, radius: [61, 27], distance: 14000 },
-  { az: -108, el: 26, radius: [50, 50], distance: 15000 },
+  { az: 2, el: 2, radius: [52.7, 30.4], distance: 150000, clear: [6, 18] },
+  { az: 180, el: 7, radius: [63.1, 33.3], distance: 25000 },
+  { az: 180, el: 7, radius: [6.1, 33.7], distance: 37000, tilt: 36 },
+  { az: 107, el: 22, radius: [60.8, 30.8], distance: 14000 },
+  { az: -108, el: 26, radius: [50.5, 22.0], distance: 15000 },
   { az: 35, el: 15, radius: [21, 21], distance: 15000 },
   { az: -35, el: 15, radius: [21, 21], distance: 15000 },
 ];
+/** The farthest a sprite is placed (inside the concourse's wall and the sky's dome; its angular size kept, its fog
+ *  its own distance's) */
+export const HOTSPOT_PLACE_MAX = 29000;
 /** Their colour: 8 (0.533, 0.686, 0.725) (clamped by the capture's 8 bits); alpha sat(8 FillFlare.G) */
 export const HOTSPOT_COLOR = [4.27, 5.49, 5.8] as const;
 /** The team hotspots (additive, 8 FillFlare.G FB(team)): low over each goal, 8k out */
 export const TEAM_HOTSPOTS: readonly (Hotspot & { readonly team: 0 | 1 })[] = [
-  { team: 0, az: -90, el: 9, radius: [27, 27], distance: 8000 },
-  { team: 1, az: 90, el: 8, radius: [24, 24], distance: 8000 },
+  { team: 0, az: -90, el: 9, radius: [26.9, 20.8], distance: 8087 },
+  { team: 1, az: 90, el: 8, radius: [23.5, 18.1], distance: 9421 },
 ];
 /** FillFlare's G by radius r = 0, 0.1, ... 0.9 (a statistic: SUR-41; 0 beyond) */
 export const FILL_FLARE_G = [1.0, 0.97, 0.91, 0.81, 0.67, 0.49, 0.31, 0.15, 0.04, 0.01];
 
 const vertexShader = /* glsl */ `
 varying vec2 vUv;
-#include <fog_pars_vertex>
+varying vec3 vWorld;
 void main() {
   vUv = uv;
-  vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-  gl_Position = projectionMatrix * mvPosition;
-  #include <fog_vertex>
+  vec4 world = modelMatrix * vec4(position, 1.0);
+  vWorld = world.xyz;
+  gl_Position = projectionMatrix * viewMatrix * world;
 }
 `;
 
+/** The sprite: FillFlare's G by radius; fogged by its own distance (the scene's linear fog, not where it's placed), or
+ *  for a `clear` one faded by elevation from the capture point */
 const fragmentShader = /* glsl */ `
 uniform vec3 colour;
 uniform float flare[10];
 uniform bool additive;
+uniform float distance;
+uniform vec2 clearEl;
+uniform vec3 from;
 varying vec2 vUv;
+varying vec3 vWorld;
 #include <fog_pars_fragment>
 void main() {
   float x = length(vUv - 0.5) * 20.0;
   int i = int(min(floor(x), 9.0));
   float g = x >= 10.0 ? 0.0 : mix(flare[i], i < 9 ? flare[i + 1] : 0.0, x - float(i));
-  if (additive) gl_FragColor = vec4(8.0 * g * colour, 1.0);
-  else gl_FragColor = vec4(colour, clamp(8.0 * g, 0.0, 1.0));
+  float clear = 1.0;
+  if (clearEl.y > clearEl.x) {
+    float el = degrees(asin(clamp(normalize(vWorld - from).y, -1.0, 1.0)));
+    clear = smoothstep(clearEl.x, clearEl.y, el);
+  }
+  if (additive) gl_FragColor = vec4(8.0 * g * colour * clear, 1.0);
+  else gl_FragColor = vec4(colour, clamp(8.0 * g, 0.0, 1.0) * clear);
   #include <colorspace_fragment>
-  #include <fog_fragment>
+  #ifdef USE_FOG
+    if (clearEl.y <= clearEl.x) gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor, smoothstep(fogNear, fogFar, distance));
+  #endif
 }
 `;
 
-/** A glow's sprite: a quad at `distance` from the capture point along (az, el), facing it, `radius` across and up */
+/** A glow's sprite: a quad along (az, el) from the capture point (at its distance, or HOTSPOT_PLACE_MAX if nearer),
+ *  facing it, `radius` across and up there, rolled by `tilt` */
 function hotspotMesh(spot: Hotspot, colour: readonly [number, number, number], additive: boolean): Mesh {
   const rad = Math.PI / 180;
   const [az, el] = [spot.az * rad, spot.el * rad];
   const [ax, ay] = [spot.radius[0] * rad, spot.radius[1] * rad];
+  const at = Math.min(spot.distance, HOTSPOT_PLACE_MAX);
+  // (the game's frame (x, y, z up) as Three's (x, z up, y))
+  const centre = new Vector3(GRASS_CUBE_AT.x, GRASS_CUBE_AT.z, GRASS_CUBE_AT.y);
   const material = new ShaderMaterial({
     vertexShader,
     fragmentShader,
-    uniforms: { ...UniformsUtils.clone(UniformsLib.fog), colour: { value: new Vector3(...colour) }, flare: { value: FILL_FLARE_G }, additive: { value: additive } },
+    uniforms: {
+      ...UniformsUtils.clone(UniformsLib.fog),
+      colour: { value: new Vector3(...colour) },
+      flare: { value: FILL_FLARE_G },
+      additive: { value: additive },
+      distance: { value: spot.distance },
+      clearEl: { value: new Vector2(...(spot.clear ?? [0, 0])) },
+      from: { value: centre },
+    },
     transparent: true,
     depthWrite: false,
     blending: additive ? AdditiveBlending : NormalBlending,
     side: DoubleSide,
-    fog: true,
+    fog: !spot.clear,
   });
-  const mesh = new Mesh(new PlaneGeometry(2 * spot.distance * Math.tan(ax), 2 * spot.distance * Math.tan(ay)), material);
-  // (the game's frame (x, y, z up) as Three's (x, z up, y))
-  const centre = new Vector3(GRASS_CUBE_AT.x, GRASS_CUBE_AT.z, GRASS_CUBE_AT.y);
+  const mesh = new Mesh(new PlaneGeometry(2 * at * Math.tan(ax), 2 * at * Math.tan(ay)), material);
   const dir = new Vector3(Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az));
-  mesh.position.copy(centre).addScaledVector(dir, spot.distance);
+  mesh.position.copy(centre).addScaledVector(dir, at);
   mesh.lookAt(centre);
+  if (spot.tilt) mesh.rotateZ(spot.tilt * rad);
   return mesh;
 }
 
@@ -141,30 +170,47 @@ export interface Tier {
 export const STANDS = {
   /** a card's centre over its row's tread */
   seat: 80,
-  /** a tier's parapet over its last tread; the upper tiers' front fascia under their first */
+  /** a tier's parapet over its last tread (the upper tiers': 100, the stands' top at their ends under 7k, RV-123); the
+   *  upper tiers' front fascia under their first */
   parapet: 150,
+  upperParapet: 100,
   fascia: 350,
   /** The lower bowl (az 27-171): the front wall from the inner radius up to its TV strip (SUR-17's placement), the four
-   *  front rows, the walkway and its step, the main rake, the back wall */
+   *  front rows, the walkway and its step, the main rake, the back wall; and the -X corner's raised section behind the
+   *  main rake (Crowd_01's third, az 137-153, the main rake there ending at r 17.45k) */
   lower: {
     az: [27, 171] as const,
     innerR: 11200,
     strip: { r: 12000, z: [512, 797] as const },
     front: { rows: 4, first: [12250, 948], last: [13000, 1119], growth: 1 } as Tier,
     main: { rows: 34, first: [13520, 1834], last: [21380, 3985], growth: 1.5 } as Tier,
+    third: { rows: 15, first: [18156, 3449], last: [22032, 4778], growth: 1 } as Tier,
+    thirdAz: [137, 153] as const,
+    mainToBesideThird: 17450,
   },
-  /** The upper tiers over each end and the -X corner (az 76-139): the mid tier (its TV strip, SUR-3's placement; its
-   *  front section and the back one behind a step), the top tier over it */
+  /** The upper tiers over each end (az 76-140): the mid tier (its TV strip, SUR-3's placement; its front section and the
+   *  back one behind a step), the top tier over it, to z 9.7k (26 rows) over the end's centre */
   upper: {
-    az: [76, 139] as const,
+    az: [76, 140] as const,
     strip: { r: 14750, z: [3160, 3360] as const },
     mid: { rows: 12, first: [15250, 3710], last: [17470, 4965], growth: 1 } as Tier,
     midBack: { rows: 10, first: [18130, 5656], last: [20220, 6949], growth: 1 } as Tier,
-    top: { rows: 21, first: [15415, 5958], last: [19116, 8975], growth: 1 } as Tier,
+    top: { rows: 26, first: [15415, 5958], last: [20041, 9729], growth: 1 } as Tier,
+  },
+  /** Where the tiers have seats and cards (RV-123, the cards' statistics by azimuth): the front rows not before the +X
+   *  ends' az 42 nor behind the goal (az 98-114); the main rake's first row out at r 17.9k at the +X ends (to az 36,
+   *  in by 42); the mid tier's front rows only its last 4 over the end's centre (az 94-118), under the top tier; the
+   *  top tier over az 86-129, all 26 rows over the centre (az 97.5-117.5), its first 11 elsewhere */
+  seating: {
+    frontAz: [[42, 98], [114, 171]] as const,
+    plusXCut: { r: 17900, until: 36, to: 42 },
+    midCentre: { az: [94, 118] as const, rows: 4 },
+    topAz: [86, 129] as const,
+    topFull: { az: [97.5, 117.5] as const, rows: 11 },
   },
   /** The back wall behind the stands, the concourse out to the outer wall (inside the camera's reach: 30k) */
   backR: 21500,
-  concourse: { r: [21500, 30000] as const, z: 500, wallTop: 8000 },
+  concourse: { r: [21500, 30000] as const, z: 500, wallTop: 8000, plaza: { az: [166, 172] as const, wallTop: 1300 } },
 } as const;
 
 /** The structures over the stands: each edge a low-order fit in t = (az - 110) / 70 (coefficients from t^0 up), fitted
@@ -173,7 +219,7 @@ export const STANDS = {
 export const STRUCTURES = {
   /** Stadium_Top, the roof's band (SUR-5): its inner edge high, its outer low (the low edge no lower than 1.3k) */
   roof: {
-    az: [45, 180] as const,
+    az: [45, 172] as const,
     rIn: [15391, 811, 6528, -922, 1607],
     rOut: [17440, 3148, 14606, -2063, -4894],
     zLo: [11369, -1432, -10847, 246],
@@ -197,9 +243,9 @@ export const STRUCTURES = {
     zLo: [9709, -450, -5250],
     zHi: [10434, -183, -4083],
   },
-  /** The steel trusses (Stadium_Supports, SUR-7): from the ground at r 25.6k (z 1.4k) up to the roof at r 15.2k (z
-   *  10.7k), every 10 degrees over the roof's span */
-  supports: { foot: [25600, 1400] as RZ, head: [15200, 10700] as RZ, every: 10, az: [45, 175] as const, width: 160 },
+  /** The steel trusses (Stadium_Supports, SUR-7): from the ground at r 25.6k (z 1.4k) up to the roof's inner edge, every
+   *  10 degrees over the roof's span */
+  supports: { foot: [25600, 1400] as RZ, every: 10, az: [45, 165] as const, width: 160 },
 } as const;
 
 /** A fit's value at az */
@@ -229,6 +275,37 @@ function treads(tier: Tier): RZ[] {
     [r - pitch / 2, z - STANDS.seat],
     [r + pitch / 2, z - STANDS.seat],
   ]);
+}
+
+export type TierName = "front" | "main" | "third" | "mid" | "midBack" | "top";
+
+/** The rows of a tier with seats and cards at `az`: [first, end) (STANDS.seating) */
+export function rowsAt(name: TierName, az: number): readonly [number, number] {
+  const { lower, upper, seating } = STANDS;
+  const within = (span: readonly [number, number]): boolean => az >= span[0] && az <= span[1];
+  const isLower = name === "front" || name === "main" || name === "third";
+  const tier = isLower ? lower[name] : upper[name];
+  if (!within(isLower ? lower.az : upper.az)) return [0, 0];
+  switch (name) {
+    case "front":
+      return seating.frontAz.some(within) ? [0, tier.rows] : [0, 0];
+    case "main": {
+      const rows = tierRows(tier);
+      const c = seating.plusXCut;
+      const cutR = az <= c.until ? c.r : az < c.to ? c.r + ((tier.first[0] - c.r) * (az - c.until)) / (c.to - c.until) : 0;
+      const first = rows.findIndex(([r]) => r >= cutR);
+      const end = within(lower.thirdAz) ? rows.filter(([r]) => r <= lower.mainToBesideThird).length : tier.rows;
+      return [Math.max(first, 0), end];
+    }
+    case "third":
+      return within(lower.thirdAz) ? [0, tier.rows] : [0, 0];
+    case "mid":
+      return within(seating.midCentre.az) ? [tier.rows - seating.midCentre.rows, tier.rows] : [0, tier.rows];
+    case "midBack":
+      return [0, tier.rows];
+    case "top":
+      return within(seating.topAz) ? [0, within(seating.topFull.az) ? tier.rows : seating.topFull.rows] : [0, 0];
+  }
 }
 
 /** Joins two runs of points with a flat then a riser (a walkway, a step) */
@@ -285,7 +362,7 @@ function sweep(from: number, to: number, steps: number, section: (az: number) =>
 
 /** An unlit surface in a seen colour, with a little smooth value noise (relative: concrete's 0.04 on its 0.433 albedo,
  *  about 9 %: SUR-38) */
-function seenMaterial(rgb: readonly [number, number, number], noise = 0.09): ShaderMaterial {
+export function seenMaterial(rgb: readonly [number, number, number], noise = 0.09): ShaderMaterial {
   return new ShaderMaterial({
     vertexShader: /* glsl */ `
       varying vec3 vWorld;
@@ -319,7 +396,7 @@ function seenMaterial(rgb: readonly [number, number, number], noise = 0.09): Sha
 }
 
 /** SUR-16: the TV strips, E = 0.5 (1 - (2 frac(2v) - 1)^2)(panels + 0.35 noise): light (0.8) and dark (0.07) panels in
- *  turn along them, a generic emblem on the dark ones (ours: no ad artwork) */
+ *  turn along both rows, a generic emblem on the dark ones (ours: no ad artwork); mean E 0.20 */
 function stripMaterial(): ShaderMaterial {
   return new ShaderMaterial({
     vertexShader: /* glsl */ `
@@ -331,10 +408,13 @@ function stripMaterial(): ShaderMaterial {
     fragmentShader: /* glsl */ `
       varying vec2 vUv;
       void main() {
+        // (two rows, v 0-0.5 and 0.5-1, light and dark panels in turn, the rows opposite: L D L D over D L D L; a dark
+        // panel's emblem at its middle, a quarter of it: RV-127b)
         float cell = vUv.x * 120.0;
-        float light = mod(floor(cell), 2.0) < 1.0 ? 0.8 : 0.07;
-        vec2 q = vec2(fract(cell) - 0.5, vUv.y - 0.5);
-        if (light < 0.5 && length(q * vec2(1.0, 2.0)) < 0.28) light = 0.8;
+        float row = floor(2.0 * vUv.y);
+        float light = mod(floor(cell) + row, 2.0) < 1.0 ? 0.8 : 0.07;
+        vec2 q = vec2(fract(cell), fract(2.0 * vUv.y)) - 0.5;
+        if (light < 0.5 && length(q) < 0.2821) light = 0.8;
         float v = 2.0 * fract(2.0 * vUv.y) - 1.0;
         float e = 0.5 * (1.0 - v * v) * (light + 0.35 * 0.225);
         gl_FragColor = vec4(vec3(e), 1.0);
@@ -373,8 +453,23 @@ function canopyMaterial(bright0: readonly [number, number, number], bright1: rea
 }
 
 /** SUR-12: the floodlight banks, E = (1 - y)^2 tri 16 max((0.5, 0.483, 0.381) - y, 0) sat(2 (D + 1/32)), y = |2v - 1|,
- *  tri = 1 - |2 frac(5v) - 1|: three rows of bulbs (v 0.3, 0.5, 0.7; the middle's peak (8, 7.7, 6.1)); D our bulb
- *  cells (11 % bright, 0.04 between: SUR-41). Warm white, not team-coloured */
+ *  tri = 1 - |2 frac(5v) - 1| (the middle row's peak (8, 7.7, 6.1)); D our bulbs, 11 % of the face bright (SUR-41),
+ *  0.04 between: one row of them along the middle (v 0.5, 0.122 tall, each 90 % of its 1/160 cell), where the formula
+ *  is strong, as the game's bright 11 % is where E passes 1 (RV-125: mean E (0.53, 0.51, 0.38), E > 1 on 11 %). Warm
+ *  white, not team-coloured */
+export const FLOODLIGHT = { cells: 160, rowHalf: 0.0611, bulb: 0.9, between: 0.04, rgb: [0.5, 0.48274, 0.38116] } as const;
+
+/** The floodlights' emissive at (u, v) on a bank (the shader's, for tests) */
+export function floodlightE(u: number, v: number): [number, number, number] {
+  const F = FLOODLIGHT;
+  const y = Math.abs(2 * v - 1);
+  const tri = 1 - Math.abs(2 * ((5 * v) % 1) - 1);
+  const f = (u * F.cells) % 1;
+  const d = Math.abs(v - 0.5) < F.rowHalf && Math.abs(f - 0.5) < F.bulb / 2 ? 1 : F.between;
+  const s = Math.min(Math.max(2 * (d + 1 / 32), 0), 1);
+  return F.rgb.map((c) => (1 - y) * (1 - y) * tri * 16 * Math.max(c - y, 0) * s) as [number, number, number];
+}
+
 function floodlightMaterial(): ShaderMaterial {
   return new ShaderMaterial({
     vertexShader: /* glsl */ `
@@ -388,9 +483,9 @@ function floodlightMaterial(): ShaderMaterial {
       void main() {
         float y = abs(2.0 * vUv.y - 1.0);
         float tri = 1.0 - abs(2.0 * fract(5.0 * vUv.y) - 1.0);
-        vec2 cell = fract(vec2(vUv.x * 160.0, vUv.y * 5.0)) - 0.5;
-        float d = length(cell * vec2(1.0, 1.6)) < 0.19 ? 1.0 : 0.04;
-        vec3 e = (1.0 - y) * (1.0 - y) * tri * 16.0 * max(vec3(0.5, 0.48274, 0.38116) - y, 0.0) * clamp(2.0 * (d + 1.0 / 32.0), 0.0, 1.0);
+        float f = fract(vUv.x * ${FLOODLIGHT.cells.toFixed(1)});
+        float d = abs(vUv.y - 0.5) < ${FLOODLIGHT.rowHalf} && abs(f - 0.5) < ${(FLOODLIGHT.bulb / 2).toFixed(3)} ? 1.0 : ${FLOODLIGHT.between};
+        vec3 e = (1.0 - y) * (1.0 - y) * tri * 16.0 * max(vec3(${FLOODLIGHT.rgb.join(", ")}) - y, 0.0) * clamp(2.0 * (d + 1.0 / 32.0), 0.0, 1.0);
         // (and the bank's own face, lightmapped: its total from the capture point 0.1 over the emissive mean)
         gl_FragColor = vec4(e + vec3(0.1, 0.09, 0.07), 1.0);
         #include <colorspace_fragment>
@@ -408,7 +503,7 @@ export function buildBowl(primary0: Color, primary1: Color): Group {
     mesh.name = name;
     group.add(mesh);
   };
-  const { lower, upper, concourse, backR, parapet, fascia, seat } = STANDS;
+  const { lower, upper, concourse, backR, parapet, upperParapet, fascia, seat } = STANDS;
   const seats = (): ShaderMaterial => seenMaterial(BOWL_COLOURS.seats);
   const concrete = (): ShaderMaterial => seenMaterial(BOWL_COLOURS.concrete);
   const fixed = (points: readonly RZ[]) => (): readonly RZ[] => points;
@@ -423,25 +518,56 @@ export function buildBowl(primary0: Color, primary1: Color): Group {
   add(sweep(az0, az1, 72, fixed([[L.strip.r, L.strip.z[0]], [L.strip.r, L.strip.z[1]]])), stripMaterial(), "bowl: lower strip");
   add(sweep(az0, az1, 72, fixed(stepTo([[L.strip.r, L.strip.z[1]]], stepTo(treads(L.front), treads(L.main))))), seats(), "bowl: lower tiers");
   add(sweep(az0, az1, 72, fixed([[back(L.main), tread(L.main)], [back(L.main), lowerTop], [backR, lowerTop], [backR, 0]])), concrete(), "bowl: lower back");
+  // The -X corner's raised section: up from the main rake where it ends (r 17.45k) to its rows, its parapet, its back
+  // down to the concourse
+  const mainRows = tierRows(L.main).filter(([r]) => r <= L.mainToBesideThird);
+  const mainEnd = mainRows.at(-1) ?? L.main.first;
+  const thirdPitch = (L.third.last[0] - L.third.first[0]) / (L.third.rows - 1);
+  const thirdTop = tread(L.third) + parapet;
+  add(
+    sweep(L.thirdAz[0], L.thirdAz[1], 16, fixed(stepTo([[mainEnd[0] + thirdPitch / 2, mainEnd[1] - seat]], [...treads(L.third), [back(L.third), thirdTop], [back(L.third), concourse.z]]))),
+    seats(),
+    "bowl: corner section",
+  );
   // The upper tiers: the mid tier's TV strip, its two sections, its underside back to the lower bowl's back; the top tier
   // over it (its fascia, rows, parapet; its underside along its rake)
   const U = upper;
-  const midTop = tread(U.midBack) + parapet;
-  const topEnd = back(U.top);
-  const topFront = (U.top.first[0] - (back(U.top) - U.top.last[0]));
+  const midTop = tread(U.midBack) + upperParapet;
+  const topPitch = (U.top.last[0] - U.top.first[0]) / (U.top.rows - 1);
+  const topFront = U.top.first[0] - topPitch / 2;
   const topLow = U.top.first[1] - seat - fascia;
-  const topTop = tread(U.top) + parapet;
+  // (the top tier's rows at az: its last row's tread and back; the rest of its section padded on its last point)
+  const topAt = (az: number): { rows: RZ[]; end: number; tread: number; top: number } => {
+    const n = rowsAt("top", az)[1];
+    const all = treads(U.top);
+    const rows = all.slice(0, 2 * n);
+    const last = rows.at(-1) ?? [topFront, topLow];
+    while (rows.length < all.length) rows.push(last);
+    return { rows, end: last[0], tread: last[1], top: last[1] + upperParapet };
+  };
+  const { topAz } = STANDS.seating;
   const u = (points: readonly RZ[], material: ShaderMaterial, name: string): void => {
     add(sweep(U.az[0], U.az[1], 32, fixed(points)), material, name);
   };
   u([[U.strip.r, U.strip.z[0]], [U.strip.r, U.strip.z[1]]], stripMaterial(), "bowl: mid strip");
   u([...stepTo([[U.strip.r, U.strip.z[1]]], stepTo(treads(U.mid), treads(U.midBack))), [back(U.midBack), midTop], [backR, midTop]], seats(), "bowl: mid tier");
   u([[U.strip.r, U.strip.z[0]], [backR, lowerTop]], concrete(), "bowl: mid underside");
-  u([[topFront, topLow], ...treads(U.top), [topEnd, topTop], [backR, topTop]], seats(), "bowl: top tier");
-  u([[topFront, topLow], [topEnd, tread(U.top) - fascia], [topEnd, tread(U.top)]], concrete(), "bowl: top underside");
-  u([[backR, lowerTop], [backR, topTop]], concrete(), "bowl: upper back");
-  // The concourse and the outer wall (round the back, the stands' ends)
-  add(sweep(az0, 180, 48, fixed([[concourse.r[0], concourse.z], [concourse.r[1], concourse.z], [concourse.r[1], concourse.wallTop]])), seenMaterial(BOWL_COLOURS.sidewalk, 0.1), "bowl: concourse");
+  add(sweep(topAz[0], topAz[1], 43, (az) => {
+    const t = topAt(az);
+    return [[topFront, topLow], ...t.rows, [t.end, t.top], [backR, t.top]];
+  }), seats(), "bowl: top tier");
+  add(sweep(topAz[0], topAz[1], 43, (az) => {
+    const t = topAt(az);
+    return [[topFront, topLow], [t.end, t.tread - fascia], [t.end, t.tread]];
+  }), concrete(), "bowl: top underside");
+  // (the back wall up to the top tier's parapet where it is, the mid tier's elsewhere)
+  add(sweep(U.az[0], U.az[1], 64, (az) => [[backR, lowerTop], [backR, rowsAt("top", az)[1] > 0 ? topAt(az).top : midTop]]), concrete(), "bowl: upper back");
+  // The concourse and the outer wall (round the back, the stands' ends; low over the -X plaza, RV-124)
+  const { plaza } = concourse;
+  add(sweep(az0, 180, 76, (az) => {
+    const f = Math.min(Math.max((az - plaza.az[0]) / (plaza.az[1] - plaza.az[0]), 0), 1);
+    return [[concourse.r[0], concourse.z], [concourse.r[1], concourse.z], [concourse.r[1], concourse.wallTop + (plaza.wallTop - concourse.wallTop) * f]];
+  }), seenMaterial(BOWL_COLOURS.sidewalk, 0.1), "bowl: concourse");
   // The roof's band (inner edge high, outer low), the canopy, the floodlight banks
   const { roof, canopy, lights } = STRUCTURES;
   add(sweep(roof.az[0], roof.az[1], 54, (az) => [
@@ -462,10 +588,11 @@ export function buildBowl(primary0: Color, primary1: Color): Group {
     [edgeAt(lights.rOut, az), edgeAt(lights.zLo, az)],
     [edgeAt(lights.rIn, az), edgeAt(lights.zHi, az)],
   ]), floodlightMaterial(), "bowl: floodlights");
-  // The trusses: thin ribs from the ground up to the roof
-  const { foot, head, every, az: span, width } = STRUCTURES.supports;
+  // The trusses: thin ribs from the ground up to the roof's inner edge (RV-128a)
+  const { foot, every, az: span, width } = STRUCTURES.supports;
   const ribs: number[] = [];
   for (let az: number = span[0]; az <= span[1]; az += every) {
+    const head: RZ = [edgeAt(roof.rIn, az), edgeAt(roof.zHi, az)];
     for (const sign of [1, -1]) {
       const a = (sign * az * Math.PI) / 180;
       const [c, s] = [Math.cos(a), Math.sin(a)];
@@ -478,360 +605,6 @@ export function buildBowl(primary0: Color, primary1: Color): Group {
   ribGeometry.setAttribute("position", new Float32BufferAttribute(ribs, 3));
   add(ribGeometry, seenMaterial(BOWL_COLOURS.steel, 0.02), "bowl: supports");
   return group;
-}
-
-// --- The crowd (SUR-26..31) ------------------------------------------------------------------------------------------
-
-/** The cards: 126 x 146.8 uu, 144 apart along a row, facing the centre; rows on the tiers (card centres, r and z):
- *  the lower bowl's 4 front rows and its main rake (az 27-171), the upper tiers' (az 76-139). No gaps but the open +X
- *  (|az| < 27) and the back's plaza (beyond 171); an aisle every 12 degrees */
-export const CROWD = {
-  card: [126, 146.8] as const,
-  pitch: 144,
-  aisle: { every: 12, width: 1.2 },
-  /** The stands' tiers the cards sit on (their rows: STANDS) */
-  tiers: [
-    { az: STANDS.lower.az, tier: STANDS.lower.front },
-    { az: STANDS.lower.az, tier: STANDS.lower.main },
-    { az: STANDS.upper.az, tier: STANDS.upper.mid },
-    { az: STANDS.upper.az, tier: STANDS.upper.midBack },
-    { az: STANDS.upper.az, tier: STANDS.upper.top },
-  ],
-  /** Baked light (a flat normal): 0.18 round most of the bowl, 0.48 on the +X ends (Crowd_03, az 27-72: sunlit) */
-  light: { base: 0.18, sunlit: 0.48, sunlitAz: [27, 72] as const },
-  /** CrowdSize (SUR-28, 29) and the bob (SUR-30: 48 Cheer, Cheer stuck at 0.25) */
-  size: 1.25,
-  bob: 12,
-} as const;
-
-/** The teams' secondaries (AV-2) */
-const SECONDARY = [
-  [0.5216, 0.8078, 0.902],
-  [0.902, 0.2353, 0.098],
-] as const;
-
-const crowdVertex = /* glsl */ `
-attribute vec3 card;
-attribute vec3 seat; // (UV1.x, UV1.y, light)
-uniform float time;
-uniform float crowdSize;
-uniform float bob;
-varying vec2 vUv;
-varying vec3 vCard;
-varying vec2 vSeat;
-varying float vTeam;
-void main() {
-  vUv = uv;
-  vCard = card;
-  vSeat = seat.yz;
-  // (each card's instance matrix: its seat, facing the centre)
-  vTeam = instanceMatrix[3].z < 0.0 ? 0.0 : 1.0;
-  // Presence: x = 0.5 (lum + b - 0.5) + 0.35 UV1.y + CrowdSize - 1.375; the card sinks 128 where x < 1/32 (SUR-28)
-  float lum = dot(card, vec3(0.3, 0.59, 0.11));
-  float x = 0.5 * (lum + card.b - 0.5) + 0.35 * seat.y + crowdSize - 1.375;
-  float sink = (1.0 - clamp(32.0 * x, 0.0, 1.0)) * 128.0;
-  float bobbing = bob * sin(4.66943 * (time * (card.r + 0.5) + seat.x));
-  gl_Position = projectionMatrix * viewMatrix * modelMatrix * instanceMatrix * vec4(position.x, position.y + bobbing - sink, 0.0, 1.0);
-}
-`;
-
-const crowdFragment = /* glsl */ `
-uniform vec3 primary0;
-uniform vec3 primary1;
-uniform vec3 secondary0;
-uniform vec3 secondary1;
-uniform vec3 bright0;
-uniform vec3 bright1;
-uniform vec3 brightS0;
-uniform vec3 brightS1;
-uniform float crowdSize;
-varying vec2 vUv;
-varying vec3 vCard;
-varying vec2 vSeat;
-varying float vTeam;
-void main() {
-  // The ellipse (SUR-27): q = 2 uv - 1, |q|^2 <= 0.9; shaded as a sphere facing the sky
-  vec2 q = 2.0 * vUv - 1.0;
-  float q2 = dot(q, q);
-  if (q2 > 0.9) discard;
-  float nz = sqrt(max(0.0, 1.0 - 0.767 * q2));
-  // The team rule (SUR-29)
-  vec3 rgb = vCard;
-  float p = clamp(32.0 * (0.912 * fract(2.19298 * (rgb.r + rgb.g)) + 0.35 * vSeat.x + crowdSize - 2.0), 0.0, 1.0);
-  float m = clamp(32.0 * (rgb.g - 0.75), 0.0, 1.0);
-  vec3 P = vTeam < 0.5 ? primary0 : primary1;
-  vec3 S = vTeam < 0.5 ? secondary0 : secondary1;
-  vec3 FP = vTeam < 0.5 ? bright0 : bright1;
-  vec3 FS = vTeam < 0.5 ? brightS0 : brightS1;
-  vec3 C = mix(mix(P, S, m), mix(FP, FS, m), rgb.b);
-  vec3 team = clamp(8.0 * clamp(C, 0.0425, 1.0), 0.0, 2.0);
-  vec3 neutral = 1.5 * (rgb + 0.25);
-  vec3 albedo = clamp(mix(neutral, team, p), 0.0, 2.0) * vUv.y;
-  // (baked light on the sphere normal, its directional lightmap lighting the top: 0.65 of the flat normal's on average,
-  // so the discs' means come to SUR-31's, 0.15 round the bowl and 0.2-0.3 on the sunlit ends)
-  gl_FragColor = vec4(albedo * vSeat.y * (0.3 + 0.5 * nz * nz), 1.0);
-  #include <colorspace_fragment>
-}
-`;
-
-/** The crowd: one instanced draw of every card; `update(seconds)` bobs them */
-export function buildCrowd(primary0: Color, primary1: Color, seed = 7): { mesh: InstancedMesh; update(seconds: number): void } {
-  const random = seededRandom(seed);
-  const seatings: Matrix4[] = [];
-  const cards: number[] = [];
-  const seats: number[] = [];
-  const { card, pitch, aisle, tiers, light } = CROWD;
-  for (const { az: span, tier } of tiers) {
-    for (const [r, z] of tierRows(tier)) {
-      const step = (pitch / r) * (180 / Math.PI);
-      for (const sign of [1, -1]) {
-        for (let az = span[0] + step / 2; az < span[1]; az += step) {
-          // (the aisles)
-          if (az % aisle.every < aisle.width) continue;
-          const a = (sign * az * Math.PI) / 180;
-          // (Three's frame: x, z up, the game's y; the card's right along the row, its face toward the centre)
-          seatings.push(new Matrix4().makeRotationY(-a - Math.PI / 2).setPosition(r * Math.cos(a), z, r * Math.sin(a)));
-          cards.push(random(), random(), random());
-          const sunlit = az >= light.sunlitAz[0] && az <= light.sunlitAz[1];
-          // UV1: x 1.19 - az/144 (the phase), y 1.0986 - 1.0994e-4 z (the height ramp)
-          seats.push(1.19 - (sign * az) / 144, 1.0986 - 1.0994e-4 * z, sunlit ? light.sunlit : light.base);
-        }
-      }
-    }
-  }
-  const geometry = new PlaneGeometry(card[0], card[1]);
-  geometry.setAttribute("card", new InstancedBufferAttribute(new Float32Array(cards), 3));
-  geometry.setAttribute("seat", new InstancedBufferAttribute(new Float32Array(seats), 3));
-  const v3 = (c: readonly number[]): Vector3 => new Vector3(c[0], c[1], c[2]);
-  const time = { value: 0 };
-  const material = new ShaderMaterial({
-    vertexShader: crowdVertex,
-    fragmentShader: crowdFragment,
-    uniforms: {
-      time,
-      crowdSize: { value: CROWD.size },
-      bob: { value: CROWD.bob },
-      primary0: { value: primary0 },
-      primary1: { value: primary1 },
-      secondary0: { value: v3(SECONDARY[0]) },
-      secondary1: { value: v3(SECONDARY[1]) },
-      bright0: { value: v3(fullBright([primary0.r, primary0.g, primary0.b])) },
-      bright1: { value: v3(fullBright([primary1.r, primary1.g, primary1.b])) },
-      brightS0: { value: v3(fullBright(SECONDARY[0])) },
-      brightS1: { value: v3(fullBright(SECONDARY[1])) },
-    },
-    side: DoubleSide,
-  });
-  const mesh = new InstancedMesh(geometry, material, seatings.length);
-  seatings.forEach((m, i) => {
-    mesh.setMatrixAt(i, m);
-  });
-  mesh.name = "crowd";
-  // (the bob above each card's seat)
-  mesh.userData["reach"] = CROWD.bob;
-  // (all round the camera)
-  mesh.frustumCulled = false;
-  return {
-    mesh,
-    update: (seconds: number) => {
-      time.value = seconds;
-    },
-  };
-}
-
-// --- Screens, ads, the near-field props (SUR-9, 10, 13, 17..19) -----------------------------------------------------
-
-/** A panel's placement (game frame): its centre, size (uu), and tilt down (degrees); it faces the arena's centre */
-interface Panel {
-  readonly at: readonly [number, number, number];
-  readonly size: readonly [number, number];
-  readonly tilt?: number;
-}
-
-export const PANELS = {
-  /** The big screens (Scoreboard_MIC): low over the back, high over the ends */
-  screens: [
-    { at: [-21851, 5448, 3670], size: [2279, 1152] },
-    { at: [-21851, -5448, 3670], size: [2279, 1152] },
-    { at: [-5765, 17700, 10260], size: [3038, 1536], tilt: 34 },
-    { at: [-5765, -17700, 10260], size: [3038, 1536], tilt: 34 },
-  ] as readonly Panel[],
-  /** The ads (2x1 and 4x1: the offline default, a dark panel and a small emblem: SUR-18) */
-  ads: [
-    { at: [18453, 13440, 6900], size: [5697, 2880] },
-    { at: [18453, -13440, 6900], size: [5317, 2688] },
-  ] as readonly Panel[],
-  billboards: [
-    { at: [12160, 19300, 5040], size: [2560, 640] },
-    { at: [12160, -19300, 5040], size: [2560, 640] },
-    { at: [-20600, 8600, 5104], size: [2560, 640] },
-    { at: [-20600, -8600, 5104], size: [2560, 640] },
-  ] as readonly Panel[],
-} as const;
-
-/** The near-field props (SUR-10): banner scaffolds (273 x 273 x 1049) behind the goals and beside the side walls,
- *  corner flags (2000 x 790, z 360 up) and the corners' arrow arrays (z 384-512) */
-export const PROPS = {
-  scaffolds: [[2048, 6144], [-2048, 6144], [2048, -6144], [-2048, -6144], [4736, 1024], [-4736, 1024], [4736, -1024], [-4736, -1024]] as readonly (readonly [number, number])[],
-  scaffold: [273, 1049] as const,
-  flags: [[3450, 4850], [-3450, 4850], [3450, -4850], [-3450, -4850]] as readonly (readonly [number, number])[],
-  flag: { size: [2000, 790] as const, z: 360 },
-  arrows: [[3312, 4352], [-3312, 4352], [3312, -4352], [-3312, -4352]] as readonly (readonly [number, number])[],
-  arrow: { z: [384, 512] as const, width: 600, behindWall: 5870 },
-} as const;
-
-const panelVertex = /* glsl */ `
-varying vec2 vUv;
-varying vec3 vWorld;
-void main() {
-  vUv = uv;
-  vec4 world = modelMatrix * vec4(position, 1.0);
-  vWorld = world.xyz;
-  gl_Position = projectionMatrix * viewMatrix * world;
-}
-`;
-
-/** SUR-17 and 18: D = 0.5 (1.1875 - (2v - 1)^4)(base + 0.35 noise), shown D (1 + L). A screen's base: lerp(0.125 + e C,
- *  logo) with C = 8/3 (FB + P) - 0.125 by the side and e = sat(32 (|2v - 1| - 0.75)) (team bars over the top and
- *  bottom eighths), our emblem (14 % of it, (0.67, 0.76, 0.85)); an ad's: 0.053 with a centred 0.59 emblem */
-const panelFragment = /* glsl */ `
-uniform bool screen;
-uniform float emblem;
-uniform vec3 primary0;
-uniform vec3 primary1;
-uniform vec3 bright0;
-uniform vec3 bright1;
-varying vec2 vUv;
-varying vec3 vWorld;
-void main() {
-  float v = 2.0 * vUv.y - 1.0;
-  vec3 base;
-  if (screen) {
-    float t = clamp(vWorld.z / 256.0 + 0.5, 0.0, 1.0);
-    vec3 C = (8.0 / 3.0) * (mix(bright0, bright1, t) + mix(primary0, primary1, t)) - 0.125;
-    float e = clamp(32.0 * (abs(v) - 0.75), 0.0, 1.0);
-    // (our emblem: a ring and a bar across it, in uv 0.09-0.93 x 0.35-0.65)
-    vec2 q = (vUv - vec2(0.51, 0.5)) / vec2(0.42, 0.15);
-    float ring = abs(length(q * vec2(2.8, 1.0)) - 0.75) < 0.16 ? 1.0 : 0.0;
-    float bar = abs(q.y) < 0.12 && abs(q.x) < 0.9 ? 1.0 : 0.0;
-    float logo = max(ring, bar);
-    base = mix(vec3(0.125) + e * C, vec3(0.67, 0.76, 0.85), logo);
-  } else {
-    vec2 q = (vUv - 0.5) * vec2(2.0, 1.0);
-    base = vec3(length(q) < emblem ? 0.59 : 0.053);
-  }
-  vec3 d = 0.5 * (1.1875 - v * v * v * v) * (base + 0.35 * 0.225);
-  gl_FragColor = vec4(d * 2.2, 1.0);
-  #include <colorspace_fragment>
-}
-`;
-
-/** SUR-19: the scaffolds' banners (Basic_Orange_Mat), the team's colour, T = P + (FB - P)/16, doubled and clamped at 1.5
- *  (blue (0.29, 1.03, 1.5), orange (1.5, 0.9, 0.27)); the corner flags the team's with a light stripe (SUR-43's stand-in;
- *  the game's flag art can't ship); the arrows pulse once a second */
-const propFragment = /* glsl */ `
-uniform vec3 colour;
-uniform float pulse;
-uniform bool stripe;
-uniform float time;
-varying vec2 vUv;
-varying vec3 vWorld;
-void main() {
-  float glow = pulse > 0.0 ? 0.5 * (1.0 + sin(6.2831853 * (time + pulse))) : 1.0;
-  // (an arrow's chevrons along it)
-  if (pulse > 0.0 && abs(fract(vUv.x * 4.0 + abs(vUv.y - 0.5)) - 0.5) > 0.2) discard;
-  vec3 c = colour;
-  if (stripe) c = abs(vUv.y - 0.5) < 0.12 ? vec3(0.85, 0.85, 0.8) : 0.6 * colour;
-  gl_FragColor = vec4(c * glow, 1.0);
-  #include <colorspace_fragment>
-}
-`;
-
-/** A panel facing the arena's centre (its normal level, tilted down by `tilt`) */
-function panelMesh(panel: Panel, material: ShaderMaterial): Mesh {
-  const mesh = new Mesh(new PlaneGeometry(panel.size[0], panel.size[1]), material);
-  const [x, y, z] = panel.at;
-  // (Three's frame: x, z up, the game's y)
-  mesh.position.set(x, z, y);
-  mesh.lookAt(0, z, 0);
-  if (panel.tilt) mesh.rotateX((-panel.tilt * Math.PI) / 180);
-  return mesh;
-}
-
-/** The screens, ads, billboards and near-field props; `update(seconds)` pulses the arrows */
-export function buildScreensAndProps(primary0: Color, primary1: Color): { group: Group; update(seconds: number): void } {
-  const group = new Group();
-  group.name = "stadium screens and props";
-  const b = (c: Color): Vector3 => new Vector3(...fullBright([c.r, c.g, c.b]));
-  const panelMaterial = (screen: boolean, emblem: number): ShaderMaterial =>
-    new ShaderMaterial({
-      vertexShader: panelVertex,
-      fragmentShader: panelFragment,
-      uniforms: {
-        screen: { value: screen },
-        emblem: { value: emblem },
-        primary0: { value: primary0 },
-        primary1: { value: primary1 },
-        bright0: { value: b(primary0) },
-        bright1: { value: b(primary1) },
-      },
-      side: DoubleSide,
-    });
-  const screenMaterial = panelMaterial(true, 0);
-  // (the emblems' radii for 11 % of a 2x1 ad and 21 % of a 4x1 billboard, in the panel's half-width units)
-  const adMaterial = panelMaterial(false, Math.sqrt((0.11 * 2) / Math.PI));
-  const billboardMaterial = panelMaterial(false, Math.sqrt((0.21 * 2) / Math.PI));
-  for (const s of PANELS.screens) group.add(panelMesh(s, screenMaterial));
-  for (const a of PANELS.ads) group.add(panelMesh(a, adMaterial));
-  for (const bb of PANELS.billboards) group.add(panelMesh(bb, billboardMaterial));
-  // The props: team-coloured by side (y < 0 blue)
-  const time = { value: 0 };
-  const teamColour = (c: Color): Vector3 => {
-    const f = b(c);
-    const t = [c.r + (f.x - c.r) / 16, c.g + (f.y - c.g) / 16, c.b + (f.z - c.b) / 16];
-    return new Vector3(...t.map((v) => Math.min(1.5, 2 * v)));
-  };
-  const propMaterial = (colour: Vector3, pulse = 0, stripe = false): ShaderMaterial =>
-    new ShaderMaterial({
-      vertexShader: panelVertex,
-      fragmentShader: propFragment,
-      uniforms: { colour: { value: colour }, pulse: { value: pulse }, stripe: { value: stripe }, time },
-      side: DoubleSide,
-    });
-  const metal = seenMaterial(BOWL_COLOURS.steel, 0.02);
-  const [w, h] = PROPS.scaffold;
-  PROPS.scaffolds.forEach(([x, y]) => {
-    const tower = new Mesh(new BoxGeometry(w, h, w), metal);
-    tower.position.set(x, h / 2, y);
-    const banner = new Mesh(new PlaneGeometry(w * 0.9, h * 0.6), propMaterial(teamColour(y < 0 ? primary0 : primary1)));
-    banner.position.set(x, h * 0.55, y - Math.sign(y) * (w / 2 + 2));
-    banner.lookAt(0, h * 0.55, 0);
-    group.add(tower, banner);
-  });
-  PROPS.flags.forEach(([x, y]) => {
-    const flag = new Mesh(new PlaneGeometry(PROPS.flag.size[0], PROPS.flag.size[1]), propMaterial(teamColour(y < 0 ? primary0 : primary1), 0, true));
-    flag.position.set(x, PROPS.flag.z + PROPS.flag.size[1] / 2, y);
-    flag.lookAt(0, PROPS.flag.z + PROPS.flag.size[1] / 2, 0);
-    group.add(flag);
-  });
-  PROPS.arrows.forEach(([x, y], k) => {
-    const [z0, z1] = PROPS.arrow.z;
-    const arrow = new Mesh(new PlaneGeometry(PROPS.arrow.width, z1 - z0), propMaterial(new Vector3(1.2, 1.1, 0.8), 0.25 * k + 0.001));
-    // (behind the corner's wall: the placement's point falls inside our wall's line, 5748 out along it; 5870 clears
-    // the corner's cut, |x| + |y| = 8064, by 150)
-    const r = Math.max(Math.hypot(x, y), PROPS.arrow.behindWall);
-    const a = Math.atan2(y, x);
-    arrow.position.set(r * Math.cos(a), (z0 + z1) / 2, r * Math.sin(a));
-    // (along the corner's cut, facing in)
-    arrow.lookAt(arrow.position.x - Math.sign(x), arrow.position.y, arrow.position.z - Math.sign(y));
-    group.add(arrow);
-  });
-  return {
-    group,
-    update: (seconds) => {
-      time.value = seconds;
-    },
-  };
 }
 
 // --- The far layer: the skyline, the city's glow, the horizon's fog band (SUR-11, 22, 23) -----------------------------
@@ -888,7 +661,8 @@ void main() {
       float lit = step(0.66, hash2(cell));
       vec2 f = fract(vec2(az / 0.18, el / 0.3));
       float pane = step(0.2, f.x) * step(f.x, 0.8) * step(0.25, f.y) * step(f.y, 0.85);
-      colour = vec3(0.022, 0.02, 0.018) + lit * pane * windows * 5.2;
+      // (lit panes 0.12 of the face: their mean the windows' (0.20, 0.17, 0.11), RV-127c)
+      colour = vec3(0.022, 0.02, 0.018) + lit * pane * windows * 7.3;
       alpha = 1.0;
     }
   }

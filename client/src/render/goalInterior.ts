@@ -2,24 +2,56 @@
 // opaque metal sheet but see-through and layered. On our goal floor (the collision's: flat, then the ramp): the frame's
 // strip across the goal line and its sides (Goal_STD_Frame's Frame_01_V2, opaque), the grate behind it and along the
 // ramp (Goal_STD_Glass[1], CrossHatched_Grate_TL), the hex glass on the ramp (Goal_STD_Glass[0]); 16 uu under it a second
-// glass (Goal_STD_Glass_Outer), the glows (Goal_STD_Glow, src/render/arena.ts), and dark metal under all (OOBFloor_Trim).
+// glass (Goal_STD_Glass_Outer), the glows (Goal_STD_Glow, src/render/arena.ts), and under all OOBFloor (RV-104), a hex
+// metal slope (Reflective_Floor_V2) seen through them.
 // The zones and charts are the meshes' (measured: their outlines and UVs); the grate's pattern is drawn, not the
 // game's texture: its square cells, 8 a texture tile, their holes 43 % of the area (measured), soft at the edges.
-import { BufferGeometry, DoubleSide, Float32BufferAttribute, Mesh, MeshBasicMaterial, ShaderMaterial, type Texture, UniformsLib, UniformsUtils, Vector3 } from "three";
+import { BufferGeometry, Color, DoubleSide, Float32BufferAttribute, Mesh, MeshBasicMaterial, ShaderMaterial, type Texture, UniformsLib, UniformsUtils, Vector3 } from "three";
 import { ENV_GLSL, ENV_RADIAL, ENV_SPREAD, PACK_G, PACK_G_MEAN } from "./gameSurfaces";
 import { GRASS_CUBE_BLUR_LOD } from "./grassCube";
+import { HexFloorMaterial } from "./stadiumField";
+import type { LightProfile } from "./stadiumFieldRules";
 
 /** The zones (|x|, |y| in uu): the hex glass on the ramp, the grate (behind the goal line's strip, and beside and under
  *  the glass along the ramp); the frame elsewhere */
 export const GOAL_GLASS = { x: 640, y0: 5344, y1: 5809 } as const;
 export const GOAL_GRATE = { x: 768, y0: 5264, y1: 5809 } as const;
-/** The lower glass (Goal_STD_Glass_Outer): this far under the top, over |x| 768, |y| 5264-5860 */
-export const GOAL_UNDER_GLASS = { depth: 16, x: 768, y0: 5264, y1: 5860 } as const;
-/** The dark metal under the goal (OOBFloor_Trim, DarkMetal_LessShine) */
-export const GOAL_BASE_Z = -20;
-/** Goal_STD_Frame's floor pieces: FrameTexture_PACK's mean R and G there (decoded, outside the stripes) and their baked
- *  light (the mesh's lightmap mean, facing up) */
-const FRAME = { r: 0.146, g: 0.158, light: [1.0209, 0.9177, 0.7189] } as const;
+/** The lower glass (Goal_STD_Glass_Outer): this far under the top, over |x| 768, |y| 5264-5860; its V across x 256 uu a
+ *  unit in mirrored 256 uu strips (RV-111) */
+export const GOAL_UNDER_GLASS = { depth: 16, x: 768, y0: 5264, y1: 5860, strip: 256 } as const;
+/** The opaque strips over the goal floor (RV-111): Goal_STD_Frame and Goal_STD_Trim across the front to |y| 5280 and
+ *  beside (|x| from 672) to 5344; AdvertStrip_Frame's bars, 12 wide, across at |y| 5338-5350 and along |x| 634-646
+ *  from 5264 to 5760 */
+export const GOAL_STRIPS = { front: 5280, sideX: 672, sideTo: 5344, across: [5338, 5350], along: { x: [634, 646], y: [5264, 5760] } } as const;
+
+/** What the goal floor's top layer is at |x|, |y| (the shader's zones, for tests) */
+export function goalFloorZone(ax: number, ay: number): "frame" | "glass" | "grate" {
+  const s = GOAL_STRIPS;
+  const strip = ay < s.front || (ax > s.sideX && ay < s.sideTo) || (ay >= s.across[0] && ay <= s.across[1]) || (ax >= s.along.x[0] && ax <= s.along.x[1] && ay >= s.along.y[0] && ay <= s.along.y[1]);
+  if (strip) return "frame";
+  if (ax <= GOAL_GLASS.x && ay >= GOAL_GLASS.y0 && ay <= GOAL_GLASS.y1) return "glass";
+  if (ax <= GOAL_GRATE.x && ay >= GOAL_GRATE.y0 && ay <= GOAL_GRATE.y1) return "grate";
+  return "frame";
+}
+/** OOBFloor under each goal (RV-104): a slope from |x| 768 at the goal line (|y| 5120, z -128) to |x| 896 at |y| 6144
+ *  (z 0), Reflective_Floor_V2 (H-3: its lines 2 P_team there), with near-black 45-degree bevels (0.05) up its sides to
+ *  |x| 896, z 0 */
+export const GOAL_BASE = { y0: 5120, y1: 6144, x0: 768, x1: 896, z0: -128, bevel: 0.05 } as const;
+/** OOBFloor's baked light along |y| (128 uu bins from the goal line; the static session's statistics, linear), the blue
+ *  goal's and the orange's */
+export const GOAL_BASE_LIGHT: readonly [LightProfile, LightProfile] = [
+  { axis: "|y|", start: 5120, bin: 128, rgb: [[0.045, 0.044, 0.037], [0.371, 0.335, 0.261], [0.883, 0.793, 0.616], [1.03, 0.925, 0.738], [0.821, 0.749, 0.608], [0.777, 0.709, 0.572], [1.017, 0.918, 0.742], [1.04, 0.934, 0.747]] },
+  { axis: "|y|", start: 5120, bin: 128, rgb: [[0.048, 0.05, 0.044], [0.348, 0.317, 0.246], [0.782, 0.698, 0.547], [0.942, 0.846, 0.67], [0.761, 0.69, 0.554], [0.695, 0.631, 0.507], [0.941, 0.844, 0.673], [1.018, 0.912, 0.728]] },
+];
+
+/** OOBFloor's height at |y| */
+export function goalBaseZ(y: number): number {
+  const { y0, y1, z0 } = GOAL_BASE;
+  return z0 * (1 - Math.min(Math.max((Math.abs(y) - y0) / (y1 - y0), 0), 1));
+}
+/** Goal_STD_Frame's floor pieces: FrameTexture_PACK's mean R and G there (decoded, outside the stripes), their baked
+ *  light (the mesh's lightmap mean, facing up) and H-4's tire-mark factor (its mean: RV-105b) */
+const FRAME = { r: 0.146, g: 0.158, light: [1.0209, 0.9177, 0.7189], tireMarks: 0.931 } as const;
 
 const fragmentShader = /* glsl */ `
 uniform samplerCube grassCube;
@@ -71,9 +103,17 @@ void main() {
   #ifdef UNDER
     // Goal_STD_Glass_Outer: glass only (its chart along y as the mesh's; across x the top glass's)
     if (ax > ${GOAL_UNDER_GLASS.x.toFixed(1)} || ay < ${GOAL_UNDER_GLASS.y0.toFixed(1)} || ay > ${GOAL_UNDER_GLASS.y1.toFixed(1)}) discard;
-    colour = glass(vec2(0.003424 * ay - 18.0243, -0.004896 * xy.x + 3.761), toCamera);
+    float strip = ax / ${GOAL_UNDER_GLASS.strip.toFixed(1)};
+    colour = glass(vec2(0.003424 * ay - 18.0243, 1.0 - abs(mod(strip, 2.0) - 1.0)), toCamera);
   #else
-    if (ax <= ${GOAL_GLASS.x.toFixed(1)} && ay >= ${GOAL_GLASS.y0.toFixed(1)} && ay <= ${GOAL_GLASS.y1.toFixed(1)}) {
+    // (the opaque strips: goalFloorZone)
+    bool strip = ay < ${GOAL_STRIPS.front.toFixed(1)} || (ax > ${GOAL_STRIPS.sideX.toFixed(1)} && ay < ${GOAL_STRIPS.sideTo.toFixed(1)})
+      || (ay >= ${GOAL_STRIPS.across[0].toFixed(1)} && ay <= ${GOAL_STRIPS.across[1].toFixed(1)})
+      || (ax >= ${GOAL_STRIPS.along.x[0].toFixed(1)} && ax <= ${GOAL_STRIPS.along.x[1].toFixed(1)} && ay >= ${GOAL_STRIPS.along.y[0].toFixed(1)} && ay <= ${GOAL_STRIPS.along.y[1].toFixed(1)});
+    if (strip) {
+      vec3 cube = textureLod(grassCube, vec3(-toCamera.x, toCamera.y, -toCamera.z), ${GRASS_CUBE_BLUR_LOD.toFixed(1)}).rgb;
+      colour = vec4(clamp(vec3(${FRAME.r}) + 4.0 * (0.125 + 0.625 * ${FRAME.g}) * cube, 0.0, 1.0) * frameLight * ${FRAME.tireMarks}, 1.0);
+    } else if (ax <= ${GOAL_GLASS.x.toFixed(1)} && ay >= ${GOAL_GLASS.y0.toFixed(1)} && ay <= ${GOAL_GLASS.y1.toFixed(1)}) {
       // Goal_STD_Glass[0]'s chart: u along y, v across x
       colour = glass(vec2(0.005172 * ay - 26.2292, -0.004896 * xy.x + 3.761), toCamera);
     } else if (ax <= ${GOAL_GRATE.x.toFixed(1)} && ay >= ${GOAL_GRATE.y0.toFixed(1)} && ay <= ${GOAL_GRATE.y1.toFixed(1)}) {
@@ -89,7 +129,7 @@ void main() {
     } else {
       // H-4's frame (off its stripes): sat(R + 4 (0.125 + 0.625 G) cube) x its baked light
       vec3 cube = textureLod(grassCube, vec3(-toCamera.x, toCamera.y, -toCamera.z), ${GRASS_CUBE_BLUR_LOD.toFixed(1)}).rgb;
-      colour = vec4(clamp(vec3(${FRAME.r}) + 4.0 * (0.125 + 0.625 * ${FRAME.g}) * cube, 0.0, 1.0) * frameLight, 1.0);
+      colour = vec4(clamp(vec3(${FRAME.r}) + 4.0 * (0.125 + 0.625 * ${FRAME.g}) * cube, 0.0, 1.0) * frameLight * ${FRAME.tireMarks}, 1.0);
     }
   #endif
   gl_FragColor = colour;
@@ -134,21 +174,41 @@ export class GoalFloorMaterial extends ShaderMaterial {
   }
 }
 
-/** Under each goal's floor (`floor`: its geometry, Three's frame): the lower glass (the floor 16 uu down) and the dark
- *  metal at z -20 over the goal's floor */
-export function goalUnderlayers(floor: BufferGeometry, cube: { value: Texture }): Mesh[] {
+/** Under each goal's floor (`floor`: its geometry, Three's frame): the lower glass (the floor 16 uu down), and OOBFloor
+ *  under it all, each goal's slope in its own light and the bevels beside them (`primaries`: the teams' linear
+ *  primaries) */
+export function goalUnderlayers(floor: BufferGeometry, cube: { value: Texture }, primaries: readonly [Color, Color]): Mesh[] {
   const under = new Mesh(floor.clone().translate(0, -GOAL_UNDER_GLASS.depth, 0), new GoalFloorMaterial(cube, true));
   under.renderOrder = 1;
   under.name = "goal under glass";
-  const base = new BufferGeometry();
-  const pos: number[] = [];
-  for (const sy of [-1, 1]) {
-    const [y0, y1] = [sy * 5120, sy * 6000];
-    // (Three's frame: x, up, the game's y)
-    pos.push(-893, GOAL_BASE_Z, y0, 893, GOAL_BASE_Z, y0, 893, GOAL_BASE_Z, y1, -893, GOAL_BASE_Z, y0, 893, GOAL_BASE_Z, y1, -893, GOAL_BASE_Z, y1);
-  }
-  base.setAttribute("position", new Float32BufferAttribute(pos, 3));
-  const dark = new Mesh(base, new MeshBasicMaterial({ color: 0x050506, side: DoubleSide }));
-  dark.name = "goal base";
-  return [under, dark];
+  const { y0, y1, x0, x1 } = GOAL_BASE;
+  // (Three's frame: x, up, the game's y; quads as two triangles)
+  const quad = (out: number[], a: number[], b: number[], c: number[], d: number[]): void => {
+    out.push(...a, ...b, ...c, ...a, ...c, ...d);
+  };
+  const edge = (y: number): number => x0 + ((x1 - x0) * (Math.abs(y) - y0)) / (y1 - y0);
+  const bevels: number[] = [];
+  const meshes = ([-1, 1] as const).map((sy, team) => {
+    const slope: number[] = [];
+    // (in 128 uu steps along y: the light's bins)
+    for (let y: number = y0; y < y1; y += 128) {
+      const [ya, yb] = [sy * y, sy * (y + 128)];
+      quad(slope, [-edge(ya), goalBaseZ(ya), ya], [edge(ya), goalBaseZ(ya), ya], [edge(yb), goalBaseZ(yb), yb], [-edge(yb), goalBaseZ(yb), yb]);
+      for (const sx of [-1, 1]) quad(bevels, [sx * edge(ya), goalBaseZ(ya), ya], [sx * x1, 0, ya], [sx * x1, 0, yb], [sx * edge(yb), goalBaseZ(yb), yb]);
+    }
+    const geometry = new BufferGeometry();
+    geometry.setAttribute("position", new Float32BufferAttribute(slope, 3));
+    const light = GOAL_BASE_LIGHT[team] ?? GOAL_BASE_LIGHT[0];
+    const material = new HexFloorMaterial(cube, primaries[0], primaries[1], light);
+    material.side = DoubleSide;
+    const mesh = new Mesh(geometry, material);
+    mesh.name = `goal base ${String(team)}`;
+    return mesh;
+  });
+  const bevelGeometry = new BufferGeometry();
+  bevelGeometry.setAttribute("position", new Float32BufferAttribute(bevels, 3));
+  // (linear: the working colour space)
+  const dark = new Mesh(bevelGeometry, new MeshBasicMaterial({ color: new Color().setScalar(GOAL_BASE.bevel), side: DoubleSide }));
+  dark.name = "goal base bevels";
+  return [under, ...meshes, dark];
 }

@@ -29,6 +29,33 @@ describe("arena mesh file", () => {
 });
 
 describe("World", () => {
+  it("demolishes on a supersonic hit, unless demolitions are off (an online client's prediction: a bump, RV-112)", () => {
+    const UPRIGHT = { forward: vec3(1, 0, 0), right: vec3(0, 1, 0), up: vec3(0, 0, 1) };
+    const ZERO = vec3(0, 0, 0);
+    const run = (demolitions: boolean): { demoed: boolean; victimSpeed: number } => {
+      const world = World.create(engine);
+      world.setDemolitions(demolitions);
+      const attacker = world.addCar(0, CarBody.Octane);
+      const victim = world.addCar(1, CarBody.Octane);
+      world.resetKickoff(3);
+      world.setKickoffCountdown(0);
+      world.setCar(attacker, { pos: vec3(-600, 0, 17), vel: vec3(2290, 0, 0), angVel: ZERO, rot: UPRIGHT, boost: 100 });
+      world.setCar(victim, { pos: vec3(0, 0, 17), vel: ZERO, angVel: ZERO, rot: UPRIGHT, boost: 0 });
+      let demoed = false;
+      for (let i = 0; i < 40; i++) {
+        world.setControls(attacker, { ...NO_CONTROLS, throttle: 1, boost: true });
+        world.step();
+        demoed ||= world.car(victim).demoed;
+      }
+      return { demoed, victimSpeed: length(world.car(victim).vel) };
+    };
+    expect(run(true).demoed).toBe(true);
+    const off = run(false);
+    expect(off.demoed).toBe(false);
+    // (bumped instead)
+    expect(off.victimSpeed).toBeGreaterThan(500);
+  });
+
   it("drives a car forward with throttle", () => {
     const world = World.create(engine);
     const id = world.addCar(0, CarBody.Octane);

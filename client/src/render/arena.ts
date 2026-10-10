@@ -39,7 +39,7 @@ import { type ArenaSurface, buildArenaSurface, floorOutline, mouthOutline, wallL
 import { addBallShadow } from "./ballShadow";
 import { cageGraph } from "./cage";
 import { CageBeams, shockWave } from "./cageBeams";
-import { type GoalSurface, buildGoalSurface } from "./goalSurface";
+import { type GoalSurface, buildGoalSurface, goalProfileU } from "./goalSurface";
 import { ForceFieldMaterial, GlowStripMaterial, HexGlassMaterial } from "./gameSurfaces";
 import { HexWallMaterial } from "./hexWalls";
 import { fullBright, linear } from "./teamColors";
@@ -199,12 +199,12 @@ export class ArenaView {
       color.copy(game ? GOAL_METAL : TEAM_COLORS[(positions[i + 1] ?? 0) < 0 ? 0 : 1]);
       colors.set([color.r, color.g, color.b], i);
     }
-    // The game's glass on the net: its tiles at UV0 x (3, 7/3), its U along the profile and V across the goal, about
-    // GOAL_GLASS_UV uu a unit (HEX-1, HEX-4; RV-67: ours has u across, v along the profile)
+    // The game's glass on the net: its tiles at UV0 x (3, 7/3), its U along the profile (the game's chart: goalProfileU,
+    // RV-110) and V across the goal, GOAL_GLASS_V uu a unit (HEX-1, HEX-4; RV-67: ours has u across, v along the profile)
     const glassTiles = new Float32Array(uvs.length);
     for (let i = 0; i < uvs.length; i += 2) {
-      glassTiles[i] = (3 * (uvs[i + 1] ?? 0)) / GOAL_GLASS_UV[0];
-      glassTiles[i + 1] = ((7 / 3) * (uvs[i] ?? 0)) / GOAL_GLASS_UV[1];
+      glassTiles[i] = 3 * goalProfileU(uvs[i + 1] ?? 0);
+      glassTiles[i + 1] = ((7 / 3) * (uvs[i] ?? 0)) / GOAL_GLASS_V;
     }
     // Swapping y and z mirrors the winding: two indices swapped per triangle keep it facing into the goal
     const geometry = (triangles: Uint32Array): BufferGeometry => {
@@ -240,7 +240,7 @@ export class ArenaView {
     const group = new Group();
     group.add(
       floor,
-      ...(game && cube ? goalUnderlayers(floorGeometry, cube) : []),
+      ...(game && cube ? goalUnderlayers(floorGeometry, cube, this.#teamColors) : []),
       net,
       new Mesh(geometry(goals.lip), new MeshBasicMaterial({ vertexColors: true, side: FrontSide })),
       new Mesh(geometry(goals.postBase), postMaterial),
@@ -283,9 +283,9 @@ export class ArenaView {
 
 /** The hexagons inside the goals: smaller, like a net (uu across) */
 const GOAL_NET_HEX = 180;
-/** The game's goal glass: uu per UV0 unit, U along the profile and V across the goal (HEX-4: the floor, back and roof
- *  192.3 (64.1 uu a tile, RV-73) and 204.2; the side walls their own planar chart: HexGlassMaterial's `net`) */
-const GOAL_GLASS_UV = [192.3, 204.2] as const;
+/** The game's goal glass: uu per UV0 unit across the goal (HEX-4: 204.2; U along the profile: goalSurface.ts
+ *  goalProfileU; the side walls their own planar chart: HexGlassMaterial's `net`) */
+const GOAL_GLASS_V = 204.2;
 /** The game's glass panel beside each goal mouth (Goal_STD_Glass: y = +-5124; RV-66, RV-72): its outline the field
  *  plan's (src/render/stadiumFieldRules.ts), its chart in the glass shader (`goalSide`) */
 const BACK_GLASS = { y: 5124 } as const;

@@ -242,6 +242,12 @@ export class World {
     this.#sim.setUnlimitedBoost(on);
   }
 
+  /** Demolitions on (the default: an authority, freeplay) or off (an online client's prediction: the server demolishes,
+   *  supersonic hits predicted as bumps: RV-112). */
+  setDemolitions(on: boolean): void {
+    this.#sim.setDemolitions(on);
+  }
+
   /** Ticks left of the kickoff countdown (cars get no input while it runs; a match server starts it). */
   kickoffCountdown(): number {
     return this.#sim.kickoffCountdown();

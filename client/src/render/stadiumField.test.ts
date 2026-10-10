@@ -8,8 +8,8 @@ import { describe, expect, it } from "vitest";
 import { ArenaView } from "./arena";
 import { floorOutline } from "./arenaSurface";
 import { GrassCube } from "./grassCube";
-import { FrameMaterial, GrassMaterial, HexFloorMaterial, MarkingMaterial, buildStadiumField } from "./stadiumField";
-import { FIELD_LIGHT, type FieldPlan, shippableFieldPlan } from "./stadiumFieldRules";
+import { FrameMaterial, GRASS_LIGHT, GrassMaterial, HexFloorMaterial, MarkingMaterial, TIRE_MARKS, buildStadiumField, grassReflection } from "./stadiumField";
+import { FIELD_LIGHT, FIELD_MEASURES, type FieldPlan, shippableFieldPlan } from "./stadiumFieldRules";
 import { nightTheme } from "./themes/night";
 import { stadiumTheme } from "./themes/stadium";
 
@@ -73,6 +73,13 @@ describe.each(plans)("the stadium's field, %s", (_name, plan) => {
   /** The piece on top at a point */
   const top = (x: number, y: number): string | undefined => layers.filter((r) => r.tris.some((t) => inTriangle(x, y, t))).at(-1)?.name;
 
+  it("takes no scene light: every piece baked-only, our shaders or unlit colours (RV-106)", () => {
+    for (const mesh of meshes.values()) {
+      const material = mesh.material as Material;
+      expect(material instanceof ShaderMaterial || material.type === "MeshBasicMaterial", mesh.name).toBe(true);
+    }
+  });
+
   it("its regions where the game's are (AV-5): the vent, the disc, the strips, the grass, the bays, the goal ends", () => {
     // (the raised pieces over them, the centre's trim and the vent's ring, aren't regions here)
     expect(top(0, 0)).toBe("vent grate");
@@ -101,7 +108,7 @@ describe.each(plans)("the stadium's field, %s", (_name, plan) => {
     expect(covered).toBeGreaterThan(5000);
   });
 
-  it("the markings: the strips 16 uu wide (AV-7; the hatch bars, single segments, 18-22), `across` 0 to 1 across", () => {
+  it("the markings: the strips 16 uu wide (AV-7; the hatch bars, single segments: 16.3 in the built plan, RV-103c, the traced plan's estimator reading 19.7-22.1), `across` 0 to 1 across", () => {
     const all = Object.values(plan.markings).flat();
     // (a strip: more than one segment)
     const strips = all.filter((m) => m.length > 5);
@@ -173,11 +180,77 @@ describe.skipIf(!local)("the field traced from the game's meshes (local)", () =>
 });
 
 describe("the field's materials and light", () => {
+  it("the frames carry H-4's tire-mark factor, each piece's mean (RV-105b)", () => {
+    for (const [piece, m] of Object.entries(TIRE_MARKS)) {
+      const material = new FrameMaterial(new GrassCube().uniform, new Color(), new Color(), piece as keyof typeof TIRE_MARKS);
+      expect(material.uniforms["tireMarks"]?.value, piece).toBe(m);
+      expect(m).toBeGreaterThan(0.88);
+      expect(m).toBeLessThan(0.94);
+    }
+  });
+
+  it("the grass's reflection is H-1's (RV-100): weak from above, stronger grazing", () => {
+    // (cube 0.5: 0.024 looking straight down, 0.098 at grazing; the old flat 0.75 (G0 + 1/3) 2/3 gave 0.130 at both)
+    expect(grassReflection(1, 0.5)).toBeCloseTo(0.0243, 4);
+    expect(grassReflection(0, 0.5)).toBeCloseTo(0.0981, 3);
+  });
+
+  it("the shipped plan's goal glows sit as the game's (RV-108)", () => {
+    const { glow } = FIELD_MEASURES;
+    const points = (flat: readonly number[]): [number, number, number][] =>
+      Array.from({ length: flat.length / 3 }, (_, k) => [flat[3 * k] ?? 0, flat[3 * k + 1] ?? 0, flat[3 * k + 2] ?? 0]);
+    const ribbons = shippableFieldPlan().goalGlow.map((r) => ({ attached: points(r.attached), free: points(r.free) }));
+    const onWall = (p: [number, number, number][]): boolean => p.every(([, y]) => Math.abs(y - glow.wallY) < 1e-6);
+    // The mouth ring: on the back wall's plane, up over the crossbar; its free edge in toward the opening
+    const ring = ribbons.find((r) => onWall(r.attached) && Math.max(...r.attached.map(([, , z]) => z)) > 600 && Math.max(...r.attached.map(([x]) => Math.abs(x))) < 950);
+    expect(ring).toBeDefined();
+    ring?.attached.forEach(([x, , z], k) => {
+      const [fx, , fz] = ring.free[k] ?? [0, 0, 0];
+      expect(Math.abs(fx)).toBeLessThanOrEqual(Math.abs(x) + 1e-6);
+      expect(fz).toBeLessThanOrEqual(z + 1e-6);
+    });
+    // The stepped outline: its free edge in the wall's plane, 128 above
+    const stepped = ribbons.find((r) => onWall(r.attached) && Math.max(...r.attached.map(([x]) => Math.abs(x))) === glow.stepped.to);
+    expect(stepped && onWall(stepped.free)).toBe(true);
+    stepped?.attached.forEach(([, , z], k) => {
+      expect((stepped.free[k]?.[2] ?? 0) - z).toBeCloseTo(glow.stepped.out, 6);
+    });
+    // Inside: the sides from y 5344, the front bands from 5281
+    const sides = ribbons.filter((r) => r.attached.every(([x]) => Math.abs(Math.abs(x) - glow.inside.x) < 1e-6));
+    expect(sides).toHaveLength(2);
+    for (const side of sides) expect(Math.min(...side.attached.map(([, y]) => y))).toBeCloseTo(glow.inside.front + glow.width, 6);
+    const fronts = ribbons.filter((r) => r.attached.every(([, , z]) => z === glow.inside.floorZ) || r.attached.every(([, , z]) => z === glow.inside.roofZ));
+    expect(fronts).toHaveLength(2);
+    for (const front of fronts) expect(Math.min(...front.attached.map(([, y]) => y))).toBeCloseTo(glow.inside.front, 6);
+  });
+
+  it("the centre's arcs lie on the disc, inside the raised trim, its E ring on the trim (RV-102)", () => {
+    const { centre, marking, trimLine } = FIELD_MEASURES;
+    expect(marking.arc.r + marking.width / 2).toBeLessThan(centre.disc);
+    expect(centre.disc).toBeLessThanOrEqual(centre.trim[0]);
+    expect(trimLine.rings[0]).toBeGreaterThan(centre.trim[0]);
+    expect(trimLine.rings[0]).toBeLessThan(centre.trim[1]);
+    expect(trimLine.rings[1]).toBeGreaterThan(centre.ventTrim[0]);
+    expect(trimLine.rings[1]).toBeLessThan(centre.ventTrim[1]);
+  });
+
+  it("the grass's light tables cover the grass (RV-105a: |x| to 3806, |y| 64-4830)", () => {
+    expect(GRASS_LIGHT.x0).toBeLessThanOrEqual(-3806);
+    expect(GRASS_LIGHT.x0 + GRASS_LIGHT.x.length * GRASS_LIGHT.step).toBeGreaterThanOrEqual(3806);
+    expect(GRASS_LIGHT.y0 + GRASS_LIGHT.y.length * GRASS_LIGHT.step).toBeGreaterThanOrEqual(4830);
+    // (the +x half lighter than the -x: 0.595 vs 0.512)
+    const half = (from: number, to: number): number => GRASS_LIGHT.x.slice(from, to).reduce((s, c) => s + c[0], 0) / (to - from);
+    expect(half(15, 30)).toBeGreaterThan(half(0, 15) + 0.05);
+  });
+
   it("only with the game's materials: the stadium has the field and not our old markings; other themes keep theirs", () => {
     const stadium = materials(new ArenaView(stadiumTheme()).root);
     expect(stadium.filter((m) => m instanceof GrassMaterial)).toHaveLength(1);
-    // (each piece its own baked light; the goal mouths Reflective_Floor_B)
-    expect(stadium.filter((m) => m instanceof HexFloorMaterial).map((m) => m.piece).sort()).toEqual(["disc", "goalEnd", "goalMouth", "hexPads", "hexSide"]);
+    // (each piece its own baked light; the goal mouths Reflective_Floor_B; the field's pieces by name, OOBFloor under
+    // each goal by its own profile: RV-104)
+    const hex = stadium.filter((m) => m instanceof HexFloorMaterial);
+    expect(hex.map((m) => m.piece).filter((p) => typeof p === "string").sort()).toEqual(["disc", "goalEnd", "goalMouth", "hexPads", "hexSide"]);
+    expect(hex.filter((m) => typeof m.piece !== "string")).toHaveLength(2);
     // (each marking mesh its own baked light: Goal_Lines brightest, Field_Side_Lines dimmest)
     const marks = stadium.filter((m): m is MarkingMaterial => m instanceof MarkingMaterial);
     expect(marks.map((m) => m.group).sort()).toEqual(["centre", "goal", "side"]);

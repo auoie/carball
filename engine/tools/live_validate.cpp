@@ -954,8 +954,17 @@ int main(int argc, char** argv) {
 		if (used != s.size()) throw std::invalid_argument(s);
 		return v;
 	};
-	auto toFloat = [&](const std::string& s) { return number(s, [](const std::string& t, size_t* u) { return std::stof(t, u); }); };
-	auto toInt = [&](const std::string& s) { return number(s, [](const std::string& t, size_t* u) { return std::stoi(t, u); }); };
+	// (and in range: a sensitivity a finite number >= 0, the jitter's count >= 0, the contacts' FROM <= TO: RV-117)
+	auto toFloat = [&](const std::string& s) {
+		float v = number(s, [](const std::string& t, size_t* u) { return std::stof(t, u); });
+		if (!std::isfinite(v) || v < 0) throw std::out_of_range(s);
+		return v;
+	};
+	auto toInt = [&](const std::string& s) {
+		int v = number(s, [](const std::string& t, size_t* u) { return std::stoi(t, u); });
+		if (v < 0) throw std::out_of_range(s);
+		return v;
+	};
 	auto toTick = [&](const std::string& s) {
 		if (s.empty() || s[0] == '-') throw std::invalid_argument(s);
 		return number(s, [](const std::string& t, size_t* u) { return std::stoull(t, u); });
@@ -972,6 +981,7 @@ int main(int argc, char** argv) {
 			size_t dash = r.find('-');
 			contactsFrom = toTick(r.substr(0, dash));
 			contactsTo = dash == std::string::npos ? contactsFrom : toTick(r.substr(dash + 1));
+			if (contactsTo < contactsFrom) throw std::out_of_range(r);
 		}
 		else if (a == "--air-sensitivity" && i + 1 < argc) sens.air = toFloat(argv[++i]);
 		else if (a == "--continuous") continuous = true;

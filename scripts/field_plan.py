@@ -364,7 +364,8 @@ def simplify3(p, tol):
 def glow_ribbons(name, group_has):
     """A glow mesh's ribbons (TrimLight_Glow: alpha 0.5 u^4, u = 1 at the edge it's attached to, 0 at its free edge):
     each piece's boundary edges where u is 1 chained into its attached edges, where u is 0 into its free edges, each
-    attached edge paired with the free edge nearest it (the same way round), both simplified in 3D"""
+    attached edge paired with the nearest free edge of the same connected piece (the same way round: across pieces the
+    stepped top's paired with the field-side ring, RV-108), both simplified in 3D"""
     (path,) = glob.glob(f"{MESHES}/*/{name}.obj")
     v, vt, faces, g = [], [], [], ""
     for line in open(path):
@@ -391,6 +392,21 @@ def glow_ribbons(name, group_has):
     for fi, _ in faces:
         for i in fi:
             pos[key(i)] = v[i]
+    # The connected pieces: faces joined by their shared vertices (union-find)
+    parent = {}
+
+    def find(k):
+        while parent.setdefault(k, k) != k:
+            parent[k] = parent[parent[k]]
+            k = parent[k]
+        return k
+
+    for fi, _ in faces:
+        first = find(key(fi[0]))
+        for i in fi[1:]:
+            other = find(key(i))
+            if other != first:
+                parent[other] = first
     kinds = {"attached": [], "free": []}
     for e, c in count.items():
         if c != 1:
@@ -419,7 +435,7 @@ def glow_ribbons(name, group_has):
                 prev, cur = cur, nxt[0]
                 seen.add(cur)
                 chain.append(cur)
-            out.append(np.array([pos[k] for k in chain]))
+            out.append((find(chain[0]), np.array([pos[k] for k in chain])))
         # (closed loops: no ends)
         for start in nbr:
             if start in seen:
@@ -434,15 +450,17 @@ def glow_ribbons(name, group_has):
                 seen.add(cur)
                 chain.append(cur)
             chain.append(start)
-            out.append(np.array([pos[k] for k in chain]))
+            out.append((find(chain[0]), np.array([pos[k] for k in chain])))
         return out
 
     attached, free = chains(kinds["attached"]), chains(kinds["free"])
-    segments = [(f[i], f[i + 1]) for f in free for i in range(len(f) - 1)]
+    segments = defaultdict(list)
+    for piece, f in free:
+        segments[piece] += [(f[i], f[i + 1]) for i in range(len(f) - 1)]
 
-    def nearest_free(p):
+    def nearest_free(p, piece):
         best, at = np.inf, p
-        for a, b in segments:
+        for a, b in segments[piece]:
             d = b - a
             t = np.clip(np.dot(p - a, d) / max(np.dot(d, d), 1e-12), 0, 1)
             q = a + t * d
@@ -453,9 +471,9 @@ def glow_ribbons(name, group_has):
 
     # each attached edge simplified, its free side the nearest point on any free edge from each of its points
     ribbons = []
-    for a in attached:
+    for piece, a in attached:
         pts = simplify3(a, 1.0)
-        across = [nearest_free(p) for p in pts]
+        across = [nearest_free(p, piece) for p in pts]
         ribbons.append((pts, np.array([q for q, _ in across]), float(np.median([d for _, d in across]))))
     return ribbons
 

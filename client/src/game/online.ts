@@ -174,6 +174,9 @@ export class Online {
     private readonly inputEnabled: () => boolean,
   ) {
     this.#world = world;
+    // (the server demolishes: the game's demolition is the authority's alone, a client sees it in the replicated
+    // demolish; predicted here a supersonic hit is a bump until the server's state and event say otherwise: RV-112)
+    world.setDemolitions(false);
     this.#renderer = renderer;
     this.#arena = arena;
     this.#input = input;
@@ -322,11 +325,22 @@ export class Online {
     return serverTick - (best?.offset ?? 0);
   }
 
+  /** Whether `car` is drawn demolished: the server's Demo event named it (until it respawns), or its replicated state
+   *  says so (a late joiner, an event for a car not here yet: the game replicates the demolish as state, RV-112); never
+   *  predicted (the world's demolitions are off) */
+  #drawnDemoed(id: number, car: CarState): boolean {
+    return this.#demolitions.demoed(id, car.spawnCount) || car.demoed;
+  }
+
   /** What a frame drew, for the goal replay (not while one plays: its frames must stay) */
   #recordFrame(frame: number): void {
     if (this.#replay) return;
     const cars = new Map<number, RecordedCar>();
-    for (const id of this.#world.carIds()) cars.set(id, recordCar(this.#world.car(id)));
+    // (each car demolished as drawn: the server's, RV-112)
+    for (const id of this.#world.carIds()) {
+      const car = this.#world.car(id);
+      cars.set(id, { ...recordCar(car), demoed: this.#drawnDemoed(id, car) });
+    }
     this.#recorder.record(frame, { cars, ball: this.#world.ball(), ballExploded: this.#world.ballExploded() });
   }
 
@@ -550,7 +564,7 @@ export class Online {
       error.decay(frameSeconds);
       const { boosting, supersonic } = state.current;
       // (demolished as the server says: RV-84)
-      const demoed = this.#demolitions.demoed(id, state.current.spawnCount);
+      const demoed = this.#drawnDemoed(id, state.current);
       const pos = error.applyPosition(state.position(alpha, this.#pos));
       const throttling = (id === this.#localCar ? this.#throttle : Math.abs(this.#world.carControls(id).throttle)) > 0;
       view.update(pos, error.applyRotation(state.rotation(alpha, this.#rot)), boosting, demoed, supersonic, frameSeconds, trailGround(state.current), throttling);
@@ -588,7 +602,7 @@ export class Online {
       const car = local.state.blended(alpha);
       const e = local.error.rotation;
       const rot = { forward: rotateRl(car.rot.forward, e), right: rotateRl(car.rot.right, e), up: rotateRl(car.rot.up, e) };
-      const demoed = this.#demolitions.demoed(this.#localCar, local.state.current.spawnCount);
+      const demoed = this.#drawnDemoed(this.#localCar, local.state.current);
       const drawnCar = { ...car, pos: add(car.pos, local.error.location), rot, demoed };
       const drawnBall = add(this.#ball.blended(alpha).pos, this.#ballError.location);
       // Demolished: the respawn cameras follow the spot picked (respawns wait after a goal: CAM-29)
@@ -608,7 +622,7 @@ export class Online {
       this.#audio.frame({
         // (the demolitions as drawn, the server's: the explosion's sound with its effect, RV-84)
         world: {
-          cars: new Map([...this.#cars].map(([id, entry]) => [id, { ...entry.state.current, demoed: this.#demolitions.demoed(id, entry.state.current.spawnCount) }])),
+          cars: new Map([...this.#cars].map(([id, entry]) => [id, { ...entry.state.current, demoed: this.#drawnDemoed(id, entry.state.current) }])),
           ball: this.#ball.current,
           pads,
         },

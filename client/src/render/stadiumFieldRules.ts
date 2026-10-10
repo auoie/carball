@@ -107,22 +107,32 @@ export const FIELD_MEASURES = {
   mouthFront: [[928, 4583], [850, 4462], [520, 4300], [260, 4260], [160, 4340], [0, 4350]] as readonly P2[],
   /** The mouth piece: |x| 928, to the back wall (y 5120), its back corners rounded r 270 about (928, 5120) */
   goalMouth: { x: 928, back: 5120, cornerR: 270 },
-  /** The centre: the disc (r 706.9; the vent's ring inside r 260), the trim's band r 712-737 (bent in over the strips'
-   *  ends to r 628 for |x| 146), the vent's trim ring r 260-284 */
-  centre: { disc: 706.9, hole: 260, trim: [712, 737] as const, trimNotch: { r: 628, half: 146 }, ventTrim: [260, 284] as const },
+  /** The centre (RV-102): the disc (r 746, its hole r 288, the arcs on it), the raised trim's band r 752-776 (bent in over
+   *  the strips' ends to r 628 for |x| 146), the vent's trim ring r 260-288 */
+  centre: { disc: 746, hole: 288, trim: [752, 776] as const, trimNotch: { r: 628, half: 146 }, ventTrim: [260, 288] as const },
   /** A centre-field strip's half width along y (and the halfway strip's along x): wide at the disc, 32 between, flared at
-   *  the goal end (to 233) or the wall (to 269) */
-  centreStrip: [[658, 110], [700, 155], [760, 100], [1000, 100], [1160, 32], [2660, 32], [2800, 95], [3060, 95], [3223, 233], [3326, 0]] as readonly P2[],
+   *  the goal end (to 233, its end flat at y 3326: RV-103d) or the wall (to 269) */
+  centreStrip: [[658, 110], [700, 155], [760, 100], [1000, 100], [1160, 32], [2660, 32], [2800, 95], [3060, 95], [3223, 233], [3326, 110]] as readonly P2[],
   halfway: [[659, 110], [700, 155], [760, 100], [1000, 100], [1160, 32], [2920, 32], [3080, 95], [3330, 105], [3514, 269], [3620, 160], [3700, 120], [3842, 110]] as readonly P2[],
   /** The seams: 32 uu round the regions, and between the grass's pieces */
   seam: 32,
   seams: [[[1190, 3238], [1555, 2873], [1570, 2600], [1700, 2470]], [[1990, 2190], [2160, 2064], [3330, 2064]]] as readonly (readonly P2[])[],
-  /** The glowing trim line round the panels: this far out from their edge, 9.2 wide; the centre trim's rings */
-  trimLine: { out: 17, width: 9.2, rings: [733, 280] as const, ringWidth: 9.4 },
+  /** The glowing trim line round the panels: this far out from their edge, 9.2 wide; the centre trim's E rings (r 764 on
+   *  the raised trim, 272 on the vent's: RV-102) */
+  trimLine: { out: 17, width: 9.2, rings: [764, 272] as const, ringWidth: 9.4 },
   /** The team-coloured lines on the strips: at |x| 67.5 (the halfway strip's |y|), 31 wide, along the wide sections */
   stripLines: { at: 67.5, width: 31, centre: [[700, 1000], [2860, 3230]] as const, halfway: [[700, 1000], [3080, 3480]] as const },
-  /** The markings: 16 wide, the panels' outlines 64 in; the centre's arcs r 714.25 over 21.7-68.3 degrees */
-  marking: { width: 16, hatch: 20, inset: 64, arc: { r: 714.25, from: 21.7, to: 68.3 } },
+  /** The markings: 16 wide (the hatch bars 16.3: RV-103c), the panels' outlines 64 in; the centre's arcs r 714.25,
+   *  ending where their 45-degree legs run on |y - x| = 441 (19.1-70.9 degrees: RV-103a), the +y leg to x 128 then
+   *  doubling back (to y 527.6, out to (96, 536), down to y 504), the +x leg to x 611.5 then the hook to (553, 32) */
+  marking: {
+    width: 16,
+    hatch: 16.3,
+    inset: 64,
+    arc: { r: 714.25, from: 19.1, to: 70.9, leg: 441 },
+    hookY: [[128, 527.6], [96, 536], [96, 504]] as readonly P2[],
+    hookX: { to: 611.5, tail: [[590, 64], [580, 48], [553, 32]] as readonly P2[] },
+  },
   /** A goal end's dashes (x 832, 31 long every 62 from y 3264, 17) and hatches (45 degrees, every 48: 11 along the back
    *  from (1232, 4736), 8 by the notch from (128, 3584)); its "=" marks */
   goalMarks: {
@@ -144,11 +154,24 @@ export const FIELD_MEASURES = {
       { from: [3384, 2200] as const, step: [0, 48] as const, bar: [56, 56] as const, count: 2 },
     ],
   },
-  /** The goals' glows (H-5, RV-77; the +y goal): 63 wide round the mouth (on the back wall's plane, y 5136, and on its
-   *  field side, y 5119, 51 out from the opening), along the mouth piece's front on the floor, and inside along the goal's
-   *  profile at |x| 735 (15 out); under the crossbar (z 639, |x| 704); the back wall's stepped outline (z 273 out to |x|
-   *  2048, up FF_Goal's line z = 1584 - |x|, z 721 over |x| 816), and low beside the goal */
-  glow: { width: 63, wallY: 5136, fieldY: 5119, out: 51, insideX: 735, insideOut: 15, crossbar: { z: 639, x: 704 } },
+  /** The goals' glows (H-5, RV-77, RV-108; the +y goal), 63 wide: round the mouth on the back wall's plane (y 5136), its
+   *  free edge in toward the opening, and a band along the floor (z 1 up); on its field side (y 5119, 51 out from the
+   *  opening); along the mouth piece's front on the floor; under the crossbar (z 639, |x| 704); the back wall's stepped
+   *  outline (z 272.8 out to |x| 2048, up z = 1591.5 - |x|, z 720.8 across the top), its free edge 128 out in the wall's
+   *  plane; low beside the goal; inside, its front bands across the floor (z -16) and the roof (z 656) from y 5281 back
+   *  to 5344 over |x| 672, rounding into the sides along the goal's profile at |x| 735 (15 out) from y 5344 */
+  glow: {
+    width: 63,
+    wallY: 5136,
+    fieldY: 5119,
+    out: 51,
+    crossbar: { z: 639, x: 704 },
+    stepped: { low: 272.8, top: 720.8, slant: 1591.5, to: 2048, out: 128 },
+    /** low beside the goal: from |x| 960 to 2048, 14 behind the back wall's face, rising from z 36 to 72, leaning back
+     *  116 and up 28 (named measures: RV-114's detector found the old copy of two traced points) */
+    beside: { x: [960, 2048], y: 5150, z: [36, 72], lean: [116, 28] },
+    inside: { x: 735, out: 15, front: 5281, frontX: 672, floorZ: -16, roofZ: 656 },
+  },
   /** The glass beside each goal (RV-72): (|x|, z) from (960, 127) to (1536, 127), up to 256, back to 1408, round via
    *  (1344, 265) onto FF_Goal's line z = 1584 - |x| and up it to |x| 960 */
   sideGlass: { x: [960, 1536] as const, bottom: 127, top: 256, roundTo: [1408, 1344, 265] as const, line: 1584 },
@@ -389,15 +412,14 @@ export function shippableFieldPlan(): FieldPlan {
   };
 }
 
-/** The centre's painted arc (AV-7): r 714.25 over 21.7-68.3 degrees, its hook toward +y (in along 45 degrees, then along
- *  y to y 504 at x 96) and toward +x (in along 45 degrees to x 590, along it to y 64, curving in to (553, 32)) */
+/** The centre's painted arc (AV-7, RV-103a): FIELD_MEASURES.marking's arc, legs and hooks */
 function centreArcMarking(): P2[] {
-  const { r, from, to } = FIELD_MEASURES.marking.arc;
+  const m = FIELD_MEASURES.marking;
+  const { r, from, to, leg } = m.arc;
   const arc = arcPoints(r, from, to);
-  const start = arc[0] ?? [r, 0];
-  const end = arc.at(-1) ?? [0, r];
-  const toX: P2[] = [[553, 32], [580, 48], [590, 64], [590, start[1] - (start[0] - 590)]];
-  const toY: P2[] = [[end[0] - (end[0] - 128), end[1] - (end[0] - 128)], [96, 536], [96, 504]];
+  // (the legs along 45 degrees: the +x one on x - y = 441 in to x 611.5, the +y one on y - x = 441 in to x 128)
+  const toX: P2[] = [...[...m.hookX.tail].reverse(), [m.hookX.to, m.hookX.to - leg]];
+  const toY: P2[] = [[128, 128 + leg], ...m.hookY];
   return [...toX, ...arc, ...toY];
 }
 
@@ -441,10 +463,15 @@ function goalGlowRibbons(): GlowRibbon[] {
     // (pointing away from the opening's centre (0, 300))
     return n[0] * p[0] + n[1] * (p[1] - 300) >= 0 ? n : [-n[0], -n[1]];
   });
-  // Round the opening on the back wall's plane: out 63
+  // Round the opening on the back wall's plane: its free edge 63 in toward the opening; along the floor, a band up
   push(
     whole.map(([x, z]): P3 => [x, g.wallY, z]),
-    whole.map(([x, z], k): P3 => [x + (outward[k]?.[0] ?? 0) * g.width, g.wallY, z + (outward[k]?.[1] ?? 0) * g.width]),
+    whole.map(([x, z], k): P3 => [x - (outward[k]?.[0] ?? 0) * g.width, g.wallY, Math.max(0, z - (outward[k]?.[1] ?? 0) * g.width)]),
+  );
+  const postX = (firstHalf?.[0] ?? 893) - g.width;
+  push(
+    [[-postX, g.wallY, 1], [postX, g.wallY, 1]],
+    [[-postX, g.wallY, 1 + g.width], [postX, g.wallY, 1 + g.width]],
   );
   // On its field side, 51 out from the opening: toward the field
   push(
@@ -463,50 +490,65 @@ function goalGlowRibbons(): GlowRibbon[] {
     frontWhole.map(([x, y]): P3 => [x, y, 1]),
     frontWhole.map(([x, y]): P3 => [x, y, 1 + g.width]),
   );
-  // The back wall's stepped outline: z 273 out to |x| 2048, up FF_Goal's line, z 721 across the middle
-  const step = (x: number): P3 => [x, g.wallY, Math.min(721, Math.max(273, 1584 - Math.abs(x)))];
-  const stepX = [-2048, -1360, -1311, -863, -816, 816, 863, 1311, 1360, 2048];
-  const freeOf = ([x, y, z]: P3): P3 => {
-    // (the low parts' sheets up 128; the top's toward the field and down; the slant's between)
-    const top = (z - 273) / (721 - 273);
-    return [x, y - 80 * top, z + 128 * (1 - top) - 34 * top];
-  };
-  const stepped = stepX.map(step);
-  push(stepped, stepped.map(freeOf));
+  // The back wall's stepped outline: low out to |x| 2048, up the slant, across the top; its free edge 128 out in the
+  // wall's plane (mitred: up from the low and top parts, out along the slant's normal)
+  const st = g.stepped;
+  const corner = [st.slant - st.low, st.slant - st.top];
+  const mitre = st.out * (Math.SQRT2 - 1);
+  const attachedSteps: P3[] = [];
+  const freeSteps: P3[] = [];
+  for (const [x, z, dx] of [[-st.to, st.low, 0], [-(corner[0] ?? 0), st.low, -mitre], [-(corner[1] ?? 0), st.top, -mitre], [corner[1] ?? 0, st.top, mitre], [corner[0] ?? 0, st.low, mitre], [st.to, st.low, 0]] as const) {
+    attachedSteps.push([x, g.wallY, z]);
+    // (at the slant's corners the free edge's lines meet 128 (sqrt 2 - 1) further out)
+    freeSteps.push([x + dx, g.wallY, z + st.out]);
+  }
+  push(attachedSteps, freeSteps);
   // Low beside the goal, leaning back
+  const bs = g.beside;
   for (const s of [-1, 1]) {
     push(
-      [[s * 2048, 5149, 73], [s * 960, 5152, 35]],
-      [[s * 2048, 5149 + 116, 73 + 28], [s * 960, 5152 + 116, 35 + 28]],
+      [[s * bs.x[1], bs.y, bs.z[1]], [s * bs.x[0], bs.y, bs.z[0]]],
+      [[s * bs.x[1], bs.y + bs.lean[0], bs.z[1] + bs.lean[1]], [s * bs.x[0], bs.y + bs.lean[0], bs.z[0] + bs.lean[1]]],
     );
   }
-  // Inside: along the goal's profile at |x| 735 (15 out into the net), 63 toward the centre; and across the floor's and
-  // the roof's front edges
+  // Inside: along the goal's profile at |x| 735 (15 out into the net), 63 toward the centre, from y 5344; and the front
+  // bands across the floor and the roof, from y 5281 back to 5344 over |x| 672, rounding (r 63) into the sides
+  const i = g.inside;
+  const sideFrom = i.front + g.width;
   const profile = goalPath().map(([behind, z]): P2 => [5120 + behind, z]);
-  const outProfile = profile.map(([y, z], k): P2 => {
-    const a = profile[k - 1] ?? [y, z];
-    const b = profile[k + 1] ?? [y, z];
-    const [dy, dz] = [b[0] - a[0], b[1] - a[1]];
-    const l = Math.hypot(dy, dz) || 1;
-    // (the profile runs from the floor round the back to the roof: its right normal points out of the goal)
-    return [y + (dz / l) * g.insideOut, z - (dy / l) * g.insideOut];
-  });
-  for (const s of [-1, 1]) {
+  const outProfile = profile
+    .map(([y, z], k): P2 => {
+      const a = profile[k - 1] ?? [y, z];
+      const b = profile[k + 1] ?? [y, z];
+      const [dy, dz] = [b[0] - a[0], b[1] - a[1]];
+      const l = Math.hypot(dy, dz) || 1;
+      // (the profile runs from the floor round the back to the roof: its right normal points out of the goal)
+      return [y + (dz / l) * i.out, z - (dy / l) * i.out];
+    })
+    .filter(([y]) => y >= sideFrom);
+  const sides: P2[] = [[sideFrom, i.floorZ], ...outProfile, [sideFrom, i.roofZ]];
+  for (const sx of [-1, 1]) {
     push(
-      outProfile.map(([y, z]): P3 => [s * g.insideX, y, z]),
-      outProfile.map(([y, z]): P3 => [s * (g.insideX - g.width), y, z]),
+      sides.map(([y, z]): P3 => [sx * i.x, y, z]),
+      sides.map(([y, z]): P3 => [sx * (i.x - g.width), y, z]),
     );
   }
-  const floorFront = outProfile[0] ?? [5281, -16];
-  const roofFront = outProfile.at(-1) ?? [5286, 656];
-  push(
-    [[-g.insideX, floorFront[0], floorFront[1]], [g.insideX, floorFront[0], floorFront[1]]],
-    [[-g.insideX, floorFront[0] + g.width, floorFront[1]], [g.insideX, floorFront[0] + g.width, floorFront[1]]],
-  );
-  push(
-    [[-g.insideX, roofFront[0], roofFront[1]], [g.insideX, roofFront[0], roofFront[1]]],
-    [[-g.insideX, roofFront[0] + g.width, roofFront[1]], [g.insideX, roofFront[0] + g.width, roofFront[1]]],
-  );
+  for (const z of [i.floorZ, i.roofZ]) {
+    const attached: P3[] = [];
+    const free: P3[] = [];
+    // (the left corner's arc, the straight front, the right corner's arc: the free edge the arcs' centres)
+    for (let k = 0; k <= 4; k++) {
+      const a = (Math.PI / 2) * (k / 4);
+      attached.push([-(i.frontX + g.width * Math.cos(a)), sideFrom - g.width * Math.sin(a), z]);
+      free.push([-i.frontX, sideFrom, z]);
+    }
+    for (let k = 4; k >= 0; k--) {
+      const a = (Math.PI / 2) * (k / 4);
+      attached.push([i.frontX + g.width * Math.cos(a), sideFrom - g.width * Math.sin(a), z]);
+      free.push([i.frontX, sideFrom, z]);
+    }
+    push(attached, free);
+  }
   return ribbons;
 }
 

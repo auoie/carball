@@ -4,7 +4,9 @@
 // teams' primaries (AV-2). Values only: the look is built in code.
 import { BackSide, Color, DirectionalLight, Fog, Group, HemisphereLight, Mesh, ShaderMaterial, SphereGeometry } from "three";
 import { TEAM_PRIMARY_LINEAR, linear } from "../teamColors";
-import { buildBowl, buildCaptureHotspots, buildCrowd, buildFarLayer, buildScreensAndProps } from "./stadiumSurroundings";
+import { buildCrowd } from "./stadiumCrowd";
+import { buildScreensAndProps } from "./stadiumProps";
+import { buildBowl, buildCaptureHotspots, buildFarLayer } from "./stadiumSurroundings";
 import type { Theme } from "./theme";
 
 /** SkyDome_MAT (H-10): the zenith, the warm horizon added as q^4 (q = sat(2 (v - 0.5)), v 0 at the zenith, 1 at the
@@ -14,6 +16,14 @@ import type { Theme } from "./theme";
 const SKY_ZENITH = [0.017, 0.043, 0.0546] as const;
 const SKY_HORIZON_ADD = [1.479, 1.106, 0.476] as const;
 const SKY_HORIZON = [1.496, 1.149, 0.531] as const;
+
+/** The dome's v and q at an elevation in degrees (the shader's, for tests: RV-79) */
+export function skyVQ(elevation: number): { v: number; q: number } {
+  const e = (Math.max(elevation, 0) * Math.PI) / 180;
+  const phi = Math.atan2(Math.sin(e) * (128 / 76.8), Math.cos(e));
+  const v = Math.min(Math.max(1 - phi / (Math.PI / 2), 0), 1);
+  return { v, q: Math.min(Math.max(2 * (v - 0.5), 0), 1) };
+}
 
 const skyVertex = /* glsl */ `
 varying vec3 vDirection;

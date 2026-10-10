@@ -239,6 +239,14 @@ public:
 				car->_internalState.boost = RLConst::BOOST_MAX;
 	}
 
+	// Demolitions on (the authority: the server, freeplay) or off (an online client's prediction: the game demolishes on
+	// the authority only, a client learns of it from the replicated demolish; supersonic hits there are bumps: RV-112)
+	void SetDemolitions(bool on) {
+		MutatorConfig config = _arena->GetMutatorConfig();
+		config.demoMode = on ? DemoMode::NORMAL : DemoMode::DISABLED;
+		_arena->SetMutatorConfig(config);
+	}
+
 	// Kickoff countdown in ticks (cars get no input while it runs; the server sets it in matches)
 	uint32_t KickoffCountdown() { return _arena->kickoffCountdownTicks; }
 	void SetKickoffCountdown(uint32_t ticks) { _arena->kickoffCountdownTicks = ticks; }
@@ -508,6 +516,7 @@ EMSCRIPTEN_BINDINGS(rlengine) {
 		.function("resetBoostPads", &Sim::ResetBoostPads)
 		.function("carLastBallTouchTick", &Sim::CarLastBallTouchTick)
 		.function("setUnlimitedBoost", &Sim::SetUnlimitedBoost)
+		.function("setDemolitions", &Sim::SetDemolitions)
 		.function("kickoffCountdown", &Sim::KickoffCountdown)
 		.function("setKickoffCountdown", &Sim::SetKickoffCountdown)
 		.function("tickCount", &Sim::TickCount)

@@ -3,7 +3,7 @@
 import { Group } from "three";
 import { describe, expect, it } from "vitest";
 import { vec3 } from "../math/vec";
-import { DEMOLITION, Demolition, HUSK_SECONDS, type HuskKind, launchHusk, stepHusk, traceWorld } from "./demolition";
+import { DEMOLITION, Demolition, HUSK_SECONDS, type HuskKind, boomMaterial, launchHusk, stepHusk, traceWorld } from "./demolition";
 import { Particles } from "./particles";
 
 /** A seeded generator (mulberry32) */
@@ -150,5 +150,16 @@ describe("the demolition's soft particles (RV-86)", () => {
     expect(depth("demolition smoke")).toBe(255);
     // (the embers' Sparks_MAT has no depth fade)
     expect(depth("demolition embers")).toBeUndefined();
+  });
+});
+
+describe("BOOM!", () => {
+  it("is a soft particle as Explosion_MAT is: fading over 63.75 uu where the floor is just behind it (RV-113)", () => {
+    const material = boomMaterial(null);
+    const shader = { vertexShader: "void main() {\n#include <fog_vertex>\n}", fragmentShader: "void main() {\n#include <opaque_fragment>\n}" };
+    material.onBeforeCompile(shader as never, null as never);
+    expect(shader.vertexShader).toContain("vSoftWorld = (inverse(viewMatrix) * mvPosition).xyz;\n#include <fog_vertex>");
+    expect(shader.fragmentShader).toContain("/ 63.75, 0.0, 1.0)");
+    expect(shader.fragmentShader.indexOf("diffuseColor.a *=")).toBeLessThan(shader.fragmentShader.indexOf("#include <opaque_fragment>"));
   });
 });

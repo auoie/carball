@@ -245,6 +245,8 @@ const BOOM = {
   ] as const,
   alpha: [0.728, 0.81, 0.838, 0.854, 0.849, 0.836, 0.563, 0.21, 0],
   heat: curve([0, 0.35], [6, 1]),
+  /** A soft particle (Explosion_MAT, its DepthBias 0.75: 63.75 uu), fading where the floor is just behind it (RV-113) */
+  softDepth: 63.75,
 } as const;
 
 // --- the husks ---
@@ -439,6 +441,31 @@ interface Source {
 
 let boomTexture: CanvasTexture | null | undefined;
 
+/** The sprite's material: soft against the floor as the particles are (src/render/particles.ts: the scene behind taken as
+ *  the floor, Three's y = 0; the fade in view depth over BOOM.softDepth) */
+export function boomMaterial(texture: CanvasTexture | null): SpriteMaterial {
+  const material = new SpriteMaterial({ map: texture, transparent: true, depthWrite: false });
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = `varying vec3 vSoftWorld;\n${shader.vertexShader.replace(
+      "#include <fog_vertex>",
+      "vSoftWorld = (inverse(viewMatrix) * mvPosition).xyz;\n#include <fog_vertex>",
+    )}`;
+    shader.fragmentShader = `varying vec3 vSoftWorld;\n${shader.fragmentShader.replace(
+      "#include <opaque_fragment>",
+      `{
+        vec3 dir = normalize(vSoftWorld - cameraPosition);
+        if (dir.y < -1e-4) {
+          vec3 forward = -vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2]);
+          diffuseColor.a *= clamp(vSoftWorld.y / -dir.y * dot(dir, forward) / ${BOOM.softDepth.toFixed(2)}, 0.0, 1.0);
+        }
+      }
+      #include <opaque_fragment>`,
+    )}`;
+  };
+  material.customProgramCacheKey = () => "boom soft";
+  return material;
+}
+
 /** "BOOM!" drawn once (our own lettering), white: the sprite's colour tints it */
 function boom(): CanvasTexture | null {
   if (boomTexture !== undefined) return boomTexture;
@@ -501,7 +528,7 @@ export class Demolition {
     }
     const texture = boom();
     if (texture) {
-      this.#boom = new Sprite(new SpriteMaterial({ map: texture, transparent: true, depthWrite: false }));
+      this.#boom = new Sprite(boomMaterial(texture));
       this.#boom.visible = false;
       toThreeVector({ x: at.x, y: at.y, z: at.z + BOOM.offset }, this.#boom.position);
       scene.add(this.#boom);

@@ -84,7 +84,7 @@
     (`notes/camera-shakes.md`, `client/src/camera/shake.ts`) off by default (the Modern preset), on with Default. Left:
     the impact shake and ball-hit sparks (need contact data: with the sound work), pickup bursts, wheel dust, the ball
     trail, the explosion's ribbons.
-  - **Arena visuals (in progress, committed through bee7a7c; `notes/arena-visuals.md`):** a `stadium` theme (`?theme=stadium`, not
+  - **Arena visuals (in progress, committed through 02cf5c4; `notes/arena-visuals.md`):** a `stadium` theme (`?theme=stadium`, not
     the default) with the game's arena materials, switched on by the theme's `walls.game`: cage beams per H-8/H-8b
     (additive, 8 uu, the scan stripes and contracting rings from the measured Curve_Fire/Smoke profiles, the
     shockwave from the goal explosion: `ArenaView.explode()` / `newBall()`), the wall overlay per H-9 (the ball
@@ -103,7 +103,7 @@
     for a local copy of the game's cooked meshes (the user's decision: exactness checks only, never committed or
     shipped; `out/arena_local/cooked_meshes2` is that copy with the goal halves' body offsets). The 72 live
     recordings: better or the same; the replay validation unchanged. Committed in f8b7e2c (reviewed: all fixed).
-  - **In bee7a7c (reviewed: RV-94 partly fixed, RV-95..98 found, all fixed since):** the goal halves' body origins as the game's (README row 95, validation finding
+  - **In 02cf5c4 (bee7a7c amended by the user to drop RV-99's game data; reviewed: RV-94..99 fixed):** the goal halves' body origins as the game's (README row 95, validation finding
     52: on the cooked meshes, now `out/arena_local/cooked_meshes3`, every walls tick matches); every preset's exact box
     (RV-88); the countdown keeping the real input over a multi-tick Step (RV-93); `live_validate`'s jitter reworked
     (RV-91); PhysLog's bounded lines (RV-94). Client: the stadium's field (`render/stadiumField.ts`); review fixes RV-72..75, 79, 81, 82, 84, 85,
@@ -119,24 +119,45 @@
   - **Known e2e flake:** `e2e/online.spec.ts` "a goal: the game slows down ..." can miss its 8-frame tolerance between
     the goal's frame and the explosion's under load (seen once at 9 in a full run; 3 of 3 alone pass). Software
     rendering stalls shift the server tick to client frame mapping; it's the default theme, unaffected by the stadium.
-  - **Also in bee7a7c:** the arena's reflection capture (`render/grassCube.ts`: GrassCube, once before the first frame,
+    `e2e/freeplay.spec.ts` "freeplay loads, drives and resets" missed its reset once under load (Backspace inside its
+    1.0 game s cooldown: the slowed game hadn't run a second since the spawn); it now presses again until it takes.
+  - **Also in 02cf5c4:** the arena's reflection capture (`render/grassCube.ts`: GrassCube, once before the first frame,
     `Renderer.beforeNextFrame`); the field's materials as the game's (H-1, H-3, H-4, Reflective_Floor_B; baked light
     only: each piece's lightmap statistics from the static session, `FIELD_LIGHT`; the frame's glowing (E) and
     team-coloured (D) lines traced from FrameTexture_PACK's stripes through the meshes' UVs); the goals' glows (RV-77:
     `GOAL_GLOW` ribbons) and see-through layered floors (RV-76: `render/goalInterior.ts`); RV-83's data and shake
     tests; RV-86's soft particles (the floor as the scene behind). RV-71 since settled ((c), above); the markings' light
     and the surroundings spec (`notes/arena-surroundings.md`, SUR-1..44) have arrived.
-  - **Since bee7a7c (uncommitted):** the surroundings (`render/themes/stadiumSurroundings.ts`, from the spec's named
-    measures and per-azimuth statistics, nothing traced): GrassCube as the game's capture (8-bit, near 32, the blur as
-    mip LOD 5) with the capture-only hotspots (SUR-32, 33); the bowl, upper tiers, roof band, glass canopy, floodlight
-    banks, trusses and TV strips (SUR-2..8, 12, 15, 16); the crowd (SUR-26..31: about 28k instanced cards, the team
-    rule, presence and bob); screens, ads and billboards (SUR-9, 17, 18: our own emblem, no ad art); the near-field
-    props (SUR-10, 19: scaffolds, striped corner flags, pulsing arrows); the far layer (SUR-11, 22, 23: our skyline
-    silhouettes, the city's glow, the horizon band). The theme test now checks vertices against the cage (the field
-    with its cut corners and the goals), not its bounding box. Left: calibrating the capture against SUR-35, team
-    uplight beams and flare sheets (SUR-13), flags and trees (SUR-11). Review fixes: RV-94's wasm smoketest path,
-    RV-95 (the child origin's bits tested, PhysLog's `origin_bu`), RV-96 (PhysLog's vsim reads through SafeRead),
-    RV-97 (`live_validate` option values, usage), RV-98 (docs).
+  - **Also in 02cf5c4:** the surroundings (`render/themes/stadiumSurroundings.ts`: GrassCube as the game's capture,
+    the hotspots, the stands from tier rules, the structures as low-order fits, the crowd, screens, props, the far
+    layer), RV-94..98 (wasm smoketest path, the child origin's bits, PhysLog's SafeRead and `origin_bu`,
+    `live_validate`'s option values, docs), RV-99 (the shipped-data guard, `render/shippedData.test.ts`).
+  - **Since 02cf5c4 (uncommitted), the static session's RV-100..132:**
+    - field and goals: the grass's reflection as H-1's (RV-100) and its light by x and |y| (RV-105a); the centre disc
+      and trims to the game's radii (RV-102); RV-103a, c, d (the centre arc's legs, 16.3 hatch bars, the strip's flat
+      end; b, e, f wait on extents from the static session); OOBFloor under each goal, a hex slope in its own light
+      (RV-104); the tire-mark factors on the frames (RV-105b); the vent baked-only (RV-106); the goal glows (RV-108,
+      and `field_plan.py` pairs free edges within a piece); the overlay's corner charts (RV-109); the net's charts
+      (RV-110); the goal floor's opaque strips and lower glass chart (RV-111);
+    - online: the client predicts no demolitions (`World.setDemolitions(false)`, a new engine binding: the server's
+      alone, as the game's), the drawn and recorded demolished state the server's (RV-112);
+    - RV-113: the particle constant and comment, the far-plane test over each theme's animation (the city's
+      searchlights shortened), BOOM soft against the floor, value tests (envG's rings, the sky's v and q);
+    - RV-95: the child origin by the game's chain (x 0.02f x 50f x 0.02f, `Car.cpp`; the same bits);
+    - shipped-data guard (RV-114, RV-131): strings and shaders scanned, every number form, transposed pairs and
+      triples, the surroundings' meshes (`scripts/reference_vertices.py` exports a local reference to
+      `out/arena_local/reference/`), their (r, z) statistics, imported JSON, the bundle; controls built from the local
+      data prove each form is caught; it found two copied glow points, now named measures;
+    - RV-115..118 (comment, triangle-sampled cage test, `live_validate` value ranges, these notes);
+    - surroundings (RV-119..128, 132): the hotspots as the game's ellipses, the +X one unfogged above the horizon, all
+      placed inside the dome; the high screens facing down; the crowd's light (HL2 basis, warm); the tiers seated where
+      the game's are (per-tier spans, the top tier's rows, the +X ends' cut, the -X corner's section); the -X plaza
+      open; the floodlights' bulbs on the middle row; per-placement panel light, the logo at 14 %, two-row TV strips,
+      brighter windows, the banners' texture term; ribs to the roof's edge; sunk cards hidden; the bob phase shared.
+      The crowd and the screens and props now in `stadiumCrowd.ts` and `stadiumProps.ts`.
+    Left: RV-107 and RV-129 (with the global tone map and SUR-24's fog constants), RV-130 (team light bulbs, beam light
+    dots, the StadiumFog haze, fog sheets: not built), the SUR-35 calibration, SUR-13's beams and flare sheets, flags
+    and trees (SUR-11).
   - **Local assets from the static session** (dev-only, git-ignored, load when present like the Fennec; each with a
     README and manifest): `out/bsim/assets_local/fx/` (ball GLB and material formula, the boost trail and the goal
     explosion as emitter JSON, schema rl-fx/1), `cars/` (six cars painted per team with their hitbox presets and

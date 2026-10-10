@@ -179,7 +179,7 @@ describe("particle emitters", () => {
 });
 
 describe("a spawn sphere's offsets (SpawnEx: RV-82)", () => {
-  it("in the volume: U(-1, 1)^3 clamped to the sphere, so 1 - pi/6 of them on the surface, mean |offset| 0.871 R", () => {
+  it("in the volume: U(-1, 1)^3 clamped to the sphere, so 1 - pi/6 of them on the surface, mean |offset| (1 - pi/24) R", () => {
     let seed = 12345;
     const random = (): number => {
       // (a small LCG: reproducible)
@@ -198,7 +198,8 @@ describe("a spawn sphere's offsets (SpawnEx: RV-82)", () => {
     }
     expect(surface / n).toBeCloseTo(1 - Math.PI / 6, 2);
     expect(Math.abs(surface / n - 0.476)).toBeLessThan(0.005);
-    expect(Math.abs(sum / n - 0.871)).toBeLessThan(0.005);
+    // (pi/6 inside at a mean 3/4, the rest on the surface: pi/8 + 1 - pi/6)
+    expect(Math.abs(sum / n - (1 - Math.PI / 24))).toBeLessThan(0.005);
   });
 
   it("on the surface: every offset at the radius", () => {

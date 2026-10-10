@@ -38,10 +38,19 @@ test("freeplay loads, drives and resets", async ({ page }) => {
   await page.mouse.up({ button: "middle" });
   await expect(page.locator("#camera-mode")).toHaveText("Car cam");
 
-  // Backspace resets to a kickoff: stopped, boost still 100 (Unlimited)
-  await page.keyboard.press("Backspace");
-  await page.waitForTimeout(200);
-  expect(await speed(page)).toBeLessThan(5);
+  // Backspace resets to a kickoff: stopped, boost still 100 (Unlimited). (Its cooldown is 1.0 game s since the last
+  // reset, the first spawn's too, and under load the drive above can take less than that: pressed again until it
+  // takes; a press inside the cooldown does nothing)
+  await expect
+    .poll(
+      async () => {
+        await page.keyboard.press("Backspace");
+        await page.waitForTimeout(300);
+        return speed(page);
+      },
+      { timeout: 15_000 },
+    )
+    .toBeLessThan(5);
   await expect(page.locator("#boost-value")).toHaveText("100");
 
   // H shows the controls

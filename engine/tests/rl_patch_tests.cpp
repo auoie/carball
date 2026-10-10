@@ -1490,9 +1490,8 @@ static void TestRocketSimAudit(Arena* arena, Car* car) {
 // extents' and margin's bits, the box's offset, and the inverse inertia the game's body has (+0x1c0), which
 // calculateLocalInertia makes from those floats exactly
 static void TestPresetBoxes() {
-	// ox, oz: the compound child's origin, the physics' input (Car.cpp: hitboxPosOffset x UU_TO_BT, a x 0.02f). The game's
-	// rounding is open (RV-95): x 0.02f and / 50f differ by an ulp in Dominus x (0x3e3851eb / ...ec) and Plank z
-	// (0x3e77b070 / ...71), and PhysLog's 6-decimal uu leave Octane/Hybrid z at 0x3ed487f4 or ...f5 (origin_bu settles it)
+	// ox, oz: the compound child's origin, the physics' input: the game's chain (x 0.02f, x 50f, x 0.02f; static analysis,
+	// RV-95 settled: bit-exact for the six presets from the asset floats, HandlingPresets' BoxElems[0].TM)
 	struct Want { const char* name; const CarConfig* preset; uint32_t x, y, z, margin; Vec offset; uint32_t ox, oz, ix, iy, iz; };
 	const Want wants[] = {
 		{ "Octane", &CAR_CONFIG_OCTANE, 0x3f954d13, 0x3f540dc2, 0x3eb22419, 0x3d1e58fa, { 13.875660f, 0, 20.754988f }, 0x3e8e1636, 0x3ed487f4, 0x3c978367, 0x3c2a7d85, 0x3bf7ce24 },

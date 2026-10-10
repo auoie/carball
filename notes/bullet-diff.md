@@ -352,3 +352,16 @@ surround differ.
     coordinates), but the origin fix still applies.
   - Fix: scripts/arena_gen.py should write the RLOF offset as float32(float32(float32(float32(c)·0.02f)·50f)·0.02f).
     The −y halves are assumed symmetric (−0x42CCCCCB); confirm with a −y goal-surround recording.
+- **Car hitbox child origin (2026-10-09, sub-agent CHO1):** the uu value is the asset float
+  `HandlingPresets.Physics.Physics_<preset>.RB_BodySetup.AggGeom.BoxElems[0].TM` (Startup.upk). The game converts it
+  through the same three single-precision multiplies as the static bodies:
+  1. InstanceNovodexGeom 0x14096c420: s = Scale3D·0.02f, t = s·uu (0x1409b9554…);
+  2. PhysX 2.8 stores the dynamic shape's localPose bit-exactly (plain MOVs);
+  3. the Bullet builder 0x14040ff70 does getLocalPose → ×50f (0x1409728ad…) → ×0.02f (0x1404104cb…) → addChildShape
+     0x140285440.
+  For all six real presets this equals a single ×0.02f (checked numerically), so our `hitboxPosOffset·UU_TO_BT` is
+  bit-exact. The child origin bits are Octane/Hybrid (0x3e8e1636, 0x3ed487f4), Dominus (0x3e3851eb, 0x3ea147ae), Plank
+  (0x3e387edc, 0x3e77b070), Breakout (0x3e800000, 0x3e70a3d7), Merc (0x3e68f938, 0x3edc3609). The box half extents go
+  through the same chain (dims = f32(f32(0.02f·X)·0.5f) + 0.025f → ×50f → ×0.02f → btBoxShape), which reproduces all
+  24 EXACT_BOXES bits. The chain differs from a single ×0.02f for about 11 % of other inputs, so future offsets should use
+  the chain.

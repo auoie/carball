@@ -158,7 +158,8 @@ export function spherePoint(random: () => number, radius: number, surface: boole
   return { x: u.x * k, y: u.y * k, z: u.z * k };
 }
 
-/** The game's random unit direction (DetermineUnitDirection): normalize(U(-1, 1)^3) (a zero draw: straight up) */
+/** A random unit direction as the game's draws are (RV-52d): normalize(U(-1, 1)^3) (a zero draw: straight up). The
+ *  game's DetermineUnitDirection (live 0x140ab5310) draws U(-1, 1)^3 without normalising it (RV-113) */
 export function unitDirection(random: () => number): Vec3 {
   const v = { x: random() * 2 - 1, y: random() * 2 - 1, z: random() * 2 - 1 };
   const n = Math.hypot(v.x, v.y, v.z);

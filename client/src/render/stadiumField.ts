@@ -8,11 +8,11 @@
 // the axis it varies most), no sun, sky or specular; reflections from the arena's capture (src/render/grassCube.ts).
 import {
   BufferGeometry,
-  type Color,
+  Color,
   Float32BufferAttribute,
   Group,
   Mesh,
-  MeshStandardMaterial,
+  MeshBasicMaterial,
   ShaderMaterial,
   ShapeUtils,
   type Texture,
@@ -21,19 +21,49 @@ import {
   Vector2,
   Vector3,
 } from "three";
-import { FIELD_LIGHT, type FieldPlan, type FieldRegion, type FloorPiece, type FrameLine, type MarkingGroup, fieldPlan } from "./stadiumFieldRules";
+import { FIELD_LIGHT, type FieldPlan, type FieldRegion, type FloorPiece, type FrameLine, type LightProfile, type MarkingGroup, fieldPlan } from "./stadiumFieldRules";
 import { ENV_GLSL, ENV_RADIAL, ENV_SPREAD } from "./gameSurfaces";
 import { GRASS_CUBE_BLUR_LOD } from "./grassCube";
 import { fullBright } from "./teamColors";
 
-/** FieldSkin_FutureGrid_1x1_D's mean albedo (sRGB-flagged: decoded), StadiumFloorLightMap's mean over the field
- *  (the static session: 0.511, 0.488, 0.428) (H-1) */
+/** FieldSkin_FutureGrid_1x1_D's mean albedo (sRGB-flagged: decoded) (H-1) */
 export const GRASS_ALBEDO = [0.068, 0.11, 0.056] as const;
-export const GRASS_LIGHTMAP = [0.511, 0.488, 0.428] as const;
+/** StadiumFloorLightMap over the grass (RV-105a, the static session's statistics, linear): separable, a(x) b(|y|) /
+ *  mean (within 4.9 % RMS), each table in 256 uu bins (x from -3806, |y| from 64) */
+export const GRASS_LIGHT = {
+  mean: [0.553, 0.527, 0.461],
+  step: 256,
+  x0: -3806,
+  x: [
+    [0.481, 0.462, 0.406], [0.48, 0.462, 0.404], [0.471, 0.452, 0.396], [0.485, 0.466, 0.408], [0.497, 0.477, 0.416],
+    [0.507, 0.486, 0.424], [0.519, 0.497, 0.433], [0.511, 0.49, 0.43], [0.513, 0.492, 0.434], [0.521, 0.5, 0.437],
+    [0.526, 0.501, 0.438], [0.534, 0.507, 0.442], [0.544, 0.519, 0.452], [0.556, 0.529, 0.463], [0.565, 0.536, 0.469],
+    [0.575, 0.545, 0.477], [0.58, 0.549, 0.481], [0.581, 0.55, 0.482], [0.584, 0.553, 0.483], [0.589, 0.558, 0.487],
+    [0.598, 0.566, 0.496], [0.604, 0.576, 0.503], [0.612, 0.582, 0.51], [0.637, 0.605, 0.531], [0.633, 0.6, 0.526],
+    [0.625, 0.592, 0.519], [0.609, 0.575, 0.504], [0.564, 0.533, 0.467], [0.453, 0.431, 0.378], [0.412, 0.391, 0.342],
+  ],
+  y0: 64,
+  y: [
+    [0.483, 0.465, 0.407], [0.502, 0.483, 0.422], [0.517, 0.494, 0.434], [0.523, 0.501, 0.438], [0.528, 0.504, 0.441],
+    [0.536, 0.508, 0.445], [0.542, 0.516, 0.451], [0.551, 0.523, 0.459], [0.561, 0.532, 0.467], [0.571, 0.542, 0.473],
+    [0.578, 0.548, 0.479], [0.579, 0.548, 0.481], [0.571, 0.544, 0.477], [0.572, 0.545, 0.476], [0.576, 0.549, 0.479],
+    [0.586, 0.56, 0.489], [0.603, 0.573, 0.503], [0.623, 0.592, 0.518], [0.641, 0.611, 0.536],
+  ],
+} as const;
 /** H-1's noise factor 0.75 (n + 1.25), its mean looking down (2.0: the static session's statistic of the shader's
- *  three-sample rule on Noise_Generic_02); the reflection's scale (G0 + 1/3) 2/3 at the noise's mean G (0.185) */
+ *  three-sample rule on Noise_Generic_02); G0, Noise_Generic_02's mean G; ENVAmount */
 export const GRASS_NOISE = 2.0;
-export const GRASS_REFLECTION = 0.75 * (0.185 + 1 / 3) * (2 / 3);
+export const GRASS_G0 = 0.185;
+export const GRASS_ENV_AMOUNT = 0.75;
+
+/** H-1's reflection term (RV-100), per channel: ENVAmount [0.375 (1.5 - cos) Cg + sat(0.25 ((1.5 - cos) Cg - 0.125))],
+ *  Cg = cube (G0 + 1/3) 2/3, cos the view's against the floor's normal (the shader adds it to the lit albedo and
+ *  saturates the sum: the asm's mad_sat) */
+export function grassReflection(cos: number, cube: number, g0 = GRASS_G0): number {
+  const cg = cube * (g0 + 1 / 3) * (2 / 3);
+  const k = (1.5 - cos) * cg;
+  return GRASS_ENV_AMOUNT * (0.375 * k + Math.min(Math.max(0.25 * (k - 0.125), 0), 1));
+}
 /** The markings' baked light (PaintedLine_Mat: each mesh's 1-D directional vertex lightmaps, flat; the static
  *  session's means) */
 const MARKING_LIGHT: Readonly<Record<MarkingGroup, readonly [number, number, number]>> = {
@@ -72,6 +102,9 @@ const HP_A = [
 const HEX_TILE = [323.4, 384] as const;
 
 type FramePiece = "trimB" | "trim" | "centreTrim" | "centreStrip" | "halfway";
+/** H-4's tire-mark factor m on each frame piece, scaling its diffuse and emissive (RV-105b: the static session's means
+ *  over each mesh's up-facing area: Field_STD_Trim, TrimB, Center_Trim, CenterField_Team1/2, Mid_A) */
+export const TIRE_MARKS: Readonly<Record<FramePiece, number>> = { trim: 0.917, trimB: 0.888, centreTrim: 0.893, centreStrip: 0.9135, halfway: 0.885 };
 /** FrameTexture_PACK (sRGB, decoded) over each frame piece's faces facing up, through its UVs, outside the stripes:
  *  the mean R (the diffuse) and G (the reflection's amount) (H-4: measured, area-weighted) */
 const FRAME_TEXTURE: Readonly<Record<FramePiece, { readonly r: number; readonly g: number }>> = {
@@ -152,20 +185,35 @@ void main() {
 }
 `;
 
-/** H-1 (unlit): the albedo x the lightmap x the view factor 2 ((1 - sat(3 cos))^4 + 0.25) (0.5 from above, up to 2.5
- *  grazing) x the noise (its mean), + the reflection x 0.75 x its scale. Not drawn: FieldSkin's team line network
- *  (game artwork) */
+/** H-1 (unlit): sat(the albedo x the lightmap (GRASS_LIGHT, by x and |y|) x the view factor 2 ((1 - sat(3 cos))^4 +
+ *  0.25) (0.5 from above, up to 2.5 grazing) x the noise (its mean) + the reflection (grassReflection: RV-100)). Not
+ *  drawn: FieldSkin's team line network (game artwork) */
 const grassFragment = /* glsl */ `
 uniform vec3 albedo;
-uniform float reflection;
+uniform float reflectionScale;
+uniform vec3 lightX[${GRASS_LIGHT.x.length}];
+uniform vec3 lightY[${GRASS_LIGHT.y.length}];
+uniform vec3 lightMean;
 varying vec3 vWorld;
 #include <fog_pars_fragment>
 ${commonGlsl}
+vec3 grassLight(float x, float y) {
+  float fx = clamp((x - ${GRASS_LIGHT.x0.toFixed(1)}) / ${GRASS_LIGHT.step.toFixed(1)} - 0.5, 0.0, ${(GRASS_LIGHT.x.length - 1).toFixed(1)});
+  int ix = int(min(floor(fx), ${(GRASS_LIGHT.x.length - 2).toFixed(1)}));
+  float fy = clamp((abs(y) - ${GRASS_LIGHT.y0.toFixed(1)}) / ${GRASS_LIGHT.step.toFixed(1)} - 0.5, 0.0, ${(GRASS_LIGHT.y.length - 1).toFixed(1)});
+  int iy = int(min(floor(fy), ${(GRASS_LIGHT.y.length - 2).toFixed(1)}));
+  return mix(lightX[ix], lightX[ix + 1], fx - float(ix)) * mix(lightY[iy], lightY[iy + 1], fy - float(iy)) / lightMean;
+}
 void main() {
   vec3 toCamera = normalize(cameraPosition - vWorld);
-  float g = 1.0 - saturate1(3.0 * abs(toCamera.y));
+  float cosView = abs(toCamera.y);
+  float g = 1.0 - saturate1(3.0 * cosView);
   float view = 2.0 * (g * g * g * g + 0.25);
-  gl_FragColor = vec4(albedo * view + reflection * floorReflection(toCamera), 1.0);
+  // (the game's x and y: Three's x and z)
+  vec3 lit = albedo * grassLight(vWorld.x, vWorld.z) * view;
+  vec3 k = (1.5 - cosView) * reflectionScale * floorReflection(toCamera);
+  vec3 reflection = ${GRASS_ENV_AMOUNT.toFixed(2)} * (0.375 * k + clamp(0.25 * (k - 0.125), 0.0, 1.0));
+  gl_FragColor = vec4(clamp(lit + reflection, 0.0, 1.0), 1.0);
   #include <colorspace_fragment>
   #include <fog_fragment>
 }
@@ -246,6 +294,7 @@ vec3 teamCmix(float y) {
 const frameFragment = /* glsl */ `
 uniform float frameR;
 uniform float frameG;
+uniform float tireMarks;
 varying vec3 vWorld;
 varying float vAcross;
 #include <fog_pars_fragment>
@@ -268,7 +317,7 @@ void main() {
   #else
     diffuse = clamp(vec3(frameR) + refl, 0.0, 1.0);
   #endif
-  gl_FragColor = vec4(emissive + diffuse * bakedLight(xy), 1.0);
+  gl_FragColor = vec4(tireMarks * (emissive + diffuse * bakedLight(xy)), 1.0);
   #include <colorspace_fragment>
   #include <fog_fragment>
 }
@@ -319,8 +368,8 @@ void main() {
 type Pt = readonly [number, number];
 
 /** A piece's baked light as uniforms (16 bins at most) */
-function lightUniforms(piece: FloorPiece): Record<string, { value: unknown }> {
-  const { axis, start, bin, rgb } = FIELD_LIGHT[piece];
+function lightUniforms(piece: FloorPiece | LightProfile): Record<string, { value: unknown }> {
+  const { axis, start, bin, rgb } = typeof piece === "string" ? FIELD_LIGHT[piece] : piece;
   const table = Array.from({ length: 16 }, (_, i) => {
     const [r = 1, g = 1, b = 1] = rgb[Math.min(i, rgb.length - 1)] ?? [];
     return new Vector3(r, g, b);
@@ -342,14 +391,18 @@ function teamUniforms(primary0: Color, primary1: Color): Record<string, { value:
 export class GrassMaterial extends ShaderMaterial {
   constructor(cube: { value: Texture }) {
     const [r, g, b] = GRASS_ALBEDO;
-    const [lr, lg, lb] = GRASS_LIGHTMAP;
+    const v3 = (c: readonly number[]): Vector3 => new Vector3(c[0], c[1], c[2]);
     super({
       vertexShader,
       fragmentShader: grassFragment,
       uniforms: {
         ...shared(cube),
-        albedo: { value: new Vector3(r * lr * GRASS_NOISE, g * lg * GRASS_NOISE, b * lb * GRASS_NOISE) },
-        reflection: { value: GRASS_REFLECTION },
+        albedo: { value: new Vector3(r * GRASS_NOISE, g * GRASS_NOISE, b * GRASS_NOISE) },
+        // (Cg's scale: (G0 + 1/3) 2/3)
+        reflectionScale: { value: (GRASS_G0 + 1 / 3) * (2 / 3) },
+        lightX: { value: GRASS_LIGHT.x.map(v3) },
+        lightY: { value: GRASS_LIGHT.y.map(v3) },
+        lightMean: { value: v3(GRASS_LIGHT.mean) },
         ...lightUniforms("hexPads"),
       },
       fog: true,
@@ -358,12 +411,13 @@ export class GrassMaterial extends ShaderMaterial {
 }
 
 export class HexFloorMaterial extends ShaderMaterial {
-  /** `piece`: its baked light; `floorB`: Reflective_Floor_B (the goal mouths) */
+  /** `piece`: its baked light (a field piece's, or a profile of its own: the goals' OOBFloor); `floorB`:
+   *  Reflective_Floor_B (the goal mouths) */
   constructor(
     cube: { value: Texture },
     primary0: Color,
     primary1: Color,
-    readonly piece: FloorPiece,
+    readonly piece: FloorPiece | LightProfile,
     floorB = false,
   ) {
     super({
@@ -403,7 +457,7 @@ export class FrameMaterial extends ShaderMaterial {
       vertexShader,
       fragmentShader: frameFragment,
       defines: line === null ? {} : line === "E" ? { LINE: "", LINE_E: "" } : { LINE: "" },
-      uniforms: { ...shared(cube), ...teamUniforms(primary0, primary1), frameR: { value: r }, frameG: { value: g }, ...lightUniforms(piece) },
+      uniforms: { ...shared(cube), ...teamUniforms(primary0, primary1), frameR: { value: r }, frameG: { value: g }, tireMarks: { value: TIRE_MARKS[piece] }, ...lightUniforms(piece) },
       fog: true,
       polygonOffset: line !== null,
       polygonOffsetFactor: -1,
@@ -581,7 +635,7 @@ function mitre(pts: readonly Pt[], k: number): Pt {
  *  uniform (GrassCube.uniform) */
 export function buildStadiumField(primary0: Color, primary1: Color, cube: { value: Texture }, plan: FieldPlan = fieldPlan()): Group {
   const group = new Group();
-  const add = (sheet: Sheet, material: ShaderMaterial | MeshStandardMaterial, name: string): void => {
+  const add = (sheet: Sheet, material: ShaderMaterial | MeshBasicMaterial, name: string): void => {
     if (sheet.empty) return;
     const m = new Mesh(sheet.geometry(), material);
     m.name = name;
@@ -625,13 +679,15 @@ export function buildStadiumField(primary0: Color, primary1: Color, cube: { valu
     }
   }
   // The centre vent: its grate (CrossHatched_Grate_MIC: dark; its see-through cells are ours to do) and its ring
-  // (Frame_01_White_MIC: a light frame)
+  // (Frame_01_White_MIC: a light frame); baked light only, the disc's round it (RV-106)
+  const [dr, dg, db] = FIELD_LIGHT.disc.rgb[0] ?? [1, 1, 1];
+  const baked = (albedo: number): MeshBasicMaterial => new MeshBasicMaterial({ color: new Color(albedo).multiply(new Color().setRGB(dr, dg, db)) });
   const vent = new Sheet();
   vent.ring(0, VENT.grate, REGION_Z);
-  add(vent, new MeshStandardMaterial({ color: 0x0b0b0c, roughness: 0.8 }), "vent grate");
+  add(vent, baked(0x0b0b0c), "vent grate");
   const ring = new Sheet();
   ring.ring(VENT.ring[0], VENT.ring[1], RING_Z, 96);
-  add(ring, new MeshStandardMaterial({ color: 0xd0d4d8, roughness: 0.5, metalness: 0.4 }), "vent ring");
+  add(ring, baked(0xd0d4d8), "vent ring");
   // The painted markings, by mesh (each its baked light)
   for (const mesh of ["goal", "side", "centre"] as const) {
     const markings = new Sheet();
