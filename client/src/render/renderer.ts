@@ -2,6 +2,7 @@
 // is drawn linear HDR and through the game's post-processing (postProcess.ts) to display values: no three.js tone
 // mapping or sRGB encoding (PP-19).
 import { LinearSRGBColorSpace, NoToneMapping, PerspectiveCamera, Scene, Vector3, WebGLRenderer } from "three";
+import { fogAll } from "./heightFog";
 import { PostProcess, type PostOptions } from "./postProcess";
 import type { CameraView } from "../camera/rlCamera";
 import { horizontalToVerticalFov } from "../camera/interp";
@@ -28,6 +29,9 @@ export class Renderer {
   /** The camera's fade (0 clear .. 1 black: the goal replay's cuts, fade.ts), through the post-processing's remap as the
    *  game's LUT (RV-159) */
   cameraFade = 0;
+  /** The stadium's height fog in every material drawn (render/heightFog.ts: the arena, cars and ball too, RV-187): new
+   *  meshes taken in each frame */
+  heightFog = false;
 
   constructor(readonly canvas: HTMLCanvasElement) {
     // (no anti-aliasing: the game's default is Off, PP-16; the scene goes to an HDR target anyway)
@@ -54,6 +58,8 @@ export class Renderer {
   }
 
   render(view: CameraView): void {
+    // (before the frame's work, the reflection capture's included)
+    if (this.heightFog) fogAll(this.scene);
     for (const work of this.#beforeNextFrame.splice(0)) work(this.#gl, this.scene);
     this.#camera.position.copy(toThreeVector(view.position));
     this.#camera.up.copy(toThreeVector(view.up));

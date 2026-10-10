@@ -22,12 +22,12 @@ const field = new Box3(
 );
 /** Whether a point is in the cage itself plus the margin (the field with its cut corners, the goals behind): scenery
  *  may stand behind the end walls beside the goals and outside the corners (the stadium's scaffolds and flags) */
-function inCage(p: Vector3): boolean {
+function inCage(p: Vector3, margin = MARGIN): boolean {
   const V = PLAYING_VOLUME;
   const [x, y, z] = [Math.abs(p.x), p.y, Math.abs(p.z)];
-  if (y < 0 || y > V.height + MARGIN) return false;
-  const inField = x <= V.halfX + MARGIN && z <= V.fieldHalfZ + MARGIN && x + z <= V.cornerSum + MARGIN * Math.SQRT2;
-  const inGoal = x <= V.goalHalfWidth + MARGIN && z <= V.halfZ + MARGIN && y <= V.goalHeight + MARGIN;
+  if (y < 0 || y > V.height + margin) return false;
+  const inField = x <= V.halfX + margin && z <= V.fieldHalfZ + margin && x + z <= V.cornerSum + margin * Math.SQRT2;
+  const inGoal = x <= V.goalHalfWidth + margin && z <= V.halfZ + margin && y <= V.goalHeight + margin;
   return inField || inGoal;
 }
 
@@ -74,7 +74,10 @@ describe("themes", () => {
         }
       } else {
         // Each triangle, its inside too (RV-116): those whose bounds reach the cage's box sampled every 50 uu or finer (at
-        // most 64 steps a side: the largest that reach it, the stadium's 2150 across, take 43, RV-147)
+        // most 64 steps a side: the largest that reach it, the stadium's 2150 across, take 43, RV-147); MARGIN off the
+        // volume, or the mesh's own `clearance` (a game placement standing nearer)
+        const clearance: unknown = mesh.userData["clearance"];
+        const margin = typeof clearance === "number" ? clearance : MARGIN;
         const position = geometry.getAttribute("position");
         const index = geometry.getIndex();
         const count = index ? index.count : position.count;
@@ -91,7 +94,7 @@ describe("themes", () => {
               v.copy(a)
                 .addScaledVector(b.clone().sub(a), i / n)
                 .addScaledVector(c.clone().sub(a), j / n);
-              if (inCage(v)) expect.fail(`${name}: triangle ${String(k / 3)} of ${mesh.name || mesh.type} at ${v.toArray().map(Math.round).join(", ")}`);
+              if (inCage(v, margin)) expect.fail(`${name}: triangle ${String(k / 3)} of ${mesh.name || `${mesh.type} in ${mesh.parent?.name ?? "?"}`} at ${v.toArray().map(Math.round).join(", ")}`);
             }
           }
         }

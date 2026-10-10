@@ -141,10 +141,14 @@ export interface CarConfig {
 /** What a car touched (takeImpacts) */
 export type ImpactPartner = "world" | "ball" | "car";
 
+/** The ball's own impacts' `car` (with the world: notes/impact-triggers.md §2b, RV-172) */
+export const BALL_IMPACT = -1;
+
 /** One car's contacts with one partner in one physics step, as the game's HandleCollision gets them (engine patch 96:
- *  notes/impact-triggers.md IT-1..3; speeds of 50 uu/s or more) */
+ *  notes/impact-triggers.md IT-1..3; speeds of 50 uu/s or more); or the ball's with the world */
 export interface Impact {
   readonly tick: number;
+  /** the car's id, or BALL_IMPACT for the ball's own */
   readonly car: number;
   readonly partner: ImpactPartner;
   /** the partner car's id, for a car */

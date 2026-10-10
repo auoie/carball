@@ -321,19 +321,19 @@ void btRSBroadphase::setAabb(btBroadphaseProxy* proxy, const btVector3& aabbMin,
 			sbp->cellIdx = newIndex;
 
 			if (oldIndex != newIndex) {
+				// RL PATCH: re-registered even while it's the only dynamic body. RocketSim skipped this then, so a ball
+				// moved before any car existed stayed in its old cells' lists, and a car added later never paired with it
+				// (it drove through a resting ball: an online player joining after a reset)
+				_UpdateCellsDynamic<false>(this, sbp, sbp->iIdx, sbp->jIdx, sbp->kIdx);
 
-				if (numDynProxies > 1) {
-					_UpdateCellsDynamic<false>(this, sbp, sbp->iIdx, sbp->jIdx, sbp->kIdx);
+				// TODO: Can determine newIndex from these
+				int iNew, jNew, kNew;
+				GetCellIndices(aabbMin, iNew, jNew, kNew);
+				sbp->iIdx = iNew;
+				sbp->jIdx = jNew;
+				sbp->kIdx = kNew;
 
-					// TODO: Can determine newIndex from these
-					int iNew, jNew, kNew;
-					GetCellIndices(aabbMin, iNew, jNew, kNew);
-					sbp->iIdx = iNew;
-					sbp->jIdx = jNew;
-					sbp->kIdx = kNew;
-
-					_UpdateCellsDynamic<true>(this, sbp, iNew, jNew, kNew);
-				}
+				_UpdateCellsDynamic<true>(this, sbp, iNew, jNew, kNew);
 			}
 		}
 	}

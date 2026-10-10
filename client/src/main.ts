@@ -103,6 +103,7 @@ async function main(): Promise<void> {
   const renderer = new Renderer(canvas);
   renderer.scene.background = theme.background;
   renderer.scene.fog = theme.fog;
+  renderer.heightFog = theme.heightFog ?? false;
   const arena = new ArenaView(theme);
   renderer.scene.add(arena.root);
   // (the arena's reflection capture, once: before the first frame, the cars and ball not yet drawn in it)
@@ -138,6 +139,8 @@ async function main(): Promise<void> {
       },
       particles: () => freeplay.debugParticles(),
       pads: () => freeplay.debugPads(),
+      // (the camera's fade as the post-processing draws it: RV-159, RV-175)
+      cameraFade: () => renderer.cameraFade,
     };
     game = freeplay;
   } else {

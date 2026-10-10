@@ -199,6 +199,7 @@ async function playTheme(page: Page, theme: string): Promise<void> {
 interface Hook {
   place: (car: object, ball?: object) => void;
   car: () => { pos: { x: number; y: number }; speed: number };
+  cameraFade: () => number;
 }
 
 test("a goal in freeplay with goal replays on: the replay plays, Space skips it, then a kickoff spot, no jump", async ({ page }) => {
@@ -210,10 +211,19 @@ test("a goal in freeplay with goal replays on: the replay plays, Space skips it,
     page.evaluate(() => (window as unknown as { rlFreeplay: Hook }).rlFreeplay.car());
   await page.evaluate(() => {
     (window as unknown as { rlFreeplay: Hook }).rlFreeplay.place({ x: 3000, y: 0, yaw: 0 }, { x: 0, y: 5300, z: 200 });
+    // (the camera's fade at its largest, frame by frame: the replay cuts in from black through the post-processing)
+    const w = window as unknown as { rlFreeplay: Hook; rlFadeMax: number };
+    w.rlFadeMax = 0;
+    const sample = (): void => {
+      w.rlFadeMax = Math.max(w.rlFadeMax, w.rlFreeplay.cameraFade());
+      requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
   });
   await expect(page.locator("#score-blue")).toHaveText("1", { timeout: 10_000 });
-  // After PostGoalTime the replay (no freeplay special case: ShouldPlayReplayPlayback)
+  // After PostGoalTime the replay (no freeplay special case: ShouldPlayReplayPlayback), cut in from black (RV-175)
   await expect(page.locator("#message")).toHaveText("REPLAY", { timeout: 20_000 });
+  await expect.poll(async () => page.evaluate(() => (window as unknown as { rlFadeMax: number }).rlFadeMax), { timeout: 10_000 }).toBeGreaterThan(0.5);
   await expect(page.locator("#message-hint")).toContainText("skip");
   await page.locator("#game").click({ position: { x: 640, y: 360 }, button: "right" });
   await page.keyboard.press("Space");

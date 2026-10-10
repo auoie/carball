@@ -37,14 +37,22 @@ function aliases(): [string, string][] {
 }
 
 /** The specifiers a module's text imports, in every form the build follows (RV-167f): static and side-effect imports,
- *  import(), import.meta.glob's patterns, new URL(..., import.meta.url); queries (?raw, ?url) kept */
+ *  import(), import.meta.glob's patterns, new URL(..., import.meta.url); queries (?raw, ?url) kept; template literals
+ *  too, each ${...} a wildcard, as Vite globs them (RV-174) */
 function importSpecifiers(text: string): string[] {
   const out: string[] = [];
-  for (const re of [/\bfrom\s*["']([^"']+)["']/g, /\bimport\s*["']([^"']+)["']/g, /\bimport\s*\(\s*["']([^"']+)["']/g, /\bnew\s+URL\s*\(\s*["']([^"']+)["']\s*,\s*import\.meta\.url/g]) {
-    for (const m of text.matchAll(re)) out.push(m[1] ?? "");
+  const quoted = "[\"'`]([^\"'`]+)[\"'`]";
+  const wild = (s: string): string => s.replace(/\$\{[^}]*\}/g, "*");
+  for (const re of [
+    /\bfrom\s*["']([^"']+)["']/g,
+    /\bimport\s*["']([^"']+)["']/g,
+    new RegExp(`\\bimport\\s*\\(\\s*${quoted}`, "g"),
+    new RegExp(`\\bnew\\s+URL\\s*\\(\\s*${quoted}\\s*,\\s*import\\.meta\\.url`, "g"),
+  ]) {
+    for (const m of text.matchAll(re)) out.push(wild(m[1] ?? ""));
   }
-  for (const m of text.matchAll(/import\.meta\.glob\s*(?:<[^>]*>)?\s*\(\s*(\[[^\]]*\]|["'][^"']+["'])/g)) {
-    for (const s of (m[1] ?? "").matchAll(/["']([^"']+)["']/g)) out.push(s[1] ?? "");
+  for (const m of text.matchAll(/import\.meta\.glob\s*(?:<[^>]*>)?\s*\(\s*(\[[^\]]*\]|["'`][^"'`]+["'`])/g)) {
+    for (const s of (m[1] ?? "").matchAll(/["'`]([^"'`]+)["'`]/g)) out.push(wild(s[1] ?? ""));
   }
   return out;
 }
@@ -135,17 +143,19 @@ interface Num {
 /** The numeric literals in a text (leading dots, exponents and separators too: 1_234.5, RV-140); their places counted
  *  with the exponent's shift (RV-167c) */
 function numbers(text: string): Num[] {
-  return [...text.matchAll(/(?<![A-Za-z_$\d.])-?(?:\d[\d_]*(\.[\d_]*)?|(\.\d[\d_]*))(?:[eE]([-+]?\d+))?/g)].map((m) => {
+  return [...text.matchAll(/(?<![A-Za-z_$\d.])-?(?:0[xX]([\da-fA-F_]+)|\d[\d_]*(\.[\d_]*)?|(\.\d[\d_]*))(?:[eE]([-+]?\d+))?/g)].map((m) => {
+    // (a hex literal an integer: RV-183)
+    if (m[1] !== undefined) return { value: parseInt(m[1].replace(/_/g, ""), 16) * (m[0].startsWith("-") ? -1 : 1), decimals: 0, written: 0, integer: true, at: m.index };
     const mantissa = m[0].replace(/_/g, "").replace(/^-/, "").replace(/[eE].*$/, "");
     const point = mantissa.indexOf(".");
     const digits = mantissa.replace(".", "");
     const before = point < 0 ? digits.length : point;
-    const places = (d: string): number => Math.max(0, d.length - before - Number(m[3] ?? 0));
+    const places = (d: string): number => Math.max(0, d.length - before - Number(m[4] ?? 0));
     return {
       value: Number(m[0].replace(/_/g, "")),
       decimals: places(digits.replace(/0+$/, "")),
       written: places(digits),
-      integer: m[1] === undefined && m[2] === undefined && m[3] === undefined,
+      integer: m[2] === undefined && m[3] === undefined && m[4] === undefined,
       at: m.index,
     };
   });
@@ -241,8 +251,24 @@ describe("what ships carries no game data (RV-99)", () => {
       'const e = import.meta.glob(["./p/*.json", "./q/**/*.txt"]);',
       'const f = new URL("./data.bin", import.meta.url);',
       'import type { G } from "three";',
+      "const g = await import(`./p/${n}.json`);",
+      "const h = new URL(`./d/${n}.bin`, import.meta.url);",
+      "const k = import.meta.glob(`./t/*.glsl`);",
     ].join("\n");
-    expect(importSpecifiers(sample)).toEqual(["./a.json", "./shader.glsl?raw", "three", "./style.css", "./lazy", "./data.bin", "@arena/x/*.cmf", "./p/*.json", "./q/**/*.txt"]);
+    expect(importSpecifiers(sample)).toEqual([
+      "./a.json",
+      "./shader.glsl?raw",
+      "three",
+      "./style.css",
+      "./lazy",
+      "./p/*.json",
+      "./data.bin",
+      "./d/*.bin",
+      "@arena/x/*.cmf",
+      "./p/*.json",
+      "./q/**/*.txt",
+      "./t/*.glsl",
+    ]);
     const shipped = shippedImports().map((p) => p.slice(ROOT.length));
     expect(shipped).toContain("scripts/cage_topology.json");
     expect(shipped).toContain("client/src/style.css");
@@ -354,7 +380,8 @@ class Sequences {
     values: readonly number[] | Float32Array,
     readonly cell: number,
   ) {
-    const v = (this.#values = Float32Array.from(values));
+    // (a Float32Array shared, not copied: the textures' streams indexed twice)
+    const v = (this.#values = values instanceof Float32Array ? values : Float32Array.from(values));
     let size = 1024;
     while (size < v.length) size *= 2;
     this.#mask = size - 1;
@@ -389,9 +416,11 @@ class Sequences {
   along(w: readonly number[], tolerance: number): boolean {
     const [ca, cb, cc] = w.slice(0, 3).map((x) => Math.floor(x / this.cell)) as [number, number, number];
     const v = this.#values;
-    for (let i = -1; i <= 1; i++) {
-      for (let j = -1; j <= 1; j++) {
-        for (let k = -1; k <= 1; k++) {
+    // (as many cells round as the tolerance spans: coarse levels, RV-183)
+    const r = Math.max(1, Math.ceil(tolerance / this.cell));
+    for (let i = -r; i <= r; i++) {
+      for (let j = -r; j <= r; j++) {
+        for (let k = -r; k <= r; k++) {
           const key = this.#key(ca + i, cb + j, cc + k);
           for (let m = this.#start[key] ?? 0, end = this.#start[key + 1] ?? 0; m < end; m++) {
             const at = this.#order[m] ?? 0;
@@ -416,6 +445,58 @@ const TEXTURE_BEND = 0.02;
  *  in a 256-level space, meet a row of six somewhere */
 const TEXTURE_LEVELS_WINDOW = 8;
 const TEXTURE_LEVELS_SPAN = 0.1;
+/** Written to 4 decimals or more, a gentler bend will do (a low-contrast texture's row: RV-183) */
+const TEXTURE_BEND_FINE = 0.002;
+
+/** A form a texture's row might be written in: how many values in a row, each number's value (0 to 1; null: not this
+ *  form's), the tolerance (decimals: from the places written), the span it needs, and how many of its values must be
+ *  off black and white (a mask touching 0 and 255 has some between: RV-183) */
+interface TextureForm {
+  readonly window: number;
+  readonly value: (x: Num) => number | null;
+  readonly decimals: boolean;
+  readonly tolerance: number;
+  readonly span: number;
+  readonly interior?: number;
+  /** a coarse form: its windows must wiggle (wiggles) */
+  readonly wiggle?: boolean;
+}
+const TEXTURE_FORMS: readonly TextureForm[] = [
+  // (0 to 1, 3 decimals or more, as stored or decoded)
+  { window: TEXTURE_WINDOW, value: (x) => (!x.integer && x.written >= 3 && x.value >= 0 && x.value <= 1 ? x.value : null), decimals: true, tolerance: 0, span: 0 },
+  // (8-bit levels: four or more of them off black and white)
+  { window: TEXTURE_LEVELS_WINDOW, value: (x) => (x.integer && x.value >= 0 && x.value <= 255 ? x.value / 255 : null), decimals: false, tolerance: 0.5 / 255, span: TEXTURE_LEVELS_SPAN, interior: 4 },
+  // (percent)
+  { window: 8, value: (x) => (x.integer && x.value >= 0 && x.value <= 100 ? x.value / 100 : null), decimals: false, tolerance: 0.5 / 100, span: 0.25, interior: 3, wiggle: true },
+  // (4-bit levels: a longer run, a 16-level space being denser still)
+  { window: 12, value: (x) => (x.integer && x.value >= 0 && x.value <= 15 ? x.value / 15 : null), decimals: false, tolerance: 0.5 / 15, span: 0.2, interior: 3, wiggle: true },
+];
+
+/** Whether a window's values are spread: half of them distinct or more, none taking more than 40 % (a tiled row
+ *  repeats its period, code a few counts over and over) */
+function spread(w: readonly number[]): boolean {
+  const counts = new Map<number, number>();
+  for (const x of w) counts.set(x, (counts.get(x) ?? 0) + 1);
+  return counts.size >= Math.ceil(w.length / 2) && Math.max(...counts.values()) <= Math.floor(0.4 * w.length);
+}
+
+/** Whether a window turns (its steps change sign somewhere) and its values are spread */
+function wiggles(w: readonly number[]): boolean {
+  const steps = w.slice(1).map((x, j) => x - (w[j] ?? 0)).filter((d) => d !== 0);
+  const turns = steps.some((d, j) => j > 0 && Math.sign(d) !== Math.sign(steps[j - 1] ?? 0));
+  return turns && spread(w);
+}
+
+/** The byte strings a text writes as hex or base64 string literals (16 bytes or more) */
+function stringBytes(text: string): Uint8Array[] {
+  const out: Uint8Array[] = [];
+  for (const m of text.matchAll(/["'`]([A-Za-z0-9+/=]{24,})["'`]/g)) {
+    const s = m[1] ?? "";
+    if (/^[0-9a-fA-F]+$/.test(s) && s.length % 2 === 0) out.push(Uint8Array.from(s.match(/../g) ?? [], (h) => parseInt(h, 16)));
+    else if (/^[A-Za-z0-9+/]+={0,2}$/.test(s) && s.length % 4 === 0) out.push(Uint8Array.from(Buffer.from(s, "base64")));
+  }
+  return out;
+}
 const floats = (path: string): Float32Array => {
   if (!existsSync(path)) return new Float32Array(0);
   const b = readFileSync(path);
@@ -465,7 +546,7 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
   // (where the game's meshes are, the rest of the local reference must be too: a guard that skips its own data is no
   // guard, RV-140)
   it("has its local reference (scripts/reference_vertices.py; the static session's SUR-1 exports)", () => {
-    const needed = ["vertices.f32", "uvs.f32", "rz.f32", "az.f32", "columns.f32", "index.json", "textures.f32"].map((n) => join(REFERENCE, n));
+    const needed = ["vertices.f32", "uvs.f32", "rz.f32", "az.f32", "columns.f32", "index.json", "textures.f32", "texture_controls.json"].map((n) => join(REFERENCE, n));
     for (const path of [...needed, join(SUR1, "outline_az.json"), join(SUR1, "surroundings_geometry.json"), PLAN]) expect(existsSync(path), path.slice(ROOT.length)).toBe(true);
   });
 
@@ -549,6 +630,10 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
   // scripts/reference_textures.py); cells of 1/250, for 8-bit levels' half-level tolerance
   const textureStreams = floats(join(REFERENCE, "textures.f32"));
   const textures = new Sequences(textureStreams, 0.004);
+  // (and coarsely, for the coarse forms' wide tolerances: 4-bit levels, percent)
+  const texturesCoarse = new Sequences(textureStreams, 0.07);
+  /** The last texture window found and its form (for the report) */
+  let textureMatch = "";
   const topology = topologyArrays();
   const sorted = Float64Array.from(uvValues).sort();
   const nearUv = (x: number, tolerance: number): boolean => {
@@ -576,6 +661,26 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
   const large = (x: Num | undefined, places: number): boolean => !!x && x.written >= places && Math.abs(x.value) >= 0.05;
   /** Half the last decimal of the least precise, its trailing zeros aside, at most 0.0005 (RV-167a) */
   const tolerance = (...x: readonly (Num | undefined)[]): number => 0.5 * 10 ** -Math.max(3, Math.min(...x.map((m) => m?.decimals ?? 0)));
+
+  /** A window of values (0 to 1) along one place of the textures' streams, either way round (RV-183), if it bends and
+   *  spans as its form needs */
+  function textureWindow(w: readonly number[], form: TextureForm, tol: number, written: number): boolean {
+    const fine = form.decimals && written >= 4;
+    const bendsBy = (bend: number): boolean => w.some((x, j) => j >= 2 && Math.abs((w[j - 2] ?? 0) - 2 * (w[j - 1] ?? 0) + x) >= bend);
+    if (!bendsBy(TEXTURE_BEND) && !(fine && bendsBy(TEXTURE_BEND_FINE))) return false;
+    if (Math.max(...w) - Math.min(...w) < form.span) return false;
+    if (form.interior && w.filter((x) => x * 255 >= 2 && x * 255 <= 253).length < form.interior) return false;
+    // (an integer form's values not one count over and over (a topology's sides): a tiled row repeats, but evenly)
+    if (!form.decimals && !spread(w)) return false;
+    // (the riskier forms (coarse levels, black and white, a gentle bend) a picture's row: turning somewhere, its values
+    // mostly apart; a ramp or a curve is a profile, a run of one value code's)
+    const risky = form.wiggle === true || (fine && !bendsBy(TEXTURE_BEND)) || (!form.decimals && w.some((x) => x * 255 < 2 || x * 255 > 253));
+    if (risky && !wiggles(w)) return false;
+    const index = tol * 2 > textures.cell ? texturesCoarse : textures;
+    const hit = index.along(w, tol) || index.along([...w].reverse(), tol);
+    if (hit) textureMatch = `form ${String(TEXTURE_FORMS.indexOf(form))}: ${w.map((x) => x.toFixed(3)).join(" ")}`;
+    return hit;
+  }
 
   /** Every check on one text: what it found (none for a clean text) */
   function findings(text: string): string[] {
@@ -645,20 +750,36 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
     // (a downsampled texture's row or column, a value every `stride`: TEXTURE_WINDOW values along one place of the
     // textures' streams, 0 to 1 to 3 decimals or more (as stored or decoded) or 8-bit levels 2 to 253, bending somewhere;
     // RV-157)
-    const textureRow = (i: number, s: number): boolean => {
-      // (levels clear of black and white, where the textures' rows are densest: a run of 0s and 1s meets one anywhere)
-      const levels = n[i]?.integer === true;
-      const length = levels ? TEXTURE_LEVELS_WINDOW : TEXTURE_WINDOW;
-      if (i + (length - 1) * s >= n.length) return false;
-      const m = Array.from({ length }, (_, j) => n[i + j * s]);
-      if (levels && !m.every((x) => x?.integer === true && x.value >= 2 && x.value <= 253)) return false;
-      if (!levels && !m.every((x) => x !== undefined && !x.integer && x.written >= 3 && x.value >= 0 && x.value <= 1)) return false;
-      const w = m.map((x) => (x?.value ?? 0) / (levels ? 255 : 1));
-      const bends = w.some((x, j) => j >= 2 && Math.abs((w[j - 2] ?? 0) - 2 * (w[j - 1] ?? 0) + x) >= TEXTURE_BEND);
-      if (!bends || (levels && Math.max(...w) - Math.min(...w) < TEXTURE_LEVELS_SPAN)) return false;
-      return textures.along(w, levels ? 0.5 / 255 : tolerance(...m));
-    };
-    if (textureStreams.length > 0) report("texture rows", longestRun(text, n, textureRow), 1);
+    const textureRow = (i: number, s: number): boolean => TEXTURE_FORMS.some((form) => {
+      // (a coarse form's rows written row by row, channels interleaved at most four: wider strides pick code's
+      // integers apart)
+      if (form.wiggle === true && s > 4) return false;
+      if (i + (form.window - 1) * s >= n.length) return false;
+      const m = Array.from({ length: form.window }, (_, j) => n[i + j * s]);
+      const w = m.map((x) => (x ? form.value(x) : null));
+      if (w.some((x) => x === null)) return false;
+      // (levels touching black or white: as risky, so rows and four channels at most)
+      if (!form.decimals && s > 4 && (w as number[]).some((x) => x * 255 < 2 || x * 255 > 253)) return false;
+      return textureWindow(w as number[], form, form.decimals ? tolerance(...m) : form.tolerance, Math.min(...m.map((x) => x?.written ?? 0)));
+    });
+    if (textureStreams.length > 0) {
+      const run = longestRun(text, n, textureRow);
+      report("texture rows", { ...run, at: `${run.at} [${textureMatch}]` }, 1);
+      // (bytes written as hex or base64 strings: their levels, RV-183)
+      for (const bytes of stringBytes(text)) {
+        const levels = TEXTURE_FORMS[1];
+        for (let s = 1; s <= 4 && levels; s++) {
+          for (let i = 0; i + (levels.window - 1) * s < bytes.length; i++) {
+            const w = Array.from({ length: levels.window }, (_, j) => (bytes[i + j * s] ?? 0) / 255);
+            if (textureWindow(w, levels, levels.tolerance, 0)) {
+              found.push(`texture rows in a string (every ${String(s)}): ${bytes.slice(i, i + 8).join(", ")}`);
+              s = 5;
+              break;
+            }
+          }
+        }
+      }
+    }
     if (rzValues.length > 0) {
       // (the tables and profiles carry a radius of 11k or more: a pair 2000 or more out, not the small ones the 25 uu
       // tolerance would find among indices; any adjacent pair, 4 of any 8, so a table's azimuth column between its
@@ -718,7 +839,9 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
       for (let k = 0; k + 8 < textureStreams.length; k++) {
         const w = Array.from(textureStreams.subarray(k, k + 8));
         if (w.some(Number.isNaN)) continue;
-        if (Math.max(...w) - Math.min(...w) >= 0.1 && w.every((x, j) => j === 0 || Math.abs(x - (w[j - 1] ?? 0)) >= 0.005)) return w;
+        // (off black and white, each step two levels or more, turning: a plain picture's row, not a ramp)
+        const turns = w.some((x, j) => j >= 2 && Math.abs((w[j - 2] ?? 0) - 2 * (w[j - 1] ?? 0) + x) >= 0.03);
+        if (turns && Math.max(...w) - Math.min(...w) >= 0.1 && w.every((x, j) => x > 0.01 && x < 0.99 && (j === 0 || Math.abs(x - (w[j - 1] ?? 0)) >= 0.008))) return w;
       }
       return [];
     })();
@@ -750,6 +873,35 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
       ["UVs as [x, v]", `[${vt.map((_, k) => `[${f2(Math.abs(v[k]?.[0] ?? 0))}, ${uvAt(k, 1)}]`).join(", ")}]`],
       ["UVs as {at, v}", vt.map((_, k) => `{ at: ${String(k * 64)}, v: ${uvAt(k, 1)} }`).join(", ")],
     ];
+    // The textures' named rows (the reference's picks: the logo's, its alpha as a mask, a 12 px row, a low-contrast one;
+    // RV-182, RV-183), each in the forms a row might be written in, and each found as a texture's (not by another check
+    // by chance: a low-contrast row's 4 decimals meet the UVs)
+    const textureControls: [string, string][] = [];
+    const picks = JSON.parse(readFileSync(join(REFERENCE, "texture_controls.json"), "utf8")) as Record<"logo" | "mask" | "twelve" | "low", number[] | null>;
+    const { logo, mask, twelve, low } = picks;
+    expect([logo, mask, twelve, low].every((row) => row !== null)).toBe(true);
+    if (logo && mask && twelve && low) {
+      const row = logo.slice(0, 16);
+      const start = logo[16] ?? 0;
+      const [eight, window] = [row.slice(start, start + 8), row.slice(start, start + 12)];
+      const levels = (w: readonly number[]): number[] => w.map((x) => Math.round(x * 255));
+      const bytes = Uint8Array.from(levels(row));
+      const list = (w: readonly (number | string)[]): string => `[${w.map(String).join(", ")}]`;
+      textureControls.push(
+        ["the logo's row to 3 decimals", list(eight.map((x) => x.toFixed(3)))],
+        ["the logo's row as 8-bit levels", list(levels(eight))],
+        ["the logo's row reversed", list(levels(eight).reverse())],
+        ["the logo's row reversed to 3 decimals", list(eight.map((x) => x.toFixed(3)).reverse())],
+        ["the logo's row as hex literals", list(levels(eight).map((x) => `0x${x.toString(16).padStart(2, "0")}`))],
+        ["the logo's row as a hex string", `"${Buffer.from(bytes).toString("hex")}"`],
+        ["the logo's row as a base64 string", `"${Buffer.from(bytes).toString("base64")}"`],
+        ["the logo's row as percent", list(eight.map((x) => Math.round(x * 100)))],
+        ["the logo's row as 4-bit levels", list(window.map((x) => Math.round(x * 15)))],
+        ["a 12 px row to 3 decimals", list(twelve.slice(0, 8).map((x) => x.toFixed(3)))],
+        ["a mask's row touching 0 as levels", list(levels(mask.slice(0, 8)))],
+        ["a low-contrast row to 4 decimals", list(low.slice(0, 8).map((x) => x.toFixed(4)))],
+      );
+    }
     // The surroundings' meshes (index.json: each one's place in the reference)
     const index = JSON.parse(readFileSync(join(REFERENCE, "index.json"), "utf8")) as Record<string, { vertices: [number, number]; uvs: [number, number] }>;
     for (const name of ["City_OOB_A", "Loft_Quad_01", "Statue_SM", "Stadium_Top"]) {
@@ -795,7 +947,10 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
       if (t.sections.length < 2) continue;
       controls.push([`crowd tier ${tier}'s rows`, t.sections.map((s) => `[${s.r_first_row.toFixed(0)}, ${s.z_first_row.toFixed(0)}, ${s.r_last_row.toFixed(0)}, ${s.z_last_row.toFixed(0)}]`).join(", ")]);
     }
-    const missed = controls.filter(([, text]) => findings(text).length === 0).map(([what]) => what);
+    const missed = [
+      ...controls.filter(([, text]) => findings(text).length === 0),
+      ...textureControls.filter(([, text]) => !findings(text).some((f) => f.startsWith("texture rows"))),
+    ].map(([what]) => what);
     expect(missed).toEqual([]);
   }, 60000);
 
@@ -804,14 +959,18 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
     expect(findings(text), name).toEqual([]);
   }
 
-  it.each(modules().map((p) => p.slice(SRC.length)))("%s: no run of the game's vertices, UVs or traced points", (path) => {
-    check(path, stripComments(readFileSync(join(SRC, path), "utf8")));
-  });
+  it.each(modules().map((p) => p.slice(SRC.length)))(
+    "%s: no run of the game's vertices, UVs or traced points",
+    (path) => {
+      check(path, stripComments(readFileSync(join(SRC, path), "utf8")));
+    },
+    60000,
+  );
 
   it.each(shippedImports().filter((p) => kind(p) === "text").map((p) => p.slice(ROOT.length)))("%s (imported): no run of the game's vertices, UVs or traced points", (path) => {
     const text = readFileSync(join(ROOT, path), "utf8");
     check(path, join(ROOT, path) === TOPOLOGY ? topologyFree(text) : text);
-  });
+  }, 60000);
 
   it("our generated arena's collision meshes are none of the game's cooked ones (RV-167f)", () => {
     const game = new Set(files(ARENA_LOCAL, (n) => n.endsWith(".cmf")).map((p) => readFileSync(p).toString("base64")));

@@ -928,17 +928,17 @@ void Arena::_UpdateImpacts() {
 	};
 	btCollisionDispatcher* dispatcher = _bulletWorld.getDispatcher();
 	std::vector<Entry> entries;
-	for (Car* car : _cars) {
-		if (car->_internalState.isDemoed)
-			continue;
+	// (one body's contacts, partner by partner: a car's with anything; the ball's with the world only, as its own
+	// ImpactEffectsComponent's (its hits with a car are the car's events: RV-172))
+	auto scan = [&](const btRigidBody* self, uint32_t selfId, bool worldOnly) {
 		entries.clear();
 		for (int i = 0; i < dispatcher->getNumManifolds(); i++) {
 			btPersistentManifold* manifold = dispatcher->getManifoldByIndexInternal(i);
 			if (manifold->getNumContacts() == 0)
 				continue;
 			const btCollisionObject *body0 = manifold->getBody0(), *body1 = manifold->getBody1();
-			bool first = body0 == &car->_rigidBody;
-			if (!first && body1 != &car->_rigidBody)
+			bool first = body0 == self;
+			if (!first && body1 != self)
 				continue;
 			if (!body0->hasContactResponse() || !body1->hasContactResponse())
 				continue;
@@ -950,6 +950,8 @@ void Arena::_UpdateImpacts() {
 			if (asleep(body0) || asleep(body1))
 				continue;
 			const btCollisionObject* other = first ? body1 : body0;
+			if (worldOnly && (other->getUserIndex() == BT_USERINFO_TYPE_BALL || other->getUserIndex() == BT_USERINFO_TYPE_CAR))
+				continue;
 			Entry* entry = nullptr;
 			for (Entry& e : entries)
 				if (e.other == other)
@@ -976,11 +978,11 @@ void Arena::_UpdateImpacts() {
 			btVector3 n;
 			if (!_ImpactNormal(e.normal, n))
 				continue;
-			// (the line check: from 10 uu on the car's side through the point to 10 uu into the partner; a hit's normal
+			// (the line check: from 10 uu on the body's side through the point to 10 uu into the partner; a hit's normal
 			// and point replace the contact's)
 			btVector3 from = pos + n * (10 * UU_TO_BT), to = pos - n * (10 * UU_TO_BT);
-			// (the car itself left out: the game's source)
-			btCollisionWorld::ClosestRayResultCallback ray(from, to, &car->_rigidBody);
+			// (the body itself left out: the game's source)
+			btCollisionWorld::ClosestRayResultCallback ray(from, to, self);
 			ray.m_collisionFilterGroup = -1;
 			ray.m_collisionFilterMask = -1;
 			_bulletWorld.rayTest(from, to, ray);
@@ -1000,9 +1002,14 @@ void Arena::_UpdateImpacts() {
 				kind = 2;
 				partnerId = ((Car*)e.other->getUserPointer())->id;
 			}
-			impacts.push_back(ImpactEvent{ tickCount, car->id, kind, partnerId, speed, slide, Vec(pos) * BT_TO_UU, Vec(n) });
+			impacts.push_back(ImpactEvent{ tickCount, selfId, kind, partnerId, speed, slide, Vec(pos) * BT_TO_UU, Vec(n) });
 		}
-	}
+	};
+	for (Car* car : _cars)
+		if (!car->_internalState.isDemoed)
+			scan(&car->_rigidBody, car->id, false);
+	if (ball)
+		scan(&ball->_rigidBody, IMPACT_BALL, true);
 }
 
 Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mutatorConfig(gameMode), _config(config) {

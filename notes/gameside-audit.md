@@ -166,6 +166,10 @@ and whenever it changes: `*(int*)(*(uintptr_t*)(body + 0xc8) + 0x18)`.
 - An undriven car (`!bDriving`) gets throttle 0, brake 0 (no idle brake), steer 0, and `FUN_140f2f610` attaches a 6-DOF
   constraint: the second car must be a driven bot.
 - Non-Octane steering residual (validation finding 21) is not explained by the curves (G2 L5 above).
+  **Closed 2026-10-10 (CCR-7, notes/physics-values.md):** finding 21 does not reproduce with the current engine (Dominus,
+  Breakout, Batmobile and Centio fit to 0.0002–0.010); what remains is per replay, not per body. Also: the bump's up axis,
+  the car–ball forward and the demolition forward go through rotators (CCR-2/3/4), and RS-9's order was tested with no
+  effect (CCR-6).
 - `PhysicsConfig_TA` is online-overridable (`OnlineConfig_X`); the cached config has no override.
 - GA-17's kickoff reversal assumes `Destroy()` frees the broadphase handle synchronously and that the body is created at
   spawn; GA-18's ~38.6 respawn height is assumed from kickoffs; the uneven-team tail of `GetSpawnOrientation` and goal detection

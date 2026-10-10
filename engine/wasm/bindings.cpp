@@ -419,7 +419,8 @@ public:
 			float* f = &_floats[i * Layout::IMPACT_SIZE];
 			const Arena::ImpactEvent& e = list[i];
 			f[Layout::IMPACT_TICK] = (float)e.tick;
-			f[Layout::IMPACT_CAR] = (float)e.carId;
+			// (the ball's own impacts, with the world: -1, RV-172)
+			f[Layout::IMPACT_CAR] = e.carId == Arena::IMPACT_BALL ? -1.f : (float)e.carId;
 			f[Layout::IMPACT_KIND] = (float)e.partnerKind;
 			f[Layout::IMPACT_PARTNER] = (float)e.partnerId;
 			f[Layout::IMPACT_SPEED] = e.speed;

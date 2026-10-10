@@ -110,6 +110,14 @@ export class ArenaView {
       ...(walls.game ? [] : [buildFieldMarkings(theme.style.markings)]),
       theme.root,
     );
+    // (the theme's materials that sample the capture (a `grassCube` uniform: the banners', RV-178) share its uniform)
+    const cube = this.#grassCube;
+    if (cube) {
+      theme.root.traverse((m) => {
+        const material = (m as { material?: { uniforms?: Record<string, unknown> } }).material;
+        if (material?.uniforms?.["grassCube"] !== undefined) material.uniforms["grassCube"] = cube.uniform;
+      });
+    }
   }
 
   /** Once per frame: lights the walls around the ball (Three.js frame) and animates the theme's scenery. */
@@ -144,9 +152,9 @@ export class ArenaView {
     return this.#grassCube?.captures ?? 0;
   }
 
-  /** The last reflection capture's faces (GrassCube.readCapture; none without one) */
-  readCapture(gl: WebGLRenderer): Uint8Array[] | null {
-    return this.#grassCube?.readCapture(gl) ?? null;
+  /** The last reflection capture's faces, linear floats, stored or as rendered (GrassCube.readCapture; none without one) */
+  readCapture(gl: WebGLRenderer, raw = false): Float32Array[] | null {
+    return this.#grassCube?.readCapture(gl, raw) ?? null;
   }
 
   /** The ball exploded (a goal): the cage's shockwave starts */

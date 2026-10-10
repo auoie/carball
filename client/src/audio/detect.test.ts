@@ -51,6 +51,8 @@ function play(
 }
 
 const kinds = (events: readonly SoundEvent[]): string[] => events.map((e) => e.kind);
+/** A landing: a sound for each wheel touching down (one to four: RV-171), nothing else */
+const landing = (k: readonly string[]): boolean => k.length >= 1 && k.length <= 4 && k.every((x) => x === "land");
 
 describe("sound events from the engine", () => {
   it("a dropped ball bounces, softer each time", () => {
@@ -83,7 +85,9 @@ describe("sound events from the engine", () => {
     world.resetKickoff(1);
     play(world, car, 120); // settle
     const events = play(world, car, 360, (t) => ({ ...NO_CONTROLS, jump: t < 30 }));
-    expect(kinds(events)).toEqual(["jump", "land"]);
+    const k = kinds(events);
+    expect(k[0]).toBe("jump");
+    expect(landing(k.slice(1)), k.join(", ")).toBe(true);
     world.dispose();
   });
 
@@ -140,12 +144,14 @@ describe("the car hitting the ground", () => {
       const nose = drop(pitched(-1.05), 400, -900, perFrame);
       expect(pogo(nose), `nose, ${String(perFrame)} ticks a frame: ${kinds(nose).join(", ")}`).toBe(true);
       expect(kinds(drop(roof, 400, -600, perFrame)), `roof, ${String(perFrame)} ticks a frame`).toEqual(["impact"]);
-      expect(kinds(drop(IDENTITY_ROT, 400, -600, perFrame)), `wheels, ${String(perFrame)} ticks a frame`).toEqual(["land"]);
+      const wheels = kinds(drop(IDENTITY_ROT, 400, -600, perFrame));
+      expect(landing(wheels), `wheels, ${String(perFrame)} ticks a frame: ${wheels.join(", ")}`).toBe(true);
     }
   });
 
-  it("landing on the wheels: one landing sound, not an impact as well", () => {
-    expect(kinds(drop(IDENTITY_ROT, 400, -600))).toEqual(["land"]);
+  it("landing on the wheels: a landing sound a wheel, not an impact as well", () => {
+    const k = kinds(drop(IDENTITY_ROT, 400, -600));
+    expect(landing(k), k.join(", ")).toBe(true);
   });
 
   it("hard driving (steering, boosting, powersliding) makes no landing or impact sounds", () => {

@@ -10,13 +10,13 @@ import { STANDS, type TierName, rowsAt, tierOf, tierRows } from "./stadiumSurrou
 
 /** The cards: 126 x 146.8 uu, 144 apart along a row, facing the centre; rows on the tiers (card centres, r and z):
  *  the lower bowl's 4 front rows and its main rake (az 27-171), the upper tiers' (az 76-139). No gaps but the open +X
- *  (|az| < 27) and the back's plaza (beyond 171); aisles (SUR-26, RV-134, RV-152) centred at |az| 45.6, 71.9, 98.1, 117.6
- *  and 143.9, 576 uu wide (no card centre within 288 of the line: the game's 2.0-3.1 degrees between cards in the first
- *  rows, 1.5-2.4 above), through all 34 of the main rake's rows, the last to its row 18 */
+ *  (|az| < 27) and the back's plaza (beyond 171); aisles (SUR-26 corrected: RV-134, RV-152, RV-180) centred at |az| 45.6,
+ *  71.9, 98.1, 117.6 and 143.9, no card centre within `half` of the line (216 uu, 360 at 71.9: the game's gaps between the
+ *  nearest cards' centres, medians 587/826/576/572/589), through all 34 of the main rake's rows, the last to its row 18 */
 export const CROWD = {
   card: [126, 146.8] as const,
   pitch: 144,
-  aisle: { at: [45.6, 71.9, 98.1, 117.6, 143.9] as const, half: 288, rows: [34, 34, 34, 34, 18] as const },
+  aisle: { at: [45.6, 71.9, 98.1, 117.6, 143.9] as const, half: [216, 360, 216, 216, 216] as const, rows: [34, 34, 34, 34, 18] as const },
   /** The stands' tiers the cards sit on (their rows: STANDS; which of them at each az: rowsAt) */
   tiers: [
     { az: STANDS.lower.az, name: "front" },
@@ -166,7 +166,7 @@ export function buildCrowd(primary0: Color, primary1: Color, seed = 7): { mesh: 
       for (const sign of [1, -1]) {
         for (let az = span[0] + step / 2; az < span[1]; az += step) {
           // (the aisles, through the main rake's first rows; the rows with seats here)
-          if (name === "main" && aisle.at.some((a, k) => row < (aisle.rows[k] ?? 0) && (Math.abs(az - a) * Math.PI * r) / 180 < aisle.half)) continue;
+          if (name === "main" && aisle.at.some((a, k) => row < (aisle.rows[k] ?? 0) && (Math.abs(az - a) * Math.PI * r) / 180 < (aisle.half[k] ?? 0))) continue;
           const [from, to] = rowsAt(name, az);
           if (row < from || row >= to) continue;
           cardTiers.push(name);

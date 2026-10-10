@@ -8,17 +8,20 @@ import {
   BackSide,
   BufferGeometry,
   type Color,
+  CustomBlending,
   DoubleSide,
   Float32BufferAttribute,
   Group,
   Mesh,
   NormalBlending,
+  OneFactor,
+  OneMinusSrcAlphaFactor,
   Path,
-  PlaneGeometry,
   ShaderMaterial,
   Shape,
   ShapeGeometry,
   SphereGeometry,
+  SrcAlphaFactor,
   Vector2,
   Vector3,
 } from "three";
@@ -26,36 +29,31 @@ import { withHeightFog } from "../heightFog";
 import { GRASS_CUBE_AT } from "../grassCube";
 import { fullBright } from "../teamColors";
 
-/** A glow seen from the capture point: its direction (az = atan2(y, x), el, degrees), its angular half sizes across and
- *  up (degrees: atan(256 Scale3D.y / d) x atan(256 Scale3D.z / d)), its distance (uu), its world pitch (degrees, its top
- *  toward the arena: the instances' rotation, RV-119); `clear`: unfogged, faded instead by elevation (clearFade) */
+/** A glow seen from the capture point: its direction (az = atan2(y, x), el, degrees), its visible disc's angular half
+ *  sizes across and up (degrees: atan(221.7 S / d), the glow's own extent, RV-191), its distance (uu), its world pitch
+ *  (degrees, its top toward the arena: the instances' rotation, RV-119) and yaw off facing the capture point (degrees,
+ *  + turned toward +az: RV-184); each in the height fog at its distance (FOG-10: the +X one at 150k is mostly fog near
+ *  the horizon, its HDR glow clipping through higher up) */
 export interface Hotspot {
   readonly az: number;
   readonly el: number;
   readonly radius: readonly [number, number];
   readonly distance: number;
   readonly pitch?: number;
-  readonly clear?: boolean;
-}
-
-/** The +X hotspot's pass through the haze by elevation (RV-120: min(1, 0.07 e^(0.12 el)), within 0.04 of the game's
- *  pass fractions 0.07, 0.12, 0.16, 0.27, 0.56, 0.89 at el 0-25) */
-export const CLEAR_FADE = { at0: 0.07, rate: 0.12 } as const;
-export function clearFade(el: number): number {
-  return Math.min(1, CLEAR_FADE.at0 * Math.exp(CLEAR_FADE.rate * el));
+  readonly yaw?: number;
 }
 
 /** CubeMap_HotSpot_Mat's glows (SUR-33, corrected: ellipses; ten Circle_Sprites the game shows only to its cube
  *  capture): the +X horizon's (fogged only near the horizon: RV-120), two over the back (-X), one over each end, one
  *  each side of the open +X. HotSpot_Mat's at 490k is fogged out in the game */
 export const HOTSPOTS: readonly Hotspot[] = [
-  { az: 2, el: 2, radius: [52.7, 30.4], distance: 150000, pitch: 35.7, clear: true },
-  { az: 180, el: 7, radius: [63.1, 33.3], distance: 25000, pitch: 14.7 },
-  { az: 180, el: 7, radius: [6.1, 33.7], distance: 37000, pitch: 35.7 },
-  { az: 107, el: 22, radius: [60.8, 30.8], distance: 14000, pitch: 14.7 },
-  { az: -108, el: 26, radius: [50.5, 22.0], distance: 15000, pitch: 9.7 },
-  { az: 35, el: 15, radius: [21, 21], distance: 15000, pitch: 9.7 },
-  { az: -35, el: 15, radius: [21, 21], distance: 15000, pitch: 9.7 },
+  { az: 2.26, el: 1.71, radius: [48.6, 26.8], distance: 149873, pitch: 35.7, yaw: -0.1 },
+  { az: 179.52, el: 7.08, radius: [59.6, 29.6], distance: 24934, pitch: 14.74, yaw: 3.79 },
+  { az: 179.53, el: 6.99, radius: [5.3, 30.0], distance: 36841, pitch: 35.7, yaw: 0.93 },
+  { az: 107.08, el: 22.12, radius: [57.1, 27.3], distance: 13729, pitch: 14.74, yaw: -2.51 },
+  { az: -107.89, el: 25.56, radius: [46.3, 19.2], distance: 15210, pitch: 9.71, yaw: 0 },
+  { az: 35.37, el: 14.92, radius: [18.6, 18.6], distance: 15729, pitch: 9.71, yaw: 3.0 },
+  { az: -33.68, el: 15.22, radius: [19.0, 19.0], distance: 15434, pitch: 9.71, yaw: -1.08 },
 ];
 /** The farthest a sprite is placed (inside the concourse's wall and the sky's dome; its angular size kept, its fog
  *  its own distance's) */
@@ -64,11 +62,11 @@ export const HOTSPOT_PLACE_MAX = 29000;
 export const HOTSPOT_COLOR = [4.27, 5.49, 5.8] as const;
 /** The team hotspots (additive, 8 FillFlare.G FB(team)): low over each goal, 8k out */
 export const TEAM_HOTSPOTS: readonly (Hotspot & { readonly team: 0 | 1 })[] = [
-  { team: 0, az: -90, el: 9, radius: [26.9, 20.8], distance: 8087, pitch: 35.7 },
-  { team: 1, az: 90, el: 8, radius: [23.5, 18.1], distance: 9421, pitch: 35.7 },
+  { team: 0, az: -89.67, el: 8.87, radius: [23.6, 18.2], distance: 8087, pitch: 35.66, yaw: -2.52 },
+  { team: 1, az: 89.72, el: 7.61, radius: [20.6, 15.7], distance: 9421, pitch: 35.66, yaw: -0.91 },
 ];
-/** FillFlare's G by radius r = 0, 0.1, ... 0.9 (a statistic: SUR-41; 0 beyond) */
-export const FILL_FLARE_G = [1.0, 0.97, 0.91, 0.81, 0.67, 0.49, 0.31, 0.15, 0.04, 0.01];
+/** FillFlare's G at radius r = 0, 0.1, ... 0.9 (point values, sRGB-decoded: SUR-41 corrected, RV-196; 0 by r 1) */
+export const FILL_FLARE_G = [1.0, 0.994, 0.944, 0.871, 0.748, 0.58, 0.393, 0.226, 0.088, 0.014];
 
 const vertexShader = /* glsl */ `
 varying vec2 vUv;
@@ -82,26 +80,18 @@ void main() {
 `;
 
 /** The sprite: FillFlare's G by radius; the height fog per vertex at its own distance along its direction (not where
- *  it's placed: withHeightFog), or for a `clear` one faded by elevation from the capture point instead */
+ *  it's placed: withHeightFog) */
 const fragmentShader = /* glsl */ `
 uniform vec3 colour;
 uniform float flare[10];
 uniform bool additive;
-uniform bool clear;
-uniform vec3 from;
 varying vec2 vUv;
-varying vec3 vWorld;
 void main() {
   float x = length(vUv - 0.5) * 20.0;
   int i = int(min(floor(x), 9.0));
   float g = x >= 10.0 ? 0.0 : mix(flare[i], i < 9 ? flare[i + 1] : 0.0, x - float(i));
-  float pass = 1.0;
-  if (clear) {
-    float el = degrees(asin(clamp(normalize(vWorld - from).y, -1.0, 1.0)));
-    pass = min(1.0, ${CLEAR_FADE.at0} * exp(${CLEAR_FADE.rate} * el));
-  }
-  if (additive) gl_FragColor = vec4(8.0 * g * colour * pass, 1.0);
-  else gl_FragColor = vec4(colour, clamp(8.0 * g, 0.0, 1.0) * pass);
+  if (additive) gl_FragColor = vec4(8.0 * g * colour, 1.0);
+  else gl_FragColor = vec4(colour, clamp(8.0 * g, 0.0, 1.0));
   #include <colorspace_fragment>
 }
 `;
@@ -122,19 +112,23 @@ function hotspotMesh(spot: Hotspot, colour: readonly [number, number, number], a
       colour: { value: new Vector3(...colour) },
       flare: { value: FILL_FLARE_G },
       additive: { value: additive },
-      clear: { value: spot.clear ?? false },
-      from: { value: centre },
     },
     transparent: true,
     depthWrite: false,
     blending: additive ? AdditiveBlending : NormalBlending,
     side: DoubleSide,
   });
-  withHeightFog(material, spot.clear ? "none" : additive ? "additive" : "translucent", spot.distance);
-  const mesh = new Mesh(new PlaneGeometry(2 * at * Math.tan(ax), 2 * at * Math.tan(ay)), material);
+  // (its vertex fog at its true vertices: placed at `at`, it is `distance` out: RV-188)
+  withHeightFog(material, additive ? "additive" : "translucent", { scale: spot.distance / at });
+  const disc: [number, number] = [2 * at * Math.tan(ax), 2 * at * Math.tan(ay)];
+  const mesh = new Mesh(circleSprite(disc[0], disc[1]), material);
+  // (its disc's size, for tests)
+  mesh.userData["disc"] = disc;
   const dir = new Vector3(Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az));
   mesh.position.copy(centre).addScaledVector(dir, at);
   mesh.lookAt(centre);
+  // (its yaw off facing the capture point, about the vertical: + toward +az, RV-184)
+  if (spot.yaw) mesh.rotateOnWorldAxis(new Vector3(0, 1, 0), -spot.yaw * rad);
   // (drawn over the canopy and the rest of the translucent surroundings, which sort as near: their geometry's in world
   // space round the origin; the glows are in front of them in the game)
   mesh.renderOrder = 2;
@@ -142,6 +136,27 @@ function hotspotMesh(spot: Hotspot, colour: readonly [number, number, number], a
   // elevation, RV-149)
   if (spot.pitch) mesh.rotateX((spot.pitch - spot.el) * rad);
   return mesh;
+}
+
+/** The game's Circle_Sprite (RV-188): a hexagon, a centre vertex and six on its rim (corners across, flat edges up and
+ *  down), holding a disc `width` x `height` at uv radius 0.5 (its corners at width / 2 / cos 30); its vertex fog runs
+ *  from the centre out as the game's does */
+export function circleSprite(width: number, height: number): BufferGeometry {
+  const [rx, ry] = [width / 2 / Math.cos(Math.PI / 6), height / 2 / Math.cos(Math.PI / 6)];
+  const rim = Array.from({ length: 6 }, (_, k): [number, number] => [rx * Math.cos((k * Math.PI) / 3), ry * Math.sin((k * Math.PI) / 3)]);
+  const pos: number[] = [];
+  const uv: number[] = [];
+  for (let k = 0; k < 6; k++) {
+    const [a, b] = [rim[k] ?? [0, 0], rim[(k + 1) % 6] ?? [0, 0]];
+    for (const [x, y] of [[0, 0], a, b] as const) {
+      pos.push(x, y, 0);
+      uv.push(0.5 + x / width, 0.5 + y / height);
+    }
+  }
+  const g = new BufferGeometry();
+  g.setAttribute("position", new Float32BufferAttribute(pos, 3));
+  g.setAttribute("uv", new Float32BufferAttribute(uv, 2));
+  return g;
 }
 
 /** The hotspots, for the reflection capture only (the theme's `captureOnly`: hidden from the game's view) */
@@ -261,11 +276,11 @@ export const STRUCTURES = {
     zHi: [10434, -183, -4083],
   },
   /** The steel trusses (Stadium_Supports, SUR-7, RV-128a): from the ground at r 25.6k (z 1.4k) up to under the roof's
-   *  inner edge, 2.25k below its top to az 145; from there onto the supports' ring by 155 (r 15.6k, z 10.6k: the game's
-   *  15.2-16.0k and 10.2-10.75k, not the receding roof's edge, RV-151); every 10 degrees from 45 to 165; the ring on
-   *  round over the -X plaza (crossing it at el 32 from the capture point: the game's 31.6-32.9; no rib there: the game
-   *  shows its supports only at el 2.4-3.6 and 32, RV-151) */
-  supports: { foot: [25600, 1400] as RZ, every: 10, az: [45, 165] as const, below: 2250, ring: { from: 145, to: 155, r: 15600, z: 10600 }, width: 160 },
+   *  inner edge, 2.25k below its top to az 145; from there onto the supports' ring by 155 (not the receding roof's edge,
+   *  RV-151); every 10 degrees from 45 to 165; the ring on round over the -X plaza, a band at r 15.2k from z 10,463 to
+   *  10,764 (el 32.1-32.9 from the capture point, SUR-7 corrected: RV-185; no rib there: the game shows its supports
+   *  only at el 2.4-3.6 and 32, RV-151) */
+  supports: { foot: [25600, 1400] as RZ, every: 10, az: [45, 165] as const, below: 2250, ring: { from: 145, to: 155, r: 15200, z: 10614, height: 300 }, width: 160 },
 } as const;
 
 /** A support's head (r, z) at az: under the roof's inner edge, then onto the ring (RV-151) */
@@ -776,12 +791,12 @@ export function buildBowl(primary0: Color, primary1: Color): Group {
       ribs.push(...p(foot[0], foot[1], -1), ...p(foot[0], foot[1], 1), ...p(head[0], head[1], 1), ...p(foot[0], foot[1], -1), ...p(head[0], head[1], 1), ...p(head[0], head[1], -1));
     }
   }
-  // (the ring on round over the plaza, from where the heads reach it: a band `width` tall)
+  // (the ring on round over the plaza, from where the heads reach it: its band)
   const { ring } = sup;
   for (let az = ring.to; az < 360 - ring.to; az += 2) {
     const [a0, a1] = [(az * Math.PI) / 180, (Math.min(az + 2, 360 - ring.to) * Math.PI) / 180];
     const p = (a: number, z: number): number[] => [ring.r * Math.cos(a), z, ring.r * Math.sin(a)];
-    const [lo, hi] = [ring.z - width / 2, ring.z + width / 2];
+    const [lo, hi] = [ring.z - ring.height / 2, ring.z + ring.height / 2];
     ribs.push(...p(a0, lo), ...p(a1, lo), ...p(a1, hi), ...p(a0, lo), ...p(a1, hi), ...p(a0, hi));
   }
   const ribGeometry = new BufferGeometry();
@@ -896,7 +911,11 @@ void main() {
 }
 `;
 
-/** The far layer (drawn after the stands, behind them, over the sky's dome; centred on the field, inside the dome and the
+/** The far layer's place in the opaque pass: after the sky's dome (-1), before the far fog sheets (in front of it) and
+ *  the rest, which cover it */
+export const FAR_LAYER_ORDER = -0.75;
+
+/** The far layer (background: over the sky's dome, under everything else; centred on the field, inside the dome and the
  *  camera's far plane from anywhere in the arena) */
 export function buildFarLayer(): Mesh {
   const L = FAR_LAYER;
@@ -912,13 +931,18 @@ export function buildFarLayer(): Mesh {
       fogAlpha: { value: L.fogBand.map(([, a]) => a) },
     },
     side: BackSide,
-    transparent: true,
+    // (as background: in the opaque pass, blended by its alpha all the same)
+    blending: CustomBlending,
+    blendSrc: SrcAlphaFactor,
+    blendDst: OneMinusSrcAlphaFactor,
+    blendSrcAlpha: OneFactor,
+    blendDstAlpha: OneMinusSrcAlphaFactor,
     depthWrite: false,
     fog: false,
   });
   withHeightFog(material, "custom");
   const mesh = new Mesh(new SphereGeometry(L.radius, 96, 48), material);
   mesh.name = "far layer";
-  mesh.renderOrder = -1;
+  mesh.renderOrder = FAR_LAYER_ORDER;
   return mesh;
 }

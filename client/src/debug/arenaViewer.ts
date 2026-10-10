@@ -1,7 +1,7 @@
 // A free camera round the arena (?viewer=arena): the arena and its theme, the ball and a car placed anywhere, seen from
 // anywhere (inside or out), for comparing it with the game's (screenshots: window.rlArenaViewer.view({eye, target,
 // ball, car})). Not part of the game.
-import { Quaternion } from "three";
+import { type Object3D, Quaternion } from "three";
 import type { CarConfig } from "../engine/world";
 import { type Vec3, normalize, sub, vec3 } from "../math/vec";
 import { ArenaView } from "../render/arena";
@@ -22,13 +22,19 @@ export interface ArenaShot {
   readonly sinceExplosion?: number;
 }
 
-/** Shows the arena and returns the view setter, the arena's reflection captures so far, and the last capture's faces
- *  (base64 RGBA, Three's face order; null without a capture: for calibrating it against SUR-35) */
+/** Shows the arena and returns the view setter, the arena's reflection captures so far, the last capture's faces
+ *  (base64 RGBA, Three's face order; null without a capture: for calibrating it against SUR-35) and a re-capture with
+ *  the objects named by some prefixes hidden (what each part brings to the capture) */
 export function showArenaViewer(
   renderer: Renderer,
   theme: Theme,
   config: CarConfig,
-): { view: (shot: ArenaShot) => void; captures: () => number; cubeFaces: () => Promise<string[] | null> } {
+): {
+  view: (shot: ArenaShot) => void;
+  captures: () => number;
+  cubeFaces: (raw?: boolean) => Promise<string[] | null>;
+  recapture: (hide?: readonly string[]) => Promise<number>;
+} {
   renderer.scene.background = theme.background;
   renderer.scene.fog = theme.fog;
   const arena = new ArenaView(theme);
@@ -56,13 +62,32 @@ export function showArenaViewer(
     last = shot;
     view(shot);
   };
-  const cubeFaces = (): Promise<string[] | null> =>
+  // (each face's linear RGBA floats, little-endian float32 as base64: stored, or as rendered with `raw`)
+  const cubeFaces = (raw = false): Promise<string[] | null> =>
     new Promise((resolve) => {
       renderer.beforeNextFrame((gl) => {
-        const faces = arena.readCapture(gl);
-        resolve(faces ? faces.map((f) => btoa(Array.from(f, (b) => String.fromCharCode(b)).join(""))) : null);
+        const faces = arena.readCapture(gl, raw);
+        resolve(faces ? faces.map((f) => btoa(Array.from(new Uint8Array(f.buffer), (b) => String.fromCharCode(b)).join(""))) : null);
       });
       view(last);
     });
-  return { view: shown, captures: () => arena.captures, cubeFaces };
+  // (the objects hidden while it captures, with their children (the capture shows its own group whatever it was), each
+  // as it was after; the count of them named)
+  const recapture = (hide: readonly string[] = []): Promise<number> =>
+    new Promise((resolve) => {
+      renderer.beforeNextFrame((gl, scene) => {
+        const named: Object3D[] = [];
+        scene.traverse((o) => {
+          if (hide.some((prefix) => o.name.startsWith(prefix))) named.push(o);
+        });
+        const was = new Map<Object3D, boolean>();
+        for (const o of named) for (const h of [o, ...o.children]) if (!was.has(h)) was.set(h, h.visible);
+        for (const h of was.keys()) h.visible = false;
+        arena.capture(gl, scene);
+        for (const [h, visible] of was) h.visible = visible;
+        resolve(named.length);
+      });
+      view(last);
+    });
+  return { view: shown, captures: () => arena.captures, cubeFaces, recapture };
 }

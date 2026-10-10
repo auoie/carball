@@ -2,9 +2,9 @@
 // its local-car rule, the effects' cooldowns per slot, the car–ball and car–car sound sides, re-simulated ticks
 // skipped, and the landings' edge and speed.
 import { describe, expect, it } from "vitest";
-import type { CarConfig, Impact } from "../engine/world";
+import { BALL_IMPACT, type CarConfig, type Impact } from "../engine/world";
 import { IDENTITY_ROT, type Vec3, vec3 } from "../math/vec";
-import { ImpactTriggers, type Trigger, type TriggerCar, hardPoint, impactShakeScale } from "./impactTriggers";
+import { IMPACT_SCALES, ImpactTriggers, type Trigger, type TriggerCar, hardPoint, impactShakeScale, triggerSounds } from "./impactTriggers";
 
 const CONFIG: CarConfig = {
   hitboxSize: vec3(118, 84, 36),
@@ -48,6 +48,17 @@ describe("the impact triggers (IT-1..4)", () => {
     expect(kinds(t.frame(0.05, [impact(7, 8, "ball", 800)], new Map(), new Map(), null))).toEqual(["sparks"]);
     const u = new ImpactTriggers();
     expect(kinds(u.frame(0.01, [impact(1, 3, "car", 900, 5), impact(1, 5, "car", 900, 3)], new Map(), new Map(), null))).toEqual(["sparks", "sparks", "carImpact"]);
+  });
+
+  it("the ball's own off the arena (RV-172): Impact_Ball from 50 uu/s on its world slot (0.15 s), its car slot apart; a bounce sound", () => {
+    const t = new ImpactTriggers();
+    const own = (tick: number, speed: number): Impact => ({ ...impact(tick, BALL_IMPACT, "world", speed), car: BALL_IMPACT });
+    expect(t.frame(0.01, [own(1, 800)], new Map(), new Map(), null)).toEqual([{ kind: "ballImpact", at: vec3(0, 0, 0), speed: 800, partner: "world" }]);
+    // (0.1 s on: the world slot still cooling; a car's hit on it sounds on the actor slot)
+    expect(kinds(t.frame(0.1, [own(13, 800), impact(13, 7, "ball", 800)], new Map(), new Map(), null))).toEqual(["sparks", "ballImpact"]);
+    expect(kinds(t.frame(0.06, [own(20, 40)], new Map(), new Map(), null))).toEqual([]);
+    expect(kinds(t.frame(0.01, [own(21, 600)], new Map(), new Map(), null))).toEqual(["ballImpact"]);
+    expect(triggerSounds([{ kind: "ballImpact", at: vec3(0, 0, 0), speed: 650, partner: "world" }])).toEqual([{ kind: "ballBounce", at: vec3(0, 0, 0), strength: 0.5 }]);
   });
 
   it("skips ticks already handled (a prediction's re-simulation)", () => {
@@ -100,5 +111,25 @@ describe("the landing trigger (IT-5)", () => {
     const wheels = out.flatMap((l) => (l.kind === "landing" ? [l.wheel] : []));
     expect(wheels).toEqual([0, 1, 2, 3]);
     for (const l of out) if (l.kind === "landing") expect(l.speed).toBeCloseTo(10 * Math.abs(hardPoint(CONFIG, l.wheel).y), 6);
+  });
+});
+
+describe("the triggers' sounds (SND-5, 6)", () => {
+  it("a sound for each wheel landing: four landings of one car, four (RV-171)", () => {
+    const landing = (wheel: number): Trigger => ({ kind: "landing", car: 1, wheel, at: vec3(0, 0, 0), speed: 600 });
+    expect(triggerSounds([0, 1, 2, 3].map(landing)).map((s) => s.kind)).toEqual(["land", "land", "land", "land"]);
+  });
+
+  it("Impact_Body one scale for both partners: a car-world and a car-car hit at 2000 as strong (RV-173); the ball's full at 1300", () => {
+    const [wall, bump, ball] = triggerSounds([
+      { kind: "carImpact", car: 1, at: vec3(0, 0, 0), speed: 2000, partner: "world" },
+      { kind: "carImpact", car: 1, at: vec3(0, 0, 0), speed: 2000, partner: "car" },
+      { kind: "ballImpact", at: vec3(0, 0, 0), speed: 1300, partner: "car" },
+    ]);
+    const strength = (s: unknown): number => (s as { strength: number }).strength;
+    expect(strength(wall)).toBe(strength(bump));
+    expect(strength(wall)).toBe(1);
+    expect(strength(ball)).toBe(1);
+    expect(IMPACT_SCALES.body).toBe(2000);
   });
 });

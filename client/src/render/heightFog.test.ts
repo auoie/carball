@@ -1,6 +1,6 @@
 // The height fog against the spec's values (notes/arena-surroundings.md FOG-5, 7, 13, 14), and how materials take it
 // (FOG-10).
-import { AdditiveBlending, type Blending, Group, Mesh, NormalBlending, PerspectiveCamera, PlaneGeometry, ShaderMaterial } from "three";
+import { AdditiveBlending, type Blending, Group, Mesh, MeshBasicMaterial, NormalBlending, PerspectiveCamera, PlaneGeometry, ShaderMaterial } from "three";
 import { describe, expect, it } from "vitest";
 import { CUBE_FOG_CAP, HEIGHT_FOG, HEIGHT_FOG_UNIFORMS, fogAll, fogCd, heightFog, opaqueDelta, skyDelta, updateHeightFog, withHeightFog } from "./heightFog";
 
@@ -61,6 +61,44 @@ describe("the height fog (FOG-1..15)", () => {
   });
 });
 
+describe("the capture's sky bands (FOG-13 T1, sky only: RV-193)", () => {
+  it("each band's F and added luminance within 0.01 of T1's, each direction capped along its cube face's axis", () => {
+    const t1: [number, number, number, number][] = [
+      [0, 3, 0.15, 0.091],
+      [3, 6, 0.183, 0.086],
+      [6, 10, 0.225, 0.081],
+      [10, 15, 0.276, 0.074],
+      [15, 20, 0.33, 0.067],
+      [20, 25, 0.378, 0.061],
+      [25, 30, 0.419, 0.056],
+      [30, 40, 0.47, 0.05],
+      [40, 50, 0.531, 0.043],
+      [50, 65, 0.602, 0.035],
+      [65, 90, 0.656, 0.03],
+    ];
+    const cd = fogCd(927.9998);
+    for (const [lo, hi, wantF, wantLum] of t1) {
+      let [w, F, lum] = [0, 0, 0];
+      for (let el = lo + 0.25; el < hi; el += 0.5) {
+        for (let az = 0; az < 360; az += 2) {
+          const d = dir(az, el);
+          // (the face: its axis the direction's largest component)
+          const k = d.map(Math.abs).indexOf(Math.max(...d.map(Math.abs)));
+          const axis: [number, number, number] = [0, 0, 0];
+          axis[k] = Math.sign(d[k] ?? 1);
+          const fog = heightFog(opaqueDelta(skyDelta(d), axis, CUBE_FOG_CAP), cd);
+          const c = Math.cos(el * deg);
+          w += c;
+          F += fog.F * c;
+          lum += (0.3 * fog.add[0] + 0.59 * fog.add[1] + 0.11 * fog.add[2]) * c;
+        }
+      }
+      expect(Math.abs(F / w - wantF), `el ${String(lo)}-${String(hi)} F ${(F / w).toFixed(3)}`).toBeLessThan(0.01);
+      expect(Math.abs(lum / w - wantLum), `el ${String(lo)}-${String(hi)} add ${(lum / w).toFixed(3)}`).toBeLessThan(0.01);
+    }
+  });
+});
+
 describe("the fog in the materials (FOG-10)", () => {
   const shader = (transparent = false, blending: Blending = NormalBlending): ShaderMaterial =>
     new ShaderMaterial({
@@ -76,8 +114,10 @@ describe("the fog in the materials (FOG-10)", () => {
     expect(opaque.fragmentShader.indexOf("gl_FragColor = vec4(1.0)")).toBeLessThan(opaque.fragmentShader.indexOf("rlFog.a + rlFog.rgb"));
     expect(opaque.uniforms["uFogCd"]).toBe(HEIGHT_FOG_UNIFORMS.uFogCd);
     expect(withHeightFog(shader(), "sky").fragmentShader).toContain("rlSkyDelta");
-    const translucent = withHeightFog(shader(true), "translucent", 25000);
+    const translucent = withHeightFog(shader(true), "translucent", { distance: 25000 });
     expect(translucent.vertexShader).toContain("vFog = rlHeightFog(normalize(vFogWorld - uFogCam) * 25000.000)");
+    // (placed at a fraction of its distance from a point: its true vertices, RV-188)
+    expect(withHeightFog(shader(true), "translucent", { scale: 4, about: [0, 928, 0] }).vertexShader).toContain("vec3(0.0000000, 928.00000, 0.0000000) + (vFogWorld - vec3(0.0000000, 928.00000, 0.0000000)) * 4.0000000 - uFogCam");
     expect(translucent.fragmentShader).toContain("gl_FragColor.rgb * vFog.a + vFog.rgb");
     expect(withHeightFog(shader(true, AdditiveBlending), "additive").fragmentShader).toContain("gl_FragColor.rgb *= vFog.a");
     const before = translucent.fragmentShader;
@@ -100,5 +140,32 @@ describe("the fog in the materials (FOG-10)", () => {
     expect(HEIGHT_FOG_UNIFORMS.uFogCd.value).toBeCloseTo(fogCd(17), 12);
     expect(HEIGHT_FOG_UNIFORMS.uFogCap.value).toBe(CUBE_FOG_CAP);
     expect(HEIGHT_FOG_UNIFORMS.uFogAxis.value.z).toBeCloseTo(-1, 9);
+  });
+});
+
+describe("the fog wherever it's drawn (RV-187, 190)", () => {
+  it("a shader's early return can't skip it: its main renamed and called, the fog after (RV-190)", () => {
+    const early = new ShaderMaterial({
+      vertexShader: "void main() { gl_Position = vec4(position, 1.0); }",
+      fragmentShader: "void main() { if (gl_FragCoord.x > 1.0) { gl_FragColor = vec4(1.0); return; } gl_FragColor = vec4(0.5); }",
+    });
+    const fragment = withHeightFog(early, "opaque").fragmentShader;
+    expect(fragment).toContain("void rlFragmentMain()");
+    const main = fragment.slice(fragment.lastIndexOf("void main()"));
+    expect(main.indexOf("rlFragmentMain();")).toBeLessThan(main.indexOf("rlFog.a + rlFog.rgb"));
+  });
+
+  it("built-in materials too, at their compile (the arena's, the cars': RV-187)", () => {
+    const basic = withHeightFog(new MeshBasicMaterial(), "opaque");
+    const shader = { vertexShader: "void main() { gl_Position = vec4(position, 1.0); }", fragmentShader: "void main() { gl_FragColor = vec4(1.0); }", uniforms: {} as Record<string, unknown> };
+    basic.onBeforeCompile(shader as never, null as never);
+    expect(shader.fragmentShader).toContain("rlHeightFog(rlOpaqueDelta(vFogWorld))");
+    expect(shader.uniforms["uFogCd"]).toBe(HEIGHT_FOG_UNIFORMS.uFogCd);
+    expect(basic.customProgramCacheKey()).toContain("rlHeightFog:opaque");
+  });
+
+  it("the arena's far corner from a corner camera fogged as the game's: F 0.784 (12.9k off, from z 150)", () => {
+    // (from (-3900, -5000, 150) to the field's corner (4096, 5120, 0); Three's axes)
+    expect(heightFog([4096 + 3900, -150, 5120 + 5000], fogCd(150)).F).toBeCloseTo(0.784, 2);
   });
 });

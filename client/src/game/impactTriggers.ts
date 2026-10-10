@@ -1,11 +1,12 @@
-// The impact and landing triggers as the game's (notes/impact-triggers.md IT-1..5): the engine reports each car's
-// contacts per physics step (engine patch 96: the speed along the averaged normal); here they become the Impact_Medium
-// shake (the local car's, restarted by every hit over 200 uu/s), the sparks and the body sound (50 uu/s or more, a 0.15 s
-// game-time cooldown each for world and actor partners; a car–ball hit sounds the ball's, a car–car hit one car's), and
-// the wheels' landings (once a frame, each wheel's contact edge, the previous frame's speed into the surface at its hard
-// point, over 50 uu/s; every car, no cooldown).
+// The impact and landing triggers as the game's (notes/impact-triggers.md IT-1..5, §2b): the engine reports each car's
+// contacts per physics step, and the ball's with the world (engine patch 96: the speed along the averaged normal); here
+// they become the Impact_Medium shake (the local car's, restarted by every hit over 200 uu/s), the sparks and the body
+// sound (50 uu/s or more, a 0.15 s game-time cooldown each for world and actor partners; a car–ball hit sounds the
+// ball's, on its actor slot, a car–car hit one car's), the ball's own Impact_Ball off the arena (its world slot: RV-172),
+// and the wheels' landings (once a frame, each wheel's contact edge, the previous frame's speed into the surface at its
+// hard point, over 50 uu/s; every car, no cooldown).
 import type { SoundEvent } from "../audio/detect";
-import type { CarConfig, CarState, Impact, ImpactPartner } from "../engine/world";
+import { BALL_IMPACT, type CarConfig, type CarState, type Impact, type ImpactPartner } from "../engine/world";
 import { type Vec3, add, cross, dot, localToWorld, vec3 } from "../math/vec";
 
 /** ImpactEffectsComponent_TA: MinImpactMomentum (uu/s), MinImpactDelay (s); the ball's the same (Ball_Default: 50, the
@@ -31,8 +32,8 @@ export type Trigger =
   | { readonly kind: "sparks"; readonly car: number; readonly at: Vec3; readonly normal: Vec3; readonly speed: number }
   /** a car's body sound (Body impact: a world or car partner) */
   | { readonly kind: "carImpact"; readonly car: number; readonly at: Vec3; readonly speed: number; readonly partner: ImpactPartner }
-  /** the ball's sound (Impact_Ball: its priority over the car's) */
-  | { readonly kind: "ballImpact"; readonly at: Vec3; readonly speed: number }
+  /** the ball's sound (Impact_Ball: its priority over the car's), off a car or the arena */
+  | { readonly kind: "ballImpact"; readonly at: Vec3; readonly speed: number; readonly partner: "car" | "world" }
   /** a wheel touching down (Impact_Wheel, its RTPC the speed) */
   | { readonly kind: "landing"; readonly car: number; readonly wheel: number; readonly at: Vec3; readonly speed: number };
 
@@ -60,6 +61,7 @@ export class ImpactTriggers {
   /** Per car, the last effect's time with a world and with an actor partner; the ball's with an actor */
   readonly #slots = new Map<number, { world: number; actor: number }>();
   #ballActor = -Infinity;
+  #ballWorld = -Infinity;
   /** Per car, last frame's state (the landing's previous frame) */
   readonly #previous = new Map<number, TriggerCar>();
 
@@ -78,6 +80,14 @@ export class ImpactTriggers {
 
   #impact(impact: Impact, local: number | null, out: Trigger[]): void {
     const { car, speed } = impact;
+    // (the ball's own, off the arena: Impact_Ball on its world slot; no shake, no sparks: §2b)
+    if (car === BALL_IMPACT) {
+      if (speed >= IMPACT_EFFECTS.minMomentum && this.#time - this.#ballWorld >= IMPACT_EFFECTS.minDelay) {
+        this.#ballWorld = this.#time;
+        out.push({ kind: "ballImpact", at: impact.pos, speed, partner: "world" });
+      }
+      return;
+    }
     // The shake (before the effects' gate: no cooldown; at most a restart a hit)
     const scale = impactShakeScale(speed);
     if (car === local && scale > 0) out.push({ kind: "shake", car, scale });
@@ -96,7 +106,7 @@ export class ImpactTriggers {
     // The ball's own side of a car–ball hit: its sound, on its own actor cooldown
     if (impact.partner === "ball" && this.#time - this.#ballActor >= IMPACT_EFFECTS.minDelay) {
       this.#ballActor = this.#time;
-      out.push({ kind: "ballImpact", at: impact.pos, speed });
+      out.push({ kind: "ballImpact", at: impact.pos, speed, partner: "car" });
     }
   }
 
@@ -115,23 +125,25 @@ export class ImpactTriggers {
   }
 }
 
-/** The triggers' sounds for the synth (its strengths 0..1 from the speeds: the game's ImpactIntensity RTPC, mapped
- *  on the scales the synth's sounds were made for): a car's body on the world an impact, on a car a bump, the ball's a
- *  ball hit; a car's wheels touching down in one frame one landing, the hardest (the game posts each wheel's Impact_Wheel:
- *  their voices' limits are the sound bank's, not modelled here) */
+/** The intensities' full scales (the game's RTPCs, SND-5/6: RV-173): Impact_Body one event, 0-2000, whichever the
+ *  partner (the world an impact, a car a bump); Impact_Ball at 0 dB by 1300 (its Car material's); a wheel's landing */
+export const IMPACT_SCALES = { body: 2000, ball: 1300, wheel: 1100 } as const;
+
+/** The triggers' sounds for the synth (its strengths 0..1 from the speeds on IMPACT_SCALES): a car's body on the world
+ *  an impact, on a car a bump, the ball's off a car a ball hit and off the arena a bounce; each wheel touching down a landing of its own (the game posts one
+ *  Impact_Wheel a wheel, up to four a landing, RV-171; their voices' limit, 25, is the sound bank's) */
 export function triggerSounds(triggers: readonly Trigger[]): SoundEvent[] {
   const strength = (v: number, full: number): number => Math.min(1, Math.max(0, v / full));
   const out: SoundEvent[] = [];
-  const landings = new Map<number, Extract<Trigger, { kind: "landing" }>>();
   for (const t of triggers) {
     if (t.kind === "carImpact") {
-      out.push(t.partner === "car" ? { kind: "bump", at: t.at, strength: strength(t.speed, 2500) } : { kind: "impact", car: t.car, at: t.at, strength: strength(t.speed, 1500) });
+      const s = strength(t.speed, IMPACT_SCALES.body);
+      out.push(t.partner === "car" ? { kind: "bump", at: t.at, strength: s } : { kind: "impact", car: t.car, at: t.at, strength: s });
     } else if (t.kind === "ballImpact") {
-      out.push({ kind: "ballHit", at: t.at, strength: strength(t.speed, 2600) });
-    } else if (t.kind === "landing" && t.speed > (landings.get(t.car)?.speed ?? 0)) {
-      landings.set(t.car, t);
+      out.push({ kind: t.partner === "car" ? "ballHit" : "ballBounce", at: t.at, strength: strength(t.speed, IMPACT_SCALES.ball) });
+    } else if (t.kind === "landing") {
+      out.push({ kind: "land", car: t.car, at: t.at, strength: strength(t.speed, IMPACT_SCALES.wheel) });
     }
   }
-  for (const l of landings.values()) out.push({ kind: "land", car: l.car, at: l.at, strength: strength(l.speed, 1100) });
   return out;
 }

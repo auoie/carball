@@ -54,8 +54,8 @@ export const PROPS = {
   /** The corner flags (SUR-10, 19: the static session's measures): each corner 5 poles on an arc (r 6185), 5.62 degrees
    *  apart from its first; the -Y corners the +Y ones turned, not mirrored (RV-153c); a pole 15.5 across from z -1 to
    *  751 with an 88 arm at its top, beside its banner (77 back along the arc, 20 toward the field: RV-153a); its banner
-   *  133 x 559 (z 175 to 734), a shaped cloth (81 % of it), facing the field, a strip over its top (z 634 to 751), 2 in
-   *  front of it (RV-153b); opaque, two-sided: col = albedo + 0.25 GrassCube, times L (RV-153e). The cloth's mean
+   *  133 x 559 (z 175 to 734), a shaped cloth (81 % of it), facing the field; the strip a sleeve round the pole and its
+   *  arm (RV-179); opaque, two-sided: col = albedo + 0.25 GrassCube, times L (RV-153e). The cloth's mean
    *  albedo 2 T + 0.295 as the texture's two parts (our own design: a light band over the team's colour), 57 % team at
    *  3.51 T and 43 % light at 0.686 (E[X.R (1 - w)] and E[X.R X.A w] over their shares: the capture's per-pixel clip
    *  sees them apart), in the corner's flat light (+X: orange (0.83, 0.75, 0.55), blue (0.76, 0.68, 0.51); -X (0.45,
@@ -74,9 +74,11 @@ export const PROPS = {
     count: 5,
     poleShape: { width: 15.5, z: [-1, 751] as const, arm: 88, along: -77, toward: 20 },
     banner: { width: 133, z: [175, 734] as const, cloth: 0.81 },
-    strip: { z: [634, 751] as const, toward: 2 },
-    /** the cloth's parts (the light band across v 0.45-0.721: 43 % of what shows under the strip) and the strip's */
-    albedo: { team: 3.51, light: 0.686, lightShare: 0.43, band: [0.45, 0.721] as const, strip: [3.152, 0.002] as const },
+    /** the flag's "top strip": a sleeve about 18 thick (SUR-10 corrected, RV-179) up the pole from z 175 to 639 and
+     *  along its arm (88 out over the cloth) rising from 634 to 745 */
+    strip: { width: 18, pole: [175, 639] as const, arm: [634, 745] as const },
+    /** the cloth's parts (the light band across v 0.45-0.798: 43 % of the cloth, above its cut) and the strip's */
+    albedo: { team: 3.51, light: 0.686, lightShare: 0.43, band: [0.45, 0.798] as const, strip: [3.152, 0.002] as const },
     light: { plusXOrange: [0.83, 0.75, 0.55], plusXBlue: [0.76, 0.68, 0.51], minusX: [0.45, 0.41, 0.31], strip: [0.52, 0.48, 0.36] } as const,
     pole: { plusX: [0.44, 0.44, 0.29], minusX: [0.3, 0.27, 0.18] } as const,
     /** The GrassCube seen back toward the field from the flags (its mean there: the poles' cube terms') */
@@ -172,13 +174,18 @@ void main() {
 /** Basic_Orange_Mat's sat(1.5 (D - 0.25)): its mean over Park_BannerScaffold_D, per channel (SUR-19) */
 export const BANNER_D_TERM = 0.153;
 
-/** A banner's colour for a team's linear primary (SUR-19, RV-127d): c0 = 0.5 lerp(W, 4 T, 1) + sat(1.5 (D - 0.25)) = 2 T
- *  + 0.153 (the texture's mean of that term), then the saturation boost c = clamp(c0 + 0.15 (c0 - lum c0), 0, 1.5); T = P
- *  + (FB - P)/16 */
-export function bannerColour(c: Color): [number, number, number] {
+/** A banner's base for a team's linear primary (SUR-19): 0.5 lerp(W, 4 T, 1) + sat(1.5 (D - 0.25)) = 2 T + 0.153 (the
+ *  texture's mean of that term); T = P + (FB - P)/16 */
+export function bannerBase(c: Color): [number, number, number] {
   const f = fullBright([c.r, c.g, c.b]);
   const t = [c.r + (f[0] - c.r) / 16, c.g + (f[1] - c.g) / 16, c.b + (f[2] - c.b) / 16];
-  const c0 = t.map((v) => 2 * v + BANNER_D_TERM);
+  return t.map((v) => 2 * v + BANNER_D_TERM) as [number, number, number];
+}
+
+/** A banner's colour (SUR-19 corrected, RV-127d, RV-178): c0 = its base + 0.5 GrassCube(R) (`cube`: the capture along
+ *  its reflection, per channel), then the saturation boost c = clamp(c0 + 0.15 (c0 - lum c0), 0, 1.5); the shader's twin */
+export function bannerColour(c: Color, cube: readonly number[] = [0, 0, 0]): [number, number, number] {
+  const c0 = bannerBase(c).map((v, k) => v + 0.5 * (cube[k] ?? 0));
   const lum = 0.3 * (c0[0] ?? 0) + 0.59 * (c0[1] ?? 0) + 0.11 * (c0[2] ?? 0);
   return c0.map((v) => Math.min(Math.max(v + 0.15 * (v - lum), 0), 1.5)) as [number, number, number];
 }
@@ -219,6 +226,39 @@ export function flagColours(primary: Color, plusX: boolean, orange: boolean): { 
     strip: t.map((v, c) => (A.strip[0] * v + A.strip[1] + cube) * (F.light.strip[c] ?? 1)),
     pole: [...(plusX ? F.pole.plusX : F.pole.minusX)],
   };
+}
+
+/** A scaffold banner's material (SUR-19, RV-178): c0 = base + 0.5 GrassCube(R), boosted and clamped (bannerColour), times
+ *  its light; `grassCube` the arena's capture (ArenaView shares its uniform; a black cube until then) */
+function bannerMaterial(base: readonly number[], light: readonly number[]): ShaderMaterial {
+  return new ShaderMaterial({
+    vertexShader: /* glsl */ `
+      varying vec3 vWorld;
+      varying vec3 vNormal;
+      void main() {
+        vec4 world = modelMatrix * vec4(position, 1.0);
+        vWorld = world.xyz;
+        vNormal = normalize(mat3(modelMatrix) * normal);
+        gl_Position = projectionMatrix * viewMatrix * world;
+      }`,
+    fragmentShader: /* glsl */ `
+      uniform vec3 base;
+      uniform vec3 light;
+      uniform samplerCube grassCube;
+      varying vec3 vWorld;
+      varying vec3 vNormal;
+      void main() {
+        vec3 toCamera = normalize(cameraPosition - vWorld);
+        vec3 n = dot(vNormal, toCamera) < 0.0 ? -vNormal : vNormal;
+        vec3 c0 = base + 0.5 * textureLod(grassCube, reflect(-toCamera, n), 0.0).rgb;
+        float lum = dot(c0, vec3(0.3, 0.59, 0.11));
+        vec3 c = clamp(c0 + 0.15 * (c0 - lum), 0.0, 1.5);
+        gl_FragColor = vec4(c * light, 1.0);
+        #include <colorspace_fragment>
+      }`,
+    uniforms: { base: { value: new Vector3(base[0], base[1], base[2]) }, light: { value: new Vector3(light[0], light[1], light[2]) }, grassCube: { value: null } },
+    side: DoubleSide,
+  });
 }
 
 /** A panel facing the arena's centre (its normal level, tilted down by `tilt`) */
@@ -263,7 +303,6 @@ export function buildScreensAndProps(primary0: Color, primary1: Color): { group:
   for (const bb of PANELS.billboards) group.add(panelMesh(bb, billboardMaterial));
   // The props: team-coloured by side (y < 0 blue)
   const time = { value: 0 };
-  const teamColour = (c: Color): Vector3 => new Vector3(...bannerColour(c));
   const propMaterial = (colour: Vector3, pulse = 0, stripe = false): ShaderMaterial =>
     new ShaderMaterial({
       vertexShader: panelVertex,
@@ -276,10 +315,9 @@ export function buildScreensAndProps(primary0: Color, primary1: Color): { group:
   PROPS.scaffolds.forEach(([x, y], k) => {
     const tower = new Mesh(new BoxGeometry(w, h, w), metal);
     tower.position.set(x, h / 2, y);
-    // (its team's colour in the placement's light: RV-150)
+    // (its team's colour with the capture along its reflection, in the placement's light: RV-150, RV-178)
     const light = PROPS.scaffoldLight[k] ?? [1, 1, 1];
-    const colour = teamColour(y < 0 ? primary0 : primary1).multiply(new Vector3(...light));
-    const banner = new Mesh(new PlaneGeometry(w * 0.9, h * 0.6), propMaterial(colour));
+    const banner = new Mesh(new PlaneGeometry(w * 0.9, h * 0.6), bannerMaterial(bannerBase(y < 0 ? primary0 : primary1), light));
     banner.position.set(x, h * 0.55, y - Math.sign(y) * (w / 2 + 2));
     banner.lookAt(0, h * 0.55, 0);
     banner.name = "props: scaffold banner";
@@ -324,11 +362,19 @@ export function buildScreensAndProps(primary0: Color, primary1: Color): { group:
       const banner = new Mesh(new PlaneGeometry(F.banner.width, F.banner.z[1] - F.banner.z[0]), cloth);
       banner.position.copy(at(F.r, 0, (F.banner.z[0] + F.banner.z[1]) / 2));
       banner.lookAt(0, banner.position.y, 0);
-      // (the strip across the top, from the pole's arm over the cloth, in front of it)
-      const stripWidth = F.banner.width / 2 - F.poleShape.along;
-      const top = new Mesh(new PlaneGeometry(stripWidth, F.strip.z[1] - F.strip.z[0]), strip);
-      top.position.copy(at(F.r - F.strip.toward, (F.banner.width / 2 + F.poleShape.along) / 2, (F.strip.z[0] + F.strip.z[1]) / 2));
-      top.lookAt(0, top.position.y, 0);
+      // (the strip: a sleeve up the pole and along its arm, rising over the cloth's top: RV-179)
+      const S = F.strip;
+      const top = new Group();
+      const up = new Mesh(new BoxGeometry(S.width, S.pole[1] - S.pole[0], S.width), strip);
+      up.position.copy(at(F.r - F.poleShape.toward, F.poleShape.along, (S.pole[0] + S.pole[1]) / 2));
+      const [from, to] = [at(F.r - F.poleShape.toward, F.poleShape.along, S.arm[0]), at(F.r - F.poleShape.toward, F.poleShape.along + F.poleShape.arm, S.arm[1])];
+      const arm = new Mesh(new BoxGeometry(from.distanceTo(to), S.width, S.width), strip);
+      arm.position.copy(from).add(to).multiplyScalar(0.5);
+      arm.quaternion.setFromUnitVectors(new Vector3(1, 0, 0), to.clone().sub(from).normalize());
+      top.add(up, arm);
+      top.position.copy(at(F.r - F.poleShape.toward, F.poleShape.along, 0));
+      up.position.sub(top.position);
+      arm.position.sub(top.position);
       pole.name = "props: flag pole";
       banner.name = "props: flag cloth";
       top.name = "props: flag strip";
@@ -364,22 +410,24 @@ export function buildScreensAndProps(primary0: Color, primary1: Color): { group:
  *  at its foot to 600 at its top (the two fitted to CAL1's coverage, 14 % of az 175-185 at el 6-10 and 21 % at 10-15:
  *  RV-154c; SUR-20's 0.17); the poplars
  *  (masked, 41.6 % of the card covering (its mask's 39.2 % of texels, bilinear), SUR-20's olive-brown; spindles, widest
- *  a third of the way up): small ones at az
- *  175.55-176.94 and 183.38-184.5 (r 16.5-17.7k, up to z 2.25k), the large at 175.55 and 184.24 (r 20.7k, up to 3.8k)
- *  and 179.88 (r 19.9k, up to 4.8k) (RV-154b) */
+ *  a third of the way up): nine, all from z 1344 (SUR-1 corrected, RV-181): six small (scale (1, 1, 0.5): up to z
+ *  2250, 440 across), two at scale 3 (up to 4062, about 1.4k across from the capture point) and one at scale 4 (up to
+ *  4968, 1.68k across) */
 export const PLAZA = {
   plinth: { front: -12120, flatTo: -13300, back: -19700, top: 2434, low: 1280, half: [640, 668] as const },
   statue: { x: [-13199, -11591] as const, y: [-380, 283] as const, z: [2339, 3841] as const, width: [220, 600] as const, colour: 0.17 },
   poplars: [
-    { az: 175.9, r: 17700, height: 2250, width: 420 },
-    { az: 176.9, r: 16500, height: 2250, width: 420 },
-    { az: 183.4, r: 16500, height: 2250, width: 420 },
-    { az: 184.4, r: 17700, height: 2250, width: 420 },
-    { az: 175.55, r: 20700, height: 3800, width: 900 },
-    { az: 184.24, r: 20700, height: 3800, width: 900 },
-    { az: 179.88, r: 19900, height: 4800, width: 1800 },
+    { az: 175.67, r: 17466, height: 2250, width: 440 },
+    { az: 176.26, r: 16534, height: 2250, width: 440 },
+    { az: 176.94, r: 15645, height: 2250, width: 440 },
+    { az: 183.38, r: 15672, height: 2250, width: 440 },
+    { az: 183.83, r: 16533, height: 2250, width: 440 },
+    { az: 184.5, r: 17453, height: 2250, width: 440 },
+    { az: 175.55, r: 20742, height: 4062, width: 1400 },
+    { az: 184.24, r: 20656, height: 4062, width: 1400 },
+    { az: 179.88, r: 19880, height: 4968, width: 1680 },
   ] as readonly { az: number; r: number; height: number; width: number }[],
-  poplarFoot: 1300,
+  poplarFoot: 1344,
   cover: 0.416,
   foliage: [0.15, 0.11, 0.024] as const,
 } as const;

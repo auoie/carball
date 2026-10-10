@@ -188,6 +188,12 @@ describe("the goals' insides (RV-76, RV-77)", () => {
     expect(meshes.filter((m) => m.name === "goal under glass")).toHaveLength(1);
     expect(meshes.filter((m) => m.name === "goal base bevels")).toHaveLength(2);
     expect(meshes.filter((m) => m.material instanceof GoalFloorMaterial)).toHaveLength(2);
+    // (the frame's tire marks inside its saturate, as H-4's: sat((R + 4 (0.125 + 0.625 G) cube) m) x its light, both
+    // places: RV-168d)
+    const frame = new GoalFloorMaterial({ value: null as never }).fragmentShader;
+    const inside = /clamp\(\(vec3\([\d.]+\) \+ 4\.0 \* \(0\.125 \+ 0\.625 \* [\d.]+\) \* cube\) \* 0\.931, 0\.0, 1\.0\) \* frameLight/g;
+    expect(frame.match(inside)).toHaveLength(2);
+    expect(frame).not.toMatch(/frameLight \* 0\.931/);
   });
 
   it("the net's glass chart along the profile is the game's (RV-110): 193.4 uu a unit on the floor, 195.8 round the back, 203.1 on the roof, 5.5 at the back's middle", () => {

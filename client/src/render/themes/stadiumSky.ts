@@ -5,7 +5,7 @@
 // the speckles' neighbour correlation), stored as the game's are (8-bit sRGB, mipmapped) and sampled by the game's
 // formula. Values and formulas only.
 import { withHeightFog } from "../heightFog";
-import { BackSide, DataTexture, LinearFilter, LinearMipmapLinearFilter, Mesh, RepeatWrapping, RGBAFormat, SRGBColorSpace, ShaderMaterial, SphereGeometry, UnsignedByteType, Vector3 } from "three";
+import { BackSide, BufferGeometry, DataTexture, DoubleSide, Float32BufferAttribute, LinearFilter, LinearMipmapLinearFilter, Mesh, RepeatWrapping, RGBAFormat, SRGBColorSpace, ShaderMaterial, SphereGeometry, UnsignedByteType, Vector3 } from "three";
 
 /** H-10's colours (linear): the zenith, the horizon's q^4 term, the sun side's pull target, the clouds' base */
 export const SKY_COLOURS = {
@@ -33,14 +33,15 @@ export const NOISE_QUANTILES = {
   fireR: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 8, 20, 37, 55, 76, 98, 123, 151, 184, 207, 227, 252, 255],
 } as const;
 
-/** The noises' structure (our own, to NOISE_MEASURES after the quantiles: RV-156): the smoke's lattices (red's own part 8
- *  cells a tile, green and blue 16; 4 octaves; red = 1.25 (green + blue) + its own), the speckles' neighbour kernels
+/** The noises' structure (our own, to NOISE_MEASURES after the quantiles: RV-156, RV-186): the smoke's lattices (red's own
+ *  part 8 cells a tile, green and blue 16; 4 octaves; blue given green's correlation smokeGBCorr; red = 1.1 (green + blue) +
+ *  its own), the speckles' neighbour kernels
  *  [a, 1, a], the fire's lattice (110 cells) */
-export const NOISE_SHAPE = { size: 512, smokeOwn: 8, smokeGB: 16, octaves: 4, smokeMix: 1.25, speckleR: 0.29, speckleG: 0.4, fire: 110 } as const;
+export const NOISE_SHAPE = { size: 512, smokeOwn: 8, smokeGB: 16, octaves: 4, smokeMix: 1.1, smokeGBCorr: -0.02, speckleR: 0.29, speckleG: 0.4, fire: 110 } as const;
 
 /** The textures' own measures our noises are made to (after their quantiles: RV-156): the smoke's red against its
  *  green and blue, the speckles' and the fire's neighbour correlation */
-export const NOISE_MEASURES = { smokeRG: 0.49, smokeRB: 0.51, speckleRLag1: 0.45, speckleGLag1: 0.42, fireLag1: 0.87 } as const;
+export const NOISE_MEASURES = { smokeRG: 0.49, smokeRB: 0.51, smokeGB: -0.02, speckleRLag1: 0.45, speckleGLag1: 0.42, fireLag1: 0.87 } as const;
 
 /** mulberry32: a seeded generator */
 function generator(seed: number): () => number {
@@ -213,12 +214,36 @@ export function skyNoise(): SkyNoise {
   return made;
 }
 
+/** `b` given `a`'s correlation `target` (both standardised): b + k a, k solved for it (a small shift of b's own pattern),
+ *  standardised again */
+function correlated(a: Float64Array, b: Float64Array, target: number): Float64Array {
+  let c = 0;
+  for (let i = 0; i < a.length; i++) c += (a[i] ?? 0) * (b[i] ?? 0);
+  c /= a.length;
+  // (corr(a, b + k a) = (c + k) / sqrt(1 + 2 k c + k²): bisection for k)
+  const at = (k: number): number => (c + k) / Math.sqrt(1 + 2 * k * c + k * k);
+  let [lo, hi] = [-1, 1];
+  for (let step = 0; step < 60; step++) {
+    const mid = (lo + hi) / 2;
+    if (at(mid) < target) lo = mid;
+    else hi = mid;
+  }
+  const k = (lo + hi) / 2;
+  const out = Float64Array.from(b, (v, i) => v + k * (a[i] ?? 0));
+  const scale = 1 / Math.sqrt(1 + 2 * k * c + k * k);
+  for (let i = 0; i < out.length; i++) out[i] = (out[i] ?? 0) * scale;
+  return out;
+}
+
+/** The noises' lattices' seeds */
+export const NOISE_SEEDS = { own: 11, g: 22, b: 33 };
+
 /** The noises made afresh (skyNoise keeps the first) */
-export function makeSkyNoise(): SkyNoise {
+export function makeSkyNoise(seeds: { own: number; g: number; b: number } = NOISE_SEEDS, mix: number = NOISE_SHAPE.smokeMix): SkyNoise {
   const { size: n, smokeOwn, smokeGB, octaves } = NOISE_SHAPE;
-  const own = valueNoise(n, smokeOwn, octaves, 11);
-  const g = valueNoise(n, smokeGB, octaves, 22);
-  const b = valueNoise(n, smokeGB, octaves, 33);
+  const own = valueNoise(n, smokeOwn, octaves, seeds.own);
+  const g = valueNoise(n, smokeGB, octaves, seeds.g);
+  const b = correlated(g, valueNoise(n, smokeGB, octaves, seeds.b), NOISE_SHAPE.smokeGBCorr);
   const sr = speckle(n, NOISE_SHAPE.speckleR, 44);
   const sg = speckle(n, NOISE_SHAPE.speckleG, 55);
   const fire = valueNoise(n, NOISE_SHAPE.fire, 1, 66);
@@ -234,7 +259,6 @@ export function makeSkyNoise(): SkyNoise {
     speckleG: byteTable(NOISE_QUANTILES.speckleG),
     fireR: byteTable(NOISE_QUANTILES.fireR),
   };
-  const mix = NOISE_SHAPE.smokeMix;
   const red = new Float64Array(n * n);
   for (let k = 0; k < red.length; k++) red[k] = mix * ((g[k] ?? 0) + (b[k] ?? 0)) + (own[k] ?? 0);
   const [ur, ug, ub] = [ranks(red), ranks(g), ranks(b)];
@@ -421,4 +445,83 @@ export function buildSkyDome(noise: SkyNoise = skyNoise()): { mesh: Mesh; update
       if (u["pan3"]) u["pan3"].value = pan(SKY_PANS.stars);
     },
   };
+}
+
+/** The fog bowl (FogHemisphere_V2 on SkySphere01, H-10, SUR-23, RV-189): a hemisphere pointing down, its rim at z 4054
+ *  and 11,796 out, 5,898 deep; translucent, its colour nothing but the premultiplied vertex fog (a darkening layer),
+ *  its alpha Curve_FogDusk.A by the mesh's v (0 at the pole, 1 at the rim) */
+export const FOG_BOWL = {
+  rim: 4054,
+  radius: 11796,
+  depth: 5898,
+  alpha: [[0.56, 0.88], [0.63, 0.7], [0.69, 0.5], [0.75, 0.29], [0.81, 0.12], [0.88, 0.035], [1, 0]] as readonly (readonly [number, number])[],
+} as const;
+
+/** Curve_FogDusk.A at v (the shader's, for tests) */
+export function fogBowlAlpha(v: number): number {
+  const table = FOG_BOWL.alpha;
+  if (v <= (table[0]?.[0] ?? 0)) return table[0]?.[1] ?? 0;
+  for (let k = 1; k < table.length; k++) {
+    const [v0 = 0, a0 = 0] = table[k - 1] ?? [];
+    const [v1 = 1, a1 = 0] = table[k] ?? [];
+    if (v <= v1) return a0 + ((a1 - a0) * (v - v0)) / (v1 - v0);
+  }
+  return 0;
+}
+
+/** The fog bowl's mesh: latitude rings from its rim (v 1) to its pole (v 0), 96 round, 24 deep */
+export function buildFogBowl(): Mesh {
+  const B = FOG_BOWL;
+  const [round, deep] = [96, 24];
+  const pos: number[] = [];
+  const vs: number[] = [];
+  const at = (k: number, j: number): [number[], number] => {
+    const [lambda, phi] = [(k / round) * 2 * Math.PI, (j / deep) * (Math.PI / 2)];
+    // (Three's frame: x, z up, the game's y)
+    return [[B.radius * Math.cos(phi) * Math.cos(lambda), B.rim - B.depth * Math.sin(phi), B.radius * Math.cos(phi) * Math.sin(lambda)], 1 - j / deep];
+  };
+  for (let k = 0; k < round; k++) {
+    for (let j = 0; j < deep; j++) {
+      const quad = [at(k, j), at(k + 1, j), at(k + 1, j + 1), at(k, j), at(k + 1, j + 1), at(k, j + 1)];
+      for (const [p, v] of quad) {
+        pos.push(...p);
+        vs.push(0, v);
+      }
+    }
+  }
+  const geometry = new BufferGeometry();
+  geometry.setAttribute("position", new Float32BufferAttribute(pos, 3));
+  geometry.setAttribute("uv", new Float32BufferAttribute(vs, 2));
+  const knots = B.alpha.map(([v]) => v.toFixed(3));
+  const alphas = B.alpha.map(([, a]) => a.toFixed(3));
+  const material = new ShaderMaterial({
+    vertexShader: /* glsl */ `
+      varying float vV;
+      void main() {
+        vV = uv.y;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: /* glsl */ `
+      varying float vV;
+      float fogDusk(float v) {
+        float knots[7] = float[7](${knots.join(", ")});
+        float alphas[7] = float[7](${alphas.join(", ")});
+        if (v <= knots[0]) return alphas[0];
+        for (int k = 1; k < 7; k++) {
+          if (v <= knots[k]) return mix(alphas[k - 1], alphas[k], (v - knots[k - 1]) / (knots[k] - knots[k - 1]));
+        }
+        return 0.0;
+      }
+      void main() {
+        gl_FragColor = vec4(0.0, 0.0, 0.0, fogDusk(vV));
+      }`,
+    transparent: true,
+    depthWrite: false,
+    side: DoubleSide,
+  });
+  // (its colour the vertex fog alone: c F + fog with c 0)
+  withHeightFog(material, "translucent");
+  const mesh = new Mesh(geometry, material);
+  mesh.name = "sky: fog bowl";
+  return mesh;
 }

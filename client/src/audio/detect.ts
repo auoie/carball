@@ -1,7 +1,7 @@
-// What happened that makes a sound, found by comparing the game's state from one frame to the next: the ball's bounces
-// off the arena, jumps, second jumps and dodges, boost pickups and demolitions. The same for freeplay and online play
-// (where the states are the predicted world). The impacts (a car's body on the arena, on another car, on the ball) and
-// the landings come from the engine's contacts instead, as the game's triggers (game/impactTriggers.ts).
+// What happened that makes a sound, found by comparing the game's state from one frame to the next: jumps, second jumps
+// and dodges, boost pickups and demolitions. The same for freeplay and online play (where the states are the predicted
+// world). The impacts (a car's body on the arena, on another car, on the ball; the ball's own off the arena) and the
+// landings come from the engine's contacts instead, as the game's triggers (game/impactTriggers.ts).
 import type { BodyState, BoostPadState, CarState } from "../engine/world";
 import { type Vec3, length, sub } from "../math/vec";
 
@@ -23,33 +23,19 @@ export type SoundEvent =
   | { readonly kind: "bump"; readonly at: Vec3; readonly strength: number }
   | { readonly kind: "demo"; readonly at: Vec3 };
 
-/** The arena's gravity (uu/s², along -z). */
-const GRAVITY = -650;
-/** A velocity change (uu/s) beyond what gravity explains, that counts as an impact; smaller ones are rolling and
- *  pushing. */
-const BALL_IMPACT = 160;
-/** A car this close to the ball (centres, uu) is what hit it. */
-const TOUCH_DISTANCE = 270;
-/** Moving further than this between frames is a teleport (a reset, a ball placed), not a hit. */
+/** Moving further than this between frames is a teleport (a reset, a car placed), not a jump. */
 const TELEPORT = 600;
-/** At most one ball sound per this long, so a dribble or a car pushing the ball doesn't rattle. */
-const BALL_COOLDOWN = 0.07;
-
-const clamp01 = (v: number): number => Math.min(1, Math.max(0, v));
 
 export class SoundDetector {
   #previous: SoundWorld | null = null;
-  #ballQuiet = 0; // seconds until the next ball sound may play
 
   /** The sounds between the last state and this one, `seconds` of simulation apart (0: nothing new). */
   update(world: SoundWorld, seconds: number): SoundEvent[] {
     if (seconds <= 0) return [];
     const previous = this.#previous;
     this.#previous = world;
-    this.#ballQuiet = Math.max(0, this.#ballQuiet - seconds);
     if (!previous) return [];
     const events: SoundEvent[] = [];
-    this.#ballEvents(previous, world, seconds, events);
     for (const [id, car] of world.cars) {
       const before = previous.cars.get(id);
       if (before) this.#carEvents(id, before, car, events);
@@ -58,20 +44,6 @@ export class SoundDetector {
       if (previous.pads[i]?.active === true && !pad.active) events.push({ kind: "pad", big: pad.big, at: pad.pos });
     });
     return events;
-  }
-
-  #ballEvents(previous: SoundWorld, world: SoundWorld, seconds: number, events: SoundEvent[]): void {
-    const before = previous.ball;
-    const now = world.ball;
-    if (length(sub(now.pos, before.pos)) > TELEPORT) return;
-    // The change in velocity that gravity doesn't account for
-    const change = sub(now.vel, before.vel);
-    const impulse = length({ ...change, z: change.z - GRAVITY * seconds });
-    if (impulse < BALL_IMPACT || this.#ballQuiet > 0) return;
-    // (a car at the ball: the car–ball contact's trigger sounds it, the ball's Impact_Ball)
-    if ([...world.cars.values()].some((c) => !c.demoed && length(sub(c.pos, now.pos)) < TOUCH_DISTANCE)) return;
-    this.#ballQuiet = BALL_COOLDOWN;
-    events.push({ kind: "ballBounce", at: now.pos, strength: clamp01(impulse / 1800) });
   }
 
   #carEvents(id: number, before: CarState, now: CarState, events: SoundEvent[]): void {

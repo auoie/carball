@@ -80,7 +80,7 @@ public:
 	// cleared) by the caller; the oldest dropped past IMPACT_LIMIT
 	struct ImpactEvent {
 		uint64_t tick;
-		uint32_t carId;
+		uint32_t carId; // the car's id, or IMPACT_BALL for the ball's own (with the world: notes/impact-triggers.md §2b)
 		int partnerKind; // 0 the world, 1 the ball, 2 a car
 		uint32_t partnerId; // the car's id, for a car
 		float speed; // |dv . n|, uu/s
@@ -91,6 +91,7 @@ public:
 	std::vector<ImpactEvent> impacts;
 	bool collectImpacts = false;
 	static constexpr size_t IMPACT_LIMIT = 1024;
+	static constexpr uint32_t IMPACT_BALL = 0xFFFFFFFF;
 
 	// RL PATCH: kickoff countdown: while non-zero, every car's controls are zeroed for the tick, then it counts down.
 	// The game freezes the cars for 4.0 s after a kickoff reset (replays: the first car moves 3.99-4.05 s after the

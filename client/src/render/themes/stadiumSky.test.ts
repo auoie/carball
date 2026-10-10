@@ -1,8 +1,9 @@
 // The stadium's sky (H-10 in full on our own noises) against the game's own sky's statistics: its mean luminance by
 // elevation band (the static session's evaluator with the game's textures, at four pan times), and our noises' own
 // statistics against the textures' quantiles.
+import type { ShaderMaterial } from "three";
 import { describe, expect, it } from "vitest";
-import { NOISE_MEASURES, NOISE_QUANTILES, QUANTILE_P, fromSrgbByte, makeSkyNoise, sampleNoise, skyColour, skyNoise, skyVQ } from "./stadiumSky";
+import { buildSkyDome, NOISE_MEASURES, NOISE_QUANTILES, QUANTILE_P, fromSrgbByte, makeSkyNoise, sampleNoise, skyColour, skyNoise, skyVQ } from "./stadiumSky";
 
 const noise = skyNoise();
 const lum = (c: readonly number[]): number => 0.2126 * (c[0] ?? 0) + 0.7152 * (c[1] ?? 0) + 0.0722 * (c[2] ?? 0);
@@ -63,6 +64,7 @@ describe("the stadium's sky (H-10, SUR-25)", () => {
     const got = {
       smokeRG: corr(r, channel(noise.smoke, 1)),
       smokeRB: corr(r, channel(noise.smoke, 2)),
+      smokeGB: corr(channel(noise.smoke, 1), channel(noise.smoke, 2)),
       speckleRLag1: lag1(channel(noise.speckle, 0)),
       speckleGLag1: lag1(channel(noise.speckle, 1)),
       fireLag1: lag1(channel(noise.fire, 0)),
@@ -100,6 +102,21 @@ describe("the stadium's sky (H-10, SUR-25)", () => {
     const ms = performance.now() - t0;
     expect(ms).toBeLessThan(1000);
   }, 10000);
+
+  it("pans by the elapsed time it's given, not a sum of them (the spin fix): the same at 10 s however often, then 20 s's", () => {
+    const sky = buildSkyDome();
+    const pan = (): unknown => (sky.mesh.material as ShaderMaterial).uniforms["pan1"]?.value;
+    const at = (t: number): number[] => [((t / 64) % 1 + 1) % 1, ((0.00625 * t) % 1 + 1) % 1];
+    sky.update(10);
+    sky.update(10);
+    (pan() as number[]).forEach((v, k) => {
+      expect(v).toBeCloseTo(at(10)[k] ?? 0, 9);
+    });
+    sky.update(20);
+    (pan() as number[]).forEach((v, k) => {
+      expect(v).toBeCloseTo(at(20)[k] ?? 0, 9);
+    });
+  });
 
   it("keeps v and q as the game's dome", () => {
     expect(skyVQ(5).v).toBeCloseTo(0.908, 3);

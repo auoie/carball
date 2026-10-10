@@ -9,7 +9,7 @@ out/bsim/agents/RMB1/e1..e26). The static session re-checked the v ≤ 200 early
 **Summary**
 - **IT-1. Cadence.** Impacts are processed every 120 Hz physics step while a pair touches; there is no touch-start
   debounce. The impact shake skips v ≤ 200 (no restart), so resting contact never cuts a hit short.
-- **IT-2. Speed.** v = |(v̄_self − v̄_other)·n|: averaged pre-impulse point velocities (v + ω×r) of all contact points
+- **IT-2. Speed.** v = |(v̄_self − v̄_other)·n|: averaged point velocities (v + ω×r) taken before the step's forces and impulses, over all contact points
   with that partner in the step; n is the averaged normal, replaced by a ±10 uu line-check hit normal.
 - **IT-3. Batching.** One HandleCollision per (car, partner actor) per physics step; the last restart in a frame wins.
 - **IT-4. Paths.** Car–ball, car–car and car–world share the chain. The ball's SoundPriority 100 means car–ball hits
@@ -93,8 +93,11 @@ DispatchRigidBodyCollisionNotifies (FUN_1409ad0e0):
 - +0xf0 = vel2, the same for body B;
 - +0x100 = max(0, −n·(vel1 − vel2) · combinedRestitution(+0x7c)).
 
-Timing: these are taken at solver setup, after this step's force and gravity integration but **before this step's
-contact impulses**. So they are the approach velocities, not the post-bounce ones.
+Timing (corrected 2026-10-10): these are the rigid bodies' own velocities (rb+0x160/+0x170) read at solver setup, i.e.
+**before this step's forces and gravity and before its contact impulses**. In Bullet 2.82 predictUnconstraintMotion does
+not integrate velocities ("it happens in the constraint solver", out/bsim/bullet-2.82 btDiscreteDynamicsWorld.cpp); the
+step's forces enter the solver separately as m_externalForceImpulse. So they are the previous step's end velocities,
+not the post-bounce ones. The earlier "after this step's force and gravity integration" was wrong (RVV, 674f3ef).
 
 **The processing threshold.** It is the min of the two objects' m_contactProcessingThreshold. RL appears to keep
 Bullet's default BT_LARGE_FLOAT [I], so every cached point counts. Points exist while within the contact breaking
@@ -125,12 +128,17 @@ if self.lastCollisionFrame (+0x718) < physMgr.frame:      # at most once per phy
 **HandleCollision** `0x140f03160`:
 
 ```
-car = comp.Owner; return if car lacks +0x130/+0x790, or car flag +0xf8 & 2, or car and partner are linked via +0x750
+self = comp.Owner   # a car or the ball; the early-outs are generic Actor/RBActor_TA fields
+return if !self.WorldInfo (+0x130) or !WorldInfo.MyEmitterPool (+0x790) or self.bHidden (+0xf8 bit 1)
+return if the hit component is null or not attached (warning)
+return if self and partner are welded (RBActor_TA.WeldedActor +0x750)
 dv = entry.vSelf - entry.vOther                            # uu/s
 if |dv.x|, |dv.y| and |dv.z| are all < 1e-4: return       # nothing at all
 n, loc, mat = entry.normal, entry.pos, entry.mat
-hit = SingleLineCheck(start = loc + 10 n, end = loc - 10 n, source = car, flags 0x220d3)
-      # partner flagged +0xfc & 0x40000: partner component LineCheck instead
+if partner owner is bMovable (+0xfc bit 18, 0x40000):          # a car or a ball
+    hit = partner component LineCheck(loc + 10 n → loc − 10 n)  # vtable +0x350
+else:                                                          # static world geometry
+    hit = SingleLineCheck(start = loc + 10 n, end = loc - 10 n, source = self, flags 0x220d3)
 if hit (Time < 1): n, loc, mat = hit.Normal, hit.Location, hit.PhysMaterial   # the hit replaces the contact normal
 v  = |dv · n|                                              # "impact speed", uu/s
 vt = |dv| - v                                              # stored, used by slide effects
@@ -194,7 +202,8 @@ if soundSide and AkImpactSound:
 - All points of all manifolds with the same partner actor in that step are **averaged**: position mean, normalised
   normal sum, mean self and partner velocities. There is no deepest, first or max selection.
 - The velocities are **point velocities v + ω × r** of each body at each contact point. They are taken at the solver's
-  contact setup: after the step's force integration, **before** the step's impulses. Units uu/s (BU × 50).
+  contact setup: **before** the step's forces and gravity (Bullet 2.82 applies them inside the solver) and before its
+  impulses, i.e. the previous step's end velocities. Units uu/s (BU × 50). (Corrected 2026-10-10.)
 - The normal is the averaged contact normal (partner → self), **replaced by the hit normal** of a ±10 uu line check
   from the self side through the averaged point toward the partner, when that check hits. For world and ball this is
   the partner's surface normal [I that it rarely differs much].
@@ -260,6 +269,41 @@ storedVel = ChassisPointVel(wheel)          # 0x140ef6650, every frame, after th
   - At high fps several frames share one physics state.
   - The landing sound has **no cooldown and no local gate**: every car, every wheel, so up to 4 posts in one frame.
   - The landing camera shake produces no camera motion (D = 0); it only carried force feedback, which the clone does not implement.
+
+## 2b. The ball's own impacts (2026-10-10, RMB1 follow-up) [N][S]
+
+**A ball–world hit plays Impact_Ball; in a car–ball hit the ball makes the sound.** HandleCollision runs on the ball's
+ImpactEffectsComponent (Ball_Default: SoundPriority 100, AkImpactSound Impact_Ball, MinImpactMomentum 50,
+MinImpactDelay 0.15, no camera shake, no effects map). Ball_TA has no native override (vtable 0x141e8cd08 uses the
+shared OnRigidBodyCollision 0x140f190b0).
+
+**Ball–world chain:**
+1. The contact scan notifies only the ball side (static arena actors get no event).
+2. 0x140f5b120 first runs the script event Ball_TA.OnRigidBodyCollision (TA:11385): OnHitWorld, EventHitWorld, and
+   EventHitGround for a ground hit on a ground material. Inside a GoalCrossbarVolume_TA the volume manager's
+   TriggerHit (TA:63676ff) sets Ball.ImpactEffectsComponent.ImpactModifier = PostImpactModifier with HitMat =
+   Goalpost_Crossbar or Goalpost_Post, sets the global RTPCs Goalpost_Corner and Goalpost_Angle, and fires
+   EventCrossbarHit.
+3. HandleCollision on the ball: v = |v_ball · n| with the static-world line check. ImpactModifier (+0x1f0) →
+   ModifyImpact 0x140f16b50 replaces the impact's PhysMaterial with HitMat (**the goalpost sound switch**), then
+   clears the modifier.
+4. ImpactShake 0x140f1b2d0 returns at once (no shake or waveform on the ball).
+5. The SoundPriority comparison skips static partners, so the ball keeps the sound.
+6. ImpactEffects 0x140f1b080: v ≥ 50; the **LastWorldImpactTime** slot, 0.15 s game time; switch MaterialType from
+   the material (+0x60), RTPC ImpactIntensity = v; post Impact_Ball. No sparks.
+
+**Car–ball, ball side:** the same chain with a LineCheck against the car's component. The car's SoundPriority 0 <
+the ball's 100, so the ball plays Impact_Ball on its **LastActorImpactTime** slot and the car side is silent. Not
+traced: whether the separate ball-touch path also plays a sound.
+
+**Other:**
+- Ball–ball: both have SoundPriority 100, so one side plays [I].
+- Ball–world contact points carry velocities: the sphere-vs-world points still go through the per-point setup
+  0x1402bb8c0 (in 0x1402b3220), so the |Δv| < 1e-4 return doesn't silence them.
+- The ball's impacts stop once the goal explosion hides it (bHidden).
+
+**Clone:** collect impacts for the ball as well as the cars, and drive Impact_Ball from them (v ≥ 50, the world/actor
+slots, the goalpost material switch). This replaces the client's guessed ball-impact rule (RV-172).
 
 ## 3. Confidence
 - **High:** step cadence and its filters; the v ≤ 200 skip; per-partner averaging; pre-impulse point velocities;

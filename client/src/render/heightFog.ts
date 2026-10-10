@@ -102,10 +102,18 @@ vec3 rlSkyDelta(vec3 dir) {
 `;
 
 /** How a material takes the fog (FOG-10): opaque per pixel (capped in the capture); the sky at the game's dome's
- *  distance; a far layer at its own distance (`distance`: the skyline's towers, drawn nearer than they are); translucent
- *  and additive per vertex (c F + fog; c F), at the vertex or, given `distance`, that far along its direction; custom
- *  (the chunk, the uniforms and vFogWorld given: the shader fogs itself); none */
-export type FogMode = "opaque" | "sky" | "far" | "translucent" | "additive" | "custom" | "none";
+ *  distance; translucent and additive per vertex (c F + fog; c F); custom (the chunk, the uniforms and vFogWorld given:
+ *  the shader fogs itself); none */
+export type FogMode = "opaque" | "sky" | "translucent" | "additive" | "custom" | "none";
+
+/** Where a translucent's vertices are for the fog when it's drawn nearer than it is: `distance` along each vertex's
+ *  direction, or `scale` times its offset from `about` (Three's axes; the camera if left out): a sprite placed at a
+ *  fraction of its distance from a point, its true vertex positions (RV-188) */
+export interface FogPlace {
+  readonly distance?: number;
+  readonly scale?: number;
+  readonly about?: readonly [number, number, number];
+}
 
 /** The uniforms every fogged material shares (one object each, set from the camera drawing: updateHeightFog) */
 export const HEIGHT_FOG_UNIFORMS = {
@@ -131,15 +139,17 @@ export function updateHeightFog(camera: Camera, frame: number): void {
   U.uFogCap.value = cap ?? 1e30;
 }
 
-/** The fog put into a shader material (its shaders amended, the shared uniforms added; once) */
-export function withHeightFog<T extends ShaderMaterial>(material: T, mode: FogMode, distance?: number): T {
-  const data = material.userData as { heightFog?: FogMode; fogDistance?: number };
-  if (data.heightFog !== undefined) return material;
-  data.heightFog = mode;
-  if (distance !== undefined) data.fogDistance = distance;
-  if (mode === "none") return material;
-  Object.assign(material.uniforms, HEIGHT_FOG_UNIFORMS);
-  const along = (world: string): string => (distance === undefined ? `${world} - uFogCam` : `normalize(${world} - uFogCam) * ${f(distance)}`);
+/** A pair of shaders with the fog put in (FOG-10): their mains renamed and new mains calling them, then the fog, so
+ *  nothing in them (an early return) can skip it (RV-190) */
+export function fogShaders(vertex: string, fragment: string, mode: FogMode, place: FogPlace = {}): { vertex: string; fragment: string } {
+  if (mode === "none") return { vertex, fragment };
+  const about = place.about ? `vec3(${place.about.map(f).join(", ")})` : "uFogCam";
+  const delta =
+    place.distance !== undefined
+      ? `normalize(vFogWorld - uFogCam) * ${f(place.distance)}`
+      : place.scale !== undefined
+        ? `${about} + (vFogWorld - ${about}) * ${f(place.scale)} - uFogCam`
+        : "vFogWorld - uFogCam";
   const perVertex = mode === "translucent" || mode === "additive";
   const world = `
   #ifdef USE_INSTANCING
@@ -147,44 +157,75 @@ export function withHeightFog<T extends ShaderMaterial>(material: T, mode: FogMo
   #else
     vFogWorld = (modelMatrix * vec4(position, 1.0)).xyz;
   #endif
-  ${perVertex ? `vFog = rlHeightFog(${along("vFogWorld")});` : ""}`;
-  material.vertexShader = beforeLastBrace(`varying vec3 vFogWorld;\n${perVertex ? `varying vec4 vFog;\n${HEIGHT_FOG_GLSL}` : ""}\n${material.vertexShader}`, world);
+  ${perVertex ? `vFog = rlHeightFog(${delta});` : ""}`;
   const apply = {
     custom: "",
     opaque: "vec4 rlFog = rlHeightFog(rlOpaqueDelta(vFogWorld));\n  gl_FragColor.rgb = gl_FragColor.rgb * rlFog.a + rlFog.rgb;",
     sky: "vec4 rlFog = rlHeightFog(rlOpaqueDelta(uFogCam + rlSkyDelta(normalize(vFogWorld - uFogCam))));\n  gl_FragColor.rgb = gl_FragColor.rgb * rlFog.a + rlFog.rgb;",
-    far: `vec4 rlFog = rlHeightFog(rlOpaqueDelta(uFogCam + ${along("vFogWorld")}));\n  gl_FragColor.rgb = gl_FragColor.rgb * rlFog.a + rlFog.rgb;`,
     translucent: "gl_FragColor.rgb = gl_FragColor.rgb * vFog.a + vFog.rgb;",
     additive: "gl_FragColor.rgb *= vFog.a;",
   }[mode];
-  material.fragmentShader = `varying vec3 vFogWorld;\n${perVertex ? "varying vec4 vFog;" : HEIGHT_FOG_GLSL}\n${material.fragmentShader}`;
-  if (apply) material.fragmentShader = beforeLastBrace(material.fragmentShader, `  {\n  ${apply}\n  }`);
+  return {
+    vertex: wrapMain(`varying vec3 vFogWorld;\n${perVertex ? `varying vec4 vFog;\n${HEIGHT_FOG_GLSL}` : ""}\n${vertex}`, "rlVertexMain", world),
+    fragment: apply
+      ? wrapMain(`varying vec3 vFogWorld;\n${perVertex ? "varying vec4 vFog;" : HEIGHT_FOG_GLSL}\n${fragment}`, "rlFragmentMain", `  ${apply}`)
+      : `varying vec3 vFogWorld;\n${HEIGHT_FOG_GLSL}\n${fragment}`,
+  };
+}
+
+/** A shader's main renamed `name`, and a new main calling it, then `after` */
+function wrapMain(shader: string, name: string, after: string): string {
+  const main = /\bvoid\s+main\s*\(\s*(void)?\s*\)/;
+  if (!main.test(shader)) throw new Error("a shader without a main");
+  return `${shader.replace(main, `void ${name}()`)}\nvoid main() {\n  ${name}();\n${after}\n}\n`;
+}
+
+/** The fog put into a material, once: a shader material's shaders amended and the shared uniforms added; a built-in
+ *  one's at its compile (onBeforeCompile: the arena's, the cars', RV-187) */
+export function withHeightFog<T extends Material>(material: T, mode: FogMode, place: FogPlace = {}): T {
+  const data = material.userData as { heightFog?: FogMode; fogDistance?: number; fogScale?: number };
+  if (data.heightFog !== undefined) return material;
+  data.heightFog = mode;
+  if (place.distance !== undefined) data.fogDistance = place.distance;
+  if (place.scale !== undefined) data.fogScale = place.scale;
+  if (mode === "none") return material;
+  const shader = material as unknown as ShaderMaterial;
+  if (shader.isShaderMaterial) {
+    Object.assign(shader.uniforms, HEIGHT_FOG_UNIFORMS);
+    const fogged = fogShaders(shader.vertexShader, shader.fragmentShader, mode, place);
+    shader.vertexShader = fogged.vertex;
+    shader.fragmentShader = fogged.fragment;
+  } else {
+    const before = material.onBeforeCompile.bind(material);
+    material.onBeforeCompile = (parameters, renderer) => {
+      before(parameters, renderer);
+      Object.assign(parameters.uniforms, HEIGHT_FOG_UNIFORMS);
+      const fogged = fogShaders(parameters.vertexShader, parameters.fragmentShader, mode, place);
+      parameters.vertexShader = fogged.vertex;
+      parameters.fragmentShader = fogged.fragment;
+    };
+    const key = material.customProgramCacheKey.bind(material);
+    material.customProgramCacheKey = () => `${key()}|rlHeightFog:${mode}`;
+  }
   material.needsUpdate = true;
   return material;
 }
 
-/** `code` put just before a shader's last closing brace (its main's end) */
-function beforeLastBrace(shader: string, code: string): string {
-  const at = shader.lastIndexOf("}");
-  if (at < 0) throw new Error("a shader without a main");
-  return `${shader.slice(0, at)}${code}\n${shader.slice(at)}`;
-}
-
-/** The fog for every shader material under `root` that hasn't its own (opaque, translucent or additive by its
- *  blending), and its meshes' uniforms set from the camera drawing them; other materials are left as they are */
+/** The fog for every material under `root` that hasn't its own (opaque, translucent or additive by its blending: the
+ *  theme's, the arena's, the cars' and ball's, RV-187), and its meshes' uniforms set from the camera drawing them; a
+ *  material already fogged is passed over (so this can run over a scene again for what's new in it) */
 export function fogAll(root: Object3D): void {
   root.traverse((object) => {
-    const mesh = object as Object3D & { material?: Material | Material[] };
-    if (!mesh.material) return;
+    const mesh = object as Object3D & { material?: Material | Material[]; isMesh?: boolean; isPoints?: boolean; isLine?: boolean; isSprite?: boolean };
+    if (!mesh.material || (object.userData as { fogHooked?: boolean }).fogHooked) return;
     let fogged = false;
     for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
-      if (!(m as ShaderMaterial).isShaderMaterial) continue;
-      const shader = m as ShaderMaterial;
-      const mode: FogMode = !shader.transparent ? "opaque" : shader.blending === AdditiveBlending ? "additive" : "translucent";
-      withHeightFog(shader, (shader.userData as { heightFog?: FogMode }).heightFog ?? mode);
-      fogged ||= (shader.userData as { heightFog?: FogMode }).heightFog !== "none";
+      const mode: FogMode = !m.transparent ? "opaque" : m.blending === AdditiveBlending ? "additive" : "translucent";
+      withHeightFog(m, (m.userData as { heightFog?: FogMode }).heightFog ?? mode);
+      fogged ||= (m.userData as { heightFog?: FogMode }).heightFog !== "none";
     }
     if (fogged) {
+      (object.userData as { fogHooked?: boolean }).fogHooked = true;
       const before = object.onBeforeRender.bind(object);
       object.onBeforeRender = (renderer, scene, camera, geometry, material, group) => {
         updateHeightFog(camera, renderer.info.render.frame);

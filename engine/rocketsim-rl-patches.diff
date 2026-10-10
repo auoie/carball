@@ -86,7 +86,7 @@ index 8821fa3..fb8078e 100644
  
  #ifdef DEBUG_CHECK_DEQUANTIZATION
 diff --git upstream/libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btRSBroadphase.cpp engine/rocketsim/libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btRSBroadphase.cpp
-index 1eb7d88..92ba314 100644
+index 1eb7d88..5560bcd 100644
 --- upstream/libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btRSBroadphase.cpp
 +++ engine/rocketsim/libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btRSBroadphase.cpp
 @@ -14,6 +14,7 @@ subject to the following restrictions:
@@ -180,7 +180,7 @@ index 1eb7d88..92ba314 100644
 -					auto triMeshShape = (btTriangleMeshShape*)colObj->m_collisionShape;
 -					btVector3 cellMin = _this->GetCellMinPos(i, j, k);
 -					btVector3 cellMax = cellMin + btVector3(_this->cellSize, _this->cellSize, _this->cellSize);
--
+ 
 -					callbackInst.hit = false;
 -					triMeshShape->processAllTriangles(&callbackInst, cellMin, cellMax);
 -
@@ -194,7 +194,7 @@ index 1eb7d88..92ba314 100644
 -						}
 -					}
 -				}
- 
+-
 -				for (auto cell : cells) {
 -					if (ADD) {
 -						bool alreadyExists = false;
@@ -235,6 +235,39 @@ index 1eb7d88..92ba314 100644
  	
  	if (sbp->isStatic) {
  		_UpdateCellsStatic<false>(this, sbp);
+@@ -304,19 +321,19 @@ void btRSBroadphase::setAabb(btBroadphaseProxy* proxy, const btVector3& aabbMin,
+ 			sbp->cellIdx = newIndex;
+ 
+ 			if (oldIndex != newIndex) {
+-
+-				if (numDynProxies > 1) {
+-					_UpdateCellsDynamic<false>(this, sbp, sbp->iIdx, sbp->jIdx, sbp->kIdx);
+-
+-					// TODO: Can determine newIndex from these
+-					int iNew, jNew, kNew;
+-					GetCellIndices(aabbMin, iNew, jNew, kNew);
+-					sbp->iIdx = iNew;
+-					sbp->jIdx = jNew;
+-					sbp->kIdx = kNew;
+-
+-					_UpdateCellsDynamic<true>(this, sbp, iNew, jNew, kNew);
+-				}
++				// RL PATCH: re-registered even while it's the only dynamic body. RocketSim skipped this then, so a ball
++				// moved before any car existed stayed in its old cells' lists, and a car added later never paired with it
++				// (it drove through a resting ball: an online player joining after a reset)
++				_UpdateCellsDynamic<false>(this, sbp, sbp->iIdx, sbp->jIdx, sbp->kIdx);
++
++				// TODO: Can determine newIndex from these
++				int iNew, jNew, kNew;
++				GetCellIndices(aabbMin, iNew, jNew, kNew);
++				sbp->iIdx = iNew;
++				sbp->jIdx = jNew;
++				sbp->kIdx = kNew;
++
++				_UpdateCellsDynamic<true>(this, sbp, iNew, jNew, kNew);
+ 			}
+ 		}
+ 	}
 @@ -396,10 +413,18 @@ void btRSBroadphase::calculateOverlappingPairs(btCollisionDispatcher* dispatcher
  	bool shouldRemove = !m_pairCache->hasDeferredRemoval();
  
@@ -440,7 +473,7 @@ index a56f38a..24b07e9 100644
  		}
  		m_cachedSeparatingAxis = normalInB;
 diff --git upstream/libsrc/bullet3-3.24/BulletCollision/NarrowPhaseCollision/btManifoldPoint.h engine/rocketsim/libsrc/bullet3-3.24/BulletCollision/NarrowPhaseCollision/btManifoldPoint.h
-index 8b528c2..952886a 100644
+index 8b528c2..2d47509 100644
 --- upstream/libsrc/bullet3-3.24/BulletCollision/NarrowPhaseCollision/btManifoldPoint.h
 +++ engine/rocketsim/libsrc/bullet3-3.24/BulletCollision/NarrowPhaseCollision/btManifoldPoint.h
 @@ -152,6 +152,11 @@ public:
@@ -448,7 +481,7 @@ index 8b528c2..952886a 100644
  	bool m_isSpecial;
  
 +	// RL PATCH (impact triggers, notes/impact-triggers.md IT-2): each body's point velocity at the solver's contact setup,
-+	// before the step's impulses (Psyonix's +0xe0 / +0xf0): body 0's, body 1's
++	// before the step's forces and impulses (Psyonix's +0xe0 / +0xf0; RV-170): body 0's, body 1's
 +	btVector3 m_rlVel1 = btVector3(0, 0, 0);
 +	btVector3 m_rlVel2 = btVector3(0, 0, 0);
 +
@@ -475,18 +508,18 @@ index 8e3e345..2efd3c7 100644
  	int size = getNumContacts();
  	int nearestPoint = -1;
 diff --git upstream/libsrc/bullet3-3.24/BulletDynamics/ConstraintSolver/btSequentialImpulseConstraintSolver.cpp engine/rocketsim/libsrc/bullet3-3.24/BulletDynamics/ConstraintSolver/btSequentialImpulseConstraintSolver.cpp
-index f27a07f..e204cc9 100644
+index f27a07f..e8d3d94 100644
 --- upstream/libsrc/bullet3-3.24/BulletDynamics/ConstraintSolver/btSequentialImpulseConstraintSolver.cpp
 +++ engine/rocketsim/libsrc/bullet3-3.24/BulletDynamics/ConstraintSolver/btSequentialImpulseConstraintSolver.cpp
 @@ -903,6 +903,11 @@ void btSequentialImpulseConstraintSolver::setupContactConstraint(btSolverConstra
  
  		vel1 = rb0 ? rb0->getVelocityInLocalPoint(rel_pos1) : btVector3(0, 0, 0);
  		vel2 = rb1 ? rb1->getVelocityInLocalPoint(rel_pos2) : btVector3(0, 0, 0);
-+		// RL PATCH (IT-2, RV-162): kept on the point, as the game's setup keeps them (the impact triggers' approach
-+		// velocities), with this step's forces in: the game's Bullet 2.82 integrates them before the solver, Bullet 3
-+		// holds them as the solver bodies' external impulses
-+		bodyA->getVelocityInLocalPointNoDelta(rel_pos1, cp.m_rlVel1);
-+		bodyB->getVelocityInLocalPointNoDelta(rel_pos2, cp.m_rlVel2);
++		// RL PATCH (IT-2): kept on the point, as the game's setup keeps them: the impact triggers' approach velocities,
++		// the bodies' before this step's forces (they enter the solver as its external impulses, in Bullet 2.82 as here:
++		// RV-170)
++		cp.m_rlVel1 = vel1;
++		cp.m_rlVel2 = vel2;
  
  		//			btVector3 vel2 = rb1 ? rb1->getVelocityInLocalPoint(rel_pos2) : btVector3(0,0,0);
  		btVector3 vel = vel1 - vel2;
@@ -1095,7 +1128,7 @@ index 5805611..3ceaa22 100644
  }
 \ No newline at end of file
 diff --git upstream/src/Sim/Arena/Arena.cpp engine/rocketsim/src/Sim/Arena/Arena.cpp
-index a13cee0..bd6e06f 100644
+index a13cee0..52fb2d6 100644
 --- upstream/src/Sim/Arena/Arena.cpp
 +++ engine/rocketsim/src/Sim/Arena/Arena.cpp
 @@ -1,4 +1,6 @@
@@ -1656,7 +1689,7 @@ index a13cee0..bd6e06f 100644
  	// Test collision both ways
  	for (int i = 0; i < 2; i++) {
  
-@@ -334,83 +763,246 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
+@@ -334,83 +763,253 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
  		if (isSwapped)
  			std::swap(car1, car2);
  
@@ -1881,17 +1914,17 @@ index a13cee0..bd6e06f 100644
 +	};
 +	btCollisionDispatcher* dispatcher = _bulletWorld.getDispatcher();
 +	std::vector<Entry> entries;
-+	for (Car* car : _cars) {
-+		if (car->_internalState.isDemoed)
-+			continue;
++	// (one body's contacts, partner by partner: a car's with anything; the ball's with the world only, as its own
++	// ImpactEffectsComponent's (its hits with a car are the car's events: RV-172))
++	auto scan = [&](const btRigidBody* self, uint32_t selfId, bool worldOnly) {
 +		entries.clear();
 +		for (int i = 0; i < dispatcher->getNumManifolds(); i++) {
 +			btPersistentManifold* manifold = dispatcher->getManifoldByIndexInternal(i);
 +			if (manifold->getNumContacts() == 0)
 +				continue;
 +			const btCollisionObject *body0 = manifold->getBody0(), *body1 = manifold->getBody1();
-+			bool first = body0 == &car->_rigidBody;
-+			if (!first && body1 != &car->_rigidBody)
++			bool first = body0 == self;
++			if (!first && body1 != self)
 +				continue;
 +			if (!body0->hasContactResponse() || !body1->hasContactResponse())
 +				continue;
@@ -1903,6 +1936,8 @@ index a13cee0..bd6e06f 100644
 +			if (asleep(body0) || asleep(body1))
 +				continue;
 +			const btCollisionObject* other = first ? body1 : body0;
++			if (worldOnly && (other->getUserIndex() == BT_USERINFO_TYPE_BALL || other->getUserIndex() == BT_USERINFO_TYPE_CAR))
++				continue;
 +			Entry* entry = nullptr;
 +			for (Entry& e : entries)
 +				if (e.other == other)
@@ -1929,11 +1964,11 @@ index a13cee0..bd6e06f 100644
 +			btVector3 n;
 +			if (!_ImpactNormal(e.normal, n))
 +				continue;
-+			// (the line check: from 10 uu on the car's side through the point to 10 uu into the partner; a hit's normal
++			// (the line check: from 10 uu on the body's side through the point to 10 uu into the partner; a hit's normal
 +			// and point replace the contact's)
 +			btVector3 from = pos + n * (10 * UU_TO_BT), to = pos - n * (10 * UU_TO_BT);
-+			// (the car itself left out: the game's source)
-+			btCollisionWorld::ClosestRayResultCallback ray(from, to, &car->_rigidBody);
++			// (the body itself left out: the game's source)
++			btCollisionWorld::ClosestRayResultCallback ray(from, to, self);
 +			ray.m_collisionFilterGroup = -1;
 +			ray.m_collisionFilterMask = -1;
 +			_bulletWorld.rayTest(from, to, ray);
@@ -1953,13 +1988,18 @@ index a13cee0..bd6e06f 100644
 +				kind = 2;
 +				partnerId = ((Car*)e.other->getUserPointer())->id;
 +			}
-+			impacts.push_back(ImpactEvent{ tickCount, car->id, kind, partnerId, speed, slide, Vec(pos) * BT_TO_UU, Vec(n) });
++			impacts.push_back(ImpactEvent{ tickCount, selfId, kind, partnerId, speed, slide, Vec(pos) * BT_TO_UU, Vec(n) });
 +		}
-+	}
++	};
++	for (Car* car : _cars)
++		if (!car->_internalState.isDemoed)
++			scan(&car->_rigidBody, car->id, false);
++	if (ball)
++		scan(&ball->_rigidBody, IMPACT_BALL, true);
  }
  
  Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mutatorConfig(gameMode), _config(config) {
-@@ -473,6 +1065,22 @@ Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mu
+@@ -473,6 +1072,22 @@ Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mu
  		auto& solverInfo = _bulletWorld.getSolverInfo();
  		solverInfo.m_splitImpulsePenetrationThreshold = 1.0e30f;
  		solverInfo.m_erp2 = 0.8f;
@@ -1982,7 +2022,7 @@ index a13cee0..bd6e06f 100644
  	}
  
  	bool loadArenaStuff = gameMode != GameMode::THE_VOID;
-@@ -543,6 +1151,51 @@ Arena* Arena::Create(GameMode gameMode, const ArenaConfig& arenaConfig, float ti
+@@ -543,6 +1158,51 @@ Arena* Arena::Create(GameMode gameMode, const ArenaConfig& arenaConfig, float ti
  	return new Arena(gameMode, arenaConfig, tickRate);
  }
  
@@ -2034,7 +2074,7 @@ index a13cee0..bd6e06f 100644
  void Arena::Serialize(DataStreamOut& out) const {
  	out.WriteMultiple(gameMode, tickTime, tickCount, _lastCarID);
  
-@@ -565,11 +1218,135 @@ void Arena::Serialize(DataStreamOut& out) const {
+@@ -565,11 +1225,135 @@ void Arena::Serialize(DataStreamOut& out) const {
  
  	{ // Serialize ball
  		ball->GetState().Serialize(out);
@@ -2170,7 +2210,7 @@ index a13cee0..bd6e06f 100644
  }
  
  Arena* Arena::DeserializeNew(DataStreamIn& in) {
-@@ -601,12 +1378,11 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
+@@ -601,12 +1385,11 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
  				RS_ERR_CLOSE(ERROR_PREFIX << "Failed to load, got repeated car ID of " << id);
  #endif
  
@@ -2187,7 +2227,7 @@ index a13cee0..bd6e06f 100644
  		}
  
  		newArena->_lastCarID = lastCarID;
-@@ -629,20 +1405,122 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
+@@ -629,20 +1412,122 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
  		}
  	}
  
@@ -2318,7 +2358,7 @@ index a13cee0..bd6e06f 100644
  Arena* Arena::Clone(bool copyCallbacks) {
  	Arena* newArena = new Arena(this->gameMode, this->_config, this->GetTickRate());
  	
-@@ -651,14 +1529,19 @@ Arena* Arena::Clone(bool copyCallbacks) {
+@@ -651,14 +1536,19 @@ Arena* Arena::Clone(bool copyCallbacks) {
  		newArena->_carBumpCallback = this->_carBumpCallback;
  	}
  
@@ -2340,7 +2380,7 @@ index a13cee0..bd6e06f 100644
  		newCar->controls = car->controls;
  		newCar->_velocityImpulseCache = car->_velocityImpulseCache;
  	}
-@@ -669,6 +1552,18 @@ Arena* Arena::Clone(bool copyCallbacks) {
+@@ -669,6 +1559,18 @@ Arena* Arena::Clone(bool copyCallbacks) {
  
  	newArena->tickCount = this->tickCount;
  	newArena->_lastCarID = this->_lastCarID;
@@ -2359,7 +2399,7 @@ index a13cee0..bd6e06f 100644
  
  	return newArena;
  }
-@@ -678,10 +1573,13 @@ Car* Arena::DeserializeNewCar(DataStreamIn& in, Team team) {
+@@ -678,10 +1580,13 @@ Car* Arena::DeserializeNewCar(DataStreamIn& in, Team team) {
  	car->_Deserialize(in);
  	car->team = team;
  
@@ -2374,7 +2414,7 @@ index a13cee0..bd6e06f 100644
  
  	return car;
  }
-@@ -691,20 +1589,41 @@ void Arena::Step(int ticksToSimulate) {
+@@ -691,20 +1596,41 @@ void Arena::Step(int ticksToSimulate) {
  
  		_bulletWorld.setWorldUserInfo(this);
  
@@ -2424,7 +2464,7 @@ index a13cee0..bd6e06f 100644
  
  		if (hasArenaStuff && !ballOnly) {
  			for (BoostPad* pad : _boostPads)
-@@ -714,11 +1633,25 @@ void Arena::Step(int ticksToSimulate) {
+@@ -714,11 +1640,25 @@ void Arena::Step(int ticksToSimulate) {
  		// Update ball
  		ball->_PreTickUpdate(gameMode, tickTime);
  
@@ -2450,7 +2490,7 @@ index a13cee0..bd6e06f 100644
  			car->_FinishPhysicsTick(_mutatorConfig);
  			if (hasArenaStuff) {
  				if (_config.useCustomBoostPads) {
-@@ -732,6 +1665,12 @@ void Arena::Step(int ticksToSimulate) {
+@@ -732,6 +1672,12 @@ void Arena::Step(int ticksToSimulate) {
  			}
  		}
  
@@ -2463,7 +2503,7 @@ index a13cee0..bd6e06f 100644
  		if (hasArenaStuff && !ballOnly)
  			for (BoostPad* pad : _boostPads)
  				pad->_PostTickUpdate(tickTime, _mutatorConfig);
-@@ -745,6 +1684,19 @@ void Arena::Step(int ticksToSimulate) {
+@@ -745,6 +1691,19 @@ void Arena::Step(int ticksToSimulate) {
  			if (ball->_internalState.dsInfo.lastDamageTick && ball->_internalState.dsInfo.lastDamageTick == tickCount)
  				SetDropshotTilesState(_dropshotTilesState);
  
@@ -2483,7 +2523,7 @@ index a13cee0..bd6e06f 100644
  		if (_goalScoreCallback.func != NULL) { // Potentially fire goal score callback
  			if (IsBallScored()) {
  				_goalScoreCallback.func(this, RS_TEAM_FROM_Y(-ball->_rigidBody.getWorldTransform().m_origin.y()), _goalScoreCallback.userInfo);
-@@ -752,6 +1704,8 @@ void Arena::Step(int ticksToSimulate) {
+@@ -752,6 +1711,8 @@ void Arena::Step(int ticksToSimulate) {
  		}
  
  		tickCount++;
@@ -2492,7 +2532,7 @@ index a13cee0..bd6e06f 100644
  	}
  }
  
-@@ -983,6 +1937,7 @@ btRigidBody* Arena::_AddStaticCollisionShape(btCollisionShape* shape, btVector3
+@@ -983,6 +1944,7 @@ btRigidBody* Arena::_AddStaticCollisionShape(btCollisionShape* shape, btVector3
  	} else {
  		_bulletWorld.addRigidBody(shapeRB);
  	}
@@ -2500,7 +2540,7 @@ index a13cee0..bd6e06f 100644
  	_worldCollisionRBs.push_back(shapeRB);
  	return shapeRB;
  }
-@@ -993,6 +1948,7 @@ void Arena::_SetupArenaCollisionShapes() {
+@@ -993,6 +1955,7 @@ void Arena::_SetupArenaCollisionShapes() {
  	bool isDropShot = gameMode == GameMode::DROPSHOT;
  
  	auto collisionMeshes = RocketSim::GetArenaCollisionShapes(gameMode);
@@ -2508,7 +2548,7 @@ index a13cee0..bd6e06f 100644
  
  	if (collisionMeshes.empty()) {
  		RS_ERR_CLOSE(
-@@ -1021,7 +1977,7 @@ void Arena::_SetupArenaCollisionShapes() {
+@@ -1021,7 +1984,7 @@ void Arena::_SetupArenaCollisionShapes() {
  
  		int mask = isHoopsNet ? CollisionMasks::HOOPS_NET : 0;
  		_worldCollisionBvhShapes.push_back(mesh);
@@ -2518,7 +2558,7 @@ index a13cee0..bd6e06f 100644
  		// Don't free the BVH when we deconstruct this arena
  		mesh->m_ownsBvh = false;
 diff --git upstream/src/Sim/Arena/Arena.h engine/rocketsim/src/Sim/Arena/Arena.h
-index a3ebd3f..05bd48f 100644
+index a3ebd3f..2be83b9 100644
 --- upstream/src/Sim/Arena/Arena.h
 +++ engine/rocketsim/src/Sim/Arena/Arena.h
 @@ -1,5 +1,6 @@
@@ -2544,7 +2584,7 @@ index a3ebd3f..05bd48f 100644
  	bool ownsCars = true; // If true, deleting this arena instance deletes all cars
  
  	std::unordered_map<uint32_t, Car*> _carIDMap;
-@@ -63,7 +71,63 @@ public:
+@@ -63,7 +71,64 @@ public:
  	// Total ticks this arena instance has been simulated for, never resets
  	uint64_t tickCount = 0;
  
@@ -2558,7 +2598,7 @@ index a3ebd3f..05bd48f 100644
 +	// cleared) by the caller; the oldest dropped past IMPACT_LIMIT
 +	struct ImpactEvent {
 +		uint64_t tick;
-+		uint32_t carId;
++		uint32_t carId; // the car's id, or IMPACT_BALL for the ball's own (with the world: notes/impact-triggers.md §2b)
 +		int partnerKind; // 0 the world, 1 the ball, 2 a car
 +		uint32_t partnerId; // the car's id, for a car
 +		float speed; // |dv . n|, uu/s
@@ -2569,6 +2609,7 @@ index a3ebd3f..05bd48f 100644
 +	std::vector<ImpactEvent> impacts;
 +	bool collectImpacts = false;
 +	static constexpr size_t IMPACT_LIMIT = 1024;
++	static constexpr uint32_t IMPACT_BALL = 0xFFFFFFFF;
 +
 +	// RL PATCH: kickoff countdown: while non-zero, every car's controls are zeroed for the tick, then it counts down.
 +	// The game freezes the cars for 4.0 s after a kickoff reset (replays: the first car moves 3.99-4.05 s after the
@@ -2609,7 +2650,7 @@ index a3ebd3f..05bd48f 100644
  	const std::vector<BoostPad*>& GetBoostPads() { return _boostPads; }
  
  	// Returns true if added, false if car was already added
-@@ -116,6 +180,11 @@ public:
+@@ -116,6 +181,11 @@ public:
  	// Load new arena from serialized data
  	static Arena* DeserializeNew(DataStreamIn& in);
  
@@ -2621,7 +2662,7 @@ index a3ebd3f..05bd48f 100644
  	Arena(const Arena& other) = delete; // No copy constructor, use Arena::Clone() instead
  	Arena& operator =(const Arena& other) = delete; // No copy operator, use Arena::Clone() instead
  
-@@ -133,6 +202,24 @@ public:
+@@ -133,6 +203,24 @@ public:
  
  	void ResetToRandomKickoff(int seed = -1);
  
@@ -2646,7 +2687,7 @@ index a3ebd3f..05bd48f 100644
  	// Returns true if the ball is probably going in, does not account for wall or ceiling bounces
  	// NOTE: Purposefully overestimates, just like the real RL's shot prediction
  	// To check which goal it will score in, use the ball's velocity
-@@ -155,6 +242,17 @@ public:
+@@ -155,6 +243,17 @@ public:
  
  	void _SetupArenaCollisionShapes();
  
@@ -2664,7 +2705,7 @@ index a3ebd3f..05bd48f 100644
  	// Static function called by Bullet internally when adding a collision point
  	static bool _BulletContactAddedCallback(
  		btManifoldPoint& cp,
-@@ -176,6 +274,19 @@ public:
+@@ -176,6 +275,19 @@ public:
  	}
  
  	DropshotTilesState GetDropshotTilesState() const { return _dropshotTilesState; };
@@ -2684,7 +2725,7 @@ index a3ebd3f..05bd48f 100644
  	void SetDropshotTilesState(const DropshotTilesState& tilesState);
  
  private:
-@@ -187,4 +298,8 @@ private:
+@@ -187,4 +299,8 @@ private:
  	ArenaConfig _config;
  };
  

@@ -8,7 +8,7 @@ import { TEAM_PRIMARY_LINEAR, linear } from "../teamColors";
 import { buildCrowd } from "./stadiumCrowd";
 import { buildStadiumLights } from "./stadiumLights";
 import { buildPlaza, buildScreensAndProps } from "./stadiumProps";
-import { buildSkyDome } from "./stadiumSky";
+import { buildFogBowl, buildSkyDome } from "./stadiumSky";
 import { buildBowl, buildCaptureHotspots, buildFarLayer } from "./stadiumSurroundings";
 import type { Theme } from "./theme";
 
@@ -35,13 +35,14 @@ export function stadiumTheme(): Theme {
   const props = buildScreensAndProps(linear(p0), linear(p1));
   // The skyline, the city's glow and the horizon's fog band beyond (SUR-11, 22, 23)
   // The team beams, flare sheets, bulbs, the canopy's light dots, the haze and the near fog sheets (SUR-8, 13, 14, 23)
-  root.add(sun, sky, dome, hotspots, buildBowl(linear(p0), linear(p1)), crowd.mesh, props.group, buildPlaza(), buildStadiumLights(linear(p0), linear(p1)), buildFarLayer());
+  root.add(sun, sky, dome, buildFogBowl(), hotspots, buildBowl(linear(p0), linear(p1)), crowd.mesh, props.group, buildPlaza(), buildStadiumLights(linear(p0), linear(p1)), buildFarLayer());
   // (the height fog in every material out here: opaque per pixel, translucent per vertex; the sky, the far layer and
   // the hotspots their own ways, set where they're built. The arena within 10240 uu of any camera there takes none)
   fogAll(root);
   return {
     background: new Color(0x0b1418),
     fog: null,
+    heightFog: true,
     style: {
       floor: new Color(0x3d5a2c),
       floorStripe: null,

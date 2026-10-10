@@ -153,7 +153,7 @@ public:
 	bool m_isSpecial;
 
 	// RL PATCH (impact triggers, notes/impact-triggers.md IT-2): each body's point velocity at the solver's contact setup,
-	// before the step's impulses (Psyonix's +0xe0 / +0xf0): body 0's, body 1's
+	// before the step's forces and impulses (Psyonix's +0xe0 / +0xf0; RV-170): body 0's, body 1's
 	btVector3 m_rlVel1 = btVector3(0, 0, 0);
 	btVector3 m_rlVel2 = btVector3(0, 0, 0);
 

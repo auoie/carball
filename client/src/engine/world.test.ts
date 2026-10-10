@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { length, vec3 } from "../math/vec";
 import { arenaMeshes } from "../testing/arena";
 import { mergeMeshes, parseCmf } from "./cmf";
-import { CarBody, NO_CONTROLS, World, initEngine } from "./world";
+import { BALL_IMPACT, CarBody, type Impact, NO_CONTROLS, World, initEngine } from "./world";
 
 const meshes = arenaMeshes(); // the generated arena: one .cmf per piece
 let engine: Awaited<ReturnType<typeof createEngine>>;
@@ -181,6 +181,21 @@ describe("World", () => {
     world.setCar(id, { pos: vec3(0, 0, 800), vel: vec3(0, 0, 0), angVel: vec3(0, 0, 0), rot, boost: 0 });
     world.step(2);
     for (const n of world.car(id).wheelNormals) expect(n).toEqual(vec3(0, 0, 0));
+    world.dispose();
+  });
+
+  it("the ball's own impacts off the arena (RV-172): car BALL_IMPACT, partner the world, its speed into the floor", () => {
+    const world = World.create(engine);
+    world.setBall({ pos: vec3(2000, 1000, 600), vel: vec3(0, 0, -1500), angVel: vec3(0, 0, 0) });
+    const own: Impact[] = [];
+    for (let t = 0; t < 60 && own.length === 0; t++) {
+      world.step();
+      own.push(...world.takeImpacts().filter((i) => i.car === BALL_IMPACT));
+    }
+    expect(own.length).toBeGreaterThan(0);
+    expect(own[0]?.partner).toBe("world");
+    expect(own[0]?.normal.z).toBeGreaterThan(0.99);
+    expect(own[0]?.speed).toBeGreaterThan(1400);
     world.dispose();
   });
 

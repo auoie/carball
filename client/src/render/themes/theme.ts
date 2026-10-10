@@ -29,6 +29,8 @@ export interface Theme {
   readonly background: Color;
   /** Three's fog, or none (the stadium's own height fog in its materials: render/heightFog.ts) */
   readonly fog: Fog | null;
+  /** The exe's height fog over the whole scene (the renderer's: the arena, cars and ball as well as the theme) */
+  readonly heightFog?: boolean;
   readonly style: ArenaStyle;
   /** Lights and scenery */
   readonly root: Group;

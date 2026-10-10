@@ -673,6 +673,117 @@ static void TestNoPickupAtFullBoost() {
 	delete arena;
 }
 
+// The ball's own impacts (notes/impact-triggers.md §2b, RV-172): dropped on the floor, a world impact at its speed
+// before the step, its normal up; resting, none; with a car, the car's event only
+// A car added after the ball moved alone still collides with it (the broadphase patch): the ball placed away from the
+// centre in an arena without cars, left to rest, then a car driven into it
+static void TestLateCarMeetsBall() {
+	puts("a car added after the ball moved alone collides with it (broadphase registration patch)");
+	Arena* arena = Arena::Create(GameMode::SOCCAR);
+	BallState bs;
+	bs.pos = { 2000, 1000, 93.15f };
+	arena->ball->SetState(bs);
+	arena->Step(120);
+	Car* car = arena->AddCar(Team::BLUE);
+	car->SetState(CarAt({ 1600, 1000, 17.01f }, { 1, 0, 0 }, { 0, 0, 1 }, { 1500, 0, 0 }));
+	arena->Step(40);
+	CHECK(arena->ball->GetState().vel.x > 1000, "the ball wasn't hit: vx %.1f, the car at x %.1f", arena->ball->GetState().vel.x, car->GetState().pos.x);
+	delete arena;
+}
+
+static void TestBallImpacts() {
+	puts("the ball's impacts (RV-172): with the world its own, at |vz| before the step; with a car the car's only");
+	Arena* arena = Arena::Create(GameMode::SOCCAR);
+	arena->collectImpacts = true;
+	BallState bs;
+	bs.pos = { 2000, 1000, 600 };
+	bs.vel = { 0, 0, -1500 };
+	arena->ball->SetState(bs);
+	const Arena::ImpactEvent* hit = nullptr;
+	float vzBefore = 0;
+	for (int t = 0; t < 60 && !hit; t++) {
+		arena->impacts.clear();
+		vzBefore = arena->ball->GetState().vel.z;
+		arena->Step(1);
+		for (const auto& e : arena->impacts)
+			if (e.carId == Arena::IMPACT_BALL)
+				hit = &e;
+	}
+	CHECK(hit != nullptr, "no ball impact");
+	if (hit) {
+		CHECK(hit->partnerKind == 0, "partner %d", hit->partnerKind);
+		CHECK(hit->normal.z > 0.99f, "normal %g %g %g", hit->normal.x, hit->normal.y, hit->normal.z);
+		// (its velocity as the solver's setup reads it: before the step's forces, after its drag, which Bullet applies
+		// first, the game's 2.82 as here)
+		float damped = fabsf(vzBefore) * powf(1 - arena->ball->_rigidBody.getLinearDamping(), 1 / 120.f);
+		CHECK(Near(hit->speed, damped, 0.01f), "speed %.4f vs %.4f", hit->speed, damped);
+	}
+	// (at rest on the floor: none)
+	bs.pos = { 2000, 1000, 93.15f };
+	bs.vel = {};
+	arena->ball->SetState(bs);
+	for (int t = 0; t < 120; t++)
+		arena->Step(1);
+	arena->impacts.clear();
+	arena->Step(30);
+	int resting = 0;
+	for (const auto& e : arena->impacts)
+		if (e.carId == Arena::IMPACT_BALL)
+			resting++;
+	CHECK(resting == 0, "a resting ball gave %d", resting);
+	// (a car driving into it: the car's ball impact, no ball event)
+	Car* car = arena->AddCar(Team::BLUE);
+	car->SetState(CarAt({ 1600, 1000, 17.01f }, { 1, 0, 0 }, { 0, 0, 1 }, { 1500, 0, 0 }));
+	int carSide = 0, ballSide = 0;
+	for (int t = 0; t < 40; t++) {
+		arena->impacts.clear();
+		arena->Step(1);
+		for (const auto& e : arena->impacts) {
+			if (e.carId == car->id && e.partnerKind == 1)
+				carSide++;
+			if (e.carId == Arena::IMPACT_BALL && e.partnerKind != 0)
+				ballSide++;
+		}
+	}
+	CHECK(carSide > 0, "no car-ball impact");
+	CHECK(ballSide == 0, "ball-side events with a car or ball: %d", ballSide);
+	delete arena;
+}
+
+// The impacts' filters (RV-165, RV-175): a car driving into the ball gives a ball impact; none when the ball's body is
+// disabled (as a sleeping one: Bullet's DISABLE_SIMULATION never wakes) or has no contact response
+static void TestImpactFilters() {
+	puts("impacts' filters (RV-165): a disabled body or one without contact response gives no event");
+	auto ballHits = [](int mode) {
+		Arena* arena = Arena::Create(GameMode::SOCCAR);
+		arena->collectImpacts = true;
+		Car* car = arena->AddCar(Team::BLUE);
+		car->SetState(CarAt({ 0, 0, 17.01f }, { 1, 0, 0 }, { 0, 0, 1 }, { 1500, 0, 0 }));
+		BallState bs;
+		bs.pos = { 250, 0, 93.15f };
+		arena->ball->SetState(bs);
+		btRigidBody& body = arena->ball->_rigidBody;
+		if (mode == 1)
+			body.forceActivationState(DISABLE_SIMULATION);
+		if (mode == 2)
+			body.setCollisionFlags(body.getCollisionFlags() | btCollisionObject::CF_NO_CONTACT_RESPONSE);
+		int hits = 0;
+		for (int t = 0; t < 30; t++) {
+			arena->Step(1);
+			for (const auto& e : arena->impacts)
+				if (e.carId == car->id && e.partnerKind == 1)
+					hits++;
+		}
+		delete arena;
+		return hits;
+	};
+	CHECK(ballHits(0) > 0, "no ball impact from a car driving into it");
+	CHECK(ballHits(1) == 0, "a disabled ball gave %d", ballHits(1));
+	// (without contact response there's no solver contact, so no point velocities either: none with or without that
+	// filter)
+	CHECK(ballHits(2) == 0, "a ball without contact response gave %d", ballHits(2));
+}
+
 static void TestImpacts() {
 	puts("impacts (IT-1..3): a ball into a resting car, a car onto its roof: the speed along the averaged normal and the partner; resting contact none");
 	{
@@ -716,9 +827,9 @@ static void TestImpacts() {
 					hit = &e;
 		}
 		CHECK(hit != nullptr, "no world impact");
-		// (the approach speed with the step's gravity in, as the game's Bullet 2.82 integrates it first: RV-162)
+		// (the approach speed before this step's forces, as the game's setup reads it: RV-170)
 		if (hit)
-			CHECK(Near(hit->speed, fabsf(vzBefore) + 650.f / 120, 0.01f), "speed %.4f vs %.4f", hit->speed, fabsf(vzBefore) + 650.f / 120);
+			CHECK(Near(hit->speed, fabsf(vzBefore), 0.01f), "speed %.4f vs %.4f", hit->speed, fabsf(vzBefore));
 		if (hit) {
 			CHECK(hit->normal.z > 0.95f, "normal %g %g %g", hit->normal.x, hit->normal.y, hit->normal.z);
 			CHECK(hit->speed > 1450 && hit->speed < 1600, "speed %g", hit->speed);
@@ -1675,6 +1786,9 @@ int main(int argc, char** argv) {
 	TestBumpCurves();
 	TestBoostPads();
 	TestImpacts();
+	TestImpactFilters();
+	TestLateCarMeetsBall();
+	TestBallImpacts();
 	TestRespawn();
 	TestSpawnCount();
 	TestSpawnHeights();

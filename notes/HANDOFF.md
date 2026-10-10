@@ -192,7 +192,7 @@
     - the boost pads' taken look: the dim mix tested USE_INSTANCING_COLOR in the fragment shader, which three defines
       only for the vertex shader (the fragment's is USE_COLOR), so taken pads drew lit; now a GPU render check (taken =
       the dim reference, under half the lit). A full car takes no pad (CanPickup: !IsFull), freeplay's Unlimited too;
-    - "Unlimited boost in free play" (MENU-9) in the settings' Controller tab, on by default as the game's: off, the tank
+    - "Unlimited boost in free play" (MENU-9) in the settings' Gameplay tab (RV-169), on by default as the game's: off, the tank
       at a round's 33 (BOOST_SPAWN_AMOUNT), drained by boosting, pads taken (engine setUnlimitedBoost; turning it off
       mid-session sets the tank to 33 at once). e2e: on, a full car leaves the pad; off via the panel, the pad is taken
       (+12) and its pixels go dark.
@@ -245,6 +245,31 @@
     SSAO, shafts, flares, motion blur; the cube blur after the static session's capture recompute), quick chat's wiring
     (protocol, server bucket and relay, input, settings), match stats (STAT-1..24), custom training, mutators, the
     match intro/outro (its text cleared verbatim) and the car's look (notes/car-paint.md PNT-16..33).
+  - **In a620b27:** all of the above but the quick chat WIP. **Since a620b27 (uncommitted):** the capture's chain as the
+    exe's (SUR-32 CAP1, `render/cubeChain.ts`): a half-float raw cube, per face a 4x4 box to 64², the 9-tap Gaussian with
+    a weight channel, bilinear back to 256², the 8-bit gamma-1/2.2 store decoded; the materials sample its level 0. The
+    capture's light layers as the game's: six fog sheets and the hotspots as Circle_Sprite hexagons (vertex fog at their
+    true vertices), the fog bowl (FogHemisphere_V2), the haze shell in 500 uu rows, the 24 team beams at their list
+    positions; the near fog sheets drawn first among the translucents (they popped with the view's turn, sorted against
+    the layers at the origin). The far layer and the three far fog sheets as background: blended in the opaque pass
+    right after the sky's dome (renderOrder -0.75, -0.5), so whatever is nearer covers them wherever they're drawn; the
+    far sheets placed so their whole hexagon stays inside the camera's far plane from anywhere in the playing volume
+    (`fogSheetPlace`; at 29k their corners reached 65k, cut by the far plane). The theme test's playing-volume margin
+    takes a mesh's own `clearance` (the corner beams stand at the game's placements, 64 uu past the side walls). The ball's impacts from the engine (`IMPACT_BALL`, the binding's -1; the client's
+    `BALL_IMPACT`: its bounce sound, no heuristic left in audio/detect.ts); RocketSim's broadphase re-registering a body
+    on every setAabb (an RL PATCH: a car went through a resting ball). Review fixes RV-170..196 (RV-170's solver revert;
+    banners with the capture's 0.5 cube term; the flag sleeve; aisles 216/360; nine poplars; the ring band; the sky's
+    smoke given its green-blue correlation directly; the GLSL built-in shadowing test; template-literal imports in the
+    guard), and the guard's RV-182/183 forms: the static session's cached textures (the logo, the city's, the lightmaps)
+    in the reference, 12/24/48 px, reversed rows, hex literals, hex and base64 strings, percent, 4-bit levels, masks
+    touching 0 and 255, low-contrast rows to 4 decimals (each with a control the check alone catches:
+    `out/arena_local/reference/texture_controls.json`). The dev arena viewer's `recapture(hide)` re-captures with named
+    objects hidden (what each part brings to the capture).
+    **Open (calibration, asked by the user: the stadium too bright and glossy):** the capture's +X sector reads +0.3..0.5
+    over the profile at el −3..20, all from hotspot _13 (az 2.3, 150k) drawn after every translucent (renderOrder 2, a
+    c222307 fit). CAP1's profile composites translucents as a weighted average (a modelling choice), so the right order
+    isn't settled; the static session is extracting the exe's sort for the capture and rendering an in-order profile.
+    Hotspots sorted by position instead: +X still +0.3..0.42 at 6–20, ±90 at −3..3 −0.2 (the team glows under the haze).
   - **Decided (user, 2026-10-10): no controller rumble.** notes/rumble.md stays as a reference spec only. The contact
     detection it asked about (the static session's Q-RMB-a: HandleCollision's cadence, the contact's point and normal,
     the landing speed) is still wanted, for the Impact_Medium camera shake and the impact and landing sounds; don't

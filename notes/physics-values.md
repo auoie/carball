@@ -500,3 +500,301 @@ wheel friction values, wheel frames updated with this tick's steering), suspensi
   inner-wheel steering curves are converted to the inner/outer average for its geometry; both front wheels steer by it
   (engine patch 8; replays confirm, see validation.md).
 
+---
+
+## Car–car residual, rotator-built axes and per-body handling (CCR-1..7, 2026-10-10)
+
+Requested by the user (relayed by tmp-6f). Drafted by sub-agent CCR1. The proposed engine patch is
+out/bsim/agents/CCR1/ccr-engine.patch (a diff against the working tree at the time; six files: Arena.cpp, Ball.cpp,
+btVehicleRL.h/.cpp, a new GameRotator.h, rl_patch_tests.cpp); the live session owns the engine and applies it.
+Proposed text for validation.md (findings 21, 40) and HANDOFF.md is in the draft; the live session owns those files.
+
+Workspace: `out/bsim/agents/CCR1/` (local, git-ignored). Engine copies: `base/engine` (the repo's working tree as of
+2026-10-10 06:1x, unchanged but for an absolute mesh path and two test targets in its CMakeLists), `fix/engine` (base
+plus the proposed patch), `exp/engine` (instrumented, env-switched variants). Proposed patch: `ccr-engine.patch`
+(`diff -ruN base/engine fix/engine`). Exe citations are the live build (2026-10-06, project copy `rl-live`).
+
+### Summary
+
+- **CCR-1 (root cause of `car_car` 0.43 / 3.0 uu/s).** The bot first diverges at tick 581 (2.11 uu/s), the
+  roof landing: the player's two back wheels bottom out on the bot's roof before the bodies touch (582). Each wheel's
+  bottom-out pushback is a `resolveSingleCollision` against the bot, which gets the opposite impulse at once, so the next
+  wheel's pushback reads the bot's changed velocity: the order matters. The game runs its contact pass in its wheel
+  order (front left, front right, back left, back right); RocketSim's array is right before left. And the game applies
+  each wheel's 1.0 push on a dynamic ground inside the same pass, right after that wheel's pushback; the engine applied
+  it after the whole pass. With both as the game: `car_car` per tick car 0.433 → 0.00014, bot 3.042 → 0.010 uu/s;
+  continuous car 7.88 → 0.03–0.06, bot 8.27 → 0.010. Either change alone does not fix it (order alone: bot 0.09 with a
+  systematic 0.03–0.07 left over 580–588; push alone: 3.08). Confidence: high.
+- **CCR-2 (the last 0.09 in `car_car`, tick 110, a side bump).** `GetBumpImpulse` takes the victim's up as
+  `GetRotatorAxis(QuatToRotator(OldRBState.Quaternion), 2)`: a rotator rounded to whole units (65536 a turn) and the
+  axis rebuilt through UE3's 16384-entry sine table, not the body's exact up. Bump x: rotator 2.7896, exact 2.7003, the
+  game 2.786 (± 0.01). Confidence: high.
+- **CCR-3 (the car–ball residual: `ball_hits` 0.187, `ball_5050` 0.216 uu/s).** `ApplyBallImpactForces` takes the car's
+  forward the same way (`GetRotatorAxis(QuatToRotator(OldRBState.Quaternion), 0)`) for the PushForwardScale adjustment.
+  With it: `ball_hits` ball 0.187 → 0.00025 (per tick and continuous), `ball_5050` ball 0.216 → 0.020, `ball_roof`
+  0.010 → 0.00002. Confidence: high.
+- **CCR-4 (the bump/demo cone).** The cone native (`FUN_140f11c30`) builds each car's hitbox centre as the location plus
+  `LocalCollisionOffset` multiplied by the rotator matrix's rows, i.e. by the *transpose* of the rotation (the script's
+  debug draw uses `>>`, the native does not), with the axes from the rotator (sine table). `ShouldDemolish`'s
+  `CarForward = Vector(QuatToRotator(q))`. Replays (602, car–car pass): the engine reproduces 63 more of the game's
+  demolitions and loses 6, with 4 more demolitions where the game had none (1152 → 1187 of 1434 paired; false 44 → 47).
+  The axes alone and the forward speed alone change nothing; the transposed centre is the effect. Confidence: high for
+  the code reading, medium-high for the behaviour (replay-only evidence; a live check is listed below).
+- **CCR-5 (exe order, ulp-level).** The game's suspension and friction passes add their impulses to the chassis in its
+  wheel order, and the sticky force's up direction is summed in that order and normalised as `SafeNormal`
+  (`FUN_140ef2170`: kept at |v|² = 1, else × 1/√, zero below 1e-8). In the patch; no live recording changes beyond the
+  last bit except continuous runs that flip at thresholds (`steer_102550` ct 0.014 → 0.0001; `ball_5050` ct car
+  0.146 → 0.149). Confidence: high (code), effect negligible.
+- **CCR-6 (not proposed).** RS-9: the engine runs each car's components and then its vehicle before the next car, so a
+  car's `_oldState` and components see the other car's wheel impulses of the same tick; the game takes every
+  `OldRBState` and runs every car's components before the Bullet step's vehicle updates. Tested both ways
+  (`exp`, `CCR_ORDER`): no live recording changes; car–car replays 2 cases differ (±1 demo). Exe-faithful but not
+  measurable here.
+- **CCR-7 (question 2).** Finding 21's steering residual does not reproduce with the current engine: on clean replays
+  every non-Octane body fits its preset to the replay quantum (Dominus 403 steer 0.0003 uu, Breakout X 11505 0.010,
+  Batmobile 803 0.0098, Centio 1919 0.0002–0.0005 in its clean replays). What is left is per replay, not per body: in
+  some replays even the best of the six presets misses by ~1.8 uu at p75, interleaved with exact frames (1919 in 17
+  of 20 replays, 403 in 1 of 11). No body uses the variant presets (`LongCar_aa`, `LongCar_Pete`, ...): the live
+  build moves bodies with `HandlingPresetXOffset` instead, which (with the mesh `Origin.X`) only shifts the creation
+  point. The Batmobile (2016) has no preset, but its own box is the Plank's and its bone wheels round to the Plank
+  preset exactly. Per-body table: `bodies/body_table.tsv`. Confidence: high.
+
+### 1. Where the bot diverges (question 1)
+
+Per tick (`live_validate`, state set from the recording every tick), base engine, both `car_car` recordings (the two
+are the same run twice and give the same numbers):
+
+| tick | car uu/s | bot uu/s | bot dv (x y z) | what happens |
+|---|---|---|---|---|
+| 110 | 0.000 | 0.090 | −0.09 0.01 0 | side bump at 1400 (CCR-2) |
+| 580 | 0.020 | 0.072 | −0.04 0 −0.06 | back wheels bottom out on the roof (wheel ray hits since 575) |
+| 581 | 0.433 | 2.109 | −1.95 −0.07 −0.80 | first big divergence; no car–car contact point yet in either |
+| 582 | 0.260 | 1.547 | −1.54 0.01 −0.15 | box–box contact, 2 points (game and engine: same depths, normal; the game's manifold is (car, bot), ours (bot, car)) |
+| 583 | 0.099 | 3.042 | −2.90 −0.91 −0.08 | |
+| 584–588 | ≤ 0.03 | 1.37 … 0.12 | | settles |
+
+Every other tick ≤ 0.014 (car) / 0.09 (bot). So the residual is the roof landing, ticks 580–588, and it starts before the
+bodies touch: not the box–box points, the solver order, the bump, its cooldown, the demolition check, the car–car friction
+or restitution, or the hitbox/inertia (all unchanged by the fix, which makes every tick exact).
+
+Decomposition (`exp` build, `CCR_DEBUG=580-584`, the bot's velocity after each phase of tick 581): the player's ray pass
+takes the bot from (−10.04, −1.43, −18.05) to (−10.12, −1.33, −30.18) (the two bottom-out pushbacks), the push in the
+suspension step to (−10.13, −1.32, −30.74), the bot's own vehicle (its brake against the contact velocity its pitch
+rate gives) to (−2.32, −2.23, −9.30). The game ends at (−0.37, −2.16, −16.62) after gravity and sticky force: the split
+of the pushback between the player's two back wheels sets the bot's pitch rate, and its brake friction turns that into
+the x error.
+
+#### Evidence in the exe (live addresses)
+- Vehicle update `FUN_1402c5e40` (old 0x1402c5340): wheel transforms, candidate query, all rays (`FUN_1402c4650`), then
+  the contact pass `FUN_1402c3e60` for wheel 0..n−1, the VehicleSim hook, then suspension `FUN_1402c3540`, which calls
+  friction `FUN_1402c54d0`; every loop runs 0..n−1.
+- Contact pass `FUN_1402c3e60`: if the wheel is bottomed out and the ground is static or in the vehicle's collision
+  mask, `j = FUN_1402b96b0(...)` (resolveSingleCollision, computes only), `extraPushback = j × 0.25`, and for a rigid
+  ground `applyImpulse(−j × normal)` at once (`FUN_1402b11d0`); then for any rigid ground `activate` and, if the wheel's
+  +0xd0 > 0, `applyImpulse(−(+0xd0) × normal)` (the 1.0 push) — inside the same wheel's pass.
+- Wheel order: `UWheel_TA::Init` `0x140f097c0` stores each wheel's index in `Vehicle.Wheels` (+0x158) and adds it to the
+  btRaycastVehicle in that order; `VehicleSim_TA.OnAttached` sets up `Wheels[0], Wheels[1]` as the front axle's left and
+  right (`SetupPresetAxle`: `LeftWheel.PresetRestPosition.Y *= −1`), `Wheels[2], Wheels[3]` the back. PhysLog's header
+  (wheel0 at y −25.9) and `_wheels.csv` (`game_index`) agree. RocketSim's wheel 0 is front right (`Car.cpp` `left = i % 2`):
+  the game's wheel i is ours i ^ 1 (as `live_validate` already maps it).
+- Up-direction sum `FUN_140ef2170` (old 0x140eed3e0): sums the world wheels' normals over `VehicleSim.Wheels` in order,
+  `SafeNormal`.
+
+#### Experiments (`exp`, env-switched; per tick, both `car_car` recordings)
+| variant | car max | bot max | bot 580–588 |
+|---|---|---|---|
+| base | 0.433 | 3.042 | 0.07–3.04 |
+| contact pass in the game's order | 0.030 | 0.091 | 0.05–0.07 (systematic) |
+| push inside the contact pass only | 0.413 | 3.083 | |
+| both | 0.020 | 0.091 | ≤ 0.01 |
+| both + suspension/friction loops in the game's order | 0.020 | 0.091 | ≤ 0.01 |
+| + CCR-2 rotator up (all of the patch) | 0.00014 | 0.010 | ≤ 0.01 |
+
+### 2. The rotators (CCR-2..4)
+- `execQuatToRotator` `0x140364b80`: UE3's quaternion matrix, then `FMatrix::Rotator` `0x140385e40`: yaw
+  `atan2f(X.y, X.x)`, pitch `atan2f(X.z, sqrt(X.x² + X.y²))`, each `× 32768 / 3.1415927f` and rounded with
+  `(int)round(2f + 0.5) >> 1`; roll from the rotated pitch/yaw matrix's Y axis (`atan2f(Z·Y', Y·Y')`).
+- `execGetRotatorAxis` `0x140358d10` and the cone use `FRotationTranslationMatrix` `0x140369b10`: sin/cos from the table
+  at `0x142370780` (`TrigFLOAT[(angle >> 2) & 0x3fff]`, cos = angle + 0x4000), filled at startup by `0x140374fb0` with
+  `sinf(((float)i + (float)i) × 3.1415927f × 6.1035156e-05f)`. So axes are quantised to 4 rotator units (0.022°).
+- Script uses (`tagame_live_all.txt`): `GetBumpImpulse` UpDir (axis 2), `ApplyBallImpactForces` ForwardDir (axis 0),
+  `ShouldDemolish` `CarForward = Vector(QuatToRotator(...))`, `InitTimeOfImpactFromOldRBState` `Impact.Rotation /
+  OtherRotation = QuatToRotator(...)`; the sweep's `GetTimeOfImpact` core `0x140f01930` also goes through
+  `FMatrix::Rotator` for the impact rotations.
+- Cone `FUN_140f11c30` (called by `execIsCarWithinForwardEllipticalCone` `0x140e84500`): the matrices from
+  `Impact.Rotation` / `OtherRotation`; each centre `= Location + (off·X, off·Y, off·Z)` (disassembly: the x component
+  multiplies the offset by M00, M01, M02, row 0) with `off` = `LocalCollisionOffset` (car +0x858); the direction then
+  `SafeNormal`ed; the core `FUN_140f12910` measures pitch (right axis removed /1.01) then yaw (up axis removed) against
+  row 0 (negated when reversing), as the engine's `IsWithinForwardCone`.
+- Effect of the transpose: for yaw ψ the Octane's 13.88 uu forward offset is rotated by −ψ instead of +ψ (for yaw 90 it
+  lands 13.88 behind the origin); it cancels between two cars with the same yaw and matters up to ~28 uu between crossing
+  cars, which moves the cone decision near its edge (bands ~12 uu wide in a grid search, `tests/cone_search.cpp`).
+
+### 3. The proposed patch (`ccr-engine.patch`)
+Files: `Sim/btVehicleRL/btVehicleRL.h/.cpp` (CCR-1, CCR-5), new `Sim/GameRotator/GameRotator.h` (the rotator helpers),
+`Sim/Arena/Arena.cpp` (CCR-2, CCR-4), `Sim/Ball/Ball.cpp` (CCR-3), `tests/rl_patch_tests.cpp` (tests below). The repo's
+engine sources are unchanged since my copy (only my CMake edit differs). Deterministic: `lrintf`, `det_sinf`,
+`det_atan2f`, a double `sqrt`; native and WebAssembly identical (`determinism` 300 s, `arena_smoketest`, `netstate`,
+`rollback`, `rl_patch_tests`, all compared byte for byte in the workspace).
+
+Suggested README rows:
+- 97: The vehicle's per-wheel passes in the game's wheel order (front left, front right, back left, back right; ours
+  1, 0, 3, 2) and a wheel's 1.0 push on a dynamic ground inside the contact pass, right after its pushback; the
+  up-direction sum in that order and normalised as the game's SafeNormal | `UWheel_TA::Init` 0x140f097c0, update
+  0x1402c5e40, contact pass 0x1402c3e60, suspension 0x1402c3540, friction 0x1402c54d0, 0x140ef2170 |
+  `btVehicleRL.cpp/.h`. Live `car_car` (a car landing across another's roof): car 0.433 → 0.00014, lower car 3.04 → 0.010.
+- 98: The car scripts' rotations as rotators: the bump's up, the ball hit's forward, the demo's forward and the cone's
+  axes from `QuatToRotator` (whole units) through the 16384-entry sine table; the cone's hitbox centres the location plus
+  the offset times the transposed rotation | 0x140364b80, 0x140385e40, 0x140369b10, table 0x142370780 (0x140374fb0),
+  cone 0x140f11c30 / 0x140f12910 | `GameRotator.h`, `Arena.cpp`, `Ball.cpp`. Live `ball_hits` 0.187 → 0.0003, `ball_5050`
+  ball 0.216 → 0.020; replays +63 / −6 game demolitions reproduced.
+
+#### Tests (in `fix/engine/tests/rl_patch_tests.cpp`; the same as public-API `tests/ccr_tests.cpp`, which also builds against
+the unpatched engine)
+- `TestGameRotator`: the table's ends; the bot of `car_car` row 110 → rotator (−101, 0, 0), up.x 0.00997033 (exact
+  0.0096512); a yaw-90 cone centre lands 13.88 behind the origin.
+- `TestRoofLanding` (CCR-1): both cars from `car_car` row 492 (recorded states), run on to rows 581–585, velocities vs the
+  recording within 0.1 uu/s. Fix: 0.0000 at every row; base: car 0.23–0.43, lower car 1.5–2.95.
+- `TestBumpUpRotator` (CCR-2): row 110 → 111, the bump's own Δv (bumps on minus bump force 0): x 2.772 vs the game's
+  2.786 ± 0.015 (base 2.682).
+- `TestBallHitForwardRotator` (CCR-3): `ball_hits` row 351 → 352: ball 0.023 uu/s off (base 0.183; a fresh arena leaves
+  the car itself 0.02 off, so the bound is 0.05; per tick in `live_validate` it is 0.0003).
+- `TestDemoConeCentres` (CCR-4): attacker 2250 uu/s at yaw 60 vs a parked victim at yaw 0 offset 86 uu sideways:
+  demolished (RocketSim's cone: no); attacker yaw 30 vs victim yaw 90 at 91 uu: not (RocketSim's: demolished). Each is
+  mid-band (bands 12 uu wide).
+- Results: fix 3281 checks, 0 failed (native and WebAssembly, identical output); base fails 8 of the 10 CCR checks.
+
+### 4. Before and after
+Live (all 73 recordings, `runs/table_base_fix.md`; per tick and `--continuous`, max uu/s). Changed rows only; every other
+recording is identical in all six columns:
+
+| recording | per tick car | car2 | ball | continuous car | car2 | ball |
+|---|---|---|---|---|---|---|
+| ball_5050 | 0.070 → 0.028 | 0.051 → 0.010 | 0.216 → 0.020 | 0.146 → 0.149 | 0.051 → 0.010 | 0.216 → 0.022 |
+| ball_hits (×2) | 0.010 | – | 0.187 → 0.00025 | 0.010 | – | 0.190 → 0.00025 |
+| ball_roof (×2) | 0 | – | 0.010 → 0.00002 | 0 | – | 0.010 → 0.00002 |
+| car_car2 | 0.010 | 0.070 → 0.051 | 0 | 0.077 → 0.076 | 0.070 → 0.077 | 0 |
+| car_car_041358 | 0.433 → 0.00014 | 3.042 → 0.010 | 179.5 (see 6) | 7.88 → 0.061 | 8.27 → 0.010 | 179.5 |
+| car_car_041729 | 0.433 → 0.00014 | 3.042 → 0.010 | 0 | 7.88 → 0.032 | 8.27 → 0.010 | 0 |
+| steer_102550 | 0.014 | – | 0 | 0.022 → 0.014 | – | 0 |
+| clock, uneven, exhibition, hands (human play) | | | | p99 only, max unchanged | | |
+
+`car_car2` continuous: a 0.01 uu/s-quantum drift over the parked-on-roof stretch (ticks 493–579) that both builds show,
+along slightly different paths; per tick it is better (tick 200: 0.070 → 0). Indeterminate ticks: unchanged everywhere.
+
+Replays:
+- `out/replays/states.csv` (90 replays, 648,870 cases, paired): 1,078 cases change; touches (ball velocity) 713 better,
+  329 worse (median −0.007 uu/s); cars alone 32 cases by one 0.01 quantum (11 better, 21 worse); `replay_paired.py`
+  (car or ball position) 13 better, 23 worse. Neutral, as expected at the replays' resolution.
+- Car–car pass, the 602 replays in `out/replays/more` (`cc/base`, `cc/fix`): bumps both ways b_err p50 0.554 → 0.544
+  (8 better, 4 worse); demos a_err p50 1.132 → 1.131 (25/20); game demolitions reproduced 1152 → 1187 of 1434 paired
+  (per case: 63 gained, 6 lost), demolitions without the game's 44 → 47.
+
+### 5. Other observations
+- Contact lifetimes: our car–car points age 3 per tick (the compound algorithm refreshes the manifold, then the child
+  again, plus the validator's restore), the game's 2 then 1. `m_lifeTime` feeds nothing in the solver (2.82 and 3.24
+  source), so this is harmless.
+- The body order (game (car, bot), ours (bot, car)) changes nothing, as finding 40 said: the fix is exact with it.
+- `car_car_041358`'s ball (p50 114 uu/s, both builds): the ball sits in the net (y −5625) when the recording starts; the
+  engine counts it scored and freezes it (patch 72), the game's freeplay ball rolls on. A validator artifact, not physics
+  (the second recording parks the ball at (3000, −2000)).
+- The vehicle's pushback uses a static default solver info (erp 0.2, 1/60 s): read again in `0x1402c3e60` (0x14235fa80),
+  as the engine.
+
+### 6. Per-body handling (question 2)
+Method: `replay_validate --bodies` (current base engine) over the 602 replays (51,210 cases), every non-Octane body against
+the six presets, flat floor, inputs unchanged, by straight/steering and per replay (`bodies/base`, `tools/bodies_report.py`);
+body data from G4's `bodies_live.tsv`/`tz_live.tsv`, `mesh_origin_live.tsv`, the products dump; packages read with
+`props.py`, bones with G4's `skel.py`.
+
+Current fits (median position error after the fitted ticks, uu; best preset bold):
+
+| body | label | package → preset | straight n / p50 | steering n / p50 |
+|---|---|---|---|---|
+| 403 | Dominus | Body_MuscleCar → MuscleCar | 8413 / **0.0002** | 3837 / **0.0003** |
+| 4770 | Dominus (other id) | Body_MuscleCar → MuscleCar | 800 / 0.0001 | 380 / 0.0202 (2 replays) |
+| 1286 | Aftershock | MuscleCar | 490 / 0.0002 | 187 / 0.0005 |
+| 3426 | Diestro | MuscleCar | 268 / 0.0002 | 87 / 0.0005 |
+| 1919 | Centio | body_pumpernickel → Plank | 6970 / 0.0100 | 3773 / 0.0424 |
+| 803 | Batmobile (2016) | Body_Darkcar → none (own) | 1892 / **0.0002** (Plank) | 777 / 0.0098 |
+| 11505 | Breakout X | body_crikey → LongCar | 2998 / 0.0002 | 2441 / 0.0100 |
+| 11603 | Fennec ZR-F | body_zrf → Octane | 1102 / 0.0002 | 420 / 0.0005 |
+| 6939 | Mach-E RLE | body_elm → Octane | 465 / 0.0002 | 225 / 0.0003 |
+
+Per replay (1919): exact in 3 replays (straight 0.0001, steering 0.0002–0.0005), in the 17 others p75 1.2–2.2 uu with
+bad and exact frames interleaved and the Plank still the best of the six in 311 of 338 cases: these cases fit no preset,
+so it's the replay (stale or corrected states, or two players' cases mixed), not the body. 403 is likewise exact in 10
+of 11 replays. Finding 21's 0.032 / 0.045 / 0.057 predate patches 38 and 80 and the body mapping above.
+
+What the exe and packages say:
+- Physics wheels for a preset body: `SetupWheelPreset` sets only `BoneName` (the visual bone, Wheel_TA+0x110), radius and
+  `PresetRestPosition` from the preset; `UWheel_TA::Init` tests `PhysicsBoneName` (+0x118, None) and takes
+  `PresetRestPosition`; radius and suspension travel are scaled by the component's scale (1). The body's own axle
+  values (`WheelRadius` 12.75 on the Centio, offsets) are visual. `SuspensionTravelMin/Max` are only read by the car
+  preview. So every preset body drives exactly as its preset.
+- No-preset bodies: `SetupBoneAxle` → wheel at the bone + (`WheelOffsetForward`, ±`WheelOffsetSide`), rounded to 0.01,
+  radius `Axle.WheelRadius`. Batmobile (2016): bones FL/FR (64.9726, ∓37.7953, −7.8267) + (−15, ±10) → (49.97, ±27.80,
+  −7.83); BL/BR (−50.5821, ∓35.2803, −3.83) + (15.15, ±15) → (−35.43, ±20.28, −3.83); radii 12.5 / 17; own physics box
+  128.8198 × 84.6704 × 29.3944 at (9.0086, 0, 12.0942): all the Plank preset's.
+- Variant presets (`LongCar_aa` 4.75, `LongCar_Pete`, `LongCar_hero`, `LongCar_smoke`, `Merc_Tomato`, `Octane_Skunkz`,
+  `Hybrid_Skunkz`, `Pixie`, `Plank_Cured`, `Octane_Lemonade`) are in Startup.upk but no body asset references them in the
+  live build; body_aa uses `LongCar` with `HandlingPresetXOffset` 7.75.
+- `HandlingPresetXOffset` (and the mesh `Origin.X`): `InitBodyAsset` → `SetTranslation(CalculatePresetSuspensionOffset() +
+  (XOffset, 0, 0))` on the mesh component: the Bullet body is created at actor ⊗ T, so it moves the creation point only
+  (spawn, kickoff, respawn). The box (`LocalCollisionOffset` is the box centre in body space: PhysLog's header reads
+  13.8757, 0, 20.755 for the Fennec, whose Tz is 2.61) and the wheels are relative to the body origin, so nothing else
+  changes. GA-6 is therefore complete for physics once the engine takes the offset per body, not per preset.
+- 24 body products have a creation offset (X offset + Origin.X): Venom +5, Takumi +5, Scarab +7 (404, 5188), Takumi RX-T
+  +5, Mantis +5, Formula 1 2021/2022 −12.5, Mazda RX-7 +3.25, Ace +7.75, Lightning McQueen +6.75, Primo +6.5, The
+  Incredibile −5, 1966 Cadillac DeVille +10.25, The Mystery Machine +5, Hearse +5, AMG GT 63 S +3, BMW M4 GT3 EVO +2,
+  Pizza Planet truck +5, Corvette +2, Cayenne +3, Rivian R1S +2, Chrysler Pacifica +2, Golf GTI +5. Spawn z = 36 + Tz
+  per body (the reference bodies give the live values: 36.02, 36.01, 38.84, 36.00, 38.94 +5, 35.05, 38.61, 35.71 +5,
+  39.06 +7).
+- `SteerScale` 0.45 on body_slime (4155 Ecto-1, a MuscleCar body): no script reads it (natives not checked) and the 602
+  replays have no Ecto-1, so it stays untested.
+- Not readable with the baked keys (server-delivered content keys): 12779 Jeep Wrangler, 12781 Viper GTS-R, 12842
+  Maserati, 12888 Gummi Ship, 12951 CT5-V, 12999 190E, 13000 Mona Car.
+
+`bodies/body_table.tsv` (229 body products): id, label, package, asset, handling_preset, engine_config (OCTANE 48,
+DOMINUS 84, PLANK 12, BREAKOUT 36, HYBRID 27, MERC 14, PSYCLOPS 1 (tritip), unknown 7), hitbox, wheels, x_offset,
+mesh_origin_x, spawn_forward_offset, Tz, spawn_z, note. For the engine: `CarConfig` = the preset's, with
+`spawnForwardOffset` and `spawnZ` from the row (Batmobile: Plank, Tz not computed: G4's calc needs a preset).
+
+### 7. Corrections to the notes
+- `notes/physics-values.md`
+  - Car–ball (line ~229): `CarFwd` is `GetRotatorAxis(QuatToRotator(OldRBState.Quaternion), 0)`: whole rotator units and
+    the 16384-entry sine table, not the body's exact forward.
+  - Car–car (lines ~236–260): `Other.Up` is the rotator's axis 2 likewise; `CarForward` (demo speed and reverse test) the
+    rotator's `Vector()`; the cone's axes are the rotator matrix's rows, and its hitbox centres are "location + rotated
+    LocalCollisionOffset" only in the script's debug draw: the native `FUN_140f11c30` multiplies the offset by the rows
+    (the transpose). `FUN_140f0c940`/`FUN_140f0d620` (old) → `FUN_140f11c30`/`FUN_140f12910` (live).
+  - Car bodies and presets (lines ~153–175): "the physics wheels have no PhysicsBoneName" — confirmed: `PhysicsBoneName`
+    is Wheel_TA+0x118, which `UWheel_TA::Init` 0x140f097c0 tests; `BoneName` (+0x110) holds the visual bone. Replace the
+    three X-offset exceptions with the live list (18 body packages with `HandlingPresetXOffset`, 5 with a mesh `Origin.X`; 24 products, above) and say the offset only moves the creation point.
+    "The game's variant presets look like baked X offsets": they are unreferenced in the live build. Replace "Per-body
+    data does not explain the steering residual ..." with CCR-7 (no per-body residual with the current engine; per-replay
+    outliers). The Batmobile: own box = Physics_Plank's, bone wheels = the Plank preset after rounding.
+  - Add (vehicle): the game's wheel order FL, FR, BL, BR; the contact pass applies each wheel's pushback impulse and its
+    1.0 push to a dynamic ground immediately, in that order.
+- `notes/validation.md`
+  - Finding 40: "Left: 1–3 uu/s for a few ticks once the two bodies touch in the roof landing (... the solver's order of
+    contacts, probably)" → the wheels' contact pass order and the push's place (CCR-1); it starts a tick before the bodies
+    touch.
+  - Finding 21: superseded (CCR-7).
+  - Finding 40's `ball_5050` "first 50/50's touch (20.06 uu/s ...; open)" and the 0.22 since: the rest was the ball hit's
+    rotator forward (0.216 → 0.020).
+  - `car_car_041358`'s ball error is the scored-ball freeze in the validator (section 5).
+- `notes/gameside-audit.md`
+  - "Car–car formulas = engine patches 5–7, 33, 34": add the rotator inputs and the cone's transposed offset (CCR-2..4).
+  - Open: "Non-Octane steering residual (validation finding 21) is not explained by the curves" → closed (CCR-7).
+  - RS-9 / the component-vs-vehicle order (CCR-6): measured, no effect in the recordings or replays.
+- `HANDOFF.md` State: `car_car` 0.43 / bot 3.0 → 0.00014 / 0.010 (per tick), with the patch.
+
+### 8. Open questions / live checks worth asking for
+- CCR-4 live: a supersonic bot into a parked player car in the disagreement band (attacker yaw 60 → victim yaw 0, 86 uu
+  to the side, 2250 uu/s; and the mirror case yaw 30 → 90 at 91 uu): demolition or not. One `ga_carcar`-style scenario;
+  the replays already favour the game's rule 63 : 6.
+- A `car_car` re-recording with `_wheels.csv` is no longer needed (every tick of the roof landing is exact).
+- The 7 server-key bodies and the Batmobile's Tz (no preset: `calc_tz.py` needs the bone path) are not in the table.
+- The rotator conversion uses `det_atan2f`/`det_sinf` (musl) where the game uses MSVC's `atan2f`/`sinf`: a 1-ulp
+  difference can move a rotator across a rounding boundary (one unit) in rare cases; not seen in any recording.
