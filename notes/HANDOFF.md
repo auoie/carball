@@ -232,9 +232,19 @@
     import(), new URL), the arena's .cmf pinned to out/arena, exponent forms, signed UV pairs, strides to 16, small
     integers on longer runs, and a texture check against `out/arena_local/reference/textures.f32`
     (scripts/reference_textures.py: rows along one stream place, bending; ramps are profiles and allowed).
-    Next: quick chat (notes/quick-chat.md CHAT-1..22), match stats (notes/match-stats.md STAT-1..24), custom training,
-    mutators, the match intro/outro (notes/match-intro-outro.md: its text cleared verbatim) and the car's look
-    (notes/car-paint.md PNT-16..33).
+  - **In 674f3ef:** all of the above. **Since 674f3ef (uncommitted):** the plaza statue as a rule (CAL1's bbox, its
+    width 220 -> 600 up it, fitted to the coverage statistics; RV-154c: az 181's first open sky only a plausibility
+    range, ruled), the large poplar back to 1800 (named measures aren't tuned to tests), the poplars' cover 41.6 %; the
+    exe's height fog (notes/arena-surroundings.md FOG-1..15: `client/src/render/heightFog.ts`): three's fog off in the
+    stadium, every theme material fogged by `fogAll` (opaque per pixel, translucent/additive per vertex, the sky at
+    the game's dome's distance, the far layer's city at 100k and its FogCylinder band at 57.3k, the hotspots at their
+    game distances; the capture's faces capped at 31,887 uu of view depth), the GLSL checked against the TS twin on the
+    GPU (`?viewer=shaders`: heightFog, heightFogCapture; a series where float32 cancels at level sight lines).
+    WIP, untracked: `game/quickChat.ts` and `ui/chatLog.ts` (+ tests): the presets, slots, menu, spam bucket, log format.
+    Next: post-processing part 2 (notes/post-processing.md PP-21..32: the render split opaque -> AO -> translucent,
+    SSAO, shafts, flares, motion blur; the cube blur after the static session's capture recompute), quick chat's wiring
+    (protocol, server bucket and relay, input, settings), match stats (STAT-1..24), custom training, mutators, the
+    match intro/outro (its text cleared verbatim) and the car's look (notes/car-paint.md PNT-16..33).
   - **Decided (user, 2026-10-10): no controller rumble.** notes/rumble.md stays as a reference spec only. The contact
     detection it asked about (the static session's Q-RMB-a: HandleCollision's cadence, the contact's point and normal,
     the landing speed) is still wanted, for the Impact_Medium camera shake and the impact and landing sounds; don't

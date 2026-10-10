@@ -1,8 +1,9 @@
 // DFH Stadium (Stadium_P), the game's own soccar arena at sunset, from the static session's spec
-// (notes/arena-visuals.md): its sky (H-10), its sun low from -X (AV-17), its sky light (AV-18), fog only beyond
-// 10240 uu (AV-19), and the game's own arena materials for the cage, the walls and the glass (H-6, H-8, H-9) in the
-// teams' primaries (AV-2). Values only: the look is built in code.
-import { Color, DirectionalLight, Fog, Group, HemisphereLight } from "three";
+// (notes/arena-visuals.md): its sky (H-10), its sun low from -X (AV-17), its sky light (AV-18), its height fog (the
+// exe's, from 10240 uu out: FOG-1..15, render/heightFog.ts), and the game's own arena materials for the cage, the walls
+// and the glass (H-6, H-8, H-9) in the teams' primaries (AV-2). Values only: the look is built in code.
+import { Color, DirectionalLight, Group, HemisphereLight } from "three";
+import { fogAll } from "../heightFog";
 import { TEAM_PRIMARY_LINEAR, linear } from "../teamColors";
 import { buildCrowd } from "./stadiumCrowd";
 import { buildStadiumLights } from "./stadiumLights";
@@ -35,10 +36,12 @@ export function stadiumTheme(): Theme {
   // The skyline, the city's glow and the horizon's fog band beyond (SUR-11, 22, 23)
   // The team beams, flare sheets, bulbs, the canopy's light dots, the haze and the near fog sheets (SUR-8, 13, 14, 23)
   root.add(sun, sky, dome, hotspots, buildBowl(linear(p0), linear(p1)), crowd.mesh, props.group, buildPlaza(), buildStadiumLights(linear(p0), linear(p1)), buildFarLayer());
+  // (the height fog in every material out here: opaque per pixel, translucent per vertex; the sky, the far layer and
+  // the hotspots their own ways, set where they're built. The arena within 10240 uu of any camera there takes none)
+  fogAll(root);
   return {
     background: new Color(0x0b1418),
-    // (ExponentialHeightFog: none inside the arena, from 10240 uu out; orange towards the sun)
-    fog: new Fog(new Color().setRGB(0.42, 0.3, 0.16), 10240, 40000),
+    fog: null,
     style: {
       floor: new Color(0x3d5a2c),
       floorStripe: null,

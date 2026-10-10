@@ -2,7 +2,6 @@
 // their formulas and our own emblems (no ad artwork), the scaffolds' banners, the corner flags and the light arrows.
 import { BoxGeometry, BufferGeometry, type Color, DoubleSide, Float32BufferAttribute, Group, Mesh, PlaneGeometry, ShaderMaterial, Vector3 } from "three";
 import { fullBright } from "../teamColors";
-import { GRASS_CUBE_AT } from "../grassCube";
 import { BOWL_COLOURS, seenMaterial } from "./stadiumSurroundings";
 
 // --- Screens, ads, the near-field props (SUR-9, 10, 13, 17..19) -----------------------------------------------------
@@ -360,16 +359,17 @@ export function buildScreensAndProps(primary0: Color, primary1: Color): { group:
 
 /** The plaza's occluders (the static session's measures): the plinth, a wedge ramp in Stadium_Base (its flat top z 2434
  *  from x -13.3k to -12.1k, falling to z 1280 at -19.7k, 640 wide each side at its front (az 177.0-183.0 from the capture
- *  point: SUR-1's 177.1-182.9), 668 at its back, its front vertical at x -12.12k); the statue on it, a figure (its
- *  bounds x -13199..-11591, y -380..283, z 2339..3841): ours its outline as seen from the capture point, at its distance,
- *  from its foot up to (az, el) (178.6, 9.4), (179, 11.9), (180, 14.4), (180.5, 14), (181, 8.6) (CAL1's first open sky
- *  over it: 18.6 % of az 175-185 over its elevations, the game's figure 14-21 %, RV-154c; SUR-20's 0.17); the poplars
- *  (masked, about 43 % covering, SUR-20's olive-brown; spindles, widest a third of the way up): small ones at az
+ *  point: SUR-1's 177.1-182.9), 668 at its back, its front vertical at x -12.12k); the statue on it, a figure in its bounds
+ *  (CAL1's x -13199..-11591, y -380..283, z 2339..3841), as a rule: its whole depth, its width across widening from 220
+ *  at its foot to 600 at its top (the two fitted to CAL1's coverage, 14 % of az 175-185 at el 6-10 and 21 % at 10-15:
+ *  RV-154c; SUR-20's 0.17); the poplars
+ *  (masked, 41.6 % of the card covering (its mask's 39.2 % of texels, bilinear), SUR-20's olive-brown; spindles, widest
+ *  a third of the way up): small ones at az
  *  175.55-176.94 and 183.38-184.5 (r 16.5-17.7k, up to z 2.25k), the large at 175.55 and 184.24 (r 20.7k, up to 3.8k)
  *  and 179.88 (r 19.9k, up to 4.8k) (RV-154b) */
 export const PLAZA = {
   plinth: { front: -12120, flatTo: -13300, back: -19700, top: 2434, low: 1280, half: [640, 668] as const },
-  statue: { distance: 12400, foot: 2339, outline: [[178.6, 9.4], [179, 11.9], [180, 14.4], [180.5, 14], [181, 8.6]] as const, colour: 0.17 },
+  statue: { x: [-13199, -11591] as const, y: [-380, 283] as const, z: [2339, 3841] as const, width: [220, 600] as const, colour: 0.17 },
   poplars: [
     { az: 175.9, r: 17700, height: 2250, width: 420 },
     { az: 176.9, r: 16500, height: 2250, width: 420 },
@@ -377,21 +377,22 @@ export const PLAZA = {
     { az: 184.4, r: 17700, height: 2250, width: 420 },
     { az: 175.55, r: 20700, height: 3800, width: 900 },
     { az: 184.24, r: 20700, height: 3800, width: 900 },
-    { az: 179.88, r: 19900, height: 4800, width: 2400 },
+    { az: 179.88, r: 19900, height: 4800, width: 1800 },
   ] as readonly { az: number; r: number; height: number; width: number }[],
   poplarFoot: 1300,
-  cover: 0.43,
+  cover: 0.416,
   foliage: [0.15, 0.11, 0.024] as const,
 } as const;
 
 /** A poplar's spindle, `width` x `height` about its centre: half-width 0.5 width sin(pi y^0.7) at y up it (0 to 1:
- *  widest a third of the way up), in 16 bands */
+ *  widest a third of the way up), in SPINDLE_BANDS bands */
+const SPINDLE_BANDS = 16;
 export function spindle(width: number, height: number): BufferGeometry {
   const pos: number[] = [];
   const uv: number[] = [];
   const half = (y: number): number => 0.5 * width * Math.sin(Math.PI * y ** 0.7);
-  for (let k = 0; k < 16; k++) {
-    const [y0, y1] = [k / 16, (k + 1) / 16];
+  for (let k = 0; k < SPINDLE_BANDS; k++) {
+    const [y0, y1] = [k / SPINDLE_BANDS, (k + 1) / SPINDLE_BANDS];
     const [h0, h1] = [half(y0), half(y1)];
     const [z0, z1] = [(y0 - 0.5) * height, (y1 - 0.5) * height];
     pos.push(-h0, z0, 0, h0, z0, 0, h1, z1, 0, -h0, z0, 0, h1, z1, 0, -h1, z1, 0);
@@ -401,6 +402,13 @@ export function spindle(width: number, height: number): BufferGeometry {
   g.setAttribute("position", new Float32BufferAttribute(pos, 3));
   g.setAttribute("uv", new Float32BufferAttribute(uv, 2));
   return g;
+}
+
+/** The share of its card a spindle fills (its bands' areas: about 0.65) */
+export function spindleShare(): number {
+  let sum = 0;
+  for (let k = 0; k < SPINDLE_BANDS; k++) sum += (Math.sin(Math.PI * (k / SPINDLE_BANDS) ** 0.7) + Math.sin(Math.PI * ((k + 1) / SPINDLE_BANDS) ** 0.7)) / (2 * SPINDLE_BANDS);
+  return sum;
 }
 
 /** The plaza's plinth, statue and poplars */
@@ -429,24 +437,18 @@ export function buildPlaza(): Group {
   plinthGeometry.setAttribute("position", new Float32BufferAttribute(pos, 3));
   const plinth = new Mesh(plinthGeometry, concrete);
   plinth.name = "plaza: plinth";
-  // The statue: its outline at its distance, from its foot up (a strip between the foot and the outline's top)
+  // The statue: a block its bounds' depth and height, its width across widening up it (Three's frame: x, z up, the
+  // game's y)
   const st = PLAZA.statue;
-  const at = (az: number, z: number): number[] => {
-    const a = (az * Math.PI) / 180;
-    return [st.distance * Math.cos(a), z, st.distance * Math.sin(a)];
-  };
-  const topZ = (el: number): number => GRASS_CUBE_AT.z + st.distance * Math.tan((el * Math.PI) / 180);
-  const figure: number[] = [];
-  st.outline.forEach(([az, el], k) => {
-    const next = st.outline[k + 1];
-    if (!next) return;
-    const [a0, a1] = [at(az, st.foot), at(next[0], st.foot)];
-    const [b0, b1] = [at(az, topZ(el)), at(next[0], topZ(next[1]))];
-    figure.push(...a0, ...a1, ...b1, ...a0, ...b1, ...b0);
-  });
-  const figureGeometry = new BufferGeometry();
-  figureGeometry.setAttribute("position", new Float32BufferAttribute(figure, 3));
+  const figureGeometry = new BoxGeometry(st.x[1] - st.x[0], st.z[1] - st.z[0], 1);
+  const corners = figureGeometry.getAttribute("position");
+  for (let k = 0; k < corners.count; k++) {
+    const up = corners.getY(k) / (st.z[1] - st.z[0]) + 0.5;
+    corners.setZ(k, corners.getZ(k) * (st.width[0] + (st.width[1] - st.width[0]) * up));
+  }
+  figureGeometry.computeVertexNormals();
   const statue = new Mesh(figureGeometry, seenMaterial([st.colour, st.colour, st.colour * 0.85]));
+  statue.position.set((st.x[0] + st.x[1]) / 2, (st.z[0] + st.z[1]) / 2, (st.y[0] + st.y[1]) / 2);
   statue.name = "plaza: statue";
   group.add(plinth, statue);
   // The poplars: columns of foliage, 43 % of them covering (the rest cut away in small cells)
@@ -460,7 +462,8 @@ export function buildPlaza(): Group {
       float hash(vec2 q) { return fract(sin(dot(q, vec2(127.1, 311.7))) * 43758.5453); }
       void main() {
         // (the spindle's own outline: its geometry's)
-        if (hash(floor(vWorld.xy / 60.0) + floor(vWorld.zy / 60.0)) > cover / 0.64) discard;
+        // (cover of the card: of the spindle, cover over its share of the card)
+        if (hash(floor(vWorld.xy / 60.0) + floor(vWorld.zy / 60.0)) > cover / ${spindleShare().toFixed(4)}) discard;
         gl_FragColor = vec4(colour, 1.0);
         #include <colorspace_fragment>
       }`,

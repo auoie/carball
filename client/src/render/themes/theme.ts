@@ -27,7 +27,8 @@ export interface ArenaStyle {
 
 export interface Theme {
   readonly background: Color;
-  readonly fog: Fog;
+  /** Three's fog, or none (the stadium's own height fog in its materials: render/heightFog.ts) */
+  readonly fog: Fog | null;
   readonly style: ArenaStyle;
   /** Lights and scenery */
   readonly root: Group;

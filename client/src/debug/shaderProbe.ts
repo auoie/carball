@@ -18,10 +18,12 @@ import {
   RGBAFormat,
   Scene,
   ShaderMaterial,
+  Vector3,
   WebGLRenderTarget,
   WebGLRenderer,
 } from "three";
 import { BoostPadsView, PAD_LOOK } from "../render/entities";
+import { CUBE_FOG_CAP, HEIGHT_FOG_GLSL, fogCd, heightFog, opaqueDelta, skyDelta } from "../render/heightFog";
 import { PostProcess, REMAP_GLSL, TONEMAP_GLSL, display, unclippedNodes } from "../render/postProcess";
 import { ENV_GLSL, ENV_RADIAL, ENV_SPREAD, NET_SIDE_GLSL, OVERLAY_UV_GLSL, envG, netSideUv, overlayUv } from "../render/gameSurfaces";
 import { UNDER_GLASS_V_GLSL, underGlassV } from "../render/goalInterior";
@@ -90,6 +92,44 @@ export const PROBES: Readonly<Record<string, Probe>> = {
         grid(-4, 1, 60)
           .map((e): [number[], number[]] => [[10 ** e, 0.7 * 10 ** e, 1.3 * 10 ** e, fade], [0, 0, 0, 0]])
           .filter(([i]) => i.slice(0, 3).every((x) => Math.abs(x - 0.255447) > 2e-4)),
+      ),
+    tolerance: 2e-4,
+  },
+  // (the height fog from the cars' height, uncapped: distances 5k to 1000k all round, from 10 down to 80 up)
+  heightFog: {
+    glsl: HEIGHT_FOG_GLSL,
+    uniforms: { uFogCd: { value: fogCd(17) }, uFogCam: { value: new Vector3(0, 17, 0) }, uFogCap: { value: 1e30 }, uFogAxis: { value: new Vector3(0, 0, -1) } },
+    call: "rlHeightFog(i.xyz)",
+    twin: (i) => {
+      const fog = heightFog([i[0] ?? 0, i[1] ?? 0, i[2] ?? 0], fogCd(17));
+      return [...fog.add, fog.F];
+    },
+    inputs: () =>
+      [5000, 12000, 20000, 40000, 1e6].flatMap((d) =>
+        grid(0, 330, 11).flatMap((az) =>
+          grid(-10, 80, 9).map((el): [number[], number[]] => {
+            const [a, e] = [(az * Math.PI) / 180, (el * Math.PI) / 180];
+            return [[d * Math.cos(e) * Math.cos(a), d * Math.sin(e), d * Math.cos(e) * Math.sin(a), 0], [0, 0, 0, 0]];
+          }),
+        ),
+      ),
+    tolerance: 2e-4,
+  },
+  // (the capture's sky through its top face: the game's dome's distance, capped at 31,887 uu)
+  heightFogCapture: {
+    glsl: HEIGHT_FOG_GLSL,
+    uniforms: { uFogCd: { value: fogCd(927.9998) }, uFogCam: { value: new Vector3(0, 927.9998, 0) }, uFogCap: { value: CUBE_FOG_CAP }, uFogAxis: { value: new Vector3(0, 1, 0) } },
+    call: "rlHeightFog(rlOpaqueDelta(uFogCam + rlSkyDelta(normalize(i.xyz))))",
+    twin: (i) => {
+      const fog = heightFog(opaqueDelta(skyDelta([i[0] ?? 0, i[1] ?? 0, i[2] ?? 0]), [0, 1, 0], CUBE_FOG_CAP), fogCd(927.9998));
+      return [...fog.add, fog.F];
+    },
+    inputs: () =>
+      grid(0, 330, 11).flatMap((az) =>
+        grid(50, 89, 13).map((el): [number[], number[]] => {
+          const [a, e] = [(az * Math.PI) / 180, (el * Math.PI) / 180];
+          return [[Math.cos(e) * Math.cos(a), Math.sin(e), Math.cos(e) * Math.sin(a), 0], [0, 0, 0, 0]];
+        }),
       ),
     tolerance: 2e-4,
   },

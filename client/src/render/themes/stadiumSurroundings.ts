@@ -19,11 +19,10 @@ import {
   Shape,
   ShapeGeometry,
   SphereGeometry,
-  UniformsLib,
-  UniformsUtils,
   Vector2,
   Vector3,
 } from "three";
+import { withHeightFog } from "../heightFog";
 import { GRASS_CUBE_AT } from "../grassCube";
 import { fullBright } from "../teamColors";
 
@@ -82,18 +81,16 @@ void main() {
 }
 `;
 
-/** The sprite: FillFlare's G by radius; fogged by its own distance (the scene's linear fog, not where it's placed), or
- *  for a `clear` one faded by elevation from the capture point */
+/** The sprite: FillFlare's G by radius; the height fog per vertex at its own distance along its direction (not where
+ *  it's placed: withHeightFog), or for a `clear` one faded by elevation from the capture point instead */
 const fragmentShader = /* glsl */ `
 uniform vec3 colour;
 uniform float flare[10];
 uniform bool additive;
-uniform float gameDistance;
 uniform bool clear;
 uniform vec3 from;
 varying vec2 vUv;
 varying vec3 vWorld;
-#include <fog_pars_fragment>
 void main() {
   float x = length(vUv - 0.5) * 20.0;
   int i = int(min(floor(x), 9.0));
@@ -106,9 +103,6 @@ void main() {
   if (additive) gl_FragColor = vec4(8.0 * g * colour * pass, 1.0);
   else gl_FragColor = vec4(colour, clamp(8.0 * g, 0.0, 1.0) * pass);
   #include <colorspace_fragment>
-  #ifdef USE_FOG
-    if (!clear) gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor, smoothstep(fogNear, fogFar, gameDistance));
-  #endif
 }
 `;
 
@@ -125,11 +119,9 @@ function hotspotMesh(spot: Hotspot, colour: readonly [number, number, number], a
     vertexShader,
     fragmentShader,
     uniforms: {
-      ...UniformsUtils.clone(UniformsLib.fog),
       colour: { value: new Vector3(...colour) },
       flare: { value: FILL_FLARE_G },
       additive: { value: additive },
-      gameDistance: { value: spot.distance },
       clear: { value: spot.clear ?? false },
       from: { value: centre },
     },
@@ -137,8 +129,8 @@ function hotspotMesh(spot: Hotspot, colour: readonly [number, number, number], a
     depthWrite: false,
     blending: additive ? AdditiveBlending : NormalBlending,
     side: DoubleSide,
-    fog: !spot.clear,
   });
+  withHeightFog(material, spot.clear ? "none" : additive ? "additive" : "translucent", spot.distance);
   const mesh = new Mesh(new PlaneGeometry(2 * at * Math.tan(ax), 2 * at * Math.tan(ay)), material);
   const dir = new Vector3(Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az));
   mesh.position.copy(centre).addScaledVector(dir, at);
@@ -808,6 +800,9 @@ export function buildBowl(primary0: Color, primary1: Color): Group {
  *  17.5, 0.06 at 22.5, none from 30) */
 export const FAR_LAYER = {
   radius: 31600,
+  /** Where its parts are for the height fog (FOG-10, SUR-23): the city and its glow 100k out (its towers 57-200k), the
+   *  FogCylinder's white band at its radius, 57.3k */
+  fog: { city: 100000, band: 57300 },
   skyline: { minusY: [-176, -5] as const, plusY: [3, 176] as const, maxEl: [51, 65] as const },
   windows: [0.2, 0.17, 0.11] as const,
   ground: [0.748, 0.574, 0.265] as const,
@@ -877,15 +872,24 @@ void main() {
     colour = v * ground + sparkle * vec3(0.9, 0.7, 0.4);
     alpha = 1.0;
   }
-  // The horizon's fog band over it all (white)
-  float e = abs(el);
-  float fog = 0.0;
-  for (int i = 0; i < 5; i++) {
-    if (e >= fogEl[i] && e < fogEl[i + 1]) fog = mix(fogAlpha[i], fogAlpha[i + 1], (e - fogEl[i]) / (fogEl[i + 1] - fogEl[i]));
+  // (the city and its glow: opaque, in the height fog at their distance, along the drawing camera's sight line)
+  vec3 sight = normalize(vFogWorld - uFogCam);
+  if (alpha > 0.0) {
+    vec4 cityFog = rlHeightFog(rlOpaqueDelta(uFogCam + sight * ${FAR_LAYER.fog.city.toFixed(1)}));
+    colour = colour * cityFog.a + cityFog.rgb;
   }
-  // (the band's light: the game's horizon reads about 0.17 from the field, its white fogged and dim: SUR-35 mainview)
-  colour = mix(colour, vec3(0.2, 0.19, 0.17), fog);
-  alpha = max(alpha, fog);
+  // The horizon's fog band over it all: FogCylinder, white, alpha by elevation, in the height fog at its radius per its
+  // own translucency (c F + fog: FOG-10, SUR-23)
+  float e = abs(el);
+  float band = 0.0;
+  for (int i = 0; i < 5; i++) {
+    if (e >= fogEl[i] && e < fogEl[i + 1]) band = mix(fogAlpha[i], fogAlpha[i + 1], (e - fogEl[i]) / (fogEl[i + 1] - fogEl[i]));
+  }
+  vec4 bandFog = rlHeightFog(sight * ${FAR_LAYER.fog.band.toFixed(1)});
+  // (the band over the city, as two layers: what's drawn its colour over their joint alpha)
+  float joint = band + alpha * (1.0 - band);
+  colour = joint > 0.0 ? (colour * alpha * (1.0 - band) + (vec3(1.0) * bandFog.a + bandFog.rgb) * band) / joint : vec3(0.0);
+  alpha = joint;
   if (alpha <= 0.0) discard;
   gl_FragColor = vec4(colour, alpha);
   #include <colorspace_fragment>
@@ -912,6 +916,7 @@ export function buildFarLayer(): Mesh {
     depthWrite: false,
     fog: false,
   });
+  withHeightFog(material, "custom");
   const mesh = new Mesh(new SphereGeometry(L.radius, 96, 48), material);
   mesh.name = "far layer";
   mesh.renderOrder = -1;

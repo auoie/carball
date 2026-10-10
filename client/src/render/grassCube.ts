@@ -4,6 +4,7 @@
 // capture-only hotspots (SUR-33) seen from above the centre spot, which the grass, the metal floor and the frames
 // reflect. Two targets in turn: the materials sampling the cube read the last capture while the next is drawn (a
 // texture can't be read while it's drawn into). The blur: the materials sample its mipmaps at GRASS_CUBE_BLUR_LOD.
+import { CUBE_FOG_CAP } from "./heightFog";
 import { Color, CubeCamera, LinearFilter, LinearMipmapLinearFilter, type Object3D, type Scene, type Texture, UnsignedByteType, WebGLCubeRenderTarget, type WebGLRenderer } from "three";
 
 /** Where the game captures it from (game frame: above the centre spot) */
@@ -30,7 +31,11 @@ export class GrassCube {
       new WebGLCubeRenderTarget(GRASS_CUBE_SIZE, { type: UnsignedByteType, generateMipmaps: true, minFilter: LinearMipmapLinearFilter });
     this.#targets = [target(), target()];
     this.#cameras = [new CubeCamera(GRASS_CUBE_NEAR, GRASS_CUBE_FAR, this.#targets[0]), new CubeCamera(GRASS_CUBE_NEAR, GRASS_CUBE_FAR, this.#targets[1])];
-    for (const camera of this.#cameras) camera.position.set(GRASS_CUBE_AT.x, GRASS_CUBE_AT.z, GRASS_CUBE_AT.y); // (Three's y up)
+    for (const camera of this.#cameras) {
+      camera.position.set(GRASS_CUBE_AT.x, GRASS_CUBE_AT.z, GRASS_CUBE_AT.y); // (Three's y up)
+      // (each face's opaque height fog capped at its view depth's 31,887 uu: FOG-8, 11)
+      for (const face of camera.children) face.userData["fogCap"] = CUBE_FOG_CAP;
+    }
     this.uniform = { value: this.#targets[1].texture };
   }
 

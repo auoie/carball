@@ -7,7 +7,7 @@ import { CAMERA_FAR } from "../renderer";
 const built = new Map<string, Theme>();
 beforeAll(async () => {
   for (const name of THEMES) built.set(name, await createTheme(name));
-});
+}, 60000); // (every theme built: about 10 s alone, more under a full parallel run)
 const theme = (name: string): Theme => {
   const t = built.get(name);
   if (!t) throw new Error(name);

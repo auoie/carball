@@ -664,6 +664,8 @@ void main() {
 True and the AA default Off; the ini chain is read (PP-32). PP-17's order is replaced by part 2 §18 (shafts after
 translucency; the velocity pass after the shafts; fog per notes/arena-surroundings.md FOG-10/12).
 
+**PP-31 open item 4 settled (2026-10-10, CAP1):** the GrassCube is sampled through an sRGB view (R8G8B8A8_UNORM_SRGB), so the pow(1/2.2) store is decoded before filtering. Details and the clone recipe are in notes/arena-surroundings.md SUR-32.
+
 ## Appendix: native addresses (live 2026-10-06)
 
 | What | VA |
@@ -713,7 +715,7 @@ translucency; the velocity pass after the shafts; fog per notes/arena-surroundin
 # Part 2: motion blur, SSAO, light shafts, lens flares, the reflection-cube blur (PP-21..32, 2026-10-10)
 
 Requested by the user (relayed by tmp-6f). Drafted by sub-agent PP2 with a polarity-fixed DXBC disassembler
-(out/bsim/agents/PP2/tools/dxbc.py; AV0's tool prints every conditional branch as _z; specs that relied on a branch direction are being re-checked).
+(out/bsim/agents/PP2/tools/dxbc.py; AV0's tool prints every conditional branch as _z; specs that relied on a branch direction were re-checked on 2026-10-10 by DXB1: none changes).
 The static session confirmed the polarity bug (controls bit 0x80 = D3D10 test-boolean bit 18; AV0 tests 0x40).
 
 Static session spec draft, 2026-10-10. Drafted by sub-agent PP2 as a continuation of `notes/post-processing.md`
@@ -730,11 +732,19 @@ Static session spec draft, 2026-10-10. Drafted by sub-agent PP2 as a continuatio
 - `out/bsim/agents/AV0/dxbc.py` decodes the D3D10 "test boolean" bit from bit 17 instead of bit 18
   (`controls & 0x40` instead of `0x80`). Every `if`, `breakc`, `continuec`, `retc` and `discard` is printed as `_z`,
   even when it is `_nz`.
-- So in every listing made with it (PP1's `gsc/*.txt`, the AV*/AVQ/PNT1 material listings), **the branch polarity
-  of these instructions is unreliable**. Example: the motion-blur shader's `if_z` is really `if_nz`; a masked
-  material's `discard_z` is really `discard_nz`.
+- So in every listing made with it (PP1's `gsc/*.txt` and the AV0, AV1, AVQ, CAR2, FX1, FX2, LMP2 and SUR1 material
+  listings), **the printed branch polarity is unreliable**: every `_z` there is really `_nz`, except 50 in PP1's
+  `gsc/misc.txt` (the AA shaders), which really are `_z`. PNT1's `shaders/*.asm.txt` come from Microsoft's D3D
+  disassembler and are correct. Example: the motion-blur shader's `if_z` is really `if_nz`; a masked material's
+  `discard_z` is really `discard_nz`.
 - The fixed copy is `out/bsim/agents/PP2/tools/dxbc.py` (one-character change). Listings in `out/bsim/agents/PP2/gsc/` use it.
-- Specs that drew conclusions from a branch direction (clip, masked opacity, `if` paths) should be re-checked.
+- **Re-checked 2026-10-10 (DXB1; every conditional in those listings was re-disassembled with the fixed tool): no spec
+  claim depended on the printed polarity.**
+  - Every alpha test is clip-style, and the specs keep the side above the threshold (SUR-20/27/43, the demolition
+    and distortion assets).
+  - The vertex-fog branch takes the exponential path when the fog flag is set (FOG-6/10, SUR-23/24, H-10).
+  - The other material `if`s are the engine's dynamic-shadow gate.
+  - The PP loops and the motion-blur branch (§3, §5.4, §6) stand.
   Plain arithmetic is unaffected.
 
 **Parameter mapping method [M][N]**

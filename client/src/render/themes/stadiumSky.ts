@@ -4,6 +4,7 @@
 // here from their statistics (each channel's quantiles, the smoke's red against its green and blue, the feature sizes,
 // the speckles' neighbour correlation), stored as the game's are (8-bit sRGB, mipmapped) and sampled by the game's
 // formula. Values and formulas only.
+import { withHeightFog } from "../heightFog";
 import { BackSide, DataTexture, LinearFilter, LinearMipmapLinearFilter, Mesh, RepeatWrapping, RGBAFormat, SRGBColorSpace, ShaderMaterial, SphereGeometry, UnsignedByteType, Vector3 } from "three";
 
 /** H-10's colours (linear): the zenith, the horizon's q^4 term, the sun side's pull target, the clouds' base */
@@ -403,6 +404,8 @@ export function buildSkyDome(noise: SkyNoise = skyNoise()): { mesh: Mesh; update
     depthWrite: false,
     fog: false,
   });
+  // (fogged as the sky: at the game's dome's distance, FOG-15)
+  withHeightFog(material, "sky");
   const mesh = new Mesh(new SphereGeometry(32000, 48, 24), material);
   mesh.renderOrder = -1;
   mesh.name = "sky dome";

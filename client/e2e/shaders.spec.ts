@@ -21,7 +21,7 @@ test("each shader function matches its TypeScript twin on the GPU", async ({ pag
     const probe = (window as unknown as { rlShaderProbe: { names: () => string[]; compare: (name: string) => Comparison } }).rlShaderProbe;
     return probe.names().map((name) => ({ name, ...probe.compare(name) }));
   });
-  expect(results.map((r) => r.name).sort()).toEqual(["display", "envG", "grassReflection", "netSideUv", "overlayUv", "underGlassV"]);
+  expect(results.map((r) => r.name).sort()).toEqual(["display", "envG", "grassReflection", "heightFog", "heightFogCapture", "netSideUv", "overlayUv", "underGlassV"]);
   for (const r of results) {
     expect(r.count, r.name).toBeGreaterThan(10);
     // (float32 on the GPU: each within its probe's own tolerance, 2e-4 at most)
