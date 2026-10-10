@@ -71,6 +71,26 @@ public:
 	// Total ticks this arena instance has been simulated for, never resets
 	uint64_t tickCount = 0;
 
+	// RL PATCH (impact triggers, IT-1..3): a car's contacts with one partner (the ball, a car, the world) in one physics
+	// step, as the game's HandleCollision gets them: every point of every manifold with that partner averaged (position,
+	// the normals' normalised sum, each side's point velocity at the solver's setup), the normal replaced by a +-10 uu
+	// line check's through the averaged point. Only speeds of 50 uu/s or more (below, nothing in the game uses one);
+	// appended every step while collectImpacts is on (off by default: the server and tools don't take them), taken (and
+	// cleared) by the caller; the oldest dropped past IMPACT_LIMIT
+	struct ImpactEvent {
+		uint64_t tick;
+		uint32_t carId;
+		int partnerKind; // 0 the world, 1 the ball, 2 a car
+		uint32_t partnerId; // the car's id, for a car
+		float speed; // |dv . n|, uu/s
+		float slide; // |dv| - speed, uu/s
+		Vec pos; // uu
+		Vec normal; // the partner's side toward the car's
+	};
+	std::vector<ImpactEvent> impacts;
+	bool collectImpacts = false;
+	static constexpr size_t IMPACT_LIMIT = 1024;
+
 	// RL PATCH: kickoff countdown: while non-zero, every car's controls are zeroed for the tick, then it counts down.
 	// The game freezes the cars for 4.0 s after a kickoff reset (replays: the first car moves 3.99-4.05 s after the
 	// reset; the "3-2-1" countdown, WarmupTime 3, plus a second). ResetToRandomKickoff leaves it alone (freeplay
@@ -261,6 +281,8 @@ public:
 	// RL PATCH: one tick of the goal explosion's wave (before the physics step)
 	void _UpdateGoalExplosion();
 	void _UpdateWorldContacts();
+	// RL PATCH (impact triggers, notes/impact-triggers.md IT-1..3): each car's contact with each partner this step
+	void _UpdateImpacts();
 	void _SerializeContacts(DataStreamOut& out);
 	void _DeserializeContacts(DataStreamIn& in);
 	void SetDropshotTilesState(const DropshotTilesState& tilesState);

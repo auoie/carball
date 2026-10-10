@@ -136,6 +136,9 @@ export interface CarConfig {
   readonly backWheel: WheelConfig;
 }
 
+/** A car's boost at a kickoff or respawn (RLConst BOOST_SPAWN_AMOUNT: a third of the tank) */
+export const BOOST_SPAWN_AMOUNT = 100 / 3;
+
 export interface BoostPadState {
   readonly pos: Vec3;
   readonly big: boolean;
@@ -245,8 +248,12 @@ export class World {
   /** Demolitions on (the default: an authority, freeplay) or off (an online client's prediction: the server demolishes,
    *  supersonic hits predicted as bumps: RV-112). */
   setDemolitions(on: boolean): void {
+    this.#demolitions = on;
     this.#sim.setDemolitions(on);
   }
+
+  /** Whether demolitions are on (this world's own setting: kept over a loaded state's, RV-137) */
+  #demolitions = true;
 
   /** Ticks left of the kickoff countdown (cars get no input while it runs; a match server starts it). */
   kickoffCountdown(): number {
@@ -441,5 +448,8 @@ export class World {
 
   loadState(bytes: Uint8Array): void {
     this.#sim.loadState(bytes);
+    // (a saved state carries its arena's mutators, the server's demolitions among them: this world's setting again,
+    // or an online client predicts demolitions after every join and leave, RV-137)
+    if (!this.#demolitions) this.#sim.setDemolitions(false);
   }
 }

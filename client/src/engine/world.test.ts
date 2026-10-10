@@ -32,15 +32,18 @@ describe("World", () => {
   it("demolishes on a supersonic hit, unless demolitions are off (an online client's prediction: a bump, RV-112)", () => {
     const UPRIGHT = { forward: vec3(1, 0, 0), right: vec3(0, 1, 0), up: vec3(0, 0, 1) };
     const ZERO = vec3(0, 0, 0);
-    const run = (demolitions: boolean): { demoed: boolean; victimSpeed: number } => {
-      const world = World.create(engine);
+    // (`viaLoad`: the hit set up in a world with the default (the server's), saved, and loaded into this one)
+    const run = (demolitions: boolean, viaLoad = false): { demoed: boolean; victimSpeed: number } => {
+      const source = World.create(engine);
+      const world = viaLoad ? World.create(engine) : source;
       world.setDemolitions(demolitions);
-      const attacker = world.addCar(0, CarBody.Octane);
-      const victim = world.addCar(1, CarBody.Octane);
-      world.resetKickoff(3);
-      world.setKickoffCountdown(0);
-      world.setCar(attacker, { pos: vec3(-600, 0, 17), vel: vec3(2290, 0, 0), angVel: ZERO, rot: UPRIGHT, boost: 100 });
-      world.setCar(victim, { pos: vec3(0, 0, 17), vel: ZERO, angVel: ZERO, rot: UPRIGHT, boost: 0 });
+      const attacker = source.addCar(0, CarBody.Octane);
+      const victim = source.addCar(1, CarBody.Octane);
+      source.resetKickoff(3);
+      source.setKickoffCountdown(0);
+      source.setCar(attacker, { pos: vec3(-600, 0, 17), vel: vec3(2290, 0, 0), angVel: ZERO, rot: UPRIGHT, boost: 100 });
+      source.setCar(victim, { pos: vec3(0, 0, 17), vel: ZERO, angVel: ZERO, rot: UPRIGHT, boost: 0 });
+      if (viaLoad) world.loadState(source.saveState());
       let demoed = false;
       for (let i = 0; i < 40; i++) {
         world.setControls(attacker, { ...NO_CONTROLS, throttle: 1, boost: true });
@@ -54,6 +57,10 @@ describe("World", () => {
     expect(off.demoed).toBe(false);
     // (bumped instead)
     expect(off.victimSpeed).toBeGreaterThan(500);
+    // (and still off after loading a state from a world with them on: a client's snapshot from the server, RV-137)
+    const loaded = run(false, true);
+    expect(loaded.demoed).toBe(false);
+    expect(loaded.victimSpeed).toBeGreaterThan(500);
   });
 
   it("drives a car forward with throttle", () => {
@@ -144,6 +151,24 @@ describe("World", () => {
     expect(pads).toHaveLength(34);
     expect(pads.filter((p) => p.big)).toHaveLength(6);
     world.dispose();
+  });
+
+  it("a car on a small pad takes it below full boost, the pad down 4 s; at full boost it leaves it (CanPickup: !IsFull, RV-40)", () => {
+    const taken = (boost: number): { active: boolean; cooldown: number } | undefined => {
+      const world = World.create(engine);
+      world.setUnlimitedBoost(true);
+      const id = world.addCar(0);
+      const rot = { forward: vec3(0, 1, 0), right: vec3(-1, 0, 0), up: vec3(0, 0, 1) };
+      world.setCar(id, { pos: vec3(0, -1024, 17.01), vel: vec3(0, 0, 0), angVel: vec3(0, 0, 0), rot, boost });
+      world.step(12);
+      const pad = world.boostPads().find((p) => !p.big && p.pos.x === 0 && p.pos.y === -1024);
+      world.dispose();
+      return pad;
+    };
+    const below = taken(50);
+    expect(below?.active).toBe(false);
+    expect(below?.cooldown).toBeGreaterThan(3.8);
+    expect(taken(100)?.active).toBe(true);
   });
 
   it("restores a saved state", () => {

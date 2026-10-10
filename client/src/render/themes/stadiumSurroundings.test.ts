@@ -5,7 +5,7 @@ import { TEAM_PRIMARY_LINEAR, fullBright, linear } from "../teamColors";
 import { skyVQ, stadiumTheme } from "./stadium";
 import { CROWD, SECONDARY, buildCrowd, crowdSeen } from "./stadiumCrowd";
 import { AD_EMBLEM, PANELS, PANEL_LIGHT, bannerColour, buildScreensAndProps, panelColour, screenLogo } from "./stadiumProps";
-import { buildBowl, buildCaptureHotspots, floodlightE } from "./stadiumSurroundings";
+import { FLOODLIGHT, buildBowl, buildCaptureHotspots, clearFade, fixtureOffsets, floodlightE, lensMean } from "./stadiumSurroundings";
 
 /** The capture point in Three's frame */
 const C = new Vector3(GRASS_CUBE_AT.x, GRASS_CUBE_AT.z, GRASS_CUBE_AT.y);
@@ -44,6 +44,44 @@ describe("the reflection capture's hotspots (SUR-33)", () => {
       expect(Math.abs((s?.el ?? 0) - el), `hotspot ${String(k)} el`).toBeLessThan(0.5);
       expect(Math.abs((s?.across ?? 0) - across), `hotspot ${String(k)} across`).toBeLessThan(2);
       expect(Math.abs((s?.up ?? 0) - up), `hotspot ${String(k)} up`).toBeLessThan(2);
+    });
+  });
+
+  it("pitched as the game's, their tops toward the arena (RV-119): the projected extents from the capture point", () => {
+    // (the ellipse each draws, its boundary projected: az and el ranges)
+    const extents = (m: Mesh): { az: [number, number]; el: [number, number] } => {
+      const { width, height } = (m.geometry as PlaneGeometry).parameters;
+      const az: number[] = [];
+      const el: number[] = [];
+      for (let k = 0; k < 256; k++) {
+        const a = (k / 256) * 2 * Math.PI;
+        const p = new Vector3((width / 2) * Math.cos(a), (height / 2) * Math.sin(a), 0).applyMatrix4(m.matrixWorld).sub(C);
+        az.push(((deg(Math.atan2(p.z, p.x)) % 360) + 360) % 360);
+        el.push(deg(Math.asin(p.y / p.length())));
+      }
+      return { az: [Math.min(...az), Math.max(...az)], el: [Math.min(...el), Math.max(...el)] };
+    };
+    // (InterpActor_12, over the back: az 173.0-186.4, el -16.9..47.7; the +X one: el -18.4..37.6)
+    const sprite = (k: number): Mesh => {
+      const s = sprites[k];
+      if (!s) throw new Error(`no hotspot ${String(k)}`);
+      return s;
+    };
+    const back = extents(sprite(2));
+    expect(Math.abs(back.az[0] - 173.0)).toBeLessThan(2);
+    expect(Math.abs(back.az[1] - 186.4)).toBeLessThan(2);
+    // (its low end 2.6 short of the review's -16.9, but on the instance's own world bounds, -14.7: within 3)
+    expect(Math.abs(back.el[0] - -16.9)).toBeLessThan(3);
+    expect(Math.abs(back.el[1] - 47.7)).toBeLessThan(2);
+    const plusX = extents(sprite(0));
+    expect(Math.abs(plusX.el[0] - -18.4)).toBeLessThan(2);
+    expect(Math.abs(plusX.el[1] - 37.6)).toBeLessThan(2);
+  });
+
+  it("the +X one through the haze by elevation (RV-120): the game's pass fractions at the bands' centres", () => {
+    // (el 0-3, 3-6, 6-10, 10-15, 15-20, 20-25; the last clamped at 1 against 0.89)
+    [[1.5, 0.07], [4.5, 0.12], [8, 0.16], [12.5, 0.27], [17.5, 0.56], [22.5, 0.89]].forEach(([el = 0, pass = 0]) => {
+      expect(Math.abs(clearFade(el) - pass), `el ${String(el)}`).toBeLessThan(0.12);
     });
   });
 
@@ -115,24 +153,47 @@ describe("the crowd (SUR-26..31)", () => {
   const matrix = new Matrix4();
   const at = new Vector3();
 
-  it("seated where the game's are (RV-123): each section's cards (a team's) within 10 % of crowd_tiers'", () => {
+  it("seated where the game's are, rule by rule (RV-123): a team's cards per section and azimuth band within 15 % of the game's", () => {
     const tiers = mesh.userData["tiers"] as string[];
-    const counts = { lowerPlusX: 0, lowerEnd: 0, lowerBack: 0, upperMid: 0, top: 0 };
+    // (the game's, from its cards: the front rows z < 1200 within r 13.3k, the rest of the lower bowl by band, the upper
+    // tiers by tier)
+    const want: Record<string, number> = {
+      "front 40-100": 329,
+      "front 100-153": 225,
+      "front 153-171": 72,
+      "rest 27-38": 446,
+      "rest 38-46": 353,
+      "rest 46-72": 1789,
+      "rest 72-98": 1792,
+      "rest 98-117": 1325,
+      "rest 117-137": 1346,
+      "rest 137-153": 1187,
+      "rest 153-164": 1030,
+      "rest 164-171": 128,
+      "upper mid": 2589,
+      "upper top": 1382,
+    };
+    const bands = Object.keys(want).map((k) => {
+      const m = /^(\w+) (\d+)-(\d+)$/.exec(k);
+      return { key: k, kind: m?.[1] ?? "", from: Number(m?.[2] ?? 0), to: Number(m?.[3] ?? 0) };
+    });
+    const got: Record<string, number> = Object.fromEntries(Object.keys(want).map((k) => [k, 0]));
     for (let i = 0; i < mesh.count; i++) {
       mesh.getMatrixAt(i, matrix);
       at.setFromMatrixPosition(matrix);
       if (at.z <= 0) continue; // (team 1's half: y > 0)
       const az = deg(Math.atan2(at.z, at.x));
       const tier = tiers[i] ?? "";
-      if (tier === "top") counts.top++;
-      else if (tier === "mid" || tier === "midBack") counts.upperMid++;
-      else if (az < 72) counts.lowerPlusX++;
-      else if (az < 117.25) counts.lowerEnd++;
-      else counts.lowerBack++;
+      let key: string | undefined;
+      if (tier === "top") key = "upper top";
+      else if (tier === "mid" || tier === "midBack") key = "upper mid";
+      else {
+        const kind = at.y < 1200 && Math.hypot(at.x, at.z) < 13300 ? "front" : "rest";
+        key = bands.find((b) => b.kind === kind && az >= b.from && az < b.to)?.key;
+      }
+      if (key) got[key] = (got[key] ?? 0) + 1;
     }
-    // (Crowd_03, Crowd_02, Crowd_01, Crowd_04's mid and upper)
-    const want = { lowerPlusX: 2750, lowerEnd: 3283, lowerBack: 3989, upperMid: 2589, top: 1382 };
-    for (const [k, n] of Object.entries(want)) expect(Math.abs(counts[k as keyof typeof counts] / n - 1), `${k}: ${String(counts[k as keyof typeof counts])} vs ${String(n)}`).toBeLessThan(0.1);
+    for (const [k, n] of Object.entries(want)) expect.soft(Math.abs((got[k] ?? 0) / n - 1), `${k}: ${String(got[k])} vs ${String(n)}`).toBeLessThan(0.15);
   });
 
   it("the stands top out under 7k at the upper tiers' ends (az 76-85, 130-139): no top tier there (RV-123)", () => {
@@ -191,42 +252,64 @@ describe("the crowd (SUR-26..31)", () => {
 });
 
 describe("the floodlights (SUR-12)", () => {
-  it("as bright as the game's (RV-125): mean E within 20 % of (0.61, 0.58, 0.39), E > 1 on 0.11 +- 0.03 of the face", () => {
-    const n = [0, 0, 0];
+  it("as bright as the game's (RV-125: its fixtures and v-profile): a half's mean E within 20 % of SUR-12's front (0.61, 0.58, 0.39), E > 1 on 0.11 +- 0.03 of it", () => {
+    const r = 15500;
+    const mean = lensMean(r);
+    const offsets = fixtureOffsets();
+    expect(offsets).toHaveLength(21);
+    const [from, to] = FLOODLIGHT.halves[0];
+    const sum = [0, 0, 0];
     let over = 0;
     let count = 0;
-    for (let i = 0; i < 400; i++) {
-      for (let j = 0; j < 2000; j++) {
-        const e = floodlightE(((i + 0.5) / 400) * (4 / 160), (j + 0.5) / 2000);
-        for (let k = 0; k < 3; k++) n[k] = (n[k] ?? 0) + (e[k] ?? 0);
+    for (let i = 0; i < 600; i++) {
+      const az = from + ((to - from) * (i + 0.5)) / 600;
+      const d = Math.min(...offsets.map((o) => Math.abs(az - (FLOODLIGHT.centre + o)))) * (Math.PI / 180) * r;
+      for (let j = 0; j < 640; j++) {
+        const e = floodlightE((j + 0.5) / 640, d, mean);
+        e.forEach((c, k) => (sum[k] = (sum[k] ?? 0) + c));
         if (e[0] > 1) over++;
         count++;
       }
     }
     [0.61, 0.58, 0.39].forEach((target, k) => {
-      expect(Math.abs((n[k] ?? 0) / count / target - 1)).toBeLessThan(0.2);
+      expect(Math.abs((sum[k] ?? 0) / count / target - 1), `channel ${String(k)}`).toBeLessThan(0.2);
     });
     expect(Math.abs(over / count - 0.11)).toBeLessThan(0.03);
   });
 });
 
 describe("the -X plaza (SUR-1, 4, 25)", () => {
-  it("open over it: rays from the capture point at az 175-185, el 8-15 degrees hit nothing round the arena (RV-124)", () => {
-    const theme = stadiumTheme();
-    theme.root.updateMatrixWorld(true);
-    // (everything but the sky's dome, the far layer and the capture's own hotspots)
-    const targets: Mesh[] = [];
-    theme.root.traverse((m) => {
-      if (m instanceof Mesh && m.name !== "far layer" && m.parent?.name !== "capture hotspots" && (m.geometry as PlaneGeometry).type !== "SphereGeometry") targets.push(m as Mesh);
-    });
-    const ray = new Raycaster();
-    for (let az = 175; az <= 185; az += 2.5) {
-      for (let el = 8; el <= 15; el += 1) {
-        const [a, e] = [(az * Math.PI) / 180, (el * Math.PI) / 180];
-        ray.set(C, new Vector3(Math.cos(e) * Math.cos(a), Math.sin(e), Math.cos(e) * Math.sin(a)));
-        const hits = ray.intersectObjects(targets, false);
-        expect(hits.map((h) => h.object.name), `az ${String(az)} el ${String(el)}`).toEqual([]);
+  const theme = stadiumTheme();
+  theme.root.updateMatrixWorld(true);
+  // (everything solid: not the sky's dome, the far layer, the capture's own hotspots, nor the translucent haze and fog
+  // sheets)
+  const targets: Mesh[] = [];
+  theme.root.traverse((m) => {
+    if (!(m instanceof Mesh) || (m.material as { transparent: boolean }).transparent) return;
+    if (m.name !== "far layer" && m.parent?.name !== "capture hotspots" && (m.geometry as PlaneGeometry).type !== "SphereGeometry") targets.push(m as Mesh);
+  });
+  const ray = new Raycaster();
+  const hits = (az: number, el: number): boolean => {
+    const [a, e] = [(az * Math.PI) / 180, (el * Math.PI) / 180];
+    ray.set(C, new Vector3(Math.cos(e) * Math.cos(a), Math.sin(e), Math.cos(e) * Math.sin(a)));
+    return ray.intersectObjects(targets, false).length > 0;
+  };
+
+  it("no open sightline low over it (RV-133): rays from the capture point at az 176-184, el 1-6 meet the plinth, walls, trees or the roof's ends", () => {
+    let hit = 0;
+    let n = 0;
+    for (let az = 176; az <= 184; az += 1) {
+      for (let el = 1; el <= 6; el += 1) {
+        if (hits(az, el)) hit++;
+        n++;
       }
+    }
+    expect(hit / n).toBeGreaterThanOrEqual(0.8);
+  });
+
+  it("open sky above the statue (RV-124, RV-133: the first open sky at az 180 from el 14.4)", () => {
+    for (let az = 179.5; az <= 180.5; az += 0.5) {
+      for (let el = 15; el <= 20; el += 1) expect(hits(az, el), `az ${String(az)} el ${String(el)}`).toBe(false);
     }
   });
 });

@@ -568,8 +568,9 @@ export class Demolition {
         this.#boom.scale.set(BOOM.size * width, BOOM.size * width * 0.31 * (1 + t), 1);
         const [r, g, b] = evaluate3(curve3(BOOM.times, BOOM.colour), t);
         const heat = evaluate(BOOM.heat, t);
-        const tone = (c: number): number => 1 - Math.exp(-c * heat);
-        this.#boom.material.color.setRGB(tone(r * FLIPBOOK_COLOR[0]), tone(g * FLIPBOOK_COLOR[1]), tone(b * FLIPBOOK_COLOR[2]));
+        // (linear HDR: the post-processing tone-maps it, PP-17)
+        const linear = (c: number): number => c * heat;
+        this.#boom.material.color.setRGB(linear(r * FLIPBOOK_COLOR[0]), linear(g * FLIPBOOK_COLOR[1]), linear(b * FLIPBOOK_COLOR[2]));
         this.#boom.material.opacity = evaluate(curve(BOOM.times, BOOM.alpha), t);
       }
     }

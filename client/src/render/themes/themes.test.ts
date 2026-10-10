@@ -73,7 +73,8 @@ describe("themes", () => {
           expect.soft(box.intersectsBox(field), `${name}: instance ${i} of ${mesh.name || geometry.type} at ${at}`).toBe(false);
         }
       } else {
-        // Each triangle, its inside too (RV-116): those whose bounds reach the cage's box sampled every 50 uu or finer
+        // Each triangle, its inside too (RV-116): those whose bounds reach the cage's box sampled every 50 uu or finer (at
+        // most 64 steps a side: the largest that reach it, the stadium's 2150 across, take 43, RV-147)
         const position = geometry.getAttribute("position");
         const index = geometry.getIndex();
         const count = index ? index.count : position.count;
@@ -84,7 +85,7 @@ describe("themes", () => {
           corner(k + 1, b);
           corner(k + 2, c);
           if (!box.setFromPoints([a, b, c]).intersectsBox(field)) continue;
-          const n = Math.min(32, Math.max(1, Math.ceil(Math.max(a.distanceTo(b), b.distanceTo(c), c.distanceTo(a)) / 50)));
+          const n = Math.min(64, Math.max(1, Math.ceil(Math.max(a.distanceTo(b), b.distanceTo(c), c.distanceTo(a)) / 50)));
           for (let i = 0; i <= n; i++) {
             for (let j = 0; i + j <= n; j++) {
               v.copy(a)

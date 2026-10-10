@@ -40,6 +40,9 @@ export interface Options {
   readonly muted: boolean; // all sound off (M)
   readonly flipIndicator: boolean; // show whether the car can dodge, and flip resets
   readonly autoSkipReplay: boolean; // bAutoSkipGoalReplay: always ready to skip goal replays
+  readonly unlimitedBoost: boolean; // Unlimited boost in free play (MENU-9): on, the tank stays full (and a full car takes no pads)
+  readonly bloom: boolean; // the video option Bloom (system setting Bloom; on in the High preset, PP-16)
+  readonly depthOfField: boolean; // the video option Depth of Field (on in High: the arena's 25 % softening, PP-10)
 }
 
 /** Volumes, 0..1. */
@@ -145,6 +148,9 @@ export const DEFAULT_OPTIONS: Options = {
   muted: false,
   flipIndicator: true,
   autoSkipReplay: false,
+  unlimitedBoost: true,
+  bloom: true,
+  depthOfField: true,
 };
 
 export const DEFAULT_SETTINGS: Settings = {

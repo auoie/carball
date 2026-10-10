@@ -100,9 +100,22 @@ export const FIELD_MEASURES = {
   padBase: { at: [1850, 2362] as const, r: 172, corner: 69 },
   /** The markers: a triangle (point at (2048, 924), base y 1100, 200 wide) and one by the corner */
   markers: [[[2048, 924], [2148, 1100], [1948, 1100]], [[3100, 3990], [3155, 4175], [2960, 4126]]] as readonly (readonly P2[])[],
-  /** A goal end (x >= 0 half): its front at y 3106 from x 424 to 896 (a 45-degree notch in to y 3360 at the centre), its
-   *  side out along 45 degrees to x 2013, back to y 4864, round the mouth piece (x 962 down to y 4580) */
-  goalEnd: { front: 3106, notchX: 424, notchY: 3360, frontX: 896, sideX: 2013, back: 4864, mouthX: 962, mouthY: 4580 },
+  /** A goal end (x >= 0 half): its front at y 3106 from x 424 (a 45-degree notch in to y 3360 at the centre); its side
+   *  out along y - x = 2096.1 with a middle run 2201.5 between two jogs (symmetric about x + y = 5120: RV-103e), its
+   *  corners r 275, the jogs' r 59 and 95; out to x 2014, back to y 4864, round the mouth piece (x 962 down to y 4580) */
+  goalEnd: {
+    front: 3106,
+    notchX: 424,
+    notchY: 3360,
+    run: 2096.1,
+    jogs: [[1262.0, 3358.1], [1262.0, 3463.5], [1656.5, 3858.0], [1761.9, 3858.0]] as readonly P2[],
+    jogR: [59, 95] as const,
+    cornerR: 275,
+    outerX: 2014,
+    back: 4864,
+    mouthX: 962,
+    mouthY: 4580,
+  },
   /** The mouth piece's front, shared with the goal end's notch: from x 928 at y 4583 round to the centre (y 4350) */
   mouthFront: [[928, 4583], [850, 4462], [520, 4300], [260, 4260], [160, 4340], [0, 4350]] as readonly P2[],
   /** The mouth piece: |x| 928, to the back wall (y 5120), its back corners rounded r 270 about (928, 5120) */
@@ -111,65 +124,106 @@ export const FIELD_MEASURES = {
    *  the strips' ends to r 628 for |x| 146), the vent's trim ring r 260-288 */
   centre: { disc: 746, hole: 288, trim: [752, 776] as const, trimNotch: { r: 628, half: 146 }, ventTrim: [260, 288] as const },
   /** A centre-field strip's half width along y (and the halfway strip's along x): wide at the disc, 32 between, flared at
-   *  the goal end (to 233, its end flat at y 3326: RV-103d) or the wall (to 269) */
-  centreStrip: [[658, 110], [700, 155], [760, 100], [1000, 100], [1160, 32], [2660, 32], [2800, 95], [3060, 95], [3223, 233], [3326, 110]] as readonly P2[],
+   *  the goal end (to 233, its end flat at y 3326, 96 each side: RV-103d) or the wall (to 269) */
+  centreStrip: [[658, 110], [700, 155], [760, 100], [1000, 100], [1160, 32], [2660, 32], [2800, 95], [3060, 95], [3223, 233], [3326, 96]] as readonly P2[],
   halfway: [[659, 110], [700, 155], [760, 100], [1000, 100], [1160, 32], [2920, 32], [3080, 95], [3330, 105], [3514, 269], [3620, 160], [3700, 120], [3842, 110]] as readonly P2[],
   /** The seams: 32 uu round the regions, and between the grass's pieces */
   seam: 32,
   seams: [[[1190, 3238], [1555, 2873], [1570, 2600], [1700, 2470]], [[1990, 2190], [2160, 2064], [3330, 2064]]] as readonly (readonly P2[])[],
-  /** The glowing trim line round the panels: this far out from their edge, 9.2 wide; the centre trim's E rings (r 764 on
-   *  the raised trim, 272 on the vent's: RV-102) */
-  trimLine: { out: 17, width: 9.2, rings: [764, 272] as const, ringWidth: 9.4 },
+  /** The glowing trim line (E, RV-103f): one 9.1-wide strip a quadrant, from the wall at y 127 round the boost bay 19
+   *  outside (y 127, x + y = 3806.5, x 3311, y - x = -2382.5, the bump x 3439, x + y = 5326.5, x 3311, y - x = -698), up
+   *  the wall at x 3823, curving (r 655) onto the corner's diagonal x + y = 7678 and onto the back, y 4847, to x 2064, round
+   *  the goal end 19 outside (x 2033, y - x = 2069, the jogs at y 3839 and x 1281 with the middle run 2174.5, the front y
+   *  3087, the notch's diagonal x + y = 3477, its top y 3343 to the centre); the centre trim's E rings (r 764 on the
+   *  raised trim, 272 on the vent's: RV-102) */
+  trimLine: {
+    width: 9.1,
+    start: [3840, 127] as P2,
+    bay: { low: 3806.5, x: 3311, rampLow: -2382.5, bump: 3439, rampHigh: 5326.5, top: -698 },
+    wallX: 3823,
+    corner: { diag: 7678, r: 655 },
+    back: 4847,
+    goal: { backX: 2064, outerX: 2033, run: 2069, jogY: 3839, middle: 2174.5, jogX: 1281, front: 3087, notch: 3477, notchTop: 3343 },
+    radius: 30,
+    rings: [764, 272] as const,
+    ringWidth: 9.4,
+  },
   /** The team-coloured lines on the strips: at |x| 67.5 (the halfway strip's |y|), 31 wide, along the wide sections */
   stripLines: { at: 67.5, width: 31, centre: [[700, 1000], [2860, 3230]] as const, halfway: [[700, 1000], [3080, 3480]] as const },
   /** The markings: 16 wide (the hatch bars 16.3: RV-103c), the panels' outlines 64 in; the centre's arcs r 714.25,
-   *  ending where their 45-degree legs run on |y - x| = 441 (19.1-70.9 degrees: RV-103a), the +y leg to x 128 then
-   *  doubling back (to y 527.6, out to (96, 536), down to y 504), the +x leg to x 611.5 then the hook to (553, 32) */
+   *  ending where their 45-degree legs run on |y - x| = 441 (19.1-70.9 degrees: RV-103a), the +y leg on to x 96 (y 537)
+   *  then down it to y 504, the +x leg on to x 590 (y 149) then down it and round to (553, 32) (RV-141) */
   marking: {
     width: 16,
     hatch: 16.3,
     inset: 64,
     arc: { r: 714.25, from: 19.1, to: 70.9, leg: 441 },
-    hookY: [[128, 527.6], [96, 536], [96, 504]] as readonly P2[],
-    hookX: { to: 611.5, tail: [[590, 64], [580, 48], [553, 32]] as readonly P2[] },
+    hookY: { to: 96, end: 504 },
+    hookX: { to: 590, tail: [[590, 64], [580, 48], [553, 32]] as readonly P2[] },
+    /** the joins' radii on the centreline: where the legs meet the arc, and where they turn down x 96 and 590 (RV-141:
+     *  raster IoU 0.928 against Field_Center_Lines, from 0.861 unrounded; the short down along x 96 fits r 79 at most) */
+    joins: { arc: 50, downX: 110, downY: 75 },
   },
-  /** A goal end's dashes (x 832, 31 long every 62 from y 3264, 17) and hatches (45 degrees, every 48: 11 along the back
-   *  from (1232, 4736), 8 by the notch from (128, 3584)); its "=" marks */
-  goalMarks: {
-    dashes: { x: 832, from: 3264, length: 31, step: 62, count: 17 },
-    hatches: [
-      { from: [1232, 4736] as const, step: [48, 0] as const, bar: [72, 72] as const, count: 11 },
-      { from: [128, 3584] as const, step: [0, 48] as const, bar: [80, 80] as const, count: 8 },
-    ],
-    equals: [[[1120, 3360], [1184, 3360]], [[1152, 3392], [1216, 3392]], [[1664, 3904], [1728, 3904]], [[1696, 3936], [1760, 3936]]] as readonly (readonly P2[])[],
+  /** A goal end's painted lines (Goal_Lines, RV-103b): three open pieces (the centre's x 128, the notch's diagonal x + y
+   *  = 3594.6, the front y 3170, the side y - x = 2187, the outer x 1950, the back y 4800, the mouth's x 1026, its slope y
+   *  = x / 2 + 3926, its front y 4158; their corners' radii), between them rows of 45-degree strokes (by the notch: y - x
+   *  = 3408 + 48 k from x 128 to 208; along the back: from (1184 + 48 k, 4736), 72 by 72), the outermost of each a piece's
+   *  hook; the "=" marks (x from y - 2240 to y - 2176), the outermost two hooks too; the dashes (x 832, y 3264-4288 in 33
+   *  parts, the even ones painted) */
+  goalLines: {
+    centreX: 128,
+    notchDiag: 3594.6,
+    front: 3170,
+    sideDiag: 2187,
+    outerX: 1950,
+    back: 4800,
+    mouthX: 1026,
+    mouthSlope: 3926,
+    mouthFront: 4158,
+    radii: { square: 32, frontSide: 211, sideOuter: 211, notchFront: 57, mouthX: 270, mouthFront: 589, uTurn: 12 },
+    notchRow: { x: [128, 208] as const, diag0: 3408, step: 48, count: 10 },
+    backRow: { y: [4736, 4808] as const, x0: 1184, step: 48, count: 12 },
+    equals: { ys: [3328, 3360, 3392, 3904, 3936, 3968] as const, diag: [2176, 2240] as const },
+    dashes: { x: 832, y: [3264, 4288] as const, parts: 33 },
   },
-  /** A side bay's hatches: 14 along the wall from (3712, 656); three clusters of three from (3704, 1672), 272 apart */
-  sideMarks: {
-    hatches: [
-      { from: [3712, 656] as const, step: [0, 48] as const, bar: [72, 72] as const, count: 14 },
-      { from: [3704, 1672] as const, step: [0, 272] as const, bar: [86, 86] as const, count: 3 },
-      { from: [3720, 1832] as const, step: [0, 272] as const, bar: [80, 80] as const, count: 3 },
-      { from: [3728, 1744] as const, step: [0, 272] as const, bar: [56, 56] as const, count: 3 },
-      { from: [3384, 680] as const, step: [0, 48] as const, bar: [56, 56] as const, count: 2 },
-      { from: [3384, 2200] as const, step: [0, 48] as const, bar: [56, 56] as const, count: 2 },
-    ],
+  /** A side bay's painted lines (Field_Side_Lines, RV-103b): three open pieces (the wall's x 3776, the inner x 3394, the
+   *  bottom y 338, the low diagonal x + y = 3924, the top's y - x = -829.3; each ending in a 45-degree stroke, y - x the
+   *  given), the wall's row of strokes (from (3712, 656 + 48 k), 72 by 72), the inner rows' (from (3384, y), 56 by 56), the
+   *  clusters (every 272 from y 1400: strokes a-d, [x, dy, length]) */
+  sideLines: {
+    wallX: 3776,
+    innerX: 3394,
+    bottom: 338,
+    lowDiag: 3924,
+    topDiag: -829.3,
+    radii: { wallBottom: 32, low: 72, wallTop: 26.5, topInner: 243, uTurn: 12 },
+    ends: { s1Wall: -3107, s1Inner: -2752, s2Wall: -2432, s2End: -2160, s3Wall: -1216, s3Inner: -1088 },
+    wallRow: { x: [3712, 3784] as const, y0: 656, step: 48, count: 13 },
+    innerRows: { x: [3384, 3440] as const, ys: [680, 728, 2200, 2248] as const },
+    clusters: { y0: 1400, step: 272, count: 5, strokes: [[3704, 0, 86], [3728, 72, 56], [3728, 120, 56], [3720, 160, 80]] as readonly (readonly [number, number, number])[] },
   },
   /** The goals' glows (H-5, RV-77, RV-108; the +y goal), 63 wide: round the mouth on the back wall's plane (y 5136), its
-   *  free edge in toward the opening, and a band along the floor (z 1 up); on its field side (y 5119, 51 out from the
-   *  opening); along the mouth piece's front on the floor; under the crossbar (z 639, |x| 704); the back wall's stepped
-   *  outline (z 272.8 out to |x| 2048, up z = 1591.5 - |x|, z 720.8 across the top), its free edge 128 out in the wall's
-   *  plane; low beside the goal; inside, its front bands across the floor (z -16) and the roof (z 656) from y 5281 back
-   *  to 5344 over |x| 672, rounding into the sides along the goal's profile at |x| 735 (15 out) from y 5344 */
+   *  free edge in toward the opening, and a band along the floor (z 1 up); on its field side one loop (RV-143): 51 out
+   *  from the opening up the posts and over (y 5119), down each post to z 96, round a fillet (r 95 about y 5024, z 96)
+   *  onto the floor, and on the floor round the mouth piece's front: along |x| 944, onto y = |x| / 2 + 4018 (r 191), onto
+   *  y 4240 (r 525), onto y = 4480 - |x| (r 77), onto y 4336 across (r 78); under the crossbar (z 639, |x| 704); the back
+   *  wall's stepped outline (z 272.8 out to |x| 2048, up z = 1591.5 - |x|, z 720.8 across the top), its free edge 128 out
+   *  in the wall's plane; low beside the goal; inside, its front bands across the floor (z -16) and the roof (z 656) from
+   *  y 5281 back to 5344 over |x| 672, rounding into the sides along the goal's profile at |x| 735 (15 out) from y 5344 */
   glow: {
     width: 63,
     wallY: 5136,
     fieldY: 5119,
     out: 51,
     crossbar: { z: 639, x: 704 },
+    /** the field side's loop on the floor (RV-143): the fillet onto it, the lines round the mouth piece's front (y = a |x|
+     *  + b) and their fillets' radii */
+    mouthFloor: { fillet: { y: 5024, z: 96, r: 95 }, diagonal: [0.5, 4018] as const, front: 4240, slant: [-1, 4480] as const, centre: 4336, radii: [191, 525, 77, 78] as const },
     stepped: { low: 272.8, top: 720.8, slant: 1591.5, to: 2048, out: 128 },
-    /** low beside the goal: from |x| 960 to 2048, 14 behind the back wall's face, rising from z 36 to 72, leaning back
-     *  116 and up 28 (named measures: RV-114's detector found the old copy of two traced points) */
-    beside: { x: [960, 2048], y: 5150, z: [36, 72], lean: [116, 28] },
+    /** low beside the goal: from |x| 960 to 2048, 14 behind the back wall's face, leaning back 116 and up 28; at z 72 from
+     *  2048 in, down a slope of 0.148 (through |x| 1088, z 44) to z 34 by 960, its bends r 900 and 800 (named measures:
+     *  RV-114's detector found the old copy of two traced points; RV-143) */
+    beside: { x: [960, 2048], y: 5150, z: [34, 72], slope: { at: [1088, 44], rise: 0.148 }, radii: [900, 800], lean: [116, 28] },
     inside: { x: 735, out: 15, front: 5281, frontX: 672, floorZ: -16, roofZ: 656 },
   },
   /** The glass beside each goal (RV-72): (|x|, z) from (960, 127) to (1536, 127), up to 256, back to 1408, round via
@@ -280,14 +334,16 @@ function padBase(): P2[] {
 /** A goal end, whole (both halves: it spans x 0) */
 function goalEnd(): P2[] {
   const m = FIELD_MEASURES.goalEnd;
-  // (its side: 45 degrees out from the front's corner until x 2013)
+  // (its side: the run from the front's corner, the jogs and the middle run, the run out to x 2014; rounded)
+  const [j0, j1, j2, j3] = m.jogs;
+  const side = rounded(
+    [[m.notchX, m.front], [m.front - m.run, m.front], j0 ?? [0, 0], j1 ?? [0, 0], j2 ?? [0, 0], j3 ?? [0, 0], [m.outerX, m.outerX + m.run], [m.outerX, m.back]],
+    [0, m.cornerR, m.jogR[0], m.jogR[1], m.jogR[1], m.jogR[0], m.cornerR, 0],
+  );
   const half: P2[] = [
     [0, m.notchY],
     [m.notchX - (m.notchY - m.front), m.notchY],
-    [m.notchX, m.front],
-    [m.frontX, m.front],
-    [m.sideX, m.front + (m.sideX - m.frontX)],
-    [m.sideX, m.back],
+    ...side,
     [m.mouthX, m.back],
     [m.mouthX, m.mouthY],
     // (round the mouth piece's front, a seam's width clear of it)
@@ -334,15 +390,153 @@ function arcPoints(r: number, from: number, to: number, steps = 24): P2[] {
 }
 
 /** A hatch group: bars (each `bar` long from its start), the starts `step` apart */
-function hatches(group: { readonly from: P2; readonly step: P2; readonly bar: P2; readonly count: number }, width: number): number[][] {
-  return Array.from({ length: group.count }, (_, k) => {
-    const [x, y] = [group.from[0] + group.step[0] * k, group.from[1] + group.step[1] * k];
-    return [width, x, y, x + group.bar[0], y + group.bar[1]];
+/** An open polyline with its corners rounded: `radii[i]` at `points[i]` (0, and at its ends: sharp) */
+function rounded(points: readonly P2[], radii: readonly number[]): P2[] {
+  const out: P2[] = [];
+  points.forEach((p, i) => {
+    const [a, b, r] = [points[i - 1], points[i + 1], radii[i] ?? 0];
+    if (!a || !b || r <= 0) {
+      out.push(p);
+      return;
+    }
+    const unit = (u: P2, v: P2): P2 => {
+      const l = Math.hypot(v[0] - u[0], v[1] - u[1]) || 1;
+      return [(v[0] - u[0]) / l, (v[1] - u[1]) / l];
+    };
+    const [d1, d2] = [unit(a, p), unit(p, b)];
+    const turn = Math.acos(Math.min(Math.max(d1[0] * d2[0] + d1[1] * d2[1], -1), 1));
+    if (turn < 1e-6) {
+      out.push(p);
+      return;
+    }
+    // (the arc's ends where it meets each side, its centre r from both toward the turn)
+    const t = r * Math.tan(turn / 2);
+    const side = d1[0] * d2[1] - d1[1] * d2[0] > 0 ? 1 : -1;
+    const start: P2 = [p[0] - d1[0] * t, p[1] - d1[1] * t];
+    const centre: P2 = [start[0] - side * d1[1] * r, start[1] + side * d1[0] * r];
+    const a0 = Math.atan2(start[1] - centre[1], start[0] - centre[0]);
+    const steps = Math.max(2, Math.ceil(turn / (Math.PI / 24)));
+    for (let k = 0; k <= steps; k++) {
+      const angle = a0 + side * turn * (k / steps);
+      out.push([centre[0] + r * Math.cos(angle), centre[1] + r * Math.sin(angle)]);
+    }
   });
+  return out;
 }
 
-/** A closed loop's points as a marking (the first point repeated) */
-const loop = (width: number, pts: readonly P2[]): number[] => [width, ...flat([...pts, pts[0] ?? [0, 0]])];
+/** A 45-degree stroke from (x, y), `size` up and across: as a marking */
+const stroke = (width: number, x: number, y: number, size: number): number[] => [width, x, y, x + size, y + size];
+
+/** Goal_Lines (RV-103b): its three open pieces, the stroke rows between them, the "=" marks, the dashes */
+function goalLineMarkings(width: number, strokeWidth: number): number[][] {
+  const g = FIELD_MEASURES.goalLines;
+  const r = g.radii;
+  const notch = (k: number): [P2, P2] => {
+    const c = g.notchRow.diag0 + g.notchRow.step * k;
+    return [[g.notchRow.x[0], g.notchRow.x[0] + c], [g.notchRow.x[1], g.notchRow.x[1] + c]];
+  };
+  const backStroke = (k: number): [P2, P2] => {
+    const x = g.backRow.x0 + g.backRow.step * k;
+    const size = g.backRow.y[1] - g.backRow.y[0];
+    return [[x, g.backRow.y[0]], [x + size, g.backRow.y[1]]];
+  };
+  const bar = (y: number): [P2, P2] => [[y - g.equals.diag[1], y], [y - g.equals.diag[0], y]];
+  const [n0, n9] = [notch(0), notch(g.notchRow.count - 1)];
+  const [b0, b11] = [backStroke(0), backStroke(g.backRow.count - 1)];
+  const [e0, e5] = [bar(g.equals.ys[0]), bar(g.equals.ys[5])];
+  const mouthAt = (x: number): number => x / 2 + g.mouthSlope;
+  // A: the notch's first stroke, down the centre, the notch's diagonal, the front, up the side to the first "=" mark
+  const a = rounded(
+    [n0[1], n0[0], [g.centreX, g.notchDiag - g.centreX], [g.notchDiag - g.front, g.front], [g.front - g.sideDiag, g.front], [e0[0][1] - g.sideDiag, e0[0][1]], e0[0]],
+    [0, r.square, r.square, r.notchFront, r.frontSide, r.uTurn, 0],
+  );
+  // B: the last "=" mark, up the side, the outer edge, the back, down the back row's last stroke
+  const b = rounded(
+    [e5[0], [e5[0][1] - g.sideDiag, e5[0][1]], [g.outerX, g.outerX + g.sideDiag], [g.outerX, g.back], [g.back - (b11[0][1] - b11[0][0]), g.back], b11[0]],
+    [0, r.uTurn, r.sideOuter, r.square, r.uTurn, 0],
+  );
+  // C: the back row's first stroke, the back, the mouth's side, its slope, its front, down the centre to the notch's
+  // last stroke
+  const c = rounded(
+    [b0[0], [g.back - (b0[0][1] - b0[0][0]), g.back], [g.mouthX, g.back], [g.mouthX, mouthAt(g.mouthX)], [2 * (g.mouthFront - g.mouthSlope), g.mouthFront], [g.centreX, g.mouthFront], n9[0], n9[1]],
+    [0, r.uTurn, r.square, r.mouthX, r.mouthFront, r.square, r.uTurn, 0],
+  );
+  const pieces = [a, b, c].map((pts) => [width, ...flat(pts)]);
+  const rows = [
+    ...Array.from({ length: g.notchRow.count - 2 }, (_, k) => [strokeWidth, ...flat(notch(k + 1))]),
+    ...Array.from({ length: g.backRow.count - 2 }, (_, k) => [strokeWidth, ...flat(backStroke(k + 1))]),
+    ...g.equals.ys.slice(1, -1).map((y) => [strokeWidth, ...flat(bar(y))]),
+  ];
+  const part = (g.dashes.y[1] - g.dashes.y[0]) / g.dashes.parts;
+  const dashes = Array.from({ length: Math.ceil(g.dashes.parts / 2) }, (_, k) => {
+    const y = g.dashes.y[0] + 2 * k * part;
+    return [width, g.dashes.x, y, g.dashes.x, y + part];
+  });
+  return [...pieces, ...rows, ...dashes];
+}
+
+/** Field_Side_Lines (RV-103b): its three open pieces, the wall's row, the inner rows, the clusters */
+function sideLineMarkings(width: number, strokeWidth: number): number[][] {
+  const s = FIELD_MEASURES.sideLines;
+  const r = s.radii;
+  const e = s.ends;
+  // (a piece's end stroke on y - x = c from x0 to x1)
+  const onEnd = (c: number, x: number): P2 => [x, x + c];
+  const wallIn = s.wallRow.x[0];
+  const innerOut = s.innerRows.x[1];
+  const one = rounded(
+    [onEnd(e.s1Wall, wallIn), onEnd(e.s1Wall, s.wallX), [s.wallX, s.bottom], [s.lowDiag - s.bottom, s.bottom], [s.innerX, s.lowDiag - s.innerX], onEnd(e.s1Inner, s.innerX), onEnd(e.s1Inner, innerOut)],
+    [0, r.uTurn, r.wallBottom, r.low, r.low, r.uTurn, 0],
+  );
+  const two = rounded([onEnd(e.s2Wall, wallIn), onEnd(e.s2Wall, s.wallX), onEnd(e.s2End, s.wallX), onEnd(e.s2End, wallIn)], [0, r.uTurn, r.uTurn, 0]);
+  const three = rounded(
+    [onEnd(e.s3Wall, wallIn), onEnd(e.s3Wall, s.wallX), [s.wallX, s.wallX + s.topDiag], [s.innerX, s.innerX + s.topDiag], onEnd(e.s3Inner, s.innerX), onEnd(e.s3Inner, innerOut)],
+    [0, r.uTurn, r.wallTop, r.topInner, r.uTurn, 0],
+  );
+  const wallSize = s.wallRow.x[1] - s.wallRow.x[0];
+  const innerSize = s.innerRows.x[1] - s.innerRows.x[0];
+  return [
+    ...[one, two, three].map((pts) => [width, ...flat(pts)]),
+    ...Array.from({ length: s.wallRow.count }, (_, k) => stroke(strokeWidth, s.wallRow.x[0], s.wallRow.y0 + s.wallRow.step * k, wallSize)),
+    ...s.innerRows.ys.map((y) => stroke(strokeWidth, s.innerRows.x[0], y, innerSize)),
+    ...Array.from({ length: s.clusters.count }, (_, k) => s.clusters.strokes.map(([x, dy, size]) => stroke(strokeWidth, x, s.clusters.y0 + s.clusters.step * k + dy, size))).flat(),
+  ];
+}
+
+/** The E trim line's path in a quadrant (RV-103f), from the wall at y 127 to the goal end's notch on the centre */
+function trimEPath(): P2[] {
+  const t = FIELD_MEASURES.trimLine;
+  const b = t.bay;
+  const g = t.goal;
+  const R = t.radius;
+  const points: P2[] = [
+    t.start,
+    [b.low - t.start[1], t.start[1]],
+    [b.x, b.low - b.x],
+    [b.x, b.x + b.rampLow],
+    [b.bump, b.bump + b.rampLow],
+    [b.bump, b.rampHigh - b.bump],
+    [b.x, b.rampHigh - b.x],
+    [b.x, b.x + b.top],
+    [t.wallX, t.wallX + b.top],
+    [t.wallX, t.corner.diag - t.wallX],
+    [t.corner.diag - t.back, t.back],
+    [g.backX, t.back],
+    [g.outerX, t.back - (g.backX - g.outerX)],
+    [g.outerX, g.outerX + g.run],
+    [g.jogY - g.run, g.jogY],
+    [g.jogY - g.middle, g.jogY],
+    [g.jogX, g.jogX + g.middle],
+    [g.jogX, g.jogX + g.run],
+    [g.front - g.run, g.front],
+    [g.notch - g.front, g.front],
+    [g.notch - g.notchTop, g.notchTop],
+    [0, g.notchTop],
+  ];
+  const radii = points.map((_, i) => (i === 9 || i === 10 ? t.corner.r : R));
+  return rounded(points, radii);
+}
+
 
 /** The plan builds draw: from FIELD_MEASURES and rules */
 export function shippableFieldPlan(): FieldPlan {
@@ -386,25 +580,14 @@ export function shippableFieldPlan(): FieldPlan {
     centreStrips: [region("y", centreStrip)],
     halfway: [region("x", halfway)],
     frameLines: [
-      { kind: "E", piece: "trim", mirror: "xy", width: M.trimLine.width, points: flat([...offsetPolygon(bay, M.trimLine.out), offsetPolygon(bay, M.trimLine.out)[0] ?? [0, 0]]) },
-      { kind: "E", piece: "trim", mirror: "y", width: M.trimLine.width, points: flat([...offsetPolygon(end, M.trimLine.out), offsetPolygon(end, M.trimLine.out)[0] ?? [0, 0]]) },
+      { kind: "E", piece: "trim", mirror: "xy", width: M.trimLine.width, points: flat(trimEPath()) },
       ...M.trimLine.rings.map((r): FrameLine => ({ kind: "E", piece: "centreTrim", mirror: "none", width: M.trimLine.ringWidth, points: flat([...circle(r), [r, 0]]) })),
       ...M.stripLines.centre.map(([y0, y1]): FrameLine => ({ kind: "D", piece: "centreStrip", mirror: "xy", width: M.stripLines.width, points: [M.stripLines.at, y0, M.stripLines.at, y1] })),
       ...M.stripLines.halfway.map(([x0, x1]): FrameLine => ({ kind: "D", piece: "halfway", mirror: "xy", width: M.stripLines.width, points: [x0, M.stripLines.at, x1, M.stripLines.at] })),
     ],
     markings: {
-      goal: [
-        // (the goal end's outline 64 in: its x >= 0 half, the piece mirrored four ways)
-        [markWidth, ...flat(offsetPolygon(end, -M.marking.inset).filter(([x]) => x >= 0))],
-        ...Array.from({ length: M.goalMarks.dashes.count }, (_, k) => {
-          const d = M.goalMarks.dashes;
-          const y = d.from + d.step * k;
-          return [markWidth, d.x, y, d.x, y + d.length];
-        }),
-        ...M.goalMarks.hatches.flatMap((g) => hatches(g, M.marking.hatch)),
-        ...M.goalMarks.equals.map(([a, b]) => [M.marking.hatch, ...(a ?? [0, 0]), ...(b ?? [0, 0])]),
-      ],
-      side: [loop(markWidth, offsetPolygon(bay, -M.marking.inset)), ...M.sideMarks.hatches.flatMap((g) => hatches(g, M.marking.hatch))],
+      goal: goalLineMarkings(markWidth, M.marking.hatch),
+      side: sideLineMarkings(markWidth, M.marking.hatch),
       centre: [[markWidth, ...flat(centreArcMarking())]],
     },
     goalGlow: glow,
@@ -419,8 +602,11 @@ function centreArcMarking(): P2[] {
   const arc = arcPoints(r, from, to);
   // (the legs along 45 degrees: the +x one on x - y = 441 in to x 611.5, the +y one on y - x = 441 in to x 128)
   const toX: P2[] = [...[...m.hookX.tail].reverse(), [m.hookX.to, m.hookX.to - leg]];
-  const toY: P2[] = [[128, 128 + leg], ...m.hookY];
-  return [...toX, ...arc, ...toY];
+  const toY: P2[] = [[m.hookY.to, m.hookY.to + leg], [m.hookY.to, m.hookY.end]];
+  // (the joins rounded: the legs into the arc's ends, and into the downs)
+  const points = [...toX, ...arc, ...toY];
+  const radii = points.map((_, k) => (k === toX.length - 1 ? m.joins.downX : k === toX.length + arc.length ? m.joins.downY : k === toX.length || k === toX.length + arc.length - 1 ? m.joins.arc : 0));
+  return rounded(points, radii);
 }
 
 /** The glass beside a goal's mouth: (|x|, z) round from the bottom inside corner */
@@ -463,32 +649,81 @@ function goalGlowRibbons(): GlowRibbon[] {
     // (pointing away from the opening's centre (0, 300))
     return n[0] * p[0] + n[1] * (p[1] - 300) >= 0 ? n : [-n[0], -n[1]];
   });
-  // Round the opening on the back wall's plane: its free edge 63 in toward the opening; along the floor, a band up
+  // Round the opening on the back wall's plane, one loop (RV-143): down each post to z 96, round the fillet (r 95) onto
+  // the floor and across it; its free edge 63 in toward the opening, the fillet's concentric arc (r 32), 63 up on the
+  // floor
+  const mf = g.mouthFloor;
+  const inner = mf.fillet.r - g.width;
+  const floorZ = mf.fillet.z - mf.fillet.r;
+  /** A quarter circle about (cx, cz) of radius r, from its side (cx + side r, cz) down to its foot (cx, cz - r), or
+   *  back up */
+  const quarter = (cx: number, cz: number, r: number, side: number, down: boolean): P2[] =>
+    Array.from({ length: 9 }, (_, k) => {
+      const t = ((down ? k : 8 - k) / 8) * (Math.PI / 2);
+      return [cx + side * r * Math.cos(t), cz - r * Math.sin(t)];
+    });
+  const ringKeep = whole.map(([, z]) => z > mf.fillet.z);
+  const ringOver = whole.filter((_, k) => ringKeep[k]);
+  const ringFree = whole.map(([x, z], k): P2 => [x - (outward[k]?.[0] ?? 0) * g.width, z - (outward[k]?.[1] ?? 0) * g.width]).filter((_, k) => ringKeep[k]);
+  const postIn = Math.abs(ringOver[0]?.[0] ?? firstHalf?.[0] ?? 893);
+  const footX = postIn - mf.fillet.r;
   push(
-    whole.map(([x, z]): P3 => [x, g.wallY, z]),
-    whole.map(([x, z], k): P3 => [x - (outward[k]?.[0] ?? 0) * g.width, g.wallY, Math.max(0, z - (outward[k]?.[1] ?? 0) * g.width)]),
+    [
+      [postIn, g.wallY, mf.fillet.z],
+      ...ringOver.map(([x, z]): P3 => [x, g.wallY, z]),
+      ...quarter(-footX, mf.fillet.z, mf.fillet.r, -1, true).map(([x, z]): P3 => [x, g.wallY, z]),
+      ...quarter(footX, mf.fillet.z, mf.fillet.r, 1, false).map(([x, z]): P3 => [x, g.wallY, z]),
+    ],
+    [
+      [postIn - g.width, g.wallY, mf.fillet.z],
+      ...ringFree.map(([x, z]): P3 => [x, g.wallY, z]),
+      ...quarter(-footX, mf.fillet.z, inner, -1, true).map(([x, z]): P3 => [x, g.wallY, z]),
+      ...quarter(footX, mf.fillet.z, inner, 1, false).map(([x, z]): P3 => [x, g.wallY, z]),
+    ],
   );
-  const postX = (firstHalf?.[0] ?? 893) - g.width;
-  push(
-    [[-postX, g.wallY, 1], [postX, g.wallY, 1]],
-    [[-postX, g.wallY, 1 + g.width], [postX, g.wallY, 1 + g.width]],
+  // On its field side, one loop (RV-143): 51 out from the opening up the posts and over, down to the fillet, onto the
+  // floor and round the mouth piece's front; its free edge 63 toward the field on the wall, the fillet's concentric arc
+  // (r 32) round it, 63 up on the floor
+  const over = whole.map(([x, z], k): P2 => [x + (outward[k]?.[0] ?? 0) * g.out, z + (outward[k]?.[1] ?? 0) * g.out]).filter(([, z]) => z > mf.fillet.z);
+  const sideX = Math.abs(over[0]?.[0] ?? 944);
+  const postsAndTop: P2[] = [[sideX, mf.fillet.z], ...over, [-sideX, mf.fillet.z]];
+  // (the floor's path, the -x side's end to the +x side's: its corners where its lines meet, rounded)
+  const [diagonalSlope, diagonalAt] = mf.diagonal;
+  const [slantSlope, slantAt] = mf.slant;
+  const corners: P2[] = [
+    [sideX, diagonalSlope * sideX + diagonalAt],
+    [(mf.front - diagonalAt) / diagonalSlope, mf.front],
+    [(mf.front - slantAt) / slantSlope, mf.front],
+    [(mf.centre - slantAt) / slantSlope, mf.centre],
+  ];
+  const halfFloor: P2[] = [[sideX, mf.fillet.y], ...corners, [0, mf.centre]];
+  const floorPath = rounded(
+    [...halfFloor.map(([x, y]): P2 => [-x, y]), ...[...halfFloor].reverse().slice(1)],
+    [0, ...mf.radii, 0, ...[...mf.radii].reverse(), 0],
   );
-  // On its field side, 51 out from the opening: toward the field
-  push(
-    whole.map(([x, z], k): P3 => [x + (outward[k]?.[0] ?? 0) * g.out, g.fieldY, Math.max(0, z + (outward[k]?.[1] ?? 0) * g.out)]),
-    whole.map(([x, z], k): P3 => [x + (outward[k]?.[0] ?? 0) * g.out, g.fieldY - g.width, Math.max(0, z + (outward[k]?.[1] ?? 0) * g.out)]),
-  );
+  // (the fillet: a quarter circle in (y, z), from the wall down onto the floor)
+  const fillet = (r: number, down: boolean): P2[] =>
+    Array.from({ length: 9 }, (_, k) => {
+      const t = ((down ? k : 8 - k) / 8) * (Math.PI / 2);
+      return [mf.fillet.y + r * Math.cos(t), mf.fillet.z - r * Math.sin(t)];
+    });
+  const loopAttached: P3[] = [
+    ...postsAndTop.map(([x, z]): P3 => [x, g.fieldY, z]),
+    ...fillet(mf.fillet.r, true).slice(1).map(([y, z]): P3 => [-sideX, y, z]),
+    ...floorPath.slice(1, -1).map(([x, y]): P3 => [x, y, floorZ]),
+    ...fillet(mf.fillet.r, false).map(([y, z]): P3 => [sideX, y, z]),
+  ];
+  const loopFree: P3[] = [
+    ...postsAndTop.map(([x, z]): P3 => [x, g.fieldY - g.width, z]),
+    ...fillet(inner, true).slice(1).map(([y, z]): P3 => [-sideX, y, z]),
+    ...floorPath.slice(1, -1).map(([x, y]): P3 => [x, y, mf.fillet.z - inner]),
+    ...fillet(inner, false).map(([y, z]): P3 => [sideX, y, z]),
+  ];
+  push(loopAttached, loopFree);
   // Under the crossbar
   push(
     [[-g.crossbar.x, g.wallY, g.crossbar.z], [g.crossbar.x, g.wallY, g.crossbar.z]],
     [[-g.crossbar.x, g.wallY, g.crossbar.z - g.width], [g.crossbar.x, g.wallY, g.crossbar.z - g.width]],
-  );
-  // Along the mouth piece's front on the floor, standing up
-  const front = FIELD_MEASURES.mouthFront;
-  const frontWhole: P2[] = [...front.map(([x, y]): P2 => [x, y]), ...[...front].reverse().slice(1).map(([x, y]): P2 => [-x, y])];
-  push(
-    frontWhole.map(([x, y]): P3 => [x, y, 1]),
-    frontWhole.map(([x, y]): P3 => [x, y, 1 + g.width]),
   );
   // The back wall's stepped outline: low out to |x| 2048, up the slant, across the top; its free edge 128 out in the
   // wall's plane (mitred: up from the low and top parts, out along the slant's normal)
@@ -505,10 +740,16 @@ function goalGlowRibbons(): GlowRibbon[] {
   push(attachedSteps, freeSteps);
   // Low beside the goal, leaning back
   const bs = g.beside;
+  // (its (|x|, z) profile: flat, the slope's line through its point, flat; the bends where they meet, rounded)
+  const slopeAt = (z: number): number => bs.slope.at[0] + (z - bs.slope.at[1]) / bs.slope.rise;
+  const besideProfile = rounded(
+    [[bs.x[1], bs.z[1]], [slopeAt(bs.z[1]), bs.z[1]], [slopeAt(bs.z[0]), bs.z[0]], [bs.x[0], bs.z[0]]],
+    [0, bs.radii[0], bs.radii[1], 0],
+  );
   for (const s of [-1, 1]) {
     push(
-      [[s * bs.x[1], bs.y, bs.z[1]], [s * bs.x[0], bs.y, bs.z[0]]],
-      [[s * bs.x[1], bs.y + bs.lean[0], bs.z[1] + bs.lean[1]], [s * bs.x[0], bs.y + bs.lean[0], bs.z[0] + bs.lean[1]]],
+      besideProfile.map(([x, z]): P3 => [s * x, bs.y, z]),
+      besideProfile.map(([x, z]): P3 => [s * x, bs.y + bs.lean[0], z + bs.lean[1]]),
     );
   }
   // Inside: along the goal's profile at |x| 735 (15 out into the net), 63 toward the centre, from y 5344; and the front

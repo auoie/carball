@@ -57,11 +57,19 @@ namespace Layout {
 		CAR_PRESPAWN_POS = 53 /* 3 values */, CAR_PRESPAWN_YAW = 56,
 		CAR_FLIP_RESETS = 57 /* landings on the ball or a car that gave the jump back (count, wraps at 65536) */,
 		CAR_SPAWN_COUNT = 58 /* placements by a kickoff or a respawn (wraps at 65536): a correction that changes it isn't smoothed */,
-		CAR_SIZE = 59;
+		CAR_WHEEL_NORMALS = 59 /* 12 values, each wheel's suspension ray-hit normal (0 when not in contact): the landing
+		                          trigger's (notes/impact-triggers.md IT-5) */,
+		CAR_SIZE = 71;
 	constexpr int SPOT_POS = 0, SPOT_YAW = 3, SPOT_SIZE = 4;
 
 	// Boost pad: position, isBig, isActive, cooldown
 	constexpr int PAD_POS = 0, PAD_BIG = 3, PAD_ACTIVE = 4, PAD_COOLDOWN = 5, PAD_SIZE = 6;
+
+	// An impact (takeImpacts; notes/impact-triggers.md IT-1..3): the physics tick, the car, the partner (0 the world, 1 the
+	// ball, 2 a car) and the car's id, the speed along the normal and the sliding rest (uu/s), the point, the normal
+	// (from the partner toward the car)
+	constexpr int IMPACT_TICK = 0, IMPACT_CAR = 1, IMPACT_KIND = 2, IMPACT_PARTNER = 3, IMPACT_SPEED = 4, IMPACT_SLIDE = 5,
+		IMPACT_POS = 6, IMPACT_NORMAL = 9, IMPACT_SIZE = 12;
 
 	// Car configuration (carConfig): hitbox and wheels in the car's local frame (x forward, y right, z up).
 	// Wheel offsets are the right-hand wheels; the left ones mirror y.
@@ -139,6 +147,7 @@ class Sim {
 public:
 	Sim() {
 		_arena = Arena::Create(GameMode::SOCCAR);
+		_arena->collectImpacts = true; // (takeImpacts: the impact shake and sounds, IT-1..3)
 		_SetCallbacks();
 	}
 
@@ -334,6 +343,7 @@ public:
 					}
 				}
 				f[Layout::CAR_WHEEL_GROUND + i] = kind;
+				WriteVec(f + Layout::CAR_WHEEL_NORMALS + 3 * i, w.m_raycastInfo.m_isInContact ? Vec(w.m_raycastInfo.m_contactNormalWS) : Vec(0, 0, 0));
 			}
 			bool onActor = s.isOnGround && worldWheels <= 1;
 			f[Layout::CAR_WORLD_WHEEL_CONTACTS] = (float)worldWheels;
@@ -400,6 +410,26 @@ public:
 		return CopyToJS<Float32ArrayVal>("Float32Array", _floats);
 	}
 
+	// Every car's impacts since the last call (IMPACT_SIZE floats each; speeds of 50 uu/s or more), then cleared
+	Float32ArrayVal TakeImpacts() {
+		const auto& list = _arena->impacts;
+		_floats.assign(list.size() * Layout::IMPACT_SIZE, 0);
+		for (size_t i = 0; i < list.size(); i++) {
+			float* f = &_floats[i * Layout::IMPACT_SIZE];
+			const Arena::ImpactEvent& e = list[i];
+			f[Layout::IMPACT_TICK] = (float)e.tick;
+			f[Layout::IMPACT_CAR] = (float)e.carId;
+			f[Layout::IMPACT_KIND] = (float)e.partnerKind;
+			f[Layout::IMPACT_PARTNER] = (float)e.partnerId;
+			f[Layout::IMPACT_SPEED] = e.speed;
+			f[Layout::IMPACT_SLIDE] = e.slide;
+			WriteVec(f + Layout::IMPACT_POS, e.pos);
+			WriteVec(f + Layout::IMPACT_NORMAL, e.normal);
+		}
+		_arena->impacts.clear();
+		return CopyToJS<Float32ArrayVal>("Float32Array", _floats);
+	}
+
 	// A team's respawn spots (team 0 blue, 1 orange; side 0 all, 1 its own left, 2 right, inner first), SPOT_SIZE floats each
 	Float32ArrayVal RespawnSpots(int team, int side) {
 		std::vector<Car::RespawnSpot> spots = _arena->_RespawnSpots(team == 1 ? Team::ORANGE : Team::BLUE, side);
@@ -463,6 +493,7 @@ public:
 			delete _arena;
 			_arena = loaded;
 		}
+		_arena->collectImpacts = true; // (a new arena's is off)
 		_SetCallbacks();
 		_events.clear();
 	}
@@ -529,6 +560,7 @@ EMSCRIPTEN_BINDINGS(rlengine) {
 		.function("boostPads", &Sim::BoostPads)
 		.function("respawnSpots", &Sim::RespawnSpots)
 		.function("takeEvents", &Sim::TakeEvents)
+		.function("takeImpacts", &Sim::TakeImpacts)
 		.function("saveState", &Sim::SaveState)
 		.function("loadState", &Sim::LoadState)
 		.function("writeNetState", &Sim::WriteNetState)
@@ -545,9 +577,11 @@ EMSCRIPTEN_BINDINGS(rlengine) {
 	LAYOUT(CAR_AIR_TIME_SINCE_JUMP); LAYOUT(CAR_HAS_FLIP_OR_JUMP); LAYOUT(CAR_HAS_FLIP_RESET);
 	LAYOUT(CAR_WORLD_WHEEL_CONTACTS); LAYOUT(CAR_ON_RB_ACTOR); LAYOUT(CAR_WHEEL_GROUND); LAYOUT(CAR_RB_ACTOR);
 	LAYOUT(CAR_DEMO_SPAWN_SIDE); LAYOUT(CAR_DEMO_SPAWN_INDEX); LAYOUT(CAR_PRESPAWN_SET); LAYOUT(CAR_PRESPAWN_POS);
-	LAYOUT(CAR_PRESPAWN_YAW); LAYOUT(CAR_FLIP_RESETS); LAYOUT(CAR_SPAWN_COUNT); LAYOUT(CAR_SIZE);
+	LAYOUT(CAR_PRESPAWN_YAW); LAYOUT(CAR_FLIP_RESETS); LAYOUT(CAR_SPAWN_COUNT); LAYOUT(CAR_WHEEL_NORMALS); LAYOUT(CAR_SIZE);
 	LAYOUT(SPOT_POS); LAYOUT(SPOT_YAW); LAYOUT(SPOT_SIZE);
 	LAYOUT(PAD_POS); LAYOUT(PAD_BIG); LAYOUT(PAD_ACTIVE); LAYOUT(PAD_COOLDOWN); LAYOUT(PAD_SIZE);
+	LAYOUT(IMPACT_TICK); LAYOUT(IMPACT_CAR); LAYOUT(IMPACT_KIND); LAYOUT(IMPACT_PARTNER); LAYOUT(IMPACT_SPEED);
+	LAYOUT(IMPACT_SLIDE); LAYOUT(IMPACT_POS); LAYOUT(IMPACT_NORMAL); LAYOUT(IMPACT_SIZE);
 	LAYOUT(EVENT_GOAL); LAYOUT(EVENT_BUMP); LAYOUT(EVENT_DEMO);
 	LAYOUT(CFG_HITBOX_SIZE); LAYOUT(CFG_HITBOX_OFFSET); LAYOUT(CFG_FRONT_WHEEL_OFFSET); LAYOUT(CFG_FRONT_WHEEL_RADIUS);
 	LAYOUT(CFG_FRONT_SUSPENSION_REST); LAYOUT(CFG_BACK_WHEEL_OFFSET); LAYOUT(CFG_BACK_WHEEL_RADIUS);

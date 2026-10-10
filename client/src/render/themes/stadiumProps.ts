@@ -1,6 +1,6 @@
 // The stadium's screens, ads and near-field props (notes/arena-surroundings.md SUR-9, 10, 13, 17..19): the panels with
 // their formulas and our own emblems (no ad artwork), the scaffolds' banners, the corner flags and the light arrows.
-import { BoxGeometry, type Color, DoubleSide, Group, Mesh, PlaneGeometry, ShaderMaterial, Vector3 } from "three";
+import { BoxGeometry, BufferGeometry, type Color, DoubleSide, Float32BufferAttribute, Group, Mesh, PlaneGeometry, ShaderMaterial, Vector3 } from "three";
 import { fullBright } from "../teamColors";
 import { BOWL_COLOURS, seenMaterial } from "./stadiumSurroundings";
 
@@ -35,12 +35,26 @@ export const PANELS = {
 } as const;
 
 /** The near-field props (SUR-10): banner scaffolds (273 x 273 x 1049) behind the goals and beside the side walls,
- *  corner flags (2000 x 790, z 360 up) and the corners' arrow arrays (z 384-512) */
+ *  the corner flags and the corners' arrow arrays (z 384-512) */
 export const PROPS = {
   scaffolds: [[2048, 6144], [-2048, 6144], [2048, -6144], [-2048, -6144], [4736, 1024], [-4736, 1024], [4736, -1024], [-4736, -1024]] as readonly (readonly [number, number])[],
   scaffold: [273, 1049] as const,
-  flags: [[3450, 4850], [-3450, 4850], [3450, -4850], [-3450, -4850]] as readonly (readonly [number, number])[],
-  flag: { size: [2000, 790] as const, z: 360 },
+  /** The corner flags (SUR-10, 19: the static session's measures): each corner 5 poles on an arc (r 6185), 5.62 degrees
+   *  apart from az 43.8 (the +X corners) or 113.6 (the -X); a pole 15.5 across from z -1 to 751 with an 88 arm at its
+   *  top; its banner 133 x 559 (z 175 to 734), a shaped cloth (81 % of it), facing the field, a strip over it (z 634 to
+   *  751); opaque, two-sided: the cloth's mean albedo 2 T + 0.295, the strip's 3.15 T, times the corner's flat light (+X:
+   *  orange (0.83, 0.75, 0.55), blue (0.76, 0.68, 0.51); -X (0.45, 0.41, 0.31)) */
+  flags: {
+    r: 6185,
+    firstAz: [43.8, 113.6] as const,
+    step: 5.62,
+    count: 5,
+    pole: { width: 15.5, z: [-1, 751] as const, arm: 88 },
+    banner: { width: 133, z: [175, 734] as const, cloth: 0.81 },
+    strip: { z: [634, 751] as const },
+    albedo: { cloth: [2, 0.295], strip: [3.152, 0.002] } as const,
+    light: { plusXOrange: [0.83, 0.75, 0.55], plusXBlue: [0.76, 0.68, 0.51], minusX: [0.45, 0.41, 0.31] } as const,
+  },
   arrows: [[3312, 4352], [-3312, 4352], [3312, -4352], [-3312, -4352]] as readonly (readonly [number, number])[],
   arrow: { z: [384, 512] as const, width: 600, behindWall: 5870 },
 } as const;
@@ -61,7 +75,7 @@ void main() {
  *  bottom eighths), our emblem (14 % of it, (0.67, 0.76, 0.85)); an ad's: 0.053 with a centred 0.59 emblem */
 /** The panels' (1 + L), their baked light (RV-126: from SUR-17's and SUR-18's totals): the low screens, warm; the high
  *  screens; the 2x1 ads, warm; the 4x1 billboards */
-export const PANEL_LIGHT = { lowScreen: [2.8, 2.5, 1.9], highScreen: [1.25, 1.25, 1.25], ad: [2.4, 2.3, 2.0], billboard: [1.4, 1.4, 1.4] } as const;
+export const PANEL_LIGHT = { lowScreen: [2.8, 2.5, 1.9], highScreen: [1.29, 1.26, 1.18], ad: [2.43, 2.27, 1.82], billboard: [1.35, 1.33, 1.22] } as const;
 /** Our screen logo (SUR-40's stand-in, 14 % of the screen in uv 0.12-0.90 x 0.34-0.66: RV-127a): a ring and a bar */
 export const SCREEN_LOGO = { centre: [0.51, 0.5], half: [0.42, 0.15], ringAspect: 2.8, ring: 0.65, stroke: 0.45, bar: 0.42, barX: 0.92, colour: [0.67, 0.76, 0.85] } as const;
 
@@ -128,14 +142,18 @@ void main() {
 }
 `;
 
-/** Basic_Orange_Mat's sat(1.5 (D - 0.25)) at its texture's mean D, 0.317 (fit to SUR-19's banner colours) */
-export const BANNER_D_TERM = Math.min(Math.max(1.5 * (0.317 - 0.25), 0), 1);
+/** Basic_Orange_Mat's sat(1.5 (D - 0.25)): its mean over Park_BannerScaffold_D, per channel (SUR-19) */
+export const BANNER_D_TERM = 0.153;
 
-/** A banner's colour for a team's linear primary: 2 T + BANNER_D_TERM, clamped at 1.5, T = P + (FB - P)/16 (SUR-19) */
+/** A banner's colour for a team's linear primary (SUR-19, RV-127d): c0 = 0.5 lerp(W, 4 T, 1) + sat(1.5 (D - 0.25)) = 2 T
+ *  + 0.153 (the texture's mean of that term), then the saturation boost c = clamp(c0 + 0.15 (c0 - lum c0), 0, 1.5); T = P
+ *  + (FB - P)/16 */
 export function bannerColour(c: Color): [number, number, number] {
   const f = fullBright([c.r, c.g, c.b]);
   const t = [c.r + (f[0] - c.r) / 16, c.g + (f[1] - c.g) / 16, c.b + (f[2] - c.b) / 16];
-  return t.map((v) => Math.min(1.5, 2 * v + BANNER_D_TERM)) as [number, number, number];
+  const c0 = t.map((v) => 2 * v + BANNER_D_TERM);
+  const lum = 0.3 * (c0[0] ?? 0) + 0.59 * (c0[1] ?? 0) + 0.11 * (c0[2] ?? 0);
+  return c0.map((v) => Math.min(Math.max(v + 0.15 * (v - lum), 0), 1.5)) as [number, number, number];
 }
 
 /** SUR-19: the scaffolds' banners (Basic_Orange_Mat), the team's colour, T = P + (FB - P)/16, doubled and clamped at 1.5
@@ -219,13 +237,50 @@ export function buildScreensAndProps(primary0: Color, primary1: Color): { group:
     banner.lookAt(0, h * 0.55, 0);
     group.add(tower, banner);
   });
-  PROPS.flags.forEach(([x, y]) => {
-    const flag = new Mesh(new PlaneGeometry(PROPS.flag.size[0], PROPS.flag.size[1]), propMaterial(teamColour(y < 0 ? primary0 : primary1), 0, true));
-    flag.position.set(x, PROPS.flag.z + PROPS.flag.size[1] / 2, y);
-    // (along the corner's cut, as SUR-10's bounds (2.0k x 1.5k) lie, facing in: clear of the cage all along it, RV-116)
-    flag.lookAt(flag.position.x - Math.sign(x), flag.position.y, flag.position.z - Math.sign(y));
-    group.add(flag);
-  });
+  // The corner flags: poles on an arc, each with its banner and strip, facing the field
+  const F = PROPS.flags;
+  const flagMaterial = (rgb: readonly number[], cloth: boolean): ShaderMaterial =>
+    new ShaderMaterial({
+      vertexShader: panelVertex,
+      fragmentShader: /* glsl */ `
+        uniform vec3 colour;
+        uniform bool cloth;
+        varying vec2 vUv;
+        void main() {
+          // (the cloth shaped: a swallowtail cut from its foot, 19 % of it)
+          if (cloth && vUv.y < 0.38 * (1.0 - abs(2.0 * vUv.x - 1.0))) discard;
+          gl_FragColor = vec4(colour, 1.0);
+          #include <colorspace_fragment>
+        }`,
+      uniforms: { colour: { value: new Vector3(rgb[0], rgb[1], rgb[2]) }, cloth: { value: cloth } },
+      side: DoubleSide,
+    });
+  const poleMaterial = seenMaterial(BOWL_COLOURS.steel, 0.02);
+  for (const sy of [-1, 1]) {
+    const p = sy < 0 ? primary0 : primary1;
+    const fb = fullBright([p.r, p.g, p.b]);
+    const t = [p.r + (fb[0] - p.r) / 16, p.g + (fb[1] - p.g) / 16, p.b + (fb[2] - p.b) / 16];
+    F.firstAz.forEach((first, side) => {
+      const light = side === 1 ? F.light.minusX : sy < 0 ? F.light.plusXBlue : F.light.plusXOrange;
+      const tinted = (k: readonly [number, number]): number[] => t.map((v, c) => (k[0] * v + k[1]) * (light[c] ?? 1));
+      const cloth = flagMaterial(tinted(F.albedo.cloth), true);
+      const strip = flagMaterial(tinted(F.albedo.strip), false);
+      for (let k = 0; k < F.count; k++) {
+        const a = ((first + F.step * k) * Math.PI) / 180;
+        const [x, y] = [F.r * Math.cos(a), sy * F.r * Math.sin(a)];
+        const pole = new Mesh(new BoxGeometry(F.pole.width, F.pole.z[1] - F.pole.z[0], F.pole.width), poleMaterial);
+        pole.position.set(x, (F.pole.z[0] + F.pole.z[1]) / 2, y);
+        const banner = new Mesh(new PlaneGeometry(F.banner.width, F.banner.z[1] - F.banner.z[0]), cloth);
+        banner.position.set(x, (F.banner.z[0] + F.banner.z[1]) / 2, y);
+        banner.lookAt(0, banner.position.y, 0);
+        const top = new Mesh(new PlaneGeometry(F.banner.width + F.pole.arm / 2, F.strip.z[1] - F.strip.z[0]), strip);
+        top.position.set(x, (F.strip.z[0] + F.strip.z[1]) / 2, y);
+        top.lookAt(0, top.position.y, 0);
+        for (const m of [pole, banner, top]) m.name = "props: corner flag";
+        group.add(pole, banner, top);
+      }
+    });
+  }
   PROPS.arrows.forEach(([x, y], k) => {
     const [z0, z1] = PROPS.arrow.z;
     const arrow = new Mesh(new PlaneGeometry(PROPS.arrow.width, z1 - z0), propMaterial(new Vector3(1.2, 1.1, 0.8), 0.25 * k + 0.001));
@@ -244,4 +299,94 @@ export function buildScreensAndProps(primary0: Color, primary1: Color): { group:
       time.value = seconds;
     },
   };
+}
+
+// --- The -X plaza (SUR-1, 4, 25; RV-133: the gap in the stands is no open sightline) -------------------------------
+
+/** The plaza's occluders (the static session's measures): the plinth, a wedge ramp in Stadium_Base (its flat top z 2434
+ *  from x -13.3k to -12.1k, falling to z 1280 at -19.7k, 267 wide each side at its front, 668 at its back, its front
+ *  vertical at x -12.12k); the statue on it (its bounds x -13199..-11591, y -380..283, z 2339..3841; ours a plain block);
+ *  the poplars (masked, about 43 % covering): six small at r 15.4-17.7k up to z 2.25k, two large at r 20.7k up to 3.8k,
+ *  one larger behind the statue up to 4.8k */
+export const PLAZA = {
+  plinth: { front: -12120, flatTo: -13300, back: -19700, top: 2434, low: 1280, half: [267, 668] as const },
+  statue: { x: [-13199, -11591] as const, y: [-380, 283] as const, z: [2339, 3841] as const },
+  poplars: [
+    { az: 173, r: 15400, height: 2250, width: 420 },
+    { az: 175.5, r: 17700, height: 2250, width: 420 },
+    { az: 178, r: 16500, height: 2250, width: 420 },
+    { az: 182, r: 16500, height: 2250, width: 420 },
+    { az: 184.5, r: 17700, height: 2250, width: 420 },
+    { az: 187, r: 15400, height: 2250, width: 420 },
+    { az: 176, r: 20700, height: 3800, width: 900 },
+    { az: 184, r: 20700, height: 3800, width: 900 },
+    { az: 179.65, r: 21000, height: 4800, width: 1800 },
+  ] as readonly { az: number; r: number; height: number; width: number }[],
+  poplarFoot: 1300,
+  cover: 0.43,
+  foliage: [0.07, 0.09, 0.05] as const,
+} as const;
+
+/** The plaza's plinth, statue and poplars */
+export function buildPlaza(): Group {
+  const group = new Group();
+  group.name = "stadium plaza";
+  const concrete = seenMaterial(BOWL_COLOURS.concrete);
+  // The plinth: a wedge, its cross-section widening toward the back (Three's frame: x, z up, the game's y)
+  const p = PLAZA.plinth;
+  const zAt = (x: number): number => (x >= p.flatTo ? p.top : p.top + ((p.low - p.top) * (x - p.flatTo)) / (p.back - p.flatTo));
+  const halfAt = (x: number): number => p.half[0] + ((p.half[1] - p.half[0]) * (x - p.front)) / (p.back - p.front);
+  const xs = [p.front, p.flatTo, p.back];
+  const pos: number[] = [];
+  const quad = (a: number[], b: number[], c: number[], d: number[]): void => {
+    pos.push(...a, ...b, ...c, ...a, ...c, ...d);
+  };
+  for (let k = 0; k + 1 < xs.length; k++) {
+    const [x0 = 0, x1 = 0] = [xs[k], xs[k + 1]];
+    const [h0, h1, z0, z1] = [halfAt(x0), halfAt(x1), zAt(x0), zAt(x1)];
+    quad([x0, z0, -h0], [x0, z0, h0], [x1, z1, h1], [x1, z1, -h1]);
+    for (const s of [-1, 1]) quad([x0, 0, s * h0], [x0, z0, s * h0], [x1, z1, s * h1], [x1, 0, s * h1]);
+  }
+  const h = halfAt(p.front);
+  quad([p.front, 0, -h], [p.front, 0, h], [p.front, p.top, h], [p.front, p.top, -h]);
+  const plinthGeometry = new BufferGeometry();
+  plinthGeometry.setAttribute("position", new Float32BufferAttribute(pos, 3));
+  const plinth = new Mesh(plinthGeometry, concrete);
+  plinth.name = "plaza: plinth";
+  // The statue: a block on it
+  const st = PLAZA.statue;
+  const statue = new Mesh(new BoxGeometry(st.x[1] - st.x[0], st.z[1] - st.z[0], st.y[1] - st.y[0]), seenMaterial([0.09, 0.085, 0.07]));
+  statue.position.set((st.x[0] + st.x[1]) / 2, (st.z[0] + st.z[1]) / 2, (st.y[0] + st.y[1]) / 2);
+  statue.name = "plaza: statue";
+  group.add(plinth, statue);
+  // The poplars: columns of foliage, 43 % of them covering (the rest cut away in small cells)
+  const foliage = new ShaderMaterial({
+    vertexShader: panelVertex,
+    fragmentShader: /* glsl */ `
+      uniform vec3 colour;
+      uniform float cover;
+      varying vec2 vUv;
+      varying vec3 vWorld;
+      float hash(vec2 q) { return fract(sin(dot(q, vec2(127.1, 311.7))) * 43758.5453); }
+      void main() {
+        // (a narrow spindle: widest a third of the way up)
+        float y = vUv.y;
+        float spread = 0.5 * sin(3.14159 * pow(y, 0.7));
+        if (abs(vUv.x - 0.5) > spread) discard;
+        if (hash(floor(vWorld.xy / 60.0) + floor(vWorld.zy / 60.0)) > cover / 0.64) discard;
+        gl_FragColor = vec4(colour, 1.0);
+        #include <colorspace_fragment>
+      }`,
+    uniforms: { colour: { value: new Vector3(...PLAZA.foliage) }, cover: { value: PLAZA.cover } },
+    side: DoubleSide,
+  });
+  for (const tree of PLAZA.poplars) {
+    const a = (tree.az * Math.PI) / 180;
+    const mesh = new Mesh(new PlaneGeometry(tree.width, tree.height - PLAZA.poplarFoot), foliage);
+    mesh.position.set(tree.r * Math.cos(a), (tree.height + PLAZA.poplarFoot) / 2, tree.r * Math.sin(a));
+    mesh.lookAt(0, mesh.position.y, 0);
+    mesh.name = "plaza: poplar";
+    group.add(mesh);
+  }
+  return group;
 }

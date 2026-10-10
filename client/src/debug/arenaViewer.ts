@@ -22,8 +22,13 @@ export interface ArenaShot {
   readonly sinceExplosion?: number;
 }
 
-/** Shows the arena and returns the view setter, and the arena's reflection captures so far. */
-export function showArenaViewer(renderer: Renderer, theme: Theme, config: CarConfig): { view: (shot: ArenaShot) => void; captures: () => number } {
+/** Shows the arena and returns the view setter, the arena's reflection captures so far, and the last capture's faces
+ *  (base64 RGBA, Three's face order; null without a capture: for calibrating it against SUR-35) */
+export function showArenaViewer(
+  renderer: Renderer,
+  theme: Theme,
+  config: CarConfig,
+): { view: (shot: ArenaShot) => void; captures: () => number; cubeFaces: () => Promise<string[] | null> } {
   renderer.scene.background = theme.background;
   renderer.scene.fog = theme.fog;
   const arena = new ArenaView(theme);
@@ -46,5 +51,18 @@ export function showArenaViewer(renderer: Renderer, theme: Theme, config: CarCon
     }
     renderer.render({ position: shot.eye, forward: normalize(sub(shot.target, shot.eye)), up: vec3(0, 0, 1), horizontalFov: shot.fov ?? 90 });
   };
-  return { view, captures: () => arena.captures };
+  let last: ArenaShot = { eye: vec3(0, -4000, 600), target: vec3(0, 0, 600) };
+  const shown = (shot: ArenaShot): void => {
+    last = shot;
+    view(shot);
+  };
+  const cubeFaces = (): Promise<string[] | null> =>
+    new Promise((resolve) => {
+      renderer.beforeNextFrame((gl) => {
+        const faces = arena.readCapture(gl);
+        resolve(faces ? faces.map((f) => btoa(Array.from(f, (b) => String.fromCharCode(b)).join(""))) : null);
+      });
+      view(last);
+    });
+  return { view: shown, captures: () => arena.captures, cubeFaces };
 }

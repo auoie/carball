@@ -355,10 +355,11 @@ export class GoalExplosion {
     this.#sphere.visible = t < 1;
     if (t < 1) {
       this.#sphere.scale.setScalar(SPHERE.radius * evaluate(SPHERE.size, t));
-      // (Electricity_Mat: rgb = I C, I scaled by the vertex colour's alpha: an intensity, tone-mapped after, RV-46)
+      // (Electricity_Mat: rgb = I C, I scaled by the vertex colour's alpha: an intensity, linear HDR for the
+      // post-processing's tone map, RV-46, PP-17)
       const k = evaluate(SPHERE.color, t) * evaluate(SPHERE.alpha, t);
-      const tone = (v: number): number => 1 - Math.exp(-Math.max(0, v * k));
-      (this.#material.uniforms["tint"]?.value as Color).setRGB(tone(this.#color[0]), tone(this.#color[1]), tone(this.#color[2]));
+      const linear = (v: number): number => Math.max(0, v * k);
+      (this.#material.uniforms["tint"]?.value as Color).setRGB(linear(this.#color[0]), linear(this.#color[1]), linear(this.#color[2]));
     }
   }
 

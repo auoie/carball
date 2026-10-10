@@ -128,12 +128,25 @@ export class ArenaView {
    *  its theme drawn; nothing without the game's materials. Run with the WebGL renderer before a frame
    *  (Renderer.beforeNextFrame) */
   capture(gl: WebGLRenderer, scene: Scene): void {
-    this.#grassCube?.capture(gl, scene, this.root, this.#theme.captureOnly ?? null);
+    // (three times, as the game re-captures over its first 2 s, each reading the last: the first with the reflective
+    // surfaces seeing nothing, the others the last capture, blurred, in their own directions; it converges by the second
+    // or third, SUR-32, AV-3)
+    const cube = this.#grassCube;
+    if (!cube) return;
+    const captureOnly = this.#theme.captureOnly ?? null;
+    cube.capture(gl, scene, this.root, captureOnly, [0, 0, 0]);
+    cube.capture(gl, scene, this.root, captureOnly);
+    cube.capture(gl, scene, this.root, captureOnly);
   }
 
   /** Reflection captures so far (for tests) */
   get captures(): number {
     return this.#grassCube?.captures ?? 0;
+  }
+
+  /** The last reflection capture's faces (GrassCube.readCapture; none without one) */
+  readCapture(gl: WebGLRenderer): Uint8Array[] | null {
+    return this.#grassCube?.readCapture(gl) ?? null;
   }
 
   /** The ball exploded (a goal): the cage's shockwave starts */

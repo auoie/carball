@@ -1,5 +1,8 @@
-// Three.js scene and camera. The lights, background and fog come with the arena's theme (src/render/themes/).
-import { PerspectiveCamera, Scene, Vector3, WebGLRenderer } from "three";
+// Three.js scene and camera. The lights, background and fog come with the arena's theme (src/render/themes/). The scene
+// is drawn linear HDR and through the game's post-processing (postProcess.ts) to display values: no three.js tone
+// mapping or sRGB encoding (PP-19).
+import { LinearSRGBColorSpace, NoToneMapping, PerspectiveCamera, Scene, Vector3, WebGLRenderer } from "three";
+import { PostProcess, type PostOptions } from "./postProcess";
 import type { CameraView } from "../camera/rlCamera";
 import { horizontalToVerticalFov } from "../camera/interp";
 import { toThreeVector } from "./coords";
@@ -17,9 +20,19 @@ export class Renderer {
   /** Work with the WebGL renderer before the next frame, once each (the arena's reflection capture) */
   readonly #beforeNextFrame: ((gl: WebGLRenderer, scene: Scene) => void)[] = [];
 
+  readonly #post: PostProcess;
+  /** The video options that change the post-processing (Bloom, Depth of Field: both on in the game's High preset) */
+  postOptions: PostOptions = { bloom: true, depthOfField: true };
+  /** When the first frame was drawn: the camera fades in from black over a second (PP-18) */
+  #firstFrame: number | null = null;
+
   constructor(readonly canvas: HTMLCanvasElement) {
-    this.#gl = new WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
+    // (no anti-aliasing: the game's default is Off, PP-16; the scene goes to an HDR target anyway)
+    this.#gl = new WebGLRenderer({ canvas, antialias: false, powerPreference: "high-performance" });
     this.#gl.setPixelRatio(Math.min(2, window.devicePixelRatio));
+    this.#gl.toneMapping = NoToneMapping;
+    this.#gl.outputColorSpace = LinearSRGBColorSpace;
+    this.#post = new PostProcess(this.#gl);
 
     this.#observer = new ResizeObserver(() => { this.#resize(); });
     this.#observer.observe(canvas);
@@ -28,6 +41,7 @@ export class Renderer {
 
   dispose(): void {
     this.#observer.disconnect();
+    this.#post.dispose();
     this.#gl.dispose();
   }
 
@@ -47,7 +61,9 @@ export class Renderer {
       this.#camera.fov = fov;
       this.#camera.updateProjectionMatrix();
     }
-    this.#gl.render(this.scene, this.#camera);
+    const now = performance.now() / 1000;
+    this.#firstFrame ??= now;
+    this.#post.render(this.scene, this.#camera, this.postOptions, 1 - (now - this.#firstFrame));
   }
 
   #resize(): void {

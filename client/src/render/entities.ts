@@ -294,6 +294,9 @@ export const PAD_ALMOST_SPAWNED_SECONDS = 1;
 /** A pad's light fades out on a pickup and in on its return over this long (notes/visual-timing.md VT-12/13) */
 export const PAD_FADE_SECONDS = 0.1;
 
+/** The pads' look: lit (its colour and glow) and dim (taken: the glow off) */
+export const PAD_LOOK = { lit: 0xffc533, emissive: 0x996a00, dim: 0x4a4130, roughness: 0.4 } as const;
+
 /** Boost pads, instanced (six draw calls for all of them): flat discs, big pads with an orb, small ones with a low
  *  cylinder. Taken, a pad's light fades out over 0.1 s to its dim look (a big pad's orb goes at once, a small pad
  *  stays, dark); back, its light fades in over 0.1 s. Only big pads warm up while down, as the game's: a ghost of the
@@ -318,21 +321,17 @@ export class BoostPadsView {
 
   constructor(pads: readonly BoostPadState[]) {
     // Each pad's light (the game's Brightness, 0..1) by its instance colour: from the dim look (0: taken, waiting) to
-    // the lit one, the glow too, so the end of a fade is the resting look (RV-33)
-    const active = new MeshStandardMaterial({ color: 0xffc533, emissive: 0x996a00, roughness: 0.4 });
-    const dim = new Color(0x4a4130);
+    // the lit one, the glow too, so the end of a fade is the resting look (RV-33). (In the fragment shader three defines
+    // USE_COLOR for an instance colour: USE_INSTANCING_COLOR is the vertex shader's alone, and testing it here left every
+    // taken pad lit)
+    const active = new MeshStandardMaterial({ color: PAD_LOOK.lit, emissive: PAD_LOOK.emissive, roughness: PAD_LOOK.roughness });
+    const dim = new Color(PAD_LOOK.dim);
     active.onBeforeCompile = (shader) => {
       shader.uniforms["dimColor"] = { value: dim };
       shader.fragmentShader = shader.fragmentShader
         .replace("#include <common>", "#include <common>\nuniform vec3 dimColor;")
-        .replace(
-          "#include <color_fragment>",
-          "#ifdef USE_INSTANCING_COLOR\ndiffuseColor.rgb = mix(dimColor, diffuseColor.rgb, vColor.r);\n#endif",
-        )
-        .replace(
-          "#include <emissivemap_fragment>",
-          "#include <emissivemap_fragment>\n#ifdef USE_INSTANCING_COLOR\ntotalEmissiveRadiance *= vColor;\n#endif",
-        );
+        .replace("#include <color_fragment>", "#ifdef USE_COLOR\ndiffuseColor.rgb = mix(dimColor, diffuseColor.rgb, vColor.r);\n#endif")
+        .replace("#include <emissivemap_fragment>", "#include <emissivemap_fragment>\n#ifdef USE_COLOR\ntotalEmissiveRadiance *= vColor.rgb;\n#endif");
     };
     const warmup = new MeshBasicMaterial({ color: 0xffb020, transparent: true, opacity: 0.3, depthWrite: false });
     const almost = new MeshBasicMaterial({ color: 0xffe9a0, transparent: true, opacity: 0.65, depthWrite: false });

@@ -76,6 +76,13 @@ async function main(): Promise<void> {
     status.hidden = true;
     return;
   }
+  // ?viewer=shaders: the shaders' functions on the GPU against their TypeScript twins (the e2e suite's)
+  if (params.get("viewer") === "shaders") {
+    const { shaderProbe } = await import("./debug/shaderProbe");
+    (window as unknown as { rlShaderProbe?: unknown }).rlShaderProbe = shaderProbe(canvas);
+    status.hidden = true;
+    return;
+  }
   // ?viewer=arena: the arena alone under a free camera (for comparing it with the game's)
   if (params.get("viewer") === "arena") {
     const viewerWorld = World.create(engine);
@@ -107,9 +114,11 @@ async function main(): Promise<void> {
   let settings = loadSettings();
   const audio = new GameAudio(name);
   audio.apply(settings.audio, settings.options.muted);
+  renderer.postOptions = settings.options;
   const panel = new SettingsPanel(document.body, settings, (next) => {
     settings = next;
     audio.apply(next.audio, next.options.muted);
+    renderer.postOptions = next.options;
   });
   // For the browser tests
   (window as unknown as { rlAudio?: () => unknown }).rlAudio = () => audio.stats;
@@ -120,7 +129,7 @@ async function main(): Promise<void> {
     const freeplay = new Freeplay(world, renderer, arena, input, hud, audio, () => settings, () => !panel.isOpen);
     // For screenshots and the browser tests
     (window as unknown as { rlFreeplay?: unknown }).rlFreeplay = {
-      place: (car: { x: number; y: number; yaw: number }, ball?: { x: number; y: number; z: number }) => {
+      place: (car: { x: number; y: number; yaw: number; boost?: number }, ball?: { x: number; y: number; z: number }) => {
         freeplay.debugPlace(car, ball);
       },
       car: () => freeplay.debugCar(),
@@ -128,6 +137,7 @@ async function main(): Promise<void> {
         freeplay.debugDemolition(at);
       },
       particles: () => freeplay.debugParticles(),
+      pads: () => freeplay.debugPads(),
     };
     game = freeplay;
   } else {

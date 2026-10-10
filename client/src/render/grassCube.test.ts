@@ -85,4 +85,42 @@ describe("the arena's reflection capture (GrassCube)", () => {
     expect(new Set(sampled).size).toBe(2);
     expect(cube.captures).toBe(3);
   });
+
+  it("its upper hemisphere's mean, solid-angle weighted (SUR-32's G_env): only the +y face lit, a third", () => {
+    const cube = new GrassCube();
+    const gl = {
+      readRenderTargetPixels: (_t: unknown, _x: number, _y: number, w: number, h: number, out: Uint8Array, face: number) => {
+        out.fill(face === 2 ? 255 : 0, 0, w * h * 4);
+      },
+    } as unknown as WebGLRenderer;
+    const [r, g, b] = cube.upperMean(gl);
+    expect(r).toBeCloseTo(1 / 3, 2);
+    expect(g).toBeCloseTo(1 / 3, 2);
+    expect(b).toBeCloseTo(1 / 3, 2);
+  });
+
+  it("an environment for the reflective surfaces while capturing: a constant cube, the capture's own after", () => {
+    const scene = new Scene();
+    const arena = Object.assign(new Group(), { name: "arena" });
+    scene.add(arena);
+    const cube = new GrassCube();
+    const { gl, faces } = fakeRenderer(scene);
+    const cleared: unknown[] = [];
+    let sampledWhileDrawing: Texture | null = null;
+    Object.assign(gl, {
+      getClearColor: (c: unknown) => c,
+      getClearAlpha: () => 1,
+      setClearColor: () => undefined,
+      clear: () => cleared.push(faces.length),
+      render: () => {
+        sampledWhileDrawing ??= cube.uniform.value;
+        faces.push({ target: null, visible: [] });
+      },
+    });
+    cube.capture(gl, scene, arena, null, [0.47, 0.49, 0.49]);
+    // (six faces cleared to it, the capture drawn sampling it, then the capture's own texture)
+    expect(cleared).toHaveLength(6);
+    expect(sampledWhileDrawing).not.toBeNull();
+    expect(cube.uniform.value).not.toBe(sampledWhileDrawing);
+  });
 });

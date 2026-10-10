@@ -102,11 +102,11 @@ describe("particle emitters", () => {
     close(particleColor(emitterSpec("smoke puffs"), [0.098, 0.451, 1], 0.3), [0.246, 0.258, 0.272], 0.01);
   });
 
-  it("additive intensity isn't clamped before the tone map (RV-46): FlashSmall's centre at 0.05 s is 1 - e^-3.27", () => {
+  it("additive intensity isn't clamped before the tone map (RV-46, PP-17): FlashSmall's centre at 0.05 s is 3.27, linear HDR", () => {
     const flash = emitterSpec("small flash");
     const [r] = additiveOutput(flash, flash.color, 16, 0.05 / 0.1);
-    expect(r).toBeCloseTo(1 - Math.exp(-16 * evaluate(flash.alphaOverLife ?? { times: [], values: [] }, 0.5)), 6);
-    expect(r).toBeGreaterThan(0.95);
+    expect(r).toBeCloseTo(16 * evaluate(flash.alphaOverLife ?? { times: [], values: [] }, 0.5), 6);
+    expect(r).toBeGreaterThan(3);
   });
 
   it("the stretched smoke's length has its own curve (RV-48): 0.96 at a tenth of its life, its width 0.64", () => {

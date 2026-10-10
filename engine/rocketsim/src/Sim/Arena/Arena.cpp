@@ -903,6 +903,96 @@ void Arena::_UpdateWorldContacts() {
 	}
 }
 
+// RL PATCH (impact triggers, notes/impact-triggers.md IT-1..3): the game's manifold scan after each physics step
+// (FUN_140eddaa0), its accumulation per partner actor (ARBActor_TA::OnRigidBodyCollision) and HandleCollision's speed:
+// skipped are manifolds with no point, with a no-contact-response body or a sleeping or disabled one
+void Arena::_UpdateImpacts() {
+	if (!collectImpacts)
+		return;
+	if (impacts.size() > IMPACT_LIMIT)
+		impacts.erase(impacts.begin(), impacts.begin() + (impacts.size() - IMPACT_LIMIT / 2));
+	struct Entry {
+		const btCollisionObject* other;
+		int points = 0;
+		btVector3 pos = btVector3(0, 0, 0), normal = btVector3(0, 0, 0), vSelf = btVector3(0, 0, 0), vOther = btVector3(0, 0, 0);
+	};
+	btCollisionDispatcher* dispatcher = _bulletWorld.getDispatcher();
+	std::vector<Entry> entries;
+	for (Car* car : _cars) {
+		if (car->_internalState.isDemoed)
+			continue;
+		entries.clear();
+		for (int i = 0; i < dispatcher->getNumManifolds(); i++) {
+			btPersistentManifold* manifold = dispatcher->getManifoldByIndexInternal(i);
+			if (manifold->getNumContacts() == 0)
+				continue;
+			const btCollisionObject *body0 = manifold->getBody0(), *body1 = manifold->getBody1();
+			bool first = body0 == &car->_rigidBody;
+			if (!first && body1 != &car->_rigidBody)
+				continue;
+			if (!body0->hasContactResponse() || !body1->hasContactResponse())
+				continue;
+			// (a sleeping or disabled dynamic body: Bullet keeps the static ones "sleeping" from the start)
+			auto asleep = [](const btCollisionObject* o) {
+				int state = o->getActivationState();
+				return !o->isStaticObject() && (state == ISLAND_SLEEPING || state == DISABLE_SIMULATION);
+			};
+			if (asleep(body0) || asleep(body1))
+				continue;
+			const btCollisionObject* other = first ? body1 : body0;
+			Entry* entry = nullptr;
+			for (Entry& e : entries)
+				if (e.other == other)
+					entry = &e;
+			if (!entry) {
+				entries.push_back(Entry{ other });
+				entry = &entries.back();
+			}
+			for (int j = 0; j < manifold->getNumContacts(); j++) {
+				const btManifoldPoint& point = manifold->getContactPoint(j);
+				// (the position on body 0's side for both, the normal from body 1 toward body 0: swapped for body 1)
+				entry->pos += point.m_positionWorldOnA;
+				entry->normal += first ? point.m_normalWorldOnB : -point.m_normalWorldOnB;
+				entry->vSelf += first ? point.m_rlVel1 : point.m_rlVel2;
+				entry->vOther += first ? point.m_rlVel2 : point.m_rlVel1;
+				entry->points++;
+			}
+		}
+		for (const Entry& e : entries) {
+			float k = 1.f / (float)e.points;
+			btVector3 pos = e.pos * k, dv = (e.vSelf - e.vOther) * k * BT_TO_UU;
+			if (abs(dv.x()) < 1e-4f && abs(dv.y()) < 1e-4f && abs(dv.z()) < 1e-4f)
+				continue;
+			float length = e.normal.length();
+			btVector3 n = length > 1e-6f ? e.normal / length : btVector3(0, 0, 1);
+			// (the line check: from 10 uu on the car's side through the point to 10 uu into the partner; a hit's normal
+			// and point replace the contact's)
+			btVector3 from = pos + n * (10 * UU_TO_BT), to = pos - n * (10 * UU_TO_BT);
+			// (the car itself left out: the game's source)
+			btCollisionWorld::ClosestRayResultCallback ray(from, to, &car->_rigidBody);
+			ray.m_collisionFilterGroup = -1;
+			ray.m_collisionFilterMask = -1;
+			_bulletWorld.rayTest(from, to, ray);
+			if (ray.hasHit()) {
+				n = ray.m_hitNormalWorld.normalized();
+				pos = ray.m_hitPointWorld;
+			}
+			float speed = abs(dv.dot(n));
+			if (speed < 50)
+				continue;
+			int kind = 0;
+			uint32_t partnerId = 0;
+			if (e.other->getUserIndex() == BT_USERINFO_TYPE_BALL) {
+				kind = 1;
+			} else if (e.other->getUserIndex() == BT_USERINFO_TYPE_CAR) {
+				kind = 2;
+				partnerId = ((Car*)e.other->getUserPointer())->id;
+			}
+			impacts.push_back(ImpactEvent{ tickCount, car->id, kind, partnerId, speed, dv.length() - speed, Vec(pos) * BT_TO_UU, Vec(n) });
+		}
+	}
+}
+
 Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mutatorConfig(gameMode), _config(config) {
 
 	// Tickrate must be from 15 to 120tps
@@ -1540,6 +1630,7 @@ void Arena::Step(int ticksToSimulate) {
 		_bulletWorld.stepSimulation(tickTime, 0, tickTime);
 
 		_UpdateWorldContacts(); // RL PATCH
+		_UpdateImpacts(); // RL PATCH
 
 		size_t carIndex = 0;
 		for (Car* car : _cars) {

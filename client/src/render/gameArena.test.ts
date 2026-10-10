@@ -6,8 +6,8 @@ import { wallLine } from "./arenaSurface";
 import type { CageGraph } from "./cage";
 import { CageBeams, shockRing, shockWave } from "./cageBeams";
 import { existsSync, readFileSync } from "node:fs";
-import { ENV_GLSL, ENV_RADIAL, ENV_SPREAD, GOAL_SIDE_CHART, GlowStripMaterial, HexGlassMaterial, ForceFieldMaterial, envG, goalSideV } from "./gameSurfaces";
-import { GOAL_BASE_LIGHT, GoalFloorMaterial, goalBaseZ, goalFloorZone } from "./goalInterior";
+import { ENV_GLSL, ENV_RADIAL, ENV_SPREAD, GOAL_SIDE_CHART, GlowStripMaterial, HexGlassMaterial, ForceFieldMaterial, envG, goalSideV, netSideUv, overlayUv } from "./gameSurfaces";
+import { GOAL_BASE_LIGHT, GoalFloorMaterial, goalBaseZ, goalFloorZone, underGlassV } from "./goalInterior";
 import { GOAL_PROFILE_CHART, goalPath, goalProfileU } from "./goalSurface";
 import { HexFloorMaterial } from "./stadiumField";
 import { HexWallMaterial } from "./hexWalls";
@@ -35,7 +35,8 @@ describe("the game's arena materials", () => {
     // (each side wall, each team's half; each goal's glows: RV-77)
     expect(all.filter((m) => m instanceof GlowStripMaterial)).toHaveLength(6);
     expect(all.filter((m) => m instanceof HexWallMaterial)).toHaveLength(0);
-    expect(all.filter((m) => m.blending === AdditiveBlending)).toHaveLength(1);
+    // (additive: the cage's beams and the floodlights' flare sheets, SUR-13)
+    expect(all.filter((m) => m.blending === AdditiveBlending)).toHaveLength(2);
   });
 
   it("the stadium's goals carry none of our old team hexes: metal floors, the game's primaries on the mouth (RV-63)", () => {
@@ -185,7 +186,7 @@ describe("the goals' insides (RV-76, RV-77)", () => {
     expect(checked).toBeGreaterThan(10);
     // (under it: the lower glass, the glows, OOBFloor)
     expect(meshes.filter((m) => m.name === "goal under glass")).toHaveLength(1);
-    expect(meshes.filter((m) => m.name === "goal base bevels")).toHaveLength(1);
+    expect(meshes.filter((m) => m.name === "goal base bevels")).toHaveLength(2);
     expect(meshes.filter((m) => m.material instanceof GoalFloorMaterial)).toHaveLength(2);
   });
 
@@ -219,6 +220,12 @@ describe("the goals' insides (RV-76, RV-77)", () => {
     expect(goalFloorZone(300, 5500)).toBe("glass");
     expect(goalFloorZone(700, 5500)).toBe("grate");
     expect(goalFloorZone(300, 5900)).toBe("frame");
+    // (RV-142: the advert strip's second bar across the ramp, its bars along to 5808; the lower glass's V 3 -> 2 inside
+    // to out in every 256 strip)
+    expect(goalFloorZone(300, 5760)).toBe("frame");
+    expect(goalFloorZone(640, 5790)).toBe("frame");
+    expect(underGlassV(64)).toBeCloseTo(0.75, 9);
+    expect(underGlassV(320)).toBeCloseTo(0.75, 9);
   });
 
   it("under each goal OOBFloor, a hex metal slope (RV-104): z -105.5 at |y| 5300, -30.5 at 5900, in its goal's light", () => {
@@ -318,5 +325,56 @@ describe("ENVPack.G's stand-in (RV-71: our own smooth environment)", () => {
       }
     }
     expect(checked).toBeGreaterThan(10);
+  });
+
+  /** A local mesh's triangles: each corner's position and UV, and the face's normal */
+  const meshFaces = (url: URL): { p: number[][]; uv: number[][]; n: [number, number, number] }[] => {
+    const lines = readFileSync(url, "utf8").split("\n");
+    const v = lines.filter((l) => l.startsWith("v ")).map((l) => l.split(/\s+/).slice(1, 4).map(Number));
+    const vt = lines.filter((l) => l.startsWith("vt ")).map((l) => l.split(/\s+/).slice(1, 3).map(Number));
+    return lines
+      .filter((l) => l.startsWith("f "))
+      .map((f) => {
+        const corners = f.split(/\s+/).slice(1, 4).map((c) => c.split("/").map(Number));
+        const p = corners.map(([vi = 0]) => v[vi - 1] ?? [0, 0, 0]);
+        const uv = corners.map(([, ti = 0]) => vt[ti - 1] ?? [0, 0]);
+        const [a, b, c] = p.map((q) => new Vector3(q[0], q[1], q[2])) as [Vector3, Vector3, Vector3];
+        const n = b.clone().sub(a).cross(c.clone().sub(a)).normalize();
+        return { p, uv, n: [Math.abs(n.x), Math.abs(n.y), Math.abs(n.z)] as [number, number, number] };
+      })
+      .filter((f) => f.n.every(Number.isFinite));
+  };
+  const meshes = new URL("../../../out/bsim/assets_local/arena/meshes/", import.meta.url);
+
+  // The overlays' charts against the FF meshes' own UVs (local; RV-74, RV-109: the vertical corners either side of their
+  // seam, the fillets, the roof)
+  it.skipIf(!existsSync(new URL("FF_Goal.obj", meshes)))("the overlays' charts within 0.04 of FF_Goal's, FF_Side's and FF_Roof's UVs at every corner (local)", () => {
+    for (const name of ["FF_Goal", "FF_Side", "FF_Roof"]) {
+      let checked = 0;
+      for (const f of meshFaces(new URL(`${name}.obj`, meshes))) {
+        f.p.forEach(([x = 0, y = 0, z = 0], k) => {
+          const [u, v] = overlayUv([x, y, z], f.n);
+          const [mu = 0, mv = 0] = f.uv[k] ?? [];
+          expect(Math.max(Math.abs(u - mu), Math.abs(v - mv)), `${name} at (${x.toFixed(0)}, ${y.toFixed(0)}, ${z.toFixed(0)}), n ${f.n.map((c) => c.toFixed(3)).join(", ")}`).toBeLessThan(0.04);
+          checked++;
+        });
+      }
+      expect(checked, name).toBeGreaterThan(100);
+    }
+  });
+
+  // The net's flat side walls' chart against Goal_STD_Glass_Outer's UVs (local; RV-110)
+  it.skipIf(!existsSync(new URL("Goal_STD_Glass_Outer.obj", meshes)))("the net side walls' chart within 0.01 of Goal_STD_Glass_Outer's UVs (local)", () => {
+    let checked = 0;
+    for (const f of meshFaces(new URL("Goal_STD_Glass_Outer.obj", meshes))) {
+      if (f.n[0] < 0.97 || f.p.some(([, y = 0]) => Math.abs(y) < 5150)) continue;
+      f.p.forEach(([, y = 0, z = 0], k) => {
+        const [u, v] = netSideUv(Math.abs(y), z);
+        const [mu = 0, mv = 0] = f.uv[k] ?? [];
+        expect(Math.max(Math.abs(u - mu), Math.abs(v - mv))).toBeLessThan(0.01);
+        checked++;
+      });
+    }
+    expect(checked).toBeGreaterThan(100);
   });
 });

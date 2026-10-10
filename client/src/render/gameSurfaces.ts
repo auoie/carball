@@ -82,6 +82,41 @@ const overlayVertexShader = vertexShader.replace(
   vWorldPosition = world.xyz;`,
 );
 
+/** The overlay surfaces' UV, 256 uu a unit (the FF meshes' charts: side walls, and FF_Side's strip down the fillet, u =
+ *  1 + |y| / 256, v = 1 - z / 256; the roof u = -30.978 - |x| / 256, v = |y| / 256 + 1.002; the back walls u = -30.978 -
+ *  |x| / 256, v = 0.999 - z / 256: RV-70c, RV-74). The corners (RV-109): FF_Goal's vertical ones the side walls' u to
+ *  the 45-degree seam (3843, 4226: the diagonal's end, the diagonal itself the back walls'), the back walls' beyond, v =
+ *  0.9988 - 0.003902 z; the wall-ceiling fillets the walls'
+ *  charts, but for their top row (n.z over 0.55) along FF_Goal's diagonal corners (n.x and n.y both over 0.42), which
+ *  takes the roof's (from the meshes' UVs, 40 faces). `p` in the game's frame, `n` its normal's absolute
+ *  (OVERLAY_UV_GLSL's, for tests) */
+export function overlayUv(p: readonly [number, number, number], n: readonly [number, number, number]): [number, number] {
+  const [ax, ay, z] = [Math.abs(p[0]), Math.abs(p[1]), p[2]];
+  const corner = n[2] < 0.3;
+  const side = 1 + ay / 256;
+  const back = -30.978 - ax / 256;
+  if (n[2] > 0.7 || (n[2] > 0.55 && Math.min(n[0], n[1]) > 0.42)) return [back, ay / 256 + 1.002];
+  if (n[1] > 0.97) return [back, 0.999 - z / 256];
+  if (n[0] > 0.97 || (ay <= 128 && z < 256)) return [side, 1 - z / 256];
+  if (n[0] > n[1] + 0.001) return [side, corner ? 0.9988 - 0.003902 * z : 1 - z / 256];
+  return [back, corner ? 0.9988 - 0.003902 * z : 0.999 - z / 256];
+}
+
+export const OVERLAY_UV_GLSL = /* glsl */ `
+vec2 overlayUv(vec3 p, vec3 n) {
+  float ax = abs(p.x);
+  float ay = abs(p.y);
+  bool corner = n.z < 0.3;
+  float side = 1.0 + ay / 256.0;
+  float back = -30.978 - ax / 256.0;
+  return n.z > 0.7 || (n.z > 0.55 && min(n.x, n.y) > 0.42) ? vec2(back, ay / 256.0 + 1.002)
+    : n.y > 0.97 ? vec2(back, 0.999 - p.z / 256.0)
+    : n.x > 0.97 || (ay <= 128.0 && p.z < 256.0) ? vec2(side, 1.0 - p.z / 256.0)
+    : n.x > n.y + 0.001 ? vec2(side, corner ? 0.9988 - 0.003902 * p.z : 1.0 - p.z / 256.0)
+    : vec2(back, corner ? 0.9988 - 0.003902 * p.z : 0.999 - p.z / 256.0);
+}
+`;
+
 /** FF_Side / FF_Roof (Beach_NetFence_MIC, AV-16, H-9): over the walls and ceiling, a faint fine hex net everywhere
  *  (25 % on its lines), and round the ball a hex disc within 220-300 uu and a thin team-coloured ring at 312-325 uu */
 const overlayFragment = /* glsl */ `
@@ -95,6 +130,7 @@ varying vec3 vWorldPosition;
 varying vec3 vWorldNormal;
 #include <fog_pars_fragment>
 ${hexGlsl}
+${OVERLAY_UV_GLSL}
 void main() {
   // (the game's frame: Three's x, z, y)
   vec3 p = vWorldPosition.xzy;
@@ -106,16 +142,7 @@ void main() {
   bool midfield = ay <= 128.0;
   float lowest = ay > 5100.0 && ax < 1328.0 ? (ax < 880.0 ? 704.0 : 704.0 - (ax - 880.0)) : midfield ? 72.6 : 256.0;
   if (p.z < lowest) discard;
-  // UV, 256 uu a unit (the FF meshes' charts: side walls, and FF_Side's strip down the fillet, u = 1 + |y| / 256, v = 1
-  // - z / 256; the roof u = -30.978 - |x| / 256, v = |y| / 256 + 1.002; the back walls u = -30.978 - |x| / 256, v =
-  // 0.999 - z / 256: RV-70c, RV-74). The corners (RV-109): FF_Goal's vertical ones the side walls' u to the 45-degree
-  // seam (3843, 4226), the back walls' beyond, v = 0.9988 - 0.003902 z; the wall-ceiling fillets the walls' charts
-  bool corner = n.z < 0.3;
-  vec2 uv = n.z > 0.7 ? vec2(-30.978 - ax / 256.0, ay / 256.0 + 1.002)
-    : n.y > 0.97 ? vec2(-30.978 - ax / 256.0, 0.999 - p.z / 256.0)
-    : n.x > 0.97 || (midfield && p.z < 256.0) ? vec2(1.0 + ay / 256.0, 1.0 - p.z / 256.0)
-    : n.x >= n.y ? vec2(1.0 + ay / 256.0, corner ? 0.9988 - 0.003902 * p.z : 1.0 - p.z / 256.0)
-    : vec2(-30.978 - ax / 256.0, corner ? 0.9988 - 0.003902 * p.z : 0.999 - p.z / 256.0);
+  vec2 uv = overlayUv(p, n);
   float d = length(p - ballPosition.xzy);
   float F = saturate1(1.0 - 0.04 * (d - 300.0));
   float outside = saturate1(12.0 * (0.5 - F));
@@ -133,7 +160,7 @@ void main() {
   vec3 team = 2.0 * mix(primary0, primary1, saturate1(p.y / 400.0 + 0.5));
   // (the hexagon term unclamped in the colour's lerp: 0.25 + 1.23 (0.6 - 0.25) on a line at the ball, RV-65)
   vec3 colour = mix(mix(vec3(0.25), team, ring), vec3(0.6), hex);
-  gl_FragColor = vec4(1.0 - exp(-colour), saturate1(alpha));
+  gl_FragColor = vec4(colour, saturate1(alpha));
   #include <colorspace_fragment>
   #include <fog_fragment>
 }
@@ -171,10 +198,22 @@ float envG(vec2 uv) {
 }
 `;
 
+/** The goal net's flat side walls' chart (Goal_STD_Glass_Outer's, planar: RV-73, RV-110), at |y|, z (NET_SIDE_GLSL's, for
+ *  tests) */
+export function netSideUv(ay: number, z: number): [number, number] {
+  return [0.004898 * ay - 25.7024, 1.21 - 0.004732 * z];
+}
+
+export const NET_SIDE_GLSL = /* glsl */ `
+vec2 netSideUv(float ay, float z) {
+  return vec2(0.004898 * ay - 25.7024, 1.21 - 0.004732 * z);
+}
+`;
+
 /** The goal-side glass panel's chart (RV-72) as fitted rules, not the mesh's own UVs (RV-99): U a unit every 213.3 uu
  *  from 6 at |x| 960 to |x| 1344, then every 160 uu; V up the face a line in z (within 0.045 of the mesh's UVs from z 256
  *  up, about 0.1 of a hex tile: RV-115); below that down to the bottom row (z 127), whose V rises with |x| as a
- *  smoothstep, within 0.005 */
+ *  smoothstep, within 0.031 */
 export const GOAL_SIDE_CHART = {
   u: { at: 960, value: 6, bend: 1344, inner: 213.33, outer: 160 },
   face: { v0: 1.293, perZ: -0.004873, from: 256 },
@@ -204,6 +243,7 @@ varying vec2 vGlassTile;
 #include <fog_pars_fragment>
 ${hexGlsl}
 ${ENV_GLSL}
+${NET_SIDE_GLSL}
 void main() {
   vec2 tile = vGlassTile;
   #ifdef GOAL_SIDE_GLASS
@@ -222,10 +262,10 @@ void main() {
     tile = vec2(3.0 * u, (7.0 / 3.0) * v);
   #endif
   #ifdef NET_SIDE_WALLS
-    // The goal net's flat side walls: the game's planar chart there, U = 0.004898 |y| - 25.7024, V = 1.21 - 0.004732 z
-    // (the swept profile's not carried on: RV-73, RV-110)
+    // The goal net's flat side walls: the game's planar chart there (netSideUv; the swept profile's not carried on: RV-73,
+    // RV-110)
     vec3 n = normalize(vWorldNormal);
-    if (abs(n.x) > 0.97) tile = vec2(3.0 * (0.004898 * abs(vWorldPosition.z) - 25.7024), (7.0 / 3.0) * (1.21 - 0.004732 * vWorldPosition.y));
+    if (abs(n.x) > 0.97) tile = vec2(3.0, 7.0 / 3.0) * netSideUv(abs(vWorldPosition.z), vWorldPosition.y);
   #endif
   float g = profile32(packG, hexRadius(tile));
   // (cells under a few pixels: the tile's average)

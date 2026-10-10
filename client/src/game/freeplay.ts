@@ -3,7 +3,7 @@
 import { Quaternion, Vector3 } from "three";
 import { Interpolated } from "./interpolated";
 import { PlayerCamera } from "../camera/rlCamera";
-import type { BodyState, CarState, World } from "../engine/world";
+import { BOOST_SPAWN_AMOUNT, type BodyState, type CarState, type World } from "../engine/world";
 import { type Hud, respawnHud } from "../hud";
 import type { InputDevices } from "../input/devices";
 import { AirPitchSafety, ButtonLatch, EMPTY_INPUT, type HeldActions, JumpLatch, type LookInput, readControls, readHeldActions } from "../input/mapping";
@@ -74,6 +74,7 @@ export class Freeplay {
   #spawnIndex = 0;
   /** Ticks to freeplay's second pad reset (0: none due) */
   #padResetTicks = 0;
+  #unlimitedBoost: boolean;
   /** The new ball held at its spawn this many more ticks, and where that is */
   #ballHold = 0;
   #ballSpawn: Vec3 = ZERO;
@@ -110,7 +111,9 @@ export class Freeplay {
     this.#hud = hud;
     this.#audio = audio;
     this.#playerId = world.addCar(0);
-    world.setUnlimitedBoost(true); // (freeplay's default boost setting: Unlimited)
+    // (Unlimited boost in free play: on by default, as the game's; off, 33 each round, used up, and pads taken)
+    this.#unlimitedBoost = settings().options.unlimitedBoost;
+    world.setUnlimitedBoost(this.#unlimitedBoost);
     this.#startRound();
 
     this.#effects = new SceneEffects(renderer.scene);
@@ -125,6 +128,7 @@ export class Freeplay {
 
   /** One animation frame. `rawSeconds`: time since the previous frame, unclamped. */
   frame(rawSeconds: number): void {
+    this.#applyBoostSetting();
     let replay = this.#replay;
     if (!replay) {
       // The frame's times (slowed after a goal); PostGoalTime up: the goal replay, or a new round (RV-21)
@@ -312,11 +316,11 @@ export class Freeplay {
 
   /** For screenshots and browser tests: the car on the floor at (x, y) facing `yaw` (rad, the game's), at rest, and
    *  the ball at `ball` if given. */
-  debugPlace(car: { readonly x: number; readonly y: number; readonly yaw: number }, ball?: Vec3): void {
+  debugPlace(car: { readonly x: number; readonly y: number; readonly yaw: number; readonly boost?: number }, ball?: Vec3): void {
     const forward = vec3(Math.cos(car.yaw), Math.sin(car.yaw), 0);
     const rot = { forward, right: vec3(-forward.y, forward.x, 0), up: vec3(0, 0, 1) };
-    // (100: freeplay's Unlimited boost)
-    this.#world.setCar(this.#playerId, { pos: vec3(car.x, car.y, 17.01), vel: ZERO, angVel: ZERO, rot, boost: 100 });
+    // (100 with Unlimited boost, at which a car takes no pads (CanPickup: !IsFull); else a round's 33; or as given)
+    this.#world.setCar(this.#playerId, { pos: vec3(car.x, car.y, 17.01), vel: ZERO, angVel: ZERO, rot, boost: car.boost ?? (this.#unlimitedBoost ? 100 : BOOST_SPAWN_AMOUNT) });
     if (ball) {
       this.#ballHold = 0;
       this.#world.setBall({ pos: ball, vel: ZERO, angVel: ZERO });
@@ -338,6 +342,26 @@ export class Freeplay {
   /** For screenshots and tests: live particles */
   debugParticles(): number {
     return this.#effects.particles.count;
+  }
+
+  /** For the browser tests: the pads (taken or not) and the car's boost */
+  debugPads(): { readonly pads: readonly { readonly x: number; readonly y: number; readonly big: boolean; readonly active: boolean }[]; readonly boost: number } {
+    return {
+      pads: this.#world.boostPads().map((p) => ({ x: p.pos.x, y: p.pos.y, big: p.big, active: p.active })),
+      boost: this.#world.car(this.#playerId).boost,
+    };
+  }
+
+  /** The Unlimited boost setting changed: on fills the tank (the engine's), off leaves it as a new round would */
+  #applyBoostSetting(): void {
+    const unlimited = this.settings().options.unlimitedBoost;
+    if (unlimited === this.#unlimitedBoost) return;
+    this.#unlimitedBoost = unlimited;
+    this.#world.setUnlimitedBoost(unlimited);
+    if (!unlimited) {
+      const car = this.#world.car(this.#playerId);
+      this.#world.setCar(this.#playerId, { pos: car.pos, vel: car.vel, angVel: car.angVel, rot: car.rot, boost: BOOST_SPAWN_AMOUNT });
+    }
   }
 
   /** Freeplay helpers: ball in front of the car, or dropped onto its roof. */

@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { ArenaView } from "./arena";
 import { floorOutline } from "./arenaSurface";
 import { GrassCube } from "./grassCube";
-import { FrameMaterial, GRASS_LIGHT, GrassMaterial, HexFloorMaterial, MarkingMaterial, TIRE_MARKS, buildStadiumField, grassReflection } from "./stadiumField";
+import { FrameMaterial, GRASS_LIGHT, GrassMaterial, HexFloorMaterial, MarkingMaterial, TIRE_MARKS, buildStadiumField, grassBin, grassReflection } from "./stadiumField";
 import { FIELD_LIGHT, FIELD_MEASURES, type FieldPlan, shippableFieldPlan } from "./stadiumFieldRules";
 import { nightTheme } from "./themes/night";
 import { stadiumTheme } from "./themes/stadium";
@@ -201,13 +201,15 @@ describe("the field's materials and light", () => {
       Array.from({ length: flat.length / 3 }, (_, k) => [flat[3 * k] ?? 0, flat[3 * k + 1] ?? 0, flat[3 * k + 2] ?? 0]);
     const ribbons = shippableFieldPlan().goalGlow.map((r) => ({ attached: points(r.attached), free: points(r.free) }));
     const onWall = (p: [number, number, number][]): boolean => p.every(([, y]) => Math.abs(y - glow.wallY) < 1e-6);
-    // The mouth ring: on the back wall's plane, up over the crossbar; its free edge in toward the opening
+    // The mouth ring: on the back wall's plane, up over the crossbar and along the floor (one loop: RV-143); its free
+    // edge in toward the opening (nearer its middle, (0, 320)), 63 from the attached one or nearer at the fillets
     const ring = ribbons.find((r) => onWall(r.attached) && Math.max(...r.attached.map(([, , z]) => z)) > 600 && Math.max(...r.attached.map(([x]) => Math.abs(x))) < 950);
     expect(ring).toBeDefined();
+    expect(Math.min(...(ring?.attached.map(([, , z]) => z) ?? [0]))).toBeCloseTo(1, 6);
     ring?.attached.forEach(([x, , z], k) => {
       const [fx, , fz] = ring.free[k] ?? [0, 0, 0];
-      expect(Math.abs(fx)).toBeLessThanOrEqual(Math.abs(x) + 1e-6);
-      expect(fz).toBeLessThanOrEqual(z + 1e-6);
+      expect(Math.hypot(fx, fz - 320)).toBeLessThan(Math.hypot(x, z - 320));
+      expect(Math.hypot(fx - x, fz - z)).toBeLessThanOrEqual(glow.width + 1e-6);
     });
     // The stepped outline: its free edge in the wall's plane, 128 above
     const stepped = ribbons.find((r) => onWall(r.attached) && Math.max(...r.attached.map(([x]) => Math.abs(x))) === glow.stepped.to);
@@ -224,6 +226,69 @@ describe("the field's materials and light", () => {
     for (const front of fronts) expect(Math.min(...front.attached.map(([, y]) => y))).toBeCloseTo(glow.inside.front, 6);
   });
 
+  // (local: the game's meshes and the traced plan, never shipped)
+  const centreLines = new URL("../../../out/bsim/assets_local/arena/meshes/Field_Center_Lines.obj", import.meta.url);
+  it.skipIf(!existsSync(centreLines))("the shipped plan's centre markings cover Field_Center_Lines' (raster IoU 0.9 or more: RV-141, local)", () => {
+    // (2 uu cells over the centre, |x| and |y| to 800; a cell counts where its centre is in a triangle)
+    const cell = 2;
+    const half = 800;
+    const n = (2 * half) / cell;
+    const raster = (tris: readonly Tri[]): Uint8Array => {
+      const grid = new Uint8Array(n * n);
+      for (const t of tris) {
+        const xs = [t[0], t[2], t[4]];
+        const ys = [t[1], t[3], t[5]];
+        const [i0, i1] = [Math.max(0, Math.floor((Math.min(...xs) + half) / cell)), Math.min(n - 1, Math.ceil((Math.max(...xs) + half) / cell))];
+        const [j0, j1] = [Math.max(0, Math.floor((Math.min(...ys) + half) / cell)), Math.min(n - 1, Math.ceil((Math.max(...ys) + half) / cell))];
+        for (let i = i0; i <= i1; i++) {
+          for (let j = j0; j <= j1; j++) if (inTriangle((i + 0.5) * cell - half, (j + 0.5) * cell - half, t)) grid[i * n + j] = 1;
+        }
+      }
+      return grid;
+    };
+    const lines = readFileSync(centreLines, "utf8").split("\n");
+    const v = lines.filter((l) => l.startsWith("v ")).map((l) => l.split(/\s+/).slice(1, 3).map(Number));
+    const game: Tri[] = lines
+      .filter((l) => l.startsWith("f "))
+      .map((l) => l.split(/\s+/).slice(1, 4).flatMap((c) => v[Number(c.split("/")[0]) - 1] ?? [0, 0]) as unknown as Tri);
+    let ours: Mesh | undefined;
+    buildStadiumField(new Color(0, 0, 1), new Color(1, 0.5, 0), new GrassCube().uniform, shippableFieldPlan()).traverse((o) => {
+      if (o instanceof Mesh && o.name === "markings: centre") ours = o as Mesh;
+    });
+    expect(ours).toBeDefined();
+    const [a, b] = [raster(game), raster(ours ? triangles(ours) : [])];
+    let both = 0;
+    let either = 0;
+    for (let k = 0; k < a.length; k++) {
+      both += a[k] === 1 && b[k] === 1 ? 1 : 0;
+      either += a[k] === 1 || b[k] === 1 ? 1 : 0;
+    }
+    expect(both / either).toBeGreaterThanOrEqual(0.9);
+  });
+
+  it.skipIf(!local)("the shipped plan's goal glows run where the traced ones do: every traced attached point within 10 uu of a shipped ribbon (RV-143, local)", () => {
+    const points = (flat: readonly number[]): [number, number, number][] =>
+      Array.from({ length: flat.length / 3 }, (_, k) => [flat[3 * k] ?? 0, flat[3 * k + 1] ?? 0, flat[3 * k + 2] ?? 0]);
+    const shipped = shippableFieldPlan().goalGlow.map((r) => points(r.attached));
+    // (the distance from a point to a polyline, segment by segment)
+    const toSegment = (p: readonly number[], a: readonly number[], b: readonly number[]): number => {
+      const d = [0, 1, 2].map((k) => (b[k] ?? 0) - (a[k] ?? 0));
+      const len2 = d.reduce((s, c) => s + c * c, 0);
+      const t = len2 > 0 ? Math.min(Math.max([0, 1, 2].reduce((s, k) => s + ((p[k] ?? 0) - (a[k] ?? 0)) * (d[k] ?? 0), 0) / len2, 0), 1) : 0;
+      return Math.hypot(...[0, 1, 2].map((k) => (p[k] ?? 0) - (a[k] ?? 0) - t * (d[k] ?? 0)));
+    };
+    const far: string[] = [];
+    for (const r of local?.goalGlow ?? []) {
+      for (const p of points(r.attached)) {
+        // (both goals: the shipped ribbons for +y, mirrored)
+        const q = [p[0], Math.abs(p[1]), p[2]];
+        const d = Math.min(...shipped.flatMap((s) => s.slice(1).map((b, k) => toSegment(q, s[k] ?? b, b))));
+        if (d > 10) far.push(`(${p.map((c) => c.toFixed(0)).join(", ")}) ${d.toFixed(1)}`);
+      }
+    }
+    expect(far).toEqual([]);
+  });
+
   it("the centre's arcs lie on the disc, inside the raised trim, its E ring on the trim (RV-102)", () => {
     const { centre, marking, trimLine } = FIELD_MEASURES;
     expect(marking.arc.r + marking.width / 2).toBeLessThan(centre.disc);
@@ -232,6 +297,39 @@ describe("the field's materials and light", () => {
     expect(trimLine.rings[0]).toBeLessThan(centre.trim[1]);
     expect(trimLine.rings[1]).toBeGreaterThan(centre.ventTrim[0]);
     expect(trimLine.rings[1]).toBeLessThan(centre.ventTrim[1]);
+  });
+
+  it("the grass's light bins where the game's are (RV-146): on 256's, half the partial end bins' widths in", () => {
+    const x = (s: number): number => grassBin(s, GRASS_LIGHT.x0, GRASS_LIGHT.x1, GRASS_LIGHT.x.length);
+    const y = (s: number): number => grassBin(s, GRASS_LIGHT.y0, GRASS_LIGHT.y1, GRASS_LIGHT.y.length);
+    expect(x(-3695)).toBeCloseTo(0, 9);
+    expect(x(-3456)).toBeCloseTo(1, 9);
+    expect(x(-3584 + 128 + 256 * 13)).toBeCloseTo(14, 9);
+    expect(x(3695)).toBeCloseTo(29, 9);
+    expect(y(160)).toBeCloseTo(0, 9);
+    expect(y(384)).toBeCloseTo(1, 9);
+    expect(y(4719)).toBeCloseTo(18, 9);
+  });
+
+  it("the shipped plan's centre arcs, strips and hatches (RV-103c, d, RV-141): the hooks' legs on to x 96 and 590, the strip's end 96 wide, the hatch bars 16.3", () => {
+    const { marking, centreStrip } = FIELD_MEASURES;
+    expect(marking.hatch).toBe(16.3);
+    expect(centreStrip.at(-1)).toEqual([3326, 96]);
+    const arc = shippableFieldPlan().markings.centre[0] ?? [];
+    const pts = Array.from({ length: (arc.length - 1) / 2 }, (_, k): [number, number] => [arc[1 + 2 * k] ?? 0, arc[2 + 2 * k] ?? 0]);
+    // (one way along: no join's arc overshooting its side)
+    pts.forEach(([x, y], k) => {
+      const [px, py] = pts[k - 1] ?? [x, y];
+      expect(Math.hypot(x - px, y - py)).toBeLessThan(200);
+    });
+    expect(pts.slice(-6).every(([x, y], k, a) => k === 0 || y <= (a[k - 1]?.[1] ?? Infinity) + 1e-9 || x !== 96)).toBe(true);
+    // (the legs on |y - x| = 441, then down x 96 to y 504 and down x 590 (their joins rounded: RV-141))
+    const on = (test: (x: number, y: number) => boolean): number => pts.filter(([x, y]) => test(x, y)).length;
+    expect(on((x, y) => Math.abs(y - x - marking.arc.leg) < 0.5 && x > 96 && x < 233)).toBeGreaterThan(0);
+    expect(on((x, y) => Math.abs(x - y - marking.arc.leg) < 0.5 && x > 590 && x < 674)).toBeGreaterThan(0);
+    expect(pts.at(-1)).toEqual([96, 504]);
+    expect(on((x, y) => Math.abs(x - 96) < 0.01 && y > 504 && y < 537)).toBeGreaterThan(0);
+    expect(on((x, y) => Math.abs(x - 590) < 0.01 && y > 64 && y < 149)).toBeGreaterThan(0);
   });
 
   it("the grass's light tables cover the grass (RV-105a: |x| to 3806, |y| 64-4830)", () => {
@@ -277,7 +375,8 @@ describe("the field's materials and light", () => {
 
   it("builds carry no traced shapes: the shippable plan is built from FIELD_MEASURES (under a thousand numbers)", () => {
     // (the plan module's numbers, outside FIELD_LIGHT's statistics: well under the traced plan's thousands)
-    const source = readFileSync(new URL("./stadiumFieldRules.ts", import.meta.url), "utf8");
+    // (comments left out: they don't ship; the module has no strings holding "//")
+    const source = readFileSync(new URL("./stadiumFieldRules.ts", import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
     const withoutLight = source.replace(/export const FIELD_LIGHT[\s\S]*?\n};\n/, "");
     const numbers = withoutLight.match(/-?\d+\.?\d*/g) ?? [];
     expect(numbers.length).toBeLessThan(1000);

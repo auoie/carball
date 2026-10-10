@@ -673,6 +673,68 @@ static void TestNoPickupAtFullBoost() {
 	delete arena;
 }
 
+static void TestImpacts() {
+	puts("impacts (IT-1..3): a ball into a resting car, a car onto its roof: the speed along the averaged normal and the partner; resting contact none");
+	{
+		Arena* arena = Arena::Create(GameMode::SOCCAR);
+		arena->collectImpacts = true;
+		Car* car = arena->AddCar(Team::BLUE);
+		car->SetState(CarAt({ 0, 0, 17.01f }, { 1, 0, 0 }, { 0, 0, 1 }));
+		BallState bs;
+		bs.pos = { 300, 0, 93.15f };
+		bs.vel = { -2000, 0, 0 };
+		arena->ball->SetState(bs);
+		const Arena::ImpactEvent* hit = nullptr;
+		for (int t = 0; t < 30 && !hit; t++) {
+			arena->Step(1);
+			for (const auto& e : arena->impacts)
+				if (e.carId == car->id && e.partnerKind == 1)
+					hit = &e;
+		}
+		CHECK(hit != nullptr, "no ball impact");
+		if (hit) {
+			// (the ball meets the nose's top edge: its normal tilted up, the speed 2000 times its x part)
+			CHECK(hit->normal.x < -0.85f, "normal %g %g %g", hit->normal.x, hit->normal.y, hit->normal.z);
+			CHECK(Near(hit->speed, 2000 * -hit->normal.x, 60), "speed %g (normal x %g)", hit->speed, hit->normal.x);
+		}
+		delete arena;
+	}
+	{
+		Arena* arena = Arena::Create(GameMode::SOCCAR);
+		arena->collectImpacts = true;
+		Car* car = arena->AddCar(Team::BLUE);
+		arena->ball->SetState(BallState());
+		car->SetState(CarAt({ 1000, 1000, 120 }, { 1, 0, 0 }, { 0, 0, -1 }, { 0, 0, -1500 }));
+		const Arena::ImpactEvent* hit = nullptr;
+		for (int t = 0; t < 30 && !hit; t++) {
+			arena->impacts.clear();
+			arena->Step(1);
+			for (const auto& e : arena->impacts)
+				if (e.partnerKind == 0)
+					hit = &e;
+		}
+		CHECK(hit != nullptr, "no world impact");
+		if (hit) {
+			CHECK(hit->normal.z > 0.95f, "normal %g %g %g", hit->normal.x, hit->normal.y, hit->normal.z);
+			CHECK(hit->speed > 1450 && hit->speed < 1600, "speed %g", hit->speed);
+		}
+		// (resting on its roof: nothing 50 uu/s or more)
+		arena->Step(240);
+		arena->impacts.clear();
+		arena->Step(120);
+		size_t resting = 0;
+		for (const auto& e : arena->impacts)
+			resting += e.partnerKind == 0;
+		CHECK(resting == 0, "%zu impacts resting", resting);
+		// (off, the default: nothing kept)
+		arena->collectImpacts = false;
+		car->SetState(CarAt({ 1000, 1000, 120 }, { 1, 0, 0 }, { 0, 0, -1 }, { 0, 0, -1500 }));
+		arena->Step(30);
+		CHECK(arena->impacts.empty(), "%zu impacts collected while off", arena->impacts.size());
+		delete arena;
+	}
+}
+
 static void TestKickoffUnevenTeams() {
 	puts("kickoff with uneven teams: the short team's last car takes the most central of the full team's spots (MR-5)");
 	using namespace RLConst;
@@ -1518,6 +1580,14 @@ static void TestPresetBoxes() {
 		}
 		arena->RemoveCar(car);
 	}
+	// (an offset where the game's chain and a single x 0.02f differ: 10 and 20 uu give 0x3e4ccccb and 0x3ecccccb by the
+	// chain, 0x3e4ccccc and 0x3ecccccc by x 0.02f: RV-148)
+	CarConfig odd = CAR_CONFIG_OCTANE;
+	odd.hitboxPosOffset = Vec(10, 0, 20);
+	Car* car = arena->AddCar(Team::BLUE, odd);
+	const btVector3& child = car->_compoundShape.getChildTransform(0).getOrigin();
+	CHECK(bitsOf(child.x()) == 0x3e4ccccbu && bitsOf(child.z()) == 0x3ecccccbu, "child origin by the chain: %08x %08x", bitsOf(child.x()), bitsOf(child.z()));
+	arena->RemoveCar(car);
 	delete arena;
 }
 
@@ -1553,6 +1623,7 @@ int main(int argc, char** argv) {
 	TestQuantize();
 	TestBumpCurves();
 	TestBoostPads();
+	TestImpacts();
 	TestRespawn();
 	TestSpawnCount();
 	TestSpawnHeights();

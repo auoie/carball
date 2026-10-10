@@ -136,13 +136,14 @@ export function particleColor(spec: EmitterSpec, start: readonly number[], t: nu
   return [mix(0), mix(1), mix(2)];
 }
 
-/** An additive sprite's output at `t` of its life, as the shader has it: 1 - exp(-I), I = colour x alpha x the sprite's
- *  shape there (1 at its centre); the alpha an intensity, unclamped (the game's rgb = I C.rgb C.a) */
+/** An additive sprite's output at `t` of its life, as the shader has it: colour x alpha x the sprite's shape there (1 at
+ *  its centre), linear HDR (the post-processing tone-maps it: PP-17); the alpha an intensity, unclamped (the game's rgb
+ *  = I C.rgb C.a) */
 export function additiveOutput(spec: EmitterSpec, start: readonly number[], alpha: number, t: number, shape = 1): readonly [number, number, number] {
   const c = particleColor(spec, start, t);
   const a = alpha * (spec.alphaOverLife ? evaluate(spec.alphaOverLife, t) : 1);
-  const tone = (v: number): number => 1 - Math.exp(-Math.max(0, v) * Math.max(0, a) * shape);
-  return [tone(c[0]), tone(c[1]), tone(c[2])];
+  const linear = (v: number): number => Math.max(0, v) * Math.max(0, a) * shape;
+  return [linear(c[0]), linear(c[1]), linear(c[2])];
 }
 
 /** A spawn sphere's offset (SpawnEx 0x140ac6130: RV-82): on the surface, a unit direction times the radius; in the
@@ -159,7 +160,9 @@ export function spherePoint(random: () => number, radius: number, surface: boole
 }
 
 /** A random unit direction as the game's draws are (RV-52d): normalize(U(-1, 1)^3) (a zero draw: straight up). The
- *  game's DetermineUnitDirection (live 0x140ab5310) draws U(-1, 1)^3 without normalising it (RV-113) */
+ *  game's DetermineUnitDirection (live 0x140ab5310) draws U(-1, 1)^3 without normalising it; SpawnEx's SurfaceOnly
+ *  spheres (0x140ac6130) normalise it before scaling by the radius, which is what the demolition's emitters use
+ *  (RV-113) */
 export function unitDirection(random: () => number): Vec3 {
   const v = { x: random() * 2 - 1, y: random() * 2 - 1, z: random() * 2 - 1 };
   const n = Math.hypot(v.x, v.y, v.z);
@@ -227,10 +230,10 @@ void main() {
   }
   vec3 rgb = max(vTint.rgb, 0.0);
   if (additive) {
-    // (rgb = I C.rgb C.a: the alpha an intensity, not clamped before the tone map)
-    gl_FragColor = vec4(1.0 - exp(-rgb * max(vTint.a, 0.0) * shape), 1.0);
+    // (rgb = I C.rgb C.a: the alpha an intensity, unclamped: linear HDR for the post-processing's tone map, PP-17)
+    gl_FragColor = vec4(rgb * max(vTint.a, 0.0) * shape, 1.0);
   } else {
-    gl_FragColor = vec4(1.0 - exp(-rgb), clamp(vTint.a * shape, 0.0, 1.0));
+    gl_FragColor = vec4(rgb, clamp(vTint.a * shape, 0.0, 1.0));
   }
   #include <colorspace_fragment>
 }

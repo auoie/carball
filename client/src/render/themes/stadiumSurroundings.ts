@@ -13,8 +13,11 @@ import {
   Group,
   Mesh,
   NormalBlending,
+  Path,
   PlaneGeometry,
   ShaderMaterial,
+  Shape,
+  ShapeGeometry,
   SphereGeometry,
   UniformsLib,
   UniformsUtils,
@@ -25,28 +28,35 @@ import { GRASS_CUBE_AT } from "../grassCube";
 import { fullBright } from "../teamColors";
 
 /** A glow seen from the capture point: its direction (az = atan2(y, x), el, degrees), its angular half sizes across and
- *  up (degrees: atan(256 Scale3D.y / d) x atan(256 Scale3D.z / d)), its distance (uu), its roll about the view
- *  (degrees); `clear`: unfogged, faded instead by elevation from 0 at `clear[0]` to 1 at `clear[1]` degrees */
+ *  up (degrees: atan(256 Scale3D.y / d) x atan(256 Scale3D.z / d)), its distance (uu), its pitch (degrees, its top
+ *  toward the arena: the instances' rotation, RV-119); `clear`: unfogged, faded instead by elevation (clearFade) */
 export interface Hotspot {
   readonly az: number;
   readonly el: number;
   readonly radius: readonly [number, number];
   readonly distance: number;
-  readonly tilt?: number;
-  readonly clear?: readonly [number, number];
+  readonly pitch?: number;
+  readonly clear?: boolean;
+}
+
+/** The +X hotspot's pass through the haze by elevation (RV-120: min(1, 0.07 e^(0.12 el)), within 0.04 of the game's
+ *  pass fractions 0.07, 0.12, 0.16, 0.27, 0.56, 0.89 at el 0-25) */
+export const CLEAR_FADE = { at0: 0.07, rate: 0.12 } as const;
+export function clearFade(el: number): number {
+  return Math.min(1, CLEAR_FADE.at0 * Math.exp(CLEAR_FADE.rate * el));
 }
 
 /** CubeMap_HotSpot_Mat's glows (SUR-33, corrected: ellipses; ten Circle_Sprites the game shows only to its cube
  *  capture): the +X horizon's (fogged only near the horizon: RV-120), two over the back (-X), one over each end, one
  *  each side of the open +X. HotSpot_Mat's at 490k is fogged out in the game */
 export const HOTSPOTS: readonly Hotspot[] = [
-  { az: 2, el: 2, radius: [52.7, 30.4], distance: 150000, clear: [6, 18] },
-  { az: 180, el: 7, radius: [63.1, 33.3], distance: 25000 },
-  { az: 180, el: 7, radius: [6.1, 33.7], distance: 37000, tilt: 36 },
-  { az: 107, el: 22, radius: [60.8, 30.8], distance: 14000 },
-  { az: -108, el: 26, radius: [50.5, 22.0], distance: 15000 },
-  { az: 35, el: 15, radius: [21, 21], distance: 15000 },
-  { az: -35, el: 15, radius: [21, 21], distance: 15000 },
+  { az: 2, el: 2, radius: [52.7, 30.4], distance: 150000, pitch: 35.7, clear: true },
+  { az: 180, el: 7, radius: [63.1, 33.3], distance: 25000, pitch: 14.7 },
+  { az: 180, el: 7, radius: [6.1, 33.7], distance: 37000, pitch: 35.7 },
+  { az: 107, el: 22, radius: [60.8, 30.8], distance: 14000, pitch: 14.7 },
+  { az: -108, el: 26, radius: [50.5, 22.0], distance: 15000, pitch: 9.7 },
+  { az: 35, el: 15, radius: [21, 21], distance: 15000, pitch: 9.7 },
+  { az: -35, el: 15, radius: [21, 21], distance: 15000, pitch: 9.7 },
 ];
 /** The farthest a sprite is placed (inside the concourse's wall and the sky's dome; its angular size kept, its fog
  *  its own distance's) */
@@ -55,8 +65,8 @@ export const HOTSPOT_PLACE_MAX = 29000;
 export const HOTSPOT_COLOR = [4.27, 5.49, 5.8] as const;
 /** The team hotspots (additive, 8 FillFlare.G FB(team)): low over each goal, 8k out */
 export const TEAM_HOTSPOTS: readonly (Hotspot & { readonly team: 0 | 1 })[] = [
-  { team: 0, az: -90, el: 9, radius: [26.9, 20.8], distance: 8087 },
-  { team: 1, az: 90, el: 8, radius: [23.5, 18.1], distance: 9421 },
+  { team: 0, az: -90, el: 9, radius: [26.9, 20.8], distance: 8087, pitch: 35.7 },
+  { team: 1, az: 90, el: 8, radius: [23.5, 18.1], distance: 9421, pitch: 35.7 },
 ];
 /** FillFlare's G by radius r = 0, 0.1, ... 0.9 (a statistic: SUR-41; 0 beyond) */
 export const FILL_FLARE_G = [1.0, 0.97, 0.91, 0.81, 0.67, 0.49, 0.31, 0.15, 0.04, 0.01];
@@ -78,8 +88,8 @@ const fragmentShader = /* glsl */ `
 uniform vec3 colour;
 uniform float flare[10];
 uniform bool additive;
-uniform float distance;
-uniform vec2 clearEl;
+uniform float gameDistance;
+uniform bool clear;
 uniform vec3 from;
 varying vec2 vUv;
 varying vec3 vWorld;
@@ -88,16 +98,16 @@ void main() {
   float x = length(vUv - 0.5) * 20.0;
   int i = int(min(floor(x), 9.0));
   float g = x >= 10.0 ? 0.0 : mix(flare[i], i < 9 ? flare[i + 1] : 0.0, x - float(i));
-  float clear = 1.0;
-  if (clearEl.y > clearEl.x) {
+  float pass = 1.0;
+  if (clear) {
     float el = degrees(asin(clamp(normalize(vWorld - from).y, -1.0, 1.0)));
-    clear = smoothstep(clearEl.x, clearEl.y, el);
+    pass = min(1.0, ${CLEAR_FADE.at0} * exp(${CLEAR_FADE.rate} * el));
   }
-  if (additive) gl_FragColor = vec4(8.0 * g * colour * clear, 1.0);
-  else gl_FragColor = vec4(colour, clamp(8.0 * g, 0.0, 1.0) * clear);
+  if (additive) gl_FragColor = vec4(8.0 * g * colour * pass, 1.0);
+  else gl_FragColor = vec4(colour, clamp(8.0 * g, 0.0, 1.0) * pass);
   #include <colorspace_fragment>
   #ifdef USE_FOG
-    if (clearEl.y <= clearEl.x) gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor, smoothstep(fogNear, fogFar, distance));
+    if (!clear) gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor, smoothstep(fogNear, fogFar, gameDistance));
   #endif
 }
 `;
@@ -119,8 +129,8 @@ function hotspotMesh(spot: Hotspot, colour: readonly [number, number, number], a
       colour: { value: new Vector3(...colour) },
       flare: { value: FILL_FLARE_G },
       additive: { value: additive },
-      distance: { value: spot.distance },
-      clearEl: { value: new Vector2(...(spot.clear ?? [0, 0])) },
+      gameDistance: { value: spot.distance },
+      clear: { value: spot.clear ?? false },
       from: { value: centre },
     },
     transparent: true,
@@ -133,7 +143,11 @@ function hotspotMesh(spot: Hotspot, colour: readonly [number, number, number], a
   const dir = new Vector3(Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az));
   mesh.position.copy(centre).addScaledVector(dir, at);
   mesh.lookAt(centre);
-  if (spot.tilt) mesh.rotateZ(spot.tilt * rad);
+  // (drawn over the canopy and the rest of the translucent surroundings, which sort as near: their geometry's in world
+  // space round the origin; the glows are in front of them in the game)
+  mesh.renderOrder = 2;
+  // (its top toward the arena)
+  if (spot.pitch) mesh.rotateX(spot.pitch * rad);
   return mesh;
 }
 
@@ -168,49 +182,59 @@ export interface Tier {
  *  points here). Each surface follows its tier's rows: a tread a row's pitch deep, `seat` under the row's cards, a
  *  riser up to the next; uu, az = atan2(y, x) in degrees on the y >= 0 half (y < 0 mirrors it) */
 export const STANDS = {
-  /** a card's centre over its row's tread */
-  seat: 80,
+  /** a card's centre over its row's tread (SUR-28: about 93, p5-p95 91-100) */
+  seat: 93,
   /** a tier's parapet over its last tread (the upper tiers': 100, the stands' top at their ends under 7k, RV-123); the
    *  upper tiers' front fascia under their first */
   parapet: 150,
   upperParapet: 100,
   fascia: 350,
   /** The lower bowl (az 27-171): the front wall from the inner radius up to its TV strip (SUR-17's placement), the four
-   *  front rows, the walkway and its step, the main rake, the back wall; and the -X corner's raised section behind the
-   *  main rake (Crowd_01's third, az 137-153, the main rake there ending at r 17.45k) */
+   *  front rows, the walkway and its step, the main rake, the back wall. At the -X end (RV-123): from az 153 one rake
+   *  without a walkway, (11.8k, 1.03k) to (17.5k, 2.48k), from 164 its first 20 rows tapering to 7 by 171; behind it a wedge out to (23.2k,
+   *  4.7k), its outermost 4 rows from az 137 growing to all 24 by 153, to 164 (the main rake beside it to r 17.45k) */
   lower: {
     az: [27, 171] as const,
     innerR: 11200,
-    strip: { r: 12000, z: [512, 797] as const },
+    strip: { r: 12000, z: [512, 797] as const, az: [[48, 98], [118, 167]] as const },
     front: { rows: 4, first: [12250, 948], last: [13000, 1119], growth: 1 } as Tier,
     main: { rows: 34, first: [13520, 1834], last: [21380, 3985], growth: 1.5 } as Tier,
-    third: { rows: 15, first: [18156, 3449], last: [22032, 4778], growth: 1 } as Tier,
-    thirdAz: [137, 153] as const,
-    mainToBesideThird: 17450,
+    back: { rows: 25, first: [11800, 1030], last: [17500, 2480], growth: 1 } as Tier,
+    backAz: { from: 153, full: 164, to: 171, taperRows: 20, endRows: 7 },
+    wedge: { rows: 24, first: [17726, 2600], last: [23200, 4700], growth: 1 } as Tier,
+    wedgeAz: { from: 137, full: 153, to: 164, fromRows: 4 },
+    mainToBesideWedge: 17450,
   },
   /** The upper tiers over each end (az 76-140): the mid tier (its TV strip, SUR-3's placement; its front section and the
    *  back one behind a step), the top tier over it, to z 9.7k (26 rows) over the end's centre */
   upper: {
     az: [76, 140] as const,
-    strip: { r: 14750, z: [3160, 3360] as const },
+    strip: { r: 14750, z: [3160, 3360] as const, az: [83, 137] as const },
+    /** the top tier's front strip (SUR-16, RV-135) */
+    topStrip: { r: 15200, z: [5400, 5700] as const, az: [93, 122] as const },
     mid: { rows: 12, first: [15250, 3710], last: [17470, 4965], growth: 1 } as Tier,
     midBack: { rows: 10, first: [18130, 5656], last: [20220, 6949], growth: 1 } as Tier,
     top: { rows: 26, first: [15415, 5958], last: [20041, 9729], growth: 1 } as Tier,
   },
-  /** Where the tiers have seats and cards (RV-123, the cards' statistics by azimuth): the front rows not before the +X
-   *  ends' az 42 nor behind the goal (az 98-114); the main rake's first row out at r 17.9k at the +X ends (to az 36,
-   *  in by 42); the mid tier's front rows only its last 4 over the end's centre (az 94-118), under the top tier; the
-   *  top tier over az 86-129, all 26 rows over the centre (az 97.5-117.5), its first 11 elsewhere */
+  /** Where the tiers have seats and cards (RV-123, the cards' statistics by azimuth): the front rows over az 45-98.9
+   *  and 117-153; the main rake's first rows at the +X ends from r 17.9k (to az 38), 16.9k (to 42), 16.1k (to 46); the mid tier's
+   *  front rows only its last 8 over the end's centre (az 96-120), under the top tier; the top tier over az 88.9-126.9,
+   *  all 26 rows over the centre (az 100.5-115.5), its first 12 elsewhere */
   seating: {
-    frontAz: [[42, 98], [114, 171]] as const,
-    plusXCut: { r: 17900, until: 36, to: 42 },
-    midCentre: { az: [94, 118] as const, rows: 4 },
-    topAz: [86, 129] as const,
-    topFull: { az: [97.5, 117.5] as const, rows: 11 },
+    frontAz: [[45, 98.9], [117, 153]] as const,
+    plusXCut: [[38, 17900], [42, 16900], [46, 16100]] as const,
+    midCentre: { az: [96, 120] as const, rows: 8 },
+    topAz: [88.9, 126.9] as const,
+    topFull: { az: [100.5, 115.5] as const, rows: 12 },
   },
   /** The back wall behind the stands, the concourse out to the outer wall (inside the camera's reach: 30k) */
   backR: 21500,
-  concourse: { r: [21500, 30000] as const, z: 500, wallTop: 8000, plaza: { az: [166, 172] as const, wallTop: 1300 } },
+  concourse: { r: [21500, 30000] as const, z: 500, wallTop: 8000, plaza: { az: [166, 172] as const, wallTop: 1260 } },
+  /** The ground between the cage and the stands (Stadium_Base's apron, z just under the field's), to the front wall, 12k
+   *  across the open +X (|az| < 27) and the -X plaza (beyond 171); the plaza's sidewalk there, rising from z 1.3k at r
+   *  12k to 1.8k at 20k (SUR-4) */
+  apron: { z: -2, out: 12000, openAz: 27, plazaAz: 171 },
+  plaza: { from: [12000, 1300] as RZ, to: [20000, 1800] as RZ },
 } as const;
 
 /** The structures over the stands: each edge a low-order fit in t = (az - 110) / 70 (coefficients from t^0 up), fitted
@@ -219,7 +243,7 @@ export const STANDS = {
 export const STRUCTURES = {
   /** Stadium_Top, the roof's band (SUR-5): its inner edge high, its outer low (the low edge no lower than 1.3k) */
   roof: {
-    az: [45, 172] as const,
+    az: [45, 176] as const,
     rIn: [15391, 811, 6528, -922, 1607],
     rOut: [17440, 3148, 14606, -2063, -4894],
     zLo: [11369, -1432, -10847, 246],
@@ -243,9 +267,10 @@ export const STRUCTURES = {
     zLo: [9709, -450, -5250],
     zHi: [10434, -183, -4083],
   },
-  /** The steel trusses (Stadium_Supports, SUR-7): from the ground at r 25.6k (z 1.4k) up to the roof's inner edge, every
-   *  10 degrees over the roof's span */
-  supports: { foot: [25600, 1400] as RZ, every: 10, az: [45, 165] as const, width: 160 },
+  /** The steel trusses (Stadium_Supports, SUR-7, RV-128a): from the ground at r 25.6k (z 1.4k) up to under the roof's
+   *  inner edge, 2.25k below its top to az 145, rising to z 10.4k by 155; every 10 degrees from 45, and one at 173,
+   *  the two joined over the -X plaza */
+  supports: { foot: [25600, 1400] as RZ, every: 10, az: [45, 165] as const, last: 173, below: 2250, high: { from: 145, to: 155, z: 10400 }, width: 160 },
 } as const;
 
 /** A fit's value at az */
@@ -277,28 +302,43 @@ function treads(tier: Tier): RZ[] {
   ]);
 }
 
-export type TierName = "front" | "main" | "third" | "mid" | "midBack" | "top";
+export type TierName = "front" | "main" | "back" | "wedge" | "mid" | "midBack" | "top";
+
+/** A tier by name */
+export function tierOf(name: TierName): Tier {
+  return name === "front" || name === "main" || name === "back" || name === "wedge" ? STANDS.lower[name] : STANDS.upper[name];
+}
 
 /** The rows of a tier with seats and cards at `az`: [first, end) (STANDS.seating) */
 export function rowsAt(name: TierName, az: number): readonly [number, number] {
   const { lower, upper, seating } = STANDS;
   const within = (span: readonly [number, number]): boolean => az >= span[0] && az <= span[1];
-  const isLower = name === "front" || name === "main" || name === "third";
-  const tier = isLower ? lower[name] : upper[name];
+  const isLower = name === "front" || name === "main" || name === "back" || name === "wedge";
+  const tier = tierOf(name);
   if (!within(isLower ? lower.az : upper.az)) return [0, 0];
+  const lerp = (a: number, b: number, t: number): number => a + (b - a) * Math.min(Math.max(t, 0), 1);
   switch (name) {
     case "front":
       return seating.frontAz.some(within) ? [0, tier.rows] : [0, 0];
     case "main": {
+      if (az >= lower.backAz.from) return [0, 0];
       const rows = tierRows(tier);
-      const c = seating.plusXCut;
-      const cutR = az <= c.until ? c.r : az < c.to ? c.r + ((tier.first[0] - c.r) * (az - c.until)) / (c.to - c.until) : 0;
+      const cutR = seating.plusXCut.find(([until]) => az < until)?.[1] ?? 0;
       const first = rows.findIndex(([r]) => r >= cutR);
-      const end = within(lower.thirdAz) ? rows.filter(([r]) => r <= lower.mainToBesideThird).length : tier.rows;
+      const end = az >= lower.wedgeAz.from ? rows.filter(([r]) => r <= lower.mainToBesideWedge).length : tier.rows;
       return [Math.max(first, 0), end];
     }
-    case "third":
-      return within(lower.thirdAz) ? [0, tier.rows] : [0, 0];
+    case "back": {
+      const b = lower.backAz;
+      if (az < b.from) return [0, 0];
+      return [0, Math.round(az <= b.full ? tier.rows : lerp(b.taperRows, b.endRows, (az - b.full) / (b.to - b.full)))];
+    }
+    case "wedge": {
+      const w = lower.wedgeAz;
+      if (az < w.from || az > w.to) return [0, 0];
+      const n = Math.round(lerp(w.fromRows, tier.rows, (az - w.from) / (w.full - w.from)));
+      return [tier.rows - n, tier.rows];
+    }
     case "mid":
       return within(seating.midCentre.az) ? [tier.rows - seating.midCentre.rows, tier.rows] : [0, tier.rows];
     case "midBack":
@@ -452,44 +492,109 @@ function canopyMaterial(bright0: readonly [number, number, number], bright1: rea
   });
 }
 
-/** SUR-12: the floodlight banks, E = (1 - y)^2 tri 16 max((0.5, 0.483, 0.381) - y, 0) sat(2 (D + 1/32)), y = |2v - 1|,
- *  tri = 1 - |2 frac(5v) - 1| (the middle row's peak (8, 7.7, 6.1)); D our bulbs, 11 % of the face bright (SUR-41),
- *  0.04 between: one row of them along the middle (v 0.5, 0.122 tall, each 90 % of its 1/160 cell), where the formula
- *  is strong, as the game's bright 11 % is where E passes 1 (RV-125: mean E (0.53, 0.51, 0.38), E > 1 on 11 %). Warm
- *  white, not team-coloured */
-export const FLOODLIGHT = { cells: 160, rowHalf: 0.0611, bulb: 0.9, between: 0.04, rgb: [0.5, 0.48274, 0.38116] } as const;
+/** SUR-12, RV-125: the floodlight banks: 42 fixtures a bank in 6 groups of 7 (each half three: from 2592, 4787 and 6950
+ *  out from the end's centre along the bank, pitch 241, 237.8, 233.2), the halves over az 77.6-98.07 and 117.96-138.4
+ *  (nothing in the 5184 between); E = (1 - y)^2 tri 16 max((0.5, 0.483, 0.381) - y, 0) sat(2 (D + 1/32)), warm white,
+ *  not team-coloured. Drawn from its v-profile across the bank (the static session's statistic of the front faces: mean
+ *  E per 1/32 from v 0.25, none outside 0.25-0.75), its lens rows (v 0.406-0.469, 0.531-0.594) only at the fixtures
+ *  (within 32 uu of one, none beyond 96), their means kept */
+export const FLOODLIGHT = {
+  halves: [[77.6, 98.07], [117.96, 138.4]] as const,
+  groups: [[2592, 241], [4787, 237.8], [6950, 233.2]] as const,
+  perGroup: 7,
+  centre: 108,
+  profile: [
+    [0.081, 0.045, 0.0], [0.38, 0.311, 0.001], [0.584, 0.519, 0.136], [0.542, 0.498, 0.244], [0.211, 0.198, 0.118], [0.691, 0.657, 0.458],
+    [2.17, 2.08, 1.54], [4.41, 4.25, 3.3], [4.3, 4.14, 3.21], [1.99, 1.9, 1.41], [0.597, 0.568, 0.395], [0.177, 0.165, 0.099],
+    [0.454, 0.418, 0.203], [0.504, 0.448, 0.116], [0.348, 0.285, 0.001], [0.077, 0.042, 0.0],
+  ] as readonly (readonly [number, number, number])[],
+  lens: { rows: [[0.406, 0.469], [0.531, 0.594]] as const, full: 32, none: 96 },
+} as const;
 
-/** The floodlights' emissive at (u, v) on a bank (the shader's, for tests) */
-export function floodlightE(u: number, v: number): [number, number, number] {
+/** The fixtures' azimuths on a half (degrees off the end's centre: their along-bank offsets spread linearly over the
+ *  half's span) */
+export function fixtureOffsets(): number[] {
   const F = FLOODLIGHT;
-  const y = Math.abs(2 * v - 1);
-  const tri = 1 - Math.abs(2 * ((5 * v) % 1) - 1);
-  const f = (u * F.cells) % 1;
-  const d = Math.abs(v - 0.5) < F.rowHalf && Math.abs(f - 0.5) < F.bulb / 2 ? 1 : F.between;
-  const s = Math.min(Math.max(2 * (d + 1 / 32), 0), 1);
-  return F.rgb.map((c) => (1 - y) * (1 - y) * tri * 16 * Math.max(c - y, 0) * s) as [number, number, number];
+  const along = F.groups.flatMap(([from, pitch]) => Array.from({ length: F.perGroup }, (_, k) => from + pitch * k));
+  const [first, last] = [along[0] ?? 0, along.at(-1) ?? 1];
+  // (the nearer half, az 77.6-98.07: its near end 98.07, its far end 77.6; the other half mirrors it)
+  const near = Math.abs(F.centre - F.halves[0][1]);
+  const far = Math.abs(F.centre - F.halves[0][0]);
+  return along.map((s) => -(near + (far - near) * ((s - first) / (last - first))));
 }
 
-function floodlightMaterial(): ShaderMaterial {
+/** The lens rows' mask along the bank at `d` uu from the nearest fixture (1 within 32, none beyond 96) */
+const lensMask = (d: number): number => Math.min(Math.max((FLOODLIGHT.lens.none - d) / (FLOODLIGHT.lens.none - FLOODLIGHT.lens.full), 0), 1);
+
+/** The floodlights' emissive at v across the bank, `d` uu along it from the nearest fixture, `mean` the lens mask's mean
+ *  over the half (the shader's, for tests) */
+export function floodlightE(v: number, d: number, mean: number): [number, number, number] {
+  const F = FLOODLIGHT;
+  if (v < 0.25 || v >= 0.75) return [0, 0, 0];
+  const bin = F.profile[Math.floor((v - 0.25) * 32)] ?? [0, 0, 0];
+  const lens = F.lens.rows.some(([a, b]) => v >= a && v < b);
+  const k = lens ? lensMask(d) / mean : 1;
+  return [bin[0] * k, bin[1] * k, bin[2] * k];
+}
+
+/** The lens mask's mean along a half (for the shader's normalisation) */
+export function lensMean(r: number): number {
+  const offsets = fixtureOffsets();
+  const half = FLOODLIGHT.halves[0];
+  let sum = 0;
+  const n = 2000;
+  for (let i = 0; i < n; i++) {
+    const az = half[0] + ((half[1] - half[0]) * (i + 0.5)) / n;
+    const d = Math.min(...offsets.map((o) => Math.abs(az - (FLOODLIGHT.centre + o)))) * (Math.PI / 180) * r;
+    sum += lensMask(d);
+  }
+  return sum / n;
+}
+
+function floodlightMaterial(r: number): ShaderMaterial {
+  const F = FLOODLIGHT;
+  const offsets = fixtureOffsets();
   return new ShaderMaterial({
     vertexShader: /* glsl */ `
       varying vec2 vUv;
+      varying vec3 vWorld;
       void main() {
         vUv = uv;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        vec4 world = modelMatrix * vec4(position, 1.0);
+        vWorld = world.xyz;
+        gl_Position = projectionMatrix * viewMatrix * world;
       }`,
     fragmentShader: /* glsl */ `
+      uniform vec3 profile[16];
+      uniform float offsets[${String(offsets.length)}];
+      uniform float lensMean;
       varying vec2 vUv;
+      varying vec3 vWorld;
       void main() {
-        float y = abs(2.0 * vUv.y - 1.0);
-        float tri = 1.0 - abs(2.0 * fract(5.0 * vUv.y) - 1.0);
-        float f = fract(vUv.x * ${FLOODLIGHT.cells.toFixed(1)});
-        float d = abs(vUv.y - 0.5) < ${FLOODLIGHT.rowHalf} && abs(f - 0.5) < ${(FLOODLIGHT.bulb / 2).toFixed(3)} ? 1.0 : ${FLOODLIGHT.between};
-        vec3 e = (1.0 - y) * (1.0 - y) * tri * 16.0 * max(vec3(${FLOODLIGHT.rgb.join(", ")}) - y, 0.0) * clamp(2.0 * (d + 1.0 / 32.0), 0.0, 1.0);
+        float v = vUv.y;
+        if (v < 0.25 || v >= 0.75) { gl_FragColor = vec4(vec3(0.1, 0.09, 0.07), 1.0); return; }
+        vec3 e = profile[int(clamp(floor((v - 0.25) * 32.0), 0.0, 15.0))];
+        bool lens = (v >= ${F.lens.rows[0][0]} && v < ${F.lens.rows[0][1]}) || (v >= ${F.lens.rows[1][0]} && v < ${F.lens.rows[1][1]});
+        if (lens) {
+          // (the nearest fixture, along the bank in uu; the game's az of this point, both halves mirrored)
+          float az = degrees(atan(abs(vWorld.z), vWorld.x));
+          float best = 1e9;
+          for (int i = 0; i < ${String(offsets.length)}; i++) {
+            best = min(best, abs(az - (${F.centre.toFixed(1)} + offsets[i])));
+            best = min(best, abs(az - (${F.centre.toFixed(1)} - offsets[i])));
+          }
+          float d = radians(best) * ${r.toFixed(1)};
+          e *= clamp((${F.lens.none.toFixed(1)} - d) / ${(F.lens.none - F.lens.full).toFixed(1)}, 0.0, 1.0) / lensMean;
+        }
         // (and the bank's own face, lightmapped: its total from the capture point 0.1 over the emissive mean)
         gl_FragColor = vec4(e + vec3(0.1, 0.09, 0.07), 1.0);
         #include <colorspace_fragment>
       }`,
+    uniforms: {
+      profile: { value: F.profile.map((c) => new Vector3(c[0], c[1], c[2])) },
+      offsets: { value: offsets },
+      lensMean: { value: lensMean(r) },
+    },
     side: DoubleSide,
   });
 }
@@ -514,21 +619,56 @@ export function buildBowl(primary0: Color, primary1: Color): Group {
   const lowerTop = tread(L.main) + parapet;
   const az0 = L.az[0];
   const az1 = L.az[1];
-  add(sweep(az0, az1, 72, fixed([[L.innerR, 0], [L.strip.r, L.strip.z[0]]])), concrete(), "bowl: front wall");
-  add(sweep(az0, az1, 72, fixed([[L.strip.r, L.strip.z[0]], [L.strip.r, L.strip.z[1]]])), stripMaterial(), "bowl: lower strip");
-  add(sweep(az0, az1, 72, fixed(stepTo([[L.strip.r, L.strip.z[1]]], stepTo(treads(L.front), treads(L.main))))), seats(), "bowl: lower tiers");
+  // (from the front rows' start, az 42: before it, at the +X ends, the stands begin further out with the main rake's
+  // first seated row, a wall up to it: RV-123's cut, the surfaces too)
+  const frontFrom = STANDS.seating.frontAz[0][0];
+  add(sweep(frontFrom, az1, 66, fixed([[L.innerR, 0], [L.strip.r, L.strip.z[0]]])), concrete(), "bowl: front wall");
+  // (the strips over their extents, plain concrete between: RV-135)
+  const stripSpan = (spans: readonly (readonly [number, number])[], from: number, to: number, section: readonly RZ[], name: string): void => {
+    let at = from;
+    for (const [a, b] of spans) {
+      if (a > at) add(sweep(at, a, Math.max(2, Math.round(a - at)), fixed(section)), concrete(), `${name} (between)`);
+      add(sweep(a, b, Math.max(2, Math.round(b - a)), fixed(section)), stripMaterial(), name);
+      at = b;
+    }
+    if (to > at) add(sweep(at, to, Math.max(2, Math.round(to - at)), fixed(section)), concrete(), `${name} (between)`);
+  };
+  stripSpan(L.strip.az, frontFrom, az1, [[L.strip.r, L.strip.z[0]], [L.strip.r, L.strip.z[1]]], "bowl: lower strip");
+  const backFrom = L.backAz.from;
+  add(sweep(frontFrom, backFrom, 54, fixed(stepTo([[L.strip.r, L.strip.z[1]]], stepTo(treads(L.front), treads(L.main))))), seats(), "bowl: lower tiers");
+  // (a section's rows at az, padded at its far end: the same count of points at every az)
+  const padded = (pts: readonly RZ[], count: number, atStart = false): RZ[] => {
+    const fill = Array.from({ length: Math.max(count - pts.length, 0) }, (): RZ => (atStart ? (pts[0] ?? [0, 0]) : (pts.at(-1) ?? [0, 0])));
+    return atStart ? [...fill, ...pts] : [...pts, ...fill];
+  };
+  // The -X end: one rake from just behind the front wall, no walkway, tapering toward the plaza
+  add(sweep(backFrom, az1, 18, (az) => {
+    const all = treads(L.back);
+    return padded(stepTo([[L.strip.r, L.strip.z[1]]], all.slice(0, 2 * rowsAt("back", az)[1])), all.length + 2);
+  }), seats(), "bowl: lower tiers, -X end");
+  const mainPitch = (L.main.last[0] - L.main.first[0]) / (L.main.rows - 1);
+  const plusXStart = (az: number): RZ => {
+    const first = rowsAt("main", az)[0];
+    const row = tierRows(L.main)[first] ?? L.main.first;
+    return [row[0] - mainPitch / 2, row[1] - seat];
+  };
+  add(sweep(az0, frontFrom, 15, (az) => {
+    const all = treads(L.main);
+    const rows = all.slice(2 * rowsAt("main", az)[0]);
+    const foot: RZ = [plusXStart(az)[0], 0];
+    // (padded at the foot: the same count of points at every az)
+    return [...Array.from({ length: all.length - rows.length }, () => foot), foot, ...rows];
+  }), seats(), "bowl: lower tiers, +X ends");
   add(sweep(az0, az1, 72, fixed([[back(L.main), tread(L.main)], [back(L.main), lowerTop], [backR, lowerTop], [backR, 0]])), concrete(), "bowl: lower back");
-  // The -X corner's raised section: up from the main rake where it ends (r 17.45k) to its rows, its parapet, its back
-  // down to the concourse
-  const mainRows = tierRows(L.main).filter(([r]) => r <= L.mainToBesideThird);
-  const mainEnd = mainRows.at(-1) ?? L.main.first;
-  const thirdPitch = (L.third.last[0] - L.third.first[0]) / (L.third.rows - 1);
-  const thirdTop = tread(L.third) + parapet;
-  add(
-    sweep(L.thirdAz[0], L.thirdAz[1], 16, fixed(stepTo([[mainEnd[0] + thirdPitch / 2, mainEnd[1] - seat]], [...treads(L.third), [back(L.third), thirdTop], [back(L.third), concourse.z]]))),
-    seats(),
-    "bowl: corner section",
-  );
+  // The -X corner's wedge behind the rakes: its rows present at az (the outermost first), a riser down at its front,
+  // its parapet, its back down to the concourse
+  const wedgeTop = tread(L.wedge) + parapet;
+  add(sweep(L.wedgeAz.from, L.wedgeAz.to, 27, (az) => {
+    const all = treads(L.wedge);
+    const rows = all.slice(2 * rowsAt("wedge", az)[0]);
+    const first = rows[0] ?? [back(L.wedge), tread(L.wedge)];
+    return padded([[first[0], first[1] - 600], ...rows, [back(L.wedge), wedgeTop], [back(L.wedge), concourse.z]], all.length + 3, true);
+  }), seats(), "bowl: corner wedge");
   // The upper tiers: the mid tier's TV strip, its two sections, its underside back to the lower bowl's back; the top tier
   // over it (its fascia, rows, parapet; its underside along its rake)
   const U = upper;
@@ -549,7 +689,8 @@ export function buildBowl(primary0: Color, primary1: Color): Group {
   const u = (points: readonly RZ[], material: ShaderMaterial, name: string): void => {
     add(sweep(U.az[0], U.az[1], 32, fixed(points)), material, name);
   };
-  u([[U.strip.r, U.strip.z[0]], [U.strip.r, U.strip.z[1]]], stripMaterial(), "bowl: mid strip");
+  stripSpan([U.strip.az], U.az[0], U.az[1], [[U.strip.r, U.strip.z[0]], [U.strip.r, U.strip.z[1]]], "bowl: mid strip");
+  add(sweep(U.topStrip.az[0], U.topStrip.az[1], 29, fixed([[U.topStrip.r, U.topStrip.z[0]], [U.topStrip.r, U.topStrip.z[1]]])), stripMaterial(), "bowl: top strip");
   u([...stepTo([[U.strip.r, U.strip.z[1]]], stepTo(treads(U.mid), treads(U.midBack))), [back(U.midBack), midTop], [backR, midTop]], seats(), "bowl: mid tier");
   u([[U.strip.r, U.strip.z[0]], [backR, lowerTop]], concrete(), "bowl: mid underside");
   add(sweep(topAz[0], topAz[1], 43, (az) => {
@@ -562,6 +703,28 @@ export function buildBowl(primary0: Color, primary1: Color): Group {
   }), concrete(), "bowl: top underside");
   // (the back wall up to the top tier's parapet where it is, the mid tier's elsewhere)
   add(sweep(U.az[0], U.az[1], 64, (az) => [[backR, lowerTop], [backR, rowsAt("top", az)[1] > 0 ? topAt(az).top : midTop]]), concrete(), "bowl: upper back");
+  // The apron round the cage (its hole the cage's footprint: the field with its cut corners, the goals), out to the
+  // stands' front wall, and the -X plaza's sidewalk
+  const { apron, plaza: walk } = STANDS;
+  const outline = new Shape();
+  for (let k = 0; k <= 360; k++) {
+    const az = k === 360 ? 0 : k;
+    const at = Math.abs(az > 180 ? az - 360 : az);
+    // (to the stands: their front wall, the +X ends' first seated row, 12k where there are none)
+    const r = at < apron.openAz || at > apron.plazaAz ? apron.out : at < frontFrom ? plusXStart(at)[0] : L.innerR;
+    const a = (az * Math.PI) / 180;
+    if (k === 0) outline.moveTo(r * Math.cos(a), r * Math.sin(a));
+    else outline.lineTo(r * Math.cos(a), r * Math.sin(a));
+  }
+  // (the cage's footprint, the game's frame: x, y; walked the other way round for a hole)
+  const cage: [number, number][] = [[4096, 0], [4096, 3968], [2944, 5120], [900, 5120], [900, 6150], [-900, 6150], [-900, 5120], [-2944, 5120], [-4096, 3968]];
+  const footprint = [...cage, ...cage.map(([x, y]): [number, number] => [-x, -y])];
+  outline.holes.push(new Path(footprint.reverse().map(([x, y]) => new Vector2(x, y))));
+  const apronGeometry = new ShapeGeometry(outline);
+  // (the shape's x, y are the game's: laid flat, its y to Three's z)
+  apronGeometry.rotateX(Math.PI / 2).translate(0, apron.z, 0);
+  add(apronGeometry, concrete(), "bowl: apron");
+  add(sweep(apron.plazaAz, 180, 6, fixed([[walk.from[0], 0], walk.from, walk.to, [concourse.r[0], walk.to[1]], [concourse.r[0], concourse.z]])), concrete(), "bowl: plaza");
   // The concourse and the outer wall (round the back, the stands' ends; low over the -X plaza, RV-124)
   const { plaza } = concourse;
   add(sweep(az0, 180, 76, (az) => {
@@ -584,15 +747,28 @@ export function buildBowl(primary0: Color, primary1: Color): Group {
     const short: RZ = [inner[0] + strip.depth, inner[1] - strip.drop];
     return [inner, [full[0] + (short[0] - full[0]) * inStrip, full[1] + (short[1] - full[1]) * inStrip]];
   }), canopyMaterial(bright(primary0), bright(primary1)), "bowl: canopy");
-  add(sweep(lights.az[0], lights.az[1], 30, (az) => [
-    [edgeAt(lights.rOut, az), edgeAt(lights.zLo, az)],
-    [edgeAt(lights.rIn, az), edgeAt(lights.zHi, az)],
-  ]), floodlightMaterial(), "bowl: floodlights");
-  // The trusses: thin ribs from the ground up to the roof's inner edge (RV-128a)
-  const { foot, every, az: span, width } = STRUCTURES.supports;
+  // (the two halves of each end's bank, the fixtures' radius for their along-bank distances)
+  const bankR = (edgeAt(lights.rIn, FLOODLIGHT.centre) + edgeAt(lights.rOut, FLOODLIGHT.centre)) / 2;
+  const banks = floodlightMaterial(bankR);
+  for (const [from, to] of FLOODLIGHT.halves) {
+    add(sweep(from, to, 24, (az) => [
+      [edgeAt(lights.rOut, az), edgeAt(lights.zLo, az)],
+      [edgeAt(lights.rIn, az), edgeAt(lights.zHi, az)],
+    ]), banks, "bowl: floodlights");
+  }
+  // The trusses: thin ribs from the ground up under the roof's inner edge (RV-128a)
+  const sup = STRUCTURES.supports;
+  const { foot, every, az: span, width } = sup;
   const ribs: number[] = [];
-  for (let az: number = span[0]; az <= span[1]; az += every) {
-    const head: RZ = [edgeAt(roof.rIn, az), edgeAt(roof.zHi, az)];
+  const ribAz: number[] = [];
+  for (let az: number = span[0]; az <= span[1]; az += every) ribAz.push(az);
+  ribAz.push(sup.last);
+  const headAt = (az: number): RZ => {
+    const f = Math.min(Math.max((az - sup.high.from) / (sup.high.to - sup.high.from), 0), 1);
+    return [edgeAt(roof.rIn, az), (1 - f) * (edgeAt(roof.zHi, az) - sup.below) + f * sup.high.z];
+  };
+  for (const az of ribAz) {
+    const head = headAt(az);
     for (const sign of [1, -1]) {
       const a = (sign * az * Math.PI) / 180;
       const [c, s] = [Math.cos(a), Math.sin(a)];
@@ -601,6 +777,11 @@ export function buildBowl(primary0: Color, primary1: Color): Group {
       ribs.push(...p(foot[0], foot[1], -1), ...p(foot[0], foot[1], 1), ...p(head[0], head[1], 1), ...p(foot[0], foot[1], -1), ...p(head[0], head[1], 1), ...p(head[0], head[1], -1));
     }
   }
+  // (the beam over the plaza between the last two, at their heads)
+  const [lr, lz] = headAt(sup.last);
+  const a = (sup.last * Math.PI) / 180;
+  const [bx, by] = [lr * Math.cos(a), lr * Math.sin(a)];
+  ribs.push(bx, lz - width / 2, by, bx, lz + width / 2, by, bx, lz + width / 2, -by, bx, lz - width / 2, by, bx, lz + width / 2, -by, bx, lz - width / 2, -by);
   const ribGeometry = new BufferGeometry();
   ribGeometry.setAttribute("position", new Float32BufferAttribute(ribs, 3));
   add(ribGeometry, seenMaterial(BOWL_COLOURS.steel, 0.02), "bowl: supports");
@@ -651,10 +832,12 @@ void main() {
   // The skyline: towers 1-4 degrees wide; their tops mostly low, a few tall
   bool minusY = az >= -176.0 && az <= -5.0;
   bool plusY = az >= 3.0 && az <= 176.0;
-  if ((minusY || plusY) && el > -2.0) {
+  // (and over the -X plaza, beyond the gap in the stands, the city lower: tops el 6.6-17, RV-133)
+  bool plaza = abs(az) > 176.0;
+  if ((minusY || plusY || plaza) && el > -2.0) {
     float bin = floor(az / 2.5);
     float u = hash1(bin + (minusY ? 17.0 : 0.0));
-    float top = 10.0 + (minusY ? 41.0 : 55.0) * u * u * u;
+    float top = plaza ? 6.6 + 10.4 * u : 10.0 + (minusY ? 41.0 : 55.0) * u * u * u;
     if (el < top) {
       // (windows: columns 0.18 degrees, rows 0.3; a third lit, warm)
       vec2 cell = vec2(floor(az / 0.18), floor(el / 0.3));

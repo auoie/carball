@@ -262,3 +262,88 @@ test("a goal in freeplay, skipping replays: no message, 3 s later a kickoff spot
   await page.keyboard.up("KeyW");
   expect(errors).toEqual([]);
 });
+
+interface PadsHook {
+  place: (car: object, ball?: object) => void;
+  pads: () => { pads: { x: number; y: number; big: boolean; active: boolean }[]; boost: number };
+}
+
+test("Unlimited boost in free play: on (the default) a full car takes no pad; off (the settings) 33 boost, a small pad is taken and drawn dim", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto("/");
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+  await page.waitForFunction(() => "rlFreeplay" in window);
+  const place = async (car: object): Promise<void> => {
+    await page.evaluate((c) => {
+      (window as unknown as { rlFreeplay: PadsHook }).rlFreeplay.place(c, { x: 0, y: 3000, z: 93 });
+    }, car);
+  };
+  const pads = async (): Promise<{ active: boolean | undefined; boost: number }> =>
+    page.evaluate(() => {
+      const s = (window as unknown as { rlFreeplay: PadsHook }).rlFreeplay.pads();
+      return { active: s.pads.find((p) => !p.big && p.x === 0 && p.y === -1024)?.active, boost: s.boost };
+    });
+  const onPad = { x: 0, y: -1024, yaw: Math.PI / 2 };
+  const behind = { x: 0, y: -1700, yaw: Math.PI / 2 };
+
+  // On: onto the small pad at (0, -1024) with a full tank, and it stays (CanPickup: !IsFull)
+  await place(onPad);
+  await page.waitForTimeout(1500);
+  expect(await pads()).toEqual({ active: true, boost: 100 });
+
+  // Off, in the settings' Controller tab (the car off the pad first: at 33 it would take it at once): the tank at a
+  // round's 33
+  await place(behind);
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#settings")).toBeVisible();
+  await page.locator('.settings-tab[data-tab="controller"]').click();
+  const box = page.locator('input[data-option="unlimitedBoost"]');
+  await expect(box).toBeChecked();
+  await box.uncheck();
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#settings")).toBeHidden();
+  await expect.poll(async () => (await pads()).boost, { timeout: 5_000 }).toBeCloseTo(100 / 3, 3);
+
+  // The pad lit, from behind it; then onto it (taken, +12 boost); then the same look again
+  const region = { x: 540, y: 340, width: 200, height: 140 };
+  await place(behind);
+  await page.waitForTimeout(800);
+  const lit = (await page.screenshot({ clip: region })).toString("base64");
+  await place(onPad);
+  await expect.poll(async () => (await pads()).active, { timeout: 10_000 }).toBe(false);
+  expect((await pads()).boost).toBeGreaterThan(45);
+  await place(behind);
+  await page.waitForTimeout(800);
+  const taken = (await page.screenshot({ clip: region })).toString("base64");
+  // (the pixels much darker in the second look, against those much brighter: the pad's dim look, its glow off)
+  const change = await page.evaluate(
+    async ([a, b]) => {
+      const read = async (png: string): Promise<Uint8ClampedArray> => {
+        const img = new Image();
+        img.src = `data:image/png;base64,${png}`;
+        await img.decode();
+        const c = document.createElement("canvas");
+        [c.width, c.height] = [img.width, img.height];
+        const g = c.getContext("2d");
+        if (!g) throw new Error("no 2d context");
+        g.drawImage(img, 0, 0);
+        return g.getImageData(0, 0, c.width, c.height).data;
+      };
+      const [p, q] = [await read(a ?? ""), await read(b ?? "")];
+      let darker = 0;
+      let brighter = 0;
+      for (let k = 0; k < p.length; k += 4) {
+        const lum = (d: Uint8ClampedArray): number => (0.2126 * (d[k] ?? 0) + 0.7152 * (d[k + 1] ?? 0) + 0.0722 * (d[k + 2] ?? 0)) / 255;
+        const d = lum(p) - lum(q);
+        if (d > 0.15) darker++;
+        else if (d < -0.15) brighter++;
+      }
+      return { darker, brighter };
+    },
+    [lit, taken],
+  );
+  expect(change.darker, JSON.stringify(change)).toBeGreaterThan(150);
+  expect(change.brighter, JSON.stringify(change)).toBeLessThan(change.darker / 4);
+  expect(errors).toEqual([]);
+});

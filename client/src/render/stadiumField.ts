@@ -29,11 +29,13 @@ import { fullBright } from "./teamColors";
 /** FieldSkin_FutureGrid_1x1_D's mean albedo (sRGB-flagged: decoded) (H-1) */
 export const GRASS_ALBEDO = [0.068, 0.11, 0.056] as const;
 /** StadiumFloorLightMap over the grass (RV-105a, the static session's statistics, linear): separable, a(x) b(|y|) /
- *  mean (within 4.9 % RMS), each table in 256 uu bins (x from -3806, |y| from 64) */
+ *  mean (within 4.9 % RMS), each table in bins on multiples of 256 with partial ones at its ends (x: -3806, -3584,
+ *  -3328 ... 3584, 3806; |y|: 64, 256, 512 ... 4608, 4830: RV-146) */
 export const GRASS_LIGHT = {
   mean: [0.553, 0.527, 0.461],
   step: 256,
   x0: -3806,
+  x1: 3806,
   x: [
     [0.481, 0.462, 0.406], [0.48, 0.462, 0.404], [0.471, 0.452, 0.396], [0.485, 0.466, 0.408], [0.497, 0.477, 0.416],
     [0.507, 0.486, 0.424], [0.519, 0.497, 0.433], [0.511, 0.49, 0.43], [0.513, 0.492, 0.434], [0.521, 0.5, 0.437],
@@ -43,6 +45,7 @@ export const GRASS_LIGHT = {
     [0.625, 0.592, 0.519], [0.609, 0.575, 0.504], [0.564, 0.533, 0.467], [0.453, 0.431, 0.378], [0.412, 0.391, 0.342],
   ],
   y0: 64,
+  y1: 4830,
   y: [
     [0.483, 0.465, 0.407], [0.502, 0.483, 0.422], [0.517, 0.494, 0.434], [0.523, 0.501, 0.438], [0.528, 0.504, 0.441],
     [0.536, 0.508, 0.445], [0.542, 0.516, 0.451], [0.551, 0.523, 0.459], [0.561, 0.532, 0.467], [0.571, 0.542, 0.473],
@@ -50,6 +53,26 @@ export const GRASS_LIGHT = {
     [0.586, 0.56, 0.489], [0.603, 0.573, 0.503], [0.623, 0.592, 0.518], [0.641, 0.611, 0.536],
   ],
 } as const;
+/** The GLSL arguments for grassBin: the first two and last two bins' centres, the bins' count */
+function binCentres(edge0: number, edge1: number, count: number): string {
+  const step = GRASS_LIGHT.step;
+  const inner0 = Math.ceil(edge0 / step) * step;
+  const inner1 = Math.floor(edge1 / step) * step;
+  return [(edge0 + inner0) / 2, inner0 + step / 2, inner1 - step / 2, (inner1 + edge1) / 2, count].map((v) => v.toFixed(1)).join(", ");
+}
+
+/** A position's place among a GRASS_LIGHT table's bins (its bins' centres at whole numbers: the partial end bins' centres
+ *  half their width in, the rest on 256's), from `edge0` (the first bin's outer edge) to `edge1`, `count` bins */
+export function grassBin(s: number, edge0: number, edge1: number, count: number): number {
+  const step = GRASS_LIGHT.step;
+  const inner0 = Math.ceil(edge0 / step) * step;
+  const [c0, c1] = [(edge0 + inner0) / 2, inner0 + step / 2];
+  const inner1 = Math.floor(edge1 / step) * step;
+  const [cLast, cBefore] = [(inner1 + edge1) / 2, inner1 - step / 2];
+  const f = s <= c1 ? (s - c0) / (c1 - c0) : s >= cBefore ? count - 2 + (s - cBefore) / (cLast - cBefore) : 1 + (s - c1) / step;
+  return Math.min(Math.max(f, 0), count - 1);
+}
+
 /** H-1's noise factor 0.75 (n + 1.25), its mean looking down (2.0: the static session's statistic of the shader's
  *  three-sample rule on Noise_Generic_02); G0, Noise_Generic_02's mean G; ENVAmount */
 export const GRASS_NOISE = 2.0;
@@ -64,6 +87,14 @@ export function grassReflection(cos: number, cube: number, g0 = GRASS_G0): numbe
   const k = (1.5 - cos) * cg;
   return GRASS_ENV_AMOUNT * (0.375 * k + Math.min(Math.max(0.25 * (k - 0.125), 0), 1));
 }
+
+/** grassReflection in the shader, per channel */
+export const GRASS_REFLECTION_GLSL = /* glsl */ `
+vec3 grassReflection(float cosView, vec3 cube, float g0) {
+  vec3 k = (1.5 - cosView) * cube * (g0 + 1.0 / 3.0) * (2.0 / 3.0);
+  return ${GRASS_ENV_AMOUNT.toFixed(2)} * (0.375 * k + clamp(0.25 * (k - 0.125), 0.0, 1.0));
+}
+`;
 /** The markings' baked light (PaintedLine_Mat: each mesh's 1-D directional vertex lightmaps, flat; the static
  *  session's means) */
 const MARKING_LIGHT: Readonly<Record<MarkingGroup, readonly [number, number, number]>> = {
@@ -190,17 +221,23 @@ void main() {
  *  drawn: FieldSkin's team line network (game artwork) */
 const grassFragment = /* glsl */ `
 uniform vec3 albedo;
-uniform float reflectionScale;
+uniform float g0;
 uniform vec3 lightX[${GRASS_LIGHT.x.length}];
 uniform vec3 lightY[${GRASS_LIGHT.y.length}];
 uniform vec3 lightMean;
 varying vec3 vWorld;
 #include <fog_pars_fragment>
 ${commonGlsl}
+// (grassBin: the bins' centres, the partial end bins' half their width in)
+float grassBin(float s, float c0, float c1, float cBefore, float cLast, float count) {
+  float f = s <= c1 ? (s - c0) / (c1 - c0) : s >= cBefore ? count - 2.0 + (s - cBefore) / (cLast - cBefore) : 1.0 + (s - c1) / ${GRASS_LIGHT.step.toFixed(1)};
+  return clamp(f, 0.0, count - 1.0);
+}
+${GRASS_REFLECTION_GLSL}
 vec3 grassLight(float x, float y) {
-  float fx = clamp((x - ${GRASS_LIGHT.x0.toFixed(1)}) / ${GRASS_LIGHT.step.toFixed(1)} - 0.5, 0.0, ${(GRASS_LIGHT.x.length - 1).toFixed(1)});
+  float fx = grassBin(x, ${binCentres(GRASS_LIGHT.x0, GRASS_LIGHT.x1, GRASS_LIGHT.x.length)});
   int ix = int(min(floor(fx), ${(GRASS_LIGHT.x.length - 2).toFixed(1)}));
-  float fy = clamp((abs(y) - ${GRASS_LIGHT.y0.toFixed(1)}) / ${GRASS_LIGHT.step.toFixed(1)} - 0.5, 0.0, ${(GRASS_LIGHT.y.length - 1).toFixed(1)});
+  float fy = grassBin(abs(y), ${binCentres(GRASS_LIGHT.y0, GRASS_LIGHT.y1, GRASS_LIGHT.y.length)});
   int iy = int(min(floor(fy), ${(GRASS_LIGHT.y.length - 2).toFixed(1)}));
   return mix(lightX[ix], lightX[ix + 1], fx - float(ix)) * mix(lightY[iy], lightY[iy + 1], fy - float(iy)) / lightMean;
 }
@@ -211,9 +248,7 @@ void main() {
   float view = 2.0 * (g * g * g * g + 0.25);
   // (the game's x and y: Three's x and z)
   vec3 lit = albedo * grassLight(vWorld.x, vWorld.z) * view;
-  vec3 k = (1.5 - cosView) * reflectionScale * floorReflection(toCamera);
-  vec3 reflection = ${GRASS_ENV_AMOUNT.toFixed(2)} * (0.375 * k + clamp(0.25 * (k - 0.125), 0.0, 1.0));
-  gl_FragColor = vec4(clamp(lit + reflection, 0.0, 1.0), 1.0);
+  gl_FragColor = vec4(clamp(lit + grassReflection(cosView, floorReflection(toCamera), g0), 0.0, 1.0), 1.0);
   #include <colorspace_fragment>
   #include <fog_fragment>
 }
@@ -308,16 +343,17 @@ void main() {
   vec3 diffuse;
   #ifdef LINE
     float m = 1.0 - smoothstep(0.75, 1.0, abs(2.0 * vAcross - 1.0));
+    // (the tire marks inside the saturate, H-4's sat(m x): RV-144)
     #ifdef LINE_E
-      emissive = m * teamC(xy.y);
-      diffuse = clamp(vec3(frameR) + refl * (1.0 - 0.8 * m), 0.0, 1.0);
+      emissive = tireMarks * m * teamC(xy.y);
+      diffuse = clamp(tireMarks * (vec3(frameR) + refl * (1.0 - 0.8 * m)), 0.0, 1.0);
     #else
-      diffuse = clamp(mix(vec3(frameR) + refl, teamCmix(xy.y), m), 0.0, 1.0);
+      diffuse = clamp(tireMarks * mix(vec3(frameR) + refl, teamCmix(xy.y), m), 0.0, 1.0);
     #endif
   #else
-    diffuse = clamp(vec3(frameR) + refl, 0.0, 1.0);
+    diffuse = clamp(tireMarks * (vec3(frameR) + refl), 0.0, 1.0);
   #endif
-  gl_FragColor = vec4(tireMarks * (emissive + diffuse * bakedLight(xy)), 1.0);
+  gl_FragColor = vec4(emissive + diffuse * bakedLight(xy), 1.0);
   #include <colorspace_fragment>
   #include <fog_fragment>
 }
@@ -399,7 +435,7 @@ export class GrassMaterial extends ShaderMaterial {
         ...shared(cube),
         albedo: { value: new Vector3(r * GRASS_NOISE, g * GRASS_NOISE, b * GRASS_NOISE) },
         // (Cg's scale: (G0 + 1/3) 2/3)
-        reflectionScale: { value: (GRASS_G0 + 1 / 3) * (2 / 3) },
+        g0: { value: GRASS_G0 },
         lightX: { value: GRASS_LIGHT.x.map(v3) },
         lightY: { value: GRASS_LIGHT.y.map(v3) },
         lightMean: { value: v3(GRASS_LIGHT.mean) },

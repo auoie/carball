@@ -21,7 +21,7 @@ import {
   saveSettings,
 } from "../settings/settings";
 
-type Tab = "controls" | "camera" | "controller" | "audio";
+type Tab = "controls" | "camera" | "controller" | "video" | "audio";
 type Device = "keyboard" | "gamepad";
 
 const CAMERA_LABELS: Readonly<Record<keyof CameraSettings, string>> = {
@@ -60,6 +60,9 @@ const OPTION_LABELS: Readonly<Record<keyof Options, string>> = {
   muted: "Mute all sound (M)",
   flipIndicator: "Show the flip indicator (whether you can still dodge, and flip resets)",
   autoSkipReplay: "Skip goal replays (online: always ready to skip; Space or (A) skips one)",
+  bloom: "Bloom (a glow round the brightest parts)",
+  depthOfField: "Depth of Field",
+  unlimitedBoost: "Unlimited boost in free play (off: 33 boost each round, used up as you boost, and pads to pick up; a full tank takes none)",
 };
 
 const AUDIO_LABELS: Readonly<Record<keyof AudioSettings, string>> = {
@@ -98,6 +101,7 @@ export class SettingsPanel {
       this.#tabButton("controls", "Controls"),
       this.#tabButton("camera", "Camera"),
       this.#tabButton("controller", "Controller"),
+      this.#tabButton("video", "Video"),
       this.#tabButton("audio", "Audio"),
     ]);
     const close = el("button", { className: "settings-close", textContent: "Close (Esc)" });
@@ -178,7 +182,9 @@ export class SettingsPanel {
           ? this.#cameraTab()
           : this.#tab === "controller"
             ? this.#controllerTab()
-            : this.#audioTab();
+            : this.#tab === "video"
+              ? this.#videoTab()
+              : this.#audioTab();
     this.#body.replaceChildren(content);
   }
 
@@ -393,8 +399,19 @@ export class SettingsPanel {
           "Dodge deadzone: how far the stick must be pushed for a second jump to dodge instead of double jumping.",
       }),
     );
-    sliders.append(this.#checkboxes(["airPitchSafety", "flipIndicator", "autoSkipReplay"]));
+    sliders.append(this.#checkboxes(["airPitchSafety", "flipIndicator", "autoSkipReplay", "unlimitedBoost"]));
     return sliders;
+  }
+
+  #videoTab(): HTMLElement {
+    const box = el("div", { className: "sliders" }, [
+      el("p", {
+        className: "settings-hint",
+        textContent: "The game's post-processing: its tone map always, these on in its High preset (the default). Depth of Field softens the whole arena a little (a quarter of every pixel), the sky and far stands more.",
+      }),
+    ]);
+    box.append(this.#checkboxes(["bloom", "depthOfField"]));
+    return box;
   }
 
   #audioTab(): HTMLElement {

@@ -94,6 +94,10 @@ out/bsim/agents/SHK1/notes.txt, decompiles in dec*/.
    0x140753ed0 → 0x140756460 → ConditionalTick 0x1405d2110). **Shakes slow down in the post-goal slow-mo.** The swivel,
    by contrast, uses real time.
 
+**Impact and landing triggers** (2026-10-10): see notes/impact-triggers.md (IT-1..5). Impact_Medium restarts per
+120 Hz physics step only while v = |Δv·n| > 200 (v ≤ 200 never restarts it); the landing shake has D = 0, so there is no
+camera motion.
+
 ## For the client
 - **Component per source.** One component per source, as above:
   - one per car for Impact, Jump, DoubleJump and Dodge;

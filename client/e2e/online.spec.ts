@@ -38,9 +38,11 @@ test("two players: one drives, the other sees it through the server", async ({ p
   const other = await otherContext.newPage();
   await join(other, errors);
 
-  // Both see both cars; the first player reloaded the world when the second joined
-  await expect(page.locator("#net")).toContainText("2 cars", { timeout: 5_000 });
-  await expect(other.locator("#net")).toContainText("2 cars");
+  // Both see both cars; the first player reloaded the world when the second joined. (Generous: software WebGL shares
+  // the CPU with the other workers' tests, the stadium's reflection capture among them, and the second page can take a
+  // while to show its first server state)
+  await expect(page.locator("#net")).toContainText("2 cars", { timeout: 15_000 });
+  await expect(other.locator("#net")).toContainText("2 cars", { timeout: 15_000 });
   await expect(page.locator("#net")).toContainText(/ping \d+ ms/);
   // The match clock, from the server: full until the ball is first hit or 5 s after go, then counting down (how far
   // depends on how long the test took to get here: not the point; a fresh match, so within its first minute)

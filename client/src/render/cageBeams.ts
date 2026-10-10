@@ -200,8 +200,8 @@ void main() {
   float I = 24.0 * (prox2 * prox2 + 0.09375) * (w + 0.5) * opacity
     * ((1.0 - prox) * 0.25 * p + prox * p * (F * (S * (prox + 0.25) + 0.25) + 4.0 * ring * prox));
   I = clamp(I, 0.0, 5.0) * vFade;
-  // (additive: HDR, tone-mapped here as there's no bloom)
-  gl_FragColor = vec4(1.0 - exp(-I * colour), 1.0);
+  // (additive: linear HDR, through the post-processing's bloom and tone map: PP-17)
+  gl_FragColor = vec4(I * colour, 1.0);
   #include <colorspace_fragment>
   // (fog only dims an additive beam, rgb x fog.w: no blend towards the fog's colour, RV-70d)
   #ifdef USE_FOG

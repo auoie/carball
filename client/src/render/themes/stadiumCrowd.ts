@@ -4,22 +4,24 @@
 import { type Color, DoubleSide, InstancedBufferAttribute, InstancedMesh, Matrix4, PlaneGeometry, ShaderMaterial, Vector3 } from "three";
 import { fullBright } from "../teamColors";
 import { seededRandom } from "./random";
-import { STANDS, type TierName, rowsAt, tierRows } from "./stadiumSurroundings";
+import { STANDS, type TierName, rowsAt, tierOf, tierRows } from "./stadiumSurroundings";
 
 // --- The crowd (SUR-26..31) ------------------------------------------------------------------------------------------
 
 /** The cards: 126 x 146.8 uu, 144 apart along a row, facing the centre; rows on the tiers (card centres, r and z):
  *  the lower bowl's 4 front rows and its main rake (az 27-171), the upper tiers' (az 76-139). No gaps but the open +X
- *  (|az| < 27) and the back's plaza (beyond 171); an aisle every 12 degrees */
+ *  (|az| < 27) and the back's plaza (beyond 171); aisles (SUR-26, RV-134) at |az| 46, 72, 98, 118 and 145, breaking the
+ *  main rake's first 12 rows */
 export const CROWD = {
   card: [126, 146.8] as const,
   pitch: 144,
-  aisle: { every: 12, width: 1.2 },
+  aisle: { at: [46, 72, 98, 118, 145] as const, width: 1.0, rows: 12 },
   /** The stands' tiers the cards sit on (their rows: STANDS; which of them at each az: rowsAt) */
   tiers: [
     { az: STANDS.lower.az, name: "front" },
     { az: STANDS.lower.az, name: "main" },
-    { az: STANDS.lower.az, name: "third" },
+    { az: STANDS.lower.az, name: "back" },
+    { az: STANDS.lower.az, name: "wedge" },
     { az: STANDS.upper.az, name: "mid" },
     { az: STANDS.upper.az, name: "midBack" },
     { az: STANDS.upper.az, name: "top" },
@@ -54,11 +56,12 @@ void main() {
   vSeat = seat.yz;
   // (each card's instance matrix: its seat, facing the centre)
   vTeam = instanceMatrix[3].z < 0.0 ? 0.0 : 1.0;
-  // Presence: x = 0.5 (lum + b - 0.5) + 0.35 UV1.y + CrowdSize - 1.375; the card sinks 128 where x < 1/32 (SUR-28)
+  // Presence: x = 0.5 (lum + b - 0.5) + 0.35 UV1.y + CrowdSize - 1.375; the card sinks where x < 1/32 (SUR-28: the
+  // game's 128), ours under its tread, its bob included (RV-128b)
   float lum = dot(card, vec3(0.3, 0.59, 0.11));
   float x = 0.5 * (lum + card.b - 0.5) + 0.35 * seat.y + crowdSize - 1.375;
   // (sunk its whole half height and the tread's offset under it: hidden, RV-128b)
-  float sink = (1.0 - clamp(32.0 * x, 0.0, 1.0)) * 153.4;
+  float sink = (1.0 - clamp(32.0 * x, 0.0, 1.0)) * ${(STANDS.seat + CROWD.card[1] / 2 + CROWD.bob).toFixed(1)};
   float bobbing = bob * sin(4.66943 * (time * (card.r + 0.5) + seat.x));
   gl_Position = projectionMatrix * viewMatrix * modelMatrix * instanceMatrix * vec4(position.x, position.y + bobbing - sink, 0.0, 1.0);
 }
@@ -153,18 +156,18 @@ export function buildCrowd(primary0: Color, primary1: Color, seed = 7): { mesh: 
   const cards: number[] = [];
   const seats: number[] = [];
   const { card, pitch, aisle, tiers, light } = CROWD;
-  const tierOf: TierName[] = [];
+  const cardTiers: TierName[] = [];
   for (const { az: span, name } of tiers) {
-    const tier = name === "front" || name === "main" || name === "third" ? STANDS.lower[name] : STANDS.upper[name];
+    const tier = tierOf(name);
     tierRows(tier).forEach(([r, z], row) => {
       const step = (pitch / r) * (180 / Math.PI);
       for (const sign of [1, -1]) {
         for (let az = span[0] + step / 2; az < span[1]; az += step) {
-          // (the aisles; the rows with seats here)
-          if (az % aisle.every < aisle.width) continue;
+          // (the aisles, through the main rake's first rows; the rows with seats here)
+          if (name === "main" && row < aisle.rows && aisle.at.some((a) => Math.abs(az - a) < aisle.width / 2)) continue;
           const [from, to] = rowsAt(name, az);
           if (row < from || row >= to) continue;
-          tierOf.push(name);
+          cardTiers.push(name);
           const a = (sign * az * Math.PI) / 180;
           // (Three's frame: x, z up, the game's y; the card's right along the row, its face toward the centre)
           seatings.push(new Matrix4().makeRotationY(-a - Math.PI / 2).setPosition(r * Math.cos(a), z, r * Math.sin(a)));
@@ -206,7 +209,7 @@ export function buildCrowd(primary0: Color, primary1: Color, seed = 7): { mesh: 
   });
   mesh.name = "crowd";
   // (each card's tier, for tests)
-  mesh.userData["tiers"] = tierOf;
+  mesh.userData["tiers"] = cardTiers;
   // (the bob above each card's seat)
   mesh.userData["reach"] = CROWD.bob;
   // (all round the camera)

@@ -89,6 +89,11 @@ install; every native was decompiled in the live project, and the addresses are 
 **States:** GameState, GameMode, InUI, IsSupersonic, ScoreStatus, ScoreSeparation, PlayerCount, MajorityFar,
 CameraBallFocus (ball cam), BallExplode, LiveReplay, AnthemPlaying, LoadingScreen, ReplayPlaybackSpeed.
 
+**Impact and landing sound triggers** (2026-10-10): see notes/impact-triggers.md (IT-1..5).
+- Impact_Body/Impact_Ball need v ≥ 50 and a 0.15 s game-time cooldown (separate world and actor slots); the ball's
+  SoundPriority 100 silences the car side.
+- Impact_Wheel fires per wheel per frame on landing (v > 50, RTPC = v) with no cooldown.
+
 ## Open
 1. **LPF/HPF:** the 0–100 → Hz mapping is not extracted (approximate in the client).
 2. **REV engines:** the simulator (AkRevPhysicsSimulation, the REV_* RTPCs, 198 profiles) and switch #3177079107 are

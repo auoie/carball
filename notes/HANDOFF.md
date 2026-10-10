@@ -132,7 +132,7 @@
     the hotspots, the stands from tier rules, the structures as low-order fits, the crowd, screens, props, the far
     layer), RV-94..98 (wasm smoketest path, the child origin's bits, PhysLog's SafeRead and `origin_bu`,
     `live_validate`'s option values, docs), RV-99 (the shipped-data guard, `render/shippedData.test.ts`).
-  - **Since 02cf5c4 (uncommitted), the static session's RV-100..132:**
+  - **In a1ab6a0, the static session's RV-100..132:**
     - field and goals: the grass's reflection as H-1's (RV-100) and its light by x and |y| (RV-105a); the centre disc
       and trims to the game's radii (RV-102); RV-103a, c, d (the centre arc's legs, 16.3 hatch bars, the strip's flat
       end; b, e, f wait on extents from the static session); OOBFloor under each goal, a hex slope in its own light
@@ -155,9 +155,72 @@
       open; the floodlights' bulbs on the middle row; per-placement panel light, the logo at 14 %, two-row TV strips,
       brighter windows, the banners' texture term; ribs to the roof's edge; sunk cards hidden; the bob phase shared.
       The crowd and the screens and props now in `stadiumCrowd.ts` and `stadiumProps.ts`.
-    Left: RV-107 and RV-129 (with the global tone map and SUR-24's fog constants), RV-130 (team light bulbs, beam light
-    dots, the StadiumFog haze, fog sheets: not built), the SUR-35 calibration, SUR-13's beams and flare sheets, flags
-    and trees (SUR-11).
+  - **Since a1ab6a0 (uncommitted):**
+    - the SUR-35 calibration: the dev arena viewer's `cubeFaces()` (`GrassCube.readCapture`) reads the capture back;
+      a script bins it as the game's reflection profile (`reflection_profile.json`, local): RMS luminance 0.148 ->
+      0.089 over 180 cells. What moved it: the capture in two passes, the second with a constant cube of the first's
+      upper hemisphere's mean (SUR-32's G_env); the apron round the cage and the -X plaza's sidewalk (SUR-4); the +X
+      ends' stands starting at their first seated row; the hotspots drawn after the canopy; the +X hotspot's fade
+      smoothstep(8, 25). Open with the static session: the corner flags' seen colour, what occludes az 180 below el 7
+      (the statue), the grass at grazing (G_env applies or not);
+    - `render/themes/stadiumLights.ts`: the team uplight beams and the floodlights' flare sheets (SUR-13), the team
+      light bulbs, the canopy's mullions with their light dots, the StadiumFog haze and the near fog sheets (RV-130);
+    - the floodlights as the game's 42 fixtures a bank (RV-125: two halves, the v-profile statistic, the lens rows at
+      the fixtures);
+    - RV-103b, e, f: the goal end's side with its jogs, Goal_Lines' and Field_Side_Lines' open pieces with their hooks,
+      stroke rows and clusters, the E trim line's real path (one a quadrant), from the static session's named measures;
+    - RV-113: the particle comment (the demolition's draws were right);
+    - the -X plaza (RV-133: the plinth, the statue, the poplars as named measures; the roof to az 176, low city beyond)
+      and the corner flags (five poles a corner on r 6185, banners with their strips, the static session's measures);
+    - the capture in three passes (the game re-captures over its first 2 s), calibrated against CAL1's corrected
+      profile: RMS 0.082;
+    - RV-141..146: the centre arc's legs and downs with rounded joins (raster IoU 0.928 against Field_Center_Lines,
+      local), the advert strip's second bar and Glass_Outer's V, the goal glows as two loops (round the mouth on the back
+      wall, and the field side's round the mouth piece's front: lines and fillets, every traced point within 10 uu),
+      the low beside-glow's profile, H-4's tire marks inside the saturate, OOBFloor's slope-only light and the bevels'
+      own, the grass light's bins on 256's;
+    - RV-109/110: the overlays' charts (the 45-degree diagonal the back walls' u, the diagonal corners' top fillet row
+      the roof's) within 0.028 UV of FF_Goal/Side/Roof at every vertex, the net side walls within 0.0033 (local tests);
+    - RV-138..140: the shipping guard by stride (1-8, every phase), with UV rows and per-azimuth columns matched in
+      order, (az, value) pairs, the crowd tiers, decimals without trailing zeros, written integers (index lists), the
+      cage topology's own index arrays blanked (it's pinned as topology), JSON through the build's aliases, dist's HTML
+      and CSS; controls for every form in the static session's battery (scripts/reference_vertices.py writes the local
+      reference);
+    - RV-148: the shaders' functions as exported GLSL (overlayUv, netSideUv, underGlassV, grassReflection, envG), run on
+      the GPU against their TypeScript twins (`?viewer=shaders`, e2e `shaders.spec.ts`); engine test for RV-95's chain at
+      a 10/20 uu offset;
+    - the boost pads' taken look: the dim mix tested USE_INSTANCING_COLOR in the fragment shader, which three defines
+      only for the vertex shader (the fragment's is USE_COLOR), so taken pads drew lit; now a GPU render check (taken =
+      the dim reference, under half the lit). A full car takes no pad (CanPickup: !IsFull), freeplay's Unlimited too;
+    - "Unlimited boost in free play" (MENU-9) in the settings' Controller tab, on by default as the game's: off, the tank
+      at a round's 33 (BOOST_SPAWN_AMOUNT), drained by boosting, pads taken (engine setUnlimitedBoost; turning it off
+      mid-session sets the tank to 33 at once). e2e: on, a full car leaves the pad; off via the panel, the pad is taken
+      (+12) and its pixels go dark.
+    - the post-processing (notes/post-processing.md PP-1..20; `render/postProcess.ts`): the scene linear HDR into a
+      half-float target, the depth of field's soft layer (0.25 everywhere, to 0.6 far off), the bloom (soft knee from 2,
+      the three Gaussian sizes by the game's tap rule), then the tone map and the 16-node remap to display values (no
+      three.js tone mapping or sRGB encode; no anti-aliasing, the game's default); a 1 s fade-in from black. The
+      per-material 1 - exp(-c) curves are gone (RV-64), the translucent blends linear (RV-107). Video tab: Bloom, Depth
+      of Field (on). Tests: the twins against the spec's tables and taps; on the GPU the GLSL against the twins, a
+      uniform grey through the whole chain at its display value, bloom only with Bloom on;
+    - the sky in full (H-10 detail, `themes/stadiumSky.ts`): the clouds and stars on our own noises (made at load from
+      the textures' quantiles, correlations, feature sizes and neighbour correlation; stored 8-bit sRGB, mipmapped, as
+      the game's), each elevation band's mean within 15 % of the game's sky (tested). The capture's zenith stays 0.01:
+      its 256 mips average the sub-texel stars, where the static session's profile samples them full-res.
+    Left: RV-129 (with SUR-24's fog constants), trees (SUR-11), the far fog sheets and the searchlights; motion blur,
+    SSAO, sun shafts and lens flares (PP-11..14).
+    - the impact triggers' engine half (engine patch 96, notes/impact-triggers.md IT-1..3): per step, each car's
+      contacts with each partner averaged as the game's (the solver setup's point velocities kept on btManifoldPoint),
+      the line check's normal, speed |dv . n| (50 or more kept); `takeImpacts` (collection on in the browser engine
+      only: the server and tools don't take them; capped); each wheel's ray-hit normal in the car state for the landing
+      trigger (IT-5). Tests: TestImpacts (native and WASM).
+    Next: the triggers' client half (the Impact_Medium shake for the local car, the impact sounds with their 0.15 s
+    world/actor cooldowns and the car-ball rule, the landings per wheel per frame; replacing audio/detect.ts's guesses),
+    then quick chat (notes/quick-chat.md CHAT-1..22) and match stats (notes/match-stats.md STAT-1..24).
+  - **Decided (user, 2026-10-10): no controller rumble.** notes/rumble.md stays as a reference spec only. The contact
+    detection it asked about (the static session's Q-RMB-a: HandleCollision's cadence, the contact's point and normal,
+    the landing speed) is still wanted, for the Impact_Medium camera shake and the impact and landing sounds; don't
+    assume per-step firing until the answer comes.
   - **Local assets from the static session** (dev-only, git-ignored, load when present like the Fennec; each with a
     README and manifest): `out/bsim/assets_local/fx/` (ball GLB and material formula, the boost trail and the goal
     explosion as emitter JSON, schema rl-fx/1), `cars/` (six cars painted per team with their hitbox presets and

@@ -94,6 +94,9 @@ describe("settings", () => {
       muted: false,
       flipIndicator: true,
       autoSkipReplay: false, // (ProfileGameplaySave bAutoSkipGoalReplay)
+      unlimitedBoost: true, // (Unlimited boost in free play, on: MENU-9)
+      bloom: true, // (the video options' High preset: PP-16)
+      depthOfField: true,
     });
   });
 
