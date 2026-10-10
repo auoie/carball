@@ -157,7 +157,8 @@ triangles touch one body. Our generated arena now has the same 16 meshes:
   the floor and above the ceiling (the skirts) our rules approximate the game's authored geometry (up to ~44 uu off;
   nothing touches it, but it is in Bullet's trees).
 - The goal halves' meshes are written in their own frame with a body offset (`.cmf` trailer "RLOF" + 3 floats;
-  `CollisionMeshFile`, engine patch 73).
+  `CollisionMeshFile`, engine patch 73). The offset is the game's single-precision chain from the location (× 0.02,
+  × 50, × 0.02): y ±0x42cccccb BU (102.399986), not 102.4f (`arena_gen.py` `body_origin`; engine README row 95).
 - Live: `ball_curves` ball max 175 → 0.04 uu/s, `walls` 14.4 → 0.20 (0.40 on the game's own meshes), every other
   recording unchanged (validation finding 45).
 

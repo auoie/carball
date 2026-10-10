@@ -205,7 +205,11 @@ void main() {
   #include <colorspace_fragment>
   // (fog only dims an additive beam, rgb x fog.w: no blend towards the fog's colour, RV-70d)
   #ifdef USE_FOG
-    gl_FragColor.rgb *= 1.0 - smoothstep(fogNear, fogFar, vFogDepth);
+    #ifdef FOG_EXP2
+      gl_FragColor.rgb *= exp(-fogDensity * fogDensity * vFogDepth * vFogDepth);
+    #else
+      gl_FragColor.rgb *= 1.0 - smoothstep(fogNear, fogFar, vFogDepth);
+    #endif
   #endif
 }
 `;
@@ -297,7 +301,11 @@ export class CageBeams {
         const after = points[Math.min(n - 1, k + 1)] ?? point;
         const tangent = new Vector3(...three(after)).sub(new Vector3(...three(before))).normalize();
         const normal = new Vector3(...three(beamNormals[k] ?? [0, 0, 1]));
-        const side = alongNormal ? normal.clone().normalize() : new Vector3().crossVectors(tangent, normal).normalize();
+        const inSurface = new Vector3().crossVectors(tangent, normal).normalize();
+        const side = alongNormal ? normal.clone().normalize() : inSurface;
+        // (each quad's own normal, as FFCage_Full's: the surface's for the quad in it, the in-surface side for the one
+        // along the normal; the stripes' blend and the shockwave's push read it: RV-75)
+        const own = alongNormal ? inSurface : normal;
         // (the ends reach a core's half width on, so beams meeting at a point overlap there instead of leaving a notch)
         const reach = style.game ? 0 : k === 0 ? -CORE_HALF_WIDTH : k === n - 1 ? CORE_HALF_WIDTH : 0;
         const centre = new Vector3(...three(point)).addScaledVector(tangent, reach);
@@ -306,7 +314,7 @@ export class CageBeams {
           positions.push(centre.x, centre.y, centre.z);
           sides.push(side.x, side.y, side.z);
           acrosses.push(across);
-          normals.push(normal.x, normal.y, normal.z);
+          normals.push(own.x, own.y, own.z);
         }
         if (k > 0) indices.push(base - 2, base - 1, base, base - 1, base + 1, base);
       });

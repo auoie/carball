@@ -18,8 +18,8 @@ RS_NS_START
 //    the ones everyone else uses/shares do not.
 
 // RL PATCH: the presets' boxes exactly (HandlingPresets.Physics.*: the box plus the 2.5 skin on every axis; RocketSim
-// rounded the lengths, 120.507 for 120.5074), and the Octane's box offset as read live (13.875660, 20.754988) (static
-// analysis RS-10)
+// rounded the lengths, 120.507 for 120.5074), and the boxes' offsets as read live (the Octane's and Hybrid's 13.875660,
+// 20.754988; the Merc's 11.375660, 21.504988; the Plank's x 9.008572) (static analysis RS-10, RV-88)
 const static Vec HITBOX_SIZES[7] = { 
 	{ 120.5074f,	86.6994f,	38.6591f	}, // OCTANE
 	{ 130.4268f,	85.78f,		33.8f		}, // DOMINUS
@@ -34,10 +34,10 @@ const static Vec HITBOX_SIZES[7] = {
 const static Vec HITBOX_OFFSETS[7] = { 
 	{ 13.875660f,	0, 20.754988f	}, 
 	{ 9.f,		0, 15.75f	},	
-	{ 9.00857f, 0, 12.0942f	},
+	{ 9.008572f, 0, 12.0942f	},
 	{ 12.5f,	0, 11.75f	},
-	{ 13.8757f,	0, 20.755f	},
-	{ 11.3757f,	0, 21.505f	},
+	{ 13.875660f,	0, 20.754988f	},
+	{ 11.375660f,	0, 21.504988f	},
 
 	{ 13.8757f,	0, 15.0f	}
 };

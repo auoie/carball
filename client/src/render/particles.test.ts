@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { vec3 } from "../math/vec";
 import { Demolition } from "./demolition";
 import { BOOST_TRAIL, GOAL_EXPLOSION, GoalExplosion, IDLE_EXHAUST, SceneEffects } from "./effects";
-import { Emitter, type EmitterSpec, Particles, additiveOutput, evaluate, particleColor, unitDirection } from "./particles";
+import { Emitter, type EmitterSpec, Particles, additiveOutput, evaluate, particleColor, spherePoint, unitDirection } from "./particles";
 
 const FRAME = 1 / 60;
 
@@ -54,13 +54,16 @@ describe("particle emitters", () => {
     expect(particles.count).toBe(0);
   });
 
-  it("over 3200 uu the trail leaves about 250 puffs (2.5 per 32 uu: RV-44), each 20-35 uu wide (RV-43)", () => {
+  it("at 1400 uu/s and 60 fps the trail leaves about 2.07 puffs per 32 uu (RV-85), each 20-35 uu wide (RV-43)", () => {
     const particles = new Particles(seeded(4));
     const trail = new Emitter(particles, BOOST_TRAIL);
     trail.active = true;
-    for (let x = 0; x <= 3200; x += 64) trail.update(FRAME, vec3(x, 0, 17));
-    expect(particles.count).toBeGreaterThan(230);
-    expect(particles.count).toBeLessThan(270);
+    // (6400 uu: 274 frames of 23.33 uu; the game's 2.0736 per 32 uu, the static session's Markov chain)
+    const step = 1400 / 60;
+    for (let i = 0; i <= 274; i++) trail.update(FRAME, vec3(i * step, 0, 17));
+    const perUnit = (particles.count * 32) / (274 * step);
+    expect(perUnit).toBeGreaterThan(1.95);
+    expect(perUnit).toBeLessThan(2.2);
     const widths = particles.list().map((p) => p.width);
     expect(Math.min(...widths)).toBeGreaterThanOrEqual(20);
     expect(Math.max(...widths)).toBeLessThanOrEqual(35);
@@ -172,5 +175,74 @@ describe("particle emitters", () => {
     const demo = new Demolition(new Particles(), new Group(), vec3(0, 0, 17));
     demo.update(3);
     expect(demo.done).toBe(true);
+  });
+});
+
+describe("a spawn sphere's offsets (SpawnEx: RV-82)", () => {
+  it("in the volume: U(-1, 1)^3 clamped to the sphere, so 1 - pi/6 of them on the surface, mean |offset| 0.871 R", () => {
+    let seed = 12345;
+    const random = (): number => {
+      // (a small LCG: reproducible)
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed / 2147483648;
+    };
+    const n = 100_000;
+    let surface = 0;
+    let sum = 0;
+    for (let i = 0; i < n; i++) {
+      const p = spherePoint(random, 100, false);
+      const r = Math.hypot(p.x, p.y, p.z) / 100;
+      expect(r).toBeLessThanOrEqual(1 + 1e-9);
+      if (r > 1 - 1e-9) surface++;
+      sum += r;
+    }
+    expect(surface / n).toBeCloseTo(1 - Math.PI / 6, 2);
+    expect(Math.abs(surface / n - 0.476)).toBeLessThan(0.005);
+    expect(Math.abs(sum / n - 0.871)).toBeLessThan(0.005);
+  });
+
+  it("on the surface: every offset at the radius", () => {
+    let k = 0;
+    const random = (): number => ((k = (k * 7 + 3) % 101) + 0.5) / 101;
+    for (let i = 0; i < 200; i++) {
+      const p = spherePoint(random, 256, true);
+      expect(Math.hypot(p.x, p.y, p.z)).toBeCloseTo(256, 6);
+    }
+  });
+});
+
+describe("spawning by distance (GetSpawnAmount: RV-85)", () => {
+  const spec = (count: number): EmitterSpec => ({ ...BOOST_TRAIL, lifetime: 100, perUnit: { unit: 32, count, maxFrame: 128 } });
+  const run = (count: number, step: number, frames: number): number => {
+    const particles = new Particles(seeded(9));
+    const emitter = new Emitter(particles, spec(count));
+    emitter.active = true;
+    for (let i = 0; i <= frames; i++) emitter.update(FRAME, vec3(i * step, 0, 17));
+    return particles.count;
+  };
+
+  it("the leftover a distance: 2.5 a unit at 23.33 uu a frame spawns one a frame (60 in 60 frames, not 109)", () => {
+    expect(run(2.5, 1400 / 60, 60)).toBe(60);
+  });
+
+  it("at 1400 uu/s, per 32 uu: 1.0 for 1 a unit, 1.371 for 2, 2.743 for 4", () => {
+    const per = (count: number): number => (run(count, 1400 / 60, 600) * 32) / (600 * (1400 / 60));
+    expect(per(1)).toBeCloseTo(1, 1);
+    expect(per(2)).toBeCloseTo(1.371, 2);
+    expect(per(4)).toBeCloseTo(2.743, 2);
+  });
+
+  it("a teleport spawns none and drops the leftover; standing still spawns none and keeps it", () => {
+    const particles = new Particles(seeded(9));
+    const emitter = new Emitter(particles, spec(1));
+    emitter.active = true;
+    emitter.update(FRAME, vec3(0, 0, 17));
+    emitter.update(FRAME, vec3(20, 0, 17)); // (L 20)
+    emitter.update(FRAME, vec3(20, 0, 17)); // (still: L kept)
+    emitter.update(FRAME, vec3(40, 0, 17)); // (40: one, L 8)
+    expect(particles.count).toBe(1);
+    emitter.update(FRAME, vec3(1040, 0, 17)); // (a teleport: none, L 0)
+    emitter.update(FRAME, vec3(1070, 0, 17)); // (30: none without the old leftover)
+    expect(particles.count).toBe(1);
   });
 });

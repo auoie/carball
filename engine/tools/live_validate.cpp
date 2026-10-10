@@ -14,6 +14,13 @@
 //        live_validate --synth SCENARIO.txt OUT.csv [--preset NAME]   (a recording made by our own engine, for testing)
 //   presets: octane dominus plank breakout hybrid merc (default: from the recording's hitbox)
 //   --steer-sensitivity X, --air-sensitivity X: the player's settings (default: from the recording's header, else 1)
+//   --meshes DIR: the arena's meshes (default: the generated ones; a local copy of the game's cooked ones, with the goal
+//     halves' body offsets, for exactness checks only: never committed or shipped). The run prints which.
+//   --jitter K: per tick with a car-mesh contact (or the game's world contact), K re-runs with the vertices of the
+//     triangles the car can touch jittered 1-4 ulps, or the car's origin moved 0.001 uu: a tick whose contact set
+//     varies and one run matches the game is indeterminate (an ill-conditioned contact), listed with the unjittered
+//     run's error and not counted; --ticks keeps its row, flagged (default 8: on, so the stats leave these ticks out;
+//     0: off, every tick counted)
 //   --contacts FROM-TO: print the car's and the ball's contact points (depth, lifetime, applied impulse) after those
 //     ticks, and the game's own for the same ticks from the recording's _bullet.csv (PhysLog reads the game's Bullet
 //     manifolds) when there is one
@@ -28,6 +35,7 @@
 #include <map>
 #include <random>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -469,9 +477,11 @@ static void PrintContacts(Arena* arena, Car* car, uint64_t tick) {
 // game, the tick is indeterminate: not counted as a physics error.
 static int g_jitter = 8;
 
-// The car's contact points with the arena's meshes after a tick: each point's triangle, sorted
-static std::vector<int> MeshContacts(Arena* arena, Car* car) {
-	std::vector<int> out;
+// The car's contact points with the arena's meshes after a tick: each point's mesh piece and triangle, sorted (the piece
+// too: the same triangle index on two pieces is two triangles, RV-91e)
+using MeshPoint = std::pair<uintptr_t, int>;
+static std::vector<MeshPoint> MeshContacts(Arena* arena, Car* car) {
+	std::vector<MeshPoint> out;
 	auto* dispatcher = arena->_bulletWorld.getDispatcher();
 	for (int i = 0; i < dispatcher->getNumManifolds(); i++) {
 		btPersistentManifold* m = dispatcher->getManifoldByIndexInternal(i);
@@ -480,33 +490,58 @@ static std::vector<int> MeshContacts(Arena* arena, Car* car) {
 		if (!other || other->getCollisionShape()->getShapeType() != TRIANGLE_MESH_SHAPE_PROXYTYPE) continue;
 		for (int j = 0; j < m->getNumContacts(); j++) {
 			const btManifoldPoint& p = m->getContactPoint(j);
-			out.push_back(carFirst ? p.m_index1 : p.m_index0);
+			out.push_back({ (uintptr_t)other, carFirst ? p.m_index1 : p.m_index0 });
 		}
 	}
 	std::sort(out.begin(), out.end());
 	return out;
 }
 
-// Jitters every mesh vertex within `radius` uu of `at` by 1-4 ulps per float (seeded); returns how to put them back
+// Jitters every vertex of the triangles the car can touch this tick (those whose bounds meet the car's, grown by
+// `reach` uu: the candidates the tree query finds, the contacted ones among them, RV-91d) by 1-4 ulps per float
+// (seeded); returns how to put them back
 struct JitteredFloat { float* at; float was; };
-static std::vector<JitteredFloat> JitterVertices(Arena* arena, Vec at, float radius, uint32_t seed) {
+struct TriangleIds : btTriangleCallback {
+	std::vector<std::pair<int, int>> ids; // (part, triangle)
+	void processTriangle(btVector3*, int part, int triangle) override { ids.push_back({ part, triangle }); }
+};
+static std::vector<JitteredFloat> JitterVertices(Arena* arena, Car* car, float reach, uint32_t seed) {
 	std::vector<JitteredFloat> undo;
 	std::minstd_rand0 random(seed);
-	btVector3 world(at.x * UU_TO_BT, at.y * UU_TO_BT, at.z * UU_TO_BT);
-	float r2 = radius * UU_TO_BT * radius * UU_TO_BT;
+	btVector3 carMin, carMax;
+	car->_rigidBody.getCollisionShape()->getAabb(car->_rigidBody.getWorldTransform(), carMin, carMax);
+	btVector3 grow(reach * UU_TO_BT, reach * UU_TO_BT, reach * UU_TO_BT);
+	carMin -= grow;
+	carMax += grow;
 	for (btRigidBody* rb : arena->_worldCollisionRBs) {
 		auto* bvh = dynamic_cast<btBvhTriangleMeshShape*>(rb->getCollisionShape());
 		if (!bvh) continue;
-		btVector3 local = rb->getWorldTransform().inverse() * world;
+		// (the car's bounds in the mesh's frame: its eight corners)
+		btTransform toLocal = rb->getWorldTransform().inverse();
+		btVector3 lo(BT_INFINITY, BT_INFINITY, BT_INFINITY), hi = -lo;
+		for (int k = 0; k < 8; k++) {
+			btVector3 c = toLocal * btVector3(k & 1 ? carMax.x() : carMin.x(), k & 2 ? carMax.y() : carMin.y(), k & 4 ? carMax.z() : carMin.z());
+			lo.setMin(c);
+			hi.setMax(c);
+		}
+		TriangleIds near;
+		bvh->processAllTriangles(&near, lo, hi);
+		if (near.ids.empty()) continue;
 		btStridingMeshInterface* mesh = bvh->getMeshInterface();
 		for (int part = 0; part < mesh->getNumSubParts(); part++) {
 			unsigned char* vertices; int numVerts, stride;
 			unsigned char* indices; int indexStride, numFaces;
 			mesh->getLockedVertexIndexBase(&vertices, numVerts, stride, &indices, indexStride, numFaces, part);
-			for (int v = 0; v < numVerts; v++) { // (floats: RocketSim's meshes)
+			std::vector<int> touched;
+			for (auto [p, t] : near.ids) {
+				if (p != part) continue;
+				const int* tri = reinterpret_cast<const int*>(indices + t * indexStride); // (int indices: RocketSim's meshes)
+				touched.insert(touched.end(), tri, tri + 3);
+			}
+			std::sort(touched.begin(), touched.end());
+			touched.erase(std::unique(touched.begin(), touched.end()), touched.end());
+			for (int v : touched) { // (floats: RocketSim's meshes)
 				float* f = reinterpret_cast<float*>(vertices + v * stride);
-				btVector3 p(f[0], f[1], f[2]);
-				if ((p - local).length2() > r2) continue;
 				for (int c = 0; c < 3; c++) {
 					undo.push_back({ f + c, f[c] });
 					int ulps = 1 + (int)(random() % 4);
@@ -564,12 +599,12 @@ static int Validate(const char* path, const std::string& presetName, const Sensi
 		fprintf(ticksOut, "tick,car_pos,car_vel,car_ang,car_rot_deg,ball_pos,ball_vel,on_ground_rec,on_ground_eng,"
 		                  "wheels_rec,wheels_eng,jump_rec,jump_eng,dodge_rec,dodge_eng,resync,"
 		                  "car_dvx,car_dvy,car_dvz,car_dwx,car_dwy,car_dwz,ball_dvx,ball_dvy,ball_dvz,ball_dwx,ball_dwy,ball_dwz,"
-		                  "world_contact_rec,world_contact_eng,car2_vel,car2_dvx,car2_dvy,car2_dvz\n");
+		                  "world_contact_rec,world_contact_eng,car2_vel,car2_dvx,car2_dvy,car2_dvz,indeterminate\n");
 		                  // (signed: engine - recording)
 
 	std::vector<float> carPos, carVel, carAng, carRot, ballPos, ballVel, car2Pos, car2Vel, car2Ang;
 	std::vector<std::string> demos; // the second car demolished: by the game (its columns go empty) and by the engine
-	std::vector<uint64_t> indeterminateTicks; // ill-conditioned contacts: not counted
+	std::vector<std::pair<uint64_t, float>> indeterminateTicks; // ill-conditioned contacts, not counted: tick, unjittered residual
 	int groundMismatch = 0, wheelMismatch = 0, touchMismatch = 0, worldContactMismatch = 0, worldContactCompared = 0, jumpMismatch = 0, dodgeMismatch = 0, compared = 0, resyncs = 0, placements = 0;
 	bool started = false;
 	for (size_t i = 0; i + 1 < rows.size(); i++) {
@@ -618,6 +653,7 @@ static int Validate(const char* path, const std::string& presetName, const Sensi
 		if (car2 && a.hasOther) car2->controls = a.other.in;
 		// Ill-conditioned contacts: the tick again from the same state with tiny jitters (per-tick mode only)
 		bool indeterminate = false;
+		float unjittered = 0;
 		if (g_jitter > 0 && !continuous) {
 			DataStreamOut snapshot;
 			arena->Serialize(snapshot);
@@ -629,18 +665,23 @@ static int Validate(const char* path, const std::string& presetName, const Sensi
 				if (car2 && a.hasOther) car2->controls = a.other.in;
 			};
 			arena->Step(ticks);
-			std::vector<int> first = MeshContacts(arena, car);
-			float best = (car->GetState().vel - b.car.vel).Length();
+			std::vector<MeshPoint> first = MeshContacts(arena, car);
+			unjittered = (car->GetState().vel - b.car.vel).Length();
+			float best = unjittered;
 			bool varies = false;
-			if (!first.empty()) {
+			// (where the engine touches a mesh, or the game touches the world and the engine may have missed it: RV-91f)
+			if (!first.empty() || b.worldContact > 0) {
 				for (int v = 0; v < g_jitter; v++) {
 					restore();
 					std::vector<JitteredFloat> undo;
 					if (v % 2 == 0) {
-						undo = JitterVertices(arena, car->GetState().pos, 300, (uint32_t)(a.tick * 131 + v));
-					} else { // (the car's origin, 0.001 uu along a seeded direction)
+						undo = JitterVertices(arena, car, 30, (uint32_t)(a.tick * 131 + v));
+					} else { // (the car's origin, 0.001 uu along a seeded direction; the draws in order: RV-91c)
 						std::minstd_rand0 random((uint32_t)(a.tick * 977 + v));
-						Vec d((float)random() / random.max() - 0.5f, (float)random() / random.max() - 0.5f, (float)random() / random.max() - 0.5f);
+						float dx = (float)random() / random.max() - 0.5f;
+						float dy = (float)random() / random.max() - 0.5f;
+						float dz = (float)random() / random.max() - 0.5f;
+						Vec d(dx, dy, dz);
 						CarState cs = car->GetState();
 						cs.pos += d * (0.001f / std::max(d.Length(), 1e-6f));
 						car->SetState(cs);
@@ -660,18 +701,20 @@ static int Validate(const char* path, const std::string& presetName, const Sensi
 		if (a.tick >= contactsFrom && a.tick <= contactsTo) PrintContacts(arena, car, a.tick);
 		CarState s = car->GetState();
 		BallState bs = arena->ball->GetState();
-		if (indeterminate) {
-			indeterminateTicks.push_back(a.tick);
-			continue;
-		}
+		// (an indeterminate tick: listed, its row written with a flag, not counted: RV-91a)
+		if (indeterminate) indeterminateTicks.push_back({ a.tick, unjittered });
+		const float ePos = (s.pos - b.car.pos).Length(), eVel = (s.vel - b.car.vel).Length(),
+		            eAng = (s.angVel - b.car.angVel).Length(), eRot = AngleBetween(s.rotMat, b.car.rot) * 57.2958f;
+		const float eBallPos = b.hasBall ? (bs.pos - b.ball.pos).Length() : 0.f, eBallVel = b.hasBall ? (bs.vel - b.ball.vel).Length() : 0.f;
+		if (!indeterminate) {
 		compared++;
-		carPos.push_back((s.pos - b.car.pos).Length());
-		carVel.push_back((s.vel - b.car.vel).Length());
-		carAng.push_back((s.angVel - b.car.angVel).Length());
-		carRot.push_back(AngleBetween(s.rotMat, b.car.rot) * 57.2958f);
+		carPos.push_back(ePos);
+		carVel.push_back(eVel);
+		carAng.push_back(eAng);
+		carRot.push_back(eRot);
 		if (b.hasBall) {
-			ballPos.push_back((bs.pos - b.ball.pos).Length());
-			ballVel.push_back((bs.vel - b.ball.vel).Length());
+			ballPos.push_back(eBallPos);
+			ballVel.push_back(eBallVel);
 		}
 		CarState s2 = car2 ? car2->GetState() : CarState();
 		if (car2 && a.hasOther && (s2.isDemoed || !b.hasOther)) {
@@ -698,17 +741,22 @@ static int Validate(const char* path, const std::string& presetName, const Sensi
 			worldContactCompared++;
 			worldContactMismatch += s.worldContact.hasContact != (b.worldContact != 0);
 		}
+		}
 		if (ticksOut) {
+			int wheels = 0;
+			for (const auto& w : s.wheelCarry.wheels) wheels += w.worldContact;
+			CarState s2 = car2 ? car2->GetState() : CarState();
+			const float e2Vel = car2 && b.hasOther ? (s2.vel - b.other.car.vel).Length() : 0.f;
 			Vec dv = s.vel - b.car.vel, dw = s.angVel - b.car.angVel;
 			Vec bdv = b.hasBall ? bs.vel - b.ball.vel : Vec(), bdw = b.hasBall ? bs.angVel - b.ball.angVel : Vec();
 			fprintf(ticksOut, "%llu,%.5f,%.4f,%.6f,%.5f,%.5f,%.4f,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.4f,%.4f,%.4f,%.5f,%.5f,%.5f,"
-			                  "%.4f,%.4f,%.4f,%.5f,%.5f,%.5f,%d,%d,%.4f,%.4f,%.4f,%.4f\n",
-			        (unsigned long long)a.tick, carPos.back(), carVel.back(), carAng.back(), carRot.back(),
-			        b.hasBall ? ballPos.back() : 0.f, b.hasBall ? ballVel.back() : 0.f, b.onGround, s.isOnGround,
+			                  "%.4f,%.4f,%.4f,%.5f,%.5f,%.5f,%d,%d,%.4f,%.4f,%.4f,%.4f,%d\n",
+			        (unsigned long long)a.tick, ePos, eVel, eAng, eRot, eBallPos, eBallVel, b.onGround, s.isOnGround,
 			        b.wheelContacts, wheels, b.jumpActive, s.isJumping, b.dodgeActive, s.isFlipping, resync, dv.x, dv.y,
 			        dv.z, dw.x, dw.y, dw.z, bdv.x, bdv.y, bdv.z, bdw.x, bdw.y, bdw.z, b.worldContact, (int)s.worldContact.hasContact,
-			        car2 && b.hasOther ? car2Vel.back() : 0.f, car2 && b.hasOther ? s2.vel.x - b.other.car.vel.x : 0.f,
-			        car2 && b.hasOther ? s2.vel.y - b.other.car.vel.y : 0.f, car2 && b.hasOther ? s2.vel.z - b.other.car.vel.z : 0.f);
+			        e2Vel, car2 && b.hasOther ? s2.vel.x - b.other.car.vel.x : 0.f,
+			        car2 && b.hasOther ? s2.vel.y - b.other.car.vel.y : 0.f, car2 && b.hasOther ? s2.vel.z - b.other.car.vel.z : 0.f,
+			        (int)indeterminate);
 		}
 	}
 	if (ticksOut) fclose(ticksOut);
@@ -717,8 +765,13 @@ static int Validate(const char* path, const std::string& presetName, const Sensi
 	       continuous ? (", " + std::to_string(resyncs) + " resyncs").c_str() : "", placements);
 	if (!indeterminateTicks.empty()) {
 		std::string list;
-		for (uint64_t t : indeterminateTicks) list += (list.empty() ? "" : " ") + std::to_string(t);
-		printf("%zu indeterminate ticks (ill-conditioned contacts, not counted): %s\n", indeterminateTicks.size(), list.c_str());
+		for (auto [t, residual] : indeterminateTicks) {
+			char one[64];
+			std::snprintf(one, sizeof one, "%s%llu (%.2f)", list.empty() ? "" : " ", (unsigned long long)t, residual);
+			list += one;
+		}
+		printf("%zu indeterminate ticks (ill-conditioned contacts, not counted; in brackets the unjittered run's car velocity "
+		       "error, uu/s): %s\n", indeterminateTicks.size(), list.c_str());
 	}
 	auto line = [](const char* name, const std::vector<float>& v, const char* unit) {
 		printf("  %-22s p50 %10.5f  p90 %10.5f  p99 %10.5f  max %10.5f %s\n", name, Percentile(v, .5f), Percentile(v, .9f),
@@ -894,28 +947,57 @@ int main(int argc, char** argv) {
 	bool synth = false, fitSteer = false;
 	Sensitivities sens;
 	uint64_t contactsFrom = 1, contactsTo = 0;
+	// (an option's number, all of it: garbage or a value out of range is an error, not an abort or a prefix: RV-97)
+	auto number = [](const std::string& s, auto parse) {
+		size_t used = 0;
+		auto v = parse(s, &used);
+		if (used != s.size()) throw std::invalid_argument(s);
+		return v;
+	};
+	auto toFloat = [&](const std::string& s) { return number(s, [](const std::string& t, size_t* u) { return std::stof(t, u); }); };
+	auto toInt = [&](const std::string& s) { return number(s, [](const std::string& t, size_t* u) { return std::stoi(t, u); }); };
+	auto toTick = [&](const std::string& s) {
+		if (s.empty() || s[0] == '-') throw std::invalid_argument(s);
+		return number(s, [](const std::string& t, size_t* u) { return std::stoull(t, u); });
+	};
 	for (int i = 1; i < argc; i++) {
 		std::string a = argv[i];
+		try {
 		if (a == "--meshes" && i + 1 < argc) meshes = argv[++i];
 		else if (a == "--preset" && i + 1 < argc) preset = argv[++i];
 		else if (a == "--ticks" && i + 1 < argc) ticksPath = argv[++i];
-		else if (a == "--steer-sensitivity" && i + 1 < argc) sens.steer = std::stof(argv[++i]);
+		else if (a == "--steer-sensitivity" && i + 1 < argc) sens.steer = toFloat(argv[++i]);
 		else if (a == "--contacts" && i + 1 < argc) { // FROM-TO: print the car's contact points after these ticks
 			std::string r = argv[++i];
 			size_t dash = r.find('-');
-			contactsFrom = std::stoull(r.substr(0, dash));
-			contactsTo = dash == std::string::npos ? contactsFrom : std::stoull(r.substr(dash + 1));
+			contactsFrom = toTick(r.substr(0, dash));
+			contactsTo = dash == std::string::npos ? contactsFrom : toTick(r.substr(dash + 1));
 		}
-		else if (a == "--air-sensitivity" && i + 1 < argc) sens.air = std::stof(argv[++i]);
+		else if (a == "--air-sensitivity" && i + 1 < argc) sens.air = toFloat(argv[++i]);
 		else if (a == "--continuous") continuous = true;
-		else if (a == "--jitter" && i + 1 < argc) g_jitter = std::stoi(argv[++i]); // (0: no indeterminate ticks)
+		else if (a == "--jitter" && i + 1 < argc) g_jitter = toInt(argv[++i]); // (0: no indeterminate ticks)
 		else if (a == "--synth") synth = true;
 		else if (a == "--fit-steer") fitSteer = true;
+		else if (a.rfind("--", 0) == 0) { // (an option misspelt, or its value missing, isn't ignored)
+			fprintf(stderr, "live_validate: unknown option or missing value: %s\n", a.c_str());
+			return 1;
+		}
 		else positional.push_back(a);
+		} catch (const std::logic_error&) { // (std::invalid_argument, std::out_of_range)
+			fprintf(stderr, "live_validate: bad value for %s: %s\n", a.c_str(), argv[i]);
+			return 1;
+		}
+	}
+	if (positional.size() > (synth ? 2u : 1u)) {
+		fprintf(stderr, "live_validate: unexpected argument: %s\n", positional.back().c_str());
+		return 1;
 	}
 	if (positional.size() < (synth ? 2u : 1u)) {
 		fprintf(stderr, "usage: live_validate LOG.csv [--continuous] [--preset NAME] [--ticks OUT.csv]\n"
 		                "                     [--steer-sensitivity X] [--air-sensitivity X]   (default: the recording's)\n"
+		                "                     [--meshes DIR]        (default: the generated arena; the cooked meshes: local only)\n"
+		                "                     [--jitter N]          (default 8; 0: no indeterminate ticks)\n"
+		                "                     [--contacts FROM[-TO]] (print the car's contact points after these ticks)\n"
 		                "       live_validate LOG.csv --fit-steer [--preset NAME]\n"
 		                "       live_validate --synth SCENARIO.txt OUT.csv [--preset NAME]\n");
 		return 1;

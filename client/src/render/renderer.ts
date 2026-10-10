@@ -14,6 +14,8 @@ export class Renderer {
   readonly #target = new Vector3();
   readonly #forward = new Vector3();
   readonly #observer: ResizeObserver;
+  /** Work with the WebGL renderer before the next frame, once each (the arena's reflection capture) */
+  readonly #beforeNextFrame: ((gl: WebGLRenderer, scene: Scene) => void)[] = [];
 
   constructor(readonly canvas: HTMLCanvasElement) {
     this.#gl = new WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
@@ -29,7 +31,13 @@ export class Renderer {
     this.#gl.dispose();
   }
 
+  /** `work` before the next frame is drawn (once) */
+  beforeNextFrame(work: (gl: WebGLRenderer, scene: Scene) => void): void {
+    this.#beforeNextFrame.push(work);
+  }
+
   render(view: CameraView): void {
+    for (const work of this.#beforeNextFrame.splice(0)) work(this.#gl, this.scene);
     this.#camera.position.copy(toThreeVector(view.position));
     this.#camera.up.copy(toThreeVector(view.up));
     this.#target.copy(this.#camera.position).add(toThreeVector(view.forward, this.#forward).multiplyScalar(1000));

@@ -3,15 +3,18 @@ import { AdditiveBlending, type BufferGeometry, Color, type Material, Mesh, type
 import { describe, expect, it } from "vitest";
 import { ArenaView, glowContour } from "./arena";
 import { wallLine } from "./arenaSurface";
-import { shockRing, shockWave } from "./cageBeams";
-import { GlowStripMaterial, HexGlassMaterial, ForceFieldMaterial } from "./gameSurfaces";
+import type { CageGraph } from "./cage";
+import { CageBeams, shockRing, shockWave } from "./cageBeams";
+import { ENV_GLSL, ENV_RADIAL, ENV_SPREAD, GOAL_SIDE_CHART, GlowStripMaterial, HexGlassMaterial, ForceFieldMaterial, goalSideV } from "./gameSurfaces";
+import { GoalFloorMaterial } from "./goalInterior";
 import { HexWallMaterial } from "./hexWalls";
 import { nightTheme } from "./themes/night";
 import { stadiumTheme } from "./themes/stadium";
 
+/** The materials drawn in the main view (not the reflection capture's own hotspots, hidden but while it captures) */
 function materials(root: Object3D): Material[] {
   const out: Material[] = [];
-  root.traverse((o) => {
+  root.traverseVisible((o) => {
     if (o instanceof Mesh) out.push(...(Array.isArray(o.material) ? (o.material as Material[]) : [o.material as Material]));
   });
   return out;
@@ -26,8 +29,8 @@ describe("the game's arena materials", () => {
     expect(all.filter((m) => m instanceof ForceFieldMaterial)).toHaveLength(1);
     // (beside each goal, and the nets)
     expect(all.filter((m) => m instanceof HexGlassMaterial)).toHaveLength(3);
-    // (each side wall, each team's half)
-    expect(all.filter((m) => m instanceof GlowStripMaterial)).toHaveLength(4);
+    // (each side wall, each team's half; each goal's glows: RV-77)
+    expect(all.filter((m) => m instanceof GlowStripMaterial)).toHaveLength(6);
     expect(all.filter((m) => m instanceof HexWallMaterial)).toHaveLength(0);
     expect(all.filter((m) => m.blending === AdditiveBlending)).toHaveLength(1);
   });
@@ -103,5 +106,129 @@ describe("the game's arena materials", () => {
     expect(shockRing(d2(5900), wave)).toBe(0);
     expect(shockRing(0, shockWave(0.24))).toBe(0);
     expect(shockRing(0, shockWave(0.375))).toBeCloseTo(1);
+  });
+});
+
+describe("the cage's crossed beam quads (RV-75)", () => {
+  // A horizontal beam on the side wall (along y, the wall facing -x) and one on the ceiling (along x, facing down)
+  const graph: CageGraph = {
+    vertices: [],
+    edges: [],
+    beams: [
+      { points: [[4096, 0, 1000], [4096, 500, 1000]], normals: [[-1, 0, 0], [-1, 0, 0]] },
+      { points: [[0, 0, 2044], [500, 0, 2044]], normals: [[0, 0, -1], [0, 0, -1]] },
+    ],
+  };
+  const beams = new CageBeams(graph, 92.75, stadiumTheme().style.walls);
+  const geometry = beams.mesh.geometry;
+  const normal = geometry.getAttribute("beamNormal");
+  const side = geometry.getAttribute("side");
+  // (per beam: the quad in the surface, 4 vertices, then the one along its normal, 4)
+  const own = (vertex: number): Vector3 => new Vector3().fromBufferAttribute(normal, vertex);
+
+  it("each quad's own normal: the surface's for the one in it, the in-surface side (across the beam) for the crossed one", () => {
+    for (let v = 0; v < 16; v++) {
+      const crossed = v % 8 >= 4;
+      const surface = v < 8 ? new Vector3(-1, 0, 0) : new Vector3(0, -1, 0); // (Three's frame)
+      if (crossed) {
+        expect(Math.abs(own(v).dot(surface))).toBeLessThan(1e-6);
+        expect(Math.abs(own(v).dot(new Vector3().fromBufferAttribute(side, v)))).toBeLessThan(1e-6);
+      } else expect(own(v).dot(surface)).toBeCloseTo(1, 6);
+    }
+  });
+
+  it("the stripes' blend sat(64 (|n.z| - 0.5)): 1 on the side wall's horizontal crossed quad, 0 on the ceiling's", () => {
+    const blend = (n: Vector3): number => Math.min(1, Math.max(0, 64 * (Math.abs(n.y) - 0.5))); // (game z: Three's y)
+    expect(blend(own(4))).toBe(1);
+    expect(blend(own(12))).toBe(0);
+  });
+});
+
+describe("the overlay's surfaces (RV-74)", () => {
+  it("pushed out along their normals (the walls 4 uu, the roof 8): the vertex shader carries the offset", () => {
+    const overlay = new ForceFieldMaterial(new Color(0, 0, 1), new Color(1, 0.5, 0));
+    expect(overlay.vertexShader).toContain("world.xyz += outward");
+    expect(new HexGlassMaterial().vertexShader).not.toContain("outward");
+  });
+});
+
+describe("the goals' insides (RV-76, RV-77)", () => {
+  const stadium = new ArenaView(stadiumTheme());
+  stadium.root.updateMatrixWorld(true);
+  const meshes: Mesh[] = [];
+  stadium.root.traverse((o) => {
+    if (o instanceof Mesh) meshes.push(o as Mesh);
+  });
+
+  it("no opaque surface over the goal floor's open part (|x| <= 768, |y| 5152-5990, z about 0): see-through and layered", () => {
+    const v = new Vector3();
+    let checked = 0;
+    for (const mesh of meshes) {
+      const material = mesh.material as Material;
+      const position = mesh.geometry.getAttribute("position");
+      // (the vertices its triangles use: the goal's pieces share one position buffer)
+      const index = mesh.geometry.getIndex();
+      const used = index ? new Set(Array.from({ length: index.count }, (_, k) => index.getX(k))) : null;
+      for (let i = 0; i < position.count; i++) {
+        if (used && !used.has(i)) continue;
+        v.fromBufferAttribute(position, i).applyMatrix4(mesh.matrixWorld);
+        // (Three's frame: x, up, the game's y)
+        const inside = Math.abs(v.x) <= 768 && Math.abs(v.z) > 5152 && Math.abs(v.z) < 5990 && Math.abs(v.y) < 1;
+        if (!inside) continue;
+        checked++;
+        expect.soft(material.transparent, `${mesh.name || material.type} at ${v.toArray().map(Math.round).join(", ")}`).toBe(true);
+      }
+    }
+    expect(checked).toBeGreaterThan(10);
+    // (under it: the lower glass, the glows, dark metal)
+    expect(meshes.filter((m) => m.name === "goal under glass")).toHaveLength(1);
+    expect(meshes.filter((m) => m.name === "goal base")).toHaveLength(1);
+    expect(meshes.filter((m) => m.material instanceof GoalFloorMaterial)).toHaveLength(2);
+  });
+
+  it("each goal's glows in its team's colour, its ribbons glowing 1 at the attached edge, 0 at the free (RV-77)", () => {
+    const glows = meshes.filter((m) => m.name.startsWith("goal glow "));
+    expect(glows).toHaveLength(2);
+    for (const [team, glow] of glows.entries()) {
+      expect(glow.material).toBeInstanceOf(GlowStripMaterial);
+      const values = glow.geometry.getAttribute("glow");
+      const set = new Set<number>();
+      for (let i = 0; i < values.count; i++) set.add(values.getX(i));
+      expect([...set].sort()).toEqual([0, 1]);
+      // (the -y goal's blue, the +y goal's orange)
+      const position = glow.geometry.getAttribute("position");
+      for (let i = 0; i < position.count; i += 7) expect(Math.sign(position.getZ(i))).toBe(team === 0 ? -1 : 1);
+    }
+  });
+});
+
+describe("ENVPack.G's stand-in (RV-71: our own smooth environment)", () => {
+  it("each ring's mean and spread (statistics), one smooth cosine round it; used by the glass, the hex cells, the goal floors", () => {
+    expect(ENV_RADIAL).toHaveLength(9);
+    expect(ENV_SPREAD).toHaveLength(9);
+    expect(ENV_SPREAD[0]).toBe(0); // (the head-on texel: one value)
+    expect(ENV_GLSL).toContain("cos(atan(uv.y, uv.x)");
+    const glass = new HexGlassMaterial();
+    expect(glass.uniforms["envSpread"]?.value).toBe(ENV_SPREAD);
+    expect(glass.fragmentShader).toContain("envG(");
+    const stadium = new ArenaView(stadiumTheme());
+    const shaders: string[] = [];
+    stadium.root.traverse((o) => {
+      if (o instanceof Mesh && "fragmentShader" in (o.material as object)) shaders.push((o.material as { fragmentShader: string }).fragmentShader);
+    });
+    // (the floor's hex cells and the goal floors' glass take it too)
+    expect(shaders.filter((s) => s.includes("envG(")).length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("the goal-side glass's chart is its fitted rules (RV-72, RV-99): V continuous up the face, the bottom row rising with |x|", () => {
+    const { face, bottom } = GOAL_SIDE_CHART;
+    // (continuous where the bottom's blend meets the face's line)
+    expect(goalSideV(1100, face.from - 1e-6)).toBeCloseTo(goalSideV(1100, face.from), 5);
+    // (the face's line: falling 0.004873 a uu)
+    expect(goalSideV(1100, 600) - goalSideV(1100, 400)).toBeCloseTo(200 * face.perZ, 6);
+    // (the bottom row: its smoothstep from v0 at |x| 960 to v0 + rise from 1344, flat beyond)
+    expect(goalSideV(bottom.from, bottom.z)).toBeCloseTo(bottom.v0, 6);
+    expect(goalSideV(bottom.from + bottom.span / 2, bottom.z)).toBeCloseTo(bottom.v0 + bottom.rise / 2, 6);
+    expect(goalSideV(bottom.from + bottom.span + 200, bottom.z)).toBeCloseTo(bottom.v0 + bottom.rise, 6);
   });
 });

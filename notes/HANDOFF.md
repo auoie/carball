@@ -54,15 +54,15 @@
     glow (PNT-12).
   - **Reviews:** the static session reviews committed snapshots only (RV-n findings); tell it "ready for review: <ids>
     @ <commit>" once the user has committed. RV-1..22 committed (354e481, 505b41a); RV-23..25, 27..33, 36, 37 and the
-    event-list test gaps fixed since, uncommitted: send it the hash after the next commit, with visual timing part 2.
-    The final freeplay rule (`notes/camera-respawn-goal.md` "Freeplay after a goal", 2026-10-09) is in, uncommitted:
+    event-list test gaps in 2f7dd07, with visual timing part 2.
+    The final freeplay rule (`notes/camera-respawn-goal.md` "Freeplay after a goal", 2026-10-09) is in 2f7dd07:
     RV-26 (released after 2 ticks), RV-38 (no scored message; either net scores for the player), RV-39 (the session's
-    kickoff spots S[k mod 10], engine patch 90; the ball from z 100.49, stopped at 92.75 on landing; pads reset twice),
+    kickoff spots S[k mod 10], engine patch 90; the ball from z 100.49, held one tick, then it bounces (RV-57); pads reset twice),
     RV-40 (no pad pickup at full boost, engine patch 91: matches too), RV-41 (freeplay's nets are TeamNum 1: the
     explosion in the player's colour, the replay camera on a team-1 net's side), Backspace's 1.0 game s cooldown,
     Unlimited boost (freeplay's default), and the goal replay in freeplay unless "Skip goal replays" is on (Q-1: the
     user's in-game setting is on, hence no replay seen; no freeplay special case). Committed in 2f7dd07; its reviews
-    (RV-42..70) and the live sitting's follow-ups are in, uncommitted: RV-54 (the free-look rate reset when the car
+    (RV-42..70) and the live sitting's follow-ups are in f8b7e2c: RV-54 (the free-look rate reset when the car
     cam ends), RV-55 (engine patch 92: a jump held through a countdown doesn't fire), RV-56 (patch 91 withdrawn:
     BoostPadGrid already skips full cars), RV-57 (the freeplay ball held a tick, then it bounces: validation finding
     51), RV-58 (sky domes inside the far plane, every theme tested), RV-42..53 (particles: local-space exhaust, the
@@ -75,7 +75,7 @@
     RV-52c (spark collision), RV-64's single global tone map (with AV-21's bloom), RV-68's directional fog (nothing in
     the stadium is beyond 10240 uu yet), RV-70g. Left: RV-16
     (the tail lights' brake glow: needs a brake signal), RV-18 (the masks' zero alpha: only off Chrome), RV-34/35 (HUD).
-  - **Visual timing part 2 (done, uncommitted):** particles (`client/src/render/particles.ts`, `effects.ts`) with the
+  - **Visual timing part 2 (done, 2f7dd07):** particles (`client/src/render/particles.ts`, `effects.ts`) with the
     game's emitter values: the boost trail by distance and the idle exhaust, the goal explosion (no ribbons), a
     demolition from the static session's export (`client/src/render/demolition.ts`: every emitter's values, the spark
     streams from 8 moving sources, the flipbooks' colour, size and fade measured as values, "BOOM!", the husks as
@@ -84,7 +84,7 @@
     (`notes/camera-shakes.md`, `client/src/camera/shake.ts`) off by default (the Modern preset), on with Default. Left:
     the impact shake and ball-hit sparks (need contact data: with the sound work), pickup bursts, wheel dust, the ball
     trail, the explosion's ribbons.
-  - **Arena visuals (in progress, uncommitted; `notes/arena-visuals.md`):** a `stadium` theme (`?theme=stadium`, not
+  - **Arena visuals (in progress, committed through bee7a7c; `notes/arena-visuals.md`):** a `stadium` theme (`?theme=stadium`, not
     the default) with the game's arena materials, switched on by the theme's `walls.game`: cage beams per H-8/H-8b
     (additive, 8 uu, the scan stripes and contracting rings from the measured Curve_Fire/Smoke profiles, the
     shockwave from the goal explosion: `ArenaView.explode()` / `newBall()`), the wall overlay per H-9 (the ball
@@ -96,8 +96,47 @@
     frames (H-4), generators (H-7), the advert band and grate (AV-10, H-11), goal floors as metal (AV-13), tone mapping
     and bloom (AV-21); then ask the user whether `stadium` becomes the default.
   - **Live sitting 2026-10-09 (validation finding 51):** the per-wheel/per-contact PhysLog columns recorded
-    (`walls_goal_wheels`: three nose-contact ticks a facet's point a tick apart; the static session is decompiling the
-    candidate filter), Takumi +5.00 / Scarab +7.00 uu spawn offsets, the freeplay ball bouncing (RV-57).
+    (`walls_goal_wheels`: three nose-contact ticks a facet's point a tick apart: ill-conditioned GJK, flipped by
+    ulps), Takumi +5.00 / Scarab +7.00 uu spawn offsets, the freeplay ball bouncing (RV-57). Then (f8b7e2c):
+    engine patches 93 (the Octane box's exact floats) and 94 (the GJK distance sum's order), `live_validate`'s
+    rotation as the game's write-back, its `--jitter` indeterminate ticks (on by default) and its opt-in `--meshes`
+    for a local copy of the game's cooked meshes (the user's decision: exactness checks only, never committed or
+    shipped; `out/arena_local/cooked_meshes2` is that copy with the goal halves' body offsets). The 72 live
+    recordings: better or the same; the replay validation unchanged. Committed in f8b7e2c (reviewed: all fixed).
+  - **In bee7a7c (reviewed: RV-94 partly fixed, RV-95..98 found, all fixed since):** the goal halves' body origins as the game's (README row 95, validation finding
+    52: on the cooked meshes, now `out/arena_local/cooked_meshes3`, every walls tick matches); every preset's exact box
+    (RV-88); the countdown keeping the real input over a multi-tick Step (RV-93); `live_validate`'s jitter reworked
+    (RV-91); PhysLog's bounded lines (RV-94). Client: the stadium's field (`render/stadiumField.ts`); review fixes RV-72..75, 79, 81, 82, 84, 85,
+    87, 90, 92.
+  - **Field shapes (the user's decision, 2026-10-09):** shapes traced from the game's meshes are local only.
+    `scripts/field_plan.py` (committed: reads local data, contains none) writes them to
+    `out/bsim/assets_local/arena/field_plan.json` (git-ignored); the dev server serves it at /local-assets/ and the client
+    draws it when present (`loadGameFieldPlan`; `?field=rules` to compare). Builds and fresh clones draw the plan built
+    from measurements and rules in `render/stadiumFieldRules.ts` (`FIELD_MEASURES`, `shippableFieldPlan`): the regions,
+    markings, frame lines, goal glows and the glass beside each goal. Statistics (the lightmap tables, `FIELD_LIGHT`;
+    `--light` regenerates them) ship. RV-71: the user chose (c), our own smooth environment (`ENV_GLSL`: each ring's
+    mean and spread, one smooth cosine).
+  - **Known e2e flake:** `e2e/online.spec.ts` "a goal: the game slows down ..." can miss its 8-frame tolerance between
+    the goal's frame and the explosion's under load (seen once at 9 in a full run; 3 of 3 alone pass). Software
+    rendering stalls shift the server tick to client frame mapping; it's the default theme, unaffected by the stadium.
+  - **Also in bee7a7c:** the arena's reflection capture (`render/grassCube.ts`: GrassCube, once before the first frame,
+    `Renderer.beforeNextFrame`); the field's materials as the game's (H-1, H-3, H-4, Reflective_Floor_B; baked light
+    only: each piece's lightmap statistics from the static session, `FIELD_LIGHT`; the frame's glowing (E) and
+    team-coloured (D) lines traced from FrameTexture_PACK's stripes through the meshes' UVs); the goals' glows (RV-77:
+    `GOAL_GLOW` ribbons) and see-through layered floors (RV-76: `render/goalInterior.ts`); RV-83's data and shake
+    tests; RV-86's soft particles (the floor as the scene behind). RV-71 since settled ((c), above); the markings' light
+    and the surroundings spec (`notes/arena-surroundings.md`, SUR-1..44) have arrived.
+  - **Since bee7a7c (uncommitted):** the surroundings (`render/themes/stadiumSurroundings.ts`, from the spec's named
+    measures and per-azimuth statistics, nothing traced): GrassCube as the game's capture (8-bit, near 32, the blur as
+    mip LOD 5) with the capture-only hotspots (SUR-32, 33); the bowl, upper tiers, roof band, glass canopy, floodlight
+    banks, trusses and TV strips (SUR-2..8, 12, 15, 16); the crowd (SUR-26..31: about 28k instanced cards, the team
+    rule, presence and bob); screens, ads and billboards (SUR-9, 17, 18: our own emblem, no ad art); the near-field
+    props (SUR-10, 19: scaffolds, striped corner flags, pulsing arrows); the far layer (SUR-11, 22, 23: our skyline
+    silhouettes, the city's glow, the horizon band). The theme test now checks vertices against the cage (the field
+    with its cut corners and the goals), not its bounding box. Left: calibrating the capture against SUR-35, team
+    uplight beams and flare sheets (SUR-13), flags and trees (SUR-11). Review fixes: RV-94's wasm smoketest path,
+    RV-95 (the child origin's bits tested, PhysLog's `origin_bu`), RV-96 (PhysLog's vsim reads through SafeRead),
+    RV-97 (`live_validate` option values, usage), RV-98 (docs).
   - **Local assets from the static session** (dev-only, git-ignored, load when present like the Fennec; each with a
     README and manifest): `out/bsim/assets_local/fx/` (ball GLB and material formula, the boost trail and the goal
     explosion as emitter JSON, schema rl-fx/1), `cars/` (six cars painted per team with their hitbox presets and

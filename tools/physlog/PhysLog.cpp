@@ -345,13 +345,14 @@ void PhysLog::onLoad() {
 		VehicleSimWrapper vsim = car.GetVehicleSim();
 		if (vsim.IsNull()) return;
 		uintptr_t base = vsim.memory_address;
+		// (every read through SafeRead: a wrong offset on a later build logs zeros instead of crashing the game: RV-96)
 		auto curve = [&](const char* name, uintptr_t offset) {
-			uintptr_t data = *reinterpret_cast<uintptr_t*>(base + offset);
-			int count = *reinterpret_cast<int*>(base + offset + 8);
+			uintptr_t data = Get<uintptr_t>(base + offset);
+			int count = Get<int>(base + offset + 8);
 			std::string line = std::string("physlog: vsim ") + name + " (" + std::to_string(count) + "):";
 			if (data && count > 0 && count <= 64)
 				for (int i = 0; i < count; i++) {
-					float in = *reinterpret_cast<float*>(data + i * 0x1c), outv = *reinterpret_cast<float*>(data + i * 0x1c + 4);
+					float in = Get<float>(data + i * 0x1c), outv = Get<float>(data + i * 0x1c + 4);
 					char b[64];
 					std::snprintf(b, sizeof b, " (%.4f, %.4f)", in, outv);
 					line += b;
@@ -359,7 +360,7 @@ void PhysLog::onLoad() {
 			cvarManager->log(line);
 		};
 		cvarManager->log("physlog: vsim body " + std::to_string(car.GetLoadoutBody()) + " flags+0x11c bit0 " +
-			std::to_string(*reinterpret_cast<uint32_t*>(base + 0x11c) & 1));
+			std::to_string(Get<uint32_t>(base + 0x11c) & 1));
 		curve("SteerAngleCurve", 0xb0);
 		curve("HandbrakeSteerAngleCurve", 0xf0);
 		curve("DriveTorqueCurve", 0xd0);
@@ -788,7 +789,8 @@ void PhysLog::BulletShape(const char* who, uintptr_t shape, int depth) {
 		for (int i = 0; i < n && i < 8; i++) {
 			uintptr_t c = data + 0x60 * i;
 			bullet_ << "# " << who << " child " << i << " basis " << raw(c) << " | " << raw(c + 0x10) << " | " << raw(c + 0x20)
-			        << " origin_uu " << vec(c + 0x30) << " child_type " << Get<int>(c + 0x48) << "\n";
+			        << " origin_uu " << vec(c + 0x30) << " child_type " << Get<int>(c + 0x48) << " origin_bu " << raw(c + 0x30)
+			        << "\n"; // (origin_bu last: the columns before it stay where readers find them; %.9g: exact, RV-95)
 			BulletShape(who, Get<uintptr_t>(c + 0x40), depth + 1);
 		}
 	}
@@ -803,9 +805,12 @@ void PhysLog::BulletHeader() {
 		BulletShape(who, Get<uintptr_t>(body + BODY_SHAPE), 0);
 		for (uintptr_t off = 0; off < BODY_SIZE; off += 16) {
 			char b[256];
-			int n = std::snprintf(b, sizeof b, "# %s body +0x%03x", who, (unsigned)off);
-			for (uintptr_t k = 0; k < 16; k += 4)
-				n += std::snprintf(b + n, sizeof b - n, " %.9g/%d", Get<float>(body + off + k), Get<int>(body + off + k));
+			int n = 0;
+			auto put = [&](const char* fmt, auto... args) {
+				if (n < (int)sizeof b) n += std::snprintf(b + n, sizeof b - n, fmt, args...);
+			};
+			put("# %s body +0x%03x", who, (unsigned)off);
+			for (uintptr_t k = 0; k < 16; k += 4) put(" %.9g/%d", Get<float>(body + off + k), Get<int>(body + off + k));
 			bullet_ << b << "\n";
 		}
 	}
@@ -835,27 +840,28 @@ void PhysLog::BulletContacts() {
 			float threshold = Get<float>(mf + 0x464) * BU;
 			for (int i = points > 0 ? 0 : -1; i < points && i < 4; i++) {
 				char b[1024];
-				int n = std::snprintf(b, sizeof b, "%llu,%s%p,%s,%s,%d,%.6g,%d", tick_, l ? "pred:" : "", (void*)mf,
-					BodyName(b0).c_str(), BodyName(b1).c_str(), points, threshold, i);
+				int n = 0;
+				// (bounded: once the line fills the buffer nothing more is written, RV-94)
+				auto put = [&](const char* fmt, auto... args) {
+					if (n < (int)sizeof(b)) n += std::snprintf(b + n, sizeof b - n, fmt, args...);
+				};
+				put("%llu,%s%p,%s,%s,%d,%.6g,%d", tick_, l ? "pred:" : "", (void*)mf, BodyName(b0).c_str(),
+					BodyName(b1).c_str(), points, threshold, i);
 				if (i >= 0) {
 					uintptr_t p = mf + 0x10 + POINT_SIZE * i;
-					auto v = [&](uintptr_t a) { n += std::snprintf(b + n, sizeof b - n, ",%.6f,%.6f,%.6f", Get<float>(a) * BU,
-						                                              Get<float>(a + 4) * BU, Get<float>(a + 8) * BU); };
-					n += std::snprintf(b + n, sizeof b - n, ",%.6f,%d,%.6g", Get<float>(p + 0x70) * BU, Get<int>(p + 0xb8),
-						Get<float>(p + 0x9c));
+					auto v = [&](uintptr_t a) { put(",%.6f,%.6f,%.6f", Get<float>(a) * BU, Get<float>(a + 4) * BU, Get<float>(a + 8) * BU); };
+					put(",%.6f,%d,%.6g", Get<float>(p + 0x70) * BU, Get<int>(p + 0xb8), Get<float>(p + 0x9c));
 					v(p + 0x30); // positionWorldOnA
 					v(p + 0x20); // positionWorldOnB
-					n += std::snprintf(b + n, sizeof b - n, ",%.6f,%.6f,%.6f", Get<float>(p + 0x40), Get<float>(p + 0x44),
-						Get<float>(p + 0x48));
+					put(",%.6f,%.6f,%.6f", Get<float>(p + 0x40), Get<float>(p + 0x44), Get<float>(p + 0x48));
 					v(p + 0x00); // localPointA
 					// (notes/wheel-kick-t125.md: the pre-solve velocities at the point, uu/s; which triangle; the combined
 					// friction and restitution; the first lateral friction direction)
 					v(p + 0xe0); // m_vel1
 					v(p + 0xf0); // m_vel2
-					n += std::snprintf(b + n, sizeof b - n, ",%d,%d,%d,%d,%.6g,%.6g,%.6g", Get<int>(p + 0x80), Get<int>(p + 0x84),
-						Get<int>(p + 0x88), Get<int>(p + 0x8c), Get<float>(p + 0x74), Get<float>(p + 0x7c), Get<float>(p + 0x100) * BU);
-					n += std::snprintf(b + n, sizeof b - n, ",%.6f,%.6f,%.6f", Get<float>(p + 0xc0), Get<float>(p + 0xc4),
-						Get<float>(p + 0xc8));
+					put(",%d,%d,%d,%d,%.6g,%.6g,%.6g", Get<int>(p + 0x80), Get<int>(p + 0x84), Get<int>(p + 0x88),
+						Get<int>(p + 0x8c), Get<float>(p + 0x74), Get<float>(p + 0x7c), Get<float>(p + 0x100) * BU);
+					put(",%.6f,%.6f,%.6f", Get<float>(p + 0xc0), Get<float>(p + 0xc4), Get<float>(p + 0xc8));
 				}
 				bullet_ << b << "\n";
 			}
@@ -880,7 +886,8 @@ WheelPtrs WheelPointers(uintptr_t w) {
 	uintptr_t vs = Get<uintptr_t>(w + 0x150);
 	p.bv = Get<uintptr_t>(vs + 0x140);
 	p.index = Get<int>(w + 0x158);
-	if (!p.bv || p.index < 0 || p.index > 3) return p;
+	// (and within the vehicle's wheel count, BV+0x54: a vehicle with fewer wheels logs none past it, RV-94)
+	if (!p.bv || p.index < 0 || p.index > 3 || p.index >= Get<int>(p.bv + 0x54)) return p;
 	p.b = Get<uintptr_t>(p.bv + 0x60) + 0xf0 * p.index;
 	p.fi = Get<uintptr_t>(p.bv + 0x18) + 0x10 * p.index;
 	p.ch = Get<uintptr_t>(p.bv + 0x40);

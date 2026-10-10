@@ -65,6 +65,17 @@ describe("camera shakes", () => {
     expect(shakes.offsets(vec3(3000, 0, 0)).rotation.yaw).toBe(Math.trunc(Math.trunc(v * w) * scale));
   });
 
+  it("double truncation where it shows (RV-83): Explosion_Large at 0.01 s, 100 uu off, phase 0, yaw 22 (once: 23)", () => {
+    const shakes = new CameraShakes(() => 0);
+    shakes.play(EXPLOSION_LARGE, vec3(0, 0, 0));
+    shakes.update(0.01);
+    const w = shakeWeight(EXPLOSION_LARGE, 0.01);
+    const v = 2000 * Math.sin(0.01 * 12);
+    const scale = distanceScale(EXPLOSION_LARGE, 100);
+    expect(Math.trunc(v * w * scale)).toBe(23);
+    expect(shakes.offsets(vec3(100, 0, 0)).rotation.yaw).toBe(22);
+  });
+
   it("the game's parameters: Explosion_Medium, BoostOrb_Used, Jump, Dodge (notes/camera-shakes.md)", () => {
     expect([EXPLOSION_MEDIUM.duration, EXPLOSION_MEDIUM.blendIn, EXPLOSION_MEDIUM.blendOut, EXPLOSION_MEDIUM.outer, EXPLOSION_MEDIUM.falloff]).toEqual([0.25, 0.1, 0.1, 4096, 1]);
     expect(EXPLOSION_MEDIUM.rot?.pitch).toEqual({ amp: 500, freq: 50, random: true });

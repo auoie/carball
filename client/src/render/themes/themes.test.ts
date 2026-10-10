@@ -20,6 +20,16 @@ const field = new Box3(
   new Vector3(-PLAYING_VOLUME.halfX - MARGIN, 0, -PLAYING_VOLUME.halfZ - MARGIN),
   new Vector3(PLAYING_VOLUME.halfX + MARGIN, PLAYING_VOLUME.height + MARGIN, PLAYING_VOLUME.halfZ + MARGIN),
 );
+/** Whether a point is in the cage itself plus the margin (the field with its cut corners, the goals behind): scenery
+ *  may stand behind the end walls beside the goals and outside the corners (the stadium's scaffolds and flags) */
+function inCage(p: Vector3): boolean {
+  const V = PLAYING_VOLUME;
+  const [x, y, z] = [Math.abs(p.x), p.y, Math.abs(p.z)];
+  if (y < 0 || y > V.height + MARGIN) return false;
+  const inField = x <= V.halfX + MARGIN && z <= V.fieldHalfZ + MARGIN && x + z <= V.cornerSum + MARGIN * Math.SQRT2;
+  const inGoal = x <= V.goalHalfWidth + MARGIN && z <= V.halfZ + MARGIN && y <= V.goalHeight + MARGIN;
+  return inField || inGoal;
+}
 
 /** Every drawn object under `root`, after the theme's animation has run a while with the ball at the centre. */
 function meshes(root: Object3D): Mesh[] {
@@ -65,7 +75,7 @@ describe("themes", () => {
         const position = geometry.getAttribute("position");
         for (let i = 0; i < position.count; i++) {
           v.fromBufferAttribute(position, i).applyMatrix4(mesh.matrixWorld);
-          if (field.containsPoint(v)) {
+          if (inCage(v)) {
             expect.fail(`${name}: vertex ${i} of a ${mesh.type} at ${v.toArray().map(Math.round).join(", ")}`);
           }
         }
@@ -73,20 +83,34 @@ describe("themes", () => {
     }
   });
 
-  it.each(THEMES)("%s: its sky within the camera's far plane from anywhere in the arena (RV-58)", (name) => {
+  it.each(THEMES)("%s: its sky and everything unfogged within the camera's far plane from anywhere in the arena (RV-58, RV-90)", (name) => {
     const t = theme(name);
     t.update(12.3, new Vector3(0, 93, 0));
     // (the camera within the playing volume: its farthest corner from the centre)
     const reach = Math.hypot(PLAYING_VOLUME.halfX, PLAYING_VOLUME.height, PLAYING_VOLUME.halfZ);
     const v = new Vector3();
     let farthest = 0;
-    // The sky domes (drawn from inside: their back faces); ground and terrain may reach past it, fogged out
-    const domes = meshes(t.root).filter((m) => !(m instanceof InstancedMesh) && (m.material as Material).side === BackSide);
-    for (const mesh of domes) {
+    // The sky domes (drawn from inside: their back faces) and everything else unfogged (RV-90); fogged ground and
+    // terrain may reach past it, fogged out
+    const sky = meshes(t.root).filter((m) => {
+      const material = m.material as Material & { fog?: boolean };
+      return material.side === BackSide || material.fog === false;
+    });
+    const matrix = new Matrix4();
+    let farthestMesh = "";
+    for (const mesh of sky) {
       const position = mesh.geometry.getAttribute("position");
-      for (let i = 0; i < position.count; i++) farthest = Math.max(farthest, v.fromBufferAttribute(position, i).applyMatrix4(mesh.matrixWorld).length());
+      const instances = mesh instanceof InstancedMesh ? mesh.count : 1;
+      for (let k = 0; k < instances; k++) {
+        if (mesh instanceof InstancedMesh) mesh.getMatrixAt(k, matrix);
+        else matrix.identity();
+        for (let i = 0; i < position.count; i++) {
+          const d = v.fromBufferAttribute(position, i).applyMatrix4(matrix).applyMatrix4(mesh.matrixWorld).length();
+          if (d > farthest) [farthest, farthestMesh] = [d, mesh.name || mesh.type];
+        }
+      }
     }
-    expect(farthest + reach).toBeLessThan(CAMERA_FAR);
+    expect(farthest + reach, farthestMesh).toBeLessThan(CAMERA_FAR);
   });
 
   it("meadow: at most 16 draw calls for all its scenery", () => {

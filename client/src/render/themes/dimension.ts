@@ -132,7 +132,8 @@ export function dimensionTheme(): Theme {
 
   const upfalls = buildUpfalls(falls);
   const drifting = buildDriftingRocks(rocks);
-  const rift = buildRift(new Vector3(0, 7500, 31000), 9500);
+  // (0.92 of the way out it was, and as much smaller: the same size in view, inside the camera's far plane: RV-90)
+  const rift = buildRift(new Vector3(0, 6900, 28520), 8740);
   const motes = buildRisingMotes(1200, SEED + 5, (x, z) => outside(x, z) < 300);
 
   root.add(

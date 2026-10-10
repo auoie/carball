@@ -16,6 +16,8 @@ import { type Curve, type Curve3, Emitter, type EmitterSpec, Particles, evaluate
 
 const curve = (times: readonly number[], values: readonly number[]): Curve => ({ times, values });
 const curve3 = (values: readonly [number, number, number]): Curve3 => ({ times: [0], values: [values] });
+/** A curve per axis (or per colour channel), as the game scales each (0x140ae7f40: RV-87) */
+const curveXYZ = (times: readonly number[], values: readonly (readonly [number, number, number])[]): Curve3 => ({ times, values });
 // (the curves at the data's own knots: rl-fx/1 size, alpha, colour and velocity over life, the materials' parameters)
 const T20 = [0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1];
 
@@ -119,7 +121,19 @@ export const GOAL_EXPLOSION: readonly EmitterSpec[] = [
       [0.7496, 0.7773, 0.8032, 0.8273, 0.8497, 0.8703, 0.8892, 0.9065, 0.9222, 0.9364, 0.949, 0.9601, 0.9698, 0.978, 0.9849, 0.9904, 0.9947, 0.9977, 0.9994, 1],
     ),
     sphere: { radius: curve([-0.000366, 0.07377, 0.1479], [0, 306.707, 311.369]), velocityScale: { min: 0.5, max: 1 } },
-    velocityOverLife: curve([-0.009479, 0.04393, 0.09734, 0.1507, 0.2042, 0.2576, 0.311, 0.3644], [0.982, 0.9455, 0.8513, 0.7226, 0.5823, 0.4535, 0.3594, 0.3228]),
+    velocityOverLife: curveXYZ(
+      [-0.009479, 0.04393, 0.09734, 0.1507, 0.2042, 0.2576, 0.311, 0.3644],
+      [
+        [0.982, 0.9551, 0.9551],
+        [0.9455, 0.9186, 0.9186],
+        [0.8513, 0.8244, 0.8244],
+        [0.7226, 0.6957, 0.6957],
+        [0.5823, 0.5554, 0.5554],
+        [0.4535, 0.4266, 0.4266],
+        [0.3594, 0.3325, 0.3325],
+        [0.3228, 0.2959, 0.2959],
+      ],
+    ),
     color: [4, 1, 0],
     colorFade: {
       to: SMOKE_WARM,
@@ -150,9 +164,26 @@ export const GOAL_EXPLOSION: readonly EmitterSpec[] = [
     ),
     velocity: { min: [-128, -128, -128], max: [128, 128, 128] },
     sphere: { radius: 256, velocityScale: { min: 2, max: 4 } },
-    velocityOverLife: curve([-0.009479, 0.04192, 0.09333, 0.1447, 0.1961, 0.2475, 0.2989], [0.982, 0.9116, 0.7355, 0.5065, 0.2776, 0.1015, 0.03104]),
+    velocityOverLife: curveXYZ(
+      [-0.009479, 0.04192, 0.09333, 0.1447, 0.1961, 0.2475, 0.2989],
+      [
+        [0.982, 0.9551, 0.9551],
+        [0.9116, 0.8866, 0.8865],
+        [0.7355, 0.7153, 0.7152],
+        [0.5065, 0.4926, 0.4924],
+        [0.2776, 0.27, 0.2696],
+        [0.1015, 0.09872, 0.09829],
+        [0.03104, 0.03021, 0.02974],
+      ],
+    ),
     color: [4, 1, 0],
-    colorOverLife: curve([-0.004774, 0.4629], [3.615, 0.9592]),
+    colorOverLife: curveXYZ(
+      [-0.004774, 0.4629],
+      [
+        [3.615, 3.553, 3.615],
+        [0.9592, 0.9875, 0.9733],
+      ],
+    ),
     colorFade: {
       to: SMOKE_WARM,
       param: SMOKE_P1,
@@ -202,9 +233,21 @@ export const GOAL_EXPLOSION: readonly EmitterSpec[] = [
     length: { min: 48, max: 128 },
     sizeOverLife: SPARK_SIZE,
     sphere: { radius: 256, surface: true, velocityScale: 8 },
-    velocityOverLife: curve(
+    velocityOverLife: curveXYZ(
       [-0.009479, 0.04272, 0.09491, 0.1471, 0.1993, 0.2515, 0.3037, 0.3559, 0.4081, 0.4603, 0.5125],
-      [0.982, 0.9563, 0.8864, 0.7834, 0.6584, 0.5223, 0.3862, 0.2612, 0.1582, 0.08836, 0.06262],
+      [
+        [0.982, 0.9551, 0.9551],
+        [0.9563, 0.9301, 0.9309],
+        [0.8864, 0.8621, 0.8654],
+        [0.7834, 0.7619, 0.7688],
+        [0.6584, 0.6403, 0.6515],
+        [0.5223, 0.508, 0.5239],
+        [0.3862, 0.3757, 0.3962],
+        [0.2612, 0.254, 0.279],
+        [0.1582, 0.1539, 0.1824],
+        [0.08836, 0.08594, 0.1168],
+        [0.06262, 0.0609, 0.09268],
+      ],
     ),
     color: [3, 1, 0],
     colorOverLife: curve3([1.089699, 1.117931, 1.110872]),

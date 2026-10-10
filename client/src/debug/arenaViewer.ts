@@ -22,15 +22,18 @@ export interface ArenaShot {
   readonly sinceExplosion?: number;
 }
 
-/** Shows the arena and returns the view setter. */
-export function showArenaViewer(renderer: Renderer, theme: Theme, config: CarConfig): (shot: ArenaShot) => void {
+/** Shows the arena and returns the view setter, and the arena's reflection captures so far. */
+export function showArenaViewer(renderer: Renderer, theme: Theme, config: CarConfig): { view: (shot: ArenaShot) => void; captures: () => number } {
   renderer.scene.background = theme.background;
   renderer.scene.fog = theme.fog;
   const arena = new ArenaView(theme);
+  renderer.beforeNextFrame((gl, scene) => {
+    arena.capture(gl, scene);
+  });
   const ball = new BallView();
   const car = buildCarModel(config, TEAM_CAR_COLORS[0], 0);
   renderer.scene.add(arena.root, ball.root, car);
-  return (shot) => {
+  const view = (shot: ArenaShot): void => {
     const ballAt = toThreeVector(shot.ball ?? vec3(0, 0, -10_000));
     ball.update(ballAt, new Quaternion());
     arena.newBall();
@@ -43,4 +46,5 @@ export function showArenaViewer(renderer: Renderer, theme: Theme, config: CarCon
     }
     renderer.render({ position: shot.eye, forward: normalize(sub(shot.target, shot.eye)), up: vec3(0, 0, 1), horizontalFov: shot.fov ?? 90 });
   };
+  return { view, captures: () => arena.captures };
 }

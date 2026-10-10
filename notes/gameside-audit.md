@@ -235,7 +235,7 @@ Result in S1's engine copy with the game's cooked meshes, triangle order, goal-h
 - **S-1 geometry:** our generated pieces differ from the game's (side_floor 63/80 vertices shared, 23 quads with the other diagonal; side_ceiling 7/18; corner 219/483, 47 flipped; extents y 3584 / x 2560 vs 3840 / 2426 / 2688), e.g. facet 2's diagonal at y 0…512 (ball_curves t240, t83). The game's pieces overlap within 2 uu in bands (side floor / corner y 3373…3753, side ceiling / corner y 3433…3736, goal / corner x 2437…2688 y 4617…5120), giving double manifolds there; the y = 0 and x = 0 seams only touch.
 - **S-2 triangle order:** PhysX (Opcode) cooking order per piece (the rule in bullet-diff.md "2.82 vs 3.24"); the authored render order matters too, so an exact match needs a per-piece order from the game's mesh (ball_curves t91, walls t243).
 - **S-3 solve order:** 2.82's unstable manifold quickSort on the dispatcher's creation order (ball_5050 t72, t626).
-- **S-4 goal halves:** bodies translated ±102.4 BU in y, meshes in actor space (walls t127 would be 58.7 uu/s baked); the grid broadphase must apply the body transform.
+- **S-4 goal halves:** bodies translated ±102.4 BU in y (exactly ±0x42cccccb, 102.399986: engine README row 95), meshes in actor space (walls t127 would be 58.7 uu/s baked); the grid broadphase must apply the body transform.
 - **S-5 = B15:** zero initial triangle-info angles (ball_5050 t633).
 - **S-6:** 2.82 BVH quantization (no recording changes). **S-7:** B8 ported: no effect here.
 

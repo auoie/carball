@@ -9,6 +9,7 @@ import { Hud } from "./hud";
 import { InputDevices } from "./input/devices";
 import { ArenaView } from "./render/arena";
 import { loadGameCage } from "./render/cage";
+import { loadGameFieldPlan } from "./render/stadiumFieldRules";
 import { loadDemolitionHusks } from "./render/demolition";
 import { loadFennec } from "./render/fennec";
 import { TEAM_CAR_COLORS } from "./render/entities";
@@ -49,7 +50,7 @@ async function main(): Promise<void> {
   status.textContent = "Building arena…";
   initEngine(engine, arenaMeshes);
   // (the game's Fennec and cage, where the dev server has them: src/render/fennec.ts, src/render/cage.ts)
-  await Promise.all([loadFennec(), loadGameCage(), loadDemolitionHusks()]);
+  await Promise.all([loadFennec(), loadGameCage(), loadDemolitionHusks(), loadGameFieldPlan()]);
   const world = World.create(engine);
 
   // Warm up: the first ticks after loading are slow while the browser compiles the module
@@ -80,8 +81,9 @@ async function main(): Promise<void> {
     const viewerWorld = World.create(engine);
     const id = viewerWorld.addCar(0);
     const { showArenaViewer } = await import("./debug/arenaViewer");
-    const view = showArenaViewer(new Renderer(canvas), await createTheme(themeName(params.get("theme"))), viewerWorld.carConfig(id));
-    (window as unknown as { rlArenaViewer?: unknown }).rlArenaViewer = { view };
+    const viewer = showArenaViewer(new Renderer(canvas), await createTheme(themeName(params.get("theme"))), viewerWorld.carConfig(id));
+    const { view } = viewer;
+    (window as unknown as { rlArenaViewer?: unknown }).rlArenaViewer = viewer;
     view({ eye: { x: 0, y: -4000, z: 600 }, target: { x: 0, y: 0, z: 600 } });
     status.hidden = true;
     return;
@@ -96,6 +98,10 @@ async function main(): Promise<void> {
   renderer.scene.fog = theme.fog;
   const arena = new ArenaView(theme);
   renderer.scene.add(arena.root);
+  // (the arena's reflection capture, once: before the first frame, the cars and ball not yet drawn in it)
+  renderer.beforeNextFrame((gl, scene) => {
+    arena.capture(gl, scene);
+  });
   const hud = new Hud(required("#hud", HTMLElement));
   const input = new InputDevices(canvas);
   let settings = loadSettings();

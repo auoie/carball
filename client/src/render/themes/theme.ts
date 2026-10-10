@@ -2,7 +2,7 @@
 // and walls' colours). Collision and gameplay are the same in every theme, as in the game, whose arenas share one
 // collision mesh.
 // Scenery is in the Three.js frame (x, y up, z = the game's y) and stays out of the playing volume.
-import type { Color, Fog, Group, Vector3 } from "three";
+import type { Color, Fog, Group, Object3D, Vector3 } from "three";
 
 export interface WallStyle {
   readonly neutral: Color; // hexagon colour around midfield
@@ -31,9 +31,13 @@ export interface Theme {
   readonly style: ArenaStyle;
   /** Lights and scenery */
   readonly root: Group;
+  /** Drawn only into the arena's reflection capture (the game's cube-only hotspots: SUR-33), kept hidden otherwise */
+  readonly captureOnly?: Object3D;
   /** Animates the scenery: seconds since it was built, and the ball's centre (Three.js frame) */
   update(seconds: number, ball: Vector3): void;
 }
 
-/** The playing volume in the Three.js frame (x, y up, z), goals included, that scenery must stay out of. */
-export const PLAYING_VOLUME = { halfX: 4096, halfZ: 6000, height: 2048 } as const;
+/** The playing volume in the Three.js frame (x, y up, z), goals included, that scenery must stay out of: its bounding box
+ *  (halfX, halfZ, height), and the cage within it, the field (to |z| = fieldHalfZ, its corners cut at |x| + |z| =
+ *  cornerSum: the corner curves lie inside that line) and the goals behind (|x| < goalHalfWidth, y < goalHeight). */
+export const PLAYING_VOLUME = { halfX: 4096, halfZ: 6000, height: 2048, fieldHalfZ: 5120, cornerSum: 8064, goalHalfWidth: 893, goalHeight: 643 } as const;

@@ -10,12 +10,12 @@ import type { Color } from "three";
  *  over 0.8-1 where the lines are; scripts/hex_profile.py, decoded from sRGB where the texture is sRGB, as the GPU
  *  reads it: RV-60): TiledPatterns.Hexagons_Pack G (sRGB; the lower glass's alpha shape); the ball tracker's
  *  Hexagons_Pack_01_T R (sRGB; glowing lines) and G (a band inside each cell); ForcefieldHex R (sRGB; the fine net) */
-const PACK_G = [
+export const PACK_G = [
   0.85, 0.85, 0.846, 0.811, 0.802, 0.803, 0.803, 0.803, 0.803, 0.803, 0.813, 0.973, 1, 1, 1, 0.801, 0.515, 0.511, 0.51, 0.512, 0.513,
   0.51, 0.501, 0.487, 0.471, 0.451, 0.43, 0.405, 0.368, 0.322, 0.253, 0.178,
 ];
 /** The decoded textures' means: what cells too small to draw average to */
-const PACK_G_MEAN = 0.719;
+export const PACK_G_MEAN = 0.719;
 const NET_R_MEAN = 0.091;
 const TRACKER_R = [
   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.001, 0.004, 0.009, 0.02, 0.037, 0.06, 0.1, 0.157, 0.235, 0.426, 0.613,
@@ -72,6 +72,16 @@ void main() {
 }
 `;
 
+/** The overlay's surfaces sit just outside the arena's: FF_Side at |x| 4100 and FF_Goal at |y| 5124 (4 uu out), FF_Roof
+ *  at z 2052 (8 up): each vertex pushed out along its normal (RV-74) */
+const overlayVertexShader = vertexShader.replace(
+  "  vWorldPosition = world.xyz;",
+  `  vec3 surfaceNormal = normalize(mat3(modelMatrix) * normal);
+  vec3 outward = dot(surfaceNormal, world.xyz - vec3(0.0, 1022.0, 0.0)) > 0.0 ? surfaceNormal : -surfaceNormal;
+  world.xyz += outward * (abs(surfaceNormal.y) > 0.7 ? 8.0 : 4.0);
+  vWorldPosition = world.xyz;`,
+);
+
 /** FF_Side / FF_Roof (Beach_NetFence_MIC, AV-16, H-9): over the walls and ceiling, a faint fine hex net everywhere
  *  (25 % on its lines), and round the ball a hex disc within 220-300 uu and a thin team-coloured ring at 312-325 uu */
 const overlayFragment = /* glsl */ `
@@ -89,15 +99,19 @@ void main() {
   // (the game's frame: Three's x, z, y)
   vec3 p = vWorldPosition.xzy;
   vec3 n = abs(normalize(vWorldNormal).xzy);
-  // Not below the game's overlay surfaces (FF_Side, FF_Roof, FF_Goal: from z 256 up; on the back walls not under
-  // FF_Goal's lower edge, (880, 704) to (1328, 256): RV-66)
+  // Not below the game's overlay surfaces (FF_Side, FF_Roof, FF_Goal: from z 256 up, FF_Side down the fillet to z 72.6
+  // for |y| <= 128 (RV-74); on the back walls not under FF_Goal's lower edge, (880, 704) to (1328, 256): RV-66)
   float ax = abs(p.x);
-  float lowest = abs(p.y) > 5100.0 && ax < 1328.0 ? (ax < 880.0 ? 704.0 : 704.0 - (ax - 880.0)) : 256.0;
+  float ay = abs(p.y);
+  bool midfield = ay <= 128.0;
+  float lowest = ay > 5100.0 && ax < 1328.0 ? (ax < 880.0 ? 704.0 : 704.0 - (ax - 880.0)) : midfield ? 72.6 : 256.0;
   if (p.z < lowest) discard;
-  // UV, 256 uu a unit (the FF meshes' charts: side walls u = 1 + |y| / 256, v = 1 - z / 256; the roof u = -30.98 -
-  // |x| / 256, v = |y| / 256: RV-70c); elsewhere (corners, back walls) along the surface's plane
-  vec2 uv = n.z > 0.7 ? vec2(-30.98 - ax / 256.0, abs(p.y) / 256.0)
-    : n.x > 0.97 ? vec2(1.0 + abs(p.y) / 256.0, 1.0 - p.z / 256.0)
+  // UV, 256 uu a unit (the FF meshes' charts: side walls, and FF_Side's strip down the fillet, u = 1 + |y| / 256, v = 1
+  // - z / 256; the roof u = -30.978 - |x| / 256, v = |y| / 256 + 1.002; the back walls u = -30.978 - |x| / 256, v =
+  // 0.999 - z / 256: RV-70c, RV-74); the corners along the surface's plane
+  vec2 uv = n.z > 0.7 ? vec2(-30.978 - ax / 256.0, ay / 256.0 + 1.002)
+    : n.y > 0.97 ? vec2(-30.978 - ax / 256.0, 0.999 - p.z / 256.0)
+    : n.x > 0.97 || (midfield && p.z < 256.0) ? vec2(1.0 + ay / 256.0, 1.0 - p.z / 256.0)
     : (n.x > n.y ? p.yz : p.xz) / 256.0;
   float d = length(p - ballPosition.xzy);
   float F = saturate1(1.0 - 0.04 * (d - 300.0));
@@ -125,7 +139,42 @@ void main() {
 /** ENVPack.G (sRGB, decoded) by |uv| of its lookup at -normalize(tangent-space camera vector).xy, which is the sine of
  *  the view's angle to the glass's normal: its mean over each ring (|uv| 0-1 in 8 steps; at 0 the head-on texel),
  *  measured from the game's texture (a statistic: the texture itself stays local) */
-const ENV_RADIAL = [0.205, 0.217, 0.166, 0.227, 0.394, 0.441, 0.286, 0.269, 0.3];
+export const ENV_RADIAL = [0.205, 0.217, 0.166, 0.227, 0.394, 0.441, 0.286, 0.269, 0.3];
+/** ENVPack.G's spread round each of those rings (its standard deviation, the same lookup: a statistic) */
+export const ENV_SPREAD = [0, 0.155, 0.117, 0.251, 0.3, 0.249, 0.236, 0.216, 0.243];
+/** Our own smooth environment for ENVPack.G (RV-71: the user's choice (c); the texture can't ship, and no low-order fit of
+ *  it holds): at |uv| its rings' mean, and round each ring one cosine with the ring's spread, its phase turning with the
+ *  radius (ours, not the texture's), clamped 0..1. Needs uniforms envRadial[9], envSpread[9] */
+export const ENV_GLSL = /* glsl */ `
+float envG(vec2 uv) {
+  float s = min(length(uv), 1.0);
+  float x = s < 0.0625 ? s / 0.0625 : 1.0 + (s - 0.0625) / 0.125;
+  int i = int(clamp(floor(x), 0.0, 7.0));
+  float f = clamp(x - float(i), 0.0, 1.0);
+  float mean = mix(envRadial[i], envRadial[i + 1], f);
+  float spread = mix(envSpread[i], envSpread[i + 1], f);
+  return clamp(mean + 1.4142 * spread * cos(atan(uv.y, uv.x) - 6.2832 * s), 0.0, 1.0);
+}
+`;
+
+/** The goal-side glass panel's chart (RV-72) as fitted rules, not the mesh's own UVs (RV-99): U a unit every 213.3 uu
+ *  from 6 at |x| 960 to |x| 1344, then every 160 uu; V up the face a line in z, within 0.03 of the chart from z 256 up;
+ *  below that down to the bottom row (z 127), whose V rises with |x| as a smoothstep, within 0.005 */
+export const GOAL_SIDE_CHART = {
+  u: { at: 960, value: 6, bend: 1344, inner: 213.33, outer: 160 },
+  face: { v0: 1.293, perZ: -0.004873, from: 256 },
+  bottom: { z: 127, v0: 0.652, rise: 0.149, from: 960, span: 384 },
+} as const;
+
+/** The panel's V at |x|, z (the shader's rule, for tests) */
+export function goalSideV(ax: number, z: number): number {
+  const { face, bottom } = GOAL_SIDE_CHART;
+  const line = (h: number): number => face.v0 + face.perZ * h;
+  if (z >= face.from) return line(z);
+  const t = Math.min(Math.max((ax - bottom.from) / bottom.span, 0), 1);
+  const low = bottom.v0 + bottom.rise * t * t * (3 - 2 * t);
+  return low + ((line(face.from) - low) * (z - bottom.z)) / (face.from - bottom.z);
+}
 
 /** The lower glass (Field_STD_Glass, Goal_STD_Glass; H-6): white, not team-tinted, its alpha 0.1875 x Hexagons_Pack.G
  *  at its tile coordinates (`glassTile`: the mesh UV0 x (3, 7/3)), its colour ENVPack.G seen along the view + 1/12
@@ -133,23 +182,54 @@ const ENV_RADIAL = [0.205, 0.217, 0.166, 0.227, 0.394, 0.441, 0.286, 0.269, 0.3]
 const glassFragment = /* glsl */ `
 uniform float packG[32];
 uniform float envRadial[9];
+uniform float envSpread[9];
 varying vec3 vWorldPosition;
 varying vec3 vWorldNormal;
 varying vec2 vGlassTile;
 #include <fog_pars_fragment>
 ${hexGlsl}
+${ENV_GLSL}
 void main() {
-  float g = profile32(packG, hexRadius(vGlassTile));
+  vec2 tile = vGlassTile;
+  #ifdef GOAL_SIDE_GLASS
+    // The glass panel beside each goal mouth (Goal_STD_Glass, y +-5124; RV-72): its chart's fitted rules (GOAL_SIDE_CHART,
+    // goalSideV: RV-99)
+    float ax = abs(vWorldPosition.x);
+    float z = vWorldPosition.y;
+    float uBend = ${GOAL_SIDE_CHART.u.value.toFixed(1)} - (${GOAL_SIDE_CHART.u.bend.toFixed(1)} - ${GOAL_SIDE_CHART.u.at.toFixed(1)}) / ${GOAL_SIDE_CHART.u.inner};
+    float u = ax <= ${GOAL_SIDE_CHART.u.bend.toFixed(1)} ? ${GOAL_SIDE_CHART.u.value.toFixed(1)} - (ax - ${GOAL_SIDE_CHART.u.at.toFixed(1)}) / ${GOAL_SIDE_CHART.u.inner}
+      : uBend - (ax - ${GOAL_SIDE_CHART.u.bend.toFixed(1)}) / ${GOAL_SIDE_CHART.u.outer.toFixed(1)};
+    float faceAt = ${GOAL_SIDE_CHART.face.from.toFixed(1)};
+    float face = ${GOAL_SIDE_CHART.face.v0} + ${GOAL_SIDE_CHART.face.perZ} * max(z, faceAt);
+    float t = clamp((ax - ${GOAL_SIDE_CHART.bottom.from.toFixed(1)}) / ${GOAL_SIDE_CHART.bottom.span.toFixed(1)}, 0.0, 1.0);
+    float low = ${GOAL_SIDE_CHART.bottom.v0} + ${GOAL_SIDE_CHART.bottom.rise} * t * t * (3.0 - 2.0 * t);
+    float v = z < faceAt ? mix(low, face, (z - ${GOAL_SIDE_CHART.bottom.z.toFixed(1)}) / (faceAt - ${GOAL_SIDE_CHART.bottom.z.toFixed(1)})) : face;
+    tile = vec2(3.0 * u, (7.0 / 3.0) * v);
+  #endif
+  #ifdef NET_SIDE_WALLS
+    // The goal net's flat side walls: the game's planar chart there, U along y (68.1 uu a tile), V down z (90.6 uu a
+    // tile), not the swept profile's carried on (RV-73)
+    vec3 n = normalize(vWorldNormal);
+    if (abs(n.x) > 0.97) tile = vec2(abs(vWorldPosition.z) / 68.1, -vWorldPosition.y / 90.6);
+  #endif
+  float g = profile32(packG, hexRadius(tile));
   // (cells under a few pixels: the tile's average)
-  g = mix(g, ${PACK_G_MEAN}, smoothstep(0.1, 0.3, length(fwidth(vGlassTile))));
+  g = mix(g, ${PACK_G_MEAN}, smoothstep(0.1, 0.3, length(fwidth(tile))));
   float alpha = 0.1875 * g;
   vec3 toCamera = normalize(cameraPosition - vWorldPosition);
-  float c = abs(dot(normalize(vWorldNormal), toCamera));
-  float s = sqrt(max(0.0, 1.0 - c * c));
-  // (the ring means at |uv| 0, 0.0625, 0.1875, ... 0.9375)
-  float x = s < 0.0625 ? s / 0.0625 : 1.0 + (s - 0.0625) / 0.125;
-  int i = int(clamp(floor(x), 0.0, 7.0));
-  float env = mix(envRadial[i], envRadial[i + 1], clamp(x - float(i), 0.0, 1.0));
+  // The view in the glass's tangent frame (T, B along its tiles' u and v: from their screen derivatives; RV-71), ENVPack
+  // looked up at -V.xy: our smooth stand-in
+  vec3 normalTs = normalize(vWorldNormal);
+  vec3 dp1 = dFdx(vWorldPosition);
+  vec3 dp2 = dFdy(vWorldPosition);
+  vec2 duv1 = dFdx(tile);
+  vec2 duv2 = dFdy(tile);
+  vec3 tangentTs = dp2 * duv1.y - dp1 * duv2.y;
+  vec3 bitangentTs = dp1 * duv2.x - dp2 * duv1.x;
+  tangentTs = normalize(tangentTs - normalTs * dot(normalTs, tangentTs) + 1e-6);
+  bitangentTs = normalize(bitangentTs - normalTs * dot(normalTs, bitangentTs) + 1e-6);
+  vec3 viewTs = vec3(dot(toCamera, tangentTs), dot(toCamera, bitangentTs), dot(toCamera, normalTs));
+  float env = envG(-normalize(viewTs).xy);
   vec3 colour = vec3(env + 1.0 / 12.0);
   gl_FragColor = vec4(colour, alpha);
   #include <colorspace_fragment>
@@ -208,7 +288,7 @@ export class ForceFieldMaterial extends ShaderMaterial {
   constructor(primary0: Color, primary1: Color) {
     const ballPosition = new Vector3(0, -100_000, 0);
     super({
-      vertexShader,
+      vertexShader: overlayVertexShader,
       fragmentShader: overlayFragment,
       uniforms: {
         ...UniformsUtils.clone(UniformsLib.fog),
@@ -230,11 +310,19 @@ export class ForceFieldMaterial extends ShaderMaterial {
 
 /** The lower glass: its mesh carries `glassTile` (tile coordinates: its UV0 x (3, 7/3)) */
 export class HexGlassMaterial extends ShaderMaterial {
-  constructor() {
+  /** `net`: the goal net's (its side walls on their own planar chart); `goalSide`: the panels beside the goal mouths
+   *  (their chart from the position) */
+  constructor(options: { readonly net?: boolean; readonly goalSide?: boolean } = {}) {
     super({
       vertexShader,
       fragmentShader: glassFragment,
-      uniforms: { ...UniformsUtils.clone(UniformsLib.fog), packG: { value: PACK_G }, envRadial: { value: ENV_RADIAL } },
+      defines: { ...(options.net ? { NET_SIDE_WALLS: "" } : {}), ...(options.goalSide ? { GOAL_SIDE_GLASS: "" } : {}) },
+      uniforms: {
+        ...UniformsUtils.clone(UniformsLib.fog),
+        packG: { value: PACK_G },
+        envRadial: { value: ENV_RADIAL },
+        envSpread: { value: ENV_SPREAD },
+      },
       transparent: true,
       depthWrite: false,
       side: DoubleSide,

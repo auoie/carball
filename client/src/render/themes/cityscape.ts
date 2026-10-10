@@ -443,7 +443,8 @@ export function buildTrain(trackX: number, trackY: number): { mesh: InstancedMes
 /** Searchlights on far roofs, sweeping the smog (always leaning away from the arena). CPU-driven, five matrices. */
 export function buildSearchlights(towers: readonly Tower[], seed: number): { mesh: InstancedMesh; update(seconds: number): void } {
   const random = seededRandom(seed);
-  const beam = new CylinderGeometry(800, 40, 15000, 20, 1, true).translate(0, 7500, 0);
+  // (10000 long: from the farthest roofs the beams' faded tips stay inside the camera's far plane, RV-90)
+  const beam = new CylinderGeometry(800 * (10 / 15), 40, 10000, 20, 1, true).translate(0, 5000, 0);
   const material = new ShaderMaterial({
     vertexShader: /* glsl */ `
       varying float vAlong;

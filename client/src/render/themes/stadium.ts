@@ -4,10 +4,11 @@
 // teams' primaries (AV-2). Values only: the look is built in code.
 import { BackSide, Color, DirectionalLight, Fog, Group, HemisphereLight, Mesh, ShaderMaterial, SphereGeometry } from "three";
 import { TEAM_PRIMARY_LINEAR, linear } from "../teamColors";
+import { buildBowl, buildCaptureHotspots, buildCrowd, buildFarLayer, buildScreensAndProps } from "./stadiumSurroundings";
 import type { Theme } from "./theme";
 
 /** SkyDome_MAT (H-10): the zenith, the warm horizon added as q^4 (q = sat(2 (v - 0.5)), v 0 at the zenith, 1 at the
- *  horizon), pulled towards (1.496, 1.149, 0.531) by sat(-X_world 5.859e-8) on the sun's (-x) side, the whole times
+ *  horizon, on the flattened dome: q 0 from 31 degrees up), pulled towards (1.496, 1.149, 0.531) by sat(-X_world 5.859e-8) on the sun's (-x) side, the whole times
  *  v. X_world on the game's dome: SkySphere01, a 65536 uu hemisphere scaled (128, 128, 76.8), so semi-axes 8388608
  *  across and 5033165 up (RV-69; about 0.49 at the -x horizon). The clouds, twinkles and fog hemisphere aren't drawn */
 const SKY_ZENITH = [0.017, 0.043, 0.0546] as const;
@@ -29,8 +30,10 @@ uniform vec3 horizon;
 varying vec3 vDirection;
 void main() {
   vec3 d = normalize(vDirection);
-  // v: 0 at the zenith, 1 at the horizon (and below it)
-  float v = clamp(1.0 - asin(clamp(d.y, 0.0, 1.0)) / 1.5707963, 0.0, 1.0);
+  // v: SkySphere01's UV0.y where this view meets the dome, 0.6 as tall as wide: 1 - phi / 90 degrees with tan phi =
+  // tan(elevation) 128 / 76.8 (the static session: within 0.004 of the faceted mesh; RV-79d), 1 at the horizon and below
+  float phi = atan(max(d.y, 0.0) * (128.0 / 76.8), sqrt(d.x * d.x + d.z * d.z));
+  float v = clamp(1.0 - phi / 1.5707963, 0.0, 1.0);
   float q = clamp(2.0 * (v - 0.5), 0.0, 1.0);
   // (the game's world X of this direction on its dome; Three's y is up)
   float across = d.x * d.x + d.z * d.z;
@@ -49,10 +52,10 @@ export function stadiumTheme(): Theme {
   // (x pi: three.js's Lambert divides by pi where the game's doesn't: RV-70a)
   const sun = new DirectionalLight(linear([1, 0.883, 0.612]), Math.PI);
   sun.position.set(-0.919 * 10000, 0.393 * 10000, -0.007 * 10000);
-  // The sky light: upper (255, 235, 186), lower (206, 255, 140), x 1.5
-  const sky = new HemisphereLight(linear([1, 0.83, 0.49]), linear([0.62, 1, 0.26]), 1.5 * Math.PI);
+  // The sky light: upper (255, 235, 186), lower (206, 255, 140), x 1.5 (the bytes ^2.2: RV-79a)
+  const sky = new HemisphereLight(linear([1, 0.8355, 0.4995]), linear([0.6254, 1, 0.2674]), 1.5 * Math.PI);
   const dome = new Mesh(
-    new SphereGeometry(30000, 48, 24), // (inside the camera's far plane from anywhere in the arena: RV-58)
+    new SphereGeometry(32000, 48, 24), // (round the stands, inside the camera's far plane from anywhere in the arena: RV-58)
     new ShaderMaterial({
       vertexShader: skyVertex,
       fragmentShader: skyFragment,
@@ -63,8 +66,15 @@ export function stadiumTheme(): Theme {
     }),
   );
   dome.renderOrder = -1;
-  root.add(sun, sky, dome);
   const [p0 = [0, 0, 1], p1 = [1, 0.5, 0]] = TEAM_PRIMARY_LINEAR;
+  // (the reflection capture's own glows: SUR-33)
+  const hotspots = buildCaptureHotspots(linear(p0), linear(p1));
+  // The stands, roof, canopy and floodlights round the arena (SUR-1..21), the crowd on them (SUR-26..31)
+  const crowd = buildCrowd(linear(p0), linear(p1));
+  // The screens, ads and the near-field props (SUR-9, 10, 17..19)
+  const props = buildScreensAndProps(linear(p0), linear(p1));
+  // The skyline, the city's glow and the horizon's fog band beyond (SUR-11, 22, 23)
+  root.add(sun, sky, dome, hotspots, buildBowl(linear(p0), linear(p1)), crowd.mesh, props.group, buildFarLayer());
   return {
     background: new Color(0x0b1418),
     // (ExponentialHeightFog: none inside the arena, from 10240 uu out; orange towards the sun)
@@ -83,6 +93,10 @@ export function stadiumTheme(): Theme {
       },
     },
     root,
-    update: () => undefined,
+    captureOnly: hotspots,
+    update: (seconds) => {
+      crowd.update(seconds);
+      props.update(seconds);
+    },
   };
 }

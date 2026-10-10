@@ -188,7 +188,7 @@ Differences that change results, beyond the Psyonix changes above (see each repo
   subsimplex stop `v² ≤ 1e-4` left the ray ~0.05 uu short; the engine's `btGjkConvexCast`, cap 64, reproduces the game).
 - EPA in 3.24 retries 9 guess directions when both EPA and the fallback fail (rare).
 - Manifold solve order: 2.82's `btSimulationIslandManager` sorts `m_islandmanifold` with the **unstable** `quickSort(btPersistentManifoldSortPredicate)` on island id only (equal keys get permuted; 3 equal keys come out reversed), fed with the dispatcher's manifold array (creation order, swap-remove). The engine's deterministic sort (patch 24) differs; applying 2.82's quickSort after it fixed ball_5050 tick 72 (cars 1.72 → 0.07 uu/s, S1 2026-10-08); exact order needs the dispatcher order as input (tick 626's remaining 0.22).
-- Arena meshes (S1, 2026-10-08; notes/gameside-audit.md has the seam work): each of the 16 pieces is its own PhysX-2.8-cooked mesh (`Stadium_P` PersistentLevel export 348, "NXS\x01MESH") turned into a `btTriangleIndexVertexArray` + quantized `btBvhTriangleMeshShape` per instance by `FUN_14040a320` (Scale3D and mirroring baked into the vertices, BU; the 4 goal halves cooked in actor space with a ±102.4 BU body offset in y). The triangle order is Opcode's cooking order (an AABB-tree reorder of the render order; S1's `tools/opcode_order.py` reproduces all 16 bit for bit), which decides which of two touching triangles wins.
+- Arena meshes (S1, 2026-10-08; notes/gameside-audit.md has the seam work): each of the 16 pieces is its own PhysX-2.8-cooked mesh (`Stadium_P` PersistentLevel export 348, "NXS\x01MESH") turned into a `btTriangleIndexVertexArray` + quantized `btBvhTriangleMeshShape` per instance by `FUN_14040a320` (Scale3D and mirroring baked into the vertices, BU; the 4 goal halves cooked in actor space with a ±0x42CCCCCB BU body offset in y (102.39998627, from the float chain ×0.02f, ×50f, ×0.02f; not 102.4f; see the last section)). The triangle order is Opcode's cooking order (an AABB-tree reorder of the render order; S1's `tools/opcode_order.py` reproduces all 16 bit for bit), which decides which of two touching triangles wins.
 - BVH quantization: the game's `setQuantizationValues` 0x14027e180 is 2.82's (the max quantized with the factor from before the min was lowered; `(ushort)(int)(x + 1) | 1`, wrapping above 65535): range [min−2, max+1] BU vs 3.24's [min−2, max+2+ε] (`btQuantizedBvh.cpp:76-98`); traversal order differs in 25–47 of 880 positions (corners) and 151–188 of 983 (goal halves); no recording changes (S1).
 - **Completeness (2026-10-08, sub-agent BC, `out/bsim/agents/BC/`):** stock 2.82 with every known Psyonix change
   applied as source patches (`bc_psyonix.patch`, 53 files, all edits marked PSYONIX) built with MSVC 19.44
@@ -336,3 +336,19 @@ surround differ.
   - The local validator may use the game's cooked meshes (out/arena_local/cooked and git-ignored copies) for
     exactness checks only; they are never committed or shipped.
   - Ticks whose contact set flips under ±4-ulp vertex jitter count as "indeterminate", not as physics errors.
+- **The unidentified input, found (2026-10-09, sub-agent BT3): the goal halves' static body origin is y =
+  ±0x42CCCCCB (102.39998627 BU), not ±102.4f (0x42CCCCCD).** The game converts the actor location through three
+  single-precision multiplies:
+  1. PhysX actor creation (InitBody 0x140969d20): L × 0.02f (MULSS at 0x14096a436…), 5120 → 0x42CCCCCC (a tie, rounded
+     to even);
+  2. the getGlobalPose read-back in 0x14040ff70 → FUN_140972870: × 50.0f;
+  3. the Bullet body: × 0.02f again → 0x42CCCCCB.
+  Power-of-two locations (the planes at 1024/2048/4096) are exact; only the goal halves (5120) are affected. The game's
+  mesh build (0x140410d20: PhysX saveToDesc points/triangles, scaling 1, addIndexedMesh, quantized BVH, stock
+  btTriangleInfoMap) is otherwise equivalent to ours.
+  - With the cooked meshes and the corrected origin, all 715 ticks of walls_goal_wheels match (max 0.101 uu/s, which is
+    at the scenario re-placement ticks), and 65/65 recorded car–mesh points are exact.
+  - The generated meshes stay inexact on ill-conditioned ticks (their vertices are bit-exact for only 4–22 % of
+    coordinates), but the origin fix still applies.
+  - Fix: scripts/arena_gen.py should write the RLOF offset as float32(float32(float32(float32(c)·0.02f)·50f)·0.02f).
+    The −y halves are assumed symmetric (−0x42CCCCCB); confirm with a −y goal-surround recording.

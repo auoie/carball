@@ -478,6 +478,18 @@ def merged(pieces):
     return arena
 
 
+def f32(x):
+    return struct.unpack("<f", struct.pack("<f", x))[0]
+
+
+def body_origin(uu):
+    """A static body's origin (BU) from its location (uu) as the game makes it, in single precision: the PhysX actor's
+    x 0.02 (0x140969d20), read back x 50 (0x140972870), the Bullet body's x 0.02. For the goal halves' 5120 that's
+    0x42cccccb (102.39999 BU), 2 ulps below 102.4f (static analysis: notes/bullet-diff.md). (A float32 product is exact
+    in a double, so rounding it once is the float32 multiply.)"""
+    return f32(f32(f32(f32(uu) * f32(0.02)) * f32(50.0)) * f32(0.02))
+
+
 def write(pieces, outdir):
     meshdir = os.path.join(outdir, "collision_meshes", "soccar")
     os.makedirs(meshdir, exist_ok=True)
@@ -498,7 +510,7 @@ def write(pieces, outdir):
             for v in piece.verts:
                 f.write(struct.pack("<3f", *(c * 0.02 for c in v)))
             if hasattr(piece, "offset"):   # the body's position (the engine's CollisionMeshFile trailer)
-                f.write(b"RLOF" + struct.pack("<3f", *(c * 0.02 for c in piece.offset)))
+                f.write(b"RLOF" + struct.pack("<3f", *(body_origin(c) for c in piece.offset)))
     stale = [n for n in os.listdir(meshdir) if n.endswith(".cmf") and n not in {f"soccar_{name}.cmf" for name, _ in pieces}]
     if stale:
         print(f"note: other .cmf files in {meshdir} are loaded too: {stale}")

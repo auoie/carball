@@ -380,13 +380,27 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
 
 	// Set up rigidbody and collision shapes
 	_childHitboxShape = btBoxShape((config.hitboxSize * UU_TO_BT) / 2);
-	// RL PATCH: the Octane box's floats exactly as the game's (read live: inner half extents 0x3f954d13, 0x3f540dc2,
-	// 0x3eb22419, margin 0x3d1e58fa); from the rounded uu sizes they come out 2/0/8 and 7 ulps off, and a nose contact
-	// nearly parallel to a facet flips on bits like these (static analysis, notes/bullet-diff.md: ticks 307/310/487)
-	if (config.hitboxSize == CAR_CONFIG_OCTANE.hitboxSize) {
+	// RL PATCH: the presets' boxes' floats exactly as the game's (read live, the _bullet.csv headers: inner half
+	// extents, margin); from the rounded uu sizes they come out a few ulps off, and a nose contact nearly parallel to a
+	// facet flips on bits like these (static analysis, notes/bullet-diff.md: ticks 307/310/487; RV-88). The game's
+	// inverse inertia follows from these exactly
+	{
+		struct ExactBox { const CarConfig* preset; uint32_t x, y, z, margin; };
+		static const ExactBox EXACT_BOXES[] = {
+			{ &CAR_CONFIG_OCTANE, 0x3f954d13, 0x3f540dc2, 0x3eb22419, 0x3d1e58fa },
+			{ &CAR_CONFIG_DOMINUS, 0x3fa29eaf, 0x3f52f1a0, 0x3e9bc01a, 0x3d0a71df },
+			{ &CAR_CONFIG_PLANK, 0x3fa401bf, 0x3f56fdbd, 0x3e92f82a, 0x3d02a3b4 },
+			{ &CAR_CONFIG_BREAKOUT, 0x3fa74fd3, 0x3f4c230f, 0x3e972474, 0x3d06594b },
+			{ &CAR_CONFIG_HYBRID, 0x3fa1179a, 0x3f4f6a8d, 0x3ea8eccd, 0x3d1627d3 },
+			{ &CAR_CONFIG_MERC, 0x3f989a16, 0x3f4089d3, 0x3ecd9d4d, 0x3d23d70a },
+		};
 		auto bits = [](uint32_t u) { float f; memcpy(&f, &u, sizeof f); return f; };
-		_childHitboxShape.btConvexInternalShape::setMargin(bits(0x3d1e58fa));
-		_childHitboxShape.setImplicitShapeDimensions(btVector3(bits(0x3f954d13), bits(0x3f540dc2), bits(0x3eb22419)));
+		for (const ExactBox& box : EXACT_BOXES) {
+			if (config.hitboxSize != box.preset->hitboxSize) continue;
+			_childHitboxShape.btConvexInternalShape::setMargin(bits(box.margin));
+			_childHitboxShape.setImplicitShapeDimensions(btVector3(bits(box.x), bits(box.y), bits(box.z)));
+			break;
+		}
 	}
 	_compoundShape = btCompoundShape(false, 1);
 

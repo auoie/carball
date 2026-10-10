@@ -687,13 +687,44 @@ a replay doesn't carry) differs. Next to look at.
       all the hitbox's nose on the curve's steeper facets: a contact point on a near facet (positive distance,
       0.87-1.46 uu, inside the 2.03 breaking threshold, life 1) appears a tick apart (the engine first on tri 645 at
       307; the game first on tri 648 at 310 and tri 823 at 487; triangle indices the same on both sides, the meshes
-      in the game's cooked order). Not the wheels. The static session is decompiling the convex-triangle candidate
-      filter (the quantized BVH walk is its hypothesis).
+      in the game's cooked order). Not the wheels. The static session decompiled the whole convex-triangle chain: the
+      same as ours; the box's edge nearly parallel to the 405 uu facets makes GJK ill-conditioned (a corner witness
+      merges into the neighbour's point, a mid-edge one stays separate), flipped by a few ulps of input. Engine
+      patches 93 (the Octane box's exact floats) and 94 (the distance sum's order) and the validator setting the
+      rotation as the game's write-back (btMatrix3x3(btQuaternion)) fix tick 310 and the steer recordings' max (0.010
+      to 0.00013 uu/s); nothing worse over the 72 recordings. With the game's cooked meshes (local only, `--meshes`
+      with the goal halves' body offsets added) tick 307 matches too; 487 needs a few ulps more, and a new tick 491
+      (10 uu/s) differs: some input is still not bit-exact. `live_validate` now marks such ticks indeterminate (the
+      contact set changes under 1-4 ulp vertex or 0.001 uu car jitter and a run matches the game: `--jitter`): here
+      127, 307, 310, 314, 487, 693, 696, leaving a max of 1.85 uu/s (tick 494, which every variant missed then; since
+      finding 52's body origins and the wider jitter (RV-91d) 494 is flagged indeterminate too, and the default
+      generated run's max is 0.212 uu/s, tick 125).
     - Spawns (two `physlog_resetplayers` each): Takumi z 35.71, 5.00 uu ahead of its spot; Scarab z 39.06, 7.00 ahead
       (as the static analysis predicted from the meshes; `tools/physlog/spawn_offsets.py`).
     - The freeplay ball after Backspace (RV-57): held a tick at (0, 0, 100.49), then it falls (5.41 uu/s a tick), lands
       18 ticks later at -97.2 uu/s and bounces at +58.3 (restitution 0.6) to z 95.60, and on. No freeze on landing:
       the engine reproduces the bounce; the client holds the ball the one tick.
+
+52. **The goal halves' body origins: the last input not bit-exact (static analysis, engine README row 95).** The game
+    makes a static body's origin from its location in single precision (x 0.02 into PhysX, x 50 back, x 0.02 into
+    Bullet): for the goal halves' 5120 uu that's y +-0x42cccccb, 2 ulps below the 102.4f our meshes' trailers had.
+    With it (`scripts/arena_gen.py` `body_origin`; the local cooked copy patched alike), `walls_goal_wheels`:
+    - on the game's cooked meshes every tick matches (max 0.101 uu/s, the scenario's re-placement ticks; p99 0.00006;
+      all 65 recorded car-mesh contact points exact, the static session's check); ticks 491 and 494 were this;
+    - on our generated meshes, without jitter, max 58.7 -> 1.85 uu/s (tick 494, ill-conditioned: our vertices are
+      bit-exact for only some coordinates); the three `walls` recordings 0.10 -> 0.21 at one tick (a generated vertex
+      flips); every other recording and the replay set unchanged but for 0.001 uu on two p90s.
+    The presets' exact boxes (RV-88: every preset's floats, offsets and inverse inertia as the game's) change no live
+    recording or replay result. `live_validate --jitter` now jitters every vertex of the triangles the car can touch,
+    keeps the indeterminate ticks' rows in `--ticks` (flagged) and prints each one's unjittered error: on the cooked
+    meshes the seven ill-conditioned ticks all read 0.00 (fragile but right). Note: the earlier "72 recordings" counts
+    left out `walls_goal_wheels` (a script filter), always run on its own; with it, 73.
+    `walls_goal_wheels` now (the static session's re-check of bee7a7c, the same as ours):
+    - generated meshes, default jitter: p99 0.022, max 0.212 uu/s (tick 125); indeterminate 127, 307, 310, 314, 487,
+      494, 693, 696;
+    - generated meshes, `--jitter 0`: max 1.853 uu/s (tick 494);
+    - cooked meshes (`cooked_meshes3`): p99 0.00006, max 0.101 uu/s (the re-placement ticks 1, 181, 361, 541); 491 and
+      494 at 0.0000.
 
 ## Limits and next steps
 - Air control (pitch, yaw, roll) is not in replays: aerial touches and car rotation in the air can only be checked

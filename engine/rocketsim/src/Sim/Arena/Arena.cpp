@@ -1502,11 +1502,12 @@ void Arena::Step(int ticksToSimulate) {
 		// RL PATCH: kickoff countdown, no input. The jump's edge still follows the real input (Car_TA.SetVehicleInput
 		// calls OnJumpPressed only when Input.bJump changes, and OnJumpPressed returns while !bDriving: a press during the
 		// countdown is swallowed, and one held through it doesn't jump at the release; static analysis RV-55)
+		// The real input is put back after the tick, so a Step of several ticks keeps it for the next (RV-93)
 		const bool countdown = kickoffCountdownTicks > 0;
-		std::vector<bool> countdownJump;
+		std::vector<CarControls> countdownControls;
 		if (countdown) {
 			for (Car* car : _cars) {
-				countdownJump.push_back(car->controls.jump);
+				countdownControls.push_back(car->controls);
 				car->controls = CarControls();
 			}
 		}
@@ -1545,8 +1546,8 @@ void Arena::Step(int ticksToSimulate) {
 			car->_PostTickUpdate(gameMode, tickTime, _mutatorConfig);
 			// RL PATCH (RV-55): through the countdown the last input's jump is the real one held, so its press at the
 			// release doesn't count
-			if (countdown && carIndex < countdownJump.size())
-				car->_internalState.lastControls.jump = countdownJump[carIndex];
+			if (countdown && carIndex < countdownControls.size())
+				car->_internalState.lastControls.jump = countdownControls[carIndex].jump;
 			carIndex++;
 			car->_FinishPhysicsTick(_mutatorConfig);
 			if (hasArenaStuff) {
@@ -1559,6 +1560,12 @@ void Arena::Step(int ticksToSimulate) {
 					_boostPadGrid.CheckCollision(car);
 				}
 			}
+		}
+
+		if (countdown) { // (RV-93)
+			size_t i = 0;
+			for (Car* car : _cars)
+				if (i < countdownControls.size()) car->controls = countdownControls[i++];
 		}
 
 		if (hasArenaStuff && !ballOnly)

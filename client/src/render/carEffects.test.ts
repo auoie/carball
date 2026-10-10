@@ -2,7 +2,7 @@
 import { ConeGeometry, Mesh, type Object3D, Quaternion, Vector3 } from "three";
 import { describe, expect, it } from "vitest";
 import { vec3 } from "../math/vec";
-import { CarView } from "./entities";
+import { CarView, EXHAUSTS } from "./entities";
 import { Particles } from "./particles";
 
 const FRAME = 1 / 60;
@@ -24,7 +24,12 @@ function cone(root: Object3D): Mesh {
 }
 
 describe("a car's exhausts", () => {
-  it("two, at the Fennec's sockets (11.88 uu behind the hitbox, 12.86 up, 20.43 to each side): RV-50", () => {
+  it("two, at the Fennec's sockets (x -57, 12.86 up, 20.43 to each side, whatever the hitbox): RV-50, RV-81", () => {
+    for (const [i, socket] of EXHAUSTS.entries()) {
+      expect(socket.x).toBeCloseTo(-57, 2);
+      expect(socket.y).toBeCloseTo(12.8615, 3);
+      expect(socket.z).toBeCloseTo(i === 0 ? -20.43 : 20.43, 3);
+    }
     const particles = new Particles(() => 0.5);
     const car = new CarView(OCTANE, 0, particles);
     const at = new Vector3(0, 17, 0);
@@ -38,7 +43,7 @@ describe("a car's exhausts", () => {
     expect(right.length).toBe(left.length);
     for (const p of puffs) {
       expect(Math.abs(Math.abs(p.pos.y) - 20.43)).toBeLessThan(5.01);
-      expect(p.pos.x).toBeLessThanOrEqual(OCTANE.hitboxOffset.x - OCTANE.hitboxSize.x / 2 - 11.88 + 1e-3);
+      expect(p.pos.x).toBeLessThanOrEqual(-57 + 1e-3);
       expect(p.pos.z).toBeCloseTo(17 + 12.8615, 0);
     }
   });

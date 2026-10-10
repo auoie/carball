@@ -44,6 +44,7 @@ import { ReplayPlayback } from "./replayPlayback";
 import { Fade } from "../render/fade";
 import { SceneEffects } from "../render/effects";
 import { EXPLOSION_LARGE, EXPLOSION_MEDIUM } from "../camera/shake";
+import { ServerDemolitions } from "./serverDemolitions";
 import { ShakeTriggers } from "./shakeTriggers";
 
 
@@ -149,6 +150,7 @@ export class Online {
   readonly #fade = new Fade();
   readonly #effects: SceneEffects;
   readonly #shakeTriggers = new ShakeTriggers({ demolitions: false }); // (the server's Demo events: RV-47)
+  readonly #demolitions = new ServerDemolitions(); // (the cars drawn demolished: RV-84)
   #localSpawns: number; // the local car's spawn counter last drawn (a kickoff's new car: the camera starts over)
   readonly #phases: { phase: MatchState["phase"]; at: number; frame: number }[] = [];
   #minDilation = 1;
@@ -468,7 +470,10 @@ export class Online {
         // A demolition as the server says (QueueDemolish from the replicated demolish): its effect and shake where the
         // victim was at that tick, as this client drew it (RV-47)
         const recorded = this.#recorder.before(Math.floor(this.#frameAt(m.serverTick)))?.cars.get(m.event.victim);
-        const at = recorded?.pos ?? this.#cars.get(m.event.victim)?.state.current.pos;
+        const victim = this.#cars.get(m.event.victim);
+        const at = recorded?.pos ?? victim?.state.current.pos;
+        // (and the car hidden, its effects killed, the camera switched, all from this frame: RV-84)
+        if (victim) this.#demolitions.event(m.event.victim, victim.state.current.spawnCount);
         if (at) {
           this.#effects.demolition(at);
           this.#camera.shakes.play(EXPLOSION_MEDIUM, at);
@@ -496,6 +501,7 @@ export class Online {
       if (!ids.has(id)) {
         this.#renderer.scene.remove(entry.view.root);
         this.#cars.delete(id);
+        this.#demolitions.forget(id);
       }
     }
     for (const id of ids) {
@@ -542,7 +548,9 @@ export class Online {
     const alpha = this.#clock.alpha;
     for (const [id, { view, state, error }] of this.#cars) {
       error.decay(frameSeconds);
-      const { boosting, demoed, supersonic } = state.current;
+      const { boosting, supersonic } = state.current;
+      // (demolished as the server says: RV-84)
+      const demoed = this.#demolitions.demoed(id, state.current.spawnCount);
       const pos = error.applyPosition(state.position(alpha, this.#pos));
       const throttling = (id === this.#localCar ? this.#throttle : Math.abs(this.#world.carControls(id).throttle)) > 0;
       view.update(pos, error.applyRotation(state.rotation(alpha, this.#rot)), boosting, demoed, supersonic, frameSeconds, trailGround(state.current), throttling);
@@ -580,10 +588,11 @@ export class Online {
       const car = local.state.blended(alpha);
       const e = local.error.rotation;
       const rot = { forward: rotateRl(car.rot.forward, e), right: rotateRl(car.rot.right, e), up: rotateRl(car.rot.up, e) };
-      const drawnCar = { ...car, pos: add(car.pos, local.error.location), rot };
+      const demoed = this.#demolitions.demoed(this.#localCar, local.state.current.spawnCount);
+      const drawnCar = { ...car, pos: add(car.pos, local.error.location), rot, demoed };
       const drawnBall = add(this.#ball.blended(alpha).pos, this.#ballError.location);
       // Demolished: the respawn cameras follow the spot picked (respawns wait after a goal: CAM-29)
-      const { demoed, spawnSelection: pick, team } = local.state.current;
+      const { spawnSelection: pick, team } = local.state.current;
       const phase = this.#match?.phase;
       const respawn = demoed
         ? {
@@ -597,7 +606,12 @@ export class Online {
       this.#renderer.render(view);
       this.#effects.camera = view.position; // (the husks collide near it)
       this.#audio.frame({
-        world: { cars: new Map([...this.#cars].map(([id, entry]) => [id, entry.state.current])), ball: this.#ball.current, pads },
+        // (the demolitions as drawn, the server's: the explosion's sound with its effect, RV-84)
+        world: {
+          cars: new Map([...this.#cars].map(([id, entry]) => [id, { ...entry.state.current, demoed: this.#demolitions.demoed(id, entry.state.current.spawnCount) }])),
+          ball: this.#ball.current,
+          pads,
+        },
         localCar: this.#localCar,
         throttle: this.#throttle,
         simulated,

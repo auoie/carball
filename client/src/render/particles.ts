@@ -44,8 +44,9 @@ export interface EmitterSpec {
   readonly loops?: boolean;
   readonly rate?: number;
   readonly bursts?: readonly { readonly time: number; readonly count: number }[];
-  /** Spawning by distance: `count` (drawn each frame) per `unit` uu the emitter moves; a frame's move over `maxFrame` uu
-   *  (a teleport) spawns none */
+  /** Spawning by distance (GetSpawnAmount 0x140ad5550: RV-85): each frame floor((d + L) count / unit) for a move of d uu,
+   *  `count` drawn each frame, the leftover L = max(0, d + L - n unit) a distance (so a rate over 1 a unit spawns at most
+   *  what the move covers); a frame's move over `maxFrame` uu (a teleport) spawns none and drops the leftover */
   readonly perUnit?: { readonly unit: number; readonly count: Range; readonly maxFrame?: number };
   readonly lifetime: Range;
   /** Start size (uu): width, and the length for a sprite stretched along its velocity */
@@ -78,6 +79,9 @@ export interface EmitterSpec {
   readonly alphaOverLife?: Curve;
   /** The sprite's falloff: (1 - |uv - 0.5|)^falloff (FlashGradient: 24, a hot point); else our soft disc */
   readonly falloff?: number;
+  /** A soft particle's fade, sat((SceneDepth - PixelDepth) / softDepth) (uu: FlashGradient's 227.5, Explosion_MAT's 255 (1 -
+   *  DepthBias)): the scene behind it taken as the floor (no depth texture here: RV-86) */
+  readonly softDepth?: number;
 }
 
 const MAX_PARTICLES = 4096;
@@ -141,6 +145,19 @@ export function additiveOutput(spec: EmitterSpec, start: readonly number[], alph
   return [tone(c[0]), tone(c[1]), tone(c[2])];
 }
 
+/** A spawn sphere's offset (SpawnEx 0x140ac6130: RV-82): on the surface, a unit direction times the radius; in the
+ *  volume, u = U(-1, 1)^3 times the radius, clamped to the sphere along u (so uniform in the ball when |u| <= 1, and
+ *  on its surface otherwise: 1 - pi/6 of the draws) */
+export function spherePoint(random: () => number, radius: number, surface: boolean): Vec3 {
+  if (surface) {
+    const dir = unitDirection(random);
+    return { x: dir.x * radius, y: dir.y * radius, z: dir.z * radius };
+  }
+  const u = { x: random() * 2 - 1, y: random() * 2 - 1, z: random() * 2 - 1 };
+  const k = radius / Math.max(1, Math.hypot(u.x, u.y, u.z));
+  return { x: u.x * k, y: u.y * k, z: u.z * k };
+}
+
 /** The game's random unit direction (DetermineUnitDirection): normalize(U(-1, 1)^3) (a zero draw: straight up) */
 export function unitDirection(random: () => number): Vec3 {
   const v = { x: random() * 2 - 1, y: random() * 2 - 1, z: random() * 2 - 1 };
@@ -154,13 +171,17 @@ attribute vec2 size; // width, length (stretched along axis when axis is set)
 attribute vec3 axis;
 attribute vec4 tint;
 attribute float falloff;
+attribute float soft;
 varying vec2 vUv;
 varying vec4 vTint;
 varying float vFalloff;
+varying float vSoft;
+varying vec3 vWorld;
 void main() {
   vUv = uv;
   vTint = tint;
   vFalloff = falloff;
+  vSoft = soft;
   vec3 toCamera = normalize(cameraPosition - center);
   vec3 right;
   vec3 up;
@@ -175,6 +196,7 @@ void main() {
     up = cross(toCamera, right);
   }
   vec3 world = center + right * position.x * size.x + up * position.y * size.y;
+  vWorld = world;
   gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
 }
 `;
@@ -183,6 +205,8 @@ const fragmentShader = /* glsl */ `
 varying vec2 vUv;
 varying vec4 vTint;
 varying float vFalloff;
+varying float vSoft;
+varying vec3 vWorld;
 uniform bool additive;
 void main() {
   // A soft round sprite (translucent ones softer and thinner: the game's smoke textures cover about half their quad),
@@ -191,6 +215,15 @@ void main() {
   float shape = clamp(1.0 - 2.0 * r, 0.0, 1.0);
   shape = additive ? shape * shape : shape * shape * shape * 0.5;
   if (vFalloff > 0.0) shape = pow(clamp(1.0 - r, 0.0, 1.0), vFalloff);
+  // A soft particle fades where the scene is just behind it: here the floor (Three's y = 0), how far behind along the
+  // view, in view depth
+  if (vSoft > 0.0) {
+    vec3 dir = normalize(vWorld - cameraPosition);
+    if (dir.y < -1e-4) {
+      vec3 forward = -vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2]);
+      shape *= clamp(vWorld.y / -dir.y * dot(dir, forward) / vSoft, 0.0, 1.0);
+    }
+  }
   vec3 rgb = max(vTint.rgb, 0.0);
   if (additive) {
     // (rgb = I C.rgb C.a: the alpha an intensity, not clamped before the tone map)
@@ -224,6 +257,7 @@ class Pool {
   readonly #axis: InstancedBufferAttribute;
   readonly #tint: InstancedBufferAttribute;
   readonly #falloff: InstancedBufferAttribute;
+  readonly #soft: InstancedBufferAttribute;
   readonly #geometry: InstancedBufferGeometry;
   // Per particle (structure of arrays); a local-space particle's position, velocity and acceleration in its frame
   count = 0;
@@ -252,12 +286,14 @@ class Pool {
     this.#axis = new InstancedBufferAttribute(new Float32Array(MAX_PARTICLES * 3), 3);
     this.#tint = new InstancedBufferAttribute(new Float32Array(MAX_PARTICLES * 4), 4);
     this.#falloff = new InstancedBufferAttribute(new Float32Array(MAX_PARTICLES), 1);
+    this.#soft = new InstancedBufferAttribute(new Float32Array(MAX_PARTICLES), 1);
     for (const [name, a] of [
       ["center", this.#center],
       ["size", this.#size],
       ["axis", this.#axis],
       ["tint", this.#tint],
       ["falloff", this.#falloff],
+      ["soft", this.#soft],
     ] as const) {
       a.setUsage(35048); // (DynamicDrawUsage)
       g.setAttribute(name, a);
@@ -374,6 +410,7 @@ class Pool {
     const axis = this.#axis.array as Float32Array;
     const tint = this.#tint.array as Float32Array;
     const falloff = this.#falloff.array as Float32Array;
+    const soft = this.#soft.array as Float32Array;
     for (let i = 0; i < n; i++) {
       const spec = this.spec[i];
       const t = (this.age[i] ?? 0) / (this.life[i] ?? 1);
@@ -408,8 +445,9 @@ class Pool {
       tint[i * 4 + 2] = colour[2];
       tint[i * 4 + 3] = (this.alpha[i] ?? 1) * alphaScale;
       falloff[i] = spec?.falloff ?? 0;
+      soft[i] = spec?.softDepth ?? 0;
     }
-    for (const a of [this.#center, this.#size, this.#axis, this.#tint, this.#falloff]) {
+    for (const a of [this.#center, this.#size, this.#axis, this.#tint, this.#falloff, this.#soft]) {
       a.addUpdateRange(0, n * a.itemSize);
       a.needsUpdate = true;
     }
@@ -475,6 +513,7 @@ export class Emitter {
   active = false;
   #time = 0;
   #rateDebt = 0;
+  /** The per-distance spawning's leftover, uu */
   #unitDebt = 0;
   #last: Vec3 | null = null;
   #burstsDone = 0;
@@ -555,11 +594,13 @@ export class Emitter {
     }
     if (spawning && spec.perUnit && last) {
       const moved = Math.hypot(at.x - last.x, at.y - last.y, at.z - last.z);
-      // (a move over the frame's limit is a teleport: not filled)
-      if (moved <= (spec.perUnit.maxFrame ?? Infinity)) {
-        this.#unitDebt += (moved / spec.perUnit.unit) * pick(spec.perUnit.count, this.particles.random);
-        const n = Math.floor(this.#unitDebt);
-        this.#unitDebt -= n;
+      // (a move over the frame's limit is a teleport: not filled, the leftover dropped; no move: none, the leftover kept)
+      if (moved > (spec.perUnit.maxFrame ?? Infinity)) this.#unitDebt = 0;
+      else if (moved > 0) {
+        const { unit } = spec.perUnit;
+        const along = moved + this.#unitDebt;
+        const n = Math.floor((along * pick(spec.perUnit.count, this.particles.random)) / unit);
+        this.#unitDebt = Math.max(0, along - n * unit);
         // (spread along the way it moved this frame)
         for (let k = 0; k < n; k++) {
           const f = (k + 1) / n;
@@ -595,10 +636,8 @@ export class Emitter {
       v = { x: v.x + source.x * k, y: v.y + source.y * k, z: v.z + source.z * k };
     }
     if (spec.sphere) {
-      const dir = unitDirection(random);
       const radius = typeof spec.sphere.radius === "number" ? spec.sphere.radius : evaluate(spec.sphere.radius, Math.max(0, emitterTime));
-      const r = radius * (spec.sphere.surface ? 1 : Math.cbrt(random()));
-      const d = { x: dir.x * r, y: dir.y * r, z: dir.z * r };
+      const d = spherePoint(random, radius, spec.sphere.surface ?? false);
       p = { x: p.x + d.x, y: p.y + d.y, z: p.z + d.z };
       if (spec.sphere.velocityScale !== undefined) {
         const k = pick(spec.sphere.velocityScale, random);

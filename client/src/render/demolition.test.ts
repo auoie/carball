@@ -3,7 +3,7 @@
 import { Group } from "three";
 import { describe, expect, it } from "vitest";
 import { vec3 } from "../math/vec";
-import { Demolition, HUSK_SECONDS, type HuskKind, launchHusk, stepHusk, traceWorld } from "./demolition";
+import { DEMOLITION, Demolition, HUSK_SECONDS, type HuskKind, launchHusk, stepHusk, traceWorld } from "./demolition";
 import { Particles } from "./particles";
 
 /** A seeded generator (mulberry32) */
@@ -138,5 +138,17 @@ describe("the demolition's husks", () => {
     expect(demo.done).toBe(true);
     demo.dispose();
     expect(scene.children.length).toBe(0);
+  });
+});
+
+describe("the demolition's soft particles (RV-86)", () => {
+  it("fade where the scene is just behind them: the flash over 227.5 uu (FlashGradient), the flipbooks and smoke over 255", () => {
+    const depth = (name: string): number | undefined => DEMOLITION.find((e) => e.name === name)?.softDepth;
+    expect(depth("demolition flash")).toBe(227.5);
+    expect(depth("demolition fireball")).toBe(255);
+    expect(depth("demolition plume")).toBe(255);
+    expect(depth("demolition smoke")).toBe(255);
+    // (the embers' Sparks_MAT has no depth fade)
+    expect(depth("demolition embers")).toBeUndefined();
   });
 });

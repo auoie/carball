@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { CarState } from "../engine/world";
 import { type Rot3, type Vec3, sub, vec3 } from "../math/vec";
 import { type CameraControls, PlayerCamera, Swivel, quantizeSwivelInput } from "./rlCamera";
+import { EXPLOSION_MEDIUM } from "./shake";
 
 const UP = vec3(0, 0, 1);
 
@@ -439,5 +440,43 @@ describe("back from the free-look ball cam with the look held (RV-27, RV-54)", (
     expect(turned).toBeLessThan(9000);
     // (the same as with no look before the ball cam: nothing carried over)
     expect(turned).toBeCloseTo(turnedAfter(0), 0);
+  });
+});
+
+describe("camera shakes in the camera (Camera_X.ApplyCameraModifiers: RV-83)", () => {
+  const ball = vec3(0, 3000, 93);
+  const differs = (a: { position: Vec3; forward: Vec3 }, b: { position: Vec3; forward: Vec3 }): number =>
+    Math.hypot(a.position.x - b.position.x, a.position.y - b.position.y, a.position.z - b.position.z) +
+    1000 * Math.hypot(a.forward.x - b.forward.x, a.forward.y - b.forward.y, a.forward.z - b.forward.z);
+
+  it("only with the camera shake setting on: a shake played with it off moves nothing", () => {
+    const plain = new PlayerCamera();
+    const off = new PlayerCamera();
+    const on = new PlayerCamera();
+    on.shake = true;
+    for (const camera of [plain, off, on]) settle(camera, car(), ball);
+    for (const camera of [off, on]) camera.shakes.play(EXPLOSION_MEDIUM, vec3(200, 0, 17));
+    const views = [plain, off, on].map((camera) => camera.update(1 / 120, car(), ball, CAR_CAM));
+    const [a, b, c] = views;
+    if (!a || !b || !c) throw new Error("views");
+    expect(differs(a, b)).toBe(0);
+    expect(differs(a, c)).toBeGreaterThan(0);
+  });
+
+  it("on world time (the dilated dt, not the real one): slowed after a goal, a 0.25 s shake still plays 0.5 s later", () => {
+    const camera = new PlayerCamera();
+    camera.shake = true;
+    settle(camera, car(), ball);
+    const still = new PlayerCamera();
+    settle(still, car(), ball);
+    camera.shakes.play(EXPLOSION_MEDIUM, vec3(200, 0, 17));
+    // (60 real frames of 1/120 s at a quarter speed: 0.125 s of world time)
+    let shaken = camera.update(1 / 480, car(), ball, CAR_CAM, null, 1 / 120);
+    let calm = still.update(1 / 480, car(), ball, CAR_CAM, null, 1 / 120);
+    for (let i = 0; i < 59; i++) {
+      shaken = camera.update(1 / 480, car(), ball, CAR_CAM, null, 1 / 120);
+      calm = still.update(1 / 480, car(), ball, CAR_CAM, null, 1 / 120);
+    }
+    expect(differs(shaken, calm)).toBeGreaterThan(0);
   });
 });

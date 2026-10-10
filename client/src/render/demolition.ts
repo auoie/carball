@@ -116,6 +116,8 @@ const SOURCES = { count: 8, radius: 75, speedScale: { min: 28, max: 32 }, drawn:
  *  colour, the cloud's size and density in each frame) */
 const SMOKE: EmitterSpec = {
   name: "demolition smoke",
+  // (a soft particle: Explosion_Smoke_02: Explosion_MAT's fade, DepthBias 0; RV-86)
+  softDepth: 255,
   blend: "translucent",
   duration: 1,
   bursts: [{ time: 0, count: 3 }],
@@ -132,6 +134,8 @@ const SMOKE: EmitterSpec = {
  *  Explosion_FinalSheet_04's frames 16-63 (measured, as the smoke's) */
 const FIREBALL: EmitterSpec = {
   name: "demolition fireball",
+  // (a soft particle: Explosion_02_MIC: DepthBias 0; RV-86)
+  softDepth: 255,
   blend: "translucent",
   duration: 1,
   bursts: [{ time: 0, count: 8 }],
@@ -165,6 +169,8 @@ const FIREBALL: EmitterSpec = {
  *  Explosion_FinalSheet_05's frames 0-63 (measured) */
 const PLUME: EmitterSpec = {
   name: "demolition plume",
+  // (a soft particle: Explosion_03_MIC: DepthBias 0; RV-86)
+  softDepth: 255,
   blend: "translucent",
   duration: 1,
   bursts: [{ time: 0, count: 1 }],
@@ -198,6 +204,8 @@ const PLUME: EmitterSpec = {
  *  FlashGradient_MAT's hot point: (1 - |uv - 0.5|)^12, squared (29 % at 5 % of its size) */
 const FLASH: EmitterSpec = {
   name: "demolition flash",
+  // (a soft particle: FlashGradient_MAT; RV-86)
+  softDepth: 227.5,
   blend: "additive",
   falloff: 24,
   duration: 1,

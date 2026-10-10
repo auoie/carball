@@ -70,7 +70,12 @@ endif()
 
 enable_testing()
 add_test(NAME rl_patch_tests COMMAND rl_patch_tests)
-add_test(NAME arena_smoketest COMMAND arena_smoketest ${ARENA_MESH_DIR})
+if (EMSCRIPTEN)
+	# (the wasm programs read the meshes embedded at /collision_meshes, not the host's directory: RV-94)
+	add_test(NAME arena_smoketest COMMAND arena_smoketest /collision_meshes)
+else()
+	add_test(NAME arena_smoketest COMMAND arena_smoketest ${ARENA_MESH_DIR})
+endif()
 
 if (EMSCRIPTEN)
 	# The engine module: rlengine.mjs + rlengine.wasm (+ rlengine.d.ts), see wasm/bindings.cpp.

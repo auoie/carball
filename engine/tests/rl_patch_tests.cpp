@@ -1145,6 +1145,20 @@ static void TestCountdownHeldJump() {
 		arena->Step(3);
 		CHECK(car->GetState().vel.z > 200, "a fresh press after the countdown %d: vz %.2f", ticks, car->GetState().vel.z);
 	}
+	{ // RV-93: one Step of several ticks through the countdown's end keeps the real input for the ticks after it
+		arena->ResetToRandomKickoff(1);
+		arena->kickoffCountdownTicks = 1;
+		CarControls held;
+		held.jump = true;
+		held.throttle = 1;
+		car->controls = held;
+		Vec before = car->GetState().pos;
+		arena->Step(10);
+		CHECK(car->controls.jump && car->controls.throttle == 1, "the input survives the countdown's tick");
+		CarState s = car->GetState();
+		CHECK(s.isOnGround && std::fabs(s.vel.z) < 1, "no jump at the release within the step: vz %.2f", s.vel.z);
+		CHECK((s.pos - before).Length() > 1 && s.vel.Length() > 50, "the ticks after the countdown drive on the real throttle: speed %.1f", s.vel.Length());
+	}
 	delete arena;
 }
 
@@ -1472,10 +1486,71 @@ static void TestRocketSimAudit(Arena* arena, Car* car) {
 	}
 }
 
+// The presets' boxes as the game's (RV-88, read live: the _bullet.csv headers of the steer recordings): the inner half
+// extents' and margin's bits, the box's offset, and the inverse inertia the game's body has (+0x1c0), which
+// calculateLocalInertia makes from those floats exactly
+static void TestPresetBoxes() {
+	// ox, oz: the compound child's origin, the physics' input (Car.cpp: hitboxPosOffset x UU_TO_BT, a x 0.02f). The game's
+	// rounding is open (RV-95): x 0.02f and / 50f differ by an ulp in Dominus x (0x3e3851eb / ...ec) and Plank z
+	// (0x3e77b070 / ...71), and PhysLog's 6-decimal uu leave Octane/Hybrid z at 0x3ed487f4 or ...f5 (origin_bu settles it)
+	struct Want { const char* name; const CarConfig* preset; uint32_t x, y, z, margin; Vec offset; uint32_t ox, oz, ix, iy, iz; };
+	const Want wants[] = {
+		{ "Octane", &CAR_CONFIG_OCTANE, 0x3f954d13, 0x3f540dc2, 0x3eb22419, 0x3d1e58fa, { 13.875660f, 0, 20.754988f }, 0x3e8e1636, 0x3ed487f4, 0x3c978367, 0x3c2a7d85, 0x3bf7ce24 },
+		{ "Dominus", &CAR_CONFIG_DOMINUS, 0x3fa29eaf, 0x3f52f1a0, 0x3e9bc01a, 0x3d0a71df, { 9.f, 0, 15.75f }, 0x3e3851eb, 0x3ea147ae, 0x3ca09d8a, 0x3c166b97, 0x3be01b54 },
+		{ "Plank", &CAR_CONFIG_PLANK, 0x3fa401bf, 0x3f56fdbd, 0x3e92f82a, 0x3d02a3b4, { 9.008572f, 0, 12.0942f }, 0x3e387edc, 0x3e77b070, 0x3c9e775c, 0x3c1586b2, 0x3bdbd438 },
+		{ "Breakout", &CAR_CONFIG_BREAKOUT, 0x3fa74fd3, 0x3f4c230f, 0x3e972474, 0x3d06594b, { 12.5f, 0, 11.75f }, 0x3e800000, 0x3e70a3d7, 0x3cab5856, 0x3c0f7e8b, 0x3bdbcdb0 },
+		{ "Hybrid", &CAR_CONFIG_HYBRID, 0x3fa1179a, 0x3f4f6a8d, 0x3ea8eccd, 0x3d1627d3, { 13.875660f, 0, 20.754988f }, 0x3e8e1636, 0x3ed487f4, 0x3ca053bf, 0x3c16b4da, 0x3be40e87 },
+		{ "Merc", &CAR_CONFIG_MERC, 0x3f989a16, 0x3f4089d3, 0x3ecd9d4d, 0x3d23d70a, { 11.375660f, 0, 21.504988f }, 0x3e68f938, 0x3edc3609, 0x3ca6031f, 0x3c1f60d4, 0x3bfe84c7 },
+	};
+	auto bitsOf = [](float f) { uint32_t u; memcpy(&u, &f, sizeof u); return u; };
+	Arena* arena = Arena::Create(GameMode::SOCCAR);
+	for (const Want& w : wants) {
+		Car* car = arena->AddCar(Team::BLUE, *w.preset);
+		const btVector3& half = car->_childHitboxShape.getImplicitShapeDimensions();
+		CHECK(bitsOf(half.x()) == w.x && bitsOf(half.y()) == w.y && bitsOf(half.z()) == w.z, "%s: box %08x %08x %08x", w.name, bitsOf(half.x()), bitsOf(half.y()), bitsOf(half.z()));
+		CHECK(bitsOf(car->_childHitboxShape.getMargin()) == w.margin, "%s: margin %08x", w.name, bitsOf(car->_childHitboxShape.getMargin()));
+		const Vec& o = car->config.hitboxPosOffset;
+		CHECK(bitsOf(o.x) == bitsOf(w.offset.x) && bitsOf(o.z) == bitsOf(w.offset.z), "%s: offset %.6f %.6f", w.name, o.x, o.z);
+		const btVector3& child = car->_compoundShape.getChildTransform(0).getOrigin();
+		CHECK(bitsOf(child.x()) == w.ox && child.y() == 0 && bitsOf(child.z()) == w.oz, "%s: child origin %08x %08x %08x", w.name, bitsOf(child.x()), bitsOf(child.y()), bitsOf(child.z()));
+		if (w.ix) {
+			const btVector3& inv = car->_rigidBody.getInvInertiaDiagLocal();
+			CHECK(bitsOf(inv.x()) == w.ix && bitsOf(inv.y()) == w.iy && bitsOf(inv.z()) == w.iz, "%s: inverse inertia %08x %08x %08x", w.name, bitsOf(inv.x()), bitsOf(inv.y()), bitsOf(inv.z()));
+		}
+		arena->RemoveCar(car);
+	}
+	delete arena;
+}
+
+// The static bodies' origins as the game makes them from whole-uu locations (single precision: the PhysX actor's x 0.02,
+// read back x 50, the Bullet body's x 0.02: 0x140969d20, 0x140972870). For the goal halves' 5120 uu that's
+// +-0x42cccccb (102.399986 BU), 2 ulps below 102.4f; live (walls_goal_wheels, the game's cooked meshes): it makes all 65
+// recorded car-mesh points exact (static analysis: notes/bullet-diff.md; scripts/arena_gen.py body_origin).
+static float GameStaticBodyOrigin(float locationUU) { return (locationUU * 0.02f) * 50.0f * 0.02f; }
+static void TestGoalBodyOrigins() {
+	uint32_t want; float w = GameStaticBodyOrigin(5120.f); memcpy(&want, &w, 4);
+	CHECK(want == 0x42cccccbu, "chain gives %08x", want);
+	Arena* arena = Arena::Create(GameMode::SOCCAR);
+	int goals = 0;
+	for (btRigidBody* rb : arena->_worldCollisionRBs) {
+		// every static body (meshes and planes): each origin component as the game's chain makes it from a whole uu
+		const btVector3& o = rb->getWorldTransform().getOrigin();
+		for (int i = 0; i < 3; i++) {
+			float uu = roundf(o[i] * 50.f), g = GameStaticBodyOrigin(uu);
+			CHECK(memcmp(&g, &o[i], 4) == 0, "static body origin[%d] %a (%.6f uu), the game's chain gives %a", i, o[i], o[i] * 50.f, g);
+		}
+		goals += o.y() != 0;
+	}
+	CHECK(goals == 4, "%d bodies off y = 0, expected the 4 goal halves", goals);
+	delete arena;
+}
+
 int main(int argc, char** argv) {
 	std::string meshes = argc > 1 ? argv[1] : ARENA_MESH_DIR;
 	RocketSim::Init(meshes, true);
 
+	TestGoalBodyOrigins();
+	TestPresetBoxes();
 	TestQuantize();
 	TestBumpCurves();
 	TestBoostPads();

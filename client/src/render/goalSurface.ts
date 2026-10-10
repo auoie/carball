@@ -67,7 +67,7 @@ export interface GoalSurface {
 
 /** Centre-line profile (y behind the goal line, z) of the goal's inside, from the mouth's floor round the back to the
  *  mouth's roof. */
-function goalPath(): Pt[] {
+export function goalPath(): Pt[] {
   const P: Pt[] = [[CHAMFER, 0], RAMP[0], RAMP[1]];
   for (let k = 1; k <= SEG90; k++) {
     const [c, s] = qc(k);

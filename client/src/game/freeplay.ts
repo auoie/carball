@@ -255,6 +255,11 @@ export class Freeplay {
     const tick = this.#world.tick;
     const car = this.#world.car(this.#playerId);
     this.#touches.update(this.#playerId, car.team, this.#world.carLastBallTouchTick(this.#playerId));
+    // (the new ball held first, so the frame recorded is the one drawn: RV-92)
+    if (this.#ballHold > 0) {
+      this.#ballHold -= 1;
+      this.#world.setBall({ pos: this.#ballSpawn, vel: ZERO, angVel: ZERO });
+    }
     this.#recorder.record(tick, {
       cars: new Map([[this.#playerId, recordCar(car)]]),
       ball: this.#world.ball(),
@@ -264,10 +269,6 @@ export class Freeplay {
     if (this.#padResetTicks > 0) {
       this.#padResetTicks -= 1;
       if (this.#padResetTicks === 0) this.#world.resetBoostPads();
-    }
-    if (this.#ballHold > 0) {
-      this.#ballHold -= 1;
-      this.#world.setBall({ pos: this.#ballSpawn, vel: ZERO, angVel: ZERO });
     }
   }
 
