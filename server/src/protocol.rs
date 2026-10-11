@@ -5,8 +5,9 @@ use crate::engine::Controls;
 // 2: kickoff countdown in the state; 3: the wheels' previous contacts; 4: the jump's release; 5: respawn spot selection
 // and flip resets in the state; 9: the goal replay (its phase, plan and skip votes; Hello's auto-skip); 10: forfeit votes,
 // the match type, a leaver's car, no contest; 11: quick chat, players' names (the roster), a leave's reason; 12: whether a
-// leaver's car explodes
-pub const VERSION: u16 = 13;
+// leaver's car explodes; 13: match stats, mute, Hello's chat filters; 14: the match's intro and end (its phases, the end
+// screen's countdown, ready checks, podium titles), Refused's version reason
+pub const VERSION: u16 = 14;
 /// The quick-chat presets (`Group1-6MessageN`: notes/quick-chat.md CHAT-1); a preset on the wire is its index
 pub const QUICK_CHAT_PRESETS: u8 = 76;
 /// A player's quick-chat filter (`EChatFilter` as the clone uses it: CHAT-18)
@@ -18,6 +19,13 @@ pub const CHAT_OFF: u8 = 3;
 pub const MAX_NAME_BYTES: usize = 32;
 /// Why a join was refused
 pub const REFUSED_FULL: u8 = 0;
+/// `Refused`'s reason: the client speaks another protocol version (RV-262; a client of version 12 on can read it)
+pub const REFUSED_VERSION: u8 = 1;
+
+/// A hello's version, read before the rest (another version's fields don't decode: RV-243); None: not a hello
+pub fn hello_version(body: &[u8]) -> Option<u16> {
+    if let [0x01, lo, hi, ..] = *body { Some(u16::from_le_bytes([lo, hi])) } else { None }
+}
 
 /// Stat events (`StatEvent_TA`, `engine/stats/StatFactory.h` `StatEvent`): the ids `StatEvent` and `Ticker` carry
 pub mod stat {
@@ -167,9 +175,23 @@ pub struct ScoreboardEntry {
     pub ping: u16,
     /// The match's MVP (`bMatchMVP`)
     pub mvp: bool,
+    /// Ready for the next match (the end screen's ready check)
+    pub ready: bool,
     /// The match counters (`engine::STAT_COUNTERS`, in its order; 65535 at most)
     pub counters: Vec<u16>,
+    /// The podium titles: primary, secondary (from the match's end; notes/match-stats.md §5.4a)
+    pub titles: [Option<PodiumTitle>; 2],
 }
+
+/// A podium title (`MemberTitleStat`): its id (`engine/stats/PodiumTitles.cpp` STAT_TITLES) and the stat count it shows
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PodiumTitle {
+    pub title: u8,
+    pub count: u16,
+}
+
+/// No title (the wire's title byte)
+pub const NO_TITLE: u8 = 255;
 
 /// A player as the others know them
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -227,10 +249,24 @@ pub enum Phase {
     PostGoal = 2,
     /// Time is up: the round ends when the ball touches the ground (goals still count)
     TimeUp = 3,
-    /// The match is over (`winner`); a new one starts after the podium
-    Ended = 4,
+    /// The match is over (`winner`): the world frozen, the winner shown (`PrePodiumSpotlight`, 3 s)
+    PrePodium = 4,
     /// The goal replay (`ReplayPlayback`): the cars gone, until it ends or every player skips it
     Replay = 5,
+    /// Before the match's first countdown (`WaitingForPlayers`, its 3 s warm-up): cars held, no messages
+    Waiting = 6,
+    /// The podium (`PodiumSpotlight`, 5.3 s): the winners' cars at their spots, drivable with unlimited boost; the
+    /// others' cars gone
+    Podium = 7,
+    /// The end screen (`Finished`, up to 60 s): the world frozen; the next match when every player is ready
+    Finished = 8,
+}
+
+impl Phase {
+    /// The match is over: the podium phases and the end screen
+    pub fn match_over(self) -> bool {
+        matches!(self, Phase::PrePodium | Phase::Podium | Phase::Finished)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -251,6 +287,8 @@ pub struct MatchState {
     pub can_vote_forfeit: bool,
     /// The match ended with no contest: every team left (`ForceNoContest`)
     pub no_contest: bool,
+    /// The end screen's countdown to the next match, whole seconds (0 in the other phases)
+    pub seconds_left: u8,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -474,10 +512,14 @@ impl Control {
                 for e in entries.iter().take(255) {
                     w.u32(e.car);
                     w.u16(e.ping);
-                    w.u8(u8::from(e.mvp));
+                    w.u8(u8::from(e.mvp) | (u8::from(e.ready) << 1));
                     w.u8(e.counters.len().min(255) as u8);
                     for &c in e.counters.iter().take(255) {
                         w.u16(c);
+                    }
+                    for t in &e.titles {
+                        w.u8(t.map_or(NO_TITLE, |t| t.title));
+                        w.u16(t.map_or(0, |t| t.count));
                     }
                 }
             }
@@ -560,6 +602,7 @@ impl Control {
                 w.u8(m.score[0]);
                 w.u8(m.score[1]);
                 w.u8(m.winner.unwrap_or(255));
+                w.u8(m.seconds_left);
             }
             Self::Event { server_tick, event } => {
                 w.u8(0x83);
@@ -625,10 +668,15 @@ impl Control {
                 let n = r.u8()?;
                 let mut entries = Vec::with_capacity(usize::from(n));
                 for _ in 0..n {
-                    let (car, ping, mvp) = (r.u32()?, r.u16()?, r.u8()? != 0);
+                    let (car, ping, flags) = (r.u32()?, r.u16()?, r.u8()?);
                     let k = r.u8()?;
                     let counters = (0..k).map(|_| r.u16()).collect::<Result<Vec<_>, _>>()?;
-                    entries.push(ScoreboardEntry { car, ping, mvp, counters });
+                    let mut title = || -> Result<Option<PodiumTitle>, DecodeError> {
+                        let (title, count) = (r.u8()?, r.u16()?);
+                        Ok((title != NO_TITLE).then_some(PodiumTitle { title, count }))
+                    };
+                    let titles = [title()?, title()?];
+                    entries.push(ScoreboardEntry { car, ping, mvp: flags & 1 != 0, ready: flags & 2 != 0, counters, titles });
                 }
                 Self::Scoreboard(entries)
             }
@@ -680,14 +728,18 @@ impl Control {
                     1 => Phase::Active,
                     2 => Phase::PostGoal,
                     3 => Phase::TimeUp,
-                    4 => Phase::Ended,
+                    4 => Phase::PrePodium,
                     5 => Phase::Replay,
+                    6 => Phase::Waiting,
+                    7 => Phase::Podium,
+                    8 => Phase::Finished,
                     t => return Err(DecodeError::UnknownType(t)),
                 };
                 let flags = r.u8()?;
                 let clock_ticks = r.u32()?;
                 let score = [r.u8()?, r.u8()?];
                 let winner = Some(r.u8()?).filter(|&w| w != 255);
+                let seconds_left = r.u8()?;
                 Self::Match(MatchState {
                     server_tick,
                     phase,
@@ -699,6 +751,7 @@ impl Control {
                     forfeit: flags & 4 != 0,
                     can_vote_forfeit: flags & 8 != 0,
                     no_contest: flags & 16 != 0,
+                    seconds_left,
                 })
             }
             t => return Err(DecodeError::UnknownType(t)),
@@ -830,7 +883,12 @@ mod tests {
                         car: u(&p["car"]),
                         ping: u(&p["ping"]) as u16,
                         mvp: p["mvp"].as_bool().unwrap(),
+                        ready: p["ready"].as_bool().unwrap(),
                         counters: p["counters"].as_array().unwrap().iter().map(|c| u(c) as u16).collect(),
+                        titles: [0, 1].map(|i| {
+                            let t = &p["titles"][i];
+                            (!t.is_null()).then(|| PodiumTitle { title: u(&t["title"]) as u8, count: u(&t["count"]) as u16 })
+                        }),
                     })
                     .collect(),
             ),
@@ -911,7 +969,10 @@ mod tests {
                     "postGoal" => Phase::PostGoal,
                     "timeUp" => Phase::TimeUp,
                     "replay" => Phase::Replay,
-                    _ => Phase::Ended,
+                    "waiting" => Phase::Waiting,
+                    "podium" => Phase::Podium,
+                    "finished" => Phase::Finished,
+                    _ => Phase::PrePodium,
                 },
                 overtime: m["overtime"].as_bool().unwrap(),
                 clock_running: m["clockRunning"].as_bool().unwrap(),
@@ -921,6 +982,7 @@ mod tests {
                 forfeit: m["forfeit"].as_bool().unwrap(),
                 can_vote_forfeit: m["canVoteForfeit"].as_bool().unwrap(),
                 no_contest: m["noContest"].as_bool().unwrap(),
+                seconds_left: u(&m["secondsLeft"]) as u8,
             }),
             t => panic!("unknown {t}"),
         }
@@ -969,6 +1031,31 @@ mod tests {
         let bytes = Control::ResetInputBuffer.encode();
         assert_eq!(bytes, vec![1, 0, 0x02]);
         assert_eq!(Control::decode(&bytes[2..]).unwrap(), Control::ResetInputBuffer);
+    }
+
+    #[test]
+    fn a_hellos_version_is_read_before_its_fields_whatever_the_version() {
+        // (version 11's hello, its version set: two bytes short of ours, so it doesn't decode as ours: RV-243, RV-262)
+        let v11 = hex("2200010b000000cdcc4c3f0000803f0000a03f01efbeadde0b4d65726375727920e29aa1");
+        assert_eq!(hello_version(&v11[2..]), Some(11));
+        assert!(Control::decode(&v11[2..]).is_err());
+        let ours = Control::Hello {
+            version: VERSION,
+            team: 0,
+            body: 0,
+            dodge_deadzone: 0.5,
+            steering_sensitivity: 1.0,
+            air_control_sensitivity: 1.0,
+            auto_skip_replay: false,
+            key: 0,
+            name: String::new(),
+            quick_chat: CHAT_EVERYONE,
+            block_non_tactical: false,
+        }
+        .encode();
+        assert_eq!(hello_version(&ours[2..]), Some(VERSION));
+        assert_eq!(hello_version(&[0x81, 11, 0]), None, "a welcome");
+        assert_eq!(hello_version(&[0x01, 11]), None, "too short");
     }
 
     #[test]

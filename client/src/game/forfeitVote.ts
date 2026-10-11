@@ -83,6 +83,15 @@ export interface VoteHud {
   readonly time: string;
   /** "Press Esc to Vote", until the player votes, while it runs (null: not shown) */
   readonly instructions: string | null;
+  /** It runs (else it's a finished one's 5 s) */
+  readonly running: boolean;
+}
+
+/** The bar flashes at each new yes, from 0 for a vote that just started, one replacing a finished vote still shown
+ *  too (RV-268); `last`: the widget the frame before (null: none) */
+export function voteFlashes(last: VoteHud | null, now: VoteHud): boolean {
+  const fresh = now.running && !(last?.running ?? false);
+  return now.yes > (fresh ? 0 : (last?.yes ?? 0));
 }
 
 /** The widget for the player's team's vote: shown at once while it runs and through its 5 s after (passed or failed),
@@ -97,5 +106,6 @@ export function voteHud(vote: ForfeitVote | null, matchType: MatchType, menuKey:
     fill: vote.required > 0 ? Math.min(1, vote.yes / vote.required) : 0,
     time: `${String(Math.floor(seconds / 60))}:${String(seconds % 60).padStart(2, "0")}`,
     instructions: vote.state === "running" && !vote.voted ? pressTo(menuKey, "Vote") : null,
+    running: vote.state === "running",
   };
 }

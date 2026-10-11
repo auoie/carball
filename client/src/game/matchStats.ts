@@ -2,7 +2,7 @@
 // game's StatEvents.int labels and [Scoreboard] column headers, cleared to ship verbatim), which awards pop up and reach
 // the feed, the scoreboard's columns, rows and order, the ping's bands, and the goal banner. The server computes the
 // stats (engine/stats); this is display only.
-import type { RosterEntry, ScoreboardEntry } from "../net/protocol";
+import type { MatchPhase, RosterEntry, ScoreboardEntry } from "../net/protocol";
 import { TEAM_FONT_COLOURS } from "./quickChat";
 
 /** The server's match counters, in its order (engine/stats/StatFactory.h Counter) */
@@ -194,6 +194,8 @@ export interface ScoreboardRow {
   readonly name: string;
   readonly local: boolean;
   readonly mvp: boolean;
+  /** Ready for the next match (the end screen's ready check) */
+  readonly ready: boolean;
   /** MatchScore, then the four columns' values */
   readonly values: readonly number[];
   readonly ping: number;
@@ -213,7 +215,7 @@ export function scoreboardTeams(
     const p = roster.get(e.car);
     if (!p) continue;
     const c = (i: number): number => e.counters[i] ?? 0;
-    const row = { car: e.car, name: p.name, local: e.car === localCar, mvp: e.mvp, values: [c(COUNTERS.score), ...counters.map(c)], ping: e.ping };
+    const row = { car: e.car, name: p.name, local: e.car === localCar, mvp: e.mvp, ready: e.ready, values: [c(COUNTERS.score), ...counters.map(c)], ping: e.ping };
     teams[p.team === 1 ? 1 : 0].push({ row, key: [c(COUNTERS.score), c(COUNTERS.goals), c(COUNTERS.assists), c(COUNTERS.saves)] });
   }
   const order = (a: { key: readonly number[] }, b: { key: readonly number[] }): number => {
@@ -239,7 +241,7 @@ export function rowColour(team: number, local: boolean): string {
   return `#${hex.join("").toUpperCase()}`;
 }
 
-/** The scoreboard may show (SB-10): online, in every phase but the match's end (post-game, podium) */
-export function scoreboardAllowed(phase: string | undefined): boolean {
-  return phase !== undefined && phase !== "ended";
+/** The scoreboard may show (SB-10): online, in every phase but the match's end (pre-podium, podium, end screen) */
+export function scoreboardAllowed(phase: MatchPhase | undefined): boolean {
+  return phase !== undefined && phase !== "prePodium" && phase !== "podium" && phase !== "finished";
 }

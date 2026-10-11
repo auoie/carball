@@ -1,5 +1,6 @@
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 import { NOISE_QUANTILES } from "./themes/stadiumSky";
 
@@ -34,13 +35,30 @@ function files(dir: string, keep: (name: string) => boolean): string[] {
 }
 const modules = (): string[] => files(SRC, (n) => n.endsWith(".ts") && !n.endsWith(".test.ts") && !n.endsWith(".d.ts"));
 
-/** The output files that are three.js's alone: every module in them (the bundler's own virtual ones aside) the
- *  library's, by its package path (RV-225), wherever the install puts it (hoisted, a workspace's, pnpm's store: RV-240);
- *  not by a file's name, which one of our modules or a public file can take */
-function libraryFiles(built: Readonly<Record<string, readonly string[]>>): Set<string> {
+/** three.js's installed package, its real path: where Node resolves "three" from client/ (hoisted, a workspace's, pnpm's
+ *  store: RV-240), so a folder of ours named node_modules/three isn't it (RV-261) */
+function installedThree(): string {
+  let dir = dirname(createRequire(join(SRC, "../package.json")).resolve("three"));
+  const named = (d: string): boolean => existsSync(join(d, "package.json")) && (JSON.parse(readFileSync(join(d, "package.json"), "utf8")) as { name?: string }).name === "three";
+  while (!named(dir)) {
+    if (dirname(dir) === dir) throw new Error("three's package.json not found");
+    dir = dirname(dir);
+  }
+  return realpathSync(dir);
+}
+
+/** The output files that are three.js's alone: every module in them (the bundler's own virtual ones aside) inside the
+ *  library's installed package (`packageDir`, its real path; the module ids are client-relative), not told by a file's
+ *  name, which one of our modules or a public file can take (RV-225), nor by a path that only looks like it (RV-261) */
+function libraryFiles(built: Readonly<Record<string, readonly string[]>>, packageDir = installedThree()): Set<string> {
+  const client = join(SRC, "..");
+  const inPackage = (id: string): boolean => {
+    const path = resolve(client, id.split("\\").join("/"));
+    return (existsSync(path) ? realpathSync(path) : path).startsWith(`${packageDir}${sep}`);
+  };
   const library = (ids: readonly string[]): boolean => {
-    const real = ids.filter((id) => !id.startsWith("\0")).map((id) => id.split("\\").join("/"));
-    return real.length > 0 && real.every((id) => /(^|\/)node_modules\/three\//.test(id));
+    const real = ids.filter((id) => !id.startsWith("\0"));
+    return real.length > 0 && real.every(inPackage);
   };
   return new Set(Object.entries(built).flatMap(([file, ids]) => (library(ids) ? [file] : [])));
 }
@@ -1025,12 +1043,17 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
       "assets/index-E4.js": ["src/main.ts", "../out/arena/data.ts"], // (a module outside src/, imported)
       "three-data.json": [], // (copied from public/: no modules)
       "assets/three-F5.js": ["\0rolldown/runtime.js"], // (only the bundler's)
-      // (the library where other installs put it: hoisted above client/, pnpm's store: RV-240)
-      "assets/three-G6.js": ["../../repo/node_modules/three/build/three.module.js"],
-      "assets/three-H7.js": ["node_modules/.pnpm/three@0.180.0/node_modules/three/build/three.core.js"],
       "assets/three-I8.js": ["src/node_modules_three/x.ts"], // (a name like it, not the package)
+      "assets/three-J9.js": ["lib/node_modules/three/toy.ts"], // (a folder of ours with the package's path: RV-261)
     });
-    expect([...exempt]).toEqual(["assets/three-B1.js", "assets/three-G6.js", "assets/three-H7.js"]);
+    expect([...exempt]).toEqual(["assets/three-B1.js"]);
+    // (the library where other installs put it: hoisted above client/, pnpm's store: RV-240)
+    const client = join(SRC, "..");
+    const hoisted = { "assets/three-G6.js": ["../../repo/node_modules/three/build/three.module.js"] };
+    expect([...libraryFiles(hoisted, resolve(client, "../../repo/node_modules/three"))]).toEqual(["assets/three-G6.js"]);
+    const pnpm = { "assets/three-H7.js": ["node_modules/.pnpm/three@0.180.0/node_modules/three/build/three.core.js"] };
+    expect([...libraryFiles(pnpm, resolve(client, "node_modules/.pnpm/three@0.180.0/node_modules/three"))]).toEqual(["assets/three-H7.js"]);
+    expect([...libraryFiles(pnpm)]).toEqual([]); // (not where this install has it)
   });
   it.skipIf(!existsSync(DIST))("the build recorded every file it wrote (a stale record would hide a chunk: RV-225)", () => {
     const written = files(DIST, (n) => n.endsWith(".js")).map((p) => relative(DIST, p).split("\\").join("/"));

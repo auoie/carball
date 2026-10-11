@@ -7,11 +7,13 @@ import {
   DecodeError,
   type InputFrame,
   PROTOCOL_VERSION,
+  REFUSED_VERSION,
   type Update,
   decodeControl,
   decodeDatagram,
   encodeControl,
   encodeDatagram,
+  welcomeVersion,
 } from "./protocol";
 
 export interface ServerAddress {
@@ -128,7 +130,7 @@ export class Connection {
         if (first) {
           first = false;
           if (m.type === "welcome") resolve(m);
-          else if (m.type === "refused") reject(new Error("the server is full"));
+          else if (m.type === "refused") reject(new Error(m.reason === REFUSED_VERSION ? "the server speaks another protocol version" : "the server is full"));
           else reject(new Error(`expected welcome, got ${m.type}`));
           return;
         }
@@ -176,10 +178,8 @@ export class Connection {
         const length = (buffer[0] ?? 0) | ((buffer[1] ?? 0) << 8);
         if (buffer.byteLength < 2 + length) break;
         const body = buffer.subarray(2, 2 + length);
-        if (first && body[0] === 0x81 && body.byteLength >= 3) {
-          const version = (body[1] ?? 0) | ((body[2] ?? 0) << 8);
-          if (version !== PROTOCOL_VERSION) throw new Error(`server protocol ${String(version)}, client ${String(PROTOCOL_VERSION)}`);
-        }
+        const version = first ? welcomeVersion(body) : null;
+        if (version !== null && version !== PROTOCOL_VERSION) throw new Error(`server protocol ${String(version)}, client ${String(PROTOCOL_VERSION)}`);
         first = false;
         handle(decodeControl(body));
         buffer = buffer.slice(2 + length);

@@ -10,6 +10,7 @@ import {
   type DatagramMessage,
   DecodeError,
   decodeControl,
+  welcomeVersion,
   decodeDatagram,
   dequantizeAxis,
   encodeControl,
@@ -75,6 +76,17 @@ describe("protocol", () => {
   it("has the vectors of this version (RV-257)", () => {
     expect(vectors.protocolVersion).toBe(PROTOCOL_VERSION);
     expect(vectors.vectors.find((v) => v.message["type"] === "hello")?.message["version"]).toBe(PROTOCOL_VERSION);
+  });
+
+  it("reads a welcome's version before its fields, whatever the version (RV-243, RV-262)", () => {
+    // (version 11's welcome, its version set: shorter than ours, so it doesn't decode as ours)
+    const v11 = hex("1500810b00030000007800000000010203000000010203").subarray(2);
+    expect(welcomeVersion(v11)).toBe(11);
+    expect(() => decodeControl(v11)).toThrow(DecodeError);
+    const welcome = vectors.vectors.find((v) => v.message["type"] === "welcome");
+    expect(welcomeVersion(hex(welcome?.hex ?? "").subarray(2))).toBe(PROTOCOL_VERSION);
+    expect(welcomeVersion(Uint8Array.of(0x01, 11, 0))).toBeNull(); // (a hello)
+    expect(welcomeVersion(Uint8Array.of(0x81, 11))).toBeNull(); // (too short)
   });
 
   it("matches the shared byte vectors", () => {

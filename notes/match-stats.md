@@ -587,6 +587,375 @@ They are computed on entering `PrePodiumSpotlight`, which happens only when ther
 
 ---
 
+### 5.4a Podium titles: exact rules (addendum, 2026-10-11, PT1; full report and reference model out/bsim/agents/PT1/podium_titles.md, podium_ref.py) [A][S]
+
+Supersedes the §5.4 table where they differ (see A.8).
+
+#### A.1 Title archetypes [A GameInfo_Soccar_SF `Archetypes.StatTitles.*`; class StatTitle_TA, Default__StatTitle_TA is empty]
+
+`GameEvent_Soccar.StatCategories` = [StatSingleInstance, StatCompound, StatStandard, StatTracking] (this order).
+Each `StatCategory_TA` has `Multiplier` and an ordered `Titles` array; # below is the index in that array. A field not
+listed in an archetype is the class default: Min 0, Max 0 (= no maximum), flags False, unit CountUnit (0).
+`PrimaryTitle` and `SecondaryTitle` (the localization keys) are equal in every archetype. The archetype object names
+and the keys differ for two titles: **archetype Goals_10 → key Goals_9**, **archetype Goals_6_9 → key Goals_6_8**.
+
+Points = int(base × Multiplier), base = P (not per-stat), P·N (per-stat) or P·(Max − N) (inverse); N = the stat's
+`MatchStats` count. Shown as a closed form below (A.2 has the exact rule).
+
+**StatSingleInstance, Multiplier 4.0**
+
+| # | Archetype (key) | Title | Stat event | P | Min | Max | Per-stat | Inverse | Clamp | Points | Stat line Label / PluralLabel |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 0 | OvertimeGoal | Finisher | OvertimeGoal | 10 | 0 | – | no | no | **yes** | 40 flat | Overtime Goal / Overtime Goals (N shown = 1) |
+
+**StatCompound, Multiplier 3.0**
+
+| # | Archetype (key) | Title | Stat event | P | Min | Max | Per-stat | Points | Stat line Label / PluralLabel |
+|---|---|---|---|---|---|---|---|---|---|
+| 0 | Goals_10 (key Goals_9) | Force of Nature | Goal | 1 | 10 | – | yes | 3N (≥ 30) | Goal / Goals |
+| 1 | Goals_6_9 (key Goals_6_8) | Ace | Goal | 1 | 6 | 9 | yes | 3N (18–27) | Goal / Goals |
+| 2 | Goals_3_5 | Prodigy | Goal | 1 | 3 | 5 | yes | 3N (9–15) | Goal / Goals |
+| 3 | Saves_10 | Savior | Save | 1 | 10 | – | yes | 3N | Save / Saves |
+| 4 | Saves_6_9 | Protector | Save | 1 | 6 | 9 | yes | 3N | Save / Saves |
+| 5 | Saves_3_5 | Warden | Save | 1 | 3 | 5 | yes | 3N | Save / Saves |
+| 6 | EpicSaves | Guardian Angel | EpicSave | 2 | 1 | – | yes | 6N | Epic Save / Epic Saves |
+| 7 | PoolShots | Calculator | PoolShot | 5 | 1 | – | yes | 15N | Pool Shot / Pool Shots |
+| 8 | BackwardsGoal | Show-off | BackwardsGoal | 3 | 1 | – | yes | 9N | Backwards Goal / Backwards Goals |
+| 9 | BicycleGoal | Acrobat | BicycleGoal | 3 | 1 | – | yes | 9N | Bicycle Goal / Bicycle Goals |
+| 10 | AerialGoal | Aviator | AerialGoal | 3 | 1 | – | yes | 9N | Aerial Goal / Aerial Goals |
+| 11 | TurtleGoal | Turtle | TurtleGoal | 3 | 1 | – | yes | 9N | Turtle Goal / Turtle Goals |
+| 12 | OwnGoal | Traitor | OwnGoal | 4 | 0* | – | yes | 12N | Own Goal / Own Goals |
+| 13 | Juggles | Juggler | JuggleHit | 2 | 1 | – | yes | 6N | Juggle / Juggles |
+
+\* Min 0 still needs the `OwnGoal` entry in `MatchStats` (A.2). It is only created by `GiveScore(…, OwnGoal)` with
+count 1 per own goal (`StatFactory_TA.OnGoalScored` TA:93229 [053d]-[05a2]), so in practice N ≥ 1 [S].
+
+**StatStandard, Multiplier 2.0** (all: P 1, Min 1, no Max, per-stat, Points 2N)
+
+| # | Archetype = key | Title | Stat event | Stat line Label / PluralLabel |
+|---|---|---|---|---|
+| 0 | Goals | Scorer | Goal | Goal / Goals |
+| 1 | Saves | Goalkeeper | Save | Save / Saves |
+| 2 | Assists | Playmaker | Assist | Assist / Assists |
+| 3 | Centers | Tactician | Center | Center Ball / Centered Balls |
+| 4 | Shots | Striker | Shot | Shot on Goal / Shots on Goal |
+| 5 | FirstTouches | Aggressor | FirstTouch | First Touch / First Touches |
+| 6 | Demolitions | Executioner | Demolish | Demolition / Demolitions |
+
+**StatTracking, Multiplier 0.01 (float32 0.0099999998)**. All per-stat. N comes from the match-end events (A.4).
+
+| # | Archetype = key | Title | Stat event | P | Min | Max | Inverse | Unit | Points | Stat line Label / PluralLabel |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 0 | MostBoostPickups | Speed Demon | MostBoostPickups | 20 | 10 | – | no | count | ⌊N/5⌋ (≥ 2) | Boost Pickup / Boost Pickups |
+| 1 | FewestBoostPickups | Hoarder | FewestBoostPickups | 20 | 0 | – | no | count | ⌊N/5⌋ (0 if N < 5) | Boost Pickup / Boost Pickups |
+| 2 | MostBallTouches | Ball Hog | MostBallTouches | 5 | 20 | – | no | count | ⌊N/20⌋ (≥ 1) | Ball Touch / Ball Touches |
+| 3 | FewestBallTouches | Benchwarmer | FewestBallTouches | 10 | 0 | – | no | count | ⌊N/10⌋ | Ball Touch / Ball Touches |
+| 4 | CarTouches | Enforcer | CarTouches | 20 | 20 | – | no | count | ⌊N/5⌋ (≥ 4) | Car Touch / Cars Bumped |
+| 5 | FurthestGoal | Sniper | FurthestGoal | 6 | 50 | – | no | DistanceUnit (2) | ⌊6N/100⌋ (≥ 3) | Goal / Goal |
+| 6 | FastestGoal | Power Hitter | FastestGoal | 15 | 20 | – | no | SpeedUnit (1) | ⌊15N/100⌋ (≥ 3) | Goal / Goal |
+| 7 | SlowestGoal | Slowpoke | SlowestGoal | 75 | 0 | 20 | **yes** | SpeedUnit (1) | ⌊75·(20 − N)/100⌋ (14 at N = 1 … 0 at N = 20) | Goal / Goal |
+
+Resolved points:
+- **Per-stat:** every title except OvertimeGoal (OvertimeGoal: `bPerStat` False, `bClampStatToOne` True, so 40 points
+  and N shown = 1 whatever the count) [A].
+- **Goals ranges:** 3–5 Prodigy, 6–9 Ace (key Goals_6_8), ≥ 10 Force of Nature (key Goals_9). No gap, no overlap. Saves
+  likewise 3–5 / 6–9 / ≥ 10 [A].
+- **SlowestGoal:** Max 20 with `bInverseStat`. It needs N ≤ 20, i.e. slowest goal speed < 2100 uu/s (N truncated,
+  ≥ 1), and scores P·(20 − N). At N = 20 it still qualifies, with 0 points [A][S].
+- In uu: FurthestGoal Min 50 ⇔ distance ≥ 5000 uu; FastestGoal Min 20 ⇔ speed ≥ 2000 uu/s.
+- Other fields that matter for selection: Category Multiplier, `StatCategories` order and `Titles` order (they fix the
+  input order of the sort, A.3). `StatUnitType` only affects display (A.6).
+
+#### A.2 Scoring one title for one member [S `StatTitle_TA.GetNumPoints` TA:93788]
+```
+GetNumPoints(Member, Category, out Points, out StatCount):
+  for PStat in Member.MatchStats:                       # one entry per StatEvent (IncrementStat FindByProp, S1:83678)
+    if PStat.StatEvent != Stat: continue
+    if !(PStat.Count >= MinStatValueRequired): continue
+    if !(MaxStatValueAllowed == 0 || PStat.Count <= MaxStatValueAllowed): continue
+    base = bPerStat ? ((bInverseStat && PStat.Count <= MaxStatValueAllowed) ? Points*(MaxStatValueAllowed - PStat.Count)
+                                                                           : Points*PStat.Count)
+                    : Points
+    Points    = int(float(base) * Category.Multiplier)   # float32 multiply, truncate toward 0
+    StatCount = bClampStatToOne ? 1 : PStat.Count
+    return true
+  Points = 0; StatCount = 0; return false
+```
+- A title applies only if the stat event is **present** in `MatchStats` and in range. Points 0 still applies: such
+  titles are sorted last but can still be assigned.
+- **Integer form (use this in the clone):** ×4, ×3, ×2 are exact. Tracking = ⌊base/100⌋: float32
+  `float(base) × 0.0099999998f`, truncated, equals ⌊base/100⌋ for every base 0…200 000 (checked, `podium_ref.py`).
+  Do not multiply by 0.0099999998 in double: 500 × it = 4.9999999 → 4 [S][I: the VM float multiply is float32,
+  open O-2].
+
+#### A.3 Assignment [S `PrePodiumSpotlight.UpdateSpotlight` TA:4366 (decode stops at [02ad]) / S1:4625; `MemberTitleSort` TA:4358]
+When: `PrePodiumSpotlight.BeginState` (TA:4331), server only (`Role == ROLE_Authority` [00a0]), call [01e2]. This is
+the same frame as `EndGame` (TA:2794 [040a] `GotoGameState(GetEndMatchState())`), after `OnMatchEnded` [020e] has run
+the match-end events (A.4). `GetEndMatchState` (TA:2837) gives PrePodiumSpotlight only with a match winner, so no
+winner means no titles. `TitleStats` and `NoTitles` are function locals [A], so each call starts empty.
+```
+TitleStats = []; NoTitles = []
+for Team in Teams:                                   # Teams[0] blue, then Teams[1] orange
+  for Member in Team.Members:                        # current members, join order
+    NoTitles.Add(Member)
+    for Category in StatCategories:                  # SingleInstance, Compound, Standard, Tracking
+      for Title in Category.Titles:                  # A.1 order
+        if Title.GetNumPoints(Member, Category, Pts, Cnt):
+          TitleStats.Add({Title, PointsEarned: Pts, StatCount: Cnt, MemberPRI: Member, Category})
+TitleStats.Sort(MemberTitleSort)                     # descending by PointsEarned; ties: see below
+for I in 0..1:                                       # 0 = PrimaryTitle, 1 = SecondaryTitle
+  Copy = TitleStats; Free = NoTitles
+  while Copy.Length > 0 and Free.Length != 0:
+    J = Free.Find(Copy[0].MemberPRI)
+    if J != -1:
+      Copy[0].MemberPRI.SetPodiumTitle(I, Copy[0])   # PRI_TA TA:80784: I 0 → PrimaryTitle, 1 → SecondaryTitle
+      Free.Remove(J)
+      for K = Copy.Length-1 down to 1: if Copy[K].Title == Copy[0].Title or Copy[K].MemberPRI == Copy[0].MemberPRI: Copy.Remove(K)
+      for K = TitleStats.Length-1 down to 0: if TitleStats[K].Title == Copy[0].Title: TitleStats.Remove(K)
+    Copy.Remove(0)
+```
+Consequences [S]:
+- **Who takes part:** `Team.Members` of **both teams**, winners and losers. Bots are members, so they qualify.
+  `FormerMembers` (leavers) do **not** take part; MVP uses Members ∪ FormerMembers, the titles do not. Spectators
+  have no team.
+- **Per member:** at most 2 titles, primary then secondary. A secondary only exists if the member got a primary.
+- **Uniqueness:** each title archetype goes to at most one player in the whole match (both teams, both passes). The
+  comparison is by Title object.
+  - A player can hold two titles on the same stat, e.g. Prodigy (Goals_3_5) + Scorer (Goals); those are different
+    archetypes.
+- **Greedy order:** pass 0 walks the sorted list. Each member takes their best remaining entry whose title is free.
+  Pass 1 repeats this without the titles handed out in pass 0.
+- **No fallback title.** A member with no qualifying entry, or whose qualifying titles all went to players earlier in
+  the sorted order, gets nothing; the GFx then hides the rows. 0-point entries (Hoarder at < 5 pickups, Benchwarmer at
+  < 10 touches, Slowpoke at 20 m/s) act as last-resort titles.
+- **After assignment** (`PodiumSpotlight.InitPodiumCars` TA:4420, PodiumDelay 3 s later):
+  - Winners in `Players` with Team == MatchWinner are sorted by MVPSort. Index > 2 (4th place onward, 4v4 only) gets
+    `ClearPodiumTitle()` [01f7]. Those titles are lost, not reassigned.
+  - Then every winner gets `ReplicatePodiumTitles()` [0228].
+
+**MemberTitleSort and tie order** [S TA:4358; N notes/match-rules-audit.md]:
+- The delegate returns 1 if A.PointsEarned > B.PointsEarned, −1 if less, 0 if equal. Nothing else is compared.
+- RL's script array `Sort` is CRT `qsort` (FUN_140366160) with comparator FUN_14036ac80 = −delegate(A, B). So higher
+  points come first, and **ties are left to qsort, which is not stable**.
+- The input order is fixed (blue Members, then orange; per member, categories then titles in A.1 order).
+- So the exact tie order is MSVC/UCRT qsort's result on that input:
+  - median-of-three quicksort; sub-arrays of ≤ 8 elements are finished by a selection sort ("shortsort") that moves
+    the *first* maximum to the end;
+  - reference implementation: `msvc_qsort` in `podium_ref.py`.
+  - For example, all-equal arrays of 2/3/5 elements come out as [1,0], [1,2,0], [1,2,3,4,0] (indices). A 12-element
+    array with keys [2,4,2,2,4,2,2,4,2,2,2,4] puts the 4s in index order 1, 7, 4, 11.
+- That RL's qsort is exactly this UCRT algorithm is [I], open O-1. A stable sort will mis-assign tied titles: in a 3v3,
+  every one-goal player's Scorer entry is worth 2, so ties are common.
+
+**Delivery to the UI** [S]:
+- `PRI_TA.PrimaryTitle`/`SecondaryTitle` are struct `MemberTitleStat` {Title, Category, PointsEarned, StatCount,
+  MemberPRI} [A], REPNOTIFY if bNetDirty.
+- On clients, `ReplicatedEvent` (TA:79608 [0262]/[026e]) → `OnRep_RepStatTitles` (TA:80632) → `EventStatTitlesSet` →
+  `GFxData_PRI_TA.HandleStatTitlesSet` (TA:51660, bound in `SetPRI` TA:51399 [0487]). The title is filled only if
+  `.Title != None`; a later clear does not blank the GFx fields.
+- On the authority (standalone, listen host), the only trigger is `ReplicatePodiumTitles` for the winners in
+  InitPodiumCars. So **offline, a losing local player never gets the titles into GFx, and "My Accolades" stays hidden**
+  [S call sites; I: UE3 does not call ReplicatedEvent on the authority]. Online (dedicated server), every client gets
+  every PRI's titles, losers included. Open O-3 (live check).
+
+#### A.4 Match-end tracking events [S `StatFactory_TA.OnMatchEnded` TA:93353 / S1:96836, bound to `EventMatchEnded` in `SetGameEvent` TA:92872 [0067]]
+All run on the server in `EndGame` → `OnMatchEnded` (TA:2849 [01b8]), before PrePodiumSpotlight. `GiveScore`
+(StatFactory TA:92928 [000d]) does nothing unless the PRI has a Team. `GiveScore(PRI, E)` adds count 1 (creates the
+entry); `SetStatCount(E, X)` then overwrites the count if the entry exists (S1:83686).
+
+**`DeterminePickupCounts`** (TA:93307), only if `MatchWinner != None` ([0000] → [01b3]):
+```
+Most = 0; Fewest = -1
+for PRI in SoccarEvent.PRIs:
+  if PRI.BoostPickups > Most: Most = PRI.BoostPickups
+  if PRI.BoostPickups > 0 and (Fewest == -1 or PRI.BoostPickups < Fewest): Fewest = PRI.BoostPickups
+for PRI in SoccarEvent.PRIs:
+  if PRI.BoostPickups == Most and Most > Fewest*10:  GiveScore(PRI, MostBoostPickups);   SetStatCount(MostBoostPickups, Most)
+  if PRI.BoostPickups == Fewest and Fewest*10 < Most: GiveScore(PRI, FewestBoostPickups); SetStatCount(FewestBoostPickups, Fewest)
+  GiveScore(PRI, BoostPickups, PRI.BoostPickups); GiveScore(PRI, SmallBoostsCollected, …); GiveScore(PRI, BigBoostsCollected, …)
+```
+- **Fewest** = the smallest **positive** count. Players with 0 pickups are ignored.
+- **The 10× rule:** Most and Fewest are given together, only if Most > 10 × Fewest (strict, integers). For example,
+  31 vs 3 qualifies and 30 vs 3 does not.
+- **Ties:** every PRI equal to Most (or Fewest) gets the event, on either team. Title uniqueness then picks one (A.3).
+- **Minimums:** the events have none beyond the 10× rule. The titles need N ≥ 10 for Speed Demon; Hoarder has no
+  minimum (N ≥ 1 by construction).
+- **Edge:** if nobody picked up boost, Most = 0, Fewest = −1, and every PRI gets MostBoostPickups with count 0; no
+  title (Min 10).
+
+**`DetermineTouchCounts`** (TA:93329), same winner condition ([01c6]):
+```
+MostCar = 0; MostBall = 0; LeastBall = -1
+for PRI in SoccarEvent.PRIs:
+  MostCar  = max(MostCar,  PRI.CarTouches)
+  MostBall = max(MostBall, PRI.BallTouches)
+  if PRI.BallTouches > 0 and (LeastBall == -1 or PRI.BallTouches < LeastBall): LeastBall = PRI.BallTouches
+for PRI in SoccarEvent.PRIs:
+  if PRI.CarTouches  == MostCar:   GiveScore(PRI, CarTouches);        SetStatCount(CarTouches, MostCar)
+  if PRI.BallTouches == MostBall:  GiveScore(PRI, MostBallTouches);   SetStatCount(MostBallTouches, MostBall)
+  if PRI.BallTouches == LeastBall: GiveScore(PRI, FewestBallTouches); SetStatCount(FewestBallTouches, LeastBall)
+```
+- **No 10× rule for touches.** FewestBallTouches goes every match to the smallest positive ball-touch count.
+  - One player can get both Most and Fewest when every positive count is equal.
+- **Ties:** all tied PRIs get the event.
+- **Minimums:** title only: Ball Hog N ≥ 20, Enforcer N ≥ 20. Benchwarmer has none.
+
+**Goal records** (`GameEvent_Soccar_TA.Active.HandleHitGoal` TA:4061 [06f7]-[088b]; given in OnMatchEnded after
+[0373], winner or not):
+- **Which goals:** only goals with a ScoringPlayer whose scoring touch is not on the conceding team; own goals do not
+  count.
+- **Values at the goal:**
+  - BallSpeed = VSize(Ball.RBState.LinearVelocity) (uu/s) at the goal event;
+  - Fastest if > FastestGoalSpeed (init 0);
+  - Slowest if SlowestGoalSpeed < 0 (init −1.0 [A Default__GameEvent_Soccar_TA]) or BallSpeed < SlowestGoalSpeed;
+  - Furthest if GoalHit.Distance > FurthestGoal (init 0).
+  - GoalHit.Distance = `Ball.Touches[ScoreIndex].Distance`, the XY path length accumulated natively (STAT-11).
+- **Ties:** comparisons are strict, so the first goal keeps the record.
+- **Counts at match end:** each record's player gets the event, then `SetStatCount`:
+  - FurthestGoal = int(FurthestGoal / 100.0) → whole **metres**;
+  - FastestGoal = int(FastestGoalSpeed / 100.0) → whole **m/s**;
+  - SlowestGoal = Max(1, int(SlowestGoalSpeed / 100.0)) → m/s, at least 1.
+- **Same player:** one player can hold all three, e.g. with the only goal of the match.
+- **Leaver:** a record holder who has left gets nothing (Team None).
+
+**Who is in `SoccarEvent.PRIs`:** the current PRIs (humans, bots, spectators). Leavers are removed and parked in
+`RemovedPRIs` (`GameEvent_Soccar_TA.RemovePRI` TA:3389; the base `GameEvent_TA.RemovePRI` TA:1061 does not decode,
+[I]), so their counters take no part in Most/Fewest. Spectators have count 0 and no Team, so they change nothing.
+
+#### A.5 The activity counters [S]
+- **`PRI.BallTouches`** (`Car_TA.OnHitBall` TA:20205 [00fc]-[01b0], from `Car_TA.OnRigidBodyCollision` TA:20160):
+  - +1 on the server when `GetPhysicsFrame() − LastBallTouchFrame > 1`.
+  - `LastBallTouchFrame` is updated on every call, so a contact that lasts consecutive physics frames counts **once**.
+    A new touch needs at least one frame without contact.
+  - Skipped while the ball is welded to this car (Rumble). No team, state or speed condition.
+- **`PRI.CarTouches`** (`Car_TA.BumpCar` TA:20322 [009d]-[00f7], from `ApplyCarImpactForces` TA:20293 [036c]-[03f8]):
+  **per bump, and both cars get +1** (the bumper and the bumped car). A bump needs:
+  - the server (not a replay actor, not `IsAffectedByExplosionHitHandler`);
+  - this car moving (speed > 0) toward the other ([011f]-[0291]);
+  - this car is the "faster" approacher, so only one of the two calls bumps;
+  - no demolition on this contact (a demo returns before BumpCar);
+  - a different car than this car's `LastHitCar`, or PhysicsTime > LastHitTime + BumpInterval (0.25 s; float32 detail
+    in gameside-audit GA-16).
+  - Teammate bumps count. A demolition is **not** a car touch.
+- **`PRI.BoostPickups`** (`VehiclePickup_Boost_TA.Pickup` TA:99170 [01c2]): +1 per pad pickup, **small and big alike**.
+  The type also goes to `SmallBoostsCollected` (BoostType 2 "Pad") or `BigBoostsCollected` (1 "Pill").
+  - **When:** `Idle.OnTouch` (TA:99148) → `CanPickup`:
+    - base TA:99067: `Car.bDriving`, pad not picked up, not a replay;
+    - boost TA:99167: car has a BoostComponent, not `IsFull()` (CurrentBoostAmount < MaxBoostAmount, TA:22158),
+      not `bNoBoost`.
+  - Driving over a pad with full boost is no pickup and no count. With boost below full it counts, even if less than
+    the pad's amount fits.
+  - Server only, not replay actors.
+
+#### A.6 Stat line under each title [S `GFxData_PRI_TA.InitStatTitle` TA:51666, `StatTitle_TA.GetUnitTypeAsString` TA:93803; G WinnerMenu `PodiumPlayerInfoView.updateTitles` m#8088, EndGameMenu `FloatingMatchStatsTitlesView` m#9300 + `MatchStatsTitleListItemRenderer.setData` m#10806]
+```
+bMetric   = viewer's ProfileGameplaySave_TA.bMetric          # local viewer's setting; default False → imperial [A]
+unitless  = Title.StatUnitType == CountUnit
+Title     = Localize(Category.Name, <PrimaryTitle or SecondaryTitle key>, 'StatTitles')   # section [StatCompound] etc.
+N         = (!bMetric && !unitless) ? int(float(StatCount) * 3.28084) : StatCount          # float32, truncate
+Postfix   = (N > 1) ? Title.Stat.PluralLabel : Title.Stat.Label
+if !unitless: Postfix = UnitString @ Postfix                 # '@' = join with one space
+AS3 line  = (N >= 0) ? N + " " + Postfix : Postfix           # title shown upper-cased (podium and tiles)
+```
+- **N:** `StatCount`, i.e. the full match count of the title's stat: total goals for Prodigy/Scorer, saves for
+  Warden, etc. OvertimeGoal is clamped to 1. The plural is chosen when N > 1, so N = 1 (and 0) is singular.
+- **Units:** speed is in **m/s, not km/h**. UnitString is a `[UIStrings_TA]` key:
+
+  | Unit type | Metric | Imperial (default) |
+  |---|---|---|
+  | SpeedUnit (Fastest/Slowest) | `MetersPerSecondUnit` = "m/s" | `FeetPerSecondUnit` = "ft/s" |
+  | DistanceUnit (Furthest) | `MetersUnit` = "m" | `FeetUnit` = "ft" |
+
+  - The number is the truncated m or m/s count (uu/100). Imperial is a second truncation of that integer × 3.28084.
+  - Examples: 28 m/s → "28 m/s Goal" / "91 ft/s Goal"; 57 m → "57 m Goal" / "187 ft Goal"; 6 m/s → "6 m/s Goal" /
+    "19 ft/s Goal".
+- **Other lines** (no unit):
+  - "3 Goals", "1 Goal", "4 Shots on Goal", "25 Cars Bumped", "34 Boost Pickups", "1 Boost Pickup", "1 Overtime Goal";
+  - N = −1 ("label only") never occurs for podium titles (the GFx default is 0, counts ≥ 0).
+- **Where shown:**
+  - podium panels (MIO-22): primary title + line; the secondary only if the primary exists;
+  - end screen "My Accolades" tiles (key `EndGameMenu.MyAccolades`, MIO-28): the local player's row, or row 0 if none
+    is local; hidden if both titles are empty.
+
+#### A.7 Test vectors (`podium_examples.out`, from `podium_ref.py`)
+- **2v2.** Blue: A {Goal 3, Shot 4, Assist 1, MostBallTouches 42, CarTouches 21}, B {Goal 1, Save 2, Shot 1,
+  FewestBoostPickups 2}. Orange: C {Save 6, EpicSave 1, MostBoostPickups 35}, D {Goal 1, Shot 2, Demolish 2,
+  FastestGoal 28, FewestBallTouches 9}.
+  - A: Prodigy 9 "3 Goals" + Striker 8 "4 Shots on Goal";
+  - B: Goalkeeper 4 "2 Saves" + Scorer 2 "1 Goal";
+  - C: Protector 18 "6 Saves" + Speed Demon 7 "35 Boost Pickups";
+  - D: Executioner 4 "2 Demolitions" + Power Hitter 4 "91 ft/s Goal" (metric "28 m/s Goal").
+  - The 4-point ties (B Saves, D Demolitions/Shots/FastestGoal, A CarTouches) are settled by the qsort order.
+- **1v1 with an OT goal.** A {Goal 2, OvertimeGoal 1, Shot 3, SlowestGoal 6, FurthestGoal 61}, B {Goal 1, Save 3,
+  Shot 2, FastestGoal 31}.
+  - A: Finisher 40 "1 Overtime Goal" + Slowpoke 10 "19 ft/s Goal";
+  - B: Warden 9 "3 Saves" + Goalkeeper 6 "3 Saves".
+- **Three equal players** (blue, 1 goal + 1 shot each):
+  - B1 Striker, B2 Scorer, **B3 nothing** (both titles taken);
+  - no secondaries.
+
+#### A.8 Corrections to the current text
+- §5.4 table:
+  - "Goals_6_8 (6–9)" and "Goals_9 (≥ 10)" are the **localization keys**; the archetypes are Goals_6_9 and Goals_10.
+  - OwnGoal "≥ 0" means "entry present", i.e. ≥ 1.
+  - Tracking points are ⌊base/100⌋.
+  - The order inside each category is as in A.1 (it matters for ties).
+- §5.4 "sort by Points descending": add that ties follow MSVC qsort (unstable) on the fixed input order (A.3).
+- §5.4: titles only for current `Team.Members` (no FormerMembers). Winners from 4th place on lose their titles at
+  PodiumSpotlight start.
+- §5.5: own goals are excluded from the goal records; strict comparisons, so the first goal keeps a tied record; counts
+  are truncated.
+- MIO-22 "Distances in imperial units ×3.28084":
+  - this applies to **speed and distance** titles, only when the viewer's `bMetric` is off (the default);
+  - the value is int(int(uu/100) × 3.28084), with "ft" / "ft/s";
+  - "Stat = −1" does not occur here.
+- MIO-28 "losers see theirs too": true for remote clients. On the authority (offline, LAN host), losers' titles never
+  reach GFx (A.3, open O-3).
+- STAT-19: add the tie order, the member scope and the 0-point last-resort titles.
+
+---
+
+#### O-1 / O-2 resolved (2026-10-11, QS1) [N]
+- **O-2 settled:** GetNumPoints' bytecode is FloatToInt(Multiply_FloatFloat(IntToFloat …)). Native 171 =
+  execMultiply_FloatFloat 0x14035fa60 (`MOVSS; MULSS; MOVSS`, float32); GCasts[0x44] FloatToInt 0x140357bc0
+  (`CVTTSS2SI`, truncation); GCasts[0x3f] IntToFloat 0x1403556c0 (`CVTDQ2PS`). Tracking points = ⌊base/100⌋ exactly for
+  every base < 2^24 (assuming the default MXCSR rounding).
+- **O-1 settled down to the CRT:** script Sort → FUN_14034dc20 / FUN_140352ff0 → FUN_14036c7b0 (sorts only if Num > 1;
+  skips a nested sort) → FUN_140322690 = tail call to the **imported** `api-ms-win-crt-utility-l1-1-0.dll!qsort` (IAT
+  0x141a3f4e8; dynamic /MD CRT, so the system ucrtbase). Comparator FUN_1403712d0 = −delegate(A, B), the int return used
+  as-is. `msvc_qsort` (PT1/podium_ref.py) equals an independent transcription of UCRT qsort.cpp in permutation and
+  comparator-call sequence on 20,160 / 20,160 arrays (mutants CUTOFF 7/9, last-max shortsort, other midpoint, no
+  median-of-3, other push order all differ). **Tie order: per the UCRT source, not checked against the DLL** (user decision
+  2026-10-11: system DLLs are not read; the transcription match is accepted).
+
+#### Open items (PT1)
+- **O-1 Tie order.**
+  - Known: the script array Sort goes to CRT qsort (FUN_140366160 → qsort, comparator FUN_14036ac80; earlier native
+    check in notes/match-rules-audit.md).
+  - To confirm: that this qsort is the UCRT algorithm in `podium_ref.py` (median-of-three, CUTOFF 8, shortsort moving
+    the first maximum). Is it the import from ucrtbase / api-ms-win-crt-utility, or a statically linked copy with the
+    same code? Static session.
+- **O-2 Float precision of `PointsEarned`.**
+  - Assumed: `float * float` (UE3 native 171) and the float→int cast run in float32 (x64 SSE `mulss` + truncation). Then
+    Tracking points = ⌊base/100⌋ exactly.
+  - If the VM multiplied in double, multiples of 100 would come out 1 lower (e.g. 25 pickups → 4 instead of 5).
+  - To confirm: execMultiply_FloatFloat in the live exe. Static session.
+- **O-3 Offline losers get no accolades.**
+  - Script: the only authority-side trigger is `ReplicatePodiumTitles` for winners (InitPodiumCars TA:4420 [0228]), and `ReplicatedEvent`
+    is client-only in UE3.
+  - Live check (offline, plain exe): lose a match against bots and see whether "My Accolades" appears on the end
+    screen. Then win as 4th+ in a 4v4 (titles cleared).
+- **O-4 Native callers.** The rate and conditions of the native callbacks were not traced: `Car_TA.OnRigidBodyCollision`
+  (ball and car contacts; FUN_140eddaa0 collects post-step collisions per netcode-audit N-4a) and
+  `VehiclePickup_TA.Touch`. Ball touches assume one callback per physics frame of contact.
+- **O-5 `GameEvent_TA.RemovePRI`** (TA:1061) does not decode. That leavers leave `PRIs` is inferred from the Soccar
+  override (RemovedPRIs) and from AddPRI restoring from RemovedPRIs.
+- **O-6 Default `bMetric`.**
+  - Known: False in `Default__ProfileGameplaySave_TA`, and no script sets it except the settings setter
+    (`GFxData_Settings_TA.SetMetric`).
+  - Not checked: whether a native or first-run path sets it from the region.
+
+
 ## 6. On-screen feed (local client)
 
 ### 6.1 Centre popup [S `GFxHUD_TA.HandleStatEvent` TA:61573, `CanDisplayStatEvent` TA:61584; G HUD `StatEventView`/`StatEventPopUp`; HUD-9]

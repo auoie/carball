@@ -1,7 +1,7 @@
 // On-screen overlay: boost, the flip indicator, speed, score, camera mode, help.
 import type { SpawnSide } from "./engine/world";
 import { DODGE_WINDOW, type Dodge } from "./game/flipTracker";
-import type { VoteHud } from "./game/forfeitVote";
+import { type VoteHud, voteFlashes } from "./game/forfeitVote";
 import { ACTIONS, type Bindings, inputName } from "./input/bindings";
 
 /** The local car demolished: its respawn and the respawn spot selection (the steer input picks a side). */
@@ -58,6 +58,8 @@ export interface HudState {
   readonly respawn: RespawnHud | null;
   /** The team's forfeit vote while it runs (null or absent: none; the widget fades out) */
   readonly vote?: VoteHud | null;
+  /** The match's HUD parts shown (online, by phase: MIO-5/17; absent: both, as freeplay) */
+  readonly parts?: { readonly scoreboard: boolean; readonly boost: boolean };
 }
 
 function element<T extends HTMLElement>(root: ParentNode, selector: string, type: new () => T): T {
@@ -71,6 +73,8 @@ export class Hud {
   readonly #boostRing: SVGCircleElement;
   readonly #speed: HTMLElement;
   readonly #blue: HTMLElement;
+  readonly #scoreBox: HTMLElement;
+  readonly #boostBox: HTMLElement;
   readonly #clock: HTMLElement;
   readonly #orange: HTMLElement;
   readonly #camera: HTMLElement;
@@ -105,6 +109,8 @@ export class Hud {
     this.#ringLength = 2 * Math.PI * ring.r.baseVal.value;
     this.#speed = element(root, "#speed", HTMLElement);
     this.#blue = element(root, "#score-blue", HTMLElement);
+    this.#scoreBox = element(root, "#score", HTMLElement);
+    this.#boostBox = element(root, "#boost", HTMLElement);
     this.#orange = element(root, "#score-orange", HTMLElement);
     this.#clock = element(root, "#clock", HTMLElement);
     this.#camera = element(root, "#camera-mode", HTMLElement);
@@ -169,6 +175,8 @@ export class Hud {
     this.#blue.textContent = String(s.score[0]);
     this.#orange.textContent = String(s.score[1]);
     this.#clock.textContent = s.clock ?? "";
+    this.#scoreBox.hidden = !(s.parts?.scoreboard ?? true);
+    this.#boostBox.hidden = !(s.parts?.boost ?? true);
     this.#clock.hidden = s.clock === null;
     this.#camera.textContent = s.ballCam ? "Ball cam" : "Car cam";
     this.#message.textContent = s.message ?? "";
@@ -183,17 +191,15 @@ export class Hud {
     this.#updateVote(s.vote ?? null);
   }
 
-  #voteYes = 0;
+  #lastVote: VoteHud | null = null;
 
   /** (shown at once, faded out in 0.3 s, its last text kept while it fades; the bar flashes at each new vote) */
   #updateVote(v: VoteHud | null): void {
     this.#vote.classList.toggle("shown", v !== null);
-    if (v === null) {
-      this.#voteYes = 0;
-      return;
-    }
-    if (v.yes > this.#voteYes) this.#voteFill.animate([{ filter: "brightness(2.5)" }, { filter: "none" }], { duration: 400, easing: "ease-out" });
-    this.#voteYes = v.yes;
+    const last = this.#lastVote;
+    this.#lastVote = v;
+    if (v === null) return;
+    if (voteFlashes(last, v)) this.#voteFill.animate([{ filter: "brightness(2.5)" }, { filter: "none" }], { duration: 400, easing: "ease-out" });
     this.#voteTally.textContent = v.tally;
     this.#voteTime.textContent = v.time;
     this.#voteFill.style.width = `${String(v.fill * 100)}%`;

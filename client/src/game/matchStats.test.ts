@@ -23,7 +23,7 @@ const roster = new Map<number, RosterEntry>([
 const entry = (car: number, counters: Partial<Record<keyof typeof COUNTERS, number>>, extra: Partial<ScoreboardEntry> = {}): ScoreboardEntry => {
   const values = Array.from({ length: 20 }, () => 0);
   for (const [k, v] of Object.entries(counters)) values[COUNTERS[k as keyof typeof COUNTERS]] = v;
-  return { car, ping: 40, mvp: false, counters: values, ...extra };
+  return { car, ping: 40, mvp: false, ready: false, counters: values, titles: [null, null], ...extra };
 };
 
 describe("match stats on the HUD", () => {
@@ -94,7 +94,8 @@ describe("the scoreboard", () => {
 
   it("shows in every phase but the match's end", () => {
     expect(scoreboardAllowed("replay")).toBe(true);
-    expect(scoreboardAllowed("ended")).toBe(false);
+    expect(scoreboardAllowed("prePodium") || scoreboardAllowed("podium") || scoreboardAllowed("finished")).toBe(false);
+    expect(scoreboardAllowed("waiting")).toBe(true);
     expect(scoreboardAllowed(undefined)).toBe(false);
   });
 });

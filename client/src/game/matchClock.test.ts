@@ -18,13 +18,11 @@ describe("match clock", () => {
     expect(formatClock({ overtime: true, clockTicks: 120 * 75 })).toBe("+1:16");
   });
 
-  it("announces overtime and the winner", () => {
-    expect(matchMessage({ phase: "countdown", overtime: true, clockTicks: 0, winner: null, forfeit: false })).toBe("OVERTIME");
-    expect(matchMessage({ phase: "countdown", overtime: false, clockTicks: 36000, winner: null, forfeit: false })).toBeNull();
-    expect(matchMessage({ phase: "ended", overtime: true, clockTicks: 300, winner: 1, forfeit: false })).toBe("ORANGE WINS!");
-    expect(matchMessage({ phase: "ended", overtime: false, clockTicks: 0, winner: 0, forfeit: false })).toBe("BLUE WINS!");
-    expect(matchMessage({ phase: "active", overtime: false, clockTicks: 100, winner: null, forfeit: false })).toBeNull();
-    expect(matchMessage({ phase: "ended", overtime: false, clockTicks: 9000, winner: 0, forfeit: true })).toBe("BLUE WINS BY FORFEIT!");
+  it("announces overtime (the winner has its banner instead: MIO-18)", () => {
+    expect(matchMessage({ phase: "countdown", overtime: true, clockTicks: 0 })).toBe("OVERTIME");
+    expect(matchMessage({ phase: "countdown", overtime: false, clockTicks: 36000 })).toBeNull();
+    expect(matchMessage({ phase: "active", overtime: false, clockTicks: 100 })).toBeNull();
+    expect(matchMessage({ phase: "prePodium", overtime: true, clockTicks: 300 })).toBeNull();
   });
 });
 

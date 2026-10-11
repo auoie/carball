@@ -702,7 +702,8 @@ body {
 /* The popup at (W/2, 150): the icon, the label rising in, "+N" popping, all floating off (2.633 s) */
 .stat-popup {
   position: absolute;
-  top: 150px;
+  top: var(--popup-y, 150px);
+  transition: top 1s;
   width: 0;
   animation: stat-popup-out 2.633s linear forwards;
 }
@@ -924,4 +925,323 @@ body {
 .settings-reset {
   margin-top: 10px;
   align-self: flex-start;
+}
+
+/* --- The match's end (notes/match-intro-outro.md §2.4) --- */
+/* MIO-20: the darkening filter (multiplied radial grey: 0.39 in the middle, 0.18 at the edges) and the podium's vignette
+   (dark edges times the winning team's colour) */
+.screen-filter,
+.podium-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.screen-filter {
+  mix-blend-mode: multiply;
+  background: radial-gradient(ellipse at center, rgb(99, 99, 99), rgb(46, 46, 46));
+}
+
+.podium-vignette {
+  background: radial-gradient(ellipse at center, transparent 45%, rgb(0, 11, 46) 100%);
+}
+
+.podium-vignette[data-side="1"] {
+  background: radial-gradient(ellipse at center, transparent 45%, rgb(43, 15, 0) 100%);
+}
+
+/* MIO-18: the winner banner (the win word over the team's name, the team's additive tint), its 0.7 s slam; raised to
+   0.15 of the height at 0.8 scale on the podium (1 s) */
+.winner {
+  position: absolute;
+  width: 0;
+  height: 0;
+  transform: translateY(0) scale(1);
+  transition: transform 1s cubic-bezier(0.16, 1, 0.3, 1);
+  --label: #709dff;
+  --team: #99c6ff;
+}
+
+.winner[data-side="1"] {
+  --label: #ffad70;
+  --team: #ffd699;
+}
+
+.winner.raised {
+  transform: translateY(var(--raise)) scale(0.8);
+}
+
+.winner-band {
+  position: absolute;
+  left: -700px;
+  width: 1400px;
+  top: -110px;
+  height: 220px;
+  background: radial-gradient(ellipse 50% 50% at center, rgba(0, 0, 0, 0.8), transparent);
+  opacity: 0;
+}
+
+.winner-label,
+.winner-team {
+  position: absolute;
+  left: 0;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  text-align: center;
+}
+
+.winner-label {
+  top: -90px;
+  font: 40px/46px var(--hud-header);
+  color: var(--label);
+  text-shadow: 0 0 8px #000;
+}
+
+.winner-team {
+  top: -60px;
+  font: 120px/120px var(--hud-thin);
+  color: var(--team);
+  text-shadow: 0 0 18px #333;
+}
+
+.winner.slam .winner-band {
+  animation: winner-band 0.433s ease-out forwards;
+}
+
+.winner.slam .winner-team {
+  animation: winner-team 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.winner.slam .winner-label {
+  animation: winner-label 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes winner-band {
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes winner-team {
+  0%,
+  33% {
+    opacity: 0;
+    transform: translateX(-50%) scale(2);
+    filter: brightness(0);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(-50%) scale(1);
+    filter: none;
+  }
+}
+
+@keyframes winner-label {
+  0%,
+  52% {
+    opacity: 0;
+    translate: 0 -28px;
+    transform: translateX(-50%) scaleY(0.76);
+  }
+  100% {
+    opacity: 1;
+    translate: 0 0;
+    transform: translateX(-50%) scaleY(1);
+  }
+}
+
+/* MIO-22: a panel under each podium car: the name, then the titles (#BBBBBB plus the team's additive tint) over their
+   stat lines on a dark radial backdrop; fading in 0.5 s into the podium */
+.podium-tags {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+.podium-panel {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transform: translate(-50%, -15px);
+  animation: podium-panel-in 0.3s 0.5s both;
+  --title: #bbe8ff;
+}
+
+.podium-panel[data-side="1"] {
+  --title: #fff8bb;
+}
+
+@keyframes podium-panel-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.podium-tag {
+  padding: 2px 14px;
+  border-radius: 3px;
+  font: 20px/26px var(--hud-header);
+  color: #fff;
+  white-space: nowrap;
+  background: rgba(0, 45, 191, 0.75);
+}
+
+.podium-panel[data-side="1"] .podium-tag {
+  background: rgba(178, 61, 0, 0.75);
+}
+
+.podium-titles {
+  width: 400px;
+  margin-top: 12px;
+  padding: 8px 0 10px;
+  text-align: center;
+  background: radial-gradient(ellipse 50% 50% at center, rgba(0, 0, 0, 0.9), transparent);
+}
+
+.podium-title {
+  font: 18px/22px var(--hud-header);
+  color: var(--title);
+  white-space: nowrap;
+}
+
+.podium-title-line {
+  margin-bottom: 4px;
+  font: 11px/14px var(--hud-small);
+  color: #fff;
+}
+
+/* MIO-28: "My Accolades": the player's titles above the end scoreboard */
+.end-accolades {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  transform: translate(-50%, -100%);
+}
+
+.end-accolades-header {
+  font: 18px/22px var(--hud-header);
+  color: #fff;
+}
+
+.end-accolade-tiles {
+  display: flex;
+  gap: 8px;
+}
+
+.end-accolade {
+  min-width: 200px;
+  padding: 6px 14px;
+  text-align: center;
+  background: rgba(10, 14, 22, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+
+.end-accolade-title {
+  font: 20px/24px var(--hud-header);
+  color: #ffed83;
+}
+
+.end-accolade-line {
+  font: 13px/16px var(--hud-small);
+  color: #ddd;
+}
+
+/* MIO-26/31: the end screen's menu on the left, the next match's countdown above it */
+.end-menu {
+  position: absolute;
+  left: 40px;
+  top: 34%;
+  width: 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  opacity: 0;
+}
+
+.end-countdown {
+  padding: 4px 12px;
+  background: rgba(0, 0, 0, 0.6);
+  font: 24px/30px var(--hud-header);
+  color: #ffed83;
+  text-shadow: 0 0 8px #ff7f00;
+}
+
+.end-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.end-button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-height: 33px;
+  padding: 6px 12px;
+  background: rgba(10, 14, 22, 0.8);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.end-button:hover:not(:disabled) {
+  border-color: #43afff;
+}
+
+.end-button.done {
+  opacity: 0.6;
+}
+
+.end-label {
+  font: 20px/24px var(--hud-header);
+  text-transform: uppercase;
+}
+
+.end-desc {
+  font: 13px/16px var(--hud-small);
+  color: #bbb;
+}
+
+.end-question {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(10, 14, 22, 0.95);
+}
+
+.end-question[hidden] {
+  display: none;
+}
+
+/* MIO-27: the end scoreboard's winner stamp and ready checks */
+.sb-winner-stamp {
+  font: 28px/34px var(--hud-header);
+  color: #fff;
+  text-align: center;
+  border: 2px solid currentColor;
+  border-radius: 4px;
+  transform: rotate(-6deg);
+}
+
+.sb-team-0 .sb-winner-stamp {
+  color: #709dff;
+}
+
+.sb-team-1 .sb-winner-stamp {
+  color: #ffad70;
+}
+
+.sb-ready {
+  font: bold 22px/25px var(--hud-small);
+  color: #3fff00;
+  text-align: center;
 }

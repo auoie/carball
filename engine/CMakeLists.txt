@@ -29,7 +29,7 @@ target_link_libraries(rlnet PUBLIC RocketSim)
 
 # C interface for the native game server (Rust): capi/rlengine.h; the match stats (stats/), server only
 if (NOT EMSCRIPTEN)
-	add_library(rlstats STATIC stats/StatFactory.cpp)
+	add_library(rlstats STATIC stats/StatFactory.cpp stats/PodiumTitles.cpp)
 	target_include_directories(rlstats PUBLIC stats rocketsim/src)
 	target_compile_options(rlstats PRIVATE -ffp-contract=off -fno-fast-math)
 	target_link_libraries(rlstats PUBLIC RocketSim)

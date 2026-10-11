@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ForfeitVote } from "../net/protocol";
-import { type MatchMenuState, matchMenuItems, pressTo, voteHud, voteLabel } from "./forfeitVote";
+import { type MatchMenuState, type VoteHud, matchMenuItems, pressTo, voteFlashes, voteHud, voteLabel } from "./forfeitVote";
 
 const NONE: ForfeitVote = { state: "none", yes: 0, required: 0, secondsLeft: 0, voted: false, canStart: true };
 const RUNNING: ForfeitVote = { state: "running", yes: 1, required: 3, secondsLeft: 17, voted: false, canStart: true };
@@ -38,8 +38,24 @@ describe("the midgame menu's match buttons", () => {
 
 describe("the vote widget", () => {
   it("shows the tally, the bar as the votes of those needed, the time and the hint until the player votes (RV-237)", () => {
-    expect(voteHud(RUNNING, "casual", "Esc")).toEqual({ tally: "Vote to Concede 1/3", yes: 1, fill: 1 / 3, time: "0:17", instructions: "Press Esc to Vote" });
-    expect(voteHud({ ...RUNNING, voted: true, yes: 2, secondsLeft: 20 }, "ranked", "Esc")).toEqual({ tally: "Vote to Forfeit 2/3", yes: 2, fill: 2 / 3, time: "0:20", instructions: null });
+    expect(voteHud(RUNNING, "casual", "Esc")).toEqual({ tally: "Vote to Concede 1/3", yes: 1, fill: 1 / 3, time: "0:17", instructions: "Press Esc to Vote", running: true });
+    expect(voteHud({ ...RUNNING, voted: true, yes: 2, secondsLeft: 20 }, "ranked", "Esc")).toEqual({
+      tally: "Vote to Forfeit 2/3",
+      yes: 2,
+      fill: 2 / 3,
+      time: "0:20",
+      instructions: null,
+      running: true,
+    });
+  });
+
+  it("flashes its bar at each new yes, the first one too, a new vote's while a finished one shows also (RV-268)", () => {
+    const widget = (yes: number, running = true): VoteHud => ({ tally: "", yes, fill: 0, time: "", instructions: null, running });
+    expect(voteFlashes(null, widget(1))).toBe(true);
+    expect(voteFlashes(widget(1), widget(1))).toBe(false);
+    expect(voteFlashes(widget(1), widget(2))).toBe(true);
+    expect(voteFlashes(widget(2), widget(2, false))).toBe(false); // (finished: its 5 s)
+    expect(voteFlashes(widget(1, false), widget(1))).toBe(true); // (a teammate's new vote in the failed one's 5 s)
   });
 
   it("stays through a finished vote's 5 s (no hint); gone when there is none or the match has ended", () => {

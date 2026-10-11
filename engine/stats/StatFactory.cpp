@@ -44,6 +44,14 @@ const StatEventInfo STAT_EVENTS[STAT_EVENT_COUNT] = {
 	{ 0, false }, // WIN
 	{ 0, false }, // LOSS
 	{ 0, false }, // DEMOLITION_RESPAWN
+	{ 0, false }, // MOST_BOOST_PICKUPS
+	{ 0, false }, // FEWEST_BOOST_PICKUPS
+	{ 0, false }, // MOST_BALL_TOUCHES
+	{ 0, false }, // FEWEST_BALL_TOUCHES
+	{ 0, false }, // MOST_CAR_TOUCHES
+	{ 0, false }, // FURTHEST_GOAL
+	{ 0, false }, // FASTEST_GOAL
+	{ 0, false }, // SLOWEST_GOAL
 };
 
 namespace {
@@ -123,6 +131,7 @@ void StatFactory::_RegisterCar(uint32_t car) { _tracks[car].cooldowns.clear(); }
 
 void StatFactory::ResetMatch() {
 	_stats.clear();
+	_goalRecords = {};
 	for (auto& [id, track] : _tracks)
 		track.cooldowns.clear();
 }
@@ -153,7 +162,17 @@ void StatFactory::_GiveScore(uint32_t car, StatEvent event, uint32_t victim, int
 	if (STAT_EVENTS[event].addToScore)
 		s.counters[MATCH_SCORE] += STAT_EVENTS[event].points;
 	s.eventCounts[event] += count;
+	s.eventPresent[event] = true;
 	_awards.push_back({ event, car, victim, count });
+}
+
+// GiveScore then SetStatCount, for the match end's events: MatchStats only (no points, nothing sent)
+void StatFactory::_SetMatchStat(uint32_t car, StatEvent event, int count) {
+	if (!_Car(car))
+		return;
+	PlayerStats& s = _stats[car];
+	s.eventCounts[event] = count;
+	s.eventPresent[event] = true;
 }
 
 void StatFactory::_Count(uint32_t car, Counter counter, int by) {
@@ -529,6 +548,20 @@ void StatFactory::_OnGoalScored(uint8_t goalTeam) {
 	if (scorerHit.team == goalTeam)
 		return; // (only defenders touched it: no goal, no assist)
 	_scoringCar = scorerHit.car;
+	// The goal records (HandleHitGoal; own goals never get here): strict, so the first goal keeps a tie
+	float speed = _arena->goalBallSpeed;
+	if (speed > _goalRecords.fastest) {
+		_goalRecords.fastest = speed;
+		_goalRecords.fastestCar = scorerHit.car;
+	}
+	if (_goalRecords.slowest < 0 || speed < _goalRecords.slowest) {
+		_goalRecords.slowest = speed;
+		_goalRecords.slowestCar = scorerHit.car;
+	}
+	if (scorerHit.distance > _goalRecords.furthest) {
+		_goalRecords.furthest = scorerHit.distance;
+		_goalRecords.furthestCar = scorerHit.car;
+	}
 	// GetStatEventsForGoalHit, in its order (BulletGoal None; the equaliser events, 0 points and hidden, left out)
 	_GiveScore(scorerHit.car, GOAL);
 	if (IsBackwardsHit(scorerHit))
@@ -606,6 +639,10 @@ void StatFactory::OnTickEnd() {
 		CarTrack& track = _tracks[bump.victim];
 		track.attacker = bump.bumper;
 		track.attackerTime = now;
+		if (!bump.isDemo) { // (Car_TA.BumpCar: both cars, in any state; a demolition is no touch)
+			_Count(bump.bumper, CAR_TOUCHES);
+			_Count(bump.victim, CAR_TOUCHES);
+		}
 		if (_state == FactoryState::INACTIVE)
 			continue;
 		if (bump.isDemo)
@@ -614,6 +651,8 @@ void StatFactory::OnTickEnd() {
 			_OnBumpAfterGoal(bump.bumper, bump.victim);
 	}
 	_bumps.clear();
+	for (const auto& pickup : _arena->boostPickups) // (small and big alike)
+		_Count(pickup.first, BOOST_PICKUPS);
 
 	_RecordTouches(tick);
 	for (const auto& contact : _arena->ballWorldContacts)
@@ -650,6 +689,55 @@ void StatFactory::OnTickEnd() {
 		}
 		track.demoed = demoed;
 	}
+}
+
+void StatFactory::OnMatchEnded(bool haveWinner) {
+	std::vector<uint32_t> cars; // (SoccarEvent.PRIs: the players here; leavers' counters take no part)
+	for (Car* car : _arena->GetCars())
+		cars.push_back(car->id);
+	if (haveWinner) {
+		// DeterminePickupCounts: the fewest is the smallest positive count; the two only together, when the most is over
+		// 10 times the fewest; every player tied gets the event
+		int most = 0, fewest = -1;
+		for (uint32_t car : cars) {
+			int n = _Get(car, BOOST_PICKUPS);
+			most = std::max(most, n);
+			if (n > 0 && (fewest == -1 || n < fewest))
+				fewest = n;
+		}
+		for (uint32_t car : cars) {
+			int n = _Get(car, BOOST_PICKUPS);
+			if (n == most && most > fewest * 10)
+				_SetMatchStat(car, MOST_BOOST_PICKUPS, most);
+			if (n == fewest && fewest * 10 < most)
+				_SetMatchStat(car, FEWEST_BOOST_PICKUPS, fewest);
+		}
+		// DetermineTouchCounts: no such rule
+		int mostCar = 0, mostBall = 0, leastBall = -1;
+		for (uint32_t car : cars) {
+			mostCar = std::max(mostCar, _Get(car, CAR_TOUCHES));
+			int n = _Get(car, BALL_TOUCHES);
+			mostBall = std::max(mostBall, n);
+			if (n > 0 && (leastBall == -1 || n < leastBall))
+				leastBall = n;
+		}
+		for (uint32_t car : cars) {
+			if (_Get(car, CAR_TOUCHES) == mostCar)
+				_SetMatchStat(car, MOST_CAR_TOUCHES, mostCar);
+			int n = _Get(car, BALL_TOUCHES);
+			if (n == mostBall)
+				_SetMatchStat(car, MOST_BALL_TOUCHES, mostBall);
+			if (n == leastBall)
+				_SetMatchStat(car, FEWEST_BALL_TOUCHES, leastBall);
+		}
+	}
+	// The goal records to their scorers still here: whole metres and m/s (float32, truncated), the slowest at least 1
+	if (_goalRecords.furthestCar)
+		_SetMatchStat(_goalRecords.furthestCar, FURTHEST_GOAL, (int)(_goalRecords.furthest / 100.f));
+	if (_goalRecords.fastestCar)
+		_SetMatchStat(_goalRecords.fastestCar, FASTEST_GOAL, (int)(_goalRecords.fastest / 100.f));
+	if (_goalRecords.slowestCar)
+		_SetMatchStat(_goalRecords.slowestCar, SLOWEST_GOAL, std::max(1, (int)(_goalRecords.slowest / 100.f)));
 }
 
 } // namespace RLStats

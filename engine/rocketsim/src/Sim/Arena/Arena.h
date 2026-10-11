@@ -124,6 +124,10 @@ public:
 	// resets every car; static analysis MR-6). A match server sets it. Saved in snapshots and the network state
 	bool respawnsHeld = false;
 
+	// RL PATCH: the match's end (EndGame / Finished: FreezePawns, every body SetFrozen): nothing simulates, ticks still
+	// count. A mode, not state: not serialized (the server's phase sets it, and a client's from the match state)
+	bool frozen = false;
+
 	// RL PATCH: the goal explosion's knockback (the ball's ExplosionComponent_X, static analysis MR-6): a wave from where
 	// the ball scored, its front at 10000 uu/s up to 3000 uu; each car its front reaches (not demolished) gets one
 	// velocity change of 5000 x (1 - front/3000)^0.1 away from a point 500 uu behind the ball (into the goal) and 500 uu
@@ -191,6 +195,12 @@ public:
 	// RL PATCH: the ball's contacts with the world during the last tick: where (uu) and the surface's normal towards the
 	// ball (the match stats' ground and crossbar hits: StatFactory.OnBallHitWorld)
 	std::vector<std::pair<Vec, Vec>> ballWorldContacts;
+
+	// RL PATCH: the pads picked up during the last tick: the car and whether the pad is big (PRI.BoostPickups, the podium
+	// titles' counts: VehiclePickup_Boost_TA.Pickup), and the ball's speed as it scored (uu/s, HandleHitGoal's BallSpeed:
+	// the goal records). Neither is serialized
+	std::vector<std::pair<uint32_t, bool>> boostPickups;
+	float goalBallSpeed = 0;
 
 	// NOTE: Arena should be destroyed after use
 	static Arena* Create(GameMode gameMode, const ArenaConfig& arenaConfig = {}, float tickRate = 120);

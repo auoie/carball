@@ -83,16 +83,14 @@ async fn read_body(recv: &mut wtransport::RecvStream) -> anyhow::Result<Vec<u8>>
     Ok(body)
 }
 
-/// The client's hello, its version checked before the rest is read (another version's fields don't decode: RV-243)
-async fn read_hello(recv: &mut wtransport::RecvStream) -> anyhow::Result<Control> {
+/// The client's hello, its version checked before the rest is read (another version's fields don't decode: RV-243);
+/// `Err(version)`: another version's
+async fn read_hello(recv: &mut wtransport::RecvStream) -> anyhow::Result<Result<Control, u16>> {
     let body = read_body(recv).await?;
-    if let [0x01, lo, hi, ..] = body[..] {
-        let version = u16::from_le_bytes([lo, hi]);
-        if version != protocol::VERSION {
-            bail!("protocol version {version}, server speaks {}", protocol::VERSION);
-        }
+    match protocol::hello_version(&body) {
+        Some(version) if version != protocol::VERSION => Ok(Err(version)),
+        _ => Ok(Ok(Control::decode(&body)?)),
     }
-    Ok(Control::decode(&body)?)
 }
 
 /// One player's session; `Ok(lost)`: whether it ended by its connection timing out (the chat log's "lost connection")
@@ -104,9 +102,17 @@ async fn session(incoming: IncomingSession, id: PlayerId, to_game: &Sender<ToGam
     }
     let connection = request.accept().await?;
     let (mut send, mut recv) = connection.accept_bi().await.context("no control stream")?;
-    let Control::Hello { team, body, dodge_deadzone, steering_sensitivity, air_control_sensitivity, auto_skip_replay, key, name, quick_chat, block_non_tactical, .. } =
-        tokio::time::timeout(Duration::from_secs(5), read_hello(&mut recv)).await.context("no hello")??
-    else {
+    let hello = match tokio::time::timeout(Duration::from_secs(5), read_hello(&mut recv)).await.context("no hello")?? {
+        Ok(hello) => hello,
+        Err(version) => {
+            // (refused with its reason, then the client closes; a client from before version 12 just sees the close)
+            let _ = send.write_all(&Control::Refused { reason: protocol::REFUSED_VERSION }.encode()).await;
+            let _ = send.finish().await;
+            let _ = tokio::time::timeout(Duration::from_secs(2), connection.closed()).await;
+            bail!("protocol version {version}, server speaks {}", protocol::VERSION);
+        }
+    };
+    let Control::Hello { team, body, dodge_deadzone, steering_sensitivity, air_control_sensitivity, auto_skip_replay, key, name, quick_chat, block_non_tactical, .. } = hello else {
         bail!("expected hello");
     };
 

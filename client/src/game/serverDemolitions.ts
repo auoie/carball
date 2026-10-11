@@ -27,3 +27,10 @@ export class ServerDemolitions {
     this.#demolished.delete(car);
   }
 }
+
+/** Whether to draw a leaver's car exploding (`RemovePlayerFromTeam` -> `Car.Demolish(None)`): the server says it had a
+ *  live car (none in the goal replay, whose start destroys the cars), it's drawn here, and the live world is on screen,
+ *  not the replay's playback (a guard: RV-235, RV-264) */
+export function leaverExplodes(event: { readonly explode: boolean }, drawn: boolean, replaying: boolean): boolean {
+  return event.explode && drawn && !replaying;
+}

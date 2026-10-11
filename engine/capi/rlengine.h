@@ -106,8 +106,23 @@ void rl_stats_reset(RLArena* arena);
 size_t rl_take_stat_awards(RLArena* arena, int32_t* out, size_t max_ints);
 /* The car's match counters (RLStats::Counter order), at most max. Returns how many there are (0: none yet) */
 size_t rl_car_stats(RLArena* arena, uint32_t car_id, int32_t* out, size_t max);
+/* The match's end (EndGame: StatFactory_TA.OnMatchEnded's tracking events) and its podium titles
+ * (PrePodiumSpotlight.UpdateSpotlight, only with a winner). `members`: the teams' current members, blue's in join order
+ * then orange's. out[6i..6i+5] for members[i]: primary title, points, count, then the secondary's (title -1: none; the
+ * ids are RLStats::STAT_TITLES's, notes/match-stats.md §5.4a) */
+void rl_match_ended(RLArena* arena, int have_winner, const uint32_t* members, size_t count, int32_t* out);
 /* An event's points (StatEvent_TA.Points; 0 for an unknown id) */
 int rl_stat_event_points(int event);
+
+/* The match's end (FreezePawns): while frozen nothing simulates, the tick count still steps (a mode, not state) */
+void rl_set_frozen(RLArena* arena, int frozen);
+/* A car (re)spawned at (x, y) facing yaw (radians) with this boost, as a respawn places it (SpawnCar: its own height,
+ * its forward offset); a demolished car comes back. The podium's cars (InitPodiumCars) */
+void rl_car_place(RLArena* arena, uint32_t car_id, float x, float y, float yaw, float boost);
+/* Boost never used up and 100 at spawns (the podium's cars: EnablePodiumMode), or the game's rates */
+void rl_set_unlimited_boost(RLArena* arena, int on);
+/* The ball hidden: exploded (no physics, no collision) until the next kickoff (the podium's HideBalls) */
+void rl_ball_hide(RLArena* arena);
 
 #ifdef __cplusplus
 }

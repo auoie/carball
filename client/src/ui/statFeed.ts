@@ -41,6 +41,7 @@ export class StatPopups {
   readonly #layer: StageLayer;
   readonly #queue: StatPopup[] = [];
   #current: { readonly el: HTMLElement; readonly since: number } | null = null;
+  #anchor = 150;
 
   constructor(parent: HTMLElement) {
     this.#layer = new StageLayer(parent, "stat-popups");
@@ -49,6 +50,14 @@ export class StatPopups {
   /** Queued: unbounded, in order, no merging (GFxHUD_TA's StatEventView) */
   push(popup: StatPopup): void {
     this.#queue.push(popup);
+  }
+
+  /** The popups' height: 150, or 250 under the winner banner (MIO-21: tweened over 1 s) */
+  set lowered(on: boolean) {
+    const target = on ? 250 : 150;
+    if (target === this.#anchor) return;
+    this.#anchor = target;
+    this.#layer.root.style.setProperty("--popup-y", `${String(target)}px`);
   }
 
   /** Each frame (`now`: real seconds) */

@@ -269,6 +269,11 @@ export class World {
     this.#sim.setUnlimitedBoost(on);
   }
 
+  /** The match's end (FreezePawns): while frozen nothing simulates; ticks still count (online: the server's phase) */
+  setFrozen(on: boolean): void {
+    this.#sim.setFrozen(on);
+  }
+
   /** Demolitions on (the default: an authority, freeplay) or off (an online client's prediction: the server demolishes,
    *  supersonic hits predicted as bumps: RV-112). */
   setDemolitions(on: boolean): void {

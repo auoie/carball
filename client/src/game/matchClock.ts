@@ -19,9 +19,8 @@ export function formatClock(state: Pick<MatchState, "overtime" | "clockTicks">):
   return state.overtime ? `+${text}` : text;
 }
 
-/** What the match says on screen, if anything (the goal message comes first) */
-export function matchMessage(state: Pick<MatchState, "phase" | "overtime" | "clockTicks" | "winner" | "forfeit">): string | null {
-  if (state.phase === "ended") return `${state.winner === 1 ? "ORANGE" : "BLUE"} WINS${state.forfeit ? " BY FORFEIT" : ""}!`;
+/** What the match says on screen, if anything (the goal message comes first; the winner has its banner: MIO-18) */
+export function matchMessage(state: Pick<MatchState, "phase" | "overtime" | "clockTicks">): string | null {
   if (state.phase === "countdown" && state.overtime && state.clockTicks === 0) return "OVERTIME";
   return null;
 }

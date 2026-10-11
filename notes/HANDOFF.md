@@ -415,6 +415,37 @@
       as a stat, the equaliser events (0 points, hidden), CarTouches/BoostPickups/Dodges columns, the private-match
       score mutators.
     - Next (the user's order): the intro and outro, HUD and menus, mutators, custom training, bots.
+  - **Since 3645f4c (uncommitted): the match's intro and outro (protocol 14), the podium titles, the 0e3f857 review
+    RV-261..272.** Specs: `notes/match-intro-outro.md` (MIO-n, CAM-30/35/36), `notes/match-stats.md` §5.4a (PT1).
+    - Server phases: Waiting (a new match's 3 s warm-up, then the countdown), PrePodium (EndGame: 3 s, the world frozen),
+      Podium (5.3 s: the winners by MVPSort at the four spots, unlimited boost, the ball hidden, everyone else demolished
+      with respawns held), Finished (60 s, frozen; ready-up from 1 s in; everyone ready or the timeout starts the next
+      match). A no contest goes straight to Finished. `Match.secondsLeft`, the scoreboard's ready flag. Engine: the
+      arena's `frozen` mode (not serialized; ticks still count), `rl_car_place`, `rl_set_unlimited_boost`, `rl_ball_hide`.
+    - Podium titles: `engine/stats/PodiumTitles` (the 30 archetypes, GetNumPoints with tracking ⌊base/100⌋, the UCRT
+      qsort port, the two greedy passes), `StatFactory::OnMatchEnded` (most/fewest pickups with the 10× rule, ball and
+      car touches, the goal records; own goals out), new counters CarTouches (both cars per bump) and BoostPickups
+      (the arena's `boostPickups`, not at full boost), the scoring speed (`goalBallSpeed`). The server assigns them at
+      EndGame for both teams (join order, blue first), clears them from 4th place on at the podium and sends them in
+      the scoreboard entries. Tests: PT1's three examples and the qsort orders in `stats_tests`.
+    - Client: `game/matchSequence.ts` (the views and timings, the banner's words, the dimming, the HUD's parts),
+      `ui/endOfMatch.ts` (winner banner and its slam, dimming and vignette, podium panels with the titles, the end
+      screen's menu: Ready / Exit to Main Menu with its question / Options, the countdown, My Accolades),
+      `game/podiumTitles.ts` (the titles verbatim, "N label", ft/s and ft by default), the scoreboard pinned on the end
+      screen with the winner stamp and ready checks. Cameras: the joining side view (CAM-30), the held last view and
+      the fade to black (CAM-35), the podium dolly (CAM-36), the winners' explosion 0.6 s in; the arena fades in at
+      load (MIO-2).
+    - Review RV-261..272: the guard exempts three.js by its installed package's real path; the version peeks factored
+      and tested with version-11 bytes, `Refused` reason 1; a real-time jitter test with irregular gaps through the
+      slow motion; a leaver's car explodes when it's live (not demolished, not a podium loser, not in the goal replay,
+      whose start destroys the cars; the client's playback skip is a guard); left
+      vectors for flags 1 and 2; a reconnect beside its old session keeps the lockout under a new key; keys of leavers
+      pruned at a new match; the vote log once per change; the vote widget's flash (a new vote's first yes too),
+      no fade-in and upper-case checked in e2e; match-rules-audit D-2, D-4 and MRL-16 brought up to date; a log line
+      and a debug assert for refused joins.
+    - Not yet: the waiting-for-players list (MIO-6), the rematch vote (MIO-32), quick actions (MIO-24), the end
+      screen's hide-scoreboard toggle (MIO-30), a metric units setting (titles are imperial, the game's default), the
+      highlights replay behind the end screen.
   - **Decided (user, 2026-10-10): no controller rumble.** notes/rumble.md stays as a reference spec only. The contact
     detection it asked about (the static session's Q-RMB-a: HandleCollision's cadence, the contact's point and normal,
     the landing speed) is still wanted, for the Impact_Medium camera shake and the impact and landing sounds; don't

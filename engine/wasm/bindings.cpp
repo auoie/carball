@@ -238,6 +238,9 @@ public:
 
 	// Freeplay's Unlimited boost (its default): boost never used up, 100 at every spawn, every car at 100 now; off:
 	// the game's rates
+	// The match's end (FreezePawns): nothing simulates while frozen (the server's phase: prePodium, finished)
+	void SetFrozen(bool on) { _arena->frozen = on; }
+
 	void SetUnlimitedBoost(bool on) {
 		MutatorConfig config = _arena->GetMutatorConfig();
 		config.boostUsedPerSecond = on ? 0.f : RLConst::BOOST_USED_PER_SECOND;
@@ -550,6 +553,7 @@ EMSCRIPTEN_BINDINGS(rlengine) {
 		.function("resetBoostPads", &Sim::ResetBoostPads)
 		.function("carLastBallTouchTick", &Sim::CarLastBallTouchTick)
 		.function("setUnlimitedBoost", &Sim::SetUnlimitedBoost)
+		.function("setFrozen", &Sim::SetFrozen)
 		.function("setDemolitions", &Sim::SetDemolitions)
 		.function("kickoffCountdown", &Sim::KickoffCountdown)
 		.function("setKickoffCountdown", &Sim::SetKickoffCountdown)

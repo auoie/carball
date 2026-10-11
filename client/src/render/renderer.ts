@@ -6,6 +6,7 @@ import { fogAll } from "./heightFog";
 import { useGameTranslucentSort } from "./translucentSort";
 import { PostProcess, type PostOptions } from "./postProcess";
 import type { CameraView } from "../camera/rlCamera";
+import type { Vec3 } from "../math/vec";
 import { horizontalToVerticalFov } from "../camera/interp";
 import { toThreeVector } from "./coords";
 
@@ -18,6 +19,7 @@ export class Renderer {
   readonly #gl: WebGLRenderer;
   readonly #target = new Vector3();
   readonly #forward = new Vector3();
+  readonly #projected = new Vector3();
   readonly #observer: ResizeObserver;
   /** Work with the WebGL renderer before the next frame, once each (the arena's reflection capture) */
   readonly #beforeNextFrame: ((gl: WebGLRenderer, scene: Scene) => void)[] = [];
@@ -58,6 +60,14 @@ export class Renderer {
   /** `work` before the next frame is drawn (once) */
   beforeNextFrame(work: (gl: WebGLRenderer, scene: Scene) => void): void {
     this.#beforeNextFrame.push(work);
+  }
+
+  /** A world point (RL frame) on the page as the last frame's camera sees it, CSS px; null behind the camera */
+  project(p: Vec3): { readonly x: number; readonly y: number } | null {
+    const v = toThreeVector(p, this.#projected).project(this.#camera);
+    if (v.z > 1 || v.z < -1) return null;
+    const rect = this.#gl.domElement.getBoundingClientRect();
+    return { x: rect.left + ((v.x + 1) / 2) * rect.width, y: rect.top + ((1 - v.y) / 2) * rect.height };
   }
 
   render(view: CameraView): void {

@@ -1,11 +1,11 @@
 {
-  "protocolVersion": 13,
+  "protocolVersion": 14,
   "vectors": [
     {
       "channel": "control",
       "message": {
         "type": "hello",
-        "version": 13,
+        "version": 14,
         "team": 0,
         "body": 0,
         "dodgeDeadzone": 0.8,
@@ -17,7 +17,7 @@
         "quickChat": "team",
         "blockNonTactical": true
       },
-      "hex": "2400010d000000cdcc4c3f0000803f0000a03f01efbeadde0b4d65726375727920e29aa10101"
+      "hex": "2400010e000000cdcc4c3f0000803f0000a03f01efbeadde0b4d65726375727920e29aa10101"
     },
     {
       "channel": "control",
@@ -88,7 +88,7 @@
       "channel": "control",
       "message": {
         "type": "welcome",
-        "version": 1,
+        "version": 14,
         "carId": 3,
         "tickRate": 120,
         "frame": 0,
@@ -101,7 +101,7 @@
           3
         ]
       },
-      "hex": "19008101000300000078000000000102cdab341203000000010203"
+      "hex": "1900810e000300000078000000000102cdab341203000000010203"
     },
     {
       "channel": "control",
@@ -159,6 +159,34 @@
     {
       "channel": "control",
       "message": {
+        "type": "event",
+        "serverTick": 10,
+        "event": {
+          "kind": "left",
+          "car": 5,
+          "lost": true,
+          "explode": false
+        }
+      },
+      "hex": "0b00830a000000020500000001"
+    },
+    {
+      "channel": "control",
+      "message": {
+        "type": "event",
+        "serverTick": 11,
+        "event": {
+          "kind": "left",
+          "car": 6,
+          "lost": false,
+          "explode": true
+        }
+      },
+      "hex": "0b00830b000000020600000002"
+    },
+    {
+      "channel": "control",
+      "message": {
         "type": "match",
         "serverTick": 1000,
         "phase": "active",
@@ -172,16 +200,17 @@
         "winner": null,
         "forfeit": false,
         "canVoteForfeit": true,
-        "noContest": false
+        "noContest": false,
+        "secondsLeft": 0
       },
-      "hex": "0e0084e8030000010aa08c00000201ff"
+      "hex": "0f0084e8030000010aa08c00000201ff00"
     },
     {
       "channel": "control",
       "message": {
         "type": "match",
         "serverTick": 5000,
-        "phase": "ended",
+        "phase": "prePodium",
         "overtime": true,
         "clockRunning": false,
         "clockTicks": 1234,
@@ -192,9 +221,10 @@
         "winner": 0,
         "forfeit": true,
         "canVoteForfeit": false,
-        "noContest": false
+        "noContest": false,
+        "secondsLeft": 0
       },
-      "hex": "0e0084881300000405d2040000030200"
+      "hex": "0f0084881300000405d204000003020000"
     },
     {
       "channel": "control",
@@ -212,16 +242,17 @@
         "winner": null,
         "forfeit": false,
         "canVoteForfeit": false,
-        "noContest": false
+        "noContest": false,
+        "secondsLeft": 0
       },
-      "hex": "0e0084701700000500e11000000100ff"
+      "hex": "0f0084701700000500e11000000100ff00"
     },
     {
       "channel": "control",
       "message": {
         "type": "match",
         "serverTick": 7000,
-        "phase": "ended",
+        "phase": "prePodium",
         "overtime": false,
         "clockRunning": false,
         "clockTicks": 20000,
@@ -232,9 +263,31 @@
         "winner": null,
         "forfeit": false,
         "canVoteForfeit": false,
-        "noContest": true
+        "noContest": true,
+        "secondsLeft": 0
       },
-      "hex": "0e0084581b00000410204e00000000ff"
+      "hex": "0f0084581b00000410204e00000000ff00"
+    },
+    {
+      "channel": "control",
+      "message": {
+        "type": "match",
+        "serverTick": 7000,
+        "phase": "finished",
+        "overtime": false,
+        "clockRunning": false,
+        "clockTicks": 20000,
+        "score": [
+          0,
+          0
+        ],
+        "winner": null,
+        "forfeit": false,
+        "canVoteForfeit": false,
+        "noContest": true,
+        "secondsLeft": 42
+      },
+      "hex": "0f0084581b00000810204e00000000ff2a"
     },
     {
       "channel": "control",
@@ -378,6 +431,11 @@
               0,
               0,
               9
+            ],
+            "ready": false,
+            "titles": [
+              null,
+              null
             ]
           },
           {
@@ -405,11 +463,22 @@
               0,
               0,
               30
+            ],
+            "ready": true,
+            "titles": [
+              {
+                "title": 3,
+                "count": 3
+              },
+              {
+                "title": 19,
+                "count": 4
+              }
             ]
           }
         ]
       },
-      "hex": "62008c02030000002a0000149a00000001000000010000000000000000000000000000000100000000000000000000000000090005000000e70301143b020300000001000500020000000100020000000000000000000000010000000100000000001e00"
+      "hex": "6e008c02030000002a0000149a000000010000000100000000000000000000000000000001000000000000000000000000000900ff0000ff000005000000e70303143b020300000001000500020000000100020000000000000000000000010000000100000000001e00030300130400"
     },
     {
       "channel": "control",

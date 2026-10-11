@@ -21,6 +21,10 @@ enum StatEvent : uint8_t {
 	ASSIST, PLAYMAKER, POOL_SHOT, SHOT, SAVE, EPIC_SAVE, SAVIOR, CLEAR, CENTER, FIRST_TOUCH, BALL_HIT,
 	CROSSBAR_HITS, AERIAL_HIT, BICYCLE_HIT, JUGGLE_HIT, DEMOLISH, DEMOLISHED, EXTERMINATION, LOW_FIVE, HIGH_FIVE,
 	OWN_GOAL, MVP, WIN, LOSS, DEMOLITION_RESPAWN,
+	// The match end's tracking events (OnMatchEnded): MatchStats only, never sent (MOST_CAR_TOUCHES: the game's
+	// "CarTouches" event)
+	MOST_BOOST_PICKUPS, FEWEST_BOOST_PICKUPS, MOST_BALL_TOUCHES, FEWEST_BALL_TOUCHES, MOST_CAR_TOUCHES, FURTHEST_GOAL,
+	FASTEST_GOAL, SLOWEST_GOAL,
 	STAT_EVENT_COUNT
 };
 
@@ -35,13 +39,14 @@ enum Counter : uint8_t {
 	MATCH_SCORE, MATCH_GOALS, MATCH_ASSISTS, MATCH_SAVES, MATCH_SHOTS, MATCH_DEMOLISHES, MATCH_EPIC_SAVES,
 	MATCH_CENTERS, MATCH_CLEARS, MATCH_AERIAL_HITS, MATCH_BICYCLE_HITS, MATCH_JUGGLE_HITS, MATCH_FIRST_TOUCHES,
 	MATCH_POOL_SHOTS, MATCH_LOW_FIVES, MATCH_HIGH_FIVES, MATCH_TIMES_DEMOLISHED, MATCH_CROSSBAR_HITS, MATCH_OWN_GOALS,
-	BALL_TOUCHES,
+	BALL_TOUCHES, CAR_TOUCHES, BOOST_PICKUPS,
 	COUNTER_COUNT
 };
 
 struct PlayerStats {
 	int32_t counters[COUNTER_COUNT] = {};
 	int32_t eventCounts[STAT_EVENT_COUNT] = {}; // (MatchStats: each event's count, for the podium titles)
+	bool eventPresent[STAT_EVENT_COUNT] = {}; // (the event's entry exists: a count 0 can be one)
 };
 
 // One award (GiveScore): the event to `car`, with the demolition's victim (0: none)
@@ -95,6 +100,9 @@ public:
 	void OnTickEnd();
 	// A goal on `goalTeam`'s goal told from outside (a replay's), while the round is active
 	void ScoreGoal(uint8_t goalTeam);
+	// The match's end (EndGame -> StatFactory_TA.OnMatchEnded): the tracking events into MatchStats. With a winner, the
+	// most and fewest pad pickups and ball touches and the most car touches; always, the goal records
+	void OnMatchEnded(bool haveWinner);
 
 	// Awards since the last call, in order
 	std::vector<Award> TakeAwards();
@@ -111,6 +119,7 @@ public:
 	static bool IsBackwardsHit(const Touch& hit);
 	bool IsLocationFarOffGround(Vec location) const;
 	float Now() const;
+	void SetCounter(uint32_t car, Counter counter, int value) { _stats[car].counters[counter] = value; }
 
 private:
 	struct BallCache {
@@ -129,6 +138,12 @@ private:
 		std::map<StatEvent, float> cooldowns; // (StatCooldowns: UnlockWorldTime)
 	};
 	struct PendingBump { uint32_t bumper, victim; bool isDemo; };
+	// GameEvent_Soccar_TA's goal records (HandleHitGoal): the ball's speed and the scoring touch's path, their scorers
+	// (0: none yet)
+	struct GoalRecords {
+		float fastest = 0, slowest = -1, furthest = 0;
+		uint32_t fastestCar = 0, slowestCar = 0, furthestCar = 0;
+	};
 
 	Arena* _arena;
 	FactoryState _state = FactoryState::INACTIVE;
@@ -144,6 +159,7 @@ private:
 	std::vector<uint32_t> _carsIssuedFive;
 	std::vector<uint32_t> _pendingRespawns;
 	std::vector<PendingBump> _bumps;
+	GoalRecords _goalRecords;
 	std::map<uint32_t, CarTrack> _tracks;
 	std::map<uint32_t, PlayerStats> _stats;
 	std::vector<Award> _awards;
@@ -151,6 +167,7 @@ private:
 	Car* _Car(uint32_t id) const;
 	void _GiveScore(uint32_t car, StatEvent event, uint32_t victim = 0, int count = 1);
 	void _Count(uint32_t car, Counter counter, int by = 1);
+	void _SetMatchStat(uint32_t car, StatEvent event, int count);
 	int _Get(uint32_t car, Counter counter) const;
 	bool _TryAwardTimeRestrictedStat(uint32_t car, StatEvent event);
 	void _RegisterCar(uint32_t car);

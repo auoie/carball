@@ -10,6 +10,14 @@ export interface ScoreboardView {
   readonly score: readonly [number, number];
   /** The four columns' ids */
   readonly columns: readonly string[];
+  /** The end screen's winner stamp on that team (MIO-27; null: none) */
+  readonly winner?: number | null;
+}
+
+/** On the end screen (MIO-26): placed 0.3 of the way down the free height, `shift` 0..1 of its slide right as the menu
+ *  comes in */
+export interface EndPlacement {
+  readonly shift: number;
 }
 
 /** The view's geometry (SB-1, SB-2): the panel width the game centres by, the team panels' height for n rows */
@@ -27,8 +35,9 @@ export function contentStage(width: number, height: number): { readonly scale: n
   return { scale: s, width: width / s, height: height / s };
 }
 
-/** Where the view goes on the stage, and its parts (SB-2, SB-5) */
-export function scoreboardLayout(stage: { readonly width: number; readonly height: number }, rows: readonly [number, number]): {
+/** Where the view goes on the stage, and its parts (SB-2, SB-5); on the end screen 0.3 down the free height (at least
+ *  30 px), sliding right to make room for the menu (MIO-26) */
+export function scoreboardLayout(stage: { readonly width: number; readonly height: number }, rows: readonly [number, number], end: EndPlacement | null = null): {
   readonly x: number;
   readonly y: number;
   readonly team1Y: number;
@@ -39,7 +48,13 @@ export function scoreboardLayout(stage: { readonly width: number; readonly heigh
   const h1 = teamHeight(rows[1]);
   const team1Y = 22 + h0 - 20;
   const backdropHeight = team1Y + h1 + 90;
-  return { x: (stage.width - VIEW_WIDTH) / 2, y: (stage.height - (backdropHeight - 120)) / 2, team1Y, backdropHeight, heights: [h0, h1] };
+  const h = backdropHeight - 120;
+  const centred = (stage.width - VIEW_WIDTH) / 2;
+  if (end) {
+    const slid = (350 + stage.width - VIEW_WIDTH) / 2;
+    return { x: centred + (slid - centred) * end.shift, y: Math.max(30, (stage.height - h) * 0.3), team1Y, backdropHeight, heights: [h0, h1] };
+  }
+  return { x: centred, y: (stage.height - h) / 2, team1Y, backdropHeight, heights: [h0, h1] };
 }
 
 const easeOut = (t: number): number => 1 - (1 - t) * (1 - t);
@@ -59,12 +74,16 @@ function box(el: HTMLElement, x: number, y: number, w: number, h: number): HTMLE
   return el;
 }
 
+/** The end screen's winner stamp (UIText [Global] Winner, verbatim; upper-cased) */
+const WINNER_STAMP = "WINNER";
+
 const AVATAR = `<svg viewBox="0 0 34 34" aria-hidden="true"><circle cx="17" cy="12" r="6.5"/><path d="M5 31c1-8 6-12 12-12s11 4 12 12z"/></svg>`;
 
 export class HeldScoreboard {
   readonly #root: HTMLDivElement;
   readonly #stage: HTMLDivElement;
   #drawn = "";
+  #pinnedAt: number | null = null; // (on the end screen since)
   #openedAt: number | null = null; // (shown since)
   #closing: { at: number; from: number } | null = null;
   #alpha = 0;
@@ -82,12 +101,31 @@ export class HeldScoreboard {
     return !this.#root.hidden;
   }
 
-  /** Each frame: whether its binding is held and it may show (SB-10), what it shows; `now`: real seconds */
-  update(now: number, held: boolean, allowed: boolean, view: ScoreboardView | null): void {
-    for (const row of view ? [...view.teams[0], ...view.teams[1]] : []) {
+  /** The end screen's scoreboard (MIO-26/27): shown, fading in over 0.3 s, placed for the end screen */
+  pin(now: number, view: ScoreboardView, end: EndPlacement): void {
+    this.#track(now, view);
+    this.#pinnedAt ??= now;
+    this.#root.hidden = false;
+    this.#root.style.opacity = Math.min(1, (now - this.#pinnedAt) / 0.3).toFixed(3);
+    this.#draw(now, view, end);
+  }
+
+  unpin(): void {
+    if (this.#pinnedAt === null) return;
+    this.#pinnedAt = null;
+    this.#hide();
+  }
+
+  #track(now: number, view: ScoreboardView): void {
+    for (const row of [...view.teams[0], ...view.teams[1]]) {
       if (row.mvp && !this.#mvpSince.has(row.car)) this.#mvpSince.set(row.car, now);
       if (!row.mvp) this.#mvpSince.delete(row.car);
     }
+  }
+
+  /** Each frame: whether its binding is held and it may show (SB-10), what it shows; `now`: real seconds */
+  update(now: number, held: boolean, allowed: boolean, view: ScoreboardView | null): void {
+    if (view) this.#track(now, view);
     if (!allowed || !view) {
       this.#hide();
       return;
@@ -123,17 +161,17 @@ export class HeldScoreboard {
     this.#alpha = 0;
   }
 
-  #draw(now: number, view: ScoreboardView): void {
+  #draw(now: number, view: ScoreboardView, end: EndPlacement | null = null): void {
     const stage = contentStage(window.innerWidth, window.innerHeight);
     const slams = [...this.#mvpSince].map(([car, since]) => `${String(car)}:${String(now - since >= MVP_DELAY)}`).join(",");
-    const key = JSON.stringify([view, stage, slams]);
+    const key = JSON.stringify([view, stage, slams, end]);
     if (key === this.#drawn) return;
     this.#drawn = key;
     this.#stage.replaceChildren();
     this.#stage.style.width = `${String(stage.width)}px`;
     this.#stage.style.height = `${String(stage.height)}px`;
     this.#stage.style.transform = `scale(${String(stage.scale)})`;
-    const layout = scoreboardLayout(stage, [view.teams[0].length, view.teams[1].length]);
+    const layout = scoreboardLayout(stage, [view.teams[0].length, view.teams[1].length], end);
     const viewEl = div("sb-view", this.#stage);
     viewEl.style.left = `${String(layout.x)}px`;
     viewEl.style.top = `${String(layout.y)}px`;
@@ -151,6 +189,7 @@ export class HeldScoreboard {
       score.textContent = String(view.score[team]);
       const name = box(div("sb-team-name", panel), 30, 0, 260, 40.5);
       name.textContent = TEAM_NAMES[team].toUpperCase();
+      if (view.winner === team) box(div("sb-winner-stamp", panel), 160, 4, 130, 34).textContent = WINNER_STAMP;
       headers.forEach((text, i) => {
         const h = box(div("sb-header", panel), 293 + 69 * i, 2, 66, 35);
         h.textContent = text;
@@ -165,6 +204,7 @@ export class HeldScoreboard {
   #row(panel: HTMLElement, row: ScoreboardRow, team: number, y: number, now: number): void {
     const el = box(div(`sb-row${row.local ? " sb-local" : ""}`, panel), -8, y, 705, 50);
     el.dataset["car"] = String(row.car);
+    if (row.ready) box(div("sb-ready", el), -34, 13, 26, 25).textContent = "✓"; // (the end screen's ready check)
     box(div("sb-strip", el), 0, 9, 705, 32);
     const avatar = box(div("sb-avatar", el), 8, 8, 34, 34);
     avatar.innerHTML = AVATAR;

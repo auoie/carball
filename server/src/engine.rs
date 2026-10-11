@@ -4,6 +4,8 @@ use std::ffi::{CString, c_char, c_int};
 use std::path::Path;
 use std::ptr::NonNull;
 
+use crate::protocol::PodiumTitle;
+
 #[repr(C)]
 struct RLArena {
     _private: [u8; 0],
@@ -67,6 +69,11 @@ unsafe extern "C" {
     fn rl_take_stat_awards(arena: *mut RLArena, out: *mut i32, max_ints: usize) -> usize;
     fn rl_car_stats(arena: *mut RLArena, car_id: u32, out: *mut i32, max: usize) -> usize;
     fn rl_stat_event_points(event: c_int) -> c_int;
+    fn rl_set_frozen(arena: *mut RLArena, frozen: c_int);
+    fn rl_car_place(arena: *mut RLArena, car_id: u32, x: f32, y: f32, yaw: f32, boost: f32);
+    fn rl_set_unlimited_boost(arena: *mut RLArena, on: c_int);
+    fn rl_ball_hide(arena: *mut RLArena);
+    fn rl_match_ended(arena: *mut RLArena, have_winner: c_int, members: *const u32, count: usize, out: *mut i32);
 }
 
 /// A player's match counters (`engine/stats/StatFactory.h` `Counter`): MatchScore, Goals, Assists, Saves, Shots,
@@ -279,10 +286,51 @@ impl Arena {
         unsafe { rl_stats_set_overtime(self.ptr(), c_int::from(overtime)) }
     }
 
+    /// The match's end (`FreezePawns`): nothing simulates while frozen; the tick count still steps
+    pub fn set_frozen(&mut self, frozen: bool) {
+        // SAFETY: valid arena
+        unsafe { rl_set_frozen(self.ptr(), c_int::from(frozen)) }
+    }
+
+    /// The car spawned at (x, y) facing `yaw` (radians) with `boost`, as a respawn places it (a demolished car comes
+    /// back): the podium's cars
+    pub fn place_car(&mut self, car_id: u32, x: f32, y: f32, yaw: f32, boost: f32) {
+        // SAFETY: valid arena; an unknown car is ignored
+        unsafe { rl_car_place(self.ptr(), car_id, x, y, yaw, boost) }
+    }
+
+    /// Boost never used up, 100 at spawns (the podium's cars), or the game's rates
+    pub fn set_unlimited_boost(&mut self, on: bool) {
+        // SAFETY: valid arena
+        unsafe { rl_set_unlimited_boost(self.ptr(), c_int::from(on)) }
+    }
+
+    /// The ball hidden (exploded: no physics, no collision) until the next kickoff
+    pub fn hide_ball(&mut self) {
+        // SAFETY: valid arena
+        unsafe { rl_ball_hide(self.ptr()) }
+    }
+
     /// A new match: every car's counters back to 0
     pub fn reset_stats(&mut self) {
         // SAFETY: valid arena
         unsafe { rl_stats_reset(self.ptr()) }
+    }
+
+    /// The match's end (`StatFactory.OnMatchEnded`) and, with a winner, its podium titles (`UpdateSpotlight`):
+    /// `members`, the teams' current members (blue's in join order, then orange's), each gets its primary and secondary
+    pub fn match_ended(&mut self, have_winner: bool, members: &[u32]) -> Vec<[Option<PodiumTitle>; 2]> {
+        let mut out = vec![0i32; members.len() * 6];
+        // SAFETY: valid arena; `out` has 6 ints per member
+        unsafe { rl_match_ended(self.ptr(), c_int::from(have_winner), members.as_ptr(), members.len(), out.as_mut_ptr()) };
+        out.as_chunks::<6>()
+            .0
+            .iter()
+            .map(|c| {
+                let title = |t: i32, count: i32| (0..255).contains(&t).then(|| PodiumTitle { title: t as u8, count: count.clamp(0, i32::from(u16::MAX)) as u16 });
+                [title(c[0], c[2]), title(c[3], c[5])]
+            })
+            .collect()
     }
 
     /// The stat awards since the last call, in order

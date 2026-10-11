@@ -208,7 +208,7 @@ AS3, [L] the user's logs, [I] inferred.
 | MRL-13 | **When a forfeit takes effect.** In Active or Countdown, `EndGame` runs at once. In PostGoalScored or ReplayPlayback, `bForfeit` is set but `EndGame` waits for `StartNewRound` (the end of the post-goal or replay). Our server ends the match at once in every phase. | high [S] |
 | MRL-14 | **A leaver's car is demolished** (`Demolish(None)`). In casual (`bAllowBotFills`), a bot takes the slot 0.1 game s later, with the leaver's car location, rotation and linear velocity (a temporary spawn spot, valid 1 game s). In the countdown it takes a kickoff spot instead; in PostGoalScored or ReplayPlayback it gets a car at the kickoff. A human joining in place of a bot waits a 3 s ticket, then takes the bot's car pose. Ranked has no bots and no takeovers. | high [S][A] |
 | MRL-15 | **A leave in a full, penalised lobby destroys any forfeit vote in progress.** When the leave penalty lifts (`OnPenaltyChanged`), every team's vote is destroyed. | high [S] |
-| MRL-16 | **Clients' input-packet cadence during the slow motion.** Our client sends one packet every 2 ticks. During the slow motion that drops to 60·D packets per real second, and the server's jitter buffer, which measures gaps in **real** time like the game's `ClientJitterBuffer_TA`, may grow. The game sends at most one packet per render frame (N-9). | medium [S][I] |
+| MRL-16 | **Clients' input-packet cadence during the slow motion.** The game sends at most one packet per render frame (N-9); the server's jitter buffer measures gaps in **real** time (`ClientJitterBuffer_TA`, RealTimeSeconds). *Corrected (RV-238):* our client already sends at 60 Hz of real time, once a frame, so the slow motion doesn't stretch the gaps and the buffer stays as it was (D-7). The first premise here (one packet every 2 ticks, dropping to 60·D a second) was wrong. | medium [S][I] |
 
 ### 1. Post-goal slow motion (MR-6.1 to MR-6.6)
 
@@ -415,15 +415,19 @@ UI. Tournament matches inherit ranked's 90 s and add series forfeits (out of sco
 - **D-1 done.** A forfeit in PostGoal or Replay sets `forfeiting`; the match ends at `new_round`. Test:
   `a_forfeit_after_a_goal_ends_the_match_at_the_next_round`.
 - **D-2 done.** Per-team votes: 20 game s, unanimous, a joiner added and a leaver removed, failed only at the timeout,
-  5 s linger. The initiator lockout is enforced on the server, keyed by a per-tab client key (Hello's `key`,
-  sessionStorage) so it survives a reconnect; the team is re-enabled when nobody on it can start one.
+  5 s linger. The initiator lockout is enforced on the server, keyed by the server's key for the client (Welcome's
+  `key`, issued by the server so two tabs can't share one: RV-239; the tab keeps it in sessionStorage and brings it back
+  in Hello's `key`), so it survives a reconnect. A reconnect while the old session is still registered gets a new key
+  with the lockout carried over (RV-265); a new match keeps only the keys of the players there (RV-270). The team is
+  re-enabled when nobody on it can start one.
   `bCanVoteToForfeit` is evaluated per tick as the first tick past the wait (4:00 shown in casual); 90 s for ranked and
   private; overtime always; never once `HasWinner`.
   - Playlist predicate: casual and ranked allow votes; private allows them in 1v1s only (its flags are unknown, §9.3).
   - Server options: `--match-type casual|ranked|private`, `--forfeit-vote-wait SECONDS`.
-  - Client: the Escape menu shows "Vote to Concede"/"Vote to Forfeit" or the 1v1 "Forfeit Match" with its confirm,
-    and "Leave Match" with its confirm (back to freeplay). The HUD widget shows the tally, the m:ss time and a time
-    bar [I], plus "Press Esc to Vote" until the player votes; it fades in 0.3 s.
+  - Client: the Escape menu has one match button (RV-236): "Vote to Concede"/"Vote to Forfeit" (or the 1v1 "Forfeit
+    Match" with its confirm) while the player may vote, else "Leave Match" with its confirm (back to freeplay); upper-
+    case. The HUD widget shows the tally, the m:ss time and a time bar [I] that flashes at each new yes, plus "Press Esc
+    to Vote" until the player votes. It shows at once (no fade-in) and fades out in 0.3 s (RV-237).
   - MR-7.15: a leave from a full public lobby ends every vote.
   - Tests: 5 server tests, client unit tests, and e2e `forfeit.spec.ts`.
 - **D-3 done.** When everyone has gone, the match is a no contest (flag 16). Our arena stops ticking with nobody in it,
@@ -432,7 +436,10 @@ UI. Tournament matches inherit ranked's 90 s and add series forfeits (out of sco
     team empty from the start (solo play) is not a forfeit.
   - The leave's own check runs 2 ticks later (`CheckAllTeamsForfeitState`), in casual and ranked only.
 - **D-4 done.** Event kind 2 `left`: the others draw the demolition effect, shake and sound where the car was drawn,
-  with no stat.
+  with no stat, when the leaver had a live car (`RemovePlayerFromTeam` → `Demolish(None)`, no phase test): not one
+  already demolished, nor a podium's loser (who has none), nor in the goal replay (`StartReplay` runs `DestroyCars`;
+  our server keeps them in the arena and sends `explode` false). The event's `explode` flag says whether the car was
+  live; the client also skips it during the replay's playback, as a guard (RV-235, RV-264).
 - **D-6 partly.** The skip prompt is now `SkipInstructions` ("Press Space to Skip" / "(A)") and the n/m count is
   gone. The names list needs player names, which come with the scoreboard.
 - **D-7: no change needed (MRL-16, corrected by RV-238).** The client already sends its input packets at 60 Hz of real

@@ -1649,6 +1649,10 @@ Car* Arena::DeserializeNewCar(DataStreamIn& in, Team team) {
 
 void Arena::Step(int ticksToSimulate) {
 	for (int i = 0; i < ticksToSimulate; i++) {
+		if (frozen) { // RL PATCH: the bodies hold where they are
+			tickCount++;
+			continue;
+		}
 
 		_bulletWorld.setWorldUserInfo(this);
 
@@ -1670,6 +1674,7 @@ void Arena::Step(int ticksToSimulate) {
 			ball->_startOfTickPos = ball->_rigidBody.getWorldTransform().getOrigin() * BT_TO_UU;
 		}
 		ballWorldContacts.clear(); // RL PATCH
+		boostPickups.clear(); // RL PATCH
 
 		// RL PATCH: kickoff countdown, no input. The jump's edge still follows the real input (Car_TA.SetVehicleInput
 		// calls OnJumpPressed only when Input.bJump changes, and OnJumpPressed returns while !bDriving: a press during the
@@ -1744,8 +1749,13 @@ void Arena::Step(int ticksToSimulate) {
 		}
 
 		if (hasArenaStuff && !ballOnly)
-			for (BoostPad* pad : _boostPads)
+			for (BoostPad* pad : _boostPads) {
+				// RL PATCH: a pickup is an active pad with a car on it (the car not full: BoostPadGrid)
+				Car* taker = pad->_internalState.isActive ? pad->_internalState.curLockedCar : NULL;
 				pad->_PostTickUpdate(tickTime, _mutatorConfig);
+				if (taker)
+					boostPickups.push_back({ taker->id, pad->config.isBig });
+			}
 
 		ball->_FinishPhysicsTick(_mutatorConfig);
 
@@ -1760,6 +1770,7 @@ void Arena::Step(int ticksToSimulate) {
 		// collision) until the kickoff reset, so it can't come back out and score again (match-rules audit MR-2).
 		// RocketSim's ball played on
 		if (gameMode != GameMode::THE_VOID && !ball->_internalState.isExploded && IsBallScored()) {
+			goalBallSpeed = ball->_rigidBody.getLinearVelocity().length() * BT_TO_UU;
 			ball->_internalState.isExploded = true;
 			ball->_ApplyExploded();
 			// The explosion goes off where the ball was as this step began (KNB-7: one tick short of the line), its

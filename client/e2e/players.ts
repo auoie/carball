@@ -37,7 +37,7 @@ export async function ends(page: Page): Promise<{ winner: number | null; forfeit
   return page.evaluate(() =>
     (window as unknown as { rlOnline: () => { phases: { phase: string; winner: number | null; forfeit: boolean }[] } })
       .rlOnline()
-      .phases.filter((p) => p.phase === "ended")
+      .phases.filter((p) => p.phase === "prePodium")
       .map(({ winner, forfeit }) => ({ winner, forfeit })),
   );
 }

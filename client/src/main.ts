@@ -21,6 +21,7 @@ import { ChatLog, QuickChatPanel } from "./ui/chatLog";
 import { HeldScoreboard } from "./ui/scoreboard";
 import { StatPopups, StatTicker } from "./ui/statFeed";
 import { PlayersMenu, Toast } from "./ui/playersMenu";
+import { EndScreen, PodiumTags, ScreenDimming, WinnerBanner } from "./ui/endOfMatch";
 import { Renderer } from "./render/renderer";
 import "./style.css";
 
@@ -171,8 +172,28 @@ async function main(): Promise<void> {
     });
     const hudRoot = required("#hud", HTMLElement);
     const chat = { log: new ChatLog(hudRoot), panel: new QuickChatPanel(hudRoot) };
+    // (the dimming under everything else on the HUD)
+    const dimmingUi = new ScreenDimming(hudRoot);
+    hudRoot.prepend(...hudRoot.querySelectorAll(".screen-filter, .podium-vignette"));
     const statsUi = { scoreboard: new HeldScoreboard(hudRoot), popups: new StatPopups(hudRoot), ticker: new StatTicker(hudRoot), toast: new Toast(hudRoot) };
-    const online = new Online(world, renderer, arena, input, hud, audio, connection, welcome, () => settings, () => !panel.isOpen, chat, statsUi);
+    // Back to freeplay (the menu's leave, the end screen's exit)
+    const leave = (): void => {
+      connection.close();
+      const query = new URLSearchParams(location.search);
+      query.delete("server");
+      location.assign(`${location.pathname}${query.size > 0 ? `?${query.toString()}` : ""}`);
+    };
+    const endScreen = new EndScreen(hudRoot, {
+      ready: () => {
+        online.readyForNextMatch();
+      },
+      exit: leave,
+      options: () => {
+        panel.open();
+      },
+    });
+    const endUi = { banner: new WinnerBanner(hudRoot), dimming: dimmingUi, tags: new PodiumTags(hudRoot), endScreen };
+    const online: Online = new Online(world, renderer, arena, input, hud, audio, connection, welcome, () => settings, () => !panel.isOpen, chat, statsUi, endUi);
     const players = new PlayersMenu(panel.players, (car, what) => {
       online.togglePlayer(car, what);
     });
@@ -181,10 +202,7 @@ async function main(): Promise<void> {
     // The menu's match buttons: forfeit or vote (the server's), leave (back to freeplay)
     const menu = new MatchMenu(panel.match, (action) => {
       if (action === "leave") {
-        connection.close();
-        const query = new URLSearchParams(location.search);
-        query.delete("server");
-        location.assign(`${location.pathname}${query.size > 0 ? `?${query.toString()}` : ""}`);
+        leave();
         return;
       }
       online.voteForfeit();

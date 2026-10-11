@@ -2,6 +2,7 @@
 
 #include "NetState.h"
 #include "RocketSim.h"
+#include "PodiumTitles.h"
 #include "StatFactory.h"
 
 #include <algorithm>
@@ -313,6 +314,52 @@ size_t rl_car_stats(RLArena* a, uint32_t car_id, int32_t* out, size_t max) {
 	for (size_t i = 0; out && i < max && i < RLStats::COUNTER_COUNT; i++)
 		out[i] = s->counters[i];
 	return RLStats::COUNTER_COUNT;
+}
+
+void rl_match_ended(RLArena* a, int have_winner, const uint32_t* members, size_t count, int32_t* out) {
+	a->stats->OnMatchEnded(have_winner != 0);
+	std::vector<std::pair<uint32_t, const RLStats::PlayerStats*>> list;
+	for (size_t i = 0; i < count; i++)
+		list.push_back({ members[i], a->stats->GetStats(members[i]) });
+	std::map<uint32_t, std::pair<RLStats::TitleStat, RLStats::TitleStat>> titles;
+	if (have_winner)
+		titles = RLStats::AssignTitles(list);
+	for (size_t i = 0; i < count; i++) {
+		RLStats::TitleStat both[2] = {};
+		auto it = titles.find(members[i]);
+		if (it != titles.end()) {
+			both[0] = it->second.first;
+			both[1] = it->second.second;
+		}
+		for (int k = 0; k < 2; k++) {
+			out[6 * i + 3 * k] = both[k].title == RLStats::NO_TITLE ? -1 : both[k].title;
+			out[6 * i + 3 * k + 1] = both[k].points;
+			out[6 * i + 3 * k + 2] = both[k].count;
+		}
+	}
+}
+
+void rl_set_frozen(RLArena* a, int frozen) { a->arena->frozen = frozen != 0; }
+
+void rl_car_place(RLArena* a, uint32_t id, float x, float y, float yaw, float boost) {
+	Car* car = a->arena->GetCar(id);
+	if (car)
+		car->_RespawnAt(Vec(x, y, 0), yaw, boost);
+}
+
+void rl_set_unlimited_boost(RLArena* a, int on) {
+	MutatorConfig config = a->arena->GetMutatorConfig();
+	config.boostUsedPerSecond = on ? 0.f : RLConst::BOOST_USED_PER_SECOND;
+	config.carSpawnBoostAmount = on ? RLConst::BOOST_MAX : RLConst::BOOST_SPAWN_AMOUNT;
+	a->arena->SetMutatorConfig(config);
+}
+
+void rl_ball_hide(RLArena* a) {
+	BallState s = a->arena->ball->GetState();
+	s.vel = Vec();
+	s.angVel = Vec();
+	s.isExploded = true;
+	a->arena->ball->SetState(s);
 }
 
 int rl_stat_event_points(int event) {

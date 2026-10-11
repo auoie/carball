@@ -2344,6 +2344,58 @@ static void TestGameRotator() {
 	CHECK(fabsf(c.x) < 1e-5f && fabsf(c.y + 13.87566f) < 1e-4f && fabsf(c.z - 37.754988f) < 1e-4f, "centre (%f %f %f)", c.x, c.y, c.z);
 }
 
+static void TestMatchEndPatches() {
+	puts("the match's end: a frozen arena simulates nothing (ticks count), a car placed on a podium spot; pickups and the scoring speed recorded");
+	Arena* arena = Arena::Create(GameMode::SOCCAR);
+	Car* car = arena->AddCar(Team::BLUE);
+	CarState s = CarAt(Vec(0, -1000, 17), { 1, 0, 0 }, { 0, 0, 1 });
+	s.vel = Vec(1000, 0, 0);
+	car->SetState(s);
+	BallState b;
+	b.pos = Vec(0, 0, 500);
+	b.vel = Vec(300, 0, 0);
+	arena->ball->SetState(b);
+	arena->frozen = true;
+	uint64_t tick = arena->tickCount;
+	arena->Step(100);
+	CHECK(arena->tickCount == tick + 100, "ticks still count: %llu", (unsigned long long)(arena->tickCount - tick));
+	Vec carAt = car->GetState().pos, ballAt = arena->ball->GetState().pos;
+	CHECK(carAt.x == 0 && carAt.y == -1000 && carAt.z == 17 && ballAt.x == 0 && ballAt.z == 500, "nothing moved");
+	arena->frozen = false;
+	arena->Step(1);
+	CHECK(car->GetState().pos.x > 0 && arena->ball->GetState().pos.x > 0, "runs again");
+	// (InitPodiumCars' spot: the MVP's, yaw 16384 + 6248 units, full boost)
+	float yaw = (16384 + 6248) * (float)(M_PI * 2 / 65536);
+	car->_RespawnAt(Vec(-40, -1670, 0), yaw, 100);
+	arena->Step(1);
+	CarState placed = car->GetState();
+	CHECK(Near(placed.pos.x, -40, 1) && Near(placed.pos.y, -1670, 1) && placed.boost == 100, "at (%.1f, %.1f) boost %.0f", placed.pos.x, placed.pos.y, placed.boost);
+	Vec forward = placed.rotMat.forward;
+	CHECK(Near(atan2f(forward.y, forward.x), yaw, 1e-3f), "facing %.4f, not %.4f", atan2f(forward.y, forward.x), yaw);
+	// A pad picked up: recorded with its car and size for that tick only; none at full boost
+	CarState onPad = CarAt(Vec(3584, 0, 17), { 1, 0, 0 }, { 0, 0, 1 });
+	onPad.boost = 10;
+	car->SetState(onPad);
+	arena->Step(1);
+	CHECK(arena->boostPickups.size() == 1 && arena->boostPickups[0].first == car->id && arena->boostPickups[0].second, "a big pad's pickup");
+	arena->Step(1);
+	CHECK(arena->boostPickups.empty(), "only the tick's");
+	CarState full = CarAt(Vec(-3584, 0, 17), { 1, 0, 0 }, { 0, 0, 1 });
+	full.boost = 100;
+	car->SetState(full);
+	arena->Step(1);
+	CHECK(arena->boostPickups.empty(), "full: no pickup");
+	// The ball's speed as it scored (before the explosion stops it)
+	BallState shot;
+	shot.pos = Vec(0, 5100, 300);
+	shot.vel = Vec(0, 2500, 0);
+	arena->ball->SetState(shot);
+	for (int i = 0; i < 20 && !arena->ball->_internalState.isExploded; i++)
+		arena->Step(1);
+	CHECK(arena->ball->_internalState.isExploded && arena->goalBallSpeed > 2400 && arena->goalBallSpeed < 2600, "scored at %.1f", arena->goalBallSpeed);
+	delete arena;
+}
+
 int main(int argc, char** argv) {
 	std::string meshes = argc > 1 ? argv[1] : ARENA_MESH_DIR;
 	RocketSim::Init(meshes, true);
@@ -2376,6 +2428,7 @@ int main(int argc, char** argv) {
 	TestKickoffCountdown();
 	TestCountdownHeldJump();
 	TestGameRotator();
+	TestMatchEndPatches();
 	TestRoofLanding();
 	TestBumpUpRotator();
 	TestBallHitForwardRotator();

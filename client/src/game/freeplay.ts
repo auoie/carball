@@ -23,6 +23,7 @@ import { cameraInputs, newCar, updateSwitches } from "./cameraInput";
 import type { FreeLookControls } from "../camera/rlCamera";
 import type { ReplayPlan } from "../net/protocol";
 import { Fade } from "../render/fade";
+import { LOAD_FADE_IN } from "./matchSequence";
 import { TouchLog, planReplay } from "./replayPlan";
 import { ReplayPlayback, explosionTeam } from "./replayPlayback";
 import { ReplayRecorder, recordCar } from "./replayRecorder";
@@ -121,6 +122,7 @@ export class Freeplay {
     this.#startRound();
 
     this.#effects = new SceneEffects(renderer.scene);
+    this.#fade.fromBlack(LOAD_FADE_IN); // (MIO-2: the arena fades in from black as it first draws)
     this.#carView = new CarView(world.carConfig(this.#playerId), 0, this.#effects.particles);
     this.#carConfigs = new Map([[this.#playerId, world.carConfig(this.#playerId)]]);
     this.#padsView = new BoostPadsView(world.boostPads());

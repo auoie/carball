@@ -7,7 +7,7 @@ use tokio::sync::mpsc::Sender;
 
 use crate::engine::{Arena, Award, Controls, Event, STAT_COUNTERS, StatCounters, StatsState, stat_event_points};
 use crate::input_buffer::InputBuffer;
-use crate::protocol::{self, Control, Datagram, ForfeitVoteState, GameEvent, InputFrame, MatchState, Phase, ReplayPlan, ScoreboardEntry, Update, stat};
+use crate::protocol::{self, Control, Datagram, ForfeitVoteState, GameEvent, InputFrame, MatchState, Phase, PodiumTitle, ReplayPlan, ScoreboardEntry, Update, stat};
 
 pub const TICK_RATE: u32 = 120;
 /// Updates go out every other tick (60 Hz)
@@ -54,8 +54,17 @@ pub const TEAM_SIZE: u8 = 3;
 pub const MATCH_TICKS: u32 = 300 * TICK_RATE;
 /// The clock starts at the first touch, or this long after "go" (`BallHasBeenHitStartDelay` 5.0 s)
 const CLOCK_START_DELAY_TICKS: u64 = 5 * TICK_RATE as u64;
-/// After the match: the podium (`PrePodiumSpotlight` 3.0 s + `PodiumSpotlight` 5.3 s), then a new match
-const PODIUM_SECONDS: f32 = 8.3;
+/// After the match (notes/match-intro-outro.md MIO-10): the winner shown, the world frozen (`PrePodiumSpotlight`:
+/// PodiumDelay 3.0 s); the podium (`PodiumSpotlight`: PodiumTime 5.3 s); the end screen (`Finished`: FinishTime 60 s,
+/// ready-up allowed after 1 s, every player ready starts the next match)
+const PRE_PODIUM_SECONDS: f32 = 3.0;
+const PODIUM_SECONDS: f32 = 5.3;
+const FINISH_SECONDS: u32 = 60;
+const READY_UP_DELAY_SECONDS: f32 = 1.0;
+/// The podium's spots for blue winners (MIO-11, the winners-explosion variant: 3000 uu in front of their own goal), the
+/// MVP's first: x, y, yaw (rotator units). Orange's are point-mirrored
+const PODIUM_SPOTS: [(f32, f32, i32); 4] =
+    [(-40.0, -1670.0, 16384 + 6248), (-200.0, -1795.0, 16384 + 57784), (150.0, -1820.0, 16384 + 10548), (-115.0, -2020.0, 16384 + 13848)];
 /// A player's outgoing queue (control messages and datagrams for their session): a client that stops reading its control
 /// stream fills it, and is dropped (RV-248)
 pub const OUT_QUEUE: usize = 2048;
@@ -276,6 +285,8 @@ struct Player {
     blocked_notice: Option<(f64, u32)>,
     /// Their match counters as the engine last gave them (`PRI_TA` Match*)
     stats: StatCounters,
+    /// Their podium titles (`PRI_TA.PrimaryTitle`/`SecondaryTitle`: the match's end, none before)
+    titles: [Option<PodiumTitle>; 2],
     /// Round-trip time (ms), as the connection measures it
     ping: u16,
 }
@@ -324,7 +335,8 @@ pub struct Game {
     /// The keys that started a forfeit vote this match: only grows (`ForfeitInitiatorIDs`: a starter who rejoins can't
     /// start another, `CheckInitiatedForfeit`)
     initiators: BTreeSet<u32>,
-    /// The keys this server gave out, and the next one's seed (RV-239: the server's, so two tabs can't share one)
+    /// The keys this server gave out, and the next one's seed (RV-239: the server's, so two tabs can't share one); a
+    /// new match keeps only those of the players here (RV-270)
     issued_keys: BTreeSet<u32>,
     key_seed: u32,
     /// A team forfeited after a goal: the match ends at the next round (`bForfeit`, MRL-13)
@@ -344,6 +356,8 @@ pub struct Game {
     /// The scoreboard changed since it was last sent; when it was (the pings: every 2 s)
     scoreboard_dirty: bool,
     scoreboard_sent: u64,
+    /// When the end screen began (ready-up allowed 1 s later)
+    finished_at: u64,
 }
 
 impl Default for Game {
@@ -383,6 +397,7 @@ impl Game {
             mvp: None,
             scoreboard_dirty: true,
             scoreboard_sent: 0,
+            finished_at: 0,
             go_tick: 0,
             clock_ticks: MATCH_TICKS,
             overtime: false,
@@ -421,6 +436,11 @@ impl Game {
             forfeit: self.forfeit,
             can_vote_forfeit: self.can_vote_forfeit(),
             no_contest: self.no_contest,
+            seconds_left: if self.phase == Phase::Finished {
+                self.phase_until.saturating_sub(self.arena.tick_count()).div_ceil(u64::from(TICK_RATE)).min(255) as u8
+            } else {
+                0
+            },
         }
     }
 
@@ -435,7 +455,7 @@ impl Game {
     fn can_vote_forfeit(&self) -> bool {
         let elapsed = MATCH_TICKS - self.clock_ticks.min(MATCH_TICKS);
         let waited = self.overtime || elapsed > self.forfeit_vote_wait.unwrap_or_else(|| self.match_type.forfeit_wait_ticks());
-        self.match_type.allows_forfeit(self.team_size) && self.phase != Phase::Ended && !self.has_winner() && waited
+        self.match_type.allows_forfeit(self.team_size) && !self.phase.match_over() && !self.has_winner() && waited
     }
 
     pub fn player_count(&self) -> usize {
@@ -458,6 +478,7 @@ impl Game {
     pub fn join(&mut self, id: PlayerId, request: JoinRequest, out: Sender<Outgoing>) {
         if self.players.len() >= MAX_PLAYERS {
             // (refused: the session ends once it's sent)
+            eprintln!("player {id} refused: full ({MAX_PLAYERS} players)");
             let _ = out.try_send(Outgoing::Control(Control::Refused { reason: protocol::REFUSED_FULL }.encode()));
             return;
         }
@@ -479,14 +500,22 @@ impl Game {
         self.arena.set_car_preferences(car_id, request.dodge_deadzone, request.steering_sensitivity, request.air_control_sensitivity);
         if self.players.is_empty() {
             self.new_match();
-        } else if self.phase == Phase::Countdown {
+        } else if matches!(self.phase, Phase::Waiting | Phase::Countdown) {
             self.arena.redo_kickoff(); // (joining in a kickoff countdown: a kickoff spot, the others where they were)
+        } else if self.phase == Phase::Podium {
+            self.arena.demolish_car(car_id); // (only the winners have cars on the podium)
         }
-        // (the key the client brought, if this server gave it and no one here has it: a reconnect; else a new one)
-        let key = if request.key != 0 && self.issued_keys.contains(&request.key) && !self.players.values().any(|p| p.key == request.key) {
+        // (the key the client brought, if this server gave it and no one here has it: a reconnect; else a new one. Its old
+        // session still here, not yet timed out: a new key, the vote lockout carried over to it, RV-265)
+        let brought = request.key != 0 && self.issued_keys.contains(&request.key);
+        let key = if brought && !self.players.values().any(|p| p.key == request.key) {
             request.key
         } else {
-            self.new_key()
+            let key = self.new_key();
+            if brought && self.initiators.contains(&request.key) {
+                self.initiators.insert(key);
+            }
+            key
         };
         let player = Player {
             car_id,
@@ -507,6 +536,7 @@ impl Game {
             muted: BTreeSet::new(),
             blocked_notice: None,
             stats: [0; STAT_COUNTERS],
+            titles: [None, None],
             ping: 0,
         };
         let snapshot = self.arena.save_state();
@@ -520,7 +550,10 @@ impl Game {
             key,
             snapshot: snapshot.clone(),
         };
-        let _ = player.out.try_send(Outgoing::Control(welcome.encode()));
+        let welcome = welcome.encode();
+        // (a frame's length is a u16: 16 cars' world is ~12.4 KB, a fifth of it, RV-242/272)
+        debug_assert!(welcome.len() - 2 <= usize::from(u16::MAX), "a welcome of {} bytes", welcome.len());
+        let _ = player.out.try_send(Outgoing::Control(welcome));
         let _ = player.out.try_send(Outgoing::Control(Control::Match(self.match_state()).encode()));
         self.players.insert(id, player);
         self.send_world_to_others(id, &snapshot);
@@ -647,14 +680,15 @@ impl Game {
             }
             self.check_vote(team);
             self.reenable_vote_starters(team);
-            // Their car explodes where it is (`Car.Demolish(None)`: no demolition counted), then goes; not one already
-            // demolished, nor in the goal replay, the cars gone (RV-235)
+            // Their car explodes where it is (`RemovePlayerFromTeam` -> `Car.Demolish(None)`: no demolition counted, no
+            // phase test), then goes: only a live car, not one already demolished (a podium's loser has none), and none in
+            // the goal replay (`StartReplay` destroys the cars; ours stay in the arena: RV-235, RV-264)
             let tick = self.arena.tick_count();
             let explode = self.phase != Phase::Replay && !self.arena.car_demoed(player.car_id);
             self.broadcast(&Control::Event { server_tick: tick as u32, event: GameEvent::Left { car: player.car_id, lost, explode } });
             self.arena.remove_car(player.car_id);
             // (their counters stay with the match: the MVP counts the team's former members)
-            if self.phase != Phase::Ended {
+            if !self.phase.match_over() {
                 self.former.push((team, player.stats));
             }
             if self.mvp == Some(player.car_id) {
@@ -662,10 +696,11 @@ impl Game {
             }
             self.scoreboard_dirty = true;
             if self.players.is_empty() {
-                // Everyone gone: no contest (`ForceNoContest`; the arena stops until the next player starts a match)
-                if self.phase != Phase::Ended {
+                // Everyone gone: no contest (`ForceNoContest`: straight to the end screen, no podium; the arena stops until
+                // the next player starts a match)
+                if !self.phase.match_over() {
                     self.no_contest = true;
-                    self.phase = Phase::Ended;
+                    self.finish(tick);
                 }
             } else {
                 // A team left without players may forfeit, 0.01 game s later (MR-7.9-7.11)
@@ -701,9 +736,9 @@ impl Game {
     fn team_forfeits(&mut self, team: u8) {
         eprintln!("team {team} forfeits ({:?})", self.phase);
         match self.phase {
-            Phase::Ended => {}
+            Phase::PrePodium | Phase::Podium | Phase::Finished => {}
             Phase::PostGoal | Phase::Replay => self.forfeiting = Some(team),
-            Phase::Countdown | Phase::Active | Phase::TimeUp => self.end_match(1 - team.min(1), true),
+            Phase::Waiting | Phase::Countdown | Phase::Active | Phase::TimeUp => self.end_match(1 - team.min(1), true),
         }
     }
 
@@ -729,8 +764,9 @@ impl Game {
         }
         if let Some(vote) = self.votes[slot].as_mut()
             && let Some(yes) = vote.voters.get_mut(&id)
+            && !*yes
         {
-            *yes = true;
+            *yes = true; // (logged when it changes: a held or repeated press isn't a line each, RV-267)
             eprintln!("player {id} votes to forfeit: team {team} {}/{}", vote.yes(), vote.voters.len());
         }
         self.check_vote(team);
@@ -856,10 +892,15 @@ impl Game {
     }
 
     /// Skip the goal replay (`ServerReadyUp`: only while one plays)
+    /// `ReadyUp`: skips the goal replay, or on the end screen (from 1 s in) readies the player for the next match
+    /// (`SetReadyToPlay` → `ServerReadyUp`, MIO-31)
     pub fn ready_up(&mut self, id: PlayerId) {
-        if self.phase == Phase::Replay
+        let tick = self.arena.tick_count();
+        let end_screen = self.phase == Phase::Finished && tick >= self.finished_at + (READY_UP_DELAY_SECONDS * TICK_RATE as f32) as u64;
+        if (self.phase == Phase::Replay || end_screen)
             && let Some(p) = self.players.get_mut(&id)
         {
+            self.scoreboard_dirty |= end_screen && !p.ready;
             p.ready = true;
         }
     }
@@ -900,16 +941,26 @@ impl Game {
         self.no_contest = false;
         self.votes = [None, None];
         self.initiators.clear();
+        // (a leaver's key only mattered for their vote lockout, which ends with the match: RV-270)
+        let here: BTreeSet<u32> = self.players.values().map(|p| p.key).collect();
+        self.issued_keys.retain(|k| here.contains(k));
         for p in self.players.values_mut() {
             p.vote_start_disabled = false;
         }
         self.forfeiting = None;
         self.left_teams.clear();
         self.forfeit_check_at = None;
+        // (the world runs again: the podium's boost and hidden losers end with the kickoff's placement)
+        self.arena.set_frozen(false);
+        self.arena.set_unlimited_boost(false);
+        for p in self.players.values_mut() {
+            p.ready = false;
+        }
         // (the match stats start over: `PRI.ResetMatchStats`)
         self.arena.reset_stats();
         for p in self.players.values_mut() {
             p.stats = [0; STAT_COUNTERS];
+            p.titles = [None, None];
         }
         self.former.clear();
         self.mvp = None;
@@ -919,6 +970,9 @@ impl Game {
         self.kickoff();
         let warmup = (WARMUP_SECONDS * TICK_RATE as f32) as u32;
         self.arena.set_kickoff_countdown(self.arena.kickoff_countdown() + warmup);
+        // (the warm-up is `WaitingForPlayers`' last 3 s: no messages; then the countdown's 3, 2, 1, GO)
+        self.phase = Phase::Waiting;
+        self.phase_until = self.arena.tick_count() + u64::from(warmup);
     }
 
     fn kickoff(&mut self) {
@@ -939,9 +993,64 @@ impl Game {
         self.forfeit = forfeit;
         self.forfeiting = None;
         self.votes = [None, None]; // (the votes end with the match)
-        self.phase = Phase::Ended;
-        self.phase_until = self.arena.tick_count() + (PODIUM_SECONDS * TICK_RATE as f32) as u64;
+        self.phase = Phase::PrePodium;
+        self.phase_until = self.arena.tick_count() + (PRE_PODIUM_SECONDS * TICK_RATE as f32) as u64;
+        // (`EndGame` → `FreezePawns`: the ball and every car hold where they are)
+        self.arena.set_frozen(true);
         self.award_match_end(winner);
+        // (`OnMatchEnded`'s tracking events, then `PrePodiumSpotlight.UpdateSpotlight`: titles for both teams' current
+        // members, blue's first, each team in join order)
+        let members: Vec<u32> = [0, 1].iter().flat_map(|&team| self.players.values().filter(move |p| p.team == team).map(|p| p.car_id)).collect();
+        let titles = self.arena.match_ended(true, &members);
+        for (car, titles) in members.into_iter().zip(titles) {
+            if let Some(p) = self.players.values_mut().find(|p| p.car_id == car) {
+                p.titles = titles;
+            }
+        }
+    }
+
+    /// `PodiumSpotlight` (`InitPodiumCars`, MIO-11/13): the ball hidden; the winning team's players by MVPSort at the
+    /// podium's spots, the MVP's first, drivable with unlimited boost; every other car gone
+    fn start_podium(&mut self, tick: u64) {
+        let winner = self.winner.unwrap_or(0);
+        self.arena.set_frozen(false);
+        self.arena.set_respawns_held(true);
+        self.arena.set_unlimited_boost(true);
+        self.arena.hide_ball();
+        let mut winners: Vec<(StatCounters, u32)> = self.players.values().filter(|p| p.team == winner).map(|p| (p.stats, p.car_id)).collect();
+        winners.sort_by(|a, b| (b.0[0], b.0[1], b.0[2], b.0[3]).cmp(&(a.0[0], a.0[1], a.0[2], a.0[3])));
+        let on_podium: Vec<u32> = winners.iter().take(PODIUM_SPOTS.len()).map(|&(_, car)| car).collect();
+        // (`ClearPodiumTitle` from 4th place on: those titles are gone, not handed on)
+        for &(_, car) in winners.iter().skip(3) {
+            if let Some(p) = self.players.values_mut().find(|p| p.car_id == car) {
+                p.titles = [None, None];
+            }
+        }
+        self.scoreboard_dirty = true;
+        for (i, &car) in on_podium.iter().enumerate() {
+            let (x, y, yaw) = PODIUM_SPOTS[i];
+            let (x, y, yaw) = if winner == 1 { (-x, -y, yaw + 32768) } else { (x, y, yaw) };
+            self.arena.place_car(car, x, y, yaw as f32 * (std::f32::consts::TAU / 65536.0), 100.0);
+        }
+        let others: Vec<u32> = self.players.values().map(|p| p.car_id).filter(|car| !on_podium.contains(car)).collect();
+        for car in others {
+            self.arena.demolish_car(car);
+        }
+        self.phase = Phase::Podium;
+        self.phase_until = tick + (PODIUM_SECONDS * TICK_RATE as f32) as u64;
+    }
+
+    /// `Finished` (MIO-14, MIO-31): the world frozen again; the end screen's 60 s, ready-up from 1 s in
+    fn finish(&mut self, tick: u64) {
+        self.arena.set_frozen(true);
+        self.arena.set_unlimited_boost(false);
+        for p in self.players.values_mut() {
+            p.ready = false;
+        }
+        self.phase = Phase::Finished;
+        self.finished_at = tick;
+        self.phase_until = tick + u64::from(FINISH_SECONDS * TICK_RATE);
+        self.scoreboard_dirty = true;
     }
 
     /// `EndGame` → `GetMVP` / `NotifyWonMVP`, then `StatFactory.OnMatchEnded`: Win to the winning team's players and Loss
@@ -1018,7 +1127,9 @@ impl Game {
                 car: p.car_id,
                 ping: p.ping,
                 mvp: self.mvp == Some(p.car_id),
+                ready: self.phase == Phase::Finished && p.ready,
                 counters: p.stats.iter().map(|&c| c.clamp(0, i32::from(u16::MAX)) as u16).collect(),
+                titles: p.titles,
             })
             .collect();
         self.broadcast(&Control::Scoreboard(entries));
@@ -1171,7 +1282,7 @@ impl Game {
         let odd_tick = self.arena.tick_count() % 2 == 1;
         // (after the match the cars are frozen: `EndGame` → `SetAllDriving(false)`; in the goal replay they're gone:
         // `StartReplay` → `DestroyCars`, here frozen out of sight until the kickoff places them)
-        let frozen = matches!(self.phase, Phase::Ended | Phase::Replay);
+        let frozen = matches!(self.phase, Phase::PrePodium | Phase::Finished | Phase::Replay);
         for p in self.players.values_mut() {
             let controls = p.input.tick(now, odd_tick);
             let controls = if frozen { Controls::default() } else { controls };
@@ -1280,8 +1391,25 @@ impl Game {
                     self.send_ready();
                 }
             }
-            Phase::Ended => {
+            Phase::Waiting => {
                 if tick >= self.phase_until {
+                    self.phase = Phase::Countdown;
+                }
+            }
+            Phase::PrePodium => {
+                if tick >= self.phase_until {
+                    self.start_podium(tick);
+                }
+            }
+            Phase::Podium => {
+                if tick >= self.phase_until {
+                    self.finish(tick);
+                }
+            }
+            // The next match when the 60 s are up, or every player is ready (`CheckPlayersReady`, from 1 s in)
+            Phase::Finished => {
+                let all_ready = !self.players.is_empty() && self.players.values().all(|p| p.ready);
+                if tick >= self.phase_until || all_ready {
                     self.new_match();
                 }
             }
@@ -1556,8 +1684,10 @@ mod tests {
         let mut game = Game::new();
         let (tx, mut rx) = channel(TEST_QUEUE);
         game.join(1, REQUEST, tx);
-        assert_eq!(match_states(&mut rx).last().map(|m| (m.phase, m.clock_ticks)), Some((Phase::Countdown, MATCH_TICKS)));
-        // The match's first kickoff: the 3 s warm-up and the 4 s countdown, the clock stopped
+        assert_eq!(match_states(&mut rx).last().map(|m| (m.phase, m.clock_ticks)), Some((Phase::Waiting, MATCH_TICKS)));
+        // The match's first kickoff: the 3 s warm-up (`WaitingForPlayers`) and the 4 s countdown, the clock stopped
+        let countdown = run_until(&mut game, 1000, |g| g.phase == Phase::Countdown);
+        assert_eq!(countdown, 360);
         let go = run_until(&mut game, 1000, |g| g.phase == Phase::Active);
         assert_eq!(go, 840);
         // Nobody touches the ball: the clock starts 5 s after go (BallHasBeenHitStartDelay)
@@ -1626,13 +1756,59 @@ mod tests {
         game.arena.set_ball([0.0, 5000.0, 300.0], [0.0, 2000.0, 0.0]); // into orange's goal: blue scores
         run_until(&mut game, 120, |g| g.phase == Phase::PostGoal);
         assert_eq!(game.score, [1, 0]);
-        let ended = run_until(&mut game, 400, |g| g.phase == Phase::Ended);
+        let ended = run_until(&mut game, 400, |g| g.phase == Phase::PrePodium);
         assert_eq!(game.winner, Some(0));
-        assert!(match_states(&mut rx).last().is_some_and(|m| m.phase == Phase::Ended && m.winner == Some(0) && m.score == [1, 0]));
-        // Frozen on the podium, then a new match: 0-0, the full clock, a kickoff
-        let restarted = run_until(&mut game, 2000, |g| g.phase != Phase::Ended);
-        assert_eq!(restarted - ended, (PODIUM_SECONDS * TICK_RATE as f32) as u64);
-        assert_eq!((game.phase, game.score, game.clock_ticks, game.overtime, game.winner), (Phase::Countdown, [0, 0], MATCH_TICKS, false, None));
+        assert!(match_states(&mut rx).last().is_some_and(|m| m.phase == Phase::PrePodium && m.winner == Some(0) && m.score == [1, 0]));
+        // The world frozen for the 3 s before the podium
+        let car = game.car_id(1).unwrap();
+        let frozen_at = game.car_position(1).unwrap();
+        ticks(&mut game, 100);
+        assert_eq!(game.car_position(1), Some(frozen_at));
+        // The podium: the winner's car at the first spot, drivable, the ball gone
+        let podium = run_until(&mut game, 1000, |g| g.phase == Phase::Podium);
+        assert_eq!(podium - ended, (PRE_PODIUM_SECONDS * TICK_RATE as f32) as u64);
+        ticks(&mut game, 1);
+        let at = game.car_position(1).unwrap();
+        assert!((at[0] - PODIUM_SPOTS[0].0).abs() < 40.0 && (at[1] - PODIUM_SPOTS[0].1).abs() < 40.0, "spot {at:?}");
+        assert!(!game.arena.car_demoed(car));
+        // The end screen after 5.3 s: frozen, its 60 s counting down; ready-up only from 1 s in
+        let finished = run_until(&mut game, 1000, |g| g.phase == Phase::Finished);
+        assert_eq!(finished - podium, (PODIUM_SECONDS * TICK_RATE as f32) as u64);
+        assert_eq!(game.match_state().seconds_left, 60);
+        game.ready_up(1);
+        ticks(&mut game, 2);
+        assert_eq!(game.phase, Phase::Finished, "ready before the 1 s doesn't count");
+        ticks(&mut game, 120);
+        game.ready_up(1);
+        ticks(&mut game, 1);
+        // Every player ready: a new match, 0-0, the full clock, its warm-up, then the kickoff's countdown
+        assert_eq!((game.phase, game.score, game.clock_ticks, game.overtime, game.winner), (Phase::Waiting, [0, 0], MATCH_TICKS, false, None));
+        run_until(&mut game, 400, |g| g.phase == Phase::Countdown);
+    }
+
+    #[test]
+    fn the_end_screen_starts_the_next_match_after_60_s_and_the_podium_has_the_winners_only_mvp_first() {
+        init_engine();
+        let mut game = Game::new();
+        let (tx, _rx) = channel(TEST_QUEUE);
+        game.join(1, REQUEST, tx);
+        run_until(&mut game, 1000, |g| g.phase == Phase::Active);
+        game.end_match(0, false);
+        run_until(&mut game, 1200, |g| g.phase == Phase::Finished);
+        let waited = run_until(&mut game, 8000, |g| g.phase != Phase::Finished);
+        assert_eq!(waited, game.finished_at + u64::from(FINISH_SECONDS * TICK_RATE));
+        // A losing player has no car on the podium; the winners' second at spot 2
+        let (mut game, _rxs) = match_with(MatchType::Casual, 2, &[(1, 0, 1), (2, 0, 2), (3, 1, 3)]);
+        roll_into(&mut game, 1); // (the first touch: 0 points)
+        ticks(&mut game, 130);
+        roll_into(&mut game, 2); // (a ball hit, +2: 2 has the higher score, the MVP, spot 1)
+        game.end_match(0, false);
+        run_until(&mut game, 1000, |g| g.phase == Phase::Podium);
+        ticks(&mut game, 1);
+        assert!(game.arena.car_demoed(game.car_id(3).unwrap()));
+        let first = game.car_position(2).unwrap();
+        let second = game.car_position(1).unwrap();
+        assert!((first[1] - PODIUM_SPOTS[0].1).abs() < 40.0 && (second[1] - PODIUM_SPOTS[1].1).abs() < 40.0, "{first:?} {second:?}");
     }
 
     #[test]
@@ -1657,10 +1833,10 @@ mod tests {
         game.tick(0.0);
         assert_eq!(game.phase, Phase::Active);
         game.tick(0.0);
-        assert_eq!((game.phase, game.winner, game.forfeit), (Phase::Ended, Some(0), true));
-        assert!(match_states(&mut rx1).last().is_some_and(|m| m.phase == Phase::Ended && m.forfeit && m.winner == Some(0)));
-        // A new match after the podium, not a forfeit
-        run_until(&mut game, 2000, |g| g.phase == Phase::Countdown);
+        assert_eq!((game.phase, game.winner, game.forfeit), (Phase::PrePodium, Some(0), true));
+        assert!(match_states(&mut rx1).last().is_some_and(|m| m.phase == Phase::PrePodium && m.forfeit && m.winner == Some(0)));
+        // A new match after the podium and the end screen, not a forfeit
+        run_until(&mut game, 10_000, |g| g.phase == Phase::Countdown);
         assert!(!game.forfeit && game.winner.is_none());
     }
 
@@ -1934,6 +2110,40 @@ mod tests {
     }
 
 
+    #[test]
+    fn the_jitter_buffer_sizes_by_real_time_gaps_through_the_slow_motion() {
+        // Packets arriving 16 and 40 ms apart in real time through the goal's slow motion (gaps under 16 ms count as 16,
+        // and the buffer's 50 ms floor hides a spread smaller than this): the player's jitter buffer is a real-time one's
+        // fed the same arrivals, packet for packet (a game clock's gaps, slowed, would leave it at its floor: RV-263)
+        init_engine();
+        let mut game = Game::new();
+        game.test_goal_after = Some(60);
+        let (tx, mut rx) = channel(TEST_QUEUE);
+        game.join(1, REQUEST, tx);
+        let mut reference = crate::input_buffer::JitterBuffer::default();
+        let (mut now, mut next_send, mut short, mut slowed) = (0.0, 0.0, true, 0);
+        for tick in 0..2400u32 {
+            while now >= next_send {
+                let newest = tick + 2;
+                let first = newest.saturating_sub(9).max(1);
+                game.receive_inputs(1, (next_send * 1000.0) as u32, first, &throttle_frames((newest - first + 1) as usize), next_send);
+                reference.received_packet(next_send);
+                let jitter = &game.players[&1].input.jitter;
+                assert_eq!((jitter.buffer_size, jitter.buffer_time), (reference.buffer_size, reference.buffer_time), "at {next_send}");
+                if game.phase == Phase::PostGoal {
+                    slowed += 1;
+                }
+                next_send += if short { 0.016 } else { 0.040 };
+                short = !short;
+            }
+            game.tick(now);
+            now += game.next_tick_seconds();
+            drain(&mut rx);
+        }
+        assert!(slowed > 100, "packets through the slow motion: {slowed}");
+        assert!(reference.buffer_size > 7, "the irregular gaps grew it: {}", reference.buffer_size);
+    }
+
     /// A match with these players (id, team, key) at "go", and their channels
     fn match_with(match_type: MatchType, team_size: u8, players: &[(PlayerId, u8, u32)]) -> (Game, Vec<Receiver<Outgoing>>) {
         init_engine();
@@ -1971,7 +2181,7 @@ mod tests {
         drain(&mut rx1);
         game.ready_up(1);
         game.tick(0.0);
-        assert_eq!((game.phase, game.winner, game.forfeit), (Phase::Ended, Some(0), true));
+        assert_eq!((game.phase, game.winner, game.forfeit), (Phase::PrePodium, Some(0), true));
     }
 
     #[test]
@@ -1979,11 +2189,11 @@ mod tests {
         let (mut game, _rxs) = match_with(MatchType::Casual, 3, &[(1, 0, 1)]);
         game.leave(1);
         let state = game.match_state();
-        assert_eq!((state.phase, state.winner, state.forfeit, state.no_contest), (Phase::Ended, None, false, true));
+        assert_eq!((state.phase, state.winner, state.forfeit, state.no_contest), (Phase::Finished, None, false, true));
         let (tx, _rx) = channel(TEST_QUEUE);
         game.join(2, REQUEST, tx);
         let state = game.match_state();
-        assert_eq!((state.phase, state.no_contest), (Phase::Countdown, false));
+        assert_eq!((state.phase, state.no_contest), (Phase::Waiting, false));
     }
 
     #[test]
@@ -2012,7 +2222,58 @@ mod tests {
         game.vote_forfeit(2);
         assert_eq!(game.phase, Phase::Active);
         game.vote_forfeit(5);
-        assert_eq!((game.phase, game.winner, game.forfeit), (Phase::Ended, Some(1), true));
+        assert_eq!((game.phase, game.winner, game.forfeit), (Phase::PrePodium, Some(1), true));
+    }
+
+    #[test]
+    fn a_reconnect_while_the_old_session_is_still_here_keeps_the_lockout_under_a_new_key() {
+        // (RV-265: the old session not yet timed out holds the key; the new one gets another, still locked out)
+        let (mut game, mut rxs) = match_with(MatchType::Casual, 3, &[(1, 0, 11), (2, 0, 12), (3, 1, 13)]);
+        game.clock_ticks = 200 * TICK_RATE;
+        game.vote_forfeit(1);
+        ticks(&mut game, 20 * 120);
+        drain(&mut rxs[0]);
+        let starter = game.players[&1].key;
+        let (tx, mut rx) = channel(TEST_QUEUE);
+        game.join(4, JoinRequest { team: 0, key: starter, ..REQUEST }, tx);
+        assert_ne!(game.players[&4].key, starter, "the key is still the old session's");
+        assert_eq!(last_vote(&mut rx).map(|v| v.can_start), Some(false));
+        game.vote_forfeit(4);
+        assert!(game.votes[0].as_ref().is_some_and(|v| v.finished.is_some()), "no new vote");
+        // (a key that started nothing carries nothing)
+        let mate = game.players[&2].key;
+        let (tx, mut rx) = channel(TEST_QUEUE);
+        game.join(5, JoinRequest { team: 0, key: mate, ..REQUEST }, tx);
+        assert_eq!(last_vote(&mut rx).map(|v| v.can_start), Some(true));
+    }
+
+    #[test]
+    fn a_new_match_lets_last_matchs_vote_starters_start_one_and_forgets_leavers_keys() {
+        // (RV-269, RV-270: the initiators and the per-player lockouts start over; only the keys of the players here stay)
+        let (mut game, mut rxs) = match_with(MatchType::Casual, 3, &[(1, 0, 11), (2, 0, 12), (3, 1, 13), (4, 1, 14)]);
+        game.clock_ticks = 200 * TICK_RATE;
+        game.vote_forfeit(1);
+        ticks(&mut game, 20 * 120);
+        assert!(game.players[&1].vote_start_disabled);
+        let leaver = game.players[&4].key;
+        game.leave(4);
+        assert!(game.issued_keys.contains(&leaver), "kept through the match (a reconnect brings it back)");
+        game.end_match(1, false);
+        game.new_match();
+        run_until(&mut game, 1000, |g| g.phase == Phase::Active);
+        game.clock_ticks = 200 * TICK_RATE;
+        assert!(!game.players[&1].vote_start_disabled);
+        // (rejoining with their key, kept as they're here: no longer an initiator either)
+        let starter = game.players[&1].key;
+        game.leave(1);
+        let (tx, _rx) = channel(TEST_QUEUE);
+        game.join(6, JoinRequest { team: 0, key: starter, ..REQUEST }, tx);
+        assert_eq!(game.players[&6].key, starter);
+        drain(&mut rxs[1]);
+        game.vote_forfeit(6);
+        assert!(game.votes[0].as_ref().is_some_and(|v| v.finished.is_none()), "the former starter starts one");
+        assert!(!game.issued_keys.contains(&leaver));
+        assert_eq!(game.issued_keys.len(), 3);
     }
 
     #[test]
@@ -2081,7 +2342,7 @@ mod tests {
         assert!(!game.match_state().can_vote_forfeit);
         game.clock_ticks = MATCH_TICKS - 91 * TICK_RATE;
         game.vote_forfeit(2);
-        assert_eq!((game.phase, game.winner, game.forfeit), (Phase::Ended, Some(0), true));
+        assert_eq!((game.phase, game.winner, game.forfeit), (Phase::PrePodium, Some(0), true));
         // Overtime: always
         let (mut game, _rxs) = match_with(MatchType::Ranked, 3, &[(1, 0, 11), (2, 1, 12)]);
         (game.overtime, game.clock_ticks) = (true, 0);
@@ -2272,7 +2533,7 @@ mod tests {
 
     #[test]
     fn a_leavers_car_explodes_only_when_its_there() {
-        // (RV-235: not already demolished, nor in the goal replay, the cars gone)
+        // (RV-235, RV-264: a live car in the game's sense; not one already demolished, none in the goal replay)
         let (mut game, mut rxs) = match_with(MatchType::Private, 3, &[(1, 0, 1), (2, 1, 2), (3, 0, 3), (4, 1, 4)]);
         let explode = |rx: &mut Receiver<Outgoing>| -> Option<bool> {
             events(rx).into_iter().find_map(|e| if let GameEvent::Left { explode, .. } = e { Some(explode) } else { None })
@@ -2286,7 +2547,7 @@ mod tests {
         assert_eq!(explode(&mut rxs[0]), Some(false), "a demolished car");
         game.phase = Phase::Replay;
         game.leave(4);
-        assert_eq!(explode(&mut rxs[0]), Some(false), "in the goal replay");
+        assert_eq!(explode(&mut rxs[0]), Some(false), "in the goal replay (the game destroys the cars for it)");
     }
 
 
@@ -2354,6 +2615,23 @@ mod tests {
         let before = game.arena.car_last_ball_touch_tick(car_id);
         run_until(game, 300, |g| g.arena.car_last_ball_touch_tick(car_id) != before);
         ticks(game, 3);
+    }
+
+    #[test]
+    fn the_match_end_gives_both_teams_podium_titles_on_the_scoreboard_until_the_next_match() {
+        let (mut game, mut rxs) = match_with(MatchType::Casual, 1, &[(1, 0, 1), (2, 1, 2)]);
+        roll_into(&mut game, 1); // (the first touch, the only ball touch)
+        game.end_match(1, false); // (orange wins: titles go to the losers too)
+        ticks(&mut game, 1);
+        let car = game.car_id(1).unwrap();
+        let board = last_scoreboard(&mut rxs[1]).unwrap();
+        // Aggressor (FirstTouches, 2 points), then Benchwarmer (the fewest ball touches, 0 points); orange: nothing qualifies
+        let line = board.iter().find(|e| e.car == car).unwrap();
+        assert_eq!(line.titles, [Some(PodiumTitle { title: 20, count: 1 }), Some(PodiumTitle { title: 25, count: 1 })]);
+        assert!(board.iter().filter(|e| e.car != car).all(|e| e.titles == [None, None]));
+        game.new_match();
+        ticks(&mut game, 1);
+        assert!(last_scoreboard(&mut rxs[0]).unwrap().iter().all(|e| e.titles == [None, None]));
     }
 
     #[test]

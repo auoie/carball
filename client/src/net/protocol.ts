@@ -5,8 +5,10 @@
 // and flip resets in the state; 6: spawn counters in the state, the match message; 7: the engine turns the ball (its
 // orientation is simulated state: the network state's format is unchanged); 8: the bodies' inverse inertia tensors;
 // 9: the goal replay (its phase, plan and skip votes; Hello's auto-skip); 10: forfeit votes, the match type, a leaver's
-// car, no contest; 11: quick chat, players' names (the roster), a leave's reason; 12: whether a leaver's car explodes
-export const PROTOCOL_VERSION = 13;
+// car, no contest; 11: quick chat, players' names (the roster), a leave's reason; 12: whether a leaver's car explodes;
+// 13: match stats, mute, Hello's chat filters; 14: the match's intro and end (its phases, the end screen's countdown,
+// ready checks, podium titles), Refused's version reason
+export const PROTOCOL_VERSION = 14;
 /** A name's bytes at most (UTF-8) */
 export const MAX_NAME_BYTES = 32;
 export const MAX_INPUT_FRAMES = 10;
@@ -50,9 +52,10 @@ export interface ForfeitVote {
 }
 const VOTE_STATES: readonly ForfeitVote["state"][] = ["running", "passed", "failed", "none"];
 
-/** Where a match is (the game's GameEvent_Soccar_TA states) */
-export type MatchPhase = "countdown" | "active" | "postGoal" | "timeUp" | "ended" | "replay";
-const MATCH_PHASES: readonly MatchPhase[] = ["countdown", "active", "postGoal", "timeUp", "ended", "replay"];
+/** Where a match is (the game's GameEvent_Soccar_TA states): waiting is the first countdown's warm-up
+ *  (WaitingForPlayers); at the end the pre-podium (the winner shown, frozen), the podium and the end screen (Finished) */
+export type MatchPhase = "countdown" | "active" | "postGoal" | "timeUp" | "prePodium" | "replay" | "waiting" | "podium" | "finished";
+const MATCH_PHASES: readonly MatchPhase[] = ["countdown", "active", "postGoal", "timeUp", "prePodium", "replay", "waiting", "podium", "finished"];
 
 /** A goal replay (server ticks; ReplayDirector_TA: notes/camera-respawn-goal.md GS-7..9) */
 export interface ReplayPlan {
@@ -87,6 +90,8 @@ export interface MatchState {
   readonly canVoteForfeit: boolean;
   /** The match ended with no contest: every team left (ForceNoContest) */
   readonly noContest: boolean;
+  /** The end screen's countdown to the next match, whole seconds (0 in the other phases) */
+  readonly secondsLeft: number;
 }
 
 export type ControlMessage =
@@ -168,8 +173,30 @@ export interface ScoreboardEntry {
   readonly ping: number;
   /** The match's MVP (bMatchMVP) */
   readonly mvp: boolean;
+  /** Ready for the next match (the end screen's ready check) */
+  readonly ready: boolean;
   /** The match counters, in the server's order (game/matchStats.ts COUNTERS) */
   readonly counters: readonly number[];
+  /** The podium titles from the match's end: primary, secondary (null: none) */
+  readonly titles: readonly [PodiumTitle | null, PodiumTitle | null];
+}
+
+/** A podium title: its id (game/podiumTitles.ts STAT_TITLES, the engine's order) and the stat count it shows */
+export interface PodiumTitle {
+  readonly title: number;
+  readonly count: number;
+}
+
+/** No title (the wire's title byte) */
+const NO_TITLE = 255;
+
+/** Refused's reasons: the match has its most players; the client speaks another protocol version (RV-262) */
+export const REFUSED_FULL = 0;
+export const REFUSED_VERSION = 1;
+
+/** A welcome's version, read before the rest (another version's fields don't decode: RV-243); null: not a welcome */
+export function welcomeVersion(body: Uint8Array): number | null {
+  return body[0] === 0x81 && body.byteLength >= 3 ? (body[1] ?? 0) | ((body[2] ?? 0) << 8) : null;
 }
 
 /** One frame of inputs as sent: axes in 1/127 steps, bits for the buttons. */
@@ -382,9 +409,13 @@ export function encodeControl(m: ControlMessage): Uint8Array {
       for (const p of m.players.slice(0, 255)) {
         w.u32(p.car);
         w.u16(p.ping);
-        w.u8(p.mvp ? 1 : 0);
+        w.u8((p.mvp ? 1 : 0) | (p.ready ? 2 : 0));
         w.u8(Math.min(p.counters.length, 255));
         for (const c of p.counters.slice(0, 255)) w.u16(c);
+        for (const t of p.titles) {
+          w.u8(t?.title ?? NO_TITLE);
+          w.u16(t?.count ?? 0);
+        }
       }
       break;
     case "statEvent":
@@ -486,6 +517,7 @@ export function encodeControl(m: ControlMessage): Uint8Array {
       w.u8(m.score[0]);
       w.u8(m.score[1]);
       w.u8(m.winner ?? 255);
+      w.u8(m.secondsLeft);
       break;
   }
   const body = w.done();
@@ -543,8 +575,15 @@ export function decodeControl(body: Uint8Array): ControlMessage {
       const players = Array.from({ length: r.u8() }, () => {
         const car = r.u32();
         const ping = r.u16();
-        const mvp = r.u8() !== 0;
-        return { car, ping, mvp, counters: Array.from({ length: r.u8() }, () => r.u16()) };
+        const flags = r.u8();
+        const counters = Array.from({ length: r.u8() }, () => r.u16());
+        const title = (): PodiumTitle | null => {
+          const id = r.u8();
+          const count = r.u16();
+          return id === NO_TITLE ? null : { title: id, count };
+        };
+        const titles = [title(), title()] as const;
+        return { car, ping, mvp: (flags & 1) !== 0, ready: (flags & 2) !== 0, counters, titles };
       });
       return { type: "scoreboard", players };
     }
@@ -615,6 +654,7 @@ export function decodeControl(body: Uint8Array): ControlMessage {
       const clockTicks = r.u32();
       const score = [r.u8(), r.u8()] as const;
       const winner = r.u8();
+      const secondsLeft = r.u8();
       return {
         type: "match",
         serverTick,
@@ -627,6 +667,7 @@ export function decodeControl(body: Uint8Array): ControlMessage {
         forfeit: (flags & 4) !== 0,
         canVoteForfeit: (flags & 8) !== 0,
         noContest: (flags & 16) !== 0,
+        secondsLeft,
       };
     }
     default:

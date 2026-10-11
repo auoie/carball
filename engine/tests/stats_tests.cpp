@@ -2,6 +2,7 @@
 // placed by hand where a rule is about the touch's record, the ball's flight simulated
 #include "RocketSim.h"
 #include "Sim/GameRotator/GameRotator.h"
+#include "PodiumTitles.h"
 #include "StatFactory.h"
 
 #include <algorithm>
@@ -504,6 +505,199 @@ static void TestCrossbar() {
 	CHECK(h.Count(CROSSBAR_HITS, blue->id) == 1 && h.Counter(blue->id, MATCH_CROSSBAR_HITS) == 1, "%s", h.List().c_str());
 }
 
+static void TestActivityCounters() {
+	puts("car touches: both cars per bump, a demolition none; pad pickups: small and big alike, never at full boost");
+	Harness h;
+	Car* a = h.Park(Team::BLUE, Vec(3584, 0, 17)); // (on the big pad)
+	Car* b = h.Park(Team::ORANGE, Vec(-3584, 0, 17)); // (the other one, full)
+	CarState full = b->GetState();
+	full.boost = 100;
+	b->SetState(full);
+	Car* c = h.Park(Team::ORANGE, Vec(0, -4240, 17)); // (a small pad)
+	h.Step();
+	CHECK(h.Counter(a->id, BOOST_PICKUPS) == 1 && h.Counter(c->id, BOOST_PICKUPS) == 1 && h.Counter(b->id, BOOST_PICKUPS) == 0,
+		"a %d c %d b %d", h.Counter(a->id, BOOST_PICKUPS), h.Counter(c->id, BOOST_PICKUPS), h.Counter(b->id, BOOST_PICKUPS));
+	h.Step(10);
+	CHECK(h.Counter(a->id, BOOST_PICKUPS) == 1, "once per pickup: %d", h.Counter(a->id, BOOST_PICKUPS));
+	h.stats.OnBump(a, b, false);
+	h.Step();
+	h.stats.OnBump(a, b, true);
+	h.Step();
+	CHECK(h.Counter(a->id, CAR_TOUCHES) == 1 && h.Counter(b->id, CAR_TOUCHES) == 1 && h.Counter(c->id, CAR_TOUCHES) == 0,
+		"a %d b %d", h.Counter(a->id, CAR_TOUCHES), h.Counter(b->id, CAR_TOUCHES));
+}
+
+static bool HasEvent(const StatFactory& stats, uint32_t car, StatEvent event, int count) {
+	const PlayerStats* s = stats.GetStats(car);
+	return s && s->eventPresent[event] && s->eventCounts[event] == count;
+}
+
+static bool NoEvent(const StatFactory& stats, uint32_t car, StatEvent event) {
+	const PlayerStats* s = stats.GetStats(car);
+	return !s || !s->eventPresent[event];
+}
+
+static void TestMatchEndEvents() {
+	puts("match end: most and fewest pickups only past 10 times, touches always, ties all; goal records strict, own goals out");
+	{
+		Harness h;
+		Car* a = h.Park(Team::BLUE, Vec(-2000, 0, 17));
+		Car* b = h.Park(Team::BLUE, Vec(-1000, 0, 17));
+		Car* c = h.Park(Team::ORANGE, Vec(1000, 0, 17));
+		Car* d = h.Park(Team::ORANGE, Vec(2000, 0, 17));
+		h.Step();
+		h.stats.SetCounter(a->id, BOOST_PICKUPS, 31);
+		h.stats.SetCounter(b->id, BOOST_PICKUPS, 3);
+		h.stats.SetCounter(c->id, BOOST_PICKUPS, 0); // (no pickups: not the fewest)
+		h.stats.SetCounter(d->id, BOOST_PICKUPS, 31);
+		h.stats.SetCounter(a->id, BALL_TOUCHES, 9);
+		h.stats.SetCounter(b->id, BALL_TOUCHES, 9);
+		h.stats.SetCounter(c->id, BALL_TOUCHES, 0);
+		h.stats.SetCounter(d->id, BALL_TOUCHES, 40);
+		h.stats.SetCounter(c->id, CAR_TOUCHES, 21);
+		h.stats.OnMatchEnded(true);
+		CHECK(HasEvent(h.stats, a->id, MOST_BOOST_PICKUPS, 31) && HasEvent(h.stats, d->id, MOST_BOOST_PICKUPS, 31), "31 > 30: the most, both tied");
+		CHECK(HasEvent(h.stats, b->id, FEWEST_BOOST_PICKUPS, 3) && NoEvent(h.stats, c->id, FEWEST_BOOST_PICKUPS), "the fewest positive");
+		CHECK(HasEvent(h.stats, d->id, MOST_BALL_TOUCHES, 40) && HasEvent(h.stats, a->id, FEWEST_BALL_TOUCHES, 9) &&
+			HasEvent(h.stats, b->id, FEWEST_BALL_TOUCHES, 9) && NoEvent(h.stats, c->id, FEWEST_BALL_TOUCHES), "touches");
+		CHECK(HasEvent(h.stats, c->id, MOST_CAR_TOUCHES, 21) && NoEvent(h.stats, a->id, MOST_CAR_TOUCHES), "car touches");
+	}
+	{
+		Harness h;
+		Car* a = h.Park(Team::BLUE, Vec(-2000, 0, 17));
+		Car* b = h.Park(Team::ORANGE, Vec(2000, 0, 17));
+		h.Step();
+		h.stats.SetCounter(a->id, BOOST_PICKUPS, 30);
+		h.stats.SetCounter(b->id, BOOST_PICKUPS, 3);
+		h.stats.OnMatchEnded(true);
+		CHECK(NoEvent(h.stats, a->id, MOST_BOOST_PICKUPS) && NoEvent(h.stats, b->id, FEWEST_BOOST_PICKUPS), "30 vs 3: neither");
+	}
+	{
+		Harness h;
+		Car* a = h.Park(Team::BLUE, Vec(-2000, 3000, 17));
+		Car* b = h.Park(Team::ORANGE, Vec(2000, -3000, 17));
+		h.Step();
+		h.stats.SetState(FactoryState::ACTIVE);
+		auto goal = [&](Car* by, uint8_t goalTeam, float speed) {
+			h.Ball(Vec(0, goalTeam == 1 ? 3000 : -3000, 93));
+			h.Touch(by);
+			h.arena->goalBallSpeed = speed;
+			h.stats.ScoreGoal(goalTeam);
+			h.stats.SetState(FactoryState::ACTIVE);
+		};
+		goal(a, 1, 2850); // a's: 28 m/s
+		goal(b, 0, 650); // b's: the slowest, 6 m/s
+		goal(a, 1, 650); // (tied: the first keeps it)
+		goal(b, 1, 99999); // (b's own goal: not a record)
+		goal(a, 1, 50); // (0.5 m/s: at least 1)
+		h.stats.SetCounter(a->id, BALL_TOUCHES, 5);
+		h.stats.OnMatchEnded(false);
+		CHECK(HasEvent(h.stats, a->id, FASTEST_GOAL, 28) && HasEvent(h.stats, a->id, SLOWEST_GOAL, 1) && NoEvent(h.stats, b->id, FASTEST_GOAL),
+			"records");
+		CHECK(NoEvent(h.stats, a->id, MOST_BALL_TOUCHES), "no winner: no touch events");
+	}
+}
+
+static StatEvent EventOf(const char* name) {
+	static const std::pair<const char*, StatEvent> names[] = {
+		{ "Goal", GOAL }, { "Shot", SHOT }, { "Assist", ASSIST }, { "Save", SAVE }, { "EpicSave", EPIC_SAVE },
+		{ "Demolish", DEMOLISH }, { "OvertimeGoal", OVERTIME_GOAL }, { "MostBallTouches", MOST_BALL_TOUCHES },
+		{ "FewestBallTouches", FEWEST_BALL_TOUCHES }, { "MostBoostPickups", MOST_BOOST_PICKUPS },
+		{ "FewestBoostPickups", FEWEST_BOOST_PICKUPS }, { "CarTouches", MOST_CAR_TOUCHES }, { "FastestGoal", FASTEST_GOAL },
+		{ "SlowestGoal", SLOWEST_GOAL }, { "FurthestGoal", FURTHEST_GOAL },
+	};
+	for (const auto& [n, e] : names)
+		if (std::string(n) == name)
+			return e;
+	printf("unknown event %s\n", name);
+	return STAT_EVENT_COUNT;
+}
+
+static PlayerStats Stats(std::initializer_list<std::pair<const char*, int>> entries) {
+	PlayerStats s;
+	for (const auto& [name, count] : entries) {
+		s.eventCounts[EventOf(name)] = count;
+		s.eventPresent[EventOf(name)] = true;
+	}
+	return s;
+}
+
+// "archetype points count" for a title (empty: none)
+static std::string Title(const TitleStat& t) {
+	if (t.title == NO_TITLE)
+		return "-";
+	return std::string(STAT_TITLES[t.title].archetype) + " " + std::to_string(t.points) + " " + std::to_string(t.count);
+}
+
+static void TestPodiumTitles() {
+	puts("podium titles: MSVC qsort's tie order, PT1's examples (notes/match-stats.md §5.4a A.7)");
+	auto order = [](std::vector<int> keys) {
+		std::vector<std::pair<int, int>> a;
+		for (size_t i = 0; i < keys.size(); i++)
+			a.push_back({ keys[i], (int)i });
+		MsvcQsort(a, [](const std::pair<int, int>& x, const std::pair<int, int>& y) { return x.first > y.first ? -1 : x.first < y.first ? 1 : 0; });
+		std::vector<int> out;
+		for (const auto& p : a)
+			out.push_back(p.second);
+		return out;
+	};
+	CHECK(order({ 2, 2 }) == std::vector<int>({ 1, 0 }), "2");
+	CHECK(order({ 2, 2, 2 }) == std::vector<int>({ 1, 2, 0 }), "3");
+	CHECK(order({ 2, 2, 2, 2, 2 }) == std::vector<int>({ 1, 2, 3, 4, 0 }), "5");
+	CHECK(order(std::vector<int>(9, 2)) == std::vector<int>({ 0, 1, 2, 3, 4, 5, 6, 7, 8 }), "9");
+	CHECK(order(std::vector<int>(10, 2)) == std::vector<int>({ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 }), "10");
+	CHECK(order({ 2, 4, 2, 2, 4, 2, 2, 4, 2, 2, 2, 4 }) == std::vector<int>({ 1, 7, 4, 11, 5, 6, 3, 2, 8, 9, 10, 0 }), "12");
+	CHECK(order({ 4, 2, 6, 0, 0, 9, 0, 4, 9, 0, 9, 2, 0, 0, 6, 6, 0, 2, 0, 9, 6, 0, 9, 0, 2 }) ==
+		std::vector<int>({ 5, 8, 19, 22, 10, 2, 14, 15, 20, 7, 0, 24, 1, 11, 17, 13, 16, 9, 18, 6, 4, 21, 3, 23, 12 }), "25 (podium_ref.py)");
+
+	auto assign = [](std::vector<PlayerStats>& members) {
+		std::vector<std::pair<uint32_t, const PlayerStats*>> list;
+		for (size_t i = 0; i < members.size(); i++)
+			list.push_back({ (uint32_t)i + 1, &members[i] });
+		return AssignTitles(list);
+	};
+	{
+		std::vector<PlayerStats> m = {
+			Stats({ { "Goal", 3 }, { "Shot", 4 }, { "Assist", 1 }, { "MostBallTouches", 42 }, { "CarTouches", 21 } }),
+			Stats({ { "Goal", 1 }, { "Save", 2 }, { "Shot", 1 }, { "FewestBoostPickups", 2 } }),
+			Stats({ { "Save", 6 }, { "EpicSave", 1 }, { "MostBoostPickups", 35 } }),
+			Stats({ { "Goal", 1 }, { "Shot", 2 }, { "Demolish", 2 }, { "FastestGoal", 28 }, { "FewestBallTouches", 9 } }),
+		};
+		auto t = assign(m);
+		CHECK(Title(t[1].first) == "Goals_3_5 9 3" && Title(t[1].second) == "Shots 8 4", "A %s / %s", Title(t[1].first).c_str(), Title(t[1].second).c_str());
+		CHECK(Title(t[2].first) == "Saves 4 2" && Title(t[2].second) == "Goals 2 1", "B %s / %s", Title(t[2].first).c_str(), Title(t[2].second).c_str());
+		CHECK(Title(t[3].first) == "Saves_6_9 18 6" && Title(t[3].second) == "MostBoostPickups 7 35", "C %s / %s", Title(t[3].first).c_str(), Title(t[3].second).c_str());
+		CHECK(Title(t[4].first) == "Demolitions 4 2" && Title(t[4].second) == "FastestGoal 4 28", "D %s / %s", Title(t[4].first).c_str(), Title(t[4].second).c_str());
+	}
+	{
+		std::vector<PlayerStats> m = {
+			Stats({ { "Goal", 2 }, { "OvertimeGoal", 1 }, { "Shot", 3 }, { "SlowestGoal", 6 }, { "FurthestGoal", 61 } }),
+			Stats({ { "Goal", 1 }, { "Save", 3 }, { "Shot", 2 }, { "FastestGoal", 31 } }),
+		};
+		auto t = assign(m);
+		CHECK(Title(t[1].first) == "OvertimeGoal 40 1" && Title(t[1].second) == "SlowestGoal 10 6", "A %s / %s", Title(t[1].first).c_str(), Title(t[1].second).c_str());
+		CHECK(Title(t[2].first) == "Saves_3_5 9 3" && Title(t[2].second) == "Saves 6 3", "B %s / %s", Title(t[2].first).c_str(), Title(t[2].second).c_str());
+	}
+	{
+		std::vector<PlayerStats> m(3, Stats({ { "Goal", 1 }, { "Shot", 1 } }));
+		auto t = assign(m);
+		CHECK(Title(t[1].first) == "Shots 2 1" && Title(t[2].first) == "Goals 2 1" && Title(t[3].first) == "-", "%s %s %s",
+			Title(t[1].first).c_str(), Title(t[2].first).c_str(), Title(t[3].first).c_str());
+		CHECK(Title(t[1].second) == "-" && Title(t[2].second) == "-" && Title(t[3].second) == "-", "no secondaries");
+	}
+	{
+		int points, count;
+		PlayerStats slow = Stats({ { "SlowestGoal", 20 } });
+		CHECK(GetNumPoints(STAT_TITLES[29], slow, points, count) && points == 0 && count == 20, "Slowpoke at 20: 0 points");
+		PlayerStats slower = Stats({ { "SlowestGoal", 21 } });
+		CHECK(!GetNumPoints(STAT_TITLES[29], slower, points, count), "21: over its maximum");
+		PlayerStats pickups = Stats({ { "MostBoostPickups", 25 } });
+		CHECK(GetNumPoints(STAT_TITLES[22], pickups, points, count) && points == 5, "500 x 0.01 is 5, not 4: %d", points);
+		PlayerStats none = Stats({ { "MostBoostPickups", 0 } });
+		CHECK(!GetNumPoints(STAT_TITLES[22], none, points, count), "nobody picked up: no Speed Demon");
+	}
+}
+
 int main(int argc, char** argv) {
 	std::string meshes = argc > 1 ? argv[1] : ARENA_MESH_DIR;
 	RocketSim::Init(meshes, true);
@@ -520,6 +714,9 @@ int main(int argc, char** argv) {
 	TestHitPredicates();
 	TestJuggle();
 	TestCrossbar();
+	TestActivityCounters();
+	TestMatchEndEvents();
+	TestPodiumTitles();
 
 	printf("%d checks, %d failed\n", checks, failures);
 	return failures ? 1 : 0;

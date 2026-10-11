@@ -45,11 +45,27 @@ test("a team votes to concede: the tally, a failed vote's lockout, a teammate's 
   const vote = button(page, "Vote to Concede");
   await expect(vote).toBeVisible({ timeout: 40_000 });
   await expect(button(page, "Leave Match")).toBeHidden();
+  await expect(vote).toHaveCSS("text-transform", "uppercase"); // (RV-268)
+  // (the bar's flashes counted: one per new yes, RV-268)
+  await page.evaluate(() => {
+    const fill = document.querySelector<HTMLElement>("#vote-fill");
+    if (!fill) return;
+    const counter = window as unknown as { voteFlashes: number };
+    counter.voteFlashes = 0;
+    const animate = fill.animate.bind(fill);
+    fill.animate = (...args: Parameters<HTMLElement["animate"]>): Animation => {
+      counter.voteFlashes++;
+      return animate(...args);
+    };
+  });
   await vote.click();
   await expect(page.locator("#settings")).toBeHidden();
 
-  // The team's widget: the tally and the time; no hint for the voter
+  // The team's widget: shown at once (no fade-in), its bar flashed; the tally and the time; no hint for the voter
   await expect(page.locator("#vote")).toHaveClass(/shown/, { timeout: 15_000 });
+  await expect(page.locator("#vote")).toHaveCSS("transition-duration", "0s");
+  await expect(page.locator("#vote")).toHaveCSS("opacity", "1");
+  await expect.poll(() => page.evaluate(() => (window as unknown as { voteFlashes: number }).voteFlashes)).toBe(1);
   await expect(page.locator("#vote-tally")).toHaveText("Vote to Concede 1/2");
   await expect(page.locator("#vote-time")).toHaveText(/^0:(20|1\d|0\d)$/);
   await expect(page.locator("#vote-hint")).toBeHidden();
@@ -58,6 +74,15 @@ test("a team votes to concede: the tally, a failed vote's lockout, a teammate's 
   await expect(page.locator("#vote")).not.toHaveClass(/shown/, { timeout: 45_000 });
   await page.keyboard.press("Escape");
   await expect(button(page, "Leave Match")).toBeVisible();
+  await expect(button(page, "Vote to Concede")).toBeHidden();
+  await page.keyboard.press("Escape");
+  // ... nor after reloading its tab: its key from storage, the lockout on it (RV-265, RV-266; blue again, the old
+  // session gone with the page)
+  await page.reload();
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
+  await expect(page.locator("#net")).toContainText("3 cars", { timeout: 30_000 });
+  await page.keyboard.press("Escape");
+  await expect(button(page, "Leave Match")).toBeVisible({ timeout: 15_000 });
   await expect(button(page, "Vote to Concede")).toBeHidden();
   await page.keyboard.press("Escape");
 
@@ -137,4 +162,45 @@ test("quick chat: the two presses, to all and to the team, names and comings and
   await expect(log).toContainText("Ziggy left the match", { timeout: 30_000 });
   expect(errors).toEqual([]);
 });
+
+test("the match's end: the winner banner, the podium with the winner's tag, the end screen, ready for the next match", async ({ page, browser }) => {
+  test.setTimeout(240_000); // (two pages joining under the suite's load)
+  const errors: string[] = [];
+  await named(page, "Merc");
+  await join(page, errors);
+  await expect(page.locator("#net")).toContainText("1 cars", { timeout: 30_000 }); // (alone: blue)
+  const orange = await newPlayer(browser, errors, "Ziggy"); // (orange, alone: its vote passes at once)
+  others.push(orange);
+  await expect(page.locator("#net")).toContainText("2 cars", { timeout: 30_000 });
+  // Orange concedes once votes are allowed (this server: as soon as the clock runs)
+  await orange.keyboard.press("Escape");
+  await button(orange, "Vote to Concede").click({ timeout: 60_000 });
+  // The winner banner (MIO-18/19): the win word over the team's name
+  const banner = page.locator("#winner-banner");
+  await expect(banner).toBeVisible({ timeout: 30_000 });
+  await expect(banner.locator(".winner-label")).toHaveText("WINNER BY FORFEIT");
+  await expect(banner.locator(".winner-team")).toHaveText("BLUE");
+  await expect(page.locator("#score")).toBeHidden(); // (the HUD's match parts go: MIO-17)
+  // The podium: the winner's car on it, its name under it (MIO-22); the banner raised
+  await expect(page.locator(".podium-tag", { hasText: "Merc" })).toBeVisible({ timeout: 15_000 });
+  await expect(banner.locator(".winner")).toHaveClass(/raised/);
+  await page.screenshot({ path: "test-results/podium.png" });
+  // The end screen (MIO-26, 31): the scoreboard with the winner stamp, the countdown, Ready; both ready: the next match
+  const end = page.locator("#end-screen");
+  await expect(end).toBeVisible({ timeout: 15_000 });
+  await expect(end.locator(".end-countdown")).toContainText(/Next Match In \d+/, { timeout: 10_000 });
+  await expect(page.locator("#scoreboard .sb-winner-stamp")).toHaveText("WINNER");
+  await page.screenshot({ path: "test-results/end-screen.png" });
+  await end.locator("button[data-action=ready]").click({ timeout: 10_000 });
+  await expect(page.locator("#scoreboard .sb-local .sb-ready")).toBeVisible({ timeout: 10_000 });
+  await orange.locator("#end-screen button[data-action=ready]").click({ timeout: 30_000 });
+  await expect.poll(async () => (await phases(page)).at(-1), { timeout: 30_000 }).toBe("waiting");
+  await expect(end).toBeHidden();
+  expect(errors).toEqual([]);
+});
+
+/** The match phases the page saw, in order */
+async function phases(page: Page): Promise<string[]> {
+  return page.evaluate(() => (window as unknown as { rlOnline: () => { phases: { phase: string }[] } }).rlOnline().phases.map((p) => p.phase));
+}
 

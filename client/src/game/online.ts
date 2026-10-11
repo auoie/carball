@@ -23,6 +23,7 @@ import {
   type ControlMessage,
   type ForfeitVote,
   type InputFrame,
+  type MatchPhase,
   type MatchState,
   type MatchType,
   type RosterEntry,
@@ -51,12 +52,29 @@ import { Fade } from "../render/fade";
 import { SceneEffects } from "../render/effects";
 import { EXPLOSION_LARGE, EXPLOSION_MEDIUM, IMPACT_MEDIUM } from "../camera/shake";
 import { ImpactTriggers, triggerSounds } from "./impactTriggers";
-import { ServerDemolitions } from "./serverDemolitions";
+import { ServerDemolitions, leaverExplodes } from "./serverDemolitions";
 import { ShakeTriggers } from "./shakeTriggers";
 import { type MatchMenuItem, matchMenuItems, pressTo, voteHud } from "./forfeitVote";
 import { CHAT_COLOURS, CHAT_TEXT, QuickChatMenu, presetIndex, presetText, visibleGroups } from "./quickChat";
 import { CHAT_LOG, type ChatLog, type QuickChatPanel, chatMessageLine, rosterLines } from "../ui/chatLog";
 import { goalBanner, scoreboardAllowed, scoreboardTeams, statPopup, tickerRow } from "./matchStats";
+import {
+  LOAD_FADE_IN,
+  PODIUM_FADE_IN,
+  PRE_PODIUM_FADE,
+  WAITING_MIN_SECONDS,
+  WAITING_VIEW,
+  WINNERS_EXPLOSION_DELAY,
+  dimming,
+  hudParts,
+  matchOver,
+  podiumView,
+  winnerBanner,
+  winnersGoal,
+} from "./matchSequence";
+import { EndScreen, type PodiumTags, type ScreenDimming, type WinnerBanner } from "../ui/endOfMatch";
+import { shownTitles } from "./podiumTitles";
+import type { CameraView } from "../camera/rlCamera";
 import type { HeldScoreboard, ScoreboardView } from "../ui/scoreboard";
 import type { StatPopups, StatTicker } from "../ui/statFeed";
 import { PLAYER_TEXT, type PlayerItem, type Toast } from "../ui/playersMenu";
@@ -195,6 +213,21 @@ export class Online {
   /** The players whose chat this player muted (the server's) and blocked (dropped here), by car; this session */
   readonly #muted = new Set<number>();
   readonly #blocked = new Set<number>();
+  /** When this client saw the match's phase change (real s): the end's camera and screen timings run from it */
+  #phaseSince = 0;
+  /** The joining camera (CAM-30): since when it shows (null: not now), and whether it has had its turn */
+  #waitingSince: number | null = null;
+  #waitingDone = false;
+  /** The car camera's last view (the pre-podium holds it: CAM-35) */
+  #lastView: CameraView | null = null;
+  #faded = false; // (the pre-podium's fade to black, started)
+  /** The podium's cars, each where first seen (CAM-36), since when the podium shows, its explosion played */
+  readonly #podiumCars = new Map<number, Vec3>();
+  #podiumSince = 0;
+  #podiumExploded = false;
+  /** The screen's dimming now, and where the phase's tween started (MIO-20) */
+  #dim = { filter: 0, vignette: 0 };
+  #dimFrom = { filter: 0, vignette: 0 };
   readonly #lost = new Set<number>();
   readonly #chatMenu = new QuickChatMenu();
   #chatFilterSent = "";
@@ -219,6 +252,7 @@ export class Online {
     private readonly inputEnabled: () => boolean,
     private readonly chat: { readonly log: ChatLog; readonly panel: QuickChatPanel },
     private readonly statsUi: { readonly scoreboard: HeldScoreboard; readonly popups: StatPopups; readonly ticker: StatTicker; readonly toast: Toast },
+    private readonly endUi: { readonly banner: WinnerBanner; readonly dimming: ScreenDimming; readonly tags: PodiumTags; readonly endScreen: EndScreen },
   ) {
     this.#world = world;
     // (the server demolishes: the game's demolition is the authority's alone, a client sees it in the replicated
@@ -247,6 +281,7 @@ export class Online {
     renderer.scene.add(this.#ballView.root, this.#padsView.root);
     this.#effects = new SceneEffects(renderer.scene);
     this.#syncCars();
+    this.#fade.fromBlack(LOAD_FADE_IN); // (MIO-2: the arena fades in from black as it first draws)
     this.#predictor.onFrame = (frame) => {
       this.#recordFrame(frame);
     };
@@ -335,7 +370,9 @@ export class Online {
     for (let i = 0; i < ticks; i++) {
       // (after the match the server freezes every car, and in the goal replay the cars are gone: send it nothing then,
       // so the prediction agrees)
-      const frozen = this.#match?.phase === "ended" || this.#match?.phase === "replay";
+      // (and on the podium only the winners drive)
+      const phase = this.#match?.phase;
+      const frozen = phase === "prePodium" || phase === "finished" || phase === "replay";
       const jumped = { ...input, bits: input.bits | (this.#jump.tick(raw.jump) ? BIT_JUMP : 0) };
       this.#predictor.advance(frozen ? NO_INPUT : this.#disconnected === null ? jumped : { ...input, throttle: 0, bits: 0 });
       this.#world.takeEvents(); // goals come from the server
@@ -387,7 +424,7 @@ export class Online {
 
   /** The four categories shown: the match's, or after it the post-game set */
   #chatGroups(settings: Settings): ReturnType<typeof visibleGroups> {
-    return visibleGroups(settings.chat.slots, this.#match?.phase === "ended" ? "ended" : "match");
+    return visibleGroups(settings.chat.slots, matchOver(this.#match?.phase) ? "ended" : "match");
   }
 
   /** The quick-chat panel and the chat log, each frame (real time) */
@@ -398,15 +435,64 @@ export class Online {
     const actions = ["chatPreset1", "chatPreset2", "chatPreset3", "chatPreset4"] as const;
     const keys = actions.map((a) => inputGlyph(this.#input.usingGamepad ? bindings[a].gamepad : bindings[a].keyboard));
     this.chat.panel.draw(this.#chatMenu.view(now), this.#chatGroups(settings), presetText, keys);
-    // The scoreboard while its binding is held; the stat popups and the feed
+    // The scoreboard while its binding is held, or pinned on the end screen; the stat popups and the feed
     const board = this.statsUi.scoreboard;
-    board.update(now, this.#scoreboardHeld, scoreboardAllowed(this.#match?.phase), this.#scoreboardView(settings));
+    const phase = this.#match?.phase;
+    const view = this.#scoreboardView(settings);
+    const since = now - this.#phaseSince;
+    if (phase === "finished" && view) {
+      board.pin(now, { ...view, winner: this.#match?.winner ?? null }, { shift: EndScreen.menuShift(since) });
+    } else {
+      board.unpin();
+      board.update(now, this.#scoreboardHeld, scoreboardAllowed(phase), view);
+    }
+    this.statsUi.popups.lowered = phase === "prePodium" || phase === "podium";
     this.statsUi.popups.update(now);
     this.statsUi.ticker.update(now);
     this.statsUi.toast.update(now);
+    this.#drawEnd(now);
     // The log stays up in the menu, after the match (RV-254) and with the scoreboard (4 s after it: SB-10)
-    const hold = !this.inputEnabled() || this.#match?.phase === "ended" || board.shown;
-    this.chat.log.update(now, hold, board.shown ? CHAT_LOG.afterScoreboard : CHAT_LOG.hideAfter);
+    const hold = !this.inputEnabled() || matchOver(phase) || board.shown;
+    this.chat.log.update(now, hold, board.shown && phase !== "finished" ? CHAT_LOG.afterScoreboard : CHAT_LOG.hideAfter);
+  }
+
+  /** The match's end on screen: the winner banner, the dimming, the podium's name tags, the end screen's menu */
+  #drawEnd(now: number): void {
+    const match = this.#match;
+    const phase = match?.phase;
+    const since = now - this.#phaseSince;
+    const winner = match?.winner ?? 0;
+    this.endUi.banner.update(phase === "prePodium" || phase === "podium" ? winnerBanner(match?.winner ?? null, match?.forfeit ?? false) : null, phase === "podium");
+    this.#dim = dimming(phase, since, this.#dimFrom);
+    this.endUi.dimming.update(this.#dim, winner);
+    // (the podium's panels: the WinnerMenu's, gone with it on the end screen)
+    const titlesOf = (car: number): ReturnType<typeof shownTitles> => shownTitles(this.#board.find((e) => e.car === car)?.titles);
+    const tags = phase === "podium"
+      ? [...this.#podiumCars.keys()].flatMap((car) => {
+          const entry = this.#cars.get(car);
+          const name = this.#roster?.get(car)?.name;
+          if (!entry || name === undefined || this.#drawnDemoed(car, entry.state.current)) return [];
+          const p = entry.state.current.pos;
+          return [{ car, name, side: winner, titles: titlesOf(car), at: this.#renderer.project({ x: p.x, y: p.y, z: -20 }) }];
+        })
+      : [];
+    this.endUi.tags.update(tags);
+    const mine = this.#board.find((e) => e.car === this.#localCar);
+    const roster = [...(this.#roster?.values() ?? [])];
+    const rows = [roster.filter((r) => r.team === 0).length, roster.filter((r) => r.team === 1).length] as const;
+    this.endUi.endScreen.update({
+      shown: phase === "finished",
+      since,
+      secondsLeft: match?.secondsLeft ?? 0,
+      ready: mine?.ready ?? false,
+      accolades: titlesOf(this.#localCar),
+      rows,
+    });
+  }
+
+  /** The end screen's Ready (`SetReadyToPlay` → `ServerReadyUp`: the next match once every player is) */
+  readyForNextMatch(): void {
+    this.#connection.readyUp();
   }
 
   /** What the scoreboard shows: the rostered players' lines by team, the score, the player's columns */
@@ -604,6 +690,7 @@ export class Online {
         if (m.phase !== this.#match?.phase) {
           this.#phases.push({ phase: m.phase, at: performance.now(), frame: this.#predictor.frame, winner: m.winner, forfeit: m.forfeit });
           if (this.#phases.length > 16) this.#phases.shift();
+          this.#enterPhase(m.phase, this.#match === null);
         }
         this.#match = m; // (the score too: the server's)
       } else if (m.type === "event" && m.event.kind === "goal") {
@@ -635,7 +722,7 @@ export class Online {
         // A player left: their car explodes where it's drawn (Car.Demolish(None)), then the world without it reloads
         if (m.event.lost) this.#lost.add(m.event.car);
         const car = this.#cars.get(m.event.car);
-        if (car && m.event.explode) {
+        if (leaverExplodes(m.event, car !== undefined, this.#replay !== null) && car) {
           const pos = add(car.state.blended(this.#clock.alpha).pos, car.error.location);
           this.#effects.demolition(pos);
           this.#camera.shakes.play(EXPLOSION_MEDIUM, pos);
@@ -653,7 +740,7 @@ export class Online {
         const roster = this.#roster;
         if (this.#blocked.has(m.car) || !CHAT_PRESETS[m.preset] || !roster?.has(m.car)) continue;
         const match = this.#match;
-        const view = { localCar: this.#localCar, roster, overtime: match?.overtime ?? false, ended: match?.phase === "ended" };
+        const view = { localCar: this.#localCar, roster, overtime: match?.overtime ?? false, ended: matchOver(match?.phase) };
         this.chat.log.add(chatMessageLine(m, view), performance.now() / 1000);
         this.#audio.chatMessage();
       } else if (m.type === "chatBlocked") {
@@ -680,6 +767,28 @@ export class Online {
         this.#fade.fromBlack();
       }
       // (replayReady: the game shows the names of the players not ready, not a count, MR-6.14: with player names)
+    }
+  }
+
+  /** A new phase as this client sees it (MIO-16: the end's timings run from here). `first`: the first match state after
+   *  joining */
+  #enterPhase(phase: MatchPhase, first: boolean): void {
+    const now = performance.now() / 1000;
+    this.#phaseSince = now;
+    this.#dimFrom = this.#dim;
+    // (the server's world: frozen at the end and on the end screen, the podium's boost unlimited)
+    this.#world.setFrozen(phase === "prePodium" || phase === "finished");
+    this.#world.setUnlimitedBoost(phase === "podium");
+    // CAM-30: joining in the match's warm-up, the side view first (once)
+    if (first && phase === "waiting" && !this.#waitingDone) this.#waitingSince = now;
+    if (phase === "prePodium") this.#faded = false;
+    if (phase === "podium") {
+      // CAM-36: a cut from the pre-podium's black, fading in over 0.25 s; the ball gone (HideBalls)
+      this.#podiumCars.clear();
+      this.#podiumSince = now;
+      this.#podiumExploded = false;
+      this.#serverExploded = true;
+      this.#fade.fromBlack(PODIUM_FADE_IN);
     }
   }
 
@@ -724,7 +833,7 @@ export class Online {
 
   #handleActions(held: HeldActions, options: Options, ballCamToggle: boolean): void {
     const phase = this.#match?.phase;
-    const blocked = phase === "replay" || phase === "ended";
+    const blocked = phase === "replay" || matchOver(phase);
     const next = updateSwitches({ ballCam: this.#ballCam, rear: this.#rear }, held, this.#held, { ballCamToggle, rearCameraToggle: options.rearCameraToggle, blocked });
     this.#ballCam = next.ballCam;
     this.#rear = next.rear;
@@ -793,8 +902,9 @@ export class Online {
           }
         : null;
       const controls = { ballCam: this.#ballCam, rear: this.#rear, lookUp: this.#look.up, lookRight: this.#look.right, freeLook: this.#freeLook };
-      const view = this.#camera.update(frameSeconds, drawnCar, drawnBall, controls, respawn, realSeconds);
+      const carView = this.#camera.update(frameSeconds, drawnCar, drawnBall, controls, respawn, realSeconds);
       if (this.#camera.takeBallCamExit()) this.#ballCam = false; // (free look left the toggled ball cam)
+      const view = this.#matchView(carView);
       this.#renderer.render(view);
       this.#effects.camera = view.position; // (the husks collide near it)
       this.#audio.frame({
@@ -813,6 +923,43 @@ export class Online {
     }
 
     this.#updateHud(null, realSeconds);
+  }
+
+  /** The view the phase calls for (notes/match-intro-outro.md): the side view while joining in the warm-up (CAM-30,
+   *  3 s at least, once), the last car view held before the podium with its fade to black from 2.5 s (CAM-35), the
+   *  podium's dolly through the end screen (CAM-36) with the winners' explosion 0.6 s in (MIO-12); else the car's */
+  #matchView(carView: CameraView): CameraView {
+    const now = performance.now() / 1000;
+    const phase = this.#match?.phase;
+    if (this.#waitingSince !== null) {
+      if (phase === "waiting" && now - this.#waitingSince < WAITING_MIN_SECONDS) return WAITING_VIEW;
+      this.#waitingSince = null; // (a cut to the car)
+    }
+    this.#waitingDone = true;
+    if (phase === "prePodium") {
+      if (!this.#faded && now - this.#phaseSince >= PRE_PODIUM_FADE.delay) {
+        this.#faded = true;
+        this.#fade.toBlack(PRE_PODIUM_FADE.duration);
+      }
+      return this.#lastView ?? carView;
+    }
+    if (phase === "podium" || phase === "finished") {
+      const winner = this.#match?.winner ?? 0;
+      for (const [id, entry] of this.#cars) {
+        const car = entry.state.current;
+        if (car.team === winner && !this.#drawnDemoed(id, car) && !this.#podiumCars.has(id)) this.#podiumCars.set(id, car.pos);
+      }
+      if (phase === "podium" && !this.#podiumExploded && now - this.#podiumSince >= WINNERS_EXPLOSION_DELAY) {
+        this.#podiumExploded = true;
+        const at = winnersGoal(winner);
+        this.#effects.goal(at, winner);
+        this.#audio.goal();
+      }
+      if (this.#podiumCars.size > 0) return podiumView([...this.#podiumCars.values()], winner, now - this.#podiumSince);
+      return carView;
+    }
+    this.#lastView = carView;
+    return carView;
   }
 
   /** The HUD; `message`: what it says instead of the match's messages (null: those); `hint`: a line under it */
@@ -837,7 +984,8 @@ export class Online {
       flipReset: this.#flipReset,
       respawn: car ? respawnHud(car) : null,
       hint,
-      vote: voteHud(this.#vote, this.#matchType, MENU_KEY, this.#match?.phase === "ended"),
+      vote: voteHud(this.#vote, this.#matchType, MENU_KEY, matchOver(this.#match?.phase)),
+      parts: hudParts(this.#match?.phase),
     });
     if (this.#flipReset) this.#audio.flipReset();
     this.#flipReset = false;
