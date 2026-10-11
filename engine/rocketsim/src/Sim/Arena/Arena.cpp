@@ -1,5 +1,6 @@
 #include "Arena.h"
 #include "../GameRotator/GameRotator.h"
+#include "SweepGjkEpa282.h"
 
 #include <algorithm>
 #include "../../RocketSim.h"
@@ -709,12 +710,14 @@ static bool IsWithinForwardCone(const RotMat& rot, Vec dir, float yawDeg, float 
 	return angleWithoutAxis(rot.up) <= yawDeg;
 }
 
-// RL PATCH: both cars at their time of impact, for the demo cone (Car_TA.ShouldDemolish -> GetTimeOfImpact, native
-// FUN_140efc840). Each car's start-of-tick state is integrated one tick back and one tick forward (FUN_140e9c2e0),
-// Bullet's continuous convex cast runs between the hitboxes over that span (allowed penetration 0.04), and the
-// positions are lerped and the rotations slerped at the fraction. A missed sweep keeps the start-of-tick states
-// (InitTimeOfImpactFromOldRBState).
-static void SweepToImpact(Car* car1, Car* car2, float tickTime, PhysState& impact1, PhysState& impact2) {
+// RL PATCH: both cars at their time of impact, for the demo cone (Car_TA.ShouldDemolish -> GetTimeOfImpact
+// FUN_140f01930). Each car's start-of-tick state (its location and velocity x 0.02, its quaternion: the integrator
+// 0x140ea04f0) is integrated one tick back and one tick forward, Bullet's continuous convex cast runs between the hitboxes
+// over that span (allowed penetration 0.04; the game's 2.82 penetration solver: RV-233), and at the fraction the
+// locations are lerped as the game's (to x 50 - from x 50) x f + from x 50 and the rotations slerped as UE3's SlerpQuat,
+// normalised, through the matrix QuatToRotator makes (RV-232). A missed sweep keeps the start-of-tick states
+// (InitTimeOfImpactFromOldRBState)
+float Arena::SweepToImpact(Car* car1, Car* car2, float tickTime, PhysState& impact1, PhysState& impact2) {
 	impact1 = car1->_oldState;
 	impact2 = car2->_oldState;
 
@@ -722,13 +725,14 @@ static void SweepToImpact(Car* car1, Car* car2, float tickTime, PhysState& impac
 	Car* cars[2] = { car1, car2 };
 	for (int i = 0; i < 2; i++) {
 		const PhysState& s = cars[i]->_oldState;
-		btTransform t(s.rotMat, s.pos * UU_TO_BT);
-		btTransformUtil::integrateTransform(t, -(s.vel * UU_TO_BT), -s.angVel, tickTime, from[i]);
-		btTransformUtil::integrateTransform(t, s.vel * UU_TO_BT, s.angVel, tickTime, to[i]);
+		btTransform t(cars[i]->_oldQuat, s.pos * UU_TO_BT);
+		btVector3 vel = s.vel * UU_TO_BT;
+		btTransformUtil::integrateTransform(t, -vel, -s.angVel, tickTime, from[i]);
+		btTransformUtil::integrateTransform(t, vel, s.angVel, tickTime, to[i]);
 	}
 
 	btVoronoiSimplexSolver simplexSolver;
-	btGjkEpaPenetrationDepthSolver penetrationSolver;
+	SweepPenetrationSolver282 penetrationSolver;
 	btContinuousConvexCollision cast(&car1->_childHitboxShape, &car2->_childHitboxShape, &simplexSolver, &penetrationSolver);
 	btConvexCast::CastResult result;
 	result.m_fraction = 1;
@@ -738,16 +742,30 @@ static void SweepToImpact(Car* car1, Car* car2, float tickTime, PhysState& impac
 		child[i] = cars[i]->_compoundShape.getChildTransform(0);
 	if (!cast.calcTimeOfImpact(from[0] * child[0], to[0] * child[0], from[1] * child[1], to[1] * child[1], result) ||
 		result.m_fraction >= 1)
-		return;
+		return 1;
 
 	float f = result.m_fraction;
 	PhysState* impacts[2] = { &impact1, &impact2 };
 	for (int i = 0; i < 2; i++) {
-		impacts[i]->pos = (from[i].getOrigin() + (to[i].getOrigin() - from[i].getOrigin()) * f) * BT_TO_UU;
-		btQuaternion q = from[i].getRotation().slerp(to[i].getRotation(), f);
-		if (q.length2() > 1e-8f)
-			impacts[i]->rotMat = btMatrix3x3(q.normalized());
+		const btVector3 &a = from[i].getOrigin(), &b = to[i].getOrigin();
+		float ax = a.x() * BT_TO_UU, ay = a.y() * BT_TO_UU, az = a.z() * BT_TO_UU;
+		impacts[i]->pos = Vec((b.x() * BT_TO_UU - ax) * f + ax, (b.y() * BT_TO_UU - ay) * f + ay, (b.z() * BT_TO_UU - az) * f + az);
+		btQuaternion qa = from[i].getRotation(), qb = to[i].getRotation();
+		UEQuat q = UENormalized(UESlerpQuat({ qa.x(), qa.y(), qa.z(), qa.w() }, { qb.x(), qb.y(), qb.z(), qb.w() }, f));
+		impacts[i]->rotMat = UEQuatRotMat(q);
 	}
+	return f;
+}
+
+bool Arena::DemoConeAtImpact(Car* car1, Car* car2, float tickTime, bool reverse) {
+	using namespace RLConst;
+	PhysState impact, otherImpact;
+	SweepToImpact(car1, car2, tickTime, impact, otherImpact);
+	// (each car's hitbox centre from its rotator's matrix, the attacker's cone axes from the same: FUN_140f11c30)
+	RotMat basis = GameRotatorBasis(impact.rotMat);
+	Vec impactDir = GameConeCentre(otherImpact.pos, GameRotatorBasis(otherImpact.rotMat), car2->config.hitboxPosOffset) -
+		GameConeCentre(impact.pos, basis, car1->config.hitboxPosOffset);
+	return IsWithinForwardCone(basis, impactDir, DEMO_CONE_YAW_DEG, DEMO_CONE_PITCH_DEG, reverse);
 }
 
 // RL PATCH: car-car impacts follow Car_TA.ApplyCarImpactForces / ShouldDemolish / GetBumpImpulse,
@@ -820,11 +838,7 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
 			float forwardSpeed = state.vel.Dot(GameRotatorBasis(state.rotMat).forward);
 			if (abs(forwardSpeed) >= DEMO_MIN_FORWARD_SPEED) {
 				// The cone at the time of impact (the bump cone below uses the start-of-tick states)
-				PhysState impact, otherImpact;
-				SweepToImpact(car1, car2, tickTime, impact, otherImpact);
-				Vec impactDir =
-					hitboxCenter(otherImpact, car2->config.hitboxPosOffset) - hitboxCenter(impact, car1->config.hitboxPosOffset);
-				isDemo = IsWithinForwardCone(GameRotatorBasis(impact.rotMat), impactDir, DEMO_CONE_YAW_DEG, DEMO_CONE_PITCH_DEG, forwardSpeed < 0);
+				isDemo = DemoConeAtImpact(car1, car2, tickTime, forwardSpeed < 0);
 			}
 		}
 

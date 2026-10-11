@@ -60,6 +60,53 @@ inline GameRotator UERotatorFromMatrix(const RotMat& m) {
 // The axes the game's scripts see for a body rotation: Rotation(QuatToRotator(q)) through the sine table
 inline RotMat GameRotatorBasis(const RotMat& m) { return UERotationMatrix(UERotatorFromMatrix(m)); }
 
+// RL PATCH (RV-232): UE3's quaternion maths where the game's car scripts take a rotator from a quaternion
+// (QuatToRotator, GetTimeOfImpact FUN_140f01930)
+struct UEQuat { float x = 0, y = 0, z = 0, w = 1; };
+
+// FQuat SlerpQuat (0x140388840): the dot ((y1y2 + x1x2) + z1z2) + w1w2; at |dot| >= 0.9999 linear (1 - t, t), else
+// through acos and sin; b's weight negated when the dot is negative
+inline UEQuat UESlerpQuat(const UEQuat& a, const UEQuat& b, float t) {
+	float raw = a.y * b.y + a.x * b.x + a.z * b.z + a.w * b.w;
+	float cosom = raw < 0 ? -raw : raw;
+	float s0, s1;
+	if (cosom < 0.9999f) {
+		float omega = det_acosf(cosom > 1.f ? 1.f : cosom);
+		float invSin = 1.f / det_sinf(omega);
+		s0 = det_sinf((1.f - t) * omega) * invSin;
+		s1 = det_sinf(omega * t) * invSin;
+	} else {
+		s0 = 1.f - t;
+		s1 = t;
+	}
+	if (raw < 0)
+		s1 = -s1;
+	return { s1 * b.x + a.x * s0, s1 * b.y + a.y * s0, s1 * b.z + a.z * s0, s1 * b.w + a.w * s0 };
+}
+
+// GetTimeOfImpact's normalisation: the sum ((x2 + y2) + z2) + w2 over 1e-8 times 1 / sqrt, else the identity
+inline UEQuat UENormalized(const UEQuat& q) {
+	float sum = q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w;
+	if (!(sum > 1e-8f))
+		return {};
+	float s = 1.f / sqrtf(sum);
+	return { q.x * s, s * q.y, s * q.z, s * q.w };
+}
+
+// FQuatRotationTranslationMatrix (0x14036f9c0: x2 = x + x, ...): the matrix QuatToRotator hands FMatrix::Rotator
+// (Bullet's basis from a quaternion scales by 2 / |q|^2: a rotator off by a unit in about 0.05 % of cases)
+inline RotMat UEQuatRotMat(const UEQuat& q) {
+	float x2 = q.x + q.x, y2 = q.y + q.y, z2 = q.z + q.z;
+	float xx = x2 * q.x, yy = y2 * q.y, zz = z2 * q.z;
+	float xy = y2 * q.x, xz = z2 * q.x, yz = z2 * q.y;
+	float wx = x2 * q.w, wy = y2 * q.w, wz = z2 * q.w;
+	RotMat m;
+	m.forward = Vec(1.f - (zz + yy), wz + xy, xz - wy);
+	m.right = Vec(xy - wz, 1.f - (zz + xx), wx + yz);
+	m.up = Vec(wy + xz, yz - wx, 1.f - (yy + xx));
+	return m;
+}
+
 // The cone's hitbox centre (FUN_140f11c30): the location plus the offset multiplied by the rotator matrix's rows,
 // (off . X, off . Y, off . Z): the transpose of the rotation (InverseTransformNormal), not R * off
 inline Vec GameConeCentre(const Vec& pos, const RotMat& rm, const Vec& off) {

@@ -5,6 +5,7 @@
 #include "../../../libsrc/bullet3-3.24/BulletDynamics/Dynamics/btDynamicsWorld.h"
 #include "../CollisionMasks.h"
 #include "../Quantize/Quantize.h"
+#include "../GameRotator/GameRotator.h"
 
 RS_NS_START
 
@@ -146,12 +147,27 @@ void Car::Respawn(GameMode gameMode, int seed, float boostAmount) {
 		spawnPos.yawAng + (team == Team::BLUE ? 0 : M_PI), boostAmount);
 }
 
-// RL PATCH: the body's state as the tick starts (OldRBState)
+// RL PATCH: the body's state as the tick starts (OldRBState), as the game's pre-step read-back (FUN_140ef2770) makes it:
+// the location rounded to 0.01 uu and the velocities capped and quantised, in uu (the body's x50 of its x0.02 is off by
+// an ulp in a quarter of the components), the quaternion as quantised (the packed one the last rounding left, else the
+// body's rounded now), and for the car scripts' rotators the matrix QuatToRotator makes of it (RV-232)
 void Car::_CaptureOldState() {
-	_oldState.pos = _rigidBody.getWorldTransform().m_origin * BT_TO_UU;
-	_oldState.rotMat = _rigidBody.getWorldTransform().m_basis;
-	_oldState.vel = _rigidBody.m_linearVelocity * BT_TO_UU;
-	_oldState.angVel = _rigidBody.m_angularVelocity;
+	using namespace RLConst;
+	const btTransform& t = _rigidBody.getWorldTransform();
+	btVector3 origin = t.m_origin * BT_TO_UU;
+	_oldState.pos = Vec(Quantize::Location(origin.x()), Quantize::Location(origin.y()), Quantize::Location(origin.z()));
+	btVector3 vel = _rigidBody.m_linearVelocity * BT_TO_UU, angVel = _rigidBody.m_angularVelocity;
+	Quantize::ReadBackVelocities(vel, angVel, CAR_MAX_SPEED, CAR_MAX_ANG_SPEED);
+	_oldState.vel = vel;
+	_oldState.angVel = angVel;
+	if (_netRotation.valid) {
+		_oldQuat = Quantize::Unpack(_netRotation);
+	} else {
+		btQuaternion q;
+		t.getBasis().getRotation(q);
+		_oldQuat = Quantize::Rotation(q);
+	}
+	_oldState.rotMat = UEQuatRotMat({ _oldQuat.x(), _oldQuat.y(), _oldQuat.z(), _oldQuat.w() });
 }
 
 void Car::_RespawnAt(Vec pos, float yaw, float boostAmount) {

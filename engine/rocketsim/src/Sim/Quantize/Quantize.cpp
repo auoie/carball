@@ -131,14 +131,18 @@ namespace Quantize {
 		} else {
 			btVector3 vel = rb.m_linearVelocity * BT_TO_UU;
 			btVector3 angVel = rb.m_angularVelocity;
-			CapReadBack(vel, maxSpeed);
-			CapReadBack(angVel, maxAngSpeed);
-			for (int i = 0; i < 3; i++) {
-				vel[i] = Velocity(vel[i], 100.f);
-				angVel[i] = Velocity(angVel[i], 10000.f);
-			}
+			ReadBackVelocities(vel, angVel, maxSpeed, maxAngSpeed);
 			rb.m_linearVelocity = vel * UU_TO_BT;
 			rb.m_angularVelocity = angVel;
+		}
+	}
+
+	void ReadBackVelocities(btVector3& vel, btVector3& angVel, float maxSpeed, float maxAngSpeed) {
+		CapReadBack(vel, maxSpeed);
+		CapReadBack(angVel, maxAngSpeed);
+		for (int i = 0; i < 3; i++) {
+			vel[i] = Velocity(vel[i], 100.f);
+			angVel[i] = Velocity(angVel[i], 10000.f);
 		}
 	}
 

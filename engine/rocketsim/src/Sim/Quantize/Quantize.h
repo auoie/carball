@@ -49,6 +49,9 @@ namespace Quantize {
 	// The velocities' part of it alone (the position and rotation already rounded: re-rounding a rotation isn't always
 	// exact): a body pushed between ticks, read back as the game's next physics frame reads it (RV-231)
 	void QuantizeVelocities(btRigidBody& rb, float maxSpeed, float maxAngSpeed);
+
+	// The read-back's velocities: `vel` in uu/s and `angVel` in rad/s capped, then quantised (QuantizeVelocities' maths)
+	void ReadBackVelocities(btVector3& vel, btVector3& angVel, float maxSpeed, float maxAngSpeed);
 }
 
 RS_NS_END

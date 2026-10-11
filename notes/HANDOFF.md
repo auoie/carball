@@ -337,6 +337,24 @@
         (`Quantize::QuantizeVelocities`).
     - Connection: control messages before the game listens are queued (`Connection.listen`). The initial match
       state and vote state were being dropped. A closed tab closes its session (`pagehide`).
+  - **In 5acdfe3:** all of the above. **Since 5acdfe3 (uncommitted): the demolition sweep as the game's (static
+    analysis DSW1, RV-232..234; README row 33).**
+    - The start-of-tick state is the game's read-back (`Car::_CaptureOldState`): the location rounded to 0.01 uu and the
+      velocities quantised, in uu; the quantised quaternion (`_oldQuat`); for the rotators, UE's matrix of it.
+    - The sweep (`Arena::SweepToImpact`, public with `DemoConeAtImpact`) uses the game's arithmetic: the inputs as L and
+      V × 0.02 and the quaternion, the location lerp, UE3 `SlerpQuat` and `FQuatRotationTranslationMatrix`
+      (`GameRotator.h`). The penetration solver is Bullet 2.82's (`SweepGjkEpa282.h/.cpp`: a namespaced copy of 3.24's
+      btGjkEpa2 with 2.82's 64 EPA vertices and single-guess `calcPenDepth`; the sweep only).
+    - Tests: `TestDemoSweep` (six DSW1 cases, bit for bit; case 4828 pins the impact's UE matrix),
+      `TestOldStateReadBack`, `TestUEQuatRotMat`.
+    - Replays (5acdfe3 vs this): neutral. The main summary is identical, car–car 0 flips in 5,012 cases (37 differ in
+      the last printed digit).
+    - Determinism: the 300 s snapshot hash is unchanged (503626639f483e87); the 600 s one is now bc8e55a507fb5c58, with
+      the per-second state hashes unchanged (native = WASM). The snapshot carries each car's ball-hit record, whose
+      `extraHitVel` comes from the start-of-tick velocity and forward, now the exact read-back values: its low bits
+      moved, while the ball's velocity, quantised each tick, didn't. (`_oldQuat` isn't serialized: each tick recaptures
+      it.)
+    - README: the stale Quantization note is gone, the demo sweep note updated, row 33 has the live addresses.
     - Next: quick chat (the untracked WIP `game/quickChat.ts`, `ui/chatLog.ts`).
   - **Decided (user, 2026-10-10): no controller rumble.** notes/rumble.md stays as a reference spec only. The contact
     detection it asked about (the static session's Q-RMB-a: HandleCollision's cadence, the contact's point and normal,

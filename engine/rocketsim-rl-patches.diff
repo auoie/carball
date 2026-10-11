@@ -1128,18 +1128,19 @@ index 5805611..3ceaa22 100644
  }
 \ No newline at end of file
 diff --git upstream/src/Sim/Arena/Arena.cpp engine/rocketsim/src/Sim/Arena/Arena.cpp
-index a13cee0..87cfade 100644
+index a13cee0..96c73d9 100644
 --- upstream/src/Sim/Arena/Arena.cpp
 +++ engine/rocketsim/src/Sim/Arena/Arena.cpp
-@@ -1,4 +1,7 @@
+@@ -1,4 +1,8 @@
  #include "Arena.h"
 +#include "../GameRotator/GameRotator.h"
++#include "SweepGjkEpa282.h"
 +
 +#include <algorithm>
  #include "../../RocketSim.h"
  
  #include "../../../libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btAxisSweep3.h"
-@@ -6,10 +9,15 @@
+@@ -6,10 +10,15 @@
  #include "../../../libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btSimpleBroadphase.h"
  #include "../../../libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btRSBroadphase.h"
  #include "../../../libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btOverlappingPairCache.h"
@@ -1155,7 +1156,7 @@ index a13cee0..87cfade 100644
  #include "DropshotTiles/DropshotTiles.h"
  
  RS_NS_START
-@@ -36,7 +44,7 @@ void Arena::SetMutatorConfig(const MutatorConfig& mutatorConfig) {
+@@ -36,7 +45,7 @@ void Arena::SetMutatorConfig(const MutatorConfig& mutatorConfig) {
  		for (Car* car : _cars) {
  			btVector3 newCarInertia;
  			car->_childHitboxShape.calculateLocalInertia(mutatorConfig.carMass, newCarInertia);
@@ -1164,7 +1165,7 @@ index a13cee0..87cfade 100644
  		}
  	}
  
-@@ -56,11 +64,174 @@ Car* Arena::AddCar(Team team, const CarConfig& config) {
+@@ -56,11 +65,174 @@ Car* Arena::AddCar(Team team, const CarConfig& config) {
  	_AddCarFromPtr(car);
  
  	car->_BulletSetup(gameMode, &_bulletWorld, _mutatorConfig);
@@ -1340,7 +1341,7 @@ index a13cee0..87cfade 100644
  bool Arena::_AddCarFromPtr(Car* car) {
  
  	car->id = ++_lastCarID;
-@@ -123,16 +294,199 @@ void Arena::ResetToRandomKickoff(int seed) {
+@@ -123,16 +295,199 @@ void Arena::ResetToRandomKickoff(int seed) {
  
  	auto kickoffOrder = KICKOFF_ORDER_TEMPLATE;
  
@@ -1543,7 +1544,7 @@ index a13cee0..87cfade 100644
  
  	const CarSpawnPos* CAR_SPAWN_LOCATIONS = CAR_SPAWN_LOCATIONS_SOCCAR;
  	const CarSpawnPos* CAR_RESPAWN_LOCATIONS = CAR_RESPAWN_LOCATIONS_SOCCAR;
-@@ -159,7 +513,7 @@ void Arena::ResetToRandomKickoff(int seed) {
+@@ -159,7 +514,7 @@ void Arena::ResetToRandomKickoff(int seed) {
  		CarSpawnPos spawnPos;
  	
  		if (i < locationAmount) {
@@ -1552,7 +1553,7 @@ index a13cee0..87cfade 100644
  		} else {
  			int respawnPosIdx = (i - (locationAmount)) % locationAmount;
  			spawnPos = CAR_RESPAWN_LOCATIONS[respawnPosIdx];
-@@ -178,6 +532,8 @@ void Arena::ResetToRandomKickoff(int seed) {
+@@ -178,6 +533,8 @@ void Arena::ResetToRandomKickoff(int seed) {
  			std::vector<Car*> teamCars = isBlue ? blueCars : orangeCars;
  
  			if (i < teamCars.size()) {
@@ -1561,7 +1562,7 @@ index a13cee0..87cfade 100644
  				CarState spawnState;
  				spawnState.boost = _mutatorConfig.carSpawnBoostAmount;
  				spawnState.pos = { spawnPos.x, spawnPos.y, CAR_SPAWN_REST_Z };
-@@ -190,6 +546,11 @@ void Arena::ResetToRandomKickoff(int seed) {
+@@ -190,6 +547,11 @@ void Arena::ResetToRandomKickoff(int seed) {
  				}
  
  				spawnState.rotMat = angle.ToRotMat();
@@ -1573,7 +1574,7 @@ index a13cee0..87cfade 100644
  
  				teamCars[i]->SetState(spawnState);
  			}
-@@ -197,6 +558,9 @@ void Arena::ResetToRandomKickoff(int seed) {
+@@ -197,6 +559,9 @@ void Arena::ResetToRandomKickoff(int seed) {
  	}
  
  	BallState ballState = BallState();
@@ -1583,7 +1584,7 @@ index a13cee0..87cfade 100644
  	if (gameMode == GameMode::HEATSEEKER) {
  		int nextRand = (*randEngine)();
  		Vec scale = Vec(1, (nextRand % 2) ? 1 : -1, 1);
-@@ -216,10 +580,7 @@ void Arena::ResetToRandomKickoff(int seed) {
+@@ -216,10 +581,7 @@ void Arena::ResetToRandomKickoff(int seed) {
  	if (gameMode == GameMode::DROPSHOT)
  		SetDropshotTilesState({});
  
@@ -1595,7 +1596,7 @@ index a13cee0..87cfade 100644
  }
  
  void Arena::SetDropshotTilesState(const DropshotTilesState& state) {
-@@ -241,11 +602,17 @@ void Arena::SetDropshotTilesState(const DropshotTilesState& state) {
+@@ -241,11 +603,17 @@ void Arena::SetDropshotTilesState(const DropshotTilesState& state) {
  	_dropshotTilesState = state;
  }
  
@@ -1613,7 +1614,7 @@ index a13cee0..87cfade 100644
  	auto
  		bodyA = objA->m_collisionObject,
  		bodyB = objB->m_collisionObject;
-@@ -320,6 +687,71 @@ void Arena::_BtCallback_OnCarBallCollision(Car* car, Ball* ball, btManifoldPoint
+@@ -320,6 +688,88 @@ void Arena::_BtCallback_OnCarBallCollision(Car* car, Ball* ball, btManifoldPoint
  	ball->_OnHit(car, relBallPos, manifoldPoint.m_combinedFriction, manifoldPoint.m_combinedRestitution, gameMode, _mutatorConfig, tickCount);
  }
  
@@ -1639,12 +1640,14 @@ index a13cee0..87cfade 100644
 +	return angleWithoutAxis(rot.up) <= yawDeg;
 +}
 +
-+// RL PATCH: both cars at their time of impact, for the demo cone (Car_TA.ShouldDemolish -> GetTimeOfImpact, native
-+// FUN_140efc840). Each car's start-of-tick state is integrated one tick back and one tick forward (FUN_140e9c2e0),
-+// Bullet's continuous convex cast runs between the hitboxes over that span (allowed penetration 0.04), and the
-+// positions are lerped and the rotations slerped at the fraction. A missed sweep keeps the start-of-tick states
-+// (InitTimeOfImpactFromOldRBState).
-+static void SweepToImpact(Car* car1, Car* car2, float tickTime, PhysState& impact1, PhysState& impact2) {
++// RL PATCH: both cars at their time of impact, for the demo cone (Car_TA.ShouldDemolish -> GetTimeOfImpact
++// FUN_140f01930). Each car's start-of-tick state (its location and velocity x 0.02, its quaternion: the integrator
++// 0x140ea04f0) is integrated one tick back and one tick forward, Bullet's continuous convex cast runs between the hitboxes
++// over that span (allowed penetration 0.04; the game's 2.82 penetration solver: RV-233), and at the fraction the
++// locations are lerped as the game's (to x 50 - from x 50) x f + from x 50 and the rotations slerped as UE3's SlerpQuat,
++// normalised, through the matrix QuatToRotator makes (RV-232). A missed sweep keeps the start-of-tick states
++// (InitTimeOfImpactFromOldRBState)
++float Arena::SweepToImpact(Car* car1, Car* car2, float tickTime, PhysState& impact1, PhysState& impact2) {
 +	impact1 = car1->_oldState;
 +	impact2 = car2->_oldState;
 +
@@ -1652,13 +1655,14 @@ index a13cee0..87cfade 100644
 +	Car* cars[2] = { car1, car2 };
 +	for (int i = 0; i < 2; i++) {
 +		const PhysState& s = cars[i]->_oldState;
-+		btTransform t(s.rotMat, s.pos * UU_TO_BT);
-+		btTransformUtil::integrateTransform(t, -(s.vel * UU_TO_BT), -s.angVel, tickTime, from[i]);
-+		btTransformUtil::integrateTransform(t, s.vel * UU_TO_BT, s.angVel, tickTime, to[i]);
++		btTransform t(cars[i]->_oldQuat, s.pos * UU_TO_BT);
++		btVector3 vel = s.vel * UU_TO_BT;
++		btTransformUtil::integrateTransform(t, -vel, -s.angVel, tickTime, from[i]);
++		btTransformUtil::integrateTransform(t, vel, s.angVel, tickTime, to[i]);
 +	}
 +
 +	btVoronoiSimplexSolver simplexSolver;
-+	btGjkEpaPenetrationDepthSolver penetrationSolver;
++	SweepPenetrationSolver282 penetrationSolver;
 +	btContinuousConvexCollision cast(&car1->_childHitboxShape, &car2->_childHitboxShape, &simplexSolver, &penetrationSolver);
 +	btConvexCast::CastResult result;
 +	result.m_fraction = 1;
@@ -1668,16 +1672,30 @@ index a13cee0..87cfade 100644
 +		child[i] = cars[i]->_compoundShape.getChildTransform(0);
 +	if (!cast.calcTimeOfImpact(from[0] * child[0], to[0] * child[0], from[1] * child[1], to[1] * child[1], result) ||
 +		result.m_fraction >= 1)
-+		return;
++		return 1;
 +
 +	float f = result.m_fraction;
 +	PhysState* impacts[2] = { &impact1, &impact2 };
 +	for (int i = 0; i < 2; i++) {
-+		impacts[i]->pos = (from[i].getOrigin() + (to[i].getOrigin() - from[i].getOrigin()) * f) * BT_TO_UU;
-+		btQuaternion q = from[i].getRotation().slerp(to[i].getRotation(), f);
-+		if (q.length2() > 1e-8f)
-+			impacts[i]->rotMat = btMatrix3x3(q.normalized());
++		const btVector3 &a = from[i].getOrigin(), &b = to[i].getOrigin();
++		float ax = a.x() * BT_TO_UU, ay = a.y() * BT_TO_UU, az = a.z() * BT_TO_UU;
++		impacts[i]->pos = Vec((b.x() * BT_TO_UU - ax) * f + ax, (b.y() * BT_TO_UU - ay) * f + ay, (b.z() * BT_TO_UU - az) * f + az);
++		btQuaternion qa = from[i].getRotation(), qb = to[i].getRotation();
++		UEQuat q = UENormalized(UESlerpQuat({ qa.x(), qa.y(), qa.z(), qa.w() }, { qb.x(), qb.y(), qb.z(), qb.w() }, f));
++		impacts[i]->rotMat = UEQuatRotMat(q);
 +	}
++	return f;
++}
++
++bool Arena::DemoConeAtImpact(Car* car1, Car* car2, float tickTime, bool reverse) {
++	using namespace RLConst;
++	PhysState impact, otherImpact;
++	SweepToImpact(car1, car2, tickTime, impact, otherImpact);
++	// (each car's hitbox centre from its rotator's matrix, the attacker's cone axes from the same: FUN_140f11c30)
++	RotMat basis = GameRotatorBasis(impact.rotMat);
++	Vec impactDir = GameConeCentre(otherImpact.pos, GameRotatorBasis(otherImpact.rotMat), car2->config.hitboxPosOffset) -
++		GameConeCentre(impact.pos, basis, car1->config.hitboxPosOffset);
++	return IsWithinForwardCone(basis, impactDir, DEMO_CONE_YAW_DEG, DEMO_CONE_PITCH_DEG, reverse);
 +}
 +
 +// RL PATCH: car-car impacts follow Car_TA.ApplyCarImpactForces / ShouldDemolish / GetBumpImpulse,
@@ -1685,7 +1703,7 @@ index a13cee0..87cfade 100644
  void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint& manifoldPoint) {
  	using namespace RLConst;
  
-@@ -327,6 +759,15 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
+@@ -327,6 +777,15 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
  	manifoldPoint.m_combinedFriction = RLConst::CARCAR_COLLISION_FRICTION;
  	manifoldPoint.m_combinedRestitution = RLConst::CARCAR_COLLISION_RESTITUTION;
  
@@ -1701,7 +1719,7 @@ index a13cee0..87cfade 100644
  	// Test collision both ways
  	for (int i = 0; i < 2; i++) {
  
-@@ -334,83 +775,269 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
+@@ -334,83 +793,265 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
  		if (isSwapped)
  			std::swap(car1, car2);
  
@@ -1714,11 +1732,11 @@ index a13cee0..87cfade 100644
 -
 -		if ((state.carContact.otherCarID == car2->id) && (state.carContact.cooldownTimer > 0))
 -			continue; // In cooldown
-+		bool canDemoTeam = _mutatorConfig.enableTeamDemos || (car1->team != car2->team);
- 
+-
 -		Vec deltaPos = (otherState.pos - state.pos);
 -		if (state.vel.Dot(deltaPos) > 0) { // Going towards other car
--
++		bool canDemoTeam = _mutatorConfig.enableTeamDemos || (car1->team != car2->team);
+ 
 -			Vec velDir = state.vel.Normalized();
 -			Vec dirToOtherCar = deltaPos.Normalized();
 -
@@ -1772,11 +1790,7 @@ index a13cee0..87cfade 100644
 +			float forwardSpeed = state.vel.Dot(GameRotatorBasis(state.rotMat).forward);
 +			if (abs(forwardSpeed) >= DEMO_MIN_FORWARD_SPEED) {
 +				// The cone at the time of impact (the bump cone below uses the start-of-tick states)
-+				PhysState impact, otherImpact;
-+				SweepToImpact(car1, car2, tickTime, impact, otherImpact);
-+				Vec impactDir =
-+					hitboxCenter(otherImpact, car2->config.hitboxPosOffset) - hitboxCenter(impact, car1->config.hitboxPosOffset);
-+				isDemo = IsWithinForwardCone(GameRotatorBasis(impact.rotMat), impactDir, DEMO_CONE_YAW_DEG, DEMO_CONE_PITCH_DEG, forwardSpeed < 0);
++				isDemo = DemoConeAtImpact(car1, car2, tickTime, forwardSpeed < 0);
 +			}
 +		}
  
@@ -2031,7 +2045,7 @@ index a13cee0..87cfade 100644
  }
  
  Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mutatorConfig(gameMode), _config(config) {
-@@ -473,6 +1100,22 @@ Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mu
+@@ -473,6 +1114,22 @@ Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mu
  		auto& solverInfo = _bulletWorld.getSolverInfo();
  		solverInfo.m_splitImpulsePenetrationThreshold = 1.0e30f;
  		solverInfo.m_erp2 = 0.8f;
@@ -2054,7 +2068,7 @@ index a13cee0..87cfade 100644
  	}
  
  	bool loadArenaStuff = gameMode != GameMode::THE_VOID;
-@@ -543,6 +1186,51 @@ Arena* Arena::Create(GameMode gameMode, const ArenaConfig& arenaConfig, float ti
+@@ -543,6 +1200,51 @@ Arena* Arena::Create(GameMode gameMode, const ArenaConfig& arenaConfig, float ti
  	return new Arena(gameMode, arenaConfig, tickRate);
  }
  
@@ -2106,7 +2120,7 @@ index a13cee0..87cfade 100644
  void Arena::Serialize(DataStreamOut& out) const {
  	out.WriteMultiple(gameMode, tickTime, tickCount, _lastCarID);
  
-@@ -565,11 +1253,137 @@ void Arena::Serialize(DataStreamOut& out) const {
+@@ -565,11 +1267,137 @@ void Arena::Serialize(DataStreamOut& out) const {
  
  	{ // Serialize ball
  		ball->GetState().Serialize(out);
@@ -2244,7 +2258,7 @@ index a13cee0..87cfade 100644
  }
  
  Arena* Arena::DeserializeNew(DataStreamIn& in) {
-@@ -601,12 +1415,11 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
+@@ -601,12 +1429,11 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
  				RS_ERR_CLOSE(ERROR_PREFIX << "Failed to load, got repeated car ID of " << id);
  #endif
  
@@ -2261,7 +2275,7 @@ index a13cee0..87cfade 100644
  		}
  
  		newArena->_lastCarID = lastCarID;
-@@ -629,20 +1442,122 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
+@@ -629,20 +1456,122 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
  		}
  	}
  
@@ -2392,7 +2406,7 @@ index a13cee0..87cfade 100644
  Arena* Arena::Clone(bool copyCallbacks) {
  	Arena* newArena = new Arena(this->gameMode, this->_config, this->GetTickRate());
  	
-@@ -651,14 +1566,19 @@ Arena* Arena::Clone(bool copyCallbacks) {
+@@ -651,14 +1580,19 @@ Arena* Arena::Clone(bool copyCallbacks) {
  		newArena->_carBumpCallback = this->_carBumpCallback;
  	}
  
@@ -2414,7 +2428,7 @@ index a13cee0..87cfade 100644
  		newCar->controls = car->controls;
  		newCar->_velocityImpulseCache = car->_velocityImpulseCache;
  	}
-@@ -669,6 +1589,18 @@ Arena* Arena::Clone(bool copyCallbacks) {
+@@ -669,6 +1603,18 @@ Arena* Arena::Clone(bool copyCallbacks) {
  
  	newArena->tickCount = this->tickCount;
  	newArena->_lastCarID = this->_lastCarID;
@@ -2433,7 +2447,7 @@ index a13cee0..87cfade 100644
  
  	return newArena;
  }
-@@ -678,10 +1610,13 @@ Car* Arena::DeserializeNewCar(DataStreamIn& in, Team team) {
+@@ -678,10 +1624,13 @@ Car* Arena::DeserializeNewCar(DataStreamIn& in, Team team) {
  	car->_Deserialize(in);
  	car->team = team;
  
@@ -2448,7 +2462,7 @@ index a13cee0..87cfade 100644
  
  	return car;
  }
-@@ -691,20 +1626,41 @@ void Arena::Step(int ticksToSimulate) {
+@@ -691,20 +1640,41 @@ void Arena::Step(int ticksToSimulate) {
  
  		_bulletWorld.setWorldUserInfo(this);
  
@@ -2498,7 +2512,7 @@ index a13cee0..87cfade 100644
  
  		if (hasArenaStuff && !ballOnly) {
  			for (BoostPad* pad : _boostPads)
-@@ -714,11 +1670,27 @@ void Arena::Step(int ticksToSimulate) {
+@@ -714,11 +1684,27 @@ void Arena::Step(int ticksToSimulate) {
  		// Update ball
  		ball->_PreTickUpdate(gameMode, tickTime);
  
@@ -2526,7 +2540,7 @@ index a13cee0..87cfade 100644
  			car->_FinishPhysicsTick(_mutatorConfig);
  			if (hasArenaStuff) {
  				if (_config.useCustomBoostPads) {
-@@ -732,6 +1704,12 @@ void Arena::Step(int ticksToSimulate) {
+@@ -732,6 +1718,12 @@ void Arena::Step(int ticksToSimulate) {
  			}
  		}
  
@@ -2539,7 +2553,7 @@ index a13cee0..87cfade 100644
  		if (hasArenaStuff && !ballOnly)
  			for (BoostPad* pad : _boostPads)
  				pad->_PostTickUpdate(tickTime, _mutatorConfig);
-@@ -745,6 +1723,22 @@ void Arena::Step(int ticksToSimulate) {
+@@ -745,6 +1737,22 @@ void Arena::Step(int ticksToSimulate) {
  			if (ball->_internalState.dsInfo.lastDamageTick && ball->_internalState.dsInfo.lastDamageTick == tickCount)
  				SetDropshotTilesState(_dropshotTilesState);
  
@@ -2562,7 +2576,7 @@ index a13cee0..87cfade 100644
  		if (_goalScoreCallback.func != NULL) { // Potentially fire goal score callback
  			if (IsBallScored()) {
  				_goalScoreCallback.func(this, RS_TEAM_FROM_Y(-ball->_rigidBody.getWorldTransform().m_origin.y()), _goalScoreCallback.userInfo);
-@@ -752,6 +1746,8 @@ void Arena::Step(int ticksToSimulate) {
+@@ -752,6 +1760,8 @@ void Arena::Step(int ticksToSimulate) {
  		}
  
  		tickCount++;
@@ -2571,7 +2585,7 @@ index a13cee0..87cfade 100644
  	}
  }
  
-@@ -983,6 +1979,7 @@ btRigidBody* Arena::_AddStaticCollisionShape(btCollisionShape* shape, btVector3
+@@ -983,6 +1993,7 @@ btRigidBody* Arena::_AddStaticCollisionShape(btCollisionShape* shape, btVector3
  	} else {
  		_bulletWorld.addRigidBody(shapeRB);
  	}
@@ -2579,7 +2593,7 @@ index a13cee0..87cfade 100644
  	_worldCollisionRBs.push_back(shapeRB);
  	return shapeRB;
  }
-@@ -993,6 +1990,7 @@ void Arena::_SetupArenaCollisionShapes() {
+@@ -993,6 +2004,7 @@ void Arena::_SetupArenaCollisionShapes() {
  	bool isDropShot = gameMode == GameMode::DROPSHOT;
  
  	auto collisionMeshes = RocketSim::GetArenaCollisionShapes(gameMode);
@@ -2587,7 +2601,7 @@ index a13cee0..87cfade 100644
  
  	if (collisionMeshes.empty()) {
  		RS_ERR_CLOSE(
-@@ -1021,7 +2019,7 @@ void Arena::_SetupArenaCollisionShapes() {
+@@ -1021,7 +2033,7 @@ void Arena::_SetupArenaCollisionShapes() {
  
  		int mask = isHoopsNet ? CollisionMasks::HOOPS_NET : 0;
  		_worldCollisionBvhShapes.push_back(mesh);
@@ -2597,7 +2611,7 @@ index a13cee0..87cfade 100644
  		// Don't free the BVH when we deconstruct this arena
  		mesh->m_ownsBvh = false;
 diff --git upstream/src/Sim/Arena/Arena.h engine/rocketsim/src/Sim/Arena/Arena.h
-index a3ebd3f..2be83b9 100644
+index a3ebd3f..33096d5 100644
 --- upstream/src/Sim/Arena/Arena.h
 +++ engine/rocketsim/src/Sim/Arena/Arena.h
 @@ -1,5 +1,6 @@
@@ -2623,7 +2637,7 @@ index a3ebd3f..2be83b9 100644
  	bool ownsCars = true; // If true, deleting this arena instance deletes all cars
  
  	std::unordered_map<uint32_t, Car*> _carIDMap;
-@@ -63,7 +71,64 @@ public:
+@@ -63,7 +71,71 @@ public:
  	// Total ticks this arena instance has been simulated for, never resets
  	uint64_t tickCount = 0;
  
@@ -2649,6 +2663,13 @@ index a3ebd3f..2be83b9 100644
 +	bool collectImpacts = false;
 +	static constexpr size_t IMPACT_LIMIT = 1024;
 +	static constexpr uint32_t IMPACT_BALL = 0xFFFFFFFF;
++
++	// RL PATCH: the demolition sweep (Car_TA.ShouldDemolish -> GetTimeOfImpact): both cars at their time of impact from
++	// their start-of-tick states; returns the fraction of the two-tick span (1: missed, the start-of-tick states). Public
++	// for the tests
++	static float SweepToImpact(Car* car1, Car* car2, float tickTime, PhysState& impact1, PhysState& impact2);
++	// The demolition cone at the time of impact: car2's hitbox centre in car1's forward cone (backward, `reverse`)
++	static bool DemoConeAtImpact(Car* car1, Car* car2, float tickTime, bool reverse);
 +
 +	// RL PATCH: kickoff countdown: while non-zero, every car's controls are zeroed for the tick, then it counts down.
 +	// The game freezes the cars for 4.0 s after a kickoff reset (replays: the first car moves 3.99-4.05 s after the
@@ -2689,7 +2710,7 @@ index a3ebd3f..2be83b9 100644
  	const std::vector<BoostPad*>& GetBoostPads() { return _boostPads; }
  
  	// Returns true if added, false if car was already added
-@@ -116,6 +181,11 @@ public:
+@@ -116,6 +188,11 @@ public:
  	// Load new arena from serialized data
  	static Arena* DeserializeNew(DataStreamIn& in);
  
@@ -2701,7 +2722,7 @@ index a3ebd3f..2be83b9 100644
  	Arena(const Arena& other) = delete; // No copy constructor, use Arena::Clone() instead
  	Arena& operator =(const Arena& other) = delete; // No copy operator, use Arena::Clone() instead
  
-@@ -133,6 +203,24 @@ public:
+@@ -133,6 +210,24 @@ public:
  
  	void ResetToRandomKickoff(int seed = -1);
  
@@ -2726,7 +2747,7 @@ index a3ebd3f..2be83b9 100644
  	// Returns true if the ball is probably going in, does not account for wall or ceiling bounces
  	// NOTE: Purposefully overestimates, just like the real RL's shot prediction
  	// To check which goal it will score in, use the ball's velocity
-@@ -155,6 +243,17 @@ public:
+@@ -155,6 +250,17 @@ public:
  
  	void _SetupArenaCollisionShapes();
  
@@ -2744,7 +2765,7 @@ index a3ebd3f..2be83b9 100644
  	// Static function called by Bullet internally when adding a collision point
  	static bool _BulletContactAddedCallback(
  		btManifoldPoint& cp,
-@@ -176,6 +275,19 @@ public:
+@@ -176,6 +282,19 @@ public:
  	}
  
  	DropshotTilesState GetDropshotTilesState() const { return _dropshotTilesState; };
@@ -2764,7 +2785,7 @@ index a3ebd3f..2be83b9 100644
  	void SetDropshotTilesState(const DropshotTilesState& tilesState);
  
  private:
-@@ -187,4 +299,8 @@ private:
+@@ -187,4 +306,8 @@ private:
  	ArenaConfig _config;
  };
  
@@ -2788,6 +2809,1085 @@ index 79b1996..b850206 100644
  
  	// Use a custom broadphase designed for RocketSim
  	// Improves performance, but becomes inefficient on giant maps
+diff --git engine/rocketsim/src/Sim/Arena/SweepGjkEpa282.cpp engine/rocketsim/src/Sim/Arena/SweepGjkEpa282.cpp
+new file mode 100644
+index 0000000..024797d
+--- /dev/null
++++ engine/rocketsim/src/Sim/Arena/SweepGjkEpa282.cpp
+@@ -0,0 +1,1042 @@
++/*
++Bullet Continuous Collision Detection and Physics Library
++Copyright (c) 2003-2008 Erwin Coumans  https://bulletphysics.org
++
++This software is provided 'as-is', without any express or implied warranty.
++In no event will the authors be held liable for any damages arising from the
++use of this software.
++Permission is granted to anyone to use this software for any purpose,
++including commercial applications, and to alter it and redistribute it
++freely,
++subject to the following restrictions:
++
++1. The origin of this software must not be misrepresented; you must not
++claim that you wrote the original software. If you use this software in a
++product, an acknowledgment in the product documentation would be appreciated
++but is not required.
++2. Altered source versions must be plainly marked as such, and must not be
++misrepresented as being the original software.
++3. This notice may not be removed or altered from any source distribution.
++*/
++/*
++RL PATCH (RV-233): a copy of Bullet 3.24's btGjkEpa2.cpp for the demolition sweep only (SweepGjkEpa282.h): its
++implementation in namespace gjkepa2_282 (not gjkepa2_impl: the two copies' types differ), EPA_MAX_VERTICES 64 as Bullet
++2.82's, Distance and Penetration as SweepGjkEpa282's; then the penetration solver with 2.82's calcPenDepth
++*/
++
++/*
++GJK-EPA collision solver by Nathanael Presson, 2008
++*/
++#include "../../../libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btConvexInternalShape.h"
++#include "../../../libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btSphereShape.h"
++#include "SweepGjkEpa282.h"
++
++#if defined(DEBUG) || defined(_DEBUG)
++#include <stdio.h>  //for debug printf
++#ifdef __SPU__
++#include <spu_printf.h>
++#define printf spu_printf
++#endif  //__SPU__
++#endif
++
++namespace gjkepa2_282
++{
++// Config
++
++/* GJK	*/
++#define GJK_MAX_ITERATIONS 128
++
++#ifdef BT_USE_DOUBLE_PRECISION
++#define GJK_ACCURACY ((btScalar)1e-12)
++#define GJK_MIN_DISTANCE ((btScalar)1e-12)
++#define GJK_DUPLICATED_EPS ((btScalar)1e-12)
++#else
++#define GJK_ACCURACY ((btScalar)0.0001)
++#define GJK_MIN_DISTANCE ((btScalar)0.0001)
++#define GJK_DUPLICATED_EPS ((btScalar)0.0001)
++#endif  //BT_USE_DOUBLE_PRECISION
++
++#define GJK_SIMPLEX2_EPS ((btScalar)0.0)
++#define GJK_SIMPLEX3_EPS ((btScalar)0.0)
++#define GJK_SIMPLEX4_EPS ((btScalar)0.0)
++
++/* EPA	*/
++#define EPA_MAX_VERTICES 64 // (2.82; 3.24: 128)
++#define EPA_MAX_ITERATIONS 255
++
++#ifdef BT_USE_DOUBLE_PRECISION
++#define EPA_ACCURACY ((btScalar)1e-12)
++#define EPA_PLANE_EPS ((btScalar)1e-14)
++#define EPA_INSIDE_EPS ((btScalar)1e-9)
++#else
++#define EPA_ACCURACY ((btScalar)0.0001)
++#define EPA_PLANE_EPS ((btScalar)0.00001)
++#define EPA_INSIDE_EPS ((btScalar)0.01)
++#endif
++
++#define EPA_FALLBACK (10 * EPA_ACCURACY)
++#define EPA_MAX_FACES (EPA_MAX_VERTICES * 2)
++
++// Shorthands
++typedef unsigned int U;
++typedef unsigned char U1;
++
++// MinkowskiDiff
++struct MinkowskiDiff
++{
++	const btConvexShape* m_shapes[2];
++	btMatrix3x3 m_toshape1;
++	btTransform m_toshape0;
++#ifdef __SPU__
++	bool m_enableMargin;
++#else
++	btVector3 (btConvexShape::*Ls)(const btVector3&) const;
++#endif  //__SPU__
++
++	MinkowskiDiff()
++	{
++	}
++#ifdef __SPU__
++	void EnableMargin(bool enable)
++	{
++		m_enableMargin = enable;
++	}
++	inline btVector3 Support0(const btVector3& d) const
++	{
++		if (m_enableMargin)
++		{
++			return m_shapes[0]->localGetSupportVertexNonVirtual(d);
++		}
++		else
++		{
++			return m_shapes[0]->localGetSupportVertexWithoutMarginNonVirtual(d);
++		}
++	}
++	inline btVector3 Support1(const btVector3& d) const
++	{
++		if (m_enableMargin)
++		{
++			return m_toshape0 * (m_shapes[1]->localGetSupportVertexNonVirtual(m_toshape1 * d));
++		}
++		else
++		{
++			return m_toshape0 * (m_shapes[1]->localGetSupportVertexWithoutMarginNonVirtual(m_toshape1 * d));
++		}
++	}
++#else
++	void EnableMargin(bool enable)
++	{
++		if (enable)
++			Ls = &btConvexShape::localGetSupportVertexNonVirtual;
++		else
++			Ls = &btConvexShape::localGetSupportVertexWithoutMarginNonVirtual;
++	}
++	inline btVector3 Support0(const btVector3& d) const
++	{
++		return (((m_shapes[0])->*(Ls))(d));
++	}
++	inline btVector3 Support1(const btVector3& d) const
++	{
++		return (m_toshape0 * ((m_shapes[1])->*(Ls))(m_toshape1 * d));
++	}
++#endif  //__SPU__
++
++	inline btVector3 Support(const btVector3& d) const
++	{
++		return (Support0(d) - Support1(-d));
++	}
++	btVector3 Support(const btVector3& d, U index) const
++	{
++		if (index)
++			return (Support1(d));
++		else
++			return (Support0(d));
++	}
++};
++
++typedef MinkowskiDiff tShape;
++
++// GJK
++struct GJK
++{
++	/* Types		*/
++	struct sSV
++	{
++		btVector3 d, w;
++	};
++	struct sSimplex
++	{
++		sSV* c[4];
++		btScalar p[4];
++		U rank;
++	};
++	struct eStatus
++	{
++		enum _
++		{
++			Valid,
++			Inside,
++			Failed
++		};
++	};
++	/* Fields		*/
++	tShape m_shape;
++	btVector3 m_ray;
++	btScalar m_distance;
++	sSimplex m_simplices[2];
++	sSV m_store[4];
++	sSV* m_free[4];
++	U m_nfree;
++	U m_current;
++	sSimplex* m_simplex;
++	eStatus::_ m_status;
++	/* Methods		*/
++	GJK()
++	{
++		Initialize();
++	}
++	void Initialize()
++	{
++		m_ray = btVector3(0, 0, 0);
++		m_nfree = 0;
++		m_status = eStatus::Failed;
++		m_current = 0;
++		m_distance = 0;
++	}
++	eStatus::_ Evaluate(const tShape& shapearg, const btVector3& guess)
++	{
++		U iterations = 0;
++		btScalar sqdist = 0;
++		btScalar alpha = 0;
++		btVector3 lastw[4];
++		U clastw = 0;
++		/* Initialize solver		*/
++		m_free[0] = &m_store[0];
++		m_free[1] = &m_store[1];
++		m_free[2] = &m_store[2];
++		m_free[3] = &m_store[3];
++		m_nfree = 4;
++		m_current = 0;
++		m_status = eStatus::Valid;
++		m_shape = shapearg;
++		m_distance = 0;
++		/* Initialize simplex		*/
++		m_simplices[0].rank = 0;
++		m_ray = guess;
++		const btScalar sqrl = m_ray.length2();
++		appendvertice(m_simplices[0], sqrl > 0 ? -m_ray : btVector3(1, 0, 0));
++		m_simplices[0].p[0] = 1;
++		m_ray = m_simplices[0].c[0]->w;
++		sqdist = sqrl;
++		lastw[0] =
++			lastw[1] =
++				lastw[2] =
++					lastw[3] = m_ray;
++		/* Loop						*/
++		do
++		{
++			const U next = 1 - m_current;
++			sSimplex& cs = m_simplices[m_current];
++			sSimplex& ns = m_simplices[next];
++			/* Check zero							*/
++			const btScalar rl = m_ray.length();
++			if (rl < GJK_MIN_DISTANCE)
++			{ /* Touching or inside				*/
++				m_status = eStatus::Inside;
++				break;
++			}
++			/* Append new vertice in -'v' direction	*/
++			appendvertice(cs, -m_ray);
++			const btVector3& w = cs.c[cs.rank - 1]->w;
++			bool found = false;
++			for (U i = 0; i < 4; ++i)
++			{
++				if ((w - lastw[i]).length2() < GJK_DUPLICATED_EPS)
++				{
++					found = true;
++					break;
++				}
++			}
++			if (found)
++			{ /* Return old simplex				*/
++				removevertice(m_simplices[m_current]);
++				break;
++			}
++			else
++			{ /* Update lastw					*/
++				lastw[clastw = (clastw + 1) & 3] = w;
++			}
++			/* Check for termination				*/
++			const btScalar omega = btDot(m_ray, w) / rl;
++			alpha = btMax(omega, alpha);
++			if (((rl - alpha) - (GJK_ACCURACY * rl)) <= 0)
++			{ /* Return old simplex				*/
++				removevertice(m_simplices[m_current]);
++				break;
++			}
++			/* Reduce simplex						*/
++			btScalar weights[4];
++			U mask = 0;
++			switch (cs.rank)
++			{
++				case 2:
++					sqdist = projectorigin(cs.c[0]->w,
++										   cs.c[1]->w,
++										   weights, mask);
++					break;
++				case 3:
++					sqdist = projectorigin(cs.c[0]->w,
++										   cs.c[1]->w,
++										   cs.c[2]->w,
++										   weights, mask);
++					break;
++				case 4:
++					sqdist = projectorigin(cs.c[0]->w,
++										   cs.c[1]->w,
++										   cs.c[2]->w,
++										   cs.c[3]->w,
++										   weights, mask);
++					break;
++			}
++			if (sqdist >= 0)
++			{ /* Valid	*/
++				ns.rank = 0;
++				m_ray = btVector3(0, 0, 0);
++				m_current = next;
++				for (U i = 0, ni = cs.rank; i < ni; ++i)
++				{
++					if (mask & (1 << i))
++					{
++						ns.c[ns.rank] = cs.c[i];
++						ns.p[ns.rank++] = weights[i];
++						m_ray += cs.c[i]->w * weights[i];
++					}
++					else
++					{
++						m_free[m_nfree++] = cs.c[i];
++					}
++				}
++				if (mask == 15) m_status = eStatus::Inside;
++			}
++			else
++			{ /* Return old simplex				*/
++				removevertice(m_simplices[m_current]);
++				break;
++			}
++			m_status = ((++iterations) < GJK_MAX_ITERATIONS) ? m_status : eStatus::Failed;
++		} while (m_status == eStatus::Valid);
++		m_simplex = &m_simplices[m_current];
++		switch (m_status)
++		{
++			case eStatus::Valid:
++				m_distance = m_ray.length();
++				break;
++			case eStatus::Inside:
++				m_distance = 0;
++				break;
++			default:
++			{
++			}
++		}
++		return (m_status);
++	}
++	bool EncloseOrigin()
++	{
++		switch (m_simplex->rank)
++		{
++			case 1:
++			{
++				for (U i = 0; i < 3; ++i)
++				{
++					btVector3 axis = btVector3(0, 0, 0);
++					axis[i] = 1;
++					appendvertice(*m_simplex, axis);
++					if (EncloseOrigin()) return (true);
++					removevertice(*m_simplex);
++					appendvertice(*m_simplex, -axis);
++					if (EncloseOrigin()) return (true);
++					removevertice(*m_simplex);
++				}
++			}
++			break;
++			case 2:
++			{
++				const btVector3 d = m_simplex->c[1]->w - m_simplex->c[0]->w;
++				for (U i = 0; i < 3; ++i)
++				{
++					btVector3 axis = btVector3(0, 0, 0);
++					axis[i] = 1;
++					const btVector3 p = btCross(d, axis);
++					if (p.length2() > 0)
++					{
++						appendvertice(*m_simplex, p);
++						if (EncloseOrigin()) return (true);
++						removevertice(*m_simplex);
++						appendvertice(*m_simplex, -p);
++						if (EncloseOrigin()) return (true);
++						removevertice(*m_simplex);
++					}
++				}
++			}
++			break;
++			case 3:
++			{
++				const btVector3 n = btCross(m_simplex->c[1]->w - m_simplex->c[0]->w,
++											m_simplex->c[2]->w - m_simplex->c[0]->w);
++				if (n.length2() > 0)
++				{
++					appendvertice(*m_simplex, n);
++					if (EncloseOrigin()) return (true);
++					removevertice(*m_simplex);
++					appendvertice(*m_simplex, -n);
++					if (EncloseOrigin()) return (true);
++					removevertice(*m_simplex);
++				}
++			}
++			break;
++			case 4:
++			{
++				if (btFabs(det(m_simplex->c[0]->w - m_simplex->c[3]->w,
++							   m_simplex->c[1]->w - m_simplex->c[3]->w,
++							   m_simplex->c[2]->w - m_simplex->c[3]->w)) > 0)
++					return (true);
++			}
++			break;
++		}
++		return (false);
++	}
++	/* Internals	*/
++	void getsupport(const btVector3& d, sSV& sv) const
++	{
++		sv.d = d / d.length();
++		sv.w = m_shape.Support(sv.d);
++	}
++	void removevertice(sSimplex& simplex)
++	{
++		m_free[m_nfree++] = simplex.c[--simplex.rank];
++	}
++	void appendvertice(sSimplex& simplex, const btVector3& v)
++	{
++		simplex.p[simplex.rank] = 0;
++		simplex.c[simplex.rank] = m_free[--m_nfree];
++		getsupport(v, *simplex.c[simplex.rank++]);
++	}
++	static btScalar det(const btVector3& a, const btVector3& b, const btVector3& c)
++	{
++		return (a.y() * b.z() * c.x() + a.z() * b.x() * c.y() -
++				a.x() * b.z() * c.y() - a.y() * b.x() * c.z() +
++				a.x() * b.y() * c.z() - a.z() * b.y() * c.x());
++	}
++	static btScalar projectorigin(const btVector3& a,
++								  const btVector3& b,
++								  btScalar* w, U& m)
++	{
++		const btVector3 d = b - a;
++		const btScalar l = d.length2();
++		if (l > GJK_SIMPLEX2_EPS)
++		{
++			const btScalar t(l > 0 ? -btDot(a, d) / l : 0);
++			if (t >= 1)
++			{
++				w[0] = 0;
++				w[1] = 1;
++				m = 2;
++				return (b.length2());
++			}
++			else if (t <= 0)
++			{
++				w[0] = 1;
++				w[1] = 0;
++				m = 1;
++				return (a.length2());
++			}
++			else
++			{
++				w[0] = 1 - (w[1] = t);
++				m = 3;
++				return ((a + d * t).length2());
++			}
++		}
++		return (-1);
++	}
++	static btScalar projectorigin(const btVector3& a,
++								  const btVector3& b,
++								  const btVector3& c,
++								  btScalar* w, U& m)
++	{
++		static const U imd3[] = {1, 2, 0};
++		const btVector3* vt[] = {&a, &b, &c};
++		const btVector3 dl[] = {a - b, b - c, c - a};
++		const btVector3 n = btCross(dl[0], dl[1]);
++		const btScalar l = n.length2();
++		if (l > GJK_SIMPLEX3_EPS)
++		{
++			btScalar mindist = -1;
++			btScalar subw[2] = {0.f, 0.f};
++			U subm(0);
++			for (U i = 0; i < 3; ++i)
++			{
++				if (btDot(*vt[i], btCross(dl[i], n)) > 0)
++				{
++					const U j = imd3[i];
++					const btScalar subd(projectorigin(*vt[i], *vt[j], subw, subm));
++					if ((mindist < 0) || (subd < mindist))
++					{
++						mindist = subd;
++						m = static_cast<U>(((subm & 1) ? 1 << i : 0) + ((subm & 2) ? 1 << j : 0));
++						w[i] = subw[0];
++						w[j] = subw[1];
++						w[imd3[j]] = 0;
++					}
++				}
++			}
++			if (mindist < 0)
++			{
++				const btScalar d = btDot(a, n);
++				const btScalar s = btSqrt(l);
++				const btVector3 p = n * (d / l);
++				mindist = p.length2();
++				m = 7;
++				w[0] = (btCross(dl[1], b - p)).length() / s;
++				w[1] = (btCross(dl[2], c - p)).length() / s;
++				w[2] = 1 - (w[0] + w[1]);
++			}
++			return (mindist);
++		}
++		return (-1);
++	}
++	static btScalar projectorigin(const btVector3& a,
++								  const btVector3& b,
++								  const btVector3& c,
++								  const btVector3& d,
++								  btScalar* w, U& m)
++	{
++		static const U imd3[] = {1, 2, 0};
++		const btVector3* vt[] = {&a, &b, &c, &d};
++		const btVector3 dl[] = {a - d, b - d, c - d};
++		const btScalar vl = det(dl[0], dl[1], dl[2]);
++		const bool ng = (vl * btDot(a, btCross(b - c, a - b))) <= 0;
++		if (ng && (btFabs(vl) > GJK_SIMPLEX4_EPS))
++		{
++			btScalar mindist = -1;
++			btScalar subw[3] = {0.f, 0.f, 0.f};
++			U subm(0);
++			for (U i = 0; i < 3; ++i)
++			{
++				const U j = imd3[i];
++				const btScalar s = vl * btDot(d, btCross(dl[i], dl[j]));
++				if (s > 0)
++				{
++					const btScalar subd = projectorigin(*vt[i], *vt[j], d, subw, subm);
++					if ((mindist < 0) || (subd < mindist))
++					{
++						mindist = subd;
++						m = static_cast<U>((subm & 1 ? 1 << i : 0) +
++										   (subm & 2 ? 1 << j : 0) +
++										   (subm & 4 ? 8 : 0));
++						w[i] = subw[0];
++						w[j] = subw[1];
++						w[imd3[j]] = 0;
++						w[3] = subw[2];
++					}
++				}
++			}
++			if (mindist < 0)
++			{
++				mindist = 0;
++				m = 15;
++				w[0] = det(c, b, d) / vl;
++				w[1] = det(a, c, d) / vl;
++				w[2] = det(b, a, d) / vl;
++				w[3] = 1 - (w[0] + w[1] + w[2]);
++			}
++			return (mindist);
++		}
++		return (-1);
++	}
++};
++
++// EPA
++struct EPA
++{
++	/* Types		*/
++	typedef GJK::sSV sSV;
++	struct sFace
++	{
++		btVector3 n;
++		btScalar d;
++		sSV* c[3];
++		sFace* f[3];
++		sFace* l[2];
++		U1 e[3];
++		U1 pass;
++	};
++	struct sList
++	{
++		sFace* root;
++		U count;
++		sList() : root(0), count(0) {}
++	};
++	struct sHorizon
++	{
++		sFace* cf;
++		sFace* ff;
++		U nf;
++		sHorizon() : cf(0), ff(0), nf(0) {}
++	};
++	struct eStatus
++	{
++		enum _
++		{
++			Valid,
++			Touching,
++			Degenerated,
++			NonConvex,
++			InvalidHull,
++			OutOfFaces,
++			OutOfVertices,
++			AccuraryReached,
++			FallBack,
++			Failed
++		};
++	};
++	/* Fields		*/
++	eStatus::_ m_status;
++	GJK::sSimplex m_result;
++	btVector3 m_normal;
++	btScalar m_depth;
++	sSV m_sv_store[EPA_MAX_VERTICES];
++	sFace m_fc_store[EPA_MAX_FACES];
++	U m_nextsv;
++	sList m_hull;
++	sList m_stock;
++	/* Methods		*/
++	EPA()
++	{
++		Initialize();
++	}
++
++	static inline void bind(sFace* fa, U ea, sFace* fb, U eb)
++	{
++		fa->e[ea] = (U1)eb;
++		fa->f[ea] = fb;
++		fb->e[eb] = (U1)ea;
++		fb->f[eb] = fa;
++	}
++	static inline void append(sList& list, sFace* face)
++	{
++		face->l[0] = 0;
++		face->l[1] = list.root;
++		if (list.root) list.root->l[0] = face;
++		list.root = face;
++		++list.count;
++	}
++	static inline void remove(sList& list, sFace* face)
++	{
++		if (face->l[1]) face->l[1]->l[0] = face->l[0];
++		if (face->l[0]) face->l[0]->l[1] = face->l[1];
++		if (face == list.root) list.root = face->l[1];
++		--list.count;
++	}
++
++	void Initialize()
++	{
++		m_status = eStatus::Failed;
++		m_normal = btVector3(0, 0, 0);
++		m_depth = 0;
++		m_nextsv = 0;
++		for (U i = 0; i < EPA_MAX_FACES; ++i)
++		{
++			append(m_stock, &m_fc_store[EPA_MAX_FACES - i - 1]);
++		}
++	}
++	eStatus::_ Evaluate(GJK& gjk, const btVector3& guess)
++	{
++		GJK::sSimplex& simplex = *gjk.m_simplex;
++		if ((simplex.rank > 1) && gjk.EncloseOrigin())
++		{
++			/* Clean up				*/
++			while (m_hull.root)
++			{
++				sFace* f = m_hull.root;
++				remove(m_hull, f);
++				append(m_stock, f);
++			}
++			m_status = eStatus::Valid;
++			m_nextsv = 0;
++			/* Orient simplex		*/
++			if (gjk.det(simplex.c[0]->w - simplex.c[3]->w,
++						simplex.c[1]->w - simplex.c[3]->w,
++						simplex.c[2]->w - simplex.c[3]->w) < 0)
++			{
++				btSwap(simplex.c[0], simplex.c[1]);
++				btSwap(simplex.p[0], simplex.p[1]);
++			}
++			/* Build initial hull	*/
++			sFace* tetra[] = {newface(simplex.c[0], simplex.c[1], simplex.c[2], true),
++							  newface(simplex.c[1], simplex.c[0], simplex.c[3], true),
++							  newface(simplex.c[2], simplex.c[1], simplex.c[3], true),
++							  newface(simplex.c[0], simplex.c[2], simplex.c[3], true)};
++			if (m_hull.count == 4)
++			{
++				sFace* best = findbest();
++				sFace outer = *best;
++				U pass = 0;
++				U iterations = 0;
++				bind(tetra[0], 0, tetra[1], 0);
++				bind(tetra[0], 1, tetra[2], 0);
++				bind(tetra[0], 2, tetra[3], 0);
++				bind(tetra[1], 1, tetra[3], 2);
++				bind(tetra[1], 2, tetra[2], 1);
++				bind(tetra[2], 2, tetra[3], 1);
++				m_status = eStatus::Valid;
++				for (; iterations < EPA_MAX_ITERATIONS; ++iterations)
++				{
++					if (m_nextsv < EPA_MAX_VERTICES)
++					{
++						sHorizon horizon;
++						sSV* w = &m_sv_store[m_nextsv++];
++						bool valid = true;
++						best->pass = (U1)(++pass);
++						gjk.getsupport(best->n, *w);
++						const btScalar wdist = btDot(best->n, w->w) - best->d;
++						if (wdist > EPA_ACCURACY)
++						{
++							for (U j = 0; (j < 3) && valid; ++j)
++							{
++								valid &= expand(pass, w,
++												best->f[j], best->e[j],
++												horizon);
++							}
++							if (valid && (horizon.nf >= 3))
++							{
++								bind(horizon.cf, 1, horizon.ff, 2);
++								remove(m_hull, best);
++								append(m_stock, best);
++								best = findbest();
++								outer = *best;
++							}
++							else
++							{
++								m_status = eStatus::InvalidHull;
++								break;
++							}
++						}
++						else
++						{
++							m_status = eStatus::AccuraryReached;
++							break;
++						}
++					}
++					else
++					{
++						m_status = eStatus::OutOfVertices;
++						break;
++					}
++				}
++				const btVector3 projection = outer.n * outer.d;
++				m_normal = outer.n;
++				m_depth = outer.d;
++				m_result.rank = 3;
++				m_result.c[0] = outer.c[0];
++				m_result.c[1] = outer.c[1];
++				m_result.c[2] = outer.c[2];
++				m_result.p[0] = btCross(outer.c[1]->w - projection,
++										outer.c[2]->w - projection)
++									.length();
++				m_result.p[1] = btCross(outer.c[2]->w - projection,
++										outer.c[0]->w - projection)
++									.length();
++				m_result.p[2] = btCross(outer.c[0]->w - projection,
++										outer.c[1]->w - projection)
++									.length();
++				const btScalar sum = m_result.p[0] + m_result.p[1] + m_result.p[2];
++				m_result.p[0] /= sum;
++				m_result.p[1] /= sum;
++				m_result.p[2] /= sum;
++				return (m_status);
++			}
++		}
++		/* Fallback		*/
++		m_status = eStatus::FallBack;
++		m_normal = -guess;
++		const btScalar nl = m_normal.length();
++		if (nl > 0)
++			m_normal = m_normal / nl;
++		else
++			m_normal = btVector3(1, 0, 0);
++		m_depth = 0;
++		m_result.rank = 1;
++		m_result.c[0] = simplex.c[0];
++		m_result.p[0] = 1;
++		return (m_status);
++	}
++	bool getedgedist(sFace* face, sSV* a, sSV* b, btScalar& dist)
++	{
++		const btVector3 ba = b->w - a->w;
++		const btVector3 n_ab = btCross(ba, face->n);   // Outward facing edge normal direction, on triangle plane
++		const btScalar a_dot_nab = btDot(a->w, n_ab);  // Only care about the sign to determine inside/outside, so not normalization required
++
++		if (a_dot_nab < 0)
++		{
++			// Outside of edge a->b
++
++			const btScalar ba_l2 = ba.length2();
++			const btScalar a_dot_ba = btDot(a->w, ba);
++			const btScalar b_dot_ba = btDot(b->w, ba);
++
++			if (a_dot_ba > 0)
++			{
++				// Pick distance vertex a
++				dist = a->w.length();
++			}
++			else if (b_dot_ba < 0)
++			{
++				// Pick distance vertex b
++				dist = b->w.length();
++			}
++			else
++			{
++				// Pick distance to edge a->b
++				const btScalar a_dot_b = btDot(a->w, b->w);
++				dist = btSqrt(btMax((a->w.length2() * b->w.length2() - a_dot_b * a_dot_b) / ba_l2, (btScalar)0));
++			}
++
++			return true;
++		}
++
++		return false;
++	}
++	sFace* newface(sSV* a, sSV* b, sSV* c, bool forced)
++	{
++		if (m_stock.root)
++		{
++			sFace* face = m_stock.root;
++			remove(m_stock, face);
++			append(m_hull, face);
++			face->pass = 0;
++			face->c[0] = a;
++			face->c[1] = b;
++			face->c[2] = c;
++			face->n = btCross(b->w - a->w, c->w - a->w);
++			const btScalar l = face->n.length();
++			const bool v = l > EPA_ACCURACY;
++
++			if (v)
++			{
++				if (!(getedgedist(face, a, b, face->d) ||
++					  getedgedist(face, b, c, face->d) ||
++					  getedgedist(face, c, a, face->d)))
++				{
++					// Origin projects to the interior of the triangle
++					// Use distance to triangle plane
++					face->d = btDot(a->w, face->n) / l;
++				}
++
++				face->n /= l;
++				if (forced || (face->d >= -EPA_PLANE_EPS))
++				{
++					return face;
++				}
++				else
++					m_status = eStatus::NonConvex;
++			}
++			else
++				m_status = eStatus::Degenerated;
++
++			remove(m_hull, face);
++			append(m_stock, face);
++			return 0;
++		}
++		m_status = m_stock.root ? eStatus::OutOfVertices : eStatus::OutOfFaces;
++		return 0;
++	}
++	sFace* findbest()
++	{
++		sFace* minf = m_hull.root;
++		btScalar mind = minf->d * minf->d;
++		for (sFace* f = minf->l[1]; f; f = f->l[1])
++		{
++			const btScalar sqd = f->d * f->d;
++			if (sqd < mind)
++			{
++				minf = f;
++				mind = sqd;
++			}
++		}
++		return (minf);
++	}
++	bool expand(U pass, sSV* w, sFace* f, U e, sHorizon& horizon)
++	{
++		static const U i1m3[] = {1, 2, 0};
++		static const U i2m3[] = {2, 0, 1};
++		if (f->pass != pass)
++		{
++			const U e1 = i1m3[e];
++			if ((btDot(f->n, w->w) - f->d) < -EPA_PLANE_EPS)
++			{
++				sFace* nf = newface(f->c[e1], f->c[e], w, false);
++				if (nf)
++				{
++					bind(nf, 0, f, e);
++					if (horizon.cf)
++						bind(horizon.cf, 1, nf, 2);
++					else
++						horizon.ff = nf;
++					horizon.cf = nf;
++					++horizon.nf;
++					return (true);
++				}
++			}
++			else
++			{
++				const U e2 = i2m3[e];
++				f->pass = (U1)pass;
++				if (expand(pass, w, f->f[e1], f->e[e1], horizon) &&
++					expand(pass, w, f->f[e2], f->e[e2], horizon))
++				{
++					remove(m_hull, f);
++					append(m_stock, f);
++					return (true);
++				}
++			}
++		}
++		return (false);
++	}
++};
++
++//
++static void Initialize(const btConvexShape* shape0, const btTransform& wtrs0,
++					   const btConvexShape* shape1, const btTransform& wtrs1,
++					   btGjkEpaSolver2::sResults& results,
++					   tShape& shape,
++					   bool withmargins)
++{
++	/* Results		*/
++	results.witnesses[0] =
++		results.witnesses[1] = btVector3(0, 0, 0);
++	results.status = btGjkEpaSolver2::sResults::Separated;
++	/* Shape		*/
++	shape.m_shapes[0] = shape0;
++	shape.m_shapes[1] = shape1;
++	shape.m_toshape1 = wtrs1.getBasis().transposeTimes(wtrs0.getBasis());
++	shape.m_toshape0 = wtrs0.inverseTimes(wtrs1);
++	shape.EnableMargin(withmargins);
++}
++
++}  // namespace gjkepa2_282
++
++//
++// Api
++//
++
++using namespace gjkepa2_282;
++
++
++//
++bool SweepGjkEpa282::Distance(const btConvexShape* shape0,
++							   const btTransform& wtrs0,
++							   const btConvexShape* shape1,
++							   const btTransform& wtrs1,
++							   const btVector3& guess,
++							   sResults& results)
++{
++	tShape shape;
++	Initialize(shape0, wtrs0, shape1, wtrs1, results, shape, false);
++	GJK gjk;
++	GJK::eStatus::_ gjk_status = gjk.Evaluate(shape, guess);
++	if (gjk_status == GJK::eStatus::Valid)
++	{
++		btVector3 w0 = btVector3(0, 0, 0);
++		btVector3 w1 = btVector3(0, 0, 0);
++		for (U i = 0; i < gjk.m_simplex->rank; ++i)
++		{
++			const btScalar p = gjk.m_simplex->p[i];
++			w0 += shape.Support(gjk.m_simplex->c[i]->d, 0) * p;
++			w1 += shape.Support(-gjk.m_simplex->c[i]->d, 1) * p;
++		}
++		results.witnesses[0] = wtrs0 * w0;
++		results.witnesses[1] = wtrs0 * w1;
++		results.normal = w0 - w1;
++		results.distance = results.normal.length();
++		results.normal /= results.distance > GJK_MIN_DISTANCE ? results.distance : 1;
++		return (true);
++	}
++	else
++	{
++		results.status = gjk_status == GJK::eStatus::Inside ? sResults::Penetrating : sResults::GJK_Failed;
++		return (false);
++	}
++}
++
++//
++bool SweepGjkEpa282::Penetration(const btConvexShape* shape0,
++								  const btTransform& wtrs0,
++								  const btConvexShape* shape1,
++								  const btTransform& wtrs1,
++								  const btVector3& guess,
++								  sResults& results,
++								  bool usemargins)
++{
++	tShape shape;
++	Initialize(shape0, wtrs0, shape1, wtrs1, results, shape, usemargins);
++	GJK gjk;
++	GJK::eStatus::_ gjk_status = gjk.Evaluate(shape, -guess);
++	switch (gjk_status)
++	{
++		case GJK::eStatus::Inside:
++		{
++			EPA epa;
++			EPA::eStatus::_ epa_status = epa.Evaluate(gjk, -guess);
++			if (epa_status != EPA::eStatus::Failed)
++			{
++				btVector3 w0 = btVector3(0, 0, 0);
++				for (U i = 0; i < epa.m_result.rank; ++i)
++				{
++					w0 += shape.Support(epa.m_result.c[i]->d, 0) * epa.m_result.p[i];
++				}
++				results.status = sResults::Penetrating;
++				results.witnesses[0] = wtrs0 * w0;
++				results.witnesses[1] = wtrs0 * (w0 - epa.m_normal * epa.m_depth);
++				results.normal = -epa.m_normal;
++				results.distance = -epa.m_depth;
++				return (true);
++			}
++			else
++				results.status = sResults::EPA_Failed;
++		}
++		break;
++		case GJK::eStatus::Failed:
++			results.status = sResults::GJK_Failed;
++			break;
++		default:
++		{
++		}
++	}
++	return (false);
++}
++
++// Bullet 2.82's btGjkEpaPenetrationDepthSolver::calcPenDepth: one guess, the origins' difference unnormalised, no retries
++bool SweepPenetrationSolver282::calcPenDepth(btSimplexSolverInterface& simplexSolver, const btConvexShape* pConvexA,
++	const btConvexShape* pConvexB, const btTransform& transformA, const btTransform& transformB, btVector3& v,
++	btVector3& wWitnessOnA, btVector3& wWitnessOnB)
++{
++	(void)simplexSolver;
++	btVector3 guessVector(transformB.getOrigin() - transformA.getOrigin());
++	SweepGjkEpa282::sResults results;
++	if (SweepGjkEpa282::Penetration(pConvexA, transformA, pConvexB, transformB, guessVector, results))
++	{
++		wWitnessOnA = results.witnesses[0];
++		wWitnessOnB = results.witnesses[1];
++		v = results.normal;
++		return true;
++	}
++	else if (SweepGjkEpa282::Distance(pConvexA, transformA, pConvexB, transformB, guessVector, results))
++	{
++		wWitnessOnA = results.witnesses[0];
++		wWitnessOnB = results.witnesses[1];
++		v = results.normal;
++		return false;
++	}
++	return false;
++}
+diff --git engine/rocketsim/src/Sim/Arena/SweepGjkEpa282.h engine/rocketsim/src/Sim/Arena/SweepGjkEpa282.h
+new file mode 100644
+index 0000000..abdd5f4
+--- /dev/null
++++ engine/rocketsim/src/Sim/Arena/SweepGjkEpa282.h
+@@ -0,0 +1,25 @@
++#pragma once
++// RL PATCH (RV-233): the demolition sweep's penetration solver as the game's Bullet 2.82 has it: one unnormalised guess
++// (transformB - transformA) and no retries in calcPenDepth (3.24 safe-normalises it, tries up to 9 guesses and zeroes
++// the witnesses on failure), and EPA_MAX_VERTICES 64 (faces 128; 3.24: 128, 256). For the sweep only (Arena.cpp
++// SweepToImpact): contact generation keeps 3.24's. With both, the sweep matches 2.82 on the static session's 200k cases
++// (DSW1); 3.24's flipped one hit in 100k and moved EPA normals by up to 0.034 degrees, only at overlapping starts
++#include "../../../libsrc/bullet3-3.24/BulletCollision/NarrowPhaseCollision/btGjkEpa2.h"
++#include "../../../libsrc/bullet3-3.24/BulletCollision/NarrowPhaseCollision/btConvexPenetrationDepthSolver.h"
++
++// btGjkEpaSolver2's Distance and Penetration with the 2.82 EPA size (SweepGjkEpa282.cpp: a copy of 3.24's btGjkEpa2.cpp
++// in its own namespace)
++struct SweepGjkEpa282 {
++	typedef btGjkEpaSolver2::sResults sResults;
++	static bool Distance(const btConvexShape* shape0, const btTransform& wtrs0, const btConvexShape* shape1, const btTransform& wtrs1,
++		const btVector3& guess, sResults& results);
++	static bool Penetration(const btConvexShape* shape0, const btTransform& wtrs0, const btConvexShape* shape1, const btTransform& wtrs1,
++		const btVector3& guess, sResults& results, bool usemargins = true);
++};
++
++// btGjkEpaPenetrationDepthSolver with 2.82's calcPenDepth
++class SweepPenetrationSolver282 : public btConvexPenetrationDepthSolver {
++public:
++	bool calcPenDepth(btSimplexSolverInterface& simplexSolver, const btConvexShape* convexA, const btConvexShape* convexB,
++		const btTransform& transA, const btTransform& transB, btVector3& v, btVector3& pa, btVector3& pb) override;
++};
 diff --git upstream/src/Sim/Ball/Ball.cpp engine/rocketsim/src/Sim/Ball/Ball.cpp
 index 46a006d..00e6db3 100644
 --- upstream/src/Sim/Ball/Ball.cpp
@@ -3019,10 +4119,10 @@ index c87d449..d9d1ad0 100644
  	if (colliding)
  		_internalState.curLockedCar = car;
 diff --git upstream/src/Sim/Car/Car.cpp engine/rocketsim/src/Sim/Car/Car.cpp
-index 417ad9d..93b78f7 100644
+index 417ad9d..7253cb6 100644
 --- upstream/src/Sim/Car/Car.cpp
 +++ engine/rocketsim/src/Sim/Car/Car.cpp
-@@ -1,11 +1,37 @@
+@@ -1,11 +1,38 @@
  #include "Car.h"
 +#include <cstring>
  #include "../../RLConst.h"
@@ -3030,6 +4130,7 @@ index 417ad9d..93b78f7 100644
  #include "../../../libsrc/bullet3-3.24/BulletDynamics/Dynamics/btDynamicsWorld.h"
  #include "../CollisionMasks.h"
 +#include "../Quantize/Quantize.h"
++#include "../GameRotator/GameRotator.h"
  
  RS_NS_START
  
@@ -3060,7 +4161,7 @@ index 417ad9d..93b78f7 100644
  // Update our internal state from bullet and return it
  CarState Car::GetState() {
  	_internalState.pos = _rigidBody.getWorldTransform().m_origin * BT_TO_UU;
-@@ -16,9 +42,42 @@ CarState Car::GetState() {
+@@ -16,9 +43,42 @@ CarState Car::GetState() {
  
  	_internalState.angVel = _rigidBody.m_angularVelocity;
  
@@ -3103,7 +4204,7 @@ index 417ad9d..93b78f7 100644
  // Update our bullet stuff to this new state, replace our internal state with it
  void Car::SetState(const CarState& state) {
  	btTransform rbTransform;
-@@ -27,12 +86,36 @@ void Car::SetState(const CarState& state) {
+@@ -27,12 +87,36 @@ void Car::SetState(const CarState& state) {
  	_rigidBody.getWorldTransform() = rbTransform;
  	_rigidBody.m_linearVelocity = state.vel * UU_TO_BT;
  	_rigidBody.m_angularVelocity = state.angVel;
@@ -3141,7 +4242,7 @@ index 417ad9d..93b78f7 100644
  }
  
  void Car::Demolish(float respawnDelay) {
-@@ -43,8 +126,6 @@ void Car::Demolish(float respawnDelay) {
+@@ -43,8 +127,6 @@ void Car::Demolish(float respawnDelay) {
  void Car::Respawn(GameMode gameMode, int seed, float boostAmount) {
  	using namespace RLConst;
  
@@ -3150,7 +4251,7 @@ index 417ad9d..93b78f7 100644
  	int spawnPosIndex = Math::RandInt(0, CAR_RESPAWN_LOCATION_AMOUNT, seed);
  
  	const CarSpawnPos* spawnPosArray;
-@@ -61,14 +142,33 @@ void Car::Respawn(GameMode gameMode, int seed, float boostAmount) {
+@@ -61,14 +143,48 @@ void Car::Respawn(GameMode gameMode, int seed, float boostAmount) {
  
  	CarSpawnPos spawnPos = spawnPosArray[spawnPosIndex];
  
@@ -3159,15 +4260,30 @@ index 417ad9d..93b78f7 100644
 +	_RespawnAt(Vec(spawnPos.x, spawnPos.y * (team == Team::BLUE ? 1 : -1), CAR_RESPAWN_Z),
 +		spawnPos.yawAng + (team == Team::BLUE ? 0 : M_PI), boostAmount);
 +}
-+
-+// RL PATCH: the body's state as the tick starts (OldRBState)
-+void Car::_CaptureOldState() {
-+	_oldState.pos = _rigidBody.getWorldTransform().m_origin * BT_TO_UU;
-+	_oldState.rotMat = _rigidBody.getWorldTransform().m_basis;
-+	_oldState.vel = _rigidBody.m_linearVelocity * BT_TO_UU;
-+	_oldState.angVel = _rigidBody.m_angularVelocity;
-+}
  
++// RL PATCH: the body's state as the tick starts (OldRBState), as the game's pre-step read-back (FUN_140ef2770) makes it:
++// the location rounded to 0.01 uu and the velocities capped and quantised, in uu (the body's x50 of its x0.02 is off by
++// an ulp in a quarter of the components), the quaternion as quantised (the packed one the last rounding left, else the
++// body's rounded now), and for the car scripts' rotators the matrix QuatToRotator makes of it (RV-232)
++void Car::_CaptureOldState() {
++	using namespace RLConst;
++	const btTransform& t = _rigidBody.getWorldTransform();
++	btVector3 origin = t.m_origin * BT_TO_UU;
++	_oldState.pos = Vec(Quantize::Location(origin.x()), Quantize::Location(origin.y()), Quantize::Location(origin.z()));
++	btVector3 vel = _rigidBody.m_linearVelocity * BT_TO_UU, angVel = _rigidBody.m_angularVelocity;
++	Quantize::ReadBackVelocities(vel, angVel, CAR_MAX_SPEED, CAR_MAX_ANG_SPEED);
++	_oldState.vel = vel;
++	_oldState.angVel = angVel;
++	if (_netRotation.valid) {
++		_oldQuat = Quantize::Unpack(_netRotation);
++	} else {
++		btQuaternion q;
++		t.getBasis().getRotation(q);
++		_oldQuat = Quantize::Rotation(q);
++	}
++	_oldState.rotMat = UEQuatRotMat({ _oldQuat.x(), _oldQuat.y(), _oldQuat.z(), _oldQuat.w() });
++}
++
 +void Car::_RespawnAt(Vec pos, float yaw, float boostAmount) {
 +	CarState newState = CarState();
 +	// RL PATCH: the body is created at its own height above the spot, and its forward offset ahead (CarConfig); the
@@ -3187,7 +4303,7 @@ index 417ad9d..93b78f7 100644
  	using namespace RLConst;
  
  #ifndef RS_MAX_SPEED
-@@ -76,14 +176,40 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
+@@ -76,14 +192,40 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
  	controls.ClampFix();
  #endif
  
@@ -3230,7 +4346,7 @@ index 417ad9d..93b78f7 100644
  			// Disable rigidbody simulation
  			_rigidBody.m_activationState1 = DISABLE_SIMULATION;
  			_rigidBody.m_collisionFlags |= btCollisionObject::CF_NO_CONTACT_RESPONSE;
-@@ -99,48 +225,105 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
+@@ -99,48 +241,105 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
  	if (_internalState.isDemoed)
  		return; // No other updates need to occur
  
@@ -3304,13 +4420,12 @@ index 417ad9d..93b78f7 100644
  
 -	_UpdateDoubleJumpOrFlip(tickTime, mutatorConfig, jumpPressed, forwardSpeed_UU);
 +	_UpdateStickyForce(forwardSpeed_UU);
- 
--	if (controls.throttle && ((numWheelsInContact > 0 && numWheelsInContact < 4) || _internalState.worldContact.hasContact))
--		_UpdateAutoRoll(tickTime, mutatorConfig, numWheelsInContact);
++
 +	bool wasBoosting = _internalState.isBoosting; // (what the AirControl component sees: it runs before Boost)
 +	_UpdateBoost(tickTime, mutatorConfig, forwardSpeed_UU);
  
--	_internalState.worldContact.hasContact = false;
+-	if (controls.throttle && ((numWheelsInContact > 0 && numWheelsInContact < 4) || _internalState.worldContact.hasContact))
+-		_UpdateAutoRoll(tickTime, mutatorConfig, numWheelsInContact);
 +	// RL PATCH: the game's air throttle (AirControl ApplyForces FUN_140eb3400) is ThrottleForce x (boost active ? 1 :
 +	// throttle), with the Boost component's state from before this tick's update (the components run AirControl first:
 +	// static analysis GA-8), so a boost press adds only the boost's own 991.67 on its first tick and the release leaves
@@ -3331,8 +4446,7 @@ index 417ad9d..93b78f7 100644
 +	// The vehicle: this tick's wheel rays and contacts, then VehicleSim, the suspension and the wheels' friction
 +	_bulletVehicle.updateVehicleFirst(tickTime);
  
--	// Complete the btVehicleRL update (does suspension and applies wheel forces)
--	_bulletVehicle.updateVehicleSecond(tickTime);
+-	_internalState.worldContact.hasContact = false;
 +	numWheelsInContact = 0;
 +	for (int i = 0; i < _bulletVehicle.m_wheelInfo.size(); i++) {
 +		bool inContact = _bulletVehicle.m_wheelInfo[i].m_raycastInfo.m_isInContact;
@@ -3354,15 +4468,17 @@ index 417ad9d..93b78f7 100644
 +	}
 +	_internalState.isOnGround = numWheelsInContact >= 3;
  
--	_UpdateBoost(tickTime, mutatorConfig, forwardSpeed_UU);
+-	// Complete the btVehicleRL update (does suspension and applies wheel forces)
+-	_bulletVehicle.updateVehicleSecond(tickTime);
 +	forwardSpeed_UU = _bulletVehicle.getForwardSpeed() * BT_TO_UU;
 +	_UpdateWheels(tickTime, mutatorConfig, numWheelsInContact, forwardSpeed_UU);
-+
+ 
+-	_UpdateBoost(tickTime, mutatorConfig, forwardSpeed_UU);
 +	_bulletVehicle.updateVehicleSecond(tickTime);
  }
  
  void Car::_PostTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig& mutatorConfig) {
-@@ -150,27 +333,27 @@ void Car::_PostTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig
+@@ -150,27 +349,27 @@ void Car::_PostTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig
  
  	_internalState.rotMat = _rigidBody.getWorldTransform().m_basis;
  
@@ -3404,7 +4520,7 @@ index 417ad9d..93b78f7 100644
  
  	_internalState.lastControls = controls;
  }
-@@ -187,32 +370,55 @@ void Car::_FinishPhysicsTick(const MutatorConfig& mutatorConfig) {
+@@ -187,32 +386,55 @@ void Car::_FinishPhysicsTick(const MutatorConfig& mutatorConfig) {
  		_velocityImpulseCache = { 0,0,0 };
  	}
  
@@ -3475,7 +4591,7 @@ index 417ad9d..93b78f7 100644
  	_compoundShape.addChildShape(hitboxOffsetTransform, &_childHitboxShape);
  
  	btVector3 localInertia(0, 0, 0);
-@@ -228,6 +434,7 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
+@@ -228,6 +450,7 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
  	_rigidBody = btRigidBody(rbInfo);
  	_rigidBody.setUserIndex(BT_USERINFO_TYPE_CAR);
  	_rigidBody.setUserPointer(this);
@@ -3483,7 +4599,7 @@ index 417ad9d..93b78f7 100644
  
  	_rigidBody.m_collisionFlags |= btCollisionObject::CF_CUSTOM_MATERIAL_CALLBACK;
  
-@@ -279,6 +486,10 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
+@@ -279,6 +502,10 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
  
  				suspensionRestLength -= RLConst::BTVehicle::MAX_SUSPENSION_TRAVEL;
  
@@ -3494,7 +4610,7 @@ index 417ad9d..93b78f7 100644
  				_bulletVehicle.addWheel(
  					wheelRayStartOffset * UU_TO_BT,
  					wheelDirectionCS, wheelAxleCS,
-@@ -295,7 +506,10 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
+@@ -295,7 +522,10 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
  					wheelInfo.m_maxSuspensionTravelCm = (MAX_SUSPENSION_TRAVEL * UU_TO_BT) * 100; // Same for all cars (hopefully)
  					wheelInfo.m_maxSuspensionForce = FLT_MAX; // Don't think there's a limit
  					wheelInfo.m_bIsFrontWheel = front;
@@ -3506,7 +4622,7 @@ index 417ad9d..93b78f7 100644
  				}
  			}
  		}
-@@ -324,6 +538,13 @@ void CarState::Serialize(DataStreamOut& out) const {
+@@ -324,6 +554,13 @@ void CarState::Serialize(DataStreamOut& out) const {
  	out.WriteMultiple(
  		CARSTATE_SERIALIZATION_FIELDS
  	);
@@ -3520,7 +4636,7 @@ index 417ad9d..93b78f7 100644
  }
  
  void CarState::Deserialize(DataStreamIn& in) {
-@@ -333,20 +554,30 @@ void CarState::Deserialize(DataStreamIn& in) {
+@@ -333,20 +570,30 @@ void CarState::Deserialize(DataStreamIn& in) {
  	in.ReadMultiple(
  		CARSTATE_SERIALIZATION_FIELDS
  	);
@@ -3555,7 +4671,7 @@ index 417ad9d..93b78f7 100644
  }
  
  void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int numWheelsInContact, float forwardSpeed_UU) {
-@@ -354,10 +585,6 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
+@@ -354,10 +601,6 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
  
  	float absForwardSpeed_UU = abs(forwardSpeed_UU);
  
@@ -3566,7 +4682,7 @@ index 417ad9d..93b78f7 100644
  	{ // Increase/decrease handbrake value from input
  		if (controls.handbrake) {
  			_internalState.handbrakeVal += POWERSLIDE_RISE_RATE * tickTime;
-@@ -367,12 +594,9 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
+@@ -367,12 +610,9 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
  		_internalState.handbrakeVal = RS_CLAMP(_internalState.handbrakeVal, 0, 1);
  	}
  
@@ -3580,7 +4696,7 @@ index 417ad9d..93b78f7 100644
  	{ // Update throttle/brake forces
  		float driveSpeedScale = DRIVE_SPEED_TORQUE_FACTOR_CURVE.GetOutput(absForwardSpeed_UU);
  
-@@ -383,7 +607,7 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
+@@ -383,7 +623,7 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
  		} else {
  			float absThrottle = abs(realThrottle);
  
@@ -3589,7 +4705,7 @@ index 417ad9d..93b78f7 100644
  				if (absForwardSpeed_UU > STOPPING_FORWARD_VEL && RS_SGN(realThrottle) != RS_SGN(forwardSpeed_UU)) {
  					// Full brake is applied if we are trying to drive in the opposite direction
  					realBrake = 1;
-@@ -414,8 +638,8 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
+@@ -414,8 +654,8 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
  		}
  	}
  
@@ -3600,7 +4716,7 @@ index 417ad9d..93b78f7 100644
  
  		if (_internalState.handbrakeVal) {
  			steerAngle +=
-@@ -423,11 +647,29 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
+@@ -423,11 +663,29 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
  				* _internalState.handbrakeVal;
  		}
  
@@ -3631,7 +4747,7 @@ index 417ad9d..93b78f7 100644
  	{ // Update friction
  		for (int i = 0; i < _bulletVehicle.m_wheelInfo.size(); i++) {
  			auto& wheel = _bulletVehicle.m_wheelInfo[i];
-@@ -465,7 +707,10 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
+@@ -465,7 +723,10 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
  					longFriction = 1; // If we aren't powersliding, it's not scaled down
  				}
  
@@ -3643,7 +4759,7 @@ index 417ad9d..93b78f7 100644
  
  				if (isContactSticky) {
  					// Keep current friction values
-@@ -481,12 +726,24 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
+@@ -481,12 +742,24 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
  			}
  		}
  	}
@@ -3669,7 +4785,7 @@ index 417ad9d..93b78f7 100644
  
  		float stickyForceScale = config.threeWheels ? 0 : 0.5f;
  		if (fullStick)
-@@ -528,8 +785,14 @@ void Car::_UpdateBoost(float tickTime, const MutatorConfig& mutatorConfig, float
+@@ -528,8 +801,14 @@ void Car::_UpdateBoost(float tickTime, const MutatorConfig& mutatorConfig, float
  	// Apply boosting force and consume boost
  	if (_internalState.isBoosting) {
  		_internalState.boost = RS_MAX(_internalState.boost - mutatorConfig.boostUsedPerSecond * tickTime, 0);
@@ -3685,7 +4801,7 @@ index 417ad9d..93b78f7 100644
  			* GetForwardDir() * CAR_MASS_BT
  		);
  		_internalState.timeSinceBoosted = 0;
-@@ -547,28 +810,31 @@ void Car::_UpdateBoost(float tickTime, const MutatorConfig& mutatorConfig, float
+@@ -547,28 +826,31 @@ void Car::_UpdateBoost(float tickTime, const MutatorConfig& mutatorConfig, float
  
  void Car::_UpdateJump(float tickTime, const MutatorConfig& mutatorConfig, bool jumpPressed) {
  	using namespace RLConst;
@@ -3729,7 +4845,7 @@ index 417ad9d..93b78f7 100644
  		_internalState.jumpTime = 0;
  		btVector3 jumpStartForce = GetUpDir() * mutatorConfig.jumpImmediateForce * UU_TO_BT * CAR_MASS_BT;
  		_rigidBody.applyCentralImpulse(jumpStartForce);
-@@ -578,14 +844,10 @@ void Car::_UpdateJump(float tickTime, const MutatorConfig& mutatorConfig, bool j
+@@ -578,14 +860,10 @@ void Car::_UpdateJump(float tickTime, const MutatorConfig& mutatorConfig, bool j
  		_internalState.hasJumped = true;
  
  		// Apply extra long-jump force
@@ -3747,7 +4863,7 @@ index 417ad9d..93b78f7 100644
  		_rigidBody.applyCentralForce(totalJumpForce * UU_TO_BT * CAR_MASS_BT);
  	}
  
-@@ -602,7 +864,11 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -602,7 +880,11 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  		dirYaw_up = GetUpDir(),
  		dirRoll_forward = -GetForwardDir();
  
@@ -3760,7 +4876,7 @@ index 417ad9d..93b78f7 100644
  	if (_internalState.isFlipping)
  		_internalState.isFlipping = _internalState.hasFlipped && _internalState.flipTime < FLIP_TORQUE_TIME;
  
-@@ -613,15 +879,20 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -613,15 +895,20 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  		if (!_internalState.flipRelTorque.IsZero()) {
  			// Flip cancel check
  			float pitchScale = 1;
@@ -3786,7 +4902,7 @@ index 417ad9d..93b78f7 100644
  				}
  			}
  
-@@ -629,22 +900,25 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -629,22 +916,25 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  
  			btVector3 dodgeTorque = relDodgeTorque * btVector3(FLIP_TORQUE_X, FLIP_TORQUE_Y, 0);
  			_rigidBody.applyTorque(_rigidBody.m_invInertiaTensorWorld.inverse() * _rigidBody.getWorldTransform().m_basis * dodgeTorque);
@@ -3819,7 +4935,7 @@ index 417ad9d..93b78f7 100644
  
  			if (_internalState.isFlipping) {
  				pitchTorqueScale = 0;
-@@ -653,11 +927,13 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -653,11 +943,13 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  				if (_internalState.flipTime < FLIP_TORQUE_TIME + FLIP_PITCHLOCK_EXTRA_TIME)
  					pitchTorqueScale = 0;
  			}
@@ -3836,7 +4952,7 @@ index 417ad9d..93b78f7 100644
  		} else {
  			torque = { 0, 0, 0 };
  		}
-@@ -666,8 +942,8 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -666,8 +958,8 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  
  		// TODO: Use actual dot product operator functions (?)
  		float
@@ -3847,7 +4963,7 @@ index 417ad9d..93b78f7 100644
  			dampRoll = dirRoll_forward.dot(angVel) * CAR_AIR_CONTROL_DAMPING.z;
  
  		btVector3 damping =
-@@ -677,8 +953,7 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -677,8 +969,7 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  		_rigidBody.applyTorque(_rigidBody.m_invInertiaTensorWorld.inverse() * (torque - damping) * CAR_TORQUE_SCALE);
  	}
  
@@ -3857,7 +4973,7 @@ index 417ad9d..93b78f7 100644
  }
  
  void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorConfig, bool jumpPressed, float forwardSpeed_UU) {
-@@ -687,6 +962,9 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
+@@ -687,6 +978,9 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
  	float tickTimeScale = tickTime / (1 / 120.f);
  
  	if (_internalState.isOnGround) {
@@ -3867,7 +4983,7 @@ index 417ad9d..93b78f7 100644
  		_internalState.hasDoubleJumped = false;
  		_internalState.hasFlipped = false;
  		_internalState.airTime = 0;
-@@ -702,7 +980,7 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
+@@ -702,7 +996,7 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
  		}
  
  		if (jumpPressed && _internalState.airTimeSinceJump < DOUBLEJUMP_MAX_DELAY) {
@@ -3876,7 +4992,7 @@ index 417ad9d..93b78f7 100644
  			bool isFlipInput = inputMagnitude >= config.dodgeDeadzone;
  
  			bool canUse;
-@@ -728,16 +1006,33 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
+@@ -728,16 +1022,33 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
  					{
  						float forwardSpeedRatio = abs(forwardSpeed_UU) / CAR_MAX_SPEED;
  
@@ -3918,7 +5034,7 @@ index 417ad9d..93b78f7 100644
  						if (abs(dodgeDir.x()) < 0.1f) dodgeDir.x() = 0;
  						if (abs(dodgeDir.y()) < 0.1f) dodgeDir.y() = 0;
  
-@@ -781,50 +1076,79 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
+@@ -781,50 +1092,79 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
  		}
  	}
  
@@ -4012,7 +5128,7 @@ index 417ad9d..93b78f7 100644
  			_internalState.autoFlipTimer -= tickTime;
  		}
 diff --git upstream/src/Sim/Car/Car.h engine/rocketsim/src/Sim/Car/Car.h
-index 90bcaa8..e7cfd25 100644
+index 90bcaa8..ae9a71d 100644
 --- upstream/src/Sim/Car/Car.h
 +++ engine/rocketsim/src/Sim/Car/Car.h
 @@ -1,9 +1,11 @@
@@ -4156,12 +5272,14 @@ index 90bcaa8..e7cfd25 100644
  	btVehicleRL _bulletVehicle;
  	btDefaultVehicleRaycaster _bulletVehicleRaycaster;
  	btRigidBody _rigidBody;
-@@ -166,6 +229,14 @@ public:
+@@ -166,6 +229,16 @@ public:
  	// Those values are only updated when GetState() is called
  	CarState _internalState;
  
-+	// RL PATCH: state at the start of the current tick (the game's OldRBState)
++	// RL PATCH: state at the start of the current tick (the game's OldRBState): its location and velocities as the
++	// read-back rounds them, in uu; its rotation the matrix QuatToRotator makes of its quaternion, `_oldQuat`
 +	PhysState _oldState;
++	btQuaternion _oldQuat;
 +	void _CaptureOldState();
 +
 +	// RL PATCH: this tick's throttle as the game's Vehicle.Input.Throttle (controls.throttle, or 1 while boosting on the
@@ -4171,7 +5289,7 @@ index 90bcaa8..e7cfd25 100644
  	// Get the forward direction as a unit vector
  	Vec GetForwardDir() const {
  		return _internalState.rotMat.forward;
-@@ -181,10 +252,26 @@ public:
+@@ -181,10 +254,26 @@ public:
  		return _internalState.rotMat.up;
  	}
  
@@ -4199,7 +5317,7 @@ index 90bcaa8..e7cfd25 100644
  	void _FinishPhysicsTick(const MutatorConfig& mutatorConfig);
  
  	void _BulletSetup(GameMode gameMode, class btDynamicsWorld* bulletWorld, const MutatorConfig& mutatorConfig);
-@@ -195,6 +282,9 @@ public:
+@@ -195,6 +284,9 @@ public:
  	void Serialize(DataStreamOut& out);
  	void _Deserialize(DataStreamIn& in);
  
@@ -4209,7 +5327,7 @@ index 90bcaa8..e7cfd25 100644
  	Car(const Car& other) = delete;
  	Car& operator=(const Car& other) = delete;
  
-@@ -206,7 +296,10 @@ private:
+@@ -206,7 +298,10 @@ private:
  	void _UpdateJump(float tickTime, const MutatorConfig& mutatorConfig, bool jumpPressed);
  	void _UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, bool doAirControl);
  	void _UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorConfig, bool jumpPressed, float forwardSpeed_UU);
@@ -4365,10 +5483,10 @@ index b70cb95..6f1f42d 100644
 \ No newline at end of file
 diff --git engine/rocketsim/src/Sim/GameRotator/GameRotator.h engine/rocketsim/src/Sim/GameRotator/GameRotator.h
 new file mode 100644
-index 0000000..5512d3e
+index 0000000..7c6f812
 --- /dev/null
 +++ engine/rocketsim/src/Sim/GameRotator/GameRotator.h
-@@ -0,0 +1,72 @@
+@@ -0,0 +1,119 @@
 +#pragma once
 +// RL PATCH: the game's rotators (UE3 FRotator, 65536 units a turn) as its car scripts use them: QuatToRotator
 +// (execQuatToRotator 0x140364b80: the quaternion's matrix, then FMatrix::Rotator 0x140385e40: atan2f, appRound) and
@@ -4430,6 +5548,53 @@ index 0000000..5512d3e
 +
 +// The axes the game's scripts see for a body rotation: Rotation(QuatToRotator(q)) through the sine table
 +inline RotMat GameRotatorBasis(const RotMat& m) { return UERotationMatrix(UERotatorFromMatrix(m)); }
++
++// RL PATCH (RV-232): UE3's quaternion maths where the game's car scripts take a rotator from a quaternion
++// (QuatToRotator, GetTimeOfImpact FUN_140f01930)
++struct UEQuat { float x = 0, y = 0, z = 0, w = 1; };
++
++// FQuat SlerpQuat (0x140388840): the dot ((y1y2 + x1x2) + z1z2) + w1w2; at |dot| >= 0.9999 linear (1 - t, t), else
++// through acos and sin; b's weight negated when the dot is negative
++inline UEQuat UESlerpQuat(const UEQuat& a, const UEQuat& b, float t) {
++	float raw = a.y * b.y + a.x * b.x + a.z * b.z + a.w * b.w;
++	float cosom = raw < 0 ? -raw : raw;
++	float s0, s1;
++	if (cosom < 0.9999f) {
++		float omega = det_acosf(cosom > 1.f ? 1.f : cosom);
++		float invSin = 1.f / det_sinf(omega);
++		s0 = det_sinf((1.f - t) * omega) * invSin;
++		s1 = det_sinf(omega * t) * invSin;
++	} else {
++		s0 = 1.f - t;
++		s1 = t;
++	}
++	if (raw < 0)
++		s1 = -s1;
++	return { s1 * b.x + a.x * s0, s1 * b.y + a.y * s0, s1 * b.z + a.z * s0, s1 * b.w + a.w * s0 };
++}
++
++// GetTimeOfImpact's normalisation: the sum ((x2 + y2) + z2) + w2 over 1e-8 times 1 / sqrt, else the identity
++inline UEQuat UENormalized(const UEQuat& q) {
++	float sum = q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w;
++	if (!(sum > 1e-8f))
++		return {};
++	float s = 1.f / sqrtf(sum);
++	return { q.x * s, s * q.y, s * q.z, s * q.w };
++}
++
++// FQuatRotationTranslationMatrix (0x14036f9c0: x2 = x + x, ...): the matrix QuatToRotator hands FMatrix::Rotator
++// (Bullet's basis from a quaternion scales by 2 / |q|^2: a rotator off by a unit in about 0.05 % of cases)
++inline RotMat UEQuatRotMat(const UEQuat& q) {
++	float x2 = q.x + q.x, y2 = q.y + q.y, z2 = q.z + q.z;
++	float xx = x2 * q.x, yy = y2 * q.y, zz = z2 * q.z;
++	float xy = y2 * q.x, xz = z2 * q.x, yz = z2 * q.y;
++	float wx = x2 * q.w, wy = y2 * q.w, wz = z2 * q.w;
++	RotMat m;
++	m.forward = Vec(1.f - (zz + yy), wz + xy, xz - wy);
++	m.right = Vec(xy - wz, 1.f - (zz + xx), wx + yz);
++	m.up = Vec(wy + xz, yz - wx, 1.f - (yy + xx));
++	return m;
++}
 +
 +// The cone's hitbox centre (FUN_140f11c30): the location plus the offset multiplied by the rotator matrix's rows,
 +// (off . X, off . Y, off . Z): the transpose of the rotation (InverseTransformNormal), not R * off
@@ -4533,10 +5698,10 @@ index 0000000..5830392
 +RS_NS_END
 diff --git engine/rocketsim/src/Sim/Quantize/Quantize.cpp engine/rocketsim/src/Sim/Quantize/Quantize.cpp
 new file mode 100644
-index 0000000..e7d8477
+index 0000000..ae9872d
 --- /dev/null
 +++ engine/rocketsim/src/Sim/Quantize/Quantize.cpp
-@@ -0,0 +1,165 @@
+@@ -0,0 +1,169 @@
 +#include "Quantize.h"
 +
 +#include "../../BulletLink.h"
@@ -4670,14 +5835,18 @@ index 0000000..e7d8477
 +		} else {
 +			btVector3 vel = rb.m_linearVelocity * BT_TO_UU;
 +			btVector3 angVel = rb.m_angularVelocity;
-+			CapReadBack(vel, maxSpeed);
-+			CapReadBack(angVel, maxAngSpeed);
-+			for (int i = 0; i < 3; i++) {
-+				vel[i] = Velocity(vel[i], 100.f);
-+				angVel[i] = Velocity(angVel[i], 10000.f);
-+			}
++			ReadBackVelocities(vel, angVel, maxSpeed, maxAngSpeed);
 +			rb.m_linearVelocity = vel * UU_TO_BT;
 +			rb.m_angularVelocity = angVel;
++		}
++	}
++
++	void ReadBackVelocities(btVector3& vel, btVector3& angVel, float maxSpeed, float maxAngSpeed) {
++		CapReadBack(vel, maxSpeed);
++		CapReadBack(angVel, maxAngSpeed);
++		for (int i = 0; i < 3; i++) {
++			vel[i] = Velocity(vel[i], 100.f);
++			angVel[i] = Velocity(angVel[i], 10000.f);
 +		}
 +	}
 +
@@ -4704,10 +5873,10 @@ index 0000000..e7d8477
 +RS_NS_END
 diff --git engine/rocketsim/src/Sim/Quantize/Quantize.h engine/rocketsim/src/Sim/Quantize/Quantize.h
 new file mode 100644
-index 0000000..0e7def8
+index 0000000..4c9bb13
 --- /dev/null
 +++ engine/rocketsim/src/Sim/Quantize/Quantize.h
-@@ -0,0 +1,54 @@
+@@ -0,0 +1,57 @@
 +#pragma once
 +#include "../../BaseInc.h"
 +
@@ -4759,6 +5928,9 @@ index 0000000..0e7def8
 +	// The velocities' part of it alone (the position and rotation already rounded: re-rounding a rotation isn't always
 +	// exact): a body pushed between ticks, read back as the game's next physics frame reads it (RV-231)
 +	void QuantizeVelocities(btRigidBody& rb, float maxSpeed, float maxAngSpeed);
++
++	// The read-back's velocities: `vel` in uu/s and `angVel` in rad/s capped, then quantised (QuantizeVelocities' maths)
++	void ReadBackVelocities(btVector3& vel, btVector3& angVel, float maxSpeed, float maxAngSpeed);
 +}
 +
 +RS_NS_END

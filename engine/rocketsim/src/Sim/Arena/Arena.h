@@ -93,6 +93,13 @@ public:
 	static constexpr size_t IMPACT_LIMIT = 1024;
 	static constexpr uint32_t IMPACT_BALL = 0xFFFFFFFF;
 
+	// RL PATCH: the demolition sweep (Car_TA.ShouldDemolish -> GetTimeOfImpact): both cars at their time of impact from
+	// their start-of-tick states; returns the fraction of the two-tick span (1: missed, the start-of-tick states). Public
+	// for the tests
+	static float SweepToImpact(Car* car1, Car* car2, float tickTime, PhysState& impact1, PhysState& impact2);
+	// The demolition cone at the time of impact: car2's hitbox centre in car1's forward cone (backward, `reverse`)
+	static bool DemoConeAtImpact(Car* car1, Car* car2, float tickTime, bool reverse);
+
 	// RL PATCH: kickoff countdown: while non-zero, every car's controls are zeroed for the tick, then it counts down.
 	// The game freezes the cars for 4.0 s after a kickoff reset (replays: the first car moves 3.99-4.05 s after the
 	// reset; the "3-2-1" countdown, WarmupTime 3, plus a second). ResetToRandomKickoff leaves it alone (freeplay

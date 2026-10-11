@@ -2117,6 +2117,130 @@ static void TestBallHitForwardRotator() {
 // location plus LocalCollisionOffset multiplied by the rotator matrix's rows (the transpose of the rotation), the axes
 // from the rotator. A supersonic attacker (2250 uu/s) at yaw A, a parked victim at yaw B, (dx, dy) to the attacker's
 // left and ahead: the two cases sit mid-way in 12 uu wide bands where the rules disagree
+// RV-232/233: the demolition sweep as the game's GetTimeOfImpact computes it: its start-of-tick inputs (L and V x 0.02,
+// the quaternion), the location lerp, UE3's SlerpQuat and quaternion matrix, the 2.82 penetration solver. The static
+// session's cases (DSW1 harness, game replica; exact bits): each gave the engine a different rotator, fraction, cone
+// decision or hit before
+static void TestDemoSweep() {
+	puts("demolition sweep (GetTimeOfImpact) as the game's arithmetic: six of the static session's cases bit for bit (RV-232, RV-233)");
+	auto f = [](uint32_t u) { float x; memcpy(&x, &u, sizeof x); return x; };
+	auto bitsOf = [](float x) { uint32_t u; memcpy(&u, &x, sizeof u); return u; };
+	struct CarIn { int preset; uint32_t pos[3], vel[3], ang[3], q[4]; };
+	struct Want { int id; bool hit; uint32_t fraction; int rot0[3], rot1[3]; bool cone; uint32_t loc0[3]; };
+	struct Case { CarIn car[2]; Want want; };
+	const Case cases[] = {
+		// (slow rotation: Bullet's slerp kept the start orientation; ours [504, -17641, 179] / [-571, 3984, -121])
+		{ { { 2, { 0xc460a147, 0xc4888947, 0x4461351e }, { 0xc4fa1bdf, 0xc4861bdf, 0x431da419 }, { 0x3cd1cc10, 0xbd7d9556, 0x3c586ec1 }, { 0x3cc06668, 0x3c1eca27, 0x3f3f8f48, 0xbf29b391 } },
+		    { 0, { 0xc46b4999, 0xc47705c2, 0x44639999 }, { 0x44c3366e, 0xc4c3e578, 0x435ccd0e }, { 0xbce7ea5f, 0xbbd551d6, 0xbd186983 }, { 0x39cd0f9d, 0x3ce52b6b, 0x3e41fd06, 0x3f7b4326 } } },
+		  { 435, true, 0x3f011780, { 501, -17640, 174 }, { -572, 3981, -119 }, false, { 0xc460aa60, 0xc4888bb8, 0x446135d6 } } },
+		// (the location lerp: ours was 1 ulp off in x)
+		{ { { 0, { 0x44bdb4cd, 0xc5818fc2, 0x44884f0a }, { 0x43f3ee35, 0xc4f3e2e9, 0xc2b99f3b }, { 0x3ed1f9f0, 0x404ae315, 0x40349bd0 }, { 0x3ce5b32d, 0x3bf108f7, 0xbf1d8e69, 0x3f49a2bb } },
+		    { 0, { 0x44b5970a, 0xc58556f6, 0x4486d9eb }, { 0, 0, 0 }, { 0xb8e6afcc, 0x38e6afcc, 0xb8e6afcc }, { 0x3cd54dca, 0xbaddad90, 0x3f42d6df, 0xbf25eb2f } } },
+		  { 17, true, 0x3edcf36d, { -467, -13860, -402 }, { 391, -18046, 379 }, true, { 0x44bda2fd, 0xc5817df4, 0x4488526d } } },
+		// (the inputs' round trip moved the fraction most: ours 0x3f699946)
+		{ { { 3, { 0x4523d199, 0xc57fcb85, 0x44a390a4 }, { 0x4369e6a8, 0xc3b7853f, 0xc299d26e }, { 0x3ea3a3ec, 0x3f1dd399, 0xbe59b66f }, { 0x3b9c5be7, 0xbbf9584e, 0x3e98f323, 0x3f744cb6 } },
+		    { 3, { 0x45223f85, 0xc5828229, 0x449f5666 }, { 0xc4d22b3b, 0xc4868b8d, 0xc0cb8d4f }, { 0x3cce8534, 0x3e48198f, 0x3e6feef5 }, { 0xbb96b3bf, 0xbc6f0c06, 0x3f4cf847, 0xbf1952c3 } } },
+		  { 32333, true, 0x3f7033ea, { 156, 6311, -94 }, { -257, -19355, 201 }, false, { 0x4523ecf0, 0xc57ff66b, 0x44a37ea9 } } },
+		// (the game hits, f 0.0910, and demolishes; ours missed)
+		{ { { 5, { 0xc41b4333, 0x4587cab8, 0x432a23d7 }, { 0x44e7694f, 0x44957712, 0xc2842e97 }, { 0, 0, 0 }, { 0xbc126a7e, 0x3c54e27d, 0x3e90d385, 0x3f758305 } },
+		    { 3, { 0xc4128852, 0x458c0599, 0x432b3d70 }, { 0xc2e69a1c, 0x44579343, 0x42bba978 }, { 0x3f8e9b28, 0xbf3518d2, 0x3fa47b35 }, { 0xbba25e90, 0x3abd26ac, 0x3f5d7058, 0x3f0072e4 } } },
+		  { 34002, true, 0x3dba7642, { -313, 5982, 102 }, { -149, 21712, -57 }, true, { 0xc41e6ac4, 0x45878984, 0x432a9728 } } },
+		// (the cone: the game's 0, ours 1)
+		{ { { 3, { 0x448a26b8, 0x45228b0a, 0x441880a4 }, { 0x423acdd3, 0x4297245a, 0xc0d85a1c }, { 0xbd244a62, 0x3d4302b3, 0x3ce4a383 }, { 0x3f590ba3, 0x3ef6dd8f, 0x3d969902, 0x3e55104b } },
+		    { 4, { 0x44933b33, 0x4523ff0a, 0x441bf0a4 }, { 0xc4a50e6e, 0xc39519ba, 0x432a59db }, { 0xbc1bcfd4, 0xbd0cf17f, 0xbd6b8f9a }, { 0x3f086fda, 0x3e992c69, 0x3e7a248c, 0x3f40bace } } },
+		  { 92490, true, 0x3eff24d1, { -793, 10610, -28190 }, { -1995, 8080, -13666 }, false, { 0x448a26ad, 0x45228b01, 0x441880a7 } } },
+		// (an overlapping start: 2.82's EPA hits at 0, 3.24's missed)
+		{ { { 2, { 0xc4cdba3d, 0xc58a6ab8, 0x44891666 }, { 0xc2b99a1c, 0xc3cf47cf, 0xc1102d0f }, { 0x3d9e2046, 0x3e0a8eb4, 0x3e510236 }, { 0x3c3252d0, 0xbcfa4b74, 0x3f47a86b, 0xbf200308 } },
+		    { 0, { 0xc4d5e852, 0xc5893370, 0x448a4dc2 }, { 0xc4ceea45, 0x4415acdd, 0xc34e30e6 }, { 0, 0xb8e6afcc, 0xb8e6afcc }, { 0x3ca49a15, 0x3c9f1f2f, 0x3f7ddb01, 0x3e012215 } } },
+		  { 38047, true, 0x00000000, { -217, -18698, 627 }, { 365, 30121, -455 }, false, { 0xc4cda17c, 0xc58a4f14, 0x448918cc } } },
+		// (the impact's matrix: Bullet's basis gave the second car yaw 23219)
+		{ { { 0, { 0x44c18800, 0x452bc8f6, 0x435951eb }, { 0x43f743f8, 0x4507be18, 0xc23bb958 }, { 0x3d193b3a, 0x3d01797c, 0x3d806e19 }, { 0xbb9bd423, 0x3c1e9ce6, 0x3f1fa6c0, 0x3f48197b } },
+		    { 3, { 0x44b25429, 0x452ccf33, 0x437bd1eb }, { 0x44ed3a45, 0xc3c19d91, 0x42d761ca }, { 0, 0, 0x38e6afcc }, { 0x3b88e9df, 0xbc10d334, 0x3f65a18e, 0x3ee244a6 } } },
+		  { 4828, true, 0x3f693180, { -218, 14053, -51 }, { 160, 23220, 127 }, false, { 0x44c1f461, 0x452cb6f2, 0x4358ffa3 } } },
+	};
+	const CarConfig* presets[] = { &CAR_CONFIG_OCTANE, &CAR_CONFIG_DOMINUS, &CAR_CONFIG_PLANK, &CAR_CONFIG_BREAKOUT, &CAR_CONFIG_HYBRID, &CAR_CONFIG_MERC };
+	for (const Case& c : cases) {
+		Arena* arena = Arena::Create(GameMode::SOCCAR);
+		Car* cars[2];
+		for (int k = 0; k < 2; k++) {
+			const CarIn& in = c.car[k];
+			cars[k] = arena->AddCar(k == 0 ? Team::BLUE : Team::ORANGE, *presets[in.preset]);
+			PhysState& s = cars[k]->_oldState;
+			s.pos = Vec(f(in.pos[0]), f(in.pos[1]), f(in.pos[2]));
+			s.vel = Vec(f(in.vel[0]), f(in.vel[1]), f(in.vel[2]));
+			s.angVel = Vec(f(in.ang[0]), f(in.ang[1]), f(in.ang[2]));
+			cars[k]->_oldQuat = btQuaternion(f(in.q[0]), f(in.q[1]), f(in.q[2]), f(in.q[3]));
+			s.rotMat = UEQuatRotMat({ f(in.q[0]), f(in.q[1]), f(in.q[2]), f(in.q[3]) });
+		}
+		PhysState impact[2];
+		float fraction = Arena::SweepToImpact(cars[0], cars[1], arena->tickTime, impact[0], impact[1]);
+		bool cone = Arena::DemoConeAtImpact(cars[0], cars[1], arena->tickTime, false);
+		const Want& w = c.want;
+		GameRotator r0 = UERotatorFromMatrix(impact[0].rotMat), r1 = UERotatorFromMatrix(impact[1].rotMat);
+		uint32_t loc[3] = { bitsOf(impact[0].pos.x), bitsOf(impact[0].pos.y), bitsOf(impact[0].pos.z) };
+		bool ok = (fraction < 1) == w.hit && bitsOf(fraction) == w.fraction && cone == w.cone &&
+			r0.pitch == w.rot0[0] && r0.yaw == w.rot0[1] && r0.roll == w.rot0[2] && r1.pitch == w.rot1[0] && r1.yaw == w.rot1[1] && r1.roll == w.rot1[2] &&
+			loc[0] == w.loc0[0] && loc[1] == w.loc0[1] && loc[2] == w.loc0[2];
+		CHECK(ok, "case %d: fraction 0x%08x (want 0x%08x), rotators [%d, %d, %d] / [%d, %d, %d], cone %d, location {0x%08x, 0x%08x, 0x%08x}",
+			w.id, bitsOf(fraction), w.fraction, r0.pitch, r0.yaw, r0.roll, r1.pitch, r1.yaw, r1.roll, cone, loc[0], loc[1], loc[2]);
+		delete arena;
+	}
+}
+
+// RV-232: the start-of-tick state (OldRBState) as the game's read-back makes it: the location rounded to 0.01 uu and the
+// velocities quantised, in uu (exact fixed points of the rounding, not the body's x50 of its x0.02), the quaternion the
+// quantised one, the rotation its UE matrix
+static void TestOldStateReadBack() {
+	puts("the start-of-tick state as the game's read-back: rounded location and velocities in uu, the quantised quaternion (RV-232)");
+	Arena* arena = Arena::Create(GameMode::SOCCAR);
+	Car* car = arena->AddCar(Team::BLUE);
+	car->SetState(CarAt({ 100.37f, -1200.11f, 17.01f }, Vec(1, 0.3f, 0).Normalized(), { 0, 0, 1 }, { 830.3f, 410.7f, 0 }));
+	car->controls.throttle = 1;
+	car->controls.steer = 0.4f;
+	car->controls.boost = true;
+	int ticks = 0, offLocation = 0, offVelocity = 0, offRotation = 0;
+	for (int t = 0; t < 240; t++) {
+		if (t == 60)
+			car->controls.jump = true; // (into the air, spinning)
+		if (t == 70) {
+			car->controls.jump = false;
+			car->controls.pitch = 0.5f;
+			car->controls.yaw = 0.3f;
+			car->controls.roll = 0.2f;
+		}
+		btQuaternion q = Quantize::Unpack(car->_netRotation); // (as the tick starts: the last tick's rounding)
+		arena->Step(1);
+		if (t < 1)
+			continue; // (the first tick starts from a placed state)
+		const PhysState& s = car->_oldState;
+		for (int k = 0; k < 3; k++) {
+			offLocation += Quantize::Location(s.pos[k]) != s.pos[k];
+			offVelocity += Quantize::Velocity(s.vel[k], 100) != s.vel[k];
+			offVelocity += Quantize::Velocity(s.angVel[k], 10000) != s.angVel[k];
+		}
+		RotMat m = UEQuatRotMat({ q.x(), q.y(), q.z(), q.w() });
+		offRotation += memcmp(&m, &s.rotMat, sizeof m) != 0 || !(car->_oldQuat == q);
+		ticks++;
+	}
+	// (the old capture, ((L x 0.02) x 50), missed the rounding's fixed point in about a quarter of the components)
+	CHECK(offLocation == 0 && offVelocity == 0 && offRotation == 0, "over %d ticks: %d location, %d velocity components and %d rotations not the read-back's",
+		ticks, offLocation, offVelocity, offRotation);
+	delete arena;
+}
+
+// RV-232: QuatToRotator's matrix is UE's FQuatRotationTranslationMatrix (x2 = x + x), not Bullet's basis (2 / |q|^2): a
+// unit apart in about 0.05 % of quaternions, as this one (found by a scan); the start-of-tick rotation and the sweep's
+// impact rotation are made with it
+static void TestUEQuatRotMat() {
+	puts("QuatToRotator's matrix as UE's (x + x), not Bullet's (2 / |q|^2): a quaternion whose rotators differ (RV-232)");
+	auto f = [](uint32_t u) { float x; memcpy(&x, &u, sizeof x); return x; };
+	UEQuat q = { f(0x3ec1dbca), f(0x3bee773d), f(0xbf085dfc), f(0xbf41c171) };
+	GameRotator ue = UERotatorFromMatrix(UEQuatRotMat(q));
+	GameRotator bullet = UERotatorFromMatrix(RotMat(btMatrix3x3(btQuaternion(q.x, q.y, q.z, q.w))));
+	CHECK(ue.pitch == -4206 && ue.yaw == 11279 && ue.roll == 7131, "UE's matrix: [%d, %d, %d] (expected [-4206, 11279, 7131])", ue.pitch, ue.yaw, ue.roll);
+	CHECK(bullet.yaw == 11280 && bullet.roll == 7129, "Bullet's basis: [%d, %d, %d] (a unit or two off: [-4206, 11280, 7129])", bullet.pitch, bullet.yaw, bullet.roll);
+}
+
 static void TestDemoConeCentres() {
 	puts("CCR-4: the demo cone's hitbox centres with the offset times the transposed rotation");
 	Arena* arena = Arena::Create(GameMode::SOCCAR);
@@ -2199,6 +2323,9 @@ int main(int argc, char** argv) {
 	TestBumpUpRotator();
 	TestBallHitForwardRotator();
 	TestDemoConeCentres();
+	TestDemoSweep();
+	TestOldStateReadBack();
+	TestUEQuatRotMat();
 
 	Arena* arena = Arena::Create(GameMode::SOCCAR);
 	Car* car = arena->AddCar(Team::BLUE);

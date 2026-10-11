@@ -229,8 +229,10 @@ public:
 	// Those values are only updated when GetState() is called
 	CarState _internalState;
 
-	// RL PATCH: state at the start of the current tick (the game's OldRBState)
+	// RL PATCH: state at the start of the current tick (the game's OldRBState): its location and velocities as the
+	// read-back rounds them, in uu; its rotation the matrix QuatToRotator makes of its quaternion, `_oldQuat`
 	PhysState _oldState;
+	btQuaternion _oldQuat;
 	void _CaptureOldState();
 
 	// RL PATCH: this tick's throttle as the game's Vehicle.Input.Throttle (controls.throttle, or 1 while boosting on the
