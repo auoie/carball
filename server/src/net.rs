@@ -66,10 +66,26 @@ pub async fn accept_loop(server: Endpoint<wtransport::endpoint::endpoint_side::S
 }
 
 async fn read_control(recv: &mut wtransport::RecvStream) -> anyhow::Result<Control> {
+    Ok(Control::decode(&read_body(recv).await?)?)
+}
+
+async fn read_body(recv: &mut wtransport::RecvStream) -> anyhow::Result<Vec<u8>> {
     let mut len = [0u8; 2];
     recv.read_exact(&mut len).await?;
     let mut body = vec![0u8; usize::from(u16::from_le_bytes(len))];
     recv.read_exact(&mut body).await?;
+    Ok(body)
+}
+
+/// The client's hello, its version checked before the rest is read (another version's fields don't decode: RV-243)
+async fn read_hello(recv: &mut wtransport::RecvStream) -> anyhow::Result<Control> {
+    let body = read_body(recv).await?;
+    if let [0x01, lo, hi, ..] = body[..] {
+        let version = u16::from_le_bytes([lo, hi]);
+        if version != protocol::VERSION {
+            bail!("protocol version {version}, server speaks {}", protocol::VERSION);
+        }
+    }
     Ok(Control::decode(&body)?)
 }
 
@@ -81,14 +97,11 @@ async fn session(incoming: IncomingSession, id: PlayerId, to_game: &UnboundedSen
     }
     let connection = request.accept().await?;
     let (mut send, mut recv) = connection.accept_bi().await.context("no control stream")?;
-    let Control::Hello { version, team, body, dodge_deadzone, steering_sensitivity, air_control_sensitivity, auto_skip_replay, key, name } =
-        tokio::time::timeout(Duration::from_secs(5), read_control(&mut recv)).await.context("no hello")??
+    let Control::Hello { team, body, dodge_deadzone, steering_sensitivity, air_control_sensitivity, auto_skip_replay, key, name, .. } =
+        tokio::time::timeout(Duration::from_secs(5), read_hello(&mut recv)).await.context("no hello")??
     else {
         bail!("expected hello");
     };
-    if version != protocol::VERSION {
-        bail!("protocol version {version}, server speaks {}", protocol::VERSION);
-    }
 
     let (out_tx, mut out_rx) = unbounded_channel();
     let request = JoinRequest { team, body, dodge_deadzone, steering_sensitivity, air_control_sensitivity, auto_skip_replay, key, name };
@@ -96,7 +109,7 @@ async fn session(incoming: IncomingSession, id: PlayerId, to_game: &UnboundedSen
 
     // Game -> client
     let writer_connection = connection.clone();
-    let writer = tokio::spawn(async move {
+    let mut writer = tokio::spawn(async move {
         while let Some(message) = out_rx.recv().await {
             match message {
                 Outgoing::Control(bytes) => {
@@ -110,6 +123,8 @@ async fn session(incoming: IncomingSession, id: PlayerId, to_game: &UnboundedSen
                 }
             }
         }
+        // (the game let go of this player: a refused join; what it sent goes out before the stream ends)
+        let _ = send.finish().await;
     });
 
     // Client -> game: control messages (in their own task: a framed read mustn't be cancelled halfway); the control
@@ -145,6 +160,11 @@ async fn session(incoming: IncomingSession, id: PlayerId, to_game: &UnboundedSen
                 Err(e) => break Err(e.into()),
             },
             _ = &mut control_reader => break Ok(()),
+            // (the game let go of this player: give the client a moment to read why and close)
+            _ = &mut writer => {
+                let _ = tokio::time::timeout(Duration::from_secs(2), &mut control_reader).await;
+                break Ok(());
+            }
         }
     };
     control_reader.abort();

@@ -1,6 +1,7 @@
 // Online play against a local rl-server (started by playwright.config.ts on ports 14433/14434).
 import type { Page } from "@playwright/test";
 import { expect, hideGamepads, test } from "./fixtures";
+import { ends, join as joinServer, leaveAll, newPlayer } from "./players";
 
 interface Stats {
   ping: number | null;
@@ -91,6 +92,43 @@ test("two players: one drives, the other sees it through the server", async ({ p
 
   await otherContext.close();
   expect(errors).toEqual([]);
+});
+
+test("leaving: the question, back to freeplay; the car explodes for the others and the emptied team forfeits", async ({ page, browser }) => {
+  // (on this server votes wait for the clock's first minute, so the menu's match button is leaving's: RV-236)
+  const errors: string[] = [];
+  const others: Page[] = [];
+  await joinServer(page, SERVER, errors);
+  // (alone first: the last test's players gone, so the two are on opposite teams)
+  await expect(page.locator("#net")).toContainText("1 cars", { timeout: 30_000 });
+  const leaving: string[] = [];
+  const other = await newPlayer(browser, SERVER, leaving);
+  others.push(other);
+  await expect(page.locator("#net")).toContainText("2 cars", { timeout: 30_000 });
+  const demolitions = (): Promise<number> =>
+    page.evaluate(() => (window as unknown as { rlAudio: () => { played: Record<string, number> } }).rlAudio().played.demo ?? 0);
+  const before = await demolitions();
+  const button = (label: string) => other.getByRole("button", { name: new RegExp(`^${label}$`, "i") });
+
+  await other.keyboard.press("Escape");
+  await button("Leave Match").click({ timeout: 30_000 });
+  await expect(other.getByText("Are you sure you want to quit the match?")).toBeVisible({ timeout: 30_000 });
+  await button("No").click();
+  await expect(button("Leave Match")).toBeVisible({ timeout: 30_000 });
+  await button("Leave Match").click();
+  await button("Yes").click({ timeout: 30_000 });
+
+  // The others: its car explodes and goes; its team, emptied, forfeits (whichever the page's isn't)
+  await expect(page.locator("#net")).toContainText("1 cars", { timeout: 15_000 });
+  await expect.poll(demolitions, { timeout: 15_000 }).toBeGreaterThan(before);
+  await expect.poll(async () => (await ends(page)).filter((e) => e.forfeit).length, { timeout: 15_000 }).toBe(1);
+  // The leaver: back to freeplay
+  await expect(other).toHaveURL(/:4173\/$/, { timeout: 30_000 });
+  await other.waitForFunction(() => "rlFreeplay" in window, null, { timeout: 60_000 });
+
+  expect(errors).toEqual([]);
+  expect(leaving).toEqual([]);
+  await leaveAll(page, others);
 });
 
 test("a goal: the game slows down for 3.53 s, the goal replay plays, Space skips it, then the kickoff", async ({ page }) => {

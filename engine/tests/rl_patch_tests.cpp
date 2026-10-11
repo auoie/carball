@@ -2113,16 +2113,12 @@ static void TestBallHitForwardRotator() {
 	delete arena;
 }
 
-// CCR-4: the demo cone as the game's (FUN_140f11c30 from Impact.Rotation = QuatToRotator): the hitbox centres are the
-// location plus LocalCollisionOffset multiplied by the rotator matrix's rows (the transpose of the rotation), the axes
-// from the rotator. A supersonic attacker (2250 uu/s) at yaw A, a parked victim at yaw B, (dx, dy) to the attacker's
-// left and ahead: the two cases sit mid-way in 12 uu wide bands where the rules disagree
 // RV-232/233: the demolition sweep as the game's GetTimeOfImpact computes it: its start-of-tick inputs (L and V x 0.02,
 // the quaternion), the location lerp, UE3's SlerpQuat and quaternion matrix, the 2.82 penetration solver. The static
 // session's cases (DSW1 harness, game replica; exact bits): each gave the engine a different rotator, fraction, cone
 // decision or hit before
 static void TestDemoSweep() {
-	puts("demolition sweep (GetTimeOfImpact) as the game's arithmetic: six of the static session's cases bit for bit (RV-232, RV-233)");
+	puts("demolition sweep (GetTimeOfImpact) as the game's arithmetic: twelve of the static session's cases bit for bit (RV-232, RV-233, RV-245)");
 	auto f = [](uint32_t u) { float x; memcpy(&x, &u, sizeof x); return x; };
 	auto bitsOf = [](float x) { uint32_t u; memcpy(&u, &x, sizeof u); return u; };
 	struct CarIn { int preset; uint32_t pos[3], vel[3], ang[3], q[4]; };
@@ -2153,6 +2149,25 @@ static void TestDemoSweep() {
 		{ { { 2, { 0xc4cdba3d, 0xc58a6ab8, 0x44891666 }, { 0xc2b99a1c, 0xc3cf47cf, 0xc1102d0f }, { 0x3d9e2046, 0x3e0a8eb4, 0x3e510236 }, { 0x3c3252d0, 0xbcfa4b74, 0x3f47a86b, 0xbf200308 } },
 		    { 0, { 0xc4d5e852, 0xc5893370, 0x448a4dc2 }, { 0xc4ceea45, 0x4415acdd, 0xc34e30e6 }, { 0, 0xb8e6afcc, 0xb8e6afcc }, { 0x3ca49a15, 0x3c9f1f2f, 0x3f7ddb01, 0x3e012215 } } },
 		  { 38047, true, 0x00000000, { -217, -18698, 627 }, { 365, 30121, -455 }, false, { 0xc4cda17c, 0xc58a4f14, 0x448918cc } } },
+		// (SlerpQuat's linear branch at |dot| >= 0.9999; also the normalisation by a reciprocal: RV-245)
+		{ { { 3, { 0xc4017c29, 0x454649c2, 0x449662e1 }, { 0, 0, 0 }, { 0xbeec8c93, 0xbef02f30, 0x3e1f7271 }, { 0x3f135f4d, 0x3f473227, 0x3e5978de, 0x3e098d59 } },
+		    { 0, { 0xc40927ae, 0x454d1452, 0x449a028f }, { 0x4422ac39, 0xc3ae7b02, 0xc393720c }, { 0xbdd49a56, 0xbe401cd6, 0xbdde6eeb }, { 0xbea16b21, 0xbe9f20ef, 0x3f634127, 0x3e016d0a } } },
+		  { 10822, true, 0x3f49a332, { 341, 19585, -27465 }, { -5247, 27546, 8390 }, true, { 0xc4017c29, 0x454649c1, 0x449662e0 } } },
+		{ { { 2, { 0xc488a852, 0x44d5e147, 0x43d4c3d7 }, { 0x440f67be, 0xc50a1a41, 0xc2832e97 }, { 0x3f0be187, 0x3e1eef5e, 0x3f00a47f }, { 0x3c2d052b, 0x3c23a6a9, 0xbf1c9fc2, 0x3f4a7666 } },
+		    { 1, { 0xc470a1eb, 0x44d3751e, 0x43d350a4 }, { 0xc504adef, 0x43f3a168, 0xc3aa8021 }, { 0, 0, 0 }, { 0x3c8571eb, 0xbc375cc1, 0x3f79ee5d, 0xbe5cb86a } } },
+		  { 5718, true, 0x3efb673d, { -299, -13735, -47 }, { 281, -28231, 301 }, false, { 0xc488ab11, 0x44d5ebdc, 0x43d4c519 } } },
+		// (the normalisation as 1 / sqrt, times)
+		{ { { 5, { 0x4445ef5c, 0x440178f6, 0x44769000 }, { 0xc4a60dca, 0x448e6a97, 0x3ed26e97 }, { 0xba8461f9, 0x3a54562e, 0x3ae02213 }, { 0xbbbe1fed, 0xbc8352c6, 0x3f700cec, 0x3eb1ae96 } },
+		    { 1, { 0x4441270a, 0x44225eb8, 0x447780a3 }, { 0x4502a456, 0xc45a6c39, 0x4222d810 }, { 0x3f8f76b4, 0xbf0b6502, 0xbf83d0d0 }, { 0xbc5a1954, 0x3b2dc580, 0x3f5d1497, 0x3f010652 } } },
+		  { 9109, true, 0x3e961ce2, { 3, 25374, 356 }, { -293, 21785, 55 }, true, { 0x44471469, 0x44007da0, 0x44768fe9 } } },
+		// (the UE matrix's terms in their order)
+		{ { { 1, { 0xc551b333, 0xc5896f33, 0x43f2a666 }, { 0, 0, 0 }, { 0x3deb2181, 0x3d982fd7, 0x4037ae3e }, { 0xbe9f4449, 0x3f2d8fa5, 0x3ef99998, 0x3ee85849 } },
+		    { 0, { 0xc554b91e, 0xc58b627b, 0x43dbbd70 }, { 0xc41590b4, 0x4505282d, 0x43f999ba }, { 0xbf28cf18, 0xbfe16c0d, 0xbf0027fa }, { 0x3f4f5592, 0x3eeaabab, 0xbeb213b3, 0xbde9a936 } } },
+		  { 11318, true, 0x3f06ed0c, { -12146, 32235, -19400 }, { -4971, 12308, 26492 }, false, { 0xc551b332, 0xc5896f32, 0x43f2a665 } } },
+		// (location not given: not checked)
+		{ { { 5, { 0x43bafc29, 0x44a73e14, 0x446a11eb }, { 0xc4114b95, 0x44fc6431, 0xc440a343 }, { 0xc088fc65, 0x3fa47e7c, 0xc0444356 }, { 0x3e5eaa38, 0x3f077f14, 0x3f176356, 0x3f1176af } },
+		    { 1, { 0x43ebdc29, 0x449d0d1e, 0x446bd1eb }, { 0xc42bfaf1, 0x438303f8, 0x44843bdf }, { 0, 0, 0 }, { 0x3f65f427, 0xbb8ffc10, 0xbe06af5e, 0x3ed6af06 } } },
+		  { 26253, true, 0x3ec70cc0, { -3594, 19349, -12407 }, { -2449, -1271, -23507 }, false, { 0, 0, 0 } } },
 		// (the impact's matrix: Bullet's basis gave the second car yaw 23219)
 		{ { { 0, { 0x44c18800, 0x452bc8f6, 0x435951eb }, { 0x43f743f8, 0x4507be18, 0xc23bb958 }, { 0x3d193b3a, 0x3d01797c, 0x3d806e19 }, { 0xbb9bd423, 0x3c1e9ce6, 0x3f1fa6c0, 0x3f48197b } },
 		    { 3, { 0x44b25429, 0x452ccf33, 0x437bd1eb }, { 0x44ed3a45, 0xc3c19d91, 0x42d761ca }, { 0, 0, 0x38e6afcc }, { 0x3b88e9df, 0xbc10d334, 0x3f65a18e, 0x3ee244a6 } } },
@@ -2178,9 +2193,10 @@ static void TestDemoSweep() {
 		const Want& w = c.want;
 		GameRotator r0 = UERotatorFromMatrix(impact[0].rotMat), r1 = UERotatorFromMatrix(impact[1].rotMat);
 		uint32_t loc[3] = { bitsOf(impact[0].pos.x), bitsOf(impact[0].pos.y), bitsOf(impact[0].pos.z) };
+		bool unchecked = w.loc0[0] == 0 && w.loc0[1] == 0 && w.loc0[2] == 0;
 		bool ok = (fraction < 1) == w.hit && bitsOf(fraction) == w.fraction && cone == w.cone &&
 			r0.pitch == w.rot0[0] && r0.yaw == w.rot0[1] && r0.roll == w.rot0[2] && r1.pitch == w.rot1[0] && r1.yaw == w.rot1[1] && r1.roll == w.rot1[2] &&
-			loc[0] == w.loc0[0] && loc[1] == w.loc0[1] && loc[2] == w.loc0[2];
+			(unchecked || (loc[0] == w.loc0[0] && loc[1] == w.loc0[1] && loc[2] == w.loc0[2]));
 		CHECK(ok, "case %d: fraction 0x%08x (want 0x%08x), rotators [%d, %d, %d] / [%d, %d, %d], cone %d, location {0x%08x, 0x%08x, 0x%08x}",
 			w.id, bitsOf(fraction), w.fraction, r0.pitch, r0.yaw, r0.roll, r1.pitch, r1.yaw, r1.roll, cone, loc[0], loc[1], loc[2]);
 		delete arena;
@@ -2191,13 +2207,17 @@ static void TestDemoSweep() {
 // velocities quantised, in uu (exact fixed points of the rounding, not the body's x50 of its x0.02), the quaternion the
 // quantised one, the rotation its UE matrix
 static void TestOldStateReadBack() {
-	puts("the start-of-tick state as the game's read-back: rounded location and velocities in uu, the quantised quaternion (RV-232)");
+	puts("the start-of-tick state as the game's read-back: rounded location and velocities in uu, the quantised quaternion, the ball's velocity (RV-232, RV-244)");
 	Arena* arena = Arena::Create(GameMode::SOCCAR);
 	Car* car = arena->AddCar(Team::BLUE);
 	car->SetState(CarAt({ 100.37f, -1200.11f, 17.01f }, Vec(1, 0.3f, 0).Normalized(), { 0, 0, 1 }, { 830.3f, 410.7f, 0 }));
 	car->controls.throttle = 1;
 	car->controls.steer = 0.4f;
 	car->controls.boost = true;
+	BallState ball;
+	ball.pos = { -300.37f, 200.11f, 400.5f };
+	ball.vel = { 410.3f, -230.7f, 120.1f };
+	arena->ball->SetState(ball);
 	int ticks = 0, offLocation = 0, offVelocity = 0, offRotation = 0;
 	for (int t = 0; t < 240; t++) {
 		if (t == 60)
@@ -2220,11 +2240,44 @@ static void TestOldStateReadBack() {
 		}
 		RotMat m = UEQuatRotMat({ q.x(), q.y(), q.z(), q.w() });
 		offRotation += memcmp(&m, &s.rotMat, sizeof m) != 0 || !(car->_oldQuat == q);
+		// (the ball's too: its start-of-tick velocity for the hit, RV-244)
+		for (int k = 0; k < 3; k++)
+			offVelocity += Quantize::Velocity(arena->ball->_startOfTickVel[k], 100) != arena->ball->_startOfTickVel[k];
 		ticks++;
 	}
 	// (the old capture, ((L x 0.02) x 50), missed the rounding's fixed point in about a quarter of the components)
 	CHECK(offLocation == 0 && offVelocity == 0 && offRotation == 0, "over %d ticks: %d location, %d velocity components and %d rotations not the read-back's",
 		ticks, offLocation, offVelocity, offRotation);
+	delete arena;
+}
+
+// RV-245: the start-of-tick quaternion is the packed one the last rounding left, not the body's basis rounded again (a
+// rotator 3 and 4 units apart for this one of the reviewer's 2M quaternions)
+static void TestOldQuatFromPacked() {
+	puts("the start-of-tick quaternion: the last rounding's packed one, not the basis rounded again (RV-245)");
+	auto f = [](uint32_t u) { float x; memcpy(&x, &u, sizeof x); return x; };
+	Arena* arena = Arena::Create(GameMode::SOCCAR);
+	Car* car = arena->AddCar(Team::BLUE);
+	btQuaternion q1(f(0x3e12531d), f(0x3f31898b), f(0x3e0828f6), f(0xbf3189a3));
+	// (the packing that rounding left: y dropped, the largest before it; unpacked, w comes out a hair larger, so rounding
+	// q1 again drops w instead)
+	constexpr float ROT_MAX = 262143.f;
+	Quantize::PackedRotation packed;
+	packed.largest = 1;
+	packed.valid = true;
+	const float kept[3] = { q1.x(), q1.z(), q1.w() };
+	for (int j = 0; j < 3; j++)
+		packed.c[j] = (uint32_t)Quantize::RoundUE((kept[j] * 1.4142135f * 0.5f + 0.5f) * ROT_MAX);
+	CHECK(Quantize::Unpack(packed) == q1, "the packing doesn't unpack to the quaternion");
+	car->_netRotation = packed;
+	car->_rigidBody.getWorldTransform().setBasis(btMatrix3x3(q1));
+	car->_CaptureOldState();
+	GameRotator r = UERotatorFromMatrix(car->_oldState.rotMat);
+	CHECK(r.pitch == 16238 && r.yaw == 14335 && r.roll == 18428, "from the packed rotation: [%d, %d, %d] (expected [16238, 14335, 18428])", r.pitch, r.yaw, r.roll);
+	car->_netRotation.valid = false; // (as after a placement: the basis rounded now)
+	car->_CaptureOldState();
+	r = UERotatorFromMatrix(car->_oldState.rotMat);
+	CHECK(r.pitch == 16238 && r.yaw == 14338 && r.roll == 18432, "re-rounded: [%d, %d, %d] (the reviewer's [16238, 14338, 18432])", r.pitch, r.yaw, r.roll);
 	delete arena;
 }
 
@@ -2241,6 +2294,10 @@ static void TestUEQuatRotMat() {
 	CHECK(bullet.yaw == 11280 && bullet.roll == 7129, "Bullet's basis: [%d, %d, %d] (a unit or two off: [-4206, 11280, 7129])", bullet.pitch, bullet.yaw, bullet.roll);
 }
 
+// CCR-4: the demo cone as the game's (FUN_140f11c30 from Impact.Rotation = QuatToRotator): the hitbox centres are the
+// location plus LocalCollisionOffset multiplied by the rotator matrix's rows (the transpose of the rotation), the axes
+// from the rotator. A supersonic attacker (2250 uu/s) at yaw A, a parked victim at yaw B, (dx, dy) to the attacker's
+// left and ahead: the two cases sit mid-way in 12 uu wide bands where the rules disagree
 static void TestDemoConeCentres() {
 	puts("CCR-4: the demo cone's hitbox centres with the offset times the transposed rotation");
 	Arena* arena = Arena::Create(GameMode::SOCCAR);
@@ -2326,6 +2383,7 @@ int main(int argc, char** argv) {
 	TestDemoSweep();
 	TestOldStateReadBack();
 	TestUEQuatRotMat();
+	TestOldQuatFromPacked();
 
 	Arena* arena = Arena::Create(GameMode::SOCCAR);
 	Car* car = arena->AddCar(Team::BLUE);

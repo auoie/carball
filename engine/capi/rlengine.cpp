@@ -199,6 +199,17 @@ int rl_car_position(RLArena* a, uint32_t id, float out[3]) {
 	return 1;
 }
 
+int rl_car_demoed(RLArena* a, uint32_t id) {
+	Car* car = a->arena->GetCar(id);
+	return car && car->_internalState.isDemoed ? 1 : 0;
+}
+
+void rl_car_demolish(RLArena* a, uint32_t id) {
+	Car* car = a->arena->GetCar(id);
+	if (car)
+		car->Demolish(a->arena->GetMutatorConfig().respawnDelay);
+}
+
 size_t rl_take_events(RLArena* a, int32_t* out, size_t max_ints) {
 	size_t n = a->events.size() < max_ints ? a->events.size() : max_ints;
 	n -= n % 3;

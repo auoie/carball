@@ -183,10 +183,17 @@ export class Hud {
     this.#updateVote(s.vote ?? null);
   }
 
-  /** (its last text stays while it fades out) */
+  #voteYes = 0;
+
+  /** (shown at once, faded out in 0.3 s, its last text kept while it fades; the bar flashes at each new vote) */
   #updateVote(v: VoteHud | null): void {
     this.#vote.classList.toggle("shown", v !== null);
-    if (v === null) return;
+    if (v === null) {
+      this.#voteYes = 0;
+      return;
+    }
+    if (v.yes > this.#voteYes) this.#voteFill.animate([{ filter: "brightness(2.5)" }, { filter: "none" }], { duration: 400, easing: "ease-out" });
+    this.#voteYes = v.yes;
     this.#voteTally.textContent = v.tally;
     this.#voteTime.textContent = v.time;
     this.#voteFill.style.width = `${String(v.fill * 100)}%`;

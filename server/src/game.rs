@@ -56,6 +56,9 @@ pub const MATCH_TICKS: u32 = 300 * TICK_RATE;
 const CLOCK_START_DELAY_TICKS: u64 = 5 * TICK_RATE as u64;
 /// After the match: the podium (`PrePodiumSpotlight` 3.0 s + `PodiumSpotlight` 5.3 s), then a new match
 const PODIUM_SECONDS: f32 = 8.3;
+/// A match's players at most (a 4v4 private match's, twice over: each car adds about 0.7 KB to the world snapshot a join
+/// sends, a u16-framed control message, which 90 cars would overflow: RV-242)
+pub const MAX_PLAYERS: usize = 16;
 /// A forfeit vote runs 20 game s (`ForfeitVoteArchetype.TimeRemaining`, less 1 each game second); a finished one stays
 /// 5 s more (destroyed 5 s after `FinishVote`)
 const FORFEIT_VOTE_SECONDS: u64 = 20;
@@ -237,6 +240,9 @@ struct Player {
     /// Ready to skip this goal replay
     ready: bool,
     key: u32,
+    /// They may not start a forfeit vote (`SetStartVoteToForfeitDisabled`: they started one, until their team is
+    /// re-enabled; at a join, if their key started one this match)
+    vote_start_disabled: bool,
     /// Their team's forfeit vote as last sent to them
     vote_sent: Option<ForfeitVoteState>,
     name: String,
@@ -287,9 +293,12 @@ pub struct Game {
     pub forfeit_vote_wait: Option<u32>,
     /// Each team's forfeit vote, while it runs and for 5 s after
     votes: [Option<ForfeitVote>; 2],
-    /// Who started a forfeit vote (team, key): no other start until their team is re-enabled; kept when they reconnect
-    /// (`ForfeitInitiatorIDs`)
-    initiators: BTreeSet<(u8, u32)>,
+    /// The keys that started a forfeit vote this match: only grows (`ForfeitInitiatorIDs`: a starter who rejoins can't
+    /// start another, `CheckInitiatedForfeit`)
+    initiators: BTreeSet<u32>,
+    /// The keys this server gave out, and the next one's seed (RV-239: the server's, so two tabs can't share one)
+    issued_keys: BTreeSet<u32>,
+    key_seed: u32,
     /// A team forfeited after a goal: the match ends at the next round (`bForfeit`, MRL-13)
     forfeiting: Option<u8>,
     /// The teams players left since the last forfeit check, and the check's tick (`PlayersRemovedThisFrame`)
@@ -300,9 +309,6 @@ pub struct Game {
     sent: Option<MatchState>,
     /// Browser tests: each round, the ball is knocked into orange's goal this many ticks after "go"
     pub test_goal_after: Option<u64>,
-    /// The game's clock at the last tick: (real s, game s, game s a real s until the next): an input packet's arrival on
-    /// it (MRL-16)
-    clock: (f64, f64, f64),
 }
 
 impl Default for Game {
@@ -349,12 +355,13 @@ impl Game {
             forfeit_vote_wait: None,
             votes: [None, None],
             initiators: BTreeSet::new(),
+            issued_keys: BTreeSet::new(),
+            key_seed: (seed as u32) ^ 0x9e37_79b9,
             forfeiting: None,
             left_teams: Vec::new(),
             forfeit_check_at: None,
             score: [0, 0],
             sent: None,
-            clock: (0.0, 0.0, 1.0),
         }
     }
 
@@ -410,6 +417,11 @@ impl Game {
     }
 
     pub fn join(&mut self, id: PlayerId, request: JoinRequest, out: UnboundedSender<Outgoing>) {
+        if self.players.len() >= MAX_PLAYERS {
+            // (refused: the session ends once it's sent)
+            let _ = out.send(Outgoing::Control(Control::Refused { reason: protocol::REFUSED_FULL }.encode()));
+            return;
+        }
         let team = match request.team {
             0 | 1 => request.team,
             _ => {
@@ -431,6 +443,12 @@ impl Game {
         } else if self.phase == Phase::Countdown {
             self.arena.redo_kickoff(); // (joining in a kickoff countdown: a kickoff spot, the others where they were)
         }
+        // (the key the client brought, if this server gave it and no one here has it: a reconnect; else a new one)
+        let key = if request.key != 0 && self.issued_keys.contains(&request.key) && !self.players.values().any(|p| p.key == request.key) {
+            request.key
+        } else {
+            self.new_key()
+        };
         let player = Player {
             car_id,
             team,
@@ -440,7 +458,8 @@ impl Game {
             last_reset: None,
             auto_skip_replay: request.auto_skip_replay,
             ready: false,
-            key: request.key,
+            key,
+            vote_start_disabled: self.initiators.contains(&key),
             vote_sent: None,
             name: player_name(&request.name, id),
             chat: ChatBucket::default(),
@@ -455,6 +474,7 @@ impl Game {
             frame: 0,
             match_type: self.match_type as u8,
             team_size: self.team_size,
+            key,
             snapshot: snapshot.clone(),
         };
         let _ = player.out.send(Outgoing::Control(welcome.encode()));
@@ -463,6 +483,17 @@ impl Game {
         self.send_world_to_others(id, &snapshot);
         self.send_votes();
         self.send_roster();
+    }
+
+    /// A key not given out before, never 0
+    fn new_key(&mut self) -> u32 {
+        loop {
+            self.key_seed = self.key_seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let key = self.key_seed ^ (self.key_seed >> 15);
+            if key != 0 && self.issued_keys.insert(key) {
+                return key;
+            }
+        }
     }
 
     /// The players to everyone (their cars, teams and names)
@@ -548,9 +579,11 @@ impl Game {
             }
             self.check_vote(team);
             self.reenable_vote_starters(team);
-            // Their car explodes where it is (`Car.Demolish(None)`: no demolition counted), then goes
+            // Their car explodes where it is (`Car.Demolish(None)`: no demolition counted), then goes; not one already
+            // demolished, nor in the goal replay, the cars gone (RV-235)
             let tick = self.arena.tick_count();
-            self.broadcast(&Control::Event { server_tick: tick as u32, event: GameEvent::Left { car: player.car_id, lost } });
+            let explode = self.phase != Phase::Replay && !self.arena.car_demoed(player.car_id);
+            self.broadcast(&Control::Event { server_tick: tick as u32, event: GameEvent::Left { car: player.car_id, lost, explode } });
             self.arena.remove_car(player.car_id);
             if self.players.is_empty() {
                 // Everyone gone: no contest (`ForceNoContest`; the arena stops until the next player starts a match)
@@ -602,16 +635,18 @@ impl Game {
     /// the player's team's vote if none runs (not if they started one before: the lockout, which the game leaves to its
     /// menu, is enforced here), and counts their yes
     pub fn vote_forfeit(&mut self, id: PlayerId) {
-        let Some((team, key)) = self.players.get(&id).map(|p| (p.team, p.key)) else { return };
+        let Some((team, key, disabled)) = self.players.get(&id).map(|p| (p.team, p.key, p.vote_start_disabled)) else { return };
         if !self.can_vote_forfeit() {
-            eprintln!("player {id}: a forfeit vote now isn't allowed");
             return;
         }
         let slot = usize::from(team.min(1));
         if self.votes[slot].as_ref().is_none_or(|vote| vote.finished.is_some()) {
-            if !self.initiators.insert((team, key)) {
-                eprintln!("player {id}: started a forfeit vote before (locked out)");
-                return;
+            if disabled {
+                return; // (they started one before: the lockout, enforced here)
+            }
+            self.initiators.insert(key);
+            if let Some(p) = self.players.get_mut(&id) {
+                p.vote_start_disabled = true;
             }
             let voters = self.players.iter().filter(|(_, p)| p.team == team).map(|(&id, _)| (id, false)).collect();
             self.votes[slot] = Some(ForfeitVote { voters, started: self.arena.tick_count(), finished: None });
@@ -664,12 +699,17 @@ impl Game {
         }
     }
 
-    /// Every player of the team has started a vote: all of them may start one again (MR-7.5)
+    /// Every player of the team may not start a vote: all of them may again (MR-7.5; the initiators stay recorded, so
+    /// one who leaves and rejoins can't)
     fn reenable_vote_starters(&mut self, team: u8) {
-        let keys: Vec<u32> = self.players.values().filter(|p| p.team == team).map(|p| p.key).collect();
-        if !keys.is_empty() && keys.iter().all(|&key| self.initiators.contains(&(team, key))) {
-            for key in keys {
-                self.initiators.remove(&(team, key));
+        let mut members = self.players.values_mut().filter(|p| p.team == team).peekable();
+        if members.peek().is_none() {
+            return;
+        }
+        let members: Vec<&mut Player> = members.collect();
+        if members.iter().all(|p| p.vote_start_disabled) {
+            for p in members {
+                p.vote_start_disabled = false;
             }
         }
     }
@@ -681,7 +721,7 @@ impl Game {
             .players
             .iter()
             .map(|(&id, p)| {
-                let can_start = !self.initiators.contains(&(p.team, p.key));
+                let can_start = !p.vote_start_disabled;
                 let state = match &self.votes[usize::from(p.team.min(1))] {
                     None => ForfeitVoteState { state: protocol::VOTE_NONE, yes: 0, required: 0, seconds_left: 0, voted: false, can_start },
                     Some(vote) => ForfeitVoteState {
@@ -721,10 +761,8 @@ impl Game {
     }
 
     pub fn receive_inputs(&mut self, id: PlayerId, timestamp: u32, first_frame: u32, frames: &[InputFrame], now: f64) {
-        let (real, game, rate) = self.clock;
-        let game_now = game + (now - real).max(0.0) * rate;
         if let Some(p) = self.players.get_mut(&id)
-            && p.input.receive_at(timestamp, first_frame, frames, now, game_now)
+            && p.input.receive(timestamp, first_frame, frames, now)
         {
             p.echo = Some((timestamp, now));
         }
@@ -786,6 +824,9 @@ impl Game {
         self.no_contest = false;
         self.votes = [None, None];
         self.initiators.clear();
+        for p in self.players.values_mut() {
+            p.vote_start_disabled = false;
+        }
         self.forfeiting = None;
         self.left_teams.clear();
         self.forfeit_check_at = None;
@@ -998,8 +1039,6 @@ impl Game {
         self.update_match(tick);
         self.send_match_state();
         self.send_votes();
-        // (the game's clock: this tick's game time, and its rate until the next)
-        self.clock = (now, tick as f64 / f64::from(TICK_RATE), (1.0 / f64::from(TICK_RATE)) / self.next_tick_seconds());
 
         if tick.is_multiple_of(UPDATE_EVERY_TICKS) {
             self.send_updates(now);
@@ -1423,7 +1462,7 @@ mod tests {
         // The leaver's car explodes for the others; their team forfeits 0.01 game s later (the second tick)
         let car = game.car_id(3).unwrap();
         game.leave(3);
-        assert!(events(&mut rx1).contains(&GameEvent::Left { car, lost: false }));
+        assert!(events(&mut rx1).contains(&GameEvent::Left { car, lost: false, explode: true }));
         game.tick(0.0);
         assert_eq!(game.phase, Phase::Active);
         game.tick(0.0);
@@ -1667,18 +1706,22 @@ mod tests {
 
     #[test]
     fn the_slow_motion_after_a_goal_leaves_the_jitter_buffer_as_it_was() {
-        // A client sends its inputs every 2 ticks of its game (MRL-16): through the post-goal slow motion they come
-        // further apart in real time, and a buffer sized by real-time gaps would grow for tens of seconds after each goal
+        // The client sends its input packets at 60 Hz of real time, each with its newest frames (fewer of them through
+        // the post-goal slow motion, its clock slowed with the world: online.ts), and the jitter buffer measures their
+        // gaps in real time as the game's (RealTimeSeconds, MR-6.6): the slow motion leaves it as it was (MRL-16, RV-238)
         init_engine();
         let mut game = Game::new();
         game.test_goal_after = Some(60);
         let (tx, mut rx) = unbounded_channel();
         game.join(1, REQUEST, tx);
-        let (mut now, mut frame, mut before, mut after, mut most) = (0.0, 1u32, None, None, 0);
+        let (mut now, mut next_send, mut before, mut after, mut most) = (0.0, 0.0, None, None, 0);
         for tick in 0..2400u32 {
-            if tick % 2 == 0 {
-                game.receive_inputs(1, tick, frame, &throttle_frames(2), now);
-                frame += 2;
+            while now >= next_send {
+                // (the client a couple of frames ahead of the server's tick; its unacknowledged frames, the newest 10)
+                let newest = tick + 2;
+                let first = newest.saturating_sub(9).max(1);
+                game.receive_inputs(1, (next_send * 1000.0) as u32, first, &throttle_frames((newest - first + 1) as usize), now);
+                next_send += 1.0 / 60.0;
             }
             game.tick(now);
             now += game.next_tick_seconds();
@@ -1726,10 +1769,12 @@ mod tests {
         run_until(&mut game, 1000, |g| g.phase == Phase::Active);
         game.arena.set_ball([0.0, 5000.0, 300.0], [0.0, 2000.0, 0.0]);
         run_until(&mut game, 120, |g| g.phase == Phase::PostGoal);
-        // Orange leaves after blue's goal: the forfeit waits, and the replay plays (MRL-13)
+        // Orange leaves after blue's goal: the forfeit waits, and the replay plays (MRL-13); no votes meanwhile (a team
+        // forfeiting has a winner: with the clock's wait long over, only that keeps them off)
         game.leave(2);
         ticks(&mut game, 5);
         assert_eq!((game.phase, game.forfeiting, game.winner), (Phase::PostGoal, Some(1), None));
+        game.clock_ticks = 200 * TICK_RATE;
         assert!(!game.match_state().can_vote_forfeit);
         run_until(&mut game, 400, |g| g.phase == Phase::Replay);
         drain(&mut rx1);
@@ -1791,9 +1836,11 @@ mod tests {
         // The starter can't start another (the game's menu hides it; the server refuses it), even after reconnecting
         game.vote_forfeit(1);
         assert_eq!(game.votes[0].as_ref().map(|v| v.finished.is_some()), Some(true));
+        let starter = game.players[&1].key; // (the server's key for them, which their client brings back)
         game.leave(1);
         let (tx, mut rx) = unbounded_channel();
-        game.join(4, JoinRequest { team: 0, key: 11, ..REQUEST }, tx);
+        game.join(4, JoinRequest { team: 0, key: starter, ..REQUEST }, tx);
+        assert_eq!(game.players[&4].key, starter, "a reconnect keeps its key");
         assert_eq!(last_vote(&mut rx).map(|v| v.can_start), Some(false));
         game.vote_forfeit(4);
         assert_eq!(game.votes[0].as_ref().map(|v| v.finished.is_some()), Some(true));
@@ -1807,6 +1854,32 @@ mod tests {
         // ... and 5 s later it's gone
         ticks(&mut game, 5 * 120);
         assert_eq!(last_vote(&mut rx).map(|v| v.state), Some(protocol::VOTE_NONE));
+        // The match remembers who started one: the starter, re-enabled, then leaving and coming back, can't again
+        // (`ForfeitInitiatorIDs` only grows: RV-239)
+        game.leave(4);
+        let (tx, mut rx) = unbounded_channel();
+        game.join(5, JoinRequest { team: 0, key: starter, ..REQUEST }, tx);
+        assert_eq!(last_vote(&mut rx).map(|v| v.can_start), Some(false));
+    }
+
+    #[test]
+    fn keys_are_the_servers_and_two_tabs_cant_share_one() {
+        let (mut game, mut rxs) = match_with(MatchType::Casual, 3, &[(1, 0, 0), (2, 1, 77)]);
+        let welcome_key = |rx: &mut UnboundedReceiver<Outgoing>| -> Option<u32> {
+            controls(rx).into_iter().find_map(|c| if let Control::Welcome { key, .. } = c { Some(key) } else { None })
+        };
+        drain(&mut rxs[1]);
+        let one = game.players[&1].key;
+        assert!(one != 0 && game.players[&2].key != 77, "a key this server didn't give is replaced");
+        // A copy of a connected player's key (a duplicated tab) gets a new one; a gone player's key comes back to them
+        let (tx, mut rx) = unbounded_channel();
+        game.join(3, JoinRequest { key: one, ..REQUEST }, tx);
+        let three = welcome_key(&mut rx).unwrap();
+        assert!(three != one && three != 0);
+        game.leave(1);
+        let (tx, mut rx) = unbounded_channel();
+        game.join(4, JoinRequest { key: one, ..REQUEST }, tx);
+        assert_eq!(welcome_key(&mut rx), Some(one));
     }
 
     #[test]
@@ -1922,7 +1995,7 @@ mod tests {
         // A leave: the roster without them, and why they went
         game.connection_lost(2);
         let left = controls(&mut rxs[0]);
-        assert!(left.iter().any(|c| matches!(c, Control::Event { event: GameEvent::Left { car: 2, lost: true }, .. })));
+        assert!(left.iter().any(|c| matches!(c, Control::Event { event: GameEvent::Left { car: 2, lost: true, .. }, .. })));
         assert!(left.iter().any(|c| matches!(c, Control::Roster(r) if r.len() == 2)));
     }
 
@@ -2003,6 +2076,74 @@ mod tests {
         game.set_chat_filter(1, protocol::CHAT_OFF, false);
         game.quick_chat(1, 22, false, 50.0);
         assert!(chats(&mut rxs[0]).is_empty());
+    }
+
+
+    #[test]
+    fn a_leavers_car_explodes_only_when_its_there() {
+        // (RV-235: not already demolished, nor in the goal replay, the cars gone)
+        let (mut game, mut rxs) = match_with(MatchType::Private, 3, &[(1, 0, 1), (2, 1, 2), (3, 0, 3), (4, 1, 4)]);
+        let explode = |rx: &mut UnboundedReceiver<Outgoing>| -> Option<bool> {
+            events(rx).into_iter().find_map(|e| if let GameEvent::Left { explode, .. } = e { Some(explode) } else { None })
+        };
+        drain(&mut rxs[0]);
+        game.leave(2);
+        assert_eq!(explode(&mut rxs[0]), Some(true));
+        let car = game.car_id(3).unwrap();
+        game.arena.demolish_car(car);
+        game.leave(3);
+        assert_eq!(explode(&mut rxs[0]), Some(false), "a demolished car");
+        game.phase = Phase::Replay;
+        game.leave(4);
+        assert_eq!(explode(&mut rxs[0]), Some(false), "in the goal replay");
+    }
+
+
+    #[test]
+    fn votes_wait_for_no_winner_overtime_allows_them_and_a_finished_one_stays_5_s() {
+        let (mut game, mut rxs) = match_with(MatchType::Casual, 3, &[(1, 0, 0), (2, 0, 0), (3, 1, 0)]);
+        // At 0:00 with the scores apart a team has won: no votes; tied, they are
+        (game.clock_ticks, game.score) = (0, [1, 0]);
+        assert!(!game.match_state().can_vote_forfeit);
+        game.score = [1, 1];
+        assert!(game.match_state().can_vote_forfeit);
+        // Overtime: always, its clock counting up past the regulation wait's equivalent too
+        (game.overtime, game.clock_ticks, game.score) = (true, 30_000, [0, 0]);
+        assert!(game.match_state().can_vote_forfeit);
+        (game.overtime, game.clock_ticks) = (false, 200 * TICK_RATE);
+        // A failed vote stays its 5 s, then goes
+        game.vote_forfeit(1);
+        ticks(&mut game, 20 * 120);
+        assert!(game.votes[0].as_ref().is_some_and(|v| v.finished == Some((false, game.tick_count()))));
+        ticks(&mut game, 5 * 120 - 1);
+        assert!(game.votes[0].is_some(), "gone before its 5 s");
+        ticks(&mut game, 1);
+        assert!(game.votes[0].is_none());
+        // The match's end ends a running vote
+        game.vote_forfeit(2);
+        drain(&mut rxs[0]);
+        game.end_match(1, false);
+        game.send_votes();
+        assert!(game.votes.iter().all(Option::is_none));
+        assert_eq!(last_vote(&mut rxs[0]).map(|v| v.state), Some(protocol::VOTE_NONE));
+    }
+
+
+    #[test]
+    fn a_full_match_refuses_a_join() {
+        init_engine();
+        let mut game = Game::new();
+        let mut rxs = Vec::new();
+        for id in 0..MAX_PLAYERS as PlayerId {
+            let (tx, rx) = unbounded_channel();
+            game.join(id, REQUEST, tx);
+            rxs.push(rx);
+        }
+        let (tx, mut rx) = unbounded_channel();
+        game.join(99, REQUEST, tx);
+        assert_eq!(controls(&mut rx), [Control::Refused { reason: protocol::REFUSED_FULL }]);
+        assert_eq!(game.player_count(), MAX_PLAYERS);
+        assert!(rx.try_recv().is_err(), "nothing more: the game let go of it");
     }
 
 }

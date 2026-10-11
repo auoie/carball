@@ -102,8 +102,8 @@ body {
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
 }
 
-/* The team's forfeit vote (VoteToForfeitView: src/game/forfeitVote.ts): the tally, the time left and its bar, how to
-   vote; it fades out in 0.3 s when the vote ends or goes */
+/* The team's forfeit vote (VoteToForfeitView: src/game/forfeitVote.ts): the tally, the time, the votes' bar, how to
+   vote; it fades out in 0.3 s when the vote is gone or the match ends */
 #vote {
   position: absolute;
   top: 64px;
@@ -118,8 +118,10 @@ body {
   pointer-events: none;
 }
 
+/* (no fade-in: shown at once; the fade is the way out) */
 #vote.shown {
   opacity: 1;
+  transition: none;
 }
 
 #vote-head {
@@ -353,6 +355,10 @@ body {
 
 .settings-match:empty {
   display: none;
+}
+
+.settings .settings-match button {
+  text-transform: uppercase;
 }
 
 .settings .settings-match button.danger {

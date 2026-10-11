@@ -68,6 +68,10 @@ uint64_t rl_tick_count(const RLArena* arena);
 int rl_is_ball_scored(RLArena* arena);
 void rl_ball_position(RLArena* arena, float out[3]);
 int rl_car_position(RLArena* arena, uint32_t car_id, float out[3]);
+/* 1 if the car is demolished (waiting to respawn), 0 if not or unknown */
+int rl_car_demoed(RLArena* arena, uint32_t car_id);
+/* Demolishes the car (it respawns as after any demolition) */
+void rl_car_demolish(RLArena* arena, uint32_t car_id);
 
 /* Events since the last call, as [type, a, b] triples: goal (team), bump / demo (attacker, victim).
  * Returns the number of ints written (a multiple of 3). */

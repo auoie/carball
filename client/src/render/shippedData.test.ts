@@ -35,11 +35,12 @@ function files(dir: string, keep: (name: string) => boolean): string[] {
 const modules = (): string[] => files(SRC, (n) => n.endsWith(".ts") && !n.endsWith(".test.ts") && !n.endsWith(".d.ts"));
 
 /** The output files that are three.js's alone: every module in them (the bundler's own virtual ones aside) the
- *  library's, by its path; not by a file's name, which one of our modules or a public file can take (RV-225) */
+ *  library's, by its package path (RV-225), wherever the install puts it (hoisted, a workspace's, pnpm's store: RV-240);
+ *  not by a file's name, which one of our modules or a public file can take */
 function libraryFiles(built: Readonly<Record<string, readonly string[]>>): Set<string> {
   const library = (ids: readonly string[]): boolean => {
-    const real = ids.filter((id) => !id.startsWith("\0"));
-    return real.length > 0 && real.every((id) => id.startsWith("node_modules/three/"));
+    const real = ids.filter((id) => !id.startsWith("\0")).map((id) => id.split("\\").join("/"));
+    return real.length > 0 && real.every((id) => /(^|\/)node_modules\/three\//.test(id));
   };
   return new Set(Object.entries(built).flatMap(([file, ids]) => (library(ids) ? [file] : [])));
 }
@@ -1024,8 +1025,12 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
       "assets/index-E4.js": ["src/main.ts", "../out/arena/data.ts"], // (a module outside src/, imported)
       "three-data.json": [], // (copied from public/: no modules)
       "assets/three-F5.js": ["\0rolldown/runtime.js"], // (only the bundler's)
+      // (the library where other installs put it: hoisted above client/, pnpm's store: RV-240)
+      "assets/three-G6.js": ["../../repo/node_modules/three/build/three.module.js"],
+      "assets/three-H7.js": ["node_modules/.pnpm/three@0.180.0/node_modules/three/build/three.core.js"],
+      "assets/three-I8.js": ["src/node_modules_three/x.ts"], // (a name like it, not the package)
     });
-    expect([...exempt]).toEqual(["assets/three-B1.js"]);
+    expect([...exempt]).toEqual(["assets/three-B1.js", "assets/three-G6.js", "assets/three-H7.js"]);
   });
   it.skipIf(!existsSync(DIST))("the build recorded every file it wrote (a stale record would hide a chunk: RV-225)", () => {
     const written = files(DIST, (n) => n.endsWith(".js")).map((p) => relative(DIST, p).split("\\").join("/"));

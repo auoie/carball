@@ -845,7 +845,7 @@ Everything else (all predicates, thresholds, crediting, HUD filters) is UnrealSc
 | STAT-14 | Per-touch BallHit +2 at most once per second per ball; first touch after each kickoff gives only FirstTouch | high |
 | STAT-15 | Post/crossbar hits +2 to the last toucher (either team), 0.1 s cooldown, from 6 level volumes | high |
 | STAT-16 | MatchScore = Σ points of `bAddToScore` events; the client adds locally on RPC, replication reconciles | high |
-| STAT-17 | Scoreboard: Score + 4 custom columns (default Goals, Assists, Saves, Shots) + ping (bands 100/200/250); fallback swaps Assists → Demolitions in 1v1; sort Score > Goals > Assists > Saves desc | high (tie order: low) |
+| STAT-17 | Scoreboard: Score + 4 custom columns (default Goals, Assists, Saves, Shots) + ping (bands 100/200/250); fallback swaps Assists → Demolitions in 1v1; sort Score > Goals > Assists > Saves desc | high (tie order: low)<br>**Refinement (2026-10-11, SB1, notes/scoreboard.md SB-9) [S]:** the Assists → Demolitions swap in 1v1 happens only on the fallback path (no profile scoreboard save, or a PRI without custom columns). With a local profile the default columns Goals, Assists, Saves, Shots show in **1v1 too**. |
 | STAT-18 | MVP: winning team only, Members ∪ FormerMembers, MaxTeamSize > 1 (none in 1v1), sort as STAT-17; bots eligible | high |
 | STAT-19 | Podium titles: greedy 2-pass assignment over all players by title points (§5.4) | high |
 | STAT-20 | Popup: own events only, display level Primary by default (Goal, Assist, Save, EpicSave, Shot, Demolish, MVP, Win), mutable events hidden unless "Match Notifications" = All, FIFO 2.633 s each at (W/2,150); banner separate at (W/2,250) | high |

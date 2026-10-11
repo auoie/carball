@@ -4,8 +4,9 @@ use crate::engine::Controls;
 
 // 2: kickoff countdown in the state; 3: the wheels' previous contacts; 4: the jump's release; 5: respawn spot selection
 // and flip resets in the state; 9: the goal replay (its phase, plan and skip votes; Hello's auto-skip); 10: forfeit votes,
-// the match type, a leaver's car, no contest; 11: quick chat, players' names (the roster), a leave's reason
-pub const VERSION: u16 = 11;
+// the match type, a leaver's car, no contest; 11: quick chat, players' names (the roster), a leave's reason; 12: whether a
+// leaver's car explodes
+pub const VERSION: u16 = 12;
 /// The quick-chat presets (`Group1-6MessageN`: notes/quick-chat.md CHAT-1); a preset on the wire is its index
 pub const QUICK_CHAT_PRESETS: u8 = 76;
 /// A player's quick-chat filter (`EChatFilter` as the clone uses it: CHAT-18)
@@ -15,6 +16,8 @@ pub const CHAT_FRIENDS: u8 = 2;
 pub const CHAT_OFF: u8 = 3;
 /// A name's bytes at most (UTF-8)
 pub const MAX_NAME_BYTES: usize = 32;
+/// Why a join was refused
+pub const REFUSED_FULL: u8 = 0;
 pub const MAX_INPUT_FRAMES: usize = 10;
 
 /// Control stream (reliable) messages
@@ -29,7 +32,8 @@ pub enum Control {
         air_control_sensitivity: f32,
         /// The player skips goal replays (`bAutoSkipGoalReplay`): auto-ready in every one
         auto_skip_replay: bool,
-        /// The client's own random key, kept across its reconnects (who started a forfeit vote: `ForfeitInitiatorIDs`)
+        /// The key the server gave this client before (its `Welcome`'s), kept across its reconnects (who started a forfeit
+        /// vote: `ForfeitInitiatorIDs`); 0 for none
         key: u32,
         /// The player's name (UTF-8, `MAX_NAME_BYTES` at most; the server tidies it)
         name: String,
@@ -49,8 +53,8 @@ pub enum Control {
     /// Vote to forfeit (`PRI.ServerVoteToForfeit`): starts the team's vote, or joins it as a yes
     VoteForfeit,
     /// `match_type`: 0 casual, 1 ranked, 2 private (who may vote to forfeit, after how long, its label); `team_size`: the
-    /// playlist's
-    Welcome { version: u16, car_id: u32, tick_rate: u8, frame: u32, match_type: u8, team_size: u8, snapshot: Vec<u8> },
+    /// playlist's; `key`: the player's (Hello's again, if it was this server's and no one here has it; else a new one)
+    Welcome { version: u16, car_id: u32, tick_rate: u8, frame: u32, match_type: u8, team_size: u8, key: u32, snapshot: Vec<u8> },
     World { frame: u32, snapshot: Vec<u8> },
     Event { server_tick: u32, event: GameEvent },
     /// The match's state: sent when it changes and each second while the clock runs
@@ -68,6 +72,8 @@ pub enum Control {
     Chat { car: u32, preset: u8, team: bool, seconds: u16 },
     /// The sender's chat is blocked by the spam filter for this long (`ClientNotifyChatDisabled`)
     ChatBlocked { seconds: f32 },
+    /// The join was refused (`REFUSED_FULL`: the match has its most players), instead of a `Welcome`; the session ends
+    Refused { reason: u8 },
 }
 
 /// A player as the others know them
@@ -156,9 +162,9 @@ pub struct MatchState {
 pub enum GameEvent {
     Goal { team: u8 },
     Demo { attacker: u32, victim: u32 },
-    /// A player left: their car explodes where it is (`Car.Demolish(None)`: no demolition counted); `lost`: their
-    /// connection timed out (the chat log's "lost connection")
-    Left { car: u32, lost: bool },
+    /// A player left; `lost`: their connection timed out (the chat log's "lost connection"); `explode`: their car explodes
+    /// where it is (`Car.Demolish(None)`: no demolition counted), not when already demolished or in the goal replay
+    Left { car: u32, lost: bool, explode: bool },
 }
 
 /// Datagram (unreliable) messages
@@ -354,6 +360,10 @@ impl Control {
                 w.u8(0x8A);
                 w.f32(*seconds);
             }
+            Self::Refused { reason } => {
+                w.u8(0x8B);
+                w.u8(*reason);
+            }
             Self::ResetInputBuffer => w.u8(0x02),
             Self::VoteForfeit => w.u8(0x05),
             Self::ForfeitVote(v) => {
@@ -391,7 +401,7 @@ impl Control {
                 w.u8(*ready);
                 w.u8(*total);
             }
-            Self::Welcome { version, car_id, tick_rate, frame, match_type, team_size, snapshot } => {
+            Self::Welcome { version, car_id, tick_rate, frame, match_type, team_size, key, snapshot } => {
                 w.u8(0x81);
                 w.u16(*version);
                 w.u32(*car_id);
@@ -399,6 +409,7 @@ impl Control {
                 w.u32(*frame);
                 w.u8(*match_type);
                 w.u8(*team_size);
+                w.u32(*key);
                 w.bytes_with_len(snapshot);
             }
             Self::World { frame, snapshot } => {
@@ -435,10 +446,10 @@ impl Control {
                         w.u32(*attacker);
                         w.u32(*victim);
                     }
-                    GameEvent::Left { car, lost } => {
+                    GameEvent::Left { car, lost, explode } => {
                         w.u8(2);
                         w.u32(*car);
-                        w.u8(u8::from(*lost));
+                        w.u8(u8::from(*lost) | (u8::from(*explode) << 1));
                     }
                 }
             }
@@ -476,6 +487,7 @@ impl Control {
             }
             0x89 => Self::Chat { car: r.u32()?, preset: r.u8()?, team: r.u8()? != 0, seconds: r.u16()? },
             0x8A => Self::ChatBlocked { seconds: r.f32()? },
+            0x8B => Self::Refused { reason: r.u8()? },
             0x02 => Self::ResetInputBuffer,
             0x05 => Self::VoteForfeit,
             0x87 => {
@@ -498,6 +510,7 @@ impl Control {
                 frame: r.u32()?,
                 match_type: r.u8()?,
                 team_size: r.u8()?,
+                key: r.u32()?,
                 snapshot: r.bytes_with_len()?,
             },
             0x82 => Self::World { frame: r.u32()?, snapshot: r.bytes_with_len()? },
@@ -506,7 +519,10 @@ impl Control {
                 let event = match r.u8()? {
                     0 => GameEvent::Goal { team: r.u8()? },
                     1 => GameEvent::Demo { attacker: r.u32()?, victim: r.u32()? },
-                    2 => GameEvent::Left { car: r.u32()?, lost: r.u8()? != 0 },
+                    2 => {
+                        let (car, flags) = (r.u32()?, r.u8()?);
+                        GameEvent::Left { car, lost: flags & 1 != 0, explode: flags & 2 != 0 }
+                    }
                     t => return Err(DecodeError::UnknownType(t)),
                 };
                 Self::Event { server_tick, event }
@@ -664,6 +680,7 @@ mod tests {
             ),
             "chat" => Control::Chat { car: u(&m["car"]), preset: u(&m["preset"]) as u8, team: m["team"].as_bool().unwrap(), seconds: u(&m["seconds"]) as u16 },
             "chatBlocked" => Control::ChatBlocked { seconds: f(&m["seconds"]) },
+            "refused" => Control::Refused { reason: u(&m["reason"]) as u8 },
             "readyUp" => Control::ReadyUp,
             "autoSkipReplay" => Control::AutoSkipReplay { on: m["on"].as_bool().unwrap() },
             "replay" => {
@@ -685,6 +702,7 @@ mod tests {
                 frame: u(&m["frame"]),
                 match_type: ["casual", "ranked", "private"].iter().position(|&t| t == m["matchType"]).unwrap() as u8,
                 team_size: u(&m["teamSize"]) as u8,
+                key: u(&m["key"]),
                 snapshot: bytes(&m["snapshot"]),
             },
             "voteForfeit" => Control::VoteForfeit,
@@ -702,7 +720,11 @@ mod tests {
                 server_tick: u(&m["serverTick"]),
                 event: match m["event"]["kind"].as_str().unwrap() {
                     "goal" => GameEvent::Goal { team: u(&m["event"]["team"]) as u8 },
-                    "left" => GameEvent::Left { car: u(&m["event"]["car"]), lost: m["event"]["lost"].as_bool().unwrap() },
+                    "left" => GameEvent::Left {
+                        car: u(&m["event"]["car"]),
+                        lost: m["event"]["lost"].as_bool().unwrap(),
+                        explode: m["event"]["explode"].as_bool().unwrap(),
+                    },
                     _ => GameEvent::Demo { attacker: u(&m["event"]["attacker"]), victim: u(&m["event"]["victim"]) },
                 },
             },

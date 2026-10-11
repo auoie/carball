@@ -1,63 +1,23 @@
-// Forfeit votes and leaving (notes/match-rules-audit.md MR-7), and quick chat (notes/quick-chat.md), against a 2v2 casual
+// Forfeit votes (notes/match-rules-audit.md MR-7) and quick chat (notes/quick-chat.md), against a 2v2 casual
 // rl-server whose votes are allowed once the clock runs (started by playwright.config.ts on ports 14437/14438; one file,
 // so its tests take turns on it). Players join blue, orange, blue, ...
 // (Under the suite's load a third page can take over 10 s to answer: the checks are on the first page, and the match's
 // end is read from the phases it recorded, which outlast its 8.3 s podium.)
-import type { Browser, Page } from "@playwright/test";
-import { expect, hideGamepads, test } from "./fixtures";
+import type { Page } from "@playwright/test";
+import { expect, test } from "./fixtures";
+import { ends, join as joinServer, leave, leaveAll, named, newPlayer as newServerPlayer } from "./players";
+import type { Browser } from "@playwright/test";
 
 const SERVER = "127.0.0.1:14438";
-
-async function join(page: Page, errors: string[]): Promise<void> {
-  page.on("pageerror", (e) => errors.push(e.message));
-  page.on("console", (m) => {
-    if (m.type() === "error") errors.push(m.text());
-  });
-  await page.goto(`/?server=${SERVER}`);
-  // (generous: a third page under the suite's load can take over 30 s to its first frame)
-  await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
-}
-
-async function newPlayer(browser: Browser, errors: string[], name?: string): Promise<Page> {
-  const context = await browser.newContext();
-  await hideGamepads(context);
-  const page = await context.newPage();
-  if (name !== undefined) await named(page, name);
-  await join(page, errors);
-  return page;
-}
-
-/** The page's player name, in its saved settings */
-async function named(page: Page, name: string): Promise<void> {
-  await page.addInitScript((n) => {
-    // (not on about:blank, where leaving takes the page: no storage there)
-    if (location.protocol.startsWith("http")) localStorage.setItem("rl-clone.settings.v1", JSON.stringify({ chat: { name: n } }));
-  }, name);
-}
-
-/** The match ends the page saw: each one's winner and whether by forfeit */
-async function ends(page: Page): Promise<{ winner: number | null; forfeit: boolean }[]> {
-  return page.evaluate(() =>
-    (window as unknown as { rlOnline: () => { phases: { phase: string; winner: number | null; forfeit: boolean }[] } })
-      .rlOnline()
-      .phases.filter((p) => p.phase === "ended")
-      .map(({ winner, forfeit }) => ({ winner, forfeit })),
-  );
-}
-
-/** Leaves the server at once (the page's pagehide closes its session; a closed context's lingers until it times out,
- *  into the next test) */
-async function leave(page: Page): Promise<void> {
-  await page.goto("about:blank");
-}
+const join = (page: Page, errors: string[]): Promise<void> => joinServer(page, SERVER, errors);
+const newPlayer = (browser: Browser, errors: string[], name?: string): Promise<Page> => newServerPlayer(browser, SERVER, errors, name);
+/** The menu's match button (shown upper-case) */
+const button = (page: Page, label: string) => page.getByRole("button", { name: new RegExp(`^${label}$`, "i") });
 
 const others: Page[] = [];
 
 test.afterEach(async ({ page }) => {
-  for (const p of [page, ...others.splice(0)]) {
-    await leave(p);
-    if (p !== page) await p.context().close();
-  }
+  await leaveAll(page, others);
 });
 
 test("a team votes to concede: the tally, a failed vote's lockout, a teammate's vote joined, then the forfeit", async ({ page, browser }) => {
@@ -70,11 +30,12 @@ test("a team votes to concede: the tally, a failed vote's lockout, a teammate's 
   others.push(orange, mate);
   await expect(page.locator("#net")).toContainText("3 cars", { timeout: 30_000 });
 
-  // The menu: the vote once the clock runs (5 s after go: the 3 s warm-up and 4 s countdown first), and leaving
+  // The menu's one match button (RV-236): the vote once the clock runs (5 s after go: the 3 s warm-up and 4 s countdown
+  // first), in leaving's place
   await page.keyboard.press("Escape");
-  const vote = page.getByRole("button", { name: "Vote to Concede" });
+  const vote = button(page, "Vote to Concede");
   await expect(vote).toBeVisible({ timeout: 40_000 });
-  await expect(page.getByRole("button", { name: "Leave Match" })).toBeVisible();
+  await expect(button(page, "Leave Match")).toBeHidden();
   await vote.click();
   await expect(page.locator("#settings")).toBeHidden();
 
@@ -84,57 +45,25 @@ test("a team votes to concede: the tally, a failed vote's lockout, a teammate's 
   await expect(page.locator("#vote-time")).toHaveText(/^0:(20|1\d|0\d)$/);
   await expect(page.locator("#vote-hint")).toBeHidden();
 
-  // Nobody else votes: it fails at its 20 s and fades; its starter can't start another (the menu has no vote button)
-  await expect(page.locator("#vote")).not.toHaveClass(/shown/, { timeout: 30_000 });
+  // Nobody else votes: it fails at its 20 s, stays its 5 s and goes; its starter can't start another (the menu: leaving)
+  await expect(page.locator("#vote")).not.toHaveClass(/shown/, { timeout: 45_000 });
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("button", { name: "Leave Match" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Vote to Concede" })).toBeHidden();
+  await expect(button(page, "Leave Match")).toBeVisible();
+  await expect(button(page, "Vote to Concede")).toBeHidden();
   await page.keyboard.press("Escape");
 
   // The teammate starts one: the page sees it, with how to vote, and joins it from its menu; blue concedes
   await mate.keyboard.press("Escape");
-  await mate.getByRole("button", { name: "Vote to Concede" }).click({ timeout: 30_000 });
+  await button(mate, "Vote to Concede").click({ timeout: 30_000 });
   await expect(page.locator("#vote")).toHaveClass(/shown/, { timeout: 15_000 });
   await expect(page.locator("#vote-tally")).toHaveText("Vote to Concede 1/2");
   await expect(page.locator("#vote-hint")).toHaveText("Press Esc to Vote");
   await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "Vote to Concede" }).click();
+  await expect(button(page, "Vote to Concede")).toHaveClass(/danger/); // (red while one runs)
+  await button(page, "Vote to Concede").click();
   await expect.poll(() => ends(page), { timeout: 15_000 }).toContainEqual({ winner: 1, forfeit: true });
   await expect.poll(() => ends(orange), { timeout: 30_000 }).toContainEqual({ winner: 1, forfeit: true });
   expect(errors).toEqual([]);
-});
-
-test("leaving: the question, back to freeplay; the car explodes for the others and the emptied team forfeits", async ({ page, browser }) => {
-  const errors: string[] = [];
-  await join(page, errors);
-  // (alone first: the last test's players gone, so the two are on opposite teams)
-  await expect(page.locator("#net")).toContainText("1 cars", { timeout: 30_000 });
-  const leaving: string[] = [];
-  const other = await newPlayer(browser, leaving);
-  others.push(other);
-  await expect(page.locator("#net")).toContainText("2 cars", { timeout: 30_000 });
-  const demolitions = (): Promise<number> =>
-    page.evaluate(() => (window as unknown as { rlAudio: () => { played: Record<string, number> } }).rlAudio().played.demo ?? 0);
-  const before = await demolitions();
-
-  await other.keyboard.press("Escape");
-  await other.getByRole("button", { name: "Leave Match" }).click({ timeout: 30_000 });
-  await expect(other.getByText("Are you sure you want to quit the match?")).toBeVisible({ timeout: 30_000 });
-  await other.getByRole("button", { name: "No" }).click();
-  await expect(other.getByRole("button", { name: "Leave Match" })).toBeVisible({ timeout: 30_000 });
-  await other.getByRole("button", { name: "Leave Match" }).click();
-  await other.getByRole("button", { name: "Yes" }).click({ timeout: 30_000 });
-
-  // The others: its car explodes and goes; its team, emptied, forfeits (whichever the page's isn't)
-  await expect(page.locator("#net")).toContainText("1 cars", { timeout: 15_000 });
-  await expect.poll(demolitions, { timeout: 15_000 }).toBeGreaterThan(before);
-  await expect.poll(async () => (await ends(page)).filter((e) => e.forfeit).length, { timeout: 15_000 }).toBe(1);
-  // The leaver: back to freeplay
-  await expect(other).toHaveURL(/:4173\/$/, { timeout: 30_000 });
-  await other.waitForFunction(() => "rlFreeplay" in window, null, { timeout: 60_000 });
-
-  expect(errors).toEqual([]);
-  expect(leaving).toEqual([]);
 });
 
 test("quick chat: the two presses, to all and to the team, names and comings and goings in the log", async ({ page, browser }) => {

@@ -1649,8 +1649,13 @@ void Arena::Step(int ticksToSimulate) {
 
 		bool hasArenaStuff = (gameMode != GameMode::THE_VOID);
 		
-		// RL PATCH: the ball's start-of-tick velocity (OldRBState) for the car hit impulse (cars keep theirs in _oldState)
-		ball->_startOfTickVel = ball->_rigidBody.m_linearVelocity * BT_TO_UU;
+		// RL PATCH: the ball's start-of-tick velocity (OldRBState) for the car hit impulse (cars keep theirs in _oldState),
+		// as the read-back makes it: in uu, capped and quantised, not the body's x50 of its x0.02 (RV-244)
+		{
+			btVector3 vel = ball->_rigidBody.m_linearVelocity * BT_TO_UU, angVel = ball->_rigidBody.m_angularVelocity;
+			Quantize::ReadBackVelocities(vel, angVel, _mutatorConfig.ballMaxSpeed, RLConst::BALL_MAX_ANG_SPEED);
+			ball->_startOfTickVel = vel;
+		}
 
 		// RL PATCH: kickoff countdown, no input. The jump's edge still follows the real input (Car_TA.SetVehicleInput
 		// calls OnJumpPressed only when Input.bJump changes, and OnJumpPressed returns while !bDriving: a press during the

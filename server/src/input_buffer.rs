@@ -109,19 +109,12 @@ impl InputBuffer {
     /// A packet of consecutive frames starting at `first_frame` (`ReceiveClientPacket`).
     /// Returns whether it was the newest packet so far (its timestamp is then the one to echo).
     pub fn receive(&mut self, timestamp: u32, first_frame: u32, frames: &[InputFrame], now: f64) -> bool {
-        self.receive_at(timestamp, first_frame, frames, now, now)
-    }
-
-    /// As `receive`, its arrival also on the game's clock (`game_now`, s): the jitter buffer sizes the packets' gaps on
-    /// it, as the client paces them by its game ticks (through the post-goal slow motion they come further apart in
-    /// real time, which grew the buffer for seconds after every goal: MRL-16); the input timeout stays real time
-    pub fn receive_at(&mut self, timestamp: u32, first_frame: u32, frames: &[InputFrame], now: f64, game_now: f64) -> bool {
         let newest = self.newest_timestamp.is_none_or(|t| timestamp.wrapping_sub(t) as i32 > 0);
         if newest {
             // ReceiveNewClientPacket (ServerConsume): before the packet's frames are merged
             self.newest_timestamp = Some(timestamp);
             self.last_packet_time = now;
-            self.jitter.received_packet(game_now);
+            self.jitter.received_packet(now);
             if self.filling && self.frames.len() >= self.jitter.buffer_size as usize {
                 self.filling = false;
             }

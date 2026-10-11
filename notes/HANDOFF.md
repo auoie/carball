@@ -301,7 +301,8 @@
       server.
       - Forfeits: after a goal one waits for the next round; a team emptied by a leave forfeits 2 ticks later (casual,
         ranked); everyone gone is a no contest.
-      - The jitter buffer is sized on the game clock (MRL-16: it grew after every goal).
+      - (A game-clock jitter-buffer sizing here was reverted in the next batch, RV-238: the client sends at 60 Hz of real
+        time, and the game's buffer is on real time.)
       - Options: `--match-type casual|ranked|private` and `--forfeit-vote-wait SECONDS`.
     - Client:
       - The Escape menu's match buttons (`ui/matchMenu.ts`, `game/forfeitVote.ts`): vote or forfeit, and leave (back
@@ -350,7 +351,8 @@
     - Replays (5acdfe3 vs this): neutral. The main summary is identical, car–car 0 flips in 5,012 cases (37 differ in
       the last printed digit).
     - Determinism: the 300 s snapshot hash is unchanged (503626639f483e87); the 600 s one is now bc8e55a507fb5c58, with
-      the per-second state hashes unchanged (native = WASM). The snapshot carries each car's ball-hit record, whose
+      the per-second state hashes unchanged but seconds 81 and 349 (mid goal-wave: the push's lever now uses the quantised
+      location; each kickoff reset erases the difference), native = WASM. The snapshot carries each car's ball-hit record, whose
       `extraHitVel` comes from the start-of-tick velocity and forward, now the exact read-back values: its low bits
       moved, while the ball's velocity, quantised each tick, didn't. (`_oldQuat` isn't serialized: each tick recaptures
       it.)
@@ -364,6 +366,23 @@
         wired into `online.ts`.
       - Settings: a Chat tab (name, filter, non-tactical block, slots) and the four quick-chat bindings.
       - Audio: the chat line's sound.
+  - **In 7160837:** all of the above. **Since 7160837 (uncommitted): the 5acdfe3/f9a553d review, RV-235..246,
+    protocol 12.**
+    - RV-235: a leaver's car explodes only when it's there (`Left`'s `explode`: not demolished, not in the replay).
+    - RV-236: the menu's one match button (the vote or leaving; red while a vote runs; labels upper-case).
+    - RV-237: the vote widget's bar is yes/required with a flash; it stays through the linger, with no fade-in.
+    - RV-238: the jitter buffer back on real time.
+    - RV-239: keys are the server's (Welcome's `key`, Hello's back on reconnect; a duplicated tab gets a new one). The
+      initiators are match-wide and only grow; a re-enable clears the per-player flag.
+    - RV-240: the guard finds three.js by its package path segment.
+    - RV-241: tests for the surviving vote mutants, the control queue and the stored key.
+    - RV-242: 16 players a match at most (`Refused`).
+    - RV-243: versions are checked before decoding; the vote no longer logs refusals.
+    - RV-244: the ball's start-of-tick velocity is its read-back.
+    - RV-245: five more sweep cases and the packed-rotation read-back test.
+    - RV-246: wording fixes.
+    - The leave e2e moved to `online.spec.ts` (that server's votes wait a minute, so its menu shows leaving);
+      `e2e/players.ts` holds the shared helpers.
     - Next (the user's order): match stats and the scoreboard (with mute and block), then the intro and outro, HUD and
       menus, mutators, custom training, bots.
   - **Decided (user, 2026-10-10): no controller rumble.** notes/rumble.md stays as a reference spec only. The contact

@@ -435,10 +435,11 @@ UI. Tournament matches inherit ranked's 90 s and add series forfeits (out of sco
   with no stat.
 - **D-6 partly.** The skip prompt is now `SkipInstructions` ("Press Space to Skip" / "(A)") and the n/m count is
   gone. The names list needs player names, which come with the scoreboard.
-- **D-7 done (MRL-16).** The server sizes the jitter buffer on the game clock (a packet's arrival mapped through the
-  last tick's dilation); the input timeout stays on real time. Test:
-  `the_slow_motion_after_a_goal_leaves_the_jitter_buffer_as_it_was` (before the fix the buffer grew from 7 to 9 after
-  a goal; now it stays at 7).
+- **D-7: no change needed (MRL-16, corrected by RV-238).** The client already sends its input packets at 60 Hz of real
+  time, once a frame, as the game does, so their gaps don't stretch in the slow motion. The jitter buffer measures in
+  real time as the game's (RealTimeSeconds, MR-6.6): 7 before the goal, 7 through and after it (30 Hz: 8 → 9 either
+  way). A game-clock sizing tried in 5acdfe3 was reverted; it rested on a test that sent a packet every 2 game ticks,
+  which the client doesn't. Test: `the_slow_motion_after_a_goal_leaves_the_jitter_buffer_as_it_was` (the real cadence).
 - **D-5** (bots) and **D-8** (a ring buffer) remain open.
 
 ### 8. Text the clone would need (keys and paraphrases; not cleared unless noted)

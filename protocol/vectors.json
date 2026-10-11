@@ -1,5 +1,5 @@
 {
-  "protocolVersion": 11,
+  "protocolVersion": 12,
   "vectors": [
     {
       "channel": "control",
@@ -83,13 +83,14 @@
         "frame": 0,
         "matchType": "ranked",
         "teamSize": 2,
+        "key": 305441741,
         "snapshot": [
           1,
           2,
           3
         ]
       },
-      "hex": "1500810100030000007800000000010203000000010203"
+      "hex": "19008101000300000078000000000102cdab341203000000010203"
     },
     {
       "channel": "control",
@@ -136,10 +137,11 @@
         "event": {
           "kind": "left",
           "car": 4,
-          "lost": true
+          "lost": true,
+          "explode": true
         }
       },
-      "hex": "0b008309000000020400000001"
+      "hex": "0b008309000000020400000003"
     },
     {
       "channel": "control",
@@ -324,6 +326,14 @@
         "seconds": 2.75
       },
       "hex": "05008a00003040"
+    },
+    {
+      "channel": "control",
+      "message": {
+        "type": "refused",
+        "reason": 0
+      },
+      "hex": "02008b00"
     },
     {
       "channel": "datagram",

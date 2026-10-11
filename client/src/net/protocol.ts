@@ -5,8 +5,8 @@
 // and flip resets in the state; 6: spawn counters in the state, the match message; 7: the engine turns the ball (its
 // orientation is simulated state: the network state's format is unchanged); 8: the bodies' inverse inertia tensors;
 // 9: the goal replay (its phase, plan and skip votes; Hello's auto-skip); 10: forfeit votes, the match type, a leaver's
-// car, no contest; 11: quick chat, players' names (the roster), a leave's reason
-export const PROTOCOL_VERSION = 11;
+// car, no contest; 11: quick chat, players' names (the roster), a leave's reason; 12: whether a leaver's car explodes
+export const PROTOCOL_VERSION = 12;
 /** A name's bytes at most (UTF-8) */
 export const MAX_NAME_BYTES = 32;
 export const MAX_INPUT_FRAMES = 10;
@@ -14,9 +14,9 @@ export const MAX_INPUT_FRAMES = 10;
 export type GameEvent =
   | { readonly kind: "goal"; readonly team: number }
   | { readonly kind: "demo"; readonly attacker: number; readonly victim: number }
-  /** A player left: their car explodes where it is (Car.Demolish(None): no demolition counted); `lost`: their connection
-   *  timed out (the chat log's "lost connection") */
-  | { readonly kind: "left"; readonly car: number; readonly lost: boolean };
+  /** A player left; `lost`: their connection timed out (the chat log's "lost connection"); `explode`: their car explodes
+   *  where it is (Car.Demolish(None): no demolition counted), not when already demolished or in the goal replay */
+  | { readonly kind: "left"; readonly car: number; readonly lost: boolean; readonly explode: boolean };
 
 /** A player's quick-chat filter (EChatFilter, CHAT-18) */
 export type ChatFilter = "everyone" | "team" | "friends" | "off";
@@ -99,7 +99,8 @@ export type ControlMessage =
       readonly airControlSensitivity: number;
       /** Skips every goal replay (bAutoSkipGoalReplay) */
       readonly autoSkipReplay: boolean;
-      /** This client's own random key, the same when it reconnects (who started a forfeit vote: ForfeitInitiatorIDs) */
+      /** The key the server gave this client before (its Welcome's), kept across its reconnects (who started a forfeit
+       *  vote: ForfeitInitiatorIDs); 0 for none */
       readonly key: number;
       /** The player's name (MAX_NAME_BYTES of UTF-8 at most; the server tidies it) */
       readonly name: string;
@@ -123,6 +124,8 @@ export type ControlMessage =
       readonly matchType: MatchType;
       /** The playlist's team size */
       readonly teamSize: number;
+      /** This player's key (Hello's again if it was this server's and no one here has it, else a new one) */
+      readonly key: number;
       readonly snapshot: Uint8Array;
     }
   /** The client had a hitch (over 0.1 s between its ticks) 2 s ago: the server resets its jitter buffer
@@ -142,7 +145,9 @@ export type ControlMessage =
   /** A quick-chat line (ChatMessage_TA): the sender's car, the preset, team or all, the clock's shown seconds at relay */
   | { readonly type: "chat"; readonly car: number; readonly preset: number; readonly team: boolean; readonly seconds: number }
   /** This player's chat is blocked by the spam filter for this long (ClientNotifyChatDisabled) */
-  | { readonly type: "chatBlocked"; readonly seconds: number };
+  | { readonly type: "chatBlocked"; readonly seconds: number }
+  /** The join was refused (0: the match has its most players), instead of a welcome; the session ends */
+  | { readonly type: "refused"; readonly reason: number };
 
 /** One frame of inputs as sent: axes in 1/127 steps, bits for the buttons. */
 export interface InputFrame {
@@ -331,6 +336,10 @@ export function encodeControl(m: ControlMessage): Uint8Array {
       w.u8(0x8a);
       w.f32(m.seconds);
       break;
+    case "refused":
+      w.u8(0x8b);
+      w.u8(m.reason);
+      break;
     case "resetInputBuffer":
       w.u8(0x02);
       break;
@@ -382,6 +391,7 @@ export function encodeControl(m: ControlMessage): Uint8Array {
       w.u32(m.frame);
       w.u8(MATCH_TYPES.indexOf(m.matchType));
       w.u8(m.teamSize);
+      w.u32(m.key);
       w.u32(m.snapshot.byteLength);
       w.bytes(m.snapshot);
       break;
@@ -404,7 +414,7 @@ export function encodeControl(m: ControlMessage): Uint8Array {
       } else {
         w.u8(2);
         w.u32(m.event.car);
-        w.u8(m.event.lost ? 1 : 0);
+        w.u8((m.event.lost ? 1 : 0) | (m.event.explode ? 2 : 0));
       }
       break;
     case "match":
@@ -466,6 +476,8 @@ export function decodeControl(body: Uint8Array): ControlMessage {
     }
     case 0x8a:
       return { type: "chatBlocked", seconds: r.f32() };
+    case 0x8b:
+      return { type: "refused", reason: r.u8() };
     case 0x02:
       return { type: "resetInputBuffer" };
     case 0x03:
@@ -502,7 +514,8 @@ export function decodeControl(body: Uint8Array): ControlMessage {
       const matchType = MATCH_TYPES[r.u8()];
       if (!matchType) throw new DecodeError("unknown match type");
       const teamSize = r.u8();
-      return { type: "welcome", version, carId, tickRate, frame, matchType, teamSize, snapshot: r.take(r.u32()) };
+      const key = r.u32();
+      return { type: "welcome", version, carId, tickRate, frame, matchType, teamSize, key, snapshot: r.take(r.u32()) };
     }
     case 0x82: {
       const frame = r.u32();
@@ -515,7 +528,8 @@ export function decodeControl(body: Uint8Array): ControlMessage {
       if (kind === 1) return { type: "event", serverTick, event: { kind: "demo", attacker: r.u32(), victim: r.u32() } };
       if (kind === 2) {
         const car = r.u32();
-        return { type: "event", serverTick, event: { kind: "left", car, lost: r.u8() !== 0 } };
+        const flags = r.u8();
+        return { type: "event", serverTick, event: { kind: "left", car, lost: (flags & 1) !== 0, explode: (flags & 2) !== 0 } };
       }
       throw new DecodeError(`unknown event kind ${String(kind)}`);
     }

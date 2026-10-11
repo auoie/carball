@@ -53,6 +53,8 @@ unsafe extern "C" {
     fn rl_is_ball_scored(arena: *mut RLArena) -> c_int;
     fn rl_ball_position(arena: *mut RLArena, out: *mut f32);
     fn rl_car_position(arena: *mut RLArena, car_id: u32, out: *mut f32) -> c_int;
+    fn rl_car_demoed(arena: *mut RLArena, car_id: u32) -> c_int;
+    fn rl_car_demolish(arena: *mut RLArena, car_id: u32);
     fn rl_take_events(arena: *mut RLArena, out: *mut i32, max_ints: usize) -> usize;
     fn rl_write_net_state(arena: *mut RLArena, ball: c_int, car_ids: *const u32, num_cars: usize, pads: c_int, out: *mut u8, capacity: usize) -> usize;
     fn rl_save_state(arena: *mut RLArena, out: *mut u8, capacity: usize) -> usize;
@@ -219,6 +221,18 @@ impl Arena {
         let mut out = [0.0; 3];
         // SAFETY: valid arena, 3 floats of space
         (unsafe { rl_car_position(self.ptr(), car_id, out.as_mut_ptr()) } != 0).then_some(out)
+    }
+
+    /// The car is demolished (waiting to respawn)
+    pub fn car_demoed(&mut self, car_id: u32) -> bool {
+        // SAFETY: valid arena
+        unsafe { rl_car_demoed(self.ptr(), car_id) != 0 }
+    }
+
+    /// Demolishes the car (it respawns as after any demolition)
+    pub fn demolish_car(&mut self, car_id: u32) {
+        // SAFETY: valid arena
+        unsafe { rl_car_demolish(self.ptr(), car_id) }
     }
 
     pub fn take_events(&mut self) -> Vec<Event> {

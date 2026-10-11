@@ -1128,7 +1128,7 @@ index 5805611..3ceaa22 100644
  }
 \ No newline at end of file
 diff --git upstream/src/Sim/Arena/Arena.cpp engine/rocketsim/src/Sim/Arena/Arena.cpp
-index a13cee0..96c73d9 100644
+index a13cee0..79e447a 100644
 --- upstream/src/Sim/Arena/Arena.cpp
 +++ engine/rocketsim/src/Sim/Arena/Arena.cpp
 @@ -1,4 +1,8 @@
@@ -1729,14 +1729,14 @@ index a13cee0..96c73d9 100644
 -
 -		if (state.isDemoed || otherState.isDemoed)
 -			return;
--
++		bool canDemoTeam = _mutatorConfig.enableTeamDemos || (car1->team != car2->team);
+ 
 -		if ((state.carContact.otherCarID == car2->id) && (state.carContact.cooldownTimer > 0))
 -			continue; // In cooldown
 -
 -		Vec deltaPos = (otherState.pos - state.pos);
 -		if (state.vel.Dot(deltaPos) > 0) { // Going towards other car
-+		bool canDemoTeam = _mutatorConfig.enableTeamDemos || (car1->team != car2->team);
- 
+-
 -			Vec velDir = state.vel.Normalized();
 -			Vec dirToOtherCar = deltaPos.Normalized();
 -
@@ -2275,7 +2275,7 @@ index a13cee0..96c73d9 100644
  		}
  
  		newArena->_lastCarID = lastCarID;
-@@ -629,20 +1456,122 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
+@@ -629,18 +1456,120 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
  		}
  	}
  
@@ -2293,12 +2293,8 @@ index a13cee0..96c73d9 100644
 +		MutatorConfig mutators = MutatorConfig(gameMode);
 +		mutators.Deserialize(in);
 +		newArena->SetMutatorConfig(mutators);
- 	}
- 
--	{ // Serialize mutators
--		newArena->_mutatorConfig.Deserialize(in);
--		newArena->SetMutatorConfig(newArena->_mutatorConfig);
--	}
++	}
++
 +	newArena->ball->SetState(ballState);
 +	ballBody.ApplyTo(newArena->ball->_rigidBody, newArena->ball->_netRotation);
 +	for (Car* car : newArena->_cars)
@@ -2309,10 +2305,10 @@ index a13cee0..96c73d9 100644
 +	_ReadKickoffSequence(in, newArena->kickoffSequence); // RL PATCH
 +	newArena->respawnsHeld = in.Read<uint8_t>() != 0; // RL PATCH
 +	_ReadGoalExplosion(in, newArena->goalExplosion); // RL PATCH
- 
- 	return newArena;
- }
- 
++
++	return newArena;
++}
++
 +// Whether two car configs give the same physics body (preferences such as the dodge deadzone may differ)
 +static bool SameCarBody(const CarConfig& a, const CarConfig& b) {
 +	auto same = [](const Vec& x, const Vec& y) { return x.x == y.x && x.y == y.y && x.z == y.z; };
@@ -2341,8 +2337,11 @@ index a13cee0..96c73d9 100644
 +		loadedConfig.Serialize(theirs);
 +		if (loadedMode != gameMode || loadedTickTime != tickTime || ours.data != theirs.data)
 +			return reject();
-+	}
-+
+ 	}
+ 
+-	{ // Serialize mutators
+-		newArena->_mutatorConfig.Deserialize(in);
+-		newArena->SetMutatorConfig(newArena->_mutatorConfig);
 +	struct LoadedCar {
 +		uint32_t id;
 +		CarControls controls;
@@ -2361,8 +2360,9 @@ index a13cee0..96c73d9 100644
 +		Car* existing = GetCar(c.id);
 +		if (!existing || existing->team != team || !SameCarBody(existing->config, c.config))
 +			return reject();
-+	}
-+
+ 	}
+ 
+-	return newArena;
 +	std::vector<BoostPadState> pads;
 +	if (_boostPads.size() > 0) {
 +		pads.resize(in.Read<uint32_t>());
@@ -2401,11 +2401,9 @@ index a13cee0..96c73d9 100644
 +	respawnsHeld = in.Read<uint8_t>() != 0; // RL PATCH
 +	_ReadGoalExplosion(in, goalExplosion); // RL PATCH
 +	return true;
-+}
-+
+ }
+ 
  Arena* Arena::Clone(bool copyCallbacks) {
- 	Arena* newArena = new Arena(this->gameMode, this->_config, this->GetTickRate());
- 	
 @@ -651,14 +1580,19 @@ Arena* Arena::Clone(bool copyCallbacks) {
  		newArena->_carBumpCallback = this->_carBumpCallback;
  	}
@@ -2462,7 +2460,7 @@ index a13cee0..96c73d9 100644
  
  	return car;
  }
-@@ -691,20 +1640,41 @@ void Arena::Step(int ticksToSimulate) {
+@@ -691,20 +1640,46 @@ void Arena::Step(int ticksToSimulate) {
  
  		_bulletWorld.setWorldUserInfo(this);
  
@@ -2482,8 +2480,13 @@ index a13cee0..96c73d9 100644
  
  		bool hasArenaStuff = (gameMode != GameMode::THE_VOID);
  		
-+		// RL PATCH: the ball's start-of-tick velocity (OldRBState) for the car hit impulse (cars keep theirs in _oldState)
-+		ball->_startOfTickVel = ball->_rigidBody.m_linearVelocity * BT_TO_UU;
++		// RL PATCH: the ball's start-of-tick velocity (OldRBState) for the car hit impulse (cars keep theirs in _oldState),
++		// as the read-back makes it: in uu, capped and quantised, not the body's x50 of its x0.02 (RV-244)
++		{
++			btVector3 vel = ball->_rigidBody.m_linearVelocity * BT_TO_UU, angVel = ball->_rigidBody.m_angularVelocity;
++			Quantize::ReadBackVelocities(vel, angVel, _mutatorConfig.ballMaxSpeed, RLConst::BALL_MAX_ANG_SPEED);
++			ball->_startOfTickVel = vel;
++		}
 +
 +		// RL PATCH: kickoff countdown, no input. The jump's edge still follows the real input (Car_TA.SetVehicleInput
 +		// calls OnJumpPressed only when Input.bJump changes, and OnJumpPressed returns while !bDriving: a press during the
@@ -2512,7 +2515,7 @@ index a13cee0..96c73d9 100644
  
  		if (hasArenaStuff && !ballOnly) {
  			for (BoostPad* pad : _boostPads)
-@@ -714,11 +1684,27 @@ void Arena::Step(int ticksToSimulate) {
+@@ -714,11 +1689,27 @@ void Arena::Step(int ticksToSimulate) {
  		// Update ball
  		ball->_PreTickUpdate(gameMode, tickTime);
  
@@ -2540,7 +2543,7 @@ index a13cee0..96c73d9 100644
  			car->_FinishPhysicsTick(_mutatorConfig);
  			if (hasArenaStuff) {
  				if (_config.useCustomBoostPads) {
-@@ -732,6 +1718,12 @@ void Arena::Step(int ticksToSimulate) {
+@@ -732,6 +1723,12 @@ void Arena::Step(int ticksToSimulate) {
  			}
  		}
  
@@ -2553,7 +2556,7 @@ index a13cee0..96c73d9 100644
  		if (hasArenaStuff && !ballOnly)
  			for (BoostPad* pad : _boostPads)
  				pad->_PostTickUpdate(tickTime, _mutatorConfig);
-@@ -745,6 +1737,22 @@ void Arena::Step(int ticksToSimulate) {
+@@ -745,6 +1742,22 @@ void Arena::Step(int ticksToSimulate) {
  			if (ball->_internalState.dsInfo.lastDamageTick && ball->_internalState.dsInfo.lastDamageTick == tickCount)
  				SetDropshotTilesState(_dropshotTilesState);
  
@@ -2576,7 +2579,7 @@ index a13cee0..96c73d9 100644
  		if (_goalScoreCallback.func != NULL) { // Potentially fire goal score callback
  			if (IsBallScored()) {
  				_goalScoreCallback.func(this, RS_TEAM_FROM_Y(-ball->_rigidBody.getWorldTransform().m_origin.y()), _goalScoreCallback.userInfo);
-@@ -752,6 +1760,8 @@ void Arena::Step(int ticksToSimulate) {
+@@ -752,6 +1765,8 @@ void Arena::Step(int ticksToSimulate) {
  		}
  
  		tickCount++;
@@ -2585,7 +2588,7 @@ index a13cee0..96c73d9 100644
  	}
  }
  
-@@ -983,6 +1993,7 @@ btRigidBody* Arena::_AddStaticCollisionShape(btCollisionShape* shape, btVector3
+@@ -983,6 +1998,7 @@ btRigidBody* Arena::_AddStaticCollisionShape(btCollisionShape* shape, btVector3
  	} else {
  		_bulletWorld.addRigidBody(shapeRB);
  	}
@@ -2593,7 +2596,7 @@ index a13cee0..96c73d9 100644
  	_worldCollisionRBs.push_back(shapeRB);
  	return shapeRB;
  }
-@@ -993,6 +2004,7 @@ void Arena::_SetupArenaCollisionShapes() {
+@@ -993,6 +2009,7 @@ void Arena::_SetupArenaCollisionShapes() {
  	bool isDropShot = gameMode == GameMode::DROPSHOT;
  
  	auto collisionMeshes = RocketSim::GetArenaCollisionShapes(gameMode);
@@ -2601,7 +2604,7 @@ index a13cee0..96c73d9 100644
  
  	if (collisionMeshes.empty()) {
  		RS_ERR_CLOSE(
-@@ -1021,7 +2033,7 @@ void Arena::_SetupArenaCollisionShapes() {
+@@ -1021,7 +2038,7 @@ void Arena::_SetupArenaCollisionShapes() {
  
  		int mask = isHoopsNet ? CollisionMasks::HOOPS_NET : 0;
  		_worldCollisionBvhShapes.push_back(mesh);

@@ -18,32 +18,34 @@ describe("the midgame menu's match buttons", () => {
     ]);
   });
 
-  it("labels a team vote by the match type and shows it only while the player can start or join one", () => {
+  it("one slot (RV-236): a team vote labelled by the match type while the player can start or join one, else leaving", () => {
     const state = { matchType: "casual", teamSize: 3, canVoteForfeit: true, vote: NONE } as const;
-    expect(labels(state)).toEqual(["Vote to Concede", "Leave Match"]);
-    expect(labels({ ...state, matchType: "ranked" })).toEqual(["Vote to Forfeit", "Leave Match"]);
-    expect(matchMenuItems(state)[0]?.confirm).toBeNull();
+    expect(labels(state)).toEqual(["Vote to Concede"]);
+    expect(labels({ ...state, matchType: "ranked" })).toEqual(["Vote to Forfeit"]);
+    expect(matchMenuItems(state)[0]).toMatchObject({ confirm: null, danger: false });
+    expect(matchMenuItems({ ...state, vote: RUNNING })[0]?.danger).toBe(true); // (red while one runs)
     // Not yet allowed (the clock's wait), or a private match's
     expect(labels({ ...state, canVoteForfeit: false })).toEqual(["Leave Match"]);
     expect(labels({ ...state, matchType: "private" })).toEqual(["Leave Match"]);
     // Locked out: only to join a running vote they haven't voted in
     const locked = { ...NONE, canStart: false };
     expect(labels({ ...state, vote: locked })).toEqual(["Leave Match"]);
-    expect(labels({ ...state, vote: { ...RUNNING, canStart: false } })).toEqual(["Vote to Concede", "Leave Match"]);
+    expect(labels({ ...state, vote: { ...RUNNING, canStart: false } })).toEqual(["Vote to Concede"]);
     expect(labels({ ...state, vote: { ...RUNNING, canStart: false, voted: true } })).toEqual(["Leave Match"]);
     expect(labels({ ...state, vote: null })).toEqual(["Leave Match"]);
   });
 });
 
 describe("the vote widget", () => {
-  it("shows the tally, the time left and the hint until the player votes", () => {
-    expect(voteHud(RUNNING, "casual", "Esc")).toEqual({ tally: "Vote to Concede 1/3", fill: 17 / 20, time: "0:17", instructions: "Press Esc to Vote" });
-    expect(voteHud({ ...RUNNING, voted: true, secondsLeft: 20 }, "ranked", "Esc")).toEqual({ tally: "Vote to Forfeit 1/3", fill: 1, time: "0:20", instructions: null });
+  it("shows the tally, the bar as the votes of those needed, the time and the hint until the player votes (RV-237)", () => {
+    expect(voteHud(RUNNING, "casual", "Esc")).toEqual({ tally: "Vote to Concede 1/3", yes: 1, fill: 1 / 3, time: "0:17", instructions: "Press Esc to Vote" });
+    expect(voteHud({ ...RUNNING, voted: true, yes: 2, secondsLeft: 20 }, "ranked", "Esc")).toEqual({ tally: "Vote to Forfeit 2/3", yes: 2, fill: 2 / 3, time: "0:20", instructions: null });
   });
 
-  it("is gone when the vote finishes or there is none", () => {
-    expect(voteHud({ ...RUNNING, state: "passed" }, "casual", "Esc")).toBeNull();
-    expect(voteHud({ ...RUNNING, state: "failed" }, "casual", "Esc")).toBeNull();
+  it("stays through a finished vote's 5 s (no hint); gone when there is none or the match has ended", () => {
+    expect(voteHud({ ...RUNNING, state: "failed", secondsLeft: 0 }, "casual", "Esc")).toMatchObject({ tally: "Vote to Concede 1/3", instructions: null });
+    expect(voteHud({ ...RUNNING, state: "passed", yes: 3 }, "casual", "Esc")?.fill).toBe(1);
+    expect(voteHud(RUNNING, "casual", "Esc", true)).toBeNull();
     expect(voteHud(NONE, "casual", "Esc")).toBeNull();
     expect(voteHud(null, "casual", "Esc")).toBeNull();
   });

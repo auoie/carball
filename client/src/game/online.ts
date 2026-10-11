@@ -583,7 +583,7 @@ export class Online {
         // A player left: their car explodes where it's drawn (Car.Demolish(None)), then the world without it reloads
         if (m.event.lost) this.#lost.add(m.event.car);
         const car = this.#cars.get(m.event.car);
-        if (car) {
+        if (car && m.event.explode) {
           const pos = add(car.state.blended(this.#clock.alpha).pos, car.error.location);
           this.#effects.demolition(pos);
           this.#camera.shakes.play(EXPLOSION_MEDIUM, pos);
@@ -774,7 +774,7 @@ export class Online {
       flipReset: this.#flipReset,
       respawn: car ? respawnHud(car) : null,
       hint,
-      vote: voteHud(this.#vote, this.#matchType, MENU_KEY),
+      vote: voteHud(this.#vote, this.#matchType, MENU_KEY, this.#match?.phase === "ended"),
     });
     if (this.#flipReset) this.#audio.flipReset();
     this.#flipReset = false;
