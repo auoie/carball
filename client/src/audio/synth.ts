@@ -179,13 +179,13 @@ export class Synth {
     this.#burst("highpass", 7000, 9500, 0.7, out, when, 0.03, 0.04, 0.3);
   }
 
-  /** The kickoff countdown: a beep for each second, a longer, higher one for go. */
   /** A chat line's notification (UI_Notification_ChatMessage): a soft two-note tick */
   chatMessage(out: AudioNode, when: number): void {
     this.#sweep("sine", 1046.5, 1046.5, 0.005, out, when, 0.07, 0.08);
     this.#sweep("sine", 1568, 1568, 0.005, out, when + 0.06, 0.09, 0.07);
   }
 
+  /** The kickoff countdown: a beep for each second, a longer, higher one for go. */
   beep(out: AudioNode, when: number, go: boolean): void {
     const f = go ? 1318.5 : 880;
     this.#sweep("sine", f, f, 0.01, out, when, 0.22, go ? 0.55 : 0.16);

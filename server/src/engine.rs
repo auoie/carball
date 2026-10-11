@@ -61,6 +61,40 @@ unsafe extern "C" {
     fn rl_load_state(arena: *mut RLArena, data: *const u8, size: usize) -> c_int;
     fn rl_apply_net_state(arena: *mut RLArena, data: *const u8, size: usize) -> c_int;
     fn rl_car_ids(arena: *mut RLArena, out: *mut u32, max_ids: usize) -> usize;
+    fn rl_stats_set_state(arena: *mut RLArena, state: c_int);
+    fn rl_stats_set_overtime(arena: *mut RLArena, overtime: c_int);
+    fn rl_stats_reset(arena: *mut RLArena);
+    fn rl_take_stat_awards(arena: *mut RLArena, out: *mut i32, max_ints: usize) -> usize;
+    fn rl_car_stats(arena: *mut RLArena, car_id: u32, out: *mut i32, max: usize) -> usize;
+    fn rl_stat_event_points(event: c_int) -> c_int;
+}
+
+/// A player's match counters (`engine/stats/StatFactory.h` `Counter`): MatchScore, Goals, Assists, Saves, Shots,
+/// Demolishes, EpicSaves, Centers, Clears, AerialHits, BicycleHits, JuggleHits, FirstTouches, PoolShots, LowFives,
+/// HighFives, TimesDemolished, CrossbarHits, OwnGoals, BallTouches
+pub const STAT_COUNTERS: usize = 20;
+pub type StatCounters = [i32; STAT_COUNTERS];
+
+/// The match stats' state (`rl_stats_set_state`): the round counts everything, after a goal only demolitions and fives
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StatsState {
+    Inactive = 0,
+    Round = 1,
+    AfterGoal = 2,
+}
+
+/// A stat award (`GiveScore`): the event (`protocol::stat`) to a car, with a demolition's victim (0: none)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Award {
+    pub event: u8,
+    pub car: u32,
+    pub victim: u32,
+}
+
+/// An event's points (`StatEvent_TA.Points`)
+pub fn stat_event_points(event: u8) -> i32 {
+    // SAFETY: a pure lookup
+    unsafe { rl_stat_event_points(c_int::from(event)) }
 }
 
 /// Loads the arena collision meshes. Call once before creating arenas.
@@ -233,6 +267,43 @@ impl Arena {
     pub fn demolish_car(&mut self, car_id: u32) {
         // SAFETY: valid arena
         unsafe { rl_car_demolish(self.ptr(), car_id) }
+    }
+
+    pub fn set_stats_state(&mut self, state: StatsState) {
+        // SAFETY: valid arena
+        unsafe { rl_stats_set_state(self.ptr(), state as c_int) }
+    }
+
+    pub fn set_stats_overtime(&mut self, overtime: bool) {
+        // SAFETY: valid arena
+        unsafe { rl_stats_set_overtime(self.ptr(), c_int::from(overtime)) }
+    }
+
+    /// A new match: every car's counters back to 0
+    pub fn reset_stats(&mut self) {
+        // SAFETY: valid arena
+        unsafe { rl_stats_reset(self.ptr()) }
+    }
+
+    /// The stat awards since the last call, in order
+    pub fn take_stat_awards(&mut self) -> Vec<Award> {
+        let mut ints = vec![0i32; 4 * 256];
+        // SAFETY: valid arena and buffer
+        let n = unsafe { rl_take_stat_awards(self.ptr(), ints.as_mut_ptr(), ints.len()) };
+        ints[..n]
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|&[event, car, victim, _count]| Award { event: event as u8, car: car as u32, victim: victim as u32 })
+            .collect()
+    }
+
+    /// The car's match counters (all 0 before its first award)
+    pub fn car_stats(&mut self, car_id: u32) -> StatCounters {
+        let mut out = [0i32; STAT_COUNTERS];
+        // SAFETY: valid arena and buffer
+        unsafe { rl_car_stats(self.ptr(), car_id, out.as_mut_ptr(), out.len()) };
+        out
     }
 
     pub fn take_events(&mut self) -> Vec<Event> {

@@ -98,6 +98,8 @@ public:
 	// RL PATCH: velocity at the start of the tick (UU/s; the game's OldRBState), for the car hit impulse.
 	// Taken from the state every tick before any forces, so snapshots don't need it.
 	Vec _startOfTickVel = { 0,0,0 };
+	// RL PATCH: its location then (the match stats' PreHitBallPhysics)
+	Vec _startOfTickPos = { 0,0,0 };
 
 	// RL PATCH: the rotation as last quantized, as the network sends it (see Quantize::PackedRotation)
 	Quantize::PackedRotation _netRotation;

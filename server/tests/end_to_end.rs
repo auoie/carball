@@ -23,7 +23,7 @@ async fn a_client_connects_drives_and_follows_the_world() {
     let (identity, cert_hash) = net::dev_identity().unwrap();
     let server = net::endpoint(identity, 0).unwrap();
     let port = server.local_addr().unwrap().port();
-    let (to_game, messages) = tokio::sync::mpsc::unbounded_channel();
+    let (to_game, messages) = tokio::sync::mpsc::channel(rl_server::game_loop::TO_GAME_QUEUE);
     std::thread::spawn(move || game_loop::run(
         messages,
         game_loop::Playlist { team_size: rl_server::game::TEAM_SIZE, match_type: rl_server::game::MatchType::Casual, forfeit_vote_wait: None },
@@ -47,6 +47,8 @@ async fn a_client_connects_drives_and_follows_the_world() {
         auto_skip_replay: false,
         key: 7,
         name: "tester".to_string(),
+        quick_chat: protocol::CHAT_EVERYONE,
+        block_non_tactical: false,
     };
     send.write_all(&hello.encode()).await.unwrap();
     let Control::Welcome { car_id, snapshot, tick_rate, .. } = read_control(&mut recv).await else { panic!("expected welcome") };
@@ -102,4 +104,81 @@ async fn a_client_connects_drives_and_follows_the_world() {
     assert!(driven > 500.0, "client view of the car drove {driven} uu");
     assert!(last_ack + 30 > frame, "the server consumed our inputs (ack {last_ack}, sent {frame})");
     assert!(pings.iter().all(|&p| (0..100).contains(&p)), "ping on localhost {pings:?}");
+}
+
+/// A client that vanishes without closing (its runtime stops) is a lost connection once the server's idle timeout ends
+/// it; one that closes its session left (RV-250: the reason comes from the connection's close, whichever task noticed)
+#[tokio::test(flavor = "multi_thread")]
+async fn a_vanished_client_is_a_lost_connection_and_a_closed_one_left() {
+    let (identity, cert_hash) = net::dev_identity().unwrap();
+    let config = wtransport::ServerConfig::builder()
+        .with_bind_default(0)
+        .with_identity(identity)
+        .keep_alive_interval(Some(Duration::from_millis(300)))
+        .max_idle_timeout(Some(Duration::from_millis(1500)))
+        .unwrap()
+        .build();
+    let server = Endpoint::server(config).unwrap();
+    let port = server.local_addr().unwrap().port();
+    let (to_game, mut messages) = tokio::sync::mpsc::channel(rl_server::game_loop::TO_GAME_QUEUE);
+    tokio::spawn(net::accept_loop(server, to_game));
+    let hello = Control::Hello {
+        version: protocol::VERSION,
+        team: 255,
+        body: 0,
+        dodge_deadzone: 0.5,
+        steering_sensitivity: 1.0,
+        air_control_sensitivity: 1.0,
+        auto_skip_replay: false,
+        key: 0,
+        name: String::new(),
+        quick_chat: protocol::CHAT_EVERYONE,
+        block_non_tactical: false,
+    }
+    .encode();
+    let mut keep = Vec::new(); // (the game's ends of the sessions' queues)
+    for vanish in [true, true, true, false] {
+        let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel::<()>();
+        let bytes = hello.clone();
+        let client = std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap();
+            rt.block_on(async {
+                let config = ClientConfig::builder().with_bind_default().with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(cert_hash)]).build();
+                let connection = Endpoint::client(config).unwrap().connect(format!("https://localhost:{port}/play")).await.unwrap();
+                let (mut send, recv) = connection.open_bi().await.unwrap().await.unwrap();
+                send.write_all(&bytes).await.unwrap();
+                ready_tx.send(()).unwrap();
+                let _ = go_rx.recv();
+                if vanish {
+                    std::mem::forget((connection, send, recv));
+                } else {
+                    connection.close(0u32.into(), b"bye");
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                }
+            });
+            rt.shutdown_background();
+        });
+        ready_rx.recv().unwrap();
+        let joined = loop {
+            match tokio::time::timeout(Duration::from_secs(5), messages.recv()).await {
+                Ok(Some(net::ToGame::Join { id, out, .. })) => {
+                    keep.push(out);
+                    break id;
+                }
+                Ok(Some(_)) => continue,
+                other => panic!("no join: {other:?}"),
+            }
+        };
+        go_tx.send(()).unwrap();
+        client.join().unwrap();
+        let lost = loop {
+            match tokio::time::timeout(Duration::from_secs(10), messages.recv()).await {
+                Ok(Some(net::ToGame::Leave { id, lost })) if id == joined => break lost,
+                Ok(Some(_)) => continue,
+                other => panic!("no leave: {other:?}"),
+            }
+        };
+        assert_eq!(lost, vanish, "vanished {vanish}");
+    }
 }

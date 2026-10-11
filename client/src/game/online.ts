@@ -27,6 +27,7 @@ import {
   type MatchType,
   type RosterEntry,
   MAX_INPUT_FRAMES,
+  type ScoreboardEntry,
   type Update,
   quantizeAxis,
 } from "../net/protocol";
@@ -54,8 +55,13 @@ import { ServerDemolitions } from "./serverDemolitions";
 import { ShakeTriggers } from "./shakeTriggers";
 import { type MatchMenuItem, matchMenuItems, pressTo, voteHud } from "./forfeitVote";
 import { CHAT_COLOURS, CHAT_TEXT, QuickChatMenu, presetIndex, presetText, visibleGroups } from "./quickChat";
-import { type ChatLog, type QuickChatPanel, chatMessageLine, rosterLines } from "../ui/chatLog";
-import { inputName } from "../input/bindings";
+import { CHAT_LOG, type ChatLog, type QuickChatPanel, chatMessageLine, rosterLines } from "../ui/chatLog";
+import { goalBanner, scoreboardAllowed, scoreboardTeams, statPopup, tickerRow } from "./matchStats";
+import type { HeldScoreboard, ScoreboardView } from "../ui/scoreboard";
+import type { StatPopups, StatTicker } from "../ui/statFeed";
+import { PLAYER_TEXT, type PlayerItem, type Toast } from "../ui/playersMenu";
+import { CHAT_PRESETS } from "./quickChat";
+import { inputGlyph } from "../input/bindings";
 
 
 /** The key that opens the menu, which has the vote button (VoteInstructions' {0?KeyBinding}) */
@@ -183,6 +189,12 @@ export class Online {
   #vote: ForfeitVote | null = null;
   /** The players by car (null until the first roster), and the cars whose players' connections timed out */
   #roster: Map<number, RosterEntry> | null = null;
+  /** Every player's scoreboard line, as the server last sent them */
+  #board: readonly ScoreboardEntry[] = [];
+  #scoreboardHeld = false;
+  /** The players whose chat this player muted (the server's) and blocked (dropped here), by car; this session */
+  readonly #muted = new Set<number>();
+  readonly #blocked = new Set<number>();
   readonly #lost = new Set<number>();
   readonly #chatMenu = new QuickChatMenu();
   #chatFilterSent = "";
@@ -206,6 +218,7 @@ export class Online {
     private readonly settings: () => Settings,
     private readonly inputEnabled: () => boolean,
     private readonly chat: { readonly log: ChatLog; readonly panel: QuickChatPanel },
+    private readonly statsUi: { readonly scoreboard: HeldScoreboard; readonly popups: StatPopups; readonly ticker: StatTicker; readonly toast: Toast },
   ) {
     this.#world = world;
     // (the server demolishes: the game's demolition is the authority's alone, a client sees it in the replicated
@@ -228,6 +241,8 @@ export class Online {
     this.#serverExploded = world.ballExploded(); // (joining after a goal: already gone)
     if (!this.#serverExploded) this.#ballView.spawn(); // (the ball fades in for a joining player too: RV-37)
     this.#autoSkipSent = settings().options.autoSkipReplay;
+    // (the chat filters went in the Hello: RV-259)
+    this.#chatFilterSent = `${settings().chat.quickChatFilter}|${String(settings().chat.blockNonTactical)}`;
     this.#localSpawns = world.car(welcome.carId).spawnCount;
     renderer.scene.add(this.#ballView.root, this.#padsView.root);
     this.#effects = new SceneEffects(renderer.scene);
@@ -284,6 +299,7 @@ export class Online {
     const { bindings, controller, options } = settings;
     const camera = cameraInputs(settings, snapshot, this.#input, this.#camera.fov);
     const held = readHeldActions(snapshot, bindings, controller.deadzone);
+    this.#scoreboardHeld = held.scoreboard;
     this.#quickChat(held.chat, settings);
     this.#handleActions(held, options, camera.device.ballCamToggle);
     const raw = readControls(snapshot, bindings, controller.deadzone, this.#buttons);
@@ -380,9 +396,45 @@ export class Online {
     const settings = this.settings();
     const { bindings } = settings;
     const actions = ["chatPreset1", "chatPreset2", "chatPreset3", "chatPreset4"] as const;
-    const keys = actions.map((a) => inputName(this.#input.usingGamepad ? bindings[a].gamepad : bindings[a].keyboard));
+    const keys = actions.map((a) => inputGlyph(this.#input.usingGamepad ? bindings[a].gamepad : bindings[a].keyboard));
     this.chat.panel.draw(this.#chatMenu.view(now), this.#chatGroups(settings), presetText, keys);
-    this.chat.log.update(now);
+    // The scoreboard while its binding is held; the stat popups and the feed
+    const board = this.statsUi.scoreboard;
+    board.update(now, this.#scoreboardHeld, scoreboardAllowed(this.#match?.phase), this.#scoreboardView(settings));
+    this.statsUi.popups.update(now);
+    this.statsUi.ticker.update(now);
+    this.statsUi.toast.update(now);
+    // The log stays up in the menu, after the match (RV-254) and with the scoreboard (4 s after it: SB-10)
+    const hold = !this.inputEnabled() || this.#match?.phase === "ended" || board.shown;
+    this.chat.log.update(now, hold, board.shown ? CHAT_LOG.afterScoreboard : CHAT_LOG.hideAfter);
+  }
+
+  /** What the scoreboard shows: the rostered players' lines by team, the score, the player's columns */
+  #scoreboardView(settings: Settings): ScoreboardView | null {
+    if (!this.#roster) return null;
+    const columns = settings.scoreboard.columns;
+    return { teams: scoreboardTeams(this.#board, this.#roster, this.#localCar, columns), score: this.#match?.score ?? [0, 0], columns };
+  }
+
+  /** The other players for the menu's list, with their mute and block */
+  players(): PlayerItem[] {
+    return [...(this.#roster?.values() ?? [])]
+      .filter((p) => p.car !== this.#localCar)
+      .map((p) => ({ car: p.car, name: p.name, team: p.team, muted: this.#muted.has(p.car), blocked: this.#blocked.has(p.car) }));
+  }
+
+  /** Mute (the server stops relaying their chat here) or block (dropped here, with the confirmation's toast) */
+  togglePlayer(car: number, what: "mute" | "block"): void {
+    const set = what === "mute" ? this.#muted : this.#blocked;
+    const on = !set.has(car);
+    if (on) set.add(car);
+    else set.delete(car);
+    if (what === "mute") {
+      this.#connection.mute(car, on);
+      return;
+    }
+    const name = this.#roster?.get(car)?.name ?? "";
+    this.statsUi.toast.show(name, on ? PLAYER_TEXT.blocked(name) : PLAYER_TEXT.unblocked(name), performance.now() / 1000);
   }
 
   /** Skip the goal replay: a press of Space or the pad's A (ReadyUp, ReplaySkip bindings), once */
@@ -557,7 +609,7 @@ export class Online {
       } else if (m.type === "event" && m.event.kind === "goal") {
         const team = m.event.team === 1 ? 1 : 0;
         this.#audio.goal();
-        this.#message = team === 0 ? "BLUE SCORES!" : "ORANGE SCORES!";
+        this.#message = goalBanner(m.event, this.#roster);
         this.#messageTimer = BANNER_SECONDS;
         this.#goalFrame = this.#frameAt(m.serverTick);
         this.#serverExploded = true;
@@ -596,14 +648,25 @@ export class Online {
         if (this.#roster) for (const line of rosterLines(this.#roster, next, this.#lost)) this.chat.log.add(line, now);
         this.#roster = next;
       } else if (m.type === "chat") {
-        // A quick-chat line, as the server relayed it (one's own too: no local echo), with its sound
+        // A quick-chat line, as the server relayed it (one's own too: no local echo), with its sound; not a blocked
+        // player's, nor an unknown preset's or sender's (RV-260)
+        const roster = this.#roster;
+        if (this.#blocked.has(m.car) || !CHAT_PRESETS[m.preset] || !roster?.has(m.car)) continue;
         const match = this.#match;
-        const view = { localCar: this.#localCar, roster: this.#roster ?? new Map<number, RosterEntry>(), overtime: match?.overtime ?? false, ended: match?.phase === "ended" };
+        const view = { localCar: this.#localCar, roster, overtime: match?.overtime ?? false, ended: match?.phase === "ended" };
         this.chat.log.add(chatMessageLine(m, view), performance.now() / 1000);
         this.#audio.chatMessage();
       } else if (m.type === "chatBlocked") {
         // (the spam filter's notice: a system line, silent)
         this.chat.log.add({ timestamp: "", channel: null, name: null, text: CHAT_TEXT.disabled(m.seconds), colour: CHAT_COLOURS.system }, performance.now() / 1000);
+      } else if (m.type === "scoreboard") {
+        this.#board = m.players;
+      } else if (m.type === "statEvent") {
+        const popup = statPopup(m.event, m.points);
+        if (popup) this.statsUi.popups.push(popup);
+      } else if (m.type === "ticker") {
+        const row = tickerRow(m, this.#roster ?? new Map<number, RosterEntry>(), this.#localCar);
+        if (row) this.statsUi.ticker.add(row, performance.now() / 1000);
       } else if (m.type === "forfeitVote") {
         this.#vote = { state: m.state, yes: m.yes, required: m.required, secondsLeft: m.secondsLeft, voted: m.voted, canStart: m.canStart };
       } else if (m.type === "replay") {

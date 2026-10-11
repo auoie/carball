@@ -157,6 +157,15 @@ describe("chat settings (CHAT-5, 18)", () => {
     expect(tidyName(12)).toBe("");
   });
 
+  it("a name loses its hidden characters: direction controls, zero-width ones, the BOM, fillers (RV-249)", () => {
+    expect(tidyName("\u202Eziggy")).toBe("ziggy");
+    expect(tidyName("\u2066Bo\u2069")).toBe("Bo");
+    expect(tidyName("\u200B")).toBe("");
+    expect(tidyName("\uFEFF")).toBe("");
+    expect(tidyName("\u3164")).toBe("");
+    expect(tidyName("a\u2028b")).toBe("ab");
+  });
+
   it("saved bindings from before quick chat: its keys 1-4 though freeplay's use 1 and 2 (never active together)", () => {
     const saved = { bindings: { ballInFront: DEFAULT_BINDINGS.ballInFront, ballOnCar: DEFAULT_BINDINGS.ballOnCar, jump: { keyboard: { kind: "key", code: "Digit3" }, gamepad: null } } };
     const b = parseSettings(saved).bindings;

@@ -13,9 +13,10 @@ export async function join(page: Page, server: string, errors: string[]): Promis
   await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
 }
 
-/** Another player in a context of their own */
+/** Another player in a context of their own (drawn small: every page renders in software, and a third page under the
+ *  suite's load otherwise starves) */
 export async function newPlayer(browser: Browser, server: string, errors: string[], name?: string): Promise<Page> {
-  const context = await browser.newContext();
+  const context = await browser.newContext({ viewport: { width: 640, height: 360 } });
   await hideGamepads(context);
   const page = await context.newPage();
   if (name !== undefined) await named(page, name);

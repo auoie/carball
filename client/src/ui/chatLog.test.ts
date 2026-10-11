@@ -11,7 +11,7 @@ describe("the chat log's lines (CHAT-15)", () => {
   it("[M:SS] [TEAM] NAME: message; the name upper-case", () => {
     const html = chatLineHtml({ timestamp: "[4:12]", channel: "team", name: { text: "Merc", colour: "#557CFF" }, text: "Need boost!", colour: CHAT_COLOURS.others });
     expect(text(html)).toBe("[4:12] [TEAM] MERC: Need boost!");
-    expect(html).toContain('color:#557CFF">MERC:');
+    expect(html).toContain('color:#557CFF"><bdi>MERC</bdi>:');
   });
 
   it("all-chat has no tag; once ended no timestamp; a system line no name; text escaped", () => {
@@ -42,8 +42,15 @@ describe("the chat log's lines (CHAT-15)", () => {
     const b: RosterEntry = { car: 2, team: 1, name: "Ziggy" };
     const c: RosterEntry = { car: 3, team: 1, name: "Bo" };
     const lines = rosterLines(new Map([[1, a], [2, b]]), new Map([[1, a], [3, c]]), new Set());
-    expect(lines.map((l) => l.text)).toEqual(["Ziggy left the match", "Bo joined the match"]);
+    expect(lines.map((l) => text(chatLineHtml(l)))).toEqual(["Ziggy left the match", "Bo joined the match"]);
     expect(lines.every((l) => l.colour === CHAT_COLOURS.system && l.name === null)).toBe(true);
-    expect(rosterLines(new Map([[2, b]]), new Map(), new Set([2])).map((l) => l.text)).toEqual(["Ziggy lost connection"]);
+    expect(rosterLines(new Map([[2, b]]), new Map(), new Set([2])).map((l) => text(chatLineHtml(l)))).toEqual(["Ziggy lost connection"]);
+  });
+
+  it("escapes names and keeps them in <bdi>, so markup stays text and a name's direction controls stay inside (RV-249, RV-251)", () => {
+    const html = chatLineHtml({ timestamp: "", channel: null, name: { text: "<b>x</b>&", colour: "#fff" }, text: "gg", colour: "#fff" });
+    expect(html).toContain("<bdi>&lt;B&gt;X&lt;/B&gt;&amp;</bdi>");
+    const joined = chatLineHtml(rosterLines(new Map(), new Map([[4, { car: 4, team: 0, name: "\u202Eziggy" }]]), new Set())[0] ?? { timestamp: "", channel: null, name: null, text: "", colour: "" });
+    expect(joined).toContain("<bdi>\u202Eziggy</bdi> joined the match");
   });
 });

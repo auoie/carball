@@ -366,8 +366,7 @@
         wired into `online.ts`.
       - Settings: a Chat tab (name, filter, non-tactical block, slots) and the four quick-chat bindings.
       - Audio: the chat line's sound.
-  - **In 7160837:** all of the above. **Since 7160837 (uncommitted): the 5acdfe3/f9a553d review, RV-235..246,
-    protocol 12.**
+  - **In 7160837:** all of the above. **In 0e3f857: the 5acdfe3/f9a553d review, RV-235..246, protocol 12.**
     - RV-235: a leaver's car explodes only when it's there (`Left`'s `explode`: not demolished, not in the replay).
     - RV-236: the menu's one match button (the vote or leaving; red while a vote runs; labels upper-case).
     - RV-237: the vote widget's bar is yes/required with a flash; it stays through the linger, with no fade-in.
@@ -383,8 +382,39 @@
     - RV-246: wording fixes.
     - The leave e2e moved to `online.spec.ts` (that server's votes wait a minute, so its menu shows leaving);
       `e2e/players.ts` holds the shared helpers.
-    - Next (the user's order): match stats and the scoreboard (with mute and block), then the intro and outro, HUD and
-      menus, mutators, custom training, bots.
+  - **Since 0e3f857 (uncommitted): match stats and the scoreboard (protocol 13), the 7160837 review RV-247..260.**
+    - Engine: `engine/stats/StatFactory` (the game's StatFactory_TA, `notes/match-stats.md`): the ball's touch history
+      (the 2-frame contact rule, wheel touches every 0.15 s, the merge rule, AttackerPRI for pool shots), first touch,
+      ball hits, aerial/bicycle/juggle hits, shots and saves (epic), clears and centres, goals with the scorer, assist,
+      own goal, pool shot and the goal modifiers, hat trick/playmaker/savior, demolitions and exterminations, low and
+      high fives, post and crossbar hits; PRI counters per car. RocketSim hooks: a tick-end callback, the ball's world
+      contacts and start-of-tick location, the car's ball contact point. C API `rl_stats_*`, `rl_take_stat_awards`,
+      `rl_car_stats`. Tests: `engine/tests/stats_tests.cpp` (57 checks; 14 mutants caught). Replay check:
+      `engine/tools/stats_validate.cpp` with `replay_extract --pri` (notes/validation.md "Match stats against replays").
+    - Server: the stats state per phase, awards to `StatEvent` (the receiver) and `Ticker` (everyone), the goal event's
+      scorer and assister, `Scoreboard` (counters, pings from the connection's RTT, MVP), Win/Loss and the MVP at the
+      match's end (the winning team's best, former members included; none in 1v1), counters reset per match. Mute
+      (`0x08`): the server stops relaying the muted player's chat.
+    - Client: `game/matchStats.ts` (the stat names verbatim, the popup and feed rules at the Primary level, columns,
+      MVPSort, ping bands, the goal banner "{Player} scored!"), `ui/scoreboard.ts` (held Tab / LB, SB-1..11 geometry on
+      the 1120 x 720 stage, 0.35 s minimum, fades, the MVP badge's slam), `ui/statFeed.ts` (popups 2.633 s each, the
+      feed 6 x 4 s), `ui/statIcons.ts` (our own vector icons after SB-16), `ui/playersMenu.ts` (the menu's player list:
+      Mute/Unmute, Block/Unblock and the block's toast; Report left out), the Scoreboard settings tab (4 columns, sorted
+      by label, reset).
+    - Review RV-247..260: the non-tactical block has no phase; spam notices once a second at most, bounded queues (a
+      player not reading is dropped); names lose format/invisible characters, "Player N" is reserved, names render in
+      `<bdi>`; "lost connection" from the connection's close reason; the chat log's 8 lines, fade from its alpha, kept
+      up in the menu, after the match and with the scoreboard; short pad glyphs in the quick-chat keys; a quick-chat
+      slots reset and sorted options; the chat filters in Hello; vectors tied to the version.
+    - e2e: the held scoreboard (Tab) and the goal banner in `online.spec.ts`; block, mute and RV-258 in the quick-chat
+      test. The multi-page online tests have explicit timeouts and draw their extra players at 640 x 360 (software
+      WebGL under the 4-worker load starved a third page); `online.spec.ts` leaves its pages explicitly between tests.
+      The menu's header wraps: the match's question and buttons get a row of their own (the Scoreboard tab had pushed
+      them off the panel).
+    - Not yet: the podium titles (§5.4, with the outro), the stat display level setting (Primary for now), flip resets
+      as a stat, the equaliser events (0 points, hidden), CarTouches/BoostPickups/Dodges columns, the private-match
+      score mutators.
+    - Next (the user's order): the intro and outro, HUD and menus, mutators, custom training, bots.
   - **Decided (user, 2026-10-10): no controller rumble.** notes/rumble.md stays as a reference spec only. The contact
     detection it asked about (the static session's Q-RMB-a: HandleCollision's cadence, the contact's point and normal,
     the landing speed) is still wanted, for the Impact_Medium camera shake and the impact and landing sounds; don't

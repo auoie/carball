@@ -40,6 +40,9 @@ export interface JoinPreferences {
   readonly autoSkipReplay: boolean;
   /** Empty: the server names the player */
   readonly name: string;
+  /** The chat filters from the start (RV-259: not a frame late) */
+  readonly quickChat: ChatFilter;
+  readonly blockNonTactical: boolean;
 }
 
 type Welcome = Extract<ControlMessage, { type: "welcome" }>;
@@ -240,6 +243,11 @@ export class Connection {
   /** The chat filters changed (or the session started) */
   setChatFilter(quickChat: ChatFilter, blockNonTactical: boolean): void {
     this.#sendControl({ type: "chatFilter", quickChat, blockNonTactical });
+  }
+
+  /** Mute or unmute a player's chat for this player (the server stops relaying their lines) */
+  mute(car: number, on: boolean): void {
+    this.#sendControl({ type: "mute", car, on });
   }
 
   #sendControl(m: ControlMessage): void {

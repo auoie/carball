@@ -14,12 +14,14 @@ import {
   dequantizeAxis,
   encodeControl,
   encodeDatagram,
+  PROTOCOL_VERSION,
   quantizeAxis,
 } from "./protocol";
 
 // Shared with the Rust server's tests
 const vectorsPath = fileURLToPath(new URL("../../../protocol/vectors.json", import.meta.url));
 const vectors = JSON.parse(readFileSync(vectorsPath, "utf8")) as {
+  protocolVersion: number;
   vectors: { channel: "control" | "datagram"; message: Record<string, unknown>; hex: string }[];
   dequantizedAxes: { bits: string[] };
 };
@@ -70,6 +72,11 @@ function toMessage(m: Record<string, unknown>): ControlMessage | DatagramMessage
 }
 
 describe("protocol", () => {
+  it("has the vectors of this version (RV-257)", () => {
+    expect(vectors.protocolVersion).toBe(PROTOCOL_VERSION);
+    expect(vectors.vectors.find((v) => v.message["type"] === "hello")?.message["version"]).toBe(PROTOCOL_VERSION);
+  });
+
   it("matches the shared byte vectors", () => {
     for (const v of vectors.vectors) {
       const expected = hex(v.hex);

@@ -59,7 +59,8 @@ async fn main() -> anyhow::Result<()> {
     let (identity, cert_hash) = net::dev_identity()?;
     let server = net::endpoint(identity, args.port)?;
 
-    let (to_game, messages) = tokio::sync::mpsc::unbounded_channel();
+    // (bounded: a flood of messages waits in its session instead of growing the game's queue, RV-248)
+    let (to_game, messages) = tokio::sync::mpsc::channel(game_loop::TO_GAME_QUEUE);
     let playlist = game_loop::Playlist { team_size: args.team_size, match_type: args.match_type, forfeit_vote_wait: args.forfeit_vote_wait };
     let test_goal_after = args.test_goal_after;
     std::thread::Builder::new().name("game".into()).spawn(move || game_loop::run(messages, playlist, test_goal_after))?;

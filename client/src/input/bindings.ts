@@ -46,6 +46,8 @@ export const ACTIONS = [
   { id: "chatPreset2", label: "Quick Chat - Compliments", group: "Quick Chat" },
   { id: "chatPreset3", label: "Quick Chat - Reactions", group: "Quick Chat" },
   { id: "chatPreset4", label: "Quick Chat - Apologies", group: "Quick Chat" },
+  // (ToggleScoreboard: held, online only)
+  { id: "scoreboard", label: "Scoreboard (hold)", group: "Match" },
 ] as const;
 
 /** Action groups never active together (freeplay's offline, quick chat's online): their bindings may share inputs */
@@ -100,6 +102,8 @@ export const DEFAULT_BINDINGS: Bindings = {
   chatPreset2: bind(key("Digit2"), button(14)),
   chatPreset3: bind(key("Digit3"), button(15)),
   chatPreset4: bind(key("Digit4"), button(13)),
+  // (DefaultInput.ini, ControlPreset_X: Tab and the left bumper, SB-10)
+  scoreboard: bind(key("Tab"), button(4)),
 };
 
 const PAD_BUTTON_NAMES = [
@@ -123,6 +127,15 @@ export function keyName(code: string): string {
   if (code.startsWith("Arrow")) return `${code.slice(5)} arrow`;
   if (code.startsWith("Numpad")) return `Numpad ${code.slice(6)}`;
   return code;
+}
+
+/** The pad's buttons as short glyphs (the quick-chat panel's 30 x 28 key boxes: RV-255) */
+const PAD_BUTTON_GLYPHS: Readonly<Record<number, string>> = { 4: "LB", 5: "RB", 6: "LT", 7: "RT", 8: "⧉", 9: "≡", 10: "LS", 11: "RS", 12: "▲", 13: "▼", 14: "◀", 15: "▶" };
+
+/** An input's name short enough for a key box: the D-pad as arrows, the sticks' clicks LS / RS */
+export function inputGlyph(input: KeyboardInput | GamepadInput | null): string {
+  if (input?.kind === "padButton") return PAD_BUTTON_GLYPHS[input.button] ?? inputName(input);
+  return inputName(input);
 }
 
 export function inputName(input: KeyboardInput | GamepadInput | null): string {

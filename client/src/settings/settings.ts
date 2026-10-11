@@ -1,4 +1,5 @@
 // Player settings: bindings, camera, controller and audio. Saved in the browser (localStorage).
+import { DEFAULT_COLUMNS, SCOREBOARD_COLUMNS } from "../game/matchStats";
 import { DEFAULT_CAMERA_SETTINGS, type CameraSettings } from "../camera/rlCamera";
 import {
   ACTIONS,
@@ -83,6 +84,25 @@ export interface Settings {
   readonly options: Options;
   readonly audio: AudioSettings;
   readonly chat: ChatSettings;
+  readonly scoreboard: ScoreboardSettings;
+}
+
+/** The scoreboard's four columns after SCORE (ProfileScoreboardSave_TA, Soccar's group: SB-17), by column id */
+export interface ScoreboardSettings {
+  readonly columns: readonly string[];
+}
+
+export const DEFAULT_SCOREBOARD_SETTINGS: ScoreboardSettings = { columns: DEFAULT_COLUMNS };
+
+function readScoreboard(v: unknown): ScoreboardSettings {
+  const src = isRecord(v) ? v : {};
+  const columns = Array.isArray(src["columns"]) ? (src["columns"] as unknown[]) : [];
+  return {
+    columns: DEFAULT_COLUMNS.map((fallback, i) => {
+      const id = columns[i];
+      return typeof id === "string" && SCOREBOARD_COLUMNS.some((c) => c.id === id) ? id : fallback;
+    }),
+  };
 }
 
 export interface Range {
@@ -182,6 +202,7 @@ export const DEFAULT_SETTINGS: Settings = {
   options: DEFAULT_OPTIONS,
   audio: DEFAULT_AUDIO_SETTINGS,
   chat: DEFAULT_CHAT_SETTINGS,
+  scoreboard: DEFAULT_SCOREBOARD_SETTINGS,
 };
 
 const STORAGE_KEY = "rl-clone.settings.v1";
@@ -267,10 +288,20 @@ function readBindings(v: unknown): Bindings {
   return out;
 }
 
-/** A name as the wire takes it: control characters out, trimmed, MAX_NAME_BYTES of UTF-8 at most (whole characters) */
+/** Characters a name may not have (the server drops them too, RV-249): controls, format characters (the bidi controls,
+ *  zero-width ones, the BOM), line and paragraph separators, invisible fillers, the replacement character */
+const HIDDEN = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\u115F\u1160\u2800\u3164\uFFA0\uFFF9-\uFFFD]/gu;
+/** (the invisible combining marks: the grapheme joiner, Khmer's inherent vowels, the variation selectors; by code point,
+ *  not in a character class) */
+const hiddenMark = (c: string): boolean => {
+  const code = c.codePointAt(0) ?? 0;
+  return code === 0x034f || code === 0x17b4 || code === 0x17b5 || (code >= 0x180b && code <= 0x180f) || (code >= 0xfe00 && code <= 0xfe0f);
+};
+
+/** A name as the wire takes it: hidden characters out, trimmed, MAX_NAME_BYTES of UTF-8 at most (whole characters) */
 export function tidyName(v: unknown): string {
   if (typeof v !== "string") return "";
-  const name = v.replace(/\p{Cc}/gu, "").trim();
+  const name = v.replace(HIDDEN, "").replace(/./gsu, (c) => (hiddenMark(c) ? "" : c)).trim();
   const encoder = new TextEncoder();
   if (encoder.encode(name).byteLength <= MAX_NAME_BYTES) return name;
   let kept = "";
@@ -324,6 +355,7 @@ export function parseSettings(v: unknown): Settings {
     options: readBooleans(src["options"], DEFAULT_OPTIONS),
     audio: readNumbers(src["audio"], DEFAULT_AUDIO_SETTINGS, AUDIO_LIMITS),
     chat: readChat(src["chat"]),
+    scoreboard: readScoreboard(src["scoreboard"]),
   };
 }
 

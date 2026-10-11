@@ -3,7 +3,7 @@
 
 use std::time::{Duration, Instant};
 
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::Receiver;
 
 use crate::game::{Game, MatchType};
 use crate::net::ToGame;
@@ -19,7 +19,10 @@ pub struct Playlist {
     pub forfeit_vote_wait: Option<f32>,
 }
 
-pub fn run(mut messages: UnboundedReceiver<ToGame>, playlist: Playlist, test_goal_after: Option<f32>) {
+/// The game's queue of messages from the sessions (bounded: RV-248)
+pub const TO_GAME_QUEUE: usize = 65_536;
+
+pub fn run(mut messages: Receiver<ToGame>, playlist: Playlist, test_goal_after: Option<f32>) {
     let start = Instant::now();
     let seconds = |at: Instant| at.saturating_duration_since(start).as_secs_f64();
     // (each server run its own kickoff orders, as the game's are random)
@@ -44,6 +47,8 @@ pub fn run(mut messages: UnboundedReceiver<ToGame>, playlist: Playlist, test_goa
                 Ok(ToGame::VoteForfeit { id }) => game.vote_forfeit(id),
                 Ok(ToGame::QuickChat { id, preset, team }) => game.quick_chat(id, preset, team, seconds(Instant::now())),
                 Ok(ToGame::ChatFilter { id, quick_chat, block_non_tactical }) => game.set_chat_filter(id, quick_chat, block_non_tactical),
+                Ok(ToGame::Mute { id, car, on }) => game.set_mute(id, car, on),
+                Ok(ToGame::Ping { id, ms }) => game.set_ping(id, ms),
                 Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
                 Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => return,
             }

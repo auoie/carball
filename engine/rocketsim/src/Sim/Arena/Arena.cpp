@@ -282,6 +282,11 @@ void Arena::SetCarBumpCallback(CarBumpEventFn callbackFunc, void* userInfo) {
 	_carBumpCallback.userInfo = userInfo;
 }
 
+void Arena::SetTickEndCallback(TickEndEventFn callbackFunc, void* userInfo) {
+	_tickEndCallback.func = callbackFunc;
+	_tickEndCallback.userInfo = userInfo;
+}
+
 void Arena::ResetToRandomKickoff(int seed) {
 	using namespace RLConst;
 	// TODO: Make shuffling of kickoff setup more efficient (?)
@@ -667,6 +672,11 @@ bool Arena::_BulletContactAddedCallback(
 		// Ball + World
 		Arena* arenaInst = (Arena*)bodyB->getUserPointer();
 		arenaInst->ball->_OnWorldCollision(arenaInst->gameMode, contactPoint.m_normalWorldOnB, arenaInst->tickTime);
+		{ // RL PATCH: for the match stats
+			btVector3 at = (contactPoint.getPositionWorldOnA() + contactPoint.getPositionWorldOnB()) * 0.5f;
+			btVector3 normal = arenaInst->ball->_rigidBody.getWorldTransform().getOrigin() - at;
+			arenaInst->ballWorldContacts.push_back({ at * BT_TO_UU, normal.length2() > 0 ? normal.normalized() : btVector3(0, 0, 1) });
+		}
 		
 		// Set as special (unless in snowday)
 		if (arenaInst->gameMode != GameMode::SNOWDAY)
@@ -685,6 +695,8 @@ void Arena::_BtCallback_OnCarBallCollision(Car* car, Ball* ball, btManifoldPoint
 	using namespace RLConst;
 
 	Vec relBallPos = (ballIsBodyA ? manifoldPoint.m_localPointA : manifoldPoint.m_localPointB) * BT_TO_UU;
+	// RL PATCH: where they touch, on the ball (the match stats' HitLocation)
+	car->_ballContactPoint = (ballIsBodyA ? manifoldPoint.getPositionWorldOnA() : manifoldPoint.getPositionWorldOnB()) * BT_TO_UU;
 	ball->_OnHit(car, relBallPos, manifoldPoint.m_combinedFriction, manifoldPoint.m_combinedRestitution, gameMode, _mutatorConfig, tickCount);
 }
 
@@ -1655,7 +1667,9 @@ void Arena::Step(int ticksToSimulate) {
 			btVector3 vel = ball->_rigidBody.m_linearVelocity * BT_TO_UU, angVel = ball->_rigidBody.m_angularVelocity;
 			Quantize::ReadBackVelocities(vel, angVel, _mutatorConfig.ballMaxSpeed, RLConst::BALL_MAX_ANG_SPEED);
 			ball->_startOfTickVel = vel;
+			ball->_startOfTickPos = ball->_rigidBody.getWorldTransform().getOrigin() * BT_TO_UU;
 		}
+		ballWorldContacts.clear(); // RL PATCH
 
 		// RL PATCH: kickoff countdown, no input. The jump's edge still follows the real input (Car_TA.SetVehicleInput
 		// calls OnJumpPressed only when Input.bJump changes, and OnJumpPressed returns while !bDriving: a press during the
@@ -1763,6 +1777,9 @@ void Arena::Step(int ticksToSimulate) {
 				_goalScoreCallback.func(this, RS_TEAM_FROM_Y(-ball->_rigidBody.getWorldTransform().m_origin.y()), _goalScoreCallback.userInfo);
 			}
 		}
+
+		if (_tickEndCallback.func != NULL) // RL PATCH
+			_tickEndCallback.func(this, _tickEndCallback.userInfo);
 
 		tickCount++;
 		if (kickoffCountdownTicks > 0)

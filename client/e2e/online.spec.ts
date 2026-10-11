@@ -1,7 +1,7 @@
 // Online play against a local rl-server (started by playwright.config.ts on ports 14433/14434).
 import type { Page } from "@playwright/test";
 import { expect, hideGamepads, test } from "./fixtures";
-import { ends, join as joinServer, leaveAll, newPlayer } from "./players";
+import { ends, join as joinServer, leave, leaveAll, newPlayer } from "./players";
 
 interface Stats {
   ping: number | null;
@@ -24,7 +24,8 @@ async function join(page: Page, errors: string[]): Promise<void> {
     if (m.type() === "error") errors.push(m.text());
   });
   await page.goto(`/?server=${SERVER}`);
-  await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+  // (generous: under the suite's load a page can take over 30 s to its first frame)
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
 }
 
 async function stats(page: Page): Promise<Stats> {
@@ -32,9 +33,10 @@ async function stats(page: Page): Promise<Stats> {
 }
 
 test("two players: one drives, the other sees it through the server", async ({ page, browser }) => {
+  test.setTimeout(180_000); // (two pages joining under the suite's load)
   const errors: string[] = [];
   await join(page, errors);
-  const otherContext = await browser.newContext();
+  const otherContext = await browser.newContext({ viewport: { width: 640, height: 360 } }); // (small: software rendering)
   await hideGamepads(otherContext);
   const other = await otherContext.newPage();
   await join(other, errors);
@@ -52,6 +54,21 @@ test("two players: one drives, the other sees it through the server", async ({ p
   expect(minutes * 60 + seconds).toBeLessThanOrEqual(300);
   expect(minutes * 60 + seconds).toBeGreaterThan(240);
   await expect(other.locator("#clock")).toBeVisible();
+
+  // Holding Tab shows the scoreboard: a row per player under its team's headers; released, it fades away (SB-10)
+  await page.locator("#game").click({ position: { x: 640, y: 360 }, button: "right" });
+  await page.keyboard.down("Tab");
+  const board = page.locator("#scoreboard");
+  await expect(board).toBeVisible({ timeout: 5_000 });
+  await expect(board.locator(".sb-row")).toHaveCount(2, { timeout: 10_000 });
+  await expect(board.locator(".sb-team-0 .sb-header").first()).toHaveText("SCORE");
+  await expect(board).toContainText("GOALS");
+  await expect(board).toContainText("PING");
+  await expect(board.locator(".sb-local")).toHaveCount(1);
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: "test-results/scoreboard.png" });
+  await page.keyboard.up("Tab");
+  await expect(board).toBeHidden({ timeout: 3_000 });
 
   // The kickoff countdown (4 s from the first player's join) ends: cars take input again
   await expect.poll(async () => (await stats(page)).kickoffCountdown, { timeout: 10_000 }).toBe(0);
@@ -90,11 +107,15 @@ test("two players: one drives, the other sees it through the server", async ({ p
     .toHaveLength(1);
   expect(ids).toContain((await movedCars())[0]);
 
+  // (both leave at once: the next test starts alone on this server)
+  await leave(other);
   await otherContext.close();
+  await leave(page);
   expect(errors).toEqual([]);
 });
 
 test("leaving: the question, back to freeplay; the car explodes for the others and the emptied team forfeits", async ({ page, browser }) => {
+  test.setTimeout(180_000); // (two pages joining, one going back to freeplay, under the suite's load)
   // (on this server votes wait for the clock's first minute, so the menu's match button is leaving's: RV-236)
   const errors: string[] = [];
   const others: Page[] = [];
@@ -108,6 +129,8 @@ test("leaving: the question, back to freeplay; the car explodes for the others a
   const demolitions = (): Promise<number> =>
     page.evaluate(() => (window as unknown as { rlAudio: () => { played: Record<string, number> } }).rlAudio().played.demo ?? 0);
   const before = await demolitions();
+  // (a forfeit before this, a slow last player's leave in this match's countdown, isn't this test's)
+  const forfeitsBefore = (await ends(page)).filter((e) => e.forfeit).length;
   const button = (label: string) => other.getByRole("button", { name: new RegExp(`^${label}$`, "i") });
 
   await other.keyboard.press("Escape");
@@ -121,7 +144,7 @@ test("leaving: the question, back to freeplay; the car explodes for the others a
   // The others: its car explodes and goes; its team, emptied, forfeits (whichever the page's isn't)
   await expect(page.locator("#net")).toContainText("1 cars", { timeout: 15_000 });
   await expect.poll(demolitions, { timeout: 15_000 }).toBeGreaterThan(before);
-  await expect.poll(async () => (await ends(page)).filter((e) => e.forfeit).length, { timeout: 15_000 }).toBe(1);
+  await expect.poll(async () => (await ends(page)).filter((e) => e.forfeit).length, { timeout: 15_000 }).toBe(forfeitsBefore + 1);
   // The leaver: back to freeplay
   await expect(other).toHaveURL(/:4173\/$/, { timeout: 30_000 });
   await other.waitForFunction(() => "rlFreeplay" in window, null, { timeout: 60_000 });
@@ -138,6 +161,8 @@ test("a goal: the game slows down for 3.53 s, the goal replay plays, Space skips
   // (this server knocks the ball into a goal 1 s after each go)
   await page.goto("/?server=127.0.0.1:14436");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+  // The banner: nobody touched the ball, so the team's name (GoalScored, "{Player} scored!")
+  await expect(page.locator("#message")).toHaveText("BLUE SCORED!", { timeout: 30_000 });
   await expect.poll(async () => (await stats(page)).replaying, { timeout: 30_000 }).toBe(true);
   await expect(page.locator("#message")).toContainText("REPLAY");
   const { phases } = await stats(page);

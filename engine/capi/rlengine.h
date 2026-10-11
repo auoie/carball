@@ -94,6 +94,21 @@ int rl_apply_net_state(RLArena* arena, const uint8_t* data, size_t size);
 /* Car IDs, ascending. Returns the number of cars (writes at most max_ids). */
 size_t rl_car_ids(RLArena* arena, uint32_t* out, size_t max_ids);
 
+/* Match stats (engine/stats/StatFactory.h: the game's StatFactory_TA, server side; notes/match-stats.md).
+ * state: 0 inactive, 1 the round (from "go" until a goal or the end; a goal moves it to 2 itself), 2 after a goal
+ * (demolitions and the fives only) */
+void rl_stats_set_state(RLArena* arena, int state);
+void rl_stats_set_overtime(RLArena* arena, int overtime);
+/* A new match: every car's counters back to 0 */
+void rl_stats_reset(RLArena* arena);
+/* Awards since the last call, as [event, car, victim, count] quads (RLStats::StatEvent ids; victim 0: none). Returns the
+ * number of ints written (a multiple of 4). */
+size_t rl_take_stat_awards(RLArena* arena, int32_t* out, size_t max_ints);
+/* The car's match counters (RLStats::Counter order), at most max. Returns how many there are (0: none yet) */
+size_t rl_car_stats(RLArena* arena, uint32_t car_id, int32_t* out, size_t max);
+/* An event's points (StatEvent_TA.Points; 0 for an unknown id) */
+int rl_stat_event_points(int event);
+
 #ifdef __cplusplus
 }
 #endif

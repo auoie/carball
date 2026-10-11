@@ -10,7 +10,9 @@ import {
   type ChatSettings,
   CONTROLLER_LIMITS,
   type ControllerSettings,
+  DEFAULT_CHAT_SETTINGS,
   DEFAULT_PRESET,
+  DEFAULT_SCOREBOARD_SETTINGS,
   DEFAULT_SETTINGS,
   INPUT_CAMERA_LIMITS,
   type InputCameraSettings,
@@ -24,8 +26,9 @@ import {
   tidyName,
 } from "../settings/settings";
 import { presetText } from "../game/quickChat";
+import { SCOREBOARD_COLUMNS } from "../game/matchStats";
 
-type Tab = "controls" | "camera" | "controller" | "gameplay" | "chat" | "video" | "audio";
+type Tab = "controls" | "camera" | "controller" | "gameplay" | "scoreboard" | "chat" | "video" | "audio";
 
 /** The chat settings' text (verbatim: notes/quick-chat.md "Chat UI text") */
 const CHAT_SETTINGS_TEXT = {
@@ -102,6 +105,8 @@ export class SettingsPanel {
   readonly #body: HTMLElement;
   /** Online: where the match's buttons go (src/ui/matchMenu.ts) */
   readonly match: HTMLElement = el("div", { className: "settings-match" });
+  /** Online: the other players with mute and block (src/ui/playersMenu.ts) */
+  readonly players: HTMLElement = el("div", { className: "settings-players" });
   #settings: Settings;
   #tab: Tab = "controls";
   #capture: { action: Action; device: Device; cancel: () => void } | null = null;
@@ -118,6 +123,7 @@ export class SettingsPanel {
       this.#tabButton("camera", "Camera"),
       this.#tabButton("controller", "Controller"),
       this.#tabButton("gameplay", "Gameplay"),
+      this.#tabButton("scoreboard", "Scoreboard"),
       this.#tabButton("chat", "Chat"),
       this.#tabButton("video", "Video"),
       this.#tabButton("audio", "Audio"),
@@ -126,6 +132,7 @@ export class SettingsPanel {
     close.addEventListener("click", () => { this.close(); });
     this.#root = el("div", { className: "settings" }, [
       el("div", { className: "settings-header" }, [el("h2", { textContent: "Settings" }), tabs, this.match, close]),
+      this.players,
       this.#body,
     ]);
     this.#root.id = "settings";
@@ -202,11 +209,13 @@ export class SettingsPanel {
             ? this.#controllerTab()
             : this.#tab === "gameplay"
               ? this.#gameplayTab()
-              : this.#tab === "chat"
-                ? this.#chatTab()
-                : this.#tab === "video"
-                ? this.#videoTab()
-                : this.#audioTab();
+              : this.#tab === "scoreboard"
+                ? this.#scoreboardTab()
+                : this.#tab === "chat"
+                  ? this.#chatTab()
+                  : this.#tab === "video"
+                    ? this.#videoTab()
+                    : this.#audioTab();
     this.#body.replaceChildren(content);
   }
 
@@ -466,7 +475,9 @@ export class SettingsPanel {
         const slot = 4 * row + k;
         const select = el("select");
         select.dataset["slot"] = String(slot);
-        for (const key of slotPool(slot)) select.append(el("option", { value: key, textContent: presetText(key), selected: key === chat.slots[slot] }));
+        // (sorted by their text, as the game's SortQuickChat: RV-256)
+        const keys = slotPool(slot).toSorted((a, b) => presetText(a).localeCompare(presetText(b)));
+        for (const key of keys) select.append(el("option", { value: key, textContent: presetText(key), selected: key === chat.slots[slot] }));
         select.addEventListener("change", () => {
           apply({ slots: this.#settings.chat.slots.map((s, i) => (i === slot ? select.value : s)) });
         });
@@ -475,6 +486,36 @@ export class SettingsPanel {
       slots.append(el("tr", {}, [el("th", { textContent: title }), ...cells]));
     });
     box.append(slots);
+    const reset = el("button", { className: "settings-reset", textContent: "Reset quick chat to defaults" });
+    reset.dataset["reset"] = "slots";
+    reset.addEventListener("click", () => {
+      apply({ slots: DEFAULT_CHAT_SETTINGS.slots });
+    });
+    box.append(reset);
+    return box;
+  }
+
+  /** The scoreboard's four columns after SCORE (Soccar: SB-17), each from the columns this clone counts, sorted by
+   *  label; a reset to the defaults */
+  #scoreboardTab(): HTMLElement {
+    const columns = this.#settings.scoreboard.columns;
+    const box = el("div", { className: "sliders scoreboard-settings" });
+    box.append(el("h3", { textContent: "Soccar" }));
+    columns.forEach((current, i) => {
+      const select = el("select");
+      select.dataset["column"] = String(i);
+      for (const c of SCOREBOARD_COLUMNS) select.append(el("option", { value: c.id, textContent: c.label, selected: c.id === current }));
+      select.addEventListener("change", () => {
+        this.#update({ ...this.#settings, scoreboard: { columns: this.#settings.scoreboard.columns.map((c, k) => (k === i ? select.value : c)) } });
+      });
+      box.append(el("label", { className: "option" }, [el("span", { textContent: `Column ${String(i + 1)}` }), select]));
+    });
+    const reset = el("button", { className: "settings-reset", textContent: "Reset to defaults" });
+    reset.dataset["reset"] = "scoreboard";
+    reset.addEventListener("click", () => {
+      this.#update({ ...this.#settings, scoreboard: DEFAULT_SCOREBOARD_SETTINGS });
+    });
+    box.append(reset);
     return box;
   }
 

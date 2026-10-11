@@ -4,17 +4,17 @@
 use std::time::Duration;
 
 use anyhow::{Context, bail};
-use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
+use tokio::sync::mpsc::{Sender, channel};
 use wtransport::endpoint::IncomingSession;
 use wtransport::{Endpoint, Identity, ServerConfig};
 
-use crate::game::{JoinRequest, Outgoing, PlayerId};
+use crate::game::{JoinRequest, OUT_QUEUE, Outgoing, PlayerId};
 use crate::protocol::{self, Control, Datagram, InputFrame};
 
 /// Messages from the network tasks to the game loop
 #[derive(Debug)]
 pub enum ToGame {
-    Join { id: PlayerId, request: JoinRequest, out: UnboundedSender<Outgoing> },
+    Join { id: PlayerId, request: JoinRequest, out: Sender<Outgoing> },
     /// The session ended; `lost`: its connection timed out
     Leave { id: PlayerId, lost: bool },
     Inputs { id: PlayerId, timestamp: u32, first_frame: u32, frames: Vec<InputFrame>, at: std::time::Instant },
@@ -28,6 +28,10 @@ pub enum ToGame {
     QuickChat { id: PlayerId, preset: u8, team: bool },
     /// The player's chat filters
     ChatFilter { id: PlayerId, quick_chat: u8, block_non_tactical: bool },
+    /// The player muted or unmuted another player's chat
+    Mute { id: PlayerId, car: u32, on: bool },
+    /// The connection's round-trip time (ms)
+    Ping { id: PlayerId, ms: u32 },
 }
 
 /// Development identity: self-signed for localhost, valid 14 days (the browser limit for certificate hashes)
@@ -47,7 +51,7 @@ pub fn endpoint(identity: Identity, port: u16) -> anyhow::Result<Endpoint<wtrans
     Ok(Endpoint::server(config)?)
 }
 
-pub async fn accept_loop(server: Endpoint<wtransport::endpoint::endpoint_side::Server>, to_game: UnboundedSender<ToGame>) {
+pub async fn accept_loop(server: Endpoint<wtransport::endpoint::endpoint_side::Server>, to_game: Sender<ToGame>) {
     let mut next_id: PlayerId = 1;
     loop {
         let incoming = server.accept().await;
@@ -55,12 +59,14 @@ pub async fn accept_loop(server: Endpoint<wtransport::endpoint::endpoint_side::S
         next_id += 1;
         let to_game = to_game.clone();
         tokio::spawn(async move {
-            let mut lost = false;
-            if let Err(e) = session(incoming, id, &to_game).await {
-                eprintln!("player {id}: {e:#}");
-                lost = matches!(e.downcast_ref::<wtransport::error::ConnectionError>(), Some(wtransport::error::ConnectionError::TimedOut));
-            }
-            let _ = to_game.send(ToGame::Leave { id, lost });
+            let lost = match session(incoming, id, &to_game).await {
+                Ok(lost) => lost,
+                Err(e) => {
+                    eprintln!("player {id}: {e:#}");
+                    matches!(e.downcast_ref::<wtransport::error::ConnectionError>(), Some(wtransport::error::ConnectionError::TimedOut))
+                }
+            };
+            let _ = to_game.send(ToGame::Leave { id, lost }).await;
         });
     }
 }
@@ -89,23 +95,24 @@ async fn read_hello(recv: &mut wtransport::RecvStream) -> anyhow::Result<Control
     Ok(Control::decode(&body)?)
 }
 
-async fn session(incoming: IncomingSession, id: PlayerId, to_game: &UnboundedSender<ToGame>) -> anyhow::Result<()> {
+/// One player's session; `Ok(lost)`: whether it ended by its connection timing out (the chat log's "lost connection")
+async fn session(incoming: IncomingSession, id: PlayerId, to_game: &Sender<ToGame>) -> anyhow::Result<bool> {
     let request = incoming.await?;
     if request.path() != "/play" {
         request.not_found().await;
-        return Ok(());
+        return Ok(false);
     }
     let connection = request.accept().await?;
     let (mut send, mut recv) = connection.accept_bi().await.context("no control stream")?;
-    let Control::Hello { team, body, dodge_deadzone, steering_sensitivity, air_control_sensitivity, auto_skip_replay, key, name, .. } =
+    let Control::Hello { team, body, dodge_deadzone, steering_sensitivity, air_control_sensitivity, auto_skip_replay, key, name, quick_chat, block_non_tactical, .. } =
         tokio::time::timeout(Duration::from_secs(5), read_hello(&mut recv)).await.context("no hello")??
     else {
         bail!("expected hello");
     };
 
-    let (out_tx, mut out_rx) = unbounded_channel();
-    let request = JoinRequest { team, body, dodge_deadzone, steering_sensitivity, air_control_sensitivity, auto_skip_replay, key, name };
-    to_game.send(ToGame::Join { id, request, out: out_tx })?;
+    let (out_tx, mut out_rx) = channel(OUT_QUEUE);
+    let request = JoinRequest { team, body, dodge_deadzone, steering_sensitivity, air_control_sensitivity, auto_skip_replay, key, name, quick_chat, block_non_tactical };
+    to_game.send(ToGame::Join { id, request, out: out_tx }).await?;
 
     // Game -> client
     let writer_connection = connection.clone();
@@ -139,22 +146,38 @@ async fn session(incoming: IncomingSession, id: PlayerId, to_game: &UnboundedSen
                 Ok(Control::VoteForfeit) => ToGame::VoteForfeit { id },
                 Ok(Control::QuickChat { preset, team }) => ToGame::QuickChat { id, preset, team },
                 Ok(Control::ChatFilter { quick_chat, block_non_tactical }) => ToGame::ChatFilter { id, quick_chat, block_non_tactical },
+                Ok(Control::Mute { car, on }) => ToGame::Mute { id, car, on },
                 Ok(_) => continue, // (nothing else is expected from a client)
-                Err(_) => break,
+                Err(e) => {
+                    // (a malformed message ends the session: say why; a closed stream is the usual end)
+                    if e.downcast_ref::<protocol::DecodeError>().is_some() {
+                        eprintln!("player {id}: malformed control message ({e}), session ends");
+                    }
+                    break;
+                }
             };
-            if control_to_game.send(message).is_err() {
+            if control_to_game.send(message).await.is_err() {
                 break;
             }
         }
     });
 
-    // Client -> game: input datagrams
-    let result = loop {
+    // Client -> game: input datagrams; the round-trip time each second (the scoreboard's ping)
+    let mut ping_every = tokio::time::interval(Duration::from_secs(1));
+    let result: anyhow::Result<()> = loop {
         tokio::select! {
+            _ = ping_every.tick() => {
+                let _ = to_game.try_send(ToGame::Ping { id, ms: connection.rtt().as_millis().min(u128::from(u32::MAX)) as u32 });
+            }
             datagram = connection.receive_datagram() => match datagram {
                 Ok(d) => {
                     if let Ok(Datagram::Inputs { timestamp, first_frame, frames }) = Datagram::decode(&d) {
-                        to_game.send(ToGame::Inputs { id, timestamp, first_frame, frames, at: std::time::Instant::now() })?;
+                        // (a game too far behind drops input packets, as lost ones: the queue stays bounded, RV-248)
+                        if let Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) =
+                            to_game.try_send(ToGame::Inputs { id, timestamp, first_frame, frames, at: std::time::Instant::now() })
+                        {
+                            bail!("the game has stopped");
+                        }
                     }
                 }
                 Err(e) => break Err(e.into()),
@@ -169,7 +192,10 @@ async fn session(incoming: IncomingSession, id: PlayerId, to_game: &UnboundedSen
     };
     control_reader.abort();
     writer.abort();
-    result
+    result?;
+    // (whichever branch noticed first, the connection's own close says why: an idle timeout is a lost connection, RV-250)
+    let reason = tokio::time::timeout(Duration::from_millis(100), connection.closed()).await;
+    Ok(matches!(reason, Ok(wtransport::error::ConnectionError::TimedOut)))
 }
 
 /// Development helper: `GET /info` on plain HTTP returns the WebTransport port and the certificate hash, so a browser

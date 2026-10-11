@@ -3,11 +3,11 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::Sender;
 
-use crate::engine::{Arena, Controls, Event};
+use crate::engine::{Arena, Award, Controls, Event, STAT_COUNTERS, StatCounters, StatsState, stat_event_points};
 use crate::input_buffer::InputBuffer;
-use crate::protocol::{self, Control, Datagram, ForfeitVoteState, GameEvent, InputFrame, MatchState, Phase, ReplayPlan, Update};
+use crate::protocol::{self, Control, Datagram, ForfeitVoteState, GameEvent, InputFrame, MatchState, Phase, ReplayPlan, ScoreboardEntry, Update, stat};
 
 pub const TICK_RATE: u32 = 120;
 /// Updates go out every other tick (60 Hz)
@@ -56,6 +56,10 @@ pub const MATCH_TICKS: u32 = 300 * TICK_RATE;
 const CLOCK_START_DELAY_TICKS: u64 = 5 * TICK_RATE as u64;
 /// After the match: the podium (`PrePodiumSpotlight` 3.0 s + `PodiumSpotlight` 5.3 s), then a new match
 const PODIUM_SECONDS: f32 = 8.3;
+/// A player's outgoing queue (control messages and datagrams for their session): a client that stops reading its control
+/// stream fills it, and is dropped (RV-248)
+pub const OUT_QUEUE: usize = 2048;
+
 /// A match's players at most (a 4v4 private match's, twice over: each car adds about 0.7 KB to the world snapshot a join
 /// sends, a u16-framed control message, which 90 cars would overflow: RV-242)
 pub const MAX_PLAYERS: usize = 16;
@@ -115,6 +119,9 @@ pub struct JoinRequest {
     pub key: u32,
     /// The name it asked for (tidied: `player_name`)
     pub name: String,
+    /// Its chat filters from the start (`protocol::CHAT_*`; RV-259)
+    pub quick_chat: u8,
+    pub block_non_tactical: bool,
 }
 
 /// The chat spam filter (`ApplyChatSpamFilter`, `ChatSpam`: notes/quick-chat.md CHAT-10..12): a per-player leaky bucket on
@@ -149,9 +156,21 @@ fn tactical(preset: u8) -> bool {
     !(22..59).contains(&preset) // (Group1: 0-21; Group5, Group6: 59-75)
 }
 
-/// The name a player asked for, tidied: control characters dropped, trimmed, `MAX_NAME_BYTES` at most; none: "Player N"
+/// Characters a name may not have (RV-249): format characters (Cf: the bidi controls that would turn a chat line round,
+/// zero-width ones, the BOM), the line and paragraph separators (Zl, Zp), the invisible fillers a name could be made of
+/// alone, and the replacement character an invalid UTF-8 name decodes to
+fn hidden_char(c: char) -> bool {
+    c.is_control()
+        || matches!(c as u32,
+            0x00AD | 0x034F | 0x061C | 0x115F | 0x1160 | 0x17B4 | 0x17B5 | 0x180B..=0x180F | 0x200B..=0x200F | 0x2028..=0x202E
+            | 0x2060..=0x206F | 0x2800 | 0x3164 | 0xFE00..=0xFE0F | 0xFEFF | 0xFFA0 | 0xFFF9..=0xFFFD | 0x1D173..=0x1D17A
+            | 0xE0000..=0xE0FFF)
+}
+
+/// The name a player asked for, tidied: hidden characters dropped, trimmed, `MAX_NAME_BYTES` at most; none left, or another
+/// player's automatic name ("Player 7"): "Player N"
 fn player_name(asked: &str, id: PlayerId) -> String {
-    let clean: String = asked.chars().filter(|c| !c.is_control()).collect();
+    let clean: String = asked.chars().filter(|&c| !hidden_char(c)).collect();
     let mut name = clean.trim().to_string();
     let mut end = name.len().min(protocol::MAX_NAME_BYTES);
     while !name.is_char_boundary(end) {
@@ -159,7 +178,8 @@ fn player_name(asked: &str, id: PlayerId) -> String {
     }
     name.truncate(end);
     let name = name.trim_end().to_string();
-    if name.is_empty() { format!("Player {id}") } else { name }
+    let reserved = name.strip_prefix("Player ").is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+    if name.is_empty() || reserved { format!("Player {id}") } else { name }
 }
 
 /// A run of one car's touches on the ball (`Ball_TA` touches, consecutive ones by a car merged): its last tick
@@ -230,7 +250,7 @@ struct Player {
     car_id: u32,
     team: u8,
     input: InputBuffer,
-    out: UnboundedSender<Outgoing>,
+    out: Sender<Outgoing>,
     /// Newest input packet timestamp and when it arrived (for the ping echo)
     echo: Option<(u32, f64)>,
     /// When its jitter buffer was last reset (s)
@@ -250,6 +270,14 @@ struct Player {
     /// Their quick-chat filter (`protocol::CHAT_*`) and whether they block others' non-tactical presets
     chat_filter: u8,
     block_non_tactical: bool,
+    /// The cars whose chat they muted (`VoiceMuteList`: the server doesn't relay those lines to them)
+    muted: BTreeSet<u32>,
+    /// The last spam notice: when (real s) and its whole seconds (RV-248: one per second at most, or when it changes)
+    blocked_notice: Option<(f64, u32)>,
+    /// Their match counters as the engine last gave them (`PRI_TA` Match*)
+    stats: StatCounters,
+    /// Round-trip time (ms), as the connection measures it
+    ping: u16,
 }
 
 pub struct Game {
@@ -309,6 +337,13 @@ pub struct Game {
     sent: Option<MatchState>,
     /// Browser tests: each round, the ball is knocked into orange's goal this many ticks after "go"
     pub test_goal_after: Option<u64>,
+    /// The players who left this match: their team and counters (`FormerMembers`: the MVP counts them)
+    former: Vec<(u8, StatCounters)>,
+    /// The match's MVP (`bMatchMVP`), if still here
+    mvp: Option<u32>,
+    /// The scoreboard changed since it was last sent; when it was (the pings: every 2 s)
+    scoreboard_dirty: bool,
+    scoreboard_sent: u64,
 }
 
 impl Default for Game {
@@ -344,6 +379,10 @@ impl Game {
             replay: None,
             ready_sent: None,
             test_goal_after: None,
+            former: Vec::new(),
+            mvp: None,
+            scoreboard_dirty: true,
+            scoreboard_sent: 0,
             go_tick: 0,
             clock_ticks: MATCH_TICKS,
             overtime: false,
@@ -416,10 +455,10 @@ impl Game {
         self.arena.car_position(car)
     }
 
-    pub fn join(&mut self, id: PlayerId, request: JoinRequest, out: UnboundedSender<Outgoing>) {
+    pub fn join(&mut self, id: PlayerId, request: JoinRequest, out: Sender<Outgoing>) {
         if self.players.len() >= MAX_PLAYERS {
             // (refused: the session ends once it's sent)
-            let _ = out.send(Outgoing::Control(Control::Refused { reason: protocol::REFUSED_FULL }.encode()));
+            let _ = out.try_send(Outgoing::Control(Control::Refused { reason: protocol::REFUSED_FULL }.encode()));
             return;
         }
         let team = match request.team {
@@ -463,8 +502,12 @@ impl Game {
             vote_sent: None,
             name: player_name(&request.name, id),
             chat: ChatBucket::default(),
-            chat_filter: protocol::CHAT_EVERYONE,
-            block_non_tactical: false,
+            chat_filter: request.quick_chat.min(protocol::CHAT_OFF),
+            block_non_tactical: request.block_non_tactical,
+            muted: BTreeSet::new(),
+            blocked_notice: None,
+            stats: [0; STAT_COUNTERS],
+            ping: 0,
         };
         let snapshot = self.arena.save_state();
         let welcome = Control::Welcome {
@@ -477,12 +520,13 @@ impl Game {
             key,
             snapshot: snapshot.clone(),
         };
-        let _ = player.out.send(Outgoing::Control(welcome.encode()));
-        let _ = player.out.send(Outgoing::Control(Control::Match(self.match_state()).encode()));
+        let _ = player.out.try_send(Outgoing::Control(welcome.encode()));
+        let _ = player.out.try_send(Outgoing::Control(Control::Match(self.match_state()).encode()));
         self.players.insert(id, player);
         self.send_world_to_others(id, &snapshot);
         self.send_votes();
         self.send_roster();
+        self.scoreboard_dirty = true;
     }
 
     /// A key not given out before, never 0
@@ -500,6 +544,24 @@ impl Game {
     fn send_roster(&self) {
         let roster = self.players.values().map(|p| protocol::RosterEntry { car: p.car_id, team: p.team, name: p.name.clone() }).collect();
         self.broadcast(&Control::Roster(roster));
+    }
+
+    /// Mute or unmute another player's chat for this player (`ClientMutePlayer` → `VoiceMuteList`, CHAT-19)
+    pub fn set_mute(&mut self, id: PlayerId, car: u32, on: bool) {
+        if let Some(p) = self.players.get_mut(&id) {
+            if on {
+                p.muted.insert(car);
+            } else {
+                p.muted.remove(&car);
+            }
+        }
+    }
+
+    /// The connection's round-trip time (ms) for the scoreboard (`PRI.Ping`, capped at 999 as the game shows it)
+    pub fn set_ping(&mut self, id: PlayerId, ms: u32) {
+        if let Some(p) = self.players.get_mut(&id) {
+            p.ping = ms.min(999) as u16;
+        }
     }
 
     /// The player's chat filters (`ServerSetQuickChatFilter`, `ServerSetTacticalChatFilter`)
@@ -524,7 +586,12 @@ impl Game {
             return;
         }
         if let Some(seconds) = sender.chat.apply(now) {
-            let _ = sender.out.send(Outgoing::Control(Control::ChatBlocked { seconds: seconds as f32 }.encode()));
+            // (the notice when its whole seconds change, or once a second: a flood queues no more than that, RV-248)
+            let whole = seconds.ceil() as u32;
+            if sender.blocked_notice.is_none_or(|(at, shown)| shown != whole || now - at >= 1.0) {
+                sender.blocked_notice = Some((now, whole));
+                let _ = sender.out.try_send(Outgoing::Control(Control::ChatBlocked { seconds: seconds as f32 }.encode()));
+            }
             return;
         }
         let (car, from_team, from_filter) = (sender.car_id, sender.team, sender.chat_filter);
@@ -540,9 +607,10 @@ impl Game {
                         protocol::CHAT_TEAM => p.team == from_team,
                         _ => false, // (friends only: the clone has no friends; off)
                     }
-                    && !(p.block_non_tactical && !tactical(preset) && self.phase != Phase::Ended));
+                    && !(p.block_non_tactical && !tactical(preset))
+                    && !p.muted.contains(&car));
             if reaches {
-                let _ = p.out.send(Outgoing::Control(message.clone()));
+                let _ = p.out.try_send(Outgoing::Control(message.clone()));
             }
         }
     }
@@ -585,6 +653,14 @@ impl Game {
             let explode = self.phase != Phase::Replay && !self.arena.car_demoed(player.car_id);
             self.broadcast(&Control::Event { server_tick: tick as u32, event: GameEvent::Left { car: player.car_id, lost, explode } });
             self.arena.remove_car(player.car_id);
+            // (their counters stay with the match: the MVP counts the team's former members)
+            if self.phase != Phase::Ended {
+                self.former.push((team, player.stats));
+            }
+            if self.mvp == Some(player.car_id) {
+                self.mvp = None;
+            }
+            self.scoreboard_dirty = true;
             if self.players.is_empty() {
                 // Everyone gone: no contest (`ForceNoContest`; the arena stops until the next player starts a match)
                 if self.phase != Phase::Ended {
@@ -744,7 +820,7 @@ impl Game {
             if let Some(p) = self.players.get_mut(&id)
                 && p.vote_sent != Some(state)
             {
-                let _ = p.out.send(Outgoing::Control(Control::ForfeitVote(state).encode()));
+                let _ = p.out.try_send(Outgoing::Control(Control::ForfeitVote(state).encode()));
                 p.vote_sent = Some(state);
             }
         }
@@ -755,7 +831,7 @@ impl Game {
         for (&id, p) in &self.players {
             if id != except {
                 let world = Control::World { frame: p.input.ack_frame(), snapshot: snapshot.to_vec() };
-                let _ = p.out.send(Outgoing::Control(world.encode()));
+                let _ = p.out.try_send(Outgoing::Control(world.encode()));
             }
         }
     }
@@ -830,6 +906,14 @@ impl Game {
         self.forfeiting = None;
         self.left_teams.clear();
         self.forfeit_check_at = None;
+        // (the match stats start over: `PRI.ResetMatchStats`)
+        self.arena.reset_stats();
+        for p in self.players.values_mut() {
+            p.stats = [0; STAT_COUNTERS];
+        }
+        self.former.clear();
+        self.mvp = None;
+        self.scoreboard_dirty = true;
         self.arena.start_match(self.match_seed, self.team_size);
         self.match_seed = self.match_seed.wrapping_add(1);
         self.kickoff();
@@ -857,6 +941,89 @@ impl Game {
         self.votes = [None, None]; // (the votes end with the match)
         self.phase = Phase::Ended;
         self.phase_until = self.arena.tick_count() + (PODIUM_SECONDS * TICK_RATE as f32) as u64;
+        self.award_match_end(winner);
+    }
+
+    /// `EndGame` → `GetMVP` / `NotifyWonMVP`, then `StatFactory.OnMatchEnded`: Win to the winning team's players and Loss
+    /// to the others, then the MVP: the best of the winning team, former members included, by score, goals, assists and
+    /// saves (`MVPSort`); none in 1v1 playlists (match-stats.md §5.3, STAT-18)
+    fn award_match_end(&mut self, winner: u8) {
+        let sort_key = |s: &StatCounters| (s[0], s[1], s[2], s[3]);
+        let best_here = self.players.values().filter(|p| p.team == winner).map(|p| (sort_key(&p.stats), Some(p.car_id))).max_by_key(|&(k, _)| k);
+        let best_former = self.former.iter().filter(|(team, _)| *team == winner).map(|(_, s)| (sort_key(s), None)).max_by_key(|&(k, _)| k);
+        // (a tie between someone here and a former member goes to the one here: the sort's order is open, STAT §11.2)
+        let best = match (best_here, best_former) {
+            (Some(here), Some(former)) => Some(if former.0 > here.0 { former } else { here }),
+            (here, former) => here.or(former),
+        };
+        self.mvp = if self.team_size > 1 { best.and_then(|(_, car)| car) } else { None };
+        let players: Vec<(u32, u8)> = self.players.values().map(|p| (p.car_id, p.team)).collect();
+        for &(car, team) in &players {
+            self.send_stat(car, if team == winner { stat::WIN } else { stat::LOSS }, 0);
+        }
+        if let Some(car) = self.mvp {
+            self.send_stat(car, stat::MVP, 0);
+        }
+        self.scoreboard_dirty = true;
+    }
+
+    /// A stat gained by a car's player: their popup (unless the event isn't replicated) and every player's feed (if it
+    /// goes there)
+    fn send_stat(&self, car: u32, event: u8, victim: u32) {
+        if stat::notifies_receiver(event)
+            && let Some(p) = self.players.values().find(|p| p.car_id == car)
+        {
+            let points = stat_event_points(event).clamp(0, i32::from(u16::MAX)) as u16;
+            let _ = p.out.try_send(Outgoing::Control(Control::StatEvent { event, points }.encode()));
+        }
+        if stat::notifies_ticker(event) {
+            self.broadcast(&Control::Ticker { event, receiver: car, victim });
+        }
+    }
+
+    /// This tick's stat awards (the engine's StatFactory): each player's counters taken again, the popups and feed
+    /// sent; the goal's scorer and assister (for the goal event)
+    fn handle_awards(&mut self, awards: &[Award]) -> (u32, u32) {
+        let (mut scorer, mut assister) = (0, 0);
+        for a in awards {
+            match a.event {
+                stat::GOAL => scorer = a.car,
+                stat::ASSIST => assister = a.car,
+                _ => {}
+            }
+            self.send_stat(a.car, a.event, a.victim);
+        }
+        if !awards.is_empty() {
+            let cars: Vec<u32> = self.players.values().map(|p| p.car_id).collect();
+            for car in cars {
+                let stats = self.arena.car_stats(car);
+                if let Some(p) = self.players.values_mut().find(|p| p.car_id == car) {
+                    self.scoreboard_dirty |= p.stats != stats;
+                    p.stats = stats;
+                }
+            }
+        }
+        (scorer, assister)
+    }
+
+    /// Everyone's scoreboard lines when they changed, and every 2 s for the pings
+    fn send_scoreboard(&mut self, tick: u64) {
+        if !self.scoreboard_dirty && tick < self.scoreboard_sent + 2 * u64::from(TICK_RATE) {
+            return;
+        }
+        let entries = self
+            .players
+            .values()
+            .map(|p| ScoreboardEntry {
+                car: p.car_id,
+                ping: p.ping,
+                mvp: self.mvp == Some(p.car_id),
+                counters: p.stats.iter().map(|&c| c.clamp(0, i32::from(u16::MAX)) as u16).collect(),
+            })
+            .collect();
+        self.broadcast(&Control::Scoreboard(entries));
+        self.scoreboard_dirty = false;
+        self.scoreboard_sent = tick;
     }
 
     /// A round ended (after a goal, or the ball down at 0:00): the match ends with a winner, goes to overtime when
@@ -986,12 +1153,18 @@ impl Game {
     fn broadcast(&self, message: &Control) {
         let bytes = message.encode();
         for p in self.players.values() {
-            let _ = p.out.send(Outgoing::Control(bytes.clone()));
+            let _ = p.out.try_send(Outgoing::Control(bytes.clone()));
         }
     }
 
     /// One physics tick. `now`: server time in seconds.
     pub fn tick(&mut self, now: f64) {
+        // (a player whose queue is full isn't reading: their session goes, as a lost connection)
+        let stuck: Vec<PlayerId> = self.players.iter().filter(|(_, p)| p.out.capacity() == 0).map(|(&id, _)| id).collect();
+        for id in stuck {
+            eprintln!("player {id}: outgoing queue full ({OUT_QUEUE}), dropped");
+            self.remove_player(id, true);
+        }
         if self.players.is_empty() {
             return;
         }
@@ -1008,16 +1181,26 @@ impl Game {
                 self.arena.repress_jump(p.car_id);
             }
         }
+        // (the stats count while the round is on: Active, and at 0:00 until the ball lands; after a goal the engine moves
+        // them on itself, then only demolitions and fives count)
+        self.arena.set_stats_state(match self.phase {
+            Phase::Active | Phase::TimeUp => StatsState::Round,
+            Phase::PostGoal => StatsState::AfterGoal,
+            _ => StatsState::Inactive,
+        });
+        self.arena.set_stats_overtime(self.overtime);
         self.arena.step(1);
         let tick = self.arena.tick_count();
         self.track_touches();
+        let awards = self.arena.take_stat_awards();
+        let (scorer, assister) = self.handle_awards(&awards);
 
         for event in self.arena.take_events() {
             match event {
                 // (one goal per round: the engine explodes the ball on a goal; goals count while playing and at 0:00)
                 Event::Goal { team } if matches!(self.phase, Phase::Active | Phase::TimeUp) => {
                     self.score[usize::from(team.min(1))] += 1;
-                    self.broadcast(&Control::Event { server_tick: tick as u32, event: GameEvent::Goal { team } });
+                    self.broadcast(&Control::Event { server_tick: tick as u32, event: GameEvent::Goal { team, scorer, assister } });
                     self.phase = Phase::PostGoal;
                     self.goal_tick = tick;
                     self.phase_until = tick + POST_GOAL_TICKS;
@@ -1039,6 +1222,7 @@ impl Game {
         self.update_match(tick);
         self.send_match_state();
         self.send_votes();
+        self.send_scoreboard(tick);
 
         if tick.is_multiple_of(UPDATE_EVERY_TICKS) {
             self.send_updates(now);
@@ -1170,7 +1354,7 @@ impl Game {
                     parts: parts.len() as u8,
                     state: state.clone(),
                 };
-                let _ = p.out.send(Outgoing::Datagram(Datagram::Update(update).encode()));
+                let _ = p.out.try_send(Outgoing::Datagram(Datagram::Update(update).encode()));
             }
         }
     }
@@ -1180,7 +1364,10 @@ impl Game {
 mod tests {
     use super::*;
     use crate::engine::tests::init_engine;
-    use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
+    use tokio::sync::mpsc::{Receiver, channel};
+
+    /// (the tests read their queues only now and then: room for whole matches)
+    const TEST_QUEUE: usize = 1 << 20;
 
     /// (skipping goal replays: a goal goes straight to the next kickoff; the replay's tests ask for them)
     const REQUEST: JoinRequest = JoinRequest {
@@ -1192,6 +1379,8 @@ mod tests {
         auto_skip_replay: true,
         key: 0,
         name: String::new(),
+        quick_chat: protocol::CHAT_EVERYONE,
+        block_non_tactical: false,
     };
     const WANTS_REPLAYS: JoinRequest = JoinRequest {
         team: 255,
@@ -1202,9 +1391,11 @@ mod tests {
         auto_skip_replay: false,
         key: 0,
         name: String::new(),
+        quick_chat: protocol::CHAT_EVERYONE,
+        block_non_tactical: false,
     };
 
-    fn drain(rx: &mut UnboundedReceiver<Outgoing>) -> Vec<Outgoing> {
+    fn drain(rx: &mut Receiver<Outgoing>) -> Vec<Outgoing> {
         let mut out = Vec::new();
         while let Ok(m) = rx.try_recv() {
             out.push(m);
@@ -1220,8 +1411,8 @@ mod tests {
     fn players_join_drive_and_receive_updates() {
         init_engine();
         let mut game = Game::new();
-        let (tx1, mut rx1) = unbounded_channel();
-        let (tx2, mut rx2) = unbounded_channel();
+        let (tx1, mut rx1) = channel(TEST_QUEUE);
+        let (tx2, mut rx2) = channel(TEST_QUEUE);
         game.join(1, REQUEST, tx1);
         game.join(2, REQUEST, tx2);
 
@@ -1293,7 +1484,7 @@ mod tests {
     fn input_buffer_resets_are_rate_limited() {
         init_engine();
         let mut game = Game::new();
-        let (tx, _rx) = unbounded_channel();
+        let (tx, _rx) = channel(TEST_QUEUE);
         game.join(1, REQUEST, tx);
         let inflate = |game: &mut Game| {
             let p = game.players.get_mut(&1).unwrap();
@@ -1327,7 +1518,7 @@ mod tests {
         }
     }
 
-    fn controls(rx: &mut UnboundedReceiver<Outgoing>) -> Vec<Control> {
+    fn controls(rx: &mut Receiver<Outgoing>) -> Vec<Control> {
         drain(rx)
             .iter()
             .filter_map(|m| match m {
@@ -1337,16 +1528,16 @@ mod tests {
             .collect()
     }
 
-    fn events(rx: &mut UnboundedReceiver<Outgoing>) -> Vec<GameEvent> {
+    fn events(rx: &mut Receiver<Outgoing>) -> Vec<GameEvent> {
         controls(rx).into_iter().filter_map(|c| if let Control::Event { event, .. } = c { Some(event) } else { None }).collect()
     }
 
     /// The last forfeit vote state sent
-    fn last_vote(rx: &mut UnboundedReceiver<Outgoing>) -> Option<ForfeitVoteState> {
+    fn last_vote(rx: &mut Receiver<Outgoing>) -> Option<ForfeitVoteState> {
         controls(rx).into_iter().filter_map(|c| if let Control::ForfeitVote(v) = c { Some(v) } else { None }).next_back()
     }
 
-    fn match_states(rx: &mut UnboundedReceiver<Outgoing>) -> Vec<MatchState> {
+    fn match_states(rx: &mut Receiver<Outgoing>) -> Vec<MatchState> {
         drain(rx)
             .iter()
             .filter_map(|m| match m {
@@ -1363,7 +1554,7 @@ mod tests {
     fn the_clock_waits_for_go_and_the_ball_being_hit() {
         init_engine();
         let mut game = Game::new();
-        let (tx, mut rx) = unbounded_channel();
+        let (tx, mut rx) = channel(TEST_QUEUE);
         game.join(1, REQUEST, tx);
         assert_eq!(match_states(&mut rx).last().map(|m| (m.phase, m.clock_ticks)), Some((Phase::Countdown, MATCH_TICKS)));
         // The match's first kickoff: the 3 s warm-up and the 4 s countdown, the clock stopped
@@ -1385,7 +1576,7 @@ mod tests {
     fn a_touch_starts_the_clock() {
         init_engine();
         let mut game = Game::new();
-        let (tx, _rx) = unbounded_channel();
+        let (tx, _rx) = channel(TEST_QUEUE);
         game.join(1, REQUEST, tx);
         run_until(&mut game, 1000, |g| g.phase == Phase::Active);
         // A ball rolling into the parked car
@@ -1399,7 +1590,7 @@ mod tests {
     fn at_zero_the_round_ends_when_the_ball_lands_then_a_tie_goes_to_overtime() {
         init_engine();
         let mut game = Game::new();
-        let (tx, mut rx) = unbounded_channel();
+        let (tx, mut rx) = channel(TEST_QUEUE);
         game.join(1, REQUEST, tx);
         run_until(&mut game, 1000, |g| g.phase == Phase::Active);
         run_until(&mut game, 1000, |g| g.clock_running);
@@ -1427,7 +1618,7 @@ mod tests {
     fn the_first_goal_in_overtime_wins_then_a_new_match_starts() {
         init_engine();
         let mut game = Game::new();
-        let (tx, mut rx) = unbounded_channel();
+        let (tx, mut rx) = channel(TEST_QUEUE);
         game.join(1, REQUEST, tx);
         run_until(&mut game, 1000, |g| g.phase == Phase::Active);
         game.overtime = true;
@@ -1448,9 +1639,9 @@ mod tests {
     fn a_team_left_without_players_forfeits() {
         init_engine();
         let mut game = Game::new();
-        let (tx1, mut rx1) = unbounded_channel();
-        let (tx2, _rx2) = unbounded_channel();
-        let (tx3, _rx3) = unbounded_channel();
+        let (tx1, mut rx1) = channel(TEST_QUEUE);
+        let (tx2, _rx2) = channel(TEST_QUEUE);
+        let (tx3, _rx3) = channel(TEST_QUEUE);
         game.join(1, JoinRequest { team: 0, ..REQUEST }, tx1);
         game.join(2, JoinRequest { team: 1, ..REQUEST }, tx2);
         game.join(3, JoinRequest { team: 1, ..REQUEST }, tx3);
@@ -1477,7 +1668,7 @@ mod tests {
     fn a_goal_at_zero_counts_and_a_goal_with_time_left_is_a_kickoff() {
         init_engine();
         let mut game = Game::new();
-        let (tx, _rx) = unbounded_channel();
+        let (tx, _rx) = channel(TEST_QUEUE);
         game.join(1, REQUEST, tx);
         run_until(&mut game, 1000, |g| g.phase == Phase::Active);
         // With time left: a goal, then the next kickoff with the clock where it stopped
@@ -1504,14 +1695,14 @@ mod tests {
     fn a_kickoff_starts_the_countdown_and_a_joiner_in_it_gets_a_kickoff_spot() {
         init_engine();
         let mut game = Game::new();
-        let (tx, _rx) = unbounded_channel();
+        let (tx, _rx) = channel(TEST_QUEUE);
         game.join(1, REQUEST, tx);
         assert_eq!(game.arena.kickoff_countdown(), 840); // (the match's first: with the warm-up)
         let first = game.car_position(1).unwrap();
         for _ in 0..100 {
             game.tick(0.0);
         }
-        let (tx2, _rx2) = unbounded_channel();
+        let (tx2, _rx2) = channel(TEST_QUEUE);
         game.join(2, JoinRequest { team: 0, ..REQUEST }, tx2);
         // Both on kickoff spots (z 17, a spot's x and y), the first car where it was; the countdown goes on
         let kickoff_spots = [(-2048.0, -2560.0), (2048.0, -2560.0), (-256.0, -3840.0), (256.0, -3840.0), (0.0, -4608.0)];
@@ -1531,8 +1722,8 @@ mod tests {
     fn goals_reset_to_a_kickoff_and_leaving_updates_the_others() {
         init_engine();
         let mut game = Game::new();
-        let (tx1, mut rx1) = unbounded_channel();
-        let (tx2, rx2) = unbounded_channel();
+        let (tx1, mut rx1) = channel(TEST_QUEUE);
+        let (tx2, rx2) = channel(TEST_QUEUE);
         game.join(1, REQUEST, tx1);
         game.join(2, REQUEST, tx2);
         drain(&mut rx1);
@@ -1543,7 +1734,7 @@ mod tests {
         drop(rx2);
     }
 
-    fn replay_plans(rx: &mut UnboundedReceiver<Outgoing>) -> Vec<ReplayPlan> {
+    fn replay_plans(rx: &mut Receiver<Outgoing>) -> Vec<ReplayPlan> {
         drain(rx)
             .into_iter()
             .filter_map(|m| match m {
@@ -1560,7 +1751,7 @@ mod tests {
     fn the_slow_motion_after_a_goal_makes_its_360_ticks_last_3_53_s() {
         init_engine();
         let mut game = Game::new();
-        let (tx, _rx) = unbounded_channel();
+        let (tx, _rx) = channel(TEST_QUEUE);
         game.join(1, REQUEST, tx);
         run_until(&mut game, 1000, |g| g.phase == Phase::Active);
         assert_eq!(game.next_tick_seconds(), 1.0 / 120.0);
@@ -1585,8 +1776,8 @@ mod tests {
     fn a_goal_replay_plays_with_the_cars_frozen_until_every_player_skips_it() {
         init_engine();
         let mut game = Game::new();
-        let (tx1, mut rx1) = unbounded_channel();
-        let (tx2, _rx2) = unbounded_channel();
+        let (tx1, mut rx1) = channel(TEST_QUEUE);
+        let (tx2, _rx2) = channel(TEST_QUEUE);
         game.join(1, WANTS_REPLAYS, tx1);
         game.join(2, WANTS_REPLAYS, tx2);
         run_until(&mut game, 1000, |g| g.phase == Phase::Active);
@@ -1627,8 +1818,8 @@ mod tests {
     fn a_goal_replay_ends_after_its_real_length_and_auto_skippers_are_ready() {
         init_engine();
         let mut game = Game::new();
-        let (tx1, _rx1) = unbounded_channel();
-        let (tx2, _rx2) = unbounded_channel();
+        let (tx1, _rx1) = channel(TEST_QUEUE);
+        let (tx2, _rx2) = channel(TEST_QUEUE);
         game.join(1, WANTS_REPLAYS, tx1);
         game.join(2, REQUEST, tx2); // (skips replays: one is still played for player 1)
         run_until(&mut game, 1000, |g| g.phase == Phase::Active);
@@ -1654,8 +1845,8 @@ mod tests {
     fn the_replay_starts_two_seconds_before_the_scoring_touch_and_slows_round_it() {
         init_engine();
         let mut game = Game::new();
-        let (tx1, _rx1) = unbounded_channel();
-        let (tx2, _rx2) = unbounded_channel();
+        let (tx1, _rx1) = channel(TEST_QUEUE);
+        let (tx2, _rx2) = channel(TEST_QUEUE);
         game.join(1, JoinRequest { team: 0, ..WANTS_REPLAYS }, tx1);
         game.join(2, JoinRequest { team: 1, ..WANTS_REPLAYS }, tx2);
         let [blue, orange] = [game.car_id(1).unwrap(), game.car_id(2).unwrap()];
@@ -1688,8 +1879,8 @@ mod tests {
     fn a_player_ready_by_auto_skip_stays_ready_when_turning_it_off() {
         init_engine();
         let mut game = Game::new();
-        let (tx1, _rx1) = unbounded_channel();
-        let (tx2, _rx2) = unbounded_channel();
+        let (tx1, _rx1) = channel(TEST_QUEUE);
+        let (tx2, _rx2) = channel(TEST_QUEUE);
         game.join(1, WANTS_REPLAYS, tx1);
         game.join(2, REQUEST, tx2); // (auto-skips)
         run_until(&mut game, 1000, |g| g.phase == Phase::Active);
@@ -1712,7 +1903,7 @@ mod tests {
         init_engine();
         let mut game = Game::new();
         game.test_goal_after = Some(60);
-        let (tx, mut rx) = unbounded_channel();
+        let (tx, mut rx) = channel(TEST_QUEUE);
         game.join(1, REQUEST, tx);
         let (mut now, mut next_send, mut before, mut after, mut most) = (0.0, 0.0, None, None, 0);
         for tick in 0..2400u32 {
@@ -1744,13 +1935,13 @@ mod tests {
 
 
     /// A match with these players (id, team, key) at "go", and their channels
-    fn match_with(match_type: MatchType, team_size: u8, players: &[(PlayerId, u8, u32)]) -> (Game, Vec<UnboundedReceiver<Outgoing>>) {
+    fn match_with(match_type: MatchType, team_size: u8, players: &[(PlayerId, u8, u32)]) -> (Game, Vec<Receiver<Outgoing>>) {
         init_engine();
         let mut game = Game::with_options(1, team_size);
         game.match_type = match_type;
         let mut rxs = Vec::new();
         for &(id, team, key) in players {
-            let (tx, rx) = unbounded_channel();
+            let (tx, rx) = channel(TEST_QUEUE);
             game.join(id, JoinRequest { team, key, ..REQUEST }, tx);
             rxs.push(rx);
         }
@@ -1762,8 +1953,8 @@ mod tests {
     fn a_forfeit_after_a_goal_ends_the_match_at_the_next_round() {
         init_engine();
         let mut game = Game::new();
-        let (tx1, mut rx1) = unbounded_channel();
-        let (tx2, _rx2) = unbounded_channel();
+        let (tx1, mut rx1) = channel(TEST_QUEUE);
+        let (tx2, _rx2) = channel(TEST_QUEUE);
         game.join(1, JoinRequest { team: 0, ..WANTS_REPLAYS }, tx1);
         game.join(2, JoinRequest { team: 1, ..WANTS_REPLAYS }, tx2);
         run_until(&mut game, 1000, |g| g.phase == Phase::Active);
@@ -1789,7 +1980,7 @@ mod tests {
         game.leave(1);
         let state = game.match_state();
         assert_eq!((state.phase, state.winner, state.forfeit, state.no_contest), (Phase::Ended, None, false, true));
-        let (tx, _rx) = unbounded_channel();
+        let (tx, _rx) = channel(TEST_QUEUE);
         game.join(2, REQUEST, tx);
         let state = game.match_state();
         assert_eq!((state.phase, state.no_contest), (Phase::Countdown, false));
@@ -1813,7 +2004,7 @@ mod tests {
         assert_eq!(mate, ForfeitVoteState { voted: false, can_start: true, ..starter });
         assert_eq!(last_vote(&mut rxs[2]).map(|v| v.state), Some(protocol::VOTE_NONE), "orange's vote");
         // A joiner on blue votes too; the time counts down in game seconds
-        let (tx5, mut rx5) = unbounded_channel();
+        let (tx5, mut rx5) = channel(TEST_QUEUE);
         game.join(5, JoinRequest { team: 0, key: 15, ..REQUEST }, tx5);
         ticks(&mut game, 120);
         assert_eq!(last_vote(&mut rx5).map(|v| (v.yes, v.required, v.seconds_left)), Some((1, 3, 19)));
@@ -1838,7 +2029,7 @@ mod tests {
         assert_eq!(game.votes[0].as_ref().map(|v| v.finished.is_some()), Some(true));
         let starter = game.players[&1].key; // (the server's key for them, which their client brings back)
         game.leave(1);
-        let (tx, mut rx) = unbounded_channel();
+        let (tx, mut rx) = channel(TEST_QUEUE);
         game.join(4, JoinRequest { team: 0, key: starter, ..REQUEST }, tx);
         assert_eq!(game.players[&4].key, starter, "a reconnect keeps its key");
         assert_eq!(last_vote(&mut rx).map(|v| v.can_start), Some(false));
@@ -1857,7 +2048,7 @@ mod tests {
         // The match remembers who started one: the starter, re-enabled, then leaving and coming back, can't again
         // (`ForfeitInitiatorIDs` only grows: RV-239)
         game.leave(4);
-        let (tx, mut rx) = unbounded_channel();
+        let (tx, mut rx) = channel(TEST_QUEUE);
         game.join(5, JoinRequest { team: 0, key: starter, ..REQUEST }, tx);
         assert_eq!(last_vote(&mut rx).map(|v| v.can_start), Some(false));
     }
@@ -1865,19 +2056,19 @@ mod tests {
     #[test]
     fn keys_are_the_servers_and_two_tabs_cant_share_one() {
         let (mut game, mut rxs) = match_with(MatchType::Casual, 3, &[(1, 0, 0), (2, 1, 77)]);
-        let welcome_key = |rx: &mut UnboundedReceiver<Outgoing>| -> Option<u32> {
+        let welcome_key = |rx: &mut Receiver<Outgoing>| -> Option<u32> {
             controls(rx).into_iter().find_map(|c| if let Control::Welcome { key, .. } = c { Some(key) } else { None })
         };
         drain(&mut rxs[1]);
         let one = game.players[&1].key;
         assert!(one != 0 && game.players[&2].key != 77, "a key this server didn't give is replaced");
         // A copy of a connected player's key (a duplicated tab) gets a new one; a gone player's key comes back to them
-        let (tx, mut rx) = unbounded_channel();
+        let (tx, mut rx) = channel(TEST_QUEUE);
         game.join(3, JoinRequest { key: one, ..REQUEST }, tx);
         let three = welcome_key(&mut rx).unwrap();
         assert!(three != one && three != 0);
         game.leave(1);
-        let (tx, mut rx) = unbounded_channel();
+        let (tx, mut rx) = channel(TEST_QUEUE);
         game.join(4, JoinRequest { key: one, ..REQUEST }, tx);
         assert_eq!(welcome_key(&mut rx), Some(one));
     }
@@ -1941,7 +2132,7 @@ mod tests {
         // (the apex, and each tick's last frame consumed and repress)
         let run = |release: Option<usize>| -> (f32, Vec<(u32, bool)>) {
             let mut game = Game::new();
-            let (tx, _rx) = unbounded_channel();
+            let (tx, _rx) = channel(TEST_QUEUE);
             game.join(1, REQUEST, tx);
             run_until(&mut game, 1000, |g| g.phase == Phase::Active);
             let now = game.tick_count() as f64 / 120.0;
@@ -1971,7 +2162,7 @@ mod tests {
 
 
     /// The quick-chat lines sent: (sender's car, preset, team, seconds)
-    fn chats(rx: &mut UnboundedReceiver<Outgoing>) -> Vec<(u32, u8, bool, u16)> {
+    fn chats(rx: &mut Receiver<Outgoing>) -> Vec<(u32, u8, bool, u16)> {
         controls(rx)
             .into_iter()
             .filter_map(|c| if let Control::Chat { car, preset, team, seconds } = c { Some((car, preset, team, seconds)) } else { None })
@@ -1984,7 +2175,7 @@ mod tests {
         let mut game = Game::new();
         let mut rxs = Vec::new();
         for (id, name) in [(1, "  Merc\u{7}ury  "), (2, ""), (3, "a name far longer than thirty-two bytes, cut")] {
-            let (tx, rx) = unbounded_channel();
+            let (tx, rx) = channel(TEST_QUEUE);
             game.join(id, JoinRequest { name: name.to_string(), ..REQUEST }, tx);
             rxs.push(rx);
         }
@@ -2083,7 +2274,7 @@ mod tests {
     fn a_leavers_car_explodes_only_when_its_there() {
         // (RV-235: not already demolished, nor in the goal replay, the cars gone)
         let (mut game, mut rxs) = match_with(MatchType::Private, 3, &[(1, 0, 1), (2, 1, 2), (3, 0, 3), (4, 1, 4)]);
-        let explode = |rx: &mut UnboundedReceiver<Outgoing>| -> Option<bool> {
+        let explode = |rx: &mut Receiver<Outgoing>| -> Option<bool> {
             events(rx).into_iter().find_map(|e| if let GameEvent::Left { explode, .. } = e { Some(explode) } else { None })
         };
         drain(&mut rxs[0]);
@@ -2135,15 +2326,195 @@ mod tests {
         let mut game = Game::new();
         let mut rxs = Vec::new();
         for id in 0..MAX_PLAYERS as PlayerId {
-            let (tx, rx) = unbounded_channel();
+            let (tx, rx) = channel(TEST_QUEUE);
             game.join(id, REQUEST, tx);
             rxs.push(rx);
         }
-        let (tx, mut rx) = unbounded_channel();
+        let (tx, mut rx) = channel(TEST_QUEUE);
         game.join(99, REQUEST, tx);
         assert_eq!(controls(&mut rx), [Control::Refused { reason: protocol::REFUSED_FULL }]);
         assert_eq!(game.player_count(), MAX_PLAYERS);
         assert!(rx.try_recv().is_err(), "nothing more: the game let go of it");
+    }
+
+
+    fn stat_events(rx: &mut Receiver<Outgoing>) -> Vec<(u8, u16)> {
+        controls(rx).into_iter().filter_map(|c| if let Control::StatEvent { event, points } = c { Some((event, points)) } else { None }).collect()
+    }
+
+    fn last_scoreboard(rx: &mut Receiver<Outgoing>) -> Option<Vec<ScoreboardEntry>> {
+        controls(rx).into_iter().filter_map(|c| if let Control::Scoreboard(e) = c { Some(e) } else { None }).next_back()
+    }
+
+    /// The ball rolled into a car until it touches it
+    fn roll_into(game: &mut Game, player: PlayerId) {
+        let car = game.car_position(player).unwrap();
+        game.arena.set_ball([car[0], car[1] + 400.0, 93.0], [0.0, -1500.0, 0.0]);
+        let car_id = game.car_id(player).unwrap();
+        let before = game.arena.car_last_ball_touch_tick(car_id);
+        run_until(game, 300, |g| g.arena.car_last_ball_touch_tick(car_id) != before);
+        ticks(game, 3);
+    }
+
+    #[test]
+    fn a_goal_credits_its_scorer_and_the_assist_with_popups_feed_and_scoreboard() {
+        let (mut game, mut rxs) = match_with(MatchType::Casual, 2, &[(1, 0, 1), (2, 0, 2), (3, 1, 3)]);
+        roll_into(&mut game, 1); // (the round's first touch)
+        roll_into(&mut game, 2);
+        for rx in &mut rxs {
+            drain(rx);
+        }
+        game.arena.set_ball([0.0, 4900.0, 300.0], [0.0, 3000.0, 0.0]);
+        run_until(&mut game, 120, |g| g.phase == Phase::PostGoal);
+        let orange = controls(&mut rxs[2]);
+        let goal = orange.iter().find_map(|c| if let Control::Event { event: e @ GameEvent::Goal { .. }, .. } = c { Some(*e) } else { None });
+        assert_eq!(goal, Some(GameEvent::Goal { team: 0, scorer: 2, assister: 1 }));
+        let scorer = stat_events(&mut rxs[1]);
+        assert!(scorer.contains(&(stat::GOAL, 100)), "{scorer:?}");
+        let blue = controls(&mut rxs[0]);
+        assert!(blue.contains(&Control::StatEvent { event: stat::ASSIST, points: 50 }));
+        // Everyone's feed has the goal and the assist; the scoreboard the counters
+        let feed: Vec<(u8, u32)> =
+            orange.into_iter().filter_map(|c| if let Control::Ticker { event, receiver, .. } = c { Some((event, receiver)) } else { None }).collect();
+        assert!(feed.contains(&(stat::GOAL, 2)) && feed.contains(&(stat::ASSIST, 1)), "{feed:?}");
+        let board = blue.into_iter().filter_map(|c| if let Control::Scoreboard(e) = c { Some(e) } else { None }).next_back().unwrap();
+        let line = |car: u32| board.iter().find(|e| e.car == car).unwrap().counters.clone();
+        assert_eq!((line(2)[1], line(1)[2]), (1, 1), "goals, assists");
+        assert!(line(2)[0] >= 100 && line(1)[0] >= 50, "scores {} {}", line(2)[0], line(1)[0]);
+    }
+
+    #[test]
+    fn the_match_end_gives_wins_losses_and_the_winning_teams_best_the_mvp() {
+        let (mut game, mut rxs) = match_with(MatchType::Casual, 2, &[(1, 0, 1), (2, 0, 2), (3, 1, 3)]);
+        roll_into(&mut game, 1);
+        roll_into(&mut game, 2);
+        game.arena.set_ball([0.0, 4900.0, 300.0], [0.0, 3000.0, 0.0]);
+        run_until(&mut game, 120, |g| g.phase == Phase::PostGoal);
+        for rx in &mut rxs {
+            drain(rx);
+        }
+        game.end_match(0, false);
+        ticks(&mut game, 1);
+        assert_eq!(stat_events(&mut rxs[1]), [(stat::WIN, 0), (stat::MVP, 0)]);
+        assert_eq!(stat_events(&mut rxs[0]), [(stat::WIN, 0)]);
+        let orange = controls(&mut rxs[2]);
+        let lost: Vec<u8> = orange.iter().filter_map(|c| if let Control::StatEvent { event, .. } = c { Some(*event) } else { None }).collect();
+        assert_eq!(lost, [stat::LOSS]);
+        let board = orange.into_iter().filter_map(|c| if let Control::Scoreboard(e) = c { Some(e) } else { None }).next_back().unwrap();
+        assert_eq!(board.iter().filter(|e| e.mvp).map(|e| e.car).collect::<Vec<_>>(), [2]);
+
+        // A former member who'd have been the MVP takes it with them: nobody here is
+        let (mut game, mut rxs) = match_with(MatchType::Casual, 2, &[(1, 0, 1), (2, 0, 2), (3, 1, 3)]);
+        roll_into(&mut game, 1);
+        roll_into(&mut game, 2);
+        game.arena.set_ball([0.0, 4900.0, 300.0], [0.0, 3000.0, 0.0]);
+        run_until(&mut game, 120, |g| g.phase == Phase::PostGoal);
+        game.leave(2);
+        drain(&mut rxs[0]);
+        game.end_match(0, false);
+        assert_eq!(stat_events(&mut rxs[0]), [(stat::WIN, 0)]);
+
+        // No MVP in a 1v1 playlist
+        let (mut game, mut rxs) = match_with(MatchType::Casual, 1, &[(1, 0, 1), (2, 1, 2)]);
+        drain(&mut rxs[0]);
+        game.end_match(0, false);
+        assert_eq!(stat_events(&mut rxs[0]), [(stat::WIN, 0)]);
+    }
+
+    #[test]
+    fn a_new_match_starts_the_counters_over() {
+        let (mut game, mut rxs) = match_with(MatchType::Casual, 1, &[(1, 0, 1), (2, 1, 2)]);
+        roll_into(&mut game, 1);
+        roll_into(&mut game, 1);
+        ticks(&mut game, 130);
+        roll_into(&mut game, 1); // (a ball hit: +2)
+        assert!(game.players[&1].stats[0] > 0);
+        game.new_match();
+        ticks(&mut game, 1);
+        assert_eq!(game.players[&1].stats, [0; STAT_COUNTERS]);
+        assert!(last_scoreboard(&mut rxs[1]).unwrap().iter().all(|e| e.counters.iter().all(|&c| c == 0)));
+    }
+
+    #[test]
+    fn a_muted_players_chat_isnt_relayed_to_who_muted_them() {
+        let (mut game, mut rxs) = match_with(MatchType::Casual, 2, &[(1, 0, 1), (2, 1, 2)]);
+        drain(&mut rxs[1]);
+        game.set_mute(2, 1, true);
+        game.quick_chat(1, 22, false, 0.0);
+        assert!(chats(&mut rxs[1]).is_empty());
+        assert_eq!(chats(&mut rxs[0]).len(), 1, "the sender still sees their own");
+        game.set_mute(2, 1, false);
+        game.quick_chat(1, 23, false, 10.0);
+        assert_eq!(chats(&mut rxs[1]).len(), 1);
+    }
+
+    #[test]
+    fn the_non_tactical_block_has_no_phase_and_a_flood_queues_few_notices() {
+        // RV-247: blocked after the match too (the game's filter is by preset only)
+        let (mut game, mut rxs) = match_with(MatchType::Casual, 2, &[(1, 0, 1), (2, 1, 2)]);
+        game.set_chat_filter(2, protocol::CHAT_EVERYONE, true);
+        game.end_match(0, false);
+        drain(&mut rxs[1]);
+        game.quick_chat(1, 51, false, 0.0);
+        assert!(chats(&mut rxs[1]).is_empty());
+        game.quick_chat(1, 0, false, 5.0); // (a tactical one still reaches them)
+        assert_eq!(chats(&mut rxs[1]).len(), 1);
+        // RV-248: 100k blocked attempts within a second queue a notice or two
+        drain(&mut rxs[0]);
+        for i in 0..100_000 {
+            game.quick_chat(1, 22, false, 20.0 + f64::from(i) * 1e-5);
+        }
+        let notices = controls(&mut rxs[0]).into_iter().filter(|c| matches!(c, Control::ChatBlocked { .. })).count();
+        assert!((1..=3).contains(&notices), "{notices} notices");
+    }
+
+    #[test]
+    fn pings_reach_the_scoreboard_every_two_seconds() {
+        let (mut game, mut rxs) = match_with(MatchType::Casual, 1, &[(1, 0, 1), (2, 1, 2)]);
+        ticks(&mut game, 1);
+        drain(&mut rxs[1]);
+        game.set_ping(1, 1234);
+        ticks(&mut game, 2 * 120);
+        let board = last_scoreboard(&mut rxs[1]).unwrap();
+        assert_eq!(board.iter().find(|e| e.car == 1).map(|e| e.ping), Some(999));
+    }
+
+
+    #[test]
+    fn names_lose_hidden_characters_and_cant_take_another_players_automatic_name() {
+        assert_eq!(player_name("\u{202E}ziggy", 3), "ziggy");
+        assert_eq!(player_name("\u{2066}Bo\u{2069}", 3), "Bo");
+        assert_eq!(player_name("\u{200B}", 3), "Player 3");
+        assert_eq!(player_name("\u{FEFF}", 3), "Player 3");
+        assert_eq!(player_name("\u{3164}", 3), "Player 3");
+        assert_eq!(player_name("a\u{2028}b", 3), "ab");
+        assert_eq!(player_name("Player 2", 3), "Player 3");
+        assert_eq!(player_name("Player 2x", 3), "Player 2x");
+        assert_eq!(player_name("\u{FFFD}", 3), "Player 3"); // (an invalid UTF-8 name)
+    }
+
+    #[test]
+    fn the_tactical_range_ends_at_58_and_the_bucket_blocks_only_over_4() {
+        assert!(!tactical(58) && tactical(59) && tactical(21) && !tactical(22));
+        // (exactly 4 isn't over: the fourth line passes at 4.0, the next is blocked)
+        let mut bucket = ChatBucket { value: 4.0, last: 0.0 };
+        assert_eq!(bucket.apply(0.0), None);
+        assert!(bucket.apply(0.0).is_some());
+    }
+
+
+    #[test]
+    fn a_player_who_stops_reading_is_dropped_when_their_queue_fills() {
+        init_engine();
+        let mut game = Game::new();
+        let (tx1, _rx1) = channel(64); // (never read)
+        let (tx2, mut rx2) = channel(TEST_QUEUE);
+        game.join(1, REQUEST, tx1);
+        game.join(2, REQUEST, tx2);
+        run_until(&mut game, 1000, |g| g.player_count() == 1);
+        assert!(game.players.contains_key(&2));
+        let left = events(&mut rx2).into_iter().find_map(|e| if let GameEvent::Left { car, lost, .. } = e { Some((car, lost)) } else { None });
+        assert_eq!(left, Some((1, true)));
     }
 
 }

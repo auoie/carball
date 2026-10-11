@@ -734,6 +734,28 @@ a replay doesn't carry) differs. Next to look at.
     - cooked meshes (`cooked_meshes3`): p99 0.00006, max 0.101 uu/s (the re-placement ticks 1, 181, 361, 541); 491 and
       494 at 0.0000.
 
+## Match stats against replays (`engine/tools/stats_validate.cpp`)
+The engine's StatFactory (`engine/stats/`, `notes/match-stats.md`) re-run on replays and compared with the players'
+counters as the replays record them (the PRI's replicated MatchScore, Goals, Assists, Saves, Shots, at the frames they
+change; `notes/scoreboard.md` SB-18):
+```sh
+scripts/replay_extract/target/release/replay_extract --pri out/replays/pri.csv out/replays/stats_states.csv out/replays/1v1_*.replay
+engine/build/stats_validate out/replays/stats_states.csv out/replays/pri.csv --events out/replays/stat_events.csv
+```
+- **Method.** Each body is set to its replay state when the replay updates it (cars every 2-3 frames are interpolated
+  between their rows in between), the ticks between frames simulated with the replicated inputs, the stat factory fed
+  by the engine's contacts. The round's state (Countdown, Active, PostGoalScored) and the goals come from the replay; a
+  touch the re-run misses (the replay's ball changed course more than 300 uu/s beyond the re-run's, no touch in the
+  interval, a car within 260 uu) is recorded for the nearest car. Events match when they're the same player's within
+  0.1 s after to 1.2 s before the replay's counter changed: a PRI replicates about once a second (shots and saves show
+  up 0.1-1.0 s late), a goal at once (within 0.02 s).
+- **Result (2026-10-11, 40 1v1 replays, build 250811):** goals 99.5 % recall / 99.5 % precision (426 vs 426), saves
+  96.8 / 91.5, shots 98.6 / 95.5; the players' total score 101,843 vs the replays' 100,715 (+1.1 %). Without the
+  inferred touches saves fall to 76 % recall: the defender's touch happens between two replay frames 33 ms apart while
+  the re-run's car and ball are still ~40 uu short (`--infer-touches 0`; `--trace REPLAY T0 T1` prints each tick).
+- **Caveats.** The replays are 13 months older than the live build (the point values may have changed); the per-touch
+  details (dodging, wheel contacts) come from the re-run, air control is missing, every car has the Octane hitbox.
+
 ## Limits and next steps
 - Air control (pitch, yaw, roll) is not in replays: aerial touches and car rotation in the air can only be checked
   when the input was zero, and flip cancels can't be modelled.

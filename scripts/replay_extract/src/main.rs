@@ -90,7 +90,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut demos = None;
     let mut pickups = None;
     let mut goals = None;
+    let mut pri = None;
     loop {
+        if args.len() > 2 && args[1] == "--pri" {
+            // The players' match counters as they change (MatchScore, Goals, Assists, Saves, Shots, CarDemolitions,
+            // SelfDemolitions), each car's PRI, the game's state names and overtime, and the header's goals
+            let mut p = BufWriter::new(fs::File::create(&args[2])?);
+            writeln!(p, "replay,frame,time,kind,a,b,value")?;
+            pri = Some(p);
+            args.drain(1..3);
+            continue;
+        }
         if args.len() > 2 && args[1] == "--demos" {
             let mut d = BufWriter::new(fs::File::create(&args[2])?);
             writeln!(d, "replay,frame,time,attacker,victim,avx,avy,avz,vvx,vvy,vvz")?;
@@ -142,6 +152,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut car_pri: HashMap<i32, i32> = HashMap::new(); // car actor -> PRI actor
         let mut players: HashMap<i32, Player> = HashMap::new(); // PRI actor -> loadout and preferences
         let mut names: HashMap<i32, String> = HashMap::new(); // PRI actor -> player name
+        let mut counters: HashMap<(i32, u8), i32> = HashMap::new(); // (PRI, counter) -> last value
+        let mut last_state = String::new();
+        let mut last_overtime = false;
 
         let mut prev_time = frames.first().map(|f| f.time).unwrap_or(0.0);
         for (fi, frame) in frames.iter().enumerate() {
@@ -192,6 +205,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     (Attribute::TeamPaint(p), "TAGame.Car_TA:TeamPaint") => inputs.entry(actor).or_default().team = p.team,
                     (Attribute::ActiveActor(aa), "Engine.Pawn:PlayerReplicationInfo") => {
                         car_pri.insert(actor, aa.actor.0);
+                        if let Some(p) = pri.as_mut() {
+                            writeln!(p, "{name},{fi},{},carpri,{actor},{},", frame.time, aa.actor.0)?;
+                        }
+                    }
+                    (Attribute::Int(v), counter) if pri.is_some() && counter.starts_with("TAGame.PRI_TA:") => {
+                        let id = match counter {
+                            "TAGame.PRI_TA:MatchScore" => Some(0u8),
+                            "TAGame.PRI_TA:MatchGoals" => Some(1),
+                            "TAGame.PRI_TA:MatchAssists" => Some(2),
+                            "TAGame.PRI_TA:MatchSaves" => Some(3),
+                            "TAGame.PRI_TA:MatchShots" => Some(4),
+                            "TAGame.PRI_TA:CarDemolitions" => Some(5),
+                            "TAGame.PRI_TA:SelfDemolitions" => Some(6),
+                            _ => None,
+                        };
+                        if let Some(id) = id {
+                            if counters.insert((actor, id), *v) != Some(*v) {
+                                writeln!(pri.as_mut().unwrap(), "{name},{fi},{},stat,{actor},{id},{v}", frame.time)?;
+                            }
+                        }
+                    }
+                    (Attribute::Int(v), "TAGame.GameEvent_TA:ReplicatedStateName") if pri.is_some() => {
+                        let state = replay.names.get(*v as usize).cloned().unwrap_or_default();
+                        if state != last_state {
+                            writeln!(pri.as_mut().unwrap(), "{name},{fi},{},state,,,{state}", frame.time)?;
+                            last_state = state;
+                        }
+                    }
+                    (Attribute::Boolean(b), "TAGame.GameEvent_Soccar_TA:bOverTime") if pri.is_some() => {
+                        if *b != last_overtime {
+                            writeln!(pri.as_mut().unwrap(), "{name},{fi},{},overtime,,,{}", frame.time, *b as u8)?;
+                            last_overtime = *b;
+                        }
                     }
                     (Attribute::TeamLoadout(l), "TAGame.PRI_TA:ClientLoadouts") => {
                         let p = players.entry(actor).or_default();
@@ -329,6 +375,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
+        if let Some(p) = pri.as_mut() {
+            for (key, prop) in &replay.properties {
+                let HeaderProp::Array(list) = prop else { continue };
+                if key != "Goals" {
+                    continue;
+                }
+                for goal in list {
+                    let field = |n: &str| goal.iter().find(|(k, _)| k == n).map(|(_, v)| v);
+                    if let (Some(HeaderProp::Int(frame)), Some(HeaderProp::Int(team))) = (field("frame"), field("PlayerTeam")) {
+                        let time = frames.get(*frame as usize).map_or(0.0, |f| f.time);
+                        writeln!(p, "{name},{frame},{time},goal,{team},,")?;
+                    }
+                }
+            }
+        }
         if let Some(g) = goals.as_mut() {
             for (key, prop) in &replay.properties {
                 let HeaderProp::Array(list) = prop else { continue };

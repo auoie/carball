@@ -18,6 +18,9 @@ import { loadSettings } from "./settings/settings";
 import { SettingsPanel } from "./ui/settingsPanel";
 import { MatchMenu } from "./ui/matchMenu";
 import { ChatLog, QuickChatPanel } from "./ui/chatLog";
+import { HeldScoreboard } from "./ui/scoreboard";
+import { StatPopups, StatTicker } from "./ui/statFeed";
+import { PlayersMenu, Toast } from "./ui/playersMenu";
 import { Renderer } from "./render/renderer";
 import "./style.css";
 
@@ -158,6 +161,8 @@ async function main(): Promise<void> {
       airControlSensitivity: controller.aerialSensitivity,
       autoSkipReplay: settings.options.autoSkipReplay,
       name: settings.chat.name,
+      quickChat: settings.chat.quickChatFilter,
+      blockNonTactical: settings.chat.blockNonTactical,
     });
     world.loadState(welcome.snapshot);
     // (a closed tab leaves at once, not when the session times out)
@@ -166,7 +171,11 @@ async function main(): Promise<void> {
     });
     const hudRoot = required("#hud", HTMLElement);
     const chat = { log: new ChatLog(hudRoot), panel: new QuickChatPanel(hudRoot) };
-    const online = new Online(world, renderer, arena, input, hud, audio, connection, welcome, () => settings, () => !panel.isOpen, chat);
+    const statsUi = { scoreboard: new HeldScoreboard(hudRoot), popups: new StatPopups(hudRoot), ticker: new StatTicker(hudRoot), toast: new Toast(hudRoot) };
+    const online = new Online(world, renderer, arena, input, hud, audio, connection, welcome, () => settings, () => !panel.isOpen, chat, statsUi);
+    const players = new PlayersMenu(panel.players, (car, what) => {
+      online.togglePlayer(car, what);
+    });
     // For the browser tests
     (window as unknown as { rlOnline?: () => unknown }).rlOnline = () => online.stats;
     // The menu's match buttons: forfeit or vote (the server's), leave (back to freeplay)
@@ -185,6 +194,7 @@ async function main(): Promise<void> {
       frame(dt) {
         online.frame(dt);
         menu.update(online.menuItems(), panel.isOpen);
+        players.update(online.players(), panel.isOpen);
       },
     };
   }

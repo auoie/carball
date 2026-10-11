@@ -2,6 +2,7 @@
 
 #include "NetState.h"
 #include "RocketSim.h"
+#include "StatFactory.h"
 
 #include <algorithm>
 #include <cstring>
@@ -13,6 +14,7 @@ struct RLArena {
 	Arena* arena;
 	std::vector<int32_t> events;
 	bool goalReported = false;
+	RLStats::StatFactory* stats = nullptr; // (follows the arena: rebuilt when a snapshot rebuilds it)
 };
 
 static const CarConfig* BODIES[] = {
@@ -43,12 +45,15 @@ static void SetCallbacks(RLArena* a) {
 	a->arena->SetCarBumpCallback([](Arena*, Car* bumper, Car* victim, bool isDemo, void* info) {
 		RLArena* a = (RLArena*)info;
 		a->events.insert(a->events.end(), { isDemo ? RL_EVENT_DEMO : RL_EVENT_BUMP, (int32_t)bumper->id, (int32_t)victim->id });
+		a->stats->OnBump(bumper, victim, isDemo);
 	}, a);
+	a->arena->SetTickEndCallback([](Arena*, void* info) { ((RLArena*)info)->stats->OnTickEnd(); }, a);
 }
 
 RLArena* rl_arena_create(void) {
 	RLArena* a = new RLArena();
 	a->arena = Arena::Create(GameMode::SOCCAR);
+	a->stats = new RLStats::StatFactory(a->arena);
 	SetCallbacks(a);
 	return a;
 }
@@ -56,6 +61,7 @@ RLArena* rl_arena_create(void) {
 void rl_arena_destroy(RLArena* a) {
 	if (!a)
 		return;
+	delete a->stats;
 	delete a->arena;
 	delete a;
 }
@@ -66,7 +72,10 @@ uint32_t rl_add_car(RLArena* a, int team, int body) {
 	return a->arena->AddCar(team == 1 ? Team::ORANGE : Team::BLUE, *BODIES[body])->id;
 }
 
-int rl_remove_car(RLArena* a, uint32_t id) { return a->arena->RemoveCar(id) ? 1 : 0; }
+int rl_remove_car(RLArena* a, uint32_t id) {
+	a->stats->RemoveCar(id);
+	return a->arena->RemoveCar(id) ? 1 : 0;
+}
 
 void rl_set_controls(RLArena* a, uint32_t id, const RLControls* c) {
 	Car* car = a->arena->GetCar(id);
@@ -246,8 +255,10 @@ int rl_load_state(RLArena* a, const uint8_t* data, size_t size) {
 		Arena* loaded = Arena::DeserializeNew(in);
 		if (!loaded)
 			return 0;
+		delete a->stats;
 		delete a->arena;
 		a->arena = loaded;
+		a->stats = new RLStats::StatFactory(loaded);
 	}
 	a->events.clear();
 	SetCallbacks(a);
@@ -270,6 +281,42 @@ size_t rl_car_ids(RLArena* a, uint32_t* out, size_t max_ids) {
 		n++;
 	}
 	return n;
+}
+
+void rl_stats_set_state(RLArena* a, int state) {
+	a->stats->SetState(state == 1 ? RLStats::FactoryState::ACTIVE : state == 2 ? RLStats::FactoryState::POST_GOAL
+	                                                                           : RLStats::FactoryState::INACTIVE);
+}
+
+void rl_stats_set_overtime(RLArena* a, int overtime) { a->stats->SetOvertime(overtime != 0); }
+
+void rl_stats_reset(RLArena* a) { a->stats->ResetMatch(); }
+
+size_t rl_take_stat_awards(RLArena* a, int32_t* out, size_t max_ints) {
+	std::vector<RLStats::Award> awards = a->stats->TakeAwards();
+	size_t n = 0;
+	for (const RLStats::Award& award : awards) {
+		if (!out || n + 4 > max_ints)
+			break; // (the rest are dropped: callers pass room for a tick's worth)
+		out[n++] = award.event;
+		out[n++] = (int32_t)award.car;
+		out[n++] = (int32_t)award.victim;
+		out[n++] = award.count;
+	}
+	return n;
+}
+
+size_t rl_car_stats(RLArena* a, uint32_t car_id, int32_t* out, size_t max) {
+	const RLStats::PlayerStats* s = a->stats->GetStats(car_id);
+	if (!s)
+		return 0;
+	for (size_t i = 0; out && i < max && i < RLStats::COUNTER_COUNT; i++)
+		out[i] = s->counters[i];
+	return RLStats::COUNTER_COUNT;
+}
+
+int rl_stat_event_points(int event) {
+	return event >= 0 && event < RLStats::STAT_EVENT_COUNT ? RLStats::STAT_EVENTS[event].points : 0;
 }
 
 } // extern "C"

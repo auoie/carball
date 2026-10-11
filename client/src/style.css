@@ -329,6 +329,7 @@ body {
 
 .settings-header {
   display: flex;
+  flex-wrap: wrap; /* (the match's buttons and question take their own line when the tabs fill it) */
   align-items: center;
   gap: 16px;
   padding: 12px 16px;
@@ -342,6 +343,7 @@ body {
 
 .settings-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   flex: 1;
 }
@@ -349,6 +351,8 @@ body {
 /* Online: the match's buttons (forfeit, vote, leave: src/ui/matchMenu.ts) */
 .settings-match {
   display: flex;
+  flex-basis: 100%; /* (a row of its own under the tabs: the question and its buttons never pushed off the panel) */
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
@@ -504,4 +508,420 @@ body {
 }
 #respawn.locked #respawn-bar {
   visibility: hidden;
+}
+
+/* --- Match stats: the held scoreboard, the stat popups, the feed (notes/scoreboard.md, match-stats.md §6) --- */
+/* Fonts: condensed caps for the game's Bourgeois, a wide face for its Dashboard Numbers (HUD-1: not redistributed) */
+:root {
+  --hud-header: "Bahnschrift SemiCondensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --hud-thin: "Bahnschrift Light SemiCondensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --hud-numbers: "Bahnschrift", "Eurostile", "Arial", sans-serif;
+  --hud-small: "Arial Narrow", Arial, sans-serif;
+}
+
+.scoreboard-layer,
+.hud-stage {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
+
+.scoreboard-layer {
+  inset: 0;
+}
+
+.scoreboard-stage,
+.hud-stage {
+  transform-origin: 0 0;
+}
+
+.scoreboard-stage {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+.scoreboard-stage div {
+  position: absolute;
+}
+
+.sb-backdrop {
+  /* dark navy, about α 0.47 in the middle, soft edges (150 px sides, 95 top, 210 bottom: its 9-slice) */
+  background: rgba(0, 13, 24, 0.47);
+  mask-image: linear-gradient(to right, transparent, #000 150px, #000 calc(100% - 150px), transparent), linear-gradient(to bottom, transparent, #000 95px, #000 calc(100% - 210px), transparent);
+  mask-composite: intersect;
+}
+
+.sb-seam-glow {
+  opacity: 0.37;
+}
+
+.sb-team-0 .sb-seam-glow {
+  background: radial-gradient(ellipse 50% 100% at 50% 100%, #002dbf, transparent);
+}
+
+.sb-team-1 .sb-seam-glow {
+  background: radial-gradient(ellipse 50% 100% at 50% 0%, #b23d00, transparent);
+}
+
+.sb-name-glow {
+  mix-blend-mode: screen;
+  opacity: 0.33;
+}
+
+.sb-team-0 .sb-name-glow {
+  background: radial-gradient(ellipse 50% 50% at 25% 50%, #002dbf, transparent);
+}
+
+.sb-team-1 .sb-name-glow {
+  background: radial-gradient(ellipse 50% 50% at 25% 50%, #b23d00, transparent);
+}
+
+.sb-team-score {
+  font: 36px/44px var(--hud-numbers);
+  text-align: center;
+  color: #fff;
+  text-shadow: 0 0 16px #444, 0 0 16px #444;
+}
+
+.sb-team-name {
+  font: 36px/40.5px var(--hud-thin);
+  color: #fff;
+  text-shadow: 0 0 8px #999;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.sb-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  text-align: center;
+  font: bold 11px/1.1 var(--hud-small);
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.sb-ping-header {
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.sb-strip {
+  border-radius: 16px;
+  opacity: 0.88;
+  mask-image: linear-gradient(to right, #000, rgba(0, 0, 0, 0.9));
+}
+
+.sb-team-0 .sb-strip {
+  background: #002dbf;
+}
+
+.sb-team-1 .sb-strip {
+  background: #b23d00;
+}
+
+.sb-avatar {
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.sb-local .sb-avatar {
+  border-color: #fff;
+}
+
+.sb-avatar svg {
+  width: 100%;
+  height: 100%;
+  fill: rgba(255, 255, 255, 0.55);
+}
+
+.sb-name,
+.sb-value {
+  font: 20px/25px var(--hud-header);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+}
+
+.sb-name {
+  unicode-bidi: isolate;
+}
+
+.sb-value {
+  text-align: center;
+}
+
+.sb-mvp svg {
+  width: 100%;
+  height: 100%;
+  filter: drop-shadow(0 0 2px #ff7f00);
+  animation: sb-mvp-slam 0.233s steps(8, end);
+}
+
+@keyframes sb-mvp-slam {
+  from {
+    transform: scale(3.75);
+  }
+  to {
+    transform: scale(0.94);
+  }
+}
+
+.sb-ping {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font: bold 16px/22px var(--hud-small);
+}
+
+.sb-ping .sb-bars,
+.sb-ping .sb-ping-value {
+  position: static;
+}
+
+.sb-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 20px;
+}
+
+.sb-bar {
+  position: static !important;
+  width: 3px;
+  background: currentColor;
+  opacity: 0.2;
+}
+
+.sb-bar.on {
+  opacity: 1;
+}
+
+/* The popup at (W/2, 150): the icon, the label rising in, "+N" popping, all floating off (2.633 s) */
+.stat-popup {
+  position: absolute;
+  top: 150px;
+  width: 0;
+  animation: stat-popup-out 2.633s linear forwards;
+}
+
+.stat-popup-icon {
+  position: absolute;
+  left: -32px;
+  top: -37px;
+  width: 64px;
+  height: 64px;
+  color: #fff;
+  animation: stat-popup-icon 2.633s linear forwards;
+}
+
+.stat-popup-icon svg {
+  width: 100%;
+  height: 100%;
+  filter: drop-shadow(0 0 4px #ff7f00) drop-shadow(0 0 2px #ff7f00);
+}
+
+.stat-popup-label {
+  position: absolute;
+  left: 0;
+  top: 30px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font: 32px/1 var(--hud-header);
+  color: #fff;
+  text-shadow: 0 0 8px #ff7f00, 0 0 3px #ff7f00;
+  animation: stat-popup-label 2.633s linear forwards;
+}
+
+.stat-popup-points {
+  position: absolute;
+  left: 0;
+  top: 66px;
+  transform: translateX(-50%);
+  font: 22px/1 var(--hud-header);
+  color: #ffed83;
+  animation: stat-popup-points 2.633s linear forwards;
+}
+
+@keyframes stat-popup-icon {
+  0% {
+    opacity: 0;
+  }
+  4.9% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  15% {
+    opacity: 1;
+    transform: scale(1);
+    filter: none;
+  }
+  30.4% {
+    opacity: 0.5;
+    transform: scale(2.8);
+    filter: blur(4px) sepia(1) saturate(8) hue-rotate(-15deg);
+  }
+  100% {
+    opacity: 0.5;
+    transform: scale(2.8);
+    filter: blur(4px) sepia(1) saturate(8) hue-rotate(-15deg);
+  }
+}
+
+@keyframes stat-popup-label {
+  0%,
+  15% {
+    opacity: 0;
+    translate: 0 20px;
+  }
+  22.8%,
+  100% {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+@keyframes stat-popup-points {
+  0%,
+  22.8% {
+    opacity: 0;
+    transform: translateX(-50%) scale(3);
+  }
+  31.5%,
+  100% {
+    opacity: 1;
+    transform: translateX(-50%) scale(1);
+  }
+}
+
+@keyframes stat-popup-out {
+  0%,
+  82.4% {
+    opacity: 1;
+    translate: 0 0;
+  }
+  100% {
+    opacity: 0;
+    translate: 0 -30px;
+  }
+}
+
+/* The feed at the top right (W - 10, 10): rows 36 px apart, 4 s each */
+#stat-ticker .ticker-row {
+  position: absolute;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  transition: top 0.2s;
+  animation: ticker-row 4s linear forwards;
+}
+
+.ticker-name {
+  padding: 2px 10px;
+  border-radius: 12px;
+  font: 16px/22px var(--hud-header);
+  color: #fff;
+  white-space: nowrap;
+  unicode-bidi: isolate;
+}
+
+.ticker-icon {
+  width: 46px;
+  height: 46px;
+  color: #fff;
+  background: radial-gradient(circle, rgba(0, 0, 0, 0.45), transparent 70%);
+}
+
+.ticker-icon svg {
+  width: 100%;
+  height: 100%;
+  filter: drop-shadow(0 0 3px #ff7f00);
+}
+
+@keyframes ticker-row {
+  0% {
+    opacity: 0;
+  }
+  5%,
+  95% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+#stat-ticker {
+  right: auto;
+}
+
+/* The block's toast */
+#toast {
+  position: absolute;
+  right: 24px;
+  bottom: 160px;
+  max-width: 320px;
+  padding: 10px 14px;
+  background: var(--panel);
+  border-left: 3px solid #43afff;
+  font-size: 14px;
+}
+
+.toast-title {
+  display: block;
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+
+/* The menu's players (mute, block) */
+.settings-players:empty {
+  display: none;
+}
+
+.settings-players {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.settings-players .players-toggle {
+  align-self: flex-start;
+}
+
+.player-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 33px;
+}
+
+.player-row .player-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.player-row.team-0 .player-name {
+  color: #a0faff;
+}
+
+.player-row.team-1 .player-name {
+  color: #ffffa0;
+}
+
+.player-row button.crossed::after {
+  content: "✕";
+  margin-left: 6px;
+  color: #f00;
+}
+
+.settings-reset {
+  margin-top: 10px;
+  align-self: flex-start;
 }

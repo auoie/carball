@@ -24,6 +24,8 @@ RS_NS_START
 
 typedef std::function<void(class Arena* arena, Team scoringTeam, void* userInfo)> GoalScoreEventFn;
 typedef std::function<void(class Arena* arena, Car* bumper, Car* victim, bool isDemo, void* userInfo)> CarBumpEventFn;
+// RL PATCH: the end of each tick (the match stats, engine/stats, look at it then)
+typedef std::function<void(class Arena* arena, void* userInfo)> TickEndEventFn;
 
 // The container for all game simulation
 // Stores cars, the ball, all arena collisions, and manages the overall game state
@@ -178,6 +180,17 @@ public:
 		void* userInfo = NULL;
 	} _carBumpCallback;
 	void SetCarBumpCallback(CarBumpEventFn callbackFn, void* userInfo = NULL);
+
+	// RL PATCH: called at the end of every tick, after the goal's (before the tick count steps)
+	struct {
+		TickEndEventFn func = NULL;
+		void* userInfo = NULL;
+	} _tickEndCallback;
+	void SetTickEndCallback(TickEndEventFn callbackFn, void* userInfo = NULL);
+
+	// RL PATCH: the ball's contacts with the world during the last tick: where (uu) and the surface's normal towards the
+	// ball (the match stats' ground and crossbar hits: StatFactory.OnBallHitWorld)
+	std::vector<std::pair<Vec, Vec>> ballWorldContacts;
 
 	// NOTE: Arena should be destroyed after use
 	static Arena* Create(GameMode gameMode, const ArenaConfig& arenaConfig = {}, float tickRate = 120);

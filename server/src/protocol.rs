@@ -6,7 +6,7 @@ use crate::engine::Controls;
 // and flip resets in the state; 9: the goal replay (its phase, plan and skip votes; Hello's auto-skip); 10: forfeit votes,
 // the match type, a leaver's car, no contest; 11: quick chat, players' names (the roster), a leave's reason; 12: whether a
 // leaver's car explodes
-pub const VERSION: u16 = 12;
+pub const VERSION: u16 = 13;
 /// The quick-chat presets (`Group1-6MessageN`: notes/quick-chat.md CHAT-1); a preset on the wire is its index
 pub const QUICK_CHAT_PRESETS: u8 = 76;
 /// A player's quick-chat filter (`EChatFilter` as the clone uses it: CHAT-18)
@@ -18,6 +18,76 @@ pub const CHAT_OFF: u8 = 3;
 pub const MAX_NAME_BYTES: usize = 32;
 /// Why a join was refused
 pub const REFUSED_FULL: u8 = 0;
+
+/// Stat events (`StatEvent_TA`, `engine/stats/StatFactory.h` `StatEvent`): the ids `StatEvent` and `Ticker` carry
+pub mod stat {
+    pub const GOAL: u8 = 0;
+    pub const AERIAL_GOAL: u8 = 1;
+    pub const BACKWARDS_GOAL: u8 = 2;
+    pub const BICYCLE_GOAL: u8 = 3;
+    pub const TURTLE_GOAL: u8 = 4;
+    pub const LONG_GOAL: u8 = 5;
+    pub const OVERTIME_GOAL: u8 = 6;
+    pub const HAT_TRICK: u8 = 7;
+    pub const ASSIST: u8 = 8;
+    pub const PLAYMAKER: u8 = 9;
+    pub const POOL_SHOT: u8 = 10;
+    pub const SHOT: u8 = 11;
+    pub const SAVE: u8 = 12;
+    pub const EPIC_SAVE: u8 = 13;
+    pub const SAVIOR: u8 = 14;
+    pub const CLEAR: u8 = 15;
+    pub const CENTER: u8 = 16;
+    pub const FIRST_TOUCH: u8 = 17;
+    pub const BALL_HIT: u8 = 18;
+    pub const CROSSBAR_HITS: u8 = 19;
+    pub const AERIAL_HIT: u8 = 20;
+    pub const BICYCLE_HIT: u8 = 21;
+    pub const JUGGLE_HIT: u8 = 22;
+    pub const DEMOLISH: u8 = 23;
+    pub const DEMOLISHED: u8 = 24;
+    pub const EXTERMINATION: u8 = 25;
+    pub const LOW_FIVE: u8 = 26;
+    pub const HIGH_FIVE: u8 = 27;
+    pub const OWN_GOAL: u8 = 28;
+    pub const MVP: u8 = 29;
+    pub const WIN: u8 = 30;
+    pub const LOSS: u8 = 31;
+    pub const DEMOLITION_RESPAWN: u8 = 32;
+
+    /// Sent to the receiver (`ClientNotifyGainedStat`) unless `bSkipReplication` (BallHit, CrossbarHits)
+    pub fn notifies_receiver(event: u8) -> bool {
+        !matches!(event, BALL_HIT | CROSSBAR_HITS)
+    }
+
+    /// Goes to every player's ticker (`bNotifyTicker`, match-stats.md §2)
+    pub fn notifies_ticker(event: u8) -> bool {
+        matches!(
+            event,
+            GOAL | AERIAL_GOAL
+                | BACKWARDS_GOAL
+                | BICYCLE_GOAL
+                | TURTLE_GOAL
+                | LONG_GOAL
+                | OVERTIME_GOAL
+                | HAT_TRICK
+                | ASSIST
+                | PLAYMAKER
+                | POOL_SHOT
+                | SHOT
+                | SAVE
+                | EPIC_SAVE
+                | SAVIOR
+                | BICYCLE_HIT
+                | DEMOLISH
+                | EXTERMINATION
+                | LOW_FIVE
+                | HIGH_FIVE
+                | MVP
+                | WIN
+        )
+    }
+}
 pub const MAX_INPUT_FRAMES: usize = 10;
 
 /// Control stream (reliable) messages
@@ -37,7 +107,12 @@ pub enum Control {
         key: u32,
         /// The player's name (UTF-8, `MAX_NAME_BYTES` at most; the server tidies it)
         name: String,
+        /// Their chat filters from the start (as `ChatFilter`: RV-259)
+        quick_chat: u8,
+        block_non_tactical: bool,
     },
+    /// Mute or unmute a player's chat for this player (`ClientMutePlayer`: the server stops relaying their lines to them)
+    Mute { car: u32, on: bool },
     /// A quick-chat preset (`ServerSay_TA` with bPreset): to the player's team or to all
     QuickChat { preset: u8, team: bool },
     /// The player's chat filters (`ServerSetQuickChatFilter`, `ServerSetTacticalChatFilter`): `CHAT_*`, and whether
@@ -74,6 +149,26 @@ pub enum Control {
     ChatBlocked { seconds: f32 },
     /// The join was refused (`REFUSED_FULL`: the match has its most players), instead of a `Welcome`; the session ends
     Refused { reason: u8 },
+    /// Every player's scoreboard line (`PRI_TA`'s replicated match counters, ping, MVP), sent when it changes and every
+    /// two seconds for the pings
+    Scoreboard(Vec<ScoreboardEntry>),
+    /// A stat this player gained (`ClientNotifyGainedStat`: their popup), with its points
+    StatEvent { event: u8, points: u16 },
+    /// A stat someone gained, for every player's feed (`ClientNotifyStatTickerMessage`): the receiver's car and a
+    /// demolition's victim (0: none)
+    Ticker { event: u8, receiver: u32, victim: u32 },
+}
+
+/// One player's scoreboard line
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScoreboardEntry {
+    pub car: u32,
+    /// Round-trip time in ms (999 at most)
+    pub ping: u16,
+    /// The match's MVP (`bMatchMVP`)
+    pub mvp: bool,
+    /// The match counters (`engine::STAT_COUNTERS`, in its order; 65535 at most)
+    pub counters: Vec<u16>,
 }
 
 /// A player as the others know them
@@ -160,7 +255,9 @@ pub struct MatchState {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GameEvent {
-    Goal { team: u8 },
+    /// `team` scored; `scorer` and `assister`: the cars credited with the goal and the assist (0: none; no scorer when
+    /// only the defending team touched the ball)
+    Goal { team: u8, scorer: u32, assister: u32 },
     Demo { attacker: u32, victim: u32 },
     /// A player left; `lost`: their connection timed out (the chat log's "lost connection"); `explode`: their car explodes
     /// where it is (`Car.Demolish(None)`: no demolition counted), not when already demolished or in the goal replay
@@ -318,7 +415,7 @@ impl Control {
     pub fn encode(&self) -> Vec<u8> {
         let mut w = Writer::default();
         match self {
-            Self::Hello { version, team, body, dodge_deadzone, steering_sensitivity, air_control_sensitivity, auto_skip_replay, key, name } => {
+            Self::Hello { version, team, body, dodge_deadzone, steering_sensitivity, air_control_sensitivity, auto_skip_replay, key, name, quick_chat, block_non_tactical } => {
                 w.u8(0x01);
                 w.u16(*version);
                 w.u8(*team);
@@ -329,6 +426,13 @@ impl Control {
                 w.u8(u8::from(*auto_skip_replay));
                 w.u32(*key);
                 w.name(name);
+                w.u8(*quick_chat);
+                w.u8(u8::from(*block_non_tactical));
+            }
+            Self::Mute { car, on } => {
+                w.u8(0x08);
+                w.u32(*car);
+                w.u8(u8::from(*on));
             }
             Self::QuickChat { preset, team } => {
                 w.u8(0x06);
@@ -363,6 +467,30 @@ impl Control {
             Self::Refused { reason } => {
                 w.u8(0x8B);
                 w.u8(*reason);
+            }
+            Self::Scoreboard(entries) => {
+                w.u8(0x8C);
+                w.u8(entries.len().min(255) as u8);
+                for e in entries.iter().take(255) {
+                    w.u32(e.car);
+                    w.u16(e.ping);
+                    w.u8(u8::from(e.mvp));
+                    w.u8(e.counters.len().min(255) as u8);
+                    for &c in e.counters.iter().take(255) {
+                        w.u16(c);
+                    }
+                }
+            }
+            Self::StatEvent { event, points } => {
+                w.u8(0x8D);
+                w.u8(*event);
+                w.u16(*points);
+            }
+            Self::Ticker { event, receiver, victim } => {
+                w.u8(0x8E);
+                w.u8(*event);
+                w.u32(*receiver);
+                w.u32(*victim);
             }
             Self::ResetInputBuffer => w.u8(0x02),
             Self::VoteForfeit => w.u8(0x05),
@@ -437,9 +565,11 @@ impl Control {
                 w.u8(0x83);
                 w.u32(*server_tick);
                 match event {
-                    GameEvent::Goal { team } => {
+                    GameEvent::Goal { team, scorer, assister } => {
                         w.u8(0);
                         w.u8(*team);
+                        w.u32(*scorer);
+                        w.u32(*assister);
                     }
                     GameEvent::Demo { attacker, victim } => {
                         w.u8(1);
@@ -476,7 +606,10 @@ impl Control {
                 auto_skip_replay: r.u8()? != 0,
                 key: r.u32()?,
                 name: r.name()?,
+                quick_chat: r.u8()?,
+                block_non_tactical: r.u8()? != 0,
             },
+            0x08 => Self::Mute { car: r.u32()?, on: r.u8()? != 0 },
             0x06 => Self::QuickChat { preset: r.u8()?, team: r.u8()? != 0 },
             0x07 => Self::ChatFilter { quick_chat: r.u8()?, block_non_tactical: r.u8()? != 0 },
             0x88 => {
@@ -488,6 +621,19 @@ impl Control {
             0x89 => Self::Chat { car: r.u32()?, preset: r.u8()?, team: r.u8()? != 0, seconds: r.u16()? },
             0x8A => Self::ChatBlocked { seconds: r.f32()? },
             0x8B => Self::Refused { reason: r.u8()? },
+            0x8C => {
+                let n = r.u8()?;
+                let mut entries = Vec::with_capacity(usize::from(n));
+                for _ in 0..n {
+                    let (car, ping, mvp) = (r.u32()?, r.u16()?, r.u8()? != 0);
+                    let k = r.u8()?;
+                    let counters = (0..k).map(|_| r.u16()).collect::<Result<Vec<_>, _>>()?;
+                    entries.push(ScoreboardEntry { car, ping, mvp, counters });
+                }
+                Self::Scoreboard(entries)
+            }
+            0x8D => Self::StatEvent { event: r.u8()?, points: r.u16()? },
+            0x8E => Self::Ticker { event: r.u8()?, receiver: r.u32()?, victim: r.u32()? },
             0x02 => Self::ResetInputBuffer,
             0x05 => Self::VoteForfeit,
             0x87 => {
@@ -517,7 +663,7 @@ impl Control {
             0x83 => {
                 let server_tick = r.u32()?;
                 let event = match r.u8()? {
-                    0 => GameEvent::Goal { team: r.u8()? },
+                    0 => GameEvent::Goal { team: r.u8()?, scorer: r.u32()?, assister: r.u32()? },
                     1 => GameEvent::Demo { attacker: r.u32()?, victim: r.u32()? },
                     2 => {
                         let (car, flags) = (r.u32()?, r.u8()?);
@@ -644,6 +790,13 @@ mod tests {
         serde_json::from_str(&text).unwrap()
     }
 
+    #[test]
+    fn the_vectors_are_this_versions() {
+        assert_eq!(vectors()["protocolVersion"].as_u64(), Some(u64::from(VERSION)));
+        let hello = vectors()["vectors"].as_array().unwrap().iter().find(|v| v["message"]["type"] == "hello").cloned().unwrap();
+        assert_eq!(hello["message"]["version"].as_u64(), Some(u64::from(VERSION)), "the Hello vector carries this version (RV-257)");
+    }
+
     fn hex(s: &str) -> Vec<u8> {
         (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
     }
@@ -664,7 +817,25 @@ mod tests {
                 auto_skip_replay: m["autoSkipReplay"].as_bool().unwrap(),
                 key: u(&m["key"]),
                 name: m["name"].as_str().unwrap().to_string(),
+                quick_chat: ["everyone", "team", "friends", "off"].iter().position(|&f| f == m["quickChat"]).unwrap() as u8,
+                block_non_tactical: m["blockNonTactical"].as_bool().unwrap(),
             },
+            "mute" => Control::Mute { car: u(&m["car"]), on: m["on"].as_bool().unwrap() },
+            "scoreboard" => Control::Scoreboard(
+                m["players"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|p| ScoreboardEntry {
+                        car: u(&p["car"]),
+                        ping: u(&p["ping"]) as u16,
+                        mvp: p["mvp"].as_bool().unwrap(),
+                        counters: p["counters"].as_array().unwrap().iter().map(|c| u(c) as u16).collect(),
+                    })
+                    .collect(),
+            ),
+            "statEvent" => Control::StatEvent { event: u(&m["event"]) as u8, points: u(&m["points"]) as u16 },
+            "ticker" => Control::Ticker { event: u(&m["event"]) as u8, receiver: u(&m["receiver"]), victim: u(&m["victim"]) },
             "quickChat" => Control::QuickChat { preset: u(&m["preset"]) as u8, team: m["team"].as_bool().unwrap() },
             "chatFilter" => Control::ChatFilter {
                 quick_chat: ["everyone", "team", "friends", "off"].iter().position(|&f| f == m["quickChat"]).unwrap() as u8,
@@ -719,7 +890,11 @@ mod tests {
             "event" => Control::Event {
                 server_tick: u(&m["serverTick"]),
                 event: match m["event"]["kind"].as_str().unwrap() {
-                    "goal" => GameEvent::Goal { team: u(&m["event"]["team"]) as u8 },
+                    "goal" => GameEvent::Goal {
+                        team: u(&m["event"]["team"]) as u8,
+                        scorer: u(&m["event"]["scorer"]),
+                        assister: u(&m["event"]["assister"]),
+                    },
                     "left" => GameEvent::Left {
                         car: u(&m["event"]["car"]),
                         lost: m["event"]["lost"].as_bool().unwrap(),

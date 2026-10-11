@@ -1,11 +1,11 @@
 {
-  "protocolVersion": 12,
+  "protocolVersion": 13,
   "vectors": [
     {
       "channel": "control",
       "message": {
         "type": "hello",
-        "version": 1,
+        "version": 13,
         "team": 0,
         "body": 0,
         "dodgeDeadzone": 0.8,
@@ -13,9 +13,20 @@
         "airControlSensitivity": 1.25,
         "autoSkipReplay": true,
         "key": 3735928559,
-        "name": "Mercury ⚡"
+        "name": "Mercury ⚡",
+        "quickChat": "team",
+        "blockNonTactical": true
       },
-      "hex": "22000101000000cdcc4c3f0000803f0000a03f01efbeadde0b4d65726375727920e29aa1"
+      "hex": "2400010d000000cdcc4c3f0000803f0000a03f01efbeadde0b4d65726375727920e29aa10101"
+    },
+    {
+      "channel": "control",
+      "message": {
+        "type": "mute",
+        "car": 6,
+        "on": true
+      },
+      "hex": "0600080600000001"
     },
     {
       "channel": "control",
@@ -111,10 +122,12 @@
         "serverTick": 1000,
         "event": {
           "kind": "goal",
-          "team": 1
+          "team": 1,
+          "scorer": 5,
+          "assister": 0
         }
       },
-      "hex": "070083e80300000001"
+      "hex": "0f0083e803000000010500000000000000"
     },
     {
       "channel": "control",
@@ -334,6 +347,88 @@
         "reason": 0
       },
       "hex": "02008b00"
+    },
+    {
+      "channel": "control",
+      "message": {
+        "type": "scoreboard",
+        "players": [
+          {
+            "car": 3,
+            "ping": 42,
+            "mvp": false,
+            "counters": [
+              154,
+              0,
+              1,
+              0,
+              1,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              1,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              9
+            ]
+          },
+          {
+            "car": 5,
+            "ping": 999,
+            "mvp": true,
+            "counters": [
+              571,
+              3,
+              0,
+              1,
+              5,
+              2,
+              0,
+              1,
+              2,
+              0,
+              0,
+              0,
+              0,
+              0,
+              1,
+              0,
+              1,
+              0,
+              0,
+              30
+            ]
+          }
+        ]
+      },
+      "hex": "62008c02030000002a0000149a00000001000000010000000000000000000000000000000100000000000000000000000000090005000000e70301143b020300000001000500020000000100020000000000000000000000010000000100000000001e00"
+    },
+    {
+      "channel": "control",
+      "message": {
+        "type": "statEvent",
+        "event": 13,
+        "points": 75
+      },
+      "hex": "04008d0d4b00"
+    },
+    {
+      "channel": "control",
+      "message": {
+        "type": "ticker",
+        "event": 23,
+        "receiver": 3,
+        "victim": 5
+      },
+      "hex": "0a008e170300000005000000"
     },
     {
       "channel": "datagram",

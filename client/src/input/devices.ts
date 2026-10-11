@@ -28,6 +28,7 @@ export class InputDevices {
       "keydown",
       (e) => {
         if (e.code === "Space" || e.code === "Backspace") e.preventDefault(); // no page scroll/back
+        if (e.code === "Tab" && (e.target === document.body || e.target === surface)) e.preventDefault(); // (the scoreboard, not focus)
         this.#usingGamepad = false;
         this.#ownerIsGamepad = false;
         this.#keys.add(e.code);

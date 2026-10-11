@@ -272,6 +272,9 @@ public:
 
 	// RL PATCH: the rotation as last quantized, as the network sends it (see Quantize::PackedRotation)
 	Quantize::PackedRotation _netRotation;
+
+	// RL PATCH: where it last touched the ball, on the ball (uu; valid on the tick of ballHitInfo.tickCountWhenHit)
+	Vec _ballContactPoint = { 0,0,0 };
 	// RL PATCH: whether SetState() has placed the body (its first placement computes the inertia tensor: Car::SetState)
 	bool _bodyPlaced = false;
 	void _FinishPhysicsTick(const MutatorConfig& mutatorConfig);

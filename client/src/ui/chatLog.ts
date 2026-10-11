@@ -4,9 +4,9 @@
 import { CHAT_COLOURS, CHAT_PRESETS, CHAT_TEXT, type ChatGroup, TEAM_FONT_COLOURS, chatNameColour, chatTimestamp } from "../game/quickChat";
 import type { RosterEntry } from "../net/protocol";
 
-/** The log (ChatLogViewMovie in its container at (10, 10)): its text at (22, 20), 350 x 185, 18 px; fades 0.3 s; hidden
- *  6 s after the last line */
-export const CHAT_LOG = { at: [32, 30] as const, size: [350, 185] as const, font: 18, fade: 0.3, hideAfter: 6 } as const;
+/** The log (ChatLogViewMovie in its container at (10, 10)): its text at (22, 20), 350 x 185, 18 px with 23 px lines (8
+ *  of them: RV-253); fades 0.3 s; hidden 6 s after the last line, 4 s after the scoreboard closes */
+export const CHAT_LOG = { at: [32, 30] as const, size: [350, 185] as const, font: 18, line: 23, lines: 8, fade: 0.3, hideAfter: 6, afterScoreboard: 4 } as const;
 
 /** The panel (QuickChatViewMovie): x 24, centred vertically, about 140 tall; the title at (7, 10) 16 px #43AFFF, the
  *  category at (7, 25) 20 px white glowing #43AFFF, the rows from y 48, 24 apart: a 30 x 28 key box, the message 16 px
@@ -24,6 +24,8 @@ export interface ChatLine {
   readonly text: string;
   /** own lines #CCCCCC, others' white, system lines #FFED83 */
   readonly colour: string;
+  /** A name the line starts with (system lines: "NAME joined the match"), kept apart from the text (RV-249) */
+  readonly lead?: string;
 }
 
 /** A quick-chat line as the receiver shows it (AddPresetMessage, formatMessageEvent): the clock's seconds at relay as
@@ -49,30 +51,36 @@ export function chatMessageLine(
  *  match", or "NAME lost connection" for one whose connection timed out: [GFxHUD_TA] PlayerJoinString,
  *  PlayerLeaveString, PlayerTimedOutString); system lines */
 export function rosterLines(before: ReadonlyMap<number, RosterEntry>, after: ReadonlyMap<number, RosterEntry>, lost: ReadonlySet<number>): ChatLine[] {
-  const line = (text: string): ChatLine => ({ timestamp: "", channel: null, name: null, text, colour: CHAT_COLOURS.system });
+  const line = (lead: string, text: string): ChatLine => ({ timestamp: "", channel: null, name: null, lead, text, colour: CHAT_COLOURS.system });
   const lines: ChatLine[] = [];
-  for (const [car, p] of before) if (!after.has(car)) lines.push(line(`${p.name} ${lost.has(car) ? CHAT_TEXT.lostConnection : CHAT_TEXT.left}`));
-  for (const [car, p] of after) if (!before.has(car)) lines.push(line(`${p.name} ${CHAT_TEXT.joined}`));
+  for (const [car, p] of before) if (!after.has(car)) lines.push(line(p.name, lost.has(car) ? CHAT_TEXT.lostConnection : CHAT_TEXT.left));
+  for (const [car, p] of after) if (!before.has(car)) lines.push(line(p.name, CHAT_TEXT.joined));
   return lines;
 }
 
 const escape = (s: string): string => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
-/** A line's HTML (formatMessageEvent): each part left out when empty, all of it escaped */
+/** A line's HTML (formatMessageEvent): each part left out when empty, all of it escaped; names isolated in <bdi> (a
+ *  name's direction controls can't turn the rest of the line: RV-249) */
 export function chatLineHtml(line: ChatLine): string {
   const parts: string[] = [];
   if (line.timestamp) parts.push(`<span style="color:${CHAT_COLOURS.timestamp}">${escape(line.timestamp)}</span>`);
   if (line.channel) parts.push(`[${line.channel === "team" ? CHAT_TEXT.team : CHAT_TEXT.spectator}]`);
-  if (line.name) parts.push(`<b style="color:${line.name.colour}">${escape(line.name.text.toUpperCase())}:</b>`);
-  parts.push(`<span style="color:${line.colour}">${escape(line.text)}</span>`);
+  if (line.name) parts.push(`<b style="color:${line.name.colour}"><bdi>${escape(line.name.text.toUpperCase())}</bdi>:</b>`);
+  const lead = line.lead === undefined ? "" : `<bdi>${escape(line.lead)}</bdi> `;
+  parts.push(`<span style="color:${line.colour}">${lead}${escape(line.text)}</span>`);
   return parts.join(" ");
 }
 
-/** The log in the page: lines appended, the oldest dropped while it overflows its 185 px; shown 0.3 s on a line, hidden
- *  6 s after the last (real time) */
+/** The log in the page: lines appended at the bottom of its 8 lines, the first visual lines going off the top (a long
+ *  message loses its first line, not all of it: RV-253); fading in 0.3 s from where it is on a line (RV-252), hidden 6 s
+ *  after the last; held up while the menu is open, after the match and while the scoreboard is (real time) */
 export class ChatLog {
   readonly #box: HTMLElement;
-  #last = -Infinity;
+  readonly #lines: HTMLElement;
+  #hideAt = -Infinity;
+  #alpha = 0;
+  #updated: number | null = null;
 
   constructor(root: HTMLElement) {
     const L = CHAT_LOG;
@@ -83,16 +91,21 @@ export class ChatLog {
       left: `${String(L.at[0])}px`,
       top: `${String(L.at[1])}px`,
       width: `${String(L.size[0])}px`,
-      maxHeight: `${String(L.size[1])}px`,
+      height: `${String(L.line * L.lines)}px`,
       overflow: "hidden",
+      display: "flex",
+      flexDirection: "column",
+      justifyContent: "flex-end",
       font: `${String(L.font)}px "Arial Narrow", Arial, sans-serif`,
       color: "#fff",
-      lineHeight: "1.1",
+      lineHeight: `${String(L.line)}px`,
       textShadow: "0 0 6px #000, 0 0 2px #000",
       pointerEvents: "none",
       opacity: "0",
       wordWrap: "break-word",
     });
+    this.#lines = document.createElement("div");
+    this.#box.append(this.#lines);
     root.append(this.#box);
   }
 
@@ -100,22 +113,31 @@ export class ChatLog {
     if (!line.text) return;
     const row = document.createElement("div");
     row.innerHTML = chatLineHtml(line);
-    this.#box.append(row);
-    while (this.#box.scrollHeight > CHAT_LOG.size[1] && this.#box.childElementCount > 1) this.#box.firstElementChild?.remove();
-    this.#last = now;
+    this.#lines.append(row);
+    // (the lines wholly out of sight above go)
+    const L = CHAT_LOG;
+    while (this.#lines.childElementCount > 1 && this.#lines.offsetHeight - (this.#lines.firstElementChild as HTMLElement).offsetHeight >= L.line * L.lines) {
+      this.#lines.firstElementChild?.remove();
+    }
+    this.#hideAt = Math.max(this.#hideAt, now + L.hideAfter);
   }
 
-  /** Its opacity now (fading in from the last line, out 6 s after it) */
-  update(now: number): void {
+  /** Its opacity now, moving toward shown or hidden over 0.3 s from where it is. `hold`: kept up (the menu open, the
+   *  match over: RV-254), hiding `release` s after the hold ends (the scoreboard's 4 s) */
+  update(now: number, hold = false, release: number = CHAT_LOG.hideAfter): void {
     const L = CHAT_LOG;
-    const since = now - this.#last;
-    const alpha = since < L.fade ? since / L.fade : since < L.hideAfter ? 1 : Math.max(0, 1 - (since - L.hideAfter) / L.fade);
-    this.#box.style.opacity = String(alpha);
+    if (hold) this.#hideAt = Math.max(this.#hideAt, now + release);
+    const dt = this.#updated === null ? 0 : Math.max(0, now - this.#updated);
+    this.#updated = now;
+    const target = now < this.#hideAt ? 1 : 0;
+    const step = dt / L.fade;
+    this.#alpha = target > this.#alpha ? Math.min(target, this.#alpha + step) : Math.max(target, this.#alpha - step);
+    this.#box.style.opacity = this.#alpha.toFixed(3);
   }
 
   /** Its lines' text, for tests */
   get lines(): string[] {
-    return [...this.#box.children].map((c) => c.textContent);
+    return [...this.#lines.children].map((c) => c.textContent);
   }
 }
 
