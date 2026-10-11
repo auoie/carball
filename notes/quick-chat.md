@@ -543,6 +543,27 @@ user 2026-10-10; the send-failure errors are not covered by the decision):
 - `[VoiceChatFilter]` (voice chat);
 - `PartyChatBlocked*` errors.
 
+## Status in the clone (main session, 2026-10-10, protocol 11, uncommitted)
+- **Done:**
+  - CHAT-1..8: the 76 presets verbatim, the four categories with the post-game swap once the match has ended, the 24
+    slots in settings with their pools, the four bindings (1-4 / D-pad; verbatim labels; never conflicting with
+    freeplay's 1 and 2), the two-press menu and its timings.
+  - CHAT-9: online only; not with the menu up, the filter Off or disconnected.
+  - CHAT-10..12: the spam bucket on the server, per player, real time, shared by every channel; the notice.
+  - CHAT-13..17: the panel, the log (lines, colours, [M:SS] at relay with + in overtime and none once ended, YOU), the
+    join, leave and lost-connection lines from the roster, the chat sound on named lines.
+  - CHAT-18: the Quick Chat filter (Everyone, Teammates Only, Friends Only, which reaches nobody else since the clone
+    has no friends, Off) and Block Non-Tactical, on both sides on the server. The sender's team-only filter downgrades
+    all to team.
+  - CHAT-20: protocol 11 (`QuickChat`, `ChatFilter`, `Roster`, `Chat`, `ChatBlocked`; Hello's name); validated preset
+    index.
+  - CHAT-21: no bots yet.
+- **Not done:** text chat (CHAT-22), mute and block (CHAT-19: needs the scoreboard), the harsh bucket (no bans), the
+  party channel, the spectator tag (no spectators).
+- **Tests:** server 4 (roster and names, channels and the clock, the spam bucket, both sides' filters); client unit
+  (the lines, the roster lines, the settings, the menu); e2e (`forfeit.spec.ts`: the two presses, all and team, names,
+  join and leave lines).
+
 ## Open
 - **The mute path.** How the scoreboard Mute reaches the server's `VoiceMuteList`: `GFxData_PRI_TA.SetMuted` has no
   script body, and no ServerMutePlayer exists in script or exe strings. A clone can use an explicit `Mute{playerId}`

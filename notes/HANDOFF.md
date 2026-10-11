@@ -355,7 +355,17 @@
       moved, while the ball's velocity, quantised each tick, didn't. (`_oldQuat` isn't serialized: each tick recaptures
       it.)
     - README: the stale Quantization note is gone, the demo sweep note updated, row 33 has the live addresses.
-    - Next: quick chat (the untracked WIP `game/quickChat.ts`, `ui/chatLog.ts`).
+  - **In f9a553d:** all of the above. **Since f9a553d (uncommitted): quick chat** (`notes/quick-chat.md`, its status).
+    - Protocol 11: Hello's name; `QuickChat`, `ChatFilter`, `Roster`, `Chat`, `ChatBlocked`; a leave's `lost`.
+    - Server: names (tidied; "Player N"), the roster, the spam bucket and both sides' filters, the relay with the
+      clock's shown seconds; a timed-out session is "lost connection".
+    - Client:
+      - `game/quickChat.ts` (presets, slots, the menu, the bucket's twin) and `ui/chatLog.ts` (the log and the panel)
+        wired into `online.ts`.
+      - Settings: a Chat tab (name, filter, non-tactical block, slots) and the four quick-chat bindings.
+      - Audio: the chat line's sound.
+    - Next (the user's order): match stats and the scoreboard (with mute and block), then the intro and outro, HUD and
+      menus, mutators, custom training, bots.
   - **Decided (user, 2026-10-10): no controller rumble.** notes/rumble.md stays as a reference spec only. The contact
     detection it asked about (the static session's Q-RMB-a: HandleCollision's cadence, the contact's point and normal,
     the landing speed) is still wanted, for the Impact_Medium camera shake and the impact and landing sounds; don't

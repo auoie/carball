@@ -4,8 +4,17 @@ use crate::engine::Controls;
 
 // 2: kickoff countdown in the state; 3: the wheels' previous contacts; 4: the jump's release; 5: respawn spot selection
 // and flip resets in the state; 9: the goal replay (its phase, plan and skip votes; Hello's auto-skip); 10: forfeit votes,
-// the match type, a leaver's car, no contest
-pub const VERSION: u16 = 10;
+// the match type, a leaver's car, no contest; 11: quick chat, players' names (the roster), a leave's reason
+pub const VERSION: u16 = 11;
+/// The quick-chat presets (`Group1-6MessageN`: notes/quick-chat.md CHAT-1); a preset on the wire is its index
+pub const QUICK_CHAT_PRESETS: u8 = 76;
+/// A player's quick-chat filter (`EChatFilter` as the clone uses it: CHAT-18)
+pub const CHAT_EVERYONE: u8 = 0;
+pub const CHAT_TEAM: u8 = 1;
+pub const CHAT_FRIENDS: u8 = 2;
+pub const CHAT_OFF: u8 = 3;
+/// A name's bytes at most (UTF-8)
+pub const MAX_NAME_BYTES: usize = 32;
 pub const MAX_INPUT_FRAMES: usize = 10;
 
 /// Control stream (reliable) messages
@@ -22,7 +31,14 @@ pub enum Control {
         auto_skip_replay: bool,
         /// The client's own random key, kept across its reconnects (who started a forfeit vote: `ForfeitInitiatorIDs`)
         key: u32,
+        /// The player's name (UTF-8, `MAX_NAME_BYTES` at most; the server tidies it)
+        name: String,
     },
+    /// A quick-chat preset (`ServerSay_TA` with bPreset): to the player's team or to all
+    QuickChat { preset: u8, team: bool },
+    /// The player's chat filters (`ServerSetQuickChatFilter`, `ServerSetTacticalChatFilter`): `CHAT_*`, and whether
+    /// other players' non-tactical presets are blocked during the match
+    ChatFilter { quick_chat: u8, block_non_tactical: bool },
     /// Skip the goal replay (`ReadyUp`: Space / pad A); counts only during one
     ReadyUp,
     /// The auto-skip setting changed (`ServerSetAutoSkipGoalReplay`: turned on during a replay, it readies the player)
@@ -45,6 +61,21 @@ pub enum Control {
     ReplayReady { ready: u8, total: u8 },
     /// The player's team's forfeit vote, sent to each of its players when it changes (`Team_TA.ForfeitVote`)
     ForfeitVote(ForfeitVoteState),
+    /// The players: each one's car, team and name, sent to everyone when it changes
+    Roster(Vec<RosterEntry>),
+    /// A quick-chat line (`ChatMessage_TA`): the sender's car, the preset, to the team or all, and the clock's shown
+    /// seconds as the server relayed it (`SecondsRemaining`)
+    Chat { car: u32, preset: u8, team: bool, seconds: u16 },
+    /// The sender's chat is blocked by the spam filter for this long (`ClientNotifyChatDisabled`)
+    ChatBlocked { seconds: f32 },
+}
+
+/// A player as the others know them
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RosterEntry {
+    pub car: u32,
+    pub team: u8,
+    pub name: String,
 }
 
 pub const VOTE_RUNNING: u8 = 0;
@@ -125,8 +156,9 @@ pub struct MatchState {
 pub enum GameEvent {
     Goal { team: u8 },
     Demo { attacker: u32, victim: u32 },
-    /// A player left: their car explodes where it is (`Car.Demolish(None)`: no demolition counted)
-    Left { car: u32 },
+    /// A player left: their car explodes where it is (`Car.Demolish(None)`: no demolition counted); `lost`: their
+    /// connection timed out (the chat log's "lost connection")
+    Left { car: u32, lost: bool },
 }
 
 /// Datagram (unreliable) messages
@@ -216,6 +248,15 @@ impl Writer {
         self.u32(b.len() as u32);
         self.0.extend_from_slice(b);
     }
+    /// A short UTF-8 string: a byte count, then its bytes (`MAX_NAME_BYTES` at most, cut at a character boundary)
+    fn name(&mut self, s: &str) {
+        let mut end = s.len().min(MAX_NAME_BYTES);
+        while !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        self.u8(end as u8);
+        self.0.extend_from_slice(&s.as_bytes()[..end]);
+    }
 }
 
 #[derive(Debug)]
@@ -257,6 +298,10 @@ impl<'a> Reader<'a> {
         let n = self.u32()? as usize;
         Ok(self.take(n)?.to_vec())
     }
+    fn name(&mut self) -> Result<String, DecodeError> {
+        let n = usize::from(self.u8()?);
+        Ok(String::from_utf8_lossy(self.take(n)?).into_owned())
+    }
     fn rest(&mut self) -> Vec<u8> {
         std::mem::take(&mut self.0).to_vec()
     }
@@ -267,7 +312,7 @@ impl Control {
     pub fn encode(&self) -> Vec<u8> {
         let mut w = Writer::default();
         match self {
-            Self::Hello { version, team, body, dodge_deadzone, steering_sensitivity, air_control_sensitivity, auto_skip_replay, key } => {
+            Self::Hello { version, team, body, dodge_deadzone, steering_sensitivity, air_control_sensitivity, auto_skip_replay, key, name } => {
                 w.u8(0x01);
                 w.u16(*version);
                 w.u8(*team);
@@ -277,6 +322,37 @@ impl Control {
                 w.f32(*air_control_sensitivity);
                 w.u8(u8::from(*auto_skip_replay));
                 w.u32(*key);
+                w.name(name);
+            }
+            Self::QuickChat { preset, team } => {
+                w.u8(0x06);
+                w.u8(*preset);
+                w.u8(u8::from(*team));
+            }
+            Self::ChatFilter { quick_chat, block_non_tactical } => {
+                w.u8(0x07);
+                w.u8(*quick_chat);
+                w.u8(u8::from(*block_non_tactical));
+            }
+            Self::Roster(players) => {
+                w.u8(0x88);
+                w.u8(players.len().min(255) as u8);
+                for p in players.iter().take(255) {
+                    w.u32(p.car);
+                    w.u8(p.team);
+                    w.name(&p.name);
+                }
+            }
+            Self::Chat { car, preset, team, seconds } => {
+                w.u8(0x89);
+                w.u32(*car);
+                w.u8(*preset);
+                w.u8(u8::from(*team));
+                w.u16(*seconds);
+            }
+            Self::ChatBlocked { seconds } => {
+                w.u8(0x8A);
+                w.f32(*seconds);
             }
             Self::ResetInputBuffer => w.u8(0x02),
             Self::VoteForfeit => w.u8(0x05),
@@ -359,9 +435,10 @@ impl Control {
                         w.u32(*attacker);
                         w.u32(*victim);
                     }
-                    GameEvent::Left { car } => {
+                    GameEvent::Left { car, lost } => {
                         w.u8(2);
                         w.u32(*car);
+                        w.u8(u8::from(*lost));
                     }
                 }
             }
@@ -387,7 +464,18 @@ impl Control {
                 air_control_sensitivity: r.f32()?,
                 auto_skip_replay: r.u8()? != 0,
                 key: r.u32()?,
+                name: r.name()?,
             },
+            0x06 => Self::QuickChat { preset: r.u8()?, team: r.u8()? != 0 },
+            0x07 => Self::ChatFilter { quick_chat: r.u8()?, block_non_tactical: r.u8()? != 0 },
+            0x88 => {
+                let players = (0..r.u8()?)
+                    .map(|_| Ok(RosterEntry { car: r.u32()?, team: r.u8()?, name: r.name()? }))
+                    .collect::<Result<_, DecodeError>>()?;
+                Self::Roster(players)
+            }
+            0x89 => Self::Chat { car: r.u32()?, preset: r.u8()?, team: r.u8()? != 0, seconds: r.u16()? },
+            0x8A => Self::ChatBlocked { seconds: r.f32()? },
             0x02 => Self::ResetInputBuffer,
             0x05 => Self::VoteForfeit,
             0x87 => {
@@ -418,7 +506,7 @@ impl Control {
                 let event = match r.u8()? {
                     0 => GameEvent::Goal { team: r.u8()? },
                     1 => GameEvent::Demo { attacker: r.u32()?, victim: r.u32()? },
-                    2 => GameEvent::Left { car: r.u32()? },
+                    2 => GameEvent::Left { car: r.u32()?, lost: r.u8()? != 0 },
                     t => return Err(DecodeError::UnknownType(t)),
                 };
                 Self::Event { server_tick, event }
@@ -559,7 +647,23 @@ mod tests {
                 air_control_sensitivity: f(&m["airControlSensitivity"]),
                 auto_skip_replay: m["autoSkipReplay"].as_bool().unwrap(),
                 key: u(&m["key"]),
+                name: m["name"].as_str().unwrap().to_string(),
             },
+            "quickChat" => Control::QuickChat { preset: u(&m["preset"]) as u8, team: m["team"].as_bool().unwrap() },
+            "chatFilter" => Control::ChatFilter {
+                quick_chat: ["everyone", "team", "friends", "off"].iter().position(|&f| f == m["quickChat"]).unwrap() as u8,
+                block_non_tactical: m["blockNonTactical"].as_bool().unwrap(),
+            },
+            "roster" => Control::Roster(
+                m["players"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|p| RosterEntry { car: u(&p["car"]), team: u(&p["team"]) as u8, name: p["name"].as_str().unwrap().to_string() })
+                    .collect(),
+            ),
+            "chat" => Control::Chat { car: u(&m["car"]), preset: u(&m["preset"]) as u8, team: m["team"].as_bool().unwrap(), seconds: u(&m["seconds"]) as u16 },
+            "chatBlocked" => Control::ChatBlocked { seconds: f(&m["seconds"]) },
             "readyUp" => Control::ReadyUp,
             "autoSkipReplay" => Control::AutoSkipReplay { on: m["on"].as_bool().unwrap() },
             "replay" => {
@@ -598,7 +702,7 @@ mod tests {
                 server_tick: u(&m["serverTick"]),
                 event: match m["event"]["kind"].as_str().unwrap() {
                     "goal" => GameEvent::Goal { team: u(&m["event"]["team"]) as u8 },
-                    "left" => GameEvent::Left { car: u(&m["event"]["car"]) },
+                    "left" => GameEvent::Left { car: u(&m["event"]["car"]), lost: m["event"]["lost"].as_bool().unwrap() },
                     _ => GameEvent::Demo { attacker: u(&m["event"]["attacker"]), victim: u(&m["event"]["victim"]) },
                 },
             },

@@ -100,7 +100,7 @@ pub enum Outgoing {
 }
 
 /// What a joining player asked for (their `Hello`)
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct JoinRequest {
     pub team: u8,
     pub body: u8,
@@ -110,6 +110,53 @@ pub struct JoinRequest {
     pub auto_skip_replay: bool,
     /// The client's key, the same when it reconnects
     pub key: u32,
+    /// The name it asked for (tidied: `player_name`)
+    pub name: String,
+}
+
+/// The chat spam filter (`ApplyChatSpamFilter`, `ChatSpam`: notes/quick-chat.md CHAT-10..12): a per-player leaky bucket on
+/// real time, shared by every channel
+const CHAT_RISE: f64 = 1.2;
+const CHAT_RISE_MULTIPLIER: f64 = 0.75;
+const CHAT_DECAY: f64 = 1.0;
+const CHAT_MAX: f64 = 4.0;
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ChatBucket {
+    value: f64,
+    last: f64,
+}
+
+impl ChatBucket {
+    /// A message at `now` (real s): None when it passes, else the seconds until chat is allowed again (a blocked
+    /// attempt decays the bucket and adds nothing)
+    fn apply(&mut self, now: f64) -> Option<f64> {
+        self.value = (self.value - CHAT_DECAY * (now - self.last)).max(0.0);
+        self.last = now;
+        if self.value > CHAT_MAX {
+            return Some((self.value - CHAT_MAX) / CHAT_DECAY);
+        }
+        self.value += CHAT_RISE + self.value * CHAT_RISE_MULTIPLIER;
+        None
+    }
+}
+
+/// A preset is tactical (the Block Non-Tactical filter's rule: Group1, Group5 and Group6, by the preset's group)
+fn tactical(preset: u8) -> bool {
+    !(22..59).contains(&preset) // (Group1: 0-21; Group5, Group6: 59-75)
+}
+
+/// The name a player asked for, tidied: control characters dropped, trimmed, `MAX_NAME_BYTES` at most; none: "Player N"
+fn player_name(asked: &str, id: PlayerId) -> String {
+    let clean: String = asked.chars().filter(|c| !c.is_control()).collect();
+    let mut name = clean.trim().to_string();
+    let mut end = name.len().min(protocol::MAX_NAME_BYTES);
+    while !name.is_char_boundary(end) {
+        end -= 1;
+    }
+    name.truncate(end);
+    let name = name.trim_end().to_string();
+    if name.is_empty() { format!("Player {id}") } else { name }
 }
 
 /// A run of one car's touches on the ball (`Ball_TA` touches, consecutive ones by a car merged): its last tick
@@ -192,6 +239,11 @@ struct Player {
     key: u32,
     /// Their team's forfeit vote as last sent to them
     vote_sent: Option<ForfeitVoteState>,
+    name: String,
+    chat: ChatBucket,
+    /// Their quick-chat filter (`protocol::CHAT_*`) and whether they block others' non-tactical presets
+    chat_filter: u8,
+    block_non_tactical: bool,
 }
 
 pub struct Game {
@@ -390,6 +442,10 @@ impl Game {
             ready: false,
             key: request.key,
             vote_sent: None,
+            name: player_name(&request.name, id),
+            chat: ChatBucket::default(),
+            chat_filter: protocol::CHAT_EVERYONE,
+            block_non_tactical: false,
         };
         let snapshot = self.arena.save_state();
         let welcome = Control::Welcome {
@@ -406,9 +462,71 @@ impl Game {
         self.players.insert(id, player);
         self.send_world_to_others(id, &snapshot);
         self.send_votes();
+        self.send_roster();
     }
 
+    /// The players to everyone (their cars, teams and names)
+    fn send_roster(&self) {
+        let roster = self.players.values().map(|p| protocol::RosterEntry { car: p.car_id, team: p.team, name: p.name.clone() }).collect();
+        self.broadcast(&Control::Roster(roster));
+    }
+
+    /// The player's chat filters (`ServerSetQuickChatFilter`, `ServerSetTacticalChatFilter`)
+    pub fn set_chat_filter(&mut self, id: PlayerId, quick_chat: u8, block_non_tactical: bool) {
+        if let Some(p) = self.players.get_mut(&id) {
+            p.chat_filter = quick_chat.min(protocol::CHAT_OFF);
+            p.block_non_tactical = block_non_tactical;
+        }
+    }
+
+    /// A quick-chat preset (`ServerSay_TA` → `ServerSayInternal_TA` → `GetMessageRecipients`, CHAT-10, 18, 20): through
+    /// the sender's spam filter (blocked: the notice to them), then to the sender and to each player the channel reaches
+    /// whom neither side's filter keeps it from (a team-only sender's goes to the team; a friends-only one's to nobody
+    /// else, the clone having no friends; a recipient's Off or team-only filter, or their non-tactical block), stamped
+    /// with the clock's shown seconds. `now`: real time (s)
+    pub fn quick_chat(&mut self, id: PlayerId, preset: u8, team: bool, now: f64) {
+        if preset >= protocol::QUICK_CHAT_PRESETS {
+            return;
+        }
+        let Some(sender) = self.players.get_mut(&id) else { return };
+        if sender.chat_filter == protocol::CHAT_OFF {
+            return;
+        }
+        if let Some(seconds) = sender.chat.apply(now) {
+            let _ = sender.out.send(Outgoing::Control(Control::ChatBlocked { seconds: seconds as f32 }.encode()));
+            return;
+        }
+        let (car, from_team, from_filter) = (sender.car_id, sender.team, sender.chat_filter);
+        let team = team || from_filter == protocol::CHAT_TEAM;
+        let message = Control::Chat { car, preset, team, seconds: shown_seconds(&self.match_state()).min(u32::from(u16::MAX)) as u16 }.encode();
+        for (&to, p) in &self.players {
+            let reaches = to == id
+                || (!(team && p.team != from_team)
+                    && from_filter != protocol::CHAT_FRIENDS
+                    && !(from_filter == protocol::CHAT_TEAM && p.team != from_team)
+                    && match p.chat_filter {
+                        protocol::CHAT_EVERYONE => true,
+                        protocol::CHAT_TEAM => p.team == from_team,
+                        _ => false, // (friends only: the clone has no friends; off)
+                    }
+                    && !(p.block_non_tactical && !tactical(preset) && self.phase != Phase::Ended));
+            if reaches {
+                let _ = p.out.send(Outgoing::Control(message.clone()));
+            }
+        }
+    }
+
+    /// A player left the match (their connection closed)
     pub fn leave(&mut self, id: PlayerId) {
+        self.remove_player(id, false);
+    }
+
+    /// A player's connection timed out (the chat log's "lost connection")
+    pub fn connection_lost(&mut self, id: PlayerId) {
+        self.remove_player(id, true);
+    }
+
+    fn remove_player(&mut self, id: PlayerId, lost: bool) {
         if let Some(player) = self.players.remove(&id) {
             let stats = player.input.stats;
             eprintln!(
@@ -432,7 +550,7 @@ impl Game {
             self.reenable_vote_starters(team);
             // Their car explodes where it is (`Car.Demolish(None)`: no demolition counted), then goes
             let tick = self.arena.tick_count();
-            self.broadcast(&Control::Event { server_tick: tick as u32, event: GameEvent::Left { car: player.car_id } });
+            self.broadcast(&Control::Event { server_tick: tick as u32, event: GameEvent::Left { car: player.car_id, lost } });
             self.arena.remove_car(player.car_id);
             if self.players.is_empty() {
                 // Everyone gone: no contest (`ForceNoContest`; the arena stops until the next player starts a match)
@@ -449,6 +567,7 @@ impl Game {
             self.send_world_to_others(id, &snapshot);
             self.send_match_state();
             self.send_votes();
+            self.send_roster();
         }
     }
 
@@ -1033,8 +1152,18 @@ mod tests {
         air_control_sensitivity: 1.0,
         auto_skip_replay: true,
         key: 0,
+        name: String::new(),
     };
-    const WANTS_REPLAYS: JoinRequest = JoinRequest { auto_skip_replay: false, ..REQUEST };
+    const WANTS_REPLAYS: JoinRequest = JoinRequest {
+        team: 255,
+        body: 0,
+        dodge_deadzone: 0.5,
+        steering_sensitivity: 1.0,
+        air_control_sensitivity: 1.0,
+        auto_skip_replay: false,
+        key: 0,
+        name: String::new(),
+    };
 
     fn drain(rx: &mut UnboundedReceiver<Outgoing>) -> Vec<Outgoing> {
         let mut out = Vec::new();
@@ -1294,7 +1423,7 @@ mod tests {
         // The leaver's car explodes for the others; their team forfeits 0.01 game s later (the second tick)
         let car = game.car_id(3).unwrap();
         game.leave(3);
-        assert!(events(&mut rx1).contains(&GameEvent::Left { car }));
+        assert!(events(&mut rx1).contains(&GameEvent::Left { car, lost: false }));
         game.tick(0.0);
         assert_eq!(game.phase, Phase::Active);
         game.tick(0.0);
@@ -1765,6 +1894,115 @@ mod tests {
         let (repressed, with) = run(Some(trace[k - 1].0 as usize));
         assert!(with[k].1, "the pair with the release and the press");
         assert!(repressed > held + 50.0, "held {held}, with the release {repressed}");
+    }
+
+
+    /// The quick-chat lines sent: (sender's car, preset, team, seconds)
+    fn chats(rx: &mut UnboundedReceiver<Outgoing>) -> Vec<(u32, u8, bool, u16)> {
+        controls(rx)
+            .into_iter()
+            .filter_map(|c| if let Control::Chat { car, preset, team, seconds } = c { Some((car, preset, team, seconds)) } else { None })
+            .collect()
+    }
+
+    #[test]
+    fn players_have_names_and_everyone_gets_the_roster() {
+        init_engine();
+        let mut game = Game::new();
+        let mut rxs = Vec::new();
+        for (id, name) in [(1, "  Merc\u{7}ury  "), (2, ""), (3, "a name far longer than thirty-two bytes, cut")] {
+            let (tx, rx) = unbounded_channel();
+            game.join(id, JoinRequest { name: name.to_string(), ..REQUEST }, tx);
+            rxs.push(rx);
+        }
+        let roster = controls(&mut rxs[0]).into_iter().filter_map(|c| if let Control::Roster(r) = c { Some(r) } else { None }).next_back().unwrap();
+        let names: Vec<&str> = roster.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["Mercury", "Player 2", "a name far longer than thirty-tw"]);
+        assert_eq!(roster.iter().map(|p| (p.car, p.team)).collect::<Vec<_>>(), [(1, 0), (2, 1), (3, 0)]);
+        // A leave: the roster without them, and why they went
+        game.connection_lost(2);
+        let left = controls(&mut rxs[0]);
+        assert!(left.iter().any(|c| matches!(c, Control::Event { event: GameEvent::Left { car: 2, lost: true }, .. })));
+        assert!(left.iter().any(|c| matches!(c, Control::Roster(r) if r.len() == 2)));
+    }
+
+    #[test]
+    fn quick_chat_reaches_the_channel_stamped_with_the_clock() {
+        let (mut game, mut rxs) = match_with(MatchType::Casual, 2, &[(1, 0, 1), (2, 0, 2), (3, 1, 3)]);
+        game.clock_ticks = 250 * TICK_RATE + 30; // (4:11 shown)
+        for rx in &mut rxs {
+            drain(rx);
+        }
+        // "I got it!" to the team: the sender and the teammate, not orange
+        game.quick_chat(1, 0, true, 0.0);
+        assert_eq!(chats(&mut rxs[0]), [(1, 0, true, 251)]);
+        assert_eq!(chats(&mut rxs[1]), [(1, 0, true, 251)]);
+        assert!(chats(&mut rxs[2]).is_empty());
+        // "Nice shot!" to all
+        game.quick_chat(3, 22, false, 0.0);
+        for rx in &mut rxs {
+            assert_eq!(chats(rx), [(3, 22, false, 251)]);
+        }
+        // (no such preset: nothing)
+        game.quick_chat(1, protocol::QUICK_CHAT_PRESETS, false, 0.0);
+        assert!(chats(&mut rxs[0]).is_empty());
+    }
+
+    #[test]
+    fn the_spam_filter_lets_three_through_then_blocks_with_a_notice() {
+        let (mut game, mut rxs) = match_with(MatchType::Casual, 2, &[(1, 0, 1), (2, 1, 2)]);
+        drain(&mut rxs[1]);
+        for _ in 0..3 {
+            game.quick_chat(1, 22, false, 10.0);
+        }
+        assert_eq!(chats(&mut rxs[1]).len(), 3);
+        game.quick_chat(1, 22, false, 10.0);
+        let notice = controls(&mut rxs[0]).into_iter().find_map(|c| if let Control::ChatBlocked { seconds } = c { Some(seconds) } else { None });
+        assert!(notice.is_some_and(|s| (s - 2.975).abs() < 1e-4), "{notice:?}");
+        assert!(chats(&mut rxs[1]).is_empty());
+        // (a blocked attempt adds nothing: allowed again 2.975 s after the first block)
+        game.quick_chat(1, 22, false, 12.0);
+        assert!(chats(&mut rxs[1]).is_empty());
+        game.quick_chat(1, 22, false, 13.0);
+        assert_eq!(chats(&mut rxs[1]).len(), 1);
+    }
+
+    #[test]
+    fn chat_filters_on_both_sides() {
+        let (mut game, mut rxs) = match_with(MatchType::Casual, 2, &[(1, 0, 1), (2, 0, 2), (3, 1, 3), (4, 1, 4)]);
+        for rx in &mut rxs {
+            drain(rx);
+        }
+        // Recipients: off gets nothing, team-only gets its team's, a non-tactical block keeps out "Nice shot!" during the
+        // match but not "I got it!"
+        game.set_chat_filter(2, protocol::CHAT_OFF, false);
+        game.set_chat_filter(3, protocol::CHAT_TEAM, false);
+        game.set_chat_filter(4, protocol::CHAT_EVERYONE, true);
+        game.quick_chat(1, 22, false, 0.0);
+        game.quick_chat(1, 0, false, 10.0);
+        let got: Vec<Vec<u8>> = rxs.iter_mut().map(|rx| chats(rx).iter().map(|c| c.1).collect()).collect();
+        assert_eq!(got, [vec![22, 0], vec![], vec![], vec![0]]);
+        // After the match, post-game chat isn't non-tactical: "gg" (59) reaches the blocker
+        game.end_match(0, false);
+        game.quick_chat(1, 59, false, 20.0);
+        assert_eq!(chats(&mut rxs[3]).iter().map(|c| c.1).collect::<Vec<_>>(), [59]);
+        // Senders: team-only goes to the team; friends-only to nobody else (no friends); off sends nothing
+        for rx in &mut rxs {
+            drain(rx);
+        }
+        game.set_chat_filter(2, protocol::CHAT_EVERYONE, false);
+        game.set_chat_filter(1, protocol::CHAT_TEAM, false);
+        game.quick_chat(1, 22, false, 30.0);
+        assert_eq!(chats(&mut rxs[1]), [(1, 22, true, shown_seconds(&game.match_state()) as u16)]);
+        assert!(chats(&mut rxs[3]).is_empty());
+        drain(&mut rxs[0]);
+        game.set_chat_filter(1, protocol::CHAT_FRIENDS, false);
+        game.quick_chat(1, 22, false, 40.0);
+        assert_eq!(chats(&mut rxs[0]).len(), 1, "the sender sees their own");
+        assert!(chats(&mut rxs[1]).is_empty());
+        game.set_chat_filter(1, protocol::CHAT_OFF, false);
+        game.quick_chat(1, 22, false, 50.0);
+        assert!(chats(&mut rxs[0]).is_empty());
     }
 
 }

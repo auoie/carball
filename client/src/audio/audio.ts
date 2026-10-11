@@ -117,6 +117,12 @@ export class GameAudio {
     this.#play({ kind: "demo", at });
   }
 
+  /** A chat line with a sender's name, one's own too (CHAT-17: the HUD's CHATMESSAGE event) */
+  chatMessage(): void {
+    this.#count("chat");
+    this.#synth.chatMessage(this.#effects, this.#ctx.currentTime + 0.005);
+  }
+
   /** A flip reset (the player's car): a chime, up close. */
   flipReset(): void {
     this.#count("flipReset");

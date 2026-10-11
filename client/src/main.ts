@@ -17,6 +17,7 @@ import { type ThemeName, createTheme, themeName } from "./render/themes";
 import { loadSettings } from "./settings/settings";
 import { SettingsPanel } from "./ui/settingsPanel";
 import { MatchMenu } from "./ui/matchMenu";
+import { ChatLog, QuickChatPanel } from "./ui/chatLog";
 import { Renderer } from "./render/renderer";
 import "./style.css";
 
@@ -156,13 +157,16 @@ async function main(): Promise<void> {
       steeringSensitivity: controller.steeringSensitivity,
       airControlSensitivity: controller.aerialSensitivity,
       autoSkipReplay: settings.options.autoSkipReplay,
+      name: settings.chat.name,
     });
     world.loadState(welcome.snapshot);
     // (a closed tab leaves at once, not when the session times out)
     window.addEventListener("pagehide", () => {
       connection.close();
     });
-    const online = new Online(world, renderer, arena, input, hud, audio, connection, welcome, () => settings, () => !panel.isOpen);
+    const hudRoot = required("#hud", HTMLElement);
+    const chat = { log: new ChatLog(hudRoot), panel: new QuickChatPanel(hudRoot) };
+    const online = new Online(world, renderer, arena, input, hud, audio, connection, welcome, () => settings, () => !panel.isOpen, chat);
     // For the browser tests
     (window as unknown as { rlOnline?: () => unknown }).rlOnline = () => online.stats;
     // The menu's match buttons: forfeit or vote (the server's), leave (back to freeplay)

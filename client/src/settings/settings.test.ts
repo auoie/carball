@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_BINDINGS } from "../input/bindings";
 import { DEFAULT_CAMERA_SETTINGS } from "../camera/rlCamera";
-import { DEFAULT_SETTINGS, MODERN_CAMERA_KBM, MODERN_CAMERA_PAD, loadSettings, parseSettings, saveSettings } from "./settings";
+import { DEFAULT_SETTINGS, MODERN_CAMERA_KBM, MODERN_CAMERA_PAD, loadSettings, parseSettings, saveSettings, tidyName } from "./settings";
+import { DEFAULT_SLOTS } from "../game/quickChat";
 
 class MemoryStorage {
   readonly data = new Map<string, string>();
@@ -134,5 +135,33 @@ describe("settings", () => {
   it("treats non-objects as empty", () => {
     expect(parseSettings(null)).toEqual(DEFAULT_SETTINGS);
     expect(parseSettings([1, 2, 3])).toEqual(DEFAULT_SETTINGS);
+  });
+});
+
+describe("chat settings (CHAT-5, 18)", () => {
+  it("the filters and slots from saved data, each invalid one its default", () => {
+    const slots = [...DEFAULT_SLOTS];
+    slots[0] = "Group3Message5"; // ("No way!": in the match pool)
+    slots[16] = "Group5Message3"; // ("That was fun!": post game, its pool)
+    slots[20] = "Group1Message1"; // (not a pre-game preset: back to its default)
+    const chat = parseSettings({ chat: { name: " Merc ", quickChatFilter: "team", blockNonTactical: true, slots } }).chat;
+    expect(chat).toMatchObject({ name: "Merc", quickChatFilter: "team", blockNonTactical: true });
+    expect([chat.slots[0], chat.slots[16], chat.slots[20]]).toEqual(["Group3Message5", "Group5Message3", DEFAULT_SLOTS[20]]);
+    expect(parseSettings({ chat: { quickChatFilter: "loud", slots: "x" } }).chat).toEqual(DEFAULT_SETTINGS.chat);
+  });
+
+  it("a name: control characters out, trimmed, 32 bytes of whole characters at most", () => {
+    expect(tidyName("  Ziggy\u0007 ")).toBe("Ziggy");
+    expect(new TextEncoder().encode(tidyName("é".repeat(40))).byteLength).toBe(32);
+    expect(tidyName(`${"a".repeat(30)}👍🏽`)).toBe("a".repeat(30)); // (the emoji whole or not at all)
+    expect(tidyName(12)).toBe("");
+  });
+
+  it("saved bindings from before quick chat: its keys 1-4 though freeplay's use 1 and 2 (never active together)", () => {
+    const saved = { bindings: { ballInFront: DEFAULT_BINDINGS.ballInFront, ballOnCar: DEFAULT_BINDINGS.ballOnCar, jump: { keyboard: { kind: "key", code: "Digit3" }, gamepad: null } } };
+    const b = parseSettings(saved).bindings;
+    expect([b.chatPreset1.keyboard, b.chatPreset2.keyboard]).toEqual([{ kind: "key", code: "Digit1" }, { kind: "key", code: "Digit2" }]);
+    expect(b.chatPreset3.keyboard).toBeNull(); // (a saved binding that drives the car keeps the key)
+    expect(b.chatPreset4.keyboard).toEqual({ kind: "key", code: "Digit4" });
   });
 });

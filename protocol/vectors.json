@@ -1,5 +1,5 @@
 {
-  "protocolVersion": 10,
+  "protocolVersion": 11,
   "vectors": [
     {
       "channel": "control",
@@ -12,9 +12,10 @@
         "steeringSensitivity": 1.0,
         "airControlSensitivity": 1.25,
         "autoSkipReplay": true,
-        "key": 3735928559
+        "key": 3735928559,
+        "name": "Mercury ⚡"
       },
-      "hex": "16000101000000cdcc4c3f0000803f0000a03f01efbeadde"
+      "hex": "22000101000000cdcc4c3f0000803f0000a03f01efbeadde0b4d65726375727920e29aa1"
     },
     {
       "channel": "control",
@@ -44,6 +45,33 @@
         "type": "voteForfeit"
       },
       "hex": "010005"
+    },
+    {
+      "channel": "control",
+      "message": {
+        "type": "quickChat",
+        "preset": 22,
+        "team": false
+      },
+      "hex": "0300061600"
+    },
+    {
+      "channel": "control",
+      "message": {
+        "type": "quickChat",
+        "preset": 0,
+        "team": true
+      },
+      "hex": "0300060001"
+    },
+    {
+      "channel": "control",
+      "message": {
+        "type": "chatFilter",
+        "quickChat": "team",
+        "blockNonTactical": true
+      },
+      "hex": "0300070101"
     },
     {
       "channel": "control",
@@ -107,10 +135,11 @@
         "serverTick": 9,
         "event": {
           "kind": "left",
-          "car": 4
+          "car": 4,
+          "lost": true
         }
       },
-      "hex": "0a0083090000000204000000"
+      "hex": "0b008309000000020400000001"
     },
     {
       "channel": "control",
@@ -257,6 +286,44 @@
         "canStart": true
       },
       "hex": "0600870300000002"
+    },
+    {
+      "channel": "control",
+      "message": {
+        "type": "roster",
+        "players": [
+          {
+            "car": 1,
+            "team": 0,
+            "name": "Mercury"
+          },
+          {
+            "car": 3,
+            "team": 1,
+            "name": "Player 2"
+          }
+        ]
+      },
+      "hex": "1d0088020100000000074d657263757279030000000108506c617965722032"
+    },
+    {
+      "channel": "control",
+      "message": {
+        "type": "chat",
+        "car": 3,
+        "preset": 59,
+        "team": false,
+        "seconds": 251
+      },
+      "hex": "090089030000003b00fb00"
+    },
+    {
+      "channel": "control",
+      "message": {
+        "type": "chatBlocked",
+        "seconds": 2.75
+      },
+      "hex": "05008a00003040"
     },
     {
       "channel": "datagram",

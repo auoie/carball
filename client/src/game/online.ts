@@ -3,14 +3,15 @@
 // After a goal the clock slows with the game's (src/game/goalSequence.ts, keyed to the goal's server tick as the
 // server's is), then the goal replay plays from this client's own recording of what it drew, until it ends or every
 // player skips it (Space / pad A). The team's forfeit vote shows on the HUD, and the menu has its buttons
-// (src/game/forfeitVote.ts).
+// (src/game/forfeitVote.ts). Quick chat (src/game/quickChat.ts): the two-press menu on keys 1-4, the presets through the
+// server, the chat log with the players' names, their comings and goings.
 import { Quaternion, Vector3 } from "three";
 import { PlayerCamera } from "../camera/rlCamera";
 import type { BodyState, CarConfig, CarState, World } from "../engine/world";
 import { type Vec3, add, sub } from "../math/vec";
 import { type Hud, respawnHud } from "../hud";
 import type { InputDevices } from "../input/devices";
-import { AirPitchSafety, ButtonLatch, EMPTY_INPUT, type HeldActions, type InputSnapshot, JumpLatch, type LookInput, readControls, readHeldActions } from "../input/mapping";
+import { AirPitchSafety, ButtonLatch, type ChatKey, EMPTY_INPUT, chatPresses, type HeldActions, type InputSnapshot, JumpLatch, type LookInput, NO_HELD_ACTIONS, readControls, readHeldActions } from "../input/mapping";
 import { FixedStep, TICK_SECONDS, frameTimes } from "../loop/fixedStep";
 import type { Connection } from "../net/connection";
 import { NO_INPUT, Predictor } from "../net/predictor";
@@ -24,6 +25,7 @@ import {
   type InputFrame,
   type MatchState,
   type MatchType,
+  type RosterEntry,
   MAX_INPUT_FRAMES,
   type Update,
   quantizeAxis,
@@ -51,6 +53,9 @@ import { ImpactTriggers, triggerSounds } from "./impactTriggers";
 import { ServerDemolitions } from "./serverDemolitions";
 import { ShakeTriggers } from "./shakeTriggers";
 import { type MatchMenuItem, matchMenuItems, pressTo, voteHud } from "./forfeitVote";
+import { CHAT_COLOURS, CHAT_TEXT, QuickChatMenu, presetIndex, presetText, visibleGroups } from "./quickChat";
+import { type ChatLog, type QuickChatPanel, chatMessageLine, rosterLines } from "../ui/chatLog";
+import { inputName } from "../input/bindings";
 
 
 /** The key that opens the menu, which has the vote button (VoteInstructions' {0?KeyBinding}) */
@@ -136,7 +141,7 @@ export class Online {
   readonly #controlMessages: ControlMessage[] = [];
   /** The match's state, from the server */
   #match: MatchState | null = null;
-  #held: HeldActions = { ballCam: false, rearCamera: false, reset: false, ballInFront: false, ballOnCar: false };
+  #held: HeldActions = NO_HELD_ACTIONS;
   #ballCam = false;
   #rear = false;
   #look: LookInput = { up: 0, right: 0 };
@@ -176,6 +181,11 @@ export class Online {
   readonly #teamSize: number;
   /** The team's forfeit vote, from the server */
   #vote: ForfeitVote | null = null;
+  /** The players by car (null until the first roster), and the cars whose players' connections timed out */
+  #roster: Map<number, RosterEntry> | null = null;
+  readonly #lost = new Set<number>();
+  readonly #chatMenu = new QuickChatMenu();
+  #chatFilterSent = "";
   #minDilation = 1;
   #fps = 60;
   readonly #pos = new Vector3();
@@ -195,6 +205,7 @@ export class Online {
     welcome: { readonly carId: number; readonly frame: number; readonly matchType: MatchType; readonly teamSize: number },
     private readonly settings: () => Settings,
     private readonly inputEnabled: () => boolean,
+    private readonly chat: { readonly log: ChatLog; readonly panel: QuickChatPanel },
   ) {
     this.#world = world;
     // (the server demolishes: the game's demolition is the authority's alone, a client sees it in the replicated
@@ -272,7 +283,9 @@ export class Online {
     const snapshot = this.inputEnabled() ? polled : EMPTY_INPUT;
     const { bindings, controller, options } = settings;
     const camera = cameraInputs(settings, snapshot, this.#input, this.#camera.fov);
-    this.#handleActions(readHeldActions(snapshot, bindings, controller.deadzone), options, camera.device.ballCamToggle);
+    const held = readHeldActions(snapshot, bindings, controller.deadzone);
+    this.#quickChat(held.chat, settings);
+    this.#handleActions(held, options, camera.device.ballCamToggle);
     const raw = readControls(snapshot, bindings, controller.deadzone, this.#buttons);
     this.#jump.frame(this.#buttons);
     const local = this.#cars.get(this.#localCar)?.state.current;
@@ -330,8 +343,46 @@ export class Online {
     this.#countdownLeft = left;
     this.#fade.update(real);
     this.#renderer.cameraFade = this.#fade.opacity;
+    this.#drawChat();
     if (this.#replay) this.#drawReplay(real, this.#replay);
     else this.#draw(world, ticks * TICK_SECONDS, real);
+  }
+
+  /** Quick chat (CHAT-7..9): a press of a chat key opens its category, the next sends that row's preset; not with the
+   *  menu up (it closes the panel), the filter Off or disconnected. The chat filters go to the server as they change */
+  #quickChat(keys: readonly ChatKey[], settings: Settings): void {
+    const now = performance.now() / 1000;
+    const { chat } = settings;
+    const filter = `${chat.quickChatFilter}|${String(chat.blockNonTactical)}`;
+    if (filter !== this.#chatFilterSent) {
+      this.#chatFilterSent = filter;
+      this.#connection.setChatFilter(chat.quickChatFilter, chat.blockNonTactical);
+    }
+    const available = this.inputEnabled() && chat.quickChatFilter !== "off" && this.#disconnected === null;
+    if (!this.inputEnabled()) this.#chatMenu.close(now);
+    const groups = this.#chatGroups(settings);
+    for (const i of chatPresses(keys, this.#held.chat)) {
+      const press = this.#chatMenu.press(i, now, groups, available);
+      if (press.kind !== "send") continue;
+      const preset = presetIndex(press.key);
+      if (preset !== undefined) this.#connection.quickChat(preset, press.team);
+    }
+  }
+
+  /** The four categories shown: the match's, or after it the post-game set */
+  #chatGroups(settings: Settings): ReturnType<typeof visibleGroups> {
+    return visibleGroups(settings.chat.slots, this.#match?.phase === "ended" ? "ended" : "match");
+  }
+
+  /** The quick-chat panel and the chat log, each frame (real time) */
+  #drawChat(): void {
+    const now = performance.now() / 1000;
+    const settings = this.settings();
+    const { bindings } = settings;
+    const actions = ["chatPreset1", "chatPreset2", "chatPreset3", "chatPreset4"] as const;
+    const keys = actions.map((a) => inputName(this.#input.usingGamepad ? bindings[a].gamepad : bindings[a].keyboard));
+    this.chat.panel.draw(this.#chatMenu.view(now), this.#chatGroups(settings), presetText, keys);
+    this.chat.log.update(now);
   }
 
   /** Skip the goal replay: a press of Space or the pad's A (ReadyUp, ReplaySkip bindings), once */
@@ -530,6 +581,7 @@ export class Online {
         }
       } else if (m.type === "event" && m.event.kind === "left") {
         // A player left: their car explodes where it's drawn (Car.Demolish(None)), then the world without it reloads
+        if (m.event.lost) this.#lost.add(m.event.car);
         const car = this.#cars.get(m.event.car);
         if (car) {
           const pos = add(car.state.blended(this.#clock.alpha).pos, car.error.location);
@@ -537,6 +589,21 @@ export class Online {
           this.#camera.shakes.play(EXPLOSION_MEDIUM, pos);
           this.#audio.demolition(pos);
         }
+      } else if (m.type === "roster") {
+        // The players: the log says who came and went (not those already here as this player joined)
+        const next = new Map(m.players.map((p) => [p.car, p]));
+        const now = performance.now() / 1000;
+        if (this.#roster) for (const line of rosterLines(this.#roster, next, this.#lost)) this.chat.log.add(line, now);
+        this.#roster = next;
+      } else if (m.type === "chat") {
+        // A quick-chat line, as the server relayed it (one's own too: no local echo), with its sound
+        const match = this.#match;
+        const view = { localCar: this.#localCar, roster: this.#roster ?? new Map<number, RosterEntry>(), overtime: match?.overtime ?? false, ended: match?.phase === "ended" };
+        this.chat.log.add(chatMessageLine(m, view), performance.now() / 1000);
+        this.#audio.chatMessage();
+      } else if (m.type === "chatBlocked") {
+        // (the spam filter's notice: a system line, silent)
+        this.chat.log.add({ timestamp: "", channel: null, name: null, text: CHAT_TEXT.disabled(m.seconds), colour: CHAT_COLOURS.system }, performance.now() / 1000);
       } else if (m.type === "forfeitVote") {
         this.#vote = { state: m.state, yes: m.yes, required: m.required, secondsLeft: m.secondsLeft, voted: m.voted, canStart: m.canStart };
       } else if (m.type === "replay") {

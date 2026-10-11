@@ -8,7 +8,10 @@ import {
   DEFAULT_BINDINGS,
   type GamepadInput,
   type KeyboardInput,
+  exclusiveGroups,
 } from "../input/bindings";
+import { DEFAULT_SLOTS, POOLS } from "../game/quickChat";
+import { type ChatFilter, MAX_NAME_BYTES } from "../net/protocol";
 
 /** The game's Controls menu (ProfileGamepadSave_TA). The engine applies everything but the deadzone. */
 export interface ControllerSettings {
@@ -53,6 +56,24 @@ export interface AudioSettings {
   readonly ambience: number; // the arena's soundscape
 }
 
+/** Chat: the player's name, the quick-chat filters (ProfileGameplaySave_TA QuickChatFilter, bFilterNonTacticalQuickChat:
+ *  CHAT-18) and the 24 quick-chat slots (ProfileQuickChatSave_TA: CHAT-5) */
+export interface ChatSettings {
+  /** Empty: the server names the player */
+  readonly name: string;
+  readonly quickChatFilter: ChatFilter;
+  readonly blockNonTactical: boolean;
+  /** Preset keys: slots 0-15 (rows 1-4) from the match pool, 16-19 post game, 20-23 pre game */
+  readonly slots: readonly string[];
+}
+
+export const DEFAULT_CHAT_SETTINGS: ChatSettings = { name: "", quickChatFilter: "everyone", blockNonTactical: false, slots: DEFAULT_SLOTS };
+
+/** The pool a quick-chat slot takes its preset from */
+export function slotPool(slot: number): readonly string[] {
+  return slot < 16 ? POOLS.match : slot < 20 ? POOLS.post : POOLS.pre;
+}
+
 export interface Settings {
   readonly bindings: Bindings;
   readonly camera: CameraSettings;
@@ -61,6 +82,7 @@ export interface Settings {
   readonly controller: ControllerSettings;
   readonly options: Options;
   readonly audio: AudioSettings;
+  readonly chat: ChatSettings;
 }
 
 export interface Range {
@@ -159,6 +181,7 @@ export const DEFAULT_SETTINGS: Settings = {
   controller: DEFAULT_CONTROLLER_SETTINGS,
   options: DEFAULT_OPTIONS,
   audio: DEFAULT_AUDIO_SETTINGS,
+  chat: DEFAULT_CHAT_SETTINGS,
 };
 
 const STORAGE_KEY = "rl-clone.settings.v1";
@@ -234,7 +257,7 @@ function readBindings(v: unknown): Bindings {
       a !== null && b !== null && JSON.stringify(a) === JSON.stringify(b);
     for (const { id } of ACTIONS) {
       if (saved.has(id)) continue;
-      const used = [...saved].map((s) => out[s]);
+      const used = [...saved].filter((s) => !exclusiveGroups(s, id)).map((s) => out[s]);
       out[id] = {
         keyboard: used.some((b) => same(b.keyboard, out[id].keyboard)) ? null : out[id].keyboard,
         gamepad: used.some((b) => same(b.gamepad, out[id].gamepad)) ? null : out[id].gamepad,
@@ -242,6 +265,35 @@ function readBindings(v: unknown): Bindings {
     }
   }
   return out;
+}
+
+/** A name as the wire takes it: control characters out, trimmed, MAX_NAME_BYTES of UTF-8 at most (whole characters) */
+export function tidyName(v: unknown): string {
+  if (typeof v !== "string") return "";
+  const name = v.replace(/\p{Cc}/gu, "").trim();
+  const encoder = new TextEncoder();
+  if (encoder.encode(name).byteLength <= MAX_NAME_BYTES) return name;
+  let kept = "";
+  for (const { segment } of new Intl.Segmenter().segment(name)) {
+    if (encoder.encode(kept + segment).byteLength > MAX_NAME_BYTES) break;
+    kept += segment;
+  }
+  return kept.trim();
+}
+
+function readChat(v: unknown): ChatSettings {
+  const src = isRecord(v) ? v : {};
+  const filter = src["quickChatFilter"];
+  const slots = Array.isArray(src["slots"]) ? (src["slots"] as unknown[]) : [];
+  return {
+    name: tidyName(src["name"]),
+    quickChatFilter: filter === "everyone" || filter === "team" || filter === "friends" || filter === "off" ? filter : DEFAULT_CHAT_SETTINGS.quickChatFilter,
+    blockNonTactical: typeof src["blockNonTactical"] === "boolean" ? src["blockNonTactical"] : DEFAULT_CHAT_SETTINGS.blockNonTactical,
+    slots: DEFAULT_SLOTS.map((fallback, i) => {
+      const key = slots[i];
+      return typeof key === "string" && slotPool(i).includes(key) ? key : fallback;
+    }),
+  };
 }
 
 /** Settings from untrusted data (storage, imports): every invalid or missing field takes its default. */
@@ -271,6 +323,7 @@ export function parseSettings(v: unknown): Settings {
     controller: readNumbers(src["controller"], DEFAULT_CONTROLLER_SETTINGS, CONTROLLER_LIMITS),
     options: readBooleans(src["options"], DEFAULT_OPTIONS),
     audio: readNumbers(src["audio"], DEFAULT_AUDIO_SETTINGS, AUDIO_LIMITS),
+    chat: readChat(src["chat"]),
   };
 }
 

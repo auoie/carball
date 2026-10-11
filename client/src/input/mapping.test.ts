@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { NO_CONTROLS } from "../engine/world";
 import { type Bindings, DEFAULT_BINDINGS, inputName, keyName } from "./bindings";
-import { AirPitchSafety, ButtonLatch, type InputEvent, type InputSnapshot, JumpLatch, axisDeadzone, readControls, readHeldActions, readLook } from "./mapping";
+import { AirPitchSafety, ButtonLatch, type InputEvent, type InputSnapshot, JumpLatch, axisDeadzone, readControls, readHeldActions, readLook, chatPresses } from "./mapping";
 
 const DZ = 0.2; // the game's default controller deadzone
 const keys = (...codes: string[]): InputSnapshot => ({ keys: new Set(codes), mouseButtons: new Set(), gamepad: null });
@@ -429,5 +429,18 @@ describe("more inputs from the ordered event list (review test gaps)", () => {
     expect(readControls(frame({ gamepad: bButton(0.1) }), DEFAULT_BINDINGS, DZ, latch).boost).toBe(false);
     expect(readControls(frame({ gamepad: bButton(0.2) }), DEFAULT_BINDINGS, DZ, latch).boost).toBe(true);
     expect(readControls(frame({ gamepad: bButton(0) }), DEFAULT_BINDINGS, DZ, latch).boost).toBe(false);
+  });
+});
+
+describe("quick chat's presses (CHAT-7)", () => {
+  const key = (keyPressed: boolean, padDown = false): { keyPressed: boolean; padDown: boolean } => ({ keyPressed, padDown });
+  it("a key's every tap, in back-to-back frames too; a pad button's press once while held", () => {
+    const idle = [key(false), key(false), key(false), key(false)];
+    const tap = [key(true), key(false), key(false), key(false)];
+    expect(chatPresses(tap, idle)).toEqual([0]);
+    expect(chatPresses(tap, tap)).toEqual([0]); // (released and tapped again between frames: a second press)
+    const padHeld = [key(false), key(false, true), key(false), key(false)];
+    expect(chatPresses(padHeld, idle)).toEqual([1]);
+    expect(chatPresses(padHeld, padHeld)).toEqual([]); // (held)
   });
 });

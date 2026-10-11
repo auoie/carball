@@ -41,7 +41,19 @@ export const ACTIONS = [
   { id: "reset", label: "Reset to kickoff", group: "Freeplay" },
   { id: "ballInFront", label: "Ball in front", group: "Freeplay" },
   { id: "ballOnCar", label: "Ball on car", group: "Freeplay" },
+  // (Controls.int [ChatPreset1-4] Label, verbatim: online only, so the same keys as freeplay's, as the game binds them)
+  { id: "chatPreset1", label: "Quick Chat - Information/Post Game", group: "Quick Chat" },
+  { id: "chatPreset2", label: "Quick Chat - Compliments", group: "Quick Chat" },
+  { id: "chatPreset3", label: "Quick Chat - Reactions", group: "Quick Chat" },
+  { id: "chatPreset4", label: "Quick Chat - Apologies", group: "Quick Chat" },
 ] as const;
+
+/** Action groups never active together (freeplay's offline, quick chat's online): their bindings may share inputs */
+export function exclusiveGroups(a: Action, b: Action): boolean {
+  const group = (id: Action): string => ACTIONS.find((x) => x.id === id)?.group ?? "";
+  const pair = [group(a), group(b)].sort().join("|");
+  return pair === "Freeplay|Quick Chat";
+}
 
 export type Action = (typeof ACTIONS)[number]["id"];
 export type Bindings = Readonly<Record<Action, Binding>>;
@@ -83,6 +95,11 @@ export const DEFAULT_BINDINGS: Bindings = {
   reset: bind(key("Backspace"), button(5)),
   ballInFront: bind(key("Digit1"), button(13)),
   ballOnCar: bind(key("Digit2"), button(12)),
+  // (ControlPreset_X: keys 1-4, the D-pad's up, left, right, down)
+  chatPreset1: bind(key("Digit1"), button(12)),
+  chatPreset2: bind(key("Digit2"), button(14)),
+  chatPreset3: bind(key("Digit3"), button(15)),
+  chatPreset4: bind(key("Digit4"), button(13)),
 };
 
 const PAD_BUTTON_NAMES = [

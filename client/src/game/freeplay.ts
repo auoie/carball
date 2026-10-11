@@ -6,7 +6,7 @@ import { PlayerCamera } from "../camera/rlCamera";
 import { BOOST_SPAWN_AMOUNT, type BodyState, type CarConfig, type CarState, type World } from "../engine/world";
 import { type Hud, respawnHud } from "../hud";
 import type { InputDevices } from "../input/devices";
-import { AirPitchSafety, ButtonLatch, EMPTY_INPUT, type HeldActions, JumpLatch, type LookInput, readControls, readHeldActions } from "../input/mapping";
+import { AirPitchSafety, ButtonLatch, EMPTY_INPUT, type HeldActions, JumpLatch, type LookInput, NO_HELD_ACTIONS, readControls, readHeldActions } from "../input/mapping";
 import type { ControllerSettings, Options, Settings } from "../settings/settings";
 import { FixedStep, TICK_SECONDS, frameTimes } from "../loop/fixedStep";
 import { type Vec3, ZERO, add, scale, vec3 } from "../math/vec";
@@ -61,7 +61,7 @@ export class Freeplay {
   readonly #ball: Interpolated<BodyState>;
   #ballSpawns = 0; // the ball's spawn counter last tick (a reset places it: not interpolated)
   readonly #score: [number, number] = [0, 0];
-  #held: HeldActions = { ballCam: false, rearCamera: false, reset: false, ballInFront: false, ballOnCar: false };
+  #held: HeldActions = NO_HELD_ACTIONS;
   #ballCam = false;
   #rear = false;
   #look: LookInput = { up: 0, right: 0 };

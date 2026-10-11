@@ -15,7 +15,8 @@ use crate::protocol::{self, Control, Datagram, InputFrame};
 #[derive(Debug)]
 pub enum ToGame {
     Join { id: PlayerId, request: JoinRequest, out: UnboundedSender<Outgoing> },
-    Leave { id: PlayerId },
+    /// The session ended; `lost`: its connection timed out
+    Leave { id: PlayerId, lost: bool },
     Inputs { id: PlayerId, timestamp: u32, first_frame: u32, frames: Vec<InputFrame>, at: std::time::Instant },
     ResetInputBuffer { id: PlayerId },
     /// Skip the goal replay
@@ -23,6 +24,10 @@ pub enum ToGame {
     AutoSkipReplay { id: PlayerId, on: bool },
     /// Vote to forfeit (starts or joins the team's vote)
     VoteForfeit { id: PlayerId },
+    /// A quick-chat preset
+    QuickChat { id: PlayerId, preset: u8, team: bool },
+    /// The player's chat filters
+    ChatFilter { id: PlayerId, quick_chat: u8, block_non_tactical: bool },
 }
 
 /// Development identity: self-signed for localhost, valid 14 days (the browser limit for certificate hashes)
@@ -50,10 +55,12 @@ pub async fn accept_loop(server: Endpoint<wtransport::endpoint::endpoint_side::S
         next_id += 1;
         let to_game = to_game.clone();
         tokio::spawn(async move {
+            let mut lost = false;
             if let Err(e) = session(incoming, id, &to_game).await {
                 eprintln!("player {id}: {e:#}");
+                lost = matches!(e.downcast_ref::<wtransport::error::ConnectionError>(), Some(wtransport::error::ConnectionError::TimedOut));
             }
-            let _ = to_game.send(ToGame::Leave { id });
+            let _ = to_game.send(ToGame::Leave { id, lost });
         });
     }
 }
@@ -74,7 +81,7 @@ async fn session(incoming: IncomingSession, id: PlayerId, to_game: &UnboundedSen
     }
     let connection = request.accept().await?;
     let (mut send, mut recv) = connection.accept_bi().await.context("no control stream")?;
-    let Control::Hello { version, team, body, dodge_deadzone, steering_sensitivity, air_control_sensitivity, auto_skip_replay, key } =
+    let Control::Hello { version, team, body, dodge_deadzone, steering_sensitivity, air_control_sensitivity, auto_skip_replay, key, name } =
         tokio::time::timeout(Duration::from_secs(5), read_control(&mut recv)).await.context("no hello")??
     else {
         bail!("expected hello");
@@ -84,7 +91,7 @@ async fn session(incoming: IncomingSession, id: PlayerId, to_game: &UnboundedSen
     }
 
     let (out_tx, mut out_rx) = unbounded_channel();
-    let request = JoinRequest { team, body, dodge_deadzone, steering_sensitivity, air_control_sensitivity, auto_skip_replay, key };
+    let request = JoinRequest { team, body, dodge_deadzone, steering_sensitivity, air_control_sensitivity, auto_skip_replay, key, name };
     to_game.send(ToGame::Join { id, request, out: out_tx })?;
 
     // Game -> client
@@ -115,6 +122,8 @@ async fn session(incoming: IncomingSession, id: PlayerId, to_game: &UnboundedSen
                 Ok(Control::ReadyUp) => ToGame::ReadyUp { id },
                 Ok(Control::AutoSkipReplay { on }) => ToGame::AutoSkipReplay { id, on },
                 Ok(Control::VoteForfeit) => ToGame::VoteForfeit { id },
+                Ok(Control::QuickChat { preset, team }) => ToGame::QuickChat { id, preset, team },
+                Ok(Control::ChatFilter { quick_chat, block_non_tactical }) => ToGame::ChatFilter { id, quick_chat, block_non_tactical },
                 Ok(_) => continue, // (nothing else is expected from a client)
                 Err(_) => break,
             };

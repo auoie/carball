@@ -7,6 +7,7 @@ import {
   AUDIO_LIMITS,
   type AudioSettings,
   CAMERA_LIMITS,
+  type ChatSettings,
   CONTROLLER_LIMITS,
   type ControllerSettings,
   DEFAULT_PRESET,
@@ -19,9 +20,22 @@ import {
   type Range,
   type Settings,
   saveSettings,
+  slotPool,
+  tidyName,
 } from "../settings/settings";
+import { presetText } from "../game/quickChat";
 
-type Tab = "controls" | "camera" | "controller" | "gameplay" | "video" | "audio";
+type Tab = "controls" | "camera" | "controller" | "gameplay" | "chat" | "video" | "audio";
+
+/** The chat settings' text (verbatim: notes/quick-chat.md "Chat UI text") */
+const CHAT_SETTINGS_TEXT = {
+  quickChat: "Quick Chat",
+  quickChatDescription: "Controls what types of Quick Chat messages from other players are visible.",
+  filters: { everyone: "Allow Quick Chat with Everyone", team: "Allow Quick Chat with Teammates Only", friends: "Allow Quick Chat with Friends Only", off: "Off" },
+  blockNonTactical: "Block Non-Tactical Quick Chat",
+  blockNonTacticalDescription: "Hides incoming non-tactical Quick Chat messages from other players during a match. Does not filter out Pre-game or Post-game Quick Chat.",
+  rows: ["Information (Team)", "Compliments", "Reactions", "Apologies", "Post Game", "Pre Game"],
+} as const;
 type Device = "keyboard" | "gamepad";
 
 const CAMERA_LABELS: Readonly<Record<keyof CameraSettings, string>> = {
@@ -74,7 +88,7 @@ const AUDIO_LABELS: Readonly<Record<keyof AudioSettings, string>> = {
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
-  props: Partial<Pick<HTMLElementTagNameMap[K], "className" | "textContent" | "title">> = {},
+  props: Partial<HTMLElementTagNameMap[K]> = {},
   children: readonly Node[] = [],
 ): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
@@ -104,6 +118,7 @@ export class SettingsPanel {
       this.#tabButton("camera", "Camera"),
       this.#tabButton("controller", "Controller"),
       this.#tabButton("gameplay", "Gameplay"),
+      this.#tabButton("chat", "Chat"),
       this.#tabButton("video", "Video"),
       this.#tabButton("audio", "Audio"),
     ]);
@@ -187,7 +202,9 @@ export class SettingsPanel {
             ? this.#controllerTab()
             : this.#tab === "gameplay"
               ? this.#gameplayTab()
-              : this.#tab === "video"
+              : this.#tab === "chat"
+                ? this.#chatTab()
+                : this.#tab === "video"
                 ? this.#videoTab()
                 : this.#audioTab();
     this.#body.replaceChildren(content);
@@ -412,6 +429,52 @@ export class SettingsPanel {
   #gameplayTab(): HTMLElement {
     const box = el("div", { className: "sliders" });
     box.append(this.#checkboxes(["flipIndicator", "autoSkipReplay", "unlimitedBoost"]));
+    return box;
+  }
+
+  /** Chat (online): the player's name, the quick-chat filters, the 24 quick-chat slots by category */
+  #chatTab(): HTMLElement {
+    const T = CHAT_SETTINGS_TEXT;
+    const chat = this.#settings.chat;
+    const apply = (next: Partial<ChatSettings>): void => {
+      this.#update({ ...this.#settings, chat: { ...this.#settings.chat, ...next } });
+    };
+    const box = el("div", { className: "sliders chat-settings" });
+    const name = el("input", { type: "text", value: chat.name, placeholder: "Player", maxLength: 32 });
+    name.dataset["setting"] = "name";
+    name.addEventListener("change", () => {
+      apply({ name: tidyName(name.value) });
+    });
+    box.append(el("label", { className: "option" }, [el("span", { textContent: "Name (when you next join)" }), name]));
+    const filter = el("select");
+    filter.dataset["setting"] = "quickChatFilter";
+    for (const [value, label] of Object.entries(T.filters)) filter.append(el("option", { value, textContent: label, selected: value === chat.quickChatFilter }));
+    filter.addEventListener("change", () => {
+      const value = filter.value;
+      if (value === "everyone" || value === "team" || value === "friends" || value === "off") apply({ quickChatFilter: value });
+    });
+    box.append(el("label", { className: "option", title: T.quickChatDescription }, [el("span", { textContent: T.quickChat }), filter]));
+    const block = el("input", { type: "checkbox", checked: chat.blockNonTactical });
+    block.dataset["setting"] = "blockNonTactical";
+    block.addEventListener("change", () => {
+      apply({ blockNonTactical: block.checked });
+    });
+    box.append(el("label", { className: "option", title: T.blockNonTacticalDescription }, [block, el("span", { textContent: T.blockNonTactical })]));
+    const slots = el("table", { className: "chat-slots" });
+    T.rows.forEach((title, row) => {
+      const cells = [0, 1, 2, 3].map((k) => {
+        const slot = 4 * row + k;
+        const select = el("select");
+        select.dataset["slot"] = String(slot);
+        for (const key of slotPool(slot)) select.append(el("option", { value: key, textContent: presetText(key), selected: key === chat.slots[slot] }));
+        select.addEventListener("change", () => {
+          apply({ slots: this.#settings.chat.slots.map((s, i) => (i === slot ? select.value : s)) });
+        });
+        return el("td", {}, [select]);
+      });
+      slots.append(el("tr", {}, [el("th", { textContent: title }), ...cells]));
+    });
+    box.append(slots);
     return box;
   }
 

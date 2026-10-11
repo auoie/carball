@@ -1,6 +1,7 @@
 // The connection to the game server over WebTransport (protocol/README.md): a control stream for reliable messages,
 // datagrams for inputs and world updates.
 import {
+  type ChatFilter,
   type ControlMessage,
   type DatagramMessage,
   DecodeError,
@@ -37,6 +38,8 @@ export interface JoinPreferences {
   readonly steeringSensitivity: number;
   readonly airControlSensitivity: number;
   readonly autoSkipReplay: boolean;
+  /** Empty: the server names the player */
+  readonly name: string;
 }
 
 type Welcome = Extract<ControlMessage, { type: "welcome" }>;
@@ -194,6 +197,16 @@ export class Connection {
   /** Vote to forfeit: starts the team's vote, or joins it */
   voteForfeit(): void {
     this.#sendControl({ type: "voteForfeit" });
+  }
+
+  /** A quick-chat preset (its index in the 76), to the team or all */
+  quickChat(preset: number, team: boolean): void {
+    this.#sendControl({ type: "quickChat", preset, team });
+  }
+
+  /** The chat filters changed (or the session started) */
+  setChatFilter(quickChat: ChatFilter, blockNonTactical: boolean): void {
+    this.#sendControl({ type: "chatFilter", quickChat, blockNonTactical });
   }
 
   #sendControl(m: ControlMessage): void {

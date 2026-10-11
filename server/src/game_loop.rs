@@ -33,7 +33,8 @@ pub fn run(mut messages: UnboundedReceiver<ToGame>, playlist: Playlist, test_goa
         loop {
             match messages.try_recv() {
                 Ok(ToGame::Join { id, request, out }) => game.join(id, request, out),
-                Ok(ToGame::Leave { id }) => game.leave(id),
+                Ok(ToGame::Leave { id, lost: false }) => game.leave(id),
+                Ok(ToGame::Leave { id, lost: true }) => game.connection_lost(id),
                 Ok(ToGame::Inputs { id, timestamp, first_frame, frames, at }) => {
                     game.receive_inputs(id, timestamp, first_frame, &frames, seconds(at));
                 }
@@ -41,6 +42,8 @@ pub fn run(mut messages: UnboundedReceiver<ToGame>, playlist: Playlist, test_goa
                 Ok(ToGame::ReadyUp { id }) => game.ready_up(id),
                 Ok(ToGame::AutoSkipReplay { id, on }) => game.set_auto_skip_replay(id, on),
                 Ok(ToGame::VoteForfeit { id }) => game.vote_forfeit(id),
+                Ok(ToGame::QuickChat { id, preset, team }) => game.quick_chat(id, preset, team, seconds(Instant::now())),
+                Ok(ToGame::ChatFilter { id, quick_chat, block_non_tactical }) => game.set_chat_filter(id, quick_chat, block_non_tactical),
                 Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
                 Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => return,
             }

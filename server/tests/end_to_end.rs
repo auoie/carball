@@ -46,6 +46,7 @@ async fn a_client_connects_drives_and_follows_the_world() {
         air_control_sensitivity: 1.0,
         auto_skip_replay: false,
         key: 7,
+        name: "tester".to_string(),
     };
     send.write_all(&hello.encode()).await.unwrap();
     let Control::Welcome { car_id, snapshot, tick_rate, .. } = read_control(&mut recv).await else { panic!("expected welcome") };

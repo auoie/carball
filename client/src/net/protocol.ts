@@ -5,15 +5,29 @@
 // and flip resets in the state; 6: spawn counters in the state, the match message; 7: the engine turns the ball (its
 // orientation is simulated state: the network state's format is unchanged); 8: the bodies' inverse inertia tensors;
 // 9: the goal replay (its phase, plan and skip votes; Hello's auto-skip); 10: forfeit votes, the match type, a leaver's
-// car, no contest
-export const PROTOCOL_VERSION = 10;
+// car, no contest; 11: quick chat, players' names (the roster), a leave's reason
+export const PROTOCOL_VERSION = 11;
+/** A name's bytes at most (UTF-8) */
+export const MAX_NAME_BYTES = 32;
 export const MAX_INPUT_FRAMES = 10;
 
 export type GameEvent =
   | { readonly kind: "goal"; readonly team: number }
   | { readonly kind: "demo"; readonly attacker: number; readonly victim: number }
-  /** A player left: their car explodes where it is (Car.Demolish(None): no demolition counted) */
-  | { readonly kind: "left"; readonly car: number };
+  /** A player left: their car explodes where it is (Car.Demolish(None): no demolition counted); `lost`: their connection
+   *  timed out (the chat log's "lost connection") */
+  | { readonly kind: "left"; readonly car: number; readonly lost: boolean };
+
+/** A player's quick-chat filter (EChatFilter, CHAT-18) */
+export type ChatFilter = "everyone" | "team" | "friends" | "off";
+const CHAT_FILTERS: readonly ChatFilter[] = ["everyone", "team", "friends", "off"];
+
+/** A player as the others know them */
+export interface RosterEntry {
+  readonly car: number;
+  readonly team: number;
+  readonly name: string;
+}
 
 /** The match type (MatchType_TA): the forfeit rules and the vote's label */
 export type MatchType = "casual" | "ranked" | "private";
@@ -87,7 +101,13 @@ export type ControlMessage =
       readonly autoSkipReplay: boolean;
       /** This client's own random key, the same when it reconnects (who started a forfeit vote: ForfeitInitiatorIDs) */
       readonly key: number;
+      /** The player's name (MAX_NAME_BYTES of UTF-8 at most; the server tidies it) */
+      readonly name: string;
     }
+  /** A quick-chat preset (ServerSay_TA with bPreset): its index in the 76, to the team or all */
+  | { readonly type: "quickChat"; readonly preset: number; readonly team: boolean }
+  /** The player's chat filters (ServerSetQuickChatFilter, ServerSetTacticalChatFilter) */
+  | { readonly type: "chatFilter"; readonly quickChat: ChatFilter; readonly blockNonTactical: boolean }
   /** Skip the goal replay (ReadyUp: Space / pad A); counts only during one */
   | { readonly type: "readyUp" }
   /** The auto-skip setting changed (turned on during a replay, it readies the player) */
@@ -116,7 +136,13 @@ export type ControlMessage =
   /** How many players are ready to skip the goal replay, of how many */
   | { readonly type: "replayReady"; readonly ready: number; readonly total: number }
   /** This player's team's forfeit vote, when it changes */
-  | ({ readonly type: "forfeitVote" } & ForfeitVote);
+  | ({ readonly type: "forfeitVote" } & ForfeitVote)
+  /** The players: each one's car, team and name, when it changes */
+  | { readonly type: "roster"; readonly players: readonly RosterEntry[] }
+  /** A quick-chat line (ChatMessage_TA): the sender's car, the preset, team or all, the clock's shown seconds at relay */
+  | { readonly type: "chat"; readonly car: number; readonly preset: number; readonly team: boolean; readonly seconds: number }
+  /** This player's chat is blocked by the spam filter for this long (ClientNotifyChatDisabled) */
+  | { readonly type: "chatBlocked"; readonly seconds: number };
 
 /** One frame of inputs as sent: axes in 1/127 steps, bits for the buttons. */
 export interface InputFrame {
@@ -201,6 +227,17 @@ class Writer {
   bytes(b: Uint8Array): void {
     for (const x of b) this.#bytes.push(x);
   }
+  /** A short UTF-8 string: its byte count, then its bytes (MAX_NAME_BYTES at most, cut at a character) */
+  name(s: string): void {
+    let b = new TextEncoder().encode(s);
+    if (b.byteLength > MAX_NAME_BYTES) {
+      let end = MAX_NAME_BYTES;
+      while (end > 0 && ((b[end] ?? 0) & 0xc0) === 0x80) end--; // (a continuation byte: back to the character's start)
+      b = b.slice(0, end);
+    }
+    this.u8(b.byteLength);
+    this.bytes(b);
+  }
   #push(n: number): void {
     for (let i = 0; i < n; i++) this.#bytes.push(this.#view.getUint8(i));
   }
@@ -243,6 +280,9 @@ class Reader {
   rest(): Uint8Array {
     return this.take(this.bytes.byteLength - this.#pos);
   }
+  name(): string {
+    return new TextDecoder().decode(this.take(this.u8()));
+  }
 }
 
 /** A control message with its u16 length prefix, ready for the control stream. */
@@ -259,6 +299,37 @@ export function encodeControl(m: ControlMessage): Uint8Array {
       w.f32(m.airControlSensitivity);
       w.u8(m.autoSkipReplay ? 1 : 0);
       w.u32(m.key);
+      w.name(m.name);
+      break;
+    case "quickChat":
+      w.u8(0x06);
+      w.u8(m.preset);
+      w.u8(m.team ? 1 : 0);
+      break;
+    case "chatFilter":
+      w.u8(0x07);
+      w.u8(CHAT_FILTERS.indexOf(m.quickChat));
+      w.u8(m.blockNonTactical ? 1 : 0);
+      break;
+    case "roster":
+      w.u8(0x88);
+      w.u8(Math.min(m.players.length, 255));
+      for (const p of m.players.slice(0, 255)) {
+        w.u32(p.car);
+        w.u8(p.team);
+        w.name(p.name);
+      }
+      break;
+    case "chat":
+      w.u8(0x89);
+      w.u32(m.car);
+      w.u8(m.preset);
+      w.u8(m.team ? 1 : 0);
+      w.u16(m.seconds);
+      break;
+    case "chatBlocked":
+      w.u8(0x8a);
+      w.f32(m.seconds);
       break;
     case "resetInputBuffer":
       w.u8(0x02);
@@ -333,6 +404,7 @@ export function encodeControl(m: ControlMessage): Uint8Array {
       } else {
         w.u8(2);
         w.u32(m.event.car);
+        w.u8(m.event.lost ? 1 : 0);
       }
       break;
     case "match":
@@ -369,7 +441,31 @@ export function decodeControl(body: Uint8Array): ControlMessage {
         airControlSensitivity: r.f32(),
         autoSkipReplay: r.u8() !== 0,
         key: r.u32(),
+        name: r.name(),
       };
+    case 0x06:
+      return { type: "quickChat", preset: r.u8(), team: r.u8() !== 0 };
+    case 0x07: {
+      const quickChat = CHAT_FILTERS[r.u8()];
+      if (!quickChat) throw new DecodeError("unknown chat filter");
+      return { type: "chatFilter", quickChat, blockNonTactical: r.u8() !== 0 };
+    }
+    case 0x88: {
+      const players = Array.from({ length: r.u8() }, () => {
+        const car = r.u32();
+        const team = r.u8();
+        return { car, team, name: r.name() };
+      });
+      return { type: "roster", players };
+    }
+    case 0x89: {
+      const car = r.u32();
+      const preset = r.u8();
+      const team = r.u8() !== 0;
+      return { type: "chat", car, preset, team, seconds: r.u16() };
+    }
+    case 0x8a:
+      return { type: "chatBlocked", seconds: r.f32() };
     case 0x02:
       return { type: "resetInputBuffer" };
     case 0x03:
@@ -417,7 +513,10 @@ export function decodeControl(body: Uint8Array): ControlMessage {
       const kind = r.u8();
       if (kind === 0) return { type: "event", serverTick, event: { kind: "goal", team: r.u8() } };
       if (kind === 1) return { type: "event", serverTick, event: { kind: "demo", attacker: r.u32(), victim: r.u32() } };
-      if (kind === 2) return { type: "event", serverTick, event: { kind: "left", car: r.u32() } };
+      if (kind === 2) {
+        const car = r.u32();
+        return { type: "event", serverTick, event: { kind: "left", car, lost: r.u8() !== 0 } };
+      }
       throw new DecodeError(`unknown event kind ${String(kind)}`);
     }
     case 0x84: {
