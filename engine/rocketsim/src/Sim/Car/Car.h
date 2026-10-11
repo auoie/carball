@@ -231,6 +231,7 @@ public:
 
 	// RL PATCH: state at the start of the current tick (the game's OldRBState)
 	PhysState _oldState;
+	void _CaptureOldState();
 
 	// RL PATCH: this tick's throttle as the game's Vehicle.Input.Throttle (controls.throttle, or 1 while boosting on the
 	// ground: _PreTickUpdate)

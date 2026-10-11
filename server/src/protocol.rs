@@ -3,8 +3,9 @@
 use crate::engine::Controls;
 
 // 2: kickoff countdown in the state; 3: the wheels' previous contacts; 4: the jump's release; 5: respawn spot selection
-// and flip resets in the state; 9: the goal replay (its phase, plan and skip votes; Hello's auto-skip)
-pub const VERSION: u16 = 9;
+// and flip resets in the state; 9: the goal replay (its phase, plan and skip votes; Hello's auto-skip); 10: forfeit votes,
+// the match type, a leaver's car, no contest
+pub const VERSION: u16 = 10;
 pub const MAX_INPUT_FRAMES: usize = 10;
 
 /// Control stream (reliable) messages
@@ -19,6 +20,8 @@ pub enum Control {
         air_control_sensitivity: f32,
         /// The player skips goal replays (`bAutoSkipGoalReplay`): auto-ready in every one
         auto_skip_replay: bool,
+        /// The client's own random key, kept across its reconnects (who started a forfeit vote: `ForfeitInitiatorIDs`)
+        key: u32,
     },
     /// Skip the goal replay (`ReadyUp`: Space / pad A); counts only during one
     ReadyUp,
@@ -27,7 +30,11 @@ pub enum Control {
     /// The client had a hitch (over 0.1 s between its ticks) 2 s ago: the server resets its jitter buffer
     /// (`NetworkInputBuffer_TA.ClientTick` → `ServerResetInputBuffer`)
     ResetInputBuffer,
-    Welcome { version: u16, car_id: u32, tick_rate: u8, frame: u32, snapshot: Vec<u8> },
+    /// Vote to forfeit (`PRI.ServerVoteToForfeit`): starts the team's vote, or joins it as a yes
+    VoteForfeit,
+    /// `match_type`: 0 casual, 1 ranked, 2 private (who may vote to forfeit, after how long, its label); `team_size`: the
+    /// playlist's
+    Welcome { version: u16, car_id: u32, tick_rate: u8, frame: u32, match_type: u8, team_size: u8, snapshot: Vec<u8> },
     World { frame: u32, snapshot: Vec<u8> },
     Event { server_tick: u32, event: GameEvent },
     /// The match's state: sent when it changes and each second while the clock runs
@@ -36,6 +43,29 @@ pub enum Control {
     Replay(ReplayPlan),
     /// How many players are ready to skip the goal replay, of how many (sent when it changes during one)
     ReplayReady { ready: u8, total: u8 },
+    /// The player's team's forfeit vote, sent to each of its players when it changes (`Team_TA.ForfeitVote`)
+    ForfeitVote(ForfeitVoteState),
+}
+
+pub const VOTE_RUNNING: u8 = 0;
+pub const VOTE_PASSED: u8 = 1;
+pub const VOTE_FAILED: u8 = 2;
+pub const VOTE_NONE: u8 = 3;
+
+/// A team's forfeit vote as one of its players sees it
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ForfeitVoteState {
+    /// `VOTE_RUNNING`, `VOTE_PASSED` or `VOTE_FAILED` (a finished vote stays 5 s), `VOTE_NONE`
+    pub state: u8,
+    pub yes: u8,
+    /// the votes it needs: the team's players (unanimous)
+    pub required: u8,
+    /// game seconds left of its 20 (`TimeRemaining`, counted down each game second)
+    pub seconds_left: u8,
+    /// this player has voted
+    pub voted: bool,
+    /// this player may start a vote (the lockout: one start each until the team is re-enabled)
+    pub can_start: bool,
 }
 
 /// A goal replay (server ticks; `ReplayDirector_TA`): `notes/camera-respawn-goal.md` GS-7..9
@@ -82,14 +112,21 @@ pub struct MatchState {
     pub clock_ticks: u32,
     pub score: [u8; 2],
     pub winner: Option<u8>,
-    /// The match ended because the losing team left (none of its players remained)
+    /// The match ended by a forfeit: a team voted to, or left (none of its players remained)
     pub forfeit: bool,
+    /// Forfeit votes are allowed now (`bCanVoteToForfeit`: no winner yet, and 60 s (casual) or 90 s of the clock gone,
+    /// or overtime)
+    pub can_vote_forfeit: bool,
+    /// The match ended with no contest: every team left (`ForceNoContest`)
+    pub no_contest: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GameEvent {
     Goal { team: u8 },
     Demo { attacker: u32, victim: u32 },
+    /// A player left: their car explodes where it is (`Car.Demolish(None)`: no demolition counted)
+    Left { car: u32 },
 }
 
 /// Datagram (unreliable) messages
@@ -230,7 +267,7 @@ impl Control {
     pub fn encode(&self) -> Vec<u8> {
         let mut w = Writer::default();
         match self {
-            Self::Hello { version, team, body, dodge_deadzone, steering_sensitivity, air_control_sensitivity, auto_skip_replay } => {
+            Self::Hello { version, team, body, dodge_deadzone, steering_sensitivity, air_control_sensitivity, auto_skip_replay, key } => {
                 w.u8(0x01);
                 w.u16(*version);
                 w.u8(*team);
@@ -239,8 +276,18 @@ impl Control {
                 w.f32(*steering_sensitivity);
                 w.f32(*air_control_sensitivity);
                 w.u8(u8::from(*auto_skip_replay));
+                w.u32(*key);
             }
             Self::ResetInputBuffer => w.u8(0x02),
+            Self::VoteForfeit => w.u8(0x05),
+            Self::ForfeitVote(v) => {
+                w.u8(0x87);
+                w.u8(v.state);
+                w.u8(v.yes);
+                w.u8(v.required);
+                w.u8(v.seconds_left);
+                w.u8(u8::from(v.voted) | (u8::from(v.can_start) << 1));
+            }
             Self::ReadyUp => w.u8(0x03),
             Self::AutoSkipReplay { on } => {
                 w.u8(0x04);
@@ -268,12 +315,14 @@ impl Control {
                 w.u8(*ready);
                 w.u8(*total);
             }
-            Self::Welcome { version, car_id, tick_rate, frame, snapshot } => {
+            Self::Welcome { version, car_id, tick_rate, frame, match_type, team_size, snapshot } => {
                 w.u8(0x81);
                 w.u16(*version);
                 w.u32(*car_id);
                 w.u8(*tick_rate);
                 w.u32(*frame);
+                w.u8(*match_type);
+                w.u8(*team_size);
                 w.bytes_with_len(snapshot);
             }
             Self::World { frame, snapshot } => {
@@ -285,7 +334,13 @@ impl Control {
                 w.u8(0x84);
                 w.u32(m.server_tick);
                 w.u8(m.phase as u8);
-                w.u8(u8::from(m.overtime) | (u8::from(m.clock_running) << 1) | (u8::from(m.forfeit) << 2));
+                w.u8(
+                    u8::from(m.overtime)
+                        | (u8::from(m.clock_running) << 1)
+                        | (u8::from(m.forfeit) << 2)
+                        | (u8::from(m.can_vote_forfeit) << 3)
+                        | (u8::from(m.no_contest) << 4),
+                );
                 w.u32(m.clock_ticks);
                 w.u8(m.score[0]);
                 w.u8(m.score[1]);
@@ -303,6 +358,10 @@ impl Control {
                         w.u8(1);
                         w.u32(*attacker);
                         w.u32(*victim);
+                    }
+                    GameEvent::Left { car } => {
+                        w.u8(2);
+                        w.u32(*car);
                     }
                 }
             }
@@ -327,8 +386,14 @@ impl Control {
                 steering_sensitivity: r.f32()?,
                 air_control_sensitivity: r.f32()?,
                 auto_skip_replay: r.u8()? != 0,
+                key: r.u32()?,
             },
             0x02 => Self::ResetInputBuffer,
+            0x05 => Self::VoteForfeit,
+            0x87 => {
+                let (state, yes, required, seconds_left, flags) = (r.u8()?, r.u8()?, r.u8()?, r.u8()?, r.u8()?);
+                Self::ForfeitVote(ForfeitVoteState { state, yes, required, seconds_left, voted: flags & 1 != 0, can_start: flags & 2 != 0 })
+            }
             0x03 => Self::ReadyUp,
             0x04 => Self::AutoSkipReplay { on: r.u8()? != 0 },
             0x85 => {
@@ -338,13 +403,22 @@ impl Control {
                 Self::Replay(ReplayPlan { start_tick, goal_tick, end_tick, scoring_team, slomo, focus })
             }
             0x86 => Self::ReplayReady { ready: r.u8()?, total: r.u8()? },
-            0x81 => Self::Welcome { version: r.u16()?, car_id: r.u32()?, tick_rate: r.u8()?, frame: r.u32()?, snapshot: r.bytes_with_len()? },
+            0x81 => Self::Welcome {
+                version: r.u16()?,
+                car_id: r.u32()?,
+                tick_rate: r.u8()?,
+                frame: r.u32()?,
+                match_type: r.u8()?,
+                team_size: r.u8()?,
+                snapshot: r.bytes_with_len()?,
+            },
             0x82 => Self::World { frame: r.u32()?, snapshot: r.bytes_with_len()? },
             0x83 => {
                 let server_tick = r.u32()?;
                 let event = match r.u8()? {
                     0 => GameEvent::Goal { team: r.u8()? },
                     1 => GameEvent::Demo { attacker: r.u32()?, victim: r.u32()? },
+                    2 => GameEvent::Left { car: r.u32()? },
                     t => return Err(DecodeError::UnknownType(t)),
                 };
                 Self::Event { server_tick, event }
@@ -373,6 +447,8 @@ impl Control {
                     score,
                     winner,
                     forfeit: flags & 4 != 0,
+                    can_vote_forfeit: flags & 8 != 0,
+                    no_contest: flags & 16 != 0,
                 })
             }
             t => return Err(DecodeError::UnknownType(t)),
@@ -482,6 +558,7 @@ mod tests {
                 steering_sensitivity: f(&m["steeringSensitivity"]),
                 air_control_sensitivity: f(&m["airControlSensitivity"]),
                 auto_skip_replay: m["autoSkipReplay"].as_bool().unwrap(),
+                key: u(&m["key"]),
             },
             "readyUp" => Control::ReadyUp,
             "autoSkipReplay" => Control::AutoSkipReplay { on: m["on"].as_bool().unwrap() },
@@ -502,14 +579,26 @@ mod tests {
                 car_id: u(&m["carId"]),
                 tick_rate: u(&m["tickRate"]) as u8,
                 frame: u(&m["frame"]),
+                match_type: ["casual", "ranked", "private"].iter().position(|&t| t == m["matchType"]).unwrap() as u8,
+                team_size: u(&m["teamSize"]) as u8,
                 snapshot: bytes(&m["snapshot"]),
             },
+            "voteForfeit" => Control::VoteForfeit,
+            "forfeitVote" => Control::ForfeitVote(ForfeitVoteState {
+                state: ["running", "passed", "failed", "none"].iter().position(|&s| s == m["state"]).unwrap() as u8,
+                yes: u(&m["yes"]) as u8,
+                required: u(&m["required"]) as u8,
+                seconds_left: u(&m["secondsLeft"]) as u8,
+                voted: m["voted"].as_bool().unwrap(),
+                can_start: m["canStart"].as_bool().unwrap(),
+            }),
             "resetInputBuffer" => Control::ResetInputBuffer,
             "world" => Control::World { frame: u(&m["frame"]), snapshot: bytes(&m["snapshot"]) },
             "event" => Control::Event {
                 server_tick: u(&m["serverTick"]),
                 event: match m["event"]["kind"].as_str().unwrap() {
                     "goal" => GameEvent::Goal { team: u(&m["event"]["team"]) as u8 },
+                    "left" => GameEvent::Left { car: u(&m["event"]["car"]) },
                     _ => GameEvent::Demo { attacker: u(&m["event"]["attacker"]), victim: u(&m["event"]["victim"]) },
                 },
             },
@@ -529,6 +618,8 @@ mod tests {
                 score: [u(&m["score"][0]) as u8, u(&m["score"][1]) as u8],
                 winner: m["winner"].as_u64().map(|w| w as u8),
                 forfeit: m["forfeit"].as_bool().unwrap(),
+                can_vote_forfeit: m["canVoteForfeit"].as_bool().unwrap(),
+                no_contest: m["noContest"].as_bool().unwrap(),
             }),
             t => panic!("unknown {t}"),
         }

@@ -22,6 +22,20 @@ static uint32_t Next() {
 }
 static float NextAxis() { return (int)(Next() % 3) - 1; } // -1, 0 or 1
 
+// A goal: the explosion's wave plays half a second, then the next kickoff, with its countdown (the wave in the
+// scenario too: RV-223)
+static void ResetAfterGoal(Arena* arena, uint64_t& scoredAt) {
+	if (!arena->IsBallScored())
+		return;
+	if (scoredAt == 0)
+		scoredAt = arena->tickCount;
+	if (arena->tickCount >= scoredAt + 60) {
+		arena->ResetToRandomKickoff((int)(Next() % 1000));
+		arena->kickoffCountdownTicks = 480;
+		scoredAt = 0;
+	}
+}
+
 struct Hasher {
 	uint64_t h = 1469598103934665603ULL;
 	void Add(const void* data, size_t size) {
@@ -52,6 +66,7 @@ int main(int argc, char** argv) {
 		}
 	}
 
+	uint64_t scoredAt = 0;
 	for (int sec = 1; sec <= seconds; sec++) {
 		for (int tick = 0; tick < 120; tick++) {
 			if (tick % 8 == 0) { // new inputs every 8 ticks: chase the ball, with random actions
@@ -81,8 +96,7 @@ int main(int argc, char** argv) {
 						s.angVel.x, s.angVel.y, s.angVel.z, s.rotMat.forward.x, s.rotMat.forward.y, s.rotMat.forward.z);
 				}
 			}
-			if (arena->IsBallScored())
-				{ arena->ResetToRandomKickoff((int)(Next() % 1000)); arena->kickoffCountdownTicks = 480; } // (with the kickoff countdown)
+			ResetAfterGoal(arena, scoredAt);
 		}
 
 		Hasher h;

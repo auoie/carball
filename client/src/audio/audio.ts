@@ -112,6 +112,11 @@ export class GameAudio {
     this.#synth.goal(this.#effects, this.#ctx.currentTime + 0.01);
   }
 
+  /** A car exploding that the world's demolitions don't show (a player who left): the demolition's sound at `at`. */
+  demolition(at: Vec3): void {
+    this.#play({ kind: "demo", at });
+  }
+
   /** A flip reset (the player's car): a chime, up close. */
   flipReset(): void {
     this.#count("flipReset");

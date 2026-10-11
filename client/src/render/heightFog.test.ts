@@ -182,5 +182,26 @@ describe("the fog wherever it's drawn (RV-187, 190)", () => {
     c.customProgramCacheKey = () => "own";
     withHeightFog(c, "opaque");
     expect(c.customProgramCacheKey()).toMatch(/^own\|rlHeightFog:opaque/);
+    // (the place too: two otherwise equal materials placed differently compile differently, RV-227)
+    const [far, near] = [new MeshBasicMaterial(), new MeshBasicMaterial()];
+    withHeightFog(far, "translucent", { distance: 25000 });
+    withHeightFog(near, "translucent", { world: "vWorld" });
+    expect(far.customProgramCacheKey()).not.toBe(near.customProgramCacheKey());
+  });
+
+  it("a material says where its vertices are: its own world position (userData.fogPlace, RV-208, RV-227)", () => {
+    const shader = (): ShaderMaterial =>
+      new ShaderMaterial({
+        vertexShader: "varying vec3 vWorld;\nvoid main() { vWorld = position; gl_Position = vec4(position, 1.0); }",
+        fragmentShader: "void main() { gl_FragColor = vec4(1.0); }",
+        transparent: true,
+      });
+    expect(withHeightFog(shader(), "translucent", { world: "vWorld" }).vertexShader).toContain("vFogWorld = vWorld;");
+    const placed = shader();
+    placed.userData["fogPlace"] = { world: "vWorld" };
+    const root = new Group();
+    root.add(new Mesh(new PlaneGeometry(), placed));
+    fogAll(root);
+    expect(placed.vertexShader).toContain("vFogWorld = vWorld;");
   });
 });

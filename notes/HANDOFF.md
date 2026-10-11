@@ -290,6 +290,54 @@
     poplars and banners: compare screenshots at "High Quality".
     Next (the user's order): MR-6/7 (post-goal slow motion, replay, forfeits), quick chat, match stats and the
     scoreboard, the match intro and outro, the HUD and menus, mutators, custom training, bots.
+  - **In 1352c01:** all of the above. **Since 1352c01 (uncommitted): MR-6/7** (`notes/match-rules-audit.md` §7, its
+    status list).
+    - Protocol 10:
+      - Messages: `0x05 VoteForfeit`; `0x87 ForfeitVote`, each player's view of their team's vote.
+      - Match flags: 8 (votes allowed now), 16 (no contest).
+      - Hello's `key`: a per-tab random key in sessionStorage, so the vote lockout survives a reconnect.
+      - Welcome: the match type and team size. Event kind 2: a leaver's car.
+    - Server: per-team forfeit votes (20 game s, unanimous, 5 s linger) with the initiator lockout enforced on the
+      server.
+      - Forfeits: after a goal one waits for the next round; a team emptied by a leave forfeits 2 ticks later (casual,
+        ranked); everyone gone is a no contest.
+      - The jitter buffer is sized on the game clock (MRL-16: it grew after every goal).
+      - Options: `--match-type casual|ranked|private` and `--forfeit-vote-wait SECONDS`.
+    - Client:
+      - The Escape menu's match buttons (`ui/matchMenu.ts`, `game/forfeitVote.ts`): vote or forfeit, and leave (back
+        to freeplay), with the game's verbatim text and confirms.
+      - The HUD's vote widget; the leaver's explosion (effect, shake, sound).
+      - The replay prompt is now "Press Space to Skip" (the names list waits for player names); the auto-skip setting
+        uses the game's text.
+    - e2e: `forfeit.spec.ts` runs on a fourth server (14437/14438: 2v2, votes once the clock runs).
+    - Also in this batch: RV-211a's sliding test (an accepted limit) and the banner taper (FLG1 follow-up).
+    - The 1352c01 engine/server review, RV-216..224:
+      - RV-216: the buffer's jump edges are the car's. After a tap's jump, a press the next tick is fresh.
+      - RV-217: a car respawning during the goal's wave refreshes its start-of-tick state (`Car::_CaptureOldState`).
+      - RV-218, RV-220, RV-224: tightened tests and comments.
+      - RV-219: the repress's tests, engine- and game-level.
+      - RV-221: `TestImpactSurfaceNormal`, the line check on the goal's faceted ramp.
+      - RV-222: README row 96.
+      - RV-223: determinism, rollback and netstate let each goal's wave play 0.5 s before the reset. That found a
+        snapshot bug: a restore didn't recreate a disabled body's manifold (the exploded ball, a demolished car);
+        fixed in `_DeserializeContacts`.
+      - Determinism (end-of-run snapshot hash, native = WASM): 300 s 503626639f483e87, 600 s 8af19f76ef2906dd (were
+        9f0d343981fca7d3 / 9dc05285014113cb before the wave played).
+    - The 1352c01 client review, RV-225..230, and RV-231:
+      - RV-225: the guard exempts three.js's chunk by its modules, not its name. The build records each output
+        file's modules in `client/node_modules/.cache/rl-chunk-modules.json` (vite.config.ts `chunkModules`, outside
+        dist); `public/` is scanned too.
+      - RV-226: the corner flags' ray sweep gets a 30 s timeout.
+      - RV-227: tests for the fog's `world` place and the place in the program key.
+      - RV-228: a tie control, .5 box means rounded half up (`reference_textures.py` `tie_row`, the local
+        texture_controls.json's `ties`).
+      - RV-229: the arena module list is built from names.
+      - RV-230: `codeSplitting` replaces the deprecated `advancedChunks`.
+      - RV-231 (engine): a goal push's velocities are read back at once, capped and quantised
+        (`Quantize::QuantizeVelocities`).
+    - Connection: control messages before the game listens are queued (`Connection.listen`). The initial match
+      state and vote state were being dropped. A closed tab closes its session (`pagehide`).
+    - Next: quick chat (the untracked WIP `game/quickChat.ts`, `ui/chatLog.ts`).
   - **Decided (user, 2026-10-10): no controller rumble.** notes/rumble.md stays as a reference spec only. The contact
     detection it asked about (the static session's Q-RMB-a: HandleCollision's cadence, the contact's point and normal,
     the landing speed) is still wanted, for the Impact_Medium camera shake and the impact and landing sounds; don't

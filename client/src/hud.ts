@@ -1,6 +1,7 @@
 // On-screen overlay: boost, the flip indicator, speed, score, camera mode, help.
 import type { SpawnSide } from "./engine/world";
 import { DODGE_WINDOW, type Dodge } from "./game/flipTracker";
+import type { VoteHud } from "./game/forfeitVote";
 import { ACTIONS, type Bindings, inputName } from "./input/bindings";
 
 /** The local car demolished: its respawn and the respawn spot selection (the steer input picks a side). */
@@ -55,6 +56,8 @@ export interface HudState {
   readonly flipReset: boolean;
   /** The local car is demolished (null: it isn't) */
   readonly respawn: RespawnHud | null;
+  /** The team's forfeit vote while it runs (null or absent: none; the widget fades out) */
+  readonly vote?: VoteHud | null;
 }
 
 function element<T extends HTMLElement>(root: ParentNode, selector: string, type: new () => T): T {
@@ -88,6 +91,11 @@ export class Hud {
   readonly #respawnLeft: HTMLElement;
   readonly #respawnRight: HTMLElement;
   readonly #respawnFill: HTMLElement;
+  readonly #vote: HTMLElement;
+  readonly #voteTally: HTMLElement;
+  readonly #voteTime: HTMLElement;
+  readonly #voteFill: HTMLElement;
+  readonly #voteHint: HTMLElement;
 
   constructor(root: HTMLElement) {
     this.#boostValue = element(root, "#boost-value", HTMLElement);
@@ -118,6 +126,11 @@ export class Hud {
     this.#respawnLeft = element(root, "#respawn-left", HTMLElement);
     this.#respawnRight = element(root, "#respawn-right", HTMLElement);
     this.#respawnFill = element(root, "#respawn-fill", HTMLElement);
+    this.#vote = element(root, "#vote", HTMLElement);
+    this.#voteTally = element(root, "#vote-tally", HTMLElement);
+    this.#voteTime = element(root, "#vote-time", HTMLElement);
+    this.#voteFill = element(root, "#vote-fill", HTMLElement);
+    this.#voteHint = element(root, "#vote-hint", HTMLElement);
   }
 
   /** Shows or hides the controls list, filled from the current bindings. */
@@ -167,6 +180,18 @@ export class Hud {
     this.#net.hidden = s.net === null;
     this.#updateFlip(s.flip, s.flipReset);
     this.#updateRespawn(s.respawn);
+    this.#updateVote(s.vote ?? null);
+  }
+
+  /** (its last text stays while it fades out) */
+  #updateVote(v: VoteHud | null): void {
+    this.#vote.classList.toggle("shown", v !== null);
+    if (v === null) return;
+    this.#voteTally.textContent = v.tally;
+    this.#voteTime.textContent = v.time;
+    this.#voteFill.style.width = `${String(v.fill * 100)}%`;
+    this.#voteHint.textContent = v.instructions ?? "";
+    this.#voteHint.hidden = v.instructions === null;
   }
 
   #updateRespawn(r: RespawnHud | null): void {

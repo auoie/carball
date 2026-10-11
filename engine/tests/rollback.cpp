@@ -29,6 +29,20 @@ static uint32_t Next() {
 }
 static float NextAxis() { return (int)(Next() % 3) - 1; }
 
+// A goal: the explosion's wave plays half a second, then the next kickoff, with its countdown (the wave in the
+// scenario too: RV-223)
+static void ResetAfterGoal(Arena* arena, uint64_t& scoredAt) {
+	if (!arena->IsBallScored())
+		return;
+	if (scoredAt == 0)
+		scoredAt = arena->tickCount;
+	if (arena->tickCount >= scoredAt + 60) {
+		arena->ResetToRandomKickoff((int)(Next() % 1000));
+		arena->kickoffCountdownTicks = 480;
+		scoredAt = 0;
+	}
+}
+
 static void ScriptInputs(Arena* arena) {
 	Vec ballPos = arena->ball->GetState().pos;
 	for (Car* car : arena->GetCars()) {
@@ -126,13 +140,13 @@ static int CheckMatch(int seconds, int window, int interval) {
 
 	int checks = 0, failures = 0, duringContact = 0, transientDifferences = 0;
 	Arena* target = nullptr; // long-lived arena for in-place loads (its own history differs from the original's)
+	uint64_t scoredAt = 0;
 	for (int tick = 0; tick < seconds * 120; tick++) {
 		if (tick % 8 == 0)
 			ScriptInputs(arena);
 		if (tick % interval != interval / 2) {
 			arena->Step();
-			if (arena->IsBallScored())
-				{ arena->ResetToRandomKickoff((int)(Next() % 1000)); arena->kickoffCountdownTicks = 480; } // (with the kickoff countdown)
+			ResetAfterGoal(arena, scoredAt);
 			continue;
 		}
 
@@ -176,8 +190,7 @@ static int CheckMatch(int seconds, int window, int interval) {
 		delete restored;
 		delete cloned;
 		tick += window;
-		if (arena->IsBallScored())
-			{ arena->ResetToRandomKickoff((int)(Next() % 1000)); arena->kickoffCountdownTicks = 480; } // (with the kickoff countdown)
+		ResetAfterGoal(arena, scoredAt);
 	}
 	printf("match: %d restores, in-place loads and clones (%d during car-car or car-ball contact; %d differed only before "
 		"the first tick), %d diverged\n", checks, duringContact, transientDifferences, failures);

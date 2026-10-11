@@ -41,13 +41,34 @@ export interface JoinPreferences {
 
 type Welcome = Extract<ControlMessage, { type: "welcome" }>;
 
+const KEY_STORAGE = "rl-clone.playerKey";
+
+/** This tab's random key, kept across its reconnects and reloads (sessionStorage: each tab its own player), so the
+ *  server knows who started a forfeit vote; a fresh one each time when storage is unavailable */
+export function playerKey(): number {
+  try {
+    const stored = Number(sessionStorage.getItem(KEY_STORAGE));
+    if (Number.isInteger(stored) && stored > 0 && stored <= 0xffffffff) return stored;
+  } catch {
+    // (no storage: a new key)
+  }
+  const key = Math.max(1, crypto.getRandomValues(new Uint32Array(1))[0] ?? 1);
+  try {
+    sessionStorage.setItem(KEY_STORAGE, String(key));
+  } catch {
+    // (not kept)
+  }
+  return key;
+}
+
 export class Connection {
   readonly #transport: WebTransport;
   readonly #datagrams: WritableStreamDefaultWriter<Uint8Array>;
   #control: WritableStreamDefaultWriter<Uint8Array> | null = null; // the control stream (after the hello)
   #closed = false;
-  /** Reliable messages after the welcome (world reloads, events) */
-  onControl: (m: ControlMessage) => void = () => undefined;
+  #onControl: ((m: ControlMessage) => void) | null = null;
+  /** Reliable messages that came before anyone listened (the match state and the vote sent right after the welcome) */
+  readonly #early: ControlMessage[] = [];
   onUpdate: (u: Update) => void = () => undefined;
   onClose: (reason: string) => void = () => undefined;
 
@@ -67,7 +88,7 @@ export class Connection {
     const connection = new Connection(transport);
     const stream = await transport.createBidirectionalStream();
     const writer = stream.writable.getWriter();
-    await writer.write(encodeControl({ type: "hello", version: PROTOCOL_VERSION, ...preferences }));
+    await writer.write(encodeControl({ type: "hello", version: PROTOCOL_VERSION, ...preferences, key: playerKey() }));
     connection.#control = writer;
 
     const welcome = await new Promise<Welcome>((resolve, reject) => {
@@ -79,7 +100,8 @@ export class Connection {
           else reject(new Error(`expected welcome, got ${m.type}`));
           return;
         }
-        connection.onControl(m);
+        if (connection.#onControl) connection.#onControl(m);
+        else connection.#early.push(m);
       }).catch(reject);
     });
     if (welcome.version !== PROTOCOL_VERSION) throw new Error(`server protocol ${String(welcome.version)}`);
@@ -88,6 +110,12 @@ export class Connection {
       .then(() => { connection.#close("closed by the server"); })
       .catch((e: unknown) => { connection.#close(e instanceof Error ? e.message : String(e)); });
     return { connection, welcome };
+  }
+
+  /** Reliable messages after the welcome (world reloads, events), from the first one on */
+  listen(handle: (m: ControlMessage) => void): void {
+    this.#onControl = handle;
+    for (const m of this.#early.splice(0)) handle(m);
   }
 
   get closed(): boolean {
@@ -161,6 +189,11 @@ export class Connection {
   /** The auto-skip setting changed */
   setAutoSkipReplay(on: boolean): void {
     this.#sendControl({ type: "autoSkipReplay", on });
+  }
+
+  /** Vote to forfeit: starts the team's vote, or joins it */
+  voteForfeit(): void {
+    this.#sendControl({ type: "voteForfeit" });
   }
 
   #sendControl(m: ControlMessage): void {

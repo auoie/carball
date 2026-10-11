@@ -24,7 +24,11 @@ async fn a_client_connects_drives_and_follows_the_world() {
     let server = net::endpoint(identity, 0).unwrap();
     let port = server.local_addr().unwrap().port();
     let (to_game, messages) = tokio::sync::mpsc::unbounded_channel();
-    std::thread::spawn(move || game_loop::run(messages, rl_server::game::TEAM_SIZE, None));
+    std::thread::spawn(move || game_loop::run(
+        messages,
+        game_loop::Playlist { team_size: rl_server::game::TEAM_SIZE, match_type: rl_server::game::MatchType::Casual, forfeit_vote_wait: None },
+        None,
+    ));
     tokio::spawn(net::accept_loop(server, to_game));
 
     let config = ClientConfig::builder()
@@ -41,6 +45,7 @@ async fn a_client_connects_drives_and_follows_the_world() {
         steering_sensitivity: 1.0,
         air_control_sensitivity: 1.0,
         auto_skip_replay: false,
+        key: 7,
     };
     send.write_all(&hello.encode()).await.unwrap();
     let Control::Welcome { car_id, snapshot, tick_rate, .. } = read_control(&mut recv).await else { panic!("expected welcome") };

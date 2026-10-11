@@ -59,7 +59,7 @@ const OPTION_LABELS: Readonly<Record<keyof Options, string>> = {
   airPitchSafety: "Air pitch safety (keyboard: holding W off the ground doesn't pitch until released)",
   muted: "Mute all sound (M)",
   flipIndicator: "Show the flip indicator (whether you can still dodge, and flip resets)",
-  autoSkipReplay: "Skip goal replays (online: always ready to skip; Space or (A) skips one)",
+  autoSkipReplay: "Skip Goal Replay: Automatically votes to skip the goal replay.", // ([AutoSkipGoalReplay] Label, Description)
   bloom: "Bloom (a glow round the brightest parts)",
   depthOfField: "Depth of Field",
   unlimitedBoost: "Unlimited boost in free play (off: 33 boost each round, used up as you boost, and pads to pick up; a full tank takes none)",
@@ -86,6 +86,8 @@ function el<K extends keyof HTMLElementTagNameMap>(
 export class SettingsPanel {
   readonly #root: HTMLElement;
   readonly #body: HTMLElement;
+  /** Online: where the match's buttons go (src/ui/matchMenu.ts) */
+  readonly match: HTMLElement = el("div", { className: "settings-match" });
   #settings: Settings;
   #tab: Tab = "controls";
   #capture: { action: Action; device: Device; cancel: () => void } | null = null;
@@ -108,7 +110,7 @@ export class SettingsPanel {
     const close = el("button", { className: "settings-close", textContent: "Close (Esc)" });
     close.addEventListener("click", () => { this.close(); });
     this.#root = el("div", { className: "settings" }, [
-      el("div", { className: "settings-header" }, [el("h2", { textContent: "Settings" }), tabs, close]),
+      el("div", { className: "settings-header" }, [el("h2", { textContent: "Settings" }), tabs, this.match, close]),
       this.#body,
     ]);
     this.#root.id = "settings";

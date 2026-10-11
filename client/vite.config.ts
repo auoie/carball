@@ -1,6 +1,6 @@
 /// <reference types="vitest/config" />
-import { createReadStream, statSync } from "node:fs";
-import { join, normalize, sep } from "node:path";
+import { createReadStream, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join, normalize, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type Plugin, defineConfig } from "vite";
 
@@ -36,8 +36,29 @@ function localAssets(): Plugin {
   };
 }
 
+/** Where a build records each output file's modules: the shipped-data guard exempts three.js's chunk by what's in it,
+ *  not its name (RV-225). Outside dist: it doesn't ship */
+const CHUNK_MODULES = here("node_modules/.cache/rl-chunk-modules.json");
+
+/** A build: each file it writes and the modules in it (client-relative paths, "/" separated; a bundler's own virtual
+ *  modules as they are, "\0..."; none for an asset) */
+function chunkModules(): Plugin {
+  return {
+    name: "rl-chunk-modules",
+    apply: "build",
+    generateBundle(_options, bundle) {
+      const files: Record<string, string[]> = {};
+      for (const [name, output] of Object.entries(bundle)) {
+        files[name] = output.type === "chunk" ? output.moduleIds.map((id) => (id.startsWith("\0") ? id : relative(here("."), id).split(sep).join("/"))) : [];
+      }
+      mkdirSync(dirname(CHUNK_MODULES), { recursive: true });
+      writeFileSync(CHUNK_MODULES, JSON.stringify(files, null, 1));
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [localAssets()],
+  plugins: [localAssets(), chunkModules()],
   resolve: {
     alias: {
       // The WebAssembly engine (build it first: see engine/README.md) and our generated arena
@@ -54,9 +75,8 @@ export default defineConfig({
   build: {
     target: "es2023",
     chunkSizeWarningLimit: 700, // three.js alone is ~600 KB minified
-    // (three.js in a chunk of its own, named for it: otherwise it takes the name of whichever of our modules imports it
-    // first, and the shipped-data guard tells the library's chunk by its name)
-    rolldownOptions: { output: { advancedChunks: { groups: [{ name: "three", test: /node_modules[\\/]three[\\/]/ }] } } },
+    // (three.js in a chunk of its own: the shipped-data guard exempts the library's chunk, by its modules: RV-225)
+    rolldownOptions: { output: { codeSplitting: { groups: [{ name: "three", test: /node_modules[\\/]three[\\/]/ }] } } },
   },
   test: {
     environment: "node",

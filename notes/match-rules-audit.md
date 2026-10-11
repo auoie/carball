@@ -411,6 +411,36 @@ UI. Tournament matches inherit ranked's 90 s and add series forfeits (out of sco
 | D-7 | Input packets per render frame (real-time cadence) | every 2 ticks, so slower during the slow motion; the jitter buffer measures real-time gaps | low; check |
 | D-8 | A joiner during the replay sees it (server-streamed) and must press skip | must press skip (same), but has no recording to play | low (needs a server ring buffer) |
 
+**Status (main session, 2026-10-10, protocol 10, uncommitted):**
+- **D-1 done.** A forfeit in PostGoal or Replay sets `forfeiting`; the match ends at `new_round`. Test:
+  `a_forfeit_after_a_goal_ends_the_match_at_the_next_round`.
+- **D-2 done.** Per-team votes: 20 game s, unanimous, a joiner added and a leaver removed, failed only at the timeout,
+  5 s linger. The initiator lockout is enforced on the server, keyed by a per-tab client key (Hello's `key`,
+  sessionStorage) so it survives a reconnect; the team is re-enabled when nobody on it can start one.
+  `bCanVoteToForfeit` is evaluated per tick as the first tick past the wait (4:00 shown in casual); 90 s for ranked and
+  private; overtime always; never once `HasWinner`.
+  - Playlist predicate: casual and ranked allow votes; private allows them in 1v1s only (its flags are unknown, §9.3).
+  - Server options: `--match-type casual|ranked|private`, `--forfeit-vote-wait SECONDS`.
+  - Client: the Escape menu shows "Vote to Concede"/"Vote to Forfeit" or the 1v1 "Forfeit Match" with its confirm,
+    and "Leave Match" with its confirm (back to freeplay). The HUD widget shows the tally, the m:ss time and a time
+    bar [I], plus "Press Esc to Vote" until the player votes; it fades in 0.3 s.
+  - MR-7.15: a leave from a full public lobby ends every vote.
+  - Tests: 5 server tests, client unit tests, and e2e `forfeit.spec.ts`.
+- **D-3 done.** When everyone has gone, the match is a no contest (flag 16). Our arena stops ticking with nobody in it,
+  so this happens at the leave, not 0.01 s later.
+  - The countdown-end recheck of every team is not done: our matches start without the 30 s WaitingForPlayers, so a
+    team empty from the start (solo play) is not a forfeit.
+  - The leave's own check runs 2 ticks later (`CheckAllTeamsForfeitState`), in casual and ranked only.
+- **D-4 done.** Event kind 2 `left`: the others draw the demolition effect, shake and sound where the car was drawn,
+  with no stat.
+- **D-6 partly.** The skip prompt is now `SkipInstructions` ("Press Space to Skip" / "(A)") and the n/m count is
+  gone. The names list needs player names, which come with the scoreboard.
+- **D-7 done (MRL-16).** The server sizes the jitter buffer on the game clock (a packet's arrival mapped through the
+  last tick's dilation); the input timeout stays on real time. Test:
+  `the_slow_motion_after_a_goal_leaves_the_jitter_buffer_as_it_was` (before the fix the buffer grew from 7 to 9 after
+  a goal; now it stays at 7).
+- **D-5** (bots) and **D-8** (a ring buffer) remain open.
+
 ### 8. Text the clone would need (keys and paraphrases; not cleared unless noted)
 | Where | Key | Meaning |
 |---|---|---|
@@ -526,6 +556,15 @@ The same runs found three things the engine gets wrong (KNB-5…7): the speed ca
   body+0x368 = MaxLinearSpeed·0.02 first. The engine pushes after `Car::_PreTickUpdate`'s `_LimitVelocities`, so it
   integrates up to |v0 + Δv| ≈ 3000–7000 uu/s for one tick. Replays: car position error 0.17 → 2.8 uu median
   (p90 0.86 → 8.7), velocity 6 → 27 uu/s.
+  **Correction (2026-10-10, OLD1, live) [N]:** the first cap is the next physics frame's **pre-step read-back**, not
+  applyDamping. The car pre-step (TickNotify +0x28, FUN_140f21a90 → FUN_140f21850) sets OldRBState = RBState =
+  FUN_140ef2770(actor) (|v| scaled to MaxLinearSpeed 2300 and |ω| to 5.5 in uu, then quantised) and writes it back into
+  the body (FUN_140f35870) before the Bullet step; applyDamping then changes nothing. Every game read of the body goes
+  through that getter, so **OldRBState in the tick after a push holds the capped, quantised pushed velocity** (never the
+  raw push, never the pre-push value). Bump/demo (ApplyCarImpactForces, GetBumpImpulse, ShouldDemolish) and
+  ApplyBallImpactForces read it, and the uncapped value is never replicated or visible. The push itself is
+  applyImpulse at once (0x1402b11d0, + activate) from ExplosionComponent_X's component Tick (FUN_140e5dcb0), always
+  outside a physics frame.
 - **KNB-6 (spin, data + static, high on the effect, medium on the exact lag). Engine fix.** `HitLocation` is
   `Victim.Location`, and AddImpulse applies the impulse there (`applyImpulse(J, HitLocation·0.02 − origin)`). The
   replays fit when Location is the car's body position **one tick earlier** (actor Location lags the body by a

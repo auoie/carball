@@ -84,9 +84,12 @@ pub struct InputBuffer {
     pub jitter: JitterBuffer,
     /// The controls the car currently drives with (repeated when no frame is available)
     pub controls: Controls,
-    /// This tick consumed two frames, the first releasing the jump and the second pressing it again: the car must see a
-    /// fresh press though jump reads held (`Arena::repress_jump`: NET-2)
+    /// The car had jump held and this tick released it and pressed it again (in two frames consumed together, or a
+    /// tap's release left over from the last tick): the car must see a fresh press though jump reads held
+    /// (`Arena::repress_jump`: NET-2)
     pub repress_jump: bool,
+    /// The jump the car was given last tick (a tap's press though its frame released it: RV-216)
+    given_jump: bool,
     pub stats: Stats,
 }
 
@@ -106,12 +109,19 @@ impl InputBuffer {
     /// A packet of consecutive frames starting at `first_frame` (`ReceiveClientPacket`).
     /// Returns whether it was the newest packet so far (its timestamp is then the one to echo).
     pub fn receive(&mut self, timestamp: u32, first_frame: u32, frames: &[InputFrame], now: f64) -> bool {
+        self.receive_at(timestamp, first_frame, frames, now, now)
+    }
+
+    /// As `receive`, its arrival also on the game's clock (`game_now`, s): the jitter buffer sizes the packets' gaps on
+    /// it, as the client paces them by its game ticks (through the post-goal slow motion they come further apart in
+    /// real time, which grew the buffer for seconds after every goal: MRL-16); the input timeout stays real time
+    pub fn receive_at(&mut self, timestamp: u32, first_frame: u32, frames: &[InputFrame], now: f64, game_now: f64) -> bool {
         let newest = self.newest_timestamp.is_none_or(|t| timestamp.wrapping_sub(t) as i32 > 0);
         if newest {
             // ReceiveNewClientPacket (ServerConsume): before the packet's frames are merged
             self.newest_timestamp = Some(timestamp);
             self.last_packet_time = now;
-            self.jitter.received_packet(now);
+            self.jitter.received_packet(game_now);
             if self.filling && self.frames.len() >= self.jitter.buffer_size as usize {
                 self.filling = false;
             }
@@ -154,11 +164,14 @@ impl InputBuffer {
     /// Two frames consumed in one tick (over the jitter target): the game fires SetVehicleInput for each, so the first
     /// one's jump edges still count though its axes, boost and handbrake give way to the second's (NET-2): a press in the
     /// first released in the second still jumps this tick (released the next), and a release in the first pressed again
-    /// in the second is a fresh press (`repress_jump`). (The first frame's axes at a press, the dodge's direction in the
-    /// game, are the second's here.)
+    /// in the second is a fresh press (`repress_jump`). The edges are the car's: after a tap's jump, its release comes
+    /// first the next tick, so a press then is fresh too, a held press as well as another tap (RV-216). (The first
+    /// frame's axes at a press, the dodge's direction in the game, are the second's here.)
     pub fn tick(&mut self, now: f64, odd_tick: bool) -> Controls {
         self.repress_jump = false;
-        let previous = self.controls;
+        let previous = self.controls.jump != 0; // (the last frame consumed)
+        let mut first = None;
+        let mut second = false;
         if self.frames.is_empty() {
             if now - self.last_packet_time > INPUT_TIMEOUT {
                 self.controls = Controls::default();
@@ -167,26 +180,29 @@ impl InputBuffer {
             self.skip_one();
             self.stats.under_buffer_frames += 1;
         } else {
-            let mut first = None;
             if !self.filling || !odd_tick {
                 self.consume_one();
-                first = Some(self.controls);
+                first = Some(self.controls.jump != 0);
             } else {
                 self.skip_one();
             }
             if (self.jitter.buffer_size as usize) < self.frames.len() {
                 self.consume_one();
                 self.stats.over_buffer_frames += 1;
-                if let Some(a) = first {
-                    let (p, a, b) = (previous.jump != 0, a.jump != 0, self.controls.jump != 0);
-                    if !p && a && !b {
-                        return Controls { jump: 1, ..self.controls };
-                    }
-                    self.repress_jump = p && !a && b;
-                }
+                second = true;
             }
         }
-        self.controls
+        let last = self.controls.jump != 0;
+        // The jump the car gets, and whether a release came before its press this tick
+        let (jump, released) = match first {
+            None if !second => (last, false), // (no frame: as it was, or a tap's release now)
+            Some(a) if second && !previous && a && !last => (true, true), // (a tap: it still jumps)
+            Some(a) if second => (last, !previous || !a),
+            _ => (last, !previous),
+        };
+        self.repress_jump = jump && released && self.given_jump;
+        self.given_jump = jump;
+        Controls { jump: u8::from(jump), ..self.controls }
     }
 }
 
@@ -315,6 +331,39 @@ mod tests {
         assert!(b.repress_jump, "the release between the two frames was lost");
         b.tick(0.03, false);
         assert!(!b.repress_jump, "only for that tick");
+    }
+
+    #[test]
+    fn a_press_the_tick_after_a_tap_is_a_fresh_press() {
+        // J, 0 consumed together, then J held: the tap's release comes first the next tick, so its press is fresh (the
+        // car otherwise holds one long jump where the game hops and presses again: RV-216)
+        let mut b = InputBuffer::default();
+        b.receive(1, 1, &[jump(false)], 0.0);
+        b.tick(0.0, false);
+        let mut frames = vec![jump(true), jump(false)];
+        frames.extend(vec![jump(true); 7]);
+        b.receive(2, 2, &frames, 0.01);
+        assert_eq!(b.tick(0.02, false).jump, 1, "the tap");
+        assert!(!b.repress_jump, "a press from released");
+        assert_eq!(b.tick(0.03, false).jump, 1);
+        assert!(b.repress_jump, "the release after the tap and this press");
+        assert_eq!(b.tick(0.04, false).jump, 1);
+        assert!(!b.repress_jump, "held");
+    }
+
+    #[test]
+    fn two_taps_in_consecutive_double_consumes_are_two_presses() {
+        let mut b = InputBuffer::default();
+        b.receive(1, 1, &[jump(false)], 0.0);
+        b.tick(0.0, false);
+        let mut frames = vec![jump(true), jump(false), jump(true), jump(false)];
+        frames.extend(vec![jump(false); 7]);
+        b.receive(2, 2, &frames, 0.01);
+        assert_eq!(b.tick(0.02, false).jump, 1);
+        assert_eq!(b.tick(0.03, false).jump, 1);
+        assert_eq!(b.stats.over_buffer_frames, 2, "two double consumes");
+        assert!(b.repress_jump, "the second tap was lost");
+        assert_eq!(b.tick(0.04, false).jump, 0, "released after it");
     }
 
     #[test]

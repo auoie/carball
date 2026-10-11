@@ -1,5 +1,5 @@
 {
-  "protocolVersion": 9,
+  "protocolVersion": 10,
   "vectors": [
     {
       "channel": "control",
@@ -11,9 +11,10 @@
         "dodgeDeadzone": 0.8,
         "steeringSensitivity": 1.0,
         "airControlSensitivity": 1.25,
-        "autoSkipReplay": true
+        "autoSkipReplay": true,
+        "key": 3735928559
       },
-      "hex": "12000101000000cdcc4c3f0000803f0000a03f01"
+      "hex": "16000101000000cdcc4c3f0000803f0000a03f01efbeadde"
     },
     {
       "channel": "control",
@@ -40,18 +41,27 @@
     {
       "channel": "control",
       "message": {
+        "type": "voteForfeit"
+      },
+      "hex": "010005"
+    },
+    {
+      "channel": "control",
+      "message": {
         "type": "welcome",
         "version": 1,
         "carId": 3,
         "tickRate": 120,
         "frame": 0,
+        "matchType": "ranked",
+        "teamSize": 2,
         "snapshot": [
           1,
           2,
           3
         ]
       },
-      "hex": "130081010003000000780000000003000000010203"
+      "hex": "1500810100030000007800000000010203000000010203"
     },
     {
       "channel": "control",
@@ -93,6 +103,18 @@
     {
       "channel": "control",
       "message": {
+        "type": "event",
+        "serverTick": 9,
+        "event": {
+          "kind": "left",
+          "car": 4
+        }
+      },
+      "hex": "0a0083090000000204000000"
+    },
+    {
+      "channel": "control",
+      "message": {
         "type": "match",
         "serverTick": 1000,
         "phase": "active",
@@ -104,9 +126,11 @@
           1
         ],
         "winner": null,
-        "forfeit": false
+        "forfeit": false,
+        "canVoteForfeit": true,
+        "noContest": false
       },
-      "hex": "0e0084e80300000102a08c00000201ff"
+      "hex": "0e0084e8030000010aa08c00000201ff"
     },
     {
       "channel": "control",
@@ -122,7 +146,9 @@
           2
         ],
         "winner": 0,
-        "forfeit": true
+        "forfeit": true,
+        "canVoteForfeit": false,
+        "noContest": false
       },
       "hex": "0e0084881300000405d2040000030200"
     },
@@ -140,9 +166,31 @@
           0
         ],
         "winner": null,
-        "forfeit": false
+        "forfeit": false,
+        "canVoteForfeit": false,
+        "noContest": false
       },
       "hex": "0e0084701700000500e11000000100ff"
+    },
+    {
+      "channel": "control",
+      "message": {
+        "type": "match",
+        "serverTick": 7000,
+        "phase": "ended",
+        "overtime": false,
+        "clockRunning": false,
+        "clockTicks": 20000,
+        "score": [
+          0,
+          0
+        ],
+        "winner": null,
+        "forfeit": false,
+        "canVoteForfeit": false,
+        "noContest": true
+      },
+      "hex": "0e0084581b00000410204e00000000ff"
     },
     {
       "channel": "control",
@@ -183,6 +231,32 @@
         "total": 3
       },
       "hex": "0300860103"
+    },
+    {
+      "channel": "control",
+      "message": {
+        "type": "forfeitVote",
+        "state": "running",
+        "yes": 1,
+        "required": 3,
+        "secondsLeft": 17,
+        "voted": true,
+        "canStart": false
+      },
+      "hex": "0600870001031101"
+    },
+    {
+      "channel": "control",
+      "message": {
+        "type": "forfeitVote",
+        "state": "none",
+        "yes": 0,
+        "required": 0,
+        "secondsLeft": 0,
+        "voted": false,
+        "canStart": true
+      },
+      "hex": "0600870300000002"
     },
     {
       "channel": "datagram",

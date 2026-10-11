@@ -21,6 +21,8 @@ pub enum ToGame {
     /// Skip the goal replay
     ReadyUp { id: PlayerId },
     AutoSkipReplay { id: PlayerId, on: bool },
+    /// Vote to forfeit (starts or joins the team's vote)
+    VoteForfeit { id: PlayerId },
 }
 
 /// Development identity: self-signed for localhost, valid 14 days (the browser limit for certificate hashes)
@@ -72,7 +74,7 @@ async fn session(incoming: IncomingSession, id: PlayerId, to_game: &UnboundedSen
     }
     let connection = request.accept().await?;
     let (mut send, mut recv) = connection.accept_bi().await.context("no control stream")?;
-    let Control::Hello { version, team, body, dodge_deadzone, steering_sensitivity, air_control_sensitivity, auto_skip_replay } =
+    let Control::Hello { version, team, body, dodge_deadzone, steering_sensitivity, air_control_sensitivity, auto_skip_replay, key } =
         tokio::time::timeout(Duration::from_secs(5), read_control(&mut recv)).await.context("no hello")??
     else {
         bail!("expected hello");
@@ -82,7 +84,7 @@ async fn session(incoming: IncomingSession, id: PlayerId, to_game: &UnboundedSen
     }
 
     let (out_tx, mut out_rx) = unbounded_channel();
-    let request = JoinRequest { team, body, dodge_deadzone, steering_sensitivity, air_control_sensitivity, auto_skip_replay };
+    let request = JoinRequest { team, body, dodge_deadzone, steering_sensitivity, air_control_sensitivity, auto_skip_replay, key };
     to_game.send(ToGame::Join { id, request, out: out_tx })?;
 
     // Game -> client
@@ -112,6 +114,7 @@ async fn session(incoming: IncomingSession, id: PlayerId, to_game: &UnboundedSen
                 Ok(Control::ResetInputBuffer) => ToGame::ResetInputBuffer { id },
                 Ok(Control::ReadyUp) => ToGame::ReadyUp { id },
                 Ok(Control::AutoSkipReplay { on }) => ToGame::AutoSkipReplay { id, on },
+                Ok(Control::VoteForfeit) => ToGame::VoteForfeit { id },
                 Ok(_) => continue, // (nothing else is expected from a client)
                 Err(_) => break,
             };

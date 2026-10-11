@@ -4,13 +4,36 @@
 // 2: kickoff countdown in the state; 3: the wheels' previous contacts; 4: the jump's release; 5: respawn spot selection
 // and flip resets in the state; 6: spawn counters in the state, the match message; 7: the engine turns the ball (its
 // orientation is simulated state: the network state's format is unchanged); 8: the bodies' inverse inertia tensors;
-// 9: the goal replay (its phase, plan and skip votes; Hello's auto-skip)
-export const PROTOCOL_VERSION = 9;
+// 9: the goal replay (its phase, plan and skip votes; Hello's auto-skip); 10: forfeit votes, the match type, a leaver's
+// car, no contest
+export const PROTOCOL_VERSION = 10;
 export const MAX_INPUT_FRAMES = 10;
 
 export type GameEvent =
   | { readonly kind: "goal"; readonly team: number }
-  | { readonly kind: "demo"; readonly attacker: number; readonly victim: number };
+  | { readonly kind: "demo"; readonly attacker: number; readonly victim: number }
+  /** A player left: their car explodes where it is (Car.Demolish(None): no demolition counted) */
+  | { readonly kind: "left"; readonly car: number };
+
+/** The match type (MatchType_TA): the forfeit rules and the vote's label */
+export type MatchType = "casual" | "ranked" | "private";
+const MATCH_TYPES: readonly MatchType[] = ["casual", "ranked", "private"];
+
+/** A team's forfeit vote as one of its players sees it (Team_TA.ForfeitVote) */
+export interface ForfeitVote {
+  /** A finished vote stays 5 game s */
+  readonly state: "running" | "passed" | "failed" | "none";
+  readonly yes: number;
+  /** The votes it needs: the team's players (unanimous) */
+  readonly required: number;
+  /** Game seconds left of its 20 (TimeRemaining) */
+  readonly secondsLeft: number;
+  /** This player voted */
+  readonly voted: boolean;
+  /** This player may start a vote (one start each, until every teammate has started one) */
+  readonly canStart: boolean;
+}
+const VOTE_STATES: readonly ForfeitVote["state"][] = ["running", "passed", "failed", "none"];
 
 /** Where a match is (the game's GameEvent_Soccar_TA states) */
 export type MatchPhase = "countdown" | "active" | "postGoal" | "timeUp" | "ended" | "replay";
@@ -42,8 +65,13 @@ export interface MatchState {
   readonly clockTicks: number;
   readonly score: readonly [number, number];
   readonly winner: number | null;
-  /** The match ended because the losing team left (none of its players remained) */
+  /** The match ended by a forfeit: a team voted to, or left (none of its players remained) */
   readonly forfeit: boolean;
+  /** Forfeit votes are allowed now (bCanVoteToForfeit: no winner yet, 60 s (casual) or 90 s of the clock gone, or
+   *  overtime) */
+  readonly canVoteForfeit: boolean;
+  /** The match ended with no contest: every team left (ForceNoContest) */
+  readonly noContest: boolean;
 }
 
 export type ControlMessage =
@@ -57,17 +85,24 @@ export type ControlMessage =
       readonly airControlSensitivity: number;
       /** Skips every goal replay (bAutoSkipGoalReplay) */
       readonly autoSkipReplay: boolean;
+      /** This client's own random key, the same when it reconnects (who started a forfeit vote: ForfeitInitiatorIDs) */
+      readonly key: number;
     }
   /** Skip the goal replay (ReadyUp: Space / pad A); counts only during one */
   | { readonly type: "readyUp" }
   /** The auto-skip setting changed (turned on during a replay, it readies the player) */
   | { readonly type: "autoSkipReplay"; readonly on: boolean }
+  /** Vote to forfeit (PRI.ServerVoteToForfeit): starts the team's vote, or joins it as a yes */
+  | { readonly type: "voteForfeit" }
   | {
       readonly type: "welcome";
       readonly version: number;
       readonly carId: number;
       readonly tickRate: number;
       readonly frame: number;
+      readonly matchType: MatchType;
+      /** The playlist's team size */
+      readonly teamSize: number;
       readonly snapshot: Uint8Array;
     }
   /** The client had a hitch (over 0.1 s between its ticks) 2 s ago: the server resets its jitter buffer
@@ -79,7 +114,9 @@ export type ControlMessage =
   /** The goal replay starts: what to play from this client's own recording */
   | ({ readonly type: "replay" } & ReplayPlan)
   /** How many players are ready to skip the goal replay, of how many */
-  | { readonly type: "replayReady"; readonly ready: number; readonly total: number };
+  | { readonly type: "replayReady"; readonly ready: number; readonly total: number }
+  /** This player's team's forfeit vote, when it changes */
+  | ({ readonly type: "forfeitVote" } & ForfeitVote);
 
 /** One frame of inputs as sent: axes in 1/127 steps, bits for the buttons. */
 export interface InputFrame {
@@ -221,6 +258,7 @@ export function encodeControl(m: ControlMessage): Uint8Array {
       w.f32(m.steeringSensitivity);
       w.f32(m.airControlSensitivity);
       w.u8(m.autoSkipReplay ? 1 : 0);
+      w.u32(m.key);
       break;
     case "resetInputBuffer":
       w.u8(0x02);
@@ -231,6 +269,17 @@ export function encodeControl(m: ControlMessage): Uint8Array {
     case "autoSkipReplay":
       w.u8(0x04);
       w.u8(m.on ? 1 : 0);
+      break;
+    case "voteForfeit":
+      w.u8(0x05);
+      break;
+    case "forfeitVote":
+      w.u8(0x87);
+      w.u8(VOTE_STATES.indexOf(m.state));
+      w.u8(m.yes);
+      w.u8(m.required);
+      w.u8(m.secondsLeft);
+      w.u8((m.voted ? 1 : 0) | (m.canStart ? 2 : 0));
       break;
     case "replay":
       w.u8(0x85);
@@ -260,6 +309,8 @@ export function encodeControl(m: ControlMessage): Uint8Array {
       w.u32(m.carId);
       w.u8(m.tickRate);
       w.u32(m.frame);
+      w.u8(MATCH_TYPES.indexOf(m.matchType));
+      w.u8(m.teamSize);
       w.u32(m.snapshot.byteLength);
       w.bytes(m.snapshot);
       break;
@@ -275,17 +326,20 @@ export function encodeControl(m: ControlMessage): Uint8Array {
       if (m.event.kind === "goal") {
         w.u8(0);
         w.u8(m.event.team);
-      } else {
+      } else if (m.event.kind === "demo") {
         w.u8(1);
         w.u32(m.event.attacker);
         w.u32(m.event.victim);
+      } else {
+        w.u8(2);
+        w.u32(m.event.car);
       }
       break;
     case "match":
       w.u8(0x84);
       w.u32(m.serverTick);
       w.u8(MATCH_PHASES.indexOf(m.phase));
-      w.u8((m.overtime ? 1 : 0) | (m.clockRunning ? 2 : 0) | (m.forfeit ? 4 : 0));
+      w.u8((m.overtime ? 1 : 0) | (m.clockRunning ? 2 : 0) | (m.forfeit ? 4 : 0) | (m.canVoteForfeit ? 8 : 0) | (m.noContest ? 16 : 0));
       w.u32(m.clockTicks);
       w.u8(m.score[0]);
       w.u8(m.score[1]);
@@ -314,6 +368,7 @@ export function decodeControl(body: Uint8Array): ControlMessage {
         steeringSensitivity: r.f32(),
         airControlSensitivity: r.f32(),
         autoSkipReplay: r.u8() !== 0,
+        key: r.u32(),
       };
     case 0x02:
       return { type: "resetInputBuffer" };
@@ -321,6 +376,17 @@ export function decodeControl(body: Uint8Array): ControlMessage {
       return { type: "readyUp" };
     case 0x04:
       return { type: "autoSkipReplay", on: r.u8() !== 0 };
+    case 0x05:
+      return { type: "voteForfeit" };
+    case 0x87: {
+      const state = VOTE_STATES[r.u8()];
+      if (!state) throw new DecodeError("unknown vote state");
+      const yes = r.u8();
+      const required = r.u8();
+      const secondsLeft = r.u8();
+      const flags = r.u8();
+      return { type: "forfeitVote", state, yes, required, secondsLeft, voted: (flags & 1) !== 0, canStart: (flags & 2) !== 0 };
+    }
     case 0x85: {
       const startTick = r.u32();
       const goalTick = r.u32();
@@ -337,7 +403,10 @@ export function decodeControl(body: Uint8Array): ControlMessage {
       const carId = r.u32();
       const tickRate = r.u8();
       const frame = r.u32();
-      return { type: "welcome", version, carId, tickRate, frame, snapshot: r.take(r.u32()) };
+      const matchType = MATCH_TYPES[r.u8()];
+      if (!matchType) throw new DecodeError("unknown match type");
+      const teamSize = r.u8();
+      return { type: "welcome", version, carId, tickRate, frame, matchType, teamSize, snapshot: r.take(r.u32()) };
     }
     case 0x82: {
       const frame = r.u32();
@@ -348,6 +417,7 @@ export function decodeControl(body: Uint8Array): ControlMessage {
       const kind = r.u8();
       if (kind === 0) return { type: "event", serverTick, event: { kind: "goal", team: r.u8() } };
       if (kind === 1) return { type: "event", serverTick, event: { kind: "demo", attacker: r.u32(), victim: r.u32() } };
+      if (kind === 2) return { type: "event", serverTick, event: { kind: "left", car: r.u32() } };
       throw new DecodeError(`unknown event kind ${String(kind)}`);
     }
     case 0x84: {
@@ -368,6 +438,8 @@ export function decodeControl(body: Uint8Array): ControlMessage {
         score,
         winner: winner === 255 ? null : winner,
         forfeit: (flags & 4) !== 0,
+        canVoteForfeit: (flags & 8) !== 0,
+        noContest: (flags & 16) !== 0,
       };
     }
     default:

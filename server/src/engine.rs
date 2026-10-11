@@ -355,4 +355,33 @@ pub(crate) mod tests {
         let (held, repressed) = (height(false), height(true));
         assert!(repressed > held + 50.0, "held {held}, repressed {repressed}");
     }
+
+    #[test]
+    fn a_repress_early_in_a_ground_jump_ends_it_at_its_minimum_time() {
+        // A tap's release then a press (J, 0 | J held): the release ends the jump at its minimum time, a hop as high as
+        // a one-tick tap's, not the full jump of jump held (RV-219: the repress's jumpReleased)
+        init_engine();
+        let apex = |seq: &dyn Fn(u32) -> (u8, bool)| -> f32 {
+            let mut arena = Arena::new();
+            let car = arena.add_car(0, 0);
+            arena.reset_kickoff(3);
+            arena.step(30);
+            let mut top: f32 = 0.0;
+            for tick in 0..120 {
+                let (jump, repress) = seq(tick);
+                arena.set_controls(car, &Controls { jump, ..Controls::default() });
+                if repress {
+                    arena.repress_jump(car);
+                }
+                arena.step(1);
+                top = top.max(arena.car_position(car).unwrap()[2]);
+            }
+            top
+        };
+        let held = apex(&|_| (1, false));
+        let tap = apex(&|tick| (u8::from(tick == 0), false));
+        let repressed = apex(&|tick| (1, tick == 1));
+        assert_eq!(repressed, tap, "held {held}");
+        assert!(held > tap + 100.0, "held {held}, tap {tap}");
+    }
 }

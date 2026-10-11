@@ -424,7 +424,7 @@ describe("the screens (SUR-9)", () => {
         expect(Math.abs((got[k]?.[i] ?? 0) - w), `az ${String(corner)}: ${JSON.stringify(got.map((g) => g.map((v) => v.toFixed(3))))}`).toBeLessThan(0.06);
       });
     });
-  });
+  }, 30_000); // (its ray sweep: about 4 s, over vitest's 5 s default under load: RV-226)
 
   it("the high screens tilt down toward the field: their normals down, at the capture point (RV-121)", () => {
     const { group } = buildScreensAndProps(new Color(0.1, 0.4, 1), new Color(1, 0.4, 0.1));

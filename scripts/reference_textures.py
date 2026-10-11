@@ -131,9 +131,30 @@ def row_at(img, size, low=False):
     return None
 
 
+def tie_row(img):
+    """A row of exact box means with .5 levels (an even cell's means) off black and white, bending as row_at's: written
+    rounded half up, each such level is 0.5/255 off, past it by a float's step where the stored value lies below the tie
+    (the tie factor's control: RV-228)"""
+    for size in (64, 32, 16):
+        h, w = img.shape[:2]
+        if h % size or w % size or min(h, w) < size:
+            continue
+        for row in lines(img, size):
+            a = row[:8]
+            if not (np.all(a > 0.01) and np.all(a < 0.99)):
+                continue
+            m = a * 255
+            tie = np.abs(m - np.floor(m) - 0.5) < 1e-4
+            below = tie & (m < np.floor(m) + 0.5)
+            if tie.sum() >= 3 and below.any() and bends(a, 0.03) and np.ptp(a) >= 0.15 \
+                    and spread(np.floor(m + 0.5 + 1e-4)) and turns(a):
+                return row
+    return None
+
+
 def controls():
     """The guard's named controls (local, as the reference): rows of the logo, its alpha, a lightmap, a 12 px row, a
-    low-contrast one"""
+    low-contrast one, one of .5 box means"""
     logo = np.load(f"{CACHES[0]}/GFX_Shared_Logos.Logo_RocketLeague.npy").astype(np.float64) / 255
     picks = {"logo": logo_row(logo), "mask": mask_row(logo)}
     # (a lightmap's (LMP: RV-212))
@@ -144,6 +165,8 @@ def controls():
             picks["twelve"] = row_at(img, 12)
         if picks.get("low") is None:
             picks["low"] = row_at(img, 32, low=True)
+        if picks.get("ties") is None:
+            picks["ties"] = tie_row(img)
     # (the logo's: its row of 16, then the window's start)
     out = {k: None if v is None else [float(x) for x in v] for k, v in picks.items()}
     with open(f"{OUT}/texture_controls.json", "w") as f:

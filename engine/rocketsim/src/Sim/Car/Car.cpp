@@ -146,6 +146,14 @@ void Car::Respawn(GameMode gameMode, int seed, float boostAmount) {
 		spawnPos.yawAng + (team == Team::BLUE ? 0 : M_PI), boostAmount);
 }
 
+// RL PATCH: the body's state as the tick starts (OldRBState)
+void Car::_CaptureOldState() {
+	_oldState.pos = _rigidBody.getWorldTransform().m_origin * BT_TO_UU;
+	_oldState.rotMat = _rigidBody.getWorldTransform().m_basis;
+	_oldState.vel = _rigidBody.m_linearVelocity * BT_TO_UU;
+	_oldState.angVel = _rigidBody.m_angularVelocity;
+}
+
 void Car::_RespawnAt(Vec pos, float yaw, float boostAmount) {
 	CarState newState = CarState();
 	// RL PATCH: the body is created at its own height above the spot, and its forward offset ahead (CarConfig); the
@@ -180,10 +188,7 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
 	assert(_bulletVehicle.getNumWheels() == 4 || _bulletVehicle.getNumWheels() == 3);
 
 	// RL PATCH: keep the start-of-tick state, like the game's OldRBState (used by car-car impacts)
-	_oldState.pos = _rigidBody.getWorldTransform().m_origin * BT_TO_UU;
-	_oldState.rotMat = _rigidBody.getWorldTransform().m_basis;
-	_oldState.vel = _rigidBody.m_linearVelocity * BT_TO_UU;
-	_oldState.angVel = _rigidBody.m_angularVelocity;
+	_CaptureOldState();
 
 	{ // Update simulation state
 		if (_internalState.isDemoed) {
@@ -195,6 +200,9 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
 				else
 					Respawn(gameMode, -1, mutatorConfig.carSpawnBoostAmount);
 				_respawnSpot.valid = false;
+				// RL PATCH: a respawned car is a new actor: its start-of-tick state is its spawn, not where it was
+				// demolished (the goal explosion's push, the car impacts and the ball hit read it this tick: RV-217)
+				_CaptureOldState();
 			}
 		}
 

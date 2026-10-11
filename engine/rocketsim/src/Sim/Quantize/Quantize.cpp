@@ -123,18 +123,7 @@ namespace Quantize {
 		v = btVector3(max * x, max * y, max * z);
 	}
 
-	void QuantizeRigidBody(btRigidBody& rb, PackedRotation* packedRotation, float maxSpeed, float maxAngSpeed) {
-		btTransform& transform = rb.getWorldTransform();
-
-		btVector3 pos = transform.getOrigin() * BT_TO_UU;
-		for (int i = 0; i < 3; i++)
-			pos[i] = Location(pos[i]);
-		transform.setOrigin(pos * UU_TO_BT);
-
-		btQuaternion rot;
-		transform.getBasis().getRotation(rot);
-		transform.setBasis(btMatrix3x3(Rotation(rot, packedRotation)));
-
+	void QuantizeVelocities(btRigidBody& rb, float maxSpeed, float maxAngSpeed) {
 		int activationState = rb.getActivationState();
 		if (activationState == ISLAND_SLEEPING || activationState == DISABLE_SIMULATION) {
 			rb.m_linearVelocity = btVector3(0, 0, 0);
@@ -151,6 +140,21 @@ namespace Quantize {
 			rb.m_linearVelocity = vel * UU_TO_BT;
 			rb.m_angularVelocity = angVel;
 		}
+	}
+
+	void QuantizeRigidBody(btRigidBody& rb, PackedRotation* packedRotation, float maxSpeed, float maxAngSpeed) {
+		btTransform& transform = rb.getWorldTransform();
+
+		btVector3 pos = transform.getOrigin() * BT_TO_UU;
+		for (int i = 0; i < 3; i++)
+			pos[i] = Location(pos[i]);
+		transform.setOrigin(pos * UU_TO_BT);
+
+		btQuaternion rot;
+		transform.getBasis().getRotation(rot);
+		transform.setBasis(btMatrix3x3(Rotation(rot, packedRotation)));
+
+		QuantizeVelocities(rb, maxSpeed, maxAngSpeed);
 
 		// RL PATCH: no inertia refresh: the game's write-back (FUN_140f2fb50) sets the position, the rotation and the
 		// velocities only, so the world inverse inertia tensor stays as the step's integration left it (from the

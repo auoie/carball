@@ -468,6 +468,10 @@ void Arena::_UpdateGoalExplosion() {
 		btVector3 impulse = (btVector3)(dir * (VEL_CHANGE * scale)) * (UU_TO_BT / car->_rigidBody.getInvMass());
 		car->_rigidBody.applyImpulse(impulse, (btVector3)(at * UU_TO_BT) - car->_rigidBody.getCenterOfMassPosition());
 		car->_rigidBody.activate(true);
+		// (the next physics frame reads the body back, capped and quantised, as its OldRBState and its state, and writes
+		// that into the body before the step: the push is never seen uncapped, by the bump and demolition tests, the ball
+		// hit or the network state; RV-231)
+		Quantize::QuantizeVelocities(car->_rigidBody, CAR_MAX_SPEED, CAR_MAX_ANG_SPEED);
 	}
 }
 
@@ -1342,15 +1346,17 @@ void Arena::_DeserializeContacts(DataStreamIn& in) {
 	}
 
 	// Let Bullet create its pairs, collision algorithms and manifolds for the current positions, without
-	// any game effects, then replace the contact points with the saved ones. Sleeping bodies are woken for that
-	// pass: Bullet doesn't process a sleeping body against a static one, so their manifold (which the original kept
-	// from before the body fell asleep, with its points) would otherwise not exist here
+	// any game effects, then replace the contact points with the saved ones. Sleeping and disabled bodies are woken
+	// for that pass: Bullet doesn't process them against a static one, so their manifold (which the original kept from
+	// before the body fell asleep, or was disabled: the exploded ball in the goal, a demolished car; RV-223) would
+	// otherwise not exist here
 	struct Sleeper { btCollisionObject* obj; int state; btScalar deactivationTime; };
 	std::vector<Sleeper> sleepers;
 	btCollisionObjectArray& objects = _bulletWorld.getCollisionObjectArray();
 	for (int i = 0; i < objects.size(); i++) {
 		btCollisionObject* obj = objects[i];
-		if (!obj->isStaticObject() && obj->getActivationState() == ISLAND_SLEEPING) {
+		int state = obj->getActivationState();
+		if (!obj->isStaticObject() && (state == ISLAND_SLEEPING || state == DISABLE_SIMULATION)) {
 			sleepers.push_back({ obj, obj->getActivationState(), obj->getDeactivationTime() });
 			obj->forceActivationState(ACTIVE_TAG);
 		}

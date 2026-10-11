@@ -24,9 +24,10 @@ export const FLAG_RING = {
     { index: 33, at: [-14160, -10312] as const, top: 8885, yaw: 35.9 },
     { index: 34, at: [-13286, -10814] as const, top: 9157, yaw: 63.0 },
   ],
-  /** A banner: flat, vertical, hanging from its top edge; its bottom corners trimmed (43 uu off the +u side, 18 off the
-   *  -u, over its lowest 110 uu) */
-  banner: { width: 439.6, height: 575.4, trim: { plus: 43, minus: 18, up: 110 } },
+  /** A banner: flat, vertical, hanging from its top edge, 440 across at the top; its sides taper (across from its centre
+   *  along +u): the -u side straight from -220 at the top to -202 at its foot, the +u side to +200 at 108 up, then cut to
+   *  +177 at its foot (its area 0.946 of the top's width by its height: FLG1) */
+  banner: { width: 440, height: 575.4, minus: [-220, -202] as const, plus: { top: 220, knee: [200, 108] as const, foot: 177 } },
   /** The baked light (all 49 share one lightmap patch): Ldiff bottom to top, Lspec on the front (seen from the field) */
   light: { bottom: [1.85, 1.66, 0.94] as const, top: [1.44, 1.3, 0.74] as const, spec: [0.37, 0.34, 0.19] as const },
   /** The wind (WindInt 32, UV1.v², Time): its direction, the bounds' origin (the phase), the spatial rate, UV1.v by the
@@ -220,11 +221,18 @@ void main() {
 }
 `;
 
+/** A banner's +u edge across from its centre at height h above its foot (the -u edge is straight) */
+export function flagEdge(h: number): number {
+  const { height, plus } = FLAG_RING.banner;
+  const [knee, at] = plus.knee;
+  return h >= at ? knee + ((plus.top - knee) * (h - at)) / (height - at) : plus.foot + ((knee - plus.foot) * h) / at;
+}
+
 /** The ring as one mesh (Three's frame), each banner in rows for the wind to bend it */
 export function buildFlagRing(): Mesh {
   const F = FLAG_RING;
-  const { width, height, trim } = F.banner;
-  const rows = [0, 55, 110, 220, 330, 450, height];
+  const { height, minus, plus } = F.banner;
+  const rows = [0, plus.knee[1] / 2, plus.knee[1], 220, 330, 450, height];
   const position: number[] = [];
   const uv: number[] = [];
   const foot: number[] = [];
@@ -238,10 +246,7 @@ export function buildFlagRing(): Mesh {
     const [tx, ty] = [ny, -nx];
     const bottom = b.top - height;
     const corner = (u: number, h: number): number[] => {
-      // (the trims: the +u side 43 in at the foot, the -u side 18, back to the full width 110 up)
-      const cut = Math.max(0, 1 - h / trim.up);
-      const half = u > 0 ? width / 2 - trim.plus * cut : width / 2 - trim.minus * cut;
-      const offset = u * half;
+      const offset = u > 0 ? flagEdge(h) : minus[1] + ((minus[0] - minus[1]) * h) / height;
       return [b.centre[0] + tx * offset, bottom + h, b.centre[1] + ty * offset];
     };
     for (let r = 0; r + 1 < rows.length; r++) {

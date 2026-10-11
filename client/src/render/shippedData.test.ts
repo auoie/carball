@@ -16,6 +16,10 @@ const REFERENCE = join(ROOT, "out/arena_local/reference");
 /** The surroundings' per-azimuth statistics and crowd tiers (local: the static session's SUR-1 exports) */
 const SUR1 = join(ROOT, "out/bsim/agents/SUR1");
 const DIST = join(SRC, "../dist");
+/** The build's output files and the modules in each (vite.config.ts's chunkModules) */
+const CHUNK_MODULES = join(SRC, "../node_modules/.cache/rl-chunk-modules.json");
+/** Files the build copies into dist as they are (none today) */
+const PUBLIC = join(SRC, "../public");
 /** Our generated arena (scripts/arena_gen.py): the collision meshes that ship */
 const ARENA = join(ROOT, "out/arena");
 /** The game's own meshes, cooked and exported (local only) */
@@ -29,6 +33,16 @@ function files(dir: string, keep: (name: string) => boolean): string[] {
   });
 }
 const modules = (): string[] => files(SRC, (n) => n.endsWith(".ts") && !n.endsWith(".test.ts") && !n.endsWith(".d.ts"));
+
+/** The output files that are three.js's alone: every module in them (the bundler's own virtual ones aside) the
+ *  library's, by its path; not by a file's name, which one of our modules or a public file can take (RV-225) */
+function libraryFiles(built: Readonly<Record<string, readonly string[]>>): Set<string> {
+  const library = (ids: readonly string[]): boolean => {
+    const real = ids.filter((id) => !id.startsWith("\0"));
+    return real.length > 0 && real.every((id) => id.startsWith("node_modules/three/"));
+  };
+  return new Set(Object.entries(built).flatMap(([file, ids]) => (library(ids) ? [file] : [])));
+}
 
 /** The build's import aliases (tsconfig.app.json's paths, as vite.config.ts's): "@scripts/" -> its directory */
 function aliases(): [string, string][] {
@@ -214,20 +228,14 @@ function bundleBinaries(): { kind: Kind; base64: string; where: string }[] {
   return out;
 }
 
-const FIELD_AND_GOAL = [
-  "render/stadiumFieldRules.ts",
-  "render/stadiumField.ts",
-  "render/goalInterior.ts",
-  "render/gameSurfaces.ts",
-  "render/themes/stadiumSurroundings.ts",
-  "render/themes/stadiumCrowd.ts",
-  "render/themes/stadiumProps.ts",
-  "render/themes/stadiumSky.ts",
-  "render/themes/stadiumLights.ts",
-];
+/** The arena's and its surroundings' modules, by name (a new one can't be left out: RV-229) */
+const FIELD_AND_GOAL = files(join(SRC, "render"), (n) => /^(stadium\w*|goalInterior|gameSurfaces)\.ts$/.test(n)).map((p) => p.slice(SRC.length));
 
 describe("what ships carries no game data (RV-99)", () => {
   it("the field's, goals' and surroundings' modules hold rules, not traced shapes: each under a thousand numbers", () => {
+    // (the canopy, the flags and the far layer among them)
+    expect(FIELD_AND_GOAL.length).toBeGreaterThanOrEqual(13);
+    for (const path of ["render/themes/stadiumCanopy.ts", "render/themes/stadiumFlags.ts", "render/themes/stadiumFarLayer.ts"]) expect(FIELD_AND_GOAL).toContain(path);
     for (const path of FIELD_AND_GOAL) {
       let source = stripComments(readFileSync(join(SRC, path), "utf8"));
       // (FIELD_LIGHT's and GRASS_LIGHT's lightmap statistics aside: numbers, not shapes)
@@ -895,10 +903,10 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
     // RV-182, RV-183), each in the forms a row might be written in, and each found as a texture's (not by another check
     // by chance: a low-contrast row's 4 decimals meet the UVs)
     const textureControls: [string, string][] = [];
-    const picks = JSON.parse(readFileSync(join(REFERENCE, "texture_controls.json"), "utf8")) as Record<"logo" | "mask" | "lightmap" | "twelve" | "low", number[] | null>;
-    const { logo, mask, lightmap, twelve, low } = picks;
-    expect([logo, mask, lightmap, twelve, low].every((row) => row !== null)).toBe(true);
-    if (logo && mask && lightmap && twelve && low) {
+    const picks = JSON.parse(readFileSync(join(REFERENCE, "texture_controls.json"), "utf8")) as Record<"logo" | "mask" | "lightmap" | "twelve" | "low" | "ties", number[] | null>;
+    const { logo, mask, lightmap, twelve, low, ties } = picks;
+    expect([logo, mask, lightmap, twelve, low, ties].every((row) => row !== null)).toBe(true);
+    if (logo && mask && lightmap && twelve && low && ties) {
       const row = logo.slice(0, 16);
       const start = logo[16] ?? 0;
       const [eight, window] = [row.slice(start, start + 8), row.slice(start, start + 12)];
@@ -921,6 +929,9 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
         ["a lightmap's row as 8-bit levels", list(levels(lightmap.slice(0, 8)))],
         ["a mask's row touching 0 as levels", list(levels(mask.slice(0, 8)))],
         ["a low-contrast row to 4 decimals", list(low.slice(0, 8).map((x) => x.toFixed(4)))],
+        // (box means at exact .5 levels, rounded half up: 0.5/255 off, and past it by a float's step where the stored
+        // value lies just below the tie; found only with the tie factor, RV-213, RV-228)
+        ["a row of .5 box means rounded half up", list(ties.slice(0, 8).map((x) => Math.floor(x * 255 + 0.5 + 1e-4)))],
       );
     }
     // The surroundings' meshes (index.json: each one's place in the reference)
@@ -998,9 +1009,32 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
     for (const p of globFiles(join(ARENA, "**/*.cmf"))) expect(game.has(readFileSync(p).toString("base64")), p.slice(ROOT.length)).toBe(false);
   });
 
-  // (every text file it ships: our chunks, its page and its styles, any JSON or SVG (RV-140, RV-167f); three.js's
-  // chunk is the library's, its lookup tables meeting the statistics by chance)
-  const bundle = files(DIST, (n) => kind(n) === "text" && !/^three[-.]/.test(n));
+  // (every text file it ships: our chunks, its page and its styles, any JSON or SVG, anything copied from public/
+  // (RV-140, RV-167f); three.js's chunk is the library's, its lookup tables meeting the statistics by chance: told by
+  // its modules, RV-225)
+  const built = existsSync(CHUNK_MODULES) ? (JSON.parse(readFileSync(CHUNK_MODULES, "utf8")) as Record<string, string[]>) : {};
+  const library = libraryFiles(built);
+  const bundle = files(DIST, (n) => kind(n) === "text").filter((p) => !library.has(relative(DIST, p).split("\\").join("/")));
+  it("three.js's chunk is told by its modules, not its name: our module or a public file named three-* is checked (RV-225)", () => {
+    const three = ["node_modules/three/build/three.core.js", "node_modules/three/build/three.module.js"];
+    const exempt = libraryFiles({
+      "assets/three-B1.js": [...three, "\0rolldown/runtime.js"], // (the library, the bundler's runtime with it)
+      "assets/three-toy-C2.js": ["src/lib/three-toy.ts"], // (our module, named like it)
+      "assets/three-D3.js": [...three, "src/lib/extra.ts"], // (one of ours in the library's group)
+      "assets/index-E4.js": ["src/main.ts", "../out/arena/data.ts"], // (a module outside src/, imported)
+      "three-data.json": [], // (copied from public/: no modules)
+      "assets/three-F5.js": ["\0rolldown/runtime.js"], // (only the bundler's)
+    });
+    expect([...exempt]).toEqual(["assets/three-B1.js"]);
+  });
+  it.skipIf(!existsSync(DIST))("the build recorded every file it wrote (a stale record would hide a chunk: RV-225)", () => {
+    const written = files(DIST, (n) => n.endsWith(".js")).map((p) => relative(DIST, p).split("\\").join("/"));
+    expect(written.filter((p) => !(p in built))).toEqual([]);
+    expect(library.size, "three.js's chunk").toBe(1);
+  });
+  it.each(files(PUBLIC, (n) => kind(n) === "text").map((p) => p.slice(ROOT.length)))("%s (public/, shipped as it is): no run of the game's data (RV-225)", (path) => {
+    check(path, readFileSync(join(ROOT, path), "utf8"));
+  });
   it.skipIf(bundle.length === 0)(
     "the built bundle (dist, as it ships: its shaders' comments too)",
     () => {

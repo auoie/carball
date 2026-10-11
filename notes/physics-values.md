@@ -798,3 +798,25 @@ mesh_origin_x, spawn_forward_offset, Tz, spawn_z, note. For the engine: `CarConf
 - The 7 server-key bodies and the Batmobile's Tz (no preset: `calc_tz.py` needs the bone path) are not in the table.
 - The rotator conversion uses `det_atan2f`/`det_sinf` (musl) where the game uses MSVC's `atan2f`/`sinf`: a 1-ulp
   difference can move a rotator across a rounding boundary (one unit) in rare cases; not seen in any recording.
+
+## Demolition sweep (GetTimeOfImpact) — DSW1, 2026-10-10 [N][A]
+
+Live: execGetTimeOfImpact 0x140e73ec0 → FUN_140f01930 → convex/compound sweep 0x140f016b0; integrator 0x140ea04f0.
+- **Solver:** btGjkEpaPenetrationDepthSolver (vtable 0x141a53d60, calcPenDepth 0x1402a0320), inline VoronoiSimplexSolver
+  (1e-4), CastResult (fraction 1, m_allowedPenetration 0.04), 4-argument btContinuousConvexCollision ctor 0x14029ac40,
+  calcTimeOfImpact 0x1402a1030 (stock 2.82, 64 iterations). Hit = `1.0 > fraction`. Compound children recurse with
+  btTransform::operator* arithmetic.
+- **Inputs:** basis = setRotation(OldRBState.Quaternion); origin = Location × 0.02f; velocity ±LinearVelocity × 0.02f,
+  ±AngularVelocity; dt = 1/120; integrateTransform 2.82. OldRBState holds the quantised uu state.
+- **Location:** per component `(to·50f − from·50f)·f + from·50f` (body origins).
+- **Rotation:** getRotation of both bases → **UE3 SlerpQuat 0x140388840** (raw = ((y1y2 + x1x2) + z1z2) + w1w2;
+  |raw| ≥ 0.9999f → linear s0 = 1−t, s1 = t; else Ω = acosf(clamp|raw|), s0 = sin((1−t)Ω)/sinΩ, s1 = sin(Ωt)/sinΩ;
+  s1 negated if raw < 0; q = s1·b + a·s0) → normalise (sum = ((x²+y²)+z²)+w²; > 1e-8 → × 1/sqrt, else identity) →
+  FQuatRotationTranslationMatrix 0x14036f9c0 (x2 = x+x) → FMatrix::Rotator 0x140385e40 (appRound) → Impact.Rotation.
+- **Miss:** InitTimeOfImpactFromOldRBState (Location = OldRBState.Location, Rotation = QuatToRotator(q)).
+- **Bullet 2.82 vs 3.24 on this path:** equal except calcPenDepth (3.24 normalises the guess, retries 9×, zeroes
+  witnesses) and EPA_MAX_VERTICES 64 (2.82) vs 128 (3.24): 1 hit flip / 100k, EPA normals ≤ 0.034° on overlapping starts.
+- **Clone status (engine HEAD 2026-10-10):** RV-232..234. With game inputs, lerp, SlerpQuat and the x+x matrix plus the
+  two 2.82 EPA details, a 100k-case harness is bit-identical to the game replica (detmath trig both sides; MSVC CRT trig
+  may differ in the last bit [I]). Harness and proposed code: out/bsim/agents/DSW1/.
+- The read-back getRotation is the **scalar** 2.82 branch (0x140ef2770 → 0x1402786f0); engine equal (2M cases).

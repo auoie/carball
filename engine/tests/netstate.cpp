@@ -31,6 +31,20 @@ static uint32_t Next() {
 }
 static float NextAxis() { return (int)(Next() % 3) - 1; }
 
+// A goal: the explosion's wave plays half a second, then the next kickoff, with its countdown (the wave in the
+// scenario too: RV-223)
+static void ResetAfterGoal(Arena* arena, uint64_t& scoredAt) {
+	if (!arena->IsBallScored())
+		return;
+	if (scoredAt == 0)
+		scoredAt = arena->tickCount;
+	if (arena->tickCount >= scoredAt + 60) {
+		arena->ResetToRandomKickoff((int)(Next() % 1000));
+		arena->kickoffCountdownTicks = 480;
+		scoredAt = 0;
+	}
+}
+
 static void ScriptInputs(Arena* arena) {
 	Vec ballPos = arena->ball->GetState().pos;
 	for (Car* car : arena->GetCars()) {
@@ -103,13 +117,13 @@ int main(int argc, char** argv) {
 	int checks = 0, exactFailures = 0, continued = 0, continuedExact = 0, touchingRuns = 0;
 	size_t maxBytes = 0;
 	float worstDrift = 0;
+	uint64_t scoredAt = 0;
 	for (int tick = 0; tick < seconds * 120; tick++) {
 		if (tick % 8 == 0)
 			ScriptInputs(server);
 		if (tick % interval != interval / 2) {
 			server->Step();
-			if (server->IsBallScored())
-				{ server->ResetToRandomKickoff((int)(Next() % 1000)); server->kickoffCountdownTicks = 480; } // (with the kickoff countdown)
+			ResetAfterGoal(server, scoredAt);
 			continue;
 		}
 
@@ -178,8 +192,7 @@ int main(int argc, char** argv) {
 		}
 		tick += window;
 		delete client;
-		if (server->IsBallScored())
-			{ server->ResetToRandomKickoff((int)(Next() % 1000)); server->kickoffCountdownTicks = 480; } // (with the kickoff countdown)
+		ResetAfterGoal(server, scoredAt);
 	}
 
 	printf("netstate: %d updates (max %zu bytes for ball + 4 cars + pads), %d not exact after applying\n", checks, maxBytes, exactFailures);

@@ -5,19 +5,28 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::game::Game;
+use crate::game::{Game, MatchType};
 use crate::net::ToGame;
 
 /// At most this many ticks to catch up after a stall; beyond that, time is dropped
 const MAX_CATCH_UP_TICKS: u32 = 5;
 
 /// `test_goal_after`: browser tests only (`Game::test_goal_after`)
-pub fn run(mut messages: UnboundedReceiver<ToGame>, team_size: u8, test_goal_after: Option<f32>) {
+/// The playlist: its team size, match type and forfeit vote wait (s; None: the match type's)
+pub struct Playlist {
+    pub team_size: u8,
+    pub match_type: MatchType,
+    pub forfeit_vote_wait: Option<f32>,
+}
+
+pub fn run(mut messages: UnboundedReceiver<ToGame>, playlist: Playlist, test_goal_after: Option<f32>) {
     let start = Instant::now();
     let seconds = |at: Instant| at.saturating_duration_since(start).as_secs_f64();
     // (each server run its own kickoff orders, as the game's are random)
     let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.subsec_nanos() as i32);
-    let mut game = Game::with_options(seed, team_size);
+    let mut game = Game::with_options(seed, playlist.team_size);
+    game.match_type = playlist.match_type;
+    game.forfeit_vote_wait = playlist.forfeit_vote_wait.map(|s| (s * crate::game::TICK_RATE as f32) as u32);
     game.test_goal_after = test_goal_after.map(|s| (s * crate::game::TICK_RATE as f32) as u64);
     let mut next_tick = start;
     loop {
@@ -31,6 +40,7 @@ pub fn run(mut messages: UnboundedReceiver<ToGame>, team_size: u8, test_goal_aft
                 Ok(ToGame::ResetInputBuffer { id }) => game.reset_input_buffer(id, seconds(Instant::now())),
                 Ok(ToGame::ReadyUp { id }) => game.ready_up(id),
                 Ok(ToGame::AutoSkipReplay { id, on }) => game.set_auto_skip_replay(id, on),
+                Ok(ToGame::VoteForfeit { id }) => game.vote_forfeit(id),
                 Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
                 Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => return,
             }

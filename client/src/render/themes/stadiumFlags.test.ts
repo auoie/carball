@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Vector3 } from "three";
 import { describe, expect, it } from "vitest";
-import { FLAG_PALETTE, FLAG_RING, buildFlagRing, flagAzimuths, flagBanners, flagColour, flagDesigns, flagWind } from "./stadiumFlags";
+import { FLAG_PALETTE, FLAG_RING, buildFlagRing, flagAzimuths, flagBanners, flagColour, flagDesigns, flagEdge, flagWind } from "./stadiumFlags";
 
 const TABLE = join(__dirname, "../../../../out/bsim/agents/FLG1/banners.json");
 
@@ -86,6 +86,19 @@ describe("the roof arch's flags (SUR-11, FLG1)", () => {
     expect(Math.max(...foot)).toBeLessThan(470);
     expect(Math.min(...top)).toBeGreaterThan(-5);
     expect(Math.max(...top)).toBeLessThan(40);
+  });
+
+  it("a banner's outline as the game's: 440 across at the top, its sides tapering to -202 and +177 at its foot (the +u side cut over its lowest 108), its area 0.946 of the top's width by its height", () => {
+    const B = FLAG_RING.banner;
+    expect([flagEdge(B.height), flagEdge(108), flagEdge(0)]).toEqual([220, 200, 177]);
+    // (the area: the two edges' integrals, the -u side straight)
+    const steps = 10000;
+    let area = 0;
+    for (let k = 0; k < steps; k++) {
+      const h = ((k + 0.5) / steps) * B.height;
+      area += (flagEdge(h) - (B.minus[1] + ((B.minus[0] - B.minus[1]) * h) / B.height)) * (B.height / steps);
+    }
+    expect(Math.abs(area / (B.width * B.height) - 0.946)).toBeLessThan(0.003);
   });
 
   it("one mesh, each banner's faces toward the field, two-sided", () => {

@@ -2,7 +2,8 @@
 // server's updates (src/net/predictor.ts). Inputs go out at 60 Hz, two frames per packet plus the unacknowledged ones.
 // After a goal the clock slows with the game's (src/game/goalSequence.ts, keyed to the goal's server tick as the
 // server's is), then the goal replay plays from this client's own recording of what it drew, until it ends or every
-// player skips it (Space / pad A).
+// player skips it (Space / pad A). The team's forfeit vote shows on the HUD, and the menu has its buttons
+// (src/game/forfeitVote.ts).
 import { Quaternion, Vector3 } from "three";
 import { PlayerCamera } from "../camera/rlCamera";
 import type { BodyState, CarConfig, CarState, World } from "../engine/world";
@@ -19,8 +20,10 @@ import {
   BIT_HANDBRAKE,
   BIT_JUMP,
   type ControlMessage,
+  type ForfeitVote,
   type InputFrame,
   type MatchState,
+  type MatchType,
   MAX_INPUT_FRAMES,
   type Update,
   quantizeAxis,
@@ -47,8 +50,11 @@ import { EXPLOSION_LARGE, EXPLOSION_MEDIUM, IMPACT_MEDIUM } from "../camera/shak
 import { ImpactTriggers, triggerSounds } from "./impactTriggers";
 import { ServerDemolitions } from "./serverDemolitions";
 import { ShakeTriggers } from "./shakeTriggers";
+import { type MatchMenuItem, matchMenuItems, pressTo, voteHud } from "./forfeitVote";
 
 
+/** The key that opens the menu, which has the vote button (VoteInstructions' {0?KeyBinding}) */
+const MENU_KEY = "Esc";
 /** A banner message stays this long after the last one (HUD-8: then a 0.3 s fade, not yet drawn) */
 const BANNER_SECONDS = 4;
 /** Each body's present state before a correction or reload (Online.#smooth) */
@@ -75,6 +81,14 @@ interface CarEntry {
   readonly error: SyncError;
 }
 
+export interface PhaseChange {
+  readonly phase: MatchState["phase"];
+  readonly at: number;
+  readonly frame: number;
+  readonly winner: number | null;
+  readonly forfeit: boolean;
+}
+
 export interface OnlineStats {
   readonly ping: number | null; // ms, smoothed
   readonly ackFrame: number;
@@ -83,8 +97,9 @@ export interface OnlineStats {
   readonly corrections: number;
   readonly localMispredictions: number;
   readonly kickoffCountdown: number; // ticks left (cars get no input)
-  /** The match's phase changes as they arrived: when (performance.now(), ms) and at which client frame */
-  readonly phases: readonly { readonly phase: MatchState["phase"]; readonly at: number; readonly frame: number }[];
+  /** The match's phase changes as they arrived: when (performance.now(), ms), at which client frame, and the winner and
+   *  whether by forfeit (an ended match's) */
+  readonly phases: readonly PhaseChange[];
   /** A goal replay is playing */
   readonly replaying: boolean;
   /** The last goal: the client frame its slow motion is keyed to (the server's goal tick), the first frame its recorded
@@ -144,7 +159,6 @@ export class Online {
   #goalFrame: number | null = null;
   readonly #recorder = new ReplayRecorder();
   #replay: ReplayPlayback | null = null;
-  #replayReady: { readonly ready: number; readonly total: number } | null = null;
   #skipped = false; // asked to skip this replay
   #skipHeld = true; // the skip button down last frame (a press skips)
   #autoSkipSent: boolean;
@@ -157,7 +171,11 @@ export class Online {
   readonly #carConfigs = new Map<number, CarConfig>();
   readonly #demolitions = new ServerDemolitions(); // (the cars drawn demolished: RV-84)
   #localSpawns: number; // the local car's spawn counter last drawn (a kickoff's new car: the camera starts over)
-  readonly #phases: { phase: MatchState["phase"]; at: number; frame: number }[] = [];
+  readonly #phases: PhaseChange[] = [];
+  readonly #matchType: MatchType;
+  readonly #teamSize: number;
+  /** The team's forfeit vote, from the server */
+  #vote: ForfeitVote | null = null;
   #minDilation = 1;
   #fps = 60;
   readonly #pos = new Vector3();
@@ -174,7 +192,7 @@ export class Online {
     hud: Hud,
     audio: GameAudio,
     connection: Connection,
-    welcome: { readonly carId: number; readonly frame: number },
+    welcome: { readonly carId: number; readonly frame: number; readonly matchType: MatchType; readonly teamSize: number },
     private readonly settings: () => Settings,
     private readonly inputEnabled: () => boolean,
   ) {
@@ -189,6 +207,8 @@ export class Online {
     this.#audio = audio;
     this.#connection = connection;
     this.#localCar = welcome.carId;
+    this.#matchType = welcome.matchType;
+    this.#teamSize = welcome.teamSize;
     this.#predictor = new Predictor(world, welcome.carId, welcome.frame);
     this.#padsView = new BoostPadsView(world.boostPads());
     this.#ball = new Interpolated(world.ball());
@@ -210,7 +230,7 @@ export class Online {
       this.#received.push(u);
       if (this.#received.length > MAX_QUEUED_UPDATES) this.#received.splice(0, this.#received.length - MAX_QUEUED_UPDATES);
     };
-    connection.onControl = (m) => this.#controlMessages.push(m);
+    connection.listen((m) => this.#controlMessages.push(m));
     connection.onClose = (reason) => {
       this.#disconnected = reason;
     };
@@ -229,6 +249,16 @@ export class Online {
       replaying: this.#replay !== null,
       goal: { frame: this.#goalFrame, explodedFrame: this.#explodedFrame(), minDilation: this.#minDilation },
     };
+  }
+
+  /** The menu's match buttons now */
+  menuItems(): MatchMenuItem[] {
+    return matchMenuItems({ matchType: this.#matchType, teamSize: this.#teamSize, canVoteForfeit: this.#match?.canVoteForfeit ?? false, vote: this.#vote });
+  }
+
+  /** The menu's forfeit or vote button: both a vote (in a 1v1 the lone player's passes on the press) */
+  voteForfeit(): void {
+    this.#connection.voteForfeit();
   }
 
   /** One animation frame. `rawSeconds`: time since the previous frame, unclamped. */
@@ -469,7 +499,7 @@ export class Online {
           this.#fade.fromBlack();
         }
         if (m.phase !== this.#match?.phase) {
-          this.#phases.push({ phase: m.phase, at: performance.now(), frame: this.#predictor.frame });
+          this.#phases.push({ phase: m.phase, at: performance.now(), frame: this.#predictor.frame, winner: m.winner, forfeit: m.forfeit });
           if (this.#phases.length > 16) this.#phases.shift();
         }
         this.#match = m; // (the score too: the server's)
@@ -498,19 +528,28 @@ export class Online {
           this.#effects.demolition(at);
           this.#camera.shakes.play(EXPLOSION_MEDIUM, at);
         }
+      } else if (m.type === "event" && m.event.kind === "left") {
+        // A player left: their car explodes where it's drawn (Car.Demolish(None)), then the world without it reloads
+        const car = this.#cars.get(m.event.car);
+        if (car) {
+          const pos = add(car.state.blended(this.#clock.alpha).pos, car.error.location);
+          this.#effects.demolition(pos);
+          this.#camera.shakes.play(EXPLOSION_MEDIUM, pos);
+          this.#audio.demolition(pos);
+        }
+      } else if (m.type === "forfeitVote") {
+        this.#vote = { state: m.state, yes: m.yes, required: m.required, secondsLeft: m.secondsLeft, voted: m.voted, canStart: m.canStart };
       } else if (m.type === "replay") {
         // (the cut in from black: LiveReplay's Begin)
         this.#replay = new ReplayPlayback(m, this.#recorder, (tick) => this.#frameAt(tick));
         this.#ballView.spawn(true);
         this.#arena.newBall();
-        this.#replayReady = null;
         this.#skipped = false;
         this.#skipHeld = true;
         this.#message = null;
         this.#fade.fromBlack();
-      } else if (m.type === "replayReady") {
-        this.#replayReady = { ready: m.ready, total: m.total };
       }
+      // (replayReady: the game shows the names of the players not ready, not a count, MR-6.14: with player names)
     }
   }
 
@@ -668,6 +707,7 @@ export class Online {
       flipReset: this.#flipReset,
       respawn: car ? respawnHud(car) : null,
       hint,
+      vote: voteHud(this.#vote, this.#matchType, MENU_KEY),
     });
     if (this.#flipReset) this.#audio.flipReset();
     this.#flipReset = false;
@@ -685,8 +725,7 @@ export class Online {
       ballView: this.#ballView,
       cars,
     });
-    const ready = this.#replayReady;
-    const count = ready ? ` · ${String(ready.ready)}/${String(ready.total)} ready` : "";
-    this.#updateHud("REPLAY", realSeconds, `${this.#skipped ? "Waiting for the others" : "Space / (A) to skip"}${count}`);
+    // (SkipInstructions until the player skips: the skip is Space or the pad's A)
+    this.#updateHud("REPLAY", realSeconds, this.#skipped ? null : pressTo(this.#input.usingGamepad ? "(A)" : "Space", "Skip"));
   }
 }

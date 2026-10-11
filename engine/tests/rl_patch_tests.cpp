@@ -775,7 +775,8 @@ static void TestImpactFilters() {
 				if (e.carId == car->id && e.partnerKind == 1)
 					hits++;
 			arena->impacts.clear();
-			// (mode 3: the flag set once they touch: the persisting points keep the last setup's velocities, RV-211)
+			// (mode 3: the flag set once they touch, where a persisting point would keep its last setup's velocities; here
+			// they part within a tick, so it gives none with or without the filter: RV-211a, a limit)
 			if (mode == 3 && hits > 0 && before == 0) {
 				before = hits;
 				body.setCollisionFlags(body.getCollisionFlags() | btCollisionObject::CF_NO_CONTACT_RESPONSE);
@@ -789,9 +790,72 @@ static void TestImpactFilters() {
 	// (without contact response there's no solver contact, so no point velocities either: none with or without that
 	// filter)
 	CHECK(ballHits(2) == 0, "a ball without contact response gave %d", ballHits(2));
-	// (losing its response while in contact: its manifold's points persist a while, with their last solver setup's
-	// velocities: the filter keeps them out)
+	// (losing its response while in contact: the car's and the ball's points part within a tick here, a regression check)
 	CHECK(ballHits(3) == 0, "a ball losing its contact response mid-contact gave %d more", ballHits(3));
+	// (a ball sliding without spin on the floor, solved a few ticks, then losing its response between ticks: with it, a
+	// slide of about 980 every tick; without, none. A regression check only: it gives none with or without the response
+	// filter, as the car and ball above do (no persisting point reaches the scan with its last setup's velocities here),
+	// so the filter stays a limit of these tests, RV-211a; the game's own case, the exploded ball, the disabled filter
+	// catches too)
+	auto slides = [](bool noResponse) {
+		Arena* arena = Arena::Create(GameMode::SOCCAR);
+		arena->collectImpacts = true;
+		BallState bs;
+		bs.pos = { 0, 0, 92.75f };
+		bs.vel = { 1000, 0, 0 };
+		arena->ball->SetState(bs);
+		arena->Step(3);
+		btRigidBody& body = arena->ball->_rigidBody;
+		if (noResponse)
+			body.setCollisionFlags(body.getCollisionFlags() | btCollisionObject::CF_NO_CONTACT_RESPONSE);
+		int events = 0;
+		for (int t = 0; t < 5; t++) {
+			arena->impacts.clear();
+			arena->Step(1);
+			for (const auto& e : arena->impacts)
+				if (e.carId == Arena::IMPACT_BALL && e.partnerKind == 0 && e.slide >= 50)
+					events++;
+		}
+		delete arena;
+		return events;
+	};
+	CHECK(slides(true) == 0, "a sliding ball without response gave %d slide events", slides(true));
+}
+
+static void TestImpactSurfaceNormal() {
+	puts("impacts against the static world: the normal and point are the surface's (the line check), not the contacts' average (RV-221)");
+	// A car on its roof sliding up the goal's faceted back ramp: its contacts span facets, whose average is no facet's
+	// normal. Each event's normal must be the surface's at its point (a ray through it along the normal: the same face)
+	Arena* arena = Arena::Create(GameMode::SOCCAR);
+	arena->collectImpacts = true;
+	Car* car = arena->AddCar(Team::BLUE);
+	BallState far; far.pos = Vec(3000, -2000, 92.75f); arena->ball->SetState(far);
+	car->SetState(CarAt({ 0, 5500, 60 }, { 0, -1, 0 }, { 0, 0, -1 }, { 0, 800, 0 }));
+	int events = 0, onRamp = 0, missed = 0;
+	float worst = 0;
+	for (int t = 0; t < 120; t++) {
+		arena->impacts.clear();
+		arena->Step(1);
+		for (const auto& e : arena->impacts) {
+			if (e.carId != car->id || e.partnerKind != 0)
+				continue;
+			btVector3 n = (btVector3)e.normal, at = (btVector3)(e.pos * UU_TO_BT);
+			btVector3 from = at + n * (10 * UU_TO_BT), to = at - n * (10 * UU_TO_BT);
+			btCollisionWorld::ClosestRayResultCallback ray(from, to, &car->_rigidBody);
+			arena->_bulletWorld.rayTest(from, to, ray);
+			if (ray.hasHit())
+				worst = RS_MAX(worst, (ray.m_hitNormalWorld.normalized() - n).length());
+			else
+				missed++;
+			events++;
+			if (abs(e.normal.y) > 0.2f)
+				onRamp++;
+		}
+	}
+	CHECK(events > 50 && onRamp > 10, "%d events, %d on the ramp: expected the slide up it", events, onRamp);
+	// (the contacts' averaged normal, without the line check: 0.096 from the face under it here)
+	CHECK(missed == 0 && worst < 1e-4f, "an event's normal is %.4f from the surface's at its point; %d with no surface", worst, missed);
+	delete arena;
 }
 
 static void TestImpacts() {
@@ -1052,23 +1116,25 @@ static void TestGoalExplosion() {
 	CHECK(arena->goalExplosion.origin.y == 5250 && arena->goalExplosion.origin.z == 300, "the explosion at (%.2f, %.2f, %.2f): expected the ball's start of the step",
 		arena->goalExplosion.origin.x, arena->goalExplosion.origin.y, arena->goalExplosion.origin.z);
 	int pushes = 0, pushTick = -1;
-	Vec pushed, pushedAt;
-	float nextMove = -1;
+	Vec pushed, pushedAt, readBack;
+	float maxMove = 0, oldSpeed = -1;
 	Arena* copy = nullptr;
 	for (int i = 0; i < 60; i++) {
 		Vec before = near->GetState().vel;
 		Vec at = near->GetState().pos;
 		arena->Step(1);
 		Vec dv = near->GetState().vel - before;
-		if (pushTick >= 0 && nextMove < 0)
-			nextMove = (near->GetState().pos - at).Length();
+		maxMove = RS_MAX(maxMove, (near->GetState().pos - at).Length());
 		// (the push away from the goal; the next tick's cap takes speed off along it, not a push)
 		if (dv.y < -500) {
 			pushes++;
 			pushTick = i;
+			readBack = near->GetState().vel; // (between ticks)
 		}
-		if (pushTick >= 0 && i == pushTick + 1)
+		if (pushTick >= 0 && i == pushTick + 1) {
 			pushed = near->GetState().vel;
+			oldSpeed = near->_oldState.vel.Length();
+		}
 		if (i == 5) { // (mid-wave: a snapshot goes on the same)
 			DataStreamOut out;
 			arena->Serialize(out);
@@ -1079,11 +1145,20 @@ static void TestGoalExplosion() {
 	}
 	// The front reaches the car's box (1228 uu away: KNB-9) at the end of loop step 14, 15 x 83.3 uu out
 	CHECK(pushes == 1 && pushTick == 14, "%d pushes, at loop step %d (expected one, at 14)", pushes, pushTick);
-	// (KNB-5: pushed between ticks, capped as the next one starts: it moves no more than the top speed allows)
-	CHECK(nextMove >= 0 && nextMove <= CAR_MAX_SPEED / 120 + 0.5f, "the tick after the push moved %.2f uu (capped: %.2f at most)", nextMove, CAR_MAX_SPEED / 120);
+	// (KNB-5: pushed between ticks, capped as the next one starts: no tick of the wave moves it more than the top speed
+	// allows; pushed before a tick's physics, the push's tick moves it 39.5 uu: RV-218)
+	CHECK(maxMove <= CAR_MAX_SPEED / 120 + 0.5f, "a tick of the wave moved the car %.2f uu (capped: %.2f at most)", maxMove, CAR_MAX_SPEED / 120);
 	// (from 500 uu behind and below the ball, (0, 5750, -200), to the car: up about 0.12 of the push)
 	CHECK(pushed.y < -1500 && pushed.z > 200 && pushed.Length() <= CAR_MAX_SPEED + 1,
 		"pushed to (%.0f, %.0f, %.0f): expected away from the goal, up, capped", pushed.x, pushed.y, pushed.z);
+	// (RV-231: the next frame reads the body back capped and quantised before anything sees it: read between ticks and
+	// as the next tick's start-of-tick state, the push is never over the cap, 5291 uu/s raw)
+	// (quantised: each component truncated to 0.01 and 0.001 out, so |v| x 100 is 0.1 past a whole number; read through
+	// Bullet's units, within a float's step: 0.024 of that at 2300)
+	auto quantizedAt = [](float v) { return fabsf(fmodf(fabsf(v) * 100, 1) - 0.1f) < 0.05f; };
+	bool quantized = quantizedAt(readBack.x) && quantizedAt(readBack.y) && quantizedAt(readBack.z);
+	CHECK(readBack.Length() <= CAR_MAX_SPEED + 0.001f && quantized && oldSpeed >= 0 && oldSpeed <= CAR_MAX_SPEED + 0.001f,
+		"the push read between ticks: %.3f uu/s (%.5f, %.5f, %.5f; quantized %d), the next tick's start %.3f", readBack.Length(), readBack.x, readBack.y, readBack.z, quantized, oldSpeed);
 	CHECK(far->GetState().vel.Length() < 1 && demoed->GetState().isDemoed, "the far car moved (%.1f uu/s)", far->GetState().vel.Length());
 	CHECK(!arena->goalExplosion.active, "the wave should be over after 0.3 s");
 	if (copy) {
@@ -1092,6 +1167,43 @@ static void TestGoalExplosion() {
 		CHECK(memcmp(&a, &c, sizeof(Vec)) == 0, "a snapshot taken mid-wave went on differently");
 		delete copy;
 	}
+	delete arena;
+}
+
+static void TestGoalExplosionRespawn() {
+	puts("goal explosion: a car respawning during the wave is a new car at its spawn, not pushed from where it was demolished (RV-217)");
+	using namespace RLConst;
+	Arena* arena = Arena::Create(GameMode::SOCCAR);
+	Car* car = arena->AddCar(Team::BLUE);
+	// (demolished 1228 uu from the explosion's reach, which the wave passes at loop step 14; respawning at step 20, inside
+	// the front: from its demolition spot it would be pushed in its respawn tick)
+	car->SetState(CarAt({ 0, 4000, 17.01f }, { 1, 0, 0 }, { 0, 0, 1 }));
+	arena->Step(5);
+	car->Demolish();
+	CarState s = car->GetState();
+	s.demoRespawnTimer = 21.5f / 120; // (the 22nd tick on: the goal's, then loop step 20)
+	car->SetState(s);
+	BallState b;
+	b.pos = { 0, 5250, 300 };
+	b.vel = { 0, 1000, 0 };
+	arena->ball->SetState(b);
+	arena->Step(1);
+	CHECK(arena->goalExplosion.active, "the goal didn't set off the explosion");
+	float maxSpeed = 0, maxSpin = 0;
+	bool respawned = false;
+	for (int i = 0; i < 40; i++) {
+		arena->Step(1);
+		CarState now = car->GetState();
+		if (!now.isDemoed) {
+			respawned = true;
+			maxSpeed = RS_MAX(maxSpeed, now.vel.Length());
+			maxSpin = RS_MAX(maxSpin, now.angVel.Length());
+		}
+	}
+	CHECK(respawned, "the car didn't respawn during the wave");
+	CHECK(car->GetState().pos.y < 0, "respawned at y %.0f: expected its own half", car->GetState().pos.y);
+	// (it settles onto the ground from its spawn height; pushed from its demolition spot, 4638 uu/s and a lever's spin)
+	CHECK(maxSpeed < 300 && maxSpin < 1, "the respawned car was pushed: %.1f uu/s, %.2f rad/s", maxSpeed, maxSpin);
 	delete arena;
 }
 
@@ -1922,7 +2034,8 @@ static void TestRoofLanding() {
 		row = w.row;
 		float eCar = DistV(car->GetState().vel, w.carVel), eBot = DistV(bot->GetState().vel, w.botVel);
 		printf("    row %d: car %.4f, lower car %.4f uu/s off\n", w.row, eCar, eBot);
-		CHECK(eCar < 0.1f && eBot < 0.1f, "row %d: car %.3f, lower car %.3f uu/s from the game", w.row, eCar, eBot);
+		// (0.0000 at every row; the push before the contact pass gives 0.06-0.07 from row 581: RV-224)
+		CHECK(eCar < 0.01f && eBot < 0.01f, "row %d: car %.4f, lower car %.4f uu/s from the game", w.row, eCar, eBot);
 	}
 	delete arena;
 }
@@ -2060,6 +2173,7 @@ int main(int argc, char** argv) {
 	TestBumpCurves();
 	TestBoostPads();
 	TestImpacts();
+	TestImpactSurfaceNormal();
 	TestImpactFilters();
 	TestLateCarMeetsBall();
 	TestBallImpacts();
@@ -2072,6 +2186,7 @@ int main(int argc, char** argv) {
 	TestNoPickupAtFullBoost();
 	TestRespawnsHeld();
 	TestGoalExplosion();
+	TestGoalExplosionRespawn();
 	TestGoalExplosionLocation();
 	TestBallRotation();
 	TestBallExplodesOnGoal();

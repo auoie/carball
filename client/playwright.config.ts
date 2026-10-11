@@ -31,6 +31,13 @@ export default defineConfig({
       reuseExistingServer: false,
       timeout: 600_000,
     },
+    {
+      // A 2v2 casual playlist whose forfeit votes are allowed once the clock runs (the forfeit and leave tests)
+      command: "cargo run --quiet --manifest-path ../server/Cargo.toml -- --port 14437 --info-port 14438 --team-size 2 --forfeit-vote-wait 0",
+      url: "http://127.0.0.1:14438/info",
+      reuseExistingServer: false,
+      timeout: 600_000,
+    },
   ],
   outputDir: "test-results",
 });

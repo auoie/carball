@@ -45,6 +45,10 @@ namespace Quantize {
 	// Applies all of the above to a Bullet rigid body (Bullet units are uu / 50)
 	// `maxSpeed` (uu/s) and `maxAngSpeed` (rad/s): the body's caps, applied as the game's read-back does (0: none)
 	void QuantizeRigidBody(btRigidBody& rb, PackedRotation* packedRotation = nullptr, float maxSpeed = 0, float maxAngSpeed = 0);
+
+	// The velocities' part of it alone (the position and rotation already rounded: re-rounding a rotation isn't always
+	// exact): a body pushed between ticks, read back as the game's next physics frame reads it (RV-231)
+	void QuantizeVelocities(btRigidBody& rb, float maxSpeed, float maxAngSpeed);
 }
 
 RS_NS_END

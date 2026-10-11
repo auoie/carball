@@ -102,6 +102,50 @@ body {
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
 }
 
+/* The team's forfeit vote (VoteToForfeitView: src/game/forfeitVote.ts): the tally, the time left and its bar, how to
+   vote; it fades out in 0.3 s when the vote ends or goes */
+#vote {
+  position: absolute;
+  top: 64px;
+  right: 24px;
+  width: 260px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(10, 14, 24, 0.72);
+  font-weight: 600;
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
+}
+
+#vote.shown {
+  opacity: 1;
+}
+
+#vote-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#vote-bar {
+  height: 4px;
+  margin: 8px 0 6px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 2px;
+}
+
+#vote-fill {
+  height: 100%;
+  background: var(--text);
+  border-radius: 2px;
+}
+
+#vote-hint {
+  font-size: 0.85rem;
+  opacity: 0.85;
+}
+
 /* Flip indicator: whether the car can dodge (src/game/flipTracker.ts), left of the boost meter */
 #flip {
   position: absolute;
@@ -298,6 +342,22 @@ body {
   display: flex;
   gap: 4px;
   flex: 1;
+}
+
+/* Online: the match's buttons (forfeit, vote, leave: src/ui/matchMenu.ts) */
+.settings-match {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-match:empty {
+  display: none;
+}
+
+.settings .settings-match button.danger {
+  background: #b3261e;
+  border-color: #b3261e;
 }
 
 .settings button {
