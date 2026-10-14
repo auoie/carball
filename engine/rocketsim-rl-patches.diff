@@ -507,8 +507,1734 @@ index 8e3e345..2efd3c7 100644
  	btScalar shortestDist = getContactBreakingThreshold() * getContactBreakingThreshold();
  	int size = getNumContacts();
  	int nearestPoint = -1;
+diff --git engine/rocketsim/libsrc/bullet3-3.24/BulletDynamics/ConstraintSolver/btGeneric6DofConstraint.cpp engine/rocketsim/libsrc/bullet3-3.24/BulletDynamics/ConstraintSolver/btGeneric6DofConstraint.cpp
+new file mode 100644
+index 0000000..095031f
+--- /dev/null
++++ engine/rocketsim/libsrc/bullet3-3.24/BulletDynamics/ConstraintSolver/btGeneric6DofConstraint.cpp
+@@ -0,0 +1,1066 @@
++// RL PATCH: Bullet 2.82's btGeneric6DofConstraint as it is (the game's Bullet; RocketSim's tree had none): the
++// podium's and the kickoff's XY lock, Car_TA's SetConstrained2D (static session PD1). Altered: its include paths made
++// relative, as the rest of this tree's
++/*
++Bullet Continuous Collision Detection and Physics Library
++Copyright (c) 2003-2006 Erwin Coumans  http://continuousphysics.com/Bullet/
++
++This software is provided 'as-is', without any express or implied warranty.
++In no event will the authors be held liable for any damages arising from the use of this software.
++Permission is granted to anyone to use this software for any purpose,
++including commercial applications, and to alter it and redistribute it freely,
++subject to the following restrictions:
++
++1. The origin of this software must not be misrepresented; you must not claim that you wrote the original software. If you use this software in a product, an acknowledgment in the product documentation would be appreciated but is not required.
++2. Altered source versions must be plainly marked as such, and must not be misrepresented as being the original software.
++3. This notice may not be removed or altered from any source distribution.
++*/
++/*
++2007-09-09
++Refactored by Francisco Le?n
++email: projectileman@yahoo.com
++http://gimpact.sf.net
++*/
++
++#include "btGeneric6DofConstraint.h"
++#include "../Dynamics/btRigidBody.h"
++#include "../../LinearMath/btTransformUtil.h"
++#include "../../LinearMath/btTransformUtil.h"
++#include <new>
++
++
++
++#define D6_USE_OBSOLETE_METHOD false
++#define D6_USE_FRAME_OFFSET true
++
++
++
++
++
++
++btGeneric6DofConstraint::btGeneric6DofConstraint(btRigidBody& rbA, btRigidBody& rbB, const btTransform& frameInA, const btTransform& frameInB, bool useLinearReferenceFrameA)
++: btTypedConstraint(D6_CONSTRAINT_TYPE, rbA, rbB)
++, m_frameInA(frameInA)
++, m_frameInB(frameInB),
++m_useLinearReferenceFrameA(useLinearReferenceFrameA),
++m_useOffsetForConstraintFrame(D6_USE_FRAME_OFFSET),
++m_flags(0),
++m_useSolveConstraintObsolete(D6_USE_OBSOLETE_METHOD)
++{
++	calculateTransforms();
++}
++
++
++
++btGeneric6DofConstraint::btGeneric6DofConstraint(btRigidBody& rbB, const btTransform& frameInB, bool useLinearReferenceFrameB)
++        : btTypedConstraint(D6_CONSTRAINT_TYPE, getFixedBody(), rbB),
++		m_frameInB(frameInB),
++		m_useLinearReferenceFrameA(useLinearReferenceFrameB),
++		m_useOffsetForConstraintFrame(D6_USE_FRAME_OFFSET),
++		m_flags(0),
++		m_useSolveConstraintObsolete(false)
++{
++	///not providing rigidbody A means implicitly using worldspace for body A
++	m_frameInA = rbB.getCenterOfMassTransform() * m_frameInB;
++	calculateTransforms();
++}
++
++
++
++
++#define GENERIC_D6_DISABLE_WARMSTARTING 1
++
++
++
++btScalar btGetMatrixElem(const btMatrix3x3& mat, int index);
++btScalar btGetMatrixElem(const btMatrix3x3& mat, int index)
++{
++	int i = index%3;
++	int j = index/3;
++	return mat[i][j];
++}
++
++
++
++///MatrixToEulerXYZ from http://www.geometrictools.com/LibFoundation/Mathematics/Wm4Matrix3.inl.html
++bool	matrixToEulerXYZ(const btMatrix3x3& mat,btVector3& xyz);
++bool	matrixToEulerXYZ(const btMatrix3x3& mat,btVector3& xyz)
++{
++	//	// rot =  cy*cz          -cy*sz           sy
++	//	//        cz*sx*sy+cx*sz  cx*cz-sx*sy*sz -cy*sx
++	//	//       -cx*cz*sy+sx*sz  cz*sx+cx*sy*sz  cx*cy
++	//
++
++	btScalar fi = btGetMatrixElem(mat,2);
++	if (fi < btScalar(1.0f))
++	{
++		if (fi > btScalar(-1.0f))
++		{
++			xyz[0] = btAtan2(-btGetMatrixElem(mat,5),btGetMatrixElem(mat,8));
++			xyz[1] = btAsin(btGetMatrixElem(mat,2));
++			xyz[2] = btAtan2(-btGetMatrixElem(mat,1),btGetMatrixElem(mat,0));
++			return true;
++		}
++		else
++		{
++			// WARNING.  Not unique.  XA - ZA = -atan2(r10,r11)
++			xyz[0] = -btAtan2(btGetMatrixElem(mat,3),btGetMatrixElem(mat,4));
++			xyz[1] = -SIMD_HALF_PI;
++			xyz[2] = btScalar(0.0);
++			return false;
++		}
++	}
++	else
++	{
++		// WARNING.  Not unique.  XAngle + ZAngle = atan2(r10,r11)
++		xyz[0] = btAtan2(btGetMatrixElem(mat,3),btGetMatrixElem(mat,4));
++		xyz[1] = SIMD_HALF_PI;
++		xyz[2] = 0.0;
++	}
++	return false;
++}
++
++//////////////////////////// btRotationalLimitMotor ////////////////////////////////////
++
++int btRotationalLimitMotor::testLimitValue(btScalar test_value)
++{
++	if(m_loLimit>m_hiLimit)
++	{
++		m_currentLimit = 0;//Free from violation
++		return 0;
++	}
++	if (test_value < m_loLimit)
++	{
++		m_currentLimit = 1;//low limit violation
++		m_currentLimitError =  test_value - m_loLimit;
++		if(m_currentLimitError>SIMD_PI) 
++			m_currentLimitError-=SIMD_2_PI;
++		else if(m_currentLimitError<-SIMD_PI) 
++			m_currentLimitError+=SIMD_2_PI;
++		return 1;
++	}
++	else if (test_value> m_hiLimit)
++	{
++		m_currentLimit = 2;//High limit violation
++		m_currentLimitError = test_value - m_hiLimit;
++		if(m_currentLimitError>SIMD_PI) 
++			m_currentLimitError-=SIMD_2_PI;
++		else if(m_currentLimitError<-SIMD_PI) 
++			m_currentLimitError+=SIMD_2_PI;
++		return 2;
++	};
++
++	m_currentLimit = 0;//Free from violation
++	return 0;
++
++}
++
++
++
++btScalar btRotationalLimitMotor::solveAngularLimits(
++	btScalar timeStep,btVector3& axis,btScalar jacDiagABInv,
++	btRigidBody * body0, btRigidBody * body1 )
++{
++	if (needApplyTorques()==false) return 0.0f;
++
++	btScalar target_velocity = m_targetVelocity;
++	btScalar maxMotorForce = m_maxMotorForce;
++
++	//current error correction
++	if (m_currentLimit!=0)
++	{
++		target_velocity = -m_stopERP*m_currentLimitError/(timeStep);
++		maxMotorForce = m_maxLimitForce;
++	}
++
++	maxMotorForce *= timeStep;
++
++	// current velocity difference
++
++	btVector3 angVelA = body0->getAngularVelocity();
++	btVector3 angVelB = body1->getAngularVelocity();
++
++	btVector3 vel_diff;
++	vel_diff = angVelA-angVelB;
++
++
++
++	btScalar rel_vel = axis.dot(vel_diff);
++
++	// correction velocity
++	btScalar motor_relvel = m_limitSoftness*(target_velocity  - m_damping*rel_vel);
++
++
++	if ( motor_relvel < SIMD_EPSILON && motor_relvel > -SIMD_EPSILON  )
++	{
++		return 0.0f;//no need for applying force
++	}
++
++
++	// correction impulse
++	btScalar unclippedMotorImpulse = (1+m_bounce)*motor_relvel*jacDiagABInv;
++
++	// clip correction impulse
++	btScalar clippedMotorImpulse;
++
++	///@todo: should clip against accumulated impulse
++	if (unclippedMotorImpulse>0.0f)
++	{
++		clippedMotorImpulse =  unclippedMotorImpulse > maxMotorForce? maxMotorForce: unclippedMotorImpulse;
++	}
++	else
++	{
++		clippedMotorImpulse =  unclippedMotorImpulse < -maxMotorForce ? -maxMotorForce: unclippedMotorImpulse;
++	}
++
++
++	// sort with accumulated impulses
++	btScalar	lo = btScalar(-BT_LARGE_FLOAT);
++	btScalar	hi = btScalar(BT_LARGE_FLOAT);
++
++	btScalar oldaccumImpulse = m_accumulatedImpulse;
++	btScalar sum = oldaccumImpulse + clippedMotorImpulse;
++	m_accumulatedImpulse = sum > hi ? btScalar(0.) : sum < lo ? btScalar(0.) : sum;
++
++	clippedMotorImpulse = m_accumulatedImpulse - oldaccumImpulse;
++
++	btVector3 motorImp = clippedMotorImpulse * axis;
++
++	body0->applyTorqueImpulse(motorImp);
++	body1->applyTorqueImpulse(-motorImp);
++
++	return clippedMotorImpulse;
++
++
++}
++
++//////////////////////////// End btRotationalLimitMotor ////////////////////////////////////
++
++
++
++
++//////////////////////////// btTranslationalLimitMotor ////////////////////////////////////
++
++
++int btTranslationalLimitMotor::testLimitValue(int limitIndex, btScalar test_value)
++{
++	btScalar loLimit = m_lowerLimit[limitIndex];
++	btScalar hiLimit = m_upperLimit[limitIndex];
++	if(loLimit > hiLimit)
++	{
++		m_currentLimit[limitIndex] = 0;//Free from violation
++		m_currentLimitError[limitIndex] = btScalar(0.f);
++		return 0;
++	}
++
++	if (test_value < loLimit)
++	{
++		m_currentLimit[limitIndex] = 2;//low limit violation
++		m_currentLimitError[limitIndex] =  test_value - loLimit;
++		return 2;
++	}
++	else if (test_value> hiLimit)
++	{
++		m_currentLimit[limitIndex] = 1;//High limit violation
++		m_currentLimitError[limitIndex] = test_value - hiLimit;
++		return 1;
++	};
++
++	m_currentLimit[limitIndex] = 0;//Free from violation
++	m_currentLimitError[limitIndex] = btScalar(0.f);
++	return 0;
++}
++
++
++
++btScalar btTranslationalLimitMotor::solveLinearAxis(
++	btScalar timeStep,
++	btScalar jacDiagABInv,
++	btRigidBody& body1,const btVector3 &pointInA,
++	btRigidBody& body2,const btVector3 &pointInB,
++	int limit_index,
++	const btVector3 & axis_normal_on_a,
++	const btVector3 & anchorPos)
++{
++
++	///find relative velocity
++	//    btVector3 rel_pos1 = pointInA - body1.getCenterOfMassPosition();
++	//    btVector3 rel_pos2 = pointInB - body2.getCenterOfMassPosition();
++	btVector3 rel_pos1 = anchorPos - body1.getCenterOfMassPosition();
++	btVector3 rel_pos2 = anchorPos - body2.getCenterOfMassPosition();
++
++	btVector3 vel1 = body1.getVelocityInLocalPoint(rel_pos1);
++	btVector3 vel2 = body2.getVelocityInLocalPoint(rel_pos2);
++	btVector3 vel = vel1 - vel2;
++
++	btScalar rel_vel = axis_normal_on_a.dot(vel);
++
++
++
++	/// apply displacement correction
++
++	//positional error (zeroth order error)
++	btScalar depth = -(pointInA - pointInB).dot(axis_normal_on_a);
++	btScalar	lo = btScalar(-BT_LARGE_FLOAT);
++	btScalar	hi = btScalar(BT_LARGE_FLOAT);
++
++	btScalar minLimit = m_lowerLimit[limit_index];
++	btScalar maxLimit = m_upperLimit[limit_index];
++
++	//handle the limits
++	if (minLimit < maxLimit)
++	{
++		{
++			if (depth > maxLimit)
++			{
++				depth -= maxLimit;
++				lo = btScalar(0.);
++
++			}
++			else
++			{
++				if (depth < minLimit)
++				{
++					depth -= minLimit;
++					hi = btScalar(0.);
++				}
++				else
++				{
++					return 0.0f;
++				}
++			}
++		}
++	}
++
++	btScalar normalImpulse= m_limitSoftness*(m_restitution*depth/timeStep - m_damping*rel_vel) * jacDiagABInv;
++
++
++
++
++	btScalar oldNormalImpulse = m_accumulatedImpulse[limit_index];
++	btScalar sum = oldNormalImpulse + normalImpulse;
++	m_accumulatedImpulse[limit_index] = sum > hi ? btScalar(0.) : sum < lo ? btScalar(0.) : sum;
++	normalImpulse = m_accumulatedImpulse[limit_index] - oldNormalImpulse;
++
++	btVector3 impulse_vector = axis_normal_on_a * normalImpulse;
++	body1.applyImpulse( impulse_vector, rel_pos1);
++	body2.applyImpulse(-impulse_vector, rel_pos2);
++
++	
++
++	return normalImpulse;
++}
++
++//////////////////////////// btTranslationalLimitMotor ////////////////////////////////////
++
++void btGeneric6DofConstraint::calculateAngleInfo()
++{
++	btMatrix3x3 relative_frame = m_calculatedTransformA.getBasis().inverse()*m_calculatedTransformB.getBasis();
++	matrixToEulerXYZ(relative_frame,m_calculatedAxisAngleDiff);
++	// in euler angle mode we do not actually constrain the angular velocity
++	// along the axes axis[0] and axis[2] (although we do use axis[1]) :
++	//
++	//    to get			constrain w2-w1 along		...not
++	//    ------			---------------------		------
++	//    d(angle[0])/dt = 0	ax[1] x ax[2]			ax[0]
++	//    d(angle[1])/dt = 0	ax[1]
++	//    d(angle[2])/dt = 0	ax[0] x ax[1]			ax[2]
++	//
++	// constraining w2-w1 along an axis 'a' means that a'*(w2-w1)=0.
++	// to prove the result for angle[0], write the expression for angle[0] from
++	// GetInfo1 then take the derivative. to prove this for angle[2] it is
++	// easier to take the euler rate expression for d(angle[2])/dt with respect
++	// to the components of w and set that to 0.
++	btVector3 axis0 = m_calculatedTransformB.getBasis().getColumn(0);
++	btVector3 axis2 = m_calculatedTransformA.getBasis().getColumn(2);
++
++	m_calculatedAxis[1] = axis2.cross(axis0);
++	m_calculatedAxis[0] = m_calculatedAxis[1].cross(axis2);
++	m_calculatedAxis[2] = axis0.cross(m_calculatedAxis[1]);
++
++	m_calculatedAxis[0].normalize();
++	m_calculatedAxis[1].normalize();
++	m_calculatedAxis[2].normalize();
++
++}
++
++void btGeneric6DofConstraint::calculateTransforms()
++{
++	calculateTransforms(m_rbA.getCenterOfMassTransform(),m_rbB.getCenterOfMassTransform());
++}
++
++void btGeneric6DofConstraint::calculateTransforms(const btTransform& transA,const btTransform& transB)
++{
++	m_calculatedTransformA = transA * m_frameInA;
++	m_calculatedTransformB = transB * m_frameInB;
++	calculateLinearInfo();
++	calculateAngleInfo();
++	if(m_useOffsetForConstraintFrame)
++	{	//  get weight factors depending on masses
++		btScalar miA = getRigidBodyA().getInvMass();
++		btScalar miB = getRigidBodyB().getInvMass();
++		m_hasStaticBody = (miA < SIMD_EPSILON) || (miB < SIMD_EPSILON);
++		btScalar miS = miA + miB;
++		if(miS > btScalar(0.f))
++		{
++			m_factA = miB / miS;
++		}
++		else 
++		{
++			m_factA = btScalar(0.5f);
++		}
++		m_factB = btScalar(1.0f) - m_factA;
++	}
++}
++
++
++
++void btGeneric6DofConstraint::buildLinearJacobian(
++	btJacobianEntry & jacLinear,const btVector3 & normalWorld,
++	const btVector3 & pivotAInW,const btVector3 & pivotBInW)
++{
++	new (&jacLinear) btJacobianEntry(
++        m_rbA.getCenterOfMassTransform().getBasis().transpose(),
++        m_rbB.getCenterOfMassTransform().getBasis().transpose(),
++        pivotAInW - m_rbA.getCenterOfMassPosition(),
++        pivotBInW - m_rbB.getCenterOfMassPosition(),
++        normalWorld,
++        m_rbA.getInvInertiaDiagLocal(),
++        m_rbA.getInvMass(),
++        m_rbB.getInvInertiaDiagLocal(),
++        m_rbB.getInvMass());
++}
++
++
++
++void btGeneric6DofConstraint::buildAngularJacobian(
++	btJacobianEntry & jacAngular,const btVector3 & jointAxisW)
++{
++	 new (&jacAngular)	btJacobianEntry(jointAxisW,
++                                      m_rbA.getCenterOfMassTransform().getBasis().transpose(),
++                                      m_rbB.getCenterOfMassTransform().getBasis().transpose(),
++                                      m_rbA.getInvInertiaDiagLocal(),
++                                      m_rbB.getInvInertiaDiagLocal());
++
++}
++
++
++
++bool btGeneric6DofConstraint::testAngularLimitMotor(int axis_index)
++{
++	btScalar angle = m_calculatedAxisAngleDiff[axis_index];
++	angle = btAdjustAngleToLimits(angle, m_angularLimits[axis_index].m_loLimit, m_angularLimits[axis_index].m_hiLimit);
++	m_angularLimits[axis_index].m_currentPosition = angle;
++	//test limits
++	m_angularLimits[axis_index].testLimitValue(angle);
++	return m_angularLimits[axis_index].needApplyTorques();
++}
++
++
++
++void btGeneric6DofConstraint::buildJacobian()
++{
++#ifndef __SPU__
++	if (m_useSolveConstraintObsolete)
++	{
++
++		// Clear accumulated impulses for the next simulation step
++		m_linearLimits.m_accumulatedImpulse.setValue(btScalar(0.), btScalar(0.), btScalar(0.));
++		int i;
++		for(i = 0; i < 3; i++)
++		{
++			m_angularLimits[i].m_accumulatedImpulse = btScalar(0.);
++		}
++		//calculates transform
++		calculateTransforms(m_rbA.getCenterOfMassTransform(),m_rbB.getCenterOfMassTransform());
++
++		//  const btVector3& pivotAInW = m_calculatedTransformA.getOrigin();
++		//  const btVector3& pivotBInW = m_calculatedTransformB.getOrigin();
++		calcAnchorPos();
++		btVector3 pivotAInW = m_AnchorPos;
++		btVector3 pivotBInW = m_AnchorPos;
++
++		// not used here
++		//    btVector3 rel_pos1 = pivotAInW - m_rbA.getCenterOfMassPosition();
++		//    btVector3 rel_pos2 = pivotBInW - m_rbB.getCenterOfMassPosition();
++
++		btVector3 normalWorld;
++		//linear part
++		for (i=0;i<3;i++)
++		{
++			if (m_linearLimits.isLimited(i))
++			{
++				if (m_useLinearReferenceFrameA)
++					normalWorld = m_calculatedTransformA.getBasis().getColumn(i);
++				else
++					normalWorld = m_calculatedTransformB.getBasis().getColumn(i);
++
++				buildLinearJacobian(
++					m_jacLinear[i],normalWorld ,
++					pivotAInW,pivotBInW);
++
++			}
++		}
++
++		// angular part
++		for (i=0;i<3;i++)
++		{
++			//calculates error angle
++			if (testAngularLimitMotor(i))
++			{
++				normalWorld = this->getAxis(i);
++				// Create angular atom
++				buildAngularJacobian(m_jacAng[i],normalWorld);
++			}
++		}
++
++	}
++#endif //__SPU__
++
++}
++
++
++void btGeneric6DofConstraint::getInfo1 (btConstraintInfo1* info)
++{
++	if (m_useSolveConstraintObsolete)
++	{
++		info->m_numConstraintRows = 0;
++		info->nub = 0;
++	} else
++	{
++		//prepare constraint
++		calculateTransforms(m_rbA.getCenterOfMassTransform(),m_rbB.getCenterOfMassTransform());
++		info->m_numConstraintRows = 0;
++		info->nub = 6;
++		int i;
++		//test linear limits
++		for(i = 0; i < 3; i++)
++		{
++			if(m_linearLimits.needApplyForce(i))
++			{
++				info->m_numConstraintRows++;
++				info->nub--;
++			}
++		}
++		//test angular limits
++		for (i=0;i<3 ;i++ )
++		{
++			if(testAngularLimitMotor(i))
++			{
++				info->m_numConstraintRows++;
++				info->nub--;
++			}
++		}
++	}
++}
++
++void btGeneric6DofConstraint::getInfo1NonVirtual (btConstraintInfo1* info)
++{
++	if (m_useSolveConstraintObsolete)
++	{
++		info->m_numConstraintRows = 0;
++		info->nub = 0;
++	} else
++	{
++		//pre-allocate all 6
++		info->m_numConstraintRows = 6;
++		info->nub = 0;
++	}
++}
++
++
++void btGeneric6DofConstraint::getInfo2 (btConstraintInfo2* info)
++{
++	btAssert(!m_useSolveConstraintObsolete);
++
++	const btTransform& transA = m_rbA.getCenterOfMassTransform();
++	const btTransform& transB = m_rbB.getCenterOfMassTransform();
++	const btVector3& linVelA = m_rbA.getLinearVelocity();
++	const btVector3& linVelB = m_rbB.getLinearVelocity();
++	const btVector3& angVelA = m_rbA.getAngularVelocity();
++	const btVector3& angVelB = m_rbB.getAngularVelocity();
++
++	if(m_useOffsetForConstraintFrame)
++	{ // for stability better to solve angular limits first
++		int row = setAngularLimits(info, 0,transA,transB,linVelA,linVelB,angVelA,angVelB);
++		setLinearLimits(info, row, transA,transB,linVelA,linVelB,angVelA,angVelB);
++	}
++	else
++	{ // leave old version for compatibility
++		int row = setLinearLimits(info, 0, transA,transB,linVelA,linVelB,angVelA,angVelB);
++		setAngularLimits(info, row,transA,transB,linVelA,linVelB,angVelA,angVelB);
++	}
++
++}
++
++
++void btGeneric6DofConstraint::getInfo2NonVirtual (btConstraintInfo2* info, const btTransform& transA,const btTransform& transB,const btVector3& linVelA,const btVector3& linVelB,const btVector3& angVelA,const btVector3& angVelB)
++{
++	
++	btAssert(!m_useSolveConstraintObsolete);
++	//prepare constraint
++	calculateTransforms(transA,transB);
++
++	int i;
++	for (i=0;i<3 ;i++ )
++	{
++		testAngularLimitMotor(i);
++	}
++
++	if(m_useOffsetForConstraintFrame)
++	{ // for stability better to solve angular limits first
++		int row = setAngularLimits(info, 0,transA,transB,linVelA,linVelB,angVelA,angVelB);
++		setLinearLimits(info, row, transA,transB,linVelA,linVelB,angVelA,angVelB);
++	}
++	else
++	{ // leave old version for compatibility
++		int row = setLinearLimits(info, 0, transA,transB,linVelA,linVelB,angVelA,angVelB);
++		setAngularLimits(info, row,transA,transB,linVelA,linVelB,angVelA,angVelB);
++	}
++}
++
++
++
++int btGeneric6DofConstraint::setLinearLimits(btConstraintInfo2* info, int row, const btTransform& transA,const btTransform& transB,const btVector3& linVelA,const btVector3& linVelB,const btVector3& angVelA,const btVector3& angVelB)
++{
++//	int row = 0;
++	//solve linear limits
++	btRotationalLimitMotor limot;
++	for (int i=0;i<3 ;i++ )
++	{
++		if(m_linearLimits.needApplyForce(i))
++		{ // re-use rotational motor code
++			limot.m_bounce = btScalar(0.f);
++			limot.m_currentLimit = m_linearLimits.m_currentLimit[i];
++			limot.m_currentPosition = m_linearLimits.m_currentLinearDiff[i];
++			limot.m_currentLimitError  = m_linearLimits.m_currentLimitError[i];
++			limot.m_damping  = m_linearLimits.m_damping;
++			limot.m_enableMotor  = m_linearLimits.m_enableMotor[i];
++			limot.m_hiLimit  = m_linearLimits.m_upperLimit[i];
++			limot.m_limitSoftness  = m_linearLimits.m_limitSoftness;
++			limot.m_loLimit  = m_linearLimits.m_lowerLimit[i];
++			limot.m_maxLimitForce  = btScalar(0.f);
++			limot.m_maxMotorForce  = m_linearLimits.m_maxMotorForce[i];
++			limot.m_targetVelocity  = m_linearLimits.m_targetVelocity[i];
++			btVector3 axis = m_calculatedTransformA.getBasis().getColumn(i);
++			int flags = m_flags >> (i * BT_6DOF_FLAGS_AXIS_SHIFT);
++			limot.m_normalCFM	= (flags & BT_6DOF_FLAGS_CFM_NORM) ? m_linearLimits.m_normalCFM[i] : info->cfm[0];
++			limot.m_stopCFM		= (flags & BT_6DOF_FLAGS_CFM_STOP) ? m_linearLimits.m_stopCFM[i] : info->cfm[0];
++			limot.m_stopERP		= (flags & BT_6DOF_FLAGS_ERP_STOP) ? m_linearLimits.m_stopERP[i] : info->erp;
++			if(m_useOffsetForConstraintFrame)
++			{
++				int indx1 = (i + 1) % 3;
++				int indx2 = (i + 2) % 3;
++				int rotAllowed = 1; // rotations around orthos to current axis
++				if(m_angularLimits[indx1].m_currentLimit && m_angularLimits[indx2].m_currentLimit)
++				{
++					rotAllowed = 0;
++				}
++				row += get_limit_motor_info2(&limot, transA,transB,linVelA,linVelB,angVelA,angVelB, info, row, axis, 0, rotAllowed);
++			}
++			else
++			{
++				row += get_limit_motor_info2(&limot, transA,transB,linVelA,linVelB,angVelA,angVelB, info, row, axis, 0);
++			}
++		}
++	}
++	return row;
++}
++
++
++
++int btGeneric6DofConstraint::setAngularLimits(btConstraintInfo2 *info, int row_offset, const btTransform& transA,const btTransform& transB,const btVector3& linVelA,const btVector3& linVelB,const btVector3& angVelA,const btVector3& angVelB)
++{
++	btGeneric6DofConstraint * d6constraint = this;
++	int row = row_offset;
++	//solve angular limits
++	for (int i=0;i<3 ;i++ )
++	{
++		if(d6constraint->getRotationalLimitMotor(i)->needApplyTorques())
++		{
++			btVector3 axis = d6constraint->getAxis(i);
++			int flags = m_flags >> ((i + 3) * BT_6DOF_FLAGS_AXIS_SHIFT);
++			if(!(flags & BT_6DOF_FLAGS_CFM_NORM))
++			{
++				m_angularLimits[i].m_normalCFM = info->cfm[0];
++			}
++			if(!(flags & BT_6DOF_FLAGS_CFM_STOP))
++			{
++				m_angularLimits[i].m_stopCFM = info->cfm[0];
++			}
++			if(!(flags & BT_6DOF_FLAGS_ERP_STOP))
++			{
++				m_angularLimits[i].m_stopERP = info->erp;
++			}
++			row += get_limit_motor_info2(d6constraint->getRotationalLimitMotor(i),
++												transA,transB,linVelA,linVelB,angVelA,angVelB, info,row,axis,1);
++		}
++	}
++
++	return row;
++}
++
++
++
++
++void	btGeneric6DofConstraint::updateRHS(btScalar	timeStep)
++{
++	(void)timeStep;
++
++}
++
++
++void btGeneric6DofConstraint::setFrames(const btTransform& frameA, const btTransform& frameB)
++{
++	m_frameInA = frameA;
++	m_frameInB = frameB;
++	buildJacobian();
++	calculateTransforms();
++}
++
++
++
++btVector3 btGeneric6DofConstraint::getAxis(int axis_index) const
++{
++	return m_calculatedAxis[axis_index];
++}
++
++
++btScalar	btGeneric6DofConstraint::getRelativePivotPosition(int axisIndex) const
++{
++	return m_calculatedLinearDiff[axisIndex];
++}
++
++
++btScalar btGeneric6DofConstraint::getAngle(int axisIndex) const
++{
++	return m_calculatedAxisAngleDiff[axisIndex];
++}
++
++
++
++void btGeneric6DofConstraint::calcAnchorPos(void)
++{
++	btScalar imA = m_rbA.getInvMass();
++	btScalar imB = m_rbB.getInvMass();
++	btScalar weight;
++	if(imB == btScalar(0.0))
++	{
++		weight = btScalar(1.0);
++	}
++	else
++	{
++		weight = imA / (imA + imB);
++	}
++	const btVector3& pA = m_calculatedTransformA.getOrigin();
++	const btVector3& pB = m_calculatedTransformB.getOrigin();
++	m_AnchorPos = pA * weight + pB * (btScalar(1.0) - weight);
++	return;
++}
++
++
++
++void btGeneric6DofConstraint::calculateLinearInfo()
++{
++	m_calculatedLinearDiff = m_calculatedTransformB.getOrigin() - m_calculatedTransformA.getOrigin();
++	m_calculatedLinearDiff = m_calculatedTransformA.getBasis().inverse() * m_calculatedLinearDiff;
++	for(int i = 0; i < 3; i++)
++	{
++		m_linearLimits.m_currentLinearDiff[i] = m_calculatedLinearDiff[i];
++		m_linearLimits.testLimitValue(i, m_calculatedLinearDiff[i]);
++	}
++}
++
++
++
++int btGeneric6DofConstraint::get_limit_motor_info2(
++	btRotationalLimitMotor * limot,
++	const btTransform& transA,const btTransform& transB,const btVector3& linVelA,const btVector3& linVelB,const btVector3& angVelA,const btVector3& angVelB,
++	btConstraintInfo2 *info, int row, btVector3& ax1, int rotational,int rotAllowed)
++{
++    int srow = row * info->rowskip;
++    int powered = limot->m_enableMotor;
++    int limit = limot->m_currentLimit;
++    if (powered || limit)
++    {   // if the joint is powered, or has joint limits, add in the extra row
++        btScalar *J1 = rotational ? info->m_J1angularAxis : info->m_J1linearAxis;
++        btScalar *J2 = rotational ? info->m_J2angularAxis : info->m_J2linearAxis;
++        J1[srow+0] = ax1[0];
++        J1[srow+1] = ax1[1];
++        J1[srow+2] = ax1[2];
++
++        J2[srow+0] = -ax1[0];
++        J2[srow+1] = -ax1[1];
++        J2[srow+2] = -ax1[2];
++
++		if((!rotational))
++        {
++			if (m_useOffsetForConstraintFrame)
++			{
++				btVector3 tmpA, tmpB, relA, relB;
++				// get vector from bodyB to frameB in WCS
++				relB = m_calculatedTransformB.getOrigin() - transB.getOrigin();
++				// get its projection to constraint axis
++				btVector3 projB = ax1 * relB.dot(ax1);
++				// get vector directed from bodyB to constraint axis (and orthogonal to it)
++				btVector3 orthoB = relB - projB;
++				// same for bodyA
++				relA = m_calculatedTransformA.getOrigin() - transA.getOrigin();
++				btVector3 projA = ax1 * relA.dot(ax1);
++				btVector3 orthoA = relA - projA;
++				// get desired offset between frames A and B along constraint axis
++				btScalar desiredOffs = limot->m_currentPosition - limot->m_currentLimitError;
++				// desired vector from projection of center of bodyA to projection of center of bodyB to constraint axis
++				btVector3 totalDist = projA + ax1 * desiredOffs - projB;
++				// get offset vectors relA and relB
++				relA = orthoA + totalDist * m_factA;
++				relB = orthoB - totalDist * m_factB;
++				tmpA = relA.cross(ax1);
++				tmpB = relB.cross(ax1);
++				if(m_hasStaticBody && (!rotAllowed))
++				{
++					tmpA *= m_factA;
++					tmpB *= m_factB;
++				}
++				int i;
++				for (i=0; i<3; i++) info->m_J1angularAxis[srow+i] = tmpA[i];
++				for (i=0; i<3; i++) info->m_J2angularAxis[srow+i] = -tmpB[i];
++			} else
++			{
++				btVector3 ltd;	// Linear Torque Decoupling vector
++				btVector3 c = m_calculatedTransformB.getOrigin() - transA.getOrigin();
++				ltd = c.cross(ax1);
++				info->m_J1angularAxis[srow+0] = ltd[0];
++				info->m_J1angularAxis[srow+1] = ltd[1];
++				info->m_J1angularAxis[srow+2] = ltd[2];
++
++				c = m_calculatedTransformB.getOrigin() - transB.getOrigin();
++				ltd = -c.cross(ax1);
++				info->m_J2angularAxis[srow+0] = ltd[0];
++				info->m_J2angularAxis[srow+1] = ltd[1];
++				info->m_J2angularAxis[srow+2] = ltd[2];
++			}
++        }
++        // if we're limited low and high simultaneously, the joint motor is
++        // ineffective
++        if (limit && (limot->m_loLimit == limot->m_hiLimit)) powered = 0;
++        info->m_constraintError[srow] = btScalar(0.f);
++        if (powered)
++        {
++			info->cfm[srow] = limot->m_normalCFM;
++            if(!limit)
++            {
++				btScalar tag_vel = rotational ? limot->m_targetVelocity : -limot->m_targetVelocity;
++
++				btScalar mot_fact = getMotorFactor(	limot->m_currentPosition, 
++													limot->m_loLimit,
++													limot->m_hiLimit, 
++													tag_vel, 
++													info->fps * limot->m_stopERP);
++				info->m_constraintError[srow] += mot_fact * limot->m_targetVelocity;
++                info->m_lowerLimit[srow] = -limot->m_maxMotorForce;
++                info->m_upperLimit[srow] = limot->m_maxMotorForce;
++            }
++        }
++        if(limit)
++        {
++            btScalar k = info->fps * limot->m_stopERP;
++			if(!rotational)
++			{
++				info->m_constraintError[srow] += k * limot->m_currentLimitError;
++			}
++			else
++			{
++				info->m_constraintError[srow] += -k * limot->m_currentLimitError;
++			}
++			info->cfm[srow] = limot->m_stopCFM;
++            if (limot->m_loLimit == limot->m_hiLimit)
++            {   // limited low and high simultaneously
++                info->m_lowerLimit[srow] = -SIMD_INFINITY;
++                info->m_upperLimit[srow] = SIMD_INFINITY;
++            }
++            else
++            {
++                if (limit == 1)
++                {
++                    info->m_lowerLimit[srow] = 0;
++                    info->m_upperLimit[srow] = SIMD_INFINITY;
++                }
++                else
++                {
++                    info->m_lowerLimit[srow] = -SIMD_INFINITY;
++                    info->m_upperLimit[srow] = 0;
++                }
++                // deal with bounce
++                if (limot->m_bounce > 0)
++                {
++                    // calculate joint velocity
++                    btScalar vel;
++                    if (rotational)
++                    {
++                        vel = angVelA.dot(ax1);
++//make sure that if no body -> angVelB == zero vec
++//                        if (body1)
++                            vel -= angVelB.dot(ax1);
++                    }
++                    else
++                    {
++                        vel = linVelA.dot(ax1);
++//make sure that if no body -> angVelB == zero vec
++//                        if (body1)
++                            vel -= linVelB.dot(ax1);
++                    }
++                    // only apply bounce if the velocity is incoming, and if the
++                    // resulting c[] exceeds what we already have.
++                    if (limit == 1)
++                    {
++                        if (vel < 0)
++                        {
++                            btScalar newc = -limot->m_bounce* vel;
++                            if (newc > info->m_constraintError[srow]) 
++								info->m_constraintError[srow] = newc;
++                        }
++                    }
++                    else
++                    {
++                        if (vel > 0)
++                        {
++                            btScalar newc = -limot->m_bounce * vel;
++                            if (newc < info->m_constraintError[srow]) 
++								info->m_constraintError[srow] = newc;
++                        }
++                    }
++                }
++            }
++        }
++        return 1;
++    }
++    else return 0;
++}
++
++
++
++
++
++
++	///override the default global value of a parameter (such as ERP or CFM), optionally provide the axis (0..5). 
++	///If no axis is provided, it uses the default axis for this constraint.
++void btGeneric6DofConstraint::setParam(int num, btScalar value, int axis)
++{
++	if((axis >= 0) && (axis < 3))
++	{
++		switch(num)
++		{
++			case BT_CONSTRAINT_STOP_ERP : 
++				m_linearLimits.m_stopERP[axis] = value;
++				m_flags |= BT_6DOF_FLAGS_ERP_STOP << (axis * BT_6DOF_FLAGS_AXIS_SHIFT);
++				break;
++			case BT_CONSTRAINT_STOP_CFM : 
++				m_linearLimits.m_stopCFM[axis] = value;
++				m_flags |= BT_6DOF_FLAGS_CFM_STOP << (axis * BT_6DOF_FLAGS_AXIS_SHIFT);
++				break;
++			case BT_CONSTRAINT_CFM : 
++				m_linearLimits.m_normalCFM[axis] = value;
++				m_flags |= BT_6DOF_FLAGS_CFM_NORM << (axis * BT_6DOF_FLAGS_AXIS_SHIFT);
++				break;
++			default : 
++				btAssertConstrParams(0);
++		}
++	}
++	else if((axis >=3) && (axis < 6))
++	{
++		switch(num)
++		{
++			case BT_CONSTRAINT_STOP_ERP : 
++				m_angularLimits[axis - 3].m_stopERP = value;
++				m_flags |= BT_6DOF_FLAGS_ERP_STOP << (axis * BT_6DOF_FLAGS_AXIS_SHIFT);
++				break;
++			case BT_CONSTRAINT_STOP_CFM : 
++				m_angularLimits[axis - 3].m_stopCFM = value;
++				m_flags |= BT_6DOF_FLAGS_CFM_STOP << (axis * BT_6DOF_FLAGS_AXIS_SHIFT);
++				break;
++			case BT_CONSTRAINT_CFM : 
++				m_angularLimits[axis - 3].m_normalCFM = value;
++				m_flags |= BT_6DOF_FLAGS_CFM_NORM << (axis * BT_6DOF_FLAGS_AXIS_SHIFT);
++				break;
++			default : 
++				btAssertConstrParams(0);
++		}
++	}
++	else
++	{
++		btAssertConstrParams(0);
++	}
++}
++
++	///return the local value of parameter
++btScalar btGeneric6DofConstraint::getParam(int num, int axis) const 
++{
++	btScalar retVal = 0;
++	if((axis >= 0) && (axis < 3))
++	{
++		switch(num)
++		{
++			case BT_CONSTRAINT_STOP_ERP : 
++				btAssertConstrParams(m_flags & (BT_6DOF_FLAGS_ERP_STOP << (axis * BT_6DOF_FLAGS_AXIS_SHIFT)));
++				retVal = m_linearLimits.m_stopERP[axis];
++				break;
++			case BT_CONSTRAINT_STOP_CFM : 
++				btAssertConstrParams(m_flags & (BT_6DOF_FLAGS_CFM_STOP << (axis * BT_6DOF_FLAGS_AXIS_SHIFT)));
++				retVal = m_linearLimits.m_stopCFM[axis];
++				break;
++			case BT_CONSTRAINT_CFM : 
++				btAssertConstrParams(m_flags & (BT_6DOF_FLAGS_CFM_NORM << (axis * BT_6DOF_FLAGS_AXIS_SHIFT)));
++				retVal = m_linearLimits.m_normalCFM[axis];
++				break;
++			default : 
++				btAssertConstrParams(0);
++		}
++	}
++	else if((axis >=3) && (axis < 6))
++	{
++		switch(num)
++		{
++			case BT_CONSTRAINT_STOP_ERP : 
++				btAssertConstrParams(m_flags & (BT_6DOF_FLAGS_ERP_STOP << (axis * BT_6DOF_FLAGS_AXIS_SHIFT)));
++				retVal = m_angularLimits[axis - 3].m_stopERP;
++				break;
++			case BT_CONSTRAINT_STOP_CFM : 
++				btAssertConstrParams(m_flags & (BT_6DOF_FLAGS_CFM_STOP << (axis * BT_6DOF_FLAGS_AXIS_SHIFT)));
++				retVal = m_angularLimits[axis - 3].m_stopCFM;
++				break;
++			case BT_CONSTRAINT_CFM : 
++				btAssertConstrParams(m_flags & (BT_6DOF_FLAGS_CFM_NORM << (axis * BT_6DOF_FLAGS_AXIS_SHIFT)));
++				retVal = m_angularLimits[axis - 3].m_normalCFM;
++				break;
++			default : 
++				btAssertConstrParams(0);
++		}
++	}
++	else
++	{
++		btAssertConstrParams(0);
++	}
++	return retVal;
++}
++
++ 
++
++void btGeneric6DofConstraint::setAxis(const btVector3& axis1,const btVector3& axis2)
++{
++	btVector3 zAxis = axis1.normalized();
++	btVector3 yAxis = axis2.normalized();
++	btVector3 xAxis = yAxis.cross(zAxis); // we want right coordinate system
++	
++	btTransform frameInW;
++	frameInW.setIdentity();
++	frameInW.getBasis().setValue(	xAxis[0], yAxis[0], zAxis[0],	
++	                                xAxis[1], yAxis[1], zAxis[1],
++	                               xAxis[2], yAxis[2], zAxis[2]);
++	
++	// now get constraint frame in local coordinate systems
++	m_frameInA = m_rbA.getCenterOfMassTransform().inverse() * frameInW;
++	m_frameInB = m_rbB.getCenterOfMassTransform().inverse() * frameInW;
++	
++	calculateTransforms();
++}
+diff --git engine/rocketsim/libsrc/bullet3-3.24/BulletDynamics/ConstraintSolver/btGeneric6DofConstraint.h engine/rocketsim/libsrc/bullet3-3.24/BulletDynamics/ConstraintSolver/btGeneric6DofConstraint.h
+new file mode 100644
+index 0000000..384d416
+--- /dev/null
++++ engine/rocketsim/libsrc/bullet3-3.24/BulletDynamics/ConstraintSolver/btGeneric6DofConstraint.h
+@@ -0,0 +1,648 @@
++// RL PATCH: Bullet 2.82's btGeneric6DofConstraint as it is (the game's Bullet; RocketSim's tree had none): the
++// podium's and the kickoff's XY lock, Car_TA's SetConstrained2D (static session PD1). Altered: its include paths made
++// relative, as the rest of this tree's; its serialization left out (this tree has none)
++/*
++Bullet Continuous Collision Detection and Physics Library
++Copyright (c) 2003-2006 Erwin Coumans  http://continuousphysics.com/Bullet/
++
++This software is provided 'as-is', without any express or implied warranty.
++In no event will the authors be held liable for any damages arising from the use of this software.
++Permission is granted to anyone to use this software for any purpose,
++including commercial applications, and to alter it and redistribute it freely,
++subject to the following restrictions:
++
++1. The origin of this software must not be misrepresented; you must not claim that you wrote the original software. If you use this software in a product, an acknowledgment in the product documentation would be appreciated but is not required.
++2. Altered source versions must be plainly marked as such, and must not be misrepresented as being the original software.
++3. This notice may not be removed or altered from any source distribution.
++*/
++
++/// 2009 March: btGeneric6DofConstraint refactored by Roman Ponomarev
++/// Added support for generic constraint solver through getInfo1/getInfo2 methods
++
++/*
++2007-09-09
++btGeneric6DofConstraint Refactored by Francisco Le?n
++email: projectileman@yahoo.com
++http://gimpact.sf.net
++*/
++
++
++#ifndef BT_GENERIC_6DOF_CONSTRAINT_H
++#define BT_GENERIC_6DOF_CONSTRAINT_H
++
++#include "../../LinearMath/btVector3.h"
++#include "btJacobianEntry.h"
++#include "btTypedConstraint.h"
++
++class btRigidBody;
++
++
++
++#ifdef BT_USE_DOUBLE_PRECISION
++#define btGeneric6DofConstraintData2		btGeneric6DofConstraintDoubleData2
++#define btGeneric6DofConstraintDataName	"btGeneric6DofConstraintDoubleData2"
++#else
++#define btGeneric6DofConstraintData2		btGeneric6DofConstraintData
++#define btGeneric6DofConstraintDataName	"btGeneric6DofConstraintData"
++#endif //BT_USE_DOUBLE_PRECISION
++
++
++//! Rotation Limit structure for generic joints
++class btRotationalLimitMotor
++{
++public:
++    //! limit_parameters
++    //!@{
++    btScalar m_loLimit;//!< joint limit
++    btScalar m_hiLimit;//!< joint limit
++    btScalar m_targetVelocity;//!< target motor velocity
++    btScalar m_maxMotorForce;//!< max force on motor
++    btScalar m_maxLimitForce;//!< max force on limit
++    btScalar m_damping;//!< Damping.
++    btScalar m_limitSoftness;//! Relaxation factor
++    btScalar m_normalCFM;//!< Constraint force mixing factor
++    btScalar m_stopERP;//!< Error tolerance factor when joint is at limit
++    btScalar m_stopCFM;//!< Constraint force mixing factor when joint is at limit
++    btScalar m_bounce;//!< restitution factor
++    bool m_enableMotor;
++
++    //!@}
++
++    //! temp_variables
++    //!@{
++    btScalar m_currentLimitError;//!  How much is violated this limit
++    btScalar m_currentPosition;     //!  current value of angle 
++    int m_currentLimit;//!< 0=free, 1=at lo limit, 2=at hi limit
++    btScalar m_accumulatedImpulse;
++    //!@}
++
++    btRotationalLimitMotor()
++    {
++    	m_accumulatedImpulse = 0.f;
++        m_targetVelocity = 0;
++        m_maxMotorForce = 0.1f;
++        m_maxLimitForce = 300.0f;
++        m_loLimit = 1.0f;
++        m_hiLimit = -1.0f;
++		m_normalCFM = 0.f;
++		m_stopERP = 0.2f;
++		m_stopCFM = 0.f;
++        m_bounce = 0.0f;
++        m_damping = 1.0f;
++        m_limitSoftness = 0.5f;
++        m_currentLimit = 0;
++        m_currentLimitError = 0;
++        m_enableMotor = false;
++    }
++
++    btRotationalLimitMotor(const btRotationalLimitMotor & limot)
++    {
++        m_targetVelocity = limot.m_targetVelocity;
++        m_maxMotorForce = limot.m_maxMotorForce;
++        m_limitSoftness = limot.m_limitSoftness;
++        m_loLimit = limot.m_loLimit;
++        m_hiLimit = limot.m_hiLimit;
++		m_normalCFM = limot.m_normalCFM;
++		m_stopERP = limot.m_stopERP;
++		m_stopCFM =	limot.m_stopCFM;
++        m_bounce = limot.m_bounce;
++        m_currentLimit = limot.m_currentLimit;
++        m_currentLimitError = limot.m_currentLimitError;
++        m_enableMotor = limot.m_enableMotor;
++    }
++
++
++
++	//! Is limited
++    bool isLimited()
++    {
++    	if(m_loLimit > m_hiLimit) return false;
++    	return true;
++    }
++
++	//! Need apply correction
++    bool needApplyTorques()
++    {
++    	if(m_currentLimit == 0 && m_enableMotor == false) return false;
++    	return true;
++    }
++
++	//! calculates  error
++	/*!
++	calculates m_currentLimit and m_currentLimitError.
++	*/
++	int testLimitValue(btScalar test_value);
++
++	//! apply the correction impulses for two bodies
++    btScalar solveAngularLimits(btScalar timeStep,btVector3& axis, btScalar jacDiagABInv,btRigidBody * body0, btRigidBody * body1);
++
++};
++
++
++
++class btTranslationalLimitMotor
++{
++public:
++	btVector3 m_lowerLimit;//!< the constraint lower limits
++    btVector3 m_upperLimit;//!< the constraint upper limits
++    btVector3 m_accumulatedImpulse;
++    //! Linear_Limit_parameters
++    //!@{
++    btScalar	m_limitSoftness;//!< Softness for linear limit
++    btScalar	m_damping;//!< Damping for linear limit
++    btScalar	m_restitution;//! Bounce parameter for linear limit
++	btVector3	m_normalCFM;//!< Constraint force mixing factor
++    btVector3	m_stopERP;//!< Error tolerance factor when joint is at limit
++	btVector3	m_stopCFM;//!< Constraint force mixing factor when joint is at limit
++    //!@}
++	bool		m_enableMotor[3];
++    btVector3	m_targetVelocity;//!< target motor velocity
++    btVector3	m_maxMotorForce;//!< max force on motor
++    btVector3	m_currentLimitError;//!  How much is violated this limit
++    btVector3	m_currentLinearDiff;//!  Current relative offset of constraint frames
++    int			m_currentLimit[3];//!< 0=free, 1=at lower limit, 2=at upper limit
++
++    btTranslationalLimitMotor()
++    {
++    	m_lowerLimit.setValue(0.f,0.f,0.f);
++    	m_upperLimit.setValue(0.f,0.f,0.f);
++    	m_accumulatedImpulse.setValue(0.f,0.f,0.f);
++		m_normalCFM.setValue(0.f, 0.f, 0.f);
++		m_stopERP.setValue(0.2f, 0.2f, 0.2f);
++		m_stopCFM.setValue(0.f, 0.f, 0.f);
++
++    	m_limitSoftness = 0.7f;
++    	m_damping = btScalar(1.0f);
++    	m_restitution = btScalar(0.5f);
++		for(int i=0; i < 3; i++) 
++		{
++			m_enableMotor[i] = false;
++			m_targetVelocity[i] = btScalar(0.f);
++			m_maxMotorForce[i] = btScalar(0.f);
++		}
++    }
++
++    btTranslationalLimitMotor(const btTranslationalLimitMotor & other )
++    {
++    	m_lowerLimit = other.m_lowerLimit;
++    	m_upperLimit = other.m_upperLimit;
++    	m_accumulatedImpulse = other.m_accumulatedImpulse;
++
++    	m_limitSoftness = other.m_limitSoftness ;
++    	m_damping = other.m_damping;
++    	m_restitution = other.m_restitution;
++		m_normalCFM = other.m_normalCFM;
++		m_stopERP = other.m_stopERP;
++		m_stopCFM = other.m_stopCFM;
++
++		for(int i=0; i < 3; i++) 
++		{
++			m_enableMotor[i] = other.m_enableMotor[i];
++			m_targetVelocity[i] = other.m_targetVelocity[i];
++			m_maxMotorForce[i] = other.m_maxMotorForce[i];
++		}
++    }
++
++    //! Test limit
++	/*!
++    - free means upper < lower,
++    - locked means upper == lower
++    - limited means upper > lower
++    - limitIndex: first 3 are linear, next 3 are angular
++    */
++    inline bool	isLimited(int limitIndex)
++    {
++       return (m_upperLimit[limitIndex] >= m_lowerLimit[limitIndex]);
++    }
++    inline bool needApplyForce(int limitIndex)
++    {
++    	if(m_currentLimit[limitIndex] == 0 && m_enableMotor[limitIndex] == false) return false;
++    	return true;
++    }
++	int testLimitValue(int limitIndex, btScalar test_value);
++
++
++    btScalar solveLinearAxis(
++    	btScalar timeStep,
++        btScalar jacDiagABInv,
++        btRigidBody& body1,const btVector3 &pointInA,
++        btRigidBody& body2,const btVector3 &pointInB,
++        int limit_index,
++        const btVector3 & axis_normal_on_a,
++		const btVector3 & anchorPos);
++
++
++};
++
++enum bt6DofFlags
++{
++	BT_6DOF_FLAGS_CFM_NORM = 1,
++	BT_6DOF_FLAGS_CFM_STOP = 2,
++	BT_6DOF_FLAGS_ERP_STOP = 4
++};
++#define BT_6DOF_FLAGS_AXIS_SHIFT 3 // bits per axis
++
++
++/// btGeneric6DofConstraint between two rigidbodies each with a pivotpoint that descibes the axis location in local space
++/*!
++btGeneric6DofConstraint can leave any of the 6 degree of freedom 'free' or 'locked'.
++currently this limit supports rotational motors<br>
++<ul>
++<li> For Linear limits, use btGeneric6DofConstraint.setLinearUpperLimit, btGeneric6DofConstraint.setLinearLowerLimit. You can set the parameters with the btTranslationalLimitMotor structure accsesible through the btGeneric6DofConstraint.getTranslationalLimitMotor method.
++At this moment translational motors are not supported. May be in the future. </li>
++
++<li> For Angular limits, use the btRotationalLimitMotor structure for configuring the limit.
++This is accessible through btGeneric6DofConstraint.getLimitMotor method,
++This brings support for limit parameters and motors. </li>
++
++<li> Angulars limits have these possible ranges:
++<table border=1 >
++<tr>
++	<td><b>AXIS</b></td>
++	<td><b>MIN ANGLE</b></td>
++	<td><b>MAX ANGLE</b></td>
++</tr><tr>
++	<td>X</td>
++	<td>-PI</td>
++	<td>PI</td>
++</tr><tr>
++	<td>Y</td>
++	<td>-PI/2</td>
++	<td>PI/2</td>
++</tr><tr>
++	<td>Z</td>
++	<td>-PI</td>
++	<td>PI</td>
++</tr>
++</table>
++</li>
++</ul>
++
++*/
++ATTRIBUTE_ALIGNED16(class) btGeneric6DofConstraint : public btTypedConstraint
++{
++protected:
++
++	//! relative_frames
++    //!@{
++	btTransform	m_frameInA;//!< the constraint space w.r.t body A
++    btTransform	m_frameInB;//!< the constraint space w.r.t body B
++    //!@}
++
++    //! Jacobians
++    //!@{
++    btJacobianEntry	m_jacLinear[3];//!< 3 orthogonal linear constraints
++    btJacobianEntry	m_jacAng[3];//!< 3 orthogonal angular constraints
++    //!@}
++
++	//! Linear_Limit_parameters
++    //!@{
++    btTranslationalLimitMotor m_linearLimits;
++    //!@}
++
++
++    //! hinge_parameters
++    //!@{
++    btRotationalLimitMotor m_angularLimits[3];
++	//!@}
++
++
++protected:
++    //! temporal variables
++    //!@{
++    btScalar m_timeStep;
++    btTransform m_calculatedTransformA;
++    btTransform m_calculatedTransformB;
++    btVector3 m_calculatedAxisAngleDiff;
++    btVector3 m_calculatedAxis[3];
++    btVector3 m_calculatedLinearDiff;
++	btScalar	m_factA;
++	btScalar	m_factB;
++	bool		m_hasStaticBody;
++    
++	btVector3 m_AnchorPos; // point betwen pivots of bodies A and B to solve linear axes
++
++    bool	m_useLinearReferenceFrameA;
++	bool	m_useOffsetForConstraintFrame;
++    
++	int		m_flags;
++
++    //!@}
++
++    btGeneric6DofConstraint&	operator=(btGeneric6DofConstraint&	other)
++    {
++        btAssert(0);
++        (void) other;
++        return *this;
++    }
++
++
++	int setAngularLimits(btConstraintInfo2 *info, int row_offset,const btTransform& transA,const btTransform& transB,const btVector3& linVelA,const btVector3& linVelB,const btVector3& angVelA,const btVector3& angVelB);
++
++	int setLinearLimits(btConstraintInfo2 *info, int row, const btTransform& transA,const btTransform& transB,const btVector3& linVelA,const btVector3& linVelB,const btVector3& angVelA,const btVector3& angVelB);
++
++    void buildLinearJacobian(
++        btJacobianEntry & jacLinear,const btVector3 & normalWorld,
++        const btVector3 & pivotAInW,const btVector3 & pivotBInW);
++
++    void buildAngularJacobian(btJacobianEntry & jacAngular,const btVector3 & jointAxisW);
++
++	// tests linear limits
++	void calculateLinearInfo();
++
++	//! calcs the euler angles between the two bodies.
++    void calculateAngleInfo();
++
++
++
++public:
++
++	BT_DECLARE_ALIGNED_ALLOCATOR();
++	
++	///for backwards compatibility during the transition to 'getInfo/getInfo2'
++	bool		m_useSolveConstraintObsolete;
++
++    btGeneric6DofConstraint(btRigidBody& rbA, btRigidBody& rbB, const btTransform& frameInA, const btTransform& frameInB ,bool useLinearReferenceFrameA);
++    btGeneric6DofConstraint(btRigidBody& rbB, const btTransform& frameInB, bool useLinearReferenceFrameB);
++    
++	//! Calcs global transform of the offsets
++	/*!
++	Calcs the global transform for the joint offset for body A an B, and also calcs the agle differences between the bodies.
++	\sa btGeneric6DofConstraint.getCalculatedTransformA , btGeneric6DofConstraint.getCalculatedTransformB, btGeneric6DofConstraint.calculateAngleInfo
++	*/
++    void calculateTransforms(const btTransform& transA,const btTransform& transB);
++
++	void calculateTransforms();
++
++	//! Gets the global transform of the offset for body A
++    /*!
++    \sa btGeneric6DofConstraint.getFrameOffsetA, btGeneric6DofConstraint.getFrameOffsetB, btGeneric6DofConstraint.calculateAngleInfo.
++    */
++    const btTransform & getCalculatedTransformA() const
++    {
++    	return m_calculatedTransformA;
++    }
++
++    //! Gets the global transform of the offset for body B
++    /*!
++    \sa btGeneric6DofConstraint.getFrameOffsetA, btGeneric6DofConstraint.getFrameOffsetB, btGeneric6DofConstraint.calculateAngleInfo.
++    */
++    const btTransform & getCalculatedTransformB() const
++    {
++    	return m_calculatedTransformB;
++    }
++
++    const btTransform & getFrameOffsetA() const
++    {
++    	return m_frameInA;
++    }
++
++    const btTransform & getFrameOffsetB() const
++    {
++    	return m_frameInB;
++    }
++
++
++    btTransform & getFrameOffsetA()
++    {
++    	return m_frameInA;
++    }
++
++    btTransform & getFrameOffsetB()
++    {
++    	return m_frameInB;
++    }
++
++
++	//! performs Jacobian calculation, and also calculates angle differences and axis
++    virtual void	buildJacobian();
++
++	virtual void getInfo1 (btConstraintInfo1* info);
++
++	void getInfo1NonVirtual (btConstraintInfo1* info);
++
++	virtual void getInfo2 (btConstraintInfo2* info);
++
++	void getInfo2NonVirtual (btConstraintInfo2* info,const btTransform& transA,const btTransform& transB,const btVector3& linVelA,const btVector3& linVelB,const btVector3& angVelA,const btVector3& angVelB);
++
++
++    void	updateRHS(btScalar	timeStep);
++
++	//! Get the rotation axis in global coordinates
++	/*!
++	\pre btGeneric6DofConstraint.buildJacobian must be called previously.
++	*/
++    btVector3 getAxis(int axis_index) const;
++
++    //! Get the relative Euler angle
++    /*!
++	\pre btGeneric6DofConstraint::calculateTransforms() must be called previously.
++	*/
++    btScalar getAngle(int axis_index) const;
++
++	//! Get the relative position of the constraint pivot
++    /*!
++	\pre btGeneric6DofConstraint::calculateTransforms() must be called previously.
++	*/
++	btScalar getRelativePivotPosition(int axis_index) const;
++
++	void setFrames(const btTransform & frameA, const btTransform & frameB);
++
++	//! Test angular limit.
++	/*!
++	Calculates angular correction and returns true if limit needs to be corrected.
++	\pre btGeneric6DofConstraint::calculateTransforms() must be called previously.
++	*/
++    bool testAngularLimitMotor(int axis_index);
++
++    void	setLinearLowerLimit(const btVector3& linearLower)
++    {
++    	m_linearLimits.m_lowerLimit = linearLower;
++    }
++
++	void	getLinearLowerLimit(btVector3& linearLower)
++	{
++		linearLower = m_linearLimits.m_lowerLimit;
++	}
++
++	void	setLinearUpperLimit(const btVector3& linearUpper)
++	{
++		m_linearLimits.m_upperLimit = linearUpper;
++	}
++
++	void	getLinearUpperLimit(btVector3& linearUpper)
++	{
++		linearUpper = m_linearLimits.m_upperLimit;
++	}
++
++    void	setAngularLowerLimit(const btVector3& angularLower)
++    {
++		for(int i = 0; i < 3; i++) 
++			m_angularLimits[i].m_loLimit = btNormalizeAngle(angularLower[i]);
++    }
++
++	void	getAngularLowerLimit(btVector3& angularLower)
++	{
++		for(int i = 0; i < 3; i++) 
++			angularLower[i] = m_angularLimits[i].m_loLimit;
++	}
++
++    void	setAngularUpperLimit(const btVector3& angularUpper)
++    {
++		for(int i = 0; i < 3; i++)
++			m_angularLimits[i].m_hiLimit = btNormalizeAngle(angularUpper[i]);
++    }
++
++	void	getAngularUpperLimit(btVector3& angularUpper)
++	{
++		for(int i = 0; i < 3; i++)
++			angularUpper[i] = m_angularLimits[i].m_hiLimit;
++	}
++
++	//! Retrieves the angular limit informacion
++    btRotationalLimitMotor * getRotationalLimitMotor(int index)
++    {
++    	return &m_angularLimits[index];
++    }
++
++    //! Retrieves the  limit informacion
++    btTranslationalLimitMotor * getTranslationalLimitMotor()
++    {
++    	return &m_linearLimits;
++    }
++
++    //first 3 are linear, next 3 are angular
++    void setLimit(int axis, btScalar lo, btScalar hi)
++    {
++    	if(axis<3)
++    	{
++    		m_linearLimits.m_lowerLimit[axis] = lo;
++    		m_linearLimits.m_upperLimit[axis] = hi;
++    	}
++    	else
++    	{
++			lo = btNormalizeAngle(lo);
++			hi = btNormalizeAngle(hi);
++    		m_angularLimits[axis-3].m_loLimit = lo;
++    		m_angularLimits[axis-3].m_hiLimit = hi;
++    	}
++    }
++
++	//! Test limit
++	/*!
++    - free means upper < lower,
++    - locked means upper == lower
++    - limited means upper > lower
++    - limitIndex: first 3 are linear, next 3 are angular
++    */
++    bool	isLimited(int limitIndex)
++    {
++    	if(limitIndex<3)
++    	{
++			return m_linearLimits.isLimited(limitIndex);
++
++    	}
++        return m_angularLimits[limitIndex-3].isLimited();
++    }
++
++	virtual void calcAnchorPos(void); // overridable
++
++	int get_limit_motor_info2(	btRotationalLimitMotor * limot,
++								const btTransform& transA,const btTransform& transB,const btVector3& linVelA,const btVector3& linVelB,const btVector3& angVelA,const btVector3& angVelB,
++								btConstraintInfo2 *info, int row, btVector3& ax1, int rotational, int rotAllowed = false);
++
++	// access for UseFrameOffset
++	bool getUseFrameOffset() { return m_useOffsetForConstraintFrame; }
++	void setUseFrameOffset(bool frameOffsetOnOff) { m_useOffsetForConstraintFrame = frameOffsetOnOff; }
++
++	///override the default global value of a parameter (such as ERP or CFM), optionally provide the axis (0..5). 
++	///If no axis is provided, it uses the default axis for this constraint.
++	virtual	void setParam(int num, btScalar value, int axis = -1);
++	///return the local value of parameter
++	virtual	btScalar getParam(int num, int axis = -1) const;
++
++	void setAxis( const btVector3& axis1, const btVector3& axis2);
++
++
++#if 0 // RL PATCH: no serialization in this tree
++	virtual	int	calculateSerializeBufferSize() const;
++
++	///fills the dataBuffer and returns the struct name (and 0 on failure)
++	virtual	const char*	serialize(void* dataBuffer, btSerializer* serializer) const;
++#endif
++
++	
++};
++
++
++#if 0 // RL PATCH: no serialization in this tree
++struct btGeneric6DofConstraintData
++{
++	btTypedConstraintData	m_typeConstraintData;
++	btTransformFloatData m_rbAFrame; // constraint axii. Assumes z is hinge axis.
++	btTransformFloatData m_rbBFrame;
++	
++	btVector3FloatData	m_linearUpperLimit;
++	btVector3FloatData	m_linearLowerLimit;
++
++	btVector3FloatData	m_angularUpperLimit;
++	btVector3FloatData	m_angularLowerLimit;
++	
++	int	m_useLinearReferenceFrameA;
++	int m_useOffsetForConstraintFrame;
++};
++
++struct btGeneric6DofConstraintDoubleData2
++{
++	btTypedConstraintDoubleData	m_typeConstraintData;
++	btTransformDoubleData m_rbAFrame; // constraint axii. Assumes z is hinge axis.
++	btTransformDoubleData m_rbBFrame;
++	
++	btVector3DoubleData	m_linearUpperLimit;
++	btVector3DoubleData	m_linearLowerLimit;
++
++	btVector3DoubleData	m_angularUpperLimit;
++	btVector3DoubleData	m_angularLowerLimit;
++	
++	int	m_useLinearReferenceFrameA;
++	int m_useOffsetForConstraintFrame;
++};
++
++SIMD_FORCE_INLINE	int	btGeneric6DofConstraint::calculateSerializeBufferSize() const
++{
++	return sizeof(btGeneric6DofConstraintData2);
++}
++
++	///fills the dataBuffer and returns the struct name (and 0 on failure)
++SIMD_FORCE_INLINE	const char*	btGeneric6DofConstraint::serialize(void* dataBuffer, btSerializer* serializer) const
++{
++
++	btGeneric6DofConstraintData2* dof = (btGeneric6DofConstraintData2*)dataBuffer;
++	btTypedConstraint::serialize(&dof->m_typeConstraintData,serializer);
++
++	m_frameInA.serialize(dof->m_rbAFrame);
++	m_frameInB.serialize(dof->m_rbBFrame);
++
++		
++	int i;
++	for (i=0;i<3;i++)
++	{
++		dof->m_angularLowerLimit.m_floats[i] =  m_angularLimits[i].m_loLimit;
++		dof->m_angularUpperLimit.m_floats[i] =  m_angularLimits[i].m_hiLimit;
++		dof->m_linearLowerLimit.m_floats[i] = m_linearLimits.m_lowerLimit[i];
++		dof->m_linearUpperLimit.m_floats[i] = m_linearLimits.m_upperLimit[i];
++	}
++	
++	dof->m_useLinearReferenceFrameA = m_useLinearReferenceFrameA? 1 : 0;
++	dof->m_useOffsetForConstraintFrame = m_useOffsetForConstraintFrame ? 1 : 0;
++
++	return btGeneric6DofConstraintDataName;
++}
++
++
++
++
++
++#endif
++
++#endif //BT_GENERIC_6DOF_CONSTRAINT_H
 diff --git upstream/libsrc/bullet3-3.24/BulletDynamics/ConstraintSolver/btSequentialImpulseConstraintSolver.cpp engine/rocketsim/libsrc/bullet3-3.24/BulletDynamics/ConstraintSolver/btSequentialImpulseConstraintSolver.cpp
-index f27a07f..e8d3d94 100644
+index f27a07f..6732fa3 100644
 --- upstream/libsrc/bullet3-3.24/BulletDynamics/ConstraintSolver/btSequentialImpulseConstraintSolver.cpp
 +++ engine/rocketsim/libsrc/bullet3-3.24/BulletDynamics/ConstraintSolver/btSequentialImpulseConstraintSolver.cpp
 @@ -903,6 +903,11 @@ void btSequentialImpulseConstraintSolver::setupContactConstraint(btSolverConstra
@@ -553,6 +2279,20 @@ index f27a07f..e8d3d94 100644
 +	specialTempManifold.m_combinedRestitution = specialResolveInfo.m_restitution / specialResolveInfo.m_numSpecialCollisions;
  	
  	int frictionIndex = m_tmpSolverContactConstraintPool.size();
+ 
+@@ -1550,7 +1560,12 @@ btScalar btSequentialImpulseConstraintSolver::solveGroupCacheFriendlySetup(btCol
+ 	convertBodies(bodies, numBodies, infoGlobal);
+ 
+ 	// ROCKETSIM CHANGE: We do not need this
+-	//convertJoints(constraints, numConstraints, infoGlobal);
++	// RL PATCH: the cars' XY locks are joints (Car_TA's SetConstrained2D, btGeneric6DofConstraint): converted when there
++	// are any (none: as before, the pool left empty)
++	if (numConstraints > 0)
++		convertJoints(constraints, numConstraints, infoGlobal);
++	else
++		m_tmpSolverNonContactConstraintPool.resizeNoInitialize(0);
+ 
+ 	convertContacts(manifoldPtr, numManifolds, infoGlobal);
  
 diff --git upstream/libsrc/bullet3-3.24/LinearMath/btScalar.h engine/rocketsim/libsrc/bullet3-3.24/LinearMath/btScalar.h
 index 927f3e9..3e17418 100644
@@ -776,7 +2516,7 @@ index 888d7f9..cb5809c 100644
  	return Vec(cp * cy, cp * sy, -sp);
  }
 diff --git upstream/src/RLConst.h engine/rocketsim/src/RLConst.h
-index 8281ac9..d3e25f1 100644
+index 8281ac9..e8e4652 100644
 --- upstream/src/RLConst.h
 +++ engine/rocketsim/src/RLConst.h
 @@ -41,6 +41,13 @@ namespace RLConst {
@@ -793,7 +2533,7 @@ index 8281ac9..d3e25f1 100644
  		BALL_MAX_ANG_SPEED = 6.f, // Ball can never exceed this angular velocity (radians/s)
  		BALL_DRAG = 0.03f, // Net-velocity drag multiplier
  		BALL_FRICTION = 0.35f,
-@@ -87,14 +94,17 @@ namespace RLConst {
+@@ -87,15 +94,19 @@ namespace RLConst {
  		STOPPING_FORWARD_VEL = 25.f, // If we are costing with less than this forward vel, we full-brake
  		COASTING_BRAKE_FACTOR = 0.15f, // How much the brake is applied when costing
  		BRAKING_NO_THROTTLE_SPEED_THRESH = 0.01f, // If we are braking and moving faster than this, disable throttle
@@ -811,9 +2551,11 @@ index 8281ac9..d3e25f1 100644
 +		JUMP_RESET_TIME_PAD = (1 / 40.f), // (RL PATCH: unused; the game's rule is JUMP_LEAVE_GROUND_TIME, see Car::_UpdateJump)
 +		JUMP_LEAVE_GROUND_TIME = 0.125f, // RL PATCH: CarComponent_Jump_TA JumpLeaveGroundTime
  		JUMP_MAX_TIME = 0.2f,
++		PODIUM_JUMP_MAX_TIME = 0.085f, // RL PATCH: CarComponent_Jump_TA PodiumJumpForceTime (podium mode: static session PD1)
  		DOUBLEJUMP_MAX_DELAY = 1.25f, // Can be at most 1.25 seconds after the jump is finished
  
-@@ -103,7 +113,7 @@ namespace RLConst {
+ 		// Mostly from: https://github.com/samuelpmish/RLUtilities/blob/develop/src/mechanics/dodge.cc
+@@ -103,7 +114,7 @@ namespace RLConst {
  		FLIP_Z_DAMP_START = 0.15f,
  		FLIP_Z_DAMP_END = 0.21f,
  		FLIP_TORQUE_TIME = 0.65f,
@@ -822,7 +2564,7 @@ index 8281ac9..d3e25f1 100644
  		FLIP_PITCHLOCK_TIME = 1.f,
  		FLIP_PITCHLOCK_EXTRA_TIME = 0.3f,
  		FLIP_INITIAL_VEL_SCALE = 500.f,
-@@ -125,9 +135,11 @@ namespace RLConst {
+@@ -125,9 +136,11 @@ namespace RLConst {
  
  		CAR_AUTOFLIP_IMPULSE = 200,
  		CAR_AUTOFLIP_TORQUE = 50,
@@ -835,7 +2577,7 @@ index 8281ac9..d3e25f1 100644
  
  		CAR_AUTOROLL_FORCE = 100,
  		CAR_AUTOROLL_TORQUE = 80,
-@@ -142,8 +154,24 @@ namespace RLConst {
+@@ -142,8 +155,24 @@ namespace RLConst {
  		CAR_RESPAWN_Z = 36.f,
  
  		BUMP_COOLDOWN_TIME = 0.25f,
@@ -862,7 +2604,7 @@ index 8281ac9..d3e25f1 100644
  
  	// NOTE: Angle order is PYR
  	constexpr Vec
-@@ -162,7 +190,12 @@ namespace RLConst {
+@@ -162,7 +191,12 @@ namespace RLConst {
  			WHEELS_DAMPING_COMPRESSION = 25.f,
  			WHEELS_DAMPING_RELAXATION = 40.f,
  			MAX_SUSPENSION_TRAVEL = 12.f, // TODO: Are we sure this is the same for all cars?
@@ -876,7 +2618,7 @@ index 8281ac9..d3e25f1 100644
  	}
  
  	namespace Heatseeker {
-@@ -251,10 +284,14 @@ namespace RLConst {
+@@ -251,10 +285,14 @@ namespace RLConst {
  	namespace BoostPads {
  		// Mostly from a Rocket Science video: https://www.youtube.com/watch?v=xgfa-qZyInw
  		
@@ -893,7 +2635,7 @@ index 8281ac9..d3e25f1 100644
  
  			BOX_HEIGHT = 64,
  			BOX_RAD_BIG = 160,
-@@ -271,44 +308,49 @@ namespace RLConst {
+@@ -271,44 +309,49 @@ namespace RLConst {
  			LOCS_AMOUNT_SMALL_HOOPS = 14,
  			LOCS_AMOUNT_BIG = 6;
  
@@ -977,7 +2719,7 @@ index 8281ac9..d3e25f1 100644
  		};
  
  		constexpr Vec LOCS_SMALL_HOOPS[LOCS_AMOUNT_SMALL_HOOPS] = {
-@@ -426,6 +468,27 @@ namespace RLConst {
+@@ -426,6 +469,27 @@ namespace RLConst {
  		}
  	};
  
@@ -1005,7 +2747,7 @@ index 8281ac9..d3e25f1 100644
  	const static LinearPieceCurve STEER_ANGLE_FROM_SPEED_CURVE_THREEWHEEL = {
  		{
  			{0,		0.342473f},
-@@ -452,10 +515,11 @@ namespace RLConst {
+@@ -452,10 +516,11 @@ namespace RLConst {
  		}
  	};
  
@@ -1018,7 +2760,7 @@ index 8281ac9..d3e25f1 100644
  			{1,			1.0f}
  		}
  	};
-@@ -502,27 +566,29 @@ namespace RLConst {
+@@ -502,27 +567,29 @@ namespace RLConst {
  		}
  	};
  
@@ -1128,7 +2870,7 @@ index 5805611..3ceaa22 100644
  }
 \ No newline at end of file
 diff --git upstream/src/Sim/Arena/Arena.cpp engine/rocketsim/src/Sim/Arena/Arena.cpp
-index a13cee0..88dc234 100644
+index a13cee0..c90f10b 100644
 --- upstream/src/Sim/Arena/Arena.cpp
 +++ engine/rocketsim/src/Sim/Arena/Arena.cpp
 @@ -1,4 +1,8 @@
@@ -1140,7 +2882,7 @@ index a13cee0..88dc234 100644
  #include "../../RocketSim.h"
  
  #include "../../../libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btAxisSweep3.h"
-@@ -6,10 +10,15 @@
+@@ -6,10 +10,16 @@
  #include "../../../libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btSimpleBroadphase.h"
  #include "../../../libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btRSBroadphase.h"
  #include "../../../libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btOverlappingPairCache.h"
@@ -1153,10 +2895,11 @@ index a13cee0..88dc234 100644
 +#include "../../../libsrc/bullet3-3.24/BulletCollision/NarrowPhaseCollision/btGjkEpaPenetrationDepthSolver.h"
 +#include "../../../libsrc/bullet3-3.24/BulletCollision/NarrowPhaseCollision/btVoronoiSimplexSolver.h"
 +#include "../../../libsrc/bullet3-3.24/LinearMath/btTransformUtil.h"
++#include "../../../libsrc/bullet3-3.24/BulletDynamics/ConstraintSolver/btGeneric6DofConstraint.h" // RL PATCH: the XY lock
  #include "DropshotTiles/DropshotTiles.h"
  
  RS_NS_START
-@@ -36,7 +45,7 @@ void Arena::SetMutatorConfig(const MutatorConfig& mutatorConfig) {
+@@ -36,7 +46,7 @@ void Arena::SetMutatorConfig(const MutatorConfig& mutatorConfig) {
  		for (Car* car : _cars) {
  			btVector3 newCarInertia;
  			car->_childHitboxShape.calculateLocalInertia(mutatorConfig.carMass, newCarInertia);
@@ -1165,7 +2908,7 @@ index a13cee0..88dc234 100644
  		}
  	}
  
-@@ -56,11 +65,174 @@ Car* Arena::AddCar(Team team, const CarConfig& config) {
+@@ -56,11 +66,174 @@ Car* Arena::AddCar(Team team, const CarConfig& config) {
  	_AddCarFromPtr(car);
  
  	car->_BulletSetup(gameMode, &_bulletWorld, _mutatorConfig);
@@ -1341,7 +3084,15 @@ index a13cee0..88dc234 100644
  bool Arena::_AddCarFromPtr(Car* car) {
  
  	car->id = ++_lastCarID;
-@@ -110,6 +282,11 @@ void Arena::SetCarBumpCallback(CarBumpEventFn callbackFunc, void* userInfo) {
+@@ -82,6 +255,7 @@ bool Arena::RemoveCar(uint32_t id) {
+ 
+ 	if (itr != _carIDMap.end()) {
+ 		Car* car = itr->second;
++		_RemoveXYLock(car); // RL PATCH
+ 		_carIDMap.erase(itr);
+ 		_cars.erase(car);
+ 		_bulletWorld.removeCollisionObject(&car->_rigidBody);
+@@ -110,6 +284,11 @@ void Arena::SetCarBumpCallback(CarBumpEventFn callbackFunc, void* userInfo) {
  	_carBumpCallback.userInfo = userInfo;
  }
  
@@ -1353,7 +3104,7 @@ index a13cee0..88dc234 100644
  void Arena::ResetToRandomKickoff(int seed) {
  	using namespace RLConst;
  	// TODO: Make shuffling of kickoff setup more efficient (?)
-@@ -123,16 +300,199 @@ void Arena::ResetToRandomKickoff(int seed) {
+@@ -123,16 +302,199 @@ void Arena::ResetToRandomKickoff(int seed) {
  
  	auto kickoffOrder = KICKOFF_ORDER_TEMPLATE;
  
@@ -1556,7 +3307,7 @@ index a13cee0..88dc234 100644
  
  	const CarSpawnPos* CAR_SPAWN_LOCATIONS = CAR_SPAWN_LOCATIONS_SOCCAR;
  	const CarSpawnPos* CAR_RESPAWN_LOCATIONS = CAR_RESPAWN_LOCATIONS_SOCCAR;
-@@ -159,7 +519,7 @@ void Arena::ResetToRandomKickoff(int seed) {
+@@ -159,7 +521,7 @@ void Arena::ResetToRandomKickoff(int seed) {
  		CarSpawnPos spawnPos;
  	
  		if (i < locationAmount) {
@@ -1565,7 +3316,7 @@ index a13cee0..88dc234 100644
  		} else {
  			int respawnPosIdx = (i - (locationAmount)) % locationAmount;
  			spawnPos = CAR_RESPAWN_LOCATIONS[respawnPosIdx];
-@@ -178,6 +538,8 @@ void Arena::ResetToRandomKickoff(int seed) {
+@@ -178,6 +540,8 @@ void Arena::ResetToRandomKickoff(int seed) {
  			std::vector<Car*> teamCars = isBlue ? blueCars : orangeCars;
  
  			if (i < teamCars.size()) {
@@ -1574,7 +3325,7 @@ index a13cee0..88dc234 100644
  				CarState spawnState;
  				spawnState.boost = _mutatorConfig.carSpawnBoostAmount;
  				spawnState.pos = { spawnPos.x, spawnPos.y, CAR_SPAWN_REST_Z };
-@@ -190,6 +552,11 @@ void Arena::ResetToRandomKickoff(int seed) {
+@@ -190,6 +554,11 @@ void Arena::ResetToRandomKickoff(int seed) {
  				}
  
  				spawnState.rotMat = angle.ToRotMat();
@@ -1586,7 +3337,7 @@ index a13cee0..88dc234 100644
  
  				teamCars[i]->SetState(spawnState);
  			}
-@@ -197,6 +564,9 @@ void Arena::ResetToRandomKickoff(int seed) {
+@@ -197,6 +566,9 @@ void Arena::ResetToRandomKickoff(int seed) {
  	}
  
  	BallState ballState = BallState();
@@ -1596,7 +3347,7 @@ index a13cee0..88dc234 100644
  	if (gameMode == GameMode::HEATSEEKER) {
  		int nextRand = (*randEngine)();
  		Vec scale = Vec(1, (nextRand % 2) ? 1 : -1, 1);
-@@ -216,10 +586,7 @@ void Arena::ResetToRandomKickoff(int seed) {
+@@ -216,10 +588,7 @@ void Arena::ResetToRandomKickoff(int seed) {
  	if (gameMode == GameMode::DROPSHOT)
  		SetDropshotTilesState({});
  
@@ -1608,7 +3359,7 @@ index a13cee0..88dc234 100644
  }
  
  void Arena::SetDropshotTilesState(const DropshotTilesState& state) {
-@@ -241,11 +608,17 @@ void Arena::SetDropshotTilesState(const DropshotTilesState& state) {
+@@ -241,11 +610,17 @@ void Arena::SetDropshotTilesState(const DropshotTilesState& state) {
  	_dropshotTilesState = state;
  }
  
@@ -1626,7 +3377,7 @@ index a13cee0..88dc234 100644
  	auto
  		bodyA = objA->m_collisionObject,
  		bodyB = objB->m_collisionObject;
-@@ -299,6 +672,11 @@ bool Arena::_BulletContactAddedCallback(
+@@ -299,6 +674,11 @@ bool Arena::_BulletContactAddedCallback(
  		// Ball + World
  		Arena* arenaInst = (Arena*)bodyB->getUserPointer();
  		arenaInst->ball->_OnWorldCollision(arenaInst->gameMode, contactPoint.m_normalWorldOnB, arenaInst->tickTime);
@@ -1638,7 +3389,7 @@ index a13cee0..88dc234 100644
  		
  		// Set as special (unless in snowday)
  		if (arenaInst->gameMode != GameMode::SNOWDAY)
-@@ -317,9 +695,93 @@ void Arena::_BtCallback_OnCarBallCollision(Car* car, Ball* ball, btManifoldPoint
+@@ -317,9 +697,93 @@ void Arena::_BtCallback_OnCarBallCollision(Car* car, Ball* ball, btManifoldPoint
  	using namespace RLConst;
  
  	Vec relBallPos = (ballIsBodyA ? manifoldPoint.m_localPointA : manifoldPoint.m_localPointB) * BT_TO_UU;
@@ -1732,7 +3483,7 @@ index a13cee0..88dc234 100644
  void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint& manifoldPoint) {
  	using namespace RLConst;
  
-@@ -327,6 +789,15 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
+@@ -327,6 +791,15 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
  	manifoldPoint.m_combinedFriction = RLConst::CARCAR_COLLISION_FRICTION;
  	manifoldPoint.m_combinedRestitution = RLConst::CARCAR_COLLISION_RESTITUTION;
  
@@ -1748,7 +3499,7 @@ index a13cee0..88dc234 100644
  	// Test collision both ways
  	for (int i = 0; i < 2; i++) {
  
-@@ -334,83 +805,265 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
+@@ -334,83 +807,265 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
  		if (isSwapped)
  			std::swap(car1, car2);
  
@@ -1758,14 +3509,14 @@ index a13cee0..88dc234 100644
 -
 -		if (state.isDemoed || otherState.isDemoed)
 -			return;
-+		bool canDemoTeam = _mutatorConfig.enableTeamDemos || (car1->team != car2->team);
- 
+-
 -		if ((state.carContact.otherCarID == car2->id) && (state.carContact.cooldownTimer > 0))
 -			continue; // In cooldown
 -
 -		Vec deltaPos = (otherState.pos - state.pos);
 -		if (state.vel.Dot(deltaPos) > 0) { // Going towards other car
--
++		bool canDemoTeam = _mutatorConfig.enableTeamDemos || (car1->team != car2->team);
+ 
 -			Vec velDir = state.vel.Normalized();
 -			Vec dirToOtherCar = deltaPos.Normalized();
 -
@@ -2074,7 +3825,7 @@ index a13cee0..88dc234 100644
  }
  
  Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mutatorConfig(gameMode), _config(config) {
-@@ -473,6 +1126,22 @@ Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mu
+@@ -473,6 +1128,22 @@ Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mu
  		auto& solverInfo = _bulletWorld.getSolverInfo();
  		solverInfo.m_splitImpulsePenetrationThreshold = 1.0e30f;
  		solverInfo.m_erp2 = 0.8f;
@@ -2097,7 +3848,7 @@ index a13cee0..88dc234 100644
  	}
  
  	bool loadArenaStuff = gameMode != GameMode::THE_VOID;
-@@ -543,6 +1212,51 @@ Arena* Arena::Create(GameMode gameMode, const ArenaConfig& arenaConfig, float ti
+@@ -543,6 +1214,85 @@ Arena* Arena::Create(GameMode gameMode, const ArenaConfig& arenaConfig, float ti
  	return new Arena(gameMode, arenaConfig, tickRate);
  }
  
@@ -2146,10 +3897,44 @@ index a13cee0..88dc234 100644
 +		in.Read(id);
 +}
 +
++// RL PATCH: the cars' XY locks in a snapshot: each held one's car and pin, so a restored world takes them back where
++// they were (Arena::_UpdateXYLocks)
++static void _WriteXYLocks(DataStreamOut& out, const Arena::CarSet& cars) {
++	uint32_t held = 0;
++	for (const Car* car : cars)
++		held += car->_xyLock != NULL;
++	out.Write(held);
++	for (const Car* car : cars) {
++		if (!car->_xyLock)
++			continue;
++		const btVector3& pin = car->_xyLock->getFrameOffsetA().getOrigin();
++		out.Write(car->id);
++		out.WriteMultiple(pin.x(), pin.y(), pin.z());
++	}
++}
++
++static void _ReadXYLocks(DataStreamIn& in, Arena* arena) {
++	for (Car* car : arena->GetCars()) {
++		arena->_RemoveXYLock(car);
++		car->_xyLockPending = false;
++	}
++	uint32_t held = in.Read<uint32_t>();
++	for (uint32_t i = 0; i < held; i++) {
++		uint32_t id = in.Read<uint32_t>();
++		float x, y, z;
++		in.ReadMultiple(x, y, z);
++		Car* car = arena->GetCar(id);
++		if (car) {
++			car->_xyLockPending = true;
++			car->_xyLockPin = btVector3(x, y, z);
++		}
++	}
++}
++
  void Arena::Serialize(DataStreamOut& out) const {
  	out.WriteMultiple(gameMode, tickTime, tickCount, _lastCarID);
  
-@@ -565,11 +1279,137 @@ void Arena::Serialize(DataStreamOut& out) const {
+@@ -565,11 +1315,138 @@ void Arena::Serialize(DataStreamOut& out) const {
  
  	{ // Serialize ball
  		ball->GetState().Serialize(out);
@@ -2166,6 +3951,7 @@ index a13cee0..88dc234 100644
 +	_WriteKickoffSequence(out, kickoffSequence); // RL PATCH
 +	out.Write<uint8_t>(respawnsHeld); // RL PATCH
 +	_WriteGoalExplosion(out, goalExplosion); // RL PATCH
++	_WriteXYLocks(out, _cars); // RL PATCH
 +}
 +
 +// RL PATCH: Bullet keeps contact points from tick to tick (persistent manifolds), and some contacts, such as a
@@ -2287,7 +4073,7 @@ index a13cee0..88dc234 100644
  }
  
  Arena* Arena::DeserializeNew(DataStreamIn& in) {
-@@ -601,12 +1441,11 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
+@@ -601,12 +1478,11 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
  				RS_ERR_CLOSE(ERROR_PREFIX << "Failed to load, got repeated car ID of " << id);
  #endif
  
@@ -2304,7 +4090,7 @@ index a13cee0..88dc234 100644
  		}
  
  		newArena->_lastCarID = lastCarID;
-@@ -629,20 +1468,122 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
+@@ -629,20 +1505,124 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
  		}
  	}
  
@@ -2338,6 +4124,7 @@ index a13cee0..88dc234 100644
 +	_ReadKickoffSequence(in, newArena->kickoffSequence); // RL PATCH
 +	newArena->respawnsHeld = in.Read<uint8_t>() != 0; // RL PATCH
 +	_ReadGoalExplosion(in, newArena->goalExplosion); // RL PATCH
++	_ReadXYLocks(in, newArena); // RL PATCH
  
  	return newArena;
  }
@@ -2429,13 +4216,14 @@ index a13cee0..88dc234 100644
 +	_ReadKickoffSequence(in, kickoffSequence); // RL PATCH
 +	respawnsHeld = in.Read<uint8_t>() != 0; // RL PATCH
 +	_ReadGoalExplosion(in, goalExplosion); // RL PATCH
++	_ReadXYLocks(in, this); // RL PATCH
 +	return true;
 +}
 +
  Arena* Arena::Clone(bool copyCallbacks) {
  	Arena* newArena = new Arena(this->gameMode, this->_config, this->GetTickRate());
  	
-@@ -651,14 +1592,19 @@ Arena* Arena::Clone(bool copyCallbacks) {
+@@ -651,16 +1631,24 @@ Arena* Arena::Clone(bool copyCallbacks) {
  		newArena->_carBumpCallback = this->_carBumpCallback;
  	}
  
@@ -2456,8 +4244,13 @@ index a13cee0..88dc234 100644
 +		RawBodyState::From(car->_rigidBody, car->_netRotation).ApplyTo(newCar->_rigidBody, newCar->_netRotation); // RL PATCH: exact state
  		newCar->controls = car->controls;
  		newCar->_velocityImpulseCache = car->_velocityImpulseCache;
++		// RL PATCH: its XY lock taken back where it is
++		newCar->_xyLockPending = car->_xyLock != NULL || car->_xyLockPending;
++		newCar->_xyLockPin = car->_xyLock ? car->_xyLock->getFrameOffsetA().getOrigin() : car->_xyLockPin;
  	}
-@@ -669,6 +1615,18 @@ Arena* Arena::Clone(bool copyCallbacks) {
+ 
+ 	assert(this->_boostPads.size() == newArena->_boostPads.size());
+@@ -669,6 +1657,18 @@ Arena* Arena::Clone(bool copyCallbacks) {
  
  	newArena->tickCount = this->tickCount;
  	newArena->_lastCarID = this->_lastCarID;
@@ -2476,7 +4269,7 @@ index a13cee0..88dc234 100644
  
  	return newArena;
  }
-@@ -678,33 +1636,69 @@ Car* Arena::DeserializeNewCar(DataStreamIn& in, Team team) {
+@@ -678,33 +1678,109 @@ Car* Arena::DeserializeNewCar(DataStreamIn& in, Team team) {
  	car->_Deserialize(in);
  	car->team = team;
  
@@ -2492,6 +4285,44 @@ index a13cee0..88dc234 100644
  	return car;
  }
  
++// RL PATCH: Car_TA.SetConstrained2D (FUN_140f21a90 every physics tick: SetConstrained2D(!bDriving || bPodiumMode);
++// static session PD1): Bullet 2.82's btGeneric6DofConstraint against the fixed body, frame A the identity basis at the
++// body's world origin as it takes hold, frame B the identity, its linear limits lower (0, 0, 1) upper (0, 0, 0) (X and
++// Y held, Z free: lower over upper), every angular one (1, 0) (free), the world's ERP and CFM. Not driving is the
++// kickoff countdown here (SetAllDriving(false)); the end's frozen world doesn't step
++void Arena::_UpdateXYLocks(bool countdown) {
++	for (Car* car : _cars) {
++		const bool want = (countdown || podiumMode) && !car->_internalState.isDemoed;
++		if (want && !car->_xyLock) {
++			btTransform frameA;
++			frameA.setIdentity();
++			// (where a snapshot's lock was, else where the car is)
++			frameA.setOrigin(car->_xyLockPending ? car->_xyLockPin : car->_rigidBody.getCenterOfMassPosition());
++			car->_xyLockPending = false;
++			btTransform frameB;
++			frameB.setIdentity();
++			btGeneric6DofConstraint* lock = new btGeneric6DofConstraint(btTypedConstraint::getFixedBody(), car->_rigidBody, frameA, frameB, true);
++			lock->setLinearLowerLimit(btVector3(0, 0, 1));
++			lock->setLinearUpperLimit(btVector3(0, 0, 0));
++			for (int axis = 3; axis < 6; axis++)
++				lock->setLimit(axis, 1, 0);
++			_bulletWorld.addConstraint(lock, true);
++			car->_xyLock = lock;
++		} else if (!want) {
++			_RemoveXYLock(car);
++			car->_xyLockPending = false;
++		}
++	}
++}
++
++void Arena::_RemoveXYLock(Car* car) {
++	if (!car->_xyLock)
++		return;
++	_bulletWorld.removeConstraint(car->_xyLock);
++	delete car->_xyLock;
++	car->_xyLock = NULL;
++}
++
  void Arena::Step(int ticksToSimulate) {
  	for (int i = 0; i < ticksToSimulate; i++) {
 +		if (frozen) { // RL PATCH: the bodies hold where they are
@@ -2517,6 +4348,8 @@ index a13cee0..88dc234 100644
  
  		bool hasArenaStuff = (gameMode != GameMode::THE_VOID);
  		
+-		for (Car* car : _cars)
+-			car->_PreTickUpdate(gameMode, tickTime, _mutatorConfig);
 +		// RL PATCH: the ball's start-of-tick velocity (OldRBState) for the car hit impulse (cars keep theirs in _oldState),
 +		// as the read-back makes it: in uu, capped and quantised, not the body's x50 of its x0.02 (RV-244)
 +		{
@@ -2549,13 +4382,14 @@ index a13cee0..88dc234 100644
 +					_UpdateDemolished(car, claimed);
 +		}
 +
- 		for (Car* car : _cars)
--			car->_PreTickUpdate(gameMode, tickTime, _mutatorConfig);
++		for (Car* car : _cars) {
++			car->_podiumMode = podiumMode; // RL PATCH
 +			car->_PreTickUpdate(gameMode, tickTime, _mutatorConfig, respawnsHeld);
++		}
  
  		if (hasArenaStuff && !ballOnly) {
  			for (BoostPad* pad : _boostPads)
-@@ -714,11 +1708,27 @@ void Arena::Step(int ticksToSimulate) {
+@@ -714,11 +1790,30 @@ void Arena::Step(int ticksToSimulate) {
  		// Update ball
  		ball->_PreTickUpdate(gameMode, tickTime);
  
@@ -2565,6 +4399,9 @@ index a13cee0..88dc234 100644
 +		// RL PATCH (KNB-7): the ball's location as the step starts: the explosion's (Ball_TA.Explode's ExplodeLocation
 +		// is its actor Location, one tick behind the body that crossed the line)
 +		const Vec ballAtStart = ball->_rigidBody.getWorldTransform().m_origin * BT_TO_UU;
++
++		// RL PATCH: the XY locks (Car_TA's pre-step SetConstrained2D, every tick)
++		_UpdateXYLocks(countdown);
 +
  		// Update world
  		_bulletWorld.stepSimulation(tickTime, 0, tickTime);
@@ -2583,7 +4420,7 @@ index a13cee0..88dc234 100644
  			car->_FinishPhysicsTick(_mutatorConfig);
  			if (hasArenaStuff) {
  				if (_config.useCustomBoostPads) {
-@@ -732,9 +1742,20 @@ void Arena::Step(int ticksToSimulate) {
+@@ -732,9 +1827,20 @@ void Arena::Step(int ticksToSimulate) {
  			}
  		}
  
@@ -2605,7 +4442,7 @@ index a13cee0..88dc234 100644
  
  		ball->_FinishPhysicsTick(_mutatorConfig);
  
-@@ -745,13 +1766,35 @@ void Arena::Step(int ticksToSimulate) {
+@@ -745,13 +1851,35 @@ void Arena::Step(int ticksToSimulate) {
  			if (ball->_internalState.dsInfo.lastDamageTick && ball->_internalState.dsInfo.lastDamageTick == tickCount)
  				SetDropshotTilesState(_dropshotTilesState);
  
@@ -2641,7 +4478,18 @@ index a13cee0..88dc234 100644
  	}
  }
  
-@@ -983,6 +2026,7 @@ btRigidBody* Arena::_AddStaticCollisionShape(btCollisionShape* shape, btVector3
+@@ -928,6 +2056,10 @@ bool Arena::IsBallScored() const {
+ 
+ Arena::~Arena() {
+ 
++	// RL PATCH: the cars' XY locks out and freed
++	for (Car* car : _cars)
++		_RemoveXYLock(car);
++
+ 	// Remove all from bullet world constraints
+ 	while (_bulletWorld.getNumConstraints() > 0)
+ 		_bulletWorld.removeConstraint(0);
+@@ -983,6 +2115,7 @@ btRigidBody* Arena::_AddStaticCollisionShape(btCollisionShape* shape, btVector3
  	} else {
  		_bulletWorld.addRigidBody(shapeRB);
  	}
@@ -2649,7 +4497,7 @@ index a13cee0..88dc234 100644
  	_worldCollisionRBs.push_back(shapeRB);
  	return shapeRB;
  }
-@@ -993,6 +2037,7 @@ void Arena::_SetupArenaCollisionShapes() {
+@@ -993,6 +2126,7 @@ void Arena::_SetupArenaCollisionShapes() {
  	bool isDropShot = gameMode == GameMode::DROPSHOT;
  
  	auto collisionMeshes = RocketSim::GetArenaCollisionShapes(gameMode);
@@ -2657,7 +4505,7 @@ index a13cee0..88dc234 100644
  
  	if (collisionMeshes.empty()) {
  		RS_ERR_CLOSE(
-@@ -1021,7 +2066,7 @@ void Arena::_SetupArenaCollisionShapes() {
+@@ -1021,7 +2155,7 @@ void Arena::_SetupArenaCollisionShapes() {
  
  		int mask = isHoopsNet ? CollisionMasks::HOOPS_NET : 0;
  		_worldCollisionBvhShapes.push_back(mesh);
@@ -2667,7 +4515,7 @@ index a13cee0..88dc234 100644
  		// Don't free the BVH when we deconstruct this arena
  		mesh->m_ownsBvh = false;
 diff --git upstream/src/Sim/Arena/Arena.h engine/rocketsim/src/Sim/Arena/Arena.h
-index a3ebd3f..94df61a 100644
+index a3ebd3f..a38a587 100644
 --- upstream/src/Sim/Arena/Arena.h
 +++ engine/rocketsim/src/Sim/Arena/Arena.h
 @@ -1,5 +1,6 @@
@@ -2702,7 +4550,7 @@ index a3ebd3f..94df61a 100644
  	bool ownsCars = true; // If true, deleting this arena instance deletes all cars
  
  	std::unordered_map<uint32_t, Car*> _carIDMap;
-@@ -63,7 +73,75 @@ public:
+@@ -63,7 +73,85 @@ public:
  	// Total ticks this arena instance has been simulated for, never resets
  	uint64_t tickCount = 0;
  
@@ -2762,6 +4610,16 @@ index a3ebd3f..94df61a 100644
 +	// count. A mode, not state: not serialized (the server's phase sets it, and a client's from the match state)
 +	bool frozen = false;
 +
++	// RL PATCH: the podium (InitPodiumCars' EnablePodiumMode, never cleared while the car lives): every car XY-locked
++	// and its jumps short (Car::_xyLock, _podiumMode). A mode, not state, as `frozen`: the server's phase sets it, and a
++	// client's from the match state
++	bool podiumMode = false;
++
++	// RL PATCH: the cars' XY locks for this tick (wanted: the kickoff countdown or the podium, the car not demolished);
++	// one let go (its constraint out of the world)
++	void _UpdateXYLocks(bool countdown);
++	void _RemoveXYLock(Car* car);
++
 +	// RL PATCH: the goal explosion's knockback (the ball's ExplosionComponent_X, static analysis MR-6): a wave from where
 +	// the ball scored, its front at 10000 uu/s up to 3000 uu; each car its front reaches (not demolished) gets one
 +	// velocity change of 5000 x (1 - front/3000)^0.1 away from a point 500 uu behind the ball (into the goal) and 500 uu
@@ -2779,7 +4637,7 @@ index a3ebd3f..94df61a 100644
  	const std::vector<BoostPad*>& GetBoostPads() { return _boostPads; }
  
  	// Returns true if added, false if car was already added
-@@ -107,6 +185,23 @@ public:
+@@ -107,6 +195,23 @@ public:
  	} _carBumpCallback;
  	void SetCarBumpCallback(CarBumpEventFn callbackFn, void* userInfo = NULL);
  
@@ -2803,7 +4661,7 @@ index a3ebd3f..94df61a 100644
  	// NOTE: Arena should be destroyed after use
  	static Arena* Create(GameMode gameMode, const ArenaConfig& arenaConfig = {}, float tickRate = 120);
  	
-@@ -116,6 +211,11 @@ public:
+@@ -116,6 +221,11 @@ public:
  	// Load new arena from serialized data
  	static Arena* DeserializeNew(DataStreamIn& in);
  
@@ -2815,7 +4673,7 @@ index a3ebd3f..94df61a 100644
  	Arena(const Arena& other) = delete; // No copy constructor, use Arena::Clone() instead
  	Arena& operator =(const Arena& other) = delete; // No copy operator, use Arena::Clone() instead
  
-@@ -133,6 +233,24 @@ public:
+@@ -133,6 +243,24 @@ public:
  
  	void ResetToRandomKickoff(int seed = -1);
  
@@ -2840,7 +4698,7 @@ index a3ebd3f..94df61a 100644
  	// Returns true if the ball is probably going in, does not account for wall or ceiling bounces
  	// NOTE: Purposefully overestimates, just like the real RL's shot prediction
  	// To check which goal it will score in, use the ball's velocity
-@@ -155,6 +273,17 @@ public:
+@@ -155,6 +283,17 @@ public:
  
  	void _SetupArenaCollisionShapes();
  
@@ -2858,7 +4716,7 @@ index a3ebd3f..94df61a 100644
  	// Static function called by Bullet internally when adding a collision point
  	static bool _BulletContactAddedCallback(
  		btManifoldPoint& cp,
-@@ -176,6 +305,19 @@ public:
+@@ -176,6 +315,19 @@ public:
  	}
  
  	DropshotTilesState GetDropshotTilesState() const { return _dropshotTilesState; };
@@ -2878,7 +4736,7 @@ index a3ebd3f..94df61a 100644
  	void SetDropshotTilesState(const DropshotTilesState& tilesState);
  
  private:
-@@ -187,4 +329,8 @@ private:
+@@ -187,4 +339,8 @@ private:
  	ArenaConfig _config;
  };
  
@@ -4214,7 +6072,7 @@ index c87d449..d9d1ad0 100644
  	if (colliding)
  		_internalState.curLockedCar = car;
 diff --git upstream/src/Sim/Car/Car.cpp engine/rocketsim/src/Sim/Car/Car.cpp
-index 417ad9d..7253cb6 100644
+index 417ad9d..6468f9a 100644
 --- upstream/src/Sim/Car/Car.cpp
 +++ engine/rocketsim/src/Sim/Car/Car.cpp
 @@ -1,11 +1,38 @@
@@ -4896,7 +6754,7 @@ index 417ad9d..7253cb6 100644
  			* GetForwardDir() * CAR_MASS_BT
  		);
  		_internalState.timeSinceBoosted = 0;
-@@ -547,28 +826,31 @@ void Car::_UpdateBoost(float tickTime, const MutatorConfig& mutatorConfig, float
+@@ -547,28 +826,33 @@ void Car::_UpdateBoost(float tickTime, const MutatorConfig& mutatorConfig, float
  
  void Car::_UpdateJump(float tickTime, const MutatorConfig& mutatorConfig, bool jumpPressed) {
  	using namespace RLConst;
@@ -4924,7 +6782,9 @@ index 417ad9d..7253cb6 100644
  	if (_internalState.isJumping) {
 -		if (_internalState.jumpTime < JUMP_MIN_TIME || (controls.jump && _internalState.jumpTime < JUMP_MAX_TIME)) {
 +		_internalState.jumpReleased |= !controls.jump;
-+		if (_internalState.jumpTime < JUMP_MIN_TIME || (!_internalState.jumpReleased && _internalState.jumpTime < JUMP_MAX_TIME)) {
++		// RL PATCH: on the podium the force ends at PodiumJumpForceTime (PD1)
++		const float jumpMaxTime = _podiumMode ? PODIUM_JUMP_MAX_TIME : JUMP_MAX_TIME;
++		if (_internalState.jumpTime < JUMP_MIN_TIME || (!_internalState.jumpReleased && _internalState.jumpTime < jumpMaxTime)) {
  			// Continue jump
  			_internalState.isJumping = true;
  		} else {
@@ -4940,7 +6800,7 @@ index 417ad9d..7253cb6 100644
  		_internalState.jumpTime = 0;
  		btVector3 jumpStartForce = GetUpDir() * mutatorConfig.jumpImmediateForce * UU_TO_BT * CAR_MASS_BT;
  		_rigidBody.applyCentralImpulse(jumpStartForce);
-@@ -578,14 +860,10 @@ void Car::_UpdateJump(float tickTime, const MutatorConfig& mutatorConfig, bool j
+@@ -578,14 +862,10 @@ void Car::_UpdateJump(float tickTime, const MutatorConfig& mutatorConfig, bool j
  		_internalState.hasJumped = true;
  
  		// Apply extra long-jump force
@@ -4958,7 +6818,7 @@ index 417ad9d..7253cb6 100644
  		_rigidBody.applyCentralForce(totalJumpForce * UU_TO_BT * CAR_MASS_BT);
  	}
  
-@@ -602,7 +880,11 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -602,7 +882,11 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  		dirYaw_up = GetUpDir(),
  		dirRoll_forward = -GetForwardDir();
  
@@ -4971,7 +6831,7 @@ index 417ad9d..7253cb6 100644
  	if (_internalState.isFlipping)
  		_internalState.isFlipping = _internalState.hasFlipped && _internalState.flipTime < FLIP_TORQUE_TIME;
  
-@@ -613,15 +895,20 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -613,15 +897,20 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  		if (!_internalState.flipRelTorque.IsZero()) {
  			// Flip cancel check
  			float pitchScale = 1;
@@ -4997,7 +6857,7 @@ index 417ad9d..7253cb6 100644
  				}
  			}
  
-@@ -629,22 +916,25 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -629,22 +918,25 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  
  			btVector3 dodgeTorque = relDodgeTorque * btVector3(FLIP_TORQUE_X, FLIP_TORQUE_Y, 0);
  			_rigidBody.applyTorque(_rigidBody.m_invInertiaTensorWorld.inverse() * _rigidBody.getWorldTransform().m_basis * dodgeTorque);
@@ -5030,7 +6890,7 @@ index 417ad9d..7253cb6 100644
  
  			if (_internalState.isFlipping) {
  				pitchTorqueScale = 0;
-@@ -653,11 +943,13 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -653,11 +945,13 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  				if (_internalState.flipTime < FLIP_TORQUE_TIME + FLIP_PITCHLOCK_EXTRA_TIME)
  					pitchTorqueScale = 0;
  			}
@@ -5047,7 +6907,7 @@ index 417ad9d..7253cb6 100644
  		} else {
  			torque = { 0, 0, 0 };
  		}
-@@ -666,8 +958,8 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -666,8 +960,8 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  
  		// TODO: Use actual dot product operator functions (?)
  		float
@@ -5058,7 +6918,7 @@ index 417ad9d..7253cb6 100644
  			dampRoll = dirRoll_forward.dot(angVel) * CAR_AIR_CONTROL_DAMPING.z;
  
  		btVector3 damping =
-@@ -677,8 +969,7 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -677,8 +971,7 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  		_rigidBody.applyTorque(_rigidBody.m_invInertiaTensorWorld.inverse() * (torque - damping) * CAR_TORQUE_SCALE);
  	}
  
@@ -5068,7 +6928,7 @@ index 417ad9d..7253cb6 100644
  }
  
  void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorConfig, bool jumpPressed, float forwardSpeed_UU) {
-@@ -687,6 +978,9 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
+@@ -687,6 +980,9 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
  	float tickTimeScale = tickTime / (1 / 120.f);
  
  	if (_internalState.isOnGround) {
@@ -5078,7 +6938,7 @@ index 417ad9d..7253cb6 100644
  		_internalState.hasDoubleJumped = false;
  		_internalState.hasFlipped = false;
  		_internalState.airTime = 0;
-@@ -702,7 +996,7 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
+@@ -702,7 +998,7 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
  		}
  
  		if (jumpPressed && _internalState.airTimeSinceJump < DOUBLEJUMP_MAX_DELAY) {
@@ -5087,7 +6947,7 @@ index 417ad9d..7253cb6 100644
  			bool isFlipInput = inputMagnitude >= config.dodgeDeadzone;
  
  			bool canUse;
-@@ -728,16 +1022,33 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
+@@ -728,16 +1024,33 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
  					{
  						float forwardSpeedRatio = abs(forwardSpeed_UU) / CAR_MAX_SPEED;
  
@@ -5129,7 +6989,7 @@ index 417ad9d..7253cb6 100644
  						if (abs(dodgeDir.x()) < 0.1f) dodgeDir.x() = 0;
  						if (abs(dodgeDir.y()) < 0.1f) dodgeDir.y() = 0;
  
-@@ -781,50 +1092,79 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
+@@ -781,50 +1094,79 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
  		}
  	}
  
@@ -5223,7 +7083,7 @@ index 417ad9d..7253cb6 100644
  			_internalState.autoFlipTimer -= tickTime;
  		}
 diff --git upstream/src/Sim/Car/Car.h engine/rocketsim/src/Sim/Car/Car.h
-index 90bcaa8..399d407 100644
+index 90bcaa8..b27203a 100644
 --- upstream/src/Sim/Car/Car.h
 +++ engine/rocketsim/src/Sim/Car/Car.h
 @@ -1,9 +1,11 @@
@@ -5238,7 +7098,16 @@ index 90bcaa8..399d407 100644
  #include "../MutatorConfig/MutatorConfig.h"
  
  #include "../../../libsrc/bullet3-3.24/BulletDynamics/Dynamics/btRigidBody.h"
-@@ -21,13 +23,32 @@ struct CarState : public PhysState {
+@@ -12,6 +14,8 @@
+ #include "../../../libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btCompoundShape.h"
+ #include "../../../src/Sim/btVehicleRL/btVehicleRL.h"
+ 
++class btGeneric6DofConstraint;
++
+ RS_NS_START
+ 
+ struct CarState : public PhysState {
+@@ -21,13 +25,32 @@ struct CarState : public PhysState {
  	// Not serialized
  	uint64_t tickCountSinceUpdate = 0;
  
@@ -5272,7 +7141,7 @@ index 90bcaa8..399d407 100644
  
  	// Whether we jumped to get into the air
  	// Can be false while airborne, if we left the ground with a flip reset
-@@ -44,7 +65,8 @@ struct CarState : public PhysState {
+@@ -44,7 +67,8 @@ struct CarState : public PhysState {
  	// Forward flip will have positive Y
  	Vec flipRelTorque = { 0, 0, 0 };
  
@@ -5282,7 +7151,7 @@ index 90bcaa8..399d407 100644
  	float flipTime = 0; // When currently flipping, the time since we started flipping, else 0
  
  	// True during a flip (not an auto-flip, and not after a flip)
-@@ -53,6 +75,10 @@ struct CarState : public PhysState {
+@@ -53,6 +77,10 @@ struct CarState : public PhysState {
  	// True during a jump
  	bool isJumping = false;
  
@@ -5293,7 +7162,7 @@ index 90bcaa8..399d407 100644
  	// Total time spent in the air
  	float airTime = 0;
  
-@@ -73,7 +99,8 @@ struct CarState : public PhysState {
+@@ -73,7 +101,8 @@ struct CarState : public PhysState {
  
  	bool isSupersonic = false;
  
@@ -5303,7 +7172,7 @@ index 90bcaa8..399d407 100644
  	float supersonicTime = 0;
  
  	// This is a state variable due to the rise/fall rate of handbrake inputs (see RLConst.h)
-@@ -96,6 +123,29 @@ struct CarState : public PhysState {
+@@ -96,6 +125,29 @@ struct CarState : public PhysState {
  	bool isDemoed = false;
  	float demoRespawnTimer = 0;
  
@@ -5333,7 +7202,7 @@ index 90bcaa8..399d407 100644
  	BallHitInfo ballHitInfo = BallHitInfo();
  
  	// Controls from last tick, set to this->controls after simulation
-@@ -121,11 +171,13 @@ struct CarState : public PhysState {
+@@ -121,11 +173,13 @@ struct CarState : public PhysState {
  
  #define CARSTATE_SERIALIZATION_FIELDS \
  pos, rotMat, vel, angVel, isOnGround, hasJumped, hasDoubleJumped, hasFlipped, \
@@ -5349,7 +7218,7 @@ index 90bcaa8..399d407 100644
  
  enum class Team : byte {
  	BLUE = 0,
-@@ -156,6 +208,17 @@ public:
+@@ -156,9 +210,30 @@ public:
  	// Respawn the car, called after we have been demolished and waited for the respawn timer
  	void Respawn(GameMode gameMode, int seed = -1, float boostAmount = RLConst::BOOST_SPAWN_AMOUNT);
  
@@ -5367,7 +7236,20 @@ index 90bcaa8..399d407 100644
  	btVehicleRL _bulletVehicle;
  	btDefaultVehicleRaycaster _bulletVehicleRaycaster;
  	btRigidBody _rigidBody;
-@@ -166,6 +229,16 @@ public:
++	// RL PATCH: the XY lock while the car isn't driving (the kickoff countdown) or is on the podium (Car_TA's per-tick
++	// SetConstrained2D(!bDriving || bPodiumMode): a btGeneric6DofConstraint pinning the body's world X/Y where it took
++	// hold, Z and every rotation free; Arena::_UpdateXYLocks keeps it, static session PD1). Not state: taken again
++	// where the car is when it's wanted and missing (a clone, a load)
++	btGeneric6DofConstraint* _xyLock = NULL;
++	// RL PATCH: a lock a snapshot held, its pin (frame A's origin, BT units): taken there as the lock comes back
++	bool _xyLockPending = false;
++	btVector3 _xyLockPin = btVector3(0, 0, 0);
++	// RL PATCH: podium mode (EnablePodiumMode): the jump's force lasts PodiumJumpForceTime (the arena sets it per tick)
++	bool _podiumMode = false;
+ 	btCompoundShape _compoundShape;
+ 	btBoxShape _childHitboxShape;
+ 
+@@ -166,6 +241,16 @@ public:
  	// Those values are only updated when GetState() is called
  	CarState _internalState;
  
@@ -5384,7 +7266,7 @@ index 90bcaa8..399d407 100644
  	// Get the forward direction as a unit vector
  	Vec GetForwardDir() const {
  		return _internalState.rotMat.forward;
-@@ -181,10 +254,29 @@ public:
+@@ -181,10 +266,29 @@ public:
  		return _internalState.rotMat.up;
  	}
  
@@ -5415,7 +7297,7 @@ index 90bcaa8..399d407 100644
  	void _FinishPhysicsTick(const MutatorConfig& mutatorConfig);
  
  	void _BulletSetup(GameMode gameMode, class btDynamicsWorld* bulletWorld, const MutatorConfig& mutatorConfig);
-@@ -195,6 +287,9 @@ public:
+@@ -195,6 +299,9 @@ public:
  	void Serialize(DataStreamOut& out);
  	void _Deserialize(DataStreamIn& in);
  
@@ -5425,7 +7307,7 @@ index 90bcaa8..399d407 100644
  	Car(const Car& other) = delete;
  	Car& operator=(const Car& other) = delete;
  
-@@ -206,7 +301,10 @@ private:
+@@ -206,7 +313,10 @@ private:
  	void _UpdateJump(float tickTime, const MutatorConfig& mutatorConfig, bool jumpPressed);
  	void _UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, bool doAirControl);
  	void _UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorConfig, bool jumpPressed, float forwardSpeed_UU);

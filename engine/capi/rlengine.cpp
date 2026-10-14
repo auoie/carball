@@ -359,6 +359,8 @@ void rl_set_unlimited_boost(RLArena* a, int on) {
 	a->arena->SetMutatorConfig(config);
 }
 
+void rl_set_podium(RLArena* a, int on) { a->arena->podiumMode = on != 0; }
+
 void rl_ball_hide(RLArena* a) {
 	BallState s = a->arena->ball->GetState();
 	s.vel = Vec();

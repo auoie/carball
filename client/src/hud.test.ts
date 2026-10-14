@@ -1,6 +1,6 @@
 // The HUD's numbers as the game's (notes/visual-timing.md).
 import { describe, expect, it } from "vitest";
-import { boostArc, boostShown, messageShown, replaySpeed, replayTime } from "./hud";
+import { EASE_IN_QUAD, EASE_OUT_QUAD, boostArc, boostShown, messageShown, replaySpeed, replayTime } from "./hud";
 
 describe("the boost meter's number (VT-21)", () => {
   it("is floor(pct · 100), at least 1 while any boost is left", () => {
@@ -46,3 +46,25 @@ describe("the replay's goal speed and time (HUD-11, HT-6)", () => {
   });
 });
 
+describe("BOOST's fade past 80 % (HUD-7: GSAP's default ease, Power1)", () => {
+  // (a CSS cubic-bezier's y at time x: its parameter solved by bisection)
+  const bezier = (css: string, x: number): number => {
+    const [x1 = 0, y1 = 0, x2 = 0, y2 = 0] = (css.match(/[\d.]+/g) ?? []).map(Number);
+    const at = (a: number, b: number, t: number): number => 3 * a * t * (1 - t) ** 2 + 3 * b * t * t * (1 - t) + t ** 3;
+    let lo = 0;
+    let hi = 1;
+    for (let i = 0; i < 60; i++) {
+      const mid = (lo + hi) / 2;
+      if (at(x1, x2, mid) < x) lo = mid;
+      else hi = mid;
+    }
+    return at(y1, y2, (lo + hi) / 2);
+  };
+
+  it("rises as 1 - (1 - s)^2 and falls back as the same tween reversed, 1 - s^2", () => {
+    for (const s of [0.1, 0.3, 0.5, 0.8]) {
+      expect(bezier(EASE_OUT_QUAD, s)).toBeCloseTo(1 - (1 - s) ** 2, 5);
+      expect(1 - bezier(EASE_IN_QUAD, s)).toBeCloseTo(1 - s * s, 5);
+    }
+  });
+});

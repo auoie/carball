@@ -1560,7 +1560,12 @@ btScalar btSequentialImpulseConstraintSolver::solveGroupCacheFriendlySetup(btCol
 	convertBodies(bodies, numBodies, infoGlobal);
 
 	// ROCKETSIM CHANGE: We do not need this
-	//convertJoints(constraints, numConstraints, infoGlobal);
+	// RL PATCH: the cars' XY locks are joints (Car_TA's SetConstrained2D, btGeneric6DofConstraint): converted when there
+	// are any (none: as before, the pool left empty)
+	if (numConstraints > 0)
+		convertJoints(constraints, numConstraints, infoGlobal);
+	else
+		m_tmpSolverNonContactConstraintPool.resizeNoInitialize(0);
 
 	convertContacts(manifoldPtr, numManifolds, infoGlobal);
 

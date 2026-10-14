@@ -117,19 +117,27 @@ function drawPlate(canvas: HTMLCanvasElement, name: string, team: number, onlyAr
 
 interface PlateSprite {
   readonly sprite: Sprite;
-  readonly texture: CanvasTexture;
+  texture: CanvasTexture;
   readonly canvas: HTMLCanvasElement;
   key: string;
+}
+
+/** A texture of the plate's canvas as drawn now (a new one each time it's drawn: once uploaded, a texture's storage
+ *  can't change size, and a name that came after its car is wider than the empty plate: RV-290) */
+function plateTexture(canvas: HTMLCanvasElement): CanvasTexture {
+  const texture = new CanvasTexture(canvas);
+  texture.colorSpace = SRGBColorSpace;
+  return texture;
 }
 
 export class Nameplates {
   /** The plates in the world (the game adds it to its scene) */
   readonly root = new Group();
   readonly #plates = new Map<number, PlateSprite>();
-  #shown: { readonly name: string; readonly team: number; readonly arrowOnly: boolean }[] = [];
+  #shown: { readonly name: string; readonly team: number; readonly onScreen: boolean; readonly arrowOnly: boolean }[] = [];
 
-  /** The plates drawn now (the tests') */
-  get shown(): readonly { readonly name: string; readonly team: number; readonly arrowOnly: boolean }[] {
+  /** The plates now, on screen or not (the tests') */
+  get shown(): readonly { readonly name: string; readonly team: number; readonly onScreen: boolean; readonly arrowOnly: boolean }[] {
     return this.#shown;
   }
 
@@ -142,8 +150,7 @@ export class Nameplates {
       let plate = this.#plates.get(p.car);
       if (!plate) {
         const canvas = document.createElement("canvas");
-        const texture = new CanvasTexture(canvas);
-        texture.colorSpace = SRGBColorSpace;
+        const texture = plateTexture(canvas);
         const material = new SpriteMaterial({ map: texture, alphaTest: MASK_CLIP, transparent: false, depthTest: true, depthWrite: true, fog: false });
         material.userData = { heightFog: "none" };
         const sprite = new Sprite(material);
@@ -153,19 +160,25 @@ export class Nameplates {
         this.#plates.set(p.car, plate);
       }
       plate.sprite.visible = p.at !== null;
-      if (!p.at) continue;
-      const only = arrowOnly(mode, p.at.distance);
       const team = p.team === 1 ? 1 : 0;
+      if (!p.at) {
+        this.#shown.push({ name: p.name, team, onScreen: false, arrowOnly: false });
+        continue;
+      }
+      const only = arrowOnly(mode, p.at.distance);
       const key = `${p.name}|${String(team)}|${String(only)}`;
       if (key !== plate.key) {
         plate.key = key;
         drawPlate(plate.canvas, p.name, team, only);
-        plate.texture.needsUpdate = true;
+        const old = plate.texture;
+        plate.texture = plateTexture(plate.canvas);
+        plate.sprite.material.map = plate.texture;
+        old.dispose();
       }
       const size = plateSize(plate.canvas.width / plate.canvas.height, nameplateScale(p.at.distance, p.at.horizontalFov, setting));
       toThreeVector(p.top, plate.sprite.position);
       plate.sprite.scale.set(size.width, size.height, 1);
-      this.#shown.push({ name: p.name, team, arrowOnly: only });
+      this.#shown.push({ name: p.name, team, onScreen: true, arrowOnly: only });
     }
     for (const [car, plate] of this.#plates) {
       if (!seen.has(car)) {

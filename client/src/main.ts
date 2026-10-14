@@ -1,6 +1,6 @@
 // Entry point: load the WebAssembly engine and the arena, then run freeplay.
 import { setInterfaceScale } from "./ui/stage";
-import { fitHudFonts } from "./ui/hudFont";
+import { fitHudFonts, loadHudFonts } from "./ui/hudFont";
 import createEngine from "@engine/rlengine_web.mjs";
 import { CarBody, World, initEngine } from "./engine/world";
 import { Freeplay } from "./game/freeplay";
@@ -135,11 +135,10 @@ async function main(): Promise<void> {
     hud.configure(s.interface);
   };
   applyInterface(settings);
-  // (the header fonts' substitute scaled to Bourgeois' capitals: now, and again once every font is in)
+  // (the HUD's fonts scaled to the game's capitals and digits, each number glyph's ink fitted: now, and again once
+  // they're loaded)
   fitHudFonts();
-  void document.fonts.ready.then(() => {
-    fitHudFonts();
-  });
+  void loadHudFonts();
   const panel = new SettingsPanel(document.body, settings, (next) => {
     settings = next;
     audio.apply(next.audio, next.options.muted);
@@ -208,7 +207,9 @@ async function main(): Promise<void> {
     start: escape,
   });
   // (the games don't take input under a menu, nor a pad button a menu took that's still down)
-  const inputEnabled = (): boolean => !menusOpen() && !padNav.suppressed;
+  const inputEnabled = (): boolean => !menusOpen();
+  // (the game's pad without a menu's presses still held: RV-289)
+  input.padFilter = (pad) => padNav.mask(pad);
   // For the browser tests
   (window as unknown as { rlAudio?: () => unknown }).rlAudio = () => audio.stats;
   (window as unknown as { rlAmbienceLevels?: (theme: ThemeName, seconds: number) => Promise<unknown> }).rlAmbienceLevels = async (t, seconds) =>

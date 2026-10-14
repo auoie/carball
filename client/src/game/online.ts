@@ -85,6 +85,7 @@ import { CHAT_PRESETS } from "./quickChat";
 import { inputGlyph } from "../input/bindings";
 import { keyGlyph } from "../ui/keyGlyph";
 import { BallArrow, ballArrowShown } from "../render/ballArrow";
+import { FlipResetFx } from "../render/flipResetFx";
 
 
 /** The key that opens the menu, which has the vote button (VoteInstructions' {0?KeyBinding}) */
@@ -160,6 +161,8 @@ export class Online {
   readonly #ballView = new BallView();
   /** The ball arrow by the player's car (HUD-17) */
   readonly #ballArrow = new BallArrow();
+  /** The flip reset's effect on our car (HUD-19: the player's own only) */
+  readonly #flipFx = new FlipResetFx();
   readonly #ball: Interpolated<BodyState>;
   readonly #ballError = new SyncError();
   #ballSpawns = 0; // the ball's spawn counter last tick (a reset places it: not interpolated)
@@ -229,6 +232,8 @@ export class Online {
   /** The joining camera (CAM-30): since when it shows (null: not now), and whether it has had its turn */
   #waitingSince: number | null = null;
   #waitingDone = false;
+  /** The last view drawn: the sounds' listener when no car of ours is drawn */
+  #listener: CameraView | null = null;
   /** The car camera's last view (the pre-podium holds it: CAM-35) */
   #lastView: CameraView | null = null;
   #faded = false; // (the pre-podium's fade to black, started)
@@ -799,6 +804,7 @@ export class Online {
     // (the server's world: frozen at the end and on the end screen, the podium's boost unlimited)
     this.#world.setFrozen(phase === "prePodium" || phase === "finished");
     this.#world.setUnlimitedBoost(phase === "podium");
+    this.#world.setPodium(phase === "podium" || phase === "finished");
     // CAM-30: joining in the match's warm-up, the side view first (once)
     if (first && phase === "waiting" && !this.#waitingDone) this.#waitingSince = now;
     if (phase === "prePodium") this.#faded = false;
@@ -891,6 +897,8 @@ export class Online {
     const round = roundPhase === "countdown" || roundPhase === "active" || roundPhase === "postGoal" || roundPhase === "timeUp";
     const arrow = ballArrowShown(this.settings().interface.ballArrow, this.#ballCam, localDrawn !== null, round && this.#carView);
     this.#ballArrow.update(arrow ? localDrawn : null, fromThreeVector(ball), frameSeconds, this.#serverExploded);
+    this.#cars.get(this.#localCar)?.view.attach(this.#flipFx.root);
+    this.#flipFx.update(frameSeconds);
     this.#ballView.update(ball, this.#ballError.applyRotation(this.#ball.rotation(alpha, this.#rot)));
     this.#arena.update(ball, frameSeconds);
     this.#effects.update(frameSeconds);
@@ -911,6 +919,7 @@ export class Online {
       if (this.#world.kickoffCountdown() > 0) this.#camera.reset();
       this.#rear = newCar({ ballCam: this.#ballCam, rear: this.#rear }).rear;
     }
+    let view: CameraView | null = null;
     if (local) {
       // The camera follows the drawn (smoothed) car and ball, its rotation too
       const car = local.state.blended(alpha);
@@ -931,21 +940,34 @@ export class Online {
       const controls = { ballCam: this.#ballCam, rear: this.#rear, lookUp: this.#look.up, lookRight: this.#look.right, freeLook: this.#freeLook };
       const carView = this.#camera.update(frameSeconds, drawnCar, drawnBall, controls, respawn, realSeconds);
       if (this.#camera.takeBallCamExit()) this.#ballCam = false; // (free look left the toggled ball cam)
-      const view = this.#matchView(carView);
+      view = this.#matchView(carView);
       this.#renderer.render(view);
       this.#effects.camera = view.position; // (the husks collide near it)
       this.#drawNameplates(alpha);
+      this.#listener = view;
+    }
+    // The sounds every frame, through the match's end too (the user's finding 24: they stuck at the cars' last state):
+    // heard from the view drawn (the last one without a car of ours), every car in the world now (a removed car's voice
+    // stops); frozen at the end, the cars halted and still (the game's halt their physics), the podium's winners heard
+    // as they drive
+    const listener = view ?? this.#listener;
+    if (listener) {
+      const phase = this.#match?.phase;
+      const frozen = phase === "prePodium" || phase === "finished";
+      const still = { vel: { x: 0, y: 0, z: 0 }, boosting: false, supersonic: false };
       this.#audio.frame({
         // (the demolitions as drawn, the server's: the explosion's sound with its effect, RV-84)
         world: {
-          cars: new Map([...this.#cars].map(([id, entry]) => [id, { ...entry.state.current, demoed: this.#drawnDemoed(id, entry.state.current) }])),
+          cars: new Map(
+            [...this.#cars].map(([id, entry]) => [id, { ...entry.state.current, ...(frozen ? still : {}), demoed: this.#drawnDemoed(id, entry.state.current) }]),
+          ),
           ball: this.#ball.current,
           pads,
         },
         localCar: this.#localCar,
-        throttle: this.#throttle,
+        throttle: frozen ? 0 : this.#throttle,
         simulated,
-        camera: view,
+        camera: listener,
         triggered: triggerSounds(triggers),
       });
     }
@@ -1071,6 +1093,7 @@ export class Online {
       parts: { ...hudParts(phase), ballCamIndicator: phase !== "finished" },
     });
     if (this.#flipReset && flipAudio(this.settings().gameplay.flipResetIndicator)) this.#audio.flipReset();
+    if (this.#flipReset && flipVisual(this.settings().gameplay.flipResetIndicator)) this.#flipFx.trigger();
     this.#flipReset = false;
   }
 

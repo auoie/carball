@@ -151,20 +151,6 @@ body {
 #flip[data-state="reset"] svg {
   filter: drop-shadow(0 0 8px rgba(255, 207, 58, 0.8));
 }
-#flip-toast {
-  position: absolute;
-  top: 62%;
-  width: 100%;
-  text-align: center;
-  font-size: 1.8rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  color: #ffcf3a;
-  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7), 0 0 18px rgba(255, 207, 58, 0.5);
-  opacity: 0; /* (shown by an animation, src/hud.ts) */
-  pointer-events: none;
-}
-
 /* (ours: speed, camera, fps and the connection, small at the bottom centre, out of the HUD's corners) */
 #info {
   position: absolute;
@@ -425,13 +411,38 @@ body {
 }
 
 /* --- Match stats: the held scoreboard, the stat popups, the feed (notes/scoreboard.md, match-stats.md §6) --- */
-/* Fonts: condensed caps for the game's Bourgeois, a wide face for its Dashboard Numbers (HUD-1: not redistributed) */
+/* Fonts: the game's Bourgeois and Dashboard Numbers Wide aren't redistributed (HUD-1); ours are bundled so the HUD looks
+   the same in every browser (the user's pick, 2026-10-14): Rajdhani SemiBold and Light for the header and thin text,
+   Orbitron at 500 for the numbers, under the SIL Open Font License (each in public/fonts with its OFL.txt). Orbitron's file is the
+   upstream one as it is (its licence reserves the name: no subset or conversion); Rajdhani's the Latin subset. Each
+   family one face, its weight the face's own (Orbitron's variable axis set by the descriptor) */
+@font-face {
+  font-family: "Rajdhani SemiBold";
+  src: url("/fonts/rajdhani/Rajdhani-SemiBold-latin.woff2") format("woff2");
+  font-weight: 600;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Rajdhani Light";
+  src: url("/fonts/rajdhani/Rajdhani-Light-latin.woff2") format("woff2");
+  font-weight: 300;
+  font-display: block;
+}
+
+@font-face {
+  font-family: Orbitron;
+  src: url("/fonts/orbitron/Orbitron%5Bwght%5D.ttf") format("truetype");
+  font-weight: 500;
+  font-display: block;
+}
+
 :root {
-  /* (the game's $HeaderFont and $HeaderThinFont are Bourgeois Medium and Thin, not shipped: a local substitute, its size
-     scaled so its capitals stand as tall as Bourgeois' at the same size: src/ui/hudFont.ts sets the scales) */
-  --hud-header: "Bahnschrift SemiCondensed", "Arial Narrow", "Roboto Condensed", sans-serif;
-  --hud-thin: "Bahnschrift Light SemiCondensed", "Arial Narrow", "Roboto Condensed", sans-serif;
-  --hud-numbers: "Bahnschrift", "Eurostile", "Arial", sans-serif;
+  /* (sizes scaled so the capitals and digits stand as tall as the game's fonts' at the same size: src/ui/hudFont.ts
+     sets the scales; the local fonts behind only if ours can't load) */
+  --hud-header: "Rajdhani SemiBold", "Bahnschrift SemiCondensed", "Arial Narrow", sans-serif;
+  --hud-thin: "Rajdhani Light", "Bahnschrift Light SemiCondensed", "Arial Narrow", sans-serif;
+  --hud-numbers: Orbitron, "Bahnschrift", "Arial", sans-serif;
   --hud-small: "Arial Narrow", Arial, sans-serif;
 }
 
@@ -1331,10 +1342,13 @@ body {
   height: calc(2px + 0.7775 * var(--numbers-size));
 }
 
+/* (the glyph from the cell's left, its ink stretched to the game's glyph's and moved to where that one's ink starts) */
 .num-cell {
   flex: none;
   width: calc(var(--advance) * var(--numbers-size));
-  text-align: center;
+  text-align: left;
+  transform: translateX(calc(var(--ink-shift, 0) * var(--numbers-size))) scaleX(var(--ink-scale, 1));
+  transform-origin: 0 0;
 }
 
 /* (a field's letterSpacing between the cells: not after the last, nor between the clock's padded '1' and its space) */
@@ -1342,16 +1356,22 @@ body {
   margin-right: var(--numbers-gap);
 }
 
-/* (the digits' 70 x 52 box centred in the score box) */
+/* (the digits' 70 x 52 box, at y 2 from the board's origin: x -136...-66 on the left, 68...138 on the right, not
+   mirrored as the backgrounds are (HUD-2, RX5's answer); from the score boxes at -134.5 and 67) */
 .score-digits {
   --numbers-size: 48px;
   position: absolute;
-  left: -1.25px;
+  left: -1.5px;
   top: 2.1px;
   width: 70px;
   height: 52px;
   font: calc(var(--numbers-size) * var(--hud-numbers-scale, 1))/0 var(--hud-numbers);
   text-shadow: 0 0 8px #999;
+}
+
+#score:not(.swapped) .score-view.team-1 .score-digits,
+#score.swapped .score-view.team-0 .score-digits {
+  left: 1px;
 }
 
 .score-view.team-0 .score-digits {
@@ -1388,16 +1408,27 @@ body {
   color: #fff;
 }
 
-/* HUD-3: "OVERTIME" in the clock slot until it runs */
+/* HUD-3: "OVERTIME" in the clock slot until it runs (HT-12: overtimeTextField at (-60, 4) from the board's origin,
+   124 x 50, centred both ways; the script shrinks it to one line: 30 px, its baseline at y 37.4), on its baseline as
+   the numbers are */
 #clock-overtime {
+  --strut: 30px;
   position: absolute;
-  left: 2.5px;
-  top: 7.1px;
-  width: 130px;
-  font: calc(32px * var(--hud-header-scale, 1))/26px var(--hud-header);
+  left: calc(-60px + 67.5px);
+  top: calc(37.4px + 1.1px - var(--strut));
+  width: 124px;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  font: calc(30px * var(--hud-header-scale, 1))/0 var(--hud-header);
   color: #fff;
-  text-align: center;
   white-space: nowrap;
+}
+
+#clock-overtime::before {
+  content: "";
+  flex: none;
+  height: var(--strut);
 }
 
 /* HUD-8/9/10: the centre message (GameMessageView at (W/2, 250): its text box's centre, y 214...290; the baseline at
@@ -1446,16 +1477,19 @@ body {
 }
 
 /* HUD-11/12: the red dot's centre is the view's origin; the label's text box 12 px right of it (its glyphs from 14:
-   Flash's 2 px gutter), its baseline 11 below the centre; the hint's box at the same left, its baseline 27 below. Laid
+   Flash's 2 px gutter), the dot on its capitals' middle; the hint's box at the same left, its baseline 15.4 lower. Laid
    out on the baselines so it sits the same in any font (RV: Chrome's Bahnschrift, Firefox's Arial Narrow): the rows
    align their items' baselines, the dot's an empty box's (its bottom), the text's lines 0 high, so the head row's
-   baseline is the dot box's bottom, 32 below the row's top, and the dot is moved down to have its centre 11 above it */
+   baseline is the dot box's bottom, 32 below the row's top, and the dot is moved down to have its centre on the capitals' middle */
 :root {
   --rec-dot: 32px;
   --rec-text-x: 14px;
-  --rec-label-baseline: 11px;
-  --rec-hint-baseline: 27px;
-  /* (where the origin is in a head row: x 16, y 32 - 11 = 21) */
+  /* (the dot's centre on the middle of the label's capitals as drawn: its baseline half the drawn cap height below the
+     dot's centre (the user's decision, 2026-10-14: with HT-12's Flash baseline, 11.2, the dot looked too high); the hint's 15.4 under
+     the label's, as the movie's fields are) */
+  --rec-label-baseline: calc(32px * var(--hud-header-scale, 1) * var(--hud-header-cap, 0.5679) / 2);
+  --rec-hint-baseline: calc(var(--rec-label-baseline) + 15.4px);
+  /* (where the origin is in a head row: x 16, y 32 less the label's baseline under the dot) */
   --rec-origin-y: calc(var(--rec-dot) - var(--rec-label-baseline));
 }
 
@@ -1779,10 +1813,11 @@ body {
   text-shadow: 0 0 6px #000;
 }
 
-/* (shown past 80 % only, blinking: HT-2) */
+/* (faded in and out by the HUD past 80 %: HUD-7; its colour #666666 plus the team's tint always, the number alone turning
+   white: the user's finding 29) */
 #boost-label {
   position: absolute;
-  visibility: hidden;
+  opacity: 0;
   left: 42px;
   top: 126px;
   width: 120px;
@@ -1796,26 +1831,14 @@ body {
   color: rgb(255, 163, 102);
 }
 
-/* (past 80 %: white, a full glow, the label blinking every 0.2 s) */
-#boost.max #boost-value,
-#boost.max #boost-label {
+/* (past 80 %: the number white, a full glow; the label fading in and out in its own colour: hud.ts) */
+#boost.max #boost-value {
   color: #fff;
   text-shadow: 0 0 8px #000;
 }
 
 #boost.max .boost-glow {
   opacity: 1;
-}
-
-#boost.max #boost-label {
-  visibility: visible;
-  animation: boost-blink 0.4s steps(1) infinite;
-}
-
-@keyframes boost-blink {
-  50% {
-    opacity: 0;
-  }
 }
 
 /* (not team-coloured: orange, red past 80 %; an amber or red glow) */
@@ -1836,9 +1859,14 @@ body {
   --boost-white: rgb(255, 217, 189);
 }
 
-#boost.plain.max #boost-value,
-#boost.plain.max #boost-label {
+#boost.plain.max #boost-value {
   color: #ff4040;
+}
+
+/* (the label past 80 % without the team colours: COLOR_BOOST_MAX on its #666666, (0, 0.6, 0.49) x + (255, 64, 64);
+   HUD.updateTeamColor) */
+#boost.plain.max #boost-label {
+  color: rgb(255, 125, 114);
 }
 
 #boost.plain.max .boost-glow-stop {

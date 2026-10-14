@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cellOffsets, numberAdvance, numberCells } from "./numberCells";
+import { NUMBERS_INK, cellOffsets, glyphKey, inkFit, numberAdvance, numberCells } from "./numberCells";
 
 describe("the HUD's numbers at Dashboard Numbers Wide's advances (HT-12, the user's finding 21)", () => {
   it("gives every digit but 1 the same cell, so the clock holds still as they change", () => {
@@ -20,5 +20,19 @@ describe("the HUD's numbers at Dashboard Numbers Wide's advances (HT-12, the use
     expect(at("1:19")[0]).not.toBeCloseTo(at("1:20")[0] ?? 0, 3);
     // (no padding for the scores and boost)
     expect(numberCells("11").map((cell) => cell.c)).toEqual(["1", "1"]);
+  });
+
+  it("stretches a stand-in glyph's ink to the game's and starts it where the game's does (the user's \"10 0\")", () => {
+    // (a stand-in '0' with ink from 0.05 to 0.55 em, drawn at 0.9 of the game's size: 0.45 wide, to fill 0.7363)
+    const zero = NUMBERS_INK["0"] ?? { xMin: 0, xMax: 0 };
+    const fit = inkFit(zero, { left: 0.05, right: 0.55 }, 0.9);
+    const drawn = (x: number): number => fit.shift + fit.scale * x * 0.9;
+    expect(drawn(0.05)).toBeCloseTo(zero.xMin, 9);
+    expect(drawn(0.55)).toBeCloseTo(zero.xMax, 9);
+    // (the '1' its narrow ink, at its cell's left; no ink: left as it is)
+    const one = NUMBERS_INK["1"] ?? { xMin: 0, xMax: 0 };
+    expect(one.xMax - one.xMin).toBeCloseTo(0.2549, 4);
+    expect(inkFit(one, { left: 0.1, right: 0.1 }, 1)).toEqual({ scale: 1, shift: 0 });
+    expect([glyphKey("7"), glyphKey(":"), glyphKey("+"), glyphKey("\u00a0")]).toEqual(["7", "colon", "plus", null]);
   });
 });

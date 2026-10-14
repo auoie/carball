@@ -14,6 +14,8 @@
 #include "../../../libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btCompoundShape.h"
 #include "../../../src/Sim/btVehicleRL/btVehicleRL.h"
 
+class btGeneric6DofConstraint;
+
 RS_NS_START
 
 struct CarState : public PhysState {
@@ -222,6 +224,16 @@ public:
 	btVehicleRL _bulletVehicle;
 	btDefaultVehicleRaycaster _bulletVehicleRaycaster;
 	btRigidBody _rigidBody;
+	// RL PATCH: the XY lock while the car isn't driving (the kickoff countdown) or is on the podium (Car_TA's per-tick
+	// SetConstrained2D(!bDriving || bPodiumMode): a btGeneric6DofConstraint pinning the body's world X/Y where it took
+	// hold, Z and every rotation free; Arena::_UpdateXYLocks keeps it, static session PD1). Not state: taken again
+	// where the car is when it's wanted and missing (a clone, a load)
+	btGeneric6DofConstraint* _xyLock = NULL;
+	// RL PATCH: a lock a snapshot held, its pin (frame A's origin, BT units): taken there as the lock comes back
+	bool _xyLockPending = false;
+	btVector3 _xyLockPin = btVector3(0, 0, 0);
+	// RL PATCH: podium mode (EnablePodiumMode): the jump's force lasts PodiumJumpForceTime (the arena sets it per tick)
+	bool _podiumMode = false;
 	btCompoundShape _compoundShape;
 	btBoxShape _childHitboxShape;
 

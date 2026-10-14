@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { nearestTowards, padDirection } from "./padNav";
+import { PadMenuNav, nearestTowards, padDirection } from "./padNav";
 
 const pad = (down: number[], axes: number[] = [0, 0, 0, 0]): { buttons: number[]; axes: number[] } => ({
   buttons: Array.from({ length: 17 }, (_, i) => (down.includes(i) ? 1 : 0)),
@@ -25,5 +25,30 @@ describe("the menus with a pad", () => {
     expect(nearestTowards(from, "right", candidates)).toBe(2);
     expect(nearestTowards(from, "up", candidates)).toBe(3);
     expect(nearestTowards(from, "left", candidates)).toBe(-1);
+  });
+
+  it("keeps a button pressed for a menu from the game until it's released, not one held from before (RV-289)", () => {
+    let open = false;
+    const menu = { querySelectorAll: () => [] } as unknown as HTMLElement;
+    const nav = new PadMenuNav({
+      menu: () => (open ? menu : null),
+      back: () => undefined,
+      start: () => {
+        open = !open;
+      },
+    });
+    const held = (...down: number[]): { axes: number[]; buttons: number[] } => pad(down);
+    const RT = 7;
+    const START = 9;
+    nav.frame(held(RT), 0); // (boosting)
+    nav.frame(held(RT, START), 0.1); // (Start: the pause menu)
+    expect(open).toBe(true);
+    nav.frame(held(RT), 0.2);
+    nav.frame(held(RT, START), 0.3); // (Start again: closed)
+    expect(open).toBe(false);
+    expect(nav.mask(held(RT, START))?.buttons[RT]).toBe(1); // (the boost the game's all along)
+    expect(nav.mask(held(RT, START))?.buttons[START]).toBe(0); // (Start the menu's while it's held)
+    nav.frame(held(RT), 0.4);
+    expect(nav.mask(held(RT))?.buttons).toEqual(held(RT).buttons);
   });
 });

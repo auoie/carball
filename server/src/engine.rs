@@ -72,6 +72,7 @@ unsafe extern "C" {
     fn rl_set_frozen(arena: *mut RLArena, frozen: c_int);
     fn rl_car_place(arena: *mut RLArena, car_id: u32, x: f32, y: f32, yaw: f32, boost: f32);
     fn rl_set_unlimited_boost(arena: *mut RLArena, on: c_int);
+    fn rl_set_podium(arena: *mut RLArena, on: c_int);
     fn rl_ball_hide(arena: *mut RLArena);
     fn rl_match_ended(arena: *mut RLArena, have_winner: c_int, members: *const u32, count: usize, out: *mut i32);
 }
@@ -305,6 +306,12 @@ impl Arena {
         unsafe { rl_set_unlimited_boost(self.ptr(), c_int::from(on)) }
     }
 
+    /// Podium mode (EnablePodiumMode): every car held at its X/Y, Z and rotation free, its jumps short (PD1)
+    pub fn set_podium(&mut self, on: bool) {
+        // SAFETY: valid arena
+        unsafe { rl_set_podium(self.ptr(), c_int::from(on)) }
+    }
+
     /// The ball hidden (exploded: no physics, no collision) until the next kickoff
     pub fn hide_ball(&mut self) {
         // SAFETY: valid arena
@@ -482,6 +489,78 @@ pub(crate) mod tests {
         assert!(on_ground([0.0, 0.0, 800.0], [0.0, 0.0, 0.0]).iter().all(|&g| !g), "falling from 800");
         // (pressed against the side wall, in the air)
         assert!(on_ground([4096.0 - 93.0, 0.0, 800.0], [500.0, 0.0, 0.0]).iter().all(|&g| !g), "against the side wall");
+    }
+
+    #[test]
+    fn the_ball_is_not_on_the_ground_while_it_climbs_the_floor_to_wall_curve() {
+        // (RV-291: rolled up the side wall's curve, its contact's merged normal z falls from 0.95 to 0.77: not the floor,
+        // where a looser bound than GroundToleranceZ 0.96 would say it is)
+        init_engine();
+        let mut arena = Arena::new();
+        arena.set_ball([3000.0, 0.0, 93.15], [1200.0, 0.0, 0.0]);
+        let mut on_curve = 0;
+        for _ in 0..120 {
+            arena.step(1);
+            let p = arena.ball_position();
+            if p[0] > 3900.0 && p[2] > 105.0 && p[2] < 200.0 {
+                on_curve += 1;
+                assert!(!arena.ball_on_ground(), "on the curve at {p:?}");
+            }
+        }
+        assert!(on_curve >= 5, "{on_curve} ticks on the curve");
+    }
+
+    #[test]
+    fn podium_cars_hold_their_x_and_y_while_they_drive_and_boost() {
+        // (PD1: Car_TA's SetConstrained2D on the podium, a 6-DOF constraint: X and Y held, Z and rotation free)
+        init_engine();
+        let mut arena = Arena::new();
+        let car = arena.add_car(0, 0);
+        arena.reset_kickoff(3);
+        arena.place_car(car, 0.0, 0.0, 0.0, 100.0);
+        arena.step(30);
+        let start = arena.car_position(car).unwrap();
+        arena.set_podium(true);
+        let controls = Controls { throttle: 1.0, boost: 1, ..Controls::default() };
+        let across = |p: [f32; 3]| ((p[0] - start[0]).powi(2) + (p[1] - start[1]).powi(2)).sqrt();
+        for _ in 0..240 {
+            arena.set_controls(car, &controls);
+            arena.step(1);
+            let p = arena.car_position(car).unwrap();
+            assert!(across(p) < 1.0, "moved {} uu across", across(p));
+        }
+        // (let go: it drives off)
+        arena.set_podium(false);
+        for _ in 0..60 {
+            arena.set_controls(car, &controls);
+            arena.step(1);
+        }
+        assert!(across(arena.car_position(car).unwrap()) > 100.0);
+    }
+
+    #[test]
+    fn podium_jumps_stop_pushing_at_podium_jump_force_time() {
+        // (PD1: PodiumJumpForceTime 0.085 s, against JumpForceTime 0.2: a held jump goes much less high)
+        init_engine();
+        let top = |podium: bool| -> f32 {
+            let mut arena = Arena::new();
+            let car = arena.add_car(0, 0);
+            arena.reset_kickoff(3);
+            arena.place_car(car, 0.0, 0.0, 0.0, 100.0);
+            arena.step(60);
+            arena.set_podium(podium);
+            let floor = arena.car_position(car).unwrap()[2];
+            let jump = Controls { jump: 1, ..Controls::default() };
+            let mut top = floor;
+            for _ in 0..120 {
+                arena.set_controls(car, &jump);
+                arena.step(1);
+                top = top.max(arena.car_position(car).unwrap()[2]);
+            }
+            top - floor
+        };
+        let (normal, podium) = (top(false), top(true));
+        assert!(podium > 20.0 && podium < normal - 20.0, "a held jump: {podium} uu on the podium, {normal} uu otherwise");
     }
 
     #[test]

@@ -191,6 +191,9 @@ test("a goal: the game slows down for 3.53 s, the goal replay plays, Space skips
   // (within a few frames: the server tick to client frame mapping moves by a frame each time the server repeats or
   // skips an input, which a stalling software-rendered page makes it do often)
   expect(Math.abs((slowed.frame ?? 0) - (slowed.explodedFrame ?? 0)), JSON.stringify(slowed)).toBeLessThanOrEqual(8);
+  // (the replay draws every car's plate where the replay has it, this player's own saying YOU: RV-279, RV-288, RV-292)
+  const plates = (): Promise<string[]> => page.evaluate(() => (window as unknown as { rlNameplates: () => { name: string }[] }).rlNameplates().map((p) => p.name));
+  await expect.poll(plates, { timeout: 5_000 }).toEqual(["YOU"]);
   await page.waitForTimeout(1000);
   await page.screenshot({ path: "test-results/replay.png" });
 

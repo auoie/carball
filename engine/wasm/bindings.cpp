@@ -240,6 +240,7 @@ public:
 	// the game's rates
 	// The match's end (FreezePawns): nothing simulates while frozen (the server's phase: prePodium, finished)
 	void SetFrozen(bool on) { _arena->frozen = on; }
+	void SetPodium(bool on) { _arena->podiumMode = on; }
 
 	void SetUnlimitedBoost(bool on) {
 		MutatorConfig config = _arena->GetMutatorConfig();
@@ -554,6 +555,7 @@ EMSCRIPTEN_BINDINGS(rlengine) {
 		.function("carLastBallTouchTick", &Sim::CarLastBallTouchTick)
 		.function("setUnlimitedBoost", &Sim::SetUnlimitedBoost)
 		.function("setFrozen", &Sim::SetFrozen)
+		.function("setPodium", &Sim::SetPodium)
 		.function("setDemolitions", &Sim::SetDemolitions)
 		.function("kickoffCountdown", &Sim::KickoffCountdown)
 		.function("setKickoffCountdown", &Sim::SetKickoffCountdown)

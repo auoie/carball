@@ -491,7 +491,37 @@
     - RV-285: "Free Play" on the main menu stays as it is (the user, 2026-10-14); RV-286 info, no change.
     - Scope (the user, 2026-10-14): free play and online matches. Custom training, bots and mutators are dropped;
       netcode, hosting and joining come later, after the user has evaluated the game.
-  - **Since 6e56234 (uncommitted): the user's first evaluation findings, the 6e56234 review RV-287/288.**
+  - **Since 85b2463 (uncommitted): the HUD's fonts bundled (the user's pick, set B).** Rajdhani SemiBold / Light for
+    the header and thin text (the Latin woff2), Orbitron at 500 for the numbers (the upstream google/fonts TTF as it is:
+    its licence reserves the name, so no subset or conversion), each in `client/public/fonts/` with its OFL.txt; the
+    guard pins them by content (`shippedData.test.ts` FONTS). They're loaded, then measured (`loadHudFonts`): sizes
+    scaled to the game's capitals and digits as before, and each number glyph's ink stretched to Dashboard Numbers
+    Wide's and started where its does in the cell (HT-12's per-glyph ink: the user's "10 0").
+    - More of the user's findings: BOOST fades in and out past 80 % (0.2 s each way, GSAP's Power1 out, the tween played
+      back; HUD.updateBoost) in its own colour (#666666 + the team tint; without team colours COLOR_BOOST_MAX's salmon),
+      only the number turning white (24, 25, 29); the sounds fed through the match's end, frozen cars heard halted (24);
+      OVERTIME one 30 px line centred in its field, its baseline at y 37.4 (27); the red dot centred on the label's
+      capitals as drawn (the user's decision over HT-12's Flash baseline: 26), `--hud-header-cap` from `fitHudFonts`.
+    - The flip reset's sign is the game's effect under the car, ours built to FR1's description (HUD-19,
+      `render/flipResetFx.ts`): a glow disc, a ring, a shallow dome and 25 sparks in one pale blue, attached to the car
+      12 uu under its origin, gone in about 0.2 s; the "FLIP RESET" text is gone (23).
+    - The 85b2463 review: RV-289 (a menu's presses masked from the game only, each until released: `padNav.mask`),
+      RV-290 (a nameplate's redraw a new texture), RV-291 (the wall curve's contact isn't the floor's: engine and 0:00
+      tests), RV-292 (the replay's YOU plate in the e2e), RV-293 (the guard against the game's Ball Arrow mesh and boost
+      meter bitmaps, local references in out/bsim/assets_local/hud: the profile's numbers close together, a run of the
+      mesh's arrays in their order, the bitmaps' files, pixels and rows at 1, 1/2, 1/4 their size, as text, base64,
+      data URIs or floats; its controls built from them); the score digits' boxes not mirrored (x -136...-66 and
+      68...138).
+    - The podium's and the kickoff countdown's XY lock (28; PD1, MIO-13): Car_TA's SetConstrained2D(!bDriving ||
+      bPodiumMode) every tick, Bullet 2.82's btGeneric6DofConstraint added to the engine's Bullet as it is (include
+      paths relative, no serialization) and pinned at the car's centre of mass as it takes hold: X and Y held, Z and
+      rotation free; RocketSim had left joints out of its solver (`convertJoints`), back when there are any. Arena
+      `podiumMode` (rl_set_podium / setPodium, from the phase on both sides) and the countdown; podium jumps end their
+      force at PodiumJumpForceTime 0.085 s. Snapshots (Serialize, in-place loads, clones) carry each held lock's pin, so
+      a restore takes it back where it was (the rollback test: all identical). The end's frozen world still doesn't
+      step (the game's frozen cars would be held at X/Y and fall: the screen is black then).
+    - No boost cone: the trail alone (the user's decision, 31).
+  - **In 85b2463: the user's first evaluation findings, the 6e56234 review RV-287/288.**
     - The red dot (REPLAY, BALL CAM): the game's 32 px bitmap is mostly halo: a 13 px #FF7752 disc and a soft #FF4141
       glow to r 16; the label's text 12 px right of its centre.
     - The header fonts ($HeaderFont, $HeaderThinFont: Bourgeois Medium and Thin, cap height 0.5679 em): every size

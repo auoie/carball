@@ -37,7 +37,7 @@ nothing else (no clock, overtime, end, replay, forfeit).
 `Countdown.BeginState` → `SetAllDriving(false)` (`ZeroMovementVariables`); `InitCountDown`: 1 s lead-in, then
 `CountdownTime` 3 ticking each second ("3/2/1"); at 0 `GotoGameState('Active')`, `SetAllDriving(true)`: 4.0 s = 480
 ticks (frame-timer granularity ±1 tick; replays 3.99–4.05 s). Frozen: undriven cars get throttle/brake/steer 0 (no idle
-brake) and a 6-DOF constraint (`FUN_140f2f610`; reading: linear X/Y locked, Z and rotations free); the ball is
+brake) and a 6-DOF constraint (`FUN_140f2f610`; **settled [N], PD1 2026-10-14:** the car pre-step re-applies SetConstrained2D(`!bDriving || bPodiumMode`) every tick, a stock btGeneric6DofConstraint locking world X/Y of the COM, Z and rotations free, ERP 0.2, CFM 0; see match-intro-outro MIO-13); the ball is
 `SetConstrained2D(true)` until `Active.StartRound`. Spawn boost 0.333; pads reset (`ResetPickups`) at the new round
 and 0.1 s into the countdown. Inputs count from the first tick after "go".
 
@@ -106,7 +106,7 @@ and ball equivalent to zeroed controls; spawn boost 33.3; all pads reset at kick
 5215.5), the scoring team; goal → reset 360 ticks, goal → go 840 without a replay; cars drivable after a goal.
 
 ## Open
-The 6-DOF axis reading; the disadvantage rule needs a live check with uneven teams
+~~The 6-DOF axis reading~~ (settled, PD1); the disadvantage rule needs a live check with uneven teams
 (BakkesMod or a LAN private match; offline exhibitions refill with bots).
 
 **Settled 2026-10-10 (MR-6.x/MR-7.x below):** physics runs slowed after a goal (fixed 1/120 s step, fewer steps per real

@@ -106,6 +106,7 @@ namespace RLConst {
 		JUMP_RESET_TIME_PAD = (1 / 40.f), // (RL PATCH: unused; the game's rule is JUMP_LEAVE_GROUND_TIME, see Car::_UpdateJump)
 		JUMP_LEAVE_GROUND_TIME = 0.125f, // RL PATCH: CarComponent_Jump_TA JumpLeaveGroundTime
 		JUMP_MAX_TIME = 0.2f,
+		PODIUM_JUMP_MAX_TIME = 0.085f, // RL PATCH: CarComponent_Jump_TA PodiumJumpForceTime (podium mode: static session PD1)
 		DOUBLEJUMP_MAX_DELAY = 1.25f, // Can be at most 1.25 seconds after the jump is finished
 
 		// Mostly from: https://github.com/samuelpmish/RLUtilities/blob/develop/src/mechanics/dodge.cc

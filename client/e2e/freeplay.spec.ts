@@ -471,7 +471,14 @@ test("the main menu, the pause menu, the HUD and its Interface options (MENU-1/4
     return ctx.measureText("H").actualBoundingBoxAscent;
   });
   expect(cap / 32).toBeCloseTo(0.5679, 1);
-  // (HUD-12, the user's findings 13 and 16: the dot's centre 11 above the label's baseline, in any font; the hint's box
+  // (the bundled fonts in: Rajdhani SemiBold and Light, Orbitron; each number glyph's ink fitted to the game's)
+  const fonts = await page.evaluate(() => ({
+    loaded: [...document.fonts].filter((f) => f.status === "loaded").map((f) => f.family.replace(/"/g, "")).sort(),
+    zero: Number(getComputedStyle(document.documentElement).getPropertyValue("--num-s-0")),
+  }));
+  expect(fonts.loaded).toEqual(expect.arrayContaining(["Orbitron", "Rajdhani Light", "Rajdhani SemiBold"]));
+  expect(fonts.zero).toBeGreaterThan(0.5);
+  // (HUD-12, the user's findings 13, 16 and 26: the dot's centre on the label's capitals' middle, in any font; the hint's box
   // starting where the label's does; in stage px)
   const place = await page.evaluate(() => {
     const head = document.querySelector(".ballcam-head");
@@ -488,7 +495,7 @@ test("the main menu, the pause menu, the HUD and its Interface options (MENU-1/4
     const scale = d.width / 32;
     return { above: (baseline - (d.top + d.height / 2)) / scale, hint: (hint.getBoundingClientRect().left - label.getBoundingClientRect().left) / scale };
   });
-  expect(place?.above).toBeCloseTo(11, 0);
+  expect(Math.abs((place?.above ?? 0) - cap / 2)).toBeLessThan(0.5);
   expect(Math.abs(place?.hint ?? 99)).toBeLessThan(0.5);
   await page.mouse.up({ button: "middle" });
   await expect(page.locator("#ballcam")).not.toHaveClass(/shown/);

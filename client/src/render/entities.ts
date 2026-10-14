@@ -1,6 +1,6 @@
 // Visuals built from the physics shapes: the car is a body around its hitbox (src/render/carModel.ts), the ball is
 // its collision sphere. Real models come later (roadmap §10).
-import { BufferAttribute, type BufferGeometry, Color, ConeGeometry, CylinderGeometry, Group, IcosahedronGeometry, InstancedMesh, LinearSRGBColorSpace, Matrix4, Mesh, MeshBasicMaterial, MeshStandardMaterial, PlaneGeometry, type Quaternion, ShaderMaterial, Vector3 } from "three";
+import { BufferAttribute, type BufferGeometry, Color, CylinderGeometry, Group, IcosahedronGeometry, InstancedMesh, LinearSRGBColorSpace, Matrix4, Mesh, MeshBasicMaterial, MeshStandardMaterial, type Object3D, PlaneGeometry, type Quaternion, ShaderMaterial, Vector3 } from "three";
 import type { BoostPadState, CarConfig, Team } from "../engine/world";
 import { buildCarModel } from "./carModel";
 import { Trail, trailingRearWheels } from "./supersonic";
@@ -39,21 +39,19 @@ export const TEAM_CAR_COLORS = [
   new Color().setRGB(0.978132, 0.206684, 0.001343, LinearSRGBColorSpace),
 ] as const;
 
-/** A car: the boxy model built around its hitbox (src/render/carModel.ts) and a boost flame, in the car's local
- *  frame (x forward, y up, z right); and, in the world, its supersonic trails and shockwave (src/render/supersonic.ts). */
+/** A car: the boxy model built around its hitbox (src/render/carModel.ts), in the car's local frame (x forward, y up,
+ *  z right), its boost trail and idle exhaust; and, in the world, its supersonic trails and shockwave
+ *  (src/render/supersonic.ts). (No boost cone: the user's decision, 2026-10-14: one boost, the trail) */
 /** The exhausts, where the boost trail and idle exhaust come out: the Fennec's BoostEmitterLeft/Right sockets,
  *  (-57, -+20.43, 10.25) in its mesh's frame, the mesh 2.6115 uu above the car's origin and not shifted along x
  *  (boost_standard.json car_attachment.sockets: RV-81; every car here is drawn Fennec-style), in the car's Three.js
  *  frame */
 export const EXHAUSTS: readonly [Vector3, Vector3] = [new Vector3(-57, 10.25 + 2.6115, -20.43), new Vector3(-57, 10.25 + 2.6115, 20.43)];
-/** The boost cone shows this long after the boost starts (body_grain BoostConeMesh: AttachDelay 0.1 s) */
-const CONE_DELAY = 0.1;
 
 export class CarView {
   /** Add this to the scene: the car and its effects */
   readonly root = new Group();
   readonly #body = new Group(); // posed as the car
-  readonly #flame: Mesh;
   readonly #trails: readonly [Trail, Trail] = [new Trail(), new Trail()];
   /** Where the trails leave the car: its rear corners, a little above the middle (local frame) */
   readonly #trailFrom: readonly [Vector3, Vector3];
@@ -63,8 +61,6 @@ export class CarView {
   readonly #exhausts: readonly { readonly at: Vector3; readonly trail: Emitter; readonly idle: Emitter }[];
   readonly #axis = new Vector3();
   #wasDemoed = false;
-  /** World seconds the boost has been on (the cone's delay) */
-  #boosted = 0;
 
   /** `particles`: the scene's, for the boost trail and the idle exhaust (none: no particles) */
   constructor(config: CarConfig, team: Team, particles: Particles | null = null) {
@@ -79,16 +75,11 @@ export class CarView {
     const height = back.offset.z - (back.suspensionRest - WHEEL_TRAVEL) - back.radius;
     const side = config.hitboxSize.y / 2 - 8;
     this.#trailFrom = [new Vector3(back.offset.x, height, -side), new Vector3(back.offset.x, height, side)];
+  }
 
-    this.#flame = new Mesh(
-      new ConeGeometry(14, 70, 12),
-      new MeshBasicMaterial({ color: 0xffb347, transparent: true, opacity: 0.85 }),
-    );
-    this.#flame.rotation.z = Math.PI / 2; // point backwards (-x)
-    this.#flame.position.copy(
-      toThreeVector(vec3(config.hitboxOffset.x - config.hitboxSize.x / 2 - 35, 0, config.hitboxOffset.z)),
-    );
-    this.#body.add(this.#flame);
+  /** Puts `object` on the car, in its frame (x forward, y up, z right): it moves and turns with it (once) */
+  attach(object: Object3D): void {
+    if (object.parent !== this.#body) this.#body.add(object);
   }
 
   /** A frame: the car's pose and state; `seconds` since the last frame (for the trails); `ground`: its rear wheels'
@@ -128,8 +119,6 @@ export class CarView {
       }
     }
     this.#wasDemoed = demoed;
-    this.#boosted = boosting && !demoed ? this.#boosted + Math.max(0, seconds) : 0;
-    this.#flame.visible = this.#boosted >= CONE_DELAY;
     this.root.visible = !demoed;
     // Each rear wheel's trail: supersonic, picked by the direction rule, touching the ground (back left, back right)
     const picked = ground ? trailingRearWheels(ground.forwardSpeed, ground.sideSpeed) : [false, false];

@@ -30,6 +30,7 @@ import { TouchLog, planReplay } from "./replayPlan";
 import { ReplayPlayback, explosionTeam } from "./replayPlayback";
 import { ReplayRecorder, recordCar } from "./replayRecorder";
 import { BallArrow, ballArrowShown } from "../render/ballArrow";
+import { FlipResetFx } from "../render/flipResetFx";
 import { fromThreeVector } from "../render/coords";
 import {
   FREEPLAY_BALL_HOLD_TICKS,
@@ -63,6 +64,8 @@ export class Freeplay {
   readonly #ballView = new BallView();
   /** The ball arrow by the car (HUD-17) */
   readonly #ballArrow = new BallArrow();
+  /** The flip reset's effect on the car (HUD-19) */
+  readonly #flipFx = new FlipResetFx();
   readonly #padsView: BoostPadsView;
   readonly #car: Interpolated<CarState>;
   readonly #ball: Interpolated<BodyState>;
@@ -474,6 +477,8 @@ export class Freeplay {
     // The ball arrow (HUD-17): the setting on, the ball cam off, the car alive (free play's round always runs)
     const arrow = ballArrowShown(this.settings().interface.ballArrow, this.#ballCam, !car.demoed, true);
     this.#ballArrow.update(arrow ? carDrawn : null, fromThreeVector(ball), frameSeconds, this.#world.ballExploded());
+    this.#carView.attach(this.#flipFx.root);
+    this.#flipFx.update(frameSeconds);
     this.#ballView.update(ball, this.#ball.rotation(alpha, this.#rot));
     this.#arena.update(ball, frameSeconds);
     const pads = this.#world.boostPads();
@@ -523,6 +528,7 @@ export class Freeplay {
       respawn: respawnHud(car),
     });
     if (this.#flipReset && flipAudio(this.settings().gameplay.flipResetIndicator)) this.#audio.flipReset();
+    if (this.#flipReset && flipVisual(this.settings().gameplay.flipResetIndicator)) this.#flipFx.trigger();
     this.#flipReset = false;
   }
 }

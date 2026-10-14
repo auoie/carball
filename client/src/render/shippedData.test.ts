@@ -1,5 +1,7 @@
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
+import { inflateSync } from "node:zlib";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 import { NOISE_QUANTILES } from "./themes/stadiumSky";
@@ -127,9 +129,19 @@ function shippedImports(): string[] {
 }
 /** What ships as text (scanned as the modules are), and what as binary (each kind pinned or allowed by name) */
 const TEXT = /\.(json|css|js|mjs|html|txt|glsl|svg|csv|map|webmanifest)$/;
-type Kind = "text" | "cmf" | "wasm" | "unknown";
-/** cmf: the arena's collision meshes (pinned to our generated ones); wasm: the engine, our build (engine/build-wasm) */
-const kind = (path: string): Kind => (TEXT.test(path) ? "text" : path.endsWith(".cmf") ? "cmf" : path.endsWith(".wasm") ? "wasm" : "unknown");
+type Kind = "text" | "cmf" | "wasm" | "font" | "unknown";
+/** cmf: the arena's collision meshes (pinned to our generated ones); wasm: the engine, our build (engine/build-wasm);
+ *  font: the HUD's bundled fonts (pinned: FONTS) */
+const kind = (path: string): Kind =>
+  TEXT.test(path) ? "text" : path.endsWith(".cmf") ? "cmf" : path.endsWith(".wasm") ? "wasm" : /\.(woff2?|ttf|otf)$/.test(path) ? "font" : "unknown";
+/** The fonts that ship (style.css, public/fonts/; the user's pick, 2026-10-14), by their path under public/ and their
+ *  content: the files as they were taken, SIL OFL each, its OFL.txt beside it. Orbitron's is the upstream google/fonts
+ *  file unchanged (its licence reserves the name: no subset or conversion may ship under it) */
+const FONTS: Readonly<Record<string, string>> = {
+  "fonts/orbitron/Orbitron[wght].ttf": "f42db2dd16e642258e35782916eceb1dcdbea06fb958d77ad71dc5963587e8fd",
+  "fonts/rajdhani/Rajdhani-SemiBold-latin.woff2": "433a7007e4747a02a790167a6efa2625855f013970ba49b9b739a5d3db8b2601",
+  "fonts/rajdhani/Rajdhani-Light-latin.woff2": "828d4d537471ba0717fec6f6aa717aa6b96dd7aeb35f7e7b6d206775b438982c",
+};
 
 /** A module's text with its comments blanked: strings and template literals kept whole (a shader's comments ship) */
 function stripComments(source: string): string {
@@ -306,6 +318,21 @@ describe("what ships carries no game data (RV-99)", () => {
     // (every shipped file a kind this guard knows: text it scans, binary it pins or allows)
     expect(shipped.filter((p) => kind(p) === "unknown")).toEqual([]);
     expect(globFiles(join(SRC, "render/themes/stadium*.ts")).map((f) => f.slice(SRC.length))).toContain("render/themes/stadiumSky.ts");
+  });
+
+  it("the fonts that ship are the pinned ones, byte for byte, each with its licence beside it (public/ and the bundle)", () => {
+    const sha = (path: string): string => createHash("sha256").update(readFileSync(path)).digest("hex");
+    for (const dir of [PUBLIC, DIST]) {
+      for (const path of files(dir, (n) => kind(n) === "font")) {
+        const at = relative(dir, path).split("\\").join("/");
+        expect(FONTS[at], `${at}: not a font we ship`).toBeDefined();
+        expect(sha(path), at).toBe(FONTS[at]);
+        expect(existsSync(join(dirname(path), "OFL.txt")), `${at}: its OFL.txt`).toBe(true);
+      }
+    }
+    for (const at of Object.keys(FONTS)) expect(existsSync(join(PUBLIC, at)), at).toBe(true);
+    // (Orbitron's licence names its Reserved Font Name: the file is the one it covers)
+    expect(readFileSync(join(PUBLIC, "fonts/orbitron/OFL.txt"), "utf8")).toContain('Reserved Font Name: "Orbitron"');
   });
 
   it("the arena's collision meshes that ship are our generated ones: imported from out/arena, the bundle's (files or inlined) the same bytes (RV-167f)", () => {
@@ -1071,4 +1098,273 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
     },
     300000,
   );
+});
+
+/** The static session's local references for the HUD's own drawings (RV-293; out/bsim/assets_local/hud, git-ignored):
+ *  the game's Ball Arrow mesh and its lathe profile, and the boost meter's four bitmaps. What ships draws both from
+ *  named measures (HUD-17, HUD-18): none of these in any form */
+const HUD_REFS = join(ROOT, "out/bsim/assets_local/hud");
+const ARROW_MESH = join(HUD_REFS, "ball_arrow/ball_arrow_mesh.json");
+const METER_PNGS = ["Background", "Fill", "FillTintablePortion", "Glow"].map((n) => join(HUD_REFS, `boost_meter/BoostMeter_${n}.png`));
+/** The profile's numbers no named measure has (the README's list): three among a dozen numbers in a row is a copy */
+const ARROW_PROFILE = [-6.813, -6.733, -6.687, 1.184, 1.88, 2.606, 4.144, 4.307, 0.0576, 0.0915, 0.1223, 0.4583, 0.5454, 0.5708, 0.9775];
+/** A run this long of the mesh's arrays, in their order, is a copy of them */
+const MESH_RUN = 8;
+/** The profile's numbers within this many numbers of each other */
+const PROFILE_WINDOW = 12;
+/** A bitmap's row as a copy would write it: this many values */
+const ROW_WINDOW = 8;
+
+/** A PNG's pixels (8-bit RGBA, not interlaced: the references') */
+function decodePng(path: string): { width: number; height: number; rgba: Uint8Array } {
+  const b = readFileSync(path);
+  let at = 8;
+  let width = 0;
+  let height = 0;
+  const data: Buffer[] = [];
+  while (at < b.length) {
+    const length = b.readUInt32BE(at);
+    const type = b.toString("ascii", at + 4, at + 8);
+    const chunk = b.subarray(at + 8, at + 8 + length);
+    if (type === "IHDR") {
+      width = chunk.readUInt32BE(0);
+      height = chunk.readUInt32BE(4);
+      if (chunk[8] !== 8 || chunk[9] !== 6 || chunk[12] !== 0) throw new Error(`${path}: not 8-bit RGBA, not interlaced`);
+    }
+    if (type === "IDAT") data.push(chunk);
+    at += 12 + length;
+  }
+  const raw = inflateSync(Buffer.concat(data));
+  const stride = width * 4;
+  const rgba = new Uint8Array(height * stride);
+  for (let y = 0; y < height; y++) {
+    const filter = raw[y * (stride + 1)] ?? 0;
+    for (let x = 0; x < stride; x++) {
+      const v = raw[y * (stride + 1) + 1 + x] ?? 0;
+      const a = x >= 4 ? (rgba[y * stride + x - 4] ?? 0) : 0;
+      const up = y > 0 ? (rgba[(y - 1) * stride + x] ?? 0) : 0;
+      const c = x >= 4 && y > 0 ? (rgba[(y - 1) * stride + x - 4] ?? 0) : 0;
+      const paeth = (): number => {
+        const p = a + up - c;
+        const [pa, pb, pc] = [Math.abs(p - a), Math.abs(p - up), Math.abs(p - c)];
+        return pa <= pb && pa <= pc ? a : pb <= pc ? up : c;
+      };
+      const predicted = filter === 1 ? a : filter === 2 ? up : filter === 3 ? Math.floor((a + up) / 2) : filter === 4 ? paeth() : 0;
+      rgba[y * stride + x] = (v + predicted) & 255;
+    }
+  }
+  return { width, height, rgba };
+}
+
+/** A window's key (exact values, as integers) */
+const windowKey = (w: readonly number[]): string => w.join(",");
+
+/** The bitmaps' rows and columns (alpha, luminance; at 1, 1/2 and 1/4 their size, box means), every wiggling window of
+ *  ROW_WINDOW as 8-bit levels and as thousandths */
+function bitmapWindows(): { levels: Set<string>; thousandths: Set<string> } {
+  const levels = new Set<string>();
+  const thousandths = new Set<string>();
+  for (const path of METER_PNGS) {
+    const { width, height, rgba } = decodePng(path);
+    for (const channel of ["alpha", "luma"] as const) {
+      const at = (x: number, y: number): number => {
+        const i = (y * width + x) * 4;
+        return channel === "alpha" ? (rgba[i + 3] ?? 0) / 255 : (0.299 * (rgba[i] ?? 0) + 0.587 * (rgba[i + 1] ?? 0) + 0.114 * (rgba[i + 2] ?? 0)) / 255;
+      };
+      for (const scale of [1, 2, 4]) {
+        const w = Math.floor(width / scale);
+        const h = Math.floor(height / scale);
+        const cell = (x: number, y: number): number => {
+          let sum = 0;
+          for (let j = 0; j < scale; j++) for (let i = 0; i < scale; i++) sum += at(x * scale + i, y * scale + j);
+          return sum / (scale * scale);
+        };
+        const lines: number[][] = [];
+        for (let y = 0; y < h; y++) lines.push(Array.from({ length: w }, (_, x) => cell(x, y)));
+        for (let x = 0; x < w; x++) lines.push(Array.from({ length: h }, (_, y) => cell(x, y)));
+        for (const line of lines) {
+          for (let k = 0; k + ROW_WINDOW <= line.length; k++) {
+            const win = line.slice(k, k + ROW_WINDOW);
+            const asLevels = win.map((v) => Math.round(v * 255));
+            if (wiggles(asLevels)) levels.add(windowKey(asLevels));
+            const asThousandths = win.map((v) => Math.round(v * 1000));
+            if (wiggles(asThousandths)) thousandths.add(windowKey(asThousandths));
+          }
+        }
+      }
+    }
+  }
+  return { levels, thousandths };
+}
+
+/** float32 and float16 values a byte string holds (little-endian, every alignment) */
+function floatsIn(bytes: Uint8Array): number[][] {
+  const out: number[][] = [];
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const half = (h: number): number => {
+    const s = h & 0x8000 ? -1 : 1;
+    const e = (h >> 10) & 0x1f;
+    const f = h & 0x3ff;
+    return e === 0 ? s * 2 ** -14 * (f / 1024) : e === 31 ? NaN : s * 2 ** (e - 15) * (1 + f / 1024);
+  };
+  for (let align = 0; align < 4; align++) {
+    const f32: number[] = [];
+    for (let i = align; i + 4 <= bytes.byteLength; i += 4) f32.push(view.getFloat32(i, true));
+    out.push(f32);
+  }
+  for (let align = 0; align < 2; align++) {
+    const f16: number[] = [];
+    for (let i = align; i + 2 <= bytes.byteLength; i += 2) f16.push(half(view.getUint16(i, true)));
+    out.push(f16);
+  }
+  return out;
+}
+
+describe.skipIf(!existsSync(ARROW_MESH))("against the game's Ball Arrow mesh and boost meter bitmaps (local, RV-293)", () => {
+  it("has its local reference", () => {
+    for (const path of [ARROW_MESH, ...METER_PNGS]) expect(existsSync(path), path.slice(ROOT.length)).toBe(true);
+  });
+
+  const mesh = JSON.parse(readFileSync(ARROW_MESH, "utf8")) as { positions: number[][]; normals: number[][]; uv0: number[][] };
+  // (the arrays as a copy would lay them out: flat, an axis at a time, or as vertex records with their normals and UVs)
+  const records = (parts: readonly (readonly number[][])[]): number[] => mesh.positions.flatMap((_, i) => parts.flatMap((part) => part[i] ?? []));
+  const axis = (part: readonly number[][], k: number): number[] => part.map((v) => v[k] ?? 0);
+  const sequences = [
+    mesh.positions.flat(),
+    mesh.uv0.flat(),
+    axis(mesh.positions, 0),
+    axis(mesh.positions, 1),
+    axis(mesh.positions, 2),
+    axis(mesh.uv0, 0),
+    axis(mesh.uv0, 1),
+    records([mesh.positions, mesh.uv0]),
+    records([mesh.positions, mesh.normals]),
+    records([mesh.positions, mesh.normals, mesh.uv0]),
+  ];
+  /** Whether `values` (with their tolerances) run along one of the arrays, in order: values most of which are no
+   *  round numbers (zeros, ones and tenths line up anywhere) */
+  const runsAlong = (values: readonly number[], tolerance: (k: number) => number): boolean => {
+    if (values.filter((v) => Math.abs(v) >= 0.05 && Math.abs(v * 10 - Math.round(v * 10)) > 0.01).length < 5) return false;
+    for (const seq of sequences) {
+      for (let j = 0; j + values.length <= seq.length; j++) {
+        if (values.every((v, k) => Math.abs(v - (seq[j + k] ?? NaN)) <= tolerance(k))) return true;
+      }
+    }
+    return false;
+  };
+  const pngs = METER_PNGS.map((p) => readFileSync(p));
+  const pixels = METER_PNGS.map((p) => Buffer.from(decodePng(p).rgba));
+  const windows = bitmapWindows();
+
+  /** What in a text or a byte string is the game's: the profile's numbers, a run of the mesh's arrays, a bitmap's
+   *  bytes, a bitmap's row; null when nothing is */
+  const findText = (text: string): string | null => {
+    const n = numbers(text);
+    // (the profile: three of its numbers among PROFILE_WINDOW in a row, written to 3 places or more, each at its
+    // written precision)
+    const profileHit = n.map((x) =>
+      x.written < 3 ? null : (ARROW_PROFILE.find((p) => Math.abs(x.value - p) <= 0.5 * 10 ** -Math.min(x.written, 4) + 1e-9) ?? null),
+    );
+    for (let i = 0; i < n.length; i++) {
+      const near = new Set(profileHit.slice(i, i + PROFILE_WINDOW).filter((p) => p !== null));
+      if (near.size >= 3) return `the arrow's profile (${[...near].join(", ")}) at ${text.slice(n[i]?.at ?? 0, (n[i]?.at ?? 0) + 80).replace(/\s+/g, " ")}`;
+    }
+    // (the mesh: MESH_RUN of its arrays' values in their order, 3 places or more, each at its written precision)
+    for (let i = 0; i + MESH_RUN <= n.length; i++) {
+      const w = n.slice(i, i + MESH_RUN);
+      if (w.some((x) => x.written < 3) || w.every((x) => x.value === w[0]?.value)) continue;
+      if (runsAlong(w.map((x) => x.value), (k) => 0.5 * 10 ** -(w[k]?.written ?? 0) + 1e-6)) return `a run of the arrow mesh's arrays at ${text.slice(w[0]?.at ?? 0, (w[0]?.at ?? 0) + 80).replace(/\s+/g, " ")}`;
+    }
+    // (a bitmap's row: 8-bit levels, or thousandths written to 3 places)
+    for (let i = 0; i + ROW_WINDOW <= n.length; i++) {
+      const w = n.slice(i, i + ROW_WINDOW);
+      if (w.every((x) => x.integer && x.value >= 0 && x.value <= 255) && windows.levels.has(windowKey(w.map((x) => x.value)))) return `a boost meter bitmap's row (levels) at ${String(w[0]?.at)}`;
+      if (w.every((x) => !x.integer && x.written === 3 && x.value >= 0 && x.value <= 1) && windows.thousandths.has(windowKey(w.map((x) => Math.round(x.value * 1000))))) {
+        return `a boost meter bitmap's row (thousandths) at ${String(w[0]?.at)}`;
+      }
+    }
+    // (bytes written as base64 or hex strings, data URIs too)
+    for (const bytes of [...stringBytes(text), ...[...text.matchAll(/data:[\w/+.-]+;base64,([A-Za-z0-9+/=]+)/g)].map((m) => Uint8Array.from(Buffer.from(m[1] ?? "", "base64")))]) {
+      const found = findBytes(bytes);
+      if (found) return found;
+    }
+    return null;
+  };
+  const findBytes = (bytes: Uint8Array): string | null => {
+    const b = Buffer.from(bytes);
+    // (a bitmap's file, or a stretch of it past its header; its pixels, a row's worth)
+    for (const [k, png] of pngs.entries()) {
+      if (b.includes(png.subarray(0, 64)) || (png.length > 512 && b.includes(png.subarray(256, 512)))) return `boost meter bitmap ${String(k)}'s file`;
+    }
+    for (const [k, rgba] of pixels.entries()) {
+      for (let at = 0; at + 256 <= rgba.length; at += 4096) {
+        const piece = rgba.subarray(at, at + 256);
+        if (new Set(piece).size > 8 && b.includes(piece)) return `boost meter bitmap ${String(k)}'s pixels`;
+      }
+    }
+    // (float arrays: five of the profile's numbers among 16, a run of the mesh's arrays; each to its format's precision:
+    // float32's against the references' 5 places, float16's 11 bits)
+    for (const [k, values] of floatsIn(bytes).entries()) {
+      const tolerance = (v: number): number => (k < 4 ? 2e-5 + 1e-5 * Math.abs(v) : 1e-4 + 1e-3 * Math.abs(v));
+      for (let i = 0; i < values.length; i++) {
+        const near = new Set(values.slice(i, i + 16).flatMap((v) => ARROW_PROFILE.filter((p) => Math.abs(v - p) <= tolerance(p) + 5e-4)));
+        if (near.size >= 5) return `the arrow's profile as floats (${[...near].join(", ")})`;
+      }
+      for (let i = 0; i + MESH_RUN <= values.length; i++) {
+        const w = values.slice(i, i + MESH_RUN);
+        if (!w.every((v) => Number.isFinite(v) && Math.abs(v) < 100) || w.every((v) => v === w[0])) continue;
+        if (runsAlong(w, (j) => tolerance(w[j] ?? 0))) return "a run of the arrow mesh's arrays as floats";
+      }
+    }
+    return null;
+  };
+
+  it("catches the game's arrow and meter in the forms they might take (controls built here from the local data)", () => {
+    const fmt = (v: number, places: number): string => v.toFixed(places);
+    // (the profile as a table; the mesh's positions and UVs as arrays; as float32 and float16 bytes)
+    expect(findText(`const PROFILE = [[-6.813, 0], [-6.733, 1.184], [-6.687, 1.88], [-6.25, 2.25]];`)).toMatch(/profile/);
+    expect(findText(`const P = [${mesh.positions.slice(200, 204).flat().map((v) => fmt(v, 3)).join(", ")}];`)).toMatch(/mesh/);
+    expect(findText(`const UV = [${mesh.uv0.slice(200, 206).flat().map((v) => fmt(v, 4)).join(", ")}];`)).toMatch(/mesh/);
+    const f32 = Buffer.from(new Float32Array(mesh.positions.slice(200, 206).flat()).buffer);
+    expect(findText(`const B = "${f32.toString("base64")}";`)).toMatch(/mesh/);
+    expect(findText(`const B = "${Buffer.from(new Float32Array(ARROW_PROFILE).buffer).toString("hex")}";`)).toMatch(/profile/);
+    // (a bitmap as a data URI, its bytes as base64 from past its header, its pixels as hex)
+    expect(findText(`url("data:image/png;base64,${(pngs[1] ?? Buffer.alloc(0)).toString("base64")}")`)).toMatch(/file/);
+    expect(findText(`const X = "${(pngs[0] ?? Buffer.alloc(0)).subarray(200, 800).toString("base64").slice(0, 600).replace(/=+$/, "")}";`.replace(/"([^"]*)"/, (_, s: string) => `"${s.slice(0, s.length - (s.length % 4))}"`))).toMatch(/file|pixels/);
+    // (a row of the Fill's alpha, at half its size, as 8-bit levels and as thousandths)
+    const { width, rgba } = decodePng(METER_PNGS[1] ?? "");
+    const half = (x: number, y: number): number => {
+      let sum = 0;
+      for (let j = 0; j < 2; j++) for (let i = 0; i < 2; i++) sum += (rgba[((y * 2 + j) * width + x * 2 + i) * 4 + 3] ?? 0) / 255;
+      return sum / 4;
+    };
+    let found: number[] | null = null;
+    for (let y = 0; y < width / 2 && !found; y++) {
+      const line = Array.from({ length: width / 2 }, (_, x) => half(x, y));
+      for (let k = 0; k + ROW_WINDOW <= line.length && !found; k++) {
+        const w = line.slice(k, k + ROW_WINDOW).map((v) => Math.round(v * 255));
+        if (wiggles(w)) found = line.slice(k, k + ROW_WINDOW);
+      }
+    }
+    expect(found).not.toBeNull();
+    expect(findText(`const ROW = [${(found ?? []).map((v) => String(Math.round(v * 255))).join(", ")}];`)).toMatch(/row \(levels\)/);
+    expect(findText(`const ROW = [${(found ?? []).map((v) => fmt(v, 3)).join(", ")}];`)).toMatch(/row \(thousandths\)/);
+  });
+
+  // (what ships: our modules, the files they import, public/ and the bundle; the bundle's and public/'s binaries)
+  const texts = [
+    ...modules().map((p) => ({ where: p.slice(ROOT.length), text: stripComments(readFileSync(p, "utf8")) })),
+    ...shippedImports()
+      .filter((p) => kind(p) === "text")
+      .map((p) => ({ where: p.slice(ROOT.length), text: readFileSync(p, "utf8") })),
+    ...files(PUBLIC, (n) => kind(n) === "text").map((p) => ({ where: p.slice(ROOT.length), text: readFileSync(p, "utf8") })),
+    ...files(DIST, (n) => kind(n) === "text").map((p) => ({ where: p.slice(ROOT.length), text: readFileSync(p, "utf8") })),
+  ];
+  it.each(texts.map((t) => t.where))("%s: none of the arrow's or the meter's data", (where) => {
+    const t = texts.find((x) => x.where === where);
+    expect(findText(t?.text ?? "")).toBeNull();
+  }, 60000);
+  it("the binaries that ship: none of it (fonts, the engine, meshes)", () => {
+    for (const p of [...files(PUBLIC, (n) => kind(n) !== "text"), ...files(DIST, (n) => kind(n) !== "text")]) expect(findBytes(readFileSync(p)), p.slice(ROOT.length)).toBeNull();
+  }, 300000);
 });

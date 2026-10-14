@@ -128,6 +128,16 @@ public:
 	// count. A mode, not state: not serialized (the server's phase sets it, and a client's from the match state)
 	bool frozen = false;
 
+	// RL PATCH: the podium (InitPodiumCars' EnablePodiumMode, never cleared while the car lives): every car XY-locked
+	// and its jumps short (Car::_xyLock, _podiumMode). A mode, not state, as `frozen`: the server's phase sets it, and a
+	// client's from the match state
+	bool podiumMode = false;
+
+	// RL PATCH: the cars' XY locks for this tick (wanted: the kickoff countdown or the podium, the car not demolished);
+	// one let go (its constraint out of the world)
+	void _UpdateXYLocks(bool countdown);
+	void _RemoveXYLock(Car* car);
+
 	// RL PATCH: the goal explosion's knockback (the ball's ExplosionComponent_X, static analysis MR-6): a wave from where
 	// the ball scored, its front at 10000 uu/s up to 3000 uu; each car its front reaches (not demolished) gets one
 	// velocity change of 5000 x (1 - front/3000)^0.1 away from a point 500 uu behind the ball (into the goal) and 500 uu

@@ -274,6 +274,12 @@ export class World {
     this.#sim.setFrozen(on);
   }
 
+  /** Podium mode (EnablePodiumMode, the podium and after: PD1): every car held at its X/Y, Z and rotation free, its
+   *  jumps short (online: the server's phase, so the prediction agrees) */
+  setPodium(on: boolean): void {
+    this.#sim.setPodium(on);
+  }
+
   /** Demolitions on (the default: an authority, freeplay) or off (an online client's prediction: the server demolishes,
    *  supersonic hits predicted as bumps: RV-112). */
   setDemolitions(on: boolean): void {

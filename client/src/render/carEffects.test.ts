@@ -13,14 +13,13 @@ const OCTANE = {
   backWheel: { offset: vec3(-33.75, 29.5, 20.8), radius: 15, suspensionRest: 37.1 },
 };
 
-function cone(root: Object3D): Mesh {
+/** The cones under a car's root (none: the boost is the trail alone) */
+function cones(root: Object3D): Mesh[] {
   const found: Mesh[] = [];
   root.traverse((o) => {
     if (o instanceof Mesh && o.geometry instanceof ConeGeometry) found.push(o as Mesh);
   });
-  const mesh = found[0];
-  if (!mesh) throw new Error("no boost cone");
-  return mesh;
+  return found;
 }
 
 describe("a car's exhausts", () => {
@@ -57,14 +56,10 @@ describe("a car's exhausts", () => {
     expect(particles.count).toBe(0);
   });
 
-  it("the boost cone shows 0.1 s after the boost starts (BoostConeMesh's AttachDelay: RV-52b)", () => {
+  it("has no boost cone: boosting shows the trail alone (the user's decision, 2026-10-14)", () => {
     const car = new CarView(OCTANE, 0);
     const at = new Vector3(0, 17, 0);
-    car.update(at, new Quaternion(), true, false, false, FRAME);
-    expect(cone(car.root).visible).toBe(false);
     for (let i = 0; i < 6; i++) car.update(at, new Quaternion(), true, false, false, FRAME);
-    expect(cone(car.root).visible).toBe(true);
-    car.update(at, new Quaternion(), false, false, false, FRAME);
-    expect(cone(car.root).visible).toBe(false);
+    expect(cones(car.root)).toEqual([]);
   });
 });

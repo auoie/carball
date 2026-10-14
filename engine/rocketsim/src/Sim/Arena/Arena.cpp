@@ -19,6 +19,7 @@
 #include "../../../libsrc/bullet3-3.24/BulletCollision/NarrowPhaseCollision/btGjkEpaPenetrationDepthSolver.h"
 #include "../../../libsrc/bullet3-3.24/BulletCollision/NarrowPhaseCollision/btVoronoiSimplexSolver.h"
 #include "../../../libsrc/bullet3-3.24/LinearMath/btTransformUtil.h"
+#include "../../../libsrc/bullet3-3.24/BulletDynamics/ConstraintSolver/btGeneric6DofConstraint.h" // RL PATCH: the XY lock
 #include "DropshotTiles/DropshotTiles.h"
 
 RS_NS_START
@@ -254,6 +255,7 @@ bool Arena::RemoveCar(uint32_t id) {
 
 	if (itr != _carIDMap.end()) {
 		Car* car = itr->second;
+		_RemoveXYLock(car); // RL PATCH
 		_carIDMap.erase(itr);
 		_cars.erase(car);
 		_bulletWorld.removeCollisionObject(&car->_rigidBody);
@@ -1257,6 +1259,40 @@ void _ReadGoalExplosion(DataStreamIn& in, Arena::GoalExplosion& ex) {
 		in.Read(id);
 }
 
+// RL PATCH: the cars' XY locks in a snapshot: each held one's car and pin, so a restored world takes them back where
+// they were (Arena::_UpdateXYLocks)
+static void _WriteXYLocks(DataStreamOut& out, const Arena::CarSet& cars) {
+	uint32_t held = 0;
+	for (const Car* car : cars)
+		held += car->_xyLock != NULL;
+	out.Write(held);
+	for (const Car* car : cars) {
+		if (!car->_xyLock)
+			continue;
+		const btVector3& pin = car->_xyLock->getFrameOffsetA().getOrigin();
+		out.Write(car->id);
+		out.WriteMultiple(pin.x(), pin.y(), pin.z());
+	}
+}
+
+static void _ReadXYLocks(DataStreamIn& in, Arena* arena) {
+	for (Car* car : arena->GetCars()) {
+		arena->_RemoveXYLock(car);
+		car->_xyLockPending = false;
+	}
+	uint32_t held = in.Read<uint32_t>();
+	for (uint32_t i = 0; i < held; i++) {
+		uint32_t id = in.Read<uint32_t>();
+		float x, y, z;
+		in.ReadMultiple(x, y, z);
+		Car* car = arena->GetCar(id);
+		if (car) {
+			car->_xyLockPending = true;
+			car->_xyLockPin = btVector3(x, y, z);
+		}
+	}
+}
+
 void Arena::Serialize(DataStreamOut& out) const {
 	out.WriteMultiple(gameMode, tickTime, tickCount, _lastCarID);
 
@@ -1292,6 +1328,7 @@ void Arena::Serialize(DataStreamOut& out) const {
 	_WriteKickoffSequence(out, kickoffSequence); // RL PATCH
 	out.Write<uint8_t>(respawnsHeld); // RL PATCH
 	_WriteGoalExplosion(out, goalExplosion); // RL PATCH
+	_WriteXYLocks(out, _cars); // RL PATCH
 }
 
 // RL PATCH: Bullet keeps contact points from tick to tick (persistent manifolds), and some contacts, such as a
@@ -1490,6 +1527,7 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
 	_ReadKickoffSequence(in, newArena->kickoffSequence); // RL PATCH
 	newArena->respawnsHeld = in.Read<uint8_t>() != 0; // RL PATCH
 	_ReadGoalExplosion(in, newArena->goalExplosion); // RL PATCH
+	_ReadXYLocks(in, newArena); // RL PATCH
 
 	return newArena;
 }
@@ -1581,6 +1619,7 @@ bool Arena::DeserializeInPlace(DataStreamIn& in) {
 	_ReadKickoffSequence(in, kickoffSequence); // RL PATCH
 	respawnsHeld = in.Read<uint8_t>() != 0; // RL PATCH
 	_ReadGoalExplosion(in, goalExplosion); // RL PATCH
+	_ReadXYLocks(in, this); // RL PATCH
 	return true;
 }
 
@@ -1607,6 +1646,9 @@ Arena* Arena::Clone(bool copyCallbacks) {
 		RawBodyState::From(car->_rigidBody, car->_netRotation).ApplyTo(newCar->_rigidBody, newCar->_netRotation); // RL PATCH: exact state
 		newCar->controls = car->controls;
 		newCar->_velocityImpulseCache = car->_velocityImpulseCache;
+		// RL PATCH: its XY lock taken back where it is
+		newCar->_xyLockPending = car->_xyLock != NULL || car->_xyLockPending;
+		newCar->_xyLockPin = car->_xyLock ? car->_xyLock->getFrameOffsetA().getOrigin() : car->_xyLockPin;
 	}
 
 	assert(this->_boostPads.size() == newArena->_boostPads.size());
@@ -1645,6 +1687,44 @@ Car* Arena::DeserializeNewCar(DataStreamIn& in, Team team) {
 	car->SetState(loadedState);
 
 	return car;
+}
+
+// RL PATCH: Car_TA.SetConstrained2D (FUN_140f21a90 every physics tick: SetConstrained2D(!bDriving || bPodiumMode);
+// static session PD1): Bullet 2.82's btGeneric6DofConstraint against the fixed body, frame A the identity basis at the
+// body's world origin as it takes hold, frame B the identity, its linear limits lower (0, 0, 1) upper (0, 0, 0) (X and
+// Y held, Z free: lower over upper), every angular one (1, 0) (free), the world's ERP and CFM. Not driving is the
+// kickoff countdown here (SetAllDriving(false)); the end's frozen world doesn't step
+void Arena::_UpdateXYLocks(bool countdown) {
+	for (Car* car : _cars) {
+		const bool want = (countdown || podiumMode) && !car->_internalState.isDemoed;
+		if (want && !car->_xyLock) {
+			btTransform frameA;
+			frameA.setIdentity();
+			// (where a snapshot's lock was, else where the car is)
+			frameA.setOrigin(car->_xyLockPending ? car->_xyLockPin : car->_rigidBody.getCenterOfMassPosition());
+			car->_xyLockPending = false;
+			btTransform frameB;
+			frameB.setIdentity();
+			btGeneric6DofConstraint* lock = new btGeneric6DofConstraint(btTypedConstraint::getFixedBody(), car->_rigidBody, frameA, frameB, true);
+			lock->setLinearLowerLimit(btVector3(0, 0, 1));
+			lock->setLinearUpperLimit(btVector3(0, 0, 0));
+			for (int axis = 3; axis < 6; axis++)
+				lock->setLimit(axis, 1, 0);
+			_bulletWorld.addConstraint(lock, true);
+			car->_xyLock = lock;
+		} else if (!want) {
+			_RemoveXYLock(car);
+			car->_xyLockPending = false;
+		}
+	}
+}
+
+void Arena::_RemoveXYLock(Car* car) {
+	if (!car->_xyLock)
+		return;
+	_bulletWorld.removeConstraint(car->_xyLock);
+	delete car->_xyLock;
+	car->_xyLock = NULL;
 }
 
 void Arena::Step(int ticksToSimulate) {
@@ -1697,8 +1777,10 @@ void Arena::Step(int ticksToSimulate) {
 					_UpdateDemolished(car, claimed);
 		}
 
-		for (Car* car : _cars)
+		for (Car* car : _cars) {
+			car->_podiumMode = podiumMode; // RL PATCH
 			car->_PreTickUpdate(gameMode, tickTime, _mutatorConfig, respawnsHeld);
+		}
 
 		if (hasArenaStuff && !ballOnly) {
 			for (BoostPad* pad : _boostPads)
@@ -1714,6 +1796,9 @@ void Arena::Step(int ticksToSimulate) {
 		// RL PATCH (KNB-7): the ball's location as the step starts: the explosion's (Ball_TA.Explode's ExplodeLocation
 		// is its actor Location, one tick behind the body that crossed the line)
 		const Vec ballAtStart = ball->_rigidBody.getWorldTransform().m_origin * BT_TO_UU;
+
+		// RL PATCH: the XY locks (Car_TA's pre-step SetConstrained2D, every tick)
+		_UpdateXYLocks(countdown);
 
 		// Update world
 		_bulletWorld.stepSimulation(tickTime, 0, tickTime);
@@ -1970,6 +2055,10 @@ bool Arena::IsBallScored() const {
 }
 
 Arena::~Arena() {
+
+	// RL PATCH: the cars' XY locks out and freed
+	for (Car* car : _cars)
+		_RemoveXYLock(car);
 
 	// Remove all from bullet world constraints
 	while (_bulletWorld.getNumConstraints() > 0)

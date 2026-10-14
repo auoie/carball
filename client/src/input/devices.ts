@@ -122,9 +122,12 @@ export class InputDevices {
     this.#abort.abort();
   }
 
+  /** What the game sees of the pad (the menus' presses taken out: ui/padNav.ts) */
+  padFilter: (pad: GamepadSnapshot | null) => GamepadSnapshot | null = (pad) => pad;
+
   /** Held inputs, and the presses and releases since the previous snapshot. */
   snapshot(): InputSnapshot {
-    const gamepad = readGamepad();
+    const gamepad = this.padFilter(readGamepad());
     if (gamepad && (gamepad.buttons.some((v) => v > 0.5) || gamepad.axes.some((v) => Math.abs(v) > 0.5))) {
       this.#usingGamepad = true;
     }

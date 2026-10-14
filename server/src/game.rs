@@ -957,6 +957,7 @@ impl Game {
         // (the world runs again: the podium's boost and hidden losers end with the kickoff's placement)
         self.arena.set_frozen(false);
         self.arena.set_unlimited_boost(false);
+        self.arena.set_podium(false);
         for p in self.players.values_mut() {
             p.ready = false;
         }
@@ -1020,6 +1021,8 @@ impl Game {
         self.arena.set_frozen(false);
         self.arena.set_respawns_held(true);
         self.arena.set_unlimited_boost(true);
+        // (podium mode: held at their spots, Z and rotation free, short jumps: PD1)
+        self.arena.set_podium(true);
         self.arena.hide_ball();
         let mut winners: Vec<(StatCounters, u32)> = self.players.values().filter(|p| p.team == winner).map(|p| (p.stats, p.car_id)).collect();
         winners.sort_by(|a, b| (b.0[0], b.0[1], b.0[2], b.0[3]).cmp(&(a.0[0], a.0[1], a.0[2], a.0[3])));
@@ -1738,6 +1741,31 @@ mod tests {
         let ended = run_until(&mut game, 10, |g| g.phase != Phase::TimeUp);
         assert!(ended - at <= 2, "the round ended {} ticks after 0:00", ended - at);
         assert!(game.overtime);
+    }
+
+    #[test]
+    fn at_zero_a_ball_climbing_the_wall_curve_does_not_end_the_round() {
+        // (RV-291: the curve's contact isn't the floor's, normal z under 0.96)
+        init_engine();
+        let mut game = Game::new();
+        let (tx, _rx) = channel(TEST_QUEUE);
+        game.join(1, REQUEST, tx);
+        run_until(&mut game, 1000, |g| g.phase == Phase::Active);
+        run_until(&mut game, 1000, |g| g.clock_running);
+        game.arena.set_ball([3000.0, 0.0, 93.15], [1200.0, 0.0, 0.0]);
+        run_until(&mut game, 200, |g| g.arena.ball_position()[0] > 3880.0);
+        game.clock_ticks = 1;
+        run_until(&mut game, 5, |g| g.phase == Phase::TimeUp);
+        let mut climbing = 0;
+        for _ in 0..10 {
+            ticks(&mut game, 1);
+            let p = game.arena.ball_position();
+            if p[2] > 105.0 && p[2] < 200.0 {
+                climbing += 1;
+                assert_eq!(game.phase, Phase::TimeUp, "the round ended with the ball on the curve at {p:?}");
+            }
+        }
+        assert!(climbing >= 3, "{climbing} ticks climbing");
     }
 
     #[test]

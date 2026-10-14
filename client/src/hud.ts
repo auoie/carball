@@ -44,6 +44,17 @@ export function boostShown(boost: number): number {
   return boost <= 0 ? 0 : Math.min(100, Math.max(1, Math.floor(boost)));
 }
 
+/** GSAP's Power1 (quadratic) eases as exact cubic Béziers: out, 1 - (1 - t)^2; in (the yoyo's way back), t^2 */
+export const EASE_OUT_QUAD = "cubic-bezier(0.3333333, 0.6666667, 0.6666667, 1)";
+export const EASE_IN_QUAD = "cubic-bezier(0.3333333, 0, 0.6666667, 0.3333333)";
+/** BOOST's fade past 80 % (TweenMax.to(label, 0.2, {autoAlpha: 1, yoyo: true, repeat: -1}) from alpha 0): up with
+ *  the ease out, back down the same tween reversed */
+export const BOOST_LABEL_BLINK: Keyframe[] = [
+  { opacity: 0, easing: EASE_OUT_QUAD },
+  { opacity: 1, offset: 0.5, easing: EASE_IN_QUAD },
+  { opacity: 0 },
+];
+
 /** Flip Reset Indicator's parts (MENU-9): its look (our flip ring and the reset's toast) and its sound */
 export function flipVisual(mode: FlipResetIndicator): boolean {
   return mode === "visual" || mode === "on";
@@ -165,6 +176,9 @@ export class Hud {
   readonly #stageFit = { key: "" };
   readonly #boostValue: HTMLElement;
   readonly #boostGhost: HTMLElement;
+  readonly #boostLabel: HTMLElement;
+  /** Past 80 % (the label's fade running) */
+  #boostMax = false;
   readonly #boostArt: BoostMeterArt;
   readonly #speed: HTMLElement;
   readonly #blue: HTMLElement;
@@ -190,7 +204,6 @@ export class Hud {
   readonly #flipRing: SVGCircleElement;
   readonly #flipLabel: HTMLElement;
   readonly #flipDetail: HTMLElement;
-  readonly #flipToast: HTMLElement;
   readonly #flipRingLength: number;
   readonly #respawn: HTMLElement;
   readonly #respawnTime: HTMLElement;
@@ -208,6 +221,7 @@ export class Hud {
     this.#stage = element(root, "#hud-stage", HTMLElement);
     this.#boostValue = element(root, "#boost-value", HTMLElement);
     this.#boostGhost = element(root, "#boost-ghost", HTMLElement);
+    this.#boostLabel = element(root, "#boost-label", HTMLElement);
     this.#boostArt = new BoostMeterArt(element(root, "#boost-back", HTMLElement), element(root, "#boost-front", HTMLElement));
     this.#speed = element(root, "#speed", HTMLElement);
     this.#blue = element(root, "#score-blue", HTMLElement);
@@ -236,7 +250,6 @@ export class Hud {
     this.#flipRingLength = 2 * Math.PI * flipRing.r.baseVal.value;
     this.#flipLabel = element(root, "#flip-label", HTMLElement);
     this.#flipDetail = element(root, "#flip-detail", HTMLElement);
-    this.#flipToast = element(root, "#flip-toast", HTMLElement);
     this.#respawn = element(root, "#respawn", HTMLElement);
     this.#respawnTime = element(root, "#respawn-time", HTMLElement);
     this.#respawnLeft = element(root, "#respawn-left", HTMLElement);
@@ -414,6 +427,22 @@ export class Hud {
     this.#boostBox.classList.toggle("team-1", teamColoured && team === 1);
     this.#boostBox.classList.toggle("plain", !teamColoured);
     this.#boostBox.classList.toggle("max", value > 80);
+    this.#fadeBoostLabel(value > 80);
+  }
+
+  /** HUD-7 (HUD.updateBoost): past 80 % BOOST fades in and out forever (0.2 s each way, GSAP's default ease out and
+   *  played back in); back to 80 % or under it fades out from where it is in 0.2 s */
+  #fadeBoostLabel(max: boolean): void {
+    if (max === this.#boostMax) return;
+    this.#boostMax = max;
+    const label = this.#boostLabel;
+    const from = Number(getComputedStyle(label).opacity);
+    for (const a of label.getAnimations()) a.cancel();
+    if (max) {
+      label.animate(BOOST_LABEL_BLINK, { duration: 400, iterations: Infinity });
+    } else {
+      label.animate([{ opacity: from }, { opacity: 0 }], { duration: 200, easing: EASE_OUT_QUAD, fill: "forwards" });
+    }
   }
 
   #boostDisplayed(now: number): number {
@@ -543,18 +572,7 @@ export class Hud {
     this.#flipLabel.textContent = dodge.kind === "spent" ? "NO FLIP" : "FLIP";
     this.#flipDetail.textContent =
       dodge.kind === "window" ? `${dodge.remaining.toFixed(1)} s` : state === "reset" ? "RESET" : dodge.kind === "free" ? "∞" : "";
-    if (reset) {
-      // A pulse, and a toast rising and fading
-      this.#flip.animate([{ transform: "scale(1.35)" }, { transform: "scale(1)" }], { duration: 500, easing: "ease-out" });
-      this.#flipToast.animate(
-        [
-          { opacity: 0, transform: "translateY(12px) scale(0.9)" },
-          { opacity: 1, transform: "translateY(0) scale(1.05)", offset: 0.12 },
-          { opacity: 1, transform: "none", offset: 0.7 },
-          { opacity: 0, transform: "translateY(-8px)" },
-        ],
-        { duration: 1200, easing: "ease-out" },
-      );
-    }
+    // (a pulse; the game's own sign is the effect under the car, not text: render/flipResetFx.ts, HUD-19)
+    if (reset) this.#flip.animate([{ transform: "scale(1.35)" }, { transform: "scale(1)" }], { duration: 500, easing: "ease-out" });
   }
 }

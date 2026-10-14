@@ -122,6 +122,8 @@ void rl_set_frozen(RLArena* arena, int frozen);
 void rl_car_place(RLArena* arena, uint32_t car_id, float x, float y, float yaw, float boost);
 /* Boost never used up and 100 at spawns (the podium's cars: EnablePodiumMode), or the game's rates */
 void rl_set_unlimited_boost(RLArena* arena, int on);
+/* Podium mode (EnablePodiumMode): every car held at its X/Y (Z and rotation free) and its jumps short */
+void rl_set_podium(RLArena* arena, int on);
 /* The ball hidden: exploded (no physics, no collision) until the next kickoff (the podium's HideBalls) */
 void rl_ball_hide(RLArena* arena);
 

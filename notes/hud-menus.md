@@ -24,7 +24,7 @@ Sub-agent files, local in out/bsim/agents/HUD1/:
 | HUD-4 | Scoreboard animation and visibility | **Intro** (1 s delay): y −20 → 0 over 1 s Back.easeOut; alpha 0 → 1 and rotationX 75 → 5 over 0.6 s Strong.easeOut; score views rotationY ±60 → ±10 over 0.6 s Strong.easeIn.<br>**Goal:** the scorer's additive TeamScoreView_Glow jumps to α 1, then fades over 0.6 s Power1.easeIn.<br>**Hidden** in WaitingForPlayers, PostGame, PrePodium/Podium, Finished, training and tutorial, and by HideHUD. **Visible during the replay** [G] | text only | The glow flash on a score change; the intro |
 | HUD-5 | Boost meter: geometry | [G boostMeterView] bottom-right anchored, **centre at (W − 110, H − 110)**.<br>• Background disc 200×200 (thin grey ring with ticks); glow 180×180 at α 0.5.<br>• **Fill:** orange segments **clockwise from 6 o'clock to 12 o'clock** (0–80 %), then a separately tinted white segment **12 to 1:30** (80–100 %). **Total sweep 225°**; a 101-frame mask reveals 2.25° per frame.<br>• **Number:** $NumbersWideFont 54 in a 120×58 box at (−58, −28), black glow 6, #333333 duplicate behind; "BOOST" ($HeaderFont 16) at y + 16.<br>• **3D:** rotationY 15, rotationX −2, fills and number at z −20, FOV 120 | `index.html:35-41`, `style.css:189-223`: 140 px, 360° from 12 o'clock, 32 px from the edges | A 225° arc from 6 o'clock clockwise, about 200/720 of the screen height, centred 110 virtual px from the right and bottom; the last 45° tinted separately |
 | HUD-6 | Boost meter: value and animation | Value = floor(pct·100) clamped 1–100 when > 0 (VT-21), sent only on change [S]. The shown integer tweens over 0.2 s (Quad.easeOut [I]). **Arc** = gotoAndStop(int(b·1.01)), i.e. **2.25°·(b − 1)** for b 1–99 (empty at 0 and 1), 225° at 100. **On an increase:** both fills flash white back to normal over 0.8 s Strong.easeOut; the glow scales 2 → 1 over 0.8 s [G] | `hud.ts:145-147`: round, instant, linear over 360° | floor with minimum 1, the 0.2 s number tween, the b − 1 arc, the pickup flash |
-| HUD-7 | Boost meter: colour states | The "max" state is **> 80**, not 100 [G].<br>**Team-coloured meter** (setting, default on): number, glow, label and tinted segment get the additive team tint. ≤ 80: number #666666 + tint, glow α 0.5. > 80: number white, glow α 1, black text glow 8, "BOOST" blinks (α 0 ↔ 1 every 0.2 s).<br>**Non-team meter:** number orange (BOOST_NORMAL (1, .38, .51 + 255, 127, 0)), > 80 BOOST_MAX (0, .6, .49 + 255, 64, 64); glow amber (255, 147, 67)·0.25, or red (255, 64, 64)·0.75 > 80; disc × (1, .43, 0) | single colour #ffb02e | Both modes and the > 80 state |
+| HUD-7 | Boost meter: colour states | The "max" state is **> 80**, not 100 [G].<br>**Team-coloured meter** (setting, default on): number, glow, label and tinted segment get the additive team tint. ≤ 80: number #666666 + tint, glow α 0.5. > 80: number white, glow α 1, black text glow 8, "BOOST" blinks (α 0 ↔ 1 every 0.2 s: `TweenMax.to(label, 0.2, {autoAlpha: 1, yoyo: true, repeat: -1})`, default ease Power1.easeOut (GSAP 12.1.4): up α = 1 − (1 − s)², down (yoyo = same tween backwards) α = 1 − s²; leaving > 80 %: 0.2 s autoAlpha → 0). The label's colour never changes with the max state: it stays #666666 + the additive team tint (≈ (102, 147, 255) blue, (255, 163, 102) orange; non-team mode BOOST_MAX ≈ (255, 125, 114)); no parent alpha, blend or glow caps it; α runs the full 0 → 1 (item 29).<br>**Non-team meter:** number orange (BOOST_NORMAL (1, .38, .51 + 255, 127, 0)), > 80 BOOST_MAX (0, .6, .49 + 255, 64, 64); glow amber (255, 147, 67)·0.25, or red (255, 64, 64)·0.75 > 80; disc × (1, .43, 0) | single colour #ffb02e | Both modes and the > 80 state |
 | HUD-8 | Kickoff countdown | Timing (VT-24): "3", "2", "1" at 1/2/3 s and "GO!" at 4 s, each with its sound [S/A]. Display [G GameMessageView at (W/2, 250)]: $HeaderThinFont **72**, #FFED83, orange glow #FF7F00 blur 10, uppercase, shrinks to fit. Each message pops from scale 1.4 → 1 with a white additive flash fading over **0.6 s Strong.easeOut**; it fades out (0.3 s) **4 s** after the last message, or at once on an empty message | beeps only (`online.ts:282-285`) | Digits and GO! with the pop (GO! stays about 4 s) |
 | HUD-9 | Goal banner, stat popups | **Goal:** "{Player} scored!" (or the team name) in the HUD-8 style [A GoalScoredMessage].<br>**Stat popup** [G StatEventView at (W/2, 150); 80 frames = 2.667 s; one at a time]:<br>• icon fades in by 0.13 s, then grows 2 → 5.6× with a 4 px blur to α 0.5 (0.4–0.8 s);<br>• name ($HeaderFont 32, white, orange glow) rises in (0.4–0.6 s);<br>• "+N" ($HeaderFont 22, #FFED83) pops from 3× with a white flash in 0.23 s;<br>• all float up and fade 2.17–2.63 s.<br>Shown per StatEventDisplayLevel (default Primary) | "BLUE SCORES!" for 2 s (`online.ts:49,443`, `freeplay.ts:157`) | "PLAYER SCORED!" for 4 s; optional "GOAL +100" popup |
 | HUD-10 | Other messages | HUD-8 style [S/A]: "Overtime!"; "One Minute Remaining!" (61 → 60); "30 Seconds Remaining!"; **"10" … "1"** each second while 0 < SecondsRemaining ≤ 10 (EndCounter sound); the pause message (by key `[Messages] GamePaused` / `GameUnPaused`; not cleared verbatim). A message shows if HUDMessageThreshold ≤ its level; the "Match Notifications" setting is All (default) / Game updates / Kickoff only | none | Add them, with the filter |
@@ -508,6 +508,26 @@ white, SC-chars:2980):
   - So the clock at 31 px has 17.9 px digits and a 24.7 px advance (+ letterSpacing 2); the score at 48 px has
     27.7 px digits and a 38.2 px advance.
   - A substitute font's size = size × 0.5781 / its digit height; match the advance with letter-spacing.
+  - **Per-glyph ink (em; y up from the baseline)** [A]:
+
+    | Glyph | xMin | xMax | Ink width | Advance | yMin | yMax |
+    |---|---|---|---|---|---|---|
+    | 0, 2–6, 8, 9 | 0.0298 | 0.7661 | 0.7363 | 0.7959 | 0 | 0.5781 |
+    | 7 | 0.0298 | 0.7674 | 0.7376 | 0.7959 | 0 | 0.5781 |
+    | 1 | 0.0249 | 0.2798 | 0.2549 | 0.3100 | 0 | 0.5868 |
+    | : | 0.0298 | 0.1099 | 0.0801 | 0.1400 | 0.1182 | 0.4609 |
+    | + | 0.0298 | 0.4121 | 0.3823 | 0.4419 | 0.0981 | 0.4800 |
+    | NBSP (U+00A0) | – | – | 0 | 0.4860 | – | – |
+
+    Side bearings are ≈ 0.03 em on both sides for every glyph ('1': 0.025 left, 0.030 right).
+- **Label baselines** [M][G]; first baseline = top + 2 gutter + DefineFont3 ascent [I: Scaleform = Flash]:
+  - BALL CAM: top-aligned (autoSize LEFT), baseline +11.2, caps' middle +2.1, so the dot (exactly centred: alpha
+    centroid 15.5/15.5 in the 32 px bitmap; it pulses but never moves) sits ≈ 2 px above the caps' middle.
+  - REPLAY: VALIGN_CENTER + shrink; one 32 px line fills the 32.5 px inner height, so again baseline ≈ +11.2.
+- **OVERTIME in the clock slot** (HMI:49974-49984; box (−60, 4) 124 × 50, centred, multiline, leading −6): VALIGN_CENTER;
+  shrinks by 1 until it fits one line. "OVERTIME" = 3.9147 em in Bourgeois Medium → **30 px** (31 = 121.4 px > 120 inner).
+  Baseline = 4 + 2 + (46 − 1.015·30)/2 + 0.7875·30 ≈ **y 37.4** of matchInfoView (caps 20.4…37.4, middle 28.9, level with
+  the clock digits' middle 29.2).
 - **Number alignment** [G][M]:
   - **Clock** (`timeRemainingTextField`, box (−63, 12), 130 × 36.1, $NumbersWideFont 31): **centre-aligned**, no autoSize,
     no script x moves.
@@ -651,6 +671,51 @@ Units: stage px, origin = meter centre, the meter 200 px across; angles along th
 - **3D:** rotationY 15°, rotationX −2°; the bars and the number at z −20; perspective focal 500 with the vanishing point
   at (x − 50, y − 100) (HT-11).
 - **Pickup flash** (HUD-6): both bars go white and ease back over 0.8 s; the glow scales 2 → 1.
+
+### HUD-19 Flip reset indicator (Gameplay "Flip Reset Indicator"; static session 2026-10-14)
+The game draws **no text**: it plays a particle effect under the car, a sound and a rumble.
+- **Trigger** [S]: `Car_TA.UpdateDodgeAvailable` (authority). When the dodges become refreshed while the wheels touch
+  an RBActor (the ball), `++DodgesRefreshedCounter` + ForceNetUpdate → `EventPerformedFlipReset` (TA:101283-101311).
+  Clients get it through the replicated counter (`OnDodgeCounterReplicated`).
+- **Who sees and hears it** [S] (`FXActor_FlipReset_TA.PlayFlipResetFx`, TA:100435-100445): only the car's own player
+  (locally controlled), spectators, or replays. Other players in the match get nothing.
+- **Setting** `GameplaySettingsSave_TA.FlipResetFxPref` (EFlipResetFxPref): 0 Off, 1 AudioOnly, 2 VisualOnly,
+  3 Enabled (default On) [A]:
+  - Off: nothing;
+  - AudioOnly / Enabled: sound `SFX_Car_Movements.Car_Movement_FlipReset` on the car;
+  - VisualOnly / Enabled: the particle effect;
+  - any mode but Off, local car only: `FlipResetShake`, which is **rumble only** (FlipReset_FF: 30/60 then 60/30 for
+    0.075 s each; no camera shake) → nothing in the clone (no rumble).
+- **Visual** [A][S]: particle system `FX_FlipReset.FlipReset_P`, created once and **attached to the car** (follows it),
+  restarted (SetActive false → true) at every reset.
+  - TranslationOffset **(0, 0, −12)** in the car's frame (12 uu below the car's origin, archetype
+    `Archetypes.Car.Car_Default.FlipResetFXActorArchetype`).
+  - RotationOffset **pitch 16384 (90°)** (class default, not overridden).
+  - SetDrawScale(car DrawScale) on the FX actor.
+  - **Decoded (FR1, 2026-10-14):** `FX_FlipReset.FlipReset_P` is a forced export inside TAGame.upk (export 95088), with
+    materials `M_FlipReset_Circle` / `_Gradient` / `_Mesh`, the mesh `SM_FlipReset_Dome` and 4 emitters. Material formulas
+    come from the compiled shaders (live RefShaderCache); textures and mesh data stay local in `out/bsim/agents/FR1/work/`.
+  - **All emitters** [A]: local space (they **follow and rotate with the car**, sparks in flight too); bursts only;
+    lifetime U(0.15, 0.20) s; one colour, linear (0.574, 0.594, 0.996) × 3 (HDR) ≈ pale periwinkle #C8CBFF blooming
+    near-white, alpha 1, **no fade** (particles vanish at the end of life); unlit.
+  - **Orientation** [I, UE semantics, consistent across emitters]: the 90° pitch puts the effect's local X along the
+    **car's up axis**, so the flat parts lie **parallel to the car's floor**, about 5 uu above the wheel contact plane,
+    and tilt with the car (on the wheel side even when upside down on the ball).
+  - **Glow disc** (additive sprite, axis-locked to that plane): 150 uu across, intensity (1 − r)⁴ (half at ≈ 12 uu radius,
+    6 % at 37, ~0 beyond 55): a tight bright core.
+  - **Ring** (additive sprite, same plane): a thin bright line ≈ 1.5 uu wide at ≈ 37 uu radius, sharp outer edge ≈ 38,
+    soft glow inward to ≈ 30, empty centre; peak ≈ 0.34 × the colour.
+  - **Dome** (alpha-blended mesh): a very shallow cap 145 uu across, 16 uu deep at full size, bulging toward the car's
+    roof, rim toward the wheels/ball (rim ≈ 26.6 uu below the car origin, top ≈ 10.3). Opacity (1 − V)⁵, so a **bright
+    blue band ≈ 10 uu wide at the rim** with an invisible centre; visible from both sides.
+  - **Sparks** (additive velocity-aligned streaks): 25 at t = 0.05 s, from a 20 uu radius ring round the up axis
+    (±5 uu), flying out at 240 uu/s in the plane and 50–100 uu/s toward the wheel side (12–23° below); 2–3 × 20–30 uu,
+    shrinking to 0.4–0.6 × 2–3; ending at a radius ≈ 56–68 uu.
+  - **Timing:** at t = 0 the glow, ring and dome appear at 10 % size and **grow linearly to 100 %** over their
+    0.15–0.20 s life (ring radius 3.7 → 37 uu, dome 7.3 → 72.6 uu), then vanish; the sparks are gone by 0.20–0.25 s.
+    **Visible ≈ 0.2–0.25 s in total.** A new reset kills and restarts it.
+  - Open [I]: the axis-lock / mesh-rotation semantics; UE3's default camera near/far fades (10/150 and 2000/2100 uu) may or
+    may not apply; the draw order among the four. A screenshot of a live flip reset would settle the plane.
 
 ### Open
 - **Nameplate scale combination** (product assumed), the distance's origin and the billboard rotation: native

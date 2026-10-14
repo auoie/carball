@@ -1,8 +1,9 @@
 // The menus with a controller (as the game's menus take a pad): the D-pad and the left stick move the focus from
 // control to control (the nearest one that way on screen), held they repeat; A presses the focused control (a list
 // steps to its next value), left and right change a list's or a slider's value, B goes back (Escape's), Start opens and
-// closes the pause menu. The focused control is highlighted. A button still held when a menu closes isn't the game's
-// (A is jump: Resume Game mustn't jump the car) until every button is up.
+// closes the pause menu. The focused control is highlighted. A button pressed for a menu isn't the game's until it's
+// released (A is jump: Resume Game mustn't jump the car); one held from before (boost through a pause: RV-289) is, and
+// the keyboard always.
 import type { GamepadSnapshot } from "../input/mapping";
 
 /** The standard layout's buttons and axes */
@@ -88,16 +89,17 @@ export class PadMenuNav {
   #heldSince = 0;
   #repeatedAt = 0;
   #focused: HTMLElement | null = null;
-  /** A menu's button is still down after the menu closed: the game doesn't see the pad until all are up */
-  #suppress = false;
+  /** The buttons pressed for a menu (the Start that opened it too), the game's again once each is released */
+  readonly #masked = new Set<number>();
 
   constructor(actions: PadNavActions) {
     this.#actions = actions;
   }
 
-  /** Whether the game should ignore the pad now (a menu's press still held) */
-  get suppressed(): boolean {
-    return this.#suppress;
+  /** The pad as the game should see it: the menu's buttons still held, up */
+  mask(pad: GamepadSnapshot | null): GamepadSnapshot | null {
+    if (!pad || this.#masked.size === 0) return pad;
+    return { ...pad, buttons: pad.buttons.map((v, i) => (this.#masked.has(i) ? 0 : v)) };
   }
 
   /** Each frame: the pad's state and the real time (s) */
@@ -106,19 +108,21 @@ export class PadMenuNav {
     // (the last frame's, kept before it's replaced: the user's finding 15, every press was read against itself)
     const previous = this.#previous;
     const pressed = (i: number): boolean => (buttons[i] ?? false) && !(previous[i] ?? false);
-    const anyDown = buttons.some(Boolean);
     this.#previous = buttons;
+    for (const i of [...this.#masked]) if (!(buttons[i] ?? false)) this.#masked.delete(i);
     const menu = this.#actions.menu();
     if (!menu) {
       this.#blur();
-      if (this.#suppress && !anyDown) this.#suppress = false;
       if (pad && pressed(PAD_START)) {
         this.#actions.start();
-        this.#suppress = true;
+        this.#masked.add(PAD_START);
       }
       return;
     }
-    this.#suppress = true; // (whatever is down while a menu is up stays the menu's until released)
+    // (every press while a menu is up is the menu's until released)
+    buttons.forEach((down, i) => {
+      if (down && pressed(i)) this.#masked.add(i);
+    });
     if (!pad) return;
     if (pressed(PAD_START)) {
       this.#actions.start();

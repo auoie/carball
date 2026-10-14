@@ -839,7 +839,9 @@ void Car::_UpdateJump(float tickTime, const MutatorConfig& mutatorConfig, bool j
 
 	if (_internalState.isJumping) {
 		_internalState.jumpReleased |= !controls.jump;
-		if (_internalState.jumpTime < JUMP_MIN_TIME || (!_internalState.jumpReleased && _internalState.jumpTime < JUMP_MAX_TIME)) {
+		// RL PATCH: on the podium the force ends at PodiumJumpForceTime (PD1)
+		const float jumpMaxTime = _podiumMode ? PODIUM_JUMP_MAX_TIME : JUMP_MAX_TIME;
+		if (_internalState.jumpTime < JUMP_MIN_TIME || (!_internalState.jumpReleased && _internalState.jumpTime < jumpMaxTime)) {
 			// Continue jump
 			_internalState.isJumping = true;
 		} else {
