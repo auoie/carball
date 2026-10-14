@@ -470,14 +470,15 @@ export class World {
     return this.#sim.saveState();
   }
 
-  /** The server's network state (engine/net/NetState.h): applies exactly onto this world. False if malformed. */
+  /** The server's network state (engine/net/NetState.h): laid over this world (the compact form: a value it holds that
+   *  sends the same stays as it is; the exact form: exactly). False if malformed. */
   applyNetState(bytes: Uint8Array): boolean {
     return this.#sim.applyNetState(bytes);
   }
 
   /** Writes a network state (what the server sends; for tests and local servers). */
-  writeNetState(options: { readonly ball: boolean; readonly carIds: readonly number[]; readonly pads: boolean }): Uint8Array {
-    return this.#sim.writeNetState(options.ball, Int32Array.from(options.carIds), options.pads);
+  writeNetState(options: { readonly ball: boolean; readonly carIds: readonly number[]; readonly pads: boolean; readonly exact?: boolean }): Uint8Array {
+    return this.#sim.writeNetState(options.ball, Int32Array.from(options.carIds), options.pads, options.exact ?? false);
   }
 
   /** The cars the last applied network state held. */

@@ -7,15 +7,12 @@ use tokio::sync::mpsc::Sender;
 
 use crate::engine::{Arena, Award, Controls, Event, STAT_COUNTERS, StatCounters, StatsState, stat_event_points};
 use crate::input_buffer::InputBuffer;
+use crate::replication::Replication;
 use crate::protocol::{self, Control, Datagram, ForfeitVoteState, GameEvent, InputFrame, MatchState, Phase, PodiumTitle, ReplayPlan, ScoreboardEntry, Update, stat};
 
 pub const TICK_RATE: u32 = 120;
-/// Updates go out every other tick (60 Hz)
+/// Updates go out every other tick (60 Hz: the acknowledgement, and the actors due: src/replication.rs)
 const UPDATE_EVERY_TICKS: u64 = 2;
-/// Cars away from the ball and the boost pads: every 8 ticks (15 Hz, `Car_TA.NetUpdateFrequency`)
-const SLOW_UPDATE_EVERY_TICKS: u64 = 8;
-/// Cars this close to the ball go in every update (`NetworkConfig_TA.ForcePacketSignificantDistance`)
-const NEAR_BALL_DISTANCE: f32 = 1000.0;
 /// Datagram budget for an update (QUIC datagrams are limited by the path MTU, ~1200 bytes)
 pub const MAX_DATAGRAM: usize = 1100;
 const UPDATE_HEADER: usize = 25;
@@ -362,6 +359,21 @@ pub struct Game {
     scoreboard_sent: u64,
     /// When the end screen began (ready-up allowed 1 s later)
     finished_at: u64,
+    /// What each update carries, at the game's rates (src/replication.rs)
+    replication: Replication,
+    /// The tests' record of what each update carried (the network tests' T6: notes/netcode-live.md §13)
+    #[cfg(test)]
+    replicated: Vec<Replicated>,
+}
+
+/// What one update carried: the ball, the pads, the cars, each part's size
+#[cfg(test)]
+#[derive(Clone, Debug)]
+struct Replicated {
+    ball: bool,
+    pads: bool,
+    cars: Vec<u32>,
+    part_bytes: Vec<usize>,
 }
 
 impl Default for Game {
@@ -420,6 +432,9 @@ impl Game {
             forfeit_check_at: None,
             score: [0, 0],
             sent: None,
+            replication: Replication::new(seed as u64),
+            #[cfg(test)]
+            replicated: Vec::new(),
         }
     }
 
@@ -1344,6 +1359,7 @@ impl Game {
         self.send_votes();
         self.send_scoreboard(tick);
 
+        self.replication.watch(&mut self.arena);
         if tick.is_multiple_of(UPDATE_EVERY_TICKS) {
             self.send_updates(now);
         }
@@ -1438,26 +1454,13 @@ impl Game {
 
     /// The network-state parts of this update, each within the datagram budget
     fn update_parts(&mut self) -> Vec<Vec<u8>> {
-        let tick = self.arena.tick_count();
-        let slow = tick.is_multiple_of(SLOW_UPDATE_EVERY_TICKS);
-        let ball = self.arena.ball_position();
-        let mut cars = Vec::new();
-        for car in self.arena.car_ids() {
-            let near = self.arena.car_position(car).is_some_and(|p| {
-                let d = [p[0] - ball[0], p[1] - ball[1], p[2] - ball[2]];
-                d[0] * d[0] + d[1] * d[1] + d[2] * d[2] <= NEAR_BALL_DISTANCE * NEAR_BALL_DISTANCE
-            });
-            if near || slow {
-                cars.push(car);
-            }
-        }
-
+        let chosen = self.replication.choose(&mut self.arena);
         // Greedy split: the ball and pads go in the first part
         let budget = MAX_DATAGRAM - UPDATE_HEADER;
         let mut parts = Vec::new();
-        let (mut with_ball, mut with_pads) = (true, slow);
+        let (mut with_ball, mut with_pads) = (chosen.ball, chosen.pads);
         let mut current: Vec<u32> = Vec::new();
-        for car in cars {
+        for &car in &chosen.cars {
             current.push(car);
             if self.arena.write_net_state(with_ball, &current, with_pads).len() > budget && current.len() > 1 {
                 current.pop();
@@ -1467,6 +1470,13 @@ impl Game {
             }
         }
         parts.push(self.arena.write_net_state(with_ball, &current, with_pads));
+        #[cfg(test)]
+        self.replicated.push(Replicated {
+            ball: chosen.ball,
+            pads: chosen.pads,
+            cars: chosen.cars,
+            part_bytes: parts.iter().map(Vec::len).collect(),
+        });
         parts
     }
 
@@ -1892,6 +1902,103 @@ mod tests {
         // A new match after the podium and the end screen, not a forfeit
         run_until(&mut game, 10_000, |g| g.phase == Phase::Countdown);
         assert!(!game.forfeit && game.winner.is_none());
+    }
+
+    /// T6 (notes/netcode-live.md §13): one client's bytes a second and each actor's update rate, `near` of the cars
+    /// within 1000 uu of the ball, the rest far
+    /// A player's scripted input for a frame (120 a second): full throttle, weaving, boosting a third of the time, a
+    /// jump now and then (players out of step, so the cars spread over the field and meet the ball)
+    fn driving_frame(player: u32, frame: u32) -> InputFrame {
+        let phase = f64::from(frame + 97 * player);
+        let mut bits = 0;
+        if (frame / 60 + player).is_multiple_of(3) {
+            bits |= protocol::BIT_BOOST;
+        }
+        if (frame + 53 * player) % 300 < 4 {
+            bits |= protocol::BIT_JUMP;
+        }
+        InputFrame { throttle: 127, steer: ((phase / 70.0).sin() * 127.0).round() as i8, bits, ..InputFrame::default() }
+    }
+
+    /// The network tests' T6 (notes/netcode-live.md §13): every player drives (inputs at 60 Hz, two frames each, as
+    /// the client sends them) for `seconds` after the kickoff; what one client receives, a second (KB), its largest
+    /// datagram, how often the ball, its own car, another car and the pads went out, and the network state's bytes per
+    /// body sent (the pads and the header shared out)
+    fn replication_rates(team_size: u8, seconds: f64) -> (f64, usize, f64, f64, f64, f64, f64) {
+        init_engine();
+        let mut game = Game::with_options(1, team_size);
+        let mut rx = Vec::new();
+        let players = u32::from(team_size) * 2;
+        for id in 0..players {
+            let (tx, r) = channel(TEST_QUEUE);
+            game.join(u64::from(id) + 1, JoinRequest { team: (id % 2) as u8, ..REQUEST }, tx);
+            rx.push(r);
+        }
+        let mut frame = 1u32;
+        let mut drive = |game: &mut Game, n: u64| {
+            for _ in 0..n {
+                let tick = game.tick_count();
+                let now = tick as f64 / 120.0;
+                if tick.is_multiple_of(2) {
+                    for id in 0..players {
+                        let frames = [driving_frame(id, frame), driving_frame(id, frame + 1)];
+                        game.receive_inputs(u64::from(id) + 1, (now * 1000.0) as u32, frame, &frames, now);
+                    }
+                    frame += 2;
+                }
+                game.tick(now);
+            }
+        };
+        for _ in 0..3000 {
+            if game.phase == Phase::Active {
+                break;
+            }
+            drive(&mut game, 1);
+        }
+        for r in rx.iter_mut() {
+            drain(r);
+        }
+        game.replicated.clear();
+        drive(&mut game, (seconds * 120.0) as u64);
+        let (mut bytes, mut largest) = (0usize, 0usize);
+        for m in drain(&mut rx[0]) {
+            if let Outgoing::Datagram(b) = m {
+                bytes += b.len();
+                largest = largest.max(b.len());
+            }
+        }
+        let cars = game.arena.car_ids();
+        let own = game.players[&1].car_id;
+        let other = cars.iter().copied().find(|&c| c != own).unwrap_or(own);
+        let log = &game.replicated;
+        let rate = |n: usize| n as f64 / seconds;
+        let ball = rate(log.iter().filter(|r| r.ball).count());
+        let pads = rate(log.iter().filter(|r| r.pads).count());
+        let own_car = rate(log.iter().filter(|r| r.cars.contains(&own)).count());
+        let other_car = rate(log.iter().filter(|r| r.cars.contains(&other)).count());
+        let state: usize = log.iter().map(|r| r.part_bytes.iter().sum::<usize>()).sum();
+        let bodies: usize = log.iter().map(|r| usize::from(r.ball) + r.cars.len()).sum();
+        (bytes as f64 / seconds / 1000.0, largest, ball, own_car, other_car, pads, state as f64 / bodies.max(1) as f64)
+    }
+
+    #[test]
+    fn t6_bandwidth_and_cadence() {
+        // T6 (G1): what a client receives while everyone drives, in 1v1, 2v2 and 3v3. Before G1 (exact states; the ball
+        // every update, cars 15 a second, 60 within 1000 uu of the ball; the pads 15): 22.5, 33.7, 45.6 KB/s here, 67.6
+        // and 97.0 for 2v2 and 3v3 with the cars by the ball. The game: the ball ≈ 35 a second, a car ≈ 12-13 plus forced
+        // updates, ≈ 35 B a body; ≈ 3.1 KB/s of state in a 2v2, ≈ 6.5 KB/s per client in a 3v3 with acks and UDP
+        for (team_size, high) in [(1u8, 5.0), (2, 7.0), (3, 9.0)] {
+            let (kbps, largest, ball, own_car, other_car, pads, per_body) = replication_rates(team_size, 10.0);
+            eprintln!(
+                "T6 {team_size}v{team_size}: {kbps:.2} KB/s, largest {largest} B, {per_body:.1} B a body; ball {ball:.1}/s, own car {own_car:.1}/s, another car {other_car:.1}/s, pads {pads:.1}/s"
+            );
+            assert!(kbps <= high, "{team_size}v{team_size}: {kbps} KB/s");
+            assert!(largest <= MAX_DATAGRAM + 64, "a datagram of {largest} B");
+            assert!((30.0..=45.0).contains(&ball), "ball {ball}/s");
+            assert!((10.0..=20.0).contains(&own_car) && (10.0..=20.0).contains(&other_car), "cars {own_car}/s, {other_car}/s");
+            assert!(pads <= 8.0, "pads {pads}/s");
+            assert!(per_body <= 70.0, "{per_body} B a body");
+        }
     }
 
     #[test]

@@ -1604,6 +1604,58 @@ static void TestKickoffCountdown() {
 	delete arena;
 }
 
+static void TestXYLockSnapshots() {
+	puts("countdown XY lock: a snapshot restores and re-serializes to the same bytes (RV-297, RV-305); a car placed while "
+		"held is held at its new spot in a snapshot, a clone and after a load (RV-303)");
+	auto bytes = [](Arena* a) { DataStreamOut out; a->Serialize(out); return out.data; };
+	auto restore = [](const std::vector<uint8_t>& data) { DataStreamIn in; in.data = data; return Arena::DeserializeNew(in); };
+	auto xy = [](Car* c) { Vec p = c->GetState().pos; return Vec(p.x, p.y, 0); };
+	Arena* arena = Arena::Create(GameMode::SOCCAR);
+	Car* car = arena->AddCar(Team::BLUE);
+	arena->ResetToRandomKickoff(1);
+	arena->kickoffCountdownTicks = 480;
+	arena->Step(5);
+	{ // RV-305: restored during the countdown and serialized at once: the same bytes (the pending pin written)
+		std::vector<uint8_t> a = bytes(arena);
+		DataStreamIn in;
+		in.data = a;
+		CHECK(arena->DeserializeInPlace(in) && bytes(arena) == a, "a restore re-serializes to the same bytes");
+	}
+	// RV-303: placed while held, then a snapshot and a clone before the next tick
+	CarState moved = car->GetState();
+	moved.pos = moved.pos + Vec(800, -600, 0);
+	car->SetState(moved);
+	Arena* restored = restore(bytes(arena));
+	Arena* cloned = arena->Clone(false);
+	Vec spot = xy(car);
+	for (int i = 0; i < 40; i++) {
+		car->controls.throttle = 1;
+		restored->GetCar(car->id)->controls.throttle = 1;
+		cloned->GetCar(car->id)->controls.throttle = 1;
+		arena->Step(1);
+		restored->Step(1);
+		cloned->Step(1);
+	}
+	CHECK((xy(car) - spot).Length() < 1, "the server's car held at its new spot: %.2f uu off", (xy(car) - spot).Length());
+	CHECK((xy(restored->GetCar(car->id)) - spot).Length() < 1, "restored: %.2f uu off its new spot", (xy(restored->GetCar(car->id)) - spot).Length());
+	CHECK((xy(cloned->GetCar(car->id)) - spot).Length() < 1, "cloned: %.2f uu off its new spot", (xy(cloned->GetCar(car->id)) - spot).Length());
+	{ // A placement after a load beats the snapshot's pin
+		DataStreamIn in;
+		in.data = bytes(arena);
+		CHECK(restored->DeserializeInPlace(in), "loads");
+		Car* r = restored->GetCar(car->id);
+		CarState again = r->GetState();
+		again.pos = again.pos + Vec(-500, 300, 0);
+		r->SetState(again);
+		Vec placed = xy(r);
+		restored->Step(40);
+		CHECK((xy(r) - placed).Length() < 1, "placed after a load: %.2f uu off its new spot", (xy(r) - placed).Length());
+	}
+	delete restored;
+	delete cloned;
+	delete arena;
+}
+
 // Supersonic: on from 2200; below that, kept for 1 s (TimeBelowSupersonicSpeed) while above 2100
 static void TestSupersonic(Arena* arena, Car* car) {
 	puts("supersonic: kept for 1 s below 2200 (above 2100), also after a long supersonic run");
@@ -2427,6 +2479,7 @@ int main(int argc, char** argv) {
 	TestKickoffBall();
 	TestKickoffCountdown();
 	TestCountdownHeldJump();
+	TestXYLockSnapshots();
 	TestGameRotator();
 	TestMatchEndPatches();
 	TestRoofLanding();

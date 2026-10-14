@@ -74,6 +74,22 @@ int rl_car_demoed(RLArena* arena, uint32_t car_id);
 /* Demolishes the car (it respawns as after any demolition) */
 void rl_car_demolish(RLArena* arena, uint32_t car_id);
 
+/* What the server's replication watches to force a car into the next update (notes/netcode-live.md §11.2): its spawn
+ * counter (a placement: a teleport, a respawn, a kickoff), its flip resets, its jump, double jump and dodge (the
+ * component impulses) and whether it is demolished */
+typedef struct RLCarNetInfo {
+	uint32_t spawn_count;
+	uint32_t flip_resets;
+	uint8_t jumped;
+	uint8_t double_jumped;
+	uint8_t flipped;
+	uint8_t demoed;
+} RLCarNetInfo;
+/* 1 and the car's info, 0 if no such car */
+int rl_car_net_info(RLArena* arena, uint32_t car_id, RLCarNetInfo* out);
+/* The boost pads' active flags, bit i the arena's pad i (a pickup or a respawn changes them; at most 64 pads) */
+uint64_t rl_pads_active(RLArena* arena);
+
 /* Events since the last call, as [type, a, b] triples: goal (team), bump / demo (attacker, victim).
  * Returns the number of ints written (a multiple of 3). */
 size_t rl_take_events(RLArena* arena, int32_t* out, size_t max_ints);

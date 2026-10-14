@@ -1,4 +1,4 @@
-# Game protocol (version 14)
+# Game protocol (version 15)
 
 Client ↔ server over **WebTransport** (HTTP/3, QUIC). All integers little-endian. Implemented in
 `server/src/protocol.rs` (Rust) and `client/src/net/protocol.ts` (TypeScript); `vectors.json` holds byte-exact
@@ -64,8 +64,18 @@ as the game's DodgeForward, so q(−p) and not −q(p); version 6); then `u8` bi
 unchanged and the client predicts with exactly what the server applies.
 The client sends its unacknowledged frames (the newest 10) at its input rate (60 Hz).
 
-**Update**: the network state (`engine/net/NetState.h`) is the server's world after `serverTick`; for this client
-that is the state after its input frame `ackFrame` (the last frame the server consumed for it; 0 = none yet).
+**Update**: the network state (`engine/net/NetState.h`, its compact form since version 15) is the server's world after
+`serverTick` for the bodies it holds; for this client that is the state after its input frame `ackFrame` (the last
+frame the server consumed for it; 0 = none yet). Updates go out every other tick (60 a second) with the actors due, at
+the game's rates (`server/src/replication.rs`): the ball about 35 times a second, each car about 12, and forced into
+the next update as the game forces them (the ball after a car hits it; a car on a placement, a flip reset, a
+demolition, the countdown's end, and its jump, double jump or dodge within 1000 uu of the ball); the pads when one
+changes and once a second. The compact form carries each body as the game's `ReplicatedRBState` (the location ×100
+and the velocities ×100 and ×10000 as packed int vectors, the rotation's 2 + 3 × 18 bits; exact, since the bodies were
+rounded to it at their last tick; raw floats for a body placed since its tick), each car's flags, boost (a byte),
+controls (bytes), the dodge's torque (bytes, while dodging), spawn and flip-reset counters (low bytes), the timers the
+physics reads (only while active) and its XY lock (held, and its pin); the client lays it over its own state at that
+frame (a lossy value it holds that sends the same is kept), so a right prediction is left exactly as it was.
 `receivedFrame` is the highest input frame received, so the client stops resending frames up to it.
 `echoTimestamp` is the newest `Inputs.timestamp` received and `echoDelay` how long the server held it, so
 ping = now − echoTimestamp − echoDelay. A large update is split into `parts`, each a complete network state for
@@ -91,7 +101,8 @@ Version 11: quick chat (`0x06 QuickChat`, `0x07 ChatFilter`, `0x89 Chat`, `0x8A 
 `key`), whether a leaver's car explodes (event kind 2's flags), `0x8B Refused`. Version 13: match stats (`0x8C
 Scoreboard`, `0x8D StatEvent`, `0x8E Ticker`, the goal event's scorer and assister), `0x08 Mute`, the chat filters in
 `Hello`. Version 14: the match's intro and end (phases 6 to 8, phase 4 now only the 3 s before the podium; `Match`'s
-`secondsLeft`), the scoreboard's ready flag and podium titles, `Refused` reason 1.
+`secondsLeft`), the scoreboard's ready flag and podium titles, `Refused` reason 1. Version 15: the compact network
+state and the game's replication rates (above): ≈ 3.3 / 4.4 / 5.5 KB/s per client in a 1v1 / 2v2 / 3v3, from 22–100.
 
 Podium title ids (`notes/match-stats.md` §5.4a; the client's `game/podiumTitles.ts`): 0 OvertimeGoal, 1 Goals_10,
 2 Goals_6_9, 3 Goals_3_5, 4 Saves_10, 5 Saves_6_9, 6 Saves_3_5, 7 EpicSaves, 8 PoolShots, 9 BackwardsGoal, 10 BicycleGoal,

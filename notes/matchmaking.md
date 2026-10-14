@@ -4,7 +4,63 @@ Static session, sub-agent MM1, 2026-10-14; live build 2026-10-06. Scope (user de
 matchmaking, playlists 1v1 / 2v2 / 3v3, no ranks, guest names, no accounts. Psyonix's matchmaker (PsyNet) is not in
 the exe: rows say what the client shows and enforces, and mark the rest **[PsyNet]** (server-side, unknowable).
 
-**User decisions (2026-10-14, via tmp-3b):**
+## v1 queue checklist (user scope 2026-10-14: ship v1; simple queue, no rating or ranks)
+Only what the v1 queue needs, distilled from the rows below. **V** = cleared to ship verbatim (user decisions); **K** =
+by key / our own wording. Dropped for v1: ranks/MMR, backfill and join-in-progress, bots, parties, regions, leave
+penalty, the queue-time estimate, reconnect prompts.
+
+**Search**
+- [ ] Play → pick a playlist: **1v1 / 2v2 / 3v3** (single select is enough; multi-select optional) → **Find Match** (V).
+- [ ] While searching: the main-menu panel (MM-4) with the summary **Searching** (V) (+ Connecting / Joining / Failed, V),
+  the decorative radius bar (8.82 s per step, 17 steps; optional), the log line **FindingBestMatch** then
+  **WaitingForMorePlayers** at 150 s (V; no skill lines), and **Cancel Search** (V; pad Y / button).
+- [ ] Elsewhere (free play, menus): the 26 px top banner with the summary and Cancel Search; the in-match HUD shifts down
+  26 px only while searching (HUD-2a). No elapsed-time counter (the game has none).
+- [ ] Searching from free play is allowed; cancel plays a cancel sound, start plays a start sound (our own sounds).
+- [ ] Auto-cancel when the connection to the queue drops; show the summary **Failed** (V) and a warning line.
+
+**Match found**
+- [ ] No accept step. **"Joining in {n}"** (V) for 3, 2, 1 with a beep each (our sound), then load/travel.
+- [ ] **Start only when full** (user decision): every slot filled, every player loaded; then the normal intro and kickoff.
+  If a reserved player never loads within the reservation timeout (game: 30 s initial / 15 s wait; ours to choose),
+  cancel the match and put the others back in the queue with a warning line (MM-18 style).
+- [ ] No backfill: a leaver's slot stays empty; forfeit votes as now (MR-7).
+
+**In the match**
+- [ ] No team switching or spectating (MM-29): the server refuses team-change requests.
+- [ ] **Idle kick** (cheap, server only, MM-32..38 + MM-35a): during Active play only, a 1 s check; warning at > 25 s idle,
+  kick at > 30 s; idle carries over between rounds; activity = the MM-35a input predicate on each consumed frame (button
+  flips; throttle / pitch-stick |Δ| ≥ 0.01; steer / yaw only while throttling), quick chat, replay skip. The warning tip
+  **Warning** + "you will be kicked for being idle" (V), no countdown digits; the kick sends a reason, closes 1 s later, and
+  the client shows the idle-kick modal (V). No ban.
+
+**Match end**
+- [ ] Podium and end screen as now (MIO). Like the game's ranked flow (no rematch vote, MIO-29/32): **Play again**
+  (re-search the last playlist; V as end-menu text) and **Exit to Main Menu** (V, with its confirmation), plus the
+  "Leaving in {n}" countdown (V, next-match texts cleared) → back to the menu at 0. (A "Change playlist" button is
+  optional.)
+
+**Disconnects**
+- [ ] Lost connection → back to the menu with the **connection lost** modal (V; title `DefaultDisconnectionTitle`, OK).
+  The slot is not held (no reconnect prompt, MM-44/45). "(Error: NN)" strings: K.
+- [ ] Server-ended matches show a reason (MatchKick etc., K).
+
+**Server must enforce** (from "Server must enforce" below, trimmed): per-playlist queues; ignore stale or duplicate
+searches; re-queue after a failed join; full-only start; refuse team change / spectate; the idle kick; free a leaver's
+slot at once (no backfill); send reasons for server-ended matches.
+
+**User decisions, REVISED (2026-10-14, via tmp-3b; supersede the casual start/backfill choices below):**
+- **Ranked-style matchmaking:** matches start **only when full**; **no backfill or join-in-progress**; a leaver's slot
+  stays empty (forfeit votes as now); **no bots**; **no leave penalty** for now.
+- **Skill rating with visible ranks:** an MMR per playlist (1v1, 2v2, 3v3) pairs players, and ranks are shown. Identity
+  is the browser's stored key (no accounts).
+- **Order:** the queue comes after netcode and hosting. A client-side ranked spec (where ranks show, tier/division
+  structure, rank-up/down and placement screens) is queued for the static session after the current netcode job.
+- Still valid from the earlier decisions: the verbatim text groups below. The earlier "start nearly full + backfill" and
+  "backfill limits" (lead ≥ 3 goals / < 1:00) are **superseded**. Rank names, division text etc. are by key until the user
+  clears them per case; rank icons are art (described only).
+
+**Earlier user decisions (2026-10-14, via tmp-3b):**
 - **Verbatim text cleared** for four groups:
   1. the search UI words: Searching…, Cancel Search, Connecting / Searching / Joining / Failed, "Joining in {n}",
      Find Match, Single / Multiple Selection;

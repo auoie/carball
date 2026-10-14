@@ -225,6 +225,29 @@ void rl_car_demolish(RLArena* a, uint32_t id) {
 		car->Demolish(a->arena->GetMutatorConfig().respawnDelay);
 }
 
+int rl_car_net_info(RLArena* a, uint32_t id, RLCarNetInfo* out) {
+	Car* car = a->arena->GetCar(id);
+	if (!car || !out)
+		return 0;
+	const CarState& s = car->_internalState;
+	out->spawn_count = s.spawnCount;
+	out->flip_resets = s.flipResets;
+	out->jumped = s.hasJumped;
+	out->double_jumped = s.hasDoubleJumped;
+	out->flipped = s.hasFlipped;
+	out->demoed = s.isDemoed;
+	return 1;
+}
+
+uint64_t rl_pads_active(RLArena* a) {
+	uint64_t mask = 0;
+	const auto& pads = a->arena->GetBoostPads();
+	for (size_t i = 0; i < pads.size() && i < 64; i++)
+		if (pads[i]->GetState().isActive)
+			mask |= 1ull << i;
+	return mask;
+}
+
 size_t rl_take_events(RLArena* a, int32_t* out, size_t max_ints) {
 	size_t n = a->events.size() < max_ints ? a->events.size() : max_ints;
 	n -= n % 3;

@@ -9,13 +9,13 @@ import { flipAudio, flipVisual } from "../hud";
 import { Quaternion, Vector3 } from "three";
 import { PlayerCamera } from "../camera/rlCamera";
 import type { BodyState, CarConfig, CarState, World } from "../engine/world";
-import { type Vec3, add, sub } from "../math/vec";
+import { type Vec3, add } from "../math/vec";
 import { ESSENTIAL, GAME_UPDATE, type Hud, type ReplayHud, replaySpeed, replayTime, respawnHud } from "../hud";
 import type { InputDevices } from "../input/devices";
 import { AirPitchSafety, ButtonLatch, type ChatKey, EMPTY_INPUT, chatPresses, type HeldActions, type InputSnapshot, JumpLatch, type LookInput, NO_HELD_ACTIONS, readControls, readHeldActions } from "../input/mapping";
 import { FixedStep, TICK_SECONDS, frameTimes } from "../loop/fixedStep";
 import type { Connection } from "../net/connection";
-import { NO_INPUT, Predictor } from "../net/predictor";
+import { NO_INPUT, type Predictor } from "../net/predictor";
 import {
   BIT_AIR_PITCH_SAFETY,
   BIT_BOOST,
@@ -28,12 +28,10 @@ import {
   type MatchState,
   type MatchType,
   type RosterEntry,
-  MAX_INPUT_FRAMES,
   type ScoreboardEntry,
-  type Update,
   quantizeAxis,
 } from "../net/protocol";
-import { type CompleteUpdate, UpdateAssembler } from "../net/updates";
+import { NetSession } from "../net/session";
 import { BallView, BoostPadsView, CarView, trailGround } from "../render/entities";
 import type { ArenaView } from "../render/arena";
 import type { Renderer } from "../render/renderer";
@@ -45,7 +43,7 @@ import type { Options, Settings } from "../settings/settings";
 import { Interpolated } from "./interpolated";
 import { SyncError } from "./syncError";
 import { HUD_TEXT, TICK_RATE, clockCue, clockWarning, countdownStep, formatClock, overtimeLabel, shownSeconds } from "./matchClock";
-import { fromThreeQuaternion, fromThreeVector, rotateRl, toThreeQuaternion } from "../render/coords";
+import { fromThreeVector, rotateRl } from "../render/coords";
 import { postGoalDilation } from "./goalSequence";
 import { type RecordedCar, ReplayRecorder, recordCar } from "./replayRecorder";
 import { ReplayPlayback } from "./replayPlayback";
@@ -91,22 +89,6 @@ import { FlipResetFx } from "../render/flipResetFx";
 /** The key that opens the menu, which has the vote button (VoteInstructions' {0?KeyBinding}) */
 const MENU_KEY = "Esc";
 /** A banner message stays this long after the last one (HUD-8: then a 0.3 s fade, not yet drawn) */
-/** Each body's present state before a correction or reload (Online.#smooth) */
-interface Captured {
-  readonly cars: ReadonlyMap<number, CarState>;
-  readonly ball: BodyState;
-  readonly ballSpawns: number;
-}
-
-/** Update parts kept while no frame is drawn (a hidden tab): about a second's worth */
-const MAX_QUEUED_UPDATES = 120;
-/** A frame this long is a hitch: the server's jitter buffer is reset this long after the last one (the game:
- *  NetworkInputBuffer_TA.ClientTick, "Hitch detected!", SetTimer(2, ServerResetInputBuffer)) */
-const HITCH_SECONDS = 0.1;
-const HITCH_RESET_DELAY = 2;
-
-/** Samples of server tick − client frame kept (one per update: 20 s) */
-const MAX_TICK_OFFSETS = 1200;
 
 interface CarEntry {
   readonly view: CarView;
@@ -164,13 +146,10 @@ export class Online {
   /** The flip reset's effect on our car (HUD-19: the player's own only) */
   readonly #flipFx = new FlipResetFx();
   readonly #ball: Interpolated<BodyState>;
-  readonly #ballError = new SyncError();
-  #ballSpawns = 0; // the ball's spawn counter last tick (a reset places it: not interpolated)
+  readonly #ballError: SyncError;
   #drawnBallSpawns = 0; // the ball's spawn counter last drawn (a new ball fades in)
   #serverExploded = false; // the server's goal event exploded the ball, until the next ball
   readonly #padsView: BoostPadsView;
-  readonly #updates = new UpdateAssembler();
-  readonly #received: Update[] = [];
   readonly #controlMessages: ControlMessage[] = [];
   /** The match's state, from the server */
   #match: MatchState | null = null;
@@ -183,9 +162,6 @@ export class Online {
   readonly #buttons = new ButtonLatch(); // (buttons as the game's press and release commands: C-4)
   readonly #jump = new JumpLatch(); // (a jump press is a tick of jump however short: LT-4)
   readonly #sendClock = new SendClock();
-  #ackFrame = 0;
-  #ping: number | null = null;
-  #bufferText = "";
   #countdownLeft = 0; // whole seconds of the kickoff countdown, for its beeps
   #clockShown: number | null = null; // the clock's shown seconds last frame (its announcements: HUD-10)
   /** The last goal for the replay's banner: who scored and assisted, the clock then, the ball's speed (uu/s) */
@@ -195,9 +171,8 @@ export class Online {
   /** The camera is the local car's this frame (not the replay, the podium or the joining view: HUD-16) */
   #carView = true;
   #disconnected: string | null = null;
-  #hitchReset: number | null = null; // seconds until the server's input buffer is reset after a hitch
-  /** Server tick − client frame (the update's ackFrame was consumed at its serverTick), oldest first */
-  readonly #tickOffsets: { readonly serverTick: number; readonly offset: number }[] = [];
+  /** The network core: updates, corrections and their smoothing, the inputs sent (src/net/session.ts) */
+  readonly #session: NetSession;
   /** The client frame of the last goal's server tick (the slow motion after it) */
   #goalFrame: number | null = null;
   readonly #recorder = new ReplayRecorder();
@@ -251,8 +226,6 @@ export class Online {
   #fps = 60;
   readonly #pos = new Vector3();
   readonly #rot = new Quaternion();
-  readonly #q1 = new Quaternion();
-  readonly #q2 = new Quaternion();
 
   /** `world` already holds the welcome snapshot. */
   constructor(
@@ -283,11 +256,20 @@ export class Online {
     this.#localCar = welcome.carId;
     this.#matchType = welcome.matchType;
     this.#teamSize = welcome.teamSize;
-    this.#predictor = new Predictor(world, welcome.carId, welcome.frame);
+    this.#session = new NetSession(world, welcome.carId, welcome.frame, this.#cars, {
+      sendInputs: (timestamp, first, frames) => {
+        connection.sendInputs(timestamp, first, frames);
+      },
+      resetInputBuffer: () => {
+        connection.resetInputBuffer();
+      },
+      nowMs: () => performance.now(),
+    });
+    this.#predictor = this.#session.predictor;
     this.#padsView = new BoostPadsView(world.boostPads());
-    this.#ball = new Interpolated(world.ball());
-    this.#ballSpawns = world.ballSpawnCount();
-    this.#drawnBallSpawns = this.#ballSpawns;
+    this.#ball = this.#session.ball;
+    this.#ballError = this.#session.ballError;
+    this.#drawnBallSpawns = this.#session.ballSpawns;
     this.#serverExploded = world.ballExploded(); // (joining after a goal: already gone)
     if (!this.#serverExploded) this.#ballView.spawn(); // (the ball fades in for a joining player too: RV-37)
     this.#autoSkipSent = settings().options.autoSkipReplay;
@@ -303,20 +285,19 @@ export class Online {
     };
 
     connection.onUpdate = (u) => {
-      // (a hidden tab doesn't draw frames: keep only the newest second of updates, not a backlog to replay at once)
-      this.#received.push(u);
-      if (this.#received.length > MAX_QUEUED_UPDATES) this.#received.splice(0, this.#received.length - MAX_QUEUED_UPDATES);
+      this.#session.receive(u);
     };
     connection.listen((m) => this.#controlMessages.push(m));
     connection.onClose = (reason) => {
       this.#disconnected = reason;
+      this.#session.disconnected = true;
     };
   }
 
   get stats(): OnlineStats {
     return {
-      ping: this.#ping,
-      ackFrame: this.#ackFrame,
+      ping: this.#session.ping,
+      ackFrame: this.#session.ackFrame,
       frame: this.#predictor.frame,
       cars: [...this.#cars].map(([id, entry]) => ({ id, pos: entry.state.current.pos })),
       corrections: this.#predictor.stats.corrections,
@@ -341,8 +322,8 @@ export class Online {
   /** One animation frame. `rawSeconds`: time since the previous frame, unclamped. */
   frame(rawSeconds: number): void {
     this.#handleControlMessages();
-    this.#applyUpdates();
-    this.#watchHitches(rawSeconds);
+    this.#session.applyUpdates();
+    this.#session.watchHitches(rawSeconds);
 
     const settings = this.settings();
     const polled = this.#input.snapshot(); // (every frame: a menu's presses mustn't wait for it to close)
@@ -397,7 +378,7 @@ export class Online {
     }
     // Input packets at 60 Hz of real time, once a frame (slowed ticks after a goal don't stretch them: RV-4)
     // (DeltaSeconds / TimeDilation: the world time undilated, RV-22)
-    if (this.#sendClock.due(world / dilation)) this.#sendInputs();
+    if (this.#sendClock.due(world / dilation)) this.#session.sendInputs();
     // The countdown: 3, 2, 1 and GO!, a second apart from a second in, each with its beep (VT-24, HUD-8)
     const { left, say } = countdownStep(this.#countdownLeft, this.#world.kickoffCountdown());
     if (say !== null) {
@@ -554,15 +535,6 @@ export class Online {
     return null;
   }
 
-  /** The client frame that was consumed at a server tick (by the update nearest it) */
-  #frameAt(serverTick: number): number {
-    let best = this.#tickOffsets.at(-1);
-    for (const sample of this.#tickOffsets) {
-      if (!best || Math.abs(sample.serverTick - serverTick) < Math.abs(best.serverTick - serverTick)) best = sample;
-    }
-    return serverTick - (best?.offset ?? 0);
-  }
-
   /** Whether `car` is drawn demolished: the server's Demo event named it (until it respawns), or its replicated state
    *  says so (a late joiner, an event for a car not here yet: the game replicates the demolish as state, RV-112); never
    *  predicted (the world's demolitions are off) */
@@ -582,118 +554,13 @@ export class Online {
     this.#recorder.record(frame, { cars, ball: this.#world.ball(), ballExploded: this.#world.ballExploded() });
   }
 
-  /** After a hitch the gap inflated the server's jitter buffer (one 300 ms gap: 7 -> 18 frames, ~40 s to come back):
-   *  2 s after the last hitch the server resets it */
-  #watchHitches(rawSeconds: number): void {
-    const frameSeconds = Math.max(0, rawSeconds);
-    if (frameSeconds > HITCH_SECONDS) this.#hitchReset = HITCH_RESET_DELAY;
-    else if (this.#hitchReset !== null) {
-      this.#hitchReset -= frameSeconds;
-      if (this.#hitchReset <= 0) {
-        this.#hitchReset = null;
-        this.#connection.resetInputBuffer();
-      }
-    }
-  }
-
-  /** The frames the server has not acknowledged yet, newest 10 at most */
-  #sendInputs(): void {
-    if (this.#disconnected !== null) return;
-    const last = this.#predictor.frame;
-    let first = Math.max(this.#ackFrame + 1, last - MAX_INPUT_FRAMES + 1);
-    while (first <= last && !this.#predictor.inputAt(first)) first++; // (history before a world reload is gone)
-    const frames: InputFrame[] = [];
-    for (let f = first; f <= last; f++) frames.push(this.#predictor.inputAt(f) ?? NO_INPUT);
-    if (frames.length > 0) this.#connection.sendInputs(Math.round(performance.now()), first, frames);
-  }
-
-  #applyUpdates(): void {
-    for (const part of this.#received.splice(0)) {
-      for (const update of this.#updates.add(part)) this.#applyUpdate(update);
-    }
-    for (const update of this.#updates.flush()) this.#applyUpdate(update); // (a part was lost: the others still apply)
-  }
-
-  #applyUpdate(update: CompleteUpdate): void {
-    const u = update.update;
-    this.#ackFrame = Math.max(this.#ackFrame, u.ackFrame);
-    this.#bufferText = `buffer ${String(u.bufferSize)}/${String(u.bufferTarget)}`;
-    if (u.ackFrame > 0) {
-      this.#tickOffsets.push({ serverTick: u.serverTick, offset: u.serverTick - u.ackFrame });
-      if (this.#tickOffsets.length > MAX_TICK_OFFSETS) this.#tickOffsets.splice(0, this.#tickOffsets.length - MAX_TICK_OFFSETS);
-    }
-    if (u.echoTimestamp > 0) {
-      const rtt = ((Math.round(performance.now()) - u.echoTimestamp) >>> 0) - u.echoDelay;
-      if (rtt >= 0 && rtt < 10_000) this.#ping = this.#ping === null ? rtt : this.#ping + (rtt - this.#ping) * 0.1;
-    }
-    this.#correct(u.ackFrame, update.states);
-  }
-
-  /** A server correction, smoothed for drawing: each body's drawn pose keeps where it was and glides to the corrected
-   *  one (SyncError); the interpolation's previous tick moves with the correction, so nothing jumps. A resync (the
-   *  server's state ahead of this client) is smoothed the same way, as the game smooths every correction. */
-  #correct(frame: number, states: readonly Uint8Array[]): void {
-    const pre = this.#capture();
-    this.#predictor.correct(frame, states);
-    this.#smooth(pre);
-  }
-
-  /** Each body's present state, before a correction or reload */
-  #capture(): Captured {
-    return {
-      cars: new Map([...this.#cars.keys()].map((id) => [id, this.#world.car(id)])),
-      ball: this.#world.ball(),
-      ballSpawns: this.#world.ballSpawnCount(),
-    };
-  }
-
-  /** The world's present state changed from `pre`: carry the difference in each body's drawn pose */
-  #smooth(pre: Captured): void {
-    for (const [id, entry] of this.#cars) {
-      const before = pre.cars.get(id);
-      if (!before) continue; // (a car new in the world: drawn from its state)
-      const after = this.#world.car(id);
-      const moved = sub(before.pos, after.pos);
-      // A new placement (a kickoff, a respawn: in the game a new actor) is drawn at once; every other correction,
-      // however large, is smoothed (notes/netcode-audit.md NR-2)
-      if (before.demoed || after.demoed || before.spawnCount !== after.spawnCount) {
-        entry.error.clear();
-        entry.state.previous = after;
-      } else {
-        entry.error.accumulate(before, after);
-        // The previous tick moves with the correction, rotation included (prev' = post pre^-1 prev, as the game's
-        // OldRBState): the drawn pose stays where it was
-        const turn = toThreeQuaternion(after.rot, this.#q1).multiply(toThreeQuaternion(before.rot, this.#q2).invert());
-        const prevRot = fromThreeQuaternion(turn.multiply(toThreeQuaternion(entry.state.previous.rot, this.#q2)));
-        entry.state.previous = { ...entry.state.previous, pos: sub(entry.state.previous.pos, moved), rot: prevRot };
-      }
-      entry.state.current = after;
-    }
-    const ball = this.#world.ball();
-    const moved = sub(pre.ball.pos, ball.pos);
-    const teleport = this.#world.ballSpawnCount() !== pre.ballSpawns;
-    if (teleport) {
-      this.#ballError.clear();
-      this.#ball.previous = ball;
-    } else {
-      // As a car's (NR-1): the error keeps the drawn pose, rotation included; the previous tick moves with the correction
-      this.#ballError.accumulate(pre.ball, ball);
-      const turn = toThreeQuaternion(ball.rot, this.#q1).multiply(toThreeQuaternion(pre.ball.rot, this.#q2).invert());
-      const prevRot = fromThreeQuaternion(turn.multiply(toThreeQuaternion(this.#ball.previous.rot, this.#q2)));
-      this.#ball.previous = { ...this.#ball.previous, pos: sub(this.#ball.previous.pos, moved), rot: prevRot };
-    }
-    this.#ball.current = ball;
-    this.#ballSpawns = this.#world.ballSpawnCount();
-  }
-
   #handleControlMessages(): void {
     for (const m of this.#controlMessages.splice(0)) {
       if (m.type === "world") {
         // (the set of cars changed: the cars in both worlds are smoothed from where they were drawn, as any correction)
-        const pre = this.#capture();
-        this.#predictor.reload(m.frame, m.snapshot);
-        this.#syncCars();
-        this.#smooth(pre);
+        this.#session.reload(m.frame, m.snapshot, () => {
+          this.#syncCars();
+        });
       } else if (m.type === "match") {
         // The replay over (its end, or everyone skipped): the next camera cuts in from black
         if (this.#replay && m.phase !== "replay") {
@@ -715,7 +582,7 @@ export class Online {
         const team = m.event.team === 1 ? 1 : 0;
         this.#audio.goal();
         this.#hud.say(goalBanner(m.event, this.#roster), ESSENTIAL);
-        this.#goalFrame = this.#frameAt(m.serverTick);
+        this.#goalFrame = this.#session.frameAt(m.serverTick);
         // (for the replay's banner: the clock at the goal, the ball's speed in the last frame before it)
         const before = this.#recorder.before(Math.floor(this.#goalFrame) - 1)?.ball.vel;
         this.#goal = {
@@ -734,7 +601,7 @@ export class Online {
       } else if (m.type === "event" && m.event.kind === "demo") {
         // A demolition as the server says (QueueDemolish from the replicated demolish): its effect and shake where the
         // victim was at that tick, as this client drew it (RV-47)
-        const recorded = this.#recorder.before(Math.floor(this.#frameAt(m.serverTick)))?.cars.get(m.event.victim);
+        const recorded = this.#recorder.before(Math.floor(this.#session.frameAt(m.serverTick)))?.cars.get(m.event.victim);
         const victim = this.#cars.get(m.event.victim);
         const at = recorded?.pos ?? victim?.state.current.pos;
         // (and the car hidden, its effects killed, the camera switched, all from this frame: RV-84)
@@ -783,7 +650,7 @@ export class Online {
         this.#vote = { state: m.state, yes: m.yes, required: m.required, secondsLeft: m.secondsLeft, voted: m.voted, canStart: m.canStart };
       } else if (m.type === "replay") {
         // (the cut in from black: LiveReplay's Begin)
-        this.#replay = new ReplayPlayback(m, this.#recorder, (tick) => this.#frameAt(tick));
+        this.#replay = new ReplayPlayback(m, this.#recorder, (tick) => this.#session.frameAt(tick));
         this.#ballView.spawn(true);
         this.#arena.newBall();
         this.#skipped = false;
@@ -844,8 +711,8 @@ export class Online {
       entry.state.push(car, car.spawnCount !== entry.state.current.spawnCount);
     }
     const ballSpawns = this.#world.ballSpawnCount();
-    this.#ball.push(this.#world.ball(), ballSpawns !== this.#ballSpawns);
-    this.#ballSpawns = ballSpawns;
+    this.#ball.push(this.#world.ball(), ballSpawns !== this.#session.ballSpawns);
+    this.#session.ballSpawns = ballSpawns;
   }
 
   /** Whether the player's car can dodge, after this tick (the flip indicator). */
@@ -1064,7 +931,7 @@ export class Online {
   #updateHud(realSeconds: number, replay: ReplayHud | null = null): void {
     if (realSeconds > 0) this.#fps += (1 / realSeconds - this.#fps) * 0.05;
     const car = this.#cars.get(this.#localCar)?.state.current;
-    const ping = this.#ping === null ? "ping –" : `ping ${String(Math.round(this.#ping))} ms`;
+    const ping = this.#session.ping === null ? "ping –" : `ping ${String(Math.round(this.#session.ping))} ms`;
     const settings = this.settings();
     const pad = this.#input.usingGamepad;
     const toggles = (pad ? settings.cameraPad : settings.cameraKbm).ballCamToggle;
@@ -1085,7 +952,7 @@ export class Online {
       message: this.#disconnected !== null ? `Disconnected: ${this.#disconnected}` : null,
       replay,
       fps: this.#fps,
-      net: `${ping} · ${this.#bufferText} · ${String(this.#cars.size)} cars`,
+      net: `${ping} · ${this.#session.bufferText} · ${String(this.#cars.size)} cars`,
       flip: flipVisual(settings.gameplay.flipResetIndicator) ? this.#dodge : null,
       flipReset: this.#flipReset,
       respawn: car ? respawnHud(car) : null,

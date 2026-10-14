@@ -462,11 +462,12 @@ public:
 	}
 
 	// Network state (net/NetState.h): what the server sends each update. The client applies it onto its own arena;
-	// writing is here for tests (the native server writes it).
-	Uint8ArrayVal WriteNetState(bool ball, Int32ArrayVal carIds, bool boostPads) {
+	// writing is here for tests (the native server writes it). `exact`: the exact form (the compact one otherwise)
+	Uint8ArrayVal WriteNetState(bool ball, Int32ArrayVal carIds, bool boostPads, bool exact) {
 		NetState::WriteOptions options;
 		options.ball = ball;
 		options.boostPads = boostPads;
+		options.exact = exact;
 		for (int id : emscripten::convertJSArrayToNumberVector<int>(carIds))
 			if (_arena->GetCar((uint32_t)id))
 				options.carIds.push_back((uint32_t)id);

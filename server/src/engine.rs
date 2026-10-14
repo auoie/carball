@@ -11,6 +11,18 @@ struct RLArena {
     _private: [u8; 0],
 }
 
+/// What the replication watches to force a car into the next update (`RLCarNetInfo`)
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CarNetInfo {
+    pub spawn_count: u32,
+    pub flip_resets: u32,
+    pub jumped: u8,
+    pub double_jumped: u8,
+    pub flipped: u8,
+    pub demoed: u8,
+}
+
 /// Car controls as the engine takes them.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -57,6 +69,8 @@ unsafe extern "C" {
     fn rl_car_position(arena: *mut RLArena, car_id: u32, out: *mut f32) -> c_int;
     fn rl_car_demoed(arena: *mut RLArena, car_id: u32) -> c_int;
     fn rl_car_demolish(arena: *mut RLArena, car_id: u32);
+    fn rl_car_net_info(arena: *mut RLArena, car_id: u32, out: *mut CarNetInfo) -> c_int;
+    fn rl_pads_active(arena: *mut RLArena) -> u64;
     fn rl_take_events(arena: *mut RLArena, out: *mut i32, max_ints: usize) -> usize;
     fn rl_write_net_state(arena: *mut RLArena, ball: c_int, car_ids: *const u32, num_cars: usize, pads: c_int, out: *mut u8, capacity: usize) -> usize;
     fn rl_save_state(arena: *mut RLArena, out: *mut u8, capacity: usize) -> usize;
@@ -271,6 +285,19 @@ impl Arena {
         unsafe { rl_car_demoed(self.ptr(), car_id) != 0 }
     }
 
+    /// What the replication watches to force the car into the next update
+    pub fn car_net_info(&mut self, car_id: u32) -> Option<CarNetInfo> {
+        let mut out = CarNetInfo::default();
+        // SAFETY: valid arena, out is a valid RLCarNetInfo
+        (unsafe { rl_car_net_info(self.ptr(), car_id, &raw mut out) } != 0).then_some(out)
+    }
+
+    /// The boost pads' active flags, bit i pad i
+    pub fn pads_active(&mut self) -> u64 {
+        // SAFETY: valid arena
+        unsafe { rl_pads_active(self.ptr()) }
+    }
+
     /// Demolishes the car (it respawns as after any demolition)
     pub fn demolish_car(&mut self, car_id: u32) {
         // SAFETY: valid arena
@@ -469,7 +496,8 @@ pub(crate) mod tests {
         assert!(moved > 400.0, "moved {moved}");
         assert_eq!(arena.tick_count(), 120);
         let state = arena.write_net_state(true, &[car], true);
-        assert!(state.len() > 100 && state[0] == 8); // the network state format version
+        // (the compact form, engine/net/NetState.h: its version, the ball, a car and the pads, about the game's size)
+        assert!(state[0] == 9 && (60..200).contains(&state.len()), "{} B", state.len());
         assert!(arena.save_state().len() > 1000);
     }
 
@@ -615,6 +643,45 @@ pub(crate) mod tests {
         let respawned = arena.car_position(car).unwrap();
         arena.step(60);
         assert!(across(arena.car_position(car).unwrap(), respawned) < 1.0, "pulled away from where it respawned");
+    }
+
+    #[test]
+    fn a_snapshot_or_an_update_after_a_held_car_is_placed_holds_it_at_its_new_spot_on_the_client() {
+        // (RV-303: a snapshot taken before the next tick carries the new spot as its pin, not the old one; RV-304: a
+        // client that only gets updates takes the server's pin from them; on the podium too)
+        init_engine();
+        let across = |a: [f32; 3], b: [f32; 3]| ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt();
+        for podium in [false, true] {
+            let mut server = Arena::new();
+            let car = server.add_car(0, 0);
+            server.place_car(car, 0.0, 0.0, 0.0, 33.0);
+            if podium {
+                server.set_podium(true);
+            } else {
+                server.set_kickoff_countdown(900);
+            }
+            server.step(10);
+            let mut updated = Arena::new();
+            updated.add_car(0, 0);
+            assert!(updated.load_state(&server.save_state()));
+            updated.set_podium(podium);
+            // Placed while held; a snapshot at once (RV-303), and an update after the tick (RV-304)
+            server.place_car(car, 1500.0, -1000.0, 0.0, 33.0);
+            let mut restored = Arena::new();
+            restored.add_car(0, 0);
+            assert!(restored.load_state(&server.save_state()));
+            restored.set_podium(podium);
+            server.step(1);
+            assert!(updated.apply_net_state(&server.write_net_state(true, &[car], true)));
+            let spot = server.car_position(car).unwrap();
+            for arena in [&mut server, &mut restored, &mut updated] {
+                arena.step(40);
+            }
+            let what = if podium { "podium" } else { "countdown" };
+            assert!(across(server.car_position(car).unwrap(), spot) < 1.0, "{what}: the server's car left its new spot");
+            assert!(across(restored.car_position(car).unwrap(), spot) < 1.0, "{what}: the snapshot's car pulled back to its old pin");
+            assert!(across(updated.car_position(car).unwrap(), spot) < 1.0, "{what}: the updated client's car pulled back to its old pin");
+        }
     }
 
     #[test]

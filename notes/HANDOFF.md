@@ -1,6 +1,44 @@
 # Handoff: how to resume this project
 
-## Next (2026-10-08)
+## Next (2026-10-14): a shippable v1 (G1 bandwidth, a simple queue, deployable)
+The user (2026-10-14) wants a shippable v1, no more polish; three steps, each its own clean point (the full e2e once
+per clean point):
+1. **G1 bandwidth** (done, below) with a small loss/latency test.
+2. **A simple queue**: Play → 1v1 / 2v2 / 3v3 → searching (Cancel works); the server runs several matches at once; a
+   match starts only when full (no backfill, no bots, leavers not replaced, forfeit votes as now); at the end back to
+   the menu or search again. No rating or ranks in v1. The static session's v1 checklist (verbatim texts, idle kick,
+   "Joining in {n}", reservation timeout, end-menu Play again / Exit) is the first section of `notes/matchmaking.md`.
+3. **Deployable**: two images (the client's static build served on :3000 with a `config.json` for the game server's
+   URL, env-overridable; the game server: env for the public host, the allowed page origin, the UDP port, the cert and
+   key paths, reloaded on a file change or SIGHUP without dropping matches) and a short `APP-CONTRACT.md` (env, ports,
+   volumes, reload, health check, resources, logs). The user's own servers repo does hosts, DNS, firewall and certs.
+   Names: the page `https://carball.zolt.top`, the game server `game.carball.zolt.top` (DNS-only).
+
+Cut until after launch: ranks/MMR (the ranked-style design: matches only when full, MMR per playlist, the browser key
+as identity), G2–G4 (remote cars predicted as the game does, no per-update resim spikes, the Connection Quality
+indicator), the full §13 harness, free-play polish.
+
+**G1 (bandwidth), 2026-10-14.** The server sends the game's compact state at the game's rates:
+- `engine/net/NetState` compact form (`COMPACT_VERSION` 9; protocol 15): each body as `ReplicatedRBState` (packed int
+  vectors, the 56-bit rotation; exact, since every tick rounds the bodies to it; raw for a body placed since its tick)
+  plus each car's flags, boost, controls, dodge torque, counters, the physics' timers while active and its XY lock
+  (RV-304). The client lays it over its own saved state (a lossy value that sends the same is kept), so a right
+  prediction is untouched; its wheels' carried values and contacts stay its own, as the game's client. The exact
+  form (version 8) stays for the engine's netstate check.
+- `server/src/replication.rs`: the ball at NUF 100, cars at 15, + U(0, 1/57) (≈ 37 and ≈ 12 a second), forced as
+  the game forces them; the pads on a change and once a second. Updates still go every other tick (the ack).
+- Per client, everyone driving (T6, `server/src/game.rs`): 1v1 22.5 → 3.3 KB/s, 2v2 33.7 → 4.4, 3v3 45.6 → 5.5
+  (32–38 B a body; with cars by the ball before: 2v2 67.6, 3v3 97.0).
+- The loss/latency check (`client/src/net/session.test.ts`, `client/src/testing/netRun.ts`: the client's network core,
+  `src/net/session.ts`, against an in-process server from the same parts: the engine, the input buffer's port
+  `testing/serverConsume.ts`, the replication schedule) at 80 ms round trip, 20 ms jitter, 2 % loss: no input frame
+  lost, the server's buffer at 11, the local car's corrections p95 0 uu (a few a second at most), the bot's p95
+  ≈ 15 uu, the ball's p95 0; against before G1 on the same path: 42.9 → 3.9 KB/s, local mispredictions 97 → 32,
+  the bot's p95 11.8 → 14.3 uu (fewer updates: G2 is the fix).
+- Kept from the first harness step: `server/src/netsim.rs` (seeded paths; `client/src/testing/netsim.ts` its twin,
+  checked against the vectors it writes), the input buffer's T2 tests (`server/src/net_tests.rs`).
+
+## Earlier (2026-10-08)
 - **Where:** the repository is on the data drive, `/mnt/primary/home/arch/rocket-league-reverse-engineering`, the
   same path from Arch and WSL. `engine/build` and `engine/build-wasm` were rebuilt at this path (the old ones are
   renamed `*-old-documents-path`, and `engine/build-wsl`, `engine/build-wasm-wsl` are leftovers: all can be deleted).

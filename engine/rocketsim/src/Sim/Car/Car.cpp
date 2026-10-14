@@ -6,6 +6,7 @@
 #include "../CollisionMasks.h"
 #include "../Quantize/Quantize.h"
 #include "../GameRotator/GameRotator.h"
+#include "../../../libsrc/bullet3-3.24/BulletDynamics/ConstraintSolver/btGeneric6DofConstraint.h" // RL PATCH: the XY lock
 
 RS_NS_START
 
@@ -77,6 +78,15 @@ void Car::_LimitVelocities() {
 
 	_rigidBody.m_linearVelocity = vel;
 	_rigidBody.m_angularVelocity = angVel;
+}
+
+// RL PATCH (RV-303)
+bool Car::_XYLockHeld(btVector3* pin) const {
+	if (!_xyLock && !_xyLockPending)
+		return false;
+	if (pin)
+		*pin = _xyLockMoved ? _rigidBody.getCenterOfMassPosition() : (_xyLock ? _xyLock->getFrameOffsetA().getOrigin() : _xyLockPin);
+	return true;
 }
 
 // Update our bullet stuff to this new state, replace our internal state with it

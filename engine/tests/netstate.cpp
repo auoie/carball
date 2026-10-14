@@ -1,6 +1,10 @@
 // Network state check: a client arena that applies the server's state (net/NetState) must hold exactly the server's
 // bodies, car state and boost pads, and then continue like the server.
 //
+// The compact form (what the server sends) at the same updates: a client that tracked the server exactly must be left
+// exactly as it was (a right prediction isn't corrected), and the drifted one must take the server's bodies bit for
+// bit (its own timers and wheel values stay: how far it then drifts is reported, as the game's client would).
+//
 // A server arena plays a scripted 2v2. Every `interval` ticks a client arena that drifted away (it started from the
 // same snapshot but drove with other inputs) applies the server's state. Then:
 //  - every car, the ball and the pads must equal the server's, bit for bit (contact points aside);
@@ -87,6 +91,29 @@ static std::vector<uint8_t> NetVisibleState(Arena* arena) {
 	return out.data;
 }
 
+// The bodies' transforms and velocities, bit for bit (not the inverse inertia, which the compact form leaves the client's)
+static bool SameBodies(Arena* a, Arena* b) {
+	auto same = [](const btRigidBody& x, const btRigidBody& y) {
+		const btTransform& tx = x.getWorldTransform();
+		const btTransform& ty = y.getWorldTransform();
+		float fx[18], fy[18];
+		for (int i = 0; i < 3; i++) {
+			fx[i] = tx.getOrigin()[i], fy[i] = ty.getOrigin()[i];
+			fx[3 + i] = x.getLinearVelocity()[i], fy[3 + i] = y.getLinearVelocity()[i];
+			fx[6 + i] = x.getAngularVelocity()[i], fy[6 + i] = y.getAngularVelocity()[i];
+			for (int c = 0; c < 3; c++)
+				fx[9 + 3 * i + c] = tx.getBasis()[i][c], fy[9 + 3 * i + c] = ty.getBasis()[i][c];
+		}
+		return memcmp(fx, fy, sizeof(fx)) == 0;
+	};
+	if (!same(a->ball->_rigidBody, b->ball->_rigidBody))
+		return false;
+	for (Car* car : a->GetCars())
+		if (!same(car->_rigidBody, b->GetCar(car->id)->_rigidBody))
+			return false;
+	return true;
+}
+
 static bool Touching(Arena* arena) {
 	auto* dispatcher = arena->_bulletWorld.getDispatcher();
 	for (int i = 0; i < dispatcher->getNumManifolds(); i++)
@@ -117,6 +144,9 @@ int main(int argc, char** argv) {
 	int checks = 0, exactFailures = 0, continued = 0, continuedExact = 0, touchingRuns = 0;
 	size_t maxBytes = 0;
 	float worstDrift = 0;
+	int compactFailures = 0, compactIdentical = 0;
+	size_t compactMax = 0, compactTotal = 0, compactCarsOnly = 0;
+	float compactWorstDrift = 0;
 	uint64_t scoredAt = 0;
 	for (int tick = 0; tick < seconds * 120; tick++) {
 		if (tick % 8 == 0)
@@ -150,10 +180,42 @@ int main(int argc, char** argv) {
 
 		// The server's update
 		NetState::WriteOptions options;
+		options.exact = true;
 		for (Car* car : server->GetCars())
 			options.carIds.push_back(car->id);
 		DataStreamOut update;
 		NetState::Write(server, update, options);
+
+		// The compact form, onto a client that tracked the server exactly and onto the drifted one
+		NetState::WriteOptions compact;
+		compact.carIds = options.carIds;
+		DataStreamOut compactUpdate;
+		NetState::Write(server, compactUpdate, compact);
+		{
+			NetState::WriteOptions carsOnly;
+			carsOnly.carIds = options.carIds;
+			carsOnly.ball = carsOnly.boostPads = false;
+			DataStreamOut out;
+			NetState::Write(server, out, carsOnly);
+			compactCarsOnly += out.data.size();
+		}
+		compactMax = std::max(compactMax, compactUpdate.data.size());
+		compactTotal += compactUpdate.data.size();
+		Arena* tracked = Restore(Snapshot(server));
+		std::vector<uint8_t> trackedBefore = NetVisibleState(tracked);
+		DataStreamIn compactIn;
+		compactIn.data = compactUpdate.data;
+		if (!NetState::Read(tracked, compactIn) || NetVisibleState(tracked) != trackedBefore) {
+			printf("tick %d: the compact update changed a client that had the server's state\n", tick);
+			compactFailures++;
+		}
+		delete tracked;
+		Arena* drifted = Restore(Snapshot(client));
+		compactIn.pos = 0;
+		if (!NetState::Read(drifted, compactIn) || !SameBodies(drifted, server)) {
+			printf("tick %d: after the compact update the drifted client's bodies differ from the server's\n", tick);
+			compactFailures++;
+		}
 		maxBytes = std::max(maxBytes, update.data.size());
 		DataStreamIn in;
 		in.data = update.data;
@@ -161,6 +223,7 @@ int main(int argc, char** argv) {
 			printf("tick %d: the update did not apply\n", tick);
 			exactFailures++;
 			delete client;
+			delete drifted;
 			continue;
 		}
 		if (NetVisibleState(client) != NetVisibleState(server)) {
@@ -174,14 +237,21 @@ int main(int argc, char** argv) {
 		for (int t = 0; t < window; t++) {
 			if ((tick + t) % 8 == 0 && t > 0)
 				ScriptInputs(server);
-			for (Car* car : server->GetCars())
+			for (Car* car : server->GetCars()) {
 				client->GetCar(car->id)->controls = car->controls;
+				drifted->GetCar(car->id)->controls = car->controls;
+			}
 			server->Step();
 			client->Step();
+			drifted->Step();
 			if (identical && NetVisibleState(client) != NetVisibleState(server))
 				identical = false;
 		}
 		continued++;
+		float compactDrift = MaxPositionDifference(server, drifted);
+		compactIdentical += compactDrift == 0;
+		compactWorstDrift = fmaxf(compactWorstDrift, compactDrift);
+		delete drifted;
 		if (identical) {
 			continuedExact++;
 		} else {
@@ -198,7 +268,11 @@ int main(int argc, char** argv) {
 	printf("netstate: %d updates (max %zu bytes for ball + 4 cars + pads), %d not exact after applying\n", checks, maxBytes, exactFailures);
 	printf("netstate: continued %d, identical for %d ticks: %d; the others had contacts at the update: %d (worst drift %.3f uu)\n",
 		continued, window, continuedExact, touchingRuns, worstDrift);
-	int failures = exactFailures + (continued - continuedExact - touchingRuns);
+	printf("netstate compact: %d updates, mean %zu bytes for ball + 4 cars + pads (max %zu), cars alone %zu bytes a car; "
+		"%d failed; the drifted client after %d ticks: identical %d, worst drift %.3f uu\n",
+		checks, checks ? compactTotal / checks : 0, compactMax, checks ? compactCarsOnly / checks / 4 : 0, compactFailures, window,
+		compactIdentical, compactWorstDrift);
+	int failures = exactFailures + compactFailures + (continued - continuedExact - touchingRuns);
 	printf(failures ? "netstate: FAILED\n" : "netstate: ok\n");
 	delete server;
 	return failures ? 1 : 0;

@@ -1267,14 +1267,15 @@ void _ReadGoalExplosion(DataStreamIn& in, Arena::GoalExplosion& ex) {
 // they were (Arena::_UpdateXYLocks)
 static void _WriteXYLocks(DataStreamOut& out, const Arena::CarSet& cars) {
 	uint32_t held = 0;
-	// (a pending one too: a snapshot taken just after a load, before the tick takes it back: RV-297)
+	// (a pending one too: a snapshot taken just after a load, before the tick takes it back: RV-297; one placed since
+	// the last tick at its pin as the tick takes it, where it is now: RV-303)
 	for (const Car* car : cars)
-		held += car->_xyLock != NULL || car->_xyLockPending;
+		held += car->_XYLockHeld(NULL);
 	out.Write(held);
 	for (const Car* car : cars) {
-		if (!car->_xyLock && !car->_xyLockPending)
+		btVector3 pin;
+		if (!car->_XYLockHeld(&pin))
 			continue;
-		const btVector3 pin = car->_xyLock ? car->_xyLock->getFrameOffsetA().getOrigin() : car->_xyLockPin;
 		out.Write(car->id);
 		out.WriteMultiple(pin.x(), pin.y(), pin.z());
 	}
@@ -1284,6 +1285,7 @@ static void _ReadXYLocks(DataStreamIn& in, Arena* arena) {
 	for (Car* car : arena->GetCars()) {
 		arena->_RemoveXYLock(car);
 		car->_xyLockPending = false;
+		car->_xyLockMoved = false; // (the load's own placement: the snapshot's pins stand; a later one beats them, RV-303)
 	}
 	uint32_t held = in.Read<uint32_t>();
 	for (uint32_t i = 0; i < held; i++) {
@@ -1651,9 +1653,11 @@ Arena* Arena::Clone(bool copyCallbacks) {
 		RawBodyState::From(car->_rigidBody, car->_netRotation).ApplyTo(newCar->_rigidBody, newCar->_netRotation); // RL PATCH: exact state
 		newCar->controls = car->controls;
 		newCar->_velocityImpulseCache = car->_velocityImpulseCache;
-		// RL PATCH: its XY lock taken back where it is
-		newCar->_xyLockPending = car->_xyLock != NULL || car->_xyLockPending;
-		newCar->_xyLockPin = car->_xyLock ? car->_xyLock->getFrameOffsetA().getOrigin() : car->_xyLockPin;
+		// RL PATCH: its XY lock taken back where it is (its pin as the next tick takes it: RV-303)
+		btVector3 pin;
+		newCar->_xyLockPending = car->_XYLockHeld(&pin);
+		newCar->_xyLockPin = pin;
+		newCar->_xyLockMoved = false;
 	}
 
 	assert(this->_boostPads.size() == newArena->_boostPads.size());
@@ -1702,9 +1706,11 @@ Car* Arena::DeserializeNewCar(DataStreamIn& in, Team team) {
 void Arena::_UpdateXYLocks(bool countdown) {
 	for (Car* car : _cars) {
 		const bool want = (countdown || podiumMode) && !car->_internalState.isDemoed;
-		// (placed while held: taken again where it is now, unless a snapshot's pin is waiting: RV-295)
-		if (want && car->_xyLock && car->_xyLockMoved && !car->_xyLockPending)
+		// (placed since the last tick: taken again where it is now, over a lock or a snapshot's pin: RV-295, RV-303)
+		if (want && car->_xyLockMoved) {
 			_RemoveXYLock(car);
+			car->_xyLockPending = false;
+		}
 		car->_xyLockMoved = false;
 		if (want && !car->_xyLock) {
 			btTransform frameA;

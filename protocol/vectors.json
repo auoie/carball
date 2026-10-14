@@ -1,11 +1,11 @@
 {
-  "protocolVersion": 14,
+  "protocolVersion": 15,
   "vectors": [
     {
       "channel": "control",
       "message": {
         "type": "hello",
-        "version": 14,
+        "version": 15,
         "team": 0,
         "body": 0,
         "dodgeDeadzone": 0.8,
@@ -17,7 +17,7 @@
         "quickChat": "team",
         "blockNonTactical": true
       },
-      "hex": "2400010e000000cdcc4c3f0000803f0000a03f01efbeadde0b4d65726375727920e29aa10101"
+      "hex": "2400010f000000cdcc4c3f0000803f0000a03f01efbeadde0b4d65726375727920e29aa10101"
     },
     {
       "channel": "control",
@@ -88,7 +88,7 @@
       "channel": "control",
       "message": {
         "type": "welcome",
-        "version": 14,
+        "version": 15,
         "carId": 3,
         "tickRate": 120,
         "frame": 0,
@@ -101,7 +101,7 @@
           3
         ]
       },
-      "hex": "1900810e000300000078000000000102cdab341203000000010203"
+      "hex": "1900810f000300000078000000000102cdab341203000000010203"
     },
     {
       "channel": "control",

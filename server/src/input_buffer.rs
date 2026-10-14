@@ -62,10 +62,25 @@ impl JitterBuffer {
     }
 }
 
+/// What the buffer did, counted (the network tests' measures: notes/netcode-live.md §13)
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Stats {
+    /// Ticks that consumed two frames (over the jitter target)
     pub over_buffer_frames: u32,
+    /// Ticks with no frame to consume
     pub under_buffer_frames: u32,
+    /// ... of those, the last input repeated / zeroed (no packet for a second)
+    pub repeated: u32,
+    pub zeroed: u32,
+    /// Ticks the refill skipped (odd ticks while filling)
+    pub fill_skips: u32,
+    /// Frames dropped: over the half second kept, at or before the last consumed, already buffered
+    pub trimmed: u32,
+    pub late_dropped: u32,
+    pub duplicates: u32,
+    /// Frames consumed, and frames passed over for good (a gap between two consumed: never received in time)
+    pub consumed: u32,
+    pub never_consumed: u32,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -106,6 +121,16 @@ impl InputBuffer {
         self.frames.is_empty()
     }
 
+    /// The last frame consumed (0: none yet)
+    pub fn last_consumed(&self) -> u32 {
+        self.last_consumed_frame
+    }
+
+    /// Refilling after running dry (frames consumed only on even ticks until the buffer reaches its target)
+    pub fn filling(&self) -> bool {
+        self.filling
+    }
+
     /// A packet of consecutive frames starting at `first_frame` (`ReceiveClientPacket`).
     /// Returns whether it was the newest packet so far (its timestamp is then the one to echo).
     pub fn receive(&mut self, timestamp: u32, first_frame: u32, frames: &[InputFrame], now: f64) -> bool {
@@ -124,21 +149,27 @@ impl InputBuffer {
             let number = first_frame.wrapping_add(i as u32);
             self.last_received_frame = self.last_received_frame.max(number);
             if self.last_processed_frame.is_some() && number <= self.last_consumed_frame {
+                self.stats.late_dropped += 1;
                 continue;
             }
             match self.frames.binary_search_by_key(&number, |(n, _)| *n) {
-                Ok(_) => {}
+                Ok(_) => self.stats.duplicates += 1,
                 Err(at) => self.frames.insert(at, (number, *frame)),
             }
         }
         while self.frames.len() > MAX_BUFFERED_FRAMES {
             self.frames.pop_front();
+            self.stats.trimmed += 1;
         }
         newest
     }
 
     fn consume_one(&mut self) {
         if let Some((number, frame)) = self.frames.pop_front() {
+            if self.stats.consumed > 0 && number > self.last_consumed_frame.wrapping_add(1) {
+                self.stats.never_consumed += number - self.last_consumed_frame - 1;
+            }
+            self.stats.consumed += 1;
             self.controls = frame.controls();
             self.last_processed_frame = Some(number);
             self.last_consumed_frame = number;
@@ -168,6 +199,9 @@ impl InputBuffer {
         if self.frames.is_empty() {
             if now - self.last_packet_time > INPUT_TIMEOUT {
                 self.controls = Controls::default();
+                self.stats.zeroed += 1;
+            } else {
+                self.stats.repeated += 1;
             }
             self.filling = true;
             self.skip_one();
@@ -178,6 +212,7 @@ impl InputBuffer {
                 first = Some(self.controls.jump != 0);
             } else {
                 self.skip_one();
+                self.stats.fill_skips += 1;
             }
             if (self.jitter.buffer_size as usize) < self.frames.len() {
                 self.consume_one();
