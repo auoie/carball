@@ -105,6 +105,9 @@ pub struct InputBuffer {
     pub repress_jump: bool,
     /// The jump the car was given last tick (a tap's press though its frame released it: RV-216)
     given_jump: bool,
+    /// This tick's jump press came in the first of two frames consumed together: its axes (the dodge's forward input,
+    /// yaw, roll), the dodge's direction in the game, where the car drives with the second's (G10)
+    pub press_axes: Option<(f32, f32, f32)>,
     pub stats: Stats,
 }
 
@@ -189,12 +192,14 @@ impl InputBuffer {
     /// one's jump edges still count though its axes, boost and handbrake give way to the second's (NET-2): a press in the
     /// first released in the second still jumps this tick (released the next), and a release in the first pressed again
     /// in the second is a fresh press (`repress_jump`). The edges are the car's: after a tap's jump, its release comes
-    /// first the next tick, so a press then is fresh too, a held press as well as another tap (RV-216). (The first
-    /// frame's axes at a press, the dodge's direction in the game, are the second's here.)
+    /// first the next tick, so a press then is fresh too, a held press as well as another tap (RV-216). A press in the
+    /// first frame dodges by its axes (`press_axes`: the game's SetVehicleInput of the first frame starts the dodge, G10).
     pub fn tick(&mut self, now: f64, odd_tick: bool) -> Controls {
         self.repress_jump = false;
+        self.press_axes = None;
         let previous = self.controls.jump != 0; // (the last frame consumed)
         let mut first = None;
+        let mut first_controls = self.controls;
         let mut second = false;
         if self.frames.is_empty() {
             if now - self.last_packet_time > INPUT_TIMEOUT {
@@ -210,6 +215,7 @@ impl InputBuffer {
             if !self.filling || !odd_tick {
                 self.consume_one();
                 first = Some(self.controls.jump != 0);
+                first_controls = self.controls;
             } else {
                 self.skip_one();
                 self.stats.fill_skips = self.stats.fill_skips.saturating_add(1);
@@ -230,6 +236,9 @@ impl InputBuffer {
         };
         self.repress_jump = jump && released && self.given_jump;
         self.given_jump = jump;
+        if second && first == Some(true) && !previous {
+            self.press_axes = Some((first_controls.dodge_forward, first_controls.yaw, first_controls.roll));
+        }
         Controls { jump: u8::from(jump), ..self.controls }
     }
 }
@@ -240,6 +249,25 @@ mod tests {
 
     fn frame(throttle: i8) -> InputFrame {
         InputFrame { throttle, ..InputFrame::default() }
+    }
+
+    #[test]
+    fn a_press_in_the_first_of_two_frames_dodges_by_its_axes() {
+        // (G10: the first frame pressed jump with a forward dodge, the second holds it pushing sideways; the car drives
+        // with the second, its dodge goes forward)
+        let mut b = InputBuffer::default();
+        let a = InputFrame { dodge_forward: 127, pitch: -127, bits: crate::protocol::BIT_JUMP, ..InputFrame::default() };
+        let held = InputFrame { yaw: 127, bits: crate::protocol::BIT_JUMP, ..InputFrame::default() };
+        let mut frames = vec![a, held];
+        frames.extend(vec![InputFrame::default(); 7]);
+        b.receive(1, 1, &frames, 0.0);
+        let controls = b.tick(0.0, false);
+        assert_eq!(b.stats.over_buffer_frames, 1, "two frames consumed");
+        assert_eq!(controls.yaw, 1.0, "the second's axes drive");
+        assert_eq!(b.press_axes, Some((1.0, 0.0, 0.0)), "the first's dodge");
+        // Not without a press in the first frame
+        b.tick(0.0, false);
+        assert_eq!(b.press_axes, None);
     }
 
     #[test]

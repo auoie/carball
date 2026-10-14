@@ -37,8 +37,8 @@ export interface SessionLink {
   nowMs(): number;
 }
 
-/** The network tests' measures (§13 T3): each correction's replay depth and how far each body's state moved (the cars
- *  the server's state held; the ball in every correction) */
+/** The network tests' measures (§13 T3): the frames replayed in each rendered frame and how far each body's state moved
+ *  (the cars the server's states held; the ball at every replay) */
 export interface SessionMetrics {
   readonly depths: number[];
   readonly localErrors: number[];
@@ -60,8 +60,10 @@ export class NetSession {
   readonly ballError = new SyncError();
   /** The ball's spawn counter last tick (a reset places it: not interpolated) */
   ballSpawns: number;
-  /** The highest frame the server has acknowledged */
+  /** The server's acknowledgement in its newest update (by its tick): after this client stalled it can be ahead of this
+   *  client's frames (the server moved its count on), then come back to them as it consumes them (G7) */
   ackFrame = 0;
+  #ackTick = -1;
   /** The round trip, smoothed (ms) */
   ping: number | null = null;
   bufferText = "";
@@ -69,6 +71,8 @@ export class NetSession {
   disconnected = false;
   /** Keep the measures (the tests) */
   measure = false;
+  /** Replay after each update, as before G3 (the network tests' comparison) */
+  replayEachUpdate = false;
   readonly metrics: SessionMetrics = { depths: [], localErrors: [], remoteErrors: [], ballErrors: [], applied: [] };
   readonly #world: World;
   readonly #localCar: number;
@@ -100,17 +104,30 @@ export class NetSession {
     if (this.#received.length > MAX_QUEUED_UPDATES) this.#received.splice(0, this.#received.length - MAX_QUEUED_UPDATES);
   }
 
-  /** Each frame: the updates received since the last */
+  /** Each frame: the updates received since the last, staged, then one replay and one smoothing for all (G3: a burst
+   *  of updates costs one resim, not one each) */
   applyUpdates(): void {
-    for (const part of this.#received.splice(0)) {
-      for (const update of this.#updates.add(part)) this.#applyUpdate(update);
+    const updates: CompleteUpdate[] = [];
+    for (const part of this.#received.splice(0)) updates.push(...this.#updates.add(part));
+    updates.push(...this.#updates.flush()); // (a part was lost: the others still apply)
+    if (updates.length === 0) return;
+    const pre = this.#capture();
+    let depth = 0;
+    for (const update of updates) {
+      this.#stageUpdate(update);
+      if (this.replayEachUpdate) depth += this.predictor.resimulate();
     }
-    for (const update of this.#updates.flush()) this.#applyUpdate(update); // (a part was lost: the others still apply)
+    depth += this.predictor.resimulate();
+    if (this.measure) this.metrics.depths.push(depth);
+    this.#smooth(pre);
   }
 
-  #applyUpdate(update: CompleteUpdate): void {
+  #stageUpdate(update: CompleteUpdate): void {
     const u = update.update;
-    this.ackFrame = Math.max(this.ackFrame, u.ackFrame);
+    if (u.serverTick > this.#ackTick) {
+      this.ackFrame = u.ackFrame;
+      this.#ackTick = u.serverTick;
+    }
     this.bufferText = `buffer ${String(u.bufferSize)}/${String(u.bufferTarget)}`;
     if (u.ackFrame > 0) {
       this.#tickOffsets.push({ serverTick: u.serverTick, offset: u.serverTick - u.ackFrame });
@@ -121,7 +138,7 @@ export class NetSession {
       if (rtt >= 0 && rtt < 10_000) this.ping = this.ping === null ? rtt : this.ping + (rtt - this.ping) * 0.1;
     }
     if (this.measure) this.metrics.applied.push(this.#link.nowMs());
-    this.correct(u.ackFrame, update.states);
+    this.predictor.stage(u.ackFrame, update.states);
   }
 
   /** The client frame a server tick corresponds to (from the acknowledgements' offsets) */
@@ -217,11 +234,13 @@ export class NetSession {
     }
   }
 
-  /** The frames the server has not acknowledged yet, newest 10 at most */
+  /** The frames the server has not acknowledged yet, newest 10 at most (an acknowledgement past this client's frames, the
+   *  server's count moved on while it stalled, acknowledges none of them: the newest 10) */
   sendInputs(): void {
     if (this.disconnected) return;
     const last = this.predictor.frame;
-    let first = Math.max(this.ackFrame + 1, last - MAX_INPUT_FRAMES + 1);
+    const acked = this.ackFrame <= last ? this.ackFrame : 0;
+    let first = Math.max(acked + 1, last - MAX_INPUT_FRAMES + 1);
     while (first <= last && !this.predictor.inputAt(first)) first++; // (history before a world reload is gone)
     const frames: InputFrame[] = [];
     for (let f = first; f <= last; f++) frames.push(this.predictor.inputAt(f) ?? NO_INPUT);

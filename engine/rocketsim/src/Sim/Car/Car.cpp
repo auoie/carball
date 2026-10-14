@@ -249,8 +249,10 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
 		}
 	}
 
-	if (_internalState.isDemoed)
+	if (_internalState.isDemoed) {
+		_pressAxes.valid = false; // RL PATCH (G10)
 		return; // No other updates need to occur
+	}
 
 	bool jumpPressed = controls.jump && !_internalState.lastControls.jump;
 
@@ -357,6 +359,7 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
 	_UpdateWheels(tickTime, mutatorConfig, numWheelsInContact, forwardSpeed_UU);
 
 	_bulletVehicle.updateVehicleSecond(tickTime);
+	_pressAxes.valid = false; // RL PATCH (G10: this tick's alone)
 }
 
 void Car::_PostTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig& mutatorConfig) {
@@ -1015,7 +1018,8 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
 		}
 
 		if (jumpPressed && _internalState.airTimeSinceJump < DOUBLEJUMP_MAX_DELAY) {
-			float inputMagnitude = abs(controls.yaw) + abs(_DodgeForward()) + abs(controls.roll); // (RL PATCH C-2)
+			// (RL PATCH: the press's axes, G10)
+			float inputMagnitude = abs(_PressYaw()) + abs(_PressForward()) + abs(_PressRoll()); // (RL PATCH C-2)
 			bool isFlipInput = inputMagnitude >= config.dodgeDeadzone;
 
 			bool canUse;
@@ -1045,7 +1049,7 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
 						// normalised, then each component of 0.1 or less zeroed. RocketSim zeroed the direction when both
 						// inputs were under 0.1 before normalising, so yaw 0.95 + roll -1 (side -0.05) had no impulse; the
 						// game's is a full side dodge. Live (`ga_jump`): 500 uu/s off
-						btVector3 dodgeDir = btVector3(_DodgeForward(), controls.yaw + controls.roll, 0);
+						btVector3 dodgeDir = btVector3(_PressForward(), _PressYaw() + _PressRoll(), 0);
 						float dodgeLengthSq = dodgeDir.length2();
 						dodgeDir = (dodgeLengthSq >= 1e-8f) ? dodgeDir / sqrtf(dodgeLengthSq) : btVector3(0, 0, 0);
 						for (int k = 0; k < 2; k++)
@@ -1056,7 +1060,7 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
 							// RL PATCH: CarComponent_Dodge_TA.SetDodgeSettings:
 							// DodgeDirection = Normal(-pitch, yaw + roll) (no deadzone),
 							// DodgeTorque = Round(224 * dir.X) pitch, Round(260 * -dir.Y) roll
-							Vec torqueDir = Vec(_DodgeForward(), controls.yaw + controls.roll, 0);
+							Vec torqueDir = Vec(_PressForward(), _PressYaw() + _PressRoll(), 0);
 							float lengthSq = torqueDir.LengthSq();
 							torqueDir = (lengthSq >= 1e-8f) ? torqueDir / sqrtf(lengthSq) : Vec(0, 0, 0);
 

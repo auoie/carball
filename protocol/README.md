@@ -76,7 +76,9 @@ rounded to it at their last tick; raw floats for a body placed since its tick), 
 controls (bytes), the dodge's torque (bytes, while dodging), spawn and flip-reset counters (low bytes), the timers the
 physics reads (only while active) and its XY lock (held, and its pin); the client lays it over its own state at that
 frame (a lossy value it holds that sends the same is kept), so a right prediction is left exactly as it was.
-`receivedFrame` is the highest input frame received, so the client stops resending frames up to it.
+`receivedFrame` is the highest input frame received (informational: the client resends its frames after `ackFrame`, the
+newest 10, until the server consumes them; after a stall the server's `ackFrame` can run past the client's frames,
+then come back to them as it consumes them: notes/netcode-live.md §6, §7).
 `echoTimestamp` is the newest `Inputs.timestamp` received and `echoDelay` how long the server held it, so
 ping = now − echoTimestamp − echoDelay. A large update is split into `parts`, each a complete network state for
 some of the bodies; parts apply independently. Every network state also carries the kickoff countdown (ticks left;

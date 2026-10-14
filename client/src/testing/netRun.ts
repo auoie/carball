@@ -45,10 +45,13 @@ export interface NetRunResult {
   readonly local: Summary;
   readonly remote: Summary;
   readonly ball: Summary;
+  /** Replays (one a rendered frame at most: G3) */
   readonly corrections: number;
+  /** Updates applied (each staged into the history; one replay takes every update of its frame) */
+  readonly updates: number;
   /** Corrections that changed the local car's present state */
   readonly localMispredictions: number;
-  /** Frames each correction replayed */
+  /** Frames replayed in each rendered frame that had updates */
   readonly depth: Summary;
   /** The client's smoothed round trip at the end (ms) */
   readonly ping: number | null;
@@ -56,6 +59,13 @@ export interface NetRunResult {
   readonly buffer: { readonly target: number; readonly under: number; readonly over: number; readonly repeated: number; readonly zeroed: number; readonly neverConsumed: number; readonly ticks: number };
   /** Downstream, what the client received a second (KB, the update datagrams) */
   readonly downKBps: number;
+  /** The server's input buffer target each second (from the start) and the resets it got */
+  readonly bufferTargets: readonly number[];
+  readonly resets: number;
+  /** States applied at the present, not replayed (G5, G7) */
+  readonly direct: number;
+  /** Local mispredictions in the run's last 5 s */
+  readonly lateMispredictions: number;
   /** Every correction's size, per class (uu) */
   readonly errors: { readonly local: readonly number[]; readonly remote: readonly number[]; readonly ball: readonly number[] };
   /** How far corrections moved each class a second, all summed (uu/s; the per-correction sizes depend on how often a
@@ -79,6 +89,10 @@ export interface NetRunOptions {
   readonly drive?: Driver;
   /** How the client predicts the other cars (default: the game's) */
   readonly model?: RemoteModel;
+  /** Replay after each update, as before G3 */
+  readonly replayEachUpdate?: boolean;
+  /** Spans the client draws no frame (a hidden tab, a stall: its updates queue; the next frame is a hitch) */
+  readonly clientStalls?: readonly { readonly atS: number; readonly seconds: number }[];
 }
 
 /** The default drivers: the client chases the ball as it predicts it; the others chase it with a weave (a bot) */
@@ -185,6 +199,11 @@ export function netRun(engine: Engine, options: NetRunOptions): NetRunResult {
   const downPath = new NetSim(options.down, options.seed + 1);
   const toServer: InFlight<{ timestamp: number; first: number; frames: InputFrame[] }>[] = [];
   const toClient: InFlight<Update>[] = [];
+  const resets: number[] = []; // (the reset requests on their way up)
+  let resetsDone = 0;
+  const bufferTargets: number[] = [];
+  let lateFrom: number | null = null;
+  let lastFrameAt = 0;
   const session = new NetSession(
     client,
     local,
@@ -194,11 +213,14 @@ export function netRun(engine: Engine, options: NetRunOptions): NetRunResult {
       sendInputs: (timestamp, first, frames) => {
         for (const at of upPath.send(clock)) toServer.push({ at, value: { timestamp, first, frames } });
       },
-      resetInputBuffer: () => undefined,
+      resetInputBuffer: () => {
+        for (const at of upPath.send(clock)) resets.push(at);
+      },
       nowMs: () => clock * 1000,
     },
     options.model ?? "game",
   );
+  session.replayEachUpdate = options.replayEachUpdate ?? false;
   const consume = new ServerConsume();
   const schedule = new Schedule(options.seed);
   let echo: { timestamp: number; at: number } | null = null;
@@ -208,6 +230,7 @@ export function netRun(engine: Engine, options: NetRunOptions): NetRunResult {
   let measuredFrom: { readonly under: number; readonly over: number; readonly repeated: number; readonly zeroed: number; readonly neverConsumed: number } | null = null;
   let measuredTicks = 0;
   let mispredictionsFrom = 0;
+  let correctionsFrom = 0;
 
   const ticks = Math.round(options.seconds * 120);
   for (let n = 1; n <= ticks; n++) {
@@ -216,19 +239,31 @@ export function netRun(engine: Engine, options: NetRunOptions): NetRunResult {
     if (measuring && !measuredFrom) {
       measuredFrom = { ...consume.stats };
       mispredictionsFrom = session.predictor.stats.localMispredictions;
+      correctionsFrom = session.predictor.stats.corrections;
       session.measure = true;
     }
 
-    // The client: a rendered frame every other tick (60 fps): the updates in, two frames ahead, the inputs out
-    if (n % 2 === 0) {
+    // The client: a rendered frame every other tick (60 fps): the updates in, two frames ahead, the inputs out (none
+    // while it stalls: its updates queue)
+    const stalled = (options.clientStalls ?? []).some((st) => clock >= st.atS && clock < st.atS + st.seconds);
+    if (stalled) for (const u of deliver(toClient, clock)) session.receive(u);
+    if (n % 2 === 0 && !stalled) {
       for (const u of deliver(toClient, clock)) session.receive(u);
       session.applyUpdates();
-      session.watchHitches(2 * TICK);
+      session.watchHitches(clock - lastFrameAt);
+      lastFrameAt = clock;
       for (let k = 0; k < 2; k++) session.predictor.advance(drive(0, session.predictor.frame + 1, client, local));
       session.sendInputs();
     }
 
     // The server's tick: the inputs that arrived, one frame consumed, the bot, the physics, an update every other tick
+    for (const at of resets.filter((r) => r <= clock)) {
+      resets.splice(resets.indexOf(at), 1);
+      consume.jitter.reset();
+      resetsDone++;
+    }
+    if (n % 120 === 0) bufferTargets.push(consume.jitter.bufferSize);
+    if (lateFrom === null && clock >= options.seconds - 5) lateFrom = session.predictor.stats.localMispredictions;
     for (const p of deliver(toServer, clock)) {
       if (consume.receive(p.timestamp, p.first, p.frames, clock)) echo = { timestamp: p.timestamp, at: clock };
     }
@@ -276,6 +311,7 @@ export function netRun(engine: Engine, options: NetRunOptions): NetRunResult {
     remote: summary(session.metrics.remoteErrors),
     ball: summary(session.metrics.ballErrors),
     corrections: session.metrics.depths.length,
+    updates: session.predictor.stats.corrections - correctionsFrom,
     localMispredictions: session.predictor.stats.localMispredictions - mispredictionsFrom,
     depth: summary(session.metrics.depths),
     ping: session.ping,
@@ -290,6 +326,10 @@ export function netRun(engine: Engine, options: NetRunOptions): NetRunResult {
     },
     downKBps: downBytes / Math.max(1e-9, options.seconds - warmUp) / 1000,
     errors: { local: session.metrics.localErrors, remote: session.metrics.remoteErrors, ball: session.metrics.ballErrors },
+    bufferTargets,
+    resets: resetsDone,
+    direct: session.predictor.stats.direct,
+    lateMispredictions: session.predictor.stats.localMispredictions - (lateFrom ?? 0),
     movedPerSecond: {
       local: sum(session.metrics.localErrors) / measuredSeconds,
       remote: sum(session.metrics.remoteErrors) / measuredSeconds,

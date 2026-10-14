@@ -6107,7 +6107,7 @@ index c87d449..d9d1ad0 100644
  	if (colliding)
  		_internalState.curLockedCar = car;
 diff --git upstream/src/Sim/Car/Car.cpp engine/rocketsim/src/Sim/Car/Car.cpp
-index 417ad9d..a12a1e7 100644
+index 417ad9d..904ef29 100644
 --- upstream/src/Sim/Car/Car.cpp
 +++ engine/rocketsim/src/Sim/Car/Car.cpp
 @@ -1,11 +1,39 @@
@@ -6346,14 +6346,21 @@ index 417ad9d..a12a1e7 100644
  			// Disable rigidbody simulation
  			_rigidBody.m_activationState1 = DISABLE_SIMULATION;
  			_rigidBody.m_collisionFlags |= btCollisionObject::CF_NO_CONTACT_RESPONSE;
-@@ -99,48 +252,111 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
- 	if (_internalState.isDemoed)
+@@ -96,51 +249,117 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
+ 		}
+ 	}
+ 
+-	if (_internalState.isDemoed)
++	if (_internalState.isDemoed) {
++		_pressAxes.valid = false; // RL PATCH (G10)
  		return; // No other updates need to occur
++	}
  
 -	// Do first part of the btVehicleRL update (update wheel transforms, do traces, calculate friction impulses) 
 -	_bulletVehicle.updateVehicleFirst(tickTime);
 +	bool jumpPressed = controls.jump && !_internalState.lastControls.jump;
-+
+ 
+-	btMatrix3x3 basis = _rigidBody.getWorldTransform().m_basis;
 +	// RL PATCH: the game's Car_TA.SetVehicleInput sets the input throttle to 1 while the car is on the ground (3+ wheels
 +	// after the previous tick), boost is held and there is boost left (before this tick's use), so everything reading
 +	// the throttle sees 1: VehicleSim's drive, the wheels' wall grip, the sticky force's wall share, auto-roll (static
@@ -6371,14 +6378,15 @@ index 417ad9d..a12a1e7 100644
 +		numWheelsInContact += _internalState.wheelsWithContact[i];
 +	float forwardSpeed_UU = _bulletVehicle.getForwardSpeed() * BT_TO_UU;
  
--	btMatrix3x3 basis = _rigidBody.getWorldTransform().m_basis;
+-	bool jumpPressed = controls.jump && !_internalState.lastControls.jump;
 +	// RL PATCH: the components (Jump, FlipCar, DoubleJump, Dodge; AirControl below), none for another player's car on a
 +	// client (_componentsOff)
 +	if (!_componentsOff) {
 +		_UpdateJump(tickTime, mutatorConfig, jumpPressed);
 +		_UpdateAutoFlip(tickTime, mutatorConfig, jumpPressed);
  
--	bool jumpPressed = controls.jump && !_internalState.lastControls.jump;
+-	// Update wheelsWithContact
+-	int numWheelsInContact = 0;
 +		_UpdateDoubleJumpOrFlip(tickTime, mutatorConfig, jumpPressed, forwardSpeed_UU);
 +
 +		// RL PATCH: air control and the dodge torque come after this tick's jump, flip and auto-flip starts (the game
@@ -6392,9 +6400,7 @@ index 417ad9d..a12a1e7 100644
 +		_UpdateFlipTime(tickTime);
 +		_UpdateAutoFlipTorque(tickTime);
 +	}
- 
--	// Update wheelsWithContact
--	int numWheelsInContact = 0;
++
 +	// RL PATCH: auto-roll as the game gates it (Car_TA pre-physics FUN_140f1c600): throttle held, no dodge active, fewer
 +	// than all wheels on world geometry (wheels on the ball or a car don't count), and at least one, or else the body
 +	// touching the world. RocketSim counted any wheel contact, rolled during dodges, and rolled with all four wheels
@@ -6484,10 +6490,11 @@ index 417ad9d..a12a1e7 100644
  	_bulletVehicle.updateVehicleSecond(tickTime);
 -
 -	_UpdateBoost(tickTime, mutatorConfig, forwardSpeed_UU);
++	_pressAxes.valid = false; // RL PATCH (G10: this tick's alone)
  }
  
  void Car::_PostTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig& mutatorConfig) {
-@@ -150,27 +366,27 @@ void Car::_PostTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig
+@@ -150,27 +369,27 @@ void Car::_PostTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig
  
  	_internalState.rotMat = _rigidBody.getWorldTransform().m_basis;
  
@@ -6529,7 +6536,7 @@ index 417ad9d..a12a1e7 100644
  
  	_internalState.lastControls = controls;
  }
-@@ -187,32 +403,55 @@ void Car::_FinishPhysicsTick(const MutatorConfig& mutatorConfig) {
+@@ -187,32 +406,55 @@ void Car::_FinishPhysicsTick(const MutatorConfig& mutatorConfig) {
  		_velocityImpulseCache = { 0,0,0 };
  	}
  
@@ -6600,7 +6607,7 @@ index 417ad9d..a12a1e7 100644
  	_compoundShape.addChildShape(hitboxOffsetTransform, &_childHitboxShape);
  
  	btVector3 localInertia(0, 0, 0);
-@@ -228,6 +467,7 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
+@@ -228,6 +470,7 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
  	_rigidBody = btRigidBody(rbInfo);
  	_rigidBody.setUserIndex(BT_USERINFO_TYPE_CAR);
  	_rigidBody.setUserPointer(this);
@@ -6608,7 +6615,7 @@ index 417ad9d..a12a1e7 100644
  
  	_rigidBody.m_collisionFlags |= btCollisionObject::CF_CUSTOM_MATERIAL_CALLBACK;
  
-@@ -279,6 +519,10 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
+@@ -279,6 +522,10 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
  
  				suspensionRestLength -= RLConst::BTVehicle::MAX_SUSPENSION_TRAVEL;
  
@@ -6619,7 +6626,7 @@ index 417ad9d..a12a1e7 100644
  				_bulletVehicle.addWheel(
  					wheelRayStartOffset * UU_TO_BT,
  					wheelDirectionCS, wheelAxleCS,
-@@ -295,7 +539,10 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
+@@ -295,7 +542,10 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
  					wheelInfo.m_maxSuspensionTravelCm = (MAX_SUSPENSION_TRAVEL * UU_TO_BT) * 100; // Same for all cars (hopefully)
  					wheelInfo.m_maxSuspensionForce = FLT_MAX; // Don't think there's a limit
  					wheelInfo.m_bIsFrontWheel = front;
@@ -6631,7 +6638,7 @@ index 417ad9d..a12a1e7 100644
  				}
  			}
  		}
-@@ -324,6 +571,13 @@ void CarState::Serialize(DataStreamOut& out) const {
+@@ -324,6 +574,13 @@ void CarState::Serialize(DataStreamOut& out) const {
  	out.WriteMultiple(
  		CARSTATE_SERIALIZATION_FIELDS
  	);
@@ -6645,7 +6652,7 @@ index 417ad9d..a12a1e7 100644
  }
  
  void CarState::Deserialize(DataStreamIn& in) {
-@@ -333,20 +587,30 @@ void CarState::Deserialize(DataStreamIn& in) {
+@@ -333,20 +590,30 @@ void CarState::Deserialize(DataStreamIn& in) {
  	in.ReadMultiple(
  		CARSTATE_SERIALIZATION_FIELDS
  	);
@@ -6680,7 +6687,7 @@ index 417ad9d..a12a1e7 100644
  }
  
  void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int numWheelsInContact, float forwardSpeed_UU) {
-@@ -354,10 +618,6 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
+@@ -354,10 +621,6 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
  
  	float absForwardSpeed_UU = abs(forwardSpeed_UU);
  
@@ -6691,7 +6698,7 @@ index 417ad9d..a12a1e7 100644
  	{ // Increase/decrease handbrake value from input
  		if (controls.handbrake) {
  			_internalState.handbrakeVal += POWERSLIDE_RISE_RATE * tickTime;
-@@ -367,12 +627,9 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
+@@ -367,12 +630,9 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
  		_internalState.handbrakeVal = RS_CLAMP(_internalState.handbrakeVal, 0, 1);
  	}
  
@@ -6705,7 +6712,7 @@ index 417ad9d..a12a1e7 100644
  	{ // Update throttle/brake forces
  		float driveSpeedScale = DRIVE_SPEED_TORQUE_FACTOR_CURVE.GetOutput(absForwardSpeed_UU);
  
-@@ -383,7 +640,7 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
+@@ -383,7 +643,7 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
  		} else {
  			float absThrottle = abs(realThrottle);
  
@@ -6714,7 +6721,7 @@ index 417ad9d..a12a1e7 100644
  				if (absForwardSpeed_UU > STOPPING_FORWARD_VEL && RS_SGN(realThrottle) != RS_SGN(forwardSpeed_UU)) {
  					// Full brake is applied if we are trying to drive in the opposite direction
  					realBrake = 1;
-@@ -414,8 +671,8 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
+@@ -414,8 +674,8 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
  		}
  	}
  
@@ -6725,7 +6732,7 @@ index 417ad9d..a12a1e7 100644
  
  		if (_internalState.handbrakeVal) {
  			steerAngle +=
-@@ -423,11 +680,29 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
+@@ -423,11 +683,29 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
  				* _internalState.handbrakeVal;
  		}
  
@@ -6756,7 +6763,7 @@ index 417ad9d..a12a1e7 100644
  	{ // Update friction
  		for (int i = 0; i < _bulletVehicle.m_wheelInfo.size(); i++) {
  			auto& wheel = _bulletVehicle.m_wheelInfo[i];
-@@ -465,7 +740,10 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
+@@ -465,7 +743,10 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
  					longFriction = 1; // If we aren't powersliding, it's not scaled down
  				}
  
@@ -6768,7 +6775,7 @@ index 417ad9d..a12a1e7 100644
  
  				if (isContactSticky) {
  					// Keep current friction values
-@@ -481,12 +759,24 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
+@@ -481,12 +762,24 @@ void Car::_UpdateWheels(float tickTime, const MutatorConfig& mutatorConfig, int
  			}
  		}
  	}
@@ -6794,7 +6801,7 @@ index 417ad9d..a12a1e7 100644
  
  		float stickyForceScale = config.threeWheels ? 0 : 0.5f;
  		if (fullStick)
-@@ -528,8 +818,14 @@ void Car::_UpdateBoost(float tickTime, const MutatorConfig& mutatorConfig, float
+@@ -528,8 +821,14 @@ void Car::_UpdateBoost(float tickTime, const MutatorConfig& mutatorConfig, float
  	// Apply boosting force and consume boost
  	if (_internalState.isBoosting) {
  		_internalState.boost = RS_MAX(_internalState.boost - mutatorConfig.boostUsedPerSecond * tickTime, 0);
@@ -6810,7 +6817,7 @@ index 417ad9d..a12a1e7 100644
  			* GetForwardDir() * CAR_MASS_BT
  		);
  		_internalState.timeSinceBoosted = 0;
-@@ -547,28 +843,33 @@ void Car::_UpdateBoost(float tickTime, const MutatorConfig& mutatorConfig, float
+@@ -547,28 +846,33 @@ void Car::_UpdateBoost(float tickTime, const MutatorConfig& mutatorConfig, float
  
  void Car::_UpdateJump(float tickTime, const MutatorConfig& mutatorConfig, bool jumpPressed) {
  	using namespace RLConst;
@@ -6856,7 +6863,7 @@ index 417ad9d..a12a1e7 100644
  		_internalState.jumpTime = 0;
  		btVector3 jumpStartForce = GetUpDir() * mutatorConfig.jumpImmediateForce * UU_TO_BT * CAR_MASS_BT;
  		_rigidBody.applyCentralImpulse(jumpStartForce);
-@@ -578,14 +879,10 @@ void Car::_UpdateJump(float tickTime, const MutatorConfig& mutatorConfig, bool j
+@@ -578,14 +882,10 @@ void Car::_UpdateJump(float tickTime, const MutatorConfig& mutatorConfig, bool j
  		_internalState.hasJumped = true;
  
  		// Apply extra long-jump force
@@ -6874,7 +6881,7 @@ index 417ad9d..a12a1e7 100644
  		_rigidBody.applyCentralForce(totalJumpForce * UU_TO_BT * CAR_MASS_BT);
  	}
  
-@@ -602,7 +899,11 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -602,7 +902,11 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  		dirYaw_up = GetUpDir(),
  		dirRoll_forward = -GetForwardDir();
  
@@ -6887,7 +6894,7 @@ index 417ad9d..a12a1e7 100644
  	if (_internalState.isFlipping)
  		_internalState.isFlipping = _internalState.hasFlipped && _internalState.flipTime < FLIP_TORQUE_TIME;
  
-@@ -613,15 +914,20 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -613,15 +917,20 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  		if (!_internalState.flipRelTorque.IsZero()) {
  			// Flip cancel check
  			float pitchScale = 1;
@@ -6913,7 +6920,7 @@ index 417ad9d..a12a1e7 100644
  				}
  			}
  
-@@ -629,22 +935,25 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -629,22 +938,25 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  
  			btVector3 dodgeTorque = relDodgeTorque * btVector3(FLIP_TORQUE_X, FLIP_TORQUE_Y, 0);
  			_rigidBody.applyTorque(_rigidBody.m_invInertiaTensorWorld.inverse() * _rigidBody.getWorldTransform().m_basis * dodgeTorque);
@@ -6946,7 +6953,7 @@ index 417ad9d..a12a1e7 100644
  
  			if (_internalState.isFlipping) {
  				pitchTorqueScale = 0;
-@@ -653,11 +962,13 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -653,11 +965,13 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  				if (_internalState.flipTime < FLIP_TORQUE_TIME + FLIP_PITCHLOCK_EXTRA_TIME)
  					pitchTorqueScale = 0;
  			}
@@ -6963,7 +6970,7 @@ index 417ad9d..a12a1e7 100644
  		} else {
  			torque = { 0, 0, 0 };
  		}
-@@ -666,8 +977,8 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -666,8 +980,8 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  
  		// TODO: Use actual dot product operator functions (?)
  		float
@@ -6974,7 +6981,7 @@ index 417ad9d..a12a1e7 100644
  			dampRoll = dirRoll_forward.dot(angVel) * CAR_AIR_CONTROL_DAMPING.z;
  
  		btVector3 damping =
-@@ -677,8 +988,7 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
+@@ -677,8 +991,7 @@ void Car::_UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, b
  		_rigidBody.applyTorque(_rigidBody.m_invInertiaTensorWorld.inverse() * (torque - damping) * CAR_TORQUE_SCALE);
  	}
  
@@ -6984,7 +6991,7 @@ index 417ad9d..a12a1e7 100644
  }
  
  void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorConfig, bool jumpPressed, float forwardSpeed_UU) {
-@@ -687,6 +997,9 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
+@@ -687,6 +1000,9 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
  	float tickTimeScale = tickTime / (1 / 120.f);
  
  	if (_internalState.isOnGround) {
@@ -6994,16 +7001,17 @@ index 417ad9d..a12a1e7 100644
  		_internalState.hasDoubleJumped = false;
  		_internalState.hasFlipped = false;
  		_internalState.airTime = 0;
-@@ -702,7 +1015,7 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
+@@ -702,7 +1018,8 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
  		}
  
  		if (jumpPressed && _internalState.airTimeSinceJump < DOUBLEJUMP_MAX_DELAY) {
 -			float inputMagnitude = abs(controls.yaw) + abs(controls.pitch) + abs(controls.roll);
-+			float inputMagnitude = abs(controls.yaw) + abs(_DodgeForward()) + abs(controls.roll); // (RL PATCH C-2)
++			// (RL PATCH: the press's axes, G10)
++			float inputMagnitude = abs(_PressYaw()) + abs(_PressForward()) + abs(_PressRoll()); // (RL PATCH C-2)
  			bool isFlipInput = inputMagnitude >= config.dodgeDeadzone;
  
  			bool canUse;
-@@ -728,16 +1041,33 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
+@@ -728,16 +1045,33 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
  					{
  						float forwardSpeedRatio = abs(forwardSpeed_UU) / CAR_MAX_SPEED;
  
@@ -7017,7 +7025,7 @@ index 417ad9d..a12a1e7 100644
 +						// normalised, then each component of 0.1 or less zeroed. RocketSim zeroed the direction when both
 +						// inputs were under 0.1 before normalising, so yaw 0.95 + roll -1 (side -0.05) had no impulse; the
 +						// game's is a full side dodge. Live (`ga_jump`): 500 uu/s off
-+						btVector3 dodgeDir = btVector3(_DodgeForward(), controls.yaw + controls.roll, 0);
++						btVector3 dodgeDir = btVector3(_PressForward(), _PressYaw() + _PressRoll(), 0);
 +						float dodgeLengthSq = dodgeDir.length2();
 +						dodgeDir = (dodgeLengthSq >= 1e-8f) ? dodgeDir / sqrtf(dodgeLengthSq) : btVector3(0, 0, 0);
 +						for (int k = 0; k < 2; k++)
@@ -7028,7 +7036,7 @@ index 417ad9d..a12a1e7 100644
 +							// RL PATCH: CarComponent_Dodge_TA.SetDodgeSettings:
 +							// DodgeDirection = Normal(-pitch, yaw + roll) (no deadzone),
 +							// DodgeTorque = Round(224 * dir.X) pitch, Round(260 * -dir.Y) roll
-+							Vec torqueDir = Vec(_DodgeForward(), controls.yaw + controls.roll, 0);
++							Vec torqueDir = Vec(_PressForward(), _PressYaw() + _PressRoll(), 0);
 +							float lengthSq = torqueDir.LengthSq();
 +							torqueDir = (lengthSq >= 1e-8f) ? torqueDir / sqrtf(lengthSq) : Vec(0, 0, 0);
 +
@@ -7045,7 +7053,7 @@ index 417ad9d..a12a1e7 100644
  						if (abs(dodgeDir.x()) < 0.1f) dodgeDir.x() = 0;
  						if (abs(dodgeDir.y()) < 0.1f) dodgeDir.y() = 0;
  
-@@ -781,50 +1111,79 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
+@@ -781,50 +1115,79 @@ void Car::_UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorCo
  		}
  	}
  
@@ -7139,7 +7147,7 @@ index 417ad9d..a12a1e7 100644
  			_internalState.autoFlipTimer -= tickTime;
  		}
 diff --git upstream/src/Sim/Car/Car.h engine/rocketsim/src/Sim/Car/Car.h
-index 90bcaa8..b46d615 100644
+index 90bcaa8..8ee913a 100644
 --- upstream/src/Sim/Car/Car.h
 +++ engine/rocketsim/src/Sim/Car/Car.h
 @@ -1,9 +1,11 @@
@@ -7334,13 +7342,23 @@ index 90bcaa8..b46d615 100644
  	// Get the forward direction as a unit vector
  	Vec GetForwardDir() const {
  		return _internalState.rotMat.forward;
-@@ -181,10 +278,29 @@ public:
+@@ -181,10 +278,39 @@ public:
  		return _internalState.rotMat.up;
  	}
  
 -	void _PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig& mutatorConfig);
 +	// RL PATCH: the dodge's forward input (CarControls::dodgeForward, else -pitch)
 +	float _DodgeForward() const { return controls.hasDodgeForward ? controls.dodgeForward : -controls.pitch; }
++	// RL PATCH: the axes the jump press of this tick came with, when not the controls' (the server's double consume: the
++	// first frame's press, the second frame's controls; the game's dodge takes the press's DodgeForward and DodgeRight,
++	// G10); a dodge starting this tick reads them, the tick clears them
++	struct PressAxes {
++		bool valid = false;
++		float dodgeForward = 0, yaw = 0, roll = 0;
++	} _pressAxes;
++	float _PressForward() const { return _pressAxes.valid ? _pressAxes.dodgeForward : _DodgeForward(); }
++	float _PressYaw() const { return _pressAxes.valid ? _pressAxes.yaw : controls.yaw; }
++	float _PressRoll() const { return _pressAxes.valid ? _pressAxes.roll : controls.roll; }
 +
 +	// RL PATCH: respawnHeld: a demolished car stays demolished (after a goal, until the kickoff)
 +	void _PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig& mutatorConfig, bool respawnHeld = false);
@@ -7365,7 +7383,7 @@ index 90bcaa8..b46d615 100644
  	void _FinishPhysicsTick(const MutatorConfig& mutatorConfig);
  
  	void _BulletSetup(GameMode gameMode, class btDynamicsWorld* bulletWorld, const MutatorConfig& mutatorConfig);
-@@ -195,6 +311,9 @@ public:
+@@ -195,6 +321,9 @@ public:
  	void Serialize(DataStreamOut& out);
  	void _Deserialize(DataStreamIn& in);
  
@@ -7375,7 +7393,7 @@ index 90bcaa8..b46d615 100644
  	Car(const Car& other) = delete;
  	Car& operator=(const Car& other) = delete;
  
-@@ -206,7 +325,10 @@ private:
+@@ -206,7 +335,10 @@ private:
  	void _UpdateJump(float tickTime, const MutatorConfig& mutatorConfig, bool jumpPressed);
  	void _UpdateAirTorque(float tickTime, const MutatorConfig& mutatorConfig, bool doAirControl);
  	void _UpdateDoubleJumpOrFlip(float tickTime, const MutatorConfig& mutatorConfig, bool jumpPressed, float forwardSpeed_UU);

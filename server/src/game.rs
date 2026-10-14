@@ -13,6 +13,8 @@ use crate::protocol::{self, Control, Datagram, ForfeitVoteState, GameEvent, Inpu
 pub const TICK_RATE: u32 = 120;
 /// Updates go out every other tick (60 Hz: the acknowledgement, and the actors due: src/replication.rs)
 const UPDATE_EVERY_TICKS: u64 = 2;
+/// A client silent this long (s) gets no updates until it's heard again (the game's replication stop, stock UE3: G8)
+const SILENT_SECONDS: f64 = 1.5;
 /// Datagram budget for an update (QUIC datagrams are limited by the path MTU, ~1200 bytes)
 pub const MAX_DATAGRAM: usize = 1100;
 const UPDATE_HEADER: usize = 25;
@@ -261,6 +263,8 @@ struct Player {
     team: u8,
     input: InputBuffer,
     out: Sender<Outgoing>,
+    /// When the last input packet came (server time, s): a client silent this long gets no updates (G8)
+    last_heard: Option<f64>,
     /// Newest input packet timestamp and when it arrived (for the ping echo)
     echo: Option<(u32, f64)>,
     /// When its jitter buffer was last reset (s)
@@ -578,6 +582,7 @@ impl Game {
             stats: [0; STAT_COUNTERS],
             titles: [None, None],
             ping: 0,
+            last_heard: None,
         };
         let snapshot = self.arena.save_state();
         let welcome = Control::Welcome {
@@ -919,10 +924,11 @@ impl Game {
     }
 
     pub fn receive_inputs(&mut self, id: PlayerId, timestamp: u32, first_frame: u32, frames: &[InputFrame], now: f64) {
-        if let Some(p) = self.players.get_mut(&id)
-            && p.input.receive(timestamp, first_frame, frames, now)
-        {
-            p.echo = Some((timestamp, now));
+        if let Some(p) = self.players.get_mut(&id) {
+            p.last_heard = Some(now);
+            if p.input.receive(timestamp, first_frame, frames, now) {
+                p.echo = Some((timestamp, now));
+            }
         }
     }
 
@@ -1342,6 +1348,10 @@ impl Game {
             if p.input.repress_jump && !frozen {
                 self.arena.repress_jump(p.car_id);
             }
+            // (a press in the first of two frames: the dodge by its axes, G10)
+            if let (Some((forward, yaw, roll)), false) = (p.input.press_axes, frozen) {
+                self.arena.set_press_axes(p.car_id, forward, yaw, roll);
+            }
         }
         // (the stats count while the round is on: Active, and at 0:00 until the ball lands; after a goal the engine moves
         // them on itself, then only demolitions and fives count)
@@ -1511,6 +1521,10 @@ impl Game {
         let parts = self.update_parts();
         let server_tick = self.arena.tick_count() as u32;
         for p in self.players.values() {
+            // (a client silent for 1.5 s gets none until it's heard again: the game stops replicating to it, G8)
+            if p.last_heard.is_some_and(|heard| now - heard >= SILENT_SECONDS) {
+                continue;
+            }
             let (echo_timestamp, echo_delay) = match p.echo {
                 Some((timestamp, at)) => (timestamp, ((now - at) * 1000.0).clamp(0.0, f64::from(u16::MAX)) as u16),
                 None => (0, 0),
@@ -2807,6 +2821,36 @@ mod tests {
         assert_eq!(controls(&mut rx), [Control::Refused { reason: protocol::REFUSED_FULL }]);
         assert_eq!(game.player_count(), game.capacity());
         assert!(rx.try_recv().is_err(), "nothing more: the game let go of it");
+    }
+
+    #[test]
+    fn a_client_silent_for_1_5_s_gets_no_updates_until_it_is_heard_again() {
+        // (G8: the game stops replicating to a connection it hasn't heard from in 1.5 s)
+        init_engine();
+        let mut game = Game::new();
+        let (tx, mut rx) = channel(TEST_QUEUE);
+        game.join(1, REQUEST, tx);
+        let updates = |rx: &mut Receiver<Outgoing>| drain(rx).iter().filter(|m| matches!(m, Outgoing::Datagram(_))).count();
+        let mut frame = 1;
+        let mut run = |game: &mut Game, seconds: f64, send: bool| {
+            for _ in 0..(seconds * 120.0) as u64 {
+                let tick = game.tick_count();
+                let now = tick as f64 / 120.0;
+                if send && tick.is_multiple_of(2) {
+                    game.receive_inputs(1, (now * 1000.0) as u32, frame, &throttle_frames(2), now);
+                    frame += 2;
+                }
+                game.tick(now);
+            }
+        };
+        run(&mut game, 1.0, true);
+        assert!(updates(&mut rx) > 50);
+        run(&mut game, 1.4, false);
+        assert!(updates(&mut rx) > 70, "still sent within 1.5 s of the last input");
+        run(&mut game, 1.0, false);
+        assert!(updates(&mut rx) <= 6, "none after 1.5 s");
+        run(&mut game, 0.5, true);
+        assert!(updates(&mut rx) > 25, "again once heard");
     }
 
     #[test]

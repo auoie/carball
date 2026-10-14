@@ -85,6 +85,9 @@ typedef struct RLCarNetInfo {
 	uint8_t flipped;
 	uint8_t demoed;
 } RLCarNetInfo;
+/* The axes the car's jump press of the next tick came with (the dodge's direction), when its controls are another frame's
+ * (a double consume: the first frame's press, the second's controls; the game's dodge takes the press's, G10) */
+void rl_set_press_axes(RLArena* arena, uint32_t car_id, float dodge_forward, float yaw, float roll);
 /* 1 and the car's info, 0 if no such car */
 int rl_car_net_info(RLArena* arena, uint32_t car_id, RLCarNetInfo* out);
 /* The boost pads' active flags, bit i the arena's pad i (a pickup or a respawn changes them; at most 64 pads) */

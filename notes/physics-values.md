@@ -844,6 +844,12 @@ Sub-agent FP1; decompiles and probes local in `out/bsim/agents/FP1/` (decomp/r1.
   only because the upper car was created first and also has the lower ID. Fix: keep an action-order list in the Arena
   (append on body creation/respawn, swap-remove on removal). Open: exactly when the game removes and re-adds vehicles
   at a demolition and a kickoff reset.
+  **Triggers (static session, 2026-10-14; [S] script, [N] native, [I] inferred):** a demolition swap-removes at FinishDemo
+  (TerminateRBPhys + VehicleSim detach) and the respawn (a new Car_TA) appends at its VehicleSim attach; a kickoff reset
+  (StartNewRound → ResetPlayers TA:3032 → 954) destroys every car (array emptied) then RestartPlayer in **Players = join
+  order** (MRL-8), which also holds after a goal replay (StartReplay DestroyCars TA:4264, then ResetPlayers) and at match
+  start (RestartPlayers TA:3801); a leaver is demolished (swap-remove); the podium restarts the winners in MVP-sorted
+  order (TA:4409, 4420). [I]: removeAction's call site (vt+0x80, not traced) and a possibly async VehicleSim attach.
 - **G1 (negligible):** the engine damps the ball after the wheels' pushes, the game before: ≤ 0.04 uu/s measured.
 - **G3 (negligible):** a later car's read-back / limits / forward speed see an earlier car's impulses of the same tick: ≤ 0.01 uu/s.
 - **Tests to add** (none exist for patches 49, 50, 54):

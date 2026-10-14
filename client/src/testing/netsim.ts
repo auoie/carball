@@ -58,6 +58,8 @@ export interface Profile {
   readonly loss: Loss;
   readonly duplicate: number;
   readonly stalls: readonly Stall[];
+  /** Everything sent in these spans lost (an outage; TypeScript only: after the draws, so the Rust twin's vectors hold) */
+  readonly outages?: readonly { readonly atS: number; readonly ms: number }[];
 }
 
 /** A constant delay */
@@ -114,7 +116,7 @@ export class NetSim {
       this.#ar = jitter.rho * this.#ar + Math.sqrt(1 - jitter.rho * jitter.rho) * jitter.sigmaMs * jitterDraw;
       jitterMs = this.#ar;
     }
-    if (lost) return [];
+    if (lost || (this.profile.outages ?? []).some((o) => t >= o.atS && t < o.atS + o.ms / 1000)) return [];
     const depart = this.#stalledUntil(t) ?? t;
     const arrive = (j: number): number => depart + Math.max(0, this.profile.baseMs + j) / 1000;
     const out = [arrive(jitterMs)];

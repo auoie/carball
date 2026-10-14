@@ -66,8 +66,9 @@ export interface PredictorStats {
   corrections: number;
   resimulatedFrames: number;
   ignoredOld: number;
-  /** The server was ahead of this client (it fell behind real time): its state was taken as the present */
-  resyncs: number;
+  /** States applied at the present, not replayed (notes/netcode-live.md §3, §5: for a frame this client hasn't reached,
+   *  with no acknowledgement yet, or while the local car is demolished: G5, G7) */
+  direct: number;
   /** Corrections that changed the local car's present state: the server disagreed with its prediction */
   localMispredictions: number;
 }
@@ -82,9 +83,15 @@ export class Predictor {
   /** Each other car's latest replicated controls (the server's, with the frame they belong to) */
   readonly #replicated = new Map<number, RemoteBase>();
   readonly #model: RemoteModel;
-  readonly stats: PredictorStats = { corrections: 0, resimulatedFrames: 0, ignoredOld: 0, resyncs: 0, localMispredictions: 0 };
-  /** The cars the last applied correction held (the network tests measure their corrections) */
+  readonly stats: PredictorStats = { corrections: 0, resimulatedFrames: 0, ignoredOld: 0, direct: 0, localMispredictions: 0 };
+  /** The cars the last frame's corrections held (the network tests measure their corrections) */
   lastCars: ReadonlySet<number> = new Set();
+  /** The oldest frame a staged state changed since the last replay (null: none) */
+  #dirty: number | null = null;
+  /** The local car's state before this frame's corrections */
+  #predicted = "";
+  /** The local car is demolished: states apply at the present, no prediction (G5) */
+  #pawnless = false;
   /** Called with each frame once the world holds its state: when first simulated, and again whenever a correction
    *  replays it (the goal replay's recording) */
   onFrame: ((frame: number) => void) | null = null;
@@ -130,9 +137,10 @@ export class Predictor {
   }
 
   #record(frame: number, input: InputFrame, remote: Map<number, CarControls>, server?: readonly Uint8Array[]): void {
-    this.#history[this.#slot(frame)] = server
-      ? { frame, snapshot: this.#world.saveState(), input, remote, server }
-      : { frame, snapshot: this.#world.saveState(), input, remote };
+    const slot = this.#slot(frame);
+    // (the slot's buffer again: no allocation a frame, G3)
+    const snapshot = this.#world.saveStateInto(this.#history[slot]?.snapshot);
+    this.#history[slot] = server ? { frame, snapshot, input, remote, server } : { frame, snapshot, input, remote };
     this.onFrame?.(frame);
   }
 
@@ -192,42 +200,100 @@ export class Predictor {
   }
 
   /**
-   * The server's state after this client's frame `frame` (the parts of one update). Rewinds there, applies it and
-   * replays to the present. Returns the number of frames replayed (0 if the state was too old or did not apply).
+   * The server's state after this client's frame `frame` (the parts of one update): rewinds there, applies it and
+   * replays to the present. The frames replayed (0 if the state was too old or didn't apply).
    */
   correct(frame: number, states: readonly Uint8Array[]): number {
-    if (frame > this.#frame) {
-      this.#resync(frame, states);
-      return 0;
+    return this.stage(frame, states) ? this.resimulate() : 0;
+  }
+
+  /**
+   * The server's state after this client's frame `frame`, written into the history at that frame; the replay waits for
+   * resimulate(), once a frame however many updates came (the game's one resim a render frame from the oldest dirty
+   * frame: G3). A frame older than the history is taken as its oldest (the game's RPF = max(ack, PF − 119)). Applied at
+   * the present instead, without a replay (the game's direct apply): for a frame this client hasn't reached (it fell
+   * behind real time; the frames aren't renumbered: the server's acknowledgement comes back to this client's own as it
+   * consumes them), with no acknowledgement yet (0), and while the local car is demolished (no pawn, no prediction: G5,
+   * G7). Whether it was staged.
+   */
+  stage(frame: number, states: readonly Uint8Array[]): boolean {
+    if (frame > this.#frame || frame <= 0 || this.#pawnless) {
+      this.#applyDirect(states);
+      return false;
     }
+    const oldestKept = Math.max(this.#oldest, this.#frame - HISTORY_FRAMES + 1);
+    if (frame < oldestKept && frame >= this.#oldest) frame = oldestKept;
     const at = this.#recorded(frame);
     if (frame < this.#oldest || !at) {
       this.stats.ignoredOld++;
-      return 0;
+      return false;
     }
-    const present = this.#frame;
-    const predicted = this.#localState();
+    const first = this.#dirty === null;
+    if (first) {
+      this.#predicted = this.#localState(); // (the world at the present still)
+      this.lastCars = new Set();
+    }
     this.#world.loadState(at.snapshot);
     const updated = this.#applyStates(states);
     if (!updated) {
-      this.#world.loadState(this.#recorded(present)?.snapshot ?? at.snapshot);
-      return 0;
+      if (first) this.#world.loadState(this.#recorded(this.#frame)?.snapshot ?? at.snapshot);
+      return false;
     }
-    this.lastCars = updated;
+    this.lastCars = new Set([...this.lastCars, ...updated]);
     if (this.#model === "fade") this.#rebase(updated, frame);
-    else this.#receiveRemote(updated, frame, present);
+    else this.#receiveRemote(updated, frame, this.#frame);
     this.#record(frame, at.input, at.remote, [...(at.server ?? []), ...states]);
-    for (let f = frame + 1; f <= present; f++) {
+    this.#dirty = Math.min(this.#dirty ?? frame, frame);
+    this.stats.corrections++;
+    return true;
+  }
+
+  /** The states at the present (no rewind, no replay): the shown world takes the server's as it is, smoothed (G5, G7) */
+  #applyDirect(states: readonly Uint8Array[]): void {
+    this.resimulate(); // (a frame's staged states first: the world back at the present)
+    const present = this.#recorded(this.#frame);
+    const updated = this.#applyStates(states);
+    if (!updated) {
+      if (present) this.#world.loadState(present.snapshot);
+      return;
+    }
+    this.lastCars = new Set(updated);
+    if (this.#model === "fade") this.#rebase(updated, this.#frame);
+    for (const car of updated) if (car !== this.#localCar) this.#replicated.set(car, { controls: this.#world.carControls(car), frame: this.#frame });
+    this.#record(this.#frame, present?.input ?? NO_INPUT, present?.remote ?? this.#presentRemote());
+    this.stats.direct++;
+    this.#watchPawn();
+  }
+
+  /** While the local car is demolished, no prediction (the game's effective bEnableClientPrediction needs a pawn: G5) */
+  #watchPawn(): void {
+    this.#pawnless = this.#world.car(this.#localCar).demoed;
+  }
+
+  /** Whether the client predicts (not while its car is demolished) */
+  get predicting(): boolean {
+    return !this.#pawnless;
+  }
+
+  /** The staged states' replay: from the oldest staged frame to the present, once. The frames replayed */
+  resimulate(): number {
+    const from = this.#dirty;
+    if (from === null) return 0;
+    this.#dirty = null;
+    const present = this.#frame;
+    const start = this.#recorded(from);
+    if (start) this.#world.loadState(start.snapshot);
+    for (let f = from + 1; f <= present; f++) {
       const recorded = this.#recorded(f);
       const input = recorded?.input ?? NO_INPUT;
       const remote = this.#simulate(f, input, recorded?.remote);
       if (recorded?.server) this.#applyStates(recorded.server); // (the newer states: they win for their bodies)
       this.#record(f, input, remote, recorded?.server);
     }
-    this.stats.corrections++;
-    this.stats.resimulatedFrames += present - frame;
-    if (this.#localState() !== predicted) this.stats.localMispredictions++;
-    return present - frame;
+    this.stats.resimulatedFrames += present - from;
+    if (this.#localState() !== this.#predicted) this.stats.localMispredictions++;
+    this.#watchPawn();
+    return present - from;
   }
 
   /** Applies an update's network states; the cars they held, or null if one didn't apply. */
@@ -292,27 +358,6 @@ export class Predictor {
   }
 
   /**
-   * The server's state is for a frame this client hasn't reached: it fell behind real time (a stalled tab) and the
-   * server, finding no input, repeated the last one and moved its frame count on (ServerConsume). Take the server's
-   * state as the present and continue from its frame.
-   */
-  #resync(frame: number, states: readonly Uint8Array[]): void {
-    const present = this.#recorded(this.#frame);
-    const updated = this.#applyStates(states);
-    if (!updated) {
-      if (present) this.#world.loadState(present.snapshot);
-      return;
-    }
-    this.#rebase(updated, frame);
-    for (const car of updated) if (car !== this.#localCar) this.#replicated.set(car, { controls: this.#world.carControls(car), frame });
-    this.#history.fill(undefined);
-    this.#frame = frame;
-    this.#oldest = frame;
-    this.#record(frame, NO_INPUT, this.#presentRemote());
-    this.stats.resyncs++;
-  }
-
-  /**
    * The set of cars changed: the server's full world after this client's frame `frame`. Older history no longer
    * matches the world (different cars), so corrections cannot reach before it.
    */
@@ -328,7 +373,9 @@ export class Predictor {
     this.#history.fill(undefined);
     this.#frame = frame;
     this.#oldest = frame;
+    this.#dirty = null;
     this.#adoptCars(frame);
+    this.#watchPawn();
     this.#record(frame, NO_INPUT, this.#presentRemote());
     for (let f = frame + 1; f <= present; f++) this.advance(inputs.get(f) ?? NO_INPUT);
   }

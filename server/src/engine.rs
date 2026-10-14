@@ -70,6 +70,7 @@ unsafe extern "C" {
     fn rl_car_demoed(arena: *mut RLArena, car_id: u32) -> c_int;
     fn rl_car_demolish(arena: *mut RLArena, car_id: u32);
     fn rl_car_net_info(arena: *mut RLArena, car_id: u32, out: *mut CarNetInfo) -> c_int;
+    fn rl_set_press_axes(arena: *mut RLArena, car_id: u32, dodge_forward: f32, yaw: f32, roll: f32);
     fn rl_pads_active(arena: *mut RLArena) -> u64;
     fn rl_take_events(arena: *mut RLArena, out: *mut i32, max_ints: usize) -> usize;
     fn rl_write_net_state(arena: *mut RLArena, ball: c_int, car_ids: *const u32, num_cars: usize, pads: c_int, out: *mut u8, capacity: usize) -> usize;
@@ -283,6 +284,13 @@ impl Arena {
     pub fn car_demoed(&mut self, car_id: u32) -> bool {
         // SAFETY: valid arena
         unsafe { rl_car_demoed(self.ptr(), car_id) != 0 }
+    }
+
+    /// The axes the car's jump press of the next tick came with (the dodge's direction), when its controls are another
+    /// frame's (G10)
+    pub fn set_press_axes(&mut self, car_id: u32, dodge_forward: f32, yaw: f32, roll: f32) {
+        // SAFETY: valid arena
+        unsafe { rl_set_press_axes(self.ptr(), car_id, dodge_forward, yaw, roll) }
     }
 
     /// What the replication watches to force the car into the next update

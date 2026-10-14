@@ -241,6 +241,11 @@ public:
 	// The match's end (FreezePawns): nothing simulates while frozen (the server's phase: prePodium, finished)
 	void SetFrozen(bool on) { _arena->frozen = on; }
 	void SetPodium(bool on) { _arena->podiumMode = on; }
+	// Demolishes the car (it respawns as after any demolition): for the tests' servers
+	void DemolishCar(int id) {
+		if (Car* car = _arena->GetCar((uint32_t)id))
+			car->Demolish(_arena->GetMutatorConfig().respawnDelay);
+	}
 	// Another player's car on a client: its components (jump, dodge, boost, air control, auto-flip) don't run
 	// (Car::_componentsOff, the game's SimulatedProxy)
 	void SetCarComponents(int id, bool on) {
@@ -467,6 +472,15 @@ public:
 		return CopyToJS<Uint8ArrayVal>("Uint8Array", out.data);
 	}
 
+	// The same snapshot as a view of this module's own buffer, reused call after call (no allocation once it has grown):
+	// valid until the next call or the memory grows, so the caller copies it at once (the predictor's every-frame
+	// snapshot into its history's buffers: G3)
+	Uint8ArrayVal SaveStateView() {
+		_saveOut.data.clear();
+		_arena->Serialize(_saveOut);
+		return Uint8ArrayVal(val(emscripten::typed_memory_view(_saveOut.data.size(), _saveOut.data.data())));
+	}
+
 	// Network state (net/NetState.h): what the server sends each update. The client applies it onto its own arena;
 	// writing is here for tests (the native server writes it). `exact`: the exact form (the compact one otherwise)
 	Uint8ArrayVal WriteNetState(bool ball, Int32ArrayVal carIds, bool boostPads, bool exact) {
@@ -518,6 +532,7 @@ private:
 	std::vector<int> _ints;
 	std::vector<int> _events;
 	std::vector<uint32_t> _netStateCars;
+	DataStreamOut _saveOut; // (SaveStateView's buffer)
 	bool _goalReported = false;
 
 	void _SetCallbacks() {
@@ -564,6 +579,7 @@ EMSCRIPTEN_BINDINGS(rlengine) {
 		.function("setFrozen", &Sim::SetFrozen)
 		.function("setPodium", &Sim::SetPodium)
 		.function("setCarComponents", &Sim::SetCarComponents)
+		.function("demolishCar", &Sim::DemolishCar)
 		.function("setDemolitions", &Sim::SetDemolitions)
 		.function("kickoffCountdown", &Sim::KickoffCountdown)
 		.function("setKickoffCountdown", &Sim::SetKickoffCountdown)
@@ -579,6 +595,7 @@ EMSCRIPTEN_BINDINGS(rlengine) {
 		.function("takeEvents", &Sim::TakeEvents)
 		.function("takeImpacts", &Sim::TakeImpacts)
 		.function("saveState", &Sim::SaveState)
+		.function("saveStateView", &Sim::SaveStateView)
 		.function("loadState", &Sim::LoadState)
 		.function("writeNetState", &Sim::WriteNetState)
 		.function("applyNetState", &Sim::ApplyNetState)

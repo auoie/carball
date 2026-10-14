@@ -225,6 +225,11 @@ void rl_car_demolish(RLArena* a, uint32_t id) {
 		car->Demolish(a->arena->GetMutatorConfig().respawnDelay);
 }
 
+void rl_set_press_axes(RLArena* a, uint32_t id, float dodge_forward, float yaw, float roll) {
+	if (Car* car = a->arena->GetCar(id))
+		car->_pressAxes = { true, dodge_forward, yaw, roll };
+}
+
 int rl_car_net_info(RLArena* a, uint32_t id, RLCarNetInfo* out) {
 	Car* car = a->arena->GetCar(id);
 	if (!car || !out)

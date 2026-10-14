@@ -280,6 +280,16 @@ public:
 
 	// RL PATCH: the dodge's forward input (CarControls::dodgeForward, else -pitch)
 	float _DodgeForward() const { return controls.hasDodgeForward ? controls.dodgeForward : -controls.pitch; }
+	// RL PATCH: the axes the jump press of this tick came with, when not the controls' (the server's double consume: the
+	// first frame's press, the second frame's controls; the game's dodge takes the press's DodgeForward and DodgeRight,
+	// G10); a dodge starting this tick reads them, the tick clears them
+	struct PressAxes {
+		bool valid = false;
+		float dodgeForward = 0, yaw = 0, roll = 0;
+	} _pressAxes;
+	float _PressForward() const { return _pressAxes.valid ? _pressAxes.dodgeForward : _DodgeForward(); }
+	float _PressYaw() const { return _pressAxes.valid ? _pressAxes.yaw : controls.yaw; }
+	float _PressRoll() const { return _pressAxes.valid ? _pressAxes.roll : controls.roll; }
 
 	// RL PATCH: respawnHeld: a demolished car stays demolished (after a goal, until the kickoff)
 	void _PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig& mutatorConfig, bool respawnHeld = false);

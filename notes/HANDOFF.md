@@ -62,6 +62,16 @@ client after each update and must send the server's bytes (RV-312); replication.
 apart, the replays' 13.4 a second (RV-315); the Rust tests check the TypeScript twins' vectors and write them only with
 `REGENERATE_VECTORS=1` (RV-317). G1's step (2) (no stale datagrams queued; `send_datagram` errors counted) isn't done:
 at ≈ 5 KB/s the path never backs up.
+**G3, G5, G7, G8, G10, 2026-10-14** (one clean point; gates T7, T8): `Predictor.stage()` writes each update's states
+into the history at its frame and `resimulate()` replays once a frame from the oldest (`NetSession.applyUpdates`: one
+capture and smoothing around it); the history's snapshots reuse their buffers (`World.saveStateInto`, the binding's
+`saveStateView`). States apply at the present without a replay (`stats.direct`) for a frame not reached yet (no more
+renumbering: the server's ack comes back to the client's frames; the session keeps the newest update's ack and sends
+its newest 10 while the ack is past its frames), with ack 0, and while the local car is demolished (G5, `predicting`);
+an ack older than the history replays from its oldest frame. The server stops updates to a client silent 1.5 s (G8)
+and counts unsent datagrams; a jump press in the first of two frames consumed together dodges by that frame's axes
+(G10: `InputBuffer::press_axes`, `rl_set_press_axes`, `Car::_pressAxes`). T7 (client stalls 0.3/2/10 s) and T8 (a 3 s
+two-way outage: the server's buffer takes ≈ 38 s back to 7, the game's rule) in `client/src/net/session.test.ts`.
 **The browser tests' servers** start from `client/e2e/servers.ts` (Playwright's globalSetup), not its webServer: here a
 connection to a closed 127.0.0.1 port is dropped, not refused, and Playwright's pre-check of each server's URL waited
 2 min 14 s per server (9 of the suite's 12 minutes).

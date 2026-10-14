@@ -1732,6 +1732,38 @@ static void TestKickoffManyOnOneTeam() {
 	delete arena;
 }
 
+static void TestPressAxes() {
+	puts("a dodge started by a press that came with other axes than the controls (the server's double consume) goes by "
+		"the press's axes (G10)");
+	for (bool override : { false, true }) {
+		Arena* arena = Arena::Create(GameMode::SOCCAR);
+		Car* car = arena->AddCar(Team::BLUE);
+		car->SetState(CarAt(Vec(0, 0, 17), Vec(1, 0, 0), Vec(0, 0, 1)));
+		arena->Step(20);
+		CarControls jump;
+		jump.jump = true;
+		for (int i = 0; i < 10; i++) { // (a jump, then let go)
+			car->controls = i < 8 ? jump : CarControls();
+			arena->Step(1);
+		}
+		CarControls side; // (the controls: jump, pushing sideways)
+		side.jump = true;
+		side.yaw = 1;
+		car->controls = side;
+		if (override)
+			car->_pressAxes = { true, 1.f, 0.f, 0.f }; // (the press's: forward)
+		arena->Step(1);
+		CarState s = car->GetState();
+		CHECK(s.isFlipping, "dodging (override %d)", override);
+		if (override)
+			CHECK(s.flipRelTorque.y != 0 && s.flipRelTorque.x == 0, "a forward dodge: torque (%.2f, %.2f)", s.flipRelTorque.x, s.flipRelTorque.y);
+		else
+			CHECK(s.flipRelTorque.x != 0 && s.flipRelTorque.y == 0, "a side dodge: torque (%.2f, %.2f)", s.flipRelTorque.x, s.flipRelTorque.y);
+		CHECK(!car->_pressAxes.valid, "cleared after its tick");
+		delete arena;
+	}
+}
+
 // Supersonic: on from 2200; below that, kept for 1 s (TimeBelowSupersonicSpeed) while above 2100
 static void TestSupersonic(Arena* arena, Car* car) {
 	puts("supersonic: kept for 1 s below 2200 (above 2100), also after a long supersonic run");
@@ -2558,6 +2590,7 @@ int main(int argc, char** argv) {
 	TestXYLockSnapshots();
 	TestComponentsOff();
 	TestKickoffManyOnOneTeam();
+	TestPressAxes();
 	TestGameRotator();
 	TestMatchEndPatches();
 	TestRoofLanding();

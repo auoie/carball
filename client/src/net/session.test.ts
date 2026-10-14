@@ -6,6 +6,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { initEngine } from "../engine/world";
 import { arenaMeshes } from "../testing/arena";
 import { type NetRunResult, netRun } from "../testing/netRun";
+import { HISTORY_FRAMES } from "./predictor";
 import { type Profile, constantProfile } from "../testing/netsim";
 
 let engine: Awaited<ReturnType<typeof createEngine>>;
@@ -21,7 +22,7 @@ const REALISTIC: Profile = { baseMs: 40, jitter: { kind: "normal", sigmaMs: 14 }
 function report(name: string, r: NetRunResult): void {
   const f = (s: { mean: number; p95: number; max: number }) => `mean ${s.mean.toFixed(2)} p95 ${s.p95.toFixed(2)} max ${s.max.toFixed(2)}`;
   console.info(
-    `${name}: ${String(r.corrections)} corrections (replay ${r.depth.mean.toFixed(1)} frames), local mispredictions ${String(r.localMispredictions)}; ` +
+    `${name}: ${String(r.updates)} updates, ${String(r.corrections)} replays ( ${r.depth.mean.toFixed(1)} frames, at most ${String(r.depth.max)} in a frame), local mispredictions ${String(r.localMispredictions)}; ` +
       `local ${f(r.local)} uu; bot ${f(r.remote)} uu; ball ${f(r.ball)} uu; moved a second: local ${r.movedPerSecond.local.toFixed(1)}, ` +
       `bot ${r.movedPerSecond.remote.toFixed(1)}, ball ${r.movedPerSecond.ball.toFixed(1)} uu/s; ping ${r.ping?.toFixed(1) ?? "-"} ms; ` +
       `buffer target ${String(r.buffer.target)}, under ${String(r.buffer.under)} over ${String(r.buffer.over)} repeated ${String(r.buffer.repeated)} ` +
@@ -69,8 +70,57 @@ describe("play over a network path (in process)", () => {
       expect(r.remote.p95).toBeLessThanOrEqual(40);
       expect(r.ball.p95).toBeLessThanOrEqual(5);
       expect(r.downKBps).toBeLessThanOrEqual(6);
+      // One replay a frame, however many updates came in it (G3): never more than the round trip and the buffer's
+      // depth, ≈ 16 frames here, with the jitter's spread
+      expect(r.depth.max).toBeLessThanOrEqual(40);
     }
   }, 300_000);
+
+  it("a burst of updates after a stall replays once in its frame (G3)", () => {
+    // A 150 ms stall on the way down every 2 s: the updates held back arrive together
+    const stalled: Profile = { ...constantProfile(40), stalls: [{ atS: 4, ms: 150, everyS: 2 }] };
+    const r = netRun(engine, { seconds: 20, up: constantProfile(40), down: stalled, seed: 3 });
+    report("stalls down", r);
+    expect(r.depth.max).toBeLessThanOrEqual(40);
+    // (the held updates applied together: fewer replays than updates)
+    expect(r.updates).toBeGreaterThan(r.corrections * 1.05);
+    // Before G3 each update replayed on its own: a burst's frame replayed each of them
+    const before = netRun(engine, { seconds: 20, up: constantProfile(40), down: stalled, seed: 3, replayEachUpdate: true });
+    report("stalls down, a replay each update (before G3)", before);
+    expect(r.depth.max).toBeLessThan(before.depth.max);
+    expect(r.depth.mean * r.depth.count).toBeLessThan(before.depth.mean * before.depth.count);
+  }, 120_000);
+
+  // (T7, T8: the local car alone, so "exact again" is the network's: with the bot its contacts mispredict too)
+  it("T7: a stalled client (a hidden tab) comes back: one reset 2 s later, the server's buffer back to 7, exact again", () => {
+    for (const seconds of [0.3, 2, 10]) {
+      const r = netRun(engine, { seconds: 30, up: constantProfile(40), down: constantProfile(40), seed: 3, players: 1, clientStalls: [{ atS: 6, seconds }] });
+      report(`a ${String(seconds)} s client stall`, r);
+      console.info(`  buffer targets by second: ${r.bufferTargets.join(" ")}; resets ${String(r.resets)}, direct ${String(r.direct)}`);
+      expect(r.resets, `${String(seconds)} s`).toBe(1); // (the frame after it a hitch: the reset 2 s on)
+      expect(Math.max(...r.bufferTargets.slice(6)), `${String(seconds)} s`).toBeGreaterThan(7);
+      expect(r.bufferTargets.at(-1), `${String(seconds)} s`).toBe(7);
+      expect(r.lateMispredictions, `${String(seconds)} s`).toBe(0);
+      expect(r.depth.max, `${String(seconds)} s`).toBeLessThan(HISTORY_FRAMES);
+    }
+  }, 300_000);
+
+  it("T8: a 3 s outage both ways recovers: no storm of corrections, exact again once the server's buffer is back", () => {
+    const outage: Profile = { ...constantProfile(40), outages: [{ atS: 6, ms: 3000 }] };
+    const r = netRun(engine, { seconds: 60, up: outage, down: outage, seed: 3, players: 1 });
+    report("a 3 s outage both ways", r);
+    console.info(`  buffer targets by second: ${r.bufferTargets.join(" ")}`);
+    expect(r.direct).toBeLessThanOrEqual(5);
+    expect(r.depth.max).toBeLessThan(HISTORY_FRAMES);
+    expect(r.buffer.neverConsumed).toBeGreaterThan(0); // (the frames sent in the outage, never received)
+    // (the outage's gap raised the server's buffer, not reset: no client hitch; the game's rule brings it down a frame
+    // every few seconds, steadily; its double consumes meanwhile mispredict now and then)
+    const after = r.bufferTargets.slice(9);
+    expect(after[0]).toBe(18);
+    expect(after.every((v, i) => i === 0 || v <= (after[i - 1] ?? v))).toBe(true);
+    expect(r.bufferTargets.at(-1)).toBe(7);
+    expect(r.lateMispredictions).toBe(0); // (back at its floor: exact again)
+  }, 120_000);
 
   it("G1: an eighth of the bytes for corrections like before on the same path", () => {
     const after = netRun(engine, { seconds: 30, up: REALISTIC, down: REALISTIC, seed: 3 });

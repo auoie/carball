@@ -280,6 +280,11 @@ export class World {
     this.#sim.setPodium(on);
   }
 
+  /** Demolishes the car (it respawns as after any demolition): for the tests' servers */
+  demolishCar(id: number): void {
+    this.#sim.demolishCar(id);
+  }
+
   /** A car's components on (the default) or off: another player's car on an online client, as the game's
    *  SimulatedProxy, drives but doesn't jump, dodge, boost or air-roll between the server's states (Car::_componentsOff).
    *  This world's setting, kept over loaded states. */
@@ -480,6 +485,17 @@ export class World {
 
   saveState(): Uint8Array {
     return this.#sim.saveState();
+  }
+
+  /** The same snapshot written into `target`'s buffer when it has the room (the predictor's history: no buffer allocated a
+   *  frame; a snapshot's size changes with the contacts it holds), else into a new one with room to spare; a view of the
+   *  snapshot's length */
+  saveStateInto(target: Uint8Array | undefined): Uint8Array {
+    const view = this.#sim.saveStateView();
+    const buffer = target && target.buffer.byteLength >= view.length ? target.buffer : new ArrayBuffer(Math.ceil((view.length + 1024) / 1024) * 1024);
+    const out = new Uint8Array(buffer, 0, view.length);
+    out.set(view);
+    return out;
   }
 
   /** The server's network state (engine/net/NetState.h): laid over this world (the compact form: a value it holds that

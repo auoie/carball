@@ -4,7 +4,7 @@
 import createEngine from "@engine/rlengine.mjs";
 import { beforeAll, describe, expect, it } from "vitest";
 import { type CarControls, World, initEngine } from "../engine/world";
-import { NO_INPUT, Predictor, inputControls } from "./predictor";
+import { HISTORY_FRAMES, NO_INPUT, Predictor, inputControls } from "./predictor";
 import { BIT_BOOST, BIT_JUMP, type InputFrame, quantizeAxis } from "./protocol";
 import { arenaMeshes } from "../testing/arena";
 let engine: Awaited<ReturnType<typeof createEngine>>;
@@ -155,7 +155,8 @@ describe("Predictor", () => {
   it("catches up after stalling while the server went on", () => {
     // The client stops for 1 s; the server repeats its last input and moves its frame count past the client's
     const r = run(480, 0, [120, 240]);
-    expect(r.predictor.stats.resyncs).toBeGreaterThan(0);
+    // (the server's states for frames it hadn't reached applied at its present, its frames not renumbered: G7)
+    expect(r.predictor.stats.direct).toBeGreaterThan(0);
     // Afterwards it follows the server again: its own car predicted exactly where the server put it, frame by frame
     expect(r.predictor.stats.corrections).toBeGreaterThan(100);
     let compared = 0;
@@ -292,5 +293,145 @@ describe("Predictor", () => {
     expect(replay([20, 10])).toEqual(inOrder);
     expect(replay([20])).not.toEqual(inOrder); // (the older update does tell the client something)
     server.dispose();
+  });
+
+  it("a burst of updates in one frame replays once, from the oldest, into the world they make one by one (G3)", () => {
+    const server = World.create(engine);
+    const local = server.addCar(0);
+    const near = server.addCar(1);
+    const far = server.addCar(1);
+    server.resetKickoff(4);
+    const start = server.saveState();
+    const states = new Map<number, Uint8Array>();
+    for (let f = 1; f <= 20; f++) {
+      server.setControls(near, { ...inputControls(NO_INPUT), throttle: 1, steer: f < 8 ? 1 : -1 });
+      server.setControls(far, { ...inputControls(NO_INPUT), throttle: 1, steer: f < 5 ? -1 : 1 });
+      server.step();
+      if (f === 10) states.set(f, server.writeNetState({ ball: true, carIds: [local, far], pads: true }));
+      if (f === 20) states.set(f, server.writeNetState({ ball: true, carIds: [local, near], pads: true }));
+    }
+    const world = (apply: (p: Predictor) => void): { world: Uint8Array; replayed: number } => {
+      const client = World.create(engine);
+      client.loadState(start);
+      const predictor = new Predictor(client, local, 0);
+      for (let f = 1; f <= 30; f++) predictor.advance(NO_INPUT);
+      apply(predictor);
+      const out = { world: client.saveState(), replayed: predictor.stats.resimulatedFrames };
+      client.dispose();
+      return out;
+    };
+    const oneByOne = world((p) => {
+      for (const f of [10, 20]) p.correct(f, [states.get(f) ?? new Uint8Array()]);
+    });
+    for (const order of [
+      [10, 20],
+      [20, 10],
+    ]) {
+      const burst = world((p) => {
+        for (const f of order) expect(p.stage(f, [states.get(f) ?? new Uint8Array()])).toBe(true);
+        expect(p.resimulate()).toBe(20);
+      });
+      expect(burst.world, order.join(",")).toEqual(oneByOne.world);
+      expect(burst.replayed).toBe(20); // (one replay of 20 frames; one by one: 20 + 10)
+    }
+    expect(oneByOne.replayed).toBe(30);
+    server.dispose();
+  });
+
+  it("applies a state with no acknowledgement yet at the present, without a replay (G7)", () => {
+    const server = World.create(engine);
+    const local = server.addCar(0);
+    server.resetKickoff(4);
+    const client = World.create(engine);
+    client.loadState(server.saveState());
+    const predictor = new Predictor(client, local, 0);
+    for (let f = 1; f <= 20; f++) predictor.advance(NO_INPUT);
+    server.setBall({ pos: { x: 500, y: 500, z: 300 }, vel: { x: 0, y: 0, z: 0 }, angVel: { x: 0, y: 0, z: 0 } });
+    server.step();
+    expect(predictor.correct(0, [server.writeNetState({ ball: true, carIds: [local], pads: true })])).toBe(0);
+    expect(predictor.stats.direct).toBe(1);
+    expect(predictor.stats.resimulatedFrames).toBe(0);
+    expect(client.ball().pos.x).toBeCloseTo(server.ball().pos.x, 3);
+    expect(predictor.frame).toBe(20); // (not renumbered)
+    server.dispose();
+    client.dispose();
+  });
+
+  it("replays an acknowledgement older than its history from its oldest frame (G7: RPF = max(ack, PF − 119))", () => {
+    const server = World.create(engine);
+    const local = server.addCar(0);
+    server.resetKickoff(4);
+    const client = World.create(engine);
+    client.loadState(server.saveState());
+    const predictor = new Predictor(client, local, 0);
+    for (let f = 1; f <= 200; f++) predictor.advance(NO_INPUT);
+    expect(predictor.correct(10, [server.writeNetState({ ball: true, carIds: [local], pads: true })])).toBe(HISTORY_FRAMES - 1);
+    expect(predictor.stats.ignoredOld).toBe(0);
+    server.dispose();
+    client.dispose();
+  });
+
+  it("doesn't predict while its car is demolished: states apply at the present until it respawns (G5, T11)", () => {
+    const server = World.create(engine);
+    const local = server.addCar(0);
+    server.addCar(1);
+    server.resetKickoff(4);
+    const client = World.create(engine);
+    client.loadState(server.saveState());
+    client.setDemolitions(false);
+    const predictor = new Predictor(client, local, 0);
+    const LAG = 12;
+    server.demolishCar(local);
+    const states = new Map<number, Uint8Array>();
+    let directWhileDemoed = 0;
+    let replaysWhileDemoed = 0;
+    let replayedAfter = 0;
+    for (let f = 1; f <= 600; f++) {
+      server.step();
+      states.set(f, server.writeNetState({ ball: true, carIds: server.carIds(), pads: true }));
+      predictor.advance(NO_INPUT);
+      if (f % 4 === 0 && f > LAG) {
+        const wasPredicting = predictor.predicting;
+        const direct = predictor.stats.direct;
+        const replayed = predictor.correct(f - LAG, [states.get(f - LAG) ?? new Uint8Array()]);
+        if (!wasPredicting) {
+          directWhileDemoed += predictor.stats.direct - direct;
+          replaysWhileDemoed += replayed;
+        } else if (f > 500) replayedAfter = Math.max(replayedAfter, replayed);
+      }
+    }
+    expect(server.car(local).demoed).toBe(false); // (respawned after 3 s)
+    expect(directWhileDemoed).toBeGreaterThan(50);
+    expect(replaysWhileDemoed).toBe(0);
+    expect(predictor.predicting).toBe(true);
+    expect(replayedAfter).toBe(LAG); // (predicting again: each state replayed from its frame)
+    server.dispose();
+    client.dispose();
+  });
+
+  it("keeps its history in the same buffers: no snapshot allocated a frame once it's full (G3)", () => {
+    const client = World.create(engine);
+    const local = client.addCar(0);
+    client.addCar(1);
+    client.resetKickoff(4);
+    const predictor = new Predictor(client, local, 0);
+    const save = client.saveStateInto.bind(client);
+    let fresh = 0;
+    const sizes = new Set<number>();
+    client.saveStateInto = (target) => {
+      const written = save(target);
+      if (written.buffer !== target?.buffer) fresh++;
+      sizes.add(written.length);
+      return written;
+    };
+    // (driving, jumping, landing, into the ball: the snapshot's size changes with its contacts)
+    const drive = (f: number) => ({ ...NO_INPUT, throttle: 127, steer: f < 600 ? 0 : Math.round(Math.sin(f / 30) * 127), bits: f > 600 && f % 90 < 3 ? 1 : 0 });
+    for (let f = 1; f <= 200; f++) predictor.advance(drive(f));
+    const filling = fresh;
+    expect(filling).toBeLessThanOrEqual(200);
+    for (let f = 201; f <= 1000; f++) predictor.advance(drive(f));
+    expect(sizes.size).toBeGreaterThan(1);
+    expect(fresh).toBe(filling);
+    client.dispose();
   });
 });

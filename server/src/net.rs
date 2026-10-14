@@ -123,6 +123,7 @@ async fn session(incoming: IncomingSession, id: PlayerId, to_game: &Sender<ToGam
     // Game -> client
     let writer_connection = connection.clone();
     let mut writer = tokio::spawn(async move {
+        let mut unsent: u64 = 0;
         while let Some(message) = out_rx.recv().await {
             match message {
                 Outgoing::Control(bytes) => {
@@ -130,14 +131,19 @@ async fn session(incoming: IncomingSession, id: PlayerId, to_game: &Sender<ToGam
                         break;
                     }
                 }
-                // Unreliable: a datagram that doesn't fit or can't be queued is simply lost, like a lost packet
+                // Unreliable: a datagram that doesn't fit or can't be queued is simply lost, like a lost packet (counted)
                 Outgoing::Datagram(bytes) => {
-                    let _ = writer_connection.send_datagram(bytes);
+                    if writer_connection.send_datagram(bytes).is_err() {
+                        unsent += 1;
+                    }
                 }
             }
         }
         // (the game let go of this player: a refused join; what it sent goes out before the stream ends)
         let _ = send.finish().await;
+        if unsent > 0 {
+            eprintln!("player {id}: {unsent} datagrams not sent");
+        }
     });
 
     // Client -> game: control messages (in their own task: a framed read mustn't be cancelled halfway); the control

@@ -86,13 +86,28 @@ describe("the network session's wiring", () => {
     dispose(s);
   });
 
-  it("keeps the highest acknowledgement: an older update doesn't take it back", () => {
+  it("keeps the newest update's acknowledgement: an older update doesn't take it back", () => {
     const s = setup();
     for (let f = 1; f <= 20; f++) s.session.predictor.advance(NO_INPUT);
     s.session.receive(update(s, 100, 12));
     s.session.receive(update(s, 98, 9));
     s.session.applyUpdates();
     expect(s.session.ackFrame).toBe(12);
+    // A newer update's lower acknowledgement does (the server consuming this client's frames again after a stall, G7)
+    s.session.receive(update(s, 102, 11));
+    s.session.applyUpdates();
+    expect(s.session.ackFrame).toBe(11);
+    dispose(s);
+  });
+
+  it("after a stall, with the server's acknowledgement past its frames, sends its newest 10 (G7)", () => {
+    const s = setup();
+    for (let f = 1; f <= 20; f++) s.session.predictor.advance({ ...NO_INPUT, throttle: f });
+    s.session.receive(update(s, 100, 60)); // (the server moved its count on while this client stalled)
+    s.session.applyUpdates();
+    s.session.sendInputs();
+    expect(s.sent.at(-1)?.first).toBe(11);
+    expect(s.sent.at(-1)?.frames.length).toBe(10);
     dispose(s);
   });
 
