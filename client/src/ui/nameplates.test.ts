@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { arrowOnly, nameplateScale, plateTransform } from "./nameplates";
+import { NAMEPLATE_UU, NAMEPLATE_YOU, arrowOnly, nameplateScale, platesAt, plateSize } from "./nameplates";
 
 describe("nameplates (HUD-13)", () => {
   it("grow from 0.5 at the car to 9 at 10000 uu, by the FOV up to 90 degrees, times the setting", () => {
@@ -16,26 +16,20 @@ describe("nameplates (HUD-13)", () => {
     expect(arrowOnly("simplified", 100)).toBe(true);
   });
 
-  it("keep the plate's bottom-centre on its point at any scale (the pivot, RV-280)", () => {
-    // (CSS applies a transform list right to left on the element's points, origin top left)
-    const image = (transform: string, w: number, h: number, px: number, py: number): [number, number] => {
-      const ops = [...transform.matchAll(/(translate|scale)\(([^)]*)\)/g)].map((m) => ({ op: m[1], args: (m[2] ?? "").split(",").map((a) => a.trim()) }));
-      let [x, y] = [px, py];
-      for (const { op, args } of ops.reverse()) {
-        const value = (a: string | undefined, size: number): number => (a?.endsWith("%") ? (parseFloat(a) / 100) * size : parseFloat(a ?? "0"));
-        if (op === "scale") {
-          const k = value(args[0], 1);
-          [x, y] = [x * k, y * k];
-        } else {
-          [x, y] = [x + value(args[0], w), y + value(args[1], h)];
-        }
-      }
-      return [x, y];
-    };
-    for (const k of [0.5, 1, 2]) {
-      const [x, y] = image(plateTransform(300, 200, k), 140, 40, 70, 40);
-      expect(x).toBeCloseTo(300, 9);
-      expect(y).toBeCloseTo(200, 9);
-    }
+  it("stand NAMEPLATE_UU high at scale 1 in the world, as wide as their texture says", () => {
+    expect(plateSize(4, 1)).toEqual({ width: 4 * NAMEPLATE_UU, height: NAMEPLATE_UU });
+    expect(plateSize(4, 2.5).height).toBe(2.5 * NAMEPLATE_UU);
+  });
+
+  it("sit 60 uu over their cars, the player's own saying YOU (the replay shows every car's: RV-288)", () => {
+    const cars = new Map([
+      [1, { pos: { x: 0, y: 0, z: 17 }, team: 0 }],
+      [2, { pos: { x: 500, y: 100, z: 17 }, team: 1 }],
+    ]);
+    const plates = platesAt(cars, 1, (car) => `P${String(car)}`, (top) => ({ x: top.x, y: top.z, pxPerUnit: 1, distance: 1000, horizontalFov: 90 }));
+    expect(plates.map((p) => [p.name, p.team, p.at?.x, p.at?.y, p.top.z])).toEqual([
+      [NAMEPLATE_YOU, 0, 0, 77, 77],
+      ["P2", 1, 500, 77, 77],
+    ]);
   });
 });

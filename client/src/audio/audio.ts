@@ -5,6 +5,7 @@
 // Browsers only let a page make sound after the player interacts with it, so the audio starts on the first key press
 // or click; it pauses while the tab is hidden.
 import type { CameraView } from "../camera/rlCamera";
+import type { CarState } from "../engine/world";
 import { type Vec3, cross, dot, normalize, sub, vec3 } from "../math/vec";
 import type { ThemeName } from "../render/themes";
 import type { AudioSettings } from "../settings/settings";
@@ -29,7 +30,14 @@ export interface AudioStats {
   readonly state: AudioContextState;
   readonly played: Readonly<Record<string, number>>;
   readonly cars: number;
+  /** Whose cars the voices follow: the live world's or a goal replay's */
+  readonly mode: "live" | "replay";
+  /** The voices boosting now */
+  readonly boosting: number;
 }
+
+/** What a car's voice follows (the live world's cars, or a goal replay's recorded ones) */
+export type VoiceCar = Pick<CarState, "pos" | "vel" | "boosting" | "supersonic" | "demoed">;
 
 /** Where a car's voice is: right by the camera (the player's car), or out in the arena. */
 interface Voiced {
@@ -99,11 +107,33 @@ export class GameAudio {
 
   /** Once per animation frame, after the camera has moved. */
   frame(f: AudioFrame): void {
+    this.#setMode("live");
     this.#listen(f.camera);
     for (const event of this.#detector.update(f.world, f.simulated)) this.#play(event);
     for (const event of f.triggered ?? []) this.#play(event);
-    this.#steerVoices(f);
+    this.#steerVoices(f.world.cars, f.localCar, f.throttle);
     this.#ambience.tick();
+  }
+
+  /** A goal replay's frame: the voices follow the replayed cars (engine, boost, supersonic; every car where it is, the
+   *  replay camera the listener; no events, no Ignition: SND-3), and go back to the live cars after it */
+  replayFrame(cars: ReadonlyMap<number, VoiceCar>, camera: CameraView): void {
+    this.#setMode("replay");
+    this.#listen(camera);
+    this.#steerVoices(cars, null, 0);
+    this.#ambience.tick();
+  }
+
+  #mode: "live" | "replay" = "live";
+  #boosting = 0;
+
+  /** The voices start over when they change over between the live cars and a replay's (the player's car is up close
+   *  live, out in the arena in a replay) */
+  #setMode(mode: "live" | "replay"): void {
+    if (mode === this.#mode) return;
+    this.#mode = mode;
+    for (const { voice } of this.#voices.values()) voice.dispose();
+    this.#voices.clear();
   }
 
   /** A goal: the explosion and fanfare, up close. */
@@ -148,7 +178,7 @@ export class GameAudio {
   }
 
   get stats(): AudioStats {
-    return { state: this.#ctx.state, played: { ...this.#played }, cars: this.#voices.size };
+    return { state: this.#ctx.state, played: { ...this.#played }, cars: this.#voices.size, mode: this.#mode, boosting: this.#boosting };
   }
 
   dispose(): void {
@@ -235,18 +265,19 @@ export class GameAudio {
     }
   }
 
-  #steerVoices(f: AudioFrame): void {
+  #steerVoices(cars: ReadonlyMap<number, VoiceCar>, localCar: number | null, localThrottle: number): void {
     for (const [id, voiced] of this.#voices) {
-      if (!f.world.cars.has(id)) {
+      if (!cars.has(id)) {
         voiced.voice.dispose();
         this.#voices.delete(id);
       }
     }
-    for (const [id, car] of f.world.cars) {
+    this.#boosting = 0;
+    for (const [id, car] of cars) {
       let voiced = this.#voices.get(id);
       if (!voiced) {
         const voice = new CarVoice(this.#synth);
-        const panner = id === f.localCar ? null : this.#panner(car.pos, this.#cars);
+        const panner = id === localCar ? null : this.#panner(car.pos, this.#cars);
         voice.output.connect(panner ?? this.#cars);
         voiced = { voice, panner, demoed: false };
         this.#voices.set(id, voiced);
@@ -258,10 +289,11 @@ export class GameAudio {
       }
       if (voiced.panner) this.#place(voiced.panner, car.pos);
       const speed = Math.hypot(car.vel.x, car.vel.y, car.vel.z);
-      const local = id === f.localCar;
+      const local = id === localCar;
       // Other cars' throttle isn't known here: guess from their speed
-      const throttle = local ? f.throttle : Math.min(1, speed / 1400) * 0.7;
+      const throttle = local ? localThrottle : Math.min(1, speed / 1400) * 0.7;
       voiced.voice.set(speed, throttle, car.boosting, car.supersonic, local ? 1 : 0.8);
+      if (car.boosting && !car.demoed) this.#boosting++;
     }
   }
 }

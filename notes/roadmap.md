@@ -134,7 +134,8 @@ throttle curve, hitbox sizes and wheel setup, ball radius, dodge-vs-double-jump 
 - [x] Pinches checked (303, incl. 74 wall pinches up to 5437 uu/s): engine kick = game kick within 0.1%.
 - [x] Flips, jumps, double jumps in the validator (state from the replicated components).
 - [x] Jumps and flips: match; the errors were start timing (jump press fitted; flip start diagnostic).
-- [ ] Wheels on dynamic bodies (car on car / ball): the game's pushback and reaction impulses not modelled.
+- [x] Wheels on dynamic bodies (car on car / ball): push, bottom-out (cars only), suspension and friction match the game
+  (patches 49, 50, 54; FP1 2026-10-14). Left: G2, the cross-car vehicle order (notes/physics-values.md FP1 section).
 - [x] Wall-grip condition (patch 32).
 - [x] Car–car pass (`--carcar`): bumps match (ground: 0.43 uu vs 28 without the bump), the attacker slows in a demo
       as the game does, demo cone at impact and supersonic rule fixed (patches 33, 34; validation.md finding 17).

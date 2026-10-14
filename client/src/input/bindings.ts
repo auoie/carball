@@ -115,6 +115,31 @@ const PAD_BUTTON_NAMES = [
   "A", "B", "X", "Y", "LB", "RB", "LT", "RT", "View", "Menu", "Left stick click", "Right stick click",
   "D-pad up", "D-pad down", "D-pad left", "D-pad right", "Home",
 ];
+/** A PlayStation pad's names for the same buttons (the standard layout: Cross is button 0) */
+const PS_BUTTON_NAMES = [
+  "Cross", "Circle", "Square", "Triangle", "L1", "R1", "L2", "R2", "Share", "Options", "L3", "R3",
+  "D-pad up", "D-pad down", "D-pad left", "D-pad right", "PS",
+];
+
+/** The pad's kind, for its buttons' names and glyphs (the game's glyph set per pad type: HT-3) */
+export type PadStyle = "xbox" | "playstation";
+
+/** A pad's kind from its id: Sony's (vendor 054c), a DualShock or DualSense, "Wireless Controller" (the DS4's own
+ *  name), else Xbox's layout */
+export function padStyleOf(id: string): PadStyle {
+  return /054c|dualshock|dualsense|wireless controller|playstation/i.test(id) ? "playstation" : "xbox";
+}
+
+let padStyle: PadStyle = "xbox";
+
+/** The connected pad's kind (the devices note it as they read the pad) */
+export function setPadStyle(style: PadStyle): void {
+  padStyle = style;
+}
+
+export function currentPadStyle(): PadStyle {
+  return padStyle;
+}
 const MOUSE_NAMES = ["Left mouse", "Middle mouse", "Right mouse", "Mouse 4", "Mouse 5"];
 const AXIS_NAMES: Record<number, readonly [string, string]> = {
   0: ["Left stick left", "Left stick right"],
@@ -136,14 +161,16 @@ export function keyName(code: string): string {
 
 /** The pad's buttons as short glyphs (the quick-chat panel's 30 x 28 key boxes: RV-255) */
 const PAD_BUTTON_GLYPHS: Readonly<Record<number, string>> = { 4: "LB", 5: "RB", 6: "LT", 7: "RT", 8: "⧉", 9: "≡", 10: "LS", 11: "RS", 12: "▲", 13: "▼", 14: "◀", 15: "▶" };
+/** A PlayStation pad's: the face buttons' symbols (our own drawing), L1/R1/L2/R2, L3/R3 */
+const PS_BUTTON_GLYPHS: Readonly<Record<number, string>> = { 0: "✕", 1: "○", 2: "□", 3: "△", 4: "L1", 5: "R1", 6: "L2", 7: "R2", 8: "⧉", 9: "≡", 10: "L3", 11: "R3", 12: "▲", 13: "▼", 14: "◀", 15: "▶" };
 
-/** An input's name short enough for a key box: the D-pad as arrows, the sticks' clicks LS / RS */
-export function inputGlyph(input: KeyboardInput | GamepadInput | null): string {
-  if (input?.kind === "padButton") return PAD_BUTTON_GLYPHS[input.button] ?? inputName(input);
-  return inputName(input);
+/** An input's name short enough for a key box: the D-pad as arrows, the sticks' clicks LS / RS (L3 / R3) */
+export function inputGlyph(input: KeyboardInput | GamepadInput | null, style: PadStyle = padStyle): string {
+  if (input?.kind === "padButton") return (style === "playstation" ? PS_BUTTON_GLYPHS : PAD_BUTTON_GLYPHS)[input.button] ?? inputName(input, style);
+  return inputName(input, style);
 }
 
-export function inputName(input: KeyboardInput | GamepadInput | null): string {
+export function inputName(input: KeyboardInput | GamepadInput | null, style: PadStyle = padStyle): string {
   if (input === null) return "—";
   switch (input.kind) {
     case "key":
@@ -151,7 +178,7 @@ export function inputName(input: KeyboardInput | GamepadInput | null): string {
     case "mouse":
       return MOUSE_NAMES[input.button] ?? `Mouse ${input.button + 1}`;
     case "padButton":
-      return PAD_BUTTON_NAMES[input.button] ?? `Button ${input.button}`;
+      return (style === "playstation" ? PS_BUTTON_NAMES : PAD_BUTTON_NAMES)[input.button] ?? `Button ${input.button}`;
     case "padAxis": {
       const names = AXIS_NAMES[input.axis];
       return names ? names[input.sign > 0 ? 1 : 0] : `Axis ${input.axis}${input.sign > 0 ? "+" : "-"}`;

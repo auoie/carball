@@ -1721,6 +1721,26 @@ mod tests {
     }
 
     #[test]
+    fn at_zero_a_ball_rolling_on_the_floor_ends_the_round_at_once() {
+        // (the user's finding 14: the round waited for a touch; the rolling ball's floor contact is the world contact the
+        // game's EndRoundComponent takes)
+        init_engine();
+        let mut game = Game::new();
+        let (tx, _rx) = channel(TEST_QUEUE);
+        game.join(1, REQUEST, tx);
+        run_until(&mut game, 1000, |g| g.phase == Phase::Active);
+        run_until(&mut game, 1000, |g| g.clock_running);
+        game.arena.set_ball([0.0, -2000.0, 93.15], [0.0, 600.0, 0.0]);
+        ticks(&mut game, 10);
+        game.clock_ticks = 1;
+        run_until(&mut game, 5, |g| g.phase == Phase::TimeUp);
+        let at = game.tick_count();
+        let ended = run_until(&mut game, 10, |g| g.phase != Phase::TimeUp);
+        assert!(ended - at <= 2, "the round ended {} ticks after 0:00", ended - at);
+        assert!(game.overtime);
+    }
+
+    #[test]
     fn at_zero_the_round_ends_when_the_ball_lands_then_a_tie_goes_to_overtime() {
         init_engine();
         let mut game = Game::new();

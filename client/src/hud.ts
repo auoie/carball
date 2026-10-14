@@ -8,6 +8,8 @@ import { DODGE_WINDOW, type Dodge } from "./game/flipTracker";
 import { type VoteHud, voteFlashes } from "./game/forfeitVote";
 import { ACTIONS, type Bindings, inputName } from "./input/bindings";
 import { type KeyGlyph, clearPrompt, renderPrompt } from "./ui/keyGlyph";
+import { BoostMeterArt } from "./ui/boostMeter";
+import { setNumberText } from "./ui/numberCells";
 
 /** The local car demolished: its respawn and the respawn spot selection (the steer input picks a side). */
 export interface RespawnHud {
@@ -162,9 +164,8 @@ export class Hud {
   readonly #stage: HTMLElement;
   readonly #stageFit = { key: "" };
   readonly #boostValue: HTMLElement;
-  readonly #boostRing: SVGCircleElement;
-  readonly #boostTop: SVGCircleElement;
-  readonly #boostGlow: SVGCircleElement;
+  readonly #boostGhost: HTMLElement;
+  readonly #boostArt: BoostMeterArt;
   readonly #speed: HTMLElement;
   readonly #blue: HTMLElement;
   readonly #scoreBox: HTMLElement;
@@ -185,7 +186,6 @@ export class Hud {
   readonly #fps: HTMLElement;
   readonly #net: HTMLElement;
   readonly #help: HTMLElement;
-  readonly #ringLength: number;
   readonly #flip: HTMLElement;
   readonly #flipRing: SVGCircleElement;
   readonly #flipLabel: HTMLElement;
@@ -207,15 +207,8 @@ export class Hud {
     this.#root = root;
     this.#stage = element(root, "#hud-stage", HTMLElement);
     this.#boostValue = element(root, "#boost-value", HTMLElement);
-    const circle = (selector: string): SVGCircleElement => {
-      const c = root.querySelector(selector);
-      if (!(c instanceof SVGCircleElement)) throw new Error(`HUD element ${selector} missing`);
-      return c;
-    };
-    this.#boostRing = circle("#boost-ring");
-    this.#boostTop = circle("#boost-top");
-    this.#boostGlow = circle("#boost-glow");
-    this.#ringLength = 2 * Math.PI * this.#boostRing.r.baseVal.value;
+    this.#boostGhost = element(root, "#boost-ghost", HTMLElement);
+    this.#boostArt = new BoostMeterArt(element(root, "#boost-back", HTMLElement), element(root, "#boost-front", HTMLElement));
     this.#speed = element(root, "#speed", HTMLElement);
     this.#blue = element(root, "#score-blue", HTMLElement);
     this.#scoreBox = element(root, "#score", HTMLElement);
@@ -346,8 +339,8 @@ export class Hud {
     this.#scoreBox.classList.toggle("swapped", team === 1);
     if (shown && !this.#scoreShown) this.#scoreIntro();
     this.#scoreShown = shown;
-    this.#blue.textContent = String(s.score[0]);
-    this.#orange.textContent = String(s.score[1]);
+    setNumberText(this.#blue, String(s.score[0]));
+    setNumberText(this.#orange, String(s.score[1]));
     const last = this.#lastScore;
     if (last) {
       for (const t of [0, 1] as const) {
@@ -360,7 +353,7 @@ export class Hud {
     }
     this.#lastScore = s.score;
     const overtime = s.overtimeLabel ?? false;
-    this.#clock.textContent = s.clock ?? "";
+    setNumberText(this.#clock, s.clock ?? "", true);
     this.#clock.hidden = s.clock === null || overtime;
     this.#clockOvertime.hidden = !overtime;
     // (the label fades out in 0.2 s, the clock in over 0.3 s)
@@ -407,21 +400,16 @@ export class Hud {
     const target = boostShown(boost);
     const displayedNow = this.#boostDisplayed(now);
     if (target !== this.#boostTarget) {
-      if (this.#boostTarget >= 0 && target > this.#boostTarget && shown) {
-        const flash = { duration: 800, easing: "cubic-bezier(0.23, 1, 0.32, 1)" };
-        this.#boostRing.animate([{ stroke: "#ffffff" }, { stroke: "#ff9d1e" }], flash);
-        this.#boostGlow.animate([{ transform: "scale(2)" }, { transform: "scale(1)" }], flash);
-      }
+      if (this.#boostTarget >= 0 && target > this.#boostTarget && shown) this.#boostArt.flash();
       this.#boostFrom = this.#boostTarget < 0 ? target : displayedNow;
       this.#boostTarget = target;
       this.#boostSince = now;
     }
     const value = Math.round(this.#boostDisplayed(now));
-    this.#boostValue.textContent = String(value);
+    setNumberText(this.#boostValue, String(value));
+    setNumberText(this.#boostGhost, String(value));
     const arc = boostArc(value);
-    const length = this.#ringLength;
-    this.#boostRing.style.strokeDasharray = `${String((length * arc.fill) / 360)} ${String(length)}`;
-    this.#boostTop.style.strokeDasharray = `${String((length * arc.top) / 360)} ${String(length)}`;
+    this.#boostArt.set(arc.fill, arc.top);
     const teamColoured = this.#ui?.teamColoredBoost ?? true;
     this.#boostBox.classList.toggle("team-1", teamColoured && team === 1);
     this.#boostBox.classList.toggle("plain", !teamColoured);
@@ -445,7 +433,8 @@ export class Hud {
       this.#messageText = text;
       el.textContent = text;
       el.style.fontSize = "";
-      if (text !== "" && el.scrollWidth > width - 80) el.style.fontSize = `${String((72 * (width - 80)) / el.scrollWidth)}px`;
+      // (too wide: smaller, from its size as set, the stand-in font's scale in it)
+      if (text !== "" && el.scrollWidth > width - 80) el.style.fontSize = `${String((parseFloat(getComputedStyle(el).fontSize) * (width - 80)) / el.scrollWidth)}px`;
     }
     if (this.#popMessage && text !== "") {
       el.animate(

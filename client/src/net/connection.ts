@@ -22,7 +22,14 @@ export interface ServerAddress {
 }
 
 /** A development server publishes its port and certificate hash at http://host:infoPort/info. */
-export async function devServerAddress(host: string, infoPort: number): Promise<ServerAddress> {
+/** The host to reach a server at: "localhost" as 127.0.0.1. Windows resolves localhost to ::1 first, and UDP to ::1
+ *  doesn't reach a server in WSL, while WebTransport doesn't fall back to IPv4: the opening handshake fails */
+export function serverHost(host: string): string {
+  return host === "" || host.toLowerCase() === "localhost" ? "127.0.0.1" : host;
+}
+
+export async function devServerAddress(requestedHost: string, infoPort: number): Promise<ServerAddress> {
+  const host = serverHost(requestedHost);
   const response = await fetch(`http://${host}:${String(infoPort)}/info`, { cache: "no-store" });
   if (!response.ok) throw new Error(`server info: HTTP ${String(response.status)}`);
   const info = (await response.json()) as { port?: unknown; certHash?: unknown };

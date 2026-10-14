@@ -41,7 +41,8 @@ not yet tested. Values in parentheses are engine-only predictions.
 ## Confirmed same (game code vs engine)
 - **Tick order** (`FUN_140f1c600` → Bullet substep → vehicle update `FUN_1402c5340`): matches patches 41/51; the engine
   runs each car's vehicle update inside its own `_PreTickUpdate` (only another body's wheel-push impulse differs,
-  < 0.3 uu/s). Per car: RB read-back, auto-roll, sticky, supersonic, jump-landing reset, then each component's
+  < 0.3 uu/s; **but** the game runs all vehicles in its action-array order, creation order reshuffled by swap-remove,
+  where the engine uses car-ID order: up to 0.73 uu/s for a car parked on another car, FP1 G2 in physics-values.md). Per car: RB read-back, auto-roll, sticky, supersonic, jump-landing reset, then each component's
   PrePhysicsStep → ApplyForces(ActivityTime) → ActivityTime += dt (`SetActive` `FUN_140f2f370` resets it). Velocity
   changes read the start-of-tick state, so component order only matters for GA-8 and GA-3.
 - **Throttle/brake:** drive curve with `VehicleSim_TA.OnAttached` adding (InVal±10, 0) at both ends → 1410 → 0

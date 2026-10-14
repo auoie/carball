@@ -45,7 +45,7 @@ import type { Options, Settings } from "../settings/settings";
 import { Interpolated } from "./interpolated";
 import { SyncError } from "./syncError";
 import { HUD_TEXT, TICK_RATE, clockCue, clockWarning, countdownStep, formatClock, overtimeLabel, shownSeconds } from "./matchClock";
-import { fromThreeQuaternion, rotateRl, toThreeQuaternion } from "../render/coords";
+import { fromThreeQuaternion, fromThreeVector, rotateRl, toThreeQuaternion } from "../render/coords";
 import { postGoalDilation } from "./goalSequence";
 import { type RecordedCar, ReplayRecorder, recordCar } from "./replayRecorder";
 import { ReplayPlayback } from "./replayPlayback";
@@ -76,7 +76,7 @@ import {
 } from "./matchSequence";
 import { EndScreen, type PodiumTags, type ScreenDimming, type WinnerBanner } from "../ui/endOfMatch";
 import { shownTitles } from "./podiumTitles";
-import { NAMEPLATE_HEIGHT, type Nameplates, type Plate } from "../ui/nameplates";
+import { type Nameplates, type Plate, platesAt } from "../ui/nameplates";
 import type { CameraView } from "../camera/rlCamera";
 import type { HeldScoreboard, ScoreboardView } from "../ui/scoreboard";
 import type { StatPopups, StatTicker } from "../ui/statFeed";
@@ -84,6 +84,7 @@ import { PLAYER_TEXT, type PlayerItem, type Toast } from "../ui/playersMenu";
 import { CHAT_PRESETS } from "./quickChat";
 import { inputGlyph } from "../input/bindings";
 import { keyGlyph } from "../ui/keyGlyph";
+import { BallArrow, ballArrowShown } from "../render/ballArrow";
 
 
 /** The key that opens the menu, which has the vote button (VoteInstructions' {0?KeyBinding}) */
@@ -157,6 +158,8 @@ export class Online {
   readonly #camera = new PlayerCamera();
   readonly #cars = new Map<number, CarEntry>();
   readonly #ballView = new BallView();
+  /** The ball arrow by the player's car (HUD-17) */
+  readonly #ballArrow = new BallArrow();
   readonly #ball: Interpolated<BodyState>;
   readonly #ballError = new SyncError();
   #ballSpawns = 0; // the ball's spawn counter last tick (a reset places it: not interpolated)
@@ -286,7 +289,7 @@ export class Online {
     // (the chat filters went in the Hello: RV-259)
     this.#chatFilterSent = `${settings().chat.quickChatFilter}|${String(settings().chat.blockNonTactical)}`;
     this.#localSpawns = world.car(welcome.carId).spawnCount;
-    renderer.scene.add(this.#ballView.root, this.#padsView.root);
+    renderer.scene.add(this.#ballView.root, this.#padsView.root, this.#ballArrow.root, statsUi.nameplates.root);
     this.#effects = new SceneEffects(renderer.scene);
     this.#syncCars();
     this.#fade.fromBlack(LOAD_FADE_IN); // (MIO-2: the arena fades in from black as it first draws)
@@ -861,12 +864,14 @@ export class Online {
    *  `realSeconds`: real time since the last frame. */
   #draw(frameSeconds: number, simulated: number, realSeconds: number): void {
     const alpha = this.#clock.alpha;
+    let localDrawn: Vec3 | null = null;
     for (const [id, { view, state, error }] of this.#cars) {
       error.decay(frameSeconds);
       const { boosting, supersonic } = state.current;
       // (demolished as the server says: RV-84)
       const demoed = this.#drawnDemoed(id, state.current);
       const pos = error.applyPosition(state.position(alpha, this.#pos));
+      if (id === this.#localCar && !demoed) localDrawn = fromThreeVector(pos);
       const throttling = (id === this.#localCar ? this.#throttle : Math.abs(this.#world.carControls(id).throttle)) > 0;
       view.update(pos, error.applyRotation(state.rotation(alpha, this.#rot)), boosting, demoed, supersonic, frameSeconds, trailGround(state.current), throttling);
     }
@@ -881,6 +886,11 @@ export class Online {
       this.#arena.newBall();
     }
     this.#ballView.fade(this.#serverExploded, frameSeconds);
+    // The ball arrow (HUD-17): the setting on, the ball cam off, in the round (the countdown, play, after a goal)
+    const roundPhase = this.#match?.phase;
+    const round = roundPhase === "countdown" || roundPhase === "active" || roundPhase === "postGoal" || roundPhase === "timeUp";
+    const arrow = ballArrowShown(this.settings().interface.ballArrow, this.#ballCam, localDrawn !== null, round && this.#carView);
+    this.#ballArrow.update(arrow ? localDrawn : null, fromThreeVector(ball), frameSeconds, this.#serverExploded);
     this.#ballView.update(ball, this.#ballError.applyRotation(this.#ball.rotation(alpha, this.#rot)));
     this.#arena.update(ball, frameSeconds);
     this.#effects.update(frameSeconds);
@@ -945,24 +955,26 @@ export class Online {
 
   /** HUD-13: the other cars' nameplates as drawn (none for a demolished car, nor on the podium and after: its panels);
    *  `replayCars`: the goal replay's cars as it draws them (every car's plate tracks them: HT-8, RV-279) */
-  #drawNameplates(alpha: number, replayCars: ReadonlyMap<number, Vec3> | null = null): void {
+  #drawNameplates(alpha: number, replayCars: ReadonlyMap<number, { readonly pos: Vec3; readonly team: number }> | null = null): void {
     const ui = this.settings().interface;
     const phase = this.#match?.phase;
     const live = this.#carView && phase !== "podium" && phase !== "finished" && phase !== "prePodium";
-    const plate = (id: number, pos: Vec3, team: number): Plate => {
-      const top = { x: pos.x, y: pos.y, z: pos.z + NAMEPLATE_HEIGHT };
+    const project = (top: Vec3): Plate["at"] => {
       const scale = this.#renderer.scaleAt(top);
       const at = scale ? this.#renderer.project(top) : null;
-      return { car: id, name: this.#roster?.get(id)?.name ?? "", team, at: at && scale ? { ...at, ...scale } : null };
+      return at && scale ? { ...at, ...scale } : null;
     };
-    const plates = replayCars
-      ? [...replayCars].map(([id, pos]) => plate(id, pos, this.#cars.get(id)?.state.current.team ?? this.#roster?.get(id)?.team ?? 0))
-      : live
-        ? [...this.#cars].flatMap(([id, entry]) => {
-            if (id === this.#localCar || this.#drawnDemoed(id, entry.state.current)) return [];
-            return [plate(id, add(entry.state.blended(alpha).pos, entry.error.location), entry.state.current.team)];
-          })
-        : [];
+    // (live: the others' cars as drawn; the replay: every car, the player's own saying YOU)
+    const cars = replayCars ?? new Map(
+      live
+        ? [...this.#cars].flatMap(([id, entry]) =>
+            id === this.#localCar || this.#drawnDemoed(id, entry.state.current)
+              ? []
+              : [[id, { pos: add(entry.state.blended(alpha).pos, entry.error.location), team: entry.state.current.team }] as const],
+          )
+        : [],
+    );
+    const plates = platesAt(cars, this.#localCar, (id) => this.#roster?.get(id)?.name ?? "", project);
     this.statsUi.nameplates.update(plates, ui.nameplateMode, ui.nameplateScale, ui.hideHud);
   }
 
@@ -1066,6 +1078,7 @@ export class Online {
    *  last frame. */
   #drawReplay(realSeconds: number, playback: ReplayPlayback): void {
     const cars = [...this.#cars].map(([id, entry]) => [id, entry.view] as const);
+    this.#ballArrow.update(null, null); // (not in a replay: HUD-17)
     playback.frame(realSeconds, {
       renderer: this.#renderer,
       arena: this.#arena,

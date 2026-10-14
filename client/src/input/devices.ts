@@ -1,4 +1,5 @@
 // Collects keyboard, mouse and gamepad state from the browser into snapshots.
+import { padStyleOf, setPadStyle } from "./bindings";
 import type { GamepadSnapshot, InputEvent, InputSnapshot } from "./mapping";
 
 export class InputDevices {
@@ -151,10 +152,11 @@ export class InputDevices {
   }
 }
 
-/** The first connected gamepad with the standard layout. */
+/** The first connected gamepad with the standard layout (its kind noted for the prompts' glyphs: setPadStyle) */
 export function readGamepad(): GamepadSnapshot | null {
   for (const pad of navigator.getGamepads()) {
     if (pad?.connected && pad.mapping === "standard") {
+      setPadStyle(padStyleOf(pad.id));
       return { axes: [...pad.axes], buttons: pad.buttons.map((b) => b.value) };
     }
   }

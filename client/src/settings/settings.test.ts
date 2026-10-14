@@ -176,7 +176,7 @@ describe("chat settings (CHAT-5, 18)", () => {
   it("the Interface and Gameplay tabs: defaults, limits, unknown values back to the default (MENU-6/9)", () => {
     expect(DEFAULT_SETTINGS.interface).toMatchObject({ scale: 1, displayScale: 1, nameplateMode: "default", matchNotifications: "all", teamColoredBoost: true, metric: true });
     const parsed = parseSettings({ interface: { scale: 0.2, displayScale: 0.95, nameplateMode: "huge", matchNotifications: "kickoff", hideHud: true }, gameplay: { statDisplayLevel: "all" } });
-    expect(parsed.interface).toMatchObject({ scale: 0.5, displayScale: 0.95, nameplateMode: "default", matchNotifications: "kickoff", hideHud: true, ballCamIndicator: true });
+    expect(parsed.interface).toMatchObject({ scale: 0.5, displayScale: 0.95, nameplateMode: "default", matchNotifications: "kickoff", hideHud: true, ballCamIndicator: true, ballArrow: true });
     expect(parsed.gameplay).toEqual({ statDisplayLevel: "all", flipResetIndicator: "on" });
   });
 

@@ -1,5 +1,6 @@
 // Entry point: load the WebAssembly engine and the arena, then run freeplay.
 import { setInterfaceScale } from "./ui/stage";
+import { fitHudFonts } from "./ui/hudFont";
 import createEngine from "@engine/rlengine_web.mjs";
 import { CarBody, World, initEngine } from "./engine/world";
 import { Freeplay } from "./game/freeplay";
@@ -7,7 +8,7 @@ import { Online } from "./game/online";
 import { Connection, devServerAddress } from "./net/connection";
 import { GameAudio } from "./audio/audio";
 import { Hud } from "./hud";
-import { InputDevices } from "./input/devices";
+import { InputDevices, readGamepad } from "./input/devices";
 import { ArenaView } from "./render/arena";
 import { loadGameCage } from "./render/cage";
 import { loadGameFieldPlan } from "./render/stadiumFieldRules";
@@ -26,6 +27,8 @@ import { EndScreen, PodiumTags, ScreenDimming, WinnerBanner } from "./ui/endOfMa
 import { Nameplates } from "./ui/nameplates";
 import { MainMenu } from "./ui/mainMenu";
 import { PauseMenu } from "./ui/pauseMenu";
+import { PadMenuNav } from "./ui/padNav";
+import { PadReadout } from "./ui/padReadout";
 import { Renderer } from "./render/renderer";
 import "./style.css";
 
@@ -132,6 +135,11 @@ async function main(): Promise<void> {
     hud.configure(s.interface);
   };
   applyInterface(settings);
+  // (the header fonts' substitute scaled to Bourgeois' capitals: now, and again once every font is in)
+  fitHudFonts();
+  void document.fonts.ready.then(() => {
+    fitHudFonts();
+  });
   const panel = new SettingsPanel(document.body, settings, (next) => {
     settings = next;
     audio.apply(next.audio, next.options.muted);
@@ -160,24 +168,54 @@ async function main(): Promise<void> {
       : {}),
   });
   const menusOpen = (): boolean => panel.isOpen || pause.isOpen || (mainMenu?.isOpen ?? false);
+  // Escape (and the pad's Start): back out of the settings or the main menu's page, else the pause menu opens or closes
+  const escape = (): void => {
+    if (panel.isOpen) panel.escape();
+    else if (mainMenu?.isOpen) mainMenu.back();
+    else pause.toggle();
+  };
   window.addEventListener(
     "keydown",
     (e) => {
       if (e.code !== "Escape") return;
       e.preventDefault();
-      if (panel.isOpen) panel.escape();
-      else if (mainMenu?.isOpen) mainMenu.back();
-      else pause.toggle();
+      escape();
     },
     { capture: true },
   );
+  // The menus with a pad (src/ui/padNav.ts): the topmost open one; the end screen's menu when nothing is over it
+  const visibleMenu = (selector: string): HTMLElement | null => {
+    const el = document.querySelector<HTMLElement>(selector);
+    return el && !el.hidden && el.getClientRects().length > 0 ? el : null;
+  };
+  // (?pad: what the browser reports for each pad, over everything)
+  const padReadout = new URLSearchParams(location.search).has("pad") ? new PadReadout(document.body) : null;
+  const padNav = new PadMenuNav({
+    menu: () =>
+      panel.isOpen
+        ? visibleMenu("#settings")
+        : mainMenu?.isOpen
+          ? visibleMenu("#main-menu")
+          : pause.isOpen
+            ? visibleMenu("#pause-menu")
+            : document.querySelector("#end-screen .end-buttons button") && visibleMenu("#end-screen .end-menu"),
+    // (B backs out of an open menu: never opens the pause menu)
+    back: () => {
+      if (panel.isOpen) panel.escape();
+      else if (mainMenu?.isOpen) mainMenu.back();
+      else if (pause.isOpen) pause.close();
+    },
+    start: escape,
+  });
+  // (the games don't take input under a menu, nor a pad button a menu took that's still down)
+  const inputEnabled = (): boolean => !menusOpen() && !padNav.suppressed;
   // For the browser tests
   (window as unknown as { rlAudio?: () => unknown }).rlAudio = () => audio.stats;
   (window as unknown as { rlAmbienceLevels?: (theme: ThemeName, seconds: number) => Promise<unknown> }).rlAmbienceLevels = async (t, seconds) =>
     (await import("./audio/levels")).ambienceLevels(t, seconds);
   let game: { frame(dt: number): void };
   if (server === null) {
-    const freeplay = new Freeplay(world, renderer, arena, input, hud, audio, () => settings, () => !menusOpen());
+    const freeplay = new Freeplay(world, renderer, arena, input, hud, audio, () => settings, inputEnabled);
     freeplayRestart = () => {
       freeplay.restart();
     };
@@ -241,7 +279,7 @@ async function main(): Promise<void> {
       popups: new StatPopups(hudRoot),
       ticker: new StatTicker(hudRoot),
       toast: new Toast(hudRoot),
-      nameplates: new Nameplates(hudRoot),
+      nameplates: new Nameplates(),
     };
     // Back to the main menu (the menu's leave, the end screen's exit)
     const leave = (): void => {
@@ -260,12 +298,13 @@ async function main(): Promise<void> {
       },
     });
     const endUi = { banner: new WinnerBanner(hudRoot), dimming: dimmingUi, tags: new PodiumTags(hudRoot), endScreen };
-    const online: Online = new Online(world, renderer, arena, input, hud, audio, connection, welcome, () => settings, () => !menusOpen(), chat, statsUi, endUi);
+    const online: Online = new Online(world, renderer, arena, input, hud, audio, connection, welcome, () => settings, inputEnabled, chat, statsUi, endUi);
     const players = new PlayersMenu(pause.players, (car, what) => {
       online.togglePlayer(car, what);
     });
     // For the browser tests
     (window as unknown as { rlOnline?: () => unknown }).rlOnline = () => online.stats;
+    (window as unknown as { rlNameplates?: () => unknown }).rlNameplates = () => statsUi.nameplates.shown;
     // The pause menu's match buttons: forfeit or vote (the server's), leave (back to the main menu)
     const menu = new MatchMenu(pause.match, (action) => {
       if (action === "leave") {
@@ -296,6 +335,8 @@ async function main(): Promise<void> {
     // (raw: the games take their clamped real and world times from it, LT-3)
     const dt = (now - last) / 1000;
     last = now;
+    padNav.frame(readGamepad(), now / 1000);
+    padReadout?.update();
     game.frame(dt);
     requestAnimationFrame(frame);
   };

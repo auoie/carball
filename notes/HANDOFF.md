@@ -477,7 +477,7 @@
       characters are every Cf; stats_validate resumes the round when the replay is still in play a second after an
       engine-only goal (`ResumeRound`; 60 1v1 replays: goals 100.0 / 99.7, notes/validation.md).
     - Not yet: the centre dot, the ball arrow, the chat input box, the waiting-for-players list, a garage (car choice).
-  - **Since 150e1e6 (uncommitted): the 150e1e6 review RV-279..286.** Mutators are dropped (user decision,
+  - **In 6e56234: the 150e1e6 review RV-279..286.** Mutators are dropped (user decision,
     2026-10-14); their spec, notes/mutators.md, is in git history at 674f3ef.
     - RV-279: nameplates follow the goal replay's cars (`ReplayPlayback.cars`), every car's plate.
     - RV-280: the plate's pivot (bottom centre on its point) holds at any scale (`plateTransform`).
@@ -491,6 +491,51 @@
     - RV-285: "Free Play" on the main menu stays as it is (the user, 2026-10-14); RV-286 info, no change.
     - Scope (the user, 2026-10-14): free play and online matches. Custom training, bots and mutators are dropped;
       netcode, hosting and joining come later, after the user has evaluated the game.
+  - **Since 6e56234 (uncommitted): the user's first evaluation findings, the 6e56234 review RV-287/288.**
+    - The red dot (REPLAY, BALL CAM): the game's 32 px bitmap is mostly halo: a 13 px #FF7752 disc and a soft #FF4141
+      glow to r 16; the label's text 12 px right of its centre.
+    - The header fonts ($HeaderFont, $HeaderThinFont: Bourgeois Medium and Thin, cap height 0.5679 em): every size
+      scaled by Bourgeois' cap height over the local substitute's, measured on the font the browser draws the stack
+      with (`ui/hudFont.ts`, CSS `--hud-header-scale`, `--hud-thin-scale`).
+    - The top scoreboard's fills at the textures' 0.8 (team boxes, the clock box); its 100 px perspective stays (the
+      static session: focalLength wins); the boost meter's is 500 px (focalLength 500, centre 50 left and 100 above).
+    - Menus with a pad (`ui/padNav.ts`): the D-pad and left stick move a highlighted focus (the nearest control that
+      way), A presses (a list steps on), left/right change a list or slider, B backs out, Start opens and closes the
+      pause menu; a menu's press still held after it closes isn't the car's. The end screen, pause, main menu, settings.
+    - Online from a Windows browser: `localhost` is reached at 127.0.0.1 (Windows tries ::1 first, which a WSL server's
+      UDP never sees, and WebTransport doesn't fall back).
+    - The goal replay's car sounds follow the replayed cars (engine, boost, supersonic), heard from the replay camera;
+      the live voices come back after it (`GameAudio.replayFrame`).
+    - The flip circle on the HUD's stage, left of the boost meter (no overlap at any size).
+    - The ball arrow (HUD-17, `render/ballArrow.ts`; Interface "Ball Arrow", on): the round arrow 75–120 uu from the car
+      toward the ball, 20 up, over everything; with the ball cam off, the car alive, in the round. Its materials from
+      the compiled shaders (ARW1): the r 12 sphere a black haze ((N·V)⁴ on its far inner side: a soft dark disc), the
+      arrow neutral grey (0.25 linear) with a 125 ms flash to 3.25 twice a second sweeping tail to tip; it freezes
+      while the ball is exploded (a goal).
+    - The 0:00 rule (`rl_ball_on_ground`): the ball's world contact counts its persisted points too, their merged
+      normal z > 0.96, so a ball rolling on the floor ends the round at once (it rides 0.038 over the mesh, never under
+      the 0.02 the check used to ask).
+    - The red dot's labels laid out on their baselines (REPLAY, BALL CAM and its hint: the dot's centre 11 above the
+      label's baseline, the hint's 27, both texts from 14 right of it, HUD-12), so they line up in any font; the stat
+      popup's name and "+N" and the centre message on their measured baselines (HT-12: no overlap).
+    - The scoreboard drawn to the bitmaps' visible shapes (HUD-2a: the clock box 135 × 56 with its notch, the score
+      boxes 67.5 × 56, rounded outside, a grey ramp to the inner edge under the team tint; the board's origin at y 0:
+      MatchInfoView sets it at run time, 26 while searching for a match, later), the score views turned about their
+      origins; the numbers' stand-in scaled to Dashboard Numbers Wide's digit height (`--hud-numbers-scale`), each
+      character in a cell its advance wide (`ui/numberCells.ts`: digits 0.796 em, '1' 0.31, ':' 0.14, as the game's:
+      the clock holds still but for a 1), each field on its baseline.
+    - Nameplates drawn in the world (sprites, alpha-tested 0.667, depth-tested: what's in front covers them; HT-12).
+    - A PlayStation pad (Gamepad.id: 054c, DualShock/DualSense, "Wireless Controller") gets PlayStation glyphs and
+      names (✕ ○ □ △, L1/R1/L2/R2, Options, Share); a menu's first control is highlighted at once. The user's "Cross
+      does nothing" was the pad's press edge read against itself (`PadMenuNav.frame` kept the new buttons as the last
+      frame's before reading them): A, B and Start never pressed, only the stick and D-pad moved. `?pad` in the address
+      shows what the browser reports for each pad (id, mapping, held buttons, axes).
+    - The clock pads a trailing '1' with a no-break space (HT-12, onTimeRemainingChanged), its letterSpacing not on
+      that pair: 1:10 to 1:11 holds still, as the game's.
+    - RV-287: Exit to Main Menu, then Free Play: the goals back to 0-0. RV-288: in the goal replay the player's own
+      plate says YOU (`platesAt`); RV-279's test (`replayCarPositions`).
+    - Every check batch: `scripts/replay_check.py`, the physics against a fixed sample of 16 local replays (median per
+      group, WORSE against the previous run; notes/validation.md).
   - **Decided (user, 2026-10-10): no controller rumble.** notes/rumble.md stays as a reference spec only. The contact
     detection it asked about (the static session's Q-RMB-a: HandleCollision's cadence, the contact's point and normal,
     the landing speed) is still wanted, for the Impact_Medium camera shake and the impact and landing sounds; don't

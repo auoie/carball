@@ -19,7 +19,7 @@ Sub-agent files, local in out/bsim/agents/HUD1/:
 | # | Element | Game | Ours | Implement |
 |---|---|---|---|---|
 | HUD-1 | Stage, scaling, fonts, team colours | **Scaling** (NO_SCALE, top-left) [G projectx.core.UIScreen]: S = stageH/720 if stageW/stageH ≥ 1.5556, else stageW/1120; **ContentScale = max(0.5, S·UIScale·SafeZone)**; content stage = stage/ContentScale·SafeZone, inset by stage·(1 − SafeZone)/2. UIScale 0.5–1 (default 1); SafeZone ("Display Scale") 0.9–1 (default native).<br>**Fonts** [G]: $HeaderFont Bourgeois Medium; $HeaderThinFont Bourgeois Thin; $NumbersWideFont Dashboard Numbers Wide (only ` ()+-./0-9:`); $SmallFont Arial Narrow; $SmallBoldFont Arial Narrow Bold; $NormalFont Arial.<br>**Team colours** [A Team0/1 FontColor, verified]: blue (0, 0.18, 0.75) = #002DBF; orange (0.7, 0.24, 0) = #B23D00 (colour-blind #001972 / #FF6600).<br>**Text on team colour** [G TeamStyleManager]: brightness = (3R + 4G + B) >> 3; text = (c + 80)·3 clamped (≤ 120) or (c − 80)·0.3, giving blue #F0FFFF, orange #FFFFF0. Tints are **additive** (1, 1, 1, 1, r, g, b) | fixed CSS px, system-ui (`client/src/style.css:20`) | A 1120×720 (or W×720) container scaled by ContentScale, with the anchors below. Substitute fonts: condensed caps for Bourgeois, a wide digital font for the numbers. Don't redistribute the game fonts |
-| HUD-2 | Scoreboard | [G HudMatchInfo matchInfoView] at x = W/2, y = 0. Relative to its top centre:<br>• **Clock box:** black notched MatchTimer_Background at x −90…90, y −18…72.<br>• **Clock text:** $NumbersWideFont 31, white, letterSpacing 2, in x −65…65, y 10…46.<br>• **Score digits:** $NumbersWideFont 48 in the team text colour, glow #999999 blur 8, plus a duplicate at α 0.4. Left box x −136…−66, y 2…54; right mirrored at 68…138.<br>• **Score backgrounds:** dark rounded 90×90 TeamScoreView_Background (x −157…−67, y −17…73), additive team tint.<br>• **Caption:** match type (ranked/series), white pill, $HeaderFont 18 black, y 34.<br>• **3D:** rotationX 5, score views rotationY ±10, perspective focal 100 centred at (W/2, 80).<br>**Your own team is always on the left** (Team 1 swaps the views) | `index.html:14-18`, `style.css:54-90`: blue always left, solid pills, system font | Dark boxes with additive team tint and near-white digits; local team on the left; black clock box |
+| HUD-2 | Scoreboard | [G HudMatchInfo matchInfoView] at x = W/2, y = 0. Relative to its top centre:<br>• **Clock box:** black notched MatchTimer_Background at x −90…90, y −18…72 (that is the bitmap; the **visible box is 135 × 56 at x −67.5…67.5, y −1…55**: see HUD-2a).<br>• **Clock text:** $NumbersWideFont 31, white, letterSpacing 2, in x −65…65, y 10…46 (centred, with a trailing-'1' NBSP pad: HT-12).<br>• **Score digits:** $NumbersWideFont 48 in the team text colour, glow #999999 blur 8, plus a duplicate at α 0.4. Left box x −136…−66, y 2…54; right mirrored at 68…138.<br>• **Score backgrounds:** dark rounded 90×90 TeamScoreView_Background (x −157…−67, y −17…73), additive team tint.<br>• **Caption:** match type (ranked/series), white pill, $HeaderFont 18 black, y 34.<br>• **3D:** rotationX 5, score views rotationY ±10, perspective focal 100 centred at (W/2, 80).<br>**Your own team is always on the left** (Team 1 swaps the views) | `index.html:14-18`, `style.css:54-90`: blue always left, solid pills, system font | Dark boxes with additive team tint and near-white digits; local team on the left; black clock box |
 | HUD-3 | Clock and overtime | TimeRemaining = SecondsRemaining (int(t) + 1, notes/visual-timing.md VT-23) [S]. Format M:SS with unpadded minutes; "0:00" when ≥ 5000 (unlimited); "+" in overtime [G]. Overtime not yet active: the clock slot shows **"OVERTIME"** ($HeaderFont 32, two lines, leading −6, shrinks to fit); on Active it fades out (0.2 s) and "+M:SS" fades in (0.3 s) [G] | `matchClock.ts:7-11` ceil/floor; `:16` shows OVERTIME as a centre message | int(t) + 1; "OVERTIME" in the clock slot |
 | HUD-4 | Scoreboard animation and visibility | **Intro** (1 s delay): y −20 → 0 over 1 s Back.easeOut; alpha 0 → 1 and rotationX 75 → 5 over 0.6 s Strong.easeOut; score views rotationY ±60 → ±10 over 0.6 s Strong.easeIn.<br>**Goal:** the scorer's additive TeamScoreView_Glow jumps to α 1, then fades over 0.6 s Power1.easeIn.<br>**Hidden** in WaitingForPlayers, PostGame, PrePodium/Podium, Finished, training and tutorial, and by HideHUD. **Visible during the replay** [G] | text only | The glow flash on a score change; the intro |
 | HUD-5 | Boost meter: geometry | [G boostMeterView] bottom-right anchored, **centre at (W − 110, H − 110)**.<br>• Background disc 200×200 (thin grey ring with ticks); glow 180×180 at α 0.5.<br>• **Fill:** orange segments **clockwise from 6 o'clock to 12 o'clock** (0–80 %), then a separately tinted white segment **12 to 1:30** (80–100 %). **Total sweep 225°**; a 101-frame mask reveals 2.25° per frame.<br>• **Number:** $NumbersWideFont 54 in a 120×58 box at (−58, −28), black glow 6, #333333 duplicate behind; "BOOST" ($HeaderFont 16) at y + 16.<br>• **3D:** rotationY 15, rotationX −2, fills and number at z −20, FOV 120 | `index.html:35-41`, `style.css:189-223`: 140 px, 360° from 12 o'clock, 32 px from the edges | A 225° arc from 6 o'clock clockwise, about 200/720 of the screen height, centred 110 virtual px from the right and bottom; the last 45° tinted separately |
@@ -467,6 +467,190 @@ white, SC-chars:2980):
   Leave becomes FORFEIT MATCH (1v1) or VOTE TO … (teams) per HT-4.
 - **MENU-6/9:** the displayed option names are those in HT-5 (Nearby Only, Time Updates Only, Kickoffs Only, Main Stats
   Only, Audio Only, Visuals Only, …), not the enum names.
+
+### HT-11 Measurements for the HUD fixes (2026-10-14)
+- **Red dot** (HUD-11/12): `gfx_shared.GlowingRedDot` 32×32 bitmap, centred, scale 1. Solid core #FF7752 α 1, ≈ 13 px
+  across (50 % alpha at 14 px); halo #FF4141 α ≈ 0.29 at r 7–8 → 0 at r 16; ink = a 16 px solid disc. Label box at +12 px.
+  Behind the label: Glow_LinearFade 256×64 × 1.953, tint (255, 67, 67), α 0.5 [A][G].
+- **Fonts** (DefineFont3 outlines, GFX_Fonts.Fonts_EFIGS; EM 20480): Bourgeois Medium cap 0.5679 em, x-height 0.4258,
+  ascent 0.7875, descent 0.2275, leading −0.15; Bourgeois Thin cap 0.5679, x 0.4209; Arial / Arial Narrow cap 0.7158,
+  x 0.5186. Substitute size = size × 0.5679 / cap(substitute) [A].
+- **Perspective:** MatchInfoView `fieldOfView 165; focalLength 100`, centre (W/2, 80) (HMI:49955-49963); boost meter
+  `fieldOfView 120; focalLength 500`, centre (x − 50, y − 100) (HUD:53281-53286). Flash links the two
+  (fov = 2·atan((W/2)/focal)), last write wins → effective focal 100 and 500 (CSS perspective in stage px) [M][I: Scaleform = Flash].
+- **Scoreboard fills:** no clip alpha; textures carry it: MatchTimer_Background black α 0.80; TeamScoreView_Background
+  (18, 19, 18) α 0.80 (0.85–0.89 band) + additive team tint (alpha unchanged); TeamName_Background α ≤ 0.98, mostly
+  0.75–0.95; TeamScoreView_Glow (additive) hidden by default [A][M].
+
+### HT-12 More measurements for the HUD fixes (2026-10-14)
+- **Nameplate material** `GFx_Meshes.PlaneMat_Masked` (TAGame.upk) [A]: **BLEND_Masked** (alpha test,
+  OpacityMaskClipValue 0.667, so hard edges and no partial transparency), unlit, `bAllowFog` false, **depth test on**
+  (no bDisableDepthTest; a masked material also writes depth). The component (`Default__NameplateMeshComponent_TA`) sets
+  no depth-priority group and isn't translucent, so no sort priority applies. **The ball, cars, goal frames and the
+  world in front of a plate hide it**; the clone's draw-over-everything is a deviation.
+- **Stat popup** (StatEventView at (W/2, 150); each popup is added at the view's origin) [G anim]:
+  - Name (`EventNameLabel`): text box x −98…102, **y −17…25** ($HeaderFont 32), hold position (0, 0) from 0.6 s
+    (rises from +20 over 0.4–0.6 s). Baseline ≈ y 10, caps ≈ y −8…10.
+  - "+N" (`PointsLabel`): label at (0, **22**), its box y −12…18 inside, so **y 10…40** on the view ($HeaderFont 22);
+    baseline ≈ y 29, caps ≈ y 17…29. Pops from 3× to 1× in 0.23 s about the label's origin (0, 22).
+  - Icon: 32 px icon at scale 2, box (−32, −47)…(32, 17) while held still (0.13–0.37 s). It then grows to 5.625× at
+    (−90, −100) (a 180 px faint orange icon behind, α 0.5, blur 4) over 0.4–0.8 s.
+  - Exit 2.17–2.63 s: all rise (name to y −40, +N to −38, icon −30) and fade.
+  - So on the stage: name caps y ≈ 142–160, "+N" caps y ≈ 167–179.
+- **GameMessageView (W/2, 250)** [G]: the text box ($HeaderThinFont 72) is at (−228, −36), 460 × 76.3, so y 214…290.
+  The anchor 250 is ≈ the **box's vertical centre** and ≈ the **cap-height centre** (baseline ≈ y 272, caps ≈ 231–272;
+  Bourgeois Thin ascent 0.7775). It is neither the top nor the baseline. The message's caps start ≈ 52 px below the
+  popup's "+N", so in the game they never overlap.
+- **Dashboard Numbers Wide** (`$NumbersWideFont`, DefineFont3 in GFX_Fonts.Fonts_EFIGS; EM 20480) [A]:
+  - **digit height 0.5781 em** ('1' 0.5864); ascent 0.7775, descent 0.2275, leading 0.05;
+  - digits 0.736 em wide with **advance 0.796 em**, except **'1': advance 0.31** (proportional);
+  - ':' 0.14 em advance (dots between 0.118 and 0.461 em); '+' 0.442 advance.
+  - So the clock at 31 px has 17.9 px digits and a 24.7 px advance (+ letterSpacing 2); the score at 48 px has
+    27.7 px digits and a 38.2 px advance.
+  - A substitute font's size = size × 0.5781 / its digit height; match the advance with letter-spacing.
+- **Number alignment** [G][M]:
+  - **Clock** (`timeRemainingTextField`, box (−63, 12), 130 × 36.1, $NumbersWideFont 31): **centre-aligned**, no autoSize,
+    no script x moves.
+    - `onTimeRemainingChanged` (HMI:50222-50255) appends a **no-break space (U+00A0, advance 0.486 em) when the last
+      character is '1'**. '1' (0.31) + NBSP (0.486) = 0.796, a wide digit's advance, so a trailing '1' takes a full digit
+      cell (drawn at its left).
+    - letterSpacing 2 goes on the whole text, or, when padded, on all but the last two characters ('1' and the NBSP).
+    - Only the last character is compensated, so 1:10 → 1:11 doesn't move, but a '1' elsewhere (minutes, tens) makes
+      the centred text shift: 1:19 → 1:20 widens by 0.486 em (15 px), moving every character ≈ 7.5 px.
+    - The overtime "+" prefix is part of the same centred text.
+  - **Score digits** (`scoreTextField` + its ghost `backgroundTextField`, 70 × 52, $NumbersWideFont 48): centre-aligned,
+    set as plain `String(score)` (no padding, no autoSize). On a score increase the team glow flashes (visible, α 1 →
+    0 over 0.6 s, Power1.easeIn; HMI TeamScoreView.onScoreChanged).
+  - **Boost number** (`boostTextField` + ghost, 120 × 58.2, $NumbersWideFont 54): centre-aligned, plain text, no padding.
+- **HUD-12 text x** [G]: the dot's centre is the view origin (50, 672 + ΔH). "BALL CAM" (box (12, −16), 120 × 42.4,
+  left) and "PRESS {key} TO TOGGLE" (box (12, 12), 120 × 23.2, left) **share the left edge, 12 px right of the dot's
+  centre** (glyphs start ≈ 14 px with Flash's 2 px gutter). Baselines ≈ y +11 (label, 32 px) and ≈ y +27 (hint, 16 px).
+  The REPLAY label (HUD-11) uses the same 12 px offset.
+
+### HUD-2a Scoreboard shapes, measured (2026-10-14)
+The bitmaps carry transparent padding; the visible shapes are smaller than the 180 × 90 and 90 × 90 bitmaps [A][G].
+Coordinates are relative to matchInfoView's origin (W/2, y). The timeline places it at y 9, but at runtime
+`updateMatchInfoPosY` sets **y = m_offsetPosY = 0** (HMI:50048-50091); the intro tweens it −20 → 0 (HUD-4). While the player
+is searching for a match (`OnlineMatchStatus.bSearching`, no split screen), y = MATCHMAKING_VIEW_HEIGHT = 26 instead (HMI:50077) [G]:
+the board sits under the compact 26 px matchmaking banner (notes/matchmaking.md MM-5; the old expandable panel is unused).
+- **Clock box** (MatchTimer_Background, 256 × 128 at 0.7031, placed at (−90, −18)): an opaque rectangle (tex x 32…223,
+  y 24…103) → **135 × 56 at x −67.5…67.5, y −1.1…55.1**. Black, α 0.80, **hard edges** (no soft margin, shadow or
+  glow), square corners. A shallow **notch at the bottom centre**: ≈ 41–44 px wide, ≈ 2 px deep, with 45° ends.
+- **Score boxes** (TeamScoreView_Background, 128 × 128 at 0.7031, placed at (−90, −17) inside each score view; orange
+  mirrored): an opaque shape (tex x 32…127, y 24…103) → **67.5 × 56 at x −67.5…0, y −0.1…56.1** of the score view.
+  - The views sit at x ∓67 in matchInfoView, so the **blue box spans x −134.5…−67 and the orange 67…134.5**, joining
+    the clock box (0.5 px overlap).
+  - Corners: **rounded (r ≈ 5 px) on the outer side only**; the inner side, against the clock, is square. Hard edges,
+    no shadow.
+  - Fill: base (18, 19, 18) at α 0.80, **dark on the outer ~40 %, then a grey ramp toward the inner edge** (luminance
+    ≈ 1, 10, 29, 48, 70 at 45, 55, 70, 80, 90 % of the width); α rises to 0.89 at the inner edge. The additive team tint
+    makes it the team colour with a lighter inner side.
+- **The whole board** is therefore **269 × 56 px** (x −134.5…134.5), from stage y ≈ −1 to 56 (flush with the top
+  edge). The perspective centre (W/2, 80) is in stage coordinates (Flash: projectionCenter is relative to the stage
+  top-left), i.e. 80 px below the board's origin [I: Scaleform = Flash]. The match-type caption
+  and other parts hang below (HUD-2).
+
+### HUD-17 Ball Arrow (Interface "Ball Arrow", `BallIndicator`, default on; static session 2026-10-14)
+UserSettings.int `[BallIndicator]` (by key): an arrow above the car that always points to the ball.
+- **What draws it: a 3D mesh, not the HUD movie.** `TargetIndicator_TA` is a StaticMeshComponent attached to the
+  car (`Car_TA.HandleTargetAdded` → `AttachComponent`, TA:20736-20742). Defaults: `bOnlyOwnerSee` (only the car's
+  owner sees it), `AbsoluteRotation`, `HiddenGame` true until native code shows it [A].
+- **Archetype** `Archetypes.Component.BallIndicator` (TAGame.upk) [A]: StaticMesh `Gadget_BallLocatorArrow.BallLocatorArrow_SM`,
+  `MinTranslationX` 75, `MaxTranslationX` 120, `MinDistance` 100, `MaxDistance` 10000, `ZTranslationOffset` 20,
+  `TranslucencySortPriority` 1; no scale (1).
+- **Mesh** [A]: a round 3D arrow along +X: shaft radius 2.25 uu from x −6.8 to 0.5, head (cone) radius 4.31 from x 0.5
+  to the tip at 7.8 (14.6 uu long, 8.6 wide), plus a sphere of radius 12 uu round its origin (second section).
+- **Materials** [A]: arrow `BallLocatorArrow_Mat`: unlit, translucent, **depth test off** (drawn over the car and the
+  world), a scalar parameter `Throb` (a pulse; its driver is native). Sphere `BallLocatorArrow_Clarity_Mat`: unlit,
+  translucent, depth test off. **Correction (user, watching the game, 2026-10-14): the sphere is visible as a dark haze
+  round the arrow, and the arrow flashes**; the earlier "invisible" inference was wrong. Haze colour/falloff and the
+  Throb pulse are decoded below (ARW1); CS1 found no native or script driver for Throb. The colours are in the compiled
+  shader, not in the package data → use our own colour (e.g. white or the team colour).
+- **Placement** [N, CS1: TargetIndicator_TA vtable slot 0x2a0 → 0x140f510c0, every tick; no smoothing of its own]:
+  - delta = ball actor Location − the car's origin (both drawn, i.e. smoothed, poses); d = |delta|.
+  - **Rotation: full 3D along delta** (pitch + yaw, roll 0; FVector::Rotation), absolute.
+  - **Translation = normalize(delta) · r, then +20 uu in world Z**, with **r = 75 + 45·clamp((d − 100)/9900, 0, 1)**
+    (linear: d 1000 → 79.1, 3000 → 88.2). So the arrow sits 20 uu above the car→ball line, parallel to it.
+  - Visibility: HiddenGame is cleared on every update. MaxDisplayDistance and DistanceScaleMultiplier are 0 in the
+    archetype, so there is no distance hide and no scaling. There is no on-screen check.
+  - Once the ball's ExplosionTime ≠ 0 (goal), the update stops: the arrow freezes in place until the script removes it.
+  - **Throb is set by no native or script code** (no "Throb" string in the exe): any flashing comes from the material
+    itself (time-driven), being decoded from the shader data (ARW1).
+- **One per ball**, its target = the ball's `BallCamTarget_TA`. In **multi-ball**, the ball the camera is locked on
+  (`PlayerController.TargettedActor`) has no arrow (TA:20733-20737).
+- **When** (`Car_TA.RefreshTargetIndicators` TA:20724-20732): setting on **and ball cam off** (with more than one ball:
+  ball cam on or off) **and** `GameEvent.ShouldShowBallIndicator()`. That is true in the ActiveBase states:
+  **Countdown, Active, PostGoalScored**. It is false in WaitingForPlayers, PreMatchLobby, **ReplayPlayback**,
+  PrePodium/Podium/Finished, but true in the post-game lobby [S].
+  - Soccar's ActiveBase override applies to Countdown/Active: the same pattern as `ShouldRecordReplay`, which must be
+    true while playing [I, consistent].
+  - Re-evaluated on a game-state change, ball cam toggle (`SetUsingSecondaryCamera`), controller/game-event change and
+    `SetTargettedActor` (TA:19897-19925, 76755-76778).
+  - It is **not** hidden while the ball is on screen (no such check in script; "always points").
+  - Demolished: hidden with the car (the car actor is hidden); a respawned car re-creates it.
+  - Spectators and other players never see it (owner-only).
+- **Free play**: shown (the Active state family) [I].
+- **HUD scale / Centre Dot**: unaffected (a world object, not the HUD movie; Interface Scale doesn't apply). Not a
+  HUD element, so the Hide HUD option does not apply either [I].
+- **Materials, decoded from the compiled shaders (ARW1, 2026-10-14; RefShaderCache of the live snapshot) [A unless marked]:**
+  - **Haze** (Clarity_Mat on the r 12 sphere): translucent (dst = rgb·a + dst·(1 − a)), unlit, depth test off, black
+    (no emissive), **alpha = (N·V)⁴**. The sphere's normals point inward, so only the far inner surface draws [I]. On
+    screen this is a soft black disc of radius 12 uu round the mesh origin (the arrow head's base): **alpha = (1 − ρ²)²**
+    for ρ = distance from the centre / disc radius (1, 0.83, 0.56, 0.26, 0.04, 0 at ρ 0, .3, .5, .7, .9, 1; half dark at
+    ρ ≈ 0.54). No time term, texture or depth fade.
+  - **Arrow** (BallLocatorArrow_Mat): translucent, unlit, depth test off, **neutral grey/white**, not team-coloured.
+    - Emissive E on R = G = B (linear HDR): **E = 0.25 + 12·saturate(|fmod(4t − u/4 + 1, 2) − 1| − 0.75)**, from 0.25 up to 3.25.
+    - t = game time [I]; u = the mesh texture coordinate, 0 at the tail → 1 at the tip.
+    - So **twice a second (0.5 s period) a 125 ms triangle pulse** (62.5 ms up, 62.5 ms down) sweeps tail → tip in 62.5 ms.
+      Otherwise it stays at the 0.25 base (75 % of the time).
+    - **Opacity = min(4·N·V, 1)·(N·V² + 0.125)**: 0 at grazing (soft edges), 1.125 face-on.
+    - Predicted on screen through the stadium tonemapper [I]: about 147/255 at base and 247/255 at the peak (over the haze).
+  - **Throb** only drives a vertex "breathing" offset (2·Throb·(|fmod(8t + 1, 2) − 1| − 0.25) along the normal, 4 Hz).
+    Its default is 0 and no code sets it (CS1), so the shape never pulses.
+  - **Draw order:** the sphere first (index order, material slot 0), then the arrow over it [I, consistent with the user's
+    view]. Both draw over everything, after the normal translucent objects.
+  - **To confirm with a clip** (offline free play, ball cam off, car and ball 1500–3000 uu apart, 4–6 s at ≥ 60 fps,
+    120 preferred, lossless):
+    - per-frame brightness of a 3×3 patch on the arrow head: expect a 2.00 Hz flash, 125 ms peaks, R = G = B, and base/peak ≈ 147/247;
+    - tail vs tip lag: 62.5 ms;
+    - the haze's radial darkening 1 − (1 − ρ²)² against an even bright background, between pulses;
+    - no 4 Hz outline breathing.
+
+### HUD-18 Boost meter art, described for our own redraw (static session 2026-10-14)
+Measured from the four bitmaps (`BoostMeter_Background`, `_Fill`, `_FillTintablePortion`, `_Glow`; decoded locally,
+never shipped) and the movie's layers [A][G]. Our art must be drawn fresh from these numbers; no bitmap or path copies.
+Units: stage px, origin = meter centre, the meter 200 px across; angles along the 225° sweep (0° = 6 o'clock, clockwise).
+- **Layers, bottom → top:** background disc → glow (clip α 0.5) → orange bar (0–80 %) → white bar (80–100 %) →
+  ghost number #333333 → "BOOST" label → number (black glow).
+- **Background disc:** black, **α 0.75**, flat to r ≈ 56, then a wide soft edge: α 0.68 at r 66, 0.45 at 78,
+  0.22 at 84, 0.07 at 88, 0 by ≈ 92 (half-alpha radius ≈ 77). No noise, scanlines or inner shadow.
+- **Guide ring:** a thin grey line (≈ #424242, α 0.82, ≈ 1.7 px) at **r ≈ 61.5**, **only along the 225° sweep** (nothing
+  on the empty quarter).
+- **Ticks:** 6 radial ticks at 0/45/90/135/180/225° of the sweep (0/20/40/60/80/100 %), same grey, ≈ 1.5 px, from the
+  ring out to the bar's outer edge at that angle: r 62–68, 62–72, 63–79, 64–82, 63–89, 62–89. Each has a small node
+  (≈ 3 px) on the ring; the ring's two ends finish in a tick.
+- **Orange bar (0–80 %):**
+  - Shape: **36 bars on a 5° pitch** (bar ≈ 3.3°, transparent gap ≈ 1.7°), radial sides. Inner edge r ≈ 65, outer
+    edge **tapering from r ≈ 69 at 0 % to ≈ 87 at 80 %**: a thin-to-thick wedge, the outer edge roughly linear in angle.
+  - Colour: flat across each bar's width (no radial shading); **an angular ramp from deep orange (255, 130, 5) at the
+    start → (255, 174, 49) around 40 % → (255, 212, 86) near 80 %**.
+  - Edges: a soft orange halo (255, 126, 0) outside the outer edge, α ≈ 0.25 → 0.08 over ≈ 5 px. A ≈ 1 px dark-brown
+    line (α ≈ 0.4) separates the bars from the ring.
+  - Lit ring: along the filled part the ring and its nodes are drawn light cream (≈ (220, 212, 204), α 0.9), i.e. the
+    guide line lights up as the bar fills.
+- **White bar (80–100 %):** **9 bars on the same 5° pitch**, **full thickness r ≈ 65–88** (no taper), pure white α 1,
+  separated by thin dark lines (not transparent gaps), with a thin dark edge (black α ≈ 0.2) instead of an orange halo.
+  The bars look slightly skewed in the art. At runtime this layer is recoloured: the team tint in team mode, or
+  BOOST_MAX (HUD-7).
+- **Glow:** a round soft blob centred on the meter: α 1 at the centre, 0.5 at r ≈ 48, 0.25 at 59, 0.09 at 70, 0 by ≈ 76
+  (Gaussian-like). Its base is black and the colour comes entirely from the additive tint (team colour, or amber/red
+  in non-team mode); the clip α is 0.5 at ≤ 80 % and 1 at > 80 % (HUD-7).
+- **Number and label:** $NumbersWideFont 54 (box 120×58 at (−58, −28)), #666666 + tint (white above 80 %), black glow
+  blur 6 (8 above 80 %); a duplicate #333333 at the same spot behind it (a ghost). "BOOST" in $HeaderFont 16, #666666 +
+  tint, centred 16 px below the meter centre, blinking above 80 % (HUD-7).
+- **3D:** rotationY 15°, rotationX −2°; the bars and the number at z −20; perspective focal 500 with the vanishing point
+  at (x − 50, y − 100) (HT-11).
+- **Pickup flash** (HUD-6): both bars go white and ease back over 0.8 s; the glow scales 2 → 1.
 
 ### Open
 - **Nameplate scale combination** (product assumed), the distance's origin and the billboard rotation: native

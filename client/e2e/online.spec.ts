@@ -58,7 +58,8 @@ test("two players: one drives, the other sees it through the server", async ({ p
   // nameplate (HUD-13)
   await expect(page.locator("#score")).not.toHaveClass(/swapped/);
   await expect(other.locator("#score")).toHaveClass(/swapped/);
-  await expect(page.locator(".nameplate")).toHaveCount(1, { timeout: 10_000 });
+  // (drawn in the world, depth-tested: HT-12)
+  await expect.poll(() => page.evaluate(() => (window as unknown as { rlNameplates: () => { name: string }[] }).rlNameplates().length), { timeout: 10_000 }).toBe(1);
   await page.screenshot({ path: "test-results/hud-online.png" });
 
   // Holding Tab shows the scoreboard: a row per player under its team's headers; released, it fades away (SB-10)

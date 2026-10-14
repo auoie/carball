@@ -65,6 +65,22 @@ test("freeplay loads, drives and resets", async ({ page }) => {
   expect((await audio()).state).toBe("running");
   expect((await audio()).cars).toBe(1);
   await expect(page.locator("#flip")).toHaveAttribute("data-state", "ground");
+  // (the flip circle beside the boost meter, both scaled with the HUD's stage: never overlapping, at any window size)
+  // (both boxes read at once, once the stage has been fitted to the new size: a frame between two reads put them on
+  // different stages)
+  for (const size of [{ width: 1280, height: 720 }, { width: 1920, height: 1080 }, { width: 900, height: 900 }]) {
+    await page.setViewportSize(size);
+    const gap = (): Promise<number | null> =>
+      page.evaluate(() => {
+        const flip = document.querySelector("#flip")?.getBoundingClientRect();
+        const boost = document.querySelector("#boost")?.getBoundingClientRect();
+        const stage = document.querySelector<HTMLElement>("#hud-stage");
+        const fitted = stage && Math.abs(stage.getBoundingClientRect().width - innerWidth) < 1;
+        return flip && boost && fitted ? boost.left - flip.right : null;
+      });
+    await expect.poll(gap, { message: `${String(size.width)} x ${String(size.height)}` }).toBeGreaterThanOrEqual(-1);
+  }
+  await page.setViewportSize({ width: 1280, height: 720 });
   await page.keyboard.down("Space");
   await page.waitForTimeout(150);
   await page.keyboard.up("Space");
@@ -239,11 +255,15 @@ test("a goal in freeplay with goal replays on: the replay plays, Space skips it,
   await expect(page.locator("#replay-info .replay-scorer")).toBeVisible();
   await expect.poll(async () => page.evaluate(() => (window as unknown as { rlFadeMax: number }).rlFadeMax), { timeout: 10_000 }).toBeGreaterThan(0.5);
   await expect(page.locator("#replay-prompt")).toContainText(/skip/i);
+  // (the car's voice follows the replayed car, not the live state the replay began in: user finding 7)
+  const audioMode = async (): Promise<string> => page.evaluate(() => (window as unknown as { rlAudio: () => { mode: string } }).rlAudio().mode);
+  await expect.poll(audioMode, { timeout: 5_000 }).toBe("replay");
   // (its key: the Skip Replay binding's, a word for a keyboard key: HT-3, RV-282)
   await expect(page.locator("#replay-prompt .key-glyph.key-word")).toHaveText("Space");
   await page.locator("#game").click({ position: { x: 640, y: 360 }, button: "right" });
   await page.keyboard.press("Space");
   await expect(page.locator("#replay-banner")).toBeHidden({ timeout: 10_000 });
+  await expect.poll(audioMode, { timeout: 5_000 }).toBe("live");
   // The new round straight after, the car at rest on its spot: the skip's Space doesn't make it jump
   await expect.poll(async () => Math.abs((await hook()).pos.y), { timeout: 10_000 }).toBeGreaterThan(2000);
   await page.waitForTimeout(500);
@@ -263,6 +283,7 @@ test("Exit to Main Menu during a goal replay, then Free Play: a fresh round, no 
     (window as unknown as { rlFreeplay: Hook }).rlFreeplay.place({ x: 3000, y: 0, yaw: 0 }, { x: 0, y: 5300, z: 200 });
   });
   await expect(page.locator("#replay-banner")).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator("#score-blue")).toHaveText("1");
   await page.keyboard.press("Escape");
   const pause = page.locator("#pause-menu");
   await pause.getByRole("button", { name: /^exit to main menu$/i }).click();
@@ -272,6 +293,8 @@ test("Exit to Main Menu during a goal replay, then Free Play: a fresh round, no 
   await freePlay(page);
   await expect(page.locator("#replay-banner")).toBeHidden();
   await expect.poll(async () => Math.abs((await hook()).pos.y), { timeout: 10_000 }).toBeGreaterThan(2000);
+  // (a new free play: the goals back to 0, RV-287)
+  await expect(page.locator("#score-blue")).toHaveText("0");
   expect(errors).toEqual([]);
 });
 
@@ -439,6 +462,34 @@ test("the main menu, the pause menu, the HUD and its Interface options (MENU-1/4
   await page.mouse.down({ button: "middle" });
   await expect(page.locator("#ballcam")).toHaveClass(/shown/);
   await expect(page.locator("#ballcam-toggle")).toHaveText("");
+  // (BALL CAM's capitals as tall as Bourgeois Medium's at its 32: 0.5679 em, whatever font stands in for it here)
+  const cap = await page.locator(".ballcam-head > span:not(.rec-dot)").evaluate((el) => {
+    const style = getComputedStyle(el);
+    const ctx = document.createElement("canvas").getContext("2d");
+    if (!ctx) return 0;
+    ctx.font = `${style.fontSize} ${style.fontFamily}`;
+    return ctx.measureText("H").actualBoundingBoxAscent;
+  });
+  expect(cap / 32).toBeCloseTo(0.5679, 1);
+  // (HUD-12, the user's findings 13 and 16: the dot's centre 11 above the label's baseline, in any font; the hint's box
+  // starting where the label's does; in stage px)
+  const place = await page.evaluate(() => {
+    const head = document.querySelector(".ballcam-head");
+    const dot = head?.querySelector(".rec-dot");
+    const label = head?.querySelector("span:not(.rec-dot)");
+    const hint = document.querySelector("#ballcam-toggle");
+    if (!head || !dot || !label || !hint) return null;
+    const probe = document.createElement("span"); // (an empty inline box: its bottom is the line's baseline)
+    probe.style.display = "inline-block";
+    label.append(probe);
+    const baseline = probe.getBoundingClientRect().bottom;
+    probe.remove();
+    const d = dot.getBoundingClientRect();
+    const scale = d.width / 32;
+    return { above: (baseline - (d.top + d.height / 2)) / scale, hint: (hint.getBoundingClientRect().left - label.getBoundingClientRect().left) / scale };
+  });
+  expect(place?.above).toBeCloseTo(11, 0);
+  expect(Math.abs(place?.hint ?? 99)).toBeLessThan(0.5);
   await page.mouse.up({ button: "middle" });
   await expect(page.locator("#ballcam")).not.toHaveClass(/shown/);
   // The pause menu: the boost meter goes under it (HUD-16); Resume Game (no Show Controls in a match: HT-4)

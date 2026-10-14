@@ -36,41 +36,37 @@
         <div id="replay-banner" hidden>
           <div class="letterbox top"></div>
           <div class="letterbox bottom"></div>
-          <div id="replay-label"><span class="rec-dot"></span><span>REPLAY</span></div>
+          <div id="replay-label" class="rec-head"><span class="rec-dot"></span><span>REPLAY</span></div>
           <div id="replay-info"></div>
           <div id="replay-prompts"><span id="replay-prompt"></span><span id="replay-waiting"></span></div>
         </div>
         <div id="ballcam">
-          <div class="ballcam-head"><span class="rec-dot"></span><span>BALL CAM</span></div>
-          <span id="ballcam-toggle"></span>
+          <div class="ballcam-head rec-head"><span class="rec-dot"></span><span>BALL CAM</span></div>
+          <div class="rec-hint"><span id="ballcam-toggle"></span></div>
         </div>
         <div id="boost">
           <div id="boost-3d">
-            <svg viewBox="0 0 200 200" aria-hidden="true">
-              <circle class="disc" cx="100" cy="100" r="96" />
-              <circle class="ticks" cx="100" cy="100" r="88" />
-              <circle id="boost-glow" cx="100" cy="100" r="90" />
-              <circle class="track" cx="100" cy="100" r="78" transform="rotate(90 100 100)" />
-              <circle id="boost-ring" cx="100" cy="100" r="78" transform="rotate(90 100 100)" />
-              <circle id="boost-top" cx="100" cy="100" r="78" transform="rotate(270 100 100)" />
-            </svg>
-            <span id="boost-value">0</span>
-            <span id="boost-label">BOOST</span>
+            <div id="boost-back" class="boost-layer"></div>
+            <div id="boost-front" class="boost-layer">
+              <span id="boost-ghost">0</span>
+              <span id="boost-label">BOOST</span>
+              <span id="boost-value">0</span>
+            </div>
           </div>
+        </div>
+        <div id="flip" data-state="ground" hidden>
+          <svg viewBox="0 0 100 100" aria-hidden="true">
+            <circle class="track" cx="50" cy="50" r="42" />
+            <circle id="flip-ring" cx="50" cy="50" r="42" />
+          </svg>
+          <span id="flip-label">FLIP</span>
+          <span id="flip-detail"></span>
         </div>
       </div>
       <div id="vote">
         <div id="vote-head"><span id="vote-tally"></span><span id="vote-time"></span></div>
         <div id="vote-bar"><div id="vote-fill"></div></div>
         <div id="vote-hint"></div>
-      </div>
-      <div id="flip" data-state="ground" hidden>
-        <svg viewBox="0 0 100 100" aria-hidden="true">
-          <circle class="track" cx="50" cy="50" r="42" />
-          <circle id="flip-ring" cx="50" cy="50" r="42" />
-        </svg>
-        <span id="flip-label">FLIP</span>
-        <span id="flip-detail"></span>
       </div>
       <div id="flip-toast">FLIP RESET</div>
       <div id="respawn" hidden>

@@ -1,7 +1,7 @@
 // The connection's pieces that need no server: the stored key (RV-239) and the queue for messages before the game
 // listens (RV-241).
 import { describe, expect, it } from "vitest";
-import { ControlQueue, storeKey, storedKey } from "./connection";
+import { ControlQueue, serverHost, storeKey, storedKey } from "./connection";
 
 const memory = (): Pick<Storage, "getItem" | "setItem"> => {
   const map = new Map<string, string>();
@@ -39,5 +39,15 @@ describe("the connection", () => {
     queue.listen((m) => got.push(m));
     queue.push(3);
     expect(got).toEqual([1, 2, 3]);
+  });
+
+  it("reaches localhost at 127.0.0.1 (Windows tries ::1 first, which a WSL server's UDP never sees)", () => {
+    expect([serverHost("localhost"), serverHost("LOCALHOST"), serverHost(""), serverHost("127.0.0.1"), serverHost("game.example")]).toEqual([
+      "127.0.0.1",
+      "127.0.0.1",
+      "127.0.0.1",
+      "127.0.0.1",
+      "game.example",
+    ]);
   });
 });

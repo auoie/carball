@@ -113,6 +113,8 @@ export interface InterfaceSettings {
    *  unless the build's region is the US) */
   readonly metric: boolean;
   readonly ballCamIndicator: boolean;
+  /** Ball Arrow (BallIndicator): the arrow by the car toward the ball while the ball cam is off (HUD-17) */
+  readonly ballArrow: boolean;
   /** Hide In-Game HUD */
   readonly hideHud: boolean;
 }
@@ -132,6 +134,7 @@ export const DEFAULT_INTERFACE_SETTINGS: InterfaceSettings = {
   teamColoredBoost: true,
   metric: true,
   ballCamIndicator: true,
+  ballArrow: true,
   hideHud: false,
 };
 
@@ -140,7 +143,7 @@ function readInterface(v: unknown): InterfaceSettings {
   const d = DEFAULT_INTERFACE_SETTINGS;
   const mode = src["nameplateMode"];
   const notifications = src["matchNotifications"];
-  const flag = (k: "teamColoredBoost" | "metric" | "ballCamIndicator" | "hideHud"): boolean => (typeof src[k] === "boolean" ? src[k] : d[k]);
+  const flag = (k: "teamColoredBoost" | "metric" | "ballCamIndicator" | "ballArrow" | "hideHud"): boolean => (typeof src[k] === "boolean" ? src[k] : d[k]);
   return {
     scale: readNumber(src["scale"], d.scale, INTERFACE_LIMITS.scale),
     displayScale: readNumber(src["displayScale"], d.displayScale, INTERFACE_LIMITS.displayScale),
@@ -150,6 +153,7 @@ function readInterface(v: unknown): InterfaceSettings {
     teamColoredBoost: flag("teamColoredBoost"),
     metric: flag("metric"),
     ballCamIndicator: flag("ballCamIndicator"),
+    ballArrow: flag("ballArrow"),
     hideHud: flag("hideHud"),
   };
 }

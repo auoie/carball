@@ -467,6 +467,24 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn the_ball_is_on_the_ground_rolling_but_not_in_the_air_nor_against_a_wall() {
+        // (EndRoundComponent: the ball's world contact, persisted points too, its normal z > 0.96)
+        init_engine();
+        let mut arena = Arena::new();
+        let mut on_ground = |pos: [f32; 3], vel: [f32; 3]| {
+            arena.set_ball(pos, vel);
+            (0..20).map(|_| {
+                arena.step(1);
+                arena.ball_on_ground()
+            }).collect::<Vec<bool>>()
+        };
+        assert!(on_ground([0.0, -2000.0, 93.15], [0.0, 600.0, 0.0]).iter().skip(2).all(|&g| g), "rolling on the floor");
+        assert!(on_ground([0.0, 0.0, 800.0], [0.0, 0.0, 0.0]).iter().all(|&g| !g), "falling from 800");
+        // (pressed against the side wall, in the air)
+        assert!(on_ground([4096.0 - 93.0, 0.0, 800.0], [500.0, 0.0, 0.0]).iter().all(|&g| !g), "against the side wall");
+    }
+
+    #[test]
     fn a_repressed_jump_is_a_fresh_press() {
         // Jump held from the ground through the jump and on in the air: no second jump; the same with a release and a
         // press inside one tick (NET-2): the double jump fires though the button never reads up

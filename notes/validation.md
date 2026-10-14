@@ -11,7 +11,10 @@ scripts/replay_extract/target/release/replay_extract out/replays/states.csv out/
 engine/build/replay_validate out/replays/states.csv --cases out/replays/cases.csv   # summary per category (~1 min)
 python3 scripts/validation_report.py out/replays/cases.csv                   # accelerations, touch bias
 ```
-`out/replays/` is git-ignored (replays hold player data). Options: `--no-sensitivity` (ignore the players' steering
+`out/replays/` is git-ignored (replays hold player data).
+Every check batch (the user's request, 2026-10-14): `.venv/bin/python scripts/replay_check.py`, the same validator on a
+fixed sample (the first 10 1v1 and 6 2v2 replays by name, extracted once into `out/replays/check/`), the median error
+per group (ball flight, driving, walls, air, hits, bumps), a group worse than the previous run's flagged WORSE. Options: `--no-sensitivity` (ignore the players' steering
 sensitivity), `--no-warmup`, `--no-handbrake-history`, `--fit-handbrake` (see below), `--zero-ball-spin`.
 
 Recordings of the live game (offline modes only; `tools/physlog/README.md`): a BakkesMod plugin records every tick's

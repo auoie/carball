@@ -36,6 +36,17 @@ export interface ReplayScene {
   readonly cars: Iterable<readonly [number, CarView]>;
 }
 
+/** The cars between two recorded frames, as the replay draws them (game coordinates), not the demolished: their
+ *  nameplates track them (HT-8, RV-279) */
+export function replayCarPositions(a: RecordedFrame, b: RecordedFrame, alpha: number): Map<number, { readonly pos: Vec3; readonly team: number }> {
+  const out = new Map<number, { readonly pos: Vec3; readonly team: number }>();
+  for (const [id, from] of a.cars) {
+    const to = b.cars.get(id) ?? from;
+    if (!to.demoed) out.set(id, { pos: add(from.pos, scale(sub(to.pos, from.pos), alpha)), team: to.team });
+  }
+  return out;
+}
+
 export class ReplayPlayback {
   readonly plan: ReplayPlan;
   /** Where it is (the plan's ticks, fractional) */
@@ -98,14 +109,16 @@ export class ReplayPlayback {
     const view = this.#camera.update(realSeconds, { car, ball, carId: car ? (next?.car ?? null) : null }, dilation);
     const clipped = { ...view, position: { ...view.position, z: Math.max(view.position.z, GROUND_CLAMP_Z) } };
     scene.renderer.render(clipped);
+    // (the cars' engines and boosts as replayed, heard from the replay's camera: not the live state the replay began in)
+    if (b) scene.audio.replayFrame(b.cars, clipped);
   }
 
-  /** The cars as this frame draws them (game coordinates; not the demolished): their nameplates (HT-8, RV-279) */
-  readonly cars = new Map<number, Vec3>();
+  /** The cars as this frame draws them (replayCarPositions): their nameplates (HT-8, RV-279) */
+  cars: ReadonlyMap<number, { readonly pos: Vec3; readonly team: number }> = new Map();
 
   /** The cars and the ball between two recorded frames */
   #drawRecorded(scene: ReplayScene, a: RecordedFrame, b: RecordedFrame, alpha: number, seconds: number): void {
-    this.cars.clear();
+    this.cars = replayCarPositions(a, b, alpha);
     for (const [id, view] of scene.cars) {
       const from = a.cars.get(id);
       const to = b.cars.get(id) ?? from;
@@ -113,7 +126,6 @@ export class ReplayPlayback {
         view.root.visible = false;
         continue;
       }
-      if (!to.demoed) this.cars.set(id, add(from.pos, scale(sub(to.pos, from.pos), alpha)));
       const between = new Interpolated<RecordedCar>(from);
       between.push(to);
       view.update(between.position(alpha, this.#pos), between.rotation(alpha, this.#rot), to.boosting, to.demoed, to.supersonic, seconds, trailGround(to));

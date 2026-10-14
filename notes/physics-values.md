@@ -357,7 +357,8 @@ per wheel in contact:
   force   = max(0, ((restLength - length) * Stiffness(500) * clippedInvContactDotSuspension - relVel*damping) * scale)
   scale   = mass * (other axle's |x|) / wheelbase / 2      // per-wheel weight share
   impulse = contactNormal * (force*dt + bottomOut) at the contact point
-  bottomOut = 0.25 * single-contact impulse when compressed beyond travel (opposite impulse to the ground body)
+  bottomOut = 0.25 * single-contact impulse when trace < radius + rest − MaxRaise (opposite impulse to the ground body:
+              static ground or cars only; vehicle mask 0xff7f excludes RBCC_Ball, so none on the ball)
 ```
 **New:** the suspension scale is computed per car from its wheel positions (Octane 35.735 / 54.265; Dominus
 36.77 / 53.23 …). RocketSim uses the Octane values for every car.
@@ -383,7 +384,9 @@ Iterations stay at 10. Rigid bodies: inertia from the shape, damping/friction/re
 - Wheels on a dynamic body (ball, car): each pushes it with an impulse of 1.0 into its surface every tick and wakes
   it; the wheels' friction treats every ground as static and motionless (Bullet's fixed body, no ground velocity);
   the suspension's bottom-out impulse reaches a dynamic body only if its collision group is in the vehicle's mask
-  (+0x30), which the ball's isn't (engine patches 49, 50).
+  (+0x30 = 0xff7f: every channel but 7, RBCC_Ball), so cars get it and the ball doesn't (engine patches 49, 50, 54, 97).
+  Verified against the live build (FP1, 2026-10-14): all per-wheel impulses match; see "Wheels on dynamic bodies and
+  the flip-cancel lock (FP1)".
 - Convex vs plane (`FUN_1402944b0`, the algorithm for the finite planes): stock Bullet (the convex shape's deepest
   vertex, one point per call, no perturbation: the collision configuration `FUN_140281860` keeps the defaults 1 / 0)
   plus a bounds check: no contact unless that vertex lies within the plane's half extents (shape `+0x20`, `+0x24`)
@@ -485,7 +488,7 @@ wheel friction values, wheel frames updated with this tick's steering), suspensi
 - Contact pass: suspension length = trace − radius (no clamp); pushback reset to 0, and when trace < radius + rest −
   max raise: `resolveSingleCollision` (impulse only, not applied) with a static default `btContactSolverInfo` (1/60 s,
   erp 0.2), stored × 0.25 and added to the suspension impulse; on a dynamic ground body the opposite impulse goes to
-  it (not modelled: wheels on cars/ball). Relative velocity and 1/(n·up) clipped at 0.1 → 10.
+  it: cars only, the vehicle mask 0xff7f excludes RBCC_Ball (modelled, engine patch 54; FP1 2026-10-14). Relative velocity and 1/(n·up) clipped at 0.1 → 10.
 - Friction: lateral = `resolveSingleBilateral` against the fixed body along the wheel's axle (not projected) × dt ×
   60 × lat friction; longitudinal = engine force × dt, or clamp(v_contact·fwd × 113.74, ±brake) × dt × 60, × long
   friction, along normalize(normal × axle); applied at the contact point projected onto the plane through the car's
@@ -820,3 +823,65 @@ Live: execGetTimeOfImpact 0x140e73ec0 → FUN_140f01930 → convex/compound swee
   two 2.82 EPA details, a 100k-case harness is bit-identical to the game replica (detmath trig both sides; MSVC CRT trig
   may differ in the last bit [I]). Harness and proposed code: out/bsim/agents/DSW1/.
 - The read-back getRotation is the **scalar** 2.82 branch (0x140ef2770 → 0x1402786f0); engine equal (2M cases).
+
+## Wheels on dynamic bodies and the flip-cancel lock (FP1, live build, 2026-10-14) [N]
+Sub-agent FP1; decompiles and probes local in `out/bsim/agents/FP1/` (decomp/r1..r8, probe/, engcopy/).
+
+**Wheels on the ball or a car: every per-wheel impulse matches the engine now.** The old "not modelled" lines were stale.
+
+| Impulse (ground = ball or car) | Game (live) | Engine | Match |
+|---|---|---|---|
+| (a) Push | Contact pass `0x1402c3e60`: any rigid-body ground (arena pieces are plain collision objects, skipped). Wake (`0x140270ef0`), then −PushForce·n at the contact (`0x1402b11d0`) once per substep, not dt-scaled. PushForce = PushForceConstant 1.0 × Vehicle+0x788→+0x1ec. No mask. Applied right after that wheel's bottom-out, wheels FL, FR, BL, BR | `btVehicleRL.cpp:266-272`, game wheel order | yes (probe: ≤ 0.0075 uu/s) |
+| (b) Bottom-out | trace < radius + rest − maxRaise → resolveSingleCollision (`0x1402b96b0`, never applies) with a static default solver info (1/60 s, erp 0.2), against the fixed body (`0x1402c3cf0`) or a rigid ground whose broadphase group is in vehicle+0x30. **Mask 0xff7f**: ctor `0x1402c24b0` sets 0xffffffff, VehicleSim attach `0x140f1d170` clears channel 7 = RBCC_Ball. Cars (RBCC_Vehicle 3) are in. Chassis keeps r·0.25 (applied only if the suspension force ≠ 0); the ground gets −r·n at once | `btVehicleRL.cpp:232-258` (patches 31, 54) | yes (probe ≤ 0.0055 uu/s; bit-level summation order differs) |
+| (c) Suspension | `0x1402c3540`: chassis only; ground velocity unused; no reaction on the ground | `btVehicleRL.cpp:357-392`, `:214-227` | yes |
+| (d) Friction | `0x1402c54d0`: lateral resolveSingleBilateral (`0x1402b9260`) vs the fixed body; longitudinal from engine force / brake on the chassis-only contact velocity; chassis only | `btVehicleRL.cpp:395-479` (patch 50) | yes |
+| (e) Order in one vehicle | `0x1402c5e40`: hard points → one broadphase query → rays → per wheel [bottom-out → opposite impulse → wake → push → contact velocity] → VehicleSim callback → suspension → friction | patches 31, 38, 97 | yes |
+| (e) Order in the substep | `0x1402b8640`: gravity → caps and damping for every body → **all vehicles in the world's action-array order** (world+0x190; addAction `0x1402b04f0` appends at VehicleSim attach, removeAction `0x1402b90a0` swap-removes) → collision → solve → integrate | `Arena.cpp:1700-1719`: per car in **ID order**, its pre-physics + cap + vehicle; then the ball's cap; ball damped in Bullet's step | G1–G3 |
+
+- **G2 (the one real gap):** vehicles run in car-ID order in the engine, but in action-array order in the game (creation
+  order, reshuffled by swap-remove and respawns). For a car parked on another's roof, swapping the order changes the
+  lower car by ≤ 0.73 uu/s per tick (0.15 at rest) and the upper by 0.25–0.64. The live `car_car` recordings match
+  only because the upper car was created first and also has the lower ID. Fix: keep an action-order list in the Arena
+  (append on body creation/respawn, swap-remove on removal). Open: exactly when the game removes and re-adds vehicles
+  at a demolition and a kickoff reset.
+- **G1 (negligible):** the engine damps the ball after the wheels' pushes, the game before: ≤ 0.04 uu/s measured.
+- **G3 (negligible):** a later car's read-back / limits / forward speed see an earlier car's impulses of the same tick: ≤ 0.01 uu/s.
+- **Tests to add** (none exist for patches 49, 50, 54):
+  - T1, car on a car's roof: L's Δv = gravity + Σ(−nᵢ)(1 + 4·pushbackᵢ)/m within 0.011 uu/s. Later, with G2, the
+    order in both creation orders and after a demolish/respawn.
+  - T2, car on the ball:
+    - (i) ball Δv = gravity + Σ(−nᵢ)·1.667 uu/s with every pushback 0;
+    - (ii) spinning/moving ball: the car's friction impulses equal the ball-at-rest case;
+    - (iii) a sleeping ball under a wheel is awake after the tick.
+
+**Flip-cancel lock: settled; the engine matches** (patches 1, 39).
+- Pre-physics `0x140f21a90`, per component: PrePhysicsStep → ApplyForces(ActivityTime) → ActivityTime (+0x298) += dt.
+- SetActive `0x140f35090` zeroes +0x298/+0x2a0 on a change.
+- The dodge ends (`0x140f20dc0`) on the ground or when ActivityTime > 0.65.
+- ApplyForces `0x140eb8b60` → `0x140ebb700`: the cancel (Input.DodgeForward, Vehicle+0x810) scales the pitch torque
+  only when t ≥ MinDodgeTorqueTime 0.041. The Z damping uses the same t: from t ≥ 0.15, while rising only until t < 0.21.
+- Tick k after the press (t before the tick = k/120 in float): k 0 impulse + full torque; **k 1–4 the cancel is ignored;
+  k 5 (t 0.041666668) is the first tick the cancel acts**. Z damping from k 18; damping while rising to k 25; the dodge
+  deactivates at k 79.
+- Engine `Car.cpp:266`, `:272` → `:904`, `:276` → `:1108-1112`: the same sequence (probe Δω_y −1.289 rad/s at k 5, 0 before).
+- Live: `out/live/flip_cancel_20261008_011347.csv`, stick back from k 3–4 has no effect; at k 5, |ω| 5.5 → 5.368.
+- `engine/README.md` "Cancel-lock timing" ("the 4th, not verified") is stale: it is the **5th tick after the press (k = 5)**,
+  verified statically and live (engine/ is the live session's to edit).
+
+**Recording notes (not chased):**
+- **Goal-wall wobble** (validation finding 9).
+  - Capture: offline free play, Octane, PhysLog + `_bullet.csv`, plugin placements at 2–3 of the scan's worst fillets
+    (goal floor→back wall, floor→side wall). Park with no input 5 s; full throttle nose-first into a side wall at 90°
+    and 45°, 5 s each; throttle 0.3 along the side fillet, 5 s (≈ 40 s).
+  - Measure with `live_validate`: per hold, the per-wheel suspension tick-to-tick difference (p99), the car-frame
+    roll/pitch rates (p99, sign flips/s) and the tilt range.
+    - Game steady but engine alternating → engine bug.
+    - Both alternating alike → faithful; close it.
+  - Video and replay files can't settle it (aliasing, coarse).
+- **Ball resting on a parked car's roof** (the existing `ball_roof` recordings roll off).
+  - Capture: car parked on the flat floor, no input; the ball placed at rest on the roof at dx = +13.9, +6, 0 and −6 uu,
+    8 s each, plus one drop from 200 uu onto the balance point (≈ 1 min).
+  - Measure per tick: ball |v| and `bsleep`, drift along the car's x, the car's pitch and suspension lengths, the
+    car–ball manifold points, ball Δv spikes.
+  - If the game's ball sleeps on the roof, the engine needs B12 (the game wakes a sleeping body in an awake island only
+    if it has velocity after the solve; stock 3.24 keeps the island awake).

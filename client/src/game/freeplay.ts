@@ -29,6 +29,8 @@ import { LOAD_FADE_IN } from "./matchSequence";
 import { TouchLog, planReplay } from "./replayPlan";
 import { ReplayPlayback, explosionTeam } from "./replayPlayback";
 import { ReplayRecorder, recordCar } from "./replayRecorder";
+import { BallArrow, ballArrowShown } from "../render/ballArrow";
+import { fromThreeVector } from "../render/coords";
 import {
   FREEPLAY_BALL_HOLD_TICKS,
   FREEPLAY_COUNTDOWN_TICKS,
@@ -59,6 +61,8 @@ export class Freeplay {
   readonly #impactTriggers = new ImpactTriggers();
   readonly #carConfigs: ReadonlyMap<number, CarConfig>;
   readonly #ballView = new BallView();
+  /** The ball arrow by the car (HUD-17) */
+  readonly #ballArrow = new BallArrow();
   readonly #padsView: BoostPadsView;
   readonly #car: Interpolated<CarState>;
   readonly #ball: Interpolated<BodyState>;
@@ -132,7 +136,7 @@ export class Freeplay {
     this.#carView = new CarView(world.carConfig(this.#playerId), 0, this.#effects.particles);
     this.#carConfigs = new Map([[this.#playerId, world.carConfig(this.#playerId)]]);
     this.#padsView = new BoostPadsView(world.boostPads());
-    renderer.scene.add(this.#carView.root, this.#ballView.root, this.#padsView.root);
+    renderer.scene.add(this.#carView.root, this.#ballView.root, this.#padsView.root, this.#ballArrow.root);
     this.#car = new Interpolated(world.car(this.#playerId));
     this.#ball = new Interpolated(world.ball());
     this.#ballSpawns = world.ballSpawnCount();
@@ -176,6 +180,7 @@ export class Freeplay {
    *  camera cutting in from black */
   #playReplay(rawSeconds: number, replay: ReplayPlayback): void {
     const { real } = frameTimes(rawSeconds, 1);
+    this.#ballArrow.update(null, null); // (not in a replay: HUD-17)
     this.#fade.update(real);
     this.#renderer.cameraFade = this.#fade.opacity;
     const snapshot = this.inputEnabled() ? this.#input.snapshot() : EMPTY_INPUT;
@@ -345,9 +350,11 @@ export class Freeplay {
   }
 
   /** The session over again (Exit to Main Menu, then Free Play: MENU-1, RV-284): any goal replay and its banner gone, a
-   *  new round from the kickoff */
+   *  new round from the kickoff, the goals back to 0-0 (a new free play: RV-287) */
   restart(): void {
     this.#replay = null;
+    this.#score[0] = 0;
+    this.#score[1] = 0;
     this.#hud.say("");
     this.#resetKickoff();
     this.#updateHud(this.#car.current, 0, null);
@@ -443,6 +450,7 @@ export class Freeplay {
   #draw(frameSeconds: number, simulated: number, realSeconds: number): void {
     const alpha = this.#clock.alpha;
     const car = this.#car.current;
+    const carDrawn = fromThreeVector(this.#car.position(alpha, this.#pos));
     this.#carView.update(
       this.#car.position(alpha, this.#pos),
       this.#car.rotation(alpha, this.#rot),
@@ -463,6 +471,9 @@ export class Freeplay {
     // The impacts and landings: the local car's Impact_Medium restarts, the sounds
     const triggers = this.#impactTriggers.frame(frameSeconds, this.#world.takeImpacts(), new Map([[this.#playerId, own]]), this.#carConfigs, this.#playerId);
     for (const t of triggers) if (t.kind === "shake") this.#camera.shakes.play(IMPACT_MEDIUM, null, t.scale, `impact:${String(t.car)}`);
+    // The ball arrow (HUD-17): the setting on, the ball cam off, the car alive (free play's round always runs)
+    const arrow = ballArrowShown(this.settings().interface.ballArrow, this.#ballCam, !car.demoed, true);
+    this.#ballArrow.update(arrow ? carDrawn : null, fromThreeVector(ball), frameSeconds, this.#world.ballExploded());
     this.#ballView.update(ball, this.#ball.rotation(alpha, this.#rot));
     this.#arena.update(ball, frameSeconds);
     const pads = this.#world.boostPads();

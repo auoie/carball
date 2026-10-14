@@ -153,7 +153,13 @@ int rl_ball_on_ground(RLArena* a) {
 	btRigidBody* ball = &a->arena->ball->_rigidBody;
 	if (ball->getActivationState() == ISLAND_SLEEPING)
 		return 1;
+	// The ball's world contact as the game rebuilds it after the step (as the cars', Arena::_UpdateWorldContacts): in
+	// contact if any of its manifolds with static geometry has points, persisted ones too (a rolling ball rides 1.9 uu
+	// over the floor's mesh: distance 0.038, never under 0.02), the normal the normalised sum of those points' normals
+	// toward the ball. EndRoundComponent: normal.z > 0.96 (GroundToleranceZ)
 	btCollisionDispatcher* dispatcher = a->arena->_bulletWorld.getDispatcher();
+	btVector3 sum(0, 0, 0);
+	int points = 0;
 	for (int i = 0; i < dispatcher->getNumManifolds(); i++) {
 		btPersistentManifold* m = dispatcher->getManifoldByIndexInternal(i);
 		bool ballIs0 = m->getBody0() == ball, ballIs1 = m->getBody1() == ball;
@@ -161,14 +167,13 @@ int rl_ball_on_ground(RLArena* a) {
 		if ((!ballIs0 && !ballIs1) || !other->isStaticObject())
 			continue;
 		for (int j = 0; j < m->getNumContacts(); j++) {
-			const btManifoldPoint& p = m->getContactPoint(j);
-			// (the normal on body 1, pointing to body 0: up from the ground when the ball is body 0)
-			float up = ballIs0 ? p.m_normalWorldOnB.z() : -p.m_normalWorldOnB.z();
-			if (p.getDistance() <= 0.02f && up > 0.96f)
-				return 1;
+			// (the normal on body 1, pointing to body 0: toward the ball when it is body 0)
+			const btVector3& n = m->getContactPoint(j).m_normalWorldOnB;
+			sum += ballIs0 ? n : -n;
+			points++;
 		}
 	}
-	return 0;
+	return points > 0 && sum.length2() > 0 && sum.normalized().z() > 0.96f ? 1 : 0;
 }
 
 void rl_set_ball(RLArena* a, const float pos[3], const float vel[3]) {

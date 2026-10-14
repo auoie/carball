@@ -78,8 +78,10 @@ with time left gives a normal kickoff with that time.
 - Forfeit: a team without humans forfeits automatically 0.01 s after a leave (not in bot matches or while joining;
   also checked at `Countdown.EndState`; both empty = no contest); votes after game-clock elapsed ≥
   `ForfeitVoteWaitGameTime` 60 s casual / 90 s ranked, always in overtime; pass threshold not found. No mercy rule.
-- Casual fills with bots (`bFillWithAI`); a joining human takes over a bot's car (position and velocity), not in the
-  countdown. Ranked: no bots. Private pause → 4 s unpause countdown. Match start: players spawn undriven at kickoff
+- Casual fills with bots (`bFillWithAI` = `Playlist.bAllowBotFills`, PsyNet playlist data, forced off for ranked,
+  PX:6725); a joining human takes over a bot's car (position and velocity), not in the countdown. **No bots while
+  waiting for players** (TA:3662): the first fill is at the first countdown (TA:3948); a human joining during a
+  countdown takes a kickoff spot, not a bot (TA:1856). See notes/matchmaking.md MM-16, MM-22, MM-25. Ranked: no bots. Private pause → 4 s unpause countdown. Match start: players spawn undriven at kickoff
   spots, wait for reserved players (30 s public / 90 s tournament), `WarmupTime` 3 s, then the countdown.
 - New, not physics: `MatchType_HonorDuel_TA` (post-match 1v1 with spectators), the winners explosion (0.6 s into the
   podium), PodiumTime 5.3, the disadvantage adjustment.
@@ -474,7 +476,9 @@ The **new text to clear** with the user is the first ten rows (skip prompt throu
 3. **Private matches.** Whether a forfeit vote is offered (it depends on the private playlist's flags), and whether
    spectators are PRIs that block the replay skip.
 4. **`Team_TA.OnPlayerMarkedAsIdleBanned`** is only partly decoded (unknown token 0x62). Reading: it re-enables the
-   other active members' vote start.
+   other active members' vote start. **Moot for casual/ranked:** `bIdleBanned` is set only by IdleBan, which only
+   auto-tournaments use; casual and ranked use IdleKick (notes/matchmaking.md MM-32, MM-40), so the idle exclusions
+   in MR-7.3 / MRL-9 never apply there.
 5. **The game's input-packet cadence during the slow motion** (real time vs game time accumulation for the
    1/60 s send gate, N-9).
 

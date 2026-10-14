@@ -317,15 +317,16 @@ server-only forcing (FUN_140eed780 needs NetMode 1 or 2).
    prediction. Product decision.
 
 ### Open
-- Whether a subscriber of `GameEvent.EventReplicatedDemolish` (or RL native code) forces the victim's net update
-  (N-4e timing).
+- ~~Whether anything forces the victim's net update on a demolish (N-4e)~~: **settled, nothing does** (see
+  "Correction smoothing (live build)" → N-4e).
 - The setter of EngineShare+0x170 bit 0x20 (deferred dirtying in FUN_140f643f0), probably states received before the
   ack.
 - UE3 bunch and packet framing in RL (≈ 26-bit bunch header, 14-bit packet id, acks, possible packet encryption) is
   not decoded; byte totals use the UE3 layout [inf].
 - `NetServerMaxTickRate` 57 is a class default (`ServerConfig_X`, an online config); a live override would change the
   effective rates (at 120 Hz: cars ≈ 6.7/s, ball ≈ 27/s per client with the same gating [sim]).
-- Ping: repeated ack timestamps produce stale ping samples (`UpdatePing`); PC.UpdatePing's filter not decoded.
+- Ping: repeated ack timestamps produce stale ping samples (`UpdatePing`); **PC.UpdatePing's filter: settled** (see
+  "Correction smoothing (live build)" → Ping filter).
 
 ### Live addresses
 | Function | Live address |
@@ -343,3 +344,239 @@ server-only forcing (FUN_140eed780 needs NetMode 1 or 2).
 Files: `agents/NET1/runs/b1..b10/c/*.c` (decompiles), `agents/NET1/work/repconds_net.txt` (replication conditions),
 `agents/NET1/work/fname_globals.json` (FName globals → strings, 180), `agents/NET1/work/ns2v2/*.csv` (replay bits),
 `agents/NET1/tools/netsize` (measuring tool).
+
+## Correction smoothing (live build)
+
+Static analysis of the **live build (2026-10-06)** by sub-agent CS1 (2026-10-14). The decompiles were made in a copy of
+out/bsim/rl-20261006 (`out/bsim/agents/CS1/rl-live`, runs `out/bsim/agents/CS1/runs/b1..b17`). Scripts are cited as TA:<line>
+(`out/bsim/work/tagame_live_all.txt`). The Engine script is from `agents/K1/work/live_engine_ubc.txt`. Class defaults come from
+`scripts/props.py` on `live-20261006/decrypted`. The reference model and the vector generator are in
+`out/bsim/agents/CS1/scripts/cs_ref.py` (float32).
+
+Tags: [N] native decompile, [S] script, [A] package data, [I] inferred.
+
+Field offsets in RBActor_TA (live = old):
+- 0x56c flags: 0x2 bReplayActor, 0x10 bIgnoreSyncing, 0x40 bSkipNextErrorAccumulation [A, export order].
+- 0x570 NetworkSyncSettings.
+- 0x590 OldRBState, 0x5d0 RBState, 0x610 ReplicatedRBState, 0x650 ClientCorrectionRBState.
+- 0x6b8 SyncErrorLocation, 0x6c4 SyncErrorAngle, 0x6c8 SyncErrorAxis.
+- 0x710 RBHistory, 0x750 WeldedActor, 0x758 WeldedTo.
+- From Actor: 0x130 WorldInfo, 0x140 LastRenderTime [A].
+- RB state layout: q (x, y, z, w), loc, linvel, angvel.
+
+### Summary
+
+- **The error is stored per body.**
+  - Location: a vector.
+  - Rotation: an angle plus a unit axis, not a quaternion.
+- **When the error grows.** It grows at every correction of a body that has already been drawn:
+  - after a resim (the error grows by pre − post);
+  - on a direct apply when the client is behind (the error grows by pre − new).
+- **How it decays.** Once per render frame, in the body's own tick, with the game-time dt:
+  - k = min(dt·4, 1) for location and min(dt·5, 1) for the angle;
+  - the decayed error is drawn on top of the interpolated pose (lerp / slerp of OldRBState → RBState);
+  - after drawing, the error snaps to 0 when |e|² < 0.1 uu² or |angle| < 0.001 rad.
+- **No size limit.** There is no large-error snap or cap.
+- **Same for every body.** The local car, remote cars and the ball are smoothed the same way. No class or archetype
+  overrides the rates.
+- **What is drawn at once (no smoothing):**
+  - new actors (kickoff, respawn, ball reset);
+  - bodies whose TeleportCounter changed (only the free-play ball teleport);
+  - bodies never rendered (direct apply only);
+  - received states while the game is paused, for bodies with no prediction history.
+
+### Rows
+
+| # | Rule | Evidence (live) | Conf. |
+|---|---|---|---|
+| CS-1 | **Resim capture.** Before the rollback, every TickNotify body saves its current RB state into ClientCorrectionRBState. After the resim to the same PhysicsFrame:<br>• if bSkipNextErrorAccumulation is set: clear it and add nothing;<br>• else Accumulate(pre = ClientCorrectionRBState, post = current).<br>There is **no LastRenderTime gate** on this path. The dispatcher calls +0x10 when EngineShare+0x170 bit 2 (resimming) is set and +0x18 otherwise. EngineShare calls it before and after the resim loop. | Pre-correction hook 0x140f1fe20 (ITickNotify +0x10). Post-correction hooks 0x140f1b890 (RBActor/Ball) and 0x140f1b900 (Car, which also clears the "reuse contact planes" flag). Dispatcher 0x140f18520. EngineShare tick 0x140f54bd0. Vtables 0x141e8aa68 (RBActor) and 0x141e8de08 (Car) [N] | high |
+| CS-2 | **Direct-apply capture** (client behind: PF ≤ RPF in the RB receive; or a body without history, in its PreAsyncTick):<br>• if bIgnoreSyncing is set, **nothing happens** (the state is not applied either);<br>• else pre = current, then SetRBState(new);<br>• if LastRenderTime > 0: if skip is set, clear it; else Accumulate(pre, new). If LastRenderTime ≤ 0: no error, and the skip flag stays set;<br>• then shift the interpolation start: Old.loc/linvel/angvel += new − pre, and Old.q = (new.q ⊗ conj(pre.q)) ⊗ Old.q (not renormalized). | Direct apply 0x140f4bac0. RB receive 0x140f1eb20. PreAsyncTick 0x140f1fa20 (ball) and 0x140f1fab0 (car) [N] | high |
+| CS-3 | **Accumulate(pre, post):**<br>• SyncErrorLocation += pre.loc − post.loc;<br>• d = pre.q ⊗ conj(post.q); if d.w < 0 then d = −d; normalize (\|d\|² ≤ 1e-8 → identity);<br>• E = (axis·sin(a/2), cos(a/2)); E′ = **E ⊗ d**;<br>• store E′ as angle + axis: angle = 2·acos(clamp(w, −1, 1)); s = sqrt(max(1 − w², 0)); axis = xyz/s normalized when s ≥ 1e-4, else (1, 0, 0).<br>The composite E′ gets **no** hemisphere fix, so the stored angle is in [0, 2π]. Quaternion products are the standard Hamilton product, (x, y, z, w). The sign masks were read from .rdata: M0 (1, −1, 1, −1), M1 (1, 1, −1, −1), M2 (−1, 1, 1, −1). | 0x140eaffe0. ToAxisAndAngle 0x140389010. Mask init 0x140255050..78 ← 0x141a561d0..ff [N] | high |
+| CS-4 | **Per-frame decay and draw** (physRigidBody, every PHYS_RigidBody actor, every frame). α = EngineShare.RenderAlpha (+0x1a4) = clamp(accumulator / (1/120), 0, 1) after this frame's substeps.<br>• loc = lerp(Old.loc, RB.loc, α);<br>• q = normalize(Slerp(Old.q, RB.q, α)). Slerp takes the shortest arc and falls back to a linear blend when \|cos\| ≥ 0.9999;<br>• Velocity and AngularVelocity = lerp(Old, RB, α), with no error added;<br>• if WeldedTo ≠ None: zero both errors and skip the rest (the parent places this body);<br>• else, if e ≠ 0: e −= min(dt·LocationFixRate, 1)·e; loc += e; then if \|e\|² < 0.1: e = 0;<br>• if angle ≠ 0: angle −= min(dt·AngularFixRate, 1)·angle; q = Qaxis,angle ⊗ q (the error is on the left, in the world frame); then if \|angle\| < 0.001: angle = 0;<br>• MoveActor(actor, loc − Location, Rotator(q)). The rotation goes through FRotator, which is quantised to 65536 units per turn (0.0055°). | 0x140f704b0. Slerp 0x140388840 (α in XMM3, loaded from +0x1a4 at 0x140f70574). Quat→matrix→rotator 0x14036f9c0 / 0x140385e40. MoveActor 0x14072f2f0. Called from performPhysics 0x14082a160 case 9 (vtable +0x470) [N] | high |
+| CS-5 | **Constants** (RBActor_TA.NetworkSyncSettings):<br>• LocationFixRate 4, AngularFixRate 5, WeldedLerpRate 18;<br>• MinDeltaLocation 5, MinDeltaRotation 100, MinDeltaLinearVelocity 10 (bUseNEQ only, which is off);<br>• ForceReplicationDelay 0.35, bDebug false.<br>The snaps 0.1 (uu²) and 0.001 (rad) are code literals. No override in Car_TA, Ball_TA, Vehicle_TA, Archetypes.Ball.Ball_Default or Archetypes.Car.Car_Default. GameInfo_Soccar_SF.upk does not contain the name `NetworkSyncSettings` at all. | Default__RBActor_TA [A] | high |
+| CS-6 | **dt is game time.** physRigidBody gets the actor tick's DeltaSeconds = real frame time × WorldInfo.TimeDilation (× DemoPlayTimeDilation in replays). The camera scripts undo the dilation (`DeltaTime /= WorldInfo.TimeDilation`, TA:14877, TA:15839). TimeDilation drops during the post-goal slow motion (`PostGoalScored.Tick`: ScoreSlomoCurve × MatchTimeDilation, TA:4272) and with game-speed mutators, so smoothing slows with them. | [S] + UE3 actor tick [I] | medium-high |
+| CS-7 | **No large-error snap or cap.** Any size of correction is smoothed. The only clamp is k ≤ 1: one frame with dt ≥ 0.25 s clears the location error, and dt ≥ 0.2 s clears the angle error. A composite angle above π decays the long way round (example: 150° plus another 60° on the same axis is stored as 210°). | CS-3, CS-4 [N] | high |
+| CS-8 | **Order inside a frame:**<br>1. network receive (RB receive: history write and dirty, or direct apply);<br>2. EngineShare tick: resim + CS-1, PreAsyncTick direct applies, substeps, RenderAlpha;<br>3. RBActor ticks (TickGroup TG_PostAsyncWork [A]): CS-4;<br>4. camera.<br>So the **first drawn frame after a correction already shows (1 − k)·e**. Even if the tick order were different, physRigidBody always decays before it draws. | TickGroup [A]. EngineShare tick reached only through vtable 0x141e649e0 (caller not found) [I] | medium-high |
+| CS-9 | **OldRBState / RBState per step.** In the pre-step hook (0x140f21850) Old = RB = current. In the post-step hook (0x140f1ef70) RB = current. In a resim, a frame that holds a server state is snapped to it, unless bOverrideServerPhysicsState is set. Resim steps update Old too, so after a resim the drawn jump is (1 − α)·[(Old′ − Old) − (post − pre)], about 0. A direct apply leaves the drawn pose unchanged exactly (CS-2 shift). | [N] | high |
+| CS-10 | **Which bodies smooth.** On a client every RBActor gets an RBHistory at RB init (0x140f1fd10: NM_Client and RBHistoryClass set). So the **local car, remote cars and the ball are all predicted and resimmed, and all are smoothed the same way**. There is no role gate in CS-1 to CS-4. bReplayActor bodies (replay playback) have no history and get direct applies. | 0x140f1fd10, 0x140f1eb20 [N] | high |
+| CS-11 | **Where the smoothed pose goes:**<br>• the actor's Location and Rotation, so the mesh and every attached component (wheels, nameplate, boost, trail, Ball Arrow; see below), the attached FX actors and the camera (ViewTarget = car actor) follow it;<br>• the demolish explosion spawns at the victim's drawn Location (N-4c).<br>The wheels' suspension visuals come from VehicleSim, relative to the mesh, and get no smoothing of their own [I]. Actor Velocity is the lerp only. | [N] + [I] for the components | medium-high |
+| CS-12 | **Spawn, kickoff, respawn, demolish.** RB init (0x140f1fd10 and 0x140f1cd50) sets RBState from the actor pose and **OldRBState = RBState**. SyncError starts at 0. Soccar "teleports" are new actors, so nothing glides:<br>• kickoff: `ResetPlayers` = DestroyCars + RestartPlayer (TA:954);<br>• ball reset: `ResetBall` / `ResetBalls` = Destroy + SpawnNewBall (TA:3099, TA:3116);<br>• respawn: `RestartPlayer` destroys the pawn (TA:1092);<br>• goal: `DestroyBalls` + `DestroyCars` (TA:4262).<br>A demolished car is taken off the tick notifies (N-4c) and keeps its last drawn pose until destroyed. | [N] + [S] | high |
+| CS-13 | **Teleports.** TeleportCounter (byte, RepNotify, `if bNetDirty`) → `SetTeleportCount` sets bSkipNextErrorAccumulation (TA:11046). Only the **next** accumulation is skipped; it is consumed by CS-1 or by CS-2 with LastRenderTime > 0. The only script writer is `FreeplayCommands_TA.ConditionalTeleportBallToCar` → `Ball.RegisterTeleport()` (TA:29882), and native code never writes the counter. | [S] + N2 [N] | high |
+| CS-14 | **Paused game.** When the RB receive still has bNewData set after the history step and WorldInfo.**Pauser** ≠ None (WorldInfo+0x570, confirmed by AWorldInfo::SetPauser 0x1407355d0), the state is **hard-set**: SetRBState, **OldRBState = new**, Rotation, Velocity and AngularVelocity set, then SetLocation. There is no smoothing and the error is untouched.<br>With client prediction on (EngineShare+0x170 bit 0), predicted bodies clear bNewData first. So in online play this only reaches bodies without history. | 0x140f1eb20 [N] | high (scope: info) |
+| CS-15 | **Welded bodies (WeldedLerpRate 18).** The parent's physRigidBody places its WeldedActor at the parent's drawn transform combined with the weld offset and rotation. The child's location moves toward it by min(dt·18, 1) of the gap each frame, and its rotation is set directly. The child (WeldedTo ≠ None) zeroes its own errors (CS-4). This is for welding modes (for example Spike Rush), not soccar. | 0x140f704b0 tail [N] | medium-high |
+
+### Reference pseudo-code
+
+```ts
+// Per body: errLoc: Vec3 = 0; errAngle = 0; errAxis = (1,0,0); skipNext = false; lastRendered = false
+// Quaternions (x,y,z,w), Hamilton product mul(a,b); conj(q) = (-x,-y,-z,w).
+
+function accumulate(b, pre: RBState, post: RBState) {          // 0x140eaffe0
+  b.errLoc = b.errLoc + (pre.loc - post.loc);
+  let d = mul(pre.q, conj(post.q));
+  if (d.w < 0) d = neg(d);
+  d = (dot(d,d) <= 1e-8) ? IDENTITY : scale(d, 1/sqrt(dot(d,d)));
+  const E = axisAngleQuat(b.errAxis, b.errAngle);                // (axis*sin(a/2), cos(a/2))
+  const Ep = mul(E, d);                                          // no hemisphere fix here
+  b.errAngle = 2 * acos(clamp(Ep.w, -1, 1));                     // 0..2π
+  const s = sqrt(max(1 - Ep.w * Ep.w, 0));
+  b.errAxis = (s >= 1e-4 && normalizable(Ep.xyz / s)) ? normalize(Ep.xyz / s) : vec(1,0,0);
+}
+
+function afterResim(b, pre: RBState) {                           // 0x140f1b890 / 0x140f1b900
+  if (b.skipNext) b.skipNext = false; else accumulate(b, pre, b.current);
+}
+
+function directApply(b, s: RBState) {                            // 0x140f4bac0 (client behind, or no history)
+  if (b.ignoreSyncing) return;
+  const pre = b.current; b.setState(s);
+  if (b.lastRendered) { if (b.skipNext) b.skipNext = false; else accumulate(b, pre, s); }
+  b.old.loc += s.loc - pre.loc; b.old.linVel += s.linVel - pre.linVel; b.old.angVel += s.angVel - pre.angVel;
+  b.old.q = mul(mul(s.q, conj(pre.q)), b.old.q);
+}
+
+function drawPose(b, dt /* game-time frame delta */, alpha /* RenderAlpha */) {   // 0x140f704b0
+  let loc = lerp(b.old.loc, b.rb.loc, alpha);
+  let q = slerpUE3(b.old.q, b.rb.q, alpha);                      // shortest arc, linear if |cos| >= 0.9999
+  q = (dot(q,q) <= 1e-8) ? IDENTITY : normalize(q);
+  if (b.weldedTo) { b.errLoc = 0; b.errAngle = 0; return; }      // the parent places it
+  if (b.errLoc != 0) {
+    const k = min(dt * 4, 1);
+    b.errLoc = b.errLoc - k * b.errLoc;
+    loc = loc + b.errLoc;                                         // the decayed value is drawn this frame
+    if (lengthSq(b.errLoc) < 0.1) b.errLoc = 0;
+  }
+  if (b.errAngle != 0) {
+    const k = min(dt * 5, 1);
+    b.errAngle = b.errAngle - k * b.errAngle;
+    q = mul(axisAngleQuat(b.errAxis, b.errAngle), q);             // error on the left (world frame)
+    if (abs(b.errAngle) < 0.001) b.errAngle = 0;
+  }
+  b.actor.setPose(loc, q); b.lastRendered = true;                 // mesh, camera, nameplate, FX follow
+}
+// New actor (spawn, kickoff, respawn, ball reset): old = rb = spawn state, err = 0, lastRendered = false.
+```
+
+### Test vectors (from `out/bsim/agents/CS1/scripts/cs_ref.py`, float32)
+
+**TV-1: a 100 uu location correction at 60 fps.** pre.loc = (100, 0, 0), post.loc = (0, 0, 0), dt = 1/60, so
+k = 0.0666667. The drawn offset per frame is 93.333336, 87.111115, 81.303703, 75.883453, 70.824554 (frames 1–5),
+then:
+
+| Frame | Drawn offset (uu) |
+|---|---|
+| 10 | 50.161179 |
+| 30 | 12.621275 |
+| 60 | 1.592966 |
+| 80 | 0.400813 |
+| 83 | 0.325876 |
+| 84 | **0.304151** (drawn, then snapped) |
+| 85 | 0 |
+
+The biggest step is 6.67 uu, in frame 1. At 144 fps the error lasts 205 frames (97.222221, 94.521606, …, last
+0.310411).
+
+**TV-2: a 30° yaw correction at 144 fps.** post.q = 30° about +Z, pre.q = identity, dt = 1/144, so k = 0.0347222.
+
+| Frame | Stored angle (rad) | Drawn offset from the corrected pose |
+|---|---|---|
+| 1 | 0.5054184 | 28.95835° |
+| 2 | 0.4878692 | 27.95285° |
+| 10 | 0.3677239 | 21.06902° |
+| 50 | 0.0894569 | 5.12551° |
+| 100 | 0.0152837 | 0.87570° |
+| 177 | 0.0010057 | 0.05762° |
+| 178 | 0 | 0.05562° drawn, then snapped |
+| 179 | | 0 |
+
+At 60 fps the same correction lasts 72 frames (27.500°, 25.208°, …).
+
+**TV-3: composition** (a check of E′ = E ⊗ d). The existing error is 10° about +Z, pre.q = identity and post.q = 20°
+about +X:
+- the stored result is axis (−0.8930559, −0.0781323, 0.4431100), angle 0.3898700 rad (22.3379°);
+- E′ = (−0.1729874, −0.0151344, 0.0858316, 0.9810603);
+- E′ ⊗ post = (0, 0, 0.0871557, 0.9961947) = E ⊗ pre. The drawn rotation is unchanged at the moment of correction.
+
+**TV-4: direct apply** (location only, α = 0.5, E = 0):
+- before: Old.loc = 0, pre = 10, drawn before decay = 5;
+- the server says 15: Old′ = 5, RB = 15, lerp = 10, e = 10 − 15 = −5, drawn = 5 (unchanged);
+- then the usual decay.
+
+**TV-5: hitch and large angle.**
+- e = (100, 0, 0) with 30°:
+  - dt = 0.1: 60 uu and 0.261799 rad (15°) remain;
+  - dt = 0.25: both errors are cleared in that frame.
+- 150° plus a further 60° on the same axis is stored as 210° about +Z and decays through 180°, 90°, …
+
+### Differences from the earlier N-1 / NR text
+
+1. **The snap happens after drawing.** The last drawn offset is up to 0.316 uu or 0.001 rad, and only then does it
+   snap. At 60 fps a 100 uu error is drawn for 84 frames (0.304 uu in frame 84) and is 0 from frame 85; N-1 said
+   "0 at ~83".
+2. **Direct apply has gates N-1 left out:**
+   - bIgnoreSyncing skips the whole apply;
+   - the error is only accumulated when LastRenderTime > 0;
+   - a never-rendered body consumes no skip flag.
+   The resim path has no LastRenderTime gate.
+3. **The rotation error is angle + axis without a hemisphere fix on the composite.** The stored angle can exceed π
+   and then decays the long way. Only the new delta d is hemisphere-fixed and normalized. NR-7's E′ = E ⊗ d is
+   confirmed, and so is the Hamilton product (sign masks read from .rdata, not assumed).
+4. **The rotation interpolation is a UE3 Slerp** (shortest arc; linear when |cos| ≥ 0.9999), then normalized. It is
+   not a lerp or nlerp. The drawn rotation is quantised through FRotator (65536 units per turn).
+5. **dt is game time** (dilated by TimeDilation, for example in the post-goal slow motion), not real time.
+6. **No large-error snap exists.** The k ≤ 1 clamp clears the error in a single frame of ≥ 0.25 s (location) or
+   ≥ 0.2 s (angle).
+7. **New: a paused game hard-sets** received states with no smoothing (CS-14). In online play this reaches only
+   bodies without history.
+8. **NR-1 confirmed:** Old.q = (new ⊗ pre⁻¹) ⊗ Old.q, with no renormalization. **NR-2 confirmed on live:** the
+   TeleportCounter writer is only the free-play ball teleport; kickoff, respawn and ball reset are new actors with
+   Old = RB.
+9. **Welded lerp 18 is the WeldedActor placement rate** (Spike-Rush-style welding), not part of correction smoothing.
+
+### Ping filter (PC.UpdatePing), item 5a
+
+1. **Sample.** For each `ClientAckFrame` with TimeStamp ≥ 0 (TA:71042), the client queues the timestamp and runs
+   `UpdatePing` one tick later (`SetTimer(0.001)`). For each queued timestamp:
+   `s = max(RealTimeSeconds − ts − (RealDeltaSeconds + 0.016)/2, 0)` (TA:71058).
+2. **Filter.** Each local `PC.UpdatePing(s)` (Engine `PlayerController.UpdatePing`) calls the native
+   **PRI.UpdatePing** (0x14065d2f0, exec 0x14066e830) [N]:
+   ```
+   N = min(s, 1.5)
+   if ExactPing >= 0.004:
+       if N > 2·ExactPing: N = min(N, 3·ExactPing)        // spike clamp
+       ExactPing = min(0.99·ExactPing + 0.01·N, 0.99)
+   else:
+       ExactPing = min(N, 0.3)                            // first sample
+   NetStats.CurrentLatency = ExactPing; NetStats.CurrentJitter = |N − ExactPing|
+   Ping (byte) = min(ceil(255·ExactPing), 255)
+   ```
+3. **Report to the server.** If `TimeSeconds − LastPingUpdate > 4` (game time), `PC.UpdatePing` calls
+   `ServerUpdatePing(int(1000·ExactPing))`, an unreliable server RPC (flags 0x220043). On the server, that RPC sets:
+   - CurrentJitter = |s − CurrentLatency|;
+   - CurrentLatency = s;
+   - **Ping = min(ceil(255·s), 255)**.
+4. **Replication.** `Ping` replicates `if (bNetDirty && !bNetOwner)`, i.e. to the other players [repcond on
+   Engine.upk]. ExactPing does not replicate.
+5. **Display.** The scoreboard uses `PRI_TA.GetPing` (TA:81134) = `min(ExactPing != 0 ? ceil(1000·ExactPing) : 4·Ping, 999)`.
+   - Your own ping is the filtered ExactPing in ms (time constant ≈ 100 samples ≈ 1.8 s at ~55 acks/s).
+   - Other players' pings are 4·ceil(0.255·ms): a multiple of 4, about 2 % high, and refreshed at most every 4 s.
+   - GetPing's caller is native or GFx (not traced) [I].
+6. **Repeated ack timestamps** (NET-6) give stale, growing samples. The spike clamp limits one sample to
+   3·ExactPing, and the weight per sample is 1 %.
+
+### N-4e (forced net update on demolish), item 5b
+
+**Settled: nothing forces the victim's update.** The demolish rides the car's next regular consideration.
+- The only subscriber of `GameEvent.EventReplicatedDemolish` is `CrowdSoundManager_TA.HandleDemolish` (bound at
+  TA:25883, body at TA:25987). It is a crowd-audio relevance check.
+- **Script, scanned for direct calls:**
+  - ForceNetUpdate: 60 callers in all of TAGame (positive control `RBActor_TA.SetFrozen`).
+  - ForceNetUpdatePacket: 2 callers (`SetAllDriving`, `ApplyBallImpactForces`).
+  - None of them is on the demolish path (Car_TA Demolish, DemolishFromSource, QueueDemolish*, FinishDemo and its
+    delegate classes, `OnReplicatedDemolish`, `RemoveCar`, HandleDemolish).
+- **Native:** the ForceNetUpdate implementation (0x1405a8f60: NetUpdateTime = TimeSeconds − 1, bForceNetUpdate,
+  bNetDirty, the UE3 semantics) has three native callers:
+  - SpawnActor 0x1407376e0;
+  - AWorldInfo::SetPauser 0x1407355d0;
+  - car-component SetActive 0x140f35090 (on the component actors, not the car).
+- Confidence high. Script calls through variables or delegates are not covered by the bytecode scan.

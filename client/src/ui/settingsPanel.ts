@@ -53,6 +53,7 @@ const INTERFACE_TEXT = {
   teamColoredBoost: "Team-Colored Boost Meter",
   metric: "Metric",
   ballCamIndicator: "Ball Cam Indicator",
+  ballArrow: "Ball Arrow",
   hideHud: "Hide In-Game HUD",
 } as const;
 
@@ -513,7 +514,7 @@ export class SettingsPanel {
       return el("label", { className: "option" }, [el("span", { textContent: label }), input]);
     };
     const options = el("div", { className: "options" });
-    for (const key of ["teamColoredBoost", "metric", "ballCamIndicator", "hideHud"] as const) {
+    for (const key of ["teamColoredBoost", "metric", "ballCamIndicator", "ballArrow", "hideHud"] as const) {
       const input = el("input", { type: "checkbox", checked: ui[key] });
       input.dataset["setting"] = key;
       input.addEventListener("change", () => {
