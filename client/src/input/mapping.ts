@@ -49,6 +49,8 @@ export interface HeldActions {
   readonly ballOnCar: boolean;
   /** The scoreboard's binding held (OpenScoreboard | OnRelease CloseScoreboard) */
   readonly scoreboard: boolean;
+  /** The goal replay's skip (ReadyUp) */
+  readonly readyUp: boolean;
   /** The quick-chat keys (ChatPreset1-4): a key's press since the last frame (each tap, in back-to-back frames too: a
    *  press is a command, not a state), and the pad button held now (its press is its edge) */
   readonly chat: readonly ChatKey[];
@@ -65,7 +67,16 @@ const NO_CHAT_KEY: ChatKey = { keyPressed: false, padDown: false };
 export function chatPresses(keys: readonly ChatKey[], previous: readonly ChatKey[]): number[] {
   return keys.flatMap((k, i) => (k.keyPressed || (k.padDown && !(previous[i]?.padDown ?? false)) ? [i] : []));
 }
-export const NO_HELD_ACTIONS: HeldActions = { ballCam: false, rearCamera: false, reset: false, ballInFront: false, ballOnCar: false, scoreboard: false, chat: [NO_CHAT_KEY, NO_CHAT_KEY, NO_CHAT_KEY, NO_CHAT_KEY] };
+export const NO_HELD_ACTIONS: HeldActions = {
+  ballCam: false,
+  rearCamera: false,
+  reset: false,
+  ballInFront: false,
+  ballOnCar: false,
+  scoreboard: false,
+  readyUp: false,
+  chat: [NO_CHAT_KEY, NO_CHAT_KEY, NO_CHAT_KEY, NO_CHAT_KEY],
+};
 
 /** Camera swivel input, -1..1 each (PlayerController_TA.ReplicateCameraRotation, before inversion). */
 export interface LookInput {
@@ -252,6 +263,7 @@ export function readHeldActions(input: InputSnapshot, bindings: Bindings, stickD
     ballInFront: held("ballInFront"),
     ballOnCar: held("ballOnCar"),
     scoreboard: held("scoreboard"),
+    readyUp: held("readyUp"),
     chat: (["chatPreset1", "chatPreset2", "chatPreset3", "chatPreset4"] as const).map((a) => {
       const [key, pad] = buttonInputs(input, bindings, stickDeadzone, a);
       return { keyPressed: key?.pressed ?? false, padDown: pad?.down ?? false };

@@ -6,8 +6,7 @@ import { Interpolated } from "./interpolated";
 import { PlayerCamera } from "../camera/rlCamera";
 import { BOOST_SPAWN_AMOUNT, type BodyState, type CarConfig, type CarState, type World } from "../engine/world";
 import { type Hud, type ReplayGoal, type ReplayHud, replaySpeed, replayTime, respawnHud } from "../hud";
-import { pressTo } from "./forfeitVote";
-import { inputGlyph } from "../input/bindings";
+import { keyGlyph } from "../ui/keyGlyph";
 import type { InputDevices } from "../input/devices";
 import { AirPitchSafety, ButtonLatch, EMPTY_INPUT, type HeldActions, JumpLatch, type LookInput, NO_HELD_ACTIONS, readControls, readHeldActions } from "../input/mapping";
 import type { ControllerSettings, Options, Settings } from "../settings/settings";
@@ -180,7 +179,7 @@ export class Freeplay {
     this.#fade.update(real);
     this.#renderer.cameraFade = this.#fade.opacity;
     const snapshot = this.inputEnabled() ? this.#input.snapshot() : EMPTY_INPUT;
-    const held = snapshot.keys.has("Space") || (snapshot.pressedKeys?.has("Space") ?? false) || (snapshot.gamepad?.buttons[0] ?? 0) > 0.5;
+    const held = readHeldActions(snapshot, this.settings().bindings, this.settings().controller.deadzone).readyUp;
     const skipped = held && !this.#skipHeld;
     this.#skipHeld = held;
     replay.frame(real, {
@@ -199,7 +198,9 @@ export class Freeplay {
       time: this.#goalTime === null ? null : replayTime(this.#goalTime),
       speed: this.#goalSpeed === null ? null : replaySpeed(this.#goalSpeed, this.settings().interface.metric),
     };
-    this.#updateHud(this.#car.current, real, { prompt: pressTo(this.#input.usingGamepad ? "(A)" : "Space", "Skip"), waiting: null, goal });
+    const { bindings } = this.settings();
+    const skipKey = keyGlyph(this.#input.usingGamepad ? bindings.readyUp.gamepad : bindings.readyUp.keyboard);
+    this.#updateHud(this.#car.current, real, { prompt: skipKey, waiting: null, goal });
     if (!skipped && !replay.done) return;
     this.#replay = null;
     this.#fade.fromBlack();
@@ -341,6 +342,15 @@ export class Freeplay {
     this.#ballSpawnTick = this.#world.tick;
     this.#touches.clear();
     this.#replayPlan = null;
+  }
+
+  /** The session over again (Exit to Main Menu, then Free Play: MENU-1, RV-284): any goal replay and its banner gone, a
+   *  new round from the kickoff */
+  restart(): void {
+    this.#replay = null;
+    this.#hud.say("");
+    this.#resetKickoff();
+    this.#updateHud(this.#car.current, 0, null);
   }
 
   /** For screenshots and browser tests: the car on the floor at (x, y) facing `yaw` (rad, the game's), at rest, and
@@ -488,7 +498,7 @@ export class Freeplay {
       score: this.#score,
       clock: null,
       ballCam: this.#ballCam,
-      ballCamKey: toggles ? inputGlyph(pad ? settings.bindings.ballCam.gamepad : settings.bindings.ballCam.keyboard) : null,
+      ballCamKey: toggles ? keyGlyph(pad ? settings.bindings.ballCam.gamepad : settings.bindings.ballCam.keyboard) : null,
       carView: replay === null,
       menuOpen: !this.inputEnabled(),
       message: null, // (no scored message in offline freeplay: RV-38)

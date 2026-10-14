@@ -140,6 +140,8 @@ async function main(): Promise<void> {
   });
   // The menus (MENU-1/4): Escape brings up the pause menu, the settings over it; the main menu as freeplay's page opens
   let mainMenu: MainMenu | null = null;
+  // (freeplay's session over again: leaving it for the main menu, RV-284)
+  let freeplayRestart: (() => void) | null = null;
   const pause: PauseMenu = new PauseMenu(document.body, {
     resume: () => {
       pause.close();
@@ -151,6 +153,7 @@ async function main(): Promise<void> {
       ? {
           exit: () => {
             pause.close();
+            freeplayRestart?.();
             mainMenu?.open();
           },
         }
@@ -175,9 +178,13 @@ async function main(): Promise<void> {
   let game: { frame(dt: number): void };
   if (server === null) {
     const freeplay = new Freeplay(world, renderer, arena, input, hud, audio, () => settings, () => !menusOpen());
+    freeplayRestart = () => {
+      freeplay.restart();
+    };
     mainMenu = new MainMenu(document.body, {
       freePlay: () => {
         mainMenu?.close();
+        freeplay.restart(); // (a fresh session, not the one left: RV-284)
       },
       join: (address) => {
         const query = new URLSearchParams(location.search);

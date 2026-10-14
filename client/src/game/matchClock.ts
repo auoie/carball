@@ -43,6 +43,12 @@ export function clockWarning(before: number, now: number): string | null {
   return null;
 }
 
+/** The sound of a clock announcement at shown second `now` (HT-7's sound column, our own cues: the last ten seconds'
+ *  tick, else the one-minute or 30-seconds call) */
+export function clockCue(now: number): "endCounter" | "oneMinute" | "thirtySeconds" {
+  return now <= 10 ? "endCounter" : now === 60 ? "oneMinute" : "thirtySeconds";
+}
+
 /** The kickoff countdown's announcements (VT-24): "3", "2", "1" a second apart from a second in, "GO!" when the cars
  *  can drive, each with its beep. `before`: the whole seconds left last frame; `ticks`: the countdown's ticks left now.
  *  Returns the whole seconds left now, and what to announce (null: nothing). */

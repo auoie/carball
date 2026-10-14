@@ -35,6 +35,12 @@ export interface Plate {
   readonly at: { readonly x: number; readonly y: number; readonly pxPerUnit: number; readonly distance: number; readonly horizontalFov: number } | null;
 }
 
+/** A plate's CSS transform (origin top left): its bottom-centre on the point (x, y), scaled `k` about it (HT-8's pivot;
+ *  the right-to-left order matters: the shift to the pivot first, then the scale, then the move, RV-280) */
+export function plateTransform(x: number, y: number, k: number): string {
+  return `translate(${String(x)}px, ${String(y)}px) scale(${String(k)}) translate(-50%, -100%)`;
+}
+
 export class Nameplates {
   readonly #root: HTMLDivElement;
   readonly #plates = new Map<number, { readonly el: HTMLDivElement; readonly name: HTMLElement }>();
@@ -71,7 +77,7 @@ export class Nameplates {
       if (!p.at) continue;
       const px = NAMEPLATE_UU * nameplateScale(p.at.distance, p.at.horizontalFov, setting) * p.at.pxPerUnit;
       plate.el.classList.toggle("arrow-only", arrowOnly(mode, p.at.distance));
-      plate.el.style.transform = `translate(${String(p.at.x)}px, ${String(p.at.y)}px) translate(-50%, -100%) scale(${String(px / PLATE_PX)})`;
+      plate.el.style.transform = plateTransform(p.at.x, p.at.y, px / PLATE_PX);
     }
     for (const [car, plate] of this.#plates) {
       if (!seen.has(car)) {

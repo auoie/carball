@@ -7,6 +7,7 @@ import { fitStage } from "./ui/stage";
 import { DODGE_WINDOW, type Dodge } from "./game/flipTracker";
 import { type VoteHud, voteFlashes } from "./game/forfeitVote";
 import { ACTIONS, type Bindings, inputName } from "./input/bindings";
+import { type KeyGlyph, clearPrompt, renderPrompt } from "./ui/keyGlyph";
 
 /** The local car demolished: its respawn and the respawn spot selection (the steer input picks a side). */
 export interface RespawnHud {
@@ -75,8 +76,8 @@ const MESSAGE_FADE = 0.3;
 
 /** The goal replay's banner (HUD-11) */
 export interface ReplayHud {
-  /** "Press Space to Skip" until the player skips (null: none) */
-  readonly prompt: string | null;
+  /** "Press {key} to Skip" until the player skips (the ReadyUp binding's glyph: HT-3; null: none) */
+  readonly prompt: KeyGlyph | null;
   /** Who isn't ready yet (null: nothing shown) */
   readonly waiting: string | null;
   /** The goal: its scorer and assister, the clock at the goal and the ball's speed (null: not known) */
@@ -135,7 +136,7 @@ export interface HudState {
   /** A menu is over the HUD */
   readonly menuOpen?: boolean;
   /** The ball cam's toggle key, when it toggles (null: held, or nothing to say) */
-  readonly ballCamKey?: string | null;
+  readonly ballCamKey?: KeyGlyph | null;
   readonly fps: number;
   readonly net: string | null; // online: ping and buffer
   /** Whether the car can dodge (null: the indicator is turned off) */
@@ -319,7 +320,8 @@ export class Hud {
     const ballCam = (this.#ui?.ballCamIndicator ?? true) && s.ballCam && carView && !menuOpen && (s.parts?.ballCamIndicator ?? true);
     this.#ballCam.classList.toggle("shown", ballCam);
     const key = s.ballCamKey ?? null;
-    this.#ballCamToggle.textContent = key === null ? "" : `Press ${key} to Toggle`;
+    if (key === null) clearPrompt(this.#ballCamToggle);
+    else renderPrompt(this.#ballCamToggle, key, "Toggle"); // (HT-3: the pad's and the mouse's buttons as icons)
     this.#speed.textContent = `${Math.round(s.speed)} uu/s`;
     this.#speed.classList.toggle("supersonic", s.supersonic);
     this.#camera.textContent = s.ballCam ? "Ball cam" : "Car cam";
@@ -466,7 +468,8 @@ export class Hud {
       this.#replayGoal = "";
       return;
     }
-    this.#replayPrompt.textContent = r.prompt ?? "";
+    if (r.prompt === null) clearPrompt(this.#replayPrompt);
+    else renderPrompt(this.#replayPrompt, r.prompt, "Skip");
     this.#replayWaiting.textContent = r.waiting ?? "";
     const key = JSON.stringify(r.goal);
     if (key === this.#replayGoal) return;

@@ -192,6 +192,26 @@ export class Synth {
     this.#sweep("triangle", f * 2, f * 2, 0.01, out, when, 0.04, go ? 0.4 : 0.1);
   }
 
+  /** The clock's last ten seconds (SFX_UI_Countdown_EndCounter's place): a short, dry tick, lower than the kickoff's */
+  endCounter(out: AudioNode, when: number): void {
+    this.#sweep("square", 740, 700, 0.03, out, when, 0.07, 0.07);
+    this.#sweep("sine", 1480, 1480, 0.01, out, when, 0.05, 0.05);
+  }
+
+  /** The clock's announcements (the Overtime and Remaining_60sec / _30sec cues' places): overtime a rising brass call,
+   *  one minute left two notes up, 30 seconds three */
+  announcement(out: AudioNode, when: number, kind: "overtime" | "oneMinute" | "thirtySeconds"): void {
+    if (kind === "overtime") {
+      this.#brass(out, when, 392, 0.14);
+      this.#brass(out, when + 0.16, 523.25, 0.4);
+      return;
+    }
+    const notes = kind === "oneMinute" ? [659.25, 987.75] : [659.25, 830.6, 987.75];
+    notes.forEach((f, i) => {
+      this.#sweep("triangle", f, f, 0.01, out, when + i * 0.12, 0.16, 0.18);
+    });
+  }
+
   /** A brass note: two detuned saws through a filter that opens as it sounds, with vibrato on long notes. */
   #brass(out: AudioNode, when: number, frequency: number, length: number): void {
     const g = this.gain(0, out);

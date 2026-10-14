@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clockWarning, countdownStep, formatClock, overtimeLabel } from "./matchClock";
+import { clockCue, clockWarning, countdownStep, formatClock, overtimeLabel } from "./matchClock";
 
 describe("match clock", () => {
   it("shows int(t) + 1 seconds, as the game's (5:00 until the clock runs; at a whole second, still the one before)", () => {
@@ -36,6 +36,10 @@ describe("the clock's announcements (HUD-10)", () => {
     expect(clockWarning(1, 0)).toBeNull();
     expect(clockWarning(12, 11)).toBeNull();
     expect(clockWarning(64, 59)).toBeNull(); // (a step past it: not at it)
+  });
+
+  it("each announcement its own sound (HT-7, RV-283): the last ten's tick, the minute's and 30 seconds' calls", () => {
+    expect([clockCue(60), clockCue(30), clockCue(10), clockCue(1)]).toEqual(["oneMinute", "thirtySeconds", "endCounter", "endCounter"]);
   });
 });
 

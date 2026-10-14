@@ -57,7 +57,7 @@ notes/scoreboard.md (SB-n), notes/match-intro-outro.md §5 and notes/match-rules
 
 **Text rule (user decisions).** Quoted verbatim below: the in-match HUD messages (kickoff 3/2/1/GO!, OVERTIME in the
 clock slot and Overtime!, One Minute Remaining!, 30 Seconds Remaining!, 10…1), BOOST, BALL CAM / PRESS {key} TO
-TOGGLE, YOU, main menu Play / Garage / Settings / Quit, pause menu Resume / Settings / Show Controls / Leave with the
+TOGGLE, YOU, main menu Play / Garage / Settings / Quit and Free Play (`[Global] FreePlay`, user 2026-10-14, RV-285), pause menu Resume / Settings / Show Controls / Leave with the
 leave/forfeit inquiries, the settings tab names, the Interface and Gameplay labels and options, the replay HUD and
 banner, and stat/scoreboard text; plus strings cleared earlier (Yes/No, Exit to Main Menu and its inquiry: MIO §5;
 vote/forfeit/leave and replay-skip text: match-rules-audit.md). Everything else is **by key only**; its English is in

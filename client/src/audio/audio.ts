@@ -135,6 +135,18 @@ export class GameAudio {
     this.#synth.beep(this.#effects, this.#ctx.currentTime + 0.01, secondsLeft === 0);
   }
 
+  /** One of the clock's last ten seconds (HT-7: its own cue, not the kickoff's) */
+  endCounter(): void {
+    this.#count("endCounter");
+    this.#synth.endCounter(this.#effects, this.#ctx.currentTime + 0.01);
+  }
+
+  /** "Overtime!", "One Minute Remaining!", "30 Seconds Remaining!" (HT-7: each its own cue, whatever the setting) */
+  announcement(kind: "overtime" | "oneMinute" | "thirtySeconds"): void {
+    this.#count(kind);
+    this.#synth.announcement(this.#effects, this.#ctx.currentTime + 0.01, kind);
+  }
+
   get stats(): AudioStats {
     return { state: this.#ctx.state, played: { ...this.#played }, cars: this.#voices.size };
   }

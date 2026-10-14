@@ -44,7 +44,7 @@ import type { FreeLookControls } from "../camera/rlCamera";
 import type { Options, Settings } from "../settings/settings";
 import { Interpolated } from "./interpolated";
 import { SyncError } from "./syncError";
-import { HUD_TEXT, TICK_RATE, clockWarning, countdownStep, formatClock, overtimeLabel, shownSeconds } from "./matchClock";
+import { HUD_TEXT, TICK_RATE, clockCue, clockWarning, countdownStep, formatClock, overtimeLabel, shownSeconds } from "./matchClock";
 import { fromThreeQuaternion, rotateRl, toThreeQuaternion } from "../render/coords";
 import { postGoalDilation } from "./goalSequence";
 import { type RecordedCar, ReplayRecorder, recordCar } from "./replayRecorder";
@@ -55,7 +55,7 @@ import { EXPLOSION_LARGE, EXPLOSION_MEDIUM, IMPACT_MEDIUM } from "../camera/shak
 import { ImpactTriggers, triggerSounds } from "./impactTriggers";
 import { ServerDemolitions, leaverExplodes } from "./serverDemolitions";
 import { ShakeTriggers } from "./shakeTriggers";
-import { type MatchMenuItem, matchMenuItems, pressTo, voteHud } from "./forfeitVote";
+import { type MatchMenuItem, matchMenuItems, voteHud } from "./forfeitVote";
 import { CHAT_COLOURS, CHAT_TEXT, QuickChatMenu, presetIndex, presetText, visibleGroups } from "./quickChat";
 import { CHAT_LOG, type ChatLog, type QuickChatPanel, chatMessageLine, rosterLines } from "../ui/chatLog";
 import { goalBanner, scoreboardAllowed, scoreboardTeams, statPopup, tickerRow } from "./matchStats";
@@ -76,13 +76,14 @@ import {
 } from "./matchSequence";
 import { EndScreen, type PodiumTags, type ScreenDimming, type WinnerBanner } from "../ui/endOfMatch";
 import { shownTitles } from "./podiumTitles";
-import { NAMEPLATE_HEIGHT, type Nameplates } from "../ui/nameplates";
+import { NAMEPLATE_HEIGHT, type Nameplates, type Plate } from "../ui/nameplates";
 import type { CameraView } from "../camera/rlCamera";
 import type { HeldScoreboard, ScoreboardView } from "../ui/scoreboard";
 import type { StatPopups, StatTicker } from "../ui/statFeed";
 import { PLAYER_TEXT, type PlayerItem, type Toast } from "../ui/playersMenu";
 import { CHAT_PRESETS } from "./quickChat";
 import { inputGlyph } from "../input/bindings";
+import { keyGlyph } from "../ui/keyGlyph";
 
 
 /** The key that opens the menu, which has the vote button (VoteInstructions' {0?KeyBinding}) */
@@ -526,9 +527,10 @@ export class Online {
     this.statsUi.toast.show(name, on ? PLAYER_TEXT.blocked(name) : PLAYER_TEXT.unblocked(name), performance.now() / 1000);
   }
 
-  /** Skip the goal replay: a press of Space or the pad's A (ReadyUp, ReplaySkip bindings), once */
+  /** Skip the goal replay: a press of its binding (ReadyUp: Space or the pad's A by default, rebindable), once */
   #watchSkip(snapshot: InputSnapshot): void {
-    const held = snapshot.keys.has("Space") || (snapshot.pressedKeys?.has("Space") ?? false) || (snapshot.gamepad?.buttons[0] ?? 0) > 0.5;
+    const { bindings, controller } = this.settings();
+    const held = readHeldActions(snapshot, bindings, controller.deadzone).readyUp;
     if (held && !this.#skipHeld && this.#replay && !this.#skipped) {
       this.#skipped = true;
       this.#connection.readyUp();
@@ -696,7 +698,10 @@ export class Online {
           this.#enterPhase(m.phase, this.#match === null);
           if (m.phase === "countdown") this.#roundStartTick = m.serverTick; // (the replay's goal time counts from here: HT-6)
         }
-        if (m.overtime && this.#match !== null && !this.#match.overtime) this.#hud.say(HUD_TEXT.overtime, GAME_UPDATE); // (HUD-10)
+        if (m.overtime && this.#match !== null && !this.#match.overtime) {
+          this.#hud.say(HUD_TEXT.overtime, GAME_UPDATE); // (HUD-10)
+          this.#audio.announcement("overtime"); // (its sound whatever the setting: HT-7, RV-283)
+        }
         this.#match = m; // (the score too: the server's)
       } else if (m.type === "event" && m.event.kind === "goal") {
         const team = m.event.team === 1 ? 1 : 0;
@@ -938,22 +943,26 @@ export class Online {
     this.#updateHud(realSeconds);
   }
 
-  /** HUD-13: the other cars' nameplates as drawn (none for a demolished car, nor on the podium and after: its panels) */
-  #drawNameplates(alpha: number): void {
+  /** HUD-13: the other cars' nameplates as drawn (none for a demolished car, nor on the podium and after: its panels);
+   *  `replayCars`: the goal replay's cars as it draws them (every car's plate tracks them: HT-8, RV-279) */
+  #drawNameplates(alpha: number, replayCars: ReadonlyMap<number, Vec3> | null = null): void {
     const ui = this.settings().interface;
     const phase = this.#match?.phase;
     const live = this.#carView && phase !== "podium" && phase !== "finished" && phase !== "prePodium";
-    const plates = live
-      ? [...this.#cars].flatMap(([id, entry]) => {
-          if (id === this.#localCar || this.#drawnDemoed(id, entry.state.current)) return [];
-          const roster = this.#roster?.get(id);
-          const pos = add(entry.state.blended(alpha).pos, entry.error.location);
-          const top = { x: pos.x, y: pos.y, z: pos.z + NAMEPLATE_HEIGHT };
-          const scale = this.#renderer.scaleAt(top);
-          const at = scale ? this.#renderer.project(top) : null;
-          return [{ car: id, name: roster?.name ?? "", team: entry.state.current.team, at: at && scale ? { ...at, ...scale } : null }];
-        })
-      : [];
+    const plate = (id: number, pos: Vec3, team: number): Plate => {
+      const top = { x: pos.x, y: pos.y, z: pos.z + NAMEPLATE_HEIGHT };
+      const scale = this.#renderer.scaleAt(top);
+      const at = scale ? this.#renderer.project(top) : null;
+      return { car: id, name: this.#roster?.get(id)?.name ?? "", team, at: at && scale ? { ...at, ...scale } : null };
+    };
+    const plates = replayCars
+      ? [...replayCars].map(([id, pos]) => plate(id, pos, this.#cars.get(id)?.state.current.team ?? this.#roster?.get(id)?.team ?? 0))
+      : live
+        ? [...this.#cars].flatMap(([id, entry]) => {
+            if (id === this.#localCar || this.#drawnDemoed(id, entry.state.current)) return [];
+            return [plate(id, add(entry.state.blended(alpha).pos, entry.error.location), entry.state.current.team)];
+          })
+        : [];
     this.statsUi.nameplates.update(plates, ui.nameplateMode, ui.nameplateScale, ui.hideHud);
   }
 
@@ -1010,7 +1019,10 @@ export class Online {
     const say = this.#clockShown === null ? null : clockWarning(this.#clockShown, now);
     this.#clockShown = now;
     if (say === null) return;
-    if (now <= 10) this.#audio.countdown(now); // (its sound whatever the setting: HT-7)
+    // (each its own sound, whatever the setting: HT-7, RV-283)
+    const cue = clockCue(now);
+    if (cue === "endCounter") this.#audio.endCounter();
+    else this.#audio.announcement(cue);
     this.#hud.say(say, GAME_UPDATE);
   }
 
@@ -1022,7 +1034,7 @@ export class Online {
     const settings = this.settings();
     const pad = this.#input.usingGamepad;
     const toggles = (pad ? settings.cameraPad : settings.cameraKbm).ballCamToggle;
-    const ballCamKey = inputGlyph(pad ? settings.bindings.ballCam.gamepad : settings.bindings.ballCam.keyboard);
+    const ballCamKey = keyGlyph(pad ? settings.bindings.ballCam.gamepad : settings.bindings.ballCam.keyboard);
     const phase = this.#match?.phase;
     this.#hud.update({
       boost: car?.boost ?? 0,
@@ -1062,14 +1074,17 @@ export class Online {
       ballView: this.#ballView,
       cars,
     });
-    // (SkipInstructions until the player skips: the skip is Space or the pad's A)
+    this.#drawNameplates(0, playback.cars);
+    // (SkipInstructions until the player skips: its binding's key, HT-3)
     const goal = this.#goal;
+    const { bindings } = this.settings();
+    const skipKey = keyGlyph(this.#input.usingGamepad ? bindings.readyUp.gamepad : bindings.readyUp.keyboard);
     const named = (car: number): { readonly name: string; readonly team: number } | null => {
       const entry = car === 0 ? undefined : this.#roster?.get(car);
       return entry ? { name: entry.name, team: entry.team } : null;
     };
     this.#updateHud(realSeconds, {
-      prompt: this.#skipped ? null : pressTo(this.#input.usingGamepad ? "(A)" : "Space", "Skip"),
+      prompt: this.#skipped ? null : skipKey,
       waiting: null,
       goal: goal && {
         scorer: named(goal.scorer),

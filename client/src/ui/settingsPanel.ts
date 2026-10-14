@@ -453,7 +453,8 @@ export class SettingsPanel {
 
   /** The game's Gameplay settings (MENU-9): the flip indicator, goal replays, free play's boost */
   #gameplayTab(): HTMLElement {
-    const box = el("div", { className: "sliders" });
+    // (the game's row labels upper-cased, its values as written: HT-5, RV-281)
+    const box = el("div", { className: "sliders caps-labels" });
     const gameplay = this.#settings.gameplay;
     const apply = (next: Partial<GameplaySettings>): void => {
       this.#update({ ...this.#settings, gameplay: { ...this.#settings.gameplay, ...next } });
@@ -470,10 +471,12 @@ export class SettingsPanel {
       });
       return el("label", { className: "option" }, [el("span", { textContent: label }), input]);
     };
+    // (the game's creation order: free play's unlimited boost first, the goal replay's skip last: HT-5, RV-281)
     box.append(
+      this.#checkboxes(["unlimitedBoost"]),
       select("statDisplayLevel", T.statDisplayLevel, T.statLevels),
       select("flipResetIndicator", T.flipResetIndicator, T.flipModes),
-      this.#checkboxes(["autoSkipReplay", "unlimitedBoost"]),
+      this.#checkboxes(["autoSkipReplay"]),
     );
     return box;
   }
@@ -495,6 +498,7 @@ export class SettingsPanel {
       { scale: d.scale, displayScale: d.displayScale, nameplateScale: d.nameplateScale },
       true,
     );
+    box.classList.add("caps-labels"); // (HT-5, RV-281)
     const reset = box.lastElementChild;
     const select = <K extends "nameplateMode" | "matchNotifications">(key: K, label: string, options: Readonly<Record<InterfaceSettings[K], string>>): HTMLElement => {
       const input = el("select");

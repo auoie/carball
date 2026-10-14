@@ -48,13 +48,16 @@ export const ACTIONS = [
   { id: "chatPreset4", label: "Quick Chat - Apologies", group: "Quick Chat" },
   // (ToggleScoreboard: held, online only)
   { id: "scoreboard", label: "Scoreboard (hold)", group: "Match" },
+  // (Controls.int [ReadyUp] Label, verbatim: the goal replay's skip, when no car drives, so it shares its keys)
+  { id: "readyUp", label: "Skip Replay", group: "Replay" },
 ] as const;
 
 /** Action groups never active together (freeplay's offline, quick chat's online): their bindings may share inputs */
 export function exclusiveGroups(a: Action, b: Action): boolean {
   const group = (id: Action): string => ACTIONS.find((x) => x.id === id)?.group ?? "";
   const pair = [group(a), group(b)].sort().join("|");
-  return pair === "Freeplay|Quick Chat";
+  // (the replay's skip: no car is driven in a goal replay, so it shares any key: Space with jump, the pad's A)
+  return pair === "Freeplay|Quick Chat" || (pair.includes("Replay") && group(a) !== group(b));
 }
 
 export type Action = (typeof ACTIONS)[number]["id"];
@@ -104,6 +107,8 @@ export const DEFAULT_BINDINGS: Bindings = {
   chatPreset4: bind(key("Digit4"), button(13)),
   // (DefaultInput.ini, ControlPreset_X: Tab and the left bumper, SB-10)
   scoreboard: bind(key("Tab"), button(4)),
+  // (ReadyUp: Modern's SpaceBar, the pad's A: notes/hud-menus.md HT-3)
+  readyUp: bind(key("Space"), button(0)),
 };
 
 const PAD_BUTTON_NAMES = [

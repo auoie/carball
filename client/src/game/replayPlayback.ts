@@ -100,8 +100,12 @@ export class ReplayPlayback {
     scene.renderer.render(clipped);
   }
 
+  /** The cars as this frame draws them (game coordinates; not the demolished): their nameplates (HT-8, RV-279) */
+  readonly cars = new Map<number, Vec3>();
+
   /** The cars and the ball between two recorded frames */
   #drawRecorded(scene: ReplayScene, a: RecordedFrame, b: RecordedFrame, alpha: number, seconds: number): void {
+    this.cars.clear();
     for (const [id, view] of scene.cars) {
       const from = a.cars.get(id);
       const to = b.cars.get(id) ?? from;
@@ -109,6 +113,7 @@ export class ReplayPlayback {
         view.root.visible = false;
         continue;
       }
+      if (!to.demoed) this.cars.set(id, add(from.pos, scale(sub(to.pos, from.pos), alpha)));
       const between = new Interpolated<RecordedCar>(from);
       between.push(to);
       view.update(between.position(alpha, this.#pos), between.rotation(alpha, this.#rot), to.boosting, to.demoed, to.supersonic, seconds, trailGround(to));

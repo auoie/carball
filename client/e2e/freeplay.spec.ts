@@ -83,6 +83,12 @@ test("freeplay loads, drives and resets", async ({ page }) => {
   await expect(page.locator('input[data-option="muted"]')).toBeChecked();
   // The flip indicator can be turned off (the Gameplay tab's Flip Reset Indicator: MENU-9, RV-169)
   await page.locator(".settings-tab", { hasText: "Gameplay" }).click();
+  // (its rows in the game's order, their labels upper-cased, the values as written: HT-5, RV-281)
+  const order = await page.locator(".caps-labels > *").evaluateAll((rows) =>
+    rows.map((r) => r.querySelector("[data-setting], [data-option]")?.getAttribute("data-setting") ?? r.querySelector("[data-option]")?.getAttribute("data-option") ?? ""),
+  );
+  expect(order.filter((k) => k !== "")).toEqual(["unlimitedBoost", "statDisplayLevel", "flipResetIndicator", "autoSkipReplay"]);
+  await expect(page.locator(".caps-labels .option > span").first()).toHaveCSS("text-transform", "uppercase");
   await page.locator('select[data-setting="flipResetIndicator"]').selectOption("off");
   await closeMenus(page);
   await expect(page.locator("#flip")).toBeHidden();
@@ -233,6 +239,8 @@ test("a goal in freeplay with goal replays on: the replay plays, Space skips it,
   await expect(page.locator("#replay-info .replay-scorer")).toBeVisible();
   await expect.poll(async () => page.evaluate(() => (window as unknown as { rlFadeMax: number }).rlFadeMax), { timeout: 10_000 }).toBeGreaterThan(0.5);
   await expect(page.locator("#replay-prompt")).toContainText(/skip/i);
+  // (its key: the Skip Replay binding's, a word for a keyboard key: HT-3, RV-282)
+  await expect(page.locator("#replay-prompt .key-glyph.key-word")).toHaveText("Space");
   await page.locator("#game").click({ position: { x: 640, y: 360 }, button: "right" });
   await page.keyboard.press("Space");
   await expect(page.locator("#replay-banner")).toBeHidden({ timeout: 10_000 });
@@ -240,6 +248,30 @@ test("a goal in freeplay with goal replays on: the replay plays, Space skips it,
   await expect.poll(async () => Math.abs((await hook()).pos.y), { timeout: 10_000 }).toBeGreaterThan(2000);
   await page.waitForTimeout(500);
   expect((await hook()).speed).toBeLessThan(1);
+  expect(errors).toEqual([]);
+});
+
+test("Exit to Main Menu during a goal replay, then Free Play: a fresh round, no replay banner (MENU-1, RV-284)", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto("/");
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+  await freePlay(page);
+  const hook = async (): Promise<{ pos: { x: number; y: number }; speed: number }> =>
+    page.evaluate(() => (window as unknown as { rlFreeplay: Hook }).rlFreeplay.car());
+  await page.evaluate(() => {
+    (window as unknown as { rlFreeplay: Hook }).rlFreeplay.place({ x: 3000, y: 0, yaw: 0 }, { x: 0, y: 5300, z: 200 });
+  });
+  await expect(page.locator("#replay-banner")).toBeVisible({ timeout: 20_000 });
+  await page.keyboard.press("Escape");
+  const pause = page.locator("#pause-menu");
+  await pause.getByRole("button", { name: /^exit to main menu$/i }).click();
+  await pause.getByRole("button", { name: /^yes$/i }).click();
+  await expect(page.locator("#main-menu")).toBeVisible();
+  await expect(page.locator("#replay-banner")).toBeHidden();
+  await freePlay(page);
+  await expect(page.locator("#replay-banner")).toBeHidden();
+  await expect.poll(async () => Math.abs((await hook()).pos.y), { timeout: 10_000 }).toBeGreaterThan(2000);
   expect(errors).toEqual([]);
 });
 

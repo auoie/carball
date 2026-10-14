@@ -1855,3 +1855,60 @@ body {
   border-radius: 3px;
   user-select: text;
 }
+
+/* HT-5: the Interface and Gameplay tabs' row labels upper-cased (their dropdown values as written: RV-281) */
+.caps-labels .option > span,
+.caps-labels .slider > span {
+  text-transform: uppercase;
+}
+
+/* HT-3: the {key} token's icons in the HUD's prompts (our own): about 1.5 x the line, sitting on its baseline; the pad's
+   face buttons round badges, its other buttons rounded tabs, the mouse an outline with its button lit */
+.key-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: -0.35em;
+  margin: 0 0.15em;
+}
+
+.key-glyph.key-pad {
+  min-width: 1.5em;
+  height: 1.5em;
+  padding: 0 0.25em;
+  font-size: 0.8em;
+  font-weight: 700;
+  color: #0b0f17;
+  background: #e8eef7;
+  border-radius: 0.5em;
+  box-sizing: border-box;
+}
+
+.key-glyph.key-pad[data-button="0"],
+.key-glyph.key-pad[data-button="1"],
+.key-glyph.key-pad[data-button="2"],
+.key-glyph.key-pad[data-button="3"] {
+  min-width: 1.5em;
+  border-radius: 50%;
+}
+
+.key-glyph.key-pad[data-button="0"] {
+  background: #6cc24a;
+}
+
+.key-glyph.key-pad[data-button="1"] {
+  background: #e0453b;
+}
+
+.key-glyph.key-pad[data-button="2"] {
+  background: #3d8fe0;
+}
+
+.key-glyph.key-pad[data-button="3"] {
+  background: #f2c230;
+}
+
+.key-glyph.key-mouse svg {
+  width: 1em;
+  height: 1.5em;
+}

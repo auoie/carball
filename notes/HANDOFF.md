@@ -446,7 +446,7 @@
     - Not yet: the waiting-for-players list (MIO-6), the rematch vote (MIO-32), quick actions (MIO-24), the end
       screen's hide-scoreboard toggle (MIO-30), a metric units setting (titles are imperial, the game's default), the
       highlights replay behind the end screen.
-  - **Since b22dc21 (uncommitted): the in-match HUD and the menus (notes/hud-menus.md), the 3645f4c + b22dc21 review
+  - **In 150e1e6: the in-match HUD and the menus (notes/hud-menus.md), the 3645f4c + b22dc21 review
     RV-273..278.** Text verbatim per the user's decision of 2026-10-14 (HUD messages, menus, Interface and Gameplay
     settings), the strings and their case from the static session's table (notes/hud-menus.md HT-1..HT-10).
     - Stage (HUD-1): `ui/stage.ts`, the content stage with Interface Scale and Display Scale; every HUD layer uses it.
@@ -477,6 +477,20 @@
       characters are every Cf; stats_validate resumes the round when the replay is still in play a second after an
       engine-only goal (`ResumeRound`; 60 1v1 replays: goals 100.0 / 99.7, notes/validation.md).
     - Not yet: the centre dot, the ball arrow, the chat input box, the waiting-for-players list, a garage (car choice).
+  - **Since 150e1e6 (uncommitted): the 150e1e6 review RV-279..286.** Mutators are dropped (user decision,
+    2026-10-14); their spec, notes/mutators.md, is in git history at 674f3ef.
+    - RV-279: nameplates follow the goal replay's cars (`ReplayPlayback.cars`), every car's plate.
+    - RV-280: the plate's pivot (bottom centre on its point) holds at any scale (`plateTransform`).
+    - RV-281: the Interface and Gameplay row labels upper-cased; Gameplay in the game's order (free play's unlimited
+      boost first, Skip Goal Replay last).
+    - RV-282: the {key} token's own icons for mouse and pad buttons (`ui/keyGlyph.ts`); the replay skip is a binding of
+      its own (Skip Replay, Space / A, shares any key: no car drives in a replay).
+    - RV-283: the clock's announcements their own sounds (the last ten's tick, the minute's and 30 seconds' calls,
+      Overtime!'s).
+    - RV-284: Exit to Main Menu in free play stops a goal replay and restarts the session, as does Free Play.
+    - RV-285: "Free Play" on the main menu stays as it is (the user, 2026-10-14); RV-286 info, no change.
+    - Scope (the user, 2026-10-14): free play and online matches. Custom training, bots and mutators are dropped;
+      netcode, hosting and joining come later, after the user has evaluated the game.
   - **Decided (user, 2026-10-10): no controller rumble.** notes/rumble.md stays as a reference spec only. The contact
     detection it asked about (the static session's Q-RMB-a: HandleCollision's cadence, the contact's point and normal,
     the landing speed) is still wanted, for the Impact_Medium camera shake and the impact and landing sounds; don't
