@@ -491,7 +491,19 @@
     - RV-285: "Free Play" on the main menu stays as it is (the user, 2026-10-14); RV-286 info, no change.
     - Scope (the user, 2026-10-14): free play and online matches. Custom training, bots and mutators are dropped;
       netcode, hosting and joining come later, after the user has evaluated the game.
-  - **Since 9b99b97 (uncommitted): the generated car in the Fennec's proportions (the user's item 30).** The model
+  - **Since f6d9a24 (uncommitted): the car's arches flush in its paint, the 9b99b97/f6d9a24 review RV-294..302.**
+    - The generated car without its black flares and sill cladding (the user's choice; the side vent stays), its lower
+      body the Fennec's full width.
+    - RV-294: the guard's local block reads its references when a test asks (`refs()`), not at collection: a checkout
+      without out/bsim/assets_local (CI) passes. RV-302: it also catches a bitmap's pixels as RGBA, RGB or alpha alone
+      from any pixel of a row (a crop), and decodes shipped images (a crop, a downscale, a re-encoding): any image it
+      can't decode fails it.
+    - RV-295: a placed car (SetState: a spawn, a kickoff, a respawn, a load) takes its XY lock again where it is
+      (`Car::_xyLockMoved`); RV-296: the podium clears a kickoff countdown a forfeit cut short; RV-297: snapshots
+      carry pending pins; RV-298: each arena's own anchor body for the locks (`Arena::_xyAnchor`); RV-299: the
+      countdown lock's tests; RV-300: the gimbal guard noted (inert: every angular limit free); RV-301: the plate
+      texture's test.
+  - **In f6d9a24: the generated car in the Fennec's proportions (the user's item 30).** The model
     (`render/carModel.ts`) takes the Fennec's measured scalars (FENNEC: length, width at the fenders, belt, roof, nose
     and tail, heights of the sills, nose, hood, belt and roof, the windscreen's base and rake, the roof's ends, the rear
     window's base, the bumper, the wheels' places and sizes), measured from the local export, set on the hitbox

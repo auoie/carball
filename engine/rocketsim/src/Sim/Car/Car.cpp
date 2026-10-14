@@ -81,6 +81,7 @@ void Car::_LimitVelocities() {
 
 // Update our bullet stuff to this new state, replace our internal state with it
 void Car::SetState(const CarState& state) {
+	_xyLockMoved = true; // RL PATCH (RV-295)
 	btTransform rbTransform;
 	rbTransform.setOrigin(state.pos * UU_TO_BT);
 	rbTransform.setBasis(state.rotMat);

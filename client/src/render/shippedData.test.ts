@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
-import { inflateSync } from "node:zlib";
+import { crc32, deflateSync, inflateSync } from "node:zlib";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 import { NOISE_QUANTILES } from "./themes/stadiumSky";
@@ -1115,78 +1115,110 @@ const PROFILE_WINDOW = 12;
 /** A bitmap's row as a copy would write it: this many values */
 const ROW_WINDOW = 8;
 
-/** A PNG's pixels (8-bit RGBA, not interlaced: the references') */
-function decodePng(path: string): { width: number; height: number; rgba: Uint8Array } {
-  const b = readFileSync(path);
+/** A PNG's pixels as RGBA (8-bit, not interlaced: gray, RGB, gray and alpha, RGBA); null if it isn't one of those */
+function decodePngBytes(b: Buffer): { width: number; height: number; rgba: Uint8Array } | null {
+  if (b.length < 8 || b.readUInt32BE(0) !== 0x89504e47) return null;
   let at = 8;
   let width = 0;
   let height = 0;
+  let channels = 0;
   const data: Buffer[] = [];
-  while (at < b.length) {
+  while (at + 8 <= b.length) {
     const length = b.readUInt32BE(at);
     const type = b.toString("ascii", at + 4, at + 8);
     const chunk = b.subarray(at + 8, at + 8 + length);
     if (type === "IHDR") {
       width = chunk.readUInt32BE(0);
       height = chunk.readUInt32BE(4);
-      if (chunk[8] !== 8 || chunk[9] !== 6 || chunk[12] !== 0) throw new Error(`${path}: not 8-bit RGBA, not interlaced`);
+      channels = ({ 0: 1, 2: 3, 4: 2, 6: 4 } as Record<number, number>)[chunk[9] ?? -1] ?? 0;
+      if (chunk[8] !== 8 || channels === 0 || chunk[12] !== 0) return null;
     }
     if (type === "IDAT") data.push(chunk);
     at += 12 + length;
   }
   const raw = inflateSync(Buffer.concat(data));
-  const stride = width * 4;
-  const rgba = new Uint8Array(height * stride);
+  const stride = width * channels;
+  const px = new Uint8Array(height * stride);
   for (let y = 0; y < height; y++) {
     const filter = raw[y * (stride + 1)] ?? 0;
     for (let x = 0; x < stride; x++) {
       const v = raw[y * (stride + 1) + 1 + x] ?? 0;
-      const a = x >= 4 ? (rgba[y * stride + x - 4] ?? 0) : 0;
-      const up = y > 0 ? (rgba[(y - 1) * stride + x] ?? 0) : 0;
-      const c = x >= 4 && y > 0 ? (rgba[(y - 1) * stride + x - 4] ?? 0) : 0;
+      const a = x >= channels ? (px[y * stride + x - channels] ?? 0) : 0;
+      const up = y > 0 ? (px[(y - 1) * stride + x] ?? 0) : 0;
+      const c = x >= channels && y > 0 ? (px[(y - 1) * stride + x - channels] ?? 0) : 0;
       const paeth = (): number => {
         const p = a + up - c;
         const [pa, pb, pc] = [Math.abs(p - a), Math.abs(p - up), Math.abs(p - c)];
         return pa <= pb && pa <= pc ? a : pb <= pc ? up : c;
       };
       const predicted = filter === 1 ? a : filter === 2 ? up : filter === 3 ? Math.floor((a + up) / 2) : filter === 4 ? paeth() : 0;
-      rgba[y * stride + x] = (v + predicted) & 255;
+      px[y * stride + x] = (v + predicted) & 255;
     }
   }
+  const rgba = new Uint8Array(width * height * 4);
+  for (let i = 0; i < width * height; i++) {
+    const q = px.subarray(i * channels, i * channels + channels);
+    const [r, g, bl, al] = channels === 1 ? [q[0], q[0], q[0], 255] : channels === 2 ? [q[0], q[0], q[0], q[1]] : channels === 3 ? [q[0], q[1], q[2], 255] : [q[0], q[1], q[2], q[3]];
+    rgba.set([r ?? 0, g ?? 0, bl ?? 0, al ?? 0], i * 4);
+  }
   return { width, height, rgba };
+}
+
+/** A reference PNG's pixels */
+function decodePng(path: string): { width: number; height: number; rgba: Uint8Array } {
+  const decoded = decodePngBytes(readFileSync(path));
+  if (!decoded) throw new Error(`${path}: not an 8-bit PNG`);
+  return decoded;
+}
+
+/** An RGBA image as a PNG (filter 0): the controls' re-encoded copies */
+function encodePng(width: number, height: number, rgba: Uint8Array): Buffer {
+  const chunk = (type: string, body: Buffer): Buffer => {
+    const head = Buffer.alloc(8);
+    head.writeUInt32BE(body.length, 0);
+    head.write(type, 4, "ascii");
+    const tail = Buffer.alloc(4);
+    tail.writeUInt32BE(crc32(Buffer.concat([Buffer.from(type, "ascii"), body])) >>> 0, 0);
+    return Buffer.concat([head, body, tail]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr.set([8, 6, 0, 0, 0], 8);
+  const rows = Buffer.alloc(height * (width * 4 + 1));
+  for (let y = 0; y < height; y++) rows.set(rgba.subarray(y * width * 4, (y + 1) * width * 4), y * (width * 4 + 1) + 1);
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ihdr), chunk("IDAT", deflateSync(rows)), chunk("IEND", Buffer.alloc(0))]);
 }
 
 /** A window's key (exact values, as integers) */
 const windowKey = (w: readonly number[]): string => w.join(",");
 
-/** The bitmaps' rows and columns (alpha, luminance; at 1, 1/2 and 1/4 their size, box means), every wiggling window of
- *  ROW_WINDOW as 8-bit levels and as thousandths */
-function bitmapWindows(): { levels: Set<string>; thousandths: Set<string> } {
-  const levels = new Set<string>();
-  const thousandths = new Set<string>();
-  for (const path of METER_PNGS) {
-    const { width, height, rgba } = decodePng(path);
-    for (const channel of ["alpha", "luma"] as const) {
-      const at = (x: number, y: number): number => {
-        const i = (y * width + x) * 4;
-        return channel === "alpha" ? (rgba[i + 3] ?? 0) / 255 : (0.299 * (rgba[i] ?? 0) + 0.587 * (rgba[i + 1] ?? 0) + 0.114 * (rgba[i + 2] ?? 0)) / 255;
+/** An image's rows and columns (alpha, luminance; at 1, 1/2 and 1/4 its size, box means), every wiggling window of
+ *  ROW_WINDOW as 8-bit levels and as thousandths, into the sets */
+function imageWindows(image: { width: number; height: number; rgba: Uint8Array }, levels: Set<string>, thousandths: Set<string> | null, scales = [1, 2, 4]): void {
+  const { width, height, rgba } = image;
+  for (const channel of ["alpha", "luma"] as const) {
+    const at = (x: number, y: number): number => {
+      const i = (y * width + x) * 4;
+      return channel === "alpha" ? (rgba[i + 3] ?? 0) / 255 : (0.299 * (rgba[i] ?? 0) + 0.587 * (rgba[i + 1] ?? 0) + 0.114 * (rgba[i + 2] ?? 0)) / 255;
+    };
+    for (const scale of scales) {
+      const w = Math.floor(width / scale);
+      const h = Math.floor(height / scale);
+      const cell = (x: number, y: number): number => {
+        let sum = 0;
+        for (let j = 0; j < scale; j++) for (let i = 0; i < scale; i++) sum += at(x * scale + i, y * scale + j);
+        return sum / (scale * scale);
       };
-      for (const scale of [1, 2, 4]) {
-        const w = Math.floor(width / scale);
-        const h = Math.floor(height / scale);
-        const cell = (x: number, y: number): number => {
-          let sum = 0;
-          for (let j = 0; j < scale; j++) for (let i = 0; i < scale; i++) sum += at(x * scale + i, y * scale + j);
-          return sum / (scale * scale);
-        };
-        const lines: number[][] = [];
-        for (let y = 0; y < h; y++) lines.push(Array.from({ length: w }, (_, x) => cell(x, y)));
-        for (let x = 0; x < w; x++) lines.push(Array.from({ length: h }, (_, y) => cell(x, y)));
-        for (const line of lines) {
-          for (let k = 0; k + ROW_WINDOW <= line.length; k++) {
-            const win = line.slice(k, k + ROW_WINDOW);
-            const asLevels = win.map((v) => Math.round(v * 255));
-            if (wiggles(asLevels)) levels.add(windowKey(asLevels));
+      const lines: number[][] = [];
+      for (let y = 0; y < h; y++) lines.push(Array.from({ length: w }, (_, x) => cell(x, y)));
+      for (let x = 0; x < w; x++) lines.push(Array.from({ length: h }, (_, y) => cell(x, y)));
+      for (const line of lines) {
+        for (let k = 0; k + ROW_WINDOW <= line.length; k++) {
+          const win = line.slice(k, k + ROW_WINDOW);
+          const asLevels = win.map((v) => Math.round(v * 255));
+          if (wiggles(asLevels)) levels.add(windowKey(asLevels));
+          if (thousandths) {
             const asThousandths = win.map((v) => Math.round(v * 1000));
             if (wiggles(asThousandths)) thousandths.add(windowKey(asThousandths));
           }
@@ -1194,8 +1226,21 @@ function bitmapWindows(): { levels: Set<string>; thousandths: Set<string> } {
       }
     }
   }
-  return { levels, thousandths };
 }
+
+/** A byte window's hash (FNV-1a, two of them, into 53 bits) */
+function windowHash(b: Uint8Array, at: number, n: number): number {
+  let h1 = 0x811c9dc5;
+  let h2 = 0x01000193;
+  for (let i = at; i < at + n; i++) {
+    const v = b[i] ?? 0;
+    h1 = Math.imul(h1 ^ v, 0x01000193) >>> 0;
+    h2 = Math.imul(h2 ^ (v + 0x9e), 0x85ebca6b) >>> 0;
+  }
+  return h1 * 0x200000 + (h2 & 0x1fffff);
+}
+/** A stretch of a bitmap's pixels as a copy would hold it: this many bytes */
+const BYTE_WINDOW = 32;
 
 /** float32 and float16 values a byte string holds (little-endian, every alignment) */
 function floatsIn(bytes: Uint8Array): number[][] {
@@ -1220,13 +1265,23 @@ function floatsIn(bytes: Uint8Array): number[][] {
   return out;
 }
 
-describe.skipIf(!existsSync(ARROW_MESH))("against the game's Ball Arrow mesh and boost meter bitmaps (local, RV-293)", () => {
-  it("has its local reference", () => {
-    for (const path of [ARROW_MESH, ...METER_PNGS]) expect(existsSync(path), path.slice(ROOT.length)).toBe(true);
-  });
-
-  const mesh = JSON.parse(readFileSync(ARROW_MESH, "utf8")) as { positions: number[][]; normals: number[][]; uv0: number[][] };
-  // (the arrays as a copy would lay them out: flat, an axis at a time, or as vertex records with their normals and UVs)
+/** The references, read once and only when a test asks (a checkout without them: the block skipped, nothing read at
+ *  collection: RV-294) */
+interface HudRefs {
+  readonly mesh: { positions: number[][]; normals: number[][]; uv0: number[][] };
+  /** The mesh's arrays as a copy would lay them out: flat, an axis at a time, or as vertex records */
+  readonly sequences: number[][];
+  readonly pngs: Buffer[];
+  readonly images: { width: number; height: number; rgba: Uint8Array }[];
+  readonly windows: { levels: Set<string>; thousandths: Set<string> };
+  /** Every BYTE_WINDOW stretch of the bitmaps' pixels as RGBA, as RGB and as alpha alone, from any pixel of a row (a
+   *  crop's rows), by hash: where it is, to check */
+  readonly bytes: Map<number, { readonly from: Uint8Array; readonly at: number }>;
+}
+let hudRefs: HudRefs | null = null;
+function refs(): HudRefs {
+  if (hudRefs) return hudRefs;
+  const mesh = JSON.parse(readFileSync(ARROW_MESH, "utf8")) as HudRefs["mesh"];
   const records = (parts: readonly (readonly number[][])[]): number[] => mesh.positions.flatMap((_, i) => parts.flatMap((part) => part[i] ?? []));
   const axis = (part: readonly number[][], k: number): number[] => part.map((v) => v[k] ?? 0);
   const sequences = [
@@ -1241,130 +1296,221 @@ describe.skipIf(!existsSync(ARROW_MESH))("against the game's Ball Arrow mesh and
     records([mesh.positions, mesh.normals]),
     records([mesh.positions, mesh.normals, mesh.uv0]),
   ];
-  /** Whether `values` (with their tolerances) run along one of the arrays, in order: values most of which are no
-   *  round numbers (zeros, ones and tenths line up anywhere) */
-  const runsAlong = (values: readonly number[], tolerance: (k: number) => number): boolean => {
-    if (values.filter((v) => Math.abs(v) >= 0.05 && Math.abs(v * 10 - Math.round(v * 10)) > 0.01).length < 5) return false;
-    for (const seq of sequences) {
-      for (let j = 0; j + values.length <= seq.length; j++) {
-        if (values.every((v, k) => Math.abs(v - (seq[j + k] ?? NaN)) <= tolerance(k))) return true;
-      }
-    }
-    return false;
-  };
   const pngs = METER_PNGS.map((p) => readFileSync(p));
-  const pixels = METER_PNGS.map((p) => Buffer.from(decodePng(p).rgba));
-  const windows = bitmapWindows();
+  const images = METER_PNGS.map((p) => decodePng(p));
+  const levels = new Set<string>();
+  const thousandths = new Set<string>();
+  const bytes = new Map<number, { from: Uint8Array; at: number }>();
+  for (const image of images) {
+    imageWindows(image, levels, thousandths);
+    const { width, height, rgba } = image;
+    const rgb = new Uint8Array(width * height * 3);
+    const alpha = new Uint8Array(width * height);
+    for (let i = 0; i < width * height; i++) {
+      rgb.set(rgba.subarray(i * 4, i * 4 + 3), i * 3);
+      alpha[i] = rgba[i * 4 + 3] ?? 0;
+    }
+    for (const [plane, size] of [[rgba, 4], [rgb, 3], [alpha, 1]] as const) {
+      const stride = width * size;
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x + BYTE_WINDOW <= stride; x += size) {
+          const at = y * stride + x;
+          if (new Set(plane.subarray(at, at + BYTE_WINDOW)).size < 8) continue;
+          bytes.set(windowHash(plane, at, BYTE_WINDOW), { from: plane, at });
+        }
+      }
+    }
+  }
+  hudRefs = { mesh, sequences, pngs, images, windows: { levels, thousandths }, bytes };
+  return hudRefs;
+}
 
-  /** What in a text or a byte string is the game's: the profile's numbers, a run of the mesh's arrays, a bitmap's
-   *  bytes, a bitmap's row; null when nothing is */
-  const findText = (text: string): string | null => {
-    const n = numbers(text);
-    // (the profile: three of its numbers among PROFILE_WINDOW in a row, written to 3 places or more, each at its
-    // written precision)
-    const profileHit = n.map((x) =>
-      x.written < 3 ? null : (ARROW_PROFILE.find((p) => Math.abs(x.value - p) <= 0.5 * 10 ** -Math.min(x.written, 4) + 1e-9) ?? null),
-    );
-    for (let i = 0; i < n.length; i++) {
-      const near = new Set(profileHit.slice(i, i + PROFILE_WINDOW).filter((p) => p !== null));
-      if (near.size >= 3) return `the arrow's profile (${[...near].join(", ")}) at ${text.slice(n[i]?.at ?? 0, (n[i]?.at ?? 0) + 80).replace(/\s+/g, " ")}`;
+/** Whether `values` (with their tolerances) run along one of the mesh's arrays, in order: values most of which are no
+ *  round numbers (zeros, ones and tenths line up anywhere) */
+function runsAlong(values: readonly number[], tolerance: (k: number) => number): boolean {
+  if (values.filter((v) => Math.abs(v) >= 0.05 && Math.abs(v * 10 - Math.round(v * 10)) > 0.01).length < 5) return false;
+  for (const seq of refs().sequences) {
+    for (let j = 0; j + values.length <= seq.length; j++) {
+      if (values.every((v, k) => Math.abs(v - (seq[j + k] ?? NaN)) <= tolerance(k))) return true;
     }
-    // (the mesh: MESH_RUN of its arrays' values in their order, 3 places or more, each at its written precision)
-    for (let i = 0; i + MESH_RUN <= n.length; i++) {
-      const w = n.slice(i, i + MESH_RUN);
-      if (w.some((x) => x.written < 3) || w.every((x) => x.value === w[0]?.value)) continue;
-      if (runsAlong(w.map((x) => x.value), (k) => 0.5 * 10 ** -(w[k]?.written ?? 0) + 1e-6)) return `a run of the arrow mesh's arrays at ${text.slice(w[0]?.at ?? 0, (w[0]?.at ?? 0) + 80).replace(/\s+/g, " ")}`;
+  }
+  return false;
+}
+
+/** An image's rows that are a reference bitmap's, as decoded (a crop, a downscale, a re-encoding: RV-302) */
+function findImageRows(image: { width: number; height: number; rgba: Uint8Array }): string | null {
+  const levels = new Set<string>();
+  imageWindows(image, levels, null, [1]);
+  const { windows } = refs();
+  let hits = 0;
+  for (const key of levels) if (windows.levels.has(key)) hits++;
+  return hits >= 3 ? `an image with ${String(hits)} of a boost meter bitmap's rows` : null;
+}
+
+/** What in a text is the game's: the profile's numbers, a run of the mesh's arrays, a bitmap's row; bytes in its
+ *  strings and data URIs; null when nothing is */
+function findHudText(text: string): string | null {
+  const { windows } = refs();
+  const n = numbers(text);
+  // (the profile: three of its numbers among PROFILE_WINDOW in a row, written to 3 places or more, each at its
+  // written precision)
+  const profileHit = n.map((x) =>
+    x.written < 3 ? null : (ARROW_PROFILE.find((p) => Math.abs(x.value - p) <= 0.5 * 10 ** -Math.min(x.written, 4) + 1e-9) ?? null),
+  );
+  for (let i = 0; i < n.length; i++) {
+    const near = new Set(profileHit.slice(i, i + PROFILE_WINDOW).filter((p) => p !== null));
+    if (near.size >= 3) return `the arrow's profile (${[...near].join(", ")}) at ${text.slice(n[i]?.at ?? 0, (n[i]?.at ?? 0) + 80).replace(/\s+/g, " ")}`;
+  }
+  // (the mesh: MESH_RUN of its arrays' values in their order, 3 places or more, each at its written precision)
+  for (let i = 0; i + MESH_RUN <= n.length; i++) {
+    const w = n.slice(i, i + MESH_RUN);
+    if (w.some((x) => x.written < 3) || w.every((x) => x.value === w[0]?.value)) continue;
+    if (runsAlong(w.map((x) => x.value), (k) => 0.5 * 10 ** -(w[k]?.written ?? 0) + 1e-6)) return `a run of the arrow mesh's arrays at ${text.slice(w[0]?.at ?? 0, (w[0]?.at ?? 0) + 80).replace(/\s+/g, " ")}`;
+  }
+  // (a bitmap's row: 8-bit levels, or thousandths written to 3 places)
+  for (let i = 0; i + ROW_WINDOW <= n.length; i++) {
+    const w = n.slice(i, i + ROW_WINDOW);
+    if (w.every((x) => x.integer && x.value >= 0 && x.value <= 255) && windows.levels.has(windowKey(w.map((x) => x.value)))) return `a boost meter bitmap's row (levels) at ${String(w[0]?.at)}`;
+    if (w.every((x) => !x.integer && x.written === 3 && x.value >= 0 && x.value <= 1) && windows.thousandths.has(windowKey(w.map((x) => Math.round(x.value * 1000))))) {
+      return `a boost meter bitmap's row (thousandths) at ${String(w[0]?.at)}`;
     }
-    // (a bitmap's row: 8-bit levels, or thousandths written to 3 places)
-    for (let i = 0; i + ROW_WINDOW <= n.length; i++) {
-      const w = n.slice(i, i + ROW_WINDOW);
-      if (w.every((x) => x.integer && x.value >= 0 && x.value <= 255) && windows.levels.has(windowKey(w.map((x) => x.value)))) return `a boost meter bitmap's row (levels) at ${String(w[0]?.at)}`;
-      if (w.every((x) => !x.integer && x.written === 3 && x.value >= 0 && x.value <= 1) && windows.thousandths.has(windowKey(w.map((x) => Math.round(x.value * 1000))))) {
-        return `a boost meter bitmap's row (thousandths) at ${String(w[0]?.at)}`;
-      }
+  }
+  // (bytes written as base64 or hex strings, data URIs too: an image in one is decoded)
+  for (const m of text.matchAll(/data:([\w/+.-]+);base64,([A-Za-z0-9+/=]+)/g)) {
+    const bytes = Buffer.from(m[2] ?? "", "base64");
+    if ((m[1] ?? "").startsWith("image/")) {
+      const image = decodePngBytes(bytes);
+      if (!image) return `an image this guard can't read (${m[1] ?? ""})`;
+      const rows = findImageRows(image);
+      if (rows) return rows;
     }
-    // (bytes written as base64 or hex strings, data URIs too)
-    for (const bytes of [...stringBytes(text), ...[...text.matchAll(/data:[\w/+.-]+;base64,([A-Za-z0-9+/=]+)/g)].map((m) => Uint8Array.from(Buffer.from(m[1] ?? "", "base64")))]) {
-      const found = findBytes(bytes);
-      if (found) return found;
+    const found = findHudBytes(bytes);
+    if (found) return found;
+  }
+  for (const bytes of stringBytes(text)) {
+    const found = findHudBytes(bytes);
+    if (found) return found;
+  }
+  return null;
+}
+
+/** What in a byte string is the game's: a bitmap's file or a stretch of its pixels (RGBA, RGB, alpha), the profile's
+ *  numbers or a run of the mesh's arrays as floats; null when nothing is */
+function findHudBytes(bytes: Uint8Array): string | null {
+  const { pngs, bytes: pixelWindows } = refs();
+  const b = Buffer.from(bytes);
+  for (const [k, png] of pngs.entries()) {
+    if (b.includes(png.subarray(0, 64)) || (png.length > 512 && b.includes(png.subarray(256, 512)))) return `boost meter bitmap ${String(k)}'s file`;
+  }
+  for (let at = 0; at + BYTE_WINDOW <= b.length; at++) {
+    const ref = pixelWindows.get(windowHash(b, at, BYTE_WINDOW));
+    if (ref && Buffer.compare(b.subarray(at, at + BYTE_WINDOW), Buffer.from(ref.from.subarray(ref.at, ref.at + BYTE_WINDOW))) === 0) return `a boost meter bitmap's pixels at byte ${String(at)}`;
+  }
+  // (float arrays: five of the profile's numbers among 16, a run of the mesh's arrays; each to its format's precision:
+  // float32's against the references' 5 places, float16's 11 bits)
+  for (const [k, values] of floatsIn(bytes).entries()) {
+    const tolerance = (v: number): number => (k < 4 ? 2e-5 + 1e-5 * Math.abs(v) : 1e-4 + 1e-3 * Math.abs(v));
+    for (let i = 0; i < values.length; i++) {
+      const near = new Set(values.slice(i, i + 16).flatMap((v) => ARROW_PROFILE.filter((p) => Math.abs(v - p) <= tolerance(p) + 5e-4)));
+      if (near.size >= 5) return `the arrow's profile as floats (${[...near].join(", ")})`;
     }
-    return null;
-  };
-  const findBytes = (bytes: Uint8Array): string | null => {
-    const b = Buffer.from(bytes);
-    // (a bitmap's file, or a stretch of it past its header; its pixels, a row's worth)
-    for (const [k, png] of pngs.entries()) {
-      if (b.includes(png.subarray(0, 64)) || (png.length > 512 && b.includes(png.subarray(256, 512)))) return `boost meter bitmap ${String(k)}'s file`;
+    for (let i = 0; i + MESH_RUN <= values.length; i++) {
+      const w = values.slice(i, i + MESH_RUN);
+      if (!w.every((v) => Number.isFinite(v) && Math.abs(v) < 100) || w.every((v) => v === w[0])) continue;
+      if (runsAlong(w, (j) => tolerance(w[j] ?? 0))) return "a run of the arrow mesh's arrays as floats";
     }
-    for (const [k, rgba] of pixels.entries()) {
-      for (let at = 0; at + 256 <= rgba.length; at += 4096) {
-        const piece = rgba.subarray(at, at + 256);
-        if (new Set(piece).size > 8 && b.includes(piece)) return `boost meter bitmap ${String(k)}'s pixels`;
-      }
-    }
-    // (float arrays: five of the profile's numbers among 16, a run of the mesh's arrays; each to its format's precision:
-    // float32's against the references' 5 places, float16's 11 bits)
-    for (const [k, values] of floatsIn(bytes).entries()) {
-      const tolerance = (v: number): number => (k < 4 ? 2e-5 + 1e-5 * Math.abs(v) : 1e-4 + 1e-3 * Math.abs(v));
-      for (let i = 0; i < values.length; i++) {
-        const near = new Set(values.slice(i, i + 16).flatMap((v) => ARROW_PROFILE.filter((p) => Math.abs(v - p) <= tolerance(p) + 5e-4)));
-        if (near.size >= 5) return `the arrow's profile as floats (${[...near].join(", ")})`;
-      }
-      for (let i = 0; i + MESH_RUN <= values.length; i++) {
-        const w = values.slice(i, i + MESH_RUN);
-        if (!w.every((v) => Number.isFinite(v) && Math.abs(v) < 100) || w.every((v) => v === w[0])) continue;
-        if (runsAlong(w, (j) => tolerance(w[j] ?? 0))) return "a run of the arrow mesh's arrays as floats";
-      }
-    }
-    return null;
-  };
+  }
+  return null;
+}
+
+/** An image file's kind by its name (PNG decoded; any other kind fails the guard until it can read it) */
+const IMAGE = /\.(png|jpe?g|webp|gif|avif|bmp|ktx2|basis)$/i;
+
+describe.skipIf(!existsSync(ARROW_MESH))("against the game's Ball Arrow mesh and boost meter bitmaps (local, RV-293)", () => {
+  it("has its local reference", () => {
+    for (const path of [ARROW_MESH, ...METER_PNGS]) expect(existsSync(path), path.slice(ROOT.length)).toBe(true);
+  });
 
   it("catches the game's arrow and meter in the forms they might take (controls built here from the local data)", () => {
+    const { mesh, pngs, images } = refs();
     const fmt = (v: number, places: number): string => v.toFixed(places);
     // (the profile as a table; the mesh's positions and UVs as arrays; as float32 and float16 bytes)
-    expect(findText(`const PROFILE = [[-6.813, 0], [-6.733, 1.184], [-6.687, 1.88], [-6.25, 2.25]];`)).toMatch(/profile/);
-    expect(findText(`const P = [${mesh.positions.slice(200, 204).flat().map((v) => fmt(v, 3)).join(", ")}];`)).toMatch(/mesh/);
-    expect(findText(`const UV = [${mesh.uv0.slice(200, 206).flat().map((v) => fmt(v, 4)).join(", ")}];`)).toMatch(/mesh/);
+    expect(findHudText(`const PROFILE = [[-6.813, 0], [-6.733, 1.184], [-6.687, 1.88], [-6.25, 2.25]];`)).toMatch(/profile/);
+    expect(findHudText(`const P = [${mesh.positions.slice(200, 204).flat().map((v) => fmt(v, 3)).join(", ")}];`)).toMatch(/mesh/);
+    expect(findHudText(`const UV = [${mesh.uv0.slice(200, 206).flat().map((v) => fmt(v, 4)).join(", ")}];`)).toMatch(/mesh/);
     const f32 = Buffer.from(new Float32Array(mesh.positions.slice(200, 206).flat()).buffer);
-    expect(findText(`const B = "${f32.toString("base64")}";`)).toMatch(/mesh/);
-    expect(findText(`const B = "${Buffer.from(new Float32Array(ARROW_PROFILE).buffer).toString("hex")}";`)).toMatch(/profile/);
-    // (a bitmap as a data URI, its bytes as base64 from past its header, its pixels as hex)
-    expect(findText(`url("data:image/png;base64,${(pngs[1] ?? Buffer.alloc(0)).toString("base64")}")`)).toMatch(/file/);
-    expect(findText(`const X = "${(pngs[0] ?? Buffer.alloc(0)).subarray(200, 800).toString("base64").slice(0, 600).replace(/=+$/, "")}";`.replace(/"([^"]*)"/, (_, s: string) => `"${s.slice(0, s.length - (s.length % 4))}"`))).toMatch(/file|pixels/);
+    expect(findHudText(`const B = "${f32.toString("base64")}";`)).toMatch(/mesh/);
+    expect(findHudText(`const B = "${Buffer.from(new Float32Array(ARROW_PROFILE).buffer).toString("hex")}";`)).toMatch(/profile/);
+    // (a bitmap as a data URI, its bytes as base64 from past its header)
+    expect(findHudText(`url("data:image/png;base64,${(pngs[1] ?? Buffer.alloc(0)).toString("base64")}")`)).toMatch(/file|rows/);
+    const piece = (pngs[0] ?? Buffer.alloc(0)).subarray(200, 800).toString("base64");
+    expect(findHudText(`const X = "${piece.slice(0, piece.length - (piece.length % 4)).replace(/=+$/, "")}";`)).toMatch(/file|pixels/);
+    // (RV-302: its pixels as hex from inside a row; a cropped region's rows as base64; its alpha alone; a crop re-encoded
+    // as a PNG of its own)
+    const fill = images[1] ?? { width: 0, height: 0, rgba: new Uint8Array(0) };
+    const row = (y: number, x0: number, x1: number): Uint8Array => fill.rgba.subarray((y * fill.width + x0) * 4, (y * fill.width + x1) * 4);
+    // (a busy spot: its first pixels' bytes and its alpha varied, as a copy worth catching is)
+    const alphaAt = (y: number, x: number, n: number): Buffer => Buffer.from(Array.from({ length: n }, (_, i) => fill.rgba[(y * fill.width + x + i) * 4 + 3] ?? 0));
+    let spot: [number, number] | null = null;
+    for (let y = 0; y < fill.height - 4 && !spot; y++) {
+      for (let x = 1; x + 40 < fill.width && !spot; x++) {
+        if (new Set(row(y, x, x + 8)).size >= 16 && new Set(alphaAt(y, x, BYTE_WINDOW)).size >= 12) spot = [y, x];
+      }
+    }
+    expect(spot).not.toBeNull();
+    const [sy, sx] = spot ?? [0, 0];
+    expect(findHudText(`const H = "${Buffer.from(row(sy, sx, sx + 16)).toString("hex")}";`), "pixels as hex").toMatch(/pixels/);
+    const crop = Buffer.concat([0, 1, 2, 3].map((j) => Buffer.from(row(sy + j, sx, sx + 40))));
+    expect(findHudText(`const C = "${crop.toString("base64")}";`), "a cropped region").toMatch(/pixels/);
+    expect(findHudText(`const A = "${alphaAt(sy, sx, 48).toString("base64")}";`), "its alpha alone").toMatch(/pixels/);
+    const cw = 64;
+    const cropRgba = new Uint8Array(cw * cw * 4);
+    const [cy, cx] = [Math.min(sy, fill.height - cw), Math.min(Math.max(0, sx - 16), fill.width - cw)];
+    for (let j = 0; j < cw; j++) cropRgba.set(fill.rgba.subarray(((j + cy) * fill.width + cx) * 4, ((j + cy) * fill.width + cx + cw) * 4), j * cw * 4);
+    expect(findHudText(`url("data:image/png;base64,${encodePng(cw, cw, cropRgba).toString("base64")}")`), "a crop re-encoded").toMatch(/rows/);
     // (a row of the Fill's alpha, at half its size, as 8-bit levels and as thousandths)
-    const { width, rgba } = decodePng(METER_PNGS[1] ?? "");
     const half = (x: number, y: number): number => {
       let sum = 0;
-      for (let j = 0; j < 2; j++) for (let i = 0; i < 2; i++) sum += (rgba[((y * 2 + j) * width + x * 2 + i) * 4 + 3] ?? 0) / 255;
+      for (let j = 0; j < 2; j++) for (let i = 0; i < 2; i++) sum += (fill.rgba[((y * 2 + j) * fill.width + x * 2 + i) * 4 + 3] ?? 0) / 255;
       return sum / 4;
     };
     let found: number[] | null = null;
-    for (let y = 0; y < width / 2 && !found; y++) {
-      const line = Array.from({ length: width / 2 }, (_, x) => half(x, y));
+    for (let y = 0; y < fill.width / 2 && !found; y++) {
+      const line = Array.from({ length: fill.width / 2 }, (_, x) => half(x, y));
       for (let k = 0; k + ROW_WINDOW <= line.length && !found; k++) {
         const w = line.slice(k, k + ROW_WINDOW).map((v) => Math.round(v * 255));
         if (wiggles(w)) found = line.slice(k, k + ROW_WINDOW);
       }
     }
     expect(found).not.toBeNull();
-    expect(findText(`const ROW = [${(found ?? []).map((v) => String(Math.round(v * 255))).join(", ")}];`)).toMatch(/row \(levels\)/);
-    expect(findText(`const ROW = [${(found ?? []).map((v) => fmt(v, 3)).join(", ")}];`)).toMatch(/row \(thousandths\)/);
-  });
+    expect(findHudText(`const ROW = [${(found ?? []).map((v) => String(Math.round(v * 255))).join(", ")}];`)).toMatch(/row \(levels\)/);
+    expect(findHudText(`const ROW = [${(found ?? []).map((v) => fmt(v, 3)).join(", ")}];`)).toMatch(/row \(thousandths\)/);
+  }, 120000);
 
-  // (what ships: our modules, the files they import, public/ and the bundle; the bundle's and public/'s binaries)
+  // (what ships: our modules, the files they import, public/ and the bundle (named at collection, read in the test);
+  // the bundle's and public/'s binaries, any image among them decoded)
   const texts = [
-    ...modules().map((p) => ({ where: p.slice(ROOT.length), text: stripComments(readFileSync(p, "utf8")) })),
+    ...modules().map((p) => ({ path: p, strip: true })),
     ...shippedImports()
       .filter((p) => kind(p) === "text")
-      .map((p) => ({ where: p.slice(ROOT.length), text: readFileSync(p, "utf8") })),
-    ...files(PUBLIC, (n) => kind(n) === "text").map((p) => ({ where: p.slice(ROOT.length), text: readFileSync(p, "utf8") })),
-    ...files(DIST, (n) => kind(n) === "text").map((p) => ({ where: p.slice(ROOT.length), text: readFileSync(p, "utf8") })),
+      .map((p) => ({ path: p, strip: false })),
+    ...files(PUBLIC, (n) => kind(n) === "text").map((p) => ({ path: p, strip: false })),
+    ...files(DIST, (n) => kind(n) === "text").map((p) => ({ path: p, strip: false })),
   ];
-  it.each(texts.map((t) => t.where))("%s: none of the arrow's or the meter's data", (where) => {
-    const t = texts.find((x) => x.where === where);
-    expect(findText(t?.text ?? "")).toBeNull();
+  it.each(texts.map((t) => t.path.slice(ROOT.length)))("%s: none of the arrow's or the meter's data", (where) => {
+    const t = texts.find((x) => x.path.slice(ROOT.length) === where);
+    const text = t ? readFileSync(t.path, "utf8") : "";
+    expect(findHudText(t?.strip ? stripComments(text) : text)).toBeNull();
   }, 60000);
-  it("the binaries that ship: none of it (fonts, the engine, meshes)", () => {
-    for (const p of [...files(PUBLIC, (n) => kind(n) !== "text"), ...files(DIST, (n) => kind(n) !== "text")]) expect(findBytes(readFileSync(p)), p.slice(ROOT.length)).toBeNull();
+  it("the binaries that ship: none of it (fonts, the engine, meshes; images decoded)", () => {
+    for (const p of [...files(PUBLIC, (n) => kind(n) !== "text"), ...files(DIST, (n) => kind(n) !== "text")]) {
+      const b = readFileSync(p);
+      if (IMAGE.test(p)) {
+        const image = decodePngBytes(b);
+        expect(image, `${p.slice(ROOT.length)}: an image this guard can't read`).not.toBeNull();
+        if (image) expect(findImageRows(image), p.slice(ROOT.length)).toBeNull();
+      }
+      expect(findHudBytes(b), p.slice(ROOT.length)).toBeNull();
+    }
   }, 300000);
 });

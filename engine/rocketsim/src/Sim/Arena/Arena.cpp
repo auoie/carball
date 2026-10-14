@@ -1078,6 +1078,10 @@ Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mu
 	this->gameMode = gameMode;
 	this->tickTime = 1 / tickRate;
 
+	// RL PATCH: the XY locks' fixed body (RV-298), as Bullet's getFixedBody() makes its own
+	_xyAnchor = new btRigidBody(btScalar(0), NULL, NULL);
+	_xyAnchor->setMassProps(btScalar(0), btVector3(0, 0, 0));
+
 	{ // Initialize world
 
 		btDefaultCollisionConstructionInfo collisionConfigConstructionInfo = {};
@@ -1263,13 +1267,14 @@ void _ReadGoalExplosion(DataStreamIn& in, Arena::GoalExplosion& ex) {
 // they were (Arena::_UpdateXYLocks)
 static void _WriteXYLocks(DataStreamOut& out, const Arena::CarSet& cars) {
 	uint32_t held = 0;
+	// (a pending one too: a snapshot taken just after a load, before the tick takes it back: RV-297)
 	for (const Car* car : cars)
-		held += car->_xyLock != NULL;
+		held += car->_xyLock != NULL || car->_xyLockPending;
 	out.Write(held);
 	for (const Car* car : cars) {
-		if (!car->_xyLock)
+		if (!car->_xyLock && !car->_xyLockPending)
 			continue;
-		const btVector3& pin = car->_xyLock->getFrameOffsetA().getOrigin();
+		const btVector3 pin = car->_xyLock ? car->_xyLock->getFrameOffsetA().getOrigin() : car->_xyLockPin;
 		out.Write(car->id);
 		out.WriteMultiple(pin.x(), pin.y(), pin.z());
 	}
@@ -1697,6 +1702,10 @@ Car* Arena::DeserializeNewCar(DataStreamIn& in, Team team) {
 void Arena::_UpdateXYLocks(bool countdown) {
 	for (Car* car : _cars) {
 		const bool want = (countdown || podiumMode) && !car->_internalState.isDemoed;
+		// (placed while held: taken again where it is now, unless a snapshot's pin is waiting: RV-295)
+		if (want && car->_xyLock && car->_xyLockMoved && !car->_xyLockPending)
+			_RemoveXYLock(car);
+		car->_xyLockMoved = false;
 		if (want && !car->_xyLock) {
 			btTransform frameA;
 			frameA.setIdentity();
@@ -1705,7 +1714,9 @@ void Arena::_UpdateXYLocks(bool countdown) {
 			car->_xyLockPending = false;
 			btTransform frameB;
 			frameB.setIdentity();
-			btGeneric6DofConstraint* lock = new btGeneric6DofConstraint(btTypedConstraint::getFixedBody(), car->_rigidBody, frameA, frameB, true);
+			// (its angular limits all free, so 2.82's calculateAngleInfo runs without the exe's gimbal guard (B18,
+			// 0x1402b0ec0) and is inert here: RV-300)
+			btGeneric6DofConstraint* lock = new btGeneric6DofConstraint(*_xyAnchor, car->_rigidBody, frameA, frameB, true);
 			lock->setLinearLowerLimit(btVector3(0, 0, 1));
 			lock->setLinearUpperLimit(btVector3(0, 0, 0));
 			for (int axis = 3; axis < 6; axis++)
@@ -2056,9 +2067,11 @@ bool Arena::IsBallScored() const {
 
 Arena::~Arena() {
 
-	// RL PATCH: the cars' XY locks out and freed
+	// RL PATCH: the cars' XY locks out and freed, then their fixed body
 	for (Car* car : _cars)
 		_RemoveXYLock(car);
+	delete _xyAnchor;
+	_xyAnchor = NULL;
 
 	// Remove all from bullet world constraints
 	while (_bulletWorld.getNumConstraints() > 0)

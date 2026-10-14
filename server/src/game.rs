@@ -1021,8 +1021,10 @@ impl Game {
         self.arena.set_frozen(false);
         self.arena.set_respawns_held(true);
         self.arena.set_unlimited_boost(true);
-        // (podium mode: held at their spots, Z and rotation free, short jumps: PD1)
+        // (podium mode: held at their spots, Z and rotation free, short jumps: PD1); a kickoff's countdown cut short by a
+        // forfeit doesn't run on into it (RV-296)
         self.arena.set_podium(true);
+        self.arena.set_kickoff_countdown(0);
         self.arena.hide_ball();
         let mut winners: Vec<(StatCounters, u32)> = self.players.values().filter(|p| p.team == winner).map(|p| (p.stats, p.car_id)).collect();
         winners.sort_by(|a, b| (b.0[0], b.0[1], b.0[2], b.0[3]).cmp(&(a.0[0], a.0[1], a.0[2], a.0[3])));
@@ -1890,6 +1892,30 @@ mod tests {
         // A new match after the podium and the end screen, not a forfeit
         run_until(&mut game, 10_000, |g| g.phase == Phase::Countdown);
         assert!(!game.forfeit && game.winner.is_none());
+    }
+
+    #[test]
+    fn a_forfeit_in_the_countdown_puts_the_winner_on_the_podium_held_there_and_free_to_drive() {
+        // (RV-295: the kickoff's lock let go at the podium's placement, not pulling the car back to its kickoff spot;
+        // RV-296: no countdown left running into the podium)
+        init_engine();
+        let mut game = Game::new();
+        let (tx1, _rx1) = channel(TEST_QUEUE);
+        let (tx2, _rx2) = channel(TEST_QUEUE);
+        game.join(1, JoinRequest { team: 0, ..REQUEST }, tx1);
+        game.join(2, JoinRequest { team: 1, ..REQUEST }, tx2);
+        run_until(&mut game, 1000, |g| g.phase == Phase::Countdown && g.arena.kickoff_countdown() > 120);
+        let car = game.car_id(1).unwrap();
+        let kickoff = game.arena.car_position(car).unwrap();
+        game.leave(2);
+        run_until(&mut game, 2000, |g| g.phase == Phase::Podium);
+        assert_eq!(game.arena.kickoff_countdown(), 0);
+        let spot = game.arena.car_position(car).unwrap();
+        let apart = |a: [f32; 3], b: [f32; 3]| ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt();
+        assert!(apart(spot, kickoff) > 500.0, "the podium spot {spot:?} is the kickoff's {kickoff:?}");
+        ticks(&mut game, 60);
+        let now = game.arena.car_position(car).unwrap();
+        assert!(apart(now, spot) < 2.0, "the podium car moved {} uu from its spot", apart(now, spot));
     }
 
     #[test]

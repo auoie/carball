@@ -137,6 +137,9 @@ public:
 	// one let go (its constraint out of the world)
 	void _UpdateXYLocks(bool countdown);
 	void _RemoveXYLock(Car* car);
+	// RL PATCH: the locks' fixed body, this arena's own (Bullet's getFixedBody() is one static body every arena's
+	// constraints would share and write: RV-298); zero mass, not in the world
+	btRigidBody* _xyAnchor = NULL;
 
 	// RL PATCH: the goal explosion's knockback (the ball's ExplosionComponent_X, static analysis MR-6): a wave from where
 	// the ball scored, its front at 10000 uu/s up to 3000 uu; each car its front reaches (not demolished) gets one

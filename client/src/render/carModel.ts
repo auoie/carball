@@ -1,8 +1,8 @@
 // A boxy hatchback in the proportions of the game's Fennec (the car the Octane hitbox wears in the game): its length,
 // width, heights, wheel placement and glass angles are the Fennec's, measured from the local export as a few scalar
 // dimensions (FENNEC below; the user's decision of 2026-10-14: no outlines or vertex lists, the styling our own), set
-// on the car's hitbox (other hitboxes get them scaled to theirs). Angular wheel arches with black flares, black lower
-// cladding and a side vent, a roof spoiler over the rear window. Our own low-poly model; on the dev server with the
+// on the car's hitbox (other hitboxes get them scaled to theirs). Angular wheel arches flush in the paint (no flares or
+// sill cladding: the user's choice), a side vent, a roof spoiler. Our own low-poly model; on the dev server with the
 // game's own Fennec exported locally, cars of its hitbox wear that instead (src/render/fennec.ts).
 // Local frame (Three.js): x forward, y up, z right; the origin is the car's (the physics body's).
 import {
@@ -76,9 +76,10 @@ export const TAIL_PAST_HITBOX = OCTANE_HITBOX.offset.x - OCTANE_HITBOX.size.x / 
 /** The wheel arches: half width past the tyre, height over it, and the black flares round them (uu) */
 const ARCH_PAST_TYRE = 3;
 const ARCH_OVER_TYRE = 4;
-const FLARE = 3;
+/** The side vent's gap to the front wheel's arch (uu) */
+const VENT_GAP = 3;
 /** The plan's taper at the ends: over this far from the nose and the tail (uu) */
-const NOSE_TAPER = 18;
+const NOSE_TAPER = 30;
 const TAIL_TAPER = 14;
 
 type Point = readonly [x: number, y: number];
@@ -154,7 +155,7 @@ export function buildCarModel(config: CarConfig, paint: Color, team = 0): Group 
     width: Z(w.width),
   });
   const wheels = [place(F.backWheel), place(F.frontWheel)] as const;
-  const [backWheel, frontWheel] = wheels;
+  const frontWheel = wheels[1];
   const archHalfWidth = (wheel: { readonly radius: number }): number => wheel.radius + ARCH_PAST_TYRE;
   const archTop = (wheel: (typeof wheels)[number]): number => wheel.y + wheel.radius + ARCH_OVER_TYRE;
   // An arch's outline (x, y) from its back foot to its front foot: square shoulders, chamfered top corners
@@ -211,30 +212,35 @@ export function buildCarModel(config: CarConfig, paint: Color, team = 0): Group 
   // tail: the bumper, then the hatch's lower panel leaning in to the rear window's base
   const tailTop = Y(F.bumperTop);
   const hatchAtBelt = rearBase[0] + ((rear + 1 - rearBase[0]) * (rearBase[1] - belt)) / (rearBase[1] - tailTop);
-  const lower = new Shape();
-  let started = false;
+  const outline: Point[] = [[rear + 2, bottom]];
   for (const wheel of wheels) {
-    const outline = archOutline(wheel, 0).filter(([x]) => x > rear + 1);
-    const [firstX = rear + 1, firstY = bottom] = outline[0] ?? [];
-    if (!started) {
-      lower.moveTo(rear + 2, bottom);
-      started = true;
-    }
-    if (outline.length === 6) lower.lineTo(firstX, firstY);
-    for (const [x, y] of outline) lower.lineTo(x, y);
+    const arch = archOutline(wheel, 0).filter(([x]) => x > rear + 1);
+    const [firstX = rear + 1, firstY = bottom] = arch[0] ?? [];
+    if (arch.length === 6) outline.push([firstX, firstY]);
+    outline.push(...arch);
   }
-  lower.lineTo(front - 2, bottom);
-  lower.lineTo(front, bottom + 4);
-  lower.lineTo(front, Y(F.noseTop) - 2);
-  lower.lineTo(front - 3, Y(F.noseTop) + 1);
-  lower.lineTo(cowl, hood);
-  lower.lineTo(cowl - 4, belt);
-  lower.lineTo(hatchAtBelt, belt);
-  lower.lineTo(rear + 1, tailTop);
-  lower.lineTo(rear, tailTop - 2);
-  lower.lineTo(rear, bottom + 5);
-  lower.closePath();
-  group.add(warp(extrudeAcross(lower, halfWidth - 1, body), (x, _y, z) => z * taper(x)));
+  outline.push(
+    [front - 2, bottom],
+    [front, bottom + 4],
+    [front, Y(F.noseTop) - 2],
+    [front - 3, Y(F.noseTop) + 1],
+    [cowl, hood],
+    [cowl - 4, belt],
+    [hatchAtBelt, belt],
+    [rear + 1, tailTop],
+    [rear, tailTop - 2],
+    [rear, bottom + 5],
+  );
+  // (points every few uu along it, so the taper and the hood's narrowing bend the sides smoothly: on the outline's
+  // points alone they stretched its faces into fins)
+  const lower = new Shape(densify(outline, 4).map(([x, y]) => new Vector2(x, y)));
+  // (above the belt, the hood's rise by the windscreen narrowing to the cabin's width: full width, it stood out past
+  // the pillars as fins)
+  const hoodNarrow = (y: number): number => {
+    const t = Math.min(1, Math.max(0, (y - (belt - 2)) / (hood - belt + 2)));
+    return 1 + (F.halfWidthBelt / F.halfWidth - 1) * t;
+  };
+  group.add(warp(extrudeAcross(lower, halfWidth, body), (x, y, z) => z * taper(x) * hoodNarrow(y)));
 
   // Cabin: raked windscreen, the roof, the rear window leaning back under the spoiler; narrowing to the roof
   const cabin = new Shape();
@@ -279,9 +285,8 @@ export function buildCarModel(config: CarConfig, paint: Color, team = 0): Group 
   box(trim, 1, 6, 2 * noseHalf - 22, front + 0.1, Y(F.noseTop) - 7, 0);
   box(trim, 4, 4, 2 * noseHalf - 1, front - 1.5, bottom + 2, 0);
   box(trim, 4, 4, 2 * tailHalf - 1, rear + 1.5, bottom + 7, 0);
-  // Black cladding along the sills (between the arches' flares), a side vent behind the front wheel, the flares
-  const sillStart = backWheel.x + archHalfWidth(backWheel) + FLARE;
-  const sillEnd = frontWheel.x - archHalfWidth(frontWheel) - FLARE;
+  // A side vent behind the front wheel
+  const sillEnd = frontWheel.x - archHalfWidth(frontWheel) - VENT_GAP;
   const ventOutline: Point[] = [
     [sillEnd - 3, bottom + 9],
     [sillEnd - 15, bottom + 9],
@@ -291,16 +296,12 @@ export function buildCarModel(config: CarConfig, paint: Color, team = 0): Group 
   for (const side of [-1, 1]) {
     box(headlight, 1, 5, 11, front + 0.2, Y(F.noseTop) - 6, side * (noseHalf - 7));
     box(taillight, 1, 4, 12, rear - 0.2, tailTop - 4, side * (tailHalf - 8));
-    box(trim, sillEnd - sillStart, 7, 1.6, (sillStart + sillEnd) / 2, bottom + 3.5, side * (halfWidth - 0.5));
     // (the left one turned round to face out: built from its x negated, which the turn puts back)
     const vent = new Shape(ventOutline.map(([x, y]) => new Vector2(side * x, y)));
     const ventMesh = new Mesh(new ShapeGeometry(vent), trim);
-    ventMesh.position.z = side * (halfWidth - 0.7);
+    ventMesh.position.z = side * (halfWidth + 0.3);
     if (side < 0) ventMesh.rotation.y = Math.PI;
     group.add(ventMesh);
-    for (const wheel of wheels) {
-      group.add(flare(archOutline(wheel, 0), archOutline(wheel, FLARE), rear + 1, bottom + 6, side * (halfWidth * taper(wheel.x) - 1.8), trim));
-    }
   }
 
   // Wheels: tyre and rim, axle along the car's right axis (Three z)
@@ -320,6 +321,17 @@ export function buildCarModel(config: CarConfig, paint: Color, team = 0): Group 
   return mergeByMaterial(group);
 }
 
+/** An outline with points added along its edges, none longer than `step` */
+function densify(points: readonly Point[], step: number): Point[] {
+  const out: Point[] = [];
+  points.forEach((p, i) => {
+    const q = points[(i + 1) % points.length] ?? p;
+    const n = Math.max(1, Math.ceil(Math.hypot(q[0] - p[0], q[1] - p[1]) / step));
+    for (let k = 0; k < n; k++) out.push([p[0] + ((q[0] - p[0]) * k) / n, p[1] + ((q[1] - p[1]) * k) / n]);
+  });
+  return out;
+}
+
 /** A mesh's geometry with each vertex's z taken from `z(x, y, z)` (its own frame): the plan's taper, the tumblehome */
 function warp(mesh: Mesh, z: (x: number, y: number, z: number) => number): Mesh {
   const position = mesh.geometry.getAttribute("position");
@@ -327,16 +339,6 @@ function warp(mesh: Mesh, z: (x: number, y: number, z: number) => number): Mesh 
   position.needsUpdate = true;
   mesh.geometry.computeVertexNormals();
   return mesh;
-}
-
-/** A wheel arch's flare: the band between the arch's outline and the same grown by its width, 3 uu thick at `z` (its
- *  inner face), clipped at the tail and above `foot` (where the sill's cladding starts). */
-function flare(inner: readonly Point[], outer: readonly Point[], tail: number, foot: number, z: number, material: Material): Mesh {
-  const clip = ([x, y]: Point): Vector2 => new Vector2(Math.max(x, tail), Math.max(y, foot));
-  const shape = new Shape([...outer.map(clip), ...[...inner].reverse().map(clip)]);
-  const geometry = new ExtrudeGeometry(shape, { depth: 3, bevelEnabled: false });
-  geometry.translate(0, 0, z < 0 ? z - 3 : z);
-  return new Mesh(geometry, material);
 }
 
 /** x on the profile edge a→b at height y. */

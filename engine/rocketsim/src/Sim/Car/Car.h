@@ -232,6 +232,9 @@ public:
 	// RL PATCH: a lock a snapshot held, its pin (frame A's origin, BT units): taken there as the lock comes back
 	bool _xyLockPending = false;
 	btVector3 _xyLockPin = btVector3(0, 0, 0);
+	// RL PATCH: placed since the last tick (SetState: a spawn, a kickoff, a respawn, a load): a held lock is taken again
+	// where the car is now (the game's every placement is a new body, a new lock: RV-295)
+	bool _xyLockMoved = false;
 	// RL PATCH: podium mode (EnablePodiumMode): the jump's force lasts PodiumJumpForceTime (the arena sets it per tick)
 	bool _podiumMode = false;
 	btCompoundShape _compoundShape;

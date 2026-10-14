@@ -539,6 +539,85 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn the_countdown_holds_cars_at_their_x_and_y_and_lets_go_at_go() {
+        // (RV-299: Car_TA's SetConstrained2D while not driving: two cars overlapping in the countdown stay put, apart
+        // they'd push each other off; at go they drive)
+        init_engine();
+        let across = |a: [f32; 3], b: [f32; 3]| ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt();
+        let pushed = |countdown: u32| -> f32 {
+            let mut arena = Arena::new();
+            let a = arena.add_car(0, 0);
+            let b = arena.add_car(1, 0);
+            arena.place_car(a, 0.0, 0.0, 0.0, 33.0);
+            arena.place_car(b, 0.0, 70.0, 0.0, 33.0);
+            arena.set_kickoff_countdown(countdown);
+            // (from where it was placed: the lock's pin)
+            let start = arena.car_position(a).unwrap();
+            arena.step(60);
+            across(arena.car_position(a).unwrap(), start)
+        };
+        assert!(pushed(240) < 1.0, "held: {} uu", pushed(240));
+        assert!(pushed(0) > 5.0, "free: {} uu", pushed(0));
+        // (at go: it drives)
+        let mut arena = Arena::new();
+        let car = arena.add_car(0, 0);
+        arena.place_car(car, 0.0, 0.0, 0.0, 33.0);
+        arena.set_kickoff_countdown(30);
+        arena.step(40);
+        let start = arena.car_position(car).unwrap();
+        let throttle = Controls { throttle: 1.0, ..Controls::default() };
+        for _ in 0..60 {
+            arena.set_controls(car, &throttle);
+            arena.step(1);
+        }
+        assert!(across(arena.car_position(car).unwrap(), start) > 50.0);
+    }
+
+    #[test]
+    fn a_car_placed_or_respawned_while_held_is_held_where_it_is_now() {
+        // (RV-295: a placement takes the lock again where the car is, not back at its old pin; a demolished car has
+        // none, and holds where it respawns)
+        init_engine();
+        let across = |a: [f32; 3], b: [f32; 3]| ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt();
+        let mut arena = Arena::new();
+        let car = arena.add_car(0, 0);
+        arena.place_car(car, 0.0, 0.0, 0.0, 33.0);
+        arena.set_kickoff_countdown(900);
+        arena.step(10);
+        arena.place_car(car, 1500.0, -1000.0, 0.0, 33.0);
+        arena.step(2);
+        let placed = arena.car_position(car).unwrap();
+        arena.step(60);
+        assert!(across(arena.car_position(car).unwrap(), placed) < 1.0, "pulled back from its new spot");
+        assert!(across(placed, [0.0, 0.0, 0.0]) > 1000.0);
+        // (on the podium too)
+        arena.set_kickoff_countdown(0);
+        arena.set_podium(true);
+        arena.step(5);
+        arena.place_car(car, -800.0, 2000.0, 0.0, 100.0);
+        arena.step(2);
+        let podium = arena.car_position(car).unwrap();
+        arena.step(60);
+        assert!(across(arena.car_position(car).unwrap(), podium) < 1.0, "pulled back from its podium spot");
+        // (demolished: no lock while it is, held where it respawns)
+        arena.set_podium(false);
+        arena.set_kickoff_countdown(900);
+        arena.step(2);
+        arena.demolish_car(car);
+        for _ in 0..600 {
+            arena.step(1);
+            if !arena.car_demoed(car) {
+                break;
+            }
+        }
+        assert!(!arena.car_demoed(car));
+        arena.step(2);
+        let respawned = arena.car_position(car).unwrap();
+        arena.step(60);
+        assert!(across(arena.car_position(car).unwrap(), respawned) < 1.0, "pulled away from where it respawned");
+    }
+
+    #[test]
     fn podium_jumps_stop_pushing_at_podium_jump_force_time() {
         // (PD1: PodiumJumpForceTime 0.085 s, against JumpForceTime 0.2: a held jump goes much less high)
         init_engine();

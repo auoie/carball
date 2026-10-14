@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { NAMEPLATE_UU, NAMEPLATE_YOU, arrowOnly, nameplateScale, platesAt, plateSize } from "./nameplates";
+import type { Sprite } from "three";
+import { describe, expect, it, vi } from "vitest";
+import { NAMEPLATE_UU, NAMEPLATE_YOU, Nameplates, arrowOnly, nameplateScale, platesAt, plateSize } from "./nameplates";
 
 describe("nameplates (HUD-13)", () => {
   it("grow from 0.5 at the car to 9 at 10000 uu, by the FOV up to 90 degrees, times the setting", () => {
@@ -31,5 +32,45 @@ describe("nameplates (HUD-13)", () => {
       [NAMEPLATE_YOU, 0, 0, 77, 77],
       ["P2", 1, 500, 77, 77],
     ]);
+  });
+
+  it("draws a plate whose name grows on a new texture and lets the old one go (an uploaded texture can't change size: RV-290, RV-301)", () => {
+    // (a canvas and its 2D context enough for the plate's drawing: text 10 px a letter at 1x)
+    const ctx = {
+      font: "",
+      fillStyle: "",
+      textAlign: "",
+      textBaseline: "",
+      measureText: (t: string) => ({ width: t.length * 40 }),
+      scale: () => undefined,
+      beginPath: () => undefined,
+      roundRect: () => undefined,
+      fill: () => undefined,
+      moveTo: () => undefined,
+      lineTo: () => undefined,
+      closePath: () => undefined,
+      fillText: () => undefined,
+    };
+    vi.stubGlobal("document", { createElement: () => ({ width: 0, height: 0, getContext: () => ctx }), documentElement: {} });
+    vi.stubGlobal("getComputedStyle", () => ({ getPropertyValue: () => "sans-serif" }));
+    try {
+      const plates = new Nameplates();
+      const at = { x: 0, y: 0, pxPerUnit: 1, distance: 1000, horizontalFov: 90 };
+      const plate = (name: string) => ({ car: 7, name, team: 0, top: { x: 0, y: 0, z: 0 }, at });
+      plates.update([plate("")], "default", 1, false);
+      const sprite = plates.root.children[0] as Sprite;
+      const first = sprite.material.map;
+      const disposed = vi.fn();
+      first?.addEventListener("dispose", disposed);
+      plates.update([plate("A MUCH LONGER NAME")], "default", 1, false);
+      expect(sprite.material.map).not.toBe(first);
+      expect(disposed).toHaveBeenCalledOnce();
+      // (the same name again: nothing redrawn)
+      const second = sprite.material.map;
+      plates.update([plate("A MUCH LONGER NAME")], "default", 1, false);
+      expect(sprite.material.map).toBe(second);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
