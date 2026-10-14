@@ -55,3 +55,27 @@ export async function leaveAll(page: Page, others: Page[]): Promise<void> {
     if (p !== page) await p.context().close();
   }
 }
+
+/** The main menu's Play, then Free Play (MENU-1/2): the game starts */
+export async function freePlay(page: Page): Promise<void> {
+  const menu = page.locator("#main-menu");
+  await menu.getByRole("button", { name: /^play$/i }).click({ timeout: 30_000 });
+  await menu.getByRole("button", { name: /^free play$/i }).click();
+  await expect(menu).toBeHidden();
+}
+
+/** The pause menu (Escape: MENU-4), then its Settings */
+export async function openSettings(page: Page): Promise<void> {
+  await page.keyboard.press("Escape");
+  await page.locator("#pause-menu").getByRole("button", { name: /^settings$/i }).click();
+  await expect(page.locator("#settings")).toBeVisible();
+}
+
+/** Back to the game: Escape closes the settings, then the pause menu */
+export async function closeMenus(page: Page): Promise<void> {
+  if (await page.locator("#settings").isVisible()) await page.keyboard.press("Escape");
+  await expect(page.locator("#settings")).toBeHidden();
+  if (await page.locator("#pause-menu").isVisible()) await page.keyboard.press("Escape");
+  await expect(page.locator("#pause-menu")).toBeHidden();
+}
+

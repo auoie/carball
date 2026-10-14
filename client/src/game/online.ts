@@ -5,11 +5,12 @@
 // player skips it (Space / pad A). The team's forfeit vote shows on the HUD, and the menu has its buttons
 // (src/game/forfeitVote.ts). Quick chat (src/game/quickChat.ts): the two-press menu on keys 1-4, the presets through the
 // server, the chat log with the players' names, their comings and goings.
+import { flipAudio, flipVisual } from "../hud";
 import { Quaternion, Vector3 } from "three";
 import { PlayerCamera } from "../camera/rlCamera";
 import type { BodyState, CarConfig, CarState, World } from "../engine/world";
 import { type Vec3, add, sub } from "../math/vec";
-import { type Hud, respawnHud } from "../hud";
+import { ESSENTIAL, GAME_UPDATE, type Hud, type ReplayHud, replaySpeed, replayTime, respawnHud } from "../hud";
 import type { InputDevices } from "../input/devices";
 import { AirPitchSafety, ButtonLatch, type ChatKey, EMPTY_INPUT, chatPresses, type HeldActions, type InputSnapshot, JumpLatch, type LookInput, NO_HELD_ACTIONS, readControls, readHeldActions } from "../input/mapping";
 import { FixedStep, TICK_SECONDS, frameTimes } from "../loop/fixedStep";
@@ -43,7 +44,7 @@ import type { FreeLookControls } from "../camera/rlCamera";
 import type { Options, Settings } from "../settings/settings";
 import { Interpolated } from "./interpolated";
 import { SyncError } from "./syncError";
-import { countdownStep, formatClock, matchMessage } from "./matchClock";
+import { HUD_TEXT, TICK_RATE, clockWarning, countdownStep, formatClock, overtimeLabel, shownSeconds } from "./matchClock";
 import { fromThreeQuaternion, rotateRl, toThreeQuaternion } from "../render/coords";
 import { postGoalDilation } from "./goalSequence";
 import { type RecordedCar, ReplayRecorder, recordCar } from "./replayRecorder";
@@ -68,12 +69,14 @@ import {
   dimming,
   hudParts,
   matchOver,
+  podiumSpots,
   podiumView,
   winnerBanner,
   winnersGoal,
 } from "./matchSequence";
 import { EndScreen, type PodiumTags, type ScreenDimming, type WinnerBanner } from "../ui/endOfMatch";
 import { shownTitles } from "./podiumTitles";
+import { NAMEPLATE_HEIGHT, type Nameplates } from "../ui/nameplates";
 import type { CameraView } from "../camera/rlCamera";
 import type { HeldScoreboard, ScoreboardView } from "../ui/scoreboard";
 import type { StatPopups, StatTicker } from "../ui/statFeed";
@@ -85,7 +88,6 @@ import { inputGlyph } from "../input/bindings";
 /** The key that opens the menu, which has the vote button (VoteInstructions' {0?KeyBinding}) */
 const MENU_KEY = "Esc";
 /** A banner message stays this long after the last one (HUD-8: then a 0.3 s fade, not yet drawn) */
-const BANNER_SECONDS = 4;
 /** Each body's present state before a correction or reload (Online.#smooth) */
 interface Captured {
   readonly cars: ReadonlyMap<number, CarState>;
@@ -177,9 +179,14 @@ export class Online {
   #ackFrame = 0;
   #ping: number | null = null;
   #bufferText = "";
-  #message: string | null = null;
-  #messageTimer = 0;
   #countdownLeft = 0; // whole seconds of the kickoff countdown, for its beeps
+  #clockShown: number | null = null; // the clock's shown seconds last frame (its announcements: HUD-10)
+  /** The last goal for the replay's banner: who scored and assisted, the clock then, the ball's speed (uu/s) */
+  #goal: { readonly scorer: number; readonly assister: number; readonly time: string | null; readonly speed: number | null } | null = null;
+  /** The server tick the round's kickoff countdown began at (null: not seen) */
+  #roundStartTick: number | null = null;
+  /** The camera is the local car's this frame (not the replay, the podium or the joining view: HUD-16) */
+  #carView = true;
   #disconnected: string | null = null;
   #hitchReset: number | null = null; // seconds until the server's input buffer is reset after a hitch
   /** Server tick − client frame (the update's ackFrame was consumed at its serverTick), oldest first */
@@ -251,7 +258,7 @@ export class Online {
     private readonly settings: () => Settings,
     private readonly inputEnabled: () => boolean,
     private readonly chat: { readonly log: ChatLog; readonly panel: QuickChatPanel },
-    private readonly statsUi: { readonly scoreboard: HeldScoreboard; readonly popups: StatPopups; readonly ticker: StatTicker; readonly toast: Toast },
+    private readonly statsUi: { readonly scoreboard: HeldScoreboard; readonly popups: StatPopups; readonly ticker: StatTicker; readonly toast: Toast; readonly nameplates: Nameplates },
     private readonly endUi: { readonly banner: WinnerBanner; readonly dimming: ScreenDimming; readonly tags: PodiumTags; readonly endScreen: EndScreen },
   ) {
     this.#world = world;
@@ -382,18 +389,14 @@ export class Online {
     // Input packets at 60 Hz of real time, once a frame (slowed ticks after a goal don't stretch them: RV-4)
     // (DeltaSeconds / TimeDilation: the world time undilated, RV-22)
     if (this.#sendClock.due(world / dilation)) this.#sendInputs();
-    if (this.#messageTimer > 0) {
-      this.#messageTimer -= real;
-      if (this.#messageTimer <= 0) this.#message = null;
-    }
-    // The countdown: 3, 2, 1 and GO!, a second apart from a second in, each with its beep (VT-24)
+    // The countdown: 3, 2, 1 and GO!, a second apart from a second in, each with its beep (VT-24, HUD-8)
     const { left, say } = countdownStep(this.#countdownLeft, this.#world.kickoffCountdown());
     if (say !== null) {
       this.#audio.countdown(left);
-      this.#message = say;
-      this.#messageTimer = BANNER_SECONDS;
+      this.#hud.say(say, ESSENTIAL);
     }
     this.#countdownLeft = left;
+    this.#announceClock();
     this.#fade.update(real);
     this.#renderer.cameraFade = this.#fade.opacity;
     this.#drawChat();
@@ -466,7 +469,7 @@ export class Online {
     this.#dim = dimming(phase, since, this.#dimFrom);
     this.endUi.dimming.update(this.#dim, winner);
     // (the podium's panels: the WinnerMenu's, gone with it on the end screen)
-    const titlesOf = (car: number): ReturnType<typeof shownTitles> => shownTitles(this.#board.find((e) => e.car === car)?.titles);
+    const titlesOf = (car: number): ReturnType<typeof shownTitles> => shownTitles(this.#board.find((e) => e.car === car)?.titles, this.settings().interface.metric);
     const tags = phase === "podium"
       ? [...this.#podiumCars.keys()].flatMap((car) => {
           const entry = this.#cars.get(car);
@@ -691,14 +694,23 @@ export class Online {
           this.#phases.push({ phase: m.phase, at: performance.now(), frame: this.#predictor.frame, winner: m.winner, forfeit: m.forfeit });
           if (this.#phases.length > 16) this.#phases.shift();
           this.#enterPhase(m.phase, this.#match === null);
+          if (m.phase === "countdown") this.#roundStartTick = m.serverTick; // (the replay's goal time counts from here: HT-6)
         }
+        if (m.overtime && this.#match !== null && !this.#match.overtime) this.#hud.say(HUD_TEXT.overtime, GAME_UPDATE); // (HUD-10)
         this.#match = m; // (the score too: the server's)
       } else if (m.type === "event" && m.event.kind === "goal") {
         const team = m.event.team === 1 ? 1 : 0;
         this.#audio.goal();
-        this.#message = goalBanner(m.event, this.#roster);
-        this.#messageTimer = BANNER_SECONDS;
+        this.#hud.say(goalBanner(m.event, this.#roster), ESSENTIAL);
         this.#goalFrame = this.#frameAt(m.serverTick);
+        // (for the replay's banner: the clock at the goal, the ball's speed in the last frame before it)
+        const before = this.#recorder.before(Math.floor(this.#goalFrame) - 1)?.ball.vel;
+        this.#goal = {
+          scorer: m.event.scorer,
+          assister: m.event.assister,
+          time: this.#roundStartTick === null ? null : replayTime((m.serverTick - this.#roundStartTick) / TICK_RATE),
+          speed: before ? Math.hypot(before.x, before.y, before.z) : null,
+        };
         this.#serverExploded = true;
         // (where the ball was at the goal's tick, as this client drew it: RV-52h)
         const at = this.#recorder.before(Math.floor(this.#goalFrame))?.ball.pos ?? this.#world.ball().pos;
@@ -749,10 +761,10 @@ export class Online {
       } else if (m.type === "scoreboard") {
         this.#board = m.players;
       } else if (m.type === "statEvent") {
-        const popup = statPopup(m.event, m.points);
+        const popup = statPopup(m.event, m.points, this.settings().gameplay.statDisplayLevel);
         if (popup) this.statsUi.popups.push(popup);
       } else if (m.type === "ticker") {
-        const row = tickerRow(m, this.#roster ?? new Map<number, RosterEntry>(), this.#localCar);
+        const row = tickerRow(m, this.#roster ?? new Map<number, RosterEntry>(), this.#localCar, this.settings().gameplay.statDisplayLevel);
         if (row) this.statsUi.ticker.add(row, performance.now() / 1000);
       } else if (m.type === "forfeitVote") {
         this.#vote = { state: m.state, yes: m.yes, required: m.required, secondsLeft: m.secondsLeft, voted: m.voted, canStart: m.canStart };
@@ -763,7 +775,7 @@ export class Online {
         this.#arena.newBall();
         this.#skipped = false;
         this.#skipHeld = true;
-        this.#message = null;
+        this.#hud.say("");
         this.#fade.fromBlack();
       }
       // (replayReady: the game shows the names of the players not ready, not a count, MR-6.14: with player names)
@@ -907,6 +919,7 @@ export class Online {
       const view = this.#matchView(carView);
       this.#renderer.render(view);
       this.#effects.camera = view.position; // (the husks collide near it)
+      this.#drawNameplates(alpha);
       this.#audio.frame({
         // (the demolitions as drawn, the server's: the explosion's sound with its effect, RV-84)
         world: {
@@ -922,7 +935,26 @@ export class Online {
       });
     }
 
-    this.#updateHud(null, realSeconds);
+    this.#updateHud(realSeconds);
+  }
+
+  /** HUD-13: the other cars' nameplates as drawn (none for a demolished car, nor on the podium and after: its panels) */
+  #drawNameplates(alpha: number): void {
+    const ui = this.settings().interface;
+    const phase = this.#match?.phase;
+    const live = this.#carView && phase !== "podium" && phase !== "finished" && phase !== "prePodium";
+    const plates = live
+      ? [...this.#cars].flatMap(([id, entry]) => {
+          if (id === this.#localCar || this.#drawnDemoed(id, entry.state.current)) return [];
+          const roster = this.#roster?.get(id);
+          const pos = add(entry.state.blended(alpha).pos, entry.error.location);
+          const top = { x: pos.x, y: pos.y, z: pos.z + NAMEPLATE_HEIGHT };
+          const scale = this.#renderer.scaleAt(top);
+          const at = scale ? this.#renderer.project(top) : null;
+          return [{ car: id, name: roster?.name ?? "", team: entry.state.current.team, at: at && scale ? { ...at, ...scale } : null }];
+        })
+      : [];
+    this.statsUi.nameplates.update(plates, ui.nameplateMode, ui.nameplateScale, ui.hideHud);
   }
 
   /** The view the phase calls for (notes/match-intro-outro.md): the side view while joining in the warm-up (CAM-30,
@@ -931,6 +963,7 @@ export class Online {
   #matchView(carView: CameraView): CameraView {
     const now = performance.now() / 1000;
     const phase = this.#match?.phase;
+    this.#carView = false; // (until the car's own view is the one returned)
     if (this.#waitingSince !== null) {
       if (phase === "waiting" && now - this.#waitingSince < WAITING_MIN_SECONDS) return WAITING_VIEW;
       this.#waitingSince = null; // (a cut to the car)
@@ -955,39 +988,65 @@ export class Online {
         this.#effects.goal(at, winner);
         this.#audio.goal();
       }
-      if (this.#podiumCars.size > 0) return podiumView([...this.#podiumCars.values()], winner, now - this.#podiumSince);
+      // (framed on the spots, not the cars as last seen: their placement reaches us a datagram after the phase, RV-273)
+      const winners = [...(this.#roster?.values() ?? [])].filter((r) => r.team === winner).length;
+      const count = Math.max(winners, this.#podiumCars.size);
+      if (count > 0) return podiumView(podiumSpots(winner, count), winner, now - this.#podiumSince);
       return carView;
     }
     this.#lastView = carView;
+    this.#carView = true;
     return carView;
   }
 
-  /** The HUD; `message`: what it says instead of the match's messages (null: those); `hint`: a line under it */
-  #updateHud(message: string | null, realSeconds: number, hint: string | null = null): void {
+  /** The clock's announcements while it runs in regulation (HUD-10), each of the last ten seconds with a beep */
+  #announceClock(): void {
+    const match = this.#match;
+    if (!match || match.overtime || match.phase !== "active") {
+      this.#clockShown = null;
+      return;
+    }
+    const now = shownSeconds(match);
+    const say = this.#clockShown === null ? null : clockWarning(this.#clockShown, now);
+    this.#clockShown = now;
+    if (say === null) return;
+    if (now <= 10) this.#audio.countdown(now); // (its sound whatever the setting: HT-7)
+    this.#hud.say(say, GAME_UPDATE);
+  }
+
+  /** The HUD; `replay`: the goal replay's banner (null: not in one) */
+  #updateHud(realSeconds: number, replay: ReplayHud | null = null): void {
     if (realSeconds > 0) this.#fps += (1 / realSeconds - this.#fps) * 0.05;
     const car = this.#cars.get(this.#localCar)?.state.current;
     const ping = this.#ping === null ? "ping –" : `ping ${String(Math.round(this.#ping))} ms`;
+    const settings = this.settings();
+    const pad = this.#input.usingGamepad;
+    const toggles = (pad ? settings.cameraPad : settings.cameraKbm).ballCamToggle;
+    const ballCamKey = inputGlyph(pad ? settings.bindings.ballCam.gamepad : settings.bindings.ballCam.keyboard);
+    const phase = this.#match?.phase;
     this.#hud.update({
       boost: car?.boost ?? 0,
       speed: car ? Math.hypot(car.vel.x, car.vel.y, car.vel.z) : 0,
       supersonic: car?.supersonic ?? false,
       score: this.#match?.score ?? [0, 0],
       clock: this.#match ? formatClock(this.#match) : null,
+      overtimeLabel: this.#match ? overtimeLabel(this.#match) : false,
+      localTeam: car?.team ?? 0,
       ballCam: this.#ballCam,
-      message:
-        this.#disconnected !== null
-          ? `Disconnected: ${this.#disconnected}`
-          : (message ?? this.#message ?? (this.#match ? matchMessage(this.#match) : null)),
+      ballCamKey: toggles ? ballCamKey : null,
+      carView: replay === null && this.#carView,
+      menuOpen: !this.inputEnabled(),
+      message: this.#disconnected !== null ? `Disconnected: ${this.#disconnected}` : null,
+      replay,
       fps: this.#fps,
       net: `${ping} · ${this.#bufferText} · ${String(this.#cars.size)} cars`,
-      flip: this.settings().options.flipIndicator ? this.#dodge : null,
+      flip: flipVisual(settings.gameplay.flipResetIndicator) ? this.#dodge : null,
       flipReset: this.#flipReset,
       respawn: car ? respawnHud(car) : null,
-      hint,
-      vote: voteHud(this.#vote, this.#matchType, MENU_KEY, matchOver(this.#match?.phase)),
-      parts: hudParts(this.#match?.phase),
+      vote: voteHud(this.#vote, this.#matchType, MENU_KEY, matchOver(phase)),
+      parts: { ...hudParts(phase), ballCamIndicator: phase !== "finished" },
     });
-    if (this.#flipReset) this.#audio.flipReset();
+    if (this.#flipReset && flipAudio(this.settings().gameplay.flipResetIndicator)) this.#audio.flipReset();
     this.#flipReset = false;
   }
 
@@ -1004,6 +1063,20 @@ export class Online {
       cars,
     });
     // (SkipInstructions until the player skips: the skip is Space or the pad's A)
-    this.#updateHud("REPLAY", realSeconds, this.#skipped ? null : pressTo(this.#input.usingGamepad ? "(A)" : "Space", "Skip"));
+    const goal = this.#goal;
+    const named = (car: number): { readonly name: string; readonly team: number } | null => {
+      const entry = car === 0 ? undefined : this.#roster?.get(car);
+      return entry ? { name: entry.name, team: entry.team } : null;
+    };
+    this.#updateHud(realSeconds, {
+      prompt: this.#skipped ? null : pressTo(this.#input.usingGamepad ? "(A)" : "Space", "Skip"),
+      waiting: null,
+      goal: goal && {
+        scorer: named(goal.scorer),
+        assister: named(goal.assister),
+        time: goal.time,
+        speed: goal.speed === null ? null : replaySpeed(goal.speed, this.settings().interface.metric),
+      },
+    });
   }
 }

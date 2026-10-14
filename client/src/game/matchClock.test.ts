@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { countdownStep, formatClock, matchMessage } from "./matchClock";
+import { clockWarning, countdownStep, formatClock, overtimeLabel } from "./matchClock";
 
 describe("match clock", () => {
   it("shows int(t) + 1 seconds, as the game's (5:00 until the clock runs; at a whole second, still the one before)", () => {
@@ -18,11 +18,24 @@ describe("match clock", () => {
     expect(formatClock({ overtime: true, clockTicks: 120 * 75 })).toBe("+1:16");
   });
 
-  it("announces overtime (the winner has its banner instead: MIO-18)", () => {
-    expect(matchMessage({ phase: "countdown", overtime: true, clockTicks: 0 })).toBe("OVERTIME");
-    expect(matchMessage({ phase: "countdown", overtime: false, clockTicks: 36000 })).toBeNull();
-    expect(matchMessage({ phase: "active", overtime: false, clockTicks: 100 })).toBeNull();
-    expect(matchMessage({ phase: "prePodium", overtime: true, clockTicks: 300 })).toBeNull();
+  it("shows OVERTIME in the clock's slot through overtime's kickoff, until its clock runs (HUD-3)", () => {
+    expect(overtimeLabel({ phase: "countdown", overtime: true, clockTicks: 0 })).toBe(true);
+    expect(overtimeLabel({ phase: "countdown", overtime: false, clockTicks: 36000 })).toBe(false);
+    expect(overtimeLabel({ phase: "active", overtime: true, clockTicks: 100 })).toBe(false);
+    expect(overtimeLabel({ phase: "prePodium", overtime: true, clockTicks: 300 })).toBe(false);
+  });
+});
+
+describe("the clock's announcements (HUD-10)", () => {
+  it("one minute and 30 seconds left, then each of the last ten, as the shown second steps down to them", () => {
+    expect(clockWarning(61, 60)).toBe("One Minute Remaining!");
+    expect(clockWarning(60, 60)).toBeNull();
+    expect(clockWarning(31, 30)).toBe("30 Seconds Remaining!");
+    expect(clockWarning(11, 10)).toBe("10");
+    expect(clockWarning(2, 1)).toBe("1");
+    expect(clockWarning(1, 0)).toBeNull();
+    expect(clockWarning(12, 11)).toBeNull();
+    expect(clockWarning(64, 59)).toBeNull(); // (a step past it: not at it)
   });
 });
 
@@ -38,7 +51,7 @@ describe("the kickoff countdown's announcements (VT-24, RV-36)", () => {
       }
     };
     run(480);
-    expect(said).toEqual([[120, "3"], [240, "2"], [360, "1"], [480, "GO!"]]);
+    expect(said).toEqual([[120, "3"], [240, "2"], [360, "1"], [480, "Go!"]]);
     said.length = 0;
     run(480);
     expect(said[0]).toEqual([120, "3"]);

@@ -753,6 +753,12 @@ engine/build/stats_validate out/replays/stats_states.csv out/replays/pri.csv --e
   96.8 / 91.5, shots 98.6 / 95.5; the players' total score 101,843 vs the replays' 100,715 (+1.1 %). Without the
   inferred touches saves fall to 76 % recall: the defender's touch happens between two replay frames 33 ms apart while
   the re-run's car and ball are still ~40 uu short (`--infer-touches 0`; `--trace REPLAY T0 T1` prints each tick).
+- **Result (2026-10-14, 60 1v1 replays, after RV-278):** with inferred touches goals 100.0 % recall / 99.7 %
+  precision (632 vs 630), saves 96.8 / 90.9, shots 98.8 / 95.7, the total score +1.4 % (152,060 vs 150,012); without,
+  goals 99.5 / 99.7, saves 75.4 / 89.6, shots 94.6 / 95.0, score −6.8 %. RV-278: where the re-run scores but the replay
+  plays on (a goal-line save), the round resumes once the replay is still in play a second later
+  (`StatFactory::ResumeRound`; resuming at once counted a real goal twice when the engine crossed the line a frame
+  before the replay's goal row: goal precision 93.1 %).
 - **Caveats.** The replays are 13 months older than the live build (the point values may have changed); the per-touch
   details (dodging, wheel contacts) come from the re-run, air control is missing, every car has the Octane hitbox.
 

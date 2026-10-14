@@ -3,7 +3,7 @@
 // floating off); everyone's go to the feed at the top right, a row each (the names and the icon), 6 at most, 4 s each.
 import { POPUP_SECONDS, type StatPopup, TICKER, type TickerRow } from "../game/matchStats";
 import { TEAM_FONT_COLOURS } from "../game/quickChat";
-import { contentStage } from "./scoreboard";
+import { fitStage } from "./stage";
 import { statIconSvg } from "./statIcons";
 
 function div(className: string, parent: HTMLElement): HTMLDivElement {
@@ -16,7 +16,7 @@ function div(className: string, parent: HTMLElement): HTMLDivElement {
 /** A layer on the HUD's virtual stage (HUD-1), rescaled to the window each frame */
 class StageLayer {
   readonly root: HTMLDivElement;
-  #size = "";
+  readonly #fitted = { key: "" };
 
   constructor(parent: HTMLElement, id: string) {
     this.root = div("hud-stage", parent);
@@ -25,15 +25,7 @@ class StageLayer {
 
   /** The stage's virtual width */
   fit(): number {
-    const stage = contentStage(window.innerWidth, window.innerHeight);
-    const size = `${String(stage.width)}x${String(stage.height)}x${String(stage.scale)}`;
-    if (size !== this.#size) {
-      this.#size = size;
-      this.root.style.width = `${String(stage.width)}px`;
-      this.root.style.height = `${String(stage.height)}px`;
-      this.root.style.transform = `scale(${String(stage.scale)})`;
-    }
-    return stage.width;
+    return fitStage(this.root, this.#fitted).width;
   }
 }
 

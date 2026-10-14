@@ -1,10 +1,13 @@
 // Offline freeplay: one car, the ball, boost pads, goals. Runs the physics at a fixed 120 Hz and
 // renders interpolated states.
+import { flipAudio, flipVisual } from "../hud";
 import { Quaternion, Vector3 } from "three";
 import { Interpolated } from "./interpolated";
 import { PlayerCamera } from "../camera/rlCamera";
 import { BOOST_SPAWN_AMOUNT, type BodyState, type CarConfig, type CarState, type World } from "../engine/world";
-import { type Hud, respawnHud } from "../hud";
+import { type Hud, type ReplayGoal, type ReplayHud, replaySpeed, replayTime, respawnHud } from "../hud";
+import { pressTo } from "./forfeitVote";
+import { inputGlyph } from "../input/bindings";
 import type { InputDevices } from "../input/devices";
 import { AirPitchSafety, ButtonLatch, EMPTY_INPUT, type HeldActions, JumpLatch, type LookInput, NO_HELD_ACTIONS, readControls, readHeldActions } from "../input/mapping";
 import type { ControllerSettings, Options, Settings } from "../settings/settings";
@@ -92,6 +95,10 @@ export class Freeplay {
   #ballSpawnTick = 0;
   #replayPlan: ReplayPlan | null = null;
   #replay: ReplayPlayback | null = null;
+  /** The ball's speed in the tick before the last goal (uu/s), the round's age then (game s): the replay's banner */
+  #goalSpeed: number | null = null;
+  #goalTime: number | null = null;
+  #roundAge = 0;
   readonly #fade = new Fade();
   #skipHeld = true;
   #fps = 60;
@@ -184,7 +191,15 @@ export class Freeplay {
       ballView: this.#ballView,
       cars: [[this.#playerId, this.#carView]],
     });
-    this.#updateHud(this.#car.current, real, "REPLAY", "Space / (A) to skip");
+    // (SkipInstructions, as online; the scorer is the player, no clock)
+    const name = this.settings().chat.name;
+    const goal: ReplayGoal = {
+      scorer: { name: name === "" ? "Player" : name, team: 0 },
+      assister: null,
+      time: this.#goalTime === null ? null : replayTime(this.#goalTime),
+      speed: this.#goalSpeed === null ? null : replaySpeed(this.#goalSpeed, this.settings().interface.metric),
+    };
+    this.#updateHud(this.#car.current, real, { prompt: pressTo(this.#input.usingGamepad ? "(A)" : "Space", "Skip"), waiting: null, goal });
     if (!skipped && !replay.done) return;
     this.#replay = null;
     this.#fade.fromBlack();
@@ -194,6 +209,7 @@ export class Freeplay {
   /** A frame of play: `world` its world time (slowed after a goal), `real` its real time */
   #play(world: number, real: number): void {
     this.#sinceReset += world;
+    this.#roundAge += world;
     this.#fade.update(real);
     this.#renderer.cameraFade = this.#fade.opacity;
     const settings = this.settings();
@@ -293,6 +309,9 @@ export class Freeplay {
         this.#audio.goal();
         this.#postGoal.start();
         this.#replayPlan = planReplay(this.#touches.touches, this.#world.tick, event.scoringTeam, this.#ballSpawnTick, false);
+        const vel = this.#recorder.before(this.#world.tick - 1)?.ball.vel;
+        this.#goalSpeed = vel ? Math.hypot(vel.x, vel.y, vel.z) : null;
+        this.#goalTime = this.#roundAge;
         this.#effects.goal(this.#world.ball().pos, explosionTeam(FREEPLAY_NET_TEAM)); // (the player's colour at either net)
         this.#arena.explode();
         this.#camera.shakes.play(EXPLOSION_LARGE, this.#world.ball().pos);
@@ -304,6 +323,7 @@ export class Freeplay {
    *  car on the session's next kickoff spot, held through freeplay's 0.01 s countdown, a new ball fading in */
   #resetKickoff(): void {
     this.#startRound();
+    this.#roundAge = 0;
     this.#postGoal.stop(); // (a reset ends the goal's wait)
     this.#ballView.spawn(); // (a new ball fades in)
     this.#arena.newBall();
@@ -455,9 +475,12 @@ export class Freeplay {
     this.#updateHud(car, realSeconds);
   }
 
-  /** The HUD; `message` and `hint`: what it says (a replay's) */
-  #updateHud(car: CarState, realSeconds: number, message: string | null = null, hint: string | null = null): void {
+  /** The HUD; `replay`: the goal replay's banner (null: not in one) */
+  #updateHud(car: CarState, realSeconds: number, replay: ReplayHud | null = null): void {
     if (realSeconds > 0) this.#fps += (1 / realSeconds - this.#fps) * 0.05;
+    const settings = this.settings();
+    const pad = this.#input.usingGamepad;
+    const toggles = (pad ? settings.cameraPad : settings.cameraKbm).ballCamToggle;
     this.#hud.update({
       boost: car.boost,
       speed: Math.hypot(car.vel.x, car.vel.y, car.vel.z),
@@ -465,15 +488,20 @@ export class Freeplay {
       score: this.#score,
       clock: null,
       ballCam: this.#ballCam,
-      message, // (no scored message in offline freeplay: RV-38)
-      hint,
+      ballCamKey: toggles ? inputGlyph(pad ? settings.bindings.ballCam.gamepad : settings.bindings.ballCam.keyboard) : null,
+      carView: replay === null,
+      menuOpen: !this.inputEnabled(),
+      message: null, // (no scored message in offline freeplay: RV-38)
+      replay,
+      // (training: no scoreboard, HUD-4)
+      parts: { scoreboard: false, boost: true },
       fps: this.#fps,
       net: null,
-      flip: this.settings().options.flipIndicator ? this.#dodge : null,
+      flip: flipVisual(this.settings().gameplay.flipResetIndicator) ? this.#dodge : null,
       flipReset: this.#flipReset,
       respawn: respawnHud(car),
     });
-    if (this.#flipReset) this.#audio.flipReset();
+    if (this.#flipReset && flipAudio(this.settings().gameplay.flipResetIndicator)) this.#audio.flipReset();
     this.#flipReset = false;
   }
 }

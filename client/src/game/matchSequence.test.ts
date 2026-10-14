@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { WAITING_VIEW, dimming, hudParts, matchOver, podiumView, winnerBanner, winnersGoal } from "./matchSequence";
+import { WAITING_VIEW, dimming, hudParts, matchOver, podiumSpots, podiumView, winnerBanner, winnersGoal } from "./matchSequence";
 
 const near = (a: number, b: number, eps = 0.2): boolean => Math.abs(a - b) <= eps;
 
@@ -18,8 +18,13 @@ describe("the match's start and end", () => {
     const settled = podiumView(cars, 0, 5.3);
     expect(near(settled.position.y, -1361.9, 0.5) && near(settled.position.z, 74.0)).toBe(true);
     expect(start.horizontalFov).toBe(70);
+    // The spots themselves, not where the cars were last seen (the placement comes a datagram after the phase: RV-273)
+    expect(podiumSpots(0, 3)).toEqual(cars);
+    expect(podiumView(podiumSpots(0, 3), 0, 0)).toEqual(start);
+    expect(podiumSpots(1, 1)).toEqual([{ x: 40, y: 1670, z: 17 }]);
+    expect(podiumSpots(0, 6)).toHaveLength(4);
     // Orange's: the other way round
-    const orange = podiumView([{ x: 40, y: 1670, z: 17 }], 1, 0);
+    const orange = podiumView(podiumSpots(1, 1), 1, 0);
     expect(orange.forward.y).toBeGreaterThan(0.99);
     expect(winnersGoal(1)).toEqual({ x: 0, y: 5120, z: 312 });
   });

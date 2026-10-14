@@ -19,9 +19,27 @@ export function formatClock(state: Pick<MatchState, "overtime" | "clockTicks">):
   return state.overtime ? `+${text}` : text;
 }
 
-/** What the match says on screen, if anything (the goal message comes first; the winner has its banner: MIO-18) */
-export function matchMessage(state: Pick<MatchState, "phase" | "overtime" | "clockTicks">): string | null {
-  if (state.phase === "countdown" && state.overtime && state.clockTicks === 0) return "OVERTIME";
+/** "OVERTIME" in the clock's slot: overtime's kickoff, until its clock runs (HUD-3) */
+export function overtimeLabel(state: Pick<MatchState, "phase" | "overtime" | "clockTicks">): boolean {
+  return state.phase === "countdown" && state.overtime && state.clockTicks === 0;
+}
+
+/** The HUD's messages, verbatim (TAGame.int [Messages], notes/hud-menus.md HT-2; the message view upper-cases them) */
+export const HUD_TEXT = {
+  go: "Go!",
+  overtime: "Overtime!",
+  oneMinute: "One Minute Remaining!",
+  thirtySeconds: "30 Seconds Remaining!",
+} as const;
+
+/** The clock's announcements (HUD-10): "One Minute Remaining!" as it shows 1:00, "30 Seconds Remaining!" at 0:30, then
+ *  each of the last ten seconds, as the shown second steps down to it (regulation, while it runs). `before` and `now`:
+ *  the shown seconds last frame and now */
+export function clockWarning(before: number, now: number): string | null {
+  if (now >= before) return null;
+  if (now === 60) return HUD_TEXT.oneMinute;
+  if (now === 30) return HUD_TEXT.thirtySeconds;
+  if (now >= 1 && now <= 10) return String(now);
   return null;
 }
 
@@ -30,6 +48,6 @@ export function matchMessage(state: Pick<MatchState, "phase" | "overtime" | "clo
  *  Returns the whole seconds left now, and what to announce (null: nothing). */
 export function countdownStep(before: number, ticks: number): { readonly left: number; readonly say: string | null } {
   const left = Math.ceil(ticks / TICK_RATE);
-  const say = left < before && left <= 3 ? (left === 0 ? "GO!" : String(left)) : null;
+  const say = left < before && left <= 3 ? (left === 0 ? HUD_TEXT.go : String(left)) : null;
   return { left, say };
 }

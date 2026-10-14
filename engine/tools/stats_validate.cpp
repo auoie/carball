@@ -231,6 +231,7 @@ static void RunReplay(Replay& r) {
 	struct Event { double time; int pri; int counter; };
 	std::vector<Event> replayEvents, ourEvents;
 	std::string state;
+	double engineGoalAt = -1; // (a goal the re-run scored while the replay played on: since when, RV-278)
 
 	auto award = [&](const Award& a, double time) {
 		auto it = carToPri.find(a.car);
@@ -318,6 +319,19 @@ static void RunReplay(Replay& r) {
 			s.angVel = fr.ball.angVel;
 			s.isExploded = false; // (the replay's ball is in play again at the kickoff; a goal explodes it in the re-run)
 			arena->ball->SetState(s);
+			// (the re-run scored where the replay played on, a goal-line save: the round goes on once the replay is still
+			// in play a second later; a real goal's state row follows its crossing within ~0.1 s, so it isn't counted
+			// twice: RV-278)
+			if (state == "Active" && stats.GetState() == FactoryState::POST_GOAL) {
+				if (engineGoalAt < 0)
+					engineGoalAt = fr.time;
+				else if (fr.time - engineGoalAt > 1.0) {
+					stats.ResumeRound();
+					engineGoalAt = -1;
+				}
+			} else {
+				engineGoalAt = -1;
+			}
 		}
 		for (const CarRow& row : fr.cars) {
 			auto pit = carPri.find(row.actor);

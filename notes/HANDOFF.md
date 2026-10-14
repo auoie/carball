@@ -446,6 +446,37 @@
     - Not yet: the waiting-for-players list (MIO-6), the rematch vote (MIO-32), quick actions (MIO-24), the end
       screen's hide-scoreboard toggle (MIO-30), a metric units setting (titles are imperial, the game's default), the
       highlights replay behind the end screen.
+  - **Since b22dc21 (uncommitted): the in-match HUD and the menus (notes/hud-menus.md), the 3645f4c + b22dc21 review
+    RV-273..278.** Text verbatim per the user's decision of 2026-10-14 (HUD messages, menus, Interface and Gameplay
+    settings), the strings and their case from the static session's table (notes/hud-menus.md HT-1..HT-10).
+    - Stage (HUD-1): `ui/stage.ts`, the content stage with Interface Scale and Display Scale; every HUD layer uses it.
+    - Scoreboard (HUD-2/3/4): the clock's black notched box between the team boxes (dark plus the team's colour),
+      your team on the left, perspective and tilt, the intro (1 s in: drop, tilt and turn), a team's glow on its goal,
+      "OVERTIME" in the clock's slot during overtime's kickoff; hidden in freeplay (training).
+    - Boost meter (HUD-5/6/7): 225 degrees clockwise from 6 o'clock, the last 45 white past 80 %, 2.25 degrees a point
+      past the first, the number tweened over 0.2 s, the pickup flash, team-coloured or plain, the max look past 80
+      (white, full glow, BOOST blinking); hidden in menus, replays and after the match (HUD-16), our flip ring with it.
+    - Centre messages (HUD-8/9/10): the kickoff's 3/2/1/GO!, the goal's "{Player} scored!", Overtime!, One Minute
+      Remaining!, 30 Seconds Remaining!, the last ten seconds (with a beep); each pops in from 1.4x, lives 4 s and fades
+      in 0.3 s; Match Notifications filters them by the game's levels (HT-7: the countdown and the goal essential, the
+      clock's and overtime's time updates; their sounds play regardless).
+    - Replay banner (HUD-11, HT-6): letterbox bars, the blinking REPLAY, SCORED BY and the scorer (none for an own
+      goal), the assist, the round's age at the goal and the ball's speed (KPH/MPH by Metric, on by default) with icons
+      of our own, the skip prompt bottom right. Ball-cam indicator (HUD-12) bottom left, its hint empty when held.
+    - Nameplates (HUD-13, `ui/nameplates.ts`): over the other cars, the distance and FOV curves times Nameplate Scale
+      (the 64 uu tall plate, its bottom 60 uu up: HT-8; the curves' product is [I]), Nearby Only (far) and Simplified
+      show the arrow only. Not yet: teammates' plates with their boost.
+    - Menus: the pause menu (MENU-4, HT-4, `ui/pauseMenu.ts`: Resume Game, Settings, online the match's buttons and
+      the player list, freeplay Exit to Main Menu with its question; Show Controls is the editor's only); the main menu (MENU-1/2, `ui/mainMenu.ts`: Play → Free Play or
+      a server to join, Settings) over the arena as freeplay's page opens; Escape handled in one place (main.ts).
+      Settings: the Interface tab (scales, nameplates, Match Notifications, Team-Colored Boost Meter, Metric, Ball Cam
+      Indicator, Hide In-Game HUD) and the Gameplay tab's Game Stat Display Level and Flip Reset Indicator (Off, Audio,
+      Visual, On; the old checkbox migrates).
+    - Review RV-273..278: the podium camera frames the spots (not the cars as last seen); a test for the 4th winner's
+      titles; leavers' counters out of most/fewest tested; the libraryFiles test runs in CI; the server's hidden
+      characters are every Cf; stats_validate resumes the round when the replay is still in play a second after an
+      engine-only goal (`ResumeRound`; 60 1v1 replays: goals 100.0 / 99.7, notes/validation.md).
+    - Not yet: the centre dot, the ball arrow, the chat input box, the waiting-for-players list, a garage (car choice).
   - **Decided (user, 2026-10-10): no controller rumble.** notes/rumble.md stays as a reference spec only. The contact
     detection it asked about (the static session's Q-RMB-a: HandleCollision's cadence, the contact's point and normal,
     the landing speed) is still wanted, for the Impact_Medium camera shake and the impact and landing sounds; don't

@@ -2,6 +2,7 @@
 // name, column headers and ping header on one line, then a 38 px row per player (strip, avatar, name, MVP badge, the
 // five values, ping). Laid out on the HUD's virtual stage (1120 x 720 re-anchored to the window, HUD-1); held with the
 // binding, at least 0.35 s, fading in 0.2 s and out to 0.2 before it goes.
+import { contentStage, stageTransform } from "./stage";
 import { SCOREBOARD_COLUMNS, SCOREBOARD_TEXT, type ScoreboardRow, TEAM_NAMES, pingBars, rowColour } from "../game/matchStats";
 import { statIconSvg } from "./statIcons";
 
@@ -28,12 +29,6 @@ const FADE_SECONDS = 0.2;
 const MIN_SECONDS = 0.35;
 /** The MVP badge slams in this long after the MVP is known (SB-11) */
 const MVP_DELAY = 1.75;
-
-/** The content stage (HUD-1): scale S from the window, the stage it gives in virtual px */
-export function contentStage(width: number, height: number): { readonly scale: number; readonly width: number; readonly height: number } {
-  const s = Math.max(0.5, width / height >= 1.5556 ? height / 720 : width / 1120);
-  return { scale: s, width: width / s, height: height / s };
-}
 
 /** Where the view goes on the stage, and its parts (SB-2, SB-5); on the end screen 0.3 down the free height (at least
  *  30 px), sliding right to make room for the menu (MIO-26) */
@@ -170,7 +165,7 @@ export class HeldScoreboard {
     this.#stage.replaceChildren();
     this.#stage.style.width = `${String(stage.width)}px`;
     this.#stage.style.height = `${String(stage.height)}px`;
-    this.#stage.style.transform = `scale(${String(stage.scale)})`;
+    this.#stage.style.transform = stageTransform(stage);
     const layout = scoreboardLayout(stage, [view.teams[0].length, view.teams[1].length], end);
     const viewEl = div("sb-view", this.#stage);
     viewEl.style.left = `${String(layout.x)}px`;

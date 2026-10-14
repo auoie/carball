@@ -10,13 +10,55 @@
     <canvas id="game"></canvas>
     <div id="loading">Loading…</div>
     <div id="hud">
-      <div id="score">
-        <span id="score-blue" class="team blue">0</span>
-        <span id="clock" hidden>5:00</span>
-        <span id="score-orange" class="team orange">0</span>
+      <!-- The HUD's virtual stage (notes/hud-menus.md HUD-1): positions in virtual px, scaled by src/ui/stage.ts -->
+      <div id="hud-stage" class="hud-stage">
+        <div id="score">
+          <div id="score-drop">
+            <div id="score-tilt">
+              <div class="score-view team-0">
+                <div class="score-bg"></div>
+                <div class="score-glow"></div>
+                <span id="score-blue" class="score-digits">0</span>
+              </div>
+              <div id="clock-box">
+                <span id="clock" hidden>5:00</span>
+                <span id="clock-overtime" hidden>OVERTIME</span>
+              </div>
+              <div class="score-view team-1">
+                <div class="score-bg"></div>
+                <div class="score-glow"></div>
+                <span id="score-orange" class="score-digits">0</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div id="message" hidden></div>
+        <div id="replay-banner" hidden>
+          <div class="letterbox top"></div>
+          <div class="letterbox bottom"></div>
+          <div id="replay-label"><span class="rec-dot"></span><span>REPLAY</span></div>
+          <div id="replay-info"></div>
+          <div id="replay-prompts"><span id="replay-prompt"></span><span id="replay-waiting"></span></div>
+        </div>
+        <div id="ballcam">
+          <div class="ballcam-head"><span class="rec-dot"></span><span>BALL CAM</span></div>
+          <span id="ballcam-toggle"></span>
+        </div>
+        <div id="boost">
+          <div id="boost-3d">
+            <svg viewBox="0 0 200 200" aria-hidden="true">
+              <circle class="disc" cx="100" cy="100" r="96" />
+              <circle class="ticks" cx="100" cy="100" r="88" />
+              <circle id="boost-glow" cx="100" cy="100" r="90" />
+              <circle class="track" cx="100" cy="100" r="78" transform="rotate(90 100 100)" />
+              <circle id="boost-ring" cx="100" cy="100" r="78" transform="rotate(90 100 100)" />
+              <circle id="boost-top" cx="100" cy="100" r="78" transform="rotate(270 100 100)" />
+            </svg>
+            <span id="boost-value">0</span>
+            <span id="boost-label">BOOST</span>
+          </div>
+        </div>
       </div>
-      <div id="message" hidden></div>
-      <div id="message-hint" hidden></div>
       <div id="vote">
         <div id="vote-head"><span id="vote-tally"></span><span id="vote-time"></span></div>
         <div id="vote-bar"><div id="vote-fill"></div></div>
@@ -36,13 +78,6 @@
         <div id="respawn-sides"><span id="respawn-left"></span><span id="respawn-right"></span></div>
         <div id="respawn-bar"><div id="respawn-fill"></div></div>
       </div>
-      <div id="boost">
-        <svg viewBox="0 0 120 120" aria-hidden="true">
-          <circle class="track" cx="60" cy="60" r="50" />
-          <circle id="boost-ring" cx="60" cy="60" r="50" />
-        </svg>
-        <span id="boost-value">0</span>
-      </div>
       <div id="info">
         <span id="speed">0 uu/s</span>
         <span id="camera-mode">Car cam</span>
@@ -50,7 +85,7 @@
         <span id="net" hidden></span>
       </div>
       <div id="help" hidden></div>
-      <div id="hint">Esc: settings · H: controls · M: mute</div>
+      <div id="hint">Esc: menu · H: controls · M: mute</div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

@@ -88,6 +88,8 @@ public:
 	// The game's state: the factory counts while the round is active (Active), demolitions and fives after a goal
 	// (PostGoalScored), nothing otherwise
 	void SetState(FactoryState state);
+	// Back to the round as it was (no kickoff reset): a validator's re-run that scored where the replay played on (RV-278)
+	void ResumeRound() { _state = FactoryState::ACTIVE; }
 	FactoryState GetState() const { return _state; }
 	void SetOvertime(bool overtime) { _overtime = overtime; }
 	// A new match: every player's counters back to 0

@@ -42,66 +42,6 @@ body {
   pointer-events: none;
 }
 
-#score {
-  position: absolute;
-  top: 12px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  gap: 4px;
-}
-
-.team {
-  min-width: 64px;
-  padding: 6px 12px;
-  text-align: center;
-  font-size: 1.8rem;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  border-radius: 6px;
-}
-
-.team.blue {
-  background: var(--blue);
-}
-
-#clock {
-  min-width: 96px;
-  padding: 6px 12px;
-  text-align: center;
-  font-size: 1.8rem;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  border-radius: 6px;
-  background: rgb(0 0 0 / 55%);
-}
-
-.team.orange {
-  background: var(--orange);
-}
-
-#message {
-  position: absolute;
-  top: 30%;
-  width: 100%;
-  text-align: center;
-  font-size: 4rem;
-  font-weight: 800;
-  letter-spacing: 0.05em;
-  text-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
-}
-
-/* A line under the message (the goal replay: how to skip it, who's ready) */
-#message-hint {
-  position: absolute;
-  top: calc(30% + 5.5rem);
-  width: 100%;
-  text-align: center;
-  font-size: 1.1rem;
-  font-weight: 600;
-  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
-}
-
 /* The team's forfeit vote (VoteToForfeitView: src/game/forfeitVote.ts): the tally, the time, the votes' bar, how to
    vote; it fades out in 0.3 s when the vote is gone or the match ends */
 #vote {
@@ -223,46 +163,12 @@ body {
   pointer-events: none;
 }
 
-#boost {
-  position: absolute;
-  right: 32px;
-  bottom: 32px;
-  width: 140px;
-  height: 140px;
-  display: grid;
-  place-items: center;
-}
-
-#boost svg {
-  position: absolute;
-  inset: 0;
-  transform: rotate(-90deg);
-}
-
-#boost circle {
-  fill: none;
-  stroke-width: 10;
-}
-
-#boost .track {
-  stroke: rgba(255, 255, 255, 0.15);
-}
-
-#boost-ring {
-  stroke: #ffb02e;
-  stroke-linecap: round;
-}
-
-#boost-value {
-  font-size: 2.6rem;
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
-}
-
+/* (ours: speed, camera, fps and the connection, small at the bottom centre, out of the HUD's corners) */
 #info {
   position: absolute;
-  left: 16px;
-  bottom: 16px;
+  left: 50%;
+  bottom: 6px;
+  transform: translateX(-50%);
   display: flex;
   gap: 16px;
   padding: 6px 10px;
@@ -314,6 +220,7 @@ body {
 /* Settings menu */
 .settings {
   position: fixed;
+  z-index: 6; /* (over the pause and main menus it opens from) */
   inset: 5vh 50% auto auto;
   transform: translateX(50%);
   width: min(760px, 94vw);
@@ -382,6 +289,11 @@ body {
 
 .settings button:hover {
   background: rgba(255, 255, 255, 0.14);
+}
+
+/* (tab names upper-cased, as the game's: HT-5) */
+.settings .settings-tab {
+  text-transform: uppercase;
 }
 
 .settings .settings-tab.active {
@@ -1244,4 +1156,702 @@ body {
   font: bold 22px/25px var(--hud-small);
   color: #3fff00;
   text-align: center;
+}
+
+/* --- The in-match HUD on its virtual stage (notes/hud-menus.md HUD-1..12) --- */
+#hud-stage {
+  --tint-0: 0, 45, 191; /* the teams' additive tints (Team0/1 FontColor) */
+  --tint-1: 178, 61, 0;
+}
+
+#hud.hud-hidden #hud-stage,
+#hud.hud-hidden #flip,
+#hud.hud-hidden #respawn {
+  visibility: hidden;
+}
+
+/* HUD-2: the scoreboard at the top centre; your team on the left; seen in perspective (focal 100 at y 80), tilted 5
+   degrees back, the score views turned 10 degrees */
+#score {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 0;
+  height: 0;
+  perspective: 100px;
+  perspective-origin: 0 80px;
+}
+
+#score-drop,
+#score-tilt {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-style: preserve-3d;
+}
+
+#score-tilt {
+  transform: rotateX(-5deg);
+  transform-origin: 0 0;
+}
+
+.score-view {
+  position: absolute;
+  top: -17px;
+  width: 90px;
+  height: 90px;
+  transform-style: preserve-3d;
+}
+
+.score-view.team-0 {
+  left: -157px;
+  transform: rotateY(-10deg);
+}
+
+.score-view.team-1 {
+  left: 67px;
+  transform: rotateY(10deg);
+}
+
+#score.swapped .score-view.team-0 {
+  left: 67px;
+  transform: rotateY(10deg);
+}
+
+#score.swapped .score-view.team-1 {
+  left: -157px;
+  transform: rotateY(-10deg);
+}
+
+.score-bg,
+.score-glow {
+  position: absolute;
+  inset: 0;
+  border-radius: 12px;
+}
+
+/* (dark, plus the team's colour) */
+.score-view.team-0 .score-bg {
+  background: rgb(18, 63, 209);
+  box-shadow: inset 0 0 18px rgba(0, 0, 0, 0.55);
+}
+
+.score-view.team-1 .score-bg {
+  background: rgb(196, 79, 18);
+  box-shadow: inset 0 0 18px rgba(0, 0, 0, 0.55);
+}
+
+/* HUD-4: the scorer's glow, flashed on a goal */
+.score-glow {
+  opacity: 0;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.9), rgba(var(--team-tint), 0.6) 60%, transparent 75%);
+  mix-blend-mode: screen;
+}
+
+.score-view.team-0 {
+  --team-tint: var(--tint-0);
+}
+
+.score-view.team-1 {
+  --team-tint: var(--tint-1);
+}
+
+/* (the digits' box: 21 in from the background's outer side, 70 x 52 from 19 down) */
+.score-digits {
+  position: absolute;
+  top: 19px;
+  width: 70px;
+  height: 52px;
+  font: 48px/52px var(--hud-numbers);
+  text-align: center;
+  text-shadow: 0 0 8px #999;
+}
+
+.score-view.team-0 .score-digits {
+  color: #f0ffff;
+}
+
+.score-view.team-1 .score-digits {
+  color: #fffff0;
+}
+
+#score:not(.swapped) .score-view.team-0 .score-digits,
+#score.swapped .score-view.team-1 .score-digits {
+  left: 21px;
+}
+
+#score:not(.swapped) .score-view.team-1 .score-digits,
+#score.swapped .score-view.team-0 .score-digits {
+  left: 1px;
+}
+
+/* the clock's black notched box over them */
+#clock-box {
+  position: absolute;
+  left: -90px;
+  top: -18px;
+  width: 180px;
+  height: 90px;
+  background: #000;
+  clip-path: polygon(0 0, 100% 0, 100% 72%, 88% 100%, 12% 100%, 0 72%);
+  transform: translateZ(1px);
+}
+
+#clock {
+  position: absolute;
+  left: 25px;
+  top: 28px;
+  width: 130px;
+  height: 36px;
+  font: 31px/36px var(--hud-numbers);
+  letter-spacing: 2px;
+  color: #fff;
+  text-align: center;
+}
+
+/* HUD-3: "OVERTIME" in the clock slot until it runs */
+#clock-overtime {
+  position: absolute;
+  left: 25px;
+  top: 24px;
+  width: 130px;
+  font: 32px/26px var(--hud-header);
+  color: #fff;
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* HUD-8/9/10: the centre message (GameMessageView at (W/2, 250)): thin, gold, an orange glow; it pops in from 1.4 x */
+#message {
+  position: absolute;
+  left: 0;
+  top: 214px;
+  width: 100%;
+  text-align: center;
+  font: 72px/72px var(--hud-thin);
+  color: #ffed83;
+  text-transform: uppercase;
+  text-shadow: 0 0 10px #ff7f00, 0 0 4px #ff7f00;
+  white-space: nowrap;
+  transition: opacity 0.3s;
+}
+
+#message.gone {
+  opacity: 0;
+}
+
+/* HUD-11: the replay's banner: letterbox bars, the blinking REPLAY bottom left, the scorer, the prompts bottom right */
+#replay-banner {
+  position: absolute;
+  inset: 0;
+}
+
+.letterbox {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: 90px;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.letterbox.top {
+  top: 0;
+  clip-path: polygon(0 0, 100% 0, 100% 79px, 50% 30px, 0 79px);
+}
+
+.letterbox.bottom {
+  bottom: 0;
+  clip-path: polygon(0 11px, 50% 60px, 100% 11px, 100% 100%, 0 100%);
+}
+
+.rec-dot {
+  display: inline-block;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #ff6b5a 30%, #e3261a 70%);
+  box-shadow: 0 0 8px #ff4343;
+  animation: rec-blink 0.5s infinite;
+}
+
+@keyframes rec-blink {
+  0% {
+    opacity: 1;
+  }
+  66% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+#replay-label,
+.ballcam-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font: 32px/36px var(--hud-header);
+  color: #ff7752;
+  text-shadow: 0 0 8px #ff4343;
+}
+
+#replay-label {
+  position: absolute;
+  left: 26px;
+  bottom: 12px;
+}
+
+#replay-info {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  bottom: 120px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  font: 18px/22px var(--hud-header);
+  color: #fff;
+}
+
+#replay-info > * {
+  animation: replay-in 0.3s ease-out both;
+}
+
+@keyframes replay-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
+.replay-caption {
+  font: 14px/16px var(--hud-header);
+  color: #98daff;
+  text-transform: uppercase;
+  text-shadow: 0 0 6px #016bf7;
+}
+
+/* (the assist, the goal's time and its speed: an icon each, no label; the names as written: HT-6) */
+.replay-assist,
+.replay-time,
+.replay-speed {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-shadow: 0 0 6px #000;
+}
+
+.replay-info-icon,
+#replay-info svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
+.replay-assist.team-0 {
+  color: rgb(204, 249, 255);
+}
+
+.replay-assist.team-1 {
+  color: rgb(255, 255, 204);
+}
+
+.replay-time {
+  color: #98daff;
+  text-shadow: 0 0 6px #016bf7;
+}
+
+.replay-speed small {
+  font-size: 12px;
+}
+
+.replay-scorer {
+  padding: 2px 18px;
+  border-radius: 3px;
+  font: 22px/28px var(--hud-header);
+}
+
+.replay-scorer.team-0 {
+  background: rgba(0, 45, 191, 0.85);
+  box-shadow: 0 0 16px rgba(0, 45, 191, 0.9);
+}
+
+.replay-scorer.team-1 {
+  background: rgba(178, 61, 0, 0.85);
+  box-shadow: 0 0 16px rgba(178, 61, 0, 0.9);
+}
+
+#replay-prompts {
+  position: absolute;
+  right: 26px;
+  bottom: 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+#replay-prompt {
+  font: 16px/20px var(--hud-header);
+  color: #fff;
+  text-transform: uppercase;
+}
+
+#replay-waiting {
+  font: 24px/28px var(--hud-thin);
+  color: #ff4343;
+}
+
+/* HUD-12: the ball-cam indicator bottom left (50, H - 48): slides 20 in as it shows (0.2 s), out in 0.3 s */
+#ballcam {
+  position: absolute;
+  left: 30px;
+  bottom: 30px;
+  opacity: 0;
+  transform: translateX(0);
+  transition: opacity 0.3s, transform 0.3s;
+}
+
+#ballcam.shown {
+  opacity: 1;
+  transform: translateX(20px);
+  transition-duration: 0.2s;
+}
+
+#ballcam-toggle {
+  display: block;
+  margin: 2px 0 0 42px;
+  font: 16px/20px var(--hud-header);
+  color: #fff;
+  text-transform: uppercase;
+}
+
+/* HUD-5/6/7: the boost meter, its centre 110 in from the right and the bottom: a 225 degree arc clockwise from 6
+   o'clock (the last 45 past 80 % its own white), turned 15 degrees */
+#boost {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  width: 200px;
+  height: 200px;
+  perspective: 323px;
+  --boost-tint: var(--tint-0);
+}
+
+#boost.team-1 {
+  --boost-tint: var(--tint-1);
+}
+
+#boost-3d {
+  position: absolute;
+  inset: 0;
+  transform: rotateY(-15deg) rotateX(-2deg);
+}
+
+#boost svg {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+}
+
+#boost circle {
+  fill: none;
+}
+
+#boost .disc {
+  fill: rgba(8, 10, 16, 0.55);
+  stroke: rgba(255, 255, 255, 0.35);
+  stroke-width: 2;
+}
+
+#boost .ticks {
+  stroke: rgba(255, 255, 255, 0.22);
+  stroke-width: 6;
+  stroke-dasharray: 2 10.82;
+}
+
+#boost-glow {
+  fill: rgb(var(--boost-tint));
+  opacity: 0.5;
+  filter: blur(14px);
+  transform-origin: 100px 100px;
+}
+
+#boost .track {
+  stroke: rgba(255, 255, 255, 0.08);
+  stroke-width: 16;
+  stroke-dasharray: 306.3 490.1;
+}
+
+#boost-ring {
+  stroke: #ff9d1e;
+  stroke-width: 16;
+}
+
+#boost-top {
+  stroke: #fff;
+  stroke-width: 16;
+}
+
+#boost-value {
+  position: absolute;
+  left: 42px;
+  top: 72px;
+  width: 120px;
+  height: 58px;
+  font: 54px/58px var(--hud-numbers);
+  text-align: center;
+  color: rgb(102, 147, 255);
+  text-shadow: 0 0 6px #000;
+}
+
+/* (shown past 80 % only, blinking: HT-2) */
+#boost-label {
+  position: absolute;
+  visibility: hidden;
+  left: 42px;
+  top: 126px;
+  width: 120px;
+  font: 16px/18px var(--hud-header);
+  text-align: center;
+  color: rgb(102, 147, 255);
+}
+
+#boost.team-1 #boost-value,
+#boost.team-1 #boost-label {
+  color: rgb(255, 163, 102);
+}
+
+/* (past 80 %: white, a full glow, the label blinking every 0.2 s) */
+#boost.max #boost-value,
+#boost.max #boost-label {
+  color: #fff;
+  text-shadow: 0 0 8px #000;
+}
+
+#boost.max #boost-glow {
+  opacity: 1;
+}
+
+#boost.max #boost-label {
+  visibility: visible;
+  animation: boost-blink 0.4s steps(1) infinite;
+}
+
+@keyframes boost-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* (not team-coloured: orange, red past 80 %; an amber or red glow) */
+#boost.plain #boost-value,
+#boost.plain #boost-label {
+  color: #ff8a1f;
+}
+
+#boost.plain #boost-glow {
+  fill: rgb(255, 147, 67);
+  opacity: 0.25;
+}
+
+#boost.plain.max #boost-value,
+#boost.plain.max #boost-label {
+  color: #ff4040;
+}
+
+#boost.plain.max #boost-glow {
+  fill: rgb(255, 64, 64);
+  opacity: 0.75;
+}
+
+
+/* HUD-13: nameplates over the cars (placed and scaled by src/ui/nameplates.ts): the name upper-cased on the team's
+   colour, 100 to 264 wide; the arrow under it, alone in Distance Fade (far) and Simplified (changes in 0.3 s) */
+.nameplates {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.nameplate {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transform-origin: 0 0;
+  --plate: 0, 45, 191;
+}
+
+.nameplate[data-team="1"] {
+  --plate: 178, 61, 0;
+}
+
+.nameplate-name {
+  min-width: 100px;
+  max-width: 264px;
+  height: 22px;
+  padding: 0 16px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: rgba(var(--plate), 0.85);
+  font: bold 16px/22px var(--hud-small);
+  text-align: center;
+  text-transform: uppercase;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: #f0ffff;
+  transition: opacity 0.3s;
+}
+
+.nameplate[data-team="1"] .nameplate-name {
+  color: #fffff0;
+}
+
+.nameplate-arrow {
+  width: 0;
+  height: 0;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-top: 8px solid rgba(var(--plate), 0.95);
+}
+
+.nameplate.arrow-only .nameplate-name {
+  opacity: 0;
+}
+
+/* MENU-4: the pause menu, a column of buttons at the left (MidGameMenu), the match's buttons and the players with it */
+.pause-menu {
+  position: fixed;
+  left: 6vw;
+  top: 22vh;
+  width: min(340px, 88vw);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  z-index: 5;
+}
+
+.pause-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pause-button,
+.pause-match button,
+.main-menu-button {
+  min-height: 40px;
+  padding: 6px 16px;
+  font: 22px/26px var(--hud-header);
+  text-align: left;
+  text-transform: uppercase;
+  color: #fff;
+  background: rgba(10, 14, 22, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.pause-button:hover,
+.pause-match button:hover,
+.main-menu-button:hover {
+  border-color: #43afff;
+}
+
+.pause-match {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.pause-match span,
+.pause-question span {
+  padding: 6px 12px;
+  background: rgba(10, 14, 22, 0.95);
+}
+
+.pause-question {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.pause-question button {
+  min-width: 80px;
+  padding: 4px 12px;
+  font: 18px/22px var(--hud-header);
+  text-transform: uppercase;
+  color: #fff;
+  background: rgba(10, 14, 22, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.pause-match button.danger {
+  background: #b3261e;
+  border-color: #b3261e;
+}
+
+.pause-players {
+  padding: 8px;
+  background: rgba(10, 14, 22, 0.85);
+  border-radius: 3px;
+}
+
+/* MENU-1/2: the main menu over the arena: Play and Settings; Play's Free Play and a server to join */
+.main-menu {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  padding-left: 8vw;
+  background: linear-gradient(90deg, rgba(4, 8, 16, 0.8), rgba(4, 8, 16, 0.2) 60%, transparent);
+  z-index: 4;
+}
+
+.main-menu-column {
+  width: min(360px, 84vw);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.main-menu-column[hidden] {
+  display: none;
+}
+
+.main-menu-online {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: rgba(10, 14, 22, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+
+.main-menu-online label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font: 16px/20px var(--hud-header);
+  text-transform: uppercase;
+  color: #bbb;
+}
+
+.main-menu-online input {
+  font: 18px/24px var(--hud-small);
+  padding: 4px 8px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 3px;
+  user-select: text;
 }

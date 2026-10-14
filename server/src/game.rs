@@ -169,11 +169,15 @@ fn tactical(preset: u8) -> bool {
 /// zero-width ones, the BOM), the line and paragraph separators (Zl, Zp), the invisible fillers a name could be made of
 /// alone, and the replacement character an invalid UTF-8 name decodes to
 fn hidden_char(c: char) -> bool {
+    // (every format character, Unicode's Cf as of 15.1, as the client's \p{Cf}: RV-277; then the invisible marks and fillers)
     c.is_control()
         || matches!(c as u32,
-            0x00AD | 0x034F | 0x061C | 0x115F | 0x1160 | 0x17B4 | 0x17B5 | 0x180B..=0x180F | 0x200B..=0x200F | 0x2028..=0x202E
-            | 0x2060..=0x206F | 0x2800 | 0x3164 | 0xFE00..=0xFE0F | 0xFEFF | 0xFFA0 | 0xFFF9..=0xFFFD | 0x1D173..=0x1D17A
-            | 0xE0000..=0xE0FFF)
+            0x00AD | 0x0600..=0x0605 | 0x061C | 0x06DD | 0x070F | 0x0890..=0x0891 | 0x08E2 | 0x180E | 0x200B..=0x200F
+            | 0x202A..=0x202E | 0x2060..=0x2064 | 0x2066..=0x206F | 0xFEFF | 0xFFF9..=0xFFFB | 0x110BD | 0x110CD
+            | 0x13430..=0x1343F | 0x1BCA0..=0x1BCA3 | 0x1D173..=0x1D17A | 0xE0001 | 0xE0020..=0xE007F)
+        || matches!(c as u32,
+            0x034F | 0x115F | 0x1160 | 0x17B4 | 0x17B5 | 0x180B..=0x180D | 0x180F | 0x2028 | 0x2029 | 0x2065 | 0x2800 | 0x3164
+            | 0xFE00..=0xFE0F | 0xFFA0 | 0xFFFC | 0xFFFD | 0xE0000..=0xE0FFF)
 }
 
 /// The name a player asked for, tidied: hidden characters dropped, trimmed, `MAX_NAME_BYTES` at most; none left, or another
@@ -2618,6 +2622,24 @@ mod tests {
     }
 
     #[test]
+    fn the_podium_clears_the_titles_of_winners_from_4th_place_on() {
+        // (RV-274: `ClearPodiumTitle` for MVPSort's index 3 and up, a 4v4's fourth; the losers keep theirs)
+        let players: Vec<(PlayerId, u8, u32)> = (1..=8).map(|id| (id, if id <= 4 { 0 } else { 1 }, id as u32)).collect();
+        let (mut game, _rxs) = match_with(MatchType::Casual, 4, &players);
+        game.end_match(0, false);
+        let title = Some(PodiumTitle { title: 15, count: 1 });
+        for (id, p) in game.players.iter_mut() {
+            p.titles = [title, None];
+            p.stats[0] = 100 * (10 - *id as i32); // (blue by MVPSort: 1, 2, 3, 4)
+        }
+        run_until(&mut game, 1000, |g| g.phase == Phase::Podium);
+        let titles = |id: PlayerId| game.players[&id].titles[0];
+        assert_eq!((titles(1), titles(2), titles(3)), (title, title, title));
+        assert_eq!(titles(4), None, "the fourth winner's title goes");
+        assert_eq!(titles(8), title, "a loser keeps theirs");
+    }
+
+    #[test]
     fn the_match_end_gives_both_teams_podium_titles_on_the_scoreboard_until_the_next_match() {
         let (mut game, mut rxs) = match_with(MatchType::Casual, 1, &[(1, 0, 1), (2, 1, 2)]);
         roll_into(&mut game, 1); // (the first touch, the only ball touch)
@@ -2761,6 +2783,10 @@ mod tests {
     #[test]
     fn names_lose_hidden_characters_and_cant_take_another_players_automatic_name() {
         assert_eq!(player_name("\u{202E}ziggy", 3), "ziggy");
+        // (every format character: the Arabic number signs, the Egyptian hieroglyph controls, shorthand formats: RV-277)
+        for c in ['\u{0600}', '\u{06DD}', '\u{070F}', '\u{0891}', '\u{08E2}', '\u{110BD}', '\u{13430}', '\u{1BCA3}'] {
+            assert_eq!(player_name(&format!("{c}x"), 3), "x", "{:X}", c as u32);
+        }
         assert_eq!(player_name("\u{2066}Bo\u{2069}", 3), "Bo");
         assert_eq!(player_name("\u{200B}", 3), "Player 3");
         assert_eq!(player_name("\u{FEFF}", 3), "Player 3");

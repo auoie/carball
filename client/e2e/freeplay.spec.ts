@@ -6,6 +6,7 @@ interface AudioStats {
   readonly cars: number;
 }
 import { expect, test } from "./fixtures";
+import { closeMenus, freePlay, openSettings } from "./players";
 
 async function speed(page: Page): Promise<number> {
   const text = (await page.locator("#speed").textContent()) ?? "";
@@ -21,6 +22,7 @@ test("freeplay loads, drives and resets", async ({ page }) => {
 
   await page.goto("/");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+  await freePlay(page);
   await expect(page.locator("#boost-value")).toHaveText("100"); // (freeplay's Unlimited boost)
   await page.locator("#game").click({ position: { x: 640, y: 360 }, button: "right" }); // focus (right mouse: powerslide)
 
@@ -76,13 +78,13 @@ test("freeplay loads, drives and resets", async ({ page }) => {
   await expect(page.locator("#flip")).toHaveAttribute("data-state", "ground");
   // M mutes (a setting like any other: the Audio tab shows it)
   await page.keyboard.press("KeyM");
-  await page.keyboard.press("Escape");
+  await openSettings(page);
   await page.locator(".settings-tab", { hasText: "Audio" }).click();
   await expect(page.locator('input[data-option="muted"]')).toBeChecked();
-  // The flip indicator can be turned off (the Gameplay tab: MENU-9, RV-169)
+  // The flip indicator can be turned off (the Gameplay tab's Flip Reset Indicator: MENU-9, RV-169)
   await page.locator(".settings-tab", { hasText: "Gameplay" }).click();
-  await page.locator('input[data-option="flipIndicator"]').uncheck();
-  await page.keyboard.press("Escape");
+  await page.locator('select[data-setting="flipResetIndicator"]').selectOption("off");
+  await closeMenus(page);
   await expect(page.locator("#flip")).toBeHidden();
 
   expect(errors).toEqual([]);
@@ -91,10 +93,10 @@ test("freeplay loads, drives and resets", async ({ page }) => {
 test("controls can be rebound and are remembered", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+  await freePlay(page);
 
   // Open settings, rebind throttle (keyboard) to I
-  await page.keyboard.press("Escape");
-  await expect(page.locator("#settings")).toBeVisible();
+  await openSettings(page);
   const slot = page.locator('.binding-slot[data-action="throttleForward"][data-device="keyboard"]');
   await expect(slot).toHaveText("W");
   await slot.click();
@@ -116,8 +118,7 @@ test("controls can be rebound and are remembered", async ({ page }) => {
   await expect(page.locator('input[data-setting="deadzone"]')).toHaveValue("0.2");
   await expect(page.locator('input[data-setting="dodgeDeadzone"]')).toHaveValue("0.8");
   await page.screenshot({ path: "test-results/settings-controller.png" });
-  await page.keyboard.press("Escape");
-  await expect(page.locator("#settings")).toBeHidden();
+  await closeMenus(page);
 
   // I now drives; W no longer does
   await page.keyboard.down("KeyW");
@@ -131,7 +132,8 @@ test("controls can be rebound and are remembered", async ({ page }) => {
   // Remembered after a reload
   await page.reload();
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
-  await page.keyboard.press("Escape");
+  await freePlay(page);
+  await openSettings(page);
   await expect(page.locator('.binding-slot[data-action="throttleForward"][data-device="keyboard"]')).toHaveText("I");
   await page.locator(".settings-tab", { hasText: "Camera" }).click();
   await expect(page.locator('input[data-setting="fov"]')).toHaveValue("105");
@@ -163,6 +165,7 @@ test("every theme's ambience: no sound sticks out far above the rest, and none i
   test.setTimeout(240_000);
   await page.goto("/");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
+  await freePlay(page);
   for (const theme of ["night", ...THEMED]) {
     // A minute of it, the same events every run (seeded)
     const levels = await page.evaluate(
@@ -185,6 +188,7 @@ async function playTheme(page: Page, theme: string): Promise<void> {
 
   await page.goto(`/?theme=${theme}`);
   await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
+  await freePlay(page);
   await page.locator("#game").click({ position: { x: 640, y: 360 }, button: "right" }); // focus (right mouse: powerslide)
   // The car drives. (Slowly here: the tests render in software, a few frames a second for this scenery, and the
   // physics only catches up 0.1 s per frame)
@@ -207,6 +211,7 @@ test("a goal in freeplay with goal replays on: the replay plays, Space skips it,
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto("/");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+  await freePlay(page);
   const hook = async (): Promise<{ pos: { x: number; y: number }; speed: number }> =>
     page.evaluate(() => (window as unknown as { rlFreeplay: Hook }).rlFreeplay.car());
   await page.evaluate(() => {
@@ -222,12 +227,15 @@ test("a goal in freeplay with goal replays on: the replay plays, Space skips it,
   });
   await expect(page.locator("#score-blue")).toHaveText("1", { timeout: 10_000 });
   // After PostGoalTime the replay (no freeplay special case: ShouldPlayReplayPlayback), cut in from black (RV-175)
-  await expect(page.locator("#message")).toHaveText("REPLAY", { timeout: 20_000 });
+  // (its banner, HUD-11: the blinking REPLAY, the scorer, the skip prompt)
+  await expect(page.locator("#replay-banner")).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator("#replay-label")).toHaveText("REPLAY");
+  await expect(page.locator("#replay-info .replay-scorer")).toBeVisible();
   await expect.poll(async () => page.evaluate(() => (window as unknown as { rlFadeMax: number }).rlFadeMax), { timeout: 10_000 }).toBeGreaterThan(0.5);
-  await expect(page.locator("#message-hint")).toContainText("skip");
+  await expect(page.locator("#replay-prompt")).toContainText(/skip/i);
   await page.locator("#game").click({ position: { x: 640, y: 360 }, button: "right" });
   await page.keyboard.press("Space");
-  await expect(page.locator("#message")).toBeHidden({ timeout: 10_000 });
+  await expect(page.locator("#replay-banner")).toBeHidden({ timeout: 10_000 });
   // The new round straight after, the car at rest on its spot: the skip's Space doesn't make it jump
   await expect.poll(async () => Math.abs((await hook()).pos.y), { timeout: 10_000 }).toBeGreaterThan(2000);
   await page.waitForTimeout(500);
@@ -243,6 +251,7 @@ test("a goal in freeplay, skipping replays: no message, 3 s later a kickoff spot
   });
   await page.goto("/");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+  await freePlay(page);
   const hook = async (): Promise<{ pos: { x: number; y: number }; speed: number }> =>
     page.evaluate(() => (window as unknown as { rlFreeplay: Hook }).rlFreeplay.car());
   // The car out on the side, the ball dropped into orange's goal
@@ -284,6 +293,7 @@ test("Unlimited boost in free play: on (the default) a full car takes no pad; of
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto("/");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+  await freePlay(page);
   await page.waitForFunction(() => "rlFreeplay" in window);
   const place = async (car: object): Promise<void> => {
     await page.evaluate((c) => {
@@ -306,14 +316,12 @@ test("Unlimited boost in free play: on (the default) a full car takes no pad; of
   // Off, in the settings' Gameplay tab (the car off the pad first: at 33 it would take it at once): the tank at a
   // round's 33
   await place(behind);
-  await page.keyboard.press("Escape");
-  await expect(page.locator("#settings")).toBeVisible();
+  await openSettings(page);
   await page.locator('.settings-tab[data-tab="gameplay"]').click();
   const box = page.locator('input[data-option="unlimitedBoost"]');
   await expect(box).toBeChecked();
   await box.uncheck();
-  await page.keyboard.press("Escape");
-  await expect(page.locator("#settings")).toBeHidden();
+  await closeMenus(page);
   await expect.poll(async () => (await pads()).boost, { timeout: 5_000 }).toBeCloseTo(100 / 3, 3);
 
   // The pad lit, from behind it; then onto it (taken, +12 boost); then the same look again
@@ -364,6 +372,7 @@ test("the engine's contacts as the game's impact triggers: driving into the ball
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto("/");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+  await freePlay(page);
   await page.waitForFunction(() => "rlFreeplay" in window);
   await page.locator("#game").click({ position: { x: 640, y: 360 }, button: "right" }); // (focus; the sound unlocked)
   const audio = async (): Promise<AudioStats> => page.evaluate(() => (window as unknown as { rlAudio: () => AudioStats }).rlAudio());
@@ -376,5 +385,53 @@ test("the engine's contacts as the game's impact triggers: driving into the ball
   await page.keyboard.down("KeyW");
   await expect.poll(async () => (await audio()).played.ballHit ?? 0, { timeout: 10_000 }).toBeGreaterThan(before);
   await page.keyboard.up("KeyW");
+  expect(errors).toEqual([]);
+});
+
+test("the main menu, the pause menu, the HUD and its Interface options (MENU-1/4/6, HUD-5/12/16, HT-4)", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto("/");
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+  // The main menu over the arena: Play, then Free Play
+  await expect(page.locator("#main-menu")).toBeVisible();
+  await freePlay(page);
+  // The boost meter: freeplay's unlimited boost, past 80 its "max" look; no scoreboard in training (HUD-4)
+  await expect(page.locator("#boost")).toBeVisible();
+  await expect(page.locator("#boost-value")).toHaveText("100");
+  await expect(page.locator("#boost")).toHaveClass(/max/);
+  await expect(page.locator("#score")).toBeHidden();
+  await page.screenshot({ path: "test-results/hud-freeplay.png" });
+  // The ball cam held (the middle button, Modern's): its indicator, no toggle line while it's held
+  await page.mouse.move(640, 360);
+  await page.mouse.down({ button: "middle" });
+  await expect(page.locator("#ballcam")).toHaveClass(/shown/);
+  await expect(page.locator("#ballcam-toggle")).toHaveText("");
+  await page.mouse.up({ button: "middle" });
+  await expect(page.locator("#ballcam")).not.toHaveClass(/shown/);
+  // The pause menu: the boost meter goes under it (HUD-16); Resume Game (no Show Controls in a match: HT-4)
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#pause-menu")).toBeVisible();
+  await expect(page.locator("#boost")).toBeHidden();
+  await expect(page.locator("#pause-menu").getByRole("button", { name: /^show controls$/i })).toHaveCount(0);
+  await page.screenshot({ path: "test-results/pause-menu.png" });
+  await page.locator("#pause-menu").getByRole("button", { name: /^resume game$/i }).click();
+  await expect(page.locator("#pause-menu")).toBeHidden();
+  await expect(page.locator("#boost")).toBeVisible();
+  // The Interface tab: the plain boost meter, then the HUD hidden
+  await openSettings(page);
+  await page.locator('.settings-tab[data-tab="interface"]').click();
+  await page.locator('input[data-setting="teamColoredBoost"]').uncheck();
+  await page.locator('input[data-setting="hideHud"]').check();
+  await closeMenus(page);
+  await expect(page.locator("#boost")).toHaveClass(/plain/);
+  await expect(page.locator("#hud")).toHaveClass(/hud-hidden/);
+  await expect(page.locator("#hud-stage")).toBeHidden();
+  // Exit to Main Menu, its question answered (HT-4)
+  await page.keyboard.press("Escape");
+  await page.locator("#pause-menu").getByRole("button", { name: /^exit to main menu$/i }).click();
+  await expect(page.locator("#pause-menu")).toContainText("Are you sure you want to exit to the main menu?");
+  await page.locator("#pause-menu").getByRole("button", { name: /^yes$/i }).click();
+  await expect(page.locator("#main-menu")).toBeVisible();
   expect(errors).toEqual([]);
 });

@@ -1,5 +1,9 @@
-// On-screen overlay: boost, the flip indicator, speed, score, camera mode, help.
+// On-screen overlay: the game's HUD on its virtual stage (notes/hud-menus.md HUD-1..12: the scoreboard, the boost
+// meter, the centre messages, the replay's banner, the ball-cam indicator), and ours: the flip indicator, speed, camera
+// mode, help.
 import type { SpawnSide } from "./engine/world";
+import type { FlipResetIndicator, InterfaceSettings, MatchNotifications } from "./settings/settings";
+import { fitStage } from "./ui/stage";
 import { DODGE_WINDOW, type Dodge } from "./game/flipTracker";
 import { type VoteHud, voteFlashes } from "./game/forfeitVote";
 import { ACTIONS, type Bindings, inputName } from "./input/bindings";
@@ -37,6 +41,79 @@ export function boostShown(boost: number): number {
   return boost <= 0 ? 0 : Math.min(100, Math.max(1, Math.floor(boost)));
 }
 
+/** Flip Reset Indicator's parts (MENU-9): its look (our flip ring and the reset's toast) and its sound */
+export function flipVisual(mode: FlipResetIndicator): boolean {
+  return mode === "visual" || mode === "on";
+}
+
+export function flipAudio(mode: FlipResetIndicator): boolean {
+  return mode === "audio" || mode === "on";
+}
+
+/** The boost meter's arc in degrees for its number (HUD-6: gotoAndStop(int(b x 1.01)) of a 101-frame mask, 2.25 degrees
+ *  a frame: empty at 0 and 1, 225 at 100), split at 12 o'clock: the fill's part (to 180) and the top segment's past it */
+export function boostArc(shown: number): { readonly fill: number; readonly top: number } {
+  const degrees = shown >= 100 ? 225 : shown <= 1 ? 0 : 2.25 * (shown - 1);
+  return { fill: Math.min(180, degrees), top: Math.max(0, degrees - 180) };
+}
+
+/** A centre message's level (EHUDMessageLevel, HT-7): 0 All (pause messages), 1 GameUpdates (Overtime!, the clock's
+ *  minute, 30 s and last ten), 2 Essential (the kickoff's countdown and GO!, the goal). Shown when the Match
+ *  Notifications setting's threshold is at or under it (All 0, Time Updates Only 1, Kickoffs Only 2) */
+export type MessageLevel = 0 | 1 | 2;
+export const ESSENTIAL: MessageLevel = 2;
+export const GAME_UPDATE: MessageLevel = 1;
+const THRESHOLD: Readonly<Record<MatchNotifications, MessageLevel>> = { all: 0, gameUpdates: 1, kickoff: 2 };
+
+export function messageShown(level: MessageLevel, setting: MatchNotifications): boolean {
+  return THRESHOLD[setting] <= level;
+}
+
+/** A centre message lives this long after the last one, then fades in 0.3 s (GameMessageView) */
+const MESSAGE_SECONDS = 4;
+const MESSAGE_FADE = 0.3;
+
+/** The goal replay's banner (HUD-11) */
+export interface ReplayHud {
+  /** "Press Space to Skip" until the player skips (null: none) */
+  readonly prompt: string | null;
+  /** Who isn't ready yet (null: nothing shown) */
+  readonly waiting: string | null;
+  /** The goal: its scorer and assister, the clock at the goal and the ball's speed (null: not known) */
+  readonly goal: ReplayGoal | null;
+}
+
+/** The replay's goal speed (HT-6: the ball's speed rounded to uu/s, then round(x 0.036) KPH, or round(x 0.0223694)
+ *  MPH, by Metric; KPH / MPH verbatim) */
+export function replaySpeed(speed: number, metric: boolean): { readonly value: number; readonly unit: string } {
+  const uu = Math.round(speed);
+  // (in the movie's own order of operations: UnitUtils.convert, v x from / to)
+  return metric ? { value: Math.round((uu * 3600 * 0.01) / 1000), unit: "KPH" } : { value: Math.round((uu * 36) / 1609.344), unit: "MPH" };
+}
+
+/** The replay's goal time (HT-6: the round's age at the goal, from its kickoff countdown's start; whole seconds, M:SS) */
+export function replayTime(seconds: number): string {
+  const t = Math.round(seconds);
+  const sign = t < 0 ? "-" : "";
+  const a = Math.abs(t);
+  return `${sign}${String(Math.floor(a / 60))}:${String(a % 60).padStart(2, "0")}`;
+}
+
+export interface ReplayGoal {
+  /** null: no scorer to show (an own goal: HT-6) */
+  readonly scorer: { readonly name: string; readonly team: number } | null;
+  readonly assister: { readonly name: string; readonly team: number } | null;
+  readonly time: string | null;
+  readonly speed: { readonly value: number; readonly unit: string } | null;
+}
+
+/** The replay banner's icons (ours: the game's Icon_ScoreAssist / Time / Speed show there, no text labels) */
+const ICONS = {
+  assist: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 15l6-6 4 4 6-6v4h2V3h-8v2h4l-4 4-4-4-8 8z"/></svg>',
+  time: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm1 5h-2v6l5 3 1-1.7-4-2.3z"/></svg>',
+  speed: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4a10 10 0 00-10 10h3a7 7 0 0114 0h3A10 10 0 0012 4zm4.2 4.4L11 13.6a2 2 0 102.8 2.8l5.2-5.2z"/></svg>',
+} as const;
+
 export interface HudState {
   readonly boost: number;
   readonly speed: number; // uu/s
@@ -45,9 +122,20 @@ export interface HudState {
   /** The match clock (null: no match, as in freeplay) */
   readonly clock: string | null;
   readonly ballCam: boolean;
+  /** A message that stays until it's gone (a disconnection); null: the queued ones (`say`) */
   readonly message: string | null;
-  /** A smaller line under the message (null: none) */
-  readonly hint?: string | null;
+  /** The goal replay's banner (null or absent: not in a replay) */
+  readonly replay?: ReplayHud | null;
+  /** "OVERTIME" in the clock's slot (overtime's kickoff, until its clock runs: HUD-3) */
+  readonly overtimeLabel?: boolean;
+  /** The local player's team (theirs on the left: HUD-2); absent: blue */
+  readonly localTeam?: number;
+  /** The camera is the local car's (its own or ball cam; not a replay, a podium or the joining view: HUD-16) */
+  readonly carView?: boolean;
+  /** A menu is over the HUD */
+  readonly menuOpen?: boolean;
+  /** The ball cam's toggle key, when it toggles (null: held, or nothing to say) */
+  readonly ballCamKey?: string | null;
   readonly fps: number;
   readonly net: string | null; // online: ping and buffer
   /** Whether the car can dodge (null: the indicator is turned off) */
@@ -59,7 +147,7 @@ export interface HudState {
   /** The team's forfeit vote while it runs (null or absent: none; the widget fades out) */
   readonly vote?: VoteHud | null;
   /** The match's HUD parts shown (online, by phase: MIO-5/17; absent: both, as freeplay) */
-  readonly parts?: { readonly scoreboard: boolean; readonly boost: boolean };
+  readonly parts?: { readonly scoreboard: boolean; readonly boost: boolean; readonly ballCamIndicator?: boolean };
 }
 
 function element<T extends HTMLElement>(root: ParentNode, selector: string, type: new () => T): T {
@@ -69,8 +157,13 @@ function element<T extends HTMLElement>(root: ParentNode, selector: string, type
 }
 
 export class Hud {
+  readonly #root: HTMLElement;
+  readonly #stage: HTMLElement;
+  readonly #stageFit = { key: "" };
   readonly #boostValue: HTMLElement;
   readonly #boostRing: SVGCircleElement;
+  readonly #boostTop: SVGCircleElement;
+  readonly #boostGlow: SVGCircleElement;
   readonly #speed: HTMLElement;
   readonly #blue: HTMLElement;
   readonly #scoreBox: HTMLElement;
@@ -79,7 +172,15 @@ export class Hud {
   readonly #orange: HTMLElement;
   readonly #camera: HTMLElement;
   readonly #message: HTMLElement;
-  readonly #hint: HTMLElement;
+  readonly #clockOvertime: HTMLElement;
+  readonly #scoreTilt: HTMLElement;
+  readonly #scoreDrop: HTMLElement;
+  readonly #replay: HTMLElement;
+  readonly #replayInfo: HTMLElement;
+  readonly #replayPrompt: HTMLElement;
+  readonly #replayWaiting: HTMLElement;
+  readonly #ballCam: HTMLElement;
+  readonly #ballCamToggle: HTMLElement;
   readonly #fps: HTMLElement;
   readonly #net: HTMLElement;
   readonly #help: HTMLElement;
@@ -102,11 +203,18 @@ export class Hud {
   readonly #voteHint: HTMLElement;
 
   constructor(root: HTMLElement) {
+    this.#root = root;
+    this.#stage = element(root, "#hud-stage", HTMLElement);
     this.#boostValue = element(root, "#boost-value", HTMLElement);
-    const ring = root.querySelector("#boost-ring");
-    if (!(ring instanceof SVGCircleElement)) throw new Error("HUD element #boost-ring missing");
-    this.#boostRing = ring;
-    this.#ringLength = 2 * Math.PI * ring.r.baseVal.value;
+    const circle = (selector: string): SVGCircleElement => {
+      const c = root.querySelector(selector);
+      if (!(c instanceof SVGCircleElement)) throw new Error(`HUD element ${selector} missing`);
+      return c;
+    };
+    this.#boostRing = circle("#boost-ring");
+    this.#boostTop = circle("#boost-top");
+    this.#boostGlow = circle("#boost-glow");
+    this.#ringLength = 2 * Math.PI * this.#boostRing.r.baseVal.value;
     this.#speed = element(root, "#speed", HTMLElement);
     this.#blue = element(root, "#score-blue", HTMLElement);
     this.#scoreBox = element(root, "#score", HTMLElement);
@@ -115,7 +223,15 @@ export class Hud {
     this.#clock = element(root, "#clock", HTMLElement);
     this.#camera = element(root, "#camera-mode", HTMLElement);
     this.#message = element(root, "#message", HTMLElement);
-    this.#hint = element(root, "#message-hint", HTMLElement);
+    this.#clockOvertime = element(root, "#clock-overtime", HTMLElement);
+    this.#scoreTilt = element(root, "#score-tilt", HTMLElement);
+    this.#scoreDrop = element(root, "#score-drop", HTMLElement);
+    this.#replay = element(root, "#replay-banner", HTMLElement);
+    this.#replayInfo = element(root, "#replay-info", HTMLElement);
+    this.#replayPrompt = element(root, "#replay-prompt", HTMLElement);
+    this.#replayWaiting = element(root, "#replay-waiting", HTMLElement);
+    this.#ballCam = element(root, "#ballcam", HTMLElement);
+    this.#ballCamToggle = element(root, "#ballcam-toggle", HTMLElement);
     this.#fps = element(root, "#fps", HTMLElement);
     this.#net = element(root, "#net", HTMLElement);
     this.#help = element(root, "#help", HTMLElement);
@@ -166,29 +282,232 @@ export class Hud {
     this.#help.replaceChildren(title, table);
   }
 
+  #ui: InterfaceSettings | null = null;
+
+  /** The Interface settings the HUD follows */
+  configure(ui: InterfaceSettings): void {
+    this.#ui = ui;
+  }
+
+  /** A centre message (HUD-8/9/10: the countdown, a goal, the clock's warnings): it pops in, replacing the last, and
+   *  fades 4 s after; one under the Match Notifications setting's level isn't shown; "" clears it at once */
+  say(text: string, level: MessageLevel = ESSENTIAL): void {
+    if (text === "") {
+      this.#said = null;
+      return;
+    }
+    if (this.#ui && !messageShown(level, this.#ui.matchNotifications)) return;
+    this.#said = { text, at: performance.now() / 1000 };
+    this.#popMessage = true;
+  }
+
+  #said: { readonly text: string; readonly at: number } | null = null;
+  #popMessage = false;
+  #messageText = "";
+
   update(s: HudState): void {
-    const boost = boostShown(s.boost);
-    this.#boostValue.textContent = String(boost);
-    this.#boostRing.style.strokeDasharray = `${(this.#ringLength * boost) / 100} ${this.#ringLength}`;
+    const now = performance.now() / 1000;
+    const stage = fitStage(this.#stage, this.#stageFit);
+    this.#root.classList.toggle("hud-hidden", this.#ui?.hideHud ?? false);
+    const carView = s.carView ?? true;
+    const menuOpen = s.menuOpen ?? false;
+    const team = s.localTeam === 1 ? 1 : 0;
+    this.#updateScoreboard(s, team);
+    this.#updateBoost(s.boost, team, (s.parts?.boost ?? true) && carView && !menuOpen, now);
+    this.#updateMessage(s.message, now, stage.width);
+    this.#updateReplay(s.replay ?? null);
+    const ballCam = (this.#ui?.ballCamIndicator ?? true) && s.ballCam && carView && !menuOpen && (s.parts?.ballCamIndicator ?? true);
+    this.#ballCam.classList.toggle("shown", ballCam);
+    const key = s.ballCamKey ?? null;
+    this.#ballCamToggle.textContent = key === null ? "" : `Press ${key} to Toggle`;
     this.#speed.textContent = `${Math.round(s.speed)} uu/s`;
     this.#speed.classList.toggle("supersonic", s.supersonic);
-    this.#blue.textContent = String(s.score[0]);
-    this.#orange.textContent = String(s.score[1]);
-    this.#clock.textContent = s.clock ?? "";
-    this.#scoreBox.hidden = !(s.parts?.scoreboard ?? true);
-    this.#boostBox.hidden = !(s.parts?.boost ?? true);
-    this.#clock.hidden = s.clock === null;
     this.#camera.textContent = s.ballCam ? "Ball cam" : "Car cam";
-    this.#message.textContent = s.message ?? "";
-    this.#message.hidden = s.message === null;
-    this.#hint.textContent = s.hint ?? "";
-    this.#hint.hidden = (s.hint ?? null) === null;
     this.#fps.textContent = `${Math.round(s.fps)} fps`;
     this.#net.textContent = s.net ?? "";
     this.#net.hidden = s.net === null;
-    this.#updateFlip(s.flip, s.flipReset);
+    // (the flip indicator, ours, follows the boost meter's rule)
+    this.#updateFlip(this.#boostBox.hidden ? null : s.flip, s.flipReset);
     this.#updateRespawn(s.respawn);
     this.#updateVote(s.vote ?? null);
+  }
+
+  #scoreShown = false;
+  #lastScore: readonly [number, number] | null = null;
+  #overtimeLabel = false;
+
+  /** HUD-2/3/4: the scores, your team's on the left; the clock or "OVERTIME"; the intro when it shows; a team's glow
+   *  when it scores */
+  #updateScoreboard(s: HudState, team: 0 | 1): void {
+    const shown = s.parts?.scoreboard ?? true;
+    this.#scoreBox.hidden = !shown;
+    this.#scoreBox.classList.toggle("swapped", team === 1);
+    if (shown && !this.#scoreShown) this.#scoreIntro();
+    this.#scoreShown = shown;
+    this.#blue.textContent = String(s.score[0]);
+    this.#orange.textContent = String(s.score[1]);
+    const last = this.#lastScore;
+    if (last) {
+      for (const t of [0, 1] as const) {
+        if (s.score[t] > last[t]) {
+          this.#scoreBox
+            .querySelector(`.score-view.team-${String(t)} .score-glow`)
+            ?.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 600, easing: "cubic-bezier(0.55, 0.085, 0.68, 0.53)" });
+        }
+      }
+    }
+    this.#lastScore = s.score;
+    const overtime = s.overtimeLabel ?? false;
+    this.#clock.textContent = s.clock ?? "";
+    this.#clock.hidden = s.clock === null || overtime;
+    this.#clockOvertime.hidden = !overtime;
+    // (the label fades out in 0.2 s, the clock in over 0.3 s)
+    if (this.#overtimeLabel && !overtime && s.clock !== null) this.#clock.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300 });
+    if (!this.#overtimeLabel && overtime) this.#clockOvertime.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200 });
+    this.#overtimeLabel = overtime;
+  }
+
+  /** HUD-4's intro, 1 s after it shows: down 20 over 1 s (Back.easeOut), tilting from 75 degrees and fading in over 0.6 s
+   *  (Strong.easeOut), the score views turning from 60 degrees (Strong.easeIn) */
+  #scoreIntro(): void {
+    const delay = 1000;
+    this.#scoreDrop.animate([{ transform: "translateY(-20px)" }, { transform: "none" }], { duration: 1000, delay, easing: "cubic-bezier(0.175, 0.885, 0.32, 1.275)", fill: "backwards" });
+    this.#scoreTilt.animate(
+      [
+        { opacity: 0, transform: "rotateX(-75deg)" },
+        { opacity: 1, transform: "rotateX(-5deg)" },
+      ],
+      { duration: 600, delay, easing: "cubic-bezier(0.23, 1, 0.32, 1)", fill: "backwards" },
+    );
+    const swapped = this.#scoreBox.classList.contains("swapped");
+    for (const t of [0, 1]) {
+      const left = (t === 0) !== swapped;
+      const sign = left ? -1 : 1;
+      this.#scoreBox
+        .querySelector(`.score-view.team-${String(t)}`)
+        ?.animate([{ transform: `rotateY(${String(60 * sign)}deg)` }, { transform: `rotateY(${String(10 * sign)}deg)` }], {
+          duration: 600,
+          delay,
+          easing: "cubic-bezier(0.755, 0.05, 0.855, 0.06)",
+          fill: "backwards",
+        });
+    }
+  }
+
+  #boostTarget = -1;
+  #boostFrom = 0;
+  #boostSince = 0;
+
+  /** HUD-5/6/7: the number tweens to its new value over 0.2 s (Quad.easeOut [I]) and the arc with it; an increase
+   *  flashes the fill white and the glow from 2x (0.8 s); team-coloured or plain, its "max" look past 80 */
+  #updateBoost(boost: number, team: 0 | 1, shown: boolean, now: number): void {
+    this.#boostBox.hidden = !shown;
+    const target = boostShown(boost);
+    const displayedNow = this.#boostDisplayed(now);
+    if (target !== this.#boostTarget) {
+      if (this.#boostTarget >= 0 && target > this.#boostTarget && shown) {
+        const flash = { duration: 800, easing: "cubic-bezier(0.23, 1, 0.32, 1)" };
+        this.#boostRing.animate([{ stroke: "#ffffff" }, { stroke: "#ff9d1e" }], flash);
+        this.#boostGlow.animate([{ transform: "scale(2)" }, { transform: "scale(1)" }], flash);
+      }
+      this.#boostFrom = this.#boostTarget < 0 ? target : displayedNow;
+      this.#boostTarget = target;
+      this.#boostSince = now;
+    }
+    const value = Math.round(this.#boostDisplayed(now));
+    this.#boostValue.textContent = String(value);
+    const arc = boostArc(value);
+    const length = this.#ringLength;
+    this.#boostRing.style.strokeDasharray = `${String((length * arc.fill) / 360)} ${String(length)}`;
+    this.#boostTop.style.strokeDasharray = `${String((length * arc.top) / 360)} ${String(length)}`;
+    const teamColoured = this.#ui?.teamColoredBoost ?? true;
+    this.#boostBox.classList.toggle("team-1", teamColoured && team === 1);
+    this.#boostBox.classList.toggle("plain", !teamColoured);
+    this.#boostBox.classList.toggle("max", value > 80);
+  }
+
+  #boostDisplayed(now: number): number {
+    const t = Math.min(1, (now - this.#boostSince) / 0.2);
+    return this.#boostFrom + (this.#boostTarget - this.#boostFrom) * (1 - (1 - t) * (1 - t));
+  }
+
+  /** The centre message: the standing one, else the last said for 4 s, fading in 0.3 s; shrunk to fit the stage */
+  #updateMessage(standing: string | null, now: number, width: number): void {
+    const said = this.#said;
+    const age = said ? now - said.at : Infinity;
+    const text = standing ?? (age < MESSAGE_SECONDS + MESSAGE_FADE ? (said?.text ?? "") : "");
+    const el = this.#message;
+    el.hidden = text === "";
+    el.classList.toggle("gone", standing === null && age >= MESSAGE_SECONDS);
+    if (text !== this.#messageText) {
+      this.#messageText = text;
+      el.textContent = text;
+      el.style.fontSize = "";
+      if (text !== "" && el.scrollWidth > width - 80) el.style.fontSize = `${String((72 * (width - 80)) / el.scrollWidth)}px`;
+    }
+    if (this.#popMessage && text !== "") {
+      el.animate(
+        [
+          { transform: "scale(1.4)", filter: "brightness(2.5)" },
+          { transform: "scale(1)", filter: "brightness(1)" },
+        ],
+        { duration: 600, easing: "cubic-bezier(0.23, 1, 0.32, 1)" },
+      );
+    }
+    this.#popMessage = false;
+  }
+
+  #replayGoal = "";
+
+  /** HUD-11: the replay's banner; its goal panel staggered in, 0.25 s apart */
+  #updateReplay(r: ReplayHud | null): void {
+    this.#replay.hidden = r === null;
+    if (r === null) {
+      this.#replayGoal = "";
+      return;
+    }
+    this.#replayPrompt.textContent = r.prompt ?? "";
+    this.#replayWaiting.textContent = r.waiting ?? "";
+    const key = JSON.stringify(r.goal);
+    if (key === this.#replayGoal) return;
+    this.#replayGoal = key;
+    const rows: HTMLElement[] = [];
+    const row = (className: string, text: string): HTMLElement => {
+      const e = document.createElement("div");
+      e.className = className;
+      e.textContent = text;
+      rows.push(e);
+      return e;
+    };
+    const goal = r.goal;
+    const named = (className: string, who: { readonly name: string; readonly team: number }, icon = ""): HTMLElement => {
+      const e = row(`${className} team-${String(who.team === 1 ? 1 : 0)}`, "");
+      e.innerHTML = icon;
+      const name = document.createElement("bdi");
+      name.textContent = who.name;
+      e.append(name);
+      return e;
+    };
+    // (an own goal: no caption, scorer or assist; the time and the speed still: HT-6)
+    if (goal?.scorer) {
+      row("replay-caption", "Scored By");
+      named("replay-scorer", goal.scorer);
+      if (goal.assister) named("replay-assist", goal.assister, ICONS.assist);
+    }
+    if (goal && goal.time !== null) row("replay-time", "").innerHTML = `${ICONS.time}<span>${goal.time}</span>`;
+    if (goal?.speed) {
+      const speed = row("replay-speed", "");
+      speed.innerHTML = ICONS.speed;
+      const value = document.createElement("span");
+      value.textContent = String(goal.speed.value);
+      const unit = document.createElement("small");
+      unit.textContent = ` ${goal.speed.unit}`;
+      speed.append(value, unit);
+    }
+    rows.forEach((e, i) => {
+      e.style.animationDelay = `${String(i * 0.25)}s`;
+    });
+    this.#replayInfo.replaceChildren(...rows);
   }
 
   #lastVote: VoteHud | null = null;

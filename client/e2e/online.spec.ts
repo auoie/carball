@@ -54,6 +54,12 @@ test("two players: one drives, the other sees it through the server", async ({ p
   expect(minutes * 60 + seconds).toBeLessThanOrEqual(300);
   expect(minutes * 60 + seconds).toBeGreaterThan(240);
   await expect(other.locator("#clock")).toBeVisible();
+  // The HUD's scoreboard (HUD-2): each page's own team on the left (the orange player's swapped); the other car's
+  // nameplate (HUD-13)
+  await expect(page.locator("#score")).not.toHaveClass(/swapped/);
+  await expect(other.locator("#score")).toHaveClass(/swapped/);
+  await expect(page.locator(".nameplate")).toHaveCount(1, { timeout: 10_000 });
+  await page.screenshot({ path: "test-results/hud-online.png" });
 
   // Holding Tab shows the scoreboard: a row per player under its team's headers; released, it fades away (SB-10)
   await page.locator("#game").click({ position: { x: 640, y: 360 }, button: "right" });
@@ -164,7 +170,7 @@ test("a goal: the game slows down for 3.53 s, the goal replay plays, Space skips
   // The banner: nobody touched the ball, so the team's name (GoalScored, "{Player} scored!")
   await expect(page.locator("#message")).toHaveText("BLUE SCORED!", { timeout: 30_000 });
   await expect.poll(async () => (await stats(page)).replaying, { timeout: 30_000 }).toBe(true);
-  await expect(page.locator("#message")).toContainText("REPLAY");
+  await expect(page.locator("#replay-banner")).toBeVisible();
   const { phases } = await stats(page);
   const goal = phases.findLast((p) => p.phase === "postGoal");
   const replay = phases.findLast((p) => p.phase === "replay");
@@ -192,6 +198,6 @@ test("a goal: the game slows down for 3.53 s, the goal replay plays, Space skips
   await page.keyboard.press("Space");
   await expect.poll(async () => (await stats(page)).replaying, { timeout: 3_000 }).toBe(false);
   await expect.poll(async () => (await stats(page)).phases.at(-1)?.phase).toBe("countdown");
-  await expect(page.locator("#message")).not.toContainText("REPLAY");
+  await expect(page.locator("#replay-banner")).toBeHidden();
   expect(errors).toEqual([]);
 });

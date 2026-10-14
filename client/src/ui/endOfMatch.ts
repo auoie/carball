@@ -2,7 +2,8 @@
 // the top on the podium: MIO-22), the screen's dimming and the podium's vignette (MIO-20), the podium cars' name tags
 // (MIO-22), and the end screen's menu with the next match's countdown (MIO-26, 29, 31). On the HUD's virtual stage.
 import { END_TEXT } from "../game/matchSequence";
-import { contentStage, scoreboardLayout } from "./scoreboard";
+import { scoreboardLayout } from "./scoreboard";
+import { type ContentStage, fitStage } from "./stage";
 
 /** A podium title as shown: its name (upper-cased) and its stat line */
 interface ShownTitle {
@@ -20,23 +21,15 @@ function div(className: string, parent: HTMLElement): HTMLDivElement {
 /** A layer on the virtual stage (HUD-1), rescaled to the window when it changes */
 class Stage {
   readonly root: HTMLDivElement;
-  #size = "";
+  readonly #fitted = { key: "" };
 
   constructor(parent: HTMLElement, id: string) {
     this.root = div("hud-stage", parent);
     this.root.id = id;
   }
 
-  fit(): { readonly width: number; readonly height: number; readonly scale: number } {
-    const stage = contentStage(window.innerWidth, window.innerHeight);
-    const size = `${String(stage.width)}x${String(stage.height)}x${String(stage.scale)}`;
-    if (size !== this.#size) {
-      this.#size = size;
-      this.root.style.width = `${String(stage.width)}px`;
-      this.root.style.height = `${String(stage.height)}px`;
-      this.root.style.transform = `scale(${String(stage.scale)})`;
-    }
-    return stage;
+  fit(): ContentStage {
+    return fitStage(this.root, this.#fitted);
   }
 }
 

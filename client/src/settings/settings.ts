@@ -42,7 +42,6 @@ export interface Options {
   readonly cameraShake: boolean; // bEnableCameraShake: on with the Default camera preset, off with Modern
   readonly airPitchSafety: boolean; // bAirPitchSafetyEnabled (keyboard and mouse)
   readonly muted: boolean; // all sound off (M)
-  readonly flipIndicator: boolean; // show whether the car can dodge, and flip resets
   readonly autoSkipReplay: boolean; // bAutoSkipGoalReplay: always ready to skip goal replays
   readonly unlimitedBoost: boolean; // Unlimited boost in free play (MENU-9): on, the tank stays full (and a full car takes no pads)
   readonly bloom: boolean; // the video option Bloom (system setting Bloom; on in the High preset, PP-16)
@@ -75,6 +74,86 @@ export function slotPool(slot: number): readonly string[] {
   return slot < 16 ? POOLS.match : slot < 20 ? POOLS.post : POOLS.pre;
 }
 
+/** The Gameplay tab's lists (MENU-9): Game Stat Display Level (StatEventDisplayLevel: the stat popups and feed) and
+ *  Flip Reset Indicator (its sound, its look: our flip ring with them) */
+export type StatDisplayLevel = "none" | "primary" | "all";
+export type FlipResetIndicator = "off" | "audio" | "visual" | "on";
+export interface GameplaySettings {
+  readonly statDisplayLevel: StatDisplayLevel;
+  readonly flipResetIndicator: FlipResetIndicator;
+}
+
+export const DEFAULT_GAMEPLAY_SETTINGS: GameplaySettings = { statDisplayLevel: "primary", flipResetIndicator: "on" };
+
+/** (saved before the list: the old flip indicator's checkbox, off, is Off) */
+function readGameplay(v: unknown, oldOptions: Record<string, unknown>): GameplaySettings {
+  const src = isRecord(v) ? v : {};
+  const level = src["statDisplayLevel"];
+  const flip = src["flipResetIndicator"];
+  const old = oldOptions["flipIndicator"] === false ? "off" : DEFAULT_GAMEPLAY_SETTINGS.flipResetIndicator;
+  return {
+    statDisplayLevel: level === "none" || level === "primary" || level === "all" ? level : DEFAULT_GAMEPLAY_SETTINGS.statDisplayLevel,
+    flipResetIndicator: flip === "off" || flip === "audio" || flip === "visual" || flip === "on" ? flip : old,
+  };
+}
+
+/** The Interface tab (MENU-6, notes/hud-menus.md; GFxData_Settings_TA's Interface rows) */
+export type NameplateMode = "distanceFade" | "default" | "simplified";
+export type MatchNotifications = "all" | "gameUpdates" | "kickoff";
+export interface InterfaceSettings {
+  /** Interface Scale (UIScale) and Display Scale (SafeZoneRatio: the platform's default, 1 here): the HUD's stage */
+  readonly scale: number;
+  readonly displayScale: number;
+  readonly nameplateScale: number;
+  readonly nameplateMode: NameplateMode;
+  /** Match Notifications (HUDMessageLevel): which centre messages show */
+  readonly matchNotifications: MatchNotifications;
+  readonly teamColoredBoost: boolean;
+  /** Metric (else imperial): the replay's speed, the podium titles' units; on by default (GetMetricDefaultValue: on
+   *  unless the build's region is the US) */
+  readonly metric: boolean;
+  readonly ballCamIndicator: boolean;
+  /** Hide In-Game HUD */
+  readonly hideHud: boolean;
+}
+
+export const INTERFACE_LIMITS: Readonly<Record<"scale" | "displayScale" | "nameplateScale", Range>> = {
+  scale: { min: 0.5, max: 1, step: 0.01 },
+  displayScale: { min: 0.9, max: 1, step: 0.01 },
+  nameplateScale: { min: 0.5, max: 2, step: 0.1 },
+};
+
+export const DEFAULT_INTERFACE_SETTINGS: InterfaceSettings = {
+  scale: 1,
+  displayScale: 1,
+  nameplateScale: 1,
+  nameplateMode: "default",
+  matchNotifications: "all",
+  teamColoredBoost: true,
+  metric: true,
+  ballCamIndicator: true,
+  hideHud: false,
+};
+
+function readInterface(v: unknown): InterfaceSettings {
+  const src = isRecord(v) ? v : {};
+  const d = DEFAULT_INTERFACE_SETTINGS;
+  const mode = src["nameplateMode"];
+  const notifications = src["matchNotifications"];
+  const flag = (k: "teamColoredBoost" | "metric" | "ballCamIndicator" | "hideHud"): boolean => (typeof src[k] === "boolean" ? src[k] : d[k]);
+  return {
+    scale: readNumber(src["scale"], d.scale, INTERFACE_LIMITS.scale),
+    displayScale: readNumber(src["displayScale"], d.displayScale, INTERFACE_LIMITS.displayScale),
+    nameplateScale: readNumber(src["nameplateScale"], d.nameplateScale, INTERFACE_LIMITS.nameplateScale),
+    nameplateMode: mode === "distanceFade" || mode === "default" || mode === "simplified" ? mode : d.nameplateMode,
+    matchNotifications: notifications === "all" || notifications === "gameUpdates" || notifications === "kickoff" ? notifications : d.matchNotifications,
+    teamColoredBoost: flag("teamColoredBoost"),
+    metric: flag("metric"),
+    ballCamIndicator: flag("ballCamIndicator"),
+    hideHud: flag("hideHud"),
+  };
+}
+
 export interface Settings {
   readonly bindings: Bindings;
   readonly camera: CameraSettings;
@@ -85,6 +164,8 @@ export interface Settings {
   readonly audio: AudioSettings;
   readonly chat: ChatSettings;
   readonly scoreboard: ScoreboardSettings;
+  readonly interface: InterfaceSettings;
+  readonly gameplay: GameplaySettings;
 }
 
 /** The scoreboard's four columns after SCORE (ProfileScoreboardSave_TA, Soccar's group: SB-17), by column id */
@@ -188,7 +269,6 @@ export const DEFAULT_OPTIONS: Options = {
   cameraShake: false,
   airPitchSafety: true,
   muted: false,
-  flipIndicator: true,
   autoSkipReplay: false,
   unlimitedBoost: true,
   bloom: true,
@@ -203,6 +283,8 @@ export const DEFAULT_SETTINGS: Settings = {
   audio: DEFAULT_AUDIO_SETTINGS,
   chat: DEFAULT_CHAT_SETTINGS,
   scoreboard: DEFAULT_SCOREBOARD_SETTINGS,
+  interface: DEFAULT_INTERFACE_SETTINGS,
+  gameplay: DEFAULT_GAMEPLAY_SETTINGS,
 };
 
 const STORAGE_KEY = "rl-clone.settings.v1";
@@ -356,6 +438,8 @@ export function parseSettings(v: unknown): Settings {
     audio: readNumbers(src["audio"], DEFAULT_AUDIO_SETTINGS, AUDIO_LIMITS),
     chat: readChat(src["chat"]),
     scoreboard: readScoreboard(src["scoreboard"]),
+    interface: readInterface(src["interface"]),
+    gameplay: readGameplay(src["gameplay"], old),
   };
 }
 

@@ -41,8 +41,22 @@ export function winnersGoal(winner: number): Vec3 {
   return { x: 0, y: winner === 1 ? 5120 : -5120, z: 312 };
 }
 
+/** The podium's spots (InitPodiumCars, the server's PODIUM_SPOTS: MIO-11): blue's, orange's point-mirrored */
+const PODIUM_SPOTS: readonly (readonly [number, number])[] = [
+  [-40, -1670],
+  [-200, -1795],
+  [150, -1820],
+  [-115, -2020],
+];
+
+/** Where the podium's `count` cars stand (the winners by MVPSort take the spots in order; 1 to 4) */
+export function podiumSpots(winner: number, count: number): Vec3[] {
+  const side = winner === 1 ? -1 : 1;
+  return PODIUM_SPOTS.slice(0, Math.min(4, Math.max(1, count))).map(([x, y]) => ({ x: x * side, y: y * side, z: 17 }));
+}
+
 /**
- * CAM-36, the winners-explosion variant: the podium cars' mean (each latched where first seen), from the field side
+ * CAM-36, the winners-explosion variant: the podium cars' mean (their spots: RV-273), from the field side
  * toward the winners' goal, 2° down (the offset rotation in whole degrees), the distance easing from 600 to 400
  * (d = 400 + 200 e^(−1.2 t)), FOV 70, the focus 60 up. `t`: real seconds since the podium began
  */

@@ -59,7 +59,7 @@ test("a team votes to concede: the tally, a failed vote's lockout, a teammate's 
     };
   });
   await vote.click();
-  await expect(page.locator("#settings")).toBeHidden();
+  await expect(page.locator("#pause-menu")).toBeHidden(); // (the vote closes the pause menu)
 
   // The team's widget: shown at once (no fade-in), its bar flashed; the tally and the time; no hint for the voter
   await expect(page.locator("#vote")).toHaveClass(/shown/, { timeout: 15_000 });

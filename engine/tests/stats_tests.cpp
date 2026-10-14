@@ -573,6 +573,25 @@ static void TestMatchEndEvents() {
 		CHECK(NoEvent(h.stats, a->id, MOST_BOOST_PICKUPS) && NoEvent(h.stats, b->id, FEWEST_BOOST_PICKUPS), "30 vs 3: neither");
 	}
 	{
+		// A leaver's counters take no part (SoccarEvent.PRIs: the players here; RV-275)
+		Harness h;
+		Car* a = h.Park(Team::BLUE, Vec(-2000, 0, 17));
+		Car* b = h.Park(Team::ORANGE, Vec(2000, 0, 17));
+		Car* gone = h.Park(Team::ORANGE, Vec(0, 2000, 17));
+		h.Step();
+		h.stats.SetCounter(a->id, BOOST_PICKUPS, 31);
+		h.stats.SetCounter(b->id, BOOST_PICKUPS, 3);
+		h.stats.SetCounter(gone->id, BOOST_PICKUPS, 500);
+		h.stats.SetCounter(gone->id, BALL_TOUCHES, 1);
+		h.stats.SetCounter(a->id, BALL_TOUCHES, 4);
+		uint32_t goneId = gone->id;
+		h.stats.RemoveCar(goneId);
+		h.arena->RemoveCar(gone);
+		h.stats.OnMatchEnded(true);
+		CHECK(HasEvent(h.stats, a->id, MOST_BOOST_PICKUPS, 31) && HasEvent(h.stats, b->id, FEWEST_BOOST_PICKUPS, 3), "the most among those here");
+		CHECK(HasEvent(h.stats, a->id, FEWEST_BALL_TOUCHES, 4) && h.stats.GetStats(goneId) == nullptr, "the leaver's 1 touch isn't the fewest");
+	}
+	{
 		Harness h;
 		Car* a = h.Park(Team::BLUE, Vec(-2000, 3000, 17));
 		Car* b = h.Park(Team::ORANGE, Vec(2000, -3000, 17));

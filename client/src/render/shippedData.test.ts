@@ -349,6 +349,28 @@ describe("what ships carries no game data (RV-99)", () => {
     expect(rest).toBeLessThan(100);
     expect(withoutTopology("[672, 676], [99999, 1]", new Set(["672,676"]))).toBe("          , [99999, 1]");
   });
+  // (no local data needed: CI runs it, RV-276)
+  it("three.js's chunk is told by its modules, not its name: our module or a public file named three-* is checked (RV-225)", () => {
+    const three = ["node_modules/three/build/three.core.js", "node_modules/three/build/three.module.js"];
+    const exempt = libraryFiles({
+      "assets/three-B1.js": [...three, "\0rolldown/runtime.js"], // (the library, the bundler's runtime with it)
+      "assets/three-toy-C2.js": ["src/lib/three-toy.ts"], // (our module, named like it)
+      "assets/three-D3.js": [...three, "src/lib/extra.ts"], // (one of ours in the library's group)
+      "assets/index-E4.js": ["src/main.ts", "../out/arena/data.ts"], // (a module outside src/, imported)
+      "three-data.json": [], // (copied from public/: no modules)
+      "assets/three-F5.js": ["\0rolldown/runtime.js"], // (only the bundler's)
+      "assets/three-I8.js": ["src/node_modules_three/x.ts"], // (a name like it, not the package)
+      "assets/three-J9.js": ["lib/node_modules/three/toy.ts"], // (a folder of ours with the package's path: RV-261)
+    });
+    expect([...exempt]).toEqual(["assets/three-B1.js"]);
+    // (the library where other installs put it: hoisted above client/, pnpm's store: RV-240)
+    const client = join(SRC, "..");
+    const hoisted = { "assets/three-G6.js": ["../../repo/node_modules/three/build/three.module.js"] };
+    expect([...libraryFiles(hoisted, resolve(client, "../../repo/node_modules/three"))]).toEqual(["assets/three-G6.js"]);
+    const pnpm = { "assets/three-H7.js": ["node_modules/.pnpm/three@0.180.0/node_modules/three/build/three.core.js"] };
+    expect([...libraryFiles(pnpm, resolve(client, "node_modules/.pnpm/three@0.180.0/node_modules/three"))]).toEqual(["assets/three-H7.js"]);
+    expect([...libraryFiles(pnpm)]).toEqual([]); // (not where this install has it)
+  });
 });
 
 /** A 2D lookup of points by cells of `cell` */
@@ -1034,27 +1056,6 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
   const built = existsSync(CHUNK_MODULES) ? (JSON.parse(readFileSync(CHUNK_MODULES, "utf8")) as Record<string, string[]>) : {};
   const library = libraryFiles(built);
   const bundle = files(DIST, (n) => kind(n) === "text").filter((p) => !library.has(relative(DIST, p).split("\\").join("/")));
-  it("three.js's chunk is told by its modules, not its name: our module or a public file named three-* is checked (RV-225)", () => {
-    const three = ["node_modules/three/build/three.core.js", "node_modules/three/build/three.module.js"];
-    const exempt = libraryFiles({
-      "assets/three-B1.js": [...three, "\0rolldown/runtime.js"], // (the library, the bundler's runtime with it)
-      "assets/three-toy-C2.js": ["src/lib/three-toy.ts"], // (our module, named like it)
-      "assets/three-D3.js": [...three, "src/lib/extra.ts"], // (one of ours in the library's group)
-      "assets/index-E4.js": ["src/main.ts", "../out/arena/data.ts"], // (a module outside src/, imported)
-      "three-data.json": [], // (copied from public/: no modules)
-      "assets/three-F5.js": ["\0rolldown/runtime.js"], // (only the bundler's)
-      "assets/three-I8.js": ["src/node_modules_three/x.ts"], // (a name like it, not the package)
-      "assets/three-J9.js": ["lib/node_modules/three/toy.ts"], // (a folder of ours with the package's path: RV-261)
-    });
-    expect([...exempt]).toEqual(["assets/three-B1.js"]);
-    // (the library where other installs put it: hoisted above client/, pnpm's store: RV-240)
-    const client = join(SRC, "..");
-    const hoisted = { "assets/three-G6.js": ["../../repo/node_modules/three/build/three.module.js"] };
-    expect([...libraryFiles(hoisted, resolve(client, "../../repo/node_modules/three"))]).toEqual(["assets/three-G6.js"]);
-    const pnpm = { "assets/three-H7.js": ["node_modules/.pnpm/three@0.180.0/node_modules/three/build/three.core.js"] };
-    expect([...libraryFiles(pnpm, resolve(client, "node_modules/.pnpm/three@0.180.0/node_modules/three"))]).toEqual(["assets/three-H7.js"]);
-    expect([...libraryFiles(pnpm)]).toEqual([]); // (not where this install has it)
-  });
   it.skipIf(!existsSync(DIST))("the build recorded every file it wrote (a stale record would hide a chunk: RV-225)", () => {
     const written = files(DIST, (n) => n.endsWith(".js")).map((p) => relative(DIST, p).split("\\").join("/"));
     expect(written.filter((p) => !(p in built))).toEqual([]);

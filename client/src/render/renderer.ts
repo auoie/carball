@@ -20,6 +20,8 @@ export class Renderer {
   readonly #target = new Vector3();
   readonly #forward = new Vector3();
   readonly #projected = new Vector3();
+  readonly #viewDirection = new Vector3();
+  #horizontalFov = 90;
   readonly #observer: ResizeObserver;
   /** Work with the WebGL renderer before the next frame, once each (the arena's reflection capture) */
   readonly #beforeNextFrame: ((gl: WebGLRenderer, scene: Scene) => void)[] = [];
@@ -70,6 +72,17 @@ export class Renderer {
     return { x: rect.left + ((v.x + 1) / 2) * rect.width, y: rect.top + ((1 - v.y) / 2) * rect.height };
   }
 
+  /** How big a world unit at `p` is on the page (CSS px, by its depth along the last frame's view) and the camera's
+   *  distance to it, with the view's horizontal FOV (degrees); null behind the camera */
+  scaleAt(p: Vec3): { readonly pxPerUnit: number; readonly distance: number; readonly horizontalFov: number } | null {
+    const v = toThreeVector(p, this.#projected).sub(this.#camera.position);
+    const depth = v.dot(this.#camera.getWorldDirection(this.#viewDirection));
+    if (depth <= 1) return null;
+    const height = this.#gl.domElement.getBoundingClientRect().height;
+    const focal = height / 2 / Math.tan((this.#camera.fov * Math.PI) / 360);
+    return { pxPerUnit: focal / depth, distance: v.length(), horizontalFov: this.#horizontalFov };
+  }
+
   render(view: CameraView): void {
     // (before the frame's work, the reflection capture's included)
     if (this.heightFog) fogAll(this.scene);
@@ -78,6 +91,7 @@ export class Renderer {
     this.#camera.up.copy(toThreeVector(view.up));
     this.#target.copy(this.#camera.position).add(toThreeVector(view.forward, this.#forward).multiplyScalar(1000));
     this.#camera.lookAt(this.#target);
+    this.#horizontalFov = view.horizontalFov;
     const fov = horizontalToVerticalFov(view.horizontalFov, this.#camera.aspect);
     if (Math.abs(fov - this.#camera.fov) > 1e-3) {
       this.#camera.fov = fov;

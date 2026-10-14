@@ -1,4 +1,5 @@
 // Entry point: load the WebAssembly engine and the arena, then run freeplay.
+import { setInterfaceScale } from "./ui/stage";
 import createEngine from "@engine/rlengine_web.mjs";
 import { CarBody, World, initEngine } from "./engine/world";
 import { Freeplay } from "./game/freeplay";
@@ -14,7 +15,7 @@ import { loadDemolitionHusks } from "./render/demolition";
 import { loadFennec } from "./render/fennec";
 import { TEAM_CAR_COLORS } from "./render/entities";
 import { type ThemeName, createTheme, themeName } from "./render/themes";
-import { loadSettings } from "./settings/settings";
+import { type Settings, loadSettings } from "./settings/settings";
 import { SettingsPanel } from "./ui/settingsPanel";
 import { MatchMenu } from "./ui/matchMenu";
 import { ChatLog, QuickChatPanel } from "./ui/chatLog";
@@ -22,6 +23,9 @@ import { HeldScoreboard } from "./ui/scoreboard";
 import { StatPopups, StatTicker } from "./ui/statFeed";
 import { PlayersMenu, Toast } from "./ui/playersMenu";
 import { EndScreen, PodiumTags, ScreenDimming, WinnerBanner } from "./ui/endOfMatch";
+import { Nameplates } from "./ui/nameplates";
+import { MainMenu } from "./ui/mainMenu";
+import { PauseMenu } from "./ui/pauseMenu";
 import { Renderer } from "./render/renderer";
 import "./style.css";
 
@@ -122,18 +126,68 @@ async function main(): Promise<void> {
   const audio = new GameAudio(name);
   audio.apply(settings.audio, settings.options.muted);
   renderer.postOptions = settings.options;
+  // (the Interface tab: the HUD's stage and its options)
+  const applyInterface = (s: Settings): void => {
+    setInterfaceScale(s.interface.scale, s.interface.displayScale);
+    hud.configure(s.interface);
+  };
+  applyInterface(settings);
   const panel = new SettingsPanel(document.body, settings, (next) => {
     settings = next;
     audio.apply(next.audio, next.options.muted);
     renderer.postOptions = next.options;
+    applyInterface(next);
   });
+  // The menus (MENU-1/4): Escape brings up the pause menu, the settings over it; the main menu as freeplay's page opens
+  let mainMenu: MainMenu | null = null;
+  const pause: PauseMenu = new PauseMenu(document.body, {
+    resume: () => {
+      pause.close();
+    },
+    settings: () => {
+      panel.open();
+    },
+    ...(server === null
+      ? {
+          exit: () => {
+            pause.close();
+            mainMenu?.open();
+          },
+        }
+      : {}),
+  });
+  const menusOpen = (): boolean => panel.isOpen || pause.isOpen || (mainMenu?.isOpen ?? false);
+  window.addEventListener(
+    "keydown",
+    (e) => {
+      if (e.code !== "Escape") return;
+      e.preventDefault();
+      if (panel.isOpen) panel.escape();
+      else if (mainMenu?.isOpen) mainMenu.back();
+      else pause.toggle();
+    },
+    { capture: true },
+  );
   // For the browser tests
   (window as unknown as { rlAudio?: () => unknown }).rlAudio = () => audio.stats;
   (window as unknown as { rlAmbienceLevels?: (theme: ThemeName, seconds: number) => Promise<unknown> }).rlAmbienceLevels = async (t, seconds) =>
     (await import("./audio/levels")).ambienceLevels(t, seconds);
   let game: { frame(dt: number): void };
   if (server === null) {
-    const freeplay = new Freeplay(world, renderer, arena, input, hud, audio, () => settings, () => !panel.isOpen);
+    const freeplay = new Freeplay(world, renderer, arena, input, hud, audio, () => settings, () => !menusOpen());
+    mainMenu = new MainMenu(document.body, {
+      freePlay: () => {
+        mainMenu?.close();
+      },
+      join: (address) => {
+        const query = new URLSearchParams(location.search);
+        query.set("server", address);
+        location.assign(`${location.pathname}?${query.toString()}`);
+      },
+      settings: () => {
+        panel.open();
+      },
+    });
     // For screenshots and the browser tests
     (window as unknown as { rlFreeplay?: unknown }).rlFreeplay = {
       place: (car: { x: number; y: number; yaw: number; boost?: number }, ball?: { x: number; y: number; z: number }) => {
@@ -175,8 +229,14 @@ async function main(): Promise<void> {
     // (the dimming under everything else on the HUD)
     const dimmingUi = new ScreenDimming(hudRoot);
     hudRoot.prepend(...hudRoot.querySelectorAll(".screen-filter, .podium-vignette"));
-    const statsUi = { scoreboard: new HeldScoreboard(hudRoot), popups: new StatPopups(hudRoot), ticker: new StatTicker(hudRoot), toast: new Toast(hudRoot) };
-    // Back to freeplay (the menu's leave, the end screen's exit)
+    const statsUi = {
+      scoreboard: new HeldScoreboard(hudRoot),
+      popups: new StatPopups(hudRoot),
+      ticker: new StatTicker(hudRoot),
+      toast: new Toast(hudRoot),
+      nameplates: new Nameplates(hudRoot),
+    };
+    // Back to the main menu (the menu's leave, the end screen's exit)
     const leave = (): void => {
       connection.close();
       const query = new URLSearchParams(location.search);
@@ -193,32 +253,32 @@ async function main(): Promise<void> {
       },
     });
     const endUi = { banner: new WinnerBanner(hudRoot), dimming: dimmingUi, tags: new PodiumTags(hudRoot), endScreen };
-    const online: Online = new Online(world, renderer, arena, input, hud, audio, connection, welcome, () => settings, () => !panel.isOpen, chat, statsUi, endUi);
-    const players = new PlayersMenu(panel.players, (car, what) => {
+    const online: Online = new Online(world, renderer, arena, input, hud, audio, connection, welcome, () => settings, () => !menusOpen(), chat, statsUi, endUi);
+    const players = new PlayersMenu(pause.players, (car, what) => {
       online.togglePlayer(car, what);
     });
     // For the browser tests
     (window as unknown as { rlOnline?: () => unknown }).rlOnline = () => online.stats;
-    // The menu's match buttons: forfeit or vote (the server's), leave (back to freeplay)
-    const menu = new MatchMenu(panel.match, (action) => {
+    // The pause menu's match buttons: forfeit or vote (the server's), leave (back to the main menu)
+    const menu = new MatchMenu(pause.match, (action) => {
       if (action === "leave") {
         leave();
         return;
       }
       online.voteForfeit();
-      panel.close();
+      pause.close();
     });
     game = {
       frame(dt) {
         online.frame(dt);
-        menu.update(online.menuItems(), panel.isOpen);
-        players.update(online.players(), panel.isOpen);
+        menu.update(online.menuItems(), pause.isOpen);
+        players.update(online.players(), pause.isOpen);
       },
     };
   }
 
   window.addEventListener("keydown", (e) => {
-    if (panel.isOpen) return;
+    if (panel.isOpen || (mainMenu?.isOpen ?? false)) return;
     if (e.code === "KeyH") hud.toggleHelp(settings.bindings);
     if (e.code === "KeyM") panel.apply({ ...settings, options: { ...settings.options, muted: !settings.options.muted } });
   });

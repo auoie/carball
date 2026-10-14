@@ -1,4 +1,4 @@
-// Settings menu (Escape): rebind controls, camera settings, controller settings, audio. Changes apply at once
+// Settings menu (from the pause menu or the main menu): rebind controls, camera settings, controller settings, audio. Changes apply at once
 // and are saved in the browser.
 import type { CameraSettings } from "../camera/rlCamera";
 import { ACTIONS, type Action, type GamepadInput, type KeyboardInput, inputName } from "../input/bindings";
@@ -24,11 +24,37 @@ import {
   saveSettings,
   slotPool,
   tidyName,
+  INTERFACE_LIMITS,
+  type InterfaceSettings,
+  type GameplaySettings,
 } from "../settings/settings";
 import { presetText } from "../game/quickChat";
 import { SCOREBOARD_COLUMNS } from "../game/matchStats";
 
-type Tab = "controls" | "camera" | "controller" | "gameplay" | "scoreboard" | "chat" | "video" | "audio";
+type Tab = "controls" | "camera" | "controller" | "gameplay" | "interface" | "scoreboard" | "chat" | "video" | "audio";
+
+/** The Gameplay tab's lists (verbatim, the game's settings labels: MENU-9) */
+const GAMEPLAY_TEXT = {
+  statDisplayLevel: "Game Stat Display Level",
+  statLevels: { none: "No Stats", primary: "Main Stats Only", all: "All Stats" },
+  flipResetIndicator: "Flip Reset Indicator",
+  flipModes: { off: "Off", audio: "Audio Only", visual: "Visuals Only", on: "On" },
+} as const;
+
+/** The Interface tab's text (verbatim, the game's settings labels: MENU-6) */
+const INTERFACE_TEXT = {
+  scale: "Interface Scale",
+  displayScale: "Display Scale",
+  nameplateScale: "Nameplate Scale",
+  nameplateMode: "Nameplate Mode",
+  nameplateModes: { distanceFade: "Nearby Only", default: "Default", simplified: "Simplified" },
+  matchNotifications: "Match Notifications",
+  notifications: { all: "All", gameUpdates: "Time Updates Only", kickoff: "Kickoffs Only" },
+  teamColoredBoost: "Team-Colored Boost Meter",
+  metric: "Metric",
+  ballCamIndicator: "Ball Cam Indicator",
+  hideHud: "Hide In-Game HUD",
+} as const;
 
 /** The chat settings' text (verbatim: notes/quick-chat.md "Chat UI text") */
 const CHAT_SETTINGS_TEXT = {
@@ -75,7 +101,6 @@ const OPTION_LABELS: Readonly<Record<keyof Options, string>> = {
   cameraShake: "Camera shake (goals, demolitions, pickups, jumps; the Default preset's, off with Modern)",
   airPitchSafety: "Air pitch safety (keyboard: holding W off the ground doesn't pitch until released)",
   muted: "Mute all sound (M)",
-  flipIndicator: "Show the flip indicator (whether you can still dodge, and flip resets)",
   autoSkipReplay: "Skip Goal Replay: Automatically votes to skip the goal replay.", // ([AutoSkipGoalReplay] Label, Description)
   bloom: "Bloom (a glow round the brightest parts)",
   depthOfField: "Depth of Field",
@@ -103,10 +128,8 @@ function el<K extends keyof HTMLElementTagNameMap>(
 export class SettingsPanel {
   readonly #root: HTMLElement;
   readonly #body: HTMLElement;
-  /** Online: where the match's buttons go (src/ui/matchMenu.ts) */
-  readonly match: HTMLElement = el("div", { className: "settings-match" });
-  /** Online: the other players with mute and block (src/ui/playersMenu.ts) */
-  readonly players: HTMLElement = el("div", { className: "settings-players" });
+  /** Called as it closes (the pause menu under it comes back) */
+  onClose: () => void = () => undefined;
   #settings: Settings;
   #tab: Tab = "controls";
   #capture: { action: Action; device: Device; cancel: () => void } | null = null;
@@ -123,6 +146,7 @@ export class SettingsPanel {
       this.#tabButton("camera", "Camera"),
       this.#tabButton("controller", "Controller"),
       this.#tabButton("gameplay", "Gameplay"),
+      this.#tabButton("interface", "Interface"),
       this.#tabButton("scoreboard", "Scoreboard"),
       this.#tabButton("chat", "Chat"),
       this.#tabButton("video", "Video"),
@@ -130,27 +154,16 @@ export class SettingsPanel {
     ]);
     const close = el("button", { className: "settings-close", textContent: "Close (Esc)" });
     close.addEventListener("click", () => { this.close(); });
-    this.#root = el("div", { className: "settings" }, [
-      el("div", { className: "settings-header" }, [el("h2", { textContent: "Settings" }), tabs, this.match, close]),
-      this.players,
-      this.#body,
-    ]);
+    this.#root = el("div", { className: "settings" }, [el("div", { className: "settings-header" }, [el("h2", { textContent: "Settings" }), tabs, close]), this.#body]);
     this.#root.id = "settings";
     this.#root.hidden = true;
     host.append(this.#root);
+  }
 
-    // Escape opens/closes (and cancels a rebind); handled first so the game never sees it
-    window.addEventListener(
-      "keydown",
-      (e) => {
-        if (e.code !== "Escape") return;
-        e.preventDefault();
-        if (this.#capture) this.#stopCapture();
-        else if (this.isOpen) this.close();
-        else this.open();
-      },
-      { capture: true },
-    );
+  /** Escape while it's open: a rebind's capture ends, else it closes */
+  escape(): void {
+    if (this.#capture) this.#stopCapture();
+    else this.close();
   }
 
   get isOpen(): boolean {
@@ -170,7 +183,9 @@ export class SettingsPanel {
 
   close(): void {
     this.#stopCapture();
+    const was = this.isOpen;
     this.#root.hidden = true;
+    if (was) this.onClose();
   }
 
   /** Changes settings from outside the menu (a shortcut key): saved and applied like any change in it. */
@@ -209,7 +224,9 @@ export class SettingsPanel {
             ? this.#controllerTab()
             : this.#tab === "gameplay"
               ? this.#gameplayTab()
-              : this.#tab === "scoreboard"
+              : this.#tab === "interface"
+                ? this.#interfaceTab()
+                : this.#tab === "scoreboard"
                 ? this.#scoreboardTab()
                 : this.#tab === "chat"
                   ? this.#chatTab()
@@ -437,7 +454,72 @@ export class SettingsPanel {
   /** The game's Gameplay settings (MENU-9): the flip indicator, goal replays, free play's boost */
   #gameplayTab(): HTMLElement {
     const box = el("div", { className: "sliders" });
-    box.append(this.#checkboxes(["flipIndicator", "autoSkipReplay", "unlimitedBoost"]));
+    const gameplay = this.#settings.gameplay;
+    const apply = (next: Partial<GameplaySettings>): void => {
+      this.#update({ ...this.#settings, gameplay: { ...this.#settings.gameplay, ...next } });
+    };
+    const T = GAMEPLAY_TEXT;
+    const select = <K extends keyof GameplaySettings>(key: K, label: string, options: Readonly<Record<GameplaySettings[K], string>>): HTMLElement => {
+      const input = el("select");
+      input.dataset["setting"] = key;
+      for (const [value, text] of Object.entries(options) as [GameplaySettings[K], string][]) {
+        input.append(el("option", { value, textContent: text, selected: value === gameplay[key] }));
+      }
+      input.addEventListener("change", () => {
+        if (input.value in options) apply({ [key]: input.value });
+      });
+      return el("label", { className: "option" }, [el("span", { textContent: label }), input]);
+    };
+    box.append(
+      select("statDisplayLevel", T.statDisplayLevel, T.statLevels),
+      select("flipResetIndicator", T.flipResetIndicator, T.flipModes),
+      this.#checkboxes(["autoSkipReplay", "unlimitedBoost"]),
+    );
+    return box;
+  }
+
+  /** Interface: the HUD's scales, the nameplates, which messages show, the boost meter's colours, units, the ball-cam
+   *  indicator, hiding the HUD */
+  #interfaceTab(): HTMLElement {
+    const T = INTERFACE_TEXT;
+    const ui = this.#settings.interface;
+    const apply = (next: Partial<InterfaceSettings>): void => {
+      this.#update({ ...this.#settings, interface: { ...this.#settings.interface, ...next } });
+    };
+    const d = DEFAULT_SETTINGS.interface;
+    const box = this.#sliders(
+      { scale: ui.scale, displayScale: ui.displayScale, nameplateScale: ui.nameplateScale },
+      INTERFACE_LIMITS,
+      { scale: T.scale, displayScale: T.displayScale, nameplateScale: T.nameplateScale },
+      (next) => { apply(next); },
+      { scale: d.scale, displayScale: d.displayScale, nameplateScale: d.nameplateScale },
+      true,
+    );
+    const reset = box.lastElementChild;
+    const select = <K extends "nameplateMode" | "matchNotifications">(key: K, label: string, options: Readonly<Record<InterfaceSettings[K], string>>): HTMLElement => {
+      const input = el("select");
+      input.dataset["setting"] = key;
+      for (const [value, text] of Object.entries(options) as [InterfaceSettings[K], string][]) {
+        input.append(el("option", { value, textContent: text, selected: value === ui[key] }));
+      }
+      input.addEventListener("change", () => {
+        const value = input.value;
+        if (value in options) apply({ [key]: value });
+      });
+      return el("label", { className: "option" }, [el("span", { textContent: label }), input]);
+    };
+    const options = el("div", { className: "options" });
+    for (const key of ["teamColoredBoost", "metric", "ballCamIndicator", "hideHud"] as const) {
+      const input = el("input", { type: "checkbox", checked: ui[key] });
+      input.dataset["setting"] = key;
+      input.addEventListener("change", () => {
+        apply({ [key]: input.checked });
+      });
+      options.append(el("label", { className: "option" }, [input, el("span", { textContent: T[key] })]));
+    }
+    const extra = [select("nameplateMode", T.nameplateMode, T.nameplateModes), select("matchNotifications", T.matchNotifications, T.notifications), options];
+    if (reset) reset.before(...extra);
+    else box.append(...extra);
     return box;
   }
 
@@ -569,6 +651,7 @@ export class SettingsPanel {
     labels: Readonly<Record<keyof T, string>>,
     apply: (next: T) => void,
     defaults: T,
+    percent = false,
   ): HTMLElement {
     const rows = el("div", { className: "sliders" });
     for (const key of Object.keys(limits) as (keyof T & string)[]) {
@@ -581,9 +664,11 @@ export class SettingsPanel {
       input.step = String(range.step);
       input.value = String(value);
       input.dataset["setting"] = key;
-      const output = el("output", { textContent: formatNumber(value, range.step) });
+      // (the game's percentage readout: round(v x 100) "%", HT-5)
+      const shown = (v: number): string => (percent ? `${String(Math.round(v * 100))}%` : formatNumber(v, range.step));
+      const output = el("output", { textContent: shown(value) });
       input.addEventListener("input", () => {
-        output.textContent = formatNumber(Number(input.value), range.step);
+        output.textContent = shown(Number(input.value));
       });
       input.addEventListener("change", () => {
         apply({ ...values, [key]: Number(input.value) });

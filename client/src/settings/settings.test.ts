@@ -93,7 +93,6 @@ describe("settings", () => {
       cameraShake: false, // (the Modern preset's: only the Default preset turns it on)
       airPitchSafety: true,
       muted: false,
-      flipIndicator: true,
       autoSkipReplay: false, // (ProfileGameplaySave bAutoSkipGoalReplay)
       unlimitedBoost: true, // (Unlimited boost in free play, on: MENU-9)
       bloom: true, // (the video options' High preset: PP-16)
@@ -172,5 +171,18 @@ describe("chat settings (CHAT-5, 18)", () => {
     expect([b.chatPreset1.keyboard, b.chatPreset2.keyboard]).toEqual([{ kind: "key", code: "Digit1" }, { kind: "key", code: "Digit2" }]);
     expect(b.chatPreset3.keyboard).toBeNull(); // (a saved binding that drives the car keeps the key)
     expect(b.chatPreset4.keyboard).toEqual({ kind: "key", code: "Digit4" });
+  });
+
+  it("the Interface and Gameplay tabs: defaults, limits, unknown values back to the default (MENU-6/9)", () => {
+    expect(DEFAULT_SETTINGS.interface).toMatchObject({ scale: 1, displayScale: 1, nameplateMode: "default", matchNotifications: "all", teamColoredBoost: true, metric: true });
+    const parsed = parseSettings({ interface: { scale: 0.2, displayScale: 0.95, nameplateMode: "huge", matchNotifications: "kickoff", hideHud: true }, gameplay: { statDisplayLevel: "all" } });
+    expect(parsed.interface).toMatchObject({ scale: 0.5, displayScale: 0.95, nameplateMode: "default", matchNotifications: "kickoff", hideHud: true, ballCamIndicator: true });
+    expect(parsed.gameplay).toEqual({ statDisplayLevel: "all", flipResetIndicator: "on" });
+  });
+
+  it("the old flip indicator checkbox, off, is Flip Reset Indicator Off", () => {
+    expect(parseSettings({ options: { flipIndicator: false } }).gameplay.flipResetIndicator).toBe("off");
+    expect(parseSettings({ options: { flipIndicator: true } }).gameplay.flipResetIndicator).toBe("on");
+    expect(parseSettings({ options: { flipIndicator: false }, gameplay: { flipResetIndicator: "audio" } }).gameplay.flipResetIndicator).toBe("audio");
   });
 });
