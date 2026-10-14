@@ -3,6 +3,7 @@
 #include "Sim/PhysState/RawBodyState.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 
 using namespace RocketSim;
@@ -424,6 +425,8 @@ struct BitReader {
 	}
 };
 
+std::atomic<uint64_t> rawBodies{ 0 };
+
 bool SameBits(float a, float b) { return memcmp(&a, &b, sizeof(float)) == 0; }
 bool SameBits(const btVector3& a, const btVector3& b) { return SameBits(a.x(), b.x()) && SameBits(a.y(), b.y()) && SameBits(a.z(), b.z()); }
 
@@ -484,9 +487,10 @@ btVector3 AngVelFromInts(const int32_t k[3]) {
 bool Sleeping(int activationState) { return activationState == ISLAND_SLEEPING || activationState == DISABLE_SIMULATION; }
 
 struct CompactBody {
-	btVector3 origin, linVel, angVel;
+	// (every component set: Vec copies a btVector3's fourth, and a snapshot holds it, RV-311)
+	btVector3 origin{ 0, 0, 0 }, linVel{ 0, 0, 0 }, angVel{ 0, 0, 0 };
 	Quantize::PackedRotation rotation; // when valid; otherwise the raw basis
-	btMatrix3x3 basis;
+	btMatrix3x3 basis = btMatrix3x3::getIdentity();
 	uint8_t activationState = ACTIVE_TAG;
 	float deactivationTime = 0;
 };
@@ -512,6 +516,8 @@ void WriteCompactBody(BitWriter& w, const btRigidBody& rb, const Quantize::Packe
 		(sleeping ? SameBits(rb.getLinearVelocity(), btVector3(0, 0, 0)) && SameBits(rb.getAngularVelocity(), btVector3(0, 0, 0))
 			: SameBits(LinVelFromInts(vel), rb.getLinearVelocity()) && SameBits(AngVelFromInts(ang), rb.getAngularVelocity()));
 	w.Bool(!exact);
+	if (!exact)
+		rawBodies++;
 	w.Put((uint32_t)activation, 3);
 	w.Bool(rb.getDeactivationTime() != 0);
 	if (rb.getDeactivationTime() != 0)
@@ -635,10 +641,20 @@ struct CompactCar {
 	CompactBody body;
 	bool hasJumped, hasDoubleJumped, hasFlipped, isFlipping, isJumping, isBoosting, isSupersonic, isAutoFlipping, isDemoed, jumpReleased;
 	bool jump, boost, handbrake, airPitchSafety, hasDodgeForward;
+	bool lastJump; // the last tick's jump (its press edge; after a placement the last controls are fresh: RV-309)
 	int8_t axes[6]; // throttle, steer, pitch, yaw, roll, dodge forward
 	uint8_t boostAmount, spawnCount, flipResets;
+	bool boostExact; // the boost isn't a byte's value: sent as it is (`boostValue`; the game corrects the owner's exactly: RV-310)
+	float boostValue;
 	int8_t torque[3];
 	float demoRespawnTimer;
+	// While demolished: its respawn spot's selection (the steer's side and index, the prespawn lock), as the exact form
+	// carries them (the spot's random start is seeded from the arena's tick count, which differs: RV-308)
+	int8_t spawnSelectLast;
+	uint8_t spawnPreference, spawnIndex;
+	bool prespawnSet;
+	btVector3 prespawnPos{ 0, 0, 0 };
+	float prespawnYaw;
 	float timers[TIMERS];
 	uint32_t contactCar;
 	bool held;
@@ -651,7 +667,8 @@ void WriteCompactCar(BitWriter& w, Car* car, float tickTime) {
 	w.Id(car->id);
 	WriteCompactBody(w, car->_rigidBody, car->_netRotation);
 	for (bool b : { s.hasJumped, s.hasDoubleJumped, s.hasFlipped, s.isFlipping, s.isJumping, s.isBoosting, s.isSupersonic,
-		s.isAutoFlipping, s.isDemoed, s.jumpReleased, c.jump, c.boost, c.handbrake, c.airPitchSafety, c.hasDodgeForward })
+		s.isAutoFlipping, s.isDemoed, s.jumpReleased, c.jump, c.boost, c.handbrake, c.airPitchSafety, c.hasDodgeForward,
+		s.lastControls.jump })
 		w.Bool(b);
 	w.Put((uint8_t)Quantize::InputAxisByte(c.throttle), 8);
 	w.Put((uint8_t)Quantize::InputAxisByte(c.steer), 8);
@@ -660,14 +677,29 @@ void WriteCompactCar(BitWriter& w, Car* car, float tickTime) {
 	if (air)
 		for (float v : { c.pitch, c.yaw, c.roll, c.hasDodgeForward ? c.dodgeForward : 0.f })
 			w.Put((uint8_t)Quantize::InputAxisByte(v), 8);
-	w.Put(BoostByte(s.boost), 8);
+	bool boostExact = !SameBits(BoostFromByte(BoostByte(s.boost)), s.boost);
+	w.Bool(boostExact);
+	if (boostExact)
+		w.F32(s.boost);
+	else
+		w.Put(BoostByte(s.boost), 8);
 	w.Put((uint8_t)s.spawnCount, 8);
 	w.Put((uint8_t)s.flipResets, 8);
 	if (s.isFlipping)
 		for (int i = 0; i < 3; i++)
 			w.Put((uint8_t)TorqueByte(s.flipRelTorque[i]), 8);
-	if (s.isDemoed)
+	if (s.isDemoed) {
 		w.F32(s.demoRespawnTimer);
+		w.Put((uint8_t)s.demoSpawnSelectLast, 8);
+		w.Put(s.demoSpawnPreference, 8);
+		w.Put(s.demoSpawnIndex, 8);
+		w.Bool(s.prespawnSet);
+		if (s.prespawnSet) {
+			for (int i = 0; i < 3; i++)
+				w.F32(s.prespawnPos[i]);
+			w.F32(s.prespawnYaw);
+		}
+	}
 	float* timers[TIMERS];
 	Timers(s, timers);
 	for (int i = 0; i < TIMERS; i++) {
@@ -691,19 +723,37 @@ void ReadCompactCar(BitReader& r, CompactCar& d, float tickTime) {
 	d.id = r.Id();
 	ReadCompactBody(r, d.body);
 	for (bool* b : { &d.hasJumped, &d.hasDoubleJumped, &d.hasFlipped, &d.isFlipping, &d.isJumping, &d.isBoosting, &d.isSupersonic,
-		&d.isAutoFlipping, &d.isDemoed, &d.jumpReleased, &d.jump, &d.boost, &d.handbrake, &d.airPitchSafety, &d.hasDodgeForward })
+		&d.isAutoFlipping, &d.isDemoed, &d.jumpReleased, &d.jump, &d.boost, &d.handbrake, &d.airPitchSafety, &d.hasDodgeForward,
+		&d.lastJump })
 		*b = r.Bool();
 	d.axes[0] = (int8_t)r.Get(8);
 	d.axes[1] = (int8_t)r.Get(8);
 	bool air = r.Bool();
 	for (int i = 2; i < 6; i++)
 		d.axes[i] = air ? (int8_t)r.Get(8) : 0;
-	d.boostAmount = (uint8_t)r.Get(8);
+	d.boostExact = r.Bool();
+	d.boostValue = d.boostExact ? r.F32() : 0.f;
+	d.boostAmount = d.boostExact ? 0 : (uint8_t)r.Get(8);
 	d.spawnCount = (uint8_t)r.Get(8);
 	d.flipResets = (uint8_t)r.Get(8);
 	for (int i = 0; i < 3; i++)
 		d.torque[i] = d.isFlipping ? (int8_t)r.Get(8) : 0;
 	d.demoRespawnTimer = d.isDemoed ? r.F32() : 0.f;
+	d.spawnSelectLast = 0;
+	d.spawnPreference = d.spawnIndex = 0;
+	d.prespawnSet = false;
+	d.prespawnYaw = 0;
+	if (d.isDemoed) {
+		d.spawnSelectLast = (int8_t)r.Get(8);
+		d.spawnPreference = (uint8_t)r.Get(8);
+		d.spawnIndex = (uint8_t)r.Get(8);
+		d.prespawnSet = r.Bool();
+		if (d.prespawnSet) {
+			for (int i = 0; i < 3; i++)
+				d.prespawnPos[i] = r.F32();
+			d.prespawnYaw = r.F32();
+		}
+	}
 	for (int i = 0; i < TIMERS; i++)
 		d.timers[i] = r.Bool() ? r.F32() : TimerRest(i, tickTime);
 	d.contactCar = SameBits(d.timers[TIMERS - 1], TimerRest(TIMERS - 1, tickTime)) ? 0 : r.Id();
@@ -722,7 +772,26 @@ void OverlayAxis(float& v, int8_t q) {
 
 void OverlayCar(Arena* arena, const CompactCar& d, Car* car) {
 	OverlayBody(d.body, car->_rigidBody, car->_netRotation);
-	CarState s = car->_internalState;
+	// Placed by the server since (its spawn counter moved: a kickoff, a respawn, a teleport): a fresh state, as the
+	// placement's (Car::_RespawnAt), not the client's own wheel values and contacts (RV-309)
+	uint16_t spawnCount = CounterNear(car->_internalState.spawnCount, d.spawnCount);
+	bool placed = spawnCount != car->_internalState.spawnCount;
+	CarState s = placed ? CarState() : car->_internalState;
+	if (placed) {
+		for (int i = 0; i < car->_bulletVehicle.m_wheelInfo.size() && i < 4; i++) {
+			btWheelInfoRL& wheel = car->_bulletVehicle.m_wheelInfo[i];
+			const CarState::WheelCarry& carry = s.wheelCarry.wheels[i];
+			wheel.m_steerAngle = carry.steerAngle;
+			wheel.m_engineForce = carry.engineForce;
+			wheel.m_brake = carry.brake;
+			wheel.m_latFriction = carry.latFriction;
+			wheel.m_longFriction = carry.longFriction;
+			wheel.m_extraPushback = carry.extraPushback;
+			wheel.m_raycastInfo.m_isInContact = s.wheelsWithContact[i];
+			wheel.m_isInContactWithWorld = carry.worldContact;
+			wheel.m_raycastInfo.m_contactNormalWS = carry.contactNormal;
+		}
+	}
 	const btTransform& t = car->_rigidBody.getWorldTransform();
 	s.pos = t.getOrigin() * BT_TO_UU;
 	s.rotMat = t.getBasis();
@@ -744,16 +813,27 @@ void OverlayCar(Arena* arena, const CompactCar& d, Car* car) {
 		*timers[i] = d.timers[i];
 	if (d.contactCar)
 		s.carContact.otherCarID = d.contactCar;
-	if (d.isDemoed)
+	if (d.isDemoed) {
 		s.demoRespawnTimer = d.demoRespawnTimer;
-	if (BoostByte(s.boost) != d.boostAmount)
+		s.demoSpawnSelectLast = d.spawnSelectLast;
+		s.demoSpawnPreference = d.spawnPreference;
+		s.demoSpawnIndex = d.spawnIndex;
+		s.prespawnSet = d.prespawnSet;
+		if (d.prespawnSet) {
+			s.prespawnPos = d.prespawnPos;
+			s.prespawnYaw = d.prespawnYaw;
+		}
+	}
+	if (d.boostExact)
+		s.boost = d.boostValue;
+	else if (BoostByte(s.boost) != d.boostAmount)
 		s.boost = BoostFromByte(d.boostAmount);
 	if (d.isFlipping)
 		for (int i = 0; i < 3; i++)
 			if (TorqueByte(s.flipRelTorque[i]) != d.torque[i])
 				s.flipRelTorque[i] = (float)d.torque[i] / 127.f;
-	s.spawnCount = CounterNear(s.spawnCount, d.spawnCount);
-	s.flipResets = CounterNear(s.flipResets, d.flipResets);
+	s.spawnCount = spawnCount;
+	s.flipResets = CounterNear(car->_internalState.flipResets, d.flipResets);
 
 	// The controls of the tick (the game replicates a car's inputs to the others): its last controls too, as after a tick
 	CarControls c = car->controls;
@@ -773,6 +853,7 @@ void OverlayCar(Arena* arena, const CompactCar& d, Car* car) {
 		c.dodgeForward = 0;
 	car->controls = c;
 	s.lastControls = c;
+	s.lastControls.jump = d.lastJump;
 	s.tickCountSinceUpdate = car->_internalState.tickCountSinceUpdate;
 	car->_internalState = s;
 	car->_velocityImpulseCache = { 0, 0, 0 };
@@ -836,9 +917,9 @@ void WriteCompact(Arena* arena, DataStreamOut& out, const WriteOptions& options)
 }
 
 bool ApplyCompact(Arena* arena, DataStreamIn& in, std::vector<uint32_t>* carIds) {
-	if (in.data.empty() || in.data[0] != COMPACT_VERSION)
+	if (in.pos >= in.data.size() || in.data[in.pos] != COMPACT_VERSION)
 		return false;
-	BitReader r{ in.data, 8 };
+	BitReader r{ in.data, (uint64_t)(in.pos + 1) * 8 };
 	uint32_t has = r.Get(4);
 	uint32_t countdown = r.Bool() ? r.Get(16) : 0;
 	Arena::GoalExplosion ex;
@@ -919,6 +1000,8 @@ bool ApplyCompact(Arena* arena, DataStreamIn& in, std::vector<uint32_t>* carIds)
 
 } // namespace
 
+uint64_t CompactRawBodies() { return rawBodies; }
+
 void Write(Arena* arena, DataStreamOut& out, const WriteOptions& options) {
 	if (options.exact)
 		WriteExact(arena, out, options);
@@ -927,7 +1010,7 @@ void Write(Arena* arena, DataStreamOut& out, const WriteOptions& options) {
 }
 
 bool Read(Arena* arena, DataStreamIn& in, std::vector<uint32_t>* carIds) {
-	if (!in.data.empty() && in.data[in.pos] == COMPACT_VERSION)
+	if (in.pos < in.data.size() && in.data[in.pos] == COMPACT_VERSION)
 		return ApplyCompact(arena, in, carIds);
 	return ReadExact(arena, in, carIds);
 }

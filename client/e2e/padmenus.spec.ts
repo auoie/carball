@@ -1,5 +1,6 @@
 // The menus with a pad (src/ui/padNav.ts): Start opens the pause menu, the D-pad moves a visible focus, A presses, B
-// backs out (the settings, then the pause menu), Start closes; a held A after the menu doesn't jump the car.
+// backs out (the settings, then the pause menu), Start closes; a held A after the menu doesn't jump the car. (Nothing
+// drawn: `?render=off`.)
 import { type Page } from "@playwright/test";
 import { expect, fakeGamepad, test } from "./fixtures";
 
@@ -37,7 +38,7 @@ test("menus with a pad: Start, the D-pad's focus, A, B (MENU-1/4)", async ({ pag
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await fakeGamepad(context);
-  await page.goto("/");
+  await page.goto("/?render=off");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
   // The main menu: its first control (Play) highlighted at once, A presses it: Free Play's page
   const menu = page.locator("#main-menu");

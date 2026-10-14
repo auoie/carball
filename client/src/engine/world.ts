@@ -280,6 +280,18 @@ export class World {
     this.#sim.setPodium(on);
   }
 
+  /** A car's components on (the default) or off: another player's car on an online client, as the game's
+   *  SimulatedProxy, drives but doesn't jump, dodge, boost or air-roll between the server's states (Car::_componentsOff).
+   *  This world's setting, kept over loaded states. */
+  setCarComponents(id: number, on: boolean): void {
+    if (on) this.#componentsOff.delete(id);
+    else this.#componentsOff.add(id);
+    this.#sim.setCarComponents(id, on);
+  }
+
+  /** The cars whose components are off */
+  readonly #componentsOff = new Set<number>();
+
   /** Demolitions on (the default: an authority, freeplay) or off (an online client's prediction: the server demolishes,
    *  supersonic hits predicted as bumps: RV-112). */
   setDemolitions(on: boolean): void {
@@ -508,5 +520,6 @@ export class World {
     // (a saved state carries its arena's mutators, the server's demolitions among them: this world's setting again,
     // or an online client predicts demolitions after every join and leave, RV-137)
     if (!this.#demolitions) this.#sim.setDemolitions(false);
+    for (const id of this.#componentsOff) this.#sim.setCarComponents(id, false);
   }
 }

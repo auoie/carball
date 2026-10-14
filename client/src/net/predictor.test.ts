@@ -177,7 +177,9 @@ describe("Predictor", () => {
     r.client.dispose();
   });
 
-  it("only cars in an update get a new prediction basis: a far car's inputs still fade out", () => {
+  it("the game's rule: a car missing from updates drives on with its last replicated throttle and steer", () => {
+    // (the game's car PreAsyncTick sets a SimulatedProxy's Throttle/Steer/bHandbrake from its replicated values every
+    // frame: notes/netcode-live.md §4; the earlier "fade" model let them fade out, below)
     const server = World.create(engine);
     const local = server.addCar(0);
     const near = server.addCar(1);
@@ -185,20 +187,78 @@ describe("Predictor", () => {
     server.resetKickoff(4);
     for (const car of [near, far]) server.setControls(car, { ...inputControls(NO_INPUT), throttle: 1, steer: 1 });
     server.step();
-    const client = World.create(engine);
-    client.loadState(server.saveState()); // (frame 0: both cars driving with full throttle and steer)
-    const predictor = new Predictor(client, local, 0);
-    predictor.correct(0, [server.writeNetState({ ball: true, carIds: [local, near, far], pads: true })]);
-    // Updates that hold only the near car, while the far car's inputs fade (INPUT_FADE_FRAMES)
-    for (let f = 1; f <= 30; f++) {
-      predictor.advance(NO_INPUT);
-      if (f % 2 === 0) predictor.correct(f, [server.writeNetState({ ball: true, carIds: [local, near], pads: true })]);
+    for (const model of ["game", "fade"] as const) {
+      const client = World.create(engine);
+      client.loadState(server.saveState()); // (frame 0: both cars driving with full throttle and steer)
+      const predictor = new Predictor(client, local, 0, model);
+      predictor.correct(0, [server.writeNetState({ ball: true, carIds: [local, near, far], pads: true })]);
+      for (let f = 1; f <= 30; f++) {
+        predictor.advance(NO_INPUT);
+        if (f % 2 === 0) predictor.correct(f, [server.writeNetState({ ball: true, carIds: [local, near], pads: true })]);
+      }
+      const controls = client.carControls(far);
+      expect(controls.throttle, model).toBe(model === "game" ? 1 : 0);
+      expect(controls.steer, model).toBe(model === "game" ? 1 : 0);
+      client.dispose();
     }
-    const controls = client.carControls(far);
-    expect(controls.throttle).toBe(0);
-    expect(controls.steer).toBe(0);
+    server.dispose();
+  });
+
+  it("the game's rule: a car's changed inputs rewrite the replayed frames, fading out over 0.1 s; new frames take them in full", () => {
+    const server = World.create(engine);
+    const local = server.addCar(0);
+    const other = server.addCar(1);
+    server.resetKickoff(4);
+    const client = World.create(engine);
+    client.loadState(server.saveState()); // (frame 0: the other car idle)
+    const predictor = new Predictor(client, local, 0);
+    for (let f = 1; f <= 20; f++) {
+      server.setControls(other, { ...inputControls(NO_INPUT), throttle: 1, steer: -1 });
+      server.step();
+      predictor.advance(NO_INPUT);
+    }
+    // The server's state after frame 14 arrives at frame 20: the car's inputs differ from those recorded for frame 14,
+    // so frames 14..20 replay with them faded: 6 frames on, half of them
+    const ack = 14;
+    const replay = World.create(engine);
+    replay.loadState(server.saveState());
+    expect(predictor.correct(ack, [server.writeNetState({ ball: true, carIds: [local, other], pads: true })])).toBe(6);
+    // (as the engine keeps an axis: a byte, 0.5 -> 64/127)
+    expect(client.carControls(other).throttle).toBeCloseTo(0.5, 2);
+    expect(client.carControls(other).steer).toBeCloseTo(-0.5, 2);
+    // The next frame is new: the replicated values in full
+    predictor.advance(NO_INPUT);
+    expect(client.carControls(other).throttle).toBe(1);
+    expect(client.carControls(other).steer).toBe(-1);
+    replay.dispose();
     server.dispose();
     client.dispose();
+  });
+
+  it("the game's rule: another car's boost and air control don't run on the client (its components are off)", () => {
+    // Another car in the air, boosting (the server's state after its first boosting tick): on the client it falls as
+    // the server's states show it (the game's SimulatedProxy); with its components on, the client would boost it on
+    const server = World.create(engine);
+    const local = server.addCar(0);
+    const other = server.addCar(1);
+    server.resetKickoff(4);
+    server.setCar(other, { pos: { x: 0, y: 2000, z: 800 }, vel: { x: 0, y: 0, z: 0 }, angVel: { x: 0, y: 0, z: 0 }, rot: server.car(other).rot, boost: 100 });
+    server.setControls(other, { ...inputControls(NO_INPUT), boost: true, throttle: 1 });
+    server.step();
+    const speeds: Record<string, number> = {};
+    for (const model of ["game", "gameComponents"] as const) {
+      const client = World.create(engine);
+      client.loadState(server.saveState());
+      const predictor = new Predictor(client, local, 1, model);
+      predictor.correct(1, [server.writeNetState({ ball: true, carIds: [local, other], pads: true })]);
+      for (let f = 2; f <= 30; f++) predictor.advance(NO_INPUT);
+      const v = client.car(other).vel;
+      speeds[model] = Math.hypot(v.x, v.y);
+      client.dispose();
+    }
+    expect(speeds["game"]).toBeLessThan(30); // (the first tick's boost, no more)
+    expect(speeds["gameComponents"]).toBeGreaterThan(200);
+    server.dispose();
   });
 
   it("an older update arriving after a newer one still applies, without undoing the newer one (NR-6)", () => {

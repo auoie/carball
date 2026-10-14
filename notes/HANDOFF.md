@@ -38,6 +38,34 @@ indicator), the full §13 harness, free-play polish.
 - Kept from the first harness step: `server/src/netsim.rs` (seeded paths; `client/src/testing/netsim.ts` its twin,
   checked against the vectors it writes), the input buffer's T2 tests (`server/src/net_tests.rs`).
 
+**G2 (other players' cars), 2026-10-14**, decided with T5 (`client/src/net/remoteInputs.test.ts`): the game's rule
+(notes/netcode-live.md §4, its SimulatedProxy), the static session's recommendation. `client/src/net/predictor.ts`
+records each other car's controls per frame; a new frame takes its replicated throttle, steer and handbrake in full
+(and the boost button, for the vehicle's full throttle while boosting on the ground: GA-1, which the game's server
+applies before replicating the throttle), the rest from the frame before; when its state arrives with inputs other
+than recorded, the recorded frames from its frame are rewritten, the axes fading out over 0.1 s, and replayed. Its
+components don't run on the client (`Car::_componentsOff`, `World.setCarComponents`: jump, double jump, dodge, air
+control and its air throttle, auto-flip, boost): those show only in the server's states. T5 (3 models × 50/100/150 ms,
+scripted bots and the check sample's replay inputs, local data): "gameComponents" (the components on the server's
+jump and boost) never halves the corrections; with real inputs the game's rule beats the earlier fade at p50 and p99.
+The v1 order and the security items (SEC-1..11, from the static session's review) are in the memory plan; SEC-1 (a
+kickoff with more cars on a team than spots overran RocketSim's respawn table: `% CAR_RESPAWN_LOCATION_AMOUNT`; the
+server takes two teams of the playlist's size, a requested team while it has room), SEC-4 (mutes only of players
+here), SEC-10 (Hello's preferences clamped) and saturating input counters came with G2. The browser tests that read no
+pixels load with `?render=off` (`Renderer.draws`).
+The review of G1 (RX8, RV-308..319) came with G2: the compact car carries its respawn selection while demolished
+(RV-308: the spot's random start is seeded from the tick count), a placement (the spawn counter moved) starts the
+client's car from a fresh state with the last tick's jump bit sent (RV-309), the owner's boost exact when it isn't a
+byte's value (RV-310), the compact bodies' vectors initialised (RV-311); the engine's netstate check re-encodes the
+client after each update and must send the server's bytes (RV-312); replication.rs's forcing rules unit-tested
+(RV-313); the session's wiring tested (`client/src/net/sessionWiring.test.ts`, RV-314); a car's updates 4 or 5 updates
+apart, the replays' 13.4 a second (RV-315); the Rust tests check the TypeScript twins' vectors and write them only with
+`REGENERATE_VECTORS=1` (RV-317). G1's step (2) (no stale datagrams queued; `send_datagram` errors counted) isn't done:
+at ≈ 5 KB/s the path never backs up.
+**The browser tests' servers** start from `client/e2e/servers.ts` (Playwright's globalSetup), not its webServer: here a
+connection to a closed 127.0.0.1 port is dropped, not refused, and Playwright's pre-check of each server's URL waited
+2 min 14 s per server (9 of the suite's 12 minutes).
+
 ## Earlier (2026-10-08)
 - **Where:** the repository is on the data drive, `/mnt/primary/home/arch/rocket-league-reverse-engineering`, the
   same path from Arch and WSL. `engine/build` and `engine/build-wasm` were rebuilt at this path (the old ones are

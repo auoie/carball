@@ -149,17 +149,17 @@ impl InputBuffer {
             let number = first_frame.wrapping_add(i as u32);
             self.last_received_frame = self.last_received_frame.max(number);
             if self.last_processed_frame.is_some() && number <= self.last_consumed_frame {
-                self.stats.late_dropped += 1;
+                self.stats.late_dropped = self.stats.late_dropped.saturating_add(1);
                 continue;
             }
             match self.frames.binary_search_by_key(&number, |(n, _)| *n) {
-                Ok(_) => self.stats.duplicates += 1,
+                Ok(_) => self.stats.duplicates = self.stats.duplicates.saturating_add(1),
                 Err(at) => self.frames.insert(at, (number, *frame)),
             }
         }
         while self.frames.len() > MAX_BUFFERED_FRAMES {
             self.frames.pop_front();
-            self.stats.trimmed += 1;
+            self.stats.trimmed = self.stats.trimmed.saturating_add(1);
         }
         newest
     }
@@ -167,9 +167,9 @@ impl InputBuffer {
     fn consume_one(&mut self) {
         if let Some((number, frame)) = self.frames.pop_front() {
             if self.stats.consumed > 0 && number > self.last_consumed_frame.wrapping_add(1) {
-                self.stats.never_consumed += number - self.last_consumed_frame - 1;
+                self.stats.never_consumed = self.stats.never_consumed.saturating_add(number - self.last_consumed_frame - 1);
             }
-            self.stats.consumed += 1;
+            self.stats.consumed = self.stats.consumed.saturating_add(1);
             self.controls = frame.controls();
             self.last_processed_frame = Some(number);
             self.last_consumed_frame = number;
@@ -199,24 +199,24 @@ impl InputBuffer {
         if self.frames.is_empty() {
             if now - self.last_packet_time > INPUT_TIMEOUT {
                 self.controls = Controls::default();
-                self.stats.zeroed += 1;
+                self.stats.zeroed = self.stats.zeroed.saturating_add(1);
             } else {
-                self.stats.repeated += 1;
+                self.stats.repeated = self.stats.repeated.saturating_add(1);
             }
             self.filling = true;
             self.skip_one();
-            self.stats.under_buffer_frames += 1;
+            self.stats.under_buffer_frames = self.stats.under_buffer_frames.saturating_add(1);
         } else {
             if !self.filling || !odd_tick {
                 self.consume_one();
                 first = Some(self.controls.jump != 0);
             } else {
                 self.skip_one();
-                self.stats.fill_skips += 1;
+                self.stats.fill_skips = self.stats.fill_skips.saturating_add(1);
             }
             if (self.jitter.buffer_size as usize) < self.frames.len() {
                 self.consume_one();
-                self.stats.over_buffer_frames += 1;
+                self.stats.over_buffer_frames = self.stats.over_buffer_frames.saturating_add(1);
                 second = true;
             }
         }

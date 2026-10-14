@@ -1,4 +1,4 @@
-// Browser end-to-end tests against the production build (`npm run build` first) and a local game server.
+// Browser end-to-end tests against the production build (`npm run build` first) and local game servers (e2e/servers.ts).
 // Uses the installed Google Chrome, with software WebGL so it also runs headless without a GPU.
 import { defineConfig } from "@playwright/test";
 
@@ -11,33 +11,7 @@ export default defineConfig({
     viewport: { width: 1280, height: 720 },
     launchOptions: { args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] },
   },
-  webServer: [
-    {
-      command: "npx vite preview --port 4173 --strictPort",
-      url: "http://localhost:4173",
-      reuseExistingServer: true,
-    },
-    {
-      // The game server for the online tests (the first run builds it)
-      command: "cargo run --quiet --manifest-path ../server/Cargo.toml -- --port 14433 --info-port 14434",
-      url: "http://127.0.0.1:14434/info",
-      reuseExistingServer: false,
-      timeout: 600_000,
-    },
-    {
-      // One whose rounds end in a goal 1 s after go (the goal sequence's test)
-      command: "cargo run --quiet --manifest-path ../server/Cargo.toml -- --port 14435 --info-port 14436 --test-goal-after 1",
-      url: "http://127.0.0.1:14436/info",
-      reuseExistingServer: false,
-      timeout: 600_000,
-    },
-    {
-      // A 2v2 casual playlist whose forfeit votes are allowed once the clock runs (the forfeit and leave tests)
-      command: "cargo run --quiet --manifest-path ../server/Cargo.toml -- --port 14437 --info-port 14438 --team-size 2 --forfeit-vote-wait 0",
-      url: "http://127.0.0.1:14438/info",
-      reuseExistingServer: false,
-      timeout: 600_000,
-    },
-  ],
+  // The preview of the production build and the game servers (e2e/servers.ts)
+  globalSetup: "./e2e/servers.ts",
   outputDir: "test-results",
 });

@@ -2,13 +2,14 @@
 import type { Browser, Page } from "@playwright/test";
 import { expect, hideGamepads } from "./fixtures";
 
-/** Joins `server` (host:info port), the page's errors collected in `errors` */
+/** Joins `server` (host:info port), the page's errors collected in `errors` (nothing drawn, `?render=off`: no online test
+ *  reads pixels) */
 export async function join(page: Page, server: string, errors: string[]): Promise<void> {
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => {
     if (m.type() === "error") errors.push(m.text());
   });
-  await page.goto(`/?server=${server}`);
+  await page.goto(`/?server=${server}&render=off`);
   // (generous: a third page under the suite's load can take over 30 s to its first frame)
   await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
 }

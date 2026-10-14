@@ -300,6 +300,7 @@ fn per_minute(count: u32, seconds: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::netsim::check_vectors;
 
     /// The TypeScript port's parity vectors (client/src/testing/serverConsume.test.ts): a run through jitter, loss,
     /// duplicates, a stall, an outage, a hitch and jump taps, every receive and tick with its outcome
@@ -317,11 +318,7 @@ mod tests {
         run.trace = true;
         let out = simulate(&run);
         let text = format!("[\n{}\n]\n", out.trace.join(",\n"));
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../client/src/testing/serverConsume.vectors.json");
-        if std::fs::read_to_string(path).is_ok_and(|old| old == text) {
-            return;
-        }
-        std::fs::write(path, text).unwrap();
+        check_vectors(concat!(env!("CARGO_MANIFEST_DIR"), "/../client/src/testing/serverConsume.vectors.json"), &text);
     }
 
     fn normal(sigma_ms: f64) -> Profile {
@@ -378,7 +375,7 @@ mod tests {
 
     #[test]
     fn t2d_a_stall_grows_it_at_once_and_it_comes_back() {
-        // (d) a 150 ms stall: 7 → 11 at once, ≈ 13 repeated ticks, then over ≈ 5–7, back to 7 in ≈ 25–30 s, no reset
+        // (d) a 150 ms stall: 7 → 11 at once, ≈ 13 repeated ticks, then over ≈ 10–14, back to 7 in ≈ 25–30 s, no reset
         let mut run = Run::new(60.0, 60.0, Profile::constant(50.0));
         run.up.stalls = vec![Stall { at_s: 10.0, ms: 150.0, every_s: 0.0 }];
         let out = simulate(&run);
@@ -391,7 +388,7 @@ mod tests {
         // (10: every frame held back by the stall arrives at once and is still newer than the last consumed (skips move
         // LastProcessedFrame, not LastProcessedReceivedFrame), the queue then ~25 over a target of 11: the game's too, NL1)
         let over = out.delta(10.0, 20.0).over_buffer_frames;
-        assert!((8..=12).contains(&over), "over {over}");
+        assert!((10..=14).contains(&over), "over {over}");
         let back = out.samples(10.5, 60.0).find(|s| s.target == 7).map(|s| s.t - 10.0);
         assert!(back.is_some_and(|b| (15.0..=40.0).contains(&b)), "back to 7 after {back:?} s");
         assert!(out.resets.is_empty());

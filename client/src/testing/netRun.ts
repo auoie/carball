@@ -7,7 +7,7 @@ import type createEngine from "@engine/rlengine.mjs";
 import { type BodyState, type CarState, World } from "../engine/world";
 import { Interpolated } from "../game/interpolated";
 import { SyncError } from "../game/syncError";
-import { inputControls } from "../net/predictor";
+import { type RemoteModel, inputControls } from "../net/predictor";
 import { BIT_BOOST, BIT_JUMP, type InputFrame, type Update, quantizeAxis } from "../net/protocol";
 import { NetSession, type SmoothedCar } from "../net/session";
 import { NetSim, Pcg32, type Profile } from "./netsim";
@@ -18,20 +18,27 @@ type Engine = Awaited<ReturnType<typeof createEngine>>;
 const TICK = 1 / 120;
 const UPDATE_HEADER = 25;
 
-/** count, mean, 95th percentile, largest */
+/** count, mean, median, 95th and 99th percentiles, largest */
 export interface Summary {
   readonly count: number;
   readonly mean: number;
+  readonly p50: number;
   readonly p95: number;
+  readonly p99: number;
   readonly max: number;
 }
 
-function summary(values: readonly number[]): Summary {
-  if (values.length === 0) return { count: 0, mean: 0, p95: 0, max: 0 };
+export function summary(values: readonly number[]): Summary {
+  if (values.length === 0) return { count: 0, mean: 0, p50: 0, p95: 0, p99: 0, max: 0 };
   const sorted = [...values].sort((a, b) => a - b);
   const mean = values.reduce((a, b) => a + b, 0) / values.length;
-  return { count: values.length, mean, p95: sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))] ?? 0, max: sorted.at(-1) ?? 0 };
+  const at = (q: number): number => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * q))] ?? 0;
+  return { count: values.length, mean, p50: at(0.5), p95: at(0.95), p99: at(0.99), max: sorted.at(-1) ?? 0 };
 }
+
+/** A car's input for a frame (120 a second): `player` 0 is the client's (its world: the client's prediction), the
+ *  others the server's (its world) */
+export type Driver = (player: number, frame: number, world: World, car: number) => InputFrame;
 
 export interface NetRunResult {
   /** How far each correction moved the local car's, the bot's and the ball's present state (uu), after the warm-up */
@@ -49,6 +56,11 @@ export interface NetRunResult {
   readonly buffer: { readonly target: number; readonly under: number; readonly over: number; readonly repeated: number; readonly zeroed: number; readonly neverConsumed: number; readonly ticks: number };
   /** Downstream, what the client received a second (KB, the update datagrams) */
   readonly downKBps: number;
+  /** Every correction's size, per class (uu) */
+  readonly errors: { readonly local: readonly number[]; readonly remote: readonly number[]; readonly ball: readonly number[] };
+  /** How far corrections moved each class a second, all summed (uu/s; the per-correction sizes depend on how often a
+   *  body's state comes, this doesn't) */
+  readonly movedPerSecond: { readonly local: number; readonly remote: number; readonly ball: number };
 }
 
 export interface NetRunOptions {
@@ -61,7 +73,27 @@ export interface NetRunOptions {
   /** As before G1: the exact network state, the ball in every update, cars within 1000 uu of it too, the others and
    *  the pads every 8 ticks */
   readonly legacy?: boolean;
+  /** Cars (the client's first, then the teams alternating): 2 by default */
+  readonly players?: number;
+  /** The cars' inputs (default: the client chases the ball, the others chase it with a weave) */
+  readonly drive?: Driver;
+  /** How the client predicts the other cars (default: the game's) */
+  readonly model?: RemoteModel;
 }
+
+/** The default drivers: the client chases the ball as it predicts it; the others chase it with a weave (a bot) */
+const chaseDriver: Driver = (player, frame, world, car) => {
+  const c = player === 0 ? chase(world.car(car), world.ball(), frame, 0) : chase(world.car(car), world.ball(), world.tick, Math.sin(world.tick / 37) * 0.6);
+  return {
+    throttle: quantizeAxis(c.throttle),
+    steer: quantizeAxis(c.steer),
+    pitch: 0,
+    yaw: quantizeAxis(c.steer),
+    roll: 0,
+    dodgeForward: 0,
+    bits: (c.boost ? BIT_BOOST : 0) | (c.jump ? BIT_JUMP : 0),
+  };
+};
 
 /** Before G1's schedule */
 function legacyChoice(world: World): { ball: boolean; cars: number[]; pads: boolean } {
@@ -85,8 +117,9 @@ function chase(car: CarState, ball: BodyState, frame: number, jitter: number): {
   return { throttle: 1, steer, boost: Math.abs(yaw) < 0.3 && car.boost > 10, jump: near && frame % 90 < 6 };
 }
 
-/** The server's replication schedule (server/src/replication.rs): the ball at 100, cars at 15, the net tick's jitter;
- *  the ball forced after a hit, a car on a placement; the pads on a change and once a second */
+/** The server's replication schedule (server/src/replication.rs): the ball at 100 with the net tick's jitter, a car
+ *  4 or 5 updates apart (the replays' 13.4 a second); the ball forced after a hit, a car on a placement; the pads on a
+ *  change and once a second */
 class Schedule {
   #ballNext = 0;
   readonly #carNext = new Map<number, number>();
@@ -108,9 +141,9 @@ class Schedule {
     const cars: number[] = [];
     for (const id of world.carIds()) {
       const spawns = world.car(id).spawnCount;
-      if (spawns !== this.#spawns.get(id) || t >= (this.#carNext.get(id) ?? 0)) {
+      if (spawns !== this.#spawns.get(id) || t >= (this.#carNext.get(id) ?? 0) - 1e-9) {
         cars.push(id);
-        this.#carNext.set(id, t + 1 / 15 + this.#rng.uniform() / 57);
+        this.#carNext.set(id, t + (this.#rng.uniform() < 0.52 ? 8 : 10) / 120);
       }
       this.#spawns.set(id, spawns);
     }
@@ -137,28 +170,35 @@ function deliver<T>(queue: InFlight<T>[], now: number): T[] {
 
 export function netRun(engine: Engine, options: NetRunOptions): NetRunResult {
   const server = World.create(engine);
-  const local = server.addCar(0);
-  const bot = server.addCar(1);
+  const players = options.players ?? 2;
+  const drive = options.drive ?? chaseDriver;
+  const ids = Array.from({ length: players }, (_, i) => server.addCar(i % 2 === 0 ? 0 : 1));
+  const local = ids[0] ?? 0;
   server.resetKickoff(options.seed % 5);
   const client = World.create(engine);
   client.loadState(server.saveState());
   client.setDemolitions(false); // (as online.ts: the server's demolitions only)
 
-  const cars = new Map<number, SmoothedCar>(
-    [local, bot].map((id) => [id, { state: new Interpolated(client.car(id)), error: new SyncError() }]),
-  );
+  const cars = new Map<number, SmoothedCar>(ids.map((id) => [id, { state: new Interpolated(client.car(id)), error: new SyncError() }]));
   let clock = 0; // virtual time (s)
   const upPath = new NetSim(options.up, options.seed);
   const downPath = new NetSim(options.down, options.seed + 1);
   const toServer: InFlight<{ timestamp: number; first: number; frames: InputFrame[] }>[] = [];
   const toClient: InFlight<Update>[] = [];
-  const session = new NetSession(client, local, 0, cars, {
-    sendInputs: (timestamp, first, frames) => {
-      for (const at of upPath.send(clock)) toServer.push({ at, value: { timestamp, first, frames } });
+  const session = new NetSession(
+    client,
+    local,
+    0,
+    cars,
+    {
+      sendInputs: (timestamp, first, frames) => {
+        for (const at of upPath.send(clock)) toServer.push({ at, value: { timestamp, first, frames } });
+      },
+      resetInputBuffer: () => undefined,
+      nowMs: () => clock * 1000,
     },
-    resetInputBuffer: () => undefined,
-    nowMs: () => clock * 1000,
-  });
+    options.model ?? "game",
+  );
   const consume = new ServerConsume();
   const schedule = new Schedule(options.seed);
   let echo: { timestamp: number; at: number } | null = null;
@@ -184,20 +224,7 @@ export function netRun(engine: Engine, options: NetRunOptions): NetRunResult {
       for (const u of deliver(toClient, clock)) session.receive(u);
       session.applyUpdates();
       session.watchHitches(2 * TICK);
-      for (let k = 0; k < 2; k++) {
-        const frame = session.predictor.frame + 1;
-        const c = chase(client.car(local), client.ball(), frame, 0);
-        const input: InputFrame = {
-          throttle: quantizeAxis(c.throttle),
-          steer: quantizeAxis(c.steer),
-          pitch: 0,
-          yaw: quantizeAxis(c.steer),
-          roll: 0,
-          dodgeForward: 0,
-          bits: (c.boost ? BIT_BOOST : 0) | (c.jump ? BIT_JUMP : 0),
-        };
-        session.predictor.advance(input);
-      }
+      for (let k = 0; k < 2; k++) session.predictor.advance(drive(0, session.predictor.frame + 1, client, local));
       session.sendInputs();
     }
 
@@ -207,8 +234,9 @@ export function netRun(engine: Engine, options: NetRunOptions): NetRunResult {
     }
     const consumed = consume.tick(clock, server.tick % 2 === 1);
     server.setControls(local, inputControls(consumed.frame));
-    const b = chase(server.car(bot), server.ball(), server.tick, Math.sin(server.tick / 37) * 0.6);
-    server.setControls(bot, { ...inputControls({ throttle: 0, steer: 0, pitch: 0, yaw: 0, roll: 0, dodgeForward: 0, bits: 0 }), throttle: b.throttle, steer: b.steer, yaw: b.steer, boost: b.boost, jump: b.jump });
+    ids.forEach((car, player) => {
+      if (player > 0) server.setControls(car, inputControls(drive(player, server.tick + 1, server, car)));
+    });
     server.step();
     // (a goal: the next kickoff a second later, a placement the updates carry)
     if (server.ballExploded()) {
@@ -239,6 +267,8 @@ export function netRun(engine: Engine, options: NetRunOptions): NetRunResult {
     }
   }
 
+  const measuredSeconds = Math.max(1e-9, options.seconds - warmUp);
+  const sum = (values: readonly number[]): number => values.reduce((a, b) => a + b, 0);
   const s = consume.stats;
   const from = measuredFrom ?? { under: 0, over: 0, repeated: 0, zeroed: 0, neverConsumed: 0 };
   const result: NetRunResult = {
@@ -259,6 +289,12 @@ export function netRun(engine: Engine, options: NetRunOptions): NetRunResult {
       ticks: measuredTicks,
     },
     downKBps: downBytes / Math.max(1e-9, options.seconds - warmUp) / 1000,
+    errors: { local: session.metrics.localErrors, remote: session.metrics.remoteErrors, ball: session.metrics.ballErrors },
+    movedPerSecond: {
+      local: sum(session.metrics.localErrors) / measuredSeconds,
+      remote: sum(session.metrics.remoteErrors) / measuredSeconds,
+      ball: sum(session.metrics.ballErrors) / measuredSeconds,
+    },
   };
   server.dispose();
   client.dispose();

@@ -161,6 +161,22 @@ impl NetSim {
     }
 }
 
+/// A TypeScript twin's vectors (client/src/testing/): this text must be the file's. With `REGENERATE_VECTORS=1` it's
+/// written instead; without the client's tree (a server-only checkout) the check is skipped (RV-317)
+#[cfg(test)]
+pub(crate) fn check_vectors(path: &str, text: &str) {
+    let dir = std::path::Path::new(path).parent().expect("a file in a directory");
+    if !dir.is_dir() {
+        return;
+    }
+    if std::env::var_os("REGENERATE_VECTORS").is_some_and(|v| v == "1") {
+        std::fs::write(path, text).expect("writes the vectors");
+        return;
+    }
+    let old = std::fs::read_to_string(path).unwrap_or_default();
+    assert!(old == text, "{path} is out of date: regenerate it with REGENERATE_VECTORS=1 cargo test");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -248,10 +264,6 @@ mod tests {
             out += &format!("  \"{name}\": [{}]{}\n", deliveries.join(","), if k + 1 < profiles.len() { "," } else { "" });
         }
         out += "}\n";
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../client/src/testing/netsim.vectors.json");
-        let same = std::fs::read_to_string(path).is_ok_and(|old| old == out);
-        if !same {
-            std::fs::write(path, out).unwrap();
-        }
+        check_vectors(concat!(env!("CARGO_MANIFEST_DIR"), "/../client/src/testing/netsim.vectors.json"), &out);
     }
 }

@@ -66,8 +66,8 @@ const PODIUM_SPOTS: [(f32, f32, i32); 4] =
 /// stream fills it, and is dropped (RV-248)
 pub const OUT_QUEUE: usize = 2048;
 
-/// A match's players at most (a 4v4 private match's, twice over: each car adds about 0.7 KB to the world snapshot a join
-/// sends, a u16-framed control message, which 90 cars would overflow: RV-242)
+/// A match's players at most, whatever its team size (each car adds about 0.7 KB to the world snapshot a join sends, a
+/// u16-framed control message, which 90 cars would overflow: RV-242); a match takes its two teams' worth (`capacity`)
 pub const MAX_PLAYERS: usize = 16;
 /// A forfeit vote runs 20 game s (`ForfeitVoteArchetype.TimeRemaining`, less 1 each game second); a finished one stays
 /// 5 s more (destroyed 5 s after `FinishVote`)
@@ -292,6 +292,17 @@ struct Player {
     ping: u16,
 }
 
+/// The car preferences' slider limits and defaults (`GFxData_Settings_TA` *Limits: the client's
+/// `client/src/settings/settings.ts` CONTROLLER_LIMITS): the dodge deadzone, the steering and air control sensitivities
+const DODGE_DEADZONE: (f32, f32, f32) = (0.1, 1.0, 0.8);
+const SENSITIVITY: (f32, f32, f32) = (1.0, 10.0, 1.0);
+
+/// A preference from a client's Hello within its limits, its default if it isn't a number (SEC-10: a deadzone of 0 made
+/// every second jump a dodge, a NaN sensitivity steered full left)
+fn preference(value: f32, (min, max, default): (f32, f32, f32)) -> f32 {
+    if value.is_finite() { value.clamp(min, max) } else { default }
+}
+
 pub struct Game {
     arena: Arena,
     players: BTreeMap<PlayerId, Player>,
@@ -477,6 +488,11 @@ impl Game {
         self.match_type.allows_forfeit(self.team_size) && !self.phase.match_over() && !self.has_winner() && waited
     }
 
+    /// The players a match takes: two teams of its size (SEC-1)
+    pub fn capacity(&self) -> usize {
+        (2 * usize::from(self.team_size)).min(MAX_PLAYERS)
+    }
+
     pub fn player_count(&self) -> usize {
         self.players.len()
     }
@@ -495,18 +511,18 @@ impl Game {
     }
 
     pub fn join(&mut self, id: PlayerId, request: JoinRequest, out: Sender<Outgoing>) {
-        if self.players.len() >= MAX_PLAYERS {
+        if self.players.len() >= self.capacity() {
             // (refused: the session ends once it's sent)
-            eprintln!("player {id} refused: full ({MAX_PLAYERS} players)");
+            eprintln!("player {id} refused: full ({} players)", self.capacity());
             let _ = out.try_send(Outgoing::Control(Control::Refused { reason: protocol::REFUSED_FULL }.encode()));
             return;
         }
+        // The team asked for while it has room, else the smaller one: never more than the team size on a team (SEC-1:
+        // more cars on one team than its kickoff and respawn spots overran the engine's tables)
+        let on_team = |team: u8| self.players.values().filter(|p| p.team == team).count();
         let team = match request.team {
-            0 | 1 => request.team,
-            _ => {
-                let blue = self.players.values().filter(|p| p.team == 0).count();
-                u8::from(blue > self.players.len() - blue)
-            }
+            0 | 1 if on_team(request.team) < usize::from(self.team_size) => request.team,
+            _ => u8::from(on_team(0) > on_team(1)),
         };
         let car_id = self.arena.add_car(team, request.body);
         eprintln!("player {id} joined team {team} (car {car_id})");
@@ -516,7 +532,12 @@ impl Game {
         {
             vote.voters.insert(id, false);
         }
-        self.arena.set_car_preferences(car_id, request.dodge_deadzone, request.steering_sensitivity, request.air_control_sensitivity);
+        self.arena.set_car_preferences(
+            car_id,
+            preference(request.dodge_deadzone, DODGE_DEADZONE),
+            preference(request.steering_sensitivity, SENSITIVITY),
+            preference(request.air_control_sensitivity, SENSITIVITY),
+        );
         if self.players.is_empty() {
             self.new_match();
         } else if matches!(self.phase, Phase::Waiting | Phase::Countdown) {
@@ -600,10 +621,12 @@ impl Game {
 
     /// Mute or unmute another player's chat for this player (`ClientMutePlayer` → `VoiceMuteList`, CHAT-19)
     pub fn set_mute(&mut self, id: PlayerId, car: u32, on: bool) {
+        // (only another player's car here now: the set stays within the match's players, SEC-4)
+        let known = self.players.iter().any(|(&other, p)| other != id && p.car_id == car);
         if let Some(p) = self.players.get_mut(&id) {
-            if on {
+            if on && known {
                 p.muted.insert(car);
-            } else {
+            } else if !on {
                 p.muted.remove(&car);
             }
         }
@@ -706,6 +729,10 @@ impl Game {
             let explode = self.phase != Phase::Replay && !self.arena.car_demoed(player.car_id);
             self.broadcast(&Control::Event { server_tick: tick as u32, event: GameEvent::Left { car: player.car_id, lost, explode } });
             self.arena.remove_car(player.car_id);
+            // (no one mutes a car that's gone: a later car with its id isn't muted, SEC-4)
+            for p in self.players.values_mut() {
+                p.muted.remove(&player.car_id);
+            }
             // (their counters stay with the match: the MVP counts the team's former members)
             if !self.phase.match_over() {
                 self.former.push((team, player.stats));
@@ -1904,8 +1931,6 @@ mod tests {
         assert!(!game.forfeit && game.winner.is_none());
     }
 
-    /// T6 (notes/netcode-live.md §13): one client's bytes a second and each actor's update rate, `near` of the cars
-    /// within 1000 uu of the ball, the rest far
     /// A player's scripted input for a frame (120 a second): full throttle, weaving, boosting a third of the time, a
     /// jump now and then (players out of step, so the cars spread over the field and meet the ball)
     fn driving_frame(player: u32, frame: u32) -> InputFrame {
@@ -1986,7 +2011,8 @@ mod tests {
         // T6 (G1): what a client receives while everyone drives, in 1v1, 2v2 and 3v3. Before G1 (exact states; the ball
         // every update, cars 15 a second, 60 within 1000 uu of the ball; the pads 15): 22.5, 33.7, 45.6 KB/s here, 67.6
         // and 97.0 for 2v2 and 3v3 with the cars by the ball. The game: the ball ≈ 35 a second, a car ≈ 12-13 plus forced
-        // updates, ≈ 35 B a body; ≈ 3.1 KB/s of state in a 2v2, ≈ 6.5 KB/s per client in a 3v3 with acks and UDP
+        // updates, ≈ 35 B a body; ≈ 3.1 KB/s of state in a 2v2, ≈ 6.5 KB/s per client in a 3v3 with acks and UDP. A car
+        // here: the replays' 13.4 a second (RV-315), and its forced updates
         for (team_size, high) in [(1u8, 5.0), (2, 7.0), (3, 9.0)] {
             let (kbps, largest, ball, own_car, other_car, pads, per_body) = replication_rates(team_size, 10.0);
             eprintln!(
@@ -1995,7 +2021,7 @@ mod tests {
             assert!(kbps <= high, "{team_size}v{team_size}: {kbps} KB/s");
             assert!(largest <= MAX_DATAGRAM + 64, "a datagram of {largest} B");
             assert!((30.0..=45.0).contains(&ball), "ball {ball}/s");
-            assert!((10.0..=20.0).contains(&own_car) && (10.0..=20.0).contains(&other_car), "cars {own_car}/s, {other_car}/s");
+            assert!((12.8..=15.0).contains(&own_car) && (12.8..=15.0).contains(&other_car), "cars {own_car}/s, {other_car}/s");
             assert!(pads <= 8.0, "pads {pads}/s");
             assert!(per_body <= 70.0, "{per_body} B a body");
         }
@@ -2383,8 +2409,8 @@ mod tests {
 
     #[test]
     fn forfeit_votes_wait_for_the_clock_and_need_every_teammate() {
-        // Blue leads 3-0 and still forfeits
-        let (mut game, mut rxs) = match_with(MatchType::Casual, 2, &[(1, 0, 11), (2, 0, 12), (3, 1, 13), (4, 1, 14)]);
+        // Blue leads 3-0 and still forfeits (a 3v3 two a side: room for a joiner, SEC-1)
+        let (mut game, mut rxs) = match_with(MatchType::Casual, 3, &[(1, 0, 11), (2, 0, 12), (3, 1, 13), (4, 1, 14)]);
         game.score = [3, 0];
         // Casual: not before 60 s of the clock (4:00 shown)
         game.clock_ticks = MATCH_TICKS - 60 * TICK_RATE;
@@ -2771,7 +2797,7 @@ mod tests {
         init_engine();
         let mut game = Game::new();
         let mut rxs = Vec::new();
-        for id in 0..MAX_PLAYERS as PlayerId {
+        for id in 0..game.capacity() as PlayerId {
             let (tx, rx) = channel(TEST_QUEUE);
             game.join(id, REQUEST, tx);
             rxs.push(rx);
@@ -2779,8 +2805,62 @@ mod tests {
         let (tx, mut rx) = channel(TEST_QUEUE);
         game.join(99, REQUEST, tx);
         assert_eq!(controls(&mut rx), [Control::Refused { reason: protocol::REFUSED_FULL }]);
-        assert_eq!(game.player_count(), MAX_PLAYERS);
+        assert_eq!(game.player_count(), game.capacity());
         assert!(rx.try_recv().is_err(), "nothing more: the game let go of it");
+    }
+
+    #[test]
+    fn hello_preferences_stay_within_the_sliders() {
+        assert_eq!(preference(0.5, DODGE_DEADZONE), 0.5);
+        assert_eq!(preference(0.0, DODGE_DEADZONE), 0.1);
+        assert_eq!(preference(-3.0, SENSITIVITY), 1.0);
+        assert_eq!(preference(1e9, SENSITIVITY), 10.0);
+        assert_eq!(preference(f32::NAN, DODGE_DEADZONE), 0.8);
+        assert_eq!(preference(f32::INFINITY, SENSITIVITY), 1.0);
+    }
+
+    #[test]
+    fn a_mute_takes_only_another_player_here_and_goes_with_them() {
+        // (SEC-4: any u32 went in, 1 M ids ≈ 12 MB)
+        init_engine();
+        let mut game = Game::new();
+        let (tx1, _rx1) = channel(TEST_QUEUE);
+        let (tx2, _rx2) = channel(TEST_QUEUE);
+        game.join(1, REQUEST, tx1);
+        game.join(2, REQUEST, tx2);
+        let (own, other) = (game.players[&1].car_id, game.players[&2].car_id);
+        for car in 0..100_000 {
+            game.set_mute(1, car, true);
+        }
+        assert_eq!(game.players[&1].muted, BTreeSet::from([other]), "only the other player's car, not its own nor any id");
+        assert!(!game.players[&1].muted.contains(&own));
+        game.leave(2);
+        assert!(game.players[&1].muted.is_empty(), "gone with its player");
+    }
+
+    #[test]
+    fn players_asking_for_one_team_fill_both_and_no_more() {
+        // (SEC-1, the review's probe: a 1v1 server took 12 players all on blue, and the engine placed the tenth at
+        // y = 2.9e11 from past its spot tables)
+        init_engine();
+        for team_size in [1u8, 2, 3] {
+            let mut game = Game::with_options(1, team_size);
+            let mut rxs = Vec::new();
+            for id in 0..12 {
+                let (tx, rx) = channel(TEST_QUEUE);
+                game.join(id, JoinRequest { team: 0, ..REQUEST }, tx);
+                rxs.push(rx);
+            }
+            assert_eq!(game.player_count(), 2 * usize::from(team_size));
+            for team in [0, 1] {
+                assert_eq!(game.players.values().filter(|p| p.team == team).count(), usize::from(team_size), "{team_size}v{team_size}: team {team}");
+            }
+            ticks(&mut game, 2);
+            for car in game.arena.car_ids() {
+                let p = game.arena.car_position(car).unwrap();
+                assert!(p.iter().all(|v| v.is_finite()) && p[0].abs() < 4096.0 && p[1].abs() < 6000.0 && p[2] > 0.0 && p[2] < 2044.0, "car {car} at {p:?}");
+            }
+        }
     }
 
 

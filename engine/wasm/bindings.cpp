@@ -241,6 +241,12 @@ public:
 	// The match's end (FreezePawns): nothing simulates while frozen (the server's phase: prePodium, finished)
 	void SetFrozen(bool on) { _arena->frozen = on; }
 	void SetPodium(bool on) { _arena->podiumMode = on; }
+	// Another player's car on a client: its components (jump, dodge, boost, air control, auto-flip) don't run
+	// (Car::_componentsOff, the game's SimulatedProxy)
+	void SetCarComponents(int id, bool on) {
+		if (Car* car = _arena->GetCar((uint32_t)id))
+			car->_componentsOff = !on;
+	}
 
 	void SetUnlimitedBoost(bool on) {
 		MutatorConfig config = _arena->GetMutatorConfig();
@@ -557,6 +563,7 @@ EMSCRIPTEN_BINDINGS(rlengine) {
 		.function("setUnlimitedBoost", &Sim::SetUnlimitedBoost)
 		.function("setFrozen", &Sim::SetFrozen)
 		.function("setPodium", &Sim::SetPodium)
+		.function("setCarComponents", &Sim::SetCarComponents)
 		.function("setDemolitions", &Sim::SetDemolitions)
 		.function("kickoffCountdown", &Sim::KickoffCountdown)
 		.function("setKickoffCountdown", &Sim::SetKickoffCountdown)

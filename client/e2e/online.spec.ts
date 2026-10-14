@@ -1,4 +1,5 @@
-// Online play against a local rl-server (started by playwright.config.ts on ports 14433/14434).
+// Online play against a local rl-server (started by playwright.config.ts on ports 14433/14434). Nothing here reads
+// pixels: every page loads with `?render=off` (nothing drawn; software WebGL for two or three pages starved the suite).
 import type { Page } from "@playwright/test";
 import { expect, hideGamepads, test } from "./fixtures";
 import { ends, join as joinServer, leave, leaveAll, newPlayer } from "./players";
@@ -23,7 +24,7 @@ async function join(page: Page, errors: string[]): Promise<void> {
   page.on("console", (m) => {
     if (m.type() === "error") errors.push(m.text());
   });
-  await page.goto(`/?server=${SERVER}`);
+  await page.goto(`/?server=${SERVER}&render=off`);
   // (generous: under the suite's load a page can take over 30 s to its first frame)
   await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
 }
@@ -152,8 +153,8 @@ test("leaving: the question, back to freeplay; the car explodes for the others a
   await expect(page.locator("#net")).toContainText("1 cars", { timeout: 15_000 });
   await expect.poll(demolitions, { timeout: 15_000 }).toBeGreaterThan(before);
   await expect.poll(async () => (await ends(page)).filter((e) => e.forfeit).length, { timeout: 15_000 }).toBe(forfeitsBefore + 1);
-  // The leaver: back to freeplay
-  await expect(other).toHaveURL(/:4173\/$/, { timeout: 30_000 });
+  // The leaver: back to freeplay (the server's address gone; the tests' `render=off` kept)
+  await expect(other).toHaveURL(/:4173\/(\?render=off)?$/, { timeout: 30_000 });
   await other.waitForFunction(() => "rlFreeplay" in window, null, { timeout: 60_000 });
 
   expect(errors).toEqual([]);
@@ -166,7 +167,7 @@ test("a goal: the game slows down for 3.53 s, the goal replay plays, Space skips
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   // (this server knocks the ball into a goal 1 s after each go)
-  await page.goto("/?server=127.0.0.1:14436");
+  await page.goto("/?server=127.0.0.1:14436&render=off");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
   // The banner: nobody touched the ball, so the team's name (GoalScored, "{Player} scored!")
   await expect(page.locator("#message")).toHaveText("BLUE SCORED!", { timeout: 30_000 });

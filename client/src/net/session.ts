@@ -10,7 +10,7 @@ import { Interpolated } from "../game/interpolated";
 import { SyncError } from "../game/syncError";
 import { length, sub } from "../math/vec";
 import { fromThreeQuaternion, toThreeQuaternion } from "../render/coords";
-import { NO_INPUT, Predictor } from "./predictor";
+import { NO_INPUT, Predictor, type RemoteModel } from "./predictor";
 import { type InputFrame, MAX_INPUT_FRAMES, type Update } from "./protocol";
 import { type CompleteUpdate, UpdateAssembler } from "./updates";
 
@@ -37,7 +37,8 @@ export interface SessionLink {
   nowMs(): number;
 }
 
-/** The network tests' measures (§13 T3): each correction's replay depth and how far each body's state moved */
+/** The network tests' measures (§13 T3): each correction's replay depth and how far each body's state moved (the cars
+ *  the server's state held; the ball in every correction) */
 export interface SessionMetrics {
   readonly depths: number[];
   readonly localErrors: number[];
@@ -80,13 +81,14 @@ export class NetSession {
   readonly #q1 = new Quaternion();
   readonly #q2 = new Quaternion();
 
-  /** `world` holds the state after `frame`; `cars`: the cars drawn, by id (the session smooths them) */
-  constructor(world: World, localCar: number, frame: number, cars: ReadonlyMap<number, SmoothedCar>, link: SessionLink) {
+  /** `world` holds the state after `frame`; `cars`: the cars drawn, by id (the session smooths them); `model`: how other
+   *  cars are predicted (the game's; the network tests compare others) */
+  constructor(world: World, localCar: number, frame: number, cars: ReadonlyMap<number, SmoothedCar>, link: SessionLink, model: RemoteModel = "game") {
     this.#world = world;
     this.#localCar = localCar;
     this.#cars = cars;
     this.#link = link;
-    this.predictor = new Predictor(world, localCar, frame);
+    this.predictor = new Predictor(world, localCar, frame, model);
     this.ball = new Interpolated(world.ball());
     this.ballSpawns = world.ballSpawnCount();
   }
@@ -172,7 +174,8 @@ export class NetSession {
         entry.error.clear();
         entry.state.previous = after;
       } else {
-        if (this.measure) (id === this.#localCar ? this.metrics.localErrors : this.metrics.remoteErrors).push(length(moved));
+        // (each car the server's state held: the correction of its prediction)
+        if (this.measure && this.predictor.lastCars.has(id)) (id === this.#localCar ? this.metrics.localErrors : this.metrics.remoteErrors).push(length(moved));
         entry.error.accumulate(before, after);
         // The previous tick moves with the correction, rotation included (prev' = post pre^-1 prev, as the game's
         // OldRBState): the drawn pose stays where it was

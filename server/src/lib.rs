@@ -6,7 +6,8 @@ pub mod game;
 pub mod game_loop;
 pub mod input_buffer;
 pub mod net;
-pub mod netsim;
+#[cfg(test)]
+mod netsim;
 pub mod replication;
 #[cfg(test)]
 mod net_tests;

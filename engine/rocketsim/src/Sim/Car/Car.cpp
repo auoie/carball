@@ -271,21 +271,25 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
 		numWheelsInContact += _internalState.wheelsWithContact[i];
 	float forwardSpeed_UU = _bulletVehicle.getForwardSpeed() * BT_TO_UU;
 
-	_UpdateJump(tickTime, mutatorConfig, jumpPressed);
-	_UpdateAutoFlip(tickTime, mutatorConfig, jumpPressed);
+	// RL PATCH: the components (Jump, FlipCar, DoubleJump, Dodge; AirControl below), none for another player's car on a
+	// client (_componentsOff)
+	if (!_componentsOff) {
+		_UpdateJump(tickTime, mutatorConfig, jumpPressed);
+		_UpdateAutoFlip(tickTime, mutatorConfig, jumpPressed);
 
-	_UpdateDoubleJumpOrFlip(tickTime, mutatorConfig, jumpPressed, forwardSpeed_UU);
+		_UpdateDoubleJumpOrFlip(tickTime, mutatorConfig, jumpPressed, forwardSpeed_UU);
 
-	// RL PATCH: air control and the dodge torque come after this tick's jump, flip and auto-flip starts (the game
-	// activates those from the input before any component applies its forces), so a dodge already turns the car on
-	// its press tick; RocketSim ran air control first and started the dodge torque a tick late
-	if (numWheelsInContact < 3) {
-		_UpdateAirTorque(tickTime, mutatorConfig, numWheelsInContact == 0);
-	} else {
-		_internalState.isFlipping = false;
+		// RL PATCH: air control and the dodge torque come after this tick's jump, flip and auto-flip starts (the game
+		// activates those from the input before any component applies its forces), so a dodge already turns the car on
+		// its press tick; RocketSim ran air control first and started the dodge torque a tick late
+		if (numWheelsInContact < 3) {
+			_UpdateAirTorque(tickTime, mutatorConfig, numWheelsInContact == 0);
+		} else {
+			_internalState.isFlipping = false;
+		}
+		_UpdateFlipTime(tickTime);
+		_UpdateAutoFlipTorque(tickTime);
 	}
-	_UpdateFlipTime(tickTime);
-	_UpdateAutoFlipTorque(tickTime);
 
 	// RL PATCH: auto-roll as the game gates it (Car_TA pre-physics FUN_140f1c600): throttle held, no dodge active, fewer
 	// than all wheels on world geometry (wheels on the ball or a car don't count), and at least one, or else the body
@@ -304,7 +308,8 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
 	_UpdateStickyForce(forwardSpeed_UU);
 
 	bool wasBoosting = _internalState.isBoosting; // (what the AirControl component sees: it runs before Boost)
-	_UpdateBoost(tickTime, mutatorConfig, forwardSpeed_UU);
+	if (!_componentsOff) // (RL PATCH: the Boost component)
+		_UpdateBoost(tickTime, mutatorConfig, forwardSpeed_UU);
 
 	// RL PATCH: the game's air throttle (AirControl ApplyForces FUN_140eb3400) is ThrottleForce x (boost active ? 1 :
 	// throttle), with the Boost component's state from before this tick's update (the components run AirControl first:
@@ -315,8 +320,9 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
 	// RL PATCH: the AirControl component is only active with no wheel touching anything (as RocketSim's own air
 	// control torque); RocketSim applied the air throttle with up to 2 wheels down. Live: 2 wheels on a wall, 0.56 uu/s
 	// per tick too fast
+	// RL PATCH: the AirControl component's: none for another player's car on a client (_componentsOff)
 	float airThrottle = wasBoosting ? 1 : _inputThrottle;
-	if (numWheelsInContact == 0 && airThrottle != 0)
+	if (!_componentsOff && numWheelsInContact == 0 && airThrottle != 0)
 		_rigidBody.applyCentralForce(GetForwardDir() * airThrottle * RLConst::THROTTLE_AIR_ACCEL * UU_TO_BT * RLConst::CAR_MASS_BT);
 
 	// RL PATCH: the speed caps between the car's own impulses (jump, dodge, auto-flip) and the vehicle's (the game's

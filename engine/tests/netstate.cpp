@@ -129,6 +129,78 @@ static float MaxPositionDifference(Arena* a, Arena* b) {
 	return worst;
 }
 
+// A car held in the countdown that the client has somewhere else, under another pin: the compact update puts it back on
+// the server's pin, where both hold it (RV-304, RV-312)
+static int HeldCarPushedOffItsPin() {
+	Arena* server = Arena::Create(GameMode::SOCCAR);
+	Car* car = server->AddCar(Team::BLUE);
+	server->ResetToRandomKickoff(2);
+	server->kickoffCountdownTicks = 400;
+	server->Step(10);
+	Arena* client = Restore(Snapshot(server));
+	Car* mine = client->GetCar(car->id);
+	CarState pushed = mine->GetState();
+	pushed.pos = pushed.pos + Vec(700, 300, 0);
+	mine->SetState(pushed);
+	client->Step(5); // (held there now, its pin moved)
+	NetState::WriteOptions options;
+	options.carIds = { car->id };
+	DataStreamOut update;
+	NetState::Write(server, update, options);
+	DataStreamIn in;
+	in.data = update.data;
+	int failures = NetState::Read(client, in) ? 0 : 1;
+	server->Step(40);
+	client->Step(40);
+	float off = (car->GetState().pos - mine->GetState().pos).Length();
+	if (failures || off > 0.5f) {
+		printf("netstate compact: a held car pushed off its pin is %.2f uu from the server's after the update\n", off);
+		failures = 1;
+	}
+	delete client;
+	delete server;
+	return failures;
+}
+
+// A car demolished on the server, its client counting other ticks (its frames, not the server's): it respawns where the
+// server's car does, from the respawn selection the compact car carries while demolished (the spot's random start is
+// seeded from the tick count: RV-308)
+static int RespawnSpotFollowsTheServer() {
+	int failures = 0;
+	for (int seed = 1; seed <= 4; seed++) {
+		Arena* server = Arena::Create(GameMode::SOCCAR);
+		Car* car = server->AddCar(Team::BLUE);
+		server->AddCar(Team::ORANGE);
+		server->ResetToRandomKickoff(seed);
+		server->Step(30);
+		Arena* client = Restore(Snapshot(server));
+		client->tickCount += 9;
+		car->Demolish(server->GetMutatorConfig().respawnDelay);
+		NetState::WriteOptions options;
+		for (Car* c : server->GetCars())
+			options.carIds.push_back(c->id);
+		for (int t = 0; t < 4 * 120 && (t < 10 || car->GetState().isDemoed || client->GetCar(car->id)->GetState().isDemoed); t++) {
+			server->Step();
+			client->Step();
+			if (t % 8 == 0) {
+				DataStreamOut update;
+				NetState::Write(server, update, options);
+				DataStreamIn in;
+				in.data = update.data;
+				failures += NetState::Read(client, in) ? 0 : 1;
+			}
+		}
+		float off = (car->GetState().pos - client->GetCar(car->id)->GetState().pos).Length();
+		if (off > 1) {
+			printf("netstate compact: seed %d, the client respawned the car %.1f uu from the server's spot\n", seed, off);
+			failures++;
+		}
+		delete client;
+		delete server;
+	}
+	return failures;
+}
+
 int main(int argc, char** argv) {
 	std::string meshes = argc > 1 ? argv[1] : ARENA_MESH_DIR;
 	int seconds = argc > 2 ? atoi(argv[2]) : 300;
@@ -216,6 +288,14 @@ int main(int argc, char** argv) {
 			printf("tick %d: after the compact update the drifted client's bodies differ from the server's\n", tick);
 			compactFailures++;
 		}
+		// Every field the update sent now sends the same from the client: its bodies, each car's flags, boost, controls,
+		// timers, counters, hold and pin, the pads (RV-312)
+		DataStreamOut again;
+		NetState::Write(drifted, again, compact);
+		if (again.data != compactUpdate.data) {
+			printf("tick %d: the drifted client after the compact update sends other values than the server's\n", tick);
+			compactFailures++;
+		}
 		maxBytes = std::max(maxBytes, update.data.size());
 		DataStreamIn in;
 		in.data = update.data;
@@ -268,6 +348,14 @@ int main(int argc, char** argv) {
 	printf("netstate: %d updates (max %zu bytes for ball + 4 cars + pads), %d not exact after applying\n", checks, maxBytes, exactFailures);
 	printf("netstate: continued %d, identical for %d ticks: %d; the others had contacts at the update: %d (worst drift %.3f uu)\n",
 		continued, window, continuedExact, touchingRuns, worstDrift);
+	// (every update is written after a tick: every body on the network's grid, none raw)
+	uint64_t raw = NetState::CompactRawBodies();
+	if (raw != 0) {
+		printf("netstate compact: %llu bodies written raw after their tick\n", (unsigned long long)raw);
+		compactFailures++;
+	}
+	compactFailures += HeldCarPushedOffItsPin();
+	compactFailures += RespawnSpotFollowsTheServer();
 	printf("netstate compact: %d updates, mean %zu bytes for ball + 4 cars + pads (max %zu), cars alone %zu bytes a car; "
 		"%d failed; the drifted client after %d ticks: identical %d, worst drift %.3f uu\n",
 		checks, checks ? compactTotal / checks : 0, compactMax, checks ? compactCarsOnly / checks / 4 : 0, compactFailures, window,

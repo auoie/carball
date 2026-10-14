@@ -114,6 +114,8 @@ async function main(): Promise<void> {
   const name = themeName(params.get("theme"));
   const theme = await createTheme(name);
   const renderer = new Renderer(canvas);
+  // (the browser tests that read no pixels: nothing drawn, software WebGL being most of their time)
+  renderer.draws = params.get("render") !== "off";
   renderer.scene.background = theme.background;
   renderer.scene.fog = theme.fog;
   renderer.heightFog = theme.heightFog ?? false;

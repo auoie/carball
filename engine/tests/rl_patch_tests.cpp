@@ -1656,6 +1656,82 @@ static void TestXYLockSnapshots() {
 	delete arena;
 }
 
+static void TestComponentsOff() {
+	puts("another player's car on a client (components off): drives as any car, but a jump, boost, dodge or air roll does "
+		"nothing between the server's states");
+	Arena* arena = Arena::Create(GameMode::SOCCAR);
+	Car* on = arena->AddCar(Team::BLUE);
+	Car* off = arena->AddCar(Team::ORANGE);
+	off->_componentsOff = true;
+	auto place = [&](Car* car, Vec pos) {
+		CarState s = CarAt(pos, Vec(1, 0, 0), Vec(0, 0, 1));
+		s.boost = 50;
+		car->SetState(s);
+	};
+	place(on, Vec(-2000, -1000, 17));
+	place(off, Vec(-2000, 1000, 17));
+	arena->Step(30);
+	// Driving: the same throttle and steer, the same motion (the vehicle isn't a component)
+	CarControls drive;
+	drive.throttle = 1;
+	drive.steer = 0.4f;
+	for (int i = 0; i < 90; i++) {
+		on->controls = drive;
+		off->controls = drive;
+		arena->Step(1);
+	}
+	CarState a = on->GetState(), b = off->GetState();
+	CHECK(Near(a.vel.Length(), b.vel.Length(), 1e-3f) && Near(a.pos.x, b.pos.x, 0.05f) && Near(a.pos.y + 2000, b.pos.y, 0.05f),
+		"drives alike: %.3f vs %.3f uu/s, (%.3f, %.3f) vs (%.3f, %.3f)", a.vel.Length(), b.vel.Length(), a.pos.x, a.pos.y, b.pos.x, b.pos.y);
+	// A jump and boost: none for the car with its components off
+	CarControls jump = drive;
+	jump.jump = true;
+	jump.boost = true;
+	float zOn = on->GetState().pos.z, zOff = off->GetState().pos.z, boostOff = off->GetState().boost;
+	for (int i = 0; i < 20; i++) {
+		on->controls = jump;
+		off->controls = jump;
+		arena->Step(1);
+	}
+	CHECK(on->GetState().pos.z > zOn + 20 && on->GetState().hasJumped, "the normal car jumped: z %.1f", on->GetState().pos.z);
+	CHECK(Near(off->GetState().pos.z, zOff, 2) && !off->GetState().hasJumped && !off->GetState().isBoosting,
+		"no jump nor boost: z %.2f -> %.2f", zOff, off->GetState().pos.z);
+	CHECK(off->GetState().boost == boostOff, "no boost used: %.2f -> %.2f", boostOff, off->GetState().boost);
+	// In the air: no air throttle, no air roll
+	CarState air = CarAt(Vec(0, 3000, 800), Vec(1, 0, 0), Vec(0, 0, 1));
+	off->SetState(air);
+	CarControls roll;
+	roll.throttle = 1;
+	roll.roll = 1;
+	for (int i = 0; i < 10; i++) {
+		off->controls = roll;
+		arena->Step(1);
+	}
+	CarState s = off->GetState();
+	CHECK(fabsf(s.vel.x) < 1e-3f && s.angVel.Length() < 1e-3f, "falls straight: vx %.4f, spin %.4f", s.vel.x, s.angVel.Length());
+	delete arena;
+}
+
+static void TestKickoffManyOnOneTeam() {
+	puts("a kickoff with ten cars on one team: every car on a spot in the arena, none on another (SEC-1: RocketSim's "
+		"respawn spots wrapped at 5 on a 4-entry table)");
+	Arena* arena = Arena::Create(GameMode::SOCCAR);
+	for (int i = 0; i < 10; i++)
+		arena->AddCar(Team::BLUE);
+	arena->AddCar(Team::ORANGE);
+	arena->ResetToRandomKickoff(3);
+	std::vector<Vec> spots;
+	for (Car* car : arena->GetCars()) {
+		Vec p = car->GetState().pos;
+		bool inside = std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z) && fabsf(p.x) < 4096 && fabsf(p.y) < 6000 && p.z > 0 && p.z < 2044;
+		CHECK(inside, "car %u at (%.1f, %.1f, %.1f)", car->id, p.x, p.y, p.z);
+		for (const Vec& q : spots)
+			CHECK((p - q).Length() > 100, "car %u on another's spot (%.1f, %.1f)", car->id, p.x, p.y);
+		spots.push_back(p);
+	}
+	delete arena;
+}
+
 // Supersonic: on from 2200; below that, kept for 1 s (TimeBelowSupersonicSpeed) while above 2100
 static void TestSupersonic(Arena* arena, Car* car) {
 	puts("supersonic: kept for 1 s below 2200 (above 2100), also after a long supersonic run");
@@ -2480,6 +2556,8 @@ int main(int argc, char** argv) {
 	TestKickoffCountdown();
 	TestCountdownHeldJump();
 	TestXYLockSnapshots();
+	TestComponentsOff();
+	TestKickoffManyOnOneTeam();
 	TestGameRotator();
 	TestMatchEndPatches();
 	TestRoofLanding();

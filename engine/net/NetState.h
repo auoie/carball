@@ -38,4 +38,7 @@ namespace NetState {
 	// Applies a state written by Write() (either form). Every included car must exist in the arena. Returns false, leaving the
 	// arena unchanged, when the data is malformed or names an unknown car. `carIds`, if given, gets the cars it held.
 	bool Read(RocketSim::Arena* arena, RocketSim::DataStreamIn& in, std::vector<uint32_t>* carIds = nullptr);
+
+	// Bodies the compact form has written raw (placed since their tick: not on the network's grid), for the checks
+	uint64_t CompactRawBodies();
 }

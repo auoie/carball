@@ -37,6 +37,10 @@ export class Renderer {
   /** The stadium's height fog in every material drawn (render/heightFog.ts: the arena, cars and ball too, RV-187): new
    *  meshes taken in each frame */
   heightFog = false;
+  /** Frames drawn (the browser tests turn it off where nothing reads the pixels, `?render=off`: software WebGL is most of
+   *  their time): off, the camera and the scene's matrices still follow each frame (projections, the HUD), nothing is
+   *  drawn and the reflection capture waits */
+  draws = true;
 
   constructor(readonly canvas: HTMLCanvasElement) {
     // (no anti-aliasing: the game's default is Off, PP-16; the scene goes to an HDR target anyway)
@@ -85,8 +89,10 @@ export class Renderer {
 
   render(view: CameraView): void {
     // (before the frame's work, the reflection capture's included)
-    if (this.heightFog) fogAll(this.scene);
-    for (const work of this.#beforeNextFrame.splice(0)) work(this.#gl, this.scene);
+    if (this.draws) {
+      if (this.heightFog) fogAll(this.scene);
+      for (const work of this.#beforeNextFrame.splice(0)) work(this.#gl, this.scene);
+    }
     this.#camera.position.copy(toThreeVector(view.position));
     this.#camera.up.copy(toThreeVector(view.up));
     this.#target.copy(this.#camera.position).add(toThreeVector(view.forward, this.#forward).multiplyScalar(1000));
@@ -99,6 +105,11 @@ export class Renderer {
     }
     const now = performance.now() / 1000;
     this.#firstFrame ??= now;
+    if (!this.draws) {
+      this.scene.updateMatrixWorld();
+      this.#camera.updateMatrixWorld();
+      return;
+    }
     this.#post.render(this.scene, this.#camera, this.postOptions, Math.max(1 - (now - this.#firstFrame), this.cameraFade));
   }
 

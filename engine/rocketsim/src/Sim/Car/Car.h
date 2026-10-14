@@ -241,6 +241,11 @@ public:
 	bool _XYLockHeld(btVector3* pin) const;
 	// RL PATCH: podium mode (EnablePodiumMode): the jump's force lasts PodiumJumpForceTime (the arena sets it per tick)
 	bool _podiumMode = false;
+	// RL PATCH: another player's car on a client (the game's SimulatedProxy): its components (Jump, DoubleJump, Dodge,
+	// AirControl, FlipCar, Boost) don't run, not even in a resim (the component loop needs the vehicle's Role > 1;
+	// notes/netcode-live.md §9): the car drives (the vehicle: throttle, steer, handbrake), its jumps, dodges, boost and
+	// air control show only in the server's states. A mode, not state (the client sets it for every car but its own)
+	bool _componentsOff = false;
 	btCompoundShape _compoundShape;
 	btBoxShape _childHitboxShape;
 

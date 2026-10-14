@@ -523,7 +523,9 @@ void Arena::_ResetToKickoff(const std::array<uint8_t, 5> orders[2], int first, s
 		if (i < locationAmount) {
 			spawnPos = {}; // (per team below: RL PATCH, each team's own order)
 		} else {
-			int respawnPosIdx = (i - (locationAmount)) % locationAmount;
+			// RL PATCH: wrapped at the respawn table's size (RocketSim wrapped at the kickoff spots', 5, past the 4-entry
+			// table and numCarsAtRespawnPos: an out-of-bounds read and write from a sixth car on one team, SEC-1)
+			int respawnPosIdx = (i - (locationAmount)) % CAR_RESPAWN_LOCATION_AMOUNT;
 			spawnPos = CAR_RESPAWN_LOCATIONS[respawnPosIdx];
 
 			// Extra offset to add to multiple cars spawning at the same respawn point,
@@ -1653,6 +1655,7 @@ Arena* Arena::Clone(bool copyCallbacks) {
 		RawBodyState::From(car->_rigidBody, car->_netRotation).ApplyTo(newCar->_rigidBody, newCar->_netRotation); // RL PATCH: exact state
 		newCar->controls = car->controls;
 		newCar->_velocityImpulseCache = car->_velocityImpulseCache;
+		newCar->_componentsOff = car->_componentsOff; // RL PATCH (a mode, as the arena's)
 		// RL PATCH: its XY lock taken back where it is (its pin as the next tick takes it: RV-303)
 		btVector3 pin;
 		newCar->_xyLockPending = car->_XYLockHeld(&pin);

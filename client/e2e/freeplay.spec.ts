@@ -1,3 +1,5 @@
+// Free play in the browser. The tests that read no pixels load it with `?render=off` (nothing drawn: software WebGL is
+// most of the suite's time); the themes' tests and the taken pad's dim look draw as the game does.
 import type { Page } from "@playwright/test";
 
 interface AudioStats {
@@ -20,7 +22,7 @@ test("freeplay loads, drives and resets", async ({ page }) => {
     if (m.type() === "error") errors.push(m.text());
   });
 
-  await page.goto("/");
+  await page.goto("/?render=off");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
   await freePlay(page);
   await expect(page.locator("#boost-value")).toHaveText("100"); // (freeplay's Unlimited boost)
@@ -113,7 +115,7 @@ test("freeplay loads, drives and resets", async ({ page }) => {
 });
 
 test("controls can be rebound and are remembered", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/?render=off");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
   await freePlay(page);
 
@@ -185,7 +187,7 @@ interface AmbienceLevels {
 
 test("every theme's ambience: no sound sticks out far above the rest, and none is too loud", async ({ page }) => {
   test.setTimeout(240_000);
-  await page.goto("/");
+  await page.goto("/?render=off");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
   await freePlay(page);
   for (const theme of ["night", ...THEMED]) {
@@ -231,7 +233,7 @@ interface Hook {
 test("a goal in freeplay with goal replays on: the replay plays, Space skips it, then a kickoff spot, no jump", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
-  await page.goto("/");
+  await page.goto("/?render=off");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
   await freePlay(page);
   const hook = async (): Promise<{ pos: { x: number; y: number }; speed: number }> =>
@@ -274,7 +276,7 @@ test("a goal in freeplay with goal replays on: the replay plays, Space skips it,
 test("Exit to Main Menu during a goal replay, then Free Play: a fresh round, no replay banner (MENU-1, RV-284)", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
-  await page.goto("/");
+  await page.goto("/?render=off");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
   await freePlay(page);
   const hook = async (): Promise<{ pos: { x: number; y: number }; speed: number }> =>
@@ -304,7 +306,7 @@ test("a goal in freeplay, skipping replays: no message, 3 s later a kickoff spot
   await page.addInitScript(() => {
     localStorage.setItem("rl-clone.settings.v1", JSON.stringify({ options: { autoSkipReplay: true } }));
   });
-  await page.goto("/");
+  await page.goto("/?render=off");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
   await freePlay(page);
   const hook = async (): Promise<{ pos: { x: number; y: number }; speed: number }> =>
@@ -425,7 +427,7 @@ test("Unlimited boost in free play: on (the default) a full car takes no pad; of
 test("the engine's contacts as the game's impact triggers: driving into the ball sounds it (Impact_Ball)", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
-  await page.goto("/");
+  await page.goto("/?render=off");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
   await freePlay(page);
   await page.waitForFunction(() => "rlFreeplay" in window);
@@ -446,7 +448,7 @@ test("the engine's contacts as the game's impact triggers: driving into the ball
 test("the main menu, the pause menu, the HUD and its Interface options (MENU-1/4/6, HUD-5/12/16, HT-4)", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
-  await page.goto("/");
+  await page.goto("/?render=off");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
   // The main menu over the arena: Play, then Free Play
   await expect(page.locator("#main-menu")).toBeVisible();
