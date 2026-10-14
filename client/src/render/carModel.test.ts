@@ -1,11 +1,12 @@
-// The car model is built around the physics hitbox: what you see is what collides, but for the Fennec's tail (past
-// the hitbox's back, over the rear wheels) and its flares and spoiler (a couple of uu proud of it).
+// The car model has the Fennec's proportions set on the physics hitbox (its measured scalars, FENNEC: the user's
+// decision of 2026-10-14): narrower and lower than the hitbox, its tail past the hitbox's back, its nose a little past
+// the front; other hitboxes get them scaled to theirs.
 // Requires the engine build (engine/build-wasm) and the generated arena (out/arena), for every body's dimensions.
 import createEngine from "@engine/rlengine.mjs";
 import { Box3, Color, Mesh, MeshStandardMaterial } from "three";
 import { beforeAll, describe, expect, it } from "vitest";
 import { CarBody, type CarConfig, World, initEngine } from "../engine/world";
-import { TAIL_PAST_HITBOX, buildCarModel } from "./carModel";
+import { FENNEC, buildCarModel, fennecFrame } from "./carModel";
 import { arenaMeshes } from "../testing/arena";
 
 const configs = new Map<string, CarConfig>();
@@ -45,21 +46,28 @@ describe("car model", () => {
     expect(names.sort()).toEqual(["body", "glass", "headlight", "rim", "taillight", "trim", "tyre"]);
   });
 
-  it("has the hitbox's nose, roof and sides (within 2 uu: the flares and spoiler stand proud), the tail past it", () => {
+  it("has the Fennec's nose, tail, roof and sides on every hitbox (within 2 uu: the flares and spoiler stand proud)", () => {
     for (const [name, c] of configs) {
       const box = bounds(c, false);
-      const hitbox = {
-        front: c.hitboxOffset.x + c.hitboxSize.x / 2,
-        rear: c.hitboxOffset.x - c.hitboxSize.x / 2,
-        top: c.hitboxOffset.z + c.hitboxSize.z / 2,
-        side: c.hitboxSize.y / 2,
-      };
-      expect.soft(Math.abs(box.max.x - hitbox.front), `${name} front`).toBeLessThan(2);
-      expect.soft(Math.abs(box.min.x - (hitbox.rear - TAIL_PAST_HITBOX)), `${name} rear`).toBeLessThan(1);
-      expect.soft(Math.abs(box.max.y - hitbox.top), `${name} roof`).toBeLessThan(2);
-      expect.soft(Math.abs(box.max.z - hitbox.side), `${name} right side`).toBeLessThan(2);
-      expect.soft(Math.abs(box.min.z + hitbox.side), `${name} left side`).toBeLessThan(2);
+      const { x, y, z } = fennecFrame(c);
+      expect.soft(Math.abs(box.max.x - x(FENNEC.front)), `${name} front`).toBeLessThan(2);
+      expect.soft(Math.abs(box.min.x - x(FENNEC.rear)), `${name} rear`).toBeLessThan(1);
+      expect.soft(Math.abs(box.max.y - y(FENNEC.roof)), `${name} roof`).toBeLessThan(2);
+      expect.soft(Math.abs(box.max.z - z(FENNEC.halfWidth)), `${name} right side`).toBeLessThan(2);
+      expect.soft(Math.abs(box.min.z + z(FENNEC.halfWidth)), `${name} left side`).toBeLessThan(2);
     }
+  });
+
+  it("on the Octane's hitbox, as the Fennec measures: 140 long, 71 wide, its roof 52 over the ground, 4 under the hitbox", () => {
+    const octane = configs.get("Octane");
+    if (!octane) throw new Error("no Octane");
+    const box = bounds(octane, false);
+    // (the lights and the grille stand a hair proud of the nose and the tail)
+    expect(Math.abs(box.max.x - box.min.x - 140.4)).toBeLessThan(2);
+    expect(box.max.z - box.min.z).toBeLessThan(74);
+    expect(box.max.z - box.min.z).toBeGreaterThan(70);
+    const roof = FENNEC.ground + FENNEC.roof;
+    expect(roof).toBeLessThan(octane.hitboxOffset.z + octane.hitboxSize.z / 2 - 4);
   });
 
   it("keeps the wheels within the body's width and builds finite geometry", () => {
@@ -70,7 +78,7 @@ describe("car model", () => {
       model.updateMatrixWorld(true);
       const tyres = model.children.find((p) => p.name === "tyre");
       if (!tyres) throw new Error("no tyres");
-      expect(new Box3().setFromObject(tyres).max.z, name).toBeLessThanOrEqual(c.hitboxSize.y / 2);
+      expect(new Box3().setFromObject(tyres).max.z, name).toBeLessThanOrEqual(fennecFrame(c).z(FENNEC.halfWidth));
     }
   });
 });

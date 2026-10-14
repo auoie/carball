@@ -8,8 +8,10 @@ const B = 1;
 const START = 9;
 const DOWN = 13;
 
-/** Holds `buttons` (and the sticks at `axes`) for two of the page's frames, then lets go for two (not a fixed time: under
- *  the tests' load a frame can take longer than a short hold, and the press is never seen) */
+/** Holds `buttons` (and the sticks at `axes`) for one of the page's frames, then lets go for two: not a fixed time (under
+ *  the tests' load a frame can outlast a short hold, the press never seen), and not two frames (two of them can outlast
+ *  the menus' 0.4 s repeat delay, a direction moving twice). The game's frame reads the pad before this one's callback
+ *  (asked for first), so the press is always seen */
 async function tap(page: Page, buttons: number[], axes = [0, 0, 0, 0]): Promise<void> {
   await page.evaluate(
     async ({ b, a }) => {
@@ -23,7 +25,7 @@ async function tap(page: Page, buttons: number[], axes = [0, 0, 0, 0]): Promise<
           step(n);
         });
       w.rlSetPad(b, a);
-      await frames(2);
+      await frames(1);
       w.rlSetPad([]);
       await frames(2);
     },

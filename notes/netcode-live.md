@@ -224,11 +224,176 @@ function resim(from) {
 // CSTS client (opt-in): dt' = dt * [1.0256, 1.0063, 1, 0.9938, 0.9756][satLevel from the last ack]
 ```
 
-## 11. Replication and the Connection Quality indicator
-(Pending: sub-agent NL2.)
+## 11. Replication and the Connection Quality indicator (NL2)
+Sources: script, package data (class defaults), AS3 and NET1's 10 ranked 2v2 replays (`out/bsim/agents/NL2/work/`).
+Tags here also: [G] AS3, [M] movie dump, [rep] measured in replays, [sim] simulated. Inherited defaults: Engine Actor
+(NUF 100, prio 1, RemoteRole None), Pawn (SimulatedProxy, prio 2), Info (NUF 10, dirty-only), ReplicationInfo
+(SimulatedProxy, bAlwaysRelevant). NUF = NetUpdateFrequency.
 
-## 12. Gap list against our server and client
-(Pending: sub-agent NL3.)
+### 11.1 Per actor class
+| Class | NUF / prio | Relevancy and role | Key properties and conditions | Status |
+|---|---|---|---|---|
+| Car_TA | 15 / 6 | bAlwaysRelevant (RBActor_TA); bReplicateMovement False (no Actor Location/Velocity). PossessedBy sets RemoteRole = AutonomousProxy for a PC in a net game, Simulated for bots (TA:18372) | `ReplicatedRBState` **if true** (whenever changed); `TeleportCounter` / `bFrozen` / `WeldedInfo` if bNetDirty; `ReplicatedThrottle` / `ReplicatedSteer` (bytes, 128 = neutral) and `bReplicatedHandbrake` if bNetDirty && RemoteRole == SimulatedProxy, i.e. **non-owners only**; `bDriving`, `ReplicatedDemolishExtended`, `DodgesRefreshedCounter`, `MaxNumJumps`, `bUnlimitedJumps`, `MaxTimeForDodge` if bNetDirty; `bOverrideHandbrakeOn/BoostOn` owner only | NUF/prio verified; owner mechanism new |
+| Ball_TA | 100 / 10 | bAlwaysRelevant, SimulatedProxy | RB state as cars; `HitTeamNum` byte (255 default); explosion data; scales and Magnus bNetInitial | verified |
+| CarComponent_TA (jump, double jump, dodge, flip, boost) | 30 / 5 | bAlwaysRelevant, bOnlyDirtyReplication; `Create` copies the car's RemoteRole (TA:21927) | `ReplicatedActive` byte counter (odd = active, `ClientUpdateActive` TA:21907), non-owners only; `ReplicatedActivityTime` needs bSimulateComponent (never seen); Dodge `DodgeTorque`, DoubleJump `DoubleJumpImpulse`, AirActivate `AirActivateCount` (→ ForceNetUpdate), FlipCar `FlipCarTime` + `bFlipRight` if bNetDirty | verified / new |
+| Boost amount | – | – | Owner: `ClientGiveBoost` / `ClientFixBoostAmount` RPCs (tolerance 0.0001). Non-owners: `ReplicatedBoost` (32-bit struct; BoostAmount = FloatToRangeByteUnsigned(percent), written in `Active.EndState`). While a remote car boosts, **non-owners predict its consumption** (`ShouldPredictBoostConsumption`: Role == SimulatedProxy && !unlimited, TA:22304) | new |
+| PRI_TA | 1 / 1 | ReplicationInfo, always relevant | `Ping` byte if bNetDirty && !bNetOwner; `ReplicatedWorstNetQualityBeyondLatency` byte (everyone); stats ints if bNetDirty; ForceNetUpdate on score/stat changes | new |
+| GameEvent_Soccar_TA | 100 / 10 | bAlwaysRelevant; SimulatedProxy (GameEvent_TA.Init TA:851) | `SecondsRemaining`, `ReplicatedStateName`, `bBallHasBeenHit`, `ReplicatedServerPerformanceState` (byte) if bNetDirty | new |
+| GRI_TA / Team_TA | 10 / 2 | ReplicationInfo | Team `Score` / `GameScore`, `ClubColors` if bNetDirty | new |
+| VehiclePickup_TA (pads) | 1 / 1 | bNoDelete level actor, bAlwaysRelevant, bSkipActorPropertyReplication; **RemoteRole None until the first pickup** → SimulatedProxy + ForceNetUpdate (TA:99077); `bNetRelevant` false while idle, true while picked up | `NewReplicatedPickupData {Instigator, PickedUp byte}` if bNetDirty; PickedUp is a counter (+1 pickup, +1 respawn); clients run the respawn timer themselves; a missed cycle (even delta ≥ 2) → `DeltaFix` (TA:101647) | new |
+| CameraSettingsActor_TA | 30 / 1 | ReplicationInfo | camera profile, `bUsingSecondaryCamera`, pitch/yaw bytes to non-owners; upload: unreliable `ServerSetCameraRotation` at most every 0.0333 s + a reliable resend after 0.1 s idle (TA:15262) | new |
+| NetworkInputBuffer_TA | 60 | bOnlyRelevantToOwner, AutonomousProxy | – | new |
+| PlayerController | prio 3 | bOnlyRelevantToOwner | – | – |
 
-## 13. Test plan (in-process network tests)
-(Pending: sub-agent NL3.)
+### 11.2 Relevancy, priority, rates
+- **Relevancy:** every gameplay actor is always relevant (RB actors, components, events, PRIs). No distance culling in
+  script or data [A] (a native IsNetRelevantFor override was not checked [I]).
+- **Forced updates** [S][A]: the ball after each car hit (`ApplyBallImpactForces` → `Ball.ForceNetUpdatePacket`, TA:20255);
+  cars on `SetAllDriving(true)` (TA:1370), `Teleport` (TA:20538) and flip resets (TA:101291); component impulses near the
+  ball (`NetworkConfig_TA.bForceNetPackets` True, `ForcePacketSignificantDistance` 1000; NET-5 semantics).
+  netcode.md's "a car within 1000 uu of the ball is forced into every update" is wrong.
+- **Server tick:** `NetServerMaxTickRate` 57, idle 20 (online config). Also `FlatbufferPacketSendRate` 30,
+  `MinSecondsForUnstableConnection` 20, `MinSecondsUntilConnectionCheck` 5 [A].
+- **Measured car update rate** [rep]: median **13.4/s per car** (p25–p75 13.0–13.7); gaps of 1/2/3 server frames = 14/53/32 %.
+  The 120 Hz-frame model (≈ 6.7/s) is rejected; the 57 Hz-frame model (≈ 12–13/s) fits. Replays hold the **received**
+  RB cadence (the recorder's own car shows the same gap distribution).
+- **Ball:** ≈ 35/s modelled; replays show 29/s (the 30 fps recorder cap). **Components:** ≈ 3.8 update records/s per car.
+- **Priority** matters only when saturated: Net_High asks for 15000 B/s; the 2v2 state stream is ≈ 3.1 KB/s, so it never
+  saturates. GameInfo `TotalNetBandwidth` 32000, `MinDynamicBandwidth` 4000, `MaxDynamicBandwidth` 7000 exist [A], use unknown.
+
+### 11.3 Bits per update ([rep] payloads; framing [I])
+| Update | Content | Bits |
+|---|---|---|
+| Car → non-owner, awake | RB 229.6 (112–242) + property header 7 + inputs 14.0 on average (steer 8+7 in 62 % of updates, throttle 8+7 in 28 %, handbrake 1+7 in 5 %) | **250.6** (+ framing ≈ 34–35 B) |
+| Car → owner | RB + header | 236.6 (≈ 32 B) |
+| Car, sleeping | – | 120.6 + 7 |
+| Ball | RB 235.0 + 7 | **242** |
+| Rare car properties | DemolishExtended 237 + 8; TeamPaint 88; DodgesRefreshedCounter 32 | – |
+| Components (own channels) | ReplicatedActive 8+6; AirActivateCount 32+6; ReplicatedBoost 32+6; DodgeTorque 31.1 (11–34)+6; DoubleJumpImpulse 55+6; FlipCarTime 32 + bFlipRight 1 | records: Boost 58.0, Jump 35.4, Dodge 66.3, DoubleJump 82.9, FlipCar 54.2 |
+| Pickup | NewReplicatedPickupData 18.7 (9 without instigator, 41 with) + 6 | record ≈ 62–66 |
+| PRI / GameEvent / camera | Ping 8+8, stat ints 32+8; SecondsRemaining 32+7 per second; camera pitch/yaw 8+6 | – |
+| **2v2 total** | car 1.63, ball 0.75, PRI 0.19, components 0.13, pickups 0.07, other 0.05, camera 0.03 KB/s | **≈ 3.1 KB/s** (no acks, headers, UDP) |
+The property header is the RepIndex (7–8 bits for car/ball/PRI, 6 for others); the RB quaternion is 2 + 3·18 = 56 bits. With acks and UDP/IP that is ≈ 5–6 KB/s per client [sim]. Car RB states go to the owner too, at the same cadence as to others [rep].
+
+### 11.4 Connection Quality indicator
+- **Setting:** Interface `UserSettings.int [ConnectionQualityIndicators]`, checkbox, **default on**
+  (`ConnectionQualitySave_TA.bShowConnectionQualityIndicators`) [A][S TA:56179].
+- **Tracker:** `ClientConnectionTracker_TA`, primary player in networked games only (TA:76494–76530); starts **15 s** after
+  attach, polls every **0.35 s** [A]; `GFxData_ConnectionStats_TA` proxies `bDisconnectedFromServer`,
+  `bShowConnectionQualityIndicators`, `LatencyStatus`, `JitterStatus`, `PacketStatus` to AS3.
+- **Thresholds** (`ConnectionQualityConfig_TA`, online config; status 0 good / 1 mediocre / 2 bad, ≥ comparisons, TA:547–612):
+
+  | Indicator | Input | Mediocre | Bad |
+  |---|---|---|---|
+  | Disconnected (bad only) | `NetStats.CurrentAckTime` or `CurrentReceiveTime` | – | ≥ 0.8 s (no hysteresis) |
+  | High latency | `NetStats.CurrentLatency` (the filtered ExactPing, s) | ≥ 0.25 | ≥ 0.35 |
+  | Latency variation | EMA of `CurrentJitter` (= \|ping sample − ExactPing\|), weight 0.175 per poll (0.35/2.0) | ≥ 0.04 | ≥ 0.06 |
+  | Packet loss % | EMA(new lost) / EMA(new packets) × 100, weight 0.07 (5 s) | ≥ 5 | ≥ 9 |
+  | Server health | dedicated servers: `ServerPerformanceTracker_TA` (TA:90230) fps = 1/dt, Rolling = lerp(Rolling, fps, min(dt, 1)), start 60; replicated as `GameEvent_Soccar_TA.ReplicatedServerPerformanceState` (TA:61973) | ≤ 50 fps | ≤ 40 fps |
+
+- **Hysteresis** (`ShouldUpdateMetric`): a worse status applies at once; any other change only after > `ClientUpdateDelay`
+  **1.5 s** since that metric's last change.
+- **Display** [G][M]: `connectionQualityView` (HUD d88) at **(1010, 220)**, right-anchored (x += ΔW), above the boost meter;
+  not in the replay viewer.
+  - Entries [Disconnected, Server, Packet, Jitter, Latency], sorted worst first (keep this priority order for ties).
+  - Normally only entry 0 shows (status > 0). With the scoreboard open, or any top screen other than the HUD, every bad
+    or mediocre entry shows, with labels.
+  - Entry 0 at y 0, flashing; entry i > 0 at y = 54 + (i − 1)·48, no flash, icon scale 0.6; moves tween 0.2 s.
+  - Icons by key: Icon_Disconnected, Icon_ServerPerformance, Icon_PacketLoss, Icon_LatencyVariation, Icon_LatencyHigh;
+    128 px art at 0.75 = 96 px, centred (our own icons).
+  - Fade: autoAlpha 0.2 s. Additive tint: bad (255, 0, 0); mediocre (255, 103, 0) (renders orange).
+  - Flash: 0.25 s to white and scale 1.1, then a yoyo between the status colour at 1.0 and white at 1.1, 0.25 s per leg.
+  - Labels `[ConnectionQuality] Disconnected / ServerHealth / PacketLoss / LatencyVariation / HighLatency` (by key; not on
+    the verbatim list), upper-cased, $SmallBoldFont 12 white, centred in a 120 px box at x −123…−3, bottom ≈ y 31.6,
+    black glow (blur 5, strength 2), 0.3 s fade.
+- **Scoreboard:** on the server a tracker per remote player sets `PRI.ReplicatedWorstNetQualityBeyondLatency = max(PacketStatus,
+  JitterStatus)` (TA:80637), shown as the SB-7 warning triangle; its inputs come from `ServerUpdatePing` (every ≥ 4 s:
+  latency = the client's ExactPing, jitter = |ping_k − ping_{k−1}|).
+- **Post-match help modal** (menu level; medium confidence): rolling "bad time" ±0.35 s per poll per metric (0–900 s);
+  opens if bad time / 900 reaches 35 % (ping), 10 % (jitter) or 5 % (loss) and the last notice was ≥ 5 days ago. Suggest
+  skipping it in the clone.
+- The join-time connection check is off by default (`bJoinGameConnectionCheckEnabled` false). The separate network stat
+  graph uses latency good/bad 75/120 ms and loss 1/3 % (TA:70874–70897).
+
+### 11.5 Packet-level settings
+- Low/Medium/High map to TcpNetDriver Min/Median/MaxReplicationRate and Min/Median/MaxClientRate, and to 20/40/60 for the
+  input rate (TA:71206–71242), applied as `NetRepRate`, `NetSpeed`, `NetClientInputRate`; NetworkConfig_TA (online) can
+  override the min/max. TcpNetDriver has no default object in any package; the only known High values are the user's
+  log: 60 / 15000 / 60. Server-side clamping per connection: §9.
+- Open (native, not needed for the clone): the units/writers of PRI.NetStats fields on client and server (NL1 §8 gives the
+  per-second NetStats update); FloatToRangeByte formulas (the throttle/steer decode is in §4); whether a native
+  IsNetRelevantFor exists for RB actors.
+
+## 12. Gap list against our server and client (NL3, code reading at 9b99b97)
+**Already done** (earlier audit items): N-1 (as CS-1..15), N-2, N-5, N-11 (5 substeps on client and server), NR-1..9,
+NET-1, NET-2 (caveat G10). Partly: N-3 (parts independent, size unchanged), N-4 (no client demo prediction; explosion
+position and timing differ, G9). Not done: N-9 (keep, G12), N-10 / NET-7 (G7), NET-5 cadence and NET-8 state size (G1).
+
+**Matches** (summary): one input frame per new tick, the 60 Hz send clock with ≤ 1 packet per frame, the newest 10
+frames, acks in every update (same datagram as the states, so atomic), correction at each update's own ack with no
+monotonic guard, no STS/CSTS; history only on the client (128-slot ring), every frame recorded, server states survive
+resims, inputs recorded only on new frames; any update dirties a full-world resim; the **whole server input buffer**
+(ServerConsume: repeat / zero after 1 s, half-rate fill on server PF parity, double consume, NET-2 jump edges, fill exit
+before the merge, the jitter formula, hitch reset, cap 60); loss/reorder merging; client ≤ 5 substeps with drop; CS-1..15
+and NR-1..9 (minor G13).
+
+**Ranked gaps** (effect on online feel at 30–150 ms RTT, jitter, 1–5 % loss):
+
+| # | Gap | Ours (file:line) | Game | Effect | Change | Risk |
+|---|---|---|---|---|---|---|
+| G1 | **Downstream state size and cadence vs QUIC congestion control** | cars ≈ 322–430 B each (`engine/net/NetState.cpp:122-173`: body 85 B incl. inverse inertia 36 B, two control sets 50 B, wheels, hit info); ball and cars within 1000 uu every update (60/s), others and pads 15/s (`server/src/game.rs:14-20, 1438-1495`): 2v2 ≈ 45–60 KB/s, 3v3 ≈ 95–140 KB/s per client; `send_datagram` errors ignored (`net.rs:134-136`) | car ≈ 33–37 B at ≈ 13.4/s, ball ≈ 34 B at ≈ 35/s: ≈ 3.1 KB/s (2v2), 6.5 KB/s (3v3) | **HIGH [I]**: QUIC datagrams are congestion-controlled; a loss-based controller sustains ≈ 1.22·1200/(R·√p): ≈ 146 KB/s at 100 ms/1 %, 65 KB/s at 100 ms/5 %, 44 KB/s at 150 ms/5 %, at or below our rates; queued datagrams (quinn's send buffer [I]) can add seconds of latency or drops; 2–3 datagrams per update multiply loss exposure | in order: (1) measure (T1); (2) never queue stale updates (small datagram send buffer / check space and skip; consider BBR; depends on wtransport 0.7's API [I]); (3) the game's cadence: cars ≈ 15/s + a forced update on jump/dodge/double-jump impulses within 1000 uu of the ball, ball 35–60/s, acks 60/s; (4) shrink the car state (packed RB fields only if the per-tick read-back stays lossless; drop inverse inertia if recomputable; gameplay fields only on change or as a delta against an acked update); (5) client stale-input datagram policy (`outgoingMaxAge`) [I] | (2) low; (3) medium (bigger remote errors: T5); (4) high (determinism; gate on T3: 0 local mispredictions on a clean network) |
+| G2 | **Remote-car inputs** (§4) | every frame, resim or new, uses the last server controls with throttle/steer/pitch/yaw/roll × (1 − min(1, (f − base)/12)); jump, boost, handbrake, dodgeForward held (`client/src/net/predictor.ts:101-113, 178-184`) | new frames: full replicated throttle/steer/handbrake; pitch/yaw/roll keep the last history value; the fade rewrites only history ≥ RPF, on that car's receive, when inputs differ; jump/boost never set; remote components don't run | **MEDIUM**: when resim depth > 12 (RTT ≳ 50 ms) remote cars coast at the present with zero steer/throttle, under-turn every update, every update is a correction | record remote controls per frame; new frames use full base throttle/steer/handbrake and pitch/yaw/roll from the previous record; on a car's receive, if its controls changed (\|Δ\| ≥ 1e-8), fade-rewrite entries ≥ ack (handbrake copied); remote jump/boost: product decision | medium (decide with T5) |
+| G3 | **One resim per update; a fresh snapshot per frame** | each update / late part does load + resim at depth ≈ RTT·120 + 7 (`client/src/game/online.ts:610-639`, `predictor.ts:132-163`); `saveState` allocates per frame (`engine/wasm/bindings.cpp:458-462`) | one resim per render frame from the minimum dirty frame | **MEDIUM**: a jitter burst of 3–6 updates at 150 ms ≈ 80–160 steps + snapshots in one frame; the spike can even trip the hitch reset (> 0.1 s) | `Predictor.stage(frame, states)` writes states into history and tracks the minimum frame; `resimulate()` once per frame with one SyncError capture around it; pool snapshot buffers | low–medium (keep the NR-6 "either order" test) |
+| G4 | **Connection Quality indicator and the 0.8 s "disconnected" icon** | only the debug `#net` line (`online.ts:1067, 1088`) and "Disconnected" when the transport closes | §11.4 | MEDIUM (UX) | client tracker (15 s start, 0.35 s poll): disconnected = time since the last Update ≥ 0.8 s; latency ExactPing ≥ 0.25/0.35; jitter EMA 0.175 ≥ 0.04/0.06; loss from serverTick/part gaps EMA 0.07 ≥ 5/9 %; server health byte; 1.5 s hysteresis; default on; server sets max(packet, jitter) per player for the scoreboard triangle | low |
+| G5 | **Prediction needs a pawn** (§5) | keeps predicting while the local car is demolished | applies states directly + smoothing (the shown world steps back by ≈ RTT + buffer, forward again at respawn) | LOW–MEDIUM (fidelity) | `Predictor.predicting = false` while `#drawnDemoed(local)` (`online.ts:569`); `correct()` applies at the present without replay and records the present frame; smoothing as now; re-enable at respawn (spawn counter changed and not demoed) | medium |
+| G6 | **Ping filter and display** | client EMA 0.1 with echo-delay compensation (`online.ts:625-628`); scoreboard = server QUIC RTT sampled each second, broadcast every 2 s in 1 ms steps, own ping included (`net.rs:172-177`, `game.rs:598-602, 1126-1146`) | PRI.UpdatePing (0.99/0.01 EMA, spike clamp 3·ExactPing, cap 1.5 s, first sample min(N, 0.3)); own = ceil(1000·ExactPing); others = 4·ceil(0.255·ms), refreshed ≤ every 4 s | LOW | implement the filter; an `UpdatePing` report every > 4 s; server stores min(ceil(255·s), 255) | low |
+| G7 | **Acks outside the history, ack 0, ack ahead** (N-10) | ignore beyond 127 frames; ack 0 resims from the welcome frame; ack > PF triggers a resync that renumbers frames and wipes the history (`predictor.ts:133-141, 196-209`) | clamp to PF − 119 and resim; ack 0 → apply at the present; ack > PF → apply directly without renumbering | LOW | optional | low–medium |
+| G8 | **No 1.5 s replication stop to a silent client** | sends to everyone (`game.rs:1471`) | stop replicating after 1.5 s without receive | LOW | skip a player whose last packet is ≥ 1.5 s old; count `send_datagram` errors | low |
+| G9 | **Demolish explosion position** | recorded pose at the server's tick (`online.ts:734-745`) | the victim's drawn location at receipt (N-4c, CS-11) | LOW | use blended pose + `error.location` | low (revisits RV-47) |
+| G10 | **Dodge direction on a double consume** | B's axes (`server/src/input_buffer.rs:157-162`) | A's DodgeForward/Right at the press | LOW | pass A's dodge axes with the tap/repress | low–medium (engine API) |
+| G11 | **Component state after a resim** (by design) | full snapshots: the server's component timeline wins | components replay bActive from history, skip activation decisions; the pre-resim present state is restored | INFO: a correction can shift or cancel a predicted local jump/dodge when the server's state differs | keep; measure (T3) | high if changed |
+| G12 | **Resend until consumed** (N-9; keep) | `online.ts:600-608`: more redundancy (≈ 5 packets per frame-span at 60 fps) | drop once received (TS-guarded) | – | keep; fix `protocol/README.md`, which says `receivedFrame` stops resends (unused) | – |
+| G13 | CS details (negligible) | `client/src/game/syncError.ts:39-45`: snap before draw; quaternion store; no FRotator quantisation | snap after draw; angle+axis (decays the long way past π); FRotator | negligible | optional | – |
+
+**Intentional design differences (fine):** WebTransport datagrams instead of UE3 bunches (ack and states atomic in one
+datagram; ≈ 55–75 B overhead per datagram; the real cost is congestion control, G1); full engine state per car (buys exact
+resims, i.e. 0 local mispredictions on a clean network; it is the source of the ≈ 10× size, so any shrinking must keep
+that exactness); remote jump/boost/dodge simulated, pads predicted, boost amount in the state (the user's call; G2); the
+demo event at once on the reliable stream (faster than the game); LPF counted from the first input; the 128-slot ring;
+resync renumbering; echo-compensated RTT (the display should still use the game's filter, G6); no STS/CSTS (matches the
+game's default). Remote cars recompute wheel contacts instead of reusing stored ones; components re-decide during a resim
+(G11).
+
+## 13. Test plan (in-process network tests; NL3)
+### 13.0 Prerequisites
+- **NetSim** (shared): seeded PCG; a JSON profile per direction (base_ms; jitter normal / AR(1) ρ / path stalls; loss
+  i.i.d. or Gilbert–Elliott; duplicate p); reordering emerges from the delays. Virtual-time versions in Rust (a
+  `server/src/` test module) and TS (`client/src/testing/netsim.ts`); a real-time tokio UDP relay for QUIC tests
+  (`server/tests/`).
+- **Metric hooks.** Server: extend `input_buffer::Stats` with repeated, zeroed, fill_skips, trimmed, late_dropped,
+  duplicates, consumed; per-tick `jitter.buffer_size` and `len()`; bytes from `Outgoing::Datagram` in `send_updates`;
+  `send_datagram` error count in `net.rs`; optionally under/over (u16) in the Update header (protocol bump). Client:
+  `predictor.correct()`'s depth into a histogram; |pre − post| per body class in `#smooth`; per-frame |eₖ − eₖ₋₁| in
+  `#draw`; ack lag, RTT samples, serverTick/part gaps (loss), resim time p99, all via `window.rlOnline()`.
+- **Refactor for testability:** move online.ts's network core (`#sendInputs`, `#applyUpdates` / `#correct` / `#capture` /
+  `#smooth`, `#watchHitches`, ping) into a DOM-free `client/src/net/session.ts` so T3/T4 run production code; a TS port of
+  ServerConsume (`client/src/testing/serverConsume.ts`) kept in parity with `input_buffer.rs` through Rust-written JSON vectors.
+
+### 13.1 Tests, ranked by value
+| # | Test | Setup / profile | Measure | Expected values or bounds |
+|---|---|---|---|---|
+| T1 | **QUIC transport under loss** (finds G1) | game loop + `net::accept_loop` + 4/6 headless wtransport clients (`server/tests/end_to_end.rs` pattern) through the UDP relay; RTT {30, 100, 150} ms × loss {0, 1, 5} % × {2v2, 3v3}; all cars near the ball; 5 s warm-up + 60 s | server bytes/s per client; bytes received; update age above the run minimum `t_recv − (t0 + Δtick/120)` p50/p99/max and its trend; delivered update loss; `send_datagram` errors; input packets lost | delivered loss = configured ± 1 %; age p99 above minimum ≤ jitter p99 + 17 ms with **no growth**; steady bytes/s; report-only: the game's budget (2v2 ≤ 15 KB/s) fails until G1 |
+| T2 | **Server input buffer** (deterministic Rust, `game.rs:2127-2196` pattern; virtual time; a client model sending the newest 10 frames from the consumed ack at 60/144/30 fps; NetSim upstream) | profiles (a)–(i) below | under, over, repeated, zeroed; buffer_size(t); queue length; ack lag; frames never consumed; jump taps applied | (a) constant 50 ms, no loss: after 2 s under = over = 0 for 60 s, size 7, queue 5–9, ack lag 7 ± 2. (b) 144/30 fps clients: size 7, under = over = 0. (c) i.i.d. jitter σ = 5/10/20 ms: size equal to a reference JitterBuffer fed the same newest-timestamp arrivals; ≈ 7 / 8 / ≈ 13 ± 2; under ≤ 1 per minute after the 30 s warm-up for σ ≤ 10 ms. (d) a 150 ms stall per minute: size 7 → 11 at once, ≈ 13 repeated ticks, then over ≈ 5–7, back to 7 in ≈ 25–30 s, no hitch reset. (e) loss 1/5 %: frames never consumed 0 at 60 fps; at 30 fps ≈ 0.36 / 9.5 per minute; size 7; under ≈ 0 / ≤ 1 per minute. (f) reorder/duplication 5 %: consumption sequence = the clean run; jitter sampled only on newer timestamps. (g) 300 ms client hitch: size 18, reset 2 s later → 7 at the next packet (without it > 7 after 30 s); rate limit holds. (h) 1.2 s upstream outage: repeated ticks 120 ± 2, the rest zeroed, then fill mode. (i) 1-tick jump taps under σ = 20: server jumps = taps (NET-2) |
+| T3 | **Client prediction and correction** (vitest + Node engine; extend `client/src/net/predictor.test.ts:50-124`; TS ServerConsume; NetSim both ways; `session.ts`; 2 bot cars; 60 s) | RTT 30/100/150; loss; reorder/dup | local mispredictions per minute; resim depth histogram; CS-1 error at capture p50/p99 per class; ignoredOld, resyncs; local component flips per correction (G11); resim ms p99 | no loss, constant RTT: **0 local mispredictions** after warm-up, local error exactly 0; depth in [RTT·120 + 5, RTT·120 + 12] (100 ms → 17–24), always ≤ 119; ignoredOld = resyncs = 0. Generally: local mispredictions = under episodes + over events + lost input frames (model). Downstream loss 1/5 %: local mispredictions unchanged. Reordered/duplicated updates: the same final world (NR-6) |
+| T4 | **Smoothing invariants** (CS) | the T3 correction stream at 60 and 144 fps | drawn pose at correction; per-frame steps | the drawn pose is unchanged by a correction before the decay (≤ 1e-3 uu, 1e-5 rad); per-frame step = min(dt·4, 1)·\|e\| and min(dt·5, 1)·angle (6.67 % / 8.33 % at 60 fps, 2.78 % / 3.47 % at 144 fps), so drawn-jump p99 ≤ 0.0667·p99(\|e\|); TV-1/2/5 exact except the last frame (ours 0 vs the game's 0.304 uu, G13); a spawn-counter change is not smoothed; dt dilated after a goal |
+| T5 | **Remote input model A/B** (decides G2 and G1-3) | remote inputs from replay streams or human logs; RTT 50/100/150; our cadence vs the game's (cars 13.4/s, ball 35/s); models (a) ours, (b) the game's rule, (c) the game's rule + our remote components | remote and ball CS error at capture p50/p99; drawn-jump p99 | decide by the numbers (the spec gives no bound) |
+| T6 | **Bandwidth and cadence gate** (deterministic Rust; 4/6 players near and away from the ball; `game.rs:1438-1495`) | – | per-actor send rates; datagram sizes; KB/s | today: ball 60/s, near cars 60/s, far cars and pads 15/s, no datagram > 1100 B, 2v2 ≈ 45–60 KB/s, 3v3 ≈ 95–140 KB/s; after G1: car ≤ ~40 B, 2v2 ≤ 15 KB/s |
+| T7 | **Stalls, resync, hidden tab** | client stalls 0.3 / 2 / 10 s | resyncs; queued parts; resets; server buffer | one resync per stall longer than ≈ (queue + 5)/120 s; ≤ 120 queued parts (NR-4); one reset 2 s later; server buffer 7 → 18 → 7 |
+| T8 | **Timeouts** | outages | zero input; icon timing; lost connection; recovery | zero input exactly 1.0 s after the last packet; disconnected icon at 0.8 s (+ ≤ 0.35 s poll), never before 15 s, cleared within one poll of resumed updates; QUIC idle "lost connection" (already `server/tests/end_to_end.rs:111`); a 3 s two-way outage recovers with one smoothed correction and no resync storm |
+| T9 | **Ack, RTT and ping** | RTT profiles; reordered acks | ping; corrections | our ping in [RTT, RTT + 17 ms] at 60 fps; an old reordered ack still corrects consistently; after G6 the filter vectors (first sample min(N, 0.3); clamp at 3× when N > 2×; time constant ≈ 100 samples; others' pings multiples of 4, refreshed ≤ every 4 s) |
+| T10 | **Connection Quality** (after G4) | scripted stats | statuses | every threshold; 1.5 s hysteresis (worse at once); entry order [Disconnected, Server, Packet, Jitter, Latency]; default on |
+| T11 | **No-pawn prediction** (after G5) | demolition at RTT 100 | resim depth | depth 0 while demolished with smoothing on; after respawn back to RTT·120 + 7 |
+| T12 | **Nightly end-to-end smoke** | Playwright + a Node UDP relay (the fixture serves its own `/info` with the relay port and the real certificate hash); 100 ms RTT, 10 ms jitter, 2 % loss | ping; mispredictions; buffer; errors | ping 100–140 ms; local mispredictions / corrections < 5 %; buffer target ≤ 9; no page errors |
+
+Unverified [I]: the wtransport 0.7 / quinn defaults for datagram send buffering and congestion control (their source is in
+the cargo registry outside the repo; check them in the repo's vendored or documented API before G1-2).

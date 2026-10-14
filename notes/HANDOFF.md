@@ -491,7 +491,14 @@
     - RV-285: "Free Play" on the main menu stays as it is (the user, 2026-10-14); RV-286 info, no change.
     - Scope (the user, 2026-10-14): free play and online matches. Custom training, bots and mutators are dropped;
       netcode, hosting and joining come later, after the user has evaluated the game.
-  - **Since 85b2463 (uncommitted): the HUD's fonts bundled (the user's pick, set B).** Rajdhani SemiBold / Light for
+  - **Since 9b99b97 (uncommitted): the generated car in the Fennec's proportions (the user's item 30).** The model
+    (`render/carModel.ts`) takes the Fennec's measured scalars (FENNEC: length, width at the fenders, belt, roof, nose
+    and tail, heights of the sills, nose, hood, belt and roof, the windscreen's base and rake, the roof's ends, the rear
+    window's base, the bumper, the wheels' places and sizes), measured from the local export, set on the hitbox
+    (`fennecFrame`: other presets scaled to theirs): narrower and lower than the hitbox (71 by 52 where the hitbox is
+    87 by 57 over the ground), tapered at the nose and tail, the cabin narrowing to the roof, the roof to the tail with
+    a spoiler's lip, the rear window near upright. Scalars only (the user's 2026-10-09 rule); the styling ours.
+  - **In 9b99b97: the HUD's fonts bundled (the user's pick, set B).** Rajdhani SemiBold / Light for
     the header and thin text (the Latin woff2), Orbitron at 500 for the numbers (the upstream google/fonts TTF as it is:
     its licence reserves the name, so no subset or conversion), each in `client/public/fonts/` with its OFL.txt; the
     guard pins them by content (`shippedData.test.ts` FONTS). They're loaded, then measured (`loadHudFonts`): sizes
