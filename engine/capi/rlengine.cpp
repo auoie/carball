@@ -219,6 +219,15 @@ int rl_car_position(RLArena* a, uint32_t id, float out[3]) {
 	return 1;
 }
 
+int rl_car_velocity(RLArena* a, uint32_t id, float out[3]) {
+	Car* car = a->arena->GetCar(id);
+	if (!car)
+		return 0;
+	Vec v = car->GetState().vel;
+	out[0] = v.x; out[1] = v.y; out[2] = v.z;
+	return 1;
+}
+
 int rl_car_demoed(RLArena* a, uint32_t id) {
 	Car* car = a->arena->GetCar(id);
 	return car && car->_internalState.isDemoed ? 1 : 0;
@@ -227,7 +236,7 @@ int rl_car_demoed(RLArena* a, uint32_t id) {
 void rl_car_demolish(RLArena* a, uint32_t id) {
 	Car* car = a->arena->GetCar(id);
 	if (car)
-		car->Demolish(a->arena->GetMutatorConfig().respawnDelay);
+		a->arena->DemolishCar(car); // (out of the vehicles' order at once: RV-340)
 }
 
 void rl_set_press_axes(RLArena* a, uint32_t id, float dodge_forward, float yaw, float roll) {

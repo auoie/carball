@@ -4,8 +4,11 @@ import { fitHudFonts, loadHudFonts } from "./ui/hudFont";
 import createEngine from "@engine/rlengine_web.mjs";
 import { CarBody, World, initEngine } from "./engine/world";
 import { Freeplay } from "./game/freeplay";
-import { Online } from "./game/online";
-import { Connection, devServerAddress } from "./net/connection";
+import { Online, type SessionEnd } from "./game/online";
+import { Matchmaking, OWN_SEARCH_TEXT } from "./game/matchmaking";
+import { Connection, type MatchSession, devServerAddress } from "./net/connection";
+import { type MenuNotice, pageUrl, queueAddress, storeClaim, storeNotice, takeClaim, takeNotice } from "./net/pages";
+import { Search } from "./net/search";
 import { GameAudio } from "./audio/audio";
 import { Hud } from "./hud";
 import { InputDevices, readGamepad } from "./input/devices";
@@ -26,6 +29,9 @@ import { PlayersMenu, Toast } from "./ui/playersMenu";
 import { EndScreen, PodiumTags, ScreenDimming, WinnerBanner } from "./ui/endOfMatch";
 import { Nameplates } from "./ui/nameplates";
 import { MainMenu } from "./ui/mainMenu";
+import { MODAL_TEXT, Modal } from "./ui/modal";
+import { SearchView } from "./ui/searchView";
+import { IdleTip } from "./ui/idleTip";
 import { PauseMenu } from "./ui/pauseMenu";
 import { PadMenuNav } from "./ui/padNav";
 import { PadReadout } from "./ui/padReadout";
@@ -109,6 +115,13 @@ async function main(): Promise<void> {
     return;
   }
   const server = params.get("server");
+  // ?match: a queue match's page, its slot's claim handed over by the menu page (src/net/pages.ts)
+  const claim = params.has("match") ? takeClaim() : null;
+  if (params.has("match") && claim === null) {
+    location.replace(pageUrl("menu", location));
+    return;
+  }
+  const onlinePage = server !== null || claim !== null;
 
   // ?theme=meadow: the arena's look (src/render/themes/), and its soundscape
   const name = themeName(params.get("theme"));
@@ -158,7 +171,7 @@ async function main(): Promise<void> {
     settings: () => {
       panel.open();
     },
-    ...(server === null
+    ...(!onlinePage
       ? {
           exit: () => {
             pause.close();
@@ -168,10 +181,16 @@ async function main(): Promise<void> {
         }
       : {}),
   });
-  const menusOpen = (): boolean => panel.isOpen || pause.isOpen || (mainMenu?.isOpen ?? false);
-  // Escape (and the pad's Start): back out of the settings or the main menu's page, else the pause menu opens or closes
+  // The error modal (a lost connection, an idle kick) and the search's panel and banner (the menu page's)
+  const modal = new Modal(document.body);
+  let searchView: SearchView | null = null;
+  const menusOpen = (): boolean => panel.isOpen || pause.isOpen || (mainMenu?.isOpen ?? false) || modal.isOpen || (searchView?.panelOpen ?? false);
+  // Escape (and the pad's Start): the modal's OK; back out of the settings, the search panel (the search goes on) or the
+  // main menu's page; else the pause menu opens or closes
   const escape = (): void => {
-    if (panel.isOpen) panel.escape();
+    if (modal.isOpen) modal.close();
+    else if (panel.isOpen) panel.escape();
+    else if (searchView?.panelOpen) searchView.closePanel();
     else if (mainMenu?.isOpen) mainMenu.back();
     else pause.toggle();
   };
@@ -193,16 +212,22 @@ async function main(): Promise<void> {
   const padReadout = new URLSearchParams(location.search).has("pad") ? new PadReadout(document.body) : null;
   const padNav = new PadMenuNav({
     menu: () =>
-      panel.isOpen
+      modal.isOpen
+        ? visibleMenu("#modal")
+        : panel.isOpen
         ? visibleMenu("#settings")
-        : mainMenu?.isOpen
+        : searchView?.panelOpen
+          ? visibleMenu("#search-panel")
+          : mainMenu?.isOpen
           ? visibleMenu("#main-menu")
           : pause.isOpen
             ? visibleMenu("#pause-menu")
             : document.querySelector("#end-screen .end-buttons button") && visibleMenu("#end-screen .end-menu"),
     // (B backs out of an open menu: never opens the pause menu)
     back: () => {
-      if (panel.isOpen) panel.escape();
+      if (modal.isOpen) modal.close();
+      else if (panel.isOpen) panel.escape();
+      else if (searchView?.panelOpen) searchView.closePanel();
       else if (mainMenu?.isOpen) mainMenu.back();
       else if (pause.isOpen) pause.close();
     },
@@ -217,25 +242,63 @@ async function main(): Promise<void> {
   (window as unknown as { rlAmbienceLevels?: (theme: ThemeName, seconds: number) => Promise<unknown> }).rlAmbienceLevels = async (t, seconds) =>
     (await import("./audio/levels")).ambienceLevels(t, seconds);
   let game: { frame(dt: number): void };
-  if (server === null) {
+  if (!onlinePage) {
     const freeplay = new Freeplay(world, renderer, arena, input, hud, audio, () => settings, inputEnabled);
     freeplayRestart = () => {
       freeplay.restart();
     };
+    // The queue (notes/matchmaking.md): a search from the menu or free play; a match found, its claim to the match page
+    const matchmaking = new Matchmaking({
+      search: (playlist, handlers) => {
+        let search: Search | null = null;
+        let cancelled = false;
+        queueAddress(params, location.hostname)
+          .then((address) => {
+            if (!cancelled) search = Search.start(address, playlist, handlers);
+          })
+          .catch((e: unknown) => {
+            if (!cancelled) handlers.failed(e instanceof Error ? e.message : String(e));
+          });
+        return () => {
+          cancelled = true;
+          search?.cancel();
+        };
+      },
+      sound: (cue) => {
+        if (cue === "start") audio.searchStart();
+        else if (cue === "cancel") audio.searchCancel();
+        else audio.countdown(1);
+      },
+      join: (token, playlist) => {
+        storeClaim({ token, playlist });
+        location.assign(pageUrl("match", location));
+      },
+    });
+    const view = new SearchView(document.body, () => {
+      matchmaking.cancel();
+    });
+    searchView = view;
     mainMenu = new MainMenu(document.body, {
       freePlay: () => {
         mainMenu?.close();
         freeplay.restart(); // (a fresh session, not the one left: RV-284)
       },
-      join: (address) => {
-        const query = new URLSearchParams(location.search);
-        query.set("server", address);
-        location.assign(`${location.pathname}?${query.toString()}`);
+      findMatch: (playlist) => {
+        matchmaking.start(playlist);
+        view.openPanel();
       },
       settings: () => {
         panel.open();
       },
     });
+    // (back from a match page: its modal, a search to start again)
+    const notice = takeNotice();
+    if (notice?.modal) modal.show(MODAL_TEXT.title, notice.modal === "idle" ? MODAL_TEXT.idleKicked : MODAL_TEXT.connectionLost);
+    if (notice?.search !== undefined) {
+      matchmaking.start(notice.search, notice.warning);
+      view.openPanel();
+    }
+    (window as unknown as { rlMatchmaking?: unknown }).rlMatchmaking = () => ({ state: matchmaking.state, panelOpen: view.panelOpen });
     // For screenshots and the browser tests
     (window as unknown as { rlFreeplay?: unknown }).rlFreeplay = {
       place: (car: { x: number; y: number; yaw: number; boost?: number }, ball?: { x: number; y: number; z: number }) => {
@@ -250,13 +313,28 @@ async function main(): Promise<void> {
       // (the camera's fade as the post-processing draws it: RV-159, RV-175)
       cameraFade: () => renderer.cameraFade,
     };
-    game = freeplay;
+    game = {
+      frame(dt) {
+        freeplay.frame(dt);
+        matchmaking.frame(performance.now() / 1000);
+        view.update(matchmaking.state);
+      },
+    };
   } else {
     status.textContent = "Connecting to the server…";
-    const [host = location.hostname, port = "4434"] = server === "" ? [] : server.split(":");
-    const address = await devServerAddress(host, Number(port));
+    // (a development server's open match, ?server=host:infoPort; or the queue's match, its claim)
+    let address;
+    let match: MatchSession = { intent: "join" };
+    if (claim) {
+      address = await queueAddress(params, location.hostname);
+      match = { intent: "claim", token: claim.token };
+    } else {
+      const [host = location.hostname, port = "4434"] = server === "" || server === null ? [] : server.split(":");
+      address = await devServerAddress(host, Number(port));
+    }
     const { controller } = settings;
-    const { connection, welcome } = await Connection.open(address, {
+    // (a claim that fails: back to the menu with the connection-lost modal)
+    const opened = Connection.open(address, {
       team: 255,
       body: 0,
       dodgeDeadzone: controller.dodgeDeadzone,
@@ -266,7 +344,14 @@ async function main(): Promise<void> {
       name: settings.chat.name,
       quickChat: settings.chat.quickChatFilter,
       blockNonTactical: settings.chat.blockNonTactical,
-    });
+    }, match);
+    if (claim) {
+      opened.catch(() => {
+        storeNotice({ modal: "lost" });
+        location.replace(pageUrl("menu", location));
+      });
+    }
+    const { connection, welcome } = await opened;
     world.loadState(welcome.snapshot);
     // (a closed tab leaves at once, not when the session times out)
     window.addEventListener("pagehide", () => {
@@ -284,24 +369,47 @@ async function main(): Promise<void> {
       toast: new Toast(hudRoot),
       nameplates: new Nameplates(),
     };
-    // Back to the main menu (the menu's leave, the end screen's exit)
-    const leave = (): void => {
+    // Back to the main menu (the menu's leave, the end screen's exit; a queue match's end), with what it should do there
+    let left = false;
+    const leave = (notice?: MenuNotice): void => {
+      if (left) return;
+      left = true;
+      if (notice) storeNotice(notice);
       connection.close();
-      const query = new URLSearchParams(location.search);
-      query.delete("server");
-      location.assign(`${location.pathname}${query.size > 0 ? `?${query.toString()}` : ""}`);
+      location.assign(pageUrl("menu", location));
     };
-    const endScreen = new EndScreen(hudRoot, {
-      ready: () => {
-        online.readyForNextMatch();
+    const endScreen = new EndScreen(
+      hudRoot,
+      {
+        // (a queue match: Play Again searches its playlist again from the menu)
+        ready: () => {
+          if (claim) leave({ search: claim.playlist });
+          else online.readyForNextMatch();
+        },
+        exit: () => {
+          leave();
+        },
+        options: () => {
+          panel.open();
+        },
       },
-      exit: leave,
-      options: () => {
-        panel.open();
-      },
-    });
+      claim !== null,
+    );
     const endUi = { banner: new WinnerBanner(hudRoot), dimming: dimmingUi, tags: new PodiumTags(hudRoot), endScreen };
     const online: Online = new Online(world, renderer, arena, input, hud, audio, connection, welcome, () => settings, inputEnabled, chat, statsUi, endUi);
+    online.idleTip = new IdleTip(hudRoot);
+    if (claim) {
+      // (a queue match's session ending: back to the menu, with the kick's modal, a search again, or the lost connection's)
+      const notices: Record<SessionEnd, MenuNotice | undefined> = {
+        idle: { modal: "idle" },
+        notAllJoined: { search: claim.playlist, warning: OWN_SEARCH_TEXT.notAllJoined },
+        lost: { modal: "lost" },
+        ended: undefined,
+      };
+      online.onSessionEnd = (why) => {
+        leave(notices[why]);
+      };
+    }
     const players = new PlayersMenu(pause.players, (car, what) => {
       online.togglePlayer(car, what);
     });

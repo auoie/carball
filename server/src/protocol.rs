@@ -6,8 +6,9 @@ use crate::engine::Controls;
 // and flip resets in the state; 9: the goal replay (its phase, plan and skip votes; Hello's auto-skip); 10: forfeit votes,
 // the match type, a leaver's car, no contest; 11: quick chat, players' names (the roster), a leave's reason; 12: whether a
 // leaver's car explodes; 13: match stats, mute, Hello's chat filters; 14: the match's intro and end (its phases, the end
-// screen's countdown, ready checks, podium titles), Refused's version reason
-pub const VERSION: u16 = 16;
+// screen's countdown, ready checks, podium titles), Refused's version reason; 17: the queue (Hello's intent, playlist and
+// token, 64-bit keys, MatchFound, IdleWarning, Kicked)
+pub const VERSION: u16 = 17;
 /// The quick-chat presets (`Group1-6MessageN`: notes/quick-chat.md CHAT-1); a preset on the wire is its index
 pub const QUICK_CHAT_PRESETS: u8 = 76;
 /// A player's quick-chat filter (`EChatFilter` as the clone uses it: CHAT-18)
@@ -21,6 +22,18 @@ pub const MAX_NAME_BYTES: usize = 32;
 pub const REFUSED_FULL: u8 = 0;
 /// `Refused`'s reason: the client speaks another protocol version (RV-262; a client of version 12 on can read it)
 pub const REFUSED_VERSION: u8 = 1;
+/// `Refused`'s reason: no reservation has the token (never given, already claimed, or expired)
+pub const REFUSED_TOKEN: u8 = 2;
+/// `Refused`'s reason: this server doesn't serve the hello's intent (a direct join on a queue server, a search on a direct one)
+pub const REFUSED_MODE: u8 = 3;
+/// Hello's intent: join this server's match (development servers), search a playlist's queue, claim a reserved slot
+pub const INTENT_JOIN: u8 = 0;
+pub const INTENT_SEARCH: u8 = 1;
+pub const INTENT_CLAIM: u8 = 2;
+/// `Kicked`'s reason: idle too long (MM-37)
+pub const KICK_IDLE: u8 = 0;
+/// `Kicked`'s reason: the match was cancelled before it started, not every reserved player joined (MM-18)
+pub const KICK_NOT_ALL_JOINED: u8 = 1;
 
 /// A hello's version, read before the rest (another version's fields don't decode: RV-243); None: not a hello
 pub fn hello_version(body: &[u8]) -> Option<u16> {
@@ -111,13 +124,19 @@ pub enum Control {
         /// The player skips goal replays (`bAutoSkipGoalReplay`): auto-ready in every one
         auto_skip_replay: bool,
         /// The key the server gave this client before (its `Welcome`'s), kept across its reconnects (who started a forfeit
-        /// vote: `ForfeitInitiatorIDs`); 0 for none
-        key: u32,
+        /// vote: `ForfeitInitiatorIDs`); 0 for none (64 random bits: SEC-9)
+        key: u64,
         /// The player's name (UTF-8, `MAX_NAME_BYTES` at most; the server tidies it)
         name: String,
         /// Their chat filters from the start (as `ChatFilter`: RV-259)
         quick_chat: u8,
         block_non_tactical: bool,
+        /// `INTENT_*`: what the session is for
+        intent: u8,
+        /// A search's playlist: its team size (1, 2 or 3); 0 otherwise
+        playlist: u8,
+        /// A claim's token (from `MatchFound`); 0 otherwise
+        token: u64,
     },
     /// Mute or unmute a player's chat for this player (`ClientMutePlayer`: the server stops relaying their lines to them)
     Mute { car: u32, on: bool },
@@ -137,7 +156,7 @@ pub enum Control {
     VoteForfeit,
     /// `match_type`: 0 casual, 1 ranked, 2 private (who may vote to forfeit, after how long, its label); `team_size`: the
     /// playlist's; `key`: the player's (Hello's again, if it was this server's and no one here has it; else a new one)
-    Welcome { version: u16, car_id: u32, tick_rate: u8, frame: u32, match_type: u8, team_size: u8, key: u32, snapshot: Vec<u8> },
+    Welcome { version: u16, car_id: u32, tick_rate: u8, frame: u32, match_type: u8, team_size: u8, key: u64, snapshot: Vec<u8> },
     World { frame: u32, snapshot: Vec<u8> },
     Event { server_tick: u32, event: GameEvent },
     /// The match's state: sent when it changes and each second while the clock runs
@@ -165,6 +184,12 @@ pub enum Control {
     /// A stat someone gained, for every player's feed (`ClientNotifyStatTickerMessage`): the receiver's car and a
     /// demolition's victim (0: none)
     Ticker { event: u8, receiver: u32, victim: u32 },
+    /// A search found a match: the slot's one-time token, to claim with a new session's hello; the search session ends
+    MatchFound { token: u64 },
+    /// The idle warning shows (`IdleWarning_TA`: idle over 25 s of play) or hides (the player acted)
+    IdleWarning { on: bool },
+    /// The server ends this player's session (`KICK_*`), closing it a second later (`CloseConnectionWithReason`)
+    Kicked { reason: u8 },
 }
 
 /// One player's scoreboard line
@@ -384,6 +409,7 @@ impl Writer {
     fn i8(&mut self, v: i8) { self.0.push(v as u8); }
     fn u16(&mut self, v: u16) { self.0.extend_from_slice(&v.to_le_bytes()); }
     fn u32(&mut self, v: u32) { self.0.extend_from_slice(&v.to_le_bytes()); }
+    fn u64(&mut self, v: u64) { self.0.extend_from_slice(&v.to_le_bytes()); }
     fn f32(&mut self, v: f32) { self.0.extend_from_slice(&v.to_le_bytes()); }
     fn bytes_with_len(&mut self, b: &[u8]) {
         self.u32(b.len() as u32);
@@ -434,6 +460,7 @@ impl<'a> Reader<'a> {
     fn i8(&mut self) -> Result<i8, DecodeError> { Ok(self.take(1)?[0] as i8) }
     fn u16(&mut self) -> Result<u16, DecodeError> { Ok(u16::from_le_bytes(self.take(2)?.try_into().unwrap())) }
     fn u32(&mut self) -> Result<u32, DecodeError> { Ok(u32::from_le_bytes(self.take(4)?.try_into().unwrap())) }
+    fn u64(&mut self) -> Result<u64, DecodeError> { Ok(u64::from_le_bytes(self.take(8)?.try_into().unwrap())) }
     fn f32(&mut self) -> Result<f32, DecodeError> { Ok(f32::from_le_bytes(self.take(4)?.try_into().unwrap())) }
     fn bytes_with_len(&mut self) -> Result<Vec<u8>, DecodeError> {
         let n = self.u32()? as usize;
@@ -453,7 +480,22 @@ impl Control {
     pub fn encode(&self) -> Vec<u8> {
         let mut w = Writer::default();
         match self {
-            Self::Hello { version, team, body, dodge_deadzone, steering_sensitivity, air_control_sensitivity, auto_skip_replay, key, name, quick_chat, block_non_tactical } => {
+            Self::Hello {
+                version,
+                team,
+                body,
+                dodge_deadzone,
+                steering_sensitivity,
+                air_control_sensitivity,
+                auto_skip_replay,
+                key,
+                name,
+                quick_chat,
+                block_non_tactical,
+                intent,
+                playlist,
+                token,
+            } => {
                 w.u8(0x01);
                 w.u16(*version);
                 w.u8(*team);
@@ -462,10 +504,25 @@ impl Control {
                 w.f32(*steering_sensitivity);
                 w.f32(*air_control_sensitivity);
                 w.u8(u8::from(*auto_skip_replay));
-                w.u32(*key);
+                w.u64(*key);
                 w.name(name);
                 w.u8(*quick_chat);
                 w.u8(u8::from(*block_non_tactical));
+                w.u8(*intent);
+                w.u8(*playlist);
+                w.u64(*token);
+            }
+            Self::MatchFound { token } => {
+                w.u8(0x8F);
+                w.u64(*token);
+            }
+            Self::IdleWarning { on } => {
+                w.u8(0x90);
+                w.u8(u8::from(*on));
+            }
+            Self::Kicked { reason } => {
+                w.u8(0x91);
+                w.u8(*reason);
             }
             Self::Mute { car, on } => {
                 w.u8(0x08);
@@ -579,7 +636,7 @@ impl Control {
                 w.u32(*frame);
                 w.u8(*match_type);
                 w.u8(*team_size);
-                w.u32(*key);
+                w.u64(*key);
                 w.bytes_with_len(snapshot);
             }
             Self::World { frame, snapshot } => {
@@ -647,11 +704,17 @@ impl Control {
                 steering_sensitivity: r.f32()?,
                 air_control_sensitivity: r.f32()?,
                 auto_skip_replay: r.u8()? != 0,
-                key: r.u32()?,
+                key: r.u64()?,
                 name: r.name()?,
                 quick_chat: r.u8()?,
                 block_non_tactical: r.u8()? != 0,
+                intent: r.u8()?,
+                playlist: r.u8()?,
+                token: r.u64()?,
             },
+            0x8F => Self::MatchFound { token: r.u64()? },
+            0x90 => Self::IdleWarning { on: r.u8()? != 0 },
+            0x91 => Self::Kicked { reason: r.u8()? },
             0x08 => Self::Mute { car: r.u32()?, on: r.u8()? != 0 },
             0x06 => Self::QuickChat { preset: r.u8()?, team: r.u8()? != 0 },
             0x07 => Self::ChatFilter { quick_chat: r.u8()?, block_non_tactical: r.u8()? != 0 },
@@ -704,7 +767,7 @@ impl Control {
                 frame: r.u32()?,
                 match_type: r.u8()?,
                 team_size: r.u8()?,
-                key: r.u32()?,
+                key: r.u64()?,
                 snapshot: r.bytes_with_len()?,
             },
             0x82 => Self::World { frame: r.u32()?, snapshot: r.bytes_with_len()? },
@@ -856,6 +919,8 @@ mod tests {
 
     fn f(v: &Value) -> f32 { v.as_f64().unwrap() as f32 }
     fn u(v: &Value) -> u32 { v.as_u64().unwrap() as u32 }
+    /// A 64-bit value (a decimal string in the JSON: a JS number can't hold it)
+    fn big(v: &Value) -> u64 { v.as_str().unwrap().parse().unwrap() }
     fn bytes(v: &Value) -> Vec<u8> { v.as_array().unwrap().iter().map(|b| b.as_u64().unwrap() as u8).collect() }
 
     fn control_from_json(m: &Value) -> Control {
@@ -868,11 +933,17 @@ mod tests {
                 steering_sensitivity: f(&m["steeringSensitivity"]),
                 air_control_sensitivity: f(&m["airControlSensitivity"]),
                 auto_skip_replay: m["autoSkipReplay"].as_bool().unwrap(),
-                key: u(&m["key"]),
+                key: big(&m["key"]),
                 name: m["name"].as_str().unwrap().to_string(),
                 quick_chat: ["everyone", "team", "friends", "off"].iter().position(|&f| f == m["quickChat"]).unwrap() as u8,
                 block_non_tactical: m["blockNonTactical"].as_bool().unwrap(),
+                intent: ["join", "search", "claim"].iter().position(|&i| i == m["intent"]).unwrap() as u8,
+                playlist: u(&m["playlist"]) as u8,
+                token: big(&m["token"]),
             },
+            "matchFound" => Control::MatchFound { token: big(&m["token"]) },
+            "idleWarning" => Control::IdleWarning { on: m["on"].as_bool().unwrap() },
+            "kicked" => Control::Kicked { reason: u(&m["reason"]) as u8 },
             "mute" => Control::Mute { car: u(&m["car"]), on: m["on"].as_bool().unwrap() },
             "scoreboard" => Control::Scoreboard(
                 m["players"]
@@ -931,7 +1002,7 @@ mod tests {
                 frame: u(&m["frame"]),
                 match_type: ["casual", "ranked", "private"].iter().position(|&t| t == m["matchType"]).unwrap() as u8,
                 team_size: u(&m["teamSize"]) as u8,
-                key: u(&m["key"]),
+                key: big(&m["key"]),
                 snapshot: bytes(&m["snapshot"]),
             },
             "voteForfeit" => Control::VoteForfeit,
@@ -1051,6 +1122,9 @@ mod tests {
             name: String::new(),
             quick_chat: CHAT_EVERYONE,
             block_non_tactical: false,
+            intent: INTENT_JOIN,
+            playlist: 0,
+            token: 0,
         }
         .encode();
         assert_eq!(hello_version(&ours[2..]), Some(VERSION));

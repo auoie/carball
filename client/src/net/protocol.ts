@@ -8,7 +8,7 @@
 // car, no contest; 11: quick chat, players' names (the roster), a leave's reason; 12: whether a leaver's car explodes;
 // 13: match stats, mute, Hello's chat filters; 14: the match's intro and end (its phases, the end screen's countdown,
 // ready checks, podium titles), Refused's version reason
-export const PROTOCOL_VERSION = 16;
+export const PROTOCOL_VERSION = 17;
 /** A name's bytes at most (UTF-8) */
 export const MAX_NAME_BYTES = 32;
 export const MAX_INPUT_FRAMES = 10;
@@ -106,13 +106,19 @@ export type ControlMessage =
       /** Skips every goal replay (bAutoSkipGoalReplay) */
       readonly autoSkipReplay: boolean;
       /** The key the server gave this client before (its Welcome's), kept across its reconnects (who started a forfeit
-       *  vote: ForfeitInitiatorIDs); 0 for none */
-      readonly key: number;
+       *  vote: ForfeitInitiatorIDs); 0 for none (64 random bits: SEC-9) */
+      readonly key: bigint;
       /** The player's name (MAX_NAME_BYTES of UTF-8 at most; the server tidies it) */
       readonly name: string;
       /** The chat filters from the start (as chatFilter: RV-259) */
       readonly quickChat: ChatFilter;
       readonly blockNonTactical: boolean;
+      /** What the session is for: join the server's open match, search a playlist's queue, claim a reserved slot */
+      readonly intent: Intent;
+      /** A search's playlist: its team size (1, 2, 3); 0 otherwise */
+      readonly playlist: number;
+      /** A claim's token (a search's matchFound); 0 otherwise */
+      readonly token: bigint;
     }
   /** Mute or unmute a player's chat for this player (ClientMutePlayer: the server stops relaying their lines here) */
   | { readonly type: "mute"; readonly car: number; readonly on: boolean }
@@ -136,7 +142,7 @@ export type ControlMessage =
       /** The playlist's team size */
       readonly teamSize: number;
       /** This player's key (Hello's again if it was this server's and no one here has it, else a new one) */
-      readonly key: number;
+      readonly key: bigint;
       readonly snapshot: Uint8Array;
     }
   /** The client had a hitch (over 0.1 s between its ticks) 2 s ago: the server resets its jitter buffer
@@ -164,7 +170,17 @@ export type ControlMessage =
   /** A stat this player gained (ClientNotifyGainedStat: the popup), with its points */
   | { readonly type: "statEvent"; readonly event: number; readonly points: number }
   /** A stat someone gained, for the feed (ClientNotifyStatTickerMessage): the receiver's car, a demolition's victim (0) */
-  | { readonly type: "ticker"; readonly event: number; readonly receiver: number; readonly victim: number };
+  | { readonly type: "ticker"; readonly event: number; readonly receiver: number; readonly victim: number }
+  /** A search found a match: the slot's one-time token, to claim in a new session; the search session ends */
+  | { readonly type: "matchFound"; readonly token: bigint }
+  /** The idle warning shows (idle past 25 s of play) or hides (MM-33..36) */
+  | { readonly type: "idleWarning"; readonly on: boolean }
+  /** The server ends this session a second later (KICK_*: MM-37) */
+  | { readonly type: "kicked"; readonly reason: number };
+
+/** Hello's intents (the wire's byte is the index) */
+const INTENTS = ["join", "search", "claim"] as const;
+export type Intent = (typeof INTENTS)[number];
 
 /** One player's scoreboard line */
 export interface ScoreboardEntry {
@@ -190,9 +206,15 @@ export interface PodiumTitle {
 /** No title (the wire's title byte) */
 const NO_TITLE = 255;
 
-/** Refused's reasons: the match has its most players; the client speaks another protocol version (RV-262) */
+/** Refused's reasons: the match has its most players; the client speaks another protocol version (RV-262); no reservation
+ *  has the claim's token; the server doesn't serve the hello's intent (or no such playlist) */
 export const REFUSED_FULL = 0;
 export const REFUSED_VERSION = 1;
+export const REFUSED_TOKEN = 2;
+export const REFUSED_MODE = 3;
+/** Kicked's reasons: idle past 30 s of play (MM-37); the match was cancelled before it started (MM-18) */
+export const KICK_IDLE = 0;
+export const KICK_NOT_ALL_JOINED = 1;
 
 /** A welcome's version, read before the rest (another version's fields don't decode: RV-243); null: not a welcome */
 export function welcomeVersion(body: Uint8Array): number | null {
@@ -264,9 +286,15 @@ function chatFilter(b: number): ChatFilter {
   return filter;
 }
 
+function intent(b: number): Intent {
+  const i = INTENTS[b];
+  if (!i) throw new DecodeError("unknown intent");
+  return i;
+}
+
 class Writer {
   #bytes: number[] = [];
-  #view = new DataView(new ArrayBuffer(4));
+  #view = new DataView(new ArrayBuffer(8));
   u8(v: number): void {
     this.#bytes.push(v & 0xff);
   }
@@ -280,6 +308,10 @@ class Writer {
   u32(v: number): void {
     this.#view.setUint32(0, v >>> 0, true);
     this.#push(4);
+  }
+  u64(v: bigint): void {
+    this.#view.setBigUint64(0, BigInt.asUintN(64, v), true);
+    this.#push(8);
   }
   f32(v: number): void {
     this.#view.setFloat32(0, v, true);
@@ -331,6 +363,9 @@ class Reader {
   u32(): number {
     return this.#view.getUint32(this.#need(4), true);
   }
+  u64(): bigint {
+    return this.#view.getBigUint64(this.#need(8), true);
+  }
   f32(): number {
     return this.#view.getFloat32(this.#need(4), true);
   }
@@ -359,10 +394,25 @@ export function encodeControl(m: ControlMessage): Uint8Array {
       w.f32(m.steeringSensitivity);
       w.f32(m.airControlSensitivity);
       w.u8(m.autoSkipReplay ? 1 : 0);
-      w.u32(m.key);
+      w.u64(m.key);
       w.name(m.name);
       w.u8(CHAT_FILTERS.indexOf(m.quickChat));
       w.u8(m.blockNonTactical ? 1 : 0);
+      w.u8(INTENTS.indexOf(m.intent));
+      w.u8(m.playlist);
+      w.u64(m.token);
+      break;
+    case "matchFound":
+      w.u8(0x8f);
+      w.u64(m.token);
+      break;
+    case "idleWarning":
+      w.u8(0x90);
+      w.u8(m.on ? 1 : 0);
+      break;
+    case "kicked":
+      w.u8(0x91);
+      w.u8(m.reason);
       break;
     case "mute":
       w.u8(0x08);
@@ -480,7 +530,7 @@ export function encodeControl(m: ControlMessage): Uint8Array {
       w.u32(m.frame);
       w.u8(MATCH_TYPES.indexOf(m.matchType));
       w.u8(m.teamSize);
-      w.u32(m.key);
+      w.u64(m.key);
       w.u32(m.snapshot.byteLength);
       w.bytes(m.snapshot);
       break;
@@ -542,11 +592,20 @@ export function decodeControl(body: Uint8Array): ControlMessage {
         steeringSensitivity: r.f32(),
         airControlSensitivity: r.f32(),
         autoSkipReplay: r.u8() !== 0,
-        key: r.u32(),
+        key: r.u64(),
         name: r.name(),
         quickChat: chatFilter(r.u8()),
         blockNonTactical: r.u8() !== 0,
+        intent: intent(r.u8()),
+        playlist: r.u8(),
+        token: r.u64(),
       };
+    case 0x8f:
+      return { type: "matchFound", token: r.u64() };
+    case 0x90:
+      return { type: "idleWarning", on: r.u8() !== 0 };
+    case 0x91:
+      return { type: "kicked", reason: r.u8() };
     case 0x08:
       return { type: "mute", car: r.u32(), on: r.u8() !== 0 };
     case 0x06:
@@ -627,7 +686,7 @@ export function decodeControl(body: Uint8Array): ControlMessage {
       const matchType = MATCH_TYPES[r.u8()];
       if (!matchType) throw new DecodeError("unknown match type");
       const teamSize = r.u8();
-      const key = r.u32();
+      const key = r.u64();
       return { type: "welcome", version, carId, tickRate, frame, matchType, teamSize, key, snapshot: r.take(r.u32()) };
     }
     case 0x82: {

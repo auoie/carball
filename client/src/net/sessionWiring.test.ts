@@ -129,14 +129,38 @@ describe("the network session's wiring", () => {
     dispose(s);
   });
 
-  it("finds a server tick's client frame from the acknowledgement nearest it", () => {
+  it("finds a server tick's client frame from the first acknowledgement from that tick on, else the newest (RV-333)", () => {
     const s = setup();
     for (let f = 1; f <= 140; f++) s.session.predictor.advance(NO_INPUT);
     s.session.receive(update(s, 100, 40)); // (offset 60)
     s.session.receive(update(s, 200, 130)); // (offset 70)
     s.session.applyUpdates();
-    expect(s.session.frameAt(110)).toBe(50);
+    expect(s.session.frameAt(90)).toBe(30);
+    expect(s.session.frameAt(110)).toBe(40); // (the numbering the frames had from then on)
     expect(s.session.frameAt(190)).toBe(120);
+    expect(s.session.frameAt(250)).toBe(180);
+    // An acknowledgement past this client's frames (the server's count moved on while it stalled) isn't a sample
+    s.session.receive(update(s, 300, 500));
+    s.session.applyUpdates();
+    expect(s.session.frameAt(250)).toBe(180);
+    dispose(s);
+  });
+
+  it("maps a goal while the client stalled to a frame it has passed once its own frames are acknowledged again (RV-333)", () => {
+    // (RX10's P2: frames 1-100, the server 60 ticks on; the client stalls while the server plays 250 ticks, a goal at
+    // tick 250 among them; the server's acknowledgements run past the client's frames, then come back to them)
+    const s = setup();
+    for (let f = 1; f <= 100; f++) s.session.predictor.advance(NO_INPUT);
+    s.session.receive(update(s, 150, 90));
+    s.session.applyUpdates();
+    s.session.receive(update(s, 410, 350)); // (past the client's frames: the server counted on)
+    s.session.applyUpdates();
+    for (let f = 101; f <= 130; f++) s.session.predictor.advance(NO_INPUT);
+    s.session.receive(update(s, 430, 120)); // (its own frames again: 310 ticks behind now)
+    s.session.applyUpdates();
+    const goalFrame = s.session.frameAt(250);
+    expect(goalFrame).toBeLessThanOrEqual(s.session.predictor.frame); // (no slow motion still to come)
+    expect(goalFrame).toBe(250 - 310);
     dispose(s);
   });
 

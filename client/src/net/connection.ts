@@ -7,6 +7,8 @@ import {
   DecodeError,
   type InputFrame,
   PROTOCOL_VERSION,
+  REFUSED_MODE,
+  REFUSED_TOKEN,
   REFUSED_VERSION,
   type Update,
   decodeControl,
@@ -67,22 +69,41 @@ function session(): Pick<Storage, "getItem" | "setItem"> | null {
 }
 
 /** The key the server gave this tab (sessionStorage: kept across its reconnects and reloads, each tab its own), so it
- *  knows who started a forfeit vote; 0 for none (RV-239: the server's, so two players can't share one) */
-export function storedKey(storage = session()): number {
+ *  knows who started a forfeit vote; 0 for none (RV-239: the server's, so two players can't share one; 64 bits: SEC-9) */
+export function storedKey(storage = session()): bigint {
   try {
-    const stored = Number(storage?.getItem(KEY_STORAGE));
-    return Number.isInteger(stored) && stored > 0 && stored <= 0xffffffff ? stored : 0;
+    const stored = storage?.getItem(KEY_STORAGE) ?? "";
+    if (!/^[1-9][0-9]{0,19}$/.test(stored)) return 0n;
+    const key = BigInt(stored);
+    return key < 1n << 64n ? key : 0n;
   } catch {
-    return 0;
+    return 0n;
   }
 }
 
 /** The key the server gave (its Welcome's), kept for the next connection */
-export function storeKey(key: number, storage = session()): void {
+export function storeKey(key: bigint, storage = session()): void {
   try {
-    storage?.setItem(KEY_STORAGE, String(key));
+    storage?.setItem(KEY_STORAGE, key.toString());
   } catch {
     // (not kept: the server gives a new one next time)
+  }
+}
+
+/** What a match session is for: join a development server's open match, or claim a queue's reserved slot */
+export type MatchSession = { readonly intent: "join" } | { readonly intent: "claim"; readonly token: bigint };
+
+/** Why the server refused a hello, in our own words */
+export function refusalText(reason: number): string {
+  switch (reason) {
+    case REFUSED_VERSION:
+      return "the server speaks another protocol version";
+    case REFUSED_TOKEN:
+      return "the match is no longer there";
+    case REFUSED_MODE:
+      return "the server doesn't host that kind of match";
+    default:
+      return "the server is full";
   }
 }
 
@@ -103,6 +124,32 @@ export class ControlQueue<T> {
   }
 }
 
+/** Length-prefixed messages on the control stream; the welcome's version checked before the rest is read (another
+ *  version's fields don't decode: RV-243) */
+export async function readControlMessages(readable: ReadableStream<Uint8Array>, handle: (m: ControlMessage) => void): Promise<void> {
+  const reader = readable.getReader();
+  let buffer = new Uint8Array(0);
+  let first = true;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) return;
+    const joined = new Uint8Array(buffer.byteLength + value.byteLength);
+    joined.set(buffer);
+    joined.set(value, buffer.byteLength);
+    buffer = joined;
+    while (buffer.byteLength >= 2) {
+      const length = (buffer[0] ?? 0) | ((buffer[1] ?? 0) << 8);
+      if (buffer.byteLength < 2 + length) break;
+      const body = buffer.subarray(2, 2 + length);
+      const version = first ? welcomeVersion(body) : null;
+      if (version !== null && version !== PROTOCOL_VERSION) throw new Error(`server protocol ${String(version)}, client ${String(PROTOCOL_VERSION)}`);
+      first = false;
+      handle(decodeControl(body));
+      buffer = buffer.slice(2 + length);
+    }
+  }
+}
+
 export class Connection {
   readonly #transport: WebTransport;
   readonly #datagrams: WritableStreamDefaultWriter<Uint8Array>;
@@ -118,8 +165,12 @@ export class Connection {
     this.#datagrams = (transport.datagrams.writable as WritableStream<Uint8Array>).getWriter();
   }
 
-  /** Connects, says hello and waits for the welcome. */
-  static async open(address: ServerAddress, preferences: JoinPreferences): Promise<{ connection: Connection; welcome: Welcome }> {
+  /** Connects, says hello (a join, or a claim of a reserved slot) and waits for the welcome. */
+  static async open(
+    address: ServerAddress,
+    preferences: JoinPreferences,
+    match: MatchSession = { intent: "join" },
+  ): Promise<{ connection: Connection; welcome: Welcome }> {
     const transport = new WebTransport(
       address.url,
       address.certHash ? { serverCertificateHashes: [{ algorithm: "sha-256", value: address.certHash }] } : undefined,
@@ -128,16 +179,17 @@ export class Connection {
     const connection = new Connection(transport);
     const stream = await transport.createBidirectionalStream();
     const writer = stream.writable.getWriter();
-    await writer.write(encodeControl({ type: "hello", version: PROTOCOL_VERSION, ...preferences, key: storedKey() }));
+    const token = match.intent === "claim" ? match.token : 0n;
+    await writer.write(encodeControl({ type: "hello", version: PROTOCOL_VERSION, ...preferences, key: storedKey(), intent: match.intent, playlist: 0, token }));
     connection.#control = writer;
 
     const welcome = await new Promise<Welcome>((resolve, reject) => {
       let first = true;
-      connection.#readControl(stream.readable as ReadableStream<Uint8Array>, (m) => {
+      readControlMessages(stream.readable as ReadableStream<Uint8Array>, (m) => {
         if (first) {
           first = false;
           if (m.type === "welcome") resolve(m);
-          else if (m.type === "refused") reject(new Error(m.reason === REFUSED_VERSION ? "the server speaks another protocol version" : "the server is full"));
+          else if (m.type === "refused") reject(new Error(refusalText(m.reason)));
           else reject(new Error(`expected welcome, got ${m.type}`));
           return;
         }
@@ -166,32 +218,6 @@ export class Connection {
     if (this.#closed) return;
     this.#closed = true;
     this.onClose(reason);
-  }
-
-  /** Length-prefixed messages on the control stream; the welcome's version checked before the rest is read (another
-   *  version's fields don't decode: RV-243) */
-  async #readControl(readable: ReadableStream<Uint8Array>, handle: (m: ControlMessage) => void): Promise<void> {
-    const reader = readable.getReader();
-    let buffer = new Uint8Array(0);
-    let first = true;
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) return;
-      const joined = new Uint8Array(buffer.byteLength + value.byteLength);
-      joined.set(buffer);
-      joined.set(value, buffer.byteLength);
-      buffer = joined;
-      while (buffer.byteLength >= 2) {
-        const length = (buffer[0] ?? 0) | ((buffer[1] ?? 0) << 8);
-        if (buffer.byteLength < 2 + length) break;
-        const body = buffer.subarray(2, 2 + length);
-        const version = first ? welcomeVersion(body) : null;
-        if (version !== null && version !== PROTOCOL_VERSION) throw new Error(`server protocol ${String(version)}, client ${String(PROTOCOL_VERSION)}`);
-        first = false;
-        handle(decodeControl(body));
-        buffer = buffer.slice(2 + length);
-      }
-    }
   }
 
   async #readDatagrams(): Promise<void> {

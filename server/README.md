@@ -9,10 +9,13 @@ the game's as decoded in `notes/netcode.md`.
 cd server
 cargo run --release                    # WebTransport on :4433, dev info on http://localhost:4434/info
 cargo run --release -- --port 4433 --info-port 4434 --meshes ../out/arena/collision_meshes
+cargo run --release -- --mode queue    # the queue's 1v1, 2v2 and 3v3 matches (searches and claims only)
 ```
 The server has no web page of its own: the game connects to it over UDP. To play, also run the web client
 (`cd client && npm run dev`) and open `http://localhost:5173/?server` (or `?server=host:infoPort` for another
-machine or info port). The build compiles the engine with CMake (`build.rs`).
+machine or info port): a development server's one open match, which anyone joins. With `--mode queue`, the main
+menu's Play → 1v1 / 2v2 / 3v3 → Find Match searches it (`?queue=host:infoPort` names it; default this page's host,
+info port 4434). The build compiles the engine with CMake (`build.rs`).
 
 Development identity: a self-signed certificate (valid 14 days, the WebTransport limit for certificate hashes) made at
 start-up. The info endpoint publishes its SHA-256 so the browser can connect with `serverCertificateHashes`. A public
@@ -31,9 +34,11 @@ cargo clippy --all-targets -- -D warnings
 | `src/protocol.rs` | messages; byte vectors shared with the client (`protocol/vectors.json`) |
 | `src/input_buffer.rs` | per-player input buffer (`ServerConsume`) and jitter buffer, as the game does them |
 | `src/game.rs` | the match: joins and leaves, inputs, the match flow (below), updates (rates, splitting into datagrams) |
-| `src/game_loop.rs` | the 120 Hz game thread |
+| `src/game_loop.rs` | the game thread: the sessions' messages, the queue, every match at 120 Hz on its own clock |
+| `src/queue.rs` | who plays together: each playlist's searchers, oldest first, two full teams make a match |
+| `src/match_host.rs` | the matches: reserved slots with one-time tokens, full start, cancelled on a no-show, let go when over |
 | `src/net.rs` | WebTransport sessions, development identity and info endpoint |
-| `tests/end_to_end.rs` | a client connects over WebTransport, drives, and checks acks, ping and the updates |
+| `tests/end_to_end.rs` | a client connects over WebTransport, drives, and checks acks, ping and the updates; two searches make a match |
 
 When a player leaves, the server logs how many of their input frames it had to repeat (buffer empty) or skip
 (catching up). Each such event shifts the server's timeline for that player by a tick, which the client sees as one
@@ -60,8 +65,15 @@ As the game's competitive match (`notes/match-rules-audit.md`, from the live scr
 - The end: the winner shown, the cars frozen for the podium (8.3 s), then a new match. A team left without
   players forfeits: the other team wins at once. When everyone has left, the next player starts a new match.
 - The clients get the match state (`0x84 Match`: phase, clock, scores, winner) on each change.
-The goal explosion pushes the cars near the goal away (engine patch 77). Not yet: waiting for reserved players
-before the first kickoff (a drop-in server has none), forfeit votes.
-`--team-size N` (default 3) is the playlist's team size: the uneven-teams kickoff adjustment uses it.
+The goal explosion pushes the cars near the goal away (engine patch 77).
+
+**The queue** (`--mode queue`, `notes/matchmaking.md` v1 queue): a search session names a playlist; when two full
+teams wait, the match host reserves their slots (teams alternating) and each gets a one-time random token
+(`MatchFound`), which their client claims in a new session. The match's warm-up waits for every reserved player (full
+start); a player who doesn't claim within 30 s, or leaves before the start, cancels it (the others are told,
+`Kicked` reason 1, and search again). No backfill, no bots: a leaver's slot stays empty. A player idle for 30 s of play
+is kicked (warned past 25 s: the game's `IdleKick`, MM-32..38). A queue match doesn't rematch: when the end screen's
+60 s are up the host lets it go and its sessions end.
+`--team-size N` (default 3) is the open match's team size (1 to 8): the uneven-teams kickoff adjustment uses it.
 `--test-goal-after SECONDS` (browser tests only): each round, the ball is knocked into a goal that long after "go".
 

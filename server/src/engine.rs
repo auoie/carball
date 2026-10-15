@@ -67,6 +67,7 @@ unsafe extern "C" {
     fn rl_is_ball_scored(arena: *mut RLArena) -> c_int;
     fn rl_ball_position(arena: *mut RLArena, out: *mut f32);
     fn rl_car_position(arena: *mut RLArena, car_id: u32, out: *mut f32) -> c_int;
+    fn rl_car_velocity(arena: *mut RLArena, car_id: u32, out: *mut f32) -> c_int;
     fn rl_car_demoed(arena: *mut RLArena, car_id: u32) -> c_int;
     fn rl_car_demolish(arena: *mut RLArena, car_id: u32);
     fn rl_car_net_info(arena: *mut RLArena, car_id: u32, out: *mut CarNetInfo) -> c_int;
@@ -280,6 +281,12 @@ impl Arena {
         let mut out = [0.0; 3];
         // SAFETY: valid arena, 3 floats of space
         (unsafe { rl_car_position(self.ptr(), car_id, out.as_mut_ptr()) } != 0).then_some(out)
+    }
+
+    pub fn car_velocity(&mut self, car_id: u32) -> Option<[f32; 3]> {
+        let mut out = [0.0; 3];
+        // SAFETY: valid arena, 3 floats of space
+        (unsafe { rl_car_velocity(self.ptr(), car_id, out.as_mut_ptr()) } != 0).then_some(out)
     }
 
     /// The car is demolished (waiting to respawn)
@@ -503,6 +510,30 @@ pub(crate) mod tests {
 
     pub fn init_engine() {
         INIT.call_once(|| init(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../out/arena/collision_meshes"))).unwrap());
+    }
+
+    #[test]
+    fn the_engine_clamps_car_preferences_itself() {
+        // (RV-331, RV-344: a NaN steering sensitivity steered full left; the engine gives a value that isn't a number its
+        // default and keeps the rest within the settings' limits, whoever calls it)
+        init_engine();
+        let drive = |dodge: f32, sensitivity: f32, steer: f32| {
+            let mut arena = Arena::new();
+            let car = arena.add_car(0, 0);
+            arena.reset_kickoff(1);
+            arena.set_kickoff_countdown(0);
+            arena.set_car_preferences(car, dodge, sensitivity, sensitivity);
+            arena.set_controls(car, &Controls { throttle: 1.0, steer, ..Controls::default() });
+            arena.step(90);
+            (arena.car_position(car).unwrap(), arena.car_velocity(car).unwrap())
+        };
+        let straight = drive(0.5, 1.0, 0.0);
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -3.0] {
+            assert_eq!(drive(0.5, bad, 0.0), straight, "sensitivity {bad}: the default or the limit, driving straight");
+            assert_eq!(drive(bad, 1.0, 0.0), straight, "deadzone {bad}");
+        }
+        assert_eq!(drive(0.5, 100.0, 0.1), drive(0.5, 10.0, 0.1), "above the limit: the limit");
+        assert_ne!(drive(0.5, 10.0, 0.1), drive(0.5, 1.0, 0.1), "(the sensitivity does steer)");
     }
 
     #[test]

@@ -419,10 +419,23 @@ index 80608be..889cfb6 100644
  	m_implicitShapeDimensions = boxHalfExtents - margin;
  
 diff --git upstream/libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btCollisionShape.cpp engine/rocketsim/libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btCollisionShape.cpp
-index 062f1ee..dbd918d 100644
+index 062f1ee..ccb65ab 100644
 --- upstream/libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btCollisionShape.cpp
 +++ engine/rocketsim/libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btCollisionShape.cpp
-@@ -128,6 +128,7 @@ void btCollisionShape::setMargin(btScalar margin) {
+@@ -40,6 +40,12 @@ void btCollisionShape::getAabb(const btTransform& t, btVector3& aabbMin, btVecto
+ 	if (m_shapeType == SPHERE_SHAPE_PROXYTYPE)
+ 		return ((btSphereShape*)this)->getAabb(t, aabbMin, aabbMax);
+ 
++	// RL PATCH: an arena's triangle meshes are shared by every arena (RocketSim::GetArenaCollisionShapes): the cache, in
++	// the shape, would be shared too, and arenas on two threads tore it (a static body's box with its world min and
++	// another transform's max: the broadphase's cell count went negative). The same values, computed each time
++	if (m_shapeType == TRIANGLE_MESH_SHAPE_PROXYTYPE)
++		return ((btTriangleMeshShape*)this)->getAabb(t, aabbMin, aabbMax);
++
+ 	constexpr auto fnFastCompareTransforms = [](const btTransform& a, const btTransform& b) -> bool {
+ 		return
+ 			(a.m_origin == b.m_origin) &&
+@@ -128,6 +134,7 @@ void btCollisionShape::setMargin(btScalar margin) {
  void btCollisionShape::getBoundingSphere(btVector3& center, btScalar& radius) const {
  	switch (m_shapeType) {
  	// ROCKETSIM CHANGE: Add 0.08 to the radius if the object is a sphere
@@ -2870,7 +2883,7 @@ index 5805611..3ceaa22 100644
  }
 \ No newline at end of file
 diff --git upstream/src/Sim/Arena/Arena.cpp engine/rocketsim/src/Sim/Arena/Arena.cpp
-index a13cee0..ef18914 100644
+index a13cee0..9a4614f 100644
 --- upstream/src/Sim/Arena/Arena.cpp
 +++ engine/rocketsim/src/Sim/Arena/Arena.cpp
 @@ -1,4 +1,8 @@
@@ -3102,16 +3115,36 @@ index a13cee0..ef18914 100644
  		_carIDMap.erase(itr);
  		_cars.erase(car);
  		_bulletWorld.removeCollisionObject(&car->_rigidBody);
-@@ -93,6 +270,54 @@ bool Arena::RemoveCar(uint32_t id) {
+@@ -93,6 +270,74 @@ bool Arena::RemoveCar(uint32_t id) {
  	}
  }
  
-+// RL PATCH (FP1 G2): the vehicles' order
++// RL PATCH (FP1 G2): the vehicles' order, as the next tick's sync leaves it: a car demolished by a state set since
++// out, a car on the field not in it last (a copy taken now continues as the original: RV-340)
 +std::vector<uint32_t> Arena::GetVehicleOrder() const {
++	std::vector<const Car*> order(_vehicleOrder.begin(), _vehicleOrder.end());
++	for (size_t i = 0; i < order.size();) {
++		if (order[i]->_internalState.isDemoed) {
++			order[i] = order.back();
++			order.pop_back();
++		} else {
++			i++;
++		}
++	}
++	for (const Car* car : _cars)
++		if (!car->_internalState.isDemoed && std::find(order.begin(), order.end(), car) == order.end())
++			order.push_back(car);
 +	std::vector<uint32_t> ids;
-+	for (const Car* car : _vehicleOrder)
++	for (const Car* car : order)
 +		ids.push_back(car->id);
 +	return ids;
++}
++
++void Arena::DemolishCar(Car* car) {
++	// (FinishDemo detaches the vehicle at once: removed from the order then, several in the order they're demolished,
++	// RV-340, RV-346)
++	car->Demolish(_mutatorConfig.respawnDelay);
++	_RemoveVehicle(car);
 +}
 +
 +void Arena::SetVehicleOrder(const std::vector<uint32_t>& ids) {
@@ -3157,7 +3190,7 @@ index a13cee0..ef18914 100644
  Car* Arena::GetCar(uint32_t id) {
  	return _carIDMap[id];
  }
-@@ -110,6 +335,11 @@ void Arena::SetCarBumpCallback(CarBumpEventFn callbackFunc, void* userInfo) {
+@@ -110,6 +355,11 @@ void Arena::SetCarBumpCallback(CarBumpEventFn callbackFunc, void* userInfo) {
  	_carBumpCallback.userInfo = userInfo;
  }
  
@@ -3169,7 +3202,7 @@ index a13cee0..ef18914 100644
  void Arena::ResetToRandomKickoff(int seed) {
  	using namespace RLConst;
  	// TODO: Make shuffling of kickoff setup more efficient (?)
-@@ -123,16 +353,200 @@ void Arena::ResetToRandomKickoff(int seed) {
+@@ -123,16 +373,200 @@ void Arena::ResetToRandomKickoff(int seed) {
  
  	auto kickoffOrder = KICKOFF_ORDER_TEMPLATE;
  
@@ -3373,7 +3406,7 @@ index a13cee0..ef18914 100644
  
  	const CarSpawnPos* CAR_SPAWN_LOCATIONS = CAR_SPAWN_LOCATIONS_SOCCAR;
  	const CarSpawnPos* CAR_RESPAWN_LOCATIONS = CAR_RESPAWN_LOCATIONS_SOCCAR;
-@@ -159,9 +573,11 @@ void Arena::ResetToRandomKickoff(int seed) {
+@@ -159,9 +593,11 @@ void Arena::ResetToRandomKickoff(int seed) {
  		CarSpawnPos spawnPos;
  	
  		if (i < locationAmount) {
@@ -3387,7 +3420,7 @@ index a13cee0..ef18914 100644
  			spawnPos = CAR_RESPAWN_LOCATIONS[respawnPosIdx];
  
  			// Extra offset to add to multiple cars spawning at the same respawn point,
-@@ -178,6 +594,8 @@ void Arena::ResetToRandomKickoff(int seed) {
+@@ -178,6 +614,8 @@ void Arena::ResetToRandomKickoff(int seed) {
  			std::vector<Car*> teamCars = isBlue ? blueCars : orangeCars;
  
  			if (i < teamCars.size()) {
@@ -3396,7 +3429,7 @@ index a13cee0..ef18914 100644
  				CarState spawnState;
  				spawnState.boost = _mutatorConfig.carSpawnBoostAmount;
  				spawnState.pos = { spawnPos.x, spawnPos.y, CAR_SPAWN_REST_Z };
-@@ -190,6 +608,11 @@ void Arena::ResetToRandomKickoff(int seed) {
+@@ -190,6 +628,11 @@ void Arena::ResetToRandomKickoff(int seed) {
  				}
  
  				spawnState.rotMat = angle.ToRotMat();
@@ -3408,7 +3441,7 @@ index a13cee0..ef18914 100644
  
  				teamCars[i]->SetState(spawnState);
  			}
-@@ -197,6 +620,9 @@ void Arena::ResetToRandomKickoff(int seed) {
+@@ -197,6 +640,9 @@ void Arena::ResetToRandomKickoff(int seed) {
  	}
  
  	BallState ballState = BallState();
@@ -3418,7 +3451,7 @@ index a13cee0..ef18914 100644
  	if (gameMode == GameMode::HEATSEEKER) {
  		int nextRand = (*randEngine)();
  		Vec scale = Vec(1, (nextRand % 2) ? 1 : -1, 1);
-@@ -216,10 +642,8 @@ void Arena::ResetToRandomKickoff(int seed) {
+@@ -216,10 +662,8 @@ void Arena::ResetToRandomKickoff(int seed) {
  	if (gameMode == GameMode::DROPSHOT)
  		SetDropshotTilesState({});
  
@@ -3431,7 +3464,7 @@ index a13cee0..ef18914 100644
  }
  
  void Arena::SetDropshotTilesState(const DropshotTilesState& state) {
-@@ -241,11 +665,17 @@ void Arena::SetDropshotTilesState(const DropshotTilesState& state) {
+@@ -241,11 +685,17 @@ void Arena::SetDropshotTilesState(const DropshotTilesState& state) {
  	_dropshotTilesState = state;
  }
  
@@ -3449,7 +3482,7 @@ index a13cee0..ef18914 100644
  	auto
  		bodyA = objA->m_collisionObject,
  		bodyB = objB->m_collisionObject;
-@@ -299,6 +729,11 @@ bool Arena::_BulletContactAddedCallback(
+@@ -299,6 +749,11 @@ bool Arena::_BulletContactAddedCallback(
  		// Ball + World
  		Arena* arenaInst = (Arena*)bodyB->getUserPointer();
  		arenaInst->ball->_OnWorldCollision(arenaInst->gameMode, contactPoint.m_normalWorldOnB, arenaInst->tickTime);
@@ -3461,7 +3494,7 @@ index a13cee0..ef18914 100644
  		
  		// Set as special (unless in snowday)
  		if (arenaInst->gameMode != GameMode::SNOWDAY)
-@@ -317,9 +752,93 @@ void Arena::_BtCallback_OnCarBallCollision(Car* car, Ball* ball, btManifoldPoint
+@@ -317,9 +772,93 @@ void Arena::_BtCallback_OnCarBallCollision(Car* car, Ball* ball, btManifoldPoint
  	using namespace RLConst;
  
  	Vec relBallPos = (ballIsBodyA ? manifoldPoint.m_localPointA : manifoldPoint.m_localPointB) * BT_TO_UU;
@@ -3555,7 +3588,7 @@ index a13cee0..ef18914 100644
  void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint& manifoldPoint) {
  	using namespace RLConst;
  
-@@ -327,6 +846,15 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
+@@ -327,6 +866,15 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
  	manifoldPoint.m_combinedFriction = RLConst::CARCAR_COLLISION_FRICTION;
  	manifoldPoint.m_combinedRestitution = RLConst::CARCAR_COLLISION_RESTITUTION;
  
@@ -3571,7 +3604,7 @@ index a13cee0..ef18914 100644
  	// Test collision both ways
  	for (int i = 0; i < 2; i++) {
  
-@@ -334,83 +862,265 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
+@@ -334,83 +882,265 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
  		if (isSwapped)
  			std::swap(car1, car2);
  
@@ -3584,8 +3617,7 @@ index a13cee0..ef18914 100644
 -
 -		if ((state.carContact.otherCarID == car2->id) && (state.carContact.cooldownTimer > 0))
 -			continue; // In cooldown
-+		bool canDemoTeam = _mutatorConfig.enableTeamDemos || (car1->team != car2->team);
- 
+-
 -		Vec deltaPos = (otherState.pos - state.pos);
 -		if (state.vel.Dot(deltaPos) > 0) { // Going towards other car
 -
@@ -3594,7 +3626,8 @@ index a13cee0..ef18914 100644
 -
 -			float speedTowardsOtherCar = state.vel.Dot(dirToOtherCar);
 -			float otherCarAwaySpeed = otherState.vel.Dot(velDir);
--
++		bool canDemoTeam = _mutatorConfig.enableTeamDemos || (car1->team != car2->team);
+ 
 -			if (speedTowardsOtherCar > otherCarAwaySpeed) { // Going towards other car faster than they are going away
 +		if (_mutatorConfig.demoMode == DemoMode::ON_CONTACT) {
 +			if (canDemoTeam) {
@@ -3710,7 +3743,7 @@ index a13cee0..ef18914 100644
 -							* _mutatorConfig.bumpForceScale;
 +	for (Car* victim : demolished)
 +		if (victim)
-+			victim->Demolish(_mutatorConfig.respawnDelay);
++			DemolishCar(victim); // RL PATCH (RV-340): out of the vehicles' order at once
 +}
  
 -						car2->_velocityImpulseCache += bumpImpulse * UU_TO_BT;
@@ -3897,7 +3930,7 @@ index a13cee0..ef18914 100644
  }
  
  Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mutatorConfig(gameMode), _config(config) {
-@@ -423,6 +1133,10 @@ Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mu
+@@ -423,6 +1153,10 @@ Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mu
  	this->gameMode = gameMode;
  	this->tickTime = 1 / tickRate;
  
@@ -3908,7 +3941,7 @@ index a13cee0..ef18914 100644
  	{ // Initialize world
  
  		btDefaultCollisionConstructionInfo collisionConfigConstructionInfo = {};
-@@ -473,6 +1187,22 @@ Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mu
+@@ -473,6 +1207,22 @@ Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mu
  		auto& solverInfo = _bulletWorld.getSolverInfo();
  		solverInfo.m_splitImpulsePenetrationThreshold = 1.0e30f;
  		solverInfo.m_erp2 = 0.8f;
@@ -3931,7 +3964,7 @@ index a13cee0..ef18914 100644
  	}
  
  	bool loadArenaStuff = gameMode != GameMode::THE_VOID;
-@@ -543,6 +1273,104 @@ Arena* Arena::Create(GameMode gameMode, const ArenaConfig& arenaConfig, float ti
+@@ -543,6 +1293,112 @@ Arena* Arena::Create(GameMode gameMode, const ArenaConfig& arenaConfig, float ti
  	return new Arena(gameMode, arenaConfig, tickRate);
  }
  
@@ -3999,16 +4032,24 @@ index a13cee0..ef18914 100644
 +}
 +
 +// RL PATCH (FP1 G2): the vehicles' order in a snapshot
-+static void _WriteVehicleOrder(DataStreamOut& out, const std::vector<Car*>& order) {
++static void _WriteVehicleOrder(DataStreamOut& out, const std::vector<uint32_t>& order) {
 +	out.Write<uint32_t>((uint32_t)order.size());
-+	for (const Car* car : order)
-+		out.Write(car->id);
++	for (uint32_t id : order)
++		out.Write(id);
 +}
 +
 +static std::vector<uint32_t> _ReadVehicleOrder(DataStreamIn& in) {
-+	std::vector<uint32_t> ids(in.Read<uint32_t>());
-+	if (ids.size() > 1024 || in.IsOverflown())
++	// (the count checked before anything's allocated: a snapshot cut short or a count past its bytes reads none, RV-341)
++	if (in.GetNumBytesLeft() < sizeof(uint32_t)) {
++		in.pos = in.data.size() + 1; // (overflown)
 +		return {};
++	}
++	uint32_t n = in.Read<uint32_t>();
++	if (n > 1024 || n > in.GetNumBytesLeft() / sizeof(uint32_t)) {
++		in.pos = in.data.size() + 1;
++		return {};
++	}
++	std::vector<uint32_t> ids(n);
 +	for (uint32_t& id : ids)
 +		in.Read(id);
 +	return ids;
@@ -4036,7 +4077,7 @@ index a13cee0..ef18914 100644
  void Arena::Serialize(DataStreamOut& out) const {
  	out.WriteMultiple(gameMode, tickTime, tickCount, _lastCarID);
  
-@@ -565,11 +1393,139 @@ void Arena::Serialize(DataStreamOut& out) const {
+@@ -565,11 +1421,139 @@ void Arena::Serialize(DataStreamOut& out) const {
  
  	{ // Serialize ball
  		ball->GetState().Serialize(out);
@@ -4054,7 +4095,7 @@ index a13cee0..ef18914 100644
 +	out.Write<uint8_t>(respawnsHeld); // RL PATCH
 +	_WriteGoalExplosion(out, goalExplosion); // RL PATCH
 +	_WriteXYLocks(out, _cars); // RL PATCH
-+	_WriteVehicleOrder(out, _vehicleOrder); // RL PATCH (FP1 G2)
++	_WriteVehicleOrder(out, GetVehicleOrder()); // RL PATCH (FP1 G2; as the next sync leaves it: RV-340)
 +}
 +
 +// RL PATCH: Bullet keeps contact points from tick to tick (persistent manifolds), and some contacts, such as a
@@ -4176,7 +4217,7 @@ index a13cee0..ef18914 100644
  }
  
  Arena* Arena::DeserializeNew(DataStreamIn& in) {
-@@ -601,12 +1557,11 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
+@@ -601,12 +1585,11 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
  				RS_ERR_CLOSE(ERROR_PREFIX << "Failed to load, got repeated car ID of " << id);
  #endif
  
@@ -4193,7 +4234,7 @@ index a13cee0..ef18914 100644
  		}
  
  		newArena->_lastCarID = lastCarID;
-@@ -629,20 +1584,126 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
+@@ -629,20 +1612,126 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
  		}
  	}
  
@@ -4328,7 +4369,7 @@ index a13cee0..ef18914 100644
  Arena* Arena::Clone(bool copyCallbacks) {
  	Arena* newArena = new Arena(this->gameMode, this->_config, this->GetTickRate());
  	
-@@ -651,17 +1712,29 @@ Arena* Arena::Clone(bool copyCallbacks) {
+@@ -651,17 +1740,29 @@ Arena* Arena::Clone(bool copyCallbacks) {
  		newArena->_carBumpCallback = this->_carBumpCallback;
  	}
  
@@ -4360,7 +4401,7 @@ index a13cee0..ef18914 100644
  
  	assert(this->_boostPads.size() == newArena->_boostPads.size());
  	for (int i = 0; i < this->_boostPads.size(); i++)
-@@ -669,6 +1742,18 @@ Arena* Arena::Clone(bool copyCallbacks) {
+@@ -669,6 +1770,18 @@ Arena* Arena::Clone(bool copyCallbacks) {
  
  	newArena->tickCount = this->tickCount;
  	newArena->_lastCarID = this->_lastCarID;
@@ -4379,7 +4420,7 @@ index a13cee0..ef18914 100644
  
  	return newArena;
  }
-@@ -678,33 +1763,123 @@ Car* Arena::DeserializeNewCar(DataStreamIn& in, Team team) {
+@@ -678,33 +1791,123 @@ Car* Arena::DeserializeNewCar(DataStreamIn& in, Team team) {
  	car->_Deserialize(in);
  	car->team = team;
  
@@ -4513,7 +4554,7 @@ index a13cee0..ef18914 100644
  
  		if (hasArenaStuff && !ballOnly) {
  			for (BoostPad* pad : _boostPads)
-@@ -714,11 +1889,30 @@ void Arena::Step(int ticksToSimulate) {
+@@ -714,11 +1917,30 @@ void Arena::Step(int ticksToSimulate) {
  		// Update ball
  		ball->_PreTickUpdate(gameMode, tickTime);
  
@@ -4544,7 +4585,7 @@ index a13cee0..ef18914 100644
  			car->_FinishPhysicsTick(_mutatorConfig);
  			if (hasArenaStuff) {
  				if (_config.useCustomBoostPads) {
-@@ -732,9 +1926,20 @@ void Arena::Step(int ticksToSimulate) {
+@@ -732,9 +1954,20 @@ void Arena::Step(int ticksToSimulate) {
  			}
  		}
  
@@ -4566,7 +4607,7 @@ index a13cee0..ef18914 100644
  
  		ball->_FinishPhysicsTick(_mutatorConfig);
  
-@@ -745,13 +1950,35 @@ void Arena::Step(int ticksToSimulate) {
+@@ -745,13 +1978,35 @@ void Arena::Step(int ticksToSimulate) {
  			if (ball->_internalState.dsInfo.lastDamageTick && ball->_internalState.dsInfo.lastDamageTick == tickCount)
  				SetDropshotTilesState(_dropshotTilesState);
  
@@ -4602,7 +4643,7 @@ index a13cee0..ef18914 100644
  	}
  }
  
-@@ -928,6 +2155,12 @@ bool Arena::IsBallScored() const {
+@@ -928,6 +2183,12 @@ bool Arena::IsBallScored() const {
  
  Arena::~Arena() {
  
@@ -4615,7 +4656,7 @@ index a13cee0..ef18914 100644
  	// Remove all from bullet world constraints
  	while (_bulletWorld.getNumConstraints() > 0)
  		_bulletWorld.removeConstraint(0);
-@@ -983,6 +2216,7 @@ btRigidBody* Arena::_AddStaticCollisionShape(btCollisionShape* shape, btVector3
+@@ -983,6 +2244,7 @@ btRigidBody* Arena::_AddStaticCollisionShape(btCollisionShape* shape, btVector3
  	} else {
  		_bulletWorld.addRigidBody(shapeRB);
  	}
@@ -4623,7 +4664,7 @@ index a13cee0..ef18914 100644
  	_worldCollisionRBs.push_back(shapeRB);
  	return shapeRB;
  }
-@@ -993,6 +2227,7 @@ void Arena::_SetupArenaCollisionShapes() {
+@@ -993,6 +2255,7 @@ void Arena::_SetupArenaCollisionShapes() {
  	bool isDropShot = gameMode == GameMode::DROPSHOT;
  
  	auto collisionMeshes = RocketSim::GetArenaCollisionShapes(gameMode);
@@ -4631,7 +4672,7 @@ index a13cee0..ef18914 100644
  
  	if (collisionMeshes.empty()) {
  		RS_ERR_CLOSE(
-@@ -1021,7 +2256,7 @@ void Arena::_SetupArenaCollisionShapes() {
+@@ -1021,7 +2284,7 @@ void Arena::_SetupArenaCollisionShapes() {
  
  		int mask = isHoopsNet ? CollisionMasks::HOOPS_NET : 0;
  		_worldCollisionBvhShapes.push_back(mesh);
@@ -4641,7 +4682,7 @@ index a13cee0..ef18914 100644
  		// Don't free the BVH when we deconstruct this arena
  		mesh->m_ownsBvh = false;
 diff --git upstream/src/Sim/Arena/Arena.h engine/rocketsim/src/Sim/Arena/Arena.h
-index a3ebd3f..1e9108b 100644
+index a3ebd3f..93f9749 100644
 --- upstream/src/Sim/Arena/Arena.h
 +++ engine/rocketsim/src/Sim/Arena/Arena.h
 @@ -1,5 +1,6 @@
@@ -4676,7 +4717,7 @@ index a3ebd3f..1e9108b 100644
  	bool ownsCars = true; // If true, deleting this arena instance deletes all cars
  
  	std::unordered_map<uint32_t, Car*> _carIDMap;
-@@ -63,7 +73,103 @@ public:
+@@ -63,7 +73,106 @@ public:
  	// Total ticks this arena instance has been simulated for, never resets
  	uint64_t tickCount = 0;
  
@@ -4766,7 +4807,8 @@ index a3ebd3f..1e9108b 100644
 +
 +	// RL PATCH: the vehicles' order in the physics step: the game's action array (world+0x190; a car's VehicleSim is
 +	// appended when it attaches, swap-removed when it detaches: notes/physics-values.md FP1 G2), here the cars on the
-+	// field (not demolished): one added or respawned goes last, one demolished or removed leaves its place to the last;
++	// field (not demolished; one demolished by a state set stays until the next tick's sync, which GetVehicleOrder and
++	// snapshots apply already): one added or respawned goes last, one demolished or removed leaves its place to the last;
 +	// every kickoff spawns them again in join order (car IDs). The step runs the cars' pre-physics and vehicles in it
 +	std::vector<Car*> _vehicleOrder;
 +	std::vector<uint32_t> GetVehicleOrder() const;
@@ -4774,6 +4816,8 @@ index a3ebd3f..1e9108b 100644
 +	// out follow in ID order
 +	void SetVehicleOrder(const std::vector<uint32_t>& ids);
 +	void _RemoveVehicle(Car* car);
++	// Demolishes the car (its respawn timer the mutators'), its vehicle out of the order at once (FinishDemo: RV-340)
++	void DemolishCar(Car* car);
 +	// Its demolished cars out, its others in (at the end, in ID order)
 +	void _SyncVehicleOrder();
 +	// The cars on the field in ID order (a kickoff's spawn)
@@ -4781,7 +4825,7 @@ index a3ebd3f..1e9108b 100644
  	const std::vector<BoostPad*>& GetBoostPads() { return _boostPads; }
  
  	// Returns true if added, false if car was already added
-@@ -107,6 +213,23 @@ public:
+@@ -107,6 +216,23 @@ public:
  	} _carBumpCallback;
  	void SetCarBumpCallback(CarBumpEventFn callbackFn, void* userInfo = NULL);
  
@@ -4805,7 +4849,7 @@ index a3ebd3f..1e9108b 100644
  	// NOTE: Arena should be destroyed after use
  	static Arena* Create(GameMode gameMode, const ArenaConfig& arenaConfig = {}, float tickRate = 120);
  	
-@@ -116,6 +239,11 @@ public:
+@@ -116,6 +242,11 @@ public:
  	// Load new arena from serialized data
  	static Arena* DeserializeNew(DataStreamIn& in);
  
@@ -4817,7 +4861,7 @@ index a3ebd3f..1e9108b 100644
  	Arena(const Arena& other) = delete; // No copy constructor, use Arena::Clone() instead
  	Arena& operator =(const Arena& other) = delete; // No copy operator, use Arena::Clone() instead
  
-@@ -133,6 +261,24 @@ public:
+@@ -133,6 +264,24 @@ public:
  
  	void ResetToRandomKickoff(int seed = -1);
  
@@ -4842,7 +4886,7 @@ index a3ebd3f..1e9108b 100644
  	// Returns true if the ball is probably going in, does not account for wall or ceiling bounces
  	// NOTE: Purposefully overestimates, just like the real RL's shot prediction
  	// To check which goal it will score in, use the ball's velocity
-@@ -155,6 +301,17 @@ public:
+@@ -155,6 +304,17 @@ public:
  
  	void _SetupArenaCollisionShapes();
  
@@ -4860,7 +4904,7 @@ index a3ebd3f..1e9108b 100644
  	// Static function called by Bullet internally when adding a collision point
  	static bool _BulletContactAddedCallback(
  		btManifoldPoint& cp,
-@@ -176,6 +333,19 @@ public:
+@@ -176,6 +336,19 @@ public:
  	}
  
  	DropshotTilesState GetDropshotTilesState() const { return _dropshotTilesState; };
@@ -4880,7 +4924,7 @@ index a3ebd3f..1e9108b 100644
  	void SetDropshotTilesState(const DropshotTilesState& tilesState);
  
  private:
-@@ -187,4 +357,8 @@ private:
+@@ -187,4 +360,8 @@ private:
  	ArenaConfig _config;
  };
  

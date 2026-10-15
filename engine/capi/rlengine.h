@@ -69,6 +69,8 @@ uint64_t rl_tick_count(const RLArena* arena);
 int rl_is_ball_scored(RLArena* arena);
 void rl_ball_position(RLArena* arena, float out[3]);
 int rl_car_position(RLArena* arena, uint32_t car_id, float out[3]);
+/* The car's velocity (uu/s); 0 if no such car */
+int rl_car_velocity(RLArena* arena, uint32_t car_id, float out[3]);
 /* 1 if the car is demolished (waiting to respawn), 0 if not or unknown */
 int rl_car_demoed(RLArena* arena, uint32_t car_id);
 /* Demolishes the car (it respawns as after any demolition) */

@@ -11,12 +11,16 @@ const memory = (): Pick<Storage, "getItem" | "setItem"> => {
 describe("the connection", () => {
   it("keeps the server's key for the next connection; none, or garbage, is 0 (the server gives one)", () => {
     const storage = memory();
-    expect(storedKey(storage)).toBe(0);
-    storeKey(0xdeadbeef, storage);
-    expect(storedKey(storage)).toBe(0xdeadbeef);
-    storage.setItem("rl-clone.playerKey", "1.5");
-    expect(storedKey(storage)).toBe(0);
-    expect(storedKey(null)).toBe(0);
+    expect(storedKey(storage)).toBe(0n);
+    storeKey(0xdeadbeefcafef00dn, storage);
+    expect(storedKey(storage)).toBe(0xdeadbeefcafef00dn); // (64 bits: SEC-9)
+    storeKey(0xffffffffffffffffn, storage);
+    expect(storedKey(storage)).toBe(0xffffffffffffffffn);
+    for (const garbage of ["1.5", "-3", "0", "18446744073709551616", "0x10", " 7", "123456789012345678901"]) {
+      storage.setItem("rl-clone.playerKey", garbage);
+      expect(storedKey(storage), garbage).toBe(0n);
+    }
+    expect(storedKey(null)).toBe(0n);
     const failing: Pick<Storage, "getItem" | "setItem"> = {
       getItem: () => {
         throw new Error("denied");
@@ -25,9 +29,9 @@ describe("the connection", () => {
         throw new Error("denied");
       },
     };
-    expect(storedKey(failing)).toBe(0);
+    expect(storedKey(failing)).toBe(0n);
     expect(() => {
-      storeKey(7, failing);
+      storeKey(7n, failing);
     }).not.toThrow();
   });
 

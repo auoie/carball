@@ -491,6 +491,8 @@ export class World {
    *  frame; a snapshot's size changes with the contacts it holds), else into a new one with room to spare; a view of the
    *  snapshot's length */
   saveStateInto(target: Uint8Array | undefined): Uint8Array {
+    // (the view is of the engine's memory: valid until the engine's next call, which could grow it; nothing between
+    // here and the copy calls the engine, a JS buffer's allocation included: RV-336)
     const view = this.#sim.saveStateView();
     const buffer = target && target.buffer.byteLength >= view.length ? target.buffer : new ArrayBuffer(Math.ceil((view.length + 1024) / 1024) * 1024);
     const out = new Uint8Array(buffer, 0, view.length);

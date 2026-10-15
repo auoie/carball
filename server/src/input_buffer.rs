@@ -108,7 +108,29 @@ pub struct InputBuffer {
     /// This tick's jump press came in the first of two frames consumed together: its axes (the dodge's forward input,
     /// yaw, roll), the dodge's direction in the game, where the car drives with the second's (G10)
     pub press_axes: Option<(f32, f32, f32)>,
+    /// A frame consumed this tick changed the inputs as the idle kick counts it (MM-35a), against `kick_inputs`
+    pub acted: bool,
+    /// The inputs the idle kick last counted (`PC.LastInputs`: zeroed at first, replaced only when a frame counts)
+    kick_inputs: Controls,
     pub stats: Stats,
+}
+
+/// The idle kick's activity test (`VehicleInputHasChangedForKick`, 0x140f66fc0: notes/matchmaking.md MM-35a): a press or
+/// release of jump, boost or handbrake; a throttle or pitch-stick change of 0.01 or more; steer or the yaw stick, only
+/// while throttling (a byte step, about 0.008, never counts alone)
+pub fn changed_for_kick(new: &Controls, old: &Controls) -> bool {
+    const EPS: f32 = 0.01;
+    let moved = |a: f32, b: f32| (a - b).abs() >= EPS;
+    if (new.jump, new.boost, new.handbrake) != (old.jump, old.boost, old.handbrake) {
+        return true;
+    }
+    if moved(new.throttle, old.throttle) || moved(new.dodge_forward, old.dodge_forward) {
+        return true;
+    }
+    if new.throttle.abs() < EPS {
+        return false;
+    }
+    moved(new.steer, old.steer) || moved(new.yaw, old.yaw)
 }
 
 impl InputBuffer {
@@ -174,6 +196,10 @@ impl InputBuffer {
             }
             self.stats.consumed = self.stats.consumed.saturating_add(1);
             self.controls = frame.controls();
+            if changed_for_kick(&self.controls, &self.kick_inputs) {
+                self.kick_inputs = self.controls;
+                self.acted = true;
+            }
             self.last_processed_frame = Some(number);
             self.last_consumed_frame = number;
         }
@@ -197,6 +223,7 @@ impl InputBuffer {
     pub fn tick(&mut self, now: f64, odd_tick: bool) -> Controls {
         self.repress_jump = false;
         self.press_axes = None;
+        self.acted = false;
         let previous = self.controls.jump != 0; // (the last frame consumed)
         let mut first = None;
         let mut first_controls = self.controls;
@@ -253,33 +280,58 @@ mod tests {
 
     #[test]
     fn its_counters_stay_at_their_top_under_a_flood() {
-        // (SEC-7: a client's packets drive them; a debug build panics on an overflow, so they saturate; RV-324)
-        let mut b = InputBuffer {
-            stats: Stats {
-                over_buffer_frames: u32::MAX,
-                under_buffer_frames: u32::MAX,
-                repeated: u32::MAX,
-                zeroed: u32::MAX,
-                fill_skips: u32::MAX,
-                trimmed: u32::MAX,
-                late_dropped: u32::MAX,
-                duplicates: u32::MAX,
-                consumed: u32::MAX,
-                    never_consumed: u32::MAX,
-            },
-            ..InputBuffer::default()
+        // (SEC-7: a client's packets drive them; a debug build panics on an overflow, so they saturate; RV-324. The same
+        // packets from zero drive every counter, RV-344)
+        let flood = |b: &mut InputBuffer| {
+            b.receive(1, 1, &[frame(1); 70], 0.0); // (over the 60 kept: trimmed)
+            b.receive(2, 70, &[frame(1)], 0.0); // (a duplicate: frame 70 still buffered)
+            for t in 0..200 {
+                b.tick(f64::from(t) / 120.0, t % 2 == 1);
+            }
+            b.receive(3, 1, &[frame(1)], 1.7); // (late)
+            b.receive(4, 100, &[frame(1); 4], 1.7); // (after running dry: refilling, odd ticks skip)
+            b.tick(1.71, true);
+            b.receive(5, 120, &[frame(1)], 1.72); // (a gap: frames 104..119 never come)
+            for t in 0..10 {
+                b.tick(1.72 + f64::from(t) / 120.0, false);
+            }
+            b.receive(6, 200, &[frame(1); 20], 1.9); // (more than the target: two a tick)
+            b.tick(1.91, false);
+            b.tick(3.5, false); // (no packet for over a second: zeroed)
+            b.tick(3.6, false);
         };
-        b.receive(1, 1, &[frame(1); 70], 0.0); // (over the 60 kept: trimmed)
-        b.receive(2, 1, &[frame(1)], 0.0); // (a duplicate)
-        for t in 0..200 {
-            b.tick(f64::from(t) / 120.0, t % 2 == 1);
+        let mut fresh = InputBuffer::default();
+        flood(&mut fresh);
+        let s = fresh.stats;
+        for (name, count) in [
+            ("over_buffer_frames", s.over_buffer_frames),
+            ("under_buffer_frames", s.under_buffer_frames),
+            ("repeated", s.repeated),
+            ("zeroed", s.zeroed),
+            ("fill_skips", s.fill_skips),
+            ("trimmed", s.trimmed),
+            ("late_dropped", s.late_dropped),
+            ("duplicates", s.duplicates),
+            ("consumed", s.consumed),
+            ("never_consumed", s.never_consumed),
+        ] {
+            assert!(count > 0, "{name} not driven: {s:?}");
         }
-        b.receive(3, 1, &[frame(1)], 2.0); // (late)
-        b.tick(3.0, false);
-        assert_eq!(b.stats.trimmed, u32::MAX);
-        assert_eq!(b.stats.late_dropped, u32::MAX);
-        assert_eq!(b.stats.consumed, u32::MAX);
-        assert_eq!(b.stats.under_buffer_frames, u32::MAX);
+        let top = Stats {
+            over_buffer_frames: u32::MAX,
+            under_buffer_frames: u32::MAX,
+            repeated: u32::MAX,
+            zeroed: u32::MAX,
+            fill_skips: u32::MAX,
+            trimmed: u32::MAX,
+            late_dropped: u32::MAX,
+            duplicates: u32::MAX,
+            consumed: u32::MAX,
+            never_consumed: u32::MAX,
+        };
+        let mut b = InputBuffer { stats: top, ..InputBuffer::default() };
+        flood(&mut b);
+        assert_eq!(b.stats, top);
     }
 
     #[test]

@@ -1,20 +1,23 @@
-// The main menu (notes/hud-menus.md MENU-1/2), over the arena as the page opens: Play (Free Play, or a server to join
-// online) and Settings. The game's labels verbatim (Play, Settings, Free Play: the user's decisions, 2026-10-14); the
-// online entry is ours (the game's playlists have no counterpart here). No Quit: a browser tab closes itself.
+// The main menu (notes/hud-menus.md MENU-1/2), over the arena as the page opens: Play (Free Play, or a playlist to search
+// online: notes/matchmaking.md MM-1, single selection) and Settings. The game's labels verbatim (Play, Settings, Free Play,
+// Find Match: the user's decisions, 2026-10-14); the playlists' names are ours. No Quit: a browser tab closes itself.
+import { PLAYLISTS, SEARCH_TEXT } from "../game/matchmaking";
+
 export const MAIN_MENU_TEXT = {
   play: "Play",
   settings: "Settings",
   freePlay: "Free Play",
 } as const;
 
-/** Our own words for the online entry */
-const ONLINE_TEXT = { online: "Online", server: "Server", join: "Join", back: "Back" } as const;
+/** Our own word for leaving the Play page */
+const BACK_TEXT = "Back";
 
-const SERVER_KEY = "rl-clone.server";
+const PLAYLIST_KEY = "rl-clone.playlist";
 
 export interface MainMenuActions {
   readonly freePlay: () => void;
-  readonly join: (server: string) => void;
+  /** Find Match: search the playlist with this team size */
+  readonly findMatch: (playlist: number) => void;
   readonly settings: () => void;
 }
 
@@ -22,6 +25,8 @@ export class MainMenu {
   readonly #root: HTMLDivElement;
   readonly #top: HTMLDivElement;
   readonly #play: HTMLDivElement;
+  readonly #playlists: HTMLButtonElement[] = [];
+  #playlist = storedPlaylist();
 
   constructor(host: HTMLElement, actions: MainMenuActions) {
     this.#root = document.createElement("div");
@@ -48,30 +53,25 @@ export class MainMenu {
     button(this.#top, MAIN_MENU_TEXT.settings, actions.settings);
     this.#play = column();
     button(this.#play, MAIN_MENU_TEXT.freePlay, actions.freePlay);
-    const online = document.createElement("form");
-    online.className = "main-menu-online";
-    const label = document.createElement("label");
-    const caption = document.createElement("span");
-    caption.textContent = `${ONLINE_TEXT.online} · ${ONLINE_TEXT.server}`;
-    const address = document.createElement("input");
-    address.name = "server";
-    address.placeholder = "127.0.0.1:4434";
-    address.value = storedServer();
-    label.append(caption, address);
-    const join = document.createElement("button");
-    join.type = "submit";
-    join.className = "main-menu-button";
-    join.textContent = ONLINE_TEXT.join;
-    online.append(label, join);
-    online.addEventListener("submit", (e) => {
-      e.preventDefault();
-      const server = address.value.trim();
-      if (server === "") return;
-      storeServer(server);
-      actions.join(server);
-    });
-    this.#play.append(online);
-    button(this.#play, ONLINE_TEXT.back, () => {
+    // (the playlists: one selected at a time; Find Match searches it)
+    const playlists = document.createElement("div");
+    playlists.className = "main-menu-playlists";
+    playlists.setAttribute("role", "radiogroup");
+    for (const p of PLAYLISTS) {
+      const b = button(playlists, p.name, () => {
+        this.#select(p.teamSize);
+      });
+      b.classList.add("main-menu-playlist");
+      b.setAttribute("role", "radio");
+      b.dataset["playlist"] = String(p.teamSize);
+      this.#playlists.push(b);
+    }
+    this.#play.append(playlists);
+    this.#select(this.#playlist);
+    button(this.#play, SEARCH_TEXT.findMatch, () => {
+      actions.findMatch(this.#playlist);
+    }).classList.add("main-menu-find");
+    button(this.#play, BACK_TEXT, () => {
       this.#show("top");
     });
     this.#show("top");
@@ -97,23 +97,30 @@ export class MainMenu {
     this.#show("top");
   }
 
+  #select(playlist: number): void {
+    this.#playlist = playlist;
+    storePlaylist(playlist);
+    for (const b of this.#playlists) b.setAttribute("aria-checked", String(b.dataset["playlist"] === String(playlist)));
+  }
+
   #show(view: "top" | "play"): void {
     this.#top.hidden = view !== "top";
     this.#play.hidden = view !== "play";
   }
 }
 
-function storedServer(): string {
+function storedPlaylist(): number {
   try {
-    return localStorage.getItem(SERVER_KEY) ?? "";
+    const stored = Number(localStorage.getItem(PLAYLIST_KEY));
+    return PLAYLISTS.some((p) => p.teamSize === stored) ? stored : 1;
   } catch {
-    return "";
+    return 1;
   }
 }
 
-function storeServer(server: string): void {
+function storePlaylist(playlist: number): void {
   try {
-    localStorage.setItem(SERVER_KEY, server);
+    localStorage.setItem(PLAYLIST_KEY, String(playlist));
   } catch {
     // (not kept)
   }

@@ -6,7 +6,6 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { initEngine } from "../engine/world";
 import { arenaMeshes } from "../testing/arena";
 import { type NetRunResult, netRun } from "../testing/netRun";
-import { HISTORY_FRAMES } from "./predictor";
 import { type Profile, constantProfile } from "../testing/netsim";
 
 let engine: Awaited<ReturnType<typeof createEngine>>;
@@ -99,10 +98,14 @@ describe("play over a network path (in process)", () => {
       report(`a ${String(seconds)} s client stall`, r);
       console.info(`  buffer targets by second: ${r.bufferTargets.join(" ")}; resets ${String(r.resets)}, direct ${String(r.direct)}`);
       expect(r.resets, `${String(seconds)} s`).toBe(1); // (the frame after it a hitch: the reset 2 s on)
-      expect(Math.max(...r.bufferTargets.slice(6)), `${String(seconds)} s`).toBeGreaterThan(7);
+      // (the gap, clamped to 0.25 s, takes the server's buffer to 18; the reset back to 7: RV-336)
+      expect(Math.max(...r.bufferTargets.slice(6)), `${String(seconds)} s`).toBe(18);
       expect(r.bufferTargets.at(-1), `${String(seconds)} s`).toBe(7);
       expect(r.lateMispredictions, `${String(seconds)} s`).toBe(0);
-      expect(r.depth.max, `${String(seconds)} s`).toBeLessThan(HISTORY_FRAMES);
+      // (the server's states for frames this client hadn't reached, applied at its present)
+      if (seconds >= 2) expect(r.direct, `${String(seconds)} s`).toBeGreaterThan(0);
+      // (each frame one replay: the round trip and the buffer's depth, with a stall's catch-up)
+      expect(r.depth.max, `${String(seconds)} s`).toBeLessThanOrEqual(40);
     }
   }, 300_000);
 
@@ -112,7 +115,7 @@ describe("play over a network path (in process)", () => {
     report("a 3 s outage both ways", r);
     console.info(`  buffer targets by second: ${r.bufferTargets.join(" ")}`);
     expect(r.direct).toBeLessThanOrEqual(5);
-    expect(r.depth.max).toBeLessThan(HISTORY_FRAMES);
+    expect(r.depth.max).toBeLessThanOrEqual(40);
     expect(r.buffer.neverConsumed).toBeGreaterThan(0); // (the frames sent in the outage, never received)
     // (the outage's gap raised the server's buffer, not reset: no client hitch; the game's rule brings it down a frame
     // every few seconds, steadily; its double consumes meanwhile mispredict now and then)

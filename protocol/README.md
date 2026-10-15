@@ -1,4 +1,4 @@
-# Game protocol (version 16)
+# Game protocol (version 17)
 
 Client ↔ server over **WebTransport** (HTTP/3, QUIC). All integers little-endian. Implemented in
 `server/src/protocol.rs` (Rust) and `client/src/net/protocol.ts` (TypeScript); `vectors.json` holds byte-exact
@@ -11,12 +11,23 @@ samples both test suites check. Design follows the game's netcode (`notes/netcod
 2. The client opens one bidirectional stream, the **control stream** (reliable, ordered), and sends `Hello`.
 3. The server answers `Welcome`, then sends `Update` datagrams; the client sends `Inputs` datagrams.
 
+**The queue** (`rl-server --mode queue`, `notes/matchmaking.md` v1 queue): a session's `Hello` says what it's for. A
+**search** (intent 1, a playlist: its team size 1, 2 or 3) waits in the playlist's queue; when two full teams are
+waiting, the server reserves a match for them and sends each a `MatchFound` with a one-time random token, then ends the
+search session. The client opens a new session whose `Hello` **claims** the token (intent 2) and gets its `Welcome`,
+on the reserved slot's team. The match holds its warm-up (phase 6) until every reserved player has claimed (full
+start); if one doesn't within 30 s, or a player leaves before the start, the match is cancelled: the others get
+`Kicked` (reason 1) and search again. A finished queue match doesn't rematch: when the end screen's time is up the
+server ends the sessions. Without `--mode queue` (development, the browser tests) a `Hello` **joins** (intent 0) the
+server's one open match, which rematches; a queue server refuses a join, and a development server a search or claim
+(`Refused` 3).
+
 ## Control stream messages
 Framed as `u16 length` + message (`length` counts the message, which starts with its type byte).
 
 | Type | Direction | Fields |
 |---|---|---|
-| `0x01 Hello` | C→S | `u16 version`, `u8 team` (0 blue, 1 orange, 255 any), `u8 body` (0 Octane … 5 Merc), `f32 dodgeDeadzone`, `f32 steeringSensitivity`, `f32 airControlSensitivity`, `u8 autoSkipReplay` (1: always ready to skip goal replays, `bAutoSkipGoalReplay`), `u32 key` (the key the server gave this client before, in its `Welcome`, kept for reconnects; 0 for none), `u8 n`, `n` bytes the player's name (UTF-8, 32 at most; the server drops control, format and invisible characters and trims it, and names a nameless player, or one asking for another's automatic name, "Player N"), `u8 quickChat`, `u8 blockNonTactical` (the chat filters from the start, as `ChatFilter`) |
+| `0x01 Hello` | C→S | `u16 version`, `u8 team` (0 blue, 1 orange, 255 any), `u8 body` (0 Octane … 5 Merc), `f32 dodgeDeadzone`, `f32 steeringSensitivity`, `f32 airControlSensitivity`, `u8 autoSkipReplay` (1: always ready to skip goal replays, `bAutoSkipGoalReplay`), `u64 key` (the key the server gave this client before, in its `Welcome`, kept for reconnects; 0 for none), `u8 n`, `n` bytes the player's name (UTF-8, 32 at most; the server drops control, format and invisible characters, makes every run of spaces one space, keeps two combining marks on a character at most and trims it, and names a nameless player, or one asking for another's automatic name in any case, spacing, digits or lookalike letters, "Player N"), `u8 quickChat`, `u8 blockNonTactical` (the chat filters from the start, as `ChatFilter`), `u8 intent` (0 join the open match, 1 search, 2 claim), `u8 playlist` (a search's team size; 0 otherwise), `u64 token` (a claim's, from `MatchFound`; 0 otherwise) |
 | `0x08 Mute` | C→S | `u32 car`, `u8 on`: mute or unmute that player's chat for this player (`ClientMutePlayer`: the server stops relaying their lines here; a block is the client's own) |
 | `0x02 ResetInputBuffer` | C→S | nothing: the client had a hitch (over 0.1 s between its frames) 2 s ago; the server resets its jitter buffer to the initial estimate (as the game's `ServerResetInputBuffer`) |
 | `0x03 ReadyUp` | C→S | nothing: skip the goal replay (the game's `ReadyUp`, Space / pad A); counts only during one |
@@ -24,7 +35,7 @@ Framed as `u16 length` + message (`length` counts the message, which starts with
 | `0x06 QuickChat` | C→S | `u8 preset` (its index in the 76 `Group1-6MessageN` presets, `notes/quick-chat.md` CHAT-1), `u8 team`: a quick-chat line. The server applies the sender's spam bucket (1.2, ×0.75, 1/s, 4: blocked → `ChatBlocked`), then relays it as `Chat` to the sender and to each player the channel reaches whom neither side's filter keeps it from |
 | `0x07 ChatFilter` | C→S | `u8 quickChat` (0 everyone, 1 teammates only, 2 friends only: nobody else here, 3 off), `u8 blockNonTactical` (others' non-tactical presets hidden during the match) |
 | `0x05 VoteForfeit` | C→S | nothing: vote to forfeit (`ServerVoteToForfeit`): while votes are allowed, starts the team's vote if none runs (a player who started one can't start another until every teammate has), and counts the player's yes |
-| `0x81 Welcome` | S→C | `u16 version`, `u32 carId`, `u8 tickRate` (120), `u32 frame`, `u8 matchType` (0 casual, 1 ranked, 2 private: the forfeit rules and the vote's label), `u8 teamSize` (the playlist's), `u32 key` (the player's: Hello's again if this server gave it and no one here has it, else a new one; who started a forfeit vote), `u32 n`, `n` bytes engine snapshot |
+| `0x81 Welcome` | S→C | `u16 version`, `u32 carId`, `u8 tickRate` (120), `u32 frame`, `u8 matchType` (0 casual, 1 ranked, 2 private: the forfeit rules and the vote's label), `u8 teamSize` (the playlist's), `u64 key` (the player's: Hello's again if this server gave it and no one here has it, else a new one, 64 random bits; who started a forfeit vote), `u32 n`, `n` bytes engine snapshot |
 | `0x82 World` | S→C | `u32 frame`, `u32 n`, `n` bytes engine snapshot (the set of cars changed: load it as the state after `frame`) |
 | `0x83 Event` | S→C | `u32 serverTick`, `u8 kind` (0 goal, 1 demo, 2 left), then goal: `u8 team` (that scored), `u32 scorer`, `u32 assister` (the cars credited with the goal and the assist, 0: none; no scorer when only defenders touched the ball); demo: `u32 attacker`, `u32 victim`; left: `u32 car`, `u8 flags` (a player left, before the `World` without them: 1 their connection timed out, 2 their car explodes where it is, with no demolition counted: it was live, i.e. not already demolished, not a podium's loser and not in the goal replay, whose start destroys the cars) |
 | `0x84 Match` | S→C | `u32 serverTick`, `u8 phase` (0 kickoff countdown, 1 playing, 2 after a goal, 3 time up: the round ends when the ball touches the ground, 4 the match's end (EndGame, 3 s, the world frozen), 5 goal replay, 6 a new match's warm-up (WaitingForPlayers' 3 s), 7 the podium (5.3 s: the winners drivable at its spots, the ball gone), 8 the end screen (Finished: 60 s, frozen; ready-up from 1 s in, every player ready starts the next match)), `u8 flags` (1 overtime, 2 clock running, 4 forfeit: the losing team voted to or left, 8 forfeit votes allowed now, 16 no contest: every team left), `u32 clockTicks` (regulation: ticks left of 36000; overtime: ticks played), `u8 scoreBlue`, `u8 scoreOrange`, `u8 winner` (255 none), `u8 secondsLeft` (the end screen's countdown to the next match, whole seconds rounded up; 0 otherwise). Sent after the welcome, and whenever the phase, the scores, the flags or the clock's shown second change (regulation rounds up, overtime down) |
@@ -34,10 +45,13 @@ Framed as `u16 length` + message (`length` counts the message, which starts with
 | `0x88 Roster` | S→C | `u8 n`, `n` × (`u32 carId`, `u8 team`, `u8 m`, `m` bytes name): the players, sent to everyone when it changes (a client's log says who joined and who left) |
 | `0x89 Chat` | S→C | `u32 carId` (the sender's), `u8 preset`, `u8 team`, `u16 seconds` (the clock's shown seconds at relay: `[M:SS]`, `+` in overtime, none once the match has ended) |
 | `0x8A ChatBlocked` | S→C | `f32 seconds`: the sender's chat is blocked for this long (the log's "Chat disabled for N second(s).") |
-| `0x8B Refused` | S→C | `u8 reason` (0: the match has its most players, 16; 1: the client's `Hello` has another protocol version, read before its fields): instead of a `Welcome`; the session ends |
+| `0x8B Refused` | S→C | `u8 reason` (0: the match has its most players, 16; 1: the client's `Hello` has another protocol version, read before its fields; 2: no reservation has the claim's token (never given, claimed already, or its match gone); 3: this server doesn't serve the intent, or no such playlist): instead of a `Welcome`; the session ends |
 | `0x8C Scoreboard` | S→C | `u8 n`, `n` × (`u32 car`, `u16 ping` (ms, 999 at most), `u8 flags` (1 the match's MVP, 2 ready for the next match on the end screen), `u8 k`, `k` × `u16` the match counters, 2 × (`u8 title`, `u16 count`) the podium titles, primary then secondary (title 255: none; the ids are `engine/stats/PodiumTitles.cpp` `STAT_TITLES`'s, the count is the stat shown under it: `notes/match-stats.md` §5.4a)): every player's scoreboard line, when one changes and every 2 s (the pings). Counters, in order: MatchScore, Goals, Assists, Saves, Shots, Demolishes, EpicSaves, Centers, Clears, AerialHits, BicycleHits, JuggleHits, FirstTouches, PoolShots, LowFives, HighFives, TimesDemolished, CrossbarHits, OwnGoals, BallTouches (`engine/stats/StatFactory.h`) |
 | `0x8D StatEvent` | S→C | `u8 event`, `u16 points`: a stat this player gained (`ClientNotifyGainedStat`: their popup); not BallHit or CrossbarHits (`bSkipReplication`) |
 | `0x8E Ticker` | S→C | `u8 event`, `u32 receiver`, `u32 victim` (cars; victim 0: none): a stat someone gained, to every player for their feed (`bNotifyTicker` events) |
+| `0x8F MatchFound` | S→C | `u64 token`: a search found a match; the token claims the player's slot in a new session (once, within 30 s); the search session ends |
+| `0x90 IdleWarning` | S→C | `u8 on`: the idle warning shows (idle past 25 s of play, queue matches) or hides (the player acted) (MM-33..36) |
+| `0x91 Kicked` | S→C | `u8 reason` (0 idle past 30 s of play; 1 the match was cancelled before it started: not every reserved player joined): the server ends the session a second later (MM-37) |
 | `0x87 ForfeitVote` | S→C | the player's team's forfeit vote, sent to each player when it changes: `u8 state` (0 running, 1 passed, 2 failed: a finished vote stays 5 game s, 3 none), `u8 yes`, `u8 required` (the team's players: unanimous), `u8 secondsLeft` (of its 20 game s), `u8 flags` (1 this player voted, 2 this player may start a vote) |
 
 Phase 5 (version 9) is the goal replay: the cars are frozen out of sight (the client predicts them with no input) until
@@ -74,8 +88,10 @@ changes and once a second. The compact form carries each body as the game's `Rep
 and the velocities ×100 and ×10000 as packed int vectors, the rotation's 2 + 3 × 18 bits; exact, since the bodies were
 rounded to it at their last tick; raw floats for a body placed since its tick), each car's flags, boost (a byte),
 controls (bytes), the dodge's torque (bytes, while dodging), spawn and flip-reset counters (low bytes), the timers the
-physics reads (only while active) and its XY lock (held, and its pin); the client lays it over its own state at that
-frame (a lossy value it holds that sends the same is kept), so a right prediction is left exactly as it was.
+physics reads (only while active) and its XY lock (held, and its pin), and for a car placed in the last 16 ticks (not
+demolished) its wheel block (the ticks since, its on-ground flag, each wheel's contact, carries and contact normal); the
+vehicles' order in the step when it isn't the cars' ID order; the client lays it over its own state at that frame (a
+lossy value it holds that sends the same is kept), so a right prediction is left exactly as it was.
 `receivedFrame` is the highest input frame received (informational: the client resends its frames after `ackFrame`, the
 newest 10, until the server consumes them; after a stall the server's `ackFrame` can run past the client's frames,
 then come back to them as it consumes them: notes/netcode-live.md §6, §7).
@@ -106,7 +122,9 @@ Scoreboard`, `0x8D StatEvent`, `0x8E Ticker`, the goal event's scorer and assist
 `secondsLeft`), the scoreboard's ready flag and podium titles, `Refused` reason 1. Version 15: the compact network
 state and the game's replication rates (above): ≈ 3.3 / 4.4 / 5.5 KB/s per client in a 1v1 / 2v2 / 3v3, from 22–100.
 Version 16: the vehicles' order in the physics step (the game's action array: notes/physics-values.md FP1 G2) in the
-engine snapshot (Welcome, World) and, when it isn't the cars' ID order, in the network state.
+engine snapshot (Welcome, World) and, when it isn't the cars' ID order, in the network state. Version 17: the queue
+(Hello's intent, playlist and token, `0x8F MatchFound`, `0x90 IdleWarning`, `0x91 Kicked`, `Refused` reasons 2 and 3)
+and 64-bit keys (SEC-9).
 
 Podium title ids (`notes/match-stats.md` §5.4a; the client's `game/podiumTitles.ts`): 0 OvertimeGoal, 1 Goals_10,
 2 Goals_6_9, 3 Goals_3_5, 4 Saves_10, 5 Saves_6_9, 6 Saves_3_5, 7 EpicSaves, 8 PoolShots, 9 BackwardsGoal, 10 BicycleGoal,

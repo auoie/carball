@@ -66,9 +66,15 @@ export async function startServers(servers: readonly Server[], timeoutMs: number
       const entry = { name: server.name, child, exited: Promise.resolve(), done: false };
       // (its exit as an event: a server killed by a signal has no exit code, only its signal)
       entry.exited = new Promise<void>((resolve) => {
-        child.once("exit", () => {
+        const end = (): void => {
           entry.done = true;
           resolve();
+        };
+        child.once("exit", end);
+        // (one that can't start, its command missing: an error, no exit, RV-350)
+        child.once("error", (e) => {
+          log.write(`${e.message}\n`);
+          end();
         });
       });
       started.push(entry);

@@ -165,6 +165,18 @@ export class GameAudio {
     this.#synth.beep(this.#effects, this.#ctx.currentTime + 0.01, secondsLeft === 0);
   }
 
+  /** A search starts (START_MATCH_SEARCH's place, MM-12: our own sound) */
+  searchStart(): void {
+    this.#count("searchStart");
+    this.#synth.searchStart(this.#effects, this.#ctx.currentTime + 0.01);
+  }
+
+  /** Cancel Search (the menus' CANCEL, MM-12: our own sound) */
+  searchCancel(): void {
+    this.#count("searchCancel");
+    this.#synth.searchCancel(this.#effects, this.#ctx.currentTime + 0.01);
+  }
+
   /** One of the clock's last ten seconds (HT-7: its own cue, not the kickoff's) */
   endCounter(): void {
     this.#count("endCounter");

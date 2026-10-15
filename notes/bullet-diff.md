@@ -365,3 +365,41 @@ surround differ.
   through the same chain (dims = f32(f32(0.02f·X)·0.5f) + 0.025f → ×50f → ×0.02f → btBoxShape), which reproduces all
   24 EXACT_BOXES bits. The chain differs from a single ×0.02f for about 11 % of other inputs, so future offsets should use
   the chain.
+
+## Broadphase boxes at placement and the wheel-ray candidate query (2026-10-14, live build; AB1)
+Tags: [N] native read, [S] script, [I] inferred. Live addresses (the BC map `agents/BC/cache/map_2.82-precise.tsv` is
+**old-build**; live names come through `bindiff/function_map.tsv`, Bullet ≈ +0xb00).
+- **Live Bullet addresses:** `updateAabbs` 0x14027ffa0 (`updateSingleAabb` inlined, no standalone copy; threshold global
+  0x14225b008 = 0.02 BU), AxisSweep `setAabb` 0x14027e6f0, `btDbvtBroadphase::setAabb` 0x14027e780, `createProxy`
+  0x140272c30, `internalAddPair` 0x140279790, `addCollisionObject` 0x140270f30, `aabbTest` 0x140270d80, AxisSweep
+  `rayTest` 0x14027b3f0, `btCollisionWorld::rayTest` 0x14027b490, `rayTestSingle` 0x14027b620.
+- **Moving a body never updates its box [N].** `UPrimitiveComponent::SetRBPosition` 0x14099ab70 (skeletal 0x14099acb0):
+  `++m_updateRevision (+0x128); origin = pos·0.02`. `SetRBQuat` 0x14099b010 (skeletal 0x14099b140): basis only;
+  `SetRBRotation` 0x14099b4d0 → SetRBQuat. Velocity setters 0x14099a7c0 / 0x140999dd0: v·0.02 + `activate(false)`.
+  `ARBActor_TA::SetCurrentRBState` impl 0x140f35870 (also the rollback restores 0x140f30550 / 0x140f305c0): sleep flag,
+  origin, rotation, velocities. No interpolation transform, no broadphase call; all immediate, nothing queued.
+  Scripts [S]: Car_TA.Teleport, RBActor_TA.SetLocationAndRotation, SetPhysicsState use these; `PreAsyncTick` is empty;
+  `AActor::SetLocation` → FarMoveActor 0x140729e30 (actor Location only).
+- **Creating a body gives a fresh box at once [N].** `InitBody` → 0x14040ff70 → `addRigidBody` 0x1402b0c30 →
+  `addCollisionObject` (the shape's tight box, extra virtual +0x10) → the game's `createProxy`, which calls `setAabb`
+  (vt+0x18; stock 2.82 leaves the float box unset): no 0.02 threshold, no predicted-pose union. Kickoff
+  (StartNewRound → DestroyCars/DestroyBalls → SpawnInstance [S]), demolition respawn, ball spawn and join all create.
+- **Boxes update only in `updateAabbs` [N],** inside `performDiscreteCollisionDetection` 0x14027a550, after the vehicles:
+  per tick 0x140f30970 → RB pre-physics → 0x14041f6f0 → `internalSingleStepSimulation` 0x1402b8640 (applyGravity →
+  predictUnconstraintMotion 0x1402b8760 → vehicles 0x1402c1f30, action order, setting 0x14235ed4c = 0x101 → predictive
+  contacts → updateAabbs/pairs/dispatch → islands/solve/integrate/activation/clearForces). The update condition is
+  `forceUpdateAll (world+0x68) || activation != 5` (B2). Nothing else writes boxes; `updateHandle` 0x1402802d0 only via setAabb.
+- **Wheel-ray candidates [N].** World setup 0x14040a6c0 @0x14040a7a9: `btAxisSweep3(min, max, 0x4000, 0,
+  disableRaycastAccelerator = 1)` (ctor 0x14026f490 → 0x14026f060), so no dbvt accelerator. Vehicle update 0x1402c5e40:
+  hard points (0x1402c43b0) → **one** query 0x1402c2230 = `broadphase->aabbTest` (vt+0x30) of the box around every
+  wheel's ray start and end against each proxy's **stored** box (callback 0x1402c4610: skip the chassis, group/mask,
+  ≤ 32 candidates) → per wheel 0x1402c4650: `rayTestSingle` per candidate with the **current** transform (colObj+0x10).
+- **Consequence:** after a placement of an existing body, another car's next-tick wheel ray sees it at its new pose only
+  if its old stored box overlaps that car's wheel-ray box, else not at all for one tick; never at the old pose. Created
+  bodies are visible at once. Rollback restores also leave the pre-rollback boxes for the first re-simulated tick
+  [N restore; I call site].
+- **Engine (read 2026-10-14):** `btVehicleRL.cpp:177` casts each wheel with `world->rayTest`; `btRSBroadphase::rayTest`
+  (:342) visits every proxy in the ray start's cell, and dynamic proxies are registered in the 3×3×3 cells around their
+  aabbMin cell (cell ≥ maxAABBLen), so the candidate set is a superset of the game's. Matching it means the game's single
+  `aabbTest` query (btRSBroadphase::aabbTest :376 tests stored boxes) + `rayTestSingle` per candidate. Recommendation
+  sent to the live session: do not update boxes in SetState; update at once only where the game creates a body.

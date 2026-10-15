@@ -192,6 +192,18 @@ export class Synth {
     this.#sweep("triangle", f * 2, f * 2, 0.01, out, when, 0.04, go ? 0.4 : 0.1);
   }
 
+  /** A search starts: two soft notes rising */
+  searchStart(out: AudioNode, when: number): void {
+    this.#sweep("sine", 660, 660, 0.01, out, when, 0.12, 0.12);
+    this.#sweep("sine", 990, 990, 0.01, out, when + 0.09, 0.12, 0.16);
+  }
+
+  /** A search cancelled: two soft notes falling */
+  searchCancel(out: AudioNode, when: number): void {
+    this.#sweep("sine", 880, 880, 0.01, out, when, 0.1, 0.1);
+    this.#sweep("sine", 587, 587, 0.01, out, when + 0.08, 0.1, 0.14);
+  }
+
   /** The clock's last ten seconds (SFX_UI_Countdown_EndCounter's place): a short, dry tick, lower than the kickoff's */
   endCounter(out: AudioNode, when: number): void {
     this.#sweep("square", 740, 700, 0.03, out, when, 0.07, 0.07);

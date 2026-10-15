@@ -158,7 +158,8 @@ public:
 
 	// RL PATCH: the vehicles' order in the physics step: the game's action array (world+0x190; a car's VehicleSim is
 	// appended when it attaches, swap-removed when it detaches: notes/physics-values.md FP1 G2), here the cars on the
-	// field (not demolished): one added or respawned goes last, one demolished or removed leaves its place to the last;
+	// field (not demolished; one demolished by a state set stays until the next tick's sync, which GetVehicleOrder and
+	// snapshots apply already): one added or respawned goes last, one demolished or removed leaves its place to the last;
 	// every kickoff spawns them again in join order (car IDs). The step runs the cars' pre-physics and vehicles in it
 	std::vector<Car*> _vehicleOrder;
 	std::vector<uint32_t> GetVehicleOrder() const;
@@ -166,6 +167,8 @@ public:
 	// out follow in ID order
 	void SetVehicleOrder(const std::vector<uint32_t>& ids);
 	void _RemoveVehicle(Car* car);
+	// Demolishes the car (its respawn timer the mutators'), its vehicle out of the order at once (FinishDemo: RV-340)
+	void DemolishCar(Car* car);
 	// Its demolished cars out, its others in (at the end, in ID order)
 	void _SyncVehicleOrder();
 	// The cars on the field in ID order (a kickoff's spawn)

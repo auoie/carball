@@ -1,23 +1,47 @@
 {
-  "protocolVersion": 16,
+  "protocolVersion": 17,
   "vectors": [
     {
       "channel": "control",
       "message": {
         "type": "hello",
-        "version": 16,
+        "version": 17,
         "team": 0,
         "body": 0,
         "dodgeDeadzone": 0.8,
         "steeringSensitivity": 1.0,
         "airControlSensitivity": 1.25,
         "autoSkipReplay": true,
-        "key": 3735928559,
+        "key": "16045690984503111693",
         "name": "Mercury ⚡",
         "quickChat": "team",
-        "blockNonTactical": true
+        "blockNonTactical": true,
+        "intent": "claim",
+        "playlist": 0,
+        "token": "81985529216486895"
       },
-      "hex": "24000110000000cdcc4c3f0000803f0000a03f01efbeadde0b4d65726375727920e29aa10101"
+      "hex": "32000111000000cdcc4c3f0000803f0000a03f010df0fecaefbeadde0b4d65726375727920e29aa101010200efcdab8967452301"
+    },
+    {
+      "channel": "control",
+      "message": {
+        "type": "hello",
+        "version": 17,
+        "team": 255,
+        "body": 0,
+        "dodgeDeadzone": 0.8,
+        "steeringSensitivity": 1.0,
+        "airControlSensitivity": 1.25,
+        "autoSkipReplay": false,
+        "key": "0",
+        "name": "",
+        "quickChat": "everyone",
+        "blockNonTactical": false,
+        "intent": "search",
+        "playlist": 2,
+        "token": "0"
+      },
+      "hex": "2700011100ff00cdcc4c3f0000803f0000a03f00000000000000000000000001020000000000000000"
     },
     {
       "channel": "control",
@@ -88,20 +112,20 @@
       "channel": "control",
       "message": {
         "type": "welcome",
-        "version": 16,
+        "version": 17,
         "carId": 3,
         "tickRate": 120,
         "frame": 0,
         "matchType": "ranked",
         "teamSize": 2,
-        "key": 305441741,
+        "key": "18364758544493064720",
         "snapshot": [
           1,
           2,
           3
         ]
       },
-      "hex": "19008110000300000078000000000102cdab341203000000010203"
+      "hex": "1d0081110003000000780000000001021032547698badcfe03000000010203"
     },
     {
       "channel": "control",
@@ -400,6 +424,46 @@
         "reason": 0
       },
       "hex": "02008b00"
+    },
+    {
+      "channel": "control",
+      "message": {
+        "type": "refused",
+        "reason": 2
+      },
+      "hex": "02008b02"
+    },
+    {
+      "channel": "control",
+      "message": {
+        "type": "refused",
+        "reason": 3
+      },
+      "hex": "02008b03"
+    },
+    {
+      "channel": "control",
+      "message": {
+        "type": "matchFound",
+        "token": "9223372036854775809"
+      },
+      "hex": "09008f0100000000000080"
+    },
+    {
+      "channel": "control",
+      "message": {
+        "type": "idleWarning",
+        "on": true
+      },
+      "hex": "02009001"
+    },
+    {
+      "channel": "control",
+      "message": {
+        "type": "kicked",
+        "reason": 1
+      },
+      "hex": "02009101"
     },
     {
       "channel": "control",

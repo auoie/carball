@@ -190,6 +190,9 @@ static int RespawnSpotFollowsTheServer() {
 				DataStreamIn in;
 				in.data = update.data;
 				failures += NetState::Read(client, in) ? 0 : 1;
+				// (the client's own steer zeroed: the respawn selection sent must decide, not the controls the overlay
+				// brought, RV-343)
+				client->GetCar(car->id)->controls.steer = 0;
 			}
 		}
 		float off = (car->GetState().pos - client->GetCar(car->id)->GetState().pos).Length();
@@ -236,12 +239,31 @@ static int VehicleOrderTravels() {
 }
 
 // A car placed k ticks before the update (a kickoff between updates): the client, which didn't place it, continues exactly
-// as the server from that update (its wheels' first ticks after the placement sent: RV-322)
+// as the server from that update (its wheels' first ticks after the placement sent: RV-322); on the floor, dropped onto
+// it (the suspension bottoming out: the wheels' extra pushback), and on the side wall (the contact normals), k up to the
+// block's 16 (RV-342)
 static int PlacementBeforeTheUpdate() {
 	int failures = 0;
-	for (int k : { 0, 1, 2, 5, -1 }) { // (-1: placed at once, its jump held through it: RV-324)
-		bool jumpHeld = k < 0;
-		k = RS_MAX(k, 0);
+	struct Placement {
+		int k;
+		Vec pos, forward, up, vel;
+		const char* where;
+	};
+	const Placement placements[] = {
+		{ 0, Vec(1000, -2000, 17), Vec(1, 0, 0), Vec(0, 0, 1), Vec(), "the floor" },
+		{ 1, Vec(1000, -2000, 17), Vec(1, 0, 0), Vec(0, 0, 1), Vec(), "the floor" },
+		{ 2, Vec(1000, -2000, 17), Vec(1, 0, 0), Vec(0, 0, 1), Vec(), "the floor" },
+		{ 5, Vec(1000, -2000, 17), Vec(1, 0, 0), Vec(0, 0, 1), Vec(), "the floor" },
+		{ -1, Vec(1000, -2000, 17), Vec(1, 0, 0), Vec(0, 0, 1), Vec(), "the floor" }, // (placed at once, its jump held through it: RV-324)
+		{ 9, Vec(1000, -2000, 45), Vec(1, 0, 0), Vec(0, 0, 1), Vec(0, 0, -900), "dropped on the floor" },
+		{ 12, Vec(1000, -2000, 45), Vec(1, 0, 0), Vec(0, 0, 1), Vec(0, 0, -900), "dropped on the floor" },
+		{ 16, Vec(1000, -2000, 45), Vec(1, 0, 0), Vec(0, 0, 1), Vec(0, 0, -900), "dropped on the floor" },
+		{ 9, Vec(4096 - 18, -1000, 600), Vec(0, 1, 0), Vec(-1, 0, 0), Vec(), "the side wall" },
+		{ 16, Vec(4096 - 18, -1000, 600), Vec(0, 1, 0), Vec(-1, 0, 0), Vec(), "the side wall" },
+	};
+	for (const Placement& p : placements) {
+		bool jumpHeld = p.k < 0;
+		int k = RS_MAX(p.k, 0);
 		Arena* server = Arena::Create(GameMode::SOCCAR);
 		Car* car = server->AddCar(Team::BLUE);
 		Car* other = server->AddCar(Team::ORANGE);
@@ -253,7 +275,9 @@ static int PlacementBeforeTheUpdate() {
 		server->Step(60);
 		Arena* client = Restore(Snapshot(server));
 		CarState placed = CarState();
-		placed.pos = Vec(1000, -2000, 17);
+		placed.pos = p.pos;
+		placed.rotMat = RotMat(p.forward, p.up.Cross(p.forward), p.up);
+		placed.vel = p.vel;
 		placed.spawnCount = car->GetState().spawnCount + 1;
 		car->SetState(placed);
 		for (int t = 0; t < k; t++) {
@@ -276,7 +300,7 @@ static int PlacementBeforeTheUpdate() {
 			worst = fmaxf(worst, (car->GetState().pos - client->GetCar(car->id)->GetState().pos).Length());
 		}
 		if (worst != 0) {
-			printf("netstate compact: a car placed %d ticks before the update drifts %.4f uu on the client\n", k, worst);
+			printf("netstate compact: a car placed on %s %d ticks before the update drifts %.4f uu on the client\n", p.where, k, worst);
 			failures++;
 		}
 		delete client;

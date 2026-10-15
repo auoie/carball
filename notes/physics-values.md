@@ -850,6 +850,11 @@ Sub-agent FP1; decompiles and probes local in `out/bsim/agents/FP1/` (decomp/r1.
   order** (MRL-8), which also holds after a goal replay (StartReplay DestroyCars TA:4264, then ResetPlayers) and at match
   start (RestartPlayers TA:3801); a leaver is demolished (swap-remove); the podium restarts the winners in MVP-sorted
   order (TA:4409, 4420). [I]: removeAction's call site (vt+0x80, not traced) and a possibly async VehicleSim attach.
+  **Placement and boxes (AB1, 2026-10-14):** moving a body (Teleport, SetPhysicsState, SetCurrentRBState, rollback
+  restore) leaves its broadphase box until the next `updateAabbs`, which runs after the vehicles; the wheel rays pick
+  candidates by one `aabbTest` of stored boxes (≤ 32), then ray-test current poses. Created bodies (kickoff, respawn,
+  spawn) get a fresh box at once. Details and the engine's candidate-set gap: bullet-diff.md, "Broadphase boxes at
+  placement".
 - **G1 (negligible):** the engine damps the ball after the wheels' pushes, the game before: ≤ 0.04 uu/s measured.
 - **G3 (negligible):** a later car's read-back / limits / forward speed see an earlier car's impulses of the same tick: ≤ 0.01 uu/s.
 - **Tests to add** (none exist for patches 49, 50, 54):

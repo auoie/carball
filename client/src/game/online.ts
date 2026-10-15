@@ -24,6 +24,8 @@ import {
   type ControlMessage,
   type ForfeitVote,
   type InputFrame,
+  KICK_IDLE,
+  KICK_NOT_ALL_JOINED,
   type MatchPhase,
   type MatchState,
   type MatchType,
@@ -105,6 +107,10 @@ export interface PhaseChange {
   readonly forfeit: boolean;
 }
 
+/** How a match session ended: kicked for being idle, its match cancelled before the start (not every reserved player
+ *  joined), the match over, or the connection lost */
+export type SessionEnd = "idle" | "notAllJoined" | "ended" | "lost";
+
 export interface OnlineStats {
   readonly ping: number | null; // ms, smoothed
   readonly ackFrame: number;
@@ -171,10 +177,23 @@ export class Online {
   /** The camera is the local car's this frame (not the replay, the podium or the joining view: HUD-16) */
   #carView = true;
   #disconnected: string | null = null;
+  /** The server's idle warning is on (MM-36) */
+  #idleWarning = false;
+  /** Why the server kicked this player (KICK_*), before it ends the session */
+  #kicked: number | null = null;
+  #sessionEnded = false;
+  /** How the session ended, once (a queue match's page goes back to the menu with it) */
+  onSessionEnd: ((why: SessionEnd) => void) | null = null;
+  /** The idle warning's tip (src/ui/idleTip.ts) */
+  idleTip: { update(shown: boolean): void } | null = null;
   /** The network core: updates, corrections and their smoothing, the inputs sent (src/net/session.ts) */
   readonly #session: NetSession;
-  /** The client frame of the last goal's server tick (the slow motion after it) */
-  #goalFrame: number | null = null;
+  /** The last goal's server tick (its client frame mapped each time: the frames' numbering can move under a stall, RV-333) */
+  #goalTick: number | null = null;
+  /** The client frame of the last goal's server tick (the slow motion after it), by the session's current mapping */
+  get #goalFrameNow(): number | null {
+    return this.#goalTick === null ? null : this.#session.frameAt(this.#goalTick);
+  }
   readonly #recorder = new ReplayRecorder();
   #replay: ReplayPlayback | null = null;
   #skipped = false; // asked to skip this replay
@@ -305,7 +324,7 @@ export class Online {
       kickoffCountdown: this.#world.kickoffCountdown(),
       phases: this.#phases,
       replaying: this.#replay !== null,
-      goal: { frame: this.#goalFrame, explodedFrame: this.#explodedFrame(), minDilation: this.#minDilation },
+      goal: { frame: this.#goalFrameNow, explodedFrame: this.#explodedFrame(), minDilation: this.#minDilation },
     };
   }
 
@@ -322,6 +341,7 @@ export class Online {
   /** One animation frame. `rawSeconds`: time since the previous frame, unclamped. */
   frame(rawSeconds: number): void {
     this.#handleControlMessages();
+    this.#watchSessionEnd();
     this.#session.applyUpdates();
     this.#session.watchHitches(rawSeconds);
 
@@ -360,7 +380,7 @@ export class Online {
 
     // The frame's world time: slowed after a goal (the dilation the next tick has, as the game applies the curve's
     // value from the frame after)
-    const dilation = this.#goalFrame === null ? 1 : postGoalDilation(this.#predictor.frame + 1 - this.#goalFrame);
+    const dilation = this.#goalFrameNow === null ? 1 : postGoalDilation(this.#predictor.frame + 1 - this.#goalFrameNow);
     const { world, real } = frameTimes(rawSeconds, dilation);
     this.#minDilation = Math.min(this.#minDilation, dilation);
     const ticks = this.#clock.advance(world);
@@ -444,6 +464,8 @@ export class Online {
     this.statsUi.ticker.update(now);
     this.statsUi.toast.update(now);
     this.#drawEnd(now);
+    // (the idle warning: during play, with the car's camera, MM-36)
+    this.idleTip?.update(this.#idleWarning && (phase === "active" || phase === "timeUp") && this.#replay === null && this.#disconnected === null);
     // The log stays up in the menu, after the match (RV-254) and with the scoreboard (4 s after it: SB-10)
     const hold = !this.inputEnabled() || matchOver(phase) || board.shown;
     this.chat.log.update(now, hold, board.shown && phase !== "finished" ? CHAT_LOG.afterScoreboard : CHAT_LOG.hideAfter);
@@ -530,8 +552,8 @@ export class Online {
   /** The first frame the recording (the history as corrections settled it) has the ball exploded in, near the last
    *  goal's (for the browser tests) */
   #explodedFrame(): number | null {
-    if (this.#goalFrame === null) return null;
-    for (let f = this.#goalFrame - 120; f <= this.#goalFrame + 120; f++) if (this.#recorder.at(f)?.ballExploded) return f;
+    if (this.#goalFrameNow === null) return null;
+    for (let f = this.#goalFrameNow - 120; f <= this.#goalFrameNow + 120; f++) if (this.#recorder.at(f)?.ballExploded) return f;
     return null;
   }
 
@@ -582,9 +604,10 @@ export class Online {
         const team = m.event.team === 1 ? 1 : 0;
         this.#audio.goal();
         this.#hud.say(goalBanner(m.event, this.#roster), ESSENTIAL);
-        this.#goalFrame = this.#session.frameAt(m.serverTick);
+        this.#goalTick = m.serverTick;
+        const goalFrame = this.#session.frameAt(m.serverTick);
         // (for the replay's banner: the clock at the goal, the ball's speed in the last frame before it)
-        const before = this.#recorder.before(Math.floor(this.#goalFrame) - 1)?.ball.vel;
+        const before = this.#recorder.before(Math.floor(goalFrame) - 1)?.ball.vel;
         this.#goal = {
           scorer: m.event.scorer,
           assister: m.event.assister,
@@ -593,7 +616,7 @@ export class Online {
         };
         this.#serverExploded = true;
         // (where the ball was at the goal's tick, as this client drew it: RV-52h)
-        const at = this.#recorder.before(Math.floor(this.#goalFrame))?.ball.pos ?? this.#world.ball().pos;
+        const at = this.#recorder.before(Math.floor(goalFrame))?.ball.pos ?? this.#world.ball().pos;
         this.#effects.goal(at, team);
         this.#arena.explode();
         this.#camera.shakes.play(EXPLOSION_LARGE, at);
@@ -648,6 +671,10 @@ export class Online {
         if (row) this.statsUi.ticker.add(row, performance.now() / 1000);
       } else if (m.type === "forfeitVote") {
         this.#vote = { state: m.state, yes: m.yes, required: m.required, secondsLeft: m.secondsLeft, voted: m.voted, canStart: m.canStart };
+      } else if (m.type === "idleWarning") {
+        this.#idleWarning = m.on;
+      } else if (m.type === "kicked") {
+        this.#kicked = m.reason;
       } else if (m.type === "replay") {
         // (the cut in from black: LiveReplay's Begin)
         this.#replay = new ReplayPlayback(m, this.#recorder, (tick) => this.#session.frameAt(tick));
@@ -660,6 +687,22 @@ export class Online {
       }
       // (replayReady: the game shows the names of the players not ready, not a count, MR-6.14: with player names)
     }
+  }
+
+  /** The session's end, once its messages are read: a kick's reason (idle, a match cancelled before its start), the
+   *  match over (the end screen: the server lets a queue match go), else a lost connection */
+  #watchSessionEnd(): void {
+    if (this.#disconnected === null || this.#sessionEnded) return;
+    this.#sessionEnded = true;
+    const why: SessionEnd =
+      this.#kicked === KICK_IDLE
+        ? "idle"
+        : this.#kicked === KICK_NOT_ALL_JOINED
+          ? "notAllJoined"
+          : this.#match?.phase === "finished"
+            ? "ended"
+            : "lost";
+    this.onSessionEnd?.(why);
   }
 
   /** A new phase as this client sees it (MIO-16: the end's timings run from here). `first`: the first match state after

@@ -110,4 +110,8 @@ export const END_TEXT = {
   no: "No",
   winner: "Winner",
   myAccolades: "My Accolades",
+  /** A queue match's end (the game's ranked flow, MIO-29/31): search again, and the countdown back to the menu */
+  playAgain: "Play Again",
+  playAgainDesc: "Search for a new match",
+  leavingIn: "Leaving In",
 } as const;

@@ -4,7 +4,9 @@
 // each body as the game's ReplicatedRBState (exact: the bodies were rounded to it at their last tick) and the gameplay
 // state the game replicates (flags, boost, the controls, the dodge's torque, counters, the XY lock); a client lays it
 // over its own state at that frame, so a client that predicted right is left exactly as it was, and one that didn't
-// takes the server's bodies and those fields, keeping its own timers and wheel values (as the game's client does).
+// takes the server's bodies and those fields, keeping its own timers and wheel values (as the game's client does), but
+// for a car placed in the last 16 ticks: its wheel values come too (its contacts, carries and normals, and the ticks
+// since the placement: RV-322), since a fresh placement's own wheels can't be the server's.
 // The exact one (VERSION, ~370 B a car) carries everything: a client that applies it holds, for those bodies, the
 // server's state bit for bit (the engine's netstate check). Neither has Bullet's contact points, which the client
 // keeps from its own simulation (as the game does).
@@ -23,7 +25,8 @@ namespace NetState {
 	// dodge's forward input, the goal explosion's wave, the pitch lock after a dodge that ended by landing; 8: each
 	// body's world inverse inertia tensor (the game doesn't recompute it after the tick's rounding or a placement)
 	constexpr uint8_t VERSION = 8;
-	// 9: the compact form (above); 10: the vehicles' order in the step when not the cars' ID order (FP1 G2)
+	// 9: the compact form (above); 10: the vehicles' order in the step when not the cars' ID order (FP1 G2), a recently
+	// placed car's wheel block (RV-322)
 	constexpr uint8_t COMPACT_VERSION = 10;
 
 	struct WriteOptions {

@@ -213,8 +213,9 @@ export function netRun(engine: Engine, options: NetRunOptions): NetRunResult {
       sendInputs: (timestamp, first, frames) => {
         for (const at of upPath.send(clock)) toServer.push({ at, value: { timestamp, first, frames } });
       },
+      // (a reliable control message: never lost, RV-337)
       resetInputBuffer: () => {
-        for (const at of upPath.send(clock)) resets.push(at);
+        resets.push(clock + options.up.baseMs / 1000);
       },
       nowMs: () => clock * 1000,
     },
@@ -224,6 +225,7 @@ export function netRun(engine: Engine, options: NetRunOptions): NetRunResult {
   const consume = new ServerConsume();
   const schedule = new Schedule(options.seed);
   let echo: { timestamp: number; at: number } | null = null;
+  let heardAt = 0;
   let explodedAt = -1;
   const warmUp = options.warmUp ?? 3;
   let downBytes = 0;
@@ -265,6 +267,7 @@ export function netRun(engine: Engine, options: NetRunOptions): NetRunResult {
     if (n % 120 === 0) bufferTargets.push(consume.jitter.bufferSize);
     if (lateFrom === null && clock >= options.seconds - 5) lateFrom = session.predictor.stats.localMispredictions;
     for (const p of deliver(toServer, clock)) {
+      heardAt = clock;
       if (consume.receive(p.timestamp, p.first, p.frames, clock)) echo = { timestamp: p.timestamp, at: clock };
     }
     const consumed = consume.tick(clock, server.tick % 2 === 1);
@@ -297,8 +300,11 @@ export function netRun(engine: Engine, options: NetRunOptions): NetRunResult {
         parts: 1,
         state,
       };
-      if (measuring) downBytes += state.length + UPDATE_HEADER;
-      for (const at of downPath.send(clock)) toClient.push({ at, value: update });
+      // (none to a client silent 1.5 s: the server's G8, RV-337)
+      if (clock - heardAt < 1.5) {
+        if (measuring) downBytes += state.length + UPDATE_HEADER;
+        for (const at of downPath.send(clock)) toClient.push({ at, value: update });
+      }
     }
   }
 

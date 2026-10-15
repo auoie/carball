@@ -184,11 +184,15 @@ export class EndScreen {
   readonly #ready: HTMLButtonElement;
   readonly #buttons: HTMLDivElement;
   readonly #question: HTMLDivElement;
+  /** A queue match's end screen: Play Again (a new search) for Ready, "Leaving In" for "Next Match In" */
+  readonly #queue: boolean;
 
   constructor(
     parent: HTMLElement,
     actions: { readonly ready: () => void; readonly exit: () => void; readonly options: () => void },
+    queue = false,
   ) {
+    this.#queue = queue;
     this.#stage = new Stage(parent, "end-screen");
     this.#accolades = div("end-accolades", this.#stage.root);
     div("end-accolades-header", this.#accolades).textContent = END_TEXT.myAccolades;
@@ -211,8 +215,8 @@ export class EndScreen {
       this.#buttons.append(b);
       return b;
     };
-    this.#ready = button(END_TEXT.ready, END_TEXT.readyDesc, actions.ready);
-    this.#ready.dataset["action"] = "ready";
+    this.#ready = queue ? button(END_TEXT.playAgain, END_TEXT.playAgainDesc, actions.ready) : button(END_TEXT.ready, END_TEXT.readyDesc, actions.ready);
+    this.#ready.dataset["action"] = queue ? "playAgain" : "ready";
     button(END_TEXT.exit, END_TEXT.exitDesc, () => {
       this.#question.hidden = false;
     }).dataset["action"] = "exit";
@@ -267,11 +271,13 @@ export class EndScreen {
     this.#accolades.style.opacity = Math.min(1, s.since / 0.3).toFixed(3);
     this.#menu.style.opacity = shift.toFixed(3);
     this.#menu.style.pointerEvents = shift > 0 ? "auto" : "none";
-    // ("Next Match In" and the seconds, hidden at 0; a no-break space after a last digit 1: the font's kerning)
+    // ("Next Match In" ("Leaving In" after a queue match) and the seconds, hidden at 0; a no-break space after a last
+    // digit 1: the font's kerning)
     const seconds = String(s.secondsLeft);
     this.#countdown.hidden = s.secondsLeft <= 0;
-    this.#countdown.textContent = `${END_TEXT.nextMatchIn} ${seconds}${seconds.endsWith("1") ? " " : ""}`;
-    this.#ready.disabled = s.ready;
-    this.#ready.classList.toggle("done", s.ready);
+    this.#countdown.textContent = `${this.#queue ? END_TEXT.leavingIn : END_TEXT.nextMatchIn} ${seconds}${seconds.endsWith("1") ? " " : ""}`;
+    const ready = s.ready && !this.#queue;
+    this.#ready.disabled = ready;
+    this.#ready.classList.toggle("done", ready);
   }
 }

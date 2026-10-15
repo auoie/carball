@@ -738,7 +738,8 @@ void WriteCompactCar(BitWriter& w, Car* car, float tickTime) {
 	if (held)
 		for (int i = 0; i < 3; i++)
 			w.F32(pin[i]);
-	bool recent = s.tickCountSinceUpdate <= RECENT_PLACEMENT_TICKS;
+	// (not for a demolished car: its count stands still until it respawns, a new placement, RV-345)
+	bool recent = !s.isDemoed && s.tickCountSinceUpdate <= RECENT_PLACEMENT_TICKS;
 	w.Bool(recent);
 	if (recent) {
 		w.Put((uint32_t)s.tickCountSinceUpdate, 5);
@@ -914,10 +915,15 @@ void OverlayCar(Arena* arena, const CompactCar& d, Car* car) {
 	else
 		c.dodgeForward = 0;
 	car->controls = c;
-	s.lastControls = c;
+	// (of the last tick's controls only the jump is read, its press: the rest stays the client's own, which in a
+	// kickoff's countdown are the countdown's zeroed controls, not the controls sent)
 	s.lastControls.jump = d.lastJump;
-	// (the ticks since its placement as the server counts them, so both send its wheels alike; not physics)
-	s.tickCountSinceUpdate = d.placedRecently ? d.ticksSincePlaced : RS_MAX(car->_internalState.tickCountSinceUpdate, RECENT_PLACEMENT_TICKS + 1);
+	// (the ticks since its placement as the server counts them, so both send its wheels alike; not physics. A demolished
+	// car's isn't sent: the client's own stands, still until its respawn places it, RV-345)
+	if (d.placedRecently)
+		s.tickCountSinceUpdate = d.ticksSincePlaced;
+	else if (!d.isDemoed)
+		s.tickCountSinceUpdate = RS_MAX(car->_internalState.tickCountSinceUpdate, RECENT_PLACEMENT_TICKS + 1);
 	car->_internalState = s;
 	car->_velocityImpulseCache = { 0, 0, 0 };
 

@@ -270,12 +270,32 @@ bool Arena::RemoveCar(uint32_t id) {
 	}
 }
 
-// RL PATCH (FP1 G2): the vehicles' order
+// RL PATCH (FP1 G2): the vehicles' order, as the next tick's sync leaves it: a car demolished by a state set since
+// out, a car on the field not in it last (a copy taken now continues as the original: RV-340)
 std::vector<uint32_t> Arena::GetVehicleOrder() const {
+	std::vector<const Car*> order(_vehicleOrder.begin(), _vehicleOrder.end());
+	for (size_t i = 0; i < order.size();) {
+		if (order[i]->_internalState.isDemoed) {
+			order[i] = order.back();
+			order.pop_back();
+		} else {
+			i++;
+		}
+	}
+	for (const Car* car : _cars)
+		if (!car->_internalState.isDemoed && std::find(order.begin(), order.end(), car) == order.end())
+			order.push_back(car);
 	std::vector<uint32_t> ids;
-	for (const Car* car : _vehicleOrder)
+	for (const Car* car : order)
 		ids.push_back(car->id);
 	return ids;
+}
+
+void Arena::DemolishCar(Car* car) {
+	// (FinishDemo detaches the vehicle at once: removed from the order then, several in the order they're demolished,
+	// RV-340, RV-346)
+	car->Demolish(_mutatorConfig.respawnDelay);
+	_RemoveVehicle(car);
 }
 
 void Arena::SetVehicleOrder(const std::vector<uint32_t>& ids) {
@@ -950,7 +970,7 @@ void Arena::_BtCallback_OnCarCarCollision(Car* car1, Car* car2, btManifoldPoint&
 
 	for (Car* victim : demolished)
 		if (victim)
-			victim->Demolish(_mutatorConfig.respawnDelay);
+			DemolishCar(victim); // RL PATCH (RV-340): out of the vehicles' order at once
 }
 
 void Arena::_BtCallback_OnCarWorldCollision(Car* car, btCollisionObject* world, btManifoldPoint& manifoldPoint) {
@@ -1337,16 +1357,24 @@ static void _WriteXYLocks(DataStreamOut& out, const Arena::CarSet& cars) {
 }
 
 // RL PATCH (FP1 G2): the vehicles' order in a snapshot
-static void _WriteVehicleOrder(DataStreamOut& out, const std::vector<Car*>& order) {
+static void _WriteVehicleOrder(DataStreamOut& out, const std::vector<uint32_t>& order) {
 	out.Write<uint32_t>((uint32_t)order.size());
-	for (const Car* car : order)
-		out.Write(car->id);
+	for (uint32_t id : order)
+		out.Write(id);
 }
 
 static std::vector<uint32_t> _ReadVehicleOrder(DataStreamIn& in) {
-	std::vector<uint32_t> ids(in.Read<uint32_t>());
-	if (ids.size() > 1024 || in.IsOverflown())
+	// (the count checked before anything's allocated: a snapshot cut short or a count past its bytes reads none, RV-341)
+	if (in.GetNumBytesLeft() < sizeof(uint32_t)) {
+		in.pos = in.data.size() + 1; // (overflown)
 		return {};
+	}
+	uint32_t n = in.Read<uint32_t>();
+	if (n > 1024 || n > in.GetNumBytesLeft() / sizeof(uint32_t)) {
+		in.pos = in.data.size() + 1;
+		return {};
+	}
+	std::vector<uint32_t> ids(n);
 	for (uint32_t& id : ids)
 		in.Read(id);
 	return ids;
@@ -1407,7 +1435,7 @@ void Arena::Serialize(DataStreamOut& out) const {
 	out.Write<uint8_t>(respawnsHeld); // RL PATCH
 	_WriteGoalExplosion(out, goalExplosion); // RL PATCH
 	_WriteXYLocks(out, _cars); // RL PATCH
-	_WriteVehicleOrder(out, _vehicleOrder); // RL PATCH (FP1 G2)
+	_WriteVehicleOrder(out, GetVehicleOrder()); // RL PATCH (FP1 G2; as the next sync leaves it: RV-340)
 }
 
 // RL PATCH: Bullet keeps contact points from tick to tick (persistent manifolds), and some contacts, such as a

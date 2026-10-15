@@ -244,7 +244,7 @@ public:
 	// Demolishes the car (it respawns as after any demolition): for the tests' servers
 	void DemolishCar(int id) {
 		if (Car* car = _arena->GetCar((uint32_t)id))
-			car->Demolish(_arena->GetMutatorConfig().respawnDelay);
+			_arena->DemolishCar(car); // (out of the vehicles' order at once: RV-340)
 	}
 	// Another player's car on a client: its components (jump, dodge, boost, air control, auto-flip) don't run
 	// (Car::_componentsOff, the game's SimulatedProxy)

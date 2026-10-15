@@ -40,6 +40,12 @@ void btCollisionShape::getAabb(const btTransform& t, btVector3& aabbMin, btVecto
 	if (m_shapeType == SPHERE_SHAPE_PROXYTYPE)
 		return ((btSphereShape*)this)->getAabb(t, aabbMin, aabbMax);
 
+	// RL PATCH: an arena's triangle meshes are shared by every arena (RocketSim::GetArenaCollisionShapes): the cache, in
+	// the shape, would be shared too, and arenas on two threads tore it (a static body's box with its world min and
+	// another transform's max: the broadphase's cell count went negative). The same values, computed each time
+	if (m_shapeType == TRIANGLE_MESH_SHAPE_PROXYTYPE)
+		return ((btTriangleMeshShape*)this)->getAabb(t, aabbMin, aabbMax);
+
 	constexpr auto fnFastCompareTransforms = [](const btTransform& a, const btTransform& b) -> bool {
 		return
 			(a.m_origin == b.m_origin) &&

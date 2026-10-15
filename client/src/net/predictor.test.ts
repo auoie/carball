@@ -285,7 +285,7 @@ describe("Predictor", () => {
     predictor.correct(14, [states.get(14) ?? new Uint8Array()]);
     expect(client.carControls(other).throttle).toBeCloseTo(0.5, 2);
     expect(client.carControls(other).handbrake).toBe(true);
-    // A later state with the same inputs as recorded for its frame: nothing rewritten (the present's stays as it was)
+    // The same state again (its inputs as recorded for its frame): nothing rewritten (the present's stays as it was)
     predictor.correct(14, [states.get(14) ?? new Uint8Array()]);
     expect(client.carControls(other).throttle).toBeCloseTo(0.5, 2);
     server.dispose();
@@ -446,6 +446,58 @@ describe("Predictor", () => {
     client.dispose();
   });
 
+  it("after a state applied at the present, a later one for an earlier frame still gives the other cars' newer inputs (RV-332)", () => {
+    // (RX10's P1a: an ack-0 state applied directly, then the state after frame 25 staged: the other car's next frame takes
+    // its throttle 1, not the direct one's 0)
+    const server = World.create(engine);
+    const local = server.addCar(0);
+    const other = server.addCar(1);
+    server.resetKickoff(4);
+    const client = World.create(engine);
+    client.loadState(server.saveState());
+    const predictor = new Predictor(client, local, 0);
+    const states = new Map<number, Uint8Array>();
+    for (let f = 1; f <= 30; f++) {
+      server.setControls(other, { ...inputControls(NO_INPUT), throttle: f < 10 ? 0 : 1 });
+      server.step();
+      states.set(f, server.writeNetState({ ball: true, carIds: [local, other], pads: true }));
+      predictor.advance(NO_INPUT);
+    }
+    predictor.correct(0, [states.get(5) ?? new Uint8Array()]); // (no acknowledgement yet: applied at the present)
+    expect(predictor.stats.direct).toBe(1);
+    predictor.correct(25, [states.get(25) ?? new Uint8Array()]);
+    predictor.advance(NO_INPUT);
+    expect(client.carControls(other).throttle).toBe(1);
+    server.dispose();
+    client.dispose();
+  });
+
+  it("a staged state then one applied at the present in the same frame: the direct one lands on the present (RV-336)", () => {
+    // (T7's recovery frame: the staged state is replayed first, so the direct one doesn't land on its past frame)
+    const server = World.create(engine);
+    const local = server.addCar(0);
+    server.resetKickoff(4);
+    const client = World.create(engine);
+    client.loadState(server.saveState());
+    const predictor = new Predictor(client, local, 0);
+    const states = new Map<number, Uint8Array>();
+    for (let f = 1; f <= 30; f++) {
+      server.setControls(local, { ...inputControls(NO_INPUT), throttle: 1 });
+      server.step();
+      states.set(f, server.writeNetState({ ball: true, carIds: [], pads: true }));
+      predictor.advance({ ...NO_INPUT, throttle: 127 });
+    }
+    const present = client.car(local).pos;
+    expect(predictor.stage(10, [states.get(10) ?? new Uint8Array()])).toBe(true);
+    server.setBall({ pos: { x: 300, y: 300, z: 400 }, vel: { x: 0, y: 0, z: 0 }, angVel: { x: 0, y: 0, z: 0 } });
+    server.step();
+    expect(predictor.stage(40, [server.writeNetState({ ball: true, carIds: [], pads: true })])).toBe(false); // (a frame not reached)
+    expect(client.car(local).pos).toEqual(present); // (the car at the present, not at frame 10)
+    expect(client.ball().pos.x).toBeCloseTo(server.ball().pos.x, 3);
+    server.dispose();
+    client.dispose();
+  });
+
   it("replays an acknowledgement older than its history from its oldest frame (G7: RPF = max(ack, PF − 119))", () => {
     const server = World.create(engine);
     const local = server.addCar(0);
@@ -494,6 +546,47 @@ describe("Predictor", () => {
     expect(replaysWhileDemoed).toBe(0);
     expect(predictor.predicting).toBe(true);
     expect(replayedAfter).toBe(LAG); // (predicting again: each state replayed from its frame)
+    server.dispose();
+    client.dispose();
+  });
+
+  it("after a respawn, a state for a frame before the last one applied at the present still gives the others' inputs (RV-332)", () => {
+    // (RX10's P1b: the states applied while demolished are labelled with their own frames, so the first staged one after
+    // the respawn, for an earlier frame than the present, isn't skipped as older)
+    const server = World.create(engine);
+    const local = server.addCar(0);
+    const other = server.addCar(1);
+    server.resetKickoff(4);
+    const client = World.create(engine);
+    client.loadState(server.saveState());
+    client.setDemolitions(false);
+    const predictor = new Predictor(client, local, 0);
+    const LAG = 12;
+    const throttleAt = (f: number): number => Math.floor(f / 8) % 2; // (changes within the lag)
+    server.demolishCar(local);
+    const states = new Map<number, Uint8Array>();
+    let expected: number | null = null;
+    let checked = 0;
+    let wrong = 0;
+    for (let f = 1; f <= 500; f++) {
+      server.setControls(other, { ...inputControls(NO_INPUT), throttle: throttleAt(f) });
+      server.step();
+      states.set(f, server.writeNetState({ ball: true, carIds: server.carIds(), pads: true }));
+      predictor.advance(NO_INPUT);
+      if (expected !== null) {
+        checked++;
+        if (client.carControls(other).throttle !== expected) wrong++;
+        expected = null;
+      }
+      if (f % 4 === 0 && f > LAG) {
+        const wasPredicting = predictor.predicting;
+        predictor.correct(f - LAG, [states.get(f - LAG) ?? new Uint8Array()]);
+        if (wasPredicting) expected = throttleAt(f - LAG);
+      }
+    }
+    expect(server.car(local).demoed).toBe(false);
+    expect(checked).toBeGreaterThan(20);
+    expect(wrong).toBe(0);
     server.dispose();
     client.dispose();
   });

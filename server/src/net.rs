@@ -11,10 +11,21 @@ use wtransport::{Endpoint, Identity, ServerConfig};
 use crate::game::{JoinRequest, OUT_QUEUE, Outgoing, PlayerId};
 use crate::protocol::{self, Control, Datagram, InputFrame};
 
+/// What a session is for (its hello's intent)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Intent {
+    /// Join the server's open match (development servers)
+    Join,
+    /// Search the queue of the playlist with this team size
+    Search { team_size: u8 },
+    /// Claim a reserved slot (the token a search's `MatchFound` gave)
+    Claim { token: u64 },
+}
+
 /// Messages from the network tasks to the game loop
 #[derive(Debug)]
 pub enum ToGame {
-    Join { id: PlayerId, request: JoinRequest, out: Sender<Outgoing> },
+    Join { id: PlayerId, intent: Intent, request: JoinRequest, out: Sender<Outgoing> },
     /// The session ended; `lost`: its connection timed out
     Leave { id: PlayerId, lost: bool },
     Inputs { id: PlayerId, timestamp: u32, first_frame: u32, frames: Vec<InputFrame>, at: std::time::Instant },
@@ -112,18 +123,42 @@ async fn session(incoming: IncomingSession, id: PlayerId, to_game: &Sender<ToGam
             bail!("protocol version {version}, server speaks {}", protocol::VERSION);
         }
     };
-    let Control::Hello { team, body, dodge_deadzone, steering_sensitivity, air_control_sensitivity, auto_skip_replay, key, name, quick_chat, block_non_tactical, .. } = hello else {
+    let Control::Hello {
+        team,
+        body,
+        dodge_deadzone,
+        steering_sensitivity,
+        air_control_sensitivity,
+        auto_skip_replay,
+        key,
+        name,
+        quick_chat,
+        block_non_tactical,
+        intent,
+        playlist,
+        token,
+        ..
+    } = hello
+    else {
         bail!("expected hello");
+    };
+    let intent = match intent {
+        protocol::INTENT_SEARCH => Intent::Search { team_size: playlist },
+        protocol::INTENT_CLAIM => Intent::Claim { token },
+        _ => Intent::Join,
     };
 
     let (out_tx, mut out_rx) = channel(OUT_QUEUE);
     let request = JoinRequest { team, body, dodge_deadzone, steering_sensitivity, air_control_sensitivity, auto_skip_replay, key, name, quick_chat, block_non_tactical };
-    to_game.send(ToGame::Join { id, request, out: out_tx }).await?;
+    to_game.send(ToGame::Join { id, intent, request, out: out_tx }).await?;
 
     // Game -> client
     let writer_connection = connection.clone();
+    // (datagrams the connection refused: too large for the path now, or for a peer without datagrams; counted on every
+    // way the session ends, RV-334; none counted once it's closed)
+    let unsent = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let writer_unsent = unsent.clone();
     let mut writer = tokio::spawn(async move {
-        let mut unsent: u64 = 0;
         while let Some(message) = out_rx.recv().await {
             match message {
                 Outgoing::Control(bytes) => {
@@ -132,18 +167,17 @@ async fn session(incoming: IncomingSession, id: PlayerId, to_game: &Sender<ToGam
                     }
                 }
                 // Unreliable: a datagram that doesn't fit or can't be queued is simply lost, like a lost packet (counted)
-                Outgoing::Datagram(bytes) => {
-                    if writer_connection.send_datagram(bytes).is_err() {
-                        unsent += 1;
+                Outgoing::Datagram(bytes) => match writer_connection.send_datagram(bytes) {
+                    Ok(()) | Err(wtransport::error::SendDatagramError::NotConnected) => {}
+                    Err(_) => {
+                        writer_unsent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     }
-                }
+                },
             }
         }
-        // (the game let go of this player: a refused join; what it sent goes out before the stream ends)
+        // (the game let go of this player: a refused join, a found match, a kick, a match let go; what it sent goes out
+        // before the stream ends)
         let _ = send.finish().await;
-        if unsent > 0 {
-            eprintln!("player {id}: {unsent} datagrams not sent");
-        }
     });
 
     // Client -> game: control messages (in their own task: a framed read mustn't be cancelled halfway); the control
@@ -204,6 +238,10 @@ async fn session(incoming: IncomingSession, id: PlayerId, to_game: &Sender<ToGam
     };
     control_reader.abort();
     writer.abort();
+    let refused = unsent.load(std::sync::atomic::Ordering::Relaxed);
+    if refused > 0 {
+        eprintln!("player {id}: {refused} datagrams refused by the connection (too large or unsupported)");
+    }
     result?;
     // (whichever branch noticed first, the connection's own close says why: an idle timeout is a lost connection, RV-250)
     let reason = tokio::time::timeout(Duration::from_millis(100), connection.closed()).await;

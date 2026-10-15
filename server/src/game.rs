@@ -47,6 +47,11 @@ const KICKOFF_COUNTDOWN_SECONDS: f32 = 4.0;
 const MIN_RESET_INTERVAL: f64 = 1.0;
 /// Before a match's first kickoff countdown, the cars wait frozen at their spots (`WarmupTime` 3 s)
 const WARMUP_SECONDS: f32 = 3.0;
+/// The idle kick (`IdleFeature_TA` IdleKick: MM-33): the warning past 25 s idle, the kick past 30 s, checked each second of
+/// play; the session closes a second after the kick's reason (`CloseConnectionDelay`, MM-37)
+const IDLE_WARN_TICKS: u64 = 25 * TICK_RATE as u64;
+const IDLE_KICK_TICKS: u64 = 30 * TICK_RATE as u64;
+const KICK_CLOSE_TICKS: u64 = TICK_RATE as u64;
 /// A team's size (`GameEvent_Team_TA.MaxTeamSize`: the soccar archetype's 3; it grows when a team has more players)
 pub const TEAM_SIZE: u8 = 3;
 /// The match clock (`GameEvent_Soccar_TA.GameTime` 300 s)
@@ -124,7 +129,7 @@ pub struct JoinRequest {
     pub air_control_sensitivity: f32,
     pub auto_skip_replay: bool,
     /// The client's key, the same when it reconnects
-    pub key: u32,
+    pub key: u64,
     /// The name it asked for (tidied: `player_name`)
     pub name: String,
     /// Its chat filters from the start (`protocol::CHAT_*`; RV-259)
@@ -179,10 +184,57 @@ fn hidden_char(c: char) -> bool {
             | 0xFE00..=0xFE0F | 0xFFA0 | 0xFFFC | 0xFFFD | 0xE0000..=0xE0FFF)
 }
 
-/// The name a player asked for, tidied: hidden characters dropped, trimmed, `MAX_NAME_BYTES` at most; none left, or another
-/// player's automatic name ("Player 7"): "Player N"
+/// 64 bits from the system's random source (keys and reservation tokens: SEC-9)
+pub fn random_u64() -> u64 {
+    getrandom::u64().expect("the system's random source")
+}
+
+/// A combining mark of the blocks that stack (accents piled on a letter): a character keeps two at most (SEC-11)
+fn combining_mark(c: char) -> bool {
+    matches!(c as u32,
+        0x0300..=0x036F | 0x0483..=0x0489 | 0x0591..=0x05BD | 0x0610..=0x061A | 0x064B..=0x065F | 0x0E31 | 0x0E34..=0x0E3A
+        | 0x0E47..=0x0E4E | 0x1AB0..=0x1AFF | 0x1DC0..=0x1DFF | 0x20D0..=0x20FF | 0xFE20..=0xFE2F)
+}
+
+/// A character as "Player N" would read with it: lower case, full-width forms as ASCII, the Cyrillic and Greek letters that
+/// look like the word's (SEC-11)
+fn name_fold(c: char) -> char {
+    let c = c.to_lowercase().next().unwrap_or(c);
+    match c as u32 {
+        0xFF01..=0xFF5E => char::from_u32(c as u32 - 0xFF01 + 0x21).map_or(c, |a| a.to_ascii_lowercase()),
+        0x0440 | 0x03C1 => 'p',
+        0x0430 | 0x03B1 => 'a',
+        0x0443 | 0x03B3 => 'y',
+        0x0435 | 0x03B5 => 'e',
+        0x0456 | 0x04CF | 0x0131 => 'l',
+        _ if c == 'i' => 'l',
+        _ => c,
+    }
+}
+
+/// The name a player asked for, tidied: hidden characters dropped, every run of spaces one space, two combining marks on a
+/// character at most, trimmed, `MAX_NAME_BYTES` at most; none left, or another player's automatic name ("Player 7" in any
+/// case, spacing, digits or lookalike letters): "Player N" (SEC-11)
 fn player_name(asked: &str, id: PlayerId) -> String {
-    let clean: String = asked.chars().filter(|&c| !hidden_char(c)).collect();
+    let mut clean = String::new();
+    let mut marks = 0;
+    for c in asked.chars().filter(|&c| !hidden_char(c)) {
+        if c.is_whitespace() {
+            if !clean.ends_with(' ') {
+                clean.push(' ');
+            }
+            marks = 0;
+        } else if combining_mark(c) {
+            // (none on a space or the name's start: a name of accents alone is none)
+            if marks < 2 && !clean.is_empty() && !clean.ends_with(' ') {
+                clean.push(c);
+                marks += 1;
+            }
+        } else {
+            clean.push(c);
+            marks = 0;
+        }
+    }
     let mut name = clean.trim().to_string();
     let mut end = name.len().min(protocol::MAX_NAME_BYTES);
     while !name.is_char_boundary(end) {
@@ -190,7 +242,8 @@ fn player_name(asked: &str, id: PlayerId) -> String {
     }
     name.truncate(end);
     let name = name.trim_end().to_string();
-    let reserved = name.strip_prefix("Player ").is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+    let folded: String = name.chars().filter(|c| !c.is_whitespace()).map(name_fold).collect();
+    let reserved = folded.strip_prefix("player").is_some_and(|n| !n.is_empty() && n.chars().all(char::is_numeric));
     if name.is_empty() || reserved { format!("Player {id}") } else { name }
 }
 
@@ -273,7 +326,7 @@ struct Player {
     auto_skip_replay: bool,
     /// Ready to skip this goal replay
     ready: bool,
-    key: u32,
+    key: u64,
     /// They may not start a forfeit vote (`SetStartVoteToForfeitDisabled`: they started one, until their team is
     /// re-enabled; at a join, if their key started one this match)
     vote_start_disabled: bool,
@@ -294,6 +347,35 @@ struct Player {
     titles: [Option<PodiumTitle>; 2],
     /// Round-trip time (ms), as the connection measures it
     ping: u16,
+    /// Idle time carried over from earlier periods of play (ticks), until they act (MM-34)
+    idle_carry: u64,
+    /// When they last acted (tick: `LastActiveTime`)
+    last_active: Option<u64>,
+    /// The idle warning is showing
+    idle_warned: bool,
+    /// Kicked: their session ends at this tick (MM-37)
+    kick_at: Option<u64>,
+}
+
+impl Player {
+    /// They acted (MM-35: an input change, a quick chat, a replay skip): idle no more, the warning hidden
+    fn acted(&mut self, tick: u64) {
+        self.idle_carry = 0;
+        self.last_active = Some(tick);
+        if self.idle_warned {
+            self.idle_warned = false;
+            let _ = self.out.try_send(Outgoing::Control(Control::IdleWarning { on: false }.encode()));
+        }
+    }
+
+    /// How long they've been idle in the period of play since `since` (MM-34: from their last action in it, else from its
+    /// start plus what earlier periods carried)
+    fn idle_ticks(&self, since: u64, tick: u64) -> u64 {
+        match self.last_active {
+            Some(at) if at >= since => tick - at,
+            _ => tick - since + self.idle_carry,
+        }
+    }
 }
 
 /// The car preferences' slider limits and defaults (`GFxData_Settings_TA` *Limits: the client's
@@ -350,11 +432,10 @@ pub struct Game {
     votes: [Option<ForfeitVote>; 2],
     /// The keys that started a forfeit vote this match: only grows (`ForfeitInitiatorIDs`: a starter who rejoins can't
     /// start another, `CheckInitiatedForfeit`)
-    initiators: BTreeSet<u32>,
-    /// The keys this server gave out, and the next one's seed (RV-239: the server's, so two tabs can't share one); a
-    /// new match keeps only those of the players here (RV-270)
-    issued_keys: BTreeSet<u32>,
-    key_seed: u32,
+    initiators: BTreeSet<u64>,
+    /// The keys this server gave out (RV-239: the server's, so two tabs can't share one; 64 random bits, so one doesn't
+    /// tell another: SEC-9); a new match keeps only those of the players here (RV-270)
+    issued_keys: BTreeSet<u64>,
     /// A team forfeited after a goal: the match ends at the next round (`bForfeit`, MRL-13)
     forfeiting: Option<u8>,
     /// The teams players left since the last forfeit check, and the check's tick (`PlayersRemovedThisFrame`)
@@ -376,6 +457,17 @@ pub struct Game {
     finished_at: u64,
     /// What each update carries, at the game's rates (src/replication.rs)
     replication: Replication,
+    /// A queued match (the match host's) waits for this many players before its warm-up runs, every reserved player
+    /// (full start); 0 once they're all here, or for none
+    pub hold_for: usize,
+    /// Idle players are warned and kicked (MM-32: the queue's matches)
+    pub idle_kick: bool,
+    /// The end screen's time up (or every player ready) starts the next match with the players here (development
+    /// servers); without, the match is over there (`is_over`) and its host lets it go
+    pub rematch: bool,
+    /// When the current period of play began (Active or 0:00: the idle times, MM-34)
+    active_since: Option<u64>,
+    over: bool,
     /// The tests' record of what each update carried (the network tests' T6: notes/netcode-live.md §13)
     #[cfg(test)]
     replicated: Vec<Replicated>,
@@ -441,16 +533,30 @@ impl Game {
             votes: [None, None],
             initiators: BTreeSet::new(),
             issued_keys: BTreeSet::new(),
-            key_seed: (seed as u32) ^ 0x9e37_79b9,
             forfeiting: None,
             left_teams: Vec::new(),
             forfeit_check_at: None,
             score: [0, 0],
             sent: None,
             replication: Replication::new(seed as u64),
+            hold_for: 0,
+            idle_kick: false,
+            rematch: true,
+            active_since: None,
+            over: false,
             #[cfg(test)]
             replicated: Vec::new(),
         }
+    }
+
+    /// Waiting for its reserved players (a queued match before its warm-up)
+    pub fn holding(&self) -> bool {
+        self.hold_for > 0
+    }
+
+    /// A match without rematches past its end screen
+    pub fn is_over(&self) -> bool {
+        self.over
     }
 
     pub fn phase(&self) -> Phase {
@@ -583,6 +689,10 @@ impl Game {
             titles: [None, None],
             ping: 0,
             last_heard: None,
+            idle_carry: 0,
+            last_active: Some(self.arena.tick_count()), // (the controller's creation counts: MM-35)
+            idle_warned: false,
+            kick_at: None,
         };
         let snapshot = self.arena.save_state();
         let welcome = Control::Welcome {
@@ -607,11 +717,10 @@ impl Game {
         self.scoreboard_dirty = true;
     }
 
-    /// A key not given out before, never 0
-    fn new_key(&mut self) -> u32 {
+    /// A key not given out before, never 0: 64 bits from the system's random source (SEC-9)
+    fn new_key(&mut self) -> u64 {
         loop {
-            self.key_seed = self.key_seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-            let key = self.key_seed ^ (self.key_seed >> 15);
+            let key = random_u64();
             if key != 0 && self.issued_keys.insert(key) {
                 return key;
             }
@@ -661,7 +770,9 @@ impl Game {
         if preset >= protocol::QUICK_CHAT_PRESETS {
             return;
         }
+        let tick = self.arena.tick_count();
         let Some(sender) = self.players.get_mut(&id) else { return };
+        sender.acted(tick); // (`ServerSay_TA` with a preset: MM-35)
         if sender.chat_filter == protocol::CHAT_OFF {
             return;
         }
@@ -948,6 +1059,9 @@ impl Game {
     /// (`SetReadyToPlay` → `ServerReadyUp`, MIO-31)
     pub fn ready_up(&mut self, id: PlayerId) {
         let tick = self.arena.tick_count();
+        if let Some(p) = self.players.get_mut(&id) {
+            p.acted(tick); // (`ServerReadyUp`: MM-35)
+        }
         let end_screen = self.phase == Phase::Finished && tick >= self.finished_at + (READY_UP_DELAY_SECONDS * TICK_RATE as f32) as u64;
         if (self.phase == Phase::Replay || end_screen)
             && let Some(p) = self.players.get_mut(&id)
@@ -994,7 +1108,7 @@ impl Game {
         self.votes = [None, None];
         self.initiators.clear();
         // (a leaver's key only mattered for their vote lockout, which ends with the match: RV-270)
-        let here: BTreeSet<u32> = self.players.values().map(|p| p.key).collect();
+        let here: BTreeSet<u64> = self.players.values().map(|p| p.key).collect();
         self.issued_keys.retain(|k| here.contains(k));
         for p in self.players.values_mut() {
             p.vote_start_disabled = false;
@@ -1320,7 +1434,7 @@ impl Game {
         }
     }
 
-    fn broadcast(&self, message: &Control) {
+    pub(crate) fn broadcast(&self, message: &Control) {
         let bytes = message.encode();
         for p in self.players.values() {
             let _ = p.out.try_send(Outgoing::Control(bytes.clone()));
@@ -1342,8 +1456,12 @@ impl Game {
         // (after the match the cars are frozen: `EndGame` → `SetAllDriving(false)`; in the goal replay they're gone:
         // `StartReplay` → `DestroyCars`, here frozen out of sight until the kickoff places them)
         let frozen = matches!(self.phase, Phase::PrePodium | Phase::Finished | Phase::Replay);
+        let now_tick = self.arena.tick_count();
         for p in self.players.values_mut() {
             let controls = p.input.tick(now, odd_tick);
+            if p.input.acted {
+                p.acted(now_tick); // (a consumed frame that changed the inputs: MM-35a)
+            }
             let controls = if frozen { Controls::default() } else { controls };
             self.arena.set_controls(p.car_id, &controls);
             // (a release and a press inside this tick's frames: a fresh press, NET-2)
@@ -1394,6 +1512,7 @@ impl Game {
         }
         self.update_votes(tick);
         self.update_match(tick);
+        self.update_idle(tick);
         self.send_match_state();
         self.send_votes();
         self.send_scoreboard(tick);
@@ -1401,6 +1520,43 @@ impl Game {
         self.replication.watch(&mut self.arena);
         if tick.is_multiple_of(UPDATE_EVERY_TICKS) {
             self.send_updates(now);
+        }
+    }
+
+    /// The idle kick (MM-32..38): the periods of play (Active and 0:00) timed; with `idle_kick`, each second of one, a player
+    /// idle past 25 s is warned, past 30 s kicked (the reason now, the session a second later); the kicked go
+    fn update_idle(&mut self, tick: u64) {
+        let playing = matches!(self.phase, Phase::Active | Phase::TimeUp);
+        match (playing, self.active_since) {
+            (true, None) => self.active_since = Some(tick),
+            (false, Some(since)) => {
+                // (the period's idle time carries into the next until they act: MM-34)
+                for p in self.players.values_mut() {
+                    p.idle_carry = p.idle_ticks(since, tick);
+                    p.last_active = None;
+                }
+                self.active_since = None;
+            }
+            _ => {}
+        }
+        let kicked: Vec<PlayerId> = self.players.iter().filter(|(_, p)| p.kick_at.is_some_and(|at| tick >= at)).map(|(&id, _)| id).collect();
+        for id in kicked {
+            eprintln!("player {id}: kicked for being idle");
+            self.remove_player(id, false);
+        }
+        let Some(since) = self.active_since.filter(|&since| self.idle_kick && tick > since && (tick - since).is_multiple_of(u64::from(TICK_RATE)))
+        else {
+            return;
+        };
+        for p in self.players.values_mut().filter(|p| p.kick_at.is_none()) {
+            let idle = p.idle_ticks(since, tick);
+            if idle > IDLE_KICK_TICKS {
+                let _ = p.out.try_send(Outgoing::Control(Control::Kicked { reason: protocol::KICK_IDLE }.encode()));
+                p.kick_at = Some(tick + KICK_CLOSE_TICKS);
+            } else if idle > IDLE_WARN_TICKS && !p.idle_warned {
+                p.idle_warned = true;
+                let _ = p.out.try_send(Outgoing::Control(Control::IdleWarning { on: true }.encode()));
+            }
         }
     }
 
@@ -1456,8 +1612,17 @@ impl Game {
                 }
             }
             Phase::Waiting => {
-                if tick >= self.phase_until {
-                    self.phase = Phase::Countdown;
+                if self.hold_for > self.players.len() {
+                    // (full start: the warm-up and the kickoff's countdown wait for every reserved player, the cars held at
+                    // their spots: MIO-1)
+                    let warmup = (WARMUP_SECONDS * TICK_RATE as f32) as u32;
+                    self.phase_until = tick + u64::from(warmup);
+                    self.arena.set_kickoff_countdown((KICKOFF_COUNTDOWN_SECONDS * TICK_RATE as f32) as u32 + warmup);
+                } else {
+                    self.hold_for = 0;
+                    if tick >= self.phase_until {
+                        self.phase = Phase::Countdown;
+                    }
                 }
             }
             Phase::PrePodium => {
@@ -1473,8 +1638,10 @@ impl Game {
             // The next match when the 60 s are up, or every player is ready (`CheckPlayersReady`, from 1 s in)
             Phase::Finished => {
                 let all_ready = !self.players.is_empty() && self.players.values().all(|p| p.ready);
-                if tick >= self.phase_until || all_ready {
+                if self.rematch && (tick >= self.phase_until || all_ready) {
                     self.new_match();
+                } else if !self.rematch && tick >= self.phase_until {
+                    self.over = true;
                 }
             }
         }
@@ -2043,6 +2210,183 @@ mod tests {
         }
     }
 
+    /// A tick with player `id` giving one frame a tick (throttle `throttle`), its frame numbers from `frame`
+    fn tick_with(game: &mut Game, id: PlayerId, frame: &mut u32, throttle: i8) {
+        let now = game.tick_count() as f64 / 120.0;
+        *frame += 1;
+        game.receive_inputs(id, *frame, *frame, &[InputFrame { throttle, ..InputFrame::default() }], now);
+        game.tick(now);
+    }
+
+    fn idle_messages(rx: &mut Receiver<Outgoing>) -> Vec<Control> {
+        controls(rx).into_iter().filter(|c| matches!(c, Control::IdleWarning { .. } | Control::Kicked { .. })).collect()
+    }
+
+    #[test]
+    fn an_idle_player_is_warned_past_25_s_of_play_and_kicked_past_30_s_a_second_before_they_go() {
+        // (MM-33/37: player 1 sends nothing; player 2 changes their throttle each second)
+        init_engine();
+        let mut game = Game::with_options(1, 1);
+        game.idle_kick = true;
+        let (tx1, mut rx1) = channel(TEST_QUEUE);
+        let (tx2, mut rx2) = channel(TEST_QUEUE);
+        game.join(1, REQUEST, tx1);
+        game.join(2, REQUEST, tx2);
+        let mut frame = 0;
+        while game.phase != Phase::Active {
+            tick_with(&mut game, 2, &mut frame, 0);
+        }
+        let go = game.tick_count();
+        let (mut warned, mut kicked) = (None, None);
+        while game.players.contains_key(&1) && game.tick_count() < go + 40 * 120 {
+            let throttle = if (game.tick_count() / 120).is_multiple_of(2) { 127 } else { 0 };
+            tick_with(&mut game, 2, &mut frame, throttle);
+            for m in idle_messages(&mut rx1) {
+                match m {
+                    Control::IdleWarning { on: true } => warned = Some(game.tick_count() - go),
+                    Control::Kicked { reason: protocol::KICK_IDLE } => kicked = Some(game.tick_count() - go),
+                    other => panic!("{other:?}"),
+                }
+            }
+        }
+        let gone = game.tick_count() - go;
+        assert_eq!((warned, kicked), (Some(26 * 120), Some(31 * 120)), "the first second's check past 25 s, then past 30 s");
+        assert_eq!(gone, 32 * 120, "removed a second after the kick");
+        assert!(idle_messages(&mut rx2).is_empty(), "the active player: nothing");
+        assert_eq!(game.players.len(), 1);
+    }
+
+    #[test]
+    fn idle_time_carries_over_rounds_until_the_player_acts_and_acting_hides_the_warning() {
+        // (MM-34: 20 s idle in the first round, a goal, then the warning 6 s into the next; a quick chat hides it, MM-35)
+        init_engine();
+        let mut game = Game::with_options(1, 1);
+        game.idle_kick = true;
+        game.test_goal_after = Some(20 * 120);
+        let (tx1, mut rx1) = channel(TEST_QUEUE);
+        let (tx2, _rx2) = channel(TEST_QUEUE);
+        game.join(1, REQUEST, tx1);
+        game.join(2, REQUEST, tx2);
+        let first = run_until(&mut game, 3000, |g| g.phase == Phase::Active);
+        let goal = run_until(&mut game, 3000, |g| g.phase == Phase::PostGoal);
+        assert!(idle_messages(&mut rx1).is_empty());
+        let carried = goal - first; // (a little over 20 s: the ball reaching the goal)
+        assert!((20 * 120..21 * 120).contains(&carried));
+        let go = run_until(&mut game, 6000, |g| g.phase == Phase::Active);
+        run_until(&mut game, 1000, |g| g.players[&1].idle_warned);
+        let after = game.tick_count() - go;
+        assert_eq!(after, (25 * 120 - carried) / 120 * 120 + 120, "the first second's check past 25 s with what the first round carried");
+        assert_eq!(idle_messages(&mut rx1), vec![Control::IdleWarning { on: true }]);
+        game.quick_chat(1, 0, false, game.tick_count() as f64 / 120.0);
+        assert_eq!(idle_messages(&mut rx1), vec![Control::IdleWarning { on: false }]);
+        ticks(&mut game, 25 * 120);
+        assert!(idle_messages(&mut rx1).is_empty(), "idle from the chat on: under 25 s");
+        // Without the idle kick (an open match): never warned
+        let mut open = Game::with_options(1, 1);
+        let (tx, mut rx) = channel(TEST_QUEUE);
+        open.join(1, REQUEST, tx);
+        run_until(&mut open, 3000, |g| g.phase == Phase::Active);
+        ticks(&mut open, 40 * 120);
+        assert!(idle_messages(&mut rx).is_empty() && open.players.contains_key(&1));
+    }
+
+    #[test]
+    fn the_idle_kick_counts_input_changes_as_the_game_does() {
+        // (MM-35a: buttons always; throttle and the pitch stick from 0.01; steer and yaw only while throttling; one byte
+        // step never; a NaN can't come from bytes)
+        use crate::input_buffer::changed_for_kick;
+        let c = |f: InputFrame| f.controls();
+        let zero = c(InputFrame::default());
+        assert!(changed_for_kick(&c(InputFrame { bits: protocol::BIT_JUMP, ..InputFrame::default() }), &zero));
+        assert!(changed_for_kick(&c(InputFrame { bits: protocol::BIT_BOOST, ..InputFrame::default() }), &zero));
+        assert!(changed_for_kick(&c(InputFrame { bits: protocol::BIT_HANDBRAKE, ..InputFrame::default() }), &zero));
+        assert!(!changed_for_kick(&c(InputFrame { bits: protocol::BIT_AIR_PITCH_SAFETY, ..InputFrame::default() }), &zero));
+        assert!(!changed_for_kick(&c(InputFrame { throttle: 1, ..InputFrame::default() }), &zero), "a byte step");
+        assert!(changed_for_kick(&c(InputFrame { throttle: 2, ..InputFrame::default() }), &zero));
+        assert!(changed_for_kick(&c(InputFrame { dodge_forward: -2, ..InputFrame::default() }), &zero));
+        assert!(!changed_for_kick(&c(InputFrame { pitch: 127, roll: 127, ..InputFrame::default() }), &zero), "pitch, roll: never");
+        assert!(!changed_for_kick(&c(InputFrame { steer: 127, yaw: 127, ..InputFrame::default() }), &zero), "no throttle");
+        let full = c(InputFrame { throttle: 127, ..InputFrame::default() });
+        assert!(changed_for_kick(&c(InputFrame { throttle: 127, steer: 127, ..InputFrame::default() }), &full));
+        assert!(changed_for_kick(&c(InputFrame { throttle: 127, yaw: -127, ..InputFrame::default() }), &full));
+        assert!(!changed_for_kick(&full, &full), "held: counted once");
+    }
+
+    #[test]
+    fn names_that_read_as_another_players_automatic_one_or_pile_up_marks_are_tidied() {
+        // (SEC-11)
+        for lookalike in ["Player\u{00A0}7", "Player  7", "player 7", "PLAYER 7", "Player \u{FF17}", "\u{0420}layer 7", "Pl\u{0430}yer 7", "PIayer 7", "Ｐｌａｙｅｒ 7", "Player7", "Player \u{0667}"] {
+            assert_eq!(player_name(lookalike, 3), "Player 3", "{lookalike:?}");
+        }
+        assert_eq!(player_name("Ziggy\u{00A0}\u{2003} Stardust", 3), "Ziggy Stardust", "every space run one space");
+        assert_eq!(player_name("Z\u{0301}\u{0301}\u{0301}\u{0301}oe", 3), "Z\u{0301}\u{0301}oe", "two marks a character at most");
+        assert_eq!(player_name("\u{0301}\u{0302}\u{0303}", 3), "Player 3", "marks alone: none");
+        assert_eq!(player_name("Playa 7", 3), "Playa 7");
+        assert_eq!(player_name("Player One", 3), "Player One");
+        assert_eq!(player_name("Café", 3), "Café");
+    }
+
+    #[test]
+    fn keys_are_64_random_bits() {
+        // (SEC-9: two games' keys tell nothing of each other; a 32-bit key in a thousand would be a rare fluke)
+        init_engine();
+        let mut keys = BTreeSet::new();
+        for _ in 0..2 {
+            let mut game = Game::with_options(1, 3);
+            for id in 1..=500 {
+                keys.insert(game.new_key());
+                let _ = id;
+            }
+        }
+        assert_eq!(keys.len(), 1000);
+        assert!(keys.iter().filter(|&&k| k > u64::from(u32::MAX)).count() > 990);
+    }
+
+    #[test]
+    fn a_press_in_the_first_of_two_frames_consumed_together_dodges_by_its_axes() {
+        // (G10 at the game's level, RV-335: in the air after a jump, A presses jump with the stick forward and B holds it
+        // pushing sideways, consumed in one tick: the car drives with B, its dodge goes forward)
+        init_engine();
+        let jump = InputFrame { bits: protocol::BIT_JUMP, ..InputFrame::default() };
+        let a = InputFrame { bits: protocol::BIT_JUMP, pitch: -127, dodge_forward: 127, ..InputFrame::default() };
+        let b = InputFrame { bits: protocol::BIT_JUMP, yaw: 127, ..InputFrame::default() };
+        let mut tried = 0;
+        for at in 14..20 {
+            let mut game = Game::with_options(1, 1);
+            let (tx, _rx) = channel(TEST_QUEUE);
+            game.join(1, REQUEST, tx);
+            run_until(&mut game, 3000, |g| g.phase == Phase::Active);
+            let car = game.players[&1].car_id;
+            game.arena.place_car(car, 0.0, -2500.0, std::f32::consts::FRAC_PI_2, 33.0);
+            ticks(&mut game, 60);
+            let mut frames = vec![jump; 8];
+            frames.resize(at, InputFrame::default());
+            frames.extend([a, b]);
+            frames.resize(at + 2 + 12, InputFrame::default());
+            let now = game.tick_count() as f64 / 120.0;
+            game.receive_inputs(1, (now * 1000.0) as u32 + 1, 1, &frames, now);
+            let mut paired = None;
+            for _ in 0..40 {
+                let before = game.arena.car_velocity(car).unwrap();
+                game.tick(game.tick_count() as f64 / 120.0);
+                // (A's press with B's frame: A's forward axis; the first jump's frames come in pairs too)
+                if game.players[&1].input.press_axes.is_some_and(|(forward, _, _)| forward > 0.5) {
+                    paired = Some(before);
+                    continue;
+                }
+                if let Some(v0) = paired.filter(|_| game.players[&1].input.press_axes.is_none()) {
+                    // (the tick after the pair: the dodge's impulse along the car's forward, +y here)
+                    let v1 = game.arena.car_velocity(car).unwrap();
+                    let (forward, side) = (v1[1] - v0[1], v1[0] - v0[0]);
+                    assert!(forward > 300.0 && side.abs() < 50.0, "the dodge went forward {forward:.1}, sideways {side:.1}");
+                    tried += 1;
+                    break;
+                }
+            }
+        }
+        assert!(tried > 0, "no placement of the pair was consumed together");
+    }
+
     #[test]
     fn the_podium_runs_its_winners_vehicles_in_the_mvp_order() {
         // (`InitPodiumCars` spawns the winners again in the MVP-sorted Members order: their vehicles' order in the
@@ -2385,7 +2729,7 @@ mod tests {
     }
 
     /// A match with these players (id, team, key) at "go", and their channels
-    fn match_with(match_type: MatchType, team_size: u8, players: &[(PlayerId, u8, u32)]) -> (Game, Vec<Receiver<Outgoing>>) {
+    fn match_with(match_type: MatchType, team_size: u8, players: &[(PlayerId, u8, u64)]) -> (Game, Vec<Receiver<Outgoing>>) {
         init_engine();
         let mut game = Game::with_options(1, team_size);
         game.match_type = match_type;
@@ -2557,7 +2901,7 @@ mod tests {
     #[test]
     fn keys_are_the_servers_and_two_tabs_cant_share_one() {
         let (mut game, mut rxs) = match_with(MatchType::Casual, 3, &[(1, 0, 0), (2, 1, 77)]);
-        let welcome_key = |rx: &mut Receiver<Outgoing>| -> Option<u32> {
+        let welcome_key = |rx: &mut Receiver<Outgoing>| -> Option<u64> {
             controls(rx).into_iter().find_map(|c| if let Control::Welcome { key, .. } = c { Some(key) } else { None })
         };
         drain(&mut rxs[1]);
@@ -2944,7 +3288,7 @@ mod tests {
     #[test]
     fn the_podium_clears_the_titles_of_winners_from_4th_place_on() {
         // (RV-274: `ClearPodiumTitle` for MVPSort's index 3 and up, a 4v4's fourth; the losers keep theirs)
-        let players: Vec<(PlayerId, u8, u32)> = (1..=8).map(|id| (id, if id <= 4 { 0 } else { 1 }, id as u32)).collect();
+        let players: Vec<(PlayerId, u8, u64)> = (1..=8).map(|id| (id, if id <= 4 { 0 } else { 1 }, id)).collect();
         let (mut game, _rxs) = match_with(MatchType::Casual, 4, &players);
         game.end_match(0, false);
         let title = Some(PodiumTitle { title: 15, count: 1 });

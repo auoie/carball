@@ -1854,6 +1854,30 @@ static void TestPressAxes() {
 		CHECK(!car->_pressAxes.valid, "cleared after its tick");
 		delete arena;
 	}
+	{ // The controls inside the dodge's deadzone (a double jump), the press's past it: a dodge, its impulse forward (RV-335)
+		Arena* arena = Arena::Create(GameMode::SOCCAR);
+		Car* car = arena->AddCar(Team::BLUE);
+		car->SetState(CarAt(Vec(0, 0, 17), Vec(1, 0, 0), Vec(0, 0, 1)));
+		arena->Step(20);
+		CarControls jump;
+		jump.jump = true;
+		for (int i = 0; i < 10; i++) {
+			car->controls = i < 8 ? jump : CarControls();
+			arena->Step(1);
+		}
+		Vec before = car->GetState().vel;
+		CarControls still;
+		still.jump = true;
+		still.yaw = 0.05f; // (inside the deadzone)
+		car->controls = still;
+		car->_pressAxes = { true, 1.f, 0.f, 0.f };
+		arena->Step(1);
+		CarState s = car->GetState();
+		Vec dv = s.vel - before;
+		CHECK(s.isFlipping && !s.hasDoubleJumped, "a dodge, not a double jump (flipping %d, double jumped %d)", s.isFlipping, s.hasDoubleJumped);
+		CHECK(dv.x > 300 && fabsf(dv.y) < 1, "its impulse forward: dv (%.1f, %.1f, %.1f)", dv.x, dv.y, dv.z);
+		delete arena;
+	}
 }
 
 // Each component within the velocities' quantization (0.01, + 0.001: Quantize::Velocity)
@@ -1869,9 +1893,10 @@ static void TestVehicleOrder() {
 	arena->ResetToRandomKickoff(2);
 	auto order = [&] { return arena->GetVehicleOrder(); };
 	CHECK(order() == (std::vector<uint32_t>{ a->id, b->id, c->id }), "join order at first");
-	a->Demolish(arena->GetMutatorConfig().respawnDelay);
+	arena->DemolishCar(a);
+	CHECK(order() == (std::vector<uint32_t>{ c->id, b->id }), "a demolition: the last car takes its place, at once (RV-340)");
 	arena->Step(1);
-	CHECK(order() == (std::vector<uint32_t>{ c->id, b->id }), "a demolition: the last car takes its place");
+	CHECK(order() == (std::vector<uint32_t>{ c->id, b->id }), "the tick after it: the same");
 	for (int i = 0; i < 400 && a->GetState().isDemoed; i++)
 		arena->Step(1);
 	CHECK(!a->GetState().isDemoed && order() == (std::vector<uint32_t>{ c->id, b->id, a->id }), "a respawn goes last");
@@ -1883,6 +1908,9 @@ static void TestVehicleOrder() {
 	CHECK(order() == (std::vector<uint32_t>{ c->id, b->id, d->id }), "a new car goes last");
 	arena->SetVehicleOrder({ d->id, b->id });
 	CHECK(order() == (std::vector<uint32_t>{ d->id, b->id, c->id }), "a set order, the rest after it in ID order");
+	arena->SetVehicleOrder({ b->id, b->id, 0xffffffffu, d->id });
+	CHECK(order() == (std::vector<uint32_t>{ b->id, d->id, c->id }), "a set order's duplicates and unknown ids left out (RV-342)");
+	arena->SetVehicleOrder({ d->id, b->id });
 	// (a snapshot keeps it)
 	DataStreamOut out;
 	arena->Serialize(out);
@@ -1894,6 +1922,128 @@ static void TestVehicleOrder() {
 	CHECK(cloned->GetVehicleOrder() == order(), "a clone keeps it");
 	delete restored;
 	delete cloned;
+	delete arena;
+}
+
+// The arena meshes' shapes are shared by every arena: their box isn't taken from the cache in the shape (two threads'
+// arenas tore it: a static body's box with another transform's max, and the broadphase's teardown aborted)
+static void TestSharedMeshBoxNotCached() {
+	puts("the arena meshes (shared by every arena) compute their box each time: a stale cached box in the shape isn't used");
+	auto& meshes = RocketSim::GetArenaCollisionShapes(GameMode::SOCCAR);
+	CHECK(!meshes.empty(), "no arena meshes");
+	int checked = 0;
+	for (btBvhTriangleMeshShape* mesh : meshes) {
+		btTransform t(btMatrix3x3::getIdentity(), btVector3(0, 102.4f, 0));
+		btVector3 wantMin, wantMax;
+		mesh->btTriangleMeshShape::getAabb(t, wantMin, wantMax);
+		// (another thread's box in the cache, under this transform)
+		mesh->m_aabbCached = true;
+		mesh->m_aabbCacheTrans = t;
+		mesh->m_aabbMinCache = btVector3(1e6f, 1e6f, 1e6f);
+		mesh->m_aabbMaxCache = btVector3(-1e6f, -1e6f, -1e6f);
+		btVector3 gotMin, gotMax;
+		static_cast<const btCollisionShape*>(mesh)->getAabb(t, gotMin, gotMax); // (as the world calls it)
+		mesh->m_aabbCached = false;
+		CHECK(gotMin == wantMin && gotMax == wantMax, "mesh %d: box (%.2f %.2f %.2f)-(%.2f %.2f %.2f), want (%.2f %.2f %.2f)-(%.2f %.2f %.2f)", checked,
+			gotMin.x(), gotMin.y(), gotMin.z(), gotMax.x(), gotMax.y(), gotMax.z(), wantMin.x(), wantMin.y(), wantMin.z(), wantMax.x(), wantMax.y(), wantMax.z());
+		checked++;
+	}
+}
+
+// RV-340: a copy taken on a demolition's tick (a snapshot, a clone, a load in place) continues exactly as the original,
+// whichever way the car was demolished: in the step (a supersonic hit), by the API, or by a state set
+static void TestVehicleOrderCopiesOnADemolitionTick() {
+	puts("RV-340: copies made on a demolition's tick run the original's vehicle order: a snapshot, a clone and a load in place "
+		"continue byte for byte (an in-step demolition, the API's, a state set)");
+	auto bytes = [](Arena* arena) {
+		DataStreamOut out;
+		arena->Serialize(out);
+		return out.data;
+	};
+	for (int way = 0; way < 3; way++) {
+		Arena* arena = Arena::Create(GameMode::SOCCAR);
+		Car* victim = arena->AddCar(Team::BLUE, CAR_CONFIG_OCTANE);
+		Car* attacker = arena->AddCar(Team::ORANGE, CAR_CONFIG_OCTANE);
+		Car* lower = arena->AddCar(Team::BLUE, CAR_CONFIG_OCTANE);
+		Car* upper = arena->AddCar(Team::ORANGE, CAR_CONFIG_OCTANE);
+		arena->ResetToRandomKickoff(1);
+		BallState far;
+		far.pos = Vec(3000, -4000, 92.75f);
+		arena->ball->SetState(far);
+		// (the upper car on the lower's roof: their order changes the physics, as T1)
+		lower->SetState(CarAt(Vec(-2000, 2000, 17), Vec(1, 0, 0), Vec(0, 0, 1)));
+		upper->SetState(CarAt(Vec(-2000, 2000, 75), Vec(1, 0, 0), Vec(0, 0, 1)));
+		victim->SetState(CarAt(Vec(180, 0, 17), Vec(0, 1, 0), Vec(0, 0, 1)));
+		CarState sa = CarAt(Vec(0, 0, 17), Vec(1, 0, 0), Vec(0, 0, 1), Vec(2250, 0, 0));
+		sa.isSupersonic = true;
+		attacker->SetState(way == 0 ? sa : CarAt(Vec(0, -1500, 17), Vec(1, 0, 0), Vec(0, 0, 1)));
+		Arena* inPlace = arena->Clone(false);
+		arena->Step(1);
+		if (way == 0) {
+			for (int t = 0; t < 12 && !victim->GetState().isDemoed; t++)
+				arena->Step(1);
+		} else if (way == 1) {
+			arena->DemolishCar(victim);
+		} else {
+			CarState s = victim->GetState();
+			s.isDemoed = true;
+			s.demoRespawnTimer = 3;
+			victim->SetState(s);
+		}
+		CHECK(victim->GetState().isDemoed, "way %d: the victim demolished", way);
+		std::vector<uint32_t> want = { upper->id, attacker->id, lower->id };
+		CHECK(arena->GetVehicleOrder() == want, "way %d: the last car in the victim's place", way);
+		DataStreamOut out;
+		arena->Serialize(out);
+		DataStreamIn in;
+		in.data = out.data;
+		Arena* restored = Arena::DeserializeNew(in);
+		Arena* cloned = arena->Clone(false);
+		DataStreamIn again;
+		again.data = out.data;
+		CHECK(inPlace->DeserializeInPlace(again), "way %d: loaded in place", way);
+		for (Arena* copy : { restored, cloned, inPlace })
+			CHECK(copy->GetVehicleOrder() == want, "way %d: a copy's order", way);
+		for (int t = 0; t < 60; t++)
+			for (Arena* each : { arena, restored, cloned, inPlace })
+				each->Step(1);
+		auto original = bytes(arena);
+		const char* names[] = { "snapshot", "clone", "load in place" };
+		int i = 0;
+		for (Arena* copy : { restored, cloned, inPlace }) {
+			CHECK(bytes(copy) == original, "way %d: the %s 60 ticks on: the original's bytes", way, names[i]);
+			i++;
+		}
+		delete restored;
+		delete cloned;
+		delete inPlace;
+		delete arena;
+	}
+	// RV-341: an order's count past the snapshot's bytes, or the snapshot cut short at it, reads none (nothing allocated)
+	Arena* arena = Arena::Create(GameMode::SOCCAR);
+	arena->AddCar(Team::BLUE);
+	DataStreamOut out;
+	arena->Serialize(out);
+	size_t at = out.data.size() - 4 - 4 * 1; // (the order: its count, one id; the last thing written? checked below)
+	uint32_t count;
+	memcpy(&count, out.data.data() + at, 4);
+	if (count == 1) {
+		for (uint32_t bad : { 0xffffffffu, 1025u, 2u }) {
+			std::vector<byte> data = out.data;
+			memcpy(data.data() + at, &bad, 4);
+			DataStreamIn in;
+			in.data = data;
+			Arena* loaded = Arena::DeserializeNew(in);
+			CHECK(loaded == nullptr || loaded->GetVehicleOrder().size() == 1, "count %u: refused or the plain order", bad);
+			delete loaded;
+		}
+		std::vector<byte> cut(out.data.begin(), out.data.begin() + at + 2);
+		DataStreamIn in;
+		in.data = cut;
+		Arena* loaded = Arena::DeserializeNew(in);
+		CHECK(loaded == nullptr || loaded->GetVehicleOrder().size() == 1, "cut at the order: refused or the plain order");
+		delete loaded;
+	}
 	delete arena;
 }
 
@@ -2871,6 +3021,8 @@ int main(int argc, char** argv) {
 	TestKickoffManyOnOneTeam();
 	TestPressAxes();
 	TestVehicleOrder();
+	TestVehicleOrderCopiesOnADemolitionTick();
+	TestSharedMeshBoxNotCached();
 	TestCarOnCarRoof();
 	TestCarOnBall();
 	TestGameRotator();

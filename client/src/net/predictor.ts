@@ -198,6 +198,7 @@ export class Predictor {
 
   /** One client frame with the local player's input (already quantized, as sent). */
   advance(input: InputFrame): void {
+    this.resimulate(); // (staged states replayed first: the world at the present, RV-339)
     const frame = this.#frame + 1;
     const remote = this.#simulate(frame, input);
     this.#frame = frame;
@@ -228,7 +229,7 @@ export class Predictor {
    */
   stage(frame: number, states: readonly Uint8Array[]): boolean {
     if (frame > this.#frame || frame <= 0 || this.#pawnless) {
-      this.#applyDirect(states);
+      this.#applyDirect(frame, states);
       return false;
     }
     const oldestKept = Math.max(this.#oldest, this.#frame - HISTORY_FRAMES + 1);
@@ -258,8 +259,10 @@ export class Predictor {
     return true;
   }
 
-  /** The states at the present (no rewind, no replay): the shown world takes the server's as it is, smoothed (G5, G7) */
-  #applyDirect(states: readonly Uint8Array[]): void {
+  /** The states at the present (no rewind, no replay): the shown world takes the server's as it is, smoothed (G5, G7).
+   *  The other cars' replicated inputs belong to the update's frame (to the present for a frame not reached), so a later
+   *  update for an earlier frame still gives newer ones (RV-332) */
+  #applyDirect(frame: number, states: readonly Uint8Array[]): void {
     this.resimulate(); // (a frame's staged states first: the world back at the present)
     const present = this.#recorded(this.#frame);
     const updated = this.#applyStates(states);
@@ -268,8 +271,12 @@ export class Predictor {
       return;
     }
     this.lastCars = new Set(updated);
-    if (this.#model === "fade") this.#rebase(updated, this.#frame);
-    for (const car of updated) if (car !== this.#localCar) this.#replicated.set(car, { controls: this.#replicatedControls(car), frame: this.#frame });
+    const label = frame > this.#frame ? this.#frame : Math.max(frame, 0);
+    if (this.#model === "fade") this.#rebase(updated, label);
+    for (const car of updated) {
+      const known = this.#replicated.get(car);
+      if (car !== this.#localCar && !(known && known.frame > label)) this.#replicated.set(car, { controls: this.#replicatedControls(car), frame: label });
+    }
     this.#record(this.#frame, present?.input ?? NO_INPUT, present?.remote ?? this.#presentRemote());
     this.stats.direct++;
     this.#watchPawn();

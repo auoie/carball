@@ -44,9 +44,15 @@ interface JsonFrame {
 
 function toMessage(m: Record<string, unknown>): ControlMessage | DatagramMessage {
   const bytes = (key: string): Uint8Array => Uint8Array.from(m[key] as number[]);
+  // (64-bit values are decimal strings in the JSON)
+  const big = (key: string): bigint => BigInt(m[key] as string);
   switch (m["type"]) {
+    case "hello":
+      return { ...(m as unknown as ControlMessage & { type: "hello" }), key: big("key"), token: big("token") };
+    case "matchFound":
+      return { type: "matchFound", token: big("token") };
     case "welcome":
-      return { ...(m as unknown as ControlMessage & { type: "welcome" }), snapshot: bytes("snapshot") };
+      return { ...(m as unknown as ControlMessage & { type: "welcome" }), key: big("key"), snapshot: bytes("snapshot") };
     case "world":
       return { ...(m as unknown as ControlMessage & { type: "world" }), snapshot: bytes("snapshot") };
     case "update":

@@ -26,7 +26,11 @@ async fn a_client_connects_drives_and_follows_the_world() {
     let (to_game, messages) = tokio::sync::mpsc::channel(rl_server::game_loop::TO_GAME_QUEUE);
     std::thread::spawn(move || game_loop::run(
         messages,
-        game_loop::Playlist { team_size: rl_server::game::TEAM_SIZE, match_type: rl_server::game::MatchType::Casual, forfeit_vote_wait: None },
+        game_loop::Mode::Direct(rl_server::match_host::Playlist {
+            team_size: rl_server::game::TEAM_SIZE,
+            match_type: rl_server::game::MatchType::Casual,
+            forfeit_vote_wait: None,
+        }),
         None,
     ));
     tokio::spawn(net::accept_loop(server, to_game));
@@ -49,6 +53,9 @@ async fn a_client_connects_drives_and_follows_the_world() {
         name: "tester".to_string(),
         quick_chat: protocol::CHAT_EVERYONE,
         block_non_tactical: false,
+        intent: protocol::INTENT_JOIN,
+        playlist: 0,
+        token: 0,
     };
     send.write_all(&hello.encode()).await.unwrap();
     let Control::Welcome { car_id, snapshot, tick_rate, .. } = read_control(&mut recv).await else { panic!("expected welcome") };
@@ -134,6 +141,9 @@ async fn a_vanished_client_is_a_lost_connection_and_a_closed_one_left() {
         name: String::new(),
         quick_chat: protocol::CHAT_EVERYONE,
         block_non_tactical: false,
+        intent: protocol::INTENT_JOIN,
+        playlist: 0,
+        token: 0,
     }
     .encode();
     let mut keep = Vec::new(); // (the game's ends of the sessions' queues)
@@ -181,4 +191,84 @@ async fn a_vanished_client_is_a_lost_connection_and_a_closed_one_left() {
         };
         assert_eq!(lost, vanish, "vanished {vanish}");
     }
+}
+
+/// A hello for the queue: a search of a playlist, a claim of a token, or a direct join
+fn queue_hello(intent: u8, playlist: u8, token: u64) -> Vec<u8> {
+    Control::Hello {
+        version: protocol::VERSION,
+        team: 255,
+        body: 0,
+        dodge_deadzone: 0.5,
+        steering_sensitivity: 1.0,
+        air_control_sensitivity: 1.0,
+        auto_skip_replay: false,
+        key: 0,
+        name: String::new(),
+        quick_chat: protocol::CHAT_EVERYONE,
+        block_non_tactical: false,
+        intent,
+        playlist,
+        token,
+    }
+    .encode()
+}
+
+/// A session's first control message after its hello
+async fn first_reply(port: u16, cert_hash: [u8; 32], hello: Vec<u8>) -> (Control, wtransport::Connection, wtransport::RecvStream) {
+    let config = ClientConfig::builder().with_bind_default().with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(cert_hash)]).build();
+    let connection = Endpoint::client(config).unwrap().connect(format!("https://localhost:{port}/play")).await.unwrap();
+    let (mut send, mut recv) = connection.open_bi().await.unwrap().await.unwrap();
+    send.write_all(&hello).await.unwrap();
+    std::mem::forget(send); // (the control stream stays open: the session lasts)
+    let reply = tokio::time::timeout(Duration::from_secs(10), read_control(&mut recv)).await.expect("a reply");
+    (reply, connection, recv)
+}
+
+/// Two players search 1v1 on a queue server: each gets a token, claims it with a new session and joins the match on
+/// opposite teams; a token claims once; a direct join and an unknown playlist are refused
+#[tokio::test(flavor = "multi_thread")]
+async fn two_searches_make_a_match_their_tokens_claim() {
+    engine::init(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../out/arena/collision_meshes"))).unwrap();
+    let (identity, cert_hash) = net::dev_identity().unwrap();
+    let server = net::endpoint(identity, 0).unwrap();
+    let port = server.local_addr().unwrap().port();
+    let (to_game, messages) = tokio::sync::mpsc::channel(rl_server::game_loop::TO_GAME_QUEUE);
+    let playlists = [1, 2, 3]
+        .map(|team_size| rl_server::match_host::Playlist { team_size, match_type: rl_server::game::MatchType::Casual, forfeit_vote_wait: None })
+        .to_vec();
+    std::thread::spawn(move || game_loop::run(messages, game_loop::Mode::Queue(playlists), None));
+    tokio::spawn(net::accept_loop(server, to_game));
+
+    let (direct, ..) = first_reply(port, cert_hash, queue_hello(protocol::INTENT_JOIN, 0, 0)).await;
+    assert_eq!(direct, Control::Refused { reason: protocol::REFUSED_MODE });
+    let (unknown, ..) = first_reply(port, cert_hash, queue_hello(protocol::INTENT_SEARCH, 4, 0)).await;
+    assert_eq!(unknown, Control::Refused { reason: protocol::REFUSED_MODE });
+
+    let (a, b) = tokio::join!(
+        first_reply(port, cert_hash, queue_hello(protocol::INTENT_SEARCH, 1, 0)),
+        first_reply(port, cert_hash, queue_hello(protocol::INTENT_SEARCH, 1, 0)),
+    );
+    let (Control::MatchFound { token: ta }, ..) = a else { panic!("{:?}", a.0) };
+    let (Control::MatchFound { token: tb }, ..) = b else { panic!("{:?}", b.0) };
+    assert!(ta != tb && ta != 0 && tb != 0);
+
+    let (ca, _conn_a, mut recv_a) = first_reply(port, cert_hash, queue_hello(protocol::INTENT_CLAIM, 0, ta)).await;
+    let Control::Welcome { team_size, key, .. } = ca else { panic!("{ca:?}") };
+    assert_eq!(team_size, 1);
+    assert_ne!(key, 0);
+    let (again, ..) = first_reply(port, cert_hash, queue_hello(protocol::INTENT_CLAIM, 0, ta)).await;
+    assert_eq!(again, Control::Refused { reason: protocol::REFUSED_TOKEN }, "claimed once");
+    let (cb, _conn_b, _recv_b) = first_reply(port, cert_hash, queue_hello(protocol::INTENT_CLAIM, 0, tb)).await;
+    assert!(matches!(cb, Control::Welcome { .. }), "{cb:?}");
+    // Both here: a roster of two, one a side, and the warm-up running (no longer held)
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut teams = Vec::new();
+    while teams.len() < 2 && Instant::now() < deadline {
+        if let Ok(Control::Roster(r)) = tokio::time::timeout(Duration::from_secs(1), read_control(&mut recv_a)).await {
+            teams = r.iter().map(|p| p.team).collect();
+        }
+    }
+    teams.sort_unstable();
+    assert_eq!(teams, vec![0, 1]);
 }

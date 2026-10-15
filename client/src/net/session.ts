@@ -112,13 +112,14 @@ export class NetSession {
     updates.push(...this.#updates.flush()); // (a part was lost: the others still apply)
     if (updates.length === 0) return;
     const pre = this.#capture();
-    let depth = 0;
+    // (every frame replayed in this frame, a direct apply's own replay of the staged ones included: RV-336)
+    const replayedBefore = this.predictor.stats.resimulatedFrames;
     for (const update of updates) {
       this.#stageUpdate(update);
-      if (this.replayEachUpdate) depth += this.predictor.resimulate();
+      if (this.replayEachUpdate) this.predictor.resimulate();
     }
-    depth += this.predictor.resimulate();
-    if (this.measure) this.metrics.depths.push(depth);
+    this.predictor.resimulate();
+    if (this.measure) this.metrics.depths.push(this.predictor.stats.resimulatedFrames - replayedBefore);
     this.#smooth(pre);
   }
 
@@ -129,7 +130,8 @@ export class NetSession {
       this.#ackTick = u.serverTick;
     }
     this.bufferText = `buffer ${String(u.bufferSize)}/${String(u.bufferTarget)}`;
-    if (u.ackFrame > 0) {
+    // (not one whose acknowledgement is past this client's frames: the server's count moved on while it stalled, RV-333)
+    if (u.ackFrame > 0 && u.ackFrame <= this.predictor.frame) {
       this.#tickOffsets.push({ serverTick: u.serverTick, offset: u.serverTick - u.ackFrame });
       if (this.#tickOffsets.length > MAX_TICK_OFFSETS) this.#tickOffsets.splice(0, this.#tickOffsets.length - MAX_TICK_OFFSETS);
     }
@@ -141,18 +143,21 @@ export class NetSession {
     this.predictor.stage(u.ackFrame, update.states);
   }
 
-  /** The client frame a server tick corresponds to (from the acknowledgements' offsets) */
+  /** The client frame a server tick corresponds to: by the first acknowledgement's offset from that tick on (the
+   *  numbering the client's frames had from then: a stall since moves it), else the newest (RV-333) */
   frameAt(serverTick: number): number {
-    let best = this.#tickOffsets.at(-1);
+    let best: { readonly serverTick: number; readonly offset: number } | undefined;
     for (const sample of this.#tickOffsets) {
-      if (!best || Math.abs(sample.serverTick - serverTick) < Math.abs(best.serverTick - serverTick)) best = sample;
+      if (sample.serverTick >= serverTick && (!best || sample.serverTick < best.serverTick)) best = sample;
     }
+    best ??= this.#tickOffsets.at(-1);
     return serverTick - (best?.offset ?? 0);
   }
 
   /** A server correction, smoothed for drawing: each body's drawn pose keeps where it was and glides to the corrected
-   *  one (SyncError); the interpolation's previous tick moves with the correction, so nothing jumps. A resync (the
-   *  server's state ahead of this client) is smoothed the same way, as the game smooths every correction. */
+   *  one (SyncError); the interpolation's previous tick moves with the correction, so nothing jumps. A state applied at
+   *  the present (for a frame not reached, while demolished) is smoothed the same way, as the game smooths every
+   *  correction (RV-338). */
   correct(frame: number, states: readonly Uint8Array[]): void {
     const pre = this.#capture();
     const depth = this.predictor.correct(frame, states);

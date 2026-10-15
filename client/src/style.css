@@ -1958,7 +1958,7 @@ body {
   border-radius: 3px;
 }
 
-/* MENU-1/2: the main menu over the arena: Play and Settings; Play's Free Play and a server to join */
+/* MENU-1/2: the main menu over the arena: Play and Settings; Play's Free Play, the playlists and Find Match */
 .main-menu {
   position: fixed;
   inset: 0;
@@ -1980,33 +1980,207 @@ body {
   display: none;
 }
 
-.main-menu-online {
+.main-menu-playlists {
   display: flex;
-  flex-direction: column;
   gap: 6px;
-  padding: 10px 12px;
-  background: rgba(10, 14, 22, 0.85);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 3px;
 }
 
-.main-menu-online label {
+.main-menu-playlists .main-menu-button {
+  flex: 1;
+  text-align: center;
+}
+
+.main-menu-playlist[aria-checked="true"] {
+  border-color: #43afff;
+  background: rgba(20, 60, 110, 0.9);
+}
+
+.main-menu-find {
+  background: rgba(20, 60, 110, 0.9);
+}
+
+/* MM-4: the Searching panel over the main menu (title, summary, the message log, Cancel Search) */
+.search-panel {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, calc(-50% - 50px));
+  width: min(800px, calc(100vw - 32px));
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  align-items: center;
+  gap: 12px;
+  padding: 20px 16px;
+  background: rgba(6, 10, 18, 0.94);
+  border: 1px solid rgba(67, 175, 255, 0.35);
+  border-radius: 4px;
+  z-index: 6;
+}
+
+.search-panel[hidden],
+.search-banner[hidden] {
+  display: none;
+}
+
+.search-title {
+  font: calc(30px * var(--hud-header-scale, 1))/34px var(--hud-header);
+  text-transform: uppercase;
+  color: #fff;
+}
+
+/* MM-6: the summary, white with an additive blue glow */
+.search-summary {
+  font: calc(16px * var(--hud-header-scale, 1))/20px var(--hud-header);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #fff;
+  text-shadow: 0 0 8px rgb(1, 107, 247);
+}
+
+.search-summary[data-status="failed"] {
+  text-shadow: 0 0 8px #ff4343;
+}
+
+/* MM-8: the log (status blue, warning red, countdown yellow) */
+.search-log {
+  width: 100%;
+  min-height: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font: 12px/16px var(--hud-small);
+}
+
+.search-line.status {
+  color: rgba(67, 175, 255, 0.71);
+}
+
+.search-line.warning {
+  color: #ff4343;
+}
+
+.search-line.countdown {
+  color: #ffff00;
+}
+
+.search-cancel {
+  padding: 4px 14px;
   font: calc(16px * var(--hud-header-scale, 1))/20px var(--hud-header);
   text-transform: uppercase;
-  color: #bbb;
-}
-
-.main-menu-online input {
-  font: 18px/24px var(--hud-small);
-  padding: 4px 8px;
   color: #fff;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(10, 14, 22, 0.85);
   border: 1px solid rgba(255, 255, 255, 0.25);
   border-radius: 3px;
-  user-select: text;
+  cursor: pointer;
+}
+
+.search-cancel:hover {
+  border-color: #43afff;
+}
+
+/* MM-5: the banner across the top while searching elsewhere: 26 px, the summary centred, Cancel Search at the left */
+.search-banner {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(6, 10, 18, 0.85);
+  z-index: 6;
+}
+
+.search-banner .search-cancel {
+  position: absolute;
+  left: 8px;
+  padding: 0 10px;
+  font-size: calc(13px * var(--hud-header-scale, 1));
+  line-height: 20px;
+}
+
+/* MM-38, MM-41: the error modal */
+.modal {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 8;
+}
+
+.modal[hidden] {
+  display: none;
+}
+
+.modal-box {
+  width: min(460px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px 20px;
+  background: rgba(10, 14, 22, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+
+.modal-title {
+  font: calc(24px * var(--hud-header-scale, 1))/28px var(--hud-header);
+  text-transform: uppercase;
+  color: #fff;
+}
+
+.modal-body {
+  font-size: 15px;
+  line-height: 20px;
+  color: #ddd;
+}
+
+.modal-ok {
+  align-self: flex-end;
+  min-width: 96px;
+  padding: 4px 14px;
+  font: calc(18px * var(--hud-header-scale, 1))/22px var(--hud-header);
+  text-transform: uppercase;
+  color: #fff;
+  background: rgba(20, 60, 110, 0.9);
+  border: 1px solid #43afff;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+/* MM-36: the idle warning's tip (a red feathered panel, the header upper-cased with a red glow; no digits) */
+.idle-tip {
+  position: absolute;
+  left: 50%;
+  top: 62%;
+  transform: translateX(-50%);
+  max-width: calc(100% - 32px);
+  padding: 10px 26px 12px;
+  text-align: center;
+  background: radial-gradient(ellipse at center, rgba(200, 50, 49, 0.8), rgba(200, 50, 49, 0.45) 60%, transparent 100%);
+  pointer-events: none;
+}
+
+.idle-tip[hidden] {
+  display: none;
+}
+
+.idle-tip-header {
+  font: calc(36px * var(--hud-header-scale, 1))/40px var(--hud-header);
+  text-transform: uppercase;
+  color: #fff;
+  text-shadow: 0 0 10px #c83231;
+}
+
+.idle-tip-body {
+  font-size: 16px;
+  line-height: 20px;
+  color: #fff;
 }
 
 /* HT-5: the Interface and Gameplay tabs' row labels upper-cased (their dropdown values as written: RV-281) */

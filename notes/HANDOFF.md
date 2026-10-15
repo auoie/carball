@@ -60,8 +60,8 @@ byte's value (RV-310), the compact bodies' vectors initialised (RV-311); the eng
 client after each update and must send the server's bytes (RV-312); replication.rs's forcing rules unit-tested
 (RV-313); the session's wiring tested (`client/src/net/sessionWiring.test.ts`, RV-314); a car's updates 4 or 5 updates
 apart, the replays' 13.4 a second (RV-315); the Rust tests check the TypeScript twins' vectors and write them only with
-`REGENERATE_VECTORS=1` (RV-317). G1's step (2) (no stale datagrams queued; `send_datagram` errors counted) isn't done:
-at ≈ 5 KB/s the path never backs up.
+`REGENERATE_VECTORS=1` (RV-317). G1's step (2): the datagrams the connection refuses are counted and logged when the
+session ends (`net.rs`, RV-334); no stale-datagram policy (at ≈ 5 KB/s the path never backs up).
 **G3, G5, G7, G8, G10, 2026-10-14** (one clean point; gates T7, T8): `Predictor.stage()` writes each update's states
 into the history at its frame and `resimulate()` replays once a frame from the oldest (`NetSession.applyUpdates`: one
 capture and smoothing around it); the history's snapshots reuse their buffers (`World.saveStateInto`, the binding's
@@ -85,6 +85,33 @@ start and stop in `client/src/testing/serverProcesses.ts` (a server killed by a 
 RV-320), a remote car's GA-1 folded into its replicated throttle (RV-321), a car placed in the last 16 ticks sends its
 wheels and the ticks since (RV-322), the tests RV-323..326, the goal's e2e test draws again (RV-327), `--team-size`
 validated and the engine's preference clamp (RV-329, RV-331).
+**The queue, 2026-10-14** (step 2; protocol 17): `server/src/queue.rs` decides who plays together (each playlist's
+searchers in arrival order; two full teams make a match) and asks `server/src/match_host.rs` for a match
+(`MatchHosting::create_match`: the boundary the user asked for, so the queue can move to a central matchmaker later);
+the host reserves a slot per player with a one-time random token (getrandom), runs every match on the game thread on
+its own clock, holds the warm-up until every slot is claimed (full start, `Game::hold_for`), cancels a match whose
+player doesn't claim in 30 s or leaves before the start (`Kicked` 1: the others search again), and lets a match go
+when its end screen is over (no rematch) or everyone left. `rl-server --mode queue` serves searches and claims only;
+the default `direct` keeps the one open match the browser tests and development use. The idle kick (MM-32..38, the
+MM-35a input predicate in `input_buffer.rs` `changed_for_kick`): warned past 25 s of play, kicked past 30 s, idle
+carried across rounds; queue matches only. SEC-9 (64-bit keys from getrandom) and SEC-11 (names: spaces, combining
+marks, "Player N" lookalikes) came with it. Client: the main menu's Play → Free Play / 1v1 / 2v2 / 3v3 → Find Match
+(`src/ui/mainMenu.ts`), the search (`src/game/matchmaking.ts`, `src/net/search.ts`) with the Searching panel and the
+banner (`src/ui/searchView.ts`), "Joining in 3, 2, 1", then the match page (`?match`, the claim handed over in
+sessionStorage: `src/net/pages.ts`); a queue match's end screen has Play Again (search again) and "Leaving In"; a kick
+or a lost connection goes back to the menu with the modal (`src/ui/modal.ts`), the idle warning tip
+(`src/ui/idleTip.ts`). The game's texts verbatim per the user's decisions (the connection-lost line without "(Error:
+42)"). Tests: `server/src/match_host.rs`, `queue.rs`, the game's idle tests, `tests/end_to_end.rs` (two searches over
+WebTransport), `client/src/game/matchmaking.test.ts`, `src/net/pages.test.ts`, `client/e2e/queue.spec.ts` (a queue
+server on 14439/14440). The review of G3 (RX10, RV-332..339) and of FP1 (RX11, RV-340..352) came with it: a
+demolition takes its car out of the vehicles' order at once, and copies write the order as the next sync leaves it
+(RV-340, RV-346), a snapshot's order count bounded before anything's allocated (RV-341), a demolished car doesn't
+send the wheel block (RV-345); the compact overlay leaves a car's last-tick controls but the jump to the client (in a
+kickoff's countdown they're the countdown's zeroed ones: the engine's netstate check's longer run caught the overlay
+changing an exact client there, which its 120 s batch run didn't reach). The server's tests aborted about one run in
+five (`std::length_error` in an arena's teardown, at the FP1 commit too): RocketSim caches a shape's box in the shape,
+and the arena meshes are shared by every arena, so the tests' arenas on several threads tore it; engine patch 106
+computes the meshes' box each time (rl_patch_tests TestSharedMeshBoxNotCached).
 **The browser tests' servers** start from `client/e2e/servers.ts` (Playwright's globalSetup), not its webServer: here a
 connection to a closed 127.0.0.1 port is dropped, not refused, and Playwright's pre-check of each server's URL waited
 2 min 14 s per server (9 of the suite's 12 minutes).
