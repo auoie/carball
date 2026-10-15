@@ -8,13 +8,12 @@ COPY security-headers.conf /etc/nginx/security-headers.conf
 COPY 40-carball-config.sh /docker-entrypoint.d/40-carball-config.sh
 COPY dist/ /usr/share/nginx/html/
 # (config.json and the Content-Security-Policy, written at start, the nginx user's: the site and all of /etc/nginx stay
-# root's, read-only to it, RV-397, RV-408; nginx keeps /tmp and /var/cache/nginx for its pid and buffers. The policy is
+# root's, read-only to it, RV-397, RV-408; nginx keeps /tmp and /var/cache/nginx for its pid and buffers. Both are
 # written once here too, for the default GAME_SERVER_URL: a container started without the entrypoint still sends a
-# strict one, RV-409)
+# strict policy and the default config, RV-409, RV-431)
 USER root
 RUN chown -R root:root /etc/nginx && chmod -R go-w /etc/nginx \
-    && CONFIG_DIR=/tmp sh /docker-entrypoint.d/40-carball-config.sh \
-    && touch /usr/share/nginx/html/config.json \
+    && sh /docker-entrypoint.d/40-carball-config.sh \
     && chown 101:101 /usr/share/nginx/html/config.json /etc/nginx/carball-csp.conf
 USER 101
 LABEL org.opencontainers.image.title="carball-web" \

@@ -2544,7 +2544,7 @@ index 9795e46..a35efbf 100644
  enum : int {
  	BT_USERINFO_NONE,
 diff --git upstream/src/CollisionMeshFile/CollisionMeshFile.cpp engine/rocketsim/src/CollisionMeshFile/CollisionMeshFile.cpp
-index 2f519cf..17a3b3c 100644
+index 2f519cf..d13a1b0 100644
 --- upstream/src/CollisionMeshFile/CollisionMeshFile.cpp
 +++ engine/rocketsim/src/CollisionMeshFile/CollisionMeshFile.cpp
 @@ -1,5 +1,7 @@
@@ -2559,8 +2559,8 @@ index 2f519cf..17a3b3c 100644
  	for (Vertex& vert : vertices)
  		vert = in.Read<Vertex>();
  
-+	// RL PATCH: the optional body offset trailer ("RLOF", 3 floats)
-+	if (!in.IsOverflown() && in.data.size() >= in.pos + 16 && std::memcmp(&in.data[in.pos], "RLOF", 4) == 0) {
++	// RL PATCH: the optional body offset trailer ("CBOF", 3 floats; named for no game: RV-419)
++	if (!in.IsOverflown() && in.data.size() >= in.pos + 16 && std::memcmp(&in.data[in.pos], "CBOF", 4) == 0) {
 +		in.pos += 4;
 +		offset = in.Read<Vertex>();
 +	}
@@ -2569,14 +2569,14 @@ index 2f519cf..17a3b3c 100644
  	if (in.IsOverflown()) {
  		RS_ERR_CLOSE(
 diff --git upstream/src/CollisionMeshFile/CollisionMeshFile.h engine/rocketsim/src/CollisionMeshFile/CollisionMeshFile.h
-index ad1d8b3..c9d528a 100644
+index ad1d8b3..828683b 100644
 --- upstream/src/CollisionMeshFile/CollisionMeshFile.h
 +++ engine/rocketsim/src/CollisionMeshFile/CollisionMeshFile.h
 @@ -30,6 +30,11 @@ struct CollisionMeshFile {
  	std::vector<Triangle> tris;
  	std::vector<Vertex> vertices;
  
-+	// RL PATCH: where the mesh's body goes (Bullet units): an optional trailer after the vertices, "RLOF" and three
++	// RL PATCH: where the mesh's body goes (Bullet units): an optional trailer after the vertices, "CBOF" and three
 +	// floats. The game's goal halves are meshes in their own frame placed by a body at y +-5120 uu, and placing them
 +	// so (rather than moving the vertices) keeps Bullet's float results the game's
 +	Vertex offset = { 0, 0, 0 };
@@ -3043,7 +3043,7 @@ index 5805611..3ceaa22 100644
  }
 \ No newline at end of file
 diff --git upstream/src/Sim/Arena/Arena.cpp engine/rocketsim/src/Sim/Arena/Arena.cpp
-index a13cee0..c1994d3 100644
+index a13cee0..64f0afd 100644
 --- upstream/src/Sim/Arena/Arena.cpp
 +++ engine/rocketsim/src/Sim/Arena/Arena.cpp
 @@ -1,4 +1,8 @@
@@ -4114,7 +4114,7 @@ index a13cee0..c1994d3 100644
 +		solverInfo.m_restitutionVelocityThreshold = 0;
 +
 +		// RL PATCH: Bullet sets m_timeStep only inside stepSimulation, but the wheel pushback
-+		// (btVehicleRL::rayCast -> resolveSingleCollision) reads it before that. Without this, a new or
++		// (btVehicleCarball::rayCast -> resolveSingleCollision) reads it before that. Without this, a new or
 +		// restored arena used Bullet's default 1/60 s for its first tick.
 +		solverInfo.m_timeStep = tickTime;
 +
@@ -4216,7 +4216,7 @@ index a13cee0..c1994d3 100644
 +}
 +
 +// RL PATCH (FP2): the moving bodies' stored broadphase boxes, the ball's then each car's in ID order (the wheel rays'
-+// candidates are picked by them: btVehicleRL::findRayCandidates), so a snapshot, a clone or a load in place continues as
++// candidates are picked by them: btVehicleCarball::findRayCandidates), so a snapshot, a clone or a load in place continues as
 +// the original (the game's rollback leaves the boxes from before it: ours restores them, for exact replays); the static
 +// bodies' boxes are fixed. Then their order in the broadphase's max-edge walk (RV-375: the candidates' order, history's
 +// on equal keys), as indices (the ball 0, the cars 1.. in ID order)
@@ -6562,7 +6562,7 @@ index c87d449..d9d1ad0 100644
  	if (colliding)
  		_internalState.curLockedCar = car;
 diff --git upstream/src/Sim/Car/Car.cpp engine/rocketsim/src/Sim/Car/Car.cpp
-index 417ad9d..0b63499 100644
+index 417ad9d..fdda98f 100644
 --- upstream/src/Sim/Car/Car.cpp
 +++ engine/rocketsim/src/Sim/Car/Car.cpp
 @@ -1,11 +1,40 @@
@@ -6612,7 +6612,7 @@ index 417ad9d..0b63499 100644
  
 +	// RL PATCH: wheel values carried into the next tick
 +	for (int i = 0; i < _bulletVehicle.m_wheelInfo.size() && i < 4; i++) {
-+		const btWheelInfoRL& wheel = _bulletVehicle.m_wheelInfo[i];
++		const btWheelInfoCarball& wheel = _bulletVehicle.m_wheelInfo[i];
 +		// (a wheel's normal only matters while it touches something: otherwise a fixed one, so equal states compare equal)
 +		bool contact = wheel.m_raycastInfo.m_isInContact;
 +		_internalState.wheelCarry.wheels[i] = {
@@ -6680,7 +6680,7 @@ index 417ad9d..0b63499 100644
  
 +	// RL PATCH: wheel values carried into the next tick
 +	for (int i = 0; i < _bulletVehicle.m_wheelInfo.size() && i < 4; i++) {
-+		btWheelInfoRL& wheel = _bulletVehicle.m_wheelInfo[i];
++		btWheelInfoCarball& wheel = _bulletVehicle.m_wheelInfo[i];
 +		const CarState::WheelCarry& carry = state.wheelCarry.wheels[i];
 +		wheel.m_steerAngle = carry.steerAngle;
 +		wheel.m_engineForce = carry.engineForce;
@@ -7092,6 +7092,18 @@ index 417ad9d..0b63499 100644
  
  	_rigidBody.m_collisionFlags |= btCollisionObject::CF_CUSTOM_MATERIAL_CALLBACK;
  
+@@ -248,9 +496,9 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
+ 	{ // Set up actual vehicle stuff
+ 		_bulletVehicleRaycaster = btDefaultVehicleRaycaster(bulletWorld);
+ 
+-		btVehicleRL::btVehicleTuning tuning = btVehicleRL::btVehicleTuning();
++		btVehicleCarball::btVehicleTuning tuning = btVehicleCarball::btVehicleTuning();
+ 
+-		_bulletVehicle = btVehicleRL(tuning, &_rigidBody, &_bulletVehicleRaycaster, bulletWorld, extraCollisionMask);
++		_bulletVehicle = btVehicleCarball(tuning, &_rigidBody, &_bulletVehicleRaycaster, bulletWorld, extraCollisionMask);
+ 
+ 		// Match RL with X forward, Y right, Z up
+ 		_bulletVehicle.setCoordinateSystem(1, 2, 0);
 @@ -279,6 +527,10 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
  
  				suspensionRestLength -= RLConst::BTVehicle::MAX_SUSPENSION_TRAVEL;
@@ -7103,7 +7115,15 @@ index 417ad9d..0b63499 100644
  				_bulletVehicle.addWheel(
  					wheelRayStartOffset * UU_TO_BT,
  					wheelDirectionCS, wheelAxleCS,
-@@ -295,7 +547,10 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
+@@ -288,14 +540,17 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
+ 				{ // Fix wheel info data
+ 					using namespace RLConst::BTVehicle;
+ 
+-					btWheelInfoRL& wheelInfo = _bulletVehicle.m_wheelInfo[i];
++					btWheelInfoCarball& wheelInfo = _bulletVehicle.m_wheelInfo[i];
+ 					wheelInfo.m_suspensionStiffness = SUSPENSION_STIFFNESS;
+ 					wheelInfo.m_wheelsDampingCompression = WHEELS_DAMPING_COMPRESSION;
+ 					wheelInfo.m_wheelsDampingRelaxation = WHEELS_DAMPING_RELAXATION;
  					wheelInfo.m_maxSuspensionTravelCm = (MAX_SUSPENSION_TRAVEL * UU_TO_BT) * 100; // Same for all cars (hopefully)
  					wheelInfo.m_maxSuspensionForce = FLT_MAX; // Don't think there's a limit
  					wheelInfo.m_bIsFrontWheel = front;
@@ -7624,7 +7644,7 @@ index 417ad9d..0b63499 100644
  			_internalState.autoFlipTimer -= tickTime;
  		}
 diff --git upstream/src/Sim/Car/Car.h engine/rocketsim/src/Sim/Car/Car.h
-index 90bcaa8..4713ce9 100644
+index 90bcaa8..2350424 100644
 --- upstream/src/Sim/Car/Car.h
 +++ engine/rocketsim/src/Sim/Car/Car.h
 @@ -1,9 +1,11 @@
@@ -7763,6 +7783,7 @@ index 90bcaa8..4713ce9 100644
  	// Respawn the car, called after we have been demolished and waited for the respawn timer
  	void Respawn(GameMode gameMode, int seed = -1, float boostAmount = RLConst::BOOST_SPAWN_AMOUNT);
  
+-	btVehicleRL _bulletVehicle;
 +	// RL PATCH: a fresh car at this spot (the respawn's new state)
 +	void _RespawnAt(Vec pos, float yaw, float boostAmount);
 +
@@ -7774,7 +7795,7 @@ index 90bcaa8..4713ce9 100644
 +		bool valid = false;
 +	} _respawnSpot;
 +
- 	btVehicleRL _bulletVehicle;
++	btVehicleCarball _bulletVehicle;
  	btDefaultVehicleRaycaster _bulletVehicleRaycaster;
  	btRigidBody _rigidBody;
 +	// RL PATCH: the XY lock while the car isn't driving (the kickoff countdown) or is on the podium (Car_TA's per-tick
@@ -8027,7 +8048,7 @@ index b70cb95..6f1f42d 100644
 \ No newline at end of file
 diff --git engine/rocketsim/src/Sim/CreatedBox.h engine/rocketsim/src/Sim/CreatedBox.h
 new file mode 100644
-index 0000000..dbd357a
+index 0000000..3f71aa3
 --- /dev/null
 +++ engine/rocketsim/src/Sim/CreatedBox.h
 @@ -0,0 +1,23 @@
@@ -8036,7 +8057,7 @@ index 0000000..dbd357a
 +// at once: addCollisionObject 0x140270f30 → createProxy 0x140272c30 → setAabb, the shape's tight box at the spawn pose (no
 +// contact threshold, no predicted pose: notes/bullet-diff.md "Broadphase boxes at placement", AB1). Moving a body
 +// (SetState without a new spawn, a rollback restore) leaves its stored box as it was; boxes otherwise change only in the
-+// step's updateAabbs, after the vehicles, so the wheel rays' candidate query (btVehicleRL) sees a just-moved body only
++// step's updateAabbs, after the vehicles, so the wheel rays' candidate query (btVehicleCarball) sees a just-moved body only
 +// if its old box overlaps. RV-375: its entry in the broadphase's max-edge order is made anew too (after its equals), as
 +// the game's destroy and create make it.
 +#include "../../libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/btCollisionWorld.h"
@@ -8532,10 +8553,10 @@ index 0000000..4c9bb13
 +
 +RS_NS_END
 diff --git upstream/src/Sim/btVehicleRL/btVehicleRL.cpp engine/rocketsim/src/Sim/btVehicleRL/btVehicleRL.cpp
-index 3289666..97a4908 100644
+index 3289666..78c3224 100644
 --- upstream/src/Sim/btVehicleRL/btVehicleRL.cpp
 +++ engine/rocketsim/src/Sim/btVehicleRL/btVehicleRL.cpp
-@@ -1,12 +1,65 @@
+@@ -1,13 +1,66 @@
  #include "btVehicleRL.h"
  #include "../../RLConst.h"
 +#include "../../BulletLink.h"
@@ -8548,6 +8569,7 @@ index 3289666..97a4908 100644
  
  RS_NS_START
  
+-btVehicleRL::btVehicleRL(
 +// RL PATCH (31): the vehicle as the game's Bullet vehicle does it (update FUN_1402c5340: ray FUN_1402c3b50, contact
 +// pass FUN_1402c3360, VehicleSim hook, suspension FUN_1402c2a40, friction FUN_1402c49d0; wheels set up in
 +// FUN_140f044e0). Replays confirm it (notes/validation.md).
@@ -8559,14 +8581,14 @@ index 3289666..97a4908 100644
 +		btScalar fraction;
 +		btVector3 normal;
 +	};
-+	Hit hits[btVehicleRL::MAX_RAY_CANDIDATES];
++	Hit hits[btVehicleCarball::MAX_RAY_CANDIDATES];
 +	int count = 0;
 +
 +	btScalar addSingleResult(btCollisionWorld::LocalRayResult& r, bool normalInWorldSpace) override {
 +		int i = 0;
 +		while (i < count && hits[i].obj != r.m_collisionObject) i++;
 +		if (i == count) {
-+			if (count == btVehicleRL::MAX_RAY_CANDIDATES) return 1;
++			if (count == btVehicleCarball::MAX_RAY_CANDIDATES) return 1;
 +			hits[count++] = { r.m_collisionObject, 2, btVector3(0, 0, 0) };
 +		}
 +		if (r.m_hitFraction < hits[i].fraction) {
@@ -8598,10 +8620,91 @@ index 3289666..97a4908 100644
 +	cb.addSingleResult(result, true);
 +}
 +
- btVehicleRL::btVehicleRL(
++btVehicleCarball::btVehicleCarball(
  	const btVehicleTuning& tuning, 
  	btRigidBody* chassis, btVehicleRaycaster* raycaster, btDynamicsWorld* world, 
-@@ -121,9 +174,10 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
+ 	int addedRayCollisionMask
+@@ -20,18 +73,18 @@ btVehicleRL::btVehicleRL(
+ 	defaultInit(tuning);
+ }
+ 
+-void btVehicleRL::defaultInit(const btVehicleTuning& tuning) {
++void btVehicleCarball::defaultInit(const btVehicleTuning& tuning) {
+ 	(void)tuning;
+ 	m_steeringValue = 0;
+ }
+ 
+-btVehicleRL::~btVehicleRL() {
++btVehicleCarball::~btVehicleCarball() {
+ }
+ 
+ //
+ // basically most of the code is general for 2 or 4 wheel vehicles, but some of it needs to be reviewed
+ //
+-btWheelInfoRL& btVehicleRL::addWheel(const btVector3& connectionPointCS, const btVector3& wheelDirectionCS0, const btVector3& wheelAxleCS, float suspensionRestLength, float wheelRadius, const btVehicleTuning& tuning, bool isFrontWheel) {
++btWheelInfoCarball& btVehicleCarball::addWheel(const btVector3& connectionPointCS, const btVector3& wheelDirectionCS0, const btVector3& wheelAxleCS, float suspensionRestLength, float wheelRadius, const btVehicleTuning& tuning, bool isFrontWheel) {
+ 	btWheelInfoConstructionInfo ci;
+ 
+ 	ci.m_chassisConnectionCS = connectionPointCS;
+@@ -47,24 +100,24 @@ btWheelInfoRL& btVehicleRL::addWheel(const btVector3& connectionPointCS, const b
+ 	ci.m_maxSuspensionTravelCm = tuning.m_maxSuspensionTravelCm;
+ 	ci.m_maxSuspensionForce = tuning.m_maxSuspensionForce;
+ 
+-	m_wheelInfo.push_back(btWheelInfoRL(ci));
++	m_wheelInfo.push_back(btWheelInfoCarball(ci));
+ 
+-	btWheelInfoRL& wheel = m_wheelInfo[getNumWheels() - 1];
++	btWheelInfoCarball& wheel = m_wheelInfo[getNumWheels() - 1];
+ 
+ 	updateWheelTransformsWS(wheel);
+ 	updateWheelTransform(getNumWheels() - 1);
+ 	return wheel;
+ }
+ 
+-const btTransform& btVehicleRL::getWheelTransformWS(int wheelIndex) const {
++const btTransform& btVehicleCarball::getWheelTransformWS(int wheelIndex) const {
+ 	btAssert(wheelIndex < getNumWheels());
+-	const btWheelInfoRL& wheel = m_wheelInfo[wheelIndex];
++	const btWheelInfoCarball& wheel = m_wheelInfo[wheelIndex];
+ 	return wheel.m_worldTransform;
+ }
+ 
+ // See: I20 or I21
+-void btVehicleRL::updateWheelTransform(int wheelIndex) {
+-	btWheelInfoRL& wheel = m_wheelInfo[wheelIndex];
++void btVehicleCarball::updateWheelTransform(int wheelIndex) {
++	btWheelInfoCarball& wheel = m_wheelInfo[wheelIndex];
+ 	updateWheelTransformsWS(wheel);
+ 	btVector3 up = -wheel.m_raycastInfo.m_wheelDirectionWS;
+ 	const btVector3& right = wheel.m_raycastInfo.m_wheelAxleWS;
+@@ -93,10 +146,10 @@ void btVehicleRL::updateWheelTransform(int wheelIndex) {
+ 		wheel.m_raycastInfo.m_hardPointWS + wheel.m_raycastInfo.m_wheelDirectionWS * wheel.m_raycastInfo.m_suspensionLength);
+ }
+ 
+-void btVehicleRL::resetSuspension() {
++void btVehicleCarball::resetSuspension() {
+ 	int i;
+ 	for (i = 0; i < m_wheelInfo.size(); i++) {
+-		btWheelInfoRL& wheel = m_wheelInfo[i];
++		btWheelInfoCarball& wheel = m_wheelInfo[i];
+ 		wheel.m_raycastInfo.m_suspensionLength = wheel.getSuspensionRestLength();
+ 		wheel.m_suspensionRelativeVelocity = 0;
+ 
+@@ -107,7 +160,7 @@ void btVehicleRL::resetSuspension() {
+ }
+ 
+ // See: I20 or I21
+-void btVehicleRL::updateWheelTransformsWS(btWheelInfoRL& wheel) {
++void btVehicleCarball::updateWheelTransformsWS(btWheelInfoCarball& wheel) {
+ 	wheel.m_raycastInfo.m_isInContact = false;
+ 	wheel.m_isInContactWithWorld = false;
+ 
+@@ -117,13 +170,14 @@ void btVehicleRL::updateWheelTransformsWS(btWheelInfoRL& wheel) {
+ 	wheel.m_raycastInfo.m_wheelAxleWS = chassisTrans.getBasis() * wheel.m_wheelAxleCS;
+ }
+ 
+-float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
++float btVehicleCarball::rayCast(btWheelInfoCarball& wheel) {
  	updateWheelTransformsWS(wheel);
  
  	float depth = -1;
@@ -8725,11 +8828,17 @@ index 3289666..97a4908 100644
  			}
  		}
  
-@@ -212,23 +321,79 @@ const btTransform& btVehicleRL::getChassisWorldTransform() const {
+@@ -208,69 +317,125 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
+ 	return depth;
+ }
+ 
+-const btTransform& btVehicleRL::getChassisWorldTransform() const {
++const btTransform& btVehicleCarball::getChassisWorldTransform() const {
  	return getRigidBody()->getCenterOfMassTransform();
  }
  
-+float btVehicleRL::rayLength(const btWheelInfoRL& wheel) const {
+-void btVehicleRL::updateVehicleFirst(float step) {
++float btVehicleCarball::rayLength(const btWheelInfoCarball& wheel) const {
 +	// RL PATCH: radius + rest + travel (RocketSim subtracted the 2.5 uu max raise here too)
 +	return wheel.getSuspensionRestLength() + wheel.m_maxSuspensionTravelCm / 100 + wheel.m_wheelsRadius;
 +}
@@ -8740,10 +8849,10 @@ index 3289666..97a4908 100644
 +// skipped, 32 at most in proxy order (callback 0x1402c4610). The stored boxes are the step's updateAabbs ones (after the
 +// vehicles) or a creation's (CreatedBox.h), so a body moved since is seen at its new pose only if its old box overlaps
 +// (notes/bullet-diff.md "Broadphase boxes at placement and the wheel-ray candidate query", AB1)
-+void btVehicleRL::findRayCandidates() {
++void btVehicleCarball::findRayCandidates() {
 +	btVector3 boxMin(BT_LARGE_FLOAT, BT_LARGE_FLOAT, BT_LARGE_FLOAT), boxMax(-BT_LARGE_FLOAT, -BT_LARGE_FLOAT, -BT_LARGE_FLOAT);
 +	for (int i = 0; i < getNumWheels(); i++) {
-+		const btWheelInfoRL& wheel = m_wheelInfo[i];
++		const btWheelInfoCarball& wheel = m_wheelInfo[i];
 +		btVector3 source = wheel.m_raycastInfo.m_hardPointWS;
 +		btVector3 target = source + wheel.m_raycastInfo.m_wheelDirectionWS * rayLength(wheel);
 +		boxMin.setMin(source);
@@ -8753,7 +8862,7 @@ index 3289666..97a4908 100644
 +	}
 +	struct Candidates : public btBroadphaseAabbCallback {
 +		btCollisionWorld::RayResultCallback* filter;
-+		btVehicleRL* vehicle;
++		btVehicleCarball* vehicle;
 +		bool process(const btBroadphaseProxy* proxy) override {
 +			if (vehicle->m_numRayCandidates < MAX_RAY_CANDIDATES && filter->needsCollision((btBroadphaseProxy*)proxy))
 +				vehicle->m_rayCandidates[vehicle->m_numRayCandidates++] = (const btCollisionObject*)proxy->m_clientObject;
@@ -8770,7 +8879,7 @@ index 3289666..97a4908 100644
 +	m_dynamicsWorld->getBroadphase()->aabbTest(boxMin, boxMax, candidates);
 +}
 +
- void btVehicleRL::updateVehicleFirst(float step) {
++void btVehicleCarball::updateVehicleFirst(float step) {
  
  	for (int i = 0; i < getNumWheels(); i++)
  		updateWheelTransform(i);
@@ -8788,9 +8897,9 @@ index 3289666..97a4908 100644
 +}
  
 -	calcFrictionImpulses(step);
-+void btVehicleRL::updateWheelBases() {
++void btVehicleCarball::updateWheelBases() {
 +	for (int i = 0; i < getNumWheels(); i++) {
-+		btWheelInfoRL& wheel = m_wheelInfo[i];
++		btWheelInfoCarball& wheel = m_wheelInfo[i];
 +		bool contact = wheel.m_raycastInfo.m_isInContact, world = wheel.m_isInContactWithWorld;
 +		updateWheelTransform(i); // (also resets the contact flags: keep them)
 +		wheel.m_raycastInfo.m_isInContact = contact;
@@ -8798,7 +8907,8 @@ index 3289666..97a4908 100644
 +	}
  }
  
- void btVehicleRL::updateVehicleSecond(float step) {
+-void btVehicleRL::updateVehicleSecond(float step) {
++void btVehicleCarball::updateVehicleSecond(float step) {
 +	// RL PATCH: the wheels' friction uses this tick's VehicleSim values (steering, engine, brake, friction) and the
 +	// velocities after the suspension impulse. RocketSim computed it before both, from the previous tick's values.
 +	updateWheelBases(); // this tick's steering
@@ -8807,6 +8917,58 @@ index 3289666..97a4908 100644
  	applyFrictionImpulses(step);
  }
  
+-void btVehicleRL::setSteeringValue(float steering, int wheel) {
++void btVehicleCarball::setSteeringValue(float steering, int wheel) {
+ 	btAssert(wheel >= 0 && wheel < getNumWheels());
+ 
+-	btWheelInfoRL& wheelInfo = getWheelInfo(wheel);
++	btWheelInfoCarball& wheelInfo = getWheelInfo(wheel);
+ 	wheelInfo.m_steering = steering;
+ }
+ 
+-float btVehicleRL::getSteeringValue(int wheel) const {
++float btVehicleCarball::getSteeringValue(int wheel) const {
+ 	return getWheelInfo(wheel).m_steering;
+ }
+ 
+-void btVehicleRL::applyEngineForce(float force, int wheel) {
++void btVehicleCarball::applyEngineForce(float force, int wheel) {
+ 	btAssert(wheel >= 0 && wheel < getNumWheels());
+-	btWheelInfoRL& wheelInfo = getWheelInfo(wheel);
++	btWheelInfoCarball& wheelInfo = getWheelInfo(wheel);
+ 	wheelInfo.m_engineForce = force;
+ }
+ 
+-const btWheelInfoRL& btVehicleRL::getWheelInfo(int index) const {
++const btWheelInfoCarball& btVehicleCarball::getWheelInfo(int index) const {
+ 	btAssert((index >= 0) && (index < getNumWheels()));
+ 
+ 	return m_wheelInfo[index];
+ }
+ 
+-btWheelInfoRL& btVehicleRL::getWheelInfo(int index) {
++btWheelInfoCarball& btVehicleCarball::getWheelInfo(int index) {
+ 	btAssert((index >= 0) && (index < getNumWheels()));
+ 
+ 	return m_wheelInfo[index];
+ }
+ 
+-void btVehicleRL::setBrake(float brake, int wheelIndex) {
++void btVehicleCarball::setBrake(float brake, int wheelIndex) {
+ 	btAssert((wheelIndex >= 0) && (wheelIndex < getNumWheels()));
+ 	getWheelInfo(wheelIndex).m_brake = brake;
+ }
+ 
+ // See: I24
+-void btVehicleRL::updateSuspension(float deltaTime) {
++void btVehicleCarball::updateSuspension(float deltaTime) {
+ 	
+ 	for (int i = 0; i < getNumWheels(); i++) {
+-		btWheelInfoRL& wheel_info = m_wheelInfo[i];
++		btWheelInfoCarball& wheel_info = m_wheelInfo[i];
+ 
+ 		if (wheel_info.m_raycastInfo.m_isInContact) {
+ 			float force =
 @@ -291,8 +456,8 @@ void btVehicleRL::updateSuspension(float deltaTime) {
  		}
  	}
@@ -8814,11 +8976,11 @@ index 3289666..97a4908 100644
 -	for (int i = 0; i < getNumWheels(); i++) {
 -		btWheelInfoRL& wheel = m_wheelInfo[i];
 +	for (int k = 0; k < getNumWheels(); k++) { // RL PATCH: the game's wheel order
-+		btWheelInfoRL& wheel = m_wheelInfo[GameWheel(k)];
++		btWheelInfoCarball& wheel = m_wheelInfo[GameWheel(k)];
  		if (wheel.m_wheelsSuspensionForce != 0) {
  			btVector3 contactPointOffset = wheel.m_raycastInfo.m_contactPointWS - getRigidBody()->getCenterOfMassPosition();
  			float baseForceScale = (wheel.m_wheelsSuspensionForce * deltaTime) + wheel.m_extraPushback;
-@@ -300,6 +465,8 @@ void btVehicleRL::updateSuspension(float deltaTime) {
+@@ -300,26 +465,26 @@ void btVehicleRL::updateSuspension(float deltaTime) {
  			m_chassisBody->applyImpulse(force, contactPointOffset);
  		}
  	}
@@ -8827,7 +8989,18 @@ index 3289666..97a4908 100644
  }
  
  // See: I25
-@@ -316,10 +483,8 @@ void btVehicleRL::calcFrictionImpulses(float timeStep) {
+-void btVehicleRL::calcFrictionImpulses(float timeStep) {
++void btVehicleCarball::calcFrictionImpulses(float timeStep) {
+ 
+ 	float frictionScale = m_chassisBody->getMass() / 3;
+ 
+ 	// Determine impulses
+ 	for (int i = 0; i < m_wheelInfo.size(); i++) {
+-		btWheelInfoRL& wheel = m_wheelInfo[i];
++		btWheelInfoCarball& wheel = m_wheelInfo[i];
+ 
+ 		btRigidBody* groundObject = (btRigidBody*)wheel.m_raycastInfo.m_groundObject;
+ 		if (groundObject) {
  			// Axle direction (includes steering turn)
  			btVector3 axleDir = wheel.m_worldTransform.getBasis().getColumn(m_indexRightAxis);
  
@@ -8872,21 +9045,27 @@ index 3289666..97a4908 100644
  
  					// This will round off small rolling friction amounts when at sub-80 TPS to prevent stuttering (to an extent)
  					// TODO: Improve and clarify
-@@ -383,8 +545,8 @@ void btVehicleRL::calcFrictionImpulses(float timeStep) {
- void btVehicleRL::applyFrictionImpulses(float timeStep) {
+@@ -380,11 +542,11 @@ void btVehicleRL::calcFrictionImpulses(float timeStep) {
+ }
+ 
+ // See: I25
+-void btVehicleRL::applyFrictionImpulses(float timeStep) {
++void btVehicleCarball::applyFrictionImpulses(float timeStep) {
  	// Apply impulses
  	btVector3 upDir = m_chassisBody->getWorldTransform().getBasis().getColumn(m_indexUpAxis);
 -	for (int i = 0; i < m_wheelInfo.size(); i++) {
 -		btWheelInfoRL& wheel = m_wheelInfo[i];
 +	for (int k = 0; k < m_wheelInfo.size(); k++) { // RL PATCH: the game's wheel order
-+		btWheelInfoRL& wheel = m_wheelInfo[GameWheel(k)];
++		btWheelInfoCarball& wheel = m_wheelInfo[GameWheel(k)];
  		if (!wheel.m_impulse.isZero()) {
  			btVector3 wheelContactOffset = wheel.m_raycastInfo.m_contactPointWS - m_chassisBody->getWorldTransform().getOrigin();
  			float contactUpDot = upDir.dot(wheelContactOffset);
-@@ -395,17 +557,28 @@ void btVehicleRL::applyFrictionImpulses(float timeStep) {
+@@ -394,22 +556,33 @@ void btVehicleRL::applyFrictionImpulses(float timeStep) {
+ 	}
  }
  
- btVector3 btVehicleRL::getUpwardsDirFromWheelContacts() {
+-btVector3 btVehicleRL::getUpwardsDirFromWheelContacts() {
++btVector3 btVehicleCarball::getUpwardsDirFromWheelContacts() {
 +	// RL PATCH: the wheels on world geometry only (the game's FUN_140eed3e0, for the sticky force and auto-roll); a wheel
 +	// on the ball or a car doesn't count
  	btVector3 sumContactDir = btVector3(0, 0, 0);
@@ -8894,7 +9073,7 @@ index 3289666..97a4908 100644
 -		if (m_wheelInfo[i].m_raycastInfo.m_isInContact)
 -			sumContactDir += m_wheelInfo[i].m_raycastInfo.m_contactNormalWS;
 +	for (int k = 0; k < m_wheelInfo.size(); k++) { // (summed in the game's wheel order)
-+		const btWheelInfoRL& w = m_wheelInfo[GameWheel(k)];
++		const btWheelInfoCarball& w = m_wheelInfo[GameWheel(k)];
 +		if (w.m_raycastInfo.m_isInContact && w.m_isInContactWithWorld)
 +			sumContactDir += w.m_raycastInfo.m_contactNormalWS;
 +	}
@@ -8916,13 +9095,38 @@ index 3289666..97a4908 100644
  	}
  }
  
+-float btVehicleRL::getForwardSpeed() {
++float btVehicleCarball::getForwardSpeed() {
+ 	return m_chassisBody->getLinearVelocity().dot(getForwardVector());
+ }
+ 
 diff --git upstream/src/Sim/btVehicleRL/btVehicleRL.h engine/rocketsim/src/Sim/btVehicleRL/btVehicleRL.h
-index dafd1db..a05de0f 100644
+index dafd1db..0f2e873 100644
 --- upstream/src/Sim/btVehicleRL/btVehicleRL.h
 +++ engine/rocketsim/src/Sim/btVehicleRL/btVehicleRL.h
-@@ -29,6 +29,12 @@ struct btWheelInfoRL : public btWheelInfo {
+@@ -6,7 +6,7 @@
+ RS_NS_START
+ 
+ // This is a modified version of btWheelInfo to more accurately follow Rocket League
+-struct btWheelInfoRL : public btWheelInfo {
++struct btWheelInfoCarball : public btWheelInfo {
+ 	bool m_isInContactWithWorld = false;
+ 	float m_steerAngle = 0;
+ 
+@@ -21,14 +21,20 @@ struct btWheelInfoRL : public btWheelInfo {
+ 	// Extra force applied when compressed significantly
+ 	float m_extraPushback = 0;
+ 
+-	btWheelInfoRL() {}
++	btWheelInfoCarball() {}
+ 
+-	btWheelInfoRL(btWheelInfoConstructionInfo& constructionInfo) : btWheelInfo(constructionInfo) {}
++	btWheelInfoCarball(btWheelInfoConstructionInfo& constructionInfo) : btWheelInfo(constructionInfo) {}
+ };
+ 
  // This is a modified version of btRaycastVehicle to more accurately follow Rocket League
- class btVehicleRL : public btActionInterface {
+-class btVehicleRL : public btActionInterface {
++class btVehicleCarball : public btActionInterface {
  public:
 +	// RL PATCH: the game's wheel order. Its vehicle holds the wheels front left, front right, back left, back right
 +	// (UWheel_TA::Init 0x140f097c0 adds them in Vehicle.Wheels' order); RocketSim right before left. The game's i-th
@@ -8933,10 +9137,30 @@ index dafd1db..a05de0f 100644
  	btAlignedObjectArray<btVector3> m_forwardWS;
  	btAlignedObjectArray<btVector3> m_axle;
  	btAlignedObjectArray<float> m_forwardImpulse;
-@@ -89,9 +95,21 @@ public:
+@@ -72,13 +78,13 @@ public:
  
- 	float rayCast(btWheelInfoRL& wheel);
+ 	void defaultInit(const btVehicleTuning& tuning);
  
+-	btVehicleRL() {}
++	btVehicleCarball() {}
+ 
+-	btVehicleRL(const btVehicleTuning& tuning,
++	btVehicleCarball(const btVehicleTuning& tuning,
+ 		btRigidBody* chassis, btVehicleRaycaster* raycaster, btDynamicsWorld* world,
+ 		int addedRayCollisionMask);
+ 
+-	virtual ~btVehicleRL();
++	virtual ~btVehicleCarball();
+ 
+ 	///btActionInterface interface
+ 	void updateAction(btCollisionWorld* collisionWorld, float step) {
+@@ -87,11 +93,23 @@ public:
+ 
+ 	const btTransform& getChassisWorldTransform() const;
+ 
+-	float rayCast(btWheelInfoRL& wheel);
++	float rayCast(btWheelInfoCarball& wheel);
++
 +	// RL PATCH (FP2): the bodies the wheel rays test this tick, as the game picks them (findRayCandidates): at most
 +	// 32, in the broadphase's proxy order
 +	static constexpr int MAX_RAY_CANDIDATES = 32;
@@ -8944,8 +9168,8 @@ index dafd1db..a05de0f 100644
 +	int m_numRayCandidates = 0;
 +	void findRayCandidates();
 +	// A wheel's ray from its hard point: radius + rest length + travel
-+	float rayLength(const btWheelInfoRL& wheel) const;
-+
++	float rayLength(const btWheelInfoCarball& wheel) const;
+ 
  	void updateVehicleFirst(float step);
  	void updateVehicleSecond(float step);
  
@@ -8955,6 +9179,31 @@ index dafd1db..a05de0f 100644
  	void resetSuspension();
  
  	float getSteeringValue(int wheel) const;
+@@ -106,19 +124,19 @@ public:
+ 
+ 	//	void	setRaycastWheelInfo( int wheelIndex , bool isInContact, const btVector3& hitPoint, const btVector3& hitNormal,float depth);
+ 
+-	btWheelInfoRL& addWheel(const btVector3& connectionPointCS0, const btVector3& wheelDirectionCS0, const btVector3& wheelAxleCS, float suspensionRestLength, float wheelRadius, const btVehicleTuning& tuning, bool isFrontWheel);
++	btWheelInfoCarball& addWheel(const btVector3& connectionPointCS0, const btVector3& wheelDirectionCS0, const btVector3& wheelAxleCS, float suspensionRestLength, float wheelRadius, const btVehicleTuning& tuning, bool isFrontWheel);
+ 
+ 	inline int getNumWheels() const {
+ 		return int(m_wheelInfo.size());
+ 	}
+ 
+-	btAlignedObjectArray<btWheelInfoRL> m_wheelInfo;
++	btAlignedObjectArray<btWheelInfoCarball> m_wheelInfo;
+ 
+-	const btWheelInfoRL& getWheelInfo(int index) const;
++	const btWheelInfoCarball& getWheelInfo(int index) const;
+ 
+-	btWheelInfoRL& getWheelInfo(int index);
++	btWheelInfoCarball& getWheelInfo(int index);
+ 
+-	void updateWheelTransformsWS(btWheelInfoRL& wheel);
++	void updateWheelTransformsWS(btWheelInfoCarball& wheel);
+ 
+ 	void setBrake(float brake, int wheelIndex);
+ 
 @@ -129,6 +147,8 @@ public:
  	void updateSuspension(float deltaTime);
  

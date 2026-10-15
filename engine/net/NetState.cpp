@@ -236,7 +236,7 @@ static void ApplyCar(const CarData& d, Car* car) {
 	s.angVel = car->_rigidBody.getAngularVelocity();
 	s.tickCountSinceUpdate = car->_internalState.tickCountSinceUpdate;
 	for (int i = 0; i < car->_bulletVehicle.m_wheelInfo.size() && i < 4; i++) {
-		btWheelInfoRL& wheel = car->_bulletVehicle.m_wheelInfo[i];
+		btWheelInfoCarball& wheel = car->_bulletVehicle.m_wheelInfo[i];
 		const CarState::WheelCarry& w = s.wheelCarry.wheels[i];
 		wheel.m_steerAngle = w.steerAngle;
 		wheel.m_engineForce = w.engineForce;
@@ -843,7 +843,7 @@ void OverlayCar(Arena* arena, const CompactCar& d, Car* car) {
 	}
 	if (placed || d.placedRecently) {
 		for (int i = 0; i < car->_bulletVehicle.m_wheelInfo.size() && i < 4; i++) {
-			btWheelInfoRL& wheel = car->_bulletVehicle.m_wheelInfo[i];
+			btWheelInfoCarball& wheel = car->_bulletVehicle.m_wheelInfo[i];
 			const CarState::WheelCarry& carry = s.wheelCarry.wheels[i];
 			wheel.m_steerAngle = carry.steerAngle;
 			wheel.m_engineForce = carry.engineForce;

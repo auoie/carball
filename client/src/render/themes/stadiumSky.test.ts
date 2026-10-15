@@ -97,9 +97,14 @@ describe("the stadium's sky (H-10, SUR-25)", () => {
   }, 120000);
 
   it("makes its noises within a second (RV-160: work on the main thread at the stadium's load)", () => {
-    const t0 = performance.now();
+    // (this thread's CPU time, where Node has it: wall time also counts a busy machine's other work, RV-427)
+    const cpu = (): number => {
+      const used = typeof process.threadCpuUsage === "function" ? process.threadCpuUsage() : null;
+      return used ? (used.user + used.system) / 1000 : performance.now();
+    };
+    const t0 = cpu();
     makeSkyNoise();
-    const ms = performance.now() - t0;
+    const ms = cpu() - t0;
     expect(ms).toBeLessThan(1000);
   }, 10000);
 

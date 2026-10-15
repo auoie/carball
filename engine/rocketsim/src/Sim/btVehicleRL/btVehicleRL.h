@@ -6,7 +6,7 @@
 RS_NS_START
 
 // This is a modified version of btWheelInfo to more accurately follow Rocket League
-struct btWheelInfoRL : public btWheelInfo {
+struct btWheelInfoCarball : public btWheelInfo {
 	bool m_isInContactWithWorld = false;
 	float m_steerAngle = 0;
 
@@ -21,13 +21,13 @@ struct btWheelInfoRL : public btWheelInfo {
 	// Extra force applied when compressed significantly
 	float m_extraPushback = 0;
 
-	btWheelInfoRL() {}
+	btWheelInfoCarball() {}
 
-	btWheelInfoRL(btWheelInfoConstructionInfo& constructionInfo) : btWheelInfo(constructionInfo) {}
+	btWheelInfoCarball(btWheelInfoConstructionInfo& constructionInfo) : btWheelInfo(constructionInfo) {}
 };
 
 // This is a modified version of btRaycastVehicle to more accurately follow Rocket League
-class btVehicleRL : public btActionInterface {
+class btVehicleCarball : public btActionInterface {
 public:
 	// RL PATCH: the game's wheel order. Its vehicle holds the wheels front left, front right, back left, back right
 	// (UWheel_TA::Init 0x140f097c0 adds them in Vehicle.Wheels' order); RocketSim right before left. The game's i-th
@@ -78,13 +78,13 @@ public:
 
 	void defaultInit(const btVehicleTuning& tuning);
 
-	btVehicleRL() {}
+	btVehicleCarball() {}
 
-	btVehicleRL(const btVehicleTuning& tuning,
+	btVehicleCarball(const btVehicleTuning& tuning,
 		btRigidBody* chassis, btVehicleRaycaster* raycaster, btDynamicsWorld* world,
 		int addedRayCollisionMask);
 
-	virtual ~btVehicleRL();
+	virtual ~btVehicleCarball();
 
 	///btActionInterface interface
 	void updateAction(btCollisionWorld* collisionWorld, float step) {
@@ -93,7 +93,7 @@ public:
 
 	const btTransform& getChassisWorldTransform() const;
 
-	float rayCast(btWheelInfoRL& wheel);
+	float rayCast(btWheelInfoCarball& wheel);
 
 	// RL PATCH (FP2): the bodies the wheel rays test this tick, as the game picks them (findRayCandidates): at most
 	// 32, in the broadphase's proxy order
@@ -102,7 +102,7 @@ public:
 	int m_numRayCandidates = 0;
 	void findRayCandidates();
 	// A wheel's ray from its hard point: radius + rest length + travel
-	float rayLength(const btWheelInfoRL& wheel) const;
+	float rayLength(const btWheelInfoCarball& wheel) const;
 
 	void updateVehicleFirst(float step);
 	void updateVehicleSecond(float step);
@@ -124,19 +124,19 @@ public:
 
 	//	void	setRaycastWheelInfo( int wheelIndex , bool isInContact, const btVector3& hitPoint, const btVector3& hitNormal,float depth);
 
-	btWheelInfoRL& addWheel(const btVector3& connectionPointCS0, const btVector3& wheelDirectionCS0, const btVector3& wheelAxleCS, float suspensionRestLength, float wheelRadius, const btVehicleTuning& tuning, bool isFrontWheel);
+	btWheelInfoCarball& addWheel(const btVector3& connectionPointCS0, const btVector3& wheelDirectionCS0, const btVector3& wheelAxleCS, float suspensionRestLength, float wheelRadius, const btVehicleTuning& tuning, bool isFrontWheel);
 
 	inline int getNumWheels() const {
 		return int(m_wheelInfo.size());
 	}
 
-	btAlignedObjectArray<btWheelInfoRL> m_wheelInfo;
+	btAlignedObjectArray<btWheelInfoCarball> m_wheelInfo;
 
-	const btWheelInfoRL& getWheelInfo(int index) const;
+	const btWheelInfoCarball& getWheelInfo(int index) const;
 
-	btWheelInfoRL& getWheelInfo(int index);
+	btWheelInfoCarball& getWheelInfo(int index);
 
-	void updateWheelTransformsWS(btWheelInfoRL& wheel);
+	void updateWheelTransformsWS(btWheelInfoCarball& wheel);
 
 	void setBrake(float brake, int wheelIndex);
 

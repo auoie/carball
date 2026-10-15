@@ -510,7 +510,7 @@ def write(pieces, outdir):
             for v in piece.verts:
                 f.write(struct.pack("<3f", *(c * 0.02 for c in v)))
             if hasattr(piece, "offset"):   # the body's position (the engine's CollisionMeshFile trailer)
-                f.write(b"RLOF" + struct.pack("<3f", *(body_origin(c) for c in piece.offset)))
+                f.write(b"CBOF" + struct.pack("<3f", *(body_origin(c) for c in piece.offset)))
     stale = [n for n in os.listdir(meshdir) if n.endswith(".cmf") and n not in {f"arena_{name}.cmf" for name, _ in pieces}]
     if stale:
         print(f"note: other .cmf files in {meshdir} are loaded too: {stale}")

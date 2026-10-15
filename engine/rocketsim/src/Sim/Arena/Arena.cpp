@@ -1216,7 +1216,7 @@ Arena::Arena(GameMode gameMode, const ArenaConfig& config, float tickRate) : _mu
 		solverInfo.m_restitutionVelocityThreshold = 0;
 
 		// RL PATCH: Bullet sets m_timeStep only inside stepSimulation, but the wheel pushback
-		// (btVehicleRL::rayCast -> resolveSingleCollision) reads it before that. Without this, a new or
+		// (btVehicleCarball::rayCast -> resolveSingleCollision) reads it before that. Without this, a new or
 		// restored arena used Bullet's default 1/60 s for its first tick.
 		solverInfo.m_timeStep = tickTime;
 
@@ -1381,7 +1381,7 @@ static std::vector<uint32_t> _ReadVehicleOrder(DataStreamIn& in) {
 }
 
 // RL PATCH (FP2): the moving bodies' stored broadphase boxes, the ball's then each car's in ID order (the wheel rays'
-// candidates are picked by them: btVehicleRL::findRayCandidates), so a snapshot, a clone or a load in place continues as
+// candidates are picked by them: btVehicleCarball::findRayCandidates), so a snapshot, a clone or a load in place continues as
 // the original (the game's rollback leaves the boxes from before it: ours restores them, for exact replays); the static
 // bodies' boxes are fixed. Then their order in the broadphase's max-edge walk (RV-375: the candidates' order, history's
 // on equal keys), as indices (the ball 0, the cars 1.. in ID order)

@@ -26,7 +26,8 @@ const RETURN_SECONDS: f64 = 60.0;
 /// An IPv4 address is blocked after this many different browser keys stalled from it within `STALL_WINDOW` (s)
 const ADDRESS_STALLS: usize = 2;
 const STALL_WINDOW: f64 = 600.0;
-/// The addresses whose recent stalls are kept, at most (the oldest let go first: memory stays bounded, RV-407)
+/// The addresses whose recent stalls are kept, at most (the one whose last stall is oldest let go first: memory stays
+/// bounded, RV-407. Filling it to let a staller's record go takes ~100k addresses stalling within the window, RV-428)
 const MAX_STALL_ADDRESSES: usize = 100_000;
 
 /// Who a search is from: its address (`net::address_key`), its browser's key (0: none), and the token of the slot it
@@ -86,6 +87,12 @@ pub struct Matchmaker {
     cooldowns: HashMap<Who, f64>,
     /// Each address's recent stalls (an IPv6 one by its /64): the browser keys and when
     stalls: HashMap<IpAddr, Vec<(u64, f64)>>,
+    /// Every stall within the window in the order they came (times never go back), so the oldest address is found
+    /// without a scan when the records are full (RV-428: a scan of 100k took milliseconds on the game thread). An entry
+    /// whose address stalled again since, or was let go, is passed over
+    stall_order: VecDeque<(IpAddr, f64)>,
+    /// The most addresses whose stalls are kept (`MAX_STALL_ADDRESSES`)
+    stall_cap: usize,
     /// When the expired entries were last let go (s)
     tidied: f64,
 }
@@ -101,6 +108,8 @@ impl Matchmaker {
             returning: HashMap::new(),
             cooldowns: HashMap::new(),
             stalls: HashMap::new(),
+            stall_order: VecDeque::new(),
+            stall_cap: MAX_STALL_ADDRESSES,
             tidied: 0.0,
         }
     }
@@ -159,22 +168,7 @@ impl Matchmaker {
                 if h.from.key != 0 {
                     self.cooldowns.insert(Who::Key(h.from.key), until);
                 }
-                let address = h.from.key == 0 || {
-                    if !self.stalls.contains_key(&h.from.address) && self.stalls.len() >= MAX_STALL_ADDRESSES {
-                        // (full: the address whose last stall is oldest let go)
-                        let oldest = self.stalls.iter().min_by(|a, b| a.1.last().map_or(0.0, |s| s.1).total_cmp(&b.1.last().map_or(0.0, |s| s.1))).map(|(a, _)| *a);
-                        if let Some(oldest) = oldest {
-                            self.stalls.remove(&oldest);
-                        }
-                    }
-                    let stalls = self.stalls.entry(h.from.address).or_default();
-                    stalls.retain(|&(_, at)| now - at < STALL_WINDOW);
-                    stalls.push((h.from.key, now));
-                    let mut keys: Vec<u64> = stalls.iter().map(|&(k, _)| k).collect();
-                    keys.sort_unstable();
-                    keys.dedup();
-                    keys.len() >= ADDRESS_STALLS
-                };
+                let address = h.from.key == 0 || self.address_stalled(h.from.address, h.from.key, now);
                 if address {
                     self.cooldowns.insert(Who::Address(h.from.address), until);
                 }
@@ -212,6 +206,29 @@ impl Matchmaker {
         }
     }
 
+    /// Notes a stall from the address by the browser key at `now`; whether the address is now blocked too (`ADDRESS_STALLS`
+    /// different keys within `STALL_WINDOW`). The records full, the address whose last stall is oldest is let go first
+    fn address_stalled(&mut self, address: IpAddr, key: u64, now: f64) -> bool {
+        if !self.stalls.contains_key(&address) {
+            while self.stalls.len() >= self.stall_cap
+                && let Some((oldest, at)) = self.stall_order.pop_front()
+            {
+                // (an address's latest stall alone stands for it)
+                if self.stalls.get(&oldest).and_then(|s| s.last()).is_some_and(|&(_, last)| last == at) {
+                    self.stalls.remove(&oldest);
+                }
+            }
+        }
+        let stalls = self.stalls.entry(address).or_default();
+        stalls.retain(|&(_, at)| now - at < STALL_WINDOW);
+        stalls.push((key, now));
+        self.stall_order.push_back((address, now));
+        let mut keys: Vec<u64> = stalls.iter().map(|&(k, _)| k).collect();
+        keys.sort_unstable();
+        keys.dedup();
+        keys.len() >= ADDRESS_STALLS
+    }
+
     /// Lets go of what has expired, once a second at most (the loop runs every millisecond)
     fn tidy(&mut self, now: f64) {
         if now - self.tidied < 1.0 {
@@ -225,6 +242,9 @@ impl Matchmaker {
             stalls.retain(|&(_, at)| now - at < STALL_WINDOW);
             !stalls.is_empty()
         });
+        while self.stall_order.front().is_some_and(|&(_, at)| now - at >= STALL_WINDOW) {
+            self.stall_order.pop_front();
+        }
     }
 
     /// The searcher's session ended (cancelled, or the connection lost)
@@ -498,6 +518,43 @@ mod tests {
         let mut host = Recorder::default();
         queue.form(&mut host, 900.0);
         assert!(queue.stalls.is_empty());
+        assert!(queue.stall_order.is_empty());
+    }
+
+    #[test]
+    fn the_stall_records_full_let_the_address_whose_last_stall_is_oldest_go() {
+        // (RV-428, RX16's C20/C21: the cap kept, by the oldest address alone, found without a scan)
+        let mut queue = Matchmaker::new(&playlists());
+        queue.stall_cap = 3;
+        let at = |i: u8| IpAddr::from([10, 0, 0, i]);
+        for i in 1..=3 {
+            assert!(!queue.address_stalled(at(i), u64::from(i), f64::from(i)));
+        }
+        // (1 stalls again: 2's last stall is the oldest now)
+        assert!(!queue.address_stalled(at(1), 1, 4.0));
+        assert!(!queue.address_stalled(at(4), 4, 5.0));
+        assert_eq!(queue.stalls.len(), 3);
+        assert!(!queue.stalls.contains_key(&at(2)) && queue.stalls.contains_key(&at(1)));
+        // 1's record stands: a second key from it blocks it
+        assert!(queue.address_stalled(at(1), 9, 6.0));
+        // 2 again, the records full: 3 goes (1's earlier entries are passed over), and 2 starts over with one key
+        assert!(!queue.address_stalled(at(2), 8, 7.0));
+        assert_eq!(queue.stalls.len(), 3);
+        assert!(!queue.stalls.contains_key(&at(3)));
+        assert!(!queue.address_stalled(at(5), 5, 8.0));
+        assert!(!queue.stalls.contains_key(&at(4)), "4 next");
+        // (the full records stay cheap: 100 new addresses into a 100k-address table, where a scan each took ~2.6 ms in a
+        // release build, far more in this one)
+        let mut queue = Matchmaker::new(&playlists());
+        for i in 0..MAX_STALL_ADDRESSES as u32 {
+            queue.address_stalled(IpAddr::from((0x0a00_0000 + i).to_be_bytes()), 1, f64::from(i) * 0.001);
+        }
+        let t0 = std::time::Instant::now();
+        for i in 0..100u32 {
+            queue.address_stalled(IpAddr::from((0x0b00_0000 + i).to_be_bytes()), 1, 200.0);
+        }
+        assert_eq!(queue.stalls.len(), MAX_STALL_ADDRESSES);
+        assert!(t0.elapsed() < std::time::Duration::from_millis(250), "{:?}", t0.elapsed());
     }
 
     #[test]

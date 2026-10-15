@@ -21,7 +21,7 @@ export const HEIGHT_FOG = {
 } as const;
 
 /** The game's sky dome (8,388,608 x 5,033,165 uu): the sky's fog is at its distance, not our dome's */
-export const RL_DOME = { radius: 8388608, height: 5033165 } as const;
+export const SKY_DOME = { radius: 8388608, height: 5033165 } as const;
 
 /** The GrassCube's opaque cap (FOG-8): the view depth where deviceZ reaches 0.999 (before the exe's 1 + 1e-8 z) */
 export const CUBE_FOG_CAP = 31897.44;
@@ -60,7 +60,7 @@ export function opaqueDelta(delta: V3, axis: V3, cap: number): [number, number, 
 /** The sky's delta along a direction: the game's dome's distance (FOG-15) */
 export function skyDelta(dir: V3): [number, number, number] {
   const [x, y, z] = dir;
-  const r = 1 / Math.sqrt((x * x + z * z) / RL_DOME.radius ** 2 + (y * y) / RL_DOME.height ** 2);
+  const r = 1 / Math.sqrt((x * x + z * z) / SKY_DOME.radius ** 2 + (y * y) / SKY_DOME.height ** 2);
   return [x * r, y * r, z * r];
 }
 
@@ -96,7 +96,7 @@ vec3 carballOpaqueDelta(vec3 worldPos) {
   return d * (capped / max(z, 1e-6)) / (1.0 + 1e-8 * capped);
 }
 vec3 carballSkyDelta(vec3 dir) {
-  float r = inversesqrt((dir.x * dir.x + dir.z * dir.z) / ${f(RL_DOME.radius ** 2)} + dir.y * dir.y / ${f(RL_DOME.height ** 2)});
+  float r = inversesqrt((dir.x * dir.x + dir.z * dir.z) / ${f(SKY_DOME.radius ** 2)} + dir.y * dir.y / ${f(SKY_DOME.height ** 2)});
   return dir * r;
 }
 `;

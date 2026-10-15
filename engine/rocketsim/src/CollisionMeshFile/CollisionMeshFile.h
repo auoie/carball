@@ -30,7 +30,7 @@ struct CollisionMeshFile {
 	std::vector<Triangle> tris;
 	std::vector<Vertex> vertices;
 
-	// RL PATCH: where the mesh's body goes (Bullet units): an optional trailer after the vertices, "RLOF" and three
+	// RL PATCH: where the mesh's body goes (Bullet units): an optional trailer after the vertices, "CBOF" and three
 	// floats. The game's goal halves are meshes in their own frame placed by a body at y +-5120 uu, and placing them
 	// so (rather than moving the vertices) keeps Bullet's float results the game's
 	Vertex offset = { 0, 0, 0 };

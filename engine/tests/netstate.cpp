@@ -11,7 +11,10 @@
 //  - both step with the same inputs for `window` ticks and must stay identical, except by the client's own stored
 //    broadphase boxes or persistent contact points, which a network state doesn't carry (as the game's doesn't): each
 //    such run shown so (the server's copied in, it continues identical; the client as restored reproduces the live one),
-//    2% of them at most each (RV-369, RV-387, RV-412).
+//    2% of them at most each (RV-369, RV-387, RV-412);
+//  - the update leaves the client's own persistent contacts as they were (RV-433).
+// The verdict checks itself (RV-433): each of its counts alone fails it, and a client given state the update doesn't carry
+// diverges unexplained.
 //
 // Usage: netstate [collision_meshes dir] [seconds] [window ticks] [interval ticks]
 #include "RocketSim.h"
@@ -192,6 +195,106 @@ static bool ContinuesAlike(Arena* server, Arena* client, const std::vector<std::
 			return false;
 	}
 	return true;
+}
+
+enum class Divergence { BOXES, CONTACTS, UNEXPLAINED };
+
+// Why a client that diverged from the server after an update did (both as snapshots at the update, the live client at
+// the window's end, the inputs each tick had). By its stored boxes: the same run with the server's boxes copied in is
+// identical; a network state carries none, as the game's doesn't, so the client's wheel rays may pick other candidates
+// than the server's (a game-faithful misprediction, RV-369). Else by its persistent contacts: the client with the
+// server's contacts spliced in is identical (RV-387). Either excuse holds only if the client as restored, run alone
+// with the same inputs, ends where the live client did: a state the snapshot misses can't hide behind them (RV-412)
+static Divergence Classify(const std::vector<uint8_t>& serverAtUpdate, const std::vector<uint8_t>& clientAtUpdate, Arena* client,
+	const std::vector<std::vector<CarControls>>& applied, bool& restoredFaithful) {
+	Arena* replay = Restore(clientAtUpdate);
+	for (const std::vector<CarControls>& tick : applied) {
+		int i = 0;
+		for (Car* car : replay->GetCars())
+			car->controls = tick[i++];
+		replay->Step();
+	}
+	restoredFaithful = NetVisibleState(replay) == NetVisibleState(client);
+	delete replay;
+	if (!restoredFaithful)
+		return Divergence::UNEXPLAINED;
+	Arena* again = Restore(serverAtUpdate);
+	Arena* boxed = Restore(clientAtUpdate);
+	CopyBoxes(again, boxed);
+	bool boxCaused = ContinuesAlike(again, boxed, applied);
+	delete again;
+	delete boxed;
+	if (boxCaused)
+		return Divergence::BOXES;
+	again = Restore(serverAtUpdate);
+	Arena* atUpdate = Restore(serverAtUpdate);
+	Arena* hybrid = WithServerContacts(clientAtUpdate, atUpdate);
+	bool contactCaused = ContinuesAlike(again, hybrid, applied);
+	delete again;
+	delete atUpdate;
+	delete hybrid;
+	return contactCaused ? Divergence::CONTACTS : Divergence::UNEXPLAINED;
+}
+
+// The gate's verdict: an update not applied exactly, a compact check failed, a divergence neither excuse explains, or
+// more excused runs than allowed
+static int GateFailures(int exactFailures, int compactFailures, int unexplained, int boxRuns, int touchingRuns, int continued) {
+	return exactFailures + compactFailures + unexplained + std::max(0, boxRuns - BoxRunsAllowed(continued)) +
+		std::max(0, touchingRuns - BoxRunsAllowed(continued));
+}
+
+// The verdict's own check (RV-433: nothing tied the unexplained count to the exit code, nor anything but the bound to
+// dropped contacts). Each count alone fails it; and a client given a state the update doesn't carry but the snapshot
+// keeps (car 0's angular velocity nudged 2 s into a 2v2: RX16's fault F3), continued beside the server, diverges
+// unexplained
+static int VerdictChecks(int window) {
+	int failures = 0;
+	const int n = 100, allowed = BoxRunsAllowed(n);
+	if (GateFailures(0, 0, 0, allowed, allowed, n) != 0 || !GateFailures(1, 0, 0, 0, 0, n) || !GateFailures(0, 1, 0, 0, 0, n) ||
+		!GateFailures(0, 0, 1, 0, 0, n) || !GateFailures(0, 0, 0, allowed + 1, 0, n) || !GateFailures(0, 0, 0, 0, allowed + 1, n)) {
+		printf("netstate verdict: a count alone doesn't decide it\n");
+		failures++;
+	}
+	Arena* server = Arena::Create(GameMode::SOCCAR);
+	for (int i = 0; i < 4; i++)
+		server->AddCar(i < 2 ? Team::BLUE : Team::ORANGE, i % 2 ? CAR_CONFIG_DOMINUS : CAR_CONFIG_OCTANE);
+	server->ResetToRandomKickoff(7);
+	for (int t = 0; t < 240; t++) {
+		if (t % 8 == 0)
+			ScriptInputs(server);
+		server->Step();
+	}
+	std::vector<uint8_t> serverAtUpdate = Snapshot(server);
+	delete server;
+	Arena* again = Restore(serverAtUpdate);
+	Arena* client = Restore(serverAtUpdate);
+	btRigidBody& nudged = (*client->GetCars().begin())->_rigidBody;
+	nudged.setAngularVelocity(nudged.getAngularVelocity() + btVector3(1e-4f, 0, 0));
+	std::vector<uint8_t> clientAtUpdate = Snapshot(client);
+	std::vector<std::vector<CarControls>> applied;
+	bool identical = true;
+	for (int t = 0; t < window; t++) {
+		if (t % 8 == 0)
+			ScriptInputs(again);
+		applied.emplace_back();
+		for (Car* car : again->GetCars()) {
+			client->GetCar(car->id)->controls = car->controls;
+			applied.back().push_back(car->controls);
+		}
+		again->Step();
+		client->Step();
+		identical = identical && NetVisibleState(client) == NetVisibleState(again);
+	}
+	bool restoredFaithful = false;
+	Divergence why = identical ? Divergence::BOXES : Classify(serverAtUpdate, clientAtUpdate, client, applied, restoredFaithful);
+	if (identical || why != Divergence::UNEXPLAINED || !GateFailures(0, 0, why == Divergence::UNEXPLAINED, 0, 0, n)) {
+		printf("netstate verdict: a client with state the update doesn't carry %s\n",
+			identical ? "continued identical" : why == Divergence::UNEXPLAINED ? "passed the verdict" : "was excused");
+		failures++;
+	}
+	delete again;
+	delete client;
+	return failures;
 }
 
 static float MaxPositionDifference(Arena* a, Arena* b) {
@@ -641,6 +744,8 @@ int main(int argc, char** argv) {
 		maxBytes = std::max(maxBytes, update.data.size());
 		DataStreamIn in;
 		in.data = update.data;
+		DataStreamOut contactsBefore;
+		client->_SerializeContacts(contactsBefore);
 		if (!NetState::Read(client, in)) {
 			printf("tick %d: the update did not apply\n", tick);
 			exactFailures++;
@@ -650,6 +755,14 @@ int main(int argc, char** argv) {
 		}
 		if (NetVisibleState(client) != NetVisibleState(server)) {
 			printf("tick %d: after the update the client's state differs from the server's\n", tick);
+			exactFailures++;
+		}
+		// (the update carries no contacts and leaves the client's own as they were, as the game's does: dropped, they'd be
+		// excused by the contacts' 2% bound alone, RV-433)
+		DataStreamOut contactsAfter;
+		client->_SerializeContacts(contactsAfter);
+		if (contactsAfter.data != contactsBefore.data) {
+			printf("tick %d: the update changed the client's persistent contacts\n", tick);
 			exactFailures++;
 		}
 
@@ -674,41 +787,11 @@ int main(int argc, char** argv) {
 			if (identical && NetVisibleState(client) != NetVisibleState(server))
 				identical = false;
 		}
-		// Diverged: the same run with the server's stored boxes copied into the client. Identical then, the boxes did it:
-		// a network state carries none, as the game's doesn't, so the client's wheel rays may pick other candidates than
-		// the server's (a game-faithful misprediction, RV-369); counted on its own, a few allowed
-		// (and the client with the server's persistent contacts: identical then, the contacts did it, RV-387). Either
-		// excuse holds only if the client as restored, run alone with the same inputs, ends where the live client did: a
-		// state the snapshot misses can't hide behind them (RV-412)
-		bool boxCaused = false, contactCaused = false, restoredFaithful = false;
-		if (!identical) {
-			Arena* replay = Restore(clientAtUpdate);
-			for (const std::vector<CarControls>& tick : applied) {
-				int i = 0;
-				for (Car* car : replay->GetCars())
-					car->controls = tick[i++];
-				replay->Step();
-			}
-			restoredFaithful = NetVisibleState(replay) == NetVisibleState(client);
-			delete replay;
-		}
-		if (!identical && restoredFaithful) {
-			Arena* again = Restore(serverAtUpdate);
-			Arena* boxed = Restore(clientAtUpdate);
-			CopyBoxes(again, boxed);
-			boxCaused = ContinuesAlike(again, boxed, applied);
-			delete again;
-			delete boxed;
-		}
-		if (!identical && restoredFaithful && !boxCaused) {
-			Arena* again = Restore(serverAtUpdate);
-			Arena* atUpdate = Restore(serverAtUpdate);
-			Arena* hybrid = WithServerContacts(clientAtUpdate, atUpdate);
-			contactCaused = ContinuesAlike(again, hybrid, applied);
-			delete again;
-			delete atUpdate;
-			delete hybrid;
-		}
+		// Diverged: by the client's stored boxes or its persistent contacts alone (counted on their own, a few allowed), or
+		// otherwise (Classify)
+		bool restoredFaithful = false;
+		Divergence why = identical ? Divergence::BOXES : Classify(serverAtUpdate, clientAtUpdate, client, applied, restoredFaithful);
+		bool boxCaused = !identical && why == Divergence::BOXES, contactCaused = !identical && why == Divergence::CONTACTS;
 		continued++;
 		float compactDrift = MaxPositionDifference(server, drifted);
 		compactIdentical += compactDrift == 0;
@@ -754,8 +837,8 @@ int main(int argc, char** argv) {
 		"%d failed; the drifted client after %d ticks: identical %d, worst drift %.3f uu\n",
 		checks, checks ? compactTotal / checks : 0, compactMax, checks ? compactCarsOnly / checks / 4 : 0, compactFailures, window,
 		compactIdentical, compactWorstDrift);
-	int failures = exactFailures + compactFailures + unexplained + std::max(0, boxRuns - BoxRunsAllowed(continued)) +
-		std::max(0, touchingRuns - BoxRunsAllowed(continued));
+	int failures = GateFailures(exactFailures, compactFailures, unexplained, boxRuns, touchingRuns, continued) +
+		VerdictChecks(window);
 	printf(failures ? "netstate: FAILED\n" : "netstate: ok\n");
 	delete server;
 	return failures ? 1 : 0;

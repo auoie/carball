@@ -1,11 +1,18 @@
 // The browser storage's keys were named "rl-clone.*" until 2026-10-15; shipped files say carball now (the user's
 // decision). At start, once, each old key still there moves to its new name, so a player keeps their settings, their
 // last playlist and their browser key (and a tab's claim or notice in flight).
+// Limits (RV-425): a copy that doesn't fit the store (full) leaves the old key and that load gets the defaults; once
+// the new name has a value (any save), the old one is dropped unread. A tab of an older page still open writes the old
+// names after the move, and that write is lost. A page from before the move (an image rolled back) reads only the old
+// names: it sees the defaults and makes a new browser key, and what it saves is dropped when the newer page returns
+// (the new names win).
 
 type Store = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
 /** The keys that moved: the old name's suffix is the new name's */
 const MOVED = ["settings.v1", "playlist", "browserKey", "playerKey", "claim", "menuNotice"] as const;
+/** Old keys nothing reads any more, removed: a development build's server address (150e1e6..98b4b57) */
+const DROPPED = ["server"] as const;
 const OLD_PREFIX = "rl-clone.";
 const NEW_PREFIX = "carball.";
 
@@ -22,6 +29,13 @@ export function migrateStorageKeys(store: Store | null): number {
       moved++;
     } catch {
       // (storage blocked or full: the old key stays, the defaults apply)
+    }
+  }
+  for (const suffix of DROPPED) {
+    try {
+      store.removeItem(OLD_PREFIX + suffix);
+    } catch {
+      // (storage blocked: it stays)
     }
   }
   return moved;

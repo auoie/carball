@@ -47,7 +47,7 @@ CarState Car::GetState() {
 
 	// RL PATCH: wheel values carried into the next tick
 	for (int i = 0; i < _bulletVehicle.m_wheelInfo.size() && i < 4; i++) {
-		const btWheelInfoRL& wheel = _bulletVehicle.m_wheelInfo[i];
+		const btWheelInfoCarball& wheel = _bulletVehicle.m_wheelInfo[i];
 		// (a wheel's normal only matters while it touches something: otherwise a fixed one, so equal states compare equal)
 		bool contact = wheel.m_raycastInfo.m_isInContact;
 		_internalState.wheelCarry.wheels[i] = {
@@ -114,7 +114,7 @@ void Car::SetState(const CarState& state) {
 
 	// RL PATCH: wheel values carried into the next tick
 	for (int i = 0; i < _bulletVehicle.m_wheelInfo.size() && i < 4; i++) {
-		btWheelInfoRL& wheel = _bulletVehicle.m_wheelInfo[i];
+		btWheelInfoCarball& wheel = _bulletVehicle.m_wheelInfo[i];
 		const CarState::WheelCarry& carry = state.wheelCarry.wheels[i];
 		wheel.m_steerAngle = carry.steerAngle;
 		wheel.m_engineForce = carry.engineForce;
@@ -496,9 +496,9 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
 	{ // Set up actual vehicle stuff
 		_bulletVehicleRaycaster = btDefaultVehicleRaycaster(bulletWorld);
 
-		btVehicleRL::btVehicleTuning tuning = btVehicleRL::btVehicleTuning();
+		btVehicleCarball::btVehicleTuning tuning = btVehicleCarball::btVehicleTuning();
 
-		_bulletVehicle = btVehicleRL(tuning, &_rigidBody, &_bulletVehicleRaycaster, bulletWorld, extraCollisionMask);
+		_bulletVehicle = btVehicleCarball(tuning, &_rigidBody, &_bulletVehicleRaycaster, bulletWorld, extraCollisionMask);
 
 		// Match RL with X forward, Y right, Z up
 		_bulletVehicle.setCoordinateSystem(1, 2, 0);
@@ -540,7 +540,7 @@ void Car::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const Mu
 				{ // Fix wheel info data
 					using namespace RLConst::BTVehicle;
 
-					btWheelInfoRL& wheelInfo = _bulletVehicle.m_wheelInfo[i];
+					btWheelInfoCarball& wheelInfo = _bulletVehicle.m_wheelInfo[i];
 					wheelInfo.m_suspensionStiffness = SUSPENSION_STIFFNESS;
 					wheelInfo.m_wheelsDampingCompression = WHEELS_DAMPING_COMPRESSION;
 					wheelInfo.m_wheelsDampingRelaxation = WHEELS_DAMPING_RELAXATION;

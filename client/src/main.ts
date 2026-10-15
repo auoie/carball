@@ -82,7 +82,7 @@ async function main(): Promise<void> {
   warmup.step(240);
   warmup.dispose();
 
-  // ?server=host:infoPort (or just ?server: this host, port 4434) plays online against an rl-server
+  // ?server=host:infoPort (or just ?server: this host, port 4434) plays online against a carball-server
   const params = new URLSearchParams(location.search);
   // ?viewer=car: the car model alone on a turntable (for comparing it with the game's); &team=1: orange; &body=N: another
   // hitbox preset (the Octane's wears the Fennec where the dev server has it)

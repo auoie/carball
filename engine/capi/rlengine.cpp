@@ -34,7 +34,9 @@ extern "C" {
 
 int rl_init(const char* collision_mesh_dir) {
 	RocketSim::Init(collision_mesh_dir, true);
-	return 1;
+	// (no arena mesh, an empty folder or another layout: a failure now, not the first arena's throw, which a caller
+	// across the C boundary can't catch, RV-421)
+	return RocketSim::GetArenaCollisionShapes(GameMode::SOCCAR).empty() ? 0 : 1;
 }
 
 static void SetCallbacks(RLArena* a) {

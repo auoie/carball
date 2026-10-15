@@ -3,7 +3,7 @@
 # the sources under out/images/<TAG>-<time>/src, so nothing uncommitted or git-ignored (local-only data, a stray file
 # next to the meshes) gets in. There the engine's WebAssembly is built, then the client's production build and its
 # shipped-data check on what it built, then the server's release binary (no debug info, no build machine's paths:
-# RV-380); each image is built from a staging directory holding only what it ships. Needs docker (or podman as
+# RV-380, no game's names: RV-423); each image is built from a staging directory holding only what it ships. Needs docker (or podman as
 # `docker`), Emscripten (/usr/lib/emscripten, or EMSCRIPTEN_ROOT), cargo (offline: its registry cached) and the client's
 # installed packages (client/node_modules).
 #   scripts/build_images.sh [TAG]              (default: the commit's short hash)
@@ -71,6 +71,8 @@ cp "$SRC/server/docker/Dockerfile" "$STAGE/game/"
 paths=$(grep -a -c -E "$HOME|$R|/mnt/" "$STAGE/game/carball-server" || true)
 echo "build machine paths in the binary: $paths"
 [ "$paths" = 0 ] || { echo "the binary names the build machine's paths: not built"; exit 1; }
+# (the game image's files through the names guard too: its binary, meshes and Dockerfile, RV-423)
+(cd "$SRC/client" && SHIPPED_GAME_DIR="$STAGE/game" npx vitest run src/render/shippedNames.test.ts)
 
 echo "== the images"
 # (what each image was built from: the commit, or the working tree on it, RV-398)

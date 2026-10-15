@@ -22,7 +22,7 @@ typedef struct RLControls {
 
 enum { RL_EVENT_GOAL = 0, RL_EVENT_BUMP = 1, RL_EVENT_DEMO = 2 };
 
-/* Loads the arena collision meshes (a directory with arena/*.cmf). Call once. Returns 0 on failure. */
+/* Loads the arena collision meshes (a directory with arena/*.cmf). Call once. Returns 0 on failure: none loaded. */
 int rl_init(const char* collision_mesh_dir);
 
 RLArena* rl_arena_create(void);

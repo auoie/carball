@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { startServers } from "./serverProcesses";
 
-const LOGS = mkdtempSync(join(tmpdir(), "rl-server-logs-"));
+const LOGS = mkdtempSync(join(tmpdir(), "carball-server-logs-"));
 
 /** A port no one listens on now (the system's pick: concurrent runs don't clash, RV-350) */
 async function freePort(): Promise<number> {
@@ -33,7 +33,7 @@ describe("the browser tests' servers (RV-320)", () => {
 
   it("fails at once when a server's command doesn't exist (an error, no exit)", async () => {
     const start = Date.now();
-    await expect(startServers([{ name: "missing", command: "/nonexistent/rl-server", args: [], url: "http://127.0.0.1:9/never", reuse: false }], 60_000, LOGS)).rejects.toThrow(
+    await expect(startServers([{ name: "missing", command: "/nonexistent/carball-server", args: [], url: "http://127.0.0.1:9/never", reuse: false }], 60_000, LOGS)).rejects.toThrow(
       /missing server didn't start/,
     );
     expect(Date.now() - start).toBeLessThan(5000);

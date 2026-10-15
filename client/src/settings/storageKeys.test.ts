@@ -24,4 +24,12 @@ describe("the storage keys' new names (carball.*)", () => {
     expect(migrateStorageKeys(store), "once").toBe(0);
     expect(migrateStorageKeys(null)).toBe(0);
   });
+
+  it("drop the development server's old key, which nothing reads (RV-425)", () => {
+    const store = memory();
+    store.setItem("rl-clone.server", "localhost:4434");
+    store.setItem("carball.playlist", "1");
+    expect(migrateStorageKeys(store)).toBe(0);
+    expect(Object.fromEntries(store.map)).toEqual({ "carball.playlist": "1" });
+  });
 });

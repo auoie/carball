@@ -2080,7 +2080,7 @@ static void TestWheelRayCandidates() {
 	auto onLower = [](Car* upper, Car* lower) {
 		int n = 0;
 		for (int i = 0; i < upper->_bulletVehicle.getNumWheels(); i++) {
-			const btWheelInfoRL& w = upper->_bulletVehicle.m_wheelInfo[i];
+			const btWheelInfoCarball& w = upper->_bulletVehicle.m_wheelInfo[i];
 			n += w.m_raycastInfo.m_isInContact && w.m_raycastInfo.m_groundObject == &lower->_rigidBody;
 		}
 		return n;
@@ -2249,7 +2249,7 @@ static void TestCarOnCarRoof() {
 		btVector3 expected(0, 0, 0);
 		int onRoof = 0;
 		for (int i = 0; i < upper->_bulletVehicle.getNumWheels(); i++) {
-			const btWheelInfoRL& w = upper->_bulletVehicle.m_wheelInfo[i];
+			const btWheelInfoCarball& w = upper->_bulletVehicle.m_wheelInfo[i];
 			if (!w.m_raycastInfo.m_isInContact || w.m_raycastInfo.m_groundObject != &lower->_rigidBody)
 				continue;
 			onRoof++;
@@ -2310,7 +2310,7 @@ static void TestCarOnBall() {
 		btVector3 expected(0, 0, 0);
 		int onBall = 0;
 		for (int i = 0; i < car->_bulletVehicle.getNumWheels(); i++) {
-			const btWheelInfoRL& w = car->_bulletVehicle.m_wheelInfo[i];
+			const btWheelInfoCarball& w = car->_bulletVehicle.m_wheelInfo[i];
 			if (!w.m_raycastInfo.m_isInContact || w.m_raycastInfo.m_groundObject != &arena->ball->_rigidBody)
 				continue;
 			onBall++;

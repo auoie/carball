@@ -1,6 +1,6 @@
 // JavaScript bindings (embind) for the patched RocketSim engine.
 //
-//   import createEngine from "./rlengine.mjs";
+//   import createEngine from "./carball_engine.mjs";
 //   const engine = await createEngine();
 //   engine.init([new Uint8Array(cmfBytes)]);       // arena collision meshes (out/arena/...cmf)
 //   const sim = new engine.Sim();
@@ -21,7 +21,7 @@
 using namespace RocketSim;
 using emscripten::val;
 
-// Typed JS values, so the generated rlengine.d.ts has real types instead of `any`
+// Typed JS values, so the generated carball_engine.d.mts has real types instead of `any`
 EMSCRIPTEN_DECLARE_VAL_TYPE(Float32ArrayVal);
 EMSCRIPTEN_DECLARE_VAL_TYPE(Int32ArrayVal);
 EMSCRIPTEN_DECLARE_VAL_TYPE(Uint8ArrayVal);
@@ -342,7 +342,7 @@ public:
 			int worldWheels = 0, ballWheels = 0;
 			std::map<uint32_t, int> carWheels; // car id -> wheels on it
 			for (int i = 0; i < car->_bulletVehicle.getNumWheels() && i < 4; i++) {
-				const btWheelInfoRL& w = car->_bulletVehicle.m_wheelInfo[i];
+				const btWheelInfoCarball& w = car->_bulletVehicle.m_wheelInfo[i];
 				auto* ground = (const btCollisionObject*)w.m_raycastInfo.m_groundObject;
 				float kind = 0;
 				if (w.m_raycastInfo.m_isInContact && ground) {

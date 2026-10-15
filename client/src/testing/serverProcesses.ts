@@ -28,7 +28,7 @@ async function answers(url: string): Promise<boolean> {
 export async function startServers(servers: readonly Server[], timeoutMs: number, logDir: string): Promise<() => Promise<void>> {
   mkdirSync(logDir, { recursive: true });
   const started: { readonly name: string; readonly child: ChildProcess; readonly exited: Promise<void>; done: boolean }[] = [];
-  // (each server's whole group: npx's vite, cargo's rl-server)
+  // (each server's whole group: npx's vite, cargo's carball-server)
   const signal = (name: NodeJS.Signals): void => {
     for (const s of started) {
       if (s.child.pid !== undefined && !s.done) {

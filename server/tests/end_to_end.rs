@@ -575,10 +575,13 @@ async fn the_binarys_healthcheck_answers_by_the_health_endpoint() {
     tokio::spawn(net::serve_health(live, beat.clone(), start));
     tokio::time::sleep(Duration::from_millis(200)).await;
     beat.store(start.elapsed().as_millis() as u64, std::sync::atomic::Ordering::Relaxed);
+    // (beside settings the server itself would refuse, a queue without a certificate or origins: the check reads only
+    // the health port, RV-399, RV-429)
     let check = |port: u16| {
         std::process::Command::new(env!("CARGO_BIN_EXE_carball-server"))
             .args(["--healthcheck", "--health-port", &port.to_string()])
             .env_remove("HEALTH_PORT")
+            .envs([("SERVER_MODE", "queue"), ("CERT_PATH", ""), ("KEY_PATH", ""), ("ALLOWED_ORIGIN", "")])
             .status()
             .unwrap()
             .code()
@@ -587,4 +590,39 @@ async fn the_binarys_healthcheck_answers_by_the_health_endpoint() {
     assert_eq!(tokio::task::spawn_blocking(move || check(live)).await.unwrap(), Some(0));
     assert_eq!(tokio::task::spawn_blocking(move || check(dead)).await.unwrap(), Some(1));
     assert!(at.elapsed() < Duration::from_secs(5), "{:?}", at.elapsed());
+}
+
+/// A meshes folder without arena/*.cmf (empty, or the layout before the rename: soccar/) is refused at startup, the
+/// folder named, not taken for a healthy server whose first match aborts the process (RV-421)
+#[test]
+fn the_binary_refuses_a_meshes_folder_without_arena_meshes() {
+    let meshes = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../out/arena/collision_meshes/arena"));
+    let any_mesh = std::fs::read_dir(meshes).unwrap().map(|e| e.unwrap().path()).find(|p| p.extension().is_some_and(|x| x == "cmf")).unwrap();
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join("meshes_layouts");
+    let (empty, old) = (root.join("empty"), root.join("old"));
+    std::fs::create_dir_all(&empty).unwrap();
+    std::fs::create_dir_all(old.join("soccar")).unwrap();
+    std::fs::copy(&any_mesh, old.join("soccar").join(any_mesh.file_name().unwrap())).unwrap();
+    for dir in [&empty, &old] {
+        let mut server = std::process::Command::new(env!("CARGO_BIN_EXE_carball-server"))
+            .args(["--dev", "--mode", "direct", "--port", "0", "--dev-info", "off", "--health-port", "0", "--meshes"])
+            .arg(dir)
+            .env_remove("MESHES_DIR")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        // (a server that started anyway is stopped, the test failed, not left running)
+        let at = Instant::now();
+        while server.try_wait().unwrap().is_none() && at.elapsed() < Duration::from_secs(10) {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        if server.try_wait().unwrap().is_none() {
+            server.kill().unwrap();
+        }
+        let out = server.wait_with_output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{}: {stderr}", dir.display());
+        assert!(stderr.contains("no arena collision meshes (arena/*.cmf) in") && stderr.contains(&*dir.to_string_lossy()), "{stderr}");
+    }
 }

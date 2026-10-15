@@ -134,7 +134,12 @@ pub fn init(collision_mesh_dir: &Path) -> anyhow::Result<()> {
         }
         let dir = CString::new(collision_mesh_dir.to_string_lossy().as_bytes()).map_err(|e| e.to_string())?;
         // SAFETY: a valid C string; the engine copies what it needs
-        if unsafe { rl_init(dir.as_ptr()) } == 0 { Err("engine init failed".into()) } else { Ok(()) }
+        // (none loaded, an empty folder or another layout: refused at startup, not the first match's abort, RV-421)
+        if unsafe { rl_init(dir.as_ptr()) } == 0 {
+            Err(format!("no arena collision meshes (arena/*.cmf) in {}", collision_mesh_dir.display()))
+        } else {
+            Ok(())
+        }
     })
     .clone()
     .map_err(|e| anyhow::anyhow!(e))

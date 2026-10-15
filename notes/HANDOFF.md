@@ -114,7 +114,7 @@ and the arena meshes are shared by every arena, so the tests' arenas on several 
 computes the meshes' box each time (rl_patch_tests TestSharedMeshBoxNotCached). The rest of that flake (RX12's RV-356):
 RocketSim's init raced when tests on several threads each called it; `engine::init` now runs it once a process.
 **FP2, 2026-10-15** (the wheel rays' candidates, notes/bullet-diff.md AB1; protocol 18): engine patch 107. The rays test
-only the bodies whose stored broadphase box overlaps the box around all of a car's rays (`btVehicleRL::findRayCandidates`,
+only the bodies whose stored broadphase box overlaps the box around all of a car's rays (`btVehicleCarball::findRayCandidates`,
 at most 32), at their current transform; a body teleported since the last step is seen only if its old box overlaps (a
 tick later otherwise), as in the game; a new spawn (spawn counter moved) gets its box at once (`Sim/CreatedBox.h`), also
 when the network state applies a placement; snapshots carry the ball's and cars' boxes (copies exact). Checks: the
@@ -198,6 +198,26 @@ one (RV-412); the names guard splits camelCase and digit compounds (RV-413); the
 with `grep -a` (RV-414). Tests: the no-show scenario over IPv4 and IPv6 end to end (network:true on the wire after two
 keys), the binary's `--healthcheck`, the queue's C4/C11/C12/C18. Post-launch: RV-411 (griefing a shared address from
 inside it).
+**RX16 (RV-419..433), 2026-10-15** (the renames reviewed): the last "RL" names in shipped files went (the user's
+decision on RV-420): RocketSim's vehicle classes are `btVehicleCarball` and `btWheelInfoCarball` (their files keep
+RocketSim's names, `Sim/btVehicleRL/btVehicleRL.h/.cpp`, so the patch diff stays a diff; C++ type names ship in the
+WebAssembly and the binary, file names don't), and the `.cmf` body-offset trailer's magic is "CBOF" (RV-419: the 4
+goal meshes regenerated, 2 bytes each; the local cooked goal meshes patched alike, the originals in
+`out/arena_local/rlof_backup/`), and the client's `RL_DOME` (fog) is `SKY_DOME`. Physics unchanged (det hashes as before). A meshes folder without `arena/*.cmf` (empty, or the old
+`soccar/` layout) stops the server at start naming it (`rl_init` returns 0 when no arena mesh loaded; before, the
+first match threw across the C boundary and aborted the process: RV-421). The contract lists the renamed interface
+(`SERVER_MODE`, `/app/carball-server`, `arena/`: RV-422), publishes the game port on IPv4 alone and says where the
+server's flags go (RV-432), and what rolling the web image back past the storage rename does (RV-425; the old dev key
+`rl-clone.server` is removed). The names guard (RV-423, RV-424): the modes Rumble, Gridiron, Knockout, Spike Rush; the
+abbreviation case-sensitive (rl-…, rl_…, RL_…, "RL …", rlUI, RLOF, window.rl, a type name's btVehicleRL; not a minifier's `rl`, URL, RLIMIT or
+RLEDecoder); distinctive names inside any word (OCTANEBODY); file names; binaries by their printable runs; the old
+keys' prefix in `settings/storageKeys.ts` alone and once in dist; and the image build runs it on the game image's
+files (`SHIPPED_GAME_DIR`; rustls's `hybrid_component` allowed). The web start script checks ports (1–65535) and
+host labels and rebuilds the extra sources one space apart (RV-430); the default `config.json` is written at build
+(RV-431). The queue's full stall records drop the oldest address from an arrival-ordered list, no scan (RV-428).
+netstate: the update must leave the client's persistent contacts as they were, and the verdict checks itself (each
+count alone fails it; a client with an F3-style hidden change diverges unexplained: RV-433). The sky noise test
+times its thread's CPU (RV-427).
 **The browser tests' servers** start from `client/e2e/servers.ts` (Playwright's globalSetup), not its webServer: here a
 connection to a closed 127.0.0.1 port is dropped, not refused, and Playwright's pre-check of each server's URL waited
 2 min 14 s per server (9 of the suite's 12 minutes).
@@ -1002,7 +1022,7 @@ python3 replay_pull.py ../out/replays && replay_extract/target/release/replay_ex
   Type check and unit tests after each change; the full build and e2e (5–8 min) once at the end of a batch.
 - Emscripten: `PATH=/usr/lib/emscripten:$PATH` (not on PATH in non-login shells). Bindings generate TS types
   (`--emit-tsd *.d.mts`; typed arrays via `EMSCRIPTEN_DECLARE_VAL_TYPE`). After changing `engine/wasm/bindings.cpp`,
-  rebuild `engine/build-wasm` (targets `rlengine`, `carball_engine_web`) before running the client.
+  rebuild `engine/build-wasm` (targets `rlengine`, `rlengine_web`: outputs `carball_engine*`) before running the client.
 - Determinism pitfalls (native vs WebAssembly): platform libm (fixed: `engine/detmath`), Bullet SSE paths (fixed:
   `BT_DISABLE_SIMD`), `std::` random distributions/shuffle/`default_random_engine`, function-argument evaluation
   order, uninitialized fields. Never `-ffast-math`.

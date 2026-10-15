@@ -221,7 +221,7 @@ public:
 		bool valid = false;
 	} _respawnSpot;
 
-	btVehicleRL _bulletVehicle;
+	btVehicleCarball _bulletVehicle;
 	btDefaultVehicleRaycaster _bulletVehicleRaycaster;
 	btRigidBody _rigidBody;
 	// RL PATCH: the XY lock while the car isn't driving (the kickoff countdown) or is on the podium (Car_TA's per-tick

@@ -350,7 +350,7 @@ surround differ.
     at the scenario re-placement ticks), and 65/65 recorded car–mesh points are exact.
   - The generated meshes stay inexact on ill-conditioned ticks (their vertices are bit-exact for only 4–22 % of
     coordinates), but the origin fix still applies.
-  - Fix: scripts/arena_gen.py should write the RLOF offset as float32(float32(float32(float32(c)·0.02f)·50f)·0.02f).
+  - Fix: scripts/arena_gen.py should write the CBOF (formerly RLOF, renamed 2026-10-15) offset as float32(float32(float32(float32(c)·0.02f)·50f)·0.02f).
     The −y halves are assumed symmetric (−0x42CCCCCB); confirm with a −y goal-surround recording.
 - **Car hitbox child origin (2026-10-09, sub-agent CHO1):** the uu value is the asset float
   `HandlingPresets.Physics.Physics_<preset>.RB_BodySetup.AggGeom.BoxElems[0].TM` (Startup.upk). The game converts it

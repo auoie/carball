@@ -12,9 +12,17 @@ the hosting side's (not here).
 Docker's default bridge (`-p 4433:4433/udp`), IPv6 clients reach the server through Docker's userland proxy, so the
 server would see every IPv6 player as one address (the bridge's gateway): one address's limits (8 at once, 30 a minute)
 for all of them, and two no-shows anywhere on IPv6 blocking them all. IPv4 keeps each client's real address. Deploy
-check: `dig AAAA game.carball.zolt.top` returns nothing. To serve IPv6 later, run the game container with
-`--network host` (it then sees real addresses; no `-p` mapping or network isolation, and UDP 4433 and 127.0.0.1:8081
-must be free on the host), then add the AAAA record.
+check: `dig AAAA game.carball.zolt.top` returns nothing. The example below publishes the port on IPv4 alone
+(`-p 0.0.0.0:4433:4433/udp`), so nothing reaches it over IPv6 even by mistake. To serve IPv6 later, run the game
+container with `--network host` (it then sees real addresses; no `-p` mapping or network isolation: it shares the host's
+loopback too, so its health endpoint is the host's 127.0.0.1:8081 and it can reach the host's loopback services; UDP 4433
+and 127.0.0.1:8081 must be free on the host), then add the AAAA record.
+
+**Renamed in 48388aa** (a deployment set up before it: check its files, RV-422). The mode variable `RL_MODE` is now
+`SERVER_MODE`, and the old name is ignored: `RL_MODE=direct` starts the queue. The binary `/app/rl-server` is
+`/app/carball-server` (an `--entrypoint` or health check naming the old path fails). The meshes folder is
+`collision_meshes/arena/` (was `soccar/`): a `MESHES_DIR` of one's own without `arena/*.cmf` stops the server at start,
+naming the folder (RV-421).
 
 ## Build, export, push
 
@@ -37,14 +45,16 @@ docker tag carball-web:TAG REGISTRY/carball-web:TAG && docker push REGISTRY/carb
 docker tag carball-game:TAG REGISTRY/carball-game:TAG && docker push REGISTRY/carball-game:TAG
 ```
 Client and server must come from the same commit (the protocol version is checked at the handshake: an older page is
-refused with a message).
+refused with a message). Rolling the web image back to before 48388aa (the browser storage's keys renamed, moved over
+once by the newer page) shows players the default settings and gives them a new browser key on the older page, and what
+they change there is lost when the newer page returns (RV-425; `client/src/settings/storageKeys.ts`).
 
 ## carball-web
 
 | Env | Default | |
 |---|---|---|
 | `GAME_SERVER_URL` | `https://game.carball.zolt.top:4433/play` | the game server's WebTransport URL; written into `/config.json` at start (`https://HOST[:PORT]/PATH`, else the container exits), and its origin is the page's only `connect-src` besides its own |
-| `EXTRA_CONNECT_SRC` | (none) | testing only: more `connect-src` sources (e.g. `http://127.0.0.1:14503 https://127.0.0.1:14502` for a development server's info and port); space-separated `SCHEME://HOST[:PORT]` (http, https, ws, wss; the port a number or `*`), else the container exits. `GAME_SERVER_URL` likewise allows only letters, digits and `. - _ ~ /` after `https://`, one line |
+| `EXTRA_CONNECT_SRC` | (none) | testing only: more `connect-src` sources (e.g. `http://127.0.0.1:14503 https://127.0.0.1:14502` for a development server's info and port); space-separated `SCHEME://HOST[:PORT]` (http, https, ws, wss; the port 1–65535 or `*`), else the container exits. `GAME_SERVER_URL` likewise allows only letters, digits and `. - _ ~ /` after `https://`, one line |
 
 - **Port:** 3000/tcp, plain HTTP. `/assets/*` (hashed names) cached for a year, the rest `no-cache`, `/config.json`
   `no-store`; unknown paths serve `index.html`. Every response carries `X-Content-Type-Options: nosniff`,
@@ -53,10 +63,10 @@ refused with a message).
   trailing slash), so nothing names the container's port behind the tunnel. The third-party notices are at
   `/THIRD_PARTY_NOTICES.txt`.
 - **User:** nginx runs unprivileged (uid 101, nginx 1.30, the stable line). The site and all of `/etc/nginx` are root's,
-  read-only to it; it writes `/config.json` and the policy (`/etc/nginx/carball-csp.conf`, a strict one for the default
-  `GAME_SERVER_URL` baked in at build, so a container started without the entrypoint still sends one) at start, and its
-  pid and buffers under `/tmp` and `/var/cache/nginx`. (The base image's `EXPOSE 8080` stays in its metadata: the server listens
-  on 3000 only.)
+  read-only to it; it writes `/config.json` and the policy (`/etc/nginx/carball-csp.conf`; both baked in at build for the
+  default `GAME_SERVER_URL`, so a container started without the entrypoint still has them) at start, and its pid and
+  buffers under `/tmp` and `/var/cache/nginx`. The root filesystem must be writable (`--read-only` stops it: the start
+  can't write those two files). (The base image's `EXPOSE 8080` stays in its metadata: the server listens on 3000 only.)
 - **Labels:** `org.opencontainers.image.title`, `.revision` (the commit) and `.version` (the tag), and `carball.source`:
   `commit`, or `worktree` for an image built with `--worktree` (both images).
 - **Volumes:** none.
@@ -77,7 +87,7 @@ refused with a message).
 | `KEY_PATH` | `/certs/privkey.pem` | its private key (PEM); a key that isn't the certificate's is refused (the old pair stays, tried again) |
 | `SERVER_MODE` | `queue` | `queue`: the 1v1 / 2v2 / 3v3 queue (searches and claims only); `direct`: one open match (development) |
 | `HEALTH_PORT` | `8081` | the health endpoint, on 127.0.0.1 inside the container only |
-| `MESHES_DIR` | `/app/collision_meshes` | the arena's collision meshes (in the image) |
+| `MESHES_DIR` | `/app/collision_meshes` | the arena's collision meshes (in the image): a folder holding `arena/*.cmf`, else the server refuses to start |
 
 A development run of the image takes `--dev`: a self-signed certificate made at start whatever `CERT_PATH` and `KEY_PATH`
 say, pinned by the page through the info endpoint (the info reports the game port inside the container, so publish it as
@@ -104,7 +114,7 @@ the same port): `docker run --rm -e GAME_PORT=14502 -p 127.0.0.1:14502:14502/udp
   match: a panic inside one ends only that match) or the engine aborts.
 - **Stop:** SIGTERM or SIGINT ends it at once; the matches in progress end with it.
 - **Limits it enforces:** a client proves its address (a QUIC Retry) before it takes a slot; 512 sessions at once; per
-  client address (an IPv6 one by its /64) 8 at once and 30 new a minute (a large carrier NAT or NAT64 exit can hold more players than that: RV-418, raise `--max-per-address` if they're refused); 4 s for the QUIC handshake, 10 s through the
+  client address (an IPv6 one by its /64) 8 at once and 30 new a minute (a large carrier NAT or NAT64 exit can hold more players than that: RV-418, raise `--max-per-address` if they're refused; it is a flag, given after the image name in `docker run`); 4 s for the QUIC handshake, 10 s through the
   hello; 240 input packets and 20 control messages a second per session (more are dropped; a session that keeps
   flooding either is closed); QUIC: 4 streams each way, small receive windows.
 - **The queue's no-shows:** a found match waits 12 s for its players to claim their slots; cancelled for someone (a
@@ -122,7 +132,9 @@ the same port): `docker run --rm -e GAME_PORT=14502 -p 127.0.0.1:14502:14502/udp
 
 Both images built from `scripts/build_images.sh`. Web: `/healthz` 200, `/config.json` from `GAME_SERVER_URL` (no-store),
 the hashed assets cached and gzipped, the engine served as `application/wasm`, unknown paths `index.html`, a non-https
-`GAME_SERVER_URL` exits the container (status 1), HEALTHCHECK healthy. Game: starts with a certificate mounted read-only at
+`GAME_SERVER_URL` exits the container (status 1), as do a port outside 1–65535 or a malformed host (RV-430); started
+without the entrypoint it still has the default `config.json` and policy (RV-431); HEALTHCHECK healthy. Game: a
+`MESHES_DIR` without `arena/*.cmf` exits it (status 1, the folder named: RV-421); starts with a certificate mounted read-only at
 `/certs` as uid 10001, `--healthcheck` exits 0, HEALTHCHECK healthy, replacing the mounted files and SIGHUP each reload
 the certificate with the server running, `docker stop` ends it in ~0.65 s (SIGTERM). Two pages from the web image on the
 host found a 1v1 through a game container over UDP (development mode: a publicly trusted certificate can't be made
@@ -133,6 +145,7 @@ locally, see `CERT_PATH`).
 ```sh
 docker run -d --name carball-web --restart unless-stopped -p 127.0.0.1:3000:3000 \
   -e GAME_SERVER_URL=https://game.carball.zolt.top:4433/play carball-web:TAG
-docker run -d --name carball-game --restart unless-stopped -p 4433:4433/udp \
+docker run -d --name carball-game --restart unless-stopped -p 0.0.0.0:4433:4433/udp \
   -v /path/to/certs:/certs:ro carball-game:TAG
+# the server's flags go after the image name, e.g. carball-game:TAG --max-per-address 16
 ```
