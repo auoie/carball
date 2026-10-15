@@ -4,10 +4,23 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
+
 use rl_server::engine::{self, Arena};
+use rl_server::net::NetLimits;
 use rl_server::protocol::{self, Control, Datagram, InputFrame};
 use rl_server::{game_loop, net};
 use wtransport::{ClientConfig, Endpoint};
+
+/// The tests' clients all come from one address: no per-address limits
+fn open_limits() -> NetLimits {
+    NetLimits { per_address: 1000, per_address_per_minute: 100_000, ..NetLimits::default() }
+}
+
+fn heartbeat() -> Arc<AtomicU64> {
+    Arc::new(AtomicU64::new(0))
+}
 
 async fn read_control(recv: &mut wtransport::RecvStream) -> Control {
     let mut len = [0u8; 2];
@@ -32,8 +45,10 @@ async fn a_client_connects_drives_and_follows_the_world() {
             forfeit_vote_wait: None,
         }),
         None,
+        heartbeat(),
+        Instant::now(),
     ));
-    tokio::spawn(net::accept_loop(server, to_game));
+    tokio::spawn(net::accept_loop(Arc::new(server), to_game, open_limits()));
 
     let config = ClientConfig::builder()
         .with_bind_default()
@@ -128,7 +143,7 @@ async fn a_vanished_client_is_a_lost_connection_and_a_closed_one_left() {
     let server = Endpoint::server(config).unwrap();
     let port = server.local_addr().unwrap().port();
     let (to_game, mut messages) = tokio::sync::mpsc::channel(rl_server::game_loop::TO_GAME_QUEUE);
-    tokio::spawn(net::accept_loop(server, to_game));
+    tokio::spawn(net::accept_loop(Arc::new(server), to_game, open_limits()));
     let hello = Control::Hello {
         version: protocol::VERSION,
         team: 255,
@@ -237,8 +252,8 @@ async fn two_searches_make_a_match_their_tokens_claim() {
     let playlists = [1, 2, 3]
         .map(|team_size| rl_server::match_host::Playlist { team_size, match_type: rl_server::game::MatchType::Casual, forfeit_vote_wait: None })
         .to_vec();
-    std::thread::spawn(move || game_loop::run(messages, game_loop::Mode::Queue(playlists), None));
-    tokio::spawn(net::accept_loop(server, to_game));
+    std::thread::spawn(move || game_loop::run(messages, game_loop::Mode::Queue(playlists), None, heartbeat(), Instant::now()));
+    tokio::spawn(net::accept_loop(Arc::new(server), to_game, open_limits()));
 
     let (direct, ..) = first_reply(port, cert_hash, queue_hello(protocol::INTENT_JOIN, 0, 0)).await;
     assert_eq!(direct, Control::Refused { reason: protocol::REFUSED_MODE });
@@ -271,4 +286,107 @@ async fn two_searches_make_a_match_their_tokens_claim() {
     }
     teams.sort_unstable();
     assert_eq!(teams, vec![0, 1]);
+}
+
+/// A server that takes pages from one origin only, and few sessions from an address: another origin, or none, is
+/// forbidden; the third session at once from the address is refused (SEC-5, SEC-2)
+#[tokio::test(flavor = "multi_thread")]
+async fn other_origins_and_an_addresss_extra_sessions_are_refused() {
+    engine::init(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../out/arena/collision_meshes"))).unwrap();
+    let (identity, cert_hash) = net::dev_identity().unwrap();
+    let server = net::endpoint(identity, 0).unwrap();
+    let port = server.local_addr().unwrap().port();
+    let (to_game, messages) = tokio::sync::mpsc::channel(rl_server::game_loop::TO_GAME_QUEUE);
+    let playlist = rl_server::match_host::Playlist { team_size: 2, match_type: rl_server::game::MatchType::Casual, forfeit_vote_wait: None };
+    std::thread::spawn(move || game_loop::run(messages, game_loop::Mode::Direct(playlist), None, heartbeat(), Instant::now()));
+    let limits = NetLimits { per_address: 2, allowed_origins: Some(vec!["https://carball.zolt.top".into()]), ..NetLimits::default() };
+    tokio::spawn(net::accept_loop(Arc::new(server), to_game, limits));
+    let connect = |origin: Option<&'static str>| async move {
+        let config = ClientConfig::builder().with_bind_default().with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(cert_hash)]).build();
+        let mut options = wtransport::endpoint::ConnectOptions::builder(format!("https://localhost:{port}/play"));
+        if let Some(origin) = origin {
+            options = options.add_header("origin", origin);
+        }
+        Endpoint::client(config).unwrap().connect(options.build()).await
+    };
+    assert!(connect(None).await.is_err(), "no origin: forbidden");
+    assert!(connect(Some("https://evil.example")).await.is_err(), "another origin: forbidden");
+    let first = connect(Some("https://carball.zolt.top")).await.expect("the page's origin");
+    let second = connect(Some("https://carball.zolt.top")).await.expect("a second session from the address");
+    assert!(connect(Some("https://carball.zolt.top")).await.is_err(), "a third at once: refused");
+    drop((first, second));
+}
+
+/// A session that never opens its control stream is closed at the handshake's deadline (SEC-2); one that floods control
+/// messages is closed (SEC-3)
+#[tokio::test(flavor = "multi_thread")]
+async fn a_silent_session_times_out_and_a_flooding_one_is_closed() {
+    engine::init(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../out/arena/collision_meshes"))).unwrap();
+    let (identity, cert_hash) = net::dev_identity().unwrap();
+    let server = net::endpoint(identity, 0).unwrap();
+    let port = server.local_addr().unwrap().port();
+    let (to_game, messages) = tokio::sync::mpsc::channel(rl_server::game_loop::TO_GAME_QUEUE);
+    let playlist = rl_server::match_host::Playlist { team_size: 2, match_type: rl_server::game::MatchType::Casual, forfeit_vote_wait: None };
+    std::thread::spawn(move || game_loop::run(messages, game_loop::Mode::Direct(playlist), None, heartbeat(), Instant::now()));
+    let limits = NetLimits { handshake: Duration::from_secs(1), ..open_limits() };
+    tokio::spawn(net::accept_loop(Arc::new(server), to_game, limits));
+    let config = || ClientConfig::builder().with_bind_default().with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(cert_hash)]).build();
+
+    let silent = Endpoint::client(config()).unwrap().connect(format!("https://localhost:{port}/play")).await.unwrap();
+    let start = Instant::now();
+    let closed = tokio::time::timeout(Duration::from_secs(5), silent.closed()).await;
+    assert!(closed.is_ok(), "the silent session is still open after 5 s");
+    assert!(start.elapsed() < Duration::from_secs(3), "closed after {:?}", start.elapsed());
+
+    let flooder = Endpoint::client(config()).unwrap().connect(format!("https://localhost:{port}/play")).await.unwrap();
+    let (mut send, mut recv) = flooder.open_bi().await.unwrap().await.unwrap();
+    send.write_all(&queue_hello(protocol::INTENT_JOIN, 0, 0)).await.unwrap();
+    assert!(matches!(read_control(&mut recv).await, Control::Welcome { .. }));
+    let mute = Control::Mute { car: 1, on: true }.encode();
+    for _ in 0..400 {
+        if send.write_all(&mute).await.is_err() {
+            break;
+        }
+    }
+    let closed = tokio::time::timeout(Duration::from_secs(5), flooder.closed()).await;
+    assert!(closed.is_ok(), "the flooding session is still open");
+}
+
+/// A certificate reload keeps the sessions open now (their matches go on: updates keep coming) and gives new sessions
+/// the new certificate (APP-CONTRACT.md: reload on a file change or SIGHUP)
+#[tokio::test(flavor = "multi_thread")]
+async fn a_certificate_reload_keeps_open_sessions_and_serves_the_new_one() {
+    engine::init(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../out/arena/collision_meshes"))).unwrap();
+    let (identity, old_hash) = net::dev_identity().unwrap();
+    let server = Arc::new(net::endpoint(identity, 0).unwrap());
+    let port = server.local_addr().unwrap().port();
+    let (to_game, messages) = tokio::sync::mpsc::channel(rl_server::game_loop::TO_GAME_QUEUE);
+    let playlist = rl_server::match_host::Playlist { team_size: 2, match_type: rl_server::game::MatchType::Casual, forfeit_vote_wait: None };
+    std::thread::spawn(move || game_loop::run(messages, game_loop::Mode::Direct(playlist), None, heartbeat(), Instant::now()));
+    tokio::spawn(net::accept_loop(server.clone(), to_game, open_limits()));
+    let client = |hash: [u8; 32]| ClientConfig::builder().with_bind_default().with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(hash)]).build();
+
+    let connection = Endpoint::client(client(old_hash)).unwrap().connect(format!("https://localhost:{port}/play")).await.unwrap();
+    let (mut send, mut recv) = connection.open_bi().await.unwrap().await.unwrap();
+    send.write_all(&queue_hello(protocol::INTENT_JOIN, 0, 0)).await.unwrap();
+    assert!(matches!(read_control(&mut recv).await, Control::Welcome { .. }));
+
+    let (identity, new_hash) = net::dev_identity().unwrap();
+    server.reload_config(net::server_config(identity, port).unwrap(), false).unwrap();
+
+    // The open session: updates keep coming for a second after the reload
+    let until = Instant::now() + Duration::from_secs(1);
+    let mut updates = 0;
+    while Instant::now() < until {
+        if let Ok(Ok(d)) = tokio::time::timeout(Duration::from_millis(50), connection.receive_datagram()).await
+            && matches!(Datagram::decode(&d), Ok(Datagram::Update(_)))
+        {
+            updates += 1;
+        }
+    }
+    assert!(updates > 30, "{updates} updates after the reload");
+    // New sessions: the new certificate, not the old one
+    assert!(Endpoint::client(client(new_hash)).unwrap().connect(format!("https://localhost:{port}/play")).await.is_ok());
+    assert!(Endpoint::client(client(old_hash)).unwrap().connect(format!("https://localhost:{port}/play")).await.is_err());
+    drop(send);
 }

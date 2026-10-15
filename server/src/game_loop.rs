@@ -1,6 +1,8 @@
 //! The game loop thread: drains network messages, forms matches from the queue, and runs every match at 120 ticks per game
 //! second: 120 Hz, but for the slow motion after a goal (`Game::next_tick_seconds`), each match on its own clock.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -20,15 +22,17 @@ pub enum Mode {
 
 /// The game's queue of messages from the sessions (bounded: RV-248)
 pub const TO_GAME_QUEUE: usize = 65_536;
+/// At most this many messages read between ticks: a flood waits in the queue instead of starving the matches (SEC-3)
+const MESSAGES_PER_LOOP: usize = 2048;
 
 /// The session's hello is refused: the reason sent, then its queue let go (the session ends)
 fn refuse(out: Sender<Outgoing>, reason: u8) {
     let _ = out.try_send(Outgoing::Control(Control::Refused { reason }.encode()));
 }
 
-/// `test_goal_after`: browser tests only (`Game::test_goal_after`, s)
-pub fn run(mut messages: Receiver<ToGame>, mode: Mode, test_goal_after: Option<f32>) {
-    let start = Instant::now();
+/// `test_goal_after`: browser tests only (`Game::test_goal_after`, s). `heartbeat`: the loop's last pass, in ms from
+/// `start` (the health check's)
+pub fn run(mut messages: Receiver<ToGame>, mode: Mode, test_goal_after: Option<f32>, heartbeat: Arc<AtomicU64>, start: Instant) {
     let seconds = |at: Instant| at.saturating_duration_since(start).as_secs_f64();
     // (each server run its own kickoff orders, as the game's are random)
     let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.subsec_nanos() as i32);
@@ -37,11 +41,13 @@ pub fn run(mut messages: Receiver<ToGame>, mode: Mode, test_goal_after: Option<f
         Mode::Direct(_) => &[],
         Mode::Queue(playlists) => playlists,
     });
+    let queue_mode = matches!(mode, Mode::Queue(_));
     if let Mode::Direct(playlist) = mode {
         host.open_match(playlist, 0.0);
     }
     loop {
-        loop {
+        heartbeat.store(start.elapsed().as_millis() as u64, Ordering::Relaxed);
+        for _ in 0..MESSAGES_PER_LOOP {
             match messages.try_recv() {
                 Ok(ToGame::Join { id, intent, request, out }) => match intent {
                     Intent::Join => {
@@ -54,6 +60,8 @@ pub fn run(mut messages: Receiver<ToGame>, mode: Mode, test_goal_after: Option<f
                             refuse(out, protocol::REFUSED_MODE);
                         }
                     }
+                    // (a development server has no reservations: a claim isn't its, RV-363)
+                    Intent::Claim { .. } if !queue_mode => refuse(out, protocol::REFUSED_MODE),
                     Intent::Claim { token } => {
                         if !host.claim(token, id, request, out.clone()) {
                             eprintln!("player {id}: no reservation for their token");

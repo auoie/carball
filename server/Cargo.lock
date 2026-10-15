@@ -722,6 +722,7 @@ dependencies = [
  "anyhow",
  "cmake",
  "getrandom 0.4.3",
+ "libc",
  "serde_json",
  "tokio",
  "wtransport",

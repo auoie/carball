@@ -26,6 +26,7 @@ export const PLAYLISTS = [
 ] as const;
 export const OWN_SEARCH_TEXT = {
   notAllJoined: "Not every player joined the match. Searching again.",
+  matchGone: "The match was no longer there. Searching again.",
   failedPrefix: "Search failed:",
 } as const;
 
@@ -61,17 +62,20 @@ export interface MatchmakingPorts {
   readonly sound: (cue: "start" | "cancel" | "countdown") => void;
   /** The join's end: the token claimed in the match page */
   readonly join: (token: bigint, playlist: number) => void;
+  /** Cancel Search during "Joining in": the slot given up at once (claimed and left: the match is cancelled now, its
+   *  other players search again, not after the 30 s wait: RV-355) */
+  readonly decline: (token: bigint) => void;
 }
 
-/** One search at a time, from Find Match to the join, a failure or Cancel Search. `frame(now)` runs its timers (s) */
+/** One search at a time, from Find Match to the join, a failure or Cancel Search. `frame(now)` runs the log's timeline
+ *  (s); the join's countdown runs on timers, so a hidden tab (no frames) still claims on time (RV-354) */
 export class Matchmaking {
   #state: SearchViewState | null = null;
   #playlist = 0;
   #cancel: (() => void) | null = null;
   #searchingSince: number | null = null;
-  #foundAt: number | null = null;
-  #token = 0n;
-  #countdownShown = 0;
+  #token: bigint | null = null;
+  #timers: ReturnType<typeof setTimeout>[] = [];
   #extra: LogLine[] = [];
   /** When a failed search's summary goes (its fade) */
   #failedAt: number | null = null;
@@ -92,15 +96,16 @@ export class Matchmaking {
     return this.#playlist;
   }
 
-  /** Find Match (or Play Again): a new search of the playlist; `warning`: a line to start the log with */
-  start(playlist: number, warning?: string): void {
+  /** Find Match (or Play Again): a new search of the playlist; `warning`: a line to start the log with. Ignored while a
+   *  search runs (MM-2: SearchInProgress; its place in the queue stays): false then */
+  start(playlist: number, warning?: string): boolean {
+    if (this.searching) return false;
     this.#stop();
     this.#playlist = playlist;
     this.#extra = warning === undefined ? [] : [{ text: warning, kind: "warning" }];
     this.#searchingSince = null;
-    this.#foundAt = null;
+    this.#token = null;
     this.#failedAt = null;
-    this.#countdownShown = 0;
     this.#set("connecting");
     this.ports.sound("start");
     this.#cancel = this.ports.search(playlist, {
@@ -113,39 +118,62 @@ export class Matchmaking {
         if (!this.searching) return;
         this.#cancel = null;
         this.#token = token;
-        this.#foundAt = this.#now;
         this.#set("joining");
         this.#countdown(JOIN_COUNTDOWN);
+        for (let n = JOIN_COUNTDOWN - 1; n >= 0; n--) {
+          this.#timers.push(
+            setTimeout(
+              () => {
+                if (n > 0) this.#countdown(n);
+                else this.#join();
+              },
+              (JOIN_COUNTDOWN - n) * 1000,
+            ),
+          );
+        }
       },
       failed: (reason) => {
-        if (!this.searching) return;
+        if (this.#state?.status !== "connecting" && this.#state?.status !== "searching") return;
         this.#cancel = null;
         this.#extra.push({ text: `${OWN_SEARCH_TEXT.failedPrefix} ${reason}`, kind: "warning" });
         this.#failedAt = this.#now;
         this.#set("failed");
       },
     });
+    return true;
   }
 
-  /** Cancel Search (MM-10): the session closed, the cancel sound, the panel and banner gone */
+  /** Cancel Search (MM-10): the session closed, the cancel sound, the panel and banner gone; during "Joining in" the
+   *  slot given up at once (RV-355) */
   cancel(): void {
     if (this.#state === null) return;
     const searching = this.searching;
+    const token = this.#state.status === "joining" ? this.#token : null;
     this.#stop();
     this.#state = null;
+    if (token !== null) this.ports.decline(token);
     if (searching) this.ports.sound("cancel");
   }
 
   #stop(): void {
     this.#cancel?.();
     this.#cancel = null;
+    for (const t of this.#timers.splice(0)) clearTimeout(t);
+    this.#token = null;
   }
 
   #countdown(n: number): void {
-    this.#countdownShown = n;
     this.#extra.push({ text: `${SEARCH_TEXT.joiningIn} ${String(n)}`, kind: "countdown" });
     this.ports.sound("countdown");
     this.#set("joining");
+  }
+
+  #join(): void {
+    const token = this.#token;
+    this.#timers = [];
+    this.#token = null;
+    this.#state = null;
+    if (token !== null) this.ports.join(token, this.#playlist);
   }
 
   #set(status: SearchStatus): void {
@@ -159,14 +187,6 @@ export class Matchmaking {
     if (state === null) return;
     if (state.status === "searching") {
       this.#set("searching");
-    } else if (state.status === "joining" && this.#foundAt !== null) {
-      const left = JOIN_COUNTDOWN - Math.floor(now - this.#foundAt);
-      if (left <= 0) {
-        this.#state = null;
-        this.ports.join(this.#token, this.#playlist);
-      } else if (left < this.#countdownShown) {
-        this.#countdown(left);
-      }
     } else if (state.status === "failed" && this.#failedAt !== null && now - this.#failedAt > 5) {
       this.#state = null; // (the summary fades: MM-6)
     }

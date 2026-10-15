@@ -646,6 +646,13 @@ static int Validate(const char* path, const std::string& presetName, const Sensi
 			SetBody(car, ours, a, !started, !started);
 			if (car2 && a.hasOther) SetBody(car2, car2->GetState(), a.other, !started, !started);
 			if (a.hasBall) SetBall(arena, a.ball);
+			// (after a gap or a skipped placement: the game ran that tick, whose updateAabbs gave the placed bodies their
+			// broadphase boxes before this tick's wheel rays, which pick their candidates by them: FP2, AB1)
+			if (!started) {
+				arena->_bulletWorld.updateSingleAabb(&car->_rigidBody);
+				if (car2) arena->_bulletWorld.updateSingleAabb(&car2->_rigidBody);
+				arena->_bulletWorld.updateSingleAabb(&arena->ball->_rigidBody);
+			}
 			resyncs += continuous && started;
 		}
 		started = true;

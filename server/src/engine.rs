@@ -124,12 +124,20 @@ pub fn stat_event_points(event: u8) -> i32 {
 }
 
 /// Loads the arena collision meshes. Call once before creating arenas.
+/// Loads the arena meshes, once per process: the engine's init isn't safe to run twice or on two threads at once (its
+/// tables are written outside a lock, RV-356); a later call gets the first one's result
 pub fn init(collision_mesh_dir: &Path) -> anyhow::Result<()> {
-    anyhow::ensure!(collision_mesh_dir.is_dir(), "no collision meshes at {}", collision_mesh_dir.display());
-    let dir = CString::new(collision_mesh_dir.to_string_lossy().as_bytes())?;
-    // SAFETY: a valid C string; the engine copies what it needs
-    anyhow::ensure!(unsafe { rl_init(dir.as_ptr()) } != 0, "engine init failed");
-    Ok(())
+    static DONE: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
+    DONE.get_or_init(|| {
+        if !collision_mesh_dir.is_dir() {
+            return Err(format!("no collision meshes at {}", collision_mesh_dir.display()));
+        }
+        let dir = CString::new(collision_mesh_dir.to_string_lossy().as_bytes()).map_err(|e| e.to_string())?;
+        // SAFETY: a valid C string; the engine copies what it needs
+        if unsafe { rl_init(dir.as_ptr()) } == 0 { Err("engine init failed".into()) } else { Ok(()) }
+    })
+    .clone()
+    .map_err(|e| anyhow::anyhow!(e))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

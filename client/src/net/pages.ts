@@ -90,10 +90,27 @@ export function pageUrl(page: "menu" | "match", at: { readonly pathname: string;
   return `${at.pathname}${text === "" ? "" : `?${text}`}`;
 }
 
-/** Where the queue is: `?queue=host:infoPort` (a development server, its /info giving its port and certificate hash),
- *  else this page's host, info port 4434 */
-export async function queueAddress(params: URLSearchParams, host: string): Promise<ServerAddress> {
+/** The deployment's `config.json` (APP-CONTRACT.md: the web image writes it from its environment): the game server's
+ *  WebTransport URL, e.g. https://game.carball.zolt.top:4433/play; null without one (a development page) */
+export async function deployedGameServer(fetchConfig: () => Promise<Response> = async () => fetch("/config.json", { cache: "no-store" })): Promise<string | null> {
+  try {
+    const response = await fetchConfig();
+    if (!response.ok) return null;
+    const config = (await response.json()) as { gameServer?: unknown };
+    return typeof config.gameServer === "string" && /^https:\/\/[^/\s]+\/\S*$/.test(config.gameServer) ? config.gameServer : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Where the queue is: `?queue=host:infoPort` (a development server, its /info giving its port and certificate hash);
+ *  else the deployment's game server (`config.json`: its real certificate, no hash); else this page's host, info port 4434 */
+export async function queueAddress(params: URLSearchParams, host: string, deployed = deployedGameServer): Promise<ServerAddress> {
   const queue = params.get("queue");
+  if (queue === null) {
+    const url = await deployed();
+    if (url !== null) return { url, certHash: null };
+  }
   const [name = host, port = "4434"] = queue === null || queue === "" ? [] : queue.split(":");
   return devServerAddress(name, Number(port));
 }

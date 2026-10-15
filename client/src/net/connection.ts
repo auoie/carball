@@ -93,6 +93,14 @@ export function storeKey(key: bigint, storage = session()): void {
 /** What a match session is for: join a development server's open match, or claim a queue's reserved slot */
 export type MatchSession = { readonly intent: "join" } | { readonly intent: "claim"; readonly token: bigint };
 
+/** The server refused the hello (`Refused`'s reason: REFUSED_*) */
+export class RefusedError extends Error {
+  constructor(readonly reason: number) {
+    super(refusalText(reason));
+    this.name = "RefusedError";
+  }
+}
+
 /** Why the server refused a hello, in our own words */
 export function refusalText(reason: number): string {
   switch (reason) {
@@ -189,7 +197,7 @@ export class Connection {
         if (first) {
           first = false;
           if (m.type === "welcome") resolve(m);
-          else if (m.type === "refused") reject(new Error(refusalText(m.reason)));
+          else if (m.type === "refused") reject(new RefusedError(m.reason));
           else reject(new Error(`expected welcome, got ${m.type}`));
           return;
         }

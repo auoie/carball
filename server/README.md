@@ -18,8 +18,19 @@ menu's Play → 1v1 / 2v2 / 3v3 → Find Match searches it (`?queue=host:infoPor
 info port 4434). The build compiles the engine with CMake (`build.rs`).
 
 Development identity: a self-signed certificate (valid 14 days, the WebTransport limit for certificate hashes) made at
-start-up. The info endpoint publishes its SHA-256 so the browser can connect with `serverCertificateHashes`. A public
-server needs a real certificate instead.
+start-up. The info endpoint (127.0.0.1 unless `--info-bind`, e.g. 0.0.0.0 for another machine) publishes its SHA-256 so
+the browser can connect with `serverCertificateHashes`. A public server runs with a real certificate (`CERT_PATH` and
+`KEY_PATH`, or `--cert` and `--key`): no info endpoint, reloaded when its files change or on SIGHUP. The deployment's
+interface (its environment variables, ports, health check, limits) is `APP-CONTRACT.md`; its images come from
+`scripts/build_images.sh` (`client/docker/`, `server/docker/`).
+
+What a session may do (the security review's SEC-2/3/5/7/8): 512 sessions at once, 8 at once and 30 new a minute per
+address (`--max-sessions`, `--max-per-address`, `--max-per-address-per-minute`: the browser tests raise them), 10 s
+from the first packet to the hello, pages only from `ALLOWED_ORIGIN` when it's set (any origin without: development), 240
+input packets and 20 control messages a second (excess dropped; a flood closes the session), QUIC's 4 streams each way
+and small receive windows; the game thread reads at most 2048 messages between ticks; a panic in a match's tick lets
+that match go (the others play on), and the process exits if the game thread ends; join and leave send the other
+players the world once a tick at most.
 
 ## Checks
 ```sh

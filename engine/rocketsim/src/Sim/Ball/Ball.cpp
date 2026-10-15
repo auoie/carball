@@ -8,6 +8,7 @@
 #include "../../../libsrc/bullet3-3.24/BulletDynamics/Dynamics/btDynamicsWorld.h"
 #include "../../../libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btConvexHullShape.h"
 #include "../CollisionMasks.h"
+#include "../CreatedBox.h"
 
 RS_NS_START
 
@@ -35,6 +36,8 @@ BallState Ball::GetState() {
 }
 
 void Ball::SetState(const BallState& state) {
+	// RL PATCH (FP2): a new spawn (its counter moved: a kickoff) is the game's new ball, its box at once
+	bool spawned = state.spawnCount != _internalState.spawnCount;
 
 	_internalState = state;
 
@@ -51,6 +54,8 @@ void Ball::SetState(const BallState& state) {
 	_internalState.tickCountSinceUpdate = 0;
 	_netRotation.valid = false; // RL PATCH: not a quantized state
 	_ApplyExploded();
+	if (spawned)
+		SetCreatedBox(_world, &_rigidBody);
 }
 
 void Ball::_ApplyExploded() {
@@ -131,6 +136,7 @@ void Ball::_BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const M
 		&_rigidBody,
 		btBroadphaseProxy::DefaultFilter | CollisionMasks::HOOPS_NET | CollisionMasks::DROPSHOT_TILE, btBroadphaseProxy::AllFilter
 	);
+	_world = bulletWorld;
 }
 
 // The speed caps, also at the start of the physics step (RL PATCH, as the car's: Car::_LimitVelocities)

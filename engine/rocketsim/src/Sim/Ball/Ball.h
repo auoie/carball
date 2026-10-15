@@ -91,6 +91,8 @@ public:
 	static void _DestroyBall(Ball* ball) { delete ball; }
 
 	void _BulletSetup(GameMode gameMode, btDynamicsWorld* bulletWorld, const MutatorConfig& mutatorConfig, bool noRot);
+	// RL PATCH (FP2): the world it's in (a new spawn's box: CreatedBox.h)
+	btDynamicsWorld* _world = nullptr;
 
 	bool _groundStickApplied = false;
 	Vec _velocityImpulseCache = { 0,0,0 };

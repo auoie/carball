@@ -63,8 +63,12 @@ impl Matchmaker {
     /// (A searcher whose session already ended, its cancel not yet here, doesn't count)
     pub fn form(&mut self, host: &mut impl MatchHosting, now: f64) {
         for (&team_size, queue) in &mut self.waiting {
-            queue.retain(|s| !s.out.is_closed());
+            // (only a playlist with a match's worth waiting is looked at: the loop runs every millisecond, RV-357)
             let players = 2 * usize::from(team_size);
+            if queue.len() < players {
+                continue;
+            }
+            queue.retain(|s| !s.out.is_closed());
             while queue.len() >= players {
                 let found: Vec<Searcher> = queue.drain(..players).collect();
                 let tokens = host.create_match(self.playlists[&team_size], players, now);

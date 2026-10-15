@@ -1,4 +1,5 @@
 #include "Car.h"
+#include "../CreatedBox.h"
 #include <cstring>
 #include "../../RLConst.h"
 
@@ -92,6 +93,8 @@ bool Car::_XYLockHeld(btVector3* pin) const {
 // Update our bullet stuff to this new state, replace our internal state with it
 void Car::SetState(const CarState& state) {
 	_xyLockMoved = true; // RL PATCH (RV-295)
+	// RL PATCH (FP2): a new spawn (its counter moved: a kickoff's spot, a respawn) is the game's new car, its box at once
+	bool spawned = state.spawnCount != _internalState.spawnCount;
 	btTransform rbTransform;
 	rbTransform.setOrigin(state.pos * UU_TO_BT);
 	rbTransform.setBasis(state.rotMat);
@@ -128,6 +131,8 @@ void Car::SetState(const CarState& state) {
 	_internalState.tickCountSinceUpdate = 0;
 	_internalState.refreshInertia = false;
 	_netRotation.valid = false; // RL PATCH: not a quantized state
+	if (spawned)
+		SetCreatedBox(_bulletVehicle.m_dynamicsWorld, &_rigidBody);
 }
 
 void Car::Demolish(float respawnDelay) {

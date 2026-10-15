@@ -292,6 +292,32 @@ describe("Predictor", () => {
     client.dispose();
   });
 
+  it("the game's rule: a later state whose inputs are the ones recorded for its frame rewrites nothing (RV-361)", () => {
+    // (throttle -1 replicated at frame 14 fades to -0.5 by frame 20; the server's -0.5 there (byte -64) is the same: the
+    // present stays the first fade's, -1 x (1 - 8/12); a fade started again from frame 20 would give -0.5 x (1 - 2/12))
+    const server = World.create(engine);
+    const local = server.addCar(0);
+    const other = server.addCar(1);
+    server.resetKickoff(4);
+    const client = World.create(engine);
+    client.loadState(server.saveState());
+    const predictor = new Predictor(client, local, 0);
+    const states = new Map<number, Uint8Array>();
+    for (let f = 1; f <= 22; f++) {
+      server.setControls(other, { ...inputControls(NO_INPUT), throttle: f <= 14 ? -1 : -0.5 });
+      server.step();
+      states.set(f, server.writeNetState({ ball: true, carIds: [local, other], pads: true }));
+      predictor.advance(NO_INPUT);
+    }
+    predictor.correct(14, [states.get(14) ?? new Uint8Array()]);
+    const first = client.carControls(other).throttle;
+    expect(first).toBeCloseTo(-1 / 3, 1); // (as a byte: -43/128)
+    predictor.correct(20, [states.get(20) ?? new Uint8Array()]);
+    expect(client.carControls(other).throttle).toBe(first);
+    server.dispose();
+    client.dispose();
+  });
+
   it("the game's rule: an older update doesn't replace the newer one's replicated inputs; a reload adopts new cars (RV-323)", () => {
     const server = World.create(engine);
     const local = server.addCar(0);

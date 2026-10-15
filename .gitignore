@@ -73,3 +73,4 @@ server/target/
 out/replays/
 # Recordings from the live game (tools/physlog), kept local like the replays
 out/live/
+out/images/

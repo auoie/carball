@@ -467,7 +467,14 @@ pub struct Game {
     pub rematch: bool,
     /// When the current period of play began (Active or 0:00: the idle times, MM-34)
     active_since: Option<u64>,
+    /// The set of cars changed since the world was last sent, and the players whose view has it already (a joiner's
+    /// welcome): SEC-8
+    world_pending: bool,
+    world_current: BTreeSet<PlayerId>,
     over: bool,
+    /// The tests' panic in a match's tick (the host's SEC-7 test)
+    #[cfg(test)]
+    pub panic_next_tick: bool,
     /// The tests' record of what each update carried (the network tests' T6: notes/netcode-live.md §13)
     #[cfg(test)]
     replicated: Vec<Replicated>,
@@ -543,7 +550,11 @@ impl Game {
             idle_kick: false,
             rematch: true,
             active_since: None,
+            world_pending: false,
+            world_current: BTreeSet::new(),
             over: false,
+            #[cfg(test)]
+            panic_next_tick: false,
             #[cfg(test)]
             replicated: Vec::new(),
         }
@@ -711,7 +722,7 @@ impl Game {
         let _ = player.out.try_send(Outgoing::Control(welcome));
         let _ = player.out.try_send(Outgoing::Control(Control::Match(self.match_state()).encode()));
         self.players.insert(id, player);
-        self.send_world_to_others(id, &snapshot);
+        self.world_changed(Some(id));
         self.send_votes();
         self.send_roster();
         self.scoreboard_dirty = true;
@@ -869,8 +880,7 @@ impl Game {
                 self.left_teams.push(team);
                 self.forfeit_check_at = Some(tick + FORFEIT_CHECK_TICKS);
             }
-            let snapshot = self.arena.save_state();
-            self.send_world_to_others(id, &snapshot);
+            self.world_changed(None);
             self.send_match_state();
             self.send_votes();
             self.send_roster();
@@ -1025,13 +1035,28 @@ impl Game {
     }
 
     /// The set of cars changed: everyone else reloads the world
-    fn send_world_to_others(&self, except: PlayerId, snapshot: &[u8]) {
-        for (&id, p) in &self.players {
-            if id != except {
-                let world = Control::World { frame: p.input.ack_frame(), snapshot: snapshot.to_vec() };
+    /// The set of cars changed (a join, `joined`, whose welcome has the world as it is now; a leave): the others get the
+    /// world once, at the next tick, however many joins and leaves come first (SEC-8: a join-and-leave loop sent everyone
+    /// a ~12 KB world each time)
+    fn world_changed(&mut self, joined: Option<PlayerId>) {
+        self.world_pending = true;
+        self.world_current.clear();
+        self.world_current.extend(joined);
+    }
+
+    /// The world to every player whose view of it is out of date, if it changed
+    fn send_pending_world(&mut self) {
+        if !std::mem::take(&mut self.world_pending) {
+            return;
+        }
+        let snapshot = self.arena.save_state();
+        for (id, p) in &self.players {
+            if !self.world_current.contains(id) {
+                let world = Control::World { frame: p.input.ack_frame(), snapshot: snapshot.clone() };
                 let _ = p.out.try_send(Outgoing::Control(world.encode()));
             }
         }
+        self.world_current.clear();
     }
 
     pub fn receive_inputs(&mut self, id: PlayerId, timestamp: u32, first_frame: u32, frames: &[InputFrame], now: f64) {
@@ -1443,6 +1468,8 @@ impl Game {
 
     /// One physics tick. `now`: server time in seconds.
     pub fn tick(&mut self, now: f64) {
+        #[cfg(test)]
+        assert!(!self.panic_next_tick, "the test's panic");
         // (a player whose queue is full isn't reading: their session goes, as a lost connection)
         let stuck: Vec<PlayerId> = self.players.iter().filter(|(_, p)| p.out.capacity() == 0).map(|(&id, _)| id).collect();
         for id in stuck {
@@ -1452,6 +1479,7 @@ impl Game {
         if self.players.is_empty() {
             return;
         }
+        self.send_pending_world();
         let odd_tick = self.arena.tick_count() % 2 == 1;
         // (after the match the cars are frozen: `EndGame` → `SetAllDriving(false)`; in the goal replay they're gone:
         // `StartReplay` → `DestroyCars`, here frozen out of sight until the kickoff places them)
@@ -1765,6 +1793,32 @@ mod tests {
     }
 
     #[test]
+    fn joins_and_leaves_between_ticks_send_the_others_one_world() {
+        // (SEC-8: a join-and-leave loop sent every other player the whole world each time; now once a tick, and not to a
+        // joiner whose welcome has it)
+        init_engine();
+        let mut game = Game::with_options(1, 3);
+        let (tx1, mut rx1) = channel(TEST_QUEUE);
+        game.join(1, REQUEST, tx1);
+        game.tick(0.0);
+        drain(&mut rx1);
+        let worlds = |msgs: Vec<Outgoing>| msgs.iter().filter(|m| matches!(m, Outgoing::Control(b) if b[2] == 0x82)).count();
+        for id in 2..12 {
+            let (tx, _rx) = channel(TEST_QUEUE);
+            game.join(id, REQUEST, tx);
+            game.leave(id);
+        }
+        let (tx, mut rx_last) = channel(TEST_QUEUE);
+        game.join(20, REQUEST, tx);
+        assert_eq!(worlds(drain(&mut rx1)), 0, "none before the tick");
+        game.tick(1.0 / 120.0);
+        assert_eq!(worlds(drain(&mut rx1)), 1, "one at the tick");
+        assert_eq!(worlds(drain(&mut rx_last)), 0, "the last joiner's welcome had it");
+        game.tick(2.0 / 120.0);
+        assert_eq!(worlds(drain(&mut rx1)), 0, "nothing changed since");
+    }
+
+    #[test]
     fn players_join_drive_and_receive_updates() {
         init_engine();
         let mut game = Game::new();
@@ -1772,6 +1826,7 @@ mod tests {
         let (tx2, mut rx2) = channel(TEST_QUEUE);
         game.join(1, REQUEST, tx1);
         game.join(2, REQUEST, tx2);
+        game.send_pending_world(); // (as the next tick does first: SEC-8)
 
         // Player 1: Welcome then World (player 2 joined); player 2: Welcome
         let first = drain(&mut rx1);
@@ -2291,6 +2346,45 @@ mod tests {
     }
 
     #[test]
+    fn a_replay_skip_counts_as_acting() {
+        // (MM-35, RV-360 S21)
+        init_engine();
+        let mut game = Game::with_options(1, 1);
+        game.idle_kick = true;
+        let (tx1, mut rx1) = channel(TEST_QUEUE);
+        game.join(1, REQUEST, tx1);
+        run_until(&mut game, 3000, |g| g.phase == Phase::Active);
+        run_until(&mut game, 4000, |g| g.players[&1].idle_warned);
+        game.ready_up(1);
+        assert_eq!(idle_messages(&mut rx1), vec![Control::IdleWarning { on: true }, Control::IdleWarning { on: false }]);
+    }
+
+    #[test]
+    fn idle_time_counts_only_in_play_and_a_slow_drift_counts_as_the_game_does() {
+        // (RV-360 S16: a queued match held 40 s for its players warns no one; S24: the reference input moves only when
+        // a frame counts, so a throttle creeping a byte a frame counts every second frame)
+        init_engine();
+        let mut game = Game::with_options(1, 1);
+        game.idle_kick = true;
+        game.hold_for = 2;
+        let (tx1, mut rx1) = channel(TEST_QUEUE);
+        game.join(1, REQUEST, tx1);
+        ticks(&mut game, 40 * 120);
+        assert_eq!(game.phase, Phase::Waiting);
+        assert!(idle_messages(&mut rx1).is_empty(), "held for players: not play");
+        let mut buffer = InputBuffer::default();
+        let frames: Vec<InputFrame> = (0..12).map(|i| InputFrame { throttle: 10 + i, ..InputFrame::default() }).collect();
+        buffer.receive(1, 1, &frames, 0.0);
+        buffer.jitter.buffer_size = 0; // (one frame a tick, none held back)
+        let mut acted = Vec::new();
+        for t in 0..12 {
+            buffer.tick(f64::from(t) / 120.0, false);
+            acted.push(buffer.acted);
+        }
+        assert_eq!(acted.iter().filter(|&&a| a).count(), 6, "{acted:?}: the first frame (from zero), then every second one");
+    }
+
+    #[test]
     fn the_idle_kick_counts_input_changes_as_the_game_does() {
         // (MM-35a: buttons always; throttle and the pitch stick from 0.01; steer and yaw only while throttling; one byte
         // step never; a NaN can't come from bytes)
@@ -2488,6 +2582,7 @@ mod tests {
         game.join(2, REQUEST, tx2);
         drain(&mut rx1);
         game.leave(2);
+        game.tick(0.0);
         let world = drain(&mut rx1);
         assert!(world.iter().any(|m| matches!(m, Outgoing::Control(b) if b[2] == 0x82)));
         assert_eq!(game.player_count(), 1);

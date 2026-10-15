@@ -340,6 +340,70 @@ static int SentValuesArrive() {
 	return failures;
 }
 
+// A kickoff's countdown with the throttle held: the cars drive with zeroed controls, so their last tick's controls aren't
+// the controls sent; an update leaves a client that has the server's state as it is (the overlay keeps the last
+// controls but the jump: the 300 s run's countdowns caught it, now the 120 s gate too, RV-358)
+static int CountdownLeavesAnExactClient() {
+	Arena* server = Arena::Create(GameMode::SOCCAR);
+	for (int i = 0; i < 2; i++)
+		server->AddCar(i ? Team::ORANGE : Team::BLUE);
+	server->ResetToRandomKickoff(5);
+	server->kickoffCountdownTicks = 4 * 120; // (the server's countdown)
+	for (Car* car : server->GetCars())
+		car->controls.throttle = 1;
+	server->Step(30);
+	int failures = server->kickoffCountdownTicks > 0 ? 0 : 1;
+	Arena* client = Restore(Snapshot(server));
+	std::vector<uint8_t> before = NetVisibleState(client);
+	NetState::WriteOptions options;
+	for (Car* car : server->GetCars())
+		options.carIds.push_back(car->id);
+	DataStreamOut update;
+	NetState::Write(server, update, options);
+	DataStreamIn in;
+	in.data = update.data;
+	if (!NetState::Read(client, in) || NetVisibleState(client) != before) {
+		printf("netstate compact: an update in a kickoff's countdown changed a client that had the server's state\n");
+		failures++;
+	}
+	delete client;
+	delete server;
+	return failures;
+}
+
+// A car demolished within 16 ticks of its placement sends no wheel block (its count stands still while demolished: it
+// would send it every update of its 3 s, RV-345)
+static int DemolishedCarSendsNoWheelBlock() {
+	Arena* server = Arena::Create(GameMode::SOCCAR);
+	Car* car = server->AddCar(Team::BLUE);
+	server->ResetToRandomKickoff(2);
+	server->Step(30);
+	CarState placed = CarState();
+	placed.pos = Vec(1000, -2000, 17);
+	placed.spawnCount = car->GetState().spawnCount + 1;
+	car->SetState(placed);
+	server->Step(2);
+	NetState::WriteOptions options;
+	options.carIds = { car->id };
+	options.ball = options.boostPads = false;
+	auto size = [&] {
+		DataStreamOut out;
+		NetState::Write(server, out, options);
+		return out.data.size();
+	};
+	size_t onField = size();
+	server->DemolishCar(car);
+	size_t demolished = size();
+	int failures = 0;
+	// (the block: ~24 floats; a demolished car adds its respawn's few fields)
+	if (demolished + 60 > onField) {
+		printf("netstate compact: a recently placed car sends %zu bytes, demolished %zu (the wheel block still sent?)\n", onField, demolished);
+		failures++;
+	}
+	delete server;
+	return failures;
+}
+
 int main(int argc, char** argv) {
 	std::string meshes = argc > 1 ? argv[1] : ARENA_MESH_DIR;
 	int seconds = argc > 2 ? atoi(argv[2]) : 300;
@@ -498,6 +562,8 @@ int main(int argc, char** argv) {
 	compactFailures += VehicleOrderTravels();
 	compactFailures += PlacementBeforeTheUpdate();
 	compactFailures += SentValuesArrive();
+	compactFailures += CountdownLeavesAnExactClient();
+	compactFailures += DemolishedCarSendsNoWheelBlock();
 	printf("netstate compact: %d updates, mean %zu bytes for ball + 4 cars + pads (max %zu), cars alone %zu bytes a car; "
 		"%d failed; the drifted client after %d ticks: identical %d, worst drift %.3f uu\n",
 		checks, checks ? compactTotal / checks : 0, compactMax, checks ? compactCarsOnly / checks / 4 : 0, compactFailures, window,

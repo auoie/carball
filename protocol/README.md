@@ -1,4 +1,4 @@
-# Game protocol (version 17)
+# Game protocol (version 18)
 
 Client ↔ server over **WebTransport** (HTTP/3, QUIC). All integers little-endian. Implemented in
 `server/src/protocol.rs` (Rust) and `client/src/net/protocol.ts` (TypeScript); `vectors.json` holds byte-exact
@@ -51,7 +51,7 @@ Framed as `u16 length` + message (`length` counts the message, which starts with
 | `0x8E Ticker` | S→C | `u8 event`, `u32 receiver`, `u32 victim` (cars; victim 0: none): a stat someone gained, to every player for their feed (`bNotifyTicker` events) |
 | `0x8F MatchFound` | S→C | `u64 token`: a search found a match; the token claims the player's slot in a new session (once, within 30 s); the search session ends |
 | `0x90 IdleWarning` | S→C | `u8 on`: the idle warning shows (idle past 25 s of play, queue matches) or hides (the player acted) (MM-33..36) |
-| `0x91 Kicked` | S→C | `u8 reason` (0 idle past 30 s of play; 1 the match was cancelled before it started: not every reserved player joined): the server ends the session a second later (MM-37) |
+| `0x91 Kicked` | S→C | `u8 reason` (0 idle past 30 s of play: the session ends a second later, MM-37; 1 the match was cancelled before it started, not every reserved player joined: the session ends at once) |
 | `0x87 ForfeitVote` | S→C | the player's team's forfeit vote, sent to each player when it changes: `u8 state` (0 running, 1 passed, 2 failed: a finished vote stays 5 game s, 3 none), `u8 yes`, `u8 required` (the team's players: unanimous), `u8 secondsLeft` (of its 20 game s), `u8 flags` (1 this player voted, 2 this player may start a vote) |
 
 Phase 5 (version 9) is the goal replay: the cars are frozen out of sight (the client predicts them with no input) until
@@ -124,7 +124,8 @@ state and the game's replication rates (above): ≈ 3.3 / 4.4 / 5.5 KB/s per cli
 Version 16: the vehicles' order in the physics step (the game's action array: notes/physics-values.md FP1 G2) in the
 engine snapshot (Welcome, World) and, when it isn't the cars' ID order, in the network state. Version 17: the queue
 (Hello's intent, playlist and token, `0x8F MatchFound`, `0x90 IdleWarning`, `0x91 Kicked`, `Refused` reasons 2 and 3)
-and 64-bit keys (SEC-9).
+and 64-bit keys (SEC-9). Version 18: the engine snapshot (Welcome, World) carries the ball's and each car's stored
+broadphase box, which the wheel rays pick their candidates by (physics FP2).
 
 Podium title ids (`notes/match-stats.md` §5.4a; the client's `game/podiumTitles.ts`): 0 OvertimeGoal, 1 Goals_10,
 2 Goals_6_9, 3 Goals_3_5, 4 Saves_10, 5 Saves_6_9, 6 Saves_3_5, 7 EpicSaves, 8 PoolShots, 9 BackwardsGoal, 10 BicycleGoal,

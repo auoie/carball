@@ -95,6 +95,15 @@ public:
 
 	float rayCast(btWheelInfoRL& wheel);
 
+	// RL PATCH (FP2): the bodies the wheel rays test this tick, as the game picks them (findRayCandidates): at most
+	// 32, in the broadphase's proxy order
+	static constexpr int MAX_RAY_CANDIDATES = 32;
+	const btCollisionObject* m_rayCandidates[MAX_RAY_CANDIDATES] = {};
+	int m_numRayCandidates = 0;
+	void findRayCandidates();
+	// A wheel's ray from its hard point: radius + rest length + travel
+	float rayLength(const btWheelInfoRL& wheel) const;
+
 	void updateVehicleFirst(float step);
 	void updateVehicleSecond(float step);
 

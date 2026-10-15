@@ -19,14 +19,14 @@ struct PerObjectRayCallback : public btCollisionWorld::RayResultCallback {
 		btScalar fraction;
 		btVector3 normal;
 	};
-	Hit hits[16];
+	Hit hits[btVehicleRL::MAX_RAY_CANDIDATES];
 	int count = 0;
 
 	btScalar addSingleResult(btCollisionWorld::LocalRayResult& r, bool normalInWorldSpace) override {
 		int i = 0;
 		while (i < count && hits[i].obj != r.m_collisionObject) i++;
 		if (i == count) {
-			if (count == 16) return 1;
+			if (count == btVehicleRL::MAX_RAY_CANDIDATES) return 1;
 			hits[count++] = { r.m_collisionObject, 2, btVector3(0, 0, 0) };
 		}
 		if (r.m_hitFraction < hits[i].fraction) {
@@ -155,8 +155,7 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
 	wheel.m_extraPushback = 0; // RL PATCH: recomputed every tick (RocketSim kept it until the ray missed)
 
 	float suspensionTravel = wheel.m_maxSuspensionTravelCm / 100;
-	// RL PATCH: radius + rest + travel (RocketSim subtracted the 2.5 uu max raise here too)
-	float realRayLength = wheel.getSuspensionRestLength() + suspensionTravel + wheel.m_wheelsRadius;
+	float realRayLength = rayLength(wheel);
 
 	// See: I21
 	btVector3 source = wheel.m_raycastInfo.m_hardPointWS;
@@ -168,13 +167,19 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
 	btVehicleRaycaster::btVehicleRaycasterResult rayResults;
 	
 	btAssert(m_vehicleRaycaster);
-	// RL PATCH: each object's closest hit, ignored when it is within the car's box (closer than m_minHitDistSq)
+	// RL PATCH: each object's closest hit, ignored when it is within the car's box (closer than m_minHitDistSq). FP2:
+	// only the tick's candidates (findRayCandidates), each at its current transform (rayTestSingle per candidate, the
+	// game's 0x1402c4650), not every body in the ray start's broadphase cell
 	btCollisionObject* object;
 	{
 		PerObjectRayCallback cb;
 		cb.m_ignoreObj = m_chassisBody;
 		cb.m_collisionFilterGroup |= m_vehicleRaycaster->addedFilterMask;
-		m_dynamicsWorld->rayTest(source, target, cb);
+		btTransform from(btMatrix3x3::getIdentity(), source), to(btMatrix3x3::getIdentity(), target);
+		for (int c = 0; c < m_numRayCandidates; c++) {
+			btCollisionObject* candidate = (btCollisionObject*)m_rayCandidates[c];
+			btCollisionWorld::rayTestSingle(from, to, candidate, candidate->getCollisionShape(), candidate->getWorldTransform(), cb);
+		}
 		object = nullptr;
 		float best = 2;
 		for (int i = 0; i < cb.count; i++) {
@@ -286,10 +291,53 @@ const btTransform& btVehicleRL::getChassisWorldTransform() const {
 	return getRigidBody()->getCenterOfMassTransform();
 }
 
+float btVehicleRL::rayLength(const btWheelInfoRL& wheel) const {
+	// RL PATCH: radius + rest + travel (RocketSim subtracted the 2.5 uu max raise here too)
+	return wheel.getSuspensionRestLength() + wheel.m_maxSuspensionTravelCm / 100 + wheel.m_wheelsRadius;
+}
+
+// RL PATCH (FP2): the wheel rays' candidates as the game picks them (vehicle update 0x1402c5e40, after the hard points:
+// 0x1402c2230): one query of the box around every wheel's ray, its start and end, against each body's stored
+// broadphase box (aabbTest 0x140270d80, TestAabbAgainstAabb2), the chassis and the bodies the rays' filter leaves out
+// skipped, 32 at most in proxy order (callback 0x1402c4610). The stored boxes are the step's updateAabbs ones (after the
+// vehicles) or a creation's (CreatedBox.h), so a body moved since is seen at its new pose only if its old box overlaps
+// (notes/bullet-diff.md "Broadphase boxes at placement and the wheel-ray candidate query", AB1)
+void btVehicleRL::findRayCandidates() {
+	btVector3 boxMin(BT_LARGE_FLOAT, BT_LARGE_FLOAT, BT_LARGE_FLOAT), boxMax(-BT_LARGE_FLOAT, -BT_LARGE_FLOAT, -BT_LARGE_FLOAT);
+	for (int i = 0; i < getNumWheels(); i++) {
+		const btWheelInfoRL& wheel = m_wheelInfo[i];
+		btVector3 source = wheel.m_raycastInfo.m_hardPointWS;
+		btVector3 target = source + wheel.m_raycastInfo.m_wheelDirectionWS * rayLength(wheel);
+		boxMin.setMin(source);
+		boxMin.setMin(target);
+		boxMax.setMax(source);
+		boxMax.setMax(target);
+	}
+	struct Candidates : public btBroadphaseAabbCallback {
+		btCollisionWorld::RayResultCallback* filter;
+		btVehicleRL* vehicle;
+		bool process(const btBroadphaseProxy* proxy) override {
+			if (vehicle->m_numRayCandidates < MAX_RAY_CANDIDATES && filter->needsCollision((btBroadphaseProxy*)proxy))
+				vehicle->m_rayCandidates[vehicle->m_numRayCandidates++] = (const btCollisionObject*)proxy->m_clientObject;
+			return true;
+		}
+	};
+	PerObjectRayCallback filter; // (the rays' own filter: their group and mask, the chassis ignored)
+	filter.m_ignoreObj = m_chassisBody;
+	filter.m_collisionFilterGroup |= m_vehicleRaycaster->addedFilterMask;
+	Candidates candidates;
+	candidates.filter = &filter;
+	candidates.vehicle = this;
+	m_numRayCandidates = 0;
+	m_dynamicsWorld->getBroadphase()->aabbTest(boxMin, boxMax, candidates);
+}
+
 void btVehicleRL::updateVehicleFirst(float step) {
 
 	for (int i = 0; i < getNumWheels(); i++)
 		updateWheelTransform(i);
+
+	findRayCandidates(); // RL PATCH (FP2)
 
 	//
 	// simulate suspension

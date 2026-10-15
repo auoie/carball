@@ -1,0 +1,21 @@
+// How a match session ends and when the idle warning shows (notes/matchmaking.md MM-36..38, MM-41): pure, for the
+// online game (src/game/online.ts) and its tests.
+import { KICK_IDLE, KICK_NOT_ALL_JOINED, type MatchPhase } from "../net/protocol";
+
+/** How a match session ended: kicked for being idle, its match cancelled before the start (not every reserved player
+ *  joined), the match over, or the connection lost */
+export type SessionEnd = "idle" | "notAllJoined" | "ended" | "lost";
+
+/** Why the session ended, from the server's kick (KICK_*: null without one) and the phase it ended in (the end screen's:
+ *  the server lets a finished queue match go) */
+export function sessionEndReason(kicked: number | null, phase: MatchPhase | undefined): SessionEnd {
+  if (kicked === KICK_IDLE) return "idle";
+  if (kicked === KICK_NOT_ALL_JOINED) return "notAllJoined";
+  return phase === "finished" ? "ended" : "lost";
+}
+
+/** The idle warning's tip (MM-36): while the server flags it, during play (0:00 too), with the car's camera (not in a
+ *  goal replay), connected */
+export function idleTipShown(warning: boolean, phase: MatchPhase | undefined, replaying: boolean, disconnected: boolean): boolean {
+  return warning && (phase === "active" || phase === "timeUp") && !replaying && !disconnected;
+}

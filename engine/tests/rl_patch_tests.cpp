@@ -1893,8 +1893,14 @@ static void TestVehicleOrder() {
 	arena->ResetToRandomKickoff(2);
 	auto order = [&] { return arena->GetVehicleOrder(); };
 	CHECK(order() == (std::vector<uint32_t>{ a->id, b->id, c->id }), "join order at first");
+	auto raw = [&] {
+		std::vector<uint32_t> ids;
+		for (Car* car : arena->_vehicleOrder)
+			ids.push_back(car->id);
+		return ids;
+	};
 	arena->DemolishCar(a);
-	CHECK(order() == (std::vector<uint32_t>{ c->id, b->id }), "a demolition: the last car takes its place, at once (RV-340)");
+	CHECK(raw() == (std::vector<uint32_t>{ c->id, b->id }), "a demolition: the last car takes its place, at once in the step's own order (RV-340, RV-359)");
 	arena->Step(1);
 	CHECK(order() == (std::vector<uint32_t>{ c->id, b->id }), "the tick after it: the same");
 	for (int i = 0; i < 400 && a->GetState().isDemoed; i++)
@@ -1908,6 +1914,20 @@ static void TestVehicleOrder() {
 	CHECK(order() == (std::vector<uint32_t>{ c->id, b->id, d->id }), "a new car goes last");
 	arena->SetVehicleOrder({ d->id, b->id });
 	CHECK(order() == (std::vector<uint32_t>{ d->id, b->id, c->id }), "a set order, the rest after it in ID order");
+	// (two demolitions in one tick, in the order they come: [d b c], b then d -> [c d] then [c]; d then b -> [c b] then [c]:
+	// told apart by a third car, RV-346, RV-359)
+	{
+		Arena* two = arena->Clone(false);
+		Car* e = two->AddCar(Team::BLUE);
+		two->SetVehicleOrder({ d->id, b->id, c->id, e->id });
+		two->DemolishCar(two->GetCar(b->id));
+		two->DemolishCar(two->GetCar(d->id));
+		std::vector<uint32_t> ids;
+		for (Car* car : two->_vehicleOrder)
+			ids.push_back(car->id);
+		CHECK(ids == (std::vector<uint32_t>{ c->id, e->id }), "b then d demolished: [d b c e] -> [d e c] -> [c e]");
+		delete two;
+	}
 	arena->SetVehicleOrder({ b->id, b->id, 0xffffffffu, d->id });
 	CHECK(order() == (std::vector<uint32_t>{ b->id, d->id, c->id }), "a set order's duplicates and unknown ids left out (RV-342)");
 	arena->SetVehicleOrder({ d->id, b->id });
@@ -1960,7 +1980,7 @@ static void TestVehicleOrderCopiesOnADemolitionTick() {
 		arena->Serialize(out);
 		return out.data;
 	};
-	for (int way = 0; way < 3; way++) {
+	for (int way = 0; way < 4; way++) { // (3: a state set whose respawn comes the next tick, RV-353)
 		Arena* arena = Arena::Create(GameMode::SOCCAR);
 		Car* victim = arena->AddCar(Team::BLUE, CAR_CONFIG_OCTANE);
 		Car* attacker = arena->AddCar(Team::ORANGE, CAR_CONFIG_OCTANE);
@@ -1987,7 +2007,7 @@ static void TestVehicleOrderCopiesOnADemolitionTick() {
 		} else {
 			CarState s = victim->GetState();
 			s.isDemoed = true;
-			s.demoRespawnTimer = 3;
+			s.demoRespawnTimer = way == 3 ? arena->tickTime / 2 : 3;
 			victim->SetState(s);
 		}
 		CHECK(victim->GetState().isDemoed, "way %d: the victim demolished", way);
@@ -2024,9 +2044,11 @@ static void TestVehicleOrderCopiesOnADemolitionTick() {
 	arena->AddCar(Team::BLUE);
 	DataStreamOut out;
 	arena->Serialize(out);
-	size_t at = out.data.size() - 4 - 4 * 1; // (the order: its count, one id; the last thing written? checked below)
+	// (the order, its count and one id, then the bodies' boxes: a count and 6 floats for the ball and the car, FP2)
+	size_t at = out.data.size() - (4 + 2 * 6 * 4) - 4 - 4 * 1;
 	uint32_t count;
 	memcpy(&count, out.data.data() + at, 4);
+	CHECK(count == 1, "the snapshot ends with the order (a count of 1), not %u: the layout changed, fix the offset", count);
 	if (count == 1) {
 		for (uint32_t bad : { 0xffffffffu, 1025u, 2u }) {
 			std::vector<byte> data = out.data;
@@ -2045,6 +2067,74 @@ static void TestVehicleOrderCopiesOnADemolitionTick() {
 		delete loaded;
 	}
 	delete arena;
+}
+
+// FP2 (AB1): a wheel ray tests only the bodies whose stored broadphase box overlaps the box around all the car's rays.
+// A body moved (SetState: a teleport) keeps its old box until the step's updateAabbs, after the vehicles: another car's
+// rays see it at its new pose only if the old box overlaps, else not for a tick; a new spawn gets its box at once
+static void TestWheelRayCandidates() {
+	puts("FP2: the wheel rays' candidates by the stored broadphase boxes: a teleported car seen at its new pose only if its "
+		"old box overlaps the rays' box (else a tick later), a new spawn at once; copies keep the stale boxes");
+	auto onLower = [](Car* upper, Car* lower) {
+		int n = 0;
+		for (int i = 0; i < upper->_bulletVehicle.getNumWheels(); i++) {
+			const btWheelInfoRL& w = upper->_bulletVehicle.m_wheelInfo[i];
+			n += w.m_raycastInfo.m_isInContact && w.m_raycastInfo.m_groundObject == &lower->_rigidBody;
+		}
+		return n;
+	};
+	auto bytes = [](Arena* arena) {
+		DataStreamOut out;
+		arena->Serialize(out);
+		return out.data;
+	};
+	// The lower car starts 150 uu to the side (its box clear of the upper car's rays' box, in the rays' broadphase cell
+	// neighbourhood) or 2000 uu away, then is moved under the upper car: teleported, or as a new spawn
+	struct Way {
+		float from;
+		bool spawn;
+		bool seenAtOnce;
+		const char* name;
+	};
+	for (const Way& way : { Way{ 150, false, false, "teleported from 150 uu" }, Way{ 2000, false, false, "teleported from 2000 uu" },
+	                        Way{ 25, false, true, "teleported from 25 uu (its old box overlapping)" }, Way{ 2000, true, true, "a new spawn" } }) {
+		Arena* arena = Arena::Create(GameMode::SOCCAR);
+		Car* lower = arena->AddCar(Team::BLUE);
+		Car* upper = arena->AddCar(Team::ORANGE);
+		BallState far;
+		far.pos = Vec(3000, -4000, 92.75f);
+		arena->ball->SetState(far);
+		const float dz = 50;
+		upper->SetState(CarAt(Vec(0, 0, 1000 + dz), Vec(1, 0, 0), Vec(0, 0, 1)));
+		lower->SetState(CarAt(Vec(way.from, 0, 1000), Vec(1, 0, 0), Vec(0, 0, 1)));
+		arena->Step(1); // (falling together; both boxes from this step)
+		CHECK(way.from < 100 || onLower(upper, lower) == 0, "%s: nothing under the upper car yet", way.name);
+		CarState moved = lower->GetState();
+		moved.pos = upper->GetState().pos - Vec(0, 0, dz);
+		moved.vel = upper->GetState().vel;
+		if (way.spawn)
+			moved.spawnCount++;
+		lower->SetState(moved);
+		// (a copy now, its stale boxes with it: it runs on as the original)
+		DataStreamOut out;
+		arena->Serialize(out);
+		DataStreamIn in;
+		in.data = out.data;
+		Arena* restored = Arena::DeserializeNew(in);
+		Arena* cloned = arena->Clone(false);
+		arena->Step(1);
+		int atOnce = onLower(upper, lower);
+		CHECK((atOnce > 0) == way.seenAtOnce, "%s: the upper car's wheels on it the next tick: %d", way.name, atOnce);
+		arena->Step(1);
+		CHECK(onLower(upper, lower) > 0, "%s: on it the tick after (its box updated)", way.name);
+		for (Arena* copy : { restored, cloned }) {
+			copy->Step(2);
+			CHECK(bytes(copy) == bytes(arena), "%s: a copy made right after the move runs on as the original", way.name);
+		}
+		delete restored;
+		delete cloned;
+		delete arena;
+	}
 }
 
 // T1 (FP1): a car on another's roof, both in the air: the lower car's tick is gravity and, from each of the upper car's
@@ -3023,6 +3113,7 @@ int main(int argc, char** argv) {
 	TestVehicleOrder();
 	TestVehicleOrderCopiesOnADemolitionTick();
 	TestSharedMeshBoxNotCached();
+	TestWheelRayCandidates();
 	TestCarOnCarRoof();
 	TestCarOnBall();
 	TestGameRotator();

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { JOIN_COUNTDOWN, Matchmaking, OWN_SEARCH_TEXT, SEARCH_TEXT, timelineLines } from "./matchmaking";
 
 interface Handlers {
@@ -11,6 +11,7 @@ function harness() {
   const sounds: string[] = [];
   const joined: { token: bigint; playlist: number }[] = [];
   const searches: { playlist: number; handlers: Handlers; cancelled: boolean }[] = [];
+  const declined: bigint[] = [];
   const mm = new Matchmaking({
     search: (playlist, handlers) => {
       const s = { playlist, handlers, cancelled: false };
@@ -21,14 +22,23 @@ function harness() {
     },
     sound: (cue) => sounds.push(cue),
     join: (token, playlist) => joined.push({ token, playlist }),
+    decline: (token) => declined.push(token),
   });
-  return { mm, sounds, joined, searches };
+  return { mm, sounds, joined, searches, declined };
 }
 
 describe("matchmaking (notes/matchmaking.md MM-4..14)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("logs FindingBestMatch at 5 s and WaitingForMorePlayers at 150 s", () => {
     expect(timelineLines(4.9)).toEqual([]);
     expect(timelineLines(5).map((l) => l.text)).toEqual([SEARCH_TEXT.findingBestMatch]);
+    expect(timelineLines(149.9).map((l) => l.text)).toEqual([SEARCH_TEXT.findingBestMatch]);
     expect(timelineLines(150).map((l) => l.text)).toEqual([SEARCH_TEXT.findingBestMatch, SEARCH_TEXT.waitingForMorePlayers]);
   });
 
@@ -47,12 +57,13 @@ describe("matchmaking (notes/matchmaking.md MM-4..14)", () => {
     expect(mm.state?.status).toBe("joining");
     const countdown = (): string[] => (mm.state?.lines ?? []).filter((l) => l.kind === "countdown").map((l) => l.text);
     expect(countdown()).toEqual(["Joining in 3"]);
-    mm.frame(17.01);
+    // (on timers, no frames: a hidden tab's countdown runs and claims on time, RV-354)
+    vi.advanceTimersByTime(1000);
     expect(countdown()).toEqual(["Joining in 3", "Joining in 2"]);
-    mm.frame(18.01);
+    vi.advanceTimersByTime(1000);
     expect(countdown()).toEqual(["Joining in 3", "Joining in 2", "Joining in 1"]);
     expect(joined).toEqual([]);
-    mm.frame(16 + JOIN_COUNTDOWN + 0.01);
+    vi.advanceTimersByTime(JOIN_COUNTDOWN * 1000 - 2000);
     expect(joined).toEqual([{ token: 77n, playlist: 2 }]);
     expect(sounds).toEqual(["start", "countdown", "countdown", "countdown"]);
     expect(mm.state).toBeNull();
@@ -87,14 +98,28 @@ describe("matchmaking (notes/matchmaking.md MM-4..14)", () => {
     expect(searches).toHaveLength(2);
   });
 
-  it("a second Find Match replaces the search", () => {
+  it("Find Match while a search runs keeps it (MM-2: SearchInProgress); after it ends, a new one starts", () => {
     const { mm, searches } = harness();
+    expect(mm.start(1)).toBe(true);
+    expect(mm.start(2)).toBe(false);
+    expect(searches.map((s) => [s.playlist, s.cancelled])).toEqual([[1, false]]);
+    expect(mm.playlist).toBe(1);
+    searches[0]?.handlers.failed("lost");
+    expect(mm.start(2)).toBe(true);
+    expect(searches.map((s) => s.playlist)).toEqual([1, 2]);
+  });
+
+  it("Cancel Search during Joining in gives the slot up at once and doesn't claim (RV-355)", () => {
+    const { mm, joined, searches, declined, sounds } = harness();
     mm.start(1);
-    mm.start(2);
-    expect(searches.map((s) => [s.playlist, s.cancelled])).toEqual([
-      [1, true],
-      [2, false],
-    ]);
-    expect(mm.playlist).toBe(2);
+    searches[0]?.handlers.searching();
+    searches[0]?.handlers.found(9n);
+    vi.advanceTimersByTime(1500);
+    mm.cancel();
+    expect(declined).toEqual([9n]);
+    expect(mm.state).toBeNull();
+    expect(sounds.at(-1)).toBe("cancel");
+    vi.advanceTimersByTime(5000);
+    expect(joined).toEqual([]);
   });
 });

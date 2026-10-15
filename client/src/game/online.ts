@@ -24,8 +24,6 @@ import {
   type ControlMessage,
   type ForfeitVote,
   type InputFrame,
-  KICK_IDLE,
-  KICK_NOT_ALL_JOINED,
   type MatchPhase,
   type MatchState,
   type MatchType,
@@ -34,6 +32,7 @@ import {
   quantizeAxis,
 } from "../net/protocol";
 import { NetSession } from "../net/session";
+import { type SessionEnd, idleTipShown, sessionEndReason } from "./sessionEnd";
 import { BallView, BoostPadsView, CarView, trailGround } from "../render/entities";
 import type { ArenaView } from "../render/arena";
 import type { Renderer } from "../render/renderer";
@@ -106,10 +105,6 @@ export interface PhaseChange {
   readonly winner: number | null;
   readonly forfeit: boolean;
 }
-
-/** How a match session ended: kicked for being idle, its match cancelled before the start (not every reserved player
- *  joined), the match over, or the connection lost */
-export type SessionEnd = "idle" | "notAllJoined" | "ended" | "lost";
 
 export interface OnlineStats {
   readonly ping: number | null; // ms, smoothed
@@ -465,7 +460,7 @@ export class Online {
     this.statsUi.toast.update(now);
     this.#drawEnd(now);
     // (the idle warning: during play, with the car's camera, MM-36)
-    this.idleTip?.update(this.#idleWarning && (phase === "active" || phase === "timeUp") && this.#replay === null && this.#disconnected === null);
+    this.idleTip?.update(idleTipShown(this.#idleWarning, phase, this.#replay !== null, this.#disconnected !== null));
     // The log stays up in the menu, after the match (RV-254) and with the scoreboard (4 s after it: SB-10)
     const hold = !this.inputEnabled() || matchOver(phase) || board.shown;
     this.chat.log.update(now, hold, board.shown && phase !== "finished" ? CHAT_LOG.afterScoreboard : CHAT_LOG.hideAfter);
@@ -694,15 +689,7 @@ export class Online {
   #watchSessionEnd(): void {
     if (this.#disconnected === null || this.#sessionEnded) return;
     this.#sessionEnded = true;
-    const why: SessionEnd =
-      this.#kicked === KICK_IDLE
-        ? "idle"
-        : this.#kicked === KICK_NOT_ALL_JOINED
-          ? "notAllJoined"
-          : this.#match?.phase === "finished"
-            ? "ended"
-            : "lost";
-    this.onSessionEnd?.(why);
+    this.onSessionEnd?.(sessionEndReason(this.#kicked, this.#match?.phase));
   }
 
   /** A new phase as this client sees it (MIO-16: the end's timings run from here). `first`: the first match state after

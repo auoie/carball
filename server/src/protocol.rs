@@ -7,8 +7,9 @@ use crate::engine::Controls;
 // the match type, a leaver's car, no contest; 11: quick chat, players' names (the roster), a leave's reason; 12: whether a
 // leaver's car explodes; 13: match stats, mute, Hello's chat filters; 14: the match's intro and end (its phases, the end
 // screen's countdown, ready checks, podium titles), Refused's version reason; 17: the queue (Hello's intent, playlist and
-// token, 64-bit keys, MatchFound, IdleWarning, Kicked)
-pub const VERSION: u16 = 17;
+// token, 64-bit keys, MatchFound, IdleWarning, Kicked); 18: the moving bodies' broadphase boxes in the engine snapshot
+// (physics FP2)
+pub const VERSION: u16 = 18;
 /// The quick-chat presets (`Group1-6MessageN`: notes/quick-chat.md CHAT-1); a preset on the wire is its index
 pub const QUICK_CHAT_PRESETS: u8 = 76;
 /// A player's quick-chat filter (`EChatFilter` as the clone uses it: CHAT-18)

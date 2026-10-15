@@ -1,6 +1,7 @@
 #include "NetState.h"
 
 #include "Sim/PhysState/RawBodyState.h"
+#include "Sim/CreatedBox.h"
 
 #include <algorithm>
 #include <atomic>
@@ -926,6 +927,9 @@ void OverlayCar(Arena* arena, const CompactCar& d, Car* car) {
 		s.tickCountSinceUpdate = RS_MAX(car->_internalState.tickCountSinceUpdate, RECENT_PLACEMENT_TICKS + 1);
 	car->_internalState = s;
 	car->_velocityImpulseCache = { 0, 0, 0 };
+	// (a placement is the game's new car: its broadphase box at once, as the server's spawn, FP2)
+	if (placed)
+		SetCreatedBox(car->_bulletVehicle.m_dynamicsWorld, &car->_rigidBody);
 
 	// Its XY lock: the server's pin (RV-304), taken there at the next tick unless the client already holds it there
 	btVector3 pin;
@@ -1056,10 +1060,13 @@ bool ApplyCompact(Arena* arena, DataStreamIn& in, std::vector<uint32_t>* carIds)
 		s.vel = ball->_rigidBody.getLinearVelocity() * BT_TO_UU;
 		s.angVel = ball->_rigidBody.getAngularVelocity();
 		s.spawnCount = CounterNear(s.spawnCount, ballSpawns);
+		bool spawned = s.spawnCount != ball->_internalState.spawnCount;
 		s.isExploded = ballExploded;
 		ball->_internalState = s;
 		ball->_velocityImpulseCache = { 0, 0, 0 };
 		ball->_ApplyExploded();
+		if (spawned) // (a new ball: its box at once, FP2)
+			SetCreatedBox(ball->_world, &ball->_rigidBody);
 	}
 	for (const CompactCar& d : cars)
 		OverlayCar(arena, d, arena->GetCar(d.id));

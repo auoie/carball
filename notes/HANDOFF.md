@@ -111,7 +111,41 @@ kickoff's countdown they're the countdown's zeroed ones: the engine's netstate c
 changing an exact client there, which its 120 s batch run didn't reach). The server's tests aborted about one run in
 five (`std::length_error` in an arena's teardown, at the FP1 commit too): RocketSim caches a shape's box in the shape,
 and the arena meshes are shared by every arena, so the tests' arenas on several threads tore it; engine patch 106
-computes the meshes' box each time (rl_patch_tests TestSharedMeshBoxNotCached).
+computes the meshes' box each time (rl_patch_tests TestSharedMeshBoxNotCached). The rest of that flake (RX12's RV-356):
+RocketSim's init raced when tests on several threads each called it; `engine::init` now runs it once a process.
+**FP2, 2026-10-15** (the wheel rays' candidates, notes/bullet-diff.md AB1; protocol 18): engine patch 107. The rays test
+only the bodies whose stored broadphase box overlaps the box around all of a car's rays (`btVehicleRL::findRayCandidates`,
+at most 32), at their current transform; a body teleported since the last step is seen only if its old box overlaps (a
+tick later otherwise), as in the game; a new spawn (spawn counter moved) gets its box at once (`Sim/CreatedBox.h`), also
+when the network state applies a placement; snapshots carry the ball's and cars' boxes (copies exact). Checks: the
+determinism scenario's per-second physics hashes are unchanged over 300 s (the snapshot grew by the boxes); every live
+recording validates as before (`live_validate` now gives bodies their boxes after a skipped placement tick, as the game's
+step did; without it car_car2's tick 731 lost its wheel contact); rl_patch_tests TestWheelRayCandidates (a car teleported
+from 150 uu: the old cell candidates saw it at once, the game's rule a tick later; mutants of the query, the spawn box and
+the snapshot boxes each fail it).
+**Hardening and the images, 2026-10-15** (the deploy step; `APP-CONTRACT.md`): SEC-2 (QUIC stream and window limits
+through wtransport's `quinn` feature, 512 sessions, per address 8 at once and 30 a minute, a 10 s handshake deadline),
+SEC-3 (per-session token buckets: inputs 240/s, control 20/s with a flood closing the session; 2048 messages a loop),
+SEC-5 (`ALLOWED_ORIGIN`), SEC-6 (`CERT_PATH`/`KEY_PATH` PEM files, reloaded on a change, polled every 5 s, or SIGHUP,
+open sessions kept: `Endpoint::reload_config`; the dev info server only without a certificate, on 127.0.0.1, 2 s reads,
+64 connections), SEC-7 (`catch_unwind` per match tick: that match let go, an open match restarted; the process exits if
+the game thread ends; SIGTERM exits at once), SEC-8 (one World a tick to the others). A health endpoint on 127.0.0.1
+(`--healthcheck`, the image's HEALTHCHECK) reports the game thread's heartbeat. The images: `scripts/build_images.sh`
+stages `client/dist` (nginx on :3000, `config.json` from `GAME_SERVER_URL` at start: `client/docker/`) and the release
+binary with the meshes (`debian:trixie-slim`; libstdc++ is linked in, so glibc 2.38+ is enough: `server/build.rs`;
+`server/docker/`). The client reads `config.json` for the game server (no certificate hash: a real certificate) unless
+`?queue=` names a development server. No container runtime on this machine: the Dockerfiles aren't built here; the
+binary's production mode (a PEM certificate, reloads, the health check, SIGTERM) was run by hand and the reload is in
+`tests/end_to_end.rs`. If a Windows browser can't reach a WSL development server's info endpoint on 127.0.0.1, run it
+with `--info-bind 0.0.0.0`.
+The review of the queue step (RX12, RV-353..365) came with FP2 and the hardening: a car demolished by a state set leaves
+the vehicles' order before the respawn pass (RV-353); the "Joining in" countdown runs on timers, so a hidden tab claims
+on time (RV-354); a claim whose match is gone searches again with a line, Cancel during the countdown gives the slot up at
+once (the match cancelled now for the others), Find Match while searching keeps the search (RV-355, MM-2); a formed
+match builds its arena at its first claim and the queue looks only at full playlists (RV-357; tokens aren't bound to the
+searcher: after launch); a claim on a development server is refused as not its (RV-363); netstate's countdown case and
+the demolished car's block (RV-358, RV-359); the later-state predictor test (RV-361). RV-362 (what would race with a
+thread per match): every match stays on the one game thread.
 **The browser tests' servers** start from `client/e2e/servers.ts` (Playwright's globalSetup), not its webServer: here a
 connection to a closed 127.0.0.1 port is dropped, not refused, and Playwright's pre-check of each server's URL waited
 2 min 14 s per server (9 of the suite's 12 minutes).

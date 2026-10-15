@@ -1380,6 +1380,42 @@ static std::vector<uint32_t> _ReadVehicleOrder(DataStreamIn& in) {
 	return ids;
 }
 
+// RL PATCH (FP2): the moving bodies' stored broadphase boxes, the ball's then each car's in ID order (the wheel rays'
+// candidates are picked by them: btVehicleRL::findRayCandidates), so a snapshot, a clone or a load in place continues as
+// the original (the game's rollback leaves the boxes from before it: ours restores them, for exact replays); the static
+// bodies' boxes are fixed
+static void _WriteBodyBoxes(DataStreamOut& out, Arena* arena) {
+	auto write = [&](btCollisionObject& body) {
+		btBroadphaseProxy* proxy = body.getBroadphaseHandle();
+		btVector3 boxMin = proxy ? proxy->m_aabbMin : btVector3(0, 0, 0), boxMax = proxy ? proxy->m_aabbMax : btVector3(0, 0, 0);
+		// (plain floats: ReadMultiple's count check aborts on a malformed snapshot)
+		for (float f : { boxMin.x(), boxMin.y(), boxMin.z(), boxMax.x(), boxMax.y(), boxMax.z() })
+			out.Write<float>(f);
+	};
+	out.Write<uint32_t>((uint32_t)(1 + arena->GetCars().size()));
+	write(arena->ball->_rigidBody);
+	for (Car* car : arena->GetCars())
+		write(car->_rigidBody);
+}
+
+static void _ReadBodyBoxes(DataStreamIn& in, Arena* arena) {
+	size_t bodies = 1 + arena->GetCars().size();
+	if (in.GetNumBytesLeft() < sizeof(uint32_t) || in.Read<uint32_t>() != bodies || in.GetNumBytesLeft() < bodies * 6 * sizeof(float)) {
+		in.pos = in.data.size() + 1; // (overflown: not this arena's)
+		return;
+	}
+	auto read = [&](btCollisionObject& body) {
+		float v[6];
+		for (float& f : v)
+			f = in.Read<float>();
+		if (btBroadphaseProxy* proxy = body.getBroadphaseHandle())
+			arena->_bulletWorld.getBroadphase()->setAabb(proxy, btVector3(v[0], v[1], v[2]), btVector3(v[3], v[4], v[5]), arena->_bulletWorld.getDispatcher());
+	};
+	read(arena->ball->_rigidBody);
+	for (Car* car : arena->GetCars())
+		read(car->_rigidBody);
+}
+
 static void _ReadXYLocks(DataStreamIn& in, Arena* arena) {
 	for (Car* car : arena->GetCars()) {
 		arena->_RemoveXYLock(car);
@@ -1436,6 +1472,7 @@ void Arena::Serialize(DataStreamOut& out) const {
 	_WriteGoalExplosion(out, goalExplosion); // RL PATCH
 	_WriteXYLocks(out, _cars); // RL PATCH
 	_WriteVehicleOrder(out, GetVehicleOrder()); // RL PATCH (FP1 G2; as the next sync leaves it: RV-340)
+	_WriteBodyBoxes(out, const_cast<Arena*>(this)); // RL PATCH (FP2)
 }
 
 // RL PATCH: Bullet keeps contact points from tick to tick (persistent manifolds), and some contacts, such as a
@@ -1636,6 +1673,7 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
 	_ReadGoalExplosion(in, newArena->goalExplosion); // RL PATCH
 	_ReadXYLocks(in, newArena); // RL PATCH
 	newArena->SetVehicleOrder(_ReadVehicleOrder(in)); // RL PATCH (FP1 G2)
+	_ReadBodyBoxes(in, newArena); // RL PATCH (FP2)
 
 	return newArena;
 }
@@ -1729,6 +1767,7 @@ bool Arena::DeserializeInPlace(DataStreamIn& in) {
 	_ReadGoalExplosion(in, goalExplosion); // RL PATCH
 	_ReadXYLocks(in, this); // RL PATCH
 	SetVehicleOrder(_ReadVehicleOrder(in)); // RL PATCH (FP1 G2)
+	_ReadBodyBoxes(in, this); // RL PATCH (FP2)
 	return true;
 }
 
@@ -1781,6 +1820,13 @@ Arena* Arena::Clone(bool copyCallbacks) {
 		DataStreamIn contactsIn;
 		contactsIn.data = contactsOut.data;
 		newArena->_DeserializeContacts(contactsIn);
+	}
+	{ // RL PATCH (FP2): the moving bodies' stored broadphase boxes (after the contacts, as a snapshot's load)
+		DataStreamOut boxes;
+		_WriteBodyBoxes(boxes, this);
+		DataStreamIn in;
+		in.data = boxes.data;
+		_ReadBodyBoxes(in, newArena);
 	}
 
 	return newArena;
@@ -1901,6 +1947,9 @@ void Arena::Step(int ticksToSimulate) {
 		// RL PATCH: the demolished cars first, their respawns (a new car, its vehicle last: FP1 G2); then the cars on
 		// the field in the vehicles' order, each its pre-physics and its vehicle (the game's action array; RocketSim's
 		// ran them in ID order)
+		// (a car demolished by a state set since the last tick leaves the order first, so its respawn this tick goes last,
+		// as a copy taken before the tick has it: RV-353)
+		_SyncVehicleOrder();
 		for (Car* car : _cars) {
 			car->_podiumMode = podiumMode; // RL PATCH
 			car->_PreTickRespawn(gameMode, tickTime, _mutatorConfig, respawnsHeld);

@@ -4,9 +4,11 @@ import { fitHudFonts, loadHudFonts } from "./ui/hudFont";
 import createEngine from "@engine/rlengine_web.mjs";
 import { CarBody, World, initEngine } from "./engine/world";
 import { Freeplay } from "./game/freeplay";
-import { Online, type SessionEnd } from "./game/online";
+import { Online } from "./game/online";
+import type { SessionEnd } from "./game/sessionEnd";
 import { Matchmaking, OWN_SEARCH_TEXT } from "./game/matchmaking";
-import { Connection, type MatchSession, devServerAddress } from "./net/connection";
+import { Connection, type JoinPreferences, type MatchSession, RefusedError, devServerAddress } from "./net/connection";
+import { REFUSED_TOKEN } from "./net/protocol";
 import { type MenuNotice, pageUrl, queueAddress, storeClaim, storeNotice, takeClaim, takeNotice } from "./net/pages";
 import { Search } from "./net/search";
 import { GameAudio } from "./audio/audio";
@@ -145,6 +147,18 @@ async function main(): Promise<void> {
   audio.apply(settings.audio, settings.options.muted);
   renderer.postOptions = settings.options;
   // (the Interface tab: the HUD's stage and its options)
+  // (what a match session's hello asks for: the player's car preferences, name and chat filters)
+  const joinPreferences = (s: Settings): JoinPreferences => ({
+    team: 255,
+    body: 0,
+    dodgeDeadzone: s.controller.dodgeDeadzone,
+    steeringSensitivity: s.controller.steeringSensitivity,
+    airControlSensitivity: s.controller.aerialSensitivity,
+    autoSkipReplay: s.options.autoSkipReplay,
+    name: s.chat.name,
+    quickChat: s.chat.quickChatFilter,
+    blockNonTactical: s.chat.blockNonTactical,
+  });
   const applyInterface = (s: Settings): void => {
     setInterfaceScale(s.interface.scale, s.interface.displayScale);
     hud.configure(s.interface);
@@ -273,6 +287,15 @@ async function main(): Promise<void> {
         storeClaim({ token, playlist });
         location.assign(pageUrl("match", location));
       },
+      // (the slot claimed and left at once: the match is cancelled now for its other players, RV-355)
+      decline: (token) => {
+        queueAddress(params, location.hostname)
+          .then(async (address) => {
+            const { connection } = await Connection.open(address, joinPreferences(settings), { intent: "claim", token });
+            connection.close();
+          })
+          .catch(() => undefined);
+      },
     });
     const view = new SearchView(document.body, () => {
       matchmaking.cancel();
@@ -283,6 +306,7 @@ async function main(): Promise<void> {
         mainMenu?.close();
         freeplay.restart(); // (a fresh session, not the one left: RV-284)
       },
+      // (while a search runs, Find Match only shows it: MM-2's SearchInProgress)
       findMatch: (playlist) => {
         matchmaking.start(playlist);
         view.openPanel();
@@ -332,22 +356,12 @@ async function main(): Promise<void> {
       const [host = location.hostname, port = "4434"] = server === "" || server === null ? [] : server.split(":");
       address = await devServerAddress(host, Number(port));
     }
-    const { controller } = settings;
-    // (a claim that fails: back to the menu with the connection-lost modal)
-    const opened = Connection.open(address, {
-      team: 255,
-      body: 0,
-      dodgeDeadzone: controller.dodgeDeadzone,
-      steeringSensitivity: controller.steeringSensitivity,
-      airControlSensitivity: controller.aerialSensitivity,
-      autoSkipReplay: settings.options.autoSkipReplay,
-      name: settings.chat.name,
-      quickChat: settings.chat.quickChatFilter,
-      blockNonTactical: settings.chat.blockNonTactical,
-    }, match);
+    // (a claim that fails: back to the menu; the match gone, a search again with a warning line, MM-18; the server not
+    // reached, the connection-lost modal)
+    const opened = Connection.open(address, joinPreferences(settings), match);
     if (claim) {
-      opened.catch(() => {
-        storeNotice({ modal: "lost" });
+      opened.catch((e: unknown) => {
+        storeNotice(e instanceof RefusedError && e.reason === REFUSED_TOKEN ? { search: claim.playlist, warning: OWN_SEARCH_TEXT.matchGone } : { modal: "lost" });
         location.replace(pageUrl("menu", location));
       });
     }
