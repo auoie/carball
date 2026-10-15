@@ -24,7 +24,8 @@ describe("the presets (CHAT-1, 2, 5)", () => {
     const text = (key: string): string | undefined => CHAT_PRESETS.find((p) => p.key === key)?.text;
     expect(text("Group1Message1")).toBe("I got it!");
     expect(text("Group1Message21")).toBe("Oops, wrong quick chat!");
-    expect(text("Group3Message14")).toBe("This isn't Rocket League!");
+    expect(text("Group3Message14")).toBe("This isn't Carball!"); // (the two naming the game name ours: the user's decision)
+    expect(text("Group6Message4")).toBe("This is Carball!");
     expect(text("Group4Message1")).toBe("$#@%!");
     expect(text("Group5Message1")).toBe("gg");
     expect(text("Group6Message8")).toBe("I'll do my best.");

@@ -289,7 +289,8 @@ async fn two_searches_make_a_match_their_tokens_claim() {
 }
 
 /// A server that takes pages from one origin only, and few sessions from an address: another origin, or none, is
-/// forbidden; the third session at once from the address is refused (SEC-5, SEC-2)
+/// forbidden (the origin's case as browsers send it); the third session at once from the address is refused, and past
+/// the server's most sessions any (SEC-5, SEC-2)
 #[tokio::test(flavor = "multi_thread")]
 async fn other_origins_and_an_addresss_extra_sessions_are_refused() {
     engine::init(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../out/arena/collision_meshes"))).unwrap();
@@ -300,6 +301,7 @@ async fn other_origins_and_an_addresss_extra_sessions_are_refused() {
     let playlist = rl_server::match_host::Playlist { team_size: 2, match_type: rl_server::game::MatchType::Casual, forfeit_vote_wait: None };
     std::thread::spawn(move || game_loop::run(messages, game_loop::Mode::Direct(playlist), None, heartbeat(), Instant::now()));
     let limits = NetLimits { per_address: 2, allowed_origins: Some(vec!["https://carball.zolt.top".into()]), ..NetLimits::default() };
+    let to_game_capped = to_game.clone();
     tokio::spawn(net::accept_loop(Arc::new(server), to_game, limits));
     let connect = |origin: Option<&'static str>| async move {
         let config = ClientConfig::builder().with_bind_default().with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(cert_hash)]).build();
@@ -312,13 +314,23 @@ async fn other_origins_and_an_addresss_extra_sessions_are_refused() {
     assert!(connect(None).await.is_err(), "no origin: forbidden");
     assert!(connect(Some("https://evil.example")).await.is_err(), "another origin: forbidden");
     let first = connect(Some("https://carball.zolt.top")).await.expect("the page's origin");
-    let second = connect(Some("https://carball.zolt.top")).await.expect("a second session from the address");
+    let second = connect(Some("https://Carball.Zolt.Top")).await.expect("a second session from the address");
     assert!(connect(Some("https://carball.zolt.top")).await.is_err(), "a third at once: refused");
     drop((first, second));
+
+    // A server of one session at most: the second is refused, whatever its address may have
+    let (identity, capped_hash) = net::dev_identity().unwrap();
+    let capped = net::endpoint(identity, 0).unwrap();
+    let capped_port = capped.local_addr().unwrap().port();
+    tokio::spawn(net::accept_loop(Arc::new(capped), to_game_capped, NetLimits { max_sessions: 1, ..open_limits() }));
+    let config = || ClientConfig::builder().with_bind_default().with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(capped_hash)]).build();
+    let only = Endpoint::client(config()).unwrap().connect(format!("https://localhost:{capped_port}/play")).await.expect("the one session");
+    assert!(Endpoint::client(config()).unwrap().connect(format!("https://localhost:{capped_port}/play")).await.is_err(), "past the most sessions");
+    drop(only);
 }
 
 /// A session that never opens its control stream is closed at the handshake's deadline (SEC-2); one that floods control
-/// messages is closed (SEC-3)
+/// messages or input datagrams is closed (SEC-3, RV-373); a development server refuses a search or a claim (RV-363)
 #[tokio::test(flavor = "multi_thread")]
 async fn a_silent_session_times_out_and_a_flooding_one_is_closed() {
     engine::init(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../out/arena/collision_meshes"))).unwrap();
@@ -350,6 +362,36 @@ async fn a_silent_session_times_out_and_a_flooding_one_is_closed() {
     }
     let closed = tokio::time::timeout(Duration::from_secs(5), flooder.closed()).await;
     assert!(closed.is_ok(), "the flooding session is still open");
+
+    // Input datagrams far over the rate: dropped, then the session closed
+    let flooder = Endpoint::client(config()).unwrap().connect(format!("https://localhost:{port}/play")).await.unwrap();
+    let (mut send, mut recv) = flooder.open_bi().await.unwrap().await.unwrap();
+    send.write_all(&queue_hello(protocol::INTENT_JOIN, 0, 0)).await.unwrap();
+    assert!(matches!(read_control(&mut recv).await, Control::Welcome { .. }));
+    let inputs = Datagram::Inputs { timestamp: 0, first_frame: 0, frames: vec![InputFrame::default()] }.encode();
+    let flooding = async {
+        loop {
+            for _ in 0..200 {
+                let _ = flooder.send_datagram(inputs.clone());
+            }
+            tokio::task::yield_now().await;
+        }
+    };
+    let closed = tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::select! {
+            _ = flooding => {}
+            _ = flooder.closed() => {}
+        }
+    })
+    .await;
+    assert!(closed.is_ok(), "the input flood's session is still open");
+    drop(send);
+
+    // A development server has no queue: a search and a claim are refused (3, not a token's 2: RX13's S13)
+    for hello in [queue_hello(protocol::INTENT_SEARCH, 1, 0), queue_hello(protocol::INTENT_CLAIM, 0, 42)] {
+        let (reply, ..) = first_reply(port, cert_hash, hello).await;
+        assert_eq!(reply, Control::Refused { reason: protocol::REFUSED_MODE });
+    }
 }
 
 /// A certificate reload keeps the sessions open now (their matches go on: updates keep coming) and gives new sessions
@@ -389,4 +431,34 @@ async fn a_certificate_reload_keeps_open_sessions_and_serves_the_new_one() {
     assert!(Endpoint::client(client(new_hash)).unwrap().connect(format!("https://localhost:{port}/play")).await.is_ok());
     assert!(Endpoint::client(client(old_hash)).unwrap().connect(format!("https://localhost:{port}/play")).await.is_err());
     drop(send);
+}
+
+/// A key that isn't its certificate's (a renewal read between its two writes) is an error, not wtransport's panic, so the
+/// reloads go on; the pair once both are written loads and serves (RV-368)
+#[tokio::test(flavor = "multi_thread")]
+async fn a_certificate_and_a_key_that_dont_match_are_refused_and_the_pair_then_served() {
+    engine::init(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../out/arena/collision_meshes"))).unwrap();
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("rv368");
+    std::fs::create_dir_all(&dir).unwrap();
+    let (cert, key) = (dir.join("fullchain.pem"), dir.join("privkey.pem"));
+    let (old, _) = net::dev_identity().unwrap();
+    let (new, new_hash) = net::dev_identity().unwrap();
+    // The renewal half written: the new certificate, the old key
+    std::fs::write(&cert, new.certificate_chain().as_slice()[0].to_pem()).unwrap();
+    std::fs::write(&key, old.private_key().to_secret_pem()).unwrap();
+    let e = net::load_identity(&cert, &key).await.expect_err("a key that isn't the certificate's");
+    assert!(format!("{e:#}").contains("not the certificate's"), "{e:#}");
+    // Then the new key: loaded, and a server reloaded with it serves the new certificate
+    std::fs::write(&key, new.private_key().to_secret_pem()).unwrap();
+    let identity = net::load_identity(&cert, &key).await.expect("the pair");
+    let (start, _) = net::dev_identity().unwrap();
+    let server = Arc::new(net::endpoint(start, 0).unwrap());
+    let port = server.local_addr().unwrap().port();
+    server.reload_config(net::server_config(identity, port).unwrap(), false).unwrap();
+    let (to_game, messages) = tokio::sync::mpsc::channel(rl_server::game_loop::TO_GAME_QUEUE);
+    let playlist = rl_server::match_host::Playlist { team_size: 1, match_type: rl_server::game::MatchType::Casual, forfeit_vote_wait: None };
+    std::thread::spawn(move || game_loop::run(messages, game_loop::Mode::Direct(playlist), None, heartbeat(), Instant::now()));
+    tokio::spawn(net::accept_loop(server, to_game, open_limits()));
+    let config = ClientConfig::builder().with_bind_default().with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(new_hash)]).build();
+    assert!(Endpoint::client(config).unwrap().connect(format!("https://localhost:{port}/play")).await.is_ok());
 }

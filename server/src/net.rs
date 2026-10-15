@@ -1,10 +1,12 @@
 //! WebTransport front end: accepts sessions on `/play`, reads the player's `Hello` from the control stream, then
 //! forwards input datagrams to the game and the game's messages to the client (`protocol/README.md`). What it lets in
-//! (the security review's SEC-2, SEC-3, SEC-5: `NetLimits`): QUIC's stream and buffer limits, sessions at once and per
-//! address, the handshake's deadline, the page's origin, each session's message rates.
+//! (the security review's SEC-2, SEC-3, SEC-5: `NetLimits`): QUIC's stream and buffer limits, an address proven before
+//! anything is spent on it (RV-366), sessions at once and per address, the handshakes' deadlines, the page's origin, each
+//! session's message rates.
 
 use std::collections::{HashMap, VecDeque};
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv6Addr};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -21,8 +23,9 @@ use crate::protocol::{self, Control, Datagram, InputFrame};
 pub enum Intent {
     /// Join the server's open match (development servers)
     Join,
-    /// Search the queue of the playlist with this team size
-    Search { team_size: u8 },
+    /// Search the queue of the playlist with this team size; `token`: the slot it claimed in a match cancelled for someone
+    /// else (back to the front of the queue, RV-367), else 0
+    Search { team_size: u8, token: u64 },
     /// Claim a reserved slot (the token a search's `MatchFound` gave)
     Claim { token: u64 },
 }
@@ -30,7 +33,8 @@ pub enum Intent {
 /// Messages from the network tasks to the game loop
 #[derive(Debug)]
 pub enum ToGame {
-    Join { id: PlayerId, intent: Intent, request: JoinRequest, out: Sender<Outgoing> },
+    /// `address`: the session's (`address_key`: the queue's no-show cooldown counts it too, RV-367)
+    Join { id: PlayerId, intent: Intent, request: JoinRequest, address: IpAddr, out: Sender<Outgoing> },
     /// The session ended; `lost`: its connection timed out
     Leave { id: PlayerId, lost: bool },
     Inputs { id: PlayerId, timestamp: u32, first_frame: u32, frames: Vec<InputFrame>, at: std::time::Instant },
@@ -83,9 +87,32 @@ pub fn endpoint(identity: Identity, port: u16) -> anyhow::Result<ServerEndpoint>
     Ok(Endpoint::server(server_config(identity, port)?)?)
 }
 
-/// What the front end lets in: sessions at once, per address at once and new a minute (SEC-2), the page origins
-/// allowed (SEC-5; None: any, a development server). The defaults are a public server's; the browser tests' servers,
-/// every page on one address, raise the per-address limits
+/// A public server's certificate chain and key, from their PEM files, checked to be a pair: wtransport's configuration
+/// panics on a key that isn't the certificate's (RV-368: a renewal read between its two writes would end the reloads)
+pub async fn load_identity(cert: &Path, key: &Path) -> anyhow::Result<Identity> {
+    let identity = Identity::load_pemfiles(cert, key).await?;
+    check_pair(&identity)?;
+    Ok(identity)
+}
+
+/// The identity as wtransport's server configuration takes it (the same calls), an error where they'd panic
+fn check_pair(identity: &Identity) -> anyhow::Result<()> {
+    use wtransport::tls::rustls;
+    use rustls::pki_types::pem::PemObject;
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+    let chain = identity.certificate_chain().as_slice().iter().map(|c| CertificateDer::from(c.der().to_vec())).collect();
+    let key = PrivateKeyDer::from_pem_slice(identity.private_key().to_secret_pem().as_bytes()).context("the private key")?;
+    rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+        .with_protocol_versions(&[&rustls::version::TLS13])?
+        .with_no_client_auth()
+        .with_single_cert(chain, key)
+        .context("the key is not the certificate's")?;
+    Ok(())
+}
+
+/// What the front end lets in: sessions at once, per address at once and new a minute (SEC-2; an address as
+/// `address_key` counts it), the page origins allowed (SEC-5; None: any, a development server). The defaults are a
+/// public server's; the browser tests' servers, every page on one address, raise the per-address limits
 #[derive(Clone, Debug)]
 pub struct NetLimits {
     pub max_sessions: usize,
@@ -94,19 +121,31 @@ pub struct NetLimits {
     pub allowed_origins: Option<Vec<String>>,
     /// The handshake, from the first packet through the hello, must be done this soon
     pub handshake: Duration,
+    /// Its QUIC part, through the session's request (a browser sends it at once), this soon (RV-366)
+    pub quic_handshake: Duration,
 }
 
 impl Default for NetLimits {
     fn default() -> Self {
-        Self { max_sessions: 512, per_address: 8, per_address_per_minute: 30, allowed_origins: None, handshake: Duration::from_secs(10) }
+        Self {
+            max_sessions: 512,
+            per_address: 8,
+            per_address_per_minute: 30,
+            allowed_origins: None,
+            handshake: Duration::from_secs(10),
+            quic_handshake: Duration::from_secs(4),
+        }
     }
 }
 /// Each session's rates (SEC-3), a second and a burst: input datagrams (a client sends one a frame; more are dropped, as
-/// lost packets) and control messages (more are dropped; a session that keeps on is closed)
+/// lost packets) and control messages (more are dropped)
 const INPUT_RATE: (f64, f64) = (240.0, 120.0);
 const CONTROL_RATE: (f64, f64) = (20.0, 40.0);
-/// Control messages dropped over the rate before the session is closed
-const CONTROL_OVERRUN_LIMIT: u32 = 200;
+/// The messages dropped over those rates a session may run up, a second and at most: past that it's closed. They drain,
+/// so a client now and then over its rate (a 360 Hz display's frames: 120 inputs a second dropped) never is; a flood of
+/// either kind is (RV-373)
+const INPUT_OVERRUN: (f64, f64) = (500.0, 5000.0);
+const CONTROL_OVERRUN: (f64, f64) = (2.0, 200.0);
 
 /// A token bucket: `rate` a second, `burst` at most
 #[derive(Clone, Debug)]
@@ -136,7 +175,47 @@ impl TokenBucket {
     }
 }
 
-/// The sessions of each address: at once, and the starts of the last minute (SEC-2)
+/// The address a session's limits count against: an IPv4 address (an IPv4-mapped IPv6 one as its IPv4: the server's
+/// socket is dual-stack), an IPv6 address's /64, one host's usual share (RV-366)
+pub fn address_key(ip: IpAddr) -> IpAddr {
+    match ip.to_canonical() {
+        IpAddr::V6(v6) => {
+            let s = v6.segments();
+            IpAddr::V6(Ipv6Addr::new(s[0], s[1], s[2], s[3], 0, 0, 0, 0))
+        }
+        v4 => v4,
+    }
+}
+
+/// What becomes of a connection attempt: an address not yet proven is sent a Retry before anything is spent on it (a
+/// spoofed Initial holds no slot, RV-366); a proven one is refused past the limits, else admitted (its permit kept for
+/// the session)
+#[derive(Debug)]
+pub enum Admit {
+    Retry,
+    Refuse,
+    Admit(tokio::sync::OwnedSemaphorePermit),
+}
+
+pub fn admit(
+    validated: bool,
+    address: IpAddr,
+    sessions: &Arc<tokio::sync::Semaphore>,
+    admission: &Mutex<Admission>,
+    limits: &NetLimits,
+    now: Instant,
+) -> Admit {
+    if !validated {
+        return Admit::Retry;
+    }
+    let Ok(permit) = sessions.clone().try_acquire_owned() else { return Admit::Refuse };
+    if !admission.lock().unwrap().admit(address, now, limits) {
+        return Admit::Refuse;
+    }
+    Admit::Admit(permit)
+}
+
+/// The sessions of each address (`address_key`): at once, and the starts of the last minute (SEC-2)
 #[derive(Debug, Default)]
 pub struct Admission {
     active: HashMap<IpAddr, usize>,
@@ -179,16 +258,18 @@ pub async fn accept_loop(server: Arc<ServerEndpoint>, to_game: Sender<ToGame>, l
     let limits = Arc::new(limits);
     loop {
         let incoming = server.accept().await;
-        // (refused before anything is spent on it: too many sessions, or too many from its address)
-        let address = incoming.remote_address().ip();
-        let Ok(permit) = sessions.clone().try_acquire_owned() else {
-            incoming.refuse();
-            continue;
+        let address = address_key(incoming.remote_address().ip());
+        let permit = match admit(incoming.remote_address_validated(), address, &sessions, &admission, &limits, Instant::now()) {
+            Admit::Retry => {
+                incoming.retry();
+                continue;
+            }
+            Admit::Refuse => {
+                incoming.refuse();
+                continue;
+            }
+            Admit::Admit(permit) => permit,
         };
-        if !admission.lock().unwrap().admit(address, Instant::now(), &limits) {
-            incoming.refuse();
-            continue;
-        }
         let id = next_id;
         next_id += 1;
         let to_game = to_game.clone();
@@ -196,7 +277,7 @@ pub async fn accept_loop(server: Arc<ServerEndpoint>, to_game: Sender<ToGame>, l
         let limits = limits.clone();
         tokio::spawn(async move {
             let _permit = permit;
-            let lost = match session(incoming, id, &to_game, &limits).await {
+            let lost = match session(incoming, id, address, &to_game, &limits).await {
                 Ok(lost) => lost,
                 Err(e) => {
                     eprintln!("player {id}: {e:#}");
@@ -237,13 +318,13 @@ async fn handshake(
     incoming: IncomingSession,
     limits: &NetLimits,
 ) -> anyhow::Result<Option<(wtransport::Connection, wtransport::SendStream, wtransport::RecvStream, Result<Control, u16>)>> {
-    let request = incoming.await?;
+    let request = tokio::time::timeout(limits.quic_handshake, incoming).await.context("no QUIC handshake in time")??;
     if request.path() != "/play" {
         request.not_found().await;
         return Ok(None);
     }
     if let Some(allowed) = &limits.allowed_origins
-        && !request.origin().is_some_and(|origin| allowed.iter().any(|a| a == origin))
+        && !request.origin().is_some_and(|origin| allowed.iter().any(|a| a.eq_ignore_ascii_case(origin)))
     {
         eprintln!("session from origin {:?} refused", request.origin());
         request.forbidden().await;
@@ -256,7 +337,7 @@ async fn handshake(
 }
 
 /// One player's session; `Ok(lost)`: whether it ended by its connection timing out (the chat log's "lost connection")
-async fn session(incoming: IncomingSession, id: PlayerId, to_game: &Sender<ToGame>, limits: &NetLimits) -> anyhow::Result<bool> {
+async fn session(incoming: IncomingSession, id: PlayerId, address: IpAddr, to_game: &Sender<ToGame>, limits: &NetLimits) -> anyhow::Result<bool> {
     // (the whole handshake within its deadline: a session that never opens its control stream is gone, SEC-2)
     let Some((connection, mut send, mut recv, hello)) = tokio::time::timeout(limits.handshake, handshake(incoming, limits)).await.context("no hello in time")??
     else {
@@ -292,14 +373,14 @@ async fn session(incoming: IncomingSession, id: PlayerId, to_game: &Sender<ToGam
         bail!("expected hello");
     };
     let intent = match intent {
-        protocol::INTENT_SEARCH => Intent::Search { team_size: playlist },
+        protocol::INTENT_SEARCH => Intent::Search { team_size: playlist, token },
         protocol::INTENT_CLAIM => Intent::Claim { token },
         _ => Intent::Join,
     };
 
     let (out_tx, mut out_rx) = channel(OUT_QUEUE);
     let request = JoinRequest { team, body, dodge_deadzone, steering_sensitivity, air_control_sensitivity, auto_skip_replay, key, name, quick_chat, block_non_tactical };
-    to_game.send(ToGame::Join { id, intent, request, out: out_tx }).await?;
+    to_game.send(ToGame::Join { id, intent, request, address, out: out_tx }).await?;
 
     // Game -> client
     let writer_connection = connection.clone();
@@ -335,12 +416,11 @@ async fn session(incoming: IncomingSession, id: PlayerId, to_game: &Sender<ToGam
     let mut control_reader = tokio::spawn(async move {
         // (at most CONTROL_RATE: more are dropped, and a session that keeps on is closed, SEC-3)
         let mut bucket = TokenBucket::new(CONTROL_RATE, Instant::now());
-        let mut overrun = 0;
+        let mut overruns = TokenBucket::new(CONTROL_OVERRUN, Instant::now());
         loop {
             let read = read_control(&mut recv).await;
             if read.is_ok() && !bucket.take(Instant::now()) {
-                overrun += 1;
-                if overrun > CONTROL_OVERRUN_LIMIT {
+                if !overruns.take(Instant::now()) {
                     eprintln!("player {id}: control messages over the rate, session ends");
                     break;
                 }
@@ -369,10 +449,11 @@ async fn session(incoming: IncomingSession, id: PlayerId, to_game: &Sender<ToGam
         }
     });
 
-    // Client -> game: input datagrams (at most INPUT_RATE: more are dropped as lost, SEC-3); the round-trip time each
-    // second (the scoreboard's ping)
+    // Client -> game: input datagrams (at most INPUT_RATE: more are dropped as lost, SEC-3; a flood ends the session,
+    // RV-373); the round-trip time each second (the scoreboard's ping)
     let mut ping_every = tokio::time::interval(Duration::from_secs(1));
     let mut inputs = TokenBucket::new(INPUT_RATE, Instant::now());
+    let mut input_overruns = TokenBucket::new(INPUT_OVERRUN, Instant::now());
     let result: anyhow::Result<()> = loop {
         tokio::select! {
             _ = ping_every.tick() => {
@@ -381,6 +462,10 @@ async fn session(incoming: IncomingSession, id: PlayerId, to_game: &Sender<ToGam
             datagram = connection.receive_datagram() => match datagram {
                 Ok(d) => {
                     if !inputs.take(Instant::now()) {
+                        if !input_overruns.take(Instant::now()) {
+                            eprintln!("player {id}: input datagrams over the rate, session ends");
+                            break Ok(());
+                        }
                         continue;
                     }
                     if let Ok(Datagram::Inputs { timestamp, first_frame, frames }) = Datagram::decode(&d) {
@@ -515,5 +600,61 @@ mod tests {
         admission.release(a);
         admission.release(b);
         assert!(admission.active.is_empty());
+    }
+
+    #[test]
+    fn an_ipv6_address_counts_by_its_64_and_a_mapped_ipv4_one_as_itself() {
+        let key = |s: &str| address_key(s.parse().unwrap());
+        assert_eq!(key("2001:db8:1:2:aaaa::1"), key("2001:db8:1:2:ffff:1:2:3"), "one /64");
+        assert_ne!(key("2001:db8:1:2::1"), key("2001:db8:1:3::1"), "the next /64");
+        assert_eq!(key("::ffff:10.0.0.1"), key("10.0.0.1"), "a dual-stack socket's IPv4 client");
+        assert_ne!(key("::ffff:10.0.0.1"), key("::ffff:10.0.0.2"), "IPv4 clients aren't one /64");
+        // Two hosts of one /64 share its limits
+        let limits = NetLimits { per_address: 2, ..NetLimits::default() };
+        let mut admission = Admission::default();
+        let t0 = Instant::now();
+        assert!(admission.admit(key("2001:db8::1"), t0, &limits) && admission.admit(key("2001:db8::2"), t0, &limits));
+        assert!(!admission.admit(key("2001:db8::3"), t0, &limits));
+        assert!(admission.admit(key("2001:db8:0:1::1"), t0, &limits));
+    }
+
+    #[test]
+    fn an_unproven_address_is_sent_a_retry_and_takes_no_slot() {
+        let limits = NetLimits { max_sessions: 1, per_address: 1, ..NetLimits::default() };
+        let sessions = Arc::new(tokio::sync::Semaphore::new(1));
+        let admission = Mutex::new(Admission::default());
+        let a: IpAddr = [10, 0, 0, 1].into();
+        let t0 = Instant::now();
+        for _ in 0..10 {
+            assert!(matches!(admit(false, a, &sessions, &admission, &limits, t0), Admit::Retry));
+        }
+        assert_eq!(sessions.available_permits(), 1);
+        assert!(admission.lock().unwrap().active.is_empty());
+        let Admit::Admit(permit) = admit(true, a, &sessions, &admission, &limits, t0) else { panic!("a proven address admitted") };
+        assert!(matches!(admit(true, [10, 0, 0, 2].into(), &sessions, &admission, &limits, t0), Admit::Refuse), "the global cap");
+        drop(permit);
+    }
+
+    #[test]
+    fn overruns_drain_a_client_now_and_then_over_its_rate_stays_a_flood_doesnt() {
+        // A 360 Hz client: 360 inputs a second, 120 over the rate, for ten minutes
+        let t0 = Instant::now();
+        let (mut inputs, mut overruns) = (TokenBucket::new(INPUT_RATE, t0), TokenBucket::new(INPUT_OVERRUN, t0));
+        let mut closed = false;
+        for frame in 0..360 * 600 {
+            let t = t0 + Duration::from_secs_f64(f64::from(frame) / 360.0);
+            if !inputs.take(t) && !overruns.take(t) {
+                closed = true;
+            }
+        }
+        assert!(!closed);
+        // A flood: 20 000 a second, closed within half a second
+        let t1 = t0 + Duration::from_secs(700);
+        let (mut inputs, mut overruns) = (TokenBucket::new(INPUT_RATE, t1), TokenBucket::new(INPUT_OVERRUN, t1));
+        let at = (0..20_000).position(|i| {
+            let t = t1 + Duration::from_secs_f64(f64::from(i) / 20_000.0);
+            !inputs.take(t) && !overruns.take(t)
+        });
+        assert!(at.is_some_and(|i| i < 10_000), "{at:?}");
     }
 }

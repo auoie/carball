@@ -88,8 +88,8 @@ async function main(): Promise<void> {
   if (params.get("viewer") === "car") {
     const viewerWorld = World.create(engine);
     const team = params.get("team") === "1" ? 1 : 0;
-    const bodies = [CarBody.Octane, CarBody.Dominus, CarBody.Plank, CarBody.Breakout, CarBody.Hybrid, CarBody.Merc];
-    const id = viewerWorld.addCar(team, bodies[Number(params.get("body") ?? 0)] ?? CarBody.Octane);
+    const bodies = [CarBody.Standard, CarBody.Flat, CarBody.Wide, CarBody.Long, CarBody.Mid, CarBody.Tall];
+    const id = viewerWorld.addCar(team, bodies[Number(params.get("body") ?? 0)] ?? CarBody.Standard);
     const { showCarViewer } = await import("./debug/carViewer");
     const view = showCarViewer(new Renderer(canvas), viewerWorld.carConfig(id), TEAM_CAR_COLORS[team], team);
     (window as unknown as { rlCarViewer?: unknown }).rlCarViewer = { view };
@@ -265,12 +265,12 @@ async function main(): Promise<void> {
     };
     // The queue (notes/matchmaking.md): a search from the menu or free play; a match found, its claim to the match page
     const matchmaking = new Matchmaking({
-      search: (playlist, handlers) => {
+      search: (playlist, token, handlers) => {
         let search: Search | null = null;
         let cancelled = false;
         queueAddress(params, location.hostname)
           .then((address) => {
-            if (!cancelled) search = Search.start(address, playlist, handlers);
+            if (!cancelled) search = Search.start(address, playlist, token, handlers);
           })
           .catch((e: unknown) => {
             if (!cancelled) handlers.failed(e instanceof Error ? e.message : String(e));
@@ -285,8 +285,8 @@ async function main(): Promise<void> {
         else if (cue === "cancel") audio.searchCancel();
         else audio.countdown(1);
       },
-      join: (token, playlist) => {
-        storeClaim({ token, playlist });
+      join: (token, playlist, searchedFor) => {
+        storeClaim({ token, playlist, searchedAt: Date.now() - searchedFor * 1000 });
         location.assign(pageUrl("match", location));
       },
       // (the slot claimed and left at once: the match is cancelled now for its other players, RV-355)
@@ -321,7 +321,9 @@ async function main(): Promise<void> {
     const notice = takeNotice();
     if (notice?.modal) modal.show(MODAL_TEXT.title, notice.modal === "idle" ? MODAL_TEXT.idleKicked : MODAL_TEXT.connectionLost);
     if (notice?.search !== undefined) {
-      matchmaking.start(notice.search, notice.warning);
+      // (back from a match cancelled for someone else: its token, the queue's front again, and its search's clock: RV-367)
+      const back = notice.back ? { token: notice.back.token, searchedFor: (Date.now() - notice.back.searchedAt) / 1000 } : undefined;
+      matchmaking.start(notice.search, notice.warning, back);
       view.openPanel();
     }
     (window as unknown as { rlMatchmaking?: unknown }).rlMatchmaking = () => ({ state: matchmaking.state, panelOpen: view.panelOpen });
@@ -363,7 +365,9 @@ async function main(): Promise<void> {
     const opened = Connection.open(address, joinPreferences(settings), match);
     if (claim) {
       opened.catch((e: unknown) => {
-        storeNotice(e instanceof RefusedError && e.reason === REFUSED_TOKEN ? { search: claim.playlist, warning: OWN_SEARCH_TEXT.matchGone } : { modal: "lost" });
+        // (refused while still in its time: a match cancelled for someone else, so back to the queue's front, RV-367)
+        const back = { token: claim.token, searchedAt: claim.searchedAt };
+        storeNotice(e instanceof RefusedError && e.reason === REFUSED_TOKEN ? { search: claim.playlist, warning: OWN_SEARCH_TEXT.matchGone, back } : { modal: "lost" });
         location.replace(pageUrl("menu", location));
       });
     }
@@ -418,7 +422,7 @@ async function main(): Promise<void> {
       // (a queue match's session ending: back to the menu, with the kick's modal, a search again, or the lost connection's)
       const notices: Record<SessionEnd, MenuNotice | undefined> = {
         idle: { modal: "idle" },
-        notAllJoined: { search: claim.playlist, warning: OWN_SEARCH_TEXT.notAllJoined },
+        notAllJoined: { search: claim.playlist, warning: OWN_SEARCH_TEXT.notAllJoined, back: { token: claim.token, searchedAt: claim.searchedAt } },
         lost: { modal: "lost" },
         ended: undefined,
       };

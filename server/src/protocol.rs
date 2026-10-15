@@ -8,8 +8,8 @@ use crate::engine::Controls;
 // leaver's car explodes; 13: match stats, mute, Hello's chat filters; 14: the match's intro and end (its phases, the end
 // screen's countdown, ready checks, podium titles), Refused's version reason; 17: the queue (Hello's intent, playlist and
 // token, 64-bit keys, MatchFound, IdleWarning, Kicked); 18: the moving bodies' broadphase boxes in the engine snapshot
-// (physics FP2)
-pub const VERSION: u16 = 18;
+// (physics FP2); 19: a search's browser key and returning token, SearchCooldown (RV-367: no-shows)
+pub const VERSION: u16 = 19;
 /// The quick-chat presets (`Group1-6MessageN`: notes/quick-chat.md CHAT-1); a preset on the wire is its index
 pub const QUICK_CHAT_PRESETS: u8 = 76;
 /// A player's quick-chat filter (`EChatFilter` as the clone uses it: CHAT-18)
@@ -125,7 +125,8 @@ pub enum Control {
         /// The player skips goal replays (`bAutoSkipGoalReplay`): auto-ready in every one
         auto_skip_replay: bool,
         /// The key the server gave this client before (its `Welcome`'s), kept across its reconnects (who started a forfeit
-        /// vote: `ForfeitInitiatorIDs`); 0 for none (64 random bits: SEC-9)
+        /// vote: `ForfeitInitiatorIDs`); 0 for none (64 random bits: SEC-9). A search's: the browser's own key (random,
+        /// kept: a no-show's cooldown counts it, RV-367)
         key: u64,
         /// The player's name (UTF-8, `MAX_NAME_BYTES` at most; the server tidies it)
         name: String,
@@ -136,7 +137,8 @@ pub enum Control {
         intent: u8,
         /// A search's playlist: its team size (1, 2 or 3); 0 otherwise
         playlist: u8,
-        /// A claim's token (from `MatchFound`); 0 otherwise
+        /// A claim's token (from `MatchFound`). A search's: the token of the slot it claimed in a match cancelled for
+        /// someone else (`KICK_NOT_ALL_JOINED`): it searches again at the front of the queue (RV-367). 0 otherwise
         token: u64,
     },
     /// Mute or unmute a player's chat for this player (`ClientMutePlayer`: the server stops relaying their lines to them)
@@ -191,6 +193,9 @@ pub enum Control {
     IdleWarning { on: bool },
     /// The server ends this player's session (`KICK_*`), closing it a second later (`CloseConnectionWithReason`)
     Kicked { reason: u8 },
+    /// A search refused: its browser or address stalled a match (didn't claim its slot, or left before the start) and
+    /// may search again in this many seconds (RV-367); the session ends
+    SearchCooldown { seconds: u16 },
 }
 
 /// One player's scoreboard line
@@ -525,6 +530,10 @@ impl Control {
                 w.u8(0x91);
                 w.u8(*reason);
             }
+            Self::SearchCooldown { seconds } => {
+                w.u8(0x92);
+                w.u16(*seconds);
+            }
             Self::Mute { car, on } => {
                 w.u8(0x08);
                 w.u32(*car);
@@ -716,6 +725,7 @@ impl Control {
             0x8F => Self::MatchFound { token: r.u64()? },
             0x90 => Self::IdleWarning { on: r.u8()? != 0 },
             0x91 => Self::Kicked { reason: r.u8()? },
+            0x92 => Self::SearchCooldown { seconds: r.u16()? },
             0x08 => Self::Mute { car: r.u32()?, on: r.u8()? != 0 },
             0x06 => Self::QuickChat { preset: r.u8()?, team: r.u8()? != 0 },
             0x07 => Self::ChatFilter { quick_chat: r.u8()?, block_non_tactical: r.u8()? != 0 },
@@ -945,6 +955,7 @@ mod tests {
             "matchFound" => Control::MatchFound { token: big(&m["token"]) },
             "idleWarning" => Control::IdleWarning { on: m["on"].as_bool().unwrap() },
             "kicked" => Control::Kicked { reason: u(&m["reason"]) as u8 },
+            "searchCooldown" => Control::SearchCooldown { seconds: u(&m["seconds"]) as u16 },
             "mute" => Control::Mute { car: u(&m["car"]), on: m["on"].as_bool().unwrap() },
             "scoreboard" => Control::Scoreboard(
                 m["players"]

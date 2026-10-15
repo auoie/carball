@@ -12,6 +12,8 @@ struct btRSBroadphaseProxy : public btBroadphaseProxy
 
 	int shapeType;
 	int m_nextFree;
+	// RL PATCH (RV-375): its max edge's key on the game's x axis (btRSBroadphase::QuantizeMax)
+	unsigned short maxKey = 0;
 
 	//	int			m_handleId;
 
@@ -52,6 +54,23 @@ public:
 	int totalItrs = 0;
 
 	std::vector<std::pair<btRSBroadphaseProxy*, btRSBroadphaseProxy*>> activePairs;
+
+	// RL PATCH (RV-375): the order the game's broadphase (btAxisSweep3<unsigned short>) walks its x axis's max edges in,
+	// which is the wheel rays' candidate order (aabbTest 0x140270d80; notes/bullet-diff.md HP1): by each proxy's quantized
+	// aabbMax.x, an entry added, or re-placed when its key changes, after every entry of an equal key (stock sortMaxUp /
+	// sortMaxDown); keys that don't change never move; a removal keeps the others' order. A static's key is its creation
+	// box's (the game never updates them: activation state 5); a spawn is a new entry (the game destroys and re-creates the
+	// body). The statics' boxes are the engine's (its half-space planes, its meshes), not the game's: only an exact tie in
+	// hit fraction between a static and another body can come out in another order (documented in the README)
+	std::vector<btRSBroadphaseProxy*> maxEdges;
+	static unsigned short QuantizeMax(float x);
+	void InsertMaxEdge(btRSBroadphaseProxy* proxy);
+	void RemoveMaxEdge(btRSBroadphaseProxy* proxy);
+	/// A body spawned (the game's destroy and create): its box set and its entry made anew, after its equals
+	void respawnProxy(btBroadphaseProxy* proxy, const btVector3& aabbMin, const btVector3& aabbMax, btCollisionDispatcher* dispatcher);
+	/// The moving bodies' proxies in the walk's order (a snapshot's), and that order put back (a load's)
+	std::vector<btBroadphaseProxy*> dynamicMaxEdgeOrder() const;
+	void restoreDynamicMaxEdgeOrder(const std::vector<btBroadphaseProxy*>& order);
 
 	struct Cell {
 		constexpr static int RESERVED_SIZE = 4;

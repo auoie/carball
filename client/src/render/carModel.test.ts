@@ -36,12 +36,12 @@ function bounds(config: CarConfig, withWheels: boolean): Box3 {
 
 describe("car model", () => {
   it("covers the six hitboxes", () => {
-    expect([...configs.keys()]).toEqual(["Octane", "Dominus", "Plank", "Breakout", "Hybrid", "Merc"]);
+    expect([...configs.keys()]).toEqual(["Standard", "Flat", "Wide", "Long", "Mid", "Tall"]);
   });
 
   it("draws in one call per material", () => {
-    const octane = configs.get("Octane");
-    if (!octane) throw new Error("no Octane");
+    const octane = configs.get("Standard");
+    if (!octane) throw new Error("no Standard");
     const names = buildCarModel(octane, new Color(0x1f6fff)).children.map((c) => c.name);
     expect(names.sort()).toEqual(["body", "glass", "headlight", "rim", "taillight", "trim", "tyre"]);
   });
@@ -59,8 +59,8 @@ describe("car model", () => {
   });
 
   it("on the Octane's hitbox, as the Fennec measures: 140 long, 71 wide, its roof 52 over the ground, 4 under the hitbox", () => {
-    const octane = configs.get("Octane");
-    if (!octane) throw new Error("no Octane");
+    const octane = configs.get("Standard");
+    if (!octane) throw new Error("no Standard");
     const box = bounds(octane, false);
     // (the lights and the grille stand a hair proud of the nose and the tail)
     expect(Math.abs(box.max.x - box.min.x - 140.4)).toBeLessThan(2);
@@ -85,8 +85,8 @@ describe("car model", () => {
 
 describe("the car's lights (RV-15)", () => {
   it("show as the game's: headlights a white core, tail lights deep red", () => {
-    const octane = configs.get("Octane");
-    if (!octane) throw new Error("no Octane");
+    const octane = configs.get("Standard");
+    if (!octane) throw new Error("no Standard");
     const model = buildCarModel(octane, new Color(0x1f6fff));
     const emissive = (name: string) => {
       let found: Color | null = null;

@@ -21,7 +21,7 @@ const SERVERS: readonly Server[] = [
     reuse: false,
   },
   // The queue's matches (1v1, 2v2, 3v3: searches and claims; the queue test)
-  { name: "queue", command: "cargo", args: [...GAME, "--port", "14439", "--health-port", "18084", "--info-port", "14440", "--mode", "queue"], url: "http://127.0.0.1:14440/info", reuse: false },
+  { name: "queue", command: "cargo", args: [...GAME, "--port", "14439", "--health-port", "18084", "--info-port", "14440", "--mode", "queue", "--dev"], url: "http://127.0.0.1:14440/info", reuse: false },
 ];
 
 /** The first run builds the game server */

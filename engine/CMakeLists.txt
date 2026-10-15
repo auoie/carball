@@ -103,8 +103,10 @@ if (EMSCRIPTEN)
 		else()
 			set(environment "web,worker")
 		endif()
+		# (-sDYNAMIC_EXECUTION=0: embind's bindings without eval or new Function, so the page's Content-Security-Policy
+		# needs no 'unsafe-eval': RV-371)
 		target_link_options(${variant} PRIVATE
-			-lembind -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createEngine
+			-lembind -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createEngine -sDYNAMIC_EXECUTION=0
 			-sENVIRONMENT=${environment} -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=5MB
 			"SHELL:--emit-tsd ${variant}.d.mts")
 	endforeach()

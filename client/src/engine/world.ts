@@ -5,13 +5,15 @@ import { type Rot3, type Vec3, vec3 } from "../math/vec";
 
 export type Team = 0 | 1; // 0 blue (defends -y), 1 orange (defends +y)
 
+/** The six hitbox presets, named by their shape (shipped files name no game: the user's decision, 2026-10-15; the
+ *  mapping to the game's preset names is in notes/hitboxes.md): the engine's preset ids 0..5 */
 export enum CarBody {
-  Octane = 0,
-  Dominus = 1,
-  Plank = 2,
-  Breakout = 3,
-  Hybrid = 4,
-  Merc = 5,
+  Standard = 0,
+  Flat = 1,
+  Wide = 2,
+  Long = 3,
+  Mid = 4,
+  Tall = 5,
 }
 
 export interface CarControls {
@@ -218,7 +220,7 @@ export class World {
     return this.#sim.tickCount();
   }
 
-  addCar(team: Team, body: CarBody = CarBody.Octane): number {
+  addCar(team: Team, body: CarBody = CarBody.Standard): number {
     return this.#sim.addCar(team, body);
   }
 

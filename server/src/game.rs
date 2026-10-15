@@ -496,6 +496,12 @@ impl Default for Game {
     }
 }
 
+/// The phases the idle kick times (MM-34): the round's play, and 0:00 until the ball lands (TimeUp: the game's
+/// Active state goes on there)
+fn idle_counts_in(phase: Phase) -> bool {
+    matches!(phase, Phase::Active | Phase::TimeUp)
+}
+
 impl Game {
     pub fn new() -> Self {
         Self::with_seed(1)
@@ -1551,10 +1557,10 @@ impl Game {
         }
     }
 
-    /// The idle kick (MM-32..38): the periods of play (Active and 0:00) timed; with `idle_kick`, each second of one, a player
+    /// The idle kick (MM-32..38): the periods of play (`idle_counts_in`) timed; with `idle_kick`, each second of one, a player
     /// idle past 25 s is warned, past 30 s kicked (the reason now, the session a second later); the kicked go
     fn update_idle(&mut self, tick: u64) {
-        let playing = matches!(self.phase, Phase::Active | Phase::TimeUp);
+        let playing = idle_counts_in(self.phase);
         match (playing, self.active_since) {
             (true, None) => self.active_since = Some(tick),
             (false, Some(since)) => {
@@ -2382,6 +2388,15 @@ mod tests {
             acted.push(buffer.acted);
         }
         assert_eq!(acted.iter().filter(|&&a| a).count(), 6, "{acted:?}: the first frame (from zero), then every second one");
+    }
+
+    #[test]
+    fn idle_time_counts_at_0_00_too_and_never_outside_play() {
+        // (RX13's S24: TimeUp is play for the idle kick, as the game's Active state goes on until the ball lands)
+        assert!(idle_counts_in(Phase::Active) && idle_counts_in(Phase::TimeUp));
+        for phase in [Phase::Waiting, Phase::Countdown, Phase::PostGoal, Phase::Replay, Phase::PrePodium, Phase::Podium, Phase::Finished] {
+            assert!(!idle_counts_in(phase), "{phase:?}");
+        }
     }
 
     #[test]

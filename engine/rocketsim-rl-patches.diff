@@ -86,18 +86,19 @@ index 8821fa3..fb8078e 100644
  
  #ifdef DEBUG_CHECK_DEQUANTIZATION
 diff --git upstream/libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btRSBroadphase.cpp engine/rocketsim/libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btRSBroadphase.cpp
-index 1eb7d88..5560bcd 100644
+index 1eb7d88..1a7fb11 100644
 --- upstream/libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btRSBroadphase.cpp
 +++ engine/rocketsim/libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btRSBroadphase.cpp
-@@ -14,6 +14,7 @@ subject to the following restrictions:
+@@ -14,6 +14,8 @@ subject to the following restrictions:
  */
  
  #include "btRSBroadphase.h"
 +#include <algorithm>
++#include <cstring>
  #include "btDispatcher.h"
  #include "btCollisionAlgorithm.h"
  
-@@ -110,23 +111,56 @@ void _UpdateCellsStatic(btRSBroadphase* _this, btRSBroadphaseProxy* proxy) {
+@@ -110,23 +112,56 @@ void _UpdateCellsStatic(btRSBroadphase* _this, btRSBroadphaseProxy* proxy) {
  	// We should check if each cell actually collides with the object
  	bool isTriMesh = colObj && colObj->m_collisionShape->getShapeType() == TRIANGLE_MESH_SHAPE_PROXYTYPE;
  
@@ -167,7 +168,7 @@ index 1eb7d88..5560bcd 100644
  				for (int i1 = -1; i1 <= 1; i1++) {
  					for (int j1 = -1; j1 <= 1; j1++) {
  						for (int k1 = -1; k1 <= 1; k1++) {
-@@ -137,43 +171,22 @@ void _UpdateCellsStatic(btRSBroadphase* _this, btRSBroadphaseProxy* proxy) {
+@@ -137,43 +172,22 @@ void _UpdateCellsStatic(btRSBroadphase* _this, btRSBroadphaseProxy* proxy) {
  								continue;
  							if (ci >= _this->cellsX || cj >= _this->cellsY || ck >= _this->cellsZ)
  								continue;
@@ -180,13 +181,13 @@ index 1eb7d88..5560bcd 100644
 -					auto triMeshShape = (btTriangleMeshShape*)colObj->m_collisionShape;
 -					btVector3 cellMin = _this->GetCellMinPos(i, j, k);
 -					btVector3 cellMax = cellMin + btVector3(_this->cellSize, _this->cellSize, _this->cellSize);
- 
+-
 -					callbackInst.hit = false;
 -					triMeshShape->processAllTriangles(&callbackInst, cellMin, cellMax);
 -
 -					if (!callbackInst.hit) {
 -						numSkipped++;
--
+ 
 -						if (ADD) {
 -							continue; // No tris in this AABB, ignore
 -						} else {
@@ -224,7 +225,72 @@ index 1eb7d88..5560bcd 100644
  					}
  				}
  			}
-@@ -265,6 +278,10 @@ protected:
+@@ -231,10 +245,64 @@ btBroadphaseProxy* btRSBroadphase::createProxy(const btVector3& aabbMin, const b
+ 		_UpdateCellsDynamic<true>(this, proxy, iIdx, jIdx, kIdx);
+ 		numDynProxies++;
+ 	}
++	proxy->maxKey = QuantizeMax(aabbMax.x());
++	InsertMaxEdge(proxy);
+ 
+ 	return proxy;
+ }
+ 
++unsigned short btRSBroadphase::QuantizeMax(float x) {
++	// (btAxisSweep3::quantize for a max edge as the game's 0x14027b330: the world box ±10485.740234375 BU, m_quantize
++	// 0x4047ff51 = 65535 / its size; the minimum subtracted, then scaled, truncated, even, +1)
++	const float worldMin = -10485.740234375f;
++	const uint32_t scaleBits = 0x4047ff51;
++	float scale;
++	memcpy(&scale, &scaleBits, sizeof(scale));
++	float v = (x - worldMin) * scale;
++	if (!(v > 0))
++		return 1;
++	if (v >= 65535.0f)
++		return 0xffff;
++	return (unsigned short)(((int)v & 0xfffe) | 1);
++}
++
++void btRSBroadphase::InsertMaxEdge(btRSBroadphaseProxy* proxy) {
++	// (after every entry of an equal key: the first with a greater one)
++	auto at = std::upper_bound(maxEdges.begin(), maxEdges.end(), proxy->maxKey, [](unsigned short key, const btRSBroadphaseProxy* p) { return key < p->maxKey; });
++	maxEdges.insert(at, proxy);
++}
++
++void btRSBroadphase::RemoveMaxEdge(btRSBroadphaseProxy* proxy) {
++	auto at = std::find(maxEdges.begin(), maxEdges.end(), proxy);
++	if (at != maxEdges.end())
++		maxEdges.erase(at);
++}
++
++void btRSBroadphase::respawnProxy(btBroadphaseProxy* proxy, const btVector3& aabbMin, const btVector3& aabbMax, btCollisionDispatcher* dispatcher) {
++	setAabb(proxy, aabbMin, aabbMax, dispatcher);
++	btRSBroadphaseProxy* sbp = getRSProxyFromProxy(proxy);
++	RemoveMaxEdge(sbp);
++	sbp->maxKey = QuantizeMax(aabbMax.x());
++	InsertMaxEdge(sbp);
++}
++
++std::vector<btBroadphaseProxy*> btRSBroadphase::dynamicMaxEdgeOrder() const {
++	std::vector<btBroadphaseProxy*> order;
++	for (btRSBroadphaseProxy* p : maxEdges)
++		if (!p->isStatic)
++			order.push_back(p);
++	return order;
++}
++
++void btRSBroadphase::restoreDynamicMaxEdgeOrder(const std::vector<btBroadphaseProxy*>& order) {
++	// (the statics stay; the moving bodies go back in, each after its equals, in the order given: equal keys in that
++	// order, all after the statics of their key, as the game's are; one the order doesn't name keeps its place)
++	for (btBroadphaseProxy* p : order)
++		RemoveMaxEdge(getRSProxyFromProxy(p));
++	for (btBroadphaseProxy* p : order)
++		InsertMaxEdge(getRSProxyFromProxy(p));
++}
++
+ class RemovingOverlapCallback : public btOverlapCallback
+ {
+ protected:
+@@ -265,6 +333,10 @@ protected:
  void btRSBroadphase::destroyProxy(btBroadphaseProxy* proxyOrg, btCollisionDispatcher* dispatcher) {
  	btRSBroadphaseProxy* sbp = getRSProxyFromProxy(proxyOrg);
  	m_pairCache->removeOverlappingPairsContainingProxy(proxyOrg, dispatcher);
@@ -235,7 +301,31 @@ index 1eb7d88..5560bcd 100644
  	
  	if (sbp->isStatic) {
  		_UpdateCellsStatic<false>(this, sbp);
-@@ -304,19 +321,19 @@ void btRSBroadphase::setAabb(btBroadphaseProxy* proxy, const btVector3& aabbMin,
+@@ -272,6 +344,7 @@ void btRSBroadphase::destroyProxy(btBroadphaseProxy* proxyOrg, btCollisionDispat
+ 		_UpdateCellsDynamic<false>(this, sbp, sbp->iIdx, sbp->jIdx, sbp->kIdx);
+ 		numDynProxies--;
+ 	}
++	RemoveMaxEdge(sbp);
+ 
+ 	btRSBroadphaseProxy* proxy0 = static_cast<btRSBroadphaseProxy*>(proxyOrg);
+ 	freeHandle(proxy0);
+@@ -285,6 +358,15 @@ void btRSBroadphase::getAabb(btBroadphaseProxy* proxy, btVector3& aabbMin, btVec
+ 
+ void btRSBroadphase::setAabb(btBroadphaseProxy* proxy, const btVector3& aabbMin, const btVector3& aabbMax, btCollisionDispatcher* /*dispatcher*/) {
+ 	btRSBroadphaseProxy* sbp = getRSProxyFromProxy(proxy);
++	// (a moving body's max edge re-placed when its key changes: after its new equals; a static's stays)
++	if (!sbp->isStatic) {
++		unsigned short key = QuantizeMax(aabbMax.x());
++		if (key != sbp->maxKey) {
++			RemoveMaxEdge(sbp);
++			sbp->maxKey = key;
++			InsertMaxEdge(sbp);
++		}
++	}
+ 	
+ 	if (sbp->m_aabbMin != aabbMin || sbp->m_aabbMax != aabbMax) {
+ 		if (sbp->isStatic) {
+@@ -304,19 +386,19 @@ void btRSBroadphase::setAabb(btBroadphaseProxy* proxy, const btVector3& aabbMin,
  			sbp->cellIdx = newIndex;
  
  			if (oldIndex != newIndex) {
@@ -268,7 +358,28 @@ index 1eb7d88..5560bcd 100644
  			}
  		}
  	}
-@@ -396,10 +413,18 @@ void btRSBroadphase::calculateOverlappingPairs(btCollisionDispatcher* dispatcher
+@@ -357,16 +439,13 @@ void btRSBroadphase::rayTest(const btVector3& rayFrom, const btVector3& rayTo, b
+ }
+ 
+ void btRSBroadphase::aabbTest(const btVector3& aabbMin, const btVector3& aabbMax, btBroadphaseAabbCallback& callback) {
+-	// TODO: Optimize
+-
+-	for (int i = 0; i <= m_LastHandleIndex; i++) {
+-		btRSBroadphaseProxy* proxy = &m_pHandles[i];
++	// RL PATCH (RV-375): in the game's max-edge order (maxEdges), each stored box tested as floats, the walk never
++	// stopped early (the callback caps what it takes)
++	for (btRSBroadphaseProxy* proxy : maxEdges) {
+ 		if (!proxy->m_clientObject)
+ 			continue;
+-		
+-		if (TestAabbAgainstAabb2(aabbMin, aabbMax, proxy->m_aabbMin, proxy->m_aabbMax)) {
++		if (TestAabbAgainstAabb2(aabbMin, aabbMax, proxy->m_aabbMin, proxy->m_aabbMax))
+ 			callback.process(proxy);
+-		}
+ 	}
+ }
+ 
+@@ -396,10 +475,18 @@ void btRSBroadphase::calculateOverlappingPairs(btCollisionDispatcher* dispatcher
  	bool shouldRemove = !m_pairCache->hasDeferredRemoval();
  
  	if (shouldRemove) {
@@ -289,6 +400,43 @@ index 1eb7d88..5560bcd 100644
  	} else {
  		THROW_ERR("Pair cache cannot have deferred removal");
  	}
+diff --git upstream/libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btRSBroadphase.h engine/rocketsim/libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btRSBroadphase.h
+index d42aab2..88947dd 100644
+--- upstream/libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btRSBroadphase.h
++++ engine/rocketsim/libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btRSBroadphase.h
+@@ -12,6 +12,8 @@ struct btRSBroadphaseProxy : public btBroadphaseProxy
+ 
+ 	int shapeType;
+ 	int m_nextFree;
++	// RL PATCH (RV-375): its max edge's key on the game's x axis (btRSBroadphase::QuantizeMax)
++	unsigned short maxKey = 0;
+ 
+ 	//	int			m_handleId;
+ 
+@@ -53,6 +55,23 @@ public:
+ 
+ 	std::vector<std::pair<btRSBroadphaseProxy*, btRSBroadphaseProxy*>> activePairs;
+ 
++	// RL PATCH (RV-375): the order the game's broadphase (btAxisSweep3<unsigned short>) walks its x axis's max edges in,
++	// which is the wheel rays' candidate order (aabbTest 0x140270d80; notes/bullet-diff.md HP1): by each proxy's quantized
++	// aabbMax.x, an entry added, or re-placed when its key changes, after every entry of an equal key (stock sortMaxUp /
++	// sortMaxDown); keys that don't change never move; a removal keeps the others' order. A static's key is its creation
++	// box's (the game never updates them: activation state 5); a spawn is a new entry (the game destroys and re-creates the
++	// body). The statics' boxes are the engine's (its half-space planes, its meshes), not the game's: only an exact tie in
++	// hit fraction between a static and another body can come out in another order (documented in the README)
++	std::vector<btRSBroadphaseProxy*> maxEdges;
++	static unsigned short QuantizeMax(float x);
++	void InsertMaxEdge(btRSBroadphaseProxy* proxy);
++	void RemoveMaxEdge(btRSBroadphaseProxy* proxy);
++	/// A body spawned (the game's destroy and create): its box set and its entry made anew, after its equals
++	void respawnProxy(btBroadphaseProxy* proxy, const btVector3& aabbMin, const btVector3& aabbMax, btCollisionDispatcher* dispatcher);
++	/// The moving bodies' proxies in the walk's order (a snapshot's), and that order put back (a load's)
++	std::vector<btBroadphaseProxy*> dynamicMaxEdgeOrder() const;
++	void restoreDynamicMaxEdgeOrder(const std::vector<btBroadphaseProxy*>& order);
++
+ 	struct Cell {
+ 		constexpr static int RESERVED_SIZE = 4;
+ 		std::vector<btRSBroadphaseProxy*> dynHandles;
 diff --git upstream/libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/SphereTriangleDetector.cpp engine/rocketsim/libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/SphereTriangleDetector.cpp
 index d004e1c..33eddc0 100644
 --- upstream/libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/SphereTriangleDetector.cpp
@@ -2883,7 +3031,7 @@ index 5805611..3ceaa22 100644
  }
 \ No newline at end of file
 diff --git upstream/src/Sim/Arena/Arena.cpp engine/rocketsim/src/Sim/Arena/Arena.cpp
-index a13cee0..1d26c1f 100644
+index a13cee0..c1994d3 100644
 --- upstream/src/Sim/Arena/Arena.cpp
 +++ engine/rocketsim/src/Sim/Arena/Arena.cpp
 @@ -1,4 +1,8 @@
@@ -3964,7 +4112,7 @@ index a13cee0..1d26c1f 100644
  	}
  
  	bool loadArenaStuff = gameMode != GameMode::THE_VOID;
-@@ -543,6 +1293,148 @@ Arena* Arena::Create(GameMode gameMode, const ArenaConfig& arenaConfig, float ti
+@@ -543,6 +1293,177 @@ Arena* Arena::Create(GameMode gameMode, const ArenaConfig& arenaConfig, float ti
  	return new Arena(gameMode, arenaConfig, tickRate);
  }
  
@@ -4058,7 +4206,8 @@ index a13cee0..1d26c1f 100644
 +// RL PATCH (FP2): the moving bodies' stored broadphase boxes, the ball's then each car's in ID order (the wheel rays'
 +// candidates are picked by them: btVehicleRL::findRayCandidates), so a snapshot, a clone or a load in place continues as
 +// the original (the game's rollback leaves the boxes from before it: ours restores them, for exact replays); the static
-+// bodies' boxes are fixed
++// bodies' boxes are fixed. Then their order in the broadphase's max-edge walk (RV-375: the candidates' order, history's
++// on equal keys), as indices (the ball 0, the cars 1.. in ID order)
 +static void _WriteBodyBoxes(DataStreamOut& out, Arena* arena) {
 +	auto write = [&](btCollisionObject& body) {
 +		btBroadphaseProxy* proxy = body.getBroadphaseHandle();
@@ -4071,6 +4220,18 @@ index a13cee0..1d26c1f 100644
 +	write(arena->ball->_rigidBody);
 +	for (Car* car : arena->GetCars())
 +		write(car->_rigidBody);
++	std::vector<btCollisionObject*> bodies = { &arena->ball->_rigidBody };
++	for (Car* car : arena->GetCars())
++		bodies.push_back(&car->_rigidBody);
++	std::vector<uint32_t> order;
++	if (auto* rs = dynamic_cast<btRSBroadphase*>(arena->_bulletWorld.getBroadphase()))
++		for (btBroadphaseProxy* proxy : rs->dynamicMaxEdgeOrder())
++			for (uint32_t i = 0; i < bodies.size(); i++)
++				if (bodies[i]->getBroadphaseHandle() == proxy)
++					order.push_back(i);
++	out.Write<uint32_t>((uint32_t)order.size());
++	for (uint32_t i : order)
++		out.Write<uint32_t>(i);
 +}
 +
 +static void _ReadBodyBoxes(DataStreamIn& in, Arena* arena) {
@@ -4089,6 +4250,22 @@ index a13cee0..1d26c1f 100644
 +	read(arena->ball->_rigidBody);
 +	for (Car* car : arena->GetCars())
 +		read(car->_rigidBody);
++	std::vector<btCollisionObject*> objects = { &arena->ball->_rigidBody };
++	for (Car* car : arena->GetCars())
++		objects.push_back(&car->_rigidBody);
++	uint32_t n = in.GetNumBytesLeft() < sizeof(uint32_t) ? UINT32_MAX : in.Read<uint32_t>();
++	if (n > bodies || in.GetNumBytesLeft() < n * sizeof(uint32_t)) {
++		in.pos = in.data.size() + 1; // (overflown: not this arena's)
++		return;
++	}
++	std::vector<btBroadphaseProxy*> order;
++	for (uint32_t k = 0; k < n; k++) {
++		uint32_t i = in.Read<uint32_t>();
++		if (i < objects.size() && objects[i]->getBroadphaseHandle())
++			order.push_back(objects[i]->getBroadphaseHandle());
++	}
++	if (auto* rs = dynamic_cast<btRSBroadphase*>(arena->_bulletWorld.getBroadphase()))
++		rs->restoreDynamicMaxEdgeOrder(order);
 +}
 +
 +static void _ReadXYLocks(DataStreamIn& in, Arena* arena) {
@@ -4113,7 +4290,7 @@ index a13cee0..1d26c1f 100644
  void Arena::Serialize(DataStreamOut& out) const {
  	out.WriteMultiple(gameMode, tickTime, tickCount, _lastCarID);
  
-@@ -565,11 +1457,140 @@ void Arena::Serialize(DataStreamOut& out) const {
+@@ -565,11 +1486,140 @@ void Arena::Serialize(DataStreamOut& out) const {
  
  	{ // Serialize ball
  		ball->GetState().Serialize(out);
@@ -4254,7 +4431,7 @@ index a13cee0..1d26c1f 100644
  }
  
  Arena* Arena::DeserializeNew(DataStreamIn& in) {
-@@ -601,12 +1622,11 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
+@@ -601,12 +1651,11 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
  				RS_ERR_CLOSE(ERROR_PREFIX << "Failed to load, got repeated car ID of " << id);
  #endif
  
@@ -4271,7 +4448,7 @@ index a13cee0..1d26c1f 100644
  		}
  
  		newArena->_lastCarID = lastCarID;
-@@ -629,20 +1649,128 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
+@@ -629,20 +1678,128 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
  		}
  	}
  
@@ -4408,7 +4585,7 @@ index a13cee0..1d26c1f 100644
  Arena* Arena::Clone(bool copyCallbacks) {
  	Arena* newArena = new Arena(this->gameMode, this->_config, this->GetTickRate());
  	
-@@ -651,17 +1779,29 @@ Arena* Arena::Clone(bool copyCallbacks) {
+@@ -651,17 +1808,29 @@ Arena* Arena::Clone(bool copyCallbacks) {
  		newArena->_carBumpCallback = this->_carBumpCallback;
  	}
  
@@ -4440,7 +4617,7 @@ index a13cee0..1d26c1f 100644
  
  	assert(this->_boostPads.size() == newArena->_boostPads.size());
  	for (int i = 0; i < this->_boostPads.size(); i++)
-@@ -669,6 +1809,25 @@ Arena* Arena::Clone(bool copyCallbacks) {
+@@ -669,6 +1838,25 @@ Arena* Arena::Clone(bool copyCallbacks) {
  
  	newArena->tickCount = this->tickCount;
  	newArena->_lastCarID = this->_lastCarID;
@@ -4466,7 +4643,7 @@ index a13cee0..1d26c1f 100644
  
  	return newArena;
  }
-@@ -678,33 +1837,126 @@ Car* Arena::DeserializeNewCar(DataStreamIn& in, Team team) {
+@@ -678,33 +1866,126 @@ Car* Arena::DeserializeNewCar(DataStreamIn& in, Team team) {
  	car->_Deserialize(in);
  	car->team = team;
  
@@ -4603,7 +4780,7 @@ index a13cee0..1d26c1f 100644
  
  		if (hasArenaStuff && !ballOnly) {
  			for (BoostPad* pad : _boostPads)
-@@ -714,11 +1966,30 @@ void Arena::Step(int ticksToSimulate) {
+@@ -714,11 +1995,30 @@ void Arena::Step(int ticksToSimulate) {
  		// Update ball
  		ball->_PreTickUpdate(gameMode, tickTime);
  
@@ -4634,7 +4811,7 @@ index a13cee0..1d26c1f 100644
  			car->_FinishPhysicsTick(_mutatorConfig);
  			if (hasArenaStuff) {
  				if (_config.useCustomBoostPads) {
-@@ -732,9 +2003,20 @@ void Arena::Step(int ticksToSimulate) {
+@@ -732,9 +2032,20 @@ void Arena::Step(int ticksToSimulate) {
  			}
  		}
  
@@ -4656,7 +4833,7 @@ index a13cee0..1d26c1f 100644
  
  		ball->_FinishPhysicsTick(_mutatorConfig);
  
-@@ -745,13 +2027,35 @@ void Arena::Step(int ticksToSimulate) {
+@@ -745,13 +2056,35 @@ void Arena::Step(int ticksToSimulate) {
  			if (ball->_internalState.dsInfo.lastDamageTick && ball->_internalState.dsInfo.lastDamageTick == tickCount)
  				SetDropshotTilesState(_dropshotTilesState);
  
@@ -4692,7 +4869,7 @@ index a13cee0..1d26c1f 100644
  	}
  }
  
-@@ -928,6 +2232,12 @@ bool Arena::IsBallScored() const {
+@@ -928,6 +2261,12 @@ bool Arena::IsBallScored() const {
  
  Arena::~Arena() {
  
@@ -4705,7 +4882,7 @@ index a13cee0..1d26c1f 100644
  	// Remove all from bullet world constraints
  	while (_bulletWorld.getNumConstraints() > 0)
  		_bulletWorld.removeConstraint(0);
-@@ -983,6 +2293,7 @@ btRigidBody* Arena::_AddStaticCollisionShape(btCollisionShape* shape, btVector3
+@@ -983,6 +2322,7 @@ btRigidBody* Arena::_AddStaticCollisionShape(btCollisionShape* shape, btVector3
  	} else {
  		_bulletWorld.addRigidBody(shapeRB);
  	}
@@ -4713,7 +4890,7 @@ index a13cee0..1d26c1f 100644
  	_worldCollisionRBs.push_back(shapeRB);
  	return shapeRB;
  }
-@@ -993,6 +2304,7 @@ void Arena::_SetupArenaCollisionShapes() {
+@@ -993,6 +2333,7 @@ void Arena::_SetupArenaCollisionShapes() {
  	bool isDropShot = gameMode == GameMode::DROPSHOT;
  
  	auto collisionMeshes = RocketSim::GetArenaCollisionShapes(gameMode);
@@ -4721,7 +4898,7 @@ index a13cee0..1d26c1f 100644
  
  	if (collisionMeshes.empty()) {
  		RS_ERR_CLOSE(
-@@ -1021,7 +2333,7 @@ void Arena::_SetupArenaCollisionShapes() {
+@@ -1021,7 +2362,7 @@ void Arena::_SetupArenaCollisionShapes() {
  
  		int mask = isHoopsNet ? CollisionMasks::HOOPS_NET : 0;
  		_worldCollisionBvhShapes.push_back(mesh);
@@ -7799,19 +7976,21 @@ index b70cb95..6f1f42d 100644
 \ No newline at end of file
 diff --git engine/rocketsim/src/Sim/CreatedBox.h engine/rocketsim/src/Sim/CreatedBox.h
 new file mode 100644
-index 0000000..cd11c73
+index 0000000..dbd357a
 --- /dev/null
 +++ engine/rocketsim/src/Sim/CreatedBox.h
-@@ -0,0 +1,18 @@
+@@ -0,0 +1,23 @@
 +#pragma once
 +// RL PATCH (FP2): a body the game creates (a kickoff's spawn, a respawn, the ball at a kickoff) gets its broadphase box
 +// at once: addCollisionObject 0x140270f30 → createProxy 0x140272c30 → setAabb, the shape's tight box at the spawn pose (no
 +// contact threshold, no predicted pose: notes/bullet-diff.md "Broadphase boxes at placement", AB1). Moving a body
 +// (SetState without a new spawn, a rollback restore) leaves its stored box as it was; boxes otherwise change only in the
 +// step's updateAabbs, after the vehicles, so the wheel rays' candidate query (btVehicleRL) sees a just-moved body only
-+// if its old box overlaps.
++// if its old box overlaps. RV-375: its entry in the broadphase's max-edge order is made anew too (after its equals), as
++// the game's destroy and create make it.
 +#include "../../libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/btCollisionWorld.h"
 +#include "../../libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btBroadphaseInterface.h"
++#include "../../libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btRSBroadphase.h"
 +
 +inline void SetCreatedBox(btCollisionWorld* world, btCollisionObject* obj) {
 +	btBroadphaseProxy* proxy = obj->getBroadphaseHandle();
@@ -7819,7 +7998,10 @@ index 0000000..cd11c73
 +		return;
 +	btVector3 boxMin, boxMax;
 +	obj->getCollisionShape()->getAabb(obj->getWorldTransform(), boxMin, boxMax);
-+	world->getBroadphase()->setAabb(proxy, boxMin, boxMax, world->getDispatcher());
++	if (auto* rs = dynamic_cast<btRSBroadphase*>(world->getBroadphase()))
++		rs->respawnProxy(proxy, boxMin, boxMax, world->getDispatcher());
++	else
++		world->getBroadphase()->setAabb(proxy, boxMin, boxMax, world->getDispatcher());
 +}
 diff --git engine/rocketsim/src/Sim/GameRotator/GameRotator.h engine/rocketsim/src/Sim/GameRotator/GameRotator.h
 new file mode 100644
@@ -8275,17 +8457,19 @@ index 0000000..4c9bb13
 +
 +RS_NS_END
 diff --git upstream/src/Sim/btVehicleRL/btVehicleRL.cpp engine/rocketsim/src/Sim/btVehicleRL/btVehicleRL.cpp
-index 3289666..fa2c80a 100644
+index 3289666..97a4908 100644
 --- upstream/src/Sim/btVehicleRL/btVehicleRL.cpp
 +++ engine/rocketsim/src/Sim/btVehicleRL/btVehicleRL.cpp
-@@ -1,5 +1,6 @@
+@@ -1,12 +1,65 @@
  #include "btVehicleRL.h"
  #include "../../RLConst.h"
 +#include "../../BulletLink.h"
  #define ROLLING_INFLUENCE_FIX
  
  #include "../../../libsrc/bullet3-3.24/BulletDynamics/Dynamics/btDynamicsWorld.h"
-@@ -7,6 +8,36 @@
+ #include "../../../libsrc/bullet3-3.24/BulletDynamics/ConstraintSolver/btContactConstraint.h"
++#include "../../../libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btStaticPlaneShape.h"
++#include <cfloat>
  
  RS_NS_START
  
@@ -8319,10 +8503,30 @@ index 3289666..fa2c80a 100644
 +	}
 +};
 +
++// RL PATCH (RV-377): the arena's planes (floor, ceiling, side walls) as the game's analytic plane (rayTestSingleInternal
++// 0x14027b670, shape type 0x1c; notes/bullet-diff.md HP1), not Bullet's two triangles: the body's normal (the game's
++// basis column 2; here the shape's, the basis the identity), front side only, never flipped; a hit where both distances
++// pass FLT_EPSILON and the ray reaches the plane, at their ratio, and nearer than the callback's closest
++static void RayTestPlane(const btVector3& from, const btVector3& to, const btCollisionObject* object, btCollisionWorld::RayResultCallback& cb) {
++	const btStaticPlaneShape* plane = (const btStaticPlaneShape*)object->getCollisionShape();
++	const btTransform& t = object->getWorldTransform();
++	btVector3 n = t.getBasis() * plane->getPlaneNormal();
++	btVector3 o = t.getOrigin() + n * plane->getPlaneConstant();
++	float dDir = -(((to.y() - from.y()) * n.y() + (to.x() - from.x()) * n.x()) + (to.z() - from.z()) * n.z());
++	float dFrom = -(((o.y() - from.y()) * n.y() + (o.x() - from.x()) * n.x()) + (o.z() - from.z()) * n.z());
++	if (!(dDir > FLT_EPSILON && dFrom > FLT_EPSILON && dDir >= dFrom))
++		return;
++	float fraction = dFrom / dDir;
++	if (!(fraction < cb.m_closestHitFraction))
++		return;
++	btCollisionWorld::LocalRayResult result(object, nullptr, n, fraction);
++	cb.addSingleResult(result, true);
++}
++
  btVehicleRL::btVehicleRL(
  	const btVehicleTuning& tuning, 
  	btRigidBody* chassis, btVehicleRaycaster* raycaster, btDynamicsWorld* world, 
-@@ -121,9 +152,10 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
+@@ -121,9 +174,10 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
  	updateWheelTransformsWS(wheel);
  
  	float depth = -1;
@@ -8334,7 +8538,7 @@ index 3289666..fa2c80a 100644
  
  	// See: I21
  	btVector3 source = wheel.m_raycastInfo.m_hardPointWS;
-@@ -135,7 +167,35 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
+@@ -135,7 +189,43 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
  	btVehicleRaycaster::btVehicleRaycasterResult rayResults;
  	
  	btAssert(m_vehicleRaycaster);
@@ -8350,20 +8554,28 @@ index 3289666..fa2c80a 100644
 +		btTransform from(btMatrix3x3::getIdentity(), source), to(btMatrix3x3::getIdentity(), target);
 +		for (int c = 0; c < m_numRayCandidates; c++) {
 +			btCollisionObject* candidate = (btCollisionObject*)m_rayCandidates[c];
-+			btCollisionWorld::rayTestSingle(from, to, candidate, candidate->getCollisionShape(), candidate->getWorldTransform(), cb);
++			if (candidate->getCollisionShape()->getShapeType() == STATIC_PLANE_PROXYTYPE)
++				RayTestPlane(source, target, candidate, cb);
++			else
++				btCollisionWorld::rayTestSingle(from, to, candidate, candidate->getCollisionShape(), candidate->getWorldTransform(), cb);
 +		}
++		// RL PATCH (RV-377, HP1: addSingleResult 0x1402b0df0, the per-wheel cast 0x1402c4650): each candidate's hit point
++		// as Bullet's setInterpolate3 (s·from + t·to, s = 1 − t, scalar); a hit taken if nearer than the best so far
++		// (from 1: one at the ray's end is none; ties to the first candidate); its normal as the callback has it (never
++		// normalized again)
 +		object = nullptr;
-+		float best = 2;
++		float best = 1;
 +		for (int i = 0; i < cb.count; i++) {
 +			const btRigidBody* body = btRigidBody::upcast(cb.hits[i].obj);
 +			if (!body || !body->hasContactResponse()) continue;
-+			btVector3 hit = source.lerp(target, cb.hits[i].fraction);
++			btVector3 hit;
++			hit.setInterpolate3(source, target, cb.hits[i].fraction);
 +			if ((hit - source).length2() < m_minHitDistSq) continue;
 +			if (cb.hits[i].fraction < best) {
 +				best = cb.hits[i].fraction;
 +				object = (btCollisionObject*)cb.hits[i].obj;
 +				rayResults.m_hitPointInWorld = hit;
-+				rayResults.m_hitNormalInWorld = cb.hits[i].normal.normalized();
++				rayResults.m_hitNormalInWorld = cb.hits[i].normal;
 +				rayResults.m_distFraction = best;
 +			}
 +		}
@@ -8371,7 +8583,7 @@ index 3289666..fa2c80a 100644
  
  	// See: I23
  	if (object) {
-@@ -152,14 +212,7 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
+@@ -152,14 +242,7 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
  		wheel.m_raycastInfo.m_suspensionLength = wheelTraceLenSq - wheel.m_wheelsRadius;
  
  		//clamp on max suspension travel
@@ -8387,7 +8599,7 @@ index 3289666..fa2c80a 100644
  
  		float denominator = wheel.m_raycastInfo.m_contactNormalWS.dot(getUpVector());
  
-@@ -178,22 +231,48 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
+@@ -178,22 +261,48 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
  			wheel.m_clippedInvContactDotSuspension = 10;
  		}
  
@@ -8438,7 +8650,7 @@ index 3289666..fa2c80a 100644
  			}
  		}
  
-@@ -212,23 +291,79 @@ const btTransform& btVehicleRL::getChassisWorldTransform() const {
+@@ -212,23 +321,79 @@ const btTransform& btVehicleRL::getChassisWorldTransform() const {
  	return getRigidBody()->getCenterOfMassTransform();
  }
  
@@ -8520,7 +8732,7 @@ index 3289666..fa2c80a 100644
  	applyFrictionImpulses(step);
  }
  
-@@ -291,8 +426,8 @@ void btVehicleRL::updateSuspension(float deltaTime) {
+@@ -291,8 +456,8 @@ void btVehicleRL::updateSuspension(float deltaTime) {
  		}
  	}
  
@@ -8531,7 +8743,7 @@ index 3289666..fa2c80a 100644
  		if (wheel.m_wheelsSuspensionForce != 0) {
  			btVector3 contactPointOffset = wheel.m_raycastInfo.m_contactPointWS - getRigidBody()->getCenterOfMassPosition();
  			float baseForceScale = (wheel.m_wheelsSuspensionForce * deltaTime) + wheel.m_extraPushback;
-@@ -300,6 +435,8 @@ void btVehicleRL::updateSuspension(float deltaTime) {
+@@ -300,6 +465,8 @@ void btVehicleRL::updateSuspension(float deltaTime) {
  			m_chassisBody->applyImpulse(force, contactPointOffset);
  		}
  	}
@@ -8540,7 +8752,7 @@ index 3289666..fa2c80a 100644
  }
  
  // See: I25
-@@ -316,10 +453,8 @@ void btVehicleRL::calcFrictionImpulses(float timeStep) {
+@@ -316,10 +483,8 @@ void btVehicleRL::calcFrictionImpulses(float timeStep) {
  			// Axle direction (includes steering turn)
  			btVector3 axleDir = wheel.m_worldTransform.getBasis().getColumn(m_indexRightAxis);
  
@@ -8552,7 +8764,7 @@ index 3289666..fa2c80a 100644
  
  			// Wheel forwards direction
  			btVector3 forwardDir = surfNormalWS.cross(axleDir).safeNormalized();
-@@ -327,9 +462,12 @@ void btVehicleRL::calcFrictionImpulses(float timeStep) {
+@@ -327,9 +492,12 @@ void btVehicleRL::calcFrictionImpulses(float timeStep) {
  			float sideImpulse;
  
  			// Get sideways friction force
@@ -8566,7 +8778,7 @@ index 3289666..fa2c80a 100644
  				0,
  				axleDir,
  				sideImpulse,
-@@ -340,15 +478,9 @@ void btVehicleRL::calcFrictionImpulses(float timeStep) {
+@@ -340,15 +508,9 @@ void btVehicleRL::calcFrictionImpulses(float timeStep) {
  			if (wheel.m_engineForce == 0) {
  				if (wheel.m_brake) {
  					// Simplified variation of calcRollingFriction()
@@ -8585,7 +8797,7 @@ index 3289666..fa2c80a 100644
  
  					// This will round off small rolling friction amounts when at sub-80 TPS to prevent stuttering (to an extent)
  					// TODO: Improve and clarify
-@@ -383,8 +515,8 @@ void btVehicleRL::calcFrictionImpulses(float timeStep) {
+@@ -383,8 +545,8 @@ void btVehicleRL::calcFrictionImpulses(float timeStep) {
  void btVehicleRL::applyFrictionImpulses(float timeStep) {
  	// Apply impulses
  	btVector3 upDir = m_chassisBody->getWorldTransform().getBasis().getColumn(m_indexUpAxis);
@@ -8596,7 +8808,7 @@ index 3289666..fa2c80a 100644
  		if (!wheel.m_impulse.isZero()) {
  			btVector3 wheelContactOffset = wheel.m_raycastInfo.m_contactPointWS - m_chassisBody->getWorldTransform().getOrigin();
  			float contactUpDot = upDir.dot(wheelContactOffset);
-@@ -395,17 +527,28 @@ void btVehicleRL::applyFrictionImpulses(float timeStep) {
+@@ -395,17 +557,28 @@ void btVehicleRL::applyFrictionImpulses(float timeStep) {
  }
  
  btVector3 btVehicleRL::getUpwardsDirFromWheelContacts() {

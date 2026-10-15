@@ -5,6 +5,8 @@
 
 #include "../../../libsrc/bullet3-3.24/BulletDynamics/Dynamics/btDynamicsWorld.h"
 #include "../../../libsrc/bullet3-3.24/BulletDynamics/ConstraintSolver/btContactConstraint.h"
+#include "../../../libsrc/bullet3-3.24/BulletCollision/CollisionShapes/btStaticPlaneShape.h"
+#include <cfloat>
 
 RS_NS_START
 
@@ -37,6 +39,26 @@ struct PerObjectRayCallback : public btCollisionWorld::RayResultCallback {
 		return 1; // keep receiving every hit
 	}
 };
+
+// RL PATCH (RV-377): the arena's planes (floor, ceiling, side walls) as the game's analytic plane (rayTestSingleInternal
+// 0x14027b670, shape type 0x1c; notes/bullet-diff.md HP1), not Bullet's two triangles: the body's normal (the game's
+// basis column 2; here the shape's, the basis the identity), front side only, never flipped; a hit where both distances
+// pass FLT_EPSILON and the ray reaches the plane, at their ratio, and nearer than the callback's closest
+static void RayTestPlane(const btVector3& from, const btVector3& to, const btCollisionObject* object, btCollisionWorld::RayResultCallback& cb) {
+	const btStaticPlaneShape* plane = (const btStaticPlaneShape*)object->getCollisionShape();
+	const btTransform& t = object->getWorldTransform();
+	btVector3 n = t.getBasis() * plane->getPlaneNormal();
+	btVector3 o = t.getOrigin() + n * plane->getPlaneConstant();
+	float dDir = -(((to.y() - from.y()) * n.y() + (to.x() - from.x()) * n.x()) + (to.z() - from.z()) * n.z());
+	float dFrom = -(((o.y() - from.y()) * n.y() + (o.x() - from.x()) * n.x()) + (o.z() - from.z()) * n.z());
+	if (!(dDir > FLT_EPSILON && dFrom > FLT_EPSILON && dDir >= dFrom))
+		return;
+	float fraction = dFrom / dDir;
+	if (!(fraction < cb.m_closestHitFraction))
+		return;
+	btCollisionWorld::LocalRayResult result(object, nullptr, n, fraction);
+	cb.addSingleResult(result, true);
+}
 
 btVehicleRL::btVehicleRL(
 	const btVehicleTuning& tuning, 
@@ -178,20 +200,28 @@ float btVehicleRL::rayCast(btWheelInfoRL& wheel) {
 		btTransform from(btMatrix3x3::getIdentity(), source), to(btMatrix3x3::getIdentity(), target);
 		for (int c = 0; c < m_numRayCandidates; c++) {
 			btCollisionObject* candidate = (btCollisionObject*)m_rayCandidates[c];
-			btCollisionWorld::rayTestSingle(from, to, candidate, candidate->getCollisionShape(), candidate->getWorldTransform(), cb);
+			if (candidate->getCollisionShape()->getShapeType() == STATIC_PLANE_PROXYTYPE)
+				RayTestPlane(source, target, candidate, cb);
+			else
+				btCollisionWorld::rayTestSingle(from, to, candidate, candidate->getCollisionShape(), candidate->getWorldTransform(), cb);
 		}
+		// RL PATCH (RV-377, HP1: addSingleResult 0x1402b0df0, the per-wheel cast 0x1402c4650): each candidate's hit point
+		// as Bullet's setInterpolate3 (s·from + t·to, s = 1 − t, scalar); a hit taken if nearer than the best so far
+		// (from 1: one at the ray's end is none; ties to the first candidate); its normal as the callback has it (never
+		// normalized again)
 		object = nullptr;
-		float best = 2;
+		float best = 1;
 		for (int i = 0; i < cb.count; i++) {
 			const btRigidBody* body = btRigidBody::upcast(cb.hits[i].obj);
 			if (!body || !body->hasContactResponse()) continue;
-			btVector3 hit = source.lerp(target, cb.hits[i].fraction);
+			btVector3 hit;
+			hit.setInterpolate3(source, target, cb.hits[i].fraction);
 			if ((hit - source).length2() < m_minHitDistSq) continue;
 			if (cb.hits[i].fraction < best) {
 				best = cb.hits[i].fraction;
 				object = (btCollisionObject*)cb.hits[i].obj;
 				rayResults.m_hitPointInWorld = hit;
-				rayResults.m_hitNormalInWorld = cb.hits[i].normal.normalized();
+				rayResults.m_hitNormalInWorld = cb.hits[i].normal;
 				rayResults.m_distFraction = best;
 			}
 		}

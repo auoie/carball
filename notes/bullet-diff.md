@@ -403,3 +403,56 @@ Tags: [N] native read, [S] script, [I] inferred. Live addresses (the BC map `age
   aabbMin cell (cell ≥ maxAABBLen), so the candidate set is a superset of the game's. Matching it means the game's single
   `aabbTest` query (btRSBroadphase::aabbTest :376 tests stored boxes) + `rayTestSingle` per candidate. Recommendation
   sent to the live session: do not update boxes in SetState; update at once only where the game creates a body.
+
+## Wheel-ray hit point, normal and candidate order (2026-10-15, live build; HP1, for RV-375/RV-377)
+Tags: [N] native read, [I] inferred. All addresses live (HP1's copy of rl-20261006).
+- **Per-wheel cast 0x1402c4650 [N].** One fresh ClosestRayResultCallback per candidate (vtable 0x141a555a8: [0] dtor
+  0x1402afe70, [1] needsCollision 0x14027a080 (never called on this path), [2] addSingleResult 0x1402b0df0); fraction
+  1.0, group 1, mask 0xffff, flags 0, from = wheel+0x30 (hard point), to = wheel+0x10 (ray end); rayTestSingle 0x14027b620
+  → rayTestSingleInternal 0x14027b670. A candidate's hit is taken iff `frac < best` (strict, best starts 1.0) and
+  `((hx−fx)² + (hy−fy)²) + (hz−fz)² ≥ wheel+0x54`; ties go to the earlier candidate; a candidate whose closest hit fails
+  the distance check gets no second chance. Hit: wheel+0 normal, +0x10 point, +0x40 = 1, +0x48 object; else +0x40/+0x48 = 0
+  and +0x10 keeps the ray end.
+- **Hit point [N]:** addSingleResult is scalar `setInterpolate3`: `s = fl(1 − t)`, `p_i = fl(fl(s·from_i) + fl(t·to_i))`
+  (MULSS/ADDSS/SUBSS, no FMA, no packed ops; p.w not written). closestHitFraction = t unconditionally.
+- **Normal in addSingleResult [N]:** copied as is (16 bytes) when normalInWorldSpace; else basis·local (w = 0), never
+  normalized. Every wheel-reachable path passes true.
+- **Normal per shape path (0x14027b670 dispatch: type 0x1c first, then < 0x14 convex, 0x15..0x1d concave, 0x1f compound) [N]:**
+  - Plane (0x1c, the Psyonix finite plane = arena floor/ceiling/side walls; see B13): analytic, shape fields unused;
+    `n` = column 2 of the object basis (not normalized, w 0); `d_dir = −(((to−from)·n))`, `d_from = −(((O−from)·n))`
+    (dot order (y, x, z)); hit iff `d_dir > 1.1920929e-7 && d_from > 1.1920929e-7 && d_dir ≥ d_from`; fraction
+    `d_from/d_dir` (strictly < closest); infinite, front side only, never flipped.
+  - Triangle mesh (0x15 btBvhTriangleMeshShape): ray to local via the inverse transform 0x140279c70
+    (`((p.x·Bt[r][0] + p.y·Bt[r][1]) + p.z·Bt[r][2]) + invO[r]`, invO = Bᵀ·(−O); not bit-equal to Bᵀ(p − O)); Bridge
+    callback vtable 0x141a53e60 (processTriangle 0x1402abae0, reportHit 0x14027cf20); stock 2.82 processTriangle:
+    `n = (v1−v0)×(v2−v0)`, `distance = dist_a/(dist_a − dist_b)`, edge tolerance `len2·(−1e-4f)`, then
+    `n *= 1/sqrtss(len2)` and `n = −n` when `!(dist_a > 0)` (flags 0); reportHit rotates `B·n` with no renormalization,
+    passes true. Fraction = local-space distance.
+  - Convex (< 0x14: car hitbox box/hull, ball sphere) — CORRECTED 2026-10-15 (HP1 had swapped the caster pairs): both
+    casters are built (0x14029ae40 → vtable 0x141a55048 → calcTimeOfImpact 0x1402a19f0 = btSubsimplexConvexCast;
+    0x14029ac70 → vtable 0x141a55008 → 0x1402a15c0 = btGjkConvexCast), then `TEST [callback+0x1c], 4` (0x14027b905)
+    picks subsimplex only when flag 4 (kF_UseSubSimplexConvexCastRaytest) is set: wheel rays (flags 0) use **GJK**, as
+    stock 2.82 and the engine's RL PATCH. 0x1402a15c0: radius 0.001, numIter > **64** fails (stock float build: 32),
+    `lambda −= dist/(n·r)`, fail if lambda > 1, < 0 or ≤ last, point interpolation `t·to + (1−t)·from`; result normal =
+    the GJK pair detector's normalOnB (normalized there by 1/sqrt). Back in 0x14027b670: `|n|² > 1e-4` and `fraction <
+    closest`, normalized again (SQRTSS, 1/len, 3× MULSS), no rotation, normalInWorldSpace true; fraction = lambda.
+  - Compound (0x1f; InitBody wraps a body when > 1 shape or a child offset |x| ≥ 0.1 UU): btDbvt rayTest 0x14026e5b0 →
+    ProcessLeaf 0x140270940 (childWorld = colObjWorld·child) → LocalInfoAdder2 0x140271530 forwards unchanged.
+- **After the cast [N]:** nothing renormalizes the wheel normal (0x1402c3e60 suspension reads it; game callback at
+  vehicle+0x70 reads it; 0x1402c3540/0x1402c54d0 normalize only derived cross products).
+- **Candidate order (btAxisSweep3<u16>) [N]:** aabbTest 0x140270d80 walks m_pEdges[0] (x) index 1..2·numHandles, max
+  edges only, float TestAabbAgainstAabb2 vs the handle's stored float box (x, z, y; reject only on strict separation),
+  never stops early (the callback keeps the first 32). World box ±10485.740234375 BU (±524287 UU) on all axes;
+  m_quantize = 65535/20971.48046875 = 3.1249583f (0x4047ff51); quantize 0x14027b330: `v = fl(fl(p − min)·q)`;
+  `!(v > 0)` → isMax; `v ≥ 65535` → 0xfffe|isMax; else `((u16)cvttss2si(v) & 0xfffe) | isMax`. Max keys odd, bucket
+  0.640009 BU (32.0004 UU), so equal keys are common. Sorts stock: down `while (pos < prev)`, up `while (next.handle &&
+  pos >= next.pos)`; updateHandle 0x1402802d0 (only from setAabb 0x14027e6f0) per axis 0,1,2: MinDown if dmin<0, MaxUp if
+  dmax>0, MinUp if dmin>0, MaxDown if dmax<0. addHandle 0x140271140 inserts below the sentinel and sorts down (strict),
+  so a new max edge is LAST among equal keys; removeHandle 0x14027c370 moves only the removed edges. updateAabbs
+  0x14027ffa0 visits m_collisionObjects in array order (append on add; swap-with-last on remove, also in
+  removeRigidBody 0x1402b91d0), updating iff forceUpdateAll (world+0x68, set 0) || activation != 5.
+- **Rule:** candidates in x-max-edge order; key = quantized stored aabbMax.x; ties by history (an entry just inserted or
+  whose key just changed goes after all equal keys; unchanged keys never move; removal keeps the rest in order); keys
+  change at createProxy (creation box, no +0.02) and in each step's updateAabbs (array order, skip state 5, per-step box
+  per AB1). The vehicle query runs before that step's updateAabbs. Overlap test float; skip own chassis and group/mask;
+  first 32.

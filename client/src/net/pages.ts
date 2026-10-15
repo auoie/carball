@@ -16,11 +16,22 @@ function session(): SessionStore | null {
   }
 }
 
-/** A match found: the token that claims the slot, and the playlist searched (Play Again searches it again) */
+/** A match found: the token that claims the slot, the playlist searched (Play Again searches it again), and when its
+ *  search began (ms, wall clock: a cancelled match's search goes on from there, RV-367) */
 export interface Claim {
   readonly token: bigint;
   readonly playlist: number;
+  readonly searchedAt: number;
 }
+
+/** A search back from a match cancelled for someone else: the token claimed (the queue's front again) and when its first
+ *  search began (ms, wall clock) */
+export interface Back {
+  readonly token: bigint;
+  readonly searchedAt: number;
+}
+
+const TOKEN = /^[1-9][0-9]{0,19}$/;
 
 /** What the menu page does as it opens after a match page */
 export interface MenuNotice {
@@ -30,11 +41,13 @@ export interface MenuNotice {
   readonly search?: number;
   /** A warning line to start its log with */
   readonly warning?: string;
+  /** The search is back from a match cancelled for someone else (RV-367) */
+  readonly back?: Back;
 }
 
 export function storeClaim(claim: Claim, storage = session()): void {
   try {
-    storage?.setItem(CLAIM_KEY, JSON.stringify({ token: claim.token.toString(), playlist: claim.playlist }));
+    storage?.setItem(CLAIM_KEY, JSON.stringify({ token: claim.token.toString(), playlist: claim.playlist, searchedAt: claim.searchedAt }));
   } catch {
     // (not kept: the match page goes back to the menu)
   }
@@ -46,9 +59,10 @@ export function takeClaim(storage = session()): Claim | null {
     const text = storage?.getItem(CLAIM_KEY) ?? null;
     storage?.removeItem(CLAIM_KEY);
     if (text === null) return null;
-    const value = JSON.parse(text) as { token?: unknown; playlist?: unknown };
-    if (typeof value.token !== "string" || !/^[1-9][0-9]{0,19}$/.test(value.token) || typeof value.playlist !== "number") return null;
-    return { token: BigInt(value.token), playlist: value.playlist };
+    const value = JSON.parse(text) as { token?: unknown; playlist?: unknown; searchedAt?: unknown };
+    if (typeof value.token !== "string" || !TOKEN.test(value.token) || typeof value.playlist !== "number") return null;
+    const searchedAt = typeof value.searchedAt === "number" && Number.isFinite(value.searchedAt) ? value.searchedAt : Date.now();
+    return { token: BigInt(value.token), playlist: value.playlist, searchedAt };
   } catch {
     return null;
   }
@@ -56,7 +70,8 @@ export function takeClaim(storage = session()): Claim | null {
 
 export function storeNotice(notice: MenuNotice, storage = session()): void {
   try {
-    storage?.setItem(NOTICE_KEY, JSON.stringify(notice));
+    const { back, ...rest } = notice;
+    storage?.setItem(NOTICE_KEY, JSON.stringify(back ? { ...rest, back: { token: back.token.toString(), searchedAt: back.searchedAt } } : rest));
   } catch {
     // (not kept)
   }
@@ -68,11 +83,15 @@ export function takeNotice(storage = session()): MenuNotice | null {
     const text = storage?.getItem(NOTICE_KEY) ?? null;
     storage?.removeItem(NOTICE_KEY);
     if (text === null) return null;
-    const value = JSON.parse(text) as { modal?: unknown; search?: unknown; warning?: unknown };
+    const value = JSON.parse(text) as { modal?: unknown; search?: unknown; warning?: unknown; back?: { token?: unknown; searchedAt?: unknown } };
+    const back = value.back;
     return {
       ...(value.modal === "idle" || value.modal === "lost" ? { modal: value.modal } : {}),
       ...(typeof value.search === "number" ? { search: value.search } : {}),
       ...(typeof value.warning === "string" ? { warning: value.warning } : {}),
+      ...(typeof back?.token === "string" && TOKEN.test(back.token) && typeof back.searchedAt === "number" && Number.isFinite(back.searchedAt)
+        ? { back: { token: BigInt(back.token), searchedAt: back.searchedAt } }
+        : {}),
     };
   } catch {
     return null;

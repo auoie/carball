@@ -8,7 +8,6 @@ use rl_server::game::MatchType;
 use rl_server::match_host::Playlist;
 use rl_server::net::NetLimits;
 use rl_server::{engine, game_loop, net};
-use wtransport::Identity;
 
 struct Args {
     port: u16,
@@ -29,6 +28,9 @@ struct Args {
     queue: bool,
     /// The certificate chain and its key (PEM): a public server's (APP-CONTRACT.md), reloaded when they change or on SIGHUP
     cert: Option<(PathBuf, PathBuf)>,
+    /// A development server (`--dev`): a self-signed certificate whatever CERT_PATH and KEY_PATH say. A queue server
+    /// without a certificate must be asked for it (RV-381: an empty variable in a deployment is no silent outage)
+    dev: bool,
     /// The host name the server is reached at (logged: its certificate must be for it)
     public_host: Option<String>,
     health_port: u16,
@@ -36,7 +38,7 @@ struct Args {
     health_check: bool,
 }
 
-const USAGE: &str = "usage: rl-server [--mode direct|queue] [--port 4433] [--info-port 4434] [--dev-info on|off] [--info-bind 127.0.0.1] \
+const USAGE: &str = "usage: rl-server [--mode direct|queue] [--dev] [--port 4433] [--info-port 4434] [--dev-info on|off] [--info-bind 127.0.0.1] \
 [--meshes DIR] [--team-size 3] [--match-type casual|ranked|private] [--forfeit-vote-wait SECONDS] [--test-goal-after SECONDS] \
 [--cert FULLCHAIN.pem --key KEY.pem] [--allowed-origin ORIGIN[,ORIGIN...]] [--public-host HOST] [--health-port 8081] \
 [--max-sessions N] [--max-per-address N] [--max-per-address-per-minute N] | --healthcheck
@@ -50,25 +52,43 @@ fn parse_mode(value: &str) -> anyhow::Result<bool> {
     }
 }
 
-fn origins(value: &str) -> Option<Vec<String>> {
-    let list: Vec<String> = value.split(',').map(|o| o.trim().trim_end_matches('/').to_string()).filter(|o| !o.is_empty()).collect();
-    (!list.is_empty()).then_some(list)
+/// The page origins allowed, as browsers send them (lowercase, no trailing slash); none named is an error, not "any"
+/// (RV-372: a blank ALLOWED_ORIGIN mustn't open the server to every page)
+fn origins(value: &str) -> anyhow::Result<Vec<String>> {
+    let list: Vec<String> = value.split(',').map(|o| o.trim().trim_end_matches('/').to_ascii_lowercase()).filter(|o| !o.is_empty()).collect();
+    anyhow::ensure!(!list.is_empty(), "ALLOWED_ORIGIN (--allowed-origin) names no origin: {value:?}");
+    Ok(list)
 }
 
-/// The arguments, each flag's default from the environment (`env`: the image's interface, APP-CONTRACT.md)
+/// The arena's collision meshes when neither --meshes nor MESHES_DIR names them: the repository's
+/// (`out/arena/collision_meshes`) in a directory above the binary, a development build's (no build machine's path
+/// compiled in: RV-380)
+fn default_meshes() -> PathBuf {
+    let found = std::env::current_exe().ok().and_then(|exe| exe.ancestors().map(|d| d.join("out/arena/collision_meshes")).find(|d| d.is_dir()));
+    found.unwrap_or_else(|| PathBuf::from("collision_meshes"))
+}
+
+/// The development info server: on without a certificate unless turned off, off with one unless asked (SEC-6)
+fn dev_info_on(args: &Args) -> bool {
+    args.dev_info.unwrap_or(args.cert.is_none())
+}
+
+/// The arguments, each flag's default from the environment (`env`: the image's interface, APP-CONTRACT.md). A public
+/// server (a certificate) needs its page origins; a queue server needs a certificate, or `--dev`
 fn parse_args(mut it: impl Iterator<Item = String>, env: impl Fn(&str) -> Option<String>) -> anyhow::Result<Args> {
     let mut args = Args {
         port: 4433,
         info_port: 4434,
         dev_info: None,
         info_bind: [127, 0, 0, 1].into(),
-        meshes: PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../out/arena/collision_meshes")),
+        meshes: PathBuf::new(),
         team_size: rl_server::game::TEAM_SIZE,
         match_type: MatchType::Casual,
         forfeit_vote_wait: None,
         test_goal_after: None,
         queue: false,
         cert: None,
+        dev: false,
         public_host: None,
         health_port: 8081,
         limits: NetLimits::default(),
@@ -80,13 +100,13 @@ fn parse_args(mut it: impl Iterator<Item = String>, env: impl Fn(&str) -> Option
     if let Some(port) = env("GAME_PORT") {
         args.port = port.parse()?;
     }
-    if let Some(dir) = env("MESHES_DIR") {
+    if let Some(dir) = env("MESHES_DIR").filter(|d| !d.is_empty()) {
         args.meshes = dir.into();
     }
     let mut cert = env("CERT_PATH").map(PathBuf::from);
     let mut key = env("KEY_PATH").map(PathBuf::from);
     if let Some(list) = env("ALLOWED_ORIGIN") {
-        args.limits.allowed_origins = origins(&list);
+        args.limits.allowed_origins = Some(origins(&list)?);
     }
     args.public_host = env("PUBLIC_HOST").filter(|h| !h.is_empty());
     if let Some(port) = env("HEALTH_PORT") {
@@ -122,9 +142,10 @@ fn parse_args(mut it: impl Iterator<Item = String>, env: impl Fn(&str) -> Option
             "--forfeit-vote-wait" => args.forfeit_vote_wait = Some(value()?.parse()?),
             "--test-goal-after" => args.test_goal_after = Some(value()?.parse()?),
             "--mode" => args.queue = parse_mode(&value()?)?,
+            "--dev" => args.dev = true,
             "--cert" => cert = Some(value()?.into()),
             "--key" => key = Some(value()?.into()),
-            "--allowed-origin" => args.limits.allowed_origins = origins(&value()?),
+            "--allowed-origin" => args.limits.allowed_origins = Some(origins(&value()?)?),
             "--public-host" => args.public_host = Some(value()?),
             "--health-port" => args.health_port = value()?.parse()?,
             "--max-sessions" => args.limits.max_sessions = value()?.parse()?,
@@ -134,11 +155,28 @@ fn parse_args(mut it: impl Iterator<Item = String>, env: impl Fn(&str) -> Option
             _ => anyhow::bail!("{USAGE}"),
         }
     }
+    if args.meshes.as_os_str().is_empty() {
+        args.meshes = default_meshes();
+    }
+    if args.dev {
+        return Ok(args); // (self-signed, whatever the certificate's variables say)
+    }
     args.cert = match (cert, key) {
-        (Some(c), Some(k)) => Some((c, k)),
+        (Some(c), Some(k)) => {
+            anyhow::ensure!(!c.as_os_str().is_empty() && !k.as_os_str().is_empty(), "CERT_PATH and KEY_PATH are empty (a development server: --dev)");
+            Some((c, k))
+        }
         (None, None) => None,
         _ => anyhow::bail!("a certificate needs both CERT_PATH and KEY_PATH (--cert and --key)"),
     };
+    anyhow::ensure!(
+        !args.queue || args.cert.is_some(),
+        "the queue serves the public: it needs a certificate (CERT_PATH and KEY_PATH, or --cert and --key), or --dev for a development server"
+    );
+    anyhow::ensure!(
+        args.cert.is_none() || args.limits.allowed_origins.is_some(),
+        "a server with a certificate needs ALLOWED_ORIGIN (--allowed-origin): the pages it serves"
+    );
     Ok(args)
 }
 
@@ -178,7 +216,7 @@ async fn reload_certificates(server: Arc<net::ServerEndpoint>, cert: PathBuf, ke
         if !asked && now == seen {
             continue;
         }
-        match Identity::load_pemfiles(&cert, &key).await {
+        match net::load_identity(&cert, &key).await {
             Ok(identity) => match net::server_config(identity, port).and_then(|config| Ok(server.reload_config(config, false)?)) {
                 Ok(()) => {
                     seen = now;
@@ -186,7 +224,8 @@ async fn reload_certificates(server: Arc<net::ServerEndpoint>, cert: PathBuf, ke
                 }
                 Err(e) => eprintln!("certificate reload failed, the old one stays: {e:#}"),
             },
-            // (a renewal written in two steps can be read between them: tried again at the next check)
+            // (a renewal written in two steps can be read between them, a key that isn't the certificate's yet: tried
+            // again at the next check, RV-368)
             Err(e) => eprintln!("certificate not read, the old one stays: {e:#}"),
         }
     }
@@ -194,8 +233,7 @@ async fn reload_certificates(server: Arc<net::ServerEndpoint>, cert: PathBuf, ke
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // (an empty variable is an unset one: `-e CERT_PATH=` runs a development server from the image)
-    let args = parse_args(std::env::args().skip(1), |name| std::env::var(name).ok().filter(|v| !v.is_empty()))?;
+    let args = parse_args(std::env::args().skip(1), |name| std::env::var(name).ok())?;
     if args.health_check {
         std::process::exit(if net::health_check(args.health_port) { 0 } else { 1 });
     }
@@ -206,7 +244,7 @@ async fn main() -> anyhow::Result<()> {
     }
     engine::init(&args.meshes)?;
     let (identity, dev_hash) = match &args.cert {
-        Some((cert, key)) => (Identity::load_pemfiles(cert, key).await?, None),
+        Some((cert, key)) => (net::load_identity(cert, key).await?, None),
         None => {
             let (identity, hash) = net::dev_identity()?;
             (identity, Some(hash))
@@ -239,7 +277,7 @@ async fn main() -> anyhow::Result<()> {
     if let Some((cert, key)) = args.cert.clone() {
         tokio::spawn(reload_certificates(server.clone(), cert, key, args.port));
     }
-    let dev_info = args.dev_info.unwrap_or(args.cert.is_none());
+    let dev_info = dev_info_on(&args);
     let mode = if args.queue { "the queue's matches" } else { "one open match" };
     let origins = args.limits.allowed_origins.as_ref().map_or("any origin (development)".to_string(), |o| o.join(", "));
     let host = args.public_host.as_deref().unwrap_or("this machine");
@@ -275,7 +313,7 @@ mod tests {
         for good in 1..=8 {
             assert_eq!(parse(&["--team-size", &good.to_string()]).unwrap().team_size, good);
         }
-        assert!(parse(&["--mode", "queue"]).unwrap().queue);
+        assert!(parse(&["--mode", "queue", "--dev"]).unwrap().queue);
         assert!(!parse(&["--mode", "direct"]).unwrap().queue);
         assert!(!parse(&[]).unwrap().queue, "direct by default");
         assert!(parse(&["--mode", "ranked"]).is_err());
@@ -308,5 +346,40 @@ mod tests {
         assert!(parse(&["--cert", "/a.pem"]).is_err(), "a certificate needs its key");
         let dev = parse(&[]).unwrap();
         assert!(dev.cert.is_none() && dev.limits.allowed_origins.is_none());
+        assert!(dev.meshes.ends_with("collision_meshes"), "no build machine's path: found at run time");
+    }
+
+    #[test]
+    fn a_public_server_needs_its_origins_and_a_queue_server_a_certificate_or_dev() {
+        // (RV-372, RV-381: a blank or missing setting fails closed, not open)
+        let with = |vars: &'static [(&'static str, &'static str)], flags: &[&str]| {
+            parse_args(flags.iter().map(|f| (*f).to_string()), move |name: &str| vars.iter().find(|(n, _)| *n == name).map(|(_, v)| (*v).to_string()))
+        };
+        const CERT: [(&str, &str); 2] = [("CERT_PATH", "/certs/fullchain.pem"), ("KEY_PATH", "/certs/privkey.pem")];
+        assert!(with(&CERT, &[]).is_err(), "a certificate without ALLOWED_ORIGIN");
+        assert!(with(&[CERT[0], CERT[1], ("ALLOWED_ORIGIN", "")], &[]).is_err(), "a blank ALLOWED_ORIGIN");
+        assert!(with(&[CERT[0], CERT[1], ("ALLOWED_ORIGIN", " , ")], &[]).is_err(), "no origin named");
+        let args = with(&[CERT[0], CERT[1], ("ALLOWED_ORIGIN", "HTTPS://Carball.Zolt.Top/")], &[]).unwrap();
+        assert_eq!(args.limits.allowed_origins, Some(vec!["https://carball.zolt.top".to_string()]), "as browsers send it");
+        // A queue server: a certificate, or --dev
+        assert!(with(&[("RL_MODE", "queue")], &[]).is_err());
+        assert!(with(&[("RL_MODE", "queue"), ("CERT_PATH", ""), ("KEY_PATH", ""), ("ALLOWED_ORIGIN", "https://a.example")], &[]).is_err(), "empty paths");
+        let dev = with(&[("RL_MODE", "queue"), CERT[0], CERT[1], ("ALLOWED_ORIGIN", "https://a.example")], &["--dev"]).unwrap();
+        assert!(dev.queue && dev.cert.is_none(), "--dev: self-signed whatever the variables say");
+        assert!(with(&[("RL_MODE", "queue"), CERT[0], CERT[1], ("ALLOWED_ORIGIN", "https://a.example")], &[]).unwrap().cert.is_some());
+    }
+
+    #[test]
+    fn the_development_info_server_is_on_without_a_certificate_only_unless_asked() {
+        let env = |name: &str| match name {
+            "CERT_PATH" => Some("/c.pem".to_string()),
+            "KEY_PATH" => Some("/k.pem".to_string()),
+            "ALLOWED_ORIGIN" => Some("https://a.example".to_string()),
+            _ => None,
+        };
+        assert!(!dev_info_on(&parse_args(std::iter::empty(), env).unwrap()), "SEC-6: off with a certificate");
+        assert!(dev_info_on(&parse(&[]).unwrap()));
+        assert!(!dev_info_on(&parse(&["--dev-info", "off"]).unwrap()));
+        assert!(dev_info_on(&parse(&["--mode", "queue", "--dev"]).unwrap()));
     }
 }

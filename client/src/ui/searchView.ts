@@ -10,6 +10,11 @@ const SUMMARY: Record<SearchViewState["status"], string> = {
   failed: SEARCH_TEXT.failed,
 };
 
+/** What shows: the panel while it's open over the menu, else the banner (never both: RV-360); neither without a search */
+export function searchViews(state: SearchViewState | null, panelOpen: boolean): { readonly panel: boolean; readonly banner: boolean } {
+  return { panel: state !== null && panelOpen, banner: state !== null && !panelOpen };
+}
+
 export class SearchView {
   readonly #panel: HTMLDivElement;
   readonly #panelSummary: HTMLDivElement;
@@ -65,8 +70,9 @@ export class SearchView {
 
   update(state: SearchViewState | null): void {
     if (state === null) this.#panelOpen = false;
-    this.#panel.hidden = state === null || !this.#panelOpen;
-    this.#banner.hidden = state === null || this.#panelOpen;
+    const views = searchViews(state, this.#panelOpen);
+    this.#panel.hidden = !views.panel;
+    this.#banner.hidden = !views.banner;
     if (state === null) return;
     const shown = JSON.stringify(state);
     if (shown === this.#shown) return;

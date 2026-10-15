@@ -1,5 +1,6 @@
 // Quick chat as the game's (notes/quick-chat.md CHAT-1..21): the 76 presets (their English text verbatim, by the
-// user's decision), the 24 slots and the four categories they make (category 1 replaced by the post-game set once the
+// user's decision, but for the two naming the game, which name ours: "This is Carball!", "This isn't Carball!", the
+// user's decision of 2026-10-15), the 24 slots and the four categories they make (category 1 replaced by the post-game set once the
 // match has ended), the two-press menu and its timings, the server's spam bucket, and the chat log's line format.
 
 /** A preset: its key (what the wire carries, as the game's ID), its group (1-6), its text */
@@ -52,7 +53,7 @@ const TEXTS: readonly (readonly string[])[] = [
     "Okay.",
     "Yes!",
     "Unlucky!",
-    "This isn't Rocket League!",
+    "This isn't Carball!",
     "Oof.",
     "...",
     "Be careful!",
@@ -60,7 +61,7 @@ const TEXTS: readonly (readonly string[])[] = [
   ],
   ["$#@%!", "No problem.", "Whoops...", "Sorry!", "My bad...", "Oops!", "My fault.", "All good!"],
   ["gg", "Well played.", "That was fun!", "Rematch!", "One. More. Game.", "What a game!", "Nice moves.", "Everybody dance!", "Party up?"],
-  ["Good luck!", "Have fun!", "Get ready.", "This is Rocket League!", "Let's do this!", "Here. We. Go.", "Nice cars!", "I'll do my best."],
+  ["Good luck!", "Have fun!", "Get ready.", "This is Carball!", "Let's do this!", "Here. We. Go.", "Nice cars!", "I'll do my best."],
 ];
 
 /** The 76 presets (CHAT-1), in the table's order: a preset's index there is its number on our wire */

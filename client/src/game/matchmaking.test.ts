@@ -1,30 +1,28 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { JOIN_COUNTDOWN, Matchmaking, OWN_SEARCH_TEXT, SEARCH_TEXT, timelineLines } from "./matchmaking";
-
-interface Handlers {
-  searching(): void;
-  found(token: bigint): void;
-  failed(reason: string): void;
-}
+import { JOIN_COUNTDOWN, Matchmaking, OWN_SEARCH_TEXT, SEARCH_TEXT, type SearchHandlers, timelineLines } from "./matchmaking";
 
 function harness() {
   const sounds: string[] = [];
   const joined: { token: bigint; playlist: number }[] = [];
-  const searches: { playlist: number; handlers: Handlers; cancelled: boolean }[] = [];
+  const searchedFor: number[] = [];
+  const searches: { playlist: number; token: bigint; handlers: SearchHandlers; cancelled: boolean }[] = [];
   const declined: bigint[] = [];
   const mm = new Matchmaking({
-    search: (playlist, handlers) => {
-      const s = { playlist, handlers, cancelled: false };
+    search: (playlist, token, handlers) => {
+      const s = { playlist, token, handlers, cancelled: false };
       searches.push(s);
       return () => {
         s.cancelled = true;
       };
     },
     sound: (cue) => sounds.push(cue),
-    join: (token, playlist) => joined.push({ token, playlist }),
+    join: (token, playlist, seconds) => {
+      joined.push({ token, playlist });
+      searchedFor.push(seconds);
+    },
     decline: (token) => declined.push(token),
   });
-  return { mm, sounds, joined, searches, declined };
+  return { mm, sounds, joined, searchedFor, searches, declined };
 }
 
 describe("matchmaking (notes/matchmaking.md MM-4..14)", () => {
@@ -115,11 +113,62 @@ describe("matchmaking (notes/matchmaking.md MM-4..14)", () => {
     searches[0]?.handlers.searching();
     searches[0]?.handlers.found(9n);
     vi.advanceTimersByTime(1500);
+    const beeps = sounds.filter((c) => c === "countdown").length;
     mm.cancel();
     expect(declined).toEqual([9n]);
     expect(mm.state).toBeNull();
     expect(sounds.at(-1)).toBe("cancel");
     vi.advanceTimersByTime(5000);
     expect(joined).toEqual([]);
+    // (its timers gone too: no "Joining in 1" and beep come back after the cancel, RX13's C5)
+    expect(mm.state).toBeNull();
+    expect(sounds.filter((c) => c === "countdown")).toHaveLength(beeps);
+  });
+
+  it("a failure after the match was found doesn't fail the search: the join goes on (RX13's C12)", () => {
+    const { mm, joined, searches } = harness();
+    mm.start(1);
+    searches[0]?.handlers.searching();
+    searches[0]?.handlers.found(4n);
+    searches[0]?.handlers.failed("the connection to the server was lost");
+    searches[0]?.handlers.cooldown(100);
+    expect(mm.state?.status).toBe("joining");
+    vi.advanceTimersByTime(JOIN_COUNTDOWN * 1000);
+    expect(joined).toEqual([{ token: 4n, playlist: 1 }]);
+  });
+
+  it("a search refused for a no-show says why and how long, and stays until Cancel Search or a new search (RV-367)", () => {
+    const { mm, searches, sounds } = harness();
+    mm.frame(0);
+    mm.start(2);
+    searches[0]?.handlers.cooldown(112);
+    expect(mm.state?.status).toBe("failed");
+    expect(mm.state?.lines).toEqual([{ text: OWN_SEARCH_TEXT.cooldown(112), kind: "warning" }]);
+    expect(OWN_SEARCH_TEXT.cooldown(112)).toBe("Your last match was cancelled because you didn't join it in time or left before it started. You can search again in 1:52.");
+    expect(OWN_SEARCH_TEXT.cooldown(59.2)).toMatch(/in 1:00\.$/);
+    mm.frame(60);
+    expect(mm.state?.status).toBe("failed");
+    mm.cancel();
+    expect(mm.state).toBeNull();
+    expect(sounds).toEqual(["start"]);
+  });
+
+  it("a search back from a cancelled match sends its token and its clock goes on from the first search (RV-367)", () => {
+    const { mm, searches, searchedFor } = harness();
+    mm.frame(100);
+    mm.start(3, OWN_SEARCH_TEXT.notAllJoined, { token: 31n, searchedFor: 4 });
+    expect(searches[0]?.token).toBe(31n);
+    searches[0]?.handlers.searching();
+    mm.frame(101.5);
+    expect(mm.state?.lines.map((l) => l.text)).toEqual([SEARCH_TEXT.findingBestMatch, OWN_SEARCH_TEXT.notAllJoined]);
+    searches[0]?.handlers.found(32n);
+    vi.advanceTimersByTime(JOIN_COUNTDOWN * 1000);
+    expect(searchedFor).toEqual([5.5]);
+    // A new search: token 0, its own clock
+    mm.start(3);
+    expect(searches[1]?.token).toBe(0n);
+    searches[1]?.handlers.searching();
+    mm.frame(104);
+    expect(mm.state?.lines).toEqual([]);
   });
 });

@@ -5,6 +5,7 @@
 #include "RocketSim.h"
 #include "Sim/Quantize/Quantize.h"
 #include "Sim/GameRotator/GameRotator.h"
+#include "../libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btRSBroadphase.h"
 
 #include <cmath>
 #include <algorithm>
@@ -2044,8 +2045,9 @@ static void TestVehicleOrderCopiesOnADemolitionTick() {
 	arena->AddCar(Team::BLUE);
 	DataStreamOut out;
 	arena->Serialize(out);
-	// (the order, its count and one id, then the bodies' boxes: a count and 6 floats for the ball and the car, FP2)
-	size_t at = out.data.size() - (4 + 2 * 6 * 4) - 4 - 4 * 1;
+	// (the order, its count and one id, then the bodies' boxes: a count and 6 floats for the ball and the car, FP2, and
+	// their max-edge order: a count and two indices, RV-375)
+	size_t at = out.data.size() - (4 + 2 * 4) - (4 + 2 * 6 * 4) - 4 - 4 * 1;
 	uint32_t count;
 	memcpy(&count, out.data.data() + at, 4);
 	CHECK(count == 1, "the snapshot ends with the order (a count of 1), not %u: the layout changed, fix the offset", count);
@@ -2135,6 +2137,71 @@ static void TestWheelRayCandidates() {
 		delete cloned;
 		delete arena;
 	}
+}
+
+// RV-375 (HP1): the wheel rays' candidates come in the game's broadphase order, its x axis's max edges: by the quantized
+// aabbMax.x, an entry added, re-keyed or respawned after every entry of an equal key; snapshots and clones keep it
+static void TestCandidateOrder() {
+	puts("RV-375 (HP1): the wheel rays' candidates in the game's broadphase order (the quantized aabbMax.x, 0x14027b330; "
+		"an entry added, re-keyed or respawned after its equals); a snapshot, a clone and a load in place keep it");
+	CHECK(btRSBroadphase::QuantizeMax(-20000.f) == 1 && btRSBroadphase::QuantizeMax(-10485.740234375f) == 1, "below the world box: 1");
+	CHECK(btRSBroadphase::QuantizeMax(20000.f) == 0xffff && btRSBroadphase::QuantizeMax(10485.7f) == 0xffff, "past it: 0xffff");
+	CHECK(btRSBroadphase::QuantizeMax(0.f) == 32767 && btRSBroadphase::QuantizeMax(0.3f) == 32769 && btRSBroadphase::QuantizeMax(0.65f) == 32769 &&
+		btRSBroadphase::QuantizeMax(1.f) == 32771 && btRSBroadphase::QuantizeMax(-0.5f) == 32765 && btRSBroadphase::QuantizeMax(81.92f) == 33023,
+		"the keys: odd, a bucket 0.64 BU wide");
+	Arena* arena = Arena::Create(GameMode::SOCCAR);
+	Car* a = arena->AddCar(Team::BLUE);
+	Car* b = arena->AddCar(Team::ORANGE);
+	Arena* inPlace = arena->Clone(false); // (loaded in place at the end)
+	auto order = [](Arena* in) {
+		std::string names;
+		auto* rs = dynamic_cast<btRSBroadphase*>(in->_bulletWorld.getBroadphase());
+		for (btBroadphaseProxy* proxy : rs->dynamicMaxEdgeOrder()) {
+			if (proxy == in->ball->_rigidBody.getBroadphaseHandle())
+				names += 'o';
+			for (Car* car : in->GetCars())
+				if (proxy == car->_rigidBody.getBroadphaseHandle())
+					names += car->id == 1 ? 'a' : 'b';
+		}
+		return names;
+	};
+	auto keyOf = [](btRigidBody& body) { return ((btRSBroadphaseProxy*)body.getBroadphaseHandle())->maxKey; };
+	BallState ball = arena->ball->GetState();
+	ball.pos = Vec(-3000, 0, 93);
+	ball.spawnCount++;
+	arena->ball->SetState(ball);
+	// Both cars respawned at one pose (one key): the later spawn after the earlier, whichever car was made first
+	CarState at = CarAt(Vec(1000, 0, 17), Vec(1, 0, 0), Vec(0, 0, 1));
+	at.spawnCount = b->GetState().spawnCount + 1;
+	b->SetState(at);
+	at.spawnCount = a->GetState().spawnCount + 1;
+	a->SetState(at);
+	CHECK(keyOf(a->_rigidBody) == keyOf(b->_rigidBody) && keyOf(arena->ball->_rigidBody) < keyOf(a->_rigidBody), "the cars' keys equal, the ball's less");
+	CHECK(order(arena) == "oba", "b spawned first, then a: %s", order(arena).c_str());
+	at.spawnCount = b->GetState().spawnCount + 1;
+	b->SetState(at);
+	CHECK(order(arena) == "oab", "b respawned there: after a now: %s", order(arena).c_str());
+	// The ball re-keyed past them: after both
+	ball.pos = Vec(1000 + 118.0f - 92.75f + 400, 0, 93);
+	ball.spawnCount++;
+	arena->ball->SetState(ball);
+	CHECK(order(arena) == "abo", "the ball's key now greater: %s", order(arena).c_str());
+	// Copies keep the order (with the boxes: equal keys in their history's order, not by creation)
+	DataStreamOut out;
+	arena->Serialize(out);
+	DataStreamIn in;
+	in.data = out.data;
+	Arena* restored = Arena::DeserializeNew(in);
+	Arena* cloned = arena->Clone(false);
+	DataStreamIn again;
+	again.data = out.data;
+	CHECK(inPlace->DeserializeInPlace(again), "loaded in place");
+	for (Arena* copy : { restored, cloned, inPlace })
+		CHECK(copy && order(copy) == "abo", "a copy's order: %s", copy ? order(copy).c_str() : "none");
+	delete restored;
+	delete cloned;
+	delete inPlace;
+	delete arena;
 }
 
 // T1 (FP1): a car on another's roof, both in the air: the lower car's tick is gravity and, from each of the upper car's
@@ -3114,6 +3181,7 @@ int main(int argc, char** argv) {
 	TestVehicleOrderCopiesOnADemolitionTick();
 	TestSharedMeshBoxNotCached();
 	TestWheelRayCandidates();
+	TestCandidateOrder();
 	TestCarOnCarRoof();
 	TestCarOnBall();
 	TestGameRotator();

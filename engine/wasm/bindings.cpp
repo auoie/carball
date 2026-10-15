@@ -4,7 +4,7 @@
 //   const engine = await createEngine();
 //   engine.init([new Uint8Array(cmfBytes)]);       // arena collision meshes (out/arena/...cmf)
 //   const sim = new engine.Sim();
-//   const id = sim.addCar(0, 0);                    // team (0 blue, 1 orange), car type (0 = Octane)
+//   const id = sim.addCar(0, 0);                    // team (0 blue, 1 orange), hitbox preset (0 = standard: notes/hitboxes.md)
 //   sim.setControls(id, 1, 0, 0, 0, 0, false, true, false, false, NaN);
 //   sim.step(1);
 //   const car = sim.carState(id);                   // Float32Array view, see CAR_* offsets

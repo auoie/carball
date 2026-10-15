@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { deployedGameServer, pageUrl, queueAddress, storeClaim, storeNotice, takeClaim, takeNotice } from "./pages";
 
 const memory = (): Pick<Storage, "getItem" | "setItem" | "removeItem"> => {
@@ -10,8 +10,8 @@ describe("the pages' handoffs", () => {
   it("hands the match page its claim once, a 64-bit token intact", () => {
     const storage = memory();
     expect(takeClaim(storage)).toBeNull();
-    storeClaim({ token: 0x8000000000000001n, playlist: 2 }, storage);
-    expect(takeClaim(storage)).toEqual({ token: 0x8000000000000001n, playlist: 2 });
+    storeClaim({ token: 0x8000000000000001n, playlist: 2, searchedAt: 1_700_000_000_123 }, storage);
+    expect(takeClaim(storage)).toEqual({ token: 0x8000000000000001n, playlist: 2, searchedAt: 1_700_000_000_123 });
     expect(takeClaim(storage), "taken out").toBeNull();
     storage.setItem("rl-clone.claim", '{"token":"0","playlist":1}');
     expect(takeClaim(storage), "no token").toBeNull();
@@ -29,6 +29,11 @@ describe("the pages' handoffs", () => {
     expect(takeNotice(storage)).toEqual({ modal: "idle" });
     storage.setItem("rl-clone.menuNotice", '{"modal":"boom"}');
     expect(takeNotice(storage)).toEqual({});
+    // A search back from a cancelled match: its token and its first search's time (RV-367), a bad one dropped
+    storeNotice({ search: 1, warning: "w", back: { token: 0xffffffffffffffffn, searchedAt: 42 } }, storage);
+    expect(takeNotice(storage)).toEqual({ search: 1, warning: "w", back: { token: 0xffffffffffffffffn, searchedAt: 42 } });
+    storage.setItem("rl-clone.menuNotice", '{"search":1,"back":{"token":"0","searchedAt":1}}');
+    expect(takeNotice(storage)).toEqual({ search: 1 });
   });
 
   it("keeps the page's other parameters across the pages, without a development server's or the match page's", () => {
@@ -49,5 +54,18 @@ describe("the pages' handoffs", () => {
     // (the deployment's: by name, its real certificate; a development page's ?queue wins over it)
     const deployed = (): Promise<string | null> => Promise.resolve("https://game.carball.zolt.top:4433/play");
     expect(await queueAddress(new URLSearchParams(""), "carball.zolt.top", deployed)).toEqual({ url: "https://game.carball.zolt.top:4433/play", certHash: null });
+    // ?queue= wins: the development server's info, its certificate by hash, config.json not even read (RX13's C7)
+    const info = vi.fn(() => Promise.resolve(new Response(JSON.stringify({ port: 14439, certHash: "ab".repeat(32) }))));
+    vi.stubGlobal("fetch", info);
+    const notRead = vi.fn(deployed);
+    const address = await queueAddress(new URLSearchParams("queue=127.0.0.1:14440"), "carball.zolt.top", notRead);
+    expect(address.url).toBe("https://127.0.0.1:14439/play");
+    expect(address.certHash?.length).toBe(32);
+    expect(info).toHaveBeenCalledWith("http://127.0.0.1:14440/info", { cache: "no-store" });
+    expect(notRead).not.toHaveBeenCalled();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 });

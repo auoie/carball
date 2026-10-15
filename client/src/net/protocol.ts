@@ -8,7 +8,7 @@
 // car, no contest; 11: quick chat, players' names (the roster), a leave's reason; 12: whether a leaver's car explodes;
 // 13: match stats, mute, Hello's chat filters; 14: the match's intro and end (its phases, the end screen's countdown,
 // ready checks, podium titles), Refused's version reason
-export const PROTOCOL_VERSION = 18;
+export const PROTOCOL_VERSION = 19;
 /** A name's bytes at most (UTF-8) */
 export const MAX_NAME_BYTES = 32;
 export const MAX_INPUT_FRAMES = 10;
@@ -176,7 +176,10 @@ export type ControlMessage =
   /** The idle warning shows (idle past 25 s of play) or hides (MM-33..36) */
   | { readonly type: "idleWarning"; readonly on: boolean }
   /** The server ends this session a second later (KICK_*: MM-37) */
-  | { readonly type: "kicked"; readonly reason: number };
+  | { readonly type: "kicked"; readonly reason: number }
+  /** A search refused: this browser or address stalled a match (didn't claim its slot, or left before the start); it may
+   *  search again in this many seconds (RV-367); the session ends */
+  | { readonly type: "searchCooldown"; readonly seconds: number };
 
 /** Hello's intents (the wire's byte is the index) */
 const INTENTS = ["join", "search", "claim"] as const;
@@ -414,6 +417,10 @@ export function encodeControl(m: ControlMessage): Uint8Array {
       w.u8(0x91);
       w.u8(m.reason);
       break;
+    case "searchCooldown":
+      w.u8(0x92);
+      w.u16(m.seconds);
+      break;
     case "mute":
       w.u8(0x08);
       w.u32(m.car);
@@ -606,6 +613,8 @@ export function decodeControl(body: Uint8Array): ControlMessage {
       return { type: "idleWarning", on: r.u8() !== 0 };
     case 0x91:
       return { type: "kicked", reason: r.u8() };
+    case 0x92:
+      return { type: "searchCooldown", seconds: r.u16() };
     case 0x08:
       return { type: "mute", car: r.u32(), on: r.u8() !== 0 };
     case 0x06:

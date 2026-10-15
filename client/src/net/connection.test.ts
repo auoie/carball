@@ -1,7 +1,9 @@
 // The connection's pieces that need no server: the stored key (RV-239) and the queue for messages before the game
 // listens (RV-241).
-import { describe, expect, it } from "vitest";
-import { ControlQueue, serverHost, storeKey, storedKey } from "./connection";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { fakeTransport } from "../testing/fakeTransport";
+import { Connection, ControlQueue, RefusedError, serverHost, storeKey, storedKey } from "./connection";
+import { REFUSED_TOKEN } from "./protocol";
 
 const memory = (): Pick<Storage, "getItem" | "setItem"> => {
   const map = new Map<string, string>();
@@ -53,5 +55,19 @@ describe("the connection", () => {
       "127.0.0.1",
       "game.example",
     ]);
+  });
+});
+
+describe("a refused hello", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("is a RefusedError with the server's reason (a claim's dead token: back to the queue, RV-363; RX13's C11)", async () => {
+    vi.stubGlobal("WebTransport", fakeTransport([{ type: "refused", reason: REFUSED_TOKEN }]));
+    const preferences = { team: 255, body: 0, dodgeDeadzone: 0.5, steeringSensitivity: 1, airControlSensitivity: 1, autoSkipReplay: false, name: "", quickChat: "everyone", blockNonTactical: false } as const;
+    const opened = Connection.open({ url: "https://game.example:4433/play", certHash: null }, preferences, { intent: "claim", token: 9n });
+    await expect(opened).rejects.toBeInstanceOf(RefusedError);
+    await expect(opened).rejects.toMatchObject({ reason: REFUSED_TOKEN });
   });
 });

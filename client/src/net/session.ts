@@ -154,6 +154,13 @@ export class NetSession {
     return serverTick - (best?.offset ?? 0);
   }
 
+  /** How far the server tick to client frame mapping moved between these server ticks (frames: each input the server
+   *  repeated or skipped moves it by one; for the browser tests' goal check, RV-379) */
+  offsetSpread(fromTick: number, toTick: number): number {
+    const offsets = this.#tickOffsets.filter((s) => s.serverTick >= fromTick && s.serverTick <= toTick).map((s) => s.offset);
+    return offsets.length === 0 ? 0 : Math.max(...offsets) - Math.min(...offsets);
+  }
+
   /** A server correction, smoothed for drawing: each body's drawn pose keeps where it was and glides to the corrected
    *  one (SyncError); the interpolation's previous tick moves with the correction, so nothing jumps. A state applied at
    *  the present (for a frame not reached, while demolished) is smoothed the same way, as the game smooths every

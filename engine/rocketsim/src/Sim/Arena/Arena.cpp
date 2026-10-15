@@ -1383,7 +1383,8 @@ static std::vector<uint32_t> _ReadVehicleOrder(DataStreamIn& in) {
 // RL PATCH (FP2): the moving bodies' stored broadphase boxes, the ball's then each car's in ID order (the wheel rays'
 // candidates are picked by them: btVehicleRL::findRayCandidates), so a snapshot, a clone or a load in place continues as
 // the original (the game's rollback leaves the boxes from before it: ours restores them, for exact replays); the static
-// bodies' boxes are fixed
+// bodies' boxes are fixed. Then their order in the broadphase's max-edge walk (RV-375: the candidates' order, history's
+// on equal keys), as indices (the ball 0, the cars 1.. in ID order)
 static void _WriteBodyBoxes(DataStreamOut& out, Arena* arena) {
 	auto write = [&](btCollisionObject& body) {
 		btBroadphaseProxy* proxy = body.getBroadphaseHandle();
@@ -1396,6 +1397,18 @@ static void _WriteBodyBoxes(DataStreamOut& out, Arena* arena) {
 	write(arena->ball->_rigidBody);
 	for (Car* car : arena->GetCars())
 		write(car->_rigidBody);
+	std::vector<btCollisionObject*> bodies = { &arena->ball->_rigidBody };
+	for (Car* car : arena->GetCars())
+		bodies.push_back(&car->_rigidBody);
+	std::vector<uint32_t> order;
+	if (auto* rs = dynamic_cast<btRSBroadphase*>(arena->_bulletWorld.getBroadphase()))
+		for (btBroadphaseProxy* proxy : rs->dynamicMaxEdgeOrder())
+			for (uint32_t i = 0; i < bodies.size(); i++)
+				if (bodies[i]->getBroadphaseHandle() == proxy)
+					order.push_back(i);
+	out.Write<uint32_t>((uint32_t)order.size());
+	for (uint32_t i : order)
+		out.Write<uint32_t>(i);
 }
 
 static void _ReadBodyBoxes(DataStreamIn& in, Arena* arena) {
@@ -1414,6 +1427,22 @@ static void _ReadBodyBoxes(DataStreamIn& in, Arena* arena) {
 	read(arena->ball->_rigidBody);
 	for (Car* car : arena->GetCars())
 		read(car->_rigidBody);
+	std::vector<btCollisionObject*> objects = { &arena->ball->_rigidBody };
+	for (Car* car : arena->GetCars())
+		objects.push_back(&car->_rigidBody);
+	uint32_t n = in.GetNumBytesLeft() < sizeof(uint32_t) ? UINT32_MAX : in.Read<uint32_t>();
+	if (n > bodies || in.GetNumBytesLeft() < n * sizeof(uint32_t)) {
+		in.pos = in.data.size() + 1; // (overflown: not this arena's)
+		return;
+	}
+	std::vector<btBroadphaseProxy*> order;
+	for (uint32_t k = 0; k < n; k++) {
+		uint32_t i = in.Read<uint32_t>();
+		if (i < objects.size() && objects[i]->getBroadphaseHandle())
+			order.push_back(objects[i]->getBroadphaseHandle());
+	}
+	if (auto* rs = dynamic_cast<btRSBroadphase*>(arena->_bulletWorld.getBroadphase()))
+		rs->restoreDynamicMaxEdgeOrder(order);
 }
 
 static void _ReadXYLocks(DataStreamIn& in, Arena* arena) {

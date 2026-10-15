@@ -122,6 +122,25 @@ static bool Touching(Arena* arena) {
 	return false;
 }
 
+// The continuations a client's stored boxes alone may make diverge: 2% (RX13 saw 1 of 244)
+static int BoxRunsAllowed(int continued) {
+	return std::max(2, continued / 50);
+}
+
+// The server's stored broadphase boxes (the ball's, each car's) copied into a client: what a network state doesn't carry,
+// as the game's clients don't get them (SetCurrentRBState leaves them: AB1 [N]; RV-369)
+static void CopyBoxes(Arena* from, Arena* to) {
+	auto copy = [&](btRigidBody& a, btRigidBody& b) {
+		btBroadphaseProxy* pa = a.getBroadphaseHandle();
+		btBroadphaseProxy* pb = b.getBroadphaseHandle();
+		if (pa && pb)
+			to->_bulletWorld.getBroadphase()->setAabb(pb, pa->m_aabbMin, pa->m_aabbMax, to->_bulletWorld.getDispatcher());
+	};
+	copy(from->ball->_rigidBody, to->ball->_rigidBody);
+	for (Car* car : from->GetCars())
+		copy(car->_rigidBody, to->GetCar(car->id)->_rigidBody);
+}
+
 static float MaxPositionDifference(Arena* a, Arena* b) {
 	float worst = (a->ball->GetState().pos - b->ball->GetState().pos).Length();
 	for (Car* car : a->GetCars())
@@ -242,6 +261,73 @@ static int VehicleOrderTravels() {
 // as the server from that update (its wheels' first ticks after the placement sent: RV-322); on the floor, dropped onto
 // it (the suspension bottoming out: the wheels' extra pushback), and on the side wall (the contact normals), k up to the
 // block's 16 (RV-342)
+// FP2 (d), RX13's E11-E14: a body's stored broadphase box changes at a spawn to the shape's tight box at its new pose
+// (the ball's SetState with a new spawn count; on a client, a network state's placement or new ball) and not at a plain
+// SetState (a move keeps the box it had)
+static int SpawnsGiveTheirBoxes() {
+	int failures = 0;
+	auto stored = [](btRigidBody& body) {
+		btBroadphaseProxy* proxy = body.getBroadphaseHandle();
+		std::vector<float> box;
+		for (int i = 0; i < 3; i++)
+			box.push_back(proxy->m_aabbMin[i]);
+		for (int i = 0; i < 3; i++)
+			box.push_back(proxy->m_aabbMax[i]);
+		return box;
+	};
+	auto tight = [](btRigidBody& body) {
+		btVector3 lo, hi;
+		body.getCollisionShape()->getAabb(body.getWorldTransform(), lo, hi);
+		std::vector<float> box;
+		for (int i = 0; i < 3; i++)
+			box.push_back(lo[i]);
+		for (int i = 0; i < 3; i++)
+			box.push_back(hi[i]);
+		return box;
+	};
+	auto check = [&](bool ok, const char* what) {
+		if (!ok) {
+			printf("netstate spawn boxes: %s\n", what);
+			failures++;
+		}
+	};
+	Arena* server = Arena::Create(GameMode::SOCCAR);
+	Car* car = server->AddCar(Team::BLUE);
+	server->ResetToRandomKickoff(3);
+	server->Step(30);
+	Arena* client = Restore(Snapshot(server));
+	// The ball moved: its box as it was (E12); moved as a new spawn: the tight box there at once (E11)
+	std::vector<float> before = stored(server->ball->_rigidBody);
+	BallState ball = server->ball->GetState();
+	ball.pos = Vec(1500, 1200, 600);
+	server->ball->SetState(ball);
+	check(stored(server->ball->_rigidBody) == before, "a moved ball's box changed");
+	ball.pos = Vec(-1500, 900, 400);
+	ball.spawnCount++;
+	server->ball->SetState(ball);
+	check(stored(server->ball->_rigidBody) == tight(server->ball->_rigidBody), "a new ball hasn't its tight box");
+	// A car placed (a respawn): the server's box at once, and the client's from the network state (E13), as the new
+	// ball's (E14)
+	CarState placed = car->GetState();
+	placed.pos = Vec(2000, -2500, 17);
+	placed.vel = Vec();
+	placed.spawnCount++;
+	car->SetState(placed);
+	check(stored(car->_rigidBody) == tight(car->_rigidBody), "a placed car hasn't its tight box");
+	NetState::WriteOptions options;
+	options.carIds = { car->id };
+	DataStreamOut update;
+	NetState::Write(server, update, options);
+	DataStreamIn in;
+	in.data = update.data;
+	check(NetState::Read(client, in), "the update didn't apply");
+	check(stored(client->GetCar(car->id)->_rigidBody) == stored(car->_rigidBody), "the client's placed car hasn't the server's box");
+	check(stored(client->ball->_rigidBody) == stored(server->ball->_rigidBody), "the client's new ball hasn't the server's box");
+	delete client;
+	delete server;
+	return failures;
+}
+
 static int PlacementBeforeTheUpdate() {
 	int failures = 0;
 	struct Placement {
@@ -416,7 +502,7 @@ int main(int argc, char** argv) {
 		server->AddCar(i < 2 ? Team::BLUE : Team::ORANGE, i % 2 ? CAR_CONFIG_DOMINUS : CAR_CONFIG_OCTANE);
 	server->ResetToRandomKickoff(11);
 
-	int checks = 0, exactFailures = 0, continued = 0, continuedExact = 0, touchingRuns = 0;
+	int checks = 0, exactFailures = 0, continued = 0, continuedExact = 0, touchingRuns = 0, boxRuns = 0;
 	size_t maxBytes = 0;
 	float worstDrift = 0;
 	int compactFailures = 0, compactIdentical = 0;
@@ -514,21 +600,49 @@ int main(int argc, char** argv) {
 			exactFailures++;
 		}
 
-		// Continue side by side with the server's inputs
+		// Continue side by side with the server's inputs (kept, and both sides as they start, for a run again with the
+		// server's boxes: RV-369)
 		bool touching = Touching(server);
 		bool identical = true;
+		std::vector<uint8_t> serverAtUpdate = Snapshot(server), clientAtUpdate = Snapshot(client);
+		std::vector<std::vector<CarControls>> applied;
 		for (int t = 0; t < window; t++) {
 			if ((tick + t) % 8 == 0 && t > 0)
 				ScriptInputs(server);
+			applied.emplace_back();
 			for (Car* car : server->GetCars()) {
 				client->GetCar(car->id)->controls = car->controls;
 				drifted->GetCar(car->id)->controls = car->controls;
+				applied.back().push_back(car->controls);
 			}
 			server->Step();
 			client->Step();
 			drifted->Step();
 			if (identical && NetVisibleState(client) != NetVisibleState(server))
 				identical = false;
+		}
+		// Diverged: the same run with the server's stored boxes copied into the client. Identical then, the boxes did it:
+		// a network state carries none, as the game's doesn't, so the client's wheel rays may pick other candidates than
+		// the server's (a game-faithful misprediction, RV-369); counted on its own, a few allowed
+		bool boxCaused = false;
+		if (!identical) {
+			Arena* again = Restore(serverAtUpdate);
+			Arena* boxed = Restore(clientAtUpdate);
+			CopyBoxes(again, boxed);
+			boxCaused = true;
+			for (int t = 0; t < window && boxCaused; t++) {
+				int i = 0;
+				for (Car* car : again->GetCars()) {
+					car->controls = applied[t][i];
+					boxed->GetCar(car->id)->controls = applied[t][i];
+					i++;
+				}
+				again->Step();
+				boxed->Step();
+				boxCaused = NetVisibleState(boxed) == NetVisibleState(again);
+			}
+			delete again;
+			delete boxed;
 		}
 		continued++;
 		float compactDrift = MaxPositionDifference(server, drifted);
@@ -537,6 +651,9 @@ int main(int argc, char** argv) {
 		delete drifted;
 		if (identical) {
 			continuedExact++;
+		} else if (boxCaused) {
+			boxRuns++;
+			printf("tick %d: diverged by the client's stored boxes alone (drift %.3f uu; identical with the server's)\n", tick, MaxPositionDifference(server, client));
 		} else {
 			touchingRuns += touching;
 			worstDrift = fmaxf(worstDrift, MaxPositionDifference(server, client));
@@ -549,8 +666,9 @@ int main(int argc, char** argv) {
 	}
 
 	printf("netstate: %d updates (max %zu bytes for ball + 4 cars + pads), %d not exact after applying\n", checks, maxBytes, exactFailures);
-	printf("netstate: continued %d, identical for %d ticks: %d; the others had contacts at the update: %d (worst drift %.3f uu)\n",
-		continued, window, continuedExact, touchingRuns, worstDrift);
+	printf("netstate: continued %d, identical for %d ticks: %d; diverged by the stored boxes alone: %d (at most %d); the others had "
+		"contacts at the update: %d (worst drift %.3f uu)\n",
+		continued, window, continuedExact, boxRuns, BoxRunsAllowed(continued), touchingRuns, worstDrift);
 	// (every update is written after a tick: every body on the network's grid, none raw)
 	uint64_t raw = NetState::CompactRawBodies();
 	if (raw != 0) {
@@ -561,6 +679,7 @@ int main(int argc, char** argv) {
 	compactFailures += RespawnSpotFollowsTheServer();
 	compactFailures += VehicleOrderTravels();
 	compactFailures += PlacementBeforeTheUpdate();
+	compactFailures += SpawnsGiveTheirBoxes();
 	compactFailures += SentValuesArrive();
 	compactFailures += CountdownLeavesAnExactClient();
 	compactFailures += DemolishedCarSendsNoWheelBlock();
@@ -568,7 +687,7 @@ int main(int argc, char** argv) {
 		"%d failed; the drifted client after %d ticks: identical %d, worst drift %.3f uu\n",
 		checks, checks ? compactTotal / checks : 0, compactMax, checks ? compactCarsOnly / checks / 4 : 0, compactFailures, window,
 		compactIdentical, compactWorstDrift);
-	int failures = exactFailures + compactFailures + (continued - continuedExact - touchingRuns);
+	int failures = exactFailures + compactFailures + (continued - continuedExact - boxRuns - touchingRuns) + std::max(0, boxRuns - BoxRunsAllowed(continued));
 	printf(failures ? "netstate: FAILED\n" : "netstate: ok\n");
 	delete server;
 	return failures ? 1 : 0;

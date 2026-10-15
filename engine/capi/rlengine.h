@@ -28,7 +28,8 @@ int rl_init(const char* collision_mesh_dir);
 RLArena* rl_arena_create(void);
 void rl_arena_destroy(RLArena* arena);
 
-/* team 0 blue / 1 orange; body 0 Octane, 1 Dominus, 2 Plank, 3 Breakout, 4 Hybrid, 5 Merc. Returns the car ID (> 0). */
+/* team 0 blue / 1 orange; body 0 standard, 1 flat, 2 wide, 3 long, 4 mid, 5 tall (the hitbox presets: notes/hitboxes.md).
+   Returns the car ID (> 0). */
 uint32_t rl_add_car(RLArena* arena, int team, int body);
 int rl_remove_car(RLArena* arena, uint32_t car_id);
 void rl_set_controls(RLArena* arena, uint32_t car_id, const RLControls* controls);

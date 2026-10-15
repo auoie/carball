@@ -576,6 +576,35 @@ describe("Predictor", () => {
     client.dispose();
   });
 
+  it("a state applied at the present for an older frame keeps the other cars' newer replicated inputs (RV-360; RX13's C13)", () => {
+    // (the staged state after frame 25 gave the other car throttle 1; an ack-0 state from frame 5, applied directly
+    // afterwards, mustn't put its throttle 0 back)
+    const server = World.create(engine);
+    const local = server.addCar(0);
+    const other = server.addCar(1);
+    server.resetKickoff(4);
+    const client = World.create(engine);
+    client.loadState(server.saveState());
+    const predictor = new Predictor(client, local, 0);
+    const states = new Map<number, Uint8Array>();
+    for (let f = 1; f <= 30; f++) {
+      server.setControls(other, { ...inputControls(NO_INPUT), throttle: f < 10 ? 0 : 1 });
+      server.step();
+      states.set(f, server.writeNetState({ ball: true, carIds: [local, other], pads: true }));
+      predictor.advance(NO_INPUT);
+    }
+    predictor.correct(25, [states.get(25) ?? new Uint8Array()]);
+    predictor.advance(NO_INPUT);
+    expect(client.carControls(other).throttle).toBe(1);
+    const direct = predictor.stats.direct;
+    predictor.correct(0, [states.get(5) ?? new Uint8Array()]);
+    expect(predictor.stats.direct).toBe(direct + 1);
+    predictor.advance(NO_INPUT);
+    expect(client.carControls(other).throttle).toBe(1);
+    server.dispose();
+    client.dispose();
+  });
+
   it("after a respawn, a state for a frame before the last one applied at the present still gives the others' inputs (RV-332)", () => {
     // (RX10's P1b: the states applied while demolished are labelled with their own frames, so the first staged one after
     // the respawn, for an earlier frame than the present, isn't skipped as older)

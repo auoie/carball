@@ -37,8 +37,8 @@ describe("World", () => {
       const source = World.create(engine);
       const world = viaLoad ? World.create(engine) : source;
       world.setDemolitions(demolitions);
-      const attacker = source.addCar(0, CarBody.Octane);
-      const victim = source.addCar(1, CarBody.Octane);
+      const attacker = source.addCar(0, CarBody.Standard);
+      const victim = source.addCar(1, CarBody.Standard);
       source.resetKickoff(3);
       source.setKickoffCountdown(0);
       source.setCar(attacker, { pos: vec3(-600, 0, 17), vel: vec3(2290, 0, 0), angVel: ZERO, rot: UPRIGHT, boost: 100 });
@@ -65,7 +65,7 @@ describe("World", () => {
 
   it("drives a car forward with throttle", () => {
     const world = World.create(engine);
-    const id = world.addCar(0, CarBody.Octane);
+    const id = world.addCar(0, CarBody.Standard);
     world.resetKickoff(3);
     const start = world.car(id);
     for (let i = 0; i < 120; i++) {
@@ -83,7 +83,7 @@ describe("World", () => {
   it("applies the player's steering sensitivity in the physics", () => {
     const drive = (steer: number, steeringSensitivity: number) => {
       const world = World.create(engine);
-      const id = world.addCar(0, CarBody.Octane);
+      const id = world.addCar(0, CarBody.Standard);
       world.resetKickoff(3);
       world.setCarPreferences(id, { dodgeDeadzone: 0.5, steeringSensitivity, airControlSensitivity: 1 });
       for (let i = 0; i < 120; i++) {
@@ -101,7 +101,7 @@ describe("World", () => {
 
   it("reports the car's hitbox and wheels", () => {
     const world = World.create(engine);
-    const id = world.addCar(1, CarBody.Octane);
+    const id = world.addCar(1, CarBody.Standard);
     const cfg = world.carConfig(id);
     expect(cfg.hitboxSize.x).toBeCloseTo(120.507, 2);
     expect(cfg.frontWheel.radius).toBeCloseTo(12.5);

@@ -146,6 +146,26 @@ match builds its arena at its first claim and the queue looks only at full playl
 searcher: after launch); a claim on a development server is refused as not its (RV-363); netstate's countdown case and
 the demolished car's block (RV-358, RV-359); the later-state predictor test (RV-361). RV-362 (what would race with a
 thread per match): every match stays on the one game thread.
+**RX13 (RV-366..383), 2026-10-15** (protocol 19; engine patches 108, 109): the front end sends an unproven address a
+QUIC Retry before it takes a slot, keys IPv6 by /64 (IPv4-mapped addresses as IPv4) and gives the QUIC handshake 4 s
+(RV-366); a certificate whose key isn't its pair is an error, not wtransport's panic (`net::load_identity`, RV-368); a
+blank `ALLOWED_ORIGIN` fails closed and origins compare without case (RV-372); a queue server needs a certificate or
+`--dev` (RV-381; the image's development run is `--dev`); input floods close a session too and overrun counts drain
+(RV-373). The queue's no-shows (RV-367, the user's decision): a found match waits 12 s; cancelled for someone, the
+players who claimed (or were still loading, refused their claim) search again with their token in the search hello and
+go back to the front in their first search's order; whoever stalled it (didn't claim, or left before the start) gets
+`SearchCooldown` for 2 minutes by browser key (`rl-clone.browserKey`, local storage) and by address. The wheel ray's hit
+point is `setInterpolate3`, its normal never normalized again, the planes tested analytically (patch 108, RV-377); the
+candidates come in the game's SAP order, kept by the broadphase and carried by snapshots (patch 109, RV-375; the statics'
+keys are the engine's boxes: the remaining difference). The netstate gate counts divergences caused by the client's
+stored boxes alone separately, 2 % allowed (RV-369: the game's clients don't get boxes either). The images are built
+from the commit (`git archive`; `--worktree` for testing), the WebAssembly in the script, the binary stripped with its
+paths remapped (RV-370, RV-380); the web image is nginx-unprivileged 1.30 with security headers and a CSP (the engine
+module linked with `-sDYNAMIC_EXECUTION=0`: no eval), both bases pinned by digest (RV-371). Shipped files name no game
+(the user's decision): quick chat's two lines say Carball, the hitbox presets are Standard/Flat/Wide/Long/Mid/Tall
+(notes/hitboxes.md), the title is Carball, and the web build ships `THIRD_PARTY_NOTICES.txt`. Tests for the mutants
+RX13 saw survive (S1, S7, S13, S14, S22, S24; C5, C7, C11, C12, C13, C17; E11-E14; P2, Q4, Q7, Q8); the goal e2e's bound
+is the session's own offset movement around the goal (RV-379).
 **The browser tests' servers** start from `client/e2e/servers.ts` (Playwright's globalSetup), not its webServer: here a
 connection to a closed 127.0.0.1 port is dropped, not refused, and Playwright's pre-check of each server's URL waited
 2 min 14 s per server (9 of the suite's 12 minutes).

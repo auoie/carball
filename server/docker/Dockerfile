@@ -4,7 +4,8 @@
 # $CERT_PATH and $KEY_PATH (a read-only mount), reloaded when they change or on SIGHUP. Built from the staging directory
 # (the binary, the meshes and this file only): `docker build -t carball-game:TAG <staging>/game`. (KEY_PATH is the key's
 # path, not a secret: the check that flags it is skipped above)
-FROM debian:trixie-slim
+# (the base pinned by digest, RV-371: update the tag and digest together)
+FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
 RUN useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin carball
 COPY rl-server /app/rl-server
 COPY collision_meshes /app/collision_meshes

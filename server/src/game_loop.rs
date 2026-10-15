@@ -11,7 +11,7 @@ use crate::game::Outgoing;
 use crate::match_host::{MatchHost, Playlist};
 use crate::net::{Intent, ToGame};
 use crate::protocol::{self, Control};
-use crate::queue::Matchmaker;
+use crate::queue::{Matchmaker, SearchFrom, Searched};
 
 /// What the server hosts: one open match anyone joins (development servers and the browser tests), or the queue's
 /// matches (`--mode queue`: searches and claims only)
@@ -49,15 +49,21 @@ pub fn run(mut messages: Receiver<ToGame>, mode: Mode, test_goal_after: Option<f
         heartbeat.store(start.elapsed().as_millis() as u64, Ordering::Relaxed);
         for _ in 0..MESSAGES_PER_LOOP {
             match messages.try_recv() {
-                Ok(ToGame::Join { id, intent, request, out }) => match intent {
+                Ok(ToGame::Join { id, intent, request, address, out }) => match intent {
                     Intent::Join => {
                         if !host.join_open(id, request, out.clone()) {
                             refuse(out, protocol::REFUSED_MODE);
                         }
                     }
-                    Intent::Search { team_size } => {
-                        if !queue.search(id, team_size, out.clone()) {
-                            refuse(out, protocol::REFUSED_MODE);
+                    Intent::Search { team_size, token } => {
+                        let from = SearchFrom { address, key: request.key, token };
+                        match queue.search(id, team_size, out.clone(), from, seconds(Instant::now())) {
+                            Searched::Queued => {}
+                            Searched::NoPlaylist => refuse(out, protocol::REFUSED_MODE),
+                            // (its browser or address stalled a match: refused with the time left, RV-367)
+                            Searched::Cooldown { seconds } => {
+                                let _ = out.try_send(Outgoing::Control(Control::SearchCooldown { seconds }.encode()));
+                            }
                         }
                     }
                     // (a development server has no reservations: a claim isn't its, RV-363)
@@ -102,6 +108,11 @@ pub fn run(mut messages: Receiver<ToGame>, mode: Mode, test_goal_after: Option<f
         let now = seconds(Instant::now());
         queue.form(&mut host, now);
         host.tick(now);
+        // (the matches cancelled before their start, by a leave or by time: who stayed goes back to the front, who stalled
+        // them waits, RV-367)
+        for cancelled in host.take_cancelled() {
+            queue.cancelled(&cancelled, now);
+        }
         // (until the next tick is due, a millisecond at most: the messages are read meanwhile)
         let wait = host.next_tick().map_or(0.001, |next| (next - seconds(Instant::now())).clamp(0.0, 0.001));
         if wait > 0.0 {

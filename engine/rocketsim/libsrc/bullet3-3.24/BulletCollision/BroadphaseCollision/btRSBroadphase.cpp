@@ -15,6 +15,7 @@ subject to the following restrictions:
 
 #include "btRSBroadphase.h"
 #include <algorithm>
+#include <cstring>
 #include "btDispatcher.h"
 #include "btCollisionAlgorithm.h"
 
@@ -244,8 +245,62 @@ btBroadphaseProxy* btRSBroadphase::createProxy(const btVector3& aabbMin, const b
 		_UpdateCellsDynamic<true>(this, proxy, iIdx, jIdx, kIdx);
 		numDynProxies++;
 	}
+	proxy->maxKey = QuantizeMax(aabbMax.x());
+	InsertMaxEdge(proxy);
 
 	return proxy;
+}
+
+unsigned short btRSBroadphase::QuantizeMax(float x) {
+	// (btAxisSweep3::quantize for a max edge as the game's 0x14027b330: the world box ±10485.740234375 BU, m_quantize
+	// 0x4047ff51 = 65535 / its size; the minimum subtracted, then scaled, truncated, even, +1)
+	const float worldMin = -10485.740234375f;
+	const uint32_t scaleBits = 0x4047ff51;
+	float scale;
+	memcpy(&scale, &scaleBits, sizeof(scale));
+	float v = (x - worldMin) * scale;
+	if (!(v > 0))
+		return 1;
+	if (v >= 65535.0f)
+		return 0xffff;
+	return (unsigned short)(((int)v & 0xfffe) | 1);
+}
+
+void btRSBroadphase::InsertMaxEdge(btRSBroadphaseProxy* proxy) {
+	// (after every entry of an equal key: the first with a greater one)
+	auto at = std::upper_bound(maxEdges.begin(), maxEdges.end(), proxy->maxKey, [](unsigned short key, const btRSBroadphaseProxy* p) { return key < p->maxKey; });
+	maxEdges.insert(at, proxy);
+}
+
+void btRSBroadphase::RemoveMaxEdge(btRSBroadphaseProxy* proxy) {
+	auto at = std::find(maxEdges.begin(), maxEdges.end(), proxy);
+	if (at != maxEdges.end())
+		maxEdges.erase(at);
+}
+
+void btRSBroadphase::respawnProxy(btBroadphaseProxy* proxy, const btVector3& aabbMin, const btVector3& aabbMax, btCollisionDispatcher* dispatcher) {
+	setAabb(proxy, aabbMin, aabbMax, dispatcher);
+	btRSBroadphaseProxy* sbp = getRSProxyFromProxy(proxy);
+	RemoveMaxEdge(sbp);
+	sbp->maxKey = QuantizeMax(aabbMax.x());
+	InsertMaxEdge(sbp);
+}
+
+std::vector<btBroadphaseProxy*> btRSBroadphase::dynamicMaxEdgeOrder() const {
+	std::vector<btBroadphaseProxy*> order;
+	for (btRSBroadphaseProxy* p : maxEdges)
+		if (!p->isStatic)
+			order.push_back(p);
+	return order;
+}
+
+void btRSBroadphase::restoreDynamicMaxEdgeOrder(const std::vector<btBroadphaseProxy*>& order) {
+	// (the statics stay; the moving bodies go back in, each after its equals, in the order given: equal keys in that
+	// order, all after the statics of their key, as the game's are; one the order doesn't name keeps its place)
+	for (btBroadphaseProxy* p : order)
+		RemoveMaxEdge(getRSProxyFromProxy(p));
+	for (btBroadphaseProxy* p : order)
+		InsertMaxEdge(getRSProxyFromProxy(p));
 }
 
 class RemovingOverlapCallback : public btOverlapCallback
@@ -289,6 +344,7 @@ void btRSBroadphase::destroyProxy(btBroadphaseProxy* proxyOrg, btCollisionDispat
 		_UpdateCellsDynamic<false>(this, sbp, sbp->iIdx, sbp->jIdx, sbp->kIdx);
 		numDynProxies--;
 	}
+	RemoveMaxEdge(sbp);
 
 	btRSBroadphaseProxy* proxy0 = static_cast<btRSBroadphaseProxy*>(proxyOrg);
 	freeHandle(proxy0);
@@ -302,6 +358,15 @@ void btRSBroadphase::getAabb(btBroadphaseProxy* proxy, btVector3& aabbMin, btVec
 
 void btRSBroadphase::setAabb(btBroadphaseProxy* proxy, const btVector3& aabbMin, const btVector3& aabbMax, btCollisionDispatcher* /*dispatcher*/) {
 	btRSBroadphaseProxy* sbp = getRSProxyFromProxy(proxy);
+	// (a moving body's max edge re-placed when its key changes: after its new equals; a static's stays)
+	if (!sbp->isStatic) {
+		unsigned short key = QuantizeMax(aabbMax.x());
+		if (key != sbp->maxKey) {
+			RemoveMaxEdge(sbp);
+			sbp->maxKey = key;
+			InsertMaxEdge(sbp);
+		}
+	}
 	
 	if (sbp->m_aabbMin != aabbMin || sbp->m_aabbMax != aabbMax) {
 		if (sbp->isStatic) {
@@ -374,16 +439,13 @@ void btRSBroadphase::rayTest(const btVector3& rayFrom, const btVector3& rayTo, b
 }
 
 void btRSBroadphase::aabbTest(const btVector3& aabbMin, const btVector3& aabbMax, btBroadphaseAabbCallback& callback) {
-	// TODO: Optimize
-
-	for (int i = 0; i <= m_LastHandleIndex; i++) {
-		btRSBroadphaseProxy* proxy = &m_pHandles[i];
+	// RL PATCH (RV-375): in the game's max-edge order (maxEdges), each stored box tested as floats, the walk never
+	// stopped early (the callback caps what it takes)
+	for (btRSBroadphaseProxy* proxy : maxEdges) {
 		if (!proxy->m_clientObject)
 			continue;
-		
-		if (TestAabbAgainstAabb2(aabbMin, aabbMax, proxy->m_aabbMin, proxy->m_aabbMax)) {
+		if (TestAabbAgainstAabb2(aabbMin, aabbMax, proxy->m_aabbMin, proxy->m_aabbMax))
 			callback.process(proxy);
-		}
 	}
 }
 

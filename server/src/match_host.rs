@@ -2,7 +2,8 @@
 //! asks for a match (`MatchHosting::create_match`); the host reserves a slot per player, each with a one-time random token
 //! that the player's client claims with a new session (`claim`). A match starts when every slot is claimed (full start:
 //! `Game::hold_for`), and is cancelled if one isn't within `RESERVATION_SECONDS` or a player leaves before it starts: the
-//! claimed players are told (`KICK_NOT_ALL_JOINED`) and search again (notes/matchmaking.md, v1 queue checklist). A match
+//! claimed players are told (`KICK_NOT_ALL_JOINED`) and search again, the queue told who stalled it (`take_cancelled`:
+//! RV-367) (notes/matchmaking.md, v1 queue checklist). A match
 //! over (its end screen's time up) or left by everyone is let go. Development servers host one open match that anyone
 //! joins (`join_open`), which rematches and never ends.
 
@@ -21,8 +22,10 @@ pub struct Playlist {
     pub forfeit_vote_wait: Option<f32>,
 }
 
-/// How long a match waits for its reserved players (the game's initial reservation timeout: MM-18)
-pub const RESERVATION_SECONDS: f64 = 30.0;
+/// How long a match waits for its reserved players, from its `MatchFound`: the 3 s "Joining in" countdown and the match
+/// page's load and connection (RV-367, the user's decision: well under the game's 30 s, MM-18, which let one no-show
+/// hold the others that long)
+pub const RESERVATION_SECONDS: f64 = 12.0;
 
 /// At most this many ticks of a match to catch up after a stall; beyond that, its time is dropped
 const MAX_CATCH_UP_TICKS: u32 = 5;
@@ -34,11 +37,21 @@ pub trait MatchHosting {
     fn create_match(&mut self, playlist: Playlist, players: usize, now: f64) -> Vec<u64>;
 }
 
-/// A reserved slot: its token, its team, and who claimed it
+/// A reserved slot: its token, its team, who claimed it, and whether they left before the start
 struct Reservation {
     token: u64,
     team: u8,
     claimed: Option<PlayerId>,
+    left: bool,
+}
+
+/// A match cancelled before its start, for the queue (RV-367): the tokens of the slots that stalled it (cancelled by time:
+/// those not claimed; by a leave before the start: the leaver's, the others' still in their time), and of the rest (back
+/// to the front when they search again: a claimed player told so, one still loading refused their claim)
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Cancelled {
+    pub stayed: Vec<u64>,
+    pub stalled: Vec<u64>,
 }
 
 struct Hosted {
@@ -67,6 +80,8 @@ pub struct MatchHost {
     test_goal_after: Option<u64>,
     /// The last tick's time (s): a match built later starts its clock there
     now: f64,
+    /// The matches cancelled since the queue last asked (`take_cancelled`)
+    cancelled: Vec<Cancelled>,
 }
 
 impl Hosted {
@@ -97,7 +112,7 @@ impl Hosted {
 
 impl MatchHost {
     pub fn new(seed: i32, test_goal_after: Option<u64>) -> Self {
-        Self { matches: BTreeMap::new(), players: HashMap::new(), tokens: HashMap::new(), next_id: 1, seed, test_goal_after, now: 0.0 }
+        Self { matches: BTreeMap::new(), players: HashMap::new(), tokens: HashMap::new(), next_id: 1, seed, test_goal_after, now: 0.0, cancelled: Vec::new() }
     }
 
     fn add(&mut self, playlist: Playlist, reservations: Vec<Reservation>, open: bool, now: f64) -> MatchId {
@@ -160,6 +175,9 @@ impl MatchHost {
         }
         if hosted.holding() {
             eprintln!("match {match_id}: player {id} left before the start, cancelled");
+            if let Some(slot) = hosted.reservations.iter_mut().find(|r| r.claimed == Some(id)) {
+                slot.left = true;
+            }
             self.cancel(match_id);
         } else if hosted.player_count() == 0 && !hosted.open {
             self.drop_match(match_id);
@@ -234,12 +252,24 @@ impl MatchHost {
         }
     }
 
-    /// The match is cancelled before it started: its players are told, then their sessions end
+    /// The match is cancelled before it started: its players are told, then their sessions end; the queue is told who
+    /// stayed and who stalled it
     fn cancel(&mut self, match_id: MatchId) {
-        if let Some(game) = self.matches.get(&match_id).and_then(|m| m.game.as_ref()) {
-            game.broadcast(&Control::Kicked { reason: protocol::KICK_NOT_ALL_JOINED });
+        if let Some(hosted) = self.matches.get(&match_id) {
+            if let Some(game) = hosted.game.as_ref() {
+                game.broadcast(&Control::Kicked { reason: protocol::KICK_NOT_ALL_JOINED });
+            }
+            let by_leave = hosted.reservations.iter().any(|r| r.left);
+            let (stalled, stayed): (Vec<&Reservation>, Vec<&Reservation>) =
+                hosted.reservations.iter().partition(|r| if by_leave { r.left } else { r.claimed.is_none() });
+            self.cancelled.push(Cancelled { stayed: stayed.iter().map(|r| r.token).collect(), stalled: stalled.iter().map(|r| r.token).collect() });
         }
         self.drop_match(match_id);
+    }
+
+    /// The matches cancelled before their start since the last call (the queue's: RV-367)
+    pub fn take_cancelled(&mut self) -> Vec<Cancelled> {
+        std::mem::take(&mut self.cancelled)
     }
 
     /// Lets the match go: its players' sessions end (their queues closed once what was sent goes out), its tokens die
@@ -265,7 +295,7 @@ impl MatchHosting for MatchHost {
                     break t;
                 }
             };
-            reservations.push(Reservation { token, team: (i % 2) as u8, claimed: None });
+            reservations.push(Reservation { token, team: (i % 2) as u8, claimed: None, left: false });
         }
         let tokens = reservations.iter().map(|r| r.token).collect();
         let match_id = self.add(playlist, reservations, false, now);
@@ -388,9 +418,72 @@ mod tests {
         assert!(host.game_of(1).is_none());
         assert!(controls(&mut rx).contains(&Control::Kicked { reason: protocol::KICK_NOT_ALL_JOINED }));
         assert!(rx.try_recv().is_err() && rx.is_closed(), "the session's queue closed: it ends");
+        // (before any late claim, which would take its token out itself: RX13's S22)
+        assert!(host.tokens.is_empty() && host.players.is_empty(), "a let-go match keeps no tokens or players (RV-360)");
         let (tx, _rx) = channel(OUT_QUEUE);
         assert!(!host.claim(tokens[1], 2, request(), tx), "the late token is dead");
-        assert!(host.tokens.is_empty() && host.players.is_empty(), "a let-go match keeps no tokens or players (RV-360)");
+        assert_eq!(host.take_cancelled(), vec![Cancelled { stayed: vec![tokens[0]], stalled: vec![tokens[1]] }], "by time: the unclaimed slot stalled it");
+        assert!(host.take_cancelled().is_empty());
+    }
+
+    #[test]
+    fn a_no_show_or_a_leaver_before_the_start_waits_and_the_others_go_back_to_the_front() {
+        // RV-367 with the real queue and host: a searcher that never claims (or claims and leaves) costs the others
+        // their place no more, and can't do it again for two minutes
+        use crate::queue::{Matchmaker, NO_SHOW_COOLDOWN, SearchFrom, Searched};
+        init_engine();
+        let mut queue = Matchmaker::new(&[ONES]);
+        let mut host = MatchHost::new(1, None);
+        let from = |id: PlayerId| SearchFrom { address: [10, 0, 0, id as u8].into(), key: 500 + id, token: 0 };
+        let search = |queue: &mut Matchmaker, id: PlayerId, who: PlayerId, token: u64, now: f64| {
+            let (tx, rx) = channel(OUT_QUEUE);
+            assert_eq!(queue.search(id, 1, tx, SearchFrom { token, ..from(who) }, now), Searched::Queued);
+            rx
+        };
+        let token_of = |rx: &mut Receiver<Outgoing>| controls(rx).into_iter().find_map(|m| if let Control::MatchFound { token } = m { Some(token) } else { None });
+        let step = |host: &mut MatchHost, queue: &mut Matchmaker, t: f64| {
+            queue.form(host, t);
+            host.tick(t);
+            for c in host.take_cancelled() {
+                queue.cancelled(&c, t);
+            }
+        };
+        // The no-show (1) and a player (2) are matched; 3 searches meanwhile
+        let mut s1 = search(&mut queue, 1, 1, 0, 0.0);
+        let mut s2 = search(&mut queue, 2, 2, 0, 1.0);
+        step(&mut host, &mut queue, 1.0);
+        let (_t1, t2) = (token_of(&mut s1).unwrap(), token_of(&mut s2).unwrap());
+        let mut s3 = search(&mut queue, 3, 3, 0, 2.0);
+        let (tx, mut m2) = channel(OUT_QUEUE);
+        assert!(host.claim(t2, 20, request(), tx));
+        let mut t = 1.0;
+        while host.match_count() > 0 {
+            t += 1.0 / 120.0;
+            step(&mut host, &mut queue, t);
+        }
+        assert!(t < 1.0 + RESERVATION_SECONDS + 0.1, "cancelled at {t}");
+        assert!(controls(&mut m2).contains(&Control::Kicked { reason: protocol::KICK_NOT_ALL_JOINED }));
+        let (tx, _r) = channel(OUT_QUEUE);
+        assert!(matches!(queue.search(30, 1, tx, from(1), t), Searched::Cooldown { seconds } if f64::from(seconds) > NO_SHOW_COOLDOWN - 1.0));
+        // 2 searches again with its token: matched with 3 ahead of 4, who searched before 2's return
+        let mut s4 = search(&mut queue, 4, 4, 0, t);
+        let mut s2 = search(&mut queue, 21, 2, t2, t);
+        step(&mut host, &mut queue, t);
+        let (t2, t3) = (token_of(&mut s2).unwrap(), token_of(&mut s3).unwrap());
+        assert!(token_of(&mut s4).is_none(), "4 waits");
+        // This time 3 claims and leaves before 2 has claimed: 3 waits, and 2's claim (still in its time) is refused but
+        // its token puts it back at the front
+        let (tx, _m3) = channel(OUT_QUEUE);
+        assert!(host.claim(t3, 23, request(), tx));
+        host.leave(23, false);
+        step(&mut host, &mut queue, t + 2.0);
+        let (tx, _m2) = channel(OUT_QUEUE);
+        assert!(!host.claim(t2, 22, request(), tx));
+        let (tx, _r) = channel(OUT_QUEUE);
+        assert!(matches!(queue.search(31, 1, tx, from(3), t + 3.0), Searched::Cooldown { .. }), "the leaver");
+        let mut s2 = search(&mut queue, 24, 2, t2, t + 3.0);
+        step(&mut host, &mut queue, t + 3.0);
+        assert!(token_of(&mut s2).is_some() && token_of(&mut s4).is_some(), "2 (back at the front) with 4");
     }
 
     #[test]

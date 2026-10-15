@@ -18,7 +18,14 @@ export const SEARCH_TEXT = {
   waitingForMorePlayers: "Waiting for more players to start matchmaking with your preferences...",
 } as const;
 
-/** Our own words: the playlists, the lines for a cancelled match and a failed search */
+/** m:ss */
+function clock(seconds: number): string {
+  const s = Math.max(0, Math.ceil(seconds));
+  return `${String(Math.floor(s / 60))}:${String(s % 60).padStart(2, "0")}`;
+}
+
+/** Our own words: the playlists, the lines for a cancelled match, a failed search and a refused one (the game has none
+ *  for our no-show rule, RV-367) */
 export const PLAYLISTS = [
   { teamSize: 1, name: "1v1" },
   { teamSize: 2, name: "2v2" },
@@ -28,6 +35,8 @@ export const OWN_SEARCH_TEXT = {
   notAllJoined: "Not every player joined the match. Searching again.",
   matchGone: "The match was no longer there. Searching again.",
   failedPrefix: "Search failed:",
+  cooldown: (seconds: number): string =>
+    `Your last match was cancelled because you didn't join it in time or left before it started. You can search again in ${clock(seconds)}.`,
 } as const;
 
 export type SearchStatus = "connecting" | "searching" | "joining" | "failed";
@@ -55,13 +64,29 @@ export interface SearchViewState {
   readonly lines: readonly LogLine[];
 }
 
+/** A search back from a match cancelled for someone else (RV-367): the token it claimed (the queue's front again), and
+ *  how long it had searched (its clock goes on) */
+export interface SearchBack {
+  readonly token: bigint;
+  readonly searchedFor: number;
+}
+
+export interface SearchHandlers {
+  searching(): void;
+  found(token: bigint): void;
+  failed(reason: string): void;
+  /** Refused: this browser or address stalled a match; it may search again in this many seconds (RV-367) */
+  cooldown(seconds: number): void;
+}
+
 export interface MatchmakingPorts {
-  /** Opens a search session; returns its cancel */
-  readonly search: (playlist: number, handlers: { searching(): void; found(token: bigint): void; failed(reason: string): void }) => () => void;
+  /** Opens a search session (with a returning search's token, else 0); returns its cancel */
+  readonly search: (playlist: number, token: bigint, handlers: SearchHandlers) => () => void;
   /** The start, cancel and countdown sounds (MM-12) */
   readonly sound: (cue: "start" | "cancel" | "countdown") => void;
-  /** The join's end: the token claimed in the match page */
-  readonly join: (token: bigint, playlist: number) => void;
+  /** The join's end: the token claimed in the match page; how long the search had run (s: a cancelled match's search
+   *  goes on from there) */
+  readonly join: (token: bigint, playlist: number, searchedFor: number) => void;
   /** Cancel Search during "Joining in": the slot given up at once (claimed and left: the match is cancelled now, its
    *  other players search again, not after the 30 s wait: RV-355) */
   readonly decline: (token: bigint) => void;
@@ -74,6 +99,8 @@ export class Matchmaking {
   #playlist = 0;
   #cancel: (() => void) | null = null;
   #searchingSince: number | null = null;
+  /** A returning search's time before (s) */
+  #searchedBefore = 0;
   #token: bigint | null = null;
   #timers: ReturnType<typeof setTimeout>[] = [];
   #extra: LogLine[] = [];
@@ -96,22 +123,24 @@ export class Matchmaking {
     return this.#playlist;
   }
 
-  /** Find Match (or Play Again): a new search of the playlist; `warning`: a line to start the log with. Ignored while a
-   *  search runs (MM-2: SearchInProgress; its place in the queue stays): false then */
-  start(playlist: number, warning?: string): boolean {
+  /** Find Match (or Play Again): a new search of the playlist; `warning`: a line to start the log with; `back`: a search
+   *  back from a match cancelled for someone else (RV-367). Ignored while a search runs (MM-2: SearchInProgress; its
+   *  place in the queue stays): false then */
+  start(playlist: number, warning?: string, back?: SearchBack): boolean {
     if (this.searching) return false;
     this.#stop();
     this.#playlist = playlist;
     this.#extra = warning === undefined ? [] : [{ text: warning, kind: "warning" }];
     this.#searchingSince = null;
+    this.#searchedBefore = Math.max(0, back?.searchedFor ?? 0);
     this.#token = null;
     this.#failedAt = null;
     this.#set("connecting");
     this.ports.sound("start");
-    this.#cancel = this.ports.search(playlist, {
+    this.#cancel = this.ports.search(playlist, back?.token ?? 0n, {
       searching: () => {
         if (this.#state?.status !== "connecting") return;
-        this.#searchingSince = this.#now;
+        this.#searchingSince = this.#now - this.#searchedBefore;
         this.#set("searching");
       },
       found: (token) => {
@@ -137,6 +166,14 @@ export class Matchmaking {
         this.#cancel = null;
         this.#extra.push({ text: `${OWN_SEARCH_TEXT.failedPrefix} ${reason}`, kind: "warning" });
         this.#failedAt = this.#now;
+        this.#set("failed");
+      },
+      // (the refusal stays until Cancel Search or a new search: its wait is minutes, the line must be read)
+      cooldown: (seconds) => {
+        if (this.#state?.status !== "connecting" && this.#state?.status !== "searching") return;
+        this.#cancel = null;
+        this.#extra.push({ text: OWN_SEARCH_TEXT.cooldown(seconds), kind: "warning" });
+        this.#failedAt = null;
         this.#set("failed");
       },
     });
@@ -170,10 +207,11 @@ export class Matchmaking {
 
   #join(): void {
     const token = this.#token;
+    const searchedFor = this.#searchingSince === null ? this.#searchedBefore : this.#now - this.#searchingSince;
     this.#timers = [];
     this.#token = null;
     this.#state = null;
-    if (token !== null) this.ports.join(token, this.#playlist);
+    if (token !== null) this.ports.join(token, this.#playlist, searchedFor);
   }
 
   #set(status: SearchStatus): void {

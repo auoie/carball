@@ -4,7 +4,7 @@
 // closes the pause menu. The focused control is highlighted. A button pressed for a menu isn't the game's until it's
 // released (A is jump: Resume Game mustn't jump the car); one held from before (boost through a pause: RV-289) is, and
 // the keyboard always. While the settings wait for a pad input to bind, the pad is theirs: no button navigates (B, Start
-// and the D-pad would back out, close or move away instead of binding), until every button is up again.
+// and the D-pad would back out, close or move away instead of binding), until every button is up and the stick back again.
 import type { GamepadSnapshot } from "../input/mapping";
 
 /** The standard layout's buttons and axes */
@@ -112,8 +112,8 @@ export class PadMenuNav {
   #focused: HTMLElement | null = null;
   /** The buttons pressed for a menu (the Start that opened it too), the game's again once each is released */
   readonly #masked = new Set<number>();
-  /** A binding's capture was waiting: no navigation until every button is up (the press that bound it, read by the
-   *  capture maybe earlier in the same frame, isn't a menu's press too) */
+  /** A binding's capture was waiting: no navigation until every button is up and the stick back (the press or the stick
+   *  move that bound it, read by the capture maybe earlier in the same frame, isn't a menu's too) */
   #captureHold = false;
 
   constructor(actions: PadNavActions) {
@@ -135,7 +135,7 @@ export class PadMenuNav {
     this.#previous = buttons;
     for (const i of [...this.#masked]) if (!(buttons[i] ?? false)) this.#masked.delete(i);
     if (this.#actions.capturing?.()) this.#captureHold = true;
-    else if (this.#captureHold && !buttons.some(Boolean)) this.#captureHold = false;
+    else if (this.#captureHold && !buttons.some(Boolean) && (pad === null || padDirection(pad) === null)) this.#captureHold = false;
     if (this.#captureHold) {
       // (the capture's presses kept from the game too, as a menu's)
       buttons.forEach((down, i) => {

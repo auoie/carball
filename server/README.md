@@ -9,7 +9,7 @@ the game's as decoded in `notes/netcode.md`.
 cd server
 cargo run --release                    # WebTransport on :4433, dev info on http://localhost:4434/info
 cargo run --release -- --port 4433 --info-port 4434 --meshes ../out/arena/collision_meshes
-cargo run --release -- --mode queue    # the queue's 1v1, 2v2 and 3v3 matches (searches and claims only)
+cargo run --release -- --mode queue --dev   # the queue's 1v1, 2v2 and 3v3 matches (searches and claims only)
 ```
 The server has no web page of its own: the game connects to it over UDP. To play, also run the web client
 (`cd client && npm run dev`) and open `http://localhost:5173/?server` (or `?server=host:infoPort` for another
@@ -20,14 +20,19 @@ info port 4434). The build compiles the engine with CMake (`build.rs`).
 Development identity: a self-signed certificate (valid 14 days, the WebTransport limit for certificate hashes) made at
 start-up. The info endpoint (127.0.0.1 unless `--info-bind`, e.g. 0.0.0.0 for another machine) publishes its SHA-256 so
 the browser can connect with `serverCertificateHashes`. A public server runs with a real certificate (`CERT_PATH` and
-`KEY_PATH`, or `--cert` and `--key`): no info endpoint, reloaded when its files change or on SIGHUP. The deployment's
-interface (its environment variables, ports, health check, limits; an empty variable counts as unset) is
-`APP-CONTRACT.md`; its images come from `scripts/build_images.sh` (`client/docker/`, `server/docker/`).
+`KEY_PATH`, or `--cert` and `--key`; a key that isn't the certificate's is refused): no info endpoint, reloaded when its
+files change or on SIGHUP; it needs `ALLOWED_ORIGIN` (empty or blank is an error, not "any"). A queue server needs a
+certificate or `--dev` (a self-signed one, whatever the certificate's variables say: RV-381). Without `--meshes` or
+`MESHES_DIR` the meshes are the repository's `out/arena/collision_meshes` above the binary. The deployment's interface
+(its environment variables, ports, health check, limits) is `APP-CONTRACT.md`; its images come from
+`scripts/build_images.sh` (`client/docker/`, `server/docker/`).
 
-What a session may do (the security review's SEC-2/3/5/7/8): 512 sessions at once, 8 at once and 30 new a minute per
-address (`--max-sessions`, `--max-per-address`, `--max-per-address-per-minute`: the browser tests raise them), 10 s
-from the first packet to the hello, pages only from `ALLOWED_ORIGIN` when it's set (any origin without: development), 240
-input packets and 20 control messages a second (excess dropped; a flood closes the session), QUIC's 4 streams each way
+What a session may do (the security review's SEC-2/3/5/7/8, RX13's RV-366/373): its address proven first (a QUIC
+Retry: a spoofed packet takes no slot), 512 sessions at once, 8 at once and 30 new a minute per address, an IPv6 one by
+its /64 (`--max-sessions`, `--max-per-address`, `--max-per-address-per-minute`: the browser tests raise them), 4 s for
+the QUIC handshake and 10 s from the first packet to the hello, pages only from `ALLOWED_ORIGIN` when it's set (any
+origin without: development), 240 input packets and 20 control messages a second (excess dropped; a session that keeps
+flooding either kind is closed, a client now and then over its rate never is), QUIC's 4 streams each way
 and small receive windows; the game thread reads at most 2048 messages between ticks; a panic in a match's tick lets
 that match go (the others play on), and the process exits if the game thread ends; join and leave send the other
 players the world once a tick at most.
@@ -81,8 +86,11 @@ The goal explosion pushes the cars near the goal away (engine patch 77).
 **The queue** (`--mode queue`, `notes/matchmaking.md` v1 queue): a search session names a playlist; when two full
 teams wait, the match host reserves their slots (teams alternating) and each gets a one-time random token
 (`MatchFound`), which their client claims in a new session. The match's warm-up waits for every reserved player (full
-start); a player who doesn't claim within 30 s, or leaves before the start, cancels it (the others are told,
-`Kicked` reason 1, and search again). No backfill, no bots: a leaver's slot stays empty. A player idle for 30 s of play
+start); a player who doesn't claim within 12 s, or leaves before the start, cancels it (the others are told,
+`Kicked` reason 1, and search again at the front of the queue in their first search's order, their claimed token in the
+search; a claim refused for a cancelled match does the same). Whoever stalled it can't search for 2 minutes, by the
+browser key their search sent and by address (`SearchCooldown`: RV-367, the user's decision; leaving a started match
+isn't penalized). No backfill, no bots: a leaver's slot stays empty. A player idle for 30 s of play
 is kicked (warned past 25 s: the game's `IdleKick`, MM-32..38). A queue match doesn't rematch: when the end screen's
 60 s are up the host lets it go and its sessions end.
 `--team-size N` (default 3) is the open match's team size (1 to 8): the uneven-teams kickoff adjustment uses it.

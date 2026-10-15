@@ -163,7 +163,7 @@ impl Arena {
         self.0.as_ptr()
     }
 
-    /// team 0 blue / 1 orange; body 0 Octane … 5 Merc. Returns the car ID.
+    /// team 0 blue / 1 orange; body 0 standard … 5 tall (the hitbox presets: notes/hitboxes.md). Returns the car ID.
     pub fn add_car(&mut self, team: u8, body: u8) -> u32 {
         // SAFETY: valid arena
         unsafe { rl_add_car(self.ptr(), c_int::from(team), c_int::from(body)) }
@@ -518,6 +518,15 @@ pub(crate) mod tests {
 
     pub fn init_engine() {
         INIT.call_once(|| init(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../out/arena/collision_meshes"))).unwrap());
+    }
+
+    #[test]
+    fn the_engine_is_set_up_once_whoever_asks_again() {
+        // (RV-356, RX13's S14: RocketSim's init isn't safe to run twice or from two threads; a second call, with any
+        // directory, is the first's result)
+        init_engine();
+        let again: Vec<_> = (0..8).map(|_| std::thread::spawn(|| init(Path::new("/no/such/meshes")).is_ok())).collect();
+        assert!(again.into_iter().all(|t| t.join().unwrap()));
     }
 
     #[test]
