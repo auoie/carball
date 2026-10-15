@@ -35,14 +35,21 @@ refused with a message).
 
 | Env | Default | |
 |---|---|---|
-| `GAME_SERVER_URL` | `https://game.carball.zolt.top:4433/play` | the game server's WebTransport URL; written into `/config.json` at start (`https://HOST[:PORT]/PATH`, else the container exits) |
+| `GAME_SERVER_URL` | `https://game.carball.zolt.top:4433/play` | the game server's WebTransport URL; written into `/config.json` at start (`https://HOST[:PORT]/PATH`, else the container exits), and its origin is the page's only `connect-src` besides its own |
+| `EXTRA_CONNECT_SRC` | (none) | testing only: more `connect-src` sources (e.g. `http://127.0.0.1:14503 https://127.0.0.1:14502` for a development server's info and port); letters, digits, `: / . * - _` and spaces, else the container exits |
 
 - **Port:** 3000/tcp, plain HTTP. `/assets/*` (hashed names) cached for a year, the rest `no-cache`, `/config.json`
   `no-store`; unknown paths serve `index.html`. Every response carries `X-Content-Type-Options: nosniff`,
   `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY` and a Content-Security-Policy (this origin only, but the game
-  server over https and a development server's info on localhost; `frame-ancestors 'none'`; no eval). The third-party
-  notices are at `/THIRD_PARTY_NOTICES.txt`.
-- **User:** nginx runs unprivileged (uid 101, nginx 1.30, the stable line); only `/config.json` is writable to it.
+  server's origin from `GAME_SERVER_URL`; `frame-ancestors 'none'`; no eval). Redirects are relative (a directory's
+  trailing slash), so nothing names the container's port behind the tunnel. The third-party notices are at
+  `/THIRD_PARTY_NOTICES.txt`.
+- **User:** nginx runs unprivileged (uid 101, nginx 1.30, the stable line). The site and its configuration are root's,
+  read-only to it; it writes `/config.json` and the policy (`/etc/nginx/carball-csp.conf`) at start, and its pid and
+  buffers under `/tmp` and `/var/cache/nginx`. (The base image's `EXPOSE 8080` stays in its metadata: the server listens
+  on 3000 only.)
+- **Labels:** `org.opencontainers.image.title`, `.revision` (the commit) and `.version` (the tag), and `carball.source`:
+  `commit`, or `worktree` for an image built with `--worktree` (both images).
 - **Volumes:** none.
 - **Health:** `GET /healthz` → `200 ok` (the image's `HEALTHCHECK` uses it).
 - **Resources:** ~10 MB RAM, negligible CPU; a first visit loads ~2.5 MB of files (~0.9 MB gzipped).
@@ -65,9 +72,11 @@ refused with a message).
 
 A development run of the image takes `--dev`: a self-signed certificate made at start whatever `CERT_PATH` and `KEY_PATH`
 say, pinned by the page through the info endpoint (the info reports the game port inside the container, so publish it as
-the same port): `docker run --rm -e GAME_PORT=14502 -p 14502:14502/udp -p 127.0.0.1:14503:4434
+the same port): `docker run --rm -e GAME_PORT=14502 -p 127.0.0.1:14502:14502/udp -p 127.0.0.1:14503:4434
 -e ALLOWED_ORIGIN=http://localhost:13000 carball-game:TAG --dev --info-bind 0.0.0.0`, the page opened with
-`?queue=localhost:14503`.
+`?queue=localhost:14503` (a web container for it run with `-e GAME_SERVER_URL=https://localhost:14502/play
+-e "EXTRA_CONNECT_SRC=http://127.0.0.1:14503 https://127.0.0.1:14502"`: the page reaches a development server on
+`localhost` at 127.0.0.1).
 
 - **Ports:** 4433/udp only. Nothing listens on TCP outside the container (the health endpoint is 127.0.0.1; the
   development info server is off with a certificate).
@@ -80,7 +89,8 @@ the same port): `docker run --rm -e GAME_PORT=14502 -p 14502:14502/udp -p 127.0.
   certificate's (a renewal read between its two writes), keeps the old certificate and is tried again at the next check;
   each reload, or failure, is one log line.
 - **Health:** `rl-server --healthcheck` (the image's `HEALTHCHECK`, every 15 s): `GET http://127.0.0.1:$HEALTH_PORT/healthz`
-  answers 200 while the game thread runs (its heartbeat within 2 s), else 503.
+  answers 200 while the game thread runs (its heartbeat within 2 s), else 503. The check reads `HEALTH_PORT` (or
+  `--health-port`) alone. A variable that isn't a number stops the server with its name in the error.
 - **Restart policy:** `unless-stopped` (or `always`). The process exits if its game thread ends (a panic outside a
   match: a panic inside one ends only that match) or the engine aborts.
 - **Stop:** SIGTERM or SIGINT ends it at once; the matches in progress end with it.
@@ -90,7 +100,10 @@ the same port): `docker run --rm -e GAME_PORT=14502 -p 14502:14502/udp -p 127.0.
   flooding either is closed); QUIC: 4 streams each way, small receive windows.
 - **The queue's no-shows:** a found match waits 12 s for its players to claim their slots; cancelled for someone (a
   slot not claimed, or a player leaving before the start), the others search again at the front of the queue, and whoever
-  stalled it can't search for 2 minutes (by the browser's key and by address).
+  stalled it can't search for 2 minutes by their browser's key, their other waiting searches let go too. Their address
+  is blocked as well when it's theirs (an IPv6 /64, or a search without a key) or after two different keys stalled from
+  it within 10 minutes (an IPv4 address is often shared: a carrier's NAT, a dorm, a household), and then the page says
+  the network's searches are paused, blaming no one.
 - **Resources** (measured, RX13): one game thread runs every match (120 Hz each): ~0.7 % of a core a 1v1, ~1.8 % a 3v3
   (all threads ~2.1 % / ~5.5 %), so the game thread caps a server near 55 3v3 matches. Memory ~8 MB idle, ~1.4 MB a 1v1
   and ~1.8 MB a 3v3. Bandwidth per player: ~3.4 KB/s down in a 1v1, ~5.6 KB/s in a 3v3; ~5–13 KB/s up (inputs).

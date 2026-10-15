@@ -4,8 +4,11 @@
 //! sessions end there. Nothing else about matches is the queue's (notes/matchmaking.md, v1 queue checklist; no ranks,
 //! parties or regions in v1). A match cancelled before its start (`Cancelled`: someone didn't claim their slot, or left
 //! before the start) puts the players who claimed back at the front, in their first search's order, and whoever stalled
-//! it can't search for `NO_SHOW_COOLDOWN`, by their browser's key and by address (RV-367, the user's decision: one
-//! person can't keep stalling matches; leaving a started match isn't penalized).
+//! it can't search for `NO_SHOW_COOLDOWN`, by their browser's key (RV-367, the user's decision: one person can't keep
+//! stalling matches; leaving a started match isn't penalized). Their address is blocked too only when it's theirs alone
+//! or several stall from it (RV-385: an IPv6 /64 at once; an IPv4 address, often shared by a carrier's NAT, a dorm or a
+//! household, after `ADDRESS_STALLS` different browser keys stalled from it within `STALL_WINDOW`, or at once for a
+//! search that sent no key), so a new key doesn't dodge it and one staller doesn't block their neighbours.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::net::IpAddr;
@@ -20,6 +23,9 @@ use crate::protocol::Control;
 pub const NO_SHOW_COOLDOWN: f64 = 120.0;
 /// How long a cancelled match's claimed token puts its player back at the front (s: the client searches again at once)
 const RETURN_SECONDS: f64 = 60.0;
+/// An IPv4 address is blocked after this many different browser keys stalled from it within `STALL_WINDOW` (s)
+const ADDRESS_STALLS: usize = 2;
+const STALL_WINDOW: f64 = 600.0;
 
 /// Who a search is from: its address (`net::address_key`), its browser's key (0: none), and the token of the slot it
 /// claimed in a match cancelled for someone else (0: none)
@@ -35,8 +41,9 @@ pub enum Searched {
     Queued,
     /// No playlist has the team size
     NoPlaylist,
-    /// Its browser or address stalled a match: it may search again in this many seconds
-    Cooldown { seconds: u16 },
+    /// Its browser (`network` false) or its address (true: maybe a neighbour's doing) stalled a match: it may search again
+    /// in this many seconds
+    Cooldown { seconds: u16, network: bool },
 }
 
 struct Searcher {
@@ -75,6 +82,8 @@ pub struct Matchmaker {
     returning: HashMap<u64, (u8, f64, f64)>,
     /// Who stalled a match: until when they can't search
     cooldowns: HashMap<Who, f64>,
+    /// Each IPv4 address's recent stalls: the browser keys and when
+    stalls: HashMap<IpAddr, Vec<(u64, f64)>>,
     /// When the expired entries were last let go (s)
     tidied: f64,
 }
@@ -89,14 +98,24 @@ impl Matchmaker {
             handed: HashMap::new(),
             returning: HashMap::new(),
             cooldowns: HashMap::new(),
+            stalls: HashMap::new(),
             tidied: 0.0,
         }
     }
 
-    /// Until when the search's browser or address can't search, if either can't now
-    fn cooling(&self, from: &SearchFrom, now: f64) -> Option<f64> {
-        let key = (from.key != 0).then_some(Who::Key(from.key));
-        [Some(Who::Address(from.address)), key].into_iter().flatten().filter_map(|w| self.cooldowns.get(&w).copied()).filter(|&until| until > now).reduce(f64::max)
+    /// Until when the search can't search, if it can't now, and whether only its address is why (not its browser)
+    fn cooling(&self, from: &SearchFrom, now: f64) -> Option<(f64, bool)> {
+        let until = |who: Who| self.cooldowns.get(&who).copied().filter(|&until| until > now);
+        let key = if from.key != 0 { until(Who::Key(from.key)) } else { None };
+        match (key, until(Who::Address(from.address))) {
+            (Some(k), a) => Some((a.map_or(k, |a| a.max(k)), false)),
+            (None, Some(a)) => Some((a, true)),
+            (None, None) => None,
+        }
+    }
+
+    fn refusal(until: f64, network: bool, now: f64) -> Searched {
+        Searched::Cooldown { seconds: (until - now).ceil().clamp(1.0, f64::from(u16::MAX)) as u16, network }
     }
 
     /// A search of the playlist with this team size at `now` (s). A session searches once: a second search from it is
@@ -105,8 +124,8 @@ impl Matchmaker {
         if !self.waiting.contains_key(&team_size) {
             return Searched::NoPlaylist;
         }
-        if let Some(until) = self.cooling(&from, now) {
-            return Searched::Cooldown { seconds: (until - now).ceil().clamp(1.0, f64::from(u16::MAX)) as u16 };
+        if let Some((until, network)) = self.cooling(&from, now) {
+            return Self::refusal(until, network, now);
         }
         if self.searching.contains_key(&id) {
             return Searched::Queued;
@@ -129,16 +148,56 @@ impl Matchmaker {
     }
 
     /// A match was cancelled before its start: who claimed goes back to the front when they search again, who stalled it
-    /// can't search for a while (`NO_SHOW_COOLDOWN`)
+    /// can't search for a while (`NO_SHOW_COOLDOWN`: their browser key; their address as the module says), and their other
+    /// searches waiting now are let go with the refusal (RV-386: a staller's other sessions can't stall more matches)
     pub fn cancelled(&mut self, cancelled: &Cancelled, now: f64) {
         for token in &cancelled.stalled {
             if let Some(h) = self.handed.remove(token) {
-                eprintln!("a match stalled by a no-show: their browser and address can't search for {NO_SHOW_COOLDOWN} s");
                 let until = now + NO_SHOW_COOLDOWN;
-                self.cooldowns.insert(Who::Address(h.from.address), until);
                 if h.from.key != 0 {
                     self.cooldowns.insert(Who::Key(h.from.key), until);
                 }
+                let address = match h.from.address {
+                    IpAddr::V6(_) => true,
+                    IpAddr::V4(_) if h.from.key == 0 => true,
+                    IpAddr::V4(_) => {
+                        let stalls = self.stalls.entry(h.from.address).or_default();
+                        stalls.retain(|&(_, at)| now - at < STALL_WINDOW);
+                        stalls.push((h.from.key, now));
+                        let mut keys: Vec<u64> = stalls.iter().map(|&(k, _)| k).collect();
+                        keys.sort_unstable();
+                        keys.dedup();
+                        keys.len() >= ADDRESS_STALLS
+                    }
+                };
+                if address {
+                    self.cooldowns.insert(Who::Address(h.from.address), until);
+                }
+                eprintln!("a match stalled by a no-show: their browser{} can't search for {NO_SHOW_COOLDOWN} s", if address { " and address" } else { "" });
+            }
+        }
+        // (the searches waiting now that the new cooldowns cover: let go, told why)
+        let mut refused = Vec::new();
+        for queue in self.waiting.values_mut() {
+            let mut i = 0;
+            while i < queue.len() {
+                let from = queue[i].from;
+                let key = if from.key != 0 { self.cooldowns.get(&Who::Key(from.key)).copied().filter(|&u| u > now) } else { None };
+                let address = self.cooldowns.get(&Who::Address(from.address)).copied().filter(|&u| u > now);
+                match (key, address) {
+                    (None, None) => i += 1,
+                    (k, a) => {
+                        let until = k.into_iter().chain(a).fold(now, f64::max);
+                        let searcher = queue.remove(i).expect("in range");
+                        refused.push((searcher, until, k.is_none()));
+                    }
+                }
+            }
+        }
+        for (searcher, until, network) in refused {
+            self.searching.remove(&searcher.id);
+            if let Searched::Cooldown { seconds, network } = Self::refusal(until, network, now) {
+                let _ = searcher.out.try_send(Outgoing::Control(Control::SearchCooldown { seconds, network }.encode()));
             }
         }
         for token in &cancelled.stayed {
@@ -157,6 +216,10 @@ impl Matchmaker {
         self.handed.retain(|_, h| h.until > now);
         self.returning.retain(|_, r| r.2 > now);
         self.cooldowns.retain(|_, until| *until > now);
+        self.stalls.retain(|_, stalls| {
+            stalls.retain(|&(_, at)| now - at < STALL_WINDOW);
+            !stalls.is_empty()
+        });
     }
 
     /// The searcher's session ended (cancelled, or the connection lost)
@@ -354,29 +417,95 @@ mod tests {
         assert_eq!(order, vec![(1, 1.0), (2, 2.0), (3, 3.0), (9, 5.0)]);
     }
 
-    #[test]
-    fn whoever_stalled_a_match_cant_search_for_two_minutes_by_browser_key_or_address() {
-        let mut queue = Matchmaker::new(&playlists());
+    /// A 1v1 formed of `a` and `b` (searching now), cancelled with `stalled` not having claimed; the searchers' channels kept
+    fn stall(queue: &mut Matchmaker, a: SearchFrom, b: SearchFrom, now: f64, a_stalls: bool) -> Vec<Receiver<Outgoing>> {
         let mut host = Recorder::default();
-        let (tx, mut a) = channel(OUT_QUEUE);
-        assert_eq!(queue.search(1, 1, tx, from(1), 0.0), Searched::Queued);
-        let (tx, mut b) = channel(OUT_QUEUE);
-        assert_eq!(queue.search(2, 1, tx, from(2), 0.0), Searched::Queued);
-        queue.form(&mut host, 0.0);
-        let (ta, tb) = (found(&mut a).unwrap(), found(&mut b).unwrap());
-        queue.cancelled(&Cancelled { stayed: vec![tb], stalled: vec![ta] }, 12.0);
-        let try_search = |queue: &mut Matchmaker, id: PlayerId, from: SearchFrom, now: f64| {
-            let (tx, _rx) = channel(OUT_QUEUE);
-            let searched = queue.search(id, 1, tx, from, now);
-            queue.cancel(id);
-            searched
-        };
-        assert_eq!(try_search(&mut queue, 10, from(1), 20.0), Searched::Cooldown { seconds: 112 });
-        assert_eq!(try_search(&mut queue, 11, SearchFrom { key: 777, ..from(1) }, 20.0), Searched::Cooldown { seconds: 112 }, "a new key, the same address");
-        assert_eq!(try_search(&mut queue, 12, SearchFrom { address: [192, 168, 0, 9].into(), ..from(1) }, 20.0), Searched::Cooldown { seconds: 112 }, "the same key elsewhere");
-        assert_eq!(try_search(&mut queue, 13, from(3), 20.0), Searched::Queued, "someone else");
-        assert_eq!(try_search(&mut queue, 14, from(2), 20.0), Searched::Queued, "who claimed");
-        assert_eq!(try_search(&mut queue, 15, from(1), 131.9), Searched::Cooldown { seconds: 1 });
+        let (ta, mut ra) = channel(OUT_QUEUE);
+        assert_eq!(queue.search(901, 1, ta, a, now), Searched::Queued);
+        let (tb, mut rb) = channel(OUT_QUEUE);
+        assert_eq!(queue.search(902, 1, tb, b, now), Searched::Queued);
+        queue.form(&mut host, now);
+        let (ka, kb) = (found(&mut ra).unwrap(), found(&mut rb).unwrap());
+        let (stayed, stalled) = if a_stalls { (kb, ka) } else { (ka, kb) };
+        queue.cancelled(&Cancelled { stayed: vec![stayed], stalled: vec![stalled] }, now + 12.0);
+        vec![ra, rb]
+    }
+
+    fn try_search(queue: &mut Matchmaker, id: PlayerId, from: SearchFrom, now: f64) -> Searched {
+        let (tx, _rx) = channel(OUT_QUEUE);
+        let searched = queue.search(id, 1, tx, from, now);
+        queue.cancel(id);
+        searched
+    }
+
+    #[test]
+    fn a_staller_cant_search_for_two_minutes_by_their_browser_key_not_their_neighbours() {
+        // (RV-367, RV-385: one staller behind a shared IPv4 address blocks their key alone)
+        let mut queue = Matchmaker::new(&playlists());
+        let _kept = stall(&mut queue, from(1), from(2), 0.0, true);
+        assert_eq!(try_search(&mut queue, 10, from(1), 20.0), Searched::Cooldown { seconds: 112, network: false });
+        assert_eq!(
+            try_search(&mut queue, 11, SearchFrom { address: [192, 168, 0, 9].into(), ..from(1) }, 20.0),
+            Searched::Cooldown { seconds: 112, network: false },
+            "the same key elsewhere"
+        );
+        assert_eq!(try_search(&mut queue, 12, SearchFrom { key: 777, ..from(1) }, 20.0), Searched::Queued, "a neighbour (another key, the address)");
+        assert_eq!(try_search(&mut queue, 13, from(2), 20.0), Searched::Queued, "who claimed");
+        assert_eq!(try_search(&mut queue, 15, from(1), 131.9), Searched::Cooldown { seconds: 1, network: false });
         assert_eq!(try_search(&mut queue, 16, from(1), 132.1), Searched::Queued, "two minutes on");
+        // Expired, they're let go (RX14's N19)
+        let mut host = Recorder::default();
+        queue.form(&mut host, 200.0);
+        assert!(queue.cooldowns.is_empty() && queue.handed.is_empty() && queue.returning.is_empty());
+    }
+
+    #[test]
+    fn an_address_is_blocked_after_two_browser_keys_stall_from_it_or_a_keyless_one_or_its_ipv6_64() {
+        // (RV-385: a new key doesn't dodge it: the second stall from the address blocks it, for everyone there, told it's
+        // the network's)
+        let mut queue = Matchmaker::new(&playlists());
+        let _a = stall(&mut queue, from(1), from(2), 0.0, true);
+        let _b = stall(&mut queue, SearchFrom { key: 555, ..from(1) }, from(3), 100.0, true);
+        assert_eq!(try_search(&mut queue, 20, SearchFrom { key: 556, ..from(1) }, 120.0), Searched::Cooldown { seconds: 112, network: true });
+        assert_eq!(try_search(&mut queue, 21, SearchFrom { key: 555, ..from(1) }, 120.0), Searched::Cooldown { seconds: 112, network: false }, "the staller: their key's");
+        // Ten minutes apart, two keys don't add up
+        let mut queue = Matchmaker::new(&playlists());
+        let _a = stall(&mut queue, from(1), from(2), 0.0, true);
+        let _b = stall(&mut queue, SearchFrom { key: 555, ..from(1) }, from(3), 700.0, true);
+        assert_eq!(try_search(&mut queue, 22, SearchFrom { key: 556, ..from(1) }, 720.0), Searched::Queued);
+        // No key: the address at once
+        let mut queue = Matchmaker::new(&playlists());
+        let _c = stall(&mut queue, SearchFrom { key: 0, ..from(1) }, from(2), 0.0, true);
+        assert_eq!(try_search(&mut queue, 23, SearchFrom { key: 556, ..from(1) }, 20.0), Searched::Cooldown { seconds: 112, network: true });
+        // An IPv6 /64: at once
+        let mut queue = Matchmaker::new(&playlists());
+        let six = SearchFrom { address: "2001:db8:1:2::".parse().unwrap(), ..from(1) };
+        let _d = stall(&mut queue, six, from(2), 0.0, true);
+        assert_eq!(try_search(&mut queue, 24, SearchFrom { key: 556, ..six }, 20.0), Searched::Cooldown { seconds: 112, network: true });
+    }
+
+    #[test]
+    fn a_stallers_other_waiting_searches_are_let_go_with_the_refusal() {
+        // (RV-386: three searches from one key in the 2v2 queue; one stalls a 1v1: the others are never matched)
+        let mut queue = Matchmaker::new(&playlists());
+        let mut others: Vec<Receiver<Outgoing>> = (0..3)
+            .map(|i| {
+                let (tx, rx) = channel(OUT_QUEUE);
+                assert_eq!(queue.search(30 + i, 2, tx, from(1), 0.0), Searched::Queued);
+                rx
+            })
+            .collect();
+        let _kept = stall(&mut queue, from(1), from(2), 1.0, true);
+        assert_eq!(queue.searching(2), 0);
+        for rx in &mut others {
+            let mut refused = None;
+            while let Ok(Outgoing::Control(bytes)) = rx.try_recv() {
+                if let Ok(Control::SearchCooldown { seconds, network }) = Control::decode(&bytes[2..]) {
+                    refused = Some((seconds, network));
+                }
+            }
+            assert_eq!(refused, Some((120, false)));
+            assert!(rx.is_closed(), "its session let go");
+        }
     }
 }

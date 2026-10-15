@@ -17,6 +17,7 @@
 #include "Sim/PhysState/RawBodyState.h"
 #include "../libsrc/bullet3-3.24/BulletCollision/CollisionDispatch/btCollisionDispatcher.h"
 #include "../libsrc/bullet3-3.24/BulletCollision/NarrowPhaseCollision/btPersistentManifold.h"
+#include "../libsrc/bullet3-3.24/BulletCollision/BroadphaseCollision/btRSBroadphase.h"
 
 #include <cmath>
 #include <cstdio>
@@ -122,7 +123,8 @@ static bool Touching(Arena* arena) {
 	return false;
 }
 
-// The continuations a client's stored boxes alone may make diverge: 2% (RX13 saw 1 of 244)
+// The continuations a client's stored boxes alone, or its persistent contacts alone, may make diverge: 2% each (RX13
+// saw 1 of 244 by boxes; RX14 13 of 2433 by contacts)
 static int BoxRunsAllowed(int continued) {
 	return std::max(2, continued / 50);
 }
@@ -139,6 +141,55 @@ static void CopyBoxes(Arena* from, Arena* to) {
 	copy(from->ball->_rigidBody, to->ball->_rigidBody);
 	for (Car* car : from->GetCars())
 		copy(car->_rigidBody, to->GetCar(car->id)->_rigidBody);
+}
+
+// The moving bodies' order in the broadphase's max-edge walk (patch 109) copied, as the server's boxes are above
+static void CopyMaxEdgeOrder(Arena* from, Arena* to) {
+	auto* rf = dynamic_cast<btRSBroadphase*>(from->_bulletWorld.getBroadphase());
+	auto* rt = dynamic_cast<btRSBroadphase*>(to->_bulletWorld.getBroadphase());
+	std::vector<btBroadphaseProxy*> order;
+	for (btBroadphaseProxy* p : rf->dynamicMaxEdgeOrder()) {
+		if (p == from->ball->_rigidBody.getBroadphaseHandle())
+			order.push_back(to->ball->_rigidBody.getBroadphaseHandle());
+		for (Car* car : from->GetCars())
+			if (p == car->_rigidBody.getBroadphaseHandle())
+				order.push_back(to->GetCar(car->id)->_rigidBody.getBroadphaseHandle());
+	}
+	rt->restoreDynamicMaxEdgeOrder(order);
+}
+
+// The client as it was at the update with the server's persistent contacts spliced in, all else its own (its stored
+// boxes and walk order put back after the contacts' collision pass): a divergence with contacts must be the contacts'
+// alone (RV-387; RX14 found the manifolds behind every one: the game's clients don't get them either)
+static Arena* WithServerContacts(const std::vector<uint8_t>& clientAtUpdate, Arena* serverAtUpdate) {
+	Arena* hybrid = Restore(clientAtUpdate);
+	Arena* own = Restore(clientAtUpdate);
+	DataStreamOut contacts;
+	serverAtUpdate->_SerializeContacts(contacts);
+	DataStreamIn in;
+	in.data = contacts.data;
+	hybrid->_DeserializeContacts(in);
+	CopyBoxes(own, hybrid);
+	CopyMaxEdgeOrder(own, hybrid);
+	delete own;
+	return hybrid;
+}
+
+// Whether `client` continues as `server` does for the window's ticks, given the inputs each tick had
+static bool ContinuesAlike(Arena* server, Arena* client, const std::vector<std::vector<CarControls>>& applied) {
+	for (const std::vector<CarControls>& tick : applied) {
+		int i = 0;
+		for (Car* car : server->GetCars()) {
+			car->controls = tick[i];
+			client->GetCar(car->id)->controls = tick[i];
+			i++;
+		}
+		server->Step();
+		client->Step();
+		if (NetVisibleState(client) != NetVisibleState(server))
+			return false;
+	}
+	return true;
 }
 
 static float MaxPositionDifference(Arena* a, Arena* b) {
@@ -502,7 +553,7 @@ int main(int argc, char** argv) {
 		server->AddCar(i < 2 ? Team::BLUE : Team::ORANGE, i % 2 ? CAR_CONFIG_DOMINUS : CAR_CONFIG_OCTANE);
 	server->ResetToRandomKickoff(11);
 
-	int checks = 0, exactFailures = 0, continued = 0, continuedExact = 0, touchingRuns = 0, boxRuns = 0;
+	int checks = 0, exactFailures = 0, continued = 0, continuedExact = 0, touchingRuns = 0, boxRuns = 0, unexplained = 0;
 	size_t maxBytes = 0;
 	float worstDrift = 0;
 	int compactFailures = 0, compactIdentical = 0;
@@ -624,25 +675,24 @@ int main(int argc, char** argv) {
 		// Diverged: the same run with the server's stored boxes copied into the client. Identical then, the boxes did it:
 		// a network state carries none, as the game's doesn't, so the client's wheel rays may pick other candidates than
 		// the server's (a game-faithful misprediction, RV-369); counted on its own, a few allowed
-		bool boxCaused = false;
+		// (and the client with the server's persistent contacts: identical then, the contacts did it, RV-387)
+		bool boxCaused = false, contactCaused = false;
 		if (!identical) {
 			Arena* again = Restore(serverAtUpdate);
 			Arena* boxed = Restore(clientAtUpdate);
 			CopyBoxes(again, boxed);
-			boxCaused = true;
-			for (int t = 0; t < window && boxCaused; t++) {
-				int i = 0;
-				for (Car* car : again->GetCars()) {
-					car->controls = applied[t][i];
-					boxed->GetCar(car->id)->controls = applied[t][i];
-					i++;
-				}
-				again->Step();
-				boxed->Step();
-				boxCaused = NetVisibleState(boxed) == NetVisibleState(again);
-			}
+			boxCaused = ContinuesAlike(again, boxed, applied);
 			delete again;
 			delete boxed;
+		}
+		if (!identical && !boxCaused) {
+			Arena* again = Restore(serverAtUpdate);
+			Arena* atUpdate = Restore(serverAtUpdate);
+			Arena* hybrid = WithServerContacts(clientAtUpdate, atUpdate);
+			contactCaused = ContinuesAlike(again, hybrid, applied);
+			delete again;
+			delete atUpdate;
+			delete hybrid;
 		}
 		continued++;
 		float compactDrift = MaxPositionDifference(server, drifted);
@@ -654,11 +704,13 @@ int main(int argc, char** argv) {
 		} else if (boxCaused) {
 			boxRuns++;
 			printf("tick %d: diverged by the client's stored boxes alone (drift %.3f uu; identical with the server's)\n", tick, MaxPositionDifference(server, client));
-		} else {
-			touchingRuns += touching;
+		} else if (contactCaused) {
+			touchingRuns++;
 			worstDrift = fmaxf(worstDrift, MaxPositionDifference(server, client));
-			if (!touching)
-				printf("tick %d: diverged without contacts at the update (drift %.3f uu)\n", tick, MaxPositionDifference(server, client));
+		} else {
+			unexplained++;
+			printf("tick %d: diverged, not by the stored boxes or the persistent contacts (drift %.3f uu; contacts at the update: %d)\n", tick,
+				MaxPositionDifference(server, client), (int)touching);
 		}
 		tick += window;
 		delete client;
@@ -666,9 +718,9 @@ int main(int argc, char** argv) {
 	}
 
 	printf("netstate: %d updates (max %zu bytes for ball + 4 cars + pads), %d not exact after applying\n", checks, maxBytes, exactFailures);
-	printf("netstate: continued %d, identical for %d ticks: %d; diverged by the stored boxes alone: %d (at most %d); the others had "
-		"contacts at the update: %d (worst drift %.3f uu)\n",
-		continued, window, continuedExact, boxRuns, BoxRunsAllowed(continued), touchingRuns, worstDrift);
+	printf("netstate: continued %d, identical for %d ticks: %d; diverged by the stored boxes alone: %d, by the persistent contacts "
+		"alone: %d (at most %d each; worst drift %.3f uu); otherwise: %d\n",
+		continued, window, continuedExact, boxRuns, touchingRuns, BoxRunsAllowed(continued), worstDrift, unexplained);
 	// (every update is written after a tick: every body on the network's grid, none raw)
 	uint64_t raw = NetState::CompactRawBodies();
 	if (raw != 0) {
@@ -687,7 +739,8 @@ int main(int argc, char** argv) {
 		"%d failed; the drifted client after %d ticks: identical %d, worst drift %.3f uu\n",
 		checks, checks ? compactTotal / checks : 0, compactMax, checks ? compactCarsOnly / checks / 4 : 0, compactFailures, window,
 		compactIdentical, compactWorstDrift);
-	int failures = exactFailures + compactFailures + (continued - continuedExact - boxRuns - touchingRuns) + std::max(0, boxRuns - BoxRunsAllowed(continued));
+	int failures = exactFailures + compactFailures + unexplained + std::max(0, boxRuns - BoxRunsAllowed(continued)) +
+		std::max(0, touchingRuns - BoxRunsAllowed(continued));
 	printf(failures ? "netstate: FAILED\n" : "netstate: ok\n");
 	delete server;
 	return failures ? 1 : 0;

@@ -18,6 +18,12 @@ describe("the pages' handoffs", () => {
     storage.setItem("rl-clone.claim", "{broken");
     expect(takeClaim(storage)).toBeNull();
     expect(takeClaim(null)).toBeNull();
+    // A search time that isn't a number (or isn't finite) is now's, never NaN (RX14's K9)
+    for (const bad of ['"x"', "null", "1e999"]) {
+      storage.setItem("rl-clone.claim", `{"token":"5","playlist":1,"searchedAt":${bad}}`);
+      const at = takeClaim(storage)?.searchedAt;
+      expect(Number.isFinite(at), bad).toBe(true);
+    }
   });
 
   it("hands the menu page its notice once, unknown fields dropped", () => {

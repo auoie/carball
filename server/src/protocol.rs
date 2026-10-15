@@ -8,8 +8,9 @@ use crate::engine::Controls;
 // leaver's car explodes; 13: match stats, mute, Hello's chat filters; 14: the match's intro and end (its phases, the end
 // screen's countdown, ready checks, podium titles), Refused's version reason; 17: the queue (Hello's intent, playlist and
 // token, 64-bit keys, MatchFound, IdleWarning, Kicked); 18: the moving bodies' broadphase boxes in the engine snapshot
-// (physics FP2); 19: a search's browser key and returning token, SearchCooldown (RV-367: no-shows)
-pub const VERSION: u16 = 19;
+// (physics FP2); 19: a search's browser key and returning token, SearchCooldown (RV-367: no-shows); 20: SearchCooldown
+// says whether the browser or the network is why (RV-385)
+pub const VERSION: u16 = 20;
 /// The quick-chat presets (`Group1-6MessageN`: notes/quick-chat.md CHAT-1); a preset on the wire is its index
 pub const QUICK_CHAT_PRESETS: u8 = 76;
 /// A player's quick-chat filter (`EChatFilter` as the clone uses it: CHAT-18)
@@ -193,9 +194,10 @@ pub enum Control {
     IdleWarning { on: bool },
     /// The server ends this player's session (`KICK_*`), closing it a second later (`CloseConnectionWithReason`)
     Kicked { reason: u8 },
-    /// A search refused: its browser or address stalled a match (didn't claim its slot, or left before the start) and
-    /// may search again in this many seconds (RV-367); the session ends
-    SearchCooldown { seconds: u16 },
+    /// A search refused: its browser (`network` false) or its address (true: a network shared with someone who did)
+    /// stalled a match (didn't claim its slot, or left before the start) and may search again in this many seconds
+    /// (RV-367, RV-385); the session ends
+    SearchCooldown { seconds: u16, network: bool },
 }
 
 /// One player's scoreboard line
@@ -530,9 +532,10 @@ impl Control {
                 w.u8(0x91);
                 w.u8(*reason);
             }
-            Self::SearchCooldown { seconds } => {
+            Self::SearchCooldown { seconds, network } => {
                 w.u8(0x92);
                 w.u16(*seconds);
+                w.u8(u8::from(*network));
             }
             Self::Mute { car, on } => {
                 w.u8(0x08);
@@ -725,7 +728,7 @@ impl Control {
             0x8F => Self::MatchFound { token: r.u64()? },
             0x90 => Self::IdleWarning { on: r.u8()? != 0 },
             0x91 => Self::Kicked { reason: r.u8()? },
-            0x92 => Self::SearchCooldown { seconds: r.u16()? },
+            0x92 => Self::SearchCooldown { seconds: r.u16()?, network: r.u8()? != 0 },
             0x08 => Self::Mute { car: r.u32()?, on: r.u8()? != 0 },
             0x06 => Self::QuickChat { preset: r.u8()?, team: r.u8()? != 0 },
             0x07 => Self::ChatFilter { quick_chat: r.u8()?, block_non_tactical: r.u8()? != 0 },
@@ -955,7 +958,7 @@ mod tests {
             "matchFound" => Control::MatchFound { token: big(&m["token"]) },
             "idleWarning" => Control::IdleWarning { on: m["on"].as_bool().unwrap() },
             "kicked" => Control::Kicked { reason: u(&m["reason"]) as u8 },
-            "searchCooldown" => Control::SearchCooldown { seconds: u(&m["seconds"]) as u16 },
+            "searchCooldown" => Control::SearchCooldown { seconds: u(&m["seconds"]) as u16, network: m["network"].as_bool().unwrap() },
             "mute" => Control::Mute { car: u(&m["car"]), on: m["on"].as_bool().unwrap() },
             "scoreboard" => Control::Scoreboard(
                 m["players"]

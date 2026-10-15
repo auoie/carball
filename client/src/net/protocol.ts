@@ -8,7 +8,7 @@
 // car, no contest; 11: quick chat, players' names (the roster), a leave's reason; 12: whether a leaver's car explodes;
 // 13: match stats, mute, Hello's chat filters; 14: the match's intro and end (its phases, the end screen's countdown,
 // ready checks, podium titles), Refused's version reason
-export const PROTOCOL_VERSION = 19;
+export const PROTOCOL_VERSION = 20;
 /** A name's bytes at most (UTF-8) */
 export const MAX_NAME_BYTES = 32;
 export const MAX_INPUT_FRAMES = 10;
@@ -177,9 +177,10 @@ export type ControlMessage =
   | { readonly type: "idleWarning"; readonly on: boolean }
   /** The server ends this session a second later (KICK_*: MM-37) */
   | { readonly type: "kicked"; readonly reason: number }
-  /** A search refused: this browser or address stalled a match (didn't claim its slot, or left before the start); it may
-   *  search again in this many seconds (RV-367); the session ends */
-  | { readonly type: "searchCooldown"; readonly seconds: number };
+  /** A search refused: this browser (network false) or this address (true: maybe someone else on it) stalled a match
+   *  (didn't claim its slot, or left before the start); it may search again in this many seconds (RV-367, RV-385); the
+   *  session ends */
+  | { readonly type: "searchCooldown"; readonly seconds: number; readonly network: boolean };
 
 /** Hello's intents (the wire's byte is the index) */
 const INTENTS = ["join", "search", "claim"] as const;
@@ -420,6 +421,7 @@ export function encodeControl(m: ControlMessage): Uint8Array {
     case "searchCooldown":
       w.u8(0x92);
       w.u16(m.seconds);
+      w.u8(m.network ? 1 : 0);
       break;
     case "mute":
       w.u8(0x08);
@@ -614,7 +616,7 @@ export function decodeControl(body: Uint8Array): ControlMessage {
     case 0x91:
       return { type: "kicked", reason: r.u8() };
     case 0x92:
-      return { type: "searchCooldown", seconds: r.u16() };
+      return { type: "searchCooldown", seconds: r.u16(), network: r.u8() !== 0 };
     case 0x08:
       return { type: "mute", car: r.u32(), on: r.u8() !== 0 };
     case 0x06:

@@ -35,7 +35,6 @@ struct Args {
     public_host: Option<String>,
     health_port: u16,
     limits: NetLimits,
-    health_check: bool,
 }
 
 const USAGE: &str = "usage: rl-server [--mode direct|queue] [--dev] [--port 4433] [--info-port 4434] [--dev-info on|off] [--info-bind 127.0.0.1] \
@@ -43,6 +42,24 @@ const USAGE: &str = "usage: rl-server [--mode direct|queue] [--dev] [--port 4433
 [--cert FULLCHAIN.pem --key KEY.pem] [--allowed-origin ORIGIN[,ORIGIN...]] [--public-host HOST] [--health-port 8081] \
 [--max-sessions N] [--max-per-address N] [--max-per-address-per-minute N] | --healthcheck
 environment (each the flag's default): RL_MODE, GAME_PORT, MESHES_DIR, CERT_PATH, KEY_PATH, ALLOWED_ORIGIN, PUBLIC_HOST, HEALTH_PORT";
+
+/// A variable's or flag's number, the error naming it (RV-399: an empty GAME_PORT said only "cannot parse integer")
+fn number<T: std::str::FromStr>(name: &str, value: &str) -> anyhow::Result<T>
+where
+    T::Err: std::error::Error + Send + Sync + 'static,
+{
+    value.trim().parse().map_err(|e| anyhow::anyhow!("{name} {value:?}: {e}"))
+}
+
+/// `--healthcheck`'s port alone (--health-port, else HEALTH_PORT, else 8081): the check reads nothing else, so a
+/// setting the server would refuse doesn't make a running server unhealthy (RV-399)
+fn health_port(args: &[String], env: impl Fn(&str) -> Option<String>) -> anyhow::Result<u16> {
+    if let Some(at) = args.iter().position(|a| a == "--health-port") {
+        let value = args.get(at + 1).ok_or_else(|| anyhow::anyhow!("--health-port needs a value"))?;
+        return number("--health-port", value);
+    }
+    env("HEALTH_PORT").map_or(Ok(8081), |p| number("HEALTH_PORT", &p))
+}
 
 fn parse_mode(value: &str) -> anyhow::Result<bool> {
     match value {
@@ -92,13 +109,12 @@ fn parse_args(mut it: impl Iterator<Item = String>, env: impl Fn(&str) -> Option
         public_host: None,
         health_port: 8081,
         limits: NetLimits::default(),
-        health_check: false,
     };
     if let Some(mode) = env("RL_MODE") {
         args.queue = parse_mode(&mode)?;
     }
     if let Some(port) = env("GAME_PORT") {
-        args.port = port.parse()?;
+        args.port = number("GAME_PORT", &port)?;
     }
     if let Some(dir) = env("MESHES_DIR").filter(|d| !d.is_empty()) {
         args.meshes = dir.into();
@@ -110,13 +126,13 @@ fn parse_args(mut it: impl Iterator<Item = String>, env: impl Fn(&str) -> Option
     }
     args.public_host = env("PUBLIC_HOST").filter(|h| !h.is_empty());
     if let Some(port) = env("HEALTH_PORT") {
-        args.health_port = port.parse()?;
+        args.health_port = number("HEALTH_PORT", &port)?;
     }
     while let Some(arg) = it.next() {
         let mut value = || it.next().ok_or_else(|| anyhow::anyhow!("{arg} needs a value"));
         match arg.as_str() {
-            "--port" => args.port = value()?.parse()?,
-            "--info-port" => args.info_port = value()?.parse()?,
+            "--port" => args.port = number("--port", &value()?)?,
+            "--info-port" => args.info_port = number("--info-port", &value()?)?,
             "--dev-info" => {
                 args.dev_info = Some(match value()?.as_str() {
                     "on" => true,
@@ -147,11 +163,11 @@ fn parse_args(mut it: impl Iterator<Item = String>, env: impl Fn(&str) -> Option
             "--key" => key = Some(value()?.into()),
             "--allowed-origin" => args.limits.allowed_origins = Some(origins(&value()?)?),
             "--public-host" => args.public_host = Some(value()?),
-            "--health-port" => args.health_port = value()?.parse()?,
-            "--max-sessions" => args.limits.max_sessions = value()?.parse()?,
-            "--max-per-address" => args.limits.per_address = value()?.parse()?,
-            "--max-per-address-per-minute" => args.limits.per_address_per_minute = value()?.parse()?,
-            "--healthcheck" => args.health_check = true,
+            "--health-port" => args.health_port = number("--health-port", &value()?)?,
+            "--max-sessions" => args.limits.max_sessions = number("--max-sessions", &value()?)?,
+            "--max-per-address" => args.limits.per_address = number("--max-per-address", &value()?)?,
+            "--max-per-address-per-minute" => args.limits.per_address_per_minute = number("--max-per-address-per-minute", &value()?)?,
+            "--healthcheck" => {} // (main's, before the rest is read: health_port)
             _ => anyhow::bail!("{USAGE}"),
         }
     }
@@ -233,10 +249,12 @@ async fn reload_certificates(server: Arc<net::ServerEndpoint>, cert: PathBuf, ke
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let args = parse_args(std::env::args().skip(1), |name| std::env::var(name).ok())?;
-    if args.health_check {
-        std::process::exit(if net::health_check(args.health_port) { 0 } else { 1 });
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    if argv.iter().any(|a| a == "--healthcheck") {
+        let port = health_port(&argv, |name| std::env::var(name).ok())?;
+        std::process::exit(if net::health_check(port) { 0 } else { 1 });
     }
+    let args = parse_args(argv.into_iter(), |name| std::env::var(name).ok())?;
     // SAFETY: the handler only calls _exit
     unsafe {
         libc::signal(libc::SIGTERM, on_stop as *const () as libc::sighandler_t);
@@ -367,6 +385,22 @@ mod tests {
         let dev = with(&[("RL_MODE", "queue"), CERT[0], CERT[1], ("ALLOWED_ORIGIN", "https://a.example")], &["--dev"]).unwrap();
         assert!(dev.queue && dev.cert.is_none(), "--dev: self-signed whatever the variables say");
         assert!(with(&[("RL_MODE", "queue"), CERT[0], CERT[1], ("ALLOWED_ORIGIN", "https://a.example")], &[]).unwrap().cert.is_some());
+    }
+
+    #[test]
+    fn a_bad_number_names_its_setting_and_the_health_check_reads_only_its_port() {
+        // (RV-399)
+        let env = |vars: &'static [(&'static str, &'static str)]| move |name: &str| vars.iter().find(|(n, _)| *n == name).map(|(_, v)| (*v).to_string());
+        let e = parse_args(std::iter::empty(), env(&[("GAME_PORT", "")])).err().expect("an empty GAME_PORT");
+        assert!(e.to_string().contains("GAME_PORT"), "{e}");
+        let e = parse(&["--port", "x"]).err().expect("--port x");
+        assert!(e.to_string().contains("--port"), "{e}");
+        // (a --dev run's empty certificate variables, an origin left blank: none of the health check's business)
+        let messy = env(&[("CERT_PATH", ""), ("KEY_PATH", ""), ("ALLOWED_ORIGIN", ""), ("HEALTH_PORT", "9000")]);
+        assert_eq!(health_port(&["--healthcheck".to_string()], messy).unwrap(), 9000);
+        assert_eq!(health_port(&["--healthcheck".to_string(), "--health-port".to_string(), "9100".to_string()], messy).unwrap(), 9100);
+        assert_eq!(health_port(&[], env(&[])).unwrap(), 8081);
+        assert!(health_port(&[], env(&[("HEALTH_PORT", "")])).is_err());
     }
 
     #[test]

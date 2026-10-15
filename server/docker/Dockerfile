@@ -18,6 +18,8 @@ ENV RL_MODE=queue \
     HEALTH_PORT=8081 \
     MESHES_DIR=/app/collision_meshes
 USER carball
+LABEL org.opencontainers.image.title="carball-game" \
+      org.opencontainers.image.description="Carball's game server: matches over WebTransport (UDP, GAME_PORT)"
 EXPOSE 4433/udp
 HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=3 CMD ["/app/rl-server", "--healthcheck"]
 ENTRYPOINT ["/app/rl-server"]

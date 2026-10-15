@@ -20,6 +20,7 @@ if [ "${1:-}" = "--worktree" ]; then
 	WORKTREE=1
 	shift
 	[ -n "${1:-}" ] || { echo "--worktree needs a TAG (not the commit's: it isn't what's built)"; exit 1; }
+	if [[ "$1" =~ ^[0-9a-f]{7,40}$ ]]; then echo "--worktree: $1 looks like a commit's hash, which this build isn't: another TAG"; exit 1; fi
 fi
 TAG=${1:-$COMMIT}
 PATHS=(client engine server protocol scripts out/arena/collision_meshes) # (the client imports scripts/cage_topology.json)
@@ -46,8 +47,11 @@ PATH="$EM:$PATH" emcmake cmake -S "$SRC/engine" -B "$SRC/engine/build-wasm" -DCM
 PATH="$EM:$PATH" emmake make -C "$SRC/engine/build-wasm" -j8 rlengine rlengine_web
 
 echo "== the client's production build, the shipped-data check on it"
-ln -s "$R/client/node_modules" "$SRC/client/node_modules" # (the installed packages, not sources)
-(cd "$SRC/client" && npm run build && npx vitest run src/render/shippedData.test.ts)
+# (the installed packages, each linked: not node_modules itself, whose .cache holds the build's chunk record, the
+# guard's: the working tree's must stay its own build's)
+mkdir "$SRC/client/node_modules"
+for entry in "$R/client/node_modules"/* "$R/client/node_modules/.bin"; do ln -s "$entry" "$SRC/client/node_modules/"; done
+(cd "$SRC/client" && npm run build && npx vitest run src/render/shippedData.test.ts src/render/shippedNames.test.ts)
 cp -a "$SRC/client/dist" "$STAGE/web/dist"
 cp "$SRC/client/docker/Dockerfile" "$SRC/client/docker/nginx.conf" "$SRC/client/docker/security-headers.conf" "$SRC/client/docker/40-carball-config.sh" "$STAGE/web/"
 
@@ -57,7 +61,7 @@ echo "== the server's release binary"
 TARGET="$R/out/images/target"
 CARGO_HOME_DIR=${CARGO_HOME:-$HOME/.cargo}
 CARGO_TARGET_DIR="$TARGET" CARGO_PROFILE_RELEASE_DEBUG=0 CARGO_PROFILE_RELEASE_STRIP=symbols \
-	RUSTFLAGS="--remap-path-prefix=$SRC=/src --remap-path-prefix=$CARGO_HOME_DIR=/cargo --remap-path-prefix=$HOME=/home" \
+	RUSTFLAGS="--remap-path-prefix=$HOME=/home --remap-path-prefix=$CARGO_HOME_DIR=/cargo --remap-path-prefix=$SRC=/src" \
 	CFLAGS="-ffile-prefix-map=$SRC=/src" CXXFLAGS="-ffile-prefix-map=$SRC=/src" \
 	cargo build --release --offline --manifest-path "$SRC/server/Cargo.toml"
 cp "$TARGET/release/rl-server" "$STAGE/game/"
@@ -65,8 +69,12 @@ cp -a "$SRC/out/arena/collision_meshes" "$STAGE/game/collision_meshes" # (the co
 cp "$SRC/server/docker/Dockerfile" "$STAGE/game/"
 paths=$(strings "$STAGE/game/rl-server" | grep -cE "$HOME|$R|/mnt/" || true)
 echo "build machine paths in the binary: $paths"
+[ "$paths" = 0 ] || { echo "the binary names the build machine's paths: not built"; exit 1; }
 
 echo "== the images"
-docker build -t "carball-web:$TAG" "$STAGE/web"
-docker build -t "carball-game:$TAG" "$STAGE/game"
+# (what each image was built from: the commit, or the working tree on it, RV-398)
+KIND=$([ $WORKTREE = 1 ] && echo worktree || echo commit)
+LABELS=(--label "org.opencontainers.image.revision=$COMMIT" --label "carball.source=$KIND" --label "org.opencontainers.image.version=$TAG")
+docker build "${LABELS[@]}" -t "carball-web:$TAG" "$STAGE/web"
+docker build "${LABELS[@]}" -t "carball-game:$TAG" "$STAGE/game"
 echo "built carball-web:$TAG and carball-game:$TAG from $SOURCE (staged in $STAGE)"

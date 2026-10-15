@@ -90,7 +90,7 @@ export class Search {
       await readControlMessages(stream.readable as ReadableStream<Uint8Array>, (m) => {
         if (m.type === "matchFound") this.#end(() => { this.handlers.found(m.token); });
         else if (m.type === "refused") this.#end(() => { this.handlers.failed(refusalText(m.reason)); });
-        else if (m.type === "searchCooldown") this.#end(() => { this.handlers.cooldown(m.seconds); });
+        else if (m.type === "searchCooldown") this.#end(() => { this.handlers.cooldown(m.seconds, m.network); });
       });
       this.#end(() => { this.handlers.failed("the connection to the server was lost"); });
     } catch (e) {

@@ -89,8 +89,10 @@ teams wait, the match host reserves their slots (teams alternating) and each get
 start); a player who doesn't claim within 12 s, or leaves before the start, cancels it (the others are told,
 `Kicked` reason 1, and search again at the front of the queue in their first search's order, their claimed token in the
 search; a claim refused for a cancelled match does the same). Whoever stalled it can't search for 2 minutes, by the
-browser key their search sent and by address (`SearchCooldown`: RV-367, the user's decision; leaving a started match
-isn't penalized). No backfill, no bots: a leaver's slot stays empty. A player idle for 30 s of play
+browser key their search sent, their other waiting searches let go with it (RV-386); their address too when it's theirs
+(an IPv6 /64, or no key sent) or after two different keys stalled from it within 10 minutes (RV-385: an IPv4 address is
+often shared), told then that the network's searches are paused (`SearchCooldown`'s `network`; RV-367, the user's
+decision; leaving a started match isn't penalized). No backfill, no bots: a leaver's slot stays empty. A player idle for 30 s of play
 is kicked (warned past 25 s: the game's `IdleKick`, MM-32..38). A queue match doesn't rematch: when the end screen's
 60 s are up the host lets it go and its sessions end.
 `--team-size N` (default 3) is the open match's team size (1 to 8): the uneven-teams kickoff adjustment uses it.

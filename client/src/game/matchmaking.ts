@@ -37,6 +37,8 @@ export const OWN_SEARCH_TEXT = {
   failedPrefix: "Search failed:",
   cooldown: (seconds: number): string =>
     `Your last match was cancelled because you didn't join it in time or left before it started. You can search again in ${clock(seconds)}.`,
+  /** The address's block (RV-385): maybe someone else's doing, so it blames no one */
+  cooldownNetwork: (seconds: number): string => `Searches from your network are paused after a recent no-show. You can search again in ${clock(seconds)}.`,
 } as const;
 
 export type SearchStatus = "connecting" | "searching" | "joining" | "failed";
@@ -75,8 +77,9 @@ export interface SearchHandlers {
   searching(): void;
   found(token: bigint): void;
   failed(reason: string): void;
-  /** Refused: this browser or address stalled a match; it may search again in this many seconds (RV-367) */
-  cooldown(seconds: number): void;
+  /** Refused: this browser (network false) or this address stalled a match; it may search again in this many seconds
+   *  (RV-367, RV-385) */
+  cooldown(seconds: number, network: boolean): void;
 }
 
 export interface MatchmakingPorts {
@@ -169,10 +172,10 @@ export class Matchmaking {
         this.#set("failed");
       },
       // (the refusal stays until Cancel Search or a new search: its wait is minutes, the line must be read)
-      cooldown: (seconds) => {
+      cooldown: (seconds, network) => {
         if (this.#state?.status !== "connecting" && this.#state?.status !== "searching") return;
         this.#cancel = null;
-        this.#extra.push({ text: OWN_SEARCH_TEXT.cooldown(seconds), kind: "warning" });
+        this.#extra.push({ text: network ? OWN_SEARCH_TEXT.cooldownNetwork(seconds) : OWN_SEARCH_TEXT.cooldown(seconds), kind: "warning" });
         this.#failedAt = null;
         this.#set("failed");
       },

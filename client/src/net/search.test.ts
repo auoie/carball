@@ -26,8 +26,8 @@ function answers(): { handlers: SearchHandlers; got: string[]; done: Promise<voi
       got.push(`failed ${reason}`);
       finish();
     },
-    cooldown: (seconds) => {
-      got.push(`cooldown ${String(seconds)}`);
+    cooldown: (seconds, network) => {
+      got.push(`cooldown ${String(seconds)}${network ? " network" : ""}`);
       finish();
     },
   };
@@ -61,11 +61,11 @@ describe("a search", () => {
 
   it("sends the browser's key and a returning token, and passes a no-show's cooldown on (RV-367)", async () => {
     const record: FakeTransportRecord = { sessions: [] };
-    vi.stubGlobal("WebTransport", fakeTransport([{ type: "searchCooldown", seconds: 112 }], record));
+    vi.stubGlobal("WebTransport", fakeTransport([{ type: "searchCooldown", seconds: 112, network: true }], record));
     const { handlers, got, done } = answers();
     Search.start({ url: "https://game.example:4433/play", certHash: null }, 2, 77n, handlers);
     await done;
-    expect(got).toEqual(["searching", "cooldown 112"]);
+    expect(got).toEqual(["searching", "cooldown 112 network"]);
     const written = record.sessions[0]?.written[0] ?? new Uint8Array();
     const hello = decodeControl(written.subarray(2));
     expect(hello).toMatchObject({ type: "hello", intent: "search", playlist: 2, token: 77n });

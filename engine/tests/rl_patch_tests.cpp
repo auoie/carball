@@ -2201,6 +2201,32 @@ static void TestCandidateOrder() {
 	delete restored;
 	delete cloned;
 	delete inPlace;
+	// A box that moves within its key's bucket keeps its place, whoever is equal to it (RX14's M3)
+	auto* rs = dynamic_cast<btRSBroadphase*>(arena->_bulletWorld.getBroadphase());
+	btBroadphaseProxy* pa = a->_rigidBody.getBroadphaseHandle();
+	unsigned short keyBefore = keyOf(a->_rigidBody);
+	btVector3 nudge(0.001f, 0, 0);
+	rs->setAabb(pa, pa->m_aabbMin + nudge, pa->m_aabbMax + nudge, arena->_bulletWorld.getDispatcher());
+	CHECK(keyOf(a->_rigidBody) == keyBefore && order(arena) == "abo", "a moved within its bucket stays first: %s", order(arena).c_str());
+	// The walk (aabbTest) in that order, statics among them by their keys, not by handle (RX14's M4)
+	struct Walk : public btBroadphaseAabbCallback {
+		std::vector<const btBroadphaseProxy*> seen;
+		bool process(const btBroadphaseProxy* proxy) override {
+			seen.push_back(proxy);
+			return true;
+		}
+	} walk;
+	rs->aabbTest(btVector3(-1e6f, -1e6f, -1e6f), btVector3(1e6f, 1e6f, 1e6f), walk);
+	std::vector<const btBroadphaseProxy*> listed(rs->maxEdges.begin(), rs->maxEdges.end());
+	CHECK(walk.seen == listed && walk.seen.size() > 3, "the walk: %zu bodies in the max-edge order", walk.seen.size());
+	std::vector<const btBroadphaseProxy*> byHandle = listed;
+	std::sort(byHandle.begin(), byHandle.end());
+	CHECK(byHandle != listed, "(the max-edge order isn't the handles' here, so the walk's order is tested)");
+	// A car removed leaves the walk (RX14's M17)
+	size_t entries = rs->maxEdges.size();
+	arena->RemoveCar(b->id);
+	CHECK(rs->maxEdges.size() == entries - 1 && rs->dynamicMaxEdgeOrder().size() == 2 && order(arena) == "ao", "b removed: %zu entries, %s",
+		rs->maxEdges.size(), order(arena).c_str());
 	delete arena;
 }
 

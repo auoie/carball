@@ -391,6 +391,12 @@ mod tests {
     }
 
     #[test]
+    fn the_window_is_the_users_12_s() {
+        // (RV-367's decision, pinned: RX14's N18)
+        assert_eq!(RESERVATION_SECONDS, 12.0);
+    }
+
+    #[test]
     fn a_token_claims_once_and_only_its_own_slot() {
         init_engine();
         let mut host = MatchHost::new(1, None);
@@ -464,7 +470,7 @@ mod tests {
         assert!(t < 1.0 + RESERVATION_SECONDS + 0.1, "cancelled at {t}");
         assert!(controls(&mut m2).contains(&Control::Kicked { reason: protocol::KICK_NOT_ALL_JOINED }));
         let (tx, _r) = channel(OUT_QUEUE);
-        assert!(matches!(queue.search(30, 1, tx, from(1), t), Searched::Cooldown { seconds } if f64::from(seconds) > NO_SHOW_COOLDOWN - 1.0));
+        assert!(matches!(queue.search(30, 1, tx, from(1), t), Searched::Cooldown { seconds, network: false } if f64::from(seconds) > NO_SHOW_COOLDOWN - 1.0));
         // 2 searches again with its token: matched with 3 ahead of 4, who searched before 2's return
         let mut s4 = search(&mut queue, 4, 4, 0, t);
         let mut s2 = search(&mut queue, 21, 2, t2, t);

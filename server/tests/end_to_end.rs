@@ -210,6 +210,11 @@ async fn a_vanished_client_is_a_lost_connection_and_a_closed_one_left() {
 
 /// A hello for the queue: a search of a playlist, a claim of a token, or a direct join
 fn queue_hello(intent: u8, playlist: u8, token: u64) -> Vec<u8> {
+    keyed_hello(intent, playlist, token, 0)
+}
+
+/// The same with a key (a search's: the browser's)
+fn keyed_hello(intent: u8, playlist: u8, token: u64, key: u64) -> Vec<u8> {
     Control::Hello {
         version: protocol::VERSION,
         team: 255,
@@ -218,7 +223,7 @@ fn queue_hello(intent: u8, playlist: u8, token: u64) -> Vec<u8> {
         steering_sensitivity: 1.0,
         air_control_sensitivity: 1.0,
         auto_skip_replay: false,
-        key: 0,
+        key,
         name: String::new(),
         quick_chat: protocol::CHAT_EVERYONE,
         block_non_tactical: false,
@@ -231,8 +236,13 @@ fn queue_hello(intent: u8, playlist: u8, token: u64) -> Vec<u8> {
 
 /// A session's first control message after its hello
 async fn first_reply(port: u16, cert_hash: [u8; 32], hello: Vec<u8>) -> (Control, wtransport::Connection, wtransport::RecvStream) {
+    first_reply_at("localhost", port, cert_hash, hello).await
+}
+
+/// The same to a host by name or address (127.0.0.1: an IPv4 client; localhost can be ::1)
+async fn first_reply_at(host: &str, port: u16, cert_hash: [u8; 32], hello: Vec<u8>) -> (Control, wtransport::Connection, wtransport::RecvStream) {
     let config = ClientConfig::builder().with_bind_default().with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(cert_hash)]).build();
-    let connection = Endpoint::client(config).unwrap().connect(format!("https://localhost:{port}/play")).await.unwrap();
+    let connection = Endpoint::client(config).unwrap().connect(format!("https://{host}:{port}/play")).await.unwrap();
     let (mut send, mut recv) = connection.open_bi().await.unwrap().await.unwrap();
     send.write_all(&hello).await.unwrap();
     std::mem::forget(send); // (the control stream stays open: the session lasts)
@@ -462,3 +472,84 @@ async fn a_certificate_and_a_key_that_dont_match_are_refused_and_the_pair_then_s
     let config = ClientConfig::builder().with_bind_default().with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(new_hash)]).build();
     assert!(Endpoint::client(config).unwrap().connect(format!("https://localhost:{port}/play")).await.is_ok());
 }
+
+/// A QUIC connection that never asks for a WebTransport session is closed at the QUIC deadline, not the hello's
+/// (RV-366, RX14's N5)
+#[tokio::test(flavor = "multi_thread")]
+async fn a_quic_connection_that_never_asks_for_a_session_is_closed_at_the_quic_deadline() {
+    use wtransport::quinn;
+    use wtransport::tls::rustls;
+    engine::init(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../out/arena/collision_meshes"))).unwrap();
+    let (identity, _) = net::dev_identity().unwrap();
+    let server = net::endpoint(identity, 0).unwrap();
+    let port = server.local_addr().unwrap().port();
+    let (to_game, messages) = tokio::sync::mpsc::channel(rl_server::game_loop::TO_GAME_QUEUE);
+    let playlist = rl_server::match_host::Playlist { team_size: 1, match_type: rl_server::game::MatchType::Casual, forfeit_vote_wait: None };
+    std::thread::spawn(move || game_loop::run(messages, game_loop::Mode::Direct(playlist), None, heartbeat(), Instant::now()));
+    let limits = NetLimits { quic_handshake: Duration::from_secs(1), handshake: Duration::from_secs(10), ..open_limits() };
+    tokio::spawn(net::accept_loop(Arc::new(server), to_game, limits));
+    // (QUIC with WebTransport's ALPN, and nothing after: no HTTP/3 settings, no session request)
+    let tls = wtransport::tls::client::build_default_tls_config(
+        Arc::new(rustls::RootCertStore::empty()),
+        Some(Arc::new(wtransport::tls::client::NoServerVerification::new())),
+    );
+    let config = quinn::ClientConfig::new(Arc::new(quinn::crypto::rustls::QuicClientConfig::try_from(tls).unwrap()));
+    let mut endpoint = quinn::Endpoint::client("0.0.0.0:0".parse().unwrap()).unwrap();
+    endpoint.set_default_client_config(config);
+    let connection = endpoint.connect(([127, 0, 0, 1], port).into(), "localhost").unwrap().await.expect("the QUIC handshake");
+    let start = Instant::now();
+    let closed = tokio::time::timeout(Duration::from_secs(5), connection.closed()).await;
+    assert!(closed.is_ok(), "still open after 5 s");
+    assert!(start.elapsed() < Duration::from_secs(3), "closed after {:?}", start.elapsed());
+}
+
+/// A no-show over the wire (RV-367, RV-385, RX14's N21 and N22): of a 1v1, one claims and the other never does; at the
+/// window's end the claimer is told the match is cancelled, the no-show's browser can't search (SearchCooldown, its own),
+/// and another browser at the same address still finds a match
+#[tokio::test(flavor = "multi_thread")]
+async fn a_no_show_is_refused_its_next_search_and_its_neighbours_are_not() {
+    engine::init(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../out/arena/collision_meshes"))).unwrap();
+    let (identity, cert_hash) = net::dev_identity().unwrap();
+    let server = net::endpoint(identity, 0).unwrap();
+    let port = server.local_addr().unwrap().port();
+    let (to_game, messages) = tokio::sync::mpsc::channel(rl_server::game_loop::TO_GAME_QUEUE);
+    let playlists = [1, 2, 3]
+        .map(|team_size| rl_server::match_host::Playlist { team_size, match_type: rl_server::game::MatchType::Casual, forfeit_vote_wait: None })
+        .to_vec();
+    std::thread::spawn(move || game_loop::run(messages, game_loop::Mode::Queue(playlists), None, heartbeat(), Instant::now()));
+    tokio::spawn(net::accept_loop(Arc::new(server), to_game, open_limits()));
+    // (from an IPv4 address: an IPv6 one, ::1, is its /64, blocked at once)
+    const V4: &str = "127.0.0.1";
+
+    let (a, b) = tokio::join!(
+        first_reply_at(V4, port, cert_hash, keyed_hello(protocol::INTENT_SEARCH, 1, 0, 11)),
+        first_reply_at(V4, port, cert_hash, keyed_hello(protocol::INTENT_SEARCH, 1, 0, 22)),
+    );
+    let (Control::MatchFound { token: ta }, ..) = a else { panic!("{:?}", a.0) };
+    let (Control::MatchFound { .. }, ..) = b else { panic!("{:?}", b.0) };
+    let (welcome, _conn, mut recv) = first_reply_at(V4, port, cert_hash, queue_hello(protocol::INTENT_CLAIM, 0, ta)).await;
+    assert!(matches!(welcome, Control::Welcome { .. }), "{welcome:?}");
+    // (b never claims: cancelled at the window's end, 12 s, and a told so)
+    let start = Instant::now();
+    let kicked = tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            if let Control::Kicked { reason } = read_control(&mut recv).await {
+                return reason;
+            }
+        }
+    })
+    .await
+    .expect("told the match was cancelled");
+    assert_eq!(kicked, protocol::KICK_NOT_ALL_JOINED);
+    assert!(start.elapsed() < Duration::from_secs(14), "cancelled after {:?}", start.elapsed());
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let (refused, ..) = first_reply_at(V4, port, cert_hash, keyed_hello(protocol::INTENT_SEARCH, 1, 0, 22)).await;
+    assert!(matches!(refused, Control::SearchCooldown { seconds, network: false } if (100..=120).contains(&seconds)), "{refused:?}");
+    // Two other browsers at the same address: matched
+    let (c, d) = tokio::join!(
+        first_reply_at(V4, port, cert_hash, keyed_hello(protocol::INTENT_SEARCH, 1, 0, 33)),
+        first_reply_at(V4, port, cert_hash, keyed_hello(protocol::INTENT_SEARCH, 1, 0, 44)),
+    );
+    assert!(matches!(c.0, Control::MatchFound { .. }) && matches!(d.0, Control::MatchFound { .. }), "{:?} {:?}", c.0, d.0);
+}
+

@@ -166,6 +166,19 @@ module linked with `-sDYNAMIC_EXECUTION=0`: no eval), both bases pinned by diges
 (notes/hitboxes.md), the title is Carball, and the web build ships `THIRD_PARTY_NOTICES.txt`. Tests for the mutants
 RX13 saw survive (S1, S7, S13, S14, S22, S24; C5, C7, C11, C12, C13, C17; E11-E14; P2, Q4, Q7, Q8); the goal e2e's bound
 is the session's own offset movement around the goal (RV-379).
+**RX14 (RV-384..405), 2026-10-15** (the last review before the public deploy; protocol 20): a no-show is blocked by
+its browser key; its IPv4 address only after two different keys stalled from it within 10 minutes or a keyless search
+stalled (an IPv6 /64 at once), the page then told the network's searches are paused, blaming no one (RV-385, the user's
+go via tmp-8e); a new cooldown lets the staller's other waiting searches go with it (RV-386). The netstate gate excuses a
+divergence with contacts only if splicing in the server's persistent contacts makes it identical, 2 % at most
+(RV-387); a guard test (`render/shippedNames.test.ts`) keeps the game's, maker's, cars' and arenas' names out of dist,
+the WebAssembly, public/ and our strings, in CI and the image build (RV-388). The web image's CSP has the game server's
+origin alone in `connect-src` (written at start from `GAME_SERVER_URL`; `EXTRA_CONNECT_SRC` for tests), relative
+redirects, a root-owned configuration, OCI labels with the revision and `carball.source` (commit or worktree); the build
+refuses a commit-like tag for `--worktree` and any build path in the binary (RV-395..398); `--healthcheck` reads only
+its port and a bad number names its variable (RV-399). Waiting for the user: RV-384's scope (mode names, "RL"
+abbreviations). Deferred, no measured effect: RV-389..391 (the kickoff's insertion order, the collision objects'
+re-append on spawn, deduplicating a snapshot's order).
 **The browser tests' servers** start from `client/e2e/servers.ts` (Playwright's globalSetup), not its webServer: here a
 connection to a closed 127.0.0.1 port is dropped, not refused, and Playwright's pre-check of each server's URL waited
 2 min 14 s per server (9 of the suite's 12 minutes).

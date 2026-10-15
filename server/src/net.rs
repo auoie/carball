@@ -619,6 +619,12 @@ mod tests {
     }
 
     #[test]
+    fn the_handshakes_deadlines_are_4_s_for_quic_and_10_s_through_the_hello() {
+        let limits = NetLimits::default();
+        assert_eq!((limits.quic_handshake, limits.handshake), (Duration::from_secs(4), Duration::from_secs(10)));
+    }
+
+    #[test]
     fn an_unproven_address_is_sent_a_retry_and_takes_no_slot() {
         let limits = NetLimits { max_sessions: 1, per_address: 1, ..NetLimits::default() };
         let sessions = Arc::new(tokio::sync::Semaphore::new(1));

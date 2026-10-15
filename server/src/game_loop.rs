@@ -61,8 +61,8 @@ pub fn run(mut messages: Receiver<ToGame>, mode: Mode, test_goal_after: Option<f
                             Searched::Queued => {}
                             Searched::NoPlaylist => refuse(out, protocol::REFUSED_MODE),
                             // (its browser or address stalled a match: refused with the time left, RV-367)
-                            Searched::Cooldown { seconds } => {
-                                let _ = out.try_send(Outgoing::Control(Control::SearchCooldown { seconds }.encode()));
+                            Searched::Cooldown { seconds, network } => {
+                                let _ = out.try_send(Outgoing::Control(Control::SearchCooldown { seconds, network }.encode()));
                             }
                         }
                     }
