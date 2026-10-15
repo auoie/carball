@@ -7,7 +7,10 @@
 // 9: the goal replay (its phase, plan and skip votes; Hello's auto-skip); 10: forfeit votes, the match type, a leaver's
 // car, no contest; 11: quick chat, players' names (the roster), a leave's reason; 12: whether a leaver's car explodes;
 // 13: match stats, mute, Hello's chat filters; 14: the match's intro and end (its phases, the end screen's countdown,
-// ready checks, podium titles), Refused's version reason
+// ready checks, podium titles), Refused's version reason; 15: the game's compact state and rates (G1); 16: the vehicles'
+// order (FP1); 17: the queue (Hello's intent, playlist and token, MatchFound, IdleWarning, Kicked); 18: the moving
+// bodies' broadphase boxes (FP2); 19: a search's browser key and returning token, SearchCooldown; 20: SearchCooldown's
+// network flag
 export const PROTOCOL_VERSION = 20;
 /** A name's bytes at most (UTF-8) */
 export const MAX_NAME_BYTES = 32;

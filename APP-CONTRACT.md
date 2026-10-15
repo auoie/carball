@@ -6,7 +6,15 @@ the hosting side's (not here).
 | Image | What | Port | Reached at |
 |---|---|---|---|
 | `carball-web` | the web client: static files (nginx) | **3000/tcp** (plain HTTP; TLS in front, e.g. the tunnel) | `https://carball.zolt.top` |
-| `carball-game` | the game server: matches over WebTransport (HTTP/3, QUIC) | **4433/udp** (`GAME_PORT`), public, nothing else published | `game.carball.zolt.top` (DNS only, no proxy: it's UDP) |
+| `carball-game` | the game server: matches over WebTransport (HTTP/3, QUIC) | **4433/udp** (`GAME_PORT`), public, nothing else published | `game.carball.zolt.top` (DNS only, no proxy: it's UDP; **an A record only, no AAAA**: see below) |
+
+**IPv4 only (the user's decision, RV-406).** `game.carball.zolt.top` has an A record and **no AAAA record**. Behind
+Docker's default bridge (`-p 4433:4433/udp`), IPv6 clients reach the server through Docker's userland proxy, so the
+server would see every IPv6 player as one address (the bridge's gateway): one address's limits (8 at once, 30 a minute)
+for all of them, and two no-shows anywhere on IPv6 blocking them all. IPv4 keeps each client's real address. Deploy
+check: `dig AAAA game.carball.zolt.top` returns nothing. To serve IPv6 later, run the game container with
+`--network host` (it then sees real addresses; no `-p` mapping or network isolation, and UDP 4433 and 127.0.0.1:8081
+must be free on the host), then add the AAAA record.
 
 ## Build, export, push
 
@@ -36,7 +44,7 @@ refused with a message).
 | Env | Default | |
 |---|---|---|
 | `GAME_SERVER_URL` | `https://game.carball.zolt.top:4433/play` | the game server's WebTransport URL; written into `/config.json` at start (`https://HOST[:PORT]/PATH`, else the container exits), and its origin is the page's only `connect-src` besides its own |
-| `EXTRA_CONNECT_SRC` | (none) | testing only: more `connect-src` sources (e.g. `http://127.0.0.1:14503 https://127.0.0.1:14502` for a development server's info and port); letters, digits, `: / . * - _` and spaces, else the container exits |
+| `EXTRA_CONNECT_SRC` | (none) | testing only: more `connect-src` sources (e.g. `http://127.0.0.1:14503 https://127.0.0.1:14502` for a development server's info and port); space-separated `SCHEME://HOST[:PORT]` (http, https, ws, wss; the port a number or `*`), else the container exits. `GAME_SERVER_URL` likewise allows only letters, digits and `. - _ ~ /` after `https://`, one line |
 
 - **Port:** 3000/tcp, plain HTTP. `/assets/*` (hashed names) cached for a year, the rest `no-cache`, `/config.json`
   `no-store`; unknown paths serve `index.html`. Every response carries `X-Content-Type-Options: nosniff`,
@@ -44,9 +52,10 @@ refused with a message).
   server's origin from `GAME_SERVER_URL`; `frame-ancestors 'none'`; no eval). Redirects are relative (a directory's
   trailing slash), so nothing names the container's port behind the tunnel. The third-party notices are at
   `/THIRD_PARTY_NOTICES.txt`.
-- **User:** nginx runs unprivileged (uid 101, nginx 1.30, the stable line). The site and its configuration are root's,
-  read-only to it; it writes `/config.json` and the policy (`/etc/nginx/carball-csp.conf`) at start, and its pid and
-  buffers under `/tmp` and `/var/cache/nginx`. (The base image's `EXPOSE 8080` stays in its metadata: the server listens
+- **User:** nginx runs unprivileged (uid 101, nginx 1.30, the stable line). The site and all of `/etc/nginx` are root's,
+  read-only to it; it writes `/config.json` and the policy (`/etc/nginx/carball-csp.conf`, a strict one for the default
+  `GAME_SERVER_URL` baked in at build, so a container started without the entrypoint still sends one) at start, and its
+  pid and buffers under `/tmp` and `/var/cache/nginx`. (The base image's `EXPOSE 8080` stays in its metadata: the server listens
   on 3000 only.)
 - **Labels:** `org.opencontainers.image.title`, `.revision` (the commit) and `.version` (the tag), and `carball.source`:
   `commit`, or `worktree` for an image built with `--worktree` (both images).
@@ -95,15 +104,15 @@ the same port): `docker run --rm -e GAME_PORT=14502 -p 127.0.0.1:14502:14502/udp
   match: a panic inside one ends only that match) or the engine aborts.
 - **Stop:** SIGTERM or SIGINT ends it at once; the matches in progress end with it.
 - **Limits it enforces:** a client proves its address (a QUIC Retry) before it takes a slot; 512 sessions at once; per
-  client address (an IPv6 one by its /64) 8 at once and 30 new a minute; 4 s for the QUIC handshake, 10 s through the
+  client address (an IPv6 one by its /64) 8 at once and 30 new a minute (a large carrier NAT or NAT64 exit can hold more players than that: RV-418, raise `--max-per-address` if they're refused); 4 s for the QUIC handshake, 10 s through the
   hello; 240 input packets and 20 control messages a second per session (more are dropped; a session that keeps
   flooding either is closed); QUIC: 4 streams each way, small receive windows.
 - **The queue's no-shows:** a found match waits 12 s for its players to claim their slots; cancelled for someone (a
   slot not claimed, or a player leaving before the start), the others search again at the front of the queue, and whoever
   stalled it can't search for 2 minutes by their browser's key, their other waiting searches let go too. Their address
-  is blocked as well when it's theirs (an IPv6 /64, or a search without a key) or after two different keys stalled from
-  it within 10 minutes (an IPv4 address is often shared: a carrier's NAT, a dorm, a household), and then the page says
-  the network's searches are paused, blaming no one.
+  (IPv4, or an IPv6 /64) is blocked as well after two different keys stalled from it within 10 minutes, or at once for a
+  search without a key (either is often shared: a carrier's NAT, a dorm, a household, public Wi-Fi: RV-385, RV-407), and
+  then the page says the network's searches are paused, blaming no one.
 - **Resources** (measured, RX13): one game thread runs every match (120 Hz each): ~0.7 % of a core a 1v1, ~1.8 % a 3v3
   (all threads ~2.1 % / ~5.5 %), so the game thread caps a server near 55 3v3 matches. Memory ~8 MB idle, ~1.4 MB a 1v1
   and ~1.8 MB a 3v3. Bandwidth per player: ~3.4 KB/s down in a 1v1, ~5.6 KB/s in a 3v3; ~5–13 KB/s up (inputs).

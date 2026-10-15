@@ -45,7 +45,14 @@ const NAMES = [
 /** The game's abbreviation in our own names (renamed carball: the user's decision of 2026-10-15): rl-clone.*, rl-server,
  *  rlengine, and camel-cased rlSomething (a minifier never makes those) */
 const ABBREVIATIONS = /(?<![a-z0-9])rl[-_]?(clone|server|engine)|(?<![A-Za-z0-9_$])rl[A-Z][a-z]{2,}/i;
-const PATTERN = new RegExp(`(?<![a-z0-9])(${NAMES.map((n) => n.replace(/ /g, "[ _-]?")).join("|")})(?![a-z0-9])`, "i");
+const escape = (name: string): string => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const PATTERN = new RegExp(`(?<![a-z0-9])(${NAMES.map((n) => escape(n).replace(/ /g, "[ _-]?")).join("|")})(?![a-z0-9])`, "i");
+
+/** The text with its compounds split (camelCase, letters and digits: "carOctane", "MannfieldNight", "octane2"), so a
+ *  name inside one counts as a word (RV-413) */
+function words(text: string): string {
+  return text.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/([A-Za-z])([0-9])/g, "$1 $2").replace(/([0-9])([A-Za-z])/g, "$1 $2");
+}
 
 function files(dir: string): string[] {
   if (!existsSync(dir)) return [];
@@ -65,7 +72,7 @@ const OLD_KEYS = /["'`]rl-clone\.["'`]/g;
 
 /** The first name (or abbreviation) in the text, with its surroundings */
 function found(text: string): string | null {
-  const m = PATTERN.exec(text) ?? ABBREVIATIONS.exec(text.replace(OLD_KEYS, '""'));
+  const m = PATTERN.exec(text) ?? PATTERN.exec(words(text)) ?? ABBREVIATIONS.exec(text.replace(OLD_KEYS, '""'));
   return m ? text.slice(Math.max(0, m.index - 30), m.index + m[0].length + 30) : null;
 }
 
@@ -90,6 +97,11 @@ describe("what ships names no game (RV-388)", () => {
     expect(found("window.rlFreeplay = x")).not.toBeNull();
     expect(found("rlengine_web-ab12.wasm")).not.toBeNull();
     expect(found("var rl=1,url=2;curlFoo()")).toBeNull();
+    // Compounds (RX15's G4, G4b)
+    expect(found('const carOctane = 1')).not.toBeNull();
+    expect(found('"MannfieldNight"')).not.toBeNull();
+    expect(found("octane2")).not.toBeNull();
+    expect(found("isOctaneLike")).not.toBeNull();
   });
 
   it("our modules' strings (not their comments)", () => {

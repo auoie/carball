@@ -7,17 +7,21 @@ COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY security-headers.conf /etc/nginx/security-headers.conf
 COPY 40-carball-config.sh /docker-entrypoint.d/40-carball-config.sh
 COPY dist/ /usr/share/nginx/html/
-# (config.json and the Content-Security-Policy, written at start, the nginx user's: the site and the configuration stay
-# root's, read-only to it, RV-397; nginx keeps /tmp and /var/cache/nginx for its pid and buffers)
+# (config.json and the Content-Security-Policy, written at start, the nginx user's: the site and all of /etc/nginx stay
+# root's, read-only to it, RV-397, RV-408; nginx keeps /tmp and /var/cache/nginx for its pid and buffers. The policy is
+# written once here too, for the default GAME_SERVER_URL: a container started without the entrypoint still sends a
+# strict one, RV-409)
 USER root
-RUN touch /usr/share/nginx/html/config.json /etc/nginx/carball-csp.conf \
-    && chown 101:101 /usr/share/nginx/html/config.json /etc/nginx/carball-csp.conf \
-    && chown -R root:root /etc/nginx/conf.d && chmod 755 /etc/nginx/conf.d && chmod 644 /etc/nginx/conf.d/default.conf
+RUN chown -R root:root /etc/nginx && chmod -R go-w /etc/nginx \
+    && CONFIG_DIR=/tmp sh /docker-entrypoint.d/40-carball-config.sh \
+    && touch /usr/share/nginx/html/config.json \
+    && chown 101:101 /usr/share/nginx/html/config.json /etc/nginx/carball-csp.conf
 USER 101
 LABEL org.opencontainers.image.title="carball-web" \
       org.opencontainers.image.description="Carball's web client: its static files, served by nginx on :3000" \
       org.opencontainers.image.vendor="" org.opencontainers.image.url="" org.opencontainers.image.source="" \
-      org.opencontainers.image.documentation="" org.opencontainers.image.version="" maintainer=""
+      org.opencontainers.image.documentation="" org.opencontainers.image.version="" maintainer="" \
+      org.opencontainers.image.created="" org.opencontainers.image.licenses=""
 ENV GAME_SERVER_URL=https://game.carball.zolt.top:4433/play
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s CMD wget -q -O /dev/null http://127.0.0.1:3000/healthz || exit 1

@@ -14,7 +14,8 @@ function randomKey(): bigint {
   return key === 0n ? 1n : key;
 }
 
-/** The browser's own key, sent with its searches (RV-367: a no-show's cooldown counts it, and its address): random, kept
+/** The browser's own key, sent with its searches (RV-367: a no-show's cooldown counts it; its address only after a
+ *  second key's, RV-385): random, kept
  *  in local storage across tabs and visits; this page's alone if the browser keeps nothing */
 export function browserKey(storage: Pick<Storage, "getItem" | "setItem"> | null = local()): bigint {
   try {

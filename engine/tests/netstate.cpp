@@ -8,8 +8,10 @@
 // A server arena plays a scripted 2v2. Every `interval` ticks a client arena that drifted away (it started from the
 // same snapshot but drove with other inputs) applies the server's state. Then:
 //  - every car, the ball and the pads must equal the server's, bit for bit (contact points aside);
-//  - both step with the same inputs for `window` ticks and must stay identical, except when bodies were touching at
-//    that moment (Bullet's contact points are not sent, as in the game); those runs report how far they drift.
+//  - both step with the same inputs for `window` ticks and must stay identical, except by the client's own stored
+//    broadphase boxes or persistent contact points, which a network state doesn't carry (as the game's doesn't): each
+//    such run shown so (the server's copied in, it continues identical; the client as restored reproduces the live one),
+//    2% of them at most each (RV-369, RV-387, RV-412).
 //
 // Usage: netstate [collision_meshes dir] [seconds] [window ticks] [interval ticks]
 #include "RocketSim.h"
@@ -675,9 +677,22 @@ int main(int argc, char** argv) {
 		// Diverged: the same run with the server's stored boxes copied into the client. Identical then, the boxes did it:
 		// a network state carries none, as the game's doesn't, so the client's wheel rays may pick other candidates than
 		// the server's (a game-faithful misprediction, RV-369); counted on its own, a few allowed
-		// (and the client with the server's persistent contacts: identical then, the contacts did it, RV-387)
-		bool boxCaused = false, contactCaused = false;
+		// (and the client with the server's persistent contacts: identical then, the contacts did it, RV-387). Either
+		// excuse holds only if the client as restored, run alone with the same inputs, ends where the live client did: a
+		// state the snapshot misses can't hide behind them (RV-412)
+		bool boxCaused = false, contactCaused = false, restoredFaithful = false;
 		if (!identical) {
+			Arena* replay = Restore(clientAtUpdate);
+			for (const std::vector<CarControls>& tick : applied) {
+				int i = 0;
+				for (Car* car : replay->GetCars())
+					car->controls = tick[i++];
+				replay->Step();
+			}
+			restoredFaithful = NetVisibleState(replay) == NetVisibleState(client);
+			delete replay;
+		}
+		if (!identical && restoredFaithful) {
 			Arena* again = Restore(serverAtUpdate);
 			Arena* boxed = Restore(clientAtUpdate);
 			CopyBoxes(again, boxed);
@@ -685,7 +700,7 @@ int main(int argc, char** argv) {
 			delete again;
 			delete boxed;
 		}
-		if (!identical && !boxCaused) {
+		if (!identical && restoredFaithful && !boxCaused) {
 			Arena* again = Restore(serverAtUpdate);
 			Arena* atUpdate = Restore(serverAtUpdate);
 			Arena* hybrid = WithServerContacts(clientAtUpdate, atUpdate);
@@ -709,8 +724,8 @@ int main(int argc, char** argv) {
 			worstDrift = fmaxf(worstDrift, MaxPositionDifference(server, client));
 		} else {
 			unexplained++;
-			printf("tick %d: diverged, not by the stored boxes or the persistent contacts (drift %.3f uu; contacts at the update: %d)\n", tick,
-				MaxPositionDifference(server, client), (int)touching);
+			printf("tick %d: diverged, not by the stored boxes or the persistent contacts (drift %.3f uu; contacts at the update: %d%s)\n", tick,
+				MaxPositionDifference(server, client), (int)touching, restoredFaithful ? "" : "; the restored client isn't the live one");
 		}
 		tick += window;
 		delete client;

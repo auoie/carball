@@ -503,33 +503,16 @@ async fn a_quic_connection_that_never_asks_for_a_session_is_closed_at_the_quic_d
     assert!(start.elapsed() < Duration::from_secs(3), "closed after {:?}", start.elapsed());
 }
 
-/// A no-show over the wire (RV-367, RV-385, RX14's N21 and N22): of a 1v1, one claims and the other never does; at the
-/// window's end the claimer is told the match is cancelled, the no-show's browser can't search (SearchCooldown, its own),
-/// and another browser at the same address still finds a match
-#[tokio::test(flavor = "multi_thread")]
-async fn a_no_show_is_refused_its_next_search_and_its_neighbours_are_not() {
-    engine::init(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../out/arena/collision_meshes"))).unwrap();
-    let (identity, cert_hash) = net::dev_identity().unwrap();
-    let server = net::endpoint(identity, 0).unwrap();
-    let port = server.local_addr().unwrap().port();
-    let (to_game, messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
-    let playlists = [1, 2, 3]
-        .map(|team_size| carball_server::match_host::Playlist { team_size, match_type: carball_server::game::MatchType::Casual, forfeit_vote_wait: None })
-        .to_vec();
-    std::thread::spawn(move || game_loop::run(messages, game_loop::Mode::Queue(playlists), None, heartbeat(), Instant::now()));
-    tokio::spawn(net::accept_loop(Arc::new(server), to_game, open_limits()));
-    // (from an IPv4 address: an IPv6 one, ::1, is its /64, blocked at once)
-    const V4: &str = "127.0.0.1";
-
-    let (a, b) = tokio::join!(
-        first_reply_at(V4, port, cert_hash, keyed_hello(protocol::INTENT_SEARCH, 1, 0, 11)),
-        first_reply_at(V4, port, cert_hash, keyed_hello(protocol::INTENT_SEARCH, 1, 0, 22)),
+/// A 1v1 found for the keys `a` and `b` from `host`; `a` claims, `b` never does: `a`'s session told at the window's end
+async fn stalled_match(host: &str, port: u16, cert_hash: [u8; 32], a: u64, b: u64) {
+    let (ra, rb) = tokio::join!(
+        first_reply_at(host, port, cert_hash, keyed_hello(protocol::INTENT_SEARCH, 1, 0, a)),
+        first_reply_at(host, port, cert_hash, keyed_hello(protocol::INTENT_SEARCH, 1, 0, b)),
     );
-    let (Control::MatchFound { token: ta }, ..) = a else { panic!("{:?}", a.0) };
-    let (Control::MatchFound { .. }, ..) = b else { panic!("{:?}", b.0) };
-    let (welcome, _conn, mut recv) = first_reply_at(V4, port, cert_hash, queue_hello(protocol::INTENT_CLAIM, 0, ta)).await;
+    let (Control::MatchFound { token: ta }, ..) = ra else { panic!("{:?}", ra.0) };
+    let (Control::MatchFound { .. }, ..) = rb else { panic!("{:?}", rb.0) };
+    let (welcome, _conn, mut recv) = first_reply_at(host, port, cert_hash, queue_hello(protocol::INTENT_CLAIM, 0, ta)).await;
     assert!(matches!(welcome, Control::Welcome { .. }), "{welcome:?}");
-    // (b never claims: cancelled at the window's end, 12 s, and a told so)
     let start = Instant::now();
     let kicked = tokio::time::timeout(Duration::from_secs(20), async {
         loop {
@@ -543,13 +526,65 @@ async fn a_no_show_is_refused_its_next_search_and_its_neighbours_are_not() {
     assert_eq!(kicked, protocol::KICK_NOT_ALL_JOINED);
     assert!(start.elapsed() < Duration::from_secs(14), "cancelled after {:?}", start.elapsed());
     tokio::time::sleep(Duration::from_millis(100)).await;
-    let (refused, ..) = first_reply_at(V4, port, cert_hash, keyed_hello(protocol::INTENT_SEARCH, 1, 0, 22)).await;
-    assert!(matches!(refused, Control::SearchCooldown { seconds, network: false } if (100..=120).contains(&seconds)), "{refused:?}");
-    // Two other browsers at the same address: matched
-    let (c, d) = tokio::join!(
-        first_reply_at(V4, port, cert_hash, keyed_hello(protocol::INTENT_SEARCH, 1, 0, 33)),
-        first_reply_at(V4, port, cert_hash, keyed_hello(protocol::INTENT_SEARCH, 1, 0, 44)),
-    );
-    assert!(matches!(c.0, Control::MatchFound { .. }) && matches!(d.0, Control::MatchFound { .. }), "{:?} {:?}", c.0, d.0);
 }
 
+/// No-shows over the wire from one address (RV-367, RV-385, RV-407; RX14's N21, N22, RX15's C13): a no-show's browser
+/// can't search (its own refusal) while other browsers there still find matches; a second browser's no-show there blocks
+/// the address, told as the network's
+async fn no_shows_from(host: &'static str) {
+    engine::init(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../out/arena/collision_meshes"))).unwrap();
+    let (identity, cert_hash) = net::dev_identity().unwrap();
+    let server = net::endpoint(identity, 0).unwrap();
+    let port = server.local_addr().unwrap().port();
+    let (to_game, messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
+    let playlists = [1, 2, 3]
+        .map(|team_size| carball_server::match_host::Playlist { team_size, match_type: carball_server::game::MatchType::Casual, forfeit_vote_wait: None })
+        .to_vec();
+    std::thread::spawn(move || game_loop::run(messages, game_loop::Mode::Queue(playlists), None, heartbeat(), Instant::now()));
+    tokio::spawn(net::accept_loop(Arc::new(server), to_game, open_limits()));
+
+    stalled_match(host, port, cert_hash, 11, 22).await;
+    let (refused, ..) = first_reply_at(host, port, cert_hash, keyed_hello(protocol::INTENT_SEARCH, 1, 0, 22)).await;
+    assert!(matches!(refused, Control::SearchCooldown { seconds, network: false } if (100..=120).contains(&seconds)), "{host}: {refused:?}");
+    // Two other browsers there: matched, and one of them doesn't claim either: the address is blocked
+    stalled_match(host, port, cert_hash, 33, 44).await;
+    let (blocked, ..) = first_reply_at(host, port, cert_hash, keyed_hello(protocol::INTENT_SEARCH, 1, 0, 55)).await;
+    assert!(matches!(blocked, Control::SearchCooldown { seconds, network: true } if (100..=120).contains(&seconds)), "{host}: {blocked:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn no_shows_over_ipv4_block_their_browser_then_after_two_their_address() {
+    no_shows_from("127.0.0.1").await;
+}
+
+/// The same over IPv6: its /64 is blocked only after two browsers' no-shows too (RX15's RV-407)
+#[tokio::test(flavor = "multi_thread")]
+async fn no_shows_over_ipv6_block_their_browser_then_after_two_their_64() {
+    no_shows_from("[::1]").await;
+}
+
+
+/// The binary's `--healthcheck` (the image's HEALTHCHECK): 0 against a live health endpoint, 1 against none, quickly
+/// (RX15's C16: its wiring in main)
+#[tokio::test(flavor = "multi_thread")]
+async fn the_binarys_healthcheck_answers_by_the_health_endpoint() {
+    let free_port = || std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let (live, dead) = (free_port(), free_port());
+    let start = Instant::now();
+    let beat = Arc::new(AtomicU64::new(0));
+    tokio::spawn(net::serve_health(live, beat.clone(), start));
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    beat.store(start.elapsed().as_millis() as u64, std::sync::atomic::Ordering::Relaxed);
+    let check = |port: u16| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_carball-server"))
+            .args(["--healthcheck", "--health-port", &port.to_string()])
+            .env_remove("HEALTH_PORT")
+            .status()
+            .unwrap()
+            .code()
+    };
+    let at = Instant::now();
+    assert_eq!(tokio::task::spawn_blocking(move || check(live)).await.unwrap(), Some(0));
+    assert_eq!(tokio::task::spawn_blocking(move || check(dead)).await.unwrap(), Some(1));
+    assert!(at.elapsed() < Duration::from_secs(5), "{:?}", at.elapsed());
+}

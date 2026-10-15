@@ -5,10 +5,10 @@
 //! parties or regions in v1). A match cancelled before its start (`Cancelled`: someone didn't claim their slot, or left
 //! before the start) puts the players who claimed back at the front, in their first search's order, and whoever stalled
 //! it can't search for `NO_SHOW_COOLDOWN`, by their browser's key (RV-367, the user's decision: one person can't keep
-//! stalling matches; leaving a started match isn't penalized). Their address is blocked too only when it's theirs alone
-//! or several stall from it (RV-385: an IPv6 /64 at once; an IPv4 address, often shared by a carrier's NAT, a dorm or a
-//! household, after `ADDRESS_STALLS` different browser keys stalled from it within `STALL_WINDOW`, or at once for a
-//! search that sent no key), so a new key doesn't dodge it and one staller doesn't block their neighbours.
+//! stalling matches; leaving a started match isn't penalized). Their address (an IPv4 address, an IPv6 /64) is blocked
+//! too only after `ADDRESS_STALLS` different browser keys stalled from it within `STALL_WINDOW`, or at once for a search
+//! that sent no key (RV-385, RV-407: either is often shared, by a carrier's NAT, a dorm, a household, public Wi-Fi), so a
+//! new key doesn't dodge it and one staller doesn't block their neighbours.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::net::IpAddr;
@@ -26,6 +26,8 @@ const RETURN_SECONDS: f64 = 60.0;
 /// An IPv4 address is blocked after this many different browser keys stalled from it within `STALL_WINDOW` (s)
 const ADDRESS_STALLS: usize = 2;
 const STALL_WINDOW: f64 = 600.0;
+/// The addresses whose recent stalls are kept, at most (the oldest let go first: memory stays bounded, RV-407)
+const MAX_STALL_ADDRESSES: usize = 100_000;
 
 /// Who a search is from: its address (`net::address_key`), its browser's key (0: none), and the token of the slot it
 /// claimed in a match cancelled for someone else (0: none)
@@ -82,7 +84,7 @@ pub struct Matchmaker {
     returning: HashMap<u64, (u8, f64, f64)>,
     /// Who stalled a match: until when they can't search
     cooldowns: HashMap<Who, f64>,
-    /// Each IPv4 address's recent stalls: the browser keys and when
+    /// Each address's recent stalls (an IPv6 one by its /64): the browser keys and when
     stalls: HashMap<IpAddr, Vec<(u64, f64)>>,
     /// When the expired entries were last let go (s)
     tidied: f64,
@@ -157,18 +159,21 @@ impl Matchmaker {
                 if h.from.key != 0 {
                     self.cooldowns.insert(Who::Key(h.from.key), until);
                 }
-                let address = match h.from.address {
-                    IpAddr::V6(_) => true,
-                    IpAddr::V4(_) if h.from.key == 0 => true,
-                    IpAddr::V4(_) => {
-                        let stalls = self.stalls.entry(h.from.address).or_default();
-                        stalls.retain(|&(_, at)| now - at < STALL_WINDOW);
-                        stalls.push((h.from.key, now));
-                        let mut keys: Vec<u64> = stalls.iter().map(|&(k, _)| k).collect();
-                        keys.sort_unstable();
-                        keys.dedup();
-                        keys.len() >= ADDRESS_STALLS
+                let address = h.from.key == 0 || {
+                    if !self.stalls.contains_key(&h.from.address) && self.stalls.len() >= MAX_STALL_ADDRESSES {
+                        // (full: the address whose last stall is oldest let go)
+                        let oldest = self.stalls.iter().min_by(|a, b| a.1.last().map_or(0.0, |s| s.1).total_cmp(&b.1.last().map_or(0.0, |s| s.1))).map(|(a, _)| *a);
+                        if let Some(oldest) = oldest {
+                            self.stalls.remove(&oldest);
+                        }
                     }
+                    let stalls = self.stalls.entry(h.from.address).or_default();
+                    stalls.retain(|&(_, at)| now - at < STALL_WINDOW);
+                    stalls.push((h.from.key, now));
+                    let mut keys: Vec<u64> = stalls.iter().map(|&(k, _)| k).collect();
+                    keys.sort_unstable();
+                    keys.dedup();
+                    keys.len() >= ADDRESS_STALLS
                 };
                 if address {
                     self.cooldowns.insert(Who::Address(h.from.address), until);
@@ -477,11 +482,42 @@ mod tests {
         let mut queue = Matchmaker::new(&playlists());
         let _c = stall(&mut queue, SearchFrom { key: 0, ..from(1) }, from(2), 0.0, true);
         assert_eq!(try_search(&mut queue, 23, SearchFrom { key: 556, ..from(1) }, 20.0), Searched::Cooldown { seconds: 112, network: true });
-        // An IPv6 /64: at once
+        // An IPv6 /64 the same: one staller doesn't block their neighbours, a second key does (RV-407)
         let mut queue = Matchmaker::new(&playlists());
         let six = SearchFrom { address: "2001:db8:1:2::".parse().unwrap(), ..from(1) };
         let _d = stall(&mut queue, six, from(2), 0.0, true);
-        assert_eq!(try_search(&mut queue, 24, SearchFrom { key: 556, ..six }, 20.0), Searched::Cooldown { seconds: 112, network: true });
+        assert_eq!(try_search(&mut queue, 24, SearchFrom { key: 556, ..six }, 20.0), Searched::Queued);
+        let _e = stall(&mut queue, SearchFrom { key: 557, ..six }, from(3), 30.0, true);
+        assert_eq!(try_search(&mut queue, 25, SearchFrom { key: 556, ..six }, 50.0), Searched::Cooldown { seconds: 112, network: true });
+        // One key stalling twice is still one key (RX15's C4)
+        let mut queue = Matchmaker::new(&playlists());
+        let _f = stall(&mut queue, from(1), from(2), 0.0, true);
+        let _g = stall(&mut queue, from(1), from(3), 140.0, true);
+        assert_eq!(try_search(&mut queue, 26, SearchFrom { key: 556, ..from(1) }, 160.0), Searched::Queued);
+        // Their records let go after the window (RX15's C11)
+        let mut host = Recorder::default();
+        queue.form(&mut host, 900.0);
+        assert!(queue.stalls.is_empty());
+    }
+
+    #[test]
+    fn a_refusal_shows_the_longer_wait_and_a_newly_blocked_addresss_waiting_searches_are_let_go() {
+        // (RX15's C12: the browser's 2 minutes nearly over, the address's longer: the address's wait, still the browser's
+        // words; C18: a third browser waiting at the address when the second stall blocks it is let go, told it's the
+        // network's)
+        let mut queue = Matchmaker::new(&playlists());
+        let _a = stall(&mut queue, from(1), from(2), 0.0, true);
+        let (tx, mut waiting) = channel(OUT_QUEUE);
+        assert_eq!(queue.search(40, 2, tx, SearchFrom { key: 558, ..from(1) }, 50.0), Searched::Queued);
+        let _b = stall(&mut queue, SearchFrom { key: 555, ..from(1) }, from(3), 88.0, true);
+        let mut told = None;
+        while let Ok(Outgoing::Control(bytes)) = waiting.try_recv() {
+            if let Ok(Control::SearchCooldown { seconds, network }) = Control::decode(&bytes[2..]) {
+                told = Some((seconds, network));
+            }
+        }
+        assert_eq!(told, Some((120, true)));
+        assert_eq!(try_search(&mut queue, 41, from(1), 110.0), Searched::Cooldown { seconds: 110, network: false });
     }
 
     #[test]

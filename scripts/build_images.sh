@@ -67,7 +67,8 @@ CARGO_TARGET_DIR="$TARGET" CARGO_PROFILE_RELEASE_DEBUG=0 CARGO_PROFILE_RELEASE_S
 cp "$TARGET/release/carball-server" "$STAGE/game/"
 cp -a "$SRC/out/arena/collision_meshes" "$STAGE/game/collision_meshes" # (the committed meshes only)
 cp "$SRC/server/docker/Dockerfile" "$STAGE/game/"
-paths=$(strings "$STAGE/game/carball-server" | grep -cE "$HOME|$R|/mnt/" || true)
+# (grep -a on the binary itself: without binutils' strings this still counts, RV-414)
+paths=$(grep -a -c -E "$HOME|$R|/mnt/" "$STAGE/game/carball-server" || true)
 echo "build machine paths in the binary: $paths"
 [ "$paths" = 0 ] || { echo "the binary names the build machine's paths: not built"; exit 1; }
 

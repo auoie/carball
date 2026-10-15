@@ -154,7 +154,8 @@ blank `ALLOWED_ORIGIN` fails closed and origins compare without case (RV-372); a
 (RV-373). The queue's no-shows (RV-367, the user's decision): a found match waits 12 s; cancelled for someone, the
 players who claimed (or were still loading, refused their claim) search again with their token in the search hello and
 go back to the front in their first search's order; whoever stalled it (didn't claim, or left before the start) gets
-`SearchCooldown` for 2 minutes by browser key (`rl-clone.browserKey`, local storage) and by address. The wheel ray's hit
+`SearchCooldown` for 2 minutes by browser key (`carball.browserKey`, local storage; their address only after a second
+key's stall there: RX14's RV-385, RX15's RV-407). The wheel ray's hit
 point is `setInterpolate3`, its normal never normalized again, the planes tested analytically (patch 108, RV-377); the
 candidates come in the game's SAP order, kept by the broadphase and carried by snapshots (patch 109, RV-375; the statics'
 keys are the engine's boxes: the remaining difference). The netstate gate counts divergences caused by the client's
@@ -188,6 +189,15 @@ engine module `carball_engine(_web).mjs/.wasm` (the targets keep their names), t
 `rl-clone.*` moved once at start: `settings/storageKeys.ts`, the one "rl" that ships, on purpose), the page's hooks and
 shader functions `carball*` (`camera/carballCamera.ts`), the scoreboard settings' heading "Columns". RocketSim keeps its
 name (its notice). The names guard checks the modes and the abbreviations too.
+**RX15 (RV-406..418), 2026-10-15:** IPv4 only (the user's decision, RV-406): the game server's name has an A record and
+no AAAA, since Docker's default bridge shows every IPv6 client as one address (`--network host` documented for IPv6
+later). An IPv6 /64 is blocked like an IPv4 address, after two keys' stalls or a keyless one (RV-407), the stall records
+capped at 100k addresses. The web image's whole /etc/nginx is root's (RV-408), a strict CSP is baked in at build (RV-409)
+and the start script allowlists its inputs (RV-410). netstate's excuses need the restored client to reproduce the live
+one (RV-412); the names guard splits camelCase and digit compounds (RV-413); the build's path check reads the binary
+with `grep -a` (RV-414). Tests: the no-show scenario over IPv4 and IPv6 end to end (network:true on the wire after two
+keys), the binary's `--healthcheck`, the queue's C4/C11/C12/C18. Post-launch: RV-411 (griefing a shared address from
+inside it).
 **The browser tests' servers** start from `client/e2e/servers.ts` (Playwright's globalSetup), not its webServer: here a
 connection to a closed 127.0.0.1 port is dropped, not refused, and Playwright's pre-check of each server's URL waited
 2 min 14 s per server (9 of the suite's 12 minutes).
