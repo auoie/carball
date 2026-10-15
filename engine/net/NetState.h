@@ -23,8 +23,8 @@ namespace NetState {
 	// dodge's forward input, the goal explosion's wave, the pitch lock after a dodge that ended by landing; 8: each
 	// body's world inverse inertia tensor (the game doesn't recompute it after the tick's rounding or a placement)
 	constexpr uint8_t VERSION = 8;
-	// 9: the compact form (above)
-	constexpr uint8_t COMPACT_VERSION = 9;
+	// 9: the compact form (above); 10: the vehicles' order in the step when not the cars' ID order (FP1 G2)
+	constexpr uint8_t COMPACT_VERSION = 10;
 
 	struct WriteOptions {
 		bool ball = true;

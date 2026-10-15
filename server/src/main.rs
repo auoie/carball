@@ -33,7 +33,11 @@ fn parse_args() -> anyhow::Result<Args> {
             "--port" => args.port = value()?.parse()?,
             "--info-port" => args.info_port = value()?.parse()?,
             "--meshes" => args.meshes = value()?.into(),
-            "--team-size" => args.team_size = value()?.parse()?,
+            "--team-size" => {
+                // (two teams of it within the match's most players: RV-329)
+                args.team_size = value()?.parse()?;
+                anyhow::ensure!((1..=(rl_server::game::MAX_PLAYERS / 2) as u8).contains(&args.team_size), "--team-size: 1 to {}", rl_server::game::MAX_PLAYERS / 2);
+            }
             "--match-type" => {
                 args.match_type = match value()?.as_str() {
                     "casual" => MatchType::Casual,

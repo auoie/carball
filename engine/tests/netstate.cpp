@@ -180,6 +180,8 @@ static int RespawnSpotFollowsTheServer() {
 		for (Car* c : server->GetCars())
 			options.carIds.push_back(c->id);
 		for (int t = 0; t < 4 * 120 && (t < 10 || car->GetState().isDemoed || client->GetCar(car->id)->GetState().isDemoed); t++) {
+			// (odd seeds: the player steers to a side before the spot locks, RV-324)
+			car->controls.steer = (seed % 2 == 1 && t > 30 && t < 200) ? (seed == 1 ? 1.f : -1.f) : 0.f;
 			server->Step();
 			client->Step();
 			if (t % 8 == 0) {
@@ -198,6 +200,119 @@ static int RespawnSpotFollowsTheServer() {
 		delete client;
 		delete server;
 	}
+	return failures;
+}
+
+// The vehicles' order in the step after a demolition and its respawn (the respawned car last): a client that had the
+// cars in ID order takes the server's from the compact update (FP1 G2)
+static int VehicleOrderTravels() {
+	Arena* server = Arena::Create(GameMode::SOCCAR);
+	Car* a = server->AddCar(Team::BLUE);
+	server->AddCar(Team::ORANGE);
+	server->AddCar(Team::BLUE);
+	server->ResetToRandomKickoff(2);
+	server->Step(10);
+	Arena* client = Restore(Snapshot(server));
+	a->Demolish(server->GetMutatorConfig().respawnDelay);
+	for (int t = 0; t < 400 && (t < 2 || a->GetState().isDemoed); t++)
+		server->Step();
+	server->Step(5);
+	client->SetVehicleOrder({});
+	NetState::WriteOptions options;
+	for (Car* c : server->GetCars())
+		options.carIds.push_back(c->id);
+	DataStreamOut update;
+	NetState::Write(server, update, options);
+	DataStreamIn in;
+	in.data = update.data;
+	int failures = NetState::Read(client, in) ? 0 : 1;
+	if (failures || client->GetVehicleOrder() != server->GetVehicleOrder() || server->GetVehicleOrder().back() != a->id) {
+		printf("netstate compact: the vehicles' order didn't travel\n");
+		failures = 1;
+	}
+	delete client;
+	delete server;
+	return failures;
+}
+
+// A car placed k ticks before the update (a kickoff between updates): the client, which didn't place it, continues exactly
+// as the server from that update (its wheels' first ticks after the placement sent: RV-322)
+static int PlacementBeforeTheUpdate() {
+	int failures = 0;
+	for (int k : { 0, 1, 2, 5, -1 }) { // (-1: placed at once, its jump held through it: RV-324)
+		bool jumpHeld = k < 0;
+		k = RS_MAX(k, 0);
+		Arena* server = Arena::Create(GameMode::SOCCAR);
+		Car* car = server->AddCar(Team::BLUE);
+		Car* other = server->AddCar(Team::ORANGE);
+		server->ResetToRandomKickoff(2);
+		for (Car* c : { car, other }) {
+			c->controls.throttle = 1;
+			c->controls.jump = jumpHeld;
+		}
+		server->Step(60);
+		Arena* client = Restore(Snapshot(server));
+		CarState placed = CarState();
+		placed.pos = Vec(1000, -2000, 17);
+		placed.spawnCount = car->GetState().spawnCount + 1;
+		car->SetState(placed);
+		for (int t = 0; t < k; t++) {
+			server->Step();
+			client->Step();
+		}
+		NetState::WriteOptions options;
+		options.carIds = { car->id, other->id };
+		DataStreamOut update;
+		NetState::Write(server, update, options);
+		DataStreamIn in;
+		in.data = update.data;
+		failures += NetState::Read(client, in) ? 0 : 1;
+		for (Car* c : server->GetCars())
+			client->GetCar(c->id)->controls = c->controls;
+		float worst = 0;
+		for (int t = 0; t < 30; t++) {
+			server->Step();
+			client->Step();
+			worst = fmaxf(worst, (car->GetState().pos - client->GetCar(car->id)->GetState().pos).Length());
+		}
+		if (worst != 0) {
+			printf("netstate compact: a car placed %d ticks before the update drifts %.4f uu on the client\n", k, worst);
+			failures++;
+		}
+		delete client;
+		delete server;
+	}
+	return failures;
+}
+
+// The values a car's state sends as they are, after an update: a sweep of boost amounts (bytes or exact), its flip resets
+// (RV-310, RV-312, RV-324)
+static int SentValuesArrive() {
+	int failures = 0;
+	Arena* server = Arena::Create(GameMode::SOCCAR);
+	Car* car = server->AddCar(Team::BLUE);
+	server->ResetToRandomKickoff(1);
+	server->Step(5);
+	Arena* client = Restore(Snapshot(server));
+	for (float boost : { 0.f, 0.3f, 33.333332f, 47.1234f, 99.99f, 100.f, 12.5f }) {
+		car->_internalState.boost = boost;
+		car->_internalState.flipResets = (uint16_t)(boost / 10);
+		client->GetCar(car->id)->_internalState.boost = 50;
+		NetState::WriteOptions options;
+		options.carIds = { car->id };
+		DataStreamOut update;
+		NetState::Write(server, update, options);
+		DataStreamIn in;
+		in.data = update.data;
+		failures += NetState::Read(client, in) ? 0 : 1;
+		CarState mine = client->GetCar(car->id)->GetState();
+		if (memcmp(&mine.boost, &boost, sizeof(float)) != 0 || mine.flipResets != car->_internalState.flipResets) {
+			printf("netstate compact: boost %.6f arrived as %.6f, flip resets %d as %d\n", boost, mine.boost, car->_internalState.flipResets, mine.flipResets);
+			failures++;
+		}
+	}
+	delete client;
+	delete server;
 	return failures;
 }
 
@@ -356,6 +471,9 @@ int main(int argc, char** argv) {
 	}
 	compactFailures += HeldCarPushedOffItsPin();
 	compactFailures += RespawnSpotFollowsTheServer();
+	compactFailures += VehicleOrderTravels();
+	compactFailures += PlacementBeforeTheUpdate();
+	compactFailures += SentValuesArrive();
 	printf("netstate compact: %d updates, mean %zu bytes for ball + 4 cars + pads (max %zu), cars alone %zu bytes a car; "
 		"%d failed; the drifted client after %d ticks: identical %d, worst drift %.3f uu\n",
 		checks, checks ? compactTotal / checks : 0, compactMax, checks ? compactCarsOnly / checks / 4 : 0, compactFailures, window,

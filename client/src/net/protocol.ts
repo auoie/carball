@@ -8,7 +8,7 @@
 // car, no contest; 11: quick chat, players' names (the roster), a leave's reason; 12: whether a leaver's car explodes;
 // 13: match stats, mute, Hello's chat filters; 14: the match's intro and end (its phases, the end screen's countdown,
 // ready checks, podium titles), Refused's version reason
-export const PROTOCOL_VERSION = 15;
+export const PROTOCOL_VERSION = 16;
 /** A name's bytes at most (UTF-8) */
 export const MAX_NAME_BYTES = 32;
 export const MAX_INPUT_FRAMES = 10;

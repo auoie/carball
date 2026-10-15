@@ -252,6 +252,37 @@ mod tests {
     }
 
     #[test]
+    fn its_counters_stay_at_their_top_under_a_flood() {
+        // (SEC-7: a client's packets drive them; a debug build panics on an overflow, so they saturate; RV-324)
+        let mut b = InputBuffer {
+            stats: Stats {
+                over_buffer_frames: u32::MAX,
+                under_buffer_frames: u32::MAX,
+                repeated: u32::MAX,
+                zeroed: u32::MAX,
+                fill_skips: u32::MAX,
+                trimmed: u32::MAX,
+                late_dropped: u32::MAX,
+                duplicates: u32::MAX,
+                consumed: u32::MAX,
+                    never_consumed: u32::MAX,
+            },
+            ..InputBuffer::default()
+        };
+        b.receive(1, 1, &[frame(1); 70], 0.0); // (over the 60 kept: trimmed)
+        b.receive(2, 1, &[frame(1)], 0.0); // (a duplicate)
+        for t in 0..200 {
+            b.tick(f64::from(t) / 120.0, t % 2 == 1);
+        }
+        b.receive(3, 1, &[frame(1)], 2.0); // (late)
+        b.tick(3.0, false);
+        assert_eq!(b.stats.trimmed, u32::MAX);
+        assert_eq!(b.stats.late_dropped, u32::MAX);
+        assert_eq!(b.stats.consumed, u32::MAX);
+        assert_eq!(b.stats.under_buffer_frames, u32::MAX);
+    }
+
+    #[test]
     fn a_press_in_the_first_of_two_frames_dodges_by_its_axes() {
         // (G10: the first frame pressed jump with a forward dodge, the second holds it pushing sideways; the car drives
         // with the second, its dodge goes forward)

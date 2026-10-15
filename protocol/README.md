@@ -1,4 +1,4 @@
-# Game protocol (version 15)
+# Game protocol (version 16)
 
 Client ↔ server over **WebTransport** (HTTP/3, QUIC). All integers little-endian. Implemented in
 `server/src/protocol.rs` (Rust) and `client/src/net/protocol.ts` (TypeScript); `vectors.json` holds byte-exact
@@ -105,6 +105,8 @@ Scoreboard`, `0x8D StatEvent`, `0x8E Ticker`, the goal event's scorer and assist
 `Hello`. Version 14: the match's intro and end (phases 6 to 8, phase 4 now only the 3 s before the podium; `Match`'s
 `secondsLeft`), the scoreboard's ready flag and podium titles, `Refused` reason 1. Version 15: the compact network
 state and the game's replication rates (above): ≈ 3.3 / 4.4 / 5.5 KB/s per client in a 1v1 / 2v2 / 3v3, from 22–100.
+Version 16: the vehicles' order in the physics step (the game's action array: notes/physics-values.md FP1 G2) in the
+engine snapshot (Welcome, World) and, when it isn't the cars' ID order, in the network state.
 
 Podium title ids (`notes/match-stats.md` §5.4a; the client's `game/podiumTitles.ts`): 0 OvertimeGoal, 1 Goals_10,
 2 Goals_6_9, 3 Goals_3_5, 4 Saves_10, 5 Saves_6_9, 6 Saves_3_5, 7 EpicSaves, 8 PoolShots, 9 BackwardsGoal, 10 BicycleGoal,

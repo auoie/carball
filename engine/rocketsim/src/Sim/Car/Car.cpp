@@ -195,6 +195,29 @@ void Car::_RespawnAt(Vec pos, float yaw, float boostAmount) {
 	this->SetState(newState);
 }
 
+// RL PATCH: a demolished car's tick, before the cars on the field (the arena's first pass): its respawn timer, and at
+// its end the respawn (a new car in the game: its vehicle appended to the step's order, notes/physics-values.md FP1
+// G2); while demolished its body doesn't simulate. Whether it respawned
+bool Car::_PreTickRespawn(GameMode gameMode, float tickTime, const MutatorConfig& mutatorConfig, bool respawnHeld) {
+	if (!_internalState.isDemoed)
+		return false;
+	_internalState.demoRespawnTimer = RS_MAX(_internalState.demoRespawnTimer - tickTime, 0);
+	if (_internalState.demoRespawnTimer == 0 && !respawnHeld) {
+		// RL PATCH: at the spot the arena chose (Arena::_UpdateDemolished: deterministic, not on another car)
+		if (_respawnSpot.valid)
+			_RespawnAt(_respawnSpot.pos, _respawnSpot.yaw, mutatorConfig.carSpawnBoostAmount);
+		else
+			Respawn(gameMode, -1, mutatorConfig.carSpawnBoostAmount);
+		_respawnSpot.valid = false;
+		return true;
+	}
+	// Disable rigidbody simulation
+	_rigidBody.m_activationState1 = DISABLE_SIMULATION;
+	_rigidBody.m_collisionFlags |= btCollisionObject::CF_NO_CONTACT_RESPONSE;
+	_pressAxes.valid = false; // RL PATCH (G10)
+	return false;
+}
+
 void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig& mutatorConfig, bool respawnHeld) {
 	using namespace RLConst;
 
@@ -217,42 +240,19 @@ void Car::_PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig&
 	// RL PATCH: keep the start-of-tick state, like the game's OldRBState (used by car-car impacts)
 	_CaptureOldState();
 
-	{ // Update simulation state
-		if (_internalState.isDemoed) {
-			_internalState.demoRespawnTimer = RS_MAX(_internalState.demoRespawnTimer - tickTime, 0);
-			if (_internalState.demoRespawnTimer == 0 && !respawnHeld) {
-				// RL PATCH: at the spot the arena chose (Arena::_UpdateDemolished: deterministic, not on another car)
-				if (_respawnSpot.valid)
-					_RespawnAt(_respawnSpot.pos, _respawnSpot.yaw, mutatorConfig.carSpawnBoostAmount);
-				else
-					Respawn(gameMode, -1, mutatorConfig.carSpawnBoostAmount);
-				_respawnSpot.valid = false;
-				// RL PATCH: a respawned car is a new actor: its start-of-tick state is its spawn, not where it was
-				// demolished (the goal explosion's push, the car impacts and the ball hit read it this tick: RV-217)
-				_CaptureOldState();
-			}
-		}
-
-		// RL PATCH: a car respawned this tick is simulated from this tick on (the game sets it on the ground at once;
-		// the frames before its body exists are its asset loading, a machine-dependent latency; static analysis).
-		// RocketSim kept it frozen for the respawn tick
-		if (_internalState.isDemoed) {
-			// Disable rigidbody simulation
-			_rigidBody.m_activationState1 = DISABLE_SIMULATION;
-			_rigidBody.m_collisionFlags |= btCollisionObject::CF_NO_CONTACT_RESPONSE;
-
-			// Don't bother updating anything
-		} else {
-			// Prevent the car's RB from becoming inactive
-			_rigidBody.m_activationState1 = ACTIVE_TAG;
-			_rigidBody.m_collisionFlags &= ~btCollisionObject::CF_NO_CONTACT_RESPONSE;
-		}
-	}
-
+	// RL PATCH: a demolished car's respawn comes first, in its own pass (_PreTickRespawn: its vehicle joins the step
+	// after the others', a new car's); here it's a car on the field
 	if (_internalState.isDemoed) {
 		_pressAxes.valid = false; // RL PATCH (G10)
 		return; // No other updates need to occur
 	}
+
+	// RL PATCH: a car respawned this tick is simulated from this tick on (the game sets it on the ground at once;
+	// the frames before its body exists are its asset loading, a machine-dependent latency; static analysis).
+	// RocketSim kept it frozen for the respawn tick
+	// Prevent the car's RB from becoming inactive
+	_rigidBody.m_activationState1 = ACTIVE_TAG;
+	_rigidBody.m_collisionFlags &= ~btCollisionObject::CF_NO_CONTACT_RESPONSE;
 
 	bool jumpPressed = controls.jump && !_internalState.lastControls.jump;
 

@@ -358,10 +358,13 @@ and NR-1..9 (minor G13).
 **Intentional design differences (fine):** WebTransport datagrams instead of UE3 bunches (ack and states atomic in one
 datagram; ≈ 55–75 B overhead per datagram; the real cost is congestion control, G1); full engine state per car (buys exact
 resims, i.e. 0 local mispredictions on a clean network; it is the source of the ≈ 10× size, so any shrinking must keep
-that exactness); remote jump/boost/dodge simulated, pads predicted, boost amount in the state (the user's call; G2); the
+that exactness); remote cars follow the game's rule since 8c8df8a (G2 option (b): jump, boost, dodge and air control not
+simulated on the client); pads predicted; boost amount in the state, but a remote car's boost consumption isn't predicted
+between updates (the game predicts it for SimulatedProxy, ShouldPredictBoostConsumption, §11.1; display only); the
 demo event at once on the reliable stream (faster than the game); LPF counted from the first input; the 128-slot ring;
-resync renumbering; echo-compensated RTT (the display should still use the game's filter, G6); no STS/CSTS (matches the
-game's default). Remote cars recompute wheel contacts instead of reusing stored ones; components re-decide during a resim
+echo-compensated RTT (the display should still use the game's filter, G6); no STS/CSTS (matches the
+game's default; since 3885154 there is no resync renumbering: ack 0, an ack ahead and no pawn apply directly at
+the present, G5/G7). Remote cars recompute wheel contacts instead of reusing stored ones; components re-decide during a resim
 (G11).
 
 ## 13. Test plan (in-process network tests; NL3)
@@ -388,7 +391,7 @@ game's default). Remote cars recompute wheel contacts instead of reusing stored 
 | T4 | **Smoothing invariants** (CS) | the T3 correction stream at 60 and 144 fps | drawn pose at correction; per-frame steps | the drawn pose is unchanged by a correction before the decay (≤ 1e-3 uu, 1e-5 rad); per-frame step = min(dt·4, 1)·\|e\| and min(dt·5, 1)·angle (6.67 % / 8.33 % at 60 fps, 2.78 % / 3.47 % at 144 fps), so drawn-jump p99 ≤ 0.0667·p99(\|e\|); TV-1/2/5 exact except the last frame (ours 0 vs the game's 0.304 uu, G13); a spawn-counter change is not smoothed; dt dilated after a goal |
 | T5 | **Remote input model A/B** (decides G2 and G1-3) | remote inputs from replay streams or human logs; RTT 50/100/150; our cadence vs the game's (cars 13.4/s, ball 35/s); models (a) ours, (b) the game's rule, (c) the game's rule + our remote components | remote and ball CS error at capture p50/p99; drawn-jump p99 | decide by the numbers (the spec gives no bound) |
 | T6 | **Bandwidth and cadence gate** (deterministic Rust; 4/6 players near and away from the ball; `game.rs:1438-1495`) | – | per-actor send rates; datagram sizes; KB/s | today: ball 60/s, near cars 60/s, far cars and pads 15/s, no datagram > 1100 B, 2v2 ≈ 45–60 KB/s, 3v3 ≈ 95–140 KB/s; after G1: car ≤ ~40 B, 2v2 ≤ 15 KB/s |
-| T7 | **Stalls, resync, hidden tab** | client stalls 0.3 / 2 / 10 s | resyncs; queued parts; resets; server buffer | one resync per stall longer than ≈ (queue + 5)/120 s; ≤ 120 queued parts (NR-4); one reset 2 s later; server buffer 7 → 18 → 7 |
+| T7 | **Stalls, direct applies, hidden tab** | client stalls 0.3 / 2 / 10 s | direct applies (formerly resyncs); queued parts; resets; server buffer | one run of direct applies per stall longer than ≈ (queue + 5)/120 s (ack ahead), then normal acks; ≤ 120 queued parts (NR-4); one reset 2 s later; server buffer 7 → 18 → 7 |
 | T8 | **Timeouts** | outages | zero input; icon timing; lost connection; recovery | zero input exactly 1.0 s after the last packet; disconnected icon at 0.8 s (+ ≤ 0.35 s poll), never before 15 s, cleared within one poll of resumed updates; QUIC idle "lost connection" (already `server/tests/end_to_end.rs:111`); a 3 s two-way outage recovers with one smoothed correction and no resync storm |
 | T9 | **Ack, RTT and ping** | RTT profiles; reordered acks | ping; corrections | our ping in [RTT, RTT + 17 ms] at 60 fps; an old reordered ack still corrects consistently; after G6 the filter vectors (first sample min(N, 0.3); clamp at 3× when N > 2×; time constant ≈ 100 samples; others' pings multiples of 4, refreshed ≤ every 4 s) |
 | T10 | **Connection Quality** (after G4) | scripted stats | statuses | every threshold; 1.5 s hysteresis (worse at once); entry order [Disconnected, Server, Packet, Jitter, Latency]; default on |

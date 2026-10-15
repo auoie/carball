@@ -1,6 +1,8 @@
 #include "rlengine.h"
 
 #include "NetState.h"
+
+#include <cmath>
 #include "RocketSim.h"
 #include "PodiumTitles.h"
 #include "StatFactory.h"
@@ -98,13 +100,16 @@ void rl_car_repress_jump(RLArena* a, uint32_t id) {
 	car->_internalState.lastControls.jump = false;
 }
 
+// (the sliders' limits, the defaults for what isn't a number: the server clamps them too, SEC-10; here again, RV-331)
+static float Preference(float v, float lo, float hi, float fallback) { return std::isfinite(v) ? RS_CLAMP(v, lo, hi) : fallback; }
+
 void rl_set_car_preferences(RLArena* a, uint32_t id, float dodge, float steer, float air) {
 	Car* car = a->arena->GetCar(id);
 	if (!car)
 		return;
-	car->config.dodgeDeadzone = dodge;
-	car->config.steeringSensitivity = steer;
-	car->config.airControlSensitivity = air;
+	car->config.dodgeDeadzone = Preference(dodge, 0.1f, 1.f, 0.8f);
+	car->config.steeringSensitivity = Preference(steer, 1.f, 10.f, 1.f);
+	car->config.airControlSensitivity = Preference(air, 1.f, 10.f, 1.f);
 }
 
 void rl_step(RLArena* a, int ticks) {
@@ -228,6 +233,17 @@ void rl_car_demolish(RLArena* a, uint32_t id) {
 void rl_set_press_axes(RLArena* a, uint32_t id, float dodge_forward, float yaw, float roll) {
 	if (Car* car = a->arena->GetCar(id))
 		car->_pressAxes = { true, dodge_forward, yaw, roll };
+}
+
+void rl_set_vehicle_order(RLArena* a, const uint32_t* ids, size_t num) {
+	a->arena->SetVehicleOrder(std::vector<uint32_t>(ids, ids + num));
+}
+
+size_t rl_vehicle_order(RLArena* a, uint32_t* out, size_t max_ids) {
+	std::vector<uint32_t> ids = a->arena->GetVehicleOrder();
+	for (size_t i = 0; i < ids.size() && out && i < max_ids; i++)
+		out[i] = ids[i];
+	return ids.size();
 }
 
 int rl_car_net_info(RLArena* a, uint32_t id, RLCarNetInfo* out) {

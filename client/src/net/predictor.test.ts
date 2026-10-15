@@ -236,6 +236,93 @@ describe("Predictor", () => {
     client.dispose();
   });
 
+  it("the game's rule: another car boosting on the ground replicates full throttle, which fades in the replay (GA-1, RV-321)", () => {
+    for (const throttle of [0, 0.2]) {
+      const server = World.create(engine);
+      const local = server.addCar(0);
+      const other = server.addCar(1);
+      server.resetKickoff(4);
+      for (let f = 0; f < 30; f++) server.step(); // (settled on its wheels)
+      const client = World.create(engine);
+      client.loadState(server.saveState());
+      const predictor = new Predictor(client, local, 0);
+      let at34: Uint8Array = new Uint8Array();
+      for (let f = 1; f <= 40; f++) {
+        server.setControls(other, { ...inputControls(NO_INPUT), throttle, boost: true });
+        server.step();
+        if (f === 34) at34 = server.writeNetState({ ball: true, carIds: [local, other], pads: true });
+        predictor.advance(NO_INPUT);
+      }
+      // (its inputs differ from those recorded: the replay's frames rewritten with the effective throttle, 1, fading; the
+      // boost button off)
+      expect(predictor.correct(34, [at34])).toBe(6);
+      expect(client.carControls(other).throttle, String(throttle)).toBeCloseTo(0.5, 2);
+      expect(client.carControls(other).boost).toBe(false);
+      predictor.advance(NO_INPUT);
+      expect(client.carControls(other).throttle).toBe(1);
+      expect(client.carControls(other).boost).toBe(false);
+      server.dispose();
+      client.dispose();
+    }
+  });
+
+  it("the game's rule: unchanged inputs leave the recorded frames alone; the handbrake is copied, not faded (RV-323)", () => {
+    const server = World.create(engine);
+    const local = server.addCar(0);
+    const other = server.addCar(1);
+    server.resetKickoff(4);
+    const client = World.create(engine);
+    client.loadState(server.saveState());
+    const predictor = new Predictor(client, local, 0);
+    const states = new Map<number, Uint8Array>();
+    for (let f = 1; f <= 20; f++) {
+      server.setControls(other, { ...inputControls(NO_INPUT), throttle: 1, handbrake: true });
+      server.step();
+      states.set(f, server.writeNetState({ ball: true, carIds: [local, other], pads: true }));
+      predictor.advance(NO_INPUT);
+    }
+    // The first state with these inputs: frames 14..20 rewritten, the throttle fading, the handbrake as it is
+    predictor.correct(14, [states.get(14) ?? new Uint8Array()]);
+    expect(client.carControls(other).throttle).toBeCloseTo(0.5, 2);
+    expect(client.carControls(other).handbrake).toBe(true);
+    // A later state with the same inputs as recorded for its frame: nothing rewritten (the present's stays as it was)
+    predictor.correct(14, [states.get(14) ?? new Uint8Array()]);
+    expect(client.carControls(other).throttle).toBeCloseTo(0.5, 2);
+    server.dispose();
+    client.dispose();
+  });
+
+  it("the game's rule: an older update doesn't replace the newer one's replicated inputs; a reload adopts new cars (RV-323)", () => {
+    const server = World.create(engine);
+    const local = server.addCar(0);
+    const other = server.addCar(1);
+    server.resetKickoff(4);
+    const client = World.create(engine);
+    client.loadState(server.saveState());
+    const predictor = new Predictor(client, local, 0);
+    const states = new Map<number, Uint8Array>();
+    for (let f = 1; f <= 20; f++) {
+      server.setControls(other, { ...inputControls(NO_INPUT), throttle: f < 10 ? 1 : -1 });
+      server.step();
+      states.set(f, server.writeNetState({ ball: true, carIds: [local, other], pads: true }));
+      predictor.advance(NO_INPUT);
+    }
+    predictor.correct(16, [states.get(16) ?? new Uint8Array()]);
+    predictor.correct(8, [states.get(8) ?? new Uint8Array()]); // (older: throttle 1, not the newer -1)
+    predictor.advance(NO_INPUT);
+    expect(client.carControls(other).throttle).toBe(-1);
+    // A reload with a new car: it gets its components off and its replicated inputs
+    const third = server.addCar(0);
+    server.setControls(third, { ...inputControls(NO_INPUT), throttle: 1 });
+    server.step();
+    client.addCar(0);
+    predictor.reload(predictor.frame, server.saveState());
+    predictor.advance(NO_INPUT);
+    expect(client.carControls(third).throttle).toBe(1);
+    server.dispose();
+    client.dispose();
+  });
+
   it("the game's rule: another car's boost and air control don't run on the client (its components are off)", () => {
     // Another car in the air, boosting (the server's state after its first boosting tick): on the client it falls as
     // the server's states show it (the game's SimulatedProxy); with its components on, the client would boost it on
@@ -257,7 +344,9 @@ describe("Predictor", () => {
       speeds[model] = Math.hypot(v.x, v.y);
       client.dispose();
     }
-    expect(speeds["game"]).toBeLessThan(30); // (the first tick's boost, no more)
+    // (the horizontal speed the server's state gave it, no more: no boost, no air throttle; RV-323)
+    const atAck = Math.hypot(server.car(other).vel.x, server.car(other).vel.y);
+    expect(speeds["game"]).toBeLessThanOrEqual(atAck + 0.01);
     expect(speeds["gameComponents"]).toBeGreaterThan(200);
     server.dispose();
   });

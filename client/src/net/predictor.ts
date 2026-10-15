@@ -1,4 +1,4 @@
-// Client prediction and rollback, as the game does it (notes/netcode.md): the client simulates ahead with its own
+// Client prediction and rollback, as the game does it (notes/netcode-live.md): the client simulates ahead with its own
 // inputs and keeps the world after every frame. When the server's state for one of its frames arrives, it loads its
 // own world at that frame, puts in the server's state, and replays to the present with the inputs it recorded.
 // Other cars as the game drives them (notes/netcode-live.md §4, the "game" model): every new frame takes their latest
@@ -113,7 +113,7 @@ export class Predictor {
     for (const car of this.#world.carIds()) {
       if (car === this.#localCar) continue;
       this.#world.setCarComponents(car, this.#model !== "game");
-      this.#replicated.set(car, { controls: this.#world.carControls(car), frame });
+      this.#replicated.set(car, { controls: this.#replicatedControls(car), frame });
     }
   }
 
@@ -178,9 +178,19 @@ export class Predictor {
     return { ...before, ...this.#replicatedPart(replicated) };
   }
 
-  /** What a car's replicated values set: its throttle, steer and handbrake; its boost button too, for the vehicle's
-   *  throttle alone (boost held on the ground drives at full throttle: GA-1, which the game's server applies before it
-   *  replicates the throttle; the Boost component is off); and its jump and dodge's forward input in "gameComponents" */
+  /** A car's replicated controls as the world holds them now (the server's, just applied): its throttle as the game's
+   *  server replicates it, after GA-1 (boost held on the ground with boost left: full throttle, Car_TA.SetVehicleInput
+   *  before ReplicatedThrottle), its boost button off (its Boost component doesn't run here) ("game"; as they are in
+   *  "gameComponents", whose components run GA-1 themselves) (RV-321) */
+  #replicatedControls(car: number): CarControls {
+    const c = this.#world.carControls(car);
+    if (this.#model === "gameComponents") return c;
+    const s = this.#world.car(car);
+    return { ...c, throttle: s.onGround && c.boost && s.boost > 0 ? 1 : c.throttle, boost: false };
+  }
+
+  /** What a car's replicated values set: its throttle, steer and handbrake (its boost button off: above); and its jump,
+   *  boost and dodge's forward input in "gameComponents" */
   #replicatedPart(c: CarControls): Partial<CarControls> {
     const part: Partial<CarControls> = { throttle: c.throttle, steer: c.steer, handbrake: c.handbrake, boost: c.boost };
     return this.#model === "gameComponents" ? { ...part, jump: c.jump, ...(c.dodgeForward === undefined ? {} : { dodgeForward: c.dodgeForward }) } : part;
@@ -259,7 +269,7 @@ export class Predictor {
     }
     this.lastCars = new Set(updated);
     if (this.#model === "fade") this.#rebase(updated, this.#frame);
-    for (const car of updated) if (car !== this.#localCar) this.#replicated.set(car, { controls: this.#world.carControls(car), frame: this.#frame });
+    for (const car of updated) if (car !== this.#localCar) this.#replicated.set(car, { controls: this.#replicatedControls(car), frame: this.#frame });
     this.#record(this.#frame, present?.input ?? NO_INPUT, present?.remote ?? this.#presentRemote());
     this.stats.direct++;
     this.#watchPawn();
@@ -318,7 +328,7 @@ export class Predictor {
       if (car === this.#localCar) continue;
       const known = this.#replicated.get(car);
       if (known && known.frame > frame) continue;
-      const server = this.#world.carControls(car);
+      const server = this.#replicatedControls(car);
       this.#replicated.set(car, { controls: server, frame });
       const current = { ...(this.#recorded(present)?.remote.get(car) ?? server), ...this.#replicatedPart(server) };
       const recorded = this.#recorded(frame)?.remote.get(car);

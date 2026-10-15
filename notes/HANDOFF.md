@@ -72,6 +72,19 @@ an ack older than the history replays from its oldest frame. The server stops up
 and counts unsent datagrams; a jump press in the first of two frames consumed together dodges by that frame's axes
 (G10: `InputBuffer::press_axes`, `rl_set_press_axes`, `Car::_pressAxes`). T7 (client stalls 0.3/2/10 s) and T8 (a 3 s
 two-way outage: the server's buffer takes ≈ 38 s back to 7, the game's rule) in `client/src/net/session.test.ts`.
+**FP1, 2026-10-14** (vehicles in the game's order, notes/physics-values.md FP1 G2): the Arena keeps the game's action
+array (`Arena::_vehicleOrder`: a car added or respawned goes last, one demolished or removed leaves its place to the
+last, every kickoff spawns them again in join order = car IDs; the podium in the MVP order, set by the server) and the
+step runs the cars' pre-physics and vehicles in it, after a first pass of the demolished cars' respawns
+(`Car::_PreTickRespawn`). Snapshots, clones and the compact net state (when not plain ID order) carry it: protocol 16.
+Tests: rl_patch_tests TestVehicleOrder, T1 (TestCarOnCarRoof), T2 (TestCarOnBall); the determinism scenario's physics
+hashes are unchanged (its snapshot has the order: 20 B more). The engine README's flip-cancel line: the 5th tick after
+the press. A body placed by SetState isn't in the broadphase until the next step (other cars' wheel rays miss it for a
+tick; asked the static session what the game does). The review of G2 (RX9, RV-320..331) came with it: the e2e servers'
+start and stop in `client/src/testing/serverProcesses.ts` (a server killed by a signal fails the start at once,
+RV-320), a remote car's GA-1 folded into its replicated throttle (RV-321), a car placed in the last 16 ticks sends its
+wheels and the ticks since (RV-322), the tests RV-323..326, the goal's e2e test draws again (RV-327), `--team-size`
+validated and the engine's preference clamp (RV-329, RV-331).
 **The browser tests' servers** start from `client/e2e/servers.ts` (Playwright's globalSetup), not its webServer: here a
 connection to a closed 127.0.0.1 port is dropped, not refused, and Playwright's pre-check of each server's URL waited
 2 min 14 s per server (9 of the suite's 12 minutes).

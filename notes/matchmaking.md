@@ -241,6 +241,23 @@ Disconnect → menu modal; casual slot freed; no reconnect prompt (ranked teams 
      WaitingForMorePlayers); the skill lines would mislead;
   4. the queue-time label (only if our server sends an estimate).
   The error strings with "(Error: NN)" codes stay by key or get our own wording.
+- **Exact English (decrypted Coalesced_INT, HUD1 copy line numbers; TAGame overrides win; sent to 7e 2026-10-14):**
+  | Key | Text |
+  |---|---|
+  | UIText [MainMenu] FindMatch (26794) | Find Match |
+  | UIText [Global] SearchingTitle (26560) | Searching... |
+  | UIText [Global] CancelSearch (26079) | Cancel Search |
+  | UIText [Global] Connecting (26135) / Searching (26559) / Joining (26305) / Failed (26242) | Connecting / Searching / Joining / Failed |
+  | UIText [Global] SingleSelection (26594) / MultipleSelection (26360) | Single Selection / Multiple Selection |
+  | UIText [Matchmaking] JoiningIn (26844) | Joining in {0?SecondsRemaining} |
+  | TAGame [MatchmakingMessages] FindingBestMatch (21841) | Trying to find best match... |
+  | TAGame [MatchmakingMessages] WaitingForMorePlayers (21852) | Waiting for more players to start matchmaking with your preferences... |
+  | TAGame [MatchmakingMessages] MoreRegions (21850) / MorePlaylists (21851) | TIP: If you search in more regions you may find a match faster. / TIP: If you search for more playlists you may find a match faster. |
+  | UIText [Global] Warning (26708) / YouWillBeIdleKicked (26738) | Warning (shown upper-cased) / You will be kicked for being idle. |
+  | OnlineErrors [OnlineServerConnectionErrors] IdleKick (1434) | You were kicked for being idle. |
+  | TAGame [GFxShell_TA] DefaultDisconnectionTitle (21510) / UIText [Global] OK (26394) | Connection Lost / OK |
+  | [Errors] ConnectionFailed: TAGame Engine.int (1340) / base Engine.int (158) | Your connection to the game has been lost. (Error: 42) / Your connection to the game has been lost. |
+  End-menu strings (Play Again, Exit to Main Menu + inquiry, Leaving In): match-intro-outro.md "Cleared to ship verbatim".
 
 ## Server must enforce vs client only shows (proposal)
 **Server:**

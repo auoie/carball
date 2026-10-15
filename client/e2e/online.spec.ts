@@ -1,5 +1,6 @@
 // Online play against a local rl-server (started by playwright.config.ts on ports 14433/14434). Nothing here reads
-// pixels: every page loads with `?render=off` (nothing drawn; software WebGL for two or three pages starved the suite).
+// pixels: the pages load with `?render=off` (nothing drawn; software WebGL for two or three pages starved the suite),
+// but for the goal's, which draws the online effects (RV-327).
 import type { Page } from "@playwright/test";
 import { expect, hideGamepads, test } from "./fixtures";
 import { ends, join as joinServer, leave, leaveAll, newPlayer } from "./players";
@@ -167,7 +168,8 @@ test("a goal: the game slows down for 3.53 s, the goal replay plays, Space skips
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   // (this server knocks the ball into a goal 1 s after each go)
-  await page.goto("/?server=127.0.0.1:14436&render=off");
+  // (drawn: one online test draws the online effects, the goal's explosion and replay among them, RV-327)
+  await page.goto("/?server=127.0.0.1:14436");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
   // The banner: nobody touched the ball, so the team's name (GoalScored, "{Player} scored!")
   await expect(page.locator("#message")).toHaveText("BLUE SCORED!", { timeout: 30_000 });

@@ -71,6 +71,8 @@ unsafe extern "C" {
     fn rl_car_demolish(arena: *mut RLArena, car_id: u32);
     fn rl_car_net_info(arena: *mut RLArena, car_id: u32, out: *mut CarNetInfo) -> c_int;
     fn rl_set_press_axes(arena: *mut RLArena, car_id: u32, dodge_forward: f32, yaw: f32, roll: f32);
+    fn rl_set_vehicle_order(arena: *mut RLArena, car_ids: *const u32, num_cars: usize);
+    fn rl_vehicle_order(arena: *mut RLArena, out: *mut u32, max_ids: usize) -> usize;
     fn rl_pads_active(arena: *mut RLArena) -> u64;
     fn rl_take_events(arena: *mut RLArena, out: *mut i32, max_ints: usize) -> usize;
     fn rl_write_net_state(arena: *mut RLArena, ball: c_int, car_ids: *const u32, num_cars: usize, pads: c_int, out: *mut u8, capacity: usize) -> usize;
@@ -293,6 +295,22 @@ impl Arena {
         unsafe { rl_set_press_axes(self.ptr(), car_id, dodge_forward, yaw, roll) }
     }
 
+    /// The vehicles' order in the physics step (the game's action array: the podium's winners in the MVP order); cars
+    /// left out follow in ID order
+    pub fn set_vehicle_order(&mut self, car_ids: &[u32]) {
+        // SAFETY: valid arena; car_ids is a valid slice
+        unsafe { rl_set_vehicle_order(self.ptr(), car_ids.as_ptr(), car_ids.len()) }
+    }
+
+    pub fn vehicle_order(&mut self) -> Vec<u32> {
+        // SAFETY: valid arena; out has `max` ids of space (or is null with 0)
+        let n = unsafe { rl_vehicle_order(self.ptr(), std::ptr::null_mut(), 0) };
+        let mut out = vec![0u32; n];
+        // SAFETY: as above, `n` ids of space
+        unsafe { rl_vehicle_order(self.ptr(), out.as_mut_ptr(), n) };
+        out
+    }
+
     /// What the replication watches to force the car into the next update
     pub fn car_net_info(&mut self, car_id: u32) -> Option<CarNetInfo> {
         let mut out = CarNetInfo::default();
@@ -505,7 +523,7 @@ pub(crate) mod tests {
         assert_eq!(arena.tick_count(), 120);
         let state = arena.write_net_state(true, &[car], true);
         // (the compact form, engine/net/NetState.h: its version, the ball, a car and the pads, about the game's size)
-        assert!(state[0] == 9 && (60..200).contains(&state.len()), "{} B", state.len());
+        assert!(state[0] == 10 && (60..200).contains(&state.len()), "{} B", state.len());
         assert!(arena.save_state().len() > 1000);
     }
 

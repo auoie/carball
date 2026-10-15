@@ -1712,6 +1712,87 @@ static void TestComponentsOff() {
 	delete arena;
 }
 
+static void TestComponentsOffKeepsTheCar() {
+	puts("components off (RV-323): on a wall with throttle the car drives as with them on (auto-roll, sticky force, caps, the "
+		"vehicle are the car's); mid-dodge in the air it turns no more (the dodge's torque is a component's); a clone keeps it");
+	auto snapshot = [](Arena* arena) { DataStreamOut out; arena->Serialize(out); return out.data; };
+	auto restore = [](const std::vector<uint8_t>& data) { DataStreamIn in; in.data = data; return Arena::DeserializeNew(in); };
+	{ // Settled on the side wall at x = 4096 with components on, then on and off alike while its wheels stay on it
+		Arena* arena = Arena::Create(GameMode::SOCCAR);
+		Car* car = arena->AddCar(Team::BLUE);
+		car->SetState(CarAt(Vec(4096 - 18, 0, 600), Vec(0, 0, 1), Vec(-1, 0, 0), Vec(0, 0, 300)));
+		CarControls drive;
+		drive.throttle = 1;
+		drive.steer = 0.3f;
+		for (int i = 0; i < 40; i++) {
+			car->controls = drive;
+			arena->Step(1);
+		}
+		std::vector<uint8_t> settled = snapshot(arena);
+		CarState results[2];
+		bool onWall = true;
+		for (int off = 0; off < 2; off++) {
+			Arena* a = restore(settled);
+			Car* c = a->GetCar(car->id);
+			c->_componentsOff = off == 1;
+			for (int i = 0; i < 90; i++) {
+				c->controls = drive;
+				a->Step(1);
+				int wheels = 0;
+				for (int w = 0; w < 4; w++)
+					wheels += c->GetState().wheelsWithContact[w];
+				onWall &= wheels >= 3;
+			}
+			results[off] = c->GetState();
+			delete a;
+		}
+		CHECK(onWall, "its wheels stayed on the wall");
+		CHECK(results[0].pos == results[1].pos && results[0].vel == results[1].vel && results[0].angVel == results[1].angVel,
+			"on a wall alike: (%.3f, %.3f, %.3f) vs (%.3f, %.3f, %.3f)", results[0].pos.x, results[0].pos.y, results[0].pos.z,
+			results[1].pos.x, results[1].pos.y, results[1].pos.z);
+		delete arena;
+	}
+	{ // A forward dodge under way: with components on its torque turns the car on, off it turns no more
+		Arena* arena = Arena::Create(GameMode::SOCCAR);
+		Car* car = arena->AddCar(Team::BLUE);
+		car->SetState(CarAt(Vec(0, 0, 17), Vec(1, 0, 0), Vec(0, 0, 1)));
+		arena->Step(20);
+		CarControls jump;
+		jump.jump = true;
+		for (int i = 0; i < 12; i++) {
+			car->controls = i < 8 ? jump : CarControls();
+			arena->Step(1);
+		}
+		CarControls dodge;
+		dodge.jump = true;
+		dodge.pitch = -1;
+		car->controls = dodge;
+		arena->Step(3);
+		CHECK(car->GetState().isFlipping, "dodging");
+		std::vector<uint8_t> mid = snapshot(arena);
+		float change[2];
+		bool kept[2];
+		for (int off = 0; off < 2; off++) {
+			Arena* a = restore(mid);
+			Car* c = a->GetCar(car->id);
+			c->_componentsOff = off == 1;
+			Vec before = c->GetState().angVel;
+			for (int i = 0; i < 10; i++) {
+				c->controls = CarControls();
+				a->Step(1);
+			}
+			change[off] = (c->GetState().angVel - before).Length();
+			Arena* clone = a->Clone(false);
+			kept[off] = clone->GetCar(car->id)->_componentsOff == (off == 1);
+			delete clone;
+			delete a;
+		}
+		CHECK(change[0] > 0.5f && change[1] < 1e-3f, "mid-dodge: the spin changes %.3f with components, %.5f without", change[0], change[1]);
+		CHECK(kept[0] && kept[1], "a clone keeps the switch");
+		delete arena;
+	}
+}
+
 static void TestKickoffManyOnOneTeam() {
 	puts("a kickoff with ten cars on one team: every car on a spot in the arena, none on another (SEC-1: RocketSim's "
 		"respawn spots wrapped at 5 on a 4-entry table)");
@@ -1720,6 +1801,17 @@ static void TestKickoffManyOnOneTeam() {
 		arena->AddCar(Team::BLUE);
 	arena->AddCar(Team::ORANGE);
 	arena->ResetToRandomKickoff(3);
+	// (the sixth to tenth blue cars at the respawn spots in turn, the tenth back at the first 250 uu on: RV-329)
+	std::vector<Car*> blues;
+	for (Car* car : arena->GetCars())
+		if (car->team == Team::BLUE)
+			blues.push_back(car);
+	for (int i = 5; i < 10; i++) {
+		const auto& spot = RLConst::CAR_RESPAWN_LOCATIONS_SOCCAR[(i - 5) % RLConst::CAR_RESPAWN_LOCATION_AMOUNT];
+		float wantY = spot.y + 250.f * ((i - 5) / RLConst::CAR_RESPAWN_LOCATION_AMOUNT);
+		Vec p = blues[i]->GetState().pos;
+		CHECK(Near(p.x, spot.x, 60) && Near(p.y, wantY, 60), "car %d at (%.1f, %.1f): the respawn spot (%.1f, %.1f)", i + 1, p.x, p.y, spot.x, wantY);
+	}
 	std::vector<Vec> spots;
 	for (Car* car : arena->GetCars()) {
 		Vec p = car->GetState().pos;
@@ -1762,6 +1854,192 @@ static void TestPressAxes() {
 		CHECK(!car->_pressAxes.valid, "cleared after its tick");
 		delete arena;
 	}
+}
+
+// Each component within the velocities' quantization (0.01, + 0.001: Quantize::Velocity)
+static bool NearVelocity(Vec a, Vec b) { return fabsf(a.x - b.x) <= 0.011f && fabsf(a.y - b.y) <= 0.011f && fabsf(a.z - b.z) <= 0.011f; }
+
+static void TestVehicleOrder() {
+	puts("the vehicles' order in the step (the game's action array, FP1 G2): a demolition gives its place to the last car, a "
+		"respawn goes last, a kickoff spawns them in join order, a removal gives its place to the last, a set order first");
+	Arena* arena = Arena::Create(GameMode::SOCCAR);
+	Car* a = arena->AddCar(Team::BLUE);
+	Car* b = arena->AddCar(Team::ORANGE);
+	Car* c = arena->AddCar(Team::BLUE);
+	arena->ResetToRandomKickoff(2);
+	auto order = [&] { return arena->GetVehicleOrder(); };
+	CHECK(order() == (std::vector<uint32_t>{ a->id, b->id, c->id }), "join order at first");
+	a->Demolish(arena->GetMutatorConfig().respawnDelay);
+	arena->Step(1);
+	CHECK(order() == (std::vector<uint32_t>{ c->id, b->id }), "a demolition: the last car takes its place");
+	for (int i = 0; i < 400 && a->GetState().isDemoed; i++)
+		arena->Step(1);
+	CHECK(!a->GetState().isDemoed && order() == (std::vector<uint32_t>{ c->id, b->id, a->id }), "a respawn goes last");
+	arena->ResetToRandomKickoff(3);
+	CHECK(order() == (std::vector<uint32_t>{ a->id, b->id, c->id }), "a kickoff: join order again");
+	arena->RemoveCar(a->id);
+	CHECK(order() == (std::vector<uint32_t>{ c->id, b->id }), "a removal: the last car takes its place");
+	Car* d = arena->AddCar(Team::ORANGE);
+	CHECK(order() == (std::vector<uint32_t>{ c->id, b->id, d->id }), "a new car goes last");
+	arena->SetVehicleOrder({ d->id, b->id });
+	CHECK(order() == (std::vector<uint32_t>{ d->id, b->id, c->id }), "a set order, the rest after it in ID order");
+	// (a snapshot keeps it)
+	DataStreamOut out;
+	arena->Serialize(out);
+	DataStreamIn in;
+	in.data = out.data;
+	Arena* restored = Arena::DeserializeNew(in);
+	CHECK(restored->GetVehicleOrder() == order(), "a snapshot keeps it");
+	Arena* cloned = arena->Clone(false);
+	CHECK(cloned->GetVehicleOrder() == order(), "a clone keeps it");
+	delete restored;
+	delete cloned;
+	delete arena;
+}
+
+// T1 (FP1): a car on another's roof, both in the air: the lower car's tick is gravity and, from each of the upper car's
+// wheels on its roof, the push (1.0) and the bottom-out's opposite impulse (4 x that wheel's pushback) along -normal
+static void TestCarOnCarRoof() {
+	puts("T1 (FP1): a car's wheels on another car's roof: the lower car gets gravity and each wheel's push and bottom-out "
+		"impulses (1 + 4 pushback along -normal), whichever was made first; the step's order, not the IDs, decides");
+	int touching = 0, bottomed = 0;
+	for (float dz = 30; dz <= 80; dz += 2.5f) {
+		Arena* arena = Arena::Create(GameMode::SOCCAR);
+		Car* lower = arena->AddCar(Team::BLUE);
+		Car* upper = arena->AddCar(Team::ORANGE);
+		lower->SetState(CarAt(Vec(0, 0, 1000), Vec(1, 0, 0), Vec(0, 0, 1)));
+		upper->SetState(CarAt(Vec(0, 0, 1000 + dz), Vec(1, 0, 0), Vec(0, 0, 1)));
+		arena->Step(1); // (falling together; the broadphase has the placements from the first step on)
+		Vec before = lower->GetState().vel;
+		arena->Step(1);
+		Vec after = lower->GetState().vel;
+		btVector3 expected(0, 0, 0);
+		int onRoof = 0;
+		for (int i = 0; i < upper->_bulletVehicle.getNumWheels(); i++) {
+			const btWheelInfoRL& w = upper->_bulletVehicle.m_wheelInfo[i];
+			if (!w.m_raycastInfo.m_isInContact || w.m_raycastInfo.m_groundObject != &lower->_rigidBody)
+				continue;
+			onRoof++;
+			bottomed += w.m_extraPushback != 0;
+			expected += -w.m_raycastInfo.m_contactNormalWS * (RLConst::BTVehicle::WHEEL_PUSH_IMPULSE + 4 * w.m_extraPushback);
+		}
+		if (onRoof == 0) {
+			delete arena;
+			continue;
+		}
+		touching++;
+		Vec want = Vec(0, 0, arena->GetMutatorConfig().gravity.z * arena->tickTime) + Vec(expected * lower->_rigidBody.getInvMass() * BT_TO_UU);
+		Vec got = after - before;
+		CHECK(NearVelocity(got, want), "dz %.1f, %d wheels: lower car dv (%.4f, %.4f, %.4f), want (%.4f, %.4f, %.4f)",
+			dz, onRoof, got.x, got.y, got.z, want.x, want.y, want.z);
+		delete arena;
+	}
+	CHECK(touching >= 5 && bottomed > 0, "wheels on the roof in %d placements, %d bottomed out", touching, bottomed);
+
+	// Parked on the ground, the upper car on the lower's roof: two arenas made in either order run alike once their
+	// vehicles go in the same order (the step's order decides, not the IDs); and differently in the other order
+	auto parked = [](bool upperFirst, bool upperRunsFirst) {
+		Arena* arena = Arena::Create(GameMode::SOCCAR);
+		Car* first = arena->AddCar(Team::BLUE);
+		Car* second = arena->AddCar(Team::ORANGE);
+		Car* upper = upperFirst ? first : second;
+		Car* lower = upperFirst ? second : first;
+		lower->SetState(CarAt(Vec(0, 0, 17), Vec(1, 0, 0), Vec(0, 0, 1)));
+		upper->SetState(CarAt(Vec(0, 0, 70), Vec(1, 0, 0), Vec(0, 0, 1)));
+		arena->SetVehicleOrder(upperRunsFirst ? std::vector<uint32_t>{ upper->id, lower->id } : std::vector<uint32_t>{ lower->id, upper->id });
+		arena->Step(60);
+		std::pair<Vec, Vec> out = { lower->GetState().vel, upper->GetState().vel };
+		delete arena;
+		return out;
+	};
+	auto a = parked(true, true), b = parked(false, true), c = parked(false, false);
+	CHECK(a.first == b.first && a.second == b.second, "made in either order, the same step order: the same");
+	CHECK(!(a.first == c.first && a.second == c.second), "the other step order: a different tick");
+}
+
+// T2 (FP1): a car's wheels on the ball: the ball gets each wheel's push (1.0, 1.667 uu/s) and no bottom-out (the ball isn't
+// in the vehicle's mask); the car's own impulses don't see the ball's motion; a sleeping ball is woken
+static void TestCarOnBall() {
+	puts("T2 (FP1): a car's wheels on the ball: the ball gets gravity and 1.667 uu/s along -normal a wheel, no bottom-out; "
+		"the car's tick is the same on a moving ball; a sleeping ball under a wheel wakes");
+	int touching = 0;
+	for (float dz = 100; dz <= 160; dz += 2.5f) {
+		Arena* arena = Arena::Create(GameMode::SOCCAR);
+		Car* car = arena->AddCar(Team::BLUE);
+		BallState bs;
+		bs.pos = Vec(0, 0, 1000);
+		arena->ball->SetState(bs);
+		car->SetState(CarAt(Vec(0, 0, 1000 + dz), Vec(1, 0, 0), Vec(0, 0, 1)));
+		arena->Step(1); // (falling together; the broadphase has the placements from the first step on)
+		Vec before = arena->ball->GetState().vel;
+		arena->Step(1);
+		Vec after = arena->ball->GetState().vel;
+		btVector3 expected(0, 0, 0);
+		int onBall = 0;
+		for (int i = 0; i < car->_bulletVehicle.getNumWheels(); i++) {
+			const btWheelInfoRL& w = car->_bulletVehicle.m_wheelInfo[i];
+			if (!w.m_raycastInfo.m_isInContact || w.m_raycastInfo.m_groundObject != &arena->ball->_rigidBody)
+				continue;
+			onBall++;
+			CHECK(w.m_extraPushback == 0, "no bottom-out on the ball");
+			expected += -w.m_raycastInfo.m_contactNormalWS * RLConst::BTVehicle::WHEEL_PUSH_IMPULSE;
+		}
+		if (onBall > 0) {
+			touching++;
+			Vec want = Vec(0, 0, arena->GetMutatorConfig().gravity.z * arena->tickTime) + Vec(expected * arena->ball->_rigidBody.getInvMass() * BT_TO_UU);
+			Vec got = after - before;
+			CHECK(NearVelocity(got, want), "dz %.1f, %d wheels: ball dv (%.4f, %.4f, %.4f), want (%.4f, %.4f, %.4f)", dz, onBall,
+				got.x, got.y, got.z, want.x, want.y, want.z);
+		}
+		delete arena;
+	}
+	CHECK(touching >= 3, "wheels on the ball in %d placements", touching);
+
+	// The car's tick on a ball at rest and on one moving and spinning under it (the ground's velocity unused)
+	auto carTick = [](Vec ballVel, Vec ballAngVel) {
+		Arena* arena = Arena::Create(GameMode::SOCCAR);
+		Car* car = arena->AddCar(Team::BLUE);
+		BallState bs;
+		bs.pos = Vec(0, 0, 1000);
+		bs.vel = ballVel;
+		bs.angVel = ballAngVel;
+		arena->ball->SetState(bs);
+		car->SetState(CarAt(Vec(0, 0, 1125), Vec(1, 0, 0), Vec(0, 0, 1)));
+		arena->Step(1);
+		Vec start = car->GetState().vel;
+		car->controls.throttle = 1;
+		arena->Step(1);
+		Vec v = car->GetState().vel - start;
+		delete arena;
+		return v;
+	};
+	Vec still = carTick(Vec(0, 0, 0), Vec(0, 0, 0)), moving = carTick(Vec(400, -300, 0), Vec(0, 0, 4));
+	CHECK(NearVelocity(still, moving), "the car's tick on a moving ball (%.4f, %.4f, %.4f) as on one at rest (%.4f, %.4f, %.4f)",
+		moving.x, moving.y, moving.z, still.x, still.y, still.z);
+
+	// A sleeping ball under a wheel wakes
+	Arena* arena = Arena::Create(GameMode::SOCCAR);
+	Car* car = arena->AddCar(Team::BLUE);
+	BallState bs;
+	bs.pos = Vec(0, 0, RLConst::BALL_REST_Z);
+	arena->ball->SetState(bs);
+	car->SetState(CarAt(Vec(3000, 3000, 17), Vec(1, 0, 0), Vec(0, 0, 1)));
+	for (int i = 0; i < 400; i++)
+		arena->Step(1);
+	CHECK(arena->ball->_rigidBody.getActivationState() == ISLAND_SLEEPING, "the ball asleep at rest (state %d)", arena->ball->_rigidBody.getActivationState());
+	// (a front wheel over the ball's top, the car's body clear of it)
+	bool wheelOnBall = false;
+	for (float side : { -25.9f, 25.9f }) {
+		if (wheelOnBall)
+			break;
+		car->SetState(CarAt(Vec(-51.25f, side, 200), Vec(1, 0, 0), Vec(0, 0, 1)));
+		arena->Step(2); // (the broadphase has the placement from the first step on)
+		for (int i = 0; i < car->_bulletVehicle.getNumWheels(); i++)
+			wheelOnBall |= car->_bulletVehicle.m_wheelInfo[i].m_raycastInfo.m_groundObject == &arena->ball->_rigidBody;
+	}
+	CHECK(wheelOnBall && arena->ball->_rigidBody.getActivationState() != ISLAND_SLEEPING, "a wheel on it (%d) wakes it (state %d)",
+		wheelOnBall, arena->ball->_rigidBody.getActivationState());
+	delete arena;
 }
 
 // Supersonic: on from 2200; below that, kept for 1 s (TimeBelowSupersonicSpeed) while above 2100
@@ -2589,8 +2867,12 @@ int main(int argc, char** argv) {
 	TestCountdownHeldJump();
 	TestXYLockSnapshots();
 	TestComponentsOff();
+	TestComponentsOffKeepsTheCar();
 	TestKickoffManyOnOneTeam();
 	TestPressAxes();
+	TestVehicleOrder();
+	TestCarOnCarRoof();
+	TestCarOnBall();
 	TestGameRotator();
 	TestMatchEndPatches();
 	TestRoofLanding();

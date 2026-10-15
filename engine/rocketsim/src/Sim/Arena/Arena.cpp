@@ -243,6 +243,8 @@ bool Arena::_AddCarFromPtr(Car* car) {
 		
 		_carIDMap[car->id] = car;
 		_cars.insert(car);
+		if (!car->_internalState.isDemoed)
+			_vehicleOrder.push_back(car); // RL PATCH (FP1 G2)
 		return true;
 
 	} else {
@@ -256,6 +258,7 @@ bool Arena::RemoveCar(uint32_t id) {
 	if (itr != _carIDMap.end()) {
 		Car* car = itr->second;
 		_RemoveXYLock(car); // RL PATCH
+		_RemoveVehicle(car); // RL PATCH (FP1 G2)
 		_carIDMap.erase(itr);
 		_cars.erase(car);
 		_bulletWorld.removeCollisionObject(&car->_rigidBody);
@@ -265,6 +268,54 @@ bool Arena::RemoveCar(uint32_t id) {
 	} else {
 		return false;
 	}
+}
+
+// RL PATCH (FP1 G2): the vehicles' order
+std::vector<uint32_t> Arena::GetVehicleOrder() const {
+	std::vector<uint32_t> ids;
+	for (const Car* car : _vehicleOrder)
+		ids.push_back(car->id);
+	return ids;
+}
+
+void Arena::SetVehicleOrder(const std::vector<uint32_t>& ids) {
+	_vehicleOrder.clear();
+	for (uint32_t id : ids) {
+		auto itr = _carIDMap.find(id);
+		if (itr != _carIDMap.end() && itr->second && !itr->second->_internalState.isDemoed &&
+		    std::find(_vehicleOrder.begin(), _vehicleOrder.end(), itr->second) == _vehicleOrder.end())
+			_vehicleOrder.push_back(itr->second);
+	}
+	_SyncVehicleOrder();
+}
+
+void Arena::_RemoveVehicle(Car* car) {
+	// (swap-remove: the last takes its place, as removeAction 0x1402b90a0)
+	auto itr = std::find(_vehicleOrder.begin(), _vehicleOrder.end(), car);
+	if (itr == _vehicleOrder.end())
+		return;
+	*itr = _vehicleOrder.back();
+	_vehicleOrder.pop_back();
+}
+
+void Arena::_SyncVehicleOrder() {
+	// (a demolition detaches its car's vehicle: FinishDemo; its respawn is a new car, attached at the end [I: the
+	// removeAction call site isn't traced])
+	for (size_t i = 0; i < _vehicleOrder.size();) {
+		if (_vehicleOrder[i]->_internalState.isDemoed)
+			_RemoveVehicle(_vehicleOrder[i]);
+		else
+			i++;
+	}
+	for (Car* car : _cars)
+		if (!car->_internalState.isDemoed && std::find(_vehicleOrder.begin(), _vehicleOrder.end(), car) == _vehicleOrder.end())
+			_vehicleOrder.push_back(car);
+}
+
+void Arena::_ResetVehicleOrder() {
+	// (ResetPlayers: DestroyCars, then every player's RestartPlayer in Players order, the join order)
+	_vehicleOrder.clear();
+	_SyncVehicleOrder();
 }
 
 Car* Arena::GetCar(uint32_t id) {
@@ -367,6 +418,7 @@ void Arena::ResetToFreeplayKickoff(int seed, int spawnIndex) {
 	ball->SetState(ballState);
 	ResetBoostPads();
 	goalExplosion = GoalExplosion();
+	_ResetVehicleOrder(); // RL PATCH (FP1 G2)
 }
 
 // RL PATCH: ResetPickups
@@ -524,7 +576,7 @@ void Arena::_ResetToKickoff(const std::array<uint8_t, 5> orders[2], int first, s
 			spawnPos = {}; // (per team below: RL PATCH, each team's own order)
 		} else {
 			// RL PATCH: wrapped at the respawn table's size (RocketSim wrapped at the kickoff spots', 5, past the 4-entry
-			// table and numCarsAtRespawnPos: an out-of-bounds read and write from a sixth car on one team, SEC-1)
+			// table and numCarsAtRespawnPos: an out-of-bounds read and write from a tenth car on one team (i = 9), SEC-1)
 			int respawnPosIdx = (i - (locationAmount)) % CAR_RESPAWN_LOCATION_AMOUNT;
 			spawnPos = CAR_RESPAWN_LOCATIONS[respawnPosIdx];
 
@@ -591,6 +643,7 @@ void Arena::_ResetToKickoff(const std::array<uint8_t, 5> orders[2], int first, s
 		SetDropshotTilesState({});
 
 	goalExplosion = GoalExplosion(); // RL PATCH
+	_ResetVehicleOrder(); // RL PATCH (FP1 G2: every car spawned again, in join order)
 }
 
 void Arena::SetDropshotTilesState(const DropshotTilesState& state) {
@@ -1283,6 +1336,22 @@ static void _WriteXYLocks(DataStreamOut& out, const Arena::CarSet& cars) {
 	}
 }
 
+// RL PATCH (FP1 G2): the vehicles' order in a snapshot
+static void _WriteVehicleOrder(DataStreamOut& out, const std::vector<Car*>& order) {
+	out.Write<uint32_t>((uint32_t)order.size());
+	for (const Car* car : order)
+		out.Write(car->id);
+}
+
+static std::vector<uint32_t> _ReadVehicleOrder(DataStreamIn& in) {
+	std::vector<uint32_t> ids(in.Read<uint32_t>());
+	if (ids.size() > 1024 || in.IsOverflown())
+		return {};
+	for (uint32_t& id : ids)
+		in.Read(id);
+	return ids;
+}
+
 static void _ReadXYLocks(DataStreamIn& in, Arena* arena) {
 	for (Car* car : arena->GetCars()) {
 		arena->_RemoveXYLock(car);
@@ -1338,6 +1407,7 @@ void Arena::Serialize(DataStreamOut& out) const {
 	out.Write<uint8_t>(respawnsHeld); // RL PATCH
 	_WriteGoalExplosion(out, goalExplosion); // RL PATCH
 	_WriteXYLocks(out, _cars); // RL PATCH
+	_WriteVehicleOrder(out, _vehicleOrder); // RL PATCH (FP1 G2)
 }
 
 // RL PATCH: Bullet keeps contact points from tick to tick (persistent manifolds), and some contacts, such as a
@@ -1537,6 +1607,7 @@ Arena* Arena::DeserializeNew(DataStreamIn& in) {
 	newArena->respawnsHeld = in.Read<uint8_t>() != 0; // RL PATCH
 	_ReadGoalExplosion(in, newArena->goalExplosion); // RL PATCH
 	_ReadXYLocks(in, newArena); // RL PATCH
+	newArena->SetVehicleOrder(_ReadVehicleOrder(in)); // RL PATCH (FP1 G2)
 
 	return newArena;
 }
@@ -1629,6 +1700,7 @@ bool Arena::DeserializeInPlace(DataStreamIn& in) {
 	respawnsHeld = in.Read<uint8_t>() != 0; // RL PATCH
 	_ReadGoalExplosion(in, goalExplosion); // RL PATCH
 	_ReadXYLocks(in, this); // RL PATCH
+	SetVehicleOrder(_ReadVehicleOrder(in)); // RL PATCH (FP1 G2)
 	return true;
 }
 
@@ -1662,6 +1734,7 @@ Arena* Arena::Clone(bool copyCallbacks) {
 		newCar->_xyLockPin = pin;
 		newCar->_xyLockMoved = false;
 	}
+	newArena->SetVehicleOrder(this->GetVehicleOrder()); // RL PATCH (FP1 G2)
 
 	assert(this->_boostPads.size() == newArena->_boostPads.size());
 	for (int i = 0; i < this->_boostPads.size(); i++)
@@ -1797,10 +1870,16 @@ void Arena::Step(int ticksToSimulate) {
 					_UpdateDemolished(car, claimed);
 		}
 
+		// RL PATCH: the demolished cars first, their respawns (a new car, its vehicle last: FP1 G2); then the cars on
+		// the field in the vehicles' order, each its pre-physics and its vehicle (the game's action array; RocketSim's
+		// ran them in ID order)
 		for (Car* car : _cars) {
 			car->_podiumMode = podiumMode; // RL PATCH
-			car->_PreTickUpdate(gameMode, tickTime, _mutatorConfig, respawnsHeld);
+			car->_PreTickRespawn(gameMode, tickTime, _mutatorConfig, respawnsHeld);
 		}
+		_SyncVehicleOrder();
+		for (Car* car : _vehicleOrder)
+			car->_PreTickUpdate(gameMode, tickTime, _mutatorConfig, respawnsHeld);
 
 		if (hasArenaStuff && !ballOnly) {
 			for (BoostPad* pad : _boostPads)

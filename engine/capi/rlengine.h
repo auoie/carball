@@ -88,6 +88,10 @@ typedef struct RLCarNetInfo {
 /* The axes the car's jump press of the next tick came with (the dodge's direction), when its controls are another frame's
  * (a double consume: the first frame's press, the second's controls; the game's dodge takes the press's, G10) */
 void rl_set_press_axes(RLArena* arena, uint32_t car_id, float dodge_forward, float yaw, float roll);
+/* The vehicles' order in the physics step (the game's action array: notes/physics-values.md FP1 G2): the podium's
+ * winners in the MVP order; cars left out follow in ID order. `rl_vehicle_order` writes it (as rl_car_ids) */
+void rl_set_vehicle_order(RLArena* arena, const uint32_t* car_ids, size_t num_cars);
+size_t rl_vehicle_order(RLArena* arena, uint32_t* out, size_t max_ids);
 /* 1 and the car's info, 0 if no such car */
 int rl_car_net_info(RLArena* arena, uint32_t car_id, RLCarNetInfo* out);
 /* The boost pads' active flags, bit i the arena's pad i (a pickup or a respawn changes them; at most 64 pads) */

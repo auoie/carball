@@ -218,8 +218,9 @@ Before patches 28–31, driving, turning circles and jump height were within 0.5
 
 ## Assumptions and open points
 - **Cancel-lock timing:** the game checks the 0.041 s lock with the same active time it uses for the Z damping.
-  Stock RocketSim advances that time after the air torque, so the patch adds one tick. With it, the first cancellable
-  torque tick is the 4th. This is not yet verified against replays.
+  Stock RocketSim advances that time after the air torque, so the patch adds one tick. With it, the first tick the
+  cancel acts is the 5th after the press (k = 5, the active time 0.041666668), verified statically and live
+  (notes/physics-values.md, "the flip-cancel lock (FP1)"; `out/live/flip_cancel_20261008_011347.csv`).
 - **Speed limits:** RocketSim clamps at the end of the tick (the auto-flip immediately), so a boosting car at 2300
   integrates its position with ~2308 uu/s. Replays agree: top-speed boosting cars on the floor match to 0.010 uu
   (median, 1,384 cases); a clamp during integration would leave us ~0.07 uu/tick ahead.

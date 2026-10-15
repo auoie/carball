@@ -292,6 +292,7 @@ public:
 	float _PressRoll() const { return _pressAxes.valid ? _pressAxes.roll : controls.roll; }
 
 	// RL PATCH: respawnHeld: a demolished car stays demolished (after a goal, until the kickoff)
+	bool _PreTickRespawn(GameMode gameMode, float tickTime, const MutatorConfig& mutatorConfig, bool respawnHeld); // RL PATCH
 	void _PreTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig& mutatorConfig, bool respawnHeld = false);
 	void _PostTickUpdate(GameMode gameMode, float tickTime, const MutatorConfig& mutatorConfig);
 	void _LimitVelocities();

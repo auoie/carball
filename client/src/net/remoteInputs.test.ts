@@ -6,6 +6,7 @@
 // skipped without it) and scripted bots. The decision (the static session's rule): the game's model unless
 // "gameComponents" halves the other cars' corrections (median and 99th percentile) at every round trip without
 // raising the ball's.
+import { fileURLToPath } from "node:url";
 import createEngine from "@engine/rlengine.mjs";
 import { beforeAll, describe, expect, it } from "vitest";
 import { initEngine } from "../engine/world";
@@ -71,7 +72,8 @@ function componentsWin(cells: Map<string, Cell>): boolean {
     const game = cells.get(`game@${String(rtt)}`);
     const comp = cells.get(`gameComponents@${String(rtt)}`);
     if (!game || !comp) return false;
-    return comp.remote.p50 <= game.remote.p50 / 2 && comp.remote.p99 <= game.remote.p99 / 2 && comp.ball.p99 <= game.ball.p99;
+    // (the ball's mean: its p99 is 0 in every cell, RV-326)
+    return comp.remote.p50 <= game.remote.p50 / 2 && comp.remote.p99 <= game.remote.p99 / 2 && comp.ball.mean <= game.ball.mean;
   });
 }
 
@@ -82,7 +84,7 @@ describe("T5: predicting other players' cars", () => {
     expect(componentsWin(cells)).toBe(false);
   }, 600_000);
 
-  const streams = replayInputStreams(STATES.pathname, (name) => name.startsWith("2v2_"));
+  const streams = replayInputStreams(fileURLToPath(STATES), (name) => name.startsWith("2v2_"));
   it.skipIf(streams === null)("real players' inputs (replays, local data): the game's model, not beaten by half", () => {
     const replays = [...(streams ?? new Map<string, InputFrame[][]>()).entries()].filter(([, s]) => s.length >= 4).slice(0, 2);
     expect(replays.length).toBe(2);

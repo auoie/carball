@@ -1093,6 +1093,8 @@ impl Game {
         for car in others {
             self.arena.demolish_car(car);
         }
+        // (`InitPodiumCars` spawns the winners again in the MVP order: their vehicles' order in the step, FP1 G2)
+        self.arena.set_vehicle_order(&on_podium);
         self.phase = Phase::Podium;
         self.phase_until = tick + (PODIUM_SECONDS * TICK_RATE as f32) as u64;
     }
@@ -2039,6 +2041,19 @@ mod tests {
             assert!(pads <= 8.0, "pads {pads}/s");
             assert!(per_body <= 70.0, "{per_body} B a body");
         }
+    }
+
+    #[test]
+    fn the_podium_runs_its_winners_vehicles_in_the_mvp_order() {
+        // (`InitPodiumCars` spawns the winners again in the MVP-sorted Members order: their vehicles' order in the
+        // physics step, FP1 G2)
+        let (mut game, _rxs) = match_with(MatchType::Casual, 2, &[(1, 0, 11), (2, 0, 12), (3, 1, 13), (4, 1, 14)]);
+        let cars: Vec<u32> = (1..=4).map(|id| game.players[&id].car_id).collect();
+        game.players.get_mut(&2).unwrap().stats[0] = 500; // (player 2 the MVP)
+        game.players.get_mut(&1).unwrap().stats[0] = 100;
+        game.winner = Some(0);
+        game.start_podium(game.tick_count());
+        assert_eq!(game.arena.vehicle_order(), vec![cars[1], cars[0]]);
     }
 
     #[test]

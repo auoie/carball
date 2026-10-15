@@ -62,8 +62,9 @@ describe("play over a network path (in process)", () => {
       expect(r.ping).toBeGreaterThan(60);
       expect(r.ping).toBeLessThan(110);
       // The local car stays where it was predicted: a correction now and then (a repeated or skipped input, a contact),
-      // small, all of them moving it at most 40 uu a second (seed 3: 19.5)
-      expect(r.local.p95).toBeLessThanOrEqual(20);
+      // small, all of them moving it at most 40 uu a second (RV-325: the earlier bounds back)
+      expect(r.local.p95).toBeLessThanOrEqual(1);
+      expect(r.local.mean).toBeLessThanOrEqual(2);
       expect(r.movedPerSecond.local).toBeLessThanOrEqual(40);
       expect(r.localMispredictions).toBeLessThanOrEqual(3 * 27);
       // The bot's and the ball's corrections stay small (each smoothed when drawn)

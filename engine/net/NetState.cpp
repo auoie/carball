@@ -621,7 +621,18 @@ int8_t TorqueByte(float v) { return (int8_t)std::clamp(Quantize::RoundUE(v * 127
 // A 16-bit counter from its low byte, the nearest to the client's
 uint16_t CounterNear(uint16_t client, uint8_t low) { return (uint16_t)(client + (int8_t)(uint8_t)(low - (uint8_t)client)); }
 
-enum : uint32_t { C_HAS_BALL = 1, C_HAS_PADS = 2, C_RESPAWNS_HELD = 4, C_EXPLOSION = 8 };
+enum : uint32_t { C_HAS_BALL = 1, C_HAS_PADS = 2, C_RESPAWNS_HELD = 4, C_EXPLOSION = 8, C_ORDER = 16 };
+constexpr int C_HAS_BITS = 5;
+
+// The vehicles' order in the step when it isn't the cars on the field in ID order (a demolition or a respawn since the
+// kickoff, the podium's: FP1 G2), else empty
+std::vector<uint32_t> UnusualVehicleOrder(Arena* arena) {
+	std::vector<uint32_t> order = arena->GetVehicleOrder(), plain;
+	for (Car* car : arena->GetCars())
+		if (!car->_internalState.isDemoed)
+			plain.push_back(car->id);
+	return order == plain ? std::vector<uint32_t>{} : order;
+}
 
 // The car's timers the physics reads (not airTime, a stat, nor timeSinceBoosted, the recharge mutator's), each sent
 // while it isn't at rest (a few at a time: a jump, a dodge, a powerslide, a bump), exactly
@@ -659,10 +670,20 @@ struct CompactCar {
 	uint32_t contactCar;
 	bool held;
 	btVector3 pin;
+	// Placed in the last few ticks (a kickoff, a respawn: its first ticks' wheel contacts and carried values, which a
+	// fresh state can't give the client when the update comes a tick or more after the placement: RV-322)
+	bool placedRecently;
+	uint8_t ticksSincePlaced; // (when placed recently)
+	bool onGround;
+	bool wheelContact[4];
+	CarState::WheelCarry carry[4];
 };
 
+// A car placed this many ticks ago or less sends its wheels (updates go every other tick: a few to spare)
+constexpr uint64_t RECENT_PLACEMENT_TICKS = 16;
+
 void WriteCompactCar(BitWriter& w, Car* car, float tickTime) {
-	CarState s = car->_internalState;
+	CarState s = car->GetState(); // (with the wheels' carried values)
 	const CarControls& c = car->controls;
 	w.Id(car->id);
 	WriteCompactBody(w, car->_rigidBody, car->_netRotation);
@@ -717,6 +738,22 @@ void WriteCompactCar(BitWriter& w, Car* car, float tickTime) {
 	if (held)
 		for (int i = 0; i < 3; i++)
 			w.F32(pin[i]);
+	bool recent = s.tickCountSinceUpdate <= RECENT_PLACEMENT_TICKS;
+	w.Bool(recent);
+	if (recent) {
+		w.Put((uint32_t)s.tickCountSinceUpdate, 5);
+		w.Bool(s.isOnGround);
+		for (int i = 0; i < 4; i++) {
+			const CarState::WheelCarry& c = s.wheelCarry.wheels[i];
+			w.Bool(s.wheelsWithContact[i]);
+			for (float f : { c.steerAngle, c.engineForce, c.brake, c.latFriction, c.longFriction, c.extraPushback })
+				w.F32(f);
+			w.Bool(c.worldContact);
+			if (s.wheelsWithContact[i])
+				for (int k = 0; k < 3; k++)
+					w.F32(c.contactNormal[k]);
+		}
+	}
 }
 
 void ReadCompactCar(BitReader& r, CompactCar& d, float tickTime) {
@@ -762,6 +799,24 @@ void ReadCompactCar(BitReader& r, CompactCar& d, float tickTime) {
 	if (d.held)
 		for (int i = 0; i < 3; i++)
 			d.pin[i] = r.F32();
+	d.placedRecently = r.Bool();
+	d.onGround = false;
+	d.ticksSincePlaced = 0;
+	if (d.placedRecently) {
+		d.ticksSincePlaced = (uint8_t)r.Get(5);
+		d.onGround = r.Bool();
+		for (int i = 0; i < 4; i++) {
+			CarState::WheelCarry& c = d.carry[i];
+			d.wheelContact[i] = r.Bool();
+			for (float* f : { &c.steerAngle, &c.engineForce, &c.brake, &c.latFriction, &c.longFriction, &c.extraPushback })
+				*f = r.F32();
+			c.worldContact = r.Bool();
+			c.contactNormal = Vec(0, 0, 1);
+			if (d.wheelContact[i])
+				for (int k = 0; k < 3; k++)
+					c.contactNormal[k] = r.F32();
+		}
+	}
 }
 
 // An axis the client holds: kept if it sends the same byte (a remote car's faded value, the local car's own)
@@ -776,8 +831,15 @@ void OverlayCar(Arena* arena, const CompactCar& d, Car* car) {
 	// placement's (Car::_RespawnAt), not the client's own wheel values and contacts (RV-309)
 	uint16_t spawnCount = CounterNear(car->_internalState.spawnCount, d.spawnCount);
 	bool placed = spawnCount != car->_internalState.spawnCount;
-	CarState s = placed ? CarState() : car->_internalState;
-	if (placed) {
+	CarState s = placed ? CarState() : car->GetState();
+	if (d.placedRecently) { // (the server's wheels after its placement: RV-322)
+		s.isOnGround = d.onGround;
+		for (int i = 0; i < 4; i++) {
+			s.wheelsWithContact[i] = d.wheelContact[i];
+			s.wheelCarry.wheels[i] = d.carry[i];
+		}
+	}
+	if (placed || d.placedRecently) {
 		for (int i = 0; i < car->_bulletVehicle.m_wheelInfo.size() && i < 4; i++) {
 			btWheelInfoRL& wheel = car->_bulletVehicle.m_wheelInfo[i];
 			const CarState::WheelCarry& carry = s.wheelCarry.wheels[i];
@@ -854,7 +916,8 @@ void OverlayCar(Arena* arena, const CompactCar& d, Car* car) {
 	car->controls = c;
 	s.lastControls = c;
 	s.lastControls.jump = d.lastJump;
-	s.tickCountSinceUpdate = car->_internalState.tickCountSinceUpdate;
+	// (the ticks since its placement as the server counts them, so both send its wheels alike; not physics)
+	s.tickCountSinceUpdate = d.placedRecently ? d.ticksSincePlaced : RS_MAX(car->_internalState.tickCountSinceUpdate, RECENT_PLACEMENT_TICKS + 1);
 	car->_internalState = s;
 	car->_velocityImpulseCache = { 0, 0, 0 };
 
@@ -877,8 +940,14 @@ void WriteCompact(Arena* arena, DataStreamOut& out, const WriteOptions& options)
 	out.Write(COMPACT_VERSION);
 	BitWriter w{ out.data, (uint64_t)out.data.size() * 8 };
 	const Arena::GoalExplosion& ex = arena->goalExplosion;
+	std::vector<uint32_t> order = UnusualVehicleOrder(arena);
 	w.Put((options.ball ? C_HAS_BALL : 0) | (options.boostPads ? C_HAS_PADS : 0) | (arena->respawnsHeld ? C_RESPAWNS_HELD : 0) |
-		(ex.active ? C_EXPLOSION : 0), 4);
+		(ex.active ? C_EXPLOSION : 0) | (order.empty() ? 0 : C_ORDER), C_HAS_BITS);
+	if (!order.empty()) {
+		w.Put((uint32_t)RS_MIN(order.size(), (size_t)255), 8);
+		for (size_t i = 0; i < RS_MIN(order.size(), (size_t)255); i++)
+			w.Id(order[i]);
+	}
 	uint32_t countdown = RS_MIN(arena->kickoffCountdownTicks, 65535u);
 	w.Bool(countdown != 0);
 	if (countdown)
@@ -920,7 +989,13 @@ bool ApplyCompact(Arena* arena, DataStreamIn& in, std::vector<uint32_t>* carIds)
 	if (in.pos >= in.data.size() || in.data[in.pos] != COMPACT_VERSION)
 		return false;
 	BitReader r{ in.data, (uint64_t)(in.pos + 1) * 8 };
-	uint32_t has = r.Get(4);
+	uint32_t has = r.Get(C_HAS_BITS);
+	std::vector<uint32_t> order;
+	if (has & C_ORDER) {
+		order.resize(r.Get(8));
+		for (uint32_t& id : order)
+			id = r.Id();
+	}
 	uint32_t countdown = r.Bool() ? r.Get(16) : 0;
 	Arena::GoalExplosion ex;
 	if (has & C_EXPLOSION) {
@@ -982,6 +1057,8 @@ bool ApplyCompact(Arena* arena, DataStreamIn& in, std::vector<uint32_t>* carIds)
 	}
 	for (const CompactCar& d : cars)
 		OverlayCar(arena, d, arena->GetCar(d.id));
+	// (the server's order, the cars' demolitions as now set: FP1 G2)
+	arena->SetVehicleOrder(order);
 	if (carIds) {
 		carIds->clear();
 		for (const CompactCar& d : cars)
