@@ -36,10 +36,17 @@ void CollisionMeshFile::ReadFromStream(DataStreamIn& in, bool silent, std::strin
 	for (Vertex& vert : vertices)
 		vert = in.Read<Vertex>();
 
-	// RL PATCH: the optional body offset trailer ("CBOF", 3 floats; named for no game: RV-419)
-	if (!in.IsOverflown() && in.data.size() >= in.pos + 16 && std::memcmp(&in.data[in.pos], "CBOF", 4) == 0) {
-		in.pos += 4;
-		offset = in.Read<Vertex>();
+	// RL PATCH: the optional body offset trailer ("CBOF", 3 floats; named for no game: RV-419). Other bytes after the
+	// vertices are refused: an older or foreign trailer would load the mesh unplaced, at the origin (RV-434)
+	if (!in.IsOverflown() && in.pos != in.data.size()) {
+		if (in.data.size() == in.pos + 16 && std::memcmp(&in.data[in.pos], "CBOF", 4) == 0) {
+			in.pos += 4;
+			offset = in.Read<Vertex>();
+		} else {
+			RS_ERR_CLOSE(
+				ERROR_PREFIX_STR << "Invalid collision mesh file at \"" << filePath <<
+				"\" (" << (in.data.size() - in.pos) << " bytes after the vertices that aren't a body offset)");
+		}
 	}
 
 #ifndef RS_MAX_SPEED

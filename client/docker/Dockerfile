@@ -11,6 +11,7 @@ COPY dist/ /usr/share/nginx/html/
 # root's, read-only to it, RV-397, RV-408; nginx keeps /tmp and /var/cache/nginx for its pid and buffers. Both are
 # written once here too, for the default GAME_SERVER_URL: a container started without the entrypoint still sends a
 # strict policy and the default config, RV-409, RV-431)
+ENV GAME_SERVER_URL=https://game.carball.zolt.top:4433/play
 USER root
 RUN chown -R root:root /etc/nginx && chmod -R go-w /etc/nginx \
     && sh /docker-entrypoint.d/40-carball-config.sh \
@@ -21,6 +22,5 @@ LABEL org.opencontainers.image.title="carball-web" \
       org.opencontainers.image.vendor="" org.opencontainers.image.url="" org.opencontainers.image.source="" \
       org.opencontainers.image.documentation="" org.opencontainers.image.version="" maintainer="" \
       org.opencontainers.image.created="" org.opencontainers.image.licenses=""
-ENV GAME_SERVER_URL=https://game.carball.zolt.top:4433/play
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s CMD wget -q -O /dev/null http://127.0.0.1:3000/healthz || exit 1

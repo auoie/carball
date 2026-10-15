@@ -33,7 +33,8 @@ export function migrateStorageKeys(store: Store | null): number {
   }
   for (const suffix of DROPPED) {
     try {
-      store.removeItem(OLD_PREFIX + suffix);
+      // (looked at first: a removal is a write, every load, RV-439)
+      if (store.getItem(OLD_PREFIX + suffix) !== null) store.removeItem(OLD_PREFIX + suffix);
     } catch {
       // (storage blocked: it stays)
     }

@@ -33,7 +33,7 @@ engine/tests/check_native_wasm.sh 600                              # native and 
 The arena mesh comes from `scripts/arena_gen.py` (`out/arena/`). Native tests find it via `ARENA_MESH_DIR`;
 the WebAssembly test programs embed it at `/collision_meshes`.
 
-## JavaScript module (`engine/build-wasm/carball_engine.mjs` + `carball_engine.wasm`, ~620 KB)
+## JavaScript module (`engine/build-wasm/carball_engine.mjs` + `carball_engine.wasm`, ~810 KB)
 Bindings: `wasm/bindings.cpp` (embind). ES modules: `carball_engine.mjs` (browsers, workers and Node; used by tests)
 and `carball_engine_web.mjs` (browser-only; bundled by the client). Emscripten also generates TypeScript types from
 the bindings (`carball_engine*.d.mts`; typed arrays via `EMSCRIPTEN_DECLARE_VAL_TYPE`), which the client type-checks against.

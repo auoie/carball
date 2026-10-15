@@ -218,6 +218,19 @@ host labels and rebuilds the extra sources one space apart (RV-430); the default
 netstate: the update must leave the client's persistent contacts as they were, and the verdict checks itself (each
 count alone fails it; a client with an F3-style hidden change diverges unexplained: RV-433). The sky noise test
 times its thread's CPU (RV-427).
+**RX17 (RV-434..441), 2026-10-15** (8f78a1a, deployed): the server's meshes must be the arena's (RV-434): `rl_init`
+refuses a folder whose `arena/` doesn't hold 16 whole mesh files, catches what the engine throws (an exception across
+the C boundary aborted the process), and counts the goal halves' offsets once loaded (4, else refused); the engine's
+mesh reader refuses bytes after the vertices that aren't a CBOF offset (an older RLOF mesh had loaded unplaced, the goals
+at the field's centre); the reason comes back through `rl_init_error()`. The names guard (RV-435, RV-436): the rules random
+bytes meet (short camel names, properties, a name ending in RL) apply to text only, a C++ type name ending in RL is found
+in binaries by its Itanium length prefix, base64 runs (64+) and vite's file hashes are taken out first, RLOF and the
+retired class names match anywhere, the old joined names in any case; seeded random data (4 MB of bytes, 1 MB of base64)
+gives no hit. Tests pin the stall cap (100k, the 100,001st lets the first go; a full table keeps the oldest address's
+record: RV-437); netstate tallies its runs through one function its self-check also uses, and the self-check adds a
+client whose change the snapshot misses (F2, RV-438). The dropped dev key is read before it's removed (RV-439); the web
+image's default URL is its ENV alone, an empty one refused (RV-441). "Hoops" inside a compound (jumpThroughHoops) stays a
+hit: a mode name.
 **The browser tests' servers** start from `client/e2e/servers.ts` (Playwright's globalSetup), not its webServer: here a
 connection to a closed 127.0.0.1 port is dropped, not refused, and Playwright's pre-check of each server's URL waited
 2 min 14 s per server (9 of the suite's 12 minutes).

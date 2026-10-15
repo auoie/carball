@@ -1,6 +1,6 @@
 //! The patched engine (C++), through its C interface (`engine/capi/rlengine.h`).
 
-use std::ffi::{CString, c_char, c_int};
+use std::ffi::{CStr, CString, c_char, c_int};
 use std::path::Path;
 use std::ptr::NonNull;
 
@@ -43,6 +43,7 @@ pub struct Controls {
 
 unsafe extern "C" {
     fn rl_init(collision_mesh_dir: *const c_char) -> c_int;
+    fn rl_init_error() -> *const c_char;
     fn rl_arena_create() -> *mut RLArena;
     fn rl_arena_destroy(arena: *mut RLArena);
     fn rl_add_car(arena: *mut RLArena, team: c_int, body: c_int) -> u32;
@@ -134,9 +135,11 @@ pub fn init(collision_mesh_dir: &Path) -> anyhow::Result<()> {
         }
         let dir = CString::new(collision_mesh_dir.to_string_lossy().as_bytes()).map_err(|e| e.to_string())?;
         // SAFETY: a valid C string; the engine copies what it needs
-        // (none loaded, an empty folder or another layout: refused at startup, not the first match's abort, RV-421)
+        // (another folder, an older mesh format, a truncated file: refused at startup, why said, not the first match's
+        // abort, RV-421, RV-434)
         if unsafe { rl_init(dir.as_ptr()) } == 0 {
-            Err(format!("no arena collision meshes (arena/*.cmf) in {}", collision_mesh_dir.display()))
+            // SAFETY: the engine's error string, valid until the next init (there is none: once per process)
+            Err(unsafe { CStr::from_ptr(rl_init_error()) }.to_string_lossy().into_owned())
         } else {
             Ok(())
         }

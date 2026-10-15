@@ -530,12 +530,13 @@ mod tests {
         for i in 1..=3 {
             assert!(!queue.address_stalled(at(i), u64::from(i), f64::from(i)));
         }
-        // (1 stalls again: 2's last stall is the oldest now)
-        assert!(!queue.address_stalled(at(1), 1, 4.0));
+        // (the records full, 1, the oldest, stalls again under another key: its record kept, not let go to make room, so
+        // it's blocked; RX17's C27. 2's last stall is the oldest now)
+        assert!(queue.address_stalled(at(1), 7, 4.0));
         assert!(!queue.address_stalled(at(4), 4, 5.0));
         assert_eq!(queue.stalls.len(), 3);
         assert!(!queue.stalls.contains_key(&at(2)) && queue.stalls.contains_key(&at(1)));
-        // 1's record stands: a second key from it blocks it
+        // 1's record stands: another key from it still blocks it
         assert!(queue.address_stalled(at(1), 9, 6.0));
         // 2 again, the records full: 3 goes (1's earlier entries are passed over), and 2 starts over with one key
         assert!(!queue.address_stalled(at(2), 8, 7.0));
@@ -545,10 +546,16 @@ mod tests {
         assert!(!queue.stalls.contains_key(&at(4)), "4 next");
         // (the full records stay cheap: 100 new addresses into a 100k-address table, where a scan each took ~2.6 ms in a
         // release build, far more in this one)
+        // (RX17's C21: the cap is 100k addresses, and the 100,001st lets exactly the first go)
         let mut queue = Matchmaker::new(&playlists());
-        for i in 0..MAX_STALL_ADDRESSES as u32 {
-            queue.address_stalled(IpAddr::from((0x0a00_0000 + i).to_be_bytes()), 1, f64::from(i) * 0.001);
+        let address = |i: u32| IpAddr::from((0x0a00_0000 + i).to_be_bytes());
+        for i in 0..100_000 {
+            queue.address_stalled(address(i), 1, f64::from(i) * 0.001);
         }
+        assert_eq!(queue.stalls.len(), 100_000);
+        queue.address_stalled(address(100_000), 1, 150.0);
+        assert_eq!(queue.stalls.len(), 100_000);
+        assert!(!queue.stalls.contains_key(&address(0)) && queue.stalls.contains_key(&address(1)) && queue.stalls.contains_key(&address(100_000)));
         let t0 = std::time::Instant::now();
         for i in 0..100u32 {
             queue.address_stalled(IpAddr::from((0x0b00_0000 + i).to_be_bytes()), 1, 200.0);

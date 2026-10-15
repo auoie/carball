@@ -9,6 +9,10 @@
 
 #include <algorithm>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <string>
 #include <vector>
 
 using namespace RocketSim;
@@ -32,11 +36,71 @@ static size_t CopyOut(const std::vector<uint8_t>& data, uint8_t* out, size_t cap
 
 extern "C" {
 
+// Why the last rl_init failed
+static std::string initError;
+
+// The arena's meshes as a server needs them, before the engine reads them (RV-434): the arena's 16 pieces in <dir>/arena
+// (scripts/arena_gen.py), each a whole mesh file (its counts' size, or that and a 16-byte trailer). Another folder
+// (empty, the old layout, a partial copy, a truncated file) is refused naming what's wrong (RV-421: the server then
+// refuses to start); the trailers are the engine's to check, and the goal halves' offsets are counted once it loaded them
+static std::string CheckArenaMeshes(const std::filesystem::path& dir) {
+	namespace fs = std::filesystem;
+	constexpr size_t PIECES = 16;
+	fs::path arena = dir / "arena";
+	std::vector<fs::path> meshes;
+	std::error_code ec;
+	if (fs::is_directory(arena, ec))
+		for (const fs::directory_entry& entry : fs::directory_iterator(arena, ec))
+			if (entry.path().extension() == ".cmf")
+				meshes.push_back(entry.path());
+	if (meshes.empty())
+		return "no arena collision meshes (arena/*.cmf) in " + dir.string();
+	if (meshes.size() != PIECES)
+		return arena.string() + " holds " + std::to_string(meshes.size()) + (meshes.size() == 1 ? " mesh" : " meshes") + ", not the arena's " + std::to_string(PIECES);
+	for (const fs::path& mesh : meshes) {
+		std::ifstream file(mesh, std::ios::binary);
+		std::vector<char> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+		int32_t counts[2] = { 0, 0 };
+		if (bytes.size() >= 8)
+			memcpy(counts, bytes.data(), 8);
+		uint64_t whole = 8 + 12 * (uint64_t)std::max(counts[0], 0) + 12 * (uint64_t)std::max(counts[1], 0);
+		if (bytes.size() < 8 || counts[0] <= 0 || counts[1] <= 0 || (bytes.size() != whole && bytes.size() != whole + 16))
+			return mesh.string() + ": " + std::to_string(bytes.size()) + " bytes, not a whole mesh (truncated, or another format)";
+	}
+	return "";
+}
+
 int rl_init(const char* collision_mesh_dir) {
-	RocketSim::Init(collision_mesh_dir, true);
-	// (no arena mesh, an empty folder or another layout: a failure now, not the first arena's throw, which a caller
-	// across the C boundary can't catch, RV-421)
-	return RocketSim::GetArenaCollisionShapes(GameMode::SOCCAR).empty() ? 0 : 1;
+	initError = CheckArenaMeshes(collision_mesh_dir);
+	if (!initError.empty())
+		return 0;
+	std::string arena = (std::filesystem::path(collision_mesh_dir) / "arena").string();
+	// (what the engine throws, a trailer that isn't a body offset or a bad index, can't cross the C boundary, the caller
+	// would abort: a failed init instead, the engine left unusable, RV-434)
+	try {
+		RocketSim::Init(collision_mesh_dir, true);
+	} catch (const std::exception& e) {
+		initError = arena + " (meshes in name order): " + e.what();
+		return 0;
+	}
+	if (RocketSim::GetArenaCollisionShapes(GameMode::SOCCAR).empty()) {
+		initError = "no arena collision meshes loaded from " + arena;
+		return 0;
+	}
+	// (the goal halves are placed by their body offset: none, or other pieces, and the goals would sit unplaced)
+	constexpr int GOAL_HALVES = 4;
+	int placed = 0;
+	for (const btVector3& offset : RocketSim::GetArenaCollisionOffsets(GameMode::SOCCAR))
+		placed += !offset.isZero();
+	if (placed != GOAL_HALVES) {
+		initError = arena + ": " + std::to_string(placed) + " meshes placed by a body offset, not the arena's " + std::to_string(GOAL_HALVES) + " goal halves";
+		return 0;
+	}
+	return 1;
+}
+
+const char* rl_init_error(void) {
+	return initError.c_str();
 }
 
 static void SetCallbacks(RLArena* a) {

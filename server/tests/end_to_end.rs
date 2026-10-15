@@ -592,18 +592,58 @@ async fn the_binarys_healthcheck_answers_by_the_health_endpoint() {
     assert!(at.elapsed() < Duration::from_secs(5), "{:?}", at.elapsed());
 }
 
-/// A meshes folder without arena/*.cmf (empty, or the layout before the rename: soccar/) is refused at startup, the
-/// folder named, not taken for a healthy server whose first match aborts the process (RV-421)
+/// A meshes folder that isn't the arena's is refused at startup, what's wrong named, never taken for a healthy server whose
+/// first match aborts the process or whose goals sit unplaced at the field's centre (RV-421, RV-434): empty, the layout
+/// before the rename (soccar/), a partial copy, the goal halves' older trailer (RLOF: the engine's refusal, caught), unplaced
+/// goals, a truncated file, a bad triangle index (the engine's)
 #[test]
-fn the_binary_refuses_a_meshes_folder_without_arena_meshes() {
+fn the_binary_refuses_a_meshes_folder_that_isnt_the_arenas() {
     let meshes = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../out/arena/collision_meshes/arena"));
-    let any_mesh = std::fs::read_dir(meshes).unwrap().map(|e| e.unwrap().path()).find(|p| p.extension().is_some_and(|x| x == "cmf")).unwrap();
+    let mut files: Vec<_> = std::fs::read_dir(meshes).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|x| x == "cmf")).collect();
+    files.sort();
+    assert_eq!(files.len(), 16);
     let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join("meshes_layouts");
-    let (empty, old) = (root.join("empty"), root.join("old"));
+    // (a copy of the arena's meshes under `name/folder`, each file's bytes edited, or left out)
+    let copy = |name: &str, folder: &str, edit: &dyn Fn(usize, Vec<u8>) -> Option<Vec<u8>>| {
+        let dir = root.join(name);
+        std::fs::create_dir_all(dir.join(folder)).unwrap();
+        for (i, file) in files.iter().enumerate() {
+            if let Some(bytes) = edit(i, std::fs::read(file).unwrap()) {
+                std::fs::write(dir.join(folder).join(file.file_name().unwrap()), bytes).unwrap();
+            }
+        }
+        dir
+    };
+    let goal = |bytes: &[u8]| bytes.len() >= 16 && &bytes[bytes.len() - 16..bytes.len() - 12] == b"CBOF";
+    let empty = root.join("empty");
     std::fs::create_dir_all(&empty).unwrap();
-    std::fs::create_dir_all(old.join("soccar")).unwrap();
-    std::fs::copy(&any_mesh, old.join("soccar").join(any_mesh.file_name().unwrap())).unwrap();
-    for dir in [&empty, &old] {
+    let cases = [
+        (empty.clone(), "no arena collision meshes (arena/*.cmf) in"),
+        (copy("old", "soccar", &|_, b| Some(b)), "no arena collision meshes (arena/*.cmf) in"),
+        (copy("partial", "arena", &|i, b| (i == 0).then_some(b)), "holds 1 mesh, not the arena's 16"),
+        (
+            copy("rlof", "arena", &|_, mut b| {
+                if goal(&b) {
+                    let at = b.len() - 16;
+                    b[at..at + 4].copy_from_slice(b"RLOF");
+                }
+                Some(b)
+            }),
+            "16 bytes after the vertices that aren't a body offset",
+        ),
+        (copy("unplaced", "arena", &|_, b| Some(if goal(&b) { b[..b.len() - 16].to_vec() } else { b })), "0 meshes placed by a body offset"),
+        (copy("truncated", "arena", &|i, b| Some(if i == 3 { b[..b.len() - 5].to_vec() } else { b })), "not a whole mesh (truncated"),
+        (
+            copy("bad_index", "arena", &|i, mut b| {
+                if i == 5 {
+                    b[8..12].copy_from_slice(&i32::MAX.to_le_bytes());
+                }
+                Some(b)
+            }),
+            "bad triangle vertex index",
+        ),
+    ];
+    for (dir, expected) in &cases {
         let mut server = std::process::Command::new(env!("CARGO_BIN_EXE_carball-server"))
             .args(["--dev", "--mode", "direct", "--port", "0", "--dev-info", "off", "--health-port", "0", "--meshes"])
             .arg(dir)
@@ -622,7 +662,8 @@ fn the_binary_refuses_a_meshes_folder_without_arena_meshes() {
         }
         let out = server.wait_with_output().unwrap();
         let stderr = String::from_utf8_lossy(&out.stderr);
+        // (exit 1 with the reason: not 134, an engine exception aborting the process)
         assert_eq!(out.status.code(), Some(1), "{}: {stderr}", dir.display());
-        assert!(stderr.contains("no arena collision meshes (arena/*.cmf) in") && stderr.contains(&*dir.to_string_lossy()), "{stderr}");
+        assert!(stderr.contains(expected) && stderr.contains(&*dir.to_string_lossy()), "{}: {stderr}", dir.display());
     }
 }

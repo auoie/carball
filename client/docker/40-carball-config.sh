@@ -10,7 +10,8 @@ one_line() { [ "$(printf '%s\n' "$1" | wc -l)" -eq 1 ]; }
 label='[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?'
 host="$label(\.$label)*"
 port_ok() { [ -z "$1" ] || [ "$1" = "*" ] || [ "$1" -le 65535 ]; }
-url="${GAME_SERVER_URL:-https://game.carball.zolt.top:4433/play}"
+# (its default is the image's ENV alone, RV-441: set but empty, it's refused, not taken for the production server)
+url="${GAME_SERVER_URL-}"
 if ! one_line "$url" || ! printf '%s\n' "$url" | grep -Eq "^https://$host(:[1-9][0-9]{0,4})?/[A-Za-z0-9._~/-]*\$" \
     || ! port_ok "$(printf '%s' "$url" | sed -nE 's#^https://[^/:]+:([0-9]+)/.*#\1#p')"; then
     echo "40-carball-config: GAME_SERVER_URL must be https://HOST[:PORT]/PATH (letters, digits, . - _ ~ /), got: $url" >&2

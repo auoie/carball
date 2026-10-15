@@ -2544,7 +2544,7 @@ index 9795e46..a35efbf 100644
  enum : int {
  	BT_USERINFO_NONE,
 diff --git upstream/src/CollisionMeshFile/CollisionMeshFile.cpp engine/rocketsim/src/CollisionMeshFile/CollisionMeshFile.cpp
-index 2f519cf..d13a1b0 100644
+index 2f519cf..60817de 100644
 --- upstream/src/CollisionMeshFile/CollisionMeshFile.cpp
 +++ engine/rocketsim/src/CollisionMeshFile/CollisionMeshFile.cpp
 @@ -1,5 +1,7 @@
@@ -2555,14 +2555,21 @@ index 2f519cf..d13a1b0 100644
  #include "../DataStream/DataStreamIn.h"
  
  #include "../../libsrc/bullet3-3.24/BulletDynamics/Dynamics/btRigidBody.h"
-@@ -34,6 +36,12 @@ void CollisionMeshFile::ReadFromStream(DataStreamIn& in, bool silent, std::strin
+@@ -34,6 +36,19 @@ void CollisionMeshFile::ReadFromStream(DataStreamIn& in, bool silent, std::strin
  	for (Vertex& vert : vertices)
  		vert = in.Read<Vertex>();
  
-+	// RL PATCH: the optional body offset trailer ("CBOF", 3 floats; named for no game: RV-419)
-+	if (!in.IsOverflown() && in.data.size() >= in.pos + 16 && std::memcmp(&in.data[in.pos], "CBOF", 4) == 0) {
-+		in.pos += 4;
-+		offset = in.Read<Vertex>();
++	// RL PATCH: the optional body offset trailer ("CBOF", 3 floats; named for no game: RV-419). Other bytes after the
++	// vertices are refused: an older or foreign trailer would load the mesh unplaced, at the origin (RV-434)
++	if (!in.IsOverflown() && in.pos != in.data.size()) {
++		if (in.data.size() == in.pos + 16 && std::memcmp(&in.data[in.pos], "CBOF", 4) == 0) {
++			in.pos += 4;
++			offset = in.Read<Vertex>();
++		} else {
++			RS_ERR_CLOSE(
++				ERROR_PREFIX_STR << "Invalid collision mesh file at \"" << filePath <<
++				"\" (" << (in.data.size() - in.pos) << " bytes after the vertices that aren't a body offset)");
++		}
 +	}
 +
  #ifndef RS_MAX_SPEED
@@ -2961,7 +2968,7 @@ index 8281ac9..e8e4652 100644
  	};
  }
 diff --git upstream/src/RocketSim.cpp engine/rocketsim/src/RocketSim.cpp
-index 2274167..c8a1b97 100644
+index 2274167..17dc40d 100644
 --- upstream/src/RocketSim.cpp
 +++ engine/rocketsim/src/RocketSim.cpp
 @@ -1,5 +1,7 @@
@@ -3009,7 +3016,17 @@ index 2274167..c8a1b97 100644
  		}
  	}
  
-@@ -168,16 +180,15 @@ void RocketSim::InitFromMem(const std::map<GameMode, std::vector<FileData>>& mes
+@@ -144,7 +156,8 @@ void RocketSim::InitFromMem(const std::map<GameMode, std::vector<FileData>>& mes
+ 				DataStreamIn dataStream = {};
+ 				dataStream.data = entry;
+ 				CollisionMeshFile meshFile = {};
+-				meshFile.ReadFromStream(dataStream, silent);
++				// RL PATCH: which mesh, in a refusal (they come from memory here: no path)
++				meshFile.ReadFromStream(dataStream, silent, RS_STR(GAMEMODE_STRS[(int)gameMode] << " mesh [" << idx << "]"));
+ 				int& hashCount = targetHashes[meshFile.hash];
+ 
+ 				if (hashCount > 0) {
+@@ -168,16 +181,15 @@ void RocketSim::InitFromMem(const std::map<GameMode, std::vector<FileData>>& mes
  				btGenerateInternalEdgeInfo(bvtMesh, infoMap);
  				bvtMesh->setTriangleInfoMap(infoMap);
  				meshes.push_back(bvtMesh);

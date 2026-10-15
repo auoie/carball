@@ -156,7 +156,8 @@ void RocketSim::InitFromMem(const std::map<GameMode, std::vector<FileData>>& mes
 				DataStreamIn dataStream = {};
 				dataStream.data = entry;
 				CollisionMeshFile meshFile = {};
-				meshFile.ReadFromStream(dataStream, silent);
+				// RL PATCH: which mesh, in a refusal (they come from memory here: no path)
+				meshFile.ReadFromStream(dataStream, silent, RS_STR(GAMEMODE_STRS[(int)gameMode] << " mesh [" << idx << "]"));
 				int& hashCount = targetHashes[meshFile.hash];
 
 				if (hashCount > 0) {

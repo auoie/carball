@@ -51,20 +51,27 @@ const NAMES = [
 /** The names no common word holds: found inside any word too, any case ("OCTANEBODY", "octanebody": RV-423) */
 const DISTINCT = ["rocket league", "psyonix", "octane", "dominus", "fennec", "batmobile", "takumi", "mannfield", "soccar", "dropshot", "heatseeker", "snow day", "gridiron", "spike rush"];
 /** The game's abbreviation (renamed carball: the user's decision of 2026-10-15), case-sensitive: "rl" alone is a
- *  minifier's name (`var rl=`, `of rl)`) and random bytes spell it (RV-424). In a separated compound or a phrase
- *  (rl-clone, rl_mode, RL_MODE, .rl-hud, "RL PATCH"), our old joined names (rlengine, rlserver), camel-cased
- *  (rlFreeplay, rlUI, RLStats: four characters at least, past a minifier's three-letter names, and not inside base64), a
- *  short capital run (RLOF, not RLIMIT or RLEDecoder), a property (window.rl: RV-423) or a name's suffix (a C++ type
- *  name, btVehicleRL in `N9RocketSim11btVehicleRLE`, after three lowercase letters: not URL or CRL, RV-420) */
+ *  minifier's name (`var rl=`, `of rl)`) and random bytes spell it (RV-424). Anywhere: a separated compound or a phrase
+ *  (rl-clone, rl_mode, RL_MODE, .rl-hud, "RL PATCH"), our old joined names in any case (rlengine, RLengine, rl.clone),
+ *  a long camel-cased name (rlFreeplay, RLStats), the retired names themselves wherever they sit (RLOF, xRLOF,
+ *  btVehicleRL, btWheelInfoRL: RV-436) */
 const ABBREVIATIONS = new RegExp(
   [
     String.raw`(?<![A-Za-z0-9_$])(?:rl|RL|Rl)[-_][A-Za-z]`,
-    String.raw`(?<![A-Za-z0-9_$])rl(?:clone|server|engine)`,
+    String.raw`(?<![A-Za-z0-9_$])(?:rl|RL|Rl)[-_.]?(?:clone|server|engine|Clone|Server|Engine|CLONE|SERVER|ENGINE)`,
     String.raw`(?<![A-Za-z0-9_$])RL [A-Za-z]`,
+    String.raw`(?<![A-Za-z0-9_$+/])(?:rl|Rl|RL)[A-Z][a-z]{3,}`,
+    String.raw`RLOF|btVehicleRL|btWheelInfoRL`,
+  ].join("|"),
+);
+/** In text alone (code, markup, notices: a binary's random bytes spell these, about 1 a MB, RV-435): a short camel-cased
+ *  name (rlUI: four characters at least, past a minifier's three-letter names), a property (window.rl), a name ending in
+ *  the abbreviation (CarRL, btVehicleRL; not URL or CRL, nor RLE's decodeRLE: RV-436) */
+const TEXT_ABBREVIATIONS = new RegExp(
+  [
     String.raw`(?<![A-Za-z0-9_$+/])(?:(?:rl|Rl)[A-Z][A-Za-z0-9_$]|RL[A-Z][a-z])`,
-    String.raw`(?<![A-Za-z0-9_$+/])RL[A-Z]{1,3}(?![A-Za-z0-9])`,
     String.raw`\.rl(?![A-Za-z0-9_$])`,
-    String.raw`[a-z]{3}RL(?![a-z])`,
+    String.raw`(?<![A-Za-z0-9_$])[A-Za-z][A-Za-z0-9]*[a-z]RL(?![A-Za-z0-9])`,
   ].join("|"),
 );
 const escape = (name: string): string => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/ /g, "[ _-]?");
@@ -85,13 +92,22 @@ function files(dir: string): string[] {
   });
 }
 
-/** A shipped file's text: a binary one's (a NUL in its first 8 KB) printable runs of 4 or more alone, one a line, so
- *  random bytes rarely spell a name (RV-424) */
-function shipped(path: string): string {
+/** A shipped file's text, and whether it is binary (a NUL in its first 8 KB): then its printable runs of 4 or more
+ *  alone, one a line, so random bytes rarely spell a name (RV-424) */
+function shipped(path: string): { text: string; binary: boolean } {
   const bytes = readFileSync(path);
   const text = bytes.toString("latin1");
-  return bytes.subarray(0, 8192).includes(0) ? (text.match(/[\x20-\x7e]{4,}/g) ?? []).join("\n") : text;
+  const binary = bytes.subarray(0, 8192).includes(0);
+  return { text: binary ? (text.match(/[\x20-\x7e]{4,}/g) ?? []).join("\n") : text, binary };
 }
+
+/** Vite's content hashes in the built page's file names ("index-Cc7XCyWW.js", where its code names them too): random
+ *  letters, taken out first so none spells a name by chance (RV-435: about 2% of builds). Eight characters with a capital,
+ *  a digit, - or _ (a lowercase word like "-rlengine." is a name, not a hash) */
+function viteHashes(paths: readonly string[]): string[] {
+  return paths.flatMap((path) => /-([A-Za-z0-9_-]{8})\.[A-Za-z0-9]+$/.exec(path)?.[1] ?? []).filter((hash) => /[A-Z0-9_-]/.test(hash));
+}
+const withoutHashes = (text: string, hashes: readonly string[]): string => hashes.reduce((t, hash) => t.split(hash).join(""), text);
 
 const posix = (path: string): string => path.split("\\").join("/");
 
@@ -108,18 +124,59 @@ const OLD_KEYS_MODULE = "settings/storageKeys.ts";
  *  hybrid's `hybrid_component()`) */
 const THIRD_PARTY = /\bhybrid_component\b/g;
 
-/** The first name (or abbreviation) in the text, with its surroundings */
-function found(text: string): string | null {
-  for (const [re, source] of [
-    [PATTERN, text],
-    [PATTERN, words(text)],
-    [INSIDE, text],
-    [ABBREVIATIONS, text],
-  ] as const) {
-    const m = re.exec(source);
-    if (m) return source.slice(Math.max(0, m.index - 30), m.index + m[0].length + 30);
+/** Encoded data, base64 (a run of 64 or more with capitals, lowercase letters and digits: a MIME or PEM line at least):
+ *  random letters that spell anything, left out (RV-435) */
+const ENCODED = /[A-Za-z0-9+/]{64,}={0,2}/g;
+const unencoded = (text: string): string => text.replace(ENCODED, (run) => (/[0-9]/.test(run) && /[A-Z]/.test(run) && /[a-z]/.test(run) ? " " : run));
+
+interface Hit {
+  source: string;
+  index: number;
+  length: number;
+}
+const first = (re: RegExp, source: string): Hit | null => {
+  const m = re.exec(source);
+  return m ? { source, index: m.index, length: m[0].length } : null;
+};
+
+/** In a binary alone: a C++ type name ending in the abbreviation as Itanium mangling writes it, its length then the name
+ *  (`N9RocketSim11btVehicleRLE`), the length checked, so random bytes rarely make one (RV-420, RV-435) */
+function mangledRL(text: string): Hit | null {
+  for (const m of text.matchAll(/(?<!\d)(\d{1,3})(?=[A-Za-z_])/g)) {
+    const length = Number(m[1]);
+    const at = m.index + m[0].length;
+    const name = text.slice(at, at + length);
+    if (length >= 4 && name.length === length && /^[A-Za-z_][A-Za-z0-9_]*[a-z]RL$/.test(name)) return { source: text, index: at, length };
   }
   return null;
+}
+
+/** The first name (or abbreviation) in the text, with its surroundings: a binary's (its printable runs) by the rules random
+ *  bytes rarely meet (RV-435) */
+function found(raw: string, binary = false): string | null {
+  const text = unencoded(raw);
+  const hit =
+    first(PATTERN, text) ??
+    first(PATTERN, words(text)) ??
+    first(INSIDE, text) ??
+    first(ABBREVIATIONS, text) ??
+    (binary ? mangledRL(text) : first(TEXT_ABBREVIATIONS, text));
+  return hit ? hit.source.slice(Math.max(0, hit.index - 30), hit.index + hit.length + 30) : null;
+}
+
+/** Seeded random bytes (xorshift32), for the false-alarm check */
+function randomBytes(length: number, seed: number): Buffer {
+  const out = Buffer.alloc(length);
+  let x = seed >>> 0;
+  for (let i = 0; i < length; i++) {
+    x ^= x << 13;
+    x >>>= 0;
+    x ^= x >>> 17;
+    x ^= x << 5;
+    x >>>= 0;
+    out[i] = x & 0xff;
+  }
+  return out;
 }
 
 /** A module's string literals ('…', "…", `…`), its comments and import paths left out (a module's file name doesn't ship) */
@@ -162,6 +219,30 @@ describe("what ships names no game (RV-388)", () => {
     }
   });
 
+  it("RX17's gaps closed (RV-436), and no false alarms on encoded or random data, hashed names, RLE (RV-435)", () => {
+    for (const text of ["CarRL", "RLengine", "RLENGINE", "rl.clone", "xRLOF", "breakoutCar", "isPlankLike", "rumbleMode"]) expect(found(text), text).not.toBeNull();
+    for (const bin of ["ARLOF", "N9RocketSim11btVehicleRLE", "N9RocketSim10CarModelRLE", "breakoutCar"]) expect(found(bin, true), bin).not.toBeNull();
+    for (const fine of ["decodeRLE", "encodeRLE", "readRLE", "tgaRLE", "RLE_8", "gokRLL", "for(let e of rl){}", "toURL", "CRL"]) {
+      expect(found(fine), fine).toBeNull();
+      expect(found(fine, true), fine).toBeNull();
+    }
+    // (base64 holding the rules' shapes, as one run and as MIME lines: left out)
+    const encoded = "AGFzbQEAAAAB9x/CarRL+Qk7z/RLStats+" + "Ab3x".repeat(10);
+    expect(found("x/CarRL+Qk"), "the shape alone").not.toBeNull();
+    expect(found(encoded), "inside base64").toBeNull();
+    // (vite's hash in a file name, and where the code names it)
+    expect(found("assets/three-Rl_kQ2FM.js"), "a hash that spells one").not.toBeNull();
+    expect(found(withoutHashes('import("./three-Rl_kQ2FM.js")', viteHashes(["assets/three-Rl_kQ2FM.js", "assets/three-rlengine.js"])))).toBeNull();
+    expect(viteHashes(["assets/carball-rlengine.js"]), "a lowercase word isn't a hash").toEqual([]);
+    // (seeded random data: 4 MB of bytes read as a binary, 1 MB of base64 as one run and as 76-character lines)
+    const runs = (randomBytes(4_000_000, 20261015).toString("latin1").match(/[\x20-\x7e]{4,}/g) ?? []).join("\n");
+    expect(found(runs, true), "random bytes").toBeNull();
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const base64 = Array.from(randomBytes(1_000_000, 7), (b) => alphabet[b & 63]).join("");
+    expect(found(base64), "base64, one run").toBeNull();
+    expect(found(base64.replace(/.{76}/g, "$&\n")), "base64, MIME lines").toBeNull();
+  });
+
   it("our modules' strings (not their comments)", () => {
     const modules = files(SRC).filter((p) => p.endsWith(".ts") && !p.endsWith(".test.ts") && !DEV_ONLY.has(posix(relative(SRC, p))));
     expect(modules.length).toBeGreaterThan(50);
@@ -180,19 +261,22 @@ describe("what ships names no game (RV-388)", () => {
   it("public/, as it ships, its file names too", () => {
     for (const path of files(PUBLIC)) {
       expect(found(posix(relative(PUBLIC, path))), "file name").toBeNull();
-      expect(found(shipped(path)), relative(PUBLIC, path)).toBeNull();
+      const { text, binary } = shipped(path);
+      expect(found(text, binary), relative(PUBLIC, path)).toBeNull();
     }
   });
 
   it.skipIf(!existsSync(DIST))("the built page: every file and its name, the engine's WebAssembly too", () => {
     const built = files(DIST);
     expect(built.some((p) => p.endsWith(".wasm"))).toBe(true);
+    const hashes = viteHashes(built);
+    expect(hashes.length).toBeGreaterThan(5);
     const texts = built.map((path) => [posix(relative(DIST, path)), shipped(path)] as const);
     // (the old keys' prefix once, in the migration's code)
-    expect(texts.flatMap(([, text]) => text.match(OLD_KEYS) ?? []), "the old keys' prefix").toHaveLength(1);
-    for (const [name, text] of texts) {
-      expect(found(name), "file name").toBeNull();
-      expect(found(text.replace(OLD_KEYS, '""')), name).toBeNull();
+    expect(texts.flatMap(([, { text }]) => text.match(OLD_KEYS) ?? []), "the old keys' prefix").toHaveLength(1);
+    for (const [name, { text, binary }] of texts) {
+      expect(found(withoutHashes(name, hashes)), "file name").toBeNull();
+      expect(found(withoutHashes(text.replace(OLD_KEYS, '""'), hashes), binary), name).toBeNull();
     }
   });
 
@@ -202,7 +286,8 @@ describe("what ships names no game (RV-388)", () => {
     for (const path of staged) {
       const name = posix(relative(GAME ?? "", path));
       expect(found(name), "file name").toBeNull();
-      expect(found(shipped(path).replace(THIRD_PARTY, "")), name).toBeNull();
+      const { text, binary } = shipped(path);
+      expect(found(text.replace(THIRD_PARTY, ""), binary), name).toBeNull();
     }
   });
 });

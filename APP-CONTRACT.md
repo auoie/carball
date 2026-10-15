@@ -53,7 +53,7 @@ they change there is lost when the newer page returns (RV-425; `client/src/setti
 
 | Env | Default | |
 |---|---|---|
-| `GAME_SERVER_URL` | `https://game.carball.zolt.top:4433/play` | the game server's WebTransport URL; written into `/config.json` at start (`https://HOST[:PORT]/PATH`, else the container exits), and its origin is the page's only `connect-src` besides its own |
+| `GAME_SERVER_URL` | `https://game.carball.zolt.top:4433/play` | the game server's WebTransport URL; written into `/config.json` at start (`https://HOST[:PORT]/PATH`, else the container exits: set but empty too, RV-441), and its origin is the page's only `connect-src` besides its own |
 | `EXTRA_CONNECT_SRC` | (none) | testing only: more `connect-src` sources (e.g. `http://127.0.0.1:14503 https://127.0.0.1:14502` for a development server's info and port); space-separated `SCHEME://HOST[:PORT]` (http, https, ws, wss; the port 1–65535 or `*`), else the container exits. `GAME_SERVER_URL` likewise allows only letters, digits and `. - _ ~ /` after `https://`, one line |
 
 - **Port:** 3000/tcp, plain HTTP. `/assets/*` (hashed names) cached for a year, the rest `no-cache`, `/config.json`
@@ -87,7 +87,7 @@ they change there is lost when the newer page returns (RV-425; `client/src/setti
 | `KEY_PATH` | `/certs/privkey.pem` | its private key (PEM); a key that isn't the certificate's is refused (the old pair stays, tried again) |
 | `SERVER_MODE` | `queue` | `queue`: the 1v1 / 2v2 / 3v3 queue (searches and claims only); `direct`: one open match (development) |
 | `HEALTH_PORT` | `8081` | the health endpoint, on 127.0.0.1 inside the container only |
-| `MESHES_DIR` | `/app/collision_meshes` | the arena's collision meshes (in the image): a folder holding `arena/*.cmf`, else the server refuses to start |
+| `MESHES_DIR` | `/app/collision_meshes` | the arena's collision meshes (in the image; keep the default: the image's own): a folder whose `arena/` holds the arena's 16 meshes in this image's format, the 4 goal halves placed by their offset. Anything else (empty, the old `soccar/` layout, a partial copy, meshes from before 8f78a1a, a truncated file) stops the server at start, saying what's wrong (RV-421, RV-434) |
 
 A development run of the image takes `--dev`: a self-signed certificate made at start whatever `CERT_PATH` and `KEY_PATH`
 say, pinned by the page through the info endpoint (the info reports the game port inside the container, so publish it as

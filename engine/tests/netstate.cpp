@@ -13,8 +13,8 @@
 //    such run shown so (the server's copied in, it continues identical; the client as restored reproduces the live one),
 //    2% of them at most each (RV-369, RV-387, RV-412);
 //  - the update leaves the client's own persistent contacts as they were (RV-433).
-// The verdict checks itself (RV-433): each of its counts alone fails it, and a client given state the update doesn't carry
-// diverges unexplained.
+// The verdict checks itself (RV-433, RV-438): each of its counts alone fails it, and clients given state the update
+// doesn't carry (one the snapshot keeps, one it misses) diverge unexplained, counted as the main run counts.
 //
 // Usage: netstate [collision_meshes dir] [seconds] [window ticks] [interval ticks]
 #include "RocketSim.h"
@@ -236,22 +236,52 @@ static Divergence Classify(const std::vector<uint8_t>& serverAtUpdate, const std
 	return contactCaused ? Divergence::CONTACTS : Divergence::UNEXPLAINED;
 }
 
+// The continuations' counts: how many, identical for the window, diverged by the stored boxes alone, by the persistent
+// contacts alone, otherwise
+struct Runs {
+	int continued = 0, identical = 0, boxes = 0, contacts = 0, unexplained = 0;
+};
+
+// A continuation counted by how it went (the main run and the verdict's own check count through this alike, RV-438)
+static void Tally(Runs& runs, bool identical, Divergence why) {
+	runs.continued++;
+	if (identical)
+		runs.identical++;
+	else if (why == Divergence::BOXES)
+		runs.boxes++;
+	else if (why == Divergence::CONTACTS)
+		runs.contacts++;
+	else
+		runs.unexplained++;
+}
+
 // The gate's verdict: an update not applied exactly, a compact check failed, a divergence neither excuse explains, or
 // more excused runs than allowed
-static int GateFailures(int exactFailures, int compactFailures, int unexplained, int boxRuns, int touchingRuns, int continued) {
-	return exactFailures + compactFailures + unexplained + std::max(0, boxRuns - BoxRunsAllowed(continued)) +
-		std::max(0, touchingRuns - BoxRunsAllowed(continued));
+static int GateFailures(int exactFailures, int compactFailures, const Runs& runs) {
+	return exactFailures + compactFailures + runs.unexplained + std::max(0, runs.boxes - BoxRunsAllowed(runs.continued)) +
+		std::max(0, runs.contacts - BoxRunsAllowed(runs.continued));
 }
 
 // The verdict's own check (RV-433: nothing tied the unexplained count to the exit code, nor anything but the bound to
-// dropped contacts). Each count alone fails it; and a client given a state the update doesn't carry but the snapshot
-// keeps (car 0's angular velocity nudged 2 s into a 2v2: RX16's fault F3), continued beside the server, diverges
-// unexplained
+// dropped contacts). Each count alone fails it. And two clients given a state the update doesn't carry, 2 s into a 2v2,
+// continued beside the server and counted as the main run counts (Tally, RV-438), diverge unexplained and fail it: one
+// the snapshot keeps (car 0's angular velocity nudged: RX16's fault F3), one it misses (car 0's gravity x1.001: F2, which
+// only the restored client's check tells from the stored boxes, RV-412)
 static int VerdictChecks(int window) {
 	int failures = 0;
+	auto runs = [](int continued, int boxes, int contacts, int unexplained) {
+		Runs r;
+		r.continued = continued;
+		r.identical = continued - boxes - contacts - unexplained;
+		r.boxes = boxes;
+		r.contacts = contacts;
+		r.unexplained = unexplained;
+		return r;
+	};
 	const int n = 100, allowed = BoxRunsAllowed(n);
-	if (GateFailures(0, 0, 0, allowed, allowed, n) != 0 || !GateFailures(1, 0, 0, 0, 0, n) || !GateFailures(0, 1, 0, 0, 0, n) ||
-		!GateFailures(0, 0, 1, 0, 0, n) || !GateFailures(0, 0, 0, allowed + 1, 0, n) || !GateFailures(0, 0, 0, 0, allowed + 1, n)) {
+	if (GateFailures(0, 0, runs(n, allowed, allowed, 0)) != 0 || !GateFailures(1, 0, runs(n, 0, 0, 0)) ||
+		!GateFailures(0, 1, runs(n, 0, 0, 0)) || !GateFailures(0, 0, runs(n, 0, 0, 1)) ||
+		!GateFailures(0, 0, runs(n, allowed + 1, 0, 0)) || !GateFailures(0, 0, runs(n, 0, allowed + 1, 0))) {
 		printf("netstate verdict: a count alone doesn't decide it\n");
 		failures++;
 	}
@@ -266,34 +296,48 @@ static int VerdictChecks(int window) {
 	}
 	std::vector<uint8_t> serverAtUpdate = Snapshot(server);
 	delete server;
-	Arena* again = Restore(serverAtUpdate);
-	Arena* client = Restore(serverAtUpdate);
-	btRigidBody& nudged = (*client->GetCars().begin())->_rigidBody;
-	nudged.setAngularVelocity(nudged.getAngularVelocity() + btVector3(1e-4f, 0, 0));
-	std::vector<uint8_t> clientAtUpdate = Snapshot(client);
-	std::vector<std::vector<CarControls>> applied;
-	bool identical = true;
-	for (int t = 0; t < window; t++) {
-		if (t % 8 == 0)
-			ScriptInputs(again);
-		applied.emplace_back();
-		for (Car* car : again->GetCars()) {
-			client->GetCar(car->id)->controls = car->controls;
-			applied.back().push_back(car->controls);
+	struct Fault {
+		const char* name;
+		void (*apply)(btRigidBody& body);
+	};
+	const Fault faults[] = {
+		{ "a state the snapshot keeps", [](btRigidBody& b) { b.setAngularVelocity(b.getAngularVelocity() + btVector3(1e-4f, 0, 0)); } },
+		{ "a state the snapshot misses", [](btRigidBody& b) { b.setGravity(b.getGravity() * 1.001f); } },
+	};
+	Runs counted;
+	for (const Fault& fault : faults) {
+		Arena* again = Restore(serverAtUpdate);
+		Arena* client = Restore(serverAtUpdate);
+		fault.apply((*client->GetCars().begin())->_rigidBody);
+		std::vector<uint8_t> clientAtUpdate = Snapshot(client);
+		std::vector<std::vector<CarControls>> applied;
+		bool identical = true;
+		for (int t = 0; t < window; t++) {
+			if (t % 8 == 0)
+				ScriptInputs(again);
+			applied.emplace_back();
+			for (Car* car : again->GetCars()) {
+				client->GetCar(car->id)->controls = car->controls;
+				applied.back().push_back(car->controls);
+			}
+			again->Step();
+			client->Step();
+			identical = identical && NetVisibleState(client) == NetVisibleState(again);
 		}
-		again->Step();
-		client->Step();
-		identical = identical && NetVisibleState(client) == NetVisibleState(again);
+		bool restoredFaithful = false;
+		Divergence why = identical ? Divergence::BOXES : Classify(serverAtUpdate, clientAtUpdate, client, applied, restoredFaithful);
+		Tally(counted, identical, why);
+		if (identical || why != Divergence::UNEXPLAINED) {
+			printf("netstate verdict: a client with %s %s\n", fault.name, identical ? "continued identical" : "was excused");
+			failures++;
+		}
+		delete again;
+		delete client;
 	}
-	bool restoredFaithful = false;
-	Divergence why = identical ? Divergence::BOXES : Classify(serverAtUpdate, clientAtUpdate, client, applied, restoredFaithful);
-	if (identical || why != Divergence::UNEXPLAINED || !GateFailures(0, 0, why == Divergence::UNEXPLAINED, 0, 0, n)) {
-		printf("netstate verdict: a client with state the update doesn't carry %s\n",
-			identical ? "continued identical" : why == Divergence::UNEXPLAINED ? "passed the verdict" : "was excused");
+	if (counted.unexplained != 2 || !GateFailures(0, 0, counted)) {
+		printf("netstate verdict: the faulted clients' divergences didn't fail it (%d unexplained counted)\n", counted.unexplained);
 		failures++;
 	}
-	delete again;
-	delete client;
 	return failures;
 }
 
@@ -658,7 +702,8 @@ int main(int argc, char** argv) {
 		server->AddCar(i < 2 ? Team::BLUE : Team::ORANGE, i % 2 ? CAR_CONFIG_DOMINUS : CAR_CONFIG_OCTANE);
 	server->ResetToRandomKickoff(11);
 
-	int checks = 0, exactFailures = 0, continued = 0, continuedExact = 0, touchingRuns = 0, boxRuns = 0, unexplained = 0;
+	int checks = 0, exactFailures = 0;
+	Runs runs;
 	size_t maxBytes = 0;
 	float worstDrift = 0;
 	int compactFailures = 0, compactIdentical = 0;
@@ -791,22 +836,16 @@ int main(int argc, char** argv) {
 		// otherwise (Classify)
 		bool restoredFaithful = false;
 		Divergence why = identical ? Divergence::BOXES : Classify(serverAtUpdate, clientAtUpdate, client, applied, restoredFaithful);
-		bool boxCaused = !identical && why == Divergence::BOXES, contactCaused = !identical && why == Divergence::CONTACTS;
-		continued++;
+		Tally(runs, identical, why);
 		float compactDrift = MaxPositionDifference(server, drifted);
 		compactIdentical += compactDrift == 0;
 		compactWorstDrift = fmaxf(compactWorstDrift, compactDrift);
 		delete drifted;
-		if (identical) {
-			continuedExact++;
-		} else if (boxCaused) {
-			boxRuns++;
+		if (!identical && why == Divergence::BOXES) {
 			printf("tick %d: diverged by the client's stored boxes alone (drift %.3f uu; identical with the server's)\n", tick, MaxPositionDifference(server, client));
-		} else if (contactCaused) {
-			touchingRuns++;
+		} else if (!identical && why == Divergence::CONTACTS) {
 			worstDrift = fmaxf(worstDrift, MaxPositionDifference(server, client));
-		} else {
-			unexplained++;
+		} else if (!identical) {
 			printf("tick %d: diverged, not by the stored boxes or the persistent contacts (drift %.3f uu; contacts at the update: %d%s)\n", tick,
 				MaxPositionDifference(server, client), (int)touching, restoredFaithful ? "" : "; the restored client isn't the live one");
 		}
@@ -818,7 +857,7 @@ int main(int argc, char** argv) {
 	printf("netstate: %d updates (max %zu bytes for ball + 4 cars + pads), %d not exact after applying\n", checks, maxBytes, exactFailures);
 	printf("netstate: continued %d, identical for %d ticks: %d; diverged by the stored boxes alone: %d, by the persistent contacts "
 		"alone: %d (at most %d each; worst drift %.3f uu); otherwise: %d\n",
-		continued, window, continuedExact, boxRuns, touchingRuns, BoxRunsAllowed(continued), worstDrift, unexplained);
+		runs.continued, window, runs.identical, runs.boxes, runs.contacts, BoxRunsAllowed(runs.continued), worstDrift, runs.unexplained);
 	// (every update is written after a tick: every body on the network's grid, none raw)
 	uint64_t raw = NetState::CompactRawBodies();
 	if (raw != 0) {
@@ -837,7 +876,7 @@ int main(int argc, char** argv) {
 		"%d failed; the drifted client after %d ticks: identical %d, worst drift %.3f uu\n",
 		checks, checks ? compactTotal / checks : 0, compactMax, checks ? compactCarsOnly / checks / 4 : 0, compactFailures, window,
 		compactIdentical, compactWorstDrift);
-	int failures = GateFailures(exactFailures, compactFailures, unexplained, boxRuns, touchingRuns, continued) +
+	int failures = GateFailures(exactFailures, compactFailures, runs) +
 		VerdictChecks(window);
 	printf(failures ? "netstate: FAILED\n" : "netstate: ok\n");
 	delete server;
