@@ -1,4 +1,4 @@
-// Online play against a local rl-server (started by playwright.config.ts on ports 14433/14434). Nothing here reads
+// Online play against a local carball-server (started by playwright.config.ts on ports 14433/14434). Nothing here reads
 // pixels: the pages load with `?render=off` (nothing drawn; software WebGL for two or three pages starved the suite),
 // but for the goal's, which draws the online effects (RV-327).
 import type { Page } from "@playwright/test";
@@ -31,7 +31,7 @@ async function join(page: Page, errors: string[]): Promise<void> {
 }
 
 async function stats(page: Page): Promise<Stats> {
-  return page.evaluate(() => (window as unknown as { rlOnline: () => Stats }).rlOnline());
+  return page.evaluate(() => (window as unknown as { carballOnline: () => Stats }).carballOnline());
 }
 
 test("two players: one drives, the other sees it through the server", async ({ page, browser }) => {
@@ -61,7 +61,7 @@ test("two players: one drives, the other sees it through the server", async ({ p
   await expect(page.locator("#score")).not.toHaveClass(/swapped/);
   await expect(other.locator("#score")).toHaveClass(/swapped/);
   // (drawn in the world, depth-tested: HT-12)
-  await expect.poll(() => page.evaluate(() => (window as unknown as { rlNameplates: () => { name: string }[] }).rlNameplates().length), { timeout: 10_000 }).toBe(1);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { carballNameplates: () => { name: string }[] }).carballNameplates().length), { timeout: 10_000 }).toBe(1);
   await page.screenshot({ path: "test-results/hud-online.png" });
 
   // Holding Tab shows the scoreboard: a row per player under its team's headers; released, it fades away (SB-10)
@@ -136,7 +136,7 @@ test("leaving: the question, back to freeplay; the car explodes for the others a
   others.push(other);
   await expect(page.locator("#net")).toContainText("2 cars", { timeout: 30_000 });
   const demolitions = (): Promise<number> =>
-    page.evaluate(() => (window as unknown as { rlAudio: () => { played: Record<string, number> } }).rlAudio().played.demo ?? 0);
+    page.evaluate(() => (window as unknown as { carballAudio: () => { played: Record<string, number> } }).carballAudio().played.demo ?? 0);
   const before = await demolitions();
   // (a forfeit before this, a slow last player's leave in this match's countdown, isn't this test's)
   const forfeitsBefore = (await ends(page)).filter((e) => e.forfeit).length;
@@ -156,7 +156,7 @@ test("leaving: the question, back to freeplay; the car explodes for the others a
   await expect.poll(async () => (await ends(page)).filter((e) => e.forfeit).length, { timeout: 15_000 }).toBe(forfeitsBefore + 1);
   // The leaver: back to freeplay (the server's address gone; the tests' `render=off` kept)
   await expect(other).toHaveURL(/:4173\/(\?render=off)?$/, { timeout: 30_000 });
-  await other.waitForFunction(() => "rlFreeplay" in window, null, { timeout: 60_000 });
+  await other.waitForFunction(() => "carballFreeplay" in window, null, { timeout: 60_000 });
 
   expect(errors).toEqual([]);
   expect(leaving).toEqual([]);
@@ -196,7 +196,7 @@ test("a goal: the game slows down for 3.53 s, the goal replay plays, Space skips
   // failed under load though the mapping wasn't late: RV-379)
   expect(Math.abs((slowed.frame ?? 0) - (slowed.explodedFrame ?? 0)), JSON.stringify(slowed)).toBeLessThanOrEqual(slowed.offsetSpread + 1);
   // (the replay draws every car's plate where the replay has it, this player's own saying YOU: RV-279, RV-288, RV-292)
-  const plates = (): Promise<string[]> => page.evaluate(() => (window as unknown as { rlNameplates: () => { name: string }[] }).rlNameplates().map((p) => p.name));
+  const plates = (): Promise<string[]> => page.evaluate(() => (window as unknown as { carballNameplates: () => { name: string }[] }).carballNameplates().map((p) => p.name));
   await expect.poll(plates, { timeout: 5_000 }).toEqual(["YOU"]);
   await page.waitForTimeout(1000);
   await page.screenshot({ path: "test-results/replay.png" });

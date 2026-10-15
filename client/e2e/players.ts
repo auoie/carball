@@ -29,15 +29,15 @@ export async function newPlayer(browser: Browser, server: string, errors: string
 export async function named(page: Page, name: string): Promise<void> {
   await page.addInitScript((n) => {
     // (not on about:blank, where leaving takes the page: no storage there)
-    if (location.protocol.startsWith("http")) localStorage.setItem("rl-clone.settings.v1", JSON.stringify({ chat: { name: n } }));
+    if (location.protocol.startsWith("http")) localStorage.setItem("carball.settings.v1", JSON.stringify({ chat: { name: n } }));
   }, name);
 }
 
 /** The match ends the page saw: each one's winner and whether by forfeit */
 export async function ends(page: Page): Promise<{ winner: number | null; forfeit: boolean }[]> {
   return page.evaluate(() =>
-    (window as unknown as { rlOnline: () => { phases: { phase: string; winner: number | null; forfeit: boolean }[] } })
-      .rlOnline()
+    (window as unknown as { carballOnline: () => { phases: { phase: string; winner: number | null; forfeit: boolean }[] } })
+      .carballOnline()
       .phases.filter((p) => p.phase === "prePodium")
       .map(({ winner, forfeit }) => ({ winner, forfeit })),
   );

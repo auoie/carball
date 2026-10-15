@@ -33,14 +33,14 @@ engine/tests/check_native_wasm.sh 600                              # native and 
 The arena mesh comes from `scripts/arena_gen.py` (`out/arena/`). Native tests find it via `ARENA_MESH_DIR`;
 the WebAssembly test programs embed it at `/collision_meshes`.
 
-## JavaScript module (`engine/build-wasm/rlengine.mjs` + `rlengine.wasm`, ~620 KB)
-Bindings: `wasm/bindings.cpp` (embind). ES modules: `rlengine.mjs` (browsers, workers and Node; used by tests)
-and `rlengine_web.mjs` (browser-only; bundled by the client). Emscripten also generates TypeScript types from
+## JavaScript module (`engine/build-wasm/carball_engine.mjs` + `rlengine.wasm`, ~620 KB)
+Bindings: `wasm/bindings.cpp` (embind). ES modules: `carball_engine.mjs` (browsers, workers and Node; used by tests)
+and `carball_engine_web.mjs` (browser-only; bundled by the client). Emscripten also generates TypeScript types from
 the bindings (`rlengine*.d.mts`; typed arrays via `EMSCRIPTEN_DECLARE_VAL_TYPE`), which the client type-checks against.
 ```js
-import createEngine from "./rlengine.mjs";
+import createEngine from "./carball_engine.mjs";
 const E = await createEngine();
-E.init([new Uint8Array(await (await fetch("soccar_arena.cmf")).arrayBuffer())]);  // once
+E.init([new Uint8Array(await (await fetch("arena_corner_nx_ny.cmf")).arrayBuffer())]);  // once
 const sim = new E.Sim();
 const id = sim.addCar(0, 0);             // team 0 blue / 1 orange; type 0 Octane, 1 Dominus, 2 Plank, 3 Breakout, 4 Hybrid, 5 Merc
 sim.resetKickoff(seed);

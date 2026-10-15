@@ -750,7 +750,7 @@ describe("the -X plaza (SUR-1, 4, 25)", () => {
     expect(k).toBeLessThan(1);
     expect(material.userData["fogScale"]).toBeCloseTo(1 / k, 6);
     expect(material.userData["trueDepth"]).toBeCloseTo(1 / k, 6);
-    expect(material.vertexShader).toContain("cameraPosition + (rlWorld - cameraPosition)");
+    expect(material.vertexShader).toContain("cameraPosition + (carballWorld - cameraPosition)");
   }, 30000);
 
   it("its nine poplars where the game's are (RV-181): within 0.15 degrees and 300 uu of SUR-1's list", () => {

@@ -1,5 +1,5 @@
 [package]
-name = "rl-server"
+name = "carball-server"
 version = "0.1.0"
 edition = "2024"
 description = "Authoritative game server: the patched engine (C++) behind WebTransport"

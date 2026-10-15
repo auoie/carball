@@ -1,6 +1,6 @@
 // The camera's input for a frame, shared by freeplay and online: the camera settings of the input in use (keyboard and
 // mouse, or controller: notes/camera-respawn-goal.md CAM-17), the swivel, and the free look when that input has it on.
-import type { FreeLookControls } from "../camera/rlCamera";
+import type { FreeLookControls } from "../camera/carballCamera";
 import type { InputDevices } from "../input/devices";
 import { type InputSnapshot, type LookInput, readFreeLook, readLook } from "../input/mapping";
 import type { InputCameraSettings, Settings } from "../settings/settings";

@@ -3,7 +3,7 @@
 import { flipAudio, flipVisual } from "../hud";
 import { Quaternion, Vector3 } from "three";
 import { Interpolated } from "./interpolated";
-import { PlayerCamera } from "../camera/rlCamera";
+import { PlayerCamera } from "../camera/carballCamera";
 import { BOOST_SPAWN_AMOUNT, type BodyState, type CarConfig, type CarState, type World } from "../engine/world";
 import { type Hud, type ReplayGoal, type ReplayHud, replaySpeed, replayTime, respawnHud } from "../hud";
 import { keyGlyph } from "../ui/keyGlyph";
@@ -22,7 +22,7 @@ import type { Renderer } from "../render/renderer";
 import type { GameAudio } from "../audio/audio";
 import { type Dodge, FlipTracker } from "./flipTracker";
 import { cameraInputs, newCar, updateSwitches } from "./cameraInput";
-import type { FreeLookControls } from "../camera/rlCamera";
+import type { FreeLookControls } from "../camera/carballCamera";
 import type { ReplayPlan } from "../net/protocol";
 import { Fade } from "../render/fade";
 import { LOAD_FADE_IN } from "./matchSequence";

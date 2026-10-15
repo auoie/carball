@@ -135,7 +135,7 @@ export function blurRadii(width: number): { dof: number; small: number; medium: 
 
 /** The tone map in GLSL (TONEMAP's constants) */
 export const TONEMAP_GLSL = /* glsl */ `
-vec3 rlTonemap(vec3 x) {
+vec3 carballTonemap(vec3 x) {
   x = clamp(x, 0.0, 65503.0);
   vec3 R = ${TONEMAP.b.toFixed(6)} * x / abs(x + ${TONEMAP.a.toFixed(6)});
   vec3 G = pow(${TONEMAP.w.toFixed(6)} * x, vec3(1.0 / 2.2));
@@ -147,14 +147,14 @@ vec3 rlTonemap(vec3 x) {
 /** The remap in GLSL with the camera's fade (remapNodes): needs uniforms remapR[16], remapG[16], remapB[16] (the
  *  unclipped nodes) */
 export const REMAP_GLSL = /* glsl */ `
-float rlRemap1(float d, float nodes[16], float keep) {
+float carballRemap1(float d, float nodes[16], float keep) {
   float x = clamp(d, 0.0, 1.0) * 15.0;
   int i = int(min(floor(x), 14.0));
   return mix(min(nodes[i] * keep, 1.0), min(nodes[i + 1] * keep, 1.0), x - float(i));
 }
-vec3 rlRemap(vec3 d, float fade) {
+vec3 carballRemap(vec3 d, float fade) {
   float keep = 1.0 - fade;
-  return vec3(rlRemap1(d.r, remapR, keep), rlRemap1(d.g, remapG, keep), rlRemap1(d.b, remapB, keep));
+  return vec3(carballRemap1(d.r, remapR, keep), carballRemap1(d.g, remapG, keep), carballRemap1(d.b, remapB, keep));
 }
 `;
 
@@ -321,7 +321,7 @@ void main() {
     float k = clamp(${BLOOM.screenBlend.toFixed(1)} * exp2(-3.0 * dot(C1, vec3(0.30, 0.59, 0.11))), 0.0, 1.0);
     C1 += texture2D(tBloom, vUv).rgb * ${BLOOM.scale.toFixed(2)} * k;
   }
-  gl_FragColor = vec4(rlRemap(rlTonemap(C1), fade), 1.0);
+  gl_FragColor = vec4(carballRemap(carballTonemap(C1), fade), 1.0);
 }
 `;
 

@@ -12,7 +12,7 @@ export const MAIN_MENU_TEXT = {
 /** Our own word for leaving the Play page */
 const BACK_TEXT = "Back";
 
-const PLAYLIST_KEY = "rl-clone.playlist";
+const PLAYLIST_KEY = "carball.playlist";
 
 export interface MainMenuActions {
   readonly freePlay: () => void;

@@ -7,7 +7,7 @@
 // "gameComponents" halves the other cars' corrections (median and 99th percentile) at every round trip without
 // raising the ball's.
 import { fileURLToPath } from "node:url";
-import createEngine from "@engine/rlengine.mjs";
+import createEngine from "@engine/carball_engine.mjs";
 import { beforeAll, describe, expect, it } from "vitest";
 import { initEngine } from "../engine/world";
 import { arenaMeshes } from "../testing/arena";

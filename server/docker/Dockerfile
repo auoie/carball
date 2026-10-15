@@ -7,9 +7,9 @@
 # (the base pinned by digest, RV-371: update the tag and digest together)
 FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
 RUN useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin carball
-COPY rl-server /app/rl-server
+COPY carball-server /app/carball-server
 COPY collision_meshes /app/collision_meshes
-ENV RL_MODE=queue \
+ENV SERVER_MODE=queue \
     GAME_PORT=4433 \
     PUBLIC_HOST=game.carball.zolt.top \
     ALLOWED_ORIGIN=https://carball.zolt.top \
@@ -21,5 +21,5 @@ USER carball
 LABEL org.opencontainers.image.title="carball-game" \
       org.opencontainers.image.description="Carball's game server: matches over WebTransport (UDP, GAME_PORT)"
 EXPOSE 4433/udp
-HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=3 CMD ["/app/rl-server", "--healthcheck"]
-ENTRYPOINT ["/app/rl-server"]
+HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=3 CMD ["/app/carball-server", "--healthcheck"]
+ENTRYPOINT ["/app/carball-server"]

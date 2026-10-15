@@ -6,7 +6,7 @@ fonts/orbitron/OFL.txt and fonts/rajdhani/OFL.txt.
 
 ====================================================================================================
 RocketSim (the physics engine's base)
-A modified copy (its changes marked "RL PATCH" in the source).
+A modified copy (its changes are marked as such in its source).
 ====================================================================================================
 
 MIT License
@@ -33,8 +33,8 @@ SOFTWARE.
 
 ====================================================================================================
 Bullet Physics 3.24 (inside RocketSim)
-Copyright (c) 2003-2021 Erwin Coumans and the Bullet contributors, https://bulletphysics.org. A modified copy (altered
-sources marked "RL PATCH").
+Copyright (c) 2003-2021 Erwin Coumans and the Bullet contributors, https://bulletphysics.org. A modified copy (the altered
+sources are marked as such).
 ====================================================================================================
 
 The files in this repository are licensed under the zlib license, except for the files under 'Extras' and examples/ThirdPartyLibs.

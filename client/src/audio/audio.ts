@@ -4,7 +4,7 @@
 //
 // Browsers only let a page make sound after the player interacts with it, so the audio starts on the first key press
 // or click; it pauses while the tab is hidden.
-import type { CameraView } from "../camera/rlCamera";
+import type { CameraView } from "../camera/carballCamera";
 import type { CarState } from "../engine/world";
 import { type Vec3, cross, dot, normalize, sub, vec3 } from "../math/vec";
 import type { ThemeName } from "../render/themes";

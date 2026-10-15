@@ -16,12 +16,14 @@ enum class GameMode : byte {
 	THE_VOID,
 };
 
+// RL PATCH: the modes by neutral names (shipped files name no game's modes: the user's decision, 2026-10-15); a mode's
+// meshes load from its name's folder: the arena's from collision_meshes/arena/, the others (unused here) have none
 constexpr const char* GAMEMODE_STRS[] = {
-	"soccar",
-	"hoops",
-	"heatseeker",
-	"snowday",
-	"dropshot",
+	"arena",
+	"mode 1",
+	"mode 2",
+	"mode 3",
+	"mode 4",
 	"void"
 };
 

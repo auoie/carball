@@ -34,7 +34,7 @@ export function fogCd(y: number): number {
 type V3 = readonly [number, number, number];
 
 /** The fog for a receiver at `delta` from the camera: F (what of the scene shows) and the colour added ((1 - F) x
- *  the inscatter's) (FOG-6; the shader's rlHeightFog) */
+ *  the inscatter's) (FOG-6; the shader's carballHeightFog) */
 export function heightFog(delta: V3, cd: number): { F: number; add: [number, number, number] } {
   const F0 = HEIGHT_FOG;
   const dist = Math.hypot(...delta);
@@ -49,7 +49,7 @@ export function heightFog(delta: V3, cd: number): { F: number; add: [number, num
 }
 
 /** An opaque receiver's delta as the fog pass sees it: its view depth along `axis` capped (the cube capture's 31,887; the
- *  main view none) and the exe's z / (1 + 1e-8 z) (the shader's rlOpaqueDelta) */
+ *  main view none) and the exe's z / (1 + 1e-8 z) (the shader's carballOpaqueDelta) */
 export function opaqueDelta(delta: V3, axis: V3, cap: number): [number, number, number] {
   const z = delta[0] * axis[0] + delta[1] * axis[1] + delta[2] * axis[2];
   const capped = Math.min(z, cap);
@@ -67,14 +67,14 @@ export function skyDelta(dir: V3): [number, number, number] {
 const f = (v: number): string => v.toPrecision(8);
 
 /** The shader chunk (FOG-15): uniforms uFogCam (the camera, uu), uFogCd (fogCd of its height), uFogCap (CUBE_FOG_CAP in the
- *  capture, 1e30 in the main view), uFogAxis (the view's forward axis; the cube face's in the capture). rlHeightFog(delta)
+ *  capture, 1e30 in the main view), uFogAxis (the view's forward axis; the cube face's in the capture). carballHeightFog(delta)
  *  gives (premultiplied colour, F): opaque c * F + rgb; translucent (per vertex) c * F + rgb; additive c * F */
 export const HEIGHT_FOG_GLSL = /* glsl */ `
 uniform vec3 uFogCam;
 uniform float uFogCd;
 uniform float uFogCap;
 uniform vec3 uFogAxis;
-vec4 rlHeightFog(vec3 delta) {
+vec4 carballHeightFog(vec3 delta) {
   float dist = length(delta);
   float ez = abs(delta.y) > 0.01 ? delta.y : 0.01;
   float fz = ${f(HEIGHT_FOG.falloff)} * ez;
@@ -89,13 +89,13 @@ vec4 rlHeightFog(vec3 delta) {
   vec3 opp = vec3(${HEIGHT_FOG.opposite.map(f).join(", ")});
   return vec4((1.0 - F) * mix(ins, opp, t), F);
 }
-vec3 rlOpaqueDelta(vec3 worldPos) {
+vec3 carballOpaqueDelta(vec3 worldPos) {
   vec3 d = worldPos - uFogCam;
   float z = dot(d, uFogAxis);
   float capped = min(z, uFogCap);
   return d * (capped / max(z, 1e-6)) / (1.0 + 1e-8 * capped);
 }
-vec3 rlSkyDelta(vec3 dir) {
+vec3 carballSkyDelta(vec3 dir) {
   float r = inversesqrt((dir.x * dir.x + dir.z * dir.z) / ${f(RL_DOME.radius ** 2)} + dir.y * dir.y / ${f(RL_DOME.height ** 2)});
   return dir * r;
 }
@@ -164,18 +164,18 @@ export function fogShaders(vertex: string, fragment: string, mode: FogMode, plac
     vFogWorld = (modelMatrix * vec4(position, 1.0)).xyz;
   #endif`
   }
-  ${perVertex ? `vFog = rlHeightFog(${delta});` : ""}`;
+  ${perVertex ? `vFog = carballHeightFog(${delta});` : ""}`;
   const apply = {
     custom: "",
-    opaque: "vec4 rlFog = rlHeightFog(rlOpaqueDelta(vFogWorld));\n  gl_FragColor.rgb = gl_FragColor.rgb * rlFog.a + rlFog.rgb;",
-    sky: "vec4 rlFog = rlHeightFog(rlOpaqueDelta(uFogCam + rlSkyDelta(normalize(vFogWorld - uFogCam))));\n  gl_FragColor.rgb = gl_FragColor.rgb * rlFog.a + rlFog.rgb;",
+    opaque: "vec4 carballFog = carballHeightFog(carballOpaqueDelta(vFogWorld));\n  gl_FragColor.rgb = gl_FragColor.rgb * carballFog.a + carballFog.rgb;",
+    sky: "vec4 carballFog = carballHeightFog(carballOpaqueDelta(uFogCam + carballSkyDelta(normalize(vFogWorld - uFogCam))));\n  gl_FragColor.rgb = gl_FragColor.rgb * carballFog.a + carballFog.rgb;",
     translucent: "gl_FragColor.rgb = gl_FragColor.rgb * vFog.a + vFog.rgb;",
     additive: "gl_FragColor.rgb *= vFog.a;",
   }[mode];
   return {
-    vertex: wrapMain(`varying vec3 vFogWorld;\n${perVertex ? `varying vec4 vFog;\n${HEIGHT_FOG_GLSL}` : ""}\n${vertex}`, "rlVertexMain", world),
+    vertex: wrapMain(`varying vec3 vFogWorld;\n${perVertex ? `varying vec4 vFog;\n${HEIGHT_FOG_GLSL}` : ""}\n${vertex}`, "carballVertexMain", world),
     fragment: apply
-      ? wrapMain(`varying vec3 vFogWorld;\n${perVertex ? "varying vec4 vFog;" : HEIGHT_FOG_GLSL}\n${fragment}`, "rlFragmentMain", `  ${apply}`)
+      ? wrapMain(`varying vec3 vFogWorld;\n${perVertex ? "varying vec4 vFog;" : HEIGHT_FOG_GLSL}\n${fragment}`, "carballFragmentMain", `  ${apply}`)
       : `varying vec3 vFogWorld;\n${HEIGHT_FOG_GLSL}\n${fragment}`,
   };
 }
@@ -216,7 +216,7 @@ export function withHeightFog<T extends Material>(material: T, mode: FogMode, pl
       parameters.vertexShader = fogged.vertex;
       parameters.fragmentShader = fogged.fragment;
     };
-    material.customProgramCacheKey = () => `${own ? key() : source}|rlHeightFog:${mode}:${JSON.stringify(place)}`;
+    material.customProgramCacheKey = () => `${own ? key() : source}|carballHeightFog:${mode}:${JSON.stringify(place)}`;
   }
   material.needsUpdate = true;
   return material;

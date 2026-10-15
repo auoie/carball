@@ -91,7 +91,7 @@ searchers in arrival order; two full teams make a match) and asks `server/src/ma
 the host reserves a slot per player with a one-time random token (getrandom), runs every match on the game thread on
 its own clock, holds the warm-up until every slot is claimed (full start, `Game::hold_for`), cancels a match whose
 player doesn't claim in 30 s or leaves before the start (`Kicked` 1: the others search again), and lets a match go
-when its end screen is over (no rematch) or everyone left. `rl-server --mode queue` serves searches and claims only;
+when its end screen is over (no rematch) or everyone left. `carball-server --mode queue` serves searches and claims only;
 the default `direct` keeps the one open match the browser tests and development use. The idle kick (MM-32..38, the
 MM-35a input predicate in `input_buffer.rs` `changed_for_kick`): warned past 25 s of play, kicked past 30 s, idle
 carried across rounds; queue matches only. SEC-9 (64-bit keys from getrandom) and SEC-11 (names: spaces, combining
@@ -179,6 +179,15 @@ refuses a commit-like tag for `--worktree` and any build path in the binary (RV-
 its port and a bad number names its variable (RV-399). Waiting for the user: RV-384's scope (mode names, "RL"
 abbreviations). Deferred, no measured effect: RV-389..391 (the kickoff's insertion order, the collision objects'
 re-append on spawn, deduplicating a snapshot's order).
+**RV-384, the user's names decision widened, 2026-10-15:** shipped files name no game mode and carry no "RL"
+abbreviation. The engine's mode table names the arena "arena" (the others "mode 1".."mode 4": unused), its load summary
+counts the arena alone, the tiles' errors say "Tiles::"; the arena meshes are `out/arena/collision_meshes/arena/arena_*.cmf`
+(the same order: one prefix for all), `out/arena/arena.obj`; the local cooked copies under `out/arena_local/*/` got an
+`arena` link to their `soccar` folders. The server is `carball-server` (crate `carball_server`, `SERVER_MODE`), the
+engine module `carball_engine(_web).mjs/.wasm` (the targets keep their names), the storage keys `carball.*` (the old
+`rl-clone.*` moved once at start: `settings/storageKeys.ts`, the one "rl" that ships, on purpose), the page's hooks and
+shader functions `carball*` (`camera/carballCamera.ts`), the scoreboard settings' heading "Columns". RocketSim keeps its
+name (its notice). The names guard checks the modes and the abbreviations too.
 **The browser tests' servers** start from `client/e2e/servers.ts` (Playwright's globalSetup), not its webServer: here a
 connection to a closed 127.0.0.1 port is dropped, not refused, and Playwright's pre-check of each server's URL waited
 2 min 14 s per server (9 of the suite's 12 minutes).
@@ -856,10 +865,10 @@ connection to a closed 127.0.0.1 port is dropped, not refused, and Playwright's 
 (bit-identical); own arena mesh; Three.js browser client (`client/`).
 **Status (2026-10-06):** physics reverse engineering complete; our arena mesh is generated and validated
 (`out/arena/`); RocketSim is forked into `engine/` with every verified patch and tests (`engine/README.md`).
-The engine also builds to WebAssembly with a JS API (`engine/build-wasm/rlengine.mjs`). Native and WebAssembly
+The engine also builds to WebAssembly with a JS API (`engine/build-wasm/carball_engine.mjs`). Native and WebAssembly
 builds simulate bit-identically (the game server will be native, the clients WebAssembly).
 Browser freeplay works (`client/`, TypeScript + Vite + Three.js; see `client/README.md`). The camera is the
-game's own: decompiled from UnrealScript and ported (`client/src/camera/rlCamera.ts`, algorithm in `notes/camera.md`).
+game's own: decompiled from UnrealScript and ported (`client/src/camera/carballCamera.ts`, algorithm in `notes/camera.md`).
 **Last state (2026-10-06):** multiplayer step 1 done: snapshot restore is exact (engine patches 23–26,
 `engine/tests/rollback.cpp`; in-place load ~5 µs). Step 2 done: the game's netcode is decoded (`notes/netcode.md`).
 Step 3 done: native server (`server/`, Rust, WebTransport; `server/README.md`), protocol v1 (`protocol/`), browser
@@ -939,7 +948,7 @@ cargo build --release --manifest-path replay_extract/Cargo.toml
 replay_extract/target/release/replay_extract states.csv replays/*.replay   # ball/car states + inputs
 python3 replay_measure.py states.csv                 # ball rest/wall gaps, throttle accel curve
 python3 arena_gen.py ../out/arena                    # our arena mesh (.obj + RocketSim .cmf), no Psyonix data
-python3 arena_check.py ../out/arena/soccar_arena.obj ../out/arena_local   # deviation vs game meshes (local only)
+python3 arena_check.py ../out/arena/arena.obj ../out/arena_local   # deviation vs game meshes (local only)
 cmake -S ../engine -B ../engine/build -DCMAKE_BUILD_TYPE=Release && make -C ../engine/build -j
 ../engine/build/rl_patch_tests && ../engine/build/arena_smoketest ../out/arena/collision_meshes
 # WebAssembly: Emscripten is at /usr/lib/emscripten (not on PATH in non-login shells)
@@ -983,7 +992,7 @@ python3 replay_pull.py ../out/replays && replay_extract/target/release/replay_ex
   Type check and unit tests after each change; the full build and e2e (5–8 min) once at the end of a batch.
 - Emscripten: `PATH=/usr/lib/emscripten:$PATH` (not on PATH in non-login shells). Bindings generate TS types
   (`--emit-tsd *.d.mts`; typed arrays via `EMSCRIPTEN_DECLARE_VAL_TYPE`). After changing `engine/wasm/bindings.cpp`,
-  rebuild `engine/build-wasm` (targets `rlengine`, `rlengine_web`) before running the client.
+  rebuild `engine/build-wasm` (targets `rlengine`, `carball_engine_web`) before running the client.
 - Determinism pitfalls (native vs WebAssembly): platform libm (fixed: `engine/detmath`), Bullet SSE paths (fixed:
   `BT_DISABLE_SIMD`), `std::` random distributions/shuffle/`default_random_engine`, function-argument evaluation
   order, uninitialized fields. Never `-ffast-math`.

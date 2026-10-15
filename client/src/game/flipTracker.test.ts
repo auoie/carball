@@ -1,7 +1,7 @@
 // The flip indicator's state against the real engine (requires engine/build-wasm and out/arena): what it says is
 // available is what the engine allows when the player presses, tick for tick, and flip resets are seen when the wheels
 // touch the ball.
-import createEngine from "@engine/rlengine.mjs";
+import createEngine from "@engine/carball_engine.mjs";
 import { beforeAll, describe, expect, it } from "vitest";
 import { type CarControls, NO_CONTROLS, type RbActor, World, initEngine } from "../engine/world";
 import { type Rot3, ZERO, vec3 } from "../math/vec";

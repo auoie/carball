@@ -1,7 +1,7 @@
 // Play over the internet stays sane (v1's network check): the client's network core (session.ts) against an in-process
 // server (src/testing/netRun.ts) on a clean path and on a realistic one: 80 ms round trip, 20 ms of jitter, 2 % loss
 // each way.
-import createEngine from "@engine/rlengine.mjs";
+import createEngine from "@engine/carball_engine.mjs";
 import { beforeAll, describe, expect, it } from "vitest";
 import { initEngine } from "../engine/world";
 import { arenaMeshes } from "../testing/arena";

@@ -1,6 +1,6 @@
 // Typed wrapper around the WebAssembly engine (engine/wasm/bindings.cpp).
 // The module itself is passed in, so the same code runs in the browser and in Node tests.
-import type { MainModule, Sim } from "@engine/rlengine_web.mjs";
+import type { MainModule, Sim } from "@engine/carball_engine_web.mjs";
 import { type Rot3, type Vec3, vec3 } from "../math/vec";
 
 export type Team = 0 | 1; // 0 blue (defends -y), 1 orange (defends +y)

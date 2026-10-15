@@ -103,8 +103,8 @@ The −Y goal is the same mesh rotated 180°. Every edge below is a quarter circ
 
 ## Generated arena
 `python3 scripts/arena_gen.py` → `out/arena/` (no Psyonix data; safe to commit and ship):
-- `soccar_arena.obj`: uu, for viewing.
-- `collision_meshes/soccar/soccar_arena.cmf`: RocketSim's mesh format (int32 triangle count, int32 vertex count,
+- `arena.obj`: uu, for viewing.
+- `collision_meshes/arena/arena_<piece>.cmf` (named so since 2026-10-15: shipped files name no game mode; once `soccar/soccar_*`): RocketSim's mesh format (int32 triangle count, int32 vertex count,
   int32×3 indices, float×3 vertices in Bullet units = uu × 0.02). RocketSim adds the floor, ceiling and side-wall
   planes itself. It warns that the mesh hash is unknown; that is expected.
 

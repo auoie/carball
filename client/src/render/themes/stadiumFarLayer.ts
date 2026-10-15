@@ -94,7 +94,7 @@ void main() {
   // (the city and its glow: opaque, in the height fog at their distance, along the drawing camera's sight line)
   if (alpha <= 0.0) discard;
   vec3 sight = normalize(vFogWorld - uFogCam);
-  vec4 cityFog = rlHeightFog(rlOpaqueDelta(uFogCam + sight * ${FAR_LAYER.fog.city.toFixed(1)}));
+  vec4 cityFog = carballHeightFog(carballOpaqueDelta(uFogCam + sight * ${FAR_LAYER.fog.city.toFixed(1)}));
   gl_FragColor = vec4(colour * cityFog.a + cityFog.rgb, 1.0);
   #include <colorspace_fragment>
 }

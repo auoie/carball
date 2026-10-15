@@ -1,7 +1,7 @@
 // The client's prediction and rollback against a simulated server, using the real engine (Node build).
 // Network: inputs arrive 6 ticks (50 ms) after they are sent, updates 6 ticks after; the server consumes one input
 // frame per tick from a small buffer and sends the world every other tick, as the real server does.
-import createEngine from "@engine/rlengine.mjs";
+import createEngine from "@engine/carball_engine.mjs";
 import { beforeAll, describe, expect, it } from "vitest";
 import { type CarControls, World, initEngine } from "../engine/world";
 import { HISTORY_FRAMES, NO_INPUT, Predictor, inputControls } from "./predictor";

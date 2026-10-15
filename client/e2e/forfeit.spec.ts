@@ -1,5 +1,5 @@
 // Forfeit votes (notes/match-rules-audit.md MR-7) and quick chat (notes/quick-chat.md), against a 2v2 casual
-// rl-server whose votes are allowed once the clock runs (started by playwright.config.ts on ports 14437/14438; one file,
+// carball-server whose votes are allowed once the clock runs (started by playwright.config.ts on ports 14437/14438; one file,
 // so its tests take turns on it). Players join blue, orange, blue, ...
 // (Under the suite's load a third page can take over 10 s to answer: the checks are on the first page, and the match's
 // end is read from the phases it recorded, which outlast its 8.3 s podium.)
@@ -201,6 +201,6 @@ test("the match's end: the winner banner, the podium with the winner's tag, the 
 
 /** The match phases the page saw, in order */
 async function phases(page: Page): Promise<string[]> {
-  return page.evaluate(() => (window as unknown as { rlOnline: () => { phases: { phase: string }[] } }).rlOnline().phases.map((p) => p.phase));
+  return page.evaluate(() => (window as unknown as { carballOnline: () => { phases: { phase: string }[] } }).carballOnline().phases.map((p) => p.phase));
 }
 

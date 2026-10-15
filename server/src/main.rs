@@ -4,10 +4,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
-use rl_server::game::MatchType;
-use rl_server::match_host::Playlist;
-use rl_server::net::NetLimits;
-use rl_server::{engine, game_loop, net};
+use carball_server::game::MatchType;
+use carball_server::match_host::Playlist;
+use carball_server::net::NetLimits;
+use carball_server::{engine, game_loop, net};
 
 struct Args {
     port: u16,
@@ -37,11 +37,11 @@ struct Args {
     limits: NetLimits,
 }
 
-const USAGE: &str = "usage: rl-server [--mode direct|queue] [--dev] [--port 4433] [--info-port 4434] [--dev-info on|off] [--info-bind 127.0.0.1] \
+const USAGE: &str = "usage: carball-server [--mode direct|queue] [--dev] [--port 4433] [--info-port 4434] [--dev-info on|off] [--info-bind 127.0.0.1] \
 [--meshes DIR] [--team-size 3] [--match-type casual|ranked|private] [--forfeit-vote-wait SECONDS] [--test-goal-after SECONDS] \
 [--cert FULLCHAIN.pem --key KEY.pem] [--allowed-origin ORIGIN[,ORIGIN...]] [--public-host HOST] [--health-port 8081] \
 [--max-sessions N] [--max-per-address N] [--max-per-address-per-minute N] | --healthcheck
-environment (each the flag's default): RL_MODE, GAME_PORT, MESHES_DIR, CERT_PATH, KEY_PATH, ALLOWED_ORIGIN, PUBLIC_HOST, HEALTH_PORT";
+environment (each the flag's default): SERVER_MODE, GAME_PORT, MESHES_DIR, CERT_PATH, KEY_PATH, ALLOWED_ORIGIN, PUBLIC_HOST, HEALTH_PORT";
 
 /// A variable's or flag's number, the error naming it (RV-399: an empty GAME_PORT said only "cannot parse integer")
 fn number<T: std::str::FromStr>(name: &str, value: &str) -> anyhow::Result<T>
@@ -99,7 +99,7 @@ fn parse_args(mut it: impl Iterator<Item = String>, env: impl Fn(&str) -> Option
         dev_info: None,
         info_bind: [127, 0, 0, 1].into(),
         meshes: PathBuf::new(),
-        team_size: rl_server::game::TEAM_SIZE,
+        team_size: carball_server::game::TEAM_SIZE,
         match_type: MatchType::Casual,
         forfeit_vote_wait: None,
         test_goal_after: None,
@@ -110,7 +110,7 @@ fn parse_args(mut it: impl Iterator<Item = String>, env: impl Fn(&str) -> Option
         health_port: 8081,
         limits: NetLimits::default(),
     };
-    if let Some(mode) = env("RL_MODE") {
+    if let Some(mode) = env("SERVER_MODE") {
         args.queue = parse_mode(&mode)?;
     }
     if let Some(port) = env("GAME_PORT") {
@@ -145,7 +145,7 @@ fn parse_args(mut it: impl Iterator<Item = String>, env: impl Fn(&str) -> Option
             "--team-size" => {
                 // (two teams of it within the match's most players: RV-329)
                 args.team_size = value()?.parse()?;
-                anyhow::ensure!((1..=(rl_server::game::MAX_PLAYERS / 2) as u8).contains(&args.team_size), "--team-size: 1 to {}", rl_server::game::MAX_PLAYERS / 2);
+                anyhow::ensure!((1..=(carball_server::game::MAX_PLAYERS / 2) as u8).contains(&args.team_size), "--team-size: 1 to {}", carball_server::game::MAX_PLAYERS / 2);
             }
             "--match-type" => {
                 args.match_type = match value()?.as_str() {
@@ -299,7 +299,7 @@ async fn main() -> anyhow::Result<()> {
     let mode = if args.queue { "the queue's matches" } else { "one open match" };
     let origins = args.limits.allowed_origins.as_ref().map_or("any origin (development)".to_string(), |o| o.join(", "));
     let host = args.public_host.as_deref().unwrap_or("this machine");
-    println!("rl-server: {mode}, WebTransport on UDP port {} at {host}, pages from {origins}, health on 127.0.0.1:{}", args.port, args.health_port);
+    println!("carball-server: {mode}, WebTransport on UDP port {} at {host}, pages from {origins}, health on 127.0.0.1:{}", args.port, args.health_port);
     match (dev_info, dev_hash) {
         (true, Some(hash)) => {
             tokio::spawn(net::serve_info(args.info_bind, args.info_port, args.port, hash));
@@ -342,7 +342,7 @@ mod tests {
     fn the_environment_gives_the_defaults_and_flags_override_it() {
         let env = |name: &str| {
             match name {
-                "RL_MODE" => Some("queue"),
+                "SERVER_MODE" => Some("queue"),
                 "GAME_PORT" => Some("5000"),
                 "CERT_PATH" => Some("/certs/fullchain.pem"),
                 "KEY_PATH" => Some("/certs/privkey.pem"),
@@ -380,11 +380,11 @@ mod tests {
         let args = with(&[CERT[0], CERT[1], ("ALLOWED_ORIGIN", "HTTPS://Carball.Zolt.Top/")], &[]).unwrap();
         assert_eq!(args.limits.allowed_origins, Some(vec!["https://carball.zolt.top".to_string()]), "as browsers send it");
         // A queue server: a certificate, or --dev
-        assert!(with(&[("RL_MODE", "queue")], &[]).is_err());
-        assert!(with(&[("RL_MODE", "queue"), ("CERT_PATH", ""), ("KEY_PATH", ""), ("ALLOWED_ORIGIN", "https://a.example")], &[]).is_err(), "empty paths");
-        let dev = with(&[("RL_MODE", "queue"), CERT[0], CERT[1], ("ALLOWED_ORIGIN", "https://a.example")], &["--dev"]).unwrap();
+        assert!(with(&[("SERVER_MODE", "queue")], &[]).is_err());
+        assert!(with(&[("SERVER_MODE", "queue"), ("CERT_PATH", ""), ("KEY_PATH", ""), ("ALLOWED_ORIGIN", "https://a.example")], &[]).is_err(), "empty paths");
+        let dev = with(&[("SERVER_MODE", "queue"), CERT[0], CERT[1], ("ALLOWED_ORIGIN", "https://a.example")], &["--dev"]).unwrap();
         assert!(dev.queue && dev.cert.is_none(), "--dev: self-signed whatever the variables say");
-        assert!(with(&[("RL_MODE", "queue"), CERT[0], CERT[1], ("ALLOWED_ORIGIN", "https://a.example")], &[]).unwrap().cert.is_some());
+        assert!(with(&[("SERVER_MODE", "queue"), CERT[0], CERT[1], ("ALLOWED_ORIGIN", "https://a.example")], &[]).unwrap().cert.is_some());
     }
 
     #[test]

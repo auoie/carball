@@ -1,6 +1,6 @@
 // Settings menu (from the pause menu or the main menu): rebind controls, camera settings, controller settings, audio. Changes apply at once
 // and are saved in the browser.
-import type { CameraSettings } from "../camera/rlCamera";
+import type { CameraSettings } from "../camera/carballCamera";
 import { ACTIONS, type Action, type GamepadInput, type KeyboardInput, inputName } from "../input/bindings";
 import { readGamepad } from "../input/devices";
 import {
@@ -588,12 +588,13 @@ export class SettingsPanel {
     return box;
   }
 
-  /** The scoreboard's four columns after SCORE (Soccar: SB-17), each from the columns this clone counts, sorted by
+  /** The scoreboard's four columns after SCORE (the game's soccar set: SB-17; headed "Columns": shipped text names no mode,
+   *  the user's decision), each from the columns this clone counts, sorted by
    *  label; a reset to the defaults */
   #scoreboardTab(): HTMLElement {
     const columns = this.#settings.scoreboard.columns;
     const box = el("div", { className: "sliders scoreboard-settings" });
-    box.append(el("h3", { textContent: "Soccar" }));
+    box.append(el("h3", { textContent: "Columns" }));
     columns.forEach((current, i) => {
       const select = el("select");
       select.dataset["column"] = String(i);

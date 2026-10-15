@@ -44,7 +44,7 @@ describe("a search", () => {
     const key = browserKey(storage);
     expect(key > 0n && key < 1n << 64n).toBe(true);
     expect(browserKey(storage)).toBe(key);
-    storage.setItem("rl-clone.browserKey", "garbage");
+    storage.setItem("carball.browserKey", "garbage");
     expect(browserKey(storage)).not.toBe(0n);
     const failing: Pick<Storage, "getItem" | "setItem"> = {
       getItem: () => {

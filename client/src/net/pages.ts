@@ -3,8 +3,8 @@
 // search to start: Play Again, a cancelled match). Kept in sessionStorage, this tab's alone and out of the URL's history.
 import { type ServerAddress, devServerAddress } from "./connection";
 
-const CLAIM_KEY = "rl-clone.claim";
-const NOTICE_KEY = "rl-clone.menuNotice";
+const CLAIM_KEY = "carball.claim";
+const NOTICE_KEY = "carball.menuNotice";
 
 type SessionStore = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 

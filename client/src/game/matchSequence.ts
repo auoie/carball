@@ -2,7 +2,7 @@
 // views at the end (the pre-podium hold and fade, CAM-35; the podium's dolly, CAM-36), the winner banner's words
 // (MIO-18/19), the screen's dimming (MIO-20), and which HUD parts each phase shows (MIO-5/17). Pure: the online game
 // and the HUD draw from it.
-import type { CameraView } from "../camera/rlCamera";
+import type { CameraView } from "../camera/carballCamera";
 import type { MatchPhase } from "../net/protocol";
 import type { Vec3 } from "../math/vec";
 import { TEAM_NAMES } from "./matchStats";

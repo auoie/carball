@@ -314,7 +314,7 @@ describe("what ships carries no game data (RV-99)", () => {
     const shipped = shippedImports().map((p) => p.slice(ROOT.length));
     expect(shipped).toContain("scripts/cage_topology.json");
     expect(shipped).toContain("client/src/style.css");
-    expect(shipped.filter((p) => p.startsWith("out/arena/collision_meshes/soccar/") && p.endsWith(".cmf")).length).toBe(16);
+    expect(shipped.filter((p) => p.startsWith("out/arena/collision_meshes/arena/") && p.endsWith(".cmf")).length).toBe(16);
     // (every shipped file a kind this guard knows: text it scans, binary it pins or allows)
     expect(shipped.filter((p) => kind(p) === "unknown")).toEqual([]);
     expect(globFiles(join(SRC, "render/themes/stadium*.ts")).map((f) => f.slice(SRC.length))).toContain("render/themes/stadiumSky.ts");

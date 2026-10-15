@@ -1,6 +1,6 @@
 // Player settings: bindings, camera, controller and audio. Saved in the browser (localStorage).
 import { DEFAULT_COLUMNS, SCOREBOARD_COLUMNS } from "../game/matchStats";
-import { DEFAULT_CAMERA_SETTINGS, type CameraSettings } from "../camera/rlCamera";
+import { DEFAULT_CAMERA_SETTINGS, type CameraSettings } from "../camera/carballCamera";
 import {
   ACTIONS,
   type Action,
@@ -291,7 +291,7 @@ export const DEFAULT_SETTINGS: Settings = {
   gameplay: DEFAULT_GAMEPLAY_SETTINGS,
 };
 
-const STORAGE_KEY = "rl-clone.settings.v1";
+const STORAGE_KEY = "carball.settings.v1";
 
 // --- validation: anything unexpected falls back to the default, field by field ---
 

@@ -35,7 +35,7 @@ def main():
         piece_dir = sys.argv[sys.argv.index("--pieces") + 1]
         args.remove(piece_dir)
     d = args[0] if len(args) > 0 else "out/arena_local"
-    out = args[1] if len(args) > 1 else f"{d}/collision_meshes_game/soccar/game_arena.cmf"
+    out = args[1] if len(args) > 1 else f"{d}/collision_meshes_game/arena/game_arena.cmf"
     parts = arena_check.game_quadrant(d)
     if piece_dir:
         import os

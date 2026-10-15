@@ -16,9 +16,9 @@ test("each shader function matches its TypeScript twin on the GPU", async ({ pag
     if (m.type() === "error") errors.push(m.text());
   });
   await page.goto("/?viewer=shaders");
-  await page.waitForFunction(() => "rlShaderProbe" in window, null, { timeout: 30_000 });
+  await page.waitForFunction(() => "carballShaderProbe" in window, null, { timeout: 30_000 });
   const results = await page.evaluate(() => {
-    const probe = (window as unknown as { rlShaderProbe: { names: () => string[]; compare: (name: string) => Comparison } }).rlShaderProbe;
+    const probe = (window as unknown as { carballShaderProbe: { names: () => string[]; compare: (name: string) => Comparison } }).carballShaderProbe;
     return probe.names().map((name) => ({ name, ...probe.compare(name) }));
   });
   expect(results.map((r) => r.name).sort()).toEqual(["display", "envG", "grassReflection", "heightFog", "heightFogCapture", "netSideUv", "overlayUv", "underGlassV"]);
@@ -33,9 +33,9 @@ test("each shader function matches its TypeScript twin on the GPU", async ({ pag
 
 test("a taken boost pad renders at its dim look, its glow off (the instance colour reaches the fragment shader)", async ({ page }) => {
   await page.goto("/?viewer=shaders");
-  await page.waitForFunction(() => "rlShaderProbe" in window, null, { timeout: 30_000 });
+  await page.waitForFunction(() => "carballShaderProbe" in window, null, { timeout: 30_000 });
   const pads = await page.evaluate(() =>
-    (window as unknown as { rlShaderProbe: { pads: () => { smallLit: number; smallTaken: number; bigLit: number; bigTaken: number; dim: number } } }).rlShaderProbe.pads(),
+    (window as unknown as { carballShaderProbe: { pads: () => { smallLit: number; smallTaken: number; bigLit: number; bigTaken: number; dim: number } } }).carballShaderProbe.pads(),
   );
   // (every disc found and lit by something)
   for (const v of Object.values(pads)) expect(v).toBeGreaterThan(0.02);
@@ -48,10 +48,10 @@ test("a taken boost pad renders at its dim look, its glow off (the instance colo
 
 test("the post-processing chain (PP-1..10): a uniform grey at its display value, bloom round a bright patch only with Bloom on", async ({ page }) => {
   await page.goto("/?viewer=shaders");
-  await page.waitForFunction(() => "rlShaderProbe" in window, null, { timeout: 30_000 });
+  await page.waitForFunction(() => "carballShaderProbe" in window, null, { timeout: 30_000 });
   for (const grey of [0.05, 0.18, 0.5]) {
     const r = await page.evaluate(
-      (g) => (window as unknown as { rlShaderProbe: { post: (grey: number) => { grey: number; expected: number; ringBloom: number; ringNoBloom: number } } }).rlShaderProbe.post(g),
+      (g) => (window as unknown as { carballShaderProbe: { post: (grey: number) => { grey: number; expected: number; ringBloom: number; ringNoBloom: number } } }).carballShaderProbe.post(g),
       grey,
     );
     // (8-bit output: within 2/255 of the tone map and remap's value; the depth of field leaves a uniform area as it is)
@@ -63,9 +63,9 @@ test("the post-processing chain (PP-1..10): a uniform grey at its display value,
 
 test("the bloom's soft knee (PP-7, RV-161): nothing under linear 2; at 3 against 4 the colour times its weight, 0.375 (0.5 if it subtracted)", async ({ page }) => {
   await page.goto("/?viewer=shaders");
-  await page.waitForFunction(() => "rlShaderProbe" in window, null, { timeout: 30_000 });
+  await page.waitForFunction(() => "carballShaderProbe" in window, null, { timeout: 30_000 });
   const sum = async (level: number): Promise<number> =>
-    page.evaluate((l) => (window as unknown as { rlShaderProbe: { bloomSum: (level: number) => number } }).rlShaderProbe.bloomSum(l), level);
+    page.evaluate((l) => (window as unknown as { carballShaderProbe: { bloomSum: (level: number) => number } }).carballShaderProbe.bloomSum(l), level);
   expect(await sum(1.9)).toBe(0);
   const [three, four] = [await sum(3), await sum(4)];
   expect(four).toBeGreaterThan(0);
@@ -74,8 +74,8 @@ test("the bloom's soft knee (PP-7, RV-161): nothing under linear 2; at 3 against
 
 test("the reflection capture's chain on the GPU stores what its CPU twin does (RV-201: CAP1's box, blur, bilinear up and 8-bit store)", async ({ page }) => {
   await page.goto("/?viewer=shaders");
-  await page.waitForFunction(() => "rlShaderProbe" in window, null, { timeout: 30_000 });
-  const r = await page.evaluate(() => (window as unknown as { rlShaderProbe: { chain: () => { texels: number; exact: number; maxCodes: number } } }).rlShaderProbe.chain());
+  await page.waitForFunction(() => "carballShaderProbe" in window, null, { timeout: 30_000 });
+  const r = await page.evaluate(() => (window as unknown as { carballShaderProbe: { chain: () => { texels: number; exact: number; maxCodes: number } } }).carballShaderProbe.chain());
   expect(r.texels).toBe(6 * 256 * 256 * 3);
   // (never more than one 8-bit code apart, and the same code in most texels: one off at a rounding edge, where the GPU's
   // float32 sums and its bilinear weights (about 8 bits of sub-texel precision) land the other side; smooth ramps sit on

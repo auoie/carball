@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import type { CarState } from "../engine/world";
 import { type Rot3, type Vec3, sub, vec3 } from "../math/vec";
-import { type CameraControls, PlayerCamera, Swivel, quantizeSwivelInput } from "./rlCamera";
+import { type CameraControls, PlayerCamera, Swivel, quantizeSwivelInput } from "./carballCamera";
 import { EXPLOSION_MEDIUM } from "./shake";
 
 const UP = vec3(0, 0, 1);

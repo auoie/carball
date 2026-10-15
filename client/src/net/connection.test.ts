@@ -19,7 +19,7 @@ describe("the connection", () => {
     storeKey(0xffffffffffffffffn, storage);
     expect(storedKey(storage)).toBe(0xffffffffffffffffn);
     for (const garbage of ["1.5", "-3", "0", "18446744073709551616", "0x10", " 7", "123456789012345678901"]) {
-      storage.setItem("rl-clone.playerKey", garbage);
+      storage.setItem("carball.playerKey", garbage);
       expect(storedKey(storage), garbage).toBe(0n);
     }
     expect(storedKey(null)).toBe(0n);

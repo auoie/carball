@@ -90,14 +90,16 @@ else()
 endif()
 
 if (EMSCRIPTEN)
-	# The engine module: rlengine.mjs + rlengine.wasm (+ rlengine.d.ts), see wasm/bindings.cpp.
-	# rlengine runs in browsers and Node (tests); rlengine_web is the browser-only build the client bundles.
+	# The engine module: carball_engine.mjs + carball_engine.wasm (+ its .d.mts), see wasm/bindings.cpp: the targets rlengine
+	# (browsers and Node: the tests) and rlengine_web (browser-only: the client bundles it; the shipped file names say carball,
+	# the user's decision of 2026-10-15)
 	foreach(variant rlengine rlengine_web)
+		string(REPLACE "rlengine" "carball_engine" output ${variant})
 		add_executable(${variant} wasm/bindings.cpp)
 		target_include_directories(${variant} PRIVATE rocketsim/src)
 		target_compile_options(${variant} PRIVATE -ffp-contract=off)
 		target_link_libraries(${variant} PRIVATE RocketSim rlnet)
-		set_target_properties(${variant} PROPERTIES SUFFIX ".mjs")
+		set_target_properties(${variant} PROPERTIES SUFFIX ".mjs" OUTPUT_NAME ${output})
 		if (variant STREQUAL "rlengine")
 			set(environment "web,worker,node")
 		else()
@@ -108,6 +110,6 @@ if (EMSCRIPTEN)
 		target_link_options(${variant} PRIVATE
 			-lembind -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createEngine -sDYNAMIC_EXECUTION=0
 			-sENVIRONMENT=${environment} -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=5MB
-			"SHELL:--emit-tsd ${variant}.d.mts")
+			"SHELL:--emit-tsd ${output}.d.mts")
 	endforeach()
 endif()

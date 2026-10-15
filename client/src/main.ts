@@ -1,7 +1,7 @@
 // Entry point: load the WebAssembly engine and the arena, then run freeplay.
 import { setInterfaceScale } from "./ui/stage";
 import { fitHudFonts, loadHudFonts } from "./ui/hudFont";
-import createEngine from "@engine/rlengine_web.mjs";
+import createEngine from "@engine/carball_engine_web.mjs";
 import { CarBody, World, initEngine } from "./engine/world";
 import { Freeplay } from "./game/freeplay";
 import { Online } from "./game/online";
@@ -22,6 +22,7 @@ import { loadFennec } from "./render/fennec";
 import { TEAM_CAR_COLORS } from "./render/entities";
 import { type ThemeName, createTheme, themeName } from "./render/themes";
 import { type Settings, loadSettings } from "./settings/settings";
+import { migrateBrowserStorage } from "./settings/storageKeys";
 import { SettingsPanel } from "./ui/settingsPanel";
 import { MatchMenu } from "./ui/matchMenu";
 import { ChatLog, QuickChatPanel } from "./ui/chatLog";
@@ -42,7 +43,7 @@ import "./style.css";
 
 // Every arena collision mesh: scripts/arena_gen.py writes one file per piece (each its own static body, as in the game)
 const arenaUrls = Object.values(
-  import.meta.glob<string>("@arena/collision_meshes/soccar/*.cmf", { query: "?url", import: "default", eager: true }),
+  import.meta.glob<string>("@arena/collision_meshes/arena/*.cmf", { query: "?url", import: "default", eager: true }),
 );
 
 function required<T extends Element>(selector: string, type: new () => T): T {
@@ -92,7 +93,7 @@ async function main(): Promise<void> {
     const id = viewerWorld.addCar(team, bodies[Number(params.get("body") ?? 0)] ?? CarBody.Standard);
     const { showCarViewer } = await import("./debug/carViewer");
     const view = showCarViewer(new Renderer(canvas), viewerWorld.carConfig(id), TEAM_CAR_COLORS[team], team);
-    (window as unknown as { rlCarViewer?: unknown }).rlCarViewer = { view };
+    (window as unknown as { carballCarViewer?: unknown }).carballCarViewer = { view };
     view(-140, 15);
     status.hidden = true;
     return;
@@ -100,7 +101,7 @@ async function main(): Promise<void> {
   // ?viewer=shaders: the shaders' functions on the GPU against their TypeScript twins (the e2e suite's)
   if (params.get("viewer") === "shaders") {
     const { shaderProbe } = await import("./debug/shaderProbe");
-    (window as unknown as { rlShaderProbe?: unknown }).rlShaderProbe = shaderProbe(canvas);
+    (window as unknown as { carballShaderProbe?: unknown }).carballShaderProbe = shaderProbe(canvas);
     status.hidden = true;
     return;
   }
@@ -111,11 +112,12 @@ async function main(): Promise<void> {
     const { showArenaViewer } = await import("./debug/arenaViewer");
     const viewer = showArenaViewer(new Renderer(canvas), await createTheme(themeName(params.get("theme"))), viewerWorld.carConfig(id));
     const { view } = viewer;
-    (window as unknown as { rlArenaViewer?: unknown }).rlArenaViewer = viewer;
+    (window as unknown as { carballArenaViewer?: unknown }).carballArenaViewer = viewer;
     view({ eye: { x: 0, y: -4000, z: 600 }, target: { x: 0, y: 0, z: 600 } });
     status.hidden = true;
     return;
   }
+  migrateBrowserStorage(); // (the old rl-clone.* keys to their carball.* names, once: before any is read)
   const server = params.get("server");
   // ?match: a queue match's page, its slot's claim handed over by the menu page (src/net/pages.ts)
   const claim = params.has("match") ? takeClaim() : null;
@@ -254,8 +256,8 @@ async function main(): Promise<void> {
   // (the game's pad without a menu's presses still held: RV-289)
   input.padFilter = (pad) => padNav.mask(pad);
   // For the browser tests
-  (window as unknown as { rlAudio?: () => unknown }).rlAudio = () => audio.stats;
-  (window as unknown as { rlAmbienceLevels?: (theme: ThemeName, seconds: number) => Promise<unknown> }).rlAmbienceLevels = async (t, seconds) =>
+  (window as unknown as { carballAudio?: () => unknown }).carballAudio = () => audio.stats;
+  (window as unknown as { carballAmbienceLevels?: (theme: ThemeName, seconds: number) => Promise<unknown> }).carballAmbienceLevels = async (t, seconds) =>
     (await import("./audio/levels")).ambienceLevels(t, seconds);
   let game: { frame(dt: number): void };
   if (!onlinePage) {
@@ -326,9 +328,9 @@ async function main(): Promise<void> {
       matchmaking.start(notice.search, notice.warning, back);
       view.openPanel();
     }
-    (window as unknown as { rlMatchmaking?: unknown }).rlMatchmaking = () => ({ state: matchmaking.state, panelOpen: view.panelOpen });
+    (window as unknown as { carballMatchmaking?: unknown }).carballMatchmaking = () => ({ state: matchmaking.state, panelOpen: view.panelOpen });
     // For screenshots and the browser tests
-    (window as unknown as { rlFreeplay?: unknown }).rlFreeplay = {
+    (window as unknown as { carballFreeplay?: unknown }).carballFreeplay = {
       place: (car: { x: number; y: number; yaw: number; boost?: number }, ball?: { x: number; y: number; z: number }) => {
         freeplay.debugPlace(car, ball);
       },
@@ -434,8 +436,8 @@ async function main(): Promise<void> {
       online.togglePlayer(car, what);
     });
     // For the browser tests
-    (window as unknown as { rlOnline?: () => unknown }).rlOnline = () => online.stats;
-    (window as unknown as { rlNameplates?: () => unknown }).rlNameplates = () => statsUi.nameplates.shown;
+    (window as unknown as { carballOnline?: () => unknown }).carballOnline = () => online.stats;
+    (window as unknown as { carballNameplates?: () => unknown }).carballNameplates = () => statsUi.nameplates.shown;
     // The pause menu's match buttons: forfeit or vote (the server's), leave (back to the main menu)
     const menu = new MatchMenu(pause.match, (action) => {
       if (action === "leave") {

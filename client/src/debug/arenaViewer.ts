@@ -1,5 +1,5 @@
 // A free camera round the arena (?viewer=arena): the arena and its theme, the ball and a car placed anywhere, seen from
-// anywhere (inside or out), for comparing it with the game's (screenshots: window.rlArenaViewer.view({eye, target,
+// anywhere (inside or out), for comparing it with the game's (screenshots: window.carballArenaViewer.view({eye, target,
 // ball, car})). Not part of the game.
 import { type Object3D, Quaternion } from "three";
 import type { CarConfig } from "../engine/world";

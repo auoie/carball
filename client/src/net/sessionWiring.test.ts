@@ -1,6 +1,6 @@
 // The network session's wiring (src/net/session.ts, RV-314): the hitch reset, the acknowledgement, the inputs sent, the
 // server tick's client frame and the smoothing's previous tick, against the engine (Node build).
-import createEngine from "@engine/rlengine.mjs";
+import createEngine from "@engine/carball_engine.mjs";
 import { beforeAll, describe, expect, it } from "vitest";
 import { type CarState, World, initEngine } from "../engine/world";
 import { Interpolated } from "../game/interpolated";

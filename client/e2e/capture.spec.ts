@@ -28,9 +28,9 @@ const direction = (face: number, sc: number, tc: number): [number, number, numbe
 test("the stadium's reflection capture as the game's profile: LDR luminance per sector and band within 0.1 in 95 % of the cells, none past 0.15 (SUR-35 v2, RV-197)", async ({ page }) => {
   test.setTimeout(180_000);
   await page.goto("/?viewer=arena&theme=stadium");
-  await page.waitForFunction(() => "rlArenaViewer" in window, null, { timeout: 90_000 });
-  await page.waitForFunction(() => (window as unknown as { rlArenaViewer: { captures: () => number } }).rlArenaViewer.captures() >= 3, null, { timeout: 90_000 });
-  const faces = await page.evaluate(() => (window as unknown as { rlArenaViewer: { cubeFaces: (raw: boolean) => Promise<string[] | null> } }).rlArenaViewer.cubeFaces(true));
+  await page.waitForFunction(() => "carballArenaViewer" in window, null, { timeout: 90_000 });
+  await page.waitForFunction(() => (window as unknown as { carballArenaViewer: { captures: () => number } }).carballArenaViewer.captures() >= 3, null, { timeout: 90_000 });
+  const faces = await page.evaluate(() => (window as unknown as { carballArenaViewer: { cubeFaces: (raw: boolean) => Promise<string[] | null> } }).carballArenaViewer.cubeFaces(true));
   expect(faces).not.toBeNull();
   const n = 256;
   // (per band and sector: the luminance of min(c, 1), each texel by its solid angle)

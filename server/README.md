@@ -1,4 +1,4 @@
-# Game server (`rl-server`)
+# Game server (`carball-server`)
 
 The authoritative native game server: runs the engine (`engine/`, via its C API `engine/capi/rlengine.h`) at 120 Hz
 and talks to browser clients over WebTransport (`wtransport`). Protocol: `protocol/README.md`. The netcode follows

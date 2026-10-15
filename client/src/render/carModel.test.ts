@@ -2,7 +2,7 @@
 // decision of 2026-10-14): narrower and lower than the hitbox, its tail past the hitbox's back, its nose a little past
 // the front; other hitboxes get them scaled to theirs.
 // Requires the engine build (engine/build-wasm) and the generated arena (out/arena), for every body's dimensions.
-import createEngine from "@engine/rlengine.mjs";
+import createEngine from "@engine/carball_engine.mjs";
 import { Box3, Color, Mesh, MeshStandardMaterial } from "three";
 import { beforeAll, describe, expect, it } from "vitest";
 import { CarBody, type CarConfig, World, initEngine } from "../engine/world";

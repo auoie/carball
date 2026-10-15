@@ -7,10 +7,10 @@ use std::time::{Duration, Instant};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
-use rl_server::engine::{self, Arena};
-use rl_server::net::NetLimits;
-use rl_server::protocol::{self, Control, Datagram, InputFrame};
-use rl_server::{game_loop, net};
+use carball_server::engine::{self, Arena};
+use carball_server::net::NetLimits;
+use carball_server::protocol::{self, Control, Datagram, InputFrame};
+use carball_server::{game_loop, net};
 use wtransport::{ClientConfig, Endpoint};
 
 /// The tests' clients all come from one address: no per-address limits
@@ -36,12 +36,12 @@ async fn a_client_connects_drives_and_follows_the_world() {
     let (identity, cert_hash) = net::dev_identity().unwrap();
     let server = net::endpoint(identity, 0).unwrap();
     let port = server.local_addr().unwrap().port();
-    let (to_game, messages) = tokio::sync::mpsc::channel(rl_server::game_loop::TO_GAME_QUEUE);
+    let (to_game, messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
     std::thread::spawn(move || game_loop::run(
         messages,
-        game_loop::Mode::Direct(rl_server::match_host::Playlist {
-            team_size: rl_server::game::TEAM_SIZE,
-            match_type: rl_server::game::MatchType::Casual,
+        game_loop::Mode::Direct(carball_server::match_host::Playlist {
+            team_size: carball_server::game::TEAM_SIZE,
+            match_type: carball_server::game::MatchType::Casual,
             forfeit_vote_wait: None,
         }),
         None,
@@ -142,7 +142,7 @@ async fn a_vanished_client_is_a_lost_connection_and_a_closed_one_left() {
         .build();
     let server = Endpoint::server(config).unwrap();
     let port = server.local_addr().unwrap().port();
-    let (to_game, mut messages) = tokio::sync::mpsc::channel(rl_server::game_loop::TO_GAME_QUEUE);
+    let (to_game, mut messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
     tokio::spawn(net::accept_loop(Arc::new(server), to_game, open_limits()));
     let hello = Control::Hello {
         version: protocol::VERSION,
@@ -258,9 +258,9 @@ async fn two_searches_make_a_match_their_tokens_claim() {
     let (identity, cert_hash) = net::dev_identity().unwrap();
     let server = net::endpoint(identity, 0).unwrap();
     let port = server.local_addr().unwrap().port();
-    let (to_game, messages) = tokio::sync::mpsc::channel(rl_server::game_loop::TO_GAME_QUEUE);
+    let (to_game, messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
     let playlists = [1, 2, 3]
-        .map(|team_size| rl_server::match_host::Playlist { team_size, match_type: rl_server::game::MatchType::Casual, forfeit_vote_wait: None })
+        .map(|team_size| carball_server::match_host::Playlist { team_size, match_type: carball_server::game::MatchType::Casual, forfeit_vote_wait: None })
         .to_vec();
     std::thread::spawn(move || game_loop::run(messages, game_loop::Mode::Queue(playlists), None, heartbeat(), Instant::now()));
     tokio::spawn(net::accept_loop(Arc::new(server), to_game, open_limits()));
@@ -307,8 +307,8 @@ async fn other_origins_and_an_addresss_extra_sessions_are_refused() {
     let (identity, cert_hash) = net::dev_identity().unwrap();
     let server = net::endpoint(identity, 0).unwrap();
     let port = server.local_addr().unwrap().port();
-    let (to_game, messages) = tokio::sync::mpsc::channel(rl_server::game_loop::TO_GAME_QUEUE);
-    let playlist = rl_server::match_host::Playlist { team_size: 2, match_type: rl_server::game::MatchType::Casual, forfeit_vote_wait: None };
+    let (to_game, messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
+    let playlist = carball_server::match_host::Playlist { team_size: 2, match_type: carball_server::game::MatchType::Casual, forfeit_vote_wait: None };
     std::thread::spawn(move || game_loop::run(messages, game_loop::Mode::Direct(playlist), None, heartbeat(), Instant::now()));
     let limits = NetLimits { per_address: 2, allowed_origins: Some(vec!["https://carball.zolt.top".into()]), ..NetLimits::default() };
     let to_game_capped = to_game.clone();
@@ -347,8 +347,8 @@ async fn a_silent_session_times_out_and_a_flooding_one_is_closed() {
     let (identity, cert_hash) = net::dev_identity().unwrap();
     let server = net::endpoint(identity, 0).unwrap();
     let port = server.local_addr().unwrap().port();
-    let (to_game, messages) = tokio::sync::mpsc::channel(rl_server::game_loop::TO_GAME_QUEUE);
-    let playlist = rl_server::match_host::Playlist { team_size: 2, match_type: rl_server::game::MatchType::Casual, forfeit_vote_wait: None };
+    let (to_game, messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
+    let playlist = carball_server::match_host::Playlist { team_size: 2, match_type: carball_server::game::MatchType::Casual, forfeit_vote_wait: None };
     std::thread::spawn(move || game_loop::run(messages, game_loop::Mode::Direct(playlist), None, heartbeat(), Instant::now()));
     let limits = NetLimits { handshake: Duration::from_secs(1), ..open_limits() };
     tokio::spawn(net::accept_loop(Arc::new(server), to_game, limits));
@@ -412,8 +412,8 @@ async fn a_certificate_reload_keeps_open_sessions_and_serves_the_new_one() {
     let (identity, old_hash) = net::dev_identity().unwrap();
     let server = Arc::new(net::endpoint(identity, 0).unwrap());
     let port = server.local_addr().unwrap().port();
-    let (to_game, messages) = tokio::sync::mpsc::channel(rl_server::game_loop::TO_GAME_QUEUE);
-    let playlist = rl_server::match_host::Playlist { team_size: 2, match_type: rl_server::game::MatchType::Casual, forfeit_vote_wait: None };
+    let (to_game, messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
+    let playlist = carball_server::match_host::Playlist { team_size: 2, match_type: carball_server::game::MatchType::Casual, forfeit_vote_wait: None };
     std::thread::spawn(move || game_loop::run(messages, game_loop::Mode::Direct(playlist), None, heartbeat(), Instant::now()));
     tokio::spawn(net::accept_loop(server.clone(), to_game, open_limits()));
     let client = |hash: [u8; 32]| ClientConfig::builder().with_bind_default().with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(hash)]).build();
@@ -465,8 +465,8 @@ async fn a_certificate_and_a_key_that_dont_match_are_refused_and_the_pair_then_s
     let server = Arc::new(net::endpoint(start, 0).unwrap());
     let port = server.local_addr().unwrap().port();
     server.reload_config(net::server_config(identity, port).unwrap(), false).unwrap();
-    let (to_game, messages) = tokio::sync::mpsc::channel(rl_server::game_loop::TO_GAME_QUEUE);
-    let playlist = rl_server::match_host::Playlist { team_size: 1, match_type: rl_server::game::MatchType::Casual, forfeit_vote_wait: None };
+    let (to_game, messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
+    let playlist = carball_server::match_host::Playlist { team_size: 1, match_type: carball_server::game::MatchType::Casual, forfeit_vote_wait: None };
     std::thread::spawn(move || game_loop::run(messages, game_loop::Mode::Direct(playlist), None, heartbeat(), Instant::now()));
     tokio::spawn(net::accept_loop(server, to_game, open_limits()));
     let config = ClientConfig::builder().with_bind_default().with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(new_hash)]).build();
@@ -483,8 +483,8 @@ async fn a_quic_connection_that_never_asks_for_a_session_is_closed_at_the_quic_d
     let (identity, _) = net::dev_identity().unwrap();
     let server = net::endpoint(identity, 0).unwrap();
     let port = server.local_addr().unwrap().port();
-    let (to_game, messages) = tokio::sync::mpsc::channel(rl_server::game_loop::TO_GAME_QUEUE);
-    let playlist = rl_server::match_host::Playlist { team_size: 1, match_type: rl_server::game::MatchType::Casual, forfeit_vote_wait: None };
+    let (to_game, messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
+    let playlist = carball_server::match_host::Playlist { team_size: 1, match_type: carball_server::game::MatchType::Casual, forfeit_vote_wait: None };
     std::thread::spawn(move || game_loop::run(messages, game_loop::Mode::Direct(playlist), None, heartbeat(), Instant::now()));
     let limits = NetLimits { quic_handshake: Duration::from_secs(1), handshake: Duration::from_secs(10), ..open_limits() };
     tokio::spawn(net::accept_loop(Arc::new(server), to_game, limits));
@@ -512,9 +512,9 @@ async fn a_no_show_is_refused_its_next_search_and_its_neighbours_are_not() {
     let (identity, cert_hash) = net::dev_identity().unwrap();
     let server = net::endpoint(identity, 0).unwrap();
     let port = server.local_addr().unwrap().port();
-    let (to_game, messages) = tokio::sync::mpsc::channel(rl_server::game_loop::TO_GAME_QUEUE);
+    let (to_game, messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
     let playlists = [1, 2, 3]
-        .map(|team_size| rl_server::match_host::Playlist { team_size, match_type: rl_server::game::MatchType::Casual, forfeit_vote_wait: None })
+        .map(|team_size| carball_server::match_host::Playlist { team_size, match_type: carball_server::game::MatchType::Casual, forfeit_vote_wait: None })
         .to_vec();
     std::thread::spawn(move || game_loop::run(messages, game_loop::Mode::Queue(playlists), None, heartbeat(), Instant::now()));
     tokio::spawn(net::accept_loop(Arc::new(server), to_game, open_limits()));

@@ -1,6 +1,6 @@
 // Integration test: the typed wrapper against the real WebAssembly engine (Node build).
 // Requires the engine build (engine/build-wasm) and the generated arena (out/arena).
-import createEngine from "@engine/rlengine.mjs";
+import createEngine from "@engine/carball_engine.mjs";
 import { beforeAll, describe, expect, it } from "vitest";
 import { length, vec3 } from "../math/vec";
 import { arenaMeshes } from "../testing/arena";

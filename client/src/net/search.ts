@@ -4,7 +4,7 @@ import { type SearchHandlers } from "../game/matchmaking";
 import { type ServerAddress, readControlMessages, refusalText } from "./connection";
 import { PROTOCOL_VERSION, encodeControl } from "./protocol";
 
-const BROWSER_KEY = "rl-clone.browserKey";
+const BROWSER_KEY = "carball.browserKey";
 /** This page's key when the browser keeps none (storage blocked) */
 let pageKey = 0n;
 

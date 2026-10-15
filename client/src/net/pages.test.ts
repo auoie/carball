@@ -13,14 +13,14 @@ describe("the pages' handoffs", () => {
     storeClaim({ token: 0x8000000000000001n, playlist: 2, searchedAt: 1_700_000_000_123 }, storage);
     expect(takeClaim(storage)).toEqual({ token: 0x8000000000000001n, playlist: 2, searchedAt: 1_700_000_000_123 });
     expect(takeClaim(storage), "taken out").toBeNull();
-    storage.setItem("rl-clone.claim", '{"token":"0","playlist":1}');
+    storage.setItem("carball.claim", '{"token":"0","playlist":1}');
     expect(takeClaim(storage), "no token").toBeNull();
-    storage.setItem("rl-clone.claim", "{broken");
+    storage.setItem("carball.claim", "{broken");
     expect(takeClaim(storage)).toBeNull();
     expect(takeClaim(null)).toBeNull();
     // A search time that isn't a number (or isn't finite) is now's, never NaN (RX14's K9)
     for (const bad of ['"x"', "null", "1e999"]) {
-      storage.setItem("rl-clone.claim", `{"token":"5","playlist":1,"searchedAt":${bad}}`);
+      storage.setItem("carball.claim", `{"token":"5","playlist":1,"searchedAt":${bad}}`);
       const at = takeClaim(storage)?.searchedAt;
       expect(Number.isFinite(at), bad).toBe(true);
     }
@@ -31,14 +31,14 @@ describe("the pages' handoffs", () => {
     storeNotice({ search: 3, warning: "again" }, storage);
     expect(takeNotice(storage)).toEqual({ search: 3, warning: "again" });
     expect(takeNotice(storage)).toBeNull();
-    storage.setItem("rl-clone.menuNotice", '{"modal":"idle","search":"2","other":1}');
+    storage.setItem("carball.menuNotice", '{"modal":"idle","search":"2","other":1}');
     expect(takeNotice(storage)).toEqual({ modal: "idle" });
-    storage.setItem("rl-clone.menuNotice", '{"modal":"boom"}');
+    storage.setItem("carball.menuNotice", '{"modal":"boom"}');
     expect(takeNotice(storage)).toEqual({});
     // A search back from a cancelled match: its token and its first search's time (RV-367), a bad one dropped
     storeNotice({ search: 1, warning: "w", back: { token: 0xffffffffffffffffn, searchedAt: 42 } }, storage);
     expect(takeNotice(storage)).toEqual({ search: 1, warning: "w", back: { token: 0xffffffffffffffffn, searchedAt: 42 } });
-    storage.setItem("rl-clone.menuNotice", '{"search":1,"back":{"token":"0","searchedAt":1}}');
+    storage.setItem("carball.menuNotice", '{"search":1,"back":{"token":"0","searchedAt":1}}');
     expect(takeNotice(storage)).toEqual({ search: 1 });
   });
 

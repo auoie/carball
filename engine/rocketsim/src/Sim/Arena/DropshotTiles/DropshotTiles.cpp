@@ -77,7 +77,7 @@ void DropshotTiles::Init() {
 
 			for (int j = 0; j < numTiles; j++, curIdx++) {
 				if (curIdx > Dropshot::NUM_TILES_PER_TEAM)
-					RS_ERR_CLOSE("DropshotTiles::Init(): Exceeded maximum tile count, make sure tile info is correct");
+					RS_ERR_CLOSE("Tiles::Init(): Exceeded maximum tile count, make sure tile info is correct");
 
 				float x = rowStartX + Dropshot::TILE_WIDTH_X * j;
 				g_TilePositions[curIdx] = Vec(x, y, 0);
@@ -87,7 +87,7 @@ void DropshotTiles::Init() {
 		}
 
 		if (curIdx < Dropshot::NUM_TILES_PER_TEAM)
-			RS_ERR_CLOSE("DropshotTiles::Init(): Failed to reach tile amount, make sure tile info is correct");
+			RS_ERR_CLOSE("Tiles::Init(): Failed to reach tile amount, make sure tile info is correct");
 	}
 
 	{ // Generate g_TileNeighbors
@@ -111,14 +111,14 @@ void DropshotTiles::Init() {
 		}
 
 		if (maxNeighbors1 > 7 || maxNeighbors2 > 20)
-			RS_ERR_CLOSE("DropshotTiles::Init(): Too high neighbor count, tile placement may be incorrect");
+			RS_ERR_CLOSE("Tiles::Init(): Too high neighbor count, tile placement may be incorrect");
 	}
 }
 
 // TODO: Return reference instead of copy
 std::vector<int> DropshotTiles::GetNeighborIndices(int startIdx, int radius) {
 	if (radius < 1 || radius > 3)
-		RS_ERR_CLOSE("DropshotTiles::GetNeighborIndices(): Radius must be from 1-3");
+		RS_ERR_CLOSE("Tiles::GetNeighborIndices(): Radius must be from 1-3");
 
 	if (radius == 1) {
 		return { startIdx };

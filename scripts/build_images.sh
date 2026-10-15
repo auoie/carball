@@ -64,10 +64,10 @@ CARGO_TARGET_DIR="$TARGET" CARGO_PROFILE_RELEASE_DEBUG=0 CARGO_PROFILE_RELEASE_S
 	RUSTFLAGS="--remap-path-prefix=$HOME=/home --remap-path-prefix=$CARGO_HOME_DIR=/cargo --remap-path-prefix=$SRC=/src" \
 	CFLAGS="-ffile-prefix-map=$SRC=/src" CXXFLAGS="-ffile-prefix-map=$SRC=/src" \
 	cargo build --release --offline --manifest-path "$SRC/server/Cargo.toml"
-cp "$TARGET/release/rl-server" "$STAGE/game/"
+cp "$TARGET/release/carball-server" "$STAGE/game/"
 cp -a "$SRC/out/arena/collision_meshes" "$STAGE/game/collision_meshes" # (the committed meshes only)
 cp "$SRC/server/docker/Dockerfile" "$STAGE/game/"
-paths=$(strings "$STAGE/game/rl-server" | grep -cE "$HOME|$R|/mnt/" || true)
+paths=$(strings "$STAGE/game/carball-server" | grep -cE "$HOME|$R|/mnt/" || true)
 echo "build machine paths in the binary: $paths"
 [ "$paths" = 0 ] || { echo "the binary names the build machine's paths: not built"; exit 1; }
 

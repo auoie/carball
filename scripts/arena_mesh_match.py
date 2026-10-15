@@ -23,7 +23,7 @@ def main():
     listing = sys.argv[sys.argv.index("--list") + 1] if "--list" in sys.argv else None
     if listing in args:
         args.remove(listing)
-    ours_path = args[0] if args else "out/arena/soccar_arena.obj"
+    ours_path = args[0] if args else "out/arena/arena.obj"
     d = args[1] if len(args) > 1 else "out/arena_local"
     ours = arena_check.load_obj(ours_path)
     grid = lambda p: tuple(np.floor(np.asarray(p) / TOL).astype(int))

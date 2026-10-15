@@ -3,7 +3,7 @@
 // a server built from the same parts as the real one: the engine, its input buffer (serverConsume.ts, the Rust one's
 // port), updates every other tick with the actors due at the game's rates (server/src/replication.rs), the compact
 // network state. The local player and a server-side bot both chase the ball, so they meet it and each other.
-import type createEngine from "@engine/rlengine.mjs";
+import type createEngine from "@engine/carball_engine.mjs";
 import { type BodyState, type CarState, World } from "../engine/world";
 import { Interpolated } from "../game/interpolated";
 import { SyncError } from "../game/syncError";

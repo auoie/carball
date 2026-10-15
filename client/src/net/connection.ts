@@ -58,7 +58,7 @@ export interface JoinPreferences {
 
 type Welcome = Extract<ControlMessage, { type: "welcome" }>;
 
-const KEY_STORAGE = "rl-clone.playerKey";
+const KEY_STORAGE = "carball.playerKey";
 
 function session(): Pick<Storage, "getItem" | "setItem"> | null {
   try {

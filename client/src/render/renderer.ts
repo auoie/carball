@@ -5,7 +5,7 @@ import { LinearSRGBColorSpace, NoToneMapping, PerspectiveCamera, Scene, Vector3,
 import { fogAll } from "./heightFog";
 import { useGameTranslucentSort } from "./translucentSort";
 import { PostProcess, type PostOptions } from "./postProcess";
-import type { CameraView } from "../camera/rlCamera";
+import type { CameraView } from "../camera/carballCamera";
 import type { Vec3 } from "../math/vec";
 import { horizontalToVerticalFov } from "../camera/interp";
 import { toThreeVector } from "./coords";

@@ -110,12 +110,12 @@ describe("the fog in the materials (FOG-10)", () => {
 
   it("each mode its own application, after the colour; the uniforms shared; once", () => {
     const opaque = withHeightFog(shader(), "opaque");
-    expect(opaque.fragmentShader).toContain("rlHeightFog(rlOpaqueDelta(vFogWorld))");
-    expect(opaque.fragmentShader.indexOf("gl_FragColor = vec4(1.0)")).toBeLessThan(opaque.fragmentShader.indexOf("rlFog.a + rlFog.rgb"));
+    expect(opaque.fragmentShader).toContain("carballHeightFog(carballOpaqueDelta(vFogWorld))");
+    expect(opaque.fragmentShader.indexOf("gl_FragColor = vec4(1.0)")).toBeLessThan(opaque.fragmentShader.indexOf("carballFog.a + carballFog.rgb"));
     expect(opaque.uniforms["uFogCd"]).toBe(HEIGHT_FOG_UNIFORMS.uFogCd);
-    expect(withHeightFog(shader(), "sky").fragmentShader).toContain("rlSkyDelta");
+    expect(withHeightFog(shader(), "sky").fragmentShader).toContain("carballSkyDelta");
     const translucent = withHeightFog(shader(true), "translucent", { distance: 25000 });
-    expect(translucent.vertexShader).toContain("vFog = rlHeightFog(normalize(vFogWorld - uFogCam) * 25000.000)");
+    expect(translucent.vertexShader).toContain("vFog = carballHeightFog(normalize(vFogWorld - uFogCam) * 25000.000)");
     // (placed at a fraction of its distance from a point: its true vertices, RV-188)
     expect(withHeightFog(shader(true), "translucent", { scale: 4, about: [0, 928, 0] }).vertexShader).toContain("vec3(0.0000000, 928.00000, 0.0000000) + (vFogWorld - vec3(0.0000000, 928.00000, 0.0000000)) * 4.0000000 - uFogCam");
     expect(translucent.fragmentShader).toContain("gl_FragColor.rgb * vFog.a + vFog.rgb");
@@ -123,7 +123,7 @@ describe("the fog in the materials (FOG-10)", () => {
     const before = translucent.fragmentShader;
     expect(withHeightFog(translucent, "opaque").fragmentShader).toBe(before);
     const none = withHeightFog(shader(), "none");
-    expect(none.fragmentShader).not.toContain("rlHeightFog");
+    expect(none.fragmentShader).not.toContain("carballHeightFog");
   });
 
   it("fogAll: opaque, translucent or additive by the blending, unless set; the uniforms from the camera drawing", () => {
@@ -150,18 +150,18 @@ describe("the fog wherever it's drawn (RV-187, 190)", () => {
       fragmentShader: "void main() { if (gl_FragCoord.x > 1.0) { gl_FragColor = vec4(1.0); return; } gl_FragColor = vec4(0.5); }",
     });
     const fragment = withHeightFog(early, "opaque").fragmentShader;
-    expect(fragment).toContain("void rlFragmentMain()");
+    expect(fragment).toContain("void carballFragmentMain()");
     const main = fragment.slice(fragment.lastIndexOf("void main()"));
-    expect(main.indexOf("rlFragmentMain();")).toBeLessThan(main.indexOf("rlFog.a + rlFog.rgb"));
+    expect(main.indexOf("carballFragmentMain();")).toBeLessThan(main.indexOf("carballFog.a + carballFog.rgb"));
   });
 
   it("built-in materials too, at their compile (the arena's, the cars': RV-187)", () => {
     const basic = withHeightFog(new MeshBasicMaterial(), "opaque");
     const shader = { vertexShader: "void main() { gl_Position = vec4(position, 1.0); }", fragmentShader: "void main() { gl_FragColor = vec4(1.0); }", uniforms: {} as Record<string, unknown> };
     basic.onBeforeCompile(shader as never, null as never);
-    expect(shader.fragmentShader).toContain("rlHeightFog(rlOpaqueDelta(vFogWorld))");
+    expect(shader.fragmentShader).toContain("carballHeightFog(carballOpaqueDelta(vFogWorld))");
     expect(shader.uniforms["uFogCd"]).toBe(HEIGHT_FOG_UNIFORMS.uFogCd);
-    expect(basic.customProgramCacheKey()).toContain("rlHeightFog:opaque");
+    expect(basic.customProgramCacheKey()).toContain("carballHeightFog:opaque");
   });
 
   it("the arena's far corner from a corner camera fogged as the game's: F 0.784 (12.9k off, from z 150)", () => {
@@ -181,7 +181,7 @@ describe("the fog wherever it's drawn (RV-187, 190)", () => {
     const c = new MeshStandardMaterial();
     c.customProgramCacheKey = () => "own";
     withHeightFog(c, "opaque");
-    expect(c.customProgramCacheKey()).toMatch(/^own\|rlHeightFog:opaque/);
+    expect(c.customProgramCacheKey()).toMatch(/^own\|carballHeightFog:opaque/);
     // (the place too: two otherwise equal materials placed differently compile differently, RV-227)
     const [far, near] = [new MeshBasicMaterial(), new MeshBasicMaterial()];
     withHeightFog(far, "translucent", { distance: 25000 });

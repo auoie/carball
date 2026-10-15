@@ -12,7 +12,7 @@ const DIST = join(SRC, "../dist");
 const PUBLIC = join(SRC, "../public");
 const INDEX = join(SRC, "../index.html");
 
-/** Whole words, any case: the game, its maker, its car bodies and hitbox presets, its arenas */
+/** Whole words, any case: the game, its maker, its car bodies and hitbox presets, its arenas, its modes */
 const NAMES = [
   "rocket league",
   "rocketleague",
@@ -35,7 +35,16 @@ const NAMES = [
   "neo tokyo",
   "salty shores",
   "forbidden temple",
+  "soccar",
+  "hoops",
+  "heatseeker",
+  "snow day",
+  "snowday",
+  "dropshot",
 ];
+/** The game's abbreviation in our own names (renamed carball: the user's decision of 2026-10-15): rl-clone.*, rl-server,
+ *  rlengine, and camel-cased rlSomething (a minifier never makes those) */
+const ABBREVIATIONS = /(?<![a-z0-9])rl[-_]?(clone|server|engine)|(?<![A-Za-z0-9_$])rl[A-Z][a-z]{2,}/i;
 const PATTERN = new RegExp(`(?<![a-z0-9])(${NAMES.map((n) => n.replace(/ /g, "[ _-]?")).join("|")})(?![a-z0-9])`, "i");
 
 function files(dir: string): string[] {
@@ -50,9 +59,13 @@ function files(dir: string): string[] {
  *  never bundled: the built-page check below confirms none of it ships) */
 const DEV_ONLY = new Set(["render/fennec.ts"]);
 
-/** The first name in the text, with its surroundings */
+/** The one abbreviation that ships on purpose: the old storage keys' prefix, which the one-time migration must name to
+ *  read them (settings/storageKeys.ts; it goes with the migration) */
+const OLD_KEYS = /["'`]rl-clone\.["'`]/g;
+
+/** The first name (or abbreviation) in the text, with its surroundings */
 function found(text: string): string | null {
-  const m = PATTERN.exec(text);
+  const m = PATTERN.exec(text) ?? ABBREVIATIONS.exec(text.replace(OLD_KEYS, '""'));
   return m ? text.slice(Math.max(0, m.index - 30), m.index + m[0].length + 30) : null;
 }
 
@@ -72,6 +85,11 @@ describe("what ships names no game (RV-388)", () => {
     expect(found("rocket_league")).not.toBeNull();
     expect(found("MERCHANTABILITY, FITNESS")).toBeNull();
     expect(found("Commercial use")).toBeNull();
+    expect(found('fetch("soccar_corner.cmf")')).not.toBeNull();
+    expect(found('localStorage.getItem("rl-clone.settings.v1")')).not.toBeNull();
+    expect(found("window.rlFreeplay = x")).not.toBeNull();
+    expect(found("rlengine_web-ab12.wasm")).not.toBeNull();
+    expect(found("var rl=1,url=2;curlFoo()")).toBeNull();
   });
 
   it("our modules' strings (not their comments)", () => {

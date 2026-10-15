@@ -5,7 +5,7 @@
 // Its Tick and UpdatePOV run on real time (DeltaTime / TimeDilation).
 import { type Vec3, add, length, sub, vec3 } from "../math/vec";
 import { lerp, rotationAxes, vectorToRotator, vlerp } from "./unreal";
-import type { CameraView } from "./rlCamera";
+import type { CameraView } from "./carballCamera";
 
 /** Archetypes.Camera.CameraState_LiveReplay */
 const LIVE_REPLAY = {

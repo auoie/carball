@@ -137,7 +137,7 @@ export function withTrueDepth(material: ShaderMaterial, scale: number, about: re
   const a = about === "camera" ? "cameraPosition" : `vec3(${about.map((v) => v.toFixed(3)).join(", ")})`;
   material.vertexShader = wrap(
     `varying vec4 vTrueClip;\n${material.vertexShader}`,
-    `  vec3 rlWorld = (modelMatrix * vec4(position, 1.0)).xyz;\n  vTrueClip = projectionMatrix * viewMatrix * vec4(${a} + (rlWorld - ${a}) * ${scale.toFixed(6)}, 1.0);`,
+    `  vec3 carballWorld = (modelMatrix * vec4(position, 1.0)).xyz;\n  vTrueClip = projectionMatrix * viewMatrix * vec4(${a} + (carballWorld - ${a}) * ${scale.toFixed(6)}, 1.0);`,
   );
   material.fragmentShader = wrap(
     `varying vec4 vTrueClip;\n${material.fragmentShader}`,
@@ -172,5 +172,5 @@ export function drawnNearer(mesh: Mesh, k: number, initial: Vector3): Group {
 function wrap(shader: string, after: string): string {
   const main = /\bvoid\s+main\s*\(\s*(void)?\s*\)/;
   if (!main.test(shader)) throw new Error("a shader without a main");
-  return `${shader.replace(main, "void rlTrueDepthMain()")}\nvoid main() {\n  rlTrueDepthMain();\n${after}\n}\n`;
+  return `${shader.replace(main, "void carballTrueDepthMain()")}\nvoid main() {\n  carballTrueDepthMain();\n${after}\n}\n`;
 }

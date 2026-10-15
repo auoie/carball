@@ -18,7 +18,7 @@ const RIGHT = 15;
 async function tap(page: Page, buttons: number[], axes = [0, 0, 0, 0]): Promise<void> {
   await page.evaluate(
     async ({ b, a }) => {
-      const w = window as unknown as { rlSetPad: (down: number[], axes?: number[]) => void };
+      const w = window as unknown as { carballSetPad: (down: number[], axes?: number[]) => void };
       const frames = (n: number): Promise<void> =>
         new Promise((resolve) => {
           const step = (k: number): void => {
@@ -27,9 +27,9 @@ async function tap(page: Page, buttons: number[], axes = [0, 0, 0, 0]): Promise<
           };
           step(n);
         });
-      w.rlSetPad(b, a);
+      w.carballSetPad(b, a);
       await frames(1);
-      w.rlSetPad([]);
+      w.carballSetPad([]);
       await frames(2);
     },
     { b: buttons, a: axes },
@@ -70,11 +70,11 @@ test("menus with a pad: Start, the D-pad's focus, A, B (MENU-1/4)", async ({ pag
   await tap(page, [START]);
   await expect(pause).toBeVisible();
   await expect(pause.getByRole("button", { name: /^resume game$/i })).toHaveClass(/pad-focus/);
-  const z0 = await page.evaluate(() => (window as unknown as { rlFreeplay: { car: () => { pos: { z: number } } } }).rlFreeplay.car().pos.z);
+  const z0 = await page.evaluate(() => (window as unknown as { carballFreeplay: { car: () => { pos: { z: number } } } }).carballFreeplay.car().pos.z);
   await tap(page, [A]);
   await expect(pause).toBeHidden();
   await page.waitForTimeout(400);
-  const z1 = await page.evaluate(() => (window as unknown as { rlFreeplay: { car: () => { pos: { z: number } } } }).rlFreeplay.car().pos.z);
+  const z1 = await page.evaluate(() => (window as unknown as { carballFreeplay: { car: () => { pos: { z: number } } } }).carballFreeplay.car().pos.z);
   expect(Math.abs(z1 - z0)).toBeLessThan(5);
   // The user's path (finding 15): the pause menu opened with Escape, the left stick down to Settings, A opens them
   await page.keyboard.press("Escape");

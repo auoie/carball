@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_BINDINGS } from "../input/bindings";
-import { DEFAULT_CAMERA_SETTINGS } from "../camera/rlCamera";
+import { DEFAULT_CAMERA_SETTINGS } from "../camera/carballCamera";
 import { DEFAULT_SETTINGS, MODERN_CAMERA_KBM, MODERN_CAMERA_PAD, loadSettings, parseSettings, saveSettings, tidyName } from "./settings";
 import { DEFAULT_SLOTS } from "../game/quickChat";
 
@@ -45,7 +45,7 @@ describe("settings", () => {
   it("falls back to defaults for nothing stored or broken JSON", () => {
     expect(loadSettings(new MemoryStorage())).toEqual(DEFAULT_SETTINGS);
     const broken = new MemoryStorage();
-    broken.setItem("rl-clone.settings.v1", "{not json");
+    broken.setItem("carball.settings.v1", "{not json");
     expect(loadSettings(broken)).toEqual(DEFAULT_SETTINGS);
   });
 

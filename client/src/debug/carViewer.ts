@@ -1,5 +1,5 @@
 // A turntable for the car model (?viewer=car): the model alone under plain lights, seen from a chosen angle, for
-// comparing it with the game's (screenshots: window.rlCarViewer.view(azimuth, elevation, distance)). Not part of the
+// comparing it with the game's (screenshots: window.carballCarViewer.view(azimuth, elevation, distance)). Not part of the
 // game.
 import { AmbientLight, Color, DirectionalLight } from "three";
 import type { CarConfig } from "../engine/world";

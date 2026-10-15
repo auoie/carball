@@ -187,10 +187,8 @@ void RocketSim::InitFromMem(const std::map<GameMode, std::vector<FileData>>& mes
 		}
 
 		if (!silent) {
-			RS_LOG(MSG_PREFIX << "Finished loading arena collision meshes:");
-			RS_LOG(" > Soccar: " << GetArenaCollisionShapes(GameMode::SOCCAR).size());
-			RS_LOG(" > Hoops: " << GetArenaCollisionShapes(GameMode::HOOPS).size());
-			RS_LOG(" > Dropshot: " << GetArenaCollisionShapes(GameMode::DROPSHOT).size());
+			// RL PATCH: the arena's count alone (the other modes are unused here, and named by no game: GameMode.h)
+			RS_LOG(MSG_PREFIX << "Finished loading arena collision meshes: " << GetArenaCollisionShapes(GameMode::SOCCAR).size());
 		}
 
 

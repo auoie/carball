@@ -1,13 +1,13 @@
 // Headless test of the WebAssembly engine module in Node.
-//   node engine/wasm/test_node.mjs [engine/build-wasm/rlengine.mjs] [out/arena/collision_meshes/soccar]
+//   node engine/wasm/test_node.mjs [engine/build-wasm/carball_engine.mjs] [out/arena/collision_meshes/arena]
 //   (the arena: a directory of .cmf files, one per piece, or a single .cmf)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const root = new URL("../../", import.meta.url);
-const modulePath = process.argv[2] ?? new URL("engine/build-wasm/rlengine.mjs", root).pathname;
-const meshPath = process.argv[3] ?? new URL("out/arena/collision_meshes/soccar", root).pathname;
+const modulePath = process.argv[2] ?? new URL("engine/build-wasm/carball_engine.mjs", root).pathname;
+const meshPath = process.argv[3] ?? new URL("out/arena/collision_meshes/arena", root).pathname;
 const meshFiles = statSync(meshPath).isDirectory()
   ? readdirSync(meshPath).filter((n) => n.endsWith(".cmf")).sort().map((n) => `${meshPath}/${n}`)
   : [meshPath];

@@ -19,12 +19,12 @@ export const test = base.extend({
 export { expect } from "@playwright/test";
 
 /** A scripted standard-layout pad for the page (after the fixture hid the real ones): `setPad(buttons down, axes)` from
- *  the test through `window.rlSetPad` */
+ *  the test through `window.carballSetPad` */
 export async function fakeGamepad(context: BrowserContext): Promise<void> {
   await context.addInitScript(() => {
     const pad = { buttons: Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 })), axes: [0, 0, 0, 0] };
-    const w = window as unknown as { rlSetPad: (down: number[], axes?: number[]) => void };
-    w.rlSetPad = (down, axes = [0, 0, 0, 0]) => {
+    const w = window as unknown as { carballSetPad: (down: number[], axes?: number[]) => void };
+    w.carballSetPad = (down, axes = [0, 0, 0, 0]) => {
       pad.buttons.forEach((b, i) => {
         const on = down.includes(i);
         b.pressed = on;

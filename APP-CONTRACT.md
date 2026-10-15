@@ -66,7 +66,7 @@ refused with a message).
 | `ALLOWED_ORIGIN` | `https://carball.zolt.top` | the page origin(s) allowed to open sessions, comma-separated (case doesn't matter); others (and none) get 403. Required with a certificate: empty or blank, the server refuses to start |
 | `CERT_PATH` | `/certs/fullchain.pem` | the certificate chain (PEM) for `PUBLIC_HOST`, publicly trusted (browsers refuse a self-signed one; in a test, Chrome's WebTransport refused a locally trusted test CA and ignored `--ignore-certificate-errors*` too). Required in queue mode (an empty one is an error: no silent self-signed server) |
 | `KEY_PATH` | `/certs/privkey.pem` | its private key (PEM); a key that isn't the certificate's is refused (the old pair stays, tried again) |
-| `RL_MODE` | `queue` | `queue`: the 1v1 / 2v2 / 3v3 queue (searches and claims only); `direct`: one open match (development) |
+| `SERVER_MODE` | `queue` | `queue`: the 1v1 / 2v2 / 3v3 queue (searches and claims only); `direct`: one open match (development) |
 | `HEALTH_PORT` | `8081` | the health endpoint, on 127.0.0.1 inside the container only |
 | `MESHES_DIR` | `/app/collision_meshes` | the arena's collision meshes (in the image) |
 
@@ -88,7 +88,7 @@ the same port): `docker run --rm -e GAME_PORT=14502 -p 127.0.0.1:14502:14502/udp
   time keep theirs, so no match is dropped. A file that can't be read (half-written), or a key that isn't the
   certificate's (a renewal read between its two writes), keeps the old certificate and is tried again at the next check;
   each reload, or failure, is one log line.
-- **Health:** `rl-server --healthcheck` (the image's `HEALTHCHECK`, every 15 s): `GET http://127.0.0.1:$HEALTH_PORT/healthz`
+- **Health:** `carball-server --healthcheck` (the image's `HEALTHCHECK`, every 15 s): `GET http://127.0.0.1:$HEALTH_PORT/healthz`
   answers 200 while the game thread runs (its heartbeat within 2 s), else 503. The check reads `HEALTH_PORT` (or
   `--health-port`) alone. A variable that isn't a number stops the server with its name in the error.
 - **Restart policy:** `unless-stopped` (or `always`). The process exits if its game thread ends (a panic outside a

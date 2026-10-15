@@ -148,7 +148,7 @@ def report(name, P, d):
 
 
 def main():
-    gen = load_obj(sys.argv[1] if len(sys.argv) > 1 else "out/arena/soccar_arena.obj")
+    gen = load_obj(sys.argv[1] if len(sys.argv) > 1 else "out/arena/arena.obj")
     d = sys.argv[2] if len(sys.argv) > 2 else "out/arena_local"
     ours = gen[(gen[..., 0].min(axis=1) > -1) & (gen[..., 1].min(axis=1) > -1)]
     # the planes (floor, ceiling, side wall) are not in the mesh but are part of the arena surface

@@ -1,6 +1,6 @@
 // ?viewer=shaders: the shaders' own functions run on the GPU against their TypeScript twins (RV-148: the unit tests
 // check the twins; this checks the GLSL the materials embed), and materials rendered where a shader's defines decide
-// what shows (the boost pads' taken look). The e2e suite calls window.rlShaderProbe.
+// what shows (the boost pads' taken look). The e2e suite calls window.carballShaderProbe.
 import {
   AmbientLight,
   Color,
@@ -86,7 +86,7 @@ export const PROBES: Readonly<Record<string, Probe>> = {
   display: {
     glsl: `uniform float remapR[16];\nuniform float remapG[16];\nuniform float remapB[16];\n${TONEMAP_GLSL}\n${REMAP_GLSL}`,
     uniforms: { remapR: { value: unclippedNodes(0) }, remapG: { value: unclippedNodes(1) }, remapB: { value: unclippedNodes(2) } },
-    call: "vec4(rlRemap(rlTonemap(i.rgb), i.a), 0.0)",
+    call: "vec4(carballRemap(carballTonemap(i.rgb), i.a), 0.0)",
     twin: (i) => [...display([i[0] ?? 0, i[1] ?? 0, i[2] ?? 0], i[3] ?? 0), 0],
     // (linear 0 to 10, log spaced, each channel apart, at fades 0, 0.5 and 0.9; off the tone map's 1e-4-wide step at Z)
     inputs: () =>
@@ -101,7 +101,7 @@ export const PROBES: Readonly<Record<string, Probe>> = {
   heightFog: {
     glsl: HEIGHT_FOG_GLSL,
     uniforms: { uFogCd: { value: fogCd(17) }, uFogCam: { value: new Vector3(0, 17, 0) }, uFogCap: { value: 1e30 }, uFogAxis: { value: new Vector3(0, 0, -1) } },
-    call: "rlHeightFog(i.xyz)",
+    call: "carballHeightFog(i.xyz)",
     twin: (i) => {
       const fog = heightFog([i[0] ?? 0, i[1] ?? 0, i[2] ?? 0], fogCd(17));
       return [...fog.add, fog.F];
@@ -121,7 +121,7 @@ export const PROBES: Readonly<Record<string, Probe>> = {
   heightFogCapture: {
     glsl: HEIGHT_FOG_GLSL,
     uniforms: { uFogCd: { value: fogCd(927.9998) }, uFogCam: { value: new Vector3(0, 927.9998, 0) }, uFogCap: { value: CUBE_FOG_CAP }, uFogAxis: { value: new Vector3(0, 1, 0) } },
-    call: "rlHeightFog(rlOpaqueDelta(uFogCam + rlSkyDelta(normalize(i.xyz))))",
+    call: "carballHeightFog(carballOpaqueDelta(uFogCam + carballSkyDelta(normalize(i.xyz))))",
     twin: (i) => {
       const fog = heightFog(opaqueDelta(skyDelta([i[0] ?? 0, i[1] ?? 0, i[2] ?? 0]), [0, 1, 0], CUBE_FOG_CAP), fogCd(927.9998));
       return [...fog.add, fog.F];

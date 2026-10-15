@@ -62,7 +62,7 @@ test("freeplay loads, drives and resets", async ({ page }) => {
   await expect(page.locator("#help")).toBeVisible();
 
   // Sound: running since the first key press, the car's engine playing; a jump (space) and its landing heard
-  const audio = async (): Promise<AudioStats> => page.evaluate(() => (window as unknown as { rlAudio: () => AudioStats }).rlAudio());
+  const audio = async (): Promise<AudioStats> => page.evaluate(() => (window as unknown as { carballAudio: () => AudioStats }).carballAudio());
   await page.waitForTimeout(400);
   expect((await audio()).state).toBe("running");
   expect((await audio()).cars).toBe(1);
@@ -193,7 +193,7 @@ test("every theme's ambience: no sound sticks out far above the rest, and none i
   for (const theme of ["night", ...THEMED]) {
     // A minute of it, the same events every run (seeded)
     const levels = await page.evaluate(
-      async (t) => (window as unknown as { rlAmbienceLevels: (t: string, s: number) => Promise<AmbienceLevels> }).rlAmbienceLevels(t, 60),
+      async (t) => (window as unknown as { carballAmbienceLevels: (t: string, s: number) => Promise<AmbienceLevels> }).carballAmbienceLevels(t, 60),
       theme,
     );
     // (every theme's loudest half-second is under 3x its median, its peak under 0.16: an event built too loud, like
@@ -237,14 +237,14 @@ test("a goal in freeplay with goal replays on: the replay plays, Space skips it,
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
   await freePlay(page);
   const hook = async (): Promise<{ pos: { x: number; y: number }; speed: number }> =>
-    page.evaluate(() => (window as unknown as { rlFreeplay: Hook }).rlFreeplay.car());
+    page.evaluate(() => (window as unknown as { carballFreeplay: Hook }).carballFreeplay.car());
   await page.evaluate(() => {
-    (window as unknown as { rlFreeplay: Hook }).rlFreeplay.place({ x: 3000, y: 0, yaw: 0 }, { x: 0, y: 5300, z: 200 });
+    (window as unknown as { carballFreeplay: Hook }).carballFreeplay.place({ x: 3000, y: 0, yaw: 0 }, { x: 0, y: 5300, z: 200 });
     // (the camera's fade at its largest, frame by frame: the replay cuts in from black through the post-processing)
-    const w = window as unknown as { rlFreeplay: Hook; rlFadeMax: number };
-    w.rlFadeMax = 0;
+    const w = window as unknown as { carballFreeplay: Hook; carballFadeMax: number };
+    w.carballFadeMax = 0;
     const sample = (): void => {
-      w.rlFadeMax = Math.max(w.rlFadeMax, w.rlFreeplay.cameraFade());
+      w.carballFadeMax = Math.max(w.carballFadeMax, w.carballFreeplay.cameraFade());
       requestAnimationFrame(sample);
     };
     requestAnimationFrame(sample);
@@ -255,10 +255,10 @@ test("a goal in freeplay with goal replays on: the replay plays, Space skips it,
   await expect(page.locator("#replay-banner")).toBeVisible({ timeout: 20_000 });
   await expect(page.locator("#replay-label")).toHaveText("REPLAY");
   await expect(page.locator("#replay-info .replay-scorer")).toBeVisible();
-  await expect.poll(async () => page.evaluate(() => (window as unknown as { rlFadeMax: number }).rlFadeMax), { timeout: 10_000 }).toBeGreaterThan(0.5);
+  await expect.poll(async () => page.evaluate(() => (window as unknown as { carballFadeMax: number }).carballFadeMax), { timeout: 10_000 }).toBeGreaterThan(0.5);
   await expect(page.locator("#replay-prompt")).toContainText(/skip/i);
   // (the car's voice follows the replayed car, not the live state the replay began in: user finding 7)
-  const audioMode = async (): Promise<string> => page.evaluate(() => (window as unknown as { rlAudio: () => { mode: string } }).rlAudio().mode);
+  const audioMode = async (): Promise<string> => page.evaluate(() => (window as unknown as { carballAudio: () => { mode: string } }).carballAudio().mode);
   await expect.poll(audioMode, { timeout: 5_000 }).toBe("replay");
   // (its key: the Skip Replay binding's, a word for a keyboard key: HT-3, RV-282)
   await expect(page.locator("#replay-prompt .key-glyph.key-word")).toHaveText("Space");
@@ -280,9 +280,9 @@ test("Exit to Main Menu during a goal replay, then Free Play: a fresh round, no 
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
   await freePlay(page);
   const hook = async (): Promise<{ pos: { x: number; y: number }; speed: number }> =>
-    page.evaluate(() => (window as unknown as { rlFreeplay: Hook }).rlFreeplay.car());
+    page.evaluate(() => (window as unknown as { carballFreeplay: Hook }).carballFreeplay.car());
   await page.evaluate(() => {
-    (window as unknown as { rlFreeplay: Hook }).rlFreeplay.place({ x: 3000, y: 0, yaw: 0 }, { x: 0, y: 5300, z: 200 });
+    (window as unknown as { carballFreeplay: Hook }).carballFreeplay.place({ x: 3000, y: 0, yaw: 0 }, { x: 0, y: 5300, z: 200 });
   });
   await expect(page.locator("#replay-banner")).toBeVisible({ timeout: 20_000 });
   await expect(page.locator("#score-blue")).toHaveText("1");
@@ -304,16 +304,16 @@ test("a goal in freeplay, skipping replays: no message, 3 s later a kickoff spot
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.addInitScript(() => {
-    localStorage.setItem("rl-clone.settings.v1", JSON.stringify({ options: { autoSkipReplay: true } }));
+    localStorage.setItem("carball.settings.v1", JSON.stringify({ options: { autoSkipReplay: true } }));
   });
   await page.goto("/?render=off");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
   await freePlay(page);
   const hook = async (): Promise<{ pos: { x: number; y: number }; speed: number }> =>
-    page.evaluate(() => (window as unknown as { rlFreeplay: Hook }).rlFreeplay.car());
+    page.evaluate(() => (window as unknown as { carballFreeplay: Hook }).carballFreeplay.car());
   // The car out on the side, the ball dropped into orange's goal
   await page.evaluate(() => {
-    (window as unknown as { rlFreeplay: Hook }).rlFreeplay.place({ x: 3000, y: 0, yaw: 0 }, { x: 0, y: 5300, z: 200 });
+    (window as unknown as { carballFreeplay: Hook }).carballFreeplay.place({ x: 3000, y: 0, yaw: 0 }, { x: 0, y: 5300, z: 200 });
   });
   // Scored for the player's team, with no message (offline freeplay: RV-38)
   await expect(page.locator("#score-blue")).toHaveText("1", { timeout: 10_000 });
@@ -351,15 +351,15 @@ test("Unlimited boost in free play: on (the default) a full car takes no pad; of
   await page.goto("/");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
   await freePlay(page);
-  await page.waitForFunction(() => "rlFreeplay" in window);
+  await page.waitForFunction(() => "carballFreeplay" in window);
   const place = async (car: object): Promise<void> => {
     await page.evaluate((c) => {
-      (window as unknown as { rlFreeplay: PadsHook }).rlFreeplay.place(c, { x: 0, y: 3000, z: 93 });
+      (window as unknown as { carballFreeplay: PadsHook }).carballFreeplay.place(c, { x: 0, y: 3000, z: 93 });
     }, car);
   };
   const pads = async (): Promise<{ active: boolean | undefined; boost: number }> =>
     page.evaluate(() => {
-      const s = (window as unknown as { rlFreeplay: PadsHook }).rlFreeplay.pads();
+      const s = (window as unknown as { carballFreeplay: PadsHook }).carballFreeplay.pads();
       return { active: s.pads.find((p) => !p.big && p.x === 0 && p.y === -1024)?.active, boost: s.boost };
     });
   const onPad = { x: 0, y: -1024, yaw: Math.PI / 2 };
@@ -430,12 +430,12 @@ test("the engine's contacts as the game's impact triggers: driving into the ball
   await page.goto("/?render=off");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
   await freePlay(page);
-  await page.waitForFunction(() => "rlFreeplay" in window);
+  await page.waitForFunction(() => "carballFreeplay" in window);
   await page.locator("#game").click({ position: { x: 640, y: 360 }, button: "right" }); // (focus; the sound unlocked)
-  const audio = async (): Promise<AudioStats> => page.evaluate(() => (window as unknown as { rlAudio: () => AudioStats }).rlAudio());
+  const audio = async (): Promise<AudioStats> => page.evaluate(() => (window as unknown as { carballAudio: () => AudioStats }).carballAudio());
   // The ball 500 uu ahead of the car, resting; then full throttle into it
   await page.evaluate(() => {
-    (window as unknown as { rlFreeplay: PadsHook }).rlFreeplay.place({ x: 0, y: -1500, yaw: Math.PI / 2 }, { x: 0, y: -1000, z: 93 });
+    (window as unknown as { carballFreeplay: PadsHook }).carballFreeplay.place({ x: 0, y: -1500, yaw: Math.PI / 2 }, { x: 0, y: -1000, z: 93 });
   });
   await page.waitForTimeout(300);
   const before = (await audio()).played.ballHit ?? 0;

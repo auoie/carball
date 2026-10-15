@@ -554,7 +554,7 @@ pub async fn serve_health(port: u16, heartbeat: Arc<std::sync::atomic::AtomicU64
     }
 }
 
-/// `rl-server --healthcheck`: asks the health endpoint; true if it answered 200
+/// `carball-server --healthcheck`: asks the health endpoint; true if it answered 200
 pub fn health_check(port: u16) -> bool {
     use std::io::{Read, Write};
     let Ok(mut stream) = std::net::TcpStream::connect_timeout(&([127, 0, 0, 1], port).into(), Duration::from_secs(2)) else { return false };

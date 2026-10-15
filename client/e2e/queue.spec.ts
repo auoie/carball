@@ -48,9 +48,9 @@ test("two players find a 1v1, count down and land in the match together", async 
     await expect(page.locator("#net")).toContainText("2 cars", { timeout: 30_000 });
   }
   // One a side: each page's own team on the left
-  const phases = await a.evaluate(() => (window as unknown as { rlOnline: () => { phases: { phase: string }[] } }).rlOnline().phases.map((p) => p.phase));
+  const phases = await a.evaluate(() => (window as unknown as { carballOnline: () => { phases: { phase: string }[] } }).carballOnline().phases.map((p) => p.phase));
   expect(phases[0]).toBe("waiting");
-  await expect.poll(async () => a.evaluate(() => (window as unknown as { rlOnline: () => { phases: { phase: string }[] } }).rlOnline().phases.map((p) => p.phase)), { timeout: 20_000 }).toContain("countdown");
+  await expect.poll(async () => a.evaluate(() => (window as unknown as { carballOnline: () => { phases: { phase: string }[] } }).carballOnline().phases.map((p) => p.phase)), { timeout: 20_000 }).toContain("countdown");
   expect(errors).toEqual([]);
   await a.context().close();
   await b.context().close();
@@ -75,7 +75,7 @@ test("Cancel Search ends the search; Back leaves it under the banner", async ({ 
   await expect(banner).toBeVisible();
   await banner.getByRole("button", { name: /^cancel search$/i }).click();
   await expect(banner).toBeHidden();
-  const state = await page.evaluate(() => (window as unknown as { rlMatchmaking: () => { state: unknown } }).rlMatchmaking().state);
+  const state = await page.evaluate(() => (window as unknown as { carballMatchmaking: () => { state: unknown } }).carballMatchmaking().state);
   expect(state).toBeNull();
   expect(errors).toEqual([]);
   await page.context().close();

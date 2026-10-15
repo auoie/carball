@@ -11,7 +11,7 @@ samples both test suites check. Design follows the game's netcode (`notes/netcod
 2. The client opens one bidirectional stream, the **control stream** (reliable, ordered), and sends `Hello`.
 3. The server answers `Welcome`, then sends `Update` datagrams; the client sends `Inputs` datagrams.
 
-**The queue** (`rl-server --mode queue`, `notes/matchmaking.md` v1 queue): a session's `Hello` says what it's for. A
+**The queue** (`carball-server --mode queue`, `notes/matchmaking.md` v1 queue): a session's `Hello` says what it's for. A
 **search** (intent 1, a playlist: its team size 1, 2 or 3) waits in the playlist's queue; when two full teams are
 waiting, the server reserves a match for them and sends each a `MatchFound` with a one-time random token, then ends the
 search session. The client opens a new session whose `Hello` **claims** the token (intent 2) and gets its `Welcome`,
