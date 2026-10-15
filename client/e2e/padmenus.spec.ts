@@ -8,6 +8,8 @@ const A = 0;
 const B = 1;
 const START = 9;
 const DOWN = 13;
+const LEFT = 14;
+const RIGHT = 15;
 
 /** Holds `buttons` (and the sticks at `axes`) for one of the page's frames, then lets go for two: not a fixed time (under
  *  the tests' load a frame can outlast a short hold, the press never seen), and not two frames (two of them can outlast
@@ -113,5 +115,37 @@ test("a pad input bound in the settings: Circle (B) and Start bind, they don't b
   await page.keyboard.press("Escape");
   await expect(same).toHaveText(/^(Menu|Options)$/);
   await expect(settings).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test("the settings' tabs with a pad: right and left step through them in order across their wrapped rows (the user's finding)", async ({ page, context }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await fakeGamepad(context);
+  await page.goto("/?render=off");
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+  await page.locator("#main-menu").getByRole("button", { name: /^settings$/i }).click();
+  const settings = page.locator("#settings");
+  await expect(settings).toBeVisible();
+  const tabs = settings.locator(".settings-tab");
+  // (the panel is at most 760 px wide: on a desktop window its tabs wrap as on the user's)
+  const rows = await tabs.evaluateAll((all) => new Set(all.map((t) => Math.round(t.getBoundingClientRect().top))).size);
+  expect(rows).toBeGreaterThan(1);
+  const count = await tabs.count();
+  // The panel's first control, the first tab, highlighted at once; right through every tab (Camera to Controller, the
+  // last of a row to the first of the next), then left back
+  await expect(tabs.nth(0)).toHaveClass(/pad-focus/);
+  for (let i = 1; i < count; i++) {
+    await tap(page, [RIGHT]);
+    await expect(tabs.nth(i)).toHaveClass(/pad-focus/);
+  }
+  for (let i = count - 2; i >= 0; i--) {
+    await tap(page, [LEFT]);
+    await expect(tabs.nth(i)).toHaveClass(/pad-focus/);
+  }
+  // A on a highlighted tab shows its page
+  await tap(page, [RIGHT]);
+  await tap(page, [A]);
+  await expect(tabs.nth(1)).toHaveClass(/\bactive\b/);
   expect(errors).toEqual([]);
 });

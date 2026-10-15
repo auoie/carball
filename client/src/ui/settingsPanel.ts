@@ -153,6 +153,7 @@ export class SettingsPanel {
       this.#tabButton("video", "Video"),
       this.#tabButton("audio", "Audio"),
     ]);
+    tabs.dataset["padSequence"] = ""; // (a pad's left and right step through the tabs in order, across wrapped rows)
     const close = el("button", { className: "settings-close", textContent: "Close (Esc)" });
     close.addEventListener("click", () => { this.close(); });
     this.#root = el("div", { className: "settings" }, [el("div", { className: "settings-header" }, [el("h2", { textContent: "Settings" }), tabs, close]), this.#body]);

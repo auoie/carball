@@ -44,25 +44,43 @@ export function padDirection(pad: GamepadSnapshot): NavDirection | null {
 }
 
 /** The candidate to move to from `from` going `direction`: the nearest whose centre lies that way (along the way plus
- *  twice the offset across it), or -1 */
+ *  twice the offset across it), one in the same row first (left, right: overlapping it up and down) or the same column
+ *  (up, down), so a control the next row down isn't taken for the one beside it (wrapped settings tabs: the user's
+ *  finding); else -1 */
 export function nearestTowards(from: NavRect, direction: NavDirection, candidates: readonly NavRect[]): number {
   const cx = from.left + from.width / 2;
   const cy = from.top + from.height / 2;
-  let best = -1;
-  let bestScore = Infinity;
-  candidates.forEach((r, i) => {
-    const dx = r.left + r.width / 2 - cx;
-    const dy = r.top + r.height / 2 - cy;
-    const along = direction === "up" ? -dy : direction === "down" ? dy : direction === "left" ? -dx : dx;
-    const across = direction === "up" || direction === "down" ? Math.abs(dx) : Math.abs(dy);
-    if (along <= 1) return;
-    const score = along + 2 * across;
-    if (score < bestScore) {
-      bestScore = score;
-      best = i;
-    }
-  });
-  return best;
+  const sideways = direction === "left" || direction === "right";
+  const inLine = (r: NavRect): boolean =>
+    sideways ? r.top < from.top + from.height && r.top + r.height > from.top : r.left < from.left + from.width && r.left + r.width > from.left;
+  const pick = (onlyInLine: boolean): number => {
+    let best = -1;
+    let bestScore = Infinity;
+    candidates.forEach((r, i) => {
+      if (onlyInLine && !inLine(r)) return;
+      const dx = r.left + r.width / 2 - cx;
+      const dy = r.top + r.height / 2 - cy;
+      const along = direction === "up" ? -dy : direction === "down" ? dy : direction === "left" ? -dx : dx;
+      const across = sideways ? Math.abs(dy) : Math.abs(dx);
+      if (along <= 1) return;
+      const score = along + 2 * across;
+      if (score < bestScore) {
+        bestScore = score;
+        best = i;
+      }
+    });
+    return best;
+  };
+  const inRow = pick(true);
+  return inRow >= 0 ? inRow : pick(false);
+}
+
+/** Left and right in a sequence of controls (their container marked `data-pad-sequence`: the settings' tabs, which wrap
+ *  onto rows): the previous or next in its order, across rows; null past either end */
+export function stepInSequence<T>(items: readonly T[], current: T, direction: "left" | "right"): T | null {
+  const i = items.indexOf(current);
+  if (i < 0) return null;
+  return items[direction === "right" ? i + 1 : i - 1] ?? null;
 }
 
 const FOCUSABLE = "button, select, input, [tabindex]:not([tabindex='-1'])";
@@ -185,6 +203,19 @@ export class PadMenuNav {
     if ((direction === "left" || direction === "right") && (current instanceof HTMLSelectElement || (current instanceof HTMLInputElement && current.type === "range"))) {
       this.#step(current, direction === "right" ? 1 : -1);
       return;
+    }
+    // A sequence's controls (the settings' tabs) step in their order; past its ends, the nearest that way
+    const sequence = current.closest("[data-pad-sequence]");
+    if (sequence && (direction === "left" || direction === "right")) {
+      const next = stepInSequence(
+        controls.filter((c) => sequence.contains(c)),
+        current,
+        direction,
+      );
+      if (next) {
+        this.#focus(next);
+        return;
+      }
     }
     const others = controls.filter((c) => c !== current);
     const i = nearestTowards(current.getBoundingClientRect(), direction, others.map((c) => c.getBoundingClientRect()));
