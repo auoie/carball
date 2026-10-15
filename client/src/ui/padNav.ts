@@ -3,7 +3,8 @@
 // steps to its next value), left and right change a list's or a slider's value, B goes back (Escape's), Start opens and
 // closes the pause menu. The focused control is highlighted. A button pressed for a menu isn't the game's until it's
 // released (A is jump: Resume Game mustn't jump the car); one held from before (boost through a pause: RV-289) is, and
-// the keyboard always.
+// the keyboard always. While the settings wait for a pad input to bind, the pad is theirs: no button navigates (B, Start
+// and the D-pad would back out, close or move away instead of binding), until every button is up again.
 import type { GamepadSnapshot } from "../input/mapping";
 
 /** The standard layout's buttons and axes */
@@ -80,6 +81,8 @@ export interface PadNavActions {
   readonly back: () => void;
   /** Start: the pause menu opens or closes (Escape's) */
   readonly start: () => void;
+  /** A pad input is being captured for a binding (the settings' rebind): the pad isn't the menus' meanwhile */
+  readonly capturing?: () => boolean;
 }
 
 export class PadMenuNav {
@@ -91,6 +94,9 @@ export class PadMenuNav {
   #focused: HTMLElement | null = null;
   /** The buttons pressed for a menu (the Start that opened it too), the game's again once each is released */
   readonly #masked = new Set<number>();
+  /** A binding's capture was waiting: no navigation until every button is up (the press that bound it, read by the
+   *  capture maybe earlier in the same frame, isn't a menu's press too) */
+  #captureHold = false;
 
   constructor(actions: PadNavActions) {
     this.#actions = actions;
@@ -110,6 +116,16 @@ export class PadMenuNav {
     const pressed = (i: number): boolean => (buttons[i] ?? false) && !(previous[i] ?? false);
     this.#previous = buttons;
     for (const i of [...this.#masked]) if (!(buttons[i] ?? false)) this.#masked.delete(i);
+    if (this.#actions.capturing?.()) this.#captureHold = true;
+    else if (this.#captureHold && !buttons.some(Boolean)) this.#captureHold = false;
+    if (this.#captureHold) {
+      // (the capture's presses kept from the game too, as a menu's)
+      buttons.forEach((down, i) => {
+        if (down && pressed(i)) this.#masked.add(i);
+      });
+      this.#held = null;
+      return;
+    }
     const menu = this.#actions.menu();
     if (!menu) {
       this.#blur();

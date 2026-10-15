@@ -21,8 +21,8 @@ Development identity: a self-signed certificate (valid 14 days, the WebTransport
 start-up. The info endpoint (127.0.0.1 unless `--info-bind`, e.g. 0.0.0.0 for another machine) publishes its SHA-256 so
 the browser can connect with `serverCertificateHashes`. A public server runs with a real certificate (`CERT_PATH` and
 `KEY_PATH`, or `--cert` and `--key`): no info endpoint, reloaded when its files change or on SIGHUP. The deployment's
-interface (its environment variables, ports, health check, limits) is `APP-CONTRACT.md`; its images come from
-`scripts/build_images.sh` (`client/docker/`, `server/docker/`).
+interface (its environment variables, ports, health check, limits; an empty variable counts as unset) is
+`APP-CONTRACT.md`; its images come from `scripts/build_images.sh` (`client/docker/`, `server/docker/`).
 
 What a session may do (the security review's SEC-2/3/5/7/8): 512 sessions at once, 8 at once and 30 new a minute per
 address (`--max-sessions`, `--max-per-address`, `--max-per-address-per-minute`: the browser tests raise them), 10 s

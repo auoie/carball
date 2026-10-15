@@ -18,8 +18,10 @@ cp -a "$R/client/dist" "$STAGE/web/dist"
 cp "$R/client/docker/Dockerfile" "$R/client/docker/nginx.conf" "$R/client/docker/40-carball-config.sh" "$STAGE/web/"
 
 echo "== the server's release binary"
-cargo build --release --manifest-path "$R/server/Cargo.toml"
-cp "$R/server/target/release/rl-server" "$STAGE/game/"
+# (in its own target directory: a development server running from server/target/release keeps its binary)
+TARGET=${CARGO_TARGET_DIR:-$R/out/images/target}
+CARGO_TARGET_DIR="$TARGET" cargo build --release --manifest-path "$R/server/Cargo.toml"
+cp "$TARGET/release/rl-server" "$STAGE/game/"
 cp -a "$R/out/arena/collision_meshes" "$STAGE/game/collision_meshes"
 cp "$R/server/docker/Dockerfile" "$STAGE/game/"
 

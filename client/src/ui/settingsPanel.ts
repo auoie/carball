@@ -171,6 +171,11 @@ export class SettingsPanel {
     return !this.#root.hidden;
   }
 
+  /** A pad input is awaited for a binding (the pad's menu navigation stands aside meanwhile: src/ui/padNav.ts) */
+  get capturingGamepad(): boolean {
+    return this.#capture?.device === "gamepad";
+  }
+
   get settings(): Settings {
     return this.#settings;
   }

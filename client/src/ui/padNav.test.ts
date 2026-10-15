@@ -51,4 +51,37 @@ describe("the menus with a pad", () => {
     nav.frame(held(RT), 0.4);
     expect(nav.mask(held(RT))?.buttons).toEqual(held(RT).buttons);
   });
+
+  it("stands aside while a binding's capture waits: B, Start and the D-pad bind instead of navigating, until all are up", () => {
+    let capturing = true;
+    let backs = 0;
+    let starts = 0;
+    const menu = { querySelectorAll: () => [] } as unknown as HTMLElement;
+    const nav = new PadMenuNav({
+      menu: () => menu,
+      back: () => {
+        backs++;
+      },
+      start: () => {
+        starts++;
+      },
+      capturing: () => capturing,
+    });
+    const B = 1;
+    const START = 9;
+    nav.frame(pad([]), 0);
+    nav.frame(pad([B]), 0.1); // (Circle: the capture's)
+    nav.frame(pad([START]), 0.2);
+    expect([backs, starts]).toEqual([0, 0]);
+    // The capture took Circle earlier in this frame (it's no longer waiting): Circle still down isn't a back
+    nav.frame(pad([]), 0.3);
+    nav.frame(pad([B]), 0.4);
+    capturing = false;
+    nav.frame(pad([B]), 0.5);
+    expect(backs).toBe(0);
+    expect(nav.mask(pad([B]))?.buttons[B]).toBe(0); // (kept from the game until released)
+    nav.frame(pad([]), 0.6);
+    nav.frame(pad([B]), 0.7); // (a new press, the capture over: back)
+    expect(backs).toBe(1);
+  });
 });

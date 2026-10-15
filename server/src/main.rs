@@ -194,7 +194,8 @@ async fn reload_certificates(server: Arc<net::ServerEndpoint>, cert: PathBuf, ke
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let args = parse_args(std::env::args().skip(1), |name| std::env::var(name).ok())?;
+    // (an empty variable is an unset one: `-e CERT_PATH=` runs a development server from the image)
+    let args = parse_args(std::env::args().skip(1), |name| std::env::var(name).ok().filter(|v| !v.is_empty()))?;
     if args.health_check {
         std::process::exit(if net::health_check(args.health_port) { 0 } else { 1 });
     }

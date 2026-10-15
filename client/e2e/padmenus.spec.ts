@@ -85,3 +85,33 @@ test("menus with a pad: Start, the D-pad's focus, A, B (MENU-1/4)", async ({ pag
   await expect(pause).toBeHidden();
   expect(errors).toEqual([]);
 });
+
+test("a pad input bound in the settings: Circle (B) and Start bind, they don't back out or close (the user's finding)", async ({ page, context }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await fakeGamepad(context);
+  await page.goto("/?render=off");
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+  await page.locator("#main-menu").getByRole("button", { name: /^settings$/i }).click();
+  const settings = page.locator("#settings");
+  await expect(settings).toBeVisible();
+  const slot = settings.locator('.binding-slot[data-device="gamepad"]').first();
+  const action = await slot.getAttribute("data-action");
+  const same = settings.locator(`.binding-slot[data-device="gamepad"][data-action="${action ?? ""}"]`);
+  for (const [button, name] of [
+    [B, /^(B|Circle)$/],
+    [START, /^(Menu|Options)$/],
+  ] as const) {
+    await same.click();
+    await expect(same).toHaveText("Press or move a gamepad input…");
+    await tap(page, [button]);
+    await expect(settings).toBeVisible();
+    await expect(same).toHaveText(name);
+  }
+  // Escape still cancels a capture, the binding as it was
+  await same.click();
+  await page.keyboard.press("Escape");
+  await expect(same).toHaveText(/^(Menu|Options)$/);
+  await expect(settings).toBeVisible();
+  expect(errors).toEqual([]);
+});

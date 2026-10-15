@@ -13,10 +13,11 @@ the hosting side's (not here).
 ```sh
 scripts/build_images.sh [TAG]          # TAG defaults to the commit's short hash
 ```
-It builds the client (`npm run build`, then the shipped-data check) and the server (`cargo build --release`) on this
-machine, stages each image's files alone under `out/images/<TAG>-<time>/{web,game}` (the repo's `out/` holds local-only
-data and is never a build context), and runs `docker build -t carball-web:TAG …/web` and `docker build -t
-carball-game:TAG …/game`. Then:
+It builds the client (`npm run build`, then the shipped-data check) and the server (`cargo build --release`, in
+`out/images/target`: a development server's `server/target` is left alone) on this machine, stages each image's files
+alone under `out/images/<TAG>-<time>/{web,game}` (the repo's `out/` holds local-only data and is never a build context),
+and runs `docker build -t carball-web:TAG …/web` and `docker build -t carball-game:TAG …/game` (~77 MB and ~172 MB).
+Then:
 ```sh
 docker save carball-web:TAG | gzip > carball-web-TAG.tar.gz       # on the host: docker load < carball-web-TAG.tar.gz
 docker save carball-game:TAG | gzip > carball-game-TAG.tar.gz
@@ -47,11 +48,17 @@ refused with a message).
 | `GAME_PORT` | `4433` | the UDP port (publish the same port: `-p 4433:4433/udp`) |
 | `PUBLIC_HOST` | `game.carball.zolt.top` | the name clients reach it at (logged; the certificate must be for it) |
 | `ALLOWED_ORIGIN` | `https://carball.zolt.top` | the page origin(s) allowed to open sessions, comma-separated; others (and none) get 403 |
-| `CERT_PATH` | `/certs/fullchain.pem` | the certificate chain (PEM) for `PUBLIC_HOST`, publicly trusted (browsers refuse a self-signed one) |
+| `CERT_PATH` | `/certs/fullchain.pem` | the certificate chain (PEM) for `PUBLIC_HOST`, publicly trusted (browsers refuse a self-signed one; in a test, Chrome's WebTransport refused a locally trusted test CA and ignored `--ignore-certificate-errors*` too) |
 | `KEY_PATH` | `/certs/privkey.pem` | its private key (PEM) |
 | `RL_MODE` | `queue` | `queue`: the 1v1 / 2v2 / 3v3 queue (searches and claims only); `direct`: one open match (development) |
 | `HEALTH_PORT` | `8081` | the health endpoint, on 127.0.0.1 inside the container only |
 | `MESHES_DIR` | `/app/collision_meshes` | the arena's collision meshes (in the image) |
+
+An empty variable counts as unset. A development run of the image (a self-signed certificate made at start, pinned by the
+page through the info endpoint; the info reports the game port inside the container, so publish it as the same port):
+`docker run --rm -e CERT_PATH= -e KEY_PATH= -e GAME_PORT=14502 -p 14502:14502/udp -p 127.0.0.1:14503:4434
+-e ALLOWED_ORIGIN=http://localhost:13000 carball-game:TAG --dev-info on --info-bind 0.0.0.0`, the page opened with
+`?queue=localhost:14503`.
 
 - **Ports:** 4433/udp only. Nothing listens on TCP outside the container (the health endpoint is 127.0.0.1; the
   development info server is off with a certificate).
@@ -74,6 +81,16 @@ refused with a message).
   match costs ~1 % of a core with the server's own work; plan 1 core for ~50 matches. Memory ~10 MB idle, a few MB a
   match. Bandwidth per player: 3.5 / 4.7 / 6.1 KB/s down in a 1v1 / 2v2 / 3v3, ~5–13 KB/s up (inputs).
 - **Logs:** stdout (start-up) and stderr (joins, leaves, matches, refusals, reloads), one line each.
+
+## Checked (2026-10-15, Docker 29.9 on the development VM)
+
+Both images built from `scripts/build_images.sh`. Web: `/healthz` 200, `/config.json` from `GAME_SERVER_URL` (no-store),
+the hashed assets cached and gzipped, the engine served as `application/wasm`, unknown paths `index.html`, a non-https
+`GAME_SERVER_URL` exits the container (status 1), HEALTHCHECK healthy. Game: starts with a certificate mounted read-only at
+`/certs` as uid 10001, `--healthcheck` exits 0, HEALTHCHECK healthy, replacing the mounted files and SIGHUP each reload
+the certificate with the server running, `docker stop` ends it in ~0.65 s (SIGTERM). Two pages from the web image on the
+host found a 1v1 through a game container over UDP (development mode: a publicly trusted certificate can't be made
+locally, see `CERT_PATH`).
 
 ## Example (docker run)
 

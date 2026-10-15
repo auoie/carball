@@ -246,6 +246,8 @@ async function main(): Promise<void> {
       else if (pause.isOpen) pause.close();
     },
     start: escape,
+    // (a rebind waiting for a pad input takes every button, B and Start too: Escape still cancels it)
+    capturing: () => panel.capturingGamepad,
   });
   // (the games don't take input under a menu, nor a pad button a menu took that's still down)
   const inputEnabled = (): boolean => !menusOpen();

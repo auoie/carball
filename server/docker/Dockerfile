@@ -1,9 +1,11 @@
+# check=skip=SecretsUsedInArgOrEnv
 # The game server (APP-CONTRACT.md): the release binary (built on the host by scripts/build_images.sh, libstdc++ linked
 # in: it needs glibc 2.38 or later) and the arena's collision meshes. WebTransport on UDP $GAME_PORT; the certificate from
 # $CERT_PATH and $KEY_PATH (a read-only mount), reloaded when they change or on SIGHUP. Built from the staging directory
-# (the binary, the meshes and this file only): `docker build -t carball-game:TAG <staging>/game`
+# (the binary, the meshes and this file only): `docker build -t carball-game:TAG <staging>/game`. (KEY_PATH is the key's
+# path, not a secret: the check that flags it is skipped above)
 FROM debian:trixie-slim
-RUN useradd --system --uid 10001 --no-create-home carball
+RUN useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin carball
 COPY rl-server /app/rl-server
 COPY collision_meshes /app/collision_meshes
 ENV RL_MODE=queue \
