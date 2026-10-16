@@ -87,6 +87,16 @@ export class Renderer {
     return { pxPerUnit: focal / depth, distance: v.length(), horizontalFov: this.#horizontalFov };
   }
 
+  /** Before the first frame, the page's loading line still up (RV-458): the first frame's work (the reflection
+   *  capture), then every shader program the scene and the post-processing use compiled, so the first frames don't stall
+   *  on them. Nothing when it draws nothing */
+  async prepare(): Promise<void> {
+    if (!this.draws) return;
+    if (this.heightFog) fogAll(this.scene);
+    for (const work of this.#beforeNextFrame.splice(0)) work(this.#gl, this.scene);
+    await this.#post.compile(this.scene, this.#camera);
+  }
+
   render(view: CameraView): void {
     // (before the frame's work, the reflection capture's included)
     if (this.draws) {

@@ -8,7 +8,7 @@ interface AudioStats {
   readonly cars: number;
 }
 import { expect, test } from "./fixtures";
-import { closeMenus, freePlay, openSettings } from "./players";
+import { closeMenus, cycleTo, freePlay, openSettings } from "./players";
 
 async function speed(page: Page): Promise<number> {
   const text = (await page.locator("#speed").textContent()) ?? "";
@@ -88,6 +88,8 @@ test("freeplay loads, drives and resets", async ({ page }) => {
   await page.keyboard.up("Space");
   // The flip indicator: the dodge window counting down in the air, back to the ground on landing
   await expect(page.locator("#flip")).toHaveAttribute("data-state", "window");
+  // (its seconds shown under it)
+  await expect(page.locator("#flip .flip-seconds")).toHaveClass(/shown/);
   await expect(page.locator("#flip-detail")).toHaveText(/^\d\.\d s$/);
   await page.screenshot({ path: "test-results/flip-window.png" });
   // (software rendering here: a few frames a second, the 5-tick cap running the jump slower than real time: wait for it)
@@ -98,7 +100,7 @@ test("freeplay loads, drives and resets", async ({ page }) => {
   await page.keyboard.press("KeyM");
   await openSettings(page);
   await page.locator(".settings-tab", { hasText: "Audio" }).click();
-  await expect(page.locator('input[data-option="muted"]')).toBeChecked();
+  await expect(page.locator('[data-option="muted"]')).toBeChecked();
   // The flip indicator can be turned off (the Gameplay tab's Flip Reset Indicator: MENU-9, RV-169)
   await page.locator(".settings-tab", { hasText: "Gameplay" }).click();
   // (its rows in the game's order, their labels upper-cased, the values as written: HT-5, RV-281)
@@ -107,7 +109,7 @@ test("freeplay loads, drives and resets", async ({ page }) => {
   );
   expect(order.filter((k) => k !== "")).toEqual(["unlimitedBoost", "statDisplayLevel", "flipResetIndicator", "autoSkipReplay"]);
   await expect(page.locator(".caps-labels .option > span").first()).toHaveCSS("text-transform", "uppercase");
-  await page.locator('select[data-setting="flipResetIndicator"]').selectOption("off");
+  await cycleTo(page, '[data-setting="flipResetIndicator"]', "off");
   await closeMenus(page);
   await expect(page.locator("#flip")).toBeHidden();
 
@@ -130,17 +132,23 @@ test("controls can be rebound and are remembered", async ({ page }) => {
 
   // Camera FOV slider
   await page.locator(".settings-tab", { hasText: "Camera" }).click();
-  const fov = page.locator('input[data-setting="fov"]');
-  await fov.fill("105");
-  await fov.dispatchEvent("change");
+  // (our own slider: its keys step it, the focus kept on it as the page is made again: 90 by three Page Ups, a tenth of
+  // 60-110 each, to 105, then an arrow down and up)
+  const fov = page.locator('[data-setting="fov"]');
+  await expect(fov).toHaveAttribute("aria-valuenow", "90");
+  await fov.focus();
+  for (let i = 0; i < 3; i++) await page.keyboard.press("PageUp");
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("ArrowRight");
+  await expect(fov).toHaveAttribute("aria-valuenow", "105");
   // (a new profile is Modern: keyboard-and-mouse free look on, the ball cam held; the controller's toggled)
-  await expect(page.locator('input[data-camera="cameraKbm"][data-option="freeLook"]')).toBeChecked();
-  await page.locator('input[data-camera="cameraKbm"][data-option="freeLook"]').uncheck();
+  await expect(page.locator('[data-camera="cameraKbm"][data-option="freeLook"]')).toBeChecked();
+  await page.locator('[data-camera="cameraKbm"][data-option="freeLook"]').uncheck();
 
   // Controller tab: the game's defaults
   await page.locator(".settings-tab", { hasText: "Controller" }).click();
-  await expect(page.locator('input[data-setting="deadzone"]')).toHaveValue("0.2");
-  await expect(page.locator('input[data-setting="dodgeDeadzone"]')).toHaveValue("0.8");
+  await expect(page.locator('[data-setting="deadzone"]')).toHaveAttribute("aria-valuenow", "0.2");
+  await expect(page.locator('[data-setting="dodgeDeadzone"]')).toHaveAttribute("aria-valuenow", "0.8");
   await page.screenshot({ path: "test-results/settings-controller.png" });
   await closeMenus(page);
 
@@ -160,10 +168,10 @@ test("controls can be rebound and are remembered", async ({ page }) => {
   await openSettings(page);
   await expect(page.locator('.binding-slot[data-action="throttleForward"][data-device="keyboard"]')).toHaveText("I");
   await page.locator(".settings-tab", { hasText: "Camera" }).click();
-  await expect(page.locator('input[data-setting="fov"]')).toHaveValue("105");
-  await expect(page.locator('input[data-camera="cameraKbm"][data-option="freeLook"]')).not.toBeChecked();
-  await expect(page.locator('input[data-camera="cameraKbm"][data-option="ballCamToggle"]')).not.toBeChecked();
-  await expect(page.locator('input[data-camera="cameraPad"][data-option="ballCamToggle"]')).toBeChecked();
+  await expect(page.locator('[data-setting="fov"]')).toHaveAttribute("aria-valuenow", "105");
+  await expect(page.locator('[data-camera="cameraKbm"][data-option="freeLook"]')).not.toBeChecked();
+  await expect(page.locator('[data-camera="cameraKbm"][data-option="ballCamToggle"]')).not.toBeChecked();
+  await expect(page.locator('[data-camera="cameraPad"][data-option="ballCamToggle"]')).toBeChecked();
   await page.screenshot({ path: "test-results/settings.png" });
 
   // Reset restores the default
@@ -226,7 +234,7 @@ async function playTheme(page: Page, theme: string): Promise<void> {
 
 interface Hook {
   place: (car: object, ball?: object) => void;
-  car: () => { pos: { x: number; y: number }; speed: number };
+  car: () => { pos: { x: number; y: number }; speed: number; hitbox: { x: number; y: number; z: number } };
   cameraFade: () => number;
 }
 
@@ -375,7 +383,7 @@ test("Unlimited boost in free play: on (the default) a full car takes no pad; of
   await place(behind);
   await openSettings(page);
   await page.locator('.settings-tab[data-tab="gameplay"]').click();
-  const box = page.locator('input[data-option="unlimitedBoost"]');
+  const box = page.locator('[data-option="unlimitedBoost"]');
   await expect(box).toBeChecked();
   await box.uncheck();
   await closeMenus(page);
@@ -443,6 +451,22 @@ test("the engine's contacts as the game's impact triggers: driving into the ball
   await expect.poll(async () => (await audio()).played.ballHit ?? 0, { timeout: 10_000 }).toBeGreaterThan(before);
   await page.keyboard.up("KeyW");
   expect(errors).toEqual([]);
+});
+
+test("the garage's car is the one free play drives, with its preset (CM28), kept for the next page", async ({ page }) => {
+  await page.goto("/?render=off");
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+  const hitbox = (): Promise<{ x: number; y: number; z: number }> => page.evaluate(() => (window as unknown as { carballFreeplay: Hook }).carballFreeplay.car().hitbox);
+  const sport = await hitbox();
+  const menu = page.locator("#main-menu");
+  await menu.getByRole("button", { name: /^garage$/i }).click();
+  await menu.getByRole("radio", { name: /^tall$/i }).click();
+  // (the Tall's hitbox: 123.22 x 79.21 x 44.16, taller and narrower than the Sport's)
+  await expect.poll(async () => (await hitbox()).z).toBeCloseTo(44.16, 1);
+  expect((await hitbox()).y).toBeLessThan(sport.y);
+  await page.reload();
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+  expect((await hitbox()).z).toBeCloseTo(44.16, 1);
 });
 
 test("the main menu, the pause menu, the HUD and its Interface options (MENU-1/4/6, HUD-5/12/16, HT-4)", async ({ page }) => {
@@ -513,8 +537,8 @@ test("the main menu, the pause menu, the HUD and its Interface options (MENU-1/4
   // The Interface tab: the plain boost meter, then the HUD hidden
   await openSettings(page);
   await page.locator('.settings-tab[data-tab="interface"]').click();
-  await page.locator('input[data-setting="teamColoredBoost"]').uncheck();
-  await page.locator('input[data-setting="hideHud"]').check();
+  await page.locator('[data-setting="teamColoredBoost"]').uncheck();
+  await page.locator('[data-setting="hideHud"]').check();
   await closeMenus(page);
   await expect(page.locator("#boost")).toHaveClass(/plain/);
   await expect(page.locator("#hud")).toHaveClass(/hud-hidden/);

@@ -87,7 +87,9 @@ export class MainMenu {
       parent.append(b);
       return b;
     };
+    // (each page a page of the pad's: its focus kept while the menu is open)
     this.#top = column();
+    this.#top.dataset["padPage"] = "top";
     button(this.#top, MAIN_MENU_TEXT.play, () => {
       this.#show("play");
     });
@@ -96,6 +98,8 @@ export class MainMenu {
     });
     button(this.#top, MAIN_MENU_TEXT.settings, actions.settings);
     this.#play = column();
+    this.#play.dataset["padPage"] = "play";
+    this.#play.dataset["padBack"] = ""; // (B Back in the pad's hints: a page under the top)
     button(this.#play, MAIN_MENU_TEXT.freePlay, () => {
       this.#show("maps");
     });
@@ -103,6 +107,7 @@ export class MainMenu {
     const playlists = document.createElement("div");
     playlists.className = "main-menu-playlists";
     playlists.setAttribute("role", "radiogroup");
+    playlists.dataset["padChoose"] = ""; // (a pad's left and right choose as they move: src/ui/padNav.ts)
     for (const p of PLAYLISTS) {
       const b = button(playlists, p.name, () => {
         this.#select(p.teamSize);
@@ -122,6 +127,8 @@ export class MainMenu {
     });
     // (the map select: every map, the last one picked checked; a pick starts free play on it)
     this.#maps = column();
+    this.#maps.dataset["padPage"] = "maps";
+    this.#maps.dataset["padBack"] = "";
     this.#maps.classList.add("main-menu-maps-view");
     const heading = document.createElement("div");
     heading.className = "main-menu-heading";
@@ -146,6 +153,8 @@ export class MainMenu {
     });
     // (the garage: the cars and the team colours, each kept as chosen, the car shown turning in its colour)
     this.#garage = column();
+    this.#garage.dataset["padPage"] = "garage";
+    this.#garage.dataset["padBack"] = "";
     this.#garage.classList.add("main-menu-garage-view");
     const garageHeading = document.createElement("div");
     garageHeading.className = "main-menu-heading";
@@ -155,6 +164,7 @@ export class MainMenu {
       const g = document.createElement("div");
       g.className = `main-menu-choices ${className}`;
       g.setAttribute("role", "radiogroup");
+      g.dataset["padChoose"] = "";
       return g;
     };
     const cars = group("main-menu-cars");
@@ -214,9 +224,11 @@ export class MainMenu {
 
   /** Escape: back from the map select to Play, from Play to the top; nothing at the top (the menu is where the game
    *  starts) */
-  back(): void {
+  /** Back a page (Escape's, a pad's B); whether there was one to go back from (none at the top: nothing, silently) */
+  back(): boolean {
     const view: MenuView = !this.#maps.hidden ? "maps" : !this.#play.hidden ? "play" : !this.#garage.hidden ? "garage" : "top";
     this.#show(backFrom(view));
+    return view !== "top";
   }
 
   #chooseCar(car: number): void {

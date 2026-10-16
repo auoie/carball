@@ -1,9 +1,11 @@
 // The connection's pieces that need no server: the stored key (RV-239) and the queue for messages before the game
-// listens (RV-241).
+// listens (RV-241); the hello's preferences (CM29).
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fakeTransport } from "../testing/fakeTransport";
+import { DEFAULT_SETTINGS } from "../settings/settings";
+import { type FakeTransportRecord, fakeTransport } from "../testing/fakeTransport";
 import { Connection, ControlQueue, RefusedError, serverHost, storeKey, storedKey } from "./connection";
-import { PROTOCOL_VERSION, REFUSED_TOKEN } from "./protocol";
+import { joinPreferences } from "./joinPreferences";
+import { PROTOCOL_VERSION, REFUSED_TOKEN, decodeControl } from "./protocol";
 
 const memory = (): Pick<Storage, "getItem" | "setItem"> => {
   const map = new Map<string, string>();
@@ -69,6 +71,27 @@ describe("a refused hello", () => {
     const opened = Connection.open({ url: "https://game.example:4433/play", certHash: null }, preferences, { intent: "claim", token: 9n });
     await expect(opened).rejects.toBeInstanceOf(RefusedError);
     await expect(opened).rejects.toMatchObject({ reason: REFUSED_TOKEN });
+  });
+});
+
+describe("a match session's hello", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("asks for the garage's car, the one last chosen (its model: CM29), with the player's settings", async () => {
+    const welcome = { type: "welcome", version: PROTOCOL_VERSION, carId: 1, tickRate: 120, frame: 0, matchType: "casual", teamSize: 1, map: 0, key: 5n, snapshot: new Uint8Array() } as const;
+    const record: FakeTransportRecord = { sessions: [] };
+    vi.stubGlobal("WebTransport", fakeTransport([welcome], record));
+    const stored = new Map([["carball.car", "3"]]);
+    vi.stubGlobal("localStorage", { getItem: (k: string) => stored.get(k) ?? null, setItem: (k: string, v: string) => void stored.set(k, v) });
+    const preferences = joinPreferences(DEFAULT_SETTINGS);
+    expect(preferences.model).toBe(3);
+    expect(joinPreferences(DEFAULT_SETTINGS, 2).model).toBe(2);
+    await Connection.open({ url: "https://game.example:4433/play", certHash: null }, preferences, { intent: "claim", token: 9n });
+    const hello = decodeControl(record.sessions[0]?.written[0]?.subarray(2) ?? new Uint8Array());
+    expect(hello).toMatchObject({ type: "hello", model: 3, team: 255, intent: "claim", token: 9n });
+    expect(hello.type === "hello" && hello.dodgeDeadzone).toBeCloseTo(DEFAULT_SETTINGS.controller.dodgeDeadzone, 6);
   });
 });
 

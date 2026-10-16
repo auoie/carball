@@ -204,6 +204,18 @@ export class Synth {
     this.#sweep("sine", 587, 587, 0.01, out, when + 0.08, 0.1, 0.14);
   }
 
+  /** The menus (MENU-18: the game's own cues' places, our own sounds): the focus moved or a value stepped, a tiny high
+   *  tick; a press, a short rising blip; back, a short falling one; a tab, a soft double click */
+  menu(out: AudioNode, when: number, cue: "move" | "select" | "back" | "tab"): void {
+    if (cue === "move") this.#sweep("triangle", 2600, 2300, 0.01, out, when, 0.025, 0.03);
+    else if (cue === "select") this.#sweep("sine", 880, 1320, 0.04, out, when, 0.07, 0.1);
+    else if (cue === "back") this.#sweep("sine", 990, 620, 0.05, out, when, 0.07, 0.1);
+    else {
+      this.#sweep("triangle", 1500, 1300, 0.01, out, when, 0.05, 0.04);
+      this.#burst("bandpass", 3000, 1800, 1.5, out, when + 0.02, 0.005, 0.03, 0.06);
+    }
+  }
+
   /** The clock's last ten seconds (SFX_UI_Countdown_EndCounter's place): a short, dry tick, lower than the kickoff's */
   endCounter(out: AudioNode, when: number): void {
     this.#sweep("square", 740, 700, 0.03, out, when, 0.07, 0.07);

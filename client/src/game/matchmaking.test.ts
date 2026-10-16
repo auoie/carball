@@ -173,6 +173,15 @@ describe("matchmaking (notes/matchmaking.md MM-4..14)", () => {
     expect(await mm.finish()).toBe(false);
   });
 
+  it("a search another tab of this browser took the place of says so plainly, not as a failure (RV-460)", () => {
+    const { mm, searches } = harness();
+    mm.frame(0);
+    mm.start(2);
+    searches[0]?.handlers.replaced();
+    expect(mm.state?.status).toBe("failed");
+    expect(mm.state?.lines).toEqual([{ text: "You started searching in another tab.", kind: "status" }]);
+  });
+
   it("a search refused for a no-show says why and how long, and stays until Cancel Search or a new search (RV-367)", () => {
     const { mm, searches, sounds } = harness();
     mm.frame(0);

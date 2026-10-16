@@ -3,6 +3,7 @@
 // blur 0.25 everywhere, up to 0.6 far off), the bloom (a soft knee from 2, three Gaussian sizes), then one tone map
 // and colour remap to display values. Scalars and closed forms only (PP-20).
 import {
+  type Camera,
   DataUtils,
   DepthTexture,
   FloatType,
@@ -10,6 +11,7 @@ import {
   LinearFilter,
   Mesh,
   NearestFilter,
+  type Object3D,
   OrthographicCamera,
   type PerspectiveCamera,
   PlaneGeometry,
@@ -449,6 +451,31 @@ export class PostProcess {
 
   #box(from: Texture, fromWidth: number, fromHeight: number, to: WebGLRenderTarget): void {
     this.#pass(this.#materials.box, { tSource: from, texel: new Vector2(1 / fromWidth, 1 / fromHeight) }, to);
+  }
+
+  /** The scene's shader programs and the passes' compiled for the targets the frames draw them to (three keys a
+   *  program on its target), in parallel where the browser can (resolved once all are ready), else at once
+   *  (Renderer.prepare) */
+  async compile(scene: Scene, camera: PerspectiveCamera): Promise<void> {
+    const t = this.#ensureTargets();
+    const gl = this.#gl;
+    // (asked without the extension, three's compileAsync warns: the plain compile then, its programs started)
+    const parallel = gl.extensions.has("KHR_parallel_shader_compile");
+    const compile = (object: Object3D, view: Camera): Promise<unknown> => {
+      if (parallel) return gl.compileAsync(object, view);
+      gl.compile(object, view);
+      return Promise.resolve();
+    };
+    const before = gl.getRenderTarget();
+    gl.setRenderTarget(t.scene);
+    const jobs: Promise<unknown>[] = [compile(scene, camera)];
+    for (const [name, material] of Object.entries(this.#materials)) {
+      this.#quad.material = material;
+      gl.setRenderTarget(name === "blend" ? null : t.half);
+      jobs.push(compile(this.#quad, this.#camera));
+    }
+    gl.setRenderTarget(before);
+    await Promise.all(jobs);
   }
 
   /** The scene through the chain to the canvas; `fade` the camera's fade to black (0..1) */

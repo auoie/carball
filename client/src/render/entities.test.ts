@@ -1,6 +1,6 @@
-import { Quaternion, Vector3 } from "three";
+import { Mesh, MeshStandardMaterial, Quaternion, ShaderLib, Vector3, type WebGLProgramParametersWithUniforms, type WebGLRenderer } from "three";
 import { describe, expect, it } from "vitest";
-import { BALL_RADIUS, BallView, goalLine, patchedBallGeometry } from "./entities";
+import { BALL_RADIUS, BallView, GOAL_LINE, goalLine, patchedBallGeometry } from "./entities";
 
 describe("ball", () => {
   it("has twelve five-triangle patches, so its spin shows", () => {
@@ -52,6 +52,20 @@ describe("the ball's FX actor's other pieces (VT-30a)", () => {
 });
 
 describe("the goal line's effect on the ball (VT-31)", () => {
+  it("in the ball's shader: the white-hot line 96 x, the shake 1 + 4 g uu (VT-31's measures, RV-462)", () => {
+    expect([GOAL_LINE.line, GOAL_LINE.shake.base, GOAL_LINE.shake.inside]).toEqual([96, 1, 4]);
+    const materials: MeshStandardMaterial[] = [];
+    new BallView().root.traverse((o) => {
+      if (o instanceof Mesh && o.material instanceof MeshStandardMaterial) materials.push(o.material);
+    });
+    const ball = materials[0];
+    if (!ball) throw new Error("no ball material");
+    const shader = { vertexShader: ShaderLib.standard.vertexShader, fragmentShader: ShaderLib.standard.fragmentShader, uniforms: {} } as unknown as WebGLProgramParametersWithUniforms;
+    ball.onBeforeCompile(shader, {} as WebGLRenderer);
+    expect(shader.vertexShader).toContain("glW.xyz += glOn * (1.0 + 4.0 * glG) * glProximity");
+    expect(shader.fragmentShader).toContain("totalEmissiveRadiance += glD3 * (96.0 * glLine + glFlicker)");
+  });
+
   it("the plane where the ball crosses a mouth's face, by its centre's side and its radius; the goals' nearness from 2048 uu", () => {
     // (on the field side, less than a radius from the +y face: its normal toward the field, -y)
     expect(goalLine(0, 5120 - 50, 300).plane).toEqual({ y: 5120, n: -1 });

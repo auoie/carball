@@ -1,11 +1,11 @@
 // The arena with the game's materials (notes/arena-visuals.md H-5, H-6, H-8, H-9, AV-15): its net, trim and cage on every
 // map (the user's decision, 2026-10-16), the stadium's field and goals the stadium theme's alone.
-import { AdditiveBlending, type BufferGeometry, Color, type Material, Mesh, type Object3D, Vector3 } from "three";
+import { AdditiveBlending, type BufferGeometry, Color, LinearMipmapNearestFilter, type Material, Mesh, type Object3D, type ShaderMaterial, type Texture, Vector3 } from "three";
 import { describe, expect, it } from "vitest";
 import { ArenaView, glowContour } from "./arena";
 import { wallLine } from "./arenaSurface";
 import type { CageGraph } from "./cage";
-import { CageBeams, shockRing, shockWave } from "./cageBeams";
+import { CageBeams, FIRE_CURVE, curveMips, resampleCurve, shockRing, shockWave } from "./cageBeams";
 import { existsSync, readFileSync } from "node:fs";
 import { ENV_GLSL, ENV_RADIAL, ENV_SPREAD, GOAL_SIDE_CHART, GlowStripMaterial, HexGlassMaterial, ForceFieldMaterial, envG, goalSideV, netSideUv, overlayUv } from "./gameSurfaces";
 import { GOAL_BASE_LIGHT, GoalFloorMaterial, goalBaseZ, goalFloorZone, underGlassV } from "./goalInterior";
@@ -221,6 +221,33 @@ describe("the game's arena materials", () => {
     expect(shockRing(d2(5900), wave)).toBe(0);
     expect(shockRing(0, shockWave(0.24))).toBe(0);
     expect(shockRing(0, shockWave(0.375))).toBeCloseTo(1);
+  });
+});
+
+describe("the cage beams' scan stripes (H-8, BR1: a far beam's average out, as the game's mips have them)", () => {
+  it("Curve_Fire_01 at its 512 texels, 10 mips, each its level above's box average, the last its mean (the game's 0.481-0.487)", () => {
+    const levels = curveMips(resampleCurve(FIRE_CURVE, 512));
+    expect(levels.map((l) => l.length)).toEqual([512, 256, 128, 64, 32, 16, 8, 4, 2, 1]);
+    const last = levels.at(-1)?.[0] ?? 0;
+    expect(last).toBeGreaterThan(0.479);
+    expect(last).toBeLessThan(0.489);
+    const [a, b] = [levels[3] ?? [], levels[4] ?? []];
+    b.forEach((v, i) => {
+      expect(v).toBeCloseTo(((a[2 * i] ?? 0) + (a[2 * i + 1] ?? 0)) / 2, 9);
+    });
+    // (resampled as a linear filter reads it: its texels' mean kept)
+    expect(levels[0]?.reduce((sum, v) => sum + v, 0) ?? 0).toBeCloseTo((FIRE_CURVE.reduce((sum, v) => sum + v, 0) / FIRE_CURVE.length) * 512, 6);
+  });
+
+  it("sampled at a continuous coordinate (no per-pixel frac: the mip as the game's picks it), its time wrapped on the CPU", () => {
+    const beams = new CageBeams({ vertices: [], edges: [], beams: [] }, stadiumTheme().style.walls);
+    const material = beams.mesh.material as ShaderMaterial;
+    expect(material.fragmentShader).toContain("texture2D(table, vec2(v, 0.5))");
+    expect(material.fragmentShader).not.toMatch(/fract\(v\)/);
+    const fire = material.uniforms["fire"]?.value as Texture;
+    expect([fire.mipmaps.length, fire.minFilter, fire.generateMipmaps]).toEqual([10, LinearMipmapNearestFilter, false]);
+    beams.time = 3725.25;
+    expect(material.uniforms["time"]?.value).toBeCloseTo(0.25, 9);
   });
 });
 

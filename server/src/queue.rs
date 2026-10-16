@@ -17,7 +17,7 @@ use tokio::sync::mpsc::Sender;
 
 use crate::game::{Outgoing, PlayerId};
 use crate::match_host::{Cancelled, MatchHosting, Playlist, RESERVATION_SECONDS};
-use crate::protocol::Control;
+use crate::protocol::{self, Control};
 
 /// How long a browser or address that stalled a match can't search (s)
 pub const NO_SHOW_COOLDOWN: f64 = 120.0;
@@ -147,6 +147,10 @@ impl Matchmaker {
         if from.key != 0 {
             let old: Vec<PlayerId> = self.waiting.values().flatten().filter(|s| s.from.key == from.key).map(|s| s.id).collect();
             for old in old {
+                // (its tab told why before its session's let go: the queue's drop flushes what it sent, RV-460)
+                if let Some(searcher) = self.waiting.values().flatten().find(|s| s.id == old) {
+                    let _ = searcher.out.try_send(Outgoing::Control(Control::Kicked { reason: protocol::KICK_REPLACED }.encode()));
+                }
                 self.cancel(old);
             }
         }
@@ -402,11 +406,19 @@ mod tests {
         // (RV-443: a page that went searches again from its new page before its old session's close is here)
         let mut queue = Matchmaker::new(&playlists());
         let mut host = Recorder::default();
-        let (old_tx, old_rx) = channel(OUT_QUEUE);
+        let (old_tx, mut old_rx) = channel(OUT_QUEUE);
         assert!(queued(&mut queue, 1, 1, old_tx));
         let (new_tx, mut new_rx) = channel(OUT_QUEUE);
         assert_eq!(queue.search(2, 1, new_tx, SearchFrom { address: [10, 0, 0, 2].into(), ..from(1) }, 1.0), Searched::Queued);
         assert_eq!(queue.searching(1), 1, "one search for the browser");
+        // (its tab told why first: another tab searching, RV-460)
+        let mut told = Vec::new();
+        while let Ok(Outgoing::Control(bytes)) = old_rx.try_recv() {
+            if let Ok(c) = Control::decode(&bytes[2..]) {
+                told.push(c);
+            }
+        }
+        assert_eq!(told, [Control::Kicked { reason: protocol::KICK_REPLACED }]);
         assert!(old_rx.is_closed(), "the old session let go");
         queue.form(&mut host, 1.0);
         assert!(host.asked.is_empty(), "not matched with itself");
@@ -423,6 +435,19 @@ mod tests {
         assert_eq!(queue.search(4, 2, tx_a, SearchFrom { key: 0, ..from(4) }, 1.0), Searched::Queued);
         assert_eq!(queue.search(5, 2, tx_b, SearchFrom { key: 0, ..from(5) }, 1.0), Searched::Queued);
         assert_eq!(queue.searching(2), 2);
+    }
+
+    #[test]
+    fn a_browser_keys_new_search_replaces_its_waiting_one_in_another_playlist_too() {
+        // (RV-461: one search a key, whatever its playlist: the 1v1's let go for the 2v2's)
+        let mut queue = Matchmaker::new(&playlists());
+        let (tx1, mut rx1) = channel(OUT_QUEUE);
+        assert!(queued(&mut queue, 1, 1, tx1));
+        let (tx2, _rx2) = channel(OUT_QUEUE);
+        assert_eq!(queue.search(2, 2, tx2, from(1), 1.0), Searched::Queued);
+        assert_eq!((queue.searching(1), queue.searching(2)), (0, 1));
+        assert!(matches!(rx1.try_recv(), Ok(Outgoing::Control(bytes)) if matches!(Control::decode(&bytes[2..]), Ok(Control::Kicked { reason: protocol::KICK_REPLACED }))));
+        assert!(rx1.is_closed());
     }
 
     #[test]

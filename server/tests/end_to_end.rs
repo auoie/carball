@@ -301,6 +301,103 @@ async fn two_searches_make_a_match_their_tokens_claim() {
     assert_eq!(teams, vec![0, 1]);
 }
 
+/// A search's session, its control stream kept for the test to close (as the page's `finish`)
+async fn search_session(port: u16, cert_hash: [u8; 32], playlist: u8, key: u64) -> (wtransport::Connection, wtransport::SendStream, wtransport::RecvStream) {
+    let config = ClientConfig::builder().with_bind_default().with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(cert_hash)]).build();
+    let connection = Endpoint::client(config).unwrap().connect(format!("https://localhost:{port}/play")).await.unwrap();
+    let (mut send, recv) = connection.open_bi().await.unwrap().await.unwrap();
+    send.write_all(&keyed_hello(protocol::INTENT_SEARCH, playlist, 0, key)).await.unwrap();
+    (connection, send, recv)
+}
+
+/// The session's next control message within `wait`; None if its stream ended first (or nothing came)
+async fn next_control(recv: &mut wtransport::RecvStream, wait: Duration) -> Option<Control> {
+    tokio::time::timeout(wait, async {
+        let mut len = [0u8; 2];
+        recv.read_exact(&mut len).await.ok()?;
+        let mut body = vec![0u8; usize::from(u16::from_le_bytes(len))];
+        recv.read_exact(&mut body).await.ok()?;
+        Control::decode(&body).ok()
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+/// A search's page closing its stream takes it out of the queue at once (CancelSearch, SM5: a search after that isn't
+/// matched with it); a match formed as it closed still reaches it (the flush on close, SM6: its MatchFound if and only if
+/// its rival's); a newer search from its browser key tells it why (KICK_REPLACED, RV-460). RV-461
+#[tokio::test(flavor = "multi_thread")]
+async fn a_closed_search_leaves_the_queue_a_match_formed_as_it_closed_reaches_it_and_a_replaced_one_is_told() {
+    engine::init(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../out/arena/collision_meshes"))).unwrap();
+    let (identity, cert_hash) = net::dev_identity().unwrap();
+    let server = net::endpoint(identity, 0).unwrap();
+    let port = server.local_addr().unwrap().port();
+    let (to_game, messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
+    let playlists = [1, 2, 3]
+        .map(|team_size| carball_server::match_host::Playlist { team_size, match_type: carball_server::game::MatchType::Casual, forfeit_vote_wait: None })
+        .to_vec();
+    std::thread::spawn(move || game_loop::run(messages, game_loop::Mode::Queue(playlists), None, None, heartbeat(), Instant::now()));
+    tokio::spawn(net::accept_loop(Arc::new(server), to_game, open_limits()));
+    let found = |c: &Option<Control>| matches!(c, Some(Control::MatchFound { .. }));
+
+    // CancelSearch: closed, its session ends with no answer; the next searcher waits, matched with the one after
+    let (_a, mut a_send, mut a_recv) = search_session(port, cert_hash, 1, 101).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    a_send.finish().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let (_b, _b_send, mut b_recv) = search_session(port, cert_hash, 1, 102).await;
+    assert_eq!(next_control(&mut a_recv, Duration::from_secs(3)).await, None, "the closed search isn't matched");
+    assert_eq!(next_control(&mut b_recv, Duration::from_millis(500)).await, None, "nobody to play yet");
+    let (_c, _c_send, mut c_recv) = search_session(port, cert_hash, 1, 103).await;
+    assert!(found(&next_control(&mut b_recv, Duration::from_secs(5)).await));
+    assert!(found(&next_control(&mut c_recv, Duration::from_secs(5)).await));
+
+    // The flush: a page closing as its rival's search lands, whichever comes first, both or neither get the match (the
+    // rival's hello `offset` ms after the close, before it if negative: around the game loop's 8 ms tick, so some rounds
+    // form the match just before the close is seen)
+    let mut rounds_found = 0;
+    for (round, offset) in [-10i64, -8, -6, -5, -4, -3, -2, -1, 0, 2].into_iter().enumerate() {
+        let key = 200 + 10 * round as u64;
+        let (_d, mut d_send, mut d_recv) = search_session(port, cert_hash, 1, key).await;
+        let (_e, mut e_send, mut e_recv) = {
+            let config = ClientConfig::builder().with_bind_default().with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(cert_hash)]).build();
+            let connection = Endpoint::client(config).unwrap().connect(format!("https://localhost:{port}/play")).await.unwrap();
+            let (send, recv) = connection.open_bi().await.unwrap().await.unwrap();
+            (connection, send, recv)
+        };
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let rival = async {
+            tokio::time::sleep(Duration::from_millis(offset.max(0).unsigned_abs())).await;
+            e_send.write_all(&keyed_hello(protocol::INTENT_SEARCH, 1, 0, key + 1)).await.unwrap();
+        };
+        let close = async {
+            tokio::time::sleep(Duration::from_millis(offset.min(0).unsigned_abs())).await;
+            d_send.finish().await.unwrap();
+        };
+        tokio::join!(close, rival);
+        let d = next_control(&mut d_recv, Duration::from_secs(3)).await;
+        let e = next_control(&mut e_recv, Duration::from_secs(1)).await;
+        assert_eq!(found(&d), found(&e), "round {round}: the closed page's answer {d:?}, its rival's {e:?}");
+        if !found(&d) {
+            // (the rival still waits: another searcher makes its match, the queue left clean for the next round)
+            let (_f, _f_send, mut f_recv) = search_session(port, cert_hash, 1, key + 2).await;
+            assert!(found(&next_control(&mut e_recv, Duration::from_secs(5)).await), "round {round}");
+            assert!(found(&next_control(&mut f_recv, Duration::from_secs(5)).await), "round {round}");
+        }
+        rounds_found += usize::from(found(&d));
+    }
+    println!("the flush: {rounds_found} of 10 rounds matched the closing page");
+
+    // RV-460: a second tab of the browser searching: the first told why, its session ended; the second waits
+    let (_old, _old_send, mut old_recv) = search_session(port, cert_hash, 3, 300).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let (_new, _new_send, mut new_recv) = search_session(port, cert_hash, 3, 300).await;
+    assert_eq!(next_control(&mut old_recv, Duration::from_secs(5)).await, Some(Control::Kicked { reason: protocol::KICK_REPLACED }));
+    assert_eq!(next_control(&mut old_recv, Duration::from_secs(5)).await, None, "then its session ends");
+    assert_eq!(next_control(&mut new_recv, Duration::from_millis(500)).await, None, "the new search waits");
+}
+
 /// A server that takes pages from one origin only, and few sessions from an address: another origin, or none, is
 /// forbidden (the origin's case as browsers send it); the third session at once from the address is refused, and past
 /// the server's most sessions any (SEC-5, SEC-2)

@@ -1,9 +1,9 @@
 // Visuals built from the physics shapes: the car is a body around its hitbox (src/render/carModel.ts), the ball is
 // its collision sphere. Real models come later (roadmap §10).
-import { AdditiveBlending, BackSide, BufferAttribute, type BufferGeometry, Color, FrontSide, Group, IcosahedronGeometry, LinearSRGBColorSpace, Mesh, MeshStandardMaterial, type Object3D, PlaneGeometry, type Quaternion, ShaderMaterial, type Side, SphereGeometry, Vector3 } from "three";
+import { AdditiveBlending, BackSide, BufferAttribute, type BufferGeometry, Color, FrontSide, Group, IcosahedronGeometry, LinearSRGBColorSpace, type Material, Mesh, MeshStandardMaterial, type Object3D, PlaneGeometry, type Quaternion, ShaderMaterial, type Side, SphereGeometry, Vector3 } from "three";
 import type { CarConfig, Team } from "../engine/world";
 import { RETICLE, RETICLE_GLSL_FN } from "./ballShadow";
-import { buildCarModel } from "./carModel";
+import { buildCarModel, carExhausts } from "./carModel";
 import { Trail, trailingRearWheels } from "./supersonic";
 import { BOOST_TRAIL, IDLE_EXHAUST } from "./effects";
 import { Emitter, type Particles } from "./particles";
@@ -52,6 +52,8 @@ export class CarView {
   /** Add this to the scene: the car and its effects */
   readonly root = new Group();
   readonly #body = new Group(); // posed as the car
+  /** The model it built (what `dispose` frees: not what's attached, the flip's effect being the game's) */
+  readonly #model: Object3D;
   readonly #trails: readonly [Trail, Trail] = [new Trail(), new Trail()];
   /** Where the trails leave the car: its rear corners, a little above the middle (local frame) */
   readonly #trailFrom: readonly [Vector3, Vector3];
@@ -66,9 +68,12 @@ export class CarView {
    *  (its look: src/game/cars.ts), painted in `team`'s colour */
   constructor(config: CarConfig, team: Team, particles: Particles | null = null, car = 0) {
     const model = buildCarModel(config, TEAM_CAR_COLORS[team], team, car);
+    this.#model = model;
+    // (the game's sockets on its Fennec, where it's loaded; our bodies' at their backs, found before it's posed: RV-470)
+    const exhausts = model.userData["gameMesh"] === true ? EXHAUSTS : carExhausts(model, config, car);
     this.#body.add(model);
     this.#exhausts = particles
-      ? EXHAUSTS.map((at) => ({ at, trail: new Emitter(particles, BOOST_TRAIL), idle: new Emitter(particles, IDLE_EXHAUST) }))
+      ? exhausts.map((at) => ({ at, trail: new Emitter(particles, BOOST_TRAIL), idle: new Emitter(particles, IDLE_EXHAUST) }))
       : [];
     this.root.add(this.#body, ...this.#trails.map((t) => t.mesh));
     // The rear tyres' contact points at rest (car frame: the bottom of each, as the model draws them)
@@ -129,6 +134,24 @@ export class CarView {
       const active = trailing[i] ?? false;
       if (from) trail.update(this.#point.copy(from).applyQuaternion(rotation).add(position), active, seconds);
     });
+  }
+
+  /** A car replaced or gone (RV-467): its model's and trails' geometries and materials freed, its exhausts' particles
+   *  gone; its root taken out of the scene first. What's attached isn't its own: left alone */
+  dispose(): void {
+    for (const { trail, idle } of this.#exhausts) {
+      trail.kill();
+      idle.kill();
+    }
+    const free = (o: Object3D): void => {
+      if (!(o instanceof Mesh)) return;
+      (o.geometry as BufferGeometry).dispose();
+      const material = o.material as Material | Material[];
+      for (const m of Array.isArray(material) ? material : [material]) m.dispose();
+    };
+    // (the loaded game mesh's geometry and paint are shared by every car showing it: left)
+    if (this.#model.userData["gameMesh"] !== true) this.#model.traverse(free);
+    for (const t of this.#trails) free(t.mesh);
   }
 
   /** How many points the trails have (for tests). */

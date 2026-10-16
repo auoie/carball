@@ -221,6 +221,14 @@ function traceGrid(): (i: number, j: number) => boolean {
 /** The thin traces (q's quadrant, uu): segments [x0, y0, x1, y1], vertical or at 45 degrees on the g lattice; generated
  *  row by row from the goal end to Y = 0 by AV-6a's rules, with its fixed seed; the lanes' chamfer stubs with them */
 export function grassTraces(): [number, number, number, number][] {
+  // (generated once: every arena build draws the same, RX19-B)
+  generatedTraces ??= generateTraces();
+  return generatedTraces;
+}
+
+let generatedTraces: [number, number, number, number][] | null = null;
+
+function generateTraces(): [number, number, number, number][] {
   const T = GRASS_PATTERN.traces;
   const rand = random(T.seed);
   const allowed = traceGrid();

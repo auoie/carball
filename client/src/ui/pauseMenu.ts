@@ -62,10 +62,12 @@ export class PauseMenu {
       no.addEventListener("click", () => {
         question.hidden = true;
       });
+      no.dataset["padDefault"] = ""; // (a confirm's NO focused: MENU-15)
       question.append(ask, yes, no);
       question.hidden = true;
       button(END_TEXT.exit, () => {
         question.hidden = false;
+        no.focus();
       });
       buttons.append(question);
       this.#question = question;

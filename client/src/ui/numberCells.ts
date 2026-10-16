@@ -32,7 +32,7 @@ export function inkFit(game: { readonly xMin: number; readonly xMax: number }, i
   const scale = (game.xMax - game.xMin) / width;
   return { scale, shift: game.xMin - scale * ink.left * size };
 }
-const ADVANCE: Readonly<Record<string, number>> = { "1": 0.31, ":": 0.14, "+": 0.442, [NBSP]: 0.486 };
+const ADVANCE: Readonly<Record<string, number>> = { "1": 0.31, ":": 0.14, "+": 0.442, ".": 0.2, [NBSP]: 0.486 };
 const DIGIT_ADVANCE = 0.796;
 
 /** A character's advance (em of the game's size) */

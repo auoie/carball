@@ -35,6 +35,8 @@ export const OWN_SEARCH_TEXT = {
   notAllJoined: "Not every player joined the match. Searching again.",
   matchGone: "The match was no longer there. Searching again.",
   failedPrefix: "Search failed:",
+  /** Another tab of this browser searched: this one's search ended (RV-460: our words, plain) */
+  replaced: "You started searching in another tab.",
   cooldown: (seconds: number): string =>
     `Your last match was cancelled because you didn't join it in time or left before it started. You can search again in ${clock(seconds)}.`,
   /** The address's block (RV-385): maybe someone else's doing, so it blames no one */
@@ -81,6 +83,8 @@ export interface SearchHandlers {
   /** Refused: this browser (network false) or this address stalled a match; it may search again in this many seconds
    *  (RV-367, RV-385) */
   cooldown(seconds: number, network: boolean): void;
+  /** A newer search from this browser (another tab) took this one's place (RV-460) */
+  replaced(): void;
 }
 
 /** A search session's ends: closed at once (Cancel Search), or closed and its last answer awaited (the page going) */
@@ -185,6 +189,15 @@ export class Matchmaking {
         this.#session = null;
         this.#extra.push({ text: `${OWN_SEARCH_TEXT.failedPrefix} ${reason}`, kind: "warning" });
         this.#failedAt = this.#now;
+        this.#set("failed");
+      },
+      // (another tab's search took this one's place: said plainly, the search over here; the line stays till Cancel
+      // Search or a new search)
+      replaced: () => {
+        if (this.#finishing || (this.#state?.status !== "connecting" && this.#state?.status !== "searching")) return;
+        this.#session = null;
+        this.#extra.push({ text: OWN_SEARCH_TEXT.replaced, kind: "status" });
+        this.#failedAt = null;
         this.#set("failed");
       },
       // (the refusal stays until Cancel Search or a new search: its wait is minutes, the line must be read)

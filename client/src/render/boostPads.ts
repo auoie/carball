@@ -538,12 +538,24 @@ function geometry(positions: number[], index: number[], extra: Record<string, { 
   return g;
 }
 
-/** The base, each vertex its part (0 the top, 1 a side wall, 2 the underside): a polar grid out to the outline (a
- *  plate's rings at set radii, closer at its panels' edges; a dome's fractions of the outline's radius); a plate's side
- *  walls and underside. (Counter-clockwise from above in the game's frame is clockwise in Three's: each upward
- *  triangle's last two swapped) */
+/** How finely the pads are drawn (RX19-A: 550k triangles at first): a base's angular steps and rings (fractions of the
+ *  outline's radius), the inlays' disc and window grids, the curtains' segments and wall points a side. Their markings,
+ *  soft edges and glows are drawn per pixel: the meshes need only the shapes' and heights' detail */
+export const PAD_TESSELLATION = {
+  plate: { steps: 64, rings: [0.12, 0.25, 0.38, 0.5, 0.62, 0.72, 0.8, 0.88, 0.94, 1], under: [0.5, 1] },
+  dome: { steps: 40, rings: [0.4, 0.75, 0.93, 1] },
+  disc: { steps: 32, rings: [0.35, 0.7, 0.9, 1] },
+  window: [6, 3] as const,
+  tube: 16,
+  wall: 3,
+} as const;
+
+/** The base, each vertex its part (0 the top, 1 a side wall, 2 the underside): a polar grid out to the outline (rings at
+ *  fractions of its radius); a plate's side walls and underside. (Counter-clockwise from above in the game's frame is
+ *  clockwise in Three's: each upward triangle's last two swapped) */
 export function padBaseGeometry(shape: PadShape): BufferGeometry {
-  const steps = 360;
+  const T = PAD_TESSELLATION;
+  const steps = shape.base.kind === "plate" ? T.plate.steps : T.dome.steps;
   const positions: number[] = [];
   const parts: number[] = [];
   const index: number[] = [];
@@ -582,16 +594,12 @@ export function padBaseGeometry(shape: PadShape): BufferGeometry {
   };
   const top = (x: number, y: number): number => padTop(shape, x, y);
   if (shape.base.kind === "dome") {
-    const fractions = [0.08, 0.16, 0.26, 0.36, 0.46, 0.56, 0.66, 0.75, 0.83, 0.89, 0.935, 0.965, 0.985, 1];
-    grid((th) => fractions.map((f) => f * shape.radius(th)), top, 0, true);
+    grid((th) => T.dome.rings.map((f) => f * shape.radius(th)), top, 0, true);
     return geometry(positions, index, { kind: { data: parts, size: 1 } });
   }
-  // (a plate's rings: every 3 uu, and half a chamfer either side of its plateaus' radial edges, out to the outline)
-  const edges = shape.base.plateaus.flatMap((p) => (p.r ? [p.r[0], p.r[1]] : [])).filter((r) => r > 0);
-  const radii = [...Array.from({ length: 31 }, (_, i) => 1.5 + 3 * i), ...edges.flatMap((r) => [r - 0.5, r + 0.5])].sort((a, b) => a - b);
-  grid((th) => [...radii.map((r) => Math.min(r, shape.radius(th) - 0.01)), shape.radius(th)], top, 0, true);
+  grid((th) => T.plate.rings.map((f) => f * shape.radius(th)), top, 0, true);
   const under = (x: number, y: number): number => padUnder(shape, x, y);
-  grid((th) => [0.25, 0.5, 0.75, 0.9, 1].map((f) => f * shape.radius(th)), under, 2, false);
+  grid((th) => T.plate.under.map((f) => f * shape.radius(th)), under, 2, false);
   // The side walls: the top's edge down to the underside's, facing out
   const first = parts.length;
   for (let j = 0; j < steps; j++) {
@@ -640,8 +648,8 @@ export function padInlayGeometry(shape: PadShape): BufferGeometry {
   };
   shape.inlays.forEach((region, kind) => {
     if (region.r && region.r[0] <= 0 && region.angle === undefined && region.across === undefined) {
-      const steps = 72;
-      const rings = [0.2, 0.4, 0.6, 0.75, 0.85, 0.92, 0.97, 1].map((f) => f * (region.r?.[1] ?? 0));
+      const { steps } = PAD_TESSELLATION.disc;
+      const rings = PAD_TESSELLATION.disc.rings.map((f) => f * (region.r?.[1] ?? 0));
       const centre = vertex(0, 0, kind);
       const first = kinds.length;
       for (const r of rings) for (let j = 0; j < steps; j++) vertex(r * Math.cos((2 * Math.PI * j) / steps), r * Math.sin((2 * Math.PI * j) / steps), kind);
@@ -652,7 +660,7 @@ export function padInlayGeometry(shape: PadShape): BufferGeometry {
       }
       return;
     }
-    const [nu, nw] = [16, 10];
+    const [nu, nw] = PAD_TESSELLATION.window;
     for (let k = 0; k < 3; k++) {
       const first = kinds.length;
       for (let i = 0; i <= nu; i++) {
@@ -702,16 +710,16 @@ export function padCurtainGeometry(shape: PadShape): BufferGeometry {
     }
   };
   const { tube } = shape;
-  const segments = 24;
+  const segments = PAD_TESSELLATION.tube;
   const ring = (r: number, z: number): [number, number, number][] =>
     Array.from({ length: segments }, (_, j) => [r * Math.cos((2 * Math.PI * j) / segments), r * Math.sin((2 * Math.PI * j) / segments), z]);
   band(ring(tube.r[0], tube.z[0]), ring(tube.r[1], tube.z[1]), tube.v);
   for (const wall of shape.walls) {
     for (let k = 0; k < 3; k++) {
-      const loop = regionLoop(wall.loop, 6).map(([a, c]) => turned(a, c, k));
+      const loop = regionLoop(wall.loop, PAD_TESSELLATION.wall).map(([a, c]) => turned(a, c, k));
       const centre = loop.reduce(([sx, sy], [x, y]) => [sx + x / loop.length, sy + y / loop.length], [0, 0]);
       const bottom = loop.map(([x, y]): [number, number, number] => [x, y, wall.bottom ?? padTop(shape, x, y) - 0.2]);
-      const top = (wall.topLoop ? regionLoop(wall.topLoop, 6).map(([a, c]) => turned(a, c, k)) : loop).map(([x, y]): [number, number, number] => {
+      const top = (wall.topLoop ? regionLoop(wall.topLoop, PAD_TESSELLATION.wall).map(([a, c]) => turned(a, c, k)) : loop).map(([x, y]): [number, number, number] => {
         if (wall.topLoop) return [x, y, wall.top];
         const [dx, dy] = [x - centre[0], y - centre[1]];
         const d = Math.hypot(dx, dy) || 1;
@@ -1057,6 +1065,17 @@ const HIDDEN = new Matrix4().makeScale(0, 0, 0);
 /** The translucent parts' order among themselves (VT-11c: inlays, curtains, glows; within the pads' priority 0) */
 const ORDER = { inlays: 0, curtains: 0.01, warmInlays: 0.02, warmCurtains: 0.03, puffs: 0.035, glow: 0.04, backing: 0.05 } as const;
 
+/** A shape's geometries, built once (every view of the pads shares them) */
+const geometries = new Map<PadShape, { readonly base: BufferGeometry; readonly inlays: BufferGeometry; readonly curtains: BufferGeometry }>();
+function padGeometries(shape: PadShape): { readonly base: BufferGeometry; readonly inlays: BufferGeometry; readonly curtains: BufferGeometry } {
+  let g = geometries.get(shape);
+  if (!g) {
+    g = { base: padBaseGeometry(shape), inlays: padInlayGeometry(shape), curtains: padCurtainGeometry(shape) };
+    geometries.set(shape, g);
+  }
+  return g;
+}
+
 /** One size of pad's meshes, instanced (one draw call each for all of its pads) */
 class PadMeshes {
   readonly base: InstancedMesh;
@@ -1075,9 +1094,8 @@ class PadMeshes {
       if (hidden) for (let i = 0; i < n; i++) mesh.setMatrixAt(i, HIDDEN);
       return mesh;
     };
-    const inlays = padInlayGeometry(shape);
-    const curtains = padCurtainGeometry(shape);
-    this.base = make("base", padBaseGeometry(shape), baseMaterial(shape, reflection, time));
+    const { base, inlays, curtains } = padGeometries(shape);
+    this.base = make("base", base, baseMaterial(shape, reflection, time));
     this.inlays = make("inlays", inlays, shape.big ? bigInlayMaterial(false, time) : smallInlayMaterial(time), count, ORDER.inlays);
     this.curtains = make("curtains", curtains, curtainMaterial(false, time), count, ORDER.curtains);
     if (!shape.big) {
@@ -1172,6 +1190,13 @@ export class BoostPadsView {
   /** `seconds`: since the last update (the fades, the FX's clock; none given: the fades at their end at once) */
   update(pads: readonly BoostPadState[], seconds = Infinity): void {
     if (Number.isFinite(seconds)) this.#time.value += Math.max(0, seconds);
+    // (the warm-up's meshes drawn only while a big pad is down, its puffs only in one's last second)
+    const warmUp = this.#pads.find((p) => p.meshes.warm)?.meshes.warm;
+    if (warmUp) {
+      const down = pads.filter((pad, i) => this.#pads[i]?.big === true && !pad.active);
+      warmUp.inlays.visible = warmUp.curtains.visible = down.length > 0;
+      warmUp.puffs.visible = down.some((pad) => pad.cooldown <= PAD_ALMOST_SPAWNED_SECONDS);
+    }
     pads.forEach((pad, i) => {
       const p = this.#pads[i];
       if (!p) return;

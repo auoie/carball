@@ -171,6 +171,12 @@ export class GameAudio {
     this.#synth.searchStart(this.#effects, this.#ctx.currentTime + 0.01);
   }
 
+  /** The menus' cues with a pad (MENU-18: our own sounds) */
+  menu(cue: "move" | "select" | "back" | "tab"): void {
+    this.#count(`menu-${cue}`);
+    this.#synth.menu(this.#effects, this.#ctx.currentTime + 0.005, cue);
+  }
+
   /** Cancel Search (the menus' CANCEL, MM-12: our own sound) */
   searchCancel(): void {
     this.#count("searchCancel");

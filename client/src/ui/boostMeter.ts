@@ -150,8 +150,11 @@ export class BoostMeterArt {
   readonly #glow: SVGGElement;
   readonly #flash: SVGGElement;
   readonly #box: HTMLElement;
-  /** The number and label, turned once laid out (their boxes read then) */
-  #text: readonly HTMLElement[];
+  /** The number and label, each turned with the bars' layer about its middle (their boxes read then) */
+  readonly #text: readonly HTMLElement[];
+  /** The fill's angles drawn: a frame with the same draws nothing (RV-469) */
+  #fillDrawn = Number.NaN;
+  #topDrawn = Number.NaN;
 
   /** `box`: the meter's box (#boost); `text`: its number and label in it, each turned with the bars' layer where it is */
   constructor(box: HTMLElement, text: readonly HTMLElement[] = []) {
@@ -159,6 +162,12 @@ export class BoostMeterArt {
     const Z = TILT.front;
     this.#box = box;
     this.#text = text;
+    // (turned once laid out and again whenever the meter or their boxes change size, the fonts loaded, the HUD's scale or
+    // the window's changed: never every frame, nothing read while hidden, RV-469)
+    if (text.length > 0) {
+      const observer = new ResizeObserver(() => { this.#turnText(); });
+      for (const el of [box, ...text]) observer.observe(el);
+    }
     const art = svg("svg", { viewBox: "0 0 200 200", "aria-hidden": "true", class: "boost-art" });
     box.prepend(art);
     const backSvg = art;
@@ -240,22 +249,23 @@ export class BoostMeterArt {
     for (const d of flashWhite) svg("path", { d, fill: "#fff" }, flashTop);
   }
 
-  /** The number and label: each under the tilt at its middle on the bars' layer, about that middle (CSS's origin); once
-   *  the meter is laid out */
+  /** The number and label: each under the tilt at its middle on the bars' layer, about that middle (CSS's origin); the
+   *  meter laid out (a transform doesn't change the boxes read) */
   #turnText(): void {
-    if (this.#text.length === 0 || this.#box.offsetWidth === 0) return;
+    if (this.#box.offsetWidth === 0) return;
     for (const el of this.#text) {
       const [x, y] = [el.offsetLeft + el.offsetWidth / 2, el.offsetTop + el.offsetHeight / 2];
       const [a, b, c, d] = tiltAt(x, y, TILT.front);
       const [X, Y] = project(x, y, TILT.front);
       el.style.transform = `matrix(${[a, b, c, d, X - x, Y - y].map((v) => v.toFixed(5)).join(", ")})`;
     }
-    this.#text = [];
   }
 
   /** The fill's angles: the orange part (0-180) and the white (0-45) */
   set(fill: number, top: number): void {
-    this.#turnText();
+    if (fill === this.#fillDrawn && top === this.#topDrawn) return;
+    this.#fillDrawn = fill;
+    this.#topDrawn = top;
     this.#fill.setAttribute("d", tiltedWedge(fill, TILT.front));
     this.#top.setAttribute("d", top > 0 ? tiltedWedge(WHITE_FROM + top, TILT.front) : tiltedWedge(0, TILT.front));
     this.#lit.setAttribute("d", tiltedWedge(fill + top, TILT.front));

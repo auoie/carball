@@ -35,12 +35,8 @@ function mouseSvg(button: number): string {
   );
 }
 
-/** "Press {key} to {action}" into `el`, the key as its glyph */
-export function renderPrompt(el: HTMLElement, key: KeyGlyph, action: string): void {
-  const text = `Press|${key.kind}|${key.kind === "mouse" ? String(key.button) : key.text}|${key.kind === "pad" ? key.style : ""}|${action}`;
-  if (el.dataset["prompt"] === text) return;
-  el.dataset["prompt"] = text;
-  el.replaceChildren(document.createTextNode("Press "));
+/** A key's glyph as an element (a word, a pad button's badge, a mouse with its button lit) */
+export function glyphElement(key: KeyGlyph): HTMLSpanElement {
   const glyph = document.createElement("span");
   glyph.className = `key-glyph key-${key.kind}`;
   if (key.kind === "mouse") {
@@ -53,7 +49,15 @@ export function renderPrompt(el: HTMLElement, key: KeyGlyph, action: string): vo
       glyph.dataset["style"] = key.style;
     }
   }
-  el.append(glyph, document.createTextNode(` to ${action}`));
+  return glyph;
+}
+
+/** "Press {key} to {action}" into `el`, the key as its glyph */
+export function renderPrompt(el: HTMLElement, key: KeyGlyph, action: string): void {
+  const text = `Press|${key.kind}|${key.kind === "mouse" ? String(key.button) : key.text}|${key.kind === "pad" ? key.style : ""}|${action}`;
+  if (el.dataset["prompt"] === text) return;
+  el.dataset["prompt"] = text;
+  el.replaceChildren(document.createTextNode("Press "), glyphElement(key), document.createTextNode(` to ${action}`));
 }
 
 /** No prompt */

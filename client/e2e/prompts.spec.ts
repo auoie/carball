@@ -53,7 +53,7 @@ test("the ball-cam label holds its place whether its prompt shows the mouse, a p
   // (the keyboard's and mouse's ball cam toggled too, so its prompt shows)
   await openSettings(page);
   await page.locator(".settings-tab", { hasText: "Camera" }).click();
-  await page.locator('input[data-camera="cameraKbm"][data-option="ballCamToggle"]').check();
+  await page.locator('[data-camera="cameraKbm"][data-option="ballCamToggle"]').check();
   await closeMenus(page);
   const indicator = page.locator("#ballcam");
   const toggle = page.locator("#ballcam-toggle");

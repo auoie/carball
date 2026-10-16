@@ -10,8 +10,8 @@ use crate::engine::Controls;
 // token, 64-bit keys, MatchFound, IdleWarning, Kicked); 18: the moving bodies' broadphase boxes in the engine snapshot
 // (physics FP2); 19: a search's browser key and returning token, SearchCooldown (RV-367: no-shows); 20: SearchCooldown
 // says whether the browser or the network is why (RV-385); 21: the match's map (MatchFound, Welcome); 22: the garage's
-// car (Hello's model, the roster's)
-pub const VERSION: u16 = 22;
+// car (Hello's model, the roster's); 23: Kicked's KICK_REPLACED (RV-460)
+pub const VERSION: u16 = 23;
 /// The maps a match can be on (the client's arena themes, in their order: protocol/README.md); a map on the wire is its
 /// index. Only ever appended to: an index names the same map in every version
 pub const MAP_COUNT: u8 = 16;
@@ -40,6 +40,8 @@ pub const INTENT_CLAIM: u8 = 2;
 pub const KICK_IDLE: u8 = 0;
 /// `Kicked`'s reason: the match was cancelled before it started, not every reserved player joined (MM-18)
 pub const KICK_NOT_ALL_JOINED: u8 = 1;
+/// `Kicked`'s reason: a newer search from the same browser (another of its tabs) took this search's place (RV-460)
+pub const KICK_REPLACED: u8 = 2;
 
 /// A hello's version, read before the rest (another version's fields don't decode: RV-243); None: not a hello
 pub fn hello_version(body: &[u8]) -> Option<u16> {

@@ -157,6 +157,8 @@ export function fennecModel(config: CarConfig, paint: Color, team = 0): Group | 
   }
   const car = new Group();
   car.add(body);
-  car.userData["fennec"] = true; // (its exhausts are the game's sockets: CarView)
+  // (the game's mesh: its exhausts the game's sockets, its geometry and paint shared by every car showing it: CarView;
+  // a neutral key, as shipped code reads it)
+  car.userData["gameMesh"] = true;
   return car;
 }

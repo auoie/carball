@@ -2,7 +2,7 @@
 // a match found (its slot's one-time token) or a refusal. The session ends with the answer; closing it cancels the search.
 import { type SearchHandlers } from "../game/matchmaking";
 import { type ServerAddress, readControlMessages, refusalText } from "./connection";
-import { PROTOCOL_VERSION, encodeControl } from "./protocol";
+import { KICK_REPLACED, PROTOCOL_VERSION, encodeControl } from "./protocol";
 
 const BROWSER_KEY = "carball.browserKey";
 /** This page's key when the browser keeps none (storage blocked) */
@@ -101,6 +101,8 @@ export class Search {
         if (m.type === "matchFound") this.#end(() => { this.handlers.found(m.token, m.map); });
         else if (m.type === "refused") this.#end(() => { this.handlers.failed(refusalText(m.reason)); });
         else if (m.type === "searchCooldown") this.#end(() => { this.handlers.cooldown(m.seconds, m.network); });
+        // (another tab of this browser searching took this search's place: said so, not as a failure, RV-460)
+        else if (m.type === "kicked" && m.reason === KICK_REPLACED) this.#end(() => { this.handlers.replaced(); });
       });
       this.#end(() => { this.handlers.failed("the connection to the server was lost"); });
     } catch (e) {

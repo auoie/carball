@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type SearchHandlers } from "../game/matchmaking";
 import { fakeTransport, type FakeTransportRecord } from "../testing/fakeTransport";
-import { decodeControl } from "./protocol";
+import { KICK_REPLACED, decodeControl } from "./protocol";
 import { Search, browserKey } from "./search";
 
 const memory = (): Pick<Storage, "getItem" | "setItem"> => {
@@ -28,6 +28,10 @@ function answers(): { handlers: SearchHandlers; got: string[]; done: Promise<voi
     },
     cooldown: (seconds, network) => {
       got.push(`cooldown ${String(seconds)}${network ? " network" : ""}`);
+      finish();
+    },
+    replaced: () => {
+      got.push("replaced");
       finish();
     },
   };
@@ -70,6 +74,29 @@ describe("a search", () => {
     const hello = decodeControl(written.subarray(2));
     expect(hello).toMatchObject({ type: "hello", intent: "search", playlist: 2, token: 77n });
     expect(hello.type === "hello" && hello.key).toBe(browserKey());
+  });
+
+  it("says another tab's search took its place (Kicked, KICK_REPLACED: RV-460), not that the connection was lost", async () => {
+    vi.stubGlobal("WebTransport", fakeTransport([{ type: "kicked", reason: KICK_REPLACED }]));
+    const { handlers, got, done } = answers();
+    Search.start({ url: "https://game.example:4433/play", certHash: null }, 2, 0n, handlers);
+    await done;
+    expect(got).toEqual(["searching", "replaced"]);
+  });
+
+  it("finishing closes its stream and waits for what the server sent before it saw that: a match formed as the page went reaches it (RV-443, CM8)", async () => {
+    const record: FakeTransportRecord = { sessions: [] };
+    vi.stubGlobal("WebTransport", fakeTransport([], record, false, [{ type: "matchFound", token: 8n, map: 2 }]));
+    const { handlers, got } = answers();
+    const search = Search.start({ url: "https://game.example:4433/play", certHash: null }, 1, 0n, handlers);
+    await vi.waitFor(() => {
+      expect(got).toEqual(["searching"]);
+    });
+    const started = performance.now();
+    await search.finish();
+    expect(record.sessions[0]?.finished).toBe(true);
+    expect(got).toEqual(["searching", "found 8 on map 2"]);
+    expect(performance.now() - started).toBeLessThan(1000);
   });
 
   it("passes a match found on", async () => {

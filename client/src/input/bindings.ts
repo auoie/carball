@@ -132,9 +132,21 @@ export function padStyleOf(id: string): PadStyle {
 
 let padStyle: PadStyle = "xbox";
 
-/** The connected pad's kind (the devices note it as they read the pad) */
+const padStyleListeners = new Set<(style: PadStyle) => void>();
+
+/** The connected pad's kind (the devices note it as they read the pad); who listens told when it changes */
 export function setPadStyle(style: PadStyle): void {
+  if (style === padStyle) return;
   padStyle = style;
+  for (const listener of padStyleListeners) listener(style);
+}
+
+/** Told when the connected pad's kind changes (a page that drew its names redraws them); the unsubscribe */
+export function onPadStyle(listener: (style: PadStyle) => void): () => void {
+  padStyleListeners.add(listener);
+  return () => {
+    padStyleListeners.delete(listener);
+  };
 }
 
 export function currentPadStyle(): PadStyle {

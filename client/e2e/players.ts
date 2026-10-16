@@ -68,6 +68,19 @@ export async function freePlay(page: Page): Promise<void> {
   await expect(menu).toBeHidden();
 }
 
+/** A list's cycler in the settings (src/ui/controls.ts: its value between two chevrons) stepped by clicks on its right
+ *  half until its value is `value` (the page made again after each: found again) */
+export async function cycleTo(page: Page, selector: string, value: string): Promise<void> {
+  for (let i = 0; i < 16; i++) {
+    const control = page.locator(selector);
+    if ((await control.getAttribute("data-value")) === value) return;
+    const box = await control.boundingBox();
+    if (!box) throw new Error(`${selector} isn't shown`);
+    await control.click({ position: { x: box.width - 8, y: box.height / 2 } });
+  }
+  await expect(page.locator(selector)).toHaveAttribute("data-value", value);
+}
+
 /** The pause menu (Escape: MENU-4), then its Settings */
 export async function openSettings(page: Page): Promise<void> {
   await page.keyboard.press("Escape");

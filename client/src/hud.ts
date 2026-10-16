@@ -4,10 +4,11 @@
 import type { SpawnSide } from "./engine/world";
 import type { FlipResetIndicator, InterfaceSettings, MatchNotifications } from "./settings/settings";
 import { fitStage } from "./ui/stage";
-import { DODGE_WINDOW, type Dodge } from "./game/flipTracker";
+import type { Dodge } from "./game/flipTracker";
 import { type VoteHud, voteFlashes } from "./game/forfeitVote";
 import { ACTIONS, type Bindings, inputName } from "./input/bindings";
 import { type KeyGlyph, clearPrompt, renderPrompt } from "./ui/keyGlyph";
+import { FlipLamp } from "./ui/flipLamp";
 import { BoostMeterArt } from "./ui/boostMeter";
 import { setNumberText } from "./ui/numberCells";
 
@@ -201,10 +202,8 @@ export class Hud {
   readonly #net: HTMLElement;
   readonly #help: HTMLElement;
   readonly #flip: HTMLElement;
-  readonly #flipRing: SVGCircleElement;
-  readonly #flipLabel: HTMLElement;
+  readonly #flipLamp: FlipLamp;
   readonly #flipDetail: HTMLElement;
-  readonly #flipRingLength: number;
   readonly #respawn: HTMLElement;
   readonly #respawnTime: HTMLElement;
   readonly #respawnLeft: HTMLElement;
@@ -244,12 +243,8 @@ export class Hud {
     this.#net = element(root, "#net", HTMLElement);
     this.#help = element(root, "#help", HTMLElement);
     this.#flip = element(root, "#flip", HTMLElement);
-    const flipRing = root.querySelector("#flip-ring");
-    if (!(flipRing instanceof SVGCircleElement)) throw new Error("HUD element #flip-ring missing");
-    this.#flipRing = flipRing;
-    this.#flipRingLength = 2 * Math.PI * flipRing.r.baseVal.value;
-    this.#flipLabel = element(root, "#flip-label", HTMLElement);
     this.#flipDetail = element(root, "#flip-detail", HTMLElement);
+    this.#flipLamp = new FlipLamp(this.#flip);
     this.#respawn = element(root, "#respawn", HTMLElement);
     this.#respawnTime = element(root, "#respawn-time", HTMLElement);
     this.#respawnLeft = element(root, "#respawn-left", HTMLElement);
@@ -563,16 +558,17 @@ export class Hud {
   #updateFlip(dodge: Dodge | null, reset: boolean): void {
     this.#flip.hidden = dodge === null;
     if (dodge === null) return;
-    // The ring: full when a dodge is there with no time limit, draining over the window after a jump
-    const fill = dodge.kind === "window" ? dodge.remaining / DODGE_WINDOW : dodge.kind === "spent" ? 0 : 1;
-    this.#flipRing.style.strokeDasharray = `${this.#flipRingLength * fill} ${this.#flipRingLength}`;
-    this.#flipRing.style.visibility = fill > 0 ? "visible" : "hidden"; // (an empty ring would still show its round cap)
+    // The lamp: lit while a dodge is there (amber; gold from a flip reset), dim on the wheels, dark once spent; the
+    // window's seconds on its readout (and in words, for the page's readers and the tests)
     const state = dodge.kind === "free" && dodge.reset ? "reset" : dodge.kind;
     this.#flip.dataset["state"] = state;
-    this.#flipLabel.textContent = dodge.kind === "spent" ? "NO FLIP" : "FLIP";
-    this.#flipDetail.textContent =
-      dodge.kind === "window" ? `${dodge.remaining.toFixed(1)} s` : state === "reset" ? "RESET" : dodge.kind === "free" ? "∞" : "";
-    // (a pulse; the game's own sign is the effect under the car, not text: render/flipResetFx.ts, HUD-19)
-    if (reset) this.#flip.animate([{ transform: "scale(1.35)" }, { transform: "scale(1)" }], { duration: 500, easing: "ease-out" });
+    const seconds = dodge.kind === "window" ? dodge.remaining.toFixed(1) : null;
+    this.#flipLamp.digits(seconds);
+    this.#flipDetail.textContent = seconds === null ? "" : `${seconds} s`;
+    this.#flip.setAttribute("aria-label", dodge.kind === "spent" ? "No flip" : dodge.kind === "ground" ? "Flip (on the ground)" : seconds === null ? "Flip" : `Flip, ${seconds} s left`);
+    // (a flip reset: the lamp flickers bright, then holds gold; the game's own sign is the effect under the car, not
+    // text: render/flipResetFx.ts, HUD-19)
+    if (reset) this.#flipLamp.flicker();
   }
+
 }

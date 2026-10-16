@@ -363,6 +363,7 @@ export class Freeplay {
   setCar(garage: { readonly car: number; readonly team: Team }): void {
     const scene = this.#renderer.scene;
     scene.remove(this.#carView.root);
+    this.#carView.dispose();
     this.#world.removeCar(this.#playerId);
     this.#playerId = this.#world.addCar(0, carChoice(garage.car).body);
     this.#world.setUnlimitedBoost(this.#unlimitedBoost);
@@ -387,22 +388,22 @@ export class Freeplay {
 
   /** For screenshots and browser tests: the car on the floor at (x, y) facing `yaw` (rad, the game's), at rest, and
    *  the ball at `ball` if given. */
-  debugPlace(car: { readonly x: number; readonly y: number; readonly yaw: number; readonly boost?: number }, ball?: Vec3): void {
+  debugPlace(car: { readonly x: number; readonly y: number; readonly yaw: number; readonly boost?: number }, ball?: Vec3, ballVelocity: Vec3 = ZERO): void {
     const forward = vec3(Math.cos(car.yaw), Math.sin(car.yaw), 0);
     const rot = { forward, right: vec3(-forward.y, forward.x, 0), up: vec3(0, 0, 1) };
     // (100 with Unlimited boost, at which a car takes no pads (CanPickup: !IsFull); else a round's 33; or as given)
     this.#world.setCar(this.#playerId, { pos: vec3(car.x, car.y, 17.01), vel: ZERO, angVel: ZERO, rot, boost: car.boost ?? (this.#unlimitedBoost ? 100 : BOOST_SPAWN_AMOUNT) });
     if (ball) {
       this.#ballHold = 0;
-      this.#world.setBall({ pos: ball, vel: ZERO, angVel: ZERO });
+      this.#world.setBall({ pos: ball, vel: ballVelocity, angVel: ZERO });
     }
     this.#snapViews();
   }
 
   /** For the browser tests: where the car is and how fast it goes */
-  debugCar(): { readonly pos: Vec3; readonly speed: number } {
+  debugCar(): { readonly pos: Vec3; readonly speed: number; readonly hitbox: Vec3 } {
     const car = this.#world.car(this.#playerId);
-    return { pos: car.pos, speed: Math.hypot(car.vel.x, car.vel.y, car.vel.z) };
+    return { pos: car.pos, speed: Math.hypot(car.vel.x, car.vel.y, car.vel.z), hitbox: this.#world.carConfig(this.#playerId).hitboxSize };
   }
 
   /** For screenshots: a demolition's effect at `at` (game frame) */

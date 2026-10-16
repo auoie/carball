@@ -114,7 +114,10 @@ export interface OnlineStats {
   readonly ping: number | null; // ms, smoothed
   readonly ackFrame: number;
   readonly frame: number;
-  readonly cars: readonly { readonly id: number; readonly pos: Vec3 }[];
+  /** Each car drawn: its place and its garage car (the roster's model, as drawn) */
+  readonly cars: readonly { readonly id: number; readonly pos: Vec3; readonly model: number }[];
+  /** This player's car */
+  readonly localCar: number;
   readonly corrections: number;
   readonly localMispredictions: number;
   readonly kickoffCountdown: number; // ticks left (cars get no input)
@@ -318,7 +321,8 @@ export class Online {
       ping: this.#session.ping,
       ackFrame: this.#session.ackFrame,
       frame: this.#predictor.frame,
-      cars: [...this.#cars].map(([id, entry]) => ({ id, pos: entry.state.current.pos })),
+      cars: [...this.#cars].map(([id, entry]) => ({ id, pos: entry.state.current.pos, model: entry.model })),
+      localCar: this.#localCar,
       corrections: this.#predictor.stats.corrections,
       localMispredictions: this.#predictor.stats.localMispredictions,
       kickoffCountdown: this.#world.kickoffCountdown(),
@@ -735,6 +739,7 @@ export class Online {
     for (const [id, entry] of this.#cars) {
       if (!ids.has(id)) {
         this.#renderer.scene.remove(entry.view.root);
+        entry.view.dispose();
         this.#cars.delete(id);
         this.#demolitions.forget(id);
       }
@@ -745,7 +750,11 @@ export class Online {
       if (entry?.model === model) continue;
       const state = this.#world.car(id);
       const view = new CarView(this.#world.carConfig(id), state.team, this.#effects.particles, model);
-      if (entry) this.#renderer.scene.remove(entry.view.root);
+      // (the old view's flip effect, if it had it, comes back on the next frame's attach)
+      if (entry) {
+        this.#renderer.scene.remove(entry.view.root);
+        entry.view.dispose();
+      }
       this.#renderer.scene.add(view.root);
       this.#cars.set(id, { view, model, state: entry?.state ?? new Interpolated(state), error: entry?.error ?? new SyncError() });
     }

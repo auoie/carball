@@ -1,6 +1,7 @@
 // The garage's preview (the user's feature, 2026-10-16): the chosen car in the chosen team's colour, turning slowly on
-// a small view of its own, drawn only while the garage shows. The same model the game draws (src/render/carModel.ts).
-import { AmbientLight, type BufferGeometry, type Color, DirectionalLight, Group, Mesh, PerspectiveCamera, Scene, WebGLRenderer } from "three";
+// a small view of its own, drawn only while the garage shows (its WebGL context made on opening and let go on leaving:
+// RV-468). The same model the game draws (src/render/carModel.ts).
+import { AmbientLight, type BufferGeometry, type Color, DirectionalLight, Group, type Material, Mesh, PerspectiveCamera, Scene, WebGLRenderer } from "three";
 import type { CarConfig, Team } from "../engine/world";
 import { buildCarModel } from "../render/carModel";
 import { toThreeVector } from "../render/coords";
@@ -11,7 +12,7 @@ import { vec3 } from "../math/vec";
 const PREVIEW = { width: 360, height: 210, fov: 32, distance: 290, height3d: 105, lookAt: 22, spin: 0.5 } as const;
 
 export class GaragePreview {
-  readonly element: HTMLCanvasElement;
+  #element: HTMLCanvasElement;
   readonly #config: (car: number) => CarConfig | null;
   readonly #paint: (team: Team) => Color;
   #renderer: WebGLRenderer | null = null;
@@ -27,17 +28,27 @@ export class GaragePreview {
   constructor(config: (car: number) => CarConfig | null, paint: (team: Team) => Color) {
     this.#config = config;
     this.#paint = paint;
-    this.element = document.createElement("canvas");
-    this.element.className = "garage-preview";
-    this.element.width = PREVIEW.width;
-    this.element.height = PREVIEW.height;
-    this.element.setAttribute("aria-hidden", "true");
+    this.#element = GaragePreview.#canvas();
     this.#scene.add(new AmbientLight(0xffffff, 1.1), this.#turntable);
     const sun = new DirectionalLight(0xffffff, 2.2);
     sun.position.copy(toThreeVector(vec3(300, -400, 600)));
     this.#scene.add(sun);
     this.#camera.position.copy(toThreeVector(vec3(-PREVIEW.distance, -PREVIEW.distance * 0.35, PREVIEW.height3d)));
     this.#camera.lookAt(toThreeVector(vec3(0, 0, PREVIEW.lookAt)));
+  }
+
+  /** The view on the page (a new one after each `stop`: a canvas whose context was let go can't have another) */
+  get element(): HTMLCanvasElement {
+    return this.#element;
+  }
+
+  static #canvas(): HTMLCanvasElement {
+    const canvas = document.createElement("canvas");
+    canvas.className = "garage-preview";
+    canvas.width = PREVIEW.width;
+    canvas.height = PREVIEW.height;
+    canvas.setAttribute("aria-hidden", "true");
+    return canvas;
   }
 
   /** The car and colour to show (the model built anew when either changes) */
@@ -47,7 +58,10 @@ export class GaragePreview {
     for (const child of [...this.#turntable.children]) {
       this.#turntable.remove(child);
       child.traverse((o) => {
-        if (o instanceof Mesh) (o.geometry as BufferGeometry).dispose();
+        if (!(o instanceof Mesh)) return;
+        (o.geometry as BufferGeometry).dispose();
+        const material = o.material as Material | Material[];
+        for (const m of Array.isArray(material) ? material : [material]) m.dispose();
       });
     }
     const config = this.#config(car);
@@ -70,14 +84,24 @@ export class GaragePreview {
     this.#frame = requestAnimationFrame(step);
   }
 
+  /** The garage left: no more frames, and its WebGL context let go (its canvas swapped for a fresh one in place, the
+   *  next opening's) */
   stop(): void {
     cancelAnimationFrame(this.#frame);
     this.#frame = 0;
+    const renderer = this.#renderer;
+    if (!renderer) return;
+    this.#renderer = null;
+    renderer.dispose();
+    renderer.forceContextLoss();
+    const fresh = GaragePreview.#canvas();
+    this.#element.replaceWith(fresh);
+    this.#element = fresh;
   }
 
   #draw(): void {
     try {
-      this.#renderer ??= new WebGLRenderer({ canvas: this.element, alpha: true, antialias: true });
+      this.#renderer ??= new WebGLRenderer({ canvas: this.#element, alpha: true, antialias: true });
     } catch {
       return; // (no WebGL here: no preview)
     }

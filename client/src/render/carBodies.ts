@@ -267,7 +267,9 @@ export function buildCarBody(look: CarBodySpec, config: CarConfig, paint: Color)
   const tailHalf = Z(F.halfWidthTail);
   const noseTop = Y(F.noseTop);
   box(trim, 1, 5, Math.max(4, 2 * noseHalf - 20), front + 0.1, noseTop - 7, 0);
-  box(trim, 4, 4, 2 * noseHalf - 1, front - 1.5, bottom + 2, 0);
+  // (the front lip 1 uu under the sills: its underside clear of the body's, not in its plane, where they z-fought: the
+  // user's finding)
+  box(trim, 4, 5, 2 * noseHalf - 1, front - 1.5, bottom + 1.5, 0);
   box(trim, 4, 4, 2 * tailHalf - 1, rear + 1.5, bottom + 7, 0);
   for (const s of [-1, 1]) {
     box(headlight, 1, 4, Math.min(10, noseHalf - 4), front + 0.2, noseTop - 5, s * (noseHalf - 6));
@@ -282,7 +284,8 @@ export function buildCarBody(look: CarBodySpec, config: CarConfig, paint: Color)
     box(trim, iF - ib, roof - 4 - deckH, Z(18), (ib + iF) / 2, (roof - 4 + deckH) / 2, 0);
     const [wb, wf, wy] = [X(wingBack), X(wingFront), Y(wingTop)];
     box(body, wf - wb, 1.6, 2 * Z(halfSpan), (wb + wf) / 2, wy - 0.8, 0);
-    for (const s of [-1, 1]) box(trim, 2, wy - tailTop, 1.6, (wb + wf) / 2, (wy + tailTop) / 2, s * Z(halfSpan - 8));
+    // (the uprights up into the wing's middle: their tops inside it, not in its top's plane)
+    for (const s of [-1, 1]) box(trim, 2, wy - 0.8 - tailTop, 1.6, (wb + wf) / 2, (wy - 0.8 + tailTop) / 2, s * Z(halfSpan - 8));
   }
   // The Merc's roof lip and spare wheel
   if (look.roofLip) {

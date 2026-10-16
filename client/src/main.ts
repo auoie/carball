@@ -7,7 +7,8 @@ import { Freeplay } from "./game/freeplay";
 import { Online } from "./game/online";
 import type { SessionEnd } from "./game/sessionEnd";
 import { Matchmaking, OWN_SEARCH_TEXT } from "./game/matchmaking";
-import { Connection, type JoinPreferences, type MatchSession, RefusedError, devServerAddress } from "./net/connection";
+import { Connection, type MatchSession, RefusedError, devServerAddress } from "./net/connection";
+import { joinPreferences } from "./net/joinPreferences";
 import { REFUSED_TOKEN } from "./net/protocol";
 import { type MenuNotice, freePlayUrl, pageUrl, queueAddress, storeClaim, storeNotice, takeClaim, takeNotice } from "./net/pages";
 import { Search } from "./net/search";
@@ -21,7 +22,7 @@ import { loadDemolitionHusks } from "./render/demolition";
 import { loadFennec } from "./render/fennec";
 import { TEAM_CAR_COLORS } from "./render/entities";
 import { type ThemeName, createTheme, createThemeOrNight, preloadTheme, themeName, themeOfMap } from "./render/themes";
-import { CARS, storedCar, storedTeam } from "./game/cars";
+import { CARS, carChoice, storedCar, storedTeam } from "./game/cars";
 import { GaragePreview } from "./ui/garagePreview";
 import type { Theme } from "./render/themes/theme";
 import { type Settings, loadSettings } from "./settings/settings";
@@ -96,9 +97,11 @@ async function main(): Promise<void> {
     const viewerWorld = World.create(engine);
     const team = params.get("team") === "1" ? 1 : 0;
     const bodies = [CarBody.Standard, CarBody.Flat, CarBody.Wide, CarBody.Long, CarBody.Mid, CarBody.Tall];
-    const id = viewerWorld.addCar(team, bodies[Number(params.get("body") ?? 0)] ?? CarBody.Standard);
+    // (&car=N: the garage's car N on its preset; else &body=N's hitbox with the Sport's look)
+    const car = params.has("car") ? carChoice(Number(params.get("car"))) : null;
+    const id = viewerWorld.addCar(team, car?.body ?? bodies[Number(params.get("body") ?? 0)] ?? CarBody.Standard);
     const { showCarViewer } = await import("./debug/carViewer");
-    const view = showCarViewer(new Renderer(canvas), viewerWorld.carConfig(id), TEAM_CAR_COLORS[team], team);
+    const view = showCarViewer(new Renderer(canvas), viewerWorld.carConfig(id), TEAM_CAR_COLORS[team], team, car?.id ?? 0);
     (window as unknown as { carballCarViewer?: unknown }).carballCarViewer = { view };
     view(-140, 15);
     status.hidden = true;
@@ -133,18 +136,6 @@ async function main(): Promise<void> {
   }
   const onlinePage = server !== null || claim !== null;
   let settings = loadSettings();
-  // (what a match session's hello asks for: the player's car preferences, name and chat filters)
-  const joinPreferences = (s: Settings): JoinPreferences => ({
-    team: 255,
-    model: storedCar(),
-    dodgeDeadzone: s.controller.dodgeDeadzone,
-    steeringSensitivity: s.controller.steeringSensitivity,
-    airControlSensitivity: s.controller.aerialSensitivity,
-    autoSkipReplay: s.options.autoSkipReplay,
-    name: s.chat.name,
-    quickChat: s.chat.quickChatFilter,
-    blockNonTactical: s.chat.blockNonTactical,
-  });
 
   // The arena (src/render/themes/: its look and soundscape): free play's, the map select's last pick; an online match's,
   // the server's (its welcome's map, every player's the same; a queue match's known from its MatchFound, so it loads while
@@ -271,7 +262,9 @@ async function main(): Promise<void> {
       modal.isOpen
         ? visibleMenu("#modal")
         : panel.isOpen
-        ? visibleMenu("#settings")
+        ? panel.confirming
+          ? visibleMenu("#settings-confirm")
+          : visibleMenu("#settings")
         : searchView?.panelOpen
           ? visibleMenu("#search-panel")
           : mainMenu?.isOpen
@@ -279,17 +272,22 @@ async function main(): Promise<void> {
           : pause.isOpen
             ? visibleMenu("#pause-menu")
             : document.querySelector("#end-screen .end-buttons button") && visibleMenu("#end-screen .end-menu"),
-    // (B backs out of an open menu: never opens the pause menu)
+    // (B backs out of an open menu, a level at a time: never opens the pause menu; at the main menu's top, nothing)
     back: () => {
       if (modal.isOpen) modal.close();
       else if (panel.isOpen) panel.escape();
       else if (searchView?.panelOpen) searchView.closePanel();
-      else if (mainMenu?.isOpen) mainMenu.back();
+      else if (mainMenu?.isOpen) return mainMenu.back();
       else if (pause.isOpen) pause.close();
+      else return false;
+      return true;
     },
     start: escape,
     // (a rebind waiting for a pad input takes every button, B and Start too: Escape still cancels it)
     capturing: () => panel.capturingGamepad,
+    sound: (cue) => {
+      audio.menu(cue);
+    },
   });
   // (the games don't take input under a menu, nor a pad button a menu took that's still down)
   const inputEnabled = (): boolean => !menusOpen();
@@ -413,8 +411,8 @@ async function main(): Promise<void> {
     (window as unknown as { carballMatchmaking?: unknown }).carballMatchmaking = () => ({ state: matchmaking.state, panelOpen: view.panelOpen });
     // For screenshots and the browser tests
     (window as unknown as { carballFreeplay?: unknown }).carballFreeplay = {
-      place: (car: { x: number; y: number; yaw: number; boost?: number }, ball?: { x: number; y: number; z: number }) => {
-        freeplay.debugPlace(car, ball);
+      place: (car: { x: number; y: number; yaw: number; boost?: number }, ball?: { x: number; y: number; z: number }, ballVelocity?: { x: number; y: number; z: number }) => {
+        freeplay.debugPlace(car, ball, ballVelocity);
       },
       car: () => freeplay.debugCar(),
       demolition: (at: { x: number; y: number; z: number }) => {
@@ -523,6 +521,9 @@ async function main(): Promise<void> {
     if (e.code === "KeyM") panel.apply({ ...settings, options: { ...settings.options, muted: !settings.options.muted } });
   });
 
+  // (the scene's shader programs compiled while the loading line shows, not in the first frames: RV-458)
+  status.textContent = "Loading the arena…";
+  await renderer.prepare();
   status.hidden = true;
   let last = performance.now();
   const frame = (now: number): void => {

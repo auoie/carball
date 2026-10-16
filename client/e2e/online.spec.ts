@@ -9,7 +9,8 @@ interface Stats {
   ping: number | null;
   ackFrame: number;
   frame: number;
-  cars: { id: number; pos: { x: number; y: number; z: number } }[];
+  cars: { id: number; pos: { x: number; y: number; z: number }; model: number }[];
+  localCar: number;
   corrections: number;
   localMispredictions: number;
   kickoffCountdown: number;
@@ -40,6 +41,14 @@ test("two players: one drives, the other sees it through the server", async ({ p
   await join(page, errors);
   const otherContext = await browser.newContext({ viewport: { width: 640, height: 360 } }); // (small: software rendering)
   await hideGamepads(otherContext);
+  // (the second player's garage car the Tall, chosen before: its hello asks for it, CM29)
+  await otherContext.addInitScript(() => {
+    try {
+      localStorage.setItem("carball.car", "3");
+    } catch {
+      // (a blank page's: no storage)
+    }
+  });
   const other = await otherContext.newPage();
   await join(other, errors);
 
@@ -49,6 +58,13 @@ test("two players: one drives, the other sees it through the server", async ({ p
   await expect(page.locator("#net")).toContainText("2 cars", { timeout: 15_000 });
   await expect(other.locator("#net")).toContainText("2 cars", { timeout: 15_000 });
   await expect(page.locator("#net")).toContainText(/ping \d+ ms/);
+  // Each car drawn as its player's garage car, from the roster (CM27): the second player's the Tall on both pages, the
+  // first's the default Sport
+  const tall = (await stats(other)).localCar;
+  const sport = (await stats(page)).localCar;
+  for (const p of [page, other]) {
+    await expect.poll(async () => Object.fromEntries((await stats(p)).cars.map((c) => [c.id, c.model])), { timeout: 10_000 }).toEqual({ [tall]: 3, [sport]: 0 });
+  }
   // The match clock, from the server: full until the ball is first hit or 5 s after go, then counting down (how far
   // depends on how long the test took to get here: not the point; a fresh match, so within its first minute)
   await expect(page.locator("#clock")).toHaveText(/^[45]:\d\d$/);

@@ -1,7 +1,13 @@
 // Settings menu (from the pause menu or the main menu): rebind controls, camera settings, controller settings, audio. Changes apply at once
 // and are saved in the browser.
 import type { CameraSettings } from "../camera/carballCamera";
-import { ACTIONS, type Action, type GamepadInput, type KeyboardInput, inputName } from "../input/bindings";
+import { ACTIONS, type Action, type GamepadInput, type KeyboardInput, inputName, onPadStyle } from "../input/bindings";
+import { glyphElement, keyGlyph } from "./keyGlyph";
+import { checkbox, cycler, cyclerControl, slider } from "./controls";
+import { END_TEXT } from "../game/matchSequence";
+
+/** The pad's X Default asks first (MENU-14: a confirm, NO focused): our words, the game's YES / NO */
+export const DEFAULT_QUESTION = "Reset this page to its defaults?";
 import { readGamepad } from "../input/devices";
 import {
   AUDIO_LIMITS,
@@ -134,6 +140,10 @@ export class SettingsPanel {
   #settings: Settings;
   #tab: Tab = "controls";
   #capture: { action: Action; device: Device; cancel: () => void } | null = null;
+  /** The pad's X Default's question over the page (YES resets it, NO or B leaves it) */
+  readonly #confirm: HTMLElement;
+  /** The bumpers' glyphs at the tab strip's ends (the pad's mode only) */
+  readonly #tabGlyphs: readonly [HTMLElement, HTMLElement];
 
   constructor(
     host: HTMLElement,
@@ -153,19 +163,57 @@ export class SettingsPanel {
       this.#tabButton("video", "Video"),
       this.#tabButton("audio", "Audio"),
     ]);
-    tabs.dataset["padSequence"] = ""; // (a pad's left and right step through the tabs in order, across wrapped rows)
+    // (a pad's bumpers switch the tabs, wrapping: the list isn't in its rows, nor Close (B and Start close))
+    tabs.dataset["padTabs"] = "";
+    tabs.dataset["padSkip"] = "";
     const close = el("button", { className: "settings-close", textContent: "Close (Esc)" });
+    close.dataset["padSkip"] = "";
     close.addEventListener("click", () => { this.close(); });
-    this.#root = el("div", { className: "settings" }, [el("div", { className: "settings-header" }, [el("h2", { textContent: "Settings" }), tabs, close]), this.#body]);
+    // (the pad's X Default asks first: YES runs the page's own reset, NO (focused) leaves it)
+    const yes = el("button", { textContent: END_TEXT.yes });
+    const no = el("button", { textContent: END_TEXT.no });
+    no.dataset["padDefault"] = "";
+    this.#confirm = el("div", { className: "settings-confirm" }, [el("div", { className: "settings-confirm-box" }, [el("p", { textContent: DEFAULT_QUESTION }), el("div", { className: "settings-confirm-buttons" }, [yes, no])])]);
+    this.#confirm.id = "settings-confirm";
+    this.#confirm.hidden = true;
+    yes.addEventListener("click", () => {
+      this.#confirm.hidden = true;
+      this.#body.querySelector<HTMLButtonElement>("[data-pad-reset]")?.click();
+    });
+    no.addEventListener("click", () => {
+      this.#confirm.hidden = true;
+    });
+    this.#tabGlyphs = [el("span", { className: "settings-tab-glyph" }), el("span", { className: "settings-tab-glyph" })];
+    this.#root = el("div", { className: "settings" }, [
+      el("div", { className: "settings-header" }, [el("h2", { textContent: "Settings" }), this.#tabGlyphs[0], tabs, this.#tabGlyphs[1], close]),
+      this.#body,
+      this.#confirm,
+    ]);
     this.#root.id = "settings";
+    // (B Back in the pad's hints: a level over the menu it opened from; the hints under the panel)
+    this.#root.dataset["padBack"] = "";
+    this.#root.dataset["padHintsUnder"] = "";
     this.#root.hidden = true;
+    this.#root.addEventListener("pad-default", () => {
+      this.#confirm.hidden = false;
+    });
     host.append(this.#root);
+    // (the pad's names in its family's: a pad seen after the panel drew them, or another plugged in)
+    onPadStyle(() => {
+      if (this.isOpen) this.#render();
+    });
   }
 
-  /** Escape while it's open: a rebind's capture ends, else it closes */
+  /** Escape while it's open: a rebind's capture ends, else the Default question goes, else it closes */
   escape(): void {
     if (this.#capture) this.#stopCapture();
+    else if (!this.#confirm.hidden) this.#confirm.hidden = true;
     else this.close();
+  }
+
+  /** The Default question is up (the pad's menu while it is) */
+  get confirming(): boolean {
+    return this.isOpen && !this.#confirm.hidden;
   }
 
   get isOpen(): boolean {
@@ -185,6 +233,9 @@ export class SettingsPanel {
     // (the free look's captured mouse is let go: the menu needs the pointer)
     if (document.pointerLockElement) document.exitPointerLock();
     this.#root.hidden = false;
+    // (always on the first tab, as the game's: MENU-15)
+    this.#tab = "controls";
+    this.#confirm.hidden = true;
     this.#render();
   }
 
@@ -219,6 +270,10 @@ export class SettingsPanel {
   }
 
   #render(): void {
+    // (the bumpers' glyphs in the connected pad's family)
+    this.#tabGlyphs.forEach((g, i) => {
+      g.replaceChildren(glyphElement(keyGlyph({ kind: "padButton", button: i === 0 ? 4 : 5 })));
+    });
     for (const b of this.#root.querySelectorAll<HTMLButtonElement>(".settings-tab")) {
       b.classList.toggle("active", b.dataset["tab"] === this.#tab);
     }
@@ -240,7 +295,20 @@ export class SettingsPanel {
                   : this.#tab === "video"
                     ? this.#videoTab()
                     : this.#audioTab();
+    // (each tab a page of the pad's: its focus kept while the settings are open; its reset the pad's X Default, its
+    // bindings' slots cleared by Y)
+    content.dataset["padPage"] = this.#tab;
+    const reset = [...content.querySelectorAll<HTMLButtonElement>("button")].find((b) => /^Reset (controls )?to defaults$/.test(b.textContent));
+    if (reset) {
+      reset.dataset["padReset"] = "";
+      content.dataset["padX"] = "";
+    }
+    if (this.#tab === "controls") content.dataset["padY"] = "";
+    // (the control that had the keyboard's focus has it again in the new page: a slider or list stepped by its keys goes
+    // on stepping)
+    const focused = document.activeElement instanceof HTMLElement && this.#body.contains(document.activeElement) ? sameControl(document.activeElement) : null;
     this.#body.replaceChildren(content);
+    if (focused) content.querySelector<HTMLElement>(focused)?.focus({ preventScroll: true });
   }
 
   // --- controls ---
@@ -284,6 +352,13 @@ export class SettingsPanel {
     });
     b.dataset["action"] = action;
     b.dataset["device"] = device;
+    // (a pad's face button with its glyph, in the connected pad's family: PlayStation's ✕ ○ □ △ before its name; an Xbox
+    // pad's letter, its name too, alone)
+    if (!capturing && input?.kind === "padButton" && input.button <= 3) {
+      const glyph = keyGlyph(input);
+      if (glyph.kind === "pad" && glyph.text === inputName(input)) b.replaceChildren(glyphElement(glyph));
+      else b.prepend(glyphElement(glyph), " ");
+    }
     b.addEventListener("click", (e) => {
       if (capturing) return; // the click itself is not the binding
       e.stopPropagation();
@@ -419,13 +494,14 @@ export class SettingsPanel {
     const apply = (next: InputCameraSettings): void => { this.#update({ ...this.#settings, [key]: next }); };
     const box = el("div", { className: "options" });
     for (const option of ["freeLook", "ballCamToggle", "invertPitch", "smoothing"] as const) {
-      const input = el("input");
-      input.type = "checkbox";
-      input.checked = current[option];
-      input.dataset["camera"] = key;
-      input.dataset["option"] = option;
-      input.addEventListener("change", () => { apply({ ...current, [option]: input.checked }); });
-      box.append(el("label", { className: "option" }, [input, el("span", { textContent: INPUT_CAMERA_LABELS[option] })]));
+      box.append(
+        checkbox({
+          label: INPUT_CAMERA_LABELS[option],
+          checked: current[option],
+          data: { camera: key, option },
+          onChange: (checked) => { apply({ ...current, [option]: checked }); },
+        }),
+      );
     }
     const numbers = (c: InputCameraSettings) => ({ accelRate: c.accelRate, decelRate: c.decelRate, freeLookSpeed: c.freeLookSpeed });
     const sliders = this.#sliders(
@@ -467,17 +543,14 @@ export class SettingsPanel {
       this.#update({ ...this.#settings, gameplay: { ...this.#settings.gameplay, ...next } });
     };
     const T = GAMEPLAY_TEXT;
-    const select = <K extends keyof GameplaySettings>(key: K, label: string, options: Readonly<Record<GameplaySettings[K], string>>): HTMLElement => {
-      const input = el("select");
-      input.dataset["setting"] = key;
-      for (const [value, text] of Object.entries(options) as [GameplaySettings[K], string][]) {
-        input.append(el("option", { value, textContent: text, selected: value === gameplay[key] }));
-      }
-      input.addEventListener("change", () => {
-        if (input.value in options) apply({ [key]: input.value });
+    const select = <K extends keyof GameplaySettings>(key: K, label: string, options: Readonly<Record<GameplaySettings[K], string>>): HTMLElement =>
+      cycler({
+        label,
+        options: Object.entries(options) as [GameplaySettings[K], string][],
+        value: gameplay[key],
+        data: { setting: key },
+        onChange: (value) => { apply({ [key]: value }); },
       });
-      return el("label", { className: "option" }, [el("span", { textContent: label }), input]);
-    };
     // (the game's creation order: free play's unlimited boost first, the goal replay's skip last: HT-5, RV-281)
     box.append(
       this.#checkboxes(["unlimitedBoost"]),
@@ -507,26 +580,17 @@ export class SettingsPanel {
     );
     box.classList.add("caps-labels"); // (HT-5, RV-281)
     const reset = box.lastElementChild;
-    const select = <K extends "nameplateMode" | "matchNotifications">(key: K, label: string, options: Readonly<Record<InterfaceSettings[K], string>>): HTMLElement => {
-      const input = el("select");
-      input.dataset["setting"] = key;
-      for (const [value, text] of Object.entries(options) as [InterfaceSettings[K], string][]) {
-        input.append(el("option", { value, textContent: text, selected: value === ui[key] }));
-      }
-      input.addEventListener("change", () => {
-        const value = input.value;
-        if (value in options) apply({ [key]: value });
+    const select = <K extends "nameplateMode" | "matchNotifications">(key: K, label: string, options: Readonly<Record<InterfaceSettings[K], string>>): HTMLElement =>
+      cycler({
+        label,
+        options: Object.entries(options) as [InterfaceSettings[K], string][],
+        value: ui[key],
+        data: { setting: key },
+        onChange: (value) => { apply({ [key]: value }); },
       });
-      return el("label", { className: "option" }, [el("span", { textContent: label }), input]);
-    };
     const options = el("div", { className: "options" });
     for (const key of ["teamColoredBoost", "metric", "ballCamIndicator", "ballArrow", "hideHud"] as const) {
-      const input = el("input", { type: "checkbox", checked: ui[key] });
-      input.dataset["setting"] = key;
-      input.addEventListener("change", () => {
-        apply({ [key]: input.checked });
-      });
-      options.append(el("label", { className: "option" }, [input, el("span", { textContent: T[key] })]));
+      options.append(checkbox({ label: T[key], checked: ui[key], data: { setting: key }, onChange: (checked) => { apply({ [key]: checked }); } }));
     }
     const extra = [select("nameplateMode", T.nameplateMode, T.nameplateModes), select("matchNotifications", T.matchNotifications, T.notifications), options];
     if (reset) reset.before(...extra);
@@ -547,32 +611,36 @@ export class SettingsPanel {
     name.addEventListener("change", () => {
       apply({ name: tidyName(name.value) });
     });
-    box.append(el("label", { className: "option" }, [el("span", { textContent: "Name (when you next join)" }), name]));
-    const filter = el("select");
-    filter.dataset["setting"] = "quickChatFilter";
-    for (const [value, label] of Object.entries(T.filters)) filter.append(el("option", { value, textContent: label, selected: value === chat.quickChatFilter }));
-    filter.addEventListener("change", () => {
-      const value = filter.value;
-      if (value === "everyone" || value === "team" || value === "friends" || value === "off") apply({ quickChatFilter: value });
-    });
-    box.append(el("label", { className: "option", title: T.quickChatDescription }, [el("span", { textContent: T.quickChat }), filter]));
-    const block = el("input", { type: "checkbox", checked: chat.blockNonTactical });
-    block.dataset["setting"] = "blockNonTactical";
-    block.addEventListener("change", () => {
-      apply({ blockNonTactical: block.checked });
-    });
-    box.append(el("label", { className: "option", title: T.blockNonTacticalDescription }, [block, el("span", { textContent: T.blockNonTactical })]));
+    box.append(el("label", { className: "option control-row" }, [el("span", { textContent: "Name (when you next join)" }), name]));
+    box.append(
+      cycler({
+        label: T.quickChat,
+        title: T.quickChatDescription,
+        options: Object.entries(T.filters) as [ChatSettings["quickChatFilter"], string][],
+        value: chat.quickChatFilter,
+        data: { setting: "quickChatFilter" },
+        onChange: (quickChatFilter) => { apply({ quickChatFilter }); },
+      }),
+      checkbox({
+        label: T.blockNonTactical,
+        title: T.blockNonTacticalDescription,
+        checked: chat.blockNonTactical,
+        data: { setting: "blockNonTactical" },
+        onChange: (blockNonTactical) => { apply({ blockNonTactical }); },
+      }),
+    );
     const slots = el("table", { className: "chat-slots" });
     T.rows.forEach((title, row) => {
       const cells = [0, 1, 2, 3].map((k) => {
         const slot = 4 * row + k;
-        const select = el("select");
-        select.dataset["slot"] = String(slot);
         // (sorted by their text, as the game's SortQuickChat: RV-256)
         const keys = slotPool(slot).toSorted((a, b) => presetText(a).localeCompare(presetText(b)));
-        for (const key of keys) select.append(el("option", { value: key, textContent: presetText(key), selected: key === chat.slots[slot] }));
-        select.addEventListener("change", () => {
-          apply({ slots: this.#settings.chat.slots.map((s, i) => (i === slot ? select.value : s)) });
+        const select = cyclerControl({
+          label: `${title} ${String(k + 1)}`,
+          options: keys.map((key) => [key, presetText(key)] as const),
+          value: chat.slots[slot] ?? "",
+          data: { slot: String(slot) },
+          onChange: (value) => { apply({ slots: this.#settings.chat.slots.map((s, i) => (i === slot ? value : s)) }); },
         });
         return el("td", {}, [select]);
       });
@@ -596,13 +664,17 @@ export class SettingsPanel {
     const box = el("div", { className: "sliders scoreboard-settings" });
     box.append(el("h3", { textContent: "Columns" }));
     columns.forEach((current, i) => {
-      const select = el("select");
-      select.dataset["column"] = String(i);
-      for (const c of SCOREBOARD_COLUMNS) select.append(el("option", { value: c.id, textContent: c.label, selected: c.id === current }));
-      select.addEventListener("change", () => {
-        this.#update({ ...this.#settings, scoreboard: { columns: this.#settings.scoreboard.columns.map((c, k) => (k === i ? select.value : c)) } });
-      });
-      box.append(el("label", { className: "option" }, [el("span", { textContent: `Column ${String(i + 1)}` }), select]));
+      box.append(
+        cycler({
+          label: `Column ${String(i + 1)}`,
+          options: SCOREBOARD_COLUMNS.map((c) => [c.id, c.label] as const),
+          value: current,
+          data: { column: String(i) },
+          onChange: (value) => {
+            this.#update({ ...this.#settings, scoreboard: { columns: this.#settings.scoreboard.columns.map((c, k) => (k === i ? value : c)) } });
+          },
+        }),
+      );
     });
     const reset = el("button", { className: "settings-reset", textContent: "Reset to defaults" });
     reset.dataset["reset"] = "scoreboard";
@@ -645,14 +717,14 @@ export class SettingsPanel {
   #checkboxes(keys: readonly (keyof Options)[]): HTMLElement {
     const box = el("div", { className: "options" });
     for (const key of keys) {
-      const input = el("input");
-      input.type = "checkbox";
-      input.checked = this.#settings.options[key];
-      input.dataset["option"] = key;
-      input.addEventListener("change", () => {
-        this.#update({ ...this.#settings, options: { ...this.#settings.options, [key]: input.checked } });
-      });
-      box.append(el("label", { className: "option" }, [input, el("span", { textContent: OPTION_LABELS[key] })]));
+      box.append(
+        checkbox({
+          label: OPTION_LABELS[key],
+          checked: this.#settings.options[key],
+          data: { option: key },
+          onChange: (checked) => { this.#update({ ...this.#settings, options: { ...this.#settings.options, [key]: checked } }); },
+        }),
+      );
     }
     return box;
   }
@@ -668,30 +740,34 @@ export class SettingsPanel {
     const rows = el("div", { className: "sliders" });
     for (const key of Object.keys(limits) as (keyof T & string)[]) {
       const range = limits[key];
-      const value = values[key] as number;
-      const input = el("input");
-      input.type = "range";
-      input.min = String(range.min);
-      input.max = String(range.max);
-      input.step = String(range.step);
-      input.value = String(value);
-      input.dataset["setting"] = key;
-      // (the game's percentage readout: round(v x 100) "%", HT-5)
-      const shown = (v: number): string => (percent ? `${String(Math.round(v * 100))}%` : formatNumber(v, range.step));
-      const output = el("output", { textContent: shown(value) });
-      input.addEventListener("input", () => {
-        output.textContent = shown(Number(input.value));
-      });
-      input.addEventListener("change", () => {
-        apply({ ...values, [key]: Number(input.value) });
-      });
-      rows.append(el("label", { className: "slider" }, [el("span", { textContent: labels[key] }), input, output]));
+      rows.append(
+        slider({
+          label: labels[key],
+          min: range.min,
+          max: range.max,
+          step: range.step,
+          value: values[key] as number,
+          // (the game's percentage readout: round(v x 100) "%", HT-5)
+          format: (v) => (percent ? `${String(Math.round(v * 100))}%` : formatNumber(v, range.step)),
+          data: { setting: key },
+          onChange: (value) => { apply({ ...values, [key]: value }); },
+        }),
+      );
     }
     const reset = el("button", { textContent: "Reset to defaults" });
     reset.addEventListener("click", () => { apply(defaults); });
     rows.append(reset);
     return rows;
   }
+}
+
+/** A selector for the control `el` is in the page made again (its role and data attributes, the pad's left out); null for
+ *  one with none */
+function sameControl(control: HTMLElement): string | null {
+  const data = Object.entries(control.dataset).filter(([k]) => !k.startsWith("pad") && k !== "value");
+  if (data.length === 0) return null;
+  const attr = (k: string): string => `data-${k.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`;
+  return data.map(([k, v]) => `[${attr(k)}="${CSS.escape(v ?? "")}"]`).join("");
 }
 
 function formatNumber(v: number, step: number): string {

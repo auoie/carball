@@ -184,6 +184,25 @@ describe("the pads' FX (VT-11a/b)", () => {
   });
 });
 
+describe("the pads' cost (RX19-A: 550k triangles at first)", () => {
+  it("every pad of a field drawn in under 40k triangles (the warm-up's copies not drawn while none is down)", () => {
+    // (the field's 6 big and 28 small pads)
+    const pads = [
+      ...[[-3584, 0], [3584, 0], [-3072, 4096], [3072, 4096], [-3072, -4096], [3072, -4096]].map(([x = 0, y = 0]) => ({ pos: vec3(x, y, 72), big: true, active: true, cooldown: 0 })),
+      ...Array.from({ length: 28 }, (_, i) => ({ pos: vec3(-3000 + 200 * i, 100, 64), big: false, active: true, cooldown: 0 })),
+    ];
+    const view = new BoostPadsView(pads);
+    let triangles = 0;
+    for (const child of view.root.children) {
+      if (!(child instanceof InstancedMesh) || !child.visible) continue;
+      const g = child.geometry as { index: { count: number } | null; getAttribute: (n: string) => { count: number } };
+      triangles += ((g.index?.count ?? g.getAttribute("position").count) / 3) * child.count;
+    }
+    expect(triangles).toBeLessThan(40_000);
+    for (const shape of [BIG_PAD, SMALL_PAD]) expect((padBaseGeometry(shape).index?.count ?? 0) / 3, shape.big ? "big base" : "small base").toBeLessThan(shape.big ? 3000 : 600);
+  });
+});
+
 describe("boost pads", () => {
   const pads = [
     { pos: vec3(0, -4240, 64), big: false, active: true, cooldown: 0 },

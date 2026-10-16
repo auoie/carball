@@ -11,7 +11,7 @@
 // order (FP1); 17: the queue (Hello's intent, playlist and token, MatchFound, IdleWarning, Kicked); 18: the moving
 // bodies' broadphase boxes (FP2); 19: a search's browser key and returning token, SearchCooldown; 20: SearchCooldown's
 // network flag; 21: the match's map (MatchFound, Welcome)
-export const PROTOCOL_VERSION = 22;
+export const PROTOCOL_VERSION = 23;
 /** A name's bytes at most (UTF-8) */
 export const MAX_NAME_BYTES = 32;
 export const MAX_INPUT_FRAMES = 10;
@@ -228,6 +228,8 @@ export const REFUSED_MODE = 3;
 /** Kicked's reasons: idle past 30 s of play (MM-37); the match was cancelled before it started (MM-18) */
 export const KICK_IDLE = 0;
 export const KICK_NOT_ALL_JOINED = 1;
+/** `Kicked`'s reason: a newer search from this browser (another of its tabs) took this search's place (RV-460) */
+export const KICK_REPLACED = 2;
 
 /** A welcome's version, read before the rest (another version's fields don't decode: RV-243); null: not a welcome */
 export function welcomeVersion(body: Uint8Array): number | null {

@@ -11,6 +11,7 @@ import {
   DoubleSide,
   HalfFloatType,
   LinearFilter,
+  LinearMipmapNearestFilter,
   RedFormat,
   RepeatWrapping,
   Mesh,
@@ -97,8 +98,9 @@ varying float vFade;
 #include <fog_pars_fragment>
 
 float saturate1(float x) { return clamp(x, 0.0, 1.0); }
-// The game's 1D gradients (Curve_Fire_01 R, Curve_Smoke_01 G), wrapping
-float curve(sampler2D table, float v) { return texture2D(table, vec2(fract(v), 0.5)).r; }
+// The game's 1D gradients (Curve_Fire_01 R, Curve_Smoke_01 G), wrapped by the sampler: v continuous per pixel (the time
+// term's frac taken on the CPU), so its mips are picked as the game's are and a far beam's stripes average out
+float curve(sampler2D table, float v) { return texture2D(table, vec2(v, 0.5)).r; }
 
 void main() {
   // (Three's frame: y up, z the game's y)
@@ -139,7 +141,7 @@ void main() {
 
 /** Curve_Fire_01_Pack.R and Curve_Smoke_01_Pack.G (both sRGB: decoded, as the GPU reads them, RV-60) at 256 points
  *  (values measured from the game's 1-D gradients; 256 keeps the rings' sharp edge, RV-70f), drawn as small data textures */
-const FIRE_CURVE = [
+export const FIRE_CURVE = [
   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.0005, 0.0011, 0.0017, 0.0021, 0.0029, 0.0035,
   0.0044, 0.0056, 0.0068, 0.008, 0.0097, 0.0113, 0.0137, 0.0156, 0.0181, 0.0212, 0.0242, 0.0273, 0.0307, 0.0356,
@@ -188,12 +190,43 @@ export function shockRing(d2: number, wave: number): number {
   return 1 - Math.abs(1 - 2 * Math.max(0, 8 * (x - 0.875)));
 }
 
-/** A 1-D curve as a texture (half floats: filterable everywhere WebGL2 is; linear filtering, wrapping) */
+/** `values` (a wrapping 1-D curve) at `n` texels, read as a linear filter reads it at each texel's centre */
+export function resampleCurve(values: readonly number[], n: number): number[] {
+  const m = values.length;
+  return Array.from({ length: n }, (_, i) => {
+    const u = ((i + 0.5) / n) * m - 0.5;
+    const k = Math.floor(u);
+    const f = u - k;
+    return (values[((k % m) + m) % m] ?? 0) * (1 - f) + (values[(((k + 1) % m) + m) % m] ?? 0) * f;
+  });
+}
+
+/** A 1-D curve's mips (its texels' box averages in linear space, halving to 1 texel: the game's) */
+export function curveMips(values: readonly number[]): number[][] {
+  const levels = [[...values]];
+  for (let last = levels[0] ?? []; last.length > 1; ) {
+    const next = Array.from({ length: Math.floor(last.length / 2) }, (_, i) => ((last[2 * i] ?? 0) + (last[2 * i + 1] ?? 0)) / 2);
+    levels.push(next);
+    last = next;
+  }
+  return levels;
+}
+
+/** Curve_Fire_01_Pack's width (1 x 512, 10 mips, BR1): ours resampled to it so its mips change where the game's do */
+const FIRE_TEXELS = 512;
+
+/** A 1-D curve as a texture (half floats: filterable everywhere WebGL2 is), wrapping, with its mips: linear in a mip, the
+ *  nearest mip (the game's Effects group: point mip selection, anisotropy 4, BR1) */
 function curveTexture(values: readonly number[]): DataTexture {
-  const texture = new DataTexture(new Uint16Array(values.map((v) => DataUtils.toHalfFloat(v))), values.length, 1, RedFormat, HalfFloatType);
+  const halves = (level: readonly number[]): Uint16Array => new Uint16Array(level.map((v) => DataUtils.toHalfFloat(v)));
+  const levels = curveMips(values);
+  const texture = new DataTexture(halves(values), values.length, 1, RedFormat, HalfFloatType);
+  texture.mipmaps = levels.map((level) => ({ data: halves(level), width: level.length, height: 1 }));
+  texture.generateMipmaps = false;
   texture.wrapS = RepeatWrapping;
   texture.magFilter = LinearFilter;
-  texture.minFilter = LinearFilter;
+  texture.minFilter = LinearMipmapNearestFilter;
+  texture.anisotropy = 4;
   texture.needsUpdate = true;
   return texture;
 }
@@ -262,7 +295,7 @@ export class CageBeams {
       opacity: { value: 1 },
       shockWave: { value: -0.25 },
       time: { value: 0 },
-      fire: { value: curveTexture(FIRE_CURVE) },
+      fire: { value: curveTexture(resampleCurve(FIRE_CURVE, FIRE_TEXELS)) },
       smoke: { value: curveTexture(SMOKE_CURVE) },
     };
     const material = new ShaderMaterial({
@@ -291,6 +324,7 @@ export class CageBeams {
   }
 
   set time(seconds: number) {
-    if (this.#uniforms["time"]) this.#uniforms["time"].value = seconds;
+    // (its whole seconds dropped: every use is periodic in a second, and the texture coordinates stay small: BR1's cb0[59])
+    if (this.#uniforms["time"]) this.#uniforms["time"].value = seconds - Math.floor(seconds);
   }
 }

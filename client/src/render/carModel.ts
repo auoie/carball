@@ -5,7 +5,7 @@
 // sill cladding: the user's choice), a side vent, a roof spoiler. Our own low-poly model; on the dev server with the
 // game's own Fennec exported locally, cars of its hitbox wear that instead (src/render/fennec.ts).
 // Local frame (Three.js): x forward, y up, z right; the origin is the car's (the physics body's).
-import { BoxGeometry, type Color, Group, type Material, Mesh, Shape, ShapeGeometry, Vector2 } from "three";
+import { BoxGeometry, type Color, Group, type Material, Mesh, type Object3D, Raycaster, Shape, ShapeGeometry, Vector2, Vector3 } from "three";
 import { fennecModel } from "./fennec";
 import type { CarConfig } from "../engine/world";
 import { mergeByMaterial } from "./merge";
@@ -65,6 +65,28 @@ const TAIL_TAPER = 14;
 /** The Fennec's proportions set on a hitbox (measured on the Octane's) */
 export function fennecFrame(config: CarConfig): BodyFrame {
   return bodyFrame(FENNEC.ground, OCTANE_HITBOX, config);
+}
+
+/** Where a drawn body's boost trail and idle exhaust come out (RV-470: the Fennec's sockets, at x -57, sit inside some
+ *  of these bodies): `behind` uu behind the body's back where it meets the line along the car at the Fennec's sockets'
+ *  height over the ground (29.16 uu: 12.86 over the car's origin, its ground 16.3 under that) and their spread (20.43
+ *  each side), set on the car's hitbox as its body is */
+export const BODY_EXHAUST = { behind: 1, height: 29.16, spread: 20.43 } as const;
+
+/** A car's exhausts on its `model` (buildCarModel's, not yet posed), in its frame (x forward, y up, z right): left, then
+ *  right. The body's back found along each line (its glass left out) */
+export function carExhausts(model: Object3D, config: CarConfig, car = 0): readonly [Vector3, Vector3] {
+  const look = carBody(car);
+  const { x: X, y: Y, z: Z } = look ? bodyFrame(look.spec.ground, look.hitbox, config) : fennecFrame(config);
+  const rear = X((look?.spec ?? FENNEC).rear);
+  const [y, z] = [Y(BODY_EXHAUST.height), Z(BODY_EXHAUST.spread)];
+  model.updateMatrixWorld(true);
+  const solid = model.children.filter((part) => part.name !== "glass");
+  const at = (side: number): Vector3 => {
+    const hit = new Raycaster(new Vector3(rear - 50, y, side * z), new Vector3(1, 0, 0)).intersectObjects(solid)[0];
+    return new Vector3((hit?.point.x ?? rear) - BODY_EXHAUST.behind, y, side * z);
+  };
+  return [at(-1), at(1)];
 }
 
 /** The model as one mesh per material (seven draw calls), named after the material: body, trim, glass, headlight,
@@ -225,7 +247,9 @@ export function buildCarModel(config: CarConfig, paint: Color, team = 0, car = 0
   const noseHalf = halfWidth * noseRatio;
   const tailHalf = halfWidth * tailRatio;
   box(trim, 1, 6, 2 * noseHalf - 22, front + 0.1, Y(F.noseTop) - 7, 0);
-  box(trim, 4, 4, 2 * noseHalf - 1, front - 1.5, bottom + 2, 0);
+  // (the front lip 1 uu under the sills: its underside clear of the body's, not in its plane, where they z-fought: the
+  // user's finding)
+  box(trim, 4, 5, 2 * noseHalf - 1, front - 1.5, bottom + 1.5, 0);
   box(trim, 4, 4, 2 * tailHalf - 1, rear + 1.5, bottom + 7, 0);
   // A side vent behind the front wheel
   const sillEnd = frontWheel.x - archHalfWidth(frontWheel) - VENT_GAP;
