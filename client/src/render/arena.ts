@@ -189,10 +189,14 @@ export class ArenaView {
     };
     const cage = new Mesh(geometry(cageIndices), this.#cage);
     cage.renderOrder = ARENA_PRIORITY.base; // (FFCage_Full: TRN1)
-    // (the wall's foot the game's baked frame (Side_Trim: AV-10, H-4), reflecting the capture, the ball's shadow up it)
-    const trim = new Mesh(geometry(trimIndices), new SideTrimMaterial(this.#grassCube.uniform, this.#cage.ballPosition, BALL_RADIUS));
+    // (the wall's foot the game's baked frame (Side_Trim: AV-10, H-4), reflecting the capture, the ball's shadow up it; its
+    // cap up to the glow sheets' foot)
+    const trimMaterial = new SideTrimMaterial(this.#grassCube.uniform, this.#cage.ballPosition, BALL_RADIUS);
+    const trim = new Mesh(geometry(trimIndices), trimMaterial);
+    const cap = new Mesh(trimCap(surface), trimMaterial);
+    cap.name = "trim cap";
     const group = new Group();
-    group.add(cage, trim, ...glowSheets(this.#style), backGlass(0), backGlass(1));
+    group.add(cage, trim, cap, ...glowSheets(this.#style), backGlass(0), backGlass(1));
     return group;
   }
 
@@ -319,11 +323,62 @@ const BACK_GLASS = { y: 5124 } as const;
 /** The game's team glow sheets (AV-11, Field_STD_Glow): 16 uu behind the walls, from the trim's cap (z 272) to 400,
  *  from |y| 128 on the side walls round the corners and along the back walls to |x| 2048 */
 const GLOW_SHEET = { behind: 16, z0: 272, z1: 400, y0: 128, x1: 2048 } as const;
+/** The trim's cap (AV-10: z 256-272 above the r 256 fillet), this far in front of the wall (uu) */
+const TRIM_CAP = { z0: 256, z1: GLOW_SHEET.z0, inset: 2 } as const;
 /** The trim's grey (the game's: a light, slightly metallic grey round the wall's foot) */
 const TRIM_COLOR = 0x9aa0a8;
 /** The frame round a goal mouth: its width on the back wall, and the light along its inner edge (uu) */
 const FRAME_WIDTH = 70;
 const FRAME_LIGHT_WIDTH = 14;
+
+/** The trim's cap (AV-10: Side_Trim covers the r 256 floor fillet up to a cap at z 256-272), so the trim meets the glow
+ *  sheets' foot (z 272; the user's finding, 2026-10-16: a dark band of bare cage between them): along the fillet's top
+ *  edge where it is at z 256 (the side walls, their corners and the diagonal; not the back corners and back walls, whose
+ *  lower fillet AV-10 gives other pieces) and where the glow sheets run (|y| from 128, cut there). Upright, `inset` uu in
+ *  front of the wall: over our cage's overlay, which lies on the wall (the game's sits 4 uu behind its cap) */
+export function trimCap(surface: ArenaSurface): BufferGeometry {
+  const { positions, bands, indices } = surface;
+  const at = (v: number): [number, number, number] => [positions[3 * v] ?? 0, positions[3 * v + 1] ?? 0, positions[3 * v + 2] ?? 0];
+  const top = (v: number): boolean => bands[v] === 1 && Math.abs(at(v)[2] - TRIM_CAP.z0) < 0.5;
+  const pos: number[] = [];
+  const idx: number[] = [];
+  // The fillet's top edges, in their trim triangles' order (each in one of them: the triangle above it is the cage's)
+  for (let i = 0; i < indices.length; i += 3) {
+    const tri = [indices[i] ?? 0, indices[i + 1] ?? 0, indices[i + 2] ?? 0];
+    if (!tri.every((v) => (bands[v] ?? -1) >= 0)) continue;
+    for (let k = 0; k < 3; k++) {
+      const a = tri[k] ?? 0;
+      const b = tri[(k + 1) % 3] ?? 0;
+      if (!top(a) || !top(b)) continue;
+      let [ax, ay] = at(a);
+      let [bx, by] = at(b);
+      if (Math.abs(ay) < GLOW_SHEET.y0 && Math.abs(by) < GLOW_SHEET.y0) continue;
+      // (an edge across |y| 128: cut where the glow sheet begins)
+      const cut = (fromX: number, fromY: number, toX: number, toY: number): [number, number] => {
+        const f = (Math.sign(toY) * GLOW_SHEET.y0 - fromY) / (toY - fromY);
+        return [fromX + (toX - fromX) * f, fromY + (toY - fromY) * f];
+      };
+      if (Math.abs(ay) < GLOW_SHEET.y0) [ax, ay] = cut(ax, ay, bx, by);
+      if (Math.abs(by) < GLOW_SHEET.y0) [bx, by] = cut(bx, by, ax, ay);
+      // (towards the field: the edge's normal in the plan that points at the centre)
+      const length = Math.hypot(bx - ax, by - ay) || 1;
+      let [nx, ny] = [-(by - ay) / length, (bx - ax) / length];
+      if (nx * (ax + bx) + ny * (ay + by) > 0) [nx, ny] = [-nx, -ny];
+      const base = pos.length / 3;
+      for (const [x, y] of [[ax, ay], [bx, by]] as const) {
+        for (const z of [TRIM_CAP.z0, TRIM_CAP.z1]) pos.push(x + nx * TRIM_CAP.inset, z, y + ny * TRIM_CAP.inset); // (Three's frame)
+      }
+      const [a0, a1, b0, b1] = [base, base + 1, base + 2, base + 3];
+      // (b0, a0, a1, b0, a1, b1) in the game's frame; its y and z swapped in Three's mirror the winding
+      idx.push(b0, a1, a0, b0, b1, a1);
+    }
+  }
+  const g = new BufferGeometry();
+  g.setAttribute("position", new BufferAttribute(new Float32Array(pos), 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
 
 /** The game's team glow sheets (H-5): one per quadrant, 16 uu behind the wall's line (wallLine: the side wall, the
  *  corner and the back wall), cut at |y| 128 and |x| 2048, attached at the bottom (RV-59) */

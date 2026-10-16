@@ -252,6 +252,10 @@ every map captures it now; the team glow sheets behind the walls, which replace 
 the theme's own `walls.blue`/`orange`. Still the stadium's alone (`walls.game`): its field and floor, its goals' metal
 floors, underlayers, glows and unlit frame; every other theme keeps its floor, markings, goals' floors and lit goal frame.
 `HexWallMaterial` (hexWalls.ts), our beam ribbons and trim light, and `WallStyle`'s `neutral`/`lines`/`ceilingLines` went.
+The trim's cap (AV-10: z 256-272 above the r 256 fillet, `trimCap`, the trim's material) closes the dark band of bare cage
+the user saw between the trim and the glow sheets' foot (z 272): where the fillet's top is at 256 (the side walls, their
+corners, the diagonal) and the sheets run (|y| from 128), 2 uu in front of the wall (over our overlay, which lies on the
+wall). The back corners and back walls (fillet top 160 to 96) get none: AV-10 gives them other pieces (a grate, glass).
 **The browser tests' servers** start from `client/e2e/servers.ts` (Playwright's globalSetup), not its webServer: here a
 connection to a closed 127.0.0.1 port is dropped, not refused, and Playwright's pre-check of each server's URL waited
 2 min 14 s per server (9 of the suite's 12 minutes).
