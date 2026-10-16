@@ -775,8 +775,9 @@ connection to a closed 127.0.0.1 port is dropped, not refused, and Playwright's 
     87 by 57 over the ground), tapered at the nose and tail, the cabin narrowing to the roof, the roof to the tail with
     a spoiler's lip, the rear window near upright. Scalars only (the user's 2026-10-09 rule); the styling ours.
   - **In 9b99b97: the HUD's fonts bundled (the user's pick, set B).** Rajdhani SemiBold / Light for
-    the header and thin text (the Latin woff2), Orbitron at 500 for the numbers (the upstream google/fonts TTF as it is:
-    its licence reserves the name, so no subset or conversion), each in `client/public/fonts/` with its OFL.txt; the
+    the header and thin text (the Latin woff2), Orbitron at 500 for the numbers (since RV-489 the upstream static Medium
+    OTF, theleagueof/orbitron, as it is: its licence reserves the name, so no subset or conversion), each in
+    `client/public/fonts/` with its licence ("Open Font License.markdown" for Orbitron, OFL.txt for Rajdhani); the
     guard pins them by content (`shippedData.test.ts` FONTS). They're loaded, then measured (`loadHudFonts`): sizes
     scaled to the game's capitals and digits as before, and each number glyph's ink stretched to Dashboard Numbers
     Wide's and started where its does in the cell (HT-12's per-glyph ink: the user's "10 0").

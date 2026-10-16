@@ -47,3 +47,22 @@ export function fitStage(el: HTMLElement, last: { key: string }): ContentStage {
   }
   return stage;
 }
+
+/** A layer of its own on the virtual stage (HUD-1: a piece laid out in its units, scaled with the screen), refitted to
+ *  the window when `fit` is called (each frame it's shown) */
+export class StageLayer {
+  readonly root: HTMLDivElement;
+  readonly #fitted = { key: "" };
+
+  constructor(parent: HTMLElement, id: string) {
+    this.root = document.createElement("div");
+    this.root.className = "hud-stage";
+    this.root.id = id;
+    parent.append(this.root);
+  }
+
+  fit(): ContentStage {
+    return fitStage(this.root, this.#fitted);
+  }
+}
+

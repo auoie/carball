@@ -7,36 +7,42 @@ import { fitStage } from "./ui/stage";
 import type { Dodge } from "./game/flipTracker";
 import { type VoteHud, voteFlashes } from "./game/forfeitVote";
 import { ACTIONS, type Bindings, inputName } from "./input/bindings";
-import { type KeyGlyph, clearPrompt, renderPrompt } from "./ui/keyGlyph";
+import { type KeyGlyph, clearPrompt, glyphElement, renderPrompt } from "./ui/keyGlyph";
 import { FlipLamp } from "./ui/flipLamp";
 import { BoostMeterArt } from "./ui/boostMeter";
+import { SCOREBUG_REST, SCORE_INTRO_END, ScorebugArt, scoreIntroPose } from "./ui/scorebug";
 import { setNumberText } from "./ui/numberCells";
 
-/** The local car demolished: its respawn and the respawn spot selection (the steer input picks a side). */
+/** The local car demolished, in play: the game's respawn view (HUD-20, RH1: ChooseRespawnView): its two bars shrinking
+ *  toward the hourglass over the pick's 2.5 s in 1 % steps, the side picked and its spot (the steer input picks:
+ *  inner first), each side's key */
 export interface RespawnHud {
-  readonly secondsLeft: number;
-  /** What's left of the 2.5 s to pick a spot, 1 .. 0 (0 once the spot is locked) */
-  readonly pickLeft: number;
+  /** What's left of the pick, 0..100 in 1 % steps (the game's replicated integer) */
+  readonly pct: number;
   readonly side: SpawnSide | null;
-  readonly inner: boolean; // the inner spot of that side (else the outer)
-  readonly locked: boolean;
+  /** The inner spot of that side (else the outer) */
+  readonly inner: boolean;
+  /** The keys that pick each side (the active device's steer bindings) */
+  readonly keys: { readonly left: KeyGlyph | null; readonly right: KeyGlyph | null };
 }
+
+/** The game's prompts (upper-cased by the HUD) and the bars' turn to orange at 60 % (RH1) */
+export const RESPAWN_TEXT = { left: "Respawn Left", right: "Respawn Right" } as const;
+export const RESPAWN_LATE_PCT = 60;
 
 /** RLConst DEMO_PRESPAWN_STATE_LENGTH: the spot locks this long before the respawn; the pick takes the rest. */
 const PRESPAWN_SECONDS = 0.5;
 const PICK_SECONDS = 2.5;
 
-/** The HUD's respawn panel from a demolished car's state (null when it isn't). */
-export function respawnHud(car: { readonly demoed: boolean; readonly demoRespawnTimer: number; readonly spawnSelection: { readonly side: SpawnSide | null; readonly index: number; readonly locked: unknown } }): RespawnHud | null {
-  if (!car.demoed) return null;
-  const locked = car.spawnSelection.locked !== null;
-  return {
-    secondsLeft: car.demoRespawnTimer,
-    pickLeft: locked ? 0 : Math.min(1, Math.max(0, (car.demoRespawnTimer - PRESPAWN_SECONDS) / PICK_SECONDS)),
-    side: car.spawnSelection.side,
-    inner: car.spawnSelection.index === 0,
-    locked,
-  };
+/** The respawn view from a demolished car's state (null when it isn't, or once its spot is locked: cleared at the
+ *  prespawn, RH1) */
+export function respawnHud(
+  car: { readonly demoed: boolean; readonly demoRespawnTimer: number; readonly spawnSelection: { readonly side: SpawnSide | null; readonly index: number } },
+  keys: RespawnHud["keys"] = { left: null, right: null },
+): RespawnHud | null {
+  if (!car.demoed || car.demoRespawnTimer <= PRESPAWN_SECONDS) return null;
+  const pct = Math.min(100, Math.max(0, Math.floor(((car.demoRespawnTimer - PRESPAWN_SECONDS) / PICK_SECONDS) * 100)));
+  return { pct, side: car.spawnSelection.side, inner: car.spawnSelection.index === 0, keys };
 }
 
 /** The boost meter's number (GFxHUD_TA.GetBoostAmountForUI): floor(pct · 100), at least 1 while any is left
@@ -194,7 +200,7 @@ export class Hud {
   readonly #message: HTMLElement;
   readonly #clockOvertime: HTMLElement;
   readonly #scoreTilt: HTMLElement;
-  readonly #scoreDrop: HTMLElement;
+  readonly #scoreArt: ScorebugArt;
   readonly #replay: HTMLElement;
   readonly #replayInfo: HTMLElement;
   readonly #replayPrompt: HTMLElement;
@@ -211,10 +217,10 @@ export class Hud {
   readonly #flipLamp: FlipLamp;
   readonly #flipDetail: HTMLElement;
   readonly #respawn: HTMLElement;
-  readonly #respawnTime: HTMLElement;
   readonly #respawnLeft: HTMLElement;
   readonly #respawnRight: HTMLElement;
-  readonly #respawnFill: HTMLElement;
+  /** Each side's prompt as drawn (its key), redrawn only when that changes */
+  readonly #respawnDrawn = { left: "", right: "" };
   readonly #vote: HTMLElement;
   readonly #voteTally: HTMLElement;
   readonly #voteTime: HTMLElement;
@@ -238,7 +244,7 @@ export class Hud {
     this.#message = element(root, "#message", HTMLElement);
     this.#clockOvertime = element(root, "#clock-overtime", HTMLElement);
     this.#scoreTilt = element(root, "#score-tilt", HTMLElement);
-    this.#scoreDrop = element(root, "#score-drop", HTMLElement);
+    this.#scoreArt = new ScorebugArt(this.#scoreTilt, { digits: [this.#blue, this.#orange], clock: [this.#clock, this.#clockOvertime] });
     this.#replay = element(root, "#replay-banner", HTMLElement);
     this.#replayInfo = element(root, "#replay-info", HTMLElement);
     this.#replayPrompt = element(root, "#replay-prompt", HTMLElement);
@@ -252,10 +258,8 @@ export class Hud {
     this.#flipDetail = element(root, "#flip-detail", HTMLElement);
     this.#flipLamp = new FlipLamp(this.#flip);
     this.#respawn = element(root, "#respawn", HTMLElement);
-    this.#respawnTime = element(root, "#respawn-time", HTMLElement);
     this.#respawnLeft = element(root, "#respawn-left", HTMLElement);
     this.#respawnRight = element(root, "#respawn-right", HTMLElement);
-    this.#respawnFill = element(root, "#respawn-fill", HTMLElement);
     this.#vote = element(root, "#vote", HTMLElement);
     this.#voteTally = element(root, "#vote-tally", HTMLElement);
     this.#voteTime = element(root, "#vote-time", HTMLElement);
@@ -356,6 +360,9 @@ export class Hud {
   #scoreShown = false;
   #lastScore: readonly [number, number] | null = null;
   #overtimeLabel = false;
+  /** When the board's intro began (performance.now(), ms; null: at rest), and what it was last drawn as */
+  #introAt: number | null = null;
+  #scoreDrawn = "";
 
   /** HUD-2/3/4: the scores, your team's on the left; the clock or "OVERTIME"; the intro when it shows; a team's glow
    *  when it scores */
@@ -371,9 +378,7 @@ export class Hud {
     if (last) {
       for (const t of [0, 1] as const) {
         if (s.score[t] > last[t]) {
-          this.#scoreBox
-            .querySelector(`.score-view.team-${String(t)} .score-glow`)
-            ?.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 600, easing: "cubic-bezier(0.55, 0.085, 0.68, 0.53)" });
+          this.#scoreArt.glow(t).animate([{ opacity: 1 }, { opacity: 0 }], { duration: 600, easing: "cubic-bezier(0.55, 0.085, 0.68, 0.53)" });
         }
       }
     }
@@ -386,33 +391,23 @@ export class Hud {
     if (this.#overtimeLabel && !overtime && s.clock !== null) this.#clock.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300 });
     if (!this.#overtimeLabel && overtime) this.#clockOvertime.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200 });
     this.#overtimeLabel = overtime;
+    // (the board's pose, its intro's then at rest: drawn when that, its sides or the text shown change)
+    const since = this.#introAt === null ? SCORE_INTRO_END : (performance.now() - this.#introAt) / 1000;
+    if (since >= SCORE_INTRO_END) this.#introAt = null;
+    const pose = since >= SCORE_INTRO_END ? SCOREBUG_REST : scoreIntroPose(since);
+    const drawn = [pose.drop, pose.tilt, pose.turn, pose.opacity, team, this.#clock.hidden, overtime].join();
+    if (shown && drawn !== this.#scoreDrawn) {
+      this.#scoreDrawn = drawn;
+      this.#scoreArt.draw(pose, team === 1);
+      this.#scoreTilt.style.opacity = pose.opacity < 1 ? pose.opacity.toFixed(4) : "";
+    }
+    if (!shown) this.#scoreDrawn = "";
   }
 
-  /** HUD-4's intro, 1 s after it shows: down 20 over 1 s (Back.easeOut), tilting from 75 degrees and fading in over 0.6 s
-   *  (Strong.easeOut), the score views turning from 60 degrees (Strong.easeIn) */
+  /** HUD-4's intro, 1 s after it shows (src/ui/scorebug.ts scoreIntroPose: down 20, tilting from 75 degrees and fading
+   *  in, the score views turning from 60 degrees), drawn each frame */
   #scoreIntro(): void {
-    const delay = 1000;
-    this.#scoreDrop.animate([{ transform: "translateY(-20px)" }, { transform: "none" }], { duration: 1000, delay, easing: "cubic-bezier(0.175, 0.885, 0.32, 1.275)", fill: "backwards" });
-    this.#scoreTilt.animate(
-      [
-        { opacity: 0, transform: "rotateX(-75deg)" },
-        { opacity: 1, transform: "rotateX(-5deg)" },
-      ],
-      { duration: 600, delay, easing: "cubic-bezier(0.23, 1, 0.32, 1)", fill: "backwards" },
-    );
-    const swapped = this.#scoreBox.classList.contains("swapped");
-    for (const t of [0, 1]) {
-      const left = (t === 0) !== swapped;
-      const sign = left ? -1 : 1;
-      this.#scoreBox
-        .querySelector(`.score-view.team-${String(t)}`)
-        ?.animate([{ transform: `rotateY(${String(60 * sign)}deg)` }, { transform: `rotateY(${String(10 * sign)}deg)` }], {
-          duration: 600,
-          delay,
-          easing: "cubic-bezier(0.755, 0.05, 0.855, 0.06)",
-          fill: "backwards",
-        });
-    }
+    this.#introAt = performance.now();
   }
 
   #boostTarget = -1;
@@ -560,17 +555,29 @@ export class Hud {
     this.#voteHint.hidden = v.instructions === null;
   }
 
+  /** HUD-20 (RH1): the bars at the pick's share, orange from 60 %; the picked side glowing, its spot lit; each side's
+   *  prompt, its key the active device's ("[A] - RESPAWN LEFT" for a key, the pad's icon) */
   #updateRespawn(r: RespawnHud | null): void {
-    this.#respawn.hidden = r === null;
+    if (this.#respawn.hidden !== (r === null)) this.#respawn.hidden = r === null;
     if (r === null) return;
-    this.#respawnTime.textContent = `Respawning in ${r.secondsLeft.toFixed(1)} s`;
-    const spot = r.inner ? "inner" : "outer";
-    this.#respawnLeft.textContent = r.side === "left" ? `◀ LEFT · ${spot}` : "◀ LEFT";
-    this.#respawnRight.textContent = r.side === "right" ? `RIGHT · ${spot} ▶` : "RIGHT ▶";
-    this.#respawnLeft.classList.toggle("picked", r.side === "left");
-    this.#respawnRight.classList.toggle("picked", r.side === "right");
-    this.#respawn.classList.toggle("locked", r.locked);
-    this.#respawnFill.style.width = `${String(r.pickLeft * 100)}%`;
+    this.#respawn.style.setProperty("--respawn-pct", String(r.pct / 100));
+    this.#respawn.classList.toggle("late", r.pct <= RESPAWN_LATE_PCT);
+    for (const side of ["left", "right"] as const) {
+      const prompt = side === "left" ? this.#respawnLeft : this.#respawnRight;
+      const group = prompt.parentElement;
+      group?.classList.toggle("picked", r.side === side);
+      group?.querySelectorAll<HTMLElement>(".respawn-spots i").forEach((spot) => {
+        spot.classList.toggle("lit", r.side === side && (spot.dataset["spot"] === "inner") === r.inner);
+      });
+      const key = r.keys[side];
+      const drawn = key ? `${key.kind}|${key.kind === "mouse" ? String(key.button) : key.text}` : "-";
+      if (drawn === this.#respawnDrawn[side]) continue;
+      this.#respawnDrawn[side] = drawn;
+      const text = RESPAWN_TEXT[side];
+      if (!key) prompt.replaceChildren(document.createTextNode(text));
+      else if (key.kind === "word") prompt.replaceChildren(document.createTextNode(`[${key.text}] - ${text}`));
+      else prompt.replaceChildren(glyphElement(key), document.createTextNode(` ${text}`));
+    }
   }
 
   #updateFlip(dodge: Dodge | null, reset: boolean): void {

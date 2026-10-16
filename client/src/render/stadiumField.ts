@@ -62,10 +62,11 @@ export function grassBin(s: number, edge0: number, edge1: number, count: number)
 export const GRASS_NOISE = 2.0;
 export const GRASS_G0 = 0.185;
 export const GRASS_ENV_AMOUNT = 0.75;
-/** The grass's low-quality resource (QG-5): LightColor, its flat light in place of the lightmap; Noise_Generic_02's mean
- *  in its noise factor 0.285 (n + 1.5) (ours: the texture's mid value, the static session's mean not taken) */
+/** The grass's low-quality resource (QG-5): LightColor, its flat light in place of the lightmap; the composite noise's
+ *  mean n in its noise factor 0.285 (n + 1.5): the same n as H-1's (GQ1's low permutation computes it alike: RV-496),
+ *  from GRASS_NOISE = 0.75 (n + 1.25), so n = 1.417 and the factor 0.831 */
 export const GRASS_LQ_LIGHT = [0.768, 0.698, 0.53] as const;
-export const GRASS_LQ_NOISE = 0.5;
+export const GRASS_LQ_NOISE = GRASS_NOISE / 0.75 - 1.25;
 
 /** H-1's reflection term (RV-100), per channel: ENVAmount [0.375 (1.5 - cos) Cg + sat(0.25 ((1.5 - cos) Cg - 0.125))],
  *  Cg = cube (G0 + 1/3) 2/3, cos the view's against the floor's normal (the shader adds it to the lit albedo and
@@ -251,7 +252,7 @@ void main() {
     vec3 axes = abs(vec3(toCamera.x, toCamera.z, toCamera.y));
     float off = saturate1(2.0 * (axes.x - 2.0 / 3.0)) + saturate1(2.0 * (axes.y - 2.0 / 3.0)) + saturate1(2.0 * (axes.z - 2.0 / 3.0));
     vec3 sheen = 0.15 * off * off * mix(2.0 * primary0, 2.0 * primary1, saturate1(vWorld.z / 4096.0 + 0.5)) * ${GRASS_ENV_AMOUNT.toFixed(2)};
-    vec3 albedo = mix(rgb, 2.0 * team, clamp(${GRASS_PATTERN.team.weight.toFixed(3)} * a, 0.0, 1.0)) * 0.285 * (${GRASS_LQ_NOISE.toFixed(2)} + 1.5);
+    vec3 albedo = mix(rgb, 2.0 * team, clamp(${GRASS_PATTERN.team.weight.toFixed(3)} * a, 0.0, 1.0)) * 0.285 * (${GRASS_LQ_NOISE.toFixed(4)} + 1.5);
     gl_FragColor = vec4(clamp(albedo * vec3(${GRASS_LQ_LIGHT.join(", ")}) * 3.0 * (v4 + 1.0 / 3.0) + sheen, 0.0, 1.0), 1.0);
   #else
     vec3 albedo = mix(rgb, 2.0 * team, clamp(${GRASS_PATTERN.team.weight.toFixed(3)} * a, 0.0, 1.0)) * noise;

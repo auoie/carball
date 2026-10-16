@@ -41,6 +41,13 @@ export async function settledOr(work: Promise<unknown>, canvas: EventTarget, ms:
   }
 }
 
+/** The GPU timer: the context, its timer query extension's enums, the measures in flight (oldest first) */
+interface GpuTimer {
+  readonly gl: WebGL2RenderingContext;
+  readonly ext: { readonly TIME_ELAPSED_EXT: number; readonly GPU_DISJOINT_EXT: number };
+  readonly pending: WebGLQuery[];
+}
+
 export class Renderer {
   readonly scene = new Scene();
   readonly #camera = new PerspectiveCamera(60, 16 / 9, 5, CAMERA_FAR);
@@ -176,7 +183,52 @@ export class Renderer {
     });
   }
 
+  /** The last frame's render on the CPU (ms: the Stat Graphs' Render row, HUD-21) */
+  lastRenderMs = 0;
+  /** The GPU's time for the latest frame measured (ms: the Stat Graphs' GPU row; null where the browser has no timer
+   *  query, Firefox's case), measured only while `gpuTiming` */
+  lastGpuMs: number | null = null;
+  gpuTiming = false;
+  #timer: GpuTimer | null | undefined;
+
+  /** The timer query (EXT_disjoint_timer_query_webgl2), made at its first use; null without one */
+  #gpuTimer(): GpuTimer | null {
+    if (this.#timer === undefined) {
+      const gl = this.#gl.getContext();
+      const ext = gl instanceof WebGL2RenderingContext ? (gl.getExtension("EXT_disjoint_timer_query_webgl2") as { TIME_ELAPSED_EXT: number; GPU_DISJOINT_EXT: number } | null) : null;
+      this.#timer = gl instanceof WebGL2RenderingContext && ext ? { gl, ext, pending: [] } : null;
+    }
+    return this.#timer;
+  }
+
+  /** The finished measures read (the oldest first: a few frames late), a new one begun if few are in flight */
+  #beginGpuTiming(): WebGLQuery | null {
+    const timer = this.gpuTiming ? this.#gpuTimer() : null;
+    if (!timer) return null;
+    const { gl, ext, pending } = timer;
+    while (pending.length > 0) {
+      const q = pending[0];
+      if (!q || !(gl.getQueryParameter(q, gl.QUERY_RESULT_AVAILABLE) as boolean)) break;
+      pending.shift();
+      if (!(gl.getParameter(ext.GPU_DISJOINT_EXT) as boolean)) this.lastGpuMs = (gl.getQueryParameter(q, gl.QUERY_RESULT) as number) / 1e6;
+      gl.deleteQuery(q);
+    }
+    if (pending.length >= 4) return null;
+    const q = gl.createQuery();
+    gl.beginQuery(ext.TIME_ELAPSED_EXT, q);
+    return q;
+  }
+
   render(view: CameraView): void {
+    const started = performance.now();
+    try {
+      this.#render(view);
+    } finally {
+      this.lastRenderMs = performance.now() - started;
+    }
+  }
+
+  #render(view: CameraView): void {
     // (before the frame's work, the reflection capture's included)
     if (this.draws) {
       if (this.heightFog) fogAll(this.scene);
@@ -199,7 +251,13 @@ export class Renderer {
       this.#camera.updateMatrixWorld();
       return;
     }
+    const query = this.#beginGpuTiming();
     this.#post.render(this.scene, this.#camera, this.postOptions, Math.max(1 - (now - this.#firstFrame), this.cameraFade));
+    const timer = this.#timer;
+    if (query && timer) {
+      timer.gl.endQuery(timer.ext.TIME_ELAPSED_EXT);
+      timer.pending.push(query);
+    }
   }
 
   #resize(): void {

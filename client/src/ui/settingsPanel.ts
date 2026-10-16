@@ -57,6 +57,19 @@ const INTERFACE_TEXT = {
   nameplateModes: { distanceFade: "Nearby Only", default: "Default", simplified: "Simplified" },
   matchNotifications: "Match Notifications",
   notifications: { all: "All", gameUpdates: "Time Updates Only", kickoff: "Kickoffs Only" },
+  statGraphs: "Stat Graphs",
+  statGraphOptions: {
+    none: "None",
+    performanceSummary: "Performance Summary",
+    performanceShort: "Performance Graph (short)",
+    performanceLong: "Performance Graph (long)",
+    networkSummary: "Network Summary",
+    networkShort: "Network Graph (short)",
+    networkLong: "Network Graph (long)",
+    speedSummary: "Speed Summary",
+    speedShort: "Speed Graph (short)",
+    speedLong: "Speed Graph (long)",
+  },
   teamColoredBoost: "Team-Colored Boost Meter",
   metric: "Metric",
   ballCamIndicator: "Ball Cam Indicator",
@@ -612,7 +625,7 @@ export class SettingsPanel {
     );
     box.classList.add("caps-labels"); // (HT-5, RV-281)
     const reset = box.lastElementChild;
-    const select = <K extends "nameplateMode" | "matchNotifications">(key: K, label: string, options: Readonly<Record<InterfaceSettings[K], string>>): HTMLElement =>
+    const select = <K extends "nameplateMode" | "matchNotifications" | "statGraphs">(key: K, label: string, options: Readonly<Record<InterfaceSettings[K], string>>): HTMLElement =>
       cycler({
         label,
         options: Object.entries(options) as [InterfaceSettings[K], string][],
@@ -624,7 +637,12 @@ export class SettingsPanel {
     for (const key of ["teamColoredBoost", "metric", "ballCamIndicator", "ballArrow", "hideHud"] as const) {
       options.append(checkbox({ label: T[key], checked: ui[key], data: { setting: key }, onChange: (checked) => { apply({ [key]: checked }); } }));
     }
-    const extra = [select("nameplateMode", T.nameplateMode, T.nameplateModes), select("matchNotifications", T.matchNotifications, T.notifications), options];
+    const extra = [
+      select("nameplateMode", T.nameplateMode, T.nameplateModes),
+      select("matchNotifications", T.matchNotifications, T.notifications),
+      select("statGraphs", T.statGraphs, T.statGraphOptions),
+      options,
+    ];
     if (reset) reset.before(...extra);
     else box.append(...extra);
     return box;

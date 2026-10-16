@@ -22,6 +22,8 @@ export interface VideoSettings {
   readonly chosen: boolean;
   /** The automatic default's level (AUTO_LEVELS), while the player hasn't chosen */
   readonly autoLevel: number;
+  /** The frame-rate guard has stepped it down: once, not again on a later page (MENU-21's "once", RV-504) */
+  readonly stepped: boolean;
 }
 
 /** Render Quality's share of the view's resolution each way (TA: ScreenPercentage 100 / 85 / 70 / 55) */
@@ -66,6 +68,7 @@ export const DEFAULT_VIDEO_SETTINGS: VideoSettings = {
   highQualityShaders: true,
   chosen: false,
   autoLevel: 0,
+  stepped: false,
 };
 
 /** The automatic default's levels: the game's maximum; a weak GPU's start (Performance 70 %, Quality); one step down */
@@ -94,6 +97,7 @@ export function readVideo(v: unknown): VideoSettings {
     particleDetail: oneOf(src["particleDetail"], PARTICLES, d.particleDetail),
     highQualityShaders: typeof src["highQualityShaders"] === "boolean" ? src["highQualityShaders"] : d.highQualityShaders,
     chosen: src["chosen"] === true,
+    stepped: src["stepped"] === true,
     autoLevel: typeof level === "number" && Number.isInteger(level) ? Math.min(AUTO_LEVELS.length - 1, Math.max(0, level)) : d.autoLevel,
   };
 }
@@ -136,26 +140,51 @@ export function resolveVideo(s: VideoState, weakGpu: boolean): VideoState {
 }
 
 /** The automatic default's frame-rate guard (ours): a warm-up, then this long measured, stepping down once when the
- *  median frame took longer than `slowFrame` s (under ~45 a second: a 60 Hz display's frames missed often) */
-export const AUTO_GUARD = { warmUp: 3, measure: 4, slowFrame: 1 / 45 } as const;
+ *  mean frame (its slowest 5 % left out as hitches: RV-500, a median of vsync-quantised intervals swings on the window's
+ *  parity) took longer than `slowFrame` s (under ~45 a second: a 60 Hz display's frames missed often), unless the
+ *  intervals sit on one value (their 90th percentile within `capSpread` of their 10th): a display's or the browser's cap
+ *  (a 30 Hz display, Energy Saver), not the GPU's load. A frame `hitch` s or longer, or one in a hidden tab, isn't counted */
+export const AUTO_GUARD = { warmUp: 3, measure: 4, slowFrame: 1 / 45, trim: 0.05, capSpread: 1.08, hitch: 0.25 } as const;
 
-/** The guard over one free-play session: fed each frame's interval (s); `step` once when it decides to step down */
+/** The step's decision from the measured intervals (s) */
+export function guardDecision(frames: readonly number[]): { readonly slow: boolean; readonly capped: boolean; readonly step: boolean } {
+  const sorted = [...frames].sort((a, b) => a - b);
+  const kept = sorted.slice(0, Math.max(1, Math.floor(sorted.length * (1 - AUTO_GUARD.trim))));
+  const mean = kept.reduce((s, v) => s + v, 0) / kept.length;
+  const at = (q: number): number => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * q))] ?? 0;
+  const capped = at(0.9) <= at(0.1) * AUTO_GUARD.capSpread;
+  const slow = mean > AUTO_GUARD.slowFrame;
+  return { slow, capped, step: slow && !capped };
+}
+
+/** Whether the guard runs on this page: drawing, not turned off (the browser tests'), the player not having chosen, not
+ *  stepped before, a lower level left */
+export function guardWanted(video: VideoSettings, draws: boolean, allowed = true): boolean {
+  return draws && allowed && !video.chosen && !video.stepped && video.autoLevel < AUTO_LEVELS.length - 1;
+}
+
+/** The step itself, decided now (null: the player chose meanwhile, or it stepped already) */
+export function guardStep(video: VideoSettings): VideoSettings | null {
+  if (video.chosen || video.stepped || video.autoLevel >= AUTO_LEVELS.length - 1) return null;
+  return { ...video, autoLevel: video.autoLevel + 1, stepped: true };
+}
+
+/** The guard over one free-play session: fed each frame's interval (s) and whether the tab is seen; `step` once when it
+ *  decides to step down */
 export class AutoVideoGuard {
   #time = 0;
   readonly #frames: number[] = [];
   #done = false;
 
   /** Whether this frame decided a step down (once at most) */
-  frame(seconds: number): boolean {
-    if (this.#done || !(seconds > 0)) return false;
+  frame(seconds: number, visible = true): boolean {
+    if (this.#done || !(seconds > 0) || !visible || seconds >= AUTO_GUARD.hitch) return false;
     this.#time += seconds;
     if (this.#time <= AUTO_GUARD.warmUp) return false;
     this.#frames.push(seconds);
     if (this.#time < AUTO_GUARD.warmUp + AUTO_GUARD.measure) return false;
     this.#done = true;
-    const sorted = [...this.#frames].sort((a, b) => a - b);
-    const median = sorted[Math.floor(sorted.length / 2)] ?? 0;
-    return median > AUTO_GUARD.slowFrame;
+    return guardDecision(this.#frames).step;
   }
 
   get done(): boolean {
@@ -170,13 +199,14 @@ export function gpuName(gl: WebGLRenderingContext | WebGL2RenderingContext): str
   return typeof name === "string" ? name : "";
 }
 
-/** Whether a renderer's name is an integrated or weak GPU's (ours: Intel's integrated graphics, AMD's APUs, phones' and
- *  tablets' GPUs, software renderers); a discrete GPU, Apple's own, or a name the browser hides: not */
+/** Whether a renderer's name is an integrated or weak GPU's (ours: Intel's integrated graphics, its Arc ones too, AMD's
+ *  APUs, phones' and tablets' GPUs, software renderers); a discrete GPU, or a name the browser hides or shares between
+ *  kinds (Safari's "Apple GPU", an M-series' and an Intel Mac's alike: RV-509), not */
 export function isWeakGpu(name: string): boolean {
-  if (/\bArc\b/i.test(name)) return false; // (Intel's discrete)
+  if (/\bArc\b(\(TM\))?\s+[AB]\d{3}/i.test(name)) return false; // (Intel's discrete A- and B-series; "Arc Graphics" is integrated)
   return [
     /Intel.*(HD|UHD|Iris|Graphics)/i,
-    /Radeon\(TM\) Graphics|Radeon Graphics|Radeon.*Vega \d+ (Mobile )?Graphics|Radeon\(TM\) (Vega )?\d+M|Radeon \d{3}M\b/i,
+    /Radeon\(TM\) Graphics|Radeon Graphics|Radeon.*Vega \d+ (Mobile )?Graphics|Radeon\(TM\) (Vega )?\d+M|Radeon \d{3}M\b|Radeon(\(TM\))? R[2-7] Graphics/i,
     /Mali|Adreno|PowerVR|Immortalis|Xclipse/i,
     /SwiftShader|llvmpipe|softpipe|Software|Basic Render/i,
   ].some((pattern) => pattern.test(name));

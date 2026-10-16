@@ -363,3 +363,21 @@ describe("freeplay's new round (notes/camera-respawn-goal.md, RV-26, RV-39)", ()
     world.dispose();
   });
 });
+
+describe("a network state laid over the world (RV-503's PM7)", () => {
+  it("the car read after it is the state's, not the one cached before it", () => {
+    const a = World.create(engine);
+    const b = World.create(engine);
+    const id = a.addCar(0);
+    expect(b.addCar(0)).toBe(id);
+    b.setControls(id, { ...NO_CONTROLS, throttle: 1 });
+    b.step(120);
+    const before = a.car(id).pos; // (read, and so cached, before)
+    expect(a.applyNetState(b.writeNetState({ ball: true, carIds: [id], pads: true, exact: true }))).toBe(true);
+    expect(a.car(id).pos).toEqual(b.car(id).pos);
+    expect(length(vec3(a.car(id).pos.x - before.x, a.car(id).pos.y - before.y, a.car(id).pos.z - before.z))).toBeGreaterThan(100);
+    a.dispose();
+    b.dispose();
+  });
+});
+

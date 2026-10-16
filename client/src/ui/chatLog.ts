@@ -3,6 +3,7 @@
 // title, category and four rows.
 import { CHAT_COLOURS, CHAT_PRESETS, CHAT_TEXT, type ChatGroup, TEAM_FONT_COLOURS, chatNameColour, chatTimestamp } from "../game/quickChat";
 import type { RosterEntry } from "../net/protocol";
+import { StageLayer } from "./stage";
 
 /** The log (ChatLogViewMovie in its container at (10, 10)): its text at (22, 20), 350 x 185, 18 px with 23 px lines (8
  *  of them: RV-253); fades 0.3 s; hidden 6 s after the last line, 4 s after the scoreboard closes */
@@ -76,6 +77,8 @@ export function chatLineHtml(line: ChatLine): string {
  *  message loses its first line, not all of it: RV-253); fading in 0.3 s from where it is on a line (RV-252), hidden 6 s
  *  after the last; held up while the menu is open, after the match and while the scoreboard is (real time) */
 export class ChatLog {
+  /** Its stage (its measures the movie's units, scaled with the screen: the user's finding, 2026-10-16) */
+  readonly #layer: StageLayer;
   readonly #box: HTMLElement;
   readonly #lines: HTMLElement;
   #hideAt = -Infinity;
@@ -106,7 +109,8 @@ export class ChatLog {
     });
     this.#lines = document.createElement("div");
     this.#box.append(this.#lines);
-    root.append(this.#box);
+    this.#layer = new StageLayer(root, "chat-layer");
+    this.#layer.root.append(this.#box);
   }
 
   add(line: ChatLine, now: number): void {
@@ -125,6 +129,7 @@ export class ChatLog {
   /** Its opacity now, moving toward shown or hidden over 0.3 s from where it is. `hold`: kept up (the menu open, the
    *  match over: RV-254), hiding `release` s after the hold ends (the scoreboard's 4 s) */
   update(now: number, hold = false, release: number = CHAT_LOG.hideAfter): void {
+    this.#layer.fit();
     const L = CHAT_LOG;
     if (hold) this.#hideAt = Math.max(this.#hideAt, now + release);
     const dt = this.#updated === null ? 0 : Math.max(0, now - this.#updated);
@@ -143,6 +148,7 @@ export class ChatLog {
 
 /** The panel in the page, drawn from the menu's view */
 export class QuickChatPanel {
+  readonly #layer: StageLayer;
   readonly #box: HTMLElement;
   readonly #category: HTMLElement;
   readonly #rows: { key: HTMLElement; text: HTMLElement }[] = [];
@@ -183,11 +189,13 @@ export class QuickChatPanel {
       this.#box.append(key, text);
       this.#rows.push({ key, text });
     }
-    root.append(this.#box);
+    this.#layer = new StageLayer(root, "quick-chat-layer");
+    this.#layer.root.append(this.#box);
   }
 
   /** Drawn: the menu's view, the categories, each preset's text by key, the four keys' labels (1-4, or the pad's) */
   draw(view: { shown: number | null; selected: number | null; alpha: number }, groups: readonly ChatGroup[], text: (key: string) => string, keys: readonly string[]): void {
+    this.#layer.fit();
     this.#box.style.opacity = String(view.alpha);
     const group = view.shown === null ? undefined : groups[view.shown];
     if (!group) return;

@@ -1076,6 +1076,14 @@ impl Game {
         self.world_current.clear();
     }
 
+    /// An input datagram's sequence (protocol 24): its gaps counted as the client's datagrams lost (the stat graphs' Out
+    /// Loss, HUD-21)
+    pub fn note_input_sequence(&mut self, id: PlayerId, sequence: u16) {
+        if let Some(p) = self.players.get_mut(&id) {
+            p.input.note_sequence(sequence);
+        }
+    }
+
     pub fn receive_inputs(&mut self, id: PlayerId, timestamp: u32, first_frame: u32, frames: &[InputFrame], now: f64) {
         if let Some(p) = self.players.get_mut(&id) {
             p.last_heard = Some(now);
@@ -1734,11 +1742,13 @@ impl Game {
     fn send_updates(&mut self, now: f64) {
         let parts = self.update_parts();
         let server_tick = self.arena.tick_count() as u32;
-        for p in self.players.values() {
+        for p in self.players.values_mut() {
             // (a client silent for 1.5 s gets none until it's heard again: the game stops replicating to it, G8)
             if p.last_heard.is_some_and(|heard| now - heard >= SILENT_SECONDS) {
                 continue;
             }
+            // (its input buffer since the last update, in each part alike: the stat graphs' IBuf rows, HUD-21)
+            let window = p.input.take_window();
             let (echo_timestamp, echo_delay) = match p.echo {
                 Some((timestamp, at)) => (timestamp, ((now - at) * 1000.0).clamp(0.0, f64::from(u16::MAX)) as u16),
                 None => (0, 0),
@@ -1752,6 +1762,11 @@ impl Game {
                     echo_delay,
                     buffer_target: p.input.jitter.buffer_size.min(255) as u8,
                     buffer_size: p.input.len().min(255) as u8,
+                    buffer_low: window.low,
+                    buffer_high: window.high,
+                    buffer_over: window.over,
+                    buffer_under: window.under,
+                    input_loss: window.lost,
                     part: i as u8,
                     parts: parts.len() as u8,
                     state: state.clone(),
@@ -2155,6 +2170,23 @@ mod tests {
         let first = game.car_position(2).unwrap();
         let second = game.car_position(1).unwrap();
         assert!((first[1] - PODIUM_SPOTS[0].1).abs() < 40.0 && (second[1] - PODIUM_SPOTS[1].1).abs() < 40.0, "{first:?} {second:?}");
+    }
+
+    #[test]
+    fn no_respawn_once_the_match_is_over_a_demolished_loser_stays_so_through_the_podium_and_the_end_screen() {
+        // (the user's finding: "Respawning in" for a 1v1's loser at the end. The podium hides the losers' cars as
+        // demolished, respawns held; a car demolished as the match ends stays demolished, its timer long run out)
+        let (mut game, _rxs) = match_with(MatchType::Casual, 1, &[(1, 0, 1), (2, 1, 2)]);
+        let loser = game.car_id(2).unwrap();
+        game.arena.demolish_car(loser);
+        game.end_match(0, false);
+        for phase in [Phase::PrePodium, Phase::Podium, Phase::Finished] {
+            run_until(&mut game, 3000, |g| g.phase == phase);
+            assert!(game.arena.car_demoed(loser), "{phase:?}");
+        }
+        ticks(&mut game, 600);
+        assert_eq!(game.phase, Phase::Finished);
+        assert!(game.arena.car_demoed(loser));
     }
 
     #[test]

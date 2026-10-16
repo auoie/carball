@@ -10,6 +10,7 @@ import { Quaternion, Vector3 } from "three";
 import { PlayerCamera } from "../camera/carballCamera";
 import type { BodyState, CarConfig, CarState, World } from "../engine/world";
 import { type Vec3, add } from "../math/vec";
+import { type NetGraphFeed, rawRoundTrip } from "../net/netStats";
 import { ESSENTIAL, GAME_UPDATE, type Hud, type ReplayHud, replaySpeed, replayTime, respawnHud } from "../hud";
 import type { InputDevices } from "../input/devices";
 import { AirPitchSafety, ButtonLatch, type ChatKey, EMPTY_INPUT, chatPresses, type HeldActions, type InputSnapshot, JumpLatch, type LookInput, NO_HELD_ACTIONS, readControls, readHeldActions } from "../input/mapping";
@@ -70,6 +71,7 @@ import {
   dimming,
   hudParts,
   matchOver,
+  respawnShown,
   podiumSpots,
   podiumView,
   winnerBanner,
@@ -308,12 +310,24 @@ export class Online {
 
     connection.onUpdate = (u) => {
       this.#session.receive(u);
+      this.statFeed?.received(u, rawRoundTrip(u, performance.now()));
+    };
+    connection.onSent = (bytes) => {
+      this.statFeed?.sent(bytes);
     };
     connection.listen((m) => this.#controlMessages.push(m));
     connection.onClose = (reason) => {
       this.#disconnected = reason;
       this.#session.disconnected = true;
     };
+  }
+
+  /** The Stat Graphs' network rows' feed (HUD-21: set by the page) */
+  statFeed: NetGraphFeed | null = null;
+
+  /** The viewed car's (this player's) and the ball's velocities (uu/s, game frame: the Stat Graphs' Speed rows) */
+  speeds(): { readonly car: Vec3 | null; readonly ball: Vec3 | null } {
+    return { car: this.#cars.get(this.#localCar)?.state.current.vel ?? null, ball: this.#ball.current.vel };
   }
 
   get stats(): OnlineStats {
@@ -1011,7 +1025,13 @@ export class Online {
       net: `${ping} · ${this.#session.bufferText} · ${String(this.#cars.size)} cars`,
       flip: flipVisual(settings.gameplay.flipResetIndicator) ? this.#dodge : null,
       flipReset: this.#flipReset,
-      respawn: car ? respawnHud(car) : null,
+      respawn:
+        car && respawnShown(this.#match)
+          ? respawnHud(car, {
+              left: keyGlyph(pad ? settings.bindings.steerLeft.gamepad : settings.bindings.steerLeft.keyboard),
+              right: keyGlyph(pad ? settings.bindings.steerRight.gamepad : settings.bindings.steerRight.keyboard),
+            })
+          : null,
       vote: voteHud(this.#vote, this.#matchType, MENU_KEY, matchOver(phase)),
       parts: { ...hudParts(phase), ballCamIndicator: phase !== "finished" },
     });

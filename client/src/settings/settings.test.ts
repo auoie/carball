@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_BINDINGS } from "../input/bindings";
 import { DEFAULT_CAMERA_SETTINGS } from "../camera/carballCamera";
-import { DEFAULT_SETTINGS, MODERN_CAMERA_KBM, MODERN_CAMERA_PAD, loadSettings, parseSettings, saveSettings, tidyName } from "./settings";
+import { DEFAULT_SETTINGS, MODERN_CAMERA_KBM, MODERN_CAMERA_PAD, loadSettings, parseSettings, resolveSettings, saveSettings, tidyName } from "./settings";
 import { DEFAULT_SLOTS } from "../game/quickChat";
 
 class MemoryStorage {
@@ -178,6 +178,10 @@ describe("chat settings (CHAT-5, 18)", () => {
     const parsed = parseSettings({ interface: { scale: 0.2, displayScale: 0.95, nameplateMode: "huge", matchNotifications: "kickoff", hideHud: true }, gameplay: { statDisplayLevel: "all" } });
     expect(parsed.interface).toMatchObject({ scale: 0.5, displayScale: 0.95, nameplateMode: "default", matchNotifications: "kickoff", hideHud: true, ballCamIndicator: true, ballArrow: true });
     expect(parsed.gameplay).toEqual({ statDisplayLevel: "all", flipResetIndicator: "on" });
+    // (Stat Graphs: None by default, the game's ten options kept, anything else None)
+    expect(DEFAULT_SETTINGS.interface.statGraphs).toBe("none");
+    expect(parseSettings({ interface: { statGraphs: "networkLong" } }).interface.statGraphs).toBe("networkLong");
+    expect(parseSettings({ interface: { statGraphs: "everything" } }).interface.statGraphs).toBe("none");
   });
 
   it("the old flip indicator checkbox, off, is Flip Reset Indicator Off", () => {
@@ -186,3 +190,17 @@ describe("chat settings (CHAT-5, 18)", () => {
     expect(parseSettings({ options: { flipIndicator: false }, gameplay: { flipResetIndicator: "audio" } }).gameplay.flipResetIndicator).toBe("audio");
   });
 });
+
+describe("a save from before the video group (RV-495)", () => {
+  it("keeps Bloom and Depth of Field turned off, on any GPU, as the player's own (Custom) choice", () => {
+    for (const weak of [false, true]) {
+      const s = resolveSettings(parseSettings({ options: { bloom: false } }), weak);
+      expect([s.options.bloom, s.options.depthOfField]).toEqual([false, true]);
+      expect(s.video).toMatchObject({ chosen: true, renderDetail: "custom" });
+      expect(resolveSettings(parseSettings({ options: { depthOfField: false } }), weak).options.depthOfField).toBe(false);
+    }
+    // (both on, as the defaults: the automatic default still applies)
+    expect(resolveSettings(parseSettings({ options: { bloom: true } }), true).video.chosen).toBe(false);
+  });
+});
+

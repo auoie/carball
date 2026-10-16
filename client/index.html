@@ -8,27 +8,32 @@
   </head>
   <body>
     <canvas id="game"></canvas>
-    <div id="loading">Loading…</div>
+    <!-- The loading screen (src/ui/loadingScreen.ts): over the game layer until its first frame -->
+    <div id="loading">
+      <div class="loading-card">
+        <div class="loading-ring" aria-hidden="true">
+          <svg viewBox="0 0 64 64"><circle class="loading-track" cx="32" cy="32" r="28" /><circle class="loading-arc" cx="32" cy="32" r="28" /></svg>
+        </div>
+        <div class="loading-title">Carball</div>
+        <div class="loading-place" hidden></div>
+        <div class="loading-step" role="status">Loading the physics engine</div>
+        <div class="loading-bar"><div class="loading-fill"></div></div>
+      </div>
+    </div>
     <div id="hud">
       <!-- The HUD's virtual stage (notes/hud-menus.md HUD-1): positions in virtual px, scaled by src/ui/stage.ts -->
       <div id="hud-stage" class="hud-stage">
         <div id="score">
-          <div id="score-drop">
-            <div id="score-tilt">
-              <div class="score-view team-0">
-                <div class="score-bg"></div>
-                <div class="score-glow"></div>
-                <span id="score-blue" class="score-digits">0</span>
-              </div>
-              <div id="clock-box">
-                <span id="clock" hidden>5:00</span>
-                <span id="clock-overtime" hidden>OVERTIME</span>
-              </div>
-              <div class="score-view team-1">
-                <div class="score-bg"></div>
-                <div class="score-glow"></div>
-                <span id="score-orange" class="score-digits">0</span>
-              </div>
+          <div id="score-tilt">
+            <div class="score-view team-0">
+              <span id="score-blue" class="score-digits">0</span>
+            </div>
+            <div id="clock-box">
+              <span id="clock" hidden>5:00</span>
+              <span id="clock-overtime" hidden>OVERTIME</span>
+            </div>
+            <div class="score-view team-1">
+              <span id="score-orange" class="score-digits">0</span>
             </div>
           </div>
         </div>
@@ -52,16 +57,27 @@
         <div id="flip" data-state="ground" role="img" aria-label="Flip" hidden>
           <span id="flip-detail" class="visually-hidden"></span>
         </div>
+        <!-- HUD-20 (RH1): the respawn view, demolished in play (src/hud.ts) -->
+        <div id="respawn" hidden>
+          <div class="respawn-side left">
+            <span class="respawn-arrows" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span class="respawn-spots" aria-hidden="true"><i data-spot="outer"></i><i data-spot="inner"></i></span>
+            <span id="respawn-left" class="respawn-prompt"></span>
+          </div>
+          <div class="respawn-side right">
+            <span id="respawn-right" class="respawn-prompt"></span>
+            <span class="respawn-spots" aria-hidden="true"><i data-spot="inner"></i><i data-spot="outer"></i></span>
+            <span class="respawn-arrows" aria-hidden="true"><i></i><i></i><i></i></span>
+          </div>
+          <div class="respawn-bar left"><div class="respawn-fill"></div></div>
+          <svg class="respawn-hourglass" viewBox="0 0 16 22" aria-hidden="true"><path d="M2 1.5 H14 M2 20.5 H14 M3.5 1.5 C3.5 7 8 8 8 11 C8 8 12.5 7 12.5 1.5 M3.5 20.5 C3.5 15 8 14 8 11 C8 14 12.5 15 12.5 20.5" /><path class="respawn-sand" d="M5 18.5 L8 15 L11 18.5 Z" /></svg>
+          <div class="respawn-bar right"><div class="respawn-fill"></div></div>
+        </div>
       </div>
       <div id="vote">
         <div id="vote-head"><span id="vote-tally"></span><span id="vote-time"></span></div>
         <div id="vote-bar"><div id="vote-fill"></div></div>
         <div id="vote-hint"></div>
-      </div>
-      <div id="respawn" hidden>
-        <span id="respawn-time"></span>
-        <div id="respawn-sides"><span id="respawn-left"></span><span id="respawn-right"></span></div>
-        <div id="respawn-bar"><div id="respawn-fill"></div></div>
       </div>
       <div id="info">
         <span id="speed">0 uu/s</span>

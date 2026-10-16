@@ -104,6 +104,7 @@ async fn a_client_connects_drives_and_follows_the_world() {
             let frames = sent[sent.len() - keep..].to_vec();
             let packet = Datagram::Inputs {
                 timestamp: begin.elapsed().as_millis() as u32,
+                sequence: frame as u16,
                 first_frame: frame + 1 - keep as u32,
                 frames,
             };
@@ -516,7 +517,7 @@ async fn a_silent_session_times_out_and_a_flooding_one_is_closed() {
     let (mut send, mut recv) = flooder.open_bi().await.unwrap().await.unwrap();
     send.write_all(&queue_hello(protocol::INTENT_JOIN, 0, 0)).await.unwrap();
     assert!(matches!(read_control(&mut recv).await, Control::Welcome { .. }));
-    let inputs = Datagram::Inputs { timestamp: 0, first_frame: 0, frames: vec![InputFrame::default()] }.encode();
+    let inputs = Datagram::Inputs { timestamp: 0, sequence: 0, first_frame: 0, frames: vec![InputFrame::default()] }.encode();
     let flooding = async {
         loop {
             for _ in 0..200 {

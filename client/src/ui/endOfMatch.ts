@@ -3,7 +3,7 @@
 // (MIO-22), and the end screen's menu with the next match's countdown (MIO-26, 29, 31). On the HUD's virtual stage.
 import { END_TEXT } from "../game/matchSequence";
 import { scoreboardLayout } from "./scoreboard";
-import { type ContentStage, fitStage } from "./stage";
+import { type ContentStage, contentStage, fitStage } from "./stage";
 
 /** A podium title as shown: its name (upper-cased) and its stat line */
 interface ShownTitle {
@@ -93,7 +93,8 @@ export class ScreenDimming {
 }
 
 /** MIO-22: a panel under each podium car, at the car's ground point projected to the screen (`at`: CSS px): the name,
- *  then the primary title over its stat line and the secondary's (fading in 0.5 s into the podium, over 0.3 s) */
+ *  then the primary title over its stat line and the secondary's (fading in 0.5 s into the podium, over 0.3 s). Its
+ *  sizes the movie's, scaled with the screen as the HUD's stage (ContentScale: the user's finding, 2026-10-16) */
 export class PodiumTags {
   readonly #root: HTMLDivElement;
   readonly #tags = new Map<number, { readonly el: HTMLDivElement; readonly name: HTMLElement; readonly titles: HTMLDivElement; shown: string }>();
@@ -111,6 +112,7 @@ export class PodiumTags {
       readonly at: { readonly x: number; readonly y: number } | null;
     }[],
   ): void {
+    this.#root.style.setProperty("--podium-scale", String(contentStage(window.innerWidth, window.innerHeight).scale));
     const seen = new Set<number>();
     for (const t of tags) {
       seen.add(t.car);

@@ -27,13 +27,12 @@ async function findMatch(page: Page): Promise<void> {
   await menu.getByRole("button", { name: /^play$/i }).click({ timeout: 30_000 });
   await menu.getByRole("radio", { name: "1v1" }).click();
   await menu.getByRole("button", { name: /^find match$/i }).click();
-  await expect(page.locator("#search-panel .search-summary")).toHaveText(/^(Searching|Joining)$/, { timeout: 30_000 });
+  await expect(page.locator("#search-banner .search-summary")).toHaveText(/^(Searching|Joining)$/, { timeout: 30_000 });
 }
 
-/** Free Play's map select, this map (the search panel closed first, its search going on under the banner) */
+/** Free Play's map select, this map (from the Play page, where Find Match left the player: its search going on under
+ *  the banner) */
 async function pickMap(page: Page, map: string): Promise<void> {
-  await page.keyboard.press("Escape");
-  await expect(page.locator("#search-panel")).toBeHidden();
   const menu = page.locator("#main-menu");
   await menu.getByRole("button", { name: /^free play$/i }).click();
   await menu.locator(`.main-menu-map[data-map="${map}"]`).click();
@@ -89,7 +88,7 @@ test("a map picked during Joining in keeps the page; the match's map is the serv
   });
   await findMatch(a);
   await findMatch(b);
-  await expect(a.locator("#search-panel .search-summary")).toHaveText("Joining", { timeout: 15_000 });
+  await expect(a.locator("#search-banner .search-summary")).toHaveText("Joining", { timeout: 15_000 });
   await pickMap(a, "forest");
   for (const page of [a, b]) await inMatch(page);
   // (no free play page between: straight to the match's)
@@ -131,14 +130,15 @@ test("a match cancelled while the page builds its arena: back to the menu, searc
   const b = await menuPage(browser, errors);
   await findMatch(a);
   await findMatch(b);
-  await expect(b.locator("#search-panel .search-summary")).toHaveText("Joining", { timeout: 15_000 });
+  await expect(b.locator("#search-banner .search-summary")).toHaveText("Joining", { timeout: 15_000 });
   await b.context().close();
   await a.waitForURL(/[?&]match(&|$)/, { timeout: 30_000 });
   // Back on the menu once the arena is in, its search again at the queue's front
   await a.waitForURL((url) => !/[?&]match(&|$)/.test(url.search), { timeout: 60_000 });
   await expect(a.locator("#loading")).toBeHidden({ timeout: 60_000 });
-  await expect(a.locator("#search-panel, #search-banner").filter({ hasText: "Searching" }).first()).toBeVisible({ timeout: 15_000 });
-  await expect(a.locator("body")).toContainText("Not every player joined the match. Searching again.");
+  // (its warning under the banner for its few seconds, the log's newest line: the timeline's lines follow it)
+  await expect(a.locator("#search-banner .search-message")).toHaveText("Not every player joined the match. Searching again.", { timeout: 15_000 });
+  await expect(a.locator("#search-banner .search-summary")).toHaveText("Searching", { timeout: 15_000 });
   expect(errors).toEqual([]);
   await a.context().close();
 });

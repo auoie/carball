@@ -1,11 +1,11 @@
 {
-  "protocolVersion": 23,
+  "protocolVersion": 24,
   "vectors": [
     {
       "channel": "control",
       "message": {
         "type": "hello",
-        "version": 23,
+        "version": 24,
         "team": 0,
         "model": 0,
         "dodgeDeadzone": 0.8,
@@ -13,20 +13,20 @@
         "airControlSensitivity": 1.25,
         "autoSkipReplay": true,
         "key": "16045690984503111693",
-        "name": "Mercury ⚡",
+        "name": "Mercury \u26a1",
         "quickChat": "team",
         "blockNonTactical": true,
         "intent": "claim",
         "playlist": 0,
         "token": "81985529216486895"
       },
-      "hex": "32000117000000cdcc4c3f0000803f0000a03f010df0fecaefbeadde0b4d65726375727920e29aa101010200efcdab8967452301"
+      "hex": "32000118000000cdcc4c3f0000803f0000a03f010df0fecaefbeadde0b4d65726375727920e29aa101010200efcdab8967452301"
     },
     {
       "channel": "control",
       "message": {
         "type": "hello",
-        "version": 23,
+        "version": 24,
         "team": 255,
         "model": 0,
         "dodgeDeadzone": 0.8,
@@ -41,7 +41,7 @@
         "playlist": 2,
         "token": "0"
       },
-      "hex": "2700011700ff00cdcc4c3f0000803f0000a03f00000000000000000000000001020000000000000000"
+      "hex": "2700011800ff00cdcc4c3f0000803f0000a03f00000000000000000000000001020000000000000000"
     },
     {
       "channel": "control",
@@ -112,7 +112,7 @@
       "channel": "control",
       "message": {
         "type": "welcome",
-        "version": 23,
+        "version": 24,
         "carId": 3,
         "tickRate": 120,
         "frame": 0,
@@ -126,7 +126,7 @@
           3
         ]
       },
-      "hex": "1e008117000300000078000000000102071032547698badcfe03000000010203"
+      "hex": "1e008118000300000078000000000102071032547698badcfe03000000010203"
     },
     {
       "channel": "control",
@@ -465,6 +465,14 @@
       "channel": "control",
       "message": {
         "type": "kicked",
+        "reason": 0
+      },
+      "hex": "02009100"
+    },
+    {
+      "channel": "control",
+      "message": {
+        "type": "kicked",
         "reason": 1
       },
       "hex": "02009101"
@@ -589,6 +597,7 @@
       "message": {
         "type": "inputs",
         "timestamp": 123456,
+        "sequence": 513,
         "firstFrame": 100,
         "frames": [
           {
@@ -617,7 +626,7 @@
           }
         ]
       },
-      "hex": "0140e2010064000000027fc0a6208059030000000000000c",
+      "hex": "0140e20100010264000000027fc0a6208059030000000000000c",
       "note": "axes as the game's input byte: q = round(v * 127) for v >= 0, round(v * 128) below (halves up): -0.5 -> -64, -0.7 -> -90, -1 -> -128; decoded as q / 127 or q / 128; dodgeForward is the dodge's forward input (-pitch before quantising: 0.7 -> 89)"
     },
     {
@@ -631,6 +640,11 @@
         "echoDelay": 12,
         "bufferTarget": 7,
         "bufferSize": 5,
+        "bufferLow": 3,
+        "bufferHigh": 9,
+        "bufferOver": 1,
+        "bufferUnder": 2,
+        "inputLoss": 4,
         "part": 0,
         "parts": 1,
         "state": [
@@ -638,7 +652,7 @@
           2
         ]
       },
-      "hex": "8188130000de030000e303000040e201000c00070500010102"
+      "hex": "8188130000de030000e303000040e201000c000705030901020400010102"
     }
   ],
   "dequantizedAxes": {

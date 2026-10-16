@@ -83,6 +83,20 @@ pub struct Stats {
     pub never_consumed: u32,
 }
 
+/// Since the last update sent (the stat graphs' IBuf rows and Out Loss, HUD-21: the game's InputBufferStats in each
+/// ClientAckFrame): the queue's fewest and most frames after a tick, the ticks it skipped a frame (over) and had none
+/// (under), the client's datagrams lost on the way (its sequence's gaps: protocol 24)
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BufferWindow {
+    pub low: u8,
+    pub high: u8,
+    pub over: u8,
+    pub under: u8,
+    pub lost: u8,
+    /// A tick sampled the queue in it
+    seen: bool,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct InputBuffer {
     /// Received, not yet consumed; sorted by frame, no duplicates
@@ -113,6 +127,9 @@ pub struct InputBuffer {
     /// The inputs the idle kick last counted (`PC.LastInputs`: zeroed at first, replaced only when a frame counts)
     kick_inputs: Controls,
     pub stats: Stats,
+    /// The newest datagram sequence seen (protocol 24)
+    last_sequence: Option<u16>,
+    window: BufferWindow,
 }
 
 /// The idle kick's activity test (`VehicleInputHasChangedForKick`, 0x140f66fc0: notes/matchmaking.md MM-35a): a press or
@@ -134,6 +151,29 @@ pub fn changed_for_kick(new: &Controls, old: &Controls) -> bool {
 }
 
 impl InputBuffer {
+    /// A datagram's sequence (protocol 24): a gap past the newest counts that many lost; a late or repeated one isn't
+    /// counted, nor a jump of 1000 or more (a client starting its count again)
+    pub fn note_sequence(&mut self, sequence: u16) {
+        if let Some(last) = self.last_sequence {
+            let gap = sequence.wrapping_sub(last) as i16;
+            if gap <= 0 {
+                return;
+            }
+            if (2..1000).contains(&gap) {
+                self.window.lost = self.window.lost.saturating_add((gap - 1).min(255) as u8);
+            }
+        }
+        self.last_sequence = Some(sequence);
+    }
+
+    /// The window since the last update (its queue now, if no tick sampled it), started again
+    pub fn take_window(&mut self) -> BufferWindow {
+        let queued = self.frames.len().min(255) as u8;
+        let w = if self.window.seen { self.window } else { BufferWindow { low: queued, high: queued, ..self.window } };
+        self.window = BufferWindow::default();
+        w
+    }
+
     pub fn ack_frame(&self) -> u32 {
         self.last_processed_frame.unwrap_or(0)
     }
@@ -238,6 +278,7 @@ impl InputBuffer {
             self.filling = true;
             self.skip_one();
             self.stats.under_buffer_frames = self.stats.under_buffer_frames.saturating_add(1);
+            self.window.under = self.window.under.saturating_add(1);
         } else {
             if !self.filling || !odd_tick {
                 self.consume_one();
@@ -250,9 +291,14 @@ impl InputBuffer {
             if (self.jitter.buffer_size as usize) < self.frames.len() {
                 self.consume_one();
                 self.stats.over_buffer_frames = self.stats.over_buffer_frames.saturating_add(1);
+                self.window.over = self.window.over.saturating_add(1);
                 second = true;
             }
         }
+        let queued = self.frames.len().min(255) as u8;
+        let w = &mut self.window;
+        (w.low, w.high) = if w.seen { (w.low.min(queued), w.high.max(queued)) } else { (queued, queued) };
+        w.seen = true;
         let last = self.controls.jump != 0;
         // The jump the car gets, and whether a release came before its press this tick
         let (jump, released) = match first {
@@ -276,6 +322,47 @@ mod tests {
 
     fn frame(throttle: i8) -> InputFrame {
         InputFrame { throttle, ..InputFrame::default() }
+    }
+
+    #[test]
+    fn the_datagrams_lost_from_their_sequence_and_the_window_since_the_last_update() {
+        // (protocol 24, the stat graphs' Out Loss and IBuf rows: HUD-21)
+        let mut b = InputBuffer::default();
+        b.note_sequence(10);
+        b.note_sequence(11);
+        b.note_sequence(14); // (12 and 13 lost)
+        b.note_sequence(13); // (late: not counted again)
+        b.note_sequence(5000); // (a jump of 1000 or more: a count started again, not loss)
+        assert_eq!(b.take_window().lost, 2);
+        b.note_sequence(5001);
+        assert_eq!(b.take_window().lost, 0);
+        // (across the wrap: 65534, then 1, 65535 and 0 lost)
+        let mut b = InputBuffer::default();
+        b.note_sequence(65534);
+        b.note_sequence(1);
+        assert_eq!(b.take_window().lost, 2);
+        // The queue's fewest and most frames after each tick, the ticks over and under
+        let mut b = InputBuffer::default();
+        b.receive(1, 1, &[frame(1); 3], 0.0);
+        let mut t = 0.0;
+        for _ in 0..3 {
+            t += 1.0 / 120.0;
+            b.tick(t, false);
+        }
+        t += 1.0 / 120.0;
+        b.tick(t, false); // (none left: under)
+        let w = b.take_window();
+        assert_eq!((w.low, w.under), (0, 1));
+        assert!(w.high >= 1, "{w:?}");
+        b.receive(2, 4, &[frame(1); 20], t);
+        t += 1.0 / 120.0;
+        b.tick(t, false); // (over the target: two consumed, one over)
+        let w = b.take_window();
+        assert_eq!(w.over, 1);
+        assert!(w.low >= 10 && w.high == w.low, "{w:?}");
+        // (no tick since: the queue as it is)
+        let w = b.take_window();
+        assert_eq!((w.low, w.high, w.over, w.under, w.lost), (b.len() as u8, b.len() as u8, 0, 0, 0));
     }
 
     #[test]

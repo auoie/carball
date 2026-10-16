@@ -151,6 +151,11 @@ export class Freeplay {
   }
 
   /** One animation frame. `rawSeconds`: time since the previous frame, unclamped. */
+  /** The viewed car's and the ball's velocities (uu/s, game frame: the Stat Graphs' Speed rows, HUD-21) */
+  speeds(): { readonly car: Vec3 | null; readonly ball: Vec3 | null } {
+    return { car: this.#car.current.vel, ball: this.#ball.current.vel };
+  }
+
   frame(rawSeconds: number): void {
     this.#applyBoostSetting();
     let replay = this.#replay;
@@ -401,6 +406,11 @@ export class Freeplay {
   }
 
   /** For the browser tests: where the car is and how fast it goes */
+  /** For screenshots and browser tests: this car demolished (the respawn view's, HUD-20) */
+  debugDemolish(): void {
+    this.#world.demolishCar(this.#playerId);
+  }
+
   debugCar(): { readonly pos: Vec3; readonly speed: number; readonly hitbox: Vec3 } {
     const car = this.#world.car(this.#playerId);
     return { pos: car.pos, speed: Math.hypot(car.vel.x, car.vel.y, car.vel.z), hitbox: this.#world.carConfig(this.#playerId).hitboxSize };
@@ -548,7 +558,10 @@ export class Freeplay {
       net: null,
       flip: flipVisual(this.settings().gameplay.flipResetIndicator) ? this.#dodge : null,
       flipReset: this.#flipReset,
-      respawn: respawnHud(car),
+      respawn: respawnHud(car, {
+        left: keyGlyph(pad ? settings.bindings.steerLeft.gamepad : settings.bindings.steerLeft.keyboard),
+        right: keyGlyph(pad ? settings.bindings.steerRight.gamepad : settings.bindings.steerRight.keyboard),
+      }),
     });
     if (this.#flipReset && flipAudio(this.settings().gameplay.flipResetIndicator)) this.#audio.flipReset();
     if (this.#flipReset && flipVisual(this.settings().gameplay.flipResetIndicator)) this.#flipFx.trigger();

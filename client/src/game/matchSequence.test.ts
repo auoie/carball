@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { WAITING_VIEW, dimming, hudParts, matchOver, podiumSpots, podiumView, winnerBanner, winnersGoal } from "./matchSequence";
+import type { MatchPhase } from "../net/protocol";
+import { WAITING_VIEW, dimming, hudParts, matchOver, podiumSpots, podiumView, respawnShown, winnerBanner, winnersGoal } from "./matchSequence";
 
 const near = (a: number, b: number, eps = 0.2): boolean => Math.abs(a - b) <= eps;
 
@@ -51,3 +52,13 @@ describe("the match's start and end", () => {
     expect(matchOver("finished") && !matchOver("replay")).toBe(true);
   });
 });
+
+describe("the respawn view's phases (HUD-20, RH1; the user's finding at a match's end, 2026-10-16)", () => {
+  it("in Active play only (0:00 too); cleared by a goal, its replay, the countdown and the match's end; free play always", () => {
+    expect(respawnShown(undefined)).toBe(true);
+    expect(respawnShown(null)).toBe(true);
+    const phases: readonly MatchPhase[] = ["waiting", "countdown", "active", "timeUp", "postGoal", "replay", "prePodium", "podium", "finished"];
+    expect(phases.filter((phase) => respawnShown({ phase }))).toEqual(["active", "timeUp"]);
+  });
+});
+

@@ -16,10 +16,19 @@ export function detailMode<T extends Object3D>(piece: T, mode: DetailMode): T {
   return piece;
 }
 
-/** Each marked piece under `root` shown or hidden for `level`; the count shown and hidden */
+/** A piece drawn by rule whose gated parts are in its shader (the city's window lights, QG-14): told each level as the
+ *  setting changes; returns it */
+export function onWorldDetail<T extends Object3D>(piece: T, apply: (level: WorldDetail) => void): T {
+  (piece.userData as { worldDetail?: (level: WorldDetail) => void }).worldDetail = apply;
+  return piece;
+}
+
+/** Each marked piece under `root` shown or hidden for `level` (and each piece with a rule told it); the count shown and
+ *  hidden */
 export function applyWorldDetail(root: Object3D, level: WorldDetail): { readonly shown: number; readonly hidden: number } {
   let [shown, hidden] = [0, 0];
   root.traverse((o) => {
+    (o.userData as { worldDetail?: (level: WorldDetail) => void }).worldDetail?.(level);
     const mode = (o.userData as { detailMode?: DetailMode }).detailMode;
     if (!mode) return;
     o.visible = PIECE[mode] <= SYSTEM[level];

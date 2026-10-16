@@ -3,7 +3,7 @@
 // (MIO-18/19), the screen's dimming (MIO-20), and which HUD parts each phase shows (MIO-5/17). Pure: the online game
 // and the HUD draw from it.
 import type { CameraView } from "../camera/carballCamera";
-import type { MatchPhase } from "../net/protocol";
+import type { MatchPhase, MatchState } from "../net/protocol";
 import type { Vec3 } from "../math/vec";
 import { TEAM_NAMES } from "./matchStats";
 
@@ -91,6 +91,14 @@ export function dimming(phase: MatchPhase | undefined, t: number, from: { readon
 
 /** MIO-5/17: what the HUD shows in a phase. The top scoreboard and the boost meter only while playing (not in the
  *  warm-up, not at the end); the held scoreboard not at the end */
+/** Whether a demolished car's respawn view can show (notes/hud-menus.md HUD-20, RH1: the ticket exists in Active only,
+ *  0:00 with the ball up still Active; leaving it clears the view, never freezes it: a goal and its replay, the
+ *  countdown, the match's end, where the podium hides the losers' cars as demolished, the user's finding, 2026-10-16).
+ *  Free play: no match phases, always */
+export function respawnShown(m: Pick<MatchState, "phase"> | null | undefined): boolean {
+  return m === null || m === undefined || m.phase === "active" || m.phase === "timeUp";
+}
+
 export function hudParts(phase: MatchPhase | undefined): { readonly scoreboard: boolean; readonly boost: boolean; readonly heldScoreboard: boolean } {
   const playing = phase === "countdown" || phase === "active" || phase === "postGoal" || phase === "timeUp" || phase === "replay";
   return { scoreboard: playing, boost: playing && phase !== "replay", heldScoreboard: phase !== undefined && !matchOver(phase) };

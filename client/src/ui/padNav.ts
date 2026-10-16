@@ -138,6 +138,13 @@ function pageKey(menu: HTMLElement): string {
   return `${menu.id}|${page?.dataset["padPage"] ?? ""}`;
 }
 
+/** A click's cue in the open menu (MENU-18): a question's answer (a shown question: not the hidden one a page keeps for
+ *  later, RV-501) confirms, else it selects */
+export function clickCue(menu: HTMLElement | null): "confirm" | "select" {
+  const answers = [...(menu?.querySelectorAll<HTMLElement>("[data-pad-default]") ?? [])];
+  return answers.some((c) => c.hasAttribute("data-pad-default") && shown(c)) ? "confirm" : "select";
+}
+
 export interface PadNavActions {
   /** The open menu the pad drives (the topmost), or null */
   readonly menu: () => HTMLElement | null;
@@ -147,6 +154,9 @@ export interface PadNavActions {
   readonly start: () => void;
   /** A pad input is being captured for a binding (the settings' rebind): the pad isn't the menus' meanwhile */
   readonly capturing?: () => boolean;
+  /** Y released with no control of the page's own Y focused: the search's cancel where it applies (MM-10: the banner's,
+   *  over the main or pause menu); whether it did */
+  readonly cancelSearch?: () => boolean;
   /** The menus' sounds: the focus moved or a value stepped, a press, a question's answer (or a notice's OK), a back, a
    *  tab */
   readonly sound?: (cue: "move" | "select" | "confirm" | "back" | "tab") => void;
@@ -171,7 +181,7 @@ export class PadMenuNav {
   /** The bumper held (the other ignored meanwhile) and when it repeats */
   #bumper: number | null = null;
   #bumperNext = 0;
-  /** A and B pressed in this menu, acted on as they're released */
+  /** A, B, X and Y pressed in this menu, acted on as they're released (Settings' X and Y too, MENU-13) */
   #armed = new Set<number>();
   /** The control drawn pressed (A held on it) */
   #pressedEl: HTMLElement | null = null;
@@ -210,8 +220,7 @@ export class PadMenuNav {
       window.addEventListener("click", (e: Event) => {
         const control = e.isTrusted ? this.#menuControl(e.target) : null;
         if (!control || control.getAttribute("role") === "slider") return;
-        const menu = this.#actions.menu();
-        this.#actions.sound?.(menu?.querySelector("[data-pad-default]") ? "confirm" : "select");
+        this.#actions.sound?.(clickCue(this.#actions.menu()));
       }, { capture: true, passive: true });
       window.addEventListener("pointerover", (e: Event) => {
         const control = this.#padMode ? null : this.#menuControl(e.target);
@@ -283,7 +292,7 @@ export class PadMenuNav {
       this.#actions.start();
       return;
     }
-    for (const b of [PAD.a, PAD.b]) if (pressed(b)) this.#armed.add(b);
+    for (const b of [PAD.a, PAD.b, PAD.x, PAD.y]) if (pressed(b)) this.#armed.add(b);
     if (released(PAD.b) && this.#armed.delete(PAD.b)) {
       if (this.#actions.back()) this.#actions.sound?.("back");
       return;
@@ -307,14 +316,17 @@ export class PadMenuNav {
       this.#press(current, controls.some((c) => c.hasAttribute("data-pad-default")));
       return;
     }
-    if (pressed(PAD.x)) {
+    if (released(PAD.x) && this.#armed.delete(PAD.x)) {
       // (the page's Default: its menu asks first, MENU-14)
       const page = [...menu.querySelectorAll<HTMLElement>("[data-pad-page]")].find((p) => !p.closest("[hidden]"));
       if (page?.hasAttribute("data-pad-x")) page.dispatchEvent(new CustomEvent("pad-default", { bubbles: true }));
       return;
     }
-    if (pressed(PAD.y) && current.closest("[data-pad-y]")) {
-      current.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    if (released(PAD.y) && this.#armed.delete(PAD.y)) {
+      // (the focused control's own Y first, a binding cleared: the settings are a modal screen over the banner's cancel,
+      // MM-10; else the search's cancel, the menu's cue)
+      if (current.closest("[data-pad-y]")) current.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+      else this.#actions.cancelSearch?.();
       return;
     }
     const direction = input?.direction ?? null;
@@ -359,6 +371,17 @@ export class PadMenuNav {
     const samePage = page === this.#page;
     this.#page = page;
     const active = document.activeElement instanceof HTMLElement && controls.includes(document.activeElement) ? document.activeElement : null;
+    // (the keyboard's or the mouse's mode: the focus where they put it, never moved to the pad's kept place by an idle
+    // pad, RV-502)
+    if (!this.#padMode && active) {
+      if (active !== this.#focused) {
+        this.#focused?.classList.remove("pad-focus");
+        this.#focused = active;
+        active.classList.add("pad-focus");
+      }
+      this.#highlight(active, rows);
+      return active;
+    }
     if (samePage && this.#focused && controls.includes(this.#focused)) {
       if (active && active !== this.#focused && this.#padMode) {
         this.#focus(active, rows, false);

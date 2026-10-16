@@ -1,6 +1,6 @@
 // The stadium's far layer (notes/arena-surroundings.md SUR-11, 22, 23; TRN1): the skyline and the city's glow, opaque
 // and at their distance's depth, and the FogCylinder's band over them, the game's mesh drawn nearer about the camera.
-import { detailMode } from "../detail";
+import { detailMode, onWorldDetail } from "../detail";
 import { BackSide, BufferGeometry, Float32BufferAttribute, Group, Mesh, ShaderMaterial, SphereGeometry, Vector3 } from "three";
 import { GRASS_CUBE_AT } from "../grassCube";
 import { withHeightFog } from "../heightFog";
@@ -31,6 +31,11 @@ export const FAR_LAYER = {
   fogBand: [[0, 0.9], [7.5, 0.73], [12.5, 0.43], [17.5, 0.19], [22.5, 0.06], [30, 0]] as readonly (readonly [number, number])[],
 } as const;
 
+/** The windows' lit share's threshold (a cell lit when its hash passes it): a third of them; at World Detail Performance
+ *  the C lights' quarter of those (QG-14: three of the four light meshes gone; ours by rule, the meshes' shares not
+ *  measured) */
+export const CITY_LIT_FROM = { highQuality: 0.66, performance: 1 - 0.34 / 4 } as const;
+
 const farVertex = /* glsl */ `
 uniform vec3 from;
 varying vec3 vDirection;
@@ -53,6 +58,7 @@ export function plazaCityTop(az: number): number | null {
 
 const farFragment = /* glsl */ `
 uniform vec3 windows;
+uniform float litFrom;
 uniform vec3 ground;
 varying vec3 vDirection;
 float hash1(float x) { return fract(sin(x * 127.1) * 43758.5453); }
@@ -77,7 +83,7 @@ void main() {
     if (el < top) {
       // (windows: columns 0.18 degrees, rows 0.3; a third lit, warm)
       vec2 cell = vec2(floor(az / 0.18), floor(el / 0.3));
-      float lit = step(0.66, hash2(cell));
+      float lit = step(litFrom, hash2(cell));
       vec2 f = fract(vec2(az / 0.18, el / 0.3));
       float pane = step(0.2, f.x) * step(f.x, 0.8) * step(0.25, f.y) * step(f.y, 0.85);
       // (lit panes 0.12 of the face: their mean the windows' (0.20, 0.17, 0.11), RV-127c)
@@ -169,6 +175,7 @@ export function buildFarLayer(): Group {
       // (its elevations as seen from the capture point; Three's frame)
       from: { value: from },
       windows: { value: new Vector3(...L.windows) },
+      litFrom: { value: CITY_LIT_FROM.highQuality },
       ground: { value: new Vector3(...L.ground) },
     },
     side: BackSide,
@@ -178,6 +185,11 @@ export function buildFarLayer(): Group {
   withTrueDepth(city, L.fog.city / L.radius, [from.x, from.y, from.z]);
   const cityMesh = new Mesh(new SphereGeometry(L.radius, 96, 48), city);
   cityMesh.name = "far layer: city";
+  // (World Detail Performance: SkyScraperLights_01/02 and SkyScraper_B_Lights gone, SkyScraper_C_Lights kept, QG-14:
+  // a quarter of the lit windows, RV-507)
+  onWorldDetail(cityMesh, (level) => {
+    (city.uniforms["litFrom"] as { value: number }).value = level === "performance" ? CITY_LIT_FROM.performance : CITY_LIT_FROM.highQuality;
+  });
   cityMesh.renderOrder = FAR_CITY_ORDER;
   const band = new ShaderMaterial({
     vertexShader: bandVertex,

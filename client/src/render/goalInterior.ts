@@ -13,6 +13,7 @@ import { GRASS_CUBE_BLUR_LOD } from "./grassCube";
 import { HexFloorMaterial } from "./stadiumField";
 import type { LightProfile } from "./stadiumFieldRules";
 import { ARENA_PRIORITY, fitIndexedBounds } from "./translucentSort";
+import { lowQualityPath } from "./shaderQuality";
 
 /** The zones (|x|, |y| in uu): the hex glass on the ramp, the grate (behind the goal line's strip, and beside and under
  *  the glass along the ramp); the frame elsewhere */
@@ -113,8 +114,23 @@ vec4 glass(vec2 uv, vec3 toCamera) {
   vec2 tile = vec2(3.0, 7.0 / 3.0) * uv;
   float g = tableProfile(T_PACK_G, hexRadius(tile));
   g = mix(g, ${PACK_G_MEAN}, smoothstep(0.1, 0.3, length(fwidth(tile))));
-  float env = envG(-normalize(vec3(toCamera.z, -toCamera.x, toCamera.y)).xy);
-  return vec4(vec3(env + 1.0 / 12.0), 0.1875 * g);
+  #ifdef CARBALL_LQ
+    // (High Quality Shaders off, QG-9: a flat 1/12, no ENVPack along the view: RV-498)
+    return vec4(vec3(1.0 / 12.0), 0.1875 * g);
+  #else
+    float env = envG(-normalize(vec3(toCamera.z, -toCamera.x, toCamera.y)).xy);
+    return vec4(vec3(env + 1.0 / 12.0), 0.1875 * g);
+  #endif
+}
+// H-4's frame: sat((R + 4 (0.125 + 0.625 G) cube) m) x its baked light (the tire marks inside the saturate: RV-144,
+// RV-168d); High Quality Shaders off, QG-8: no capture's reflection, no tire marks (RV-498)
+vec4 frame(vec3 toCamera) {
+  #ifdef CARBALL_LQ
+    return vec4(clamp(vec3(${FRAME.r}), 0.0, 1.0) * frameLight, 1.0);
+  #else
+    vec3 cube = textureLod(grassCube, vec3(-toCamera.x, toCamera.y, -toCamera.z), ${GRASS_CUBE_BLUR_LOD.toFixed(1)}).rgb;
+    return vec4(clamp((vec3(${FRAME.r}) + 4.0 * (0.125 + 0.625 * ${FRAME.g}) * cube) * ${FRAME.tireMarks}, 0.0, 1.0) * frameLight, 1.0);
+  #endif
 }
 void main() {
   vec2 xy = vec2(vWorld.x, vWorld.z); // (the game's frame: Three's x and z)
@@ -134,8 +150,7 @@ void main() {
       || (ay >= ${GOAL_STRIPS.across[1][0].toFixed(1)} && ay <= ${GOAL_STRIPS.across[1][1].toFixed(1)})
       || (ax >= ${GOAL_STRIPS.along.x[0].toFixed(1)} && ax <= ${GOAL_STRIPS.along.x[1].toFixed(1)} && ay >= ${GOAL_STRIPS.along.y[0].toFixed(1)} && ay <= ${GOAL_STRIPS.along.y[1].toFixed(1)});
     if (strip) {
-      vec3 cube = textureLod(grassCube, vec3(-toCamera.x, toCamera.y, -toCamera.z), ${GRASS_CUBE_BLUR_LOD.toFixed(1)}).rgb;
-      colour = vec4(clamp((vec3(${FRAME.r}) + 4.0 * (0.125 + 0.625 * ${FRAME.g}) * cube) * ${FRAME.tireMarks}, 0.0, 1.0) * frameLight, 1.0);
+      colour = frame(toCamera);
     } else if (ax <= ${GOAL_GLASS.x.toFixed(1)} && ay >= ${GOAL_GLASS.y0.toFixed(1)} && ay <= ${GOAL_GLASS.y1.toFixed(1)}) {
       // Goal_STD_Glass[0]'s chart: u along y, v across x
       colour = glass(vec2(0.005172 * ay - 26.2292, -0.004896 * xy.x + 3.761), toCamera);
@@ -150,10 +165,8 @@ void main() {
       alpha = mix(alpha, 0.573, smoothstep(0.12, 0.3, length(fwidth(cell))));
       colour = vec4(vec3(0.03) * frameLight, alpha);
     } else {
-      // H-4's frame (off its stripes): sat((R + 4 (0.125 + 0.625 G) cube) m) x its baked light (the tire marks inside the
-      // saturate: RV-144, RV-168d)
-      vec3 cube = textureLod(grassCube, vec3(-toCamera.x, toCamera.y, -toCamera.z), ${GRASS_CUBE_BLUR_LOD.toFixed(1)}).rgb;
-      colour = vec4(clamp((vec3(${FRAME.r}) + 4.0 * (0.125 + 0.625 * ${FRAME.g}) * cube) * ${FRAME.tireMarks}, 0.0, 1.0) * frameLight, 1.0);
+      // (H-4's frame off its stripes)
+      colour = frame(toCamera);
     }
   #endif
   gl_FragColor = colour;
@@ -193,6 +206,8 @@ export class GoalFloorMaterial extends ShaderMaterial {
       side: DoubleSide,
       fog: true,
     });
+    // (its CARBALL_LQ branch: the frame's QG-8 and the glass's QG-9, RV-498)
+    lowQualityPath(this);
   }
 }
 

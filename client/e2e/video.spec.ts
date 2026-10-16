@@ -79,3 +79,29 @@ test("on a weak GPU the default is Performance (70 %) and Quality until the play
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
   expect(await drawnShare(page)).toBeCloseTo(0.7, 2);
 });
+
+test("the frame-rate guard on a slow page: one step down after its warm-up and measure, saved, never again (RV-499)", async ({ page, context }) => {
+  test.setTimeout(120_000);
+  await videoAuto(context, false, true);
+  // (a synthetic clock: each frame's time 33 ms on, varied as a GPU-bound page's, whatever the page really takes)
+  await context.addInitScript(() => {
+    const real = window.requestAnimationFrame.bind(window);
+    const pattern = [0.85, 1.15, 1, 0.9, 1.1];
+    let t = 0;
+    let i = 0;
+    window.requestAnimationFrame = (callback: FrameRequestCallback): number =>
+      real(() => {
+        t += (1000 / 30) * (pattern[i++ % pattern.length] ?? 1);
+        callback(t);
+      });
+  });
+  await page.goto("/");
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
+  await freePlay(page);
+  expect(await drawnShare(page)).toBeCloseTo(1, 2);
+  // (3 s of warm-up and 4 of measure on the synthetic clock: Performance 70 % and Quality)
+  await expect.poll(async () => drawnShare(page), { timeout: 90_000 }).toBeCloseTo(0.7, 2);
+  const saved = await page.evaluate(() => (JSON.parse(localStorage.getItem("carball.settings.v1") ?? "{}") as { video?: { autoLevel?: number; stepped?: boolean } }).video);
+  expect(saved).toMatchObject({ autoLevel: 1, stepped: true });
+});
+

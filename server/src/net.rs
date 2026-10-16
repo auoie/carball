@@ -40,7 +40,7 @@ pub enum ToGame {
     /// A search's page closed its control stream (Cancel Search, another map): the search out of the queue now, so its
     /// session can write out what the game sent before (a match found) and end
     CancelSearch { id: PlayerId },
-    Inputs { id: PlayerId, timestamp: u32, first_frame: u32, frames: Vec<InputFrame>, at: std::time::Instant },
+    Inputs { id: PlayerId, timestamp: u32, sequence: u16, first_frame: u32, frames: Vec<InputFrame>, at: std::time::Instant },
     ResetInputBuffer { id: PlayerId },
     /// Skip the goal replay
     ReadyUp { id: PlayerId },
@@ -472,10 +472,10 @@ async fn session(incoming: IncomingSession, id: PlayerId, address: IpAddr, to_ga
                         }
                         continue;
                     }
-                    if let Ok(Datagram::Inputs { timestamp, first_frame, frames }) = Datagram::decode(&d) {
+                    if let Ok(Datagram::Inputs { timestamp, sequence, first_frame, frames }) = Datagram::decode(&d) {
                         // (a game too far behind drops input packets, as lost ones: the queue stays bounded, RV-248)
                         if let Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) =
-                            to_game.try_send(ToGame::Inputs { id, timestamp, first_frame, frames, at: std::time::Instant::now() })
+                            to_game.try_send(ToGame::Inputs { id, timestamp, sequence, first_frame, frames, at: std::time::Instant::now() })
                         {
                             bail!("the game has stopped");
                         }

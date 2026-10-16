@@ -313,7 +313,7 @@ The property header is the RepIndex (7–8 bits for car/ball/PRI, 6 for others);
   opens if bad time / 900 reaches 35 % (ping), 10 % (jitter) or 5 % (loss) and the last notice was ≥ 5 days ago. Suggest
   skipping it in the clone.
 - The join-time connection check is off by default (`bJoinGameConnectionCheckEnabled` false). The separate network stat
-  graph uses latency good/bad 75/120 ms and loss 1/3 % (TA:70874–70897).
+  graph uses latency good/bad 75/120 ms and loss 1/3 **lost packets per second** (a count per 1-s StatPeriod, not %: SG2, UNetConnection stat block fed at 0x140bada29; TA:70874–70897).
 
 ### 11.5 Packet-level settings
 - Low/Medium/High map to TcpNetDriver Min/Median/MaxReplicationRate and Min/Median/MaxClientRate, and to 20/40/60 for the

@@ -7,6 +7,7 @@
 import { withHeightFog } from "../heightFog";
 import { BackSide, BufferGeometry, DataTexture, DoubleSide, Float32BufferAttribute, LinearFilter, LinearMipmapLinearFilter, Mesh, RepeatWrapping, RGBAFormat, SRGBColorSpace, ShaderMaterial, SphereGeometry, UnsignedByteType, Vector3 } from "three";
 import { PRIORITY } from "../translucentSort";
+import { lowQualityPath } from "../shaderQuality";
 
 /** H-10's colours (linear): the zenith, the horizon's q^4 term, the sun side's pull target, the clouds' base */
 export const SKY_COLOURS = {
@@ -377,6 +378,12 @@ void main() {
   dx.x -= floor(dx.x + 0.5);
   dy.x -= floor(dy.x + 0.5);
   float w = clamp(-5.859e-8 * ${DOME.across.toFixed(1)} * cos(phi) * g.x / max(length(g.xy), 1e-6), 0.0, 1.0);
+  vec3 base = zenith + q4 * horizonAdd;
+  vec3 G = v * mix(base, horizon, w);
+#ifdef CARBALL_LQ
+  // (High Quality Shaders off: the gradient alone, no clouds, no stars: QG-12, RV-497)
+  gl_FragColor = vec4(G, 1.0);
+#else
   vec3 c = tex(smoke, uv, dx, dy).rgb;
   vec3 a = tex(smoke, uv * vec2(8.0, 5.25) + pan1, dx * vec2(8.0, 5.25), dy * vec2(8.0, 5.25)).rgb;
   vec3 b = tex(smoke, uv * vec2(6.0, 5.0) + pan2 + 0.2 * c.r, dx * vec2(6.0, 5.0), dy * vec2(6.0, 5.0)).rgb;
@@ -384,8 +391,6 @@ void main() {
   float gb = mix(S.b, S.g, w);
   float m0 = clamp(6.0 * (v - S.r + 1.0 - 0.875), 0.0, 1.0);
   vec3 cloud = (1.0 + 16.0 * clamp(2.0 * (gb - 0.125), 0.0, 1.0)) * cloudColour;
-  vec3 base = zenith + q4 * horizonAdd;
-  vec3 G = v * mix(base, horizon, w);
   vec3 col = mix(G, (1.0 - w) * cloud, (1.0 - q4) * m0);
   float s1 = tex(speckle, uv * vec2(8.0, 4.0) + pan3, dx * vec2(8.0, 4.0), dy * vec2(8.0, 4.0)).g;
   float s2 = tex(speckle, uv * vec2(16.0, 8.0), dx * vec2(16.0, 8.0), dy * vec2(16.0, 8.0)).r;
@@ -393,6 +398,7 @@ void main() {
   float stars = clamp(8.0 * clamp(s1 * s2 * (s3 + 0.5) - 1.0 / 64.0, 0.0, 1.0) - m0, 0.0, 1.0);
   // (linear HDR: the post-processing's tone map, PP-4)
   gl_FragColor = vec4(col + stars, 1.0);
+#endif
 }
 `;
 
@@ -410,7 +416,8 @@ const texture = (bytes: Uint8Array, size: number): DataTexture => {
 /** The sky dome (inside the camera's far plane from anywhere in the arena: RV-58) and its clock */
 export function buildSkyDome(noise: SkyNoise = skyNoise()): { mesh: Mesh; update: (elapsedSeconds: number) => void } {
   const vec = (c: readonly number[]): Vector3 => new Vector3(c[0], c[1], c[2]);
-  const material = new ShaderMaterial({
+  // (its CARBALL_LQ branch the gradient alone: QG-12)
+  const material = lowQualityPath(new ShaderMaterial({
     vertexShader,
     fragmentShader,
     uniforms: {
@@ -428,7 +435,7 @@ export function buildSkyDome(noise: SkyNoise = skyNoise()): { mesh: Mesh; update
     side: BackSide,
     depthWrite: false,
     fog: false,
-  });
+  }));
   // (fogged as the sky: at the game's dome's distance, FOG-15)
   withHeightFog(material, "sky");
   const mesh = new Mesh(new SphereGeometry(32000, 48, 24), material);

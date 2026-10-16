@@ -1,4 +1,4 @@
-# Game protocol (version 23)
+# Game protocol (version 24)
 
 Client ↔ server over **WebTransport** (HTTP/3, QUIC). All integers little-endian. Implemented in
 `server/src/protocol.rs` (Rust) and `client/src/net/protocol.ts` (TypeScript); `vectors.json` holds byte-exact
@@ -83,8 +83,8 @@ server's) shows its default (0).
 ## Datagrams
 | Type | Direction | Fields |
 |---|---|---|
-| `0x01 Inputs` | C→S | `u32 timestamp` (client ms), `u32 firstFrame`, `u8 count` (≤ 10), `count` × input frame |
-| `0x81 Update` | S→C | `u32 serverTick`, `u32 ackFrame`, `u32 receivedFrame`, `u32 echoTimestamp`, `u16 echoDelay` (ms), `u8 bufferTarget`, `u8 bufferSize`, `u8 part`, `u8 parts`, then network state bytes |
+| `0x01 Inputs` | C→S | `u32 timestamp` (client ms), `u16 sequence` (the client's count of its `Inputs` datagrams, wrapping: the server counts the gaps as lost, a jump of 1000 or more as a count started again), `u32 firstFrame`, `u8 count` (≤ 10), `count` × input frame |
+| `0x81 Update` | S→C | `u32 serverTick`, `u32 ackFrame`, `u32 receivedFrame`, `u32 echoTimestamp`, `u16 echoDelay` (ms), `u8 bufferTarget`, `u8 bufferSize`, since the last `Update` to this client (the same in each part): `u8 bufferLow` and `u8 bufferHigh` (its input buffer's fewest and most frames after a tick), `u8 bufferOver` (ticks that consumed a second frame) and `u8 bufferUnder` (ticks with none), `u8 inputLoss` (its `Inputs` datagrams lost: the sequence's gaps); then `u8 part`, `u8 parts`, then network state bytes |
 
 **Input frame** (7 bytes, consecutive frames from `firstFrame`): `i8 throttle, steer, pitch, yaw, roll,
 dodgeForward` as the game's input byte (`Vehicle_TA.SetVehicleInput`): q = round(value × 127) for value ≥ 0 and
@@ -145,6 +145,8 @@ broadphase box, which the wheel rays pick their candidates by (physics FP2). Ver
 returning token (Hello), `0x92 SearchCooldown` (RV-367). Version 20: `SearchCooldown`'s `network` (RV-385). Version 21:
 the match's map (`MatchFound`, `Welcome`). Version 22: the garage's car (Hello's `model`, in place of its `body`; the
 roster's `model`). Version 23: `Kicked`'s reason 2, a newer search from the same browser took this one's place (RV-460).
+Version 24: the stat graphs' network rows (HUD-21): `Inputs`' `sequence`, and each `Update`'s input-buffer window and the
+inputs lost.
 
 Podium title ids (`notes/match-stats.md` §5.4a; the client's `game/podiumTitles.ts`): 0 OvertimeGoal, 1 Goals_10,
 2 Goals_6_9, 3 Goals_3_5, 4 Saves_10, 5 Saves_6_9, 6 Saves_3_5, 7 EpicSaves, 8 PoolShots, 9 BackwardsGoal, 10 BicycleGoal,

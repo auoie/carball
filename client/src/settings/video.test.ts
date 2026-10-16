@@ -5,6 +5,9 @@ import {
   AutoVideoGuard,
   DEFAULT_VIDEO_SETTINGS,
   RENDER_QUALITY_SCALE,
+  guardDecision,
+  guardStep,
+  guardWanted,
   type VideoState,
   isWeakGpu,
   readVideo,
@@ -39,12 +42,13 @@ describe("the video settings", () => {
 
   it("a saved group read field by field, anything unexpected its default", () => {
     expect(readVideo(undefined)).toEqual(DEFAULT_VIDEO_SETTINGS);
-    expect(readVideo({ renderQuality: "performance", renderDetail: "nonsense", highQualityShaders: false, chosen: true, autoLevel: 9 })).toEqual({
+    expect(readVideo({ renderQuality: "performance", renderDetail: "nonsense", highQualityShaders: false, chosen: true, autoLevel: 9, stepped: true })).toEqual({
       ...DEFAULT_VIDEO_SETTINGS,
       renderQuality: "performance",
       highQualityShaders: false,
       chosen: true,
       autoLevel: 2,
+      stepped: true,
     });
   });
 });
@@ -63,15 +67,23 @@ describe("the automatic default", () => {
     expect(resolveVideo(mine, true)).toBe(mine);
   });
 
-  it("the guard: nothing in the warm-up, then the median frame over its measure; once", () => {
-    const run = (frame: number): boolean[] => {
-      const guard = new AutoVideoGuard();
-      const decisions: boolean[] = [];
-      for (let t = 0; t < AUTO_GUARD.warmUp + AUTO_GUARD.measure + 2; t += frame) decisions.push(guard.frame(frame));
-      return decisions;
-    };
+  /** A session's intervals: `base` s, varied as a GPU-bound page's are (a fixed pattern, ±15 %) unless `steady` */
+  const run = (base: number, steady = false, visible = true): boolean[] => {
+    const guard = new AutoVideoGuard();
+    const decisions: boolean[] = [];
+    const pattern = steady ? [1] : [0.85, 1.15, 1, 0.9, 1.1];
+    for (let t = 0, i = 0; t < AUTO_GUARD.warmUp + AUTO_GUARD.measure + 2; i++) {
+      const frame = base * (pattern[i % pattern.length] ?? 1);
+      t += frame;
+      decisions.push(guard.frame(frame, visible));
+    }
+    return decisions;
+  };
+
+  it("the guard: nothing in the warm-up, then the trimmed mean over its measure; once; the threshold 45 a second", () => {
     expect(run(1 / 60).filter(Boolean)).toEqual([]);
-    expect(run(1 / 50).filter(Boolean)).toEqual([]);
+    expect(run(1 / 46).filter(Boolean)).toEqual([]);
+    expect(run(1 / 44).filter(Boolean)).toEqual([true]);
     const slow = run(1 / 30);
     expect(slow.filter(Boolean)).toEqual([true]);
     // (decided at the measure's end, not in the warm-up)
@@ -82,6 +94,43 @@ describe("the automatic default", () => {
     for (let t = 0; t < AUTO_GUARD.warmUp; t += 0.1) stepped ||= guard.frame(0.1);
     for (let t = 0; t < AUTO_GUARD.measure + 0.1; t += 1 / 60) stepped ||= guard.frame(1 / 60);
     expect(stepped).toBe(false);
+    // (a hidden tab's frames not counted at all)
+    expect(run(1 / 30, false, false).filter(Boolean)).toEqual([]);
+  });
+
+  it("not on a cap: intervals sitting on one value (a 30 Hz display, Energy Saver) are the display's or the browser's, not the GPU's (RV-500)", () => {
+    expect(run(1 / 30, true).filter(Boolean)).toEqual([]);
+    expect(guardDecision(Array.from({ length: 120 }, (_, i) => 1 / 30 + (i % 3) * 0.0004))).toMatchObject({ slow: true, capped: true, step: false });
+    // (40 a second at 60 Hz, alternating one and two refreshes: the mean 25 ms whatever the window's parity, a step)
+    for (const first of [1 / 60, 1 / 30]) {
+      const frames = Array.from({ length: 160 }, (_, i) => (i % 2 === 0 ? first : first === 1 / 60 ? 1 / 30 : 1 / 60));
+      expect(guardDecision(frames)).toMatchObject({ capped: false, step: true });
+    }
+  });
+
+  it("hitches: a few long frames trimmed, none 0.25 s or longer counted", () => {
+    const frames = Array.from({ length: 240 }, (_, i) => (i % 40 === 0 ? 0.2 : (1 / 60) * (i % 2 === 0 ? 0.9 : 1.1)));
+    expect(guardDecision(frames).step).toBe(false);
+    const guard = new AutoVideoGuard();
+    expect(guard.frame(0.3)).toBe(false);
+    expect(guard.frame(0.5)).toBe(false);
+  });
+
+  it("its gates: drawing, allowed, not chosen, not stepped before, a level left; the step itself once, never over a choice (RV-499, RV-504)", () => {
+    const v = DEFAULT_VIDEO_SETTINGS;
+    expect(guardWanted(v, true)).toBe(true);
+    expect(guardWanted(v, false)).toBe(false);
+    expect(guardWanted(v, true, false)).toBe(false);
+    expect(guardWanted({ ...v, chosen: true }, true)).toBe(false);
+    expect(guardWanted({ ...v, stepped: true }, true)).toBe(false);
+    expect(guardWanted({ ...v, autoLevel: 2 }, true)).toBe(false);
+    expect(guardStep(v)).toEqual({ ...v, autoLevel: 1, stepped: true });
+    expect(guardStep({ ...v, autoLevel: 1 })).toEqual({ ...v, autoLevel: 2, stepped: true });
+    expect(guardStep({ ...v, chosen: true })).toBeNull();
+    expect(guardStep({ ...v, stepped: true })).toBeNull();
+    // (stepped once: the next page's guard doesn't run, so a capable GPU never steps twice)
+    const once = guardStep(v);
+    expect(once && guardWanted(once, true)).toBe(false);
   });
 
   it("weak GPUs by their names: Intel's and AMD's integrated graphics, phones', software; discrete and Apple's not", () => {
@@ -95,11 +144,18 @@ describe("the automatic default", () => {
       "Adreno (TM) 650",
       "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
       "llvmpipe (LLVM 15.0.7, 256 bits)",
+      // (RV-509: Meteor Lake's integrated Arc, Kaveri's and Carrizo's APUs)
+      "ANGLE (Intel, Intel(R) Arc(TM) Graphics (0x00007D55) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "ANGLE (AMD, AMD Radeon(TM) R7 Graphics (0x00001313) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "AMD Radeon R5 Graphics",
     ]) expect(isWeakGpu(name), name).toBe(true);
     for (const name of [
       "ANGLE (NVIDIA, NVIDIA GeForce RTX 3090 (0x00002204) Direct3D11 vs_5_0 ps_5_0, D3D11)",
       "ANGLE (AMD, AMD Radeon RX 6800 XT (0x000073BF) Direct3D11 vs_5_0 ps_5_0, D3D11)",
       "ANGLE (Intel, Intel(R) Arc(TM) A770 Graphics (0x000056A0) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "ANGLE (Intel, Intel(R) Arc(TM) B580 Graphics (0x0000E20B) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "AMD Radeon R7 200 Series",
+      "Apple GPU",
       "Apple M2",
       "",
     ]) expect(isWeakGpu(name), name).toBe(false);

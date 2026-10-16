@@ -16,7 +16,8 @@ import { ServerConsume } from "./serverConsume";
 type Engine = Awaited<ReturnType<typeof createEngine>>;
 
 const TICK = 1 / 120;
-const UPDATE_HEADER = 25;
+/** An update datagram's bytes before its state (protocol 24: the input buffer's window, 5 more) */
+const UPDATE_HEADER = 30;
 
 /** count, mean, median, 95th and 99th percentiles, largest */
 export interface Summary {
@@ -296,6 +297,11 @@ export function netRun(engine: Engine, options: NetRunOptions): NetRunResult {
         echoDelay: echo ? Math.round((clock - echo.at) * 1000) : 0,
         bufferTarget: Math.min(255, consume.jitter.bufferSize),
         bufferSize: Math.min(255, consume.length),
+        bufferLow: 0,
+        bufferHigh: 0,
+        bufferOver: 0,
+        bufferUnder: 0,
+        inputLoss: 0,
         part: 0,
         parts: 1,
         state,

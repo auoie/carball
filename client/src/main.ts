@@ -6,7 +6,7 @@ import { CarBody, World, initEngine } from "./engine/world";
 import { Freeplay } from "./game/freeplay";
 import { Online } from "./game/online";
 import type { SessionEnd } from "./game/sessionEnd";
-import { Matchmaking, OWN_SEARCH_TEXT } from "./game/matchmaking";
+import { Matchmaking, OWN_SEARCH_TEXT, PLAYLISTS } from "./game/matchmaking";
 import { Connection, type MatchSession, RefusedError, devServerAddress } from "./net/connection";
 import { joinPreferences } from "./net/joinPreferences";
 import { REFUSED_TOKEN } from "./net/protocol";
@@ -21,12 +21,13 @@ import { loadGameFieldPlan } from "./render/stadiumFieldRules";
 import { loadDemolitionHusks } from "./render/demolition";
 import { loadFennec } from "./render/fennec";
 import { TEAM_CAR_COLORS } from "./render/entities";
-import { type ThemeName, createTheme, createThemeOrNight, preloadTheme, themeName, themeOfMap } from "./render/themes";
+import { MAP_NAMES, type ThemeName, createTheme, createThemeOrNight, preloadTheme, themeName, themeOfMap } from "./render/themes";
 import { CARS, carChoice, storedCar, storedTeam } from "./game/cars";
 import { GaragePreview } from "./ui/garagePreview";
 import type { Theme } from "./render/themes/theme";
-import { type Settings, loadSettings, resolveSettings } from "./settings/settings";
-import { AUTO_LEVELS, AutoVideoGuard, RENDER_QUALITY_SCALE, isWeakGpu } from "./settings/video";
+import { STAT_GRAPHS, type Settings, loadSettings, resolveSettings } from "./settings/settings";
+import type { Vec3 } from "./math/vec";
+import { AutoVideoGuard, RENDER_QUALITY_SCALE, guardStep, guardWanted, isWeakGpu } from "./settings/video";
 import { applyWorldDetail } from "./render/detail";
 import { particleDetail } from "./render/particles";
 import { applyShaderQuality } from "./render/shaderQuality";
@@ -39,7 +40,11 @@ import { StatPopups, StatTicker } from "./ui/statFeed";
 import { PlayersMenu, Toast } from "./ui/playersMenu";
 import { EndScreen, PodiumTags, ScreenDimming, WinnerBanner } from "./ui/endOfMatch";
 import { Nameplates } from "./ui/nameplates";
-import { MainMenu, storedMap } from "./ui/mainMenu";
+import { LoadingScreen, showLoadingFailure } from "./ui/loadingScreen";
+import { StatGraphsView } from "./ui/statGraphsView";
+import { type StatContext, StatGraphData, levelView, measuredRefresh, speedUnit } from "./game/statGraphs";
+import { EXPECTED_PACKETS, NetGraphFeed } from "./net/netStats";
+import { MAIN_MENU_TEXT, MainMenu, storedMap } from "./ui/mainMenu";
 import { MODAL_TEXT, Modal } from "./ui/modal";
 import { SearchView } from "./ui/searchView";
 import { IdleTip } from "./ui/idleTip";
@@ -64,10 +69,34 @@ function required<T extends Element>(selector: string, type: new () => T): T {
 let startedConnection: { close(): void } | null = null;
 
 async function main(): Promise<void> {
-  const status = required("#loading", HTMLElement);
+  const loading = new LoadingScreen(required("#loading", HTMLElement));
   const canvas = required("#game", HTMLCanvasElement);
+  // ?server=host:infoPort (or just ?server: this host, port 4434) plays online against a carball-server
+  const params = new URLSearchParams(location.search);
+  migrateBrowserStorage(); // (the old rl-clone.* keys to their carball.* names, once: before any is read)
+  const server = params.get("server");
+  // ?match: a queue match's page, its slot's claim handed over by the menu page (src/net/pages.ts)
+  const claim = params.has("match") ? takeClaim() : null;
+  if (params.has("match") && claim === null) {
+    location.replace(pageUrl("menu", location));
+    return;
+  }
+  const onlinePage = server !== null || claim !== null;
+  let settings = loadSettings();
+  // (the menu page's notice from a match page or the map select, read here: the loading screen names free play's map)
+  const menuNotice = onlinePage ? null : takeNotice();
+  const playlistName = (teamSize: number): string | null => PLAYLISTS.find((p) => p.teamSize === teamSize)?.name ?? null;
 
-  status.textContent = "Loading physics engine…";
+  // The arena (src/render/themes/: its look and soundscape): free play's, the map select's last pick; an online match's,
+  // the server's (its welcome's map, every player's the same; a queue match's known from its MatchFound, so it loads while
+  // the claim connects); ?theme=meadow overrides either (development)
+  const override = params.get("theme") === null ? null : themeName(params.get("theme"));
+  // (the map and mode named on the loading screen from its start: free play's map from the map select, a queue match's
+  // from its claim; a development server's once it welcomes)
+  if (menuNotice?.freePlay) loading.place(MAP_NAMES[override ?? storedMap()], MAIN_MENU_TEXT.freePlay);
+  if (claim?.map !== undefined) loading.place(MAP_NAMES[override ?? themeOfMap(claim.map)], playlistName(claim.playlist));
+
+  loading.step("engine");
   const [engine, arenaMeshes] = await Promise.all([
     createEngine(),
     Promise.all(
@@ -80,7 +109,7 @@ async function main(): Promise<void> {
   ]);
   if (arenaMeshes.length === 0) throw new Error("no arena meshes (run scripts/arena_gen.py)");
 
-  status.textContent = "Building arena…";
+  loading.step("arena");
   initEngine(engine, arenaMeshes);
   // (the game's Fennec and cage, where the dev server has them: src/render/fennec.ts, src/render/cage.ts)
   await Promise.all([loadFennec(), loadGameCage(), loadDemolitionHusks(), loadGameFieldPlan()]);
@@ -93,8 +122,6 @@ async function main(): Promise<void> {
   warmup.step(240);
   warmup.dispose();
 
-  // ?server=host:infoPort (or just ?server: this host, port 4434) plays online against a carball-server
-  const params = new URLSearchParams(location.search);
   // ?viewer=car: the car model alone on a turntable (for comparing it with the game's); &team=1: orange; &body=N: another
   // hitbox preset (the Octane's wears the Fennec where the dev server has it)
   if (params.get("viewer") === "car") {
@@ -108,14 +135,14 @@ async function main(): Promise<void> {
     const view = showCarViewer(new Renderer(canvas), viewerWorld.carConfig(id), TEAM_CAR_COLORS[team], team, car?.id ?? 0);
     (window as unknown as { carballCarViewer?: unknown }).carballCarViewer = { view };
     view(-140, 15);
-    status.hidden = true;
+    loading.hide();
     return;
   }
   // ?viewer=shaders: the shaders' functions on the GPU against their TypeScript twins (the e2e suite's)
   if (params.get("viewer") === "shaders") {
     const { shaderProbe } = await import("./debug/shaderProbe");
     (window as unknown as { carballShaderProbe?: unknown }).carballShaderProbe = shaderProbe(canvas);
-    status.hidden = true;
+    loading.hide();
     return;
   }
   // ?viewer=arena: the arena alone under a free camera (for comparing it with the game's)
@@ -127,27 +154,16 @@ async function main(): Promise<void> {
     const { view } = viewer;
     (window as unknown as { carballArenaViewer?: unknown }).carballArenaViewer = viewer;
     view({ eye: { x: 0, y: -4000, z: 600 }, target: { x: 0, y: 0, z: 600 } });
-    status.hidden = true;
+    loading.hide();
     return;
   }
-  migrateBrowserStorage(); // (the old rl-clone.* keys to their carball.* names, once: before any is read)
-  const server = params.get("server");
-  // ?match: a queue match's page, its slot's claim handed over by the menu page (src/net/pages.ts)
-  const claim = params.has("match") ? takeClaim() : null;
-  if (params.has("match") && claim === null) {
-    location.replace(pageUrl("menu", location));
-    return;
-  }
-  const onlinePage = server !== null || claim !== null;
-  let settings = loadSettings();
-
-  // The arena (src/render/themes/: its look and soundscape): free play's, the map select's last pick; an online match's,
-  // the server's (its welcome's map, every player's the same; a queue match's known from its MatchFound, so it loads while
-  // the claim connects); ?theme=meadow overrides either (development)
-  const override = params.get("theme") === null ? null : themeName(params.get("theme"));
   const arenaAndSession = async (): Promise<{ name: ThemeName; theme: Theme; session: Awaited<ReturnType<typeof Connection.open>> | null }> => {
-    if (!onlinePage) return { ...(await createThemeOrNight(override ?? storedMap())), session: null };
-    status.textContent = "Connecting to the server…";
+    if (!onlinePage) {
+      const map = override ?? storedMap();
+      loading.step("map");
+      return { ...(await createThemeOrNight(map)), session: null };
+    }
+    loading.step("connecting");
     // (a development server's open match, ?server=host:infoPort; or the queue's match, its claim)
     let address;
     let match: MatchSession = { intent: "join" };
@@ -174,7 +190,8 @@ async function main(): Promise<void> {
     const session = await opened;
     startedConnection = session.connection;
     const name = override ?? themeOfMap(session.welcome.map);
-    status.textContent = "Loading the arena…";
+    loading.place(MAP_NAMES[name], claim ? playlistName(claim.playlist) : null);
+    loading.step("map");
     return { ...(earlyTheme !== null && early === name ? await earlyTheme : await createThemeOrNight(name)), session };
   };
   const { name, theme, session } = await arenaAndSession();
@@ -206,11 +223,27 @@ async function main(): Promise<void> {
   const audio = new GameAudio(name);
   audio.apply(settings.audio, settings.options.muted);
   renderer.postOptions = settings.options;
-  // (the Interface tab: the HUD's stage and its options)
+  // HUD-21's stat graphs: every row sampled each frame, the level's drawn over everything; F10 cycles the level, unsaved
+  const statData = new StatGraphData();
+  const statView = new StatGraphsView(document.body);
+  let statLevel = settings.interface.statGraphs;
+  let savedStatLevel = statLevel;
+  // (the Interface tab: the HUD's stage and its options; a change of Stat Graphs its level, F10's undone)
   const applyInterface = (s: Settings): void => {
     setInterfaceScale(s.interface.scale, s.interface.displayScale);
+    if (s.interface.statGraphs !== savedStatLevel) statLevel = savedStatLevel = s.interface.statGraphs;
     hud.configure(s.interface);
   };
+  window.addEventListener(
+    "keydown",
+    (e) => {
+      if (e.code !== "F10") return;
+      // (F10 "Toggle Stat Graphs": the next level, not saved; the browser's own F10 not taken)
+      e.preventDefault();
+      statLevel = STAT_GRAPHS[(STAT_GRAPHS.indexOf(statLevel) + 1) % STAT_GRAPHS.length] ?? "none";
+    },
+    { capture: true },
+  );
   applyInterface(settings);
   // (the HUD's fonts scaled to the game's capitals and digits, each number glyph's ink fitted: now, and again once
   // they're loaded)
@@ -255,16 +288,17 @@ async function main(): Promise<void> {
   });
   // The error modal (a lost connection, an idle kick) and the search's panel and banner (the menu page's)
   const modal = new Modal(document.body);
-  let searchView: SearchView | null = null;
-  const menusOpen = (): boolean => panel.isOpen || pause.isOpen || (mainMenu?.isOpen ?? false) || modal.isOpen || (searchView?.panelOpen ?? false);
+  const menusOpen = (): boolean => panel.isOpen || pause.isOpen || (mainMenu?.isOpen ?? false) || modal.isOpen;
+  // (the pad's Y releasing over the main or pause menu, no modal or settings over it: the search's cancel, MM-10; set by the
+  // menu page's search)
+  let cancelSearchByPad = (): boolean => false;
   // (the online match menu's question, answered NO by B or Escape: set once that menu's made)
   let dismissMatchQuestion = (): boolean => false;
-  // Escape: the modal's OK; back out of the settings, the search panel (the search goes on) or the main menu's page; a
-  // pause menu's question answered NO (RV-478); else the pause menu opens or closes
+  // Escape: the modal's OK; back out of the settings or the main menu's page; a pause menu's question answered NO
+  // (RV-478); else the pause menu opens or closes
   const escape = (): void => {
     if (modal.isOpen) modal.close();
     else if (panel.isOpen) panel.escape();
-    else if (searchView?.panelOpen) searchView.closePanel();
     else if (mainMenu?.isOpen) mainMenu.back();
     else if (pause.isOpen && (pause.dismissQuestion() || dismissMatchQuestion())) return;
     else pause.toggle();
@@ -293,9 +327,7 @@ async function main(): Promise<void> {
         ? panel.confirming
           ? visibleMenu("#settings-confirm")
           : visibleMenu("#settings")
-        : searchView?.panelOpen
-          ? visibleMenu("#search-panel")
-          : mainMenu?.isOpen
+        : mainMenu?.isOpen
           ? visibleMenu("#main-menu")
           : pause.isOpen
             ? visibleMenu("#pause-menu")
@@ -304,7 +336,6 @@ async function main(): Promise<void> {
     back: () => {
       if (modal.isOpen) modal.close();
       else if (panel.isOpen) panel.escape();
-      else if (searchView?.panelOpen) searchView.closePanel();
       else if (mainMenu?.isOpen) return mainMenu.back();
       else if (pause.isOpen) {
         // (a question up answered NO, the menu kept: RV-478)
@@ -328,6 +359,7 @@ async function main(): Promise<void> {
     },
     // (a rebind waiting for a pad input takes every button, B and Start too: Escape still cancels it)
     capturing: () => panel.capturingGamepad,
+    cancelSearch: () => cancelSearchByPad(),
     sound: (cue) => {
       audio.menu(cue);
     },
@@ -342,7 +374,13 @@ async function main(): Promise<void> {
   (window as unknown as { carballAmbienceLevels?: (theme: ThemeName, seconds: number) => Promise<unknown> }).carballAmbienceLevels = async (t, seconds) =>
     (await import("./audio/levels")).ambienceLevels(t, seconds);
   (window as unknown as { carballMap?: () => ThemeName }).carballMap = () => name;
-  let game: { frame(dt: number): void };
+  let game: {
+    frame(dt: number): void;
+    /** The viewed car's and the ball's velocities (the Stat Graphs' Speed rows) */
+    speeds(): { readonly car: Vec3 | null; readonly ball: Vec3 | null };
+    /** Each frame's network rows (online), at `now` (s) */
+    netFrame?(now: number): void;
+  };
   if (!onlinePage) {
     const freeplay = new Freeplay(world, renderer, arena, input, hud, audio, () => settings, inputEnabled, { car: storedCar(), team: storedTeam() });
     freeplayRestart = () => {
@@ -397,7 +435,14 @@ async function main(): Promise<void> {
     const view = new SearchView(document.body, () => {
       matchmaking.cancel();
     });
-    searchView = view;
+    // (the banner's cancel, the pad's Y too, where MM-10 has it: over the main or pause menu, nothing over them; never
+    // while driving, Y the ball cam's)
+    const cancelHere = (): boolean => ((mainMenu?.isOpen ?? false) || pause.isOpen) && !panel.isOpen && !modal.isOpen;
+    cancelSearchByPad = () => {
+      if (matchmaking.state === null || !cancelHere()) return false;
+      matchmaking.cancel();
+      return true;
+    };
     // (the garage's preview: the cars' hitboxes from a world of its own, one car each)
     const garageWorld = World.create(engine);
     const garageConfigs = new Map(CARS.map((c) => [c.id, garageWorld.carConfig(garageWorld.addCar(0, c.body))]));
@@ -429,17 +474,18 @@ async function main(): Promise<void> {
         mainMenu?.close();
         freeplay.restart(); // (a fresh session, not the one left: RV-284)
       },
-      // (while a search runs, Find Match only shows it: MM-2's SearchInProgress)
+      // (the banner at once, no panel (MS1's in-game path); the Play page kept, its Free Play focused: free play next while
+      // searching, the user's decision; while a search runs, Find Match only shows it: MM-2's SearchInProgress)
       findMatch: (playlist) => {
         matchmaking.start(playlist);
-        view.openPanel();
+        mainMenu?.focusFreePlay();
       },
       settings: () => {
         panel.open();
       },
     });
     // (back from a match page: its modal, a search to start again)
-    const notice = takeNotice();
+    const notice = menuNotice;
     if (notice?.freePlay) {
       mainMenu.close();
       freeplay.restart();
@@ -449,16 +495,17 @@ async function main(): Promise<void> {
       // (back from a match cancelled for someone else: its token, the queue's front again, and its search's clock: RV-367)
       const back = notice.back ? { token: notice.back.token, searchedFor: (Date.now() - notice.back.searchedAt) / 1000 } : undefined;
       matchmaking.start(notice.search, notice.warning, back);
-      // (free play on another map: the search under the banner, the panel closed)
-      if (!notice.freePlay) view.openPanel();
     }
-    (window as unknown as { carballMatchmaking?: unknown }).carballMatchmaking = () => ({ state: matchmaking.state, panelOpen: view.panelOpen });
+    (window as unknown as { carballMatchmaking?: unknown }).carballMatchmaking = () => ({ state: matchmaking.state });
     // For screenshots and the browser tests
     (window as unknown as { carballFreeplay?: unknown }).carballFreeplay = {
       place: (car: { x: number; y: number; yaw: number; boost?: number }, ball?: { x: number; y: number; z: number }, ballVelocity?: { x: number; y: number; z: number }) => {
         freeplay.debugPlace(car, ball, ballVelocity);
       },
       car: () => freeplay.debugCar(),
+      demolish: () => {
+        freeplay.debugDemolish();
+      },
       demolition: (at: { x: number; y: number; z: number }) => {
         freeplay.debugDemolition(at);
       },
@@ -467,17 +514,21 @@ async function main(): Promise<void> {
       // (the camera's fade as the post-processing draws it: RV-159, RV-175)
       cameraFade: () => renderer.cameraFade,
     };
-    // (the automatic default's frame-rate guard: in free play only, never in a match; once a page, while the player
-    // hasn't chosen and a lower level's left)
-    const guard = renderer.draws && (videoAuto?.guard ?? true) && !settings.video.chosen && settings.video.autoLevel < AUTO_LEVELS.length - 1 ? new AutoVideoGuard() : null;
+    // (the automatic default's frame-rate guard: in free play only, never in a match; once ever, while the player hasn't
+    // chosen and a lower level's left: settings/video.ts guardWanted)
+    const guard = guardWanted(settings.video, renderer.draws, videoAuto?.guard) ? new AutoVideoGuard() : null;
+    // (offline: the network and input-buffer rows read 0)
+    NetGraphFeed.offline(statData);
     game = {
+      speeds: () => freeplay.speeds(),
       frame(dt) {
         freeplay.frame(dt);
         matchmaking.frame(performance.now() / 1000);
-        view.update(matchmaking.state);
-        // (a hidden tab's or a stalled frame's time not counted)
-        if (guard && !guard.done && document.visibilityState === "visible" && dt < 0.25 && guard.frame(dt) && !settings.video.chosen) {
-          panel.apply({ ...settings, video: { ...settings.video, autoLevel: settings.video.autoLevel + 1 } });
+        view.update(matchmaking.state, { menuUp: cancelHere(), padMode: padNav.padMode, now: performance.now() / 1000 });
+        // (a hidden tab's or a hitch's time not counted: AutoVideoGuard; the player's choice since wins: guardStep)
+        if (guard && !guard.done && guard.frame(dt, document.visibilityState === "visible")) {
+          const stepped = guardStep(settings.video);
+          if (stepped) panel.apply({ ...settings, video: stepped });
         }
       },
     };
@@ -558,7 +609,13 @@ async function main(): Promise<void> {
       pause.close();
     });
     dismissMatchQuestion = () => menu.dismissQuestion();
+    const netFeed = new NetGraphFeed(statData);
+    online.statFeed = netFeed;
     game = {
+      speeds: () => online.speeds(),
+      netFrame: (now) => {
+        netFeed.frame(now);
+      },
       frame(dt) {
         online.frame(dt);
         menu.update(online.menuItems(), pause.isOpen);
@@ -576,19 +633,62 @@ async function main(): Promise<void> {
   // (High Quality Shaders: every material's branch set before they're compiled; the scene's shader programs compiled
   // while the loading line shows, not in the first frames: RV-458)
   applyShaderQuality(renderer.scene, settings.video.highQualityShaders);
-  status.textContent = "Loading the arena…";
+  loading.step("shaders");
   await renderer.prepare();
-  // (and the whole chain drawn once under the loading line: the first frames seen don't stall, RV-483)
+  // (and the whole chain drawn once under the loading screen: the first frames seen don't stall, RV-483)
+  loading.step("firstFrame");
   await renderer.warmUp();
-  status.hidden = true;
   let last = performance.now();
+  // (the stat graphs' context: the display's refresh as measured, ours having no cap; our downstream's budget, the
+  // updates needing up to about 140 KB/s, not the game's 15000 B/s; the speeds' units)
+  const intervals: number[] = [];
+  const statContext = (): StatContext => ({
+    targetFps: measuredRefresh(intervals),
+    maxBytesRate: 150_000,
+    expectedOutPackets: EXPECTED_PACKETS.out,
+    expectedInPackets: EXPECTED_PACKETS.in,
+    metric: settings.interface.metric,
+  });
+  (window as unknown as { carballStatGraphs?: unknown }).carballStatGraphs = () => ({ level: statLevel, rows: statData.view(statLevel, performance.now() / 1000, statContext()) });
+  /** Each frame's rows sampled (FPS from the raw frame, the game's work less the render's, the render's, the speeds),
+   *  the level drawn */
+  const statFrame = (t: number, dt: number, gameMs: number): void => {
+    if (dt > 0 && dt < 1) {
+      statData.set("FPS", 1 / dt);
+      statData.set("Frame", dt * 1000);
+      intervals.push(dt * 1000);
+      if (intervals.length > 240) intervals.shift();
+    }
+    statData.set("Render", renderer.lastRenderMs);
+    statData.set("Game", Math.max(0, gameMs - renderer.lastRenderMs));
+    // (the GPU's time only while a level is shown: its timer query's cost not paid at None)
+    renderer.gpuTiming = statLevel !== "none";
+    if (renderer.lastGpuMs !== null) statData.set("GPU", renderer.lastGpuMs);
+    const { car, ball } = game.speeds();
+    const unit = speedUnit(settings.interface.metric);
+    for (const [body, v] of [["Car", car], ["Ball", ball]] as const) {
+      if (!v) continue;
+      statData.set(`${body} Speed`, Math.hypot(v.x, v.y, v.z) * unit);
+      statData.set(`${body} Speed (XY)`, Math.hypot(v.x, v.y) * unit);
+      statData.set(`${body} Speed (Z)`, Math.abs(v.z) * unit);
+    }
+    game.netFrame?.(t);
+    statData.sample(t);
+    const view = levelView(statLevel);
+    if (!view) statView.hide();
+    else statView.draw(statData.view(statLevel, t, statContext()), view.window, t, settings.interface.scale, settings.interface.displayScale);
+  };
   const frame = (now: number): void => {
     // (raw: the games take their clamped real and world times from it, LT-3)
     const dt = (now - last) / 1000;
     last = now;
     padNav.frame(readGamepad(), now / 1000);
     padReadout?.update();
+    const started = performance.now();
     game.frame(dt);
+    statFrame(now / 1000, dt, performance.now() - started);
+    // (the game's first frame drawn, its HUD and menus laid out: the loading screen fades into it)
+    loading.done();
     requestAnimationFrame(frame);
   };
   requestAnimationFrame(frame);
@@ -597,7 +697,6 @@ async function main(): Promise<void> {
 main().catch((err: unknown) => {
   // (a match's session not left open behind a page that failed: its slot not an idle car, RV-445)
   startedConnection?.close();
-  const status = document.querySelector("#loading");
-  if (status) status.textContent = `Failed to start: ${err instanceof Error ? err.message : String(err)}`;
+  showLoadingFailure(document.querySelector("#loading"), err instanceof Error ? err.message : String(err));
   console.error(err);
 });

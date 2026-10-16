@@ -170,6 +170,8 @@ export class Connection {
   #onClose: (reason: string) => void = () => undefined;
   readonly #incoming = new ControlQueue<ControlMessage>();
   onUpdate: (u: Update) => void = () => undefined;
+  /** An input datagram sent, its bytes (the Stat Graphs' Out Pkt and Out Bytes, HUD-21) */
+  onSent: (bytes: number) => void = () => undefined;
 
   private constructor(transport: WebTransport) {
     this.#transport = transport;
@@ -264,10 +266,15 @@ export class Connection {
     }
   }
 
+  /** The input datagrams sent: each one's sequence (protocol 24, wrapping: the server counts the gaps as lost) */
+  #inputsSent = 0;
+
   /** Input frames from `firstFrame` on (at most 10), stamped with the client's clock (ms) */
   sendInputs(timestamp: number, firstFrame: number, frames: readonly InputFrame[]): void {
     if (this.#closed) return;
-    const bytes = encodeDatagram({ type: "inputs", timestamp: timestamp >>> 0, firstFrame, frames });
+    const sequence = this.#inputsSent++ & 0xffff;
+    const bytes = encodeDatagram({ type: "inputs", timestamp: timestamp >>> 0, sequence, firstFrame, frames });
+    this.onSent(bytes.length);
     // Unreliable: if the browser drops it (congestion), the frames go again in the next packets
     this.#datagrams.write(bytes).catch(() => undefined);
   }

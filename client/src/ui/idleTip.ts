@@ -2,12 +2,16 @@
 // "You will be kicked for being idle." (the game's words, cleared verbatim: the user's decision, 2026-10-14), no countdown
 // digits; while the server flags it, during play with the car's camera. It hides at once when the player acts.
 
+import { StageLayer } from "./stage";
+
 export const IDLE_TEXT = {
   warning: "Warning",
   willBeKicked: "You will be kicked for being idle.",
 } as const;
 
 export class IdleTip {
+  /** Its stage (the tip's measures the movie's units, scaled with the screen) */
+  readonly #layer: StageLayer;
   readonly #root: HTMLDivElement;
 
   constructor(host: HTMLElement) {
@@ -22,10 +26,12 @@ export class IdleTip {
     body.textContent = IDLE_TEXT.willBeKicked;
     this.#root.append(header, body);
     this.#root.hidden = true;
-    host.append(this.#root);
+    this.#layer = new StageLayer(host, "idle-tip-layer");
+    this.#layer.root.append(this.#root);
   }
 
   update(shown: boolean): void {
+    if (shown) this.#layer.fit();
     if (this.#root.hidden === shown) this.#root.hidden = !shown;
   }
 }

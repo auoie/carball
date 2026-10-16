@@ -61,6 +61,7 @@ function toMessage(m: Record<string, unknown>): ControlMessage | DatagramMessage
       return {
         type: "inputs",
         timestamp: m["timestamp"] as number,
+        sequence: m["sequence"] as number,
         firstFrame: m["firstFrame"] as number,
         frames: (m["frames"] as JsonFrame[]).map((f) => ({
           throttle: quantizeAxis(f.throttle),

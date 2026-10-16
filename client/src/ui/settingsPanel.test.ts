@@ -30,6 +30,10 @@ describe("a settings page reset to its defaults (the pad's X Default)", () => {
     const video = pageDefaults("video", changed);
     expect(video.options.bloom).toBe(DEFAULT_SETTINGS.options.bloom);
     expect(video.options.muted).toBe(true);
+    // (the player's choice and the guard's step undone: the automatic default again, RV-499)
+    const chosen = pageDefaults("video", { ...changed, video: { ...DEFAULT_SETTINGS.video, chosen: true, stepped: true, autoLevel: 2, renderDetail: "custom" } });
+    expect(chosen.video).toEqual(DEFAULT_SETTINGS.video);
+    expect([chosen.video.chosen, chosen.video.stepped, chosen.video.autoLevel]).toEqual([false, false, 0]);
     const gameplay = pageDefaults("gameplay", changed);
     expect(gameplay.options.unlimitedBoost).toBe(DEFAULT_SETTINGS.options.unlimitedBoost);
     const controller = pageDefaults("controller", changed);

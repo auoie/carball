@@ -1,6 +1,6 @@
 // The HUD's numbers as the game's (notes/visual-timing.md).
 import { describe, expect, it } from "vitest";
-import { EASE_IN_QUAD, EASE_OUT_QUAD, boostArc, boostShown, messageShown, replaySpeed, replayTime } from "./hud";
+import { EASE_IN_QUAD, EASE_OUT_QUAD, RESPAWN_LATE_PCT, RESPAWN_TEXT, boostArc, boostShown, messageShown, replaySpeed, replayTime, respawnHud } from "./hud";
 
 describe("the boost meter's number (VT-21)", () => {
   it("is floor(pct · 100), at least 1 while any boost is left", () => {
@@ -68,3 +68,26 @@ describe("BOOST's fade past 80 % (HUD-7: GSAP's default ease, Power1)", () => {
     }
   });
 });
+
+describe("the respawn view (HUD-20, RH1)", () => {
+  const car = (demoRespawnTimer: number, side: "left" | "right" | null = null, index = 0): Parameters<typeof respawnHud>[0] => ({ demoed: true, demoRespawnTimer, spawnSelection: { side, index } });
+  it("the pick's share in 1 % steps over the 2.5 s before the prespawn; gone at the prespawn and when not demolished; no seconds", () => {
+    expect(respawnHud(car(3))?.pct).toBe(100);
+    expect(respawnHud(car(2.0))?.pct).toBe(60);
+    expect(respawnHud(car(1.0))?.pct).toBe(20);
+    expect(respawnHud(car(0.5))).toBeNull();
+    expect(respawnHud({ ...car(2), demoed: false })).toBeNull();
+    expect(Object.keys(respawnHud(car(2)) ?? {})).toEqual(["pct", "side", "inner", "keys"]);
+    // (orange from 60 %: about a second after the demolition)
+    expect(RESPAWN_LATE_PCT).toBe(60);
+    expect(respawnHud(car(2.03))?.pct).toBeGreaterThan(RESPAWN_LATE_PCT);
+  });
+
+  it("the side picked and its spot (inner first), each side's key; the game's prompts", () => {
+    const keys = { left: { kind: "word", text: "A" } as const, right: { kind: "word", text: "D" } as const };
+    expect(respawnHud(car(2, "left", 0), keys)).toMatchObject({ side: "left", inner: true, keys });
+    expect(respawnHud(car(2, "right", 1))).toMatchObject({ side: "right", inner: false, keys: { left: null, right: null } });
+    expect(RESPAWN_TEXT).toEqual({ left: "Respawn Left", right: "Respawn Right" });
+  });
+});
+

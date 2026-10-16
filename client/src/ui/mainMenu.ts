@@ -57,6 +57,7 @@ export class MainMenu {
   readonly #root: HTMLDivElement;
   readonly #top: HTMLDivElement;
   readonly #play: HTMLDivElement;
+  readonly #playFreePlay: HTMLButtonElement;
   readonly #maps: HTMLDivElement;
   readonly #garage: HTMLDivElement;
   readonly #carButtons: HTMLButtonElement[] = [];
@@ -100,7 +101,7 @@ export class MainMenu {
     this.#play = column();
     this.#play.dataset["padPage"] = "play";
     this.#play.dataset["padBack"] = ""; // (B Back in the pad's hints: a page under the top)
-    button(this.#play, MAIN_MENU_TEXT.freePlay, () => {
+    this.#playFreePlay = button(this.#play, MAIN_MENU_TEXT.freePlay, () => {
       this.#show("maps");
     });
     // (the playlists: one selected at a time; Find Match searches it)
@@ -220,6 +221,12 @@ export class MainMenu {
   close(): void {
     this.#root.hidden = true;
     this.#preview?.stop();
+  }
+
+  /** The Play page's Free Play focused (the pad's highlight follows): Find Match's search started, free play next (the
+   *  user's decision, 2026-10-16) */
+  focusFreePlay(): void {
+    this.#playFreePlay.focus({ preventScroll: true });
   }
 
   /** Escape: back from the map select to Play, from Play to the top; nothing at the top (the menu is where the game

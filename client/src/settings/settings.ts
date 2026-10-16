@@ -101,6 +101,20 @@ function readGameplay(v: unknown, oldOptions: Record<string, unknown>): Gameplay
 /** The Interface tab (MENU-6, notes/hud-menus.md; GFxData_Settings_TA's Interface rows) */
 export type NameplateMode = "distanceFade" | "default" | "simplified";
 export type MatchNotifications = "all" | "gameUpdates" | "kickoff";
+/** Stat Graphs (MENU-6: the game's overlay, its ten options in order; None its default) */
+export const STAT_GRAPHS = [
+  "none",
+  "performanceSummary",
+  "performanceShort",
+  "performanceLong",
+  "networkSummary",
+  "networkShort",
+  "networkLong",
+  "speedSummary",
+  "speedShort",
+  "speedLong",
+] as const;
+export type StatGraphs = (typeof STAT_GRAPHS)[number];
 export interface InterfaceSettings {
   /** Interface Scale (UIScale) and Display Scale (SafeZoneRatio: the platform's default, 1 here): the HUD's stage */
   readonly scale: number;
@@ -109,6 +123,8 @@ export interface InterfaceSettings {
   readonly nameplateMode: NameplateMode;
   /** Match Notifications (HUDMessageLevel): which centre messages show */
   readonly matchNotifications: MatchNotifications;
+  /** Stat Graphs: the overlay of the frame rate, the network or the speed (None: a clean screen, the game's default) */
+  readonly statGraphs: StatGraphs;
   readonly teamColoredBoost: boolean;
   /** Metric (else imperial): the replay's speed, the podium titles' units; on by default (GetMetricDefaultValue: on
    *  unless the build's region is the US) */
@@ -132,6 +148,7 @@ export const DEFAULT_INTERFACE_SETTINGS: InterfaceSettings = {
   nameplateScale: 1,
   nameplateMode: "default",
   matchNotifications: "all",
+  statGraphs: "none",
   teamColoredBoost: true,
   metric: true,
   ballCamIndicator: true,
@@ -151,6 +168,7 @@ function readInterface(v: unknown): InterfaceSettings {
     nameplateScale: readNumber(src["nameplateScale"], d.nameplateScale, INTERFACE_LIMITS.nameplateScale),
     nameplateMode: mode === "distanceFade" || mode === "default" || mode === "simplified" ? mode : d.nameplateMode,
     matchNotifications: notifications === "all" || notifications === "gameUpdates" || notifications === "kickoff" ? notifications : d.matchNotifications,
+    statGraphs: STAT_GRAPHS.find((g) => g === src["statGraphs"]) ?? d.statGraphs,
     teamColoredBoost: flag("teamColoredBoost"),
     metric: flag("metric"),
     ballCamIndicator: flag("ballCamIndicator"),
@@ -443,19 +461,23 @@ export function parseSettings(v: unknown): Settings {
     const limited = (k: keyof typeof INPUT_CAMERA_LIMITS): number => readNumber(numbers[k], base[k], INPUT_CAMERA_LIMITS[k]);
     return { ...base, accelRate: limited("accelRate"), decelRate: limited("decelRate"), freeLookSpeed: limited("freeLookSpeed") };
   };
+  const options = readBooleans(src["options"], DEFAULT_OPTIONS);
+  // (a save from before the video group with Bloom or Depth of Field turned off: the player's choice, kept as a Custom
+  // Render Detail, not the automatic default's preset over it: RV-495, the user's lost settings)
+  const video = !("video" in src) && (!options.bloom || !options.depthOfField) ? { ...readVideo(undefined), renderDetail: "custom" as const, chosen: true } : readVideo(src["video"]);
   return {
     bindings: readBindings(src["bindings"]),
     camera: readNumbers(src["camera"], saved ? DEFAULT_CAMERA_SETTINGS : MODERN_CAMERA, CAMERA_LIMITS),
     cameraKbm: inputCamera("cameraKbm", MODERN_CAMERA_KBM),
     cameraPad: inputCamera("cameraPad", MODERN_CAMERA_PAD),
     controller: readNumbers(src["controller"], DEFAULT_CONTROLLER_SETTINGS, CONTROLLER_LIMITS),
-    options: readBooleans(src["options"], DEFAULT_OPTIONS),
+    options,
     audio: readNumbers(src["audio"], DEFAULT_AUDIO_SETTINGS, AUDIO_LIMITS),
     chat: readChat(src["chat"]),
     scoreboard: readScoreboard(src["scoreboard"]),
     interface: readInterface(src["interface"]),
     gameplay: readGameplay(src["gameplay"], old),
-    video: readVideo(src["video"]),
+    video,
   };
 }
 

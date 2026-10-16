@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { ArenaView } from "./arena";
 import { floorOutline } from "./arenaSurface";
 import { GrassCube } from "./grassCube";
-import { FrameMaterial, GRASS_LIGHT, GrassMaterial, HexFloorMaterial, MarkingMaterial, TIRE_MARKS, buildStadiumField, grassBin, grassReflection, mergeFieldPieces } from "./stadiumField";
+import { FrameMaterial, GRASS_LIGHT, GRASS_LQ_NOISE, GRASS_NOISE, GrassMaterial, HexFloorMaterial, MarkingMaterial, TIRE_MARKS, buildStadiumField, grassBin, grassReflection, mergeFieldPieces } from "./stadiumField";
 import { FIELD_LIGHT, FIELD_MEASURES, type FieldPlan, shippableFieldPlan } from "./stadiumFieldRules";
 import { meadowTheme } from "./themes/meadow";
 import { stadiumTheme } from "./themes/stadium";
@@ -443,3 +443,11 @@ describe("the field's materials and light", () => {
     expect(numbers.length).toBeLessThan(1000);
   });
 });
+
+describe("the grass's low-quality noise (QG-5, RV-496)", () => {
+  it("the same composite noise's mean as H-1's: the factor 0.285 (n + 1.5) = 0.831, not the texture's mid value's 0.570", () => {
+    expect(0.75 * (GRASS_LQ_NOISE + 1.25)).toBeCloseTo(GRASS_NOISE, 9);
+    expect(0.285 * (GRASS_LQ_NOISE + 1.5)).toBeCloseTo(0.831, 3);
+  });
+});
+

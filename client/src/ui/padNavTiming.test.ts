@@ -2,7 +2,7 @@
 // pinned; the reviewer's RX20 probe the pattern): the repeats, the stick's threshold and ownership, A and B on release,
 // the bumpers, X and Y, the slider's and the list's steps, the focus's memory, the device's mode
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PadMenuNav, sliderStep } from "./padNav";
+import { PadMenuNav, clickCue, sliderStep } from "./padNav";
 
 const BTN = { a: 0, b: 1, x: 2, y: 3, lb: 4, rb: 5, start: 9, up: 12, down: 13, left: 14, right: 15 } as const;
 const pad = (down: readonly number[] = [], axes: readonly number[] = [0, 0, 0, 0]): { buttons: number[]; axes: number[] } => ({
@@ -545,3 +545,45 @@ describe("the device's mode (MENU-16)", () => {
     expect(bodyClasses.has("pad-mode")).toBe(false);
   });
 });
+
+describe("the keyboard's focus with a pad idle (RV-502)", () => {
+  it("in the keyboard's mode the focus stays where the keys put it, a page rebuilt in place too (Reset), not the pad's kept row", () => {
+    const menu = new Menu("m");
+    menu.controls = column("b", 4);
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => now * 1000);
+    const { nav } = harness(() => menu);
+    // (the pad used here first: its place kept at the first row)
+    now = 1;
+    nav.frame(pad([BTN.down]), now);
+    nav.frame(pad(), (now = 1.05));
+    expect(nav.padMode).toBe(true);
+    // The keyboard: its mode; it focuses the third control
+    for (const f of windowListeners.get("keydown") ?? []) f();
+    now = 2;
+    nav.frame(pad(), now);
+    expect(nav.padMode).toBe(false);
+    focus.active = menu.controls[2];
+    nav.frame(pad(), (now = 2.1));
+    expect(focusedName(menu)).toBe("b2");
+    // The page rebuilt in place (Reset): new controls, the keys' focus on the new fourth (Reset itself)
+    menu.controls = column("b", 4);
+    focus.active = menu.controls[3];
+    nav.frame(pad(), (now = 2.2));
+    expect(focusedName(menu)).toBe("b3");
+    expect(focus.active).toBe(menu.controls[3]);
+  });
+});
+
+describe("a click's cue (MENU-18, RV-501)", () => {
+  it("confirm only with a question shown; a page's hidden question (kept for later) leaves it a select", () => {
+    const menu = new Menu("m");
+    const no = new Control("no", box(0, 0), { "data-pad-default": "" }, ["[hidden]"]);
+    menu.controls = [...column("b", 2), no];
+    expect(clickCue(menu as unknown as HTMLElement)).toBe("select");
+    menu.controls = [...column("b", 2), new Control("no", box(0, 0), { "data-pad-default": "" })];
+    expect(clickCue(menu as unknown as HTMLElement)).toBe("confirm");
+    expect(clickCue(null)).toBe("select");
+  });
+});
+

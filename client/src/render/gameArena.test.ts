@@ -333,11 +333,12 @@ describe("the goals' insides (RV-76, RV-77)", () => {
     expect(meshes.filter((m) => m.name === "goal under glass")).toHaveLength(2);
     expect(meshes.filter((m) => m.name === "goal base bevels")).toHaveLength(2);
     expect(meshes.filter((m) => m.material instanceof GoalFloorMaterial)).toHaveLength(4);
-    // (the frame's tire marks inside its saturate, as H-4's: sat((R + 4 (0.125 + 0.625 G) cube) m) x its light, both
-    // places: RV-168d)
+    // (the frame's tire marks inside its saturate, as H-4's: sat((R + 4 (0.125 + 0.625 G) cube) m) x its light: one
+    // formula, the strips' and the frame's both: RV-168d; its CARBALL_LQ branch without them, QG-8: RV-498)
     const frame = new GoalFloorMaterial({ value: null as never }).fragmentShader;
     const inside = /clamp\(\(vec3\([\d.]+\) \+ 4\.0 \* \(0\.125 \+ 0\.625 \* [\d.]+\) \* cube\) \* 0\.931, 0\.0, 1\.0\) \* frameLight/g;
-    expect(frame.match(inside)).toHaveLength(2);
+    expect(frame.match(inside)).toHaveLength(1);
+    expect(frame.match(/colour = frame\(toCamera\);/g)).toHaveLength(2);
     expect(frame).not.toMatch(/frameLight \* 0\.931/);
   });
 
@@ -533,3 +534,26 @@ describe("ENVPack.G's stand-in (RV-71: our own smooth environment)", () => {
     expect(checked).toBeGreaterThan(100);
   });
 });
+
+describe("the arena's frozen pieces and the theme's moving ones (RV-510)", () => {
+  it("a theme piece that moves (the temple's rings) still changes its world matrix: only the arena is frozen", async () => {
+    const { templeTheme } = await import("./themes/temple");
+    const theme = templeTheme();
+    const arena = new ArenaView(theme);
+    const moving: Object3D[] = [];
+    theme.root.traverse((o) => {
+      if (o.matrixAutoUpdate && o !== theme.root) moving.push(o);
+    });
+    expect(moving.length).toBeGreaterThan(0);
+    arena.root.updateMatrixWorld();
+    const before = moving.map((o) => o.matrixWorld.clone());
+    arena.update(new Vector3(), 5);
+    arena.root.updateMatrixWorld();
+    expect(moving.some((o, i) => !o.matrixWorld.equals(before[i] ?? o.matrixWorld))).toBe(true);
+    // (and the arena's own pieces frozen)
+    const frozen = arena.root.children.filter((c) => c !== theme.root);
+    expect(frozen.length).toBeGreaterThan(0);
+    expect(frozen.every((c) => !c.matrixAutoUpdate)).toBe(true);
+  });
+});
+

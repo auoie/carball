@@ -1,5 +1,5 @@
 // The particle emitters against the game's spawning rules (notes/visual-timing.md VT-2, VT-16).
-import { Group, type Mesh, type ShaderMaterial } from "three";
+import { Group, type InstancedBufferGeometry, type Mesh, type ShaderMaterial } from "three";
 import { describe, expect, it } from "vitest";
 import { vec3 } from "../math/vec";
 import { Demolition } from "./demolition";
@@ -286,3 +286,22 @@ describe("Particle Detail and the emitters' second LOD (QG-24/25)", () => {
     expect([lod?.size, lod?.alpha, lod?.rate, IDLE_EXHAUST.lod?.beyond]).toEqual([{ min: 25, max: 25 }, 0.15, 10, 2500]);
   });
 });
+
+describe("the particles' drawing (RV-503's PM5)", () => {
+  it("none drawn once the last particle dies: each pool's instance count back to 0", () => {
+    const particles = new Particles(seeded(6));
+    const trail = new Emitter(particles, BOOST_TRAIL);
+    trail.active = true;
+    for (let i = 0; i < 30; i++) {
+      trail.update(FRAME, vec3(i * 20, 0, 17));
+      particles.update(FRAME);
+    }
+    const counts = (): number[] => particles.root.children.map((m) => ((m as Mesh).geometry as InstancedBufferGeometry).instanceCount);
+    expect(Math.max(...counts())).toBeGreaterThan(0);
+    trail.active = false;
+    for (let i = 0; i < 600; i++) particles.update(FRAME);
+    expect(particles.count).toBe(0);
+    expect(counts()).toEqual([0, 0]);
+  });
+});
+

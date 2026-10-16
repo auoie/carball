@@ -538,7 +538,8 @@ function geometry(positions: number[], index: number[], extra: Record<string, { 
 
 /** How finely the pads are drawn (the user's request, 2026-10-16: similar, cheap): a base's outline points in each
  *  sixth (degrees from an arm, mirrored in the next sixth: a big pad's at its turns, the tip's arc's end, the arm's
- *  widest, its waist, then the curve between the arms), a big plate's inner ring (on the arms' axes and the bisectors, r
+ *  widest, its waist, then the curve between the arms; a small pad's every 20 degrees: a 24-gon, rounder close up
+ *  (RV-506), puts every big pad down at 3,012 triangles, over the user's 3k), a big plate's inner ring (on the arms' axes and the bisectors, r
  *  uu out), the curtains' tube sides and wall points a side. Their markings, inlays, soft edges, glows and the surface's
  *  shading normal are drawn per pixel: the meshes carry only the outline and the overall height */
 export const PAD_TESSELLATION = {

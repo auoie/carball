@@ -11,8 +11,9 @@
 // order (FP1); 17: the queue (Hello's intent, playlist and token, MatchFound, IdleWarning, Kicked); 18: the moving
 // bodies' broadphase boxes (FP2); 19: a search's browser key and returning token, SearchCooldown; 20: SearchCooldown's
 // network flag; 21: the match's map (MatchFound, Welcome); 22: the garage's car (Hello's and the roster's model); 23:
-// Kicked's reason 2, a newer search from the same browser took this one's place (RV-460)
-export const PROTOCOL_VERSION = 23;
+// Kicked's reason 2, a newer search from the same browser took this one's place (RV-460); 24: the stat graphs' network
+// rows (HUD-21: Inputs' sequence, each Update's input-buffer window and the inputs lost)
+export const PROTOCOL_VERSION = 24;
 /** A name's bytes at most (UTF-8) */
 export const MAX_NAME_BYTES = 32;
 export const MAX_INPUT_FRAMES = 10;
@@ -262,13 +263,20 @@ export interface Update {
   readonly echoDelay: number;
   readonly bufferTarget: number;
   readonly bufferSize: number;
+  /** Since the last update (the stat graphs' IBuf rows and Out Loss, HUD-21): the input buffer's fewest and most frames,
+   *  its ticks that consumed a second frame (over) and had none (under), this client's input datagrams lost */
+  readonly bufferLow: number;
+  readonly bufferHigh: number;
+  readonly bufferOver: number;
+  readonly bufferUnder: number;
+  readonly inputLoss: number;
   readonly part: number;
   readonly parts: number;
   readonly state: Uint8Array;
 }
 
 export type DatagramMessage =
-  | { readonly type: "inputs"; readonly timestamp: number; readonly firstFrame: number; readonly frames: readonly InputFrame[] }
+  | { readonly type: "inputs"; readonly timestamp: number; readonly sequence: number; readonly firstFrame: number; readonly frames: readonly InputFrame[] }
   | ({ readonly type: "update" } & Update);
 
 /** Round half to even (the game's float-to-int conversion) */
@@ -767,6 +775,7 @@ export function encodeDatagram(m: DatagramMessage): Uint8Array {
   if (m.type === "inputs") {
     w.u8(0x01);
     w.u32(m.timestamp);
+    w.u16(m.sequence & 0xffff);
     w.u32(m.firstFrame);
     w.u8(m.frames.length);
     for (const f of m.frames) {
@@ -782,6 +791,7 @@ export function encodeDatagram(m: DatagramMessage): Uint8Array {
     w.u16(m.echoDelay);
     w.u8(m.bufferTarget);
     w.u8(m.bufferSize);
+    for (const v of [m.bufferLow, m.bufferHigh, m.bufferOver, m.bufferUnder, m.inputLoss]) w.u8(v);
     w.u8(m.part);
     w.u8(m.parts);
     w.bytes(m.state);
@@ -794,6 +804,7 @@ export function decodeDatagram(bytes: Uint8Array): DatagramMessage {
   const type = r.u8();
   if (type === 0x01) {
     const timestamp = r.u32();
+    const sequence = r.u16();
     const firstFrame = r.u32();
     const count = r.u8();
     if (count > MAX_INPUT_FRAMES) throw new DecodeError("too many input frames");
@@ -801,7 +812,7 @@ export function decodeDatagram(bytes: Uint8Array): DatagramMessage {
     for (let i = 0; i < count; i++) {
       frames.push({ throttle: r.i8(), steer: r.i8(), pitch: r.i8(), yaw: r.i8(), roll: r.i8(), dodgeForward: r.i8(), bits: r.u8() });
     }
-    return { type: "inputs", timestamp, firstFrame, frames };
+    return { type: "inputs", timestamp, sequence, firstFrame, frames };
   }
   if (type === 0x81) {
     return {
@@ -813,6 +824,11 @@ export function decodeDatagram(bytes: Uint8Array): DatagramMessage {
       echoDelay: r.u16(),
       bufferTarget: r.u8(),
       bufferSize: r.u8(),
+      bufferLow: r.u8(),
+      bufferHigh: r.u8(),
+      bufferOver: r.u8(),
+      bufferUnder: r.u8(),
+      inputLoss: r.u8(),
       part: r.u8(),
       parts: r.u8(),
       state: r.rest(),

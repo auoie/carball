@@ -1,7 +1,8 @@
 // World Detail's gates on the stadium (QG-14/15): what each level draws
-import type { Object3D } from "three";
+import type { Mesh, Object3D, ShaderMaterial } from "three";
 import { describe, expect, it } from "vitest";
 import { applyWorldDetail } from "./detail";
+import { CITY_LIT_FROM } from "./themes/stadiumFarLayer";
 import { stadiumTheme } from "./themes/stadium";
 
 describe("World Detail on the stadium (QG-14/15)", () => {
@@ -49,3 +50,22 @@ describe("World Detail on the stadium (QG-14/15)", () => {
     expect(drawn()).toEqual(all);
   });
 });
+
+describe("the city's window lights at World Detail Performance (QG-14, RV-507)", () => {
+  it("a quarter of the lit windows (the C lights) at Performance, all of them above, the towers drawn either way", () => {
+    const theme = stadiumTheme();
+    let city: Mesh | undefined;
+    theme.root.traverse((o) => {
+      if (o.name === "far layer: city") city = o as Mesh;
+    });
+    if (!city) throw new Error("no city");
+    const litFrom = (): number => ((city?.material as ShaderMaterial).uniforms["litFrom"] as { value: number }).value;
+    applyWorldDetail(theme.root, "performance");
+    expect(litFrom()).toBeCloseTo(CITY_LIT_FROM.performance, 9);
+    expect(city.visible).toBe(true);
+    expect((1 - CITY_LIT_FROM.performance) / (1 - CITY_LIT_FROM.highQuality)).toBeCloseTo(0.25, 2);
+    applyWorldDetail(theme.root, "quality");
+    expect(litFrom()).toBe(CITY_LIT_FROM.highQuality);
+  });
+});
+

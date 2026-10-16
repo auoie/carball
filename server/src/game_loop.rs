@@ -81,8 +81,9 @@ pub fn run(mut messages: Receiver<ToGame>, mode: Mode, test_goal_after: Option<f
                     host.leave(id, lost);
                 }
                 Ok(ToGame::CancelSearch { id }) => queue.cancel(id),
-                Ok(ToGame::Inputs { id, timestamp, first_frame, frames, at }) => {
+                Ok(ToGame::Inputs { id, timestamp, sequence, first_frame, frames, at }) => {
                     if let Some(game) = host.game_of(id) {
+                        game.note_input_sequence(id, sequence);
                         game.receive_inputs(id, timestamp, first_frame, &frames, seconds(at));
                     }
                 }

@@ -167,9 +167,15 @@ export class InputDevices {
   }
 }
 
+/** The browser's pads: none where it has no Gamepad API (turned off, or a privacy setting's: the game plays on without
+ *  pads, not stopped at its first frame) */
+export function gamepads(): readonly (Gamepad | null)[] {
+  return typeof navigator.getGamepads === "function" ? navigator.getGamepads() : [];
+}
+
 /** The first connected gamepad with the standard layout (its kind noted for the prompts' glyphs: setPadStyle) */
 export function readGamepad(): GamepadSnapshot | null {
-  for (const pad of navigator.getGamepads()) {
+  for (const pad of gamepads()) {
     if (pad?.connected && pad.mapping === "standard") {
       setPadStyle(padStyleOf(pad.id));
       return { axes: [...pad.axes], buttons: pad.buttons.map((b) => b.value) };

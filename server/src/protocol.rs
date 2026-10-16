@@ -10,8 +10,9 @@ use crate::engine::Controls;
 // token, 64-bit keys, MatchFound, IdleWarning, Kicked); 18: the moving bodies' broadphase boxes in the engine snapshot
 // (physics FP2); 19: a search's browser key and returning token, SearchCooldown (RV-367: no-shows); 20: SearchCooldown
 // says whether the browser or the network is why (RV-385); 21: the match's map (MatchFound, Welcome); 22: the garage's
-// car (Hello's model, the roster's); 23: Kicked's KICK_REPLACED (RV-460)
-pub const VERSION: u16 = 23;
+// car (Hello's model, the roster's); 23: Kicked's KICK_REPLACED (RV-460); 24: the stat graphs' network rows (HUD-21: the
+// input datagrams' sequence, each update's input-buffer window and the inputs lost)
+pub const VERSION: u16 = 24;
 /// The maps a match can be on (the client's arena themes, in their order: protocol/README.md); a map on the wire is its
 /// index. Only ever appended to: an index names the same map in every version
 pub const MAP_COUNT: u8 = 16;
@@ -361,7 +362,8 @@ pub enum GameEvent {
 /// Datagram (unreliable) messages
 #[derive(Clone, Debug, PartialEq)]
 pub enum Datagram {
-    Inputs { timestamp: u32, first_frame: u32, frames: Vec<InputFrame> },
+    /// `sequence`: the client's count of its input datagrams (wrapping: the server counts the gaps, Out Loss)
+    Inputs { timestamp: u32, sequence: u16, first_frame: u32, frames: Vec<InputFrame> },
     Update(Update),
 }
 
@@ -374,6 +376,13 @@ pub struct Update {
     pub echo_delay: u16,
     pub buffer_target: u8,
     pub buffer_size: u8,
+    /// Since the last update (the stat graphs' IBuf rows, HUD-21): the input buffer's fewest and most frames, its frames
+    /// skipped (over) and ticks without one (under), the client's input datagrams lost
+    pub buffer_low: u8,
+    pub buffer_high: u8,
+    pub buffer_over: u8,
+    pub buffer_under: u8,
+    pub input_loss: u8,
     pub part: u8,
     pub parts: u8,
     pub state: Vec<u8>,
@@ -867,9 +876,10 @@ impl Datagram {
     pub fn encode(&self) -> Vec<u8> {
         let mut w = Writer::default();
         match self {
-            Self::Inputs { timestamp, first_frame, frames } => {
+            Self::Inputs { timestamp, sequence, first_frame, frames } => {
                 w.u8(0x01);
                 w.u32(*timestamp);
+                w.u16(*sequence);
                 w.u32(*first_frame);
                 w.u8(frames.len() as u8);
                 for f in frames {
@@ -888,6 +898,9 @@ impl Datagram {
                 w.u16(u.echo_delay);
                 w.u8(u.buffer_target);
                 w.u8(u.buffer_size);
+                for v in [u.buffer_low, u.buffer_high, u.buffer_over, u.buffer_under, u.input_loss] {
+                    w.u8(v);
+                }
                 w.u8(u.part);
                 w.u8(u.parts);
                 w.0.extend_from_slice(&u.state);
@@ -901,6 +914,7 @@ impl Datagram {
         Ok(match r.u8()? {
             0x01 => {
                 let timestamp = r.u32()?;
+                let sequence = r.u16()?;
                 let first_frame = r.u32()?;
                 let count = usize::from(r.u8()?);
                 if count > MAX_INPUT_FRAMES {
@@ -918,7 +932,7 @@ impl Datagram {
                         bits: r.u8()?,
                     });
                 }
-                Self::Inputs { timestamp, first_frame, frames }
+                Self::Inputs { timestamp, sequence, first_frame, frames }
             }
             0x81 => Self::Update(Update {
                 server_tick: r.u32()?,
@@ -928,6 +942,11 @@ impl Datagram {
                 echo_delay: r.u16()?,
                 buffer_target: r.u8()?,
                 buffer_size: r.u8()?,
+                buffer_low: r.u8()?,
+                buffer_high: r.u8()?,
+                buffer_over: r.u8()?,
+                buffer_under: r.u8()?,
+                input_loss: r.u8()?,
                 part: r.u8()?,
                 parts: r.u8()?,
                 state: r.rest(),
@@ -1106,6 +1125,7 @@ mod tests {
         match m["type"].as_str().unwrap() {
             "inputs" => Datagram::Inputs {
                 timestamp: u(&m["timestamp"]),
+                sequence: u(&m["sequence"]) as u16,
                 first_frame: u(&m["firstFrame"]),
                 frames: m["frames"]
                     .as_array()
@@ -1133,6 +1153,11 @@ mod tests {
                 echo_delay: u(&m["echoDelay"]) as u16,
                 buffer_target: u(&m["bufferTarget"]) as u8,
                 buffer_size: u(&m["bufferSize"]) as u8,
+                buffer_low: u(&m["bufferLow"]) as u8,
+                buffer_high: u(&m["bufferHigh"]) as u8,
+                buffer_over: u(&m["bufferOver"]) as u8,
+                buffer_under: u(&m["bufferUnder"]) as u8,
+                input_loss: u(&m["inputLoss"]) as u8,
                 part: u(&m["part"]) as u8,
                 parts: u(&m["parts"]) as u8,
                 state: bytes(&m["state"]),
@@ -1173,6 +1198,25 @@ mod tests {
         assert_eq!(hello_version(&ours[2..]), Some(VERSION));
         assert_eq!(hello_version(&[0x81, 11, 0]), None, "a welcome");
         assert_eq!(hello_version(&[0x01, 11]), None, "too short");
+    }
+
+    #[test]
+    fn the_kick_reasons_are_the_shared_vectors() {
+        // (KICK_* as the client's net/protocol.ts reads them, each the shared vector's: idle, not all joined, replaced;
+        // RV-503's SM2: the constants themselves pinned, not only the JSON's numbers)
+        let v = vectors();
+        let kicked: Vec<(u8, Vec<u8>)> = v["vectors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|vector| vector["message"]["type"] == "kicked")
+            .map(|vector| (u(&vector["message"]["reason"]) as u8, hex(vector["hex"].as_str().unwrap())))
+            .collect();
+        for reason in [KICK_IDLE, KICK_NOT_ALL_JOINED, KICK_REPLACED] {
+            let expected = kicked.iter().find(|(r, _)| *r == reason).map(|(_, bytes)| bytes.clone());
+            assert_eq!(Some(Control::Kicked { reason }.encode()), expected, "reason {reason}");
+        }
+        assert_eq!((KICK_IDLE, KICK_NOT_ALL_JOINED, KICK_REPLACED), (0, 1, 2));
     }
 
     #[test]
@@ -1221,7 +1265,8 @@ mod tests {
         assert!(Datagram::decode(&[]).is_err());
         assert!(Datagram::decode(&[0x01, 1, 2]).is_err());
         assert!(Datagram::decode(&[0x7f]).is_err());
-        let mut too_many = vec![0x01, 0, 0, 0, 0, 0, 0, 0, 0, 11];
+        // (timestamp, sequence, first frame, then a count over the most)
+        let mut too_many = vec![0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11];
         too_many.extend(std::iter::repeat_n(0, 66));
         assert!(Datagram::decode(&too_many).is_err());
     }
