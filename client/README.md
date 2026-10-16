@@ -15,6 +15,7 @@ cd client
 npm install
 npm run dev          # http://localhost:5173
 npm run build        # production build in dist/ (typechecks first)
+npm run preview:fast # build without the typecheck (~0.5 s; writes dist/), then serve it at http://localhost:4173
 ```
 Online: start the server (`cd server && cargo run --release`), then open `http://localhost:5173/?server` (or
 `?server=host:infoPort`). Every player who opens it joins the same match; teams are balanced.
