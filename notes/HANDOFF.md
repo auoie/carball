@@ -252,10 +252,14 @@ every map captures it now; the team glow sheets behind the walls, which replace 
 the theme's own `walls.blue`/`orange`. Still the stadium's alone (`walls.game`): its field and floor, its goals' metal
 floors, underlayers, glows and unlit frame; every other theme keeps its floor, markings, goals' floors and lit goal frame.
 `HexWallMaterial` (hexWalls.ts), our beam ribbons and trim light, and `WallStyle`'s `neutral`/`lines`/`ceilingLines` went.
-The trim's cap (AV-10: z 256-272 above the r 256 fillet, `trimCap`, the trim's material) closes the dark band of bare cage
-the user saw between the trim and the glow sheets' foot (z 272): where the fillet's top is at 256 (the side walls, their
-corners, the diagonal) and the sheets run (|y| from 128), 2 uu in front of the wall (over our overlay, which lies on the
-wall). The back corners and back walls (fillet top 160 to 96) get none: AV-10 gives them other pieces (a grate, glass).
+The trim's cap (AV-10: z 256-272 above the r 256 fillet, x 4096-4100; `trimCap`) closes the dark band of bare cage the
+user saw between the trim and the glow sheets' foot (z 272). It is part of the trim: along the fillet's whole top edge at
+256 (the side walls through midfield, their corners, the diagonal), a solid profile as the game's (a front face on the
+wall, sharing the fillet's top points so no seam shows the overlay's hexes, and a top face to 4 uu behind the wall along
+each point's outward normal). Its front face lies where our overlay does (the game's is 4 uu behind it), so its own
+SideTrimMaterial copy is drawn a little nearer (polygon offset -1, -2). The back corners and back walls (fillet top 160
+to 96) get none: AV-10 gives them other pieces (a grate, glass); the static session is identifying what goes there, and in
+the other gaps (the glow's ends, the midfield glow gap, the sliver between the goal frame and the glass wing).
 **The browser tests' servers** start from `client/e2e/servers.ts` (Playwright's globalSetup), not its webServer: here a
 connection to a closed 127.0.0.1 port is dropped, not refused, and Playwright's pre-check of each server's URL waited
 2 min 14 s per server (9 of the suite's 12 minutes).

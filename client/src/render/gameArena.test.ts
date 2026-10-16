@@ -106,47 +106,63 @@ describe("the game's arena materials", () => {
   });
 
   it("the wall foot as the game's frame on every map (AV-10, H-4: Side_Trim, its tire marks 0.904, its baked light, the capture along its own reflection)", () => {
-    // (the fillet and its cap: two meshes, one material)
+    // (the fillet and its cap: two meshes, the cap's material drawn a little nearer)
     const trims = materials(stadium.root).filter((m): m is SideTrimMaterial => m instanceof SideTrimMaterial);
     expect(trims).toHaveLength(2);
-    expect(new Set(trims).size).toBe(1);
     const fragment = trims[0]?.fragmentShader ?? "";
     expect(fragment).toContain("reflect(-toCamera, normalize(vNormal))");
     expect(fragment).toContain(`vec3(${SIDE_TRIM.light.map((v) => v.toFixed(3)).join(", ")})`);
     expect(SIDE_TRIM.m).toBe(0.904);
-    expect(new Set(materials(night.root).filter((m) => m instanceof SideTrimMaterial)).size).toBe(1);
+    expect(materials(night.root).filter((m) => m instanceof SideTrimMaterial)).toHaveLength(2);
   });
 
-  it("the trim's cap rises from the fillet's top (z 256) to the glow sheets' foot (z 272) where they run, 2 uu in front of the wall (AV-10; the user's finding)", () => {
-    const cap = trimCap(buildArenaSurface());
+  it("the trim's cap: a solid profile on the fillet's whole 256 top edge, through midfield, up to the glow sheets' foot (AV-10; the user's findings)", () => {
+    const surface = buildArenaSurface();
+    const cap = trimCap(surface);
     const position = cap.getAttribute("position");
     const normal = cap.getAttribute("normal");
     expect(position.count).toBeGreaterThan(0);
-    const ys = new Set<number>();
+    const key = (x: number, y: number): string => `${x.toFixed(2)},${y.toFixed(2)}`;
+    const feet = new Set<string>();
     let minAbsY = Infinity;
     let maxAbsY = 0;
     for (let i = 0; i < position.count; i++) {
       const [x, z, y] = [position.getX(i), position.getY(i), position.getZ(i)]; // (Three's frame: x, z up, y)
-      ys.add(z);
+      expect([256, 272]).toContain(z);
       minAbsY = Math.min(minAbsY, Math.abs(y));
       maxAbsY = Math.max(maxAbsY, Math.abs(y));
-      // (on the side walls 2 uu in front of x 4096; inside the field everywhere, facing it)
-      if (Math.abs(y) < 3500) expect(Math.abs(x)).toBeCloseTo(4094, 3);
-      expect(normal.getX(i) * x + normal.getZ(i) * y).toBeLessThan(0);
-      expect(Math.abs(normal.getY(i))).toBeLessThan(1e-6);
+      if (z === 256) feet.add(key(x, y));
+      // (on the side walls: the front face on the wall, x 4096; the top face to 4 uu behind it, x 4100)
+      if (Math.abs(y) < 3500) expect([4096, 4100].some((w) => Math.abs(Math.abs(x) - w) < 1e-3)).toBe(true);
+      // (each face facing the field (the front) or up (the top))
+      const [nx, ny, nz] = [normal.getX(i), normal.getY(i), normal.getZ(i)];
+      const front = Math.abs(ny) < 1e-6 && nx * x + nz * y < 0;
+      const up = Math.abs(ny - 1) < 1e-6;
+      expect(front || up).toBe(true);
     }
-    expect([...ys].sort((a, b) => a - b)).toEqual([256, 272]);
-    // (from where the glow sheets begin, |y| 128; not past the back corners' start (3200, 4864), where the fillet lowers)
-    expect(minAbsY).toBeCloseTo(128, 3);
-    expect(maxAbsY).toBeLessThanOrEqual(4864 + 1e-3);
+    // (closed down onto the fillet: its foot the fillet's top points at z 256, no seam)
+    const tops: string[] = [];
+    for (let v = 0; v < surface.bands.length; v++) {
+      const [x, y, z] = [surface.positions[3 * v] ?? 0, surface.positions[3 * v + 1] ?? 0, surface.positions[3 * v + 2] ?? 0];
+      if (surface.bands[v] === 1 && Math.abs(z - 256) < 0.5) tops.push(key(x, y));
+    }
+    expect(feet.size).toBeGreaterThan(0);
+    for (const foot of feet) expect(tops).toContain(foot);
+    // (through midfield; not past the back corners' start (3200, 4864), where the fillet lowers)
+    expect(minAbsY).toBeCloseTo(0, 3);
+    expect(maxAbsY).toBeLessThanOrEqual(4864 + 4 + 1e-3);
     expect(maxAbsY).toBeGreaterThan(4800);
-    // (on every map: the trim's mesh beside it)
+    // (on every map, drawn a little nearer than the overlay that lies on the wall with its front face)
     const caps: Mesh[] = [];
     night.root.traverse((o) => {
       if (o instanceof Mesh && o.name === "trim cap") caps.push(o as Mesh);
     });
     expect(caps).toHaveLength(1);
-    expect(caps[0]?.material).toBeInstanceOf(SideTrimMaterial);
+    const material = caps[0]?.material as SideTrimMaterial;
+    expect(material).toBeInstanceOf(SideTrimMaterial);
+    expect(material.polygonOffset).toBe(true);
+    expect(material.polygonOffsetFactor).toBeLessThan(0);
+    expect(material.polygonOffsetUnits).toBeLessThan(0);
   });
 
   it("every map wears the game's net, trim and cage, in its own team colours; the stadium's field and goals stay its own", () => {

@@ -191,9 +191,14 @@ export class ArenaView {
     cage.renderOrder = ARENA_PRIORITY.base; // (FFCage_Full: TRN1)
     // (the wall's foot the game's baked frame (Side_Trim: AV-10, H-4), reflecting the capture, the ball's shadow up it; its
     // cap up to the glow sheets' foot)
-    const trimMaterial = new SideTrimMaterial(this.#grassCube.uniform, this.#cage.ballPosition, BALL_RADIUS);
-    const trim = new Mesh(geometry(trimIndices), trimMaterial);
-    const cap = new Mesh(trimCap(surface), trimMaterial);
+    const trim = new Mesh(geometry(trimIndices), new SideTrimMaterial(this.#grassCube.uniform, this.#cage.ballPosition, BALL_RADIUS));
+    // (the cap's front face lies on the wall, as our overlay does (the game's 4 uu behind it): drawn a little nearer,
+    // so the overlay never shows on it)
+    const capMaterial = new SideTrimMaterial(this.#grassCube.uniform, this.#cage.ballPosition, BALL_RADIUS);
+    capMaterial.polygonOffset = true;
+    capMaterial.polygonOffsetFactor = -1;
+    capMaterial.polygonOffsetUnits = -2;
+    const cap = new Mesh(trimCap(surface), capMaterial);
     cap.name = "trim cap";
     const group = new Group();
     group.add(cage, trim, cap, ...glowSheets(this.#style), backGlass(0), backGlass(1));
@@ -323,55 +328,71 @@ const BACK_GLASS = { y: 5124 } as const;
 /** The game's team glow sheets (AV-11, Field_STD_Glow): 16 uu behind the walls, from the trim's cap (z 272) to 400,
  *  from |y| 128 on the side walls round the corners and along the back walls to |x| 2048 */
 const GLOW_SHEET = { behind: 16, z0: 272, z1: 400, y0: 128, x1: 2048 } as const;
-/** The trim's cap (AV-10: z 256-272 above the r 256 fillet), this far in front of the wall (uu) */
-const TRIM_CAP = { z0: 256, z1: GLOW_SHEET.z0, inset: 2 } as const;
+/** The trim's cap (AV-10: z 256-272 above the r 256 fillet, its top x 4096-4100: this deep behind the wall, uu) */
+const TRIM_CAP = { z0: 256, z1: GLOW_SHEET.z0, depth: 4 } as const;
 /** The trim's grey (the game's: a light, slightly metallic grey round the wall's foot) */
 const TRIM_COLOR = 0x9aa0a8;
 /** The frame round a goal mouth: its width on the back wall, and the light along its inner edge (uu) */
 const FRAME_WIDTH = 70;
 const FRAME_LIGHT_WIDTH = 14;
 
-/** The trim's cap (AV-10: Side_Trim covers the r 256 floor fillet up to a cap at z 256-272), so the trim meets the glow
- *  sheets' foot (z 272; the user's finding, 2026-10-16: a dark band of bare cage between them): along the fillet's top
- *  edge where it is at z 256 (the side walls, their corners and the diagonal; not the back corners and back walls, whose
- *  lower fillet AV-10 gives other pieces) and where the glow sheets run (|y| from 128, cut there). Upright, `inset` uu in
- *  front of the wall: over our cage's overlay, which lies on the wall (the game's sits 4 uu behind its cap) */
+/** The trim's cap (AV-10: Side_Trim covers the r 256 floor fillet up to a cap at z 256-272, x 4096-4100), so the trim
+ *  meets the glow sheets' foot (z 272; the user's findings, 2026-10-16: a dark band of bare cage between them, the
+ *  overlay flickering through a seam): part of the trim, along the fillet's whole top edge where it is at z 256 (the side
+ *  walls through midfield, their corners and the diagonal; not the back corners and back walls, whose lower fillet AV-10
+ *  gives other pieces). A solid profile as the game's: its front face on the wall, closed down onto the fillet's top edge
+ *  (its points, no seam), up to z 272, and its top face from the wall to `depth` uu behind it (each point along the wall's
+ *  outward normal there, so the corners close) */
 export function trimCap(surface: ArenaSurface): BufferGeometry {
   const { positions, bands, indices } = surface;
   const at = (v: number): [number, number, number] => [positions[3 * v] ?? 0, positions[3 * v + 1] ?? 0, positions[3 * v + 2] ?? 0];
   const top = (v: number): boolean => bands[v] === 1 && Math.abs(at(v)[2] - TRIM_CAP.z0) < 0.5;
-  const pos: number[] = [];
-  const idx: number[] = [];
   // The fillet's top edges, in their trim triangles' order (each in one of them: the triangle above it is the cage's)
+  const edges: [number, number][] = [];
   for (let i = 0; i < indices.length; i += 3) {
     const tri = [indices[i] ?? 0, indices[i + 1] ?? 0, indices[i + 2] ?? 0];
     if (!tri.every((v) => (bands[v] ?? -1) >= 0)) continue;
     for (let k = 0; k < 3; k++) {
       const a = tri[k] ?? 0;
       const b = tri[(k + 1) % 3] ?? 0;
-      if (!top(a) || !top(b)) continue;
-      let [ax, ay] = at(a);
-      let [bx, by] = at(b);
-      if (Math.abs(ay) < GLOW_SHEET.y0 && Math.abs(by) < GLOW_SHEET.y0) continue;
-      // (an edge across |y| 128: cut where the glow sheet begins)
-      const cut = (fromX: number, fromY: number, toX: number, toY: number): [number, number] => {
-        const f = (Math.sign(toY) * GLOW_SHEET.y0 - fromY) / (toY - fromY);
-        return [fromX + (toX - fromX) * f, fromY + (toY - fromY) * f];
-      };
-      if (Math.abs(ay) < GLOW_SHEET.y0) [ax, ay] = cut(ax, ay, bx, by);
-      if (Math.abs(by) < GLOW_SHEET.y0) [bx, by] = cut(bx, by, ax, ay);
-      // (towards the field: the edge's normal in the plan that points at the centre)
-      const length = Math.hypot(bx - ax, by - ay) || 1;
-      let [nx, ny] = [-(by - ay) / length, (bx - ax) / length];
-      if (nx * (ax + bx) + ny * (ay + by) > 0) [nx, ny] = [-nx, -ny];
-      const base = pos.length / 3;
-      for (const [x, y] of [[ax, ay], [bx, by]] as const) {
-        for (const z of [TRIM_CAP.z0, TRIM_CAP.z1]) pos.push(x + nx * TRIM_CAP.inset, z, y + ny * TRIM_CAP.inset); // (Three's frame)
-      }
-      const [a0, a1, b0, b1] = [base, base + 1, base + 2, base + 3];
-      // (b0, a0, a1, b0, a1, b1) in the game's frame; its y and z swapped in Three's mirror the winding
-      idx.push(b0, a1, a0, b0, b1, a1);
+      if (top(a) && top(b)) edges.push([a, b]);
     }
+  }
+  // Each point's outward normal in the plan: its edges' normals that point away from the field, averaged
+  const outward = new Map<number, [number, number]>();
+  for (const [a, b] of edges) {
+    const [ax, ay] = at(a);
+    const [bx, by] = at(b);
+    let [nx, ny] = [by - ay, -(bx - ax)];
+    if (nx * (ax + bx) + ny * (ay + by) < 0) [nx, ny] = [-nx, -ny];
+    const length = Math.hypot(nx, ny) || 1;
+    for (const v of [a, b]) {
+      const sum = outward.get(v) ?? [0, 0];
+      outward.set(v, [sum[0] + nx / length, sum[1] + ny / length]);
+    }
+  }
+  const behind = (v: number): [number, number] => {
+    const [x, y] = at(v);
+    const [nx, ny] = outward.get(v) ?? [0, 0];
+    const length = Math.hypot(nx, ny) || 1;
+    return [x + (nx / length) * TRIM_CAP.depth, y + (ny / length) * TRIM_CAP.depth];
+  };
+  const pos: number[] = [];
+  const idx: number[] = [];
+  // (Three's frame: x, z up, y; the game's (b0, a0, a1, b0, a1, b1) mirrored by the swap)
+  const quad = (a0: readonly number[], a1: readonly number[], b0: readonly number[], b1: readonly number[]): void => {
+    const base = pos.length / 3;
+    pos.push(...a0, ...a1, ...b0, ...b1);
+    idx.push(base + 2, base + 1, base, base + 2, base + 3, base + 1);
+  };
+  for (const [a, b] of edges) {
+    const [ax, ay] = at(a);
+    const [bx, by] = at(b);
+    const [aox, aoy] = behind(a);
+    const [box, boy] = behind(b);
+    // (the front face, facing the field; the top face, facing up: its inner edge the front face's top)
+    quad([ax, TRIM_CAP.z0, ay], [ax, TRIM_CAP.z1, ay], [bx, TRIM_CAP.z0, by], [bx, TRIM_CAP.z1, by]);
+    quad([ax, TRIM_CAP.z1, ay], [aox, TRIM_CAP.z1, aoy], [bx, TRIM_CAP.z1, by], [box, TRIM_CAP.z1, boy]);
   }
   const g = new BufferGeometry();
   g.setAttribute("position", new BufferAttribute(new Float32Array(pos), 3));
