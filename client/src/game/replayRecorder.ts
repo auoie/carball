@@ -10,6 +10,8 @@ export interface RecordedCar extends BodyState {
   readonly demoed: boolean;
   readonly supersonic: boolean;
   readonly wheelContact: CarState["wheelContact"];
+  /** The engine's flip-reset count (the game's DodgesRefreshedCounter): a replay plays the effect where it goes up */
+  readonly flipResets: number;
 }
 
 export interface RecordedFrame {
@@ -50,6 +52,6 @@ export class ReplayRecorder {
 
 /** A car as recorded */
 export function recordCar(car: CarState): RecordedCar {
-  const { pos, vel, angVel, rot, team, boosting, demoed, supersonic, wheelContact } = car;
-  return { pos, vel, angVel, rot, team, boosting, demoed, supersonic, wheelContact };
+  const { pos, vel, angVel, rot, team, boosting, demoed, supersonic, wheelContact, flipResets } = car;
+  return { pos, vel, angVel, rot, team, boosting, demoed, supersonic, wheelContact, flipResets };
 }

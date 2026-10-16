@@ -31,19 +31,22 @@ test("each shader function matches its TypeScript twin on the GPU", async ({ pag
   expect(errors).toEqual([]);
 });
 
-test("a taken boost pad renders at its dim look, its glow off (the instance colour reaches the fragment shader)", async ({ page }) => {
+test("a taken boost pad renders as its base alone, its FX faded out, and a big one warms up (VT-11c: the instance colours reach the shaders)", async ({ page }) => {
   await page.goto("/?viewer=shaders");
   await page.waitForFunction(() => "carballShaderProbe" in window, null, { timeout: 30_000 });
   const pads = await page.evaluate(() =>
-    (window as unknown as { carballShaderProbe: { pads: () => { smallLit: number; smallTaken: number; bigLit: number; bigTaken: number; dim: number } } }).carballShaderProbe.pads(),
+    (window as unknown as { carballShaderProbe: { pads: () => Record<"smallLit" | "smallTaken" | "smallBase" | "bigLit" | "bigTaken" | "bigBase" | "bigWarm" | "bigWarmBase", number> } })
+      .carballShaderProbe.pads(),
   );
-  // (every disc found and lit by something)
-  for (const v of Object.values(pads)) expect(v).toBeGreaterThan(0.02);
-  // Taken: as the dim reference (within 10 %), far under the lit look
-  expect(Math.abs(pads.smallTaken - pads.dim) / pads.dim, JSON.stringify(pads)).toBeLessThan(0.1);
-  expect(Math.abs(pads.bigTaken - pads.dim) / pads.dim, JSON.stringify(pads)).toBeLessThan(0.1);
+  // (every pad found: its dark metal and underglow are something)
+  for (const v of Object.values(pads)) expect(v).toBeGreaterThan(0.002);
+  // Taken: its base drawn alone (within 2 %), far under the lit look
+  expect(Math.abs(pads.smallTaken - pads.smallBase) / pads.smallBase, JSON.stringify(pads)).toBeLessThan(0.02);
+  expect(Math.abs(pads.bigTaken - pads.bigBase) / pads.bigBase, JSON.stringify(pads)).toBeLessThan(0.02);
   expect(pads.smallTaken, JSON.stringify(pads)).toBeLessThan(0.5 * pads.smallLit);
   expect(pads.bigTaken, JSON.stringify(pads)).toBeLessThan(0.5 * pads.bigLit);
+  // A big pad 8 s into its warm-up: its cream copies revealed over most of its centre (VT-11c)
+  expect(pads.bigWarm, JSON.stringify(pads)).toBeGreaterThan(2 * pads.bigWarmBase);
 });
 
 test("the post-processing chain (PP-1..10): a uniform grey at its display value, bloom round a bright patch only with Bloom on", async ({ page }) => {

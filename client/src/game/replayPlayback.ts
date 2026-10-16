@@ -11,6 +11,7 @@ import type { ReplayPlan } from "../net/protocol";
 import type { ArenaView } from "../render/arena";
 import type { SceneEffects } from "../render/effects";
 import { type BallView, type CarView, trailGround } from "../render/entities";
+import { FlipResetFx } from "../render/flipResetFx";
 import type { Renderer } from "../render/renderer";
 import { replayDilation } from "./goalSequence";
 import { Interpolated } from "./interpolated";
@@ -34,6 +35,9 @@ export interface ReplayScene {
   readonly ballView: BallView;
   /** Every car's view, by id (one without a recording is hidden) */
   readonly cars: Iterable<readonly [number, CarView]>;
+  /** The Flip Reset Indicator setting's parts: replays show every car's flip resets (HUD-19: PlayFlipResetFx plays for
+   *  replays), as the live game the player's own */
+  readonly flipReset: { readonly visual: boolean; readonly audio: boolean };
 }
 
 /** The cars between two recorded frames, as the replay draws them (game coordinates), not the demolished: their
@@ -43,6 +47,18 @@ export function replayCarPositions(a: RecordedFrame, b: RecordedFrame, alpha: nu
   for (const [id, from] of a.cars) {
     const to = b.cars.get(id) ?? from;
     if (!to.demoed) out.set(id, { pos: add(from.pos, scale(sub(to.pos, from.pos), alpha)), team: to.team });
+  }
+  return out;
+}
+
+/** The cars whose flip-reset count went up in `frame` since the counts last seen (`last`, brought up to date): a car
+ *  first seen only starts its count; the demolished aside (HUD-19: the replay plays PlayFlipResetFx for any car) */
+export function flipResetCars(last: Map<number, number>, frame: RecordedFrame): Set<number> {
+  const out = new Set<number>();
+  for (const [id, car] of frame.cars) {
+    const before = last.get(id);
+    last.set(id, car.flipResets);
+    if (before !== undefined && car.flipResets > before && !car.demoed) out.add(id);
   }
   return out;
 }
@@ -57,6 +73,9 @@ export class ReplayPlayback {
   /** The explosion's colour: Ball_TA.SetExplosionFXActor, the team other than the net's TeamNum */
   readonly #explosionTeam: number;
   #goalShown = false;
+  /** Each car's flip-reset count as last drawn, and its effect (made at its first reset in the replay) */
+  readonly #flipCounts = new Map<number, number>();
+  readonly #flipFx = new Map<number, FlipResetFx>();
   readonly #pos = new Vector3();
   readonly #rot = new Quaternion();
 
@@ -79,6 +98,12 @@ export class ReplayPlayback {
   /** Played to its end (the goal + PostGoalTime) */
   get done(): boolean {
     return this.tick >= this.plan.endTick;
+  }
+
+  /** Over (ended, skipped or left): the flip resets' effects off the cars */
+  dispose(): void {
+    for (const fx of this.#flipFx.values()) fx.dispose();
+    this.#flipFx.clear();
   }
 
   /** One frame: on by `realSeconds` at the replay's speed, drawn */
@@ -119,6 +144,7 @@ export class ReplayPlayback {
   /** The cars and the ball between two recorded frames */
   #drawRecorded(scene: ReplayScene, a: RecordedFrame, b: RecordedFrame, alpha: number, seconds: number): void {
     this.cars = replayCarPositions(a, b, alpha);
+    const resets = flipResetCars(this.#flipCounts, b);
     for (const [id, view] of scene.cars) {
       const from = a.cars.get(id);
       const to = b.cars.get(id) ?? from;
@@ -129,7 +155,22 @@ export class ReplayPlayback {
       const between = new Interpolated<RecordedCar>(from);
       between.push(to);
       view.update(between.position(alpha, this.#pos), between.rotation(alpha, this.#rot), to.boosting, to.demoed, to.supersonic, seconds, trailGround(to));
+      // (a flip reset in the replayed window: its effect on that car, as live, and its sound, by the setting: HUD-19)
+      if (resets.has(id)) {
+        if (scene.flipReset.audio) scene.audio.flipReset();
+        if (scene.flipReset.visual) {
+          let fx = this.#flipFx.get(id);
+          if (!fx) {
+            fx = new FlipResetFx();
+            this.#flipFx.set(id, fx);
+          }
+          view.attach(fx.root);
+          fx.trigger();
+        }
+      }
     }
+    // (at the replay's speed, as the cars)
+    for (const fx of this.#flipFx.values()) fx.update(seconds);
     const ball = new Interpolated<BodyState>(a.ball);
     ball.push(b.ball);
     const position = ball.position(alpha, this.#pos);

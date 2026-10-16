@@ -79,6 +79,17 @@ export async function createTheme(name: ThemeName): Promise<Theme> {
   return name === "night" ? nightTheme() : (await MODULES[name]())();
 }
 
+/** A theme, or night's (in the main bundle) if its chunk can't be fetched (a network blip, a redeploy meanwhile): themes
+ *  are looks only, so the match plays on in night's (RV-445); the name of the one made */
+export async function createThemeOrNight(name: ThemeName): Promise<{ name: ThemeName; theme: Theme }> {
+  try {
+    return { name, theme: await createTheme(name) };
+  } catch (e) {
+    console.warn(`the ${name} arena didn't load, night's instead:`, e);
+    return { name: "night", theme: nightTheme() };
+  }
+}
+
 /** A theme's chunk downloaded ahead, not built (a found match's map, during the join's countdown) */
 export async function preloadTheme(name: ThemeName): Promise<void> {
   if (name !== "night") await MODULES[name]();

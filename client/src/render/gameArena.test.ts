@@ -2,8 +2,8 @@
 // map (the user's decision, 2026-10-16), the stadium's field and goals the stadium theme's alone.
 import { AdditiveBlending, type BufferGeometry, Color, type Material, Mesh, type Object3D, Vector3 } from "three";
 import { describe, expect, it } from "vitest";
-import { ArenaView, glowContour, trimCap } from "./arena";
-import { buildArenaSurface, wallLine } from "./arenaSurface";
+import { ArenaView, glowContour } from "./arena";
+import { wallLine } from "./arenaSurface";
 import type { CageGraph } from "./cage";
 import { CageBeams, shockRing, shockWave } from "./cageBeams";
 import { existsSync, readFileSync } from "node:fs";
@@ -11,9 +11,11 @@ import { ENV_GLSL, ENV_RADIAL, ENV_SPREAD, GOAL_SIDE_CHART, GlowStripMaterial, H
 import { GOAL_BASE_LIGHT, GoalFloorMaterial, goalBaseZ, goalFloorZone, underGlassV } from "./goalInterior";
 import { GOAL_PROFILE_CHART, goalPath, goalProfileU } from "./goalSurface";
 import { HexFloorMaterial, SIDE_TRIM, SideTrimMaterial } from "./stadiumField";
+import { meadowTheme } from "./themes/meadow";
 import { nightTheme } from "./themes/night";
 import { stadiumTheme } from "./themes/stadium";
 import { ARENA_PRIORITY } from "./translucentSort";
+import { FIELD_MEASURES } from "./stadiumFieldRules";
 
 /** The materials drawn in the main view (not the reflection capture's own hotspots, hidden but while it captures) */
 function materials(root: Object3D): Material[] {
@@ -31,10 +33,10 @@ describe("the game's arena materials", () => {
   it("the stadium: the game's overlay on the walls, glass beside the goals and in them, glow sheets, additive beams", () => {
     const all = materials(stadium.root);
     expect(all.filter((m) => m instanceof ForceFieldMaterial)).toHaveLength(1);
-    // (beside each goal, and the nets: each goal's own mesh, TRN1)
-    expect(all.filter((m) => m instanceof HexGlassMaterial)).toHaveLength(4);
-    // (each side wall, each team's half; each goal's glows: RV-77)
-    expect(all.filter((m) => m instanceof GlowStripMaterial)).toHaveLength(6);
+    // (beside each goal, the side glass (AV-10: each quadrant's), and the nets: each goal's own mesh, TRN1)
+    expect(all.filter((m) => m instanceof HexGlassMaterial)).toHaveLength(8);
+    // (each side wall, each team's half; each goal's glows: RV-77; the far glow's quarters, AV-10b)
+    expect(all.filter((m) => m instanceof GlowStripMaterial)).toHaveLength(10);
     // (additive: the cage's beams and the floodlights' flare sheets, SUR-13)
     expect(all.filter((m) => m.blending === AdditiveBlending)).toHaveLength(2);
   });
@@ -96,69 +98,63 @@ describe("the game's arena materials", () => {
     expect(of("HexGlassMaterial")).toEqual([ARENA_PRIORITY.base]);
     expect(of("GlowStripMaterial").sort((a, b) => a - b)).toEqual([ARENA_PRIORITY.fieldGlow]);
     expect(of("goal glow 0")).toEqual([ARENA_PRIORITY.base]);
-    // (each goal its own net and floor: their bounds on their own side)
+    // (each goal its own net and floor: their bounds on their own side; the wall foot's side glass, its own tiles, not a
+    // net)
     const nets: Mesh[] = [];
     stadium.root.traverseVisible((o) => {
-      if (o instanceof Mesh && o.material instanceof HexGlassMaterial && "glassTile" in (o.geometry as BufferGeometry).attributes) nets.push(o as Mesh);
+      if (o instanceof Mesh && o.material instanceof HexGlassMaterial && o.name !== "side glass" && "glassTile" in (o.geometry as BufferGeometry).attributes) nets.push(o as Mesh);
     });
     expect(nets).toHaveLength(2);
     expect(nets.map((n) => Math.sign(n.geometry.boundingSphere?.center.z ?? 0)).sort()).toEqual([-1, 1]);
   });
 
   it("the wall foot as the game's frame on every map (AV-10, H-4: Side_Trim, its tire marks 0.904, its baked light, the capture along its own reflection)", () => {
-    // (the fillet and its cap: two meshes, the cap's material drawn a little nearer)
-    const trims = materials(stadium.root).filter((m): m is SideTrimMaterial => m instanceof SideTrimMaterial);
-    expect(trims).toHaveLength(2);
+    // (three materials: the fillet's; the cap's drawn a little nearer, which the goal frame, the lip, the bar, the posts,
+    // the arches and the far glow's trough share; Sideline_A's, its baked light darker, AV-10b)
+    const trims = [...new Set(materials(stadium.root).filter((m): m is SideTrimMaterial => m instanceof SideTrimMaterial))];
+    expect(trims).toHaveLength(3);
     const fragment = trims[0]?.fragmentShader ?? "";
     expect(fragment).toContain("reflect(-toCamera, normalize(vNormal))");
     expect(fragment).toContain(`vec3(${SIDE_TRIM.light.map((v) => v.toFixed(3)).join(", ")})`);
     expect(SIDE_TRIM.m).toBe(0.904);
-    expect(materials(night.root).filter((m) => m instanceof SideTrimMaterial)).toHaveLength(2);
+    expect(new Set(materials(night.root).filter((m) => m instanceof SideTrimMaterial)).size).toBe(3);
   });
 
-  it("the trim's cap: a solid profile on the fillet's whole 256 top edge, through midfield, up to the glow sheets' foot (AV-10; the user's findings)", () => {
-    const surface = buildArenaSurface();
-    const cap = trimCap(surface);
-    const position = cap.getAttribute("position");
-    const normal = cap.getAttribute("normal");
-    expect(position.count).toBeGreaterThan(0);
-    const key = (x: number, y: number): string => `${x.toFixed(2)},${y.toFixed(2)}`;
-    const feet = new Set<string>();
-    let minAbsY = Infinity;
-    let maxAbsY = 0;
-    for (let i = 0; i < position.count; i++) {
-      const [x, z, y] = [position.getX(i), position.getY(i), position.getZ(i)]; // (Three's frame: x, z up, y)
-      expect([256, 272]).toContain(z);
-      minAbsY = Math.min(minAbsY, Math.abs(y));
-      maxAbsY = Math.max(maxAbsY, Math.abs(y));
-      if (z === 256) feet.add(key(x, y));
-      // (on the side walls: the front face on the wall, x 4096; the top face to 4 uu behind it, x 4100)
-      if (Math.abs(y) < 3500) expect([4096, 4100].some((w) => Math.abs(Math.abs(x) - w) < 1e-3)).toBe(true);
-      // (each face facing the field (the front) or up (the top))
-      const [nx, ny, nz] = [normal.getX(i), normal.getY(i), normal.getZ(i)];
-      const front = Math.abs(ny) < 1e-6 && nx * x + nz * y < 0;
-      const up = Math.abs(ny - 1) < 1e-6;
-      expect(front || up).toBe(true);
-    }
-    // (closed down onto the fillet: its foot the fillet's top points at z 256, no seam)
-    const tops: string[] = [];
-    for (let v = 0; v < surface.bands.length; v++) {
-      const [x, y, z] = [surface.positions[3 * v] ?? 0, surface.positions[3 * v + 1] ?? 0, surface.positions[3 * v + 2] ?? 0];
-      if (surface.bands[v] === 1 && Math.abs(z - 256) < 0.5) tops.push(key(x, y));
-    }
-    expect(feet.size).toBeGreaterThan(0);
-    for (const foot of feet) expect(tops).toContain(foot);
-    // (through midfield; not past the back corners' start (3200, 4864), where the fillet lowers)
-    expect(minAbsY).toBeCloseTo(0, 3);
-    expect(maxAbsY).toBeLessThanOrEqual(4864 + 4 + 1e-3);
-    expect(maxAbsY).toBeGreaterThan(4800);
-    // (on every map, drawn a little nearer than the overlay that lies on the wall with its front face)
+  it("the cap all round (AV-10): z 256-272 from midfield round the corners along the back wall, then up the wing's 45 degree edge (its top 0.8 under the stepped glow's foot) to the goal frame's edge at |x| 969", () => {
     const caps: Mesh[] = [];
     night.root.traverse((o) => {
       if (o instanceof Mesh && o.name === "trim cap") caps.push(o as Mesh);
     });
     expect(caps).toHaveLength(1);
-    const material = caps[0]?.material as SideTrimMaterial;
+    const cap = caps[0];
+    const position = cap?.geometry.getAttribute("position");
+    expect(position?.count ?? 0).toBeGreaterThan(0);
+    let top = 0;
+    let minAbsY = Infinity;
+    let minAbsX = Infinity;
+    for (let i = 0; i < (position?.count ?? 0); i++) {
+      const [x, z, y] = [position?.getX(i) ?? 0, position?.getY(i) ?? 0, position?.getZ(i) ?? 0]; // (Three's frame: x, z up, y)
+      minAbsY = Math.min(minAbsY, Math.abs(y));
+      minAbsX = Math.min(minAbsX, Math.abs(x));
+      // (along the side walls, corners and the back wall out of the goal's reach: the band; on the side walls the front
+      // on the wall, x 4096, the deck back to 28 behind)
+      expect(z).toBeGreaterThanOrEqual(256 - 1e-3);
+      if (Math.abs(x) >= 2048 || Math.abs(y) < 5000) expect(z).toBeLessThanOrEqual(272 + 1e-3);
+      if (Math.abs(y) < 3500) {
+        expect(Math.abs(x)).toBeGreaterThanOrEqual(4096 - 1e-3);
+        expect(Math.abs(x)).toBeLessThanOrEqual(4096 + 28 + 1e-3);
+      }
+      // (up the wing's edge: under the stepped outline 0.8 below the glow's foot, low then the 45 degree line, its r 96
+      // bend rising at most r (sec 22.5 - 1) above where they meet)
+      if (Math.abs(x) < 2048) expect(z).toBeLessThanOrEqual(Math.max(272, 1591.5 - 0.8 - Math.abs(x)) + 96 * (1 / Math.cos(Math.PI / 8) - 1) + 1e-3);
+      top = Math.max(top, z);
+    }
+    // (from |y| 128, its end inside the midfield arch: AV-10b; to the frame's edge, its top there on the 45 degree line)
+    expect(minAbsY).toBeCloseTo(128, 3);
+    expect(minAbsX).toBeCloseTo(969, 3);
+    expect(top).toBeCloseTo(1591.5 - 0.8 - 969, 3);
+    // (drawn a little nearer than the overlay that lies on the wall with its front face)
+    const material = cap?.material as SideTrimMaterial;
     expect(material).toBeInstanceOf(SideTrimMaterial);
     expect(material.polygonOffset).toBe(true);
     expect(material.polygonOffsetFactor).toBeLessThan(0);
@@ -167,20 +163,39 @@ describe("the game's arena materials", () => {
 
   it("every map wears the game's net, trim and cage, in its own team colours; the stadium's field and goals stay its own", () => {
     const all = materials(night.root);
-    // (the cage's overlay; the glass beside each goal and the nets; the glow sheets behind the walls, without the
-    // stadium's goal glows; the beams additive)
+    // (the cage's overlay; the glass beside each goal, the side glass (per quadrant) and the nets; the glow sheets behind
+    // the walls, the goals' and the far glow's quarters; the beams additive)
     const overlays = all.filter((m): m is ForceFieldMaterial => m instanceof ForceFieldMaterial);
     expect(overlays).toHaveLength(1);
-    expect(all.filter((m) => m instanceof HexGlassMaterial)).toHaveLength(4);
-    expect(all.filter((m) => m instanceof GlowStripMaterial)).toHaveLength(4);
+    expect(all.filter((m) => m instanceof HexGlassMaterial)).toHaveLength(8);
+    expect(all.filter((m) => m instanceof GlowStripMaterial)).toHaveLength(10);
     expect(all.filter((m) => m.blending === AdditiveBlending)).toHaveLength(1);
     // (the night theme's own team colours, not the stadium's primaries)
     const { blue, orange } = nightTheme().style.walls;
     const uniforms = overlays[0]?.uniforms as Record<string, { value: unknown }> | undefined;
     const tints = Object.values(uniforms ?? {}).map((u) => u.value).filter((v): v is Color => v instanceof Color).map((c) => c.getHex());
     expect(tints).toEqual(expect.arrayContaining([blue.getHex(), orange.getHex()]));
-    // (its own floor and goals' floors: none of the stadium's field or goal metal)
-    expect(all.filter((m) => m instanceof GoalFloorMaterial || m instanceof HexFloorMaterial)).toHaveLength(0);
+    // (its goals' floors its own: none of the stadium's goal metal; the game's field for its floor, below)
+    expect(all.filter((m) => m instanceof GoalFloorMaterial)).toHaveLength(0);
+    expect(all.filter((m) => m instanceof HexFloorMaterial)).toHaveLength(5);
+  });
+
+  it("Night's floor is the game's field in its team colours (grass, hex floors, frame, boost paths, markings); other maps their own floors (the user's decisions, 2026-10-16)", () => {
+    const names = (root: Object3D): Set<string> => {
+      const out = new Set<string>();
+      root.traverseVisible((o) => {
+        if (o instanceof Mesh && o.name !== "") out.add(o.name);
+      });
+      return out;
+    };
+    const nightNames = names(night.root);
+    const field = ["grass", "seams", "hex floor: side bays", "hex floor: pad bases", "hex floor: goal ends", "hex floor: goal mouths", "hex floor: centre disc", "vent grate", "vent ring", "centre strips", "halfway strip", "centre trim", "trim lines E", "centreStrip lines D", "markings: goal", "markings: side", "markings: centre"];
+    for (const piece of field) expect(nightNames, piece).toContain(piece);
+    // (the stadium's as it was; another map none of it)
+    const stadiumNames = names(stadium.root);
+    for (const piece of field) expect(stadiumNames, piece).toContain(piece);
+    const meadow = names(new ArenaView(meadowTheme()).root);
+    for (const piece of field) expect(meadow, piece).not.toContain(piece);
   });
 
   it("the shockwave: -0.25 at rest, to 1 over 2.5 s of world time after the explosion, back at rest for a new ball", () => {
@@ -348,7 +363,7 @@ describe("the goals' insides (RV-76, RV-77)", () => {
     }
   });
 
-  it("each goal's glows in its team's colour, its ribbons glowing 1 at the attached edge, 0 at the free (RV-77)", () => {
+  it("each goal's glows in its team's colour, its ribbons glowing at the attached edge (1; the beside ribbon its 0.969), 0 at the free (RV-77)", () => {
     const glows = meshes.filter((m) => m.name.startsWith("goal glow "));
     expect(glows).toHaveLength(2);
     for (const [team, glow] of glows.entries()) {
@@ -356,7 +371,7 @@ describe("the goals' insides (RV-76, RV-77)", () => {
       const values = glow.geometry.getAttribute("glow");
       const set = new Set<number>();
       for (let i = 0; i < values.count; i++) set.add(values.getX(i));
-      expect([...set].sort()).toEqual([0, 1]);
+      expect([...set].sort()).toEqual([0, Math.fround(FIELD_MEASURES.glow.beside.glow), 1]);
       // (the -y goal's blue, the +y goal's orange)
       const position = glow.geometry.getAttribute("position");
       for (let i = 0; i < position.count; i += 7) expect(Math.sign(position.getZ(i))).toBe(team === 0 ? -1 : 1);

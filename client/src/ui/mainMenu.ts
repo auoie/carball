@@ -1,16 +1,24 @@
 // The main menu (notes/hud-menus.md MENU-1/2), over the arena as the page opens: Play (Free Play, or a playlist to search
-// online: notes/matchmaking.md MM-1, single selection) and Settings. Free Play opens the map select first, as the game's
+// online: notes/matchmaking.md MM-1, single selection), Garage (the car and the team colour, kept: src/game/cars.ts; the
+// user's feature, 2026-10-16) and Settings. Free Play opens the map select first, as the game's
 // does (the user's decision, 2026-10-15): the maps by their names, the last one picked kept and focused; picking one
 // starts free play on it. The game's labels verbatim (Play, Settings, Free Play, Find Match: the user's decisions,
 // 2026-10-14); the playlists' and maps' names are ours. No Quit: a browser tab closes itself.
 import { PLAYLISTS, SEARCH_TEXT } from "../game/matchmaking";
 import { MAP_NAMES, THEMES, type ThemeName, themeName } from "../render/themes";
+import type { Team } from "../engine/world";
+import { CARS, storeCar, storeTeam, storedCar, storedTeam } from "../game/cars";
+import type { GaragePreview } from "./garagePreview";
 
 export const MAIN_MENU_TEXT = {
   play: "Play",
+  garage: "Garage",
   settings: "Settings",
   freePlay: "Free Play",
 } as const;
+
+/** Our own words for the garage's team colours (Free Play's car colour; online, the queue's team) */
+export const GARAGE_TEXT = { blue: "Blue", orange: "Orange" } as const;
 
 /** Our own word for leaving the Play page */
 const BACK_TEXT = "Back";
@@ -19,10 +27,11 @@ const PLAYLIST_KEY = "carball.playlist";
 /** Free play's map: the map select's last pick */
 const MAP_KEY = "carball.freeplayMap";
 
-/** The menu's pages: the top (Play, Settings), Play's, and Free Play's map select */
-export type MenuView = "top" | "play" | "maps";
+/** The menu's pages: the top (Play, Garage, Settings), Play's, Free Play's map select, and the garage */
+export type MenuView = "top" | "play" | "maps" | "garage";
 
-/** Where Escape (the pad's B) goes from a page: the map select back to Play, Play to the top; the top stays */
+/** Where Escape (the pad's B) goes from a page: the map select back to Play, Play and the garage to the top; the top
+ *  stays */
 export function backFrom(view: MenuView): MenuView {
   return view === "maps" ? "play" : "top";
 }
@@ -38,6 +47,10 @@ export interface MainMenuActions {
   /** Find Match: search the playlist with this team size */
   readonly findMatch: (playlist: number) => void;
   readonly settings: () => void;
+  /** The garage's choice changed (it's kept already): its car and team colour */
+  readonly garage?: (choice: { readonly car: number; readonly team: Team }) => void;
+  /** The garage's preview of a car (none: no preview) */
+  readonly preview?: GaragePreview;
 }
 
 export class MainMenu {
@@ -45,6 +58,12 @@ export class MainMenu {
   readonly #top: HTMLDivElement;
   readonly #play: HTMLDivElement;
   readonly #maps: HTMLDivElement;
+  readonly #garage: HTMLDivElement;
+  readonly #carButtons: HTMLButtonElement[] = [];
+  readonly #teamButtons: HTMLButtonElement[] = [];
+  readonly #preview: GaragePreview | null;
+  #car = storedCar();
+  #team: Team = storedTeam();
   readonly #playlists: HTMLButtonElement[] = [];
   readonly #mapButtons: HTMLButtonElement[] = [];
   #playlist = storedPlaylist();
@@ -71,6 +90,9 @@ export class MainMenu {
     this.#top = column();
     button(this.#top, MAIN_MENU_TEXT.play, () => {
       this.#show("play");
+    });
+    button(this.#top, MAIN_MENU_TEXT.garage, () => {
+      this.#show("garage");
     });
     button(this.#top, MAIN_MENU_TEXT.settings, actions.settings);
     this.#play = column();
@@ -122,6 +144,50 @@ export class MainMenu {
     button(this.#maps, BACK_TEXT, () => {
       this.#show("play");
     });
+    // (the garage: the cars and the team colours, each kept as chosen, the car shown turning in its colour)
+    this.#garage = column();
+    this.#garage.classList.add("main-menu-garage-view");
+    const garageHeading = document.createElement("div");
+    garageHeading.className = "main-menu-heading";
+    garageHeading.textContent = MAIN_MENU_TEXT.garage;
+    this.#preview = actions.preview ?? null;
+    const group = (className: string): HTMLDivElement => {
+      const g = document.createElement("div");
+      g.className = `main-menu-choices ${className}`;
+      g.setAttribute("role", "radiogroup");
+      return g;
+    };
+    const cars = group("main-menu-cars");
+    for (const car of CARS) {
+      const b = button(cars, car.name, () => {
+        this.#chooseCar(car.id);
+        actions.garage?.({ car: this.#car, team: this.#team });
+      });
+      b.classList.add("main-menu-car");
+      b.setAttribute("role", "radio");
+      b.dataset["car"] = String(car.id);
+      this.#carButtons.push(b);
+    }
+    const teams = group("main-menu-teams");
+    for (const [team, label] of [
+      [0, GARAGE_TEXT.blue],
+      [1, GARAGE_TEXT.orange],
+    ] as const) {
+      const b = button(teams, label, () => {
+        this.#chooseTeam(team);
+        actions.garage?.({ car: this.#car, team: this.#team });
+      });
+      b.classList.add("main-menu-team", `team-${String(team)}`);
+      b.setAttribute("role", "radio");
+      b.dataset["team"] = String(team);
+      this.#teamButtons.push(b);
+    }
+    this.#garage.append(garageHeading, ...(this.#preview ? [this.#preview.element] : []), cars, teams);
+    this.#chooseCar(this.#car);
+    this.#chooseTeam(this.#team);
+    button(this.#garage, BACK_TEXT, () => {
+      this.#show("top");
+    });
     this.#show("top");
     host.append(this.#root);
   }
@@ -143,12 +209,28 @@ export class MainMenu {
 
   close(): void {
     this.#root.hidden = true;
+    this.#preview?.stop();
   }
 
   /** Escape: back from the map select to Play, from Play to the top; nothing at the top (the menu is where the game
    *  starts) */
   back(): void {
-    this.#show(backFrom(this.#maps.hidden ? (this.#play.hidden ? "top" : "play") : "maps"));
+    const view: MenuView = !this.#maps.hidden ? "maps" : !this.#play.hidden ? "play" : !this.#garage.hidden ? "garage" : "top";
+    this.#show(backFrom(view));
+  }
+
+  #chooseCar(car: number): void {
+    this.#car = car;
+    storeCar(car);
+    for (const b of this.#carButtons) b.setAttribute("aria-checked", String(b.dataset["car"] === String(car)));
+    this.#preview?.show(this.#car, this.#team);
+  }
+
+  #chooseTeam(team: Team): void {
+    this.#team = team;
+    storeTeam(team);
+    for (const b of this.#teamButtons) b.setAttribute("aria-checked", String(b.dataset["team"] === String(team)));
+    this.#preview?.show(this.#car, this.#team);
   }
 
   #pick(map: ThemeName): void {
@@ -174,6 +256,12 @@ export class MainMenu {
     this.#top.hidden = view !== "top";
     this.#play.hidden = view !== "play";
     this.#maps.hidden = view !== "maps";
+    this.#garage.hidden = view !== "garage";
+    // (the preview turning only while the garage shows; the car chosen focused)
+    if (view === "garage") {
+      this.#preview?.start();
+      this.#carButtons.find((b) => b.dataset["car"] === String(this.#car))?.focus();
+    } else this.#preview?.stop();
     // (the last map picked focused: Enter, or the pad's A, starts it at once)
     if (view === "maps") this.#mapButtons.find((b) => b.dataset["map"] === this.#map)?.focus();
   }

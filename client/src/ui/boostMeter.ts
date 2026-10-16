@@ -2,8 +2,13 @@
 // dark disc with a wide soft edge; the tint's soft glow; a thin grey guide ring along the 225 degree sweep with six
 // ticks and their nodes; 36 orange bars on a 5 degree pitch, thin to thick toward 80 %, deep orange to light along the
 // sweep, with a soft halo; 9 white bars for 80-100 %; the ring and ticks lit cream where it's filled. Geometry in the
-// meter's 200 x 200 box (centre (100, 100)); angles along the sweep, 0 at 6 o'clock, clockwise. The bars and ring are on
-// a layer 20 px nearer than the disc (the movie's z -20).
+// meter's 200 x 200 box (centre (100, 100)); angles along the sweep, 0 at 6 o'clock, clockwise. The bars, ring and
+// number are on a layer 20 px nearer than the disc (the movie's z -20).
+//
+// Its tilt (HUD-5: the meter turned in perspective) is drawn here, every point projected, not by a CSS 3D transform: a
+// 3D layer is rastered once and resampled into its tilt, soft at any pixel ratio (the user's finding, 2026-10-16); flat
+// vectors and text under a 2D matrix are drawn sharp. The number and label keep their HTML, each under the 2D matrix
+// the tilt is at its middle.
 const NS = "http://www.w3.org/2000/svg";
 const C = 100;
 
@@ -22,6 +27,60 @@ export function polar(r: number, a: number): readonly [number, number] {
 }
 
 const pt = (r: number, a: number): string => polar(r, a).map((v) => v.toFixed(3)).join(" ");
+
+/** The meter's tilt (HUD-5: HUD.updatePerspectiveProjection's focal length 500, its centre 50 left of and 100 above the
+ *  meter's, so (50, 0) in its box; the meter turned rotateY(-15deg) rotateX(-2deg) about its centre) and how much nearer
+ *  the bars' layer is than the disc's */
+export const TILT = { perspective: 500, origin: [50, 0] as const, rotateY: -15, rotateX: -2, front: 20 } as const;
+
+/** Where a point of the meter's box (x, y) on a layer `z` nearer than the disc's shows in the box: as CSS draws
+ *  perspective(500) about (50, 0) of rotateY(-15deg) rotateX(-2deg) about the centre (rotateX first) */
+export function project(x: number, y: number, z = 0): readonly [number, number] {
+  const ay = (TILT.rotateY * Math.PI) / 180;
+  const ax = (TILT.rotateX * Math.PI) / 180;
+  const [x0, y0] = [x - C, y - C];
+  const [y1, z1] = [y0 * Math.cos(ax) - z * Math.sin(ax), y0 * Math.sin(ax) + z * Math.cos(ax)];
+  const [x2, z2] = [x0 * Math.cos(ay) + z1 * Math.sin(ay), -x0 * Math.sin(ay) + z1 * Math.cos(ay)];
+  const k = TILT.perspective / (TILT.perspective - z2);
+  const [ox, oy] = TILT.origin;
+  return [ox + (x2 + C - ox) * k, oy + (y1 + C - oy) * k];
+}
+
+/** The tilt about a point (x, y) of a layer `z` as a 2D matrix: [a, b, c, d, e, f] (CSS matrix() and SVG's), mapping
+ *  points near it as `project` does (exactly at it) */
+export function tiltAt(x: number, y: number, z = 0): readonly [number, number, number, number, number, number] {
+  const h = 0.5;
+  const [px0, py0] = project(x - h, y, z);
+  const [px1, py1] = project(x + h, y, z);
+  const [qx0, qy0] = project(x, y - h, z);
+  const [qx1, qy1] = project(x, y + h, z);
+  const [a, b, c, d] = [(px1 - px0) / (2 * h), (py1 - py0) / (2 * h), (qx1 - qx0) / (2 * h), (qy1 - qy0) / (2 * h)];
+  const [X, Y] = project(x, y, z);
+  return [a, b, c, d, X - (a * x + c * y), Y - (b * x + d * y)];
+}
+
+/** A path through these meter points (on layer z), projected; closed if asked */
+function projected(points: readonly (readonly [number, number])[], z: number, close: boolean): string {
+  const d = points.map(([x, y], i) => `${i === 0 ? "M" : "L"} ${project(x, y, z).map((v) => v.toFixed(2)).join(" ")}`).join(" ");
+  return close ? `${d} Z` : d;
+}
+
+/** Points along the sweep at radius r from a0 to a1 (degrees), every `step` at most, both ends */
+function along(r: number, a0: number, a1: number, step = 1.5): (readonly [number, number])[] {
+  const n = Math.max(1, Math.ceil(Math.abs(a1 - a0) / step));
+  return Array.from({ length: n + 1 }, (_, i) => polar(r, a0 + ((a1 - a0) * i) / n));
+}
+
+/** barPath's shape, projected on layer z */
+function tiltedBar(a0: number, a1: number, r0: number, r1: number, r1b: number, z: number): string {
+  return projected([polar(r0, a0), polar(r1, a0), polar(r1b, a1), ...along(r0, a1, a0, 1)], z, true);
+}
+
+/** wedgePath's shape, projected on layer z */
+function tiltedWedge(a: number, z: number): string {
+  if (a <= 0) return "M 0 0 Z";
+  return projected([[C, C], ...along(110, 0, Math.min(SWEEP, a), 2)], z, true);
+}
 
 /** The orange bar's outer edge at angle a: 69 at 0 % to 87 at 80 %, linear in angle */
 export function orangeOuter(a: number): number {
@@ -57,11 +116,6 @@ export function barPath(a0: number, a1: number, r0: number, r1: number, r1b = r1
   return `M ${pt(r0, a0)} L ${pt(r1, a0)} L ${pt(r1b, a1)} L ${pt(r0, a1)} A ${String(r0)} ${String(r0)} 0 0 0 ${pt(r0, a0)} Z`;
 }
 
-/** An arc along the sweep from a0 to a1 at radius r */
-function arcPath(r: number, a0: number, a1: number): string {
-  return `M ${pt(r, a0)} A ${String(r)} ${String(r)} 0 ${a1 - a0 > 180 ? 1 : 0} 1 ${pt(r, a1)}`;
-}
-
 /** The fill's mask: a wedge from the sweep's start to angle a (empty at 0) */
 export function wedgePath(a: number): string {
   if (a <= 0) return "M 100 100 Z";
@@ -77,7 +131,9 @@ function svg<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string,
 }
 
 function radial(defs: SVGDefsElement, id: string, stops: readonly (readonly [number, string, number])[], className = ""): void {
-  const g = svg("radialGradient", { id, gradientUnits: "userSpaceOnUse", cx: "100", cy: "100", r: "100" }, defs);
+  // (centred on the meter, under the tilt at its centre on the disc's layer: the soft disc's and glow's keystone too
+  // small to see)
+  const g = svg("radialGradient", { id, gradientUnits: "userSpaceOnUse", cx: "100", cy: "100", r: "100", gradientTransform: `matrix(${tiltAt(C, C, 0).map((v) => v.toFixed(5)).join(" ")})` }, defs);
   for (const [offset, color, alpha] of stops) {
     const stop = svg("stop", { offset: offset.toFixed(4), "stop-opacity": String(alpha) }, g);
     if (className) stop.setAttribute("class", className);
@@ -93,29 +149,37 @@ export class BoostMeterArt {
   readonly #lit: SVGPathElement;
   readonly #glow: SVGGElement;
   readonly #flash: SVGGElement;
+  readonly #box: HTMLElement;
+  /** The number and label, turned once laid out (their boxes read then) */
+  #text: readonly HTMLElement[];
 
-  /** `back`: the disc's layer, `front`: the bars' (nearer) */
-  constructor(back: HTMLElement, front: HTMLElement) {
+  /** `box`: the meter's box (#boost); `text`: its number and label in it, each turned with the bars' layer where it is */
+  constructor(box: HTMLElement, text: readonly HTMLElement[] = []) {
     const id = `boost${String(meters++)}`;
-    const backSvg = svg("svg", { viewBox: "0 0 200 200", "aria-hidden": "true", class: "boost-art" });
-    const frontSvg = svg("svg", { viewBox: "0 0 200 200", "aria-hidden": "true", class: "boost-art" });
-    back.prepend(backSvg);
-    front.prepend(frontSvg);
-    const backDefs = svg("defs", {}, backSvg);
-    const defs = svg("defs", {}, frontSvg);
+    const Z = TILT.front;
+    this.#box = box;
+    this.#text = text;
+    const art = svg("svg", { viewBox: "0 0 200 200", "aria-hidden": "true", class: "boost-art" });
+    box.prepend(art);
+    const backSvg = art;
+    const frontSvg = art;
+    const defs = svg("defs", {}, art);
+    const backDefs = defs;
 
     // The disc: black at 0.75 to r 56, then the soft edge to nothing by r 92
     radial(backDefs, `${id}-disc`, [[0, "#000", 0.75], [0.56, "#000", 0.75], [0.66, "#000", 0.68], [0.78, "#000", 0.45], [0.84, "#000", 0.22], [0.88, "#000", 0.07], [0.92, "#000", 0]]);
-    svg("circle", { cx: "100", cy: "100", r: "92", fill: `url(#${id}-disc)` }, backSvg);
-    // The glow: the tint's soft blob (its colour and clip alpha from the CSS: team, plain, max)
+    svg("path", { d: projected(along(92, 0, 360, 5), 0, true), fill: `url(#${id}-disc)` }, backSvg);
+    // The glow: the tint's soft blob (its colour and clip alpha from the CSS: team, plain, max), grown from its centre
     radial(backDefs, `${id}-glow`, [[0, "", 1], [0.48, "", 0.5], [0.59, "", 0.25], [0.7, "", 0.09], [0.76, "", 0]], "boost-glow-stop");
     this.#glow = svg("g", { class: "boost-glow" }, backSvg);
-    svg("circle", { cx: "100", cy: "100", r: "76", fill: `url(#${id}-glow)` }, this.#glow);
+    const [gx, gy] = project(C, C, 0);
+    this.#glow.style.transformOrigin = `${gx.toFixed(2)}px ${gy.toFixed(2)}px`;
+    svg("path", { d: projected(along(76, 0, 360, 5), 0, true), fill: `url(#${id}-glow)` }, this.#glow);
 
     // The masks: the fill's wedge (0-80 %), the white part's (to 100 %), both together for the lit ring
     const mask = (name: string): SVGPathElement => {
-      const m = svg("mask", { id: `${id}-${name}`, maskUnits: "userSpaceOnUse", x: "0", y: "0", width: "200", height: "200" }, defs);
-      return svg("path", { d: wedgePath(0), fill: "#fff" }, m);
+      const m = svg("mask", { id: `${id}-${name}`, maskUnits: "userSpaceOnUse", x: "-50", y: "-50", width: "300", height: "300" }, defs);
+      return svg("path", { d: tiltedWedge(0, Z), fill: "#fff" }, m);
     };
     this.#fill = mask("fill");
     this.#top = mask("top");
@@ -123,16 +187,16 @@ export class BoostMeterArt {
 
     // The guide ring and its ticks (grey), then the same lit cream where filled
     const guide = (className: string, parent: Element): void => {
-      svg("path", { d: arcPath(RING, 0, SWEEP), class: `${className} boost-ring` }, parent);
+      svg("path", { d: projected(along(RING, 0, SWEEP), Z, false), class: `${className} boost-ring` }, parent);
       for (const t of TICKS) {
-        svg("path", { d: `M ${pt(t.from, t.a)} L ${pt(t.to, t.a)}`, class: `${className} boost-tick` }, parent);
-        const [x, y] = polar(RING, t.a);
+        svg("path", { d: projected([polar(t.from, t.a), polar(t.to, t.a)], Z, false), class: `${className} boost-tick` }, parent);
+        const [x, y] = project(...polar(RING, t.a), Z);
         svg("circle", { cx: x.toFixed(3), cy: y.toFixed(3), r: "1.5", class: `${className} boost-node` }, parent);
       }
     };
     guide("boost-guide", frontSvg);
     // (a dark line between the bars and the ring)
-    svg("path", { d: arcPath(63.5, 0, SWEEP), class: "boost-seam" }, frontSvg);
+    svg("path", { d: projected(along(63.5, 0, SWEEP), Z, false), class: "boost-seam" }, frontSvg);
 
     // The orange bars (0-80 %): each its colour along the ramp, a soft halo outside, masked to the fill
     const orange = svg("g", { mask: `url(#${id}-fill)` }, frontSvg);
@@ -143,10 +207,14 @@ export class BoostMeterArt {
       const r0 = orangeOuter(a0);
       const r1 = orangeOuter(a1);
       const outer = (r0 + r1) / 2;
-      radial(defs, `${id}-halo${String(i)}`, [[(outer - 0.5) / 100, "rgb(255,126,0)", 0.25], [(outer + 5) / 100, "rgb(255,126,0)", 0.08], [(outer + 5.5) / 100, "rgb(255,126,0)", 0]]);
-      svg("path", { d: barPath(a0, a1, outer - 0.5, r0 + 5.5, r1 + 5.5), fill: `url(#${id}-halo${String(i)})` }, orange);
+      // (its halo across the bar's end, outward: as the radial one it was, along the bar's middle)
+      const [hx0, hy0] = project(...polar(outer - 0.5, (a0 + a1) / 2), Z);
+      const [hx1, hy1] = project(...polar(outer + 5.5, (a0 + a1) / 2), Z);
+      const halo = svg("linearGradient", { id: `${id}-halo${String(i)}`, gradientUnits: "userSpaceOnUse", x1: hx0.toFixed(2), y1: hy0.toFixed(2), x2: hx1.toFixed(2), y2: hy1.toFixed(2) }, defs);
+      for (const [offset, alpha] of [[0, 0.25], [5.5 / 6, 0.08], [1, 0]] as const) svg("stop", { offset: offset.toFixed(4), "stop-color": "rgb(255,126,0)", "stop-opacity": String(alpha) }, halo);
+      svg("path", { d: tiltedBar(a0, a1, outer - 0.5, r0 + 5.5, r1 + 5.5, Z), fill: `url(#${id}-halo${String(i)})` }, orange);
       const [r, g, b] = orangeColor((a0 + a1) / 2);
-      const d = barPath(a0, a1, INNER, r0, r1);
+      const d = tiltedBar(a0, a1, INNER, r0, r1, Z);
       svg("path", { d, fill: `rgb(${String(r)},${String(g)},${String(b)})` }, orange);
       flashOrange.push(d);
     }
@@ -156,10 +224,10 @@ export class BoostMeterArt {
     const flashWhite: string[] = [];
     for (let i = 0; i < (SWEEP - WHITE_FROM) / PITCH; i++) {
       const a0 = WHITE_FROM + i * PITCH;
-      const d = barPath(a0, a0 + PITCH, INNER, 88);
+      const d = tiltedBar(a0, a0 + PITCH, INNER, 88, 88, Z);
       svg("path", { d, class: "boost-white" }, white);
       flashWhite.push(d);
-      if (i > 0) svg("path", { d: `M ${pt(INNER, a0)} L ${pt(88, a0)}`, class: "boost-white-seam" }, white);
+      if (i > 0) svg("path", { d: projected([polar(INNER, a0), polar(88, a0)], Z, false), class: "boost-white-seam" }, white);
     }
     // The lit ring and ticks
     const lit = svg("g", { mask: `url(#${id}-lit)` }, frontSvg);
@@ -172,11 +240,25 @@ export class BoostMeterArt {
     for (const d of flashWhite) svg("path", { d, fill: "#fff" }, flashTop);
   }
 
+  /** The number and label: each under the tilt at its middle on the bars' layer, about that middle (CSS's origin); once
+   *  the meter is laid out */
+  #turnText(): void {
+    if (this.#text.length === 0 || this.#box.offsetWidth === 0) return;
+    for (const el of this.#text) {
+      const [x, y] = [el.offsetLeft + el.offsetWidth / 2, el.offsetTop + el.offsetHeight / 2];
+      const [a, b, c, d] = tiltAt(x, y, TILT.front);
+      const [X, Y] = project(x, y, TILT.front);
+      el.style.transform = `matrix(${[a, b, c, d, X - x, Y - y].map((v) => v.toFixed(5)).join(", ")})`;
+    }
+    this.#text = [];
+  }
+
   /** The fill's angles: the orange part (0-180) and the white (0-45) */
   set(fill: number, top: number): void {
-    this.#fill.setAttribute("d", wedgePath(fill));
-    this.#top.setAttribute("d", top > 0 ? wedgePath(WHITE_FROM + top) : wedgePath(0));
-    this.#lit.setAttribute("d", wedgePath(fill + top));
+    this.#turnText();
+    this.#fill.setAttribute("d", tiltedWedge(fill, TILT.front));
+    this.#top.setAttribute("d", top > 0 ? tiltedWedge(WHITE_FROM + top, TILT.front) : tiltedWedge(0, TILT.front));
+    this.#lit.setAttribute("d", tiltedWedge(fill + top, TILT.front));
   }
 
   /** A pickup: both bars flash white and ease back over 0.8 s, the glow from twice its size */

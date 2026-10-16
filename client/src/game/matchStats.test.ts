@@ -15,9 +15,9 @@ import {
 } from "./matchStats";
 
 const roster = new Map<number, RosterEntry>([
-  [1, { car: 1, team: 0, name: "Mercury" }],
-  [2, { car: 2, team: 0, name: "Venus" }],
-  [3, { car: 3, team: 1, name: "Mars" }],
+  [1, { car: 1, team: 0, model: 0, name: "Mercury" }],
+  [2, { car: 2, team: 0, model: 0, name: "Venus" }],
+  [3, { car: 3, team: 1, model: 0, name: "Mars" }],
 ]);
 
 const entry = (car: number, counters: Partial<Record<keyof typeof COUNTERS, number>>, extra: Partial<ScoreboardEntry> = {}): ScoreboardEntry => {

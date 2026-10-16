@@ -130,7 +130,8 @@ impl Matchmaker {
     }
 
     /// A search of the playlist with this team size at `now` (s). A session searches once: a second search from it is
-    /// ignored. A cancelled match's claimed token (`from.token`) puts it back at the front, in its first search's order
+    /// ignored. A new search from a browser key already waiting replaces that key's waiting search (its session let go).
+    /// A cancelled match's claimed token (`from.token`) puts it back at the front, in its first search's order
     pub fn search(&mut self, id: PlayerId, team_size: u8, out: Sender<Outgoing>, from: SearchFrom, now: f64) -> Searched {
         if !self.waiting.contains_key(&team_size) {
             return Searched::NoPlaylist;
@@ -140,6 +141,14 @@ impl Matchmaker {
         }
         if self.searching.contains_key(&id) {
             return Searched::Queued;
+        }
+        // (a page that went (another map, a reload) and searches again from its new page: its old search, if the old
+        // session's close isn't here yet, can't be matched to the new one or leave a ghost for others to match, RV-443)
+        if from.key != 0 {
+            let old: Vec<PlayerId> = self.waiting.values().flatten().filter(|s| s.from.key == from.key).map(|s| s.id).collect();
+            for old in old {
+                self.cancel(old);
+            }
         }
         let back = (from.token != 0)
             .then(|| self.returning.remove(&from.token))
@@ -389,6 +398,34 @@ mod tests {
     }
 
     #[test]
+    fn a_new_search_from_a_waiting_browser_key_replaces_its_old_one() {
+        // (RV-443: a page that went searches again from its new page before its old session's close is here)
+        let mut queue = Matchmaker::new(&playlists());
+        let mut host = Recorder::default();
+        let (old_tx, old_rx) = channel(OUT_QUEUE);
+        assert!(queued(&mut queue, 1, 1, old_tx));
+        let (new_tx, mut new_rx) = channel(OUT_QUEUE);
+        assert_eq!(queue.search(2, 1, new_tx, SearchFrom { address: [10, 0, 0, 2].into(), ..from(1) }, 1.0), Searched::Queued);
+        assert_eq!(queue.searching(1), 1, "one search for the browser");
+        assert!(old_rx.is_closed(), "the old session let go");
+        queue.form(&mut host, 1.0);
+        assert!(host.asked.is_empty(), "not matched with itself");
+        // (another browser: the 1v1 is the new search's and the other's; the old session's end changes nothing)
+        let (tx, mut rx) = channel(OUT_QUEUE);
+        assert!(queued(&mut queue, 3, 1, tx));
+        queue.cancel(1);
+        queue.form(&mut host, 1.0);
+        assert_eq!(host.asked, vec![(1, 2)]);
+        assert_eq!((found(&mut new_rx), found(&mut rx)), (Some(1), Some(2)));
+        // (and a search without a key replaces nothing)
+        let (tx_a, _rx_a) = channel(OUT_QUEUE);
+        let (tx_b, _rx_b) = channel(OUT_QUEUE);
+        assert_eq!(queue.search(4, 2, tx_a, SearchFrom { key: 0, ..from(4) }, 1.0), Searched::Queued);
+        assert_eq!(queue.search(5, 2, tx_b, SearchFrom { key: 0, ..from(5) }, 1.0), Searched::Queued);
+        assert_eq!(queue.searching(2), 2);
+    }
+
+    #[test]
     fn who_claimed_goes_back_to_the_front_in_their_first_searchs_order_once() {
         // (RV-367: a match cancelled for someone else costs its players their place no more)
         let mut queue = Matchmaker::new(&playlists());
@@ -608,26 +645,28 @@ mod tests {
 
     #[test]
     fn a_stallers_other_waiting_searches_are_let_go_with_the_refusal() {
-        // (RV-386: three searches from one key in the 2v2 queue; one stalls a 1v1: the others are never matched)
+        // (RV-386: a browser whose 1v1 is forming searches the 2v2 from another tab (its waiting search, one a key: a
+        // new one replaces it, RV-443); it stalls the 1v1: that search is never matched)
         let mut queue = Matchmaker::new(&playlists());
-        let mut others: Vec<Receiver<Outgoing>> = (0..3)
-            .map(|i| {
-                let (tx, rx) = channel(OUT_QUEUE);
-                assert_eq!(queue.search(30 + i, 2, tx, from(1), 0.0), Searched::Queued);
-                rx
-            })
-            .collect();
-        let _kept = stall(&mut queue, from(1), from(2), 1.0, true);
+        let mut host = Recorder::default();
+        let (ta, mut ra) = channel(OUT_QUEUE);
+        let (tb, mut rb) = channel(OUT_QUEUE);
+        assert_eq!(queue.search(901, 1, ta, from(1), 0.0), Searched::Queued);
+        assert_eq!(queue.search(902, 1, tb, from(2), 0.0), Searched::Queued);
+        queue.form(&mut host, 0.0);
+        let (ka, kb) = (found(&mut ra).unwrap(), found(&mut rb).unwrap());
+        let (tx, mut other) = channel(OUT_QUEUE);
+        assert_eq!(queue.search(30, 2, tx, from(1), 1.0), Searched::Queued);
+        assert_eq!(queue.searching(2), 1);
+        queue.cancelled(&Cancelled { stayed: vec![kb], stalled: vec![ka] }, 13.0);
         assert_eq!(queue.searching(2), 0);
-        for rx in &mut others {
-            let mut refused = None;
-            while let Ok(Outgoing::Control(bytes)) = rx.try_recv() {
-                if let Ok(Control::SearchCooldown { seconds, network }) = Control::decode(&bytes[2..]) {
-                    refused = Some((seconds, network));
-                }
+        let mut refused = None;
+        while let Ok(Outgoing::Control(bytes)) = other.try_recv() {
+            if let Ok(Control::SearchCooldown { seconds, network }) = Control::decode(&bytes[2..]) {
+                refused = Some((seconds, network));
             }
-            assert_eq!(refused, Some((120, false)));
-            assert!(rx.is_closed(), "its session let go");
         }
+        assert_eq!(refused, Some((120, false)));
+        assert!(other.is_closed(), "its session let go");
     }
 }

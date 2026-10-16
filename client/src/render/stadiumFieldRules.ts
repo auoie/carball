@@ -30,7 +30,15 @@ export interface FrameLine {
 export interface GlowRibbon {
   readonly attached: readonly number[];
   readonly free: readonly number[];
+  /** The attached edge's glow (UV0.x: 1 unless said, the beside ribbon's 0.969: AV-11) */
+  readonly glow?: number;
+  /** Which of the goal's glows (the rules' plan says; a traced one doesn't) */
+  readonly part?: GlowPart;
 }
+
+/** The goal's glows by part: round the mouth on the back wall, its field side's fin, under the crossbar, the back wall's
+ *  stepped outline, beside the goal, inside it */
+export type GlowPart = "mouth" | "fieldSide" | "crossbar" | "stepped" | "beside" | "inside";
 
 /** The painted markings by mesh (each its own baked light): Goal_Lines, Field_Side_Lines, Field_Center_Lines */
 export type MarkingGroup = "goal" | "side" | "centre";
@@ -222,11 +230,13 @@ export const FIELD_MEASURES = {
     /** the field side's loop on the floor (RV-143): the fillet onto it, the lines round the mouth piece's front (y = a |x|
      *  + b) and their fillets' radii */
     mouthFloor: { fillet: { y: 5024, z: 96, r: 95 }, diagonal: [0.5, 4018] as const, front: 4240, slant: [-1, 4480] as const, centre: 4336, radii: [191, 525, 77, 78] as const },
-    stepped: { low: 272.8, top: 720.8, slant: 1591.5, to: 2048, out: 128 },
+    /** the back wall's stepped outline (AV-11): z 272.8 to |x| 1360, a bend of r 96, the 45 degree line z = 1591.5 - |x|,
+     *  a bend of r 128, across at z 720.8; its free edge 128 out in the wall's plane */
+    stepped: { low: 272.8, top: 720.8, slant: 1591.5, to: 2048, out: 128, bends: [96, 128] as const },
     /** low beside the goal: from |x| 960 to 2048, 14 behind the back wall's face, leaning back 116 and up 28; at z 72 from
      *  2048 in, down a slope of 0.148 (through |x| 1088, z 44) to z 34 by 960, its bends r 900 and 800 (named measures:
      *  RV-114's detector found the old copy of two traced points; RV-143) */
-    beside: { x: [960, 2048], y: 5150, z: [34, 72], slope: { at: [1088, 44], rise: 0.148 }, radii: [900, 800], lean: [116, 28] },
+    beside: { x: [960, 2048], y: 5150, z: [34, 72], slope: { at: [1088, 44], rise: 0.148 }, radii: [900, 800], lean: [116, 28], glow: 0.969 },
     inside: { x: 735, out: 15, front: 5281, frontX: 672, floorZ: -16, roofZ: 656 },
   },
   /** The glass beside each goal (RV-72): (|x|, z) from (960, 127) to (1536, 127), up to 256, back to 1408, round via
@@ -540,6 +550,38 @@ function trimEPath(): P2[] {
 }
 
 
+/** The pieces the grass leaves holes for, by the rules (AV-6a: its edges): each polygon with its mirror */
+export function grassHoles(): readonly { readonly mirror: FieldRegion["mirror"]; readonly pts: readonly P2[] }[] {
+  const M = FIELD_MEASURES;
+  return [
+    { mirror: "xy", pts: sideBay() },
+    { mirror: "y", pts: goalEnd() },
+    { mirror: "y", pts: goalMouth() },
+    { mirror: "xy", pts: padBase() },
+    ...M.markers.map((t) => ({ mirror: "xy" as const, pts: [...t] })),
+    { mirror: "y", pts: symmetricStrip(M.centreStrip, "y") },
+    { mirror: "x", pts: symmetricStrip(M.halfway, "x") },
+  ];
+}
+
+/** The grass's outline (its quadrant) and its centre edge's radius (AV-6a: r 782) */
+export function grassOutline(): { readonly outline: readonly P2[]; readonly centre: number } {
+  return { outline: grass(), centre: 782 };
+}
+
+/** The grass's rim (AV-6a): a band `width` wide inside every grass edge: round each hole, the centre's (r 782 out), and
+ *  along its straight outer sides (none along the 45 degree corner cut) */
+export function grassRim(width: number): FieldRegion[] {
+  const g = FIELD_MEASURES.grass;
+  const { centre } = grassOutline();
+  return [
+    ...grassHoles().map((h) => ring(h.mirror, h.pts, width)),
+    region("none", circle(centre + width, 128), [circle(centre, 128, true)]),
+    region("xy", [[g.x - width, 0], [g.x, 0], [g.x, g.cornerFrom], [g.x - width, g.cornerFrom]]),
+    region("xy", [[0, g.y - width], [g.cornerTo, g.y - width], [g.cornerTo, g.y], [0, g.y]]),
+  ];
+}
+
 /** The plan builds draw: from FIELD_MEASURES and rules */
 export function shippableFieldPlan(): FieldPlan {
   const M = FIELD_MEASURES;
@@ -631,11 +673,13 @@ function sideGlass(): (readonly [number, number])[] {
 
 /** The goal's glows (the +y goal's), built along our own arena's goal (src/render/arenaSurface.ts mouthOutline,
  *  src/render/goalSurface.ts goalPath) with FIELD_MEASURES.glow's widths */
-function goalGlowRibbons(): GlowRibbon[] {
+/** The goal's glows by the rules (the +y goal's), each with its part */
+export function goalGlowRibbons(): GlowRibbon[] {
   const g = FIELD_MEASURES.glow;
   const ribbons: GlowRibbon[] = [];
-  const push = (attached: readonly P3[], free: readonly P3[]): void => {
-    ribbons.push({ attached: flat3(attached), free: flat3(free) });
+  let part: GlowPart = "mouth";
+  const push = (attached: readonly P3[], free: readonly P3[], glow?: number): void => {
+    ribbons.push({ attached: flat3(attached), free: flat3(free), part, ...(glow === undefined ? {} : { glow }) });
   };
   // The opening's outline (x, z), whole: one post up from the floor, the crossbar, the other post down
   const half = mouthOutline(0);
@@ -687,6 +731,7 @@ function goalGlowRibbons(): GlowRibbon[] {
   // On its field side, one loop (RV-143): 51 out from the opening up the posts and over, down to the fillet, onto the
   // floor and round the mouth piece's front; its free edge 63 toward the field on the wall, the fillet's concentric arc
   // (r 32) round it, 63 up on the floor
+  part = "fieldSide";
   const fs = g.fieldSide;
   const sideX = fs.x;
   // (up the +x post, round its corner, across the top, round the other, down the -x post to the fillet)
@@ -730,24 +775,40 @@ function goalGlowRibbons(): GlowRibbon[] {
   ];
   push(loopAttached, loopFree);
   // Under the crossbar
+  part = "crossbar";
   push(
     [[-g.crossbar.x, g.wallY, g.crossbar.z], [g.crossbar.x, g.wallY, g.crossbar.z]],
     [[-g.crossbar.x, g.wallY, g.crossbar.z - g.width], [g.crossbar.x, g.wallY, g.crossbar.z - g.width]],
   );
-  // The back wall's stepped outline: low out to |x| 2048, up the slant, across the top; its free edge 128 out in the
-  // wall's plane (mitred: up from the low and top parts, out along the slant's normal)
+  // The back wall's stepped outline (AV-11): low out to |x| 2048, up the slant, across the top, its bends the game's
+  // (r 96, then r 128), not mitres; its free edge 128 out in the wall's plane: at the first bend (r 96, under the 128) the
+  // free edge's lines meet in a corner, at the second its arc is the attached one's, 128 further out
+  part = "stepped";
   const st = g.stepped;
-  const corner = [st.slant - st.low, st.slant - st.top];
-  const mitre = st.out * (Math.SQRT2 - 1);
-  const attachedSteps: P3[] = [];
-  const freeSteps: P3[] = [];
-  for (const [x, z, dx] of [[-st.to, st.low, 0], [-(corner[0] ?? 0), st.low, -mitre], [-(corner[1] ?? 0), st.top, -mitre], [corner[1] ?? 0, st.top, mitre], [corner[0] ?? 0, st.low, mitre], [st.to, st.low, 0]] as const) {
-    attachedSteps.push([x, g.wallY, z]);
-    // (at the slant's corners the free edge's lines meet 128 (sqrt 2 - 1) further out)
-    freeSteps.push([x + dx, g.wallY, z + st.out]);
-  }
-  push(attachedSteps, freeSteps);
+  const [r1, r2] = st.bends;
+  const tan22 = Math.tan(Math.PI / 8);
+  const c1: P2 = [st.slant - st.low, st.low];
+  const c2: P2 = [st.slant - st.top, st.top];
+  const arc = (cx: number, cz: number, r: number, from: number, to: number): P2[] =>
+    Array.from({ length: 7 }, (_, k): P2 => {
+      const a = from + ((to - from) * k) / 6;
+      return [cx + r * Math.cos(a), cz + r * Math.sin(a)];
+    });
+  // (bend 1: centre r1 above the low line's tangent point; bend 2: centre r2 below the top line's)
+  const t1 = r1 * tan22;
+  const t2 = r2 * tan22;
+  const bend1 = arc(c1[0] + t1, st.low + r1, r1, -Math.PI / 2, (-3 * Math.PI) / 4);
+  const centre2: P2 = [c2[0] - t2, st.top - r2];
+  const bend2 = arc(centre2[0], centre2[1], r2, Math.PI / 4, Math.PI / 2);
+  const freeCorner: P2 = [st.slant + st.out * Math.SQRT2 - (st.low + st.out), st.low + st.out];
+  const bend2Free = arc(centre2[0], centre2[1], r2 + st.out, Math.PI / 4, Math.PI / 2);
+  // (the +x half, from |x| 2048 in to the centre line)
+  const attachedHalf: P2[] = [[st.to, st.low], ...bend1, ...bend2, [0, st.top]];
+  const freeHalf: P2[] = [[st.to, st.low + st.out], ...bend1.map(() => freeCorner), ...bend2Free, [0, st.top + st.out]];
+  const across = (h: readonly P2[]): P3[] => [...h.map(([x, z]): P3 => [-x, g.wallY, z]), ...[...h].reverse().slice(1).map(([x, z]): P3 => [x, g.wallY, z])];
+  push(across(attachedHalf), across(freeHalf));
   // Low beside the goal, leaning back
+  part = "beside";
   const bs = g.beside;
   // (its (|x|, z) profile: flat, the slope's line through its point, flat; the bends where they meet, rounded)
   const slopeAt = (z: number): number => bs.slope.at[0] + (z - bs.slope.at[1]) / bs.slope.rise;
@@ -759,10 +820,12 @@ function goalGlowRibbons(): GlowRibbon[] {
     push(
       besideProfile.map(([x, z]): P3 => [s * x, bs.y, z]),
       besideProfile.map(([x, z]): P3 => [s * x, bs.y + bs.lean[0], z + bs.lean[1]]),
+      bs.glow,
     );
   }
   // Inside: along the goal's profile at |x| 735 (15 out into the net), 63 toward the centre, from y 5344; and the front
   // bands across the floor and the roof, from y 5281 back to 5344 over |x| 672, rounding (r 63) into the sides
+  part = "inside";
   const i = g.inside;
   const sideFrom = i.front + g.width;
   const profile = goalPath().map(([behind, z]): P2 => [5120 + behind, z]);

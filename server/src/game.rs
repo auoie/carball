@@ -123,7 +123,8 @@ pub enum Outgoing {
 #[derive(Clone, Debug)]
 pub struct JoinRequest {
     pub team: u8,
-    pub body: u8,
+    /// The garage's car (`protocol::MODEL_PRESETS`: as the hello sent it, the server checks it)
+    pub model: u8,
     pub dodge_deadzone: f32,
     pub steering_sensitivity: f32,
     pub air_control_sensitivity: f32,
@@ -314,6 +315,8 @@ fn replay_seconds(plan: &ReplayPlan) -> f64 {
 struct Player {
     car_id: u32,
     team: u8,
+    /// The garage's car they drive (checked)
+    model: u8,
     input: InputBuffer,
     out: Sender<Outgoing>,
     /// When the last input packet came (server time, s): a client silent this long gets no updates (G8)
@@ -655,7 +658,9 @@ impl Game {
             0 | 1 if on_team(request.team) < usize::from(self.team_size) => request.team,
             _ => u8::from(on_team(0) > on_team(1)),
         };
-        let car_id = self.arena.add_car(team, request.body);
+        // (the garage's car: one this server doesn't know plays as the first; its hitbox preset)
+        let (model, preset) = protocol::model_preset(request.model);
+        let car_id = self.arena.add_car(team, preset);
         eprintln!("player {id} joined team {team} (car {car_id})");
         // (a running vote takes the joiner as a voter: `AddToTeam`)
         if let Some(vote) = self.votes[usize::from(team)].as_mut()
@@ -691,6 +696,7 @@ impl Game {
         let player = Player {
             car_id,
             team,
+            model,
             input: InputBuffer::default(),
             out,
             echo: None,
@@ -751,7 +757,7 @@ impl Game {
 
     /// The players to everyone (their cars, teams and names)
     fn send_roster(&self) {
-        let roster = self.players.values().map(|p| protocol::RosterEntry { car: p.car_id, team: p.team, name: p.name.clone() }).collect();
+        let roster = self.players.values().map(|p| protocol::RosterEntry { car: p.car_id, team: p.team, model: p.model, name: p.name.clone() }).collect();
         self.broadcast(&Control::Roster(roster));
     }
 
@@ -1768,7 +1774,7 @@ mod tests {
     /// (skipping goal replays: a goal goes straight to the next kickoff; the replay's tests ask for them)
     const REQUEST: JoinRequest = JoinRequest {
         team: 255,
-        body: 0,
+        model: 0,
         dodge_deadzone: 0.5,
         steering_sensitivity: 1.0,
         air_control_sensitivity: 1.0,
@@ -1780,7 +1786,7 @@ mod tests {
     };
     const WANTS_REPLAYS: JoinRequest = JoinRequest {
         team: 255,
-        body: 0,
+        model: 0,
         dodge_deadzone: 0.5,
         steering_sensitivity: 1.0,
         air_control_sensitivity: 1.0,
@@ -3148,6 +3154,28 @@ mod tests {
         let left = controls(&mut rxs[0]);
         assert!(left.iter().any(|c| matches!(c, Control::Event { event: GameEvent::Left { car: 2, lost: true, .. }, .. })));
         assert!(left.iter().any(|c| matches!(c, Control::Roster(r) if r.len() == 2)));
+    }
+
+    #[test]
+    fn each_player_drives_the_garage_car_they_chose_its_preset_checked() {
+        // (the garage's cars: Sport and Standard the Standard preset, Flat and Tall theirs; one the server doesn't know
+        // plays as Sport)
+        assert_eq!(protocol::model_preset(0), (0, 0));
+        assert_eq!(protocol::model_preset(1), (1, 0));
+        assert_eq!(protocol::model_preset(2), (2, 1));
+        assert_eq!(protocol::model_preset(3), (3, 5));
+        assert_eq!(protocol::model_preset(4), (0, 0));
+        assert_eq!(protocol::model_preset(255), (0, 0));
+        init_engine();
+        let mut game = Game::new();
+        let mut rxs = Vec::new();
+        for (id, model) in [(1, 3), (2, 9), (3, 2)] {
+            let (tx, rx) = channel(TEST_QUEUE);
+            game.join(id, JoinRequest { model, ..REQUEST }, tx);
+            rxs.push(rx);
+        }
+        let roster = controls(&mut rxs[0]).into_iter().filter_map(|c| if let Control::Roster(r) = c { Some(r) } else { None }).next_back().unwrap();
+        assert_eq!(roster.iter().map(|p| (p.car, p.model)).collect::<Vec<_>>(), [(1, 3), (2, 0), (3, 2)]);
     }
 
     #[test]

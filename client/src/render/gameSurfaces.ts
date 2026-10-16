@@ -309,25 +309,27 @@ void main() {
 const glowFragment = /* glsl */ `
 uniform vec3 primary;
 uniform vec3 bright;
+uniform float vertexAlpha;
 varying float vGlow;
 #include <fog_pars_fragment>
 void main() {
   float u = clamp(vGlow, 0.0, 1.0);
   float k = clamp(u * u - 0.75, 0.0, 1.0);
   vec3 colour = primary + k * (2.0 * bright - primary);
-  gl_FragColor = vec4(colour, 0.5 * u * u * u * u);
+  gl_FragColor = vec4(colour, 0.5 * u * u * u * u * vertexAlpha);
   #include <colorspace_fragment>
   #include <fog_fragment>
 }
 `;
 
 export class GlowStripMaterial extends ShaderMaterial {
-  /** `primary` and `bright`: the team's primary and its FullBright (linear) */
-  constructor(primary: Color, bright: Color) {
+  /** `primary` and `bright`: the team's primary and its FullBright (linear); `vertexAlpha` its mesh's vertex colour's
+   *  alpha (H-5: 1 unless said) */
+  constructor(primary: Color, bright: Color, vertexAlpha = 1) {
     super({
       vertexShader: glowVertex,
       fragmentShader: glowFragment,
-      uniforms: { ...UniformsUtils.clone(UniformsLib.fog), primary: { value: primary }, bright: { value: bright } },
+      uniforms: { ...UniformsUtils.clone(UniformsLib.fog), primary: { value: primary }, bright: { value: bright }, vertexAlpha: { value: vertexAlpha } },
       transparent: true,
       depthWrite: false,
       side: DoubleSide,
@@ -360,6 +362,40 @@ export class ForceFieldMaterial extends ShaderMaterial {
       fog: true,
     });
     this.ballPosition = ballPosition;
+  }
+}
+
+/** The back wall's grate (Goal_STD_Glass[1], H-11): near black (albedo 0.03), its alpha its texture's mean, 0.58 near
+ *  and 0.53 beyond ~670 uu (its alpha sat(4.125 R (1 - 0.425 sat(4 (d/1024 - 0.4)))) fading with distance d) */
+export const GRATE = { albedo: 0.03, near: 0.58, far: 0.53 } as const;
+
+export class GrateMaterial extends ShaderMaterial {
+  constructor() {
+    super({
+      vertexShader: /* glsl */ `
+        varying vec3 vWorld;
+        #include <fog_pars_vertex>
+        void main() {
+          vec4 world = modelMatrix * vec4(position, 1.0);
+          vWorld = world.xyz;
+          vec4 mvPosition = viewMatrix * world;
+          gl_Position = projectionMatrix * mvPosition;
+          #include <fog_vertex>
+        }`,
+      fragmentShader: /* glsl */ `
+        varying vec3 vWorld;
+        #include <fog_pars_fragment>
+        void main() {
+          float fade = clamp(4.0 * (distance(cameraPosition, vWorld) / 1024.0 - 0.4), 0.0, 1.0);
+          gl_FragColor = vec4(vec3(${GRATE.albedo.toFixed(3)}), mix(${GRATE.near.toFixed(3)}, ${GRATE.far.toFixed(3)}, fade));
+          #include <colorspace_fragment>
+          #include <fog_fragment>
+        }`,
+      uniforms: UniformsUtils.clone(UniformsLib.fog),
+      transparent: true,
+      depthWrite: false,
+      fog: true,
+    });
   }
 }
 

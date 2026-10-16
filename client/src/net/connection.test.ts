@@ -3,7 +3,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fakeTransport } from "../testing/fakeTransport";
 import { Connection, ControlQueue, RefusedError, serverHost, storeKey, storedKey } from "./connection";
-import { REFUSED_TOKEN } from "./protocol";
+import { PROTOCOL_VERSION, REFUSED_TOKEN } from "./protocol";
 
 const memory = (): Pick<Storage, "getItem" | "setItem"> => {
   const map = new Map<string, string>();
@@ -65,9 +65,27 @@ describe("a refused hello", () => {
 
   it("is a RefusedError with the server's reason (a claim's dead token: back to the queue, RV-363; RX13's C11)", async () => {
     vi.stubGlobal("WebTransport", fakeTransport([{ type: "refused", reason: REFUSED_TOKEN }]));
-    const preferences = { team: 255, body: 0, dodgeDeadzone: 0.5, steeringSensitivity: 1, airControlSensitivity: 1, autoSkipReplay: false, name: "", quickChat: "everyone", blockNonTactical: false } as const;
+    const preferences = { team: 255, model: 0, dodgeDeadzone: 0.5, steeringSensitivity: 1, airControlSensitivity: 1, autoSkipReplay: false, name: "", quickChat: "everyone", blockNonTactical: false } as const;
     const opened = Connection.open({ url: "https://game.example:4433/play", certHash: null }, preferences, { intent: "claim", token: 9n });
     await expect(opened).rejects.toBeInstanceOf(RefusedError);
     await expect(opened).rejects.toMatchObject({ reason: REFUSED_TOKEN });
+  });
+});
+
+describe("a session closed before the game listens", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("is told when the game sets its handler (RV-444: a cancel while the match page builds its arena)", async () => {
+    const welcome = { type: "welcome", version: PROTOCOL_VERSION, carId: 1, tickRate: 120, frame: 0, matchType: "casual", teamSize: 1, map: 0, key: 5n, snapshot: new Uint8Array() } as const;
+    vi.stubGlobal("WebTransport", fakeTransport([welcome], { sessions: [] }, true));
+    const preferences = { team: 255, model: 0, dodgeDeadzone: 0.5, steeringSensitivity: 1, airControlSensitivity: 1, autoSkipReplay: false, name: "", quickChat: "everyone", blockNonTactical: false } as const;
+    const { connection } = await Connection.open({ url: "https://game.example:4433/play", certHash: null }, preferences, { intent: "claim", token: 9n });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(connection.closed).toBe(true);
+    const reasons: string[] = [];
+    connection.onClose = (reason) => reasons.push(reason);
+    expect(reasons).toEqual(["closed by the server"]);
   });
 });

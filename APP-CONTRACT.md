@@ -45,7 +45,10 @@ docker tag carball-web:TAG REGISTRY/carball-web:TAG && docker push REGISTRY/carb
 docker tag carball-game:TAG REGISTRY/carball-game:TAG && docker push REGISTRY/carball-game:TAG
 ```
 Client and server must come from the same commit (the protocol version is checked at the handshake: an older page is
-refused with a message). Rolling the web image back to before 48388aa (the browser storage's keys renamed, moved over
+refused with a message to reload). **Deploy the game image first, then the web image right after:** with the web image
+first, an open page from before whose search finds a match in the gap loads the newer match page, which the older server
+refuses, recording a no-show and cancelling its players' match; with the game image first, the older pages' searches and
+claims are refused cleanly with the reload message until they reload (RV-442). Rolling the web image back to before 48388aa (the browser storage's keys renamed, moved over
 once by the newer page) shows players the default settings and gives them a new browser key on the older page, and what
 they change there is lost when the newer page returns (RV-425; `client/src/settings/storageKeys.ts`).
 

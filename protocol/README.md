@@ -1,4 +1,4 @@
-# Game protocol (version 21)
+# Game protocol (version 22)
 
 Client ↔ server over **WebTransport** (HTTP/3, QUIC). All integers little-endian. Implemented in
 `server/src/protocol.rs` (Rust) and `client/src/net/protocol.ts` (TypeScript); `vectors.json` holds byte-exact
@@ -32,7 +32,7 @@ Framed as `u16 length` + message (`length` counts the message, which starts with
 
 | Type | Direction | Fields |
 |---|---|---|
-| `0x01 Hello` | C→S | `u16 version`, `u8 team` (0 blue, 1 orange, 255 any), `u8 body` (the hitbox preset, 0 standard … 5 tall: notes/hitboxes.md), `f32 dodgeDeadzone`, `f32 steeringSensitivity`, `f32 airControlSensitivity`, `u8 autoSkipReplay` (1: always ready to skip goal replays, `bAutoSkipGoalReplay`), `u64 key` (the key the server gave this client before, in its `Welcome`, kept for reconnects; 0 for none; a search's: the browser's own random key, kept in its storage), `u8 n`, `n` bytes the player's name (UTF-8, 32 at most; the server drops control, format and invisible characters, makes every run of spaces one space, keeps two combining marks on a character at most and trims it, and names a nameless player, or one asking for another's automatic name in any case, spacing, digits or lookalike letters, "Player N"), `u8 quickChat`, `u8 blockNonTactical` (the chat filters from the start, as `ChatFilter`), `u8 intent` (0 join the open match, 1 search, 2 claim), `u8 playlist` (a search's team size; 0 otherwise), `u64 token` (a claim's, from `MatchFound`; a search's: the token it claimed in a match cancelled for someone else, `Kicked` reason 1, else 0) |
+| `0x01 Hello` | C→S | `u16 version`, `u8 team` (0 blue, 1 orange, 255 any), `u8 model` (the garage's car: 0 Sport, 1 Standard, 2 Flat, 3 Tall, only ever appended to; the server plays it with its hitbox preset, Standard for Sport and Standard, and takes one it doesn't know as 0), `f32 dodgeDeadzone`, `f32 steeringSensitivity`, `f32 airControlSensitivity`, `u8 autoSkipReplay` (1: always ready to skip goal replays, `bAutoSkipGoalReplay`), `u64 key` (the key the server gave this client before, in its `Welcome`, kept for reconnects; 0 for none; a search's: the browser's own random key, kept in its storage), `u8 n`, `n` bytes the player's name (UTF-8, 32 at most; the server drops control, format and invisible characters, makes every run of spaces one space, keeps two combining marks on a character at most and trims it, and names a nameless player, or one asking for another's automatic name in any case, spacing, digits or lookalike letters, "Player N"), `u8 quickChat`, `u8 blockNonTactical` (the chat filters from the start, as `ChatFilter`), `u8 intent` (0 join the open match, 1 search, 2 claim), `u8 playlist` (a search's team size; 0 otherwise), `u64 token` (a claim's, from `MatchFound`; a search's: the token it claimed in a match cancelled for someone else, `Kicked` reason 1, else 0) |
 | `0x08 Mute` | C→S | `u32 car`, `u8 on`: mute or unmute that player's chat for this player (`ClientMutePlayer`: the server stops relaying their lines here; a block is the client's own) |
 | `0x02 ResetInputBuffer` | C→S | nothing: the client had a hitch (over 0.1 s between its frames) 2 s ago; the server resets its jitter buffer to the initial estimate (as the game's `ServerResetInputBuffer`) |
 | `0x03 ReadyUp` | C→S | nothing: skip the goal replay (the game's `ReadyUp`, Space / pad A); counts only during one |
@@ -47,7 +47,7 @@ Framed as `u16 length` + message (`length` counts the message, which starts with
 
 | `0x85 Replay` | S→C | the goal replay starts (`StartReplay` → `ReplayPlayback`): `u32 startTick`, `u32 goalTick`, `u32 endTick` (server ticks: the window shown), `u8 scoringTeam`, `u8 n`, `n` × (`u32 from`, `u32 to`): stretches played at 0.25 speed (exclusive), `u8 m`, `m` × (`u32 carId`, `u32 tick`): whom the replay camera follows with the ball, until when. The client plays its own recording of those ticks |
 | `0x86 ReplayReady` | S→C | `u8 ready`, `u8 total`: players ready to skip the replay (sent when it changes during one) |
-| `0x88 Roster` | S→C | `u8 n`, `n` × (`u32 carId`, `u8 team`, `u8 m`, `m` bytes name): the players, sent to everyone when it changes (a client's log says who joined and who left) |
+| `0x88 Roster` | S→C | `u8 n`, `n` × (`u32 carId`, `u8 team`, `u8 model` (the garage's car they drive, as Hello's, checked), `u8 m`, `m` bytes name): the players, sent to everyone when it changes (a client's log says who joined and who left) |
 | `0x89 Chat` | S→C | `u32 carId` (the sender's), `u8 preset`, `u8 team`, `u16 seconds` (the clock's shown seconds at relay: `[M:SS]`, `+` in overtime, none once the match has ended) |
 | `0x8A ChatBlocked` | S→C | `f32 seconds`: the sender's chat is blocked for this long (the log's "Chat disabled for N second(s).") |
 | `0x8B Refused` | S→C | `u8 reason` (0: the match has its most players, 16; 1: the client's `Hello` has another protocol version, read before its fields; 2: no reservation has the claim's token (never given, claimed already, or its match gone); 3: this server doesn't serve the intent, or no such playlist): instead of a `Welcome`; the session ends |
@@ -143,7 +143,8 @@ engine snapshot (Welcome, World) and, when it isn't the cars' ID order, in the n
 and 64-bit keys (SEC-9). Version 18: the engine snapshot (Welcome, World) carries the ball's and each car's stored
 broadphase box, which the wheel rays pick their candidates by (physics FP2). Version 19: a search's browser key and
 returning token (Hello), `0x92 SearchCooldown` (RV-367). Version 20: `SearchCooldown`'s `network` (RV-385). Version 21:
-the match's map (`MatchFound`, `Welcome`).
+the match's map (`MatchFound`, `Welcome`). Version 22: the garage's car (Hello's `model`, in place of its `body`; the
+roster's `model`).
 
 Podium title ids (`notes/match-stats.md` §5.4a; the client's `game/podiumTitles.ts`): 0 OvertimeGoal, 1 Goals_10,
 2 Goals_6_9, 3 Goals_3_5, 4 Saves_10, 5 Saves_6_9, 6 Saves_3_5, 7 EpicSaves, 8 PoolShots, 9 BackwardsGoal, 10 BicycleGoal,

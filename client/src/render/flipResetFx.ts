@@ -200,6 +200,15 @@ export class FlipResetFx {
     }
   }
 
+  /** Taken off its car, its GPU resources freed (a replay's, at the replay's end) */
+  dispose(): void {
+    this.root.removeFromParent();
+    for (const part of [this.#glow, this.#ring, this.#dome, this.#sparks]) {
+      part.geometry.dispose();
+      (part.material as ShaderMaterial).dispose();
+    }
+  }
+
   /** A flip reset: the effect starts over */
   trigger(): void {
     const fx = FLIP_RESET_FX;

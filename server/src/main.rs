@@ -347,6 +347,21 @@ mod tests {
     }
 
     #[test]
+    fn a_map_is_one_of_the_maps_and_named_when_refused() {
+        // (RV-447: the client's THEMES, append-only, MAP_COUNT of them)
+        let last = carball_server::protocol::MAP_COUNT - 1;
+        for bad in [carball_server::protocol::MAP_COUNT.to_string(), "255".to_string(), "256".to_string(), "-1".to_string(), "x".to_string()] {
+            let e = parse(&["--map", &bad]).err().unwrap_or_else(|| panic!("--map {bad}"));
+            assert!(e.to_string().contains("--map"), "{e}");
+        }
+        assert!(parse(&["--map"]).is_err(), "a value needed");
+        for (given, map) in [("0", 0), (last.to_string().as_str(), last), (" 3 ", 3)] {
+            assert_eq!(parse(&["--map", given]).unwrap().map, Some(map), "--map {given:?}");
+        }
+        assert_eq!(parse(&[]).unwrap().map, None, "a random map each match by default");
+    }
+
+    #[test]
     fn the_environment_gives_the_defaults_and_flags_override_it() {
         let env = |name: &str| {
             match name {

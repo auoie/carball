@@ -6,14 +6,20 @@ function harness() {
   const joined: { token: bigint; playlist: number; map: number }[] = [];
   const preloaded: number[] = [];
   const searchedFor: number[] = [];
-  const searches: { playlist: number; token: bigint; handlers: SearchHandlers; cancelled: boolean }[] = [];
+  const searches: { playlist: number; token: bigint; handlers: SearchHandlers; cancelled: boolean; finished: (() => void) | null }[] = [];
   const declined: bigint[] = [];
   const mm = new Matchmaking({
     search: (playlist, token, handlers) => {
-      const s = { playlist, token, handlers, cancelled: false };
+      const s: (typeof searches)[number] = { playlist, token, handlers, cancelled: false, finished: null };
       searches.push(s);
-      return () => {
-        s.cancelled = true;
+      return {
+        cancel: () => {
+          s.cancelled = true;
+        },
+        finish: () =>
+          new Promise<void>((resolve) => {
+            s.finished = resolve;
+          }),
       };
     },
     sound: (cue) => sounds.push(cue),
@@ -138,6 +144,33 @@ describe("matchmaking (notes/matchmaking.md MM-4..14)", () => {
     expect(mm.state?.status).toBe("joining");
     vi.advanceTimersByTime(JOIN_COUNTDOWN * 1000);
     expect(joined).toEqual([{ token: 4n, playlist: 1, map: 0 }]);
+  });
+
+  it("a search finished as the page goes: a match found meanwhile is followed, else it ends quietly (RV-443)", async () => {
+    const { mm, joined, searches, sounds } = harness();
+    // (no match: the session's end is no failure, no cancel sound, no search left)
+    mm.start(1);
+    searches[0]?.handlers.searching();
+    const quiet = mm.finish();
+    expect(mm.finish()).toBe(quiet);
+    searches[0]?.handlers.failed("the connection to the server was lost");
+    expect(mm.state?.status).toBe("searching");
+    searches[0]?.finished?.();
+    expect(await quiet).toBe(false);
+    expect(mm.state).toBeNull();
+    expect(sounds).toEqual(["start"]);
+    // (a match found before the end: the join goes on, the page follows it)
+    mm.start(1);
+    searches[1]?.handlers.searching();
+    const followed = mm.finish();
+    searches[1]?.handlers.found(9n, 3);
+    searches[1]?.finished?.();
+    expect(await followed).toBe(true);
+    expect(mm.state?.status).toBe("joining");
+    vi.advanceTimersByTime(JOIN_COUNTDOWN * 1000);
+    expect(joined).toEqual([{ token: 9n, playlist: 1, map: 3 }]);
+    // (nothing running, or already joining: answered at once)
+    expect(await mm.finish()).toBe(false);
   });
 
   it("a search refused for a no-show says why and how long, and stays until Cancel Search or a new search (RV-367)", () => {

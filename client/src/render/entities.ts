@@ -1,12 +1,12 @@
 // Visuals built from the physics shapes: the car is a body around its hitbox (src/render/carModel.ts), the ball is
 // its collision sphere. Real models come later (roadmap §10).
-import { BufferAttribute, type BufferGeometry, Color, CylinderGeometry, Group, IcosahedronGeometry, InstancedMesh, LinearSRGBColorSpace, Matrix4, Mesh, MeshBasicMaterial, MeshStandardMaterial, type Object3D, PlaneGeometry, type Quaternion, ShaderMaterial, Vector3 } from "three";
-import type { BoostPadState, CarConfig, Team } from "../engine/world";
+import { AdditiveBlending, BackSide, BufferAttribute, type BufferGeometry, Color, FrontSide, Group, IcosahedronGeometry, LinearSRGBColorSpace, Mesh, MeshStandardMaterial, type Object3D, PlaneGeometry, type Quaternion, ShaderMaterial, type Side, SphereGeometry, Vector3 } from "three";
+import type { CarConfig, Team } from "../engine/world";
+import { RETICLE, RETICLE_GLSL_FN } from "./ballShadow";
 import { buildCarModel } from "./carModel";
 import { Trail, trailingRearWheels } from "./supersonic";
 import { BOOST_TRAIL, IDLE_EXHAUST } from "./effects";
 import { Emitter, type Particles } from "./particles";
-import { toThreeVector } from "./coords";
 import { type Rot3, type Vec3, vec3 } from "../math/vec";
 
 export const BALL_RADIUS = 91.25;
@@ -62,9 +62,10 @@ export class CarView {
   readonly #axis = new Vector3();
   #wasDemoed = false;
 
-  /** `particles`: the scene's, for the boost trail and the idle exhaust (none: no particles) */
-  constructor(config: CarConfig, team: Team, particles: Particles | null = null) {
-    const model = buildCarModel(config, TEAM_CAR_COLORS[team], team);
+  /** `particles`: the scene's, for the boost trail and the idle exhaust (none: no particles); `car`: the garage's car
+   *  (its look: src/game/cars.ts), painted in `team`'s colour */
+  constructor(config: CarConfig, team: Team, particles: Particles | null = null, car = 0) {
+    const model = buildCarModel(config, TEAM_CAR_COLORS[team], team, car);
     this.#body.add(model);
     this.#exhausts = particles
       ? EXHAUSTS.map((at) => ({ at, trail: new Emitter(particles, BOOST_TRAIL), idle: new Emitter(particles, IDLE_EXHAUST) }))
@@ -136,47 +137,91 @@ export class CarView {
   }
 }
 
-/** The ball, faceted and patched so its spin is visible, plus its marker on the floor straight below it. */
+/** The ball, faceted and patched so its spin is visible, plus its reticle on the floor straight below it (VT-30a). */
 export class BallView {
   readonly root = new Group();
   readonly #ball: Mesh;
   readonly #material: MeshStandardMaterial;
   readonly #marker: Mesh;
-  readonly #fade = { value: 1 };
+  /** The ball's centre's height (uu: the inner ring's contraction) */
+  readonly #altitude = { value: 0 };
+  /** The ball's FX actor's other pieces (VT-30a): the location beam, the far ring and the clarity sphere */
+  readonly #beam: Mesh;
+  readonly #ring: Mesh;
+  readonly #sphere: Mesh;
+  /** Since the ball's FX actor was made (a spawn, a reset, a replay's ball: s) */
+  #sinceSpawn = 0;
+  /** The goal line's effect on the ball (VT-31): the mouth's plane where the ball is crossing it (Three's frame), the
+   *  goals' nearness, the FX time, on unless dissolving */
+  readonly #goalLine = {
+    planeLoc: { value: new Vector3() },
+    planeN: { value: new Vector3() },
+    proximity: { value: 0 },
+    time: { value: 0 },
+    on: { value: 0 },
+  };
   #opacity = 1;
 
   constructor() {
     // (transparent throughout: it dissolves on a goal and fades in at a kickoff)
     this.#material = new MeshStandardMaterial({ vertexColors: true, roughness: 0.5, metalness: 0.1, flatShading: true, transparent: true });
+    addGoalLineEffect(this.#material, this.#goalLine);
     this.#ball = new Mesh(patchedBallGeometry(), this.#material);
-    // The ball's size, so it shows where the ball will come down; a plane a little bigger, to hold the rim
+    // The game's reticle: a decal 192 uu square straight down from the ball's centre, square to the world's axes (it
+    // never turns), its two white rings added (src/render/ballShadow.ts); just over the floor's pieces, under the pads
     this.#marker = new Mesh(
-      new PlaneGeometry(BALL_RADIUS * 2 * MARKER_SPAN, BALL_RADIUS * 2 * MARKER_SPAN),
+      new PlaneGeometry(RETICLE.half * 2, RETICLE.half * 2),
       new ShaderMaterial({
         vertexShader: MARKER_VERTEX,
         fragmentShader: MARKER_FRAGMENT,
-        uniforms: { fade: this.#fade },
+        uniforms: { altitude: this.#altitude },
         transparent: true,
         depthWrite: false,
+        blending: AdditiveBlending,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+        polygonOffsetUnits: -1,
       }),
     );
     this.#marker.rotation.x = -Math.PI / 2;
     this.#marker.renderOrder = 1; // (over the floor and its markings)
-    this.root.add(this.#ball, this.#marker);
+    // The FX actor's group (its sort priority 2, the decal's 1): plain alpha, unlit, white or black, none faded in
+    const fx = (geometry: BufferGeometry, vertexShader: string, fragmentShader: string, depthTest: boolean, side: Side = FrontSide): Mesh => {
+      const mesh = new Mesh(geometry, new ShaderMaterial({ vertexShader, fragmentShader, transparent: true, depthWrite: false, depthTest, side }));
+      mesh.renderOrder = 2;
+      mesh.visible = false;
+      return mesh;
+    };
+    // (the beam: a strip 2 uu wide from the ball's centre 2500 uu down, turned about the vertical to face the camera)
+    this.#beam = fx(new PlaneGeometry(BALL_FX.beam.width, BALL_FX.beam.length).translate(0, -BALL_FX.beam.length / 2, 0), BEAM_VERTEX, BEAM_FRAGMENT, true);
+    // (the far ring: a 192 uu billboard at the ball, through everything)
+    this.#ring = fx(new PlaneGeometry(BALL_FX.ring.size, BALL_FX.ring.size), RING_VERTEX, RING_FRAGMENT, false);
+    // (the clarity sphere: 128 uu, seen from inside, black, its rim soft)
+    this.#sphere = fx(new SphereGeometry(BALL_FX.sphere.radius, 32, 16), SPHERE_VERTEX, SPHERE_FRAGMENT, true, BackSide);
+    this.root.add(this.#ball, this.#marker, this.#sphere, this.#beam, this.#ring);
   }
 
   update(position: Vector3, rotation: Quaternion): void {
     this.#ball.position.copy(position);
     this.#ball.quaternion.copy(rotation);
-    // On the floor straight below the ball, the ball's size at any height; a little fainter the higher it is
-    this.#marker.position.set(position.x, 1, position.z);
-    this.#fade.value = markerFade(Math.max(0, position.y - BALL_RADIUS));
+    // On the floor straight below the ball; its inner ring by the height of the ball's centre (no fade: VT-30a)
+    this.#marker.position.set(position.x, MARKER_HEIGHT, position.z);
+    this.#altitude.value = position.y;
+    for (const piece of [this.#beam, this.#ring, this.#sphere]) piece.position.copy(position);
+    // (the goal line's plane and the goals' nearness: the game's per frame, VT-31; Three's z the game's y)
+    const line = goalLine(position.x, position.z, position.y);
+    this.#goalLine.proximity.value = line.proximity;
+    if (line.plane) {
+      this.#goalLine.planeLoc.value.set(position.x, position.y, line.plane.y);
+      this.#goalLine.planeN.value.set(0, 0, line.plane.n);
+    } else this.#goalLine.planeN.value.set(0, 0, 0);
   }
 
   /** A new ball (a kickoff, a goal's reset): it fades in over 1 s (VT-30); `instant`: shown at once (a replay's,
    *  freeplay's placements) */
   spawn(instant = false): void {
     this.#opacity = instant ? 1 : 0;
+    this.#sinceSpawn = 0; // (a new FX actor: its beam, ring and sphere come again, VT-30a)
     this.#show(false);
   }
 
@@ -185,6 +230,8 @@ export class BallView {
   fade(exploded: boolean, seconds: number): void {
     const dt = Math.min(Math.max(0, seconds), 1 / 30);
     this.#opacity = exploded ? Math.max(0, this.#opacity - 3 * dt) : Math.min(1, this.#opacity + dt);
+    this.#sinceSpawn += Math.max(0, seconds);
+    this.#goalLine.time.value += Math.max(0, seconds);
     this.#show(exploded);
   }
 
@@ -205,21 +252,223 @@ export class BallView {
     this.#material.depthWrite = alpha >= 1;
     this.#ball.visible = alpha > 0;
     this.#marker.visible = !exploded;
+    // (the goal line's effect: not under the dissolve, VT-31)
+    this.#goalLine.on.value = !exploded && this.#opacity >= 1 ? 1 : 0;
+    // (popping on 1 s after the FX actor's made, the beam's first particle a second later; gone at once on the explosion)
+    this.#ring.visible = !exploded && this.#sinceSpawn >= BALL_FX.attach;
+    this.#sphere.visible = this.#ring.visible;
+    this.#beam.visible = !exploded && this.#sinceSpawn >= BALL_FX.beam.first;
   }
 
-  /** The marker's place on the floor, and how strongly it shows (for tests). */
-  get marker(): { readonly x: number; readonly z: number; readonly fade: number } {
-    return { x: this.#marker.position.x, z: this.#marker.position.z, fade: this.#fade.value };
+  /** The goal line's effect now (for tests): its plane's normal (Three's frame; 0 off), the goals' nearness, whether on */
+  get goalLineState(): { readonly normalZ: number; readonly proximity: number; readonly on: boolean } {
+    return { normalZ: this.#goalLine.planeN.value.z, proximity: this.#goalLine.proximity.value, on: this.#goalLine.on.value > 0 };
+  }
+
+  /** Which of the FX actor's other pieces show (for tests) */
+  get fxShown(): { readonly beam: boolean; readonly ring: boolean; readonly sphere: boolean } {
+    return { beam: this.#beam.visible, ring: this.#ring.visible, sphere: this.#sphere.visible };
+  }
+
+  /** The reticle's place on the floor, and the height its inner ring is drawn for (for tests). */
+  get marker(): { readonly x: number; readonly z: number; readonly altitude: number } {
+    return { x: this.#marker.position.x, z: this.#marker.position.z, altitude: this.#altitude.value };
   }
 }
 
-/** The marker's plane, in ball radii from its centre to its edge. */
-const MARKER_SPAN = 1.3;
+/** The goal line's effect on the ball (notes/visual-timing.md VT-31, the static session's BR1): the goal volume's face
+ *  (y = -/+5120, |x| <= 960, -64 <= z <= 688, its normal toward the field) where the ball's centre projects onto it
+ *  and the ball is less than its radius from it on the field side; the goals' nearness 1 - min(d / 2048, 1) from the
+ *  nearer goal's location (0, -/+5120, 312); in the ball's shader: past the plane (g over 1 uu) its albedo darkened
+ *  to nothing, a white-hot line where the plane cuts it (96 x), an 8 Hz sawtooth glow (8 x: facing outside, a rim
+ *  inside) and a shake (1 + 4 g uu); the game's lit honeycomb (its ball texture's: 4.1 uu, 0.74 uu lines, line/cell
+ *  albedo 0.18/0.087) drawn by rule in the part past the plane, our ball's own look kept elsewhere */
+export const GOAL_LINE = {
+  y: 5120,
+  halfWidth: 960,
+  z: [-64, 688] as const,
+  location: { z: 312 },
+  near: 2048,
+  line: 96,
+  flicker: { gain: 8, hz: 8 },
+  shake: { base: 1, inside: 4, rates: [204.331, 155.14, 145.444] as const },
+  honeycomb: { spacing: 4.1, line: 0.74, albedo: [0.18, 0.087] as const },
+} as const;
 
-/** How strongly the marker shows with the ball `height` uu off the floor: fully on the floor, never below 0.45. */
-export function markerFade(height: number): number {
-  return Math.max(0.45, 1 - height / 3000);
+/** The goal line's plane for a ball at (x, y, z) (game frame): which goal's face (y and its normal's y), if the ball's
+ *  crossing it; and the nearer goal's nearness */
+export function goalLine(x: number, y: number, z: number): { readonly plane: { readonly y: number; readonly n: number } | null; readonly proximity: number } {
+  const G = GOAL_LINE;
+  const side = y >= 0 ? 1 : -1;
+  const proximity = 1 - Math.min(Math.hypot(x, y - side * G.y, z - G.location.z) / G.near, 1);
+  const s = side * (G.y * side - y); // (the centre's distance on the field side of the face)
+  const onFace = Math.abs(x) <= G.halfWidth && z >= G.z[0] && z <= G.z[1];
+  return { plane: onFace && s < BALL_RADIUS ? { y: side * G.y, n: -side } : null, proximity };
 }
+
+/** The goal line's effect added to the ball's material (VT-31); `u` its uniforms, set every frame */
+function addGoalLineEffect(
+  material: MeshStandardMaterial,
+  u: { planeLoc: { value: Vector3 }; planeN: { value: Vector3 }; proximity: { value: number }; time: { value: number }; on: { value: number } },
+): void {
+  const G = GOAL_LINE;
+  const [r0, r1, r2] = G.shake.rates;
+  const [lineAlbedo, cellAlbedo] = G.honeycomb.albedo;
+  material.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, { glPlaneLoc: u.planeLoc, glPlaneN: u.planeN, glProximity: u.proximity, glTime: u.time, glOn: u.on });
+    const common = `uniform vec3 glPlaneLoc;\nuniform vec3 glPlaneN;\nuniform float glProximity;\nuniform float glTime;\nuniform float glOn;\nvarying vec3 glWorld;\nvarying vec3 glLocal;`;
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", `#include <common>\n${common}`)
+      .replace(
+        "#include <project_vertex>",
+        `vec4 glW = modelMatrix * vec4(transformed, 1.0);
+        float glG = clamp(dot(glPlaneLoc - glW.xyz, glPlaneN), 0.0, 1.0);
+        // (the shake, in the world's uu: the game's (x, y, z) as Three's (x, z, y))
+        glW.xyz += glOn * (${G.shake.base.toFixed(1)} + ${G.shake.inside.toFixed(1)} * glG) * glProximity * vec3(sin(${r0} * glTime), cos(${r2} * glTime), sin(${r1} * glTime));
+        glWorld = glW.xyz;
+        glLocal = transformed;
+        vec4 mvPosition = viewMatrix * glW;
+        gl_Position = projectionMatrix * mvPosition;`,
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <common>", `#include <common>\n${common}
+// (the game's ball texture's honeycomb, by rule: its cells' distance to their edges on the ball's surface, three ways)
+float glHexEdge(vec2 p) {
+  vec2 s = vec2(1.0, 1.7320508);
+  vec2 a = mod(p, s) - 0.5 * s;
+  vec2 b = mod(p - 0.5 * s, s) - 0.5 * s;
+  vec2 h = dot(a, a) < dot(b, b) ? a : b;
+  h = abs(h);
+  return 0.5 - max(dot(h, normalize(s)), h.x);
+}
+vec3 glHoneycomb(vec3 p, vec3 n) {
+  vec3 w = abs(n) / (abs(n.x) + abs(n.y) + abs(n.z));
+  float e = w.x * glHexEdge(p.yz / ${G.honeycomb.spacing.toFixed(2)}) + w.y * glHexEdge(p.zx / ${G.honeycomb.spacing.toFixed(2)}) + w.z * glHexEdge(p.xy / ${G.honeycomb.spacing.toFixed(2)});
+  float halfLine = ${(G.honeycomb.line / 2 / G.honeycomb.spacing).toFixed(4)};
+  float aa = fwidth(e);
+  float line = 1.0 - smoothstep(halfLine - aa, halfLine + aa, e);
+  // (cells under a pixel or so: their average)
+  float mean = ${(((G.honeycomb.line / G.honeycomb.spacing) * 2) * lineAlbedo + (1 - (G.honeycomb.line / G.honeycomb.spacing) * 2) * cellAlbedo).toFixed(4)};
+  return vec3(mix(mix(${cellAlbedo.toFixed(3)}, ${lineAlbedo.toFixed(3)}, line), mean, smoothstep(0.1, 0.3, aa * 4.0)));
+}`)
+      .replace(
+        "#include <color_fragment>",
+        `#include <color_fragment>
+        float glD = dot(glPlaneLoc - glWorld, glPlaneN);
+        float glG = glOn * clamp(glD, 0.0, 1.0);
+        vec3 glAlbedo = diffuseColor.rgb;
+        diffuseColor.rgb *= 1.0 - glG;`,
+      )
+      .replace(
+        "#include <emissivemap_fragment>",
+        `#include <emissivemap_fragment>
+        if (glOn > 0.0 && dot(glPlaneN, glPlaneN) > 0.0) {
+          vec3 glN = normalize(cross(dFdx(glLocal), dFdy(glLocal)));
+          vec3 glD3 = mix(glAlbedo, glHoneycomb(glLocal, glN), glG);
+          float glNdotV = clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0);
+          // (the line: 1 uu, a pixel and a half at least, as bright as it's narrow)
+          float glW = max(1.0, fwidth(glD) * 1.5);
+          float glLine = clamp(1.0 - abs(2.0 * (glD - 0.5) / glW), 0.0, 1.0) / glW;
+          float glFlicker = ${G.flicker.gain.toFixed(1)} * fract(${G.flicker.hz.toFixed(1)} * glTime) * glProximity
+            * mix(pow(clamp(glNdotV - 0.5, 0.0, 1.0), 2.0), pow(1.0 - glNdotV, 2.0), glG);
+          totalEmissiveRadiance += glD3 * (${G.line.toFixed(1)} * glLine + glFlicker);
+        }`,
+      );
+  };
+  material.customProgramCacheKey = () => "goalLine";
+}
+
+/** The ball's FX actor's pieces besides the reticle (VT-30a, the static session's BR1): attached 1 s after it's made; the
+ *  location beam (Ball_LocationBeam01_PS: a strip 2 x 2500 uu down from the ball's centre, its dashes every 78.125 uu,
+ *  alpha 0.0625 at most, faded near the screen's centre; its emitter's first particle at 2 s), the far ring (Reticle_Mat:
+ *  192 uu, its ring at d2 0.875, only for balls 2048 to 4096 uu or more from the camera) and the clarity sphere (128 uu,
+ *  black, (N.V sat(depth / 2049))^2) */
+export const BALL_FX = {
+  attach: 1,
+  beam: { width: 2, length: 2500, dash: 78.125, alpha: 0.0625, first: 2 },
+  ring: { size: 192, at: 0.875, near: 2048, far: 4096 },
+  sphere: { radius: 128, depth: 2049 },
+} as const;
+
+// The beam: turned about the vertical toward the camera; s its distance below the ball's centre; its screen position
+// for the fade near the screen's centre (plain [0, 1] screen uv)
+const BEAM_VERTEX = /* glsl */ `
+varying float vBelow;
+varying vec4 vClip;
+void main() {
+  vec3 centre = (modelMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+  vec3 toCamera = cameraPosition - centre;
+  vec3 across = normalize(vec3(toCamera.z, 0.0, -toCamera.x) + vec3(1e-6, 0.0, 0.0));
+  vec3 world = centre + across * position.x + vec3(0.0, position.y, 0.0);
+  vBelow = -position.y;
+  vClip = projectionMatrix * viewMatrix * vec4(world, 1.0);
+  gl_Position = vClip;
+}
+`;
+
+const BEAM_FRAGMENT = /* glsl */ `
+varying float vBelow;
+varying vec4 vClip;
+void main() {
+  float a = 0.25 + clamp(8.0 * (sin(${(2 * Math.PI).toFixed(6)} * vBelow / ${BALL_FX.beam.dash.toFixed(3)}) - 0.75), 0.0, 0.75);
+  vec2 uv = vClip.xy / vClip.w * 0.5 + 0.5;
+  vec2 off = uv - 0.5;
+  float fade = clamp(4.0 * (dot(off, off) - 0.0625), 0.0, 1.0);
+  gl_FragColor = vec4(1.0, 1.0, 1.0, ${BALL_FX.beam.alpha.toFixed(4)} * a * fade);
+}
+`;
+
+// The far ring: facing the camera, its view depth for the distance it shows from
+const RING_VERTEX = /* glsl */ `
+varying vec2 vUv;
+varying float vDepth;
+void main() {
+  vUv = uv;
+  vec4 view = modelViewMatrix * vec4(0.0, 0.0, 0.0, 1.0) + vec4(position.xy, 0.0, 0.0);
+  vDepth = -view.z;
+  gl_Position = projectionMatrix * view;
+}
+`;
+
+const RING_FRAGMENT = /* glsl */ `
+varying vec2 vUv;
+varying float vDepth;
+void main() {
+  vec2 p = vUv * 2.0 - 1.0;
+  float d2 = dot(p, p);
+  float ring = clamp(4.0 * (1.0 - abs(12.0 * (${BALL_FX.ring.at.toFixed(3)} - d2))), 0.0, 1.0);
+  float far = max(0.0, 2.0 * clamp(vDepth / ${BALL_FX.ring.far.toFixed(1)}, 0.0, 1.0) - 1.0);
+  gl_FragColor = vec4(1.0, 1.0, 1.0, ring * far);
+}
+`;
+
+// The clarity sphere: its inside's faces, the normal inward, against the view; black
+const SPHERE_VERTEX = /* glsl */ `
+varying vec3 vInward;
+varying vec3 vToCamera;
+varying float vDepth;
+void main() {
+  vec4 world = modelMatrix * vec4(position, 1.0);
+  vInward = -normalize(mat3(modelMatrix) * normal);
+  vToCamera = cameraPosition - world.xyz;
+  vec4 view = viewMatrix * world;
+  vDepth = -view.z;
+  gl_Position = projectionMatrix * view;
+}
+`;
+
+const SPHERE_FRAGMENT = /* glsl */ `
+varying vec3 vInward;
+varying vec3 vToCamera;
+varying float vDepth;
+void main() {
+  float k = clamp(dot(normalize(vInward), normalize(vToCamera)), 0.0, 1.0) * clamp(vDepth / ${BALL_FX.sphere.depth.toFixed(1)}, 0.0, 1.0);
+  gl_FragColor = vec4(0.0, 0.0, 0.0, k * k);
+}
+`;
+
+/** The reticle's height over the floor (uu): over the field's pieces (its raised centre ring at 2), under the pads */
+const MARKER_HEIGHT = 2.5;
 
 const MARKER_VERTEX = /* glsl */ `
 varying vec2 vUv;
@@ -229,20 +478,13 @@ void main() {
 }
 `;
 
-// A soft dark disc the ball's size with a light rim round it: one or the other shows on any floor, dark or light
+// The game's rings (VT-30a), white, added: the plane's uv across its 192 uu, so p = uv * 2 - 1 = (P - ball) / 96
 const MARKER_FRAGMENT = /* glsl */ `
-uniform float fade;
+uniform float altitude;
 varying vec2 vUv;
+${RETICLE_GLSL_FN}
 void main() {
-  float r = length(vUv * 2.0 - 1.0) * ${MARKER_SPAN.toFixed(2)}; // 1 at the ball's radius
-  float core = (1.0 - smoothstep(0.5, 1.0, r)) * 0.6 * fade;
-  // The rim stays at least a pixel and a half wide however far away (it would vanish into the floor otherwise)
-  float width = max(0.09, fwidth(r) * 1.5);
-  float rim = (1.0 - smoothstep(width * 0.5, width, abs(r - 0.97))) * 0.8 * (0.4 + 0.6 * fade);
-  // The rim over the core
-  float alpha = rim + core * (1.0 - rim);
-  vec3 color = vec3(1.0, 0.97, 0.9) * rim / max(alpha, 1e-4);
-  gl_FragColor = vec4(color, alpha);
+  gl_FragColor = vec4(vec3(ballReticle(vUv * 2.0 - 1.0, altitude)), 1.0);
   #include <colorspace_fragment>
 }
 `;
@@ -275,158 +517,3 @@ export function patchedBallGeometry(): BufferGeometry {
   return geometry;
 }
 
-/** Seconds a taken pad stays down (VehiclePickup RespawnDelay x RespawnDelayScale 1): the engine's pad cooldown. */
-export const PAD_RESPAWN_SECONDS = { big: 10, small: 4 } as const;
-/** The game's second warm-up stage starts this long before a pad is back (VehiclePickup_Boost_TA AlmostSpawnedTime) */
-export const PAD_ALMOST_SPAWNED_SECONDS = 1;
-
-/** A pad's light fades out on a pickup and in on its return over this long (notes/visual-timing.md VT-12/13) */
-export const PAD_FADE_SECONDS = 0.1;
-
-/** The pads' look: lit (its colour and glow) and dim (taken: the glow off) */
-export const PAD_LOOK = { lit: 0xffc533, emissive: 0x996a00, dim: 0x4a4130, roughness: 0.4 } as const;
-
-/** Boost pads, instanced (six draw calls for all of them): flat discs, big pads with an orb, small ones with a low
- *  cylinder. Taken, a pad's light fades out over 0.1 s to its dim look (a big pad's orb goes at once, a small pad
- *  stays, dark); back, its light fades in over 0.1 s. Only big pads warm up while down, as the game's: a ghost of the
- *  orb growing over the whole delay (its glow eases in: EaseInCirc), and in the last second a brighter, pulsing one
- *  (AlmostSpawnedEvent). */
-export class BoostPadsView {
-  readonly root = new Group();
-  readonly #pads: readonly {
-    readonly meshes: PadMeshes;
-    readonly big: boolean;
-    readonly slot: number;
-    readonly base: Matrix4;
-    readonly orb: Matrix4;
-    readonly delay: number;
-  }[];
-  readonly #shown: (boolean | null)[];
-  /** Seconds left of each pad's light fading (out after a pickup, in after its return) */
-  readonly #fading: number[];
-  readonly #color = new Color();
-  readonly #scale = new Matrix4();
-  readonly #m = new Matrix4();
-
-  constructor(pads: readonly BoostPadState[]) {
-    // Each pad's light (the game's Brightness, 0..1) by its instance colour: from the dim look (0: taken, waiting) to
-    // the lit one, the glow too, so the end of a fade is the resting look (RV-33). (In the fragment shader three defines
-    // USE_COLOR for an instance colour: USE_INSTANCING_COLOR is the vertex shader's alone, and testing it here left every
-    // taken pad lit)
-    const active = new MeshStandardMaterial({ color: PAD_LOOK.lit, emissive: PAD_LOOK.emissive, roughness: PAD_LOOK.roughness });
-    const dim = new Color(PAD_LOOK.dim);
-    active.onBeforeCompile = (shader) => {
-      shader.uniforms["dimColor"] = { value: dim };
-      shader.fragmentShader = shader.fragmentShader
-        .replace("#include <common>", "#include <common>\nuniform vec3 dimColor;")
-        .replace("#include <color_fragment>", "#ifdef USE_COLOR\ndiffuseColor.rgb = mix(dimColor, diffuseColor.rgb, vColor.r);\n#endif")
-        .replace("#include <emissivemap_fragment>", "#include <emissivemap_fragment>\n#ifdef USE_COLOR\ntotalEmissiveRadiance *= vColor.rgb;\n#endif");
-    };
-    const warmup = new MeshBasicMaterial({ color: 0xffb020, transparent: true, opacity: 0.3, depthWrite: false });
-    const almost = new MeshBasicMaterial({ color: 0xffe9a0, transparent: true, opacity: 0.65, depthWrite: false });
-    const count = (big: boolean): number => pads.filter((p) => p.big === big).length;
-    const big = padMeshes(new CylinderGeometry(80, 90, 6, 24), new IcosahedronGeometry(45, 1), count(true), active, warmup, almost);
-    const small = padMeshes(new CylinderGeometry(50, 55, 6, 24), new CylinderGeometry(18, 18, 8, 12), count(false), active, warmup, almost);
-    const slots = { big: 0, small: 0 };
-    this.#pads = pads.map((pad) => {
-      const at = toThreeVector(pad.pos);
-      return {
-        meshes: pad.big ? big : small,
-        big: pad.big,
-        slot: pad.big ? slots.big++ : slots.small++,
-        base: new Matrix4().makeTranslation(at.x, 3, at.z),
-        orb: new Matrix4().makeTranslation(at.x, pad.big ? 70 : 12, at.z),
-        delay: pad.big ? PAD_RESPAWN_SECONDS.big : PAD_RESPAWN_SECONDS.small,
-      };
-    });
-    for (const m of [big, small]) this.root.add(m.active, m.orb);
-    this.root.add(big.warmup, big.almost);
-    this.#shown = pads.map(() => null);
-    this.#fading = pads.map(() => 0);
-    this.update(pads);
-  }
-
-  /** `seconds`: since the last update (the lights' fades; none given: at their end at once) */
-  update(pads: readonly BoostPadState[], seconds = Infinity): void {
-    pads.forEach((pad, i) => {
-      const p = this.#pads[i];
-      if (!p) return;
-      const { active, orb, warmup, almost } = p.meshes;
-      const changed = this.#shown[i] !== pad.active;
-      const first = this.#shown[i] === null;
-      if (changed) {
-        this.#shown[i] = pad.active;
-        this.#fading[i] = first ? 0 : PAD_FADE_SECONDS;
-        // Taken: the big orb goes at once, the light fades out; back: the orb at once, the light fading in
-        active.setMatrixAt(p.slot, p.base);
-        orb.setMatrixAt(p.slot, pad.active || !p.big ? p.orb : HIDDEN);
-        for (const mesh of [active, orb]) mesh.instanceMatrix.needsUpdate = true;
-        if (pad.active && p.big) {
-          warmup.setMatrixAt(p.slot, HIDDEN);
-          almost.setMatrixAt(p.slot, HIDDEN);
-          warmup.instanceMatrix.needsUpdate = almost.instanceMatrix.needsUpdate = true;
-        }
-      }
-      const fading = this.#fading[i] ?? 0;
-      if (fading > 0 || changed) {
-        const left = Math.max(0, fading - seconds);
-        this.#fading[i] = left;
-        const light = pad.active ? 1 - left / PAD_FADE_SECONDS : left / PAD_FADE_SECONDS;
-        this.#color.setRGB(light, light, light);
-        active.setColorAt(p.slot, this.#color);
-        orb.setColorAt(p.slot, this.#color);
-        if (active.instanceColor) active.instanceColor.needsUpdate = true;
-        if (orb.instanceColor) orb.instanceColor.needsUpdate = true;
-      }
-      if (pad.active || !p.big) return;
-      // The warm-up: how far through the delay (the game's normalized time), the glow easing in
-      const t = Math.min(1, Math.max(0, 1 - pad.cooldown / p.delay));
-      const glow = 1 - Math.sqrt(1 - t * t);
-      this.#setScaled(warmup, p.slot, p.orb, 0.2 + 0.8 * glow);
-      if (pad.cooldown <= PAD_ALMOST_SPAWNED_SECONDS) {
-        const pulse = Math.sin((PAD_ALMOST_SPAWNED_SECONDS - pad.cooldown) * 2 * Math.PI * 3); // three pulses
-        this.#setScaled(almost, p.slot, p.orb, 1 + 0.12 * pulse);
-      } else {
-        almost.setMatrixAt(p.slot, HIDDEN);
-        almost.instanceMatrix.needsUpdate = true;
-      }
-    });
-  }
-
-  #setScaled(mesh: InstancedMesh, slot: number, at: Matrix4, scale: number): void {
-    mesh.setMatrixAt(slot, this.#m.copy(at).multiply(this.#scale.makeScale(scale, scale, scale)));
-    mesh.instanceMatrix.needsUpdate = true;
-  }
-}
-
-/** One size of pad: its disc (lit to dim by each pad's light), its orb (a big pad's only shown while lit) and the orb's
- *  warm-up ghosts (while down). Unused instances are scaled to 0. */
-interface PadMeshes {
-  readonly active: InstancedMesh;
-  readonly orb: InstancedMesh;
-  readonly warmup: InstancedMesh;
-  readonly almost: InstancedMesh;
-}
-const HIDDEN = new Matrix4().makeScale(0, 0, 0);
-
-function padMeshes(
-  base: BufferGeometry,
-  orb: BufferGeometry,
-  count: number,
-  active: MeshStandardMaterial,
-  warmup: MeshBasicMaterial,
-  almost: MeshBasicMaterial,
-): PadMeshes {
-  const make = (geometry: BufferGeometry, material: MeshStandardMaterial | MeshBasicMaterial, hidden = false): InstancedMesh => {
-    const mesh = new InstancedMesh(geometry, material, count);
-    mesh.frustumCulled = false; // (spread over the whole field)
-    if (hidden) for (let i = 0; i < count; i++) mesh.setMatrixAt(i, HIDDEN);
-    return mesh;
-  };
-  return {
-    active: make(base, active),
-    orb: make(orb, active),
-    warmup: make(orb, warmup, true),
-    almost: make(orb, almost, true),
-  };
-}

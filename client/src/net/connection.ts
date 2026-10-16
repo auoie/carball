@@ -44,7 +44,8 @@ export async function devServerAddress(requestedHost: string, infoPort: number):
 
 export interface JoinPreferences {
   readonly team: number; // 0, 1, 255 = any
-  readonly body: number;
+  /** The garage's car (src/game/cars.ts) */
+  readonly model: number;
   readonly dodgeDeadzone: number;
   readonly steeringSensitivity: number;
   readonly airControlSensitivity: number;
@@ -105,7 +106,8 @@ export class RefusedError extends Error {
 export function refusalText(reason: number): string {
   switch (reason) {
     case REFUSED_VERSION:
-      return "the server speaks another protocol version";
+      // (the server updated since this page loaded: a reload gets its page, RV-456)
+      return "the server speaks another protocol version: reload the page";
     case REFUSED_TOKEN:
       return "the match is no longer there";
     case REFUSED_MODE:
@@ -163,9 +165,11 @@ export class Connection {
   readonly #datagrams: WritableStreamDefaultWriter<Uint8Array>;
   #control: WritableStreamDefaultWriter<Uint8Array> | null = null; // the control stream (after the hello)
   #closed = false;
+  /** Why it closed, kept for a handler set later */
+  #closedWith: string | null = null;
+  #onClose: (reason: string) => void = () => undefined;
   readonly #incoming = new ControlQueue<ControlMessage>();
   onUpdate: (u: Update) => void = () => undefined;
-  onClose: (reason: string) => void = () => undefined;
 
   private constructor(transport: WebTransport) {
     this.#transport = transport;
@@ -222,10 +226,22 @@ export class Connection {
     return this.#closed;
   }
 
+  /** The session's end, with why: a handler set after it ended is told at once (a cancel, a restart or a lost connection
+   *  while the match page builds its arena, before the game listens: RV-444) */
+  get onClose(): (reason: string) => void {
+    return this.#onClose;
+  }
+
+  set onClose(handler: (reason: string) => void) {
+    this.#onClose = handler;
+    if (this.#closedWith !== null) handler(this.#closedWith);
+  }
+
   #close(reason: string): void {
     if (this.#closed) return;
     this.#closed = true;
-    this.onClose(reason);
+    this.#closedWith = reason;
+    this.#onClose(reason);
   }
 
   async #readDatagrams(): Promise<void> {

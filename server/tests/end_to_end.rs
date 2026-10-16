@@ -60,7 +60,7 @@ async fn a_client_connects_drives_and_follows_the_world() {
     let hello = Control::Hello {
         version: protocol::VERSION,
         team: 255,
-        body: 0,
+        model: 0,
         dodge_deadzone: 0.5,
         steering_sensitivity: 1.0,
         air_control_sensitivity: 1.0,
@@ -148,7 +148,7 @@ async fn a_vanished_client_is_a_lost_connection_and_a_closed_one_left() {
     let hello = Control::Hello {
         version: protocol::VERSION,
         team: 255,
-        body: 0,
+        model: 0,
         dodge_deadzone: 0.5,
         steering_sensitivity: 1.0,
         air_control_sensitivity: 1.0,
@@ -219,7 +219,7 @@ fn keyed_hello(intent: u8, playlist: u8, token: u64, key: u64) -> Vec<u8> {
     Control::Hello {
         version: protocol::VERSION,
         team: 255,
-        body: 0,
+        model: 0,
         dodge_deadzone: 0.5,
         steering_sensitivity: 1.0,
         air_control_sensitivity: 1.0,

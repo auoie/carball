@@ -35,6 +35,8 @@ export function nightTheme(): Theme {
       floor: new Color(0x24402c),
       floorStripe: null,
       markings: null,
+      // (the game's field for its floor: the user's map, 2026-10-16)
+      gameField: true,
       walls: {
         blue: new Color(0x2a7fff),
         orange: new Color(0xff8a1f),

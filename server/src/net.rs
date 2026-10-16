@@ -37,6 +37,9 @@ pub enum ToGame {
     Join { id: PlayerId, intent: Intent, request: JoinRequest, address: IpAddr, out: Sender<Outgoing> },
     /// The session ended; `lost`: its connection timed out
     Leave { id: PlayerId, lost: bool },
+    /// A search's page closed its control stream (Cancel Search, another map): the search out of the queue now, so its
+    /// session can write out what the game sent before (a match found) and end
+    CancelSearch { id: PlayerId },
     Inputs { id: PlayerId, timestamp: u32, first_frame: u32, frames: Vec<InputFrame>, at: std::time::Instant },
     ResetInputBuffer { id: PlayerId },
     /// Skip the goal replay
@@ -355,7 +358,7 @@ async fn session(incoming: IncomingSession, id: PlayerId, address: IpAddr, to_ga
     };
     let Control::Hello {
         team,
-        body,
+        model,
         dodge_deadzone,
         steering_sensitivity,
         air_control_sensitivity,
@@ -372,6 +375,7 @@ async fn session(incoming: IncomingSession, id: PlayerId, address: IpAddr, to_ga
     else {
         bail!("expected hello");
     };
+    let searching = intent == protocol::INTENT_SEARCH;
     let intent = match intent {
         protocol::INTENT_SEARCH => Intent::Search { team_size: playlist, token },
         protocol::INTENT_CLAIM => Intent::Claim { token },
@@ -379,7 +383,7 @@ async fn session(incoming: IncomingSession, id: PlayerId, address: IpAddr, to_ga
     };
 
     let (out_tx, mut out_rx) = channel(OUT_QUEUE);
-    let request = JoinRequest { team, body, dodge_deadzone, steering_sensitivity, air_control_sensitivity, auto_skip_replay, key, name, quick_chat, block_non_tactical };
+    let request = JoinRequest { team, model, dodge_deadzone, steering_sensitivity, air_control_sensitivity, auto_skip_replay, key, name, quick_chat, block_non_tactical };
     to_game.send(ToGame::Join { id, intent, request, address, out: out_tx }).await?;
 
     // Game -> client
@@ -479,7 +483,15 @@ async fn session(incoming: IncomingSession, id: PlayerId, address: IpAddr, to_ga
                 }
                 Err(e) => break Err(e.into()),
             },
-            _ = &mut control_reader => break Ok(()),
+            // (a search's page closed it: the search out of the queue first, then what the game sent before that (a match
+            // found) written out before the session ends: a match formed as the page went isn't lost, a no-show, RV-443)
+            _ = &mut control_reader => {
+                if searching {
+                    let _ = to_game.send(ToGame::CancelSearch { id }).await;
+                    let _ = tokio::time::timeout(Duration::from_secs(2), &mut writer).await;
+                }
+                break Ok(());
+            }
             // (the game let go of this player: give the client a moment to read why and close)
             _ = &mut writer => {
                 let _ = tokio::time::timeout(Duration::from_secs(2), &mut control_reader).await;

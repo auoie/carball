@@ -10,7 +10,7 @@ import { floorOutline } from "./arenaSurface";
 import { GrassCube } from "./grassCube";
 import { FrameMaterial, GRASS_LIGHT, GrassMaterial, HexFloorMaterial, MarkingMaterial, TIRE_MARKS, buildStadiumField, grassBin, grassReflection } from "./stadiumField";
 import { FIELD_LIGHT, FIELD_MEASURES, type FieldPlan, shippableFieldPlan } from "./stadiumFieldRules";
-import { nightTheme } from "./themes/night";
+import { meadowTheme } from "./themes/meadow";
 import { stadiumTheme } from "./themes/stadium";
 
 type Tri = readonly [number, number, number, number, number, number];
@@ -211,12 +211,25 @@ describe("the field's materials and light", () => {
       expect(Math.hypot(fx, fz - 320)).toBeLessThan(Math.hypot(x, z - 320));
       expect(Math.hypot(fx - x, fz - z)).toBeLessThanOrEqual(glow.width + 1e-6);
     });
-    // The stepped outline: its free edge in the wall's plane, 128 above
+    // The stepped outline: its free edge in the wall's plane, 128 out: 128 above along the low and top runs, never
+    // nearer the attached edge than that (round the bends: the second's arc 128 further out, the first's lines meeting
+    // in a corner)
     const stepped = ribbons.find((r) => onWall(r.attached) && Math.max(...r.attached.map(([x]) => Math.abs(x))) === glow.stepped.to);
     expect(stepped && onWall(stepped.free)).toBe(true);
-    stepped?.attached.forEach(([, , z], k) => {
-      expect((stepped.free[k]?.[2] ?? 0) - z).toBeCloseTo(glow.stepped.out, 6);
-    });
+    const attached = stepped?.attached ?? [];
+    const free = stepped?.free ?? [];
+    const mid = Math.floor(attached.length / 2);
+    for (const k of [0, mid, attached.length - 1]) expect((free[k]?.[2] ?? 0) - (attached[k]?.[2] ?? 0)).toBeCloseTo(glow.stepped.out, 6);
+    const toAttached = ([x, , z]: [number, number, number]): number =>
+      Math.min(
+        ...attached.slice(1).map(([bx, , bz], i) => {
+          const [ax, , az] = attached[i] ?? [0, 0, 0];
+          const [dx, dz] = [bx - ax, bz - az];
+          const t = Math.min(1, Math.max(0, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz || 1)));
+          return Math.hypot(x - ax - t * dx, z - az - t * dz);
+        }),
+      );
+    for (const p of free) expect(toAttached(p)).toBeGreaterThanOrEqual(glow.stepped.out - 1e-3);
     // Inside: the sides from y 5344, the front bands from 5281
     const sides = ribbons.filter((r) => r.attached.every(([x]) => Math.abs(Math.abs(x) - glow.inside.x) < 1e-6));
     expect(sides).toHaveLength(2);
@@ -343,7 +356,8 @@ describe("the field's materials and light", () => {
 
   it("only with the game's materials: the stadium has the field and not our old markings; other themes keep theirs", () => {
     const stadium = materials(new ArenaView(stadiumTheme()).root);
-    expect(stadium.filter((m) => m instanceof GrassMaterial)).toHaveLength(1);
+    // (the grass, its rim and its traces: AV-6a)
+    expect(stadium.filter((m): m is GrassMaterial => m instanceof GrassMaterial).map((m) => m.variant).sort()).toEqual(["grass", "rim", "trace"]);
     // (each piece its own baked light; the goal mouths Reflective_Floor_B; the field's pieces by name, OOBFloor under
     // each goal by its own profile: RV-104)
     const hex = stadium.filter((m) => m instanceof HexFloorMaterial);
@@ -358,8 +372,9 @@ describe("the field's materials and light", () => {
     expect(light("centre")).toBeCloseTo(0.898, 3);
     // (the floor under it all the frame's: its seams)
     expect(stadium.filter((m) => m instanceof FrameMaterial && m.piece === "trimB")).toHaveLength(1);
-    const night = materials(new ArenaView(nightTheme()).root);
-    expect(night.filter((m) => m instanceof GrassMaterial || m instanceof HexFloorMaterial || m instanceof MarkingMaterial || m instanceof FrameMaterial)).toHaveLength(0);
+    // (Night wears the game's field too, the user's map; another theme none of it)
+    const meadow = materials(new ArenaView(meadowTheme()).root);
+    expect(meadow.filter((m) => m instanceof GrassMaterial || m instanceof HexFloorMaterial || m instanceof MarkingMaterial || m instanceof FrameMaterial)).toHaveLength(0);
   });
 
   it("the baked light: every piece's table fits the shaders' 16 bins, its levels a lightmap's (0.3-1.6)", () => {

@@ -2,16 +2,12 @@
 // check the twins; this checks the GLSL the materials embed), and materials rendered where a shader's defines decide
 // what shows (the boost pads' taken look). The e2e suite calls window.carballShaderProbe.
 import {
-  AmbientLight,
   Color,
-  CylinderGeometry,
   DataTexture,
   DataUtils,
-  DirectionalLight,
   FloatType,
   Mesh,
   MeshBasicMaterial,
-  MeshStandardMaterial,
   NearestFilter,
   OrthographicCamera,
   PerspectiveCamera,
@@ -23,7 +19,20 @@ import {
   WebGLRenderer,
   WebGLRenderTarget,
 } from "three";
-import { BoostPadsView, PAD_LOOK } from "../render/entities";
+import { BoostPadsView } from "../render/boostPads";
+
+/** The pads' probe: the mean luminance of a small pad's middle (r <= 9) lit, taken and its base alone; of a big pad's
+ *  ring (r 30-45) lit, just taken and its base alone; of a big pad's centre 8 s into its warm-up and its base alone */
+interface PadsProbe {
+  readonly smallLit: number;
+  readonly smallTaken: number;
+  readonly smallBase: number;
+  readonly bigLit: number;
+  readonly bigTaken: number;
+  readonly bigBase: number;
+  readonly bigWarm: number;
+  readonly bigWarmBase: number;
+}
 import { CUBE_FOG_CAP, HEIGHT_FOG_GLSL, fogCd, heightFog, opaqueDelta, skyDelta } from "../render/heightFog";
 import { PostProcess, REMAP_GLSL, TONEMAP_GLSL, display, unclippedNodes } from "../render/postProcess";
 import { ENV_GLSL, ENV_RADIAL, ENV_SPREAD, NET_SIDE_GLSL, OVERLAY_UV_GLSL, envG, netSideUv, overlayUv } from "../render/gameSurfaces";
@@ -155,7 +164,7 @@ void main() {
 export function shaderProbe(canvas: HTMLCanvasElement): {
   /** The pads' discs rendered from above, lit and taken, each size, and a reference disc in the dim look (no glow):
    *  their mean luminance where the disc shows round the orb */
-  pads: () => { smallLit: number; smallTaken: number; bigLit: number; bigTaken: number; dim: number };
+  pads: () => PadsProbe;
   /** The post-processing chain on two scenes (PP-1..10): a uniform linear grey filling the view (its display value at
    *  the centre, with the depth of field and bloom on), and a small patch at linear 50 on black (the mean display
    *  value in a ring round it, with bloom on and off) */
@@ -208,44 +217,47 @@ export function shaderProbe(canvas: HTMLCanvasElement): {
     for (const d of [texture, material, quad.geometry, target]) d.dispose();
     return Array.from({ length: n }, (_, k) => Array.from(out.subarray(4 * k, 4 * k + 4)));
   };
-  const pads = (): { smallLit: number; smallTaken: number; bigLit: number; bigTaken: number; dim: number } => {
-    // (four pads in a row along the game's x, a dim reference disc after them; looked at straight down)
+  const pads = (): PadsProbe => {
+    // (five pads in a row along the game's x, looked at straight down: drawn whole, then their bases alone, a taken pad
+    // the same both ways, its base: RV-33; a big one just taken (its warm-up nothing yet), one 8 s into its warm-up)
     const at = [-1600, -800, 0, 800, 1600];
     const view = new BoostPadsView([
       { pos: { x: at[0] ?? 0, y: 0, z: 0 }, big: false, active: true, cooldown: 0 },
       { pos: { x: at[1] ?? 0, y: 0, z: 0 }, big: false, active: false, cooldown: 2 },
       { pos: { x: at[2] ?? 0, y: 0, z: 0 }, big: true, active: true, cooldown: 0 },
-      { pos: { x: at[3] ?? 0, y: 0, z: 0 }, big: true, active: false, cooldown: 5 },
+      { pos: { x: at[3] ?? 0, y: 0, z: 0 }, big: true, active: false, cooldown: 10 },
+      { pos: { x: at[4] ?? 0, y: 0, z: 0 }, big: true, active: false, cooldown: 2 },
     ]);
     const scene = new Scene();
-    const sun = new DirectionalLight(0xffffff, 2);
-    sun.position.set(0.3, 1, 0.2);
-    scene.add(view.root, new AmbientLight(0xffffff, 0.5), sun);
-    const reference = new Mesh(new CylinderGeometry(50, 55, 6, 24), new MeshStandardMaterial({ color: PAD_LOOK.dim, roughness: PAD_LOOK.roughness }));
-    reference.position.set(at[4] ?? 0, 3, 0);
-    scene.add(reference);
-    const [w, h] = [400, 80];
+    scene.add(view.root);
+    const [w, h] = [1600, 320];
     const top = new OrthographicCamera(-2000, 2000, 400, -400, 1, 1000);
     top.position.set(0, 500, 0);
     top.up.set(0, 0, -1);
     top.lookAt(0, 0, 0);
     const target = new WebGLRenderTarget(w, h);
-    gl.setRenderTarget(target);
-    gl.render(scene, top);
-    gl.setRenderTarget(null);
-    const px = new Uint8Array(w * h * 4);
-    gl.readRenderTargetPixels(target, 0, 0, w, h, px);
+    const draw = (): Uint8Array => {
+      gl.setRenderTarget(target);
+      gl.render(scene, top);
+      gl.setRenderTarget(null);
+      const out = new Uint8Array(w * h * 4);
+      gl.readRenderTargetPixels(target, 0, 0, w, h, out);
+      return out;
+    };
+    const whole = draw();
+    view.fxVisible = false;
+    const bases = draw();
     target.dispose();
-    // (each disc's ring between r 30 and 45 uu: past a small pad's orb (r 18), inside its disc (r 50); a big pad's orb is
-    // gone when taken, and over the ring when lit, which only adds to its light)
-    const ring = (x: number): number => {
+    // (a small pad's middle, r <= 9: its inlay at its brightest; a big pad's ring between r 30 and 45: over its windows,
+    // its orb (r 18.6) inside it; its centre, r <= 18, warming up)
+    const ring = (px: Uint8Array, x: number, [r0, r1]: readonly [number, number]): number => {
       let sum = 0;
       let n = 0;
       for (let j = 0; j < h; j++) {
         for (let i = 0; i < w; i++) {
           const [ux, uz] = [((i + 0.5) / w) * 4000 - 2000, ((j + 0.5) / h) * 800 - 400];
           const r = Math.hypot(ux - x, uz);
-          if (r < 30 || r > 45) continue;
+          if (r < r0 || r > r1) continue;
           const k = 4 * (j * w + i);
           sum += (0.2126 * (px[k] ?? 0) + 0.7152 * (px[k + 1] ?? 0) + 0.0722 * (px[k + 2] ?? 0)) / 255;
           n++;
@@ -253,7 +265,17 @@ export function shaderProbe(canvas: HTMLCanvasElement): {
       }
       return n > 0 ? sum / n : NaN;
     };
-    return { smallLit: ring(at[0] ?? 0), smallTaken: ring(at[1] ?? 0), bigLit: ring(at[2] ?? 0), bigTaken: ring(at[3] ?? 0), dim: ring(at[4] ?? 0) };
+    const [middle, centre, windows] = [[0, 9], [0, 18], [30, 45]] as const;
+    return {
+      smallLit: ring(whole, at[0] ?? 0, middle),
+      smallTaken: ring(whole, at[1] ?? 0, middle),
+      smallBase: ring(bases, at[1] ?? 0, middle),
+      bigLit: ring(whole, at[2] ?? 0, windows),
+      bigTaken: ring(whole, at[3] ?? 0, windows),
+      bigBase: ring(bases, at[3] ?? 0, windows),
+      bigWarm: ring(whole, at[4] ?? 0, centre),
+      bigWarmBase: ring(bases, at[4] ?? 0, centre),
+    };
   };
   const post = (grey: number): { grey: number; expected: number; ringBloom: number; ringNoBloom: number } => {
     const [w, h] = [320, 180];

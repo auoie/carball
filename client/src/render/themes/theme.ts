@@ -21,6 +21,9 @@ export interface ArenaStyle {
   readonly floorStripe: Color | null;
   /** Glowing field markings in this colour (for dark arenas), or null for plain white lines lit by the scene */
   readonly markings: Color | null;
+  /** The game's field (its grass, hex floors, frame, boost paths and markings) for this map's floor, in its team colours,
+   *  instead of `floor` and `markings` (the user's decisions, 2026-10-16: Night's) */
+  readonly gameField?: boolean;
   readonly walls: WallStyle;
 }
 

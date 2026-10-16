@@ -1356,6 +1356,33 @@ body {
   margin-right: var(--numbers-gap);
 }
 
+/* (the field's glow a layer under all its digits, as the game's filter on the whole text: the same cells over the
+   field, drawing only their shadows, their characters from data-c; painted before the digits, which draw none: a later
+   digit's glow never over an earlier one, the user's "100") */
+.num-glow {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  white-space: nowrap;
+  color: transparent;
+}
+
+.num-glow::before {
+  content: "";
+  flex: none;
+  height: calc(2px + 0.7775 * var(--numbers-size));
+}
+
+.num-glow .num-cell::after {
+  content: attr(data-c);
+}
+
+.num-cell.num-fill {
+  text-shadow: none;
+}
+
 /* (the digits' 70 x 52 box, at y 2 from the board's origin: x -136...-66 on the left, 68...138 on the right, not
    mirrored as the backgrounds are (HUD-2, RX5's answer); from the score boxes at -134.5 and 67) */
 .score-digits {
@@ -1685,39 +1712,21 @@ body {
 }
 
 /* HUD-5/6/7: the boost meter, its centre 110 in from the right and the bottom: a 225 degree arc clockwise from 6
-   o'clock (the last 45 past 80 % its own white), turned 15 degrees */
+   o'clock (the last 45 past 80 % its own white), turned 15 degrees in perspective (HUD.updatePerspectiveProjection:
+   focalLength 500, its centre 50 left of and 100 above the meter's), the bars and number 20 px nearer than the disc:
+   drawn already projected by src/ui/boostMeter.ts (its art's points, the text's 2D matrices), so sharp (a CSS 3D layer
+   is resampled into its tilt: the user's finding, 2026-10-16) */
 #boost {
   position: absolute;
   right: 10px;
   bottom: 10px;
   width: 200px;
   height: 200px;
-  /* (HUD.updatePerspectiveProjection: focalLength 500 after fieldOfView 120, the last write wins as Flash links them;
-     its centre 50 left of and 100 above the meter's) */
-  perspective: 500px;
-  perspective-origin: 50px 0;
   --boost-tint: var(--tint-0);
 }
 
 #boost.team-1 {
   --boost-tint: var(--tint-1);
-}
-
-#boost-3d {
-  position: absolute;
-  inset: 0;
-  transform: rotateY(-15deg) rotateX(-2deg);
-  transform-style: preserve-3d;
-}
-
-/* HUD-18: the disc and glow, then the bars, ring and number 20 px nearer (the movie's z -20) */
-.boost-layer {
-  position: absolute;
-  inset: 0;
-}
-
-#boost-front {
-  transform: translateZ(20px);
 }
 
 .boost-art {
@@ -1780,10 +1789,9 @@ body {
   opacity: 0;
 }
 
-/* (the tint's glow: clip alpha 0.5, 1 past 80 %) */
+/* (the tint's glow: clip alpha 0.5, 1 past 80 %; grown about its centre, src/ui/boostMeter.ts) */
 .boost-glow {
   opacity: 0.5;
-  transform-origin: 100px 100px;
 }
 
 .boost-glow-stop {
@@ -2032,6 +2040,54 @@ body {
   }
 }
 
+/* The garage: the car turning in its colour, the cars four a row, the team colours two (each kept as chosen) */
+.main-menu-column.main-menu-garage-view {
+  width: min(560px, 84vw);
+}
+
+.garage-preview {
+  display: block;
+  width: min(360px, 100%);
+  height: auto;
+  aspect-ratio: 360 / 210;
+  margin: 0 auto;
+  /* (a panel as the buttons': the car on it, not floating over the arena) */
+  background: rgba(10, 14, 22, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+
+.main-menu-choices {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.main-menu-choices.main-menu-teams {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.main-menu-choices .main-menu-button {
+  text-align: center;
+}
+
+.main-menu-car[aria-checked="true"],
+.main-menu-team.team-0[aria-checked="true"] {
+  border-color: #43afff;
+  background: rgba(20, 60, 110, 0.9);
+}
+
+.main-menu-team.team-1[aria-checked="true"] {
+  border-color: #ff9a43;
+  background: rgba(110, 50, 15, 0.9);
+}
+
+@media (max-width: 560px) {
+  .main-menu-choices {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
 /* MM-4: the Searching panel over the main menu (title, summary, the message log, Cancel Search) */
 .search-panel {
   position: fixed;
@@ -2222,60 +2278,79 @@ body {
   text-transform: uppercase;
 }
 
-/* HT-3: the {key} token's icons in the HUD's prompts (our own): about 1.5 x the line, sitting on its baseline; the pad's
-   face buttons round badges, its other buttons rounded tabs, the mouse an outline with its button lit */
+/* HT-3: the {key} token's icons in the HUD's prompts (our own): about 1.5 x the line, centred on its text; the pad's
+   face buttons round badges, its other buttons rounded tabs, the mouse an outline with its button lit. Each takes the room
+   plain text does on its line, no more: a line box 0 high (the user's finding, 2026-10-16: the ball-cam label moved when
+   the last input switched between pad and keyboard, a pad badge or the mouse growing the hint row it's anchored by; the
+   replay prompt's line too). The badge and the mouse are drawn over that box, centred on it: where the badge's letter's
+   middle is, as they sat */
 .key-glyph {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  position: relative;
+  z-index: 0;
+  display: inline-block;
   margin: 0 0.15em;
+  line-height: 0;
+  text-align: center;
 }
 
-/* (the mouse's icon has no text: it's lowered onto the line; a pad badge takes its baseline from its letter, which
-   then lines up with the line's text) */
+/* (the mouse: a slot 1 em wide, its outline over it) */
 .key-glyph.key-mouse {
-  vertical-align: -0.35em;
+  width: 1em;
+}
+
+.key-glyph.key-mouse svg {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1em;
+  height: 1.5em;
+  transform: translateY(-50%);
 }
 
 .key-glyph.key-pad {
   min-width: 1.5em;
-  height: 1.5em;
   padding: 0 0.25em;
   font-size: 0.8em;
   font-weight: 700;
   color: #0b0f17;
-  background: #e8eef7;
-  border-radius: 0.5em;
   box-sizing: border-box;
 }
 
-.key-glyph.key-pad[data-button="0"],
-.key-glyph.key-pad[data-button="1"],
-.key-glyph.key-pad[data-button="2"],
-.key-glyph.key-pad[data-button="3"] {
-  min-width: 1.5em;
+/* (its badge, 1.5 em high, behind the letter) */
+.key-glyph.key-pad::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 1.5em;
+  transform: translateY(-50%);
+  background: #e8eef7;
+  border-radius: 0.5em;
+}
+
+.key-glyph.key-pad[data-button="0"]::before,
+.key-glyph.key-pad[data-button="1"]::before,
+.key-glyph.key-pad[data-button="2"]::before,
+.key-glyph.key-pad[data-button="3"]::before {
   border-radius: 50%;
 }
 
-.key-glyph.key-pad[data-button="0"] {
+.key-glyph.key-pad[data-button="0"]::before {
   background: #6cc24a;
 }
 
-.key-glyph.key-pad[data-button="1"] {
+.key-glyph.key-pad[data-button="1"]::before {
   background: #e0453b;
 }
 
-.key-glyph.key-pad[data-button="2"] {
+.key-glyph.key-pad[data-button="2"]::before {
   background: #3d8fe0;
 }
 
-.key-glyph.key-pad[data-button="3"] {
+.key-glyph.key-pad[data-button="3"]::before {
   background: #f2c230;
-}
-
-.key-glyph.key-mouse svg {
-  width: 1em;
-  height: 1.5em;
 }
 
 /* The menus with a pad (src/ui/padNav.ts): the focused control */
@@ -2288,27 +2363,30 @@ body {
 /* (a PlayStation pad's face buttons, our own drawing: the symbol coloured on a dark badge, HT-3) */
 .key-glyph.key-pad[data-style="playstation"] {
   color: #e8eef7;
+}
+
+.key-glyph.key-pad[data-style="playstation"]::before,
+.key-glyph.key-pad[data-style="playstation"][data-button="0"]::before,
+.key-glyph.key-pad[data-style="playstation"][data-button="1"]::before,
+.key-glyph.key-pad[data-style="playstation"][data-button="2"]::before,
+.key-glyph.key-pad[data-style="playstation"][data-button="3"]::before {
   background: #1b1f27;
 }
 
 .key-glyph.key-pad[data-style="playstation"][data-button="0"] {
   color: #8fb3ff;
-  background: #1b1f27;
 }
 
 .key-glyph.key-pad[data-style="playstation"][data-button="1"] {
   color: #ff7a7a;
-  background: #1b1f27;
 }
 
 .key-glyph.key-pad[data-style="playstation"][data-button="2"] {
   color: #f3a6d9;
-  background: #1b1f27;
 }
 
 .key-glyph.key-pad[data-style="playstation"][data-button="3"] {
   color: #5fd8b0;
-  background: #1b1f27;
 }
 
 /* (?pad: the pads as the browser reports them) */

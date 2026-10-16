@@ -21,15 +21,14 @@ import {
   Vector2,
   Vector3,
 } from "three";
-import { FIELD_LIGHT, type FieldPlan, type FieldRegion, type FloorPiece, type FrameLine, type LightProfile, type MarkingGroup, fieldPlan } from "./stadiumFieldRules";
+import { FIELD_LIGHT, type FieldPlan, type FieldRegion, type FloorPiece, type FrameLine, type LightProfile, type MarkingGroup, fieldPlan, grassOutline, grassRim } from "./stadiumFieldRules";
+import { GRASS_PATTERN, grassPatternGlsl, grassTraces } from "./grassPattern";
 import { ENV_GLSL, ENV_RADIAL, ENV_SPREAD } from "./gameSurfaces";
 import { GRASS_CUBE_BLUR_LOD } from "./grassCube";
 import { fullBright } from "./teamColors";
 import { ARENA_PRIORITY } from "./translucentSort";
-import { BALL_SHADOW_GLSL } from "./ballShadow";
+import { BALL_RETICLE_GLSL, RETICLE_GLSL_FN } from "./ballShadow";
 
-/** FieldSkin_FutureGrid_1x1_D's mean albedo (sRGB-flagged: decoded) (H-1) */
-export const GRASS_ALBEDO = [0.068, 0.11, 0.056] as const;
 /** StadiumFloorLightMap over the grass (RV-105a, the static session's statistics, linear): separable, a(x) b(|y|) /
  *  mean (within 4.9 % RMS), each table in bins on multiples of 256 with partial ones at its ends (x: -3806, -3584,
  *  -3328 ... 3584, 3806; |y|: 64, 256, 512 ... 4608, 4830: RV-146) */
@@ -219,10 +218,14 @@ void main() {
 `;
 
 /** H-1 (unlit): sat(the albedo x the lightmap (GRASS_LIGHT, by x and |y|) x the view factor 2 ((1 - sat(3 cos))^4 +
- *  0.25) (0.5 from above, up to 2.5 grazing) x the noise (its mean) + the reflection (grassReflection: RV-100)). Not
- *  drawn: FieldSkin's team line network (game artwork) */
+ *  0.25) (0.5 from above, up to 2.5 grazing) x the noise (its mean) + the reflection (grassReflection: RV-100)); the
+ *  albedo FieldSkin's pattern as rules (AV-6a, src/render/grassPattern.ts: the plaid, paths, dashes; the rim its own
+ *  mesh, GRASS_RIM; the team lines lerped toward twice the team's primary by sat(1.094 a): the lanes here, the traces
+ *  their own mesh, GRASS_TRACE) */
 const grassFragment = /* glsl */ `
-uniform vec3 albedo;
+uniform vec3 primary0;
+uniform vec3 primary1;
+uniform float noise;
 uniform float g0;
 uniform vec3 lightX[${GRASS_LIGHT.x.length}];
 uniform vec3 lightY[${GRASS_LIGHT.y.length}];
@@ -236,6 +239,7 @@ float grassBin(float s, float c0, float c1, float cBefore, float cLast, float co
   return clamp(f, 0.0, count - 1.0);
 }
 ${GRASS_REFLECTION_GLSL}
+${grassPatternGlsl()}
 vec3 grassLight(float x, float y) {
   float fx = grassBin(x, ${binCentres(GRASS_LIGHT.x0, GRASS_LIGHT.x1, GRASS_LIGHT.x.length)});
   int ix = int(min(floor(fx), ${(GRASS_LIGHT.x.length - 2).toFixed(1)}));
@@ -248,7 +252,19 @@ void main() {
   float cosView = abs(toCamera.y);
   float g = 1.0 - saturate1(3.0 * cosView);
   float view = 2.0 * (g * g * g * g + 0.25);
-  // (the game's x and y: Three's x and z)
+  // (the game's x and y: Three's x and z; the texture mirrored both ways, the team's by the side of Y = 0)
+  vec2 q = abs(vWorld.xz);
+  #ifdef GRASS_RIM
+    vec3 rgb = vec3(${GRASS_PATTERN.rim.colour.map((c) => c.toFixed(4)).join(", ")});
+  #else
+    vec3 rgb = grassRgb(q);
+  #endif
+  float a = grassLaneAlpha(q);
+  #ifdef GRASS_TRACE
+    a = max(a, ${GRASS_PATTERN.traces.alpha.toFixed(4)});
+  #endif
+  vec3 team = vWorld.z < 0.0 ? primary0 : primary1;
+  vec3 albedo = mix(rgb, 2.0 * team, clamp(${GRASS_PATTERN.team.weight.toFixed(3)} * a, 0.0, 1.0)) * noise;
   vec3 lit = albedo * grassLight(vWorld.x, vWorld.z) * view;
   gl_FragColor = vec4(clamp(lit + grassReflection(cosView, floorReflection(toCamera), g0), 0.0, 1.0), 1.0);
   #include <colorspace_fragment>
@@ -328,6 +344,10 @@ vec3 teamCmix(float y) {
 /** H-4, Frame_01_V2 off its stripes: diffuse = sat(R + 4 (0.125 + 0.625 G) cube) (no Fresnel, no tint; R, G the
  *  piece's texture means) x the baked light. With LINE: one of its stripes, `across` 0..1 over its width (soft at its
  *  edges): E adds C (emissive) and dims the reflection (1 - 0.8 E); D lerps the diffuse to sat(Cmix) */
+/** The centre's raised trim's outer radius (RV-102: its band r 752-776, bent in over the strips' ends): the strips, their
+ *  lines and the paint stop there, nothing of them lying under a raised piece */
+const CENTRE_CLIP = 776;
+
 const frameFragment = /* glsl */ `
 uniform float frameR;
 uniform float frameG;
@@ -338,6 +358,10 @@ varying float vAcross;
 ${commonGlsl}
 ${teamGlsl}
 void main() {
+  #ifdef CLIP_CENTRE
+    // (the strips that run in under the centre's raised trim: none of them there, so none bleeds through it far off)
+    if (length(vWorld.xz) < CLIP_CENTRE) discard;
+  #endif
   vec2 xy = vec2(vWorld.x, vWorld.z);
   vec3 toCamera = normalize(cameraPosition - vWorld);
   vec3 refl = 4.0 * (0.125 + 0.625 * frameG) * floorReflection(toCamera);
@@ -393,6 +417,8 @@ float profile32(float table[32], float r) {
   return mix(table[i], table[j], clamp(x - float(i), 0.0, 1.0));
 }
 void main() {
+  // (no paint under the centre's raised trim)
+  if (length(vWorld.xz) < ${CENTRE_CLIP.toFixed(1)}) discard;
   float h = profile32(pbA, hexRadius(vec2(vWorld.x, vWorld.z) / vec2(${HEX_TILE[0].toFixed(1)}, ${HEX_TILE[1].toFixed(1)})));
   float k = 2.0 * abs(normalize(cameraPosition - vWorld).y) + 0.125;
   float u = vAcross * 2.0 - 1.0;
@@ -427,15 +453,19 @@ function teamUniforms(primary0: Color, primary1: Color): Record<string, { value:
 }
 
 export class GrassMaterial extends ShaderMaterial {
-  constructor(cube: { value: Texture }) {
-    const [r, g, b] = GRASS_ALBEDO;
+  /** `primary0`, `primary1`: the teams' primaries (linear: the team lines); `variant`: the rim's band or the traces'
+   *  strips (AV-6a), else the grass */
+  constructor(cube: { value: Texture }, primary0: Color, primary1: Color, readonly variant: "grass" | "rim" | "trace" = "grass") {
     const v3 = (c: readonly number[]): Vector3 => new Vector3(c[0], c[1], c[2]);
     super({
       vertexShader,
       fragmentShader: grassFragment,
+      defines: variant === "rim" ? { GRASS_RIM: "" } : variant === "trace" ? { GRASS_TRACE: "" } : {},
       uniforms: {
         ...shared(cube),
-        albedo: { value: new Vector3(r * GRASS_NOISE, g * GRASS_NOISE, b * GRASS_NOISE) },
+        primary0: { value: primary0 },
+        primary1: { value: primary1 },
+        noise: { value: GRASS_NOISE },
         // (Cg's scale: (G0 + 1/3) 2/3)
         g0: { value: GRASS_G0 },
         lightX: { value: GRASS_LIGHT.x.map(v3) },
@@ -491,14 +521,16 @@ export class FrameMaterial extends ShaderMaterial {
     line: FrameLine["kind"] | null = null,
   ) {
     const { r, g } = FRAME_TEXTURE[piece];
+    const clip = piece === "centreStrip" || piece === "halfway" ? { CLIP_CENTRE: CENTRE_CLIP.toFixed(1) } : {};
     super({
       vertexShader,
       fragmentShader: frameFragment,
-      defines: line === null ? {} : line === "E" ? { LINE: "", LINE_E: "" } : { LINE: "" },
+      defines: { ...clip, ...(line === null ? {} : line === "E" ? { LINE: "", LINE_E: "" } : { LINE: "" }) },
       uniforms: { ...shared(cube), ...teamUniforms(primary0, primary1), frameR: { value: r }, frameG: { value: g }, tireMarks: { value: TIRE_MARKS[piece] }, ...lightUniforms(piece) },
       fog: true,
+      // (a constant pull, not one growing at grazing views: those bled over the raised pieces far off)
       polygonOffset: line !== null,
-      polygonOffsetFactor: -1,
+      polygonOffsetFactor: 0,
       polygonOffsetUnits: -2,
     });
   }
@@ -511,8 +543,9 @@ export class FrameMaterial extends ShaderMaterial {
 export const SIDE_TRIM = { m: 0.904, light: [0.735, 0.677, 0.524] as const, texture: FRAME_TEXTURE.trim } as const;
 
 export class SideTrimMaterial extends ShaderMaterial {
-  /** `ballPosition`: the ball (Three's frame), read every frame, for its shadow up the fillet */
-  constructor(cube: { value: Texture }, ballPosition: Vector3, ballRadius: number) {
+  /** `ballPosition`: the ball (Three's frame), read every frame, for its reticle on the trim (VT-30a); `light` its baked
+   *  light (Side_Trim's unless said) */
+  constructor(cube: { value: Texture }, ballPosition: Vector3, light: readonly [number, number, number] = SIDE_TRIM.light) {
     super({
       vertexShader: /* glsl */ `
         varying vec3 vWorld;
@@ -528,22 +561,23 @@ export class SideTrimMaterial extends ShaderMaterial {
         }`,
       fragmentShader: /* glsl */ `
         uniform samplerCube grassCube;
-        uniform vec3 shadowBall;
-        uniform float shadowRadius;
+        uniform vec3 reticleBall;
         varying vec3 vWorld;
         varying vec3 vNormal;
         #include <fog_pars_fragment>
+        ${RETICLE_GLSL_FN}
         void main() {
           vec3 toCamera = normalize(cameraPosition - vWorld);
           vec3 cube = textureLod(grassCube, reflect(-toCamera, normalize(vNormal)), ${GRASS_CUBE_BLUR_LOD.toFixed(1)}).rgb;
           vec3 diffuse = clamp(${SIDE_TRIM.m.toFixed(3)} * (vec3(${SIDE_TRIM.texture.r.toFixed(3)}) + 4.0 * (0.125 + 0.625 * ${SIDE_TRIM.texture.g.toFixed(3)}) * cube), 0.0, 1.0);
-          gl_FragColor = vec4(diffuse * vec3(${SIDE_TRIM.light.map((v) => v.toFixed(3)).join(", ")}), 1.0);
-          vec3 vShadowWorld = vWorld;
-          ${BALL_SHADOW_GLSL}
+          gl_FragColor = vec4(diffuse * vec3(${light.map((v) => v.toFixed(3)).join(", ")}), 1.0);
+          vec3 vReticleWorld = vWorld;
+          vec3 vReticleNormal = vNormal;
+          ${BALL_RETICLE_GLSL}
           #include <colorspace_fragment>
           #include <fog_fragment>
         }`,
-      uniforms: { ...shared(cube), shadowBall: { value: ballPosition }, shadowRadius: { value: ballRadius } },
+      uniforms: { ...shared(cube), reticleBall: { value: ballPosition } },
       fog: true,
     });
   }
@@ -560,8 +594,9 @@ export class MarkingMaterial extends ShaderMaterial {
       transparent: true,
       depthWrite: false,
       fog: true,
+      // (a constant pull, as the lines')
       polygonOffset: true,
-      polygonOffsetFactor: -2,
+      polygonOffsetFactor: 0,
       polygonOffsetUnits: -4,
     });
   }
@@ -595,8 +630,8 @@ class Sheet {
     this.#across.push(across[0], ap, aq);
   }
 
-  /** A region with its holes, in each of its mirror images */
-  region(region: FieldRegion, height: number): void {
+  /** A region with its holes, in each of its mirror images; only the triangles whose centre `keep` takes, if given */
+  region(region: FieldRegion, height: number, keep?: (x: number, y: number) => boolean): void {
     const contour = vectors(region.outline);
     const holes = (region.holes ?? []).map(vectors);
     const all = [...contour, ...holes.flat()];
@@ -606,7 +641,11 @@ class Sheet {
         const v = all[n];
         return v ? [sx * v.x, sy * v.y] : [0, 0];
       };
-      for (const [i = 0, j = 0, k = 0] of faces) this.triangle(at(i), at(j), at(k), height);
+      for (const [i = 0, j = 0, k = 0] of faces) {
+        const [a, b, c] = [at(i), at(j), at(k)];
+        if (keep && !keep((a[0] + b[0] + c[0]) / 3, (a[1] + b[1] + c[1]) / 3)) continue;
+        this.triangle(a, b, c, height);
+      }
     }
   }
 
@@ -649,6 +688,16 @@ class Sheet {
     g.computeVertexNormals();
     return g;
   }
+}
+
+/** Whether (x, y) is inside a polygon (even-odd) */
+function insidePolygon(points: readonly (readonly [number, number])[], x: number, y: number): boolean {
+  let inside = false;
+  points.forEach(([ax, ay], i) => {
+    const [bx, by] = points[(i + 1) % points.length] ?? [ax, ay];
+    if (ay > y !== by > y && x < ax + ((bx - ax) * (y - ay)) / (by - ay)) inside = !inside;
+  });
+  return inside;
 }
 
 /** A flat [x0, y0, x1, y1, ...] loop as points (open: a repeated first point dropped) */
@@ -724,9 +773,9 @@ export function buildStadiumField(primary0: Color, primary1: Color, cube: { valu
     m.name = name;
     group.add(m);
   };
-  const sheetOf = (regions: readonly FieldRegion[], height = REGION_Z): Sheet => {
+  const sheetOf = (regions: readonly FieldRegion[], height = REGION_Z, keep?: (x: number, y: number) => boolean): Sheet => {
     const s = new Sheet();
-    for (const r of regions) s.region(r, height);
+    for (const r of regions) s.region(r, height, keep);
     return s;
   };
   // (layered: the grass under the seams under the regions, each pushed back in depth from the next, too close in height
@@ -737,7 +786,21 @@ export function buildStadiumField(primary0: Color, primary1: Color, cube: { valu
     material.polygonOffsetUnits = units;
     return material;
   };
-  add(sheetOf(plan.grass, GRASS_Z), behind(new GrassMaterial(cube), 4), "grass");
+  add(sheetOf(plan.grass, GRASS_Z), behind(new GrassMaterial(cube, primary0, primary1), 4), "grass");
+  // (its rim over it, then its traces: AV-6a; by the rules on every build, the traces the generated look-alike)
+  // (only on the grass: the rings round the goal's floor pieces run on past its end, over the goal's see-through floor)
+  const { outline } = grassOutline();
+  const onGrass = (x: number, y: number): boolean => insidePolygon(outline, Math.abs(x), Math.abs(y));
+  add(sheetOf(grassRim(GRASS_PATTERN.rim.width), GRASS_Z, onGrass), behind(new GrassMaterial(cube, primary0, primary1, "rim"), 3), "grass rim");
+  const traces = new Sheet();
+  const w = GRASS_PATTERN.traces.width;
+  for (const [x0, y0, x1, y1] of grassTraces()) {
+    // (each piece a little past its ends, so the kinks close)
+    const l = Math.hypot(x1 - x0, y1 - y0) || 1;
+    const [ux, uy] = [((x1 - x0) / l) * (w / 4), ((y1 - y0) / l) * (w / 4)];
+    for (const [sx, sy] of images("xy")) traces.strip([[sx * (x0 - ux), sy * (y0 - uy)], [sx * (x1 + ux), sy * (y1 + uy)]], w, GRASS_Z);
+  }
+  add(traces, behind(new GrassMaterial(cube, primary0, primary1, "trace"), 2.5), "grass traces");
   add(sheetOf(plan.seams ?? [], SEAM_Z), behind(new FrameMaterial(cube, primary0, primary1, "trim"), 2), "seams");
   add(sheetOf(plan.hexSide), new HexFloorMaterial(cube, primary0, primary1, "hexSide"), "hex floor: side bays");
   add(sheetOf(plan.hexPads), new HexFloorMaterial(cube, primary0, primary1, "hexPads"), "hex floor: pad bases");

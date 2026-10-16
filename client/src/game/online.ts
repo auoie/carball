@@ -33,7 +33,9 @@ import {
 } from "../net/protocol";
 import { NetSession } from "../net/session";
 import { type SessionEnd, idleTipShown, sessionEndReason } from "./sessionEnd";
-import { BallView, BoostPadsView, CarView, trailGround } from "../render/entities";
+import { BallView, CarView, trailGround } from "../render/entities";
+import { BoostPadsView } from "../render/boostPads";
+import { DEFAULT_CAR, carChoice } from "./cars";
 import type { ArenaView } from "../render/arena";
 import type { Renderer } from "../render/renderer";
 import type { GameAudio } from "../audio/audio";
@@ -93,6 +95,8 @@ const MENU_KEY = "Esc";
 
 interface CarEntry {
   readonly view: CarView;
+  /** The garage's car the view draws (src/game/cars.ts: its player's, from the roster) */
+  readonly model: number;
   readonly state: Interpolated<CarState>;
   /** How far its drawn pose still is from its corrected one (src/game/syncError.ts) */
   readonly error: SyncError;
@@ -281,7 +285,7 @@ export class Online {
       nowMs: () => performance.now(),
     });
     this.#predictor = this.#session.predictor;
-    this.#padsView = new BoostPadsView(world.boostPads());
+    this.#padsView = new BoostPadsView(world.boostPads(), arena.reflection);
     this.#ball = this.#session.ball;
     this.#ballError = this.#session.ballError;
     this.#drawnBallSpawns = this.#session.ballSpawns;
@@ -587,6 +591,7 @@ export class Online {
       } else if (m.type === "match") {
         // The replay over (its end, or everyone skipped): the next camera cuts in from black
         if (this.#replay && m.phase !== "replay") {
+          this.#replay.dispose();
           this.#replay = null;
           this.#fade.fromBlack();
         }
@@ -650,6 +655,7 @@ export class Online {
         const now = performance.now() / 1000;
         if (this.#roster) for (const line of rosterLines(this.#roster, next, this.#lost)) this.chat.log.add(line, now);
         this.#roster = next;
+        this.#syncCars();
       } else if (m.type === "chat") {
         // A quick-chat line, as the server relayed it (one's own too: no local echo), with its sound; not a blocked
         // player's, nor an unknown preset's or sender's (RV-260)
@@ -678,6 +684,7 @@ export class Online {
         this.#kicked = m.reason;
       } else if (m.type === "replay") {
         // (the cut in from black: LiveReplay's Begin)
+        this.#replay?.dispose();
         this.#replay = new ReplayPlayback(m, this.#recorder, (tick) => this.#session.frameAt(tick));
         this.#ballView.spawn(true);
         this.#arena.newBall();
@@ -721,7 +728,8 @@ export class Online {
     }
   }
 
-  /** Views for the cars in the world (after a join or leave) */
+  /** Views for the cars in the world (after a join or leave, and a roster), each the garage's car its player drives: the
+   *  default until the roster names theirs, the view made anew when it names another (its pose and correction kept) */
   #syncCars(): void {
     const ids = new Set(this.#world.carIds());
     for (const [id, entry] of this.#cars) {
@@ -732,11 +740,14 @@ export class Online {
       }
     }
     for (const id of ids) {
-      if (this.#cars.has(id)) continue;
+      const model = carChoice(this.#roster?.get(id)?.model ?? DEFAULT_CAR).id;
+      const entry = this.#cars.get(id);
+      if (entry?.model === model) continue;
       const state = this.#world.car(id);
-      const view = new CarView(this.#world.carConfig(id), state.team, this.#effects.particles);
+      const view = new CarView(this.#world.carConfig(id), state.team, this.#effects.particles, model);
+      if (entry) this.#renderer.scene.remove(entry.view.root);
       this.#renderer.scene.add(view.root);
-      this.#cars.set(id, { view, state: new Interpolated(state), error: new SyncError() });
+      this.#cars.set(id, { view, model, state: entry?.state ?? new Interpolated(state), error: entry?.error ?? new SyncError() });
     }
   }
 
@@ -1012,6 +1023,7 @@ export class Online {
       audio: this.#audio,
       ballView: this.#ballView,
       cars,
+      flipReset: { visual: flipVisual(this.settings().gameplay.flipResetIndicator), audio: flipAudio(this.settings().gameplay.flipResetIndicator) },
     });
     this.#drawNameplates(0, playback.cars);
     // (SkipInstructions until the player skips: its binding's key, HT-3)

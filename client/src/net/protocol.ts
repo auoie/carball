@@ -11,7 +11,7 @@
 // order (FP1); 17: the queue (Hello's intent, playlist and token, MatchFound, IdleWarning, Kicked); 18: the moving
 // bodies' broadphase boxes (FP2); 19: a search's browser key and returning token, SearchCooldown; 20: SearchCooldown's
 // network flag; 21: the match's map (MatchFound, Welcome)
-export const PROTOCOL_VERSION = 21;
+export const PROTOCOL_VERSION = 22;
 /** A name's bytes at most (UTF-8) */
 export const MAX_NAME_BYTES = 32;
 export const MAX_INPUT_FRAMES = 10;
@@ -32,6 +32,8 @@ const CHAT_FILTERS: readonly ChatFilter[] = ["everyone", "team", "friends", "off
 export interface RosterEntry {
   readonly car: number;
   readonly team: number;
+  /** The garage's car they drive (src/game/cars.ts) */
+  readonly model: number;
   readonly name: string;
 }
 
@@ -102,7 +104,8 @@ export type ControlMessage =
       readonly type: "hello";
       readonly version: number;
       readonly team: number; // 0 blue, 1 orange, 255 any
-      readonly body: number;
+      /** The garage's car (src/game/cars.ts; the server plays it with its hitbox preset, an unknown one as 0) */
+      readonly model: number;
       readonly dodgeDeadzone: number;
       readonly steeringSensitivity: number;
       readonly airControlSensitivity: number;
@@ -399,7 +402,7 @@ export function encodeControl(m: ControlMessage): Uint8Array {
       w.u8(0x01);
       w.u16(m.version);
       w.u8(m.team);
-      w.u8(m.body);
+      w.u8(m.model);
       w.f32(m.dodgeDeadzone);
       w.f32(m.steeringSensitivity);
       w.f32(m.airControlSensitivity);
@@ -451,6 +454,7 @@ export function encodeControl(m: ControlMessage): Uint8Array {
       for (const p of m.players.slice(0, 255)) {
         w.u32(p.car);
         w.u8(p.team);
+        w.u8(p.model);
         w.name(p.name);
       }
       break;
@@ -604,7 +608,7 @@ export function decodeControl(body: Uint8Array): ControlMessage {
         type: "hello",
         version: r.u16(),
         team: r.u8(),
-        body: r.u8(),
+        model: r.u8(),
         dodgeDeadzone: r.f32(),
         steeringSensitivity: r.f32(),
         airControlSensitivity: r.f32(),
@@ -635,7 +639,8 @@ export function decodeControl(body: Uint8Array): ControlMessage {
       const players = Array.from({ length: r.u8() }, () => {
         const car = r.u32();
         const team = r.u8();
-        return { car, team, name: r.name() };
+        const model = r.u8();
+        return { car, team, model, name: r.name() };
       });
       return { type: "roster", players };
     }

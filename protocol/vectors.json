@@ -1,13 +1,13 @@
 {
-  "protocolVersion": 21,
+  "protocolVersion": 22,
   "vectors": [
     {
       "channel": "control",
       "message": {
         "type": "hello",
-        "version": 21,
+        "version": 22,
         "team": 0,
-        "body": 0,
+        "model": 0,
         "dodgeDeadzone": 0.8,
         "steeringSensitivity": 1.0,
         "airControlSensitivity": 1.25,
@@ -20,15 +20,15 @@
         "playlist": 0,
         "token": "81985529216486895"
       },
-      "hex": "32000115000000cdcc4c3f0000803f0000a03f010df0fecaefbeadde0b4d65726375727920e29aa101010200efcdab8967452301"
+      "hex": "32000116000000cdcc4c3f0000803f0000a03f010df0fecaefbeadde0b4d65726375727920e29aa101010200efcdab8967452301"
     },
     {
       "channel": "control",
       "message": {
         "type": "hello",
-        "version": 21,
+        "version": 22,
         "team": 255,
-        "body": 0,
+        "model": 0,
         "dodgeDeadzone": 0.8,
         "steeringSensitivity": 1.0,
         "airControlSensitivity": 1.25,
@@ -41,7 +41,7 @@
         "playlist": 2,
         "token": "0"
       },
-      "hex": "2700011500ff00cdcc4c3f0000803f0000a03f00000000000000000000000001020000000000000000"
+      "hex": "2700011600ff00cdcc4c3f0000803f0000a03f00000000000000000000000001020000000000000000"
     },
     {
       "channel": "control",
@@ -112,7 +112,7 @@
       "channel": "control",
       "message": {
         "type": "welcome",
-        "version": 21,
+        "version": 22,
         "carId": 3,
         "tickRate": 120,
         "frame": 0,
@@ -126,7 +126,7 @@
           3
         ]
       },
-      "hex": "1e008115000300000078000000000102071032547698badcfe03000000010203"
+      "hex": "1e008116000300000078000000000102071032547698badcfe03000000010203"
     },
     {
       "channel": "control",
@@ -388,16 +388,18 @@
           {
             "car": 1,
             "team": 0,
+            "model": 3,
             "name": "Mercury"
           },
           {
             "car": 3,
             "team": 1,
+            "model": 0,
             "name": "Player 2"
           }
         ]
       },
-      "hex": "1d0088020100000000074d657263757279030000000108506c617965722032"
+      "hex": "1f008802010000000003074d65726375727903000000010008506c617965722032"
     },
     {
       "channel": "control",

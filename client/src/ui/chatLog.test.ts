@@ -24,8 +24,8 @@ describe("the chat log's lines (CHAT-15)", () => {
 
   it("a quick-chat message's line: the sender's name and team colour, YOU for one's own, the clock (CHAT-15, 16)", () => {
     const roster = new Map<number, RosterEntry>([
-      [1, { car: 1, team: 0, name: "Merc" }],
-      [2, { car: 2, team: 1, name: "Ziggy" }],
+      [1, { car: 1, team: 0, model: 0, name: "Merc" }],
+      [2, { car: 2, team: 1, model: 0, name: "Ziggy" }],
     ]);
     const view = { localCar: 1, roster, overtime: false, ended: false };
     const theirs = chatMessageLine({ car: 2, preset: 22, team: false, seconds: 251 }, view);
@@ -38,9 +38,9 @@ describe("the chat log's lines (CHAT-15)", () => {
   });
 
   it("players coming and going: joined, left, or lost connection (system lines)", () => {
-    const a: RosterEntry = { car: 1, team: 0, name: "Merc" };
-    const b: RosterEntry = { car: 2, team: 1, name: "Ziggy" };
-    const c: RosterEntry = { car: 3, team: 1, name: "Bo" };
+    const a: RosterEntry = { car: 1, team: 0, model: 0, name: "Merc" };
+    const b: RosterEntry = { car: 2, team: 1, model: 0, name: "Ziggy" };
+    const c: RosterEntry = { car: 3, team: 1, model: 0, name: "Bo" };
     const lines = rosterLines(new Map([[1, a], [2, b]]), new Map([[1, a], [3, c]]), new Set());
     expect(lines.map((l) => text(chatLineHtml(l)))).toEqual(["Ziggy left the match", "Bo joined the match"]);
     expect(lines.every((l) => l.colour === CHAT_COLOURS.system && l.name === null)).toBe(true);
@@ -50,7 +50,7 @@ describe("the chat log's lines (CHAT-15)", () => {
   it("escapes names and keeps them in <bdi>, so markup stays text and a name's direction controls stay inside (RV-249, RV-251)", () => {
     const html = chatLineHtml({ timestamp: "", channel: null, name: { text: "<b>x</b>&", colour: "#fff" }, text: "gg", colour: "#fff" });
     expect(html).toContain("<bdi>&lt;B&gt;X&lt;/B&gt;&amp;</bdi>");
-    const joined = chatLineHtml(rosterLines(new Map(), new Map([[4, { car: 4, team: 0, name: "\u202Eziggy" }]]), new Set())[0] ?? { timestamp: "", channel: null, name: null, text: "", colour: "" });
+    const joined = chatLineHtml(rosterLines(new Map(), new Map([[4, { car: 4, team: 0, model: 0, name: "\u202Eziggy" }]]), new Set())[0] ?? { timestamp: "", channel: null, name: null, text: "", colour: "" });
     expect(joined).toContain("<bdi>\u202Eziggy</bdi> joined the match");
   });
 });

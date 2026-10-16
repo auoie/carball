@@ -7,11 +7,12 @@ export interface FakeTransportRecord {
   readonly sessions: { url: string; written: Uint8Array[] }[];
 }
 
-/** A WebTransport class whose sessions answer with `replies` (each message framed as the server's) */
-export function fakeTransport(replies: readonly ControlMessage[], record: FakeTransportRecord = { sessions: [] }): typeof WebTransport {
+/** A WebTransport class whose sessions answer with `replies` (each message framed as the server's); `closed`: each
+ *  session closed by the server at once (else never) */
+export function fakeTransport(replies: readonly ControlMessage[], record: FakeTransportRecord = { sessions: [] }, closed = false): typeof WebTransport {
   class Fake {
     readonly ready = Promise.resolve();
-    readonly closed = new Promise<void>(() => undefined);
+    readonly closed = closed ? Promise.resolve() : new Promise<void>(() => undefined);
     readonly datagrams = { writable: new WritableStream<Uint8Array>(), readable: new ReadableStream<Uint8Array>() };
     readonly #session: { url: string; written: Uint8Array[] };
     constructor(url: string) {

@@ -336,7 +336,7 @@ mod tests {
     fn request() -> JoinRequest {
         JoinRequest {
             team: 255,
-            body: 0,
+            model: 0,
             dodge_deadzone: 0.5,
             steering_sensitivity: 1.0,
             air_control_sensitivity: 1.0,

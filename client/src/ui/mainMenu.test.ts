@@ -29,9 +29,10 @@ describe("Free Play's map select", () => {
     expect(() => { storeMap("city", blocked); }).not.toThrow();
   });
 
-  it("backs out a page at a time: the map select to Play, Play to the top", () => {
+  it("backs out a page at a time: the map select to Play, Play and the garage to the top", () => {
     expect(backFrom("maps")).toBe("play");
     expect(backFrom("play")).toBe("top");
+    expect(backFrom("garage")).toBe("top");
     expect(backFrom("top")).toBe("top");
   });
 });

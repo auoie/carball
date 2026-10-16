@@ -25,6 +25,9 @@ const SERVERS: readonly Server[] = [
   // The queue's matches (1v1, 2v2, 3v3: searches and claims; the queue test), every one on map 2 (meadow: the match pages
   // load the server's map)
   { name: "queue", command: "cargo", args: [...GAME, "--map", "2", "--port", "14439", "--health-port", "18084", "--info-port", "14440", "--mode", "queue", "--dev"], url: "http://127.0.0.1:14440/info", reuse: false },
+  // Another for the queue's edge cases (e2e/queueEdges.spec.ts, in order: its matches apart from the queue test's, and
+  // its one no-show's cooldown its own)
+  { name: "queue-edges", command: "cargo", args: [...GAME, "--map", "2", "--port", "14441", "--health-port", "18085", "--info-port", "14442", "--mode", "queue", "--dev"], url: "http://127.0.0.1:14442/info", reuse: false },
 ];
 
 /** The first run builds the game server */

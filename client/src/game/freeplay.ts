@@ -4,7 +4,8 @@ import { flipAudio, flipVisual } from "../hud";
 import { Quaternion, Vector3 } from "three";
 import { Interpolated } from "./interpolated";
 import { PlayerCamera } from "../camera/carballCamera";
-import { BOOST_SPAWN_AMOUNT, type BodyState, type CarConfig, type CarState, type World } from "../engine/world";
+import { BOOST_SPAWN_AMOUNT, type BodyState, type CarConfig, type CarState, type Team, type World } from "../engine/world";
+import { DEFAULT_CAR, carChoice } from "./cars";
 import { type Hud, type ReplayGoal, type ReplayHud, replaySpeed, replayTime, respawnHud } from "../hud";
 import { keyGlyph } from "../ui/keyGlyph";
 import type { InputDevices } from "../input/devices";
@@ -12,7 +13,8 @@ import { AirPitchSafety, ButtonLatch, EMPTY_INPUT, type HeldActions, JumpLatch, 
 import type { ControllerSettings, Options, Settings } from "../settings/settings";
 import { FixedStep, TICK_SECONDS, frameTimes } from "../loop/fixedStep";
 import { type Vec3, ZERO, add, scale, vec3 } from "../math/vec";
-import { BallView, BoostPadsView, CarView, trailGround } from "../render/entities";
+import { BallView, CarView, trailGround } from "../render/entities";
+import { BoostPadsView } from "../render/boostPads";
 import { SceneEffects } from "../render/effects";
 import { EXPLOSION_LARGE, IMPACT_MEDIUM } from "../camera/shake";
 import { ImpactTriggers, triggerSounds } from "./impactTriggers";
@@ -52,22 +54,22 @@ export class Freeplay {
   readonly #flipTracker = new FlipTracker();
   #dodge: Dodge = { kind: "ground" };
   #flipReset = false; // since the last frame drawn
-  readonly #playerId: number;
+  #playerId: number;
   readonly #clock = new FixedStep();
   readonly #camera = new PlayerCamera();
-  readonly #carView: CarView;
+  #carView: CarView;
   readonly #effects: SceneEffects;
   readonly #shakeTriggers = new ShakeTriggers();
   /** The engine's contacts as the game's impact and landing triggers (notes/impact-triggers.md) */
   readonly #impactTriggers = new ImpactTriggers();
-  readonly #carConfigs: ReadonlyMap<number, CarConfig>;
+  #carConfigs: ReadonlyMap<number, CarConfig>;
   readonly #ballView = new BallView();
   /** The ball arrow by the car (HUD-17) */
   readonly #ballArrow = new BallArrow();
   /** The flip reset's effect on the car (HUD-19) */
   readonly #flipFx = new FlipResetFx();
   readonly #padsView: BoostPadsView;
-  readonly #car: Interpolated<CarState>;
+  #car: Interpolated<CarState>;
   readonly #ball: Interpolated<BodyState>;
   #ballSpawns = 0; // the ball's spawn counter last tick (a reset places it: not interpolated)
   readonly #score: [number, number] = [0, 0];
@@ -121,6 +123,8 @@ export class Freeplay {
     /** Current settings, and whether the player's input drives the car (false while a menu is open). */
     private readonly settings: () => Settings,
     private readonly inputEnabled: () => boolean,
+    /** The garage's car and team colour (src/game/cars.ts) */
+    garage: { readonly car: number; readonly team: Team } = { car: DEFAULT_CAR, team: 0 },
   ) {
     this.#world = world;
     this.#renderer = renderer;
@@ -128,7 +132,7 @@ export class Freeplay {
     this.#input = input;
     this.#hud = hud;
     this.#audio = audio;
-    this.#playerId = world.addCar(0);
+    this.#playerId = world.addCar(0, carChoice(garage.car).body);
     // (Unlimited boost in free play: on by default, as the game's; off, 33 each round, used up, and pads taken)
     this.#unlimitedBoost = settings().options.unlimitedBoost;
     world.setUnlimitedBoost(this.#unlimitedBoost);
@@ -136,9 +140,9 @@ export class Freeplay {
 
     this.#effects = new SceneEffects(renderer.scene);
     this.#fade.fromBlack(LOAD_FADE_IN); // (MIO-2: the arena fades in from black as it first draws)
-    this.#carView = new CarView(world.carConfig(this.#playerId), 0, this.#effects.particles);
+    this.#carView = new CarView(world.carConfig(this.#playerId), garage.team, this.#effects.particles, garage.car);
     this.#carConfigs = new Map([[this.#playerId, world.carConfig(this.#playerId)]]);
-    this.#padsView = new BoostPadsView(world.boostPads());
+    this.#padsView = new BoostPadsView(world.boostPads(), arena.reflection);
     renderer.scene.add(this.#carView.root, this.#ballView.root, this.#padsView.root, this.#ballArrow.root);
     this.#car = new Interpolated(world.car(this.#playerId));
     this.#ball = new Interpolated(world.ball());
@@ -197,6 +201,7 @@ export class Freeplay {
       audio: this.#audio,
       ballView: this.#ballView,
       cars: [[this.#playerId, this.#carView]],
+      flipReset: { visual: flipVisual(this.settings().gameplay.flipResetIndicator), audio: flipAudio(this.settings().gameplay.flipResetIndicator) },
     });
     // (SkipInstructions, as online; the scorer is the player, no clock)
     const name = this.settings().chat.name;
@@ -210,6 +215,7 @@ export class Freeplay {
     const skipKey = keyGlyph(this.#input.usingGamepad ? bindings.readyUp.gamepad : bindings.readyUp.keyboard);
     this.#updateHud(this.#car.current, real, { prompt: skipKey, waiting: null, goal });
     if (!skipped && !replay.done) return;
+    replay.dispose();
     this.#replay = null;
     this.#fade.fromBlack();
     this.#resetKickoff(); // (the skip's jump press, held into the countdown, doesn't jump: the engine, RV-55)
@@ -352,9 +358,25 @@ export class Freeplay {
     this.#replayPlan = null;
   }
 
+  /** The garage's car and colour (its choice changed): the car made anew with its preset, its look, the round started
+   *  over */
+  setCar(garage: { readonly car: number; readonly team: Team }): void {
+    const scene = this.#renderer.scene;
+    scene.remove(this.#carView.root);
+    this.#world.removeCar(this.#playerId);
+    this.#playerId = this.#world.addCar(0, carChoice(garage.car).body);
+    this.#world.setUnlimitedBoost(this.#unlimitedBoost);
+    this.#carView = new CarView(this.#world.carConfig(this.#playerId), garage.team, this.#effects.particles, garage.car);
+    this.#carConfigs = new Map([[this.#playerId, this.#world.carConfig(this.#playerId)]]);
+    scene.add(this.#carView.root);
+    this.#car = new Interpolated(this.#world.car(this.#playerId));
+    this.restart();
+  }
+
   /** The session over again (Exit to Main Menu, then Free Play: MENU-1, RV-284): any goal replay and its banner gone, a
    *  new round from the kickoff, the goals back to 0-0 (a new free play: RV-287) */
   restart(): void {
+    this.#replay?.dispose();
     this.#replay = null;
     this.#score[0] = 0;
     this.#score[1] = 0;

@@ -5,27 +5,12 @@
 // sill cladding: the user's choice), a side vent, a roof spoiler. Our own low-poly model; on the dev server with the
 // game's own Fennec exported locally, cars of its hitbox wear that instead (src/render/fennec.ts).
 // Local frame (Three.js): x forward, y up, z right; the origin is the car's (the physics body's).
-import {
-  BoxGeometry,
-  BufferGeometry,
-  type Color,
-  CylinderGeometry,
-  DoubleSide,
-  ExtrudeGeometry,
-  Float32BufferAttribute,
-  Group,
-  LinearSRGBColorSpace,
-  type Material,
-  Mesh,
-  MeshPhysicalMaterial,
-  MeshStandardMaterial,
-  Shape,
-  ShapeGeometry,
-  Vector2,
-} from "three";
+import { BoxGeometry, type Color, Group, type Material, Mesh, Shape, ShapeGeometry, Vector2 } from "three";
 import { fennecModel } from "./fennec";
 import type { CarConfig } from "../engine/world";
 import { mergeByMaterial } from "./merge";
+import { type BodyFrame, type CarSpec, HITBOXES, type Point, type WheelSpec, addWheels, bodyFrame, carMaterials, densify, extrudeAcross, paneAlong, warp, xAt } from "./carParts";
+import { buildCarBody, carBody } from "./carBodies";
 
 /** The Fennec's proportions (uu, from the local export of the game's body_grain, rounded to 0.1; the Octane car's
  *  frame, heights above the ground under it at rest). The ground and the hitbox they're set on (the Octane preset's) */
@@ -41,10 +26,11 @@ export const FENNEC = {
   halfWidthRoof: 24.4,
   halfWidthNose: 27.6,
   halfWidthTail: 28.5,
-  /** Heights: the sills (ground clearance), the nose's top, the hood at the windscreen, the beltline, the roof */
+  /** Heights: the sills (ground clearance), the nose's top, the hood at the windscreen (37.0 on the centreline: the
+   *  static session's CM1 re-measure, notes/hitboxes.md), the beltline, the roof */
   clearance: 7.0,
   noseTop: 29.7,
-  hood: 38.4,
+  hood: 37.0,
   belt: 35.7,
   roof: 51.6,
   /** The windscreen: its base (x) and its rake from the horizontal (degrees); the roof's front end */
@@ -60,17 +46,10 @@ export const FENNEC = {
   /** The wheels (front, back): their centre (x, height above the ground, z), radius and width */
   frontWheel: { x: 48.8, h: 12.8, z: 28.1, radius: 13.0, width: 12.6 },
   backWheel: { x: -36.5, h: 14.2, z: 29.1, radius: 14.0, width: 12.6 },
-} as const;
-interface WheelSpec {
-  readonly x: number;
-  readonly h: number;
-  readonly z: number;
-  readonly radius: number;
-  readonly width: number;
-}
-const OCTANE_HITBOX = { size: { x: 120.507, y: 86.6994, z: 38.6591 }, offset: { x: 13.8757, z: 20.755 } } as const;
+} as const satisfies CarSpec;
 
-const BEVEL = 2.5;
+const OCTANE_HITBOX = HITBOXES.standard;
+
 /** The tail past the hitbox's back (uu, the Octane's): the Fennec's covers its rear wheels */
 export const TAIL_PAST_HITBOX = OCTANE_HITBOX.offset.x - OCTANE_HITBOX.size.x / 2 - FENNEC.rear;
 /** The wheel arches: half width past the tyre, height over it, and the black flares round them (uu) */
@@ -82,32 +61,19 @@ const VENT_GAP = 3;
 const NOSE_TAPER = 30;
 const TAIL_TAPER = 14;
 
-type Point = readonly [x: number, y: number];
 
-/** The lights' emissive colours (linear), as the game's appear on screen: the painted Fennec's bake shows its tail
- *  lights sRGB (255, 26, 0), linear (1, 0.0103, 0) (RV-23), and its headlights clipped white */
-export const HEADLIGHT = [1, 1, 1] as const;
-export const TAILLIGHT = [1, 0.0103, 0] as const;
-
-/** The Fennec's proportions set on a hitbox: its x, its heights (above the ground) as y, its widths as z, scaled by the
- *  hitbox over the Octane's (the Octane's: as measured) */
-export function fennecFrame(config: CarConfig): { readonly x: (v: number) => number; readonly y: (h: number) => number; readonly z: (v: number) => number } {
-  const { hitboxSize: s, hitboxOffset: o } = config;
-  const H = OCTANE_HITBOX;
-  const sx = s.x / H.size.x;
-  const sy = s.z / H.size.z;
-  const sz = s.y / H.size.y;
-  return {
-    x: (v) => o.x + (v - H.offset.x) * sx,
-    y: (h) => o.z - s.z / 2 + (FENNEC.ground + h - (H.offset.z - H.size.z / 2)) * sy,
-    z: (v) => v * sz,
-  };
+/** The Fennec's proportions set on a hitbox (measured on the Octane's) */
+export function fennecFrame(config: CarConfig): BodyFrame {
+  return bodyFrame(FENNEC.ground, OCTANE_HITBOX, config);
 }
 
 /** The model as one mesh per material (seven draw calls), named after the material: body, trim, glass, headlight,
- *  taillight, tyre, rim; or the game's Fennec where it is loaded (src/render/fennec.ts). */
-export function buildCarModel(config: CarConfig, paint: Color, team = 0): Group {
-  const fennec = fennecModel(config, paint, team);
+ *  taillight, tyre, rim. `car` the garage's (src/game/cars.ts): Sport this Fennec-like hatchback (or the game's Fennec
+ *  where it is loaded, src/render/fennec.ts), Standard, Flat and Tall their own bodies (src/render/carBodies.ts) */
+export function buildCarModel(config: CarConfig, paint: Color, team = 0, car = 0): Group {
+  const look = carBody(car);
+  if (look) return buildCarBody(look, config, paint);
+  const fennec = car === 0 ? fennecModel(config, paint, team) : null;
   if (fennec) return fennec;
   const F = FENNEC;
   const { x: X, y: Y, z: Z } = fennecFrame(config);
@@ -121,31 +87,7 @@ export function buildCarModel(config: CarConfig, paint: Color, team = 0): Group 
   const cowl = X(F.windscreenBase);
   const length = front - rear;
 
-  // (the merged meshes are named after their material)
-  // The game's default Glossy finish (notes/car-paint.md PNT-6/10): the paint area takes the team colour itself, shaded
-  // 0.734; Lambert with a tight highlight and a clear coat. Rubber trim: 0.75 x TrimColor 0.12 facing
-  const body = new MeshPhysicalMaterial({
-    name: "body",
-    color: paint.clone().multiplyScalar(0.734),
-    roughness: 0.3,
-    metalness: 0,
-    clearcoat: 1,
-    clearcoatRoughness: 0.06,
-  });
-  const trim = new MeshStandardMaterial({ name: "trim", roughness: 0.75, metalness: 0 });
-  trim.color.setRGB(0.09, 0.09, 0.09, LinearSRGBColorSpace);
-  const glass = new MeshStandardMaterial({ name: "glass", color: 0x0b1018, roughness: 0.08, metalness: 0.8, side: DoubleSide });
-  // The lights as the game's show (MAT_Chassis_Grain squares its light term and blends it in by the same, so its
-  // HeadlightColor and TailLightColor come out clipped: PNT-12, RV-15): headlights a near-white core, tail lights deep red
-  const lights = (name: string, [r, g, b]: readonly [number, number, number]): MeshStandardMaterial => {
-    const m = new MeshStandardMaterial({ name, color: 0x000000 });
-    m.emissive.setRGB(r, g, b, LinearSRGBColorSpace);
-    return m;
-  };
-  const headlight = lights("headlight", HEADLIGHT);
-  const taillight = lights("taillight", TAILLIGHT);
-  const tyre = new MeshStandardMaterial({ name: "tyre", color: 0x111214, roughness: 0.9 });
-  const rim = new MeshStandardMaterial({ name: "rim", color: 0xb8bec8, roughness: 0.3, metalness: 0.8 });
+  const { body, trim, glass, headlight, taillight, tyre, rim } = carMaterials(paint);
 
   const place = (w: WheelSpec): { x: number; y: number; z: number; radius: number; width: number } => ({
     x: X(w.x),
@@ -304,81 +246,6 @@ export function buildCarModel(config: CarConfig, paint: Color, team = 0): Group 
     group.add(ventMesh);
   }
 
-  // Wheels: tyre and rim, axle along the car's right axis (Three z)
-  for (const wheel of wheels) {
-    for (const side of [-1, 1]) {
-      for (const [radius, width, material] of [
-        [wheel.radius, wheel.width, tyre],
-        [wheel.radius * 0.6, wheel.width + 0.6, rim],
-      ] as const) {
-        const mesh = new Mesh(new CylinderGeometry(radius, radius, width, 20), material);
-        mesh.rotation.x = Math.PI / 2;
-        mesh.position.set(wheel.x, wheel.y, side * wheel.z);
-        group.add(mesh);
-      }
-    }
-  }
+  addWheels(group, wheels, tyre, rim);
   return mergeByMaterial(group);
-}
-
-/** An outline with points added along its edges, none longer than `step` */
-function densify(points: readonly Point[], step: number): Point[] {
-  const out: Point[] = [];
-  points.forEach((p, i) => {
-    const q = points[(i + 1) % points.length] ?? p;
-    const n = Math.max(1, Math.ceil(Math.hypot(q[0] - p[0], q[1] - p[1]) / step));
-    for (let k = 0; k < n; k++) out.push([p[0] + ((q[0] - p[0]) * k) / n, p[1] + ((q[1] - p[1]) * k) / n]);
-  });
-  return out;
-}
-
-/** A mesh's geometry with each vertex's z taken from `z(x, y, z)` (its own frame): the plan's taper, the tumblehome */
-function warp(mesh: Mesh, z: (x: number, y: number, z: number) => number): Mesh {
-  const position = mesh.geometry.getAttribute("position");
-  for (let i = 0; i < position.count; i++) position.setZ(i, z(position.getX(i), position.getY(i), position.getZ(i)));
-  position.needsUpdate = true;
-  mesh.geometry.computeVertexNormals();
-  return mesh;
-}
-
-/** x on the profile edge a→b at height y. */
-function xAt([a, b]: readonly [Point, Point], y: number): number {
-  return a[0] + ((b[0] - a[0]) * (y - a[1])) / (b[1] - a[1]);
-}
-
-/** A side profile (x forward, y up) extruded symmetrically to ±halfWidth, edges rounded inside the outline. */
-function extrudeAcross(shape: Shape, halfWidth: number, material: Material): Mesh {
-  const geometry = new ExtrudeGeometry(shape, {
-    depth: 2 * (halfWidth - BEVEL),
-    bevelEnabled: true,
-    bevelThickness: BEVEL,
-    bevelSize: BEVEL,
-    bevelOffset: -BEVEL,
-    bevelSegments: 2,
-    curveSegments: 12,
-  });
-  geometry.translate(0, 0, -(halfWidth - BEVEL));
-  return new Mesh(geometry, material);
-}
-
-/** A pane over the profile edge a→b (a in front of b, over the top), inset 2 uu from its ends, across ±halfA at a and
- *  ±halfB at b (narrowing with the cabin). */
-function paneAlong([a, b]: readonly [Point, Point], halfA: number, halfB: number, material: Material): Mesh {
-  const dx = b[0] - a[0];
-  const dy = b[1] - a[1];
-  const len = Math.hypot(dx, dy);
-  const t = 2 / len;
-  // Outward normal (forward-up on the windscreen, back-up on the hatch), lifted 0.4 uu off the body
-  const nx = (dy / len) * 0.4;
-  const ny = (-dx / len) * 0.4;
-  const [ax, ay] = [a[0] + dx * t + nx, a[1] + dy * t + ny];
-  const [bx, by] = [b[0] - dx * t + nx, b[1] - dy * t + ny];
-  const geometry = new BufferGeometry();
-  geometry.setAttribute(
-    "position",
-    new Float32BufferAttribute([ax, ay, -halfA, ax, ay, halfA, bx, by, halfB, bx, by, -halfB], 3),
-  );
-  geometry.setIndex([0, 1, 2, 0, 2, 3]);
-  geometry.computeVertexNormals();
-  return new Mesh(geometry, material);
 }

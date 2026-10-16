@@ -9,8 +9,9 @@ use crate::engine::Controls;
 // screen's countdown, ready checks, podium titles), Refused's version reason; 17: the queue (Hello's intent, playlist and
 // token, 64-bit keys, MatchFound, IdleWarning, Kicked); 18: the moving bodies' broadphase boxes in the engine snapshot
 // (physics FP2); 19: a search's browser key and returning token, SearchCooldown (RV-367: no-shows); 20: SearchCooldown
-// says whether the browser or the network is why (RV-385); 21: the match's map (MatchFound, Welcome)
-pub const VERSION: u16 = 21;
+// says whether the browser or the network is why (RV-385); 21: the match's map (MatchFound, Welcome); 22: the garage's
+// car (Hello's model, the roster's)
+pub const VERSION: u16 = 22;
 /// The maps a match can be on (the client's arena themes, in their order: protocol/README.md); a map on the wire is its
 /// index. Only ever appended to: an index names the same map in every version
 pub const MAP_COUNT: u8 = 16;
@@ -122,7 +123,8 @@ pub enum Control {
     Hello {
         version: u16,
         team: u8,
-        body: u8,
+        /// The garage's car (`MODEL_PRESETS`: the server takes an unknown one as the first)
+        model: u8,
         dodge_deadzone: f32,
         steering_sensitivity: f32,
         air_control_sensitivity: f32,
@@ -231,11 +233,25 @@ pub struct PodiumTitle {
 /// No title (the wire's title byte)
 pub const NO_TITLE: u8 = 255;
 
-/// A player as the others know them
+/// The garage's cars (the client's `CARS`, src/game/cars.ts; only ever appended to): a model on the wire is its index,
+/// each with the engine's hitbox preset it plays with (Sport and Standard both the Standard preset: the user's decision,
+/// 2026-10-16); one this server doesn't know plays as the first
+pub const MODEL_PRESETS: [u8; 4] = [0, 0, 1, 5];
+
+/// A hello's model as the server takes it: one it knows, else 0; and its hitbox preset
+pub fn model_preset(model: u8) -> (u8, u8) {
+    match MODEL_PRESETS.get(usize::from(model)) {
+        Some(&preset) => (model, preset),
+        None => (0, MODEL_PRESETS[0]),
+    }
+}
+
+/// A player as the others know them: their car (the engine's id), team, name and the garage's car they drive
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RosterEntry {
     pub car: u32,
     pub team: u8,
+    pub model: u8,
     pub name: String,
 }
 
@@ -496,7 +512,7 @@ impl Control {
             Self::Hello {
                 version,
                 team,
-                body,
+                model,
                 dodge_deadzone,
                 steering_sensitivity,
                 air_control_sensitivity,
@@ -512,7 +528,7 @@ impl Control {
                 w.u8(0x01);
                 w.u16(*version);
                 w.u8(*team);
-                w.u8(*body);
+                w.u8(*model);
                 w.f32(*dodge_deadzone);
                 w.f32(*steering_sensitivity);
                 w.f32(*air_control_sensitivity);
@@ -564,6 +580,7 @@ impl Control {
                 for p in players.iter().take(255) {
                     w.u32(p.car);
                     w.u8(p.team);
+                    w.u8(p.model);
                     w.name(&p.name);
                 }
             }
@@ -719,7 +736,7 @@ impl Control {
             0x01 => Self::Hello {
                 version: r.u16()?,
                 team: r.u8()?,
-                body: r.u8()?,
+                model: r.u8()?,
                 dodge_deadzone: r.f32()?,
                 steering_sensitivity: r.f32()?,
                 air_control_sensitivity: r.f32()?,
@@ -741,7 +758,7 @@ impl Control {
             0x07 => Self::ChatFilter { quick_chat: r.u8()?, block_non_tactical: r.u8()? != 0 },
             0x88 => {
                 let players = (0..r.u8()?)
-                    .map(|_| Ok(RosterEntry { car: r.u32()?, team: r.u8()?, name: r.name()? }))
+                    .map(|_| Ok(RosterEntry { car: r.u32()?, team: r.u8()?, model: r.u8()?, name: r.name()? }))
                     .collect::<Result<_, DecodeError>>()?;
                 Self::Roster(players)
             }
@@ -950,7 +967,7 @@ mod tests {
             "hello" => Control::Hello {
                 version: u(&m["version"]) as u16,
                 team: u(&m["team"]) as u8,
-                body: u(&m["body"]) as u8,
+                model: u(&m["model"]) as u8,
                 dodge_deadzone: f(&m["dodgeDeadzone"]),
                 steering_sensitivity: f(&m["steeringSensitivity"]),
                 air_control_sensitivity: f(&m["airControlSensitivity"]),
@@ -998,7 +1015,7 @@ mod tests {
                     .as_array()
                     .unwrap()
                     .iter()
-                    .map(|p| RosterEntry { car: u(&p["car"]), team: u(&p["team"]) as u8, name: p["name"].as_str().unwrap().to_string() })
+                    .map(|p| RosterEntry { car: u(&p["car"]), team: u(&p["team"]) as u8, model: u(&p["model"]) as u8, name: p["name"].as_str().unwrap().to_string() })
                     .collect(),
             ),
             "chat" => Control::Chat { car: u(&m["car"]), preset: u(&m["preset"]) as u8, team: m["team"].as_bool().unwrap(), seconds: u(&m["seconds"]) as u16 },
@@ -1137,7 +1154,7 @@ mod tests {
         let ours = Control::Hello {
             version: VERSION,
             team: 0,
-            body: 0,
+            model: 0,
             dodge_deadzone: 0.5,
             steering_sensitivity: 1.0,
             air_control_sensitivity: 1.0,

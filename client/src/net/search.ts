@@ -39,9 +39,17 @@ function local(): Pick<Storage, "getItem" | "setItem"> | null {
   }
 }
 
+/** How long a search that's finishing waits for the server's end (ms): the server writes out what it sent and ends
+ *  within 2 s (RV-443) */
+const FINISH_WAIT_MS = 3000;
+
 export class Search {
   #transport: WebTransport | null = null;
+  /** Its stream's writing side, once the hello is sent */
+  #writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
   #over = false;
+  /** The session's run, to its end */
+  #done: Promise<void> = Promise.resolve();
 
   private constructor(readonly handlers: SearchHandlers) {}
 
@@ -49,7 +57,7 @@ export class Search {
    *  else (back to the queue's front, RV-367), else 0 */
   static start(address: ServerAddress, playlist: number, token: bigint, handlers: SearchHandlers): Search {
     const search = new Search(handlers);
-    void search.#run(address, playlist, token);
+    search.#done = search.#run(address, playlist, token);
     return search;
   }
 
@@ -72,7 +80,7 @@ export class Search {
           type: "hello",
           version: PROTOCOL_VERSION,
           team: 255,
-          body: 0,
+          model: 0,
           dodgeDeadzone: 0,
           steeringSensitivity: 0,
           airControlSensitivity: 0,
@@ -87,6 +95,7 @@ export class Search {
         }),
       );
       if (this.#cancelled()) return;
+      this.#writer = writer;
       this.handlers.searching();
       await readControlMessages(stream.readable as ReadableStream<Uint8Array>, (m) => {
         if (m.type === "matchFound") this.#end(() => { this.handlers.found(m.token, m.map); });
@@ -114,6 +123,25 @@ export class Search {
       // (already closed)
     }
     answer();
+  }
+
+  /** The page going elsewhere (another map) with the search running: its stream closed, so the server takes it out of
+   *  the queue and then writes out what it sent before (a match found: its answer, as any) and ends; that end awaited, a
+   *  few seconds at most (RV-443). Before the search is sent, a cancel */
+  async finish(): Promise<void> {
+    if (this.#over) return;
+    const writer = this.#writer;
+    if (!writer) {
+      this.cancel();
+      return;
+    }
+    try {
+      await writer.close();
+    } catch {
+      // (already closed)
+    }
+    await Promise.race([this.#done, new Promise((resolve) => setTimeout(resolve, FINISH_WAIT_MS))]);
+    this.cancel();
   }
 
   /** Cancel Search: the session closed, no answer */

@@ -68,23 +68,31 @@ export function cellOffsets(cells: readonly NumberCell[], spacing: number): read
   });
 }
 
-/** Sets a numbers field's text as cells (unchanged text: nothing done); `padOne`: the clock's padding */
+/** Sets a numbers field's text as cells (unchanged text: nothing done); `padOne`: the clock's padding. Its glow (the
+ *  field's text-shadow) a layer under every digit, as the game's filter on the whole field: a row of the same cells
+ *  drawing only their shadows (their characters from CSS, so the field's text is the number once), then the digits
+ *  without theirs (a later digit's glow never over an earlier one: the user's "100") */
 export function setNumberText(el: HTMLElement, text: string, padOne = false): void {
   if (el.dataset["text"] === text) return;
   el.dataset["text"] = text;
-  el.replaceChildren(
-    ...numberCells(text, padOne).map(({ c, advance, spaced }) => {
-      const cell = document.createElement("span");
-      cell.className = spaced ? "num-cell spaced" : "num-cell";
-      cell.style.setProperty("--advance", String(advance));
-      // (its ink fitted to the game's: the scale and shift the page sets per glyph, ui/hudFont.ts)
-      const key = glyphKey(c);
-      if (key) {
-        cell.style.setProperty("--ink-scale", `var(--num-s-${key}, 1)`);
-        cell.style.setProperty("--ink-shift", `var(--num-x-${key}, 0)`);
-      }
-      cell.textContent = c;
-      return cell;
-    }),
-  );
+  const cells = numberCells(text, padOne);
+  const cell = ({ c, advance, spaced }: NumberCell, glow: boolean): HTMLElement => {
+    const span = document.createElement("span");
+    span.className = `num-cell${spaced ? " spaced" : ""}${glow ? "" : " num-fill"}`;
+    span.style.setProperty("--advance", String(advance));
+    // (its ink fitted to the game's: the scale and shift the page sets per glyph, ui/hudFont.ts)
+    const key = glyphKey(c);
+    if (key) {
+      span.style.setProperty("--ink-scale", `var(--num-s-${key}, 1)`);
+      span.style.setProperty("--ink-shift", `var(--num-x-${key}, 0)`);
+    }
+    if (glow) span.dataset["c"] = c;
+    else span.textContent = c;
+    return span;
+  };
+  const glow = document.createElement("span");
+  glow.className = "num-glow";
+  glow.setAttribute("aria-hidden", "true");
+  glow.replaceChildren(...cells.map((c) => cell(c, true)));
+  el.replaceChildren(glow, ...cells.map((c) => cell(c, false)));
 }

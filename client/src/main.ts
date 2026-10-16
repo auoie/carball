@@ -20,7 +20,9 @@ import { loadGameFieldPlan } from "./render/stadiumFieldRules";
 import { loadDemolitionHusks } from "./render/demolition";
 import { loadFennec } from "./render/fennec";
 import { TEAM_CAR_COLORS } from "./render/entities";
-import { type ThemeName, createTheme, preloadTheme, themeName, themeOfMap } from "./render/themes";
+import { type ThemeName, createTheme, createThemeOrNight, preloadTheme, themeName, themeOfMap } from "./render/themes";
+import { CARS, storedCar, storedTeam } from "./game/cars";
+import { GaragePreview } from "./ui/garagePreview";
 import type { Theme } from "./render/themes/theme";
 import { type Settings, loadSettings } from "./settings/settings";
 import { migrateBrowserStorage } from "./settings/storageKeys";
@@ -52,6 +54,9 @@ function required<T extends Element>(selector: string, type: new () => T): T {
   if (!(el instanceof type)) throw new Error(`missing ${selector}`);
   return el;
 }
+
+/** The match session once opened (to close it if the page then fails to start) */
+let startedConnection: { close(): void } | null = null;
 
 async function main(): Promise<void> {
   const status = required("#loading", HTMLElement);
@@ -131,7 +136,7 @@ async function main(): Promise<void> {
   // (what a match session's hello asks for: the player's car preferences, name and chat filters)
   const joinPreferences = (s: Settings): JoinPreferences => ({
     team: 255,
-    body: 0,
+    model: storedCar(),
     dodgeDeadzone: s.controller.dodgeDeadzone,
     steeringSensitivity: s.controller.steeringSensitivity,
     airControlSensitivity: s.controller.aerialSensitivity,
@@ -146,10 +151,7 @@ async function main(): Promise<void> {
   // the claim connects); ?theme=meadow overrides either (development)
   const override = params.get("theme") === null ? null : themeName(params.get("theme"));
   const arenaAndSession = async (): Promise<{ name: ThemeName; theme: Theme; session: Awaited<ReturnType<typeof Connection.open>> | null }> => {
-    if (!onlinePage) {
-      const name = override ?? storedMap();
-      return { name, theme: await createTheme(name), session: null };
-    }
+    if (!onlinePage) return { ...(await createThemeOrNight(override ?? storedMap())), session: null };
     status.textContent = "Connecting to the server…";
     // (a development server's open match, ?server=host:infoPort; or the queue's match, its claim)
     let address;
@@ -173,12 +175,12 @@ async function main(): Promise<void> {
       });
     }
     const early = claim?.map === undefined ? null : (override ?? themeOfMap(claim.map));
-    const earlyTheme = early === null ? null : createTheme(early);
-    earlyTheme?.catch(() => undefined); // (unused if the welcome names another map)
+    const earlyTheme = early === null ? null : createThemeOrNight(early);
     const session = await opened;
+    startedConnection = session.connection;
     const name = override ?? themeOfMap(session.welcome.map);
     status.textContent = "Loading the arena…";
-    return { name, theme: earlyTheme !== null && early === name ? await earlyTheme : await createTheme(name), session };
+    return { ...(earlyTheme !== null && early === name ? await earlyTheme : await createThemeOrNight(name)), session };
   };
   const { name, theme, session } = await arenaAndSession();
   const renderer = new Renderer(canvas);
@@ -300,7 +302,7 @@ async function main(): Promise<void> {
   (window as unknown as { carballMap?: () => ThemeName }).carballMap = () => name;
   let game: { frame(dt: number): void };
   if (!onlinePage) {
-    const freeplay = new Freeplay(world, renderer, arena, input, hud, audio, () => settings, inputEnabled);
+    const freeplay = new Freeplay(world, renderer, arena, input, hud, audio, () => settings, inputEnabled, { car: storedCar(), team: storedTeam() });
     freeplayRestart = () => {
       freeplay.restart();
     };
@@ -316,9 +318,15 @@ async function main(): Promise<void> {
           .catch((e: unknown) => {
             if (!cancelled) handlers.failed(e instanceof Error ? e.message : String(e));
           });
-        return () => {
-          cancelled = true;
-          search?.cancel();
+        return {
+          cancel: () => {
+            cancelled = true;
+            search?.cancel();
+          },
+          finish: async () => {
+            cancelled = true;
+            await search?.finish();
+          },
         };
       },
       sound: (cue) => {
@@ -348,14 +356,32 @@ async function main(): Promise<void> {
       matchmaking.cancel();
     });
     searchView = view;
+    // (the garage's preview: the cars' hitboxes from a world of its own, one car each)
+    const garageWorld = World.create(engine);
+    const garageConfigs = new Map(CARS.map((c) => [c.id, garageWorld.carConfig(garageWorld.addCar(0, c.body))]));
     mainMenu = new MainMenu(document.body, {
+      garage: (choice) => {
+        freeplay.setCar(choice);
+      },
+      preview: new GaragePreview((car) => garageConfigs.get(car) ?? null, (team) => TEAM_CAR_COLORS[team]),
       freePlay: (map) => {
         // (another map than the page's: the page loads it and goes straight into free play, its arena, scenery and
         // sounds the map's, as the game loads a map. A search goes on there, a new one of its playlist under the banner;
         // a match found ("Joining in") keeps this page's map: its own page loads in a moment, the slot not given up)
         if (map !== name && matchmaking.state?.status !== "joining") {
-          storeNotice({ freePlay: true, ...(matchmaking.searching ? { search: matchmaking.playlist } : {}) });
-          location.assign(freePlayUrl(location));
+          const search = matchmaking.searching ? matchmaking.playlist : null;
+          const go = (): void => {
+            storeNotice({ freePlay: true, ...(search === null ? {} : { search }) });
+            location.assign(freePlayUrl(location));
+          };
+          // (a search closed first, the page gone once it has: a match the server formed as this page went would be
+          // lost with it, its players' match cancelled, this browser's searches paused; one found meanwhile is followed
+          // instead, the map left as it is, RV-443)
+          if (search === null) go();
+          else
+            void matchmaking.finish().then((found) => {
+              if (!found) go();
+            });
           return;
         }
         mainMenu?.close();
@@ -512,6 +538,8 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
+  // (a match's session not left open behind a page that failed: its slot not an idle car, RV-445)
+  startedConnection?.close();
   const status = document.querySelector("#loading");
   if (status) status.textContent = `Failed to start: ${err instanceof Error ? err.message : String(err)}`;
   console.error(err);

@@ -222,7 +222,7 @@ export class Hud {
     this.#boostValue = element(root, "#boost-value", HTMLElement);
     this.#boostGhost = element(root, "#boost-ghost", HTMLElement);
     this.#boostLabel = element(root, "#boost-label", HTMLElement);
-    this.#boostArt = new BoostMeterArt(element(root, "#boost-back", HTMLElement), element(root, "#boost-front", HTMLElement));
+    this.#boostArt = new BoostMeterArt(element(root, "#boost", HTMLElement), [this.#boostGhost, this.#boostValue, this.#boostLabel]);
     this.#speed = element(root, "#speed", HTMLElement);
     this.#blue = element(root, "#score-blue", HTMLElement);
     this.#scoreBox = element(root, "#score", HTMLElement);

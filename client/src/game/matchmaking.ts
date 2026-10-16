@@ -83,9 +83,15 @@ export interface SearchHandlers {
   cooldown(seconds: number, network: boolean): void;
 }
 
+/** A search session's ends: closed at once (Cancel Search), or closed and its last answer awaited (the page going) */
+export interface SearchSession {
+  cancel(): void;
+  finish(): Promise<void>;
+}
+
 export interface MatchmakingPorts {
-  /** Opens a search session (with a returning search's token, else 0); returns its cancel */
-  readonly search: (playlist: number, token: bigint, handlers: SearchHandlers) => () => void;
+  /** Opens a search session (with a returning search's token, else 0) */
+  readonly search: (playlist: number, token: bigint, handlers: SearchHandlers) => SearchSession;
   /** The start, cancel and countdown sounds (MM-12) */
   readonly sound: (cue: "start" | "cancel" | "countdown") => void;
   /** The join's end: the token claimed in the match page; how long the search had run (s: a cancelled match's search
@@ -103,7 +109,9 @@ export interface MatchmakingPorts {
 export class Matchmaking {
   #state: SearchViewState | null = null;
   #playlist = 0;
-  #cancel: (() => void) | null = null;
+  #session: SearchSession | null = null;
+  /** The page going: the search finishing (RV-443), whether a match was found meanwhile */
+  #finishing: Promise<boolean> | null = null;
   #searchingSince: number | null = null;
   /** A returning search's time before (s) */
   #searchedBefore = 0;
@@ -145,7 +153,7 @@ export class Matchmaking {
     this.#failedAt = null;
     this.#set("connecting");
     this.ports.sound("start");
-    this.#cancel = this.ports.search(playlist, back?.token ?? 0n, {
+    this.#session = this.ports.search(playlist, back?.token ?? 0n, {
       searching: () => {
         if (this.#state?.status !== "connecting") return;
         this.#searchingSince = this.#now - this.#searchedBefore;
@@ -153,7 +161,7 @@ export class Matchmaking {
       },
       found: (token, map) => {
         if (!this.searching) return;
-        this.#cancel = null;
+        this.#session = null;
         this.#token = token;
         this.#map = map;
         this.ports.preload(map);
@@ -172,16 +180,17 @@ export class Matchmaking {
         }
       },
       failed: (reason) => {
-        if (this.#state?.status !== "connecting" && this.#state?.status !== "searching") return;
-        this.#cancel = null;
+        // (a finishing search's end isn't a failure: the next page searches)
+        if (this.#finishing || (this.#state?.status !== "connecting" && this.#state?.status !== "searching")) return;
+        this.#session = null;
         this.#extra.push({ text: `${OWN_SEARCH_TEXT.failedPrefix} ${reason}`, kind: "warning" });
         this.#failedAt = this.#now;
         this.#set("failed");
       },
       // (the refusal stays until Cancel Search or a new search: its wait is minutes, the line must be read)
       cooldown: (seconds, network) => {
-        if (this.#state?.status !== "connecting" && this.#state?.status !== "searching") return;
-        this.#cancel = null;
+        if (this.#finishing || (this.#state?.status !== "connecting" && this.#state?.status !== "searching")) return;
+        this.#session = null;
         this.#extra.push({ text: network ? OWN_SEARCH_TEXT.cooldownNetwork(seconds) : OWN_SEARCH_TEXT.cooldown(seconds), kind: "warning" });
         this.#failedAt = null;
         this.#set("failed");
@@ -202,9 +211,28 @@ export class Matchmaking {
     if (searching) this.ports.sound("cancel");
   }
 
+  /** The page going elsewhere (another map) with this search: the search finished (its session closed and its last
+   *  answer awaited), true if a match was found meanwhile (the join goes on: the page follows it), else false (no
+   *  search left, no cancel sound: the next page searches) (RV-443) */
+  finish(): Promise<boolean> {
+    if (this.#finishing) return this.#finishing;
+    const status = this.#state?.status;
+    if (status === "joining") return Promise.resolve(true);
+    if (status !== "connecting" && status !== "searching") return Promise.resolve(false);
+    const finishing = (this.#session?.finish() ?? Promise.resolve()).then(() => {
+      this.#finishing = null;
+      if (this.#state?.status === "joining") return true;
+      this.#stop();
+      this.#state = null;
+      return false;
+    });
+    this.#finishing = finishing;
+    return finishing;
+  }
+
   #stop(): void {
-    this.#cancel?.();
-    this.#cancel = null;
+    this.#session?.cancel();
+    this.#session = null;
     for (const t of this.#timers.splice(0)) clearTimeout(t);
     this.#token = null;
   }
