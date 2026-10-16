@@ -117,11 +117,8 @@ export function islandTheme(): Theme {
       floorStripe: new Color(0x55a852),
       markings: null,
       walls: {
-        neutral: new Color(0xffffff),
         blue: new Color(0x2a7fff),
         orange: new Color(0xff8a1f),
-        lines: 0.22,
-        ceilingLines: 0.03,
       },
     },
     root,

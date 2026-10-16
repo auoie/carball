@@ -142,11 +142,8 @@ export function kawaiiTheme(): Theme {
       floorStripe: new Color(0xffd8e8), // candy stripes
       markings: new Color(0xff5fa2), // (white would vanish on the pink)
       walls: {
-        neutral: new Color(0xffffff),
         blue: new Color(0x6fa8ff),
         orange: new Color(0xffa36b),
-        lines: 0.25,
-        ceilingLines: 0.03,
       },
     },
     root,

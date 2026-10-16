@@ -159,11 +159,8 @@ export function dimensionTheme(): Theme {
       floorStripe: new Color(0x32324f),
       markings: new Color(0x8ff5d8), // glowing teal
       walls: {
-        neutral: new Color(0xb48cff),
         blue: new Color(0x2a7fff),
         orange: new Color(0xff8a1f),
-        lines: 0.26,
-        ceilingLines: 0.04,
       },
     },
     root,

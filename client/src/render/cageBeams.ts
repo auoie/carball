@@ -1,8 +1,7 @@
-// The cage's beams drawn (src/render/cage.ts): each a ribbon on the surface along its centre line, an 8 uu core (the
-// game's beams' width) in a glow,
-// tinted towards each team's colour at its end of the field (colours and strengths from the theme, as the walls'),
-// lighting up around the ball, fainter on the ceiling. Seen from far off a beam stays at least about a pixel wide,
-// dimmer instead of thinner, so it doesn't break up or shimmer. Visible from both sides, as the game's.
+// The cage's beams drawn (src/render/cage.ts) as the game's, on every map in its theme's team colours (the user's
+// decision, 2026-10-16): each two crossed quads along its centre line, 8 uu wide, additive, coloured towards the team on
+// that side and lit around the ball (notes/arena-visuals.md AV-14, H-8). Seen from far off a beam stays at least about a
+// pixel wide, dimmer instead of thinner, so it doesn't break up or shimmer. Visible from both sides, as the game's.
 import {
   AdditiveBlending,
   BufferAttribute,
@@ -27,85 +26,8 @@ import type { WallStyle } from "./themes/theme";
 import { fullBright, linear } from "./teamColors";
 import { ARENA_PRIORITY } from "./translucentSort";
 
-/** The ribbon's half width (uu): the beam's core (the game's beams are 8 uu wide) and its glow round it */
-const HALF_WIDTH = 10;
-const CORE_HALF_WIDTH = 4;
-/** The glow's strength next to the core, and the beams' against the walls' lines (themes' `lines`) */
-const GLOW = 0.45;
-const STRENGTH = 1.3;
 /** The least half width on screen (pixels) */
 const MIN_HALF_PIXELS = 0.75;
-
-const vertexShader = /* glsl */ `
-attribute vec3 side;
-attribute float across;
-attribute vec3 beamNormal;
-uniform float halfWidth;
-uniform float minHalfPixels;
-uniform vec2 viewport;
-varying vec3 vWorldPosition;
-varying vec3 vWorldNormal;
-varying float vAcross;
-varying float vFade;
-#include <fog_pars_vertex>
-
-void main() {
-  // How many pixels the beam's half width is here: widened to the least, and dimmed by as much
-  mat4 toClip = projectionMatrix * viewMatrix * modelMatrix;
-  vec4 centre = toClip * vec4(position, 1.0);
-  vec4 edge = toClip * vec4(position + side * halfWidth, 1.0);
-  float widen = 1.0;
-  if (centre.w > 0.0 && edge.w > 0.0) {
-    float pixels = length((edge.xy / edge.w - centre.xy / centre.w) * 0.5 * viewport);
-    widen = max(1.0, minHalfPixels / max(pixels, 1e-4));
-  }
-  vec4 world = modelMatrix * vec4(position + side * (halfWidth * widen * across), 1.0);
-  vWorldPosition = world.xyz;
-  vWorldNormal = normalize(mat3(modelMatrix) * beamNormal);
-  vAcross = across;
-  vFade = 1.0 / widen;
-  vec4 mvPosition = viewMatrix * world;
-  gl_Position = projectionMatrix * mvPosition;
-  #include <fog_vertex>
-}
-`;
-
-const fragmentShader = /* glsl */ `
-uniform vec3 ballPosition;
-uniform float ballRadius;
-uniform vec3 neutralColor;
-uniform vec3 blueColor;
-uniform vec3 orangeColor;
-uniform float lineStrength;
-uniform float ceilingLineStrength;
-uniform float halfWidth;
-uniform float coreHalfWidth;
-uniform float glow;
-uniform float strength;
-varying vec3 vWorldPosition;
-varying vec3 vWorldNormal;
-varying float vAcross;
-varying float vFade;
-#include <fog_pars_fragment>
-
-void main() {
-  // The core, anti-aliased, in its glow (uu from the centre line)
-  float d = abs(vAcross) * halfWidth;
-  float aa = max(fwidth(d), 1e-3);
-  float core = 1.0 - smoothstep(coreHalfWidth - aa, coreHalfWidth + aa, d);
-  float profile = max(core, glow * (1.0 - smoothstep(coreHalfWidth, halfWidth, d)));
-  // Team tint towards each end (Three z = the game's y; blue defends -y)
-  float end = vWorldPosition.z;
-  vec3 team = end < 0.0 ? blueColor : orangeColor;
-  vec3 tint = mix(neutralColor, team, smoothstep(1000.0, 4800.0, abs(end)));
-  float near = 1.0 - smoothstep(ballRadius, ballRadius + 1100.0, length(ballPosition - vWorldPosition));
-  float ceiling = smoothstep(0.5, 0.9, -normalize(vWorldNormal).y);
-  float alpha = profile * vFade * (strength * mix(lineStrength, ceilingLineStrength, ceiling) + 0.75 * near);
-  gl_FragColor = vec4(mix(tint, vec3(1.0), 0.2 + 0.6 * near), clamp(alpha, 0.0, 1.0));
-  #include <colorspace_fragment>
-  #include <fog_fragment>
-}
-`;
 
 /** The game's beams (notes/arena-visuals.md AV-14, H-8, H-8b): additive, 8 uu wide with the profile
  *  p = 1 - (2u - 1)^2; coloured by the height on the wall w (1 at its foot, 0 on the ceiling) towards
@@ -285,16 +207,15 @@ export class CageBeams {
   readonly ballPosition = new Vector3(0, -100_000, 0);
   readonly #uniforms: Record<string, { value: unknown }>;
 
-  constructor(graph: CageGraph, ballRadius: number, style: WallStyle) {
+  constructor(graph: CageGraph, style: Pick<WallStyle, "blue" | "orange">) {
     const positions: number[] = [];
     const sides: number[] = [];
     const acrosses: number[] = [];
     const normals: number[] = [];
     const indices: number[] = [];
     // The game's beams are two crossed quads (FFCage_Full, AV-14): one in the surface, one along its normal (additive:
-    // it adds, and keeps a beam seen edge-on as wide: RV-62); ours one ribbon in the surface
-    const crossings: readonly boolean[] = style.game ? [false, true] : [false];
-    for (const beam of graph.beams) for (const alongNormal of crossings) {
+    // it adds, and keeps a beam seen edge-on as wide: RV-62)
+    for (const beam of graph.beams) for (const alongNormal of [false, true]) {
       const { points, normals: beamNormals } = beam;
       const n = points.length;
       points.forEach((point, k) => {
@@ -307,9 +228,7 @@ export class CageBeams {
         // (each quad's own normal, as FFCage_Full's: the surface's for the quad in it, the in-surface side for the one
         // along the normal; the stripes' blend and the shockwave's push read it: RV-75)
         const own = alongNormal ? inSurface : normal;
-        // (the ends reach a core's half width on, so beams meeting at a point overlap there instead of leaving a notch)
-        const reach = style.game ? 0 : k === 0 ? -CORE_HALF_WIDTH : k === n - 1 ? CORE_HALF_WIDTH : 0;
-        const centre = new Vector3(...three(point)).addScaledVector(tangent, reach);
+        const centre = new Vector3(...three(point));
         const base = positions.length / 3;
         for (const across of [-1, 1]) {
           positions.push(centre.x, centre.y, centre.z);
@@ -327,80 +246,46 @@ export class CageBeams {
     geometry.setAttribute("beamNormal", new BufferAttribute(new Float32Array(normals), 3));
     geometry.setIndex(indices);
     const viewport = new Vector2(1280, 720);
-    if (style.game) {
-      // The game's: additive, 8 uu wide, its colour and brightness formula (with the teams' primaries)
-      const p0 = [style.blue.r, style.blue.g, style.blue.b] as const;
-      const p1 = [style.orange.r, style.orange.g, style.orange.b] as const;
-      this.#uniforms = {
-        ...UniformsUtils.clone(UniformsLib.fog),
-        ballPosition: { value: this.ballPosition },
-        halfWidth: { value: 4 },
-        minHalfPixels: { value: MIN_HALF_PIXELS },
-        viewport: { value: viewport },
-        primary0: { value: style.blue },
-        primary1: { value: style.orange },
-        bright0: { value: linear(fullBright(p0)) },
-        bright1: { value: linear(fullBright(p1)) },
-        opacity: { value: 1 },
-        shockWave: { value: -0.25 },
-        time: { value: 0 },
-        fire: { value: curveTexture(FIRE_CURVE) },
-        smoke: { value: curveTexture(SMOKE_CURVE) },
-      };
-      const gameMaterial = new ShaderMaterial({
-        vertexShader: gameVertexShader,
-        fragmentShader: gameFragmentShader,
-        uniforms: this.#uniforms,
-        transparent: true,
-        depthWrite: false,
-        blending: AdditiveBlending,
-        side: DoubleSide,
-        fog: true,
-      });
-      this.mesh = new Mesh(geometry, gameMaterial);
-      this.mesh.frustumCulled = false;
-      // (the cage's lines right after its fill: the game's one primitive, FFCage_Full at 0 (TRN1), as our two)
-      this.mesh.renderOrder = ARENA_PRIORITY.base + 0.001;
-      this.mesh.onBeforeRender = (renderer: WebGLRenderer) => {
-        renderer.getDrawingBufferSize(viewport);
-      };
-      return;
-    }
-    this.#uniforms = {};
+    // The game's: additive, 8 uu wide, its colour and brightness formula (with the teams' primaries)
+    const p0 = [style.blue.r, style.blue.g, style.blue.b] as const;
+    const p1 = [style.orange.r, style.orange.g, style.orange.b] as const;
+    this.#uniforms = {
+      ...UniformsUtils.clone(UniformsLib.fog),
+      ballPosition: { value: this.ballPosition },
+      halfWidth: { value: 4 },
+      minHalfPixels: { value: MIN_HALF_PIXELS },
+      viewport: { value: viewport },
+      primary0: { value: style.blue },
+      primary1: { value: style.orange },
+      bright0: { value: linear(fullBright(p0)) },
+      bright1: { value: linear(fullBright(p1)) },
+      opacity: { value: 1 },
+      shockWave: { value: -0.25 },
+      time: { value: 0 },
+      fire: { value: curveTexture(FIRE_CURVE) },
+      smoke: { value: curveTexture(SMOKE_CURVE) },
+    };
     const material = new ShaderMaterial({
-      vertexShader,
-      fragmentShader,
-      uniforms: {
-        ...UniformsUtils.clone(UniformsLib.fog),
-        ballPosition: { value: this.ballPosition },
-        ballRadius: { value: ballRadius },
-        halfWidth: { value: HALF_WIDTH },
-        coreHalfWidth: { value: CORE_HALF_WIDTH },
-        glow: { value: GLOW },
-        strength: { value: STRENGTH },
-        minHalfPixels: { value: MIN_HALF_PIXELS },
-        viewport: { value: viewport },
-        neutralColor: { value: style.neutral },
-        blueColor: { value: style.blue },
-        orangeColor: { value: style.orange },
-        lineStrength: { value: style.lines },
-        ceilingLineStrength: { value: style.ceilingLines },
-      },
+      vertexShader: gameVertexShader,
+      fragmentShader: gameFragmentShader,
+      uniforms: this.#uniforms,
       transparent: true,
       depthWrite: false,
+      blending: AdditiveBlending,
       side: DoubleSide,
       fog: true,
     });
     this.mesh = new Mesh(geometry, material);
-    this.mesh.frustumCulled = false; // (it surrounds the field: always in view)
-    this.mesh.renderOrder = ARENA_PRIORITY.base + 0.001; // (over the walls' see-through fill, right after it: FFCage_Full)
+    this.mesh.frustumCulled = false;
+    // (the cage's lines right after its fill: the game's one primitive, FFCage_Full at 0 (TRN1), as our two)
+    this.mesh.renderOrder = ARENA_PRIORITY.base + 0.001;
     this.mesh.onBeforeRender = (renderer: WebGLRenderer) => {
       renderer.getDrawingBufferSize(viewport);
     };
   }
 
   /** The goal explosion's shockwave (AV-15: -0.25 at rest, then to 1 over 2.5 s after the explosion) and the time
-   *  (seconds) the game's beams animate by; nothing for our own look */
+   *  (seconds) the beams animate by */
   set shockWave(value: number) {
     if (this.#uniforms["shockWave"]) this.#uniforms["shockWave"].value = value;
   }

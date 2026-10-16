@@ -36,11 +36,8 @@ export function nightTheme(): Theme {
       floorStripe: null,
       markings: null,
       walls: {
-        neutral: new Color(0x8fa6c8),
         blue: new Color(0x2a7fff),
         orange: new Color(0xff8a1f),
-        lines: 0.2,
-        ceilingLines: 0.06,
       },
     },
     root,

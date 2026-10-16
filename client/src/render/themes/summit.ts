@@ -159,11 +159,8 @@ export function summitTheme(): Theme {
       floorStripe: new Color(0x7894ad),
       markings: new Color(0xffffff),
       walls: {
-        neutral: new Color(0xeaf6ff),
         blue: new Color(0x2a7fff),
         orange: new Color(0xff8a1f),
-        lines: 0.24,
-        ceilingLines: 0.03,
       },
     },
     root,

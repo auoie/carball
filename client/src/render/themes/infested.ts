@@ -118,11 +118,8 @@ export function infestedTheme(): Theme {
       floorStripe: new Color(0x6b634b), // (worn)
       markings: null,
       walls: {
-        neutral: new Color(0xd6dca0), // a sickly pale
         blue: new Color(0x2a7fff),
         orange: new Color(0xff8a1f),
-        lines: 0.2,
-        ceilingLines: 0.03,
       },
     },
     root,

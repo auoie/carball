@@ -180,11 +180,8 @@ export function hauntedTheme(): Theme {
       floorStripe: new Color(0x4d5a42),
       markings: new Color(0xcfe0ff), // pale and glowing, readable at night
       walls: {
-        neutral: new Color(0x9fb4ff), // a ghostly blue
         blue: new Color(0x2a7fff),
         orange: new Color(0xff8a1f),
-        lines: 0.24,
-        ceilingLines: 0.05,
       },
     },
     root,

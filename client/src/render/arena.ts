@@ -1,14 +1,16 @@
 // The arena as the game draws it: the walls and ceiling one continuous swept surface (src/render/arenaSurface.ts: floor
 // fillet, wall and ceiling fillet round the whole field and the ceiling inside it, from the collision mesh's rules but
 // without its pieces' overlaps and hidden skirts), see-through, with the game's cage of beams on it (src/render/cage.ts,
-// src/render/cageBeams.ts) lighting up around the ball; the wall's foot wrapped in a grey trim with a team-coloured
-// light along its top; the goals' insides (src/render/goalSurface.ts: a finer pattern, as a net) behind a
-// team-coloured frame round each mouth; the floor. The cage shows from both sides (the game's is visible from outside
-// the arena too); the trim and frames only from inside, so they never hide a car driving on the wall from the camera
-// behind it. Around it all, the theme's scenery (src/render/themes/).
-// With the game's materials (a theme's `walls.game`, notes/arena-visuals.md): the walls carry the game's overlay round
-// the ball (H-9) instead of our fill, the beams stop at the wall's foot, hex glass (H-6) beside the goal mouths and as
-// the goals' nets, and team glow sheets (H-5) behind the side walls instead of the light along the trim.
+// src/render/cageBeams.ts) lighting up around the ball; the wall's foot wrapped in the game's frame (its trim); the goals'
+// insides (src/render/goalSurface.ts) behind a frame round each mouth; the floor. The cage shows from both sides (the
+// game's is visible from outside the arena too); the trim and frames only from inside, so they never hide a car driving
+// on the wall from the camera behind it. Around it all, the theme's scenery (src/render/themes/).
+// Every map wears the game's net, trim and cage (the user's decision, 2026-10-16; notes/arena-visuals.md), in its theme's
+// team colours: the game's overlay round the ball on the walls (H-9), its beams stopping at the wall's foot with hex glass
+// (H-6) beside the goal mouths below them, the hex glass as the goals' nets, the frame's metal at the wall's foot
+// reflecting the arena's capture (AV-10) and team glow sheets (H-5) behind the walls. The game's stadium itself (a
+// theme's `walls.game`: its field, its goals' metal floors and glows) is the stadium theme's alone; every other theme
+// keeps its own floor, markings and goals' floors.
 import {
   BufferAttribute,
   BufferGeometry,
@@ -41,7 +43,6 @@ import { cageGraph } from "./cage";
 import { CageBeams, shockWave } from "./cageBeams";
 import { type GoalSurface, buildGoalSurface, goalProfileU } from "./goalSurface";
 import { ForceFieldMaterial, GlowStripMaterial, HexGlassMaterial } from "./gameSurfaces";
-import { HexWallMaterial } from "./hexWalls";
 import { fullBright, linear } from "./teamColors";
 import { mergeByMaterial } from "./merge";
 import { GoalFloorMaterial, goalUnderlayers } from "./goalInterior";
@@ -73,35 +74,30 @@ const STRIPE_WIDTH = 512;
 
 export class ArenaView {
   readonly root = new Group();
-  readonly #cage: HexWallMaterial | ForceFieldMaterial; // the walls' and ceiling's see-through fill (or the game's overlay)
+  readonly #cage: ForceFieldMaterial; // the walls' and ceiling's see-through fill: the game's overlay round the ball
   readonly #beams: CageBeams; // the cage on them
-  readonly #net: HexWallMaterial | HexGlassMaterial; // the goals' insides (a finer pattern, as a net; or the game's glass)
+  readonly #net: HexGlassMaterial; // the goals' nets: the game's hex glass
   readonly #style: ArenaStyle;
   readonly #theme: Theme;
   /** The teams' colours on the arena: the theme's (the game's: the linear primaries, AV-2), else ours */
   readonly #teamColors: readonly [Color, Color];
-  /** The game's reflection capture (with the game's materials: the field reflects it) */
-  readonly #grassCube: GrassCube | null;
+  /** The game's reflection capture: the trim reflects it (and the stadium's field, its banners) */
+  readonly #grassCube = new GrassCube();
   #seconds = 0;
   /** World seconds since the ball exploded (a goal), null with a ball in play: the cage's shockwave (AV-15) */
   #sinceExplosion: number | null = null;
 
   constructor(theme: Theme) {
     this.#theme = theme;
-    this.#grassCube = theme.style.walls.game ? new GrassCube() : null;
     this.#style = theme.style;
     this.#teamColors = theme.style.walls.game ? [theme.style.walls.blue, theme.style.walls.orange] : TEAM_COLORS;
     const surface = buildArenaSurface();
     const goals = buildGoalSurface(GOAL_NET_HEX);
     const { walls } = theme.style;
-    if (walls.game) {
-      this.#cage = new ForceFieldMaterial(walls.blue, walls.orange);
-      this.#net = new HexGlassMaterial({ net: true });
-    } else {
-      this.#cage = new HexWallMaterial(BALL_RADIUS, walls, { lines: false });
-      this.#net = new HexWallMaterial(BALL_RADIUS, walls, { scale: 1 / goals.hexSize });
-    }
-    this.#beams = new CageBeams(cageGraph(!walls.game), BALL_RADIUS, walls);
+    // (the game's net, trim and cage on every map, in its theme's team colours)
+    this.#cage = new ForceFieldMaterial(walls.blue, walls.orange);
+    this.#net = new HexGlassMaterial({ net: true });
+    this.#beams = new CageBeams(cageGraph(false), walls);
     this.root.add(
       this.#buildWalls(surface),
       this.#beams.mesh,
@@ -113,19 +109,16 @@ export class ArenaView {
     );
     // (the theme's materials that sample the capture (a `grassCube` uniform: the banners', RV-178) share its uniform)
     const cube = this.#grassCube;
-    if (cube) {
-      theme.root.traverse((m) => {
-        const material = (m as { material?: { uniforms?: Record<string, unknown> } }).material;
-        if (material?.uniforms?.["grassCube"] !== undefined) material.uniforms["grassCube"] = cube.uniform;
-      });
-    }
+    theme.root.traverse((m) => {
+      const material = (m as { material?: { uniforms?: Record<string, unknown> } }).material;
+      if (material?.uniforms?.["grassCube"] !== undefined) material.uniforms["grassCube"] = cube.uniform;
+    });
   }
 
   /** Once per frame: lights the walls around the ball (Three.js frame) and animates the theme's scenery. */
   update(ballPosition: Vector3, frameSeconds: number): void {
     this.#cage.ballPosition.copy(ballPosition);
     this.#beams.ballPosition.copy(ballPosition);
-    if (this.#net instanceof HexWallMaterial) this.#net.ballPosition.copy(ballPosition);
     this.#seconds += frameSeconds;
     if (this.#sinceExplosion !== null) this.#sinceExplosion += Math.max(0, frameSeconds);
     this.#beams.shockWave = shockWave(this.#sinceExplosion);
@@ -134,14 +127,12 @@ export class ArenaView {
   }
 
   /** The arena's reflection capture (AV-3: at load, and again when the team colours change), with only the arena and
-   *  its theme drawn; nothing without the game's materials. Run with the WebGL renderer before a frame
-   *  (Renderer.beforeNextFrame) */
+   *  its theme drawn. Run with the WebGL renderer before a frame (Renderer.beforeNextFrame) */
   capture(gl: WebGLRenderer, scene: Scene): void {
     // (three times, as the game re-captures over its first 2 s, each reading the last: the first with the reflective
     // surfaces seeing nothing, the others the last capture, blurred, in their own directions; it converges by the second
     // or third, SUR-32, AV-3)
     const cube = this.#grassCube;
-    if (!cube) return;
     const captureOnly = this.#theme.captureOnly ?? null;
     cube.capture(gl, scene, this.root, captureOnly, [0, 0, 0]);
     cube.capture(gl, scene, this.root, captureOnly);
@@ -150,12 +141,12 @@ export class ArenaView {
 
   /** Reflection captures so far (for tests) */
   get captures(): number {
-    return this.#grassCube?.captures ?? 0;
+    return this.#grassCube.captures;
   }
 
-  /** The last reflection capture's faces, linear floats, stored or as rendered (GrassCube.readCapture; none without one) */
+  /** The last reflection capture's faces, linear floats, stored or as rendered (GrassCube.readCapture) */
   readCapture(gl: WebGLRenderer, raw = false): Float32Array[] | null {
-    return this.#grassCube?.readCapture(gl, raw) ?? null;
+    return this.#grassCube.readCapture(gl, raw);
   }
 
   /** The ball exploded (a goal): the cage's shockwave starts */
@@ -173,7 +164,8 @@ export class ArenaView {
     this.#sinceExplosion = null;
   }
 
-  /** The swept walls: the hexagon cage above the floor fillet, the grey trim on it, a light along the trim's top. */
+  /** The swept walls: the cage's overlay above the floor fillet, the game's frame on the fillet (the trim), the glass
+   *  beside the goal mouths, the team glow sheets behind the walls. */
   #buildWalls(surface: ArenaSurface): Group {
     const { positions, bands, indices } = surface;
     const threePositions = new Float32Array(positions.length);
@@ -197,18 +189,10 @@ export class ArenaView {
     };
     const cage = new Mesh(geometry(cageIndices), this.#cage);
     cage.renderOrder = ARENA_PRIORITY.base; // (FFCage_Full: TRN1)
-    // (the game's arena: the wall's foot its baked frame (Side_Trim: AV-10, H-4); ours lit, the ball's shadow up it)
-    const capture = this.#grassCube?.uniform;
-    const trimMaterial =
-      this.#style.walls.game && capture
-        ? new SideTrimMaterial(capture, this.#cage.ballPosition, BALL_RADIUS)
-        : new MeshStandardMaterial({ color: TRIM_COLOR, roughness: 0.6, metalness: 0.3, side: FrontSide });
-    if (trimMaterial instanceof MeshStandardMaterial) addBallShadow(trimMaterial, this.#cage.ballPosition, BALL_RADIUS);
-    const trim = new Mesh(geometry(trimIndices), trimMaterial);
+    // (the wall's foot the game's baked frame (Side_Trim: AV-10, H-4), reflecting the capture, the ball's shadow up it)
+    const trim = new Mesh(geometry(trimIndices), new SideTrimMaterial(this.#grassCube.uniform, this.#cage.ballPosition, BALL_RADIUS));
     const group = new Group();
-    group.add(cage, trim);
-    if (this.#style.walls.game) group.add(...glowSheets(this.#style), backGlass(0), backGlass(1));
-    else group.add(trimLight(surface));
+    group.add(cage, trim, ...glowSheets(this.#style), backGlass(0), backGlass(1));
     return group;
   }
 
@@ -272,9 +256,9 @@ export class ArenaView {
     addBallShadow(postMaterial, this.#cage.ballPosition, BALL_RADIUS);
     // The game's goal floors: see-through and layered (RV-76): the frame, the grate, the glass on the ramp, and under them
     // a second glass, the glows and dark metal
-    const cube = this.#grassCube?.uniform;
+    const cube = this.#grassCube.uniform;
     const floorGeometries = perGoal(goals.floor).map((t) => fitIndexedBounds(geometry(t)));
-    const goalFloor = game && cube ? new GoalFloorMaterial(cube) : floorMaterial;
+    const goalFloor = game ? new GoalFloorMaterial(cube) : floorMaterial;
     const floors = floorGeometries.map((g) => {
       const floor = new Mesh(g, goalFloor);
       floor.renderOrder = ARENA_PRIORITY.base; // (Goal_STD_Glass: TRN1)
@@ -283,7 +267,7 @@ export class ArenaView {
     const group = new Group();
     group.add(
       ...floors,
-      ...(game && cube ? goalUnderlayers(floorGeometries, cube, this.#teamColors) : []),
+      ...(game ? goalUnderlayers(floorGeometries, cube, this.#teamColors) : []),
       ...nets,
       new Mesh(geometry(goals.lip), new MeshBasicMaterial({ vertexColors: true, side: FrontSide })),
       new Mesh(geometry(goals.postBase), postMaterial),
@@ -313,11 +297,11 @@ export class ArenaView {
     // The game's field (AV-5..9): the floor the frame's metal (its seams between the regions), the field above it,
     // reflecting the arena's capture
     const { walls } = this.#style;
-    const cube = this.#grassCube?.uniform;
-    if (walls.game && cube) group.add(buildStadiumField(walls.blue, walls.orange, cube));
+    const cube = this.#grassCube.uniform;
+    if (walls.game) group.add(buildStadiumField(walls.blue, walls.orange, cube));
 
     // Floor, out to the trim's foot. The shape faces +z; rotate it to face up (+y in Three)
-    const floor = new Mesh(new ShapeGeometry(floorShape()), walls.game && cube ? frameFloorMaterial(cube, walls.blue, walls.orange) : floorMat);
+    const floor = new Mesh(new ShapeGeometry(floorShape()), walls.game ? frameFloorMaterial(cube, walls.blue, walls.orange) : floorMat);
     floor.rotation.x = -Math.PI / 2;
     group.add(floor);
     return group;
@@ -337,64 +321,9 @@ const BACK_GLASS = { y: 5124 } as const;
 const GLOW_SHEET = { behind: 16, z0: 272, z1: 400, y0: 128, x1: 2048 } as const;
 /** The trim's grey (the game's: a light, slightly metallic grey round the wall's foot) */
 const TRIM_COLOR = 0x9aa0a8;
-/** The light along the trim's top: this tall on the wall (uu), in each team's colour on its half */
-const TRIM_LIGHT_HEIGHT = 14;
 /** The frame round a goal mouth: its width on the back wall, and the light along its inner edge (uu) */
 const FRAME_WIDTH = 70;
 const FRAME_LIGHT_WIDTH = 14;
-
-/** A glowing strip along the top of the floor fillet, just in front of the wall: blue on blue's half, orange on
- *  orange's, blending over midfield. */
-function trimLight(surface: ArenaSurface): Mesh {
-  const { positions, bands, indices } = surface;
-  // The trim's top edge: the fillet's last point (band 1) of each column; its triangles' top edges join them
-  const top = new Set<number>();
-  for (let i = 0; i < bands.length; i++) if (bands[i] === 1) top.add(i);
-  const pos: number[] = [];
-  const colors: number[] = [];
-  const idx: number[] = [];
-  const color = new Color();
-  const vertexFor = new Map<number, [number, number]>();
-  const add = (v: number): [number, number] => {
-    const known = vertexFor.get(v);
-    if (known) return known;
-    const x = positions[v * 3] ?? 0;
-    const y = positions[v * 3 + 1] ?? 0;
-    const z = positions[v * 3 + 2] ?? 0;
-    // (1 uu off the wall towards the field, along the wall's normal there: x or y inward)
-    const nx = Math.abs(x) > ARENA.sideX - 1 ? -Math.sign(x) : 0;
-    const ny = nx === 0 ? -Math.sign(y) : 0;
-    color.copy(TEAM_COLORS[0]).lerp(TEAM_COLORS[1], Math.min(1, Math.max(0, (y + 200) / 400)));
-    const base = pos.length / 3;
-    for (const dz of [0, TRIM_LIGHT_HEIGHT]) {
-      pos.push(x + nx, z + dz, y + ny); // (Three's frame)
-      colors.push(color.r, color.g, color.b);
-    }
-    const pair: [number, number] = [base, base + 1];
-    vertexFor.set(v, pair);
-    return pair;
-  };
-  // The top edges of the trim's triangles, in their order there (the triangles face the field: a strip above an
-  // edge faces the same way when it runs along the edge the other way round)
-  for (let i = 0; i < indices.length; i += 3) {
-    const tri = [indices[i] ?? 0, indices[i + 1] ?? 0, indices[i + 2] ?? 0];
-    if (!tri.every((v) => (bands[v] ?? -1) >= 0)) continue;
-    for (let k = 0; k < 3; k++) {
-      const a = tri[k] ?? 0;
-      const b = tri[(k + 1) % 3] ?? 0;
-      if (!top.has(a) || !top.has(b)) continue;
-      const [a0, a1] = add(a);
-      const [b0, b1] = add(b);
-      // (b0, a0, a1, b0, a1, b1) in the game's frame; its y and z swapped in Three's mirror the winding
-      idx.push(b0, a1, a0, b0, b1, a1);
-    }
-  }
-  const g = new BufferGeometry();
-  g.setAttribute("position", new BufferAttribute(new Float32Array(pos), 3));
-  g.setAttribute("color", new BufferAttribute(new Float32Array(colors), 3));
-  g.setIndex(idx);
-  return new Mesh(g, new MeshBasicMaterial({ vertexColors: true, side: FrontSide }));
-}
 
 /** The game's team glow sheets (H-5): one per quadrant, 16 uu behind the wall's line (wallLine: the side wall, the
  *  corner and the back wall), cut at |y| 128 and |x| 2048, attached at the bottom (RV-59) */

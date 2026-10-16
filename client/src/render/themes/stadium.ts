@@ -56,11 +56,8 @@ export function stadiumTheme(): Theme {
       floorStripe: null,
       markings: null,
       walls: {
-        neutral: new Color(0xffffff),
         blue: linear(p0),
         orange: linear(p1),
-        lines: 0.2,
-        ceilingLines: 0.06,
         game: true,
       },
     },

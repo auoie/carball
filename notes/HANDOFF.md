@@ -244,6 +244,14 @@ a found match's theme chunk during "Joining in" and hands the map to the match p
 while the claim connects; the welcome's map decides. `?theme=` still overrides (development), and a map-select pick drops
 it. `--map N` fixes every match's map: the e2e servers run on 0 (night), the queue server on 2 (meadow), which the queue
 test checks both match pages show.
+**The game's net, trim and cage on every map, 2026-10-16** (the user's decision: the old hex walls' hexagons warped over
+the goals' curves): every theme wears the stadium's cage (the force-field overlay round the ball, the game's additive
+beams stopping at the wall's foot, `cageGraph(false)`, with the hex glass beside the goal mouths below them), its net
+(the hex glass) and its trim (the frame's metal at the wall's foot, `SideTrimMaterial`, reflecting the arena's capture:
+every map captures it now; the team glow sheets behind the walls, which replace our light along the trim), tinted with
+the theme's own `walls.blue`/`orange`. Still the stadium's alone (`walls.game`): its field and floor, its goals' metal
+floors, underlayers, glows and unlit frame; every other theme keeps its floor, markings, goals' floors and lit goal frame.
+`HexWallMaterial` (hexWalls.ts), our beam ribbons and trim light, and `WallStyle`'s `neutral`/`lines`/`ceilingLines` went.
 **The browser tests' servers** start from `client/e2e/servers.ts` (Playwright's globalSetup), not its webServer: here a
 connection to a closed 127.0.0.1 port is dropped, not refused, and Playwright's pre-check of each server's URL waited
 2 min 14 s per server (9 of the suite's 12 minutes).

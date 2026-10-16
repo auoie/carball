@@ -48,11 +48,8 @@ export function meadowTheme(): Theme {
       floorStripe: new Color(0x63b853),
       markings: null,
       walls: {
-        neutral: new Color(0xf2f8ff),
         blue: new Color(0x2a7fff),
         orange: new Color(0xff8a1f),
-        lines: 0.22,
-        ceilingLines: 0.03, // (the sky shows through)
       },
     },
     root,

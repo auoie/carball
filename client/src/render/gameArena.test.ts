@@ -1,4 +1,5 @@
-// The arena with the game's materials (the stadium theme: notes/arena-visuals.md H-5, H-6, H-8, H-9, AV-15).
+// The arena with the game's materials (notes/arena-visuals.md H-5, H-6, H-8, H-9, AV-15): its net, trim and cage on every
+// map (the user's decision, 2026-10-16), the stadium's field and goals the stadium theme's alone.
 import { AdditiveBlending, type BufferGeometry, Color, type Material, Mesh, type Object3D, Vector3 } from "three";
 import { describe, expect, it } from "vitest";
 import { ArenaView, glowContour } from "./arena";
@@ -10,7 +11,6 @@ import { ENV_GLSL, ENV_RADIAL, ENV_SPREAD, GOAL_SIDE_CHART, GlowStripMaterial, H
 import { GOAL_BASE_LIGHT, GoalFloorMaterial, goalBaseZ, goalFloorZone, underGlassV } from "./goalInterior";
 import { GOAL_PROFILE_CHART, goalPath, goalProfileU } from "./goalSurface";
 import { HexFloorMaterial, SIDE_TRIM, SideTrimMaterial } from "./stadiumField";
-import { HexWallMaterial } from "./hexWalls";
 import { nightTheme } from "./themes/night";
 import { stadiumTheme } from "./themes/stadium";
 import { ARENA_PRIORITY } from "./translucentSort";
@@ -35,7 +35,6 @@ describe("the game's arena materials", () => {
     expect(all.filter((m) => m instanceof HexGlassMaterial)).toHaveLength(4);
     // (each side wall, each team's half; each goal's glows: RV-77)
     expect(all.filter((m) => m instanceof GlowStripMaterial)).toHaveLength(6);
-    expect(all.filter((m) => m instanceof HexWallMaterial)).toHaveLength(0);
     // (additive: the cage's beams and the floodlights' flare sheets, SUR-13)
     expect(all.filter((m) => m.blending === AdditiveBlending)).toHaveLength(2);
   });
@@ -106,22 +105,32 @@ describe("the game's arena materials", () => {
     expect(nets.map((n) => Math.sign(n.geometry.boundingSphere?.center.z ?? 0)).sort()).toEqual([-1, 1]);
   });
 
-  it("the stadium's wall foot as the game's frame (AV-10, H-4: Side_Trim, its tire marks 0.904, its baked light, the capture along its own reflection); other themes' lit", () => {
+  it("the wall foot as the game's frame on every map (AV-10, H-4: Side_Trim, its tire marks 0.904, its baked light, the capture along its own reflection)", () => {
     const trims = materials(stadium.root).filter((m): m is SideTrimMaterial => m instanceof SideTrimMaterial);
     expect(trims).toHaveLength(1);
     const fragment = trims[0]?.fragmentShader ?? "";
     expect(fragment).toContain("reflect(-toCamera, normalize(vNormal))");
     expect(fragment).toContain(`vec3(${SIDE_TRIM.light.map((v) => v.toFixed(3)).join(", ")})`);
     expect(SIDE_TRIM.m).toBe(0.904);
-    expect(materials(night.root).filter((m) => m instanceof SideTrimMaterial)).toHaveLength(0);
+    expect(materials(night.root).filter((m) => m instanceof SideTrimMaterial)).toHaveLength(1);
   });
 
-  it("other themes keep our own look", () => {
+  it("every map wears the game's net, trim and cage, in its own team colours; the stadium's field and goals stay its own", () => {
     const all = materials(night.root);
-    // (the walls, and each goal's net)
-    expect(all.filter((m) => m instanceof HexWallMaterial)).toHaveLength(3);
-    expect(all.filter((m) => m instanceof GlowStripMaterial || m instanceof HexGlassMaterial || m instanceof ForceFieldMaterial)).toHaveLength(0);
-    expect(all.filter((m) => m.blending === AdditiveBlending)).toHaveLength(0);
+    // (the cage's overlay; the glass beside each goal and the nets; the glow sheets behind the walls, without the
+    // stadium's goal glows; the beams additive)
+    const overlays = all.filter((m): m is ForceFieldMaterial => m instanceof ForceFieldMaterial);
+    expect(overlays).toHaveLength(1);
+    expect(all.filter((m) => m instanceof HexGlassMaterial)).toHaveLength(4);
+    expect(all.filter((m) => m instanceof GlowStripMaterial)).toHaveLength(4);
+    expect(all.filter((m) => m.blending === AdditiveBlending)).toHaveLength(1);
+    // (the night theme's own team colours, not the stadium's primaries)
+    const { blue, orange } = nightTheme().style.walls;
+    const uniforms = overlays[0]?.uniforms as Record<string, { value: unknown }> | undefined;
+    const tints = Object.values(uniforms ?? {}).map((u) => u.value).filter((v): v is Color => v instanceof Color).map((c) => c.getHex());
+    expect(tints).toEqual(expect.arrayContaining([blue.getHex(), orange.getHex()]));
+    // (its own floor and goals' floors: none of the stadium's field or goal metal)
+    expect(all.filter((m) => m instanceof GoalFloorMaterial || m instanceof HexFloorMaterial)).toHaveLength(0);
   });
 
   it("the shockwave: -0.25 at rest, to 1 over 2.5 s of world time after the explosion, back at rest for a new ball", () => {
@@ -160,7 +169,7 @@ describe("the cage's crossed beam quads (RV-75)", () => {
       { points: [[0, 0, 2044], [500, 0, 2044]], normals: [[0, 0, -1], [0, 0, -1]] },
     ],
   };
-  const beams = new CageBeams(graph, 92.75, stadiumTheme().style.walls);
+  const beams = new CageBeams(graph, stadiumTheme().style.walls);
   const geometry = beams.mesh.geometry;
   const normal = geometry.getAttribute("beamNormal");
   const side = geometry.getAttribute("side");

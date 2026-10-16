@@ -179,11 +179,8 @@ export function templeTheme(): Theme {
       floorStripe: new Color(0x5b5a72),
       markings: new Color(0xffe6a8), // glowing gold
       walls: {
-        neutral: new Color(0xfff0d0),
         blue: new Color(0x2a7fff),
         orange: new Color(0xff8a1f),
-        lines: 0.24,
-        ceilingLines: 0.04,
       },
     },
     root,

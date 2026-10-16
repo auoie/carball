@@ -336,11 +336,8 @@ export function ghostsTheme(): Theme {
       floorStripe: new Color(0x4c4560),
       markings: new Color(0xdccbff), // pale violet, glowing
       walls: {
-        neutral: new Color(0xcbb8ff),
         blue: new Color(0x2a7fff),
         orange: new Color(0xff8a1f),
-        lines: 0.24,
-        ceilingLines: 0.04,
       },
     },
     root,

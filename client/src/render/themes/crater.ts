@@ -202,11 +202,8 @@ export function craterTheme(): Theme {
       floorStripe: new Color(0x494262),
       markings: new Color(0xc8f4ff), // glowing pale cyan
       walls: {
-        neutral: new Color(0xd8c8ff),
         blue: new Color(0x2a7fff),
         orange: new Color(0xff8a1f),
-        lines: 0.26,
-        ceilingLines: 0.04,
       },
     },
     root,

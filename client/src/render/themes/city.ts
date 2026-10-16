@@ -87,11 +87,8 @@ export function cityTheme(): Theme {
       floorStripe: new Color(0x22264a),
       markings: new Color(0x5ff6ff), // neon lines on the dark deck
       walls: {
-        neutral: new Color(0x3ff0ff),
         blue: new Color(0x2a7fff),
         orange: new Color(0xff8a1f),
-        lines: 0.32, // (a neon cage)
-        ceilingLines: 0.06,
       },
     },
     root,

@@ -6,14 +6,12 @@ import type { Color, Fog, Group, Object3D, Vector3 } from "three";
 import { CAMERA_FAR } from "../renderer";
 
 export interface WallStyle {
-  readonly neutral: Color; // hexagon colour around midfield
-  readonly blue: Color; // towards each team's end
+  /** The teams' colours (linear) on the game's net, trim and cage, which every map wears (src/render/arena.ts): the cage's
+   *  overlay and beams, the glow sheets behind the walls */
+  readonly blue: Color;
   readonly orange: Color;
-  /** Opacity of the hexagon lines on the walls, and on the ceiling */
-  readonly lines: number;
-  readonly ceilingLines: number;
-  /** The game's own arena materials (notes/arena-visuals.md H-1..11: the cage's beams, the walls' overlay round the
-   *  ball, the glass), with `blue` and `orange` as the teams' linear primaries; else our own look */
+  /** The game's stadium itself (notes/arena-visuals.md: its field, its goals' metal floors and glows), with `blue` and
+   *  `orange` as the teams' linear primaries: the stadium theme's alone; else the theme's own floor and goals' floors */
   readonly game?: boolean;
 }
 

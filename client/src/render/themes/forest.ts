@@ -118,11 +118,8 @@ export function forestTheme(): Theme {
       floorStripe: new Color(0x55a144), // (faint: a clearing, not a stadium)
       markings: null,
       walls: {
-        neutral: new Color(0xe9f7e4),
         blue: new Color(0x2a7fff),
         orange: new Color(0xff8a1f),
-        lines: 0.18,
-        ceilingLines: 0.02, // (the canopy and sky show through)
       },
     },
     root,
