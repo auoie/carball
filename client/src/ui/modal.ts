@@ -27,6 +27,8 @@ export class Modal {
     this.#body.className = "modal-body";
     const ok = document.createElement("button");
     ok.className = "modal-ok";
+    // (the pad's focus on it; its press the notice's own cue, MENU-18)
+    ok.dataset["padDefault"] = "";
     ok.textContent = MODAL_TEXT.ok;
     ok.addEventListener("click", () => {
       this.close();

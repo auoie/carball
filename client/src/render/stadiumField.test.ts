@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { ArenaView } from "./arena";
 import { floorOutline } from "./arenaSurface";
 import { GrassCube } from "./grassCube";
-import { FrameMaterial, GRASS_LIGHT, GrassMaterial, HexFloorMaterial, MarkingMaterial, TIRE_MARKS, buildStadiumField, grassBin, grassReflection } from "./stadiumField";
+import { FrameMaterial, GRASS_LIGHT, GrassMaterial, HexFloorMaterial, MarkingMaterial, TIRE_MARKS, buildStadiumField, grassBin, grassReflection, mergeFieldPieces } from "./stadiumField";
 import { FIELD_LIGHT, FIELD_MEASURES, type FieldPlan, shippableFieldPlan } from "./stadiumFieldRules";
 import { meadowTheme } from "./themes/meadow";
 import { stadiumTheme } from "./themes/stadium";
@@ -175,6 +175,47 @@ describe.skipIf(!local)("the field traced from the game's meshes (local)", () =>
         const hits = regions.filter((r) => r.tris.some((t) => inTriangle(x, y, t))).map((r) => r.name);
         expect.soft(hits.length, `${String(x)},${String(y)}: ${hits.join(", ")}`).toBeLessThanOrEqual(1);
       }
+    }
+  });
+});
+
+describe("the field's pieces merged (mergeFieldPieces: fewer draw calls, the same pixels)", () => {
+  it("each shader's opaque pieces one mesh: their vertices as they were, each piece's light and frame values with its vertices, its table a texture row", () => {
+    const cube = new GrassCube().uniform;
+    const [p0, p1] = [new Color(0.1, 0.3, 1), new Color(1, 0.4, 0.05)];
+    const before = buildStadiumField(p0, p1, cube, shippableFieldPlan());
+    const after = buildStadiumField(p0, p1, cube, shippableFieldPlan());
+    mergeFieldPieces(after);
+    const meshes = (g: Object3D): Mesh[] => g.children.filter((c): c is Mesh => c instanceof Mesh);
+    const byName = new Map(meshes(before).map((m) => [m.name, m]));
+    // (the hex floors 4 as 1, the strips 2 as 1, the E lines 2 as 1, the D lines 2 as 1)
+    expect(meshes(before).length - meshes(after).length).toBe(6);
+    const merged = meshes(after).filter((m) => m.userData["pieces"] !== undefined);
+    expect(merged.map((m) => (m.userData["pieces"] as unknown[]).length).sort()).toEqual([2, 2, 2, 4]);
+    for (const mesh of merged) {
+      const material = mesh.material as ShaderMaterial;
+      expect(material.defines["PER_VERTEX_PIECE"]).toBe("");
+      const table = (material.uniforms["lightTex"]?.value as { image: { data: Float32Array } }).image.data;
+      const pieces = mesh.userData["pieces"] as { name: string; start: number; count: number }[];
+      pieces.forEach((piece, k) => {
+        const source = byName.get(piece.name);
+        if (!source) throw new Error(piece.name);
+        const position = source.geometry.getAttribute("position") as BufferAttribute;
+        const into = mesh.geometry.getAttribute("position") as BufferAttribute;
+        expect(piece.count).toBe(position.count);
+        for (let i = 0; i < position.count; i += 97) expect([into.getX(piece.start + i), into.getY(piece.start + i), into.getZ(piece.start + i)]).toEqual([position.getX(i), position.getY(i), position.getZ(i)]);
+        const u = (source.material as ShaderMaterial).uniforms;
+        const axis = mesh.geometry.getAttribute("pieceAxis") as BufferAttribute;
+        const frame = mesh.geometry.getAttribute("pieceFrame") as BufferAttribute;
+        const row = mesh.geometry.getAttribute("pieceRow") as BufferAttribute;
+        const at = piece.start + piece.count - 1;
+        expect([axis.getX(at), axis.getY(at), axis.getZ(at), axis.getW(at)]).toEqual(Array.from(new Float32Array(u["lightAxis"]?.value as number[])));
+        if (source.material instanceof FrameMaterial) expect([frame.getX(at), frame.getY(at), frame.getZ(at)]).toEqual(Array.from(new Float32Array([u["frameR"]?.value, u["frameG"]?.value, u["tireMarks"]?.value].map(Number))));
+        expect(row.getX(at)).toBe(k);
+        (u["lightTable"]?.value as Vector3[]).forEach((v, i) => {
+          expect(Array.from(table.subarray(4 * (16 * k + i), 4 * (16 * k + i) + 3))).toEqual(Array.from(new Float32Array([v.x, v.y, v.z])));
+        });
+      });
     }
   });
 });
@@ -358,11 +399,16 @@ describe("the field's materials and light", () => {
     const stadium = materials(new ArenaView(stadiumTheme()).root);
     // (the grass, its rim and its traces: AV-6a)
     expect(stadium.filter((m): m is GrassMaterial => m instanceof GrassMaterial).map((m) => m.variant).sort()).toEqual(["grass", "rim", "trace"]);
-    // (each piece its own baked light; the goal mouths Reflective_Floor_B; the field's pieces by name, OOBFloor under
-    // each goal by its own profile: RV-104)
+    // (each piece its own baked light: four drawn as one mesh carrying theirs per vertex (mergeFieldPieces, pinned above),
+    // the goal mouths Reflective_Floor_B on their own; OOBFloor under each goal by its own profile: RV-104)
     const hex = stadium.filter((m) => m instanceof HexFloorMaterial);
-    expect(hex.map((m) => m.piece).filter((p) => typeof p === "string").sort()).toEqual(["disc", "goalEnd", "goalMouth", "hexPads", "hexSide"]);
+    expect(hex.map((m) => m.piece).filter((p) => typeof p === "string").sort()).toEqual(["goalMouth", "hexSide"]);
     expect(hex.filter((m) => typeof m.piece !== "string")).toHaveLength(2);
+    const merged: string[] = [];
+    new ArenaView(stadiumTheme()).root.traverse((o) => {
+      for (const piece of (o.userData["pieces"] ?? []) as { name: string }[]) merged.push(piece.name);
+    });
+    expect(merged.filter((n) => n.startsWith("hex floor: ")).sort()).toEqual(["hex floor: centre disc", "hex floor: goal ends", "hex floor: pad bases", "hex floor: side bays"]);
     // (each marking mesh its own baked light: Goal_Lines brightest, Field_Side_Lines dimmest)
     const marks = stadium.filter((m): m is MarkingMaterial => m instanceof MarkingMaterial);
     expect(marks.map((m) => m.group).sort()).toEqual(["centre", "goal", "side"]);

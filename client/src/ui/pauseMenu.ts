@@ -98,4 +98,11 @@ export class PauseMenu {
     if (this.isOpen) this.close();
     else this.open();
   }
+
+  /** B or Escape with the Exit question up: the question answered NO, the menu kept (RV-478); whether one was up */
+  dismissQuestion(): boolean {
+    if (!this.#question || this.#question.hidden) return false;
+    this.#question.hidden = true;
+    return true;
+  }
 }

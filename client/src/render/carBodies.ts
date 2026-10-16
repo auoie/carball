@@ -259,14 +259,16 @@ export function buildCarBody(look: CarBodySpec, config: CarConfig, paint: Color)
     [Math.max(beltBack[0], edgeAt(backEdge, beltBack[1] + 1, beltBack[0]) + 2), beltBack[1] + 1],
   ];
   for (const s of [-1, 1]) {
-    group.add(warp(new Mesh(new ShapeGeometry(new Shape(side.map(([x, y]) => new Vector2(x, y)))), glass), (_x, y) => s * ((cabinHalf + 0.3) * tumble(y))));
+    // (0.8 off the cabin's outline: its bevelled sides 0.5 under it at least, not to fight far off: RV-487)
+    group.add(warp(new Mesh(new ShapeGeometry(new Shape(side.map(([x, y]) => new Vector2(x, y)))), glass), (_x, y) => s * ((cabinHalf + 0.8) * tumble(y))));
   }
 
   // Lights, the grille and the bumpers' black lips
   const noseHalf = Z(F.halfWidthNose);
   const tailHalf = Z(F.halfWidthTail);
   const noseTop = Y(F.noseTop);
-  box(trim, 1, 5, Math.max(4, 2 * noseHalf - 20), front + 0.1, noseTop - 7, 0);
+  // (the grille clear of the headlights beside it, not under them 0.1 apart: RV-487)
+  box(trim, 1, 5, Math.max(4, 2 * noseHalf - 23), front + 0.1, noseTop - 7, 0);
   // (the front lip 1 uu under the sills: its underside clear of the body's, not in its plane, where they z-fought: the
   // user's finding)
   box(trim, 4, 5, 2 * noseHalf - 1, front - 1.5, bottom + 1.5, 0);
@@ -299,7 +301,7 @@ export function buildCarBody(look: CarBodySpec, config: CarConfig, paint: Color)
     const centre = { x: X(look.spare.back) + width / 2, y: Y(look.spare.top) - radius };
     for (const [r, w, material] of [
       [radius, width, tyre],
-      [radius * 0.6, width + 0.6, rim],
+      [radius * 0.6, width + 1.2, rim], // (0.6 proud of the tyre's faces: RV-487)
     ] as const) {
       const mesh = new Mesh(new CylinderGeometry(r, r, w, 20), material);
       mesh.rotation.z = Math.PI / 2; // (its axle along the car's length)

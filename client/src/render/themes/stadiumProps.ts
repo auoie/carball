@@ -1,5 +1,6 @@
 // The stadium's screens, ads and near-field props (notes/arena-surroundings.md SUR-9, 10, 13, 17..19): the panels with
 // their formulas and our own emblems (no ad artwork), the scaffolds' banners, the corner flags and the light arrows.
+import { detailMode } from "../detail";
 import { BoxGeometry, BufferGeometry, type Color, CylinderGeometry, DoubleSide, Float32BufferAttribute, Group, Mesh, PlaneGeometry, ShaderMaterial, Vector3 } from "three";
 import { fullBright } from "../teamColors";
 import { BOWL_COLOURS, seenMaterial } from "./stadiumSurroundings";
@@ -321,7 +322,8 @@ export function buildScreensAndProps(primary0: Color, primary1: Color): { group:
     banner.position.set(x, h * 0.55, y - Math.sign(y) * (w / 2 + 2));
     banner.lookAt(0, h * 0.55, 0);
     banner.name = "props: scaffold banner";
-    group.add(tower, banner);
+    // (the scaffolds DetailMode High: gone below World Detail High Quality, QG-15)
+    group.add(detailMode(tower, "high"), detailMode(banner, "high"));
   });
   // The corner flags: poles on an arc, each with its banner and strip, facing the field
   const F = PROPS.flags;
@@ -378,7 +380,8 @@ export function buildScreensAndProps(primary0: Color, primary1: Color): { group:
       pole.name = "props: flag pole";
       banner.name = "props: flag cloth";
       top.name = "props: flag strip";
-      group.add(pole, banner, top);
+      // (the corner banner flags DetailMode Medium: QG-14)
+      for (const piece of [pole, banner, top]) group.add(detailMode(piece, "medium"));
     }
   }
   PROPS.arrows.forEach(([x, y], k) => {
@@ -524,7 +527,8 @@ export function buildPlaza(): Group {
     mesh.position.set(tree.r * Math.cos(a), (tree.height + PLAZA.poplarFoot) / 2, tree.r * Math.sin(a));
     mesh.lookAt(0, mesh.position.y, 0);
     mesh.name = "plaza: poplar";
-    group.add(mesh);
+    // (the small ones DetailMode High, QG-15; the three big ones over the -X plaza always drawn)
+    group.add(tree.height < 3000 ? detailMode(mesh, "high") : mesh);
   }
   return group;
 }

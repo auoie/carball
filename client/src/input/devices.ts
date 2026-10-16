@@ -2,6 +2,13 @@
 import { padStyleOf, setPadStyle } from "./bindings";
 import type { GamepadSnapshot, InputEvent, InputSnapshot } from "./mapping";
 
+/** A text field (or editable text) a key typed goes to */
+function editable(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable || target instanceof HTMLTextAreaElement) return true;
+  return target instanceof HTMLInputElement && !["button", "checkbox", "color", "file", "radio", "range", "reset", "submit"].includes(target.type);
+}
+
 export class InputDevices {
   readonly #keys = new Set<string>();
   readonly #mouseButtons = new Set<number>();
@@ -21,6 +28,8 @@ export class InputDevices {
   #mouseY = 0;
   /** Capture the pointer on a click (keyboard-and-mouse free look on): its motion turns the view */
   capturePointer = false;
+  /** Whether a menu is up (Tab then moves the focus, not the scoreboard's) */
+  menuOpen: () => boolean = () => false;
 
   /** `surface`: the element that receives mouse buttons (the game canvas). */
   constructor(surface: HTMLElement) {
@@ -28,8 +37,11 @@ export class InputDevices {
     window.addEventListener(
       "keydown",
       (e) => {
+        // (typing in a text field, the settings' name: its keys the field's, not the game's: RV-482)
+        if (editable(e.target)) return;
         if (e.code === "Space" || e.code === "Backspace") e.preventDefault(); // no page scroll/back
-        if (e.code === "Tab" && (e.target === document.body || e.target === surface)) e.preventDefault(); // (the scoreboard, not focus)
+        // (Tab the scoreboard's, not focus, in play; with a menu up it moves the focus, the menus' keyboard path: RV-482)
+        if (e.code === "Tab" && !this.menuOpen() && (e.target === document.body || e.target === surface)) e.preventDefault();
         this.#usingGamepad = false;
         this.#ownerIsGamepad = false;
         this.#keys.add(e.code);

@@ -472,6 +472,14 @@
     {
       "channel": "control",
       "message": {
+        "type": "kicked",
+        "reason": 2
+      },
+      "hex": "02009102"
+    },
+    {
+      "channel": "control",
+      "message": {
         "type": "searchCooldown",
         "seconds": 300,
         "network": true

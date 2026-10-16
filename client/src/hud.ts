@@ -171,6 +171,9 @@ function element<T extends HTMLElement>(root: ParentNode, selector: string, type
   return el;
 }
 
+/** The status line's speed and fps readouts: at most this often (s) */
+const READOUT_EVERY = 0.1;
+
 export class Hud {
   readonly #root: HTMLElement;
   readonly #stage: HTMLElement;
@@ -200,6 +203,9 @@ export class Hud {
   readonly #ballCamToggle: HTMLElement;
   readonly #fps: HTMLElement;
   readonly #net: HTMLElement;
+  /** The status line's texts as last written, and when its readouts last were */
+  readonly #written = new Map<HTMLElement, string>();
+  #readoutAt = -Infinity;
   readonly #help: HTMLElement;
   readonly #flip: HTMLElement;
   readonly #flipLamp: FlipLamp;
@@ -307,6 +313,13 @@ export class Hud {
   #popMessage = false;
   #messageText = "";
 
+  /** `el`'s text, written only if it changed */
+  #text(el: HTMLElement, text: string): void {
+    if (this.#written.get(el) === text) return;
+    this.#written.set(el, text);
+    el.textContent = text;
+  }
+
   update(s: HudState): void {
     const now = performance.now() / 1000;
     const stage = fitStage(this.#stage, this.#stageFit);
@@ -323,12 +336,17 @@ export class Hud {
     const key = s.ballCamKey ?? null;
     if (key === null) clearPrompt(this.#ballCamToggle);
     else renderPrompt(this.#ballCamToggle, key, "Toggle"); // (HT-3: the pad's and the mouse's buttons as icons)
-    this.#speed.textContent = `${Math.round(s.speed)} uu/s`;
+    // (the status line: each text written only when it changes, the speed and fps readouts at most 10 times a second;
+    // every write lays the line out again: the Firefox profile's reflow each frame, 2026-10-16)
+    if (now - this.#readoutAt >= READOUT_EVERY) {
+      this.#readoutAt = now;
+      this.#text(this.#speed, `${Math.round(s.speed)} uu/s`);
+      this.#text(this.#fps, `${Math.round(s.fps)} fps`);
+    }
     this.#speed.classList.toggle("supersonic", s.supersonic);
-    this.#camera.textContent = s.ballCam ? "Ball cam" : "Car cam";
-    this.#fps.textContent = `${Math.round(s.fps)} fps`;
-    this.#net.textContent = s.net ?? "";
-    this.#net.hidden = s.net === null;
+    this.#text(this.#camera, s.ballCam ? "Ball cam" : "Car cam");
+    this.#text(this.#net, s.net ?? "");
+    if (this.#net.hidden !== (s.net === null)) this.#net.hidden = s.net === null;
     // (the flip indicator, ours, follows the boost meter's rule)
     this.#updateFlip(this.#boostBox.hidden ? null : s.flip, s.flipReset);
     this.#updateRespawn(s.respawn);
@@ -561,11 +579,14 @@ export class Hud {
     // The lamp: lit while a dodge is there (amber; gold from a flip reset), dim on the wheels, dark once spent; the
     // window's seconds on its readout (and in words, for the page's readers and the tests)
     const state = dodge.kind === "free" && dodge.reset ? "reset" : dodge.kind;
-    this.#flip.dataset["state"] = state;
+    if (this.#flip.dataset["state"] !== state) this.#flip.dataset["state"] = state;
     const seconds = dodge.kind === "window" ? dodge.remaining.toFixed(1) : null;
     this.#flipLamp.digits(seconds);
-    this.#flipDetail.textContent = seconds === null ? "" : `${seconds} s`;
-    this.#flip.setAttribute("aria-label", dodge.kind === "spent" ? "No flip" : dodge.kind === "ground" ? "Flip (on the ground)" : seconds === null ? "Flip" : `Flip, ${seconds} s left`);
+    // (the page's text only when it changes: not rewritten every frame, RV-492)
+    const detail = seconds === null ? "" : `${seconds} s`;
+    if (this.#flipDetail.textContent !== detail) this.#flipDetail.textContent = detail;
+    const label = dodge.kind === "spent" ? "No flip" : dodge.kind === "ground" ? "Flip (on the ground)" : seconds === null ? "Flip" : `Flip, ${seconds} s left`;
+    if (this.#flip.getAttribute("aria-label") !== label) this.#flip.setAttribute("aria-label", label);
     // (a flip reset: the lamp flickers bright, then holds gold; the game's own sign is the effect under the car, not
     // text: render/flipResetFx.ts, HUD-19)
     if (reset) this.#flipLamp.flicker();

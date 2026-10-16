@@ -1,7 +1,8 @@
 // Three.js scene and camera. The lights, background and fog come with the arena's theme (src/render/themes/). The scene
 // is drawn linear HDR and through the game's post-processing (postProcess.ts) to display values: no three.js tone
 // mapping or sRGB encoding (PP-19).
-import { LinearSRGBColorSpace, NoToneMapping, PerspectiveCamera, Scene, Vector3, WebGLRenderer } from "three";
+import { gpuName } from "../settings/video";
+import { LinearSRGBColorSpace, NoToneMapping, type Object3D, PerspectiveCamera, Scene, Vector3, WebGLRenderer } from "three";
 import { fogAll } from "./heightFog";
 import { useGameTranslucentSort } from "./translucentSort";
 import { PostProcess, type PostOptions } from "./postProcess";
@@ -12,6 +13,33 @@ import { toThreeVector } from "./coords";
 
 /** The camera's far plane (uu): scenery farther from the camera isn't drawn */
 export const CAMERA_FAR = 40000;
+
+/** The most a page's loading waits on its shader compile (ms): past it the frames start anyway */
+export const PREPARE_WAIT_MS = 10_000;
+
+/** `work`, or the canvas's WebGL context lost, or `ms`: whichever comes first (the shaders' compile never resolves once
+ *  the context is gone) */
+export async function settledOr(work: Promise<unknown>, canvas: EventTarget, ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let lost: (() => void) | undefined;
+  try {
+    await Promise.race([
+      work,
+      new Promise<void>((resolve) => {
+        lost = (): void => {
+          resolve();
+        };
+        canvas.addEventListener("webglcontextlost", lost, { once: true });
+      }),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+    if (lost) canvas.removeEventListener("webglcontextlost", lost);
+  }
+}
 
 export class Renderer {
   readonly scene = new Scene();
@@ -42,6 +70,10 @@ export class Renderer {
    *  drawn and the reflection capture waits */
   draws = true;
 
+  /** Render Quality's share of the view's resolution each way (settings/video.ts: the canvas drawn smaller and shown
+   *  at its size, the HUD and menus not in it) */
+  #renderScale = 1;
+
   constructor(readonly canvas: HTMLCanvasElement) {
     // (no anti-aliasing: the game's default is Off, PP-16; the scene goes to an HDR target anyway)
     this.#gl = new WebGLRenderer({ canvas, antialias: false, powerPreference: "high-performance" });
@@ -51,14 +83,35 @@ export class Renderer {
     // (the translucents in the game's order, the reflection capture's faces too: TRN1)
     useGameTranslucentSort(this.#gl, this.scene);
     this.#post = new PostProcess(this.#gl);
+    // (the scene never moves: its matrix kept, so a frame doesn't force every object's world matrix again; what moves
+    // updates its own, the arena's still pieces never: src/render/arena.ts freeze)
+    this.scene.matrixAutoUpdate = false;
 
     this.#observer = new ResizeObserver(() => { this.#resize(); });
     this.#observer.observe(canvas);
+    window.addEventListener("resize", this.#readRect);
+    this.#resize();
+  }
+
+  /** The GPU's name, as the browser gives it (settings/video.ts isWeakGpu) */
+  get gpuName(): string {
+    return gpuName(this.#gl.getContext());
+  }
+
+  get renderScale(): number {
+    return this.#renderScale;
+  }
+
+  set renderScale(scale: number) {
+    if (scale === this.#renderScale) return;
+    this.#renderScale = scale;
+    this.#gl.setPixelRatio(Math.min(2, window.devicePixelRatio) * scale);
     this.#resize();
   }
 
   dispose(): void {
     this.#observer.disconnect();
+    window.removeEventListener("resize", this.#readRect);
     this.#post.dispose();
     this.#gl.dispose();
   }
@@ -72,7 +125,7 @@ export class Renderer {
   project(p: Vec3): { readonly x: number; readonly y: number } | null {
     const v = toThreeVector(p, this.#projected).project(this.#camera);
     if (v.z > 1 || v.z < -1) return null;
-    const rect = this.#gl.domElement.getBoundingClientRect();
+    const rect = this.#rect;
     return { x: rect.left + ((v.x + 1) / 2) * rect.width, y: rect.top + ((1 - v.y) / 2) * rect.height };
   }
 
@@ -82,7 +135,7 @@ export class Renderer {
     const v = toThreeVector(p, this.#projected).sub(this.#camera.position);
     const depth = v.dot(this.#camera.getWorldDirection(this.#viewDirection));
     if (depth <= 1) return null;
-    const height = this.#gl.domElement.getBoundingClientRect().height;
+    const height = this.#rect.height;
     const focal = height / 2 / Math.tan((this.#camera.fov * Math.PI) / 360);
     return { pxPerUnit: focal / depth, distance: v.length(), horizontalFov: this.#horizontalFov };
   }
@@ -94,7 +147,33 @@ export class Renderer {
     if (!this.draws) return;
     if (this.heightFog) fogAll(this.scene);
     for (const work of this.#beforeNextFrame.splice(0)) work(this.#gl, this.scene);
-    await this.#post.compile(this.scene, this.#camera);
+    // (never waiting forever: a context lost mid-compile never resolves it, RV-484)
+    await settledOr(this.#post.compile(this.scene, this.#camera), this.canvas, PREPARE_WAIT_MS);
+  }
+
+  /** The whole chain drawn once while the loading screen still covers the page (RV-483): the reflection capture, every
+   *  mesh (frustum culling off for it: its buffers and textures uploaded, its programs used once) and the
+   *  post-processing at the canvas's size, so the first frames seen upload and finalize nothing; then two frames for the
+   *  browser to present it. The camera's fade-in starts at the first real frame */
+  async warmUp(): Promise<void> {
+    if (!this.draws) return;
+    if (this.heightFog) fogAll(this.scene);
+    for (const work of this.#beforeNextFrame.splice(0)) work(this.#gl, this.scene);
+    const culled: Object3D[] = [];
+    this.scene.traverse((o) => {
+      if (!o.frustumCulled) return;
+      culled.push(o);
+      o.frustumCulled = false;
+    });
+    this.#post.render(this.scene, this.#camera, this.postOptions, 1);
+    for (const o of culled) o.frustumCulled = true;
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          resolve();
+        });
+      });
+    });
   }
 
   render(view: CameraView): void {
@@ -129,5 +208,15 @@ export class Renderer {
     this.#gl.setSize(width, height, false);
     this.#camera.aspect = width / height;
     this.#camera.updateProjectionMatrix();
+    this.#readRect();
   }
+
+  /** The canvas's box on the page (CSS px), read when it's resized or the window is, not by every projection: each read
+   *  a forced layout, the HUD writing between them (the nameplates, the arrows, every frame) */
+  #rect = { left: 0, top: 0, width: 1, height: 1 };
+
+  readonly #readRect = (): void => {
+    const r = this.canvas.getBoundingClientRect();
+    this.#rect = { left: r.left, top: r.top, width: r.width, height: r.height };
+  };
 }

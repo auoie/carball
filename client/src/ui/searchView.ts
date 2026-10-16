@@ -1,13 +1,14 @@
 // The search's views (notes/matchmaking.md MM-4..8): the Searching panel over the main menu (its title, the summary, the
 // message log, Cancel Search), and elsewhere the 26 px banner across the top (the summary, Cancel Search). Back closes the
 // panel and the search goes on under the banner; both go when the search ends.
-import { SEARCH_TEXT, type SearchViewState } from "../game/matchmaking";
+import { OWN_SEARCH_TEXT, SEARCH_TEXT, type SearchViewState } from "../game/matchmaking";
 
 const SUMMARY: Record<SearchViewState["status"], string> = {
   connecting: SEARCH_TEXT.connecting,
   searching: SEARCH_TEXT.searching,
   joining: SEARCH_TEXT.joining,
   failed: SEARCH_TEXT.failed,
+  ended: OWN_SEARCH_TEXT.ended,
 };
 
 /** What shows: the panel while it's open over the menu, else the banner (never both: RV-360); neither without a search */

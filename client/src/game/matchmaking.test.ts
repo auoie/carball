@@ -178,8 +178,12 @@ describe("matchmaking (notes/matchmaking.md MM-4..14)", () => {
     mm.frame(0);
     mm.start(2);
     searches[0]?.handlers.replaced();
-    expect(mm.state?.status).toBe("failed");
+    // (its summary "Ended", not the game's "Failed": RV-491; no longer searching, and it stays till Cancel Search)
+    expect(mm.state?.status).toBe("ended");
+    expect(mm.searching).toBe(false);
     expect(mm.state?.lines).toEqual([{ text: "You started searching in another tab.", kind: "status" }]);
+    mm.frame(60);
+    expect(mm.state?.status).toBe("ended");
   });
 
   it("a search refused for a no-show says why and how long, and stays until Cancel Search or a new search (RV-367)", () => {

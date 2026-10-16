@@ -141,7 +141,8 @@ export function addWheels(group: Group, wheels: readonly { readonly x: number; r
     for (const side of [-1, 1]) {
       for (const [radius, width, material] of [
         [wheel.radius, wheel.width, tyre],
-        [wheel.radius * 0.6, wheel.width + 0.6, rim],
+        // (the rim 0.6 proud of the tyre's faces: apart enough not to fight far off, RV-487)
+        [wheel.radius * 0.6, wheel.width + 1.2, rim],
       ] as const) {
         const mesh = new Mesh(new CylinderGeometry(radius, radius, width, 20), material);
         mesh.rotation.x = Math.PI / 2;
@@ -199,9 +200,10 @@ export function paneAlong([a, b]: readonly [Point, Point], halfA: number, halfB:
   const dy = b[1] - a[1];
   const len = Math.hypot(dx, dy);
   const t = 2 / len;
-  // Outward normal (forward-up on the windscreen, back-up on the hatch), lifted 0.4 uu off the body
-  const nx = (dy / len) * 0.4;
-  const ny = (-dx / len) * 0.4;
+  // Outward normal (forward-up on the windscreen, back-up on the hatch), lifted 0.8 uu off the body's outline (its
+  // bevelled faces come nearer: 0.5 at least, not to fight far off, RV-487)
+  const nx = (dy / len) * 0.8;
+  const ny = (-dx / len) * 0.8;
   const [ax, ay] = [a[0] + dx * t + nx, a[1] + dy * t + ny];
   const [bx, by] = [b[0] - dx * t + nx, b[1] - dy * t + ny];
   const geometry = new BufferGeometry();

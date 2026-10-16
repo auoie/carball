@@ -220,7 +220,8 @@ export class BallView {
     // (the far ring: a 192 uu billboard at the ball, through everything)
     this.#ring = fx(new PlaneGeometry(BALL_FX.ring.size, BALL_FX.ring.size), RING_VERTEX, RING_FRAGMENT, false);
     // (the clarity sphere: 128 uu, seen from inside, black, its rim soft)
-    this.#sphere = fx(new SphereGeometry(BALL_FX.sphere.radius, 32, 16), SPHERE_VERTEX, SPHERE_FRAGMENT, true, BackSide);
+    // (24 x 12: its opacity (N.V)^2, nothing at its silhouette, so no facet shows: the integrated-graphics trims)
+    this.#sphere = fx(new SphereGeometry(BALL_FX.sphere.radius, 24, 12), SPHERE_VERTEX, SPHERE_FRAGMENT, true, BackSide);
     this.root.add(this.#ball, this.#marker, this.#sphere, this.#beam, this.#ring);
   }
 

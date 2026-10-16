@@ -10,6 +10,7 @@ use std::sync::atomic::AtomicU64;
 use carball_server::engine::{self, Arena};
 use carball_server::net::NetLimits;
 use carball_server::protocol::{self, Control, Datagram, InputFrame};
+use carball_server::game::Outgoing;
 use carball_server::{game_loop, net};
 use wtransport::{ClientConfig, Endpoint};
 
@@ -396,6 +397,43 @@ async fn a_closed_search_leaves_the_queue_a_match_formed_as_it_closed_reaches_it
     assert_eq!(next_control(&mut old_recv, Duration::from_secs(5)).await, Some(Control::Kicked { reason: protocol::KICK_REPLACED }));
     assert_eq!(next_control(&mut old_recv, Duration::from_secs(5)).await, None, "then its session ends");
     assert_eq!(next_control(&mut new_recv, Duration::from_millis(500)).await, None, "the new search waits");
+}
+
+/// The flush on close made certain (SM9, RV-486): a stand-in game answers the closing search's CancelSearch with a
+/// match found (one formed just before the cancel was seen, the race above's rare case): the page still reads it, so the
+/// search is out of the queue before the session ends and what the game sent before that goes out
+#[tokio::test(flavor = "multi_thread")]
+async fn a_closing_search_writes_out_what_the_game_sent_before_its_cancel() {
+    let (identity, cert_hash) = net::dev_identity().unwrap();
+    let server = net::endpoint(identity, 0).unwrap();
+    let port = server.local_addr().unwrap().port();
+    let (to_game, mut messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
+    tokio::spawn(net::accept_loop(Arc::new(server), to_game, open_limits()));
+    // (the game: the search's Join kept; its CancelSearch answered with a match, then let go; true if the cancel came
+    // before the session's Leave)
+    let game = tokio::spawn(async move {
+        let mut searcher = None;
+        while let Some(message) = messages.recv().await {
+            match message {
+                net::ToGame::Join { out, .. } => searcher = Some(out),
+                net::ToGame::CancelSearch { .. } => {
+                    if let Some(out) = searcher.take() {
+                        let _ = out.send(Outgoing::Control(Control::MatchFound { token: 7, map: 3 }.encode())).await;
+                    }
+                    return true;
+                }
+                net::ToGame::Leave { .. } => return false,
+                _ => {}
+            }
+        }
+        false
+    });
+    let (_d, mut d_send, mut d_recv) = search_session(port, cert_hash, 1, 900).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    d_send.finish().await.unwrap();
+    assert_eq!(next_control(&mut d_recv, Duration::from_secs(3)).await, Some(Control::MatchFound { token: 7, map: 3 }));
+    assert_eq!(next_control(&mut d_recv, Duration::from_secs(3)).await, None, "then its stream ends");
+    assert!(game.await.unwrap(), "the search cancelled before its session ended");
 }
 
 /// A server that takes pages from one origin only, and few sessions from an address: another origin, or none, is

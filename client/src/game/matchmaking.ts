@@ -37,13 +37,15 @@ export const OWN_SEARCH_TEXT = {
   failedPrefix: "Search failed:",
   /** Another tab of this browser searched: this one's search ended (RV-460: our words, plain) */
   replaced: "You started searching in another tab.",
+  /** That search's summary: ended, not failed (RV-491) */
+  ended: "Ended",
   cooldown: (seconds: number): string =>
     `Your last match was cancelled because you didn't join it in time or left before it started. You can search again in ${clock(seconds)}.`,
   /** The address's block (RV-385): maybe someone else's doing, so it blames no one */
   cooldownNetwork: (seconds: number): string => `Searches from your network are paused after a recent no-show. You can search again in ${clock(seconds)}.`,
 } as const;
 
-export type SearchStatus = "connecting" | "searching" | "joining" | "failed";
+export type SearchStatus = "connecting" | "searching" | "joining" | "failed" | "ended";
 
 /** A log line and its colour (MM-8: status blue, warning red, countdown yellow) */
 export interface LogLine {
@@ -136,7 +138,7 @@ export class Matchmaking {
   }
 
   get searching(): boolean {
-    return this.#state !== null && this.#state.status !== "failed";
+    return this.#state !== null && this.#state.status !== "failed" && this.#state.status !== "ended";
   }
 
   get playlist(): number {
@@ -198,7 +200,7 @@ export class Matchmaking {
         this.#session = null;
         this.#extra.push({ text: OWN_SEARCH_TEXT.replaced, kind: "status" });
         this.#failedAt = null;
-        this.#set("failed");
+        this.#set("ended");
       },
       // (the refusal stays until Cancel Search or a new search: its wait is minutes, the line must be read)
       cooldown: (seconds, network) => {

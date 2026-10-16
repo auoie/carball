@@ -14,7 +14,7 @@ const RIGHT = 15;
 
 /** Holds `buttons` (and the sticks at `axes`) for one of the page's frames, then lets go for two: not a fixed time (under
  *  the tests' load a frame can outlast a short hold, the press never seen), and not two frames (two of them can outlast
- *  the menus' 0.4 s repeat delay, a direction moving twice). The game's frame reads the pad before this one's callback
+ *  the menus' 0.2 s repeat delay, a direction moving twice). The game's frame reads the pad before this one's callback
  *  (asked for first), so the press is always seen */
 async function tap(page: Page, buttons: number[], axes = [0, 0, 0, 0]): Promise<void> {
   await page.evaluate(
@@ -49,6 +49,10 @@ test("menus with a pad: Start, the D-pad's focus, A, B (MENU-1/4)", async ({ pag
   await expect(menu.getByRole("button", { name: /^play$/i })).toHaveClass(/pad-focus/);
   await tap(page, [A]);
   await expect(menu.getByRole("button", { name: /^free play$/i })).toBeVisible();
+  // (Start on the main menu: nothing, never a step back: RV-475)
+  await tap(page, [START]);
+  await expect(menu.getByRole("button", { name: /^free play$/i })).toBeVisible();
+  await expect(page.locator("#pause-menu")).toBeHidden();
   // (focus Free Play: down from the top until it holds it, then A)
   for (let i = 0; i < 4 && !(await menu.getByRole("button", { name: /^free play$/i }).evaluate((b) => b.classList.contains("pad-focus"))); i++) await tap(page, [DOWN]);
   await tap(page, [A]);
@@ -86,8 +90,9 @@ test("menus with a pad: Start, the D-pad's focus, A, B (MENU-1/4)", async ({ pag
   for (let i = 0; i < 4 && !(await pause.getByRole("button", { name: /^settings$/i }).evaluate((el) => el.classList.contains("pad-focus"))); i++) await tap(page, [], [0, 1, 0, 0]);
   await tap(page, [A]);
   await expect(page.locator("#settings")).toBeVisible();
-  await tap(page, [B]);
-  await tap(page, [B]);
+  // (Start with the settings open: the pause menu closed, the settings with it, no page backed out of: RV-475)
+  await tap(page, [START]);
+  await expect(page.locator("#settings")).toBeHidden();
   await expect(pause).toBeHidden();
   expect(errors).toEqual([]);
 });
@@ -220,5 +225,38 @@ test("Free Play's map select with a pad: the D-pad along the maps, A loads anoth
   await page.waitForFunction(() => (window as unknown as { carballMap?: () => string }).carballMap?.() === "stadium", undefined, { timeout: 30_000 });
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
   await expect(page.locator("#main-menu")).toBeHidden();
+  expect(errors).toEqual([]);
+});
+
+test("online with a pad: Leave Match's question opens on NO, so a second A keeps the match (MENU-15, RV-472)", async ({ page, context }) => {
+  test.setTimeout(120_000);
+  await fakeGamepad(context);
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto("/?server=127.0.0.1:14444&render=off");
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
+  await tap(page, []);
+  await tap(page, [START]);
+  const menu = page.locator("#pause-menu");
+  await expect(menu).toBeVisible();
+  // (down the menu's rows to the match's own button: Leave Match, or Forfeit Match where a vote is open)
+  const focused = (): Promise<string> => page.evaluate(() => document.querySelector(".pad-focus")?.textContent.trim() ?? "");
+  for (let i = 0; i < 12 && !/^(leave|forfeit) match$/i.test(await focused()); i++) await tap(page, [DOWN]);
+  await expect.poll(focused).toMatch(/^(leave|forfeit) match$/i);
+  await tap(page, [A]);
+  await expect(menu.locator("button", { hasText: /^yes$/i })).toBeVisible();
+  await expect.poll(focused).toMatch(/^no$/i);
+  // (a second A: NO, the question gone, the match kept)
+  await tap(page, [A]);
+  await expect(menu.locator("button", { hasText: /^yes$/i })).toHaveCount(0);
+  await expect(menu).toBeVisible();
+  // (asked again, B: only the question goes, the pause menu stays: RV-478)
+  for (let i = 0; i < 12 && !/^(leave|forfeit) match$/i.test(await focused()); i++) await tap(page, [DOWN]);
+  await tap(page, [A]);
+  await expect(menu.locator("button", { hasText: /^yes$/i })).toBeVisible();
+  await tap(page, [B]);
+  await expect(menu.locator("button", { hasText: /^yes$/i })).toHaveCount(0);
+  await expect(menu).toBeVisible();
+  await expect(page).toHaveURL(/server=127\.0\.0\.1:14444/);
   expect(errors).toEqual([]);
 });

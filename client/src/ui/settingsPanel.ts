@@ -4,6 +4,7 @@ import type { CameraSettings } from "../camera/carballCamera";
 import { ACTIONS, type Action, type GamepadInput, type KeyboardInput, inputName, onPadStyle } from "../input/bindings";
 import { glyphElement, keyGlyph } from "./keyGlyph";
 import { checkbox, cycler, cyclerControl, slider } from "./controls";
+import { VIDEO_TEXT, type VideoState, withRenderDetail, withVideoChange } from "../settings/video";
 import { END_TEXT } from "../game/matchSequence";
 
 /** The pad's X Default asks first (MENU-14: a confirm, NO focused): our words, the game's YES / NO */
@@ -149,6 +150,8 @@ export class SettingsPanel {
     host: HTMLElement,
     initial: Settings,
     private readonly onChange: (settings: Settings) => void,
+    /** The settings as they apply (the video settings' automatic default: main.ts), after each change */
+    private readonly resolve: (settings: Settings) => Settings = (s) => s,
   ) {
     this.#settings = initial;
     this.#body = el("div", { className: "settings-body" });
@@ -163,7 +166,8 @@ export class SettingsPanel {
       this.#tabButton("video", "Video"),
       this.#tabButton("audio", "Audio"),
     ]);
-    // (a pad's bumpers switch the tabs, wrapping: the list isn't in its rows, nor Close (B and Start close))
+    // (a pad's bumpers switch the tabs, stopping at the first and last: the list isn't in its rows, nor Close (B and Start
+    // close))
     tabs.dataset["padTabs"] = "";
     tabs.dataset["padSkip"] = "";
     const close = el("button", { className: "settings-close", textContent: "Close (Esc)" });
@@ -178,7 +182,7 @@ export class SettingsPanel {
     this.#confirm.hidden = true;
     yes.addEventListener("click", () => {
       this.#confirm.hidden = true;
-      this.#body.querySelector<HTMLButtonElement>("[data-pad-reset]")?.click();
+      this.#update(pageDefaults(this.#tab, this.#settings));
     });
     no.addEventListener("click", () => {
       this.#confirm.hidden = true;
@@ -190,12 +194,31 @@ export class SettingsPanel {
       this.#confirm,
     ]);
     this.#root.id = "settings";
+    // (a dialog over the menus: named, modal, Tab kept inside it: RV-482)
+    this.#root.setAttribute("role", "dialog");
+    this.#root.setAttribute("aria-modal", "true");
+    this.#root.setAttribute("aria-label", "Settings");
+    this.#root.addEventListener("keydown", (e) => {
+      if (e.key !== "Tab") return;
+      const focusable = [...this.#root.querySelectorAll<HTMLElement>("button, [tabindex='0'], input")].filter((f) => !f.closest("[hidden]") && f.getClientRects().length > 0);
+      const [first, last] = [focusable[0], focusable.at(-1)];
+      if (!first || !last) return;
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    });
     // (B Back in the pad's hints: a level over the menu it opened from; the hints under the panel)
     this.#root.dataset["padBack"] = "";
     this.#root.dataset["padHintsUnder"] = "";
     this.#root.hidden = true;
+    // (NO focused each time it's asked, never where the last answer was: RV-473)
     this.#root.addEventListener("pad-default", () => {
       this.#confirm.hidden = false;
+      no.focus();
     });
     host.append(this.#root);
     // (the pad's names in its family's: a pad seen after the panel drew them, or another plugged in)
@@ -251,7 +274,8 @@ export class SettingsPanel {
     this.#update(next);
   }
 
-  #update(next: Settings): void {
+  #update(change: Settings): void {
+    const next = this.resolve(change);
     this.#settings = next;
     saveSettings(next);
     this.onChange(next);
@@ -298,17 +322,19 @@ export class SettingsPanel {
     // (each tab a page of the pad's: its focus kept while the settings are open; its reset the pad's X Default, its
     // bindings' slots cleared by Y)
     content.dataset["padPage"] = this.#tab;
-    const reset = [...content.querySelectorAll<HTMLButtonElement>("button")].find((b) => /^Reset (controls )?to defaults$/.test(b.textContent));
-    if (reset) {
-      reset.dataset["padReset"] = "";
-      content.dataset["padX"] = "";
-    }
+    // (a tab come back to, or the settings opened again, starts at its first row: RV-476)
+    content.dataset["padForget"] = "";
+    // (every tab's X Default: the whole page back to its defaults, RV-474)
+    content.dataset["padX"] = "";
     if (this.#tab === "controls") content.dataset["padY"] = "";
     // (the control that had the keyboard's focus has it again in the new page: a slider or list stepped by its keys goes
     // on stepping)
-    const focused = document.activeElement instanceof HTMLElement && this.#body.contains(document.activeElement) ? sameControl(document.activeElement) : null;
+    const focused = document.activeElement instanceof HTMLElement && this.#body.contains(document.activeElement) ? document.activeElement : null;
+    const selector = focused ? sameControl(focused) : null;
     this.#body.replaceChildren(content);
-    if (focused) content.querySelector<HTMLElement>(focused)?.focus({ preventScroll: true });
+    // (by its data attributes, else (a reset button) the same kind of control with the same text: RV-482)
+    const again = selector ? content.querySelector<HTMLElement>(selector) : focused ? [...content.querySelectorAll<HTMLElement>(focused.tagName)].find((e) => e.textContent === focused.textContent) : null;
+    again?.focus({ preventScroll: true });
   }
 
   // --- controls ---
@@ -511,7 +537,13 @@ export class SettingsPanel {
       (next) => { apply({ ...current, ...next }); },
       numbers(DEFAULT_SETTINGS[key]),
     );
-    return el("div", { className: "input-camera" }, [el("h3", { textContent: title }), box, sliders]);
+    // (a group named by its heading: its controls' names repeat in the other input's, RV-482)
+    const heading = el("h3", { textContent: title });
+    heading.id = `settings-${key}`;
+    const group = el("div", { className: "input-camera" }, [heading, box, sliders]);
+    group.setAttribute("role", "group");
+    group.setAttribute("aria-labelledby", heading.id);
+    return group;
   }
 
   #controllerTab(): HTMLElement {
@@ -685,14 +717,48 @@ export class SettingsPanel {
     return box;
   }
 
+  /** Video (MENU-19..21, GQ1): Render Quality and Render Detail, then the advanced switches that change what we draw (the
+   *  game's no-op rows here not shown: Anti-aliasing, Texture Detail, Effect Intensity, Ambient Occlusion, Light Shafts,
+   *  Lens Flares, Dynamic Shadows, Motion Blur, Weather Effects); the game's labels, its preset rules (settings/video.ts) */
   #videoTab(): HTMLElement {
+    const T = VIDEO_TEXT;
+    const s = this.#settings;
+    const state: VideoState = { video: s.video, bloom: s.options.bloom, depthOfField: s.options.depthOfField };
+    const apply = (next: VideoState): void => {
+      this.#update({ ...this.#settings, video: next.video, options: { ...this.#settings.options, bloom: next.bloom, depthOfField: next.depthOfField } });
+    };
+    const list = <V extends string>(key: string, label: string, values: readonly V[], value: V, onChange: (v: V) => void): HTMLElement =>
+      cycler({ label, options: values.map((v) => [v, T.levels[v as keyof typeof T.levels]] as const), value, data: { setting: key }, onChange });
     const box = el("div", { className: "sliders" }, [
       el("p", {
         className: "settings-hint",
-        textContent: "The game's post-processing: its tone map always, these on in its High preset (the default). Depth of Field softens the whole arena a little (a quarter of every pixel), the sky and far stands more.",
+        textContent: s.video.chosen
+          ? "Render Quality draws the 3D view at a share of the screen's resolution (the HUD and menus stay sharp). Render Detail sets the switches below; changing one of them, or Render Quality, makes it Custom."
+          : "Set for this device's graphics until you change one (Default goes back to that). Render Quality draws the 3D view at a share of the screen's resolution (the HUD and menus stay sharp); Render Detail sets the switches below.",
+      }),
+      el("h3", { textContent: T.basic }),
+      list("renderQuality", T.renderQuality, ["highQuality", "quality", "performance", "highPerformance"] as const, s.video.renderQuality, (renderQuality) => {
+        apply(withVideoChange(state, { renderQuality }));
+      }),
+      list("renderDetail", T.renderDetail, ["highQuality", "quality", "performance", "custom"] as const, s.video.renderDetail, (detail) => {
+        apply(withRenderDetail(state, detail));
+      }),
+      el("h3", { textContent: T.advanced }),
+      list("worldDetail", T.worldDetail, ["highQuality", "quality", "performance"] as const, s.video.worldDetail, (worldDetail) => {
+        apply(withVideoChange(state, { worldDetail }));
+      }),
+      list("particleDetail", T.particleDetail, ["highQuality", "performance"] as const, s.video.particleDetail, (particleDetail) => {
+        apply(withVideoChange(state, { particleDetail }));
       }),
     ]);
-    box.append(this.#checkboxes(["bloom", "depthOfField"]));
+    const options = el("div", { className: "options" });
+    options.append(
+      checkbox({ label: T.highQualityShaders, checked: s.video.highQualityShaders, data: { setting: "highQualityShaders" }, onChange: (on) => { apply(withVideoChange(state, { highQualityShaders: on })); } }),
+      checkbox({ label: T.depthOfField, checked: s.options.depthOfField, data: { option: "depthOfField" }, onChange: (on) => { apply(withVideoChange(state, { depthOfField: on })); } }),
+      checkbox({ label: T.bloom, checked: s.options.bloom, data: { option: "bloom" }, onChange: (on) => { apply(withVideoChange(state, { bloom: on })); } }),
+    );
+    box.append(options);
+    box.classList.add("caps-labels");
     return box;
   }
 
@@ -758,6 +824,34 @@ export class SettingsPanel {
     reset.addEventListener("click", () => { apply(defaults); });
     rows.append(reset);
     return rows;
+  }
+}
+
+/** A settings tab's every setting back to its default (the pad's X Default, "Reset this page to its defaults?": MENU-14,
+ *  RV-474), the rest kept; the player's name kept on the chat's */
+export function pageDefaults(tab: Tab, s: Settings): Settings {
+  const d = DEFAULT_SETTINGS;
+  const options = (keys: readonly (keyof Options)[]): Options => ({ ...s.options, ...Object.fromEntries(keys.map((k) => [k, d.options[k]])) });
+  switch (tab) {
+    case "controls":
+      return { ...s, bindings: d.bindings };
+    case "camera":
+      return { ...s, camera: d.camera, cameraKbm: d.cameraKbm, cameraPad: d.cameraPad, options: options(["rearCameraToggle", "cameraShake"]) };
+    case "controller":
+      return { ...s, controller: d.controller, options: options(["airPitchSafety"]) };
+    case "gameplay":
+      return { ...s, gameplay: d.gameplay, options: options(["unlimitedBoost", "autoSkipReplay"]) };
+    case "interface":
+      return { ...s, interface: d.interface };
+    case "scoreboard":
+      return { ...s, scoreboard: d.scoreboard };
+    case "chat":
+      return { ...s, chat: { ...d.chat, name: s.chat.name } };
+    case "video":
+      // (back to the automatic default: the panel's resolve applies it)
+      return { ...s, video: d.video, options: options(["bloom", "depthOfField"]) };
+    case "audio":
+      return { ...s, audio: d.audio, options: options(["muted"]) };
   }
 }
 

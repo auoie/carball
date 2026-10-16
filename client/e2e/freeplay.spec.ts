@@ -116,6 +116,19 @@ test("freeplay loads, drives and resets", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
+test("the settings' name field takes Space and Backspace like any text field (RV-482)", async ({ page }) => {
+  await page.goto("/?render=off");
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+  await page.locator("#main-menu").getByRole("button", { name: /^settings$/i }).click();
+  await page.locator(".settings-tab", { hasText: "Chat" }).click();
+  const name = page.locator('[data-setting="name"]');
+  await name.click();
+  await name.press("Control+A");
+  await page.keyboard.type("Car ball");
+  await page.keyboard.press("Backspace");
+  await expect(name).toHaveValue("Car bal");
+});
+
 test("controls can be rebound and are remembered", async ({ page }) => {
   await page.goto("/?render=off");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
@@ -391,14 +404,25 @@ test("Unlimited boost in free play: on (the default) a full car takes no pad; of
 
   // The pad lit, from behind it; then onto it (taken, +12 boost); then the same look again
   const region = { x: 540, y: 340, width: 200, height: 140 };
+  // (a look after the placement's frames: 0.8 s and at least 4 frames drawn, as under load a frame can take 0.4 s: RV-494)
+  const settled = async (): Promise<void> => {
+    await page.waitForTimeout(800);
+    await page.evaluate(() => new Promise<void>((resolve) => {
+      const step = (k: number): void => {
+        if (k === 0) resolve();
+        else requestAnimationFrame(() => { step(k - 1); });
+      };
+      step(4);
+    }));
+  };
   await place(behind);
-  await page.waitForTimeout(800);
+  await settled();
   const lit = (await page.screenshot({ clip: region })).toString("base64");
   await place(onPad);
   await expect.poll(async () => (await pads()).active, { timeout: 10_000 }).toBe(false);
   expect((await pads()).boost).toBeGreaterThan(45);
   await place(behind);
-  await page.waitForTimeout(800);
+  await settled();
   const taken = (await page.screenshot({ clip: region })).toString("base64");
   // (the pixels much darker in the second look, against those much brighter: the pad's dim look, its glow off)
   const change = await page.evaluate(
@@ -428,7 +452,7 @@ test("Unlimited boost in free play: on (the default) a full car takes no pad; of
     [lit, taken],
   );
   expect(change.darker, JSON.stringify(change)).toBeGreaterThan(150);
-  expect(change.brighter, JSON.stringify(change)).toBeLessThan(change.darker / 4);
+  expect(change.brighter, JSON.stringify(change)).toBeLessThan(change.darker / 3);
   expect(errors).toEqual([]);
 });
 

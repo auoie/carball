@@ -31,22 +31,34 @@ export class MatchMenu {
     }
   }
 
+  /** B or Escape with a question up: answered NO, the menu kept (RV-478); whether one was up */
+  dismissQuestion(): boolean {
+    if (!this.#asking) return false;
+    this.#asking = null;
+    this.update(this.#items, true);
+    return true;
+  }
+
   #render(): void {
     const asking = this.#asking;
     if (asking?.confirm) {
       const question = document.createElement("span");
       question.textContent = asking.confirm;
+      const no = this.#button(NO, false, () => {
+        this.#asking = null;
+        this.update(this.#items, true);
+      });
+      // (NO focused, the pad's default: a second A doesn't leave or forfeit the match, MENU-15, RV-472)
+      no.dataset["padDefault"] = "";
       this.#root.replaceChildren(
         question,
         this.#button(YES, asking.danger, () => {
           this.#asking = null;
           this.onAction(asking.action);
         }),
-        this.#button(NO, false, () => {
-          this.#asking = null;
-          this.update(this.#items, true);
-        }),
+        no,
       );
+      no.focus();
       return;
     }
     this.#root.replaceChildren(

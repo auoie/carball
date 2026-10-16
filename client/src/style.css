@@ -646,9 +646,10 @@ body {
 /* --- Match stats: the held scoreboard, the stat popups, the feed (notes/scoreboard.md, match-stats.md §6) --- */
 /* Fonts: the game's Bourgeois and Dashboard Numbers Wide aren't redistributed (HUD-1); ours are bundled so the HUD looks
    the same in every browser (the user's pick, 2026-10-14): Rajdhani SemiBold and Light for the header and thin text,
-   Orbitron at 500 for the numbers, under the SIL Open Font License (each in public/fonts with its OFL.txt). Orbitron's file is the
-   upstream one as it is (its licence reserves the name: no subset or conversion); Rajdhani's the Latin subset. Each
-   family one face, its weight the face's own (Orbitron's variable axis set by the descriptor) */
+   Orbitron Medium for the numbers, under the SIL Open Font License (each in public/fonts with its licence). Orbitron's
+   file is the font project's own static Medium as it publishes it, with its licence (the user's decision, RV-489: its
+   licence reserves the name, so no subset or conversion; a static face, not the variable one); Rajdhani's the Latin
+   subset. Each family one face, its weight the face's own */
 @font-face {
   font-family: "Rajdhani SemiBold";
   src: url("/fonts/rajdhani/Rajdhani-SemiBold-latin.woff2") format("woff2");
@@ -665,7 +666,7 @@ body {
 
 @font-face {
   font-family: Orbitron;
-  src: url("/fonts/orbitron/Orbitron%5Bwght%5D.ttf") format("truetype");
+  src: url("/fonts/orbitron/Orbitron%20Medium.otf") format("opentype");
   font-weight: 500;
   font-display: block;
 }
@@ -2589,13 +2590,44 @@ body {
 /* The menus with a pad (src/ui/padNav.ts; MENU-17's looks, our own art): in the pad's mode only (body.pad-mode: the last
    device used; the mouse's shows none, as the game's until hover). A focused button an ice fill, pale blue to white
    down it, its text dark blue, a blue glow; a focused setting's row deep blue with a light top edge and a blue glow, its
-   value's thumb white; fading in over 0.2 s, out over 0.3 s. The row kept 20 px clear of its scroll box's edges */
-.pad-row,
-.pad-focus {
+   value's thumb white; fading in over 0.2 s, out over 0.3 s. The row kept 20 px clear of its scroll box's edges. (The
+   way out a transition on every row and button, not on the classes the focus takes away; a focused button's ice an
+   overlay faded by its opacity, as a gradient can't be: RV-479) */
+body.pad-mode :where(label, tr > td, [data-pad-row], .control-cycle, input[type="text"]) {
   transition:
     background 0.3s,
     box-shadow 0.3s,
     border-color 0.3s;
+}
+
+body.pad-mode button {
+  transition:
+    color 0.3s,
+    border-color 0.3s,
+    box-shadow 0.3s;
+}
+
+/* (no specificity: a button placed by its own class keeps its place) */
+:where(body.pad-mode button) {
+  position: relative;
+  isolation: isolate;
+}
+
+body.pad-mode button::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: linear-gradient(rgb(199, 239, 255), rgb(219, 246, 255) 50%, rgb(243, 251, 255));
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
+}
+
+body.pad-mode button.pad-focus::before {
+  opacity: 1;
+  transition-duration: 0.2s;
 }
 
 .pad-row {
@@ -2624,14 +2656,23 @@ body.pad-mode tr.pad-row > td:first-child {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
 }
 
-.pad-focus {
+/* (the pad's highlight in place of the focus ring: in the pad's mode only, the keyboard's ring kept otherwise, RV-482) */
+body.pad-mode .pad-focus {
   outline: none;
+}
+
+/* (A held on it: pressed, a deeper ice and pushed in, till A's let go: RV-478) */
+body.pad-mode button.pad-focus.pad-pressed {
+  box-shadow: inset 0 2px 4px rgba(0, 60, 100, 0.45);
+}
+
+body.pad-mode button.pad-focus.pad-pressed::before {
+  background: linear-gradient(rgb(160, 218, 243), rgb(196, 236, 252));
 }
 
 body.pad-mode button.pad-focus {
   transition-duration: 0.2s;
   color: #005f8e !important;
-  background: linear-gradient(rgb(199, 239, 255), rgb(219, 246, 255) 50%, rgb(243, 251, 255)) !important;
   border-color: rgb(24, 149, 202) !important;
   box-shadow: 0 0 4px 1px rgba(24, 149, 202, 0.5);
 }
@@ -2649,6 +2690,23 @@ body.pad-mode .control-cycle.pad-focus .control-chevron {
 body.pad-mode .control-slider.pad-focus .control-thumb {
   background: #fff;
   box-shadow: 0 0 6px rgba(65, 175, 255, 0.9);
+}
+
+/* (the pad's mode keeps the mouse's hover off: a button under a still pointer isn't lit; our own controls too, RV-481) */
+body.pad-mode .control-check:hover .control-box {
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+body.pad-mode .control-check[aria-checked="true"]:hover .control-box {
+  border-color: rgb(24, 149, 202);
+}
+
+body.pad-mode .control-cycle:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+body.pad-mode .control-slider:hover .control-thumb {
+  transform: none;
 }
 
 /* (the pad's mode keeps the mouse's hover off: a button under a still pointer isn't lit) */
@@ -2687,9 +2745,26 @@ body.pad-mode .main-menu-button:hover {
   white-space: nowrap;
 }
 
-#menu-hints[hidden],
-body:not(.pad-mode) #menu-hints {
+#menu-hints[hidden] {
   display: none;
+}
+
+/* (the mouse's hints: the words alone, clicked, MENU-16: RV-480) */
+.menu-hint-click {
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  line-height: normal;
+  text-transform: inherit;
+  text-shadow: inherit;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.menu-hint-click:hover {
+  color: rgb(199, 239, 255);
 }
 
 .menu-hint {

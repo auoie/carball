@@ -11,6 +11,7 @@
 // reflecting the arena's capture (AV-10) and team glow sheets (H-5) behind the walls. The game's stadium itself (a
 // theme's `walls.game`: its field, its goals' metal floors and glows) is the stadium theme's alone; every other theme
 // keeps its own floor, markings and goals' floors.
+import { freeze, mergedPieces } from "./freeze";
 import {
   BufferAttribute,
   BufferGeometry,
@@ -47,7 +48,7 @@ import { TEAM_PRIMARY_LINEAR, fullBright, linear } from "./teamColors";
 import { mergeByMaterial } from "./merge";
 import { GoalFloorMaterial, goalUnderlayers } from "./goalInterior";
 import { GrassCube } from "./grassCube";
-import { buildStadiumField, frameFloorMaterial, SideTrimMaterial } from "./stadiumField";
+import { buildStadiumField, frameFloorMaterial, mergeFieldPieces, SideTrimMaterial } from "./stadiumField";
 import { fieldPlan, type GlowPart, type GlowRibbon, goalGlowRibbons } from "./stadiumFieldRules";
 import type { ArenaStyle, Theme } from "./themes/theme";
 import { vec3 } from "../math/vec";
@@ -88,6 +89,7 @@ export const ARENA = {
 const TEAM_COLORS: readonly [Color, Color] = [new Color(0x2a7fff), new Color(0xff8a1f)]; // blue (-y goal), orange (+y goal)
 /** The game's goal floors (Reflective_Floor_V2: plain metal) and lip (the frame's grey), before the light */
 const GOAL_METAL = new Color(0x5a5f66);
+
 /** Width of the mown stripes across the field (uu) */
 const STRIPE_WIDTH = 512;
 
@@ -126,6 +128,9 @@ export class ArenaView {
       ...(walls.game || theme.style.gameField ? [] : [buildFieldMarkings(theme.style.markings)]),
       theme.root,
     );
+    // (the arena's own pieces never move: their matrices made once, not every frame; the theme's scenery keeps its own)
+    this.root.matrixAutoUpdate = false;
+    for (const piece of this.root.children) if (piece !== theme.root) freeze(piece);
     // (the theme's materials that sample the capture (a `grassCube` uniform: the banners', RV-178) share its uniform)
     const cube = this.#grassCube;
     theme.root.traverse((m) => {
@@ -237,19 +242,18 @@ export class ArenaView {
     capMaterial.polygonOffsetFactor = -1;
     capMaterial.polygonOffsetUnits = -2;
     const capQuarter = capPieces();
-    const cap = new Mesh(fourWays(capQuarter.positions, capQuarter.indices), capMaterial);
-    cap.name = "trim cap";
+    const capGeometry = fourWays(capQuarter.positions, capQuarter.indices);
     // (the goal-mouth frame: Goal_STD_Trim on every map, the cap's metal, no lit band, AV-13)
     const frameQuarter = framePieces();
-    const frame = new Mesh(fourWays(frameQuarter.positions, frameQuarter.indices), capMaterial);
-    frame.name = "goal frame";
+    const frameGeometry = fourWays(frameQuarter.positions, frameQuarter.indices);
     // (the stack under the cap, AV-10: the frame's lip, the side glass, the boards, the grate behind the bar, the posts)
     const stack = stackPieces();
     const whole = (piece: { positions: number[]; indices: number[] }): BufferGeometry => fourWays(piece.positions, piece.indices);
     const opening = openingPieces();
-    // (the frame metal's other pieces, one mesh: the lip, the bar, the posts, the arches, the far glow's trough)
-    const metal = new Mesh(whole(merge([stack.lip, stack.bar, stack.posts, opening.arch, opening.trough])), capMaterial);
-    metal.name = "wall metal";
+    // (the frame metal's other pieces: the lip, the bar, the posts, the arches, the far glow's trough)
+    const metalGeometry = whole(merge([stack.lip, stack.bar, stack.posts, opening.arch, opening.trough]));
+    // (the cap, the frame and the metal: one material, one mesh, one draw; each piece's vertices named in userData)
+    const metal = mergedPieces([["trim cap", capGeometry], ["goal frame", frameGeometry], ["wall metal", metalGeometry]], capMaterial);
     // (the translucent pieces one mesh per quadrant, so they sort among the others by where they are)
     const glassMaterial = new HexGlassMaterial();
     const sideGlass = QUADRANTS.map((q) => {
@@ -273,7 +277,7 @@ export class ArenaView {
     const sideline = new Mesh(whole(opening.sideline), new SideTrimMaterial(this.#grassCube.uniform, this.#cage.ballPosition, OPENING.sidelineLight));
     sideline.name = "sideline";
     const group = new Group();
-    group.add(cage, trim, cap, frame, metal, ...sideGlass, boards, ...grate, sideline, ...farGlows(this.#style));
+    group.add(cage, trim, metal, ...sideGlass, boards, ...grate, sideline, ...farGlows(this.#style));
     group.add(...glowSheets(this.#style), backGlass(0), backGlass(1));
     return group;
   }
@@ -383,7 +387,12 @@ export class ArenaView {
     const field = walls.game === true || this.#style.gameField === true;
     const [p0 = [0, 0, 1], p1 = [1, 0.5, 0]] = TEAM_PRIMARY_LINEAR;
     const [fieldBlue, fieldOrange] = walls.game ? [walls.blue, walls.orange] : [linear(p0), linear(p1)];
-    if (field) group.add(buildStadiumField(fieldBlue, fieldOrange, cube));
+    if (field) {
+      // (its pieces one shader draws merged: fewer draw calls, the same pixels)
+      const pieces = buildStadiumField(fieldBlue, fieldOrange, cube);
+      mergeFieldPieces(pieces);
+      group.add(pieces);
+    }
 
     // Floor, out to the trim's foot. The shape faces +z; rotate it to face up (+y in Three)
     const floor = new Mesh(new ShapeGeometry(floorShape()), field ? frameFloorMaterial(cube, fieldBlue, fieldOrange) : floorMat);

@@ -10,10 +10,12 @@ import {
   curveAt,
   padArmDirection,
   padBand,
+  PAD_TESSELLATION,
   padBaseGeometry,
   padNoise,
+  padOutlineAngles,
+  padSurface,
   padTop,
-  padUnder,
   padYaw,
   regionMargin,
   smallInlay,
@@ -47,17 +49,17 @@ describe("the pads' shapes (VT-11a/b's named measures)", () => {
     }
   });
 
-  it("a big pad's plate: its top and underside where VT-11a measured them, its side walls 2.26 tall", () => {
+  it("a big pad's plate: its top where VT-11a measured it (the panels' rise drawn per pixel: the mesh's surface without it)", () => {
     // (the pad's own frame here: an arm along x)
     const axis: [number, number][] = [[0, 13.06], [20, 11.83], [22.5, 11.07], [32.5, 10.04], [35, 11.05], [62.5, 8.88], [65, 7.38], [70, 6.56], [72.5, 7.3], [82.5, 5.03], [85, 3.05], [87.5, 1.51]];
     for (const [along, z] of axis) expect(Math.abs(padTop(BIG_PAD, along, 0) - z), `y ${String(along)}`).toBeLessThan(0.3);
-    // The cross-sections' wall tops, and the underside 2.26 below them
     for (const [along, across, z] of [[40, 22.6, 9.24], [60, 20.4, 7.57], [80, 21.9, 3.82]] as const) {
       expect(padTop(BIG_PAD, along, across)).toBeCloseTo(z, 1);
-      expect(padTop(BIG_PAD, along, across) - padUnder(BIG_PAD, along, across)).toBeCloseTo(2.26, 1);
+      expect(padSurface(BIG_PAD, along, across)).toBeCloseTo(z, 1);
     }
-    expect(padUnder(BIG_PAD, 0, 0)).toBeCloseTo(7.6, 6);
-    expect(padUnder(BIG_PAD, 86, 0)).toBeCloseTo(-0.36, 6); // (the tips on the floor)
+    // (on a panel the surface is the top less its rise; the tips on the floor)
+    expect(padTop(BIG_PAD, 0, 0) - padSurface(BIG_PAD, 0, 0)).toBeCloseTo(1.3, 6);
+    expect(padSurface(BIG_PAD, 89.7, 0)).toBe(0);
   });
 
   it("a small pad: a rounded triangle (r 48.3 on its lobes, 36.1 in its notches), 6 high at its centre", () => {
@@ -69,21 +71,47 @@ describe("the pads' shapes (VT-11a/b's named measures)", () => {
     expect(padTop(SMALL_PAD, 48.3, 0)).toBeLessThan(0.2);
   });
 
-  it("the bases face out: tops up, a plate's walls outward and underside down (Three's frame)", () => {
+  it("the bases: a few dozen triangles, the tops facing up and a plate's walls out (Three's frame), the outline's points on the outline at the surface's height", () => {
     for (const shape of [BIG_PAD, SMALL_PAD]) {
       const g = padBaseGeometry(shape);
-      const [position, normal, part] = [g.getAttribute("position"), g.getAttribute("normal"), g.getAttribute("kind")];
-      const seen = new Set<number>();
-      for (let i = 0; i < position.count; i++) {
-        const kind = part.getX(i);
-        const n = new Vector3(normal.getX(i), normal.getY(i), normal.getZ(i));
-        const p = new Vector3(position.getX(i), 0, position.getZ(i));
-        if (kind === 0 && p.length() < 10) expect(n.y, "top").toBeGreaterThan(0.95);
-        if (kind === 2 && p.length() < 10) expect(n.y, "underside").toBeLessThan(-0.95);
-        if (kind === 1) expect(n.dot(p.normalize()), "wall").toBeGreaterThan(0);
-        seen.add(kind);
+      const [position, part, index] = [g.getAttribute("position"), g.getAttribute("kind"), g.getIndex()];
+      if (!index) throw new Error("an indexed base");
+      expect(index.count / 3, shape.big ? "big" : "small").toBe(shape.big ? 48 + 36 : 18);
+      const point = (k: number): Vector3 => new Vector3(position.getX(k), position.getY(k), position.getZ(k));
+      let walls = 0;
+      for (let t = 0; t < index.count; t += 3) {
+        const [a, b, c] = [point(index.getX(t)), point(index.getX(t + 1)), point(index.getX(t + 2))];
+        const facing = new Vector3().subVectors(b, a).cross(new Vector3().subVectors(c, a));
+        if (part.getX(index.getX(t)) === 0) {
+          expect(facing.y, `triangle ${String(t / 3)}`).toBeGreaterThan(0);
+          continue;
+        }
+        walls++;
+        // (out from the centre; the tips' walls nothing tall)
+        const middle = new Vector3().add(a).add(b).add(c).divideScalar(3).setY(0);
+        if (facing.length() > 1e-3) expect(facing.dot(middle), `wall ${String(t / 3)}`).toBeGreaterThan(0);
       }
-      expect([...seen].sort()).toEqual(shape.base.kind === "plate" ? [0, 1, 2] : [0]);
+      // (three segments down each side of each arm)
+      expect(walls).toBe(shape.big ? 36 : 0);
+      // (2.26 tall along an arm's side, VT-11a)
+      if (shape.big) {
+        const [along, across] = [60, 20.4];
+        expect(padSurface(shape, along, across) - Math.max(0, curveAt(BIG_PAD.base.kind === "plate" ? BIG_PAD.base.underside : [], along))).toBeCloseTo(2.26, 1);
+      }
+      const angles = padOutlineAngles(shape);
+      expect(angles.length).toBe(6 * ((shape.big ? PAD_TESSELLATION.outline.big : PAD_TESSELLATION.outline.small).length - 1));
+      // (ascending round the pad, alike about every arm and every bisector)
+      angles.forEach((th, j) => {
+        expect(th).toBeGreaterThan(j === 0 ? -1e-9 : (angles[j - 1] ?? 0));
+        expect(angles.some((other) => Math.abs(other - (2 * Math.PI - th)) < 1e-9 || (th === 0 && other === 0))).toBe(true);
+      });
+      for (let j = 0; j < angles.length; j++) {
+        const p = point(1 + j);
+        const th = angles[j] ?? 0;
+        expect(Math.hypot(p.x, p.z)).toBeCloseTo(shape.radius(th), 3);
+        expect(Math.atan2(p.z, p.x)).toBeCloseTo(Math.atan2(Math.sin(th), Math.cos(th)), 4);
+        expect(p.y).toBeCloseTo(padSurface(shape, p.x, p.z), 3);
+      }
     }
   });
 
@@ -185,21 +213,40 @@ describe("the pads' FX (VT-11a/b)", () => {
 });
 
 describe("the pads' cost (RX19-A: 550k triangles at first)", () => {
-  it("every pad of a field drawn in under 40k triangles (the warm-up's copies not drawn while none is down)", () => {
+  it("every pad of a field drawn in under 3k triangles and 9 draw calls (the user's request), the warm-up's curtains and puffs only while a big pad's down (RV-488)", () => {
     // (the field's 6 big and 28 small pads)
     const pads = [
       ...[[-3584, 0], [3584, 0], [-3072, 4096], [3072, 4096], [-3072, -4096], [3072, -4096]].map(([x = 0, y = 0]) => ({ pos: vec3(x, y, 72), big: true, active: true, cooldown: 0 })),
       ...Array.from({ length: 28 }, (_, i) => ({ pos: vec3(-3000 + 200 * i, 100, 64), big: false, active: true, cooldown: 0 })),
     ];
     const view = new BoostPadsView(pads);
-    let triangles = 0;
-    for (const child of view.root.children) {
-      if (!(child instanceof InstancedMesh) || !child.visible) continue;
-      const g = child.geometry as { index: { count: number } | null; getAttribute: (n: string) => { count: number } };
-      triangles += ((g.index?.count ?? g.getAttribute("position").count) / 3) * child.count;
-    }
-    expect(triangles).toBeLessThan(40_000);
-    for (const shape of [BIG_PAD, SMALL_PAD]) expect((padBaseGeometry(shape).index?.count ?? 0) / 3, shape.big ? "big base" : "small base").toBeLessThan(shape.big ? 3000 : 600);
+    const drawn = (): { readonly triangles: number; readonly calls: number; readonly names: string[] } => {
+      let triangles = 0;
+      const names: string[] = [];
+      for (const child of view.root.children) {
+        if (!(child instanceof InstancedMesh) || !child.visible) continue;
+        const g = child.geometry as { index: { count: number } | null; getAttribute: (n: string) => { count: number } };
+        triangles += ((g.index?.count ?? g.getAttribute("position").count) / 3) * child.count;
+        names.push(child.name);
+      }
+      return { triangles, calls: names.length, names };
+    };
+    const up = drawn();
+    expect(up.triangles).toBeLessThan(2_500);
+    expect(up.calls).toBe(7);
+    expect(up.names.filter((n) => n.includes("warm-up"))).toEqual([]);
+    // Every big pad down, in its last second: the warm-up's curtains and puffs drawn too, still well under 3k
+    const down = pads.map((p) => (p.big ? { ...p, active: false, cooldown: 0.5 } : p));
+    view.update(down, 0.2);
+    const warming = drawn();
+    expect(warming.names.filter((n) => n.includes("warm-up")).sort()).toEqual(["big warm-up curtains", "big warm-up puffs"]);
+    expect(warming.calls).toBe(9);
+    expect(warming.triangles).toBeLessThan(3_000);
+    // (earlier in the warm-up the puffs aren't drawn; back up, neither)
+    view.update(pads.map((p) => (p.big ? { ...p, active: false, cooldown: 5 } : p)), 0.2);
+    expect(drawn().names.filter((n) => n.includes("warm-up"))).toEqual(["big warm-up curtains"]);
+    view.update(pads, 0.2);
+    expect(drawn().names.filter((n) => n.includes("warm-up"))).toEqual([]);
   });
 });
 
@@ -251,19 +298,20 @@ describe("boost pads", () => {
     view.update(taken, 0.05);
     expect(at(view, "big orb", 0)).toBeNull();
     expect(at(view, "big orb glow", 0)).toBeNull();
-    expect(colour(view, "big inlays", 0).r).toBeCloseTo(0.5, 6);
+    // (the inlays drawn on the base: its instance's Brightness)
+    expect(colour(view, "big base", 0).r).toBeCloseTo(0.5, 6);
     expect(colour(view, "small curtains", 1).r).toBeCloseTo(0.5, 6);
     view.update(taken, 0.06);
-    expect(colour(view, "small inlays", 0).r).toBe(0);
+    expect(colour(view, "small base", 0).r).toBe(0);
     expect(colour(view, "big curtains", 0).r).toBe(0);
     const after = new Matrix4();
     mesh(view, "small base").getMatrixAt(0, after);
     expect(after.equals(base)).toBe(true);
     view.update(pads, 0.025);
     expect(at(view, "big orb", 0)).toEqual([-3584, 0, 84]);
-    expect(colour(view, "big inlays", 0).r).toBeCloseTo(0.25, 6);
+    expect(colour(view, "big base", 0).r).toBeCloseTo(0.25, 6);
     view.update(pads, 0.1);
-    expect(colour(view, "big inlays", 0).r).toBe(1);
+    expect(colour(view, "big base", 0).r).toBe(1);
   });
 
   it("warms a taken big pad up (VT-13): the copies revealed by n, the curtains to 1 + 3 EaseInCirc(n); puffs in the last second", () => {
@@ -274,6 +322,9 @@ describe("boost pads", () => {
     const warm = colour(view, "big warm-up curtains", 0);
     expect(warm.g).toBeCloseTo(0.5, 6);
     expect(warm.r).toBeCloseTo(1 + 3 * (1 - Math.sqrt(0.75)), 5);
+    // (the base's cream inlays revealed by the same n; the small pads' never)
+    expect(colour(view, "big base", 0).g).toBeCloseTo(0.5, 6);
+    expect(colour(view, "small base", 0).g).toBe(0);
     expect(at(view, "big warm-up puffs", 0)).toBeNull();
     view.update(big(0.75));
     const puff = new Matrix4();
@@ -285,7 +336,8 @@ describe("boost pads", () => {
     expect(at(view, "big warm-up puffs", 1)).toEqual([-3584, 0, 101]);
     // Back: the warm-up gone at once
     view.update(pads);
-    for (const name of ["big warm-up inlays", "big warm-up curtains"]) expect(at(view, name, 0)).toBeNull();
+    expect(at(view, "big warm-up curtains", 0)).toBeNull();
+    expect(colour(view, "big base", 0).g).toBe(0);
     for (const slot of [0, 1]) expect(at(view, "big warm-up puffs", slot)).toBeNull();
     // (small pads have no warm-up at all)
     expect(view.root.children.some((c) => c.name.startsWith("small warm-up"))).toBe(false);

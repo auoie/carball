@@ -10,7 +10,8 @@
 // ready checks, podium titles), Refused's version reason; 15: the game's compact state and rates (G1); 16: the vehicles'
 // order (FP1); 17: the queue (Hello's intent, playlist and token, MatchFound, IdleWarning, Kicked); 18: the moving
 // bodies' broadphase boxes (FP2); 19: a search's browser key and returning token, SearchCooldown; 20: SearchCooldown's
-// network flag; 21: the match's map (MatchFound, Welcome)
+// network flag; 21: the match's map (MatchFound, Welcome); 22: the garage's car (Hello's and the roster's model); 23:
+// Kicked's reason 2, a newer search from the same browser took this one's place (RV-460)
 export const PROTOCOL_VERSION = 23;
 /** A name's bytes at most (UTF-8) */
 export const MAX_NAME_BYTES = 32;

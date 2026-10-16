@@ -119,7 +119,8 @@ export class BallArrow {
 
   constructor() {
     // The haze: the sphere with inward normals, so only its far inner side draws (the near side's faces turn away)
-    const haze = new Mesh(new SphereGeometry(HAZE_RADIUS, 32, 16), material(HAZE_FRAGMENT, BackSide, -1));
+    // (24 x 12: its opacity (N.V)^4, nothing at its silhouette, so no facet shows: the integrated-graphics trims)
+    const haze = new Mesh(new SphereGeometry(HAZE_RADIUS, 24, 12), material(HAZE_FRAGMENT, BackSide, -1));
     haze.renderOrder = 1000; // (over the world and the translucents, the haze first: the sphere is the mesh's slot 0)
     this.root.add(haze);
     this.#arrow = material(ARROW_FRAGMENT, FrontSide, 1);

@@ -31,7 +31,7 @@ const PUFF_GREY = [0.5, 0.5, 0.5] as const;
  *  drawn each frame; a move over 128 uu a frame isn't filled), so a car boosting in place leaves none and the trail
  *  lingers after the boost stops; its per-socket ParticleSize 20-35 (single-exhaust bodies: 50-100); no inherited
  *  velocity; drifting up, slowing (VelocityOverLifetime) */
-export const BOOST_TRAIL: EmitterSpec = {
+const BOOST_TRAIL_LOD0: EmitterSpec = {
   name: "boost trail",
   blend: "translucent",
   duration: 1,
@@ -62,7 +62,7 @@ export const BOOST_TRAIL: EmitterSpec = {
 
 /** Drive_PS: the idle exhaust while throttling and not boosting (10 a second, blown back), in the exhaust's own frame:
  *  the puffs move with the car (bUseLocalSpace), turning grey */
-export const IDLE_EXHAUST: EmitterSpec = {
+const IDLE_EXHAUST_LOD0: EmitterSpec = {
   name: "idle exhaust",
   blend: "translucent",
   duration: 0.25,
@@ -84,6 +84,20 @@ export const IDLE_EXHAUST: EmitterSpec = {
   },
   alpha: 0.5,
   alphaOverLife: curve(T20, [0.25, 0.2482, 0.243, 0.2348, 0.224, 0.2109, 0.196, 0.1796, 0.162, 0.1437, 0.125, 0.1063, 0.088, 0.07044, 0.054, 0.03906, 0.026, 0.01519, 0.007, 0.001812, 0]),
+};
+
+/** The boost trail, its LOD 1 a puff per 64 uu (half as many: SpawnPerUnit UnitScalar 64, against 32), at Particle
+ *  Detail Performance and beyond 3072 uu at any setting (QG-24) */
+export const BOOST_TRAIL: EmitterSpec = {
+  ...BOOST_TRAIL_LOD0,
+  lod: { beyond: 3072, spec: { ...BOOST_TRAIL_LOD0, name: "boost trail (LOD 1)", perUnit: { unit: 64, count: { min: 1, max: 4 }, maxFrame: 128 } } },
+};
+
+/** The idle exhaust, its LOD 1 bigger and fainter (25 across, against 6.5-12.5; alpha 0.15, against 0.5; still 10 a
+ *  second), at Particle Detail Performance and beyond 2500 uu at any setting (QG-25) */
+export const IDLE_EXHAUST: EmitterSpec = {
+  ...IDLE_EXHAUST_LOD0,
+  lod: { beyond: 2500, spec: { ...IDLE_EXHAUST_LOD0, name: "idle exhaust (LOD 1)", size: { min: 25, max: 25 }, alpha: 0.15 } },
 };
 
 const SPARK_KNOTS = [0, 0.05206, 0.1041, 0.1562, 0.2082, 0.2603, 0.3123, 0.3644, 0.4165, 0.4685, 0.5206, 0.5726, 0.6247, 0.6767, 0.7288, 0.7809, 0.8329, 0.885, 0.937, 0.9891, 1.041];
@@ -412,6 +426,7 @@ export class SceneEffects {
         }
       }
     }
+    this.particles.eye = this.camera;
     this.particles.update(seconds);
   }
 }

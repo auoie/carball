@@ -1,4 +1,5 @@
 // Player settings: bindings, camera, controller and audio. Saved in the browser (localStorage).
+import { DEFAULT_VIDEO_SETTINGS, type VideoSettings, readVideo, resolveVideo } from "./video";
 import { DEFAULT_COLUMNS, SCOREBOARD_COLUMNS } from "../game/matchStats";
 import { DEFAULT_CAMERA_SETTINGS, type CameraSettings } from "../camera/carballCamera";
 import {
@@ -170,6 +171,8 @@ export interface Settings {
   readonly scoreboard: ScoreboardSettings;
   readonly interface: InterfaceSettings;
   readonly gameplay: GameplaySettings;
+  /** The Video tab's (settings/video.ts; Bloom and Depth of Field in the options) */
+  readonly video: VideoSettings;
 }
 
 /** The scoreboard's four columns after SCORE (ProfileScoreboardSave_TA, Soccar's group: SB-17), by column id */
@@ -289,7 +292,15 @@ export const DEFAULT_SETTINGS: Settings = {
   scoreboard: DEFAULT_SCOREBOARD_SETTINGS,
   interface: DEFAULT_INTERFACE_SETTINGS,
   gameplay: DEFAULT_GAMEPLAY_SETTINGS,
+  video: DEFAULT_VIDEO_SETTINGS,
 };
+
+/** The settings as they apply: the video settings' automatic default resolved (settings/video.ts resolveVideo: the
+ *  player's own once chosen) */
+export function resolveSettings(s: Settings, weakGpu: boolean): Settings {
+  const r = resolveVideo({ video: s.video, bloom: s.options.bloom, depthOfField: s.options.depthOfField }, weakGpu);
+  return r.video === s.video && r.bloom === s.options.bloom && r.depthOfField === s.options.depthOfField ? s : { ...s, video: r.video, options: { ...s.options, bloom: r.bloom, depthOfField: r.depthOfField } };
+}
 
 const STORAGE_KEY = "carball.settings.v1";
 
@@ -444,6 +455,7 @@ export function parseSettings(v: unknown): Settings {
     scoreboard: readScoreboard(src["scoreboard"]),
     interface: readInterface(src["interface"]),
     gameplay: readGameplay(src["gameplay"], old),
+    video: readVideo(src["video"]),
   };
 }
 

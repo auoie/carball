@@ -666,6 +666,86 @@ translucency; the velocity pass after the shafts; fog per notes/arena-surroundin
 
 **PP-31 open item 4 settled (2026-10-10, CAP1):** the GrassCube is sampled through an sRGB view (R8G8B8A8_UNORM_SRGB), so the pow(1/2.2) store is decoded before filtering. Details and the clone recipe are in notes/arena-surroundings.md SUR-32.
 
+## 13. Quality settings and gates (GQ1, 2026-10-16)
+
+From the Video tab's script (TAGame `InitVideoSettings` / `SetRenderDetailValue`, live script dump TA:54900-55327), the
+settings movie (SET:60313-60404), UserSettings.int and the snapshot's BaseSystemSettings.ini (BSS) and
+DefaultSystemSettings.ini (DSS). Tags as above; [N] = native, not decoded. Menu labels and options: notes/hud-menus.md MENU-19..21.
+
+**Presets ("Render Detail": High Quality / Quality / Performance / Custom)** [S → C]:
+
+| Switch | High Quality | Quality | Performance |
+|---|---|---|---|
+| Texture Detail → bucket | TexturesHigher | TexturesHigh | TexturesMedium |
+| World Detail → DetailMode | 2 (decals on, cull ×1.0) | 1 (decals on, cull ×0.5) | 0 (StaticDecals off, cull ×0.5) |
+| Particle Detail → ParticleLODBias | 0 | 0 | 1 |
+| High Quality Shaders (bAllowHighQualityMaterials) | on | on | off |
+| AO / DOF / Bloom | on | off | off |
+| Light Shafts / Lens Flares / Motion Blur | on | off | off |
+| Dynamic Shadows | on | on | off |
+| Weather (bShowWeatherFX) | on | on | off |
+
+Presets don't touch Anti-aliasing, Render Quality (ScreenPercentage 100/85/70/55, separate), the FPS cap, V-Sync or Effect
+Intensity. Any advanced change, **and Anti-aliasing or Render Quality**, switches Render Detail to Custom; Lens Flares, Weather
+and Effect Intensity don't. Texture buckets (MaxLODSize, LODBias 0): Higher 2048 (Cinematic 4096); High 1024 (RenderTarget
+2048); Medium 1024 for World/Character/Vehicle/UI/Cinematic/Lightmap/Shadowmap, 512 for specular, Effects, Skybox, Weapon,
+256 WeaponSpecular; Low (UI only) 1024/512/256; Derp 128 (not in the UI). Fixed: MaxAnisotropy 4, MaxMultiSamples 1, no
+temporal AA, MaxDrawDistanceScale 1. [SystemSettingsProfileDetailLow/High] are dead (no reference).
+
+**Corrections to §7 and others:** Weather Effects defaults **on** (VideoSettingsSave_TA archetype bShowWeatherFX True; HUD1's
+table said off); Quality keeps High Quality Shaders and Dynamic Shadows; Performance also turns off High Quality Shaders,
+Dynamic Shadows and Weather, and sets StaticDecals off with decal cull ×0.5. PP-14: all 24 lens flares are DM_High, and 10
+are HiddenGame and not auto-activated, so 14 show by default. Effect Intensity and Weather have no users in Stadium_P,
+GameInfo_Soccar_SF, the Octane, Boost_Standard or Explosion_Default.
+
+**Gating rules** [A data; rules UE3 [I]]: a component draws only if its DetailMode ≤ the system DetailMode (DM_High: World
+Detail High Quality only; DM_Medium: High Quality and Quality); an emitter with MediumDetailSpawnRateScale 0 spawns nothing
+below High; ParticleLODBias is added to a system's LOD and clamped (only 2-LOD systems change; LOD 1 is also used beyond the
+system's LOD distance at any setting); High Quality Shaders off uses each material's low-quality resource where one exists.
+
+**Effect map (QG)** — what each switch changes in what Carball builds:
+
+| # | Effect (note) | Changed by | How |
+|---|---|---|---|
+| QG-1 | Bloom PP-7..9 | Bloom (off in Quality, Performance) | passes skipped |
+| QG-2 | DOF soft layer PP-10 | Depth of Field (off in Quality, Performance) | no softening |
+| QG-3 | Tone map, LUT, fades, height fog | none | always run |
+| QG-4 | SSAO, motion blur, light shafts, lens flares, car shadows | AO, MB, Light Shafts, Lens Flares, Dynamic Shadows | not built in Carball (no-op rows) |
+| QG-5 | Grass H-1/AV-6a | HQ Shaders | LQ: no lightmap texture (× LightColor (0.768, 0.698, 0.530)); no GrassCube, instead + 0.15·(Σᵢ sat(2(\|cᵢ\| − 2/3)))²·lerp(2P0, 2P1, sat(Y/4096 + 0.5))·ENVAmount with c the normalised tangent camera vector; no RockyDirt normal; view factor 3·((1 − c.z)⁴ + 1/3); noise factor 0.285·(n + 1.5) with k = 0.02125·((1 − c.z)⁴ + 0.25); skin, team lines and the Y = 0 switch unchanged. Blade meshes and Field_STD_Floor_Thick are DM_High (not built) |
+| QG-6 | Markings H-2, generators H-7, glow strips H-5 | none | no visible LQ difference |
+| QG-7 | Hex panels H-3 | HQ Shaders | Hexagons_N and carbon detail normals dropped (flat cells); GrassCube reflection kept |
+| QG-8 | Frames and trims H-4 | HQ Shaders | only FrameTexture_N + PACK: no GrassCube reflection, no tire marks, no detail normals |
+| QG-9 | Lower glass H-6 | HQ Shaders | rgb = 1/12 constant; alpha unchanged |
+| QG-10 | Cage H-8 | HQ Shaders | LQ out = colour × fog, colour as H-8 with t = sat(Y/128 + 0.5), I = 1: no parabola profile, ball glow, scan stripes, rings or shockwave |
+| QG-11 | Ball overlay H-9 | HQ Shaders | alpha = 0.25·ForcefieldHex.R (the faint net only); colour unchanged |
+| QG-12 | Sky H-10 | HQ Shaders | gradient only, v·lerp(base + q⁴·warm, horizon, w): no clouds, no stars; fog bowl unchanged |
+| QG-13 | Crowd, boards, scoreboards, roof | HQ Shaders | drop the sphere normal / the noise texture / the noise texture / three normal maps; grate and board backs unchanged |
+| QG-14 | Canopy glass (Stadium_Glass, _02), floodlight flare sheets, haze shell (FogMesh_01 ×2), the 3 big far fog sheets ((−2441, −30406), (−41904, 49), (−416, 29904)), city window lights (SkyScraperLights_01/02, SkyScraper_B_Lights), corner banner flags ×4 | World Detail Performance | DM_Medium: removed (mullions, (−20880, 49) and the low fog pair (48, ±7700), SkyScraper_C_Lights and the towers always drawn) |
+| QG-15 | FogCylinder far band, 37 small poplars + LeafyTrees, scaffolds ×8 | World Detail Quality and Performance | DM_High: removed (the 3 big −X plaza poplars (−20600, −1528), (−20680, 1608), (−19880, 40) always drawn) |
+| QG-16 | Always drawn | – | arena shell (cage, overlay, glass, glows, trims), country flags, bulbs, team beams, stands, crowd, screens, sky |
+| QG-17 | Reflection capture | World Detail, HQ Shaders | re-captured with the gated set and material variants [I] |
+| QG-18 | Big pad halo (VT-11a d) | World Detail Quality and Performance | MediumDetailSpawnRateScale 0 (already omitted in Carball) |
+| QG-19 | Pad curtains (BoostPad_LightCone_03_Mat) | HQ Shaders | alpha = sat(0.375·S(v)·Brightness): no scrolling noise; colour unchanged |
+| QG-20 | Pad glow / warm-up (BoostPad_Glowing_Mat) | HQ Shaders | no noise or scrolling bands: colour (1 + S)·BoostPad_Color, alpha = reveal·sat(0.375·S·Brightness) |
+| QG-21 | Pad base, orb sprites, small-pad inlay; ball reticle, beam, far ring, clarity sphere | none | no LQ resource, no gate (the decal has no CullDistance; DynamicDecals stays on) |
+| QG-22 | Ball material (VT-31 kept) | HQ Shaders | cube reflection without the arena-box parallax |
+| QG-23 | Ball speed trail (not built) | World Detail | emitters 3–6 (four side ribbons) High only; main ribbon and emitter 7 always |
+| QG-24 | Boost trail Boost_Painted_PS (VT-2) | Particle Detail Performance | LOD 1: SpawnPerUnit UnitScalar 64 (vs 32), half the puffs per distance; also beyond 3072 uu at any setting |
+| QG-25 | Idle exhaust Drive_PS | Particle Detail Performance | LOD 1: X 25 (vs 6.5–12.5) × Y 50–100 (vs 25–50), alpha 0.15 (vs 0.5), still 10/s; also beyond 2500 uu |
+| QG-26 | Wall dust Rock_PS, jump Jump_Metal_PS, respawn CarSpawn_PS | Particle Detail Performance | LOD 1: dust 16/s → 2/s; smaller bursts |
+| QG-27 | Supersonic, goal explosion, demolition, field dust Grass_PS | none | one LOD, no gates |
+
+**First run** [S][C]: on PC the defaults are fixed: High Quality everything, Render Quality 100, Anti-aliasing Off, every
+toggle on, FPS cap = the display's highest refresh rate (initial value Engine.MaxSmoothedFrameRate: cooked 62 [A], live config
+[N]); BSS/DSS give DetailMode 2, all post on, ParticleLODBias 0, ScreenPercentage 100, HQ materials, textures 2048, UseVsync
+off. [SystemSettingsBucket1..5] all equal [SystemSettings], there's no compat ini or GPU table in the snapshot and no script
+benchmark; the exe carries UE3's compat-detection strings ("AppCompat", "CompatLevelComposite", "firstinstall") and a
+"MinimumSystemSettings.ini" / TexturesDerp path, whether they run is [N]. Consoles default "Video Quality" to Performance
+(ScreenPercentage 70; 720p on one console). The game itself doesn't adapt to the hardware on PC.
+
+**Open [N]:** whether the compat detection or MinimumSystemSettings path runs at first launch; the live initial
+MaxSmoothedFrameRate; the script's `scale get bAllowHighQualityMaterial` typo (no "s": the box may read off on open).
+
 ## Appendix: native addresses (live 2026-10-06)
 
 | What | VA |

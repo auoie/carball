@@ -1,6 +1,7 @@
 // The stadium's lights and haze (notes/arena-surroundings.md SUR-8, 13, 14, 23; RV-130): the team uplight beams, the
 // floodlights' flare sheets, the team light bulbs along the roof, the canopy's mullions with their team light dots, the
 // StadiumFog haze and the near fog sheets. Placements and formulas the spec's; our own soft shapes (no textures).
+import { detailMode } from "../detail";
 import {
   AdditiveBlending,
   type Color,
@@ -193,6 +194,7 @@ export function buildStadiumLights(primary0: Color, primary1: Color): Group {
     }),
   );
   flares.name = "lights: flare sheets";
+  detailMode(flares, "medium"); // (QG-14)
   flares.renderOrder = PRIORITY.flares;
   group.add(flares);
   // The bulb clusters along the roof's inner edge, facing the capture point
@@ -328,6 +330,7 @@ export function buildStadiumLights(primary0: Color, primary1: Color): Group {
     }),
   );
   shell.name = "lights: haze";
+  detailMode(shell, "medium"); // (FogMesh_01: QG-14)
   shell.renderOrder = PRIORITY.haze;
   group.add(shell);
   // The fog sheets: each a Circle_Sprite hexagon facing the capture point, turned by its yaw; its vertex fog at its true
@@ -377,7 +380,10 @@ export function buildStadiumLights(primary0: Color, primary1: Color): Group {
     // (its TranslucencySortPriority, TRN1: below the canopy's glass, the fog bowl and the haze, so it no longer sorts
     // against them by position, which popped it in and out as the view turned)
     mesh.renderOrder = sheet.big ? PRIORITY.bigFogSheet : PRIORITY.lowFogSheet;
-    group.add(k < 1 ? drawnNearer(mesh, k, C) : mesh);
+    const piece = k < 1 ? drawnNearer(mesh, k, C) : mesh;
+    // (the three big far ones DetailMode Medium, QG-14; the -X plaza's and the low pair always drawn)
+    if ((sheet.big && sheet.at[2] > 5000) || sheet.at[0] < -40000) detailMode(piece, "medium");
+    group.add(piece);
   }
   return group;
 }

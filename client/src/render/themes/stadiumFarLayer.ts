@@ -1,5 +1,6 @@
 // The stadium's far layer (notes/arena-surroundings.md SUR-11, 22, 23; TRN1): the skyline and the city's glow, opaque
 // and at their distance's depth, and the FogCylinder's band over them, the game's mesh drawn nearer about the camera.
+import { detailMode } from "../detail";
 import { BackSide, BufferGeometry, Float32BufferAttribute, Group, Mesh, ShaderMaterial, SphereGeometry, Vector3 } from "three";
 import { GRASS_CUBE_AT } from "../grassCube";
 import { withHeightFog } from "../heightFog";
@@ -202,6 +203,7 @@ export function buildFarLayer(): Group {
   bandMesh.renderOrder = PRIORITY.fogCylinder;
   const group = new Group();
   group.name = "far layer";
-  group.add(cityMesh, drawnNearer(bandMesh, k, from));
+  // (the FogCylinder's far band DetailMode High: QG-15)
+  group.add(cityMesh, detailMode(drawnNearer(bandMesh, k, from), "high"));
   return group;
 }

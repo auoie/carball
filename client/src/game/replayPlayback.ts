@@ -121,7 +121,9 @@ export class ReplayPlayback {
     const at = this.#frameAt(this.tick);
     const base = Math.floor(at);
     const alpha = at - base;
-    const a = this.#recorder.before(base);
+    // (a replay beginning before this page's recording did, its page still loading as the match went on: the cars held
+    // as first recorded till then, not an empty field; ours, the game records on its server)
+    const a = this.#recorder.before(base) ?? this.#recorder.after(base, Math.ceil(this.#frameAt(plan.endTick) - base) + 1);
     const b = this.#recorder.at(base + 1) ?? a;
     if (a && b) this.#drawRecorded(scene, a, b, alpha, realSeconds * dilation);
     // The camera's focus: the next car to touch the ball, with the ball; after the scoring touch the ball alone; once

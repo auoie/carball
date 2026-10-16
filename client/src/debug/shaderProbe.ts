@@ -35,7 +35,8 @@ interface PadsProbe {
 }
 import { CUBE_FOG_CAP, HEIGHT_FOG_GLSL, fogCd, heightFog, opaqueDelta, skyDelta } from "../render/heightFog";
 import { PostProcess, REMAP_GLSL, TONEMAP_GLSL, display, unclippedNodes } from "../render/postProcess";
-import { ENV_GLSL, ENV_RADIAL, ENV_SPREAD, NET_SIDE_GLSL, OVERLAY_UV_GLSL, envG, netSideUv, overlayUv } from "../render/gameSurfaces";
+import { ENV_GLSL, NET_SIDE_GLSL, OVERLAY_UV_GLSL, envG, netSideUv, overlayUv } from "../render/gameSurfaces";
+import { CONST_TABLES_GLSL, tablesUniform } from "../render/constTables";
 import { UNDER_GLASS_V_GLSL, underGlassV } from "../render/goalInterior";
 import { GRASS_REFLECTION_GLSL, grassReflection } from "../render/stadiumField";
 import { CUBE_FACE, CubeChain, chainTwin, rawCube, storedCube } from "../render/cubeChain";
@@ -55,8 +56,9 @@ const grid = (from: number, to: number, steps: number): number[] => Array.from({
 
 export const PROBES: Readonly<Record<string, Probe>> = {
   envG: {
-    glsl: `uniform float envRadial[9];\nuniform float envSpread[9];\n${ENV_GLSL}`,
-    uniforms: { envRadial: { value: ENV_RADIAL }, envSpread: { value: ENV_SPREAD } },
+    // (its rings in the shared tables' texture, row 2: render/constTables.ts)
+    glsl: `${CONST_TABLES_GLSL}\n${ENV_GLSL}`,
+    uniforms: { constTables: tablesUniform() },
     call: "vec4(envG(i.xy), 0.0, 0.0, 0.0)",
     twin: (i) => [envG(i[0] ?? 0, i[1] ?? 0), 0, 0, 0],
     inputs: () => grid(-1.1, 1.1, 40).flatMap((u) => grid(-1.1, 1.1, 40).map((v): [number[], number[]] => [[u, v, 0, 0], [0, 0, 0, 0]])),

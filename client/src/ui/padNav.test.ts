@@ -32,7 +32,7 @@ describe("the menus with a pad", () => {
     expect(stickDirection(-0.9, 0, null)).toEqual({ direction: "left", owner: 0 });
   });
 
-  it("step a held slider by 1, then 2, 3, 6 and 11 of its steps as a hold goes on (MENU-16)", () => {
+  it("step a held slider by 1, then 2, 3, 6 and 11 of its steps as a hold goes on (MENU-14)", () => {
     expect([1, 7, 8, 13, 14, 19, 20, 25, 26, 60].map(sliderStep)).toEqual([1, 1, 2, 2, 3, 3, 6, 6, 11, 11]);
   });
 
@@ -223,7 +223,8 @@ describe("a menu page as a list with a pad (the user's request: native to contro
     expect(step(DOWN), "into the radio group: its chosen one").toBe("2v2");
     expect(step(RIGHT)).toBe("3v3");
     expect(controls[3]?.clicks, "a radio's choice taken as the focus moves").toBe(1);
-    expect(step(RIGHT), "a radio group wraps, a list's cycle").toBe("1v1");
+    expect(step(RIGHT), "a radio group stops at its end, as the game's (RV-477)").toBe("3v3");
+    expect(controls[3]?.clicks, "no choice taken again at the end").toBe(1);
     expect(step(DOWN)).toBe("find");
     expect(step(DOWN)).toBe("back");
     expect(step(DOWN), "the list's end: no wrap").toBe("back");

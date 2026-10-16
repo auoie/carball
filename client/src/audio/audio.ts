@@ -11,7 +11,7 @@ import type { ThemeName } from "../render/themes";
 import type { AudioSettings } from "../settings/settings";
 import { Ambience } from "./ambience";
 import { type SoundEvent, SoundDetector, type SoundWorld } from "./detect";
-import { CarVoice, Synth } from "./synth";
+import { CarVoice, Synth, type MenuCue } from "./synth";
 
 export interface AudioFrame {
   readonly world: SoundWorld;
@@ -171,8 +171,8 @@ export class GameAudio {
     this.#synth.searchStart(this.#effects, this.#ctx.currentTime + 0.01);
   }
 
-  /** The menus' cues with a pad (MENU-18: our own sounds) */
-  menu(cue: "move" | "select" | "back" | "tab"): void {
+  /** The menus' cues (MENU-18: our own sounds) */
+  menu(cue: MenuCue): void {
     this.#count(`menu-${cue}`);
     this.#synth.menu(this.#effects, this.#ctx.currentTime + 0.005, cue);
   }

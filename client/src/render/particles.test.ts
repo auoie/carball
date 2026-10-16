@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { vec3 } from "../math/vec";
 import { Demolition } from "./demolition";
 import { BOOST_TRAIL, GOAL_EXPLOSION, GoalExplosion, IDLE_EXHAUST, SceneEffects } from "./effects";
-import { Emitter, type EmitterSpec, Particles, additiveOutput, evaluate, particleColor, spherePoint, unitDirection } from "./particles";
+import { Emitter, type EmitterSpec, Particles, additiveOutput, evaluate, particleColor, spherePoint, unitDirection, particleDetail } from "./particles";
 import { fogAll } from "./heightFog";
 
 const FRAME = 1 / 60;
@@ -254,5 +254,35 @@ describe("spawning by distance (GetSpawnAmount: RV-85)", () => {
     const shaders = particles.root.children.map((m) => ((m as Mesh).material as ShaderMaterial).vertexShader);
     expect(shaders).toHaveLength(2);
     for (const shader of shaders) expect(shader).toContain("vFogWorld = vWorld;");
+  });
+});
+
+describe("Particle Detail and the emitters' second LOD (QG-24/25)", () => {
+  /** Boost trail puffs spawned over a 640 uu drive, the camera `eye` (none: near) */
+  const puffs = (performance: boolean, eye: { x: number; y: number; z: number } | null): { count: number; names: Set<string> } => {
+    particleDetail.performance = performance;
+    const particles = new Particles(() => 0.5);
+    particles.eye = eye;
+    const trail = new Emitter(particles, BOOST_TRAIL);
+    trail.active = true;
+    for (let x = 0; x <= 640; x += 16) trail.update(1 / 60, { x, y: 0, z: 17 });
+    particleDetail.performance = false;
+    return { count: particles.count, names: new Set(particles.list().map((p) => p.spec?.name ?? "")) };
+  };
+
+  it("the boost trail: a puff per 32 uu at High Quality near the camera; at Performance, or beyond 3072 uu at any setting, per 64", () => {
+    const near = puffs(false, { x: 0, y: 500, z: 100 });
+    const performance = puffs(true, { x: 0, y: 500, z: 100 });
+    const far = puffs(false, { x: 0, y: 5000, z: 100 });
+    expect(near.names).toEqual(new Set(["boost trail"]));
+    expect(performance.names).toEqual(new Set(["boost trail (LOD 1)"]));
+    expect(far.names).toEqual(new Set(["boost trail (LOD 1)"]));
+    expect(performance.count / near.count).toBeCloseTo(0.5, 1);
+    expect(far.count).toBe(performance.count);
+  });
+
+  it("the idle exhaust's LOD 1: 25 across and fainter, still 10 a second", () => {
+    const lod = IDLE_EXHAUST.lod?.spec;
+    expect([lod?.size, lod?.alpha, lod?.rate, IDLE_EXHAUST.lod?.beyond]).toEqual([{ min: 25, max: 25 }, 0.15, 10, 2500]);
   });
 });

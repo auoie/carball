@@ -36,10 +36,13 @@ function bounds(config: CarConfig, withWheels: boolean, car = 0): Box3 {
   return box;
 }
 
-/** Pairs of the model's triangles of two materials that lie in one plane (within 0.05 uu), face the same way (either way
- *  for a two-sided material) and overlap with some area: what z-fights (the user's finding: the Sport's bumper phasing in
- *  and out). (One material's faces in one plane shade the same: nothing shows) */
-function coplanarOverlaps(model: Object3D): string[] {
+/** Pairs of the model's triangles of two materials that lie within `tolerance` uu of one plane, face the same way
+ *  (either way for a two-sided material) and overlap with some area: what z-fights (the user's finding: the Sport's
+ *  bumper phasing in and out), near or, further off as the depth buffer coarsens, a little apart (RV-487: the depth's
+ *  step is z^2 / (near 2^24), 0.3 uu at 5000; faces 0.5 apart hold to about 6400 uu, where a car is a few pixels; the
+ *  Standard's rear pods, flush with CM1's tyres and capped by its width, 0.4: to about 5800). (One material's faces in
+ *  one plane shade the same: nothing shows) */
+function coplanarOverlaps(model: Object3D, tolerance = 0.35): string[] {
   model.updateMatrixWorld(true);
   interface Tri { readonly p: Vector3[]; readonly n: Vector3; readonly d: number; readonly mesh: string; readonly twoSided: boolean }
   const tris: Tri[] = [];
@@ -59,18 +62,19 @@ function coplanarOverlaps(model: Object3D): string[] {
       tris.push({ p, n, d: n.dot(a), mesh: o.name, twoSided });
     }
   });
-  // (by plane: the normal to 1/200 and the offset to 0.1 uu, each plane's neighbours looked in too)
-  const key = (n: Vector3, d: number): string => `${String(Math.round(n.x * 200))},${String(Math.round(n.y * 200))},${String(Math.round(n.z * 200))},${String(Math.round(d * 10))}`;
-  const planes = new Map<string, number[]>();
+  // (by the normal, to 1/200, its neighbours looked in too: the planes' offsets compared directly)
+  const key = (x: number, y: number, z: number): string => `${String(x)},${String(y)},${String(z)}`;
+  const q = (n: Vector3): [number, number, number] => [Math.round(n.x * 200), Math.round(n.y * 200), Math.round(n.z * 200)];
+  const byNormal = new Map<string, number[]>();
   tris.forEach((t, i) => {
-    const k = key(t.n, t.d);
-    planes.set(k, [...(planes.get(k) ?? []), i]);
+    const k = key(...q(t.n));
+    byNormal.set(k, [...(byNormal.get(k) ?? []), i]);
   });
   const overlap = (a: Tri, b: Tri): boolean => {
     // (in the plane's own axes; two triangles overlap with area if no edge of either separates them by more than 0.05)
     const u = new Vector3(1, 0, 0).cross(a.n).length() > 0.5 ? new Vector3(1, 0, 0).cross(a.n).normalize() : new Vector3(0, 1, 0).cross(a.n).normalize();
     const v = new Vector3().crossVectors(a.n, u);
-    const flat = (t: Tri): [number, number][] => t.p.map((q) => [q.dot(u), q.dot(v)]);
+    const flat = (t: Tri): [number, number][] => t.p.map((point) => [point.dot(u), point.dot(v)]);
     const [A, B] = [flat(a), flat(b)];
     for (const poly of [A, B]) {
       for (let i = 0; i < 3; i++) {
@@ -78,7 +82,7 @@ function coplanarOverlaps(model: Object3D): string[] {
         const [x1, y1] = poly[(i + 1) % 3] ?? [0, 0];
         const len = Math.hypot(x1 - x0, y1 - y0);
         const [nx, ny] = [-(y1 - y0) / len, (x1 - x0) / len];
-        const along = (q: [number, number]): number => (q[0] - x0) * nx + (q[1] - y0) * ny;
+        const along = (point: [number, number]): number => (point[0] - x0) * nx + (point[1] - y0) * ny;
         const [minA, maxA] = [Math.min(...A.map(along)), Math.max(...A.map(along))];
         const [minB, maxB] = [Math.min(...B.map(along)), Math.max(...B.map(along))];
         if (maxA < minB + 0.05 || maxB < minA + 0.05) return false;
@@ -88,17 +92,15 @@ function coplanarOverlaps(model: Object3D): string[] {
   };
   const found = new Set<string>();
   tris.forEach((a, i) => {
-    const [nx, ny, nz, nd] = key(a.n, a.d).split(",").map(Number) as [number, number, number, number];
-    const signs = a.twoSided ? [1, -1] : [1];
-    for (const sign of signs) {
-      for (const dd of [-1, 0, 1]) {
-        const k = sign === 1 ? `${String(nx)},${String(ny)},${String(nz)},${String(nd + dd)}` : `${String(-nx)},${String(-ny)},${String(-nz)},${String(-nd + dd)}`;
-        for (const j of planes.get(k) ?? []) {
+    const [nx, ny, nz] = q(a.n);
+    for (const sign of a.twoSided ? [1, -1] : [1]) {
+      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
+        for (const j of byNormal.get(key(sign * nx + dx, sign * ny + dy, sign * nz + dz)) ?? []) {
           const b = tris[j];
-          if (!b || j <= i || a.mesh === b.mesh || Math.abs(a.n.dot(b.n)) < 0.9999 || Math.abs(Math.abs(a.d) - Math.abs(b.d)) > 0.05 || Math.sign(a.n.dot(b.n)) !== sign) continue;
+          if (!b || j <= i || a.mesh === b.mesh || a.n.dot(b.n) * sign < 0.9999 || Math.abs(a.d - sign * b.d) > tolerance) continue;
           if (overlap(a, b)) {
             const at = a.p[0] ?? new Vector3();
-            found.add(`${a.mesh}/${b.mesh} at (${at.x.toFixed(1)}, ${at.y.toFixed(1)}, ${at.z.toFixed(1)}) facing (${a.n.x.toFixed(2)}, ${a.n.y.toFixed(2)}, ${a.n.z.toFixed(2)})`);
+            found.add(`${a.mesh}/${b.mesh} ${Math.abs(a.d - sign * b.d).toFixed(2)} apart at (${at.x.toFixed(1)}, ${at.y.toFixed(1)}, ${at.z.toFixed(1)}) facing (${a.n.x.toFixed(2)}, ${a.n.y.toFixed(2)}, ${a.n.z.toFixed(2)})`);
           }
         }
       }

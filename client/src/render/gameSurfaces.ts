@@ -3,17 +3,13 @@
 // and CS_FX Hexagons_Pack_01_T: 2 x 2 cells a tile, columns half a tile apart, rows half a tile apart across the flats,
 // odd columns half a row down; ForcefieldHex the same at 16 x 16), and their channels by profiles measured against the
 // hex radius (0 at a cell's centre, 1 at its edge). Values only; the textures stay local.
-import { DoubleSide, ShaderMaterial, UniformsLib, UniformsUtils, Vector3 } from "three";
+import { lowQualityPath } from "./shaderQuality";
+import { CONST_TABLES_GLSL, ENV_GLSL, ENV_RADIAL, ENV_SPREAD, tablesUniform } from "./constTables";
+export { ENV_GLSL, ENV_RADIAL, ENV_SPREAD, PACK_G } from "./constTables";
+import { DataTexture, DoubleSide, FloatType, NearestFilter, RGBAFormat, ShaderMaterial, UniformsLib, UniformsUtils, Vector3 } from "three";
 import type { Color } from "three";
 
-/** By hex radius in 32 steps, measured from the game's textures (the mean over each step: 16 over r 0-0.8, then 16
- *  over 0.8-1 where the lines are; scripts/hex_profile.py, decoded from sRGB where the texture is sRGB, as the GPU
- *  reads it: RV-60): TiledPatterns.Hexagons_Pack G (sRGB; the lower glass's alpha shape); the ball tracker's
- *  Hexagons_Pack_01_T R (sRGB; glowing lines) and G (a band inside each cell); ForcefieldHex R (sRGB; the fine net) */
-export const PACK_G = [
-  0.85, 0.85, 0.846, 0.811, 0.802, 0.803, 0.803, 0.803, 0.803, 0.803, 0.813, 0.973, 1, 1, 1, 0.801, 0.515, 0.511, 0.51, 0.512, 0.513,
-  0.51, 0.501, 0.487, 0.471, 0.451, 0.43, 0.405, 0.368, 0.322, 0.253, 0.178,
-];
+
 /** The decoded textures' means: what cells too small to draw average to */
 export const PACK_G_MEAN = 0.719;
 const NET_R_MEAN = 0.091;
@@ -43,14 +39,6 @@ float hexRadius(vec2 tile) {
     best = min(best, max(d.y / (0.8660254 * edge), (d.x + d.y * 0.5773503) / edge));
   }
   return best;
-}
-// A 32-step profile (16 steps over r 0-0.8, 16 over 0.8-1), interpolated between the steps' middles
-float profile32(float table[32], float r) {
-  float rr = clamp(r, 0.0, 1.0);
-  float x = (rr < 0.8 ? rr * 20.0 : 16.0 + (rr - 0.8) * 80.0) - 0.5;
-  int i = int(clamp(floor(x), 0.0, 31.0));
-  int j = min(i + 1, 31);
-  return mix(table[i], table[j], clamp(x - float(i), 0.0, 1.0));
 }
 float saturate1(float x) { return clamp(x, 0.0, 1.0); }
 `;
@@ -123,14 +111,21 @@ const overlayFragment = /* glsl */ `
 uniform vec3 ballPosition;
 uniform vec3 primary0;
 uniform vec3 primary1;
-uniform float trackerR[32];
-uniform float trackerG[32];
-uniform float netR[32];
+uniform sampler2D profiles;
 varying vec3 vWorldPosition;
 varying vec3 vWorldNormal;
 #include <fog_pars_fragment>
 ${hexGlsl}
 ${OVERLAY_UV_GLSL}
+// The three profiles at r (32 steps as profile32's), from their texture's exact texels: the ball tracker's R and G, the
+// net's R in r, g, b (one lookup a texel where the uniform arrays' indexing was: the same values, the same mix)
+vec4 profiles32(float r) {
+  float rr = clamp(r, 0.0, 1.0);
+  float x = (rr < 0.8 ? rr * 20.0 : 16.0 + (rr - 0.8) * 80.0) - 0.5;
+  int i = int(clamp(floor(x), 0.0, 31.0));
+  int j = min(i + 1, 31);
+  return mix(texelFetch(profiles, ivec2(i, 0), 0), texelFetch(profiles, ivec2(j, 0), 0), clamp(x - float(i), 0.0, 1.0));
+}
 void main() {
   // (the game's frame: Three's x, z, y)
   vec3 p = vWorldPosition.xzy;
@@ -149,14 +144,20 @@ void main() {
   float ring = saturate1(2.0 * (outside * F - 0.001));
   // The ball tracker (Hexagons_Pack_01_T) at uv x 1.75; ForcefieldHex (16 columns a tile) at uv x (0.99, 0.9)
   float hexR = hexRadius(uv * 1.75);
-  float hex = 8.0 * profile32(trackerR, hexR) * saturate1((220.0 - d) * 0.0015)
-    + saturate1(0.025 * profile32(trackerG, hexR) * saturate1((300.0 - d) * 0.01));
+  vec4 tracker = profiles32(hexR);
+  float hex = 8.0 * tracker.r * saturate1((220.0 - d) * 0.0015)
+    + saturate1(0.025 * tracker.g * saturate1((300.0 - d) * 0.01));
   vec2 netTile = uv * vec2(0.99, 0.9) * 8.0;
-  float net = profile32(netR, hexRadius(netTile));
+  float net = profiles32(hexRadius(netTile)).b;
   // (where the net's cells shrink under a few pixels: their average, not shimmer)
   float shrink = smoothstep(0.08, 0.25, length(fwidth(netTile)));
   net = mix(net, ${NET_R_MEAN}, shrink);
-  float alpha = mix(ring * (1.0 - net - 0.25 * outside * net) + 0.25 * outside * net, hex, F);
+  #ifdef CARBALL_LQ
+    // (High Quality Shaders off, QG-11: the faint net only, its alpha 0.25 ForcefieldHex.R; the colour as it is)
+    float alpha = 0.25 * net;
+  #else
+    float alpha = mix(ring * (1.0 - net - 0.25 * outside * net) + 0.25 * outside * net, hex, F);
+  #endif
   vec3 team = 2.0 * mix(primary0, primary1, saturate1(p.y / 400.0 + 0.5));
   // (the hexagon term unclamped in the colour's lerp: 0.25 + 1.23 (0.6 - 0.25) on a line at the ball, RV-65)
   vec3 colour = mix(mix(vec3(0.25), team, ring), vec3(0.6), hex);
@@ -166,12 +167,7 @@ void main() {
 }
 `;
 
-/** ENVPack.G (sRGB, decoded) by |uv| of its lookup at -normalize(tangent-space camera vector).xy, which is the sine of
- *  the view's angle to the glass's normal: its mean over each ring (|uv| 0-1 in 8 steps; at 0 the head-on texel),
- *  measured from the game's texture (a statistic: the texture itself stays local) */
-export const ENV_RADIAL = [0.205, 0.217, 0.166, 0.227, 0.394, 0.441, 0.286, 0.269, 0.3];
-/** ENVPack.G's spread round each of those rings (its standard deviation, the same lookup: a statistic) */
-export const ENV_SPREAD = [0, 0.155, 0.117, 0.251, 0.3, 0.249, 0.236, 0.216, 0.243];
+
 /** Our own smooth environment for ENVPack.G (RV-71: the user's choice (c); the texture can't ship, and no low-order fit of
  *  it holds): at |uv| its rings' mean, and round each ring one cosine with the ring's spread, its phase turning with the
  *  radius (ours, not the texture's), clamped 0..1. Needs uniforms envRadial[9], envSpread[9] */
@@ -186,17 +182,7 @@ export function envG(u: number, v: number): number {
   return Math.min(Math.max(mean + 1.4142 * spread * Math.cos(Math.atan2(v, u) - 6.2832 * s), 0), 1);
 }
 
-export const ENV_GLSL = /* glsl */ `
-float envG(vec2 uv) {
-  float s = min(length(uv), 1.0);
-  float x = s < 0.0625 ? s / 0.0625 : 1.0 + (s - 0.0625) / 0.125;
-  int i = int(clamp(floor(x), 0.0, 7.0));
-  float f = clamp(x - float(i), 0.0, 1.0);
-  float mean = mix(envRadial[i], envRadial[i + 1], f);
-  float spread = mix(envSpread[i], envSpread[i + 1], f);
-  return clamp(mean + 1.4142 * spread * cos(atan(uv.y, uv.x) - 6.2832 * s), 0.0, 1.0);
-}
-`;
+
 
 /** The goal net's flat side walls' chart (Goal_STD_Glass_Outer's, planar: RV-73, RV-110), at |y|, z (NET_SIDE_GLSL's, for
  *  tests) */
@@ -234,13 +220,11 @@ export function goalSideV(ax: number, z: number): number {
  *  at its tile coordinates (`glassTile`: the mesh UV0 x (3, 7/3)), its colour ENVPack.G seen along the view + 1/12
  *  (head-on 0.205 + 0.083: RV-61) */
 const glassFragment = /* glsl */ `
-uniform float packG[32];
-uniform float envRadial[9];
-uniform float envSpread[9];
 varying vec3 vWorldPosition;
 varying vec3 vWorldNormal;
 varying vec2 vGlassTile;
 #include <fog_pars_fragment>
+${CONST_TABLES_GLSL}
 ${hexGlsl}
 ${ENV_GLSL}
 ${NET_SIDE_GLSL}
@@ -267,10 +251,14 @@ void main() {
     vec3 n = normalize(vWorldNormal);
     if (abs(n.x) > 0.97) tile = vec2(3.0, 7.0 / 3.0) * netSideUv(abs(vWorldPosition.z), vWorldPosition.y);
   #endif
-  float g = profile32(packG, hexRadius(tile));
+  float g = tableProfile(T_PACK_G, hexRadius(tile));
   // (cells under a few pixels: the tile's average)
   g = mix(g, ${PACK_G_MEAN}, smoothstep(0.1, 0.3, length(fwidth(tile))));
   float alpha = 0.1875 * g;
+  #ifdef CARBALL_LQ
+    // (High Quality Shaders off, QG-9: a flat 1/12, no ENVPack along the view)
+    vec3 colour = vec3(1.0 / 12.0);
+  #else
   vec3 toCamera = normalize(cameraPosition - vWorldPosition);
   // The view in the glass's tangent frame (T, B along its tiles' u and v: from their screen derivatives; RV-71), ENVPack
   // looked up at -V.xy: our smooth stand-in
@@ -286,6 +274,7 @@ void main() {
   vec3 viewTs = vec3(dot(toCamera, tangentTs), dot(toCamera, bitangentTs), dot(toCamera, normalTs));
   float env = envG(-normalize(viewTs).xy);
   vec3 colour = vec3(env + 1.0 / 12.0);
+  #endif
   gl_FragColor = vec4(colour, alpha);
   #include <colorspace_fragment>
   #include <fog_fragment>
@@ -338,6 +327,19 @@ export class GlowStripMaterial extends ShaderMaterial {
   }
 }
 
+/** The overlay's three 32-step profiles (TRACKER_R, TRACKER_G, NET_R) as one 32 x 1 RGBA32F texture, texel i their step
+ *  i in r, g, b: read exactly (texelFetch, no filtering), mixed in the shader as the uniform arrays were */
+export function overlayProfiles(): DataTexture {
+  const data = new Float32Array(32 * 4);
+  for (let i = 0; i < 32; i++) data.set([TRACKER_R[i] ?? 0, TRACKER_G[i] ?? 0, NET_R[i] ?? 0, 0], 4 * i);
+  const texture = new DataTexture(data, 32, 1, RGBAFormat, FloatType);
+  texture.minFilter = NearestFilter;
+  texture.magFilter = NearestFilter;
+  texture.generateMipmaps = false;
+  texture.needsUpdate = true;
+  return texture;
+}
+
 /** The walls' and ceiling's overlay round the ball, in the teams' linear primaries */
 export class ForceFieldMaterial extends ShaderMaterial {
   readonly ballPosition: Vector3;
@@ -352,15 +354,14 @@ export class ForceFieldMaterial extends ShaderMaterial {
         ballPosition: { value: ballPosition },
         primary0: { value: primary0 },
         primary1: { value: primary1 },
-        trackerR: { value: TRACKER_R },
-        trackerG: { value: TRACKER_G },
-        netR: { value: NET_R },
+        profiles: { value: overlayProfiles() },
       },
       transparent: true,
       depthWrite: false,
       side: DoubleSide,
       fog: true,
     });
+    lowQualityPath(this);
     this.ballPosition = ballPosition;
   }
 }
@@ -410,14 +411,13 @@ export class HexGlassMaterial extends ShaderMaterial {
       defines: { ...(options.net ? { NET_SIDE_WALLS: "" } : {}), ...(options.goalSide ? { GOAL_SIDE_GLASS: "" } : {}) },
       uniforms: {
         ...UniformsUtils.clone(UniformsLib.fog),
-        packG: { value: PACK_G },
-        envRadial: { value: ENV_RADIAL },
-        envSpread: { value: ENV_SPREAD },
+        constTables: tablesUniform(),
       },
       transparent: true,
       depthWrite: false,
       side: DoubleSide,
       fog: true,
     });
+    lowQualityPath(this);
   }
 }

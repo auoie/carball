@@ -25,7 +25,11 @@ import { type ThemeName, createTheme, createThemeOrNight, preloadTheme, themeNam
 import { CARS, carChoice, storedCar, storedTeam } from "./game/cars";
 import { GaragePreview } from "./ui/garagePreview";
 import type { Theme } from "./render/themes/theme";
-import { type Settings, loadSettings } from "./settings/settings";
+import { type Settings, loadSettings, resolveSettings } from "./settings/settings";
+import { AUTO_LEVELS, AutoVideoGuard, RENDER_QUALITY_SCALE, isWeakGpu } from "./settings/video";
+import { applyWorldDetail } from "./render/detail";
+import { particleDetail } from "./render/particles";
+import { applyShaderQuality } from "./render/shaderQuality";
 import { migrateBrowserStorage } from "./settings/storageKeys";
 import { SettingsPanel } from "./ui/settingsPanel";
 import { MatchMenu } from "./ui/matchMenu";
@@ -177,10 +181,21 @@ async function main(): Promise<void> {
   const renderer = new Renderer(canvas);
   // (the browser tests that read no pixels: nothing drawn, software WebGL being most of their time)
   renderer.draws = params.get("render") !== "off";
+  // The video settings' automatic default (settings/video.ts): a weak GPU starts lower, the player's own choice wins; the
+  // browser tests say theirs (e2e/fixtures.ts: the maximum, no guard)
+  const videoAuto = (window as unknown as { carballVideoAuto?: { readonly weak: boolean; readonly guard: boolean } }).carballVideoAuto;
+  const weakGpu = videoAuto?.weak ?? isWeakGpu(renderer.gpuName);
+  const resolve = (s: Settings): Settings => resolveSettings(s, weakGpu);
+  settings = resolve(settings);
+  renderer.renderScale = RENDER_QUALITY_SCALE[settings.video.renderQuality];
   renderer.scene.background = theme.background;
   renderer.scene.fog = theme.fog;
   renderer.heightFog = theme.heightFog ?? false;
   const arena = new ArenaView(theme);
+  // (World Detail's gates on the theme's pieces, before the reflection's first capture: it sees the gated set, QG-17; a
+  // later change isn't captured again, the cars then in the scene)
+  applyWorldDetail(theme.root, settings.video.worldDetail);
+  particleDetail.performance = settings.video.particleDetail === "performance";
   renderer.scene.add(arena.root);
   // (the arena's reflection capture, once: before the first frame, the cars and ball not yet drawn in it)
   renderer.beforeNextFrame((gl, scene) => {
@@ -201,12 +216,22 @@ async function main(): Promise<void> {
   // they're loaded)
   fitHudFonts();
   void loadHudFonts();
-  const panel = new SettingsPanel(document.body, settings, (next) => {
-    settings = next;
-    audio.apply(next.audio, next.options.muted);
-    renderer.postOptions = next.options;
-    applyInterface(next);
-  });
+  const panel = new SettingsPanel(
+    document.body,
+    settings,
+    (next) => {
+      settings = next;
+      audio.apply(next.audio, next.options.muted);
+      renderer.postOptions = next.options;
+      renderer.renderScale = RENDER_QUALITY_SCALE[next.video.renderQuality];
+      applyWorldDetail(theme.root, next.video.worldDetail);
+      particleDetail.performance = next.video.particleDetail === "performance";
+      // (a changed branch compiled before it's drawn where the browser compiles in parallel)
+      if (applyShaderQuality(renderer.scene, next.video.highQualityShaders) > 0) void renderer.prepare();
+      applyInterface(next);
+    },
+    resolve,
+  );
   // The menus (MENU-1/4): Escape brings up the pause menu, the settings over it; the main menu as freeplay's page opens
   let mainMenu: MainMenu | null = null;
   // (freeplay's session over again: leaving it for the main menu, RV-284)
@@ -232,13 +257,16 @@ async function main(): Promise<void> {
   const modal = new Modal(document.body);
   let searchView: SearchView | null = null;
   const menusOpen = (): boolean => panel.isOpen || pause.isOpen || (mainMenu?.isOpen ?? false) || modal.isOpen || (searchView?.panelOpen ?? false);
-  // Escape (and the pad's Start): the modal's OK; back out of the settings, the search panel (the search goes on) or the
-  // main menu's page; else the pause menu opens or closes
+  // (the online match menu's question, answered NO by B or Escape: set once that menu's made)
+  let dismissMatchQuestion = (): boolean => false;
+  // Escape: the modal's OK; back out of the settings, the search panel (the search goes on) or the main menu's page; a
+  // pause menu's question answered NO (RV-478); else the pause menu opens or closes
   const escape = (): void => {
     if (modal.isOpen) modal.close();
     else if (panel.isOpen) panel.escape();
     else if (searchView?.panelOpen) searchView.closePanel();
     else if (mainMenu?.isOpen) mainMenu.back();
+    else if (pause.isOpen && (pause.dismissQuestion() || dismissMatchQuestion())) return;
     else pause.toggle();
   };
   window.addEventListener(
@@ -278,11 +306,26 @@ async function main(): Promise<void> {
       else if (panel.isOpen) panel.escape();
       else if (searchView?.panelOpen) searchView.closePanel();
       else if (mainMenu?.isOpen) return mainMenu.back();
-      else if (pause.isOpen) pause.close();
-      else return false;
+      else if (pause.isOpen) {
+        // (a question up answered NO, the menu kept: RV-478)
+        if (!pause.dismissQuestion() && !dismissMatchQuestion()) pause.close();
+      } else return false;
       return true;
     },
-    start: escape,
+    // (Start toggles the pause menu only, closing the settings over it with it: it never backs out of a page; on the main
+    // menu or under a modal, nothing: RV-475)
+    start: () => {
+      if (modal.isOpen || (mainMenu?.isOpen ?? false)) return;
+      // (its cue: the menu's select opening it, back closing it, RV-481)
+      if (!pause.isOpen) {
+        pause.open();
+        audio.menu("select");
+        return;
+      }
+      if (panel.isOpen) panel.close();
+      pause.close();
+      audio.menu("back");
+    },
     // (a rebind waiting for a pad input takes every button, B and Start too: Escape still cancels it)
     capturing: () => panel.capturingGamepad,
     sound: (cue) => {
@@ -291,6 +334,7 @@ async function main(): Promise<void> {
   });
   // (the games don't take input under a menu, nor a pad button a menu took that's still down)
   const inputEnabled = (): boolean => !menusOpen();
+  input.menuOpen = menusOpen;
   // (the game's pad without a menu's presses still held: RV-289)
   input.padFilter = (pad) => padNav.mask(pad);
   // For the browser tests
@@ -423,11 +467,18 @@ async function main(): Promise<void> {
       // (the camera's fade as the post-processing draws it: RV-159, RV-175)
       cameraFade: () => renderer.cameraFade,
     };
+    // (the automatic default's frame-rate guard: in free play only, never in a match; once a page, while the player
+    // hasn't chosen and a lower level's left)
+    const guard = renderer.draws && (videoAuto?.guard ?? true) && !settings.video.chosen && settings.video.autoLevel < AUTO_LEVELS.length - 1 ? new AutoVideoGuard() : null;
     game = {
       frame(dt) {
         freeplay.frame(dt);
         matchmaking.frame(performance.now() / 1000);
         view.update(matchmaking.state);
+        // (a hidden tab's or a stalled frame's time not counted)
+        if (guard && !guard.done && document.visibilityState === "visible" && dt < 0.25 && guard.frame(dt) && !settings.video.chosen) {
+          panel.apply({ ...settings, video: { ...settings.video, autoLevel: settings.video.autoLevel + 1 } });
+        }
       },
     };
   } else {
@@ -506,6 +557,7 @@ async function main(): Promise<void> {
       online.voteForfeit();
       pause.close();
     });
+    dismissMatchQuestion = () => menu.dismissQuestion();
     game = {
       frame(dt) {
         online.frame(dt);
@@ -521,9 +573,13 @@ async function main(): Promise<void> {
     if (e.code === "KeyM") panel.apply({ ...settings, options: { ...settings.options, muted: !settings.options.muted } });
   });
 
-  // (the scene's shader programs compiled while the loading line shows, not in the first frames: RV-458)
+  // (High Quality Shaders: every material's branch set before they're compiled; the scene's shader programs compiled
+  // while the loading line shows, not in the first frames: RV-458)
+  applyShaderQuality(renderer.scene, settings.video.highQualityShaders);
   status.textContent = "Loading the arena…";
   await renderer.prepare();
+  // (and the whole chain drawn once under the loading line: the first frames seen don't stall, RV-483)
+  await renderer.warmUp();
   status.hidden = true;
   let last = performance.now();
   const frame = (now: number): void => {

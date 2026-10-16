@@ -9,6 +9,10 @@ describe("a match session's end and the idle warning (MM-36..41, RV-360)", () =>
     expect(sessionEndReason(null, "finished")).toBe("ended");
     expect(sessionEndReason(KICK_IDLE, "finished")).toBe("idle");
     for (const phase of ["active", "waiting", "podium", "replay", undefined] as const) expect(sessionEndReason(null, phase), phase).toBe("lost");
+    // (a kick this page doesn't know, or one that isn't the idle or the cancelled match's: the server ended it, no lost
+    // connection's modal: RV-485)
+    expect(sessionEndReason(2, "active")).toBe("ended");
+    expect(sessionEndReason(99, "waiting")).toBe("ended");
   });
 
   it("shows the tip only during play, with the car's camera, connected", () => {

@@ -12,6 +12,9 @@ const SERVERS: readonly Server[] = [
   { name: "preview", command: "npx", args: ["vite", "preview", "--port", "4173", "--strictPort"], url: "http://localhost:4173/", reuse: true },
   // The game server for the online tests (the first run builds it)
   { name: "game", command: "cargo", args: [...GAME, ...NIGHT, "--port", "14433", "--health-port", "18081", "--info-port", "14434"], url: "http://127.0.0.1:14434/info", reuse: false },
+  // The pad's online menu test's own (e2e/padmenus.spec.ts: its match never shared with the online tests' in the other
+  // worker, whose players would join it)
+  { name: "pad", command: "cargo", args: [...GAME, ...NIGHT, "--port", "14443", "--health-port", "18086", "--info-port", "14444"], url: "http://127.0.0.1:14444/info", reuse: false },
   // One whose rounds end in a goal 1 s after go (the goal sequence's test)
   { name: "goal", command: "cargo", args: [...GAME, ...NIGHT, "--port", "14435", "--health-port", "18082", "--info-port", "14436", "--test-goal-after", "1"], url: "http://127.0.0.1:14436/info", reuse: false },
   // A 2v2 casual playlist whose forfeit votes are allowed once the clock runs (the forfeit and leave tests)

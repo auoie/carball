@@ -2,6 +2,7 @@
 // panels (Stadium_Glass: one-sided, the inner skin facing the field) and four vertical fins (Stadium_Glass_02:
 // two-sided, one layer), meeting at the fins; each end instance mirror-symmetric about az 108 (the -Y one the +Y's
 // mirrored); between F4 and its mirror an open wedge over the end's centre. The glass as SUR-15's.
+import { detailMode } from "../detail";
 import { BufferGeometry, type Color, DoubleSide, Float32BufferAttribute, FrontSide, Group, Mesh, ShaderMaterial, Vector3 } from "three";
 import { fullBright } from "../teamColors";
 import { PRIORITY } from "../translucentSort";
@@ -179,6 +180,8 @@ export function buildCanopy(primary0: Color, primary1: Color): Group {
   };
   const group = new Group();
   group.name = "canopy";
+  // (Stadium_Glass and _02: DetailMode Medium, gone at World Detail Performance: QG-14)
+  detailMode(group, "medium");
   group.add(mesh(panels, false, "bowl: canopy", PRIORITY.canopy), mesh(fins, true, "bowl: canopy fins", PRIORITY.canopy2));
   return group;
 }

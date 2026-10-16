@@ -229,7 +229,8 @@ export function buildCarModel(config: CarConfig, paint: Color, team = 0, car = 0
   ];
   const pillarX = rear + 0.38 * length;
   for (const side of [-1, 1]) {
-    const window = warp(new Mesh(new ShapeGeometry(new Shape(sideWindow)), glass), (_x, y) => side * ((cabinHalfWidth + 0.3) * tumble(y)));
+    // (0.8 off the cabin's outline: its bevelled sides 0.5 under it at least, not to fight far off: RV-487)
+    const window = warp(new Mesh(new ShapeGeometry(new Shape(sideWindow)), glass), (_x, y) => side * ((cabinHalfWidth + 0.8) * tumble(y)));
     group.add(window);
     const pillarY = (high + low) / 2;
     box(body, 3.5, high - low + 1, 0.8, pillarX, pillarY, side * (cabinHalfWidth * tumble(pillarY) + 0.5));
@@ -246,7 +247,8 @@ export function buildCarModel(config: CarConfig, paint: Color, team = 0, car = 0
   // The grille, the bumpers' black lips
   const noseHalf = halfWidth * noseRatio;
   const tailHalf = halfWidth * tailRatio;
-  box(trim, 1, 6, 2 * noseHalf - 22, front + 0.1, Y(F.noseTop) - 7, 0);
+  // (the grille clear of the headlights beside it, not under them 0.1 apart: RV-487)
+  box(trim, 1, 6, 2 * noseHalf - 26, front + 0.1, Y(F.noseTop) - 7, 0);
   // (the front lip 1 uu under the sills: its underside clear of the body's, not in its plane, where they z-fought: the
   // user's finding)
   box(trim, 4, 5, 2 * noseHalf - 1, front - 1.5, bottom + 1.5, 0);

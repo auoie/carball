@@ -48,6 +48,16 @@ export class ReplayRecorder {
     }
     return undefined;
   }
+
+  /** The nearest recorded frame after `frame`, within `within` frames (the recording's first, for a replay beginning
+   *  before this page drew any frame) */
+  after(frame: number, within = this.capacity): RecordedFrame | undefined {
+    for (let f = frame + 1; f <= frame + within; f++) {
+      const state = this.at(f);
+      if (state) return state;
+    }
+    return undefined;
+  }
 }
 
 /** A car as recorded */

@@ -100,13 +100,16 @@ export class GaragePreview {
   }
 
   #draw(): void {
-    try {
-      this.#renderer ??= new WebGLRenderer({ canvas: this.#element, alpha: true, antialias: true });
-    } catch {
-      return; // (no WebGL here: no preview)
+    if (!this.#renderer) {
+      try {
+        this.#renderer = new WebGLRenderer({ canvas: this.#element, alpha: true, antialias: true });
+      } catch {
+        return; // (no WebGL here: no preview)
+      }
+      // (its size once, as it's made: not every frame, RV-492)
+      this.#renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      this.#renderer.setSize(PREVIEW.width, PREVIEW.height, false);
     }
-    this.#renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    this.#renderer.setSize(PREVIEW.width, PREVIEW.height, false);
     this.#turntable.rotation.y = this.#angle;
     this.#renderer.render(this.#scene, this.#camera);
   }

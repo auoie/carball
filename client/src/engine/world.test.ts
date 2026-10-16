@@ -63,6 +63,32 @@ describe("World", () => {
     expect(loaded.victimSpeed).toBeGreaterThan(500);
   });
 
+  it("reads a car's and the ball's state once till the engine changes (the same object meanwhile; any change shows at once)", () => {
+    const world = World.create(engine);
+    const id = world.addCar(0);
+    const first = world.car(id);
+    expect(world.car(id)).toBe(first);
+    expect(world.ball()).toBe(world.ball());
+    world.step(1);
+    expect(world.car(id)).not.toBe(first);
+    const zero = vec3(0, 0, 0);
+    world.setCar(id, { pos: vec3(500, 600, 17), vel: zero, angVel: zero, rot: first.rot, boost: 50 });
+    expect(world.car(id).pos.x).toBeCloseTo(500, 3);
+    expect(world.car(id).boost).toBeCloseTo(50, 3);
+    const saved = world.saveState();
+    world.setControls(id, { ...NO_CONTROLS, throttle: 1 });
+    world.step(60);
+    const moved = world.car(id).pos;
+    expect(Math.hypot(moved.x - 500, moved.y - 600)).toBeGreaterThan(5);
+    world.loadState(saved);
+    expect(world.car(id).pos.x).toBeCloseTo(500, 3);
+    world.demolishCar(id);
+    expect(world.car(id).demoed).toBe(true);
+    world.setBall({ pos: vec3(0, 0, 800), vel: zero, angVel: zero });
+    expect(world.ball().pos.z).toBeCloseTo(800, 3);
+    world.dispose();
+  });
+
   it("drives a car forward with throttle", () => {
     const world = World.create(engine);
     const id = world.addCar(0, CarBody.Standard);

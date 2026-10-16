@@ -128,17 +128,20 @@ function shippedImports(): string[] {
   return [...found].sort();
 }
 /** What ships as text (scanned as the modules are), and what as binary (each kind pinned or allowed by name) */
-const TEXT = /\.(json|css|js|mjs|html|txt|glsl|svg|csv|map|webmanifest)$/;
+const TEXT = /\.(json|css|js|mjs|html|txt|markdown|glsl|svg|csv|map|webmanifest)$/;
 type Kind = "text" | "cmf" | "wasm" | "font" | "unknown";
 /** cmf: the arena's collision meshes (pinned to our generated ones); wasm: the engine, our build (engine/build-wasm);
  *  font: the HUD's bundled fonts (pinned: FONTS) */
 const kind = (path: string): Kind =>
   TEXT.test(path) ? "text" : path.endsWith(".cmf") ? "cmf" : path.endsWith(".wasm") ? "wasm" : /\.(woff2?|ttf|otf)$/.test(path) ? "font" : "unknown";
 /** The fonts that ship (style.css, public/fonts/; the user's pick, 2026-10-14), by their path under public/ and their
- *  content: the files as they were taken, SIL OFL each, its OFL.txt beside it. Orbitron's is the upstream google/fonts
- *  file unchanged (its licence reserves the name: no subset or conversion may ship under it) */
+ *  content: the files as they were taken, SIL OFL each, its licence beside it (LICENCES). Orbitron's is the font
+ *  project's own static Medium as published (github.com/theleagueof/orbitron, 2011-05-25: the user's decision, RV-489),
+ *  unchanged with its own licence file (it reserves the name: no subset or conversion may ship under it) */
+/** A font's licence beside it: OFL.txt, or the file its project publishes it with (Orbitron's) */
+const LICENCES = ["OFL.txt", "Open Font License.markdown"] as const;
 const FONTS: Readonly<Record<string, string>> = {
-  "fonts/orbitron/Orbitron[wght].ttf": "f42db2dd16e642258e35782916eceb1dcdbea06fb958d77ad71dc5963587e8fd",
+  "fonts/orbitron/Orbitron Medium.otf": "6d466e1c0478e93cbe24d3f069c61c654ebb3d7d384581379cadac2c77794104",
   "fonts/rajdhani/Rajdhani-SemiBold-latin.woff2": "433a7007e4747a02a790167a6efa2625855f013970ba49b9b739a5d3db8b2601",
   "fonts/rajdhani/Rajdhani-Light-latin.woff2": "828d4d537471ba0717fec6f6aa717aa6b96dd7aeb35f7e7b6d206775b438982c",
 };
@@ -327,12 +330,12 @@ describe("what ships carries no game data (RV-99)", () => {
         const at = relative(dir, path).split("\\").join("/");
         expect(FONTS[at], `${at}: not a font we ship`).toBeDefined();
         expect(sha(path), at).toBe(FONTS[at]);
-        expect(existsSync(join(dirname(path), "OFL.txt")), `${at}: its OFL.txt`).toBe(true);
+        expect(LICENCES.some((name) => existsSync(join(dirname(path), name))), `${at}: its licence`).toBe(true);
       }
     }
     for (const at of Object.keys(FONTS)) expect(existsSync(join(PUBLIC, at)), at).toBe(true);
-    // (Orbitron's licence names its Reserved Font Name: the file is the one it covers)
-    expect(readFileSync(join(PUBLIC, "fonts/orbitron/OFL.txt"), "utf8")).toContain('Reserved Font Name: "Orbitron"');
+    // (Orbitron's licence names its Reserved Font Name: the file is the one it covers, its own as published)
+    expect(readFileSync(join(PUBLIC, "fonts/orbitron/Open Font License.markdown"), "utf8")).toContain('with Reserved Font Name: "Orbitron"');
   });
 
   it("the arena's collision meshes that ship are our generated ones: imported from out/arena, the bundle's (files or inlined) the same bytes (RV-167f)", () => {

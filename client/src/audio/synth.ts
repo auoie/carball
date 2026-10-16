@@ -10,6 +10,9 @@ function envelope(param: AudioParam, when: number, attack: number, peak: number,
   param.exponentialRampToValueAtTime(0.0001, when + attack + decay);
 }
 
+/** The menus' cues (MENU-18) */
+export type MenuCue = "move" | "select" | "confirm" | "back" | "tab";
+
 export class Synth {
   readonly #noise: AudioBuffer;
 
@@ -205,10 +208,15 @@ export class Synth {
   }
 
   /** The menus (MENU-18: the game's own cues' places, our own sounds): the focus moved or a value stepped, a tiny high
-   *  tick; a press, a short rising blip; back, a short falling one; a tab, a soft double click */
-  menu(out: AudioNode, when: number, cue: "move" | "select" | "back" | "tab"): void {
+   *  tick; a press, a short rising blip; a question's answer or a notice's OK, two rising notes; back, a short falling
+   *  one; a tab, a soft double click */
+  menu(out: AudioNode, when: number, cue: MenuCue): void {
     if (cue === "move") this.#sweep("triangle", 2600, 2300, 0.01, out, when, 0.025, 0.03);
     else if (cue === "select") this.#sweep("sine", 880, 1320, 0.04, out, when, 0.07, 0.1);
+    else if (cue === "confirm") {
+      this.#sweep("sine", 880, 880, 0.035, out, when, 0.06, 0.08);
+      this.#sweep("sine", 1320, 1320, 0.035, out, when + 0.07, 0.09, 0.12);
+    }
     else if (cue === "back") this.#sweep("sine", 990, 620, 0.05, out, when, 0.07, 0.1);
     else {
       this.#sweep("triangle", 1500, 1300, 0.01, out, when, 0.05, 0.04);

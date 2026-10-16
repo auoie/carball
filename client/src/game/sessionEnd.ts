@@ -11,6 +11,8 @@ export type SessionEnd = "idle" | "notAllJoined" | "ended" | "lost";
 export function sessionEndReason(kicked: number | null, phase: MatchPhase | undefined): SessionEnd {
   if (kicked === KICK_IDLE) return "idle";
   if (kicked === KICK_NOT_ALL_JOINED) return "notAllJoined";
+  // (any other kick, one this page doesn't know too: the server ended it, not a lost connection: RV-485)
+  if (kicked !== null) return "ended";
   return phase === "finished" ? "ended" : "lost";
 }
 

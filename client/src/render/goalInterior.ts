@@ -7,7 +7,8 @@
 // The zones and charts are the meshes' (measured: their outlines and UVs); the grate's pattern is drawn, not the
 // game's texture: its square cells, 8 a texture tile, their holes 43 % of the area (measured), soft at the edges.
 import { BufferGeometry, Color, DoubleSide, Float32BufferAttribute, Mesh, MeshBasicMaterial, ShaderMaterial, type Texture, UniformsLib, UniformsUtils, Vector3 } from "three";
-import { ENV_GLSL, ENV_RADIAL, ENV_SPREAD, PACK_G, PACK_G_MEAN } from "./gameSurfaces";
+import { PACK_G_MEAN } from "./gameSurfaces";
+import { CONST_TABLES_GLSL, ENV_GLSL, tablesUniform } from "./constTables";
 import { GRASS_CUBE_BLUR_LOD } from "./grassCube";
 import { HexFloorMaterial } from "./stadiumField";
 import type { LightProfile } from "./stadiumFieldRules";
@@ -85,11 +86,9 @@ const FRAME = { r: 0.146, g: 0.158, light: [1.0209, 0.9177, 0.7189], tireMarks: 
 const fragmentShader = /* glsl */ `
 uniform samplerCube grassCube;
 uniform vec3 frameLight;
-uniform float packG[32];
-uniform float envRadial[9];
-uniform float envSpread[9];
 varying vec3 vWorld;
 #include <fog_pars_fragment>
+${CONST_TABLES_GLSL}
 ${ENV_GLSL}
 float saturate1(float x) { return clamp(x, 0.0, 1.0); }
 float hexRadius(vec2 tile) {
@@ -107,19 +106,12 @@ float hexRadius(vec2 tile) {
   }
   return best;
 }
-float profile32(float table[32], float r) {
-  float rr = clamp(r, 0.0, 1.0);
-  float x = (rr < 0.8 ? rr * 20.0 : 16.0 + (rr - 0.8) * 80.0) - 0.5;
-  int i = int(clamp(floor(x), 0.0, 31.0));
-  int j = min(i + 1, 31);
-  return mix(table[i], table[j], clamp(x - float(i), 0.0, 1.0));
-}
 // H-6: the glass, alpha 0.1875 Hexagons_Pack.G at its tiles (UV0 x (3, 7/3)), its colour ENVPack.G seen along the
 // view (our smooth stand-in, RV-71: the floor's tangent frame, u along y and v across x) + 1/12
 ${UNDER_GLASS_V_GLSL}
 vec4 glass(vec2 uv, vec3 toCamera) {
   vec2 tile = vec2(3.0, 7.0 / 3.0) * uv;
-  float g = profile32(packG, hexRadius(tile));
+  float g = tableProfile(T_PACK_G, hexRadius(tile));
   g = mix(g, ${PACK_G_MEAN}, smoothstep(0.1, 0.3, length(fwidth(tile))));
   float env = envG(-normalize(vec3(toCamera.z, -toCamera.x, toCamera.y)).xy);
   return vec4(vec3(env + 1.0 / 12.0), 0.1875 * g);
@@ -194,9 +186,7 @@ export class GoalFloorMaterial extends ShaderMaterial {
         ...UniformsUtils.clone(UniformsLib.fog),
         grassCube: cube,
         frameLight: { value: new Vector3(r, g, b) },
-        packG: { value: PACK_G },
-        envRadial: { value: ENV_RADIAL },
-        envSpread: { value: ENV_SPREAD },
+        constTables: tablesUniform(),
       },
       transparent: true,
       depthWrite: false,

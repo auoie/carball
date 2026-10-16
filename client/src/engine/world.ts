@@ -213,6 +213,7 @@ export class World {
   }
 
   dispose(): void {
+    this.#changed();
     this.#sim.delete();
   }
 
@@ -221,10 +222,13 @@ export class World {
   }
 
   addCar(team: Team, body: CarBody = CarBody.Standard): number {
+    this.#changed();
     return this.#sim.addCar(team, body);
   }
 
   removeCar(id: number): void {
+    this.#changed();
+    this.#carCache.delete(id);
     this.#sim.removeCar(id);
   }
 
@@ -233,25 +237,30 @@ export class World {
   }
 
   setControls(id: number, c: CarControls): void {
+    this.#changed();
     this.#sim.setControls(id, c.throttle, c.steer, c.pitch, c.yaw, c.roll, c.jump, c.boost, c.handbrake, c.airPitchSafety, c.dodgeForward ?? Number.NaN);
   }
 
   setCarPreferences(id: number, p: CarPreferences): void {
+    this.#changed();
     this.#sim.setCarPreferences(id, p.dodgeDeadzone, p.steeringSensitivity, p.airControlSensitivity);
   }
 
   step(ticks = 1): void {
+    this.#changed();
     this.#sim.step(ticks);
   }
 
   /** Puts every car on a kickoff spot and the ball in the centre. Always pass a seed (determinism). */
   resetKickoff(seed: number): void {
+    this.#changed();
     this.#sim.resetKickoff(seed);
   }
 
   /** Freeplay's new round: car i at the session's kickoff spots S[(spawnIndex + i) mod 10] (S: each of the 5 spots,
    *  shuffled from `seed`, as blue's, then mirrored), the ball at its spawn (z 100.49, at rest, to fall), the pads back. */
   resetFreeplay(seed: number, spawnIndex: number): void {
+    this.#changed();
     this.#sim.resetFreeplay(seed, spawnIndex);
   }
 
@@ -263,27 +272,32 @@ export class World {
 
   /** Every pad back (freeplay's second ResetPickups, 0.1 s after the new round). */
   resetBoostPads(): void {
+    this.#changed();
     this.#sim.resetBoostPads();
   }
 
   /** Freeplay's Unlimited boost: never used up, 100 at every spawn (every car at 100 now); off: the game's rates. */
   setUnlimitedBoost(on: boolean): void {
+    this.#changed();
     this.#sim.setUnlimitedBoost(on);
   }
 
   /** The match's end (FreezePawns): while frozen nothing simulates; ticks still count (online: the server's phase) */
   setFrozen(on: boolean): void {
+    this.#changed();
     this.#sim.setFrozen(on);
   }
 
   /** Podium mode (EnablePodiumMode, the podium and after: PD1): every car held at its X/Y, Z and rotation free, its
    *  jumps short (online: the server's phase, so the prediction agrees) */
   setPodium(on: boolean): void {
+    this.#changed();
     this.#sim.setPodium(on);
   }
 
   /** Demolishes the car (it respawns as after any demolition): for the tests' servers */
   demolishCar(id: number): void {
+    this.#changed();
     this.#sim.demolishCar(id);
   }
 
@@ -291,6 +305,7 @@ export class World {
    *  SimulatedProxy, drives but doesn't jump, dodge, boost or air-roll between the server's states (Car::_componentsOff).
    *  This world's setting, kept over loaded states. */
   setCarComponents(id: number, on: boolean): void {
+    this.#changed();
     if (on) this.#componentsOff.delete(id);
     else this.#componentsOff.add(id);
     this.#sim.setCarComponents(id, on);
@@ -302,6 +317,7 @@ export class World {
   /** Demolitions on (the default: an authority, freeplay) or off (an online client's prediction: the server demolishes,
    *  supersonic hits predicted as bumps: RV-112). */
   setDemolitions(on: boolean): void {
+    this.#changed();
     this.#demolitions = on;
     this.#sim.setDemolitions(on);
   }
@@ -316,18 +332,33 @@ export class World {
 
   /** Starts (or ends, 0) the kickoff countdown: cars get no input while it runs. */
   setKickoffCountdown(ticks: number): void {
+    this.#changed();
     this.#sim.setKickoffCountdown(ticks);
   }
 
+  /** The engine's state as last read (each car's, the ball's), kept till anything changes the engine (`#changed`, in
+   *  every method that does): read once a tick, not again by each of a frame's readers (the embind calls and the
+   *  objects they made: online's profile) */
+  #generation = 0;
+  readonly #carCache = new Map<number, { readonly generation: number; readonly state: CarState }>();
+  #ballCache: { readonly generation: number; readonly state: BodyState } | null = null;
+
+  #changed(): void {
+    this.#generation++;
+  }
+
   ball(): BodyState {
+    if (this.#ballCache?.generation === this.#generation) return this.#ballCache.state;
     const m = this.#m;
     const a = this.#sim.ballState();
-    return {
+    const state = {
       pos: readVec(a, m.BALL_POS),
       vel: readVec(a, m.BALL_VEL),
       angVel: readVec(a, m.BALL_ANG_VEL),
       rot: readRot(a, m.BALL_ROT),
     };
+    this.#ballCache = { generation: this.#generation, state };
+    return state;
   }
 
   /** Placements of the ball by a reset or a state set (see CarState.spawnCount) */
@@ -341,6 +372,7 @@ export class World {
   }
 
   setBall(state: Pick<BodyState, "pos" | "vel" | "angVel">): void {
+    this.#changed();
     const m = this.#m;
     const a = new Float32Array(m.BALL_SIZE);
     a.set([state.pos.x, state.pos.y, state.pos.z], m.BALL_POS);
@@ -352,6 +384,7 @@ export class World {
 
   /** Places a car: position, velocity, rotation and boost; its jump and dodge state go back to the defaults. */
   setCar(id: number, state: Pick<CarState, "pos" | "vel" | "angVel" | "rot" | "boost">): void {
+    this.#changed();
     const m = this.#m;
     const a = new Float32Array(m.CAR_SIZE);
     a.set([state.pos.x, state.pos.y, state.pos.z], m.CAR_POS);
@@ -364,6 +397,14 @@ export class World {
   }
 
   car(id: number): CarState {
+    const cached = this.#carCache.get(id);
+    if (cached?.generation === this.#generation) return cached.state;
+    const state = this.#readCar(id);
+    this.#carCache.set(id, { generation: this.#generation, state });
+    return state;
+  }
+
+  #readCar(id: number): CarState {
     const m = this.#m;
     const a = this.#sim.carState(id);
     const flag = (i: number): boolean => at(a, i) !== 0;
@@ -505,6 +546,7 @@ export class World {
   /** The server's network state (engine/net/NetState.h): laid over this world (the compact form: a value it holds that
    *  sends the same stays as it is; the exact form: exactly). False if malformed. */
   applyNetState(bytes: Uint8Array): boolean {
+    this.#changed();
     return this.#sim.applyNetState(bytes);
   }
 
@@ -536,6 +578,7 @@ export class World {
   }
 
   loadState(bytes: Uint8Array): void {
+    this.#changed();
     this.#sim.loadState(bytes);
     // (a saved state carries its arena's mutators, the server's demolitions among them: this world's setting again,
     // or an online client predicts demolitions after every join and leave, RV-137)

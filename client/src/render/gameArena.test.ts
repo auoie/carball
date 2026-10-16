@@ -11,6 +11,7 @@ import { ENV_GLSL, ENV_RADIAL, ENV_SPREAD, GOAL_SIDE_CHART, GlowStripMaterial, H
 import { GOAL_BASE_LIGHT, GoalFloorMaterial, goalBaseZ, goalFloorZone, underGlassV } from "./goalInterior";
 import { GOAL_PROFILE_CHART, goalPath, goalProfileU } from "./goalSurface";
 import { HexFloorMaterial, SIDE_TRIM, SideTrimMaterial } from "./stadiumField";
+import type { MergedPiece } from "./freeze";
 import { meadowTheme } from "./themes/meadow";
 import { nightTheme } from "./themes/night";
 import { stadiumTheme } from "./themes/stadium";
@@ -121,18 +122,21 @@ describe("the game's arena materials", () => {
   });
 
   it("the cap all round (AV-10): z 256-272 from midfield round the corners along the back wall, then up the wing's 45 degree edge (its top 0.8 under the stepped glow's foot) to the goal frame's edge at |x| 969", () => {
-    const caps: Mesh[] = [];
+    // (one piece of the frame metal's merged mesh: its vertices' range, userData.pieces)
+    const caps: { mesh: Mesh; piece: MergedPiece }[] = [];
     night.root.traverse((o) => {
-      if (o instanceof Mesh && o.name === "trim cap") caps.push(o as Mesh);
+      const piece = ((o.userData["pieces"] ?? []) as MergedPiece[]).find((p) => p.name === "trim cap");
+      if (o instanceof Mesh && piece) caps.push({ mesh: o as Mesh, piece });
     });
     expect(caps).toHaveLength(1);
-    const cap = caps[0];
+    const cap = caps[0]?.mesh;
+    const range = caps[0]?.piece ?? { start: 0, count: 0 };
     const position = cap?.geometry.getAttribute("position");
-    expect(position?.count ?? 0).toBeGreaterThan(0);
+    expect(range.count).toBeGreaterThan(0);
     let top = 0;
     let minAbsY = Infinity;
     let minAbsX = Infinity;
-    for (let i = 0; i < (position?.count ?? 0); i++) {
+    for (let i = range.start; i < range.start + range.count; i++) {
       const [x, z, y] = [position?.getX(i) ?? 0, position?.getY(i) ?? 0, position?.getZ(i) ?? 0]; // (Three's frame: x, z up, y)
       minAbsY = Math.min(minAbsY, Math.abs(y));
       minAbsX = Math.min(minAbsX, Math.abs(x));
@@ -177,7 +181,8 @@ describe("the game's arena materials", () => {
     expect(tints).toEqual(expect.arrayContaining([blue.getHex(), orange.getHex()]));
     // (its goals' floors its own: none of the stadium's goal metal; the game's field for its floor, below)
     expect(all.filter((m) => m instanceof GoalFloorMaterial)).toHaveLength(0);
-    expect(all.filter((m) => m instanceof HexFloorMaterial)).toHaveLength(5);
+    // (its five hex floors: four drawn as one, merged, the goal mouths' Reflective_Floor_B its own)
+    expect(all.filter((m) => m instanceof HexFloorMaterial)).toHaveLength(2);
   });
 
   it("Night's floor is the game's field in its team colours (grass, hex floors, frame, boost paths, markings); other maps their own floors (the user's decisions, 2026-10-16)", () => {
@@ -185,6 +190,8 @@ describe("the game's arena materials", () => {
       const out = new Set<string>();
       root.traverseVisible((o) => {
         if (o instanceof Mesh && o.name !== "") out.add(o.name);
+        // (a merged mesh's pieces by their own names)
+        for (const piece of (o.userData["pieces"] ?? []) as MergedPiece[]) out.add(piece.name);
       });
       return out;
     };
@@ -413,7 +420,9 @@ describe("ENVPack.G's stand-in (RV-71: our own smooth environment)", () => {
     expect(ENV_SPREAD[0]).toBe(0); // (the head-on texel: one value)
     expect(ENV_GLSL).toContain("cos(atan(uv.y, uv.x)");
     const glass = new HexGlassMaterial();
-    expect(glass.uniforms["envSpread"]?.value).toBe(ENV_SPREAD);
+    // (the tables in the shared texture, row 2: means, spreads)
+    const tables = glass.uniforms["constTables"]?.value as { image: { data: Float32Array } } | undefined;
+    expect(ENV_SPREAD.map((_, i) => tables?.image.data[(2 * 32 + i) * 4 + 1])).toEqual(ENV_SPREAD.map((v) => Math.fround(v)));
     expect(glass.fragmentShader).toContain("envG(");
     const stadium = new ArenaView(stadiumTheme());
     const shaders: string[] = [];

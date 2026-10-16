@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { type SearchHandlers } from "../game/matchmaking";
 import { fakeTransport, type FakeTransportRecord } from "../testing/fakeTransport";
 import { KICK_REPLACED, decodeControl } from "./protocol";
-import { Search, browserKey } from "./search";
+import { SEARCH_ENDED, Search, browserKey } from "./search";
 
 const memory = (): Pick<Storage, "getItem" | "setItem"> => {
   const map = new Map<string, string>();
@@ -97,6 +97,14 @@ describe("a search", () => {
     expect(record.sessions[0]?.finished).toBe(true);
     expect(got).toEqual(["searching", "found 8 on map 2"]);
     expect(performance.now() - started).toBeLessThan(1000);
+  });
+
+  it("a kick it doesn't know ends it in neutral words, not as a lost connection (RV-485)", async () => {
+    vi.stubGlobal("WebTransport", fakeTransport([{ type: "kicked", reason: 99 }]));
+    const { handlers, got, done } = answers();
+    Search.start({ url: "https://game.example:4433/play", certHash: null }, 2, 0n, handlers);
+    await done;
+    expect(got).toEqual(["searching", `failed ${SEARCH_ENDED}`]);
   });
 
   it("passes a match found on", async () => {

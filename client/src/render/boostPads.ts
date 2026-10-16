@@ -1,20 +1,23 @@
-// Boost pads (notes/visual-timing.md VT-11a/b/c, VT-12/13: the static session's PB1, 2026-10-16) as the game draws
-// them, three parts to a pad:
+// Boost pads (notes/visual-timing.md VT-11a/b/c, VT-12/13: the static session's PB1, 2026-10-16) after the game's,
+// similar rather than identical and cheap (the user's request, 2026-10-16: a few dozen triangles a pad, every detail
+// that can be drawn per pixel), three parts to a pad:
 // - the base: the level's dark metal (its baked light, the arena's capture reflected), grey line markings and a faint
-//   flickering orange underglow under its panels. A pickup never changes it: a taken pad is its base alone (the "dark
-//   pad"). A big pad's a thin arched plate of three arms (raised panels, its tips on the floor, open beneath), a small
-//   pad's a low rounded triangle, each generated from PB1's named measures;
-// - the pickup FX's unlit glow: the inlays (big pads' translucent, bands moving inward; a small pad's centre added, a
-//   ring expanding once a second) and the orange light curtains (a tube, and walls over the windows: a bright band just
-//   above the surface fading upward through a rising noise). A pickup fades its Brightness 1 -> 0 over 0.1 s, a return
-//   0 -> 1;
+//   flickering orange underglow under its panels, all drawn per pixel on a low mesh (a big pad's top a fan to its
+//   three-armed outline, a small pad's a cone to its rounded triangle; the shading's normal the measured surface's).
+//   The pickup FX's inlays are drawn on it too (big pads' translucent, bands moving inward; a small pad's centre
+//   added, a ring expanding once a second), with their Brightness: a taken pad is its metal alone (the "dark pad");
+// - the orange light curtains (a tube, and walls over the windows: a bright band just above the surface fading upward
+//   through a rising noise), a few quads each. A pickup fades the FX's Brightness 1 -> 0 over 0.1 s, a return 0 -> 1;
 // - a big pad's orb: a masked glowing billboard at z 84 (no spin, bob or pulse), a core glow and a dark backing (seen
 //   only from far off) behind it; the 640 x 512 halo is High world detail's alone: not drawn. Gone at once on a pickup,
 //   back at once on the return.
-// While a big pad is down it warms up (VT-13): cream copies of its curtains revealed top down and of its inlays by a wipe
-// round each arm, the curtains brightening to 4x (1 + 3 EaseInCirc(n)), white puffs in its last second; small pads don't.
+// While a big pad is down it warms up (VT-13): a cream copy of its curtains revealed top down and cream inlays (on the
+// base) by a wipe round each arm, the curtains brightening to 4x (1 + 3 EaseInCirc(n)), white puffs in its last
+// second; small pads don't.
 // Values and rules only: the game's gradients as named curves, its noise our own of the measured statistics, nothing
 // traced or sampled. Where PB1 leaves a shape open, ours is marked (ours).
+import { lowQualityPath } from "./shaderQuality";
+import { freeze } from "./freeze";
 import {
   AdditiveBlending,
   BufferGeometry,
@@ -398,11 +401,6 @@ export function padTop(shape: PadShape, x: number, y: number): number {
   return Math.max(curveAt(base.underside, along) + 0.2, curveAt(base.body, along) - base.slope * across + raised);
 }
 
-/** The base's underside (a plate's; a dome sits on the floor) */
-export function padUnder(shape: PadShape, x: number, y: number): number {
-  return shape.base.kind === "plate" ? curveAt(shape.base.underside, armFrame(x, y)[2]) : 0;
-}
-
 // ---- Yaws (VT-11c) ----
 
 /** A pad's yaw (degrees: its frame's x toward the game's (cos yaw, sin yaw), its first arm along its y), VT-11c's
@@ -538,78 +536,95 @@ function geometry(positions: number[], index: number[], extra: Record<string, { 
   return g;
 }
 
-/** How finely the pads are drawn (RX19-A: 550k triangles at first): a base's angular steps and rings (fractions of the
- *  outline's radius), the inlays' disc and window grids, the curtains' segments and wall points a side. Their markings,
- *  soft edges and glows are drawn per pixel: the meshes need only the shapes' and heights' detail */
+/** How finely the pads are drawn (the user's request, 2026-10-16: similar, cheap): a base's outline points in each
+ *  sixth (degrees from an arm, mirrored in the next sixth: a big pad's at its turns, the tip's arc's end, the arm's
+ *  widest, its waist, then the curve between the arms), a big plate's inner ring (on the arms' axes and the bisectors, r
+ *  uu out), the curtains' tube sides and wall points a side. Their markings, inlays, soft edges, glows and the surface's
+ *  shading normal are drawn per pixel: the meshes carry only the outline and the overall height */
 export const PAD_TESSELLATION = {
-  plate: { steps: 64, rings: [0.12, 0.25, 0.38, 0.5, 0.62, 0.72, 0.8, 0.88, 0.94, 1], under: [0.5, 1] },
-  dome: { steps: 40, rings: [0.4, 0.75, 0.93, 1] },
-  disc: { steps: 32, rings: [0.35, 0.7, 0.9, 1] },
-  window: [6, 3] as const,
-  tube: 16,
-  wall: 3,
+  outline: { big: [0, 10, 15.3, 18.8, 30, 42, 60], small: [0, 20, 40, 60] },
+  inner: { arm: 40, bisector: 30 },
+  /** A big plate's side walls: between these angles (degrees) off an arm, the tip's arc's end to the arm's root */
+  walls: [10, 30],
+  tube: { big: 8, small: 6 },
+  wall: 1,
 } as const;
 
-/** The base, each vertex its part (0 the top, 1 a side wall, 2 the underside): a polar grid out to the outline (rings at
- *  fractions of its radius); a plate's side walls and underside. (Counter-clockwise from above in the game's frame is
+/** The top's height without its panels' rise (the mesh's and the shading's: the panels are drawn per pixel) */
+export function padSurface(shape: PadShape, x: number, y: number): number {
+  const { base } = shape;
+  if (base.kind === "dome") return padTop(shape, x, y);
+  const [, , along, across] = armFrame(x, y);
+  return Math.max(0, curveAt(base.body, along) - base.slope * across);
+}
+
+/** A base's outline points' angles (radians, counter-clockwise from its first arm): PAD_TESSELLATION's sixths */
+export function padOutlineAngles(shape: PadShape): number[] {
+  const sixth = shape.big ? PAD_TESSELLATION.outline.big : PAD_TESSELLATION.outline.small;
+  const m = sixth.length - 1;
+  const angles: number[] = [];
+  for (let k = 0; k < 6; k++) {
+    for (let i = 0; i < m; i++) angles.push(deg(60 * k + (k % 2 === 0 ? (sixth[i] ?? 0) : 60 - (sixth[m - i] ?? 0))));
+  }
+  return angles;
+}
+
+/** The base, each vertex its part (0 the top, 1 a plate's side wall): its top a fan from the centre out to the outline
+ *  (a big plate's through its inner ring), the outline at the surface's height; a plate's arms' side walls down to its
+ *  underside (its tips on the floor, open beneath as the game's). (Counter-clockwise from above in the game's frame is
  *  clockwise in Three's: each upward triangle's last two swapped) */
 export function padBaseGeometry(shape: PadShape): BufferGeometry {
   const T = PAD_TESSELLATION;
-  const steps = shape.base.kind === "plate" ? T.plate.steps : T.dome.steps;
+  const angles = padOutlineAngles(shape);
+  const n = angles.length;
   const positions: number[] = [];
   const parts: number[] = [];
   const index: number[] = [];
-  const vertex = (x: number, y: number, z: number, part: number): number => {
+  const vertex = (x: number, y: number, z = padSurface(shape, x, y), part = 0): number => {
     positions.push(...three(x, y, z));
     parts.push(part);
     return parts.length - 1;
   };
-  const outlineAt = (j: number): [number, number, number] => {
-    const th = (2 * Math.PI * j) / steps;
-    return [th, Math.cos(th), Math.sin(th)];
+  const tri = (a: number, b: number, c: number): void => {
+    index.push(a, c, b);
   };
-  /** A polar grid: `ring(th)` the radii out at each angle, `z` the height; facing up or down */
-  const grid = (rings: (th: number) => number[], z: (x: number, y: number) => number, part: number, up: boolean): void => {
-    const centre = vertex(0, 0, z(0, 0), part);
-    const first = parts.length;
-    let count = 0;
-    for (let j = 0; j < steps; j++) {
-      const [th, c, s] = outlineAt(j);
-      const radii = rings(th);
-      count = radii.length;
-      for (const r of radii) vertex(r * c, r * s, z(r * c, r * s), part);
-    }
-    const at = (ring: number, j: number): number => first + (j % steps) * count + ring;
-    const tri = (a: number, b: number, c: number): void => {
-      if (up) index.push(a, c, b);
-      else index.push(a, b, c);
-    };
-    for (let j = 0; j < steps; j++) {
-      tri(centre, at(0, j), at(0, j + 1));
-      for (let i = 0; i + 1 < count; i++) {
-        tri(at(i, j), at(i + 1, j), at(i + 1, j + 1));
-        tri(at(i, j), at(i + 1, j + 1), at(i, j + 1));
-      }
-    }
-  };
-  const top = (x: number, y: number): number => padTop(shape, x, y);
+  const centre = vertex(0, 0);
+  const edge = angles.map((th) => {
+    const r = shape.radius(th);
+    return vertex(r * Math.cos(th), r * Math.sin(th));
+  });
+  const at = (j: number): number => edge[j % n] ?? centre;
   if (shape.base.kind === "dome") {
-    grid((th) => T.dome.rings.map((f) => f * shape.radius(th)), top, 0, true);
+    for (let j = 0; j < n; j++) tri(centre, at(j), at(j + 1));
     return geometry(positions, index, { kind: { data: parts, size: 1 } });
   }
-  grid((th) => T.plate.rings.map((f) => f * shape.radius(th)), top, 0, true);
-  const under = (x: number, y: number): number => padUnder(shape, x, y);
-  grid((th) => T.plate.under.map((f) => f * shape.radius(th)), under, 2, false);
-  // The side walls: the top's edge down to the underside's, facing out
-  const first = parts.length;
-  for (let j = 0; j < steps; j++) {
-    const [th, c, s] = outlineAt(j);
-    const r = shape.radius(th);
-    vertex(r * c, r * s, top(r * c, r * s), 1);
-    vertex(r * c, r * s, under(r * c, r * s), 1);
+  const inner = Array.from({ length: 6 }, (_, k) => {
+    const th = (Math.PI * k) / 3;
+    const r = k % 2 === 0 ? T.inner.arm : T.inner.bisector;
+    return vertex(r * Math.cos(th), r * Math.sin(th));
+  });
+  const ring = (k: number): number => inner[k % 6] ?? centre;
+  // (each sixth: the centre to its two ring points; the outline's points to the nearer of them; the gap between)
+  const per = n / 6;
+  for (let k = 0; k < 6; k++) {
+    tri(centre, ring(k), ring(k + 1));
+    for (let i = 0; i < per; i++) tri(i < per / 2 ? ring(k) : ring(k + 1), at(k * per + i), at(k * per + i + 1));
+    tri(ring(k), at(k * per + per / 2), ring(k + 1));
   }
-  for (let j = 0; j < steps; j++) {
-    const [t0, d0, t1, d1] = [first + 2 * j, first + 2 * j + 1, first + 2 * ((j + 1) % steps), first + 2 * ((j + 1) % steps) + 1];
+  // The side walls along the arms (VT-11a: 2.26 tall, what gives an arm its thickness seen low; the tips on the floor
+  // and the notches' short walls left out, ours): the top's edge down to the underside's, facing out
+  const { underside } = shape.base;
+  const sides = PAD_TESSELLATION.walls;
+  for (let j = 0; j < n; j++) {
+    const [a0, a1] = [angles[j] ?? 0, angles[(j + 1) % n] ?? 0];
+    const off = (th: number): number => Math.abs((folded(th) * 180) / Math.PI);
+    if (Math.min(off(a0), off(a1)) < sides[0] - 1e-6 || Math.max(off(a0), off(a1)) > sides[1] + 1e-6) continue;
+    const [[t0, d0], [t1, d1]] = [a0, a1].map((th) => {
+      const r = shape.radius(th);
+      const [x, y] = [r * Math.cos(th), r * Math.sin(th)];
+      const top = padSurface(shape, x, y);
+      return [vertex(x, y, top, 1), vertex(x, y, Math.min(top, Math.max(0, curveAt(underside, armFrame(x, y)[2]))), 1)];
+    }) as [[number, number], [number, number]];
     index.push(t0, t1, d0, t1, d1, d0);
   }
   return geometry(positions, index, { kind: { data: parts, size: 1 } });
@@ -634,48 +649,6 @@ function regionLoop(region: PadRegion, n: number): [number, number][] {
   for (let i = 0; i < n; i++) loop.push(regionPoint(region, 1, -1 + (2 * i) / n)); // the outer side
   for (let i = 0; i < n; i++) loop.push(regionPoint(region, 1 - i / n, 1)); // the left side, back in
   return loop.reverse(); // (the walk above runs clockwise in the arm's frame)
-}
-
-/** The inlays: a disc (a region from r 0) or a grid per arm, `lift` above the top, each vertex its kind (its index) */
-export function padInlayGeometry(shape: PadShape): BufferGeometry {
-  const positions: number[] = [];
-  const kinds: number[] = [];
-  const index: number[] = [];
-  const vertex = (x: number, y: number, kind: number): number => {
-    positions.push(...three(x, y, padTop(shape, x, y) + shape.inlayLift));
-    kinds.push(kind);
-    return kinds.length - 1;
-  };
-  shape.inlays.forEach((region, kind) => {
-    if (region.r && region.r[0] <= 0 && region.angle === undefined && region.across === undefined) {
-      const { steps } = PAD_TESSELLATION.disc;
-      const rings = PAD_TESSELLATION.disc.rings.map((f) => f * (region.r?.[1] ?? 0));
-      const centre = vertex(0, 0, kind);
-      const first = kinds.length;
-      for (const r of rings) for (let j = 0; j < steps; j++) vertex(r * Math.cos((2 * Math.PI * j) / steps), r * Math.sin((2 * Math.PI * j) / steps), kind);
-      const at = (ring: number, j: number): number => first + ring * steps + (j % steps);
-      for (let j = 0; j < steps; j++) index.push(centre, at(0, j + 1), at(0, j));
-      for (let i = 0; i + 1 < rings.length; i++) {
-        for (let j = 0; j < steps; j++) index.push(at(i, j), at(i + 1, j + 1), at(i + 1, j), at(i, j), at(i, j + 1), at(i + 1, j + 1));
-      }
-      return;
-    }
-    const [nu, nw] = PAD_TESSELLATION.window;
-    for (let k = 0; k < 3; k++) {
-      const first = kinds.length;
-      for (let i = 0; i <= nu; i++) {
-        for (let j = 0; j <= nw; j++) {
-          const [a, c] = regionPoint(region, i / nu, -1 + (2 * j) / nw);
-          vertex(...turned(a, c, k), kind);
-        }
-      }
-      const at = (i: number, j: number): number => first + i * (nw + 1) + j;
-      for (let i = 0; i < nu; i++) {
-        for (let j = 0; j < nw; j++) index.push(at(i, j), at(i + 1, j + 1), at(i + 1, j), at(i, j), at(i, j + 1), at(i + 1, j + 1));
-      }
-    }
-  });
-  return geometry(positions, index, { kind: { data: kinds, size: 1 } });
 }
 
 /** The curtains: the tube and the walls, each vertex its (around: noise cells, the period they wrap at, v, height in
@@ -710,7 +683,7 @@ export function padCurtainGeometry(shape: PadShape): BufferGeometry {
     }
   };
   const { tube } = shape;
-  const segments = PAD_TESSELLATION.tube;
+  const segments = shape.big ? PAD_TESSELLATION.tube.big : PAD_TESSELLATION.tube.small;
   const ring = (r: number, z: number): [number, number, number][] =>
     Array.from({ length: segments }, (_, j) => [r * Math.cos((2 * Math.PI * j) / segments), r * Math.sin((2 * Math.PI * j) / segments), z]);
   band(ring(tube.r[0], tube.z[0]), ring(tube.r[1], tube.z[1]), tube.v);
@@ -783,9 +756,94 @@ function fogUniforms(): Record<string, Uniform<unknown>> {
   return UniformsUtils.clone(UniformsLib.fog);
 }
 
-/** The base (VT-11a/b: lit opaque metal): its markings' (G, k) blended at their edges (on its top), the capture
- *  reflected, the pad floor's baked light, the underglow under the centre and windows flickering per pad */
-function baseMaterial(shape: PadShape, reflection: Uniform<Texture | null>, time: Uniform<number>): ShaderMaterial {
+/** GLSL: the surface's height (`padHeight(arm)`, as padSurface: the shading's normal is its slope) */
+function surfaceGlsl(shape: PadShape): string {
+  const { base } = shape;
+  if (base.kind === "plate") {
+    return `${curveGlsl("padBody", base.body)}
+      float padHeight(vec4 a) { return max(0.0, padBody(a.z) - ${glf(base.slope)} * a.w); }`;
+  }
+  const { lobe, lobeHalf, notch } = SMALL_OUTLINE;
+  return `${curveGlsl("padDome", base.height)}
+      float padRadius(float t) {
+        float u = abs(t);
+        if (u <= ${glf(deg(lobeHalf))}) return ${glf(lobe)};
+        float f = (u - ${glf(deg(lobeHalf))}) / ${glf(Math.PI / 3 - deg(lobeHalf))};
+        return ${glf(notch)} + ${glf((lobe - notch) / 2)} * (1.0 + cos(3.14159265 * f));
+      }
+      float padHeight(vec4 a) { return max(0.1, min(padDome(a.x), ${glf(base.edge)} * (padRadius(a.y) - a.x))); }`;
+}
+
+/** GLSL: `vec3 padInlays(vec4 arm, vec3 colour, vec3 normal, vec3 toCamera)`, the inlays over the metal (vPad: their
+ *  Brightness, the warm-up's n). A big pad's (VT-11a: translucent): the edge mask x Brightness, bands moving inward, and
+ *  the warm-up's (VT-11c: cream to gold, revealed by a wipe round each arm toward the pad frame's +x: ours the arm's
+ *  clockwise side in the game's numbers, its negative angle); a small pad's (VT-11b: added): smallInlay above x
+ *  Brightness */
+function inlaysGlsl(shape: PadShape): string {
+  if (!shape.big) {
+    const { a, b, c } = PAD_COLOURS.smallInlay;
+    return `${curveGlsl("padFireR", PAD_CURVES.fireR)}
+      ${curveGlsl("padFireG", PAD_CURVES.fireG)}
+      ${curveGlsl("padFireB", PAD_CURVES.fireB)}
+      vec3 padInlays(vec4 arm, vec3 colour, vec3 normal, vec3 toCamera) {
+        vec2 p = vLocal / 22.5;
+        float q = dot(p, p);
+        if (q >= 1.0) return colour;
+        float s = q / 4.0;
+        float x1 = fract(3.0 * s + padTime);
+        float x2 = fract(3.0 * s - padTime);
+        float x3 = fract(3.0 * s - 1.75);
+        float rb = padFireR(x1) * padFireB(x1);
+        float gb = padFireG(x2) + padFireB(x2);
+        float stay = padFireR(x3) + padFireB(x3);
+        float gc = exp(-7.5 * q);
+        float mask = clamp(8.0 * (1.0 - q), 0.0, 1.0);
+        vec3 A = ${vec3Glsl(a)};
+        vec3 C = A * (A * rb + (1.0 + sin(6.2831853 * padTime)) * gb * ${vec3Glsl(b)} + gc * ${vec3Glsl(c)});
+        return colour + mask * vPad.r * (stay + gb + gc) * C;
+      }`;
+  }
+  const [centre, inner, outer] = shape.inlays;
+  const [low, high] = PAD_COLOURS.bigInlay;
+  return `${regionGlsl("padCentre", centre ?? {})}
+      ${regionGlsl("padInner", inner ?? {})}
+      ${regionGlsl("padOuter", outer ?? {})}
+      ${curveGlsl("padFireR", PAD_CURVES.fireR)}
+      vec3 padInlays(vec4 a, vec3 colour, vec3 normal, vec3 toCamera) {
+        float lateral = -a.x * sin(a.y);
+        float centre = padCentre(a);
+        float inner = padInner(a);
+        float outer = padOuter(a);
+        float margin;
+        float v;
+        float s;
+        if (centre >= max(inner, outer)) {
+          margin = centre;
+          v = a.x <= 17.7 ? 0.67 * a.x / 17.7 : 0.1;
+          s = 0.5 - 0.415 * a.y / ${glf(Math.PI / 3)};
+        } else if (inner >= outer) {
+          margin = inner;
+          v = 0.12 + 0.28 * clamp((a.x - 34.0) / 30.0, 0.0, 1.0);
+          s = 0.5 + 0.0112 * lateral;
+        } else {
+          margin = outer;
+          v = 0.12 + 0.28 * clamp((a.x - 70.5) / 14.5, 0.0, 1.0);
+          s = 0.5 + 0.0062 * lateral;
+        }
+        float edge = clamp(margin / 2.0, 0.0, 1.0);
+        if (edge <= 0.0) return colour;
+        float facing = abs(dot(normal, toCamera));
+        float band = min(1.0, 4.0 * padFireR(fract(2.0 * v + padTime)));
+        float I = 1.5 * facing * band * v + 0.5 * pow(v, 4.0);
+        colour = mix(colour, max(mix(${vec3Glsl(low)}, ${vec3Glsl(high)}, I), 0.0), edge * vPad.r);
+        return mix(colour, mix(${vec3Glsl(PAD_COLOURS.cream)}, ${vec3Glsl(PAD_COLOURS.gold)}, I), edge * padReveal(s, vPad.g));
+      }`;
+}
+
+/** The base (VT-11a/b: lit opaque metal): its markings' (G, k) blended at their edges, the capture reflected about the
+ *  measured surface's normal, the pad floor's baked light, the underglow under the centre and windows flickering per
+ *  pad; the inlays over it (`fx` 0: the metal alone, the debug probe's look) */
+function baseMaterial(shape: PadShape, reflection: Uniform<Texture | null>, time: Uniform<number>, fx: Uniform<number>): ShaderMaterial {
   const { surface, glow, flicker } = shape;
   const lines = shape.lines.map((r, i) => regionGlsl(`padLine${String(i)}`, r)).join("\n");
   const panels = shape.panels.map((r, i) => regionGlsl(`padPanel${String(i)}`, r)).join("\n");
@@ -795,6 +853,7 @@ function baseMaterial(shape: PadShape, reflection: Uniform<Texture | null>, time
     vertexShader: LOCAL_VERTEX,
     fragmentShader: /* glsl */ `
       uniform samplerCube grassCube;
+      uniform float padFx;
       ${LOCAL_VARYINGS}
       #include <fog_pars_fragment>
       ${ARM_GLSL}
@@ -802,6 +861,8 @@ function baseMaterial(shape: PadShape, reflection: Uniform<Texture | null>, time
       ${lines}
       ${panels}
       ${glows}
+      ${surfaceGlsl(shape)}
+      ${inlaysGlsl(shape)}
       float padCover(float margin) { return clamp(0.5 + margin / max(fwidth(margin), 0.001), 0.0, 1.0); }
       float padFlickerAt(uint seed, float i) {
         uint h = padHash(uint(i), seed);
@@ -823,108 +884,25 @@ function baseMaterial(shape: PadShape, reflection: Uniform<Texture | null>, time
         float glow = 0.0;
         ${glow.regions.map((_, i) => `glow += smoothstep(-0.75, 0.75, padGlow${String(i)}(a));`).join("\n        ")}
         glow = onTop * min(glow, 1.0) * ${glf(glow.peak)};
+        // (the top's normal the measured surface's, from its height under this pixel: the mesh only follows it roughly;
+        // a wall's its own)
+        vec3 normal = normalize(vNormal);
+        if (vKind < 0.5) {
+          vec3 surfacePoint = vec3(vWorld.x, padHeight(a), vWorld.z);
+          normal = normalize(cross(dFdy(surfacePoint), dFdx(surfacePoint)));
+          if (normal.y < 0.0) normal = -normal;
+        }
         vec3 toCamera = normalize(cameraPosition - vWorld);
-        vec3 env = textureLod(grassCube, reflect(-toCamera, normalize(vNormal)), ${GRASS_CUBE_BLUR_LOD.toFixed(1)}).rgb;
+        vec3 env = textureLod(grassCube, reflect(-toCamera, normal), ${GRASS_CUBE_BLUR_LOD.toFixed(1)}).rgb;
         vec3 colour = gk.x * (1.0 + 32.0 * gk.y * env) * ${vec3Glsl(BASE_LIGHT)}
           + glow * (0.25 + padFlicker(vPad.b, padTime)) * ${vec3Glsl(PAD_COLOURS.underglow)};
+        if (padFx > 0.5 && vKind < 0.5) colour = padInlays(a, colour, normal, toCamera);
         gl_FragColor = vec4(colour, 1.0);
         #include <colorspace_fragment>
         #include <fog_fragment>
       }`,
-    uniforms: { ...fogUniforms(), grassCube: reflection, padTime: time },
+    uniforms: { ...fogUniforms(), grassCube: reflection, padTime: time, padFx: fx },
     fog: true,
-  });
-}
-
-/** A big pad's inlays (VT-11a: translucent): the edge mask x Brightness, bands moving inward; `warm` the warm-up's copy
- *  (VT-11c: cream to gold, revealed by a wipe round each arm toward the pad frame's +x: ours the arm's clockwise side
- *  in the game's numbers, its negative angle) */
-function bigInlayMaterial(warm: boolean, time: Uniform<number>): ShaderMaterial {
-  const [centre, inner, outer] = BIG_PAD.inlays;
-  const [low, high] = PAD_COLOURS.bigInlay;
-  return new ShaderMaterial({
-    vertexShader: LOCAL_VERTEX,
-    fragmentShader: /* glsl */ `
-      ${LOCAL_VARYINGS}
-      #include <fog_pars_fragment>
-      ${ARM_GLSL}
-      ${HASH_GLSL}
-      ${regionGlsl("padCentre", centre ?? {})}
-      ${regionGlsl("padInner", inner ?? {})}
-      ${regionGlsl("padOuter", outer ?? {})}
-      ${curveGlsl("padFireR", PAD_CURVES.fireR)}
-      void main() {
-        vec4 a = padArm(vLocal);
-        float lateral = -a.x * sin(a.y);
-        float margin;
-        float v;
-        float s;
-        if (vKind < 0.5) {
-          margin = padCentre(a);
-          v = a.x <= 17.7 ? 0.67 * a.x / 17.7 : 0.1;
-          s = 0.5 - 0.415 * a.y / ${glf(Math.PI / 3)};
-        } else if (vKind < 1.5) {
-          margin = padInner(a);
-          v = 0.12 + 0.28 * clamp((a.x - 34.0) / 30.0, 0.0, 1.0);
-          s = 0.5 + 0.0112 * lateral;
-        } else {
-          margin = padOuter(a);
-          v = 0.12 + 0.28 * clamp((a.x - 70.5) / 14.5, 0.0, 1.0);
-          s = 0.5 + 0.0062 * lateral;
-        }
-        float edge = clamp(margin / 2.0, 0.0, 1.0);
-        float facing = abs(dot(normalize(vNormal), normalize(cameraPosition - vWorld)));
-        float band = min(1.0, 4.0 * padFireR(fract(2.0 * v + padTime)));
-        float I = 1.5 * facing * band * v + 0.5 * pow(v, 4.0);
-        ${
-          warm
-            ? `vec3 colour = mix(${vec3Glsl(PAD_COLOURS.cream)}, ${vec3Glsl(PAD_COLOURS.gold)}, I);
-        float alpha = edge * padReveal(s, vPad.g);`
-            : `vec3 colour = max(mix(${vec3Glsl(low)}, ${vec3Glsl(high)}, I), 0.0);
-        float alpha = edge * vPad.r;`
-        }
-        gl_FragColor = vec4(colour, alpha);
-        #include <colorspace_fragment>
-        #include <fog_fragment>
-      }`,
-    uniforms: { ...fogUniforms(), padTime: time },
-    fog: true,
-    transparent: true,
-    depthWrite: false,
-  });
-}
-
-/** A small pad's inlay (VT-11b: added): smallInlay above x Brightness */
-function smallInlayMaterial(time: Uniform<number>): ShaderMaterial {
-  const { a, b, c } = PAD_COLOURS.smallInlay;
-  return new ShaderMaterial({
-    vertexShader: LOCAL_VERTEX,
-    fragmentShader: /* glsl */ `
-      ${LOCAL_VARYINGS}
-      ${curveGlsl("padFireR", PAD_CURVES.fireR)}
-      ${curveGlsl("padFireG", PAD_CURVES.fireG)}
-      ${curveGlsl("padFireB", PAD_CURVES.fireB)}
-      void main() {
-        vec2 p = vLocal / 22.5;
-        float q = dot(p, p);
-        float s = q / 4.0;
-        float x1 = fract(3.0 * s + padTime);
-        float x2 = fract(3.0 * s - padTime);
-        float x3 = fract(3.0 * s - 1.75);
-        float rb = padFireR(x1) * padFireB(x1);
-        float gb = padFireG(x2) + padFireB(x2);
-        float stay = padFireR(x3) + padFireB(x3);
-        float gc = exp(-7.5 * q);
-        float mask = clamp(8.0 * (1.0 - q), 0.0, 1.0);
-        vec3 A = ${vec3Glsl(a)};
-        vec3 C = A * (A * rb + (1.0 + sin(6.2831853 * padTime)) * gb * ${vec3Glsl(b)} + gc * ${vec3Glsl(c)});
-        gl_FragColor = vec4(mask * vPad.r * (stay + gb + gc) * C, 1.0);
-        #include <colorspace_fragment>
-      }`,
-    uniforms: { padTime: time },
-    transparent: true,
-    depthWrite: false,
-    blending: AdditiveBlending,
   });
 }
 
@@ -932,7 +910,7 @@ function smallInlayMaterial(time: Uniform<number>): ShaderMaterial {
  *  colour (1 + S) x the curtain's; `warm` the warm-up's copy (VT-11c: revealed top down, cream, Brightness to 4) */
 function curtainMaterial(warm: boolean, time: Uniform<number>): ShaderMaterial {
   const N = CURTAIN_NOISE;
-  return new ShaderMaterial({
+  return lowQualityPath(new ShaderMaterial({
     vertexShader: LOCAL_VERTEX,
     fragmentShader: /* glsl */ `
       ${LOCAL_VARYINGS}
@@ -942,12 +920,17 @@ function curtainMaterial(warm: boolean, time: Uniform<number>): ShaderMaterial {
       void main() {
         float v = vCurtain.z;
         float S = padCurtain(v);
-        uint seed = uint(vPad.b * 65535.0);
-        vec2 q = vec2(vCurtain.x, (v + ${glf(N.rise)} * padTime) * vCurtain.w);
-        float w = padNoise(q + vec2(0.0, 37.0), vCurtain.y, seed);
-        float raw = padNoise(q + ${glf(N.warp)} * vec2(w), vCurtain.y, seed);
-        float n = ${glf(N.mean)} + ${glf(N.sd)} * (raw - 0.5) / ${glf(N.raw)};
-        float alpha = clamp(S * (2.0 * n + 0.0625) * vPad.r, 0.0, 1.0);
+        #ifdef CARBALL_LQ
+          // (High Quality Shaders off, QG-19/20: no scrolling noise, alpha sat(0.375 S Brightness))
+          float alpha = clamp(0.375 * S * vPad.r, 0.0, 1.0);
+        #else
+          uint seed = uint(vPad.b * 65535.0);
+          vec2 q = vec2(vCurtain.x, (v + ${glf(N.rise)} * padTime) * vCurtain.w);
+          float w = padNoise(q + vec2(0.0, 37.0), vCurtain.y, seed);
+          float raw = padNoise(q + ${glf(N.warp)} * vec2(w), vCurtain.y, seed);
+          float n = ${glf(N.mean)} + ${glf(N.sd)} * (raw - 0.5) / ${glf(N.raw)};
+          float alpha = clamp(S * (2.0 * n + 0.0625) * vPad.r, 0.0, 1.0);
+        #endif
         ${warm ? `alpha *= padReveal(v, vPad.g);\n        vec3 colour = (1.0 + S) * ${vec3Glsl(PAD_COLOURS.cream)};` : `vec3 colour = (1.0 + S) * ${vec3Glsl(PAD_COLOURS.curtain)};`}
         gl_FragColor = vec4(colour, alpha);
         #include <colorspace_fragment>
@@ -958,7 +941,7 @@ function curtainMaterial(warm: boolean, time: Uniform<number>): ShaderMaterial {
     transparent: true,
     depthWrite: false,
     side: DoubleSide,
-  });
+  }));
 }
 
 /** The orb's sprites (VT-11a): (a) the masked orb, (b) its core glow, (c) its far-only dark backing; and the warm-up's
@@ -1062,15 +1045,16 @@ function spriteMaterial(kind: SpriteKind, time: Uniform<number>): ShaderMaterial
 
 const HIDDEN = new Matrix4().makeScale(0, 0, 0);
 
-/** The translucent parts' order among themselves (VT-11c: inlays, curtains, glows; within the pads' priority 0) */
-const ORDER = { inlays: 0, curtains: 0.01, warmInlays: 0.02, warmCurtains: 0.03, puffs: 0.035, glow: 0.04, backing: 0.05 } as const;
+/** The translucent parts' order among themselves (VT-11c: curtains, glows; within the pads' priority 0; the inlays on
+ *  the base) */
+const ORDER = { curtains: 0.01, warmCurtains: 0.03, puffs: 0.035, glow: 0.04, backing: 0.05 } as const;
 
 /** A shape's geometries, built once (every view of the pads shares them) */
-const geometries = new Map<PadShape, { readonly base: BufferGeometry; readonly inlays: BufferGeometry; readonly curtains: BufferGeometry }>();
-function padGeometries(shape: PadShape): { readonly base: BufferGeometry; readonly inlays: BufferGeometry; readonly curtains: BufferGeometry } {
+const geometries = new Map<PadShape, { readonly base: BufferGeometry; readonly curtains: BufferGeometry }>();
+function padGeometries(shape: PadShape): { readonly base: BufferGeometry; readonly curtains: BufferGeometry } {
   let g = geometries.get(shape);
   if (!g) {
-    g = { base: padBaseGeometry(shape), inlays: padInlayGeometry(shape), curtains: padCurtainGeometry(shape) };
+    g = { base: padBaseGeometry(shape), curtains: padCurtainGeometry(shape) };
     geometries.set(shape, g);
   }
   return g;
@@ -1079,12 +1063,11 @@ function padGeometries(shape: PadShape): { readonly base: BufferGeometry; readon
 /** One size of pad's meshes, instanced (one draw call each for all of its pads) */
 class PadMeshes {
   readonly base: InstancedMesh;
-  readonly inlays: InstancedMesh;
   readonly curtains: InstancedMesh;
-  readonly warm: { readonly inlays: InstancedMesh; readonly curtains: InstancedMesh; readonly puffs: InstancedMesh } | null;
+  readonly warm: { readonly curtains: InstancedMesh; readonly puffs: InstancedMesh } | null;
   readonly orb: { readonly orb: InstancedMesh; readonly glow: InstancedMesh; readonly backing: InstancedMesh } | null;
 
-  constructor(shape: PadShape, count: number, reflection: Uniform<Texture | null>, time: Uniform<number>) {
+  constructor(shape: PadShape, count: number, reflection: Uniform<Texture | null>, time: Uniform<number>, fx: Uniform<number>) {
     const name = shape.big ? "big" : "small";
     const make = (part: string, g: BufferGeometry, material: ShaderMaterial, n = count, order: number | null = null, hidden = false): InstancedMesh => {
       const mesh = new InstancedMesh(g, material, n);
@@ -1094,9 +1077,8 @@ class PadMeshes {
       if (hidden) for (let i = 0; i < n; i++) mesh.setMatrixAt(i, HIDDEN);
       return mesh;
     };
-    const { base, inlays, curtains } = padGeometries(shape);
-    this.base = make("base", base, baseMaterial(shape, reflection, time));
-    this.inlays = make("inlays", inlays, shape.big ? bigInlayMaterial(false, time) : smallInlayMaterial(time), count, ORDER.inlays);
+    const { base, curtains } = padGeometries(shape);
+    this.base = make("base", base, baseMaterial(shape, reflection, time, fx));
     this.curtains = make("curtains", curtains, curtainMaterial(false, time), count, ORDER.curtains);
     if (!shape.big) {
       this.warm = null;
@@ -1105,7 +1087,6 @@ class PadMeshes {
     }
     const sprite = new PlaneGeometry(1, 1);
     this.warm = {
-      inlays: make("warm-up inlays", inlays, bigInlayMaterial(true, time), count, ORDER.warmInlays, true),
       curtains: make("warm-up curtains", curtains, curtainMaterial(true, time), count, ORDER.warmCurtains, true),
       puffs: make("warm-up puffs", sprite, spriteMaterial("puff", time), 2 * count, ORDER.puffs, true),
     };
@@ -1118,7 +1099,7 @@ class PadMeshes {
 
   get all(): InstancedMesh[] {
     const { warm, orb } = this;
-    return [this.base, ...(orb ? [orb.orb] : []), this.inlays, this.curtains, ...(warm ? [warm.inlays, warm.curtains, warm.puffs] : []), ...(orb ? [orb.glow, orb.backing] : [])];
+    return [this.base, ...(orb ? [orb.orb] : []), this.curtains, ...(warm ? [warm.curtains, warm.puffs] : []), ...(orb ? [orb.glow, orb.backing] : [])];
   }
 }
 
@@ -1141,6 +1122,11 @@ export class BoostPadsView {
   readonly #shown: (boolean | null)[];
   /** Seconds left of each pad's Brightness fading (out after a pickup, in after its return) */
   readonly #fading: number[];
+  /** Each pad's FX Brightness and warm-up n as last drawn (its base's inlays read both) */
+  readonly #light: number[];
+  readonly #warmUp: number[];
+  /** The inlays drawn on the bases (0: the metal alone, fxVisible) */
+  readonly #inlays: Uniform<number> = { value: 1 };
   /** The FX's clock (s): the bands, rings, noise and flicker */
   readonly #time: Uniform<number> = { value: 0 };
   readonly #color = new Color();
@@ -1150,8 +1136,8 @@ export class BoostPadsView {
   /** `reflection`: the arena's capture (ArenaView.reflection; none: black) */
   constructor(pads: readonly BoostPadState[], reflection: Uniform<Texture | null> = { value: null }) {
     const count = (big: boolean): number => pads.filter((p) => p.big === big).length;
-    const big = new PadMeshes(BIG_PAD, count(true), reflection, this.#time);
-    const small = new PadMeshes(SMALL_PAD, count(false), reflection, this.#time);
+    const big = new PadMeshes(BIG_PAD, count(true), reflection, this.#time, this.#inlays);
+    const small = new PadMeshes(SMALL_PAD, count(false), reflection, this.#time, this.#inlays);
     const slots = { big: 0, small: 0 };
     this.#pads = pads.map((pad) => {
       const turn = deg(padYaw(pad.pos.x, pad.pos.y, pad.big) + PADS_TURN);
@@ -1169,22 +1155,27 @@ export class BoostPadsView {
       };
     });
     for (const p of this.#pads) {
-      const { base, inlays, curtains } = p.meshes;
-      for (const mesh of [base, inlays, curtains]) {
+      const { base, curtains } = p.meshes;
+      for (const mesh of [base, curtains]) {
         mesh.setMatrixAt(p.slot, p.matrix);
         mesh.setColorAt(p.slot, this.#color.setRGB(1, 0, p.seed));
       }
     }
     for (const m of [big, small]) this.root.add(...m.all);
+    // (the pads never move: their instances carry the places; the meshes' own matrices made once)
+    freeze(this.root);
     this.#fx = [big, small].flatMap((m) => m.all.filter((mesh) => mesh !== m.base));
     this.#shown = pads.map(() => null);
     this.#fading = pads.map(() => 0);
+    this.#light = pads.map(() => 1);
+    this.#warmUp = pads.map(() => 0);
     this.update(pads);
   }
 
-  /** Every part but the bases shown (the debug shader probe's look at a pad's base alone) */
+  /** Every part but the bases' metal shown (the debug shader probe's look at a pad's base alone) */
   set fxVisible(on: boolean) {
     for (const mesh of this.#fx) mesh.visible = on;
+    this.#inlays.value = on ? 1 : 0;
   }
 
   /** `seconds`: since the last update (the fades, the FX's clock; none given: the fades at their end at once) */
@@ -1194,13 +1185,13 @@ export class BoostPadsView {
     const warmUp = this.#pads.find((p) => p.meshes.warm)?.meshes.warm;
     if (warmUp) {
       const down = pads.filter((pad, i) => this.#pads[i]?.big === true && !pad.active);
-      warmUp.inlays.visible = warmUp.curtains.visible = down.length > 0;
+      warmUp.curtains.visible = down.length > 0;
       warmUp.puffs.visible = down.some((pad) => pad.cooldown <= PAD_ALMOST_SPAWNED_SECONDS);
     }
     pads.forEach((pad, i) => {
       const p = this.#pads[i];
       if (!p) return;
-      const { inlays, curtains, warm, orb } = p.meshes;
+      const { base, curtains, warm, orb } = p.meshes;
       const changed = this.#shown[i] !== pad.active;
       const first = this.#shown[i] === null;
       if (changed) {
@@ -1209,25 +1200,31 @@ export class BoostPadsView {
         // Taken: the orb goes at once, the FX fade out; back: the orb at once, the warm-up gone at once, the FX fading in
         if (orb) for (const mesh of [orb.orb, orb.glow, orb.backing]) this.#place(mesh, p.slot, pad.active ? p.orb : HIDDEN);
         if (pad.active && warm) {
-          for (const mesh of [warm.inlays, warm.curtains]) this.#place(mesh, p.slot, HIDDEN);
+          this.#place(warm.curtains, p.slot, HIDDEN);
           for (const k of [0, 1]) this.#place(warm.puffs, 2 * p.slot + k, HIDDEN);
         }
       }
       const fading = this.#fading[i] ?? 0;
+      let lightChanged = changed;
       if (fading > 0 || changed) {
         const left = Math.max(0, fading - seconds);
         this.#fading[i] = left;
         const light = pad.active ? 1 - left / PAD_FADE_SECONDS : left / PAD_FADE_SECONDS;
-        for (const mesh of [inlays, curtains]) this.#colour(mesh, p.slot, light, 0, p.seed);
+        this.#light[i] = light;
+        this.#colour(curtains, p.slot, light, 0, p.seed);
+        lightChanged = true;
+      }
+      // The warm-up (VT-13): n through the delay (0 while up), revealing the base's cream inlays and the curtains' copy,
+      // the curtains' Brightness 1 + 3 EaseInCirc(n)
+      const n = pad.active || !warm ? 0 : Math.min(1, Math.max(0, 1 - pad.cooldown / p.delay));
+      if (lightChanged || n !== this.#warmUp[i]) {
+        this.#warmUp[i] = n;
+        this.#colour(base, p.slot, this.#light[i] ?? 1, n, p.seed);
       }
       if (pad.active || !warm) return;
-      // The warm-up (VT-13): n through the delay, the copies revealed by it, the curtains' Brightness 1 + 3 EaseInCirc(n)
-      const n = Math.min(1, Math.max(0, 1 - pad.cooldown / p.delay));
       const brightness = 1 + 3 * (1 - Math.sqrt(1 - n * n));
-      for (const mesh of [warm.inlays, warm.curtains]) {
-        this.#place(mesh, p.slot, p.matrix);
-        this.#colour(mesh, p.slot, brightness, n, p.seed);
-      }
+      this.#place(warm.curtains, p.slot, p.matrix);
+      this.#colour(warm.curtains, p.slot, brightness, n, p.seed);
       // (the last second's puffs: two a second, each a second's life)
       for (const k of [0, 1]) {
         const age = PAD_ALMOST_SPAWNED_SECONDS - pad.cooldown - k * PUFFS.every;

@@ -2,6 +2,7 @@
 // decision, 2026-10-16): each two crossed quads along its centre line, 8 uu wide, additive, coloured towards the team on
 // that side and lit around the ball (notes/arena-visuals.md AV-14, H-8). Seen from far off a beam stays at least about a
 // pixel wide, dimmer instead of thinner, so it doesn't break up or shimmer. Visible from both sides, as the game's.
+import { lowQualityPath } from "./shaderQuality";
 import {
   AdditiveBlending,
   BufferAttribute,
@@ -62,13 +63,16 @@ void main() {
     widen = max(1.0, minHalfPixels / max(pixels, 1e-4));
   }
   vec3 p = position + side * (halfWidth * widen * across);
-  // The shockwave ripples the beams (H-8b): out along the normal and swaying, where its ring is
-  vec3 toBall = p - ballPosition;
-  float d2 = dot(toBall, toBall) / (16384.0 * 16384.0);
-  float prox = max(0.0, 1.0 - 4.0 * d2);
-  float ring = 1.0 - abs(1.0 - 2.0 * max(0.0, 8.0 * (saturate1(1.0 - d2 + shockWave) - 0.875)));
-  // ((128, 0, 128) in the game's frame: its x and z, Three's x and y)
-  p += ring * prox * (32.0 * normalize(beamNormal) + sin(6.2831853 * (32.0 * (1.0 - d2) + time)) * vec3(128.0, 128.0, 0.0));
+  #ifndef CARBALL_LQ
+    // The shockwave ripples the beams (H-8b): out along the normal and swaying, where its ring is (not with High Quality
+    // Shaders off: QG-10)
+    vec3 toBall = p - ballPosition;
+    float d2 = dot(toBall, toBall) / (16384.0 * 16384.0);
+    float prox = max(0.0, 1.0 - 4.0 * d2);
+    float ring = 1.0 - abs(1.0 - 2.0 * max(0.0, 8.0 * (saturate1(1.0 - d2 + shockWave) - 0.875)));
+    // ((128, 0, 128) in the game's frame: its x and z, Three's x and y)
+    p += ring * prox * (32.0 * normalize(beamNormal) + sin(6.2831853 * (32.0 * (1.0 - d2) + time)) * vec3(128.0, 128.0, 0.0));
+  #endif
   vec4 world = modelMatrix * vec4(p, 1.0);
   vWorldPosition = world.xyz;
   vWorldNormal = normalize(mat3(modelMatrix) * beamNormal);
@@ -107,10 +111,27 @@ void main() {
   float z = vWorldPosition.y;
   float y = vWorldPosition.z;
   float w = saturate1((2068.6 - z) / 1816.0);
-  float t = saturate1(y / 256.0 + 0.5);
+  #ifdef CARBALL_LQ
+    float t = saturate1(y / 128.0 + 0.5);
+  #else
+    float t = saturate1(y / 256.0 + 0.5);
+  #endif
   vec3 primary = mix(primary0, primary1, t);
   vec3 bright = mix(bright0, bright1, t);
   vec3 colour = vec3(0.0625) + w * ((2.0 * bright + primary) / 6.0 - vec3(0.0625));
+  #ifdef CARBALL_LQ
+    // (High Quality Shaders off, QG-10: the colour alone, I 1: no profile, ball glow, scan stripes, rings or shockwave)
+    gl_FragColor = vec4(colour * opacity * vFade, 1.0);
+    #include <colorspace_fragment>
+    #ifdef USE_FOG
+      #ifdef FOG_EXP2
+        gl_FragColor.rgb *= exp(-fogDensity * fogDensity * vFogDepth * vFogDepth);
+      #else
+        gl_FragColor.rgb *= 1.0 - smoothstep(fogNear, fogFar, vFogDepth);
+      #endif
+    #endif
+    return;
+  #endif
   float p = 1.0 - vAcross * vAcross;
   vec3 toBall = vWorldPosition - ballPosition;
   float d2 = dot(toBall, toBall) / (16384.0 * 16384.0);
@@ -308,7 +329,7 @@ export class CageBeams {
       side: DoubleSide,
       fog: true,
     });
-    this.mesh = new Mesh(geometry, material);
+    this.mesh = new Mesh(geometry, lowQualityPath(material));
     this.mesh.frustumCulled = false;
     // (the cage's lines right after its fill: the game's one primitive, FFCage_Full at 0 (TRN1), as our two)
     this.mesh.renderOrder = ARENA_PRIORITY.base + 0.001;

@@ -49,6 +49,9 @@ export interface EmitterSpec {
    *  `count` drawn each frame, the leftover L = max(0, d + L - n unit) a distance (so a rate over 1 a unit spawns at most
    *  what the move covers); a frame's move over `maxFrame` uu (a teleport) spawns none and drops the leftover */
   readonly perUnit?: { readonly unit: number; readonly count: Range; readonly maxFrame?: number };
+  /** Its second LOD (UE3's: what Particle Detail Performance draws, ParticleLODBias 1; and at any setting beyond `beyond`
+   *  uu of the camera: notes/post-processing.md QG-24/25) */
+  readonly lod?: { readonly beyond: number; readonly spec: EmitterSpec };
   readonly lifetime: Range;
   /** Start size (uu): width, and the length for a sprite stretched along its velocity */
   readonly size: Range;
@@ -409,8 +412,13 @@ class Pool {
     this.owner[to] = this.owner[from] ?? null;
   }
 
+  /** How many particles the buffers last held (none, and none again: nothing to upload) */
+  #written = -1;
+
   #write(): void {
     const n = this.count;
+    if (n === 0 && this.#written === 0) return;
+    this.#written = n;
     const center = this.#center.array as Float32Array;
     const size = this.#size.array as Float32Array;
     const axis = this.#axis.array as Float32Array;
@@ -462,8 +470,14 @@ class Pool {
 }
 
 /** The scene's particles: emitters spawn into it, it moves and draws them. */
+/** Particle Detail (settings/video.ts): Performance, the emitters' second LOD everywhere (a system setting, the game's
+ *  too) */
+export const particleDetail = { performance: false };
+
 export class Particles {
   readonly root = new Group();
+  /** Where the camera is (game frame; last drawn): an emitter's LOD by its distance */
+  eye: Vec3 | null = null;
   readonly #additive = new Pool(true);
   readonly #translucent = new Pool(false);
   readonly random: () => number;
@@ -524,6 +538,8 @@ export class Emitter {
   #last: Vec3 | null = null;
   #burstsDone = 0;
   #sourceVelocity: Vec3 | null = null;
+  /** The spec this frame spawns from (its LOD's) */
+  #spec: EmitterSpec;
   /** A local-space emitter's frame, which its particles follow */
   readonly #frame: FrameRef | null;
   readonly #color: readonly number[];
@@ -536,6 +552,7 @@ export class Emitter {
   ) {
     this.#color = color ?? spec.color;
     this.#frame = spec.local ? { origin: { x: 0, y: 0, z: 0 }, ...WORLD } : null;
+    this.#spec = spec;
   }
 
   /** Starts it over (a one-shot) */
@@ -563,7 +580,8 @@ export class Emitter {
    *  the spec's inheritVelocity) */
   update(seconds: number, at: Vec3, frame: EmitterFrame = WORLD, velocity: Vec3 | null = null): void {
     this.#sourceVelocity = velocity;
-    const { spec } = this;
+    const spec = this.#lod(at);
+    this.#spec = spec;
     if (this.#frame) {
       // (its particles move with it, spawning or not)
       this.#frame.origin = at;
@@ -618,8 +636,18 @@ export class Emitter {
     if (this.done) this.active = false;
   }
 
+  /** The spec it spawns from here: its second LOD at Particle Detail Performance or beyond its distance */
+  #lod(at: Vec3): EmitterSpec {
+    const { lod } = this.spec;
+    if (!lod) return this.spec;
+    const eye = this.particles.eye;
+    const far = eye !== null && Math.hypot(at.x - eye.x, at.y - eye.y, at.z - eye.z) > lod.beyond;
+    return particleDetail.performance || far ? lod.spec : this.spec;
+  }
+
   #spawnOne(at: Vec3, frame: EmitterFrame, emitterTime: number): void {
-    const { spec, particles } = this;
+    const { particles } = this;
+    const spec = this.#spec;
     const random = particles.random;
     // A local-space particle keeps its own coordinates in the emitter's frame; a world one is turned into the world
     const local = this.#frame !== null;

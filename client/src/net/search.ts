@@ -43,6 +43,9 @@ function local(): Pick<Storage, "getItem" | "setItem"> | null {
  *  within 2 s (RV-443) */
 const FINISH_WAIT_MS = 3000;
 
+/** A search the server ended for a reason this page doesn't know (our words: neutral) */
+export const SEARCH_ENDED = "the server ended the search";
+
 export class Search {
   #transport: WebTransport | null = null;
   /** Its stream's writing side, once the hello is sent */
@@ -103,6 +106,8 @@ export class Search {
         else if (m.type === "searchCooldown") this.#end(() => { this.handlers.cooldown(m.seconds, m.network); });
         // (another tab of this browser searching took this search's place: said so, not as a failure, RV-460)
         else if (m.type === "kicked" && m.reason === KICK_REPLACED) this.#end(() => { this.handlers.replaced(); });
+        // (another kick, one this page doesn't know: the server's doing, not a lost connection: RV-485)
+        else if (m.type === "kicked") this.#end(() => { this.handlers.failed(SEARCH_ENDED); });
       });
       this.#end(() => { this.handlers.failed("the connection to the server was lost"); });
     } catch (e) {

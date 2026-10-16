@@ -9,9 +9,18 @@ export async function hideGamepads(context: BrowserContext): Promise<void> {
   });
 }
 
+/** The video settings' automatic default off (src/settings/video.ts): software WebGL reads as a weak GPU, and its frames
+ *  are slow; the tests draw at the maximum unless one asks for the default (`videoAuto`) */
+export async function videoAuto(context: BrowserContext, weak: boolean, guard: boolean): Promise<void> {
+  await context.addInitScript(([w, g]) => {
+    (window as unknown as { carballVideoAuto: { weak: boolean; guard: boolean } }).carballVideoAuto = { weak: w, guard: g };
+  }, [weak, guard] as const);
+}
+
 export const test = base.extend({
   context: async ({ context }, use) => {
     await hideGamepads(context);
+    await videoAuto(context, false, false);
     await use(context);
   },
 });

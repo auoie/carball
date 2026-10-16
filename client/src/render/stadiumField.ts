@@ -6,13 +6,19 @@
 // statistics measured on them (profiles by hex radius, means: values only, the textures stay local). Lighting as the
 // game's floor: baked only, SceneColor = emissive + diffuse x the piece's baked light (its lightmap's statistics, along
 // the axis it varies most), no sun, sky or specular; reflections from the arena's capture (src/render/grassCube.ts).
+import { lowQualityPath } from "./shaderQuality";
 import {
+  BufferAttribute,
   BufferGeometry,
   Color,
+  DataTexture,
   Float32BufferAttribute,
+  FloatType,
   Group,
   Mesh,
   MeshBasicMaterial,
+  NearestFilter,
+  RGBAFormat,
   ShaderMaterial,
   ShapeUtils,
   type Texture,
@@ -23,37 +29,14 @@ import {
 } from "three";
 import { FIELD_LIGHT, type FieldPlan, type FieldRegion, type FloorPiece, type FrameLine, type LightProfile, type MarkingGroup, fieldPlan, grassOutline, grassRim } from "./stadiumFieldRules";
 import { GRASS_PATTERN, grassPatternGlsl, grassTraces } from "./grassPattern";
-import { ENV_GLSL, ENV_RADIAL, ENV_SPREAD } from "./gameSurfaces";
+import { CONST_TABLES_GLSL, ENV_GLSL, GRASS_LIGHT, tablesUniform } from "./constTables";
+export { GRASS_LIGHT } from "./constTables";
 import { GRASS_CUBE_BLUR_LOD } from "./grassCube";
 import { fullBright } from "./teamColors";
 import { ARENA_PRIORITY } from "./translucentSort";
 import { BALL_RETICLE_GLSL, RETICLE_GLSL_FN } from "./ballShadow";
 
-/** StadiumFloorLightMap over the grass (RV-105a, the static session's statistics, linear): separable, a(x) b(|y|) /
- *  mean (within 4.9 % RMS), each table in bins on multiples of 256 with partial ones at its ends (x: -3806, -3584,
- *  -3328 ... 3584, 3806; |y|: 64, 256, 512 ... 4608, 4830: RV-146) */
-export const GRASS_LIGHT = {
-  mean: [0.553, 0.527, 0.461],
-  step: 256,
-  x0: -3806,
-  x1: 3806,
-  x: [
-    [0.481, 0.462, 0.406], [0.48, 0.462, 0.404], [0.471, 0.452, 0.396], [0.485, 0.466, 0.408], [0.497, 0.477, 0.416],
-    [0.507, 0.486, 0.424], [0.519, 0.497, 0.433], [0.511, 0.49, 0.43], [0.513, 0.492, 0.434], [0.521, 0.5, 0.437],
-    [0.526, 0.501, 0.438], [0.534, 0.507, 0.442], [0.544, 0.519, 0.452], [0.556, 0.529, 0.463], [0.565, 0.536, 0.469],
-    [0.575, 0.545, 0.477], [0.58, 0.549, 0.481], [0.581, 0.55, 0.482], [0.584, 0.553, 0.483], [0.589, 0.558, 0.487],
-    [0.598, 0.566, 0.496], [0.604, 0.576, 0.503], [0.612, 0.582, 0.51], [0.637, 0.605, 0.531], [0.633, 0.6, 0.526],
-    [0.625, 0.592, 0.519], [0.609, 0.575, 0.504], [0.564, 0.533, 0.467], [0.453, 0.431, 0.378], [0.412, 0.391, 0.342],
-  ],
-  y0: 64,
-  y1: 4830,
-  y: [
-    [0.483, 0.465, 0.407], [0.502, 0.483, 0.422], [0.517, 0.494, 0.434], [0.523, 0.501, 0.438], [0.528, 0.504, 0.441],
-    [0.536, 0.508, 0.445], [0.542, 0.516, 0.451], [0.551, 0.523, 0.459], [0.561, 0.532, 0.467], [0.571, 0.542, 0.473],
-    [0.578, 0.548, 0.479], [0.579, 0.548, 0.481], [0.571, 0.544, 0.477], [0.572, 0.545, 0.476], [0.576, 0.549, 0.479],
-    [0.586, 0.56, 0.489], [0.603, 0.573, 0.503], [0.623, 0.592, 0.518], [0.641, 0.611, 0.536],
-  ],
-} as const;
+
 /** The GLSL arguments for grassBin: the first two and last two bins' centres, the bins' count */
 function binCentres(edge0: number, edge1: number, count: number): string {
   const step = GRASS_LIGHT.step;
@@ -79,6 +62,10 @@ export function grassBin(s: number, edge0: number, edge1: number, count: number)
 export const GRASS_NOISE = 2.0;
 export const GRASS_G0 = 0.185;
 export const GRASS_ENV_AMOUNT = 0.75;
+/** The grass's low-quality resource (QG-5): LightColor, its flat light in place of the lightmap; Noise_Generic_02's mean
+ *  in its noise factor 0.285 (n + 1.5) (ours: the texture's mid value, the static session's mean not taken) */
+export const GRASS_LQ_LIGHT = [0.768, 0.698, 0.53] as const;
+export const GRASS_LQ_NOISE = 0.5;
 
 /** H-1's reflection term (RV-100), per channel: ENVAmount [0.375 (1.5 - cos) Cg + sat(0.25 ((1.5 - cos) Cg - 0.125))],
  *  Cg = cube (G0 + 1/3) 2/3, cos the view's against the floor's normal (the shader adds it to the lit albedo and
@@ -104,32 +91,7 @@ const MARKING_LIGHT: Readonly<Record<MarkingGroup, readonly [number, number, num
   centre: [0.898, 0.83, 0.642],
 };
 
-/** Profiles by hex radius (32 steps: 16 over r 0-0.8, 16 over 0.8-1; scripts/hex_profile.py): Hexagons_Pack_B's A
- *  (linear), B, G, R (decoded), Hexagons_Pack's R (decoded) and A */
-const PB_A = [
-  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.998, 0.99, 0.967, 0.94, 0.905, 0.865, 0.819, 0.753, 0.676, 0.573,
-  0.416, 0.253,
-];
-const PB_B = [
-  0.558, 0.557, 0.562, 0.598, 0.609, 0.606, 0.607, 0.606, 0.607, 0.607, 0.592, 0.474, 0.462, 0.462, 0.462, 0.647, 0.994, 1, 1, 1,
-  0.999, 0.993, 0.976, 0.956, 0.938, 0.916, 0.89, 0.849, 0.804, 0.755, 0.676, 0.604,
-];
-const PB_G = [
-  0.849, 0.849, 0.845, 0.809, 0.801, 0.802, 0.802, 0.802, 0.802, 0.802, 0.813, 0.973, 1, 1, 1, 0.801, 0.514, 0.512, 0.511, 0.512,
-  0.512, 0.509, 0.499, 0.486, 0.472, 0.455, 0.436, 0.405, 0.369, 0.327, 0.251, 0.181,
-];
-const PB_R = [
-  0.557, 0.556, 0.556, 0.56, 0.683, 0.684, 0.688, 0.684, 0.68, 0.666, 0.657, 0.651, 0.627, 0.628, 0.627, 0.631, 0.646, 0.652,
-  0.656, 0.654, 0.659, 0.656, 0.657, 0.661, 0.659, 0.663, 0.661, 0.662, 0.665, 0.663, 0.666, 0.663,
-];
-const HP_R = [
-  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.997, 0.972, 0.919, 0.862, 0.799, 0.719, 0.634, 0.526, 0.412,
-  0.293, 0.176, 0.07,
-];
-const HP_A = [
-  0.628, 0.628, 0.628, 0.631, 0.734, 0.735, 0.738, 0.735, 0.732, 0.72, 0.712, 0.707, 0.685, 0.686, 0.685, 0.685, 0.7, 0.703,
-  0.707, 0.705, 0.708, 0.706, 0.707, 0.711, 0.709, 0.712, 0.71, 0.711, 0.714, 0.712, 0.715, 0.713,
-];
+
 /** The world hex tiling of the floor's materials (AV-8, H-2, H-3): uu per tile along x and y */
 const HEX_TILE = [323.4, 384] as const;
 
@@ -176,24 +138,31 @@ float hexRadius(vec2 tile) {
   }
   return best;
 }
-float profile32(float table[32], float r) {
-  float rr = clamp(r, 0.0, 1.0);
-  float x = (rr < 0.8 ? rr * 20.0 : 16.0 + (rr - 0.8) * 80.0) - 0.5;
-  int i = int(clamp(floor(x), 0.0, 31.0));
-  int j = min(i + 1, 31);
-  return mix(table[i], table[j], clamp(x - float(i), 0.0, 1.0));
-}
-// The piece's baked light: its bins along the game's x or |y| (lightAxis: axis 0 none, 1 x, 2 |y|; start; bin; count)
+${CONST_TABLES_GLSL}
+// The piece's baked light: its bins along the game's x or |y| (lightAxis: axis 0 none, 1 x, 2 |y|; start; bin; count);
+// merged pieces (mergeFieldPieces) carry their axis with their vertices and read their table, a row of one texture, by
+// exact texel: the same values, the same mix
+#ifdef PER_VERTEX_PIECE
+flat varying vec4 vPieceAxis;
+flat varying vec3 vPieceFrame;
+flat varying float vPieceRow;
+uniform sampler2D lightTex;
+#define LIGHT_AXIS vPieceAxis
+vec3 lightAt(int k) { return texelFetch(lightTex, ivec2(k, int(vPieceRow)), 0).rgb; }
+#else
 uniform vec3 lightTable[16];
 uniform vec4 lightAxis;
+#define LIGHT_AXIS lightAxis
+vec3 lightAt(int k) { return lightTable[k]; }
+#endif
 vec3 bakedLight(vec2 xy) {
-  int n = int(lightAxis.w);
-  if (lightAxis.x < 0.5 || n < 2) return lightTable[0];
-  float s = lightAxis.x < 1.5 ? xy.x : abs(xy.y);
-  float f = clamp((s - lightAxis.y) / lightAxis.z - 0.5, 0.0, float(n - 1));
+  int n = int(LIGHT_AXIS.w);
+  if (LIGHT_AXIS.x < 0.5 || n < 2) return lightAt(0);
+  float s = LIGHT_AXIS.x < 1.5 ? xy.x : abs(xy.y);
+  float f = clamp((s - LIGHT_AXIS.y) / LIGHT_AXIS.z - 0.5, 0.0, float(n - 1));
   int i = int(floor(f));
   int j = min(i + 1, n - 1);
-  return mix(lightTable[i], lightTable[j], f - float(i));
+  return mix(lightAt(i), lightAt(j), f - float(i));
 }
 // The arena's capture, seen along this view reflected off the floor (Three's frame: y up), blurred (its mipmaps)
 uniform samplerCube grassCube;
@@ -206,9 +175,22 @@ const vertexShader = /* glsl */ `
 attribute float across;
 varying vec3 vWorld;
 varying float vAcross;
+#ifdef PER_VERTEX_PIECE
+attribute vec4 pieceAxis;
+attribute vec3 pieceFrame;
+attribute float pieceRow;
+flat varying vec4 vPieceAxis;
+flat varying vec3 vPieceFrame;
+flat varying float vPieceRow;
+#endif
 #include <fog_pars_vertex>
 void main() {
   vAcross = across;
+  #ifdef PER_VERTEX_PIECE
+    vPieceAxis = pieceAxis;
+    vPieceFrame = pieceFrame;
+    vPieceRow = pieceRow;
+  #endif
   vec4 world = modelMatrix * vec4(position, 1.0);
   vWorld = world.xyz;
   vec4 mvPosition = viewMatrix * world;
@@ -227,8 +209,6 @@ uniform vec3 primary0;
 uniform vec3 primary1;
 uniform float noise;
 uniform float g0;
-uniform vec3 lightX[${GRASS_LIGHT.x.length}];
-uniform vec3 lightY[${GRASS_LIGHT.y.length}];
 uniform vec3 lightMean;
 varying vec3 vWorld;
 #include <fog_pars_fragment>
@@ -245,7 +225,7 @@ vec3 grassLight(float x, float y) {
   int ix = int(min(floor(fx), ${(GRASS_LIGHT.x.length - 2).toFixed(1)}));
   float fy = grassBin(abs(y), ${binCentres(GRASS_LIGHT.y0, GRASS_LIGHT.y1, GRASS_LIGHT.y.length)});
   int iy = int(min(floor(fy), ${(GRASS_LIGHT.y.length - 2).toFixed(1)}));
-  return mix(lightX[ix], lightX[ix + 1], fx - float(ix)) * mix(lightY[iy], lightY[iy + 1], fy - float(iy)) / lightMean;
+  return mix(tableAt(3, ix).rgb, tableAt(3, ix + 1).rgb, fx - float(ix)) * mix(tableAt(4, iy).rgb, tableAt(4, iy + 1).rgb, fy - float(iy)) / lightMean;
 }
 void main() {
   vec3 toCamera = normalize(cameraPosition - vWorld);
@@ -264,9 +244,20 @@ void main() {
     a = max(a, ${GRASS_PATTERN.traces.alpha.toFixed(4)});
   #endif
   vec3 team = vWorld.z < 0.0 ? primary0 : primary1;
-  vec3 albedo = mix(rgb, 2.0 * team, clamp(${GRASS_PATTERN.team.weight.toFixed(3)} * a, 0.0, 1.0)) * noise;
-  vec3 lit = albedo * grassLight(vWorld.x, vWorld.z) * view;
-  gl_FragColor = vec4(clamp(lit + grassReflection(cosView, floorReflection(toCamera), g0), 0.0, 1.0), 1.0);
+  #ifdef CARBALL_LQ
+    // (High Quality Shaders off, QG-5: no lightmap (LightColor's flat light), no capture: a sheen tinted toward the team
+    // the farther the view is from each axis; the low-quality view and noise factors (the noise its mean: ours))
+    float v4 = pow(1.0 - cosView, 4.0);
+    vec3 axes = abs(vec3(toCamera.x, toCamera.z, toCamera.y));
+    float off = saturate1(2.0 * (axes.x - 2.0 / 3.0)) + saturate1(2.0 * (axes.y - 2.0 / 3.0)) + saturate1(2.0 * (axes.z - 2.0 / 3.0));
+    vec3 sheen = 0.15 * off * off * mix(2.0 * primary0, 2.0 * primary1, saturate1(vWorld.z / 4096.0 + 0.5)) * ${GRASS_ENV_AMOUNT.toFixed(2)};
+    vec3 albedo = mix(rgb, 2.0 * team, clamp(${GRASS_PATTERN.team.weight.toFixed(3)} * a, 0.0, 1.0)) * 0.285 * (${GRASS_LQ_NOISE.toFixed(2)} + 1.5);
+    gl_FragColor = vec4(clamp(albedo * vec3(${GRASS_LQ_LIGHT.join(", ")}) * 3.0 * (v4 + 1.0 / 3.0) + sheen, 0.0, 1.0), 1.0);
+  #else
+    vec3 albedo = mix(rgb, 2.0 * team, clamp(${GRASS_PATTERN.team.weight.toFixed(3)} * a, 0.0, 1.0)) * noise;
+    vec3 lit = albedo * grassLight(vWorld.x, vWorld.z) * view;
+    gl_FragColor = vec4(clamp(lit + grassReflection(cosView, floorReflection(toCamera), g0), 0.0, 1.0), 1.0);
+  #endif
   #include <colorspace_fragment>
   #include <fog_fragment>
 }
@@ -278,14 +269,6 @@ void main() {
 const hexFragment = /* glsl */ `
 uniform vec3 primary0;
 uniform vec3 primary1;
-uniform float pbA[32];
-uniform float pbB[32];
-uniform float pbG[32];
-uniform float pbR[32];
-uniform float hpR[32];
-uniform float hpA[32];
-uniform float envRadial[9];
-uniform float envSpread[9];
 varying vec3 vWorld;
 #include <fog_pars_fragment>
 ${commonGlsl}
@@ -295,12 +278,12 @@ void main() {
   vec3 toCamera = normalize(cameraPosition - vWorld);
   vec2 h = xy / vec2(${HEX_TILE[0].toFixed(1)}, ${HEX_TILE[1].toFixed(1)});
   float r = hexRadius(h);
-  float c = saturate1(32.0 * (profile32(pbA, r) - 0.45));
-  float pb = profile32(pbB, r);
-  float pg = profile32(pbG, r);
+  float c = saturate1(32.0 * (tableProfile(T_PB_A, r) - 0.45));
+  float pb = tableProfile(T_PB_B, r);
+  float pg = tableProfile(T_PB_G, r);
   float f = 1.0 - saturate1(toCamera.y);
   vec3 cube = floorReflection(toCamera);
-  float lines = 1.0 - profile32(hpR, hexRadius(h - 0.04921875 * vec2(toCamera.x, toCamera.z)));
+  float lines = 1.0 - tableProfile(T_HP_R, hexRadius(h - 0.04921875 * vec2(toCamera.x, toCamera.z)));
   // (the reflection's tangent-space y and z: the game's y, up; ENVPack.G there our smooth stand-in, RV-71)
   vec2 reflYz = vec2(-toCamera.z, toCamera.y);
   #ifdef FLOOR_B
@@ -308,10 +291,10 @@ void main() {
     vec3 a = (0.5 * envG(2.0 * reflYz) + 0.25) * cube;
     float lumA = dot(a, vec3(0.3, 0.59, 0.11));
     vec3 env = 8.0 * (saturate1(1.5 * (pg - 0.75)) + 0.0625) * (a + clamp(0.25 * a + 0.25 * lumA - 0.015625, 0.0, 1.0));
-    vec3 cell = 0.75 * (profile32(hpA, hexRadius(h / 5.0)) + 2.0) * pb * (f * f + 0.375) * (f * f * env + (4.0 - pb) / 32.0);
+    vec3 cell = 0.75 * (tableProfile(T_HP_A, hexRadius(h / 5.0)) + 2.0) * pb * (f * f + 0.375) * (f * f * env + (4.0 - pb) / 32.0);
   #else
     vec3 T = mix(vec3(1.0, 0.9687, 0.9061), 2.0 * mix(primary0, primary1, saturate1(xy.y / 256.0 + 0.5)), min(abs(xy.y) / 128.0, 1.0));
-    float pb2r = profile32(pbR, hexRadius(h / 5.0));
+    float pb2r = tableProfile(T_PB_R, hexRadius(h / 5.0));
     vec3 cell = (0.625 + f) * pb2r * pb * (2.0 * pb * (envG(reflYz) + 0.25) * f * f * cube + 0.0625 * (pg + 0.75));
   #endif
   vec3 diffuse = mix(T * lines, cell, c);
@@ -349,9 +332,15 @@ vec3 teamCmix(float y) {
 const CENTRE_CLIP = 776;
 
 const frameFragment = /* glsl */ `
-uniform float frameR;
-uniform float frameG;
-uniform float tireMarks;
+#ifdef PER_VERTEX_PIECE
+  #define frameR vPieceFrame.x
+  #define frameG vPieceFrame.y
+  #define tireMarks vPieceFrame.z
+#else
+  uniform float frameR;
+  uniform float frameG;
+  uniform float tireMarks;
+#endif
 varying vec3 vWorld;
 varying float vAcross;
 #include <fog_pars_fragment>
@@ -364,7 +353,14 @@ void main() {
   #endif
   vec2 xy = vec2(vWorld.x, vWorld.z);
   vec3 toCamera = normalize(cameraPosition - vWorld);
-  vec3 refl = 4.0 * (0.125 + 0.625 * frameG) * floorReflection(toCamera);
+  #ifdef CARBALL_LQ
+    // (High Quality Shaders off, QG-8: FrameTexture_N and PACK only: no capture's reflection, no tire marks)
+    vec3 refl = vec3(0.0);
+    #undef tireMarks
+    #define tireMarks 1.0
+  #else
+    vec3 refl = 4.0 * (0.125 + 0.625 * frameG) * floorReflection(toCamera);
+  #endif
   vec3 emissive = vec3(0.0);
   vec3 diffuse;
   #ifdef LINE
@@ -389,7 +385,6 @@ void main() {
  *  the hexes (Hexagons_Pack_B.A), u across the strip: perforated by the hexes, its solid core about 71 % of the width */
 const markingFragment = /* glsl */ `
 uniform vec3 light;
-uniform float pbA[32];
 varying vec3 vWorld;
 varying float vAcross;
 #include <fog_pars_fragment>
@@ -409,17 +404,11 @@ float hexRadius(vec2 tile) {
   }
   return best;
 }
-float profile32(float table[32], float r) {
-  float rr = clamp(r, 0.0, 1.0);
-  float x = (rr < 0.8 ? rr * 20.0 : 16.0 + (rr - 0.8) * 80.0) - 0.5;
-  int i = int(clamp(floor(x), 0.0, 31.0));
-  int j = min(i + 1, 31);
-  return mix(table[i], table[j], clamp(x - float(i), 0.0, 1.0));
-}
+${CONST_TABLES_GLSL}
 void main() {
   // (no paint under the centre's raised trim)
   if (length(vWorld.xz) < ${CENTRE_CLIP.toFixed(1)}) discard;
-  float h = profile32(pbA, hexRadius(vec2(vWorld.x, vWorld.z) / vec2(${HEX_TILE[0].toFixed(1)}, ${HEX_TILE[1].toFixed(1)})));
+  float h = tableProfile(T_PB_A, hexRadius(vec2(vWorld.x, vWorld.z) / vec2(${HEX_TILE[0].toFixed(1)}, ${HEX_TILE[1].toFixed(1)})));
   float k = 2.0 * abs(normalize(cameraPosition - vWorld).y) + 0.125;
   float u = vAcross * 2.0 - 1.0;
   float alpha = saturate1(8.0 * (h * h - u * u - 0.5) * k) * saturate1(k);
@@ -468,13 +457,13 @@ export class GrassMaterial extends ShaderMaterial {
         noise: { value: GRASS_NOISE },
         // (Cg's scale: (G0 + 1/3) 2/3)
         g0: { value: GRASS_G0 },
-        lightX: { value: GRASS_LIGHT.x.map(v3) },
-        lightY: { value: GRASS_LIGHT.y.map(v3) },
+        constTables: tablesUniform(),
         lightMean: { value: v3(GRASS_LIGHT.mean) },
         ...lightUniforms("hexPads"),
       },
       fog: true,
     });
+    lowQualityPath(this);
   }
 }
 
@@ -496,14 +485,7 @@ export class HexFloorMaterial extends ShaderMaterial {
         ...shared(cube),
         primary0: { value: primary0 },
         primary1: { value: primary1 },
-        pbA: { value: PB_A },
-        pbB: { value: PB_B },
-        pbG: { value: PB_G },
-        pbR: { value: PB_R },
-        hpR: { value: HP_R },
-        hpA: { value: HP_A },
-        envRadial: { value: ENV_RADIAL },
-        envSpread: { value: ENV_SPREAD },
+        constTables: tablesUniform(),
         ...lightUniforms(piece),
       },
       fog: true,
@@ -533,6 +515,7 @@ export class FrameMaterial extends ShaderMaterial {
       polygonOffsetFactor: 0,
       polygonOffsetUnits: -2,
     });
+    lowQualityPath(this);
   }
 }
 
@@ -568,8 +551,13 @@ export class SideTrimMaterial extends ShaderMaterial {
         ${RETICLE_GLSL_FN}
         void main() {
           vec3 toCamera = normalize(cameraPosition - vWorld);
-          vec3 cube = textureLod(grassCube, reflect(-toCamera, normalize(vNormal)), ${GRASS_CUBE_BLUR_LOD.toFixed(1)}).rgb;
-          vec3 diffuse = clamp(${SIDE_TRIM.m.toFixed(3)} * (vec3(${SIDE_TRIM.texture.r.toFixed(3)}) + 4.0 * (0.125 + 0.625 * ${SIDE_TRIM.texture.g.toFixed(3)}) * cube), 0.0, 1.0);
+          #ifdef CARBALL_LQ
+            // (High Quality Shaders off, QG-8: no capture's reflection, no tire marks)
+            vec3 diffuse = vec3(${SIDE_TRIM.texture.r.toFixed(3)});
+          #else
+            vec3 cube = textureLod(grassCube, reflect(-toCamera, normalize(vNormal)), ${GRASS_CUBE_BLUR_LOD.toFixed(1)}).rgb;
+            vec3 diffuse = clamp(${SIDE_TRIM.m.toFixed(3)} * (vec3(${SIDE_TRIM.texture.r.toFixed(3)}) + 4.0 * (0.125 + 0.625 * ${SIDE_TRIM.texture.g.toFixed(3)}) * cube), 0.0, 1.0);
+          #endif
           gl_FragColor = vec4(diffuse * vec3(${light.map((v) => v.toFixed(3)).join(", ")}), 1.0);
           vec3 vReticleWorld = vWorld;
           vec3 vReticleNormal = vNormal;
@@ -580,6 +568,7 @@ export class SideTrimMaterial extends ShaderMaterial {
       uniforms: { ...shared(cube), reticleBall: { value: ballPosition } },
       fog: true,
     });
+    lowQualityPath(this);
   }
 }
 
@@ -590,7 +579,7 @@ export class MarkingMaterial extends ShaderMaterial {
     super({
       vertexShader,
       fragmentShader: markingFragment,
-      uniforms: { ...UniformsUtils.clone(UniformsLib.fog), light: { value: new Vector3(r, g, b) }, pbA: { value: PB_A } },
+      uniforms: { ...UniformsUtils.clone(UniformsLib.fog), light: { value: new Vector3(r, g, b) }, constTables: tablesUniform() },
       transparent: true,
       depthWrite: false,
       fog: true,
@@ -599,6 +588,91 @@ export class MarkingMaterial extends ShaderMaterial {
       polygonOffsetFactor: 0,
       polygonOffsetUnits: -4,
     });
+  }
+}
+
+/** The field's pieces one shader draws in one state (a frame's or a hex floor's, opaque, the same defines and depth
+ *  offset) merged into one mesh each: fewer draw calls, the same pixels (the user's choice, 2026-10-16). Each piece's
+ *  own uniforms (its baked light's axis and table, a frame's means and tire marks) go with its vertices, flat (no
+ *  interpolation: the same values), its table a row of one float texture (texelFetch: exact); the pieces kept in the
+ *  order three drew them (opaque: by their materials' creation), the first's material drawing them all */
+export function mergeFieldPieces(group: Group): void {
+  // (the group's children in their materials' creation order: each made as it was added)
+  const sets = new Map<string, Mesh<BufferGeometry, ShaderMaterial>[]>();
+  for (const child of group.children) {
+    if (!(child instanceof Mesh)) continue;
+    const mesh = child as Mesh<BufferGeometry, ShaderMaterial>;
+    const m = mesh.material;
+    if (!(m instanceof FrameMaterial || m instanceof HexFloorMaterial) || m.transparent) continue;
+    const key = [m instanceof FrameMaterial ? "frame" : "hex", JSON.stringify(m.defines), m.polygonOffset, m.polygonOffsetFactor, m.polygonOffsetUnits, m.side].join("|");
+    sets.set(key, [...(sets.get(key) ?? []), mesh]);
+  }
+  for (const meshes of sets.values()) {
+    if (meshes.length < 2) continue;
+    const counts = meshes.map((mesh) => mesh.geometry.getAttribute("position").count);
+    const total = counts.reduce((a, b) => a + b, 0);
+    const join = (name: string, size: number): Float32Array => {
+      const out = new Float32Array(total * size);
+      let at = 0;
+      for (const mesh of meshes) {
+        const a = mesh.geometry.getAttribute(name);
+        out.set(a.array, at);
+        at += a.count * size;
+      }
+      return out;
+    };
+    const axis = new Float32Array(total * 4);
+    const frame = new Float32Array(total * 3);
+    const row = new Float32Array(total);
+    const table = new Float32Array(16 * 4 * meshes.length);
+    let at = 0;
+    meshes.forEach((mesh, k) => {
+      const u = mesh.material.uniforms;
+      const lightAxis = u["lightAxis"]?.value as readonly number[];
+      const values = mesh.material instanceof FrameMaterial ? [u["frameR"]?.value, u["frameG"]?.value, u["tireMarks"]?.value].map(Number) : [0, 0, 0];
+      for (let i = 0; i < (counts[k] ?? 0); i++) {
+        axis.set(lightAxis, 4 * (at + i));
+        frame.set(values, 3 * (at + i));
+        row[at + i] = k;
+      }
+      at += counts[k] ?? 0;
+      (u["lightTable"]?.value as readonly Vector3[]).forEach((v, i) => {
+        table.set([v.x, v.y, v.z, 0], 4 * (16 * k + i));
+      });
+    });
+    const geometry = new BufferGeometry();
+    geometry.setAttribute("position", new BufferAttribute(join("position", 3), 3));
+    geometry.setAttribute("across", new BufferAttribute(join("across", 1), 1));
+    geometry.setAttribute("normal", new BufferAttribute(join("normal", 3), 3));
+    geometry.setAttribute("pieceAxis", new BufferAttribute(axis, 4));
+    geometry.setAttribute("pieceFrame", new BufferAttribute(frame, 3));
+    geometry.setAttribute("pieceRow", new BufferAttribute(row, 1));
+    const lightTex = new DataTexture(table, 16, meshes.length, RGBAFormat, FloatType);
+    lightTex.minFilter = NearestFilter;
+    lightTex.magFilter = NearestFilter;
+    lightTex.needsUpdate = true;
+    const [first, ...rest] = meshes;
+    if (!first) continue;
+    const material = first.material;
+    material.defines = { ...material.defines, PER_VERTEX_PIECE: "" };
+    material.uniforms["lightTex"] = { value: lightTex };
+    material.needsUpdate = true;
+    const merged = new Mesh(geometry, material);
+    merged.name = meshes.map((m) => m.name).join(" + ");
+    let start = 0;
+    merged.userData["pieces"] = meshes.map((m, k) => {
+      const piece = { name: m.name, start, count: counts[k] ?? 0 };
+      start += piece.count;
+      return piece;
+    });
+    // (in the first piece's place among the group's children: the scene drawn in the order it was)
+    group.children.splice(group.children.indexOf(first), 0, merged);
+    merged.parent = group;
+    for (const mesh of meshes) {
+      group.remove(mesh);
+      mesh.geometry.dispose();
+    }
+    for (const mesh of rest) mesh.material.dispose();
   }
 }
 

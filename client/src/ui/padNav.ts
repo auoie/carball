@@ -9,7 +9,7 @@
 // menu's top); Start opens and closes the pause menu; the bumpers step through a tabbed page's tabs (`data-pad-tabs`),
 // stopping at the ends, held repeating, the other ignored while one's held; X presses the page's Default
 // (`data-pad-x`), Y clears the focused keybinding (`data-pad-y`'s pages). The D-pad steps on a press, then repeats after
-// 0.2 s every 0.1 s; the stick counts only past 0.8 on its main axis, then repeats (0.3 s, then every 0.2 s). The focused
+// 0.2 s every 0.1 s; the stick counts at 0.8 or past it, then repeats (0.3 s, then every 0.1 s). The focused
 // row is highlighted and scrolled into view (the stick's axis that reaches 0.8 first owns its direction till it falls
 // back under it: MN1's confirmed values); a page keeps its focus while its menu is open (rebuilt after a change, by its
 // place in the list); a page that focuses its own control (a confirm's NO) is followed; a menu opened afresh starts at
@@ -147,8 +147,9 @@ export interface PadNavActions {
   readonly start: () => void;
   /** A pad input is being captured for a binding (the settings' rebind): the pad isn't the menus' meanwhile */
   readonly capturing?: () => boolean;
-  /** The menus' sounds: the focus moved or a value stepped, a press, a back, a tab */
-  readonly sound?: (cue: "move" | "select" | "back" | "tab") => void;
+  /** The menus' sounds: the focus moved or a value stepped, a press, a question's answer (or a notice's OK), a back, a
+   *  tab */
+  readonly sound?: (cue: "move" | "select" | "confirm" | "back" | "tab") => void;
 }
 
 /** What a hint names (its button, its words): B Back, X Default, Y Clear Keybinding (MENU-17) */
@@ -172,6 +173,8 @@ export class PadMenuNav {
   #bumperNext = 0;
   /** A and B pressed in this menu, acted on as they're released */
   #armed = new Set<number>();
+  /** The control drawn pressed (A held on it) */
+  #pressedEl: HTMLElement | null = null;
   #focused: HTMLElement | null = null;
   #row: HTMLElement | null = null;
   /** Each page's focus while its menu is open: its row and its place in the row */
@@ -191,6 +194,8 @@ export class PadMenuNav {
   #padMode = false;
   #modeAt = -Infinity;
   #modeWanted: boolean | null = null;
+  /** The open menu's control under the pointer (its cue on a change) */
+  #hovered: HTMLElement | null = null;
 
   constructor(actions: PadNavActions) {
     this.#actions = actions;
@@ -200,6 +205,20 @@ export class PadMenuNav {
           this.#setMode(false, performance.now() / 1000);
         }, { capture: true, passive: true });
       }
+      // The mouse's and the keyboard's cues too (MENU-18, RV-481): a control of the open menu clicked (not the pad's own
+      // presses: those cue themselves; a slider's drag silent), the pointer onto another of its controls
+      window.addEventListener("click", (e: Event) => {
+        const control = e.isTrusted ? this.#menuControl(e.target) : null;
+        if (!control || control.getAttribute("role") === "slider") return;
+        const menu = this.#actions.menu();
+        this.#actions.sound?.(menu?.querySelector("[data-pad-default]") ? "confirm" : "select");
+      }, { capture: true, passive: true });
+      window.addEventListener("pointerover", (e: Event) => {
+        const control = this.#padMode ? null : this.#menuControl(e.target);
+        if (control === this.#hovered) return;
+        this.#hovered = control;
+        if (control) this.#actions.sound?.("move");
+      }, { passive: true });
     }
   }
 
@@ -275,8 +294,17 @@ export class PadMenuNav {
     const rows = menuRows(controls.map((c) => ({ rect: c.getBoundingClientRect(), value: isValue(c) }))).map((r) => r.map((i) => controls[i]).filter((c): c is HTMLElement => c !== undefined));
     const current = this.#current(menu, controls, rows);
     if (!current) return;
-    if (released(PAD.a) && this.#armed.delete(PAD.a)) {
-      this.#press(current);
+    // (A held: its control looks pressed till A's let go, not a frame more, RV-478)
+    const releasedA = released(PAD.a) && this.#armed.delete(PAD.a);
+    const held = this.#armed.has(PAD.a) ? current : null;
+    if (held !== this.#pressedEl) {
+      this.#pressedEl?.classList.remove("pad-pressed");
+      held?.classList.add("pad-pressed");
+      this.#pressedEl = held;
+    }
+    if (releasedA) {
+      // (a question's answer, or a notice's OK, its own cue: a page with a default control, MENU-18)
+      this.#press(current, controls.some((c) => c.hasAttribute("data-pad-default")));
       return;
     }
     if (pressed(PAD.x)) {
@@ -339,14 +367,26 @@ export class PadMenuNav {
       this.#highlight(this.#focused, rows);
       return this.#focused;
     }
-    const kept = this.#memory.get(page);
+    // (a page marked data-pad-forget, the settings' tabs, starts at its first row whenever it's come to again: its place
+    // kept only while it's rebuilt in place, RV-476)
+    const shownPage = [...menu.querySelectorAll<HTMLElement>("[data-pad-page]")].find((p) => !p.closest("[hidden]"));
+    const kept = !samePage && shownPage?.hasAttribute("data-pad-forget") === true ? undefined : this.#memory.get(page);
     const at = kept ? rows[Math.min(kept.row, rows.length - 1)] : undefined;
-    let next = at ? (at[Math.min(kept?.column ?? 0, at.length - 1)] ?? null) : null;
+    // (a question opens on its default, NO, whatever had the focus there last, asked again or in place of the menu's
+    // buttons: RV-472, RV-473)
+    let next = controls.find((c) => c.hasAttribute("data-pad-default")) ?? null;
+    next ??= at ? (at[Math.min(kept?.column ?? 0, at.length - 1)] ?? null) : null;
     next ??= active;
-    next ??= controls.find((c) => c.hasAttribute("data-pad-default")) ?? null;
     next ??= this.#entry(rows[0] ?? []);
     this.#focus(next, rows, false);
     return next;
+  }
+
+  /** The open menu's control `target` is on, if any */
+  #menuControl(target: EventTarget | null): HTMLElement | null {
+    const menu = this.#actions.menu();
+    const control = typeof Element !== "undefined" && target instanceof Element ? target.closest<HTMLElement>(FOCUSABLE) : null;
+    return menu && control && menu.contains(control) && !control.hasAttribute("disabled") ? control : null;
   }
 
   /** Where focus lands entering a row: its checked radio, else its control at `column` */
@@ -364,21 +404,19 @@ export class PadMenuNav {
       return;
     }
     const by = direction === "right" ? 1 : -1;
-    // A value changes in place (never leaving its row): a slider by the held steps, a list by one, a checkbox toggled
+    // A value changes in place (never leaving its row): a slider by the held steps (the move cue), a list by one (the
+    // select cue); a checkbox only by A (RV-481)
     const role = current.getAttribute("role");
     if (role === "slider" || role === "spinbutton") {
-      if (stepControl(current, role === "slider" ? by * step : by)) this.#actions.sound?.("move");
+      if (stepControl(current, role === "slider" ? by * step : by)) this.#actions.sound?.(role === "slider" ? "move" : "select");
       return;
     }
-    if (role === "checkbox") {
-      current.click();
-      this.#actions.sound?.("move");
-      return;
-    }
-    // Along a row of buttons: a choosing group's choice taken as it goes (wrapping, a list's cycle), else the next one
+    if (role === "checkbox") return;
+    // Along a row of buttons: a choosing group's choice taken as it goes, else the next one; stopping at either end, as
+    // the game's (RV-477)
     if (row.length > 1) {
       const choose = isRadio(current) && current.closest("[data-pad-choose]") !== null;
-      const i = choose ? (column + by + row.length) % row.length : Math.min(row.length - 1, Math.max(0, column + by));
+      const i = Math.min(row.length - 1, Math.max(0, column + by));
       const next = row[i];
       if (!next || next === current) return;
       this.#focus(next, rows);
@@ -388,10 +426,10 @@ export class PadMenuNav {
 
   /** A: a button, checkbox or radio is clicked, a list steps to its next value (in place), a text field takes the
    *  keyboard; a slider nothing */
-  #press(el: HTMLElement): void {
+  #press(el: HTMLElement, question = false): void {
     const role = el.getAttribute("role");
     if (role === "slider") return;
-    this.#actions.sound?.("select");
+    this.#actions.sound?.(question ? "confirm" : "select");
     if (role === "spinbutton") {
       stepControl(el, 1);
       return;
@@ -443,6 +481,8 @@ export class PadMenuNav {
   }
 
   #blur(): void {
+    this.#pressedEl?.classList.remove("pad-pressed");
+    this.#pressedEl = null;
     this.#focused?.classList.remove("pad-focus");
     this.#focused = null;
     this.#row?.classList.remove("pad-row");
@@ -468,9 +508,6 @@ export class PadMenuNav {
     if (pad && this.#row) this.#row.scrollIntoView({ block: "nearest" });
   }
 
-  /** The button hints (MENU-17), the pad's mode only, bottom left: B Back on a page deeper than its menu's top
-   *  (`data-pad-back`), X Default where the page has one (`data-pad-x`), Y Clear Keybinding on a bindings page
-   *  (`data-pad-y`), in the game's order, in the pad's glyphs; none on the main menu's top, the pause menu or a modal */
   /** The hints under the open panel and centred on it: the one marked `data-pad-hints-under` it's in (the settings, its
    *  question too), else its page (the main menu's column), else the menu; kept on the screen */
   #placeHints(menu: HTMLElement, page: HTMLElement | null): void {
@@ -485,14 +522,19 @@ export class PadMenuNav {
     [hints.style.left, hints.style.top] = at.split(" ") as [string, string];
   }
 
+  /** The button hints (MENU-16): B Back on a page deeper than its menu's top (`data-pad-back`), X Default where the
+   *  page has one (`data-pad-x`), Y Clear Keybinding on a bindings page (`data-pad-y`), in the game's order, in the pad's
+   *  glyphs; none on the main menu's top, the pause menu or a modal. In the mouse's mode clickable words, no glyph, and
+   *  Clear Keybinding gone (no focused binding: an entry without an action vanishes, RV-480) */
   #showHints(menu: HTMLElement | null): void {
     if (typeof document === "undefined" || !("createElement" in document)) return;
     const page = menu ? ([...menu.querySelectorAll<HTMLElement>("[data-pad-page]")].find((p) => !p.closest("[hidden]")) ?? menu) : null;
     const has = (attr: string): boolean => menu !== null && (menu.hasAttribute(attr) || page?.hasAttribute(attr) === true || page?.querySelector(`[${attr}]`) !== null);
-    const shownHints = this.#padMode && menu ? HINTS.filter(([b]) => (b === PAD.b ? has("data-pad-back") : b === PAD.x ? has("data-pad-x") : has("data-pad-y"))) : [];
+    const pad = this.#padMode;
+    const shownHints = menu ? HINTS.filter(([b]) => (b === PAD.b ? has("data-pad-back") : b === PAD.x ? has("data-pad-x") : pad && has("data-pad-y"))) : [];
     // (under the open panel, centred on it, where the eye is: the user's finding, 2026-10-16)
     if (shownHints.length > 0 && menu) this.#placeHints(menu, page);
-    const key = shownHints.map(([b]) => String(b)).join(",");
+    const key = `${pad ? "pad" : "mouse"} ${shownHints.map(([b]) => String(b)).join(",")}`;
     if (key === this.#hintsKey) return;
     this.#hintsKey = key;
     if (!this.#hints) {
@@ -502,8 +544,27 @@ export class PadMenuNav {
       document.body.append(this.#hints);
     }
     this.#hints.hidden = shownHints.length === 0;
+    this.#hints.classList.toggle("menu-hints-mouse", !pad);
     this.#hints.replaceChildren(
       ...shownHints.map(([button, label]): HTMLElement => {
+        if (!pad) {
+          // (the mouse's: the words, clicked for the button's action; out of the Tab order, the page's own Close and
+          // reset buttons the keyboard's)
+          const item = document.createElement("button");
+          item.className = "menu-hint menu-hint-click";
+          item.tabIndex = -1;
+          item.textContent = label;
+          item.addEventListener("click", () => {
+            const open = this.#actions.menu();
+            if (button === PAD.b) {
+              if (this.#actions.back()) this.#actions.sound?.("back");
+            } else if (open) {
+              const shownPage = [...open.querySelectorAll<HTMLElement>("[data-pad-page]")].find((p) => !p.closest("[hidden]"));
+              if (shownPage?.hasAttribute("data-pad-x")) shownPage.dispatchEvent(new CustomEvent("pad-default", { bubbles: true }));
+            }
+          });
+          return item;
+        }
         const item = document.createElement("span");
         item.className = "menu-hint";
         const glyph: KeyGlyph = keyGlyph({ kind: "padButton", button });

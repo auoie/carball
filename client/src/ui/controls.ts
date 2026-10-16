@@ -175,6 +175,8 @@ export function slider(o: SliderOptions): HTMLDivElement {
   control.setAttribute("aria-valuemin", String(o.min));
   control.setAttribute("aria-valuemax", String(o.max));
   const output = element("output", "control-output");
+  // (the slider's own value text speaks its value: the readout no live region too, said twice: RV-482)
+  output.setAttribute("aria-hidden", "true");
   const snap = (v: number): number => onGrid(v, o.min, o.max, o.step);
   let value = snap(o.value);
   const show = (): void => {
