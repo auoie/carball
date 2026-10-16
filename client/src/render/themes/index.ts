@@ -1,8 +1,11 @@
-// The arena themes, chosen by name (?theme=… in the page URL). Each theme but the default is its own chunk of the
-// build, downloaded only when chosen.
+// The arena themes: a match's map is one (its index on the wire: protocol/README.md), free play's the map select's pick
+// (src/ui/mainMenu.ts), and ?theme=… in the page URL overrides either (development). Each theme but the default is its
+// own chunk of the build, downloaded only when chosen.
 import { nightTheme } from "./night";
 import type { Theme } from "./theme";
 
+/** The themes in their order: a map's index on the wire (MatchFound, Welcome) names one, so the list is only ever
+ *  appended to (its length is the server's protocol::MAP_COUNT) */
 export const THEMES = [
   "night",
   "stadium",
@@ -23,44 +26,60 @@ export const THEMES = [
 ] as const;
 export type ThemeName = (typeof THEMES)[number];
 
+/** Each map's name in the map select (none of the game's arenas') */
+export const MAP_NAMES: Readonly<Record<ThemeName, string>> = {
+  night: "Night",
+  stadium: "Stadium",
+  meadow: "Meadow",
+  forest: "Forest",
+  city: "City",
+  infested: "Infested",
+  kawaii: "Kawaii",
+  platformer: "Platformer",
+  haunted: "Haunted",
+  ghosts: "Ghosts",
+  dimension: "Dimension",
+  summit: "Summit",
+  crater: "Crater",
+  temple: "Temple",
+  island: "Island",
+  lake: "Lake",
+};
+
 /** The theme called `value`, or the default (night). */
 export function themeName(value: string | null): ThemeName {
   return THEMES.find((t) => t === value) ?? "night";
 }
 
+/** A match's map (its index) as a theme; an index this page doesn't know (a newer server's) is the default */
+export function themeOfMap(map: number): ThemeName {
+  return THEMES[map] ?? "night";
+}
+
+/** Each theme's module but the default's (its own chunk), downloaded when first asked for */
+const MODULES: Readonly<Record<Exclude<ThemeName, "night">, () => Promise<() => Theme>>> = {
+  stadium: async () => (await import("./stadium")).stadiumTheme,
+  meadow: async () => (await import("./meadow")).meadowTheme,
+  forest: async () => (await import("./forest")).forestTheme,
+  city: async () => (await import("./city")).cityTheme,
+  infested: async () => (await import("./infested")).infestedTheme,
+  kawaii: async () => (await import("./kawaii")).kawaiiTheme,
+  platformer: async () => (await import("./platformer")).platformerTheme,
+  haunted: async () => (await import("./haunted")).hauntedTheme,
+  ghosts: async () => (await import("./ghosts")).ghostsTheme,
+  dimension: async () => (await import("./dimension")).dimensionTheme,
+  summit: async () => (await import("./summit")).summitTheme,
+  crater: async () => (await import("./crater")).craterTheme,
+  temple: async () => (await import("./temple")).templeTheme,
+  island: async () => (await import("./island")).islandTheme,
+  lake: async () => (await import("./lake")).lakeTheme,
+};
+
 export async function createTheme(name: ThemeName): Promise<Theme> {
-  switch (name) {
-    case "night":
-      return nightTheme();
-    case "stadium":
-      return (await import("./stadium")).stadiumTheme();
-    case "meadow":
-      return (await import("./meadow")).meadowTheme();
-    case "forest":
-      return (await import("./forest")).forestTheme();
-    case "city":
-      return (await import("./city")).cityTheme();
-    case "infested":
-      return (await import("./infested")).infestedTheme();
-    case "kawaii":
-      return (await import("./kawaii")).kawaiiTheme();
-    case "platformer":
-      return (await import("./platformer")).platformerTheme();
-    case "haunted":
-      return (await import("./haunted")).hauntedTheme();
-    case "ghosts":
-      return (await import("./ghosts")).ghostsTheme();
-    case "dimension":
-      return (await import("./dimension")).dimensionTheme();
-    case "summit":
-      return (await import("./summit")).summitTheme();
-    case "crater":
-      return (await import("./crater")).craterTheme();
-    case "temple":
-      return (await import("./temple")).templeTheme();
-    case "island":
-      return (await import("./island")).islandTheme();
-    case "lake":
-      return (await import("./lake")).lakeTheme();
-  }
+  return name === "night" ? nightTheme() : (await MODULES[name]())();
+}
+
+/** A theme's chunk downloaded ahead, not built (a found match's map, during the join's countdown) */
+export async function preloadTheme(name: ThemeName): Promise<void> {
+  if (name !== "night") await MODULES[name]();
 }

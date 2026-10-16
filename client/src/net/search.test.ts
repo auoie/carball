@@ -18,8 +18,8 @@ function answers(): { handlers: SearchHandlers; got: string[]; done: Promise<voi
   });
   const handlers: SearchHandlers = {
     searching: () => got.push("searching"),
-    found: (token) => {
-      got.push(`found ${token.toString()}`);
+    found: (token, map) => {
+      got.push(`found ${token.toString()} on map ${String(map)}`);
       finish();
     },
     failed: (reason) => {
@@ -73,10 +73,10 @@ describe("a search", () => {
   });
 
   it("passes a match found on", async () => {
-    vi.stubGlobal("WebTransport", fakeTransport([{ type: "matchFound", token: 5n }]));
+    vi.stubGlobal("WebTransport", fakeTransport([{ type: "matchFound", token: 5n, map: 4 }]));
     const { handlers, got, done } = answers();
     Search.start({ url: "https://game.example:4433/play", certHash: null }, 1, 0n, handlers);
     await done;
-    expect(got).toEqual(["searching", "found 5"]);
+    expect(got).toEqual(["searching", "found 5 on map 4"]);
   });
 });

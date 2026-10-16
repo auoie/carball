@@ -1,11 +1,11 @@
 {
-  "protocolVersion": 20,
+  "protocolVersion": 21,
   "vectors": [
     {
       "channel": "control",
       "message": {
         "type": "hello",
-        "version": 20,
+        "version": 21,
         "team": 0,
         "body": 0,
         "dodgeDeadzone": 0.8,
@@ -20,13 +20,13 @@
         "playlist": 0,
         "token": "81985529216486895"
       },
-      "hex": "32000114000000cdcc4c3f0000803f0000a03f010df0fecaefbeadde0b4d65726375727920e29aa101010200efcdab8967452301"
+      "hex": "32000115000000cdcc4c3f0000803f0000a03f010df0fecaefbeadde0b4d65726375727920e29aa101010200efcdab8967452301"
     },
     {
       "channel": "control",
       "message": {
         "type": "hello",
-        "version": 20,
+        "version": 21,
         "team": 255,
         "body": 0,
         "dodgeDeadzone": 0.8,
@@ -41,7 +41,7 @@
         "playlist": 2,
         "token": "0"
       },
-      "hex": "2700011400ff00cdcc4c3f0000803f0000a03f00000000000000000000000001020000000000000000"
+      "hex": "2700011500ff00cdcc4c3f0000803f0000a03f00000000000000000000000001020000000000000000"
     },
     {
       "channel": "control",
@@ -112,12 +112,13 @@
       "channel": "control",
       "message": {
         "type": "welcome",
-        "version": 20,
+        "version": 21,
         "carId": 3,
         "tickRate": 120,
         "frame": 0,
         "matchType": "ranked",
         "teamSize": 2,
+        "map": 7,
         "key": "18364758544493064720",
         "snapshot": [
           1,
@@ -125,7 +126,7 @@
           3
         ]
       },
-      "hex": "1d0081140003000000780000000001021032547698badcfe03000000010203"
+      "hex": "1e008115000300000078000000000102071032547698badcfe03000000010203"
     },
     {
       "channel": "control",
@@ -445,9 +446,10 @@
       "channel": "control",
       "message": {
         "type": "matchFound",
-        "token": "9223372036854775809"
+        "token": "9223372036854775809",
+        "map": 9
       },
-      "hex": "09008f0100000000000080"
+      "hex": "0a008f010000000000008009"
     },
     {
       "channel": "control",

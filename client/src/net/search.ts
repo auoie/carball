@@ -89,7 +89,7 @@ export class Search {
       if (this.#cancelled()) return;
       this.handlers.searching();
       await readControlMessages(stream.readable as ReadableStream<Uint8Array>, (m) => {
-        if (m.type === "matchFound") this.#end(() => { this.handlers.found(m.token); });
+        if (m.type === "matchFound") this.#end(() => { this.handlers.found(m.token, m.map); });
         else if (m.type === "refused") this.#end(() => { this.handlers.failed(refusalText(m.reason)); });
         else if (m.type === "searchCooldown") this.#end(() => { this.handlers.cooldown(m.seconds, m.network); });
       });

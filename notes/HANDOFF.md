@@ -231,6 +231,19 @@ record: RV-437); netstate tallies its runs through one function its self-check a
 client whose change the snapshot misses (F2, RV-438). The dropped dev key is read before it's removed (RV-439); the web
 image's default URL is its ENV alone, an empty one refused (RV-441). "Hoops" inside a compound (jumpThroughHoops) stays a
 hit: a mode name.
+**Maps (protocol 21), 2026-10-15** (the user's decisions, after launch): Play → Free Play opens a map select (the 16
+themes by their names, `MAP_NAMES`; pad and keyboard; the last pick in `carball.freeplayMap`, checked and focused). Picking
+the page's own map starts free play at once; another map loads the page on it, straight into free play (a `freePlay`
+menu notice): the theme's scenery, GPU resources and soundscape are built once per page, as the game loads a map. A
+search running then goes on in the new page (a new search of its playlist, under the banner: its place in the queue
+and clock start over); during "Joining in" the pick keeps the page's map (the match page loads in a moment). Online,
+the server picks a map at random per match (`MatchHost::add`; a development server's open match keeps its map through
+rematches, its players staying connected) and sends it in `MatchFound` and every `Welcome`; a map on the wire is an index
+into `THEMES` (only ever appended to: `protocol::MAP_COUNT` = 16, a client test checks they agree). The menu page downloads
+a found match's theme chunk during "Joining in" and hands the map to the match page in its claim, which builds that arena
+while the claim connects; the welcome's map decides. `?theme=` still overrides (development), and a map-select pick drops
+it. `--map N` fixes every match's map: the e2e servers run on 0 (night), the queue server on 2 (meadow), which the queue
+test checks both match pages show.
 **The browser tests' servers** start from `client/e2e/servers.ts` (Playwright's globalSetup), not its webServer: here a
 connection to a closed 127.0.0.1 port is dropped, not refused, and Playwright's pre-check of each server's URL waited
 2 min 14 s per server (9 of the suite's 12 minutes).

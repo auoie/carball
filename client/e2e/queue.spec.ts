@@ -46,6 +46,8 @@ test("two players find a 1v1, count down and land in the match together", async 
     await page.waitForURL(/[?&]match(&|$)/, { timeout: 15_000 });
     await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
     await expect(page.locator("#net")).toContainText("2 cars", { timeout: 30_000 });
+    // (the server's map, the same for both: e2e/servers.ts runs this one's matches on map 2)
+    expect(await page.evaluate(() => (window as unknown as { carballMap: () => string }).carballMap())).toBe("meadow");
   }
   // One a side: each page's own team on the left
   const phases = await a.evaluate(() => (window as unknown as { carballOnline: () => { phases: { phase: string }[] } }).carballOnline().phases.map((p) => p.phase));
@@ -69,10 +71,27 @@ test("Cancel Search ends the search; Back leaves it under the banner", async ({ 
   const banner = page.locator("#search-banner");
   await expect(banner).toBeVisible();
   await expect(banner.locator(".search-summary")).toHaveText("Searching");
-  // Free Play under the banner: the search goes on
-  await page.locator("#main-menu").getByRole("button", { name: /^free play$/i }).click();
-  await expect(page.locator("#main-menu")).toBeHidden();
+  // Free Play under the banner, this page's map: the search goes on
+  const menu = page.locator("#main-menu");
+  await menu.getByRole("button", { name: /^free play$/i }).click();
+  await menu.locator('.main-menu-map[data-map="night"]').click();
+  await expect(menu).toBeHidden();
   await expect(banner).toBeVisible();
+  // Another map: the page loads it, straight into free play, the search going on there (a new one, under the banner)
+  await page.keyboard.press("Escape");
+  const pause = page.locator("#pause-menu");
+  await pause.getByRole("button", { name: /^exit to main menu$/i }).click();
+  await pause.getByRole("button", { name: /^yes$/i }).click();
+  await menu.getByRole("button", { name: /^play$/i }).click();
+  await menu.getByRole("button", { name: /^free play$/i }).click();
+  await menu.locator('.main-menu-map[data-map="meadow"]').click();
+  await page.waitForFunction(() => (window as unknown as { carballMap?: () => string }).carballMap?.() === "meadow", undefined, { timeout: 30_000 });
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
+  await expect(menu).toBeHidden();
+  await expect(panel).toBeHidden();
+  await expect(banner).toBeVisible();
+  await expect(banner.locator(".search-summary")).toHaveText("Searching", { timeout: 15_000 });
+  expect(await page.evaluate(() => (window as unknown as { carballMatchmaking: () => { state: unknown } }).carballMatchmaking().state)).not.toBeNull();
   await banner.getByRole("button", { name: /^cancel search$/i }).click();
   await expect(banner).toBeHidden();
   const state = await page.evaluate(() => (window as unknown as { carballMatchmaking: () => { state: unknown } }).carballMatchmaking().state);

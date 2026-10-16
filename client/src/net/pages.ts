@@ -22,6 +22,8 @@ export interface Claim {
   readonly token: bigint;
   readonly playlist: number;
   readonly searchedAt: number;
+  /** The match's map, from its MatchFound (its arena loads while the claim connects); the welcome's decides */
+  readonly map?: number;
 }
 
 /** A search back from a match cancelled for someone else: the token claimed (the queue's front again) and when its first
@@ -43,11 +45,13 @@ export interface MenuNotice {
   readonly warning?: string;
   /** The search is back from a match cancelled for someone else (RV-367) */
   readonly back?: Back;
+  /** Free play starts at once (the map select picked another map: the page loaded it) */
+  readonly freePlay?: boolean;
 }
 
 export function storeClaim(claim: Claim, storage = session()): void {
   try {
-    storage?.setItem(CLAIM_KEY, JSON.stringify({ token: claim.token.toString(), playlist: claim.playlist, searchedAt: claim.searchedAt }));
+    storage?.setItem(CLAIM_KEY, JSON.stringify({ token: claim.token.toString(), playlist: claim.playlist, searchedAt: claim.searchedAt, map: claim.map }));
   } catch {
     // (not kept: the match page goes back to the menu)
   }
@@ -59,10 +63,11 @@ export function takeClaim(storage = session()): Claim | null {
     const text = storage?.getItem(CLAIM_KEY) ?? null;
     storage?.removeItem(CLAIM_KEY);
     if (text === null) return null;
-    const value = JSON.parse(text) as { token?: unknown; playlist?: unknown; searchedAt?: unknown };
+    const value = JSON.parse(text) as { token?: unknown; playlist?: unknown; searchedAt?: unknown; map?: unknown };
     if (typeof value.token !== "string" || !TOKEN.test(value.token) || typeof value.playlist !== "number") return null;
     const searchedAt = typeof value.searchedAt === "number" && Number.isFinite(value.searchedAt) ? value.searchedAt : Date.now();
-    return { token: BigInt(value.token), playlist: value.playlist, searchedAt };
+    const map = typeof value.map === "number" && Number.isInteger(value.map) && value.map >= 0 && value.map < 256 ? { map: value.map } : {};
+    return { token: BigInt(value.token), playlist: value.playlist, searchedAt, ...map };
   } catch {
     return null;
   }
@@ -83,12 +88,13 @@ export function takeNotice(storage = session()): MenuNotice | null {
     const text = storage?.getItem(NOTICE_KEY) ?? null;
     storage?.removeItem(NOTICE_KEY);
     if (text === null) return null;
-    const value = JSON.parse(text) as { modal?: unknown; search?: unknown; warning?: unknown; back?: { token?: unknown; searchedAt?: unknown } };
+    const value = JSON.parse(text) as { modal?: unknown; search?: unknown; warning?: unknown; back?: { token?: unknown; searchedAt?: unknown }; freePlay?: unknown };
     const back = value.back;
     return {
       ...(value.modal === "idle" || value.modal === "lost" ? { modal: value.modal } : {}),
       ...(typeof value.search === "number" ? { search: value.search } : {}),
       ...(typeof value.warning === "string" ? { warning: value.warning } : {}),
+      ...(value.freePlay === true ? { freePlay: true } : {}),
       ...(typeof back?.token === "string" && TOKEN.test(back.token) && typeof back.searchedAt === "number" && Number.isFinite(back.searchedAt)
         ? { back: { token: BigInt(back.token), searchedAt: back.searchedAt } }
         : {}),
@@ -96,6 +102,14 @@ export function takeNotice(storage = session()): MenuNotice | null {
   } catch {
     return null;
   }
+}
+
+/** The free play page on the map select's pick: the menu page's URL without a development `theme` override (it would
+ *  load its map instead) */
+export function freePlayUrl(at: { readonly pathname: string; readonly search: string }): string {
+  const url = new URL(pageUrl("menu", at), "http://page");
+  url.searchParams.delete("theme");
+  return `${url.pathname}${url.search}`;
 }
 
 /** The menu page's or the match page's URL: this page's query without the pages' own parameters (a development server's

@@ -1,4 +1,4 @@
-# Game protocol (version 20)
+# Game protocol (version 21)
 
 Client ↔ server over **WebTransport** (HTTP/3, QUIC). All integers little-endian. Implemented in
 `server/src/protocol.rs` (Rust) and `client/src/net/protocol.ts` (TypeScript); `vectors.json` holds byte-exact
@@ -40,7 +40,7 @@ Framed as `u16 length` + message (`length` counts the message, which starts with
 | `0x06 QuickChat` | C→S | `u8 preset` (its index in the 76 `Group1-6MessageN` presets, `notes/quick-chat.md` CHAT-1), `u8 team`: a quick-chat line. The server applies the sender's spam bucket (1.2, ×0.75, 1/s, 4: blocked → `ChatBlocked`), then relays it as `Chat` to the sender and to each player the channel reaches whom neither side's filter keeps it from |
 | `0x07 ChatFilter` | C→S | `u8 quickChat` (0 everyone, 1 teammates only, 2 friends only: nobody else here, 3 off), `u8 blockNonTactical` (others' non-tactical presets hidden during the match) |
 | `0x05 VoteForfeit` | C→S | nothing: vote to forfeit (`ServerVoteToForfeit`): while votes are allowed, starts the team's vote if none runs (a player who started one can't start another until every teammate has), and counts the player's yes |
-| `0x81 Welcome` | S→C | `u16 version`, `u32 carId`, `u8 tickRate` (120), `u32 frame`, `u8 matchType` (0 casual, 1 ranked, 2 private: the forfeit rules and the vote's label), `u8 teamSize` (the playlist's), `u64 key` (the player's: Hello's again if this server gave it and no one here has it, else a new one, 64 random bits; who started a forfeit vote), `u32 n`, `n` bytes engine snapshot |
+| `0x81 Welcome` | S→C | `u16 version`, `u32 carId`, `u8 tickRate` (120), `u32 frame`, `u8 matchType` (0 casual, 1 ranked, 2 private: the forfeit rules and the vote's label), `u8 teamSize` (the playlist's), `u8 map` (the match's: see Maps), `u64 key` (the player's: Hello's again if this server gave it and no one here has it, else a new one, 64 random bits; who started a forfeit vote), `u32 n`, `n` bytes engine snapshot |
 | `0x82 World` | S→C | `u32 frame`, `u32 n`, `n` bytes engine snapshot (the set of cars changed: load it as the state after `frame`) |
 | `0x83 Event` | S→C | `u32 serverTick`, `u8 kind` (0 goal, 1 demo, 2 left), then goal: `u8 team` (that scored), `u32 scorer`, `u32 assister` (the cars credited with the goal and the assist, 0: none; no scorer when only defenders touched the ball); demo: `u32 attacker`, `u32 victim`; left: `u32 car`, `u8 flags` (a player left, before the `World` without them: 1 their connection timed out, 2 their car explodes where it is, with no demolition counted: it was live, i.e. not already demolished, not a podium's loser and not in the goal replay, whose start destroys the cars) |
 | `0x84 Match` | S→C | `u32 serverTick`, `u8 phase` (0 kickoff countdown, 1 playing, 2 after a goal, 3 time up: the round ends when the ball touches the ground, 4 the match's end (EndGame, 3 s, the world frozen), 5 goal replay, 6 a new match's warm-up (WaitingForPlayers' 3 s), 7 the podium (5.3 s: the winners drivable at its spots, the ball gone), 8 the end screen (Finished: 60 s, frozen; ready-up from 1 s in, every player ready starts the next match)), `u8 flags` (1 overtime, 2 clock running, 4 forfeit: the losing team voted to or left, 8 forfeit votes allowed now, 16 no contest: every team left), `u32 clockTicks` (regulation: ticks left of 36000; overtime: ticks played), `u8 scoreBlue`, `u8 scoreOrange`, `u8 winner` (255 none), `u8 secondsLeft` (the end screen's countdown to the next match, whole seconds rounded up; 0 otherwise). Sent after the welcome, and whenever the phase, the scores, the flags or the clock's shown second change (regulation rounds up, overtime down) |
@@ -54,7 +54,7 @@ Framed as `u16 length` + message (`length` counts the message, which starts with
 | `0x8C Scoreboard` | S→C | `u8 n`, `n` × (`u32 car`, `u16 ping` (ms, 999 at most), `u8 flags` (1 the match's MVP, 2 ready for the next match on the end screen), `u8 k`, `k` × `u16` the match counters, 2 × (`u8 title`, `u16 count`) the podium titles, primary then secondary (title 255: none; the ids are `engine/stats/PodiumTitles.cpp` `STAT_TITLES`'s, the count is the stat shown under it: `notes/match-stats.md` §5.4a)): every player's scoreboard line, when one changes and every 2 s (the pings). Counters, in order: MatchScore, Goals, Assists, Saves, Shots, Demolishes, EpicSaves, Centers, Clears, AerialHits, BicycleHits, JuggleHits, FirstTouches, PoolShots, LowFives, HighFives, TimesDemolished, CrossbarHits, OwnGoals, BallTouches (`engine/stats/StatFactory.h`) |
 | `0x8D StatEvent` | S→C | `u8 event`, `u16 points`: a stat this player gained (`ClientNotifyGainedStat`: their popup); not BallHit or CrossbarHits (`bSkipReplication`) |
 | `0x8E Ticker` | S→C | `u8 event`, `u32 receiver`, `u32 victim` (cars; victim 0: none): a stat someone gained, to every player for their feed (`bNotifyTicker` events) |
-| `0x8F MatchFound` | S→C | `u64 token`: a search found a match; the token claims the player's slot in a new session (once, within 12 s); the search session ends |
+| `0x8F MatchFound` | S→C | `u64 token`, `u8 map` (the match's: see Maps; the client loads its arena during the join's countdown): a search found a match; the token claims the player's slot in a new session (once, within 12 s); the search session ends |
 | `0x90 IdleWarning` | S→C | `u8 on`: the idle warning shows (idle past 25 s of play, queue matches) or hides (the player acted) (MM-33..36) |
 | `0x91 Kicked` | S→C | `u8 reason` (0 idle past 30 s of play: the session ends a second later, MM-37; 1 the match was cancelled before it started, not every reserved player joined: the session ends at once) |
 | `0x92 SearchCooldown` | S→C | `u16 seconds`, `u8 network` (0: this browser stalled a match, didn't claim its slot or left before the start; 1: its address did, a network maybe shared with whoever it was): a search refused; it may search again in this many seconds; the session ends |
@@ -69,6 +69,16 @@ their frame by the updates' `serverTick − ackFrame`), so their input frames ke
 
 `frame` is in the **client's** frame numbering: the snapshot is the world after the server applied that client's
 input frame `frame` (0 before any). Engine snapshots: `Arena::Serialize` (exact, `engine/README.md`).
+
+## Maps
+
+Each match is on a map, its arena: the server picks one at random when it makes the match (a development server's open
+match keeps its map through its rematches; `--map N` puts every match on map N), and sends it in the match's `MatchFound`
+and every player's `Welcome`, so every player sees the same arena. A map is an index into the client's themes, in this
+order (`client/src/render/themes/index.ts` `THEMES`; the server's `protocol::MAP_COUNT` is their number), only ever
+appended to: 0 night, 1 stadium, 2 meadow, 3 forest, 4 city, 5 infested, 6 kawaii, 7 platformer, 8 haunted, 9 ghosts,
+10 dimension, 11 summit, 12 crater, 13 temple, 14 island, 15 lake. A client that doesn't know an index (a newer
+server's) shows its default (0).
 
 ## Datagrams
 | Type | Direction | Fields |
@@ -132,7 +142,8 @@ engine snapshot (Welcome, World) and, when it isn't the cars' ID order, in the n
 (Hello's intent, playlist and token, `0x8F MatchFound`, `0x90 IdleWarning`, `0x91 Kicked`, `Refused` reasons 2 and 3)
 and 64-bit keys (SEC-9). Version 18: the engine snapshot (Welcome, World) carries the ball's and each car's stored
 broadphase box, which the wheel rays pick their candidates by (physics FP2). Version 19: a search's browser key and
-returning token (Hello), `0x92 SearchCooldown` (RV-367). Version 20: `SearchCooldown`'s `network` (RV-385).
+returning token (Hello), `0x92 SearchCooldown` (RV-367). Version 20: `SearchCooldown`'s `network` (RV-385). Version 21:
+the match's map (`MatchFound`, `Welcome`).
 
 Podium title ids (`notes/match-stats.md` §5.4a; the client's `game/podiumTitles.ts`): 0 OvertimeGoal, 1 Goals_10,
 2 Goals_6_9, 3 Goals_3_5, 4 Saves_10, 5 Saves_6_9, 6 Saves_3_5, 7 EpicSaves, 8 PoolShots, 9 BackwardsGoal, 10 BicycleGoal,

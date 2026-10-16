@@ -273,12 +273,12 @@ impl Matchmaker {
             queue.retain(|s| !s.out.is_closed());
             while queue.len() >= players {
                 let found: Vec<Searcher> = queue.drain(..players).collect();
-                let tokens = host.create_match(self.playlists[&team_size], players, now);
-                for (searcher, token) in found.into_iter().zip(tokens) {
+                let created = host.create_match(self.playlists[&team_size], players, now);
+                for (searcher, token) in found.into_iter().zip(created.tokens) {
                     self.searching.remove(&searcher.id);
                     // (kept past the reservation's end: a cancel's report comes with the tick after it)
                     self.handed.insert(token, Handed { team_size, from: searcher.from, since: searcher.since, until: now + RESERVATION_SECONDS + 30.0 });
-                    let _ = searcher.out.try_send(Outgoing::Control(Control::MatchFound { token }.encode()));
+                    let _ = searcher.out.try_send(Outgoing::Control(Control::MatchFound { token, map: created.map }.encode()));
                 }
             }
         }
@@ -289,6 +289,7 @@ impl Matchmaker {
 mod tests {
     use super::*;
     use crate::game::{MatchType, OUT_QUEUE};
+    use crate::match_host::Created;
     use tokio::sync::mpsc::{Receiver, channel};
 
     /// A host that records what it was asked and gives numbered tokens
@@ -299,14 +300,16 @@ mod tests {
     }
 
     impl MatchHosting for Recorder {
-        fn create_match(&mut self, playlist: Playlist, players: usize, _now: f64) -> Vec<u64> {
+        fn create_match(&mut self, playlist: Playlist, players: usize, _now: f64) -> Created {
             self.asked.push((playlist.team_size, players));
-            (0..players)
+            let tokens = (0..players)
                 .map(|_| {
                     self.next += 1;
                     self.next
                 })
-                .collect()
+                .collect();
+            // (each match its own map: the asked count's)
+            Created { tokens, map: (self.asked.len() % usize::from(crate::protocol::MAP_COUNT)) as u8 }
         }
     }
 
@@ -325,7 +328,7 @@ mod tests {
 
     fn found(rx: &mut Receiver<Outgoing>) -> Option<u64> {
         while let Ok(Outgoing::Control(bytes)) = rx.try_recv() {
-            if let Ok(Control::MatchFound { token }) = Control::decode(&bytes[2..]) {
+            if let Ok(Control::MatchFound { token, .. }) = Control::decode(&bytes[2..]) {
                 return Some(token);
             }
         }
@@ -461,6 +464,25 @@ mod tests {
         let searched = queue.search(id, 1, tx, from, now);
         queue.cancel(id);
         searched
+    }
+
+    #[test]
+    fn a_found_match_tells_each_of_its_players_its_map() {
+        let mut queue = Matchmaker::new(&playlists());
+        let mut host = Recorder::default();
+        let (tx1, mut rx1) = channel(OUT_QUEUE);
+        let (tx2, mut rx2) = channel(OUT_QUEUE);
+        assert!(queued(&mut queue, 1, 1, tx1) && queued(&mut queue, 2, 1, tx2));
+        queue.form(&mut host, 0.0);
+        let map_of = |rx: &mut Receiver<Outgoing>| match rx.try_recv() {
+            Ok(Outgoing::Control(bytes)) => match Control::decode(&bytes[2..]) {
+                Ok(Control::MatchFound { map, .. }) => Some(map),
+                _ => None,
+            },
+            _ => None,
+        };
+        // (the recorder's first match is on map 1)
+        assert_eq!((map_of(&mut rx1), map_of(&mut rx2)), (Some(1), Some(1)));
     }
 
     #[test]

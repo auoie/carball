@@ -465,6 +465,9 @@ pub struct Game {
     /// The end screen's time up (or every player ready) starts the next match with the players here (development
     /// servers); without, the match is over there (`is_over`) and its host lets it go
     pub rematch: bool,
+    /// The match's map (`protocol::MAP_COUNT`: its host's pick), in every player's welcome; a rematch keeps it (its
+    /// players stay, their arena loaded)
+    pub map: u8,
     /// When the current period of play began (Active or 0:00: the idle times, MM-34)
     active_since: Option<u64>,
     /// The set of cars changed since the world was last sent, and the players whose view has it already (a joiner's
@@ -555,6 +558,7 @@ impl Game {
             hold_for: 0,
             idle_kick: false,
             rematch: true,
+            map: 0,
             active_since: None,
             world_pending: false,
             world_current: BTreeSet::new(),
@@ -719,6 +723,7 @@ impl Game {
             frame: 0,
             match_type: self.match_type as u8,
             team_size: self.team_size,
+            map: self.map,
             key,
             snapshot: snapshot.clone(),
         };
@@ -815,7 +820,7 @@ impl Game {
                         protocol::CHAT_TEAM => p.team == from_team,
                         _ => false, // (friends only: the clone has no friends; off)
                     }
-                    && !(p.block_non_tactical && !tactical(preset))
+                    && (!p.block_non_tactical || tactical(preset))
                     && !p.muted.contains(&car));
             if reaches {
                 let _ = p.out.try_send(Outgoing::Control(message.clone()));

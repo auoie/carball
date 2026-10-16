@@ -169,7 +169,11 @@ export class PadMenuNav {
     const controls = [...menu.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(shown);
     if (controls.length === 0) return;
     let current = this.#focused && controls.includes(this.#focused) ? this.#focused : null;
-    if (!current && document.activeElement instanceof HTMLElement && controls.includes(document.activeElement)) current = document.activeElement;
+    // (a page that focused its own control, the map select's last pick: that one, highlighted)
+    if (!current && document.activeElement instanceof HTMLElement && controls.includes(document.activeElement)) {
+      current = document.activeElement;
+      this.#focus(current);
+    }
     // (a menu, or its new page, has its first control focused at once, as the game's: Cross/A always selects what's
     // highlighted, never only focuses)
     if (!current) {

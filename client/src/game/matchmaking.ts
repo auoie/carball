@@ -75,7 +75,8 @@ export interface SearchBack {
 
 export interface SearchHandlers {
   searching(): void;
-  found(token: bigint): void;
+  /** A match found: its slot's token and its map (src/render/themes/index.ts THEMES) */
+  found(token: bigint, map: number): void;
   failed(reason: string): void;
   /** Refused: this browser (network false) or this address stalled a match; it may search again in this many seconds
    *  (RV-367, RV-385) */
@@ -88,8 +89,10 @@ export interface MatchmakingPorts {
   /** The start, cancel and countdown sounds (MM-12) */
   readonly sound: (cue: "start" | "cancel" | "countdown") => void;
   /** The join's end: the token claimed in the match page; how long the search had run (s: a cancelled match's search
-   *  goes on from there) */
-  readonly join: (token: bigint, playlist: number, searchedFor: number) => void;
+   *  goes on from there); the match's map */
+  readonly join: (token: bigint, playlist: number, searchedFor: number, map: number) => void;
+  /** A match found: its map's arena fetched during the join's countdown, so the match page has it at once */
+  readonly preload: (map: number) => void;
   /** Cancel Search during "Joining in": the slot given up at once (claimed and left: the match is cancelled now, its
    *  other players search again, not after the 30 s wait: RV-355) */
   readonly decline: (token: bigint) => void;
@@ -105,6 +108,8 @@ export class Matchmaking {
   /** A returning search's time before (s) */
   #searchedBefore = 0;
   #token: bigint | null = null;
+  /** The found match's map */
+  #map = 0;
   #timers: ReturnType<typeof setTimeout>[] = [];
   #extra: LogLine[] = [];
   /** When a failed search's summary goes (its fade) */
@@ -146,10 +151,12 @@ export class Matchmaking {
         this.#searchingSince = this.#now - this.#searchedBefore;
         this.#set("searching");
       },
-      found: (token) => {
+      found: (token, map) => {
         if (!this.searching) return;
         this.#cancel = null;
         this.#token = token;
+        this.#map = map;
+        this.ports.preload(map);
         this.#set("joining");
         this.#countdown(JOIN_COUNTDOWN);
         for (let n = JOIN_COUNTDOWN - 1; n >= 0; n--) {
@@ -214,7 +221,7 @@ export class Matchmaking {
     this.#timers = [];
     this.#token = null;
     this.#state = null;
-    if (token !== null) this.ports.join(token, this.#playlist, searchedFor);
+    if (token !== null) this.ports.join(token, this.#playlist, searchedFor, this.#map);
   }
 
   #set(status: SearchStatus): void {

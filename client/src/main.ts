@@ -9,7 +9,7 @@ import type { SessionEnd } from "./game/sessionEnd";
 import { Matchmaking, OWN_SEARCH_TEXT } from "./game/matchmaking";
 import { Connection, type JoinPreferences, type MatchSession, RefusedError, devServerAddress } from "./net/connection";
 import { REFUSED_TOKEN } from "./net/protocol";
-import { type MenuNotice, pageUrl, queueAddress, storeClaim, storeNotice, takeClaim, takeNotice } from "./net/pages";
+import { type MenuNotice, freePlayUrl, pageUrl, queueAddress, storeClaim, storeNotice, takeClaim, takeNotice } from "./net/pages";
 import { Search } from "./net/search";
 import { GameAudio } from "./audio/audio";
 import { Hud } from "./hud";
@@ -20,7 +20,8 @@ import { loadGameFieldPlan } from "./render/stadiumFieldRules";
 import { loadDemolitionHusks } from "./render/demolition";
 import { loadFennec } from "./render/fennec";
 import { TEAM_CAR_COLORS } from "./render/entities";
-import { type ThemeName, createTheme, themeName } from "./render/themes";
+import { type ThemeName, createTheme, preloadTheme, themeName, themeOfMap } from "./render/themes";
+import type { Theme } from "./render/themes/theme";
 import { type Settings, loadSettings } from "./settings/settings";
 import { migrateBrowserStorage } from "./settings/storageKeys";
 import { SettingsPanel } from "./ui/settingsPanel";
@@ -31,7 +32,7 @@ import { StatPopups, StatTicker } from "./ui/statFeed";
 import { PlayersMenu, Toast } from "./ui/playersMenu";
 import { EndScreen, PodiumTags, ScreenDimming, WinnerBanner } from "./ui/endOfMatch";
 import { Nameplates } from "./ui/nameplates";
-import { MainMenu } from "./ui/mainMenu";
+import { MainMenu, storedMap } from "./ui/mainMenu";
 import { MODAL_TEXT, Modal } from "./ui/modal";
 import { SearchView } from "./ui/searchView";
 import { IdleTip } from "./ui/idleTip";
@@ -126,10 +127,60 @@ async function main(): Promise<void> {
     return;
   }
   const onlinePage = server !== null || claim !== null;
+  let settings = loadSettings();
+  // (what a match session's hello asks for: the player's car preferences, name and chat filters)
+  const joinPreferences = (s: Settings): JoinPreferences => ({
+    team: 255,
+    body: 0,
+    dodgeDeadzone: s.controller.dodgeDeadzone,
+    steeringSensitivity: s.controller.steeringSensitivity,
+    airControlSensitivity: s.controller.aerialSensitivity,
+    autoSkipReplay: s.options.autoSkipReplay,
+    name: s.chat.name,
+    quickChat: s.chat.quickChatFilter,
+    blockNonTactical: s.chat.blockNonTactical,
+  });
 
-  // ?theme=meadow: the arena's look (src/render/themes/), and its soundscape
-  const name = themeName(params.get("theme"));
-  const theme = await createTheme(name);
+  // The arena (src/render/themes/: its look and soundscape): free play's, the map select's last pick; an online match's,
+  // the server's (its welcome's map, every player's the same; a queue match's known from its MatchFound, so it loads while
+  // the claim connects); ?theme=meadow overrides either (development)
+  const override = params.get("theme") === null ? null : themeName(params.get("theme"));
+  const arenaAndSession = async (): Promise<{ name: ThemeName; theme: Theme; session: Awaited<ReturnType<typeof Connection.open>> | null }> => {
+    if (!onlinePage) {
+      const name = override ?? storedMap();
+      return { name, theme: await createTheme(name), session: null };
+    }
+    status.textContent = "Connecting to the server…";
+    // (a development server's open match, ?server=host:infoPort; or the queue's match, its claim)
+    let address;
+    let match: MatchSession = { intent: "join" };
+    if (claim) {
+      address = await queueAddress(params, location.hostname);
+      match = { intent: "claim", token: claim.token };
+    } else {
+      const [host = location.hostname, port = "4434"] = server === "" || server === null ? [] : server.split(":");
+      address = await devServerAddress(host, Number(port));
+    }
+    // (a claim that fails: back to the menu; the match gone, a search again with a warning line, MM-18; the server not
+    // reached, the connection-lost modal)
+    const opened = Connection.open(address, joinPreferences(settings), match);
+    if (claim) {
+      opened.catch((e: unknown) => {
+        // (refused while still in its time: a match cancelled for someone else, so back to the queue's front, RV-367)
+        const back = { token: claim.token, searchedAt: claim.searchedAt };
+        storeNotice(e instanceof RefusedError && e.reason === REFUSED_TOKEN ? { search: claim.playlist, warning: OWN_SEARCH_TEXT.matchGone, back } : { modal: "lost" });
+        location.replace(pageUrl("menu", location));
+      });
+    }
+    const early = claim?.map === undefined ? null : (override ?? themeOfMap(claim.map));
+    const earlyTheme = early === null ? null : createTheme(early);
+    earlyTheme?.catch(() => undefined); // (unused if the welcome names another map)
+    const session = await opened;
+    const name = override ?? themeOfMap(session.welcome.map);
+    status.textContent = "Loading the arena…";
+    return { name, theme: earlyTheme !== null && early === name ? await earlyTheme : await createTheme(name), session };
+  };
+  const { name, theme, session } = await arenaAndSession();
   const renderer = new Renderer(canvas);
   // (the browser tests that read no pixels: nothing drawn, software WebGL being most of their time)
   renderer.draws = params.get("render") !== "off";
@@ -144,23 +195,10 @@ async function main(): Promise<void> {
   });
   const hud = new Hud(required("#hud", HTMLElement));
   const input = new InputDevices(canvas);
-  let settings = loadSettings();
   const audio = new GameAudio(name);
   audio.apply(settings.audio, settings.options.muted);
   renderer.postOptions = settings.options;
   // (the Interface tab: the HUD's stage and its options)
-  // (what a match session's hello asks for: the player's car preferences, name and chat filters)
-  const joinPreferences = (s: Settings): JoinPreferences => ({
-    team: 255,
-    body: 0,
-    dodgeDeadzone: s.controller.dodgeDeadzone,
-    steeringSensitivity: s.controller.steeringSensitivity,
-    airControlSensitivity: s.controller.aerialSensitivity,
-    autoSkipReplay: s.options.autoSkipReplay,
-    name: s.chat.name,
-    quickChat: s.chat.quickChatFilter,
-    blockNonTactical: s.chat.blockNonTactical,
-  });
   const applyInterface = (s: Settings): void => {
     setInterfaceScale(s.interface.scale, s.interface.displayScale);
     hud.configure(s.interface);
@@ -259,6 +297,7 @@ async function main(): Promise<void> {
   (window as unknown as { carballAudio?: () => unknown }).carballAudio = () => audio.stats;
   (window as unknown as { carballAmbienceLevels?: (theme: ThemeName, seconds: number) => Promise<unknown> }).carballAmbienceLevels = async (t, seconds) =>
     (await import("./audio/levels")).ambienceLevels(t, seconds);
+  (window as unknown as { carballMap?: () => ThemeName }).carballMap = () => name;
   let game: { frame(dt: number): void };
   if (!onlinePage) {
     const freeplay = new Freeplay(world, renderer, arena, input, hud, audio, () => settings, inputEnabled);
@@ -287,9 +326,13 @@ async function main(): Promise<void> {
         else if (cue === "cancel") audio.searchCancel();
         else audio.countdown(1);
       },
-      join: (token, playlist, searchedFor) => {
-        storeClaim({ token, playlist, searchedAt: Date.now() - searchedFor * 1000 });
+      join: (token, playlist, searchedFor, map) => {
+        storeClaim({ token, playlist, searchedAt: Date.now() - searchedFor * 1000, map });
         location.assign(pageUrl("match", location));
+      },
+      // (the match's arena downloaded during "Joining in", so the match page builds it at once)
+      preload: (map) => {
+        preloadTheme(override ?? themeOfMap(map)).catch(() => undefined);
       },
       // (the slot claimed and left at once: the match is cancelled now for its other players, RV-355)
       decline: (token) => {
@@ -306,7 +349,15 @@ async function main(): Promise<void> {
     });
     searchView = view;
     mainMenu = new MainMenu(document.body, {
-      freePlay: () => {
+      freePlay: (map) => {
+        // (another map than the page's: the page loads it and goes straight into free play, its arena, scenery and
+        // sounds the map's, as the game loads a map. A search goes on there, a new one of its playlist under the banner;
+        // a match found ("Joining in") keeps this page's map: its own page loads in a moment, the slot not given up)
+        if (map !== name && matchmaking.state?.status !== "joining") {
+          storeNotice({ freePlay: true, ...(matchmaking.searching ? { search: matchmaking.playlist } : {}) });
+          location.assign(freePlayUrl(location));
+          return;
+        }
         mainMenu?.close();
         freeplay.restart(); // (a fresh session, not the one left: RV-284)
       },
@@ -321,12 +372,17 @@ async function main(): Promise<void> {
     });
     // (back from a match page: its modal, a search to start again)
     const notice = takeNotice();
+    if (notice?.freePlay) {
+      mainMenu.close();
+      freeplay.restart();
+    }
     if (notice?.modal) modal.show(MODAL_TEXT.title, notice.modal === "idle" ? MODAL_TEXT.idleKicked : MODAL_TEXT.connectionLost);
     if (notice?.search !== undefined) {
       // (back from a match cancelled for someone else: its token, the queue's front again, and its search's clock: RV-367)
       const back = notice.back ? { token: notice.back.token, searchedFor: (Date.now() - notice.back.searchedAt) / 1000 } : undefined;
       matchmaking.start(notice.search, notice.warning, back);
-      view.openPanel();
+      // (free play on another map: the search under the banner, the panel closed)
+      if (!notice.freePlay) view.openPanel();
     }
     (window as unknown as { carballMatchmaking?: unknown }).carballMatchmaking = () => ({ state: matchmaking.state, panelOpen: view.panelOpen });
     // For screenshots and the browser tests
@@ -351,29 +407,8 @@ async function main(): Promise<void> {
       },
     };
   } else {
-    status.textContent = "Connecting to the server…";
-    // (a development server's open match, ?server=host:infoPort; or the queue's match, its claim)
-    let address;
-    let match: MatchSession = { intent: "join" };
-    if (claim) {
-      address = await queueAddress(params, location.hostname);
-      match = { intent: "claim", token: claim.token };
-    } else {
-      const [host = location.hostname, port = "4434"] = server === "" || server === null ? [] : server.split(":");
-      address = await devServerAddress(host, Number(port));
-    }
-    // (a claim that fails: back to the menu; the match gone, a search again with a warning line, MM-18; the server not
-    // reached, the connection-lost modal)
-    const opened = Connection.open(address, joinPreferences(settings), match);
-    if (claim) {
-      opened.catch((e: unknown) => {
-        // (refused while still in its time: a match cancelled for someone else, so back to the queue's front, RV-367)
-        const back = { token: claim.token, searchedAt: claim.searchedAt };
-        storeNotice(e instanceof RefusedError && e.reason === REFUSED_TOKEN ? { search: claim.playlist, warning: OWN_SEARCH_TEXT.matchGone, back } : { modal: "lost" });
-        location.replace(pageUrl("menu", location));
-      });
-    }
-    const { connection, welcome } = await opened;
+    if (!session) throw new Error("an online page without its session");
+    const { connection, welcome } = session;
     world.loadState(welcome.snapshot);
     // (a closed tab leaves at once, not when the session times out)
     window.addEventListener("pagehide", () => {

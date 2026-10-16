@@ -20,7 +20,10 @@ npm run preview:fast # build without the typecheck (~0.5 s; writes dist/), then 
 Online: start the server (`cd server && cargo run --release`), then open `http://localhost:5173/?server` (or
 `?server=host:infoPort`). Every player who opens it joins the same match; teams are balanced.
 
-Arena themes: `?theme=stadium` (DFH Stadium, the game's own soccar arena at sunset, with the game's arena materials:
+Maps: Play → Free Play opens the map select (the 16 arena themes by name, pad and keyboard; the last pick kept in
+`carball.freeplayMap`), and a pick starts free play on it: another map than the page's loads the page on it. An online
+match is on the server's map (picked at random per match, `--map N` fixes it; protocol/README.md "Maps"), which every
+player loads. `?theme=` overrides either (development). Arena themes: `?theme=stadium` (DFH Stadium, the game's own soccar arena at sunset, with the game's arena materials:
 its cage beams, its wall overlay round the ball, its hex glass and team glow sheets; work in progress), `?theme=meadow`
 (a sunny countryside stadium), `?theme=forest` (a clearing on a forest route, with
 wildlife), `?theme=city` (a cyberpunk megacity at night), `?theme=infested` (a ruined zone overrun by a parasitic

@@ -10,8 +10,8 @@
 // ready checks, podium titles), Refused's version reason; 15: the game's compact state and rates (G1); 16: the vehicles'
 // order (FP1); 17: the queue (Hello's intent, playlist and token, MatchFound, IdleWarning, Kicked); 18: the moving
 // bodies' broadphase boxes (FP2); 19: a search's browser key and returning token, SearchCooldown; 20: SearchCooldown's
-// network flag
-export const PROTOCOL_VERSION = 20;
+// network flag; 21: the match's map (MatchFound, Welcome)
+export const PROTOCOL_VERSION = 21;
 /** A name's bytes at most (UTF-8) */
 export const MAX_NAME_BYTES = 32;
 export const MAX_INPUT_FRAMES = 10;
@@ -144,6 +144,8 @@ export type ControlMessage =
       readonly matchType: MatchType;
       /** The playlist's team size */
       readonly teamSize: number;
+      /** The match's map: its arena, every player's (an index into the themes: src/render/themes/index.ts THEMES) */
+      readonly map: number;
       /** This player's key (Hello's again if it was this server's and no one here has it, else a new one) */
       readonly key: bigint;
       readonly snapshot: Uint8Array;
@@ -174,8 +176,9 @@ export type ControlMessage =
   | { readonly type: "statEvent"; readonly event: number; readonly points: number }
   /** A stat someone gained, for the feed (ClientNotifyStatTickerMessage): the receiver's car, a demolition's victim (0) */
   | { readonly type: "ticker"; readonly event: number; readonly receiver: number; readonly victim: number }
-  /** A search found a match: the slot's one-time token, to claim in a new session; the search session ends */
-  | { readonly type: "matchFound"; readonly token: bigint }
+  /** A search found a match: the slot's one-time token, to claim in a new session, and the match's map (its arena loads
+   *  during the join's countdown); the search session ends */
+  | { readonly type: "matchFound"; readonly token: bigint; readonly map: number }
   /** The idle warning shows (idle past 25 s of play) or hides (MM-33..36) */
   | { readonly type: "idleWarning"; readonly on: boolean }
   /** The server ends this session a second later (KICK_*: MM-37) */
@@ -412,6 +415,7 @@ export function encodeControl(m: ControlMessage): Uint8Array {
     case "matchFound":
       w.u8(0x8f);
       w.u64(m.token);
+      w.u8(m.map);
       break;
     case "idleWarning":
       w.u8(0x90);
@@ -542,6 +546,7 @@ export function encodeControl(m: ControlMessage): Uint8Array {
       w.u32(m.frame);
       w.u8(MATCH_TYPES.indexOf(m.matchType));
       w.u8(m.teamSize);
+      w.u8(m.map);
       w.u64(m.key);
       w.u32(m.snapshot.byteLength);
       w.bytes(m.snapshot);
@@ -613,7 +618,7 @@ export function decodeControl(body: Uint8Array): ControlMessage {
         token: r.u64(),
       };
     case 0x8f:
-      return { type: "matchFound", token: r.u64() };
+      return { type: "matchFound", token: r.u64(), map: r.u8() };
     case 0x90:
       return { type: "idleWarning", on: r.u8() !== 0 };
     case 0x91:
@@ -700,8 +705,9 @@ export function decodeControl(body: Uint8Array): ControlMessage {
       const matchType = MATCH_TYPES[r.u8()];
       if (!matchType) throw new DecodeError("unknown match type");
       const teamSize = r.u8();
+      const map = r.u8();
       const key = r.u64();
-      return { type: "welcome", version, carId, tickRate, frame, matchType, teamSize, key, snapshot: r.take(r.u32()) };
+      return { type: "welcome", version, carId, tickRate, frame, matchType, teamSize, map, key, snapshot: r.take(r.u32()) };
     }
     case 0x82: {
       const frame = r.u32();

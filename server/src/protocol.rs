@@ -9,8 +9,11 @@ use crate::engine::Controls;
 // screen's countdown, ready checks, podium titles), Refused's version reason; 17: the queue (Hello's intent, playlist and
 // token, 64-bit keys, MatchFound, IdleWarning, Kicked); 18: the moving bodies' broadphase boxes in the engine snapshot
 // (physics FP2); 19: a search's browser key and returning token, SearchCooldown (RV-367: no-shows); 20: SearchCooldown
-// says whether the browser or the network is why (RV-385)
-pub const VERSION: u16 = 20;
+// says whether the browser or the network is why (RV-385); 21: the match's map (MatchFound, Welcome)
+pub const VERSION: u16 = 21;
+/// The maps a match can be on (the client's arena themes, in their order: protocol/README.md); a map on the wire is its
+/// index. Only ever appended to: an index names the same map in every version
+pub const MAP_COUNT: u8 = 16;
 /// The quick-chat presets (`Group1-6MessageN`: notes/quick-chat.md CHAT-1); a preset on the wire is its index
 pub const QUICK_CHAT_PRESETS: u8 = 76;
 /// A player's quick-chat filter (`EChatFilter` as the clone uses it: CHAT-18)
@@ -159,8 +162,9 @@ pub enum Control {
     /// Vote to forfeit (`PRI.ServerVoteToForfeit`): starts the team's vote, or joins it as a yes
     VoteForfeit,
     /// `match_type`: 0 casual, 1 ranked, 2 private (who may vote to forfeit, after how long, its label); `team_size`: the
-    /// playlist's; `key`: the player's (Hello's again, if it was this server's and no one here has it; else a new one)
-    Welcome { version: u16, car_id: u32, tick_rate: u8, frame: u32, match_type: u8, team_size: u8, key: u64, snapshot: Vec<u8> },
+    /// playlist's; `map`: the match's (`MAP_COUNT`), the arena every player sees; `key`: the player's (Hello's again, if
+    /// it was this server's and no one here has it; else a new one)
+    Welcome { version: u16, car_id: u32, tick_rate: u8, frame: u32, match_type: u8, team_size: u8, map: u8, key: u64, snapshot: Vec<u8> },
     World { frame: u32, snapshot: Vec<u8> },
     Event { server_tick: u32, event: GameEvent },
     /// The match's state: sent when it changes and each second while the clock runs
@@ -188,8 +192,9 @@ pub enum Control {
     /// A stat someone gained, for every player's feed (`ClientNotifyStatTickerMessage`): the receiver's car and a
     /// demolition's victim (0: none)
     Ticker { event: u8, receiver: u32, victim: u32 },
-    /// A search found a match: the slot's one-time token, to claim with a new session's hello; the search session ends
-    MatchFound { token: u64 },
+    /// A search found a match: the slot's one-time token, to claim with a new session's hello, and the match's map (its
+    /// arena loads during the join's countdown); the search session ends
+    MatchFound { token: u64, map: u8 },
     /// The idle warning shows (`IdleWarning_TA`: idle over 25 s of play) or hides (the player acted)
     IdleWarning { on: bool },
     /// The server ends this player's session (`KICK_*`), closing it a second later (`CloseConnectionWithReason`)
@@ -520,9 +525,10 @@ impl Control {
                 w.u8(*playlist);
                 w.u64(*token);
             }
-            Self::MatchFound { token } => {
+            Self::MatchFound { token, map } => {
                 w.u8(0x8F);
                 w.u64(*token);
+                w.u8(*map);
             }
             Self::IdleWarning { on } => {
                 w.u8(0x90);
@@ -641,7 +647,7 @@ impl Control {
                 w.u8(*ready);
                 w.u8(*total);
             }
-            Self::Welcome { version, car_id, tick_rate, frame, match_type, team_size, key, snapshot } => {
+            Self::Welcome { version, car_id, tick_rate, frame, match_type, team_size, map, key, snapshot } => {
                 w.u8(0x81);
                 w.u16(*version);
                 w.u32(*car_id);
@@ -649,6 +655,7 @@ impl Control {
                 w.u32(*frame);
                 w.u8(*match_type);
                 w.u8(*team_size);
+                w.u8(*map);
                 w.u64(*key);
                 w.bytes_with_len(snapshot);
             }
@@ -725,7 +732,7 @@ impl Control {
                 playlist: r.u8()?,
                 token: r.u64()?,
             },
-            0x8F => Self::MatchFound { token: r.u64()? },
+            0x8F => Self::MatchFound { token: r.u64()?, map: r.u8()? },
             0x90 => Self::IdleWarning { on: r.u8()? != 0 },
             0x91 => Self::Kicked { reason: r.u8()? },
             0x92 => Self::SearchCooldown { seconds: r.u16()?, network: r.u8()? != 0 },
@@ -781,6 +788,7 @@ impl Control {
                 frame: r.u32()?,
                 match_type: r.u8()?,
                 team_size: r.u8()?,
+                map: r.u8()?,
                 key: r.u64()?,
                 snapshot: r.bytes_with_len()?,
             },
@@ -955,7 +963,7 @@ mod tests {
                 playlist: u(&m["playlist"]) as u8,
                 token: big(&m["token"]),
             },
-            "matchFound" => Control::MatchFound { token: big(&m["token"]) },
+            "matchFound" => Control::MatchFound { token: big(&m["token"]), map: u(&m["map"]) as u8 },
             "idleWarning" => Control::IdleWarning { on: m["on"].as_bool().unwrap() },
             "kicked" => Control::Kicked { reason: u(&m["reason"]) as u8 },
             "searchCooldown" => Control::SearchCooldown { seconds: u(&m["seconds"]) as u16, network: m["network"].as_bool().unwrap() },
@@ -1017,6 +1025,7 @@ mod tests {
                 frame: u(&m["frame"]),
                 match_type: ["casual", "ranked", "private"].iter().position(|&t| t == m["matchType"]).unwrap() as u8,
                 team_size: u(&m["teamSize"]) as u8,
+                map: u(&m["map"]) as u8,
                 key: big(&m["key"]),
                 snapshot: bytes(&m["snapshot"]),
             },

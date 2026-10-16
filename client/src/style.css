@@ -1999,6 +1999,39 @@ body {
   background: rgba(20, 60, 110, 0.9);
 }
 
+/* Free Play's map select: the maps four a row (two on a narrow screen), the last one picked checked */
+.main-menu-column.main-menu-maps-view {
+  width: min(680px, 84vw);
+}
+
+.main-menu-heading {
+  padding: 4px 2px;
+  font: calc(26px * var(--hud-header-scale, 1))/30px var(--hud-header);
+  text-transform: uppercase;
+  color: #fff;
+}
+
+.main-menu-maps {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.main-menu-maps .main-menu-button {
+  text-align: center;
+}
+
+.main-menu-map[aria-checked="true"] {
+  border-color: #43afff;
+  background: rgba(20, 60, 110, 0.9);
+}
+
+@media (max-width: 560px) {
+  .main-menu-maps {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
 /* MM-4: the Searching panel over the main menu (title, summary, the message log, Cancel Search) */
 .search-panel {
   position: fixed;

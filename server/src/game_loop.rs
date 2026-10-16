@@ -30,13 +30,14 @@ fn refuse(out: Sender<Outgoing>, reason: u8) {
     let _ = out.try_send(Outgoing::Control(Control::Refused { reason }.encode()));
 }
 
-/// `test_goal_after`: browser tests only (`Game::test_goal_after`, s). `heartbeat`: the loop's last pass, in ms from
-/// `start` (the health check's)
-pub fn run(mut messages: Receiver<ToGame>, mode: Mode, test_goal_after: Option<f32>, heartbeat: Arc<AtomicU64>, start: Instant) {
+/// `test_goal_after`: browser tests only (`Game::test_goal_after`, s). `map`: every match's (`--map`), else each its own at
+/// random. `heartbeat`: the loop's last pass, in ms from `start` (the health check's)
+pub fn run(mut messages: Receiver<ToGame>, mode: Mode, test_goal_after: Option<f32>, map: Option<u8>, heartbeat: Arc<AtomicU64>, start: Instant) {
     let seconds = |at: Instant| at.saturating_duration_since(start).as_secs_f64();
     // (each server run its own kickoff orders, as the game's are random)
     let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.subsec_nanos() as i32);
     let mut host = MatchHost::new(seed, test_goal_after.map(|s| (s * crate::game::TICK_RATE as f32) as u64));
+    host.map = map;
     let mut queue = Matchmaker::new(match &mode {
         Mode::Direct(_) => &[],
         Mode::Queue(playlists) => playlists,

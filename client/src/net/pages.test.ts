@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { deployedGameServer, pageUrl, queueAddress, storeClaim, storeNotice, takeClaim, takeNotice } from "./pages";
+import { deployedGameServer, freePlayUrl, pageUrl, queueAddress, storeClaim, storeNotice, takeClaim, takeNotice } from "./pages";
 
 const memory = (): Pick<Storage, "getItem" | "setItem" | "removeItem"> => {
   const map = new Map<string, string>();
@@ -24,6 +24,13 @@ describe("the pages' handoffs", () => {
       const at = takeClaim(storage)?.searchedAt;
       expect(Number.isFinite(at), bad).toBe(true);
     }
+    // The match's map from its MatchFound (its arena loads while the claim connects); one that isn't a map index dropped
+    storeClaim({ token: 9n, playlist: 1, searchedAt: 5, map: 12 }, storage);
+    expect(takeClaim(storage)).toEqual({ token: 9n, playlist: 1, searchedAt: 5, map: 12 });
+    for (const bad of ['"3"', "-1", "2.5", "300"]) {
+      storage.setItem("carball.claim", `{"token":"5","playlist":1,"searchedAt":1,"map":${bad}}`);
+      expect(takeClaim(storage), bad).toEqual({ token: 5n, playlist: 1, searchedAt: 1 });
+    }
   });
 
   it("hands the menu page its notice once, unknown fields dropped", () => {
@@ -40,6 +47,11 @@ describe("the pages' handoffs", () => {
     expect(takeNotice(storage)).toEqual({ search: 1, warning: "w", back: { token: 0xffffffffffffffffn, searchedAt: 42 } });
     storage.setItem("carball.menuNotice", '{"search":1,"back":{"token":"0","searchedAt":1}}');
     expect(takeNotice(storage)).toEqual({ search: 1 });
+    // Free play at once: the map select picked another map, the page loaded it
+    storeNotice({ freePlay: true }, storage);
+    expect(takeNotice(storage)).toEqual({ freePlay: true });
+    storage.setItem("carball.menuNotice", '{"freePlay":"yes"}');
+    expect(takeNotice(storage)).toEqual({});
   });
 
   it("keeps the page's other parameters across the pages, without a development server's or the match page's", () => {
@@ -47,6 +59,9 @@ describe("the pages' handoffs", () => {
     expect(pageUrl("match", { pathname: "/", search: "?queue=127.0.0.1:14440&render=off" })).toBe("/?queue=127.0.0.1%3A14440&render=off&match");
     expect(pageUrl("menu", { pathname: "/", search: "?queue=q&match" })).toBe("/?queue=q");
     expect(pageUrl("menu", { pathname: "/x/", search: "?match&server=a:1" })).toBe("/x/");
+    // (the map select's pick: without a development ?theme, which would load its own map instead)
+    expect(freePlayUrl({ pathname: "/", search: "?theme=meadow&render=off" })).toBe("/?render=off");
+    expect(freePlayUrl({ pathname: "/x/", search: "?theme=lake" })).toBe("/x/");
   });
 
   it("finds the deployment's game server in config.json, else a development server's", async () => {
