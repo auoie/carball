@@ -72,9 +72,11 @@ export class PauseMenu {
       buttons.append(question);
       this.#question = question;
     }
+    // (the players' list in the buttons' own column: Players a button as the others, its rows under it)
     this.players = document.createElement("div");
     this.players.className = "settings-players pause-players";
-    this.#root.append(buttons, this.players);
+    buttons.append(this.players);
+    this.#root.append(buttons);
     this.#root.hidden = true;
     host.append(this.#root);
   }

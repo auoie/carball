@@ -18,7 +18,7 @@ const car = (x: number, team: 0 | 1, demoed = false, flipResets = 0): RecordedCa
   wheelContact: [true, true, true, true],
   flipResets,
 });
-const frame = (cars: [number, RecordedCar][]): RecordedFrame => ({ cars: new Map(cars), ball: { pos: ZERO, vel: ZERO, angVel: ZERO, rot: UPRIGHT }, ballExploded: false });
+const frame = (cars: [number, RecordedCar][]): RecordedFrame => ({ cars: new Map(cars), ball: { pos: ZERO, vel: ZERO, angVel: ZERO, rot: UPRIGHT }, ballExploded: false, lastTouchTeam: null });
 
 describe("the goal replay's cars (RV-279)", () => {
   it("are where it draws them, between its frames, the demolished left out", () => {

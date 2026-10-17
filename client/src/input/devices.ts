@@ -167,10 +167,15 @@ export class InputDevices {
   }
 }
 
-/** The browser's pads: none where it has no Gamepad API (turned off, or a privacy setting's: the game plays on without
- *  pads, not stopped at its first frame) */
+/** The browser's pads: none where it has no Gamepad API (turned off, or a privacy setting's) or refuses it (a
+ *  permissions policy's block: RV-526): the game plays on without pads, not stopped at its first frame */
 export function gamepads(): readonly (Gamepad | null)[] {
-  return typeof navigator.getGamepads === "function" ? navigator.getGamepads() : [];
+  if (typeof navigator.getGamepads !== "function") return [];
+  try {
+    return navigator.getGamepads();
+  } catch {
+    return [];
+  }
 }
 
 /** The first connected gamepad with the standard layout (its kind noted for the prompts' glyphs: setPadStyle) */

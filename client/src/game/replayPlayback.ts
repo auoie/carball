@@ -125,7 +125,7 @@ export class ReplayPlayback {
     // as first recorded till then, not an empty field; ours, the game records on its server)
     const a = this.#recorder.before(base) ?? this.#recorder.after(base, Math.ceil(this.#frameAt(plan.endTick) - base) + 1);
     const b = this.#recorder.at(base + 1) ?? a;
-    if (a && b) this.#drawRecorded(scene, a, b, alpha, realSeconds * dilation);
+    if (a && b) this.#drawRecorded(scene, a, b, alpha, realSeconds * dilation, dilation);
     // The camera's focus: the next car to touch the ball, with the ball; after the scoring touch the ball alone; once
     // it has exploded, the field's centre
     const next = plan.focus.find((f) => this.tick < f.tick);
@@ -144,7 +144,7 @@ export class ReplayPlayback {
   cars: ReadonlyMap<number, { readonly pos: Vec3; readonly team: number }> = new Map();
 
   /** The cars and the ball between two recorded frames */
-  #drawRecorded(scene: ReplayScene, a: RecordedFrame, b: RecordedFrame, alpha: number, seconds: number): void {
+  #drawRecorded(scene: ReplayScene, a: RecordedFrame, b: RecordedFrame, alpha: number, seconds: number, dilation: number): void {
     this.cars = replayCarPositions(a, b, alpha);
     const resets = flipResetCars(this.#flipCounts, b);
     for (const [id, view] of scene.cars) {
@@ -176,7 +176,8 @@ export class ReplayPlayback {
     const ball = new Interpolated<BodyState>(a.ball);
     ball.push(b.ball);
     const position = ball.position(alpha, this.#pos);
-    scene.ballView.fade(b.ballExploded, seconds); // (no fade in: the replay's ball is shown as recorded)
+    scene.ballView.trailTeam = b.lastTouchTeam;
+    scene.ballView.fade(b.ballExploded, seconds, dilation); // (no fade in: the replay's ball is shown as recorded)
     scene.ballView.update(position, ball.rotation(alpha, this.#rot));
     scene.arena.update(position, seconds);
     scene.effects.update(seconds);

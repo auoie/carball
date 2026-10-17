@@ -501,7 +501,7 @@ test("the main menu, the pause menu, the HUD and its Interface options (MENU-1/4
   // The main menu over the arena: Play, then Free Play
   await expect(page.locator("#main-menu")).toBeVisible();
   await freePlay(page);
-  // The boost meter: freeplay's unlimited boost, past 80 its "max" look; no scoreboard in training (HUD-4)
+  // The boost meter: freeplay's unlimited boost, full, its "max" look (the fuel gauge's glow); no scoreboard in training (HUD-4)
   await expect(page.locator("#boost")).toBeVisible();
   await expect(page.locator("#boost-value")).toHaveText("100");
   await expect(page.locator("#boost")).toHaveClass(/max/);

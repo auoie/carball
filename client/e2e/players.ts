@@ -61,10 +61,8 @@ export async function leaveAll(page: Page, others: Page[]): Promise<void> {
 export async function freePlay(page: Page): Promise<void> {
   const menu = page.locator("#main-menu");
   await menu.getByRole("button", { name: /^play$/i }).click({ timeout: 30_000 });
+  // (the one map offered: free play starts on it at once, on this page)
   await menu.getByRole("button", { name: /^free play$/i }).click();
-  // (the map select: this page's own map, so free play starts on it at once, no other map loaded)
-  const map = await page.evaluate(() => (window as unknown as { carballMap: () => string }).carballMap());
-  await menu.locator(`.main-menu-map[data-map="${map}"]`).click();
   await expect(menu).toBeHidden();
 }
 

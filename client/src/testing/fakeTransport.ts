@@ -1,11 +1,11 @@
 // A WebTransport stand-in for unit tests (no server): the session is ready at once, its first bidirectional stream reads
 // the given control messages then ends (or, asked to, stays open till the client closes its side, as a search's server
-// does), and what the client writes is kept.
+// does), and what the client writes is kept, its datagrams too.
 import { type ControlMessage, encodeControl } from "../net/protocol";
 
 export interface FakeTransportRecord {
-  /** Each session's URL, the bytes the client wrote on its control stream and whether it closed its side */
-  readonly sessions: { url: string; written: Uint8Array[]; finished?: boolean }[];
+  /** Each session's URL, the bytes the client wrote on its control stream, its datagrams and whether it closed its side */
+  readonly sessions: { url: string; written: Uint8Array[]; datagrams: Uint8Array[]; finished?: boolean }[];
 }
 
 /** A WebTransport class whose sessions answer with `replies` (each message framed as the server's); `closed`: each
@@ -15,11 +15,20 @@ export function fakeTransport(replies: readonly ControlMessage[], record: FakeTr
   class Fake {
     readonly ready = Promise.resolve();
     readonly closed = closed ? Promise.resolve() : new Promise<void>(() => undefined);
-    readonly datagrams = { writable: new WritableStream<Uint8Array>(), readable: new ReadableStream<Uint8Array>() };
+    readonly datagrams: { writable: WritableStream<Uint8Array>; readable: ReadableStream<Uint8Array> };
     readonly #session: FakeTransportRecord["sessions"][number];
     constructor(url: string) {
-      this.#session = { url, written: [] };
-      record.sessions.push(this.#session);
+      const session: FakeTransportRecord["sessions"][number] = { url, written: [], datagrams: [] };
+      this.#session = session;
+      this.datagrams = {
+        writable: new WritableStream<Uint8Array>({
+          write(chunk) {
+            session.datagrams.push(chunk);
+          },
+        }),
+        readable: new ReadableStream<Uint8Array>(),
+      };
+      record.sessions.push(session);
     }
     createBidirectionalStream(): Promise<{ readable: ReadableStream<Uint8Array>; writable: WritableStream<Uint8Array> }> {
       const session = this.#session;

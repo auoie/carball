@@ -6,10 +6,12 @@ import type { FlipResetIndicator, InterfaceSettings, MatchNotifications } from "
 import { fitStage } from "./ui/stage";
 import type { Dodge } from "./game/flipTracker";
 import { type VoteHud, voteFlashes } from "./game/forfeitVote";
+import { respawnShown } from "./game/matchSequence";
+import type { MatchState } from "./net/protocol";
 import { ACTIONS, type Bindings, inputName } from "./input/bindings";
 import { type KeyGlyph, clearPrompt, glyphElement, renderPrompt } from "./ui/keyGlyph";
 import { FlipLamp } from "./ui/flipLamp";
-import { BoostMeterArt } from "./ui/boostMeter";
+import { FuelGaugeArt } from "./ui/fuelGauge";
 import { SCOREBUG_REST, SCORE_INTRO_END, ScorebugArt, scoreIntroPose } from "./ui/scorebug";
 import { setNumberText } from "./ui/numberCells";
 
@@ -45,22 +47,26 @@ export function respawnHud(
   return { pct, side: car.spawnSelection.side, inner: car.spawnSelection.index === 0, keys };
 }
 
+/** The respawn view a game shows: its car's (respawnHud) where the match's phase lets it show (respawnShown: free play,
+ *  no match, always) */
+export function respawnView(
+  car: Parameters<typeof respawnHud>[0] | null | undefined,
+  match: Pick<MatchState, "phase"> | null | undefined,
+  keys: RespawnHud["keys"],
+): RespawnHud | null {
+  return car && respawnShown(match) ? respawnHud(car, keys) : null;
+}
+
+/** Whether the bars are orange (RH1: from 60 % down, at it too) */
+export function respawnLate(pct: number): boolean {
+  return pct <= RESPAWN_LATE_PCT;
+}
+
 /** The boost meter's number (GFxHUD_TA.GetBoostAmountForUI): floor(pct · 100), at least 1 while any is left
  *  (notes/visual-timing.md VT-21) */
 export function boostShown(boost: number): number {
   return boost <= 0 ? 0 : Math.min(100, Math.max(1, Math.floor(boost)));
 }
-
-/** GSAP's Power1 (quadratic) eases as exact cubic Béziers: out, 1 - (1 - t)^2; in (the yoyo's way back), t^2 */
-export const EASE_OUT_QUAD = "cubic-bezier(0.3333333, 0.6666667, 0.6666667, 1)";
-export const EASE_IN_QUAD = "cubic-bezier(0.3333333, 0, 0.6666667, 0.3333333)";
-/** BOOST's fade past 80 % (TweenMax.to(label, 0.2, {autoAlpha: 1, yoyo: true, repeat: -1}) from alpha 0): up with
- *  the ease out, back down the same tween reversed */
-export const BOOST_LABEL_BLINK: Keyframe[] = [
-  { opacity: 0, easing: EASE_OUT_QUAD },
-  { opacity: 1, offset: 0.5, easing: EASE_IN_QUAD },
-  { opacity: 0 },
-];
 
 /** Flip Reset Indicator's parts (MENU-9): its look (our flip ring and the reset's toast) and its sound */
 export function flipVisual(mode: FlipResetIndicator): boolean {
@@ -69,13 +75,6 @@ export function flipVisual(mode: FlipResetIndicator): boolean {
 
 export function flipAudio(mode: FlipResetIndicator): boolean {
   return mode === "audio" || mode === "on";
-}
-
-/** The boost meter's arc in degrees for its number (HUD-6: gotoAndStop(int(b x 1.01)) of a 101-frame mask, 2.25 degrees
- *  a frame: empty at 0 and 1, 225 at 100), split at 12 o'clock: the fill's part (to 180) and the top segment's past it */
-export function boostArc(shown: number): { readonly fill: number; readonly top: number } {
-  const degrees = shown >= 100 ? 225 : shown <= 1 ? 0 : 2.25 * (shown - 1);
-  return { fill: Math.min(180, degrees), top: Math.max(0, degrees - 180) };
 }
 
 /** A centre message's level (EHUDMessageLevel, HT-7): 0 All (pause messages), 1 GameUpdates (Overtime!, the clock's
@@ -185,11 +184,7 @@ export class Hud {
   readonly #stage: HTMLElement;
   readonly #stageFit = { key: "" };
   readonly #boostValue: HTMLElement;
-  readonly #boostGhost: HTMLElement;
-  readonly #boostLabel: HTMLElement;
-  /** Past 80 % (the label's fade running) */
-  #boostMax = false;
-  readonly #boostArt: BoostMeterArt;
+  readonly #boostArt: FuelGaugeArt;
   readonly #speed: HTMLElement;
   readonly #blue: HTMLElement;
   readonly #scoreBox: HTMLElement;
@@ -231,9 +226,7 @@ export class Hud {
     this.#root = root;
     this.#stage = element(root, "#hud-stage", HTMLElement);
     this.#boostValue = element(root, "#boost-value", HTMLElement);
-    this.#boostGhost = element(root, "#boost-ghost", HTMLElement);
-    this.#boostLabel = element(root, "#boost-label", HTMLElement);
-    this.#boostArt = new BoostMeterArt(element(root, "#boost", HTMLElement), [this.#boostGhost, this.#boostValue, this.#boostLabel]);
+    this.#boostArt = new FuelGaugeArt(element(root, "#boost", HTMLElement));
     this.#speed = element(root, "#speed", HTMLElement);
     this.#blue = element(root, "#score-blue", HTMLElement);
     this.#scoreBox = element(root, "#score", HTMLElement);
@@ -414,8 +407,9 @@ export class Hud {
   #boostFrom = 0;
   #boostSince = 0;
 
-  /** HUD-5/6/7: the number tweens to its new value over 0.2 s (Quad.easeOut [I]) and the arc with it; an increase
-   *  flashes the fill white and the glow from 2x (0.8 s); team-coloured or plain, its "max" look past 80 */
+  /** The fuel gauge (ours, src/ui/fuelGauge.ts): the number tweens to its new value over 0.2 s, the needle following on
+   *  its damped spring; an increase brightens the needle and the arc; the number team-coloured or plain; "full" glowing
+   *  at 100 (the class `max`), "low" at 15 or under */
   #updateBoost(boost: number, team: 0 | 1, shown: boolean, now: number): void {
     this.#boostBox.hidden = !shown;
     const target = boostShown(boost);
@@ -428,29 +422,12 @@ export class Hud {
     }
     const value = Math.round(this.#boostDisplayed(now));
     setNumberText(this.#boostValue, String(value));
-    setNumberText(this.#boostGhost, String(value));
-    const arc = boostArc(value);
-    this.#boostArt.set(arc.fill, arc.top);
+    this.#boostArt.set(target, now);
     const teamColoured = this.#ui?.teamColoredBoost ?? true;
     this.#boostBox.classList.toggle("team-1", teamColoured && team === 1);
     this.#boostBox.classList.toggle("plain", !teamColoured);
-    this.#boostBox.classList.toggle("max", value > 80);
-    this.#fadeBoostLabel(value > 80);
-  }
-
-  /** HUD-7 (HUD.updateBoost): past 80 % BOOST fades in and out forever (0.2 s each way, GSAP's default ease out and
-   *  played back in); back to 80 % or under it fades out from where it is in 0.2 s */
-  #fadeBoostLabel(max: boolean): void {
-    if (max === this.#boostMax) return;
-    this.#boostMax = max;
-    const label = this.#boostLabel;
-    const from = Number(getComputedStyle(label).opacity);
-    for (const a of label.getAnimations()) a.cancel();
-    if (max) {
-      label.animate(BOOST_LABEL_BLINK, { duration: 400, iterations: Infinity });
-    } else {
-      label.animate([{ opacity: from }, { opacity: 0 }], { duration: 200, easing: EASE_OUT_QUAD, fill: "forwards" });
-    }
+    this.#boostBox.classList.toggle("max", value >= 100);
+    this.#boostBox.classList.toggle("low", value <= 15);
   }
 
   #boostDisplayed(now: number): number {
@@ -561,7 +538,7 @@ export class Hud {
     if (this.#respawn.hidden !== (r === null)) this.#respawn.hidden = r === null;
     if (r === null) return;
     this.#respawn.style.setProperty("--respawn-pct", String(r.pct / 100));
-    this.#respawn.classList.toggle("late", r.pct <= RESPAWN_LATE_PCT);
+    this.#respawn.classList.toggle("late", respawnLate(r.pct));
     for (const side of ["left", "right"] as const) {
       const prompt = side === "left" ? this.#respawnLeft : this.#respawnRight;
       const group = prompt.parentElement;

@@ -21,8 +21,10 @@ import { loadGameFieldPlan } from "./render/stadiumFieldRules";
 import { loadDemolitionHusks } from "./render/demolition";
 import { loadFennec } from "./render/fennec";
 import { TEAM_CAR_COLORS } from "./render/entities";
-import { MAP_NAMES, type ThemeName, createTheme, createThemeOrNight, preloadTheme, themeName, themeOfMap } from "./render/themes";
+import { AVAILABLE_MAP, MAP_NAMES, type ThemeName, createTheme, createThemeOrNight, preloadTheme, themeName, themeOfMap } from "./render/themes";
 import { CARS, carChoice, storedCar, storedTeam } from "./game/cars";
+import type { BotListing } from "./bots/listing";
+import { BOT_MATCH_TEXT } from "./local/botText";
 import { GaragePreview } from "./ui/garagePreview";
 import type { Theme } from "./render/themes/theme";
 import { STAT_GRAPHS, type Settings, loadSettings, resolveSettings } from "./settings/settings";
@@ -42,11 +44,12 @@ import { EndScreen, PodiumTags, ScreenDimming, WinnerBanner } from "./ui/endOfMa
 import { Nameplates } from "./ui/nameplates";
 import { LoadingScreen, showLoadingFailure } from "./ui/loadingScreen";
 import { StatGraphsView } from "./ui/statGraphsView";
-import { type StatContext, StatGraphData, levelView, measuredRefresh, speedUnit } from "./game/statGraphs";
+import { type StatContext, StatGraphData, levelView, speedUnit } from "./game/statGraphs";
+import { RefreshMeter } from "./game/refreshRate";
 import { EXPECTED_PACKETS, NetGraphFeed } from "./net/netStats";
-import { MAIN_MENU_TEXT, MainMenu, storedMap } from "./ui/mainMenu";
+import { MAIN_MENU_TEXT, MainMenu } from "./ui/mainMenu";
 import { MODAL_TEXT, Modal } from "./ui/modal";
-import { SearchView } from "./ui/searchView";
+import { SearchView, cancelShown } from "./ui/searchView";
 import { IdleTip } from "./ui/idleTip";
 import { PauseMenu } from "./ui/pauseMenu";
 import { PadMenuNav } from "./ui/padNav";
@@ -81,7 +84,14 @@ async function main(): Promise<void> {
     location.replace(pageUrl("menu", location));
     return;
   }
-  const onlinePage = server !== null || claim !== null;
+  // ?bots: the offline match against bots, its setup handed over by the menu page (local/botMatch.ts), hosted in a worker
+  // (a build without bots: none, back to the menu)
+  const botMatch = __CARBALL_BOTS__ && params.has("bots") ? (await import("./local/botMatch")).readBotMatch() : null;
+  if (params.has("bots") && botMatch === null) {
+    location.replace(pageUrl("menu", location));
+    return;
+  }
+  const onlinePage = server !== null || claim !== null || botMatch !== null;
   let settings = loadSettings();
   // (the menu page's notice from a match page or the map select, read here: the loading screen names free play's map)
   const menuNotice = onlinePage ? null : takeNotice();
@@ -93,7 +103,7 @@ async function main(): Promise<void> {
   const override = params.get("theme") === null ? null : themeName(params.get("theme"));
   // (the map and mode named on the loading screen from its start: free play's map from the map select, a queue match's
   // from its claim; a development server's once it welcomes)
-  if (menuNotice?.freePlay) loading.place(MAP_NAMES[override ?? storedMap()], MAIN_MENU_TEXT.freePlay);
+  if (menuNotice?.freePlay) loading.place(MAP_NAMES[override ?? AVAILABLE_MAP], MAIN_MENU_TEXT.freePlay);
   if (claim?.map !== undefined) loading.place(MAP_NAMES[override ?? themeOfMap(claim.map)], playlistName(claim.playlist));
 
   loading.step("engine");
@@ -159,7 +169,8 @@ async function main(): Promise<void> {
   }
   const arenaAndSession = async (): Promise<{ name: ThemeName; theme: Theme; session: Awaited<ReturnType<typeof Connection.open>> | null }> => {
     if (!onlinePage) {
-      const map = override ?? storedMap();
+      // (the one map offered: free play's, the user's decision of 2026-10-17; ?theme= another, development)
+      const map = override ?? AVAILABLE_MAP;
       loading.step("map");
       return { ...(await createThemeOrNight(map)), session: null };
     }
@@ -170,6 +181,10 @@ async function main(): Promise<void> {
     if (claim) {
       address = await queueAddress(params, location.hostname);
       match = { intent: "claim", token: claim.token };
+    } else if (__CARBALL_BOTS__ && botMatch) {
+      // (the worker, its host and the bots' runtime in their own chunks, none in a build without bots)
+      const [{ localServerAddress }, { BOTS_BASE }] = await Promise.all([import("./local/localTransport"), import("./bots/listing")]);
+      address = localServerAddress(botMatch, arenaMeshes, BOTS_BASE);
     } else {
       const [host = location.hostname, port = "4434"] = server === "" || server === null ? [] : server.split(":");
       address = await devServerAddress(host, Number(port));
@@ -190,7 +205,7 @@ async function main(): Promise<void> {
     const session = await opened;
     startedConnection = session.connection;
     const name = override ?? themeOfMap(session.welcome.map);
-    loading.place(MAP_NAMES[name], claim ? playlistName(claim.playlist) : null);
+    loading.place(MAP_NAMES[name], claim ? playlistName(claim.playlist) : botMatch ? BOT_MATCH_TEXT.play : null);
     loading.step("map");
     return { ...(earlyTheme !== null && early === name ? await earlyTheme : await createThemeOrNight(name)), session };
   };
@@ -210,14 +225,15 @@ async function main(): Promise<void> {
   renderer.heightFog = theme.heightFog ?? false;
   const arena = new ArenaView(theme);
   // (World Detail's gates on the theme's pieces, before the reflection's first capture: it sees the gated set, QG-17; a
-  // later change isn't captured again, the cars then in the scene)
+  // later change captured again, the capture drawing only the arena and its theme: RV-530)
   applyWorldDetail(theme.root, settings.video.worldDetail);
   particleDetail.performance = settings.video.particleDetail === "performance";
   renderer.scene.add(arena.root);
-  // (the arena's reflection capture, once: before the first frame, the cars and ball not yet drawn in it)
+  // (the arena's reflection capture: before the first frame, and again at a World Detail change)
   renderer.beforeNextFrame((gl, scene) => {
     arena.capture(gl, scene);
   });
+  let worldDetail = settings.video.worldDetail;
   const hud = new Hud(required("#hud", HTMLElement));
   const input = new InputDevices(canvas);
   const audio = new GameAudio(name);
@@ -226,6 +242,8 @@ async function main(): Promise<void> {
   // HUD-21's stat graphs: every row sampled each frame, the level's drawn over everything; F10 cycles the level, unsaved
   const statData = new StatGraphData();
   const statView = new StatGraphsView(document.body);
+  // (the display's refresh as the page's frames show it: the stat graphs' target, the video guard's cap)
+  const refresh = new RefreshMeter();
   let statLevel = settings.interface.statGraphs;
   let savedStatLevel = statLevel;
   // (the Interface tab: the HUD's stage and its options; a change of Stat Graphs its level, F10's undone)
@@ -238,8 +256,10 @@ async function main(): Promise<void> {
     "keydown",
     (e) => {
       if (e.code !== "F10") return;
-      // (F10 "Toggle Stat Graphs": the next level, not saved; the browser's own F10 not taken)
+      // (F10 "Toggle Stat Graphs": the next level, not saved, once a press, not a held key's repeats (RV-528); the
+      // browser's own F10 not taken)
       e.preventDefault();
+      if (e.repeat) return;
       statLevel = STAT_GRAPHS[(STAT_GRAPHS.indexOf(statLevel) + 1) % STAT_GRAPHS.length] ?? "none";
     },
     { capture: true },
@@ -257,7 +277,13 @@ async function main(): Promise<void> {
       audio.apply(next.audio, next.options.muted);
       renderer.postOptions = next.options;
       renderer.renderScale = RENDER_QUALITY_SCALE[next.video.renderQuality];
-      applyWorldDetail(theme.root, next.video.worldDetail);
+      if (next.video.worldDetail !== worldDetail) {
+        worldDetail = next.video.worldDetail;
+        applyWorldDetail(theme.root, worldDetail);
+        renderer.beforeNextFrame((gl, scene) => {
+          arena.capture(gl, scene);
+        });
+      }
       particleDetail.performance = next.video.particleDetail === "performance";
       // (a changed branch compiled before it's drawn where the browser compiles in parallel)
       if (applyShaderQuality(renderer.scene, next.video.highQualityShaders) > 0) void renderer.prepare();
@@ -437,7 +463,7 @@ async function main(): Promise<void> {
     });
     // (the banner's cancel, the pad's Y too, where MM-10 has it: over the main or pause menu, nothing over them; never
     // while driving, Y the ball cam's)
-    const cancelHere = (): boolean => ((mainMenu?.isOpen ?? false) || pause.isOpen) && !panel.isOpen && !modal.isOpen;
+    const cancelHere = (): boolean => cancelShown({ mainMenu: mainMenu?.isOpen ?? false, pause: pause.isOpen, panel: panel.isOpen, modal: modal.isOpen });
     cancelSearchByPad = () => {
       if (matchmaking.state === null || !cancelHere()) return false;
       matchmaking.cancel();
@@ -480,10 +506,34 @@ async function main(): Promise<void> {
         matchmaking.start(playlist);
         mainMenu?.focusFreePlay();
       },
+      // (Play vs Bots' Start: its own page, the player on the garage's team, on free play's map; a search closed first)
+      botMatch: (choices) => {
+        const go = (): void => {
+          void import("./local/botMatch").then(({ botMatchSetup, storeBotMatch }) => {
+            storeBotMatch(botMatchSetup(choices, botListings, storedTeam(), mainMenu?.map ?? name, Math.floor(Math.random() * 0x7fffffff)));
+            location.assign(pageUrl("bots", location));
+          });
+        };
+        if (!matchmaking.searching) go();
+        else
+          void matchmaking.finish().then((found) => {
+            if (!found) go();
+          });
+      },
       settings: () => {
         panel.open();
       },
     });
+    // (the bot packages there are: Play vs Bots with one to play, its page's code and the listing in chunks of their own,
+    // loaded once the menu is up; none in a build without bots)
+    let botListings: readonly BotListing[] = [];
+    if (__CARBALL_BOTS__) {
+      void Promise.all([import("./bots/listing"), import("./ui/botsPage")]).then(async ([listing, page]) => {
+        const listings = await listing.listBots();
+        botListings = listings;
+        mainMenu?.setBots((body) => page.botsPage(body, listings));
+      });
+    }
     // (back from a match page: its modal, a search to start again)
     const notice = menuNotice;
     if (notice?.freePlay) {
@@ -526,7 +576,7 @@ async function main(): Promise<void> {
         matchmaking.frame(performance.now() / 1000);
         view.update(matchmaking.state, { menuUp: cancelHere(), padMode: padNav.padMode, now: performance.now() / 1000 });
         // (a hidden tab's or a hitch's time not counted: AutoVideoGuard; the player's choice since wins: guardStep)
-        if (guard && !guard.done && guard.frame(dt, document.visibilityState === "visible")) {
+        if (guard && !guard.done && guard.frame(dt, document.visibilityState === "visible", refresh.hz)) {
           const stepped = guardStep(settings.video);
           if (stepped) panel.apply({ ...settings, video: stepped });
         }
@@ -592,6 +642,11 @@ async function main(): Promise<void> {
       online.onSessionEnd = (why) => {
         leave(notices[why]);
       };
+    } else if (botMatch) {
+      // (the local host gone, its worker failing: the menu, with the lost connection's modal)
+      online.onSessionEnd = (why) => {
+        leave(why === "lost" ? { modal: "lost" } : undefined);
+      };
     }
     const players = new PlayersMenu(pause.players, (car, what) => {
       online.togglePlayer(car, what);
@@ -641,23 +696,24 @@ async function main(): Promise<void> {
   let last = performance.now();
   // (the stat graphs' context: the display's refresh as measured, ours having no cap; our downstream's budget, the
   // updates needing up to about 140 KB/s, not the game's 15000 B/s; the speeds' units)
-  const intervals: number[] = [];
   const statContext = (): StatContext => ({
-    targetFps: measuredRefresh(intervals),
+    targetFps: refresh.hz ?? 60,
     maxBytesRate: 150_000,
     expectedOutPackets: EXPECTED_PACKETS.out,
     expectedInPackets: EXPECTED_PACKETS.in,
     metric: settings.interface.metric,
   });
-  (window as unknown as { carballStatGraphs?: unknown }).carballStatGraphs = () => ({ level: statLevel, rows: statData.view(statLevel, performance.now() / 1000, statContext()) });
+  (window as unknown as { carballStatGraphs?: unknown }).carballStatGraphs = () => ({
+    level: statLevel,
+    rows: statData.view(statLevel, performance.now() / 1000, statContext()).map((row) => ({ ...row, graph: null })),
+  });
   /** Each frame's rows sampled (FPS from the raw frame, the game's work less the render's, the render's, the speeds),
    *  the level drawn */
   const statFrame = (t: number, dt: number, gameMs: number): void => {
     if (dt > 0 && dt < 1) {
       statData.set("FPS", 1 / dt);
       statData.set("Frame", dt * 1000);
-      intervals.push(dt * 1000);
-      if (intervals.length > 240) intervals.shift();
+      refresh.add(dt * 1000);
     }
     statData.set("Render", renderer.lastRenderMs);
     statData.set("Game", Math.max(0, gameMs - renderer.lastRenderMs));
@@ -675,8 +731,10 @@ async function main(): Promise<void> {
     game.netFrame?.(t);
     statData.sample(t);
     const view = levelView(statLevel);
+    // (drawn again as a new slot starts, the samples' rate, not every frame: RV-517)
+    const key = `${statLevel}|${String(settings.interface.scale)}|${String(settings.interface.displayScale)}`;
     if (!view) statView.hide();
-    else statView.draw(statData.view(statLevel, t, statContext()), view.window, t, settings.interface.scale, settings.interface.displayScale);
+    else if (statView.due(t, key)) statView.draw(statData.view(statLevel, t, statContext()), view.window, t, settings.interface.scale, settings.interface.displayScale, key);
   };
   const frame = (now: number): void => {
     // (raw: the games take their clamped real and world times from it, LT-3)

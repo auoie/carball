@@ -1,4 +1,4 @@
-# Game protocol (version 24)
+# Game protocol (version 25)
 
 Client ↔ server over **WebTransport** (HTTP/3, QUIC). All integers little-endian. Implemented in
 `server/src/protocol.rs` (Rust) and `client/src/net/protocol.ts` (TypeScript); `vectors.json` holds byte-exact
@@ -72,18 +72,18 @@ input frame `frame` (0 before any). Engine snapshots: `Arena::Serialize` (exact,
 
 ## Maps
 
-Each match is on a map, its arena: the server picks one at random when it makes the match (a development server's open
-match keeps its map through its rematches; `--map N` puts every match on map N), and sends it in the match's `MatchFound`
+Each match is on a map, its arena: the server puts every match on map 16, Night's greenhouse, the one map offered (the
+user's decision of 2026-10-17; `--map N` puts every match on map N), and sends it in the match's `MatchFound`
 and every player's `Welcome`, so every player sees the same arena. A map is an index into the client's themes, in this
 order (`client/src/render/themes/index.ts` `THEMES`; the server's `protocol::MAP_COUNT` is their number), only ever
 appended to: 0 night, 1 stadium, 2 meadow, 3 forest, 4 city, 5 infested, 6 kawaii, 7 platformer, 8 haunted, 9 ghosts,
-10 dimension, 11 summit, 12 crater, 13 temple, 14 island, 15 lake. A client that doesn't know an index (a newer
-server's) shows its default (0).
+10 dimension, 11 summit, 12 crater, 13 temple, 14 island, 15 lake, 16 greenhouse (Night's). A client that doesn't know an
+index (a newer server's) shows its default (0).
 
 ## Datagrams
 | Type | Direction | Fields |
 |---|---|---|
-| `0x01 Inputs` | C→S | `u32 timestamp` (client ms), `u16 sequence` (the client's count of its `Inputs` datagrams, wrapping: the server counts the gaps as lost, a jump of 1000 or more as a count started again), `u32 firstFrame`, `u8 count` (≤ 10), `count` × input frame |
+| `0x01 Inputs` | C→S | `u32 timestamp` (client ms), `u16 sequence` (the client's count of its `Inputs` datagrams, wrapping: the server counts the gaps as lost, a jump of 1000 or more as a count started again; a late datagram was already counted lost by the gap the newer one made, and a count started again backwards, less than half the range back, reads as late: nothing counted; at most 255 lost an `Update`), `u32 firstFrame`, `u8 count` (≤ 10), `count` × input frame |
 | `0x81 Update` | S→C | `u32 serverTick`, `u32 ackFrame`, `u32 receivedFrame`, `u32 echoTimestamp`, `u16 echoDelay` (ms), `u8 bufferTarget`, `u8 bufferSize`, since the last `Update` to this client (the same in each part): `u8 bufferLow` and `u8 bufferHigh` (its input buffer's fewest and most frames after a tick), `u8 bufferOver` (ticks that consumed a second frame) and `u8 bufferUnder` (ticks with none), `u8 inputLoss` (its `Inputs` datagrams lost: the sequence's gaps); then `u8 part`, `u8 parts`, then network state bytes |
 
 **Input frame** (7 bytes, consecutive frames from `firstFrame`): `i8 throttle, steer, pitch, yaw, roll,
@@ -146,7 +146,7 @@ returning token (Hello), `0x92 SearchCooldown` (RV-367). Version 20: `SearchCool
 the match's map (`MatchFound`, `Welcome`). Version 22: the garage's car (Hello's `model`, in place of its `body`; the
 roster's `model`). Version 23: `Kicked`'s reason 2, a newer search from the same browser took this one's place (RV-460).
 Version 24: the stat graphs' network rows (HUD-21): `Inputs`' `sequence`, and each `Update`'s input-buffer window and the
-inputs lost.
+inputs lost. Version 25: map 16, Night's greenhouse, every match's (a version-24 client would draw Night instead).
 
 Podium title ids (`notes/match-stats.md` §5.4a; the client's `game/podiumTitles.ts`): 0 OvertimeGoal, 1 Goals_10,
 2 Goals_6_9, 3 Goals_3_5, 4 Saves_10, 5 Saves_6_9, 6 Saves_3_5, 7 EpicSaves, 8 PoolShots, 9 BackwardsGoal, 10 BicycleGoal,

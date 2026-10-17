@@ -5,7 +5,7 @@ import { DEFAULT_SETTINGS } from "../settings/settings";
 import { type FakeTransportRecord, fakeTransport } from "../testing/fakeTransport";
 import { Connection, ControlQueue, RefusedError, serverHost, storeKey, storedKey } from "./connection";
 import { joinPreferences } from "./joinPreferences";
-import { PROTOCOL_VERSION, REFUSED_TOKEN, decodeControl } from "./protocol";
+import { PROTOCOL_VERSION, REFUSED_TOKEN, decodeControl, decodeDatagram } from "./protocol";
 
 const memory = (): Pick<Storage, "getItem" | "setItem"> => {
   const map = new Map<string, string>();
@@ -92,6 +92,30 @@ describe("a match session's hello", () => {
     const hello = decodeControl(record.sessions[0]?.written[0]?.subarray(2) ?? new Uint8Array());
     expect(hello).toMatchObject({ type: "hello", model: 3, team: 255, intent: "claim", token: 9n });
     expect(hello.type === "hello" && hello.dodgeDeadzone).toBeCloseTo(DEFAULT_SETTINGS.controller.dodgeDeadzone, 6);
+  });
+});
+
+describe("the input datagrams' count (protocol 24)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("each one's sequence one on from the last, from 0, wrapping at 65536 (RV-529's CM19: the server counts its gaps as lost)", async () => {
+    const welcome = { type: "welcome", version: PROTOCOL_VERSION, carId: 1, tickRate: 120, frame: 0, matchType: "casual", teamSize: 1, map: 0, key: 5n, snapshot: new Uint8Array() } as const;
+    const record: FakeTransportRecord = { sessions: [] };
+    vi.stubGlobal("WebTransport", fakeTransport([welcome], record));
+    vi.stubGlobal("localStorage", { getItem: () => null, setItem: () => undefined });
+    const { connection } = await Connection.open({ url: "https://game.example:4433/play", certHash: null }, joinPreferences(DEFAULT_SETTINGS), { intent: "claim", token: 9n });
+    const sends = 65_538;
+    for (let i = 0; i < sends; i++) connection.sendInputs(i, i + 1, []);
+    await new Promise((r) => setTimeout(r, 0));
+    const sent = record.sessions[0]?.datagrams ?? [];
+    expect(sent).toHaveLength(sends);
+    const sequence = (k: number): number => {
+      const d = decodeDatagram(sent[k] ?? new Uint8Array());
+      return d.type === "inputs" ? d.sequence : -1;
+    };
+    expect([0, 1, 2, 65_535, 65_536, 65_537].map(sequence)).toEqual([0, 1, 2, 65_535, 0, 1]);
   });
 });
 

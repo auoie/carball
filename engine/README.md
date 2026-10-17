@@ -33,6 +33,12 @@ engine/tests/check_native_wasm.sh 600                              # native and 
 The arena mesh comes from `scripts/arena_gen.py` (`out/arena/`). Native tests find it via `ARENA_MESH_DIR`;
 the WebAssembly test programs embed it at `/collision_meshes`.
 
+## The local host (`engine/build-wasm-host/carball_host.mjs` + `carball_host.wasm`, ~1.2 MB)
+The offline match against bots runs the game server's own match in the page's worker (`client/src/local/`): the engine's
+C API (`capi/`, `stats/`) built with Emscripten, linked with the server crate built for `wasm32-unknown-emscripten`
+(`server/src/bin/host.rs`, its `host` feature). `scripts/build_host.sh` does both (it needs rustup's
+`wasm32-unknown-emscripten` target; offline); the client's build imports it as `@host`, so build it before the client.
+
 ## JavaScript module (`engine/build-wasm/carball_engine.mjs` + `carball_engine.wasm`, ~810 KB)
 Bindings: `wasm/bindings.cpp` (embind). ES modules: `carball_engine.mjs` (browsers, workers and Node; used by tests)
 and `carball_engine_web.mjs` (browser-only; bundled by the client). Emscripten also generates TypeScript types from

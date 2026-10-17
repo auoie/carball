@@ -1,7 +1,7 @@
 // The search's banner (MM-5, MS1): its line under the strip (ours: the log the game shows only in its panel)
 import { describe, expect, it } from "vitest";
 import type { LogLine, SearchViewState } from "../game/matchmaking";
-import { BannerMessage, MESSAGE_SECONDS } from "./searchView";
+import { BannerMessage, MESSAGE_SECONDS, cancelShown } from "./searchView";
 
 const line = (text: string, kind: LogLine["kind"] = "status"): LogLine => ({ text, kind });
 const state = (status: SearchViewState["status"], lines: LogLine[]): SearchViewState => ({ status, lines });
@@ -47,6 +47,17 @@ describe("the lines under the banner in turn", () => {
     expect(m.update(state("searching", [finding, warning]), MESSAGE_SECONDS - 0.1)).toEqual(warning);
     expect(m.update(state("searching", [finding, warning]), MESSAGE_SECONDS + 0.1)).toEqual(finding);
     expect(m.update(state("searching", [finding, warning]), 2 * MESSAGE_SECONDS + 0.2)).toBeNull();
+  });
+});
+
+describe("where the search's cancel shows and the pad's Y cancels (MM-10)", () => {
+  it("over the main or pause menu with nothing over them; never while driving (RV-529's CM32)", () => {
+    const open = (o: Partial<Parameters<typeof cancelShown>[0]>): boolean => cancelShown({ mainMenu: false, pause: false, panel: false, modal: false, ...o });
+    expect(open({})).toBe(false);
+    expect(open({ mainMenu: true })).toBe(true);
+    expect(open({ pause: true })).toBe(true);
+    expect(open({ mainMenu: true, panel: true })).toBe(false);
+    expect(open({ pause: true, modal: true })).toBe(false);
   });
 });
 

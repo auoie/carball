@@ -23,12 +23,23 @@ export const THEMES = [
   "temple",
   "island",
   "lake",
+  // (Night's greenhouse: on the wire from protocol 25, appended so every other index keeps its map)
+  "greenhouse",
 ] as const;
-export type ThemeName = (typeof THEMES)[number];
+
+/** The map select's maps (in its order): every match map, Night's greenhouse beside Night. Unused since the user's decision
+ *  of 2026-10-17 (AVAILABLE_MAP alone is offered), kept */
+export const MAP_CHOICES = [THEMES[0], THEMES[16], ...THEMES.slice(1, 16)] as const;
+
+/** The one map offered (the user's decision, 2026-10-17): free play's, every match's (the server's pick) and the bots';
+ *  the others' code kept, unused (?theme= still loads one: development) */
+export const AVAILABLE_MAP: ThemeName = "greenhouse";
+export type ThemeName = (typeof MAP_CHOICES)[number];
 
 /** Each map's name in the map select (none of the game's arenas') */
 export const MAP_NAMES: Readonly<Record<ThemeName, string>> = {
   night: "Night",
+  greenhouse: "Night · Greenhouse",
   stadium: "Stadium",
   meadow: "Meadow",
   forest: "Forest",
@@ -48,7 +59,7 @@ export const MAP_NAMES: Readonly<Record<ThemeName, string>> = {
 
 /** The theme called `value`, or the default (night). */
 export function themeName(value: string | null): ThemeName {
-  return THEMES.find((t) => t === value) ?? "night";
+  return MAP_CHOICES.find((t) => t === value) ?? "night";
 }
 
 /** A match's map (its index) as a theme; an index this page doesn't know (a newer server's) is the default */
@@ -58,6 +69,7 @@ export function themeOfMap(map: number): ThemeName {
 
 /** Each theme's module but the default's (its own chunk), downloaded when first asked for */
 const MODULES: Readonly<Record<Exclude<ThemeName, "night">, () => Promise<() => Theme>>> = {
+  greenhouse: async () => (await import("./greenhouse")).greenhouseTheme,
   stadium: async () => (await import("./stadium")).stadiumTheme,
   meadow: async () => (await import("./meadow")).meadowTheme,
   forest: async () => (await import("./forest")).forestTheme,

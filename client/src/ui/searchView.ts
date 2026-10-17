@@ -67,6 +67,12 @@ export class BannerMessage {
   }
 }
 
+/** Where the search's cancel shows and the pad's Y cancels (MM-10): over the main or pause menu with nothing over them
+ *  (the settings' panel, a question); never while driving, Y the ball cam's */
+export function cancelShown(open: { readonly mainMenu: boolean; readonly pause: boolean; readonly panel: boolean; readonly modal: boolean }): boolean {
+  return (open.mainMenu || open.pause) && !open.panel && !open.modal;
+}
+
 /** Where the cancel shows: a menu up (the main or pause menu: MM-10's), in the pad's form or the mouse's */
 export interface BannerContext {
   readonly menuUp: boolean;

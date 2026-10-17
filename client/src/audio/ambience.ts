@@ -501,12 +501,16 @@ const croak = (synth: Synth, out: AudioNode, when: number): void => {
 
 const breeze: Bed = { filter: "lowpass", frequency: 500, q: 0.5, gain: 0.05, lfo: { rate: 0.07, depth: 0.6, on: "gain" } };
 
+const NIGHT: Recipe = {
+  beds: [{ filter: "lowpass", frequency: 350, q: 0.5, gain: 0.06, lfo: { rate: 0.05, depth: 0.5, on: "gain" } }],
+  drones: [{ type: "sine", frequencies: [55, 82.5], gain: 0.012, lowpass: 400 }],
+  events: [],
+};
+
 const RECIPES: Readonly<Record<ThemeName, Recipe>> = {
-  night: {
-    beds: [{ filter: "lowpass", frequency: 350, q: 0.5, gain: 0.06, lfo: { rate: 0.05, depth: 0.5, on: "gain" } }],
-    drones: [{ type: "sine", frequencies: [55, 82.5], gain: 0.012, lowpass: 400 }],
-    events: [],
-  },
+  night: NIGHT,
+  // (Night's greenhouse: Night's soundscape)
+  greenhouse: NIGHT,
   // (a placeholder until the game's crowd model: notes/sound-behaviour.md SND-17)
   stadium: {
     beds: [{ filter: "bandpass", frequency: 600, q: 0.7, gain: 0.08, lfo: { rate: 0.2, depth: 0.3, on: "gain" } }],

@@ -13,7 +13,8 @@ test("the loading screen covers the game layer until the first frame, names free
     await held;
     await route.continue();
   });
-  await page.goto("/?render=off");
+  // (on another map, ?theme=: Free Play then loads the one offered on a page of its own, named on its loading screen)
+  await page.goto("/?render=off&theme=meadow");
   const loading = page.locator("#loading");
   await expect(loading.locator(".loading-step")).toHaveText("Loading the physics engine");
   await expect(loading.locator(".loading-title")).toHaveText("Carball");
@@ -32,12 +33,11 @@ test("the loading screen covers the game layer until the first frame, names free
   release();
   await expect(loading).toBeHidden({ timeout: 60_000 });
   await expect(page.locator("#main-menu")).toBeVisible();
-  // Free play on another map from the map select: its page loads it, named on the loading screen
+  // Free Play from another map's page: the one offered loads on its own page, named on the loading screen
   const menu = page.locator("#main-menu");
   await menu.getByRole("button", { name: /^play$/i }).click();
   await menu.getByRole("button", { name: /^free play$/i }).click();
-  await menu.locator('.main-menu-map[data-map="meadow"]').click();
-  await expect(page.locator("#loading .loading-place")).toHaveText("Meadow · Free Play", { timeout: 30_000 });
+  await expect(page.locator("#loading .loading-place")).toHaveText("Night · Greenhouse · Free Play", { timeout: 30_000 });
   await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
   await expect(menu).toBeHidden();
 });

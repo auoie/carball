@@ -336,6 +336,13 @@ mod tests {
         assert_eq!(b.take_window().lost, 2);
         b.note_sequence(5001);
         assert_eq!(b.take_window().lost, 0);
+        // (a late one, then the next in order: the base not moved back by the late one, nothing more lost: RV-518's SM2)
+        let mut b = InputBuffer::default();
+        b.note_sequence(10);
+        b.note_sequence(12);
+        b.note_sequence(11);
+        b.note_sequence(13);
+        assert_eq!(b.take_window().lost, 1);
         // (across the wrap: 65534, then 1, 65535 and 0 lost)
         let mut b = InputBuffer::default();
         b.note_sequence(65534);

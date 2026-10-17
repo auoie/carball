@@ -327,11 +327,11 @@ body {
 }
 
 /* HUD-21's stat graphs (src/ui/statGraphsView.ts): drawn over everything, menus too (SG2: no gates) */
+/* (the overlay's box at the top-right, sized as drawn: RV-517) */
 .stat-graphs {
   position: fixed;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  top: 0;
+  right: 0;
   z-index: 60;
   pointer-events: none;
 }
@@ -821,13 +821,15 @@ body {
   color: rgb(255, 127, 0);
 }
 
+/* (each side grows outward from the hourglass, never meeting the other whatever its key's length: RV-512; a stage's
+   half less the gap, 520 units at least, holds any key's name) */
 .respawn-side {
   position: absolute;
   top: 22px;
   display: flex;
   align-items: center;
   gap: 8px;
-  transform: translate(-50%, -50%);
+  transform: translateY(-50%);
   font: calc(22px * var(--hud-header-scale, 1))/26px var(--hud-header);
   text-transform: uppercase;
   white-space: nowrap;
@@ -836,11 +838,11 @@ body {
 }
 
 .respawn-side.left {
-  left: 140px;
+  right: 300px;
 }
 
 .respawn-side.right {
-  left: 420px;
+  left: 300px;
 }
 
 .respawn-side.picked {
@@ -1349,16 +1351,20 @@ body {
   margin-bottom: 10px;
 }
 
-.settings-players .players-toggle {
-  align-self: flex-start;
-}
-
 .player-row {
   display: grid;
   grid-template-columns: 1fr auto auto;
   align-items: center;
   gap: 8px;
   min-height: 33px;
+  padding: 3px 6px 3px 12px;
+  background: rgba(10, 14, 22, 0.95);
+}
+
+.pause-question button:hover,
+.end-question button:hover,
+.players-action:hover {
+  border-color: #43afff;
 }
 
 .player-row .player-name {
@@ -1790,7 +1796,6 @@ body {
    aligning an empty strut's bottom with the cells' baseline, their lines 0 high) */
 .score-digits,
 #clock,
-#boost-ghost,
 #boost-value {
   --numbers-gap: 0px;
   display: flex;
@@ -1801,7 +1806,6 @@ body {
 
 .score-digits::before,
 #clock::before,
-#boost-ghost::before,
 #boost-value::before {
   content: "";
   flex: none;
@@ -2174,178 +2178,193 @@ body {
   text-transform: uppercase;
 }
 
-/* HUD-5/6/7: the boost meter, its centre 110 in from the right and the bottom: a 225 degree arc clockwise from 6
-   o'clock (the last 45 past 80 % its own white), turned 15 degrees in perspective (HUD.updatePerspectiveProjection:
-   focalLength 500, its centre 50 left of and 100 above the meter's), the bars and number 20 px nearer than the disc:
-   drawn already projected by src/ui/boostMeter.ts (its art's points, the text's 2D matrices), so sharp (a CSS 3D layer
-   is resampled into its tilt: the user's finding, 2026-10-16) */
+/* The boost meter as a fuel gauge (ours, src/ui/fuelGauge.ts: the user's design, 2026-10-17; one dashboard with the flip
+   lamp beside it): a flat semicircular dial on a dark translucent face, thin ticks, E and F, an amber needle; the number
+   under the hub, BOOST under it; the arc's band glowing calmly when full, a soft red cue near E while low */
 #boost {
   position: absolute;
   right: 10px;
   bottom: 10px;
   width: 200px;
   height: 200px;
-  --boost-tint: var(--tint-0);
+  --gauge-amber: 255, 176, 58;
 }
 
-#boost.team-1 {
-  --boost-tint: var(--tint-1);
-}
-
-.boost-art {
+.gauge-art {
   position: absolute;
   inset: 0;
   overflow: visible;
 }
 
-.boost-ring,
-.boost-tick {
+.gauge-face {
+  fill: rgba(6, 10, 18, 0.62);
+  stroke: rgba(255, 255, 255, 0.14);
+  stroke-width: 1.2;
+}
+
+.gauge-track {
   fill: none;
+  stroke: rgba(255, 255, 255, 0.16);
+  stroke-width: 2;
 }
 
-.boost-ring {
-  stroke-width: 1.7;
-}
-
-.boost-tick {
-  stroke-width: 1.5;
-}
-
-.boost-guide {
-  stroke: rgba(66, 66, 66, 0.82);
-}
-
-.boost-guide.boost-node {
-  fill: rgba(66, 66, 66, 0.82);
-  stroke: none;
-}
-
-/* (the ring, its ticks and nodes lit cream where the meter is filled) */
-.boost-lit {
-  stroke: rgba(220, 212, 204, 0.9);
-}
-
-.boost-lit.boost-node {
-  fill: rgba(220, 212, 204, 0.9);
-  stroke: none;
-}
-
-.boost-seam {
+.gauge-low {
   fill: none;
-  stroke: rgba(40, 20, 0, 0.4);
-  stroke-width: 1;
+  stroke: rgba(255, 74, 58, 0.32);
+  stroke-width: 3;
+  transition: stroke 0.3s;
 }
 
-/* (80-100 %: white, recoloured in the non-team meter: BOOST_MAX on white, HUD-7) */
-.boost-white {
-  fill: var(--boost-white, #fff);
-  stroke: rgba(0, 0, 0, 0.2);
-  stroke-width: 1;
+#boost.low .gauge-low {
+  stroke: rgba(255, 88, 66, 0.85);
 }
 
-.boost-white-seam {
-  stroke: rgba(0, 0, 0, 0.45);
-  stroke-width: 0.8;
-}
-
-.boost-flash {
+.gauge-full,
+.gauge-full-glow {
+  fill: none;
+  stroke: rgb(var(--gauge-amber));
+  stroke-width: 2.5;
   opacity: 0;
+  transition: opacity 0.4s;
 }
 
-/* (the tint's glow: clip alpha 0.5, 1 past 80 %; grown about its centre, src/ui/boostMeter.ts) */
-.boost-glow {
+.gauge-full-glow {
+  stroke-width: 7;
+}
+
+#boost.max .gauge-full {
+  opacity: 0.9;
+}
+
+#boost.max .gauge-full-glow {
   opacity: 0.5;
 }
 
-.boost-glow-stop {
-  stop-color: rgb(var(--boost-tint));
+.gauge-tick {
+  stroke: rgba(255, 222, 176, 0.6);
+  stroke-width: 1.4;
+  stroke-linecap: round;
 }
 
-#boost-ghost {
-  --numbers-size: 54px;
-  position: absolute;
-  left: 42px;
-  top: 72px;
-  width: 120px;
-  height: 58px;
-  font: calc(var(--numbers-size) * var(--hud-numbers-scale, 1))/0 var(--hud-numbers);
-  color: #333;
+.gauge-tick.major {
+  stroke: rgba(255, 222, 176, 0.92);
+  stroke-width: 2.2;
+}
+
+.gauge-letter {
+  font: 600 15px var(--hud-header);
+  fill: rgba(235, 238, 245, 0.85);
+}
+
+#boost.low .gauge-e {
+  fill: rgb(255, 112, 92);
+}
+
+.gauge-needle-line {
+  stroke: rgb(var(--gauge-amber));
+  stroke-width: 3.2;
+  stroke-linecap: round;
+}
+
+#boost.max .gauge-needle {
+  filter: drop-shadow(0 0 3px rgba(var(--gauge-amber), 0.85));
+}
+
+.gauge-hub {
+  fill: #141a24;
+  stroke: rgb(var(--gauge-amber));
+  stroke-width: 2;
+}
+
+/* (the fuel pump: dim, nearly unseen; lit amber with a soft glow at 15 or under, pulsing once as it lights) */
+.gauge-pump-body {
+  fill: rgba(235, 238, 245, 0.1);
+}
+
+.gauge-pump-hose {
+  fill: none;
+  stroke: rgba(235, 238, 245, 0.1);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+#boost.low .gauge-pump-body {
+  fill: rgb(var(--gauge-amber));
+}
+
+#boost.low .gauge-pump-hose {
+  stroke: rgb(var(--gauge-amber));
+}
+
+#boost.low .gauge-pump {
+  filter: drop-shadow(0 0 3px rgba(var(--gauge-amber), 0.8));
+  animation: gauge-pump-on 0.9s ease-out;
+}
+
+@keyframes gauge-pump-on {
+  0% {
+    opacity: 0.3;
+  }
+
+  20% {
+    opacity: 1;
+  }
+
+  45% {
+    opacity: 0.4;
+  }
+
+  70%,
+  100% {
+    opacity: 1;
+  }
+}
+
+.gauge-flash {
+  opacity: 0;
+}
+
+.gauge-flash-arc {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 6;
 }
 
 #boost-value {
-  --numbers-size: 54px;
+  --numbers-size: 40px;
   position: absolute;
-  left: 42px;
-  top: 72px;
+  left: 40px;
+  top: 114px;
   width: 120px;
-  height: 58px;
+  height: 44px;
   font: calc(var(--numbers-size) * var(--hud-numbers-scale, 1))/0 var(--hud-numbers);
   color: rgb(102, 147, 255);
   text-shadow: 0 0 6px #000;
 }
 
-/* (faded in and out by the HUD past 80 %: HUD-7; its colour #666666 plus the team's tint always, the number alone turning
-   white: the user's finding 29) */
 #boost-label {
   position: absolute;
-  opacity: 0;
-  left: 42px;
-  top: 126px;
+  left: 40px;
+  top: 152px;
   width: 120px;
-  font: calc(16px * var(--hud-header-scale, 1))/18px var(--hud-header);
+  font: calc(13px * var(--hud-header-scale, 1))/16px var(--hud-header);
+  letter-spacing: 0.12em;
   text-align: center;
-  color: rgb(102, 147, 255);
+  color: rgba(var(--gauge-amber), 0.9);
 }
 
-#boost.team-1 #boost-value,
-#boost.team-1 #boost-label {
+#boost.team-1 #boost-value {
   color: rgb(255, 163, 102);
 }
 
-/* (past 80 %: the number white, a full glow; the label fading in and out in its own colour: hud.ts) */
+#boost.plain #boost-value {
+  color: rgb(var(--gauge-amber));
+}
+
 #boost.max #boost-value {
   color: #fff;
   text-shadow: 0 0 8px #000;
-}
-
-#boost.max .boost-glow {
-  opacity: 1;
-}
-
-/* (not team-coloured: orange, red past 80 %; an amber or red glow) */
-#boost.plain #boost-value,
-#boost.plain #boost-label {
-  color: #ff8a1f;
-}
-
-#boost.plain .boost-glow-stop {
-  stop-color: rgb(255, 147, 67);
-}
-
-#boost.plain .boost-glow {
-  opacity: 0.25;
-}
-
-#boost.plain {
-  --boost-white: rgb(255, 217, 189);
-}
-
-#boost.plain.max #boost-value {
-  color: #ff4040;
-}
-
-/* (the label past 80 % without the team colours: COLOR_BOOST_MAX on its #666666, (0, 0.6, 0.49) x + (255, 64, 64);
-   HUD.updateTeamColor) */
-#boost.plain.max #boost-label {
-  color: rgb(255, 125, 114);
-}
-
-#boost.plain.max .boost-glow-stop {
-  stop-color: rgb(255, 64, 64);
-}
-
-#boost.plain.max .boost-glow {
-  opacity: 0.75;
 }
 
 
@@ -2406,7 +2425,10 @@ body {
   gap: 6px;
 }
 
-.pause-question button {
+/* (the menus' small buttons: a question's answers, the players' Mute and Block) */
+.pause-question button,
+.end-question button,
+.players-action {
   min-width: 80px;
   padding: 4px 12px;
   font: calc(18px * var(--hud-header-scale, 1))/22px var(--hud-header);
@@ -2423,10 +2445,10 @@ body {
   border-color: #b3261e;
 }
 
+/* (no panel of its own: Players a pause button as the others, the same width and spacing, its rows under it) */
 .pause-players {
-  padding: 8px;
-  background: rgba(10, 14, 22, 0.85);
-  border-radius: 3px;
+  gap: 6px;
+  margin-bottom: 0;
 }
 
 /* MENU-1/2: the main menu over the arena: Play and Settings; Play's Free Play, the playlists and Find Match */
@@ -2549,6 +2571,54 @@ body {
   .main-menu-choices {
     grid-template-columns: repeat(2, 1fr);
   }
+}
+
+/* Play vs Bots (ours): the team size, each teammate's and opponent's bot (the slots' choices a row each), the chosen bots'
+   credits small under them */
+.main-menu-column.main-menu-bots-view {
+  width: min(560px, 84vw);
+}
+
+.main-menu-bots {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.main-menu-bots .main-menu-choices {
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+}
+
+.main-menu-bots .main-menu-button[aria-checked="true"] {
+  border-color: #43afff;
+  background: rgba(20, 60, 110, 0.9);
+}
+
+/* (a slot's levels under its bots, smaller: Full, and the bot's own easier one) */
+.main-menu-bots .main-menu-bot-levels {
+  grid-template-columns: repeat(auto-fit, minmax(80px, 140px));
+  margin-top: -2px;
+}
+
+.main-menu-bot-levels .main-menu-button {
+  padding-top: 4px;
+  padding-bottom: 4px;
+  font-size: 0.85em;
+}
+
+.main-menu-bot-side {
+  padding: 6px 2px 0;
+  font: calc(15px * var(--hud-header-scale, 1))/18px var(--hud-header);
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.main-menu-bot-credits {
+  padding: 4px 2px 0;
+  font-size: 12px;
+  line-height: 16px;
+  white-space: pre-line;
+  color: rgba(255, 255, 255, 0.6);
 }
 
 /* MM-5, MM-6 (MS1): the search's banner across the top (src/ui/searchView.ts): the strip full width, 26 units of the
@@ -2950,6 +3020,33 @@ body {
   font-weight: 700;
   color: #0b0f17;
   box-sizing: border-box;
+}
+
+/* (a stick's direction, ours: its letter on a rounded badge, the arrow beside it: RV-512) */
+.key-glyph.key-stick {
+  min-width: 1.5em;
+  padding: 0 0.3em;
+  font-size: 0.8em;
+  font-weight: 700;
+  color: #0b0f17;
+  box-sizing: border-box;
+}
+
+.key-glyph.key-stick::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 1.5em;
+  transform: translateY(-50%);
+  background: #e8eef7;
+  border-radius: 0.75em;
+}
+
+.key-stick-arrow {
+  margin-left: 0.1em;
 }
 
 /* (its badge, 1.5 em high, behind the letter) */

@@ -1,6 +1,7 @@
 // The queue's edge cases against their own queue server (e2e/servers.ts "queue-edges", ports 14441/14442; its matches on
-// map 2, meadow), in order: a map picked during a search while the page is slow to load (RV-443), one picked during
-// "Joining in" and a claim naming another map than the server's (RV-446), a match page whose arena chunk fails (RV-445),
+// map 2, meadow), in order: Free Play loading a page of its own during a search while the page is slow to load (from
+// another map's page, ?theme=: the one map offered is loaded; RV-443), Free Play during "Joining in" and a claim naming
+// another map than the server's (RV-446), a match page whose arena chunk fails (RV-445),
 // and a match cancelled while the page builds its arena (RV-444: the one no-show, last). Nothing drawn (`?render=off`).
 import type { Browser, Page } from "@playwright/test";
 import { expect, hideGamepads, test } from "./fixtures";
@@ -9,13 +10,13 @@ const QUEUE = "127.0.0.1:14442";
 
 test.describe.configure({ mode: "serial" });
 
-async function menuPage(browser: Browser, errors: string[], setup?: (page: Page) => Promise<void>): Promise<Page> {
+async function menuPage(browser: Browser, errors: string[], setup?: (page: Page) => Promise<void>, query = ""): Promise<Page> {
   const context = await browser.newContext({ viewport: { width: 640, height: 360 } });
   await hideGamepads(context);
   const page = await context.newPage();
   page.on("pageerror", (e) => errors.push(e.message));
   await setup?.(page);
-  await page.goto(`/?queue=${QUEUE}&render=off`);
+  await page.goto(`/?queue=${QUEUE}&render=off${query}`);
   await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
   return page;
 }
@@ -30,12 +31,11 @@ async function findMatch(page: Page): Promise<void> {
   await expect(page.locator("#search-banner .search-summary")).toHaveText(/^(Searching|Joining)$/, { timeout: 30_000 });
 }
 
-/** Free Play's map select, this map (from the Play page, where Find Match left the player: its search going on under
- *  the banner) */
-async function pickMap(page: Page, map: string): Promise<void> {
+/** Free Play (from the Play page, where Find Match left the player: its search going on under the banner): the one map
+ *  offered, on this page, or a page of its own from another map's (?theme=) */
+async function freePlay(page: Page): Promise<void> {
   const menu = page.locator("#main-menu");
   await menu.getByRole("button", { name: /^free play$/i }).click();
-  await menu.locator(`.main-menu-map[data-map="${map}"]`).click();
 }
 
 /** On the match's page with both cars */
@@ -47,10 +47,10 @@ async function inMatch(page: Page): Promise<void> {
 
 const mapOf = (page: Page): Promise<string> => page.evaluate(() => (window as unknown as { carballMap: () => string }).carballMap());
 
-test("a map picked during a search while the page is slow to load: the search closed first, no no-show (RV-443)", async ({ browser }) => {
+test("Free Play's own page during a search while it's slow to load: the search closed first, no no-show (RV-443)", async ({ browser }) => {
   test.setTimeout(180_000);
   const errors: string[] = [];
-  const a = await menuPage(browser, errors);
+  const a = await menuPage(browser, errors, undefined, "&theme=forest");
   const b = await menuPage(browser, errors);
   await findMatch(a);
   // (the next page slow to come, 2.5 s: the old one lives on meanwhile, as RX18's probe R)
@@ -61,7 +61,7 @@ test("a map picked during a search while the page is slow to load: the search cl
       await route.continue();
     },
   );
-  await pickMap(a, "forest");
+  await freePlay(a);
   await findMatch(b);
   // The match formed with A's new page's search (or followed by the old page if found first): both play, no cooldown
   for (const page of [a, b]) await inMatch(page);
@@ -71,7 +71,7 @@ test("a map picked during a search while the page is slow to load: the search cl
   await b.context().close();
 });
 
-test("a map picked during Joining in keeps the page; the match's map is the server's whatever the claim says (RV-446)", async ({ browser }) => {
+test("Free Play during Joining in keeps the page; the match's map is the server's whatever the claim says (RV-446)", async ({ browser }) => {
   test.setTimeout(180_000);
   const errors: string[] = [];
   // (A's claim rewritten to name forest before its match page reads it: the welcome's map, meadow, wins)
@@ -89,7 +89,7 @@ test("a map picked during Joining in keeps the page; the match's map is the serv
   await findMatch(a);
   await findMatch(b);
   await expect(a.locator("#search-banner .search-summary")).toHaveText("Joining", { timeout: 15_000 });
-  await pickMap(a, "forest");
+  await freePlay(a);
   for (const page of [a, b]) await inMatch(page);
   // (no free play page between: straight to the match's)
   expect(pages.filter((url) => !/[?&]match(&|$)/.test(url))).toEqual([]);

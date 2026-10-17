@@ -20,3 +20,15 @@ describe("the prompts' {key} token (HT-3, RV-282)", () => {
     expect(inputName({ kind: "padButton", button: 0 }, "playstation")).toBe("Cross");
   });
 });
+
+describe("a stick's direction as a badge (RV-512: the axis's long name made the respawn prompts collide)", () => {
+  it("the standard layout's sticks: L or R with the direction, its name kept for the title", () => {
+    expect(keyGlyph({ kind: "padAxis", axis: 0, sign: -1 })).toEqual({ kind: "stick", stick: "L", direction: "left", text: inputName({ kind: "padAxis", axis: 0, sign: -1 }) });
+    expect(keyGlyph({ kind: "padAxis", axis: 0, sign: 1 })).toMatchObject({ stick: "L", direction: "right" });
+    expect(keyGlyph({ kind: "padAxis", axis: 1, sign: 1 })).toMatchObject({ stick: "L", direction: "down" });
+    expect(keyGlyph({ kind: "padAxis", axis: 3, sign: -1 })).toMatchObject({ stick: "R", direction: "up" });
+    // (another axis: its name)
+    expect(keyGlyph({ kind: "padAxis", axis: 5, sign: 1 }).kind).toBe("word");
+  });
+});
+

@@ -11,14 +11,19 @@ import type { Update } from "./protocol";
 export const EXPECTED_PACKETS = { out: 60, in: 60 } as const;
 /** Server ticks per update (game.rs UPDATE_EVERY_TICKS) */
 const UPDATE_EVERY_TICKS = 2;
-/** An update datagram's bytes before its state (protocol 24) */
-export const UPDATE_HEADER_BYTES = 30;
+/** A gap longer than this (server ticks: 1.5 s) is a pause, not loss: the server holding back from a client it hasn't
+ *  heard (G8), a stalled tab (RV-516) */
+const PAUSE_TICKS = 180;
+/** An update datagram's bytes before its state (protocol 24: its type, the ticks and frames, the echo, the buffer's
+ *  target, size and window, the part and parts: 28, RV-520) */
+export const UPDATE_HEADER_BYTES = 28;
 
 const NET_ROWS: readonly StatTitle[] = ["Out Pkt", "In Pkt", "Out Loss", "In Loss", "Out Bytes", "In Bytes", "Latency", "IBuf", "IBuf Target", "IBuf Miss", "Phys Rate"];
 
 export class NetGraphFeed {
   #periodStart: number | null = null;
   #counts = { outPkt: 0, inPkt: 0, outBytes: 0, inBytes: 0, outLoss: 0, inLoss: 0 };
+  /** The newest update read (its first part to arrive gives its window: a lost part 0 doesn't lose it, RV-522) */
   #lastTick: number | null = null;
 
   constructor(private readonly data: StatGraphData) {}
@@ -38,10 +43,11 @@ export class NetGraphFeed {
   received(u: Update, rtt: number | null): void {
     this.#counts.inPkt++;
     this.#counts.inBytes += u.state.length + UPDATE_HEADER_BYTES;
-    if (u.part !== 0) return;
-    // (the updates the server sent between this one and the last, not here: In Loss)
-    if (this.#lastTick !== null && u.serverTick > this.#lastTick) this.#counts.inLoss += Math.max(0, Math.round((u.serverTick - this.#lastTick) / UPDATE_EVERY_TICKS) - 1);
-    if (this.#lastTick === null || u.serverTick > this.#lastTick) this.#lastTick = u.serverTick;
+    if (this.#lastTick !== null && u.serverTick <= this.#lastTick) return;
+    // (the updates the server sent between this one and the last, not here: In Loss; a longer gap a pause)
+    const gap = this.#lastTick === null ? 0 : u.serverTick - this.#lastTick;
+    if (gap <= PAUSE_TICKS) this.#counts.inLoss += Math.max(0, Math.round(gap / UPDATE_EVERY_TICKS) - 1);
+    this.#lastTick = u.serverTick;
     this.#counts.outLoss += u.inputLoss;
     const d = this.data;
     if (rtt !== null) d.set("Latency", rtt);

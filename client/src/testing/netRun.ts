@@ -12,12 +12,13 @@ import { BIT_BOOST, BIT_JUMP, type InputFrame, type Update, quantizeAxis } from 
 import { NetSession, type SmoothedCar } from "../net/session";
 import { NetSim, Pcg32, type Profile } from "./netsim";
 import { ServerConsume } from "./serverConsume";
+import { UPDATE_HEADER_BYTES } from "../net/netStats";
 
 type Engine = Awaited<ReturnType<typeof createEngine>>;
 
 const TICK = 1 / 120;
-/** An update datagram's bytes before its state (protocol 24: the input buffer's window, 5 more) */
-const UPDATE_HEADER = 30;
+/** An update datagram's bytes before its state (protocol 24: net/netStats.ts UPDATE_HEADER_BYTES) */
+const UPDATE_HEADER = UPDATE_HEADER_BYTES;
 
 /** count, mean, median, 95th and 99th percentiles, largest */
 export interface Summary {

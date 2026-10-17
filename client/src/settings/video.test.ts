@@ -108,12 +108,43 @@ describe("the automatic default", () => {
     }
   });
 
+  it("with the display's refresh measured (RV-519): a GPU-bound page held at 30 on a 60 Hz display steps; a 30 Hz cap, frames dropped or not, doesn't", () => {
+    const steady30 = Array.from({ length: 120 }, () => 1 / 30);
+    expect(guardDecision(steady30, 60)).toMatchObject({ slow: true, capped: false, step: true });
+    expect(guardDecision(steady30, 30)).toMatchObject({ capped: true, step: false });
+    // (a 30 Hz cap with a tenth of its frames dropped: still the cap)
+    const dropped = Array.from({ length: 120 }, (_, i) => (i % 10 === 0 ? 2 / 30 : 1 / 30));
+    expect(guardDecision(dropped, 30)).toMatchObject({ capped: true, step: false });
+    // (and the guard passes it on)
+    const guard = new AutoVideoGuard();
+    let stepped = false;
+    for (let t = 0; t < AUTO_GUARD.warmUp + AUTO_GUARD.measure + 0.1; t += 1 / 30) stepped ||= guard.frame(1 / 30, true, 60);
+    expect(stepped).toBe(true);
+  });
+
   it("hitches: a few long frames trimmed, none 0.25 s or longer counted", () => {
-    const frames = Array.from({ length: 240 }, (_, i) => (i % 40 === 0 ? 0.2 : (1 / 60) * (i % 2 === 0 ? 0.9 : 1.1)));
+    const jitter = (i: number): number => (1 / 60) * (i % 2 === 0 ? 0.9 : 1.1);
+    const frames = Array.from({ length: 240 }, (_, i) => (i % 40 === 0 ? 0.2 : jitter(i)));
     expect(guardDecision(frames).step).toBe(false);
+    // (the slowest 5 % left out: 12 of 240 at 0.2 s, a mean of 26 ms with them, 60 a second without: RV-529's CM37)
+    const twelve = Array.from({ length: 240 }, (_, i) => (i % 20 === 1 ? 0.2 : jitter(i)));
+    expect(guardDecision(twelve)).toMatchObject({ capped: false, step: false });
+    // (twice as many, past the 5 %: half of them kept, a step)
+    expect(guardDecision(Array.from({ length: 240 }, (_, i) => (i % 10 === 1 ? 0.2 : jitter(i))))).toMatchObject({ step: true });
     const guard = new AutoVideoGuard();
     expect(guard.frame(0.3)).toBe(false);
     expect(guard.frame(0.5)).toBe(false);
+    // (a 0.3 s frame every tenth through the measure: not counted at all, no step; counted, it would be: CM38)
+    const hitched = new AutoVideoGuard();
+    let stepped = false;
+    let t = 0;
+    for (let i = 0; t < AUTO_GUARD.warmUp + AUTO_GUARD.measure + 1; i++) {
+      const dt = i % 10 === 9 ? 0.3 : jitter(i);
+      stepped ||= hitched.frame(dt);
+      t += dt < AUTO_GUARD.hitch ? dt : 0;
+    }
+    expect(hitched.done).toBe(true);
+    expect(stepped).toBe(false);
   });
 
   it("its gates: drawing, allowed, not chosen, not stepped before, a level left; the step itself once, never over a choice (RV-499, RV-504)", () => {
@@ -148,6 +179,8 @@ describe("the automatic default", () => {
       "ANGLE (Intel, Intel(R) Arc(TM) Graphics (0x00007D55) Direct3D11 vs_5_0 ps_5_0, D3D11)",
       "ANGLE (AMD, AMD Radeon(TM) R7 Graphics (0x00001313) Direct3D11 vs_5_0 ps_5_0, D3D11)",
       "AMD Radeon R5 Graphics",
+      // (RV-525: Lunar Lake's integrated Arc)
+      "ANGLE (Intel, Intel(R) Arc(TM) 140V GPU (16GB) (0x000064A0) Direct3D11 vs_5_0 ps_5_0, D3D11)",
     ]) expect(isWeakGpu(name), name).toBe(true);
     for (const name of [
       "ANGLE (NVIDIA, NVIDIA GeForce RTX 3090 (0x00002204) Direct3D11 vs_5_0 ps_5_0, D3D11)",
@@ -155,6 +188,7 @@ describe("the automatic default", () => {
       "ANGLE (Intel, Intel(R) Arc(TM) A770 Graphics (0x000056A0) Direct3D11 vs_5_0 ps_5_0, D3D11)",
       "ANGLE (Intel, Intel(R) Arc(TM) B580 Graphics (0x0000E20B) Direct3D11 vs_5_0 ps_5_0, D3D11)",
       "AMD Radeon R7 200 Series",
+      "ANGLE (Intel, Intel(R) Arc(TM) Pro A60 Graphics (0x000056B2) Direct3D11 vs_5_0 ps_5_0, D3D11)",
       "Apple GPU",
       "Apple M2",
       "",

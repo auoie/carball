@@ -356,23 +356,7 @@ async fn session(incoming: IncomingSession, id: PlayerId, address: IpAddr, to_ga
             bail!("protocol version {version}, server speaks {}", protocol::VERSION);
         }
     };
-    let Control::Hello {
-        team,
-        model,
-        dodge_deadzone,
-        steering_sensitivity,
-        air_control_sensitivity,
-        auto_skip_replay,
-        key,
-        name,
-        quick_chat,
-        block_non_tactical,
-        intent,
-        playlist,
-        token,
-        ..
-    } = hello
-    else {
+    let Some((request, intent, playlist, token)) = JoinRequest::from_hello(hello) else {
         bail!("expected hello");
     };
     let searching = intent == protocol::INTENT_SEARCH;
@@ -383,7 +367,6 @@ async fn session(incoming: IncomingSession, id: PlayerId, address: IpAddr, to_ga
     };
 
     let (out_tx, mut out_rx) = channel(OUT_QUEUE);
-    let request = JoinRequest { team, model, dodge_deadzone, steering_sensitivity, air_control_sensitivity, auto_skip_replay, key, name, quick_chat, block_non_tactical };
     to_game.send(ToGame::Join { id, intent, request, address, out: out_tx }).await?;
 
     // Game -> client

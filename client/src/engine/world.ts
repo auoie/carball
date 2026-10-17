@@ -173,6 +173,14 @@ export interface BoostPadState {
   readonly cooldown: number;
 }
 
+/** Whether a pad was taken between two looks at it: up then taken, or taken both times with its cooldown jumped back
+ *  up (taken again the tick it returned, a car parked on it: the client never sees it up; a taken pad's cooldown only
+ *  counts down, a prediction's correction moving it less than a second) */
+export function padPickedUp(before: Pick<BoostPadState, "active" | "cooldown"> | undefined, now: Pick<BoostPadState, "active" | "cooldown">): boolean {
+  if (!before || now.active) return false;
+  return before.active || now.cooldown > before.cooldown + 1;
+}
+
 export type GameEvent =
   | { readonly type: "goal"; readonly scoringTeam: Team }
   | { readonly type: "bump"; readonly attacker: number; readonly victim: number }

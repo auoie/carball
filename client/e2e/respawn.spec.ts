@@ -1,7 +1,8 @@
 // The respawn view (notes/hud-menus.md HUD-20, RH1): demolished, the game's two bars shrinking toward the hourglass and
 // "[A] - RESPAWN LEFT" / "[D] - RESPAWN RIGHT" with the keyboard's steer keys, no seconds; steering picks a side, its spot
 // lit; gone at the prespawn. Nothing of the 3D drawn (`?render=off`).
-import { expect, test } from "./fixtures";
+import type { Page } from "@playwright/test";
+import { expect, fakeGamepad, test } from "./fixtures";
 import { freePlay } from "./players";
 
 test("demolished: the bars and the steer keys' prompts, a side picked by steering, gone at the prespawn (HUD-20)", async ({ page }) => {
@@ -12,20 +13,11 @@ test("demolished: the bars and the steer keys' prompts, a side picked by steerin
   await freePlay(page);
   const view = page.locator("#respawn");
   await expect(view).toBeHidden();
-  // (demolished once free play's own restart has run: one before it is undone by the restart's placing)
-  await expect
-    .poll(
-      async () =>
-        page.evaluate(() => {
-          const el = document.querySelector<HTMLElement>("#respawn");
-          const shown = el !== null && !el.hidden;
-          if (!shown) (window as unknown as { carballFreeplay: { demolish: () => void } }).carballFreeplay.demolish();
-          return shown;
-        }),
-      { timeout: 10_000 },
-    )
-    .toBe(true);
+  await expect(page.locator("#boost")).toBeVisible();
+  await demolished(page);
   await expect(view).toBeVisible();
+  // (no car's HUD while demolished: the boost meter gone, HUD-16, RV-513)
+  await expect(page.locator("#boost")).toBeHidden();
   await expect(page.locator("#respawn-left")).toHaveText("[A] - Respawn Left");
   await expect(page.locator("#respawn-right")).toHaveText("[D] - Respawn Right");
   await expect(view).not.toContainText(/\d\s*s\b/);
@@ -38,5 +30,59 @@ test("demolished: the bars and the steer keys' prompts, a side picked by steerin
   // clock's under the suite's load: its frames' time clamped)
   await expect(view).toHaveClass(/late/, { timeout: 20_000 });
   await expect(view).toBeHidden({ timeout: 40_000 });
+  // (respawned: the meter back)
+  await expect(page.locator("#boost")).toBeVisible({ timeout: 20_000 });
   expect(errors).toEqual([]);
 });
+
+/** Demolished once free play's own restart has run (one before it is undone by the restart's placing) */
+async function demolished(page: Page): Promise<void> {
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(() => {
+          const el = document.querySelector<HTMLElement>("#respawn");
+          const shown = el !== null && !el.hidden;
+          if (!shown) (window as unknown as { carballFreeplay: { demolish: () => void } }).carballFreeplay.demolish();
+          return shown;
+        }),
+      { timeout: 10_000 },
+    )
+    .toBe(true);
+}
+
+for (const [width, height] of [
+  [1280, 720],
+  [1920, 1080],
+] as const) {
+  test(`with a pad: the sticks' badges in the prompts, the two sides apart at ${String(width)}x${String(height)} (RV-512)`, async ({ browser }) => {
+    const context = await browser.newContext({ viewport: { width, height } });
+    await fakeGamepad(context);
+    const page = await context.newPage();
+    await page.goto("/?render=off");
+    await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+    await freePlay(page);
+    // (a pad press: the pad's prompts)
+    await page.evaluate(async () => {
+      const w = window as unknown as { carballSetPad: (down: number[]) => void };
+      w.carballSetPad([0]);
+      await new Promise((r) => setTimeout(r, 200));
+      w.carballSetPad([]);
+    });
+    await demolished(page);
+    await expect(page.locator("#respawn-left .key-stick")).toHaveText("L◂");
+    await expect(page.locator("#respawn-right .key-stick")).toHaveText("L▸");
+    const box = async (side: string): Promise<{ x: number; width: number }> => {
+      const b = await page.locator(`.respawn-side.${side}`).boundingBox();
+      if (!b) throw new Error(`no ${side} prompt`);
+      return b;
+    };
+    const [left, right] = [await box("left"), await box("right")];
+    expect(left.x + left.width).toBeLessThan(right.x);
+    // (both on the screen)
+    expect(left.x).toBeGreaterThan(0);
+    expect(right.x + right.width).toBeLessThan(width);
+    await context.close();
+  });
+}
+

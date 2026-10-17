@@ -30,65 +30,90 @@ export interface StatSlot {
   readonly high: number;
 }
 
-/** A row's samples (SampleHistory_TA) */
+/** A ring index's slot for a tick */
+const slotOf = (tick: number): number => ((tick % SLOTS) + SLOTS) % SLOTS;
+
+/** A row's samples (SampleHistory_TA). Ours: the slots in typed arrays written in place, read in their ticks' order
+ *  straight from the ring (RV-517: no slot objects, filtering or sorting) */
 export class SampleHistory {
-  readonly #slots: { tick: number; low: number; high: number }[] = Array.from({ length: SLOTS }, () => ({ tick: -1, low: 0, high: 0 }));
+  // (a slot's tick NaN while unused: equal to none)
+  readonly #ticks = new Float64Array(SLOTS).fill(Number.NaN);
+  readonly #lows = new Float64Array(SLOTS);
+  readonly #highs = new Float64Array(SLOTS);
   #newest = -1;
 
   /** A sample (one value, or an envelope) at `now` (s) */
   add(low: number, high: number, now: number): void {
     if (!Number.isFinite(low) || !Number.isFinite(high)) return;
     const tick = Math.floor(now * SAMPLE_RATE);
-    const slot = this.#slots[((tick % SLOTS) + SLOTS) % SLOTS];
-    if (!slot) return;
-    if (slot.tick !== tick) Object.assign(slot, { tick, low, high });
-    slot.low = Math.min(slot.low, low);
-    slot.high = Math.max(slot.high, high);
-    this.#newest = Math.max(this.#newest, tick);
+    const i = slotOf(tick);
+    if (this.#ticks[i] !== tick) {
+      this.#ticks[i] = tick;
+      this.#lows[i] = low;
+      this.#highs[i] = high;
+    } else {
+      this.#lows[i] = Math.min(this.#lows[i] ?? low, low);
+      this.#highs[i] = Math.max(this.#highs[i] ?? high, high);
+    }
+    if (tick > this.#newest) this.#newest = tick;
+  }
+
+  /** Each slot within the last `seconds` before `now`, oldest first */
+  forEachSlot(now: number, seconds: number, each: (tick: number, low: number, high: number) => void): void {
+    const tick = Math.floor(now * SAMPLE_RATE);
+    for (let t = tick - Math.min(SLOTS, Math.round(seconds * SAMPLE_RATE)) + 1; t <= tick; t++) {
+      const i = slotOf(t);
+      if (this.#ticks[i] === t) each(t, this.#lows[i] ?? 0, this.#highs[i] ?? 0);
+    }
   }
 
   /** The slots within the last `seconds` before `now`, oldest first */
   slots(now: number, seconds: number): readonly StatSlot[] {
-    const tick = Math.floor(now * SAMPLE_RATE);
-    const from = tick - Math.min(SLOTS, Math.round(seconds * SAMPLE_RATE)) + 1;
-    return this.#slots.filter((s) => s.tick >= 0 && s.tick >= from && s.tick <= tick).sort((a, b) => a.tick - b.tick);
+    const out: StatSlot[] = [];
+    this.forEachSlot(now, seconds, (tick, low, high) => out.push({ tick, low, high }));
+    return out;
   }
 
   /** A summary's value at `now` for a level's `window` (s); null without samples */
   summary(s: Summary, now: number, window: number): number | null {
     const v = (x: number): number => (s.abs ? Math.abs(x) : x);
     if (s.type === "latest") {
-      const slot = this.#slots[((this.#newest % SLOTS) + SLOTS) % SLOTS];
-      return slot && this.#newest >= 0 && slot.tick === this.#newest ? v((slot.low + slot.high) / 2) : null;
+      const i = slotOf(this.#newest);
+      return this.#newest >= 0 && this.#ticks[i] === this.#newest ? v(((this.#lows[i] ?? 0) + (this.#highs[i] ?? 0)) / 2) : null;
     }
-    const slots = this.slots(now, s.age > 0 && s.age <= window ? s.age : window);
-    if (slots.length === 0) return null;
+    const tick = Math.floor(now * SAMPLE_RATE);
+    const from = tick - Math.min(SLOTS, Math.round((s.age > 0 && s.age <= window ? s.age : window) * SAMPLE_RATE)) + 1;
+    const [ticks, lows, highs, abs] = [this.#ticks, this.#lows, this.#highs, s.abs === true];
+    let [count, total, lowest, highest] = [0, 0, Infinity, -Infinity];
+    for (let t = from, i = slotOf(from); t <= tick; t++, i = i + 1 === SLOTS ? 0 : i + 1) {
+      if (ticks[i] !== t) continue;
+      let low = lows[i] ?? 0;
+      let high = highs[i] ?? 0;
+      if (abs) {
+        low = Math.abs(low);
+        high = Math.abs(high);
+      }
+      count++;
+      total += high;
+      if (low < lowest) lowest = low;
+      if (high > highest) highest = high;
+    }
+    if (count === 0) return null;
     switch (s.type) {
       case "avg":
-        return slots.reduce((t, x) => t + v(x.high), 0) / slots.length;
+        return total / count;
       case "sum":
-        return slots.reduce((t, x) => t + v(x.high), 0);
+        return total;
       case "min":
-        return Math.min(...slots.map((x) => v(x.low)));
+        return lowest;
       case "max":
-        return Math.max(...slots.map((x) => v(x.high)));
+        return highest;
     }
   }
 }
 
-/** The displays' common refresh rates (Hz) */
-const REFRESH_RATES = [30, 50, 60, 72, 75, 90, 100, 120, 144, 165, 180, 200, 240, 360] as const;
-
-/** The target frame rate (SG2: the Max FPS cap; ours has none, so the display's refresh as measured): the median of the
- *  recent frame intervals (ms) as the nearest common rate; 60 before any */
-export function measuredRefresh(intervalsMs: readonly number[]): number {
-  if (intervalsMs.length === 0) return 60;
-  const sorted = [...intervalsMs].sort((a, b) => a - b);
-  const rate = 1000 / (sorted[Math.floor(sorted.length / 2)] ?? 1000 / 60);
-  return REFRESH_RATES.reduce((best, r) => (Math.abs(r - rate) < Math.abs(best - rate) ? r : best), 60);
-}
-
-/** What the rows' values depend on: the target frame rate (the cap, else the display's measured refresh), the
+/** What the rows' values depend on: the target frame rate (the cap, else the display's refresh as measured:
+ *  game/refreshRate.ts), the
  *  downstream's budget in bytes a second, the packet rates as sent, the speeds' units */
 export interface StatContext {
   readonly targetFps: number;
@@ -137,7 +162,7 @@ const speed = (title: string, good: number, bad: number, top: number): StatRow =
 /** The groups' rows (HUD-21's table; the titles the game's) */
 export const STAT_GROUPS = {
   perf: [
-    { title: "FPS", summaries: [AVG_1S, { type: "min", age: 1 }], good: (c) => c.targetFps - 1, bad: (c) => 0.8 * c.targetFps, range: (c) => [0, c.targetFps] },
+    { title: "FPS", summaries: [AVG_1S, MIN], good: (c) => c.targetFps - 1, bad: (c) => 0.8 * c.targetFps, range: (c) => [0, c.targetFps] },
     ms("Frame"),
     ms("Game"),
     ms("Render"),
@@ -194,8 +219,8 @@ export function standing(value: number, good: number, bad: number, base = 0): "g
 export interface StatRowView {
   readonly title: string;
   readonly summaries: readonly { readonly type: SummaryType; readonly value: number | null; readonly standing: "good" | "mid" | "bad" | null }[];
-  /** Its graph's slots (the window's; none at the Summary levels) */
-  readonly slots: readonly StatSlot[];
+  /** Its graph's samples (the window's: read from the ring as drawn; null at the Summary levels) */
+  readonly graph: SampleHistory | null;
   readonly range: readonly [number, number];
   readonly good: number;
   readonly bad: number;
@@ -236,7 +261,7 @@ export class StatGraphData {
             const value = history?.summary(s, now, window) ?? null;
             return { type: s.type, value, standing: value === null ? null : standing(value, good, bad, base) };
           }),
-          slots: v.graphs && history ? history.slots(now, v.window) : [],
+          graph: v.graphs && history ? history : null,
           range: row.range(c),
           good,
           bad,

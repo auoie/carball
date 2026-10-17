@@ -25,6 +25,7 @@ import {
   DoubleSide,
   Float32BufferAttribute,
   Group,
+  type Object3D,
   InstancedMesh,
   Matrix4,
   PlaneGeometry,
@@ -33,7 +34,7 @@ import {
   UniformsLib,
   UniformsUtils,
 } from "three";
-import type { BoostPadState } from "../engine/world";
+import { type BoostPadState, padPickedUp } from "../engine/world";
 import { GRASS_CUBE_BLUR_LOD } from "./grassCube";
 import { FIELD_LIGHT } from "./stadiumFieldRules";
 
@@ -538,8 +539,8 @@ function geometry(positions: number[], index: number[], extra: Record<string, { 
 
 /** How finely the pads are drawn (the user's request, 2026-10-16: similar, cheap): a base's outline points in each
  *  sixth (degrees from an arm, mirrored in the next sixth: a big pad's at its turns, the tip's arc's end, the arm's
- *  widest, its waist, then the curve between the arms; a small pad's every 20 degrees: a 24-gon, rounder close up
- *  (RV-506), puts every big pad down at 3,012 triangles, over the user's 3k), a big plate's inner ring (on the arms' axes and the bisectors, r
+ *  widest, its waist, then the curve between the arms; a small pad's every 20 degrees, an 18-gon: a 24-gon, rounder
+ *  close up, RV-506, would put every big pad down at 3,012 triangles, over the user's 3k), a big plate's inner ring (on the arms' axes and the bisectors, r
  *  uu out), the curtains' tube sides and wall points a side. Their markings, inlays, soft edges, glows and the surface's
  *  shading normal are drawn per pixel: the meshes carry only the outline and the overall height */
 export const PAD_TESSELLATION = {
@@ -1117,10 +1118,19 @@ interface PadSlot {
 }
 
 /** Boost pads, as the game draws them (the file's header): instanced, a handful of draw calls for all of them */
-export class BoostPadsView {
+/** A view of the boost pads (every map's game-style pads, or a map's own: the greenhouse's tokens), updated each frame
+ *  from the engine's pads (`seconds` since the last update; none given: its fades at their end at once) */
+export interface PadsView {
+  readonly root: Object3D;
+  update(pads: readonly BoostPadState[], seconds?: number): void;
+}
+
+export class BoostPadsView implements PadsView {
   readonly root = new Group();
   readonly #pads: readonly PadSlot[];
   readonly #shown: (boolean | null)[];
+  /** Each pad's cooldown last seen (a jump back up while taken: taken again the tick it returned) */
+  readonly #cooldowns: number[];
   /** Seconds left of each pad's Brightness fading (out after a pickup, in after its return) */
   readonly #fading: number[];
   /** Each pad's FX Brightness and warm-up n as last drawn (its base's inlays read both) */
@@ -1167,6 +1177,7 @@ export class BoostPadsView {
     freeze(this.root);
     this.#fx = [big, small].flatMap((m) => m.all.filter((mesh) => mesh !== m.base));
     this.#shown = pads.map(() => null);
+    this.#cooldowns = pads.map((p) => p.cooldown);
     this.#fading = pads.map(() => 0);
     this.#light = pads.map(() => 1);
     this.#warmUp = pads.map(() => 0);
@@ -1193,7 +1204,10 @@ export class BoostPadsView {
       const p = this.#pads[i];
       if (!p) return;
       const { base, curtains, warm, orb } = p.meshes;
-      const changed = this.#shown[i] !== pad.active;
+      // (taken again the tick it came back, a car parked on it: as a pickup, its FX fading out from full)
+      const retaken = this.#shown[i] === false && padPickedUp({ active: false, cooldown: this.#cooldowns[i] ?? 0 }, pad);
+      this.#cooldowns[i] = pad.cooldown;
+      const changed = this.#shown[i] !== pad.active || retaken;
       const first = this.#shown[i] === null;
       if (changed) {
         this.#shown[i] = pad.active;

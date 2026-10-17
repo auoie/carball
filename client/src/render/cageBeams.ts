@@ -252,6 +252,11 @@ function curveTexture(values: readonly number[]): DataTexture {
   return texture;
 }
 
+/** The beams' two curves as textures: the scan stripes' (Curve_Fire_01) and the contracting rings' (Curve_Smoke_01) */
+export function beamCurves(): { readonly fire: DataTexture; readonly smoke: DataTexture } {
+  return { fire: curveTexture(resampleCurve(FIRE_CURVE, FIRE_TEXELS)), smoke: curveTexture(SMOKE_CURVE) };
+}
+
 /** The game frame (x, y, z up) to Three's (x, z up, y) */
 const three = (v: readonly [number, number, number]): [number, number, number] => [v[0], v[2], v[1]];
 
@@ -303,6 +308,7 @@ export class CageBeams {
     // The game's: additive, 8 uu wide, its colour and brightness formula (with the teams' primaries)
     const p0 = [style.blue.r, style.blue.g, style.blue.b] as const;
     const p1 = [style.orange.r, style.orange.g, style.orange.b] as const;
+    const curves = beamCurves();
     this.#uniforms = {
       ...UniformsUtils.clone(UniformsLib.fog),
       ballPosition: { value: this.ballPosition },
@@ -316,8 +322,8 @@ export class CageBeams {
       opacity: { value: 1 },
       shockWave: { value: -0.25 },
       time: { value: 0 },
-      fire: { value: curveTexture(resampleCurve(FIRE_CURVE, FIRE_TEXELS)) },
-      smoke: { value: curveTexture(SMOKE_CURVE) },
+      fire: { value: curves.fire },
+      smoke: { value: curves.smoke },
     };
     const material = new ShaderMaterial({
       vertexShader: gameVertexShader,

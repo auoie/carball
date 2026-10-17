@@ -19,6 +19,8 @@ const REFERENCE = join(ROOT, "out/arena_local/reference");
 /** The surroundings' per-azimuth statistics and crowd tiers (local: the static session's SUR-1 exports) */
 const SUR1 = join(ROOT, "out/bsim/agents/SUR1");
 const DIST = join(SRC, "../dist");
+/** The bot packages, tracked (vite.config.ts copies their runtime files into a build with bots) */
+const BOTS = join(SRC, "../bots");
 /** The build's output files and the modules in each (vite.config.ts's chunkModules) */
 const CHUNK_MODULES = join(SRC, "../node_modules/.cache/rl-chunk-modules.json");
 /** Files the build copies into dist as they are (none today) */
@@ -37,17 +39,19 @@ function files(dir: string, keep: (name: string) => boolean): string[] {
 }
 const modules = (): string[] => files(SRC, (n) => n.endsWith(".ts") && !n.endsWith(".test.ts") && !n.endsWith(".d.ts"));
 
-/** three.js's installed package, its real path: where Node resolves "three" from client/ (hoisted, a workspace's, pnpm's
+/** A library's installed package, its real path: where Node resolves it from client/ (hoisted, a workspace's, pnpm's
  *  store: RV-240), so a folder of ours named node_modules/three isn't it (RV-261) */
-function installedThree(): string {
-  let dir = dirname(createRequire(join(SRC, "../package.json")).resolve("three"));
-  const named = (d: string): boolean => existsSync(join(d, "package.json")) && (JSON.parse(readFileSync(join(d, "package.json"), "utf8")) as { name?: string }).name === "three";
+function installedPackage(name: string, entry = name): string {
+  let dir = dirname(createRequire(join(SRC, "../package.json")).resolve(entry));
+  const named = (d: string): boolean => existsSync(join(d, "package.json")) && (JSON.parse(readFileSync(join(d, "package.json"), "utf8")) as { name?: string }).name === name;
   while (!named(dir)) {
-    if (dirname(dir) === dir) throw new Error("three's package.json not found");
+    if (dirname(dir) === dir) throw new Error(`${name}'s package.json not found`);
     dir = dirname(dir);
   }
   return realpathSync(dir);
 }
+
+const installedThree = (): string => installedPackage("three");
 
 /** The output files that are three.js's alone: every module in them (the bundler's own virtual ones aside) inside the
  *  library's installed package (`packageDir`, its real path; the module ids are client-relative), not told by a file's
@@ -129,11 +133,21 @@ function shippedImports(): string[] {
 }
 /** What ships as text (scanned as the modules are), and what as binary (each kind pinned or allowed by name) */
 const TEXT = /\.(json|css|js|mjs|html|txt|markdown|glsl|svg|csv|map|webmanifest)$/;
-type Kind = "text" | "cmf" | "wasm" | "font" | "unknown";
+type Kind = "text" | "cmf" | "wasm" | "font" | "onnx" | "unknown";
 /** cmf: the arena's collision meshes (pinned to our generated ones); wasm: the engine, our build (engine/build-wasm);
  *  font: the HUD's bundled fonts (pinned: FONTS) */
 const kind = (path: string): Kind =>
-  TEXT.test(path) ? "text" : path.endsWith(".cmf") ? "cmf" : path.endsWith(".wasm") ? "wasm" : /\.(woff2?|ttf|otf)$/.test(path) ? "font" : "unknown";
+  TEXT.test(path)
+    ? "text"
+    : path.endsWith(".cmf")
+      ? "cmf"
+      : path.endsWith(".wasm")
+        ? "wasm"
+        : /\.(woff2?|ttf|otf)$/.test(path)
+          ? "font"
+          : path.endsWith(".onnx")
+            ? "onnx"
+            : "unknown";
 /** The fonts that ship (style.css, public/fonts/; the user's pick, 2026-10-14), by their path under public/ and their
  *  content: the files as they were taken, SIL OFL each, its licence beside it (LICENCES). Orbitron's is the font
  *  project's own static Medium as published (github.com/theleagueof/orbitron, 2011-05-25: the user's decision, RV-489),
@@ -252,6 +266,7 @@ function bundleBinaries(): { kind: Kind; base64: string; where: string }[] {
   for (const path of files(DIST, () => true)) {
     const k = kind(path);
     if (k === "cmf" || k === "wasm" || k === "unknown") out.push({ kind: k, base64: readFileSync(path).toString("base64"), where: path.slice(ROOT.length) });
+    else if (k === "onnx") continue; // (the bots' policies: their packages', checked above)
     else {
       for (const m of readFileSync(path, "utf8").matchAll(/data:application\/octet-stream;base64,([A-Za-z0-9+/=]+)/g)) {
         const base64 = m[1] ?? "";
@@ -336,6 +351,19 @@ describe("what ships carries no game data (RV-99)", () => {
     for (const at of Object.keys(FONTS)) expect(existsSync(join(PUBLIC, at)), at).toBe(true);
     // (Orbitron's licence names its Reserved Font Name: the file is the one it covers, its own as published)
     expect(readFileSync(join(PUBLIC, "fonts/orbitron/Open Font License.markdown"), "utf8")).toContain('with Reserved Font Name: "Orbitron"');
+  });
+
+  it("the bots' policies that ship are their tracked packages' own (client/bots/): the same bytes, the sha256 each bot.json pins", () => {
+    const shipped = files(DIST, (n) => kind(n) === "onnx");
+    for (const path of shipped) {
+      const at = relative(join(DIST, "bots"), path).split("\\").join("/");
+      const [bot = "", file = ""] = at.split("/");
+      const manifest = JSON.parse(readFileSync(join(BOTS, bot, "bot.json"), "utf8")) as { policy: { files: Record<string, { file: string; sha256: string }> } };
+      const pinned = Object.values(manifest.policy.files).find((f) => f.file === file);
+      const bytes = readFileSync(path);
+      expect(bytes.equals(readFileSync(join(BOTS, at))), at).toBe(true);
+      expect(createHash("sha256").update(bytes).digest("hex"), at).toBe(pinned?.sha256);
+    }
   });
 
   it("the arena's collision meshes that ship are our generated ones: imported from out/arena, the bundle's (files or inlined) the same bytes (RV-167f)", () => {
@@ -1505,8 +1533,14 @@ describe.skipIf(!existsSync(ARROW_MESH))("against the game's Ball Arrow mesh and
     const text = t ? readFileSync(t.path, "utf8") : "";
     expect(findHudText(t?.strip ? stripComments(text) : text)).toBeNull();
   }, 60000);
+  // (onnxruntime's WebAssembly, the bots' policies' runtime: the library's own binary, told by the file it came from as
+  // three.js's chunk by its modules; 14 MB of compiled code meeting the bitmap rule by chance. The bots' policies too:
+  // their packages' own weights, held to them byte for byte above)
+  const recorded = existsSync(CHUNK_MODULES) ? (JSON.parse(readFileSync(CHUNK_MODULES, "utf8")) as Record<string, string[]>) : {};
+  const runtime = libraryFiles(recorded, installedPackage("onnxruntime-web", "onnxruntime-web/wasm"));
   it("the binaries that ship: none of it (fonts, the engine, meshes; images decoded)", () => {
-    for (const p of [...files(PUBLIC, (n) => kind(n) !== "text"), ...files(DIST, (n) => kind(n) !== "text")]) {
+    const shipped = files(DIST, (n) => kind(n) !== "text" && kind(n) !== "onnx").filter((p) => !runtime.has(relative(DIST, p).split("\\").join("/")));
+    for (const p of [...files(PUBLIC, (n) => kind(n) !== "text"), ...shipped]) {
       const b = readFileSync(p);
       if (IMAGE.test(p)) {
         const image = decodePngBytes(b);

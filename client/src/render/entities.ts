@@ -3,6 +3,8 @@
 import { AdditiveBlending, BackSide, BufferAttribute, type BufferGeometry, Color, FrontSide, Group, IcosahedronGeometry, LinearSRGBColorSpace, type Material, Mesh, MeshStandardMaterial, type Object3D, PlaneGeometry, type Quaternion, ShaderMaterial, type Side, SphereGeometry, Vector3 } from "three";
 import type { CarConfig, Team } from "../engine/world";
 import { RETICLE, RETICLE_GLSL_FN } from "./ballShadow";
+import { BallTrail, type TrailPoints } from "./ballTrail";
+import { TEAM_PRIMARY_LINEAR, fullBright } from "./teamColors";
 import { buildCarModel, carExhausts } from "./carModel";
 import { Trail, trailingRearWheels } from "./supersonic";
 import { BOOST_TRAIL, IDLE_EXHAUST } from "./effects";
@@ -184,6 +186,12 @@ export class BallView {
     on: { value: 0 },
   };
   #opacity = 1;
+  /** The speed trail (VT-10a): its last frame's game seconds and time dilation, where the ball was, whether it shows */
+  readonly #trail = new BallTrail();
+  #trailFrame = { seconds: 0, dilation: 1 };
+  #trailLast: Vector3 | null = null;
+  /** Whether the trail shows (none on the podium: VT-10a) */
+  trailShown = true;
 
   constructor() {
     // (transparent throughout: it dissolves on a goal and fades in at a kickoff)
@@ -222,10 +230,30 @@ export class BallView {
     // (the clarity sphere: 128 uu, seen from inside, black, its rim soft)
     // (24 x 12: its opacity (N.V)^2, nothing at its silhouette, so no facet shows: the integrated-graphics trims)
     this.#sphere = fx(new SphereGeometry(BALL_FX.sphere.radius, 24, 12), SPHERE_VERTEX, SPHERE_FRAGMENT, true, BackSide);
-    this.root.add(this.#ball, this.#marker, this.#sphere, this.#beam, this.#ring);
+    this.root.add(this.#ball, this.#marker, this.#sphere, this.#beam, this.#ring, this.#trail.mesh);
+  }
+
+  /** The team whose car last touched the ball (null: none since the kickoff): the trail's new points in its colour at
+   *  full brightness, white before any (VT-10) */
+  set trailTeam(team: Team | null) {
+    const primary = team === null ? null : TEAM_PRIMARY_LINEAR[team];
+    this.#trail.colour = primary ? fullBright(primary) : [1, 1, 1];
+  }
+
+  /** The trail's points (for tests) */
+  get trail(): Readonly<TrailPoints> {
+    return this.#trail.state;
   }
 
   update(position: Vector3, rotation: Quaternion): void {
+    // (the trail: its speed the ball's drawn travel over the frame's game time)
+    const { seconds, dilation } = this.#trailFrame;
+    const speed = this.#trailLast && seconds > 0 ? this.#trailLast.distanceTo(position) / seconds : 0;
+    this.#trailLast = (this.#trailLast ?? new Vector3()).copy(position);
+    this.#trail.mesh.visible = this.trailShown;
+    if (this.trailShown) this.#trail.update(seconds, position, speed, dilation);
+    else this.#trail.clear();
+    this.#trailFrame = { seconds: 0, dilation: 1 };
     this.#ball.position.copy(position);
     this.#ball.quaternion.copy(rotation);
     // On the floor straight below the ball; its inner ring by the height of the ball's centre (no fade: VT-30a)
@@ -246,12 +274,18 @@ export class BallView {
   spawn(instant = false): void {
     this.#opacity = instant ? 1 : 0;
     this.#sinceSpawn = 0; // (a new FX actor: its beam, ring and sphere come again, VT-30a)
+    // (its trail too: begun again unseen, its opacity 0)
+    this.#trail.clear();
+    this.#trailLast = null;
     this.#show(false);
   }
 
   /** This frame's look: exploded, the ball's Dissolve falls at 3/s (Ball_TA's BallFadeOutSpeed -3: 0.333 s, VT-15),
    *  its marker gone at once; else it rises at 1/s (after a spawn); the frame time capped at 1/30 either way (RV-30) */
-  fade(exploded: boolean, seconds: number): void {
+  fade(exploded: boolean, seconds: number, dilation = 1): void {
+    // (the trail gone at once at the explosion: VT-10a, VT-15)
+    if (exploded) this.#trail.clear();
+    this.#trailFrame = { seconds: exploded ? 0 : Math.max(0, seconds), dilation };
     const dt = Math.min(Math.max(0, seconds), 1 / 30);
     this.#opacity = exploded ? Math.max(0, this.#opacity - 3 * dt) : Math.min(1, this.#opacity + dt);
     this.#sinceSpawn += Math.max(0, seconds);

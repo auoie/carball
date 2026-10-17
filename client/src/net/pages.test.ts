@@ -59,6 +59,9 @@ describe("the pages' handoffs", () => {
     expect(pageUrl("match", { pathname: "/", search: "?queue=127.0.0.1:14440&render=off" })).toBe("/?queue=127.0.0.1%3A14440&render=off&match");
     expect(pageUrl("menu", { pathname: "/", search: "?queue=q&match" })).toBe("/?queue=q");
     expect(pageUrl("menu", { pathname: "/x/", search: "?match&server=a:1" })).toBe("/x/");
+    // (the offline match against bots: its own page, ?bots)
+    expect(pageUrl("bots", { pathname: "/", search: "?render=off" })).toBe("/?render=off&bots");
+    expect(pageUrl("menu", { pathname: "/", search: "?bots" })).toBe("/");
     // (the map select's pick: without a development ?theme, which would load its own map instead)
     expect(freePlayUrl({ pathname: "/", search: "?theme=meadow&render=off" })).toBe("/?render=off");
     expect(freePlayUrl({ pathname: "/x/", search: "?theme=lake" })).toBe("/x/");

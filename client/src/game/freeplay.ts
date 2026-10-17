@@ -6,7 +6,7 @@ import { Interpolated } from "./interpolated";
 import { PlayerCamera } from "../camera/carballCamera";
 import { BOOST_SPAWN_AMOUNT, type BodyState, type CarConfig, type CarState, type Team, type World } from "../engine/world";
 import { DEFAULT_CAR, carChoice } from "./cars";
-import { type Hud, type ReplayGoal, type ReplayHud, replaySpeed, replayTime, respawnHud } from "../hud";
+import { type Hud, type ReplayGoal, type ReplayHud, replaySpeed, replayTime, respawnView } from "../hud";
 import { keyGlyph } from "../ui/keyGlyph";
 import type { InputDevices } from "../input/devices";
 import { AirPitchSafety, ButtonLatch, EMPTY_INPUT, type HeldActions, JumpLatch, type LookInput, NO_HELD_ACTIONS, readControls, readHeldActions } from "../input/mapping";
@@ -14,7 +14,7 @@ import type { ControllerSettings, Options, Settings } from "../settings/settings
 import { FixedStep, TICK_SECONDS, frameTimes } from "../loop/fixedStep";
 import { type Vec3, ZERO, add, scale, vec3 } from "../math/vec";
 import { BallView, CarView, trailGround } from "../render/entities";
-import { BoostPadsView } from "../render/boostPads";
+import type { PadsView } from "../render/boostPads";
 import { SceneEffects } from "../render/effects";
 import { EXPLOSION_LARGE, IMPACT_MEDIUM } from "../camera/shake";
 import { ImpactTriggers, triggerSounds } from "./impactTriggers";
@@ -30,7 +30,7 @@ import { Fade } from "../render/fade";
 import { LOAD_FADE_IN } from "./matchSequence";
 import { TouchLog, planReplay } from "./replayPlan";
 import { ReplayPlayback, explosionTeam } from "./replayPlayback";
-import { ReplayRecorder, recordCar } from "./replayRecorder";
+import { ReplayRecorder, freeplayTouchTeam, recordCar } from "./replayRecorder";
 import { BallArrow, ballArrowShown } from "../render/ballArrow";
 import { FlipResetFx } from "../render/flipResetFx";
 import { fromThreeVector } from "../render/coords";
@@ -64,11 +64,13 @@ export class Freeplay {
   readonly #impactTriggers = new ImpactTriggers();
   #carConfigs: ReadonlyMap<number, CarConfig>;
   readonly #ballView = new BallView();
+  /** The garage's team: the car's colour, the ball trail's after its touch (the engine's car is team 0 whatever it is) */
+  #team: Team = 0;
   /** The ball arrow by the car (HUD-17) */
   readonly #ballArrow = new BallArrow();
   /** The flip reset's effect on the car (HUD-19) */
   readonly #flipFx = new FlipResetFx();
-  readonly #padsView: BoostPadsView;
+  readonly #padsView: PadsView;
   #car: Interpolated<CarState>;
   readonly #ball: Interpolated<BodyState>;
   #ballSpawns = 0; // the ball's spawn counter last tick (a reset places it: not interpolated)
@@ -133,6 +135,7 @@ export class Freeplay {
     this.#hud = hud;
     this.#audio = audio;
     this.#playerId = world.addCar(0, carChoice(garage.car).body);
+    this.#team = garage.team;
     // (Unlimited boost in free play: on by default, as the game's; off, 33 each round, used up, and pads taken)
     this.#unlimitedBoost = settings().options.unlimitedBoost;
     world.setUnlimitedBoost(this.#unlimitedBoost);
@@ -142,7 +145,7 @@ export class Freeplay {
     this.#fade.fromBlack(LOAD_FADE_IN); // (MIO-2: the arena fades in from black as it first draws)
     this.#carView = new CarView(world.carConfig(this.#playerId), garage.team, this.#effects.particles, garage.car);
     this.#carConfigs = new Map([[this.#playerId, world.carConfig(this.#playerId)]]);
-    this.#padsView = new BoostPadsView(world.boostPads(), arena.reflection);
+    this.#padsView = arena.createPads(world.boostPads());
     renderer.scene.add(this.#carView.root, this.#ballView.root, this.#padsView.root, this.#ballArrow.root);
     this.#car = new Interpolated(world.car(this.#playerId));
     this.#ball = new Interpolated(world.ball());
@@ -313,6 +316,7 @@ export class Freeplay {
       cars: new Map([[this.#playerId, recordCar(car)]]),
       ball: this.#world.ball(),
       ballExploded: this.#world.ballExploded(),
+      lastTouchTeam: freeplayTouchTeam(this.#world, this.#team),
     });
     if (heldBefore && this.#world.kickoffCountdown() === 0) this.#spawnIndex += 1;
     if (this.#padResetTicks > 0) {
@@ -371,6 +375,7 @@ export class Freeplay {
     this.#carView.dispose();
     this.#world.removeCar(this.#playerId);
     this.#playerId = this.#world.addCar(0, carChoice(garage.car).body);
+    this.#team = garage.team;
     this.#world.setUnlimitedBoost(this.#unlimitedBoost);
     this.#carView = new CarView(this.#world.carConfig(this.#playerId), garage.team, this.#effects.particles, garage.car);
     this.#carConfigs = new Map([[this.#playerId, this.#world.carConfig(this.#playerId)]]);
@@ -498,7 +503,9 @@ export class Freeplay {
       this.#throttle > 0,
     );
     const ball = this.#ball.position(alpha, this.#pos);
-    this.#ballView.fade(this.#world.ballExploded(), frameSeconds); // (a goal explodes it until the reset: it dissolves)
+    // (the ball's trail in the last touch's team colour, its points quicker in the goal's slow motion: VT-10, VT-17)
+    this.#ballView.trailTeam = freeplayTouchTeam(this.#world, this.#team);
+    this.#ballView.fade(this.#world.ballExploded(), frameSeconds, realSeconds > 0 ? frameSeconds / realSeconds : 1); // (a goal explodes it until the reset: it dissolves)
     this.#effects.update(frameSeconds);
     const own = this.#car.current;
     this.#shakeTriggers.frame(this.#camera.shakes, own, new Map([[this.#playerId, own]]), this.#world.boostPads(), (c) => {
@@ -553,12 +560,13 @@ export class Freeplay {
       message: null, // (no scored message in offline freeplay: RV-38)
       replay,
       // (training: no scoreboard, HUD-4)
-      parts: { scoreboard: false, boost: true },
+      // (demolished: no car's HUD, the boost meter and the ball cam indicator gone: HUD-16's bShowCarHUD, RV-513)
+      parts: { scoreboard: false, boost: !car.demoed, ballCamIndicator: !car.demoed },
       fps: this.#fps,
       net: null,
       flip: flipVisual(this.settings().gameplay.flipResetIndicator) ? this.#dodge : null,
       flipReset: this.#flipReset,
-      respawn: respawnHud(car, {
+      respawn: respawnView(car, null, {
         left: keyGlyph(pad ? settings.bindings.steerLeft.gamepad : settings.bindings.steerLeft.keyboard),
         right: keyGlyph(pad ? settings.bindings.steerRight.gamepad : settings.bindings.steerRight.keyboard),
       }),

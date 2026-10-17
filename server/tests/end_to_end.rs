@@ -92,6 +92,9 @@ async fn a_client_connects_drives_and_follows_the_world() {
     let mut updates = 0;
     let mut last_ack = 0;
     let mut pings = Vec::new();
+    // (the datagrams' own count, protocol 24: the server counts its gaps as inputs lost, none here on localhost)
+    let mut datagrams = 0u16;
+    let mut lost = 0u32;
     let mut next_send = Instant::now();
     while begin.elapsed() < countdown + Duration::from_millis(1500) {
         if Instant::now() >= next_send {
@@ -104,10 +107,11 @@ async fn a_client_connects_drives_and_follows_the_world() {
             let frames = sent[sent.len() - keep..].to_vec();
             let packet = Datagram::Inputs {
                 timestamp: begin.elapsed().as_millis() as u32,
-                sequence: frame as u16,
+                sequence: datagrams,
                 first_frame: frame + 1 - keep as u32,
                 frames,
             };
+            datagrams = datagrams.wrapping_add(1);
             connection.send_datagram(packet.encode()).unwrap();
         }
         if let Ok(Ok(d)) = tokio::time::timeout(Duration::from_millis(2), connection.receive_datagram()).await
@@ -115,6 +119,9 @@ async fn a_client_connects_drives_and_follows_the_world() {
         {
             assert!(world.apply_net_state(&u.state));
             updates += 1;
+            if u.part == 0 {
+                lost += u32::from(u.input_loss);
+            }
             last_ack = last_ack.max(u.ack_frame);
             if u.echo_timestamp > 0 {
                 let now = begin.elapsed().as_millis() as i64;
@@ -129,6 +136,29 @@ async fn a_client_connects_drives_and_follows_the_world() {
     assert!(driven > 500.0, "client view of the car drove {driven} uu");
     assert!(last_ack + 30 > frame, "the server consumed our inputs (ack {last_ack}, sent {frame})");
     assert!(pings.iter().all(|&p| (0..100).contains(&p)), "ping on localhost {pings:?}");
+    assert_eq!(lost, 0, "inputs lost on localhost");
+    // Three datagrams skipped on purpose: the server counts them (the session, the game loop and the update's window)
+    datagrams = datagrams.wrapping_add(3);
+    let skipped_at = Instant::now();
+    let mut reported = 0u32;
+    while skipped_at.elapsed() < Duration::from_millis(400) {
+        if Instant::now() >= next_send {
+            next_send += Duration::from_micros(16_667);
+            frame += 1;
+            sent.push(InputFrame { throttle: 127, ..InputFrame::default() });
+            let keep = sent.len().min(protocol::MAX_INPUT_FRAMES);
+            let packet = Datagram::Inputs { timestamp: begin.elapsed().as_millis() as u32, sequence: datagrams, first_frame: frame + 1 - keep as u32, frames: sent[sent.len() - keep..].to_vec() };
+            datagrams = datagrams.wrapping_add(1);
+            connection.send_datagram(packet.encode()).unwrap();
+        }
+        if let Ok(Ok(d)) = tokio::time::timeout(Duration::from_millis(2), connection.receive_datagram()).await
+            && let Ok(Datagram::Update(u)) = Datagram::decode(&d)
+            && u.part == 0
+        {
+            reported += u32::from(u.input_loss);
+        }
+    }
+    assert_eq!(reported, 3, "the skipped datagrams reported lost");
 }
 
 /// A client that vanishes without closing (its runtime stops) is a lost connection once the server's idle timeout ends
@@ -280,8 +310,8 @@ async fn two_searches_make_a_match_their_tokens_claim() {
     let (Control::MatchFound { token: ta, map: ma }, ..) = a else { panic!("{:?}", a.0) };
     let (Control::MatchFound { token: tb, map: mb }, ..) = b else { panic!("{:?}", b.0) };
     assert!(ta != tb && ta != 0 && tb != 0);
-    // (the match's map, picked at random, the same for both: in their MatchFound and their welcomes)
-    assert!(ma == mb && ma < protocol::MAP_COUNT, "{ma} {mb}");
+    // (the match's map, the one offered (Night's greenhouse), the same for both: in their MatchFound and their welcomes)
+    assert!(ma == mb && ma == protocol::GREENHOUSE_MAP, "{ma} {mb}");
 
     let (ca, _conn_a, mut recv_a) = first_reply(port, cert_hash, queue_hello(protocol::INTENT_CLAIM, 0, ta)).await;
     let Control::Welcome { team_size, key, map, .. } = ca else { panic!("{ca:?}") };

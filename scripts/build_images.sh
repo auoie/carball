@@ -46,6 +46,10 @@ EM=${EMSCRIPTEN_ROOT:-/usr/lib/emscripten}
 PATH="$EM:$PATH" emcmake cmake -S "$SRC/engine" -B "$SRC/engine/build-wasm" -DCMAKE_BUILD_TYPE=Release > /dev/null
 PATH="$EM:$PATH" emmake make -C "$SRC/engine/build-wasm" -j8 rlengine rlengine_web
 
+echo "== the local host's WebAssembly (the client bundles it: the offline match against bots, scripts/build_host.sh)"
+# (its own target directory; the build machine's paths remapped by the script itself: the module ships)
+PATH="$EM:$PATH" CARGO_TARGET_DIR="$R/out/images/target-host" CARBALL_ENGINE_WASM="$SRC/engine/build-wasm-host" bash "$SRC/scripts/build_host.sh"
+
 echo "== the client's production build, the shipped-data check on it"
 # (the installed packages, each linked: not node_modules itself, whose .cache holds the build's chunk record, the
 # guard's: the working tree's must stay its own build's)

@@ -8,9 +8,27 @@ publish = false
 [dependencies]
 anyhow = "1"
 getrandom = "0.4"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util"] }
-wtransport = { version = "0.7", features = ["quinn"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util"], optional = true }
+wtransport = { version = "0.7", features = ["quinn"], optional = true }
 libc = "0.2"
+
+[features]
+default = ["net"]
+# The network server: WebTransport, the queue, the game loop's thread (the release image's build)
+net = ["dep:tokio", "dep:wtransport"]
+# The browser's local host (src/bin/host.rs: an offline match against bots, in a worker): built for
+# wasm32-unknown-emscripten with --no-default-features --features host (scripts/build_host.sh)
+host = []
+
+[[bin]]
+name = "carball-server"
+path = "src/main.rs"
+required-features = ["net"]
+
+[[bin]]
+name = "carball-host"
+path = "src/bin/host.rs"
+required-features = ["host"]
 
 [dev-dependencies]
 serde_json = "1"

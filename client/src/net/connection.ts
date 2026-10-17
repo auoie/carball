@@ -21,6 +21,9 @@ import {
 export interface ServerAddress {
   readonly url: string; // https://host:port/play
   readonly certHash: Uint8Array<ArrayBuffer> | null; // development servers: SHA-256 of their self-signed certificate
+  /** The offline match against bots: its session, a stand-in for WebTransport talking to the local host
+   *  (local/localTransport.ts), instead of the network */
+  readonly open?: () => WebTransport;
 }
 
 /** A development server publishes its port and certificate hash at http://host:infoPort/info. */
@@ -185,10 +188,9 @@ export class Connection {
     preferences: JoinPreferences,
     match: MatchSession = { intent: "join" },
   ): Promise<{ connection: Connection; welcome: Welcome }> {
-    const transport = new WebTransport(
-      address.url,
-      address.certHash ? { serverCertificateHashes: [{ algorithm: "sha-256", value: address.certHash }] } : undefined,
-    );
+    const transport =
+      address.open?.() ??
+      new WebTransport(address.url, address.certHash ? { serverCertificateHashes: [{ algorithm: "sha-256", value: address.certHash }] } : undefined);
     await transport.ready;
     const connection = new Connection(transport);
     const stream = await transport.createBidirectionalStream();

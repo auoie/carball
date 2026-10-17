@@ -27,18 +27,17 @@ target_include_directories(rlnet PUBLIC net rocketsim/src)
 target_compile_options(rlnet PRIVATE -ffp-contract=off -fno-fast-math)
 target_link_libraries(rlnet PUBLIC RocketSim)
 
-# C interface for the native game server (Rust): capi/rlengine.h; the match stats (stats/), server only
-if (NOT EMSCRIPTEN)
-	add_library(rlstats STATIC stats/StatFactory.cpp stats/PodiumTitles.cpp)
-	target_include_directories(rlstats PUBLIC stats rocketsim/src)
-	target_compile_options(rlstats PRIVATE -ffp-contract=off -fno-fast-math)
-	target_link_libraries(rlstats PUBLIC RocketSim)
+# C interface for the game server (Rust): capi/rlengine.h; the match stats (stats/). Natively for the network server;
+# with Emscripten for the browser's local host (server/src/bin/host.rs, scripts/build_host.sh: an offline match)
+add_library(rlstats STATIC stats/StatFactory.cpp stats/PodiumTitles.cpp)
+target_include_directories(rlstats PUBLIC stats rocketsim/src)
+target_compile_options(rlstats PRIVATE -ffp-contract=off -fno-fast-math)
+target_link_libraries(rlstats PUBLIC RocketSim)
 
-	add_library(rlengine_capi STATIC capi/rlengine.cpp)
-	target_include_directories(rlengine_capi PUBLIC capi)
-	target_compile_options(rlengine_capi PRIVATE -ffp-contract=off -fno-fast-math)
-	target_link_libraries(rlengine_capi PUBLIC rlnet rlstats)
-endif()
+add_library(rlengine_capi STATIC capi/rlengine.cpp)
+target_include_directories(rlengine_capi PUBLIC capi)
+target_compile_options(rlengine_capi PRIVATE -ffp-contract=off -fno-fast-math)
+target_link_libraries(rlengine_capi PUBLIC rlnet rlstats)
 
 set(ARENA_MESH_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../out/arena/collision_meshes")
 

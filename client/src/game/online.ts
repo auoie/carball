@@ -11,7 +11,7 @@ import { PlayerCamera } from "../camera/carballCamera";
 import type { BodyState, CarConfig, CarState, World } from "../engine/world";
 import { type Vec3, add } from "../math/vec";
 import { type NetGraphFeed, rawRoundTrip } from "../net/netStats";
-import { ESSENTIAL, GAME_UPDATE, type Hud, type ReplayHud, replaySpeed, replayTime, respawnHud } from "../hud";
+import { ESSENTIAL, GAME_UPDATE, type Hud, type ReplayHud, replaySpeed, replayTime, respawnView } from "../hud";
 import type { InputDevices } from "../input/devices";
 import { AirPitchSafety, ButtonLatch, type ChatKey, EMPTY_INPUT, chatPresses, type HeldActions, type InputSnapshot, JumpLatch, type LookInput, NO_HELD_ACTIONS, readControls, readHeldActions } from "../input/mapping";
 import { FixedStep, TICK_SECONDS, frameTimes } from "../loop/fixedStep";
@@ -35,7 +35,7 @@ import {
 import { NetSession } from "../net/session";
 import { type SessionEnd, idleTipShown, sessionEndReason } from "./sessionEnd";
 import { BallView, CarView, trailGround } from "../render/entities";
-import { BoostPadsView } from "../render/boostPads";
+import type { PadsView } from "../render/boostPads";
 import { DEFAULT_CAR, carChoice } from "./cars";
 import type { ArenaView } from "../render/arena";
 import type { Renderer } from "../render/renderer";
@@ -49,7 +49,7 @@ import { SyncError } from "./syncError";
 import { HUD_TEXT, TICK_RATE, clockCue, clockWarning, countdownStep, formatClock, overtimeLabel, shownSeconds } from "./matchClock";
 import { fromThreeVector, rotateRl } from "../render/coords";
 import { postGoalDilation } from "./goalSequence";
-import { type RecordedCar, ReplayRecorder, recordCar } from "./replayRecorder";
+import { type RecordedCar, ReplayRecorder, lastTouchTeam, recordCar } from "./replayRecorder";
 import { ReplayPlayback } from "./replayPlayback";
 import { Fade } from "../render/fade";
 import { SceneEffects } from "../render/effects";
@@ -71,7 +71,6 @@ import {
   dimming,
   hudParts,
   matchOver,
-  respawnShown,
   podiumSpots,
   podiumView,
   winnerBanner,
@@ -160,7 +159,7 @@ export class Online {
   readonly #ballError: SyncError;
   #drawnBallSpawns = 0; // the ball's spawn counter last drawn (a new ball fades in)
   #serverExploded = false; // the server's goal event exploded the ball, until the next ball
-  readonly #padsView: BoostPadsView;
+  readonly #padsView: PadsView;
   readonly #controlMessages: ControlMessage[] = [];
   /** The match's state, from the server */
   #match: MatchState | null = null;
@@ -290,7 +289,7 @@ export class Online {
       nowMs: () => performance.now(),
     });
     this.#predictor = this.#session.predictor;
-    this.#padsView = new BoostPadsView(world.boostPads(), arena.reflection);
+    this.#padsView = arena.createPads(world.boostPads());
     this.#ball = this.#session.ball;
     this.#ballError = this.#session.ballError;
     this.#drawnBallSpawns = this.#session.ballSpawns;
@@ -596,7 +595,7 @@ export class Online {
       const car = this.#world.car(id);
       cars.set(id, { ...recordCar(car), demoed: this.#drawnDemoed(id, car) });
     }
-    this.#recorder.record(frame, { cars, ball: this.#world.ball(), ballExploded: this.#world.ballExploded() });
+    this.#recorder.record(frame, { cars, ball: this.#world.ball(), ballExploded: this.#world.ballExploded(), lastTouchTeam: lastTouchTeam(this.#world) });
   }
 
   #handleControlMessages(): void {
@@ -828,6 +827,9 @@ export class Online {
       this.#ballView.spawn();
       this.#arena.newBall();
     }
+    // (the ball's trail in the last touch's team colour; none on the podium: VT-10, VT-10a)
+    this.#ballView.trailTeam = lastTouchTeam(this.#world);
+    this.#ballView.trailShown = this.#match?.phase !== "prePodium" && this.#match?.phase !== "podium" && this.#match?.phase !== "finished";
     this.#ballView.fade(this.#serverExploded, frameSeconds);
     // The ball arrow (HUD-17): the setting on, the ball cam off, in the round (the countdown, play, after a goal)
     const roundPhase = this.#match?.phase;
@@ -1025,15 +1027,13 @@ export class Online {
       net: `${ping} · ${this.#session.bufferText} · ${String(this.#cars.size)} cars`,
       flip: flipVisual(settings.gameplay.flipResetIndicator) ? this.#dodge : null,
       flipReset: this.#flipReset,
-      respawn:
-        car && respawnShown(this.#match)
-          ? respawnHud(car, {
-              left: keyGlyph(pad ? settings.bindings.steerLeft.gamepad : settings.bindings.steerLeft.keyboard),
-              right: keyGlyph(pad ? settings.bindings.steerRight.gamepad : settings.bindings.steerRight.keyboard),
-            })
-          : null,
+      respawn: respawnView(car, this.#match, {
+        left: keyGlyph(pad ? settings.bindings.steerLeft.gamepad : settings.bindings.steerLeft.keyboard),
+        right: keyGlyph(pad ? settings.bindings.steerRight.gamepad : settings.bindings.steerRight.keyboard),
+      }),
       vote: voteHud(this.#vote, this.#matchType, MENU_KEY, matchOver(phase)),
-      parts: { ...hudParts(phase), ballCamIndicator: phase !== "finished" },
+      // (demolished: no car's HUD, the boost meter and the ball cam indicator gone: HUD-16's bShowCarHUD, RV-513)
+      parts: { ...hudParts(phase), ...(car?.demoed ? { boost: false } : {}), ballCamIndicator: phase !== "finished" && !(car?.demoed ?? false) },
     });
     if (this.#flipReset && flipAudio(this.settings().gameplay.flipResetIndicator)) this.#audio.flipReset();
     if (this.#flipReset && flipVisual(this.settings().gameplay.flipResetIndicator)) this.#flipFx.trigger();

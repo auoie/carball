@@ -84,3 +84,39 @@ describe("the network rows fed (HUD-21, SG2)", () => {
     expect(rawRoundTrip({ echoTimestamp: 1000, echoDelay: 80 }, 1050)).toBeNull();
   });
 });
+
+describe("the network rows' edges (RV-516, RV-522)", () => {
+  it("a gap over 1.5 s is a pause, not loss (the server holding back from a silent client, a stalled tab); a short gap is", () => {
+    const data = new StatGraphData();
+    const feed = new NetGraphFeed(data);
+    feed.received(update(1000), null);
+    feed.received(update(1360), null); // (3 s on: a pause)
+    feed.received(update(1366), null); // (two updates lost)
+    feed.frame(0);
+    feed.frame(1);
+    data.sample(1);
+    expect(row(data, "In Loss", 1)[0]).toBe(2);
+  });
+
+  it("an update's inputs lost counted once, not once a part (RV-529's CM14)", () => {
+    const data = new StatGraphData();
+    const feed = new NetGraphFeed(data);
+    feed.received(update(10, { part: 0, parts: 2, inputLoss: 3 }), null);
+    feed.received(update(10, { part: 1, parts: 2, inputLoss: 3 }), null);
+    feed.frame(0);
+    feed.frame(1);
+    data.sample(1);
+    expect(row(data, "Out Loss", 1)[0]).toBe(3);
+    expect(row(data, "In Pkt", 1)[0]).toBe(2);
+  });
+
+  it("an update's window from its first part to arrive, part 0 lost or not; its later parts packets only", () => {
+    const data = new StatGraphData();
+    const feed = new NetGraphFeed(data);
+    feed.received(update(10, { part: 1, parts: 2, bufferLow: 4, bufferHigh: 9 }), null);
+    feed.received(update(10, { part: 0, parts: 2, bufferLow: 1, bufferHigh: 1 }), null);
+    data.sample(0.1);
+    expect(row(data, "IBuf", 0.1).slice(1)).toEqual([9, 4]);
+  });
+});
+

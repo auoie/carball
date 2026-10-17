@@ -18,6 +18,8 @@ export interface RecordedFrame {
   readonly cars: ReadonlyMap<number, RecordedCar>;
   readonly ball: BodyState;
   readonly ballExploded: boolean;
+  /** The team whose car last touched the ball (its trail's colour: VT-10), null before any touch since the kickoff */
+  readonly lastTouchTeam: CarState["team"] | null;
 }
 
 /** 16 s of frames */
@@ -61,6 +63,27 @@ export class ReplayRecorder {
 }
 
 /** A car as recorded */
+/** The team of the car that last touched the ball (the newest touch tick of any car's: HitTeamNum, VT-10), null before
+ *  any since the kickoff */
+export function lastTouchTeam(world: { carIds(): number[]; car(id: number): Pick<CarState, "team">; carLastBallTouchTick(id: number): number | null }): CarState["team"] | null {
+  let newest = -Infinity;
+  let team: CarState["team"] | null = null;
+  for (const id of world.carIds()) {
+    const tick = world.carLastBallTouchTick(id);
+    if (tick !== null && tick > newest) {
+      newest = tick;
+      team = world.car(id).team;
+    }
+  }
+  return team;
+}
+
+/** Free play's last touch's team: the player's garage team once its car has touched the ball (its car is the engine's
+ *  team 0 for the kickoff spots, painted in the garage's colour), null before */
+export function freeplayTouchTeam(world: Parameters<typeof lastTouchTeam>[0], team: CarState["team"]): CarState["team"] | null {
+  return lastTouchTeam(world) === null ? null : team;
+}
+
 export function recordCar(car: CarState): RecordedCar {
   const { pos, vel, angVel, rot, team, boosting, demoed, supersonic, wheelContact, flipResets } = car;
   return { pos, vel, angVel, rot, team, boosting, demoed, supersonic, wheelContact, flipResets };

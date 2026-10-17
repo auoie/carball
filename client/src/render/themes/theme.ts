@@ -2,8 +2,12 @@
 // and walls' colours). Collision and gameplay are the same in every theme, as in the game, whose arenas share one
 // collision mesh.
 // Scenery is in the Three.js frame (x, y up, z = the game's y) and stays out of the playing volume.
-import type { Color, Fog, Group, Object3D, Vector3 } from "three";
+import type { Color, Fog, Group, Material, Object3D, Vector3 } from "three";
 import { CAMERA_FAR } from "../renderer";
+import type { ArenaSurface } from "../arenaSurface";
+import type { GlowRibbon } from "../stadiumFieldRules";
+import type { PadsView } from "../boostPads";
+import type { BoostPadState } from "../../engine/world";
 
 export interface WallStyle {
   /** The teams' colours (linear) on the game's net, trim and cage, which every map wears (src/render/arena.ts): the cage's
@@ -24,7 +28,29 @@ export interface ArenaStyle {
   /** The game's field (its grass, hex floors, frame, boost paths and markings) for this map's floor, in its team colours,
    *  instead of `floor` and `markings` (the user's decisions, 2026-10-16: Night's) */
   readonly gameField?: boolean;
+  /** A map's own arena in place of the game's cage, wall foot and floor (the greenhouse's: src/render/greenhouse.ts);
+   *  the goals, their nets and glows as every map's */
+  readonly arena?: CustomArena;
   readonly walls: WallStyle;
+}
+
+/** The arena's clock, as the cage's beams have it (uniforms the arena sets each frame): the seconds' fraction and the goal
+ *  explosion's shockwave (src/render/cageBeams.ts shockWave) */
+export interface ArenaClock {
+  readonly time: { value: number };
+  readonly shockWave: { value: number };
+}
+
+/** A map's own walls and floor, built from the arena's swept surface (src/render/arenaSurface.ts), in its team colours,
+ *  lit round the ball (its centre, Three's frame, updated each frame) */
+export interface CustomArena {
+  walls(surface: ArenaSurface, ball: Vector3, blue: Color, orange: Color, clock: ArenaClock): Object3D;
+  /** Its goals' glows in place of every map's (the +y goal's, mirrored for the other: src/render/arena.ts goalGlows) */
+  goalGlows?(): readonly GlowRibbon[];
+  /** Its boost pads in place of every map's game-style ones (the engine's pads: their places and states) */
+  pads?(pads: readonly BoostPadState[]): PadsView;
+  /** The floor's material (the flat floor out to the wall's foot) */
+  floor(): Material;
 }
 
 export interface Theme {

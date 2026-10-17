@@ -6,7 +6,12 @@ import { type GamepadInput, type KeyboardInput, type PadStyle, currentPadStyle, 
 export type KeyGlyph =
   | { readonly kind: "word"; readonly text: string }
   | { readonly kind: "mouse"; readonly button: number }
-  | { readonly kind: "pad"; readonly button: number; readonly text: string; readonly style: PadStyle };
+  | { readonly kind: "pad"; readonly button: number; readonly text: string; readonly style: PadStyle }
+  /** A stick's direction (ours: its badge, L or R, with an arrow; `text` its name, for the title and the tests) */
+  | { readonly kind: "stick"; readonly stick: "L" | "R"; readonly direction: "left" | "right" | "up" | "down"; readonly text: string };
+
+/** The arrows a stick's badge points with */
+const STICK_ARROWS = { left: "◂", right: "▸", up: "▴", down: "▾" } as const;
 
 /** The face buttons' letters (Xbox layout, the game's PC fallback glyphs) */
 const PAD_FACE = ["A", "B", "X", "Y"];
@@ -14,6 +19,12 @@ const PAD_FACE = ["A", "B", "X", "Y"];
 /** An input as the prompt draws it (a pad button in the connected pad's set: PlayStation's ✕ ○ □ △, HT-3) */
 export function keyGlyph(input: KeyboardInput | GamepadInput | null, style: PadStyle = currentPadStyle()): KeyGlyph {
   if (input?.kind === "mouse") return { kind: "mouse", button: input.button };
+  // (the standard layout's sticks: a badge, not the axis's long name, RV-512)
+  if (input?.kind === "padAxis" && input.axis >= 0 && input.axis <= 3) {
+    const horizontal = input.axis % 2 === 0;
+    const direction = horizontal ? (input.sign > 0 ? "right" : "left") : input.sign > 0 ? "down" : "up";
+    return { kind: "stick", stick: input.axis < 2 ? "L" : "R", direction, text: inputGlyph(input, style) };
+  }
   if (input?.kind === "padButton") {
     const text = style === "xbox" ? (PAD_FACE[input.button] ?? inputGlyph(input, style)) : inputGlyph(input, style);
     return { kind: "pad", button: input.button, text, style };
@@ -42,6 +53,14 @@ export function glyphElement(key: KeyGlyph): HTMLSpanElement {
   if (key.kind === "mouse") {
     glyph.innerHTML = mouseSvg(key.button);
     glyph.title = `Mouse ${String(key.button + 1)}`;
+  } else if (key.kind === "stick") {
+    glyph.textContent = key.stick;
+    const arrow = document.createElement("span");
+    arrow.className = "key-stick-arrow";
+    arrow.textContent = STICK_ARROWS[key.direction];
+    glyph.append(arrow);
+    glyph.title = key.text;
+    glyph.dataset["direction"] = key.direction;
   } else {
     glyph.textContent = key.text;
     if (key.kind === "pad") {

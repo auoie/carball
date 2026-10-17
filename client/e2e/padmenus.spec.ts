@@ -55,9 +55,7 @@ test("menus with a pad: Start, the D-pad's focus, A, B (MENU-1/4)", async ({ pag
   await expect(page.locator("#pause-menu")).toBeHidden();
   // (focus Free Play: down from the top until it holds it, then A)
   for (let i = 0; i < 4 && !(await menu.getByRole("button", { name: /^free play$/i }).evaluate((b) => b.classList.contains("pad-focus"))); i++) await tap(page, [DOWN]);
-  await tap(page, [A]);
-  // (Free Play's map select: the last pick, night before any, highlighted at once; A starts free play on it)
-  await expect(menu.locator('.main-menu-map[data-map="night"]')).toHaveClass(/pad-focus/);
+  // (A on Free Play: free play at once, on the one map offered)
   await tap(page, [A]);
   await expect(menu).toBeHidden();
   // Start: the pause menu; down moves the focus; A on Settings opens them; B backs out to the pause menu, B again closes it
@@ -195,36 +193,6 @@ test("the settings with a pad: the bumpers step the tabs (stopping at the ends),
   await expect(settings.locator('[data-setting="statDisplayLevel"]')).toHaveClass(/pad-focus/);
   await tap(page, [B]);
   await expect(settings).toBeHidden();
-  expect(errors).toEqual([]);
-});
-
-test("Free Play's map select with a pad: the D-pad along the maps, A loads another into free play, B backs out (the user's decision)", async ({ page, context }) => {
-  const errors: string[] = [];
-  page.on("pageerror", (e) => errors.push(e.message));
-  await fakeGamepad(context);
-  await page.goto("/?render=off");
-  await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
-  const menu = page.locator("#main-menu");
-  await tap(page, [A]); // (Play)
-  for (let i = 0; i < 4 && !(await menu.getByRole("button", { name: /^free play$/i }).evaluate((b) => b.classList.contains("pad-focus"))); i++) await tap(page, [DOWN]);
-  await tap(page, [A]);
-  await expect(menu.locator('.main-menu-map[data-map="night"]')).toHaveClass(/pad-focus/);
-  // B: back to Play's page; A on Free Play: the maps again
-  await tap(page, [B]);
-  await expect(menu.getByRole("button", { name: /^free play$/i })).toBeVisible();
-  await expect(menu.locator(".main-menu-maps")).toBeHidden();
-  for (let i = 0; i < 4 && !(await menu.getByRole("button", { name: /^free play$/i }).evaluate((b) => b.classList.contains("pad-focus"))); i++) await tap(page, [DOWN]);
-  await tap(page, [A]);
-  // Right: Stadium, beside Night; A loads it, straight into free play
-  await tap(page, [RIGHT]);
-  await expect(menu.locator('.main-menu-map[data-map="stadium"]')).toHaveClass(/pad-focus/);
-  // (the press loads the page anew while the tap still waits on its frames)
-  await tap(page, [A]).catch((e: unknown) => {
-    if (!String(e).includes("Execution context was destroyed")) throw e;
-  });
-  await page.waitForFunction(() => (window as unknown as { carballMap?: () => string }).carballMap?.() === "stadium", undefined, { timeout: 30_000 });
-  await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
-  await expect(page.locator("#main-menu")).toBeHidden();
   expect(errors).toEqual([]);
 });
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { THEMES } from "../render/themes";
+import { MAP_CHOICES } from "../render/themes";
 import { backFrom, mapChoices, storeMap, storedMap } from "./mainMenu";
 
 const memory = (): Pick<Storage, "getItem" | "setItem"> & { map: Map<string, string> } => {
@@ -10,8 +10,8 @@ const memory = (): Pick<Storage, "getItem" | "setItem"> & { map: Map<string, str
 describe("Free Play's map select", () => {
   it("lists every map by its name, the one picked checked", () => {
     const choices = mapChoices("meadow");
-    expect(choices.map((c) => c.map)).toEqual([...THEMES]);
-    expect(choices.slice(0, 3).map((c) => c.label)).toEqual(["Night", "Stadium", "Meadow"]);
+    expect(choices.map((c) => c.map)).toEqual([...MAP_CHOICES]);
+    expect(choices.slice(0, 3).map((c) => c.label)).toEqual(["Night", "Night · Greenhouse", "Stadium"]);
     expect(choices.filter((c) => c.checked).map((c) => c.map)).toEqual(["meadow"]);
   });
 

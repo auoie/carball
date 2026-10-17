@@ -352,7 +352,7 @@ describe("the menus' buttons (MENU-13)", () => {
     expect(active).toBe(7);
   });
 
-  it("X asks for the page's Default (data-pad-x) on its press; Y clears only a bindings page's (data-pad-y) control", () => {
+  it("X asks for the page's Default (data-pad-x) on its release; Y clears only a bindings page's (data-pad-y) control", () => {
     const menu = new Menu("settings");
     const page = new Page("controls", { "data-pad-x": "" });
     menu.pages = [page];
@@ -370,6 +370,42 @@ describe("the menus' buttons (MENU-13)", () => {
     menu.pages = [new Page("audio")];
     tap(BTN.x);
     expect(page.events, "no Default on a page without one").toEqual(["pad-default"]);
+  });
+});
+
+describe("the pad's Y over the search (MM-10, RV-529)", () => {
+  it("on its release, not its press: a focused binding's clear first (the settings over the banner), else the search's cancel", () => {
+    const menu = new Menu("settings");
+    menu.pages = [new Page("controls")];
+    menu.controls = [new Control("slot", box(0, 0), {}, ["[data-pad-y]"]), new Control("other", box(0, 40))];
+    const cancels: number[] = [];
+    const nav = new PadMenuNav({
+      menu: () => menu as unknown as HTMLElement,
+      back: () => true,
+      start: () => undefined,
+      sound: () => undefined,
+      cancelSearch: () => {
+        cancels.push(1);
+        return true;
+      },
+    });
+    nav.frame(pad(), 0);
+    // (pressed and held on the binding: nothing yet; released: its clear, the search kept)
+    nav.frame(pad([BTN.y]), 0.05);
+    nav.frame(pad([BTN.y]), 0.6);
+    expect(menu.controls[0]?.events).not.toContain("contextmenu");
+    nav.frame(pad(), 0.65);
+    expect(menu.controls[0]?.events).toContain("contextmenu");
+    expect(cancels).toEqual([]);
+    // (on another control: held, nothing; released, the search's cancel)
+    nav.frame(pad([BTN.down]), 0.7);
+    nav.frame(pad(), 0.75);
+    nav.frame(pad([BTN.y]), 0.8);
+    nav.frame(pad([BTN.y]), 1.4);
+    expect(cancels).toEqual([]);
+    nav.frame(pad(), 1.45);
+    expect(cancels).toEqual([1]);
+    expect(menu.controls[1]?.events).not.toContain("contextmenu");
   });
 });
 

@@ -201,6 +201,9 @@ describe("a save from before the video group (RV-495)", () => {
     }
     // (both on, as the defaults: the automatic default still applies)
     expect(resolveSettings(parseSettings({ options: { bloom: true } }), true).video.chosen).toBe(false);
+    // (a save with its video group: that group as saved, Bloom off or not, RV-529's CM35)
+    const saved = parseSettings({ options: { bloom: false }, video: { renderDetail: "performance", chosen: false } });
+    expect(saved.video).toMatchObject({ renderDetail: "performance", chosen: false });
   });
 });
 

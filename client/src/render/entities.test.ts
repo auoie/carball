@@ -1,6 +1,7 @@
 import { Mesh, MeshStandardMaterial, Quaternion, ShaderLib, Vector3, type WebGLProgramParametersWithUniforms, type WebGLRenderer } from "three";
 import { describe, expect, it } from "vitest";
 import { BALL_RADIUS, BallView, GOAL_LINE, goalLine, patchedBallGeometry } from "./entities";
+import { TEAM_PRIMARY_LINEAR, fullBright } from "./teamColors";
 
 describe("ball", () => {
   it("has twelve five-triangle patches, so its spin shows", () => {
@@ -127,3 +128,40 @@ describe("the ball's look on a goal and at a kickoff (VT-15, VT-30)", () => {
     expect(view.opacity).toBe(1);
   });
 });
+
+describe("the ball's speed trail (VT-10, VT-10a)", () => {
+  const run = (ball: BallView, frames: number, step = 60): void => {
+    const at = new Vector3(0, 93, 0);
+    for (let k = 0; k < frames; k++) {
+      ball.fade(false, 1 / 60);
+      at.z += step;
+      ball.update(at, new Quaternion());
+    }
+  };
+
+  it("its new points in the last touch's team colour at full brightness, white before any; its speed the ball's travel", () => {
+    const ball = new BallView();
+    run(ball, 30);
+    expect(ball.trail.points.at(-1)?.colour).toEqual([1, 1, 1]);
+    // (60 uu a 1/60 s: 3600 uu/s, over 2000: its opacity rising)
+    expect(ball.trail.opacity).toBeGreaterThan(0.5);
+    ball.trailTeam = 1;
+    run(ball, 10);
+    expect(ball.trail.points.at(-1)?.colour).toEqual(fullBright(TEAM_PRIMARY_LINEAR[1] ?? [1, 1, 1]));
+  });
+
+  it("gone at once at the explosion; begun again unseen at a spawn; none while not shown (the podium)", () => {
+    const ball = new BallView();
+    run(ball, 30);
+    expect(ball.trail.points.length).toBeGreaterThan(0);
+    ball.fade(true, 1 / 60);
+    expect(ball.trail.points).toHaveLength(0);
+    run(ball, 30);
+    ball.spawn();
+    expect([ball.trail.points.length, ball.trail.opacity]).toEqual([0, 0]);
+    ball.trailShown = false;
+    run(ball, 30);
+    expect(ball.trail.points).toHaveLength(0);
+  });
+});
+

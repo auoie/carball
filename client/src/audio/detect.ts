@@ -2,7 +2,7 @@
 // and dodges, boost pickups and demolitions. The same for freeplay and online play (where the states are the predicted
 // world). The impacts (a car's body on the arena, on another car, on the ball; the ball's own off the arena) and the
 // landings come from the engine's contacts instead, as the game's triggers (game/impactTriggers.ts).
-import type { BodyState, BoostPadState, CarState } from "../engine/world";
+import { type BodyState, type BoostPadState, type CarState, padPickedUp } from "../engine/world";
 import { type Vec3, length, sub } from "../math/vec";
 
 export interface SoundWorld {
@@ -41,7 +41,8 @@ export class SoundDetector {
       if (before) this.#carEvents(id, before, car, events);
     }
     world.pads.forEach((pad, i) => {
-      if (previous.pads[i]?.active === true && !pad.active) events.push({ kind: "pad", big: pad.big, at: pad.pos });
+      // (taken: up then down, or taken again the tick it came back, its cooldown jumped back up)
+      if (padPickedUp(previous.pads[i], pad)) events.push({ kind: "pad", big: pad.big, at: pad.pos });
     });
     return events;
   }

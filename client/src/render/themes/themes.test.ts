@@ -1,12 +1,12 @@
 import { BackSide, Box3, InstancedMesh, type Material, Matrix4, Mesh, type Object3D, Vector3 } from "three";
 import { beforeAll, describe, expect, it } from "vitest";
-import { THEMES, createTheme, themeName } from ".";
+import { MAP_CHOICES, createTheme, themeName } from ".";
 import { PLAYING_VOLUME, type Theme } from "./theme";
 import { CAMERA_FAR } from "../renderer";
 
 const built = new Map<string, Theme>();
 beforeAll(async () => {
-  for (const name of THEMES) built.set(name, await createTheme(name));
+  for (const name of MAP_CHOICES) built.set(name, await createTheme(name));
 }, 60000); // (every theme built: about 10 s alone, more under a full parallel run)
 const theme = (name: string): Theme => {
   const t = built.get(name);
@@ -49,7 +49,7 @@ describe("themes", () => {
     expect(themeName("nope")).toBe("night");
   });
 
-  it.each(THEMES)("%s: no scenery reaches into the playing volume", (name) => {
+  it.each(MAP_CHOICES)("%s: no scenery reaches into the playing volume", (name) => {
     const t = theme(name);
     t.update(12.3, new Vector3(0, 93, 0));
     const v = new Vector3();
@@ -102,7 +102,7 @@ describe("themes", () => {
     }
   });
 
-  it.each(THEMES)("%s: its sky and everything unfogged within the camera's far plane from anywhere in the arena, all through its animation (RV-58, RV-90, RV-113)", (name) => {
+  it.each(MAP_CHOICES)("%s: its sky and everything unfogged within the camera's far plane from anywhere in the arena, all through its animation (RV-58, RV-90, RV-113)", (name) => {
     const t = theme(name);
     // (the camera within the playing volume: its farthest corner from the centre)
     const reach = Math.hypot(PLAYING_VOLUME.halfX, PLAYING_VOLUME.height, PLAYING_VOLUME.halfZ);

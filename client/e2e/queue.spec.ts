@@ -73,26 +73,12 @@ test("the search under the banner: Cancel Search over the menus, none while driv
   // (over the menu, the mouse's Cancel Search; the pad's form not, no pad used)
   await expect(banner.getByRole("button", { name: /^cancel search$/i })).toBeVisible();
   await expect(banner.locator(".search-cancel-pad")).toBeHidden();
-  // Free Play under the banner, this page's map: the search goes on, no Cancel Search while driving
+  // Free Play under the banner (the one map, this page's): the search goes on, no Cancel Search while driving
   const menu = page.locator("#main-menu");
   await menu.getByRole("button", { name: /^free play$/i }).click();
-  await menu.locator('.main-menu-map[data-map="night"]').click();
   await expect(menu).toBeHidden();
   await expect(banner).toBeVisible();
   await expect(banner.getByRole("button", { name: /^cancel search$/i })).toBeHidden();
-  // Another map: the page loads it, straight into free play, the search going on there (a new one, under the banner)
-  await page.keyboard.press("Escape");
-  const pause = page.locator("#pause-menu");
-  await pause.getByRole("button", { name: /^exit to main menu$/i }).click();
-  await pause.getByRole("button", { name: /^yes$/i }).click();
-  await menu.getByRole("button", { name: /^play$/i }).click();
-  await menu.getByRole("button", { name: /^free play$/i }).click();
-  await menu.locator('.main-menu-map[data-map="meadow"]').click();
-  await page.waitForFunction(() => (window as unknown as { carballMap?: () => string }).carballMap?.() === "meadow", undefined, { timeout: 30_000 });
-  await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
-  await expect(menu).toBeHidden();
-  await expect(banner).toBeVisible();
-  await expect(banner.locator(".search-summary")).toHaveText("Searching", { timeout: 15_000 });
   expect(await page.evaluate(() => (window as unknown as { carballMatchmaking: () => { state: unknown } }).carballMatchmaking().state)).not.toBeNull();
   // (the pause menu up: Cancel Search there)
   await page.keyboard.press("Escape");
@@ -137,8 +123,20 @@ test("the pad's Y cancels the search from the menus, its hint on the banner; in 
   await findMatch(page, "2v2");
   const banner = page.locator("#search-banner");
   await expect(banner.locator(".search-summary")).toHaveText("Searching", { timeout: 15_000 });
-  // (B back to the menu's top from the Play page: the pad's mode, its "‹Y› CANCEL SEARCH")
-  await tap(1);
+  // Driving under the banner: Y the ball cam's, the search kept, no cancel shown (MM-10, RV-529's CM32)
+  const menu = page.locator("#main-menu");
+  await menu.getByRole("button", { name: /^free play$/i }).click();
+  await expect(menu).toBeHidden();
+  await tap(3);
+  await expect(banner).toBeVisible();
+  await expect(banner.locator(".search-cancel-pad")).toBeHidden();
+  expect(await page.evaluate(() => (window as unknown as { carballMatchmaking: () => { state: unknown } }).carballMatchmaking().state)).not.toBeNull();
+  // (back to the main menu by the pause menu's Exit; a D-pad press: the pad's mode, its "‹Y› CANCEL SEARCH")
+  await page.keyboard.press("Escape");
+  const pause = page.locator("#pause-menu");
+  await pause.getByRole("button", { name: /^exit to main menu$/i }).click();
+  await pause.getByRole("button", { name: /^yes$/i }).click();
+  await tap(13);
   await expect(page.locator("#main-menu").getByRole("button", { name: /^settings$/i })).toBeVisible();
   await expect(banner.locator(".search-cancel-pad")).toBeVisible();
   await expect(banner.locator(".search-cancel-pad")).toContainText("Cancel Search");

@@ -1,14 +1,18 @@
 // The main menu (notes/hud-menus.md MENU-1/2), over the arena as the page opens: Play (Free Play, or a playlist to search
 // online: notes/matchmaking.md MM-1, single selection), Garage (the car and the team colour, kept: src/game/cars.ts; the
-// user's feature, 2026-10-16) and Settings. Free Play opens the map select first, as the game's
-// does (the user's decision, 2026-10-15): the maps by their names, the last one picked kept and focused; picking one
-// starts free play on it. The game's labels verbatim (Play, Settings, Free Play, Find Match: the user's decisions,
-// 2026-10-14); the playlists' and maps' names are ours. No Quit: a browser tab closes itself.
+// user's feature, 2026-10-16) and Settings. Free Play starts at once on the one map offered (the user's decision of
+// 2026-10-17; the map select, from 2026-10-15, is kept but out of the flow: the maps by their names, the last one picked
+// kept and focused, picking one starting free play on it). The game's labels verbatim (Play, Settings, Free Play, Find Match: the user's decisions,
+// 2026-10-14); the playlists' and maps' names are ours. No Quit: a browser tab closes itself. Play vs Bots (ours: the
+// offline match against bot packages, local/botMatch.ts) shows only when there's a bot to play.
 import { PLAYLISTS, SEARCH_TEXT } from "../game/matchmaking";
-import { MAP_NAMES, THEMES, type ThemeName, themeName } from "../render/themes";
+import { AVAILABLE_MAP, MAP_CHOICES, MAP_NAMES, type ThemeName, themeName } from "../render/themes";
 import type { Team } from "../engine/world";
 import { CARS, storeCar, storeTeam, storedCar, storedTeam } from "../game/cars";
 import type { GaragePreview } from "./garagePreview";
+import type { BotChoices } from "../local/botMatch";
+import { BOT_MATCH_TEXT } from "../local/botText";
+import type { BotsPage } from "./botsPage";
 
 export const MAIN_MENU_TEXT = {
   play: "Play",
@@ -27,18 +31,18 @@ const PLAYLIST_KEY = "carball.playlist";
 /** Free play's map: the map select's last pick */
 const MAP_KEY = "carball.freeplayMap";
 
-/** The menu's pages: the top (Play, Garage, Settings), Play's, Free Play's map select, and the garage */
-export type MenuView = "top" | "play" | "maps" | "garage";
+/** The menu's pages: the top (Play, Garage, Settings), Play's, Free Play's map select, the bots' setup, the garage */
+export type MenuView = "top" | "play" | "maps" | "bots" | "garage";
 
-/** Where Escape (the pad's B) goes from a page: the map select back to Play, Play and the garage to the top; the top
- *  stays */
+/** Where Escape (the pad's B) goes from a page: the map select and the bots' setup back to Play, Play and the garage to
+ *  the top; the top stays */
 export function backFrom(view: MenuView): MenuView {
-  return view === "maps" ? "play" : "top";
+  return view === "maps" || view === "bots" ? "play" : "top";
 }
 
 /** The map select's buttons: every map by its name, the one picked checked */
 export function mapChoices(picked: ThemeName): { readonly map: ThemeName; readonly label: string; readonly checked: boolean }[] {
-  return THEMES.map((map) => ({ map, label: MAP_NAMES[map], checked: map === picked }));
+  return MAP_CHOICES.map((map) => ({ map, label: MAP_NAMES[map], checked: map === picked }));
 }
 
 export interface MainMenuActions {
@@ -51,6 +55,8 @@ export interface MainMenuActions {
   readonly garage?: (choice: { readonly car: number; readonly team: Team }) => void;
   /** The garage's preview of a car (none: no preview) */
   readonly preview?: GaragePreview;
+  /** Play vs Bots' Start: the match with these bots */
+  readonly botMatch?: (choices: BotChoices) => void;
 }
 
 export class MainMenu {
@@ -67,6 +73,12 @@ export class MainMenu {
   #team: Team = storedTeam();
   readonly #playlists: HTMLButtonElement[] = [];
   readonly #mapButtons: HTMLButtonElement[] = [];
+  readonly #playBots: HTMLButtonElement;
+  readonly #bots: HTMLDivElement;
+  readonly #botsBody: HTMLDivElement;
+  readonly #botsStart: HTMLButtonElement;
+  /** The bots' page body (ui/botsPage.ts, a chunk of its own): none until the packages are listed */
+  #botsPage: BotsPage | null = null;
   #playlist = storedPlaylist();
   #map = storedMap();
 
@@ -101,9 +113,16 @@ export class MainMenu {
     this.#play = column();
     this.#play.dataset["padPage"] = "play";
     this.#play.dataset["padBack"] = ""; // (B Back in the pad's hints: a page under the top)
+    // (straight into free play on the one map offered: the map select (its page kept below) out of the flow, the user's
+    // decision of 2026-10-17)
     this.#playFreePlay = button(this.#play, MAIN_MENU_TEXT.freePlay, () => {
-      this.#show("maps");
+      actions.freePlay(AVAILABLE_MAP);
     });
+    // (hidden until a bot package is there to play: setBots)
+    this.#playBots = button(this.#play, BOT_MATCH_TEXT.play, () => {
+      this.#show("bots");
+    });
+    this.#playBots.hidden = true;
     // (the playlists: one selected at a time; Find Match searches it)
     const playlists = document.createElement("div");
     playlists.className = "main-menu-playlists";
@@ -150,6 +169,25 @@ export class MainMenu {
     this.#maps.append(heading, maps);
     this.#mark();
     button(this.#maps, BACK_TEXT, () => {
+      this.#show("play");
+    });
+    // (the bots' setup: the team size, each teammate's and opponent's bot, the bots' credits; Start)
+    this.#bots = column();
+    this.#bots.dataset["padPage"] = "bots";
+    this.#bots.dataset["padBack"] = "";
+    this.#bots.classList.add("main-menu-bots-view");
+    const botsHeading = document.createElement("div");
+    botsHeading.className = "main-menu-heading";
+    botsHeading.textContent = BOT_MATCH_TEXT.play;
+    this.#botsBody = document.createElement("div");
+    this.#botsBody.className = "main-menu-bots";
+    this.#bots.append(botsHeading, this.#botsBody);
+    this.#botsStart = button(this.#bots, BOT_MATCH_TEXT.start, () => {
+      const choices = this.#botsPage?.choices();
+      if (choices) actions.botMatch?.(choices);
+    });
+    this.#botsStart.classList.add("main-menu-find");
+    button(this.#bots, BACK_TEXT, () => {
       this.#show("play");
     });
     // (the garage: the cars and the team colours, each kept as chosen, the car shown turning in its colour)
@@ -203,9 +241,16 @@ export class MainMenu {
     host.append(this.#root);
   }
 
-  /** Free play's map: the map select's last pick (night before any) */
+  /** The bots' page body, once the bot packages are listed (`draw`: ui/botsPage.ts's, into the page): Play vs Bots shown
+   *  with one to play, else hidden */
+  setBots(draw: (body: HTMLElement) => BotsPage): void {
+    this.#botsPage = draw(this.#botsBody);
+    this.#playBots.hidden = !this.#botsPage.playable;
+  }
+
+  /** Free play's map, and the bots' matches': the one offered (the map select's last pick, kept, isn't used) */
   get map(): ThemeName {
-    return this.#map;
+    return AVAILABLE_MAP;
   }
 
   get isOpen(): boolean {
@@ -233,7 +278,7 @@ export class MainMenu {
    *  starts) */
   /** Back a page (Escape's, a pad's B); whether there was one to go back from (none at the top: nothing, silently) */
   back(): boolean {
-    const view: MenuView = !this.#maps.hidden ? "maps" : !this.#play.hidden ? "play" : !this.#garage.hidden ? "garage" : "top";
+    const view: MenuView = !this.#maps.hidden ? "maps" : !this.#bots.hidden ? "bots" : !this.#play.hidden ? "play" : !this.#garage.hidden ? "garage" : "top";
     this.#show(backFrom(view));
     return view !== "top";
   }
@@ -275,14 +320,16 @@ export class MainMenu {
     this.#top.hidden = view !== "top";
     this.#play.hidden = view !== "play";
     this.#maps.hidden = view !== "maps";
+    this.#bots.hidden = view !== "bots";
     this.#garage.hidden = view !== "garage";
     // (the preview turning only while the garage shows; the car chosen focused)
     if (view === "garage") {
       this.#preview?.start();
       this.#carButtons.find((b) => b.dataset["car"] === String(this.#car))?.focus();
     } else this.#preview?.stop();
-    // (the last map picked focused: Enter, or the pad's A, starts it at once)
+    // (the last map picked focused: Enter, or the pad's A, starts it at once; the bots' Start likewise)
     if (view === "maps") this.#mapButtons.find((b) => b.dataset["map"] === this.#map)?.focus();
+    if (view === "bots") this.#botsStart.focus();
   }
 }
 

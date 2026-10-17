@@ -42,6 +42,8 @@ import { type ArenaSurface, buildArenaSurface, floorOutline, wallLine } from "./
 import { addBallReticle } from "./ballShadow";
 import { cageGraph } from "./cage";
 import { CageBeams, shockWave } from "./cageBeams";
+import { BoostPadsView, type PadsView } from "./boostPads";
+import type { BoostPadState } from "../engine/world";
 import { type GoalSurface, buildGoalSurface, goalProfileU } from "./goalSurface";
 import { ForceFieldMaterial, GlowStripMaterial, GrateMaterial, HexGlassMaterial } from "./gameSurfaces";
 import { TEAM_PRIMARY_LINEAR, fullBright, linear } from "./teamColors";
@@ -96,7 +98,7 @@ const STRIPE_WIDTH = 512;
 export class ArenaView {
   readonly root = new Group();
   readonly #cage: ForceFieldMaterial; // the walls' and ceiling's see-through fill: the game's overlay round the ball
-  readonly #beams: CageBeams; // the cage on them
+  readonly #beams: CageBeams | null; // the cage on them (none in a map's own arena)
   readonly #net: HexGlassMaterial; // the goals' nets: the game's hex glass
   readonly #style: ArenaStyle;
   readonly #theme: Theme;
@@ -105,6 +107,8 @@ export class ArenaView {
   /** The game's reflection capture: the trim reflects it (and the stadium's field, its banners) */
   readonly #grassCube = new GrassCube();
   #seconds = 0;
+  /** The clock a map's own walls light by, as the beams (their seconds' fraction, the shockwave) */
+  readonly #clock = { time: { value: 0 }, shockWave: { value: shockWave(null) } };
   /** World seconds since the ball exploded (a goal), null with a ball in play: the cage's shockwave (AV-15) */
   #sinceExplosion: number | null = null;
 
@@ -118,14 +122,17 @@ export class ArenaView {
     // (the game's net, trim and cage on every map, in its theme's team colours)
     this.#cage = new ForceFieldMaterial(walls.blue, walls.orange);
     this.#net = new HexGlassMaterial({ net: true });
-    this.#beams = new CageBeams(cageGraph(false), walls);
+    // (a map's own arena, the greenhouse's: its walls and floor for the cage, the wall's foot and the floor; the goals as
+    // every map's)
+    const custom = theme.style.arena ?? null;
+    this.#beams = custom ? null : new CageBeams(cageGraph(false), walls);
     this.root.add(
-      this.#buildWalls(surface),
-      this.#beams.mesh,
+      custom ? custom.walls(surface, this.#cage.ballPosition, walls.blue, walls.orange, this.#clock) : this.#buildWalls(surface),
+      ...(this.#beams ? [this.#beams.mesh] : []),
       this.#buildGoals(goals),
       this.#buildFloor(),
-      // (the game's field has its own markings: AV-7)
-      ...(walls.game || theme.style.gameField ? [] : [buildFieldMarkings(theme.style.markings)]),
+      // (the game's field has its own markings: AV-7; a map's own arena its own)
+      ...(walls.game || theme.style.gameField || custom ? [] : [buildFieldMarkings(theme.style.markings)]),
       theme.root,
     );
     // (the arena's own pieces never move: their matrices made once, not every frame; the theme's scenery keeps its own)
@@ -142,11 +149,15 @@ export class ArenaView {
   /** Once per frame: lights the walls around the ball (Three.js frame) and animates the theme's scenery. */
   update(ballPosition: Vector3, frameSeconds: number): void {
     this.#cage.ballPosition.copy(ballPosition);
-    this.#beams.ballPosition.copy(ballPosition);
+    this.#beams?.ballPosition.copy(ballPosition);
     this.#seconds += frameSeconds;
     if (this.#sinceExplosion !== null) this.#sinceExplosion += Math.max(0, frameSeconds);
-    this.#beams.shockWave = shockWave(this.#sinceExplosion);
-    this.#beams.time = this.#seconds;
+    if (this.#beams) {
+      this.#beams.shockWave = shockWave(this.#sinceExplosion);
+      this.#beams.time = this.#seconds;
+    }
+    this.#clock.time.value = this.#seconds - Math.floor(this.#seconds);
+    this.#clock.shockWave.value = shockWave(this.#sinceExplosion);
     this.#theme.update(this.#seconds, ballPosition);
   }
 
@@ -161,6 +172,12 @@ export class ArenaView {
     cube.capture(gl, scene, this.root, captureOnly, [0, 0, 0]);
     cube.capture(gl, scene, this.root, captureOnly);
     cube.capture(gl, scene, this.root, captureOnly);
+  }
+
+  /** The boost pads' view for this arena: a map's own (the greenhouse's tokens), else every map's game-style pads (the
+   *  capture reflected in their bases) */
+  createPads(pads: readonly BoostPadState[]): PadsView {
+    return this.#style.arena?.pads?.(pads) ?? new BoostPadsView(pads, this.reflection);
   }
 
   /** The arena's capture as the materials sample it (its uniform: the value turns to each new capture), for what's drawn
@@ -359,7 +376,10 @@ export class ArenaView {
       new Mesh(geometry(goals.postBase), postMaterial),
       // (the goal's glows: the game's all; every map the stepped ribbon on from the walls' upright one, the beside ribbon on
       // from the slanted one, the mouth's outline and the field side's fin, AV-11, AV-13)
-      ...goalGlows(this.#style, game ? fieldPlan().goalGlow : goalGlowRibbons().filter((r) => r.part !== undefined && EVERY_MAP_GLOWS.has(r.part))),
+      ...goalGlows(
+        this.#style,
+        this.#style.arena?.goalGlows?.() ?? (game ? fieldPlan().goalGlow : goalGlowRibbons().filter((r) => r.part !== undefined && EVERY_MAP_GLOWS.has(r.part))),
+      ),
     );
     return group;
   }
@@ -384,7 +404,8 @@ export class ArenaView {
     // user's decisions, 2026-10-16; its cage and glows its own)
     const { walls } = this.#style;
     const cube = this.#grassCube.uniform;
-    const field = walls.game === true || this.#style.gameField === true;
+    const custom = this.#style.arena ?? null;
+    const field = !custom && (walls.game === true || this.#style.gameField === true);
     const [p0 = [0, 0, 1], p1 = [1, 0.5, 0]] = TEAM_PRIMARY_LINEAR;
     const [fieldBlue, fieldOrange] = walls.game ? [walls.blue, walls.orange] : [linear(p0), linear(p1)];
     if (field) {
@@ -395,7 +416,7 @@ export class ArenaView {
     }
 
     // Floor, out to the trim's foot. The shape faces +z; rotate it to face up (+y in Three)
-    const floor = new Mesh(new ShapeGeometry(floorShape()), field ? frameFloorMaterial(cube, fieldBlue, fieldOrange) : floorMat);
+    const floor = new Mesh(new ShapeGeometry(floorShape()), custom ? custom.floor() : field ? frameFloorMaterial(cube, fieldBlue, fieldOrange) : floorMat);
     floor.rotation.x = -Math.PI / 2;
     group.add(floor);
     return group;

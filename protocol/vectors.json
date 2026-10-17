@@ -1,11 +1,11 @@
 {
-  "protocolVersion": 24,
+  "protocolVersion": 25,
   "vectors": [
     {
       "channel": "control",
       "message": {
         "type": "hello",
-        "version": 24,
+        "version": 25,
         "team": 0,
         "model": 0,
         "dodgeDeadzone": 0.8,
@@ -20,13 +20,13 @@
         "playlist": 0,
         "token": "81985529216486895"
       },
-      "hex": "32000118000000cdcc4c3f0000803f0000a03f010df0fecaefbeadde0b4d65726375727920e29aa101010200efcdab8967452301"
+      "hex": "32000119000000cdcc4c3f0000803f0000a03f010df0fecaefbeadde0b4d65726375727920e29aa101010200efcdab8967452301"
     },
     {
       "channel": "control",
       "message": {
         "type": "hello",
-        "version": 24,
+        "version": 25,
         "team": 255,
         "model": 0,
         "dodgeDeadzone": 0.8,
@@ -41,7 +41,7 @@
         "playlist": 2,
         "token": "0"
       },
-      "hex": "2700011800ff00cdcc4c3f0000803f0000a03f00000000000000000000000001020000000000000000"
+      "hex": "2700011900ff00cdcc4c3f0000803f0000a03f00000000000000000000000001020000000000000000"
     },
     {
       "channel": "control",
@@ -112,7 +112,7 @@
       "channel": "control",
       "message": {
         "type": "welcome",
-        "version": 24,
+        "version": 25,
         "carId": 3,
         "tickRate": 120,
         "frame": 0,
@@ -126,7 +126,7 @@
           3
         ]
       },
-      "hex": "1e008118000300000078000000000102071032547698badcfe03000000010203"
+      "hex": "1e008119000300000078000000000102071032547698badcfe03000000010203"
     },
     {
       "channel": "control",

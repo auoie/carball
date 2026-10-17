@@ -10,7 +10,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use tokio::sync::mpsc::Sender;
+use crate::chan::Sender;
 
 use crate::game::{Game, JoinRequest, MatchType, Outgoing, PlayerId, TICK_RATE, random_u64};
 use crate::protocol::{self, Control};
@@ -135,7 +135,8 @@ impl MatchHost {
         for r in &reservations {
             self.tokens.insert(r.token, id);
         }
-        let map = self.map.unwrap_or_else(|| (random_u64() % u64::from(protocol::MAP_COUNT)) as u8);
+        // (the one map offered, the user's decision of 2026-10-17; `--map` another)
+        let map = self.map.unwrap_or(protocol::GREENHOUSE_MAP);
         let mut hosted = Hosted { game: None, seed: self.seed, playlist, reservations, created: now, next_tick: now, open, map };
         if open {
             hosted.game(self.test_goal_after); // (anyone may join it: built at once)
@@ -508,15 +509,12 @@ mod tests {
     }
 
     #[test]
-    fn each_match_is_on_a_map_picked_at_random_every_player_welcomed_with_it_or_on_the_fixed_one() {
+    fn each_match_is_on_the_one_map_offered_every_player_welcomed_with_it_or_on_the_fixed_one() {
         init_engine();
         let welcomed = |rx: &mut Receiver<Outgoing>| controls(rx).into_iter().find_map(|c| if let Control::Welcome { map, .. } = c { Some(map) } else { None });
-        // (random: within the maps, and not all one)
+        // (Night's greenhouse, every match's: the user's decision of 2026-10-17)
         let mut host = MatchHost::new(1, None);
-        let maps: Vec<u8> = (0..200).map(|_| host.create_match(ONES, 2, 0.0).map).collect();
-        assert!(maps.iter().all(|&m| m < protocol::MAP_COUNT));
-        let distinct: std::collections::BTreeSet<u8> = maps.iter().copied().collect();
-        assert!(distinct.len() >= 8, "{distinct:?}");
+        assert!((0..50).all(|_| host.create_match(ONES, 2, 0.0).map == protocol::GREENHOUSE_MAP));
         // (a queue match's players, each welcomed with its map)
         let mut host = MatchHost::new(1, None);
         let created = host.create_match(TWOS, 4, 0.0);
@@ -532,7 +530,7 @@ mod tests {
         let (tx2, mut rx2) = channel(OUT_QUEUE);
         assert!(host.join_open(1, request(), tx1) && host.join_open(2, request(), tx2));
         let (m1, m2) = (welcomed(&mut rx1), welcomed(&mut rx2));
-        assert!(m1 == m2 && m1.is_some_and(|m| m < protocol::MAP_COUNT), "{m1:?} {m2:?}");
+        assert!(m1 == m2 && m1 == Some(protocol::GREENHOUSE_MAP), "{m1:?} {m2:?}");
         // (--map: every match on it, the open one too)
         let mut host = MatchHost::new(1, None);
         host.map = Some(5);

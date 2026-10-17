@@ -114,12 +114,13 @@ export function freePlayUrl(at: { readonly pathname: string; readonly search: st
 
 /** The menu page's or the match page's URL: this page's query without the pages' own parameters (a development server's
  *  `server`, the match page's `match`), with `match` for the match page */
-export function pageUrl(page: "menu" | "match", at: { readonly pathname: string; readonly search: string }): string {
+export function pageUrl(page: "menu" | "match" | "bots", at: { readonly pathname: string; readonly search: string }): string {
   const query = new URLSearchParams(at.search);
   query.delete("server");
   query.delete("match");
-  if (page === "match") query.set("match", "");
-  const text = query.toString().replace(/(^|&)match=(?=&|$)/, "$1match");
+  query.delete("bots");
+  if (page !== "menu") query.set(page, "");
+  const text = query.toString().replace(/(^|&)(match|bots)=(?=&|$)/, "$1$2");
   return `${at.pathname}${text === "" ? "" : `?${text}`}`;
 }
 

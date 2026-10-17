@@ -13,7 +13,7 @@
 // network flag; 21: the match's map (MatchFound, Welcome); 22: the garage's car (Hello's and the roster's model); 23:
 // Kicked's reason 2, a newer search from the same browser took this one's place (RV-460); 24: the stat graphs' network
 // rows (HUD-21: Inputs' sequence, each Update's input-buffer window and the inputs lost)
-export const PROTOCOL_VERSION = 24;
+export const PROTOCOL_VERSION = 25;
 /** A name's bytes at most (UTF-8) */
 export const MAX_NAME_BYTES = 32;
 export const MAX_INPUT_FRAMES = 10;

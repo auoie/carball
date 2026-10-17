@@ -11,11 +11,15 @@ use crate::engine::Controls;
 // (physics FP2); 19: a search's browser key and returning token, SearchCooldown (RV-367: no-shows); 20: SearchCooldown
 // says whether the browser or the network is why (RV-385); 21: the match's map (MatchFound, Welcome); 22: the garage's
 // car (Hello's model, the roster's); 23: Kicked's KICK_REPLACED (RV-460); 24: the stat graphs' network rows (HUD-21: the
-// input datagrams' sequence, each update's input-buffer window and the inputs lost)
-pub const VERSION: u16 = 24;
+// input datagrams' sequence, each update's input-buffer window and the inputs lost); 25: map 16, Night's greenhouse, every
+// match's (an older client would draw another arena)
+pub const VERSION: u16 = 25;
 /// The maps a match can be on (the client's arena themes, in their order: protocol/README.md); a map on the wire is its
 /// index. Only ever appended to: an index names the same map in every version
-pub const MAP_COUNT: u8 = 16;
+pub const MAP_COUNT: u8 = 17;
+/// The one map offered (the user's decision, 2026-10-17): Night's greenhouse, every match's unless `--map` says another
+pub const GREENHOUSE_MAP: u8 = 16;
+const _: () = assert!(GREENHOUSE_MAP < MAP_COUNT);
 /// The quick-chat presets (`Group1-6MessageN`: notes/quick-chat.md CHAT-1); a preset on the wire is its index
 pub const QUICK_CHAT_PRESETS: u8 = 76;
 /// A player's quick-chat filter (`EChatFilter` as the clone uses it: CHAT-18)

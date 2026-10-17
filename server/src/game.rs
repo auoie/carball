@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use tokio::sync::mpsc::Sender;
+use crate::chan::Sender;
 
 use crate::engine::{Arena, Award, Controls, Event, STAT_COUNTERS, StatCounters, StatsState, stat_event_points};
 use crate::input_buffer::InputBuffer;
@@ -17,7 +17,9 @@ const UPDATE_EVERY_TICKS: u64 = 2;
 const SILENT_SECONDS: f64 = 1.5;
 /// Datagram budget for an update (QUIC datagrams are limited by the path MTU, ~1200 bytes)
 pub const MAX_DATAGRAM: usize = 1100;
-const UPDATE_HEADER: usize = 25;
+/// An update datagram's bytes before its state (protocol 24: its type, the ticks and frames, the echo, the buffer's
+/// target, size and window, the part and parts)
+const UPDATE_HEADER: usize = 28;
 /// After a goal, the goal replay or the next kickoff (`GameEvent_Soccar_TA.PostGoalTime` 3.0 game s; ticks, which keep
 /// their 120 per game second through the slow motion)
 const POST_GOAL_TICKS: u64 = 3 * TICK_RATE as u64;
@@ -136,6 +138,34 @@ pub struct JoinRequest {
     /// Its chat filters from the start (`protocol::CHAT_*`; RV-259)
     pub quick_chat: u8,
     pub block_non_tactical: bool,
+}
+
+impl JoinRequest {
+    /// A hello's request, with its intent (`protocol::INTENT_*`), playlist and token; `None` for any other message (the
+    /// network server's sessions and the browser's local host read hellos alike)
+    pub fn from_hello(hello: Control) -> Option<(Self, u8, u8, u64)> {
+        let Control::Hello {
+            team,
+            model,
+            dodge_deadzone,
+            steering_sensitivity,
+            air_control_sensitivity,
+            auto_skip_replay,
+            key,
+            name,
+            quick_chat,
+            block_non_tactical,
+            intent,
+            playlist,
+            token,
+            ..
+        } = hello
+        else {
+            return None;
+        };
+        let request = JoinRequest { team, model, dodge_deadzone, steering_sensitivity, air_control_sensitivity, auto_skip_replay, key, name, quick_chat, block_non_tactical };
+        Some((request, intent, playlist, token))
+    }
 }
 
 /// The chat spam filter (`ApplyChatSpamFilter`, `ChatSpam`: notes/quick-chat.md CHAT-10..12): a per-player leaky bucket on
@@ -318,6 +348,9 @@ struct Player {
     /// The garage's car they drive (checked)
     model: u8,
     input: InputBuffer,
+    /// A bot's controls (the browser's local host: `set_bot_controls`), held until the next; it has no input buffer and
+    /// is never idle
+    bot: Option<Controls>,
     out: Sender<Outgoing>,
     /// When the last input packet came (server time, s): a client silent this long gets no updates (G8)
     last_heard: Option<f64>,
@@ -465,6 +498,8 @@ pub struct Game {
     pub hold_for: usize,
     /// Idle players are warned and kicked (MM-32: the queue's matches)
     pub idle_kick: bool,
+    /// The network state's bytes a datagram carries (its parts split past it; the tests make it small to split one)
+    pub(crate) part_budget: usize,
     /// The end screen's time up (or every player ready) starts the next match with the players here (development
     /// servers); without, the match is over there (`is_over`) and its host lets it go
     pub rematch: bool,
@@ -560,6 +595,7 @@ impl Game {
             replication: Replication::new(seed as u64),
             hold_for: 0,
             idle_kick: false,
+            part_budget: MAX_DATAGRAM - UPDATE_HEADER,
             rematch: true,
             map: 0,
             active_since: None,
@@ -698,6 +734,7 @@ impl Game {
             team,
             model,
             input: InputBuffer::default(),
+            bot: None,
             out,
             echo: None,
             last_reset: None,
@@ -1078,6 +1115,19 @@ impl Game {
 
     /// An input datagram's sequence (protocol 24): its gaps counted as the client's datagrams lost (the stat graphs' Out
     /// Loss, HUD-21)
+    /// A bot's controls from the next tick on, held until the next call (the browser's local host: its bots decide every
+    /// few ticks from the match's state, `snapshot`); its first call makes the player a bot
+    pub fn set_bot_controls(&mut self, id: PlayerId, controls: Controls) {
+        if let Some(p) = self.players.get_mut(&id) {
+            p.bot = Some(controls);
+        }
+    }
+
+    /// The whole match's state, as a welcome's snapshot (the local host's bots load it into their view of the match)
+    pub fn snapshot(&mut self) -> Vec<u8> {
+        self.arena.save_state()
+    }
+
     pub fn note_input_sequence(&mut self, id: PlayerId, sequence: u16) {
         if let Some(p) = self.players.get_mut(&id) {
             p.input.note_sequence(sequence);
@@ -1267,8 +1317,9 @@ impl Game {
     fn finish(&mut self, tick: u64) {
         self.arena.set_frozen(true);
         self.arena.set_unlimited_boost(false);
+        // (the local host's bots ready for the next match at once: the players' Play Again starts it)
         for p in self.players.values_mut() {
-            p.ready = false;
+            p.ready = p.bot.is_some();
         }
         self.phase = Phase::Finished;
         self.finished_at = tick;
@@ -1511,6 +1562,11 @@ impl Game {
         let frozen = matches!(self.phase, Phase::PrePodium | Phase::Finished | Phase::Replay);
         let now_tick = self.arena.tick_count();
         for p in self.players.values_mut() {
+            if let Some(controls) = p.bot {
+                let controls = if frozen { Controls::default() } else { controls };
+                self.arena.set_controls(p.car_id, &controls);
+                continue;
+            }
             let controls = p.input.tick(now, odd_tick);
             if p.input.acted {
                 p.acted(now_tick); // (a consumed frame that changed the inputs: MM-35a)
@@ -1601,7 +1657,7 @@ impl Game {
         else {
             return;
         };
-        for p in self.players.values_mut().filter(|p| p.kick_at.is_none()) {
+        for p in self.players.values_mut().filter(|p| p.kick_at.is_none() && p.bot.is_none()) {
             let idle = p.idle_ticks(since, tick);
             if idle > IDLE_KICK_TICKS {
                 let _ = p.out.try_send(Outgoing::Control(Control::Kicked { reason: protocol::KICK_IDLE }.encode()));
@@ -1715,7 +1771,7 @@ impl Game {
     fn update_parts(&mut self) -> Vec<Vec<u8>> {
         let chosen = self.replication.choose(&mut self.arena);
         // Greedy split: the ball and pads go in the first part
-        let budget = MAX_DATAGRAM - UPDATE_HEADER;
+        let budget = self.part_budget;
         let mut parts = Vec::new();
         let (mut with_ball, mut with_pads) = (chosen.ball, chosen.pads);
         let mut current: Vec<u32> = Vec::new();
@@ -2173,6 +2229,56 @@ mod tests {
     }
 
     #[test]
+    fn every_part_of_an_update_carries_the_input_buffers_window_and_the_next_update_starts_a_fresh_one() {
+        // (protocol 24, the stat graphs' IBuf rows and Out Loss: taken once an update, in each of its parts alike, RV-518)
+        let (mut game, mut rxs) = match_with(MatchType::Casual, 1, &[(1, 0, 1), (2, 1, 2)]);
+        game.part_budget = 60; // (a car a part)
+        for rx in &mut rxs {
+            drain(rx);
+        }
+        let windows = |rx: &mut Receiver<Outgoing>| -> Vec<(u32, u8, u8, u8, u8, u8, u8)> {
+            drain(rx)
+                .into_iter()
+                .filter_map(|m| match m {
+                    Outgoing::Datagram(d) => match Datagram::decode(&d) {
+                        Ok(Datagram::Update(u)) => Some((u.server_tick, u.parts, u.buffer_low, u.buffer_high, u.buffer_over, u.buffer_under, u.input_loss)),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .collect()
+        };
+        let window = |w: &(u32, u8, u8, u8, u8, u8, u8)| (w.2, w.3, w.4, w.5, w.6);
+        // (three datagrams lost before each update, till one splits: each of its parts the same window, the loss in each; a
+        // burst of frames each time, the queue falling over the update's two ticks: its fewest and most apart, RV-518's SM10)
+        let mut sequence = 10u16;
+        let mut frame = 1u32;
+        game.note_input_sequence(1, sequence);
+        let mut split = None;
+        for _ in 0..120 {
+            sequence += 4;
+            game.note_input_sequence(1, sequence);
+            let now = game.tick_count() as f64 / 120.0;
+            game.receive_inputs(1, frame, frame, &throttle_frames(12), now);
+            frame += 12;
+            ticks(&mut game, 2);
+            let update = windows(&mut rxs[0]);
+            assert!(update.iter().all(|w| w.6 == 3), "each update's own three lost: {update:?}");
+            if update.len() >= 2 {
+                split = Some(update);
+                break;
+            }
+        }
+        let split = split.expect("an update split in parts");
+        assert!(split.iter().all(|w| usize::from(w.1) == split.len() && window(w) == window(&split[0])), "the same window in every part: {split:?}");
+        assert!(split.iter().all(|w| w.2 < w.3), "the fewest frames queued, then the most: {split:?}");
+        // (no more lost: the next update's window started again)
+        ticks(&mut game, 2);
+        let next = windows(&mut rxs[0]);
+        assert!(!next.is_empty() && next.iter().all(|w| w.6 == 0), "the next update's window started again: {next:?}");
+    }
+
+    #[test]
     fn no_respawn_once_the_match_is_over_a_demolished_loser_stays_so_through_the_podium_and_the_end_screen() {
         // (the user's finding: "Respawning in" for a 1v1's loser at the end. The podium hides the losers' cars as
         // demolished, respawns held; a car demolished as the match ends stays demolished, its timer long run out)
@@ -2406,6 +2512,31 @@ mod tests {
         run_until(&mut game, 4000, |g| g.players[&1].idle_warned);
         game.ready_up(1);
         assert_eq!(idle_messages(&mut rx1), vec![Control::IdleWarning { on: true }, Control::IdleWarning { on: false }]);
+    }
+
+    #[test]
+    fn a_bots_controls_drive_its_car_it_is_never_idle_and_it_readies_for_the_next_match() {
+        // (the browser's local host's bots, src/bin/host.rs: no input buffer, its controls held; one still for 40 s of play
+        // is never warned or kicked; both ready at the match's end; the match's snapshot for their view)
+        init_engine();
+        let mut game = Game::with_options(1, 1);
+        game.idle_kick = true;
+        let (tx1, mut rx1) = channel(TEST_QUEUE);
+        let (tx2, mut rx2) = channel(TEST_QUEUE);
+        game.join(1, REQUEST, tx1);
+        game.join(2, REQUEST, tx2);
+        game.set_bot_controls(1, Controls::default());
+        game.set_bot_controls(2, Controls { throttle: 1.0, ..Controls::default() });
+        run_until(&mut game, 3000, |g| g.phase == Phase::Active);
+        let start = game.car_position(2).unwrap();
+        ticks(&mut game, 40 * 120);
+        let end = game.car_position(2).unwrap();
+        assert!(((end[0] - start[0]).powi(2) + (end[1] - start[1]).powi(2)).sqrt() > 500.0, "driven: {start:?} -> {end:?}");
+        assert!(idle_messages(&mut rx1).is_empty() && idle_messages(&mut rx2).is_empty());
+        assert!(game.players.contains_key(&1) && game.players.contains_key(&2));
+        assert!(!game.snapshot().is_empty());
+        game.finish(game.tick_count());
+        assert!(game.players.values().all(|p| p.ready), "bots ready for the next match at once");
     }
 
     #[test]

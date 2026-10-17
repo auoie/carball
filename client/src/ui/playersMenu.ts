@@ -51,7 +51,8 @@ export class PlayersMenu {
       return;
     }
     const toggle = document.createElement("button");
-    toggle.className = "players-toggle";
+    // (the menu's own buttons: the toggle a pause menu button, the rows' actions its question's)
+    toggle.className = "pause-button players-toggle";
     toggle.textContent = PLAYERS_LABEL;
     toggle.setAttribute("aria-expanded", String(this.#open));
     toggle.addEventListener("click", () => {
@@ -75,6 +76,7 @@ export class PlayersMenu {
 
   #button(label: string, what: "mute" | "block", car: number, crossed = false): HTMLButtonElement {
     const button = document.createElement("button");
+    button.className = "players-action";
     button.textContent = label;
     button.dataset["action"] = what;
     button.classList.toggle("crossed", crossed); // (Unblock's small red X)

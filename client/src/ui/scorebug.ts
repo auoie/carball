@@ -2,7 +2,7 @@
 // origin, the stage's (W/2, 0)), tilted 5 degrees back about its origin, the score views turned 10 degrees about their
 // inner edges, the clock's box 1 px nearer; dropping and turning in as it first shows.
 //
-// Drawn here already projected, as the boost meter is (ui/boostMeter.ts), not by CSS 3D transforms: a 3D layer is rastered
+// Drawn here already projected (not by CSS 3D transforms): a 3D layer is rastered
 // once and resampled into its tilt, soft at any pixel ratio (the user's finding, 2026-10-16); flat vectors and text under
 // a 2D matrix are drawn sharp. The boxes are an SVG of projected points (perspective keeps lines straight: only the rounded
 // corners are sampled); their gradients and the scorer's glow lie under the tilt at the box's middle; the digits, the
