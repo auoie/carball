@@ -8,7 +8,7 @@ import { World, initEngine } from "../engine/world";
 import { LocalHost } from "./host";
 import { type BotBrain, LocalBots, chaser } from "./bots";
 import { type FromHost, PAGE_PLAYER, type PageMessage, type ToHost } from "./hostMessages";
-import { loadBrain } from "../bots/registry";
+import { type PackageCache, loadBrain } from "../bots/registry";
 
 /** At most this many ticks a pass (a long stall catches up over a few passes, the page's updates going out between) */
 const TICKS_PER_PASS = 12;
@@ -30,7 +30,9 @@ async function open(message: Extract<ToHost, { type: "open" }>): Promise<void> {
   h.open(message.setup.teamSize, message.setup.seed);
   const b = new LocalBots(World.create(engine), message.setup.teamSize * 2);
   // (each bot's brain: its package's policy, or the built-in chaser)
-  const brains: BotBrain[] = await Promise.all(message.setup.bots.map(async (slot) => (slot.brain === "chaser" ? chaser() : loadBrain(message.botsBase, slot.brain, message.setup.teamSize, fetch, Math.random, undefined, slot.strength))));
+  // (a package's files fetched and its policy's session made once, however many of its bots play: RV-540)
+  const packages: PackageCache = new Map();
+  const brains: BotBrain[] = await Promise.all(message.setup.bots.map(async (slot) => (slot.brain === "chaser" ? chaser() : loadBrain(message.botsBase, slot.brain, message.setup.teamSize, fetch, Math.random, undefined, slot.strength, packages))));
   message.setup.bots.forEach((slot, i) => {
     const brain = brains[i];
     if (brain) b.join(h, PAGE_PLAYER + 1 + i, slot, brain, now());

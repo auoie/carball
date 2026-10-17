@@ -2,7 +2,7 @@
  "format": 1,
  "id": "necto",
  "name": "Necto",
- "version": "rlbotpack-2022-02 (necto-model.pt sha256 137f9492)",
+ "version": "2022-02 (necto-model.pt sha256 137f9492)",
  "authors": "Rolv-Arild (Rolv), Soren and the Necto contributors",
  "licence": "CC BY-NC-SA 4.0",
  "licenceSpdx": "CC-BY-NC-SA-4.0",
@@ -360,7 +360,7 @@
   },
   "padBigRule": "padTable z > 72 (same as our pad.big)",
   "tracker": {
-   "kind": "rlgym-compat-1.0.2",
+   "kind": "ground-grace-v1",
    "onGroundGraceTicks": 6
   },
   "prevAction": "last8",
@@ -515,7 +515,7 @@
  },
  "tickSkip": 8,
  "timing": {
-  "schedule": "rlgym-compat-v1",
+  "schedule": "tick-skip-v1",
   "applyAtCounter": 8,
   "applyDelay": 7,
   "decisionCalls": "0, then 1 + 8k (k = 0, 1, ...)",

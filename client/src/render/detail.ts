@@ -10,6 +10,15 @@ export type DetailMode = "medium" | "high";
 const SYSTEM: Readonly<Record<WorldDetail, number>> = { highQuality: 2, quality: 1, performance: 0 };
 const PIECE: Readonly<Record<DetailMode, number>> = { medium: 1, high: 2 };
 
+/** Whether a piece of `mode` is drawn at World Detail `level` */
+export function drawnAt(mode: DetailMode, level: WorldDetail): boolean {
+  return PIECE[mode] <= SYSTEM[level];
+}
+
+/** World Detail now, for the pieces built outside the theme that read it as they draw (the ball trail's side ribbons,
+ *  VT-10a): src/main.ts keeps it */
+export const sceneDetail: { world: WorldDetail } = { world: "highQuality" };
+
 /** Marks `piece` drawn only at `mode` or above; returns it */
 export function detailMode<T extends Object3D>(piece: T, mode: DetailMode): T {
   (piece.userData as { detailMode?: DetailMode }).detailMode = mode;
@@ -31,7 +40,7 @@ export function applyWorldDetail(root: Object3D, level: WorldDetail): { readonly
     (o.userData as { worldDetail?: (level: WorldDetail) => void }).worldDetail?.(level);
     const mode = (o.userData as { detailMode?: DetailMode }).detailMode;
     if (!mode) return;
-    o.visible = PIECE[mode] <= SYSTEM[level];
+    o.visible = drawnAt(mode, level);
     if (o.visible) shown++;
     else hidden++;
   });

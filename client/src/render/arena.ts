@@ -174,7 +174,8 @@ const GOAL_GLASS_V = 204.2;
 const TRIM_COLOR = 0x9aa0a8;
 /** The goals' glows (Goal_STD_Glow, H-5, RV-77): ribbons round each mouth, on the back wall's stepped outline, along
  *  the floor panels' edges and under the goal's floor, glowing from the edge each is attached to (glow 1) to its free
- *  edge (0), in the team's colour (src/render/stadiumFieldRules.ts: the +y goal's; the -y goal's mirrored) */
+ *  edge (0), in the team's colour (the map's ribbons, src/render/greenhouse.ts goalOutline: the +y goal's; the -y goal's
+ *  mirrored) */
 function goalGlows(style: ArenaStyle, ribbons: readonly GlowRibbon[]): Mesh[] {
   const { blue, orange } = style.walls;
   return [blue, orange].map((primary, team) => {

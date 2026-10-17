@@ -34,7 +34,7 @@ import type { ArenaClock } from "./themes/theme";
 import { fullBright, linear } from "./teamColors";
 import { ARENA_PRIORITY } from "./translucentSort";
 import type { GlowRibbon } from "./themes/theme";
-import { WALL_FOOT, clip, fourWays, framePieces, frameTopAt, wallParam } from "./wallFoot";
+import { WALL_FOOT, clip, fourWays, framePieces, wallParam } from "./wallFoot";
 
 /** The greenhouse's measures (uu): a pane's side (an equilateral triangle), a glazing bar's half width (8 uu wide, as
  *  Night's beams: the user's "a little thicker again", 2026-10-17), its least half width on screen (pixels: Night's
@@ -55,9 +55,10 @@ export const GREENHOUSE = {
   lowBarGain: 1,
   lowNeutral: 0.055,
 
-  /** the boards' lettering and team band as shares of their height (to the trim's top: 140 along the side walls, down to
-   *  57 by the posts), the lettering's repeat along the wall (uu) */
-  boards: { textFrom: 0.1, textTo: 0.66, band: 0.8, repeat: 1600 },
+  /** the boards' height (uu), one all the way round, the back walls beside the goals too (the user's, 2026-10-17: not the
+   *  game's frame falling to 57 by the posts); their lettering and team band as shares of it, the lettering's repeat
+   *  along the wall (uu: the canvas's two phrases at 1.5625 uu a pixel, the letters' size and spacing as CARBALL's were) */
+  boards: { top: 140, textFrom: 0.1, textTo: 0.66, band: 0.8, repeat: 2700 },
 } as const;
 
 /** The pitch's markings (uu, from the field's centre, the game's frame; ours: a football pitch's lines at 100 uu a metre
@@ -338,11 +339,19 @@ export class GreenhouseGlassMaterial extends ShaderMaterial {
   }
 }
 
-/** The boards' lettering (ours: our name, repeated), a canvas where the page has one (none in the unit tests) */
+/** The boards' lettering (the user's, 2026-10-17: our site's address), its words between the dots */
+export const BOARD_TEXT = ["CARBALL", "ZOLT", "TOP"] as const;
+
+/** The lettering's dots (px on the canvas): squares on the baseline, larger than the face's own (under 5 px at this
+ *  size), so they still read at a distance */
+const BOARD_DOT = 8;
+
+/** The boards' lettering (ours: our site's address, repeated), a canvas where the page has one (none in the unit tests):
+ *  two phrases a canvas, each in a cell of 864 px (the 675 px phrase and the 191 px gap CARBALL's 512 px cell left) */
 function boardsTexture(): CanvasTexture | null {
   if (typeof document === "undefined") return null;
   const canvas = document.createElement("canvas");
-  canvas.width = 1024;
+  canvas.width = 1728;
   canvas.height = 64;
   const ctx = canvas.getContext("2d");
   if (!ctx) return null;
@@ -353,9 +362,25 @@ function boardsTexture(): CanvasTexture | null {
     ctx.fillStyle = "#e8eef7";
     ctx.font = "44px Orbitron, Arial, sans-serif";
     ctx.textBaseline = "middle";
-    ctx.textAlign = "center";
+    ctx.textAlign = "left";
     ctx.letterSpacing = "10px";
-    for (const x of [256, 768]) ctx.fillText("CARBALL", x, canvas.height / 2 + 2);
+    const middle = canvas.height / 2 + 2;
+    // (each word's width with its trailing letter spacing; a dot, then the spacing again; the phrase centred in its cell)
+    const widths = BOARD_TEXT.map((word) => ctx.measureText(word).width);
+    const dotGap = BOARD_DOT + 10;
+    const total = widths.reduce((a, b) => a + b, 0) + dotGap * (BOARD_TEXT.length - 1) - 10;
+    const baseline = middle + ctx.measureText("L").actualBoundingBoxDescent;
+    for (const centre of [432, 1296]) {
+      let x = centre - total / 2;
+      BOARD_TEXT.forEach((word, i) => {
+        ctx.fillText(word, x, middle);
+        x += widths[i] ?? 0;
+        if (i < BOARD_TEXT.length - 1) {
+          ctx.fillRect(Math.round(x), Math.round(baseline - BOARD_DOT), BOARD_DOT, BOARD_DOT);
+          x += dotGap;
+        }
+      });
+    }
     texture.needsUpdate = true;
   };
   draw();
@@ -518,8 +543,8 @@ export function goalOutline(width = 56): GlowRibbon {
   return { attached, free, part: "mouth" };
 }
 
-/** The greenhouse's walls: the glass (every triangle of the surface above the wall's foot), the boards (the foot: the
- *  trim's band), the white goal posts and bar */
+/** The greenhouse's walls: the boards (the surface up to their height), the glass (the rest of it, above them), the
+ *  white goal posts and bar */
 export function greenhouseWalls(
   surface: ArenaSurface,
   ballPosition: Vector3,
@@ -527,24 +552,15 @@ export function greenhouseWalls(
   orange: Color,
   clock?: ArenaClock,
 ): { readonly group: Group; readonly glass: GreenhouseGlassMaterial } {
-  const { positions, bands, indices } = surface;
-  const foot: number[] = [];
-  const pane: number[] = [];
-  for (let i = 0; i < indices.length; i += 3) {
-    const tri = [indices[i] ?? 0, indices[i + 1] ?? 0, indices[i + 2] ?? 0] as const;
-    (tri.every((v) => (bands[v] ?? -1) >= 0) ? foot : pane).push(...tri);
-  }
-  // (the boards up to the trim's top, as the game's frame there: 140 along the side walls, falling to 57 by the posts;
-  // the glass above it)
-  const topAt = (x: number, y: number): number => frameTopAt(wallParam(x, y));
-  const below = clip(positions, foot, (x, y, z) => z - topAt(x, y));
-  const above = clip(positions, foot, (x, y, z) => z - topAt(x, y), true);
-  const glassPositions = new Float32Array(positions.length + above.positions.length);
-  glassPositions.set(positions);
-  glassPositions.set(above.positions, positions.length);
-  const base = positions.length / 3;
+  const { positions } = surface;
+  const indices = Array.from(surface.indices);
+  // (the surface cut at the boards' height all the way round: the boards below, the glass and its bars above, ending
+  // at the goal mouth's edge where the surface does, under the posts)
+  const { top } = GREENHOUSE.boards;
+  const below = clip(positions, indices, (_x, _y, z) => z - top);
+  const above = clip(positions, indices, (_x, _y, z) => z - top, true);
   const glassMaterial = new GreenhouseGlassMaterial(ballPosition, blue, orange, clock);
-  const glass = new Mesh(glassGeometry(glassPositions, [...pane, ...above.indices.map((i) => i + base)]), glassMaterial);
+  const glass = new Mesh(glassGeometry(above.positions, above.indices), glassMaterial);
   glass.name = "greenhouse glass";
   glass.renderOrder = ARENA_PRIORITY.base;
   // (the boards: each vertex's place along the wall, signed so the lettering reads left to right from inside on every
@@ -556,7 +572,7 @@ export function greenhouseWalls(
   for (let i = 0; i < chart.count; i++) {
     // (Three's x the game's x, its z the game's y)
     const [x, y, z] = [place.getX(i), place.getZ(i), place.getY(i)];
-    board.set([(x * y >= 0 ? 1 : -1) * chart.getX(i), z / Math.max(1, topAt(x, y))], 2 * i);
+    board.set([(x * y >= 0 ? 1 : -1) * chart.getX(i), z / top], 2 * i);
   }
   boardsGeometry.setAttribute("board", new BufferAttribute(board, 2));
   boardsGeometry.deleteAttribute("chart");

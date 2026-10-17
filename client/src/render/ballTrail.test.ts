@@ -1,8 +1,8 @@
 // The ball's speed trail (VT-10, VT-10a: BR1): its points' rate, life, opacity and colour as dropped, its curves, gone
 // at once when cleared
-import { Vector3 } from "three";
+import { type ShaderMaterial, Vector3 } from "three";
 import { describe, expect, it } from "vitest";
-import { BallTrail, TRAIL, TrailPoints, alphaOverLife, colourOverLife, whiteOverLife } from "./ballTrail";
+import { BallTrail, SIDE_TRAIL, TRAIL, TrailPoints, alphaOverLife, colourOverLife, whiteOverLife } from "./ballTrail";
 
 const frames = (trail: TrailPoints, seconds: number, speed: number, dilation = 1, at = new Vector3()): void => {
   for (let t = 0; t < seconds - 1e-9; t += 1 / 60) trail.step(1 / 60, at, speed, dilation);
@@ -26,6 +26,16 @@ describe("the trail's points", () => {
     frames(slower, 1, 2500, 0.1875);
     expect(slower.points.length).toBeGreaterThanOrEqual(44);
     expect(slower.points.length).toBeLessThanOrEqual(46);
+  });
+
+  it("the side ribbons' (RV-536): 15 a game second at every dilation, each living half a second", () => {
+    for (const dilation of [1, 0.1875]) {
+      const side = new TrailPoints(SIDE_TRAIL);
+      frames(side, 2, 2500, dilation);
+      expect(side.points.length, String(dilation)).toBeGreaterThanOrEqual(7);
+      expect(side.points.length, String(dilation)).toBeLessThanOrEqual(8);
+      expect(side.time - (side.points[0]?.born ?? 0)).toBeLessThanOrEqual(0.5 + 1e-9);
+    }
   });
 
   it("the opacity easing to 1 above 2000 uu/s at 3 a second, to 0 below; nothing shown before it's fast", () => {
@@ -82,5 +92,30 @@ describe("the trail drawn", () => {
     expect(trail.mesh.geometry.drawRange.count).toBeGreaterThan(0);
     trail.clear();
     expect(trail.mesh.geometry.drawRange.count).toBe(0);
+  });
+
+  it("each point drawn in the colour it was dropped with: a touch's new colour at the head alone (RV-538 CM11)", () => {
+    const trail = new BallTrail();
+    const ball = new Vector3();
+    trail.colour = [1, 0, 0];
+    for (let k = 0; k < 60; k++) trail.update(1 / 60, ball.set(0, 93, k * 50), 3000);
+    trail.colour = [0, 0, 1];
+    trail.update(1 / 60, ball.set(0, 93, 3000), 3000);
+    const tint = trail.mesh.geometry.getAttribute("tint");
+    const last = trail.mesh.geometry.drawRange.count / 6;
+    // (the tail's vertices past the white head: red as dropped, not the new blue)
+    expect(tint.getX(2 * last)).toBeGreaterThan(0.3);
+    expect(tint.getZ(2 * last)).toBeLessThan(0.05);
+  });
+
+  it("64 uu wide, a 16 uu core with its faint halo to the edge (VT-10a; RV-538 CM7, CM10)", () => {
+    const material = new BallTrail().mesh.material as ShaderMaterial;
+    expect(TRAIL.width).toBe(64);
+    expect(material.vertexShader).toContain("side * trail.x * 32.0");
+    expect(material.fragmentShader).toContain("float profile = (1.0 - d) * (0.125 + max(0.0, 1.0 - 4.0 * d));");
+    // (the side ribbons 8 uu, the same profile)
+    const side = new BallTrail(SIDE_TRAIL).mesh.material as ShaderMaterial;
+    expect(side.vertexShader).toContain("side * trail.x * 4.0");
+    expect(side.fragmentShader).toBe(material.fragmentShader);
   });
 });

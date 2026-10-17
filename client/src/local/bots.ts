@@ -50,19 +50,19 @@ export interface BotBrain {
 const PHASE_ACTIVE = 1;
 const ENDED_PHASES: ReadonlySet<number> = new Set([4, 7, 8]);
 
-/** The bots' state from the world after a tick, and the match's phase: the kickoff's pause while play is on and the ball
- *  hasn't been touched (it rests on its spot, still, until then) */
+/** The match's moments a brain reads, from its phase and the ball: the kickoff's pause while play is on and the ball
+ *  hasn't been touched (it rests on its spot, still, until then; not the countdown's), the match's end (its pre-podium,
+ *  podium and after) */
+export function matchMoments(phase: number | null, ball: Pick<BotState["ball"], "pos" | "vel">): { readonly kickoffPause: boolean; readonly matchEnded: boolean } {
+  const untouched = ball.pos.x === 0 && ball.pos.y === 0 && ball.vel.x === 0 && ball.vel.y === 0 && ball.vel.z === 0;
+  return { kickoffPause: phase === PHASE_ACTIVE && untouched, matchEnded: phase !== null && ENDED_PHASES.has(phase) };
+}
+
+/** The bots' state from the world after a tick, and the match's phase (matchMoments) */
 export function botState(world: World, phase: number | null): { readonly state: BotState; readonly ids: readonly number[] } {
   const ids = world.carIds().sort((a, b) => a - b);
   const ball = world.ball();
-  const untouched = ball.pos.x === 0 && ball.pos.y === 0 && ball.vel.x === 0 && ball.vel.y === 0 && ball.vel.z === 0;
-  const state: BotState = {
-    cars: ids.map((id) => world.car(id)),
-    ball,
-    pads: world.boostPads(),
-    kickoffPause: phase === PHASE_ACTIVE && untouched,
-    matchEnded: phase !== null && ENDED_PHASES.has(phase),
-  };
+  const state: BotState = { cars: ids.map((id) => world.car(id)), ball, pads: world.boostPads(), ...matchMoments(phase, ball) };
   return { state, ids };
 }
 

@@ -2,7 +2,7 @@
 // with the bot packages' listing (not in the page's main bundle): the team sizes some bot plays, each slot's choice of the
 // bots that play the size (and of its bot's levels, where it offers more than full), the credits of the bots chosen; the
 // choices kept (local/botMatch.ts).
-import type { BotListing } from "../bots/listing";
+import { BOTS_BASE, type BotListing } from "../bots/listing";
 import { PLAYLISTS } from "../game/matchmaking";
 import { type BotChoices, type BotPick, type TeamSize, botTeamSizes, fitChoices, storeChoices, storedChoices } from "../local/botMatch";
 import { BOT_MATCH_TEXT } from "../local/botText";
@@ -14,6 +14,17 @@ export interface BotsPage {
 }
 
 /** The page's body drawn into `body` for these bot packages (its choices fitted to them), drawn anew at each change */
+/** A credit's link, opened in a new tab */
+function creditLink(text: string, href: string): HTMLAnchorElement {
+  const a = document.createElement("a");
+  a.className = "main-menu-bot-link";
+  a.href = href;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  a.textContent = text;
+  return a;
+}
+
 export function botsPage(body: HTMLElement, listings: readonly BotListing[]): BotsPage {
   let state = fitChoices(storedChoices(), listings);
   const draw = (): void => {
@@ -76,15 +87,19 @@ export function botsPage(body: HTMLElement, listings: readonly BotListing[]): Bo
     slots(BOT_MATCH_TEXT.teammates, "teammates");
     slots(BOT_MATCH_TEXT.opponents, "opponents");
     // (each bot chosen credited: its package's credit line, which names its licence (the packages' terms), else its name and
-    // licence)
+    // licence; its web addresses links, and a link to the licence's text beside its policy: RV-544)
     const credits = document.createElement("div");
     credits.className = "main-menu-bot-credits";
     const chosen = [...new Set([...choices.teammates, ...choices.opponents].map((p) => p.bot))];
-    credits.textContent = chosen
-      .map((id) => listings.find((l) => l.id === id))
-      .filter((l): l is BotListing => l !== undefined)
-      .map((l) => (l.credit === "" ? `${l.name} · ${l.licence}` : l.credit))
-      .join("\n");
+    for (const l of chosen.map((id) => listings.find((b) => b.id === id)).filter((b): b is BotListing => b !== undefined)) {
+      const line = document.createElement("div");
+      for (const part of (l.credit === "" ? `${l.name} · ${l.licence}` : l.credit).split(/(https:\/\/[^\s,]+)/)) {
+        if (part.startsWith("https://")) line.append(creditLink(part, part));
+        else if (part !== "") line.append(part);
+      }
+      line.append(" ", creditLink(BOT_MATCH_TEXT.licenceText, `${BOTS_BASE}${l.id}/LICENSE.txt`));
+      credits.append(line);
+    }
     body.append(credits);
   };
   draw();

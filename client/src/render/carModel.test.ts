@@ -7,7 +7,7 @@ import { Box3, type BufferGeometry, Color, DoubleSide, type Material, Mesh, Mesh
 import { beforeAll, describe, expect, it } from "vitest";
 import { CarBody, type CarConfig, World, initEngine } from "../engine/world";
 import { FENNEC, buildCarModel, carExhausts, fennecFrame } from "./carModel";
-import { FLAT_BODY, STANDARD_BODY, TALL_BODY } from "./carBodies";
+import { FLAT_BODY, TALL_BODY, carBody } from "./carBodies";
 import { bodyFrame } from "./carParts";
 import { arenaMeshes } from "../testing/arena";
 
@@ -179,10 +179,9 @@ describe("the car's lights (RV-15)", () => {
 });
 
 describe("the garage's other cars (CM1's proportions, notes/hitboxes.md)", () => {
-  // (each on its own preset's hitbox: its car id, its preset, its overall back (the Octane's wing, the Merc's spare
-  // wheel) and top (the wing, the roof, the roof lip))
+  // (each on its own preset's hitbox: its car id, its preset, its overall back (the Merc's spare wheel) and top (the roof,
+  // the roof lip))
   const cars = [
-    { car: 1, look: STANDARD_BODY, preset: "Standard", back: -60.4, top: 62.7 },
     { car: 2, look: FLAT_BODY, preset: "Flat", back: -61.1, top: 42.8 },
     { car: 3, look: TALL_BODY, preset: "Tall", back: -68.4, top: 71.9 },
   ] as const;
@@ -262,12 +261,12 @@ describe("the garage's other cars (CM1's proportions, notes/hitboxes.md)", () =>
     }
   });
 
-  it("Sport and Standard: the same hitbox, two looks (140 and 138 long overall)", () => {
+  it("the retired Standard (id 1, the user's, 2026-10-17) drawn as the Sport, 140 long overall", () => {
     const c = configs.get("Standard");
-    if (!c) throw new Error("no Standard");
-    const [sport, standard] = [bounds(c, false, 0), bounds(c, false, 1)];
+    if (!c) throw new Error("no Standard preset");
+    expect(carBody(1)).toBeNull();
+    const [sport, retired] = [bounds(c, false, 0), bounds(c, false, 1)];
     expect(Math.abs(sport.max.x - sport.min.x - 140.4)).toBeLessThan(2);
-    expect(Math.abs(standard.max.x - standard.min.x - (78 + 60.4))).toBeLessThan(2);
-    expect(standard.max.y).toBeGreaterThan(sport.max.y + 5); // (the Standard's wing)
+    expect(retired.max.toArray()).toEqual(sport.max.toArray());
   });
 });

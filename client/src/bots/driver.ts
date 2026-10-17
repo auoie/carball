@@ -1,4 +1,4 @@
-// A package bot's schedule (FORMAT.md timing.schedule "rlgym-compat-v1", ours): each call (after every tick of the match;
+// A package bot's schedule (FORMAT.md timing.schedule "tick-skip-v1", ours): each call (after every tick of the match;
 // call t gets the state after tick t, returns the next tick's controls) its cycle counter and tracker step; a decision when
 // one is due (the observation with the previous action, the policy, the pick); the decision copied into the controls at
 // `applyAtCounter`; the kickoff's script last, its row both the action and the controls while it runs. Decisions fall on
@@ -17,8 +17,9 @@ export interface DriverParts {
   readonly track?: (view: BotView) => void;
   /** A decision: the observation (with the previous action), the policy, the pick; its controls' row */
   readonly decide: (view: BotView, previous: Controls8) => Promise<Controls8>;
-  /** A controls update (a decision's or the script's applied): the difficulty's change to it, if any */
-  readonly onApply?: (row: Controls8) => Controls8;
+  /** A controls update (a decision's or the script's applied over the current controls): the difficulty's change to it,
+   *  if any */
+  readonly onApply?: (row: Controls8, current: Controls8) => Controls8;
   /** The kickoff's step, last: its script's row while it runs, else null */
   readonly kickoff?: (view: BotView) => Controls8 | null;
 }
@@ -31,9 +32,9 @@ export interface DriverState {
   controls: Controls8;
 }
 
-export function rlgymCompatDriver(parts: DriverParts): BotBrain & { readonly state: DriverState } {
+export function tickSkipDriver(parts: DriverParts): BotBrain & { readonly state: DriverState } {
   const state: DriverState = { counter: parts.tickSkip, updateAction: true, action: ZERO_ROW, controls: ZERO_ROW };
-  const apply = (row: Controls8): Controls8 => (parts.onApply ? parts.onApply(row) : row);
+  const apply = (row: Controls8): Controls8 => (parts.onApply ? parts.onApply(row, state.controls) : row);
   return {
     state,
     async tick(view: BotView): Promise<BotControls> {
@@ -59,12 +60,13 @@ export function rlgymCompatDriver(parts: DriverParts): BotBrain & { readonly sta
   };
 }
 
-/** The difficulty "random-controls-v1" (FORMAT.md, Nexto_EZ's): with probability 1 − strength a controls update's axes
- *  are random (throttle U[0, 1), steer, pitch, yaw and roll U[−1, 1)), its buttons kept */
-export function randomControls(strength: number, random: () => number): (row: Controls8) => Controls8 {
-  return (row) => {
+/** The difficulty "random-controls-v1" (FORMAT.md, Nexto_EZ's): with probability 1 − strength a controls update is
+ *  skipped for random axes (throttle U[0, 1), steer, pitch, yaw and roll U[−1, 1)), the buttons kept at their current
+ *  values, not the new row's (RV-535) */
+export function randomControls(strength: number, random: () => number): (row: Controls8, current: Controls8) => Controls8 {
+  return (row, current) => {
     if (random() >= 1 - strength) return row;
-    const [, , , , , jump, boost, handbrake] = row;
+    const [, , , , , jump, boost, handbrake] = current;
     return [random(), random() * 2 - 1, random() * 2 - 1, random() * 2 - 1, random() * 2 - 1, jump, boost, handbrake];
   };
 }

@@ -231,7 +231,7 @@ record: RV-437); netstate tallies its runs through one function its self-check a
 client whose change the snapshot misses (F2, RV-438). The dropped dev key is read before it's removed (RV-439); the web
 image's default URL is its ENV alone, an empty one refused (RV-441). "Hoops" inside a compound (jumpThroughHoops) stays a
 hit: a mode name.
-**Maps (protocol 21), 2026-10-15** (the user's decisions, after launch): Play → Free Play opens a map select (the 16
+**Maps (protocol 21), 2026-10-15** (superseded 2026-10-17: one map, Night, below) (the user's decisions, after launch): Play → Free Play opens a map select (the 16
 themes by their names, `MAP_NAMES`; pad and keyboard; the last pick in `carball.freeplayMap`, checked and focused). Picking
 the page's own map starts free play at once; another map loads the page on it, straight into free play (a `freePlay`
 menu notice): the theme's scenery, GPU resources and soundscape are built once per page, as the game loads a map. A
@@ -244,7 +244,7 @@ a found match's theme chunk during "Joining in" and hands the map to the match p
 while the claim connects; the welcome's map decides. `?theme=` still overrides (development), and a map-select pick drops
 it. `--map N` fixes every match's map: the e2e servers run on 0 (night), the queue server on 2 (meadow), which the queue
 test checks both match pages show.
-**The game's net, trim and cage on every map, 2026-10-16** (the user's decision: the old hex walls' hexagons warped over
+**The game's net, trim and cage on every map, 2026-10-16** (superseded 2026-10-17: removed with the other maps) (the user's decision: the old hex walls' hexagons warped over
 the goals' curves): every theme wears the stadium's cage (the force-field overlay round the ball, the game's additive
 beams stopping at the wall's foot, `cageGraph(false)`, with the hex glass beside the goal mouths below them), its net
 (the hex glass) and its trim (the frame's metal at the wall's foot, `SideTrimMaterial`, reflecting the arena's capture:
@@ -260,6 +260,15 @@ each point's outward normal). Its front face lies where our overlay does (the ga
 SideTrimMaterial copy is drawn a little nearer (polygon offset -1, -2). The back corners and back walls (fillet top 160
 to 96) get none: AV-10 gives them other pieces (a grate, glass); the static session is identifying what goes there, and in
 the other gaps (the glow's ends, the midfield glow gap, the sliver between the goal frame and the glass wing).
+**One map, Night (protocol 25), 2026-10-17** (the user's decision): the only map is our glasshouse arena under Night's
+sky (`render/themes/night.ts`, `render/greenhouse.ts`, `render/tokenPads.ts`), named "Night". The other 15 themes,
+game-style Night, Stadium, the hex cage and its topology (`scripts/cage_*`), the stadium field, the game's wall foot trim,
+the game-style pads, the reflection capture, the height fog, the map select, `?theme=` and the dev cage/field-plan loaders
+are gone (git history at 3cb78f8). The wire keeps the map byte, always 0 (`MAP_COUNT` 1, `NIGHT_MAP`); the server has no
+`--map`. **Play vs Bots** (same day): the server's game core compiled to wasm (`server/src/bin/host.rs`,
+`scripts/build_host.sh`) runs the match in a worker (`client/src/local/`), the page its online client; bots are the
+built-in chaser or the shipped Nexto/Necto packages (`client/bots/`, CC BY-NC-SA 4.0, onnxruntime-web on one thread;
+`CARBALL_BOTS=0` builds without them). RX23 (RV-532..547) fixed in the tree after 3c8622b.
 **The browser tests' servers** start from `client/e2e/servers.ts` (Playwright's globalSetup), not its webServer: here a
 connection to a closed 127.0.0.1 port is dropped, not refused, and Playwright's pre-check of each server's URL waited
 2 min 14 s per server (9 of the suite's 12 minutes).

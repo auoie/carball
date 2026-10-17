@@ -142,6 +142,26 @@ describe("the greenhouse arena", () => {
     expect(meshes.some((m) => m.name === "greenhouse boards")).toBe(true);
     expect(meshes.some((m) => m.name === "greenhouse posts")).toBe(true);
   });
+
+  it("its boards one height all the way round, the back walls by the posts too (the user's, 2026-10-17); the glass from there up", () => {
+    const meshes = draws(new ArenaView(nightTheme()).root, new Mesh());
+    const points = (name: string): [number, number, number][] => {
+      const at = meshes.find((m) => m.name === name)?.geometry.getAttribute("position");
+      // (Three's y the game's z; its x and z the game's x and y)
+      return Array.from({ length: at?.count ?? 0 }, (_, i) => [at?.getX(i) ?? 0, at?.getZ(i) ?? 0, at?.getY(i) ?? 0]);
+    };
+    const { top } = GREENHOUSE.boards;
+    const boards = points("greenhouse boards");
+    expect(Math.max(...boards.map(([, , z]) => z))).toBeCloseTo(top, 3);
+    // (their top edge at that height beside each post (the game's frame fell to 57 there) and along the side walls)
+    const edge = boards.filter(([, , z]) => Math.abs(z - top) < 1e-3);
+    for (const [sx, sy] of [[1, 1], [-1, 1], [1, -1], [-1, -1]] as const) {
+      expect(edge.some(([x, y]) => sx * x > 893 && sx * x < 1100 && sy * y > 5000), `post ${String(sx)}, ${String(sy)}`).toBe(true);
+      expect(edge.some(([x, y]) => sx * x > 3900 && Math.abs(y) < 2000 && sy * y >= 0), `side ${String(sx)}`).toBe(true);
+    }
+    const glassLow = Math.min(...points("greenhouse glass").map(([, , z]) => z));
+    expect(glassLow).toBeGreaterThanOrEqual(top - 1e-3);
+  });
 });
 
 describe("the greenhouse's goal light (the user's \"just a normal light wrapper\")", () => {

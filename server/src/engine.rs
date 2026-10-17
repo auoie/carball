@@ -7,7 +7,7 @@ use std::ptr::NonNull;
 use crate::protocol::PodiumTitle;
 
 #[repr(C)]
-struct RLArena {
+struct CarballArena {
     _private: [u8; 0],
 }
 
@@ -44,56 +44,56 @@ pub struct Controls {
 unsafe extern "C" {
     fn rl_init(collision_mesh_dir: *const c_char) -> c_int;
     fn rl_init_error() -> *const c_char;
-    fn rl_arena_create() -> *mut RLArena;
-    fn rl_arena_destroy(arena: *mut RLArena);
-    fn rl_add_car(arena: *mut RLArena, team: c_int, body: c_int) -> u32;
-    fn rl_remove_car(arena: *mut RLArena, car_id: u32) -> c_int;
-    fn rl_set_controls(arena: *mut RLArena, car_id: u32, controls: *const Controls);
-    fn rl_car_repress_jump(arena: *mut RLArena, car_id: u32);
-    fn rl_set_car_preferences(arena: *mut RLArena, car_id: u32, dodge: f32, steer: f32, air: f32);
-    fn rl_step(arena: *mut RLArena, ticks: c_int);
-    fn rl_reset_kickoff(arena: *mut RLArena, seed: c_int);
-    fn rl_start_match(arena: *mut RLArena, seed: c_int, team_size: c_int);
-    fn rl_next_kickoff(arena: *mut RLArena);
-    fn rl_redo_kickoff(arena: *mut RLArena);
-    fn rl_last_ball_touch_tick(arena: *mut RLArena) -> i64;
-    fn rl_car_last_ball_touch_tick(arena: *mut RLArena, car_id: u32) -> i64;
-    fn rl_ball_on_ground(arena: *mut RLArena) -> c_int;
-    fn rl_reset_ball(arena: *mut RLArena);
-    fn rl_set_ball(arena: *mut RLArena, pos: *const f32, vel: *const f32);
-    fn rl_set_kickoff_countdown(arena: *mut RLArena, ticks: u32);
-    fn rl_set_respawns_held(arena: *mut RLArena, held: c_int);
-    fn rl_kickoff_countdown(arena: *const RLArena) -> u32;
-    fn rl_tick_count(arena: *const RLArena) -> u64;
-    fn rl_is_ball_scored(arena: *mut RLArena) -> c_int;
-    fn rl_ball_position(arena: *mut RLArena, out: *mut f32);
-    fn rl_car_position(arena: *mut RLArena, car_id: u32, out: *mut f32) -> c_int;
-    fn rl_car_velocity(arena: *mut RLArena, car_id: u32, out: *mut f32) -> c_int;
-    fn rl_car_demoed(arena: *mut RLArena, car_id: u32) -> c_int;
-    fn rl_car_demolish(arena: *mut RLArena, car_id: u32);
-    fn rl_car_net_info(arena: *mut RLArena, car_id: u32, out: *mut CarNetInfo) -> c_int;
-    fn rl_set_press_axes(arena: *mut RLArena, car_id: u32, dodge_forward: f32, yaw: f32, roll: f32);
-    fn rl_set_vehicle_order(arena: *mut RLArena, car_ids: *const u32, num_cars: usize);
-    fn rl_vehicle_order(arena: *mut RLArena, out: *mut u32, max_ids: usize) -> usize;
-    fn rl_pads_active(arena: *mut RLArena) -> u64;
-    fn rl_take_events(arena: *mut RLArena, out: *mut i32, max_ints: usize) -> usize;
-    fn rl_write_net_state(arena: *mut RLArena, ball: c_int, car_ids: *const u32, num_cars: usize, pads: c_int, out: *mut u8, capacity: usize) -> usize;
-    fn rl_save_state(arena: *mut RLArena, out: *mut u8, capacity: usize) -> usize;
-    fn rl_load_state(arena: *mut RLArena, data: *const u8, size: usize) -> c_int;
-    fn rl_apply_net_state(arena: *mut RLArena, data: *const u8, size: usize) -> c_int;
-    fn rl_car_ids(arena: *mut RLArena, out: *mut u32, max_ids: usize) -> usize;
-    fn rl_stats_set_state(arena: *mut RLArena, state: c_int);
-    fn rl_stats_set_overtime(arena: *mut RLArena, overtime: c_int);
-    fn rl_stats_reset(arena: *mut RLArena);
-    fn rl_take_stat_awards(arena: *mut RLArena, out: *mut i32, max_ints: usize) -> usize;
-    fn rl_car_stats(arena: *mut RLArena, car_id: u32, out: *mut i32, max: usize) -> usize;
+    fn rl_arena_create() -> *mut CarballArena;
+    fn rl_arena_destroy(arena: *mut CarballArena);
+    fn rl_add_car(arena: *mut CarballArena, team: c_int, body: c_int) -> u32;
+    fn rl_remove_car(arena: *mut CarballArena, car_id: u32) -> c_int;
+    fn rl_set_controls(arena: *mut CarballArena, car_id: u32, controls: *const Controls);
+    fn rl_car_repress_jump(arena: *mut CarballArena, car_id: u32);
+    fn rl_set_car_preferences(arena: *mut CarballArena, car_id: u32, dodge: f32, steer: f32, air: f32);
+    fn rl_step(arena: *mut CarballArena, ticks: c_int);
+    fn rl_reset_kickoff(arena: *mut CarballArena, seed: c_int);
+    fn rl_start_match(arena: *mut CarballArena, seed: c_int, team_size: c_int);
+    fn rl_next_kickoff(arena: *mut CarballArena);
+    fn rl_redo_kickoff(arena: *mut CarballArena);
+    fn rl_last_ball_touch_tick(arena: *mut CarballArena) -> i64;
+    fn rl_car_last_ball_touch_tick(arena: *mut CarballArena, car_id: u32) -> i64;
+    fn rl_ball_on_ground(arena: *mut CarballArena) -> c_int;
+    fn rl_reset_ball(arena: *mut CarballArena);
+    fn rl_set_ball(arena: *mut CarballArena, pos: *const f32, vel: *const f32);
+    fn rl_set_kickoff_countdown(arena: *mut CarballArena, ticks: u32);
+    fn rl_set_respawns_held(arena: *mut CarballArena, held: c_int);
+    fn rl_kickoff_countdown(arena: *const CarballArena) -> u32;
+    fn rl_tick_count(arena: *const CarballArena) -> u64;
+    fn rl_is_ball_scored(arena: *mut CarballArena) -> c_int;
+    fn rl_ball_position(arena: *mut CarballArena, out: *mut f32);
+    fn rl_car_position(arena: *mut CarballArena, car_id: u32, out: *mut f32) -> c_int;
+    fn rl_car_velocity(arena: *mut CarballArena, car_id: u32, out: *mut f32) -> c_int;
+    fn rl_car_demoed(arena: *mut CarballArena, car_id: u32) -> c_int;
+    fn rl_car_demolish(arena: *mut CarballArena, car_id: u32);
+    fn rl_car_net_info(arena: *mut CarballArena, car_id: u32, out: *mut CarNetInfo) -> c_int;
+    fn rl_set_press_axes(arena: *mut CarballArena, car_id: u32, dodge_forward: f32, yaw: f32, roll: f32);
+    fn rl_set_vehicle_order(arena: *mut CarballArena, car_ids: *const u32, num_cars: usize);
+    fn rl_vehicle_order(arena: *mut CarballArena, out: *mut u32, max_ids: usize) -> usize;
+    fn rl_pads_active(arena: *mut CarballArena) -> u64;
+    fn rl_take_events(arena: *mut CarballArena, out: *mut i32, max_ints: usize) -> usize;
+    fn rl_write_net_state(arena: *mut CarballArena, ball: c_int, car_ids: *const u32, num_cars: usize, pads: c_int, out: *mut u8, capacity: usize) -> usize;
+    fn rl_save_state(arena: *mut CarballArena, out: *mut u8, capacity: usize) -> usize;
+    fn rl_load_state(arena: *mut CarballArena, data: *const u8, size: usize) -> c_int;
+    fn rl_apply_net_state(arena: *mut CarballArena, data: *const u8, size: usize) -> c_int;
+    fn rl_car_ids(arena: *mut CarballArena, out: *mut u32, max_ids: usize) -> usize;
+    fn rl_stats_set_state(arena: *mut CarballArena, state: c_int);
+    fn rl_stats_set_overtime(arena: *mut CarballArena, overtime: c_int);
+    fn rl_stats_reset(arena: *mut CarballArena);
+    fn rl_take_stat_awards(arena: *mut CarballArena, out: *mut i32, max_ints: usize) -> usize;
+    fn rl_car_stats(arena: *mut CarballArena, car_id: u32, out: *mut i32, max: usize) -> usize;
     fn rl_stat_event_points(event: c_int) -> c_int;
-    fn rl_set_frozen(arena: *mut RLArena, frozen: c_int);
-    fn rl_car_place(arena: *mut RLArena, car_id: u32, x: f32, y: f32, yaw: f32, boost: f32);
-    fn rl_set_unlimited_boost(arena: *mut RLArena, on: c_int);
-    fn rl_set_podium(arena: *mut RLArena, on: c_int);
-    fn rl_ball_hide(arena: *mut RLArena);
-    fn rl_match_ended(arena: *mut RLArena, have_winner: c_int, members: *const u32, count: usize, out: *mut i32);
+    fn rl_set_frozen(arena: *mut CarballArena, frozen: c_int);
+    fn rl_car_place(arena: *mut CarballArena, car_id: u32, x: f32, y: f32, yaw: f32, boost: f32);
+    fn rl_set_unlimited_boost(arena: *mut CarballArena, on: c_int);
+    fn rl_set_podium(arena: *mut CarballArena, on: c_int);
+    fn rl_ball_hide(arena: *mut CarballArena);
+    fn rl_match_ended(arena: *mut CarballArena, have_winner: c_int, members: *const u32, count: usize, out: *mut i32);
 }
 
 /// A player's match counters (`engine/stats/StatFactory.h` `Counter`): MatchScore, Goals, Assists, Saves, Shots,
@@ -156,7 +156,7 @@ pub enum Event {
 }
 
 /// One match's physics world (soccar).
-pub struct Arena(NonNull<RLArena>);
+pub struct Arena(NonNull<CarballArena>);
 
 // SAFETY: an arena has no thread affinity; it is only ever used by one thread at a time (it is not Sync)
 unsafe impl Send for Arena {}
@@ -167,7 +167,7 @@ impl Arena {
         Self(NonNull::new(unsafe { rl_arena_create() }).expect("arena allocation failed"))
     }
 
-    fn ptr(&self) -> *mut RLArena {
+    fn ptr(&self) -> *mut CarballArena {
         self.0.as_ptr()
     }
 

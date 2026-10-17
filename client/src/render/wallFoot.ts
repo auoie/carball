@@ -1,9 +1,9 @@
-// The wall's foot's measures and the goal frame the greenhouse builds on (src/render/greenhouse.ts: its boards' top and
-// its white goal frame; notes/arena-visuals.md AV-10, AV-13): pieces swept along our arena's wall line
+// The goal frame's measures the greenhouse builds on (src/render/greenhouse.ts: its white posts and bar, the goal's light
+// round them, the arc length along the wall; notes/arena-visuals.md AV-13), and the surface's cut (clip): pieces swept along our arena's wall line
 // (src/render/arenaSurface.ts wallLine) by their measured profiles, (o, z) with o uu behind the wall's face, in the
 // game's frame and mirrored four ways from the quadrant x, y >= 0. Values and placements only, nothing traced.
 import { BufferAttribute, BufferGeometry, ShapeUtils, Vector2, Vector3 } from "three";
-import { CORNER_BACK, CORNER_SIDE, GOAL_TOP, GOAL_X, type Pt, R_GOAL, SEG90, mouthOutline, trimTop, wallLine } from "./arenaSurface";
+import { GOAL_TOP, GOAL_X, type Pt, R_GOAL, SEG90, mouthOutline, trimTop, wallLine } from "./arenaSurface";
 
 type V3 = readonly [number, number, number];
 
@@ -281,58 +281,6 @@ export function wallParam(x: number, y: number): number {
     }
   }
   return at;
-}
-
-/** The stack's measures (AV-10, H-11; o behind the wall's face): rules and named measures (fitted to AVL1's points,
- *  within ~2 uu, so no list of the meshes' points ships) */
-export const STACK = {
-  /** the fillet frame's top: 140 along the side walls and the side corner, 128 at the back corner's start, 96 at its
-   *  end (round the back corner, `roundBack`), 96 along the back wall to |x| 1344, then straight down to 57 by 960 */
-  frameTop: { side: 140, corner: 128, back: 96, wing: [1344, 960] as Pt, post: 57 },
-  /** the side walls' boards and glass on the r 260 circle (o 4 at z 256, its centre at the cap's foot, 260 in front),
-   *  from z 139; the back corner's and back wall's from (o 1.7, z 137.4) to (o 4, z 160), then straight up; the one
-   *  becoming the other as the frame's top falls from 139 to 96 */
-  circle: { r: 260, o: 4, from: 139 },
-  back: { foot: [1.7, 137.4] as Pt, knee: [4, 160] as Pt },
-  top: 256,
-  /** the side glass (Field_STD_Glass) |y| 128-1019, its tiles' scale (HEX-4: 168.9 uu along, ~121 up per UV) */
-  glass: { from: 128, to: 1019, su: 168.9, sv: 121 },
-  /** the boards (AdvertStrip_Field) from |y| 1019 round the corners to |x| 1537 on the back wall */
-  boards: { to: 1537 },
-  /** the grate (Goal_STD_Glass[1]) from the frame's top up to the boards' foot, from where the frame falls below it (a
-   *  zero-height sliver there) to |x| 961; under the wing (|x| < 1537) up to z 127; on the back wall the plane (o -9,
-   *  z 96) to (o 1.7, z 137.4) (ours from the frame's cut edge on our fillet, within 4.4 uu of it) */
-  grate: { to: 961, wing: 127 },
-  /** the bar (AdvertStrip_Frame) at z 125-141, from where the grate starts to |x| 961: on the back wall its front (o -2,
-   *  z 128) to (o 0.9, z 139.4), carried on to its foot and top; its depth back to the boards; round the corner carried
-   *  forward with the boards' foot */
-  bar: { to: 961, z: [125, 141] as Pt, front: [[-2, 128], [0.9, 139.4]] as readonly Pt[], back: 4 },
-  /** the posts (AdvertStrip_Frame): 12 wide, 2 proud of the boards or the glass, up to the cap; along the wall line 12
-   *  even panels between the boards' ends (|y| 1019, |x| 1537), and one more on the glass; on the wing every 128 from
-   *  |x| 1344 */
-  posts: { width: 12, proud: 2, panels: 12, wing: [1344, 1216, 1088] },
-  /** the wing glass's foot (z 127, o 4) and its top under the cap (the cap's base: 256, then the 45 degree line 16
-   *  under its top, z = 1590.7 - |x| - 16 sqrt 2) */
-  wing: { foot: 127, o: 4 },
-} as const;
-
-/** A measure round the back corner (AV-10, AV-11: AVL1's points fitted): `side` along the side walls and the side
- *  corner, easing in (cubic) along the diagonal to `corner` at the back corner's start, out (cubic) round the back
- *  corner to `back` at its end, `back` on along the back wall */
-export function roundBack(s: number, side: number, corner: number, back: number): number {
-  const [s0, s1, s2] = [wallParam(...CORNER_SIDE[1]), wallParam(...CORNER_BACK[0]), wallParam(...CORNER_BACK[1])];
-  if (s <= s0) return side;
-  if (s <= s1) return side + (corner - side) * ((s - s0) / (s1 - s0)) ** 3;
-  if (s <= s2) return corner + (back - corner) * (1 - (1 - (s - s1) / (s2 - s1)) ** 3);
-  return back;
-}
-
-/** The fillet frame's top at arc length s */
-export function frameTopAt(s: number): number {
-  const f = STACK.frameTop;
-  const [w0, w1] = f.wing.map((x) => wallParam(x, 5120));
-  if (s <= (w0 ?? 0)) return roundBack(s, f.side, f.corner, f.back);
-  return f.back + ((f.post - f.back) * Math.min((s - (w0 ?? 0)) / ((w1 ?? 1) - (w0 ?? 0)), 1));
 }
 
 /** The surface's triangles (game frame) kept where `level(x, y, z)` is at most 0 (or, `above`, at least 0): those

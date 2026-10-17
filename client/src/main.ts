@@ -28,7 +28,7 @@ import type { Theme } from "./render/themes/theme";
 import { STAT_GRAPHS, type Settings, loadSettings, resolveSettings } from "./settings/settings";
 import type { Vec3 } from "./math/vec";
 import { AutoVideoGuard, RENDER_QUALITY_SCALE, guardStep, guardWanted, isWeakGpu } from "./settings/video";
-import { applyWorldDetail } from "./render/detail";
+import { applyWorldDetail, sceneDetail } from "./render/detail";
 import { particleDetail } from "./render/particles";
 import { applyShaderQuality } from "./render/shaderQuality";
 import { migrateBrowserStorage } from "./settings/storageKeys";
@@ -91,7 +91,7 @@ async function main(): Promise<void> {
   }
   const onlinePage = server !== null || claim !== null || botMatch !== null;
   let settings = loadSettings();
-  // (the menu page's notice from a match page or the map select, read here: the loading screen names free play's map)
+  // (the menu page's notice from a match page, read here)
   const menuNotice = onlinePage ? null : takeNotice();
   const playlistName = (teamSize: number): string | null => PLAYLISTS.find((p) => p.teamSize === teamSize)?.name ?? null;
 
@@ -115,7 +115,7 @@ async function main(): Promise<void> {
 
   loading.step("arena");
   initEngine(engine, arenaMeshes);
-  // (the game's Fennec and cage, where the dev server has them: src/render/fennec.ts, src/render/cage.ts)
+  // (the game's Fennec and demolition husks, where the dev server has them: src/render/fennec.ts, src/render/demolition.ts)
   await Promise.all([loadFennec(), loadDemolitionHusks()]);
   const world = World.create(engine);
 
@@ -215,6 +215,7 @@ async function main(): Promise<void> {
   const arena = new ArenaView(theme);
   // (World Detail's gates on the theme's pieces: QG-17)
   applyWorldDetail(theme.root, settings.video.worldDetail);
+  sceneDetail.world = settings.video.worldDetail;
   particleDetail.performance = settings.video.particleDetail === "performance";
   renderer.scene.add(arena.root);
   let worldDetail = settings.video.worldDetail;
@@ -264,6 +265,7 @@ async function main(): Promise<void> {
       if (next.video.worldDetail !== worldDetail) {
         worldDetail = next.video.worldDetail;
         applyWorldDetail(theme.root, worldDetail);
+        sceneDetail.world = worldDetail;
       }
       particleDetail.performance = next.video.particleDetail === "performance";
       // (a changed branch compiled before it's drawn where the browser compiles in parallel)
@@ -464,8 +466,10 @@ async function main(): Promise<void> {
         matchmaking.start(playlist);
         mainMenu?.focusFreePlay();
       },
-      // (Play vs Bots' Start: its own page, the player on the garage's team, on free play's map; a search closed first)
+      // (Play vs Bots' Start: its own page, the player on the garage's team; a search closed first)
+      // (none in a build without bots: its setup's chunk left out, RV-541)
       botMatch: (choices) => {
+        if (!__CARBALL_BOTS__) return;
         const go = (): void => {
           void import("./local/botMatch").then(({ botMatchSetup, storeBotMatch }) => {
             storeBotMatch(botMatchSetup(choices, botListings, storedTeam(), Math.floor(Math.random() * 0x7fffffff)));
@@ -628,7 +632,7 @@ async function main(): Promise<void> {
       frame(dt) {
         online.frame(dt);
         menu.update(online.menuItems(), pause.isOpen);
-        players.update(online.players(), pause.isOpen);
+        players.update(online.players(botMatch !== null), pause.isOpen);
       },
     };
   }
@@ -709,6 +713,9 @@ async function main(): Promise<void> {
 main().catch((err: unknown) => {
   // (a match's session not left open behind a page that failed: its slot not an idle car, RV-445)
   startedConnection?.close();
-  showLoadingFailure(document.querySelector("#loading"), err instanceof Error ? err.message : String(err));
+  // (a match's or the bots' page: Back to the menu; the menu's own has nowhere else to go)
+  const query = new URLSearchParams(location.search);
+  const away = query.has("bots") || query.has("match") || query.has("server");
+  showLoadingFailure(document.querySelector("#loading"), err instanceof Error ? err.message : String(err), away ? () => { location.assign(pageUrl("menu", location)); } : undefined);
   console.error(err);
 });

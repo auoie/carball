@@ -4,10 +4,11 @@ Nexto AI weights by Rolv-Arild and the Necto contributors, https://github.com/Ro
 Necto AI weights by Rolv-Arild and the Necto contributors, https://github.com/Rolv-Arild/Necto, CC BY-NC-SA 4.0. Converted from TorchScript to ONNX by re-implementing the network and copying its weights; weights unchanged. No warranty.
 Authors: Rolv-Arild (Rolv), Soren and the Necto contributors. Source: https://github.com/Rolv-Arild/Necto.
 Licensed under the Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License (CC BY-NC-SA 4.0):
-NON-COMMERCIAL use only. Changes: the networks re-implemented and exported to ONNX with their weights copied unchanged
-(bots/nexto/ and bots/necto/: the policy-*.onnx files, shared under the same licence, each folder with the licence's
-text as LICENSE.txt); their observations and actions re-implemented in this site's scripts from the bots' published
-source. No warranties are given. The licence's text follows.
+NON-COMMERCIAL use only. Changes: the networks re-implemented and exported to ONNX with their weights copied unchanged;
+their observations and actions re-implemented in this site's scripts from the bots' published source. bots/nexto/ and
+bots/necto/ (the policy-*.onnx files; bot.json, with the pad table and the kickoff rows; Nexto's actions.json, its
+action table; all taken from that source) are adaptations shared under the same licence, each folder with the
+licence's text as LICENSE.txt. No warranties are given. The licence's text follows.
 ====================================================================================================
 
 Attribution-NonCommercial-ShareAlike 4.0 International

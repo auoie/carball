@@ -151,6 +151,26 @@ body {
   visibility: hidden;
 }
 
+/* (a failed match's or bots' page: back to the menu, RV-546) */
+.loading-back {
+  margin-top: 1.5em;
+  min-height: 40px;
+  padding: 6px 22px;
+  font: calc(22px * var(--hud-header-scale, 1))/26px var(--hud-header);
+  text-transform: uppercase;
+  color: #fff;
+  background: rgba(10, 14, 22, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.loading-back:hover,
+.loading-back:focus-visible {
+  border-color: #43afff;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .loading-ring {
     animation-duration: 12s;
@@ -2492,11 +2512,6 @@ body {
   background: rgba(20, 60, 110, 0.9);
 }
 
-/* Free Play's map select: the maps four a row (two on a narrow screen), the last one picked checked */
-.main-menu-column.main-menu-maps-view {
-  width: min(680px, 84vw);
-}
-
 .main-menu-heading {
   padding: 4px 2px;
   font: calc(26px * var(--hud-header-scale, 1))/30px var(--hud-header);
@@ -2504,28 +2519,8 @@ body {
   color: #fff;
 }
 
-.main-menu-maps {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 6px;
-}
-
-.main-menu-maps .main-menu-button {
-  text-align: center;
-}
-
-.main-menu-map[aria-checked="true"] {
-  border-color: #43afff;
-  background: rgba(20, 60, 110, 0.9);
-}
-
-@media (max-width: 560px) {
-  .main-menu-maps {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-
-/* The garage: the car turning in its colour, the cars four a row, the team colours two (each kept as chosen) */
+/* The garage: the car turning in its colour, the cars three a row (Sport, Flat, Tall), the team colours two (each kept
+   as chosen) */
 .main-menu-column.main-menu-garage-view {
   width: min(560px, 84vw);
 }
@@ -2546,6 +2541,10 @@ body {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 6px;
+}
+
+.main-menu-choices.main-menu-cars {
+  grid-template-columns: repeat(3, 1fr);
 }
 
 .main-menu-choices.main-menu-teams {
@@ -2617,8 +2616,14 @@ body {
   padding: 4px 2px 0;
   font-size: 12px;
   line-height: 16px;
-  white-space: pre-line;
   color: rgba(255, 255, 255, 0.6);
+}
+
+/* (a credit's web address and its licence's text, RV-544) */
+.main-menu-bot-link {
+  color: rgba(160, 205, 255, 0.85);
+  text-decoration: underline;
+  overflow-wrap: anywhere;
 }
 
 /* MM-5, MM-6 (MS1): the search's banner across the top (src/ui/searchView.ts): the strip full width, 26 units of the

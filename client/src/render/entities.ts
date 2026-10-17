@@ -3,7 +3,8 @@
 import { AdditiveBlending, BackSide, BufferAttribute, type BufferGeometry, Color, FrontSide, Group, IcosahedronGeometry, LinearSRGBColorSpace, type Material, Mesh, MeshStandardMaterial, type Object3D, PlaneGeometry, type Quaternion, ShaderMaterial, type Side, SphereGeometry, Vector3 } from "three";
 import type { CarConfig, Team } from "../engine/world";
 import { RETICLE, RETICLE_GLSL_FN } from "./ballShadow";
-import { BallTrail, type TrailPoints } from "./ballTrail";
+import { BallTrail, SIDE_TRAIL, type TrailPoints } from "./ballTrail";
+import { drawnAt, sceneDetail } from "./detail";
 import { TEAM_PRIMARY_LINEAR, fullBright } from "./teamColors";
 import { buildCarModel, carExhausts } from "./carModel";
 import { Trail, trailingRearWheels } from "./supersonic";
@@ -192,6 +193,10 @@ export class BallView {
   #trailLast: Vector3 | null = null;
   /** Whether the trail shows (none on the podium: VT-10a) */
   trailShown = true;
+  /** The trail's side ribbons (VT-10a, World Detail High alone, DM_High): each from its offset off the ball's centre,
+   *  turning with the ball (RV-536) */
+  readonly #sideTrails = SIDE_TRAIL.offsets.map(() => new BallTrail(SIDE_TRAIL));
+  readonly #sideHead = new Vector3();
 
   constructor() {
     // (transparent throughout: it dissolves on a goal and fades in at a kickoff)
@@ -230,19 +235,25 @@ export class BallView {
     // (the clarity sphere: 128 uu, seen from inside, black, its rim soft)
     // (24 x 12: its opacity (N.V)^2, nothing at its silhouette, so no facet shows: the integrated-graphics trims)
     this.#sphere = fx(new SphereGeometry(BALL_FX.sphere.radius, 24, 12), SPHERE_VERTEX, SPHERE_FRAGMENT, true, BackSide);
-    this.root.add(this.#ball, this.#marker, this.#sphere, this.#beam, this.#ring, this.#trail.mesh);
+    this.root.add(this.#ball, this.#marker, this.#sphere, this.#beam, this.#ring, this.#trail.mesh, ...this.#sideTrails.map((t) => t.mesh));
   }
 
   /** The team whose car last touched the ball (null: none since the kickoff): the trail's new points in its colour at
    *  full brightness, white before any (VT-10) */
   set trailTeam(team: Team | null) {
     const primary = team === null ? null : TEAM_PRIMARY_LINEAR[team];
-    this.#trail.colour = primary ? fullBright(primary) : [1, 1, 1];
+    const colour = primary ? fullBright(primary) : ([1, 1, 1] as const);
+    for (const trail of [this.#trail, ...this.#sideTrails]) trail.colour = colour;
   }
 
   /** The trail's points (for tests) */
   get trail(): Readonly<TrailPoints> {
     return this.#trail.state;
+  }
+
+  /** The side ribbons' points and whether each is drawn (for tests) */
+  get sideTrails(): readonly { readonly points: Readonly<TrailPoints>; readonly drawn: boolean }[] {
+    return this.#sideTrails.map((t) => ({ points: t.state, drawn: t.mesh.visible }));
   }
 
   update(position: Vector3, rotation: Quaternion): void {
@@ -253,6 +264,17 @@ export class BallView {
     this.#trail.mesh.visible = this.trailShown;
     if (this.trailShown) this.#trail.update(seconds, position, speed, dilation);
     else this.#trail.clear();
+    const sides = this.trailShown && drawnAt("high", sceneDetail.world);
+    this.#sideTrails.forEach((trail, i) => {
+      trail.mesh.visible = sides;
+      if (!sides) {
+        trail.clear();
+        return;
+      }
+      // (its offset in the ball's own axes, the game's frame to Three's (x, z up, y), turned with the ball)
+      const [x, y, z] = SIDE_TRAIL.offsets[i] ?? [0, 0, 0];
+      trail.update(seconds, this.#sideHead.set(x, z, y).applyQuaternion(rotation).add(position), speed, dilation);
+    });
     this.#trailFrame = { seconds: 0, dilation: 1 };
     this.#ball.position.copy(position);
     this.#ball.quaternion.copy(rotation);
@@ -275,7 +297,7 @@ export class BallView {
     this.#opacity = instant ? 1 : 0;
     this.#sinceSpawn = 0; // (a new FX actor: its beam, ring and sphere come again, VT-30a)
     // (its trail too: begun again unseen, its opacity 0)
-    this.#trail.clear();
+    for (const trail of [this.#trail, ...this.#sideTrails]) trail.clear();
     this.#trailLast = null;
     this.#show(false);
   }
@@ -284,7 +306,7 @@ export class BallView {
    *  its marker gone at once; else it rises at 1/s (after a spawn); the frame time capped at 1/30 either way (RV-30) */
   fade(exploded: boolean, seconds: number, dilation = 1): void {
     // (the trail gone at once at the explosion: VT-10a, VT-15)
-    if (exploded) this.#trail.clear();
+    if (exploded) for (const trail of [this.#trail, ...this.#sideTrails]) trail.clear();
     this.#trailFrame = { seconds: exploded ? 0 : Math.max(0, seconds), dilation };
     const dt = Math.min(Math.max(0, seconds), 1 / 30);
     this.#opacity = exploded ? Math.max(0, this.#opacity - 3 * dt) : Math.min(1, this.#opacity + dt);

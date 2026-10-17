@@ -40,7 +40,7 @@ export function botLevels(manifest: BotManifest): BotLevel[] {
 }
 
 const PARSERS: ReadonlySet<string> = new Set(["lookup-v1", "multidiscrete-v1"]);
-const SCHEDULES: ReadonlySet<string> = new Set(["rlgym-compat-v1"]);
+const SCHEDULES: ReadonlySet<string> = new Set(["tick-skip-v1"]);
 
 export async function json(url: string, fetcher: typeof fetch): Promise<unknown> {
   const r = await fetcher(url);
@@ -50,6 +50,8 @@ export async function json(url: string, fetcher: typeof fetch): Promise<unknown>
 
 /** Why a manifest can't be played here, or null (each id it names needs our implementation) */
 export function unplayable(manifest: BotManifest): string | null {
+  // (a recurrent policy's state between decisions: none written, so a package with one is refused, not run wrong, RV-546)
+  if (manifest.policy.state !== undefined && manifest.policy.state !== null) return "its policy's state isn't written yet";
   if (!(manifest.observation.builder in OBSERVATIONS)) return `its observation builder ${manifest.observation.builder} isn't written yet`;
   if (!PARSERS.has(manifest.action.parser)) return `its action parser ${manifest.action.parser} isn't written yet`;
   if (manifest.timing && !SCHEDULES.has(manifest.timing.schedule)) return `its timing ${manifest.timing.schedule} isn't written yet`;

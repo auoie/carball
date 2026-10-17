@@ -64,6 +64,11 @@ export function respawnLate(pct: number): boolean {
 
 /** The boost meter's number (GFxHUD_TA.GetBoostAmountForUI): floor(pct · 100), at least 1 while any is left
  *  (notes/visual-timing.md VT-21) */
+/** The meter's "low" cue: its shown number at 15 or under */
+export function boostLow(shown: number): boolean {
+  return shown <= 15;
+}
+
 export function boostShown(boost: number): number {
   return boost <= 0 ? 0 : Math.min(100, Math.max(1, Math.floor(boost)));
 }
@@ -427,7 +432,7 @@ export class Hud {
     this.#boostBox.classList.toggle("team-1", teamColoured && team === 1);
     this.#boostBox.classList.toggle("plain", !teamColoured);
     this.#boostBox.classList.toggle("max", value >= 100);
-    this.#boostBox.classList.toggle("low", value <= 15);
+    this.#boostBox.classList.toggle("low", boostLow(value));
   }
 
   #boostDisplayed(now: number): number {

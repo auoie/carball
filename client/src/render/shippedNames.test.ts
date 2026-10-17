@@ -48,8 +48,9 @@ const NAMES = [
   "knockout",
   "spike rush",
 ];
-/** The names no common word holds: found inside any word too, any case ("OCTANEBODY", "octanebody": RV-423) */
-const DISTINCT = ["rocket league", "psyonix", "octane", "dominus", "fennec", "batmobile", "takumi", "mannfield", "soccar", "dropshot", "heatseeker", "snow day", "gridiron", "spike rush"];
+/** The names no common word holds: found inside any word too, any case ("OCTANEBODY", "octanebody": RV-423); the game's
+ *  bot projects', named after it, among them (rlbotpack, rlgym-compat in the bots' ids: RV-533) */
+const DISTINCT = ["rocket league", "psyonix", "octane", "dominus", "fennec", "batmobile", "takumi", "mannfield", "soccar", "dropshot", "heatseeker", "snow day", "gridiron", "spike rush", "rlbot", "rlgym"];
 /** The game's abbreviation (renamed carball: the user's decision of 2026-10-15), case-sensitive: "rl" alone is a
  *  minifier's name (`var rl=`, `of rl)`) and random bytes spell it (RV-424). Anywhere: a separated compound or a phrase
  *  (rl-clone, rl_mode, RL_MODE, .rl-hud, "RL PATCH"), our old joined names in any case (rlengine, RLengine, rl.clone),
@@ -139,14 +140,15 @@ const first = (re: RegExp, source: string): Hit | null => {
   return m ? { source, index: m.index, length: m[0].length } : null;
 };
 
-/** In a binary alone: a C++ type name ending in the abbreviation as Itanium mangling writes it, its length then the name
- *  (`N9RocketSim11btVehicleRLE`), the length checked, so random bytes rarely make one (RV-420, RV-435) */
+/** A C++ name ending in the abbreviation, or starting with it camel-cased, as Itanium mangling writes it, its length then
+ *  the name (`N9RocketSim11btVehicleRLE`, a lambda's `SetCallbacksP7RLArena`: RV-533), the length checked, so random
+ *  bytes rarely make one (RV-420, RV-435); RLE's names not (`10RLEDecoder`) */
 function mangledRL(text: string): Hit | null {
   for (const m of text.matchAll(/(?<!\d)(\d{1,3})(?=[A-Za-z_])/g)) {
     const length = Number(m[1]);
     const at = m.index + m[0].length;
     const name = text.slice(at, at + length);
-    if (length >= 4 && name.length === length && /^[A-Za-z_][A-Za-z0-9_]*[a-z]RL$/.test(name)) return { source: text, index: at, length };
+    if (length >= 4 && name.length === length && /^(?:[A-Za-z_][A-Za-z0-9_]*[a-z]RL|RL[A-Z][a-z][A-Za-z0-9_]*)$/.test(name)) return { source: text, index: at, length };
   }
   return null;
 }
@@ -160,7 +162,8 @@ function found(raw: string, binary = false): string | null {
     first(PATTERN, words(text)) ??
     first(INSIDE, text) ??
     first(ABBREVIATIONS, text) ??
-    (binary ? mangledRL(text) : first(TEXT_ABBREVIATIONS, text));
+    (binary ? null : first(TEXT_ABBREVIATIONS, text)) ??
+    mangledRL(text);
   return hit ? hit.source.slice(Math.max(0, hit.index - 30), hit.index + hit.length + 30) : null;
 }
 
@@ -222,7 +225,12 @@ describe("what ships names no game (RV-388)", () => {
   it("RX17's gaps closed (RV-436), and no false alarms on encoded or random data, hashed names, RLE (RV-435)", () => {
     for (const text of ["CarRL", "RLengine", "RLENGINE", "rl.clone", "xRLOF", "breakoutCar", "isPlankLike", "rumbleMode"]) expect(found(text), text).not.toBeNull();
     for (const bin of ["ARLOF", "N9RocketSim11btVehicleRLE", "N9RocketSim10CarModelRLE", "breakoutCar"]) expect(found(bin, true), bin).not.toBeNull();
-    for (const fine of ["decodeRLE", "encodeRLE", "readRLE", "tgaRLE", "RLE_8", "gokRLL", "for(let e of rl){}", "toURL", "CRL"]) {
+    // (RV-533: the bot projects' names in ids and versions, any case; an abbreviation-first type in a lambda's mangled name)
+    for (const both of ['"version": "rlbotpack-2022-05', '"schedule":"rlgym-compat-v1"', "RLGym", "rlgymcompat", "myrlbotpack", "ZL12SetCallbacksP7RLArenaE3$_0"]) {
+      expect(found(both), both).not.toBeNull();
+      expect(found(both, true), both).not.toBeNull();
+    }
+    for (const fine of ["decodeRLE", "encodeRLE", "readRLE", "tgaRLE", "RLE_8", "gokRLL", "for(let e of rl){}", "toURL", "CRL", "10RLEDecoder", "ZL12SetCallbacksP12CarballArenaE3$_0", "x12RLArena"]) {
       expect(found(fine), fine).toBeNull();
       expect(found(fine, true), fine).toBeNull();
     }

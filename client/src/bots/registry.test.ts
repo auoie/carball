@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 import type { BotView } from "../local/bots";
 import { lookupParser, multiDiscreteParser, parseTable, pickIndex, rowControls } from "./actions";
-import { rlgymCompatDriver } from "./driver";
+import { randomControls, tickSkipDriver } from "./driver";
 import { type Controls8, type MultiDiscreteAction, parseManifest, pickBeta, policyFile } from "./manifest";
 import { botLevels, listBots } from "./listing";
 
@@ -72,6 +72,12 @@ describe("the bot packages", () => {
     expect(listed[0]).toMatchObject({ id: "nexto", name: "Nexto", teamSizes: [1, 2], playable: true, credit: MANIFEST.credit, licence: "CC BY-NC-SA 4.0" });
     expect(listed[1]).toMatchObject({ id: "seer", playable: false, why: "its observation builder seer-v1 isn't written yet" });
     expect(listed[2]).toMatchObject({ id: "gone", playable: false });
+    // (a recurrent policy's state: refused, not run without it, RV-546; null as the packages write none)
+    const recurrent = { ...MANIFEST, id: "lstm", policy: { ...MANIFEST.policy, state: { kind: "lstm-v1" } } };
+    const stateless = { ...MANIFEST, id: "plain", policy: { ...MANIFEST.policy, state: null } };
+    const more = await listBots("/bots/", files({ "/bots/index.json": { format: 1, bots: ["lstm", "plain"] }, "/bots/lstm/bot.json": recurrent, "/bots/plain/bot.json": stateless }));
+    expect(more[0]).toMatchObject({ id: "lstm", playable: false, why: "its policy's state isn't written yet" });
+    expect(more[1]).toMatchObject({ id: "plain", playable: true });
   });
 
   it("offers full strength, and the package's own easier level where it defines one (Nexto's EZ)", () => {
@@ -87,6 +93,9 @@ describe("the bot packages", () => {
     expect(pickIndex([0.1, 2, -1, 2], -1, 0.9)).toBe(2);
     expect(pickIndex([5, 0, 1, 9], 1, 0, 1, 2)).toBe(1);
     expect([0, 0.3, 0.6, 0.99].map((r) => pickIndex([9, 0, 0], 0, r))).toEqual([0, 0, 1, 2]);
+    // (beta 0.5: log₃(3) = 1, the softmax of the logits themselves, p₀ = 1 / (1 + e) ≈ 0.2689: drawn either side of it;
+    // RV-538 BM30)
+    expect([0.268, 0.27].map((r) => pickIndex([0, 1], 0.5, r))).toEqual([0, 1]);
     // (beta 0.5: log3(3) = 1, the plain softmax: weights 1 and 3)
     expect(pickIndex([0, Math.log(3)], 0.5, 0.2)).toBe(0);
     expect(pickIndex([0, Math.log(3)], 0.5, 0.3)).toBe(1);
@@ -105,7 +114,7 @@ describe("the bot packages", () => {
 
   it("decides on calls 0, 1, 9, 17 and applies each decision at the cycle counter's applyAtCounter", async () => {
     const decided: number[] = [];
-    const driver = rlgymCompatDriver({
+    const driver = tickSkipDriver({
       tickSkip: 8,
       applyAtCounter: 7,
       decide: (view) => {
@@ -118,5 +127,27 @@ describe("the bot packages", () => {
     expect(decided).toEqual([0, 1, 9, 17]);
     // (tick 0's applied at once (its ticks count from the skip); tick 1's from tick 7; tick 9's from 15)
     expect(throttles).toEqual([0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 9, 9, 9, 9, 9]);
+  });
+
+  it("Nexto's EZ: with probability 1 − strength an update is random axes over the current buttons, else the new row (RV-535)", async () => {
+    const draws = (...values: number[]): (() => number) => () => values.shift() ?? Number.NaN;
+    const jumping: Controls8 = [1, 0, 0, 0, 0, 1, 0, 1];
+    const row: Controls8 = [0.5, 1, 0, 0, 0, 0, 1, 0];
+    // (strength 0.8: random under 0.2; its axes the next five draws, throttle U[0, 1), the rest U[−1, 1))
+    expect(randomControls(0.8, draws(0.19, 0.5, 0.25, 0.75, 0, 0.999))(row, jumping)).toEqual([0.5, -0.5, 0.5, -1, 0.998, 1, 0, 1]);
+    expect(randomControls(0.8, draws(0.2))(row, jumping)).toEqual(row);
+    expect(randomControls(1, draws(0))(row, jumping)).toEqual(row);
+    // (in the driver: the jump held from the last update stays through a random one whose row lets go)
+    const driver = tickSkipDriver({
+      tickSkip: 8,
+      applyAtCounter: 7,
+      decide: (view) => Promise.resolve(view.tick === 0 ? jumping : row),
+      onApply: randomControls(0.5, draws(0.9, 0.1, 0.5, 0.5, 0.5, 0.5, 0.5)),
+    });
+    const at: { jump: boolean; boost: boolean; throttle: number }[] = [];
+    for (let tick = 0; tick < 8; tick++) at.push(await driver.tick({ tick } as unknown as BotView));
+    expect(at[0]).toMatchObject({ jump: true, boost: false, throttle: 1 });
+    // (the old row's buttons, not the new row's boost)
+    expect(at[7]).toMatchObject({ jump: true, boost: false, throttle: 0.5 });
   });
 });

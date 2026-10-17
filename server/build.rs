@@ -59,6 +59,8 @@ fn local_host() {
         "-sMODULARIZE=1".into(),
         "-sEXPORT_ES6=1".into(),
         "-sEXPORT_NAME=createHost".into(),
+        // (node too: the client's unit tests run the host there, src/local/host.test.ts and src/bots/vectors.test.ts;
+        // the page's build carries a small stub chunk for it, RV-547)
         "-sENVIRONMENT=web,worker,node".into(),
         "-sALLOW_MEMORY_GROWTH=1".into(),
         "-sSTACK_SIZE=5MB".into(),

@@ -56,14 +56,18 @@ function botPackages(): Plugin {
       serveFolder(server, "/bots", BOT_PACKAGES, { ".json": "application/json", ".onnx": "application/octet-stream", ".txt": "text/plain; charset=utf-8" });
     },
     configResolved(config) {
-      outDir = resolve(config.root, config.build.outDir);
+      // (a build's alone: vitest's server closes its bundle too, and would write into whatever dist is there, RV-534)
+      outDir = config.command === "build" ? resolve(config.root, config.build.outDir) : "";
     },
     closeBundle() {
       if (!BOTS || !outDir) return;
       const shipped = (path: string): boolean => !/(vectors\.json|NOTICES\.txt|ThirdPartyNotices\.txt)$/.test(path);
       cpSync(BOT_PACKAGES, join(outDir, "bots"), { recursive: true, filter: shipped });
       const notices = join(outDir, "THIRD_PARTY_NOTICES.txt");
-      if (existsSync(notices)) writeFileSync(notices, `${readFileSync(notices, "utf8").trimEnd()}\n\n${readFileSync(join(BOT_PACKAGES, "NOTICES.txt"), "utf8")}`);
+      const bots = readFileSync(join(BOT_PACKAGES, "NOTICES.txt"), "utf8");
+      // (once, whatever ran before)
+      const page = existsSync(notices) ? readFileSync(notices, "utf8") : null;
+      if (page !== null && !page.includes(bots.trim())) writeFileSync(notices, `${page.trimEnd()}\n\n${bots}`);
       cpSync(join(BOT_PACKAGES, "onnxruntime-ThirdPartyNotices.txt"), join(outDir, "THIRD_PARTY_NOTICES-onnxruntime.txt"));
     },
   };

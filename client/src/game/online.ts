@@ -69,7 +69,7 @@ import {
   WAITING_VIEW,
   WINNERS_EXPLOSION_DELAY,
   dimming,
-  hudParts,
+  onlineHudParts,
   matchOver,
   podiumSpots,
   podiumView,
@@ -539,11 +539,12 @@ export class Online {
     return { teams: scoreboardTeams(this.#board, this.#roster, this.#localCar, columns), score: this.#match?.score ?? [0, 0], columns };
   }
 
-  /** The other players for the menu's list, with their mute and block */
-  players(): PlayerItem[] {
+  /** The other players for the menu's list, with their mute and block; `bots`: they're the offline match's bots (its
+   *  one player the page's own) */
+  players(bots = false): PlayerItem[] {
     return [...(this.#roster?.values() ?? [])]
       .filter((p) => p.car !== this.#localCar)
-      .map((p) => ({ car: p.car, name: p.name, team: p.team, muted: this.#muted.has(p.car), blocked: this.#blocked.has(p.car) }));
+      .map((p) => ({ car: p.car, name: p.name, team: p.team, muted: this.#muted.has(p.car), blocked: this.#blocked.has(p.car), bot: bots }));
   }
 
   /** Mute (the server stops relaying their chat here) or block (dropped here, with the confirmation's toast) */
@@ -1033,7 +1034,7 @@ export class Online {
       }),
       vote: voteHud(this.#vote, this.#matchType, MENU_KEY, matchOver(phase)),
       // (demolished: no car's HUD, the boost meter and the ball cam indicator gone: HUD-16's bShowCarHUD, RV-513)
-      parts: { ...hudParts(phase), ...(car?.demoed ? { boost: false } : {}), ballCamIndicator: phase !== "finished" && !(car?.demoed ?? false) },
+      parts: onlineHudParts(phase, car?.demoed ?? false),
     });
     if (this.#flipReset && flipAudio(this.settings().gameplay.flipResetIndicator)) this.#audio.flipReset();
     if (this.#flipReset && flipVisual(this.settings().gameplay.flipResetIndicator)) this.#flipFx.trigger();

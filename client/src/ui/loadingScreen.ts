@@ -68,8 +68,9 @@ export class LoadingScreen {
   }
 }
 
-/** The start failed: the reason where the step was, the ring stopped (the page kept as it is) */
-export function showLoadingFailure(root: Element | null, message: string): void {
+/** The start failed: the reason where the step was, the ring stopped (the page kept as it is); `back`, a match's or the
+ *  bots' page's way back to the menu (RV-546: else only a reload) */
+export function showLoadingFailure(root: Element | null, message: string, back?: () => void): void {
   if (!(root instanceof HTMLElement)) return;
   root.hidden = false;
   root.classList.remove("loading-done");
@@ -77,6 +78,14 @@ export function showLoadingFailure(root: Element | null, message: string): void 
   const step = root.querySelector(".loading-step");
   if (step) step.textContent = `Failed to start: ${message}`;
   else root.textContent = `Failed to start: ${message}`;
+  if (back && !root.querySelector(".loading-back")) {
+    const button = document.createElement("button");
+    button.className = "loading-back";
+    button.textContent = "Back";
+    button.addEventListener("click", back);
+    root.append(button);
+    button.focus();
+  }
 }
 
 function part(root: HTMLElement, selector: string): HTMLElement {

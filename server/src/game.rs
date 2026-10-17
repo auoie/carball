@@ -1113,8 +1113,6 @@ impl Game {
         self.world_current.clear();
     }
 
-    /// An input datagram's sequence (protocol 24): its gaps counted as the client's datagrams lost (the stat graphs' Out
-    /// Loss, HUD-21)
     /// A bot's controls from the next tick on, held until the next call (the browser's local host: its bots decide every
     /// few ticks from the match's state, `snapshot`); its first call makes the player a bot
     pub fn set_bot_controls(&mut self, id: PlayerId, controls: Controls) {
@@ -1128,6 +1126,8 @@ impl Game {
         self.arena.save_state()
     }
 
+    /// An input datagram's sequence (protocol 24): its gaps counted as the client's datagrams lost (the stat graphs' Out
+    /// Loss, HUD-21)
     pub fn note_input_sequence(&mut self, id: PlayerId, sequence: u16) {
         if let Some(p) = self.players.get_mut(&id) {
             p.input.note_sequence(sequence);
@@ -2400,6 +2400,36 @@ mod tests {
     }
 
     #[test]
+    fn an_updates_header_is_the_bytes_its_budget_leaves_out() {
+        // (RV-538 SM8: UPDATE_HEADER the encoded update's bytes before its state, so a part of the budget's state fills
+        // the datagram exactly; a header field added must grow it)
+        let update = |state: Vec<u8>| {
+            Datagram::Update(Update {
+                server_tick: u32::MAX,
+                ack_frame: u32::MAX,
+                received_frame: u32::MAX,
+                echo_timestamp: u32::MAX,
+                echo_delay: u16::MAX,
+                buffer_target: u8::MAX,
+                buffer_size: u8::MAX,
+                buffer_low: u8::MAX,
+                buffer_high: u8::MAX,
+                buffer_over: u8::MAX,
+                buffer_under: u8::MAX,
+                input_loss: u8::MAX,
+                part: u8::MAX,
+                parts: u8::MAX,
+                state,
+            })
+            .encode()
+        };
+        assert_eq!(update(Vec::new()).len(), UPDATE_HEADER);
+        init_engine();
+        let game = Game::with_options(1, 1);
+        assert_eq!(update(vec![0; game.part_budget]).len(), MAX_DATAGRAM);
+    }
+
+    #[test]
     fn t6_bandwidth_and_cadence() {
         // T6 (G1): what a client receives while everyone drives, in 1v1, 2v2 and 3v3. Before G1 (exact states; the ball
         // every update, cars 15 a second, 60 within 1000 uu of the ball; the pads 15): 22.5, 33.7, 45.6 KB/s here, 67.6
@@ -2537,6 +2567,34 @@ mod tests {
         assert!(!game.snapshot().is_empty());
         game.finish(game.tick_count());
         assert!(game.players.values().all(|p| p.ready), "bots ready for the next match at once");
+    }
+
+    #[test]
+    fn a_bots_controls_are_held_off_while_the_cars_are_frozen_as_a_players_are() {
+        // (RV-538 SM5: after the match a bot's throttle moves nothing, as a player's input doesn't; the goal replay's cars,
+        // frozen too, are placed by its kickoff as soon as the bots skip it)
+        init_engine();
+        let mut game = Game::with_options(1, 1);
+        let (tx1, _rx1) = channel(TEST_QUEUE);
+        let (tx2, _rx2) = channel(TEST_QUEUE);
+        game.join(1, REQUEST, tx1);
+        game.join(2, REQUEST, tx2);
+        game.set_bot_controls(1, Controls::default());
+        game.set_bot_controls(2, Controls::default());
+        run_until(&mut game, 3000, |g| g.phase == Phase::Active);
+        let moved = |a: [f32; 3], b: [f32; 3]| ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt();
+        for frozen in [Phase::PrePodium, Phase::Finished] {
+            game.phase = frozen;
+            game.phase_until = game.tick_count() + 10_000;
+            game.set_bot_controls(2, Controls { throttle: 1.0, ..Controls::default() });
+            let at = game.car_position(2).unwrap();
+            ticks(&mut game, 120);
+            assert!(moved(at, game.car_position(2).unwrap()) < 1.0, "{frozen:?}: held off");
+        }
+        game.phase = Phase::Active;
+        let at = game.car_position(2).unwrap();
+        ticks(&mut game, 120);
+        assert!(moved(at, game.car_position(2).unwrap()) > 50.0, "in play: driven");
     }
 
     #[test]
@@ -3321,10 +3379,10 @@ mod tests {
 
     #[test]
     fn each_player_drives_the_garage_car_they_chose_its_preset_checked() {
-        // (the garage's cars: Sport and Standard the Standard preset, Flat and Tall theirs; one the server doesn't know
-        // plays as Sport)
+        // (the garage's cars: Sport the Standard preset, Flat and Tall theirs; the retired Standard (1) and one the
+        // server doesn't know play as Sport)
         assert_eq!(protocol::model_preset(0), (0, 0));
-        assert_eq!(protocol::model_preset(1), (1, 0));
+        assert_eq!(protocol::model_preset(1), (0, 0), "the retired Standard: Sport");
         assert_eq!(protocol::model_preset(2), (2, 1));
         assert_eq!(protocol::model_preset(3), (3, 5));
         assert_eq!(protocol::model_preset(4), (0, 0));

@@ -61,10 +61,9 @@ export class MainMenu {
   #car = storedCar();
   #team: Team = storedTeam();
   readonly #playlists: HTMLButtonElement[] = [];
-  readonly #playBots: HTMLButtonElement;
-  readonly #bots: HTMLDivElement;
-  readonly #botsBody: HTMLDivElement;
-  readonly #botsStart: HTMLButtonElement;
+  /** Play vs Bots: its button on Play's page, its own page, the page's body and Start (none in a build without bots:
+   *  RV-541) */
+  readonly #botsView: { readonly entry: HTMLButtonElement; readonly page: HTMLDivElement; readonly body: HTMLDivElement; readonly start: HTMLButtonElement } | null;
   /** The bots' page body (ui/botsPage.ts, a chunk of its own): none until the packages are listed */
   #botsPage: BotsPage | null = null;
   #playlist = storedPlaylist();
@@ -102,10 +101,12 @@ export class MainMenu {
     this.#play.dataset["padBack"] = ""; // (B Back in the pad's hints: a page under the top)
     this.#playFreePlay = button(this.#play, MAIN_MENU_TEXT.freePlay, actions.freePlay);
     // (hidden until a bot package is there to play: setBots)
-    this.#playBots = button(this.#play, BOT_MATCH_TEXT.play, () => {
-      this.#show("bots");
-    });
-    this.#playBots.hidden = true;
+    const playBots = __CARBALL_BOTS__
+      ? button(this.#play, BOT_MATCH_TEXT.play, () => {
+          this.#show("bots");
+        })
+      : null;
+    if (playBots) playBots.hidden = true;
     // (the playlists: one selected at a time; Find Match searches it)
     const playlists = document.createElement("div");
     playlists.className = "main-menu-playlists";
@@ -129,24 +130,27 @@ export class MainMenu {
       this.#show("top");
     });
     // (the bots' setup: the team size, each teammate's and opponent's bot, the bots' credits; Start)
-    this.#bots = column();
-    this.#bots.dataset["padPage"] = "bots";
-    this.#bots.dataset["padBack"] = "";
-    this.#bots.classList.add("main-menu-bots-view");
-    const botsHeading = document.createElement("div");
-    botsHeading.className = "main-menu-heading";
-    botsHeading.textContent = BOT_MATCH_TEXT.play;
-    this.#botsBody = document.createElement("div");
-    this.#botsBody.className = "main-menu-bots";
-    this.#bots.append(botsHeading, this.#botsBody);
-    this.#botsStart = button(this.#bots, BOT_MATCH_TEXT.start, () => {
-      const choices = this.#botsPage?.choices();
-      if (choices) actions.botMatch?.(choices);
-    });
-    this.#botsStart.classList.add("main-menu-find");
-    button(this.#bots, BACK_TEXT, () => {
-      this.#show("play");
-    });
+    if (playBots) {
+      const page = column();
+      page.dataset["padPage"] = "bots";
+      page.dataset["padBack"] = "";
+      page.classList.add("main-menu-bots-view");
+      const botsHeading = document.createElement("div");
+      botsHeading.className = "main-menu-heading";
+      botsHeading.textContent = BOT_MATCH_TEXT.play;
+      const body = document.createElement("div");
+      body.className = "main-menu-bots";
+      page.append(botsHeading, body);
+      const start = button(page, BOT_MATCH_TEXT.start, () => {
+        const choices = this.#botsPage?.choices();
+        if (choices) actions.botMatch?.(choices);
+      });
+      start.classList.add("main-menu-find");
+      button(page, BACK_TEXT, () => {
+        this.#show("play");
+      });
+      this.#botsView = { entry: playBots, page, body, start };
+    } else this.#botsView = null;
     // (the garage: the cars and the team colours, each kept as chosen, the car shown turning in its colour)
     this.#garage = column();
     this.#garage.dataset["padPage"] = "garage";
@@ -201,8 +205,9 @@ export class MainMenu {
   /** The bots' page body, once the bot packages are listed (`draw`: ui/botsPage.ts's, into the page): Play vs Bots shown
    *  with one to play, else hidden */
   setBots(draw: (body: HTMLElement) => BotsPage): void {
-    this.#botsPage = draw(this.#botsBody);
-    this.#playBots.hidden = !this.#botsPage.playable;
+    if (!this.#botsView) return;
+    this.#botsPage = draw(this.#botsView.body);
+    this.#botsView.entry.hidden = !this.#botsPage.playable;
   }
 
   get isOpen(): boolean {
@@ -228,7 +233,7 @@ export class MainMenu {
 
   /** Back a page (Escape's, a pad's B); whether there was one to go back from (none at the top: nothing, silently) */
   back(): boolean {
-    const view: MenuView = !this.#bots.hidden ? "bots" : !this.#play.hidden ? "play" : !this.#garage.hidden ? "garage" : "top";
+    const view: MenuView = this.#botsView && !this.#botsView.page.hidden ? "bots" : !this.#play.hidden ? "play" : !this.#garage.hidden ? "garage" : "top";
     this.#show(backFrom(view));
     return view !== "top";
   }
@@ -256,7 +261,7 @@ export class MainMenu {
   #show(view: MenuView): void {
     this.#top.hidden = view !== "top";
     this.#play.hidden = view !== "play";
-    this.#bots.hidden = view !== "bots";
+    if (this.#botsView) this.#botsView.page.hidden = view !== "bots";
     this.#garage.hidden = view !== "garage";
     // (the preview turning only while the garage shows; the car chosen focused)
     if (view === "garage") {
@@ -264,7 +269,7 @@ export class MainMenu {
       this.#carButtons.find((b) => b.dataset["car"] === String(this.#car))?.focus();
     } else this.#preview?.stop();
     // (the bots' Start focused: Enter, or the pad's A, starts it at once)
-    if (view === "bots") this.#botsStart.focus();
+    if (view === "bots") this.#botsView?.start.focus();
   }
 }
 

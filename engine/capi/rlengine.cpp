@@ -17,7 +17,7 @@
 
 using namespace RocketSim;
 
-struct RLArena {
+struct CarballArena {
 	Arena* arena;
 	std::vector<int32_t> events;
 	bool goalReported = false;
@@ -103,31 +103,31 @@ const char* rl_init_error(void) {
 	return initError.c_str();
 }
 
-static void SetCallbacks(RLArena* a) {
+static void SetCallbacks(CarballArena* a) {
 	a->goalReported = a->arena->IsBallScored();
 	a->arena->SetGoalScoreCallback([](Arena*, Team team, void* info) {
-		RLArena* a = (RLArena*)info;
+		CarballArena* a = (CarballArena*)info;
 		if (!a->goalReported) // the arena reports a goal every tick the ball is in; report it once
 			a->events.insert(a->events.end(), { RL_EVENT_GOAL, (int32_t)team, 0 });
 		a->goalReported = true;
 	}, a);
 	a->arena->SetCarBumpCallback([](Arena*, Car* bumper, Car* victim, bool isDemo, void* info) {
-		RLArena* a = (RLArena*)info;
+		CarballArena* a = (CarballArena*)info;
 		a->events.insert(a->events.end(), { isDemo ? RL_EVENT_DEMO : RL_EVENT_BUMP, (int32_t)bumper->id, (int32_t)victim->id });
 		a->stats->OnBump(bumper, victim, isDemo);
 	}, a);
-	a->arena->SetTickEndCallback([](Arena*, void* info) { ((RLArena*)info)->stats->OnTickEnd(); }, a);
+	a->arena->SetTickEndCallback([](Arena*, void* info) { ((CarballArena*)info)->stats->OnTickEnd(); }, a);
 }
 
-RLArena* rl_arena_create(void) {
-	RLArena* a = new RLArena();
+CarballArena* rl_arena_create(void) {
+	CarballArena* a = new CarballArena();
 	a->arena = Arena::Create(GameMode::SOCCAR);
 	a->stats = new RLStats::StatFactory(a->arena);
 	SetCallbacks(a);
 	return a;
 }
 
-void rl_arena_destroy(RLArena* a) {
+void rl_arena_destroy(CarballArena* a) {
 	if (!a)
 		return;
 	delete a->stats;
@@ -135,18 +135,18 @@ void rl_arena_destroy(RLArena* a) {
 	delete a;
 }
 
-uint32_t rl_add_car(RLArena* a, int team, int body) {
+uint32_t rl_add_car(CarballArena* a, int team, int body) {
 	if (body < 0 || body >= (int)(sizeof(BODIES) / sizeof(BODIES[0])))
 		body = 0;
 	return a->arena->AddCar(team == 1 ? Team::ORANGE : Team::BLUE, *BODIES[body])->id;
 }
 
-int rl_remove_car(RLArena* a, uint32_t id) {
+int rl_remove_car(CarballArena* a, uint32_t id) {
 	a->stats->RemoveCar(id);
 	return a->arena->RemoveCar(id) ? 1 : 0;
 }
 
-void rl_set_controls(RLArena* a, uint32_t id, const RLControls* c) {
+void rl_set_controls(CarballArena* a, uint32_t id, const RLControls* c) {
 	Car* car = a->arena->GetCar(id);
 	if (!car || !c)
 		return;
@@ -156,7 +156,7 @@ void rl_set_controls(RLArena* a, uint32_t id, const RLControls* c) {
 	out.dodgeForward = c->dodge_forward; out.hasDodgeForward = c->has_dodge_forward != 0;
 }
 
-void rl_car_repress_jump(RLArena* a, uint32_t id) {
+void rl_car_repress_jump(CarballArena* a, uint32_t id) {
 	Car* car = a->arena->GetCar(id);
 	if (!car)
 		return;
@@ -169,7 +169,7 @@ void rl_car_repress_jump(RLArena* a, uint32_t id) {
 // (the sliders' limits, the defaults for what isn't a number: the server clamps them too, SEC-10; here again, RV-331)
 static float Preference(float v, float lo, float hi, float fallback) { return std::isfinite(v) ? RS_CLAMP(v, lo, hi) : fallback; }
 
-void rl_set_car_preferences(RLArena* a, uint32_t id, float dodge, float steer, float air) {
+void rl_set_car_preferences(CarballArena* a, uint32_t id, float dodge, float steer, float air) {
 	Car* car = a->arena->GetCar(id);
 	if (!car)
 		return;
@@ -178,7 +178,7 @@ void rl_set_car_preferences(RLArena* a, uint32_t id, float dodge, float steer, f
 	car->config.airControlSensitivity = Preference(air, 1.f, 10.f, 1.f);
 }
 
-void rl_step(RLArena* a, int ticks) {
+void rl_step(CarballArena* a, int ticks) {
 	for (int i = 0; i < ticks; i++) {
 		a->arena->Step(1);
 		if (!a->arena->IsBallScored())
@@ -186,24 +186,24 @@ void rl_step(RLArena* a, int ticks) {
 	}
 }
 
-void rl_reset_kickoff(RLArena* a, int seed) {
+void rl_reset_kickoff(CarballArena* a, int seed) {
 	a->arena->ResetToRandomKickoff(seed);
 	a->goalReported = false;
 }
 
-void rl_start_match(RLArena* a, int seed, int team_size) { a->arena->StartKickoffSequence(seed, team_size); }
+void rl_start_match(CarballArena* a, int seed, int team_size) { a->arena->StartKickoffSequence(seed, team_size); }
 
-void rl_next_kickoff(RLArena* a) {
+void rl_next_kickoff(CarballArena* a) {
 	a->arena->ResetToNextKickoff();
 	a->goalReported = false;
 }
 
-void rl_redo_kickoff(RLArena* a) {
+void rl_redo_kickoff(CarballArena* a) {
 	a->arena->RedoKickoff();
 	a->goalReported = false;
 }
 
-int64_t rl_last_ball_touch_tick(RLArena* a) {
+int64_t rl_last_ball_touch_tick(CarballArena* a) {
 	int64_t last = -1;
 	for (Car* car : a->arena->GetCars()) {
 		const BallHitInfo& hit = car->_internalState.ballHitInfo;
@@ -213,14 +213,14 @@ int64_t rl_last_ball_touch_tick(RLArena* a) {
 	return last;
 }
 
-int64_t rl_car_last_ball_touch_tick(RLArena* a, uint32_t car_id) {
+int64_t rl_car_last_ball_touch_tick(CarballArena* a, uint32_t car_id) {
 	Car* car = a->arena->GetCar(car_id);
 	if (!car || !car->_internalState.ballHitInfo.isValid)
 		return -1;
 	return (int64_t)car->_internalState.ballHitInfo.tickCountWhenHit + 1;
 }
 
-int rl_ball_on_ground(RLArena* a) {
+int rl_ball_on_ground(CarballArena* a) {
 	btRigidBody* ball = &a->arena->ball->_rigidBody;
 	if (ball->getActivationState() == ISLAND_SLEEPING)
 		return 1;
@@ -247,7 +247,7 @@ int rl_ball_on_ground(RLArena* a) {
 	return points > 0 && sum.length2() > 0 && sum.normalized().z() > 0.96f ? 1 : 0;
 }
 
-void rl_set_ball(RLArena* a, const float pos[3], const float vel[3]) {
+void rl_set_ball(CarballArena* a, const float pos[3], const float vel[3]) {
 	BallState s;
 	s.pos = Vec(pos[0], pos[1], pos[2]);
 	s.vel = Vec(vel[0], vel[1], vel[2]);
@@ -255,7 +255,7 @@ void rl_set_ball(RLArena* a, const float pos[3], const float vel[3]) {
 	a->arena->ball->SetState(s);
 }
 
-void rl_reset_ball(RLArena* a) {
+void rl_reset_ball(CarballArena* a) {
 	BallState s;
 	s.pos.z = RLConst::BALL_KICKOFF_Z;
 	s.spawnCount = a->arena->ball->_internalState.spawnCount + 1;
@@ -263,20 +263,20 @@ void rl_reset_ball(RLArena* a) {
 	a->goalReported = false;
 }
 
-void rl_set_kickoff_countdown(RLArena* a, uint32_t ticks) { a->arena->kickoffCountdownTicks = ticks; }
-void rl_set_respawns_held(RLArena* a, int held) { a->arena->respawnsHeld = held != 0; }
-uint32_t rl_kickoff_countdown(const RLArena* a) { return a->arena->kickoffCountdownTicks; }
+void rl_set_kickoff_countdown(CarballArena* a, uint32_t ticks) { a->arena->kickoffCountdownTicks = ticks; }
+void rl_set_respawns_held(CarballArena* a, int held) { a->arena->respawnsHeld = held != 0; }
+uint32_t rl_kickoff_countdown(const CarballArena* a) { return a->arena->kickoffCountdownTicks; }
 
-uint64_t rl_tick_count(const RLArena* a) { return a->arena->tickCount; }
+uint64_t rl_tick_count(const CarballArena* a) { return a->arena->tickCount; }
 
-int rl_is_ball_scored(RLArena* a) { return a->arena->IsBallScored() ? 1 : 0; }
+int rl_is_ball_scored(CarballArena* a) { return a->arena->IsBallScored() ? 1 : 0; }
 
-void rl_ball_position(RLArena* a, float out[3]) {
+void rl_ball_position(CarballArena* a, float out[3]) {
 	Vec p = a->arena->ball->GetState().pos;
 	out[0] = p.x; out[1] = p.y; out[2] = p.z;
 }
 
-int rl_car_position(RLArena* a, uint32_t id, float out[3]) {
+int rl_car_position(CarballArena* a, uint32_t id, float out[3]) {
 	Car* car = a->arena->GetCar(id);
 	if (!car)
 		return 0;
@@ -285,7 +285,7 @@ int rl_car_position(RLArena* a, uint32_t id, float out[3]) {
 	return 1;
 }
 
-int rl_car_velocity(RLArena* a, uint32_t id, float out[3]) {
+int rl_car_velocity(CarballArena* a, uint32_t id, float out[3]) {
 	Car* car = a->arena->GetCar(id);
 	if (!car)
 		return 0;
@@ -294,34 +294,34 @@ int rl_car_velocity(RLArena* a, uint32_t id, float out[3]) {
 	return 1;
 }
 
-int rl_car_demoed(RLArena* a, uint32_t id) {
+int rl_car_demoed(CarballArena* a, uint32_t id) {
 	Car* car = a->arena->GetCar(id);
 	return car && car->_internalState.isDemoed ? 1 : 0;
 }
 
-void rl_car_demolish(RLArena* a, uint32_t id) {
+void rl_car_demolish(CarballArena* a, uint32_t id) {
 	Car* car = a->arena->GetCar(id);
 	if (car)
 		a->arena->DemolishCar(car); // (out of the vehicles' order at once: RV-340)
 }
 
-void rl_set_press_axes(RLArena* a, uint32_t id, float dodge_forward, float yaw, float roll) {
+void rl_set_press_axes(CarballArena* a, uint32_t id, float dodge_forward, float yaw, float roll) {
 	if (Car* car = a->arena->GetCar(id))
 		car->_pressAxes = { true, dodge_forward, yaw, roll };
 }
 
-void rl_set_vehicle_order(RLArena* a, const uint32_t* ids, size_t num) {
+void rl_set_vehicle_order(CarballArena* a, const uint32_t* ids, size_t num) {
 	a->arena->SetVehicleOrder(std::vector<uint32_t>(ids, ids + num));
 }
 
-size_t rl_vehicle_order(RLArena* a, uint32_t* out, size_t max_ids) {
+size_t rl_vehicle_order(CarballArena* a, uint32_t* out, size_t max_ids) {
 	std::vector<uint32_t> ids = a->arena->GetVehicleOrder();
 	for (size_t i = 0; i < ids.size() && out && i < max_ids; i++)
 		out[i] = ids[i];
 	return ids.size();
 }
 
-int rl_car_net_info(RLArena* a, uint32_t id, RLCarNetInfo* out) {
+int rl_car_net_info(CarballArena* a, uint32_t id, RLCarNetInfo* out) {
 	Car* car = a->arena->GetCar(id);
 	if (!car || !out)
 		return 0;
@@ -335,7 +335,7 @@ int rl_car_net_info(RLArena* a, uint32_t id, RLCarNetInfo* out) {
 	return 1;
 }
 
-uint64_t rl_pads_active(RLArena* a) {
+uint64_t rl_pads_active(CarballArena* a) {
 	uint64_t mask = 0;
 	const auto& pads = a->arena->GetBoostPads();
 	for (size_t i = 0; i < pads.size() && i < 64; i++)
@@ -344,7 +344,7 @@ uint64_t rl_pads_active(RLArena* a) {
 	return mask;
 }
 
-size_t rl_take_events(RLArena* a, int32_t* out, size_t max_ints) {
+size_t rl_take_events(CarballArena* a, int32_t* out, size_t max_ints) {
 	size_t n = a->events.size() < max_ints ? a->events.size() : max_ints;
 	n -= n % 3;
 	if (out)
@@ -353,7 +353,7 @@ size_t rl_take_events(RLArena* a, int32_t* out, size_t max_ints) {
 	return n;
 }
 
-size_t rl_write_net_state(RLArena* a, int ball, const uint32_t* ids, size_t num, int pads, uint8_t* out, size_t capacity) {
+size_t rl_write_net_state(CarballArena* a, int ball, const uint32_t* ids, size_t num, int pads, uint8_t* out, size_t capacity) {
 	NetState::WriteOptions options;
 	options.ball = ball != 0;
 	options.boostPads = pads != 0;
@@ -365,13 +365,13 @@ size_t rl_write_net_state(RLArena* a, int ball, const uint32_t* ids, size_t num,
 	return CopyOut(data.data, out, capacity);
 }
 
-size_t rl_save_state(RLArena* a, uint8_t* out, size_t capacity) {
+size_t rl_save_state(CarballArena* a, uint8_t* out, size_t capacity) {
 	DataStreamOut data;
 	a->arena->Serialize(data);
 	return CopyOut(data.data, out, capacity);
 }
 
-int rl_load_state(RLArena* a, const uint8_t* data, size_t size) {
+int rl_load_state(CarballArena* a, const uint8_t* data, size_t size) {
 	if (!data || size == 0)
 		return 0;
 	DataStreamIn in;
@@ -390,7 +390,7 @@ int rl_load_state(RLArena* a, const uint8_t* data, size_t size) {
 	return 1;
 }
 
-int rl_apply_net_state(RLArena* a, const uint8_t* data, size_t size) {
+int rl_apply_net_state(CarballArena* a, const uint8_t* data, size_t size) {
 	if (!data || size == 0)
 		return 0;
 	DataStreamIn in;
@@ -398,7 +398,7 @@ int rl_apply_net_state(RLArena* a, const uint8_t* data, size_t size) {
 	return NetState::Read(a->arena, in) ? 1 : 0;
 }
 
-size_t rl_car_ids(RLArena* a, uint32_t* out, size_t max_ids) {
+size_t rl_car_ids(CarballArena* a, uint32_t* out, size_t max_ids) {
 	size_t n = 0;
 	for (Car* car : a->arena->GetCars()) {
 		if (out && n < max_ids)
@@ -408,16 +408,16 @@ size_t rl_car_ids(RLArena* a, uint32_t* out, size_t max_ids) {
 	return n;
 }
 
-void rl_stats_set_state(RLArena* a, int state) {
+void rl_stats_set_state(CarballArena* a, int state) {
 	a->stats->SetState(state == 1 ? RLStats::FactoryState::ACTIVE : state == 2 ? RLStats::FactoryState::POST_GOAL
 	                                                                           : RLStats::FactoryState::INACTIVE);
 }
 
-void rl_stats_set_overtime(RLArena* a, int overtime) { a->stats->SetOvertime(overtime != 0); }
+void rl_stats_set_overtime(CarballArena* a, int overtime) { a->stats->SetOvertime(overtime != 0); }
 
-void rl_stats_reset(RLArena* a) { a->stats->ResetMatch(); }
+void rl_stats_reset(CarballArena* a) { a->stats->ResetMatch(); }
 
-size_t rl_take_stat_awards(RLArena* a, int32_t* out, size_t max_ints) {
+size_t rl_take_stat_awards(CarballArena* a, int32_t* out, size_t max_ints) {
 	std::vector<RLStats::Award> awards = a->stats->TakeAwards();
 	size_t n = 0;
 	for (const RLStats::Award& award : awards) {
@@ -431,7 +431,7 @@ size_t rl_take_stat_awards(RLArena* a, int32_t* out, size_t max_ints) {
 	return n;
 }
 
-size_t rl_car_stats(RLArena* a, uint32_t car_id, int32_t* out, size_t max) {
+size_t rl_car_stats(CarballArena* a, uint32_t car_id, int32_t* out, size_t max) {
 	const RLStats::PlayerStats* s = a->stats->GetStats(car_id);
 	if (!s)
 		return 0;
@@ -440,7 +440,7 @@ size_t rl_car_stats(RLArena* a, uint32_t car_id, int32_t* out, size_t max) {
 	return RLStats::COUNTER_COUNT;
 }
 
-void rl_match_ended(RLArena* a, int have_winner, const uint32_t* members, size_t count, int32_t* out) {
+void rl_match_ended(CarballArena* a, int have_winner, const uint32_t* members, size_t count, int32_t* out) {
 	a->stats->OnMatchEnded(have_winner != 0);
 	std::vector<std::pair<uint32_t, const RLStats::PlayerStats*>> list;
 	for (size_t i = 0; i < count; i++)
@@ -463,24 +463,24 @@ void rl_match_ended(RLArena* a, int have_winner, const uint32_t* members, size_t
 	}
 }
 
-void rl_set_frozen(RLArena* a, int frozen) { a->arena->frozen = frozen != 0; }
+void rl_set_frozen(CarballArena* a, int frozen) { a->arena->frozen = frozen != 0; }
 
-void rl_car_place(RLArena* a, uint32_t id, float x, float y, float yaw, float boost) {
+void rl_car_place(CarballArena* a, uint32_t id, float x, float y, float yaw, float boost) {
 	Car* car = a->arena->GetCar(id);
 	if (car)
 		car->_RespawnAt(Vec(x, y, 0), yaw, boost);
 }
 
-void rl_set_unlimited_boost(RLArena* a, int on) {
+void rl_set_unlimited_boost(CarballArena* a, int on) {
 	MutatorConfig config = a->arena->GetMutatorConfig();
 	config.boostUsedPerSecond = on ? 0.f : RLConst::BOOST_USED_PER_SECOND;
 	config.carSpawnBoostAmount = on ? RLConst::BOOST_MAX : RLConst::BOOST_SPAWN_AMOUNT;
 	a->arena->SetMutatorConfig(config);
 }
 
-void rl_set_podium(RLArena* a, int on) { a->arena->podiumMode = on != 0; }
+void rl_set_podium(CarballArena* a, int on) { a->arena->podiumMode = on != 0; }
 
-void rl_ball_hide(RLArena* a) {
+void rl_ball_hide(CarballArena* a) {
 	BallState s = a->arena->ball->GetState();
 	s.vel = Vec();
 	s.angVel = Vec();

@@ -1,7 +1,7 @@
 // The arena's walls and ceiling for drawing: one continuous surface swept round the field (the floor fillet, the wall,
 // the ceiling fillet) and the ceiling inside it, as the game's arena reads as one cage. Built from the same rules as
 // the collision mesh (scripts/arena_gen.py: the plan contour's stations and each one's profile), but without the
-// collision pieces' overlaps and hidden skirts (the cage's beams are laid out on it too: src/render/cageLayout.ts).
+// collision pieces' overlaps and hidden skirts (the glasshouse's bars are laid out on it: src/render/greenhouse.ts).
 // `band`: on the floor fillet (the game wraps the wall's foot in a grey trim) how far up it the point is, 0 at the
 // floor to 1 at the wall; -1 above it. Positions in the game's frame (x, y, z up); triangles face into the field.
 

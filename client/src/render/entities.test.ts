@@ -1,6 +1,7 @@
 import { Mesh, MeshStandardMaterial, Quaternion, ShaderLib, Vector3, type WebGLProgramParametersWithUniforms, type WebGLRenderer } from "three";
 import { describe, expect, it } from "vitest";
 import { BALL_RADIUS, BallView, GOAL_LINE, goalLine, patchedBallGeometry } from "./entities";
+import { sceneDetail } from "./detail";
 import { TEAM_PRIMARY_LINEAR, fullBright } from "./teamColors";
 
 describe("ball", () => {
@@ -162,6 +163,37 @@ describe("the ball's speed trail (VT-10, VT-10a)", () => {
     ball.trailShown = false;
     run(ball, 30);
     expect(ball.trail.points).toHaveLength(0);
+  });
+
+  it("its four side ribbons at World Detail High alone, from 72 uu off the ball's centre along its own y and z, turning with it (RV-536)", () => {
+    const ball = new BallView();
+    run(ball, 30);
+    expect(ball.sideTrails.map((s) => s.drawn)).toEqual([true, true, true, true]);
+    // (the ball held still, unturned: the game's ±y Three's ±z, its ±z Three's ±y; the newest points dropped there)
+    const centre = new Vector3(500, 400, 1000);
+    const hold = (rotation: Quaternion): Vector3[] => {
+      for (let k = 0; k < 10; k++) {
+        ball.fade(false, 1 / 60);
+        ball.update(centre, rotation);
+      }
+      return ball.sideTrails.map((t) => (t.points.points.at(-1)?.at ?? new Vector3()).clone().sub(centre));
+    };
+    expect(hold(new Quaternion()).map((p) => p.toArray().map(Math.round))).toEqual([
+      [0, 0, 72],
+      [0, 0, -72],
+      [0, 72, 0],
+      [0, -72, 0],
+    ]);
+    // (a quarter turn about the vertical: the game's y offset now along Three's x)
+    expect(hold(new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), Math.PI / 2))[0]?.toArray().map(Math.round)).toEqual([72, 0, 0]);
+    // (World Detail Quality or Performance: none)
+    sceneDetail.world = "performance";
+    try {
+      run(ball, 10);
+      expect(ball.sideTrails.every((s) => !s.drawn && s.points.points.length === 0)).toBe(true);
+    } finally {
+      sceneDetail.world = "highQuality";
+    }
   });
 });
 

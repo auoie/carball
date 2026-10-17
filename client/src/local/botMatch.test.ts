@@ -56,6 +56,11 @@ describe("Play vs Bots' setup", () => {
     expect(readBotMatch(store)).toBeNull();
     store.setItem("carball.botMatch", JSON.stringify({ ...setup, bots: [{ team: 1, name: "Nexto", brain: "nexto", strength: 3 }] }));
     expect(readBotMatch(store)).toBeNull();
+    // (a brain not a bot's id: never fetched by, RV-546)
+    for (const brain of ["../index", "nexto/../../x", "https://x", "Nexto", ""]) {
+      store.setItem("carball.botMatch", JSON.stringify({ ...setup, bots: [{ team: 1, name: "Nexto", brain }] }));
+      expect(readBotMatch(store), brain).toBeNull();
+    }
     store.setItem("carball.botMatch", "{");
     expect(readBotMatch(store)).toBeNull();
   });

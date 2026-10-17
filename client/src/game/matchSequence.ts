@@ -104,6 +104,13 @@ export function hudParts(phase: MatchPhase | undefined): { readonly scoreboard: 
   return { scoreboard: playing, boost: playing && phase !== "replay", heldScoreboard: phase !== undefined && !matchOver(phase) };
 }
 
+/** The online HUD's parts: the phase's, the car's own (the boost meter, the ball cam indicator) gone while it's
+ *  demolished (HUD-16's bShowCarHUD, RV-513) and the indicator at the match's end */
+export function onlineHudParts(phase: MatchPhase | undefined, demoed: boolean): { readonly scoreboard: boolean; readonly boost: boolean; readonly heldScoreboard: boolean; readonly ballCamIndicator: boolean } {
+  const parts = hudParts(phase);
+  return { ...parts, boost: parts.boost && !demoed, ballCamIndicator: phase !== "finished" && !demoed };
+}
+
 /** MIO-31's countdown line (UIText [EndGameMenu] NextMatchIn, verbatim) */
 export const END_TEXT = {
   nextMatchIn: "Next Match In",

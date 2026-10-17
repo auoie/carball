@@ -1,12 +1,12 @@
 // The garage's cars (the user's feature, 2026-10-16), named by their shape (shipped files name no game: the user's
 // decision, 2026-10-15): each its look (our own procedural body) and its physics preset (the engine's hitbox preset,
-// src/engine/world.ts CarBody). Sport and Standard share the Standard preset in everything simulated, their spawn too
-// (the user's choice over the game's per-body spawn height): they differ only in how they look. And the team colour
-// the player picks, Free Play's (online, the queue picks the team: the car takes that team's colour).
+// src/engine/world.ts CarBody). Sport plays the Standard preset. Id 1 (the garage's Standard, an Octane-like body) is
+// gone (the user's, 2026-10-17): the ids stay as they were (no wire change), a stored or sent 1 is Sport. And the team
+// colour the player picks, Free Play's (online, the queue picks the team: the car takes that team's colour).
 import { CarBody, type Team } from "../engine/world";
 
 export interface CarChoice {
-  /** The car's id (the hello's: append-only, the server checks it) */
+  /** The car's id (the hello's: append-only, never reused; the server checks it) */
   readonly id: number;
   readonly name: string;
   /** Its physics preset */
@@ -15,7 +15,6 @@ export interface CarChoice {
 
 export const CARS: readonly CarChoice[] = [
   { id: 0, name: "Sport", body: CarBody.Standard },
-  { id: 1, name: "Standard", body: CarBody.Standard },
   { id: 2, name: "Flat", body: CarBody.Flat },
   { id: 3, name: "Tall", body: CarBody.Tall },
 ];

@@ -3,6 +3,7 @@
 // page its setup in this tab's sessionStorage (as a queue match's claim, net/pages.ts), kept so a reload plays it again.
 import type { Team } from "../engine/world";
 import type { BotListing } from "../bots/listing";
+import { BOT_ID } from "../bots/manifest";
 import type { BotSlot, LocalMatchSetup } from "./hostMessages";
 
 export type TeamSize = 1 | 2 | 3;
@@ -129,7 +130,8 @@ export function readBotMatch(storage: Store | null = session()): LocalMatchSetup
     if (!v || (v.teamSize !== 1 && v.teamSize !== 2 && v.teamSize !== 3) || typeof v.seed !== "number" || !Array.isArray(v.bots)) return null;
     const slots = v.bots as readonly Partial<Record<keyof BotSlot, unknown>>[];
     const strength = (s: unknown): boolean => s === undefined || (typeof s === "number" && s >= 0 && s <= 1);
-    const bots = slots.filter((b): b is BotSlot => (b.team === 0 || b.team === 1) && typeof b.name === "string" && typeof b.brain === "string" && strength(b.strength));
+    // (a brain a bot's id, before the worker fetches its package by it: RV-546)
+    const bots = slots.filter((b): b is BotSlot => (b.team === 0 || b.team === 1) && typeof b.name === "string" && typeof b.brain === "string" && BOT_ID.test(b.brain) && strength(b.strength));
     if (bots.length !== v.teamSize * 2 - 1) return null;
     return { teamSize: v.teamSize, seed: v.seed, bots };
   } catch {

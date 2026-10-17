@@ -241,15 +241,18 @@ pub struct PodiumTitle {
 pub const NO_TITLE: u8 = 255;
 
 /// The garage's cars (the client's `CARS`, src/game/cars.ts; only ever appended to): a model on the wire is its index,
-/// each with the engine's hitbox preset it plays with (Sport and Standard both the Standard preset: the user's decision,
-/// 2026-10-16); one this server doesn't know plays as the first
+/// each with the engine's hitbox preset it plays with; one this server doesn't know plays as the first
 pub const MODEL_PRESETS: [u8; 4] = [0, 0, 1, 5];
 
-/// A hello's model as the server takes it: one it knows, else 0; and its hitbox preset
+/// The garage's retired cars (their ids never reused): 1, the Standard (the user's, 2026-10-17), now Sport (0) as the
+/// client takes it
+pub const RETIRED_MODELS: [u8; 1] = [1];
+
+/// A hello's model as the server takes it: one it knows, else 0 (a retired one too); and its hitbox preset
 pub fn model_preset(model: u8) -> (u8, u8) {
     match MODEL_PRESETS.get(usize::from(model)) {
-        Some(&preset) => (model, preset),
-        None => (0, MODEL_PRESETS[0]),
+        Some(&preset) if !RETIRED_MODELS.contains(&model) => (model, preset),
+        _ => (0, MODEL_PRESETS[0]),
     }
 }
 

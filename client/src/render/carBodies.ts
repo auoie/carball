@@ -1,11 +1,12 @@
-// The garage's other cars (the user's feature, 2026-10-16): Standard, Flat and Tall, in the proportions of the game's
-// Octane, Dominus and Merc, each on its own preset's hitbox (notes/hitboxes.md "Body proportions on the presets": the
-// static session's CM1, measured scalars only; the styling ours, no outlines or vertex lists: the user's rule). Built as
+// The garage's other cars (the user's feature, 2026-10-16): Flat and Tall, in the proportions of the game's Dominus and
+// Merc (the Standard, Octane-like, gone: the user's, 2026-10-17), each on its own preset's hitbox (notes/hitboxes.md
+// "Body proportions on the presets": the static session's CM1, measured scalars only; the styling ours, no outlines or
+// vertex lists: the user's rule). Built as
 // the Sport's (src/render/carModel.ts): a side profile through the measured heights, extruded across and pinched in plan
 // (the nose, a waist, the fenders over the wheels, the tail), a cabin on it narrowing to the roof, glass, lights and
 // wheels; with what each needs past FENNEC's fields (CM1's extra measures): the roof line above the windscreen, the
-// rising beltline, the rear deck and tail, the Octane's wheel pods, intake and wing, the Merc's stepped nose, roof lip
-// and spare wheel. Upright backs (the Octane's cabin, the Merc's box) have no rear glass.
+// rising beltline, the rear deck and tail, the Merc's stepped nose, roof lip and spare wheel. An upright back (the Merc's
+// box) has no rear glass.
 // Local frame (Three.js): x forward, y up, z right; the origin is the car's (the physics body's).
 import { BoxGeometry, type Color, CylinderGeometry, Group, type Material, Mesh, Shape, ShapeGeometry, Vector2 } from "three";
 import type { CarConfig } from "../engine/world";
@@ -14,13 +15,6 @@ import { type CarSpec, HITBOXES, type Hitbox, type Point, addWheels, bodyFrame, 
 
 /** CM1's proportions in FENNEC's field set (notes/hitboxes.md; for cars without rear glass rearWindowBase is the foot of
  *  the cabin's back; the wheels the visual ones) */
-export const OCTANE = {
-  front: 78.0, rear: -51.7, ground: -19.1, halfWidth: 36.3, halfWidthBelt: 22.6, halfWidthRoof: 13.4, halfWidthNose: 18.5,
-  halfWidthTail: 31.9, clearance: 9.8, noseTop: 22.9, hood: 34.5, belt: 33.3, roof: 52.0, windscreenBase: 45.5,
-  windscreenDeg: 33.1, roofFront: 31.0, roofBack: -2.2, rearWindowBase: [-2.2, 38.5] as const, bumperTop: 20.1,
-  frontWheel: { x: 51.3, h: 13.2, z: 26.5, radius: 12.7, width: 11.1 },
-  backWheel: { x: -34.3, h: 14.8, z: 29.6, radius: 15.3, width: 12.6 },
-} as const satisfies CarSpec;
 export const DOMINUS = {
   front: 89.7, rear: -61.1, ground: -19.4, halfWidth: 36.3, halfWidthBelt: 27.6, halfWidthRoof: 16.8, halfWidthNose: 18.9,
   halfWidthTail: 33.9, clearance: 3.4, noseTop: 21.5, hood: 31.4, belt: 31.5, roof: 42.8, windscreenBase: 27.0,
@@ -56,31 +50,10 @@ export interface CarBodySpec {
   readonly waist: readonly [x: number, halfWidth: number];
   readonly fenders: readonly [front: number, back: number];
   readonly rearGlass: boolean;
-  /** The Octane's: a wing (its top, x from back to front, half span) and an intake behind the cabin (x from back to front) */
-  readonly wing?: { readonly top: number; readonly x: readonly [number, number]; readonly halfSpan: number; readonly intake: readonly [number, number] };
   /** The Merc's: a lip on the roof's back end (its top, x) and a spare wheel on the tail (its top, its back) */
   readonly roofLip?: { readonly top: number; readonly x: number };
   readonly spare?: { readonly top: number; readonly back: number };
 }
-
-/** The garage's Standard (Octane-like): wheel pods and a narrow canopy, its cabin's back upright over an engine deck, a
- *  wing (CM1: the wing and intake span x -60.4 to -2.3, its top 62.7; their split, the intake's, ours) */
-export const STANDARD_BODY: CarBodySpec = {
-  spec: OCTANE,
-  hitbox: HITBOXES.standard,
-  bonnet: { frontH: 25.8, midH: 29.7, step: 4 },
-  windscreenTopH: 43.1,
-  roofFrontH: 45.9,
-  roofPeakX: 0.0,
-  beltH: [34.1, 42.1],
-  sideGlass: { x: [2.5, 38.0], topH: 47.1 },
-  rearDeck: [-5.2, 38.6],
-  tailTopH: 43.2,
-  waist: [27.0, 20.9],
-  fenders: [31.9, 36.3],
-  rearGlass: false,
-  wing: { top: 62.7, x: [-60.4, -49.4], halfSpan: 29.75, intake: [-16, -2.3] },
-};
 
 /** The garage's Flat (Dominus-like): a long low bonnet to a beak, a low roof, a rear window down to a short trunk and
  *  its ducktail */
@@ -120,9 +93,10 @@ export const TALL_BODY: CarBodySpec = {
   spare: { top: 64.7, back: -68.4 },
 };
 
-/** The garage car's body (its id: src/game/cars.ts), null for the Sport (src/render/carModel.ts's) */
+/** The garage car's body (its id: src/game/cars.ts), null for the Sport (src/render/carModel.ts's), the retired Standard
+ *  (1) too */
 export function carBody(car: number): CarBodySpec | null {
-  return [null, STANDARD_BODY, FLAT_BODY, TALL_BODY][car] ?? null;
+  return [null, null, FLAT_BODY, TALL_BODY][car] ?? null;
 }
 
 /** The extruded profiles' rounded edges (uu: less than the Sport's, for these bodies' thin bonnets over their arches) */
@@ -278,17 +252,6 @@ export function buildCarBody(look: CarBodySpec, config: CarConfig, paint: Color)
     box(taillight, 1, 4, Math.min(12, tailHalf - 4), rear - 0.2, tailTop - 5, s * (tailHalf - 7));
   }
 
-  // The Octane's intake behind the cabin and its wing on two uprights from the tail
-  if (look.wing) {
-    const { top: wingTop, x: [wingBack, wingFront], halfSpan, intake } = look.wing;
-    const [ib, iF] = [X(intake[0]), X(intake[1])];
-    const deckH = deck[0]?.[1] ?? rearWindowBase[1];
-    box(trim, iF - ib, roof - 4 - deckH, Z(18), (ib + iF) / 2, (roof - 4 + deckH) / 2, 0);
-    const [wb, wf, wy] = [X(wingBack), X(wingFront), Y(wingTop)];
-    box(body, wf - wb, 1.6, 2 * Z(halfSpan), (wb + wf) / 2, wy - 0.8, 0);
-    // (the uprights up into the wing's middle: their tops inside it, not in its top's plane)
-    for (const s of [-1, 1]) box(trim, 2, wy - 0.8 - tailTop, 1.6, (wb + wf) / 2, (wy - 0.8 + tailTop) / 2, s * Z(halfSpan - 8));
-  }
   // The Merc's roof lip and spare wheel
   if (look.roofLip) {
     const lipFront = X(look.roofLip.x) + 6;

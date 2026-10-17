@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MatchPhase } from "../net/protocol";
-import { WAITING_VIEW, dimming, hudParts, matchOver, podiumSpots, podiumView, respawnShown, winnerBanner, winnersGoal } from "./matchSequence";
+import { WAITING_VIEW, dimming, hudParts, matchOver, onlineHudParts, podiumSpots, podiumView, respawnShown, winnerBanner, winnersGoal } from "./matchSequence";
 
 const near = (a: number, b: number, eps = 0.2): boolean => Math.abs(a - b) <= eps;
 
@@ -50,6 +50,13 @@ describe("the match's start and end", () => {
     expect(hudParts("replay")).toEqual({ scoreboard: true, boost: false, heldScoreboard: true });
     expect(hudParts("podium")).toEqual({ scoreboard: false, boost: false, heldScoreboard: false });
     expect(matchOver("finished") && !matchOver("replay")).toBe(true);
+  });
+
+  it("online, a demolished car's own HUD gone: its boost meter and ball cam indicator (HUD-16, RV-513; RV-538 CM15)", () => {
+    expect(onlineHudParts("active", false)).toEqual({ scoreboard: true, boost: true, heldScoreboard: true, ballCamIndicator: true });
+    expect(onlineHudParts("active", true)).toEqual({ scoreboard: true, boost: false, heldScoreboard: true, ballCamIndicator: false });
+    expect(onlineHudParts("replay", false)).toMatchObject({ boost: false, ballCamIndicator: true });
+    expect(onlineHudParts("finished", false)).toMatchObject({ boost: false, ballCamIndicator: false });
   });
 });
 

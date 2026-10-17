@@ -9,12 +9,12 @@ import * as ort from "onnxruntime-web";
 import { describe, expect, it, vi } from "vitest";
 import type { BotState, BotView } from "../local/bots";
 import { lookupParser, multiDiscreteParser, parseTable } from "./actions";
-import { rlgymCompatDriver } from "./driver";
+import { tickSkipDriver } from "./driver";
 import { entityPerceiver } from "./entityPerceiver";
 import { nearestLeftKickoff } from "./kickoff";
 import { type Controls8, parseManifest, pickBeta, policyFile } from "./manifest";
 import { OnnxPolicy } from "./policy";
-import { loadBrain } from "./registry";
+import { type PackageCache, loadBrain } from "./registry";
 import createEngine from "@engine/carball_engine.mjs";
 import createHost from "@host/carball_host.mjs";
 import { World, initEngine } from "../engine/world";
@@ -77,7 +77,7 @@ describe.skipIf(!PRESENT)("the bot packages' vectors, replayed", () => {
         let frame: Frame | undefined;
         let calls = 0;
         const where = (what: string): string => `${sequence.name} tick ${String(frame?.tick)}: ${what}`;
-        const driver = rlgymCompatDriver({
+        const driver = tickSkipDriver({
           tickSkip: manifest.tickSkip,
           applyAtCounter: manifest.timing?.applyAtCounter ?? manifest.tickSkip,
           track: (view) => {
@@ -159,9 +159,11 @@ describe.skipIf(!PRESENT)("the bot packages' vectors, replayed", () => {
     expect(moved).toBeGreaterThan(200);
   }, 300_000);
 
-  it("a 2v2 of package bots (Nexto and Necto on each side, teammates too): every brain runs, none fails", async () => {
+  it("a 2v2 of package bots (Nexto and Necto on each side, teammates too): every brain runs, none fails, each package fetched once (RV-540)", async () => {
+    const fetched: string[] = [];
     const files: typeof fetch = (input) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      fetched.push(url);
       const path = `${ROOT}${url.replace(/^\/bots\//, "")}`;
       return Promise.resolve(existsSync(path) ? new Response(readFileSync(path)) : new Response(null, { status: 404 }));
     };
@@ -178,7 +180,12 @@ describe.skipIf(!PRESENT)("the bot packages' vectors, replayed", () => {
       { team: 1, name: "Nexto 2", brain: "nexto" },
       { team: 1, name: "Necto 2", brain: "necto" },
     ] as const;
-    for (const [i, slot] of slots.entries()) bots.join(host, 2 + i, slot, await loadBrain("/bots/", slot.brain, 2, files, Math.random, ort), 0);
+    // (the match's packages: a package's manifest, policy and table fetched once for its two bots, one session each)
+    const packages: PackageCache = new Map();
+    for (const [i, slot] of slots.entries()) bots.join(host, 2 + i, slot, await loadBrain("/bots/", slot.brain, 2, files, Math.random, ort, undefined, packages), 0);
+    expect(packages.size).toBe(2);
+    expect(fetched.filter((u) => u.endsWith(".onnx")).sort()).toEqual(["/bots/necto/policy-2v2.onnx", "/bots/nexto/policy-2v2.onnx"]);
+    expect(fetched.filter((u) => u.endsWith("bot.json"))).toHaveLength(2);
     let now = 0;
     for (let i = 0; i < 10 * 120; i++) {
       now = host.nextTick() ?? now + 1 / 120;

@@ -26,9 +26,10 @@ array ops. I re-decoded the training classes with a patched copy of the G3 decod
 ## 1. Data model
 
 ### 1.1 Where it lives in RL
-- **Pack** = `TrainingEditorData_TA` [S/A classprops]: `TM_Guid`, `Code`, `TM_Name`, `Type`, `Difficulty`, `Tags`,
-  `Description`, `CreatorName`, `CreatorPlayerID`, `MapName`, `NumRounds`, `CreatedAt`, `UpdatedAt` (QWord epoch),
-  `Rounds: EditorRoundData[]`. `Init` sets `TM_Guid = CreateGuid()` (TA:97338).
+- **Pack** = `TrainingEditorData_TA` [S/A classprops]: `TM_Guid`, `Code`, `TM_Name`, `Type`, `Difficulty`, `Tags`
+  (`int[]` of `ETrainingTag` indices: the array's inner property is an IntProperty [A]), `Description`, `CreatorName`,
+  `CreatorPlayerID`, `MapName`, `NumRounds` (CPF_Transient: never in the file), `CreatedAt`, `UpdatedAt` (QWord, Unix
+  seconds UTC), `Rounds: EditorRoundData[]`. `Init` sets `TM_Guid = CreateGuid()` (TA:97338). On-disk form: §1.4.
 - **Shot** = `_Types_TA.EditorRoundData { SerializedArchetypes: string[]; TimeLimit: float }`. Struct default
   **TimeLimit = 10.0** [A raw struct defaults].
 - Each `SerializedArchetypes[i]` is a **JSON string** for one editor actor [S]:
@@ -37,15 +38,20 @@ array ops. I re-decoded the training classes with a patched copy of the G3 decod
     `VelocityStartRotationP/Y/R` (int rotator), `VelocityStartSpeed` (float).
   - **Car spawn** (`GameEditor_Actor_TA.Serialize` TA:27025 + `DynamicSpawnPointMesh_TA.SerializeClassSpecific`
     TA:104379): `ObjectArchetype` (`Archetypes.GameEditor.DynamicSpawnPointMesh`), `LocationX/Y/Z`,
-    `RotationP/Y/R`, `VelocityStartSpeed` (key optional on load: `HasKey`, TA:104382).
+    `RotationP/Y/R`, `VelocityStartSpeed` (key optional on load: `HasKey`, TA:104382; absent in all 455 car spawns
+    of the 20 real packs examined, §1.4).
   - **Editor camera** (`PlayerController_TA.Editing.EditorPawnSerialize`, TA:77892): `IsPC: true`, `LocationX/Y/Z`,
     `RotationP/Y/R`. Appended when the shot has any actor (`GetCurrentRoundData`, TA:35511 [S patched]). Not used in
     play; `DeserializeAndSpawn` diverts it to the editor pawn (TA:33373).
 - **No spin field exists.** The ball is launched with linear velocity only (`Ball_GameEditor_TA.Fire`, TA:12187:
   `SetRBLinearVelocity(vector(VelocityStartRotation) · VelocityStartSpeed)`); no angular velocity is set [S].
+  Confirmed on 20 real packs: every ball JSON (455) has exactly the 8 keys above, and no actor JSON (1,365) has any
+  other key (§1.4) [A data].
 - **Save wrapper** `SaveData_GameEditor_Training_TA` [A Default__]: `TrainingData`, `PlayerTeamNumber` (never
-  written by script → always 0 = blue), `bUnowned`, `ShotsCompleted`, `bPerfectCompleted`, `LoadedSaveName`.
-  Files `..\..\TAGame\Training\<platform id>\{MyTraining\|Favorities\|Downloaded\}\<guid>.Tem` (sic "Favorities").
+  written by script → always 0 = blue; never stored in the 20 files), `bUnowned`, `ShotsCompleted`,
+  `bPerfectCompleted` (never stored in the 20 files), `LoadedSaveName` (CPF_Transient: never in the file).
+  Files `..\..\TAGame\Training\<platform id>\{MyTraining\|Favorities\|Downloaded\}\<guid>.Tem` (sic "Favorities");
+  `<guid>` = `TM_Guid` as 32 upper-case hex digits (4 × `%08X`); the Downloaded copies seen are named `Temp(n).Tem`.
 - **Per-user progress** `TrainingProgressSave_TA.AllPacksProgress: TrainingPackProgress_TA[]`, each
   `{ PackCode, TimeLastPlayed, Progress: { RoundNumber, Status: NotAttempted 0 | Attempted 1 | Completed 2 }[] }`
   (TA:97599–97672).
@@ -99,7 +105,9 @@ export interface CarSpawn {
 export const enum ShotStatus { NotAttempted = 0, Attempted = 1, Completed = 2 }
 export interface PackProgress { packId: string; lastPlayed: number; status: ShotStatus[] } // index = shot number
 ```
-JSON import from RL `.Tem` data is out of scope (binary save; not examined) [I].
+Packs in the clone (**user decision 2026-10-17**): Carball's own pack format (JSON, the fields of §1.2 / §1.4). The
+`.Tem` converter stays local (`out/`, git-ignored), never in the repo or a build; the game's save key never ships.
+The format is in §1.4 (decoder and writer local in `out/bsim/agents/TP1/`).
 
 ### 1.3 Ranges, defaults and limits
 | Item | Value | Tag |
@@ -121,6 +129,144 @@ JSON import from RL `.Tem` data is out of scope (binary save; not examined) [I].
   the blue goal location facing the ball.
 - Both actors are dropped to the floor: trace down 10000 with the actor extent (z extent 1), z = hit.z + half-height
   (`AdjustToFloorLocation`, TA:35619); the ball then gets z ≥ 100.
+
+### 1.4 The `.Tem` file format (TP1, 2026-10-17)
+Decoded from 20 real packs (other creators' packs from the user's install, 2.4–35 KB, created 2017–2025; local only,
+never in the repo) and the live exe's save code. Scripts in `out/bsim/agents/TP1/`: `temfmt.py` (codec),
+`temwrite.py` (writer from plain values), `temdump.py` (dump + checks). Both directions are byte-exact on all 20
+files (decode → encode, and plain values → file). Little-endian throughout. **[N]** addresses are the live exe.
+
+**Container** [N, verified 20/20]
+| Offset | Type | Field |
+|---|---|---|
+| 0 | u32 | `PayloadSize` = file size − 8, a multiple of 16 |
+| 4 | u32 | `Crc` = `appMemCrc(Payload, seed 0xEFCBF201)`: MSB-first CRC-32, poly 0x04C11DB7, inverted in and out (the keys/ report's `MemCrc`), over the **encrypted** payload |
+| 8 | `PayloadSize` bytes | `Payload` = AES-256-**ECB**(plaintext + zero padding) |
+- **Key**: the same key as `Coalesced_*.bin`: `Deobf(8 obfuscated dwords inline in 0x1402d85a0, seed 0xC1832A9E,
+  salt "TA")` (06-16 build: `FUN_1402d45b0`). Derivation: `out/bsim/agents/keys/coalesced.py` (key never written
+  out). It is neither the package key nor a content-key table entry. ECB, no IV (the first cipher block is identical
+  in every file with the same header).
+- **Padding**: zeros up to a multiple of 16 (0–15 bytes; 0 in 4 files), not PKCS#7.
+- **Load** `0x140edc0e0`: `0x140e05e40` reads Size + Crc, fails if Size > the bytes left or the CRC
+  (`0x1403a0a90`) differs; zero-pad (`0x1402e53c0`); decrypt (`0x1402dbe50`, key from `0x1402d85a0`); check the two
+  magic words (wrong first word → load error 3); set the archive versions; deserialize the objects (`0x140e50810`).
+- **Save** `0x140f33750`: serialize (`0x140f33800`; header writer at `0x140f339b5`), zero-pad, encrypt
+  (`0x1402dc0b0`), prepend Size + Crc (`0x140e44450`, seed 0xEFCBF201). `0x140edf9b0` has the same tail behind a
+  per-save "encrypt" flag.
+
+**Plaintext** [N `0x140edc4d1`, `0x140f339b5`, `0x140e50810`, `0x140e0ab40`]
+| Offset | Type | Field |
+|---|---|---|
+| 0x00 | u32 | Magic **0xF005BA11** (`.data 0x142338d40`) |
+| 0x04 | u32 | **0x7FFFFFFF** (`0x142338d44`). Any other value: the loader assumes version 868 / licensee 20 (old layout, not seen) |
+| 0x08 | u32 | FileVersion = `GPackageFileVersion` **868** |
+| 0x0C | u32 | LicenseeVersion = `GPackageFileLicenseeVersion`: **32** in 19 files (older builds), **34** in 1 (the live build's value, `0x142264118`) |
+| 0x10 | u32 | runtime global `0x1424a0bf0` (zero-initialized `.data`), read into the archive's version slot +0x14; 0 in all files; meaning unknown |
+| 0x14 | i32 | `TableOffset`, relative to **base = 0x14** |
+| 0x18 | object | root object = the save wrapper `SaveData_GameEditor_Training_TA` (class known to the caller, not stored) |
+| … | objects | the referenced objects, in table order (always one: the pack) |
+| base + TableOffset | table | i32 Count; Count × { FString ClassPath; i32 Offset (from base); i32 ObjectIndex } |
+- Seen in all 20: one table entry `{ "TAGame.TrainingEditorData_TA", Offset, 0 }`; the file ends right after the table.
+- **Object** = i32 NetIndex (−1) + tagged properties ending with the name "None" (UObject::Serialize).
+- Saving writes the root, then each object it references (appended to the table as `<<UObject*` meets it), recording
+  its Offset, then the table, then patches TableOffset [N `0x140e50b97`–`0x140e50cf2`].
+- **ObjectProperty** value = i32 ObjectIndex (−1 = None) [N `0x140e0af20`, load side; save side I].
+
+**Tagged properties** (UE3 v868 layout, names as strings) [N; A data]
+- **FString**: i32 n; n > 0: n bytes Latin-1 incl. the NUL; n < 0: −n UTF-16LE units incl. the NUL; 0 = "".
+  All 4,564 strings in the 20 files are ASCII (n > 0); no UTF-16 and no empty strings seen. Writer rule assumed:
+  UTF-16 iff a char > 0x7F [I].
+- **FName** = an FString of the name text (no name table): property names, type names, struct and enum names,
+  NameProperty values, enum values [N `<<FName` `0x1403123f0`: reads an FString, then `FName(str, FNAME_Add)`].
+- **Tag** = FString Name, FString Type, i32 Size, i32 ArrayIndex (0 in all files), type extras, value. Size counts
+  the value only (not the extras).
+  - `BoolProperty`: Size 0; one u8 value right after ArrayIndex (no trailing u32).
+  - `ByteProperty`: extra FString EnumName; value = FString enum value name (`Training_Striker`, `D_Hard`,
+    `OnlinePlatform_Steam`), or a u8 when EnumName is "None" (not seen).
+  - `StructProperty`: extra FString StructName; `Guid` = 16 raw bytes (u32 A, B, C, D); any other struct = a nested
+    tagged list + "None".
+  - `ArrayProperty`: i32 Count + elements, element type from the class (not stored): struct → tagged list +
+    "None" each (no struct name); string → FString; int → i32.
+  - `IntProperty` i32, `FloatProperty` f32, `QWordProperty` u64, `StrProperty`/`NameProperty` FString,
+    `ObjectProperty` i32.
+- **Defaults omitted**: an object's properties equal to its class default are not written (no stored value equals the
+  default in 20 files: Difficulty Easy, ShotsCompleted 0, bUnowned false, empty Tags/Description never appear).
+  Struct-array elements (`EditorRoundData`) are written in full (TimeLimit 10 is stored).
+- **Order** = the class's property order (TAGame export order reversed) [A]: wrapper `TrainingData,
+  PlayerTeamNumber, bUnowned, bPerfectCompleted, ShotsCompleted`; pack `TM_Guid, Code, TM_Name, Type, Difficulty,
+  CreatorName, Description, Tags, MapName, CreatedAt, UpdatedAt, CreatorPlayerID, Rounds`; shot `TimeLimit,
+  SerializedArchetypes`; UniqueNetId `Uid, Platform`. (Places of Description, PlayerTeamNumber, bPerfectCompleted:
+  from the class only, never seen.)
+
+**Stored fields** (counts = files of 20 that store the field)
+| Field | On disk | Values seen | Absent → | Clone (§1.2) |
+|---|---|---|---|---|
+| wrapper `TrainingData` | Object, i32 0 | table object 0 | — | — |
+| wrapper `bUnowned` | Bool | true in 20 (packs of other creators) | false | — |
+| wrapper `ShotsCompleted` | Int | best score of one run (`OnCurrentShotCompleted`, TA:35842); 13 files, 1–31 | 0 | progress, optional |
+| wrapper `PlayerTeamNumber`, `bPerfectCompleted` | Int, Bool | never stored | 0, false | — |
+| `TM_Guid` | Struct Guid | = the file name (§1.1) for the 18 non-Downloaded copies | zero GUID | `id` |
+| `Code` | Str | `XXXX-XXXX-XXXX-XXXX`, upper-case hex, 20 | "" | `code` |
+| `TM_Name` | Str | 6–30 chars, 20 | "" | `name` |
+| `Type` | Byte `ETrainingType` | `Training_Striker` in 20 | `Training_None` | `type` |
+| `Difficulty` | Byte `EDifficulty` | `D_Hard` 13, `D_Medium` 1, absent 6 | `D_Easy` | `difficulty` |
+| `CreatorName` | Str | 4–16 chars, 20 | "" | `creatorName` |
+| `Description` | Str | never stored | "" | `description` |
+| `Tags` | Array of i32 (`ETrainingTag` index, §1.1) | 11 files, 1–4 tags each; 12 of the 19 tags used | [] | `tags` |
+| `MapName` | Name | 11 different maps, mixed case (FName) | None | `mapName` (one arena in the clone) |
+| `CreatedAt`, `UpdatedAt` | QWord | Unix seconds UTC, 2017–2025; Updated ≥ Created in all | 0 | `createdAt`, `updatedAt` (× 1000 for JS ms) |
+| `CreatorPlayerID` | Struct `UniqueNetId`: `Uid` QWord (platform account id), `Platform` Byte `OnlinePlatform` (Steam, PS4, Dingo = Xbox) | 18 (absent in both Downloaded copies); NpId, EpicAccountId, SplitscreenID never stored | Uid 0, Unknown | not imported (account data) |
+| `Rounds` | Array of `EditorRoundData` | 2–50 shots per pack, 455 in all, 3 packs at the max 50 | [] | `shots` |
+| shot `TimeLimit` | Float, s | always stored; 1–59, whole seconds; 10 in 355 of 455 | (always present) | `timeLimit` |
+| shot `SerializedArchetypes` | Array of FString (JSON) | exactly 3 per shot, in the order ball, car spawn, camera (455 of 455) | — | `ball`, `car` |
+
+**Actor JSON** [S: `Ball_GameEditor_TA.Serialize`/`Deserialize` TA:12270/12285, `GameEditor_Actor_TA.Serialize`/
+`Deserialize` TA:27025/27040, `DynamicSpawnPointMesh_TA.*ClassSpecific` TA:104379/104382,
+`PlayerController_TA.Editing.EditorPawnSerialize` TA:77892; A data]
+- Text: one object, no whitespace, keys in a fixed order, floats `%.4f` (`1500.0000`), ints plain, `true`.
+  Re-printing all 1,365 strings from their parsed values with this rule gives the same text.
+- Numbers: the script writes rotators with `SetIntValue` and reads them with `GetIntValue`, but 2 packs (26 shots)
+  hold integer-valued **float** yaws (`n.0000` form) for ball and car, and 2 packs hold an all-zero **int**
+  camera. A reader must accept int or float for every numeric key (the game truncates to int [I]).
+- **Ball** (`ObjectArchetype` = `Archetypes.Ball.Ball_GameEditor`):
+  - `StartLocationX/Y/Z` float uu, ball centre → `ball.location`. Seen: |x| ≤ 3991, y −4998…+5487, z 100.0…1938.
+  - `VelocityStartRotationP/Y/R` int rotator units → `ball.launch`; direction `vector(P, Y)`, R has no effect.
+    Seen: P within ±16383; **Y not normalized** (−456,351…+196,950, i.e. several turns in 5 packs: wrap mod 65536);
+    R ≠ 0 in 1 pack (−399…+1798).
+  - `VelocityStartSpeed` float uu/s → `ball.speed`. Seen 0–5900; 0 in 19 shots.
+- **Car spawn** (`Archetypes.GameEditor.DynamicSpawnPointMesh`): `LocationX/Y/Z` float uu (z 16.5–52.3, i.e. the
+  spawn mesh origin above the floor), `RotationP/Y/R` int (Y not normalized, −61,079…+141,520; P and R ≠ 0 only in
+  the 2 Downloaded packs, |P| ≤ 1058 = 5.8°, |R| ≤ 538 = 3.0°), `VelocityStartSpeed` float uu/s: **absent in all
+  455** (likely shots made before the car start speed existed [I]) → `car.startSpeed` 0.
+- **Camera** (`IsPC: true`, `LocationX/Y/Z`, `RotationP/Y/R`): editor only, drop on import; all zeros in the 2
+  Downloaded packs.
+- **Missing keys**: only the car's `VelocityStartSpeed` is optional (`HasKey`, TA:104382; → class default 0). Every
+  other key is read unconditionally with `GetFloatValue`/`GetIntValue`, i.e. 0 when missing [S; 0 = UE3
+  `JsonObject` behaviour, I]. So a ball without `VelocityStartSpeed` gets 0 (frozen until touched), not the class
+  default 2500.
+- **Other actors**: none in 20 packs. `DeserializeAndSpawn` (TA:33373) would spawn any `ObjectArchetype` path that
+  loads as an Actor of the requested class, but the public editor only creates the ball and the car spawn (§1.3).
+
+**Sanity check** (all 455 shots, `temdump.py`)
+- Every ball and car is inside the arena box (|x| ≤ 4096, |y| ≤ 5120 + goal depth, 0 < z ≤ 2044) and inside the
+  corner planes; every ball has z ≥ 100 (the editor clamp; nothing below 92.75); ball speeds ≤ 6000; car start
+  speed never stored; time limits 1–59; launch pitch within ±90°.
+- Outliers, all legitimate editor output:
+  - 3 balls (3 packs) placed **inside the orange goal** (|y| > 5120, |x| < 893, z < 643). The editor lets the ball be
+    moved there, and a striker goal only counts after a car touch (§2.5). The clone must accept a spawn inside the
+    goal volume and count it only after the first touch [I].
+  - Unnormalized yaws (26 ball, 14 car spawns), ball launch roll (50 shots, 1 pack, no effect), small car pitch and
+    roll (21 and 18 shots, 2 packs).
+  - Balls next to a surface (not errors): 163 on the floor (z ≤ 103), 3 next to a side wall, 2 near a back wall, 2
+    near a corner, 2 under the ceiling (gap < 60 uu).
+
+**Converting into the clone's format** [I] (offline, with the local converter only; nothing of this ships)
+- Decode as above; map `TM_Guid`, `TM_Name`, `Type` (value name → enum; anything but Goalie plays as Striker),
+  `Difficulty` (absent = Easy), `Tags`, `Code`, `Description`, `CreatedAt/UpdatedAt`, and per shot `TimeLimit`, the
+  ball and the car spawn. Drop the camera, `CreatorPlayerID`, `bUnowned`, `ShotsCompleted`, `MapName`.
+- Wrap yaws into [0, 65536); clamp pitch to ±16384; ignore the ball's roll. Units are already uu, uu/s, s.
+- Export (clone → `.Tem`) follows the same rules (`TP1/temwrite.py` rebuilds all 20 files byte for byte from plain
+  values; a new file was not tried in the game). The loader rejects a file whose size, CRC or magic is wrong.
 
 ## 2. Play flow
 
@@ -470,6 +616,7 @@ random picks without repetition, a ball cannon, velocities from aim points (`Get
 | CTR-18 | Ball/car physics identical to matches; needs frozen-ball, XY-hold, 3D-freeze, Δv impulse | high |
 | CTR-19 | Rookie/Pro/All-Star = separate procedural system (10 shots, pass 4/6/8), not this data model | high |
 | CTR-20 | Bindings: Backspace/RB reset; ←/→ (D-pad) navigate; ↑ shuffle; ↓ mirror; Enter/Back select | high |
+| CTR-21 | `.Tem` = u32 size + u32 CRC (seed 0xEFCBF201, over the cipher text) + AES-256-ECB (the Coalesced key) of a magic/version header and a tagged-property object graph (wrapper + pack); fields, defaults and JSON rules §1.4; decoder and writer byte-exact on 20 real packs | high (header word at 0x10: unknown, always 0) |
 
 ## Possible future addition (clone-only)
 
@@ -489,10 +636,15 @@ snapshots could serve) and an input binding. Off by default; not part of RL fide
    ground then suspension settles [I].
 6. `RestartRoundInputDelay` default 0 is the class default of the save object; a user's saved value may differ (I
    did not read the user's Documents; reading their `CustomTrainingSave` would confirm their current values).
-7. RL's `.Tem` file encoding (for importing real packs) was not examined.
+7. ~~RL's `.Tem` file encoding~~ **Resolved** (TP1, 2026-10-17): §1.4 (container, cipher, CRC, serialization, fields;
+   decoder and writer round-trip 20 real packs byte for byte).
 
 ## Actions outside the brief
 - None. Read-only use of the snapshot's `TAGame/Config/DefaultInput.ini` and `RocketLeague.exe` strings (game files
   from the 20261006 snapshot). Ghidra ran on my copy (`rl-live`) under the memory cap. Work files:
   `work/` (package copies of GameInfo_TrainingEditor_SF / GameInfo_Tutorial_SF, patched decoder, decodes, defaults),
   `dec1`–`dec4` (native decompiles).
+- TP1 (§1.4): none. The 20 packs were parsed as bytes by TP1's own scripts (never opened in the game or any tool
+  that runs them); the live exe was read with objdump and the repo's PE helpers (no Ghidra); the live `TAGame.upk`
+  was decrypted into TP1's workspace for class, enum and function decodes. Pack dumps (with names, codes and creator
+  ids) stay in `out/bsim/agents/TP1/dump/`, git-ignored.

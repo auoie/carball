@@ -59,12 +59,16 @@ they change there is lost when the newer page returns (RV-425; `client/src/setti
 | `GAME_SERVER_URL` | `https://game.carball.zolt.top:4433/play` | the game server's WebTransport URL; written into `/config.json` at start (`https://HOST[:PORT]/PATH`, else the container exits: set but empty too, RV-441), and its origin is the page's only `connect-src` besides its own |
 | `EXTRA_CONNECT_SRC` | (none) | testing only: more `connect-src` sources (e.g. `http://127.0.0.1:14503 https://127.0.0.1:14502` for a development server's info and port); space-separated `SCHEME://HOST[:PORT]` (http, https, ws, wss; the port 1–65535 or `*`), else the container exits. `GAME_SERVER_URL` likewise allows only letters, digits and `. - _ ~ /` after `https://`, one line |
 
-- **Port:** 3000/tcp, plain HTTP. `/assets/*` (hashed names) cached for a year, the rest `no-cache`, `/config.json`
-  `no-store`; unknown paths serve `index.html`. Every response carries `X-Content-Type-Options: nosniff`,
-  `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY` and a Content-Security-Policy (this origin only, but the game
-  server's origin from `GAME_SERVER_URL`; `frame-ancestors 'none'`; no eval). Redirects are relative (a directory's
-  trailing slash), so nothing names the container's port behind the tunnel. The third-party notices are at
-  `/THIRD_PARTY_NOTICES.txt`.
+- **Port:** 3000/tcp, plain HTTP. `/assets/*` (hashed names) cached for a year, the rest `no-cache` (`/bots/*`, Play vs
+  Bots' packages under their own names, among them), `/config.json` `no-store`. A missing file under `/assets/`, `/bots/`
+  or `/config.json` is a 404; any other unknown path serves `index.html` (RV-537). Every response carries
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY` and a
+  Content-Security-Policy (this origin only, but the game server's origin from `GAME_SERVER_URL`; `frame-ancestors
+  'none'`; no eval; WebAssembly compiled, `'wasm-unsafe-eval'`: the engine, the bots' match host and onnxruntime; workers
+  from this origin: a match against bots runs in one, onnxruntime on one thread, so no cross-origin isolation is needed).
+  Redirects are relative (a directory's trailing slash), so nothing names the container's port behind the tunnel. The
+  third-party notices are at `/THIRD_PARTY_NOTICES.txt` (the bots' section included) and
+  `/THIRD_PARTY_NOTICES-onnxruntime.txt`; each bot's licence at `/bots/<bot>/LICENSE.txt`.
 - **User:** nginx runs unprivileged (uid 101, nginx 1.30, the stable line). The site and all of `/etc/nginx` are root's,
   read-only to it; it writes `/config.json` and the policy (`/etc/nginx/carball-csp.conf`; both baked in at build for the
   default `GAME_SERVER_URL`, so a container started without the entrypoint still has them) at start, and its pid and
@@ -74,7 +78,9 @@ they change there is lost when the newer page returns (RV-425; `client/src/setti
   `commit`, or `worktree` for an image built with `--worktree` (both images).
 - **Volumes:** none.
 - **Health:** `GET /healthz` → `200 ok` (the image's `HEALTHCHECK` uses it).
-- **Resources:** ~10 MB RAM, negligible CPU; a first visit loads ~2.5 MB of files (~0.9 MB gzipped).
+- **Resources:** ~10 MB RAM, negligible CPU; a first visit loads ~2.1 MB of files (~0.75 MB gzipped). The site is ~26 MB:
+  Play vs Bots alone fetches its part, the match host (1.2 MB), onnxruntime (14.2 MB of WebAssembly, 3.7 MB gzipped) and
+  a bot's package for the team size (its policy 1–2 MB), cached by the browser after.
 - **Logs:** nginx's access and error logs on stdout/stderr.
 - **Start/stop:** nginx's. The image's stop signal is SIGQUIT (a graceful stop: requests in flight finish), which
   `docker stop` sends.
@@ -132,6 +138,14 @@ the same port): `docker run --rm -e GAME_PORT=14502 -p 127.0.0.1:14502:14502/udp
 - **Logs:** stdout (start-up) and stderr (joins, leaves, matches, refusals, reloads), one line each.
 
 ## Checked (2026-10-15, Docker 29.9 on the development VM; again for every change to the images or this contract)
+
+2026-10-17 (3c8622b, protocol 25; the static session's review RX23): both images built from `scripts/build_images.sh`
+(the pinned base images by digest, built offline) and run on 127.0.0.1: the game container healthy, a 1v1 through it
+(map 0), the web container serving the bots with no Content-Security-Policy violation, onnxruntime on one thread
+without cross-origin isolation. The `/bots/` 404 (RV-537) came after it: checked from the configuration
+(`client/src/testing/webImage.test.ts`), not yet in a container.
+
+2026-10-15:
 
 Both images built from `scripts/build_images.sh`. Web: `/healthz` 200, `/config.json` from `GAME_SERVER_URL` (no-store),
 the hashed assets cached and gzipped, the engine served as `application/wasm`, unknown paths `index.html`, a non-https

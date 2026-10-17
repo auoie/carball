@@ -20,21 +20,27 @@ const memory = (): Pick<Storage, "getItem" | "setItem"> => {
 };
 
 describe("the garage's cars", () => {
-  it("Sport and Standard simulate the same in everything, their spawn too; Flat and Tall their own presets", () => {
+  it("Sport, Flat and Tall, each its own preset; the retired Standard (id 1) Sport (the user's, 2026-10-17)", () => {
     const world = World.create(engine);
     const config = (id: number): string => JSON.stringify(world.carConfig(world.addCar(0, carChoice(id).body)));
-    expect(CARS.map((c) => c.name)).toEqual(["Sport", "Standard", "Flat", "Tall"]);
+    expect(CARS.map((c) => [c.id, c.name])).toEqual([
+      [0, "Sport"],
+      [2, "Flat"],
+      [3, "Tall"],
+    ]);
     expect(carChoice(0).body).toBe(CarBody.Standard);
-    expect(carChoice(1).body).toBe(CarBody.Standard);
-    expect(config(0)).toBe(config(1));
-    expect(config(2)).not.toBe(config(1));
-    expect(config(3)).not.toBe(config(1));
+    expect(carChoice(1)).toBe(CARS[DEFAULT_CAR]);
+    expect(config(2)).not.toBe(config(0));
+    expect(config(3)).not.toBe(config(0));
     expect([carChoice(2).body, carChoice(3).body]).toEqual([CarBody.Flat, CarBody.Tall]);
     world.dispose();
   });
 
   it("an unknown id is the default car; the choice and the team colour kept, blue and Sport before any", () => {
     expect(carChoice(99)).toBe(CARS[DEFAULT_CAR]);
+    const retired = memory();
+    retired.setItem("carball.car", "1");
+    expect(storedCar(retired)).toBe(0);
     const store = memory();
     expect([storedCar(store), storedTeam(store)]).toEqual([DEFAULT_CAR, 0]);
     storeCar(3, store);

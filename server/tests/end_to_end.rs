@@ -247,8 +247,13 @@ fn queue_hello(intent: u8, playlist: u8, token: u64) -> Vec<u8> {
 
 /// The same with a key (a search's: the browser's)
 fn keyed_hello(intent: u8, playlist: u8, token: u64, key: u64) -> Vec<u8> {
+    versioned_hello(protocol::VERSION, intent, playlist, token, key)
+}
+
+/// The same as a client of `version` speaks it
+fn versioned_hello(version: u16, intent: u8, playlist: u8, token: u64, key: u64) -> Vec<u8> {
     Control::Hello {
-        version: protocol::VERSION,
+        version,
         team: 255,
         model: 0,
         dodge_deadzone: 0.5,
@@ -280,6 +285,31 @@ async fn first_reply_at(host: &str, port: u16, cert_hash: [u8; 32], hello: Vec<u
     std::mem::forget(send); // (the control stream stays open: the session lasts)
     let reply = tokio::time::timeout(Duration::from_secs(10), read_control(&mut recv)).await.expect("a reply");
     (reply, connection, recv)
+}
+
+/// A client of another protocol version (an older page, a newer one) is refused with the version reason, its hello's
+/// other fields never read: an older one's body that wouldn't decode as this version's (RV-243, RV-538 SM3); this
+/// version's hello is let in
+#[tokio::test(flavor = "multi_thread")]
+async fn another_versions_hello_is_refused_with_the_version_reason_this_ones_let_in() {
+    engine::init(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../out/arena/collision_meshes"))).unwrap();
+    let (identity, cert_hash) = net::dev_identity().unwrap();
+    let server = net::endpoint(identity, 0).unwrap();
+    let port = server.local_addr().unwrap().port();
+    let (to_game, messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
+    let playlist = carball_server::match_host::Playlist { team_size: 1, match_type: carball_server::game::MatchType::Casual, forfeit_vote_wait: None };
+    std::thread::spawn(move || game_loop::run(messages, game_loop::Mode::Direct(playlist), None, heartbeat(), Instant::now()));
+    tokio::spawn(net::accept_loop(Arc::new(server), to_game, open_limits()));
+
+    let refused = Control::Refused { reason: protocol::REFUSED_VERSION };
+    // (an older page's hello: its tag and version, then fields this version can't read)
+    let [lo, hi] = (protocol::VERSION - 1).to_le_bytes();
+    let (older, ..) = first_reply(port, cert_hash, vec![3, 0, 0x01, lo, hi]).await;
+    assert_eq!(older, refused, "an older version's hello");
+    let (newer, ..) = first_reply(port, cert_hash, versioned_hello(protocol::VERSION + 1, protocol::INTENT_JOIN, 0, 0, 0)).await;
+    assert_eq!(newer, refused, "a newer version's hello");
+    let (current, ..) = first_reply(port, cert_hash, queue_hello(protocol::INTENT_JOIN, 0, 0)).await;
+    assert!(!matches!(current, Control::Refused { .. }), "this version's hello let in: {current:?}");
 }
 
 /// Two players search 1v1 on a queue server: each gets a token, claims it with a new session and joins the match on

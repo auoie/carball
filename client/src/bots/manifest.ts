@@ -69,7 +69,8 @@ export interface BotManifest {
   readonly vectors?: string;
 }
 
-const ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
+/** A bot's id (a package's folder, the built-in brains'): checked before any fetch names it */
+export const BOT_ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const isFiles = (v: unknown): boolean => isRecord(v) && Object.entries(v).every(([k, f]) => ["1", "2", "3"].includes(k) && isRecord(f) && typeof f["file"] === "string");
@@ -79,7 +80,7 @@ const isPick = (v: unknown): boolean => v === "argmax" || v === "sample" || (isR
 export function parseManifest(json: unknown): BotManifest | string {
   if (!isRecord(json)) return "not an object";
   const { id, name, licence, policy, observation, action, tickSkip, teamSizes } = json;
-  if (typeof id !== "string" || !ID.test(id)) return "its id";
+  if (typeof id !== "string" || !BOT_ID.test(id)) return "its id";
   if (typeof name !== "string" || name.length === 0 || name.length > 32) return "its name";
   if (typeof licence !== "string") return "its licence";
   if (!isRecord(policy) || !(typeof policy["file"] === "string" || isFiles(policy["files"])) || !Array.isArray(policy["inputs"]) || !Array.isArray(policy["outputs"]) || !isPick(policy["pick"])) return "its policy";

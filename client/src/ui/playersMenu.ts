@@ -1,12 +1,14 @@
 // The menu's player list online (notes/scoreboard.md SB-12..14): the other players, each with Mute / Unmute and Block /
 // Unblock (the button text verbatim; report is left out: the clone has no report system). Mute: the server stops
-// relaying their chat to this player; block: this client drops their chat. A block's confirmation shows as a toast.
+// relaying their chat to this player; block: this client drops their chat. A block's confirmation shows as a toast. A
+// bot (the offline match's) is listed by name alone: nothing to mute or block (RV-539).
 export interface PlayerItem {
   readonly car: number;
   readonly name: string;
   readonly team: number;
   readonly muted: boolean;
   readonly blocked: boolean;
+  readonly bot: boolean;
 }
 
 /** The buttons and the block's confirmations ([Friends] NowBlocked / NowUnblocked), verbatim */
@@ -67,7 +69,8 @@ export class PlayersMenu {
           const name = document.createElement("bdi");
           name.className = "player-name";
           name.textContent = p.name;
-          row.append(name, this.#button(p.muted ? PLAYER_TEXT.unmute : PLAYER_TEXT.mute, "mute", p.car), this.#button(p.blocked ? PLAYER_TEXT.unblock : PLAYER_TEXT.block, "block", p.car, p.blocked));
+          row.append(name);
+          if (!p.bot) row.append(this.#button(p.muted ? PLAYER_TEXT.unmute : PLAYER_TEXT.mute, "mute", p.car), this.#button(p.blocked ? PLAYER_TEXT.unblock : PLAYER_TEXT.block, "block", p.car, p.blocked));
           return row;
         })
       : [];

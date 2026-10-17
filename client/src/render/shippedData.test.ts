@@ -329,6 +329,16 @@ describe("what ships carries no game data (RV-99)", () => {
     }
   });
 
+  it("the bots, their notices once and onnxruntime's ship in a build with them alone (its match host's worker): never after a test run (RV-534)", () => {
+    const withBots = files(join(DIST, "assets"), (n) => /^hostWorker-.*\.js$/.test(n)).length > 0;
+    const notices = join(DIST, "THIRD_PARTY_NOTICES.txt");
+    const page = existsSync(notices) ? readFileSync(notices, "utf8") : "";
+    const section = readFileSync(join(BOTS, "NOTICES.txt"), "utf8").trim();
+    expect(existsSync(join(DIST, "bots"))).toBe(withBots);
+    expect(page.split(section).length - 1).toBe(withBots ? 1 : 0);
+    expect(existsSync(join(DIST, "THIRD_PARTY_NOTICES-onnxruntime.txt"))).toBe(withBots);
+  });
+
   it("the arena's collision meshes that ship are our generated ones: imported from out/arena, the bundle's (files or inlined) the same bytes (RV-167f)", () => {
     const cmf = shippedImports().filter((p) => kind(p) === "cmf");
     expect(cmf.length).toBeGreaterThan(0);
