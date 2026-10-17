@@ -1,11 +1,10 @@
 // The particle emitters against the game's spawning rules (notes/visual-timing.md VT-2, VT-16).
-import { Group, type InstancedBufferGeometry, type Mesh, type ShaderMaterial } from "three";
+import { Group, type InstancedBufferGeometry, type Mesh } from "three";
 import { describe, expect, it } from "vitest";
 import { vec3 } from "../math/vec";
 import { Demolition } from "./demolition";
 import { BOOST_TRAIL, GOAL_EXPLOSION, GoalExplosion, IDLE_EXHAUST, SceneEffects } from "./effects";
 import { Emitter, type EmitterSpec, Particles, additiveOutput, evaluate, particleColor, spherePoint, unitDirection, particleDetail } from "./particles";
-import { fogAll } from "./heightFog";
 
 const FRAME = 1 / 60;
 
@@ -246,14 +245,6 @@ describe("spawning by distance (GetSpawnAmount: RV-85)", () => {
     emitter.update(FRAME, vec3(1040, 0, 17)); // (a teleport: none, L 0)
     emitter.update(FRAME, vec3(1070, 0, 17)); // (30: none without the old leftover)
     expect(particles.count).toBe(1);
-  });
-
-  it("the height fog takes each particle where it is: the quad's world position its shader builds (RV-208, RV-227)", () => {
-    const particles = new Particles(() => 0.5);
-    fogAll(particles.root);
-    const shaders = particles.root.children.map((m) => ((m as Mesh).material as ShaderMaterial).vertexShader);
-    expect(shaders).toHaveLength(2);
-    for (const shader of shaders) expect(shader).toContain("vFogWorld = vWorld;");
   });
 });
 

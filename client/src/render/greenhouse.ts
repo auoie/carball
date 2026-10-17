@@ -33,7 +33,7 @@ import { lowQualityPath } from "./shaderQuality";
 import type { ArenaClock } from "./themes/theme";
 import { fullBright, linear } from "./teamColors";
 import { ARENA_PRIORITY } from "./translucentSort";
-import type { GlowRibbon } from "./stadiumFieldRules";
+import type { GlowRibbon } from "./themes/theme";
 import { WALL_FOOT, clip, fourWays, framePieces, frameTopAt, wallParam } from "./wallFoot";
 
 /** The greenhouse's measures (uu): a pane's side (an equilateral triangle), a glazing bar's half width (8 uu wide, as

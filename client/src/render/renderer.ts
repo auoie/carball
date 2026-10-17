@@ -3,7 +3,6 @@
 // mapping or sRGB encoding (PP-19).
 import { gpuName } from "../settings/video";
 import { LinearSRGBColorSpace, NoToneMapping, type Object3D, PerspectiveCamera, Scene, Vector3, WebGLRenderer } from "three";
-import { fogAll } from "./heightFog";
 import { useGameTranslucentSort } from "./translucentSort";
 import { PostProcess, type PostOptions } from "./postProcess";
 import type { CameraView } from "../camera/carballCamera";
@@ -69,9 +68,6 @@ export class Renderer {
   /** The camera's fade (0 clear .. 1 black: the goal replay's cuts, fade.ts), through the post-processing's remap as the
    *  game's LUT (RV-159) */
   cameraFade = 0;
-  /** The stadium's height fog in every material drawn (render/heightFog.ts: the arena, cars and ball too, RV-187): new
-   *  meshes taken in each frame */
-  heightFog = false;
   /** Frames drawn (the browser tests turn it off where nothing reads the pixels, `?render=off`: software WebGL is most of
    *  their time): off, the camera and the scene's matrices still follow each frame (projections, the HUD), nothing is
    *  drawn and the reflection capture waits */
@@ -152,7 +148,6 @@ export class Renderer {
    *  on them. Nothing when it draws nothing */
   async prepare(): Promise<void> {
     if (!this.draws) return;
-    if (this.heightFog) fogAll(this.scene);
     for (const work of this.#beforeNextFrame.splice(0)) work(this.#gl, this.scene);
     // (never waiting forever: a context lost mid-compile never resolves it, RV-484)
     await settledOr(this.#post.compile(this.scene, this.#camera), this.canvas, PREPARE_WAIT_MS);
@@ -164,7 +159,6 @@ export class Renderer {
    *  browser to present it. The camera's fade-in starts at the first real frame */
   async warmUp(): Promise<void> {
     if (!this.draws) return;
-    if (this.heightFog) fogAll(this.scene);
     for (const work of this.#beforeNextFrame.splice(0)) work(this.#gl, this.scene);
     const culled: Object3D[] = [];
     this.scene.traverse((o) => {
@@ -231,7 +225,6 @@ export class Renderer {
   #render(view: CameraView): void {
     // (before the frame's work, the reflection capture's included)
     if (this.draws) {
-      if (this.heightFog) fogAll(this.scene);
       for (const work of this.#beforeNextFrame.splice(0)) work(this.#gl, this.scene);
     }
     this.#camera.position.copy(toThreeVector(view.position));

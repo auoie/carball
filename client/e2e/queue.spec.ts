@@ -50,8 +50,8 @@ test("two players find a 1v1, count down and land in the match together", async 
     await page.waitForURL(/[?&]match(&|$)/, { timeout: 15_000 });
     await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
     await expect(page.locator("#net")).toContainText("2 cars", { timeout: 30_000 });
-    // (the server's map, the same for both: e2e/servers.ts runs this one's matches on map 2)
-    expect(await page.evaluate(() => (window as unknown as { carballMap: () => string }).carballMap())).toBe("meadow");
+    // (the server's map, the same for both: Night, the one map)
+    expect(await page.evaluate(() => (window as unknown as { carballMap: () => string }).carballMap())).toBe("night");
   }
   // One a side: each page's own team on the left
   const phases = await a.evaluate(() => (window as unknown as { carballOnline: () => { phases: { phase: string }[] } }).carballOnline().phases.map((p) => p.phase));

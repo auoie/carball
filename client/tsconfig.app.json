@@ -9,8 +9,7 @@
     "resolveJsonModule": true,
     "paths": {
       "@engine/*": ["../engine/build-wasm/*"],
-      "@arena/*": ["../out/arena/*"],
-      "@scripts/*": ["../scripts/*"]
+      "@arena/*": ["../out/arena/*"]
     },
 
     "strict": true,

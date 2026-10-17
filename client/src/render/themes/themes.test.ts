@@ -1,13 +1,13 @@
 import { BackSide, Box3, InstancedMesh, type Material, Matrix4, Mesh, type Object3D, Vector3 } from "three";
 import { beforeAll, describe, expect, it } from "vitest";
-import { MAP_CHOICES, createTheme, themeName } from ".";
+import { THEMES, createTheme } from ".";
 import { PLAYING_VOLUME, type Theme } from "./theme";
 import { CAMERA_FAR } from "../renderer";
 
 const built = new Map<string, Theme>();
-beforeAll(async () => {
-  for (const name of MAP_CHOICES) built.set(name, await createTheme(name));
-}, 60000); // (every theme built: about 10 s alone, more under a full parallel run)
+beforeAll(() => {
+  for (const name of THEMES) built.set(name, createTheme());
+});
 const theme = (name: string): Theme => {
   const t = built.get(name);
   if (!t) throw new Error(name);
@@ -42,14 +42,8 @@ function meshes(root: Object3D): Mesh[] {
   return out;
 }
 
-describe("themes", () => {
-  it("are chosen by name, the night theme by default", () => {
-    expect(themeName("meadow")).toBe("meadow");
-    expect(themeName(null)).toBe("night");
-    expect(themeName("nope")).toBe("night");
-  });
-
-  it.each(MAP_CHOICES)("%s: no scenery reaches into the playing volume", (name) => {
+describe("the map's scenery (Night)", () => {
+  it.each(THEMES)("%s: no scenery reaches into the playing volume", (name) => {
     const t = theme(name);
     t.update(12.3, new Vector3(0, 93, 0));
     const v = new Vector3();
@@ -102,7 +96,7 @@ describe("themes", () => {
     }
   });
 
-  it.each(MAP_CHOICES)("%s: its sky and everything unfogged within the camera's far plane from anywhere in the arena, all through its animation (RV-58, RV-90, RV-113)", (name) => {
+  it.each(THEMES)("%s: its sky and everything unfogged within the camera's far plane from anywhere in the arena, all through its animation (RV-58, RV-90, RV-113)", (name) => {
     const t = theme(name);
     // (the camera within the playing volume: its farthest corner from the centre)
     const reach = Math.hypot(PLAYING_VOLUME.halfX, PLAYING_VOLUME.height, PLAYING_VOLUME.halfZ);
@@ -133,129 +127,5 @@ describe("themes", () => {
       }
     }
     expect(farthest + reach, farthestMesh).toBeLessThan(CAMERA_FAR);
-  });
-
-  it("meadow: at most 16 draw calls for all its scenery", () => {
-    expect(meshes(theme("meadow").root).length).toBeLessThanOrEqual(16);
-  });
-
-  it("meadow: fills the stands with all four kinds of creature", () => {
-    const crowd = meshes(theme("meadow").root).filter((m): m is InstancedMesh => m.name.startsWith("crowd: "));
-    expect(crowd.map((m) => m.name).sort()).toEqual(["crowd: ember", "crowd: puff", "crowd: ripple", "crowd: sprout"]);
-    for (const kind of crowd) expect(kind.count, kind.name).toBeGreaterThan(250);
-  });
-
-  it("forest: at most 24 draw calls for all its scenery", () => {
-    expect(meshes(theme("forest").root).length).toBeLessThanOrEqual(24);
-  });
-
-  it("forest: wild creatures of every kind around the clearing, and no stands", () => {
-    const wild = meshes(theme("forest").root).filter((m): m is InstancedMesh => m.name.startsWith("wildlife: "));
-    expect(wild.map((m) => m.name.slice("wildlife: ".length)).sort()).toEqual(
-      ["beetle", "butterfly", "caterpillar", "ember", "puff", "ripple", "sprout"],
-    );
-    for (const kind of wild) expect(kind.count, kind.name).toBeGreaterThan(5);
-    expect(meshes(theme("forest").root).some((m) => m.name.startsWith("crowd: "))).toBe(false);
-  });
-
-  it("city: at most 16 draw calls for all its scenery", () => {
-    expect(meshes(theme("city").root).length).toBeLessThanOrEqual(16);
-  });
-
-  it("infested: at most 14 draw calls for all its scenery", () => {
-    expect(meshes(theme("infested").root).length).toBeLessThanOrEqual(14);
-  });
-
-  it("kawaii: at most 24 draw calls for all its scenery", () => {
-    expect(meshes(theme("kawaii").root).length).toBeLessThanOrEqual(24);
-  });
-
-  it("platformer: at most 20 draw calls for all its scenery", () => {
-    expect(meshes(theme("platformer").root).length).toBeLessThanOrEqual(20);
-  });
-
-  it("haunted: at most 24 draw calls for all its scenery", () => {
-    expect(meshes(theme("haunted").root).length).toBeLessThanOrEqual(24);
-  });
-
-  it("ghosts: all three kinds of ghost, and at most 20 draw calls for all its scenery", () => {
-    const all = meshes(theme("ghosts").root);
-    expect(all.length).toBeLessThanOrEqual(20);
-    const ghosts = all.filter((m): m is InstancedMesh => m.name.startsWith("ghost: "));
-    expect(ghosts.map((m) => m.name).sort()).toEqual(["ghost: orb", "ghost: peeker", "ghost: sheet"]);
-    for (const kind of ghosts) expect(kind.count, kind.name).toBeGreaterThan(15);
-  });
-
-  it("dimension: its creatures are all there, and at most 28 draw calls for all its scenery", () => {
-    const all = meshes(theme("dimension").root);
-    expect(all.length).toBeLessThanOrEqual(28);
-    const names = new Set(all.map((m) => m.name));
-    for (const name of ["serpent", "watcher", "ghost: jelly", "wildlife: sprout", "wildlife: caterpillar"]) {
-      expect(names.has(name), name).toBe(true);
-    }
-    // The watchers face the ball: their eyes' shader is given its position
-    const t = theme("dimension");
-    t.update(1, new Vector3(1234, 93, 0));
-  });
-
-  it("summit: its creatures are all there, and at most 26 draw calls for all its scenery", () => {
-    const all = meshes(theme("summit").root);
-    expect(all.length).toBeLessThanOrEqual(26);
-    const names = new Set(all.map((m) => m.name));
-    for (const name of ["ice bird", "snow beast", "wildlife: snowpuff", "ghost: crystal", "wildlife: butterfly"]) {
-      expect(names.has(name), name).toBe(true);
-    }
-  });
-
-  it("crater: its creatures and landmarks are all there, and at most 28 draw calls for all its scenery", () => {
-    const all = meshes(theme("crater").root);
-    expect(all.length).toBeLessThanOrEqual(28);
-    const names = new Set(all.map((m) => m.name));
-    for (const name of ["colossus", "wildlife: tortoise", "ghost: crystal", "wildlife: butterfly", "crystals", "heart crystal"]) {
-      expect(names.has(name), name).toBe(true);
-    }
-  });
-
-  it("temple: its creatures and landmarks are all there, and at most 30 draw calls for all its scenery", () => {
-    const all = meshes(theme("temple").root);
-    expect(all.length).toBeLessThanOrEqual(30);
-    const names = new Set(all.map((m) => m.name));
-    for (const name of ["sky whale", "guardians", "ghost: orb", "sky ring"]) expect(names.has(name), name).toBe(true);
-    expect(all.filter((m) => m.name === "sky whale")).toHaveLength(2); // (a mother and her calf)
-  });
-
-  it("island: its creatures and landmarks are all there, and at most 26 draw calls for all its scenery", () => {
-    const all = meshes(theme("island").root);
-    expect(all.length).toBeLessThanOrEqual(26);
-    const names = new Set(all.map((m) => m.name));
-    for (const name of ["manta", "wildlife: leaper", "wildlife: crab", "wildlife: butterfly", "palms", "smoke", "sea"]) {
-      expect(names.has(name), name).toBe(true);
-    }
-  });
-
-  it("lake: its creatures and landmarks are all there, and at most 30 draw calls for all its scenery", () => {
-    const all = meshes(theme("lake").root);
-    expect(all.length).toBeLessThanOrEqual(30);
-    const names = new Set(all.map((m) => m.name));
-    for (const name of ["guardian", "wildlife: swan", "wildlife: frog", "wildlife: leaper", "lake", "deck", "islet", "lanterns"]) {
-      expect(names.has(name), name).toBe(true);
-    }
-  });
-
-  it("lake: the water reflects only the big scenery (a second render of the scene: kept to a dozen draw calls)", () => {
-    const all = meshes(theme("lake").root);
-    const reflected = all.filter((m) => m.layers.isEnabled(5));
-    expect(reflected.length).toBeGreaterThan(5);
-    expect(reflected.length).toBeLessThanOrEqual(14);
-    expect(reflected.map((m) => m.name)).not.toContain("wildlife: swan");
-  });
-
-  it("meadow: the same scenery every time (seeded)", async () => {
-    const placements = (t: Theme): number[] =>
-      meshes(t.root).flatMap((m) => (m instanceof InstancedMesh ? Array.from(m.instanceMatrix.array) : []));
-    const again = await createTheme("meadow");
-    again.update(12.3, new Vector3(0, 93, 0));
-    theme("meadow").update(12.3, new Vector3(0, 93, 0));
-    expect(placements(again)).toEqual(placements(theme("meadow")));
   });
 });

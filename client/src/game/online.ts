@@ -35,7 +35,7 @@ import {
 import { NetSession } from "../net/session";
 import { type SessionEnd, idleTipShown, sessionEndReason } from "./sessionEnd";
 import { BallView, CarView, trailGround } from "../render/entities";
-import type { PadsView } from "../render/boostPads";
+import type { PadsView } from "../render/tokenPads";
 import { DEFAULT_CAR, carChoice } from "./cars";
 import type { ArenaView } from "../render/arena";
 import type { Renderer } from "../render/renderer";

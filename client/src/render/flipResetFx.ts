@@ -151,7 +151,6 @@ function material(vertexShader: string, fragmentShader: string, blending: typeof
     blending,
     side: DoubleSide,
   });
-  m.userData = { heightFog: "none" };
   return m;
 }
 

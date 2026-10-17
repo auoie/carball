@@ -1,14 +1,12 @@
-// Night's greenhouse (ours): its pitch inside the floor, the glass's chart and bars, and the arena it makes in few
+// Night's glasshouse arena (ours): its pitch inside the floor, the glass's chart and bars, and the arena it makes in few
 // draws (the user's budget: one translucent glass layer, one floor shader, ~10-20 draws)
 import { AdditiveBlending, Mesh, type Object3D, Vector3 } from "three";
 import { describe, expect, it } from "vitest";
 import { ArenaView } from "./arena";
-import { ForceFieldMaterial } from "./gameSurfaces";
 import { fullBright, linear } from "./teamColors";
 import { applyShaderQuality } from "./shaderQuality";
 import { H, floorOutline } from "./arenaSurface";
 import { GREENHOUSE, GreenhouseGlassMaterial, WALL_CHART_TOP, glassChart, goalOutline, pitchLayout, wallChart } from "./greenhouse";
-import { greenhouseTheme } from "./themes/greenhouse";
 import { nightTheme } from "./themes/night";
 import { wallParam } from "./wallFoot";
 
@@ -135,19 +133,14 @@ describe("the greenhouse arena", () => {
     return out;
   };
 
-  it("in the budget: one translucent glass layer, no cage beams, the pitch one material; 20 draws at most, fewer than Night's", () => {
-    const theme = greenhouseTheme();
+  it("in the budget: one translucent glass layer, no cage beams, the pitch one material; 20 draws at most", () => {
+    const theme = nightTheme();
     const arena = new ArenaView(theme);
     const meshes = draws(arena.root, theme.root);
-    const night = nightTheme();
-    const nightMeshes = draws(new ArenaView(night).root, night.root);
     expect(meshes.length).toBeLessThanOrEqual(20);
-    expect(meshes.length).toBeLessThan(nightMeshes.length);
     expect(meshes.filter((m) => m.material instanceof GreenhouseGlassMaterial)).toHaveLength(1);
     expect(meshes.some((m) => m.name === "greenhouse boards")).toBe(true);
     expect(meshes.some((m) => m.name === "greenhouse posts")).toBe(true);
-    // (the game's cage, overlay and wall foot not built)
-    expect(meshes.filter((m) => m.material instanceof ForceFieldMaterial)).toHaveLength(0);
   });
 });
 

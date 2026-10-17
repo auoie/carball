@@ -10,18 +10,16 @@ import { Matchmaking, OWN_SEARCH_TEXT, PLAYLISTS } from "./game/matchmaking";
 import { Connection, type MatchSession, RefusedError, devServerAddress } from "./net/connection";
 import { joinPreferences } from "./net/joinPreferences";
 import { REFUSED_TOKEN } from "./net/protocol";
-import { type MenuNotice, freePlayUrl, pageUrl, queueAddress, storeClaim, storeNotice, takeClaim, takeNotice } from "./net/pages";
+import { type MenuNotice, pageUrl, queueAddress, storeClaim, storeNotice, takeClaim, takeNotice } from "./net/pages";
 import { Search } from "./net/search";
 import { GameAudio } from "./audio/audio";
 import { Hud } from "./hud";
 import { InputDevices, readGamepad } from "./input/devices";
 import { ArenaView } from "./render/arena";
-import { loadGameCage } from "./render/cage";
-import { loadGameFieldPlan } from "./render/stadiumFieldRules";
 import { loadDemolitionHusks } from "./render/demolition";
 import { loadFennec } from "./render/fennec";
 import { TEAM_CAR_COLORS } from "./render/entities";
-import { AVAILABLE_MAP, MAP_NAMES, type ThemeName, createTheme, createThemeOrNight, preloadTheme, themeName, themeOfMap } from "./render/themes";
+import { MAP_NAMES, type ThemeName, createTheme, themeOfMap } from "./render/themes";
 import { CARS, carChoice, storedCar, storedTeam } from "./game/cars";
 import type { BotListing } from "./bots/listing";
 import { BOT_MATCH_TEXT } from "./local/botText";
@@ -47,7 +45,7 @@ import { StatGraphsView } from "./ui/statGraphsView";
 import { type StatContext, StatGraphData, levelView, speedUnit } from "./game/statGraphs";
 import { RefreshMeter } from "./game/refreshRate";
 import { EXPECTED_PACKETS, NetGraphFeed } from "./net/netStats";
-import { MAIN_MENU_TEXT, MainMenu } from "./ui/mainMenu";
+import { MainMenu } from "./ui/mainMenu";
 import { MODAL_TEXT, Modal } from "./ui/modal";
 import { SearchView, cancelShown } from "./ui/searchView";
 import { IdleTip } from "./ui/idleTip";
@@ -97,14 +95,10 @@ async function main(): Promise<void> {
   const menuNotice = onlinePage ? null : takeNotice();
   const playlistName = (teamSize: number): string | null => PLAYLISTS.find((p) => p.teamSize === teamSize)?.name ?? null;
 
-  // The arena (src/render/themes/: its look and soundscape): free play's, the map select's last pick; an online match's,
-  // the server's (its welcome's map, every player's the same; a queue match's known from its MatchFound, so it loads while
-  // the claim connects); ?theme=meadow overrides either (development)
-  const override = params.get("theme") === null ? null : themeName(params.get("theme"));
-  // (the map and mode named on the loading screen from its start: free play's map from the map select, a queue match's
-  // from its claim; a development server's once it welcomes)
-  if (menuNotice?.freePlay) loading.place(MAP_NAMES[override ?? AVAILABLE_MAP], MAIN_MENU_TEXT.freePlay);
-  if (claim?.map !== undefined) loading.place(MAP_NAMES[override ?? themeOfMap(claim.map)], playlistName(claim.playlist));
+  // The arena (src/render/themes/: its look and soundscape): Night, the one map (the user's decision of 2026-10-17); the
+  // map and mode named on the loading screen from its start for a queue match (its claim), a development server's once it
+  // welcomes
+  if (claim?.map !== undefined) loading.place(MAP_NAMES[themeOfMap(claim.map)], playlistName(claim.playlist));
 
   loading.step("engine");
   const [engine, arenaMeshes] = await Promise.all([
@@ -122,7 +116,7 @@ async function main(): Promise<void> {
   loading.step("arena");
   initEngine(engine, arenaMeshes);
   // (the game's Fennec and cage, where the dev server has them: src/render/fennec.ts, src/render/cage.ts)
-  await Promise.all([loadFennec(), loadGameCage(), loadDemolitionHusks(), loadGameFieldPlan()]);
+  await Promise.all([loadFennec(), loadDemolitionHusks()]);
   const world = World.create(engine);
 
   // Warm up: the first ticks after loading are slow while the browser compiles the module
@@ -160,7 +154,7 @@ async function main(): Promise<void> {
     const viewerWorld = World.create(engine);
     const id = viewerWorld.addCar(0);
     const { showArenaViewer } = await import("./debug/arenaViewer");
-    const viewer = showArenaViewer(new Renderer(canvas), await createTheme(themeName(params.get("theme"))), viewerWorld.carConfig(id));
+    const viewer = showArenaViewer(new Renderer(canvas), createTheme(), viewerWorld.carConfig(id));
     const { view } = viewer;
     (window as unknown as { carballArenaViewer?: unknown }).carballArenaViewer = viewer;
     view({ eye: { x: 0, y: -4000, z: 600 }, target: { x: 0, y: 0, z: 600 } });
@@ -169,10 +163,8 @@ async function main(): Promise<void> {
   }
   const arenaAndSession = async (): Promise<{ name: ThemeName; theme: Theme; session: Awaited<ReturnType<typeof Connection.open>> | null }> => {
     if (!onlinePage) {
-      // (the one map offered: free play's, the user's decision of 2026-10-17; ?theme= another, development)
-      const map = override ?? AVAILABLE_MAP;
       loading.step("map");
-      return { ...(await createThemeOrNight(map)), session: null };
+      return { name: "night", theme: createTheme(), session: null };
     }
     loading.step("connecting");
     // (a development server's open match, ?server=host:infoPort; or the queue's match, its claim)
@@ -200,14 +192,12 @@ async function main(): Promise<void> {
         location.replace(pageUrl("menu", location));
       });
     }
-    const early = claim?.map === undefined ? null : (override ?? themeOfMap(claim.map));
-    const earlyTheme = early === null ? null : createThemeOrNight(early);
     const session = await opened;
     startedConnection = session.connection;
-    const name = override ?? themeOfMap(session.welcome.map);
+    const name = themeOfMap(session.welcome.map);
     loading.place(MAP_NAMES[name], claim ? playlistName(claim.playlist) : botMatch ? BOT_MATCH_TEXT.play : null);
     loading.step("map");
-    return { ...(earlyTheme !== null && early === name ? await earlyTheme : await createThemeOrNight(name)), session };
+    return { name, theme: createTheme(), session };
   };
   const { name, theme, session } = await arenaAndSession();
   const renderer = new Renderer(canvas);
@@ -222,17 +212,11 @@ async function main(): Promise<void> {
   renderer.renderScale = RENDER_QUALITY_SCALE[settings.video.renderQuality];
   renderer.scene.background = theme.background;
   renderer.scene.fog = theme.fog;
-  renderer.heightFog = theme.heightFog ?? false;
   const arena = new ArenaView(theme);
-  // (World Detail's gates on the theme's pieces, before the reflection's first capture: it sees the gated set, QG-17; a
-  // later change captured again, the capture drawing only the arena and its theme: RV-530)
+  // (World Detail's gates on the theme's pieces: QG-17)
   applyWorldDetail(theme.root, settings.video.worldDetail);
   particleDetail.performance = settings.video.particleDetail === "performance";
   renderer.scene.add(arena.root);
-  // (the arena's reflection capture: before the first frame, and again at a World Detail change)
-  renderer.beforeNextFrame((gl, scene) => {
-    arena.capture(gl, scene);
-  });
   let worldDetail = settings.video.worldDetail;
   const hud = new Hud(required("#hud", HTMLElement));
   const input = new InputDevices(canvas);
@@ -280,9 +264,6 @@ async function main(): Promise<void> {
       if (next.video.worldDetail !== worldDetail) {
         worldDetail = next.video.worldDetail;
         applyWorldDetail(theme.root, worldDetail);
-        renderer.beforeNextFrame((gl, scene) => {
-          arena.capture(gl, scene);
-        });
       }
       particleDetail.performance = next.video.particleDetail === "performance";
       // (a changed branch compiled before it's drawn where the browser compiles in parallel)
@@ -444,10 +425,6 @@ async function main(): Promise<void> {
         storeClaim({ token, playlist, searchedAt: Date.now() - searchedFor * 1000, map });
         location.assign(pageUrl("match", location));
       },
-      // (the match's arena downloaded during "Joining in", so the match page builds it at once)
-      preload: (map) => {
-        preloadTheme(override ?? themeOfMap(map)).catch(() => undefined);
-      },
       // (the slot claimed and left at once: the match is cancelled now for its other players, RV-355)
       decline: (token) => {
         queueAddress(params, location.hostname)
@@ -477,26 +454,7 @@ async function main(): Promise<void> {
         freeplay.setCar(choice);
       },
       preview: new GaragePreview((car) => garageConfigs.get(car) ?? null, (team) => TEAM_CAR_COLORS[team]),
-      freePlay: (map) => {
-        // (another map than the page's: the page loads it and goes straight into free play, its arena, scenery and
-        // sounds the map's, as the game loads a map. A search goes on there, a new one of its playlist under the banner;
-        // a match found ("Joining in") keeps this page's map: its own page loads in a moment, the slot not given up)
-        if (map !== name && matchmaking.state?.status !== "joining") {
-          const search = matchmaking.searching ? matchmaking.playlist : null;
-          const go = (): void => {
-            storeNotice({ freePlay: true, ...(search === null ? {} : { search }) });
-            location.assign(freePlayUrl(location));
-          };
-          // (a search closed first, the page gone once it has: a match the server formed as this page went would be
-          // lost with it, its players' match cancelled, this browser's searches paused; one found meanwhile is followed
-          // instead, the map left as it is, RV-443)
-          if (search === null) go();
-          else
-            void matchmaking.finish().then((found) => {
-              if (!found) go();
-            });
-          return;
-        }
+      freePlay: () => {
         mainMenu?.close();
         freeplay.restart(); // (a fresh session, not the one left: RV-284)
       },
@@ -510,7 +468,7 @@ async function main(): Promise<void> {
       botMatch: (choices) => {
         const go = (): void => {
           void import("./local/botMatch").then(({ botMatchSetup, storeBotMatch }) => {
-            storeBotMatch(botMatchSetup(choices, botListings, storedTeam(), mainMenu?.map ?? name, Math.floor(Math.random() * 0x7fffffff)));
+            storeBotMatch(botMatchSetup(choices, botListings, storedTeam(), Math.floor(Math.random() * 0x7fffffff)));
             location.assign(pageUrl("bots", location));
           });
         };
@@ -536,10 +494,6 @@ async function main(): Promise<void> {
     }
     // (back from a match page: its modal, a search to start again)
     const notice = menuNotice;
-    if (notice?.freePlay) {
-      mainMenu.close();
-      freeplay.restart();
-    }
     if (notice?.modal) modal.show(MODAL_TEXT.title, notice.modal === "idle" ? MODAL_TEXT.idleKicked : MODAL_TEXT.connectionLost);
     if (notice?.search !== undefined) {
       // (back from a match cancelled for someone else: its token, the queue's front again, and its search's clock: RV-367)

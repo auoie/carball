@@ -3,7 +3,7 @@
 declare module "@host/carball_host.mjs" {
   export interface HostModule {
     _host_init(dir: number): number;
-    _host_open(teamSize: number, map: number, seed: number): void;
+    _host_open(teamSize: number, seed: number): void;
     _host_connect(id: number): void;
     _host_control(id: number, bytes: number, len: number, now: number): void;
     _host_datagram(id: number, bytes: number, len: number, now: number): void;

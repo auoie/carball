@@ -61,7 +61,7 @@ export async function leaveAll(page: Page, others: Page[]): Promise<void> {
 export async function freePlay(page: Page): Promise<void> {
   const menu = page.locator("#main-menu");
   await menu.getByRole("button", { name: /^play$/i }).click({ timeout: 30_000 });
-  // (the one map offered: free play starts on it at once, on this page)
+  // (Night, the one map: free play starts on it at once, on this page)
   await menu.getByRole("button", { name: /^free play$/i }).click();
   await expect(menu).toBeHidden();
 }

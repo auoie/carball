@@ -4,33 +4,30 @@
 // test-results/servers/<name>.log.
 import { type Server, startServers } from "../src/testing/serverProcesses";
 
-// (every page from one address: no per-address session limits; the health ports apart; every match on the night map, the
-// tests' own, but the queue's: its own, the map test's)
+// (every page from one address: no per-address session limits; the health ports apart; every match on Night, the one map)
 const GAME = ["run", "--quiet", "--manifest-path", "../server/Cargo.toml", "--", "--max-per-address", "1000", "--max-per-address-per-minute", "100000"];
-const NIGHT = ["--map", "0"];
 const SERVERS: readonly Server[] = [
   { name: "preview", command: "npx", args: ["vite", "preview", "--port", "4173", "--strictPort"], url: "http://localhost:4173/", reuse: true },
   // The game server for the online tests (the first run builds it)
-  { name: "game", command: "cargo", args: [...GAME, ...NIGHT, "--port", "14433", "--health-port", "18081", "--info-port", "14434"], url: "http://127.0.0.1:14434/info", reuse: false },
+  { name: "game", command: "cargo", args: [...GAME, "--port", "14433", "--health-port", "18081", "--info-port", "14434"], url: "http://127.0.0.1:14434/info", reuse: false },
   // The pad's online menu test's own (e2e/padmenus.spec.ts: its match never shared with the online tests' in the other
   // worker, whose players would join it)
-  { name: "pad", command: "cargo", args: [...GAME, ...NIGHT, "--port", "14443", "--health-port", "18086", "--info-port", "14444"], url: "http://127.0.0.1:14444/info", reuse: false },
+  { name: "pad", command: "cargo", args: [...GAME, "--port", "14443", "--health-port", "18086", "--info-port", "14444"], url: "http://127.0.0.1:14444/info", reuse: false },
   // One whose rounds end in a goal 1 s after go (the goal sequence's test)
-  { name: "goal", command: "cargo", args: [...GAME, ...NIGHT, "--port", "14435", "--health-port", "18082", "--info-port", "14436", "--test-goal-after", "1"], url: "http://127.0.0.1:14436/info", reuse: false },
+  { name: "goal", command: "cargo", args: [...GAME, "--port", "14435", "--health-port", "18082", "--info-port", "14436", "--test-goal-after", "1"], url: "http://127.0.0.1:14436/info", reuse: false },
   // A 2v2 casual playlist whose forfeit votes are allowed once the clock runs (the forfeit and leave tests)
   {
     name: "forfeit",
     command: "cargo",
-    args: [...GAME, ...NIGHT, "--port", "14437", "--health-port", "18083", "--info-port", "14438", "--team-size", "2", "--forfeit-vote-wait", "0"],
+    args: [...GAME, "--port", "14437", "--health-port", "18083", "--info-port", "14438", "--team-size", "2", "--forfeit-vote-wait", "0"],
     url: "http://127.0.0.1:14438/info",
     reuse: false,
   },
-  // The queue's matches (1v1, 2v2, 3v3: searches and claims; the queue test), every one on map 2 (meadow: the match pages
-  // load the server's map)
-  { name: "queue", command: "cargo", args: [...GAME, "--map", "2", "--port", "14439", "--health-port", "18084", "--info-port", "14440", "--mode", "queue", "--dev"], url: "http://127.0.0.1:14440/info", reuse: false },
+  // The queue's matches (1v1, 2v2, 3v3: searches and claims; the queue test)
+  { name: "queue", command: "cargo", args: [...GAME, "--port", "14439", "--health-port", "18084", "--info-port", "14440", "--mode", "queue", "--dev"], url: "http://127.0.0.1:14440/info", reuse: false },
   // Another for the queue's edge cases (e2e/queueEdges.spec.ts, in order: its matches apart from the queue test's, and
   // its one no-show's cooldown its own)
-  { name: "queue-edges", command: "cargo", args: [...GAME, "--map", "2", "--port", "14441", "--health-port", "18085", "--info-port", "14442", "--mode", "queue", "--dev"], url: "http://127.0.0.1:14442/info", reuse: false },
+  { name: "queue-edges", command: "cargo", args: [...GAME, "--port", "14441", "--health-port", "18085", "--info-port", "14442", "--mode", "queue", "--dev"], url: "http://127.0.0.1:14442/info", reuse: false },
 ];
 
 /** The first run builds the game server */

@@ -139,7 +139,7 @@ describe.skipIf(!PRESENT)("the bot packages' vectors, replayed", () => {
     const engine = await createEngine();
     initEngine(engine, meshes);
     const host = LocalHost.create(await createHost({ printErr: () => undefined }), meshes);
-    host.open(1, 0, 5);
+    host.open(1, 5);
     const bots = new LocalBots(World.create(engine), 2);
     bots.join(host, 2, { team: 0, name: "Nexto", brain: "nexto" }, await loadBrain("/bots/", "nexto", 1, files, Math.random, ort), 0);
     bots.join(host, 3, { team: 1, name: "Necto", brain: "necto" }, await loadBrain("/bots/", "necto", 1, files, Math.random, ort), 0);
@@ -170,7 +170,7 @@ describe.skipIf(!PRESENT)("the bot packages' vectors, replayed", () => {
     const engine = await createEngine();
     initEngine(engine, meshes);
     const host = LocalHost.create(await createHost({ printErr: () => undefined }), meshes);
-    host.open(2, 0, 9);
+    host.open(2, 9);
     const bots = new LocalBots(World.create(engine), 4);
     const slots = [
       { team: 0, name: "Nexto 1", brain: "nexto" },

@@ -103,8 +103,6 @@ export interface MatchmakingPorts {
   /** The join's end: the token claimed in the match page; how long the search had run (s: a cancelled match's search
    *  goes on from there); the match's map */
   readonly join: (token: bigint, playlist: number, searchedFor: number, map: number) => void;
-  /** A match found: its map's arena fetched during the join's countdown, so the match page has it at once */
-  readonly preload: (map: number) => void;
   /** Cancel Search during "Joining in": the slot given up at once (claimed and left: the match is cancelled now, its
    *  other players search again, not after the 30 s wait: RV-355) */
   readonly decline: (token: bigint) => void;
@@ -170,7 +168,6 @@ export class Matchmaking {
         this.#session = null;
         this.#token = token;
         this.#map = map;
-        this.ports.preload(map);
         this.#set("joining");
         this.#countdown(JOIN_COUNTDOWN);
         for (let n = JOIN_COUNTDOWN - 1; n >= 0; n--) {

@@ -24,8 +24,6 @@ struct Args {
     forfeit_vote_wait: Option<f32>,
     /// Browser tests: each round, the ball is knocked into a goal this long after "go"
     test_goal_after: Option<f32>,
-    /// Every match on this map (development servers and the browser tests); without, each its own at random
-    map: Option<u8>,
     /// The queue's matches (1v1, 2v2, 3v3: searches and claims only), not one open match
     queue: bool,
     /// The certificate chain and its key (PEM): a public server's (APP-CONTRACT.md), reloaded when they change or on SIGHUP
@@ -40,7 +38,7 @@ struct Args {
 }
 
 const USAGE: &str = "usage: carball-server [--mode direct|queue] [--dev] [--port 4433] [--info-port 4434] [--dev-info on|off] [--info-bind 127.0.0.1] \
-[--meshes DIR] [--team-size 3] [--match-type casual|ranked|private] [--forfeit-vote-wait SECONDS] [--test-goal-after SECONDS] [--map 0-15] \
+[--meshes DIR] [--team-size 3] [--match-type casual|ranked|private] [--forfeit-vote-wait SECONDS] [--test-goal-after SECONDS] \
 [--cert FULLCHAIN.pem --key KEY.pem] [--allowed-origin ORIGIN[,ORIGIN...]] [--public-host HOST] [--health-port 8081] \
 [--max-sessions N] [--max-per-address N] [--max-per-address-per-minute N] | --healthcheck
 environment (each the flag's default): SERVER_MODE, GAME_PORT, MESHES_DIR, CERT_PATH, KEY_PATH, ALLOWED_ORIGIN, PUBLIC_HOST, HEALTH_PORT";
@@ -105,7 +103,6 @@ fn parse_args(mut it: impl Iterator<Item = String>, env: impl Fn(&str) -> Option
         match_type: MatchType::Casual,
         forfeit_vote_wait: None,
         test_goal_after: None,
-        map: None,
         queue: false,
         cert: None,
         dev: false,
@@ -160,11 +157,6 @@ fn parse_args(mut it: impl Iterator<Item = String>, env: impl Fn(&str) -> Option
             }
             "--forfeit-vote-wait" => args.forfeit_vote_wait = Some(value()?.parse()?),
             "--test-goal-after" => args.test_goal_after = Some(value()?.parse()?),
-            "--map" => {
-                let map: u8 = number("--map", &value()?)?;
-                anyhow::ensure!(map < carball_server::protocol::MAP_COUNT, "--map {map}: 0 to {}", carball_server::protocol::MAP_COUNT - 1);
-                args.map = Some(map);
-            }
             "--mode" => args.queue = parse_mode(&value()?)?,
             "--dev" => args.dev = true,
             "--cert" => cert = Some(value()?.into()),
@@ -283,11 +275,11 @@ async fn main() -> anyhow::Result<()> {
     let playlist = |team_size| Playlist { team_size, match_type: args.match_type, forfeit_vote_wait: args.forfeit_vote_wait };
     // (direct: one open match of --team-size; queue: the 1v1, 2v2 and 3v3 playlists)
     let mode = if args.queue { game_loop::Mode::Queue([1, 2, 3].map(playlist).to_vec()) } else { game_loop::Mode::Direct(playlist(args.team_size)) };
-    let (test_goal_after, map) = (args.test_goal_after, args.map);
+    let test_goal_after = args.test_goal_after;
     let start = Instant::now();
     let heartbeat = Arc::new(AtomicU64::new(0));
     let game_heartbeat = heartbeat.clone();
-    let game = std::thread::Builder::new().name("game".into()).spawn(move || game_loop::run(messages, mode, test_goal_after, map, game_heartbeat, start))?;
+    let game = std::thread::Builder::new().name("game".into()).spawn(move || game_loop::run(messages, mode, test_goal_after, game_heartbeat, start))?;
     // (the game thread gone, by a panic outside a match's tick: the process ends, for its supervisor to restart it, SEC-7)
     tokio::spawn(async move {
         let mut every = tokio::time::interval(Duration::from_secs(1));
@@ -344,21 +336,6 @@ mod tests {
         assert!(!parse(&[]).unwrap().queue, "direct by default");
         assert!(parse(&["--mode", "ranked"]).is_err());
         assert!(parse(&["--team-size"]).is_err(), "a value needed");
-    }
-
-    #[test]
-    fn a_map_is_one_of_the_maps_and_named_when_refused() {
-        // (RV-447: the client's THEMES, append-only, MAP_COUNT of them)
-        let last = carball_server::protocol::MAP_COUNT - 1;
-        for bad in [carball_server::protocol::MAP_COUNT.to_string(), "255".to_string(), "256".to_string(), "-1".to_string(), "x".to_string()] {
-            let e = parse(&["--map", &bad]).err().unwrap_or_else(|| panic!("--map {bad}"));
-            assert!(e.to_string().contains("--map"), "{e}");
-        }
-        assert!(parse(&["--map"]).is_err(), "a value needed");
-        for (given, map) in [("0", 0), (last.to_string().as_str(), last), (" 3 ", 3)] {
-            assert_eq!(parse(&["--map", given]).unwrap().map, Some(map), "--map {given:?}");
-        }
-        assert_eq!(parse(&[]).unwrap().map, None, "a random map each match by default");
     }
 
     #[test]

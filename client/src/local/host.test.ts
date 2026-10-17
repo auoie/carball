@@ -26,7 +26,7 @@ const controls = (messages: readonly HostMessage[], id: number): ControlMessage[
 
 describe("the local host", () => {
   it("welcomes a player's hello, starts a 1v1 with a bot, sends updates and drives the bot's car", () => {
-    host.open(1, 0, 7);
+    host.open(1, 7);
     host.connect(1);
     host.control(1, hello(0, "Player"), 0);
     const first = host.drain();
@@ -59,7 +59,7 @@ describe("the local host", () => {
   });
 
   it("a bot's brain is given the match's state after every tick: the chaser hits the kickoff's ball (the player idle)", async () => {
-    host.open(1, 0, 3);
+    host.open(1, 3);
     host.connect(1);
     host.control(1, hello(0, "Player"), 0);
     const world = World.create(engine);

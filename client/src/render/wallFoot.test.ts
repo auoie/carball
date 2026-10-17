@@ -1,6 +1,6 @@
 // The wall foot's stack (AV-10, src/render/wallFoot.ts): the fillet frame's top round the walls (RV-462)
 import { describe, expect, it } from "vitest";
-import { STACK, archOutline, frameTopAt, wallParam } from "./wallFoot";
+import { STACK, frameTopAt, wallParam } from "./wallFoot";
 
 describe("the wall foot's frame (AV-10)", () => {
   it("its top 140 along the side walls, 96 along the back wall to |x| 1344, then down to 57 by 960", () => {
@@ -11,10 +11,5 @@ describe("the wall foot's frame (AV-10)", () => {
     expect(frameTopAt(wallParam(1344, 5120))).toBeCloseTo(96, 0);
     expect(frameTopAt(wallParam(1152, 5120))).toBeCloseTo(76.5, 0);
     expect(frameTopAt(wallParam(960, 5120))).toBeCloseTo(57, 0);
-  });
-
-  it("the goal's arch rises from the side walls' frame top", () => {
-    const { points } = archOutline();
-    expect(points[0]?.[1]).toBe(STACK.frameTop.side);
   });
 });

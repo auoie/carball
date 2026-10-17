@@ -4,9 +4,8 @@ import createEngine from "@engine/carball_engine.mjs";
 import { beforeAll, describe, expect, it } from "vitest";
 import { type BoostPadState, World, initEngine, padPickedUp } from "../engine/world";
 import { SoundDetector } from "../audio/detect";
-import { BoostPadsView } from "../render/boostPads";
 import { TOKENS, TokenPadsView } from "../render/tokenPads";
-import { InstancedMesh, Vector3 } from "three";
+import { type InstancedMesh, Vector3 } from "three";
 import { ZERO, vec3 } from "../math/vec";
 import { arenaMeshes } from "../testing/arena";
 
@@ -66,7 +65,7 @@ describe("the pickup's feedback keyed on the pickup itself", () => {
     expect(detector.update(world(big(false, 9.98)), 1 / 60)).toEqual([]);
   });
 
-  it("the greenhouse's ball pops for it; the game-style pad's FX fade out from full for it", () => {
+  it("the pad's ball pops for it", () => {
     const tokens = new TokenPadsView([big(false, 0.03)]);
     const balls = tokens.root.children[2] as InstancedMesh;
     const scale = (): number => new Vector3(balls.instanceMatrix.array[0] ?? 0, balls.instanceMatrix.array[1] ?? 0, balls.instanceMatrix.array[2] ?? 0).length();
@@ -74,14 +73,6 @@ describe("the pickup's feedback keyed on the pickup itself", () => {
     expect(scale()).toBe(0);
     tokens.update([big(false, 10)], 1 / 60);
     expect(scale()).toBeGreaterThan(TOKENS.ball.radius * 0.9);
-    const game = new BoostPadsView([big(false, 0.03)]);
-    const curtains = game.root.children.find((c): c is InstancedMesh => c instanceof InstancedMesh && c.name.includes("curtain")) ?? (game.root.children[1] as InstancedMesh);
-    game.update([big(false, 0.01)], 1 / 60);
-    const before = curtains.instanceColor?.getX(0) ?? -1;
-    game.update([big(false, 10)], 1 / 60);
-    const after = curtains.instanceColor?.getX(0) ?? -1;
-    expect(before).toBe(0);
-    expect(after).toBeGreaterThan(0.5);
   });
 });
 

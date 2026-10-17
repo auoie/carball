@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 import { ArenaView } from "./arena";
 import { ENV_RADIAL, FIELD_TABLES, GRASS_LIGHT, PACK_G, PB_A, TABLE_WIDTH, tableTexels, tablesUniform } from "./constTables";
 import { nightTheme } from "./themes/night";
-import { stadiumTheme } from "./themes/stadium";
 
 describe("the constant tables' texture", () => {
   it("each table in its row and channel, as float32", () => {
@@ -30,12 +29,13 @@ describe("the constant tables' texture", () => {
       if (u["constTables"]?.value === tablesUniform().value) sharing++;
     });
     expect([...arrays]).toEqual([]);
-    expect(sharing).toBeGreaterThan(5);
+    // (the goals' nets: the hex glass)
+    expect(sharing).toBe(2);
   });
 
-  it("every shader reading the tables declares their sampler first (the stadium's goal floor read envG before it: RV, 2026-10-16)", () => {
+  it("every shader reading the tables declares their sampler first (a goal floor once read envG before it: RV, 2026-10-16)", () => {
     let checked = 0;
-    for (const arena of [new ArenaView(nightTheme()), new ArenaView(stadiumTheme())]) {
+    for (const arena of [new ArenaView(nightTheme())]) {
       arena.root.traverse((o) => {
         if (!(o instanceof Mesh)) return;
         const shader = (o.material as Partial<ShaderMaterial>).fragmentShader;
@@ -49,6 +49,6 @@ describe("the constant tables' texture", () => {
         }
       });
     }
-    expect(checked).toBeGreaterThan(5);
+    expect(checked).toBe(2);
   });
 });

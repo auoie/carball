@@ -18,6 +18,7 @@ import {
   IcosahedronGeometry,
   InstancedMesh,
   Matrix4,
+  type Object3D,
   PlaneGeometry,
   ShaderMaterial,
   UniformsLib,
@@ -25,7 +26,16 @@ import {
   Vector3,
 } from "three";
 import { type BoostPadState, padPickedUp } from "../engine/world";
-import { PAD_RESPAWN_SECONDS, type PadsView } from "./boostPads";
+
+/** Seconds a taken pad stays down (VehiclePickup RespawnDelay x RespawnDelayScale 1): the engine's pad cooldown. */
+export const PAD_RESPAWN_SECONDS = { big: 10, small: 4 } as const;
+
+/** A view of the boost pads, updated each frame from the engine's pads (`seconds` since the last update; none given: its
+ *  fades at their end at once) */
+export interface PadsView {
+  readonly root: Object3D;
+  update(pads: readonly BoostPadState[], seconds?: number): void;
+}
 
 /** The pads' measures (uu, s): the puck and the pedestal (radius, height, bevel, their sides' segments), the ball
  *  (radius, its centre's height), the halo round it (its size, its burst's growth), the pops (a pickup's, a return's),

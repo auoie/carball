@@ -4,7 +4,6 @@ import { JOIN_COUNTDOWN, Matchmaking, OWN_SEARCH_TEXT, SEARCH_TEXT, type SearchH
 function harness() {
   const sounds: string[] = [];
   const joined: { token: bigint; playlist: number; map: number }[] = [];
-  const preloaded: number[] = [];
   const searchedFor: number[] = [];
   const searches: { playlist: number; token: bigint; handlers: SearchHandlers; cancelled: boolean; finished: (() => void) | null }[] = [];
   const declined: bigint[] = [];
@@ -27,10 +26,9 @@ function harness() {
       joined.push({ token, playlist, map });
       searchedFor.push(seconds);
     },
-    preload: (map) => preloaded.push(map),
     decline: (token) => declined.push(token),
   });
-  return { mm, sounds, joined, searchedFor, searches, declined, preloaded };
+  return { mm, sounds, joined, searchedFor, searches, declined };
 }
 
 describe("matchmaking (notes/matchmaking.md MM-4..14)", () => {
@@ -49,7 +47,7 @@ describe("matchmaking (notes/matchmaking.md MM-4..14)", () => {
   });
 
   it("connects, searches, then counts Joining in 3, 2, 1 with a beep each and claims at 0", () => {
-    const { mm, sounds, joined, searches, preloaded } = harness();
+    const { mm, sounds, joined, searches } = harness();
     mm.frame(10);
     mm.start(2);
     expect(mm.state?.status).toBe("connecting");
@@ -61,7 +59,6 @@ describe("matchmaking (notes/matchmaking.md MM-4..14)", () => {
     expect(mm.state?.lines.map((l) => l.text)).toEqual([SEARCH_TEXT.findingBestMatch]);
     searches[0]?.handlers.found(77n, 6);
     expect(mm.state?.status).toBe("joining");
-    expect(preloaded, "the match's arena fetched as the countdown starts").toEqual([6]);
     const countdown = (): string[] => (mm.state?.lines ?? []).filter((l) => l.kind === "countdown").map((l) => l.text);
     expect(countdown()).toEqual(["Joining in 3"]);
     // (on timers, no frames: a hidden tab's countdown runs and claims on time, RV-354)

@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 description = "Authoritative game server: the patched engine (C++) behind WebTransport"
 publish = false
+# (`cargo run`: the network server; the local host is built by scripts/build_host.sh)
+default-run = "carball-server"
 
 [dependencies]
 anyhow = "1"

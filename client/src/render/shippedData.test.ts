@@ -4,7 +4,6 @@ import { createRequire } from "node:module";
 import { crc32, deflateSync, inflateSync } from "node:zlib";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { describe, expect, it } from "vitest";
-import { NOISE_QUANTILES } from "./themes/stadiumSky";
 
 /** What ships carries no game data (RV-99, RV-114, RV-131): no mesh's vertices or UVs, no traced shapes, no tables of
  *  the meshes' per-azimuth extents, in any module under src/ or the JSON they import, nor in the built bundle (the
@@ -226,38 +225,6 @@ function numbers(text: string): Num[] {
   });
 }
 
-/** scripts/cage_topology.json: the cage's topology, derived and shipped (its lattice, edges, cells and boundary as
- *  indices into its own nodes) */
-const TOPOLOGY = join(ROOT, "scripts/cage_topology.json");
-interface Topology {
-  params: Record<string, unknown>;
-  rows: Record<string, { corner_marks: number[] }>;
-  nodes: { q: number[]; a: (string | number)[] }[];
-  edges: number[][];
-  cells: { nodes: number[]; sides: number }[];
-  defects: { cell: number; sides: number; wall_rows: number[] }[];
-  boundary: number[][];
-}
-
-/** The topology's free numbers, its parameters and its rows' marks: the rest is indices and labels, proven so by the
- *  structural test below, and is left out of the scan (a field read across its cells meets some texture's row) */
-function topologyFree(text: string): string {
-  const t = JSON.parse(text) as Topology;
-  return JSON.stringify({ params: t.params, rows: t.rows });
-}
-
-/** Its index arrays, each as "a,b,c" */
-function topologyArrays(): Set<string> {
-  const t = JSON.parse(readFileSync(TOPOLOGY, "utf8")) as Topology;
-  return new Set([...t.nodes.map((n) => n.q), ...t.edges, ...t.cells.map((c) => c.nodes), ...t.defects.map((d) => d.wall_rows), ...t.boundary].map((a) => a.join(",")));
-}
-
-/** A text with the cage topology's own index arrays blanked wherever they are (the JSON, the bundle's inlined copy):
- *  indices into its nodes, which the checks would read as coordinates; the rest of the text is checked as any */
-function withoutTopology(text: string, arrays: ReadonlySet<string>): string {
-  return text.replace(/\[\s*\d+(?:\s*,\s*\d+)*\s*\]/g, (m) => (arrays.has(m.replace(/[\s[\]]/g, "")) ? " ".repeat(m.length) : m));
-}
-
 /** The bundle's binaries: its asset files by kind, and the data URLs inlined in its text (small assets, under the
  *  build's inline limit), as base64; inlined data a collision mesh when it is one of ours by content */
 function bundleBinaries(): { kind: Kind; base64: string; where: string }[] {
@@ -278,13 +245,11 @@ function bundleBinaries(): { kind: Kind; base64: string; where: string }[] {
 }
 
 /** The arena's and its surroundings' modules, by name (a new one can't be left out: RV-229) */
-const FIELD_AND_GOAL = files(join(SRC, "render"), (n) => /^(stadium\w*|goalInterior|gameSurfaces)\.ts$/.test(n)).map((p) => p.slice(SRC.length));
+const FIELD_AND_GOAL = files(join(SRC, "render"), (n) => /^(greenhouse|gameSurfaces|wallFoot|goalSurface|arenaSurface|tokenPads)\.ts$/.test(n)).map((p) => p.slice(SRC.length));
 
 describe("what ships carries no game data (RV-99)", () => {
-  it("the field's, goals' and surroundings' modules hold rules, not traced shapes: each under a thousand numbers", () => {
-    // (the canopy, the flags and the far layer among them)
-    expect(FIELD_AND_GOAL.length).toBeGreaterThanOrEqual(13);
-    for (const path of ["render/themes/stadiumCanopy.ts", "render/themes/stadiumFlags.ts", "render/themes/stadiumFarLayer.ts"]) expect(FIELD_AND_GOAL).toContain(path);
+  it("the arena's modules (the glasshouse, its wall foot, surfaces, materials and pads) hold rules, not traced shapes: each under a thousand numbers", () => {
+    expect(FIELD_AND_GOAL.length).toBe(6);
     for (const path of FIELD_AND_GOAL) {
       let source = stripComments(readFileSync(join(SRC, path), "utf8"));
       // (FIELD_LIGHT's and GRASS_LIGHT's lightmap statistics aside: numbers, not shapes)
@@ -330,12 +295,10 @@ describe("what ships carries no game data (RV-99)", () => {
       "./t/*.glsl",
     ]);
     const shipped = shippedImports().map((p) => p.slice(ROOT.length));
-    expect(shipped).toContain("scripts/cage_topology.json");
     expect(shipped).toContain("client/src/style.css");
     expect(shipped.filter((p) => p.startsWith("out/arena/collision_meshes/arena/") && p.endsWith(".cmf")).length).toBe(16);
     // (every shipped file a kind this guard knows: text it scans, binary it pins or allows)
     expect(shipped.filter((p) => kind(p) === "unknown")).toEqual([]);
-    expect(globFiles(join(SRC, "render/themes/stadium*.ts")).map((f) => f.slice(SRC.length))).toContain("render/themes/stadiumSky.ts");
   });
 
   it("the fonts that ship are the pinned ones, byte for byte, each with its licence beside it (public/ and the bundle)", () => {
@@ -380,33 +343,6 @@ describe("what ships carries no game data (RV-99)", () => {
     expect(new Set(meshes.map((b) => b.base64)).size).toBe(ours.size);
   });
 
-  it("the noise's quantile tables are distributions, not a texture's rows: 24 levels each, never decreasing (RV-157)", () => {
-    for (const [channel, levels] of Object.entries(NOISE_QUANTILES)) {
-      expect(levels.length, channel).toBe(24);
-      expect(levels.every((v, k) => k === 0 || v >= (levels[k - 1] ?? 0)), channel).toBe(true);
-    }
-  });
-
-  it("the cage's topology is topology: integer indices into its own nodes, its lattice integers; only its parameters and row marks otherwise", () => {
-    const t = JSON.parse(readFileSync(TOPOLOGY, "utf8")) as Topology;
-    const count = t.nodes.length;
-    const index = (k: number): boolean => Number.isInteger(k) && k >= 0 && k < count;
-    // (an edge a chain of nodes, a beam)
-    expect(t.edges.every((e) => e.length >= 2 && e.every(index))).toBe(true);
-    expect(t.cells.every((c) => c.nodes.every(index))).toBe(true);
-    expect(t.boundary.every((b) => b.every(index))).toBe(true);
-    expect(t.nodes.every((n) => n.q.length === 2 && n.q.every(Number.isInteger))).toBe(true);
-    expect(t.defects.every((d) => Number.isInteger(d.cell) && d.cell < t.cells.length && d.wall_rows.every(Number.isInteger))).toBe(true);
-    // (a cell's corners, 3 to its nodes (some on its edges); a defect's its cell's; a node's label its surface and
-    // integer lattice rows and columns)
-    expect(t.cells.every((c) => Number.isInteger(c.sides) && c.sides >= 3 && c.sides <= c.nodes.length)).toBe(true);
-    expect(t.defects.every((d) => d.sides === t.cells[d.cell]?.sides)).toBe(true);
-    expect(t.nodes.every((nd) => ["free", "clip", "wall", "seam", "ceil"].includes(String(nd.a[0])) && nd.a.slice(1).every((x) => Number.isInteger(x)))).toBe(true);
-    // (its numbers otherwise: a handful of parameters and the rows' corner marks)
-    const rest = Object.keys(t.params).length + Object.values(t.rows).reduce((s, r) => s + r.corner_marks.length + 2, 0);
-    expect(rest).toBeLessThan(100);
-    expect(withoutTopology("[672, 676], [99999, 1]", new Set(["672,676"]))).toBe("          , [99999, 1]");
-  });
   // (no local data needed: CI runs it, RV-276)
   it("three.js's chunk is told by its modules, not its name: our module or a public file named three-* is checked (RV-225)", () => {
     const three = ["node_modules/three/build/three.core.js", "node_modules/three/build/three.module.js"];
@@ -751,7 +687,6 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
   const texturesCoarse = new Sequences(textureStreams, 0.07);
   /** The last texture window found and its form (for the report) */
   let textureMatch = "";
-  const topology = topologyArrays();
   const sorted = Float64Array.from(uvValues).sort();
   const nearUv = (x: number, tolerance: number): boolean => {
     let lo = 0;
@@ -801,7 +736,7 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
 
   /** Every check on one text: what it found (none for a clean text) */
   function findings(text: string): string[] {
-    const n = numbers(withoutTopology(text, topology));
+    const n = numbers(text);
     const value = (k: number): number => Math.abs(n[k]?.value ?? 0);
     const signed = (k: number): number => n[k]?.value ?? 0;
     const integers = (i: number, count: number): boolean => n.slice(i, i + count).every((m) => m.integer);
@@ -1100,7 +1035,7 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
 
   it.each(shippedImports().filter((p) => kind(p) === "text").map((p) => p.slice(ROOT.length)))("%s (imported): no run of the game's vertices, UVs or traced points", (path) => {
     const text = readFileSync(join(ROOT, path), "utf8");
-    check(path, join(ROOT, path) === TOPOLOGY ? topologyFree(text) : text);
+    check(path, text);
   }, 60000);
 
   it("our generated arena's collision meshes are none of the game's cooked ones (RV-167f)", () => {

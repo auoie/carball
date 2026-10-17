@@ -1,26 +1,16 @@
-// The game's wall, glass and glow materials (notes/arena-visuals.md H-5, H-6, H-9), drawn in code: the hexagon
-// textures they sample replaced by a procedural flat-top hex grid fitted to the game's (TiledPatterns.Hexagons_Pack
-// and CS_FX Hexagons_Pack_01_T: 2 x 2 cells a tile, columns half a tile apart, rows half a tile apart across the flats,
-// odd columns half a row down; ForcefieldHex the same at 16 x 16), and their channels by profiles measured against the
-// hex radius (0 at a cell's centre, 1 at its edge). Values only; the textures stay local.
+// The game's glass and glow materials (notes/arena-visuals.md H-5, H-6), drawn in code: the goals' nets' hex glass and
+// the goals' glow strips. The hexagon textures they sample replaced by a procedural flat-top hex grid fitted to the
+// game's (TiledPatterns.Hexagons_Pack: 2 x 2 cells a tile, columns half a tile apart, rows half a tile apart across the
+// flats, odd columns half a row down), and their channels by profiles measured against the hex radius (0 at a cell's
+// centre, 1 at its edge). Values only; the textures stay local.
 import { lowQualityPath } from "./shaderQuality";
 import { CONST_TABLES_GLSL, ENV_GLSL, ENV_RADIAL, ENV_SPREAD, tablesUniform } from "./constTables";
 export { ENV_GLSL, ENV_RADIAL, ENV_SPREAD, PACK_G } from "./constTables";
-import { DataTexture, DoubleSide, FloatType, NearestFilter, RGBAFormat, ShaderMaterial, UniformsLib, UniformsUtils, Vector3 } from "three";
+import { DoubleSide, ShaderMaterial, UniformsLib, UniformsUtils } from "three";
 import type { Color } from "three";
-
 
 /** The decoded textures' means: what cells too small to draw average to */
 export const PACK_G_MEAN = 0.719;
-const NET_R_MEAN = 0.091;
-const TRACKER_R = [
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.001, 0.004, 0.009, 0.02, 0.037, 0.06, 0.1, 0.157, 0.235, 0.426, 0.613,
-];
-const TRACKER_G = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.736, 1, 1, 1, 0.327, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-const NET_R = [
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.001, 0.004, 0.019, 0.059, 0.126, 0.233, 0.32, 0.465, 0.652, 0.91,
-  0.963,
-];
 
 const hexGlsl = /* glsl */ `
 // The hex radius (0 at a cell's centre, 1 at its edge) at tile coordinates (2 columns a tile): the game's flat-top
@@ -60,114 +50,6 @@ void main() {
 }
 `;
 
-/** The overlay's surfaces sit just outside the arena's: FF_Side at |x| 4100 and FF_Goal at |y| 5124 (4 uu out), FF_Roof
- *  at z 2052 (8 up): each vertex pushed out along its normal (RV-74) */
-const overlayVertexShader = vertexShader.replace(
-  "  vWorldPosition = world.xyz;",
-  `  vec3 surfaceNormal = normalize(mat3(modelMatrix) * normal);
-  vec3 outward = dot(surfaceNormal, world.xyz - vec3(0.0, 1022.0, 0.0)) > 0.0 ? surfaceNormal : -surfaceNormal;
-  world.xyz += outward * (abs(surfaceNormal.y) > 0.7 ? 8.0 : 4.0);
-  vWorldPosition = world.xyz;`,
-);
-
-/** The overlay surfaces' UV, 256 uu a unit (the FF meshes' charts: side walls, and FF_Side's strip down the fillet, u =
- *  1 + |y| / 256, v = 1 - z / 256; the roof u = -30.978 - |x| / 256, v = |y| / 256 + 1.002; the back walls u = -30.978 -
- *  |x| / 256, v = 0.999 - z / 256: RV-70c, RV-74). The corners (RV-109): FF_Goal's vertical ones the side walls' u to
- *  the 45-degree seam (3843, 4226: the diagonal's end, the diagonal itself the back walls'), the back walls' beyond, v =
- *  0.9988 - 0.003902 z; the wall-ceiling fillets the walls'
- *  charts, but for their top row (n.z over 0.55) along FF_Goal's diagonal corners (n.x and n.y both over 0.42), which
- *  takes the roof's (from the meshes' UVs, 40 faces). `p` in the game's frame, `n` its normal's absolute
- *  (OVERLAY_UV_GLSL's, for tests) */
-export function overlayUv(p: readonly [number, number, number], n: readonly [number, number, number]): [number, number] {
-  const [ax, ay, z] = [Math.abs(p[0]), Math.abs(p[1]), p[2]];
-  const corner = n[2] < 0.3;
-  const side = 1 + ay / 256;
-  const back = -30.978 - ax / 256;
-  if (n[2] > 0.7 || (n[2] > 0.55 && Math.min(n[0], n[1]) > 0.42)) return [back, ay / 256 + 1.002];
-  if (n[1] > 0.97) return [back, 0.999 - z / 256];
-  if (n[0] > 0.97 || (ay <= 128 && z < 256)) return [side, 1 - z / 256];
-  if (n[0] > n[1] + 0.001) return [side, corner ? 0.9988 - 0.003902 * z : 1 - z / 256];
-  return [back, corner ? 0.9988 - 0.003902 * z : 0.999 - z / 256];
-}
-
-export const OVERLAY_UV_GLSL = /* glsl */ `
-vec2 overlayUv(vec3 p, vec3 n) {
-  float ax = abs(p.x);
-  float ay = abs(p.y);
-  bool corner = n.z < 0.3;
-  float side = 1.0 + ay / 256.0;
-  float back = -30.978 - ax / 256.0;
-  return n.z > 0.7 || (n.z > 0.55 && min(n.x, n.y) > 0.42) ? vec2(back, ay / 256.0 + 1.002)
-    : n.y > 0.97 ? vec2(back, 0.999 - p.z / 256.0)
-    : n.x > 0.97 || (ay <= 128.0 && p.z < 256.0) ? vec2(side, 1.0 - p.z / 256.0)
-    : n.x > n.y + 0.001 ? vec2(side, corner ? 0.9988 - 0.003902 * p.z : 1.0 - p.z / 256.0)
-    : vec2(back, corner ? 0.9988 - 0.003902 * p.z : 0.999 - p.z / 256.0);
-}
-`;
-
-/** FF_Side / FF_Roof (Beach_NetFence_MIC, AV-16, H-9): over the walls and ceiling, a faint fine hex net everywhere
- *  (25 % on its lines), and round the ball a hex disc within 220-300 uu and a thin team-coloured ring at 312-325 uu */
-const overlayFragment = /* glsl */ `
-uniform vec3 ballPosition;
-uniform vec3 primary0;
-uniform vec3 primary1;
-uniform sampler2D profiles;
-varying vec3 vWorldPosition;
-varying vec3 vWorldNormal;
-#include <fog_pars_fragment>
-${hexGlsl}
-${OVERLAY_UV_GLSL}
-// The three profiles at r (32 steps as profile32's), from their texture's exact texels: the ball tracker's R and G, the
-// net's R in r, g, b (one lookup a texel where the uniform arrays' indexing was: the same values, the same mix)
-vec4 profiles32(float r) {
-  float rr = clamp(r, 0.0, 1.0);
-  float x = (rr < 0.8 ? rr * 20.0 : 16.0 + (rr - 0.8) * 80.0) - 0.5;
-  int i = int(clamp(floor(x), 0.0, 31.0));
-  int j = min(i + 1, 31);
-  return mix(texelFetch(profiles, ivec2(i, 0), 0), texelFetch(profiles, ivec2(j, 0), 0), clamp(x - float(i), 0.0, 1.0));
-}
-void main() {
-  // (the game's frame: Three's x, z, y)
-  vec3 p = vWorldPosition.xzy;
-  vec3 n = abs(normalize(vWorldNormal).xzy);
-  // Not below the game's overlay surfaces (FF_Side, FF_Roof, FF_Goal: from z 256 up, FF_Side down the fillet to z 72.6
-  // for |y| <= 128 (RV-74); on the back walls not under FF_Goal's lower edge, (880, 704) to (1328, 256): RV-66)
-  float ax = abs(p.x);
-  float ay = abs(p.y);
-  bool midfield = ay <= 128.0;
-  float lowest = ay > 5100.0 && ax < 1328.0 ? (ax < 880.0 ? 704.0 : 704.0 - (ax - 880.0)) : midfield ? 72.6 : 256.0;
-  if (p.z < lowest) discard;
-  vec2 uv = overlayUv(p, n);
-  float d = length(p - ballPosition.xzy);
-  float F = saturate1(1.0 - 0.04 * (d - 300.0));
-  float outside = saturate1(12.0 * (0.5 - F));
-  float ring = saturate1(2.0 * (outside * F - 0.001));
-  // The ball tracker (Hexagons_Pack_01_T) at uv x 1.75; ForcefieldHex (16 columns a tile) at uv x (0.99, 0.9)
-  float hexR = hexRadius(uv * 1.75);
-  vec4 tracker = profiles32(hexR);
-  float hex = 8.0 * tracker.r * saturate1((220.0 - d) * 0.0015)
-    + saturate1(0.025 * tracker.g * saturate1((300.0 - d) * 0.01));
-  vec2 netTile = uv * vec2(0.99, 0.9) * 8.0;
-  float net = profiles32(hexRadius(netTile)).b;
-  // (where the net's cells shrink under a few pixels: their average, not shimmer)
-  float shrink = smoothstep(0.08, 0.25, length(fwidth(netTile)));
-  net = mix(net, ${NET_R_MEAN}, shrink);
-  #ifdef CARBALL_LQ
-    // (High Quality Shaders off, QG-11: the faint net only, its alpha 0.25 ForcefieldHex.R; the colour as it is)
-    float alpha = 0.25 * net;
-  #else
-    float alpha = mix(ring * (1.0 - net - 0.25 * outside * net) + 0.25 * outside * net, hex, F);
-  #endif
-  vec3 team = 2.0 * mix(primary0, primary1, saturate1(p.y / 400.0 + 0.5));
-  // (the hexagon term unclamped in the colour's lerp: 0.25 + 1.23 (0.6 - 0.25) on a line at the ball, RV-65)
-  vec3 colour = mix(mix(vec3(0.25), team, ring), vec3(0.6), hex);
-  gl_FragColor = vec4(colour, saturate1(alpha));
-  #include <colorspace_fragment>
-  #include <fog_fragment>
-}
-`;
-
-
 /** Our own smooth environment for ENVPack.G (RV-71: the user's choice (c); the texture can't ship, and no low-order fit of
  *  it holds): at |uv| its rings' mean, and round each ring one cosine with the ring's spread, its phase turning with the
  *  radius (ours, not the texture's), clamped 0..1. Needs uniforms envRadial[9], envSpread[9] */
@@ -181,8 +63,6 @@ export function envG(u: number, v: number): number {
   const spread = (ENV_SPREAD[i] ?? 0) + ((ENV_SPREAD[i + 1] ?? 0) - (ENV_SPREAD[i] ?? 0)) * f;
   return Math.min(Math.max(mean + 1.4142 * spread * Math.cos(Math.atan2(v, u) - 6.2832 * s), 0), 1);
 }
-
-
 
 /** The goal net's flat side walls' chart (Goal_STD_Glass_Outer's, planar: RV-73, RV-110), at |y|, z (NET_SIDE_GLSL's, for
  *  tests) */
@@ -322,79 +202,6 @@ export class GlowStripMaterial extends ShaderMaterial {
       transparent: true,
       depthWrite: false,
       side: DoubleSide,
-      fog: true,
-    });
-  }
-}
-
-/** The overlay's three 32-step profiles (TRACKER_R, TRACKER_G, NET_R) as one 32 x 1 RGBA32F texture, texel i their step
- *  i in r, g, b: read exactly (texelFetch, no filtering), mixed in the shader as the uniform arrays were */
-export function overlayProfiles(): DataTexture {
-  const data = new Float32Array(32 * 4);
-  for (let i = 0; i < 32; i++) data.set([TRACKER_R[i] ?? 0, TRACKER_G[i] ?? 0, NET_R[i] ?? 0, 0], 4 * i);
-  const texture = new DataTexture(data, 32, 1, RGBAFormat, FloatType);
-  texture.minFilter = NearestFilter;
-  texture.magFilter = NearestFilter;
-  texture.generateMipmaps = false;
-  texture.needsUpdate = true;
-  return texture;
-}
-
-/** The walls' and ceiling's overlay round the ball, in the teams' linear primaries */
-export class ForceFieldMaterial extends ShaderMaterial {
-  readonly ballPosition: Vector3;
-
-  constructor(primary0: Color, primary1: Color) {
-    const ballPosition = new Vector3(0, -100_000, 0);
-    super({
-      vertexShader: overlayVertexShader,
-      fragmentShader: overlayFragment,
-      uniforms: {
-        ...UniformsUtils.clone(UniformsLib.fog),
-        ballPosition: { value: ballPosition },
-        primary0: { value: primary0 },
-        primary1: { value: primary1 },
-        profiles: { value: overlayProfiles() },
-      },
-      transparent: true,
-      depthWrite: false,
-      side: DoubleSide,
-      fog: true,
-    });
-    lowQualityPath(this);
-    this.ballPosition = ballPosition;
-  }
-}
-
-/** The back wall's grate (Goal_STD_Glass[1], H-11): near black (albedo 0.03), its alpha its texture's mean, 0.58 near
- *  and 0.53 beyond ~670 uu (its alpha sat(4.125 R (1 - 0.425 sat(4 (d/1024 - 0.4)))) fading with distance d) */
-export const GRATE = { albedo: 0.03, near: 0.58, far: 0.53 } as const;
-
-export class GrateMaterial extends ShaderMaterial {
-  constructor() {
-    super({
-      vertexShader: /* glsl */ `
-        varying vec3 vWorld;
-        #include <fog_pars_vertex>
-        void main() {
-          vec4 world = modelMatrix * vec4(position, 1.0);
-          vWorld = world.xyz;
-          vec4 mvPosition = viewMatrix * world;
-          gl_Position = projectionMatrix * mvPosition;
-          #include <fog_vertex>
-        }`,
-      fragmentShader: /* glsl */ `
-        varying vec3 vWorld;
-        #include <fog_pars_fragment>
-        void main() {
-          float fade = clamp(4.0 * (distance(cameraPosition, vWorld) / 1024.0 - 0.4), 0.0, 1.0);
-          gl_FragColor = vec4(vec3(${GRATE.albedo.toFixed(3)}), mix(${GRATE.near.toFixed(3)}, ${GRATE.far.toFixed(3)}, fade));
-          #include <colorspace_fragment>
-          #include <fog_fragment>
-        }`,
-      uniforms: UniformsUtils.clone(UniformsLib.fog),
-      transparent: true,
-      depthWrite: false,
       fog: true,
     });
   }

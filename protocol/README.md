@@ -72,13 +72,10 @@ input frame `frame` (0 before any). Engine snapshots: `Arena::Serialize` (exact,
 
 ## Maps
 
-Each match is on a map, its arena: the server puts every match on map 16, Night's greenhouse, the one map offered (the
-user's decision of 2026-10-17; `--map N` puts every match on map N), and sends it in the match's `MatchFound`
-and every player's `Welcome`, so every player sees the same arena. A map is an index into the client's themes, in this
-order (`client/src/render/themes/index.ts` `THEMES`; the server's `protocol::MAP_COUNT` is their number), only ever
-appended to: 0 night, 1 stadium, 2 meadow, 3 forest, 4 city, 5 infested, 6 kawaii, 7 platformer, 8 haunted, 9 ghosts,
-10 dimension, 11 summit, 12 crater, 13 temple, 14 island, 15 lake, 16 greenhouse (Night's). A client that doesn't know an
-index (a newer server's) shows its default (0).
+Each match is on a map, its arena: one, Night (the user's decision of 2026-10-17: our glasshouse arena under Night's
+sky), map 0, sent in the match's `MatchFound` and every player's `Welcome`. A map is an index into the client's themes
+(`client/src/render/themes/index.ts` `THEMES`; the server's `protocol::MAP_COUNT` is their number). A client that doesn't
+know an index (a newer server's) shows Night.
 
 ## Datagrams
 | Type | Direction | Fields |
@@ -146,7 +143,7 @@ returning token (Hello), `0x92 SearchCooldown` (RV-367). Version 20: `SearchCool
 the match's map (`MatchFound`, `Welcome`). Version 22: the garage's car (Hello's `model`, in place of its `body`; the
 roster's `model`). Version 23: `Kicked`'s reason 2, a newer search from the same browser took this one's place (RV-460).
 Version 24: the stat graphs' network rows (HUD-21): `Inputs`' `sequence`, and each `Update`'s input-buffer window and the
-inputs lost. Version 25: map 16, Night's greenhouse, every match's (a version-24 client would draw Night instead).
+inputs lost. Version 25: one map, Night (map 0, its arena the glasshouse: a version-24 client would draw another).
 
 Podium title ids (`notes/match-stats.md` §5.4a; the client's `game/podiumTitles.ts`): 0 OvertimeGoal, 1 Goals_10,
 2 Goals_6_9, 3 Goals_3_5, 4 Saves_10, 5 Saves_6_9, 6 Saves_3_5, 7 EpicSaves, 8 PoolShots, 9 BackwardsGoal, 10 BicycleGoal,

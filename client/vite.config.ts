@@ -112,8 +112,6 @@ export default defineConfig({
       // The local host: the server's match built to WebAssembly (scripts/build_host.sh; the offline match against bots)
       "@host": here("../engine/build-wasm-host"),
       "@arena": here("../out/arena"),
-      // Derived game data that ships (the cage's topology: scripts/cage_topology.json)
-      "@scripts": here("../scripts"),
     },
   },
   server: {

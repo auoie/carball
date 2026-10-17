@@ -14,10 +14,9 @@ export interface BotSlot {
   readonly strength?: number;
 }
 
-/** The match to host: `teamSize` a side, on `map` (the protocol's map number), the kickoff orders from `seed` */
+/** The match to host (on Night, the one map): `teamSize` a side, the kickoff orders from `seed` */
 export interface LocalMatchSetup {
   readonly teamSize: number;
-  readonly map: number;
   readonly seed: number;
   readonly bots: readonly BotSlot[];
 }

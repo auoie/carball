@@ -48,10 +48,10 @@ export class LocalHost {
     return new LocalHost(module);
   }
 
-  /** A new open match: `teamSize` a side, on `map` (the protocol's map number), the kickoff orders from `seed`; its
+  /** A new open match (on Night, the one map): `teamSize` a side, the kickoff orders from `seed`; its
    *  clock from 0 s */
-  open(teamSize: number, map: number, seed: number): void {
-    this.#m._host_open(teamSize, map, seed);
+  open(teamSize: number, seed: number): void {
+    this.#m._host_open(teamSize, seed);
   }
 
   connect(id: number): void {

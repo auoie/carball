@@ -1,12 +1,10 @@
 // The main menu (notes/hud-menus.md MENU-1/2), over the arena as the page opens: Play (Free Play, or a playlist to search
 // online: notes/matchmaking.md MM-1, single selection), Garage (the car and the team colour, kept: src/game/cars.ts; the
-// user's feature, 2026-10-16) and Settings. Free Play starts at once on the one map offered (the user's decision of
-// 2026-10-17; the map select, from 2026-10-15, is kept but out of the flow: the maps by their names, the last one picked
-// kept and focused, picking one starting free play on it). The game's labels verbatim (Play, Settings, Free Play, Find Match: the user's decisions,
-// 2026-10-14); the playlists' and maps' names are ours. No Quit: a browser tab closes itself. Play vs Bots (ours: the
+// user's feature, 2026-10-16) and Settings. Free Play starts at once on Night, the one map (the user's decision of
+// 2026-10-17). The game's labels verbatim (Play, Settings, Free Play, Find Match: the user's decisions,
+// 2026-10-14); the playlists' names are ours. No Quit: a browser tab closes itself. Play vs Bots (ours: the
 // offline match against bot packages, local/botMatch.ts) shows only when there's a bot to play.
 import { PLAYLISTS, SEARCH_TEXT } from "../game/matchmaking";
-import { AVAILABLE_MAP, MAP_CHOICES, MAP_NAMES, type ThemeName, themeName } from "../render/themes";
 import type { Team } from "../engine/world";
 import { CARS, storeCar, storeTeam, storedCar, storedTeam } from "../game/cars";
 import type { GaragePreview } from "./garagePreview";
@@ -28,26 +26,18 @@ export const GARAGE_TEXT = { blue: "Blue", orange: "Orange" } as const;
 const BACK_TEXT = "Back";
 
 const PLAYLIST_KEY = "carball.playlist";
-/** Free play's map: the map select's last pick */
-const MAP_KEY = "carball.freeplayMap";
+/** The menu's pages: the top (Play, Garage, Settings), Play's, the bots' setup, the garage */
+export type MenuView = "top" | "play" | "bots" | "garage";
 
-/** The menu's pages: the top (Play, Garage, Settings), Play's, Free Play's map select, the bots' setup, the garage */
-export type MenuView = "top" | "play" | "maps" | "bots" | "garage";
-
-/** Where Escape (the pad's B) goes from a page: the map select and the bots' setup back to Play, Play and the garage to
- *  the top; the top stays */
+/** Where Escape (the pad's B) goes from a page: the bots' setup back to Play, Play and the garage to the top; the top
+ *  stays */
 export function backFrom(view: MenuView): MenuView {
-  return view === "maps" || view === "bots" ? "play" : "top";
-}
-
-/** The map select's buttons: every map by its name, the one picked checked */
-export function mapChoices(picked: ThemeName): { readonly map: ThemeName; readonly label: string; readonly checked: boolean }[] {
-  return MAP_CHOICES.map((map) => ({ map, label: MAP_NAMES[map], checked: map === picked }));
+  return view === "bots" ? "play" : "top";
 }
 
 export interface MainMenuActions {
-  /** Free Play on this map (the map select's pick) */
-  readonly freePlay: (map: ThemeName) => void;
+  /** Free Play (on Night, the one map) */
+  readonly freePlay: () => void;
   /** Find Match: search the playlist with this team size */
   readonly findMatch: (playlist: number) => void;
   readonly settings: () => void;
@@ -64,7 +54,6 @@ export class MainMenu {
   readonly #top: HTMLDivElement;
   readonly #play: HTMLDivElement;
   readonly #playFreePlay: HTMLButtonElement;
-  readonly #maps: HTMLDivElement;
   readonly #garage: HTMLDivElement;
   readonly #carButtons: HTMLButtonElement[] = [];
   readonly #teamButtons: HTMLButtonElement[] = [];
@@ -72,7 +61,6 @@ export class MainMenu {
   #car = storedCar();
   #team: Team = storedTeam();
   readonly #playlists: HTMLButtonElement[] = [];
-  readonly #mapButtons: HTMLButtonElement[] = [];
   readonly #playBots: HTMLButtonElement;
   readonly #bots: HTMLDivElement;
   readonly #botsBody: HTMLDivElement;
@@ -80,7 +68,6 @@ export class MainMenu {
   /** The bots' page body (ui/botsPage.ts, a chunk of its own): none until the packages are listed */
   #botsPage: BotsPage | null = null;
   #playlist = storedPlaylist();
-  #map = storedMap();
 
   constructor(host: HTMLElement, actions: MainMenuActions) {
     this.#root = document.createElement("div");
@@ -113,11 +100,7 @@ export class MainMenu {
     this.#play = column();
     this.#play.dataset["padPage"] = "play";
     this.#play.dataset["padBack"] = ""; // (B Back in the pad's hints: a page under the top)
-    // (straight into free play on the one map offered: the map select (its page kept below) out of the flow, the user's
-    // decision of 2026-10-17)
-    this.#playFreePlay = button(this.#play, MAIN_MENU_TEXT.freePlay, () => {
-      actions.freePlay(AVAILABLE_MAP);
-    });
+    this.#playFreePlay = button(this.#play, MAIN_MENU_TEXT.freePlay, actions.freePlay);
     // (hidden until a bot package is there to play: setBots)
     this.#playBots = button(this.#play, BOT_MATCH_TEXT.play, () => {
       this.#show("bots");
@@ -144,32 +127,6 @@ export class MainMenu {
     }).classList.add("main-menu-find");
     button(this.#play, BACK_TEXT, () => {
       this.#show("top");
-    });
-    // (the map select: every map, the last one picked checked; a pick starts free play on it)
-    this.#maps = column();
-    this.#maps.dataset["padPage"] = "maps";
-    this.#maps.dataset["padBack"] = "";
-    this.#maps.classList.add("main-menu-maps-view");
-    const heading = document.createElement("div");
-    heading.className = "main-menu-heading";
-    heading.textContent = MAIN_MENU_TEXT.freePlay;
-    const maps = document.createElement("div");
-    maps.className = "main-menu-maps";
-    maps.setAttribute("role", "radiogroup");
-    for (const { map, label } of mapChoices(this.#map)) {
-      const b = button(maps, label, () => {
-        this.#pick(map);
-        actions.freePlay(map);
-      });
-      b.classList.add("main-menu-map");
-      b.setAttribute("role", "radio");
-      b.dataset["map"] = map;
-      this.#mapButtons.push(b);
-    }
-    this.#maps.append(heading, maps);
-    this.#mark();
-    button(this.#maps, BACK_TEXT, () => {
-      this.#show("play");
     });
     // (the bots' setup: the team size, each teammate's and opponent's bot, the bots' credits; Start)
     this.#bots = column();
@@ -248,11 +205,6 @@ export class MainMenu {
     this.#playBots.hidden = !this.#botsPage.playable;
   }
 
-  /** Free play's map, and the bots' matches': the one offered (the map select's last pick, kept, isn't used) */
-  get map(): ThemeName {
-    return AVAILABLE_MAP;
-  }
-
   get isOpen(): boolean {
     return !this.#root.hidden;
   }
@@ -274,11 +226,9 @@ export class MainMenu {
     this.#playFreePlay.focus({ preventScroll: true });
   }
 
-  /** Escape: back from the map select to Play, from Play to the top; nothing at the top (the menu is where the game
-   *  starts) */
   /** Back a page (Escape's, a pad's B); whether there was one to go back from (none at the top: nothing, silently) */
   back(): boolean {
-    const view: MenuView = !this.#maps.hidden ? "maps" : !this.#bots.hidden ? "bots" : !this.#play.hidden ? "play" : !this.#garage.hidden ? "garage" : "top";
+    const view: MenuView = !this.#bots.hidden ? "bots" : !this.#play.hidden ? "play" : !this.#garage.hidden ? "garage" : "top";
     this.#show(backFrom(view));
     return view !== "top";
   }
@@ -297,19 +247,6 @@ export class MainMenu {
     this.#preview?.show(this.#car, this.#team);
   }
 
-  #pick(map: ThemeName): void {
-    this.#map = map;
-    storeMap(map);
-    this.#mark();
-  }
-
-  #mark(): void {
-    const choices = mapChoices(this.#map);
-    this.#mapButtons.forEach((b, i) => {
-      b.setAttribute("aria-checked", String(choices[i]?.checked ?? false));
-    });
-  }
-
   #select(playlist: number): void {
     this.#playlist = playlist;
     storePlaylist(playlist);
@@ -319,7 +256,6 @@ export class MainMenu {
   #show(view: MenuView): void {
     this.#top.hidden = view !== "top";
     this.#play.hidden = view !== "play";
-    this.#maps.hidden = view !== "maps";
     this.#bots.hidden = view !== "bots";
     this.#garage.hidden = view !== "garage";
     // (the preview turning only while the garage shows; the car chosen focused)
@@ -327,29 +263,8 @@ export class MainMenu {
       this.#preview?.start();
       this.#carButtons.find((b) => b.dataset["car"] === String(this.#car))?.focus();
     } else this.#preview?.stop();
-    // (the last map picked focused: Enter, or the pad's A, starts it at once; the bots' Start likewise)
-    if (view === "maps") this.#mapButtons.find((b) => b.dataset["map"] === this.#map)?.focus();
+    // (the bots' Start focused: Enter, or the pad's A, starts it at once)
     if (view === "bots") this.#botsStart.focus();
-  }
-}
-
-type MapStore = Pick<Storage, "getItem" | "setItem">;
-const local = (): MapStore | null => (typeof localStorage === "undefined" ? null : localStorage);
-
-/** Free play's map, as the map select last left it (night before any, or for one this page doesn't know) */
-export function storedMap(storage: MapStore | null = local()): ThemeName {
-  try {
-    return themeName(storage?.getItem(MAP_KEY) ?? null);
-  } catch {
-    return "night";
-  }
-}
-
-export function storeMap(map: ThemeName, storage: MapStore | null = local()): void {
-  try {
-    storage?.setItem(MAP_KEY, map);
-  } catch {
-    // (not kept)
   }
 }
 

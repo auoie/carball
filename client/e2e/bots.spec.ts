@@ -14,7 +14,7 @@ test("a 1v1 against the chaser in the page's own host: welcomed, the warm-up and
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await context.addInitScript(() => {
-    sessionStorage.setItem("carball.botMatch", JSON.stringify({ teamSize: 1, map: 0, seed: 3, bots: [{ team: 1, name: "Chaser", brain: "chaser" }] }));
+    sessionStorage.setItem("carball.botMatch", JSON.stringify({ teamSize: 1, seed: 3, bots: [{ team: 1, name: "Chaser", brain: "chaser" }] }));
   });
   await page.goto("/?bots&render=off");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
@@ -22,7 +22,9 @@ test("a 1v1 against the chaser in the page's own host: welcomed, the warm-up and
   await expect.poll(async () => (await online())?.cars.length, { timeout: 20_000 }).toBe(2);
   // (the online match's own start: waiting with its warm-up, the countdown, then play)
   await expect.poll(async () => (await online())?.phases.map((p) => p.phase).includes("active"), { timeout: 40_000 }).toBe(true);
-  await expect(page.locator("#score")).toBeVisible();
+  // (the match's scoreboard: its digits and clock; #score itself the board's 0 x 0 anchor)
+  await expect(page.locator("#score-blue")).toBeVisible();
+  await expect(page.locator("#clock")).toBeVisible();
   await expect(page.locator("#boost")).toBeVisible();
   expect(errors).toEqual([]);
 });

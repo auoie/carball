@@ -16,7 +16,6 @@ import {
   ShaderMaterial,
 } from "three";
 import type { Vec3 } from "../math/vec";
-import type { FogPlace } from "./heightFog";
 
 /** A value or a uniform range */
 export type Range = number | { readonly min: number; readonly max: number };
@@ -316,9 +315,6 @@ class Pool {
       depthWrite: false,
       blending: additive ? AdditiveBlending : NormalBlending,
     });
-    // (where a height fog takes it (fogAll): each particle where it is, the quad's world position the shader builds from
-    // its centre, RV-208)
-    material.userData["fogPlace"] = { world: "vWorld" } satisfies FogPlace;
     this.mesh = new Mesh(g, material);
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = 2;

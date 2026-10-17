@@ -3,9 +3,7 @@ import { describe, expect, it } from "vitest";
 import { mergeMeshes, parseCmf } from "../engine/cmf";
 import { arenaMeshes } from "../testing/arena";
 import { type Vec3, cross, dot, sub, vec3 } from "../math/vec";
-import { type BufferAttribute, BufferGeometry, Mesh } from "three";
-import { ARENA, buildFieldMarkings } from "./arena";
-import { floorOutline } from "./arenaSurface";
+import { ARENA } from "./arena";
 
 const mesh = mergeMeshes(arenaMeshes().map(parseCmf));
 
@@ -65,36 +63,5 @@ describe("arena surfaces", () => {
     const after = firstHit(vec3(ARENA.cornerTangentX + 50, 4900, 1000), 1);
     expect(before).toBeGreaterThanOrEqual(ARENA.backY - 0.01);
     expect(after).toBeLessThan(ARENA.backY - 0.1);
-  });
-
-  it("keeps the field's markings on the floor (inside its outline: none running under or past the trim)", () => {
-    const outline = floorOutline();
-    const inside = (x: number, y: number): boolean => {
-      let odd = false;
-      for (let i = 0, j = outline.length - 1; i < outline.length; j = i++) {
-        const [ax, ay] = outline[i] ?? [0, 0];
-        const [bx, by] = outline[j] ?? [0, 0];
-        if (ay > y !== by > y && x < ((bx - ax) * (y - ay)) / (by - ay) + ax) odd = !odd;
-      }
-      return odd;
-    };
-    const markings = buildFieldMarkings(null);
-    markings.updateMatrixWorld(true);
-    let checked = 0;
-    markings.traverse((part) => {
-      if (!(part instanceof Mesh)) return;
-      const geometry: unknown = part.geometry;
-      if (!(geometry instanceof BufferGeometry)) return;
-      const position = geometry.getAttribute("position") as BufferAttribute;
-      for (let i = 0; i < position.count; i++) {
-        // (Three's frame: x, up, the game's y)
-        const x = position.getX(i);
-        const y = position.getZ(i);
-        // (a hair inside, so points on the outline itself count)
-        expect.soft(inside(x * 0.9999, y * 0.9999), `${String(x)},${String(y)}`).toBe(true);
-        checked++;
-      }
-    });
-    expect(checked).toBeGreaterThan(100);
   });
 });

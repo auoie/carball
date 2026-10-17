@@ -180,7 +180,7 @@ test("the match's end: the winner banner, the podium with the winner's tag, the 
   await expect(banner).toBeVisible({ timeout: 30_000 });
   await expect(banner.locator(".winner-label")).toHaveText("WINNER BY FORFEIT");
   await expect(banner.locator(".winner-team")).toHaveText("BLUE");
-  await expect(page.locator("#score")).toBeHidden(); // (the HUD's match parts go: MIO-17)
+  await expect(page.locator("#score-blue")).toBeHidden(); // (the HUD's match parts go: MIO-17; #score the board's 0 x 0 anchor)
   // The podium: the winner's car on it, its name under it (MIO-22); the banner raised
   await expect(page.locator(".podium-tag", { hasText: "Merc" })).toBeVisible({ timeout: 15_000 });
   await expect(banner.locator(".winner")).toHaveClass(/raised/);

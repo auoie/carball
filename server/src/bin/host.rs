@@ -72,12 +72,11 @@ pub unsafe extern "C" fn host_init(dir: *const c_char) -> i32 {
     }
 }
 
-/// A new open match of `team_size` a side on map `map` (`protocol` map number; below 0: one at random), the kickoff
-/// orders from `seed`; a casual match's rules (forfeit votes after 60 s); its clock starting at 0 s
+/// A new open match of `team_size` a side (on Night, the one map), the kickoff orders from `seed`; a casual match's rules
+/// (forfeit votes after 60 s); its clock starting at 0 s
 #[unsafe(no_mangle)]
-pub extern "C" fn host_open(team_size: u8, map: i32, seed: i32) {
+pub extern "C" fn host_open(team_size: u8, seed: i32) {
     let mut matches = MatchHost::new(seed, None);
-    matches.map = u8::try_from(map).ok();
     matches.open_match(Playlist { team_size, match_type: MatchType::Casual, forfeit_vote_wait: None }, 0.0);
     HOST.with_borrow_mut(|host| *host = Some(Host { matches, sessions: BTreeMap::new(), drained: Vec::new(), state: Vec::new() }));
 }

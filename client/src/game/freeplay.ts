@@ -14,7 +14,7 @@ import type { ControllerSettings, Options, Settings } from "../settings/settings
 import { FixedStep, TICK_SECONDS, frameTimes } from "../loop/fixedStep";
 import { type Vec3, ZERO, add, scale, vec3 } from "../math/vec";
 import { BallView, CarView, trailGround } from "../render/entities";
-import type { PadsView } from "../render/boostPads";
+import type { PadsView } from "../render/tokenPads";
 import { SceneEffects } from "../render/effects";
 import { EXPLOSION_LARGE, IMPACT_MEDIUM } from "../camera/shake";
 import { ImpactTriggers, triggerSounds } from "./impactTriggers";

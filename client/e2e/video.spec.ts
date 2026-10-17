@@ -83,7 +83,8 @@ test("on a weak GPU the default is Performance (70 %) and Quality until the play
 test("the frame-rate guard on a slow page: one step down after its warm-up and measure, saved, never again (RV-499)", async ({ page, context }) => {
   test.setTimeout(120_000);
   await videoAuto(context, false, true);
-  // (a synthetic clock: each frame's time 33 ms on, varied as a GPU-bound page's, whatever the page really takes)
+  // (a synthetic clock, whatever the page really takes: a 60 Hz display's, its first 60 frames at its rate (the refresh
+  // meter reads 60: RV-514, RV-519), then each frame 33 ms on, varied as a GPU-bound page's)
   await context.addInitScript(() => {
     const real = window.requestAnimationFrame.bind(window);
     const pattern = [0.85, 1.15, 1, 0.9, 1.1];
@@ -91,7 +92,8 @@ test("the frame-rate guard on a slow page: one step down after its warm-up and m
     let i = 0;
     window.requestAnimationFrame = (callback: FrameRequestCallback): number =>
       real(() => {
-        t += (1000 / 30) * (pattern[i++ % pattern.length] ?? 1);
+        t += i < 60 ? 1000 / 60 : (1000 / 30) * (pattern[i % pattern.length] ?? 1);
+        i++;
         callback(t);
       });
   });

@@ -45,8 +45,6 @@ export interface MenuNotice {
   readonly warning?: string;
   /** The search is back from a match cancelled for someone else (RV-367) */
   readonly back?: Back;
-  /** Free play starts at once (the map select picked another map: the page loaded it) */
-  readonly freePlay?: boolean;
 }
 
 export function storeClaim(claim: Claim, storage = session()): void {
@@ -88,13 +86,12 @@ export function takeNotice(storage = session()): MenuNotice | null {
     const text = storage?.getItem(NOTICE_KEY) ?? null;
     storage?.removeItem(NOTICE_KEY);
     if (text === null) return null;
-    const value = JSON.parse(text) as { modal?: unknown; search?: unknown; warning?: unknown; back?: { token?: unknown; searchedAt?: unknown }; freePlay?: unknown };
+    const value = JSON.parse(text) as { modal?: unknown; search?: unknown; warning?: unknown; back?: { token?: unknown; searchedAt?: unknown } };
     const back = value.back;
     return {
       ...(value.modal === "idle" || value.modal === "lost" ? { modal: value.modal } : {}),
       ...(typeof value.search === "number" ? { search: value.search } : {}),
       ...(typeof value.warning === "string" ? { warning: value.warning } : {}),
-      ...(value.freePlay === true ? { freePlay: true } : {}),
       ...(typeof back?.token === "string" && TOKEN.test(back.token) && typeof back.searchedAt === "number" && Number.isFinite(back.searchedAt)
         ? { back: { token: BigInt(back.token), searchedAt: back.searchedAt } }
         : {}),
@@ -102,14 +99,6 @@ export function takeNotice(storage = session()): MenuNotice | null {
   } catch {
     return null;
   }
-}
-
-/** The free play page on the map select's pick: the menu page's URL without a development `theme` override (it would
- *  load its map instead) */
-export function freePlayUrl(at: { readonly pathname: string; readonly search: string }): string {
-  const url = new URL(pageUrl("menu", at), "http://page");
-  url.searchParams.delete("theme");
-  return `${url.pathname}${url.search}`;
 }
 
 /** The menu page's or the match page's URL: this page's query without the pages' own parameters (a development server's

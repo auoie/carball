@@ -152,7 +152,6 @@ export class Nameplates {
         const canvas = document.createElement("canvas");
         const texture = plateTexture(canvas);
         const material = new SpriteMaterial({ map: texture, alphaTest: MASK_CLIP, transparent: false, depthTest: true, depthWrite: true, fog: false });
-        material.userData = { heightFog: "none" };
         const sprite = new Sprite(material);
         sprite.center = new Vector2(0.5, 0); // (the pivot: the bottom edge's middle)
         this.root.add(sprite);

@@ -1,7 +1,7 @@
 // Play vs Bots' setup: fitted to the bots there are, the slots' bots on their teams by name and level, kept and handed over
 import { describe, expect, it } from "vitest";
 import type { BotListing } from "../bots/listing";
-import { type BotPick, botMatchSetup, botTeamSizes, fitChoices, mapNumber, readBotMatch, storeBotMatch, storeChoices, storedChoices } from "./botMatch";
+import { type BotPick, botMatchSetup, botTeamSizes, fitChoices, readBotMatch, storeBotMatch, storeChoices, storedChoices } from "./botMatch";
 
 const FULL = { id: "full", name: "Full", strength: 1 } as const;
 const EZ = { id: "ez", name: "EZ", strength: 0.8 } as const;
@@ -32,10 +32,9 @@ describe("Play vs Bots' setup", () => {
   });
 
   it("puts the teammates on the player's team and the opponents on the other: named by bot and level (numbered when used twice), at the level's strength", () => {
-    const setup = botMatchSetup({ teamSize: 2, teammates: [pick("necto")], opponents: [pick("nexto", "ez"), pick("nexto", "ez")] }, LISTINGS, 1, "stadium", 42);
+    const setup = botMatchSetup({ teamSize: 2, teammates: [pick("necto")], opponents: [pick("nexto", "ez"), pick("nexto", "ez")] }, LISTINGS, 1, 42);
     expect(setup).toEqual({
       teamSize: 2,
-      map: 1,
       seed: 42,
       bots: [
         { team: 1, name: "Necto", brain: "necto" },
@@ -43,15 +42,13 @@ describe("Play vs Bots' setup", () => {
         { team: 0, name: "Nexto EZ 2", brain: "nexto", strength: 0.8 },
       ],
     });
-    // (the maps' wire numbers: the greenhouse's 16, appended)
-    expect([mapNumber("night"), mapNumber("greenhouse"), mapNumber("meadow")]).toEqual([0, 16, 2]);
   });
 
   it("keeps the choices, and hands the match page a setup it checks (a reload plays it again)", () => {
     const store = memory();
     storeChoices({ teamSize: 2, teammates: [pick("necto")], opponents: [pick("nexto", "ez"), pick("necto")] }, store);
     expect(storedChoices(store)).toEqual({ teamSize: 2, teammates: [pick("necto")], opponents: [pick("nexto", "ez"), pick("necto")] });
-    const setup = botMatchSetup({ teamSize: 1, teammates: [], opponents: [pick("nexto", "ez")] }, LISTINGS, 0, "night", 7);
+    const setup = botMatchSetup({ teamSize: 1, teammates: [], opponents: [pick("nexto", "ez")] }, LISTINGS, 0, 7);
     storeBotMatch(setup, store);
     expect(readBotMatch(store)).toEqual(setup);
     expect(readBotMatch(store)).toEqual(setup);

@@ -193,12 +193,9 @@ test("controls can be rebound and are remembered", async ({ page }) => {
   await expect(page.locator('.binding-slot[data-action="throttleForward"][data-device="keyboard"]')).toHaveText("W");
 });
 
-const THEMED = ["stadium", "meadow", "forest", "city", "infested", "kawaii", "platformer", "haunted", "ghosts", "dimension", "summit", "crater", "temple", "island", "lake"];
-for (const theme of THEMED) {
-  test(`the ${theme} theme loads and plays`, async ({ page }) => {
-    await playTheme(page, theme);
-  });
-}
+test("the map (Night) loads and plays", async ({ page }) => {
+  await playMap(page);
+});
 
 interface AmbienceLevels {
   readonly peak: number;
@@ -206,12 +203,12 @@ interface AmbienceLevels {
   readonly loudest: number;
 }
 
-test("every theme's ambience: no sound sticks out far above the rest, and none is too loud", async ({ page }) => {
+test("the map's ambience: no sound sticks out far above the rest, and none is too loud", async ({ page }) => {
   test.setTimeout(240_000);
   await page.goto("/?render=off");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
   await freePlay(page);
-  for (const theme of ["night", ...THEMED]) {
+  for (const theme of ["night"]) {
     // A minute of it, the same events every run (seeded)
     const levels = await page.evaluate(
       async (t) => (window as unknown as { carballAmbienceLevels: (t: string, s: number) => Promise<AmbienceLevels> }).carballAmbienceLevels(t, 60),
@@ -224,14 +221,14 @@ test("every theme's ambience: no sound sticks out far above the rest, and none i
   }
 });
 
-async function playTheme(page: Page, theme: string): Promise<void> {
+async function playMap(page: Page): Promise<void> {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => {
     if (m.type() === "error") errors.push(m.text());
   });
 
-  await page.goto(`/?theme=${theme}`);
+  await page.goto("/");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
   await freePlay(page);
   await page.locator("#game").click({ position: { x: 640, y: 360 }, button: "right" }); // focus (right mouse: powerslide)
@@ -241,7 +238,7 @@ async function playTheme(page: Page, theme: string): Promise<void> {
   // (a heavy theme draws about a frame a second in software: wait for the car to move rather than a fixed time)
   await expect.poll(async () => speed(page), { timeout: 15_000 }).toBeGreaterThan(100);
   await page.keyboard.up("KeyW");
-  await page.screenshot({ path: `test-results/${theme}.png` });
+  await page.screenshot({ path: "test-results/night.png" });
   expect(errors).toEqual([]);
 }
 
@@ -505,7 +502,9 @@ test("the main menu, the pause menu, the HUD and its Interface options (MENU-1/4
   await expect(page.locator("#boost")).toBeVisible();
   await expect(page.locator("#boost-value")).toHaveText("100");
   await expect(page.locator("#boost")).toHaveClass(/max/);
-  await expect(page.locator("#score")).toBeHidden();
+  // (#score the board's 0 x 0 anchor: its digits and clock)
+  await expect(page.locator("#score-blue")).toBeHidden();
+  await expect(page.locator("#clock")).toBeHidden();
   await page.screenshot({ path: "test-results/hud-freeplay.png" });
   // The ball cam held (the middle button, Modern's): its indicator, no toggle line while it's held
   await page.mouse.move(640, 360);

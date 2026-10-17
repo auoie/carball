@@ -321,8 +321,8 @@ mod tests {
                     self.next
                 })
                 .collect();
-            // (each match its own map: the asked count's)
-            Created { tokens, map: (self.asked.len() % usize::from(crate::protocol::MAP_COUNT)) as u8 }
+            // (every match on Night, the one map)
+            Created { tokens, map: crate::protocol::NIGHT_MAP }
         }
     }
 
@@ -543,8 +543,9 @@ mod tests {
             },
             _ => None,
         };
-        // (the recorder's first match is on map 1)
-        assert_eq!((map_of(&mut rx1), map_of(&mut rx2)), (Some(1), Some(1)));
+        // (Night, the one map)
+        let night = Some(crate::protocol::NIGHT_MAP);
+        assert_eq!((map_of(&mut rx1), map_of(&mut rx2)), (night, night));
     }
 
     #[test]

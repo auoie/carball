@@ -1,9 +1,8 @@
 // The offline match against bots, as the menu sets it up: a team size, a bot (a package's) and its difficulty level in
-// each teammate's and opponent's slot, kept between visits; the player on the garage's team, on free play's map. The menu page hands the match
+// each teammate's and opponent's slot, kept between visits; the player on the garage's team (on Night, the one map). The menu page hands the match
 // page its setup in this tab's sessionStorage (as a queue match's claim, net/pages.ts), kept so a reload plays it again.
 import type { Team } from "../engine/world";
 import type { BotListing } from "../bots/listing";
-import { THEMES, type ThemeName } from "../render/themes";
 import type { BotSlot, LocalMatchSetup } from "./hostMessages";
 
 export type TeamSize = 1 | 2 | 3;
@@ -58,15 +57,9 @@ export function fitChoices(choices: BotChoices | null, listings: readonly BotLis
   };
 }
 
-/** The protocol's map number for a map (one free play alone has: Night's, whose field it wears) */
-export function mapNumber(map: ThemeName): number {
-  const n = (THEMES as readonly string[]).indexOf(map);
-  return n < 0 ? 0 : n;
-}
-
 /** The match's setup: the teammates on the player's team, the opponents on the other, each named after its bot (its
  *  level's name after it below full; a number after a name used twice), at its level's strength */
-export function botMatchSetup(choices: BotChoices, listings: readonly BotListing[], team: Team, map: ThemeName, seed: number): LocalMatchSetup {
+export function botMatchSetup(choices: BotChoices, listings: readonly BotListing[], team: Team, seed: number): LocalMatchSetup {
   const picks = [...choices.teammates, ...choices.opponents];
   const level = (pick: BotPick): { readonly name: string; readonly strength: number } | undefined =>
     listings.find((l) => l.id === pick.bot)?.levels.find((v) => v.id === pick.level);
@@ -88,7 +81,7 @@ export function botMatchSetup(choices: BotChoices, listings: readonly BotListing
       ...(strength < 1 ? { strength } : {}),
     };
   });
-  return { teamSize: choices.teamSize, map: mapNumber(map), seed, bots };
+  return { teamSize: choices.teamSize, seed, bots };
 }
 
 const isPick = (v: unknown): v is BotPick => typeof v === "object" && v !== null && "bot" in v && typeof v.bot === "string" && "level" in v && typeof v.level === "string";
@@ -132,13 +125,13 @@ export function storeBotMatch(setup: LocalMatchSetup, storage: Store | null = se
 /** The match page's setup (kept: a reload plays it again), checked; null for none or a broken one */
 export function readBotMatch(storage: Store | null = session()): LocalMatchSetup | null {
   try {
-    const v = JSON.parse(storage?.getItem(MATCH_KEY) ?? "null") as { teamSize?: unknown; map?: unknown; seed?: unknown; bots?: unknown } | null;
-    if (!v || (v.teamSize !== 1 && v.teamSize !== 2 && v.teamSize !== 3) || typeof v.map !== "number" || typeof v.seed !== "number" || !Array.isArray(v.bots)) return null;
+    const v = JSON.parse(storage?.getItem(MATCH_KEY) ?? "null") as { teamSize?: unknown; seed?: unknown; bots?: unknown } | null;
+    if (!v || (v.teamSize !== 1 && v.teamSize !== 2 && v.teamSize !== 3) || typeof v.seed !== "number" || !Array.isArray(v.bots)) return null;
     const slots = v.bots as readonly Partial<Record<keyof BotSlot, unknown>>[];
     const strength = (s: unknown): boolean => s === undefined || (typeof s === "number" && s >= 0 && s <= 1);
     const bots = slots.filter((b): b is BotSlot => (b.team === 0 || b.team === 1) && typeof b.name === "string" && typeof b.brain === "string" && strength(b.strength));
     if (bots.length !== v.teamSize * 2 - 1) return null;
-    return { teamSize: v.teamSize, map: v.map, seed: v.seed, bots };
+    return { teamSize: v.teamSize, seed: v.seed, bots };
   } catch {
     return null;
   }

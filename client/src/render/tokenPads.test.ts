@@ -4,8 +4,6 @@ import { InstancedMesh, Vector3 } from "three";
 import { describe, expect, it } from "vitest";
 import type { BoostPadState } from "../engine/world";
 import { ArenaView } from "./arena";
-import { BoostPadsView } from "./boostPads";
-import { greenhouseTheme } from "./themes/greenhouse";
 import { nightTheme } from "./themes/night";
 import { TOKENS, TokenPadsView, popIn, popOut, ringFill, roundBase } from "./tokenPads";
 
@@ -81,8 +79,7 @@ describe("the pads' view", () => {
     expect(lit(0)).toBe(1);
   });
 
-  it("the greenhouse's arena makes them; Night keeps the game-style pads", () => {
-    expect(new ArenaView(greenhouseTheme()).createPads(pads())).toBeInstanceOf(TokenPadsView);
-    expect(new ArenaView(nightTheme()).createPads(pads())).toBeInstanceOf(BoostPadsView);
+  it("the arena makes them (Night's own pads)", () => {
+    expect(new ArenaView(nightTheme()).createPads(pads())).toBeInstanceOf(TokenPadsView);
   });
 });

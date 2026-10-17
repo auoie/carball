@@ -23,7 +23,7 @@ if [ "${1:-}" = "--worktree" ]; then
 	if [[ "$1" =~ ^[0-9a-f]{7,40}$ ]]; then echo "--worktree: $1 looks like a commit's hash, which this build isn't: another TAG"; exit 1; fi
 fi
 TAG=${1:-$COMMIT}
-PATHS=(client engine server protocol scripts out/arena/collision_meshes) # (the client imports scripts/cage_topology.json)
+PATHS=(client engine server protocol scripts out/arena/collision_meshes) # (scripts: build_host.sh, the local host's build)
 STAGE="$R/out/images/$TAG-$(date +%Y%m%d%H%M%S)"
 SRC="$STAGE/src"
 mkdir -p "$SRC" "$STAGE/web" "$STAGE/game"

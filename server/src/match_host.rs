@@ -5,8 +5,8 @@
 //! claimed players are told (`KICK_NOT_ALL_JOINED`) and search again, the queue told who stalled it (`take_cancelled`:
 //! RV-367) (notes/matchmaking.md, v1 queue checklist). A match
 //! over (its end screen's time up) or left by everyone is let go. Development servers host one open match that anyone
-//! joins (`join_open`), which rematches and never ends. Each match is on a map picked at random when it's made (as the
-//! game's playlists pick an arena per match), sent in its `MatchFound` and every player's welcome; `--map` fixes it.
+//! joins (`join_open`), which rematches and never ends. Each match is on Night, the one map (the user's decision of
+//! 2026-10-17), sent as map 0 in its `MatchFound` and every player's welcome.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -92,8 +92,6 @@ pub struct MatchHost {
     now: f64,
     /// The matches cancelled since the queue last asked (`take_cancelled`)
     cancelled: Vec<Cancelled>,
-    /// Every match's map (`--map`: development servers and the browser tests); None: each its own, at random
-    pub map: Option<u8>,
 }
 
 impl Hosted {
@@ -125,7 +123,7 @@ impl Hosted {
 
 impl MatchHost {
     pub fn new(seed: i32, test_goal_after: Option<u64>) -> Self {
-        Self { matches: BTreeMap::new(), players: HashMap::new(), tokens: HashMap::new(), next_id: 1, seed, test_goal_after, now: 0.0, cancelled: Vec::new(), map: None }
+        Self { matches: BTreeMap::new(), players: HashMap::new(), tokens: HashMap::new(), next_id: 1, seed, test_goal_after, now: 0.0, cancelled: Vec::new() }
     }
 
     fn add(&mut self, playlist: Playlist, reservations: Vec<Reservation>, open: bool, now: f64) -> MatchId {
@@ -135,8 +133,8 @@ impl MatchHost {
         for r in &reservations {
             self.tokens.insert(r.token, id);
         }
-        // (the one map offered, the user's decision of 2026-10-17; `--map` another)
-        let map = self.map.unwrap_or(protocol::GREENHOUSE_MAP);
+        // (Night, the one map: the user's decision of 2026-10-17)
+        let map = protocol::NIGHT_MAP;
         let mut hosted = Hosted { game: None, seed: self.seed, playlist, reservations, created: now, next_tick: now, open, map };
         if open {
             hosted.game(self.test_goal_after); // (anyone may join it: built at once)
@@ -509,12 +507,12 @@ mod tests {
     }
 
     #[test]
-    fn each_match_is_on_the_one_map_offered_every_player_welcomed_with_it_or_on_the_fixed_one() {
+    fn each_match_is_on_night_the_one_map_every_player_welcomed_with_it() {
         init_engine();
         let welcomed = |rx: &mut Receiver<Outgoing>| controls(rx).into_iter().find_map(|c| if let Control::Welcome { map, .. } = c { Some(map) } else { None });
-        // (Night's greenhouse, every match's: the user's decision of 2026-10-17)
+        // (Night, every match's: the user's decision of 2026-10-17)
         let mut host = MatchHost::new(1, None);
-        assert!((0..50).all(|_| host.create_match(ONES, 2, 0.0).map == protocol::GREENHOUSE_MAP));
+        assert!((0..20).all(|_| host.create_match(ONES, 2, 0.0).map == protocol::NIGHT_MAP));
         // (a queue match's players, each welcomed with its map)
         let mut host = MatchHost::new(1, None);
         let created = host.create_match(TWOS, 4, 0.0);
@@ -530,15 +528,7 @@ mod tests {
         let (tx2, mut rx2) = channel(OUT_QUEUE);
         assert!(host.join_open(1, request(), tx1) && host.join_open(2, request(), tx2));
         let (m1, m2) = (welcomed(&mut rx1), welcomed(&mut rx2));
-        assert!(m1 == m2 && m1 == Some(protocol::GREENHOUSE_MAP), "{m1:?} {m2:?}");
-        // (--map: every match on it, the open one too)
-        let mut host = MatchHost::new(1, None);
-        host.map = Some(5);
-        assert!((0..20).all(|_| host.create_match(ONES, 2, 0.0).map == 5));
-        host.open_match(ONES, 0.0);
-        let (tx, mut rx) = channel(OUT_QUEUE);
-        assert!(host.join_open(99, request(), tx));
-        assert_eq!(welcomed(&mut rx), Some(5));
+        assert!(m1 == m2 && m1 == Some(protocol::NIGHT_MAP), "{m1:?} {m2:?}");
     }
 
     #[test]

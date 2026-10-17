@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { deployedGameServer, freePlayUrl, pageUrl, queueAddress, storeClaim, storeNotice, takeClaim, takeNotice } from "./pages";
+import { deployedGameServer, pageUrl, queueAddress, storeClaim, storeNotice, takeClaim, takeNotice } from "./pages";
 
 const memory = (): Pick<Storage, "getItem" | "setItem" | "removeItem"> => {
   const map = new Map<string, string>();
@@ -47,11 +47,6 @@ describe("the pages' handoffs", () => {
     expect(takeNotice(storage)).toEqual({ search: 1, warning: "w", back: { token: 0xffffffffffffffffn, searchedAt: 42 } });
     storage.setItem("carball.menuNotice", '{"search":1,"back":{"token":"0","searchedAt":1}}');
     expect(takeNotice(storage)).toEqual({ search: 1 });
-    // Free play at once: the map select picked another map, the page loaded it
-    storeNotice({ freePlay: true }, storage);
-    expect(takeNotice(storage)).toEqual({ freePlay: true });
-    storage.setItem("carball.menuNotice", '{"freePlay":"yes"}');
-    expect(takeNotice(storage)).toEqual({});
   });
 
   it("keeps the page's other parameters across the pages, without a development server's or the match page's", () => {
@@ -62,9 +57,6 @@ describe("the pages' handoffs", () => {
     // (the offline match against bots: its own page, ?bots)
     expect(pageUrl("bots", { pathname: "/", search: "?render=off" })).toBe("/?render=off&bots");
     expect(pageUrl("menu", { pathname: "/", search: "?bots" })).toBe("/");
-    // (the map select's pick: without a development ?theme, which would load its own map instead)
-    expect(freePlayUrl({ pathname: "/", search: "?theme=meadow&render=off" })).toBe("/?render=off");
-    expect(freePlayUrl({ pathname: "/x/", search: "?theme=lake" })).toBe("/x/");
   });
 
   it("finds the deployment's game server in config.json, else a development server's", async () => {

@@ -27,7 +27,7 @@ async function open(message: Extract<ToHost, { type: "open" }>): Promise<void> {
   const [hostModule, engine] = await Promise.all([createHost({ printErr: (text) => { console.debug(`local host: ${text}`); } }), createEngine()]);
   initEngine(engine, message.meshes);
   const h = LocalHost.create(hostModule, message.meshes);
-  h.open(message.setup.teamSize, message.setup.map, message.setup.seed);
+  h.open(message.setup.teamSize, message.setup.seed);
   const b = new LocalBots(World.create(engine), message.setup.teamSize * 2);
   // (each bot's brain: its package's policy, or the built-in chaser)
   const brains: BotBrain[] = await Promise.all(message.setup.bots.map(async (slot) => (slot.brain === "chaser" ? chaser() : loadBrain(message.botsBase, slot.brain, message.setup.teamSize, fetch, Math.random, undefined, slot.strength))));

@@ -102,8 +102,6 @@ function material(fragmentShader: string, side: Side, inward: number): ShaderMat
     depthTest: false,
     depthWrite: false,
   });
-  // (no height fog: by the car, a few uu from it, and the shaders above have no fog term [I])
-  m.userData = { heightFog: "none" };
   return m;
 }
 
