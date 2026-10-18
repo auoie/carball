@@ -28,6 +28,8 @@ pub enum Intent {
     Search { team_size: u8, token: u64 },
     /// Claim a reserved slot (the token a search's `MatchFound` gave)
     Claim { token: u64 },
+    /// Rejoin the ranked match left by accident (its id: Welcome's `match_id`; LV1)
+    Rejoin { match_id: u64 },
 }
 
 /// Messages from the network tasks to the game loop
@@ -426,13 +428,18 @@ async fn session(
     // (a search and a claim are an account's: its ticket checked here alone, never in the match code the browser's local
     // host shares; the account's key and name in place of the hello's)
     if let Some(tickets) = &limits.tickets
-        && (intent == protocol::INTENT_SEARCH || intent == protocol::INTENT_CLAIM)
+        && matches!(intent, protocol::INTENT_SEARCH | protocol::INTENT_CLAIM | protocol::INTENT_REJOIN)
     {
         match tickets.check(&ticket, crate::ticket::unix_now()) {
             Ok(checked) => {
                 request.key = crate::ticket::account_key(&checked.account);
                 request.name = checked.name;
                 request.verified = true;
+                request.ticket = Some(crate::game::SeatTicket {
+                    encoded: ticket,
+                    account: checked.account,
+                    ratings: checked.ratings.map(|r| r.rating),
+                });
             }
             Err(why) => {
                 let _ = send.write_all(&Control::Refused { reason: protocol::REFUSED_TICKET }.encode()).await;
@@ -446,6 +453,7 @@ async fn session(
     let intent = match intent {
         protocol::INTENT_SEARCH => Intent::Search { team_size: playlist, token },
         protocol::INTENT_CLAIM => Intent::Claim { token },
+        protocol::INTENT_REJOIN => Intent::Rejoin { match_id: token },
         _ => Intent::Join,
     };
 
@@ -630,10 +638,12 @@ pub async fn serve_info(
 }
 
 /// A development ticket's JSON for a query's `name` (percent-encoded; "Dev " and the account's first 4 hex digits when
-/// none, so two nameless players aren't one name) and `id` (the account's 16 bytes as 32 hex digits, kept by the page
-/// so its searches are one account's; random when none)
+/// none, so two nameless players aren't one name), `id` (the account's 16 bytes as 32 hex digits, kept by the page so
+/// its searches are one account's; random when none) and `r1`, `r2`, `r3` (the playlists' ratings, the tests' pairing:
+/// a new account's when none)
 fn dev_ticket(tickets: &crate::ticket::Tickets, query: &str) -> Option<String> {
     let mut name = None;
+    let mut ratings = [crate::ticket::DEFAULT_RATING; 3];
     let mut account = [0u8; 16];
     getrandom::fill(&mut account).ok()?;
     for pair in query.split('&') {
@@ -651,11 +661,15 @@ fn dev_ticket(tickets: &crate::ticket::Tickets, query: &str) -> Option<String> {
                     *byte = u8::from_str_radix(value.get(2 * i..2 * i + 2)?, 16).ok()?;
                 }
             }
+            "r1" | "r2" | "r3" => {
+                let playlist = usize::from(key.as_bytes()[1] - b'1');
+                ratings[playlist].rating = value.parse().ok()?;
+            }
             _ => {}
         }
     }
     let name = name.unwrap_or_else(|| format!("Dev {:02x}{:02x}", account[0], account[1]));
-    let ticket = tickets.dev_ticket(account, &name, crate::ticket::unix_now())?;
+    let ticket = tickets.dev_ticket(account, &name, ratings, crate::ticket::unix_now())?;
     Some(format!("{{\"ticket\":\"{ticket}\"}}"))
 }
 

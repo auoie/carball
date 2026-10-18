@@ -9,8 +9,21 @@ import type { SessionEnd } from "./game/sessionEnd";
 import { Matchmaking, OWN_SEARCH_TEXT, PLAYLISTS } from "./game/matchmaking";
 import { Connection, type MatchSession, RefusedError, devServerAddress } from "./net/connection";
 import { joinPreferences } from "./net/joinPreferences";
-import { REFUSED_TOKEN } from "./net/protocol";
-import { type MenuNotice, deployedGameServer, pageUrl, queueAddress, storeClaim, storeNotice, takeClaim, takeNotice } from "./net/pages";
+import { REFUSED_CONCLUDED, REFUSED_TICKET, REFUSED_TOKEN } from "./net/protocol";
+import {
+  type MenuNotice,
+  clearRankedSeat,
+  deployedGameServer,
+  pageUrl,
+  queueAddress,
+  rankedSeat,
+  storeClaim,
+  storeNotice,
+  storeRankedSeat,
+  takeClaim,
+  takeNotice,
+} from "./net/pages";
+import { QueueBannedError, SignedOutError } from "./net/tickets";
 import { type Account, AccountsApi, signInReturn, withoutSignInReturn } from "./account/api";
 import { ACCOUNT_TEXT, AccountPages, accountErrorText, signInNotice } from "./ui/accountPages";
 import { Search } from "./net/search";
@@ -58,7 +71,7 @@ import { type StatContext, StatGraphData, levelView, speedUnit } from "./game/st
 import { RefreshMeter } from "./game/refreshRate";
 import { EXPECTED_PACKETS, NetGraphFeed } from "./net/netStats";
 import { MainMenu } from "./ui/mainMenu";
-import { MODAL_TEXT, Modal } from "./ui/modal";
+import { MODAL_TEXT, Modal, REJOIN_TEXT } from "./ui/modal";
 import { SearchView, cancelShown } from "./ui/searchView";
 import { IdleTip } from "./ui/idleTip";
 import { PauseMenu, TRAINING_PAUSE_TEXT } from "./ui/pauseMenu";
@@ -186,7 +199,7 @@ async function main(): Promise<void> {
     let match: MatchSession = { intent: "join" };
     if (claim) {
       address = await queueAddress(params, location.hostname);
-      match = { intent: "claim", token: claim.token };
+      match = { intent: claim.rejoin ? "rejoin" : "claim", token: claim.token };
     } else if (__CARBALL_BOTS__ && botMatch) {
       // (the worker, its host and the bots' runtime in their own chunks, none in a build without bots)
       const [{ localServerAddress }, { BOTS_BASE }] = await Promise.all([import("./local/localTransport"), import("./bots/listing")]);
@@ -200,15 +213,28 @@ async function main(): Promise<void> {
     const opened = Connection.open(address, joinPreferences(settings), match);
     if (claim) {
       opened.catch((e: unknown) => {
-        // (refused while still in its time: a match cancelled for someone else, so back to the queue's front, RV-367)
+        // (refused while still in its time: a match cancelled for someone else, so back to the queue's front, RV-367; a
+        // rejoin too late: the match over, its offer gone; the sign-in gone: the menu's sign-in, RX29C)
         const back = { token: claim.token, searchedAt: claim.searchedAt };
+        const refused = e instanceof RefusedError ? e.reason : null;
+        if (refused === REFUSED_CONCLUDED || claim.rejoin) clearRankedSeat();
         storeNotice(
-          e instanceof RefusedError && e.reason === REFUSED_TOKEN ? { search: claim.playlist, warning: OWN_SEARCH_TEXT.matchGone, back } : { modal: "lost" },
+          refused === REFUSED_TOKEN && !claim.rejoin
+            ? { search: claim.playlist, warning: OWN_SEARCH_TEXT.matchGone, back }
+            : refused === REFUSED_CONCLUDED
+              ? { modal: "concluded" }
+              : refused === REFUSED_TICKET || e instanceof SignedOutError
+                ? { modal: "signedOut" }
+                : { modal: "lost" },
         );
         location.replace(pageUrl("menu", location));
       });
     }
     const session = await opened;
+    // (a ranked 2v2 or 3v3 joined: offered back for 900 s if it's left by accident, LV1; a rejoin keeps its first join's time)
+    if (claim && !claim.rejoin) {
+      storeRankedSeat({ matchId: session.welcome.matchId, teamSize: session.welcome.teamSize, joinedAt: Date.now() });
+    }
     startedConnection = session.connection;
     const name = themeOfMap(session.welcome.map);
     loading.place(MAP_NAMES[name], claim ? playlistName(claim.playlist) : botMatch ? BOT_MATCH_TEXT.play : null);
@@ -324,7 +350,9 @@ async function main(): Promise<void> {
             };
             if (!leaveEditor(toMenu, backToPause)) toMenu();
           },
-          exitDirect: () => editorHolds(),
+          // (the editor's SAVE AND EXIT the one question with unsaved changes; without, the pause's own EXIT TO MAIN MENU
+          // YES/NO: TE1 §5.3, RX29C)
+          exitDirect: () => editorHolds() && editorDirty(),
           exitSaves: () => editorHolds() && editorDirty(),
         }
       : {}),
@@ -453,7 +481,26 @@ async function main(): Promise<void> {
         let cancelled = false;
         queueAddress(params, location.hostname)
           .then((address) => {
-            if (!cancelled) search = Search.start(address, playlist, token, handlers);
+            // (its ticket's refusals: the sign-in gone, the account's page with why (RX29C); a leaver's ban, its line on
+            // the Play page, LV1)
+            const ticket = address.ticket;
+            const watched = ticket
+              ? {
+                  ...address,
+                  ticket: async () => {
+                    try {
+                      return await ticket();
+                    } catch (e) {
+                      if (e instanceof SignedOutError) {
+                        setAccount(null);
+                        showAccountPage(ACCOUNT_TEXT.sessionEnded);
+                      } else if (e instanceof QueueBannedError) mainMenu?.setQueueBan(e.until);
+                      throw e;
+                    }
+                  },
+                }
+              : address;
+            if (!cancelled) search = Search.start(watched, playlist, token, handlers);
           })
           .catch((e: unknown) => {
             if (!cancelled) handlers.failed(e instanceof Error ? e.message : String(e));
@@ -585,6 +632,8 @@ async function main(): Promise<void> {
     const setAccount = (a: Account | null): void => {
       account = a;
       mainMenu?.setAccountEntry(accountsOn ? (a?.name ?? ACCOUNT_TEXT.entrySignedOut) : null);
+      mainMenu?.setRatings(a?.ratings ?? null);
+      mainMenu?.setQueueBan(a?.queueBanUntil ?? null);
     };
     const showAccountPage = (note: string | null = null): void => {
       if (!accountPages || !mainMenu) return;
@@ -707,9 +756,38 @@ async function main(): Promise<void> {
         mainMenu?.setBots((body) => page.botsPage(body, listings));
       });
     }
-    // (back from a match page: its modal, a search to start again)
+    // (a ranked 2v2 or 3v3 left by accident in the last 900 s: offered back, once (LV1); Yes to its match page, No forgets it)
+    const offerRejoin = (): void => {
+      const seat = rankedSeat();
+      if (!seat) return;
+      modal.choose(
+        REJOIN_TEXT.title,
+        REJOIN_TEXT.body,
+        [
+          {
+            label: MODAL_TEXT.yes,
+            act: () => {
+              storeClaim({ token: seat.matchId, playlist: seat.teamSize, searchedAt: Date.now(), rejoin: true });
+              location.assign(pageUrl("match", location));
+            },
+          },
+          { label: MODAL_TEXT.no, act: clearRankedSeat },
+        ],
+        1,
+        1,
+      );
+    };
+    // (back from a match page: its modal, a search to start again; the rejoin offer after the modal's OK)
     const notice = menuNotice;
-    if (notice?.modal) modal.show(MODAL_TEXT.title, notice.modal === "idle" ? MODAL_TEXT.idleKicked : MODAL_TEXT.connectionLost);
+    if (notice?.modal === "idle" || notice?.modal === "lost") {
+      modal.show(MODAL_TEXT.title, notice.modal === "idle" ? MODAL_TEXT.idleKicked : MODAL_TEXT.connectionLost, offerRejoin);
+    } else if (notice?.modal === "concluded") {
+      modal.show(REJOIN_TEXT.concludedTitle, REJOIN_TEXT.concluded);
+    } else if (notice?.modal === "signedOut") {
+      setTimeout(() => {
+        showAccountPage(ACCOUNT_TEXT.sessionEnded);
+      }, 0);
+    } else offerRejoin();
     if (notice?.search !== undefined) {
       // (back from a match cancelled for someone else: its token, the queue's front again, and its search's clock: RV-367)
       const back = notice.back ? { token: notice.back.token, searchedFor: (Date.now() - notice.back.searchedAt) / 1000 } : undefined;
@@ -894,6 +972,8 @@ async function main(): Promise<void> {
     const leave = (notice?: MenuNotice): void => {
       if (left) return;
       left = true;
+      // (left on purpose or over: no rejoin offer; kicked or the connection lost: it stays, LV1)
+      if (notice?.modal !== "idle" && notice?.modal !== "lost") clearRankedSeat();
       if (notice) storeNotice(notice);
       connection.close();
       location.assign(pageUrl("menu", location));

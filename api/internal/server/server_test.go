@@ -79,6 +79,9 @@ type env struct {
 // (a made-up SteamID64)
 const steamID = "76561190000000077"
 
+// (the game server's made-up credential)
+const gameToken = "game-server-token-0123456789abcdef"
+
 func setup(t *testing.T, limits *server.Limits) *env {
 	t.Helper()
 	owner, app := testdb.New(t)
@@ -125,6 +128,8 @@ func setup(t *testing.T, limits *server.Limits) *env {
 		t.Fatal(err)
 	}
 	e.s.Tickets = signer
+	e.s.TicketKeys = map[string]ed25519.PublicKey{signer.KeyID: signer.PublicKey()}
+	e.s.GameServerToken = []byte(gameToken)
 	e.srv = httptest.NewTLSServer(e.s.Handler())
 	t.Cleanup(e.srv.Close)
 	e.s.Origin = e.srv.URL
@@ -967,5 +972,211 @@ func TestTicket(t *testing.T) {
 	e.clock.Add(time.Hour)
 	if resp := e.write(b, http.MethodPost, "/api/ticket", nil); resp.StatusCode != http.StatusServiceUnavailable {
 		t.Errorf("no key: %d", resp.StatusCode)
+	}
+}
+
+// gameCall: the game server's call (its bearer token: `token`), JSON
+func (e *env) gameCall(method, path, token string, body any) reply {
+	e.t.Helper()
+	var buf []byte
+	if body != nil {
+		var err error
+		if buf, err = json.Marshal(body); err != nil {
+			e.t.Fatal(err)
+		}
+	}
+	req, err := http.NewRequestWithContext(context.Background(), method, e.srv.URL+path, bytes.NewReader(buf))
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	return e.do(e.browser(), req)
+}
+
+// player: a new account signed in on its own browser, and a search ticket of its
+func (e *env) player(sub string) (b *http.Client, id, encoded string) {
+	e.t.Helper()
+	b = e.browser()
+	e.googleSignIn(b, sub)
+	account := e.signUp(b, "P "+sub)
+	resp := e.write(b, http.MethodPost, "/api/ticket", nil)
+	encoded, _ = decode(e.t, resp)["ticket"].(string)
+	if encoded == "" {
+		e.t.Fatalf("%s's ticket: %d", sub, resp.StatusCode)
+	}
+	return b, account["id"].(string), encoded
+}
+
+// rating: an account's rating in a playlist as /api/me shows it
+func (e *env) rating(b *http.Client, playlist int) map[string]any {
+	e.t.Helper()
+	for _, r := range decode(e.t, e.get(b, "/api/me"))["ratings"].([]any) {
+		if m := r.(map[string]any); int(m["playlist"].(float64)) == playlist {
+			return m
+		}
+	}
+	e.t.Fatalf("no rating for playlist %d", playlist)
+	return nil
+}
+
+// A match's result from the game server: its credential checked, each ticket ours and counted once, the result recorded
+// once, the winners up (a quitter too) and the losers down
+func TestResults(t *testing.T) {
+	e := setup(t, nil)
+	ba, _, ta := e.player("sub-ra")
+	bb, _, tb := e.player("sub-rb")
+	if got := e.rating(ba, 1); got["rating"].(float64) != 1500 || got["provisional"] != true || got["games"].(float64) != 0 {
+		t.Errorf("a new account's rating: %v", got)
+	}
+	result := func(match string, tickets ...string) map[string]any {
+		players := []map[string]any{}
+		for i, tk := range tickets {
+			players = append(players, map[string]any{"ticket": tk, "team": i % 2, "quitter": i == 1, "seconds": 300})
+		}
+		return map[string]any{"match": match, "server": "game.example", "playlist": len(tickets) / 2, "winningTeam": 0, "players": players}
+	}
+	if resp := e.gameCall(http.MethodPost, "/api/results", "", result("m1", ta, tb)); resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("no credential: %d", resp.StatusCode)
+	}
+	if resp := e.gameCall(http.MethodPost, "/api/results", gameToken+"x", result("m1", ta, tb)); resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("a wrong credential: %d", resp.StatusCode)
+	}
+	resp := e.gameCall(http.MethodPost, "/api/results", gameToken, result("m1", ta, tb))
+	if resp.StatusCode != http.StatusOK || decode(t, resp)["recorded"] != true {
+		t.Fatalf("the result: %d %v", resp.StatusCode, decode(t, resp))
+	}
+	a, b := e.rating(ba, 1), e.rating(bb, 1)
+	if a["rating"].(float64) <= 1500 || b["rating"].(float64) >= 1500 || a["games"].(float64) != 1 || b["games"].(float64) != 1 {
+		t.Errorf("after the match: the winner %v, the loser (a quitter) %v", a, b)
+	}
+	if e.rating(ba, 2)["games"].(float64) != 0 {
+		t.Error("another playlist's rating changed")
+	}
+	// (the same result again: recorded once, nothing changes; its tickets in another result: refused)
+	if resp := e.gameCall(http.MethodPost, "/api/results", gameToken, result("m1", ta, tb)); resp.StatusCode != http.StatusOK || decode(t, resp)["recorded"] != false {
+		t.Errorf("a retry: %d", resp.StatusCode)
+	}
+	if e.rating(ba, 1)["rating"] != a["rating"] {
+		t.Error("a retry changed the rating")
+	}
+	if resp := e.gameCall(http.MethodPost, "/api/results", gameToken, result("m2", ta, tb)); resp.StatusCode != http.StatusConflict {
+		t.Errorf("used tickets in another result: %d", resp.StatusCode)
+	}
+	if n := e.rows(`SELECT count(*) FROM ranked_result_players WHERE match_id = 'm1'`); n != 2 {
+		t.Errorf("%d players recorded, want 2", n)
+	}
+	// (refusals: the wrong number of players, an account twice, a foreign ticket, a ticket past the window)
+	_, _, tc := e.player("sub-rc")
+	_, _, td := e.player("sub-rd")
+	if resp := e.gameCall(http.MethodPost, "/api/results", gameToken, result("m3", tc)); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("one player: %d", resp.StatusCode)
+	}
+	if resp := e.gameCall(http.MethodPost, "/api/results", gameToken, result("m3", tc, tc)); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("an account twice: %d", resp.StatusCode)
+	}
+	otherSeed, _, _ := ticket.NewKey("test")
+	other, _ := ticket.NewSigner("test", otherSeed)
+	forged, _, _ := other.Issue([16]byte{7}, "Forged", [3]ticket.Shown{}, e.clock.Now())
+	if resp := e.gameCall(http.MethodPost, "/api/results", gameToken, result("m3", tc, forged)); resp.StatusCode != http.StatusForbidden {
+		t.Errorf("a foreign ticket: %d", resp.StatusCode)
+	}
+	e.clock.Add(server.AcceptWindow + time.Minute)
+	if resp := e.gameCall(http.MethodPost, "/api/results", gameToken, result("m3", tc, td)); resp.StatusCode != http.StatusForbidden {
+		t.Errorf("tickets past the window: %d", resp.StatusCode)
+	}
+	// (no credential configured: refused as unavailable)
+	e.s.GameServerToken = nil
+	if resp := e.gameCall(http.MethodPost, "/api/results", gameToken, result("m4", tc, td)); resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("no game server token set: %d", resp.StatusCode)
+	}
+}
+
+// An armed leave reported at the leave: the account's queue ban up the ladder, its tickets refused while it runs (the
+// page told until when); the same match once; a rejoin that refills the lobby undoes it (LV1)
+func TestQuitters(t *testing.T) {
+	e := setup(t, nil)
+	b, id, tk := e.player("sub-q")
+	leave := func(match string) int {
+		return e.gameCall(http.MethodPost, "/api/quitters", gameToken, map[string]string{"match": match, "ticket": tk}).StatusCode
+	}
+	banned := func() (int, string) {
+		resp := e.write(b, http.MethodPost, "/api/ticket", nil)
+		until, _ := decode(t, resp)["until"].(string)
+		return resp.StatusCode, until
+	}
+	if got := leave("q1"); got != http.StatusNoContent {
+		t.Fatalf("a quitter: %d", got)
+	}
+	want := e.clock.Now().Add(5 * time.Minute).UTC().Format(time.RFC3339)
+	if code, until := banned(); code != http.StatusForbidden || until != want {
+		t.Errorf("a ticket while banned: %d until %q, want 403 until %q", code, until, want)
+	}
+	if me := decode(t, e.get(b, "/api/me")); me["queueBanUntil"] != want {
+		t.Errorf("the page's ban: %v", me["queueBanUntil"])
+	}
+	e.clock.Add(time.Minute)
+	leave("q1") // (the same match again: one ban per match)
+	if _, until := banned(); until != want {
+		t.Errorf("a retried report moved the ban to %q", until)
+	}
+	if got := e.gameCall(http.MethodDelete, "/api/quitters/q1/"+id, gameToken, nil).StatusCode; got != http.StatusNoContent {
+		t.Fatalf("a refill: %d", got)
+	}
+	if code, _ := banned(); code != http.StatusOK {
+		t.Errorf("after the rejoin refilled the lobby: %d", code)
+	}
+	// (two leaves: 5 minutes, then 15; over at its end)
+	leave("q2")
+	e.clock.Add(6 * time.Minute)
+	if code, _ := banned(); code != http.StatusOK {
+		t.Errorf("after the 5 minutes: %d", code)
+	}
+	leave("q3")
+	if _, until := banned(); until != e.clock.Now().Add(15*time.Minute).UTC().Format(time.RFC3339) {
+		t.Errorf("the second leave's ban until %q, want 15 minutes", until)
+	}
+	if got := e.gameCall(http.MethodPost, "/api/quitters", "", map[string]string{"match": "q4", "ticket": tk}).StatusCode; got != http.StatusUnauthorized {
+		t.Errorf("without the game server's credential: %d", got)
+	}
+	if got := e.gameCall(http.MethodDelete, "/api/quitters/q3/not-an-id", gameToken, nil).StatusCode; got != http.StatusBadRequest {
+		t.Errorf("a malformed account: %d", got)
+	}
+}
+
+// A body without its length (chunked) is capped as one with it: past 16 KiB, 413 (AP2-10)
+func TestChunkedBodyCapped(t *testing.T) {
+	e := setup(t, nil)
+	big := strings.Repeat("x", 17<<10)
+	body := io.MultiReader(strings.NewReader(`{"match":"`), strings.NewReader(big), strings.NewReader(`"}`))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, e.srv.URL+"/api/results", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+gameToken)
+	if req.ContentLength != 0 && req.ContentLength != -1 {
+		t.Fatalf("not chunked: %d", req.ContentLength)
+	}
+	if resp := e.do(e.browser(), req); resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Errorf("a 17 KiB chunked body: %d", resp.StatusCode)
+	}
+	// (the page's writes too: a sign-up's body without its length, past 16 KiB)
+	b := e.browser()
+	e.googleSignIn(b, "sub-chunked")
+	page := io.MultiReader(strings.NewReader(`{"name":"`), strings.NewReader(big), strings.NewReader(`","turnstile":"good"}`))
+	req, err = http.NewRequestWithContext(context.Background(), http.MethodPost, e.srv.URL+"/api/signup", page)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", e.srv.URL)
+	req.Header.Set("X-Carball", "1")
+	if resp := e.do(b, req); resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Errorf("a page's 17 KiB chunked body: %d", resp.StatusCode)
 	}
 }

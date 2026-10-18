@@ -274,6 +274,7 @@ func (s *Store) BanOn(ctx context.Context, provider Provider, subject string, no
 
 type querier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
 func banOn(ctx context.Context, q querier, provider Provider, subject string, now time.Time) (Ban, bool, error) {
@@ -675,4 +676,220 @@ func (s *Store) Purge(ctx context.Context, now, deletionsBefore time.Time) error
 		}
 	}
 	return nil
+}
+
+// --- The ranked rules (notes/accounts.md §2, §3; LV1) ---
+
+// Rating is an account's Glicko-2 rating in a playlist
+type Rating struct {
+	Rating, Deviation, Volatility float64
+	Games                         int
+	LastPlayed                    time.Time
+}
+
+// RatingsOf is an account's ratings by playlist (1, 2, 3): none where it hasn't played
+func (s *Store) RatingsOf(ctx context.Context, accountID string) (map[int]Rating, error) {
+	return ratingsOf(ctx, s.pool, `SELECT playlist, rating, deviation, volatility, games, last_played FROM ratings
+		WHERE account_id = $1`, accountID)
+}
+
+func ratingsOf(ctx context.Context, q querier, sql string, args ...any) (map[int]Rating, error) {
+	rows, err := q.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	out := map[int]Rating{}
+	var key int
+	var r Rating
+	_, err = pgx.ForEachRow(rows, []any{&key, &r.Rating, &r.Deviation, &r.Volatility, &r.Games, &r.LastPlayed}, func() error {
+		out[key] = r
+		return nil
+	})
+	return out, err
+}
+
+// QueueBan is an account's leavers' queue ban (LV1): its step on the ladder (1-5), until when, its last leave and the
+// match it came from; and the state before that leave (step 0 and no times: none), for a rejoin that refills the lobby
+type QueueBan struct {
+	Step          int
+	Until         time.Time
+	LastLeave     time.Time
+	Match         string
+	PreviousStep  int
+	PreviousUntil *time.Time
+	PreviousLeave *time.Time
+}
+
+// QueueBanOf is an account's queue ban row, if it has one (in force or not: Until says)
+func (s *Store) QueueBanOf(ctx context.Context, accountID string) (QueueBan, bool, error) {
+	return queueBanOf(ctx, s.pool, accountID, false)
+}
+
+func queueBanOf(ctx context.Context, q querier, accountID string, lock bool) (QueueBan, bool, error) {
+	sql := `SELECT step, until, last_leave, match_id, previous_step, previous_until, previous_leave FROM queue_bans
+		WHERE account_id = $1`
+	if lock {
+		sql += ` FOR UPDATE`
+	}
+	var b QueueBan
+	err := q.QueryRow(ctx, sql, accountID).Scan(&b.Step, &b.Until, &b.LastLeave, &b.Match, &b.PreviousStep, &b.PreviousUntil, &b.PreviousLeave)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return QueueBan{}, false, nil
+	}
+	return b, err == nil, err
+}
+
+// ChangeQueueBan changes an account's queue ban in one transaction: `change` gets its row (and whether there is one) and
+// returns the new one (nil: none), or write false to leave it. No such account: ErrNoAccount
+func (s *Store) ChangeQueueBan(ctx context.Context, accountID string, change func(cur QueueBan, exists bool) (next *QueueBan, write bool)) error {
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		var one int
+		if err := tx.QueryRow(ctx, `SELECT 1 FROM accounts WHERE id = $1 FOR UPDATE`, accountID).Scan(&one); errors.Is(err, pgx.ErrNoRows) {
+			return ErrNoAccount
+		} else if err != nil {
+			return err
+		}
+		cur, exists, err := queueBanOf(ctx, tx, accountID, true)
+		if err != nil {
+			return err
+		}
+		next, write := change(cur, exists)
+		switch {
+		case !write:
+			return nil
+		case next == nil:
+			_, err = tx.Exec(ctx, `DELETE FROM queue_bans WHERE account_id = $1`, accountID)
+		default:
+			_, err = tx.Exec(ctx, `INSERT INTO queue_bans (account_id, step, until, last_leave, match_id, previous_step,
+				previous_until, previous_leave) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+				ON CONFLICT (account_id) DO UPDATE SET step = excluded.step, until = excluded.until,
+				last_leave = excluded.last_leave, match_id = excluded.match_id, previous_step = excluded.previous_step,
+				previous_until = excluded.previous_until, previous_leave = excluded.previous_leave`,
+				accountID, next.Step, next.Until, next.LastLeave, next.Match, next.PreviousStep, next.PreviousUntil, next.PreviousLeave)
+		}
+		return err
+	})
+}
+
+// Result is a match's result as recorded: its id, the game server's, the playlist (its team size), the winning team, the
+// players
+type Result struct {
+	Match       string
+	Server      string
+	Playlist    int
+	WinningTeam int
+	Players     []ResultPlayer
+}
+
+// ResultPlayer is one player of a result: their account, team, whether they quit, time played, and their ticket's nonce
+// and issue time
+type ResultPlayer struct {
+	Account  string
+	Team     int
+	Quitter  bool
+	Seconds  int
+	Nonce    [16]byte
+	IssuedAt time.Time
+}
+
+// ErrTicketUsed: a result's ticket counted in another result already (AC-5)
+var ErrTicketUsed = errors.New("a ticket counted already")
+
+// RecordResult records a result once, in one transaction: false if its match is recorded already (a retry: nothing
+// changes). Its tickets once each (ErrTicketUsed); the players' accounts that still exist and their ratings in the
+// playlist locked, `rate` given them (an account without one: absent) to return each one's new rating; written, with the
+// players' rows (a deleted account's: a placeholder, not rated)
+func (s *Store) RecordResult(ctx context.Context, r Result, rate func(current map[string]*Rating) map[string]Rating, now time.Time) (bool, error) {
+	recorded := false
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `INSERT INTO ranked_results (match_id, server, playlist, winning_team, received_at)
+			VALUES ($1, $2, $3, $4, $5) ON CONFLICT (match_id) DO NOTHING`, r.Match, r.Server, r.Playlist, r.WinningTeam, now)
+		if err != nil || tag.RowsAffected() == 0 {
+			return err
+		}
+		accounts := make([]string, len(r.Players))
+		for i, p := range r.Players {
+			accounts[i] = p.Account
+			tag, err := tx.Exec(ctx, `INSERT INTO used_tickets (nonce, issued_at, used_at) VALUES ($1, $2, $3)
+				ON CONFLICT (nonce) DO NOTHING`, p.Nonce[:], p.IssuedAt, now)
+			if err != nil {
+				return err
+			}
+			if tag.RowsAffected() == 0 {
+				return ErrTicketUsed
+			}
+		}
+		rows, err := tx.Query(ctx, `SELECT id::text FROM accounts WHERE id = ANY($1::uuid[]) ORDER BY id FOR UPDATE`, accounts)
+		if err != nil {
+			return err
+		}
+		existing, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			return err
+		}
+		current := map[string]*Rating{}
+		for _, a := range existing {
+			current[a] = nil
+		}
+		held, err := ratingsByAccount(ctx, tx, existing, r.Playlist)
+		if err != nil {
+			return err
+		}
+		for a, rt := range held {
+			current[a] = &rt
+		}
+		next := rate(current)
+		for _, p := range r.Players {
+			before, after := 0.0, 0.0
+			var account *string
+			if n, ok := next[p.Account]; ok {
+				account = &p.Account
+				if c := current[p.Account]; c != nil {
+					before = c.Rating
+				}
+				after = n.Rating
+				if _, err := tx.Exec(ctx, `INSERT INTO ratings (account_id, playlist, rating, deviation, volatility, games,
+					last_played) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (account_id, playlist) DO UPDATE SET
+					rating = excluded.rating, deviation = excluded.deviation, volatility = excluded.volatility,
+					games = excluded.games, last_played = excluded.last_played`,
+					p.Account, r.Playlist, n.Rating, n.Deviation, n.Volatility, n.Games, n.LastPlayed); err != nil {
+					return err
+				}
+			}
+			if _, err := tx.Exec(ctx, `INSERT INTO ranked_result_players (match_id, account_id, team, quitter, seconds, nonce,
+				rating_before, rating_after) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+				r.Match, account, p.Team, p.Quitter, p.Seconds, p.Nonce[:], before, after); err != nil {
+				return err
+			}
+		}
+		recorded = true
+		return nil
+	})
+	return recorded, err
+}
+
+func ratingsByAccount(ctx context.Context, tx pgx.Tx, accounts []string, playlist int) (map[string]Rating, error) {
+	rows, err := tx.Query(ctx, `SELECT account_id::text, rating, deviation, volatility, games, last_played FROM ratings
+		WHERE account_id = ANY($1::uuid[]) AND playlist = $2 ORDER BY account_id FOR UPDATE`, accounts, playlist)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]Rating{}
+	var a string
+	var r Rating
+	_, err = pgx.ForEachRow(rows, []any{&a, &r.Rating, &r.Deviation, &r.Volatility, &r.Games, &r.LastPlayed}, func() error {
+		out[a] = r
+		return nil
+	})
+	return out, err
+}
+
+// PurgeRanked removes the results received before resultsBefore (their year over) and the used tickets issued before
+// ticketsBefore (past the acceptance window: a ticket that old is refused anyway, AC-22)
+func (s *Store) PurgeRanked(ctx context.Context, resultsBefore, ticketsBefore time.Time) error {
+	if _, err := s.pool.Exec(ctx, `DELETE FROM ranked_results WHERE received_at < $1`, resultsBefore); err != nil {
+		return err
+	}
+	_, err := s.pool.Exec(ctx, `DELETE FROM used_tickets WHERE issued_at < $1`, ticketsBefore)
+	return err
 }

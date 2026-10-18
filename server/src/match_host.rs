@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use crate::chan::Sender;
 
-use crate::game::{Game, JoinRequest, MatchType, Outgoing, PlayerId, TICK_RATE, random_u64};
+use crate::game::{Game, JoinRequest, MatchType, Outgoing, PlayerId, SeatTicket, TICK_RATE, random_u64};
 use crate::protocol::{self, Control};
 
 /// A playlist: its team size, match type and forfeit vote wait (s; None: the match type's)
@@ -31,6 +31,43 @@ pub const RESERVATION_SECONDS: f64 = 12.0;
 /// At most this many ticks of a match to catch up after a stall; beyond that, its time is dropped
 const MAX_CATCH_UP_TICKS: u32 = 5;
 
+/// A leave after the match hasn't ticked this long (s) is the server's outage, not the player's: no ban (LV1's leniency:
+/// every connected player received nothing for 20 s)
+const OUTAGE_SECONDS: f64 = 20.0;
+
+/// What the ranked rules tell the accounts service, as it happens (notes/accounts.md §3; LV1): taken by the network
+/// server (`take_reports`), sent by its outbox. Only for seats with tickets (the queue's: never the local host's)
+#[derive(Clone, Debug, PartialEq)]
+pub enum Report {
+    /// An armed leave (the lobby full of humans, no winner yet, the first leaver): the leaver's first ticket, its account
+    /// checked again by the service
+    Quitter { match_id: String, ticket: String },
+    /// A rejoin filled the lobby again: that match's ban on the account undone
+    Refilled { match_id: String, account: [u8; 16] },
+    /// A match ended with a winner (a no contest has no result)
+    Result(MatchResult),
+}
+
+/// A match's result for the accounts service
+#[derive(Clone, Debug, PartialEq)]
+pub struct MatchResult {
+    pub match_id: String,
+    /// Its team size (the playlist)
+    pub playlist: u8,
+    pub winning_team: u8,
+    pub players: Vec<ResultPlayer>,
+}
+
+/// One seat's part of a result: its first ticket, its team, whether its player left and didn't come back, their time in
+/// the match (s)
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResultPlayer {
+    pub ticket: String,
+    pub team: u8,
+    pub quitter: bool,
+    pub seconds: u32,
+}
+
 pub type MatchId = u32;
 
 /// A match made for the queue: one token per player, to hand them, and its map (`protocol::MAP_COUNT`)
@@ -47,13 +84,41 @@ pub trait MatchHosting {
 }
 
 /// A reserved slot: its token, its team, the searcher's key (an account's, with tickets), who claimed it, and whether they
-/// left before the start
+/// left before the start; its seat's ranked state: its first ticket, since when its player is here (none: not here) and
+/// their time before, whether they left the started match (a quitter unless back) and whether that leave was reported
 struct Reservation {
     token: u64,
     team: u8,
     key: u64,
     claimed: Option<PlayerId>,
     left: bool,
+    ticket: Option<SeatTicket>,
+    here_since: Option<f64>,
+    played: f64,
+    quit: bool,
+    reported: bool,
+}
+
+impl Reservation {
+    fn new(token: u64, team: u8, key: u64) -> Self {
+        Self {
+            token,
+            team,
+            key,
+            claimed: None,
+            left: false,
+            ticket: None,
+            here_since: None,
+            played: 0.0,
+            quit: false,
+            reported: false,
+        }
+    }
+
+    /// Their time in the match by now (s)
+    fn seconds(&self, now: f64) -> f64 {
+        self.played + self.here_since.map_or(0.0, |since| (now - since).max(0.0))
+    }
 }
 
 /// A match cancelled before its start, for the queue (RV-367): the tokens of the slots that stalled it (cancelled by time:
@@ -78,6 +143,30 @@ struct Hosted {
     open: bool,
     /// Its map (`protocol::MAP_COUNT`)
     map: u8,
+    /// Its id for the accounts service and a rejoin (random, never 0: Welcome's `match_id`; the service's as 16 hex digits)
+    ranked: u64,
+    /// The leave penalty armed (LV1): the lobby full of humans and no winner yet; the first leaver drops it lobby-wide,
+    /// the lobby full again re-arms it
+    armed: bool,
+    /// When it last ticked (s): a leave after a long silence is the server's outage
+    ticked_at: f64,
+}
+
+impl Hosted {
+    /// Every seat's player here
+    fn lobby_full(&self) -> bool {
+        !self.reservations.is_empty() && self.reservations.iter().all(|r| r.here_since.is_some())
+    }
+
+    /// A team has won, or the match is over
+    fn decided(&self) -> bool {
+        self.game.as_ref().is_some_and(|g| g.has_winner() || g.is_over())
+    }
+
+    /// Its id as the accounts service has it
+    fn ranked_text(&self) -> String {
+        format!("{:016x}", self.ranked)
+    }
 }
 
 pub struct MatchHost {
@@ -95,13 +184,15 @@ pub struct MatchHost {
     now: f64,
     /// The matches cancelled since the queue last asked (`take_cancelled`)
     cancelled: Vec<Cancelled>,
+    /// For the accounts service, since the network server last asked (`take_reports`)
+    reports: Vec<Report>,
 }
 
 impl Hosted {
     /// The match's game, built at its first player
     fn game(&mut self, test_goal_after: Option<u64>) -> &mut Game {
-        let (seed, playlist, open, hold_for, map) =
-            (self.seed, self.playlist, self.open, self.reservations.len(), self.map);
+        let (seed, playlist, open, hold_for, map, ranked) =
+            (self.seed, self.playlist, self.open, self.reservations.len(), self.map, self.ranked);
         self.game.get_or_insert_with(|| {
             let mut game = Game::with_options(seed, playlist.team_size);
             game.match_type = playlist.match_type;
@@ -111,6 +202,7 @@ impl Hosted {
             game.idle_kick = !open;
             game.hold_for = hold_for;
             game.map = map;
+            game.match_id = if open { 0 } else { ranked };
             game
         })
     }
@@ -136,6 +228,7 @@ impl MatchHost {
             test_goal_after,
             now: 0.0,
             cancelled: Vec::new(),
+            reports: Vec::new(),
         }
     }
 
@@ -148,8 +241,25 @@ impl MatchHost {
         }
         // (Night, the one map: the user's decision of 2026-10-17)
         let map = protocol::NIGHT_MAP;
-        let mut hosted =
-            Hosted { game: None, seed: self.seed, playlist, reservations, created: now, next_tick: now, open, map };
+        let ranked = loop {
+            let id = random_u64();
+            if id != 0 && !self.matches.values().any(|m| m.ranked == id) {
+                break id;
+            }
+        };
+        let mut hosted = Hosted {
+            game: None,
+            seed: self.seed,
+            playlist,
+            reservations,
+            created: now,
+            next_tick: now,
+            open,
+            map,
+            ranked,
+            armed: false,
+            ticked_at: now,
+        };
         if open {
             hosted.game(self.test_goal_after); // (anyone may join it: built at once)
         }
@@ -183,22 +293,169 @@ impl MatchHost {
             return false;
         };
         if request.verified && slot.key != request.key {
+            eprintln!("player {id}: a claim of another account's seat, refused");
             return false;
         }
         self.tokens.remove(&token);
         slot.claimed = Some(id);
+        slot.here_since = Some(self.now);
+        if slot.ticket.is_none() {
+            slot.ticket = request.ticket.clone(); // (the seat's first: its result's and its quitter's)
+        }
         let team = slot.team;
         if hosted.game.is_none() {
             hosted.next_tick = self.now; // (its clock from now: built at its first claim)
         }
         hosted.game(self.test_goal_after).join(id, JoinRequest { team, ..request }, out);
         self.players.insert(id, match_id);
+        self.lobby_filled(match_id);
         true
+    }
+
+    /// Every seat's player here: the leave penalty armed (no winner yet), and the leavers back since their reported leave
+    /// cleared (the game's RPC_RemoveQuitter: the ban undone), no longer quitters
+    fn lobby_filled(&mut self, match_id: MatchId) {
+        let Some(hosted) = self.matches.get_mut(&match_id) else { return };
+        if !hosted.lobby_full() || hosted.armed || hosted.decided() {
+            return;
+        }
+        hosted.armed = true;
+        let ranked = hosted.ranked_text();
+        for r in &mut hosted.reservations {
+            r.quit = false;
+            if std::mem::take(&mut r.reported)
+                && let Some(t) = &r.ticket
+            {
+                self.reports.push(Report::Refilled { match_id: ranked.clone(), account: t.account });
+            }
+        }
+    }
+
+    /// A seat's player left the started match: a quitter (unless back by its end); the first while the penalty is armed
+    /// reported, and the penalty dropped lobby-wide (LV1), unless it's the server's outage
+    fn seat_left(&mut self, match_id: MatchId, id: PlayerId, started: bool) {
+        let now = self.now;
+        let Some(hosted) = self.matches.get_mut(&match_id) else { return };
+        let decided = hosted.decided();
+        let outage = now - hosted.ticked_at > OUTAGE_SECONDS;
+        let armed = std::mem::take(&mut hosted.armed);
+        let ranked_id = hosted.ranked_text();
+        let Some(slot) = hosted.reservations.iter_mut().find(|r| r.claimed == Some(id)) else { return };
+        slot.played = slot.seconds(now);
+        slot.here_since = None;
+        if !started || decided {
+            return;
+        }
+        slot.quit = true;
+        if !armed {
+            return;
+        }
+        if outage {
+            eprintln!("match {match_id}: player {id} left during the server's silence: no ban");
+        } else if let Some(t) = &slot.ticket
+            && !slot.reported
+        {
+            slot.reported = true;
+            self.reports.push(Report::Quitter { match_id: ranked_id, ticket: t.encoded.clone() });
+        }
+    }
+
+    /// Whether an account (its key) holds a seat: in a match found and not yet started, or one running that it's in or
+    /// left without a winner yet (its seat held for a rejoin). One search or match per account (notes/accounts.md §3,
+    /// AP2-1)
+    pub fn account_busy(&self, key: u64) -> bool {
+        key != 0
+            && self.matches.values().any(|m| {
+                !m.open
+                    && !m.game.as_ref().is_some_and(Game::is_over)
+                    && m.reservations.iter().any(|r| {
+                        r.key == key && (r.claimed.is_none() || r.here_since.is_some() || (r.quit && !m.decided()))
+                    })
+            })
+    }
+
+    /// A rejoin (LV1): the ranked 2v2 or 3v3 match `match_id` takes the account back into its seat, its team, while it
+    /// runs (no winner yet) and the seat's player is away; false otherwise ("Match has concluded"). The seat's first
+    /// ticket stays its result's (a reconnect's fresh one checked, not sent on: notes/accounts.md §3)
+    pub fn rejoin(&mut self, match_id: u64, id: PlayerId, request: JoinRequest, out: Sender<Outgoing>) -> bool {
+        let now = self.now;
+        let Some((&mid, hosted)) = self.matches.iter_mut().find(|(_, m)| m.ranked == match_id && !m.open) else {
+            return false;
+        };
+        let running = hosted.game.as_ref().is_some_and(|g| !g.is_over() && !g.has_winner() && !g.holding());
+        if !request.verified || hosted.playlist.team_size < 2 || !running {
+            return false;
+        }
+        let Some(slot) = hosted
+            .reservations
+            .iter_mut()
+            .find(|r| r.key == request.key && r.claimed.is_some() && r.here_since.is_none())
+        else {
+            return false;
+        };
+        slot.claimed = Some(id);
+        slot.here_since = Some(now);
+        let team = slot.team;
+        eprintln!("match {mid}: player {id} rejoined team {team}");
+        hosted.game(self.test_goal_after).join(id, JoinRequest { team, ..request }, out);
+        self.players.insert(id, mid);
+        self.lobby_filled(mid);
+        true
+    }
+
+    /// The time now (s), before the messages that came since the last tick are handled: a leave after a stall of the
+    /// whole server is seen as one (the penalty's leniency)
+    pub fn observe(&mut self, now: f64) {
+        self.now = self.now.max(now);
+    }
+
+    /// What the accounts service is to be told since the last call (the network server's outbox sends it)
+    pub fn take_reports(&mut self) -> Vec<Report> {
+        std::mem::take(&mut self.reports)
+    }
+
+    /// A match over: its result, if it has a winner and every seat a ticket (a no contest, the local host's or an
+    /// unverified match has none)
+    fn report_result(&mut self, match_id: MatchId) {
+        let now = self.now;
+        let Some(hosted) = self.matches.get(&match_id) else { return };
+        let Some(game) = hosted.game.as_ref() else { return };
+        if hosted.reservations.is_empty() {
+            return; // (an open match)
+        }
+        let state = game.match_state();
+        let Some(winning_team) = state.winner.filter(|_| !state.no_contest) else {
+            eprintln!("match {match_id}: no winner, no result (a no contest)");
+            return;
+        };
+        let players: Option<Vec<ResultPlayer>> = hosted
+            .reservations
+            .iter()
+            .map(|r| {
+                r.ticket.as_ref().map(|t| ResultPlayer {
+                    ticket: t.encoded.clone(),
+                    team: r.team,
+                    quitter: r.quit && r.here_since.is_none(),
+                    seconds: r.seconds(now).round() as u32,
+                })
+            })
+            .collect();
+        match players {
+            Some(players) => self.reports.push(Report::Result(MatchResult {
+                match_id: hosted.ranked_text(),
+                playlist: hosted.playlist.team_size,
+                winning_team,
+                players,
+            })),
+            None => eprintln!("match {match_id}: seats without tickets, no result"),
+        }
     }
 
     /// A player's session ended. Before their match started it's cancelled (its slot can't be filled: full start)
     pub fn leave(&mut self, id: PlayerId, lost: bool) {
         let Some(match_id) = self.players.remove(&id) else { return };
+        let Some(started) = self.matches.get(&match_id).map(|m| !m.holding()) else { return };
+        self.seat_left(match_id, id, started);
         let Some(hosted) = self.matches.get_mut(&match_id) else { return };
         if let Some(game) = hosted.game.as_mut() {
             if lost {
@@ -214,6 +471,7 @@ impl MatchHost {
             }
             self.cancel(match_id);
         } else if hosted.player_count() == 0 && !hosted.open {
+            self.report_result(match_id);
             self.drop_match(match_id);
         }
     }
@@ -255,6 +513,9 @@ impl MatchHost {
                 if ticks == MAX_CATCH_UP_TICKS && m.next_tick < now {
                     m.next_tick = now;
                 }
+                if ticks > 0 {
+                    m.ticked_at = now;
+                }
             }));
             if ran.is_err() {
                 eprintln!("match {match_id}: its tick panicked, let go");
@@ -278,6 +539,7 @@ impl MatchHost {
             if cancelled {
                 self.cancel(match_id);
             } else {
+                self.report_result(match_id);
                 self.drop_match(match_id);
             }
         }
@@ -333,7 +595,7 @@ impl MatchHosting for MatchHost {
                     break t;
                 }
             };
-            reservations.push(Reservation { token, team: (i % 2) as u8, key, claimed: None, left: false });
+            reservations.push(Reservation::new(token, (i % 2) as u8, key));
         }
         let tokens = reservations.iter().map(|r| r.token).collect();
         let match_id = self.add(playlist, reservations, false, now);
@@ -377,6 +639,7 @@ mod tests {
             quick_chat: 0,
             block_non_tactical: false,
             verified: false,
+            ticket: None,
         }
     }
 
@@ -443,6 +706,149 @@ mod tests {
         assert_eq!(RESERVATION_SECONDS, 12.0);
     }
 
+    /// A seat's ticket (made up)
+    fn seat(n: u8) -> JoinRequest {
+        JoinRequest {
+            key: u64::from(n),
+            verified: true,
+            ticket: Some(SeatTicket { encoded: format!("t{n}"), account: [n; 16], ratings: [1500; 3] }),
+            ..request()
+        }
+    }
+
+    /// The host run on to `until` (s), ticking each 1/120 s
+    fn run_to(host: &mut MatchHost, from: f64, until: f64) {
+        let mut t = from;
+        while t < until {
+            t += 1.0 / 120.0;
+            host.tick(t);
+        }
+    }
+
+    #[test]
+    fn the_first_armed_leave_is_reported_and_the_result_has_the_winner_the_quitter_and_the_time_played() {
+        init_engine();
+        let mut host = MatchHost::new(1, None);
+        let tokens = host.create_match(ONES, &[1, 2], 0.0).tokens;
+        let (tx, _rx) = channel(OUT_QUEUE);
+        assert!(host.claim(tokens[0], 1, seat(1), tx.clone()));
+        assert!(host.claim(tokens[1], 2, seat(2), tx));
+        run_to(&mut host, 0.0, 5.0);
+        assert!(host.take_reports().is_empty(), "nothing yet");
+        // (player 1 leaves: reported at once, the lobby's penalty dropped; their team empty, it forfeits)
+        host.observe(5.0);
+        host.leave(1, false);
+        let reports = host.take_reports();
+        let Some(Report::Quitter { match_id, ticket }) = reports.first() else { panic!("{reports:?}") };
+        assert_eq!((reports.len(), ticket.as_str()), (1, "t1"));
+        let match_id = match_id.clone();
+        run_to(&mut host, 5.0, 6.0);
+        // (the winner leaves after the forfeit: no ban, the result sent as the match goes)
+        host.leave(2, false);
+        let reports = host.take_reports();
+        let [Report::Result(result)] = reports.as_slice() else { panic!("{reports:?}") };
+        assert_eq!((result.match_id.as_str(), result.playlist, result.winning_team), (match_id.as_str(), 1, 1));
+        let by_ticket = |t: &str| result.players.iter().find(|p| p.ticket == t).unwrap().clone();
+        assert_eq!((by_ticket("t1").team, by_ticket("t1").quitter, by_ticket("t1").seconds), (0, true, 5));
+        assert_eq!((by_ticket("t2").team, by_ticket("t2").quitter, by_ticket("t2").seconds), (1, false, 6));
+        assert_eq!(host.match_count(), 0);
+    }
+
+    #[test]
+    fn only_the_first_leaver_is_banned_and_everyone_gone_is_a_no_contest_with_no_result() {
+        init_engine();
+        let mut host = MatchHost::new(1, None);
+        let tokens = host.create_match(TWOS, &[1, 2, 3, 4], 0.0).tokens;
+        let (tx, _rx) = channel(OUT_QUEUE);
+        for (i, &token) in tokens.iter().enumerate() {
+            let n = i as u8 + 1;
+            assert!(host.claim(token, u64::from(n), seat(n), tx.clone()));
+        }
+        run_to(&mut host, 0.0, 3.0);
+        for id in [1, 2, 3, 4] {
+            host.leave(id, id == 2); // (a lost connection counts too)
+        }
+        let reports = host.take_reports();
+        assert_eq!(reports.len(), 1, "the first leaver alone, then no result (a no contest): {reports:?}");
+        assert!(matches!(&reports[0], Report::Quitter { ticket, .. } if ticket == "t1"));
+    }
+
+    #[test]
+    fn a_leave_after_the_servers_silence_or_from_an_unverified_seat_isnt_reported() {
+        init_engine();
+        let mut host = MatchHost::new(1, None);
+        let tokens = host.create_match(ONES, &[1, 2], 0.0).tokens;
+        let (tx, _rx) = channel(OUT_QUEUE);
+        host.claim(tokens[0], 1, seat(1), tx.clone());
+        host.claim(tokens[1], 2, seat(2), tx.clone());
+        run_to(&mut host, 0.0, 2.0);
+        host.observe(2.0 + OUTAGE_SECONDS + 1.0); // (the whole server stalled)
+        host.leave(1, true);
+        assert!(
+            !host.take_reports().iter().any(|r| matches!(r, Report::Quitter { .. })),
+            "the server's outage: no ban"
+        );
+        // (seats without tickets: no quitter, no result)
+        let tokens = host.create_match(ONES, &[0, 0], 30.0).tokens;
+        host.claim(tokens[0], 3, request(), tx.clone());
+        host.claim(tokens[1], 4, request(), tx);
+        run_to(&mut host, 30.0, 32.0);
+        host.leave(3, false);
+        run_to(&mut host, 32.0, 33.0);
+        host.leave(4, false);
+        assert!(host.take_reports().is_empty());
+    }
+
+    #[test]
+    fn a_ranked_2v2_seat_left_by_accident_is_rejoined_the_ban_undone_and_one_match_per_account() {
+        init_engine();
+        let mut host = MatchHost::new(1, None);
+        let tokens = host.create_match(TWOS, &[1, 2, 3, 4], 0.0).tokens;
+        assert!(host.account_busy(1), "a found match's seat, not yet claimed");
+        assert!(!host.account_busy(9));
+        let (tx, _rx) = channel(OUT_QUEUE);
+        for (i, &token) in tokens.iter().enumerate() {
+            let n = i as u8 + 1;
+            assert!(host.claim(token, u64::from(n), seat(n), tx.clone()));
+        }
+        let match_id = host.matches.values().next().unwrap().ranked;
+        run_to(&mut host, 0.0, 3.0);
+        host.leave(1, true);
+        assert!(matches!(host.take_reports().as_slice(), [Report::Quitter { .. }]));
+        assert!(host.account_busy(1), "a running match's seat, held");
+        // (another account can't take it; the match's own player back on their team)
+        assert!(!host.rejoin(match_id, 10, seat(9), tx.clone()), "not the seat's account");
+        assert!(!host.rejoin(match_id + 1, 10, seat(1), tx.clone()), "no such match");
+        assert!(host.rejoin(match_id, 10, seat(1), tx.clone()));
+        let reports = host.take_reports();
+        assert!(matches!(reports.as_slice(), [Report::Refilled { account, .. }] if *account == [1; 16]), "{reports:?}");
+        let hosted = host.matches.values().next().unwrap();
+        let slot = hosted.reservations.iter().find(|r| r.key == 1).unwrap();
+        assert!(
+            !slot.quit && slot.claimed == Some(10) && hosted.armed,
+            "back, no longer a quitter, the penalty re-armed"
+        );
+        assert_eq!(host.game_of(10).map(|g| g.player_count()), Some(4));
+        // (the next armed leave reported again; a second rejoin of a seat that's here: refused)
+        assert!(!host.rejoin(match_id, 11, seat(2), tx), "their player is here");
+    }
+
+    #[test]
+    fn no_rejoin_in_1v1_or_once_there_is_a_winner() {
+        init_engine();
+        let mut host = MatchHost::new(1, None);
+        let tokens = host.create_match(ONES, &[1, 2], 0.0).tokens;
+        let (tx, _rx) = channel(OUT_QUEUE);
+        host.claim(tokens[0], 1, seat(1), tx.clone());
+        host.claim(tokens[1], 2, seat(2), tx.clone());
+        let match_id = host.matches.values().next().unwrap().ranked;
+        run_to(&mut host, 0.0, 3.0);
+        host.leave(1, true);
+        assert!(!host.rejoin(match_id, 10, seat(1), tx.clone()), "1v1: no rejoin");
+        run_to(&mut host, 3.0, 4.0);
+        assert!(!host.account_busy(1), "the forfeit's winner decided: the seat no longer held");
+    }
+
     #[test]
     fn a_verified_claim_must_be_the_searchers_account_its_token_kept_otherwise() {
         // (notes/accounts.md §3: a seat is the account's; an unverified claim (no tickets: development) isn't held to it)
@@ -507,7 +913,12 @@ mod tests {
         init_engine();
         let mut queue = Matchmaker::new(&[ONES]);
         let mut host = MatchHost::new(1, None);
-        let from = |id: PlayerId| SearchFrom { address: [10, 0, 0, id as u8].into(), key: 500 + id, token: 0 };
+        let from = |id: PlayerId| SearchFrom {
+            address: [10, 0, 0, id as u8].into(),
+            key: 500 + id,
+            token: 0,
+            rating: crate::queue::DEFAULT_RATING,
+        };
         let search = |queue: &mut Matchmaker, id: PlayerId, who: PlayerId, token: u64, now: f64| {
             let (tx, rx) = channel(OUT_QUEUE);
             assert_eq!(queue.search(id, 1, tx, SearchFrom { token, ..from(who) }, now), Searched::Queued);

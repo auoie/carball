@@ -6,6 +6,7 @@ package server
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -76,6 +77,10 @@ type Store interface {
 	Account(ctx context.Context, id string) (store.Account, error)
 	Rename(ctx context.Context, id, name string) error
 	DeleteAccount(ctx context.Context, id string, hmacOf func(store.Identity) []byte, now time.Time) error
+	RatingsOf(ctx context.Context, accountID string) (map[int]store.Rating, error)
+	QueueBanOf(ctx context.Context, accountID string) (store.QueueBan, bool, error)
+	ChangeQueueBan(ctx context.Context, accountID string, change func(cur store.QueueBan, exists bool) (*store.QueueBan, bool)) error
+	RecordResult(ctx context.Context, r store.Result, rate func(current map[string]*store.Rating) map[string]store.Rating, now time.Time) (bool, error)
 }
 
 // Turnstile checks a sign-up's token (turnstile.Verifier)
@@ -98,6 +103,10 @@ type Server struct {
 	DeletionKey      []byte
 	// Tickets signs the search tickets (nil: none issued, a development server without a key)
 	Tickets *ticket.Signer
+	// TicketKeys check the tickets a result or a quitter carries: the signer's, and those from before a rotation
+	TicketKeys map[string]ed25519.PublicKey
+	// GameServerToken is the game server's credential on its calls (none: they answer 503)
+	GameServerToken []byte
 	// TrustedProxies are the connections whose CF-Connecting-IP is believed (cloudflared's: AP-1)
 	TrustedProxies []netip.Prefix
 	Now            func() time.Time
@@ -186,6 +195,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/signout", s.write(s.signOut))
 	mux.HandleFunc("POST /api/signout-everywhere", s.write(s.signOutEverywhere))
 	mux.HandleFunc("POST /api/ticket", s.write(s.ticket))
+	mux.HandleFunc("POST /api/results", s.gameServer(s.result))
+	mux.HandleFunc("POST /api/quitters", s.gameServer(s.quitter))
+	mux.HandleFunc("DELETE /api/quitters/{match}/{account}", s.gameServer(s.quitterRefilled))
 	return s.logged(headers(mux))
 }
 

@@ -3,10 +3,12 @@
 // server checks it offline with the public keys it's given (by key id: keys rotate). The format is small and binary, so
 // the game server reads it without a JSON parser:
 //
-//	version (1) | kid length (1) | kid | account id (16) | issued (8, Unix s) | expires (8) | nonce (16) | name length (1) | name
+//	version (1) = 2 | kid length (1) | kid | account id (16) | issued (8, Unix s) | expires (8) | nonce (16) |
+//	name length (1) | name | the ratings, 1v1, 2v2, 3v3: rating (2) and deviation (2) each, rounded
 //
 // then the signature (64) over "carball-search\x00" and those bytes (the audience: a ticket signs nothing else), all as
-// unpadded base64url.
+// unpadded base64url. Integers big-endian. The ratings are the account's at the ticket's issue (the queue pairs by them:
+// notes/matchmaking.md, ranked pairing), the defaults where it hasn't played.
 package ticket
 
 import (
@@ -18,10 +20,11 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
-// Version is the format's
-const Version = 1
+// Version is the format's (2: the ratings)
+const Version = 2
 
 // Context is what a ticket's signature covers before its bytes (the audience)
 const Context = "carball-search\x00"
@@ -40,6 +43,13 @@ type Ticket struct {
 	Expires time.Time
 	Nonce   [16]byte
 	Name    string
+	// Ratings in the playlists 1v1, 2v2, 3v3 (index 0, 1, 2)
+	Ratings [3]Shown
+}
+
+// Shown is a rating as a ticket carries it, rounded
+type Shown struct {
+	Rating, Deviation uint16
 }
 
 // Signer signs tickets with one key
@@ -79,9 +89,9 @@ func NewKey(keyID string) (seed, public string, err error) {
 	return base64.StdEncoding.EncodeToString(raw), s.Public(), nil
 }
 
-// Issue signs a ticket for the account and name at now (a fresh nonce, Lifetime long)
-func (s *Signer) Issue(account [16]byte, name string, now time.Time) (string, Ticket, error) {
-	t := Ticket{KeyID: s.KeyID, Account: account, Issued: now.Truncate(time.Second), Name: name}
+// Issue signs a ticket for the account, its name and ratings at now (a fresh nonce, Lifetime long)
+func (s *Signer) Issue(account [16]byte, name string, ratings [3]Shown, now time.Time) (string, Ticket, error) {
+	t := Ticket{KeyID: s.KeyID, Account: account, Issued: now.Truncate(time.Second), Name: name, Ratings: ratings}
 	t.Expires = t.Issued.Add(Lifetime)
 	if _, err := rand.Read(t.Nonce[:]); err != nil {
 		return "", Ticket{}, err
@@ -108,17 +118,35 @@ func Encode(t Ticket) ([]byte, error) {
 	b = append(b, t.Nonce[:]...)
 	b = append(b, byte(len(t.Name))) //nolint:gosec // (G115: checked above, 32 at most)
 	b = append(b, t.Name...)
+	for _, r := range t.Ratings {
+		b = binary.BigEndian.AppendUint16(b, r.Rating)
+		b = binary.BigEndian.AppendUint16(b, r.Deviation)
+	}
 	return b, nil
 }
 
 // Verify reads and checks a ticket against public keys by id, at now with `skew` either way (the tests'; the game
 // server's own, in Rust, mirrors it)
 func Verify(encoded string, keys map[string]ed25519.PublicKey, now time.Time, skew time.Duration) (Ticket, error) {
+	t, err := VerifySigned(encoded, keys)
+	if err != nil {
+		return Ticket{}, err
+	}
+	if now.Add(skew).Before(t.Issued) || !now.Add(-skew).Before(t.Expires) {
+		return Ticket{}, errors.New("ticket: not in its time")
+	}
+	return t, nil
+}
+
+// VerifySigned reads a ticket and checks its signature alone, not its time: a result's or a quitter's (the game server
+// hands on the player's ticket from the match's start; its issue time checked against the acceptance window instead)
+func VerifySigned(encoded string, keys map[string]ed25519.PublicKey) (Ticket, error) {
 	if len(encoded) > MaxBytes {
 		return Ticket{}, errors.New("ticket: too long")
 	}
-	raw, err := base64.RawURLEncoding.DecodeString(encoded)
-	if err != nil || len(raw) < ed25519.SignatureSize+2 {
+	// (strict: no padding, no stray bits or line breaks: one encoding per ticket, as the game server reads it, AP2-11)
+	raw, err := base64.RawURLEncoding.Strict().DecodeString(encoded)
+	if err != nil || len(raw) < ed25519.SignatureSize+2 || strings.ContainsAny(encoded, "\r\n") {
 		return Ticket{}, errors.New("ticket: malformed")
 	}
 	body, sig := raw[:len(raw)-ed25519.SignatureSize], raw[len(raw)-ed25519.SignatureSize:]
@@ -133,10 +161,34 @@ func Verify(encoded string, keys map[string]ed25519.PublicKey, now time.Time, sk
 	if !ed25519.Verify(key, append([]byte(Context), body...), sig) {
 		return Ticket{}, errors.New("ticket: bad signature")
 	}
-	if now.Add(skew).Before(t.Issued) || !now.Add(-skew).Before(t.Expires) {
-		return Ticket{}, errors.New("ticket: not in its time")
-	}
 	return t, nil
+}
+
+// PublicKey is the signer's public key
+func (s *Signer) PublicKey() ed25519.PublicKey {
+	pub, _ := s.key.Public().(ed25519.PublicKey)
+	return pub
+}
+
+// ParsePublic reads public key lines as the game server's TICKET_PUBLIC_KEYS lists them ("KID BASE64", comma- or
+// newline-separated)
+func ParsePublic(list string) (map[string]ed25519.PublicKey, error) {
+	out := map[string]ed25519.PublicKey{}
+	for _, item := range strings.FieldsFunc(list, func(r rune) bool { return r == ',' || r == '\n' }) {
+		fields := strings.Fields(item)
+		if len(fields) == 0 {
+			continue
+		}
+		if len(fields) != 2 || len(fields[0]) > 32 {
+			return nil, fmt.Errorf("ticket: a key line is \"KID BASE64\", got %q", item)
+		}
+		raw, err := base64.StdEncoding.DecodeString(fields[1])
+		if err != nil || len(raw) != ed25519.PublicKeySize {
+			return nil, fmt.Errorf("ticket: key %q is not 32 bytes of base64", fields[0])
+		}
+		out[fields[0]] = ed25519.PublicKey(raw)
+	}
+	return out, nil
 }
 
 func decode(b []byte) (Ticket, error) {
@@ -150,6 +202,9 @@ func decode(b []byte) (Ticket, error) {
 	if n == 0 || n > 32 || len(b) < n+16+8+8+16+1 {
 		return t, bad
 	}
+	if !utf8.Valid(b[:n]) {
+		return t, bad
+	}
 	t.KeyID, b = string(b[:n]), b[n:]
 	copy(t.Account[:], b[:16])
 	b = b[16:]
@@ -158,9 +213,16 @@ func decode(b []byte) (Ticket, error) {
 	copy(t.Nonce[:], b[16:32])
 	b = b[32:]
 	m := int(b[0])
-	if m == 0 || m > 32 || len(b) != 1+m {
+	if m == 0 || m > 32 || len(b) != 1+m+3*4 {
 		return t, bad
 	}
-	t.Name = string(b[1:])
+	if !utf8.Valid(b[1 : 1+m]) {
+		return t, bad
+	}
+	t.Name = string(b[1 : 1+m])
+	b = b[1+m:]
+	for i := range t.Ratings {
+		t.Ratings[i] = Shown{Rating: binary.BigEndian.Uint16(b[4*i:]), Deviation: binary.BigEndian.Uint16(b[4*i+2:])}
+	}
 	return t, nil
 }

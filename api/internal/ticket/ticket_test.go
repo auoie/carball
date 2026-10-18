@@ -29,7 +29,7 @@ func TestNoncesDiffer(t *testing.T) {
 	at := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
 	seen := map[[16]byte]bool{}
 	for range 8 {
-		_, tk, err := s.Issue([16]byte{1}, "Ada", at)
+		_, tk, err := s.Issue([16]byte{1}, "Ada", [3]Shown{}, at)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -50,16 +50,22 @@ func TestIssueAndVerify(t *testing.T) {
 		t.Fatal(err)
 	}
 	account := [16]byte{1, 2, 3}
-	encoded, issued, err := s.Issue(account, "Made Up", now)
+	ratings := [3]Shown{{1500, 500}, {1723, 64}, {65535, 45}}
+	encoded, issued, err := s.Issue(account, "Made Up", ratings, now)
 	if err != nil || len(encoded) > MaxBytes {
 		t.Fatalf("Issue = %d bytes, %v", len(encoded), err)
 	}
 	got, err := Verify(encoded, keys(t, s), now.Add(time.Minute), 30*time.Second)
-	if err != nil || got.Account != account || got.Name != "Made Up" || got.Nonce != issued.Nonce || !got.Expires.Equal(now.Add(Lifetime)) {
+	if err != nil || got.Account != account || got.Name != "Made Up" || got.Nonce != issued.Nonce || !got.Expires.Equal(now.Add(Lifetime)) ||
+		got.Ratings != ratings {
 		t.Fatalf("Verify = %+v, %v", got, err)
 	}
-	// (a 32-byte name: still within the cap)
-	long, _, err := s.Issue(account, strings.Repeat("é", 16), now)
+	// (a 32-byte key id and name: still within the cap)
+	longKey, err := NewSigner(strings.Repeat("k", 32), seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	long, _, err := longKey.Issue(account, strings.Repeat("é", 16), ratings, now)
 	if err != nil || len(long) > MaxBytes {
 		t.Errorf("a 32-byte name's ticket: %d bytes, %v", len(long), err)
 	}
@@ -68,11 +74,11 @@ func TestIssueAndVerify(t *testing.T) {
 func TestVerifyRefusals(t *testing.T) {
 	seed, _, _ := NewKey("k1")
 	s, _ := NewSigner("k1", seed)
-	encoded, _, _ := s.Issue([16]byte{9}, "Name", now)
+	encoded, _, _ := s.Issue([16]byte{9}, "Name", [3]Shown{}, now)
 	ks := keys(t, s)
 	otherSeed, _, _ := NewKey("k1")
 	other, _ := NewSigner("k1", otherSeed)
-	forged, _, _ := other.Issue([16]byte{9}, "Name", now)
+	forged, _, _ := other.Issue([16]byte{9}, "Name", [3]Shown{}, now)
 	raw, _ := base64.RawURLEncoding.DecodeString(encoded)
 	flipped := append([]byte(nil), raw...)
 	flipped[20] ^= 1 // (the account's bytes changed: the signature no longer covers them)
@@ -87,6 +93,8 @@ func TestVerifyRefusals(t *testing.T) {
 		"not base64":              {"!!!", now},
 		"too long":                {strings.Repeat("A", MaxBytes+1), now},
 		"truncated":               {encoded[:40], now},
+		"a line break inside":     {encoded[:20] + "\n" + encoded[20:], now},
+		"padded":                  {encoded + "==", now},
 	} {
 		if _, err := Verify(c.ticket, ks, c.at, 30*time.Second); err == nil {
 			t.Errorf("%s: accepted", name)
@@ -115,5 +123,28 @@ func TestNewSignerRefusals(t *testing.T) {
 		if _, err := NewSigner(c[0], c[1]); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+// The lifetime pinned (AC-6: about two minutes; the game server's checks assume it, AP2-10)
+func TestLifetime(t *testing.T) {
+	if Lifetime != 2*time.Minute {
+		t.Errorf("Lifetime = %v", Lifetime)
+	}
+}
+
+// A name or key id that isn't UTF-8: refused, as the game server refuses it (AP2-11)
+func TestNotUTF8Refused(t *testing.T) {
+	seed, _, _ := NewKey("k1")
+	s, _ := NewSigner("k1", seed)
+	tk := Ticket{KeyID: "k1", Name: "\xff\xfe", Issued: now, Expires: now.Add(Lifetime)}
+	body, err := Encode(tk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed := append([]byte(Context), body...)
+	encoded := base64.RawURLEncoding.EncodeToString(append(body, ed25519.Sign(s.key, signed)...))
+	if _, err := VerifySigned(encoded, keys(t, s)); err == nil {
+		t.Error("a name not UTF-8 accepted")
 	}
 }

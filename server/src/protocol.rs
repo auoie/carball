@@ -12,8 +12,9 @@ use crate::engine::Controls;
 // says whether the browser or the network is why (RV-385); 21: the match's map (MatchFound, Welcome); 22: the garage's
 // car (Hello's model, the roster's); 23: Kicked's KICK_REPLACED (RV-460); 24: the stat graphs' network rows (HUD-21: the
 // input datagrams' sequence, each update's input-buffer window and the inputs lost); 25: one map, Night (map 0, its
-// arena the glasshouse: an older client would draw another)
-pub const VERSION: u16 = 26;
+// arena the glasshouse: an older client would draw another); 26: Hello's search ticket, Refused's REFUSED_TICKET; 27:
+// rejoining a ranked match (Hello's INTENT_REJOIN, Welcome's match id, Refused's REFUSED_IN_MATCH and REFUSED_CONCLUDED)
+pub const VERSION: u16 = 27;
 /// The maps a match can be on (the client's THEMES: protocol/README.md): one, Night (the user's decision of 2026-10-17); a
 /// map on the wire is its index
 pub const MAP_COUNT: u8 = 1;
@@ -42,10 +43,18 @@ pub const REFUSED_MODE: u8 = 3;
 /// `Refused`'s reason: a search's or a claim's ticket missing, not ours, out of its time, used before, or not the
 /// account that searched (notes/accounts.md §3: sign in again)
 pub const REFUSED_TICKET: u8 = 4;
+/// `Refused`'s reason: a search from an account that holds a seat already, in a match found or running (one search or
+/// match per account: notes/accounts.md §3, AP2-1; a ranked 2v2 or 3v3 left by accident is rejoined instead)
+pub const REFUSED_IN_MATCH: u8 = 5;
+/// `Refused`'s reason: a rejoin whose match is over, or has no seat of the account's to take back (LV1: "Match has
+/// concluded")
+pub const REFUSED_CONCLUDED: u8 = 6;
 /// Hello's intent: join this server's match (development servers), search a playlist's queue, claim a reserved slot
 pub const INTENT_JOIN: u8 = 0;
 pub const INTENT_SEARCH: u8 = 1;
 pub const INTENT_CLAIM: u8 = 2;
+/// Hello's intent: rejoin the ranked match its token names (Welcome's match id: LV1, 2v2 and 3v3 only)
+pub const INTENT_REJOIN: u8 = 3;
 /// `Kicked`'s reason: idle too long (MM-37)
 pub const KICK_IDLE: u8 = 0;
 /// `Kicked`'s reason: the match was cancelled before it started, not every reserved player joined (MM-18)
@@ -191,7 +200,7 @@ pub enum Control {
     VoteForfeit,
     /// `match_type`: 0 casual, 1 ranked, 2 private (who may vote to forfeit, after how long, its label); `team_size`: the
     /// playlist's; `map`: the match's (`MAP_COUNT`), the arena every player sees; `key`: the player's (Hello's again, if
-    /// it was this server's and no one here has it; else a new one)
+    /// it was this server's and no one here has it; else a new one); `match_id`: a queue match's, for a rejoin (0: none)
     Welcome {
         version: u16,
         car_id: u32,
@@ -201,6 +210,7 @@ pub enum Control {
         team_size: u8,
         map: u8,
         key: u64,
+        match_id: u64,
         snapshot: Vec<u8>,
     },
     World {
@@ -576,6 +586,8 @@ pub enum DecodeError {
     Truncated,
     UnknownType(u8),
     TooLarge,
+    /// Bytes after the message's end (a hello's: AP2-12)
+    Trailing,
 }
 
 impl std::fmt::Display for DecodeError {
@@ -584,6 +596,7 @@ impl std::fmt::Display for DecodeError {
             Self::Truncated => write!(f, "message truncated"),
             Self::UnknownType(t) => write!(f, "unknown message type 0x{t:02x}"),
             Self::TooLarge => write!(f, "message too large"),
+            Self::Trailing => write!(f, "bytes after the message"),
         }
     }
 }
@@ -802,7 +815,18 @@ impl Control {
                 w.u8(*ready);
                 w.u8(*total);
             }
-            Self::Welcome { version, car_id, tick_rate, frame, match_type, team_size, map, key, snapshot } => {
+            Self::Welcome {
+                version,
+                car_id,
+                tick_rate,
+                frame,
+                match_type,
+                team_size,
+                map,
+                key,
+                match_id,
+                snapshot,
+            } => {
                 w.u8(0x81);
                 w.u16(*version);
                 w.u32(*car_id);
@@ -812,6 +836,7 @@ impl Control {
                 w.u8(*team_size);
                 w.u8(*map);
                 w.u64(*key);
+                w.u64(*match_id);
                 w.bytes_with_len(snapshot);
             }
             Self::World { frame, snapshot } => {
@@ -884,7 +909,13 @@ impl Control {
                 intent: r.u8()?,
                 playlist: r.u8()?,
                 token: r.u64()?,
-                ticket: r.ticket()?,
+                ticket: {
+                    let ticket = r.ticket()?;
+                    if !r.0.is_empty() {
+                        return Err(DecodeError::Trailing);
+                    }
+                    ticket
+                },
             },
             0x8F => Self::MatchFound { token: r.u64()?, map: r.u8()? },
             0x90 => Self::IdleWarning { on: r.u8()? != 0 },
@@ -958,6 +989,7 @@ impl Control {
                 team_size: r.u8()?,
                 map: r.u8()?,
                 key: r.u64()?,
+                match_id: r.u64()?,
                 snapshot: r.bytes_with_len()?,
             },
             0x82 => Self::World { frame: r.u32()?, snapshot: r.bytes_with_len()? },
@@ -1107,6 +1139,33 @@ mod tests {
     }
 
     #[test]
+    fn a_hello_with_bytes_after_its_ticket_is_refused() {
+        let hello = Control::Hello {
+            version: VERSION,
+            team: 255,
+            model: 0,
+            dodge_deadzone: 0.5,
+            steering_sensitivity: 1.0,
+            air_control_sensitivity: 1.0,
+            auto_skip_replay: false,
+            key: 0,
+            name: String::new(),
+            quick_chat: CHAT_EVERYONE,
+            block_non_tactical: false,
+            intent: INTENT_SEARCH,
+            playlist: 1,
+            token: 0,
+            ticket: "abc".into(),
+        };
+        let bytes = hello.encode();
+        assert!(matches!(Control::decode(&bytes[2..]), Ok(Control::Hello { ticket, .. }) if ticket == "abc"));
+        let mut longer = bytes[2..].to_vec();
+        longer.push(0);
+        assert!(matches!(Control::decode(&longer), Err(DecodeError::Trailing)), "AP2-12");
+        drop(hello);
+    }
+
+    #[test]
     fn the_vectors_are_this_versions() {
         assert_eq!(vectors()["protocolVersion"].as_u64(), Some(u64::from(VERSION)));
         let hello =
@@ -1151,7 +1210,7 @@ mod tests {
                 quick_chat: ["everyone", "team", "friends", "off"].iter().position(|&f| f == m["quickChat"]).unwrap()
                     as u8,
                 block_non_tactical: m["blockNonTactical"].as_bool().unwrap(),
-                intent: ["join", "search", "claim"].iter().position(|&i| i == m["intent"]).unwrap() as u8,
+                intent: ["join", "search", "claim", "rejoin"].iter().position(|&i| i == m["intent"]).unwrap() as u8,
                 playlist: u(&m["playlist"]) as u8,
                 token: big(&m["token"]),
                 ticket: m["ticket"].as_str().unwrap().to_string(),
@@ -1236,6 +1295,7 @@ mod tests {
                 team_size: u(&m["teamSize"]) as u8,
                 map: u(&m["map"]) as u8,
                 key: big(&m["key"]),
+                match_id: big(&m["matchId"]),
                 snapshot: bytes(&m["snapshot"]),
             },
             "voteForfeit" => Control::VoteForfeit,

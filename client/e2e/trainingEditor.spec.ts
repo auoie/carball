@@ -385,8 +385,8 @@ test("Exit to Main Menu over the editor with a pad (the user's report): the edit
     await menu.getByRole("button", { name: /^create training$/i }).click();
     await expect(menu).toBeHidden();
   };
-  // (Start, the focus down to Exit to Main Menu, A: over the editor no question of its own, the editor's SAVE AND EXIT
-  // the one (TE1 §6.3, RX28C); the entry reads Save and Exit over unsaved changes)
+  // (Start, the focus down to Exit to Main Menu, A. Unsaved changes: the entry reads Save and Exit, the editor's SAVE AND
+  // EXIT the one question (TE1 §6.3, RX28C); none: the pause's own EXIT TO MAIN MENU YES/NO, YES taken (TE1 §5.3, RX29C))
   const exitToMainMenu = async (saves = false): Promise<void> => {
     await padTap(page, [START]);
     await expect(pause).toBeVisible();
@@ -394,6 +394,12 @@ test("Exit to Main Menu over the editor with a pad (the user's report): the edit
     for (let i = 0; i < 8 && !(await padFocused(exit)); i++) await padTap(page, [DOWN]);
     await expect(exit).toHaveClass(/pad-focus/);
     await padTap(page, [A]);
+    if (!saves) {
+      const question = pause.locator(".pause-question");
+      await expect(question).toBeVisible();
+      await expect(question.getByRole("button", { name: /^no$/i })).toBeFocused(); // (NO the default, MENU-15)
+      await question.getByRole("button", { name: /^yes$/i }).click();
+    }
     await expect(pause).toBeHidden();
     await expect(pause.locator(".pause-question")).toBeHidden();
   };
@@ -426,7 +432,7 @@ test("Exit to Main Menu over the editor with a pad (the user's report): the edit
     await expect(menu).toBeVisible();
   };
 
-  // The free-camera editor, nothing changed: Exit to Main Menu leaves it, no question
+  // The free-camera editor, nothing changed: Exit to Main Menu asks the pause's EXIT TO MAIN MENU, YES leaves it
   await createTraining();
   await expect(list).toBeVisible();
   await exitToMainMenu();
@@ -489,6 +495,7 @@ test("Exit to Main Menu over the editor with a pad (the user's report): the edit
   await padTap(page, [START]);
   await expect(pause).toBeVisible();
   await pause.getByRole("button", { name: /^exit to main menu$/i }).click();
+  await pause.locator(".pause-question").getByRole("button", { name: /^yes$/i }).click();
   await expect(pause).toBeHidden();
   await freePlayDrives();
 

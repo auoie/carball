@@ -18,6 +18,7 @@ import type { Renderer } from "../render/renderer";
 import { replayDilation } from "./goalSequence";
 import { Interpolated } from "./interpolated";
 import { RECORDED_FRAMES, type RecordedCar, type RecordedFrame, type ReplayRecorder } from "./replayRecorder";
+import { IMPACT_SCALES } from "./impactTriggers";
 
 /** Camera_TA.ClipToField: the camera stays this far above the floor */
 const GROUND_CLAMP_Z = 10;
@@ -53,6 +54,32 @@ export function replayCarPositions(a: RecordedFrame, b: RecordedFrame, alpha: nu
   return out;
 }
 
+/** The ball hits in `b` (the frame after `a`): each car whose last touch moved on since the touches last seen (`last`,
+ *  brought up to date; a car first seen only noted), heard at the ball: the replay's own, from its frames as corrected
+ *  (RX29C). As hard as the game's ImpactIntensity, |v_rel·n| (SND-19): the ball's velocity less the car's along the
+ *  normal from the car's centre to the ball, in the frame before the touch (an approximation: the contact's own point and
+ *  normal aren't recorded); the ball's change of speed when the two coincide. On the ball hit's scale (IMPACT_SCALES) */
+export function ballHits(last: Map<number, number | null>, a: RecordedFrame, b: RecordedFrame): SoundEvent[] {
+  const out: SoundEvent[] = [];
+  for (const [id, car] of b.cars) {
+    const touch = car.lastTouch ?? null;
+    const known = last.has(id);
+    const before = last.get(id) ?? null;
+    last.set(id, touch);
+    if (!known || touch === null || touch === before || car.demoed) continue;
+    const from = a.cars.get(id) ?? car;
+    const n = sub(a.ball.pos, from.pos);
+    const len = Math.hypot(n.x, n.y, n.z);
+    const rel = sub(a.ball.vel, from.vel);
+    const intensity =
+      len > 1e-3
+        ? Math.abs((rel.x * n.x + rel.y * n.y + rel.z * n.z) / len)
+        : Math.hypot(b.ball.vel.x - a.ball.vel.x, b.ball.vel.y - a.ball.vel.y, b.ball.vel.z - a.ball.vel.z);
+    out.push({ kind: "ballHit", at: b.ball.pos, strength: Math.min(1, intensity / IMPACT_SCALES.ball) });
+  }
+  return out;
+}
+
 /** The cars whose flip-reset count went up in `frame` since the counts last seen (`last`, brought up to date): a car
  *  first seen only starts its count; the demolished aside (HUD-19: the replay plays PlayFlipResetFx for any car) */
 export function flipResetCars(last: Map<number, number>, frame: RecordedFrame): Set<number> {
@@ -77,6 +104,8 @@ export class ReplayPlayback {
   #goalShown = false;
   /** The last recorded frame whose live sounds were played again (null: none yet) */
   #soundFrame: number | null = null;
+  /** Each car's last ball touch as last seen (the replay's ball hits: ballHits) */
+  readonly #touches = new Map<number, number | null>();
   /** Each car's flip-reset count as last drawn, and its effect (made at its first reset in the replay) */
   readonly #flipCounts = new Map<number, number>();
   readonly #flipFx = new Map<number, FlipResetFx>();
@@ -149,13 +178,23 @@ export class ReplayPlayback {
   }
 
   /** The live sounds kept at the recorded frames after the last played, up to `upTo` (from the replay's first frame: what
-   *  sounded before it isn't heard) */
+   *  sounded before it isn't heard), with the ball hits found in those frames (ballHits) */
   #sounds(upTo: number): SoundEvent[] {
     const from = this.#soundFrame ?? Math.floor(this.#frameAt(this.plan.startTick));
+    if (this.#soundFrame === null) {
+      // (the touches as the replay begins: noted, not heard)
+      const first = this.#recorder.before(from);
+      if (first) for (const [id, car] of first.cars) this.#touches.set(id, car.lastTouch ?? null);
+    }
     this.#soundFrame = Math.max(from, upTo);
     const out: SoundEvent[] = [];
     // (a long stall at most the recording's length)
-    for (let f = Math.max(from + 1, upTo - RECORDED_FRAMES); f <= upTo; f++) out.push(...this.#recorder.soundsAt(f));
+    for (let f = Math.max(from + 1, upTo - RECORDED_FRAMES); f <= upTo; f++) {
+      out.push(...this.#recorder.soundsAt(f));
+      const a = this.#recorder.at(f - 1);
+      const b = this.#recorder.at(f);
+      if (a && b) out.push(...ballHits(this.#touches, a, b));
+    }
     return out;
   }
 

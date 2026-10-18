@@ -142,7 +142,11 @@ The game server checks it offline, with `TICKET_PUBLIC_KEYS` (a list, so keys ca
 API. It:
 - allows ±30 s of clock skew (both boxes on NTP);
 - caps the ticket's size in `Hello`;
-- keeps used nonces until `exp`, so a ticket is used once;
+- keeps used nonces until `exp`, so a ticket is used once; refuses a ticket issued before the process started (its
+  nonce may have been used with the one before), one longer than the API's lifetime or ending before it began (AP2-3,
+  AP2-4);
+- takes its keys from `TICKET_PUBLIC_KEYS` or `TICKET_PUBLIC_KEYS_FILE`, the file read again on SIGHUP (a rotation
+  without a restart), refusing a list with no key, a key id twice, a key of small order or the id `dev` (AP2-5);
 - allows one active search or match per account (two tabs, two devices). That holds per game server, which is enough
   while there is one; a second server would need the API to hold it (AC-27).
 
@@ -174,6 +178,25 @@ protocol simply changes, since no older client exists; the `u64` browser key lea
   refuses a search ticket while it runs, and the page shows until when. A rejoin that fills the lobby again removes it
   (`DELETE /api/quitters/{match}/{account}`); a rejoin itself needs no search, so the ban never blocks it. Both calls go
   through the same credential and retry queue as results.
+
+**Ratings: Glicko-2 (built 2026-10-18, `api/internal/ranked`).** Implemented from Glickman's paper ("Example of the
+Glicko-2 system", 2012; its worked example is a test), with lichess's choices where they fit (the user's direction:
+lichess's lila, `modules/rating` Glicko settings, and scalachess's `rating/glicko`, read for the approach and the numbers
+only: lila is AGPL-3.0, none of its code is ours; and lichess's rating FAQ):
+- **Taken from lichess:** a new rating 1500, deviation 500 (also the ceiling: lichess's "1500 ± 1000"), volatility 0.09
+  (capped at 0.1), τ 0.75; the deviation's floor 45; **provisional ("?") from a deviation of 110** (scalachess's
+  `provisionalDeviation`, "at least"; the FAQ says "greater than"); **each game its own rating period, the deviation
+  first grown by the time since the account's last game in that playlist**, 0.21436 rating periods a day (lila's
+  `periodsPerDay`, "chosen so a typical player's RD goes from 60 → 110 in 1 year"; a test checks ours does that, and
+  the FAQ's "around a year of inactivity" to be provisional again); a first game grows nothing; at most 700 points a
+  game (lila's `maxRatingDelta`); ratings held within 400-4000. The page and the ticket show the deviation grown to now.
+- **Not taken:** lila's `RatingRegulator` (small per-variant boosts on gains, its correction for deflation measured on
+  its own players: we have none to measure); colour advantage (no colours); a bot game's halved change (no rated bot
+  games); the virtual 1450 for a first pairing (our pairing uses the stored rating); the rankable thresholds (no
+  leaderboards yet).
+- **Ours (lichess has no team games):** in 2v2 and 3v3 each player is rated against the other team as one composite
+  opponent: its players' mean rating, their deviations' root mean square; the team's result for everyone, a quitter
+  too (LV1), a deleted player counted as a new rating in its team and not rated.
 - Because tickets are checked offline, a match can start and end while the API is down. So the game server keeps unsent
   results in a small file queue and retries with backoff; the match id makes retries safe.
 

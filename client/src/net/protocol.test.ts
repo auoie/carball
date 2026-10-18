@@ -52,7 +52,7 @@ function toMessage(m: Record<string, unknown>): ControlMessage | DatagramMessage
     case "matchFound":
       return { type: "matchFound", token: big("token"), map: m["map"] as number };
     case "welcome":
-      return { ...(m as unknown as ControlMessage & { type: "welcome" }), key: big("key"), snapshot: bytes("snapshot") };
+      return { ...(m as unknown as ControlMessage & { type: "welcome" }), key: big("key"), matchId: big("matchId"), snapshot: bytes("snapshot") };
     case "world":
       return { ...(m as unknown as ControlMessage & { type: "world" }), snapshot: bytes("snapshot") };
     case "update":

@@ -20,6 +20,9 @@ export interface RecordedCar extends BodyState {
   /** Its wheels as the vehicle had them (their suspension and steering), for a car drawn with its Blender model: its
    *  replay's wheels as live (RV-581); none for the others */
   readonly wheels?: CarWheels;
+  /** Its last touch of the ball (the engine's tick; null none): a replay hears a ball hit where it moves on, from the
+   *  frames as corrected (a touch the client learns only from a correction has no live sound: RX29C) */
+  readonly lastTouch?: number | null;
 }
 
 export interface RecordedFrame {
@@ -34,10 +37,11 @@ export interface RecordedFrame {
 export const RECORDED_FRAMES = 16 * 120;
 
 /** The live sounds a replay hears again at their frames (RA1 §1: the game's replay bodies collide again, so its impacts
- *  sound again; §8, §9: the pickups and demolitions): the ball's hits and bounces, the cars' landings, impacts and bumps,
- *  pickups, demolitions. Not the jumps and dodges: the replay finds those in its cars' flags (SND-9) */
+ *  sound again; §8, §9: the pickups and demolitions): the ball's bounces, the cars' landings, impacts and bumps,
+ *  pickups, demolitions. Not the jumps and dodges, nor the ball's hits: the replay finds those in its frames (the cars'
+ *  flags, SND-9; their last touches, from the corrected history: RX29C) */
 export function replayedSound(event: SoundEvent): boolean {
-  return event.kind !== "jump" && event.kind !== "doubleJump" && event.kind !== "flip";
+  return event.kind !== "jump" && event.kind !== "doubleJump" && event.kind !== "flip" && event.kind !== "ballHit";
 }
 
 export class ReplayRecorder {
@@ -132,8 +136,8 @@ export function freeplayTouchTeam(world: Parameters<typeof lastTouchTeam>[0], te
 }
 
 /** A car as a replay keeps it (`wheels`: its vehicle's, for a car whose drawn wheels follow them) */
-export function recordCar(car: CarState, wheels: CarWheels | null = null): RecordedCar {
+export function recordCar(car: CarState, wheels: CarWheels | null = null, lastTouch: number | null = null): RecordedCar {
   const { pos, vel, angVel, rot, team, boosting, demoed, supersonic, wheelContact, flipResets, hasJumped, hasFlipped, doubleJumped } = car;
-  const recorded = { pos, vel, angVel, rot, team, boosting, demoed, supersonic, wheelContact, flipResets, hasJumped, hasFlipped, doubleJumped };
+  const recorded = { pos, vel, angVel, rot, team, boosting, demoed, supersonic, wheelContact, flipResets, hasJumped, hasFlipped, doubleJumped, lastTouch };
   return wheels ? { ...recorded, wheels } : recorded;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { SignedOutError, accountTicket, devTicket } from "./tickets";
+import { QueueBannedError, SignedOutError, accountTicket, devTicket, queueBanText } from "./tickets";
 
 const answer = (body: unknown, status = 200) => vi.fn(() => Promise.resolve(new Response(JSON.stringify(body), { status })));
 
@@ -10,6 +10,11 @@ describe("search tickets", () => {
     expect(post).toHaveBeenCalledWith("/api/ticket", { method: "POST", headers: { "X-Carball": "1" }, credentials: "same-origin", cache: "no-store" });
     await expect(accountTicket(answer({ error: "signed out" }, 401))).rejects.toBeInstanceOf(SignedOutError);
     await expect(accountTicket(answer({ error: "busy" }, 503))).rejects.toThrow(/503/);
+    // (a leaver's queue ban: its end, the minutes left said (LV1: at least 1))
+    const banned = accountTicket(answer({ error: "queue-banned", until: new Date(Date.now() + 14.5 * 60_000).toISOString() }, 403));
+    await expect(banned).rejects.toBeInstanceOf(QueueBannedError);
+    await expect(banned).rejects.toThrow(/search again in 15 minutes/);
+    expect(queueBanText(1000, 990)).toMatch(/in 1 minute$/);
     // (a ticket is base64url, 256 characters at most: anything else isn't sent on)
     await expect(accountTicket(answer({ ticket: "has space" }))).rejects.toThrow(/malformed/);
     await expect(accountTicket(answer({ ticket: "A".repeat(257) }))).rejects.toThrow(/malformed/);

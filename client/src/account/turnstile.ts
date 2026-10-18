@@ -17,6 +17,13 @@ interface TurnstileApi {
     },
   ): string;
   remove(widget: string): void;
+  reset(widget: string): void;
+}
+
+/** A rendered widget: reset it (a new check: its token was spent by a refused sign-up), or remove it */
+export interface TurnstileWidget {
+  readonly reset: () => void;
+  readonly remove: () => void;
 }
 
 let loading: Promise<TurnstileApi> | null = null;
@@ -40,9 +47,8 @@ function load(): Promise<TurnstileApi> {
   return loading;
 }
 
-/** The widget in `container` for this site key: `token` with each check passed, null when one expires or fails; the
- *  returned function removes it */
-export async function turnstileWidget(container: HTMLElement, siteKey: string, token: (value: string | null) => void): Promise<() => void> {
+/** The widget in `container` for this site key: `token` with each check passed, null when one expires or fails */
+export async function turnstileWidget(container: HTMLElement, siteKey: string, token: (value: string | null) => void): Promise<TurnstileWidget> {
   const api = await load();
   const widget = api.render(container, {
     sitekey: siteKey,
@@ -56,7 +62,12 @@ export async function turnstileWidget(container: HTMLElement, siteKey: string, t
       token(null);
     },
   });
-  return () => {
-    api.remove(widget);
+  return {
+    reset: () => {
+      api.reset(widget);
+    },
+    remove: () => {
+      api.remove(widget);
+    },
   };
 }

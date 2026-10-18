@@ -64,6 +64,14 @@ anything rating-side beyond what's submitted is PsyNet's, unknowable, so Carball
   - **Back in:** the same team, their stats restored, spawned at once, no longer a quitter.
 - The no-show search ban (2 minutes) stays as it is, now by account.
 - Ratings are shown as numbers, lichess-style, with "?" while provisional (deviation above 110, lichess's).
+- **Built 2026-10-18 (ranked step 3):** the results and the leave penalty's latch in the game server's match host (each
+  seat's first ticket; the first armed leaver reported at the leave; a refill undoes it; no contest sends nothing; no ban
+  after a 20 s server silence), the ladder and Glicko-2 in the API (notes/accounts.md §3), the rejoin (protocol 27:
+  Hello's intent 3, Welcome's match id; the page's offer within 900 s, cleared by Exit to Main Menu), one search or match
+  per account (Refused 5), and **ranked pairing (ours)**: each search carries its account's rating (the ticket's), the
+  oldest searcher matched with those within ±100, wider by 50 every 10 s either has waited, ±600 at most, then anyone;
+  the teams split by a snake draft. The game's strings (the rejoin prompt, "Match has concluded", the ban messages) are
+  our words by key until the user clears them.
 
 ## v1 queue checklist (user scope 2026-10-14: ship v1; simple queue, no rating or ranks)
 Only what the v1 queue needs, distilled from the rows below. **V** = cleared to ship verbatim (user decisions); **K** =

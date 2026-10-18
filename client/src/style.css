@@ -2525,6 +2525,27 @@ body {
   background: rgba(20, 60, 110, 0.9);
 }
 
+/* The account's rating beside a playlist's name, and a leaver's queue ban under Find Match (ours) */
+.main-menu-rating {
+  margin-left: 0.5em;
+  font-size: 0.75em;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.main-menu-rating:empty {
+  display: none;
+}
+
+.main-menu-ban {
+  font: 14px/1.4 var(--hud-small);
+  color: #ffb36b;
+}
+
+.account-ratings {
+  font: 16px var(--hud-header);
+  color: #fff;
+}
+
 .main-menu-heading {
   padding: 4px 2px;
   font: calc(26px * var(--hud-header-scale, 1))/30px var(--hud-header);

@@ -9,6 +9,11 @@
 //! too only after `ADDRESS_STALLS` different browser keys stalled from it within `STALL_WINDOW`, or at once for a search
 //! that sent no key (RV-385, RV-407: either is often shared, by a carrier's NAT, a dorm, a household, public Wi-Fi), so a
 //! new key doesn't dodge it and one staller doesn't block their neighbours.
+//!
+//! Ranked pairing (ours: the game's matchmaker is PsyNet's, unknowable; notes/matchmaking.md): each search carries its
+//! account's rating in the playlist (its ticket's). The oldest searcher anchors a match of searchers whose ratings are
+//! within a window of theirs (`rating_window`: ±100, wider by 50 every 10 s either has waited, ±600 at most, then anyone),
+//! the rest in their order; the teams split by a snake draft on rating, for even averages.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::net::IpAddr;
@@ -30,13 +35,37 @@ const STALL_WINDOW: f64 = 600.0;
 /// bounded, RV-407. Filling it to let a staller's record go takes ~100k addresses stalling within the window, RV-428)
 const MAX_STALL_ADDRESSES: usize = 100_000;
 
-/// Who a search is from: its address (`net::address_key`), its browser's key (0: none), and the token of the slot it
-/// claimed in a match cancelled for someone else (0: none)
+/// Who a search is from: its address (`net::address_key`), its key (an account's; 0: none), the token of the slot it
+/// claimed in a match cancelled for someone else (0: none), and its rating in the playlist (`DEFAULT_RATING` unknown)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SearchFrom {
     pub address: IpAddr,
     pub key: u64,
     pub token: u64,
+    pub rating: u16,
+}
+
+/// A rating unknown (a search without a ticket: a development server's): a new account's
+pub const DEFAULT_RATING: u16 = 1500;
+
+/// The ratings a searcher who has waited `waited` seconds is matched within (±): 100, wider by 50 every 10 s, 600 at most;
+/// past that (100 s), anyone
+pub fn rating_window(waited: f64) -> f64 {
+    let steps = (waited.max(0.0) / 10.0).floor();
+    if steps >= 10.0 { f64::INFINITY } else { (100.0 + 50.0 * steps).min(600.0) }
+}
+
+/// A match's seats in the host's order (teams alternating: blue, orange, ...) for these searchers, by a snake draft on
+/// their ratings (the best to blue, the next two to orange, the next two to blue, ...): their indices
+pub fn snake_seats(ratings: &[u16]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..ratings.len()).collect();
+    order.sort_by(|&a, &b| ratings[b].cmp(&ratings[a]).then(a.cmp(&b)));
+    let (mut blue, mut orange) = (Vec::new(), Vec::new());
+    for (pick, &i) in order.iter().enumerate() {
+        // (picks 0, 3, 4, 7, 8, ... blue; 1, 2, 5, 6, ... orange)
+        if (pick + 1) % 4 < 2 { blue.push(i) } else { orange.push(i) }
+    }
+    blue.iter().zip(&orange).flat_map(|(&b, &o)| [b, o]).collect()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,8 +113,9 @@ pub struct Matchmaker {
     searching: HashMap<PlayerId, u8>,
     /// The found matches' slots, by token
     handed: HashMap<u64, Handed>,
-    /// A cancelled match's claimed tokens: their playlist, first search's time, and until when they're good
-    returning: HashMap<u64, (u8, f64, f64)>,
+    /// A cancelled match's claimed tokens: their playlist, first search's time, until when they're good, and the key that
+    /// searched (another key's search can't use it: AP2-2)
+    returning: HashMap<u64, (u8, f64, f64, u64)>,
     /// Who stalled a match: until when they can't search
     cooldowns: HashMap<Who, f64>,
     /// Each address's recent stalls (an IPv6 one by its /64): the browser keys and when
@@ -168,10 +198,13 @@ impl Matchmaker {
             }
         }
         let back = (from.token != 0)
-            .then(|| self.returning.remove(&from.token))
+            .then(|| self.returning.get(&from.token).copied())
             .flatten()
-            .filter(|&(size, _, until)| size == team_size && until > now)
-            .map(|(_, since, _)| since);
+            .filter(|&(size, _, until, key)| size == team_size && until > now && key == from.key)
+            .map(|(_, since, _, _)| since);
+        if back.is_some() {
+            self.returning.remove(&from.token);
+        }
         let queue = self.waiting.get_mut(&team_size).expect("checked above");
         self.searching.insert(id, team_size);
         match back {
@@ -234,7 +267,7 @@ impl Matchmaker {
         }
         for token in &cancelled.stayed {
             if let Some(h) = self.handed.remove(token) {
-                self.returning.insert(*token, (h.team_size, h.since, now + RETURN_SECONDS));
+                self.returning.insert(*token, (h.team_size, h.since, now + RETURN_SECONDS, h.from.key));
             }
         }
     }
@@ -293,8 +326,9 @@ impl Matchmaker {
         self.waiting.get(&team_size).map_or(0, VecDeque::len)
     }
 
-    /// Every match the waiting searchers fill, oldest searchers first: each one's token sent, their sessions let go.
-    /// (A searcher whose session already ended, its cancel not yet here, doesn't count)
+    /// Every match the waiting searchers fill: each oldest searcher in turn with those within the rating window (theirs
+    /// or the other's, whoever has waited longer), in queue order; the teams by a snake draft; each one's token sent,
+    /// their sessions let go. (A searcher whose session already ended, its cancel not yet here, doesn't count)
     pub fn form(&mut self, host: &mut impl MatchHosting, now: f64) {
         self.tidy(now);
         for (&team_size, queue) in &mut self.waiting {
@@ -304,8 +338,29 @@ impl Matchmaker {
                 continue;
             }
             queue.retain(|s| !s.out.is_closed());
-            while queue.len() >= players {
-                let found: Vec<Searcher> = queue.drain(..players).collect();
+            let mut anchor = 0;
+            while queue.len() >= players && anchor + players <= queue.len() {
+                let a = &queue[anchor];
+                let within = |s: &Searcher| {
+                    let window = rating_window(now - a.since).max(rating_window(now - s.since));
+                    (f64::from(s.from.rating) - f64::from(a.from.rating)).abs() <= window
+                };
+                let picked: Vec<usize> = std::iter::once(anchor)
+                    .chain((anchor + 1..queue.len()).filter(|&i| within(&queue[i])))
+                    .take(players)
+                    .collect();
+                if picked.len() < players {
+                    anchor += 1; // (not enough near this one yet: the next oldest may make a match)
+                    continue;
+                }
+                let mut found: Vec<Searcher> = Vec::with_capacity(players);
+                for &i in picked.iter().rev() {
+                    found.push(queue.remove(i).expect("in range"));
+                }
+                found.reverse();
+                let seats = snake_seats(&found.iter().map(|s| s.from.rating).collect::<Vec<_>>());
+                let mut found: Vec<Option<Searcher>> = found.into_iter().map(Some).collect();
+                let found: Vec<Searcher> = seats.iter().filter_map(|&i| found[i].take()).collect();
                 let keys: Vec<u64> = found.iter().map(|s| s.from.key).collect();
                 let created = host.create_match(self.playlists[&team_size], &keys, now);
                 for (searcher, token) in found.into_iter().zip(created.tokens) {
@@ -366,7 +421,7 @@ mod tests {
 
     /// A searcher's address and browser key (by id), no returning token
     fn from(id: PlayerId) -> SearchFrom {
-        SearchFrom { address: [10, 0, 0, id as u8].into(), key: 1000 + id, token: 0 }
+        SearchFrom { address: [10, 0, 0, id as u8].into(), key: 1000 + id, token: 0, rating: DEFAULT_RATING }
     }
 
     fn queued(queue: &mut Matchmaker, id: PlayerId, team_size: u8, out: Sender<Outgoing>) -> bool {
@@ -380,6 +435,75 @@ mod tests {
             }
         }
         None
+    }
+
+    #[test]
+    fn the_rating_window_widens_with_the_wait_then_takes_anyone() {
+        assert_eq!(rating_window(0.0), 100.0);
+        assert_eq!(rating_window(9.9), 100.0);
+        assert_eq!(rating_window(10.0), 150.0);
+        assert_eq!(rating_window(95.0), 550.0);
+        assert_eq!(rating_window(100.0), f64::INFINITY);
+        // (the snake draft: by rating, the best and the 4th and 5th blue, the 2nd, 3rd and 6th orange; seats alternate)
+        assert_eq!(snake_seats(&[1500, 1800, 1600, 1700]), vec![1, 3, 0, 2]);
+        assert_eq!(snake_seats(&[1000, 1100, 1200, 1300, 1400, 1500]), vec![5, 4, 2, 3, 1, 0]);
+        // (each team's mean as close as the draft gets: 1800+1500 and 1700+1600)
+        let r = [1500u16, 1800, 1600, 1700];
+        let seats = snake_seats(&r);
+        let blue: u32 = seats.iter().step_by(2).map(|&i| u32::from(r[i])).sum();
+        let orange: u32 = seats.iter().skip(1).step_by(2).map(|&i| u32::from(r[i])).sum();
+        assert_eq!((blue, orange), (3300, 3300));
+    }
+
+    #[test]
+    fn searchers_far_apart_wait_until_their_windows_meet_others_near_pair_at_once() {
+        let mut queue = Matchmaker::new(&playlists());
+        let mut host = Recorder::default();
+        let search = |queue: &mut Matchmaker, id: PlayerId, rating: u16, at: f64| {
+            let (tx, rx) = channel(OUT_QUEUE);
+            assert_eq!(queue.search(id, 1, tx, SearchFrom { rating, ..from(id) }, at), Searched::Queued);
+            rx
+        };
+        let mut low = search(&mut queue, 1, 1000, 0.0);
+        let mut high = search(&mut queue, 2, 1700, 0.0);
+        queue.form(&mut host, 0.0);
+        assert!(host.asked.is_empty(), "700 apart: no match yet");
+        // (a searcher near the high one: paired at once, the low one still waiting, its place kept)
+        let mut near = search(&mut queue, 3, 1650, 1.0);
+        queue.form(&mut host, 1.0);
+        assert_eq!(host.asked, vec![(1, 2)]);
+        assert!(found(&mut high).is_some() && found(&mut near).is_some() && found(&mut low).is_none());
+        // (another far one: 600 apart pairs once either has waited 100 s, anyone after)
+        let mut far = search(&mut queue, 4, 1600, 2.0);
+        queue.form(&mut host, 50.0);
+        assert_eq!(host.asked.len(), 1, "600 apart at 50 s: not yet");
+        queue.form(&mut host, 100.0);
+        assert_eq!(host.asked.len(), 2);
+        assert!(found(&mut low).is_some() && found(&mut far).is_some());
+    }
+
+    #[test]
+    fn a_returning_token_is_its_own_accounts_alone() {
+        let mut queue = Matchmaker::new(&playlists());
+        let mut host = Recorder::default();
+        let mut rxs = Vec::new();
+        for id in 1..=2 {
+            let (tx, rx) = channel(OUT_QUEUE);
+            assert!(queued(&mut queue, id, 1, tx));
+            rxs.push(rx);
+        }
+        queue.form(&mut host, 0.0);
+        let tokens: Vec<u64> = rxs.iter_mut().map(|rx| found(rx).unwrap()).collect();
+        // (the match cancelled for player 2's stall: player 1's token returns them to the front)
+        queue.cancelled(&Cancelled { stayed: vec![tokens[0]], stalled: vec![tokens[1]] }, 13.0);
+        // (another account's search with it: an ordinary search, at the back; the token still the owner's)
+        let (tx, _rx) = channel(OUT_QUEUE);
+        assert_eq!(queue.search(7, 1, tx, SearchFrom { token: tokens[0], ..from(7) }, 14.0), Searched::Queued);
+        assert!(queue.returning.contains_key(&tokens[0]), "not spent by another account");
+        let (tx, _rx) = channel(OUT_QUEUE);
+        assert_eq!(queue.search(1, 1, tx, SearchFrom { token: tokens[0], ..from(1) }, 15.0), Searched::Queued);
+        assert!(!queue.returning.contains_key(&tokens[0]), "its owner's: back at the front");
+        assert_eq!(queue.waiting[&1].front().map(|s| s.id), Some(1));
     }
 
     #[test]
@@ -402,7 +526,9 @@ mod tests {
         queue.form(&mut host, 0.0);
         assert_eq!(host.asked, vec![(2, 4)]);
         let tokens: Vec<u64> = rxs.iter_mut().map(|rx| found(rx).unwrap()).collect();
-        assert_eq!(tokens, vec![1, 2, 3, 4], "oldest first, a token each");
+        // (a token each, seated by the snake draft: equal ratings in search order, the 1st and 4th blue, the 2nd and 3rd
+        // orange; the host's seats alternate blue, orange)
+        assert_eq!(tokens, vec![1, 2, 4, 3], "a token each, seated by the draft");
         assert!(rxs.iter().all(Receiver::is_closed), "their search sessions let go");
         assert_eq!((queue.searching(2), queue.searching(1)), (0, 1));
         assert!(found(&mut solo).is_none());

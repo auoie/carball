@@ -11,7 +11,7 @@ use carball_server::engine::{self, Arena};
 use carball_server::game::Outgoing;
 use carball_server::net::NetLimits;
 use carball_server::protocol::{self, Control, Datagram, InputFrame};
-use carball_server::ticket::{Tickets, unix_now};
+use carball_server::ticket::{DEFAULT_RATING, Tickets, unix_now};
 use carball_server::{game_loop, net};
 use wtransport::{ClientConfig, Endpoint};
 
@@ -452,14 +452,20 @@ async fn a_queue_with_tickets_takes_only_good_ones_and_binds_each_seat_to_its_ac
     let tickets = Arc::new(Tickets::from_list("").unwrap().with_dev_key().unwrap());
     let limits = NetLimits { tickets: Some(tickets.clone()), ..open_limits() };
     tokio::spawn(net::accept_loop(Arc::new(server), to_game, limits));
-    let ticket = |account: u8, name: &str| tickets.dev_ticket([account; 16], name, unix_now()).unwrap();
+    let ticket =
+        |account: u8, name: &str| tickets.dev_ticket([account; 16], name, [DEFAULT_RATING; 3], unix_now()).unwrap();
     let refused = Control::Refused { reason: protocol::REFUSED_TICKET };
 
     let (none, ..) = first_reply(port, cert_hash, queue_hello(protocol::INTENT_SEARCH, 1, 0)).await;
     assert_eq!(none, refused, "a search without a ticket");
     let (junk, ..) = first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_SEARCH, 1, 0, "AAAA".into())).await;
     assert_eq!(junk, refused, "a malformed ticket");
-    let foreign = Tickets::from_list("").unwrap().with_dev_key().unwrap().dev_ticket([9; 16], "Elsewhere", unix_now());
+    let foreign = Tickets::from_list("").unwrap().with_dev_key().unwrap().dev_ticket(
+        [9; 16],
+        "Elsewhere",
+        [DEFAULT_RATING; 3],
+        unix_now(),
+    );
     let (other_key, ..) =
         first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_SEARCH, 1, 0, foreign.unwrap())).await;
     assert_eq!(other_key, refused, "another signer's ticket");
@@ -492,6 +498,14 @@ async fn a_queue_with_tickets_takes_only_good_ones_and_binds_each_seat_to_its_ac
     }
     names.sort_unstable();
     assert_eq!(names, vec!["Ada".to_string(), "Bea".to_string()], "the tickets' names");
+    // (an account seated in a running match can't search for another: one search or match per account, AP2-1)
+    let (again, ..) =
+        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_SEARCH, 1, 0, ticket(1, "Ada"))).await;
+    assert_eq!(again, Control::Refused { reason: protocol::REFUSED_IN_MATCH }, "a second match for Ada");
+    // (a 1v1 has no rejoin: refused as concluded)
+    let (rejoin, ..) =
+        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_REJOIN, 0, 1, ticket(1, "Ada"))).await;
+    assert_eq!(rejoin, Control::Refused { reason: protocol::REFUSED_CONCLUDED });
 }
 
 /// A search's session, its control stream kept for the test to close (as the page's `finish`)

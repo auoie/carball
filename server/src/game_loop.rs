@@ -5,10 +5,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::mpsc::{Receiver, Sender, UnboundedSender};
 
 use crate::game::Outgoing;
-use crate::match_host::{MatchHost, Playlist};
+use crate::match_host::{MatchHost, Playlist, Report};
 use crate::net::{Intent, ToGame};
 use crate::protocol::{self, Control};
 use crate::queue::{Matchmaker, SearchFrom, Searched};
@@ -33,11 +33,23 @@ fn refuse(out: Sender<Outgoing>, reason: u8) {
 /// `test_goal_after`: browser tests only (`Game::test_goal_after`, s). `heartbeat`: the loop's last pass, in ms from
 /// `start` (the health check's)
 pub fn run(
+    messages: Receiver<ToGame>,
+    mode: Mode,
+    test_goal_after: Option<f32>,
+    heartbeat: Arc<AtomicU64>,
+    start: Instant,
+) {
+    run_with_reports(messages, mode, test_goal_after, heartbeat, start, None);
+}
+
+/// The same, the ranked reports (results, quitters, refills: `match_host::Report`) handed to `reports` (the outbox's)
+pub fn run_with_reports(
     mut messages: Receiver<ToGame>,
     mode: Mode,
     test_goal_after: Option<f32>,
     heartbeat: Arc<AtomicU64>,
     start: Instant,
+    reports: Option<UnboundedSender<Report>>,
 ) {
     let seconds = |at: Instant| at.saturating_duration_since(start).as_secs_f64();
     // (each server run its own kickoff orders, as the game's are random)
@@ -54,6 +66,7 @@ pub fn run(
     }
     loop {
         heartbeat.store(start.elapsed().as_millis() as u64, Ordering::Relaxed);
+        host.observe(seconds(Instant::now()));
         for _ in 0..MESSAGES_PER_LOOP {
             match messages.try_recv() {
                 Ok(ToGame::Join { id, intent, request, address, out }) => match intent {
@@ -62,8 +75,18 @@ pub fn run(
                             refuse(out, protocol::REFUSED_MODE);
                         }
                     }
+                    // (an account holding a seat already, found or running: no second match, AP2-1)
+                    Intent::Search { .. } if request.verified && host.account_busy(request.key) => {
+                        refuse(out, protocol::REFUSED_IN_MATCH);
+                    }
                     Intent::Search { team_size, token } => {
-                        let from = SearchFrom { address, key: request.key, token };
+                        // (its account's rating in the playlist, from its ticket: the queue pairs by it)
+                        let rating = request
+                            .ticket
+                            .as_ref()
+                            .and_then(|t| t.ratings.get(usize::from(team_size.max(1)) - 1).copied())
+                            .unwrap_or(crate::queue::DEFAULT_RATING);
+                        let from = SearchFrom { address, key: request.key, token, rating };
                         match queue.search(id, team_size, out.clone(), from, seconds(Instant::now())) {
                             Searched::Queued => {}
                             Searched::NoPlaylist => refuse(out, protocol::REFUSED_MODE),
@@ -80,6 +103,12 @@ pub fn run(
                         if !host.claim(token, id, request, out.clone()) {
                             eprintln!("player {id}: no reservation for their token");
                             refuse(out, protocol::REFUSED_TOKEN);
+                        }
+                    }
+                    Intent::Rejoin { .. } if !queue_mode => refuse(out, protocol::REFUSED_MODE),
+                    Intent::Rejoin { match_id } => {
+                        if !host.rejoin(match_id, id, request, out.clone()) {
+                            refuse(out, protocol::REFUSED_CONCLUDED);
                         }
                     }
                 },
@@ -124,6 +153,15 @@ pub fn run(
         // them waits, RV-367)
         for cancelled in host.take_cancelled() {
             queue.cancelled(&cancelled, now);
+        }
+        // (the accounts service's: results, quitters, refills, sent by the outbox)
+        for report in host.take_reports() {
+            match &reports {
+                Some(tx) => {
+                    let _ = tx.send(report);
+                }
+                None => eprintln!("ranked report (no outbox): {report:?}"),
+            }
         }
         // (until the next tick is due, a millisecond at most: the messages are read meanwhile)
         let wait = host.next_tick().map_or(0.001, |next| (next - seconds(Instant::now())).clamp(0.0, 0.001));

@@ -62,6 +62,10 @@ func TestLoadRefusals(t *testing.T) {
 		"a Google id without its secret":     func(v map[string]string) { delete(v, "GOOGLE_CLIENT_SECRET_FILE") },
 		"a spaced password keyword (AP-14)":  func(v map[string]string) { v["DATABASE_URL"] = "host=db user=u password = pw" },
 		"a bad trusted proxy":                func(v map[string]string) { v["TRUSTED_PROXIES"] = "172.18.0.0/16, not-a-cidr" },
+		"every address trusted (AP2-6)":      func(v map[string]string) { v["TRUSTED_PROXIES"] = "0.0.0.0/0" },
+		"every IPv6 address trusted":         func(v map[string]string) { v["TRUSTED_PROXIES"] = "::/0" },
+		"a public address trusted":           func(v map[string]string) { v["TRUSTED_PROXIES"] = "203.0.113.7" },
+		"a prefix running past private":      func(v map[string]string) { v["TRUSTED_PROXIES"] = "10.0.0.0/7" },
 		"no trusted proxy (the tunnel's)":    func(v map[string]string) { delete(v, "TRUSTED_PROXIES") },
 		"a blank trusted proxy list":         func(v map[string]string) { v["TRUSTED_PROXIES"] = " , " },
 		"a health address off loopback":      func(v map[string]string) { v["HEALTH_ADDR"] = "0.0.0.0:8081" },
@@ -94,11 +98,16 @@ func TestLoadDev(t *testing.T) {
 			t.Errorf("development with %s accepted", origin)
 		}
 	}
+	// (a development server on loopback alone, unless LISTEN_ADDR says otherwise: AP2-7)
+	vars["PUBLIC_ORIGIN"] = "http://localhost:5173"
+	if c, err := Load(env(vars), true); err != nil || c.ListenAddr != "127.0.0.1:8080" {
+		t.Errorf("the development listener: %q, %v", c.ListenAddr, err)
+	}
 }
 
 func TestProxiesAndHealth(t *testing.T) {
 	vars := good(t)
-	vars["TRUSTED_PROXIES"] = "172.18.0.0/16, 10.0.0.7, fd00::/8"
+	vars["TRUSTED_PROXIES"] = "172.18.0.0/16, 10.0.0.7, fd00::/8, ::ffff:172.19.0.0/112, ::ffff:127.0.0.1"
 	c, err := Load(env(vars), false)
 	if err != nil {
 		t.Fatal(err)
@@ -107,7 +116,7 @@ func TestProxiesAndHealth(t *testing.T) {
 	for _, p := range c.TrustedProxies {
 		got = append(got, p.String())
 	}
-	if strings.Join(got, " ") != "172.18.0.0/16 10.0.0.7/32 fd00::/8" || c.HealthAddr != "127.0.0.1:8081" {
+	if strings.Join(got, " ") != "172.18.0.0/16 10.0.0.7/32 fd00::/8 172.19.0.0/16 127.0.0.1/32" || c.HealthAddr != "127.0.0.1:8081" {
 		t.Errorf("TrustedProxies %v, HealthAddr %q", got, c.HealthAddr)
 	}
 	if Hostname("https://carball.example") != "carball.example" || Hostname("http://localhost:5173") != "localhost" {

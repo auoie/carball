@@ -34,6 +34,8 @@ type Client struct {
 	Issuer string
 	// HTTP makes the discovery, key and token calls (with a timeout: AC-15)
 	HTTP *http.Client
+	// Now is the clock the discovery's failure is timed by (nil: time.Now; the tests')
+	Now func() time.Time
 
 	mu       sync.Mutex
 	provider *oidc.Provider
@@ -53,14 +55,18 @@ func (c *Client) discover() (*oidc.Provider, error) {
 	if c.provider != nil {
 		return c.provider, nil
 	}
-	if c.failed != nil && time.Since(c.failedAt) < discoveryRetry {
+	now := time.Now
+	if c.Now != nil {
+		now = c.Now
+	}
+	if c.failed != nil && now().Sub(c.failedAt) < discoveryRetry {
 		return nil, c.failed
 	}
 	ctx, cancel := context.WithTimeout(oidc.ClientContext(context.Background(), c.HTTP), 10*time.Second)
 	defer cancel()
 	p, err := oidc.NewProvider(ctx, c.Issuer)
 	if err != nil {
-		c.failed, c.failedAt = fmt.Errorf("google: discovery: %w", err), time.Now()
+		c.failed, c.failedAt = fmt.Errorf("google: discovery: %w", err), now()
 		return nil, c.failed
 	}
 	c.provider, c.failed = p, nil

@@ -2,7 +2,9 @@
 // an account, the offline modes don't); after a provider's first sign-in, the sign-up (the name other players see, and
 // Turnstile's check); signed in, the account (its name and rename, the sign-ins it has, sign out, sign out everywhere,
 // delete). Our own words: the game signs in with its platforms' accounts, with no page of this kind.
-import { type Account, type AccountsApi, AccountError, type ApiError, type Provider, type Signup, signInUrl } from "../account/api";
+import { type Account, type AccountsApi, AccountError, type ApiError, type Provider, type Signup, ratingText, signInUrl } from "../account/api";
+import type { TurnstileWidget } from "../account/turnstile";
+import { PLAYLISTS } from "../game/matchmaking";
 
 export const ACCOUNT_TEXT = {
   entrySignedOut: "Sign In",
@@ -21,6 +23,8 @@ export const ACCOUNT_TEXT = {
   checking: "Waiting for the check…",
   accountTitle: "Account",
   signedInWith: (providers: readonly Provider[]): string => `Signed in with ${providers.map((p) => PROVIDER_NAMES[p]).join(" and ")}`,
+  ratings: "Ratings",
+  provisionalNote: "? while provisional: a few more matches settle it",
   rename: "Rename",
   save: "Save",
   signOut: "Sign Out",
@@ -29,6 +33,7 @@ export const ACCOUNT_TEXT = {
   deleteTitle: "DELETE ACCOUNT",
   deleteBody: "Your account, its sign-ins and its ratings go at once. This sign-in can't make a new account for 30 days. Delete it?",
   signedOutEverywhere: "Signed out on every device.",
+  sessionEnded: "Your sign-in has ended. Sign in again to play online.",
 } as const;
 
 const PROVIDER_NAMES: Readonly<Record<Provider, string>> = { google: "Google", steam: "Steam" };
@@ -88,8 +93,8 @@ export interface AccountPagesActions {
   readonly back: () => void;
   /** Go to a provider's sign-in (a page load) */
   readonly go: (url: string) => void;
-  /** Turnstile's widget in `container` (src/account/turnstile.ts), its remover */
-  readonly turnstile: (container: HTMLElement, siteKey: string, token: (value: string | null) => void) => Promise<() => void>;
+  /** Turnstile's widget in `container` (src/account/turnstile.ts) */
+  readonly turnstile: (container: HTMLElement, siteKey: string, token: (value: string | null) => void) => Promise<TurnstileWidget>;
 }
 
 /** The account page's three forms, drawn into the menu's account column */
@@ -97,7 +102,7 @@ export class AccountPages {
   readonly #body: HTMLElement;
   readonly #api: AccountsApi;
   readonly #actions: AccountPagesActions;
-  #removeWidget: (() => void) | null = null;
+  #widget: TurnstileWidget | null = null;
 
   constructor(body: HTMLElement, api: AccountsApi, actions: AccountPagesActions) {
     this.#body = body;
@@ -148,6 +153,11 @@ export class AccountPages {
         .catch((e: unknown) => {
           create.disabled = false;
           status.textContent = accountErrorText(e instanceof AccountError ? e.code : "server");
+          // (the check's token spent by the refused try: a new check before the next, RX29C)
+          if (this.#widget) {
+            token = null;
+            this.#widget.reset();
+          }
         });
     });
     create.classList.add("main-menu-find");
@@ -158,8 +168,8 @@ export class AccountPages {
           token = value;
           if (value !== null && status.textContent === T.checking) status.textContent = "";
         })
-        .then((remove) => {
-          this.#removeWidget = remove;
+        .then((rendered) => {
+          this.#widget = rendered;
         })
         .catch(() => {
           status.textContent = accountErrorText("unavailable");
@@ -219,9 +229,18 @@ export class AccountPages {
     const rename = document.createElement("div");
     rename.className = "account-rename";
     rename.append(this.#label(T.rename, name), save);
+    const ratings = this.#line(
+      PLAYLISTS.map((p) => {
+        const r = account.ratings.find((x) => x.playlist === p.teamSize);
+        return `${p.name} ${r ? ratingText(r) : "–"}`;
+      }).join("   "),
+      "account-ratings",
+    );
+    ratings.title = T.provisionalNote;
     this.#draw(T.accountTitle, [
       this.#line(account.name, "account-name"),
       this.#line(T.signedInWith(account.providers)),
+      ratings,
       rename,
       status,
       signOut,
@@ -239,8 +258,8 @@ export class AccountPages {
   }
 
   #clearWidget(): void {
-    this.#removeWidget?.();
-    this.#removeWidget = null;
+    this.#widget?.remove();
+    this.#widget = null;
   }
 
   #draw(title: string, parts: readonly HTMLElement[]): void {

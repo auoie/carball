@@ -3,11 +3,26 @@
 // check, the account's rename, sign-out and deletion. The deployment's page only: a development page plays on its game
 // server's own tickets, with no accounts.
 
-/** A signed-in account (GET /api/me) */
+/** A signed-in account (GET /api/me): its ratings in the playlists (1v1, 2v2, 3v3), a leaver's queue ban's end (ms) */
 export interface Account {
   readonly id: string;
   readonly name: string;
   readonly providers: readonly Provider[];
+  readonly ratings: readonly ShownRating[];
+  readonly queueBanUntil: number | null;
+}
+
+/** A playlist's rating as the page shows it ("?" while provisional: lichess's) */
+export interface ShownRating {
+  readonly playlist: number;
+  readonly rating: number;
+  readonly provisional: boolean;
+  readonly games: number;
+}
+
+/** A rating as a line shows it: "1523", "1500?" */
+export function ratingText(r: ShownRating): string {
+  return `${String(r.rating)}${r.provisional ? "?" : ""}`;
 }
 
 export type Provider = "google" | "steam";
@@ -120,9 +135,23 @@ export class AccountsApi {
 }
 
 function account(body: unknown): Account {
-  const b = (body ?? {}) as { id?: unknown; name?: unknown; providers?: unknown };
+  const b = (body ?? {}) as { id?: unknown; name?: unknown; providers?: unknown; ratings?: unknown; queueBanUntil?: unknown };
   if (typeof b.id !== "string" || typeof b.name !== "string" || !Array.isArray(b.providers)) throw new AccountError("server");
-  return { id: b.id, name: b.name, providers: PROVIDERS.filter((p) => (b.providers as unknown[]).includes(p)) };
+  const ratings: ShownRating[] = [];
+  for (const r of Array.isArray(b.ratings) ? (b.ratings as unknown[]) : []) {
+    const x = (r ?? {}) as { playlist?: unknown; rating?: unknown; provisional?: unknown; games?: unknown };
+    if (typeof x.playlist === "number" && typeof x.rating === "number") {
+      ratings.push({ playlist: x.playlist, rating: x.rating, provisional: x.provisional === true, games: typeof x.games === "number" ? x.games : 0 });
+    }
+  }
+  const until = typeof b.queueBanUntil === "string" ? Date.parse(b.queueBanUntil) : NaN;
+  return {
+    id: b.id,
+    name: b.name,
+    providers: PROVIDERS.filter((p) => (b.providers as unknown[]).includes(p)),
+    ratings,
+    queueBanUntil: Number.isFinite(until) ? until : null,
+  };
 }
 
 /** What a sign-in's return says (`/?signin=…&until=…`, `/?signup`): a notice to show, or the sign-up to finish */

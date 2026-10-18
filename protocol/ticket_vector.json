@@ -1,0 +1,26 @@
+{
+  "seed": "yMfGxcTDwsHAv769vLu6ubi3trW0s7KxsK+urayrqqk=",
+  "keyId": "vector",
+  "publicKey": "J07WsmgF0v6NBgUp7povKHY7aXbZxf0d7jj/NrO3aTk=",
+  "account": "0f0e0d0c0b0a49088706050403020100",
+  "name": "Made Up é",
+  "issued": 1792300000,
+  "expires": 1792300120,
+  "nonce": "0102030405060708090a0b0c0d0e0f10",
+  "ratings": [
+    [
+      1500,
+      500
+    ],
+    [
+      1723,
+      64
+    ],
+    [
+      1312,
+      110
+    ]
+  ],
+  "encoded": "AgZ2ZWN0b3IPDg0MCwpJCIcGBQQDAgEAAAAAAGrUU-AAAAAAatRUWAECAwQFBgcICQoLDA0ODxAKTWFkZSBVcCDDqQXcAfQGuwBABSAAbts1B7-als-yoqxcjtOWAGrp6wF99J62o_rM7vbVJu_CoS_cWyFmMX-GSNNZhyPaRIGSoAzQQiAsUApAAPhmggY",
+  "comment": "A search ticket (version 2) made by api/internal/ticket and checked by server/src/ticket.rs: made-up values"
+}

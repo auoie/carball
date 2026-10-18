@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -97,5 +98,31 @@ func TestExchangePKCE(t *testing.T) {
 	// (another verifier than the challenge's: the provider refuses the code)
 	if _, err := c.Exchange(context.Background(), q.Get("code"), oauth2.GenerateVerifier(), "n"); err == nil {
 		t.Fatal("a code exchanged with the wrong PKCE verifier")
+	}
+}
+
+// A failed discovery answers for itself for 30 s: Google isn't asked again by every sign-in meanwhile; after, it is
+// (AP-17, AP2-10)
+func TestDiscoveryFailureCached(t *testing.T) {
+	asked := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		asked++
+		http.Error(w, "down", http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+	at := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
+	c := &Client{ClientID: "c", Issuer: srv.URL, HTTP: srv.Client(), Now: func() time.Time { return at }}
+	for range 3 {
+		if _, err := c.AuthURL("s", "n", "v"); err == nil {
+			t.Fatal("a discovery that failed: no error")
+		}
+	}
+	if asked != 1 {
+		t.Errorf("asked %d times within the 30 s, want 1", asked)
+	}
+	at = at.Add(31 * time.Second)
+	_, _ = c.AuthURL("s", "n", "v")
+	if asked != 2 {
+		t.Errorf("asked %d times after the 30 s, want 2", asked)
 	}
 }

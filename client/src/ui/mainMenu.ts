@@ -11,6 +11,8 @@ import type { BotChoices } from "../local/botMatch";
 import { BOT_MATCH_TEXT } from "../local/botText";
 import type { BotsPage } from "./botsPage";
 import type { PackListing } from "../training/packs";
+import { type ShownRating, ratingText } from "../account/api";
+import { queueBanText } from "../net/tickets";
 
 export const MAIN_MENU_TEXT = {
   play: "Play",
@@ -105,6 +107,11 @@ export class MainMenu {
   readonly #accountLeft: (() => void) | undefined;
   /** The account's page, its body filled by ui/accountPages.ts */
   readonly accountBody: HTMLDivElement;
+  /** Each playlist's rating beside its name (the account's: none signed out or on a development page) */
+  readonly #ratingTags = new Map<number, HTMLSpanElement>();
+  /** A leaver's queue ban under Find Match (LV1: the Play menu shows it), until when (ms) */
+  readonly #banLine: HTMLDivElement;
+  #banUntil: number | null = null;
 
   constructor(host: HTMLElement, actions: MainMenuActions) {
     this.#root = document.createElement("div");
@@ -163,6 +170,10 @@ export class MainMenu {
       const b = button(playlists, p.name, () => {
         this.#select(p.teamSize);
       });
+      const tag = document.createElement("span");
+      tag.className = "main-menu-rating";
+      b.append(tag);
+      this.#ratingTags.set(p.teamSize, tag);
       b.classList.add("main-menu-playlist");
       b.setAttribute("role", "radio");
       b.dataset["playlist"] = String(p.teamSize);
@@ -173,6 +184,10 @@ export class MainMenu {
     button(this.#play, SEARCH_TEXT.findMatch, () => {
       actions.findMatch(this.#playlist);
     }).classList.add("main-menu-find");
+    this.#banLine = document.createElement("div");
+    this.#banLine.className = "main-menu-ban";
+    this.#banLine.hidden = true;
+    this.#play.append(this.#banLine);
     // (each page's own Back row: no B Back hint under it as well, one Back, the user's call (2026-10-18); B and Escape
     // still go back)
     button(this.#play, BACK_TEXT, () => {
@@ -276,6 +291,27 @@ export class MainMenu {
   setAccountEntry(label: string | null): void {
     this.#accountEntry.hidden = label === null;
     this.#accountEntry.textContent = label ?? "";
+  }
+
+  /** The account's ratings beside the playlists' names (null: none shown) */
+  setRatings(ratings: readonly ShownRating[] | null): void {
+    for (const [teamSize, tag] of this.#ratingTags) {
+      const r = ratings?.find((x) => x.playlist === teamSize);
+      tag.textContent = r ? ratingText(r) : "";
+    }
+  }
+
+  /** A leaver's queue ban's end (ms; null: none): its line under Find Match while it runs */
+  setQueueBan(until: number | null): void {
+    this.#banUntil = until;
+    this.#drawBan();
+  }
+
+  #drawBan(): void {
+    const now = Date.now();
+    const on = this.#banUntil !== null && this.#banUntil > now;
+    this.#banLine.hidden = !on;
+    if (on && this.#banUntil !== null) this.#banLine.textContent = queueBanText(this.#banUntil, now);
   }
 
   /** The account's page shown (its body drawn first), the menu open */
@@ -416,6 +452,7 @@ export class MainMenu {
     this.#account.hidden = view !== "account";
     this.#top.hidden = view !== "top";
     this.#play.hidden = view !== "play";
+    if (view === "play") this.#drawBan();
     if (this.#botsView) this.#botsView.page.hidden = view !== "bots";
     this.#training.hidden = view !== "training";
     this.#garage.hidden = view !== "garage";

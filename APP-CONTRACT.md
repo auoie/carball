@@ -104,12 +104,19 @@ they change there is lost when the newer page returns (RV-425; `client/src/setti
 | `ALLOWED_ORIGIN` | `https://carball.zolt.top` | the page origin(s) allowed to open sessions, comma-separated (case doesn't matter); others (and none) get 403. Required with a certificate: empty or blank, the server refuses to start |
 | `CERT_PATH` | `/certs/fullchain.pem` | the certificate chain (PEM) for `PUBLIC_HOST`, publicly trusted (browsers refuse a self-signed one; in a test, Chrome's WebTransport refused a locally trusted test CA and ignored `--ignore-certificate-errors*` too). Required in queue mode (an empty one is an error: no silent self-signed server) |
 | `KEY_PATH` | `/certs/privkey.pem` | its private key (PEM); a key that isn't the certificate's is refused (the old pair stays, tried again) |
-| `SERVER_MODE` | `queue` | `queue`: the 1v1 / 2v2 / 3v3 queue (searches and claims only); `direct`: one open match (development) |
+| `SERVER_MODE` | `queue` | `queue`: the 1v1 / 2v2 / 3v3 queue (searches, claims and rejoins only); `direct`: one open match, development only (with a certificate it's refused: anyone would join without a ticket) |
 | `HEALTH_PORT` | `8081` | the health endpoint, on 127.0.0.1 inside the container only |
-| `TICKET_PUBLIC_KEYS` | (none) | the search tickets' public keys (notes/accounts.md §3): `KID BASE64` each (the line `carball-api ticket-key KID` prints), comma- or newline-separated, the API's current key among them (two while it rotates). Required in queue mode (empty or blank, the server refuses to start; `--dev` makes a key of its own); a search or claim without a ticket signed by one of them, in its time and not used before, is refused (`Refused` 4) |
+| `TICKET_PUBLIC_KEYS` | (none) | the search tickets' public keys (notes/accounts.md §3): `KID BASE64` each (the line `carball-api ticket-key KID` prints), comma- or newline-separated, the API's current key among them (two while it rotates). Required in queue mode, or `TICKET_PUBLIC_KEYS_FILE` (empty, blank or naming no key, the server refuses to start; so does a key of small order, a key id twice, or the id `dev`; the key ids are logged at start); a search, claim or rejoin without a ticket signed by one of them, in its time (two minutes; issued since the server started) and not used before, is refused (`Refused` 4) |
+| `TICKET_PUBLIC_KEYS_FILE` | (none) | the same list in a file (not both): read at start and again on **SIGHUP**, so a rotation needs no restart (a bad file keeps the keys there were; the new ids logged) |
+| `API_URL` | (none) | the accounts service's origin, `https://HOST[:PORT]` (e.g. `https://carball.zolt.top`, through the tunnel): each queue match's result, each armed leave and each refill are posted to it (notes/accounts.md §3). Required in queue mode (with `GAME_SERVER_TOKEN_FILE`; refused at start without, unless `--dev`, which logs the calls only) |
+| `GAME_SERVER_TOKEN_FILE` | (none) | the game server's token for those calls (a file: the API's `GAME_SERVER_TOKEN_FILE` holds the same, 32 characters or more of random text), sent as a bearer token |
+| `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET_FILE` | (none) | the tunnel's Access service token on `/api/results` and `/api/quitters` (its id; its secret as a file), both or neither (without: a warning, the calls go without it) |
+| `OUTBOX_DIR` | `/var/lib/carball-game/outbox` | where the calls wait until the service takes them (the image's volume `/var/lib/carball-game`, uid 10001's): a call that fails for a reason that may pass (no answer, a 5xx, 429) is tried again, in order, with a growing wait (5 s to 5 min), for up to 24 h (the service's acceptance window), and a restart sends what's left; a call refused otherwise (a 4xx) is logged and dropped |
 | `MESHES_DIR` | `/app/collision_meshes` | the arena's collision meshes (in the image; keep the default: the image's own): a folder whose `arena/` holds the arena's 16 meshes in this image's format, the 4 goal halves placed by their offset. Anything else (empty, the old `soccar/` layout, a partial copy, meshes from before 8f78a1a, a truncated file) stops the server at start, saying what's wrong (RV-421, RV-434) |
 
-A development run of the image takes `--dev`: a self-signed certificate made at start whatever `CERT_PATH` and `KEY_PATH`
+A development run of the image takes `--dev` (refused beside production keys, `TICKET_PUBLIC_KEYS` or its file, and when a
+certificate file is there at `CERT_PATH` or `KEY_PATH`: a public server's; it warns that it signs tickets for anyone): a
+self-signed certificate made at start whatever `CERT_PATH` and `KEY_PATH`
 say, pinned by the page through the info endpoint (the info reports the game port inside the container, so publish it as
 the same port): `docker run --rm -e GAME_PORT=14502 -p 127.0.0.1:14502:14502/udp -p 127.0.0.1:14503:4434
 -e ALLOWED_ORIGIN=http://localhost:13000 carball-game:TAG --dev --info-bind 0.0.0.0`, the page opened with
@@ -120,7 +127,17 @@ the same port): `docker run --rm -e GAME_PORT=14502 -p 127.0.0.1:14502:14502/udp
 
 - **Ports:** 4433/udp only. Nothing listens on TCP outside the container (the health endpoint is 127.0.0.1; the
   development info server is off with a certificate).
-- **Volumes:** the certificate directory, read-only, at `/certs` (e.g. `-v /etc/letsencrypt/live/game.carball.zolt.top:/certs:ro`
+- **Outbound:** https to `API_URL` only (reqwest over rustls; the root certificates are Mozilla's, built into the binary
+  through the `webpki-roots` crate, so the image needs no CA bundle: they update when the crate does, with a rebuild).
+- **The ranked rules** (notes/accounts.md §3, notes/matchmaking.md LV1): every queue match is rated: its result (the
+  winning team; each seat's first ticket, team, quitter flag and time played) goes to `POST /api/results` when it ends
+  with a winner; a match with none (everyone left, cancelled before the start) is a no contest and sends nothing. The
+  first player to leave while the lobby is full and there's no winner yet is reported at the leave (`POST
+  /api/quitters`, their queue ban); a rejoin that fills the lobby again undoes it (`DELETE /api/quitters/{match}/{account}`).
+  No ban when the match hadn't ticked for 20 s (the server's own outage). A ranked 2v2 or 3v3 seat left by accident is
+  held for a rejoin until the match ends. One search or match per account; the queue pairs by rating (ours: ±100,
+  wider by 50 every 10 s waited, ±600 at most, then anyone; teams by a snake draft).
+- **Volumes:** `/var/lib/carball-game` (the outbox: a few KB, keep it across restarts). The certificate directory, read-only, at `/certs` (e.g. `-v /etc/letsencrypt/live/game.carball.zolt.top:/certs:ro`
   with the archive files it links to reachable). The process runs as **uid 10001**: the key must be readable by it (a
   copy owned by or readable to 10001, or `--user` set to the files' owner).
 - **Certificate reload:** the files are checked every 5 s (modification times) and read again when either changes, or at
@@ -156,9 +173,9 @@ The accounts service (notes/accounts.md). **Nothing is deployed yet: the first d
 
 | Env | Default in the image | |
 |---|---|---|
-| `LISTEN_ADDR` | `:8080` | the HTTP listener (plain HTTP: TLS is the tunnel's) |
+| `LISTEN_ADDR` | `:8080` | the HTTP listener (plain HTTP: TLS is the tunnel's); `--dev`'s default `127.0.0.1:8080` |
 | `HEALTH_ADDR` | `127.0.0.1:8081` | the health check's own listener, loopback only (a non-loopback one is refused): never reachable through the tunnel |
-| `TRUSTED_PROXIES` | (required; `--dev`: optional) | the tunnel connector's address as the API sees it (CIDRs or single addresses, comma-separated), whose `CF-Connecting-IP` is believed: `127.0.0.1/32,::1/128` when cloudflared and the API share the host's network (`--network host`); the Docker network's subnet, e.g. `172.18.0.0/16`, when cloudflared is a container on the API's network. (cloudflared on the host and the API's port published on `127.0.0.1`: the API sees the Docker network's gateway, e.g. `172.18.0.1/32`, `docker network inspect` shows it.) From anyone else the header is ignored and the connection's address is the rate limits' key. Unset, the service refuses to start (behind the tunnel every user would share the connector's key); it logs the list at start, and a header ignored from an untrusted peer is warned of once per kind of peer (loopback, private, public; never the address): that warning behind the tunnel means the value is wrong |
+| `TRUSTED_PROXIES` | (required; `--dev`: optional) | the tunnel connector's address as the API sees it (CIDRs or single addresses, comma-separated), whose `CF-Connecting-IP` is believed (loopback, private or link-local only: a public address or a /0 is refused; an IPv4-mapped entry read as IPv4): `127.0.0.1/32,::1/128` when cloudflared and the API share the host's network (`--network host`); the Docker network's subnet, e.g. `172.18.0.0/16`, when cloudflared is a container on the API's network. (cloudflared on the host and the API's port published on `127.0.0.1`: the API sees the Docker network's gateway, e.g. `172.18.0.1/32`, `docker network inspect` shows it.) From anyone else the header is ignored and the connection's address is the rate limits' key. Unset, the service refuses to start (behind the tunnel every user would share the connector's key); it logs the list at start, and a header ignored from an untrusted peer is warned of once per kind of peer (loopback, private, public; never the address): that warning behind the tunnel means the value is wrong |
 | `PUBLIC_ORIGIN` | `https://carball.zolt.top` | the site's origin: every write's `Origin` must be it; the redirect URIs and Steam's realm are under it. https only; `--dev` takes a localhost origin and no other (http allowed) |
 | `DATABASE_URL` | (required) | the service's role, rows only (e.g. `postgres://carball_app@db:5432/carball`); **no password in it** (refused) |
 | `DATABASE_PASSWORD_FILE` | | that role's password |
@@ -171,6 +188,8 @@ The accounts service (notes/accounts.md). **Nothing is deployed yet: the first d
 | `TURNSTILE_SECRET_FILE` | (required) | its secret (sign-up's siteverify, its hostname `PUBLIC_ORIGIN`'s, action `signup`) |
 | `TICKET_KEY_ID` | (required) | the search tickets' key's id (1-32 characters, no spaces): the game server finds the public key by it |
 | `TICKET_SIGNING_KEY_FILE` | (required) | that key's seed (32 bytes, base64: `carball-api ticket-key KID` prints a new one, its public line for the game server's `TICKET_PUBLIC_KEYS` on stderr) |
+| `TICKET_PREVIOUS_KEYS` | (none) | earlier ticket keys' public lines (`KID BASE64`, comma-separated) after a rotation: a result's or a quitter's tickets signed before it still check, for the acceptance window (24 h) |
+| `GAME_SERVER_TOKEN_FILE` | (none) | the game server's token on `POST /api/results`, `POST /api/quitters` and `DELETE /api/quitters/{match}/{account}` (bearer, compared in constant time; 32 characters or more), behind the tunnel's Access service token on those paths. Unset: those calls answer 503 (a deployment needs it) |
 | `DELETION_HMAC_KEY_FILE` | (required) | 32 characters or more of random text (e.g. `openssl rand -base64 48`: a trailing newline is dropped, so not raw bytes): keys the delete/re-create rule's records (30 days). Changing it forgets them |
 
 - **Ports:** 8080/tcp, plain HTTP, **never published to the internet**: only cloudflared reaches it (with cloudflared a
@@ -206,8 +225,13 @@ The accounts service (notes/accounts.md). **Nothing is deployed yet: the first d
   `… ban --account ID --reason TEXT --by NAME [--for 72h | --until 2026-12-01]` (or `--identity steam:<SteamID64>`;
   every identity of the account, signed out everywhere), `… unban --account ID`, `… bans`.
 - **Stop:** SIGTERM or SIGINT: requests in flight finish (10 s at most).
-- **Search tickets** (`POST /api/ticket`, notes/accounts.md §3): a signed-in account's, two minutes long, a nonce each;
-  the game server checks them offline with `TICKET_PUBLIC_KEYS`. **Rotating the key:** make a new one
+- **Search tickets** (`POST /api/ticket`, notes/accounts.md §3): a signed-in account's, two minutes long, a nonce each,
+  its ratings in each playlist (format 2); refused (403, `queue-banned` and until when) while a leaver's queue ban runs;
+  the game server checks them offline with `TICKET_PUBLIC_KEYS`.
+- **The game server's calls** (behind the Access service token and `GAME_SERVER_TOKEN_FILE`): results (recorded once by
+  their match id; each ticket ours, issued within 24 h and counted once; the ratings changed: Glicko-2), quitters (the
+  account's queue ban up the ladder 5 min, 15 min, 1 h, 6 h, 24 h, a step forgiven per 24 h without a leave) and refills
+  (that ban undone). Results are kept a year; used tickets past the window are purged hourly. **Rotating the key:** make a new one
   (`carball-api ticket-key k2`), add its public line to the game server's `TICKET_PUBLIC_KEYS` beside the old and
   restart it, then switch the API to the new id and seed, and drop the old line once its last tickets have run out (two
   minutes on).

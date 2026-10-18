@@ -7,12 +7,31 @@ const api = (...responses: Response[]) => {
   for (const r of responses) call.mockResolvedValueOnce(r);
   return { call, api: new AccountsApi(call) };
 };
-const ACCOUNT = { id: "0f0e0d0c-0b0a-4908-8706-050403020100", name: "Ziggy", providers: ["steam", "unknown"], createdAt: "2026-01-02T03:04:05Z" };
+const ACCOUNT = {
+  id: "0f0e0d0c-0b0a-4908-8706-050403020100",
+  name: "Ziggy",
+  providers: ["steam", "unknown"],
+  createdAt: "2026-01-02T03:04:05Z",
+  ratings: [
+    { playlist: 1, rating: 1523, deviation: 80, provisional: false, games: 12 },
+    { playlist: 2, rating: 1500, deviation: 500, provisional: true, games: 0 },
+  ],
+  queueBanUntil: "2026-10-18T12:05:00Z",
+};
 
 describe("the accounts service's calls", () => {
   it("reads the signed-in account, null signed out; writes carry the API's header, JSON with a body", async () => {
     const { call, api: a } = api(reply(200, ACCOUNT), reply(401, { error: "signed-out" }), reply(200, ACCOUNT), reply(204));
-    expect(await a.me()).toEqual({ id: ACCOUNT.id, name: "Ziggy", providers: ["steam"] });
+    expect(await a.me()).toEqual({
+      id: ACCOUNT.id,
+      name: "Ziggy",
+      providers: ["steam"],
+      ratings: [
+        { playlist: 1, rating: 1523, provisional: false, games: 12 },
+        { playlist: 2, rating: 1500, provisional: true, games: 0 },
+      ],
+      queueBanUntil: Date.parse("2026-10-18T12:05:00Z"),
+    });
     expect(await a.me()).toBeNull();
     expect(call).toHaveBeenNthCalledWith(1, "/api/me", { method: "GET", headers: {}, credentials: "same-origin", cache: "no-store" });
     await a.rename("Stardust");

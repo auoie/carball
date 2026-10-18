@@ -442,7 +442,12 @@ export class Freeplay {
     }
     this.#recorder.record(tick, {
       // (a Blender model's wheels as live: RV-581)
-      cars: new Map([[this.#playerId, recordCar(car, this.#carView.posesWheels ? this.#world.carWheels(this.#playerId) : null)]]),
+      cars: new Map([
+        [
+          this.#playerId,
+          recordCar(car, this.#carView.posesWheels ? this.#world.carWheels(this.#playerId) : null, this.#world.carLastBallTouchTick(this.#playerId)),
+        ],
+      ]),
       ball: this.#world.ball(),
       ballExploded: this.#world.ballExploded(),
       lastTouchTeam: freeplayTouchTeam(this.#world, this.#team),

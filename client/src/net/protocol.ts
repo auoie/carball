@@ -13,8 +13,9 @@
 // network flag; 21: the match's map (MatchFound, Welcome); 22: the garage's car (Hello's and the roster's model); 23:
 // Kicked's reason 2, a newer search from the same browser took this one's place (RV-460); 24: the stat graphs' network
 // rows (HUD-21: Inputs' sequence, each Update's input-buffer window and the inputs lost); 25: one map, Night; 26: Hello's
-// search ticket, an account's (notes/accounts.md §3), and Refused's reason 4
-export const PROTOCOL_VERSION = 26;
+// search ticket, an account's (notes/accounts.md §3), and Refused's reason 4; 27: rejoining a ranked match (Hello's
+// "rejoin" intent, Welcome's match id, Refused's reasons 5 and 6)
+export const PROTOCOL_VERSION = 27;
 /** A Hello's ticket's bytes at most (the accounts service's encoded ticket) */
 export const MAX_TICKET_BYTES = 256;
 /** A name's bytes at most (UTF-8) */
@@ -159,6 +160,8 @@ export type ControlMessage =
       readonly map: number;
       /** This player's key (Hello's again if it was this server's and no one here has it, else a new one) */
       readonly key: bigint;
+      /** A queue match's id, for a rejoin (0: none: an open match, the local host's) */
+      readonly matchId: bigint;
       readonly snapshot: Uint8Array;
     }
   /** The client had a hitch (over 0.1 s between its ticks) 2 s ago: the server resets its jitter buffer
@@ -200,7 +203,7 @@ export type ControlMessage =
   | { readonly type: "searchCooldown"; readonly seconds: number; readonly network: boolean };
 
 /** Hello's intents (the wire's byte is the index) */
-const INTENTS = ["join", "search", "claim"] as const;
+const INTENTS = ["join", "search", "claim", "rejoin"] as const;
 export type Intent = (typeof INTENTS)[number];
 
 /** One player's scoreboard line */
@@ -236,6 +239,11 @@ export const REFUSED_MODE = 3;
 /** Refused's reason: the search's or claim's ticket missing, not the server's, out of its time, used before, or not the
  *  account that searched (sign in again) */
 export const REFUSED_TICKET = 4;
+/** Refused's reason: a search from an account that holds a seat already, in a match found or running (one search or match
+ *  per account; a ranked 2v2 or 3v3 left by accident is rejoined instead) */
+export const REFUSED_IN_MATCH = 5;
+/** Refused's reason: a rejoin whose match is over, or has no seat of the account's to take back */
+export const REFUSED_CONCLUDED = 6;
 /** Kicked's reasons: idle past 30 s of play (MM-37); the match was cancelled before it started (MM-18) */
 export const KICK_IDLE = 0;
 export const KICK_NOT_ALL_JOINED = 1;
@@ -584,6 +592,7 @@ export function encodeControl(m: ControlMessage): Uint8Array {
       w.u8(m.teamSize);
       w.u8(m.map);
       w.u64(m.key);
+      w.u64(m.matchId);
       w.u32(m.snapshot.byteLength);
       w.bytes(m.snapshot);
       break;
@@ -745,7 +754,8 @@ export function decodeControl(body: Uint8Array): ControlMessage {
       const teamSize = r.u8();
       const map = r.u8();
       const key = r.u64();
-      return { type: "welcome", version, carId, tickRate, frame, matchType, teamSize, map, key, snapshot: r.take(r.u32()) };
+      const matchId = r.u64();
+      return { type: "welcome", version, carId, tickRate, frame, matchType, teamSize, map, key, matchId, snapshot: r.take(r.u32()) };
     }
     case 0x82: {
       const frame = r.u32();

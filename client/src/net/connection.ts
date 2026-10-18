@@ -7,6 +7,8 @@ import {
   DecodeError,
   type InputFrame,
   PROTOCOL_VERSION,
+  REFUSED_CONCLUDED,
+  REFUSED_IN_MATCH,
   REFUSED_MODE,
   REFUSED_TICKET,
   REFUSED_TOKEN,
@@ -98,8 +100,9 @@ export function storeKey(key: bigint, storage = session()): void {
   }
 }
 
-/** What a match session is for: join a development server's open match, or claim a queue's reserved slot */
-export type MatchSession = { readonly intent: "join" } | { readonly intent: "claim"; readonly token: bigint };
+/** What a match session is for: join a development server's open match, claim a queue's reserved slot, or rejoin a ranked
+ *  match left by accident (its match id) */
+export type MatchSession = { readonly intent: "join" } | { readonly intent: "claim" | "rejoin"; readonly token: bigint };
 
 /** The server refused the hello (`Refused`'s reason: REFUSED_*) */
 export class RefusedError extends Error {
@@ -121,6 +124,10 @@ export function refusalText(reason: number): string {
       return "the server doesn't host that kind of match";
     case REFUSED_TICKET:
       return "sign in again to play online";
+    case REFUSED_IN_MATCH:
+      return "you're in a match already";
+    case REFUSED_CONCLUDED:
+      return "that match has ended";
     default:
       return "the server is full";
   }
@@ -201,9 +208,9 @@ export class Connection {
     const connection = new Connection(transport);
     const stream = await transport.createBidirectionalStream();
     const writer = stream.writable.getWriter();
-    const token = match.intent === "claim" ? match.token : 0n;
-    // (a claim's ticket: the account that searched, notes/accounts.md §3; a join's none)
-    const ticket = match.intent === "claim" && address.ticket ? await address.ticket() : "";
+    const token = match.intent === "join" ? 0n : match.token;
+    // (a claim's and a rejoin's ticket: the seat's account, notes/accounts.md §3; a join's none)
+    const ticket = match.intent !== "join" && address.ticket ? await address.ticket() : "";
     await writer.write(
       encodeControl({ type: "hello", version: PROTOCOL_VERSION, ...preferences, key: storedKey(), intent: match.intent, playlist: 0, token, ticket }),
     );

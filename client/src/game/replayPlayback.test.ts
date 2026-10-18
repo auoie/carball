@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { CarWheels } from "../engine/world";
 import type { SoundEvent } from "../audio/detect";
 import { vec3 } from "../math/vec";
-import { ReplayPlayback, type ReplayScene, flipResetCars, replayCarPositions } from "./replayPlayback";
+import { ReplayPlayback, type ReplayScene, ballHits, flipResetCars, replayCarPositions } from "./replayPlayback";
 import { type RecordedCar, type RecordedFrame, ReplayRecorder, recordCar } from "./replayRecorder";
 
 const ZERO = vec3(0, 0, 0);
@@ -212,5 +212,57 @@ describe("a goal replay's sounds (RA1)", () => {
     expect(goals).toBe(1);
     const states = heard.map((h) => h.state).filter((s, i, all) => s !== all[i - 1]);
     expect(states).toEqual(["preScore", "slomo", "preScore", "postGoal"]);
+  });
+});
+
+describe("a goal replay's ball hits, from its frames as corrected (RX29C)", () => {
+  // (the car at x 0, the ball 100 ahead of it on x: the normal +x)
+  const touched = (touch: number | null, carVx: number, demoed = false, carY = 0): RecordedFrame => ({
+    ...frame([[1, { ...car(0, 0, demoed), pos: vec3(0, carY, 17), vel: vec3(carVx, 0, 0), lastTouch: touch }]]),
+    ball: { pos: vec3(100, 0, 17), vel: ZERO, angVel: ZERO, rot: UPRIGHT },
+  });
+  const hit = (strength: number): SoundEvent[] => [{ kind: "ballHit", at: vec3(100, 0, 17), strength }];
+
+  it("are each car's last touch moving on, at the ball, as hard as the game's intensity: the speed into each other", () => {
+    const last = new Map<number, number | null>();
+    expect(ballHits(last, touched(null, 0), touched(40, 0))).toEqual([]); // (a car first seen: noted)
+    expect(ballHits(last, touched(40, 0), touched(40, 0))).toEqual([]);
+    // (the car into the ball at 650 along the normal: half the scale's 1300; at 2600, full)
+    expect(ballHits(last, touched(40, 650), touched(52, 650))).toEqual(hit(0.5));
+    expect(ballHits(last, touched(52, 2600), touched(60, 2600))).toEqual(hit(1));
+    // (across the normal: the car beside the ball's line, moving along x, the normal tilted: less)
+    const glancing = ballHits(last, touched(60, 650, false, 100), touched(61, 650))[0] as { strength: number };
+    expect(glancing.strength).toBeCloseTo(0.5 * Math.SQRT1_2);
+    expect(ballHits(last, touched(61, 650), touched(70, 650, true))).toEqual([]); // (a wreck's: none)
+  });
+
+  it("are heard though no live sound was kept: a touch a correction put in the recording", () => {
+    const recorder = new ReplayRecorder();
+    for (let f = 0; f <= 40; f++) recorder.record(f, touched(null, 650));
+    // (corrections: frames 20 on recorded again with a touch the prediction had missed, then 30 on with another; no live
+    // sound kept for either)
+    for (let f = 20; f <= 40; f++) recorder.record(f, touched(20, 650));
+    for (let f = 30; f <= 40; f++) recorder.record(f, touched(30, 650));
+    const heard: SoundEvent[] = [];
+    const view = { root: { visible: true }, posesWheels: false, update: () => undefined, attach: () => undefined };
+    const stub = (): object => new Proxy({}, { get: () => () => undefined });
+    const scene = {
+      renderer: stub(),
+      arena: stub(),
+      effects: stub(),
+      audio: {
+        flipReset: () => undefined,
+        replayGoal: () => undefined,
+        replayFrame: (_cars: unknown, _camera: unknown, replay: { sounds: readonly SoundEvent[] }) => {
+          heard.push(...replay.sounds);
+        },
+      },
+      ballView: stub(),
+      cars: [[1, view]],
+      flipReset: { visual: false, audio: false },
+    } as unknown as ReplayScene;
+    const playback = new ReplayPlayback({ startTick: 10, goalTick: 30, endTick: 40, scoringTeam: 0, slomo: [], focus: [] }, recorder);
+    for (let i = 0; i < 400 && !playback.done; i++) playback.frame(1 / 240, scene);
+    expect(heard.filter((e) => e.kind === "ballHit")).toHaveLength(2);
   });
 });

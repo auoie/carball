@@ -12,6 +12,15 @@ export const MODAL_TEXT = {
   no: "No",
 } as const;
 
+/** The rejoin offer and its refusal (LV1: the game's "It appears you accidentally left a ranked match…" and "Match has
+ *  concluded" by key until the user clears them; our words meanwhile) */
+export const REJOIN_TEXT = {
+  title: "REJOIN MATCH",
+  body: "You left a ranked match that is still going. Rejoin it?",
+  concludedTitle: "MATCH OVER",
+  concluded: "That match has ended.",
+} as const;
+
 export class Modal {
   readonly #root: HTMLDivElement;
   readonly #title: HTMLDivElement;

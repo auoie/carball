@@ -25,7 +25,8 @@ files change or on SIGHUP; it needs `ALLOWED_ORIGIN` (empty or blank is an error
 certificate or `--dev` (a self-signed one, whatever the certificate's variables say: RV-381), and the search tickets'
 public keys, `TICKET_PUBLIC_KEYS` (notes/accounts.md §3: a search and a claim are a signed-in account's, its ticket
 checked offline in the session's hello; `--dev` makes a key of its own and its info endpoint signs tickets at
-`/dev-ticket?name=…&id=…` with no sign-in). Without `--meshes` or
+`/dev-ticket?name=…&id=…` with no sign-in), and the accounts service for the rated matches' calls, `API_URL` and
+`GAME_SERVER_TOKEN_FILE` (`--dev` logs them instead: APP-CONTRACT.md). Without `--meshes` or
 `MESHES_DIR` the meshes are the repository's `out/arena/collision_meshes` above the binary. The deployment's interface
 (its environment variables, ports, health check, limits) is `APP-CONTRACT.md`; its images come from
 `scripts/build_images.sh` (`client/docker/`, `server/docker/`).
@@ -58,10 +59,11 @@ cargo clippy --no-default-features --features host --lib --bins -- -D warnings
 | `src/input_buffer.rs` | per-player input buffer (`ServerConsume`) and jitter buffer, as the game does them |
 | `src/game.rs` | the match: joins and leaves, inputs, the match flow (below), updates (rates, splitting into datagrams) |
 | `src/game_loop.rs` | the game thread: the sessions' messages, the queue, every match at 120 Hz on its own clock |
-| `src/queue.rs` | who plays together: each playlist's searchers, oldest first, two full teams make a match |
-| `src/match_host.rs` | the matches: reserved slots with one-time tokens, full start, cancelled on a no-show, let go when over |
+| `src/queue.rs` | who plays together: each playlist's searchers, the oldest with those within a rating window (wider as they wait), teams by a snake draft |
+| `src/match_host.rs` | the matches: reserved slots with one-time tokens, full start, cancelled on a no-show, let go when over; the ranked bookkeeping (each seat's first ticket, the leave penalty's latch, results; a seat held for a rejoin) |
 | `src/net.rs` | WebTransport sessions (a search's and a claim's ticket checked), development identity and info endpoint |
-| `src/ticket.rs` | the search tickets: Ed25519 over the accounts service's format, keys by id, each nonce once; `--dev`'s own key |
+| `src/ticket.rs` | the search tickets: Ed25519 over the accounts service's format (version 2: the ratings), keys by id, each nonce once; `--dev`'s own key |
+| `src/outbox.rs` | the ranked calls to the accounts service (results, quitters, refills), kept on disk and retried for up to 24 h (`API_URL`) |
 | `tests/end_to_end.rs` | a client connects over WebTransport, drives, and checks acks, ping and the updates; two searches make a match |
 
 When a player leaves, the server logs how many of their input frames it had to repeat (buffer empty) or skip

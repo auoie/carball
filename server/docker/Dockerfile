@@ -6,7 +6,8 @@
 # path, not a secret: the check that flags it is skipped above)
 # (the base pinned by digest, RV-371: update the tag and digest together)
 FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
-RUN useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin carball
+RUN useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin carball \
+    && mkdir -p /var/lib/carball-game/outbox && chown -R 10001:10001 /var/lib/carball-game
 COPY carball-server /app/carball-server
 COPY collision_meshes /app/collision_meshes
 ENV SERVER_MODE=queue \
@@ -16,7 +17,10 @@ ENV SERVER_MODE=queue \
     CERT_PATH=/certs/fullchain.pem \
     KEY_PATH=/certs/privkey.pem \
     HEALTH_PORT=8081 \
-    MESHES_DIR=/app/collision_meshes
+    MESHES_DIR=/app/collision_meshes \
+    OUTBOX_DIR=/var/lib/carball-game/outbox
+# (the ranked calls waiting for the accounts service: a small volume, so a restart sends them later)
+VOLUME /var/lib/carball-game
 USER carball
 LABEL org.opencontainers.image.title="carball-game" \
       org.opencontainers.image.description="Carball's game server: matches over WebTransport (UDP, GAME_PORT)"

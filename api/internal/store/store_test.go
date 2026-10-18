@@ -349,3 +349,104 @@ func TestFlowsNoncesAndPurge(t *testing.T) {
 		t.Errorf("OpenSignups = %d, %v", n, err)
 	}
 }
+
+// A result recorded once: the players' ratings as `rate` gives them, a deleted account's player a placeholder (no
+// account, not rated: AC-10); the account deleted later leaves its rows as placeholders; purged after their time
+func TestRecordResultAndPurge(t *testing.T) {
+	s, owner, _ := open(t)
+	ctx := context.Background()
+	a, err := s.CreateAccount(ctx, pending(t, s, "google", "sub-ra", t0), "A", []byte("ha"), t0, t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone := "00000000-0000-4000-8000-000000000001" // (no such account: deleted before the result came)
+	r := store.Result{Match: "m1", Server: "game", Playlist: 1, WinningTeam: 0, Players: []store.ResultPlayer{
+		{Account: a, Team: 0, Seconds: 300, Nonce: [16]byte{1}, IssuedAt: t0},
+		{Account: gone, Team: 1, Quitter: true, Seconds: 120, Nonce: [16]byte{2}, IssuedAt: t0},
+	}}
+	var given map[string]*store.Rating
+	rate := func(current map[string]*store.Rating) map[string]store.Rating {
+		given = current
+		return map[string]store.Rating{a: {Rating: 1600, Deviation: 300, Volatility: 0.09, Games: 1, LastPlayed: t0}}
+	}
+	if ok, err := s.RecordResult(ctx, r, rate, t0); err != nil || !ok {
+		t.Fatalf("RecordResult = %v, %v", ok, err)
+	}
+	if c, has := given[a]; !has || c != nil || len(given) != 1 {
+		t.Errorf("rate given %v: the existing account without a rating, the deleted one absent", given)
+	}
+	if got, err := s.RatingsOf(ctx, a); err != nil || got[1].Rating != 1600 || got[1].Games != 1 {
+		t.Errorf("RatingsOf = %+v, %v", got, err)
+	}
+	db, err := pgx.Connect(ctx, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close(ctx) }()
+	count := func(sql string) (n int) {
+		if err := db.QueryRow(ctx, sql).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if n := count(`SELECT count(*) FROM ranked_result_players WHERE match_id = 'm1' AND account_id IS NULL`); n != 1 {
+		t.Errorf("%d placeholders, want 1 (the deleted account's)", n)
+	}
+	// (again: not recorded; its tickets in another match: refused, nothing written)
+	if ok, err := s.RecordResult(ctx, r, rate, t0); err != nil || ok {
+		t.Errorf("a retry: %v, %v", ok, err)
+	}
+	r2 := r
+	r2.Match = "m2"
+	if _, err := s.RecordResult(ctx, r2, rate, t0); !errors.Is(err, store.ErrTicketUsed) {
+		t.Errorf("used tickets: %v", err)
+	}
+	if n := count(`SELECT count(*) FROM ranked_results WHERE match_id = 'm2'`); n != 0 {
+		t.Error("a refused result left its row")
+	}
+	// (the account deleted: its rows kept, as placeholders; its rating gone)
+	if err := s.DeleteAccount(ctx, a, func(store.Identity) []byte { return []byte("ha") }, t0); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(`SELECT count(*) FROM ranked_result_players WHERE account_id IS NULL`); n != 2 {
+		t.Errorf("%d placeholders after the deletion, want 2", n)
+	}
+	if n := count(`SELECT count(*) FROM ratings`); n != 0 {
+		t.Errorf("%d ratings left", n)
+	}
+	// (purged: results past their year, tickets past the window)
+	if err := s.PurgeRanked(ctx, t0.Add(time.Second), t0.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if count(`SELECT count(*) FROM ranked_results`)+count(`SELECT count(*) FROM used_tickets`) != 0 {
+		t.Error("not purged")
+	}
+}
+
+// A queue ban written, changed and removed in one transaction; an unknown account refused
+func TestQueueBans(t *testing.T) {
+	s, _, _ := open(t)
+	ctx := context.Background()
+	a, err := s.CreateAccount(ctx, pending(t, s, "google", "sub-qb", t0), "Q", []byte("hq"), t0, t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := t0.Add(-time.Hour)
+	ban := store.QueueBan{Step: 2, Until: t0.Add(15 * time.Minute), LastLeave: t0, Match: "m", PreviousStep: 1, PreviousUntil: &t0, PreviousLeave: &before}
+	if err := s.ChangeQueueBan(ctx, a, func(_ store.QueueBan, exists bool) (*store.QueueBan, bool) { return &ban, !exists }); err != nil {
+		t.Fatal(err)
+	}
+	got, found, err := s.QueueBanOf(ctx, a)
+	if err != nil || !found || got.Step != 2 || !got.Until.Equal(ban.Until) || got.Match != "m" || !got.PreviousLeave.Equal(before) {
+		t.Fatalf("QueueBanOf = %+v, %v, %v", got, found, err)
+	}
+	if err := s.ChangeQueueBan(ctx, a, func(store.QueueBan, bool) (*store.QueueBan, bool) { return nil, true }); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, _ := s.QueueBanOf(ctx, a); found {
+		t.Error("not removed")
+	}
+	if err := s.ChangeQueueBan(ctx, "00000000-0000-4000-8000-000000000009", func(store.QueueBan, bool) (*store.QueueBan, bool) { return &ban, true }); !errors.Is(err, store.ErrNoAccount) {
+		t.Errorf("an unknown account: %v", err)
+	}
+}

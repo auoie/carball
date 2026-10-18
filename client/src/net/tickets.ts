@@ -13,11 +13,30 @@ export class SignedOutError extends Error {
   }
 }
 
+/** A leaver's queue ban in force (LV1): no search until `until` (ms, wall clock) */
+export class QueueBannedError extends Error {
+  constructor(readonly until: number) {
+    super(queueBanText(until, Date.now()));
+    this.name = "QueueBannedError";
+  }
+}
+
+/** A ban's minutes left as the search says them (LV1: max(⌈s/60⌉, 1); our words, the game's by key until cleared) */
+export function queueBanText(until: number, now: number): string {
+  const minutes = Math.max(Math.ceil((until - now) / 60_000), 1);
+  return `you left a ranked match: you can search again in ${String(minutes)} ${minutes === 1 ? "minute" : "minutes"}`;
+}
+
 /** A ticket from the accounts service: the write's guards its own (Origin the page's, which the browser sends; the custom
  *  header), no body */
 export async function accountTicket(post: typeof fetch = fetch): Promise<string> {
   const response = await post("/api/ticket", { method: "POST", headers: { "X-Carball": "1" }, credentials: "same-origin", cache: "no-store" });
   if (response.status === 401) throw new SignedOutError();
+  if (response.status === 403) {
+    const body = (await response.json().catch(() => null)) as { error?: unknown; until?: unknown } | null;
+    const until = typeof body?.until === "string" ? Date.parse(body.until) : NaN;
+    if (body?.error === "queue-banned" && Number.isFinite(until)) throw new QueueBannedError(until);
+  }
   if (!response.ok) throw new Error(`the accounts service: HTTP ${String(response.status)}`);
   return ticketOf(await response.json());
 }

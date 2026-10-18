@@ -11,7 +11,7 @@ const FRAME: RecordedFrame = {
   ballExploded: false,
   lastTouchTeam: null,
 };
-const hit: SoundEvent = { kind: "ballHit", at: AT, strength: 0.5 };
+const hit: SoundEvent = { kind: "ballBounce", at: AT, strength: 0.5 };
 const jump: SoundEvent = { kind: "jump", car: 1, at: AT };
 const pad: SoundEvent = { kind: "pad", big: true, at: AT };
 
@@ -37,12 +37,10 @@ describe("the replay's sounds", () => {
     r.sounds([pad]);
     expect(r.soundsAt(13)).toEqual([pad]);
     expect(r.soundsAt(5)).toEqual([]);
-    expect([hit, jump, pad, { kind: "flip", car: 1, at: AT }, { kind: "doubleJump", car: 1, at: AT }].map((e) => replayedSound(e as SoundEvent))).toEqual([
-      true,
-      false,
-      true,
-      false,
-      false,
-    ]);
+    // (the ball's hits the replay finds in its frames, as corrected: not the live ones, RX29C)
+    const ballHit: SoundEvent = { kind: "ballHit", at: AT, strength: 0.5 };
+    expect(
+      [hit, jump, pad, { kind: "flip", car: 1, at: AT }, { kind: "doubleJump", car: 1, at: AT }, ballHit].map((e) => replayedSound(e as SoundEvent)),
+    ).toEqual([true, false, true, false, false, false]);
   });
 });

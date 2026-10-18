@@ -1,5 +1,5 @@
 use std::net::IpAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime};
@@ -38,6 +38,22 @@ struct Args {
     /// The search tickets' public keys (`TICKET_PUBLIC_KEYS`: "KID BASE64", comma- or line-separated; notes/accounts.md
     /// §3): a queue server's, required unless --dev (which makes a key of its own as well)
     ticket_keys: Option<String>,
+    /// Or their file (`TICKET_PUBLIC_KEYS_FILE`): read at the start and again on SIGHUP (a rotation without a restart,
+    /// AP2-4)
+    ticket_keys_file: Option<PathBuf>,
+    /// The accounts service for the ranked calls (results, quitters: notes/accounts.md §3): its origin (`API_URL`), the
+    /// game server's token file, the tunnel's Access service token (its id, its secret's file), and where the calls wait
+    /// (`OUTBOX_DIR`). A queue server's, required unless --dev (which logs the calls only)
+    api: Option<ApiArgs>,
+    outbox_dir: Option<PathBuf>,
+}
+
+/// `API_URL` and its credentials' files
+#[derive(Clone, Debug, PartialEq)]
+struct ApiArgs {
+    url: String,
+    token_file: PathBuf,
+    access: Option<(String, PathBuf)>,
 }
 
 const USAGE: &str = "usage: carball-server [--mode direct|queue] [--dev] [--port 4433] [--info-port 4434] [--dev-info on|off] [--info-bind 127.0.0.1] \
@@ -45,7 +61,8 @@ const USAGE: &str = "usage: carball-server [--mode direct|queue] [--dev] [--port
 [--cert FULLCHAIN.pem --key KEY.pem] [--allowed-origin ORIGIN[,ORIGIN...]] [--public-host HOST] [--health-port 8081] \
 [--max-sessions N] [--max-per-address N] [--max-per-address-per-minute N] | --healthcheck
 environment (each the flag's default): SERVER_MODE, GAME_PORT, MESHES_DIR, CERT_PATH, KEY_PATH, ALLOWED_ORIGIN, PUBLIC_HOST, HEALTH_PORT;
-TICKET_PUBLIC_KEYS (a queue server's: the search tickets' public keys, \"KID BASE64\" each)";
+TICKET_PUBLIC_KEYS (a queue server's: the search tickets' public keys, \"KID BASE64\" each); API_URL, GAME_SERVER_TOKEN_FILE,
+CF_ACCESS_CLIENT_ID, CF_ACCESS_CLIENT_SECRET_FILE, OUTBOX_DIR (a queue server's ranked calls to the accounts service)";
 
 /// A variable's or flag's number, the error naming it (RV-399: an empty GAME_PORT said only "cannot parse integer")
 fn number<T: std::str::FromStr>(name: &str, value: &str) -> anyhow::Result<T>
@@ -120,6 +137,9 @@ fn parse_args(mut it: impl Iterator<Item = String>, env: impl Fn(&str) -> Option
         health_port: 8081,
         limits: NetLimits::default(),
         ticket_keys: None,
+        ticket_keys_file: None,
+        api: None,
+        outbox_dir: None,
     };
     if let Some(mode) = env("SERVER_MODE") {
         args.queue = parse_mode(&mode)?;
@@ -192,11 +212,33 @@ fn parse_args(mut it: impl Iterator<Item = String>, env: impl Fn(&str) -> Option
         args.meshes = default_meshes();
     }
     args.ticket_keys = env("TICKET_PUBLIC_KEYS").filter(|k| !k.trim().is_empty());
+    args.ticket_keys_file = env("TICKET_PUBLIC_KEYS_FILE").filter(|k| !k.trim().is_empty()).map(PathBuf::from);
     anyhow::ensure!(
-        !args.queue || args.dev || args.ticket_keys.is_some(),
-        "the queue's searches are accounts': it needs TICKET_PUBLIC_KEYS (the accounts service's ticket keys), or --dev for a development server"
+        args.ticket_keys.is_none() || args.ticket_keys_file.is_none(),
+        "TICKET_PUBLIC_KEYS or TICKET_PUBLIC_KEYS_FILE, not both"
+    );
+    anyhow::ensure!(
+        !args.queue || args.dev || args.ticket_keys.is_some() || args.ticket_keys_file.is_some(),
+        "the queue's searches are accounts': it needs TICKET_PUBLIC_KEYS or TICKET_PUBLIC_KEYS_FILE (the accounts service's ticket keys), or --dev for a development server"
+    );
+    // (--dev signs its own tickets: never beside production keys, AP2-7)
+    anyhow::ensure!(
+        !args.dev || (args.ticket_keys.is_none() && args.ticket_keys_file.is_none()),
+        "--dev signs tickets of its own: it refuses production keys (TICKET_PUBLIC_KEYS, TICKET_PUBLIC_KEYS_FILE)"
+    );
+    args.api = api_args(&env)?;
+    args.outbox_dir = env("OUTBOX_DIR").filter(|d| !d.trim().is_empty()).map(PathBuf::from);
+    anyhow::ensure!(
+        !args.queue || args.dev || args.api.is_some(),
+        "the queue's matches are rated: it needs API_URL and GAME_SERVER_TOKEN_FILE (the accounts service and the game server's token), or --dev for a development server"
     );
     if args.dev {
+        // (a certificate there is a public server's: --dev on it would hand out its own tickets to the internet, AP2-7)
+        let mounted = |p: &Option<PathBuf>| p.as_ref().is_some_and(|p| !p.as_os_str().is_empty() && p.is_file());
+        anyhow::ensure!(
+            !mounted(&cert) && !mounted(&key),
+            "--dev with a certificate at CERT_PATH or KEY_PATH: that's a public server's (no --dev there)"
+        );
         return Ok(args); // (self-signed, whatever the certificate's variables say)
     }
     args.cert = match (cert, key) {
@@ -214,6 +256,11 @@ fn parse_args(mut it: impl Iterator<Item = String>, env: impl Fn(&str) -> Option
         !args.queue || args.cert.is_some(),
         "the queue serves the public: it needs a certificate (CERT_PATH and KEY_PATH, or --cert and --key), or --dev for a development server"
     );
+    // (a certificate is a public server's, and online play needs a ticket: no open match without one, AP2-9)
+    anyhow::ensure!(
+        args.queue || args.cert.is_none(),
+        "the open match (--mode direct) takes anyone without a ticket: a development server's, not a public one (no certificate; --dev)"
+    );
     anyhow::ensure!(
         args.cert.is_none() || args.limits.allowed_origins.is_some(),
         "a server with a certificate needs ALLOWED_ORIGIN (--allowed-origin): the pages it serves"
@@ -221,11 +268,89 @@ fn parse_args(mut it: impl Iterator<Item = String>, env: impl Fn(&str) -> Option
     Ok(args)
 }
 
-/// SIGHUP asks for the certificate to be read again
+/// The accounts service's settings: none without `API_URL`; with it, `https://HOST[:PORT]` (no path), the token's file,
+/// and the Access service token's id and secret file together or neither
+fn api_args(env: &impl Fn(&str) -> Option<String>) -> anyhow::Result<Option<ApiArgs>> {
+    let set = |name: &str| env(name).filter(|v| !v.trim().is_empty()).map(|v| v.trim().to_string());
+    let Some(url) = set("API_URL") else { return Ok(None) };
+    let url = url.trim_end_matches('/').to_string();
+    let host = url.strip_prefix("https://").unwrap_or("");
+    anyhow::ensure!(
+        !host.is_empty() && !host.contains('/') && !host.contains(char::is_whitespace),
+        "API_URL must be https://HOST[:PORT] (the accounts service's origin), got {url:?}"
+    );
+    let token_file = set("GAME_SERVER_TOKEN_FILE").map(PathBuf::from);
+    let token_file = token_file.ok_or_else(|| anyhow::anyhow!("API_URL needs GAME_SERVER_TOKEN_FILE"))?;
+    let access = match (set("CF_ACCESS_CLIENT_ID"), set("CF_ACCESS_CLIENT_SECRET_FILE")) {
+        (Some(id), Some(secret)) => Some((id, PathBuf::from(secret))),
+        (None, None) => None,
+        _ => anyhow::bail!("CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET_FILE go together"),
+    };
+    Ok(Some(ApiArgs { url, token_file, access }))
+}
+
+/// A secret's file: its text, trimmed; refused when empty
+fn read_secret(name: &str, path: &Path) -> anyhow::Result<String> {
+    let text = std::fs::read_to_string(path).map_err(|e| anyhow::anyhow!("{name} {}: {e}", path.display()))?;
+    let text = text.trim().to_string();
+    anyhow::ensure!(!text.is_empty(), "{name} {}: empty", path.display());
+    Ok(text)
+}
+
+/// The outbox's settings, its secrets read now (a missing or empty file stops the start)
+fn outbox_config(args: &Args) -> anyhow::Result<carball_server::outbox::OutboxConfig> {
+    let (api_url, token, access) = match &args.api {
+        Some(api) => {
+            let token = read_secret("GAME_SERVER_TOKEN_FILE", &api.token_file)?;
+            let access = match &api.access {
+                Some((id, file)) => Some((id.clone(), read_secret("CF_ACCESS_CLIENT_SECRET_FILE", file)?)),
+                None => {
+                    eprintln!("no CF_ACCESS_CLIENT_ID: the ranked calls go without the tunnel's Access service token");
+                    None
+                }
+            };
+            (Some(api.url.clone()), token, access)
+        }
+        None => (None, String::new(), None),
+    };
+    Ok(carball_server::outbox::OutboxConfig {
+        api_url,
+        token,
+        access,
+        dir: args.outbox_dir.clone(),
+        server: args.public_host.clone().unwrap_or_else(|| "carball-server".into()),
+        first_wait: Duration::from_secs(5),
+        max_wait: Duration::from_secs(300),
+    })
+}
+
+/// SIGHUP asks for the certificate to be read again, and the ticket keys' file
 static RELOAD: AtomicBool = AtomicBool::new(false);
+static RELOAD_KEYS: AtomicBool = AtomicBool::new(false);
 
 extern "C" fn on_sighup(_: libc::c_int) {
     RELOAD.store(true, Ordering::SeqCst);
+    RELOAD_KEYS.store(true, Ordering::SeqCst);
+}
+
+/// The ticket keys' file read again on SIGHUP (a rotation: its new key added beside the old, the old dropped later), its
+/// keys logged by id; a bad file keeps the keys there were
+async fn reload_ticket_keys(tickets: Arc<carball_server::ticket::Tickets>, file: PathBuf) {
+    // SAFETY: the handler only stores to atomics
+    unsafe {
+        libc::signal(libc::SIGHUP, on_sighup as *const () as libc::sighandler_t);
+    }
+    let mut tick = tokio::time::interval(Duration::from_secs(1));
+    loop {
+        tick.tick().await;
+        if !RELOAD_KEYS.swap(false, Ordering::SeqCst) {
+            continue;
+        }
+        match std::fs::read_to_string(&file).map_err(anyhow::Error::from).and_then(|list| tickets.reload(&list)) {
+            Ok(()) => println!("ticket keys reloaded (SIGHUP): {}", tickets.key_ids().join(", ")),
+            Err(e) => eprintln!("ticket keys not reloaded ({}): {e}; the ones there were kept", file.display()),
+        }
+    }
 }
 
 /// SIGTERM or SIGINT: the process ends at once (as a container's PID 1, an unhandled SIGTERM is ignored: `docker stop`
@@ -298,11 +423,26 @@ async fn main() -> anyhow::Result<()> {
     let server = Arc::new(net::endpoint(identity, args.port)?);
     // (a queue server's searches and claims are accounts': their tickets checked with these keys; a development server's
     // own key too, its info server signing tickets for the pages that ask)
-    let mut tickets = carball_server::ticket::Tickets::from_list(args.ticket_keys.as_deref().unwrap_or(""))?;
+    let key_list = match &args.ticket_keys_file {
+        Some(file) => std::fs::read_to_string(file)
+            .map_err(|e| anyhow::anyhow!("TICKET_PUBLIC_KEYS_FILE {}: {e}", file.display()))?,
+        None => args.ticket_keys.clone().unwrap_or_default(),
+    };
+    let mut tickets = carball_server::ticket::Tickets::from_list(&key_list)?;
+    // (a list that names no key, ", " say: a queue server refusing everyone, AP2-5)
+    anyhow::ensure!(!args.queue || args.dev || !tickets.is_empty(), "TICKET_PUBLIC_KEYS names no key");
     if args.dev && args.queue {
+        // (development only: anyone may get a ticket from its info server, any account, any name)
+        eprintln!("--dev: this server signs tickets of its own for anyone who asks: never a public server");
         tickets = tickets.with_dev_key()?;
     }
+    if args.queue {
+        println!("ticket keys: {}", tickets.key_ids().join(", "));
+    }
     let tickets = args.queue.then(|| Arc::new(tickets));
+    if let (Some(tickets), Some(file)) = (&tickets, &args.ticket_keys_file) {
+        tokio::spawn(reload_ticket_keys(tickets.clone(), file.clone()));
+    }
     let mut args = args;
     args.limits.tickets = tickets.clone();
 
@@ -320,9 +460,25 @@ async fn main() -> anyhow::Result<()> {
     let start = Instant::now();
     let heartbeat = Arc::new(AtomicU64::new(0));
     let game_heartbeat = heartbeat.clone();
+    // (a queue server's ranked calls: the outbox, sending to the accounts service; without API_URL, --dev, logged only)
+    let reports = if args.queue {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let config = outbox_config(&args)?;
+        match &config.api_url {
+            Some(url) => println!(
+                "ranked calls to {url} (waiting in {})",
+                config.dir.as_ref().map_or("memory".into(), |d| d.display().to_string())
+            ),
+            None => println!("ranked calls logged only (no API_URL: development)"),
+        }
+        tokio::spawn(carball_server::outbox::run(config, rx));
+        Some(tx)
+    } else {
+        None
+    };
     let game = std::thread::Builder::new()
         .name("game".into())
-        .spawn(move || game_loop::run(messages, mode, test_goal_after, game_heartbeat, start))?;
+        .spawn(move || game_loop::run_with_reports(messages, mode, test_goal_after, game_heartbeat, start, reports))?;
     // (the game thread gone, by a panic outside a match's tick: the process ends, for its supervisor to restart it, SEC-7)
     tokio::spawn(async move {
         let mut every = tokio::time::interval(Duration::from_secs(1));
@@ -408,6 +564,11 @@ mod tests {
                 "PUBLIC_HOST" => Some("game.carball.zolt.top"),
                 "HEALTH_PORT" => Some("9000"),
                 "TICKET_PUBLIC_KEYS" => Some("k1 AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="),
+                "API_URL" => Some("https://carball.zolt.top/"),
+                "GAME_SERVER_TOKEN_FILE" => Some("/run/secrets/game_token"),
+                "CF_ACCESS_CLIENT_ID" => Some("access-id.access"),
+                "CF_ACCESS_CLIENT_SECRET_FILE" => Some("/run/secrets/access_secret"),
+                "OUTBOX_DIR" => Some("/var/lib/carball-game/outbox"),
                 _ => None,
             }
             .map(str::to_string)
@@ -415,6 +576,15 @@ mod tests {
         let args = parse_args(std::iter::empty(), env).unwrap();
         assert!(args.queue);
         assert_eq!((args.port, args.health_port), (5000, 9000));
+        assert_eq!(
+            args.api,
+            Some(ApiArgs {
+                url: "https://carball.zolt.top".into(),
+                token_file: "/run/secrets/game_token".into(),
+                access: Some(("access-id.access".into(), "/run/secrets/access_secret".into())),
+            })
+        );
+        assert_eq!(args.outbox_dir.as_deref(), Some(Path::new("/var/lib/carball-game/outbox")));
         assert_eq!(args.cert, Some(("/certs/fullchain.pem".into(), "/certs/privkey.pem".into())));
         assert_eq!(
             args.limits.allowed_origins,
@@ -422,7 +592,10 @@ mod tests {
         );
         assert_eq!(args.public_host.as_deref(), Some("game.carball.zolt.top"));
         assert!(args.ticket_keys.is_some());
-        let args = parse_args(["--port", "6000", "--mode", "direct"].map(String::from).into_iter(), env).unwrap();
+        // (the open match with a certificate: a public server without tickets, refused: AP2-9)
+        let e = parse_args(["--port", "6000", "--mode", "direct"].map(String::from).into_iter(), env).err().unwrap();
+        assert!(e.to_string().contains("--mode direct"), "{e}");
+        let args = parse(&["--port", "6000", "--mode", "direct"]).unwrap();
         assert_eq!((args.port, args.queue), (6000, false));
         assert!(parse(&["--cert", "/a.pem"]).is_err(), "a certificate needs its key");
         let dev = parse(&[]).unwrap();
@@ -442,7 +615,19 @@ mod tests {
         assert!(with(&CERT, &[]).is_err(), "a certificate without ALLOWED_ORIGIN");
         assert!(with(&[CERT[0], CERT[1], ("ALLOWED_ORIGIN", "")], &[]).is_err(), "a blank ALLOWED_ORIGIN");
         assert!(with(&[CERT[0], CERT[1], ("ALLOWED_ORIGIN", " , ")], &[]).is_err(), "no origin named");
-        let args = with(&[CERT[0], CERT[1], ("ALLOWED_ORIGIN", "HTTPS://Carball.Zolt.Top/")], &[]).unwrap();
+        let args = with(
+            &[
+                ("SERVER_MODE", "queue"),
+                CERT[0],
+                CERT[1],
+                ("ALLOWED_ORIGIN", "HTTPS://Carball.Zolt.Top/"),
+                ("TICKET_PUBLIC_KEYS", "k1 AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="),
+                ("API_URL", "https://carball.zolt.top"),
+                ("GAME_SERVER_TOKEN_FILE", "/run/t"),
+            ],
+            &[],
+        )
+        .unwrap();
         assert_eq!(
             args.limits.allowed_origins,
             Some(vec!["https://carball.zolt.top".to_string()]),
@@ -468,12 +653,40 @@ mod tests {
                 .unwrap();
         assert!(dev.queue && dev.cert.is_none(), "--dev: self-signed whatever the variables say");
         const KEYS: (&str, &str) = ("TICKET_PUBLIC_KEYS", "k1 AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=");
+        const API: [(&str, &str); 2] = [("API_URL", "https://carball.zolt.top"), ("GAME_SERVER_TOKEN_FILE", "/run/t")];
         assert!(
-            with(&[("SERVER_MODE", "queue"), CERT[0], CERT[1], ("ALLOWED_ORIGIN", "https://a.example"), KEYS], &[])
-                .unwrap()
-                .cert
-                .is_some()
+            with(
+                &[
+                    ("SERVER_MODE", "queue"),
+                    CERT[0],
+                    CERT[1],
+                    ("ALLOWED_ORIGIN", "https://a.example"),
+                    KEYS,
+                    API[0],
+                    API[1]
+                ],
+                &[]
+            )
+            .unwrap()
+            .cert
+            .is_some()
         );
+        // (a public queue server's matches are rated: without the accounts service it won't start; --dev logs the calls)
+        let public = [("SERVER_MODE", "queue"), CERT[0], CERT[1], ("ALLOWED_ORIGIN", "https://a.example"), KEYS];
+        let refused = |extra: &'static [(&'static str, &'static str)], why: &str| {
+            let vars: Vec<(&'static str, &'static str)> = public.iter().chain(extra).copied().collect();
+            let vars: &'static [(&'static str, &'static str)] = Box::leak(vars.into_boxed_slice());
+            assert!(with(vars, &[]).is_err(), "{why}");
+        };
+        refused(&[], "no API_URL");
+        refused(&[("API_URL", "https://carball.zolt.top")], "no GAME_SERVER_TOKEN_FILE");
+        refused(&[("API_URL", "http://carball.zolt.top"), ("GAME_SERVER_TOKEN_FILE", "/t")], "http");
+        refused(&[("API_URL", "https://carball.zolt.top/api"), ("GAME_SERVER_TOKEN_FILE", "/t")], "a path");
+        refused(
+            &[("API_URL", "https://carball.zolt.top"), ("GAME_SERVER_TOKEN_FILE", "/t"), ("CF_ACCESS_CLIENT_ID", "id")],
+            "the Access id without its secret",
+        );
+        assert!(dev.api.is_none(), "--dev without API_URL: calls logged only");
         // (a public queue server's searches are accounts': without the tickets' keys it won't start; --dev makes its own)
         assert!(
             with(&[("SERVER_MODE", "queue"), CERT[0], CERT[1], ("ALLOWED_ORIGIN", "https://a.example")], &[]).is_err(),
@@ -518,11 +731,45 @@ mod tests {
     }
 
     #[test]
+    fn dev_refuses_production_keys_and_a_mounted_certificate() {
+        // (AP2-7: --dev's own tickets never beside production keys or a public server's certificate)
+        let with = |vars: &'static [(&'static str, &'static str)]| {
+            parse_args(["--mode", "queue", "--dev"].map(String::from).into_iter(), move |name: &str| {
+                vars.iter().find(|(n, _)| *n == name).map(|(_, v)| (*v).to_string())
+            })
+        };
+        assert!(with(&[]).is_ok());
+        assert!(with(&[("TICKET_PUBLIC_KEYS", "k1 AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=")]).is_err());
+        assert!(with(&[("TICKET_PUBLIC_KEYS_FILE", "/run/keys")]).is_err());
+        let mounted: &'static str = Box::leak(std::env::current_exe().unwrap().display().to_string().into_boxed_str());
+        let vars: &'static [(&'static str, &'static str)] =
+            Box::leak(Box::new([("CERT_PATH", mounted), ("KEY_PATH", "/k.pem")]));
+        assert!(with(vars).is_err(), "a file at CERT_PATH");
+        assert!(
+            with(&[("CERT_PATH", "/no/such/file.pem"), ("KEY_PATH", "/k.pem")]).is_ok(),
+            "the image's defaults, nothing there"
+        );
+        assert!(
+            parse_args(std::iter::empty(), |n: &str| match n {
+                "TICKET_PUBLIC_KEYS" => Some("k".into()),
+                "TICKET_PUBLIC_KEYS_FILE" => Some("/f".into()),
+                _ => None,
+            })
+            .is_err(),
+            "both"
+        );
+    }
+
+    #[test]
     fn the_development_info_server_is_on_without_a_certificate_only_unless_asked() {
         let env = |name: &str| match name {
+            "SERVER_MODE" => Some("queue".to_string()),
             "CERT_PATH" => Some("/c.pem".to_string()),
             "KEY_PATH" => Some("/k.pem".to_string()),
             "ALLOWED_ORIGIN" => Some("https://a.example".to_string()),
+            "TICKET_PUBLIC_KEYS" => Some("k1 AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=".to_string()),
+            "API_URL" => Some("https://a.example".to_string()),
+            "GAME_SERVER_TOKEN_FILE" => Some("/run/t".to_string()),
             _ => None,
         };
         assert!(!dev_info_on(&parse_args(std::iter::empty(), env).unwrap()), "SEC-6: off with a certificate");

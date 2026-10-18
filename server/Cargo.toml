@@ -15,12 +15,17 @@ wtransport = { version = "0.7", features = ["quinn"], optional = true }
 # (the search tickets' Ed25519 and base64: already in the tree through rustls, so offline builds have them)
 ring = { version = "0.17", optional = true }
 base64 = { version = "0.22", optional = true }
+# (the results' and quitters' HTTPS calls to the accounts service: rustls with Mozilla's roots built in (webpki-roots),
+# no OpenSSL, no cookies; pinned: the user's choice, 2026-10-18)
+reqwest = { version = "=0.12.22", default-features = false, features = ["rustls-tls-webpki-roots"], optional = true }
+# (the calls' JSON: already in the tree, the tests')
+serde_json = { version = "1", optional = true }
 libc = "0.2"
 
 [features]
 default = ["net"]
 # The network server: WebTransport, the queue, the game loop's thread (the release image's build)
-net = ["dep:tokio", "dep:wtransport", "dep:ring", "dep:base64"]
+net = ["dep:tokio", "dep:wtransport", "dep:ring", "dep:base64", "dep:reqwest", "dep:serde_json"]
 # The browser's local host (src/bin/host.rs: an offline match against bots, in a worker): built for
 # wasm32-unknown-emscripten with --no-default-features --features host (scripts/build_host.sh)
 host = []

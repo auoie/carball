@@ -100,6 +100,7 @@ describe("a match session's hello", () => {
       teamSize: 1,
       map: 0,
       key: 5n,
+      matchId: 0n,
       snapshot: new Uint8Array(),
     } as const;
     const record: FakeTransportRecord = { sessions: [] };
@@ -132,6 +133,7 @@ describe("the input datagrams' count (protocol 24)", () => {
       teamSize: 1,
       map: 0,
       key: 5n,
+      matchId: 0n,
       snapshot: new Uint8Array(),
     } as const;
     const record: FakeTransportRecord = { sessions: [] };
@@ -170,6 +172,7 @@ describe("a session closed before the game listens", () => {
       teamSize: 1,
       map: 0,
       key: 5n,
+      matchId: 0n,
       snapshot: new Uint8Array(),
     } as const;
     vi.stubGlobal("WebTransport", fakeTransport([welcome], { sessions: [] }, true));

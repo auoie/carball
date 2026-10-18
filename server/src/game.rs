@@ -149,6 +149,19 @@ pub struct JoinRequest {
     /// the name kept as the accounts service checked it (no automatic "Player N" put for it), the claim bound to the
     /// account that searched
     pub verified: bool,
+    /// That ticket, as the player sent it, and its account (the network server's claims: the match host keeps a seat's
+    /// first, for the result and a quitter's report: notes/accounts.md §3); none for the local host and a development
+    /// server's open match
+    pub ticket: Option<SeatTicket>,
+}
+
+/// A seat's ticket: as sent (the accounts service checks it again in the result), the account it names, and its ratings
+/// in the playlists 1v1, 2v2, 3v3 (the queue pairs by them)
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SeatTicket {
+    pub encoded: String,
+    pub account: [u8; 16],
+    pub ratings: [u16; 3],
 }
 
 impl JoinRequest {
@@ -186,6 +199,7 @@ impl JoinRequest {
             quick_chat,
             block_non_tactical,
             verified: false,
+            ticket: None,
         };
         Some((request, intent, playlist, token))
     }
@@ -270,6 +284,21 @@ fn name_fold(c: char) -> char {
 /// character at most, trimmed, `MAX_NAME_BYTES` at most; none left, or another player's automatic name ("Player 7" in any
 /// case, spacing, digits or lookalike letters): "Player N" (SEC-11)
 fn player_name(asked: &str, id: PlayerId) -> String {
+    let name = tidy_name(asked);
+    let folded: String = name.chars().filter(|c| !c.is_whitespace()).map(name_fold).collect();
+    let reserved = folded.strip_prefix("player").is_some_and(|n| !n.is_empty() && n.chars().all(char::is_numeric));
+    if name.is_empty() || reserved { format!("Player {id}") } else { name }
+}
+
+/// A name tidied: no hidden characters (control, format, invisible), every run of spaces one space, two combining marks
+/// on a character at most, trimmed, `MAX_NAME_BYTES` at most. An account's name too (its ticket's: the accounts service
+/// cleaned it, but a development server's tickets carry any name, AP2-8); "Player" for one tidied to nothing
+fn verified_name(asked: &str) -> String {
+    let name = tidy_name(asked);
+    if name.is_empty() { "Player".to_string() } else { name }
+}
+
+fn tidy_name(asked: &str) -> String {
     let mut clean = String::new();
     let mut marks = 0;
     for c in asked.chars().filter(|&c| !hidden_char(c)) {
@@ -295,10 +324,7 @@ fn player_name(asked: &str, id: PlayerId) -> String {
         end -= 1;
     }
     name.truncate(end);
-    let name = name.trim_end().to_string();
-    let folded: String = name.chars().filter(|c| !c.is_whitespace()).map(name_fold).collect();
-    let reserved = folded.strip_prefix("player").is_some_and(|n| !n.is_empty() && n.chars().all(char::is_numeric));
-    if name.is_empty() || reserved { format!("Player {id}") } else { name }
+    name.trim_end().to_string()
 }
 
 /// A run of one car's touches on the ball (`Ball_TA` touches, consecutive ones by a car merged): its last tick
@@ -414,6 +440,8 @@ struct Player {
     idle_warned: bool,
     /// Kicked: their session ends at this tick (MM-37)
     kick_at: Option<u64>,
+    /// The account's key (a verified seat's; 0: none): a rejoin's counters found by it
+    account: u64,
 }
 
 impl Player {
@@ -506,7 +534,9 @@ pub struct Game {
     /// Browser tests: each round, the ball is knocked into orange's goal this many ticks after "go"
     pub test_goal_after: Option<u64>,
     /// The players who left this match: their team and counters (`FormerMembers`: the MVP counts them)
-    former: Vec<(u8, StatCounters)>,
+    former: Vec<(u8, StatCounters, u64)>,
+    /// A queue match's id (the match host's, for the accounts service and a rejoin: Welcome's); 0 none
+    pub match_id: u64,
     /// The match's MVP (`bMatchMVP`), if still here
     mvp: Option<u32>,
     /// The scoreboard changed since it was last sent; when it was (the pings: every 2 s)
@@ -594,6 +624,7 @@ impl Game {
             ready_sent: None,
             test_goal_after: None,
             former: Vec::new(),
+            match_id: 0,
             mvp: None,
             scoreboard_dirty: true,
             scoreboard_sent: 0,
@@ -668,7 +699,7 @@ impl Game {
     }
 
     /// A team has won (`HasWinner`: the match ended, a team forfeited, or the clock ran out with the scores apart)
-    fn has_winner(&self) -> bool {
+    pub fn has_winner(&self) -> bool {
         self.winner.is_some()
             || self.forfeiting.is_some()
             || ((self.overtime || self.clock_ticks == 0) && self.score[0] != self.score[1])
@@ -755,7 +786,7 @@ impl Game {
             }
             key
         };
-        let player = Player {
+        let mut player = Player {
             car_id,
             team,
             model,
@@ -769,7 +800,7 @@ impl Game {
             key,
             vote_start_disabled: self.initiators.contains(&key),
             vote_sent: None,
-            name: if request.verified { request.name.clone() } else { player_name(&request.name, id) },
+            name: if request.verified { verified_name(&request.name) } else { player_name(&request.name, id) },
             chat: ChatBucket::default(),
             chat_filter: request.quick_chat.min(protocol::CHAT_OFF),
             block_non_tactical: request.block_non_tactical,
@@ -783,7 +814,14 @@ impl Game {
             last_active: Some(self.arena.tick_count()), // (the controller's creation counts: MM-35)
             idle_warned: false,
             kick_at: None,
+            account: if request.verified { request.key } else { 0 },
         };
+        // (an account back in the match it left (a rejoin: LV1): its counters back from its team's former members)
+        if player.account != 0
+            && let Some(at) = self.former.iter().position(|&(t, _, a)| t == team && a == player.account)
+        {
+            player.stats = self.former.remove(at).1;
+        }
         let snapshot = self.arena.save_state();
         let welcome = Control::Welcome {
             version: protocol::VERSION,
@@ -794,6 +832,7 @@ impl Game {
             team_size: self.team_size,
             map: self.map,
             key,
+            match_id: self.match_id,
             snapshot: snapshot.clone(),
         };
         let welcome = welcome.encode();
@@ -956,7 +995,7 @@ impl Game {
             }
             // (their counters stay with the match: the MVP counts the team's former members)
             if !self.phase.match_over() {
-                self.former.push((team, player.stats));
+                self.former.push((team, player.stats, player.account));
             }
             if self.mvp == Some(player.car_id) {
                 self.mvp = None;
@@ -1395,8 +1434,8 @@ impl Game {
         let best_former = self
             .former
             .iter()
-            .filter(|(team, _)| *team == winner)
-            .map(|(_, s)| (sort_key(s), None))
+            .filter(|(team, _, _)| *team == winner)
+            .map(|(_, s, _)| (sort_key(s), None))
             .max_by_key(|&(k, _)| k);
         // (a tie between someone here and a former member goes to the one here: the sort's order is open, STAT §11.2)
         let best = match (best_here, best_former) {
@@ -1939,6 +1978,7 @@ mod tests {
         quick_chat: protocol::CHAT_EVERYONE,
         block_non_tactical: false,
         verified: false,
+        ticket: None,
     };
     const WANTS_REPLAYS: JoinRequest = JoinRequest {
         team: 255,
@@ -1952,6 +1992,7 @@ mod tests {
         quick_chat: protocol::CHAT_EVERYONE,
         block_non_tactical: false,
         verified: false,
+        ticket: None,
     };
 
     fn drain(rx: &mut Receiver<Outgoing>) -> Vec<Outgoing> {
@@ -4081,6 +4122,10 @@ mod tests {
     #[test]
     fn names_lose_hidden_characters_and_cant_take_another_players_automatic_name() {
         assert_eq!(player_name("\u{202E}ziggy", 3), "ziggy");
+        // (an account's name: tidied of hidden characters too, its "Player N" kept as the service allowed: AP2-8)
+        assert_eq!(verified_name("\u{202E}Zig\u{200B}gy  \u{0007}Star"), "Ziggy Star");
+        assert_eq!(verified_name("Player 7"), "Player 7");
+        assert_eq!(verified_name("\u{200B}"), "Player");
         // (every format character: the Arabic number signs, the Egyptian hieroglyph controls, shorthand formats: RV-277)
         for c in ['\u{0600}', '\u{06DD}', '\u{070F}', '\u{0891}', '\u{08E2}', '\u{110BD}', '\u{13430}', '\u{1BCA3}'] {
             assert_eq!(player_name(&format!("{c}x"), 3), "x", "{:X}", c as u32);

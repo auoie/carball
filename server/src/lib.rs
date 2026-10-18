@@ -15,6 +15,8 @@ pub mod net;
 mod net_tests;
 #[cfg(all(test, feature = "net"))]
 mod netsim;
+#[cfg(feature = "net")]
+pub mod outbox;
 pub mod protocol;
 #[cfg(feature = "net")]
 pub mod queue;

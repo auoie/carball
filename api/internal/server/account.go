@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"carball/api/internal/names"
+	"carball/api/internal/ranked"
 	"carball/api/internal/store"
 )
 
@@ -58,9 +59,26 @@ func (s *Server) writeAccount(w http.ResponseWriter, r *http.Request, status int
 		writeError(w, http.StatusInternalServerError, "server")
 		return
 	}
-	writeJSON(w, status, map[string]any{
+	ratings, err := s.Store.RatingsOf(r.Context(), id)
+	if err != nil {
+		s.Log.Error("reading ratings", "err", err)
+		writeError(w, http.StatusInternalServerError, "server")
+		return
+	}
+	body := map[string]any{
 		"id": a.ID, "name": a.Name, "providers": a.Providers, "createdAt": a.CreatedAt.UTC().Format(time.RFC3339),
-	})
+		"ratings": shownRatings(ratings, s.Now()),
+	}
+	ban, banned, err := s.Store.QueueBanOf(r.Context(), id)
+	if err != nil {
+		s.Log.Error("reading a queue ban", "err", err)
+		writeError(w, http.StatusInternalServerError, "server")
+		return
+	}
+	if until, on := ranked.BannedUntil(ban, banned, s.Now()); on {
+		body["queueBanUntil"] = until.UTC().Format(time.RFC3339)
+	}
+	writeJSON(w, status, body)
 }
 
 // me: the signed-in account (the page's account state), or 401
@@ -181,13 +199,30 @@ func (s *Server) ticket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "unavailable")
 		return
 	}
+	// (a leaver's queue ban in force: no search, the page told until when, LV1)
+	ban, banned, err := s.Store.QueueBanOf(r.Context(), ss.AccountID)
+	if err != nil {
+		s.Log.Error("reading a queue ban", "err", err)
+		writeError(w, http.StatusServiceUnavailable, "unavailable")
+		return
+	}
+	if until, on := ranked.BannedUntil(ban, banned, now); on {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "queue-banned", "until": until.UTC().Format(time.RFC3339)})
+		return
+	}
+	ratings, err := s.Store.RatingsOf(r.Context(), ss.AccountID)
+	if err != nil {
+		s.Log.Error("reading ratings", "err", err)
+		writeError(w, http.StatusServiceUnavailable, "unavailable")
+		return
+	}
 	id, err := accountBytes(a.ID)
 	if err != nil {
 		s.Log.Error("an account's id", "err", err)
 		writeError(w, http.StatusInternalServerError, "server")
 		return
 	}
-	encoded, t, err := s.Tickets.Issue(id, a.Name, now)
+	encoded, t, err := s.Tickets.Issue(id, a.Name, ranked.TicketRatings(ratings, now), now)
 	if err != nil {
 		s.Log.Error("signing a ticket", "err", err)
 		writeError(w, http.StatusInternalServerError, "server")

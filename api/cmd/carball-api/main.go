@@ -14,6 +14,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"flag"
 	"fmt"
@@ -82,6 +83,18 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
+	// (the ticket key read first: a bad one stops the start before the database is waited for, AP2-12)
+	var signer *ticket.Signer
+	var ticketKeys map[string]ed25519.PublicKey
+	if cfg.TicketKeyID != "" {
+		if signer, err = ticket.NewSigner(cfg.TicketKeyID, cfg.TicketSeed); err != nil {
+			return fmt.Errorf("TICKET_SIGNING_KEY_FILE: %w", err)
+		}
+		if ticketKeys, err = ticket.ParsePublic(cfg.TicketPreviousKeys); err != nil {
+			return fmt.Errorf("TICKET_PREVIOUS_KEYS: %w", err)
+		}
+		ticketKeys[signer.KeyID] = signer.PublicKey()
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	db, err := openWithRetry(ctx, cfg, log)
@@ -90,10 +103,12 @@ func serve(args []string) error {
 	}
 	defer db.Close()
 	// (the service's role rows only: one that could change the schema is a deployment's mistake, AP-4)
-	if can, err := db.CanCreate(ctx); err != nil {
+	can, err := db.CanCreate(ctx)
+	if err != nil {
 		return fmt.Errorf("checking the service's role: %w", err)
-	} else if can && !cfg.Dev {
-		return errors.New("DATABASE_URL's role may create in the schema: give the service a role of its own, rows only (carball-api migrate grants it)")
+	}
+	if err := roleRefusal(can, cfg.Dev); err != nil {
+		return err
 	} else if can {
 		log.Warn("development: the service's role may create in the schema")
 	}
@@ -127,13 +142,16 @@ func serve(args []string) error {
 	if cfg.SteamWebAPIKey != "" {
 		s.SteamNames = &steam.Names{Key: cfg.SteamWebAPIKey, Client: client, URL: steam.SummariesURL}
 	}
-	if cfg.TicketKeyID != "" {
-		if s.Tickets, err = ticket.NewSigner(cfg.TicketKeyID, cfg.TicketSeed); err != nil {
-			return fmt.Errorf("TICKET_SIGNING_KEY_FILE: %w", err)
-		}
-		log.Info("search tickets signed", "key", s.Tickets.Public())
+	s.Tickets, s.TicketKeys = signer, ticketKeys
+	if signer != nil {
+		log.Info("search tickets signed", "key", signer.Public())
 	} else {
 		log.Warn("development: no ticket key, no search tickets")
+	}
+	if cfg.GameServerToken != "" {
+		s.GameServerToken = []byte(cfg.GameServerToken)
+	} else {
+		log.Warn("GAME_SERVER_TOKEN_FILE not set: the game server's results and quitters refused (503)")
 	}
 	if cfg.TurnstileSecret != "" {
 		s.Turnstile = &turnstile.Verifier{Secret: cfg.TurnstileSecret, Hostname: config.Hostname(cfg.PublicOrigin), Client: client, URL: turnstile.SiteverifyURL}
@@ -168,6 +186,14 @@ func serve(args []string) error {
 	return httpServer.Shutdown(shutdown)
 }
 
+// roleRefusal: a role that may create in the schema refused outside development (AP-4)
+func roleRefusal(canCreate, dev bool) error {
+	if canCreate && !dev {
+		return errors.New("DATABASE_URL's role may create in the schema: give the service a role of its own, rows only (carball-api migrate grants it)")
+	}
+	return nil
+}
+
 // openWithRetry connects the database, trying again for a minute while it isn't up yet (a container started beside it:
 // AP-24), then giving up
 func openWithRetry(ctx context.Context, cfg config.Config, log *slog.Logger) (*store.Store, error) {
@@ -195,6 +221,9 @@ func housekeeping(ctx context.Context, db *store.Store, s *server.Server, log *s
 	for {
 		now := time.Now()
 		if now.Sub(purged) >= time.Hour {
+			if err := db.PurgeRanked(ctx, now.Add(-server.ResultsKept), now.Add(-server.AcceptWindow-time.Hour)); err != nil && ctx.Err() == nil {
+				log.Error("purging results and used tickets", "err", err)
+			}
 			if err := db.Purge(ctx, now, now.Add(-server.RecreateBlock)); err != nil && ctx.Err() == nil {
 				log.Error("purging", "err", err)
 			} else {

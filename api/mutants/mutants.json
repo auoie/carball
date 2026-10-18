@@ -1,0 +1,1066 @@
+{
+ "comment": "carball-api's mutants: one exact replacement each (old must occur once), then `go test` of the packages; a test must fail. AP1's (the static session's review of step 1), re-anchored where the code moved, and those added after (step 2, AP2's survivors). Run: python3 api/mutants/run.py --out DIR",
+ "mutants": [
+  {
+   "id": "AC1-flow-not-single-use",
+   "file": "internal/store/store.go",
+   "old": "`DELETE FROM auth_flows WHERE id_hash = $1\n\t\tRETURNING provider, state, nonce, verifier, expires_at`",
+   "new": "`SELECT provider, state, nonce, verifier, expires_at FROM auth_flows WHERE id_hash = $1`",
+   "packages": [
+    "./internal/server/",
+    "./internal/store/"
+   ]
+  },
+  {
+   "id": "AC1-flow-expiry-ignored",
+   "file": "internal/store/store.go",
+   "old": "return f, f.ExpiresAt.After(now), nil",
+   "new": "return f, true, nil",
+   "packages": [
+    "./internal/server/",
+    "./internal/store/"
+   ]
+  },
+  {
+   "id": "AC1-flow-provider-unchecked",
+   "file": "internal/server/auth.go",
+   "old": "return f, ok && f.Provider == provider",
+   "new": "return f, ok",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC1-auth-cookie-not-cleared",
+   "file": "internal/server/auth.go",
+   "old": "id := cookie(r, authCookie)\n\tclearCookie(w, authCookie)",
+   "new": "id := cookie(r, authCookie)",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC1-flow-ttl-x1000",
+   "file": "internal/server/auth.go",
+   "old": "ExpiresAt: now.Add(FlowTTL)}",
+   "new": "ExpiresAt: now.Add(1000 * FlowTTL)}",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC1-google-state-unchecked",
+   "file": "internal/server/auth.go",
+   "old": "if !ok || s.Google == nil || !equal(q.Get(\"state\"), f.State) {",
+   "new": "if !ok || s.Google == nil {",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC1-steam-flow-unchecked",
+   "file": "internal/server/auth.go",
+   "old": "if !ok || !equal(q.Get(\"flow\"), f.State) {",
+   "new": "if !ok {",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC1-steam-flow-and-returnto-from-query",
+   "file": "internal/server/auth.go",
+   "old": "if !ok || !equal(q.Get(\"flow\"), f.State) {",
+   "new": "if !ok {\n\t\ts.redirectPage(w, r, url.Values{\"signin\": {signinFailed}})\n\t\treturn\n\t}\n\tf.State = q.Get(\"flow\")\n\tif false {",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC1-cookie-not-httponly",
+   "file": "internal/server/server.go",
+   "old": "MaxAge: int(maxAge.Seconds()),\n\t\tHttpOnly: true,",
+   "new": "MaxAge: int(maxAge.Seconds()),\n\t\tHttpOnly: false,",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC1-cookie-samesite-none",
+   "file": "internal/server/server.go",
+   "old": "MaxAge: int(maxAge.Seconds()),\n\t\tHttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,",
+   "new": "MaxAge: int(maxAge.Seconds()),\n\t\tHttpOnly: true, Secure: true, SameSite: http.SameSiteNoneMode,",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC1-auth-cookie-not-host-prefixed",
+   "file": "internal/server/server.go",
+   "old": "authCookie    = \"__Host-cb_auth\"",
+   "new": "authCookie    = \"cb_auth\"",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC1-signup-cookie-not-host-prefixed",
+   "file": "internal/server/server.go",
+   "old": "signupCookie  = \"__Host-cb_signup\"",
+   "new": "signupCookie  = \"cb_signup\"",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC1-session-cookie-not-host-prefixed",
+   "file": "internal/server/server.go",
+   "old": "sessionCookie = \"__Host-cb_session\"",
+   "new": "sessionCookie = \"cb_session\"",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC3-no-pkce-challenge",
+   "file": "internal/google/google.go",
+   "old": "AuthCodeURL(state, oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier))",
+   "new": "AuthCodeURL(state, oidc.Nonce(nonce))",
+   "packages": [
+    "./internal/google/",
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC3-no-pkce-verifier",
+   "file": "internal/google/google.go",
+   "old": "Exchange(ctx, code, oauth2.VerifierOption(verifier))",
+   "new": "Exchange(ctx, code)",
+   "packages": [
+    "./internal/google/",
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC3-no-nonce-sent",
+   "file": "internal/google/google.go",
+   "old": "AuthCodeURL(state, oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier))",
+   "new": "AuthCodeURL(state, oauth2.S256ChallengeOption(verifier))",
+   "packages": [
+    "./internal/google/",
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC3-nonce-unchecked",
+   "file": "internal/google/google.go",
+   "old": "if subtle.ConstantTimeCompare([]byte(id.Nonce), []byte(nonce)) != 1 {",
+   "new": "if subtle.ConstantTimeCompare([]byte(id.Nonce), []byte(nonce)) != 1 && false {",
+   "packages": [
+    "./internal/google/"
+   ]
+  },
+  {
+   "id": "AC3-azp-unchecked",
+   "file": "internal/google/google.go",
+   "old": "if (claims.AZP != \"\" || len(id.Audience) > 1) && claims.AZP != c.ClientID {",
+   "new": "if false {",
+   "packages": [
+    "./internal/google/"
+   ]
+  },
+  {
+   "id": "AC3-azp-multi-aud-dropped",
+   "file": "internal/google/google.go",
+   "old": "(claims.AZP != \"\" || len(id.Audience) > 1)",
+   "new": "(claims.AZP != \"\")",
+   "packages": [
+    "./internal/google/"
+   ]
+  },
+  {
+   "id": "AC3-aud-skipped",
+   "file": "internal/google/google.go",
+   "old": "&oidc.Config{ClientID: c.ClientID}",
+   "new": "&oidc.Config{ClientID: c.ClientID, SkipClientIDCheck: true}",
+   "packages": [
+    "./internal/google/"
+   ]
+  },
+  {
+   "id": "AC3-expiry-skipped",
+   "file": "internal/google/google.go",
+   "old": "&oidc.Config{ClientID: c.ClientID}",
+   "new": "&oidc.Config{ClientID: c.ClientID, SkipExpiryCheck: true}",
+   "packages": [
+    "./internal/google/"
+   ]
+  },
+  {
+   "id": "AC3-issuer-skipped",
+   "file": "internal/google/google.go",
+   "old": "&oidc.Config{ClientID: c.ClientID}",
+   "new": "&oidc.Config{ClientID: c.ClientID, SkipIssuerCheck: true}",
+   "packages": [
+    "./internal/google/"
+   ]
+  },
+  {
+   "id": "AC2-duplicates-allowed",
+   "file": "internal/steam/steam.go",
+   "old": "if len(vs) != 1 {\n\t\t\treturn \"\", ErrDuplicate",
+   "new": "if false {\n\t\t\treturn \"\", ErrDuplicate",
+   "packages": [
+    "./internal/steam/"
+   ]
+  },
+  {
+   "id": "AC2-ns-unchecked",
+   "file": "internal/steam/steam.go",
+   "old": "if params[\"openid.ns\"] != namespace {",
+   "new": "if false {",
+   "packages": [
+    "./internal/steam/"
+   ]
+  },
+  {
+   "id": "AC2-mode-unchecked",
+   "file": "internal/steam/steam.go",
+   "old": "if params[\"openid.mode\"] != \"id_res\" {",
+   "new": "if false {",
+   "packages": [
+    "./internal/steam/"
+   ]
+  },
+  {
+   "id": "AC2-op-endpoint-unchecked",
+   "file": "internal/steam/steam.go",
+   "old": "if params[\"openid.op_endpoint\"] != v.Endpoint {",
+   "new": "if false {",
+   "packages": [
+    "./internal/steam/"
+   ]
+  },
+  {
+   "id": "AC2-return-to-unchecked",
+   "file": "internal/steam/steam.go",
+   "old": "if subtle.ConstantTimeCompare([]byte(params[\"openid.return_to\"]), []byte(returnTo)) != 1 {",
+   "new": "if subtle.ConstantTimeCompare([]byte(params[\"openid.return_to\"]), []byte(returnTo)) != 1 && false {",
+   "packages": [
+    "./internal/steam/",
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC2-identity-ne-claimed-allowed",
+   "file": "internal/steam/steam.go",
+   "old": "if m == nil || params[\"openid.identity\"] != params[\"openid.claimed_id\"] {",
+   "new": "if m == nil {",
+   "packages": [
+    "./internal/steam/"
+   ]
+  },
+  {
+   "id": "AC2-claimed-regex-removed",
+   "file": "internal/steam/steam.go",
+   "old": "m := claimed.FindStringSubmatch(params[\"openid.claimed_id\"])",
+   "new": "m := []string{\"\", strings.TrimPrefix(params[\"openid.claimed_id\"], \"https://steamcommunity.com/openid/id/\")}\n\t_ = claimed",
+   "packages": [
+    "./internal/steam/"
+   ]
+  },
+  {
+   "id": "AC2-claimed-regex-no-end-anchor",
+   "file": "internal/steam/steam.go",
+   "old": "(\\d{17})$`)",
+   "new": "(\\d{17})`)",
+   "packages": [
+    "./internal/steam/"
+   ]
+  },
+  {
+   "id": "AC2-claimed-regex-no-start-anchor",
+   "file": "internal/steam/steam.go",
+   "old": "regexp.MustCompile(`^https://",
+   "new": "regexp.MustCompile(`https://",
+   "packages": [
+    "./internal/steam/"
+   ]
+  },
+  {
+   "id": "AC2-signed-unchecked",
+   "file": "internal/steam/steam.go",
+   "old": "if !signed[f] {\n\t\t\treturn \"\", ErrSigned",
+   "new": "if !signed[f] && false {\n\t\t\treturn \"\", ErrSigned",
+   "packages": [
+    "./internal/steam/"
+   ]
+  },
+  {
+   "id": "AC2-signed-drop-claimed_id",
+   "file": "internal/steam/steam.go",
+   "old": "[]string{\"claimed_id\", \"identity\", \"return_to\", \"response_nonce\", \"assoc_handle\", \"op_endpoint\"}",
+   "new": "[]string{\"identity\", \"return_to\", \"response_nonce\", \"assoc_handle\", \"op_endpoint\"}",
+   "packages": [
+    "./internal/steam/"
+   ]
+  },
+  {
+   "id": "AC2-signed-drop-identity",
+   "file": "internal/steam/steam.go",
+   "old": "[]string{\"claimed_id\", \"identity\", \"return_to\", \"response_nonce\", \"assoc_handle\", \"op_endpoint\"}",
+   "new": "[]string{\"claimed_id\", \"return_to\", \"response_nonce\", \"assoc_handle\", \"op_endpoint\"}",
+   "packages": [
+    "./internal/steam/"
+   ]
+  },
+  {
+   "id": "AC2-signed-drop-return_to",
+   "file": "internal/steam/steam.go",
+   "old": "[]string{\"claimed_id\", \"identity\", \"return_to\", \"response_nonce\", \"assoc_handle\", \"op_endpoint\"}",
+   "new": "[]string{\"claimed_id\", \"identity\", \"response_nonce\", \"assoc_handle\", \"op_endpoint\"}",
+   "packages": [
+    "./internal/steam/"
+   ]
+  },
+  {
+   "id": "AC2-signed-drop-response_nonce",
+   "file": "internal/steam/steam.go",
+   "old": "[]string{\"claimed_id\", \"identity\", \"return_to\", \"response_nonce\", \"assoc_handle\", \"op_endpoint\"}",
+   "new": "[]string{\"claimed_id\", \"identity\", \"return_to\", \"assoc_handle\", \"op_endpoint\"}",
+   "packages": [
+    "./internal/steam/"
+   ]
+  },
+  {
+   "id": "AC2-signed-drop-assoc_handle",
+   "file": "internal/steam/steam.go",
+   "old": "[]string{\"claimed_id\", \"identity\", \"return_to\", \"response_nonce\", \"assoc_handle\", \"op_endpoint\"}",
+   "new": "[]string{\"claimed_id\", \"identity\", \"return_to\", \"response_nonce\", \"op_endpoint\"}",
+   "packages": [
+    "./internal/steam/"
+   ]
+  },
+  {
+   "id": "AC2-signed-drop-op_endpoint",
+   "file": "internal/steam/steam.go",
+   "old": "[]string{\"claimed_id\", \"identity\", \"return_to\", \"response_nonce\", \"assoc_handle\", \"op_endpoint\"}",
+   "new": "[]string{\"claimed_id\", \"identity\", \"return_to\", \"response_nonce\", \"assoc_handle\"}",
+   "packages": [
+    "./internal/steam/"
+   ]
+  },
+  {
+   "id": "AC2-nonce-age-unchecked",
+   "file": "internal/steam/steam.go",
+   "old": "if err != nil || at.Before(now.Add(-NonceWindow)) || at.After(now.Add(nonceSkew)) {",
+   "new": "if err != nil || at.After(now.Add(nonceSkew)) {",
+   "packages": [
+    "./internal/steam/"
+   ]
+  },
+  {
+   "id": "AC2-nonce-future-unchecked",
+   "file": "internal/steam/steam.go",
+   "old": "if err != nil || at.Before(now.Add(-NonceWindow)) || at.After(now.Add(nonceSkew)) {",
+   "new": "if err != nil || at.Before(now.Add(-NonceWindow)) {",
+   "packages": [
+    "./internal/steam/"
+   ]
+  },
+  {
+   "id": "AC2-nonce-window-10min",
+   "file": "internal/steam/steam.go",
+   "old": "NonceWindow = 5 * time.Minute",
+   "new": "NonceWindow = 10 * time.Minute",
+   "packages": [
+    "./internal/steam/"
+   ]
+  },
+  {
+   "id": "AC2-nonce-replay-allowed",
+   "file": "internal/steam/steam.go",
+   "old": "if !fresh {",
+   "new": "if !fresh && false {",
+   "packages": [
+    "./internal/steam/"
+   ]
+  },
+  {
+   "id": "AC2-nonce-kept-too-short",
+   "file": "internal/steam/steam.go",
+   "old": "at.Add(NonceWindow+nonceSkew)",
+   "new": "at.Add(time.Second)",
+   "packages": [
+    "./internal/steam/",
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC2-check-auth-skipped",
+   "file": "internal/steam/steam.go",
+   "old": "if err := v.checkAuthentication(ctx, params); err != nil {",
+   "new": "if err := error(nil); err != nil {",
+   "packages": [
+    "./internal/steam/"
+   ]
+  },
+  {
+   "id": "AC2-check-auth-value-ignored",
+   "file": "internal/steam/steam.go",
+   "old": "if val != \"true\" {",
+   "new": "if val != \"true\" && false {",
+   "packages": [
+    "./internal/steam/"
+   ]
+  },
+  {
+   "id": "AC2-check-auth-is_valid-twice-ok",
+   "file": "internal/steam/steam.go",
+   "old": "valid != 1",
+   "new": "valid < 1",
+   "packages": [
+    "./internal/steam/"
+   ]
+  },
+  {
+   "id": "AC2-check-auth-status-ignored",
+   "file": "internal/steam/steam.go",
+   "old": "if resp.StatusCode != http.StatusOK {\n\t\treturn fmt.Errorf(\"steam: check_authentication: status",
+   "new": "if false {\n\t\treturn fmt.Errorf(\"steam: check_authentication: status",
+   "packages": [
+    "./internal/steam/"
+   ]
+  },
+  {
+   "id": "AC2-check-auth-mode-not-changed",
+   "file": "internal/steam/steam.go",
+   "old": "form.Set(\"openid.mode\", \"check_authentication\")",
+   "new": "",
+   "packages": [
+    "./internal/steam/"
+   ]
+  },
+  {
+   "id": "AC2-forward-non-openid-params",
+   "file": "internal/steam/steam.go",
+   "old": "if strings.HasPrefix(k, \"openid.\") {",
+   "new": "if true {",
+   "packages": [
+    "./internal/steam/"
+   ]
+  },
+  {
+   "id": "AC7-origin-unchecked",
+   "file": "internal/server/server.go",
+   "old": "if r.Header.Get(\"Origin\") != s.Origin || r.Header.Get(WriteHeader) != \"1\" {",
+   "new": "if r.Header.Get(WriteHeader) != \"1\" {",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC7-header-unchecked",
+   "file": "internal/server/server.go",
+   "old": "if r.Header.Get(\"Origin\") != s.Origin || r.Header.Get(WriteHeader) != \"1\" {",
+   "new": "if r.Header.Get(\"Origin\") != s.Origin {",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC7-json-type-unchecked",
+   "file": "internal/server/server.go",
+   "old": "if r.ContentLength != 0 {",
+   "new": "if false {",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC7-body-cap-16G",
+   "file": "internal/server/server.go",
+   "old": "const maxBody = 16 << 10",
+   "new": "const maxBody = 16 << 30",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC7-unknown-fields-allowed",
+   "file": "internal/server/server.go",
+   "old": "d.DisallowUnknownFields()\n",
+   "new": "",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC7-trailing-json-allowed",
+   "file": "internal/server/server.go",
+   "old": "if err := d.Decode(&struct{}{}); !errors.Is(err, io.EOF) {",
+   "new": "if err := d.Decode(&struct{}{}); false && !errors.Is(err, io.EOF) {",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC7-delete-unguarded",
+   "file": "internal/server/server.go",
+   "old": "s.write(s.deleteAccount)",
+   "new": "s.deleteAccount",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC7-rename-unguarded",
+   "file": "internal/server/server.go",
+   "old": "s.write(s.rename)",
+   "new": "s.rename",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC7-signup-unguarded",
+   "file": "internal/server/server.go",
+   "old": "s.write(s.signup)",
+   "new": "s.signup",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC7-signout-everywhere-unguarded",
+   "file": "internal/server/server.go",
+   "old": "s.write(s.signOutEverywhere)",
+   "new": "s.signOutEverywhere",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC8-token-stored-raw",
+   "file": "internal/server/server.go",
+   "old": "h := sha256.Sum256([]byte(token))\n\treturn h[:]",
+   "new": "return []byte(token)",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC8-rotate-every-100d",
+   "file": "internal/server/server.go",
+   "old": "RotateEvery = 24 * time.Hour",
+   "new": "RotateEvery = 2400 * time.Hour",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC8-grace-100min",
+   "file": "internal/server/server.go",
+   "old": "RotateGrace = 10 * time.Minute",
+   "new": "RotateGrace = 100 * time.Minute",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC8-lifetime-900d",
+   "file": "internal/server/server.go",
+   "old": "SessionTTL = 90 * 24 * time.Hour",
+   "new": "SessionTTL = 900 * 24 * time.Hour",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC8-expiry-unchecked",
+   "file": "internal/store/store.go",
+   "old": "OR (s.previous_hash = $1 AND s.previous_until > $2)) AND s.expires_at > $2",
+   "new": "OR (s.previous_hash = $1 AND s.previous_until > $2))",
+   "packages": [
+    "./internal/server/",
+    "./internal/store/"
+   ]
+  },
+  {
+   "id": "AC8-grace-unbounded",
+   "file": "internal/store/store.go",
+   "old": "(s.previous_hash = $1 AND s.previous_until > $2)",
+   "new": "(s.previous_hash = $1 AND $2::timestamptz IS NOT NULL)",
+   "packages": [
+    "./internal/server/",
+    "./internal/store/"
+   ]
+  },
+  {
+   "id": "AC8-rotation-extends-lifetime",
+   "file": "internal/store/store.go",
+   "old": "rotated_at = $3 WHERE token_hash = $1`",
+   "new": "rotated_at = $3, expires_at = $3::timestamptz + interval '90 days' WHERE token_hash = $1`",
+   "packages": [
+    "./internal/server/",
+    "./internal/store/"
+   ]
+  },
+  {
+   "id": "AC8-ban-keeps-sessions",
+   "file": "internal/store/store.go",
+   "old": "_, err := tx.Exec(ctx, `DELETE FROM sessions WHERE account_id = $1`, accountID)",
+   "new": "_, err := tx.Exec(ctx, `SELECT $1::uuid`, accountID)",
+   "packages": [
+    "./internal/server/",
+    "./internal/store/"
+   ]
+  },
+  {
+   "id": "AC8-everywhere-keeps-sessions",
+   "file": "internal/store/store.go",
+   "old": "_, err := s.pool.Exec(ctx, `DELETE FROM sessions WHERE account_id = $1`, accountID)",
+   "new": "_, err := s.pool.Exec(ctx, `SELECT $1::uuid`, accountID)",
+   "packages": [
+    "./internal/server/",
+    "./internal/store/"
+   ]
+  },
+  {
+   "id": "AC8-signout-keeps-session",
+   "file": "internal/server/account.go",
+   "old": "if err := s.Store.DeleteSession(r.Context(), digest(tok)); err != nil {",
+   "new": "if err := error(nil); err != nil {",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC8-signout-by-previous-only-current",
+   "file": "internal/store/store.go",
+   "old": "WHERE token_hash = $1 OR previous_hash = $1`",
+   "new": "WHERE token_hash = $1`",
+   "packages": [
+    "./internal/server/",
+    "./internal/store/"
+   ]
+  },
+  {
+   "id": "AC8-signin-keeps-old-session",
+   "file": "internal/server/auth.go",
+   "old": "if err := s.Store.DeleteSession(r.Context(), digest(old)); err != nil {",
+   "new": "if err := error(nil); err != nil {",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC8-delete-no-cascade-sessions",
+   "file": "internal/store/migrations/00001_accounts.sql",
+   "old": "account_id uuid NOT NULL REFERENCES accounts (id) ON DELETE CASCADE,\n    created_at timestamptz NOT NULL,\n    rotated_at",
+   "new": "account_id uuid NOT NULL REFERENCES accounts (id) ON DELETE SET NULL,\n    created_at timestamptz NOT NULL,\n    rotated_at",
+   "packages": [
+    "./internal/server/",
+    "./internal/store/"
+   ]
+  },
+  {
+   "id": "AC14-hidden-kept",
+   "file": "internal/names/names.go",
+   "old": "case hidden(c):",
+   "new": "case false:",
+   "packages": [
+    "./internal/names/",
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC14-no-nfkc",
+   "file": "internal/names/names.go",
+   "old": "norm.NFKD.String(asked)",
+   "new": "asked",
+   "packages": [
+    "./internal/names/"
+   ]
+  },
+  {
+   "id": "AC14-length-unchecked",
+   "file": "internal/names/names.go",
+   "old": "if len(name) > MaxBytes {\n\t\treturn \"\", ErrTooLong",
+   "new": "if false {\n\t\treturn \"\", ErrTooLong",
+   "packages": [
+    "./internal/names/",
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC14-marks-unlimited",
+   "file": "internal/names/names.go",
+   "old": "if marks < 2 && b.Len() > 0 && !space {",
+   "new": "if marks < 1000 && b.Len() > 0 && !space {",
+   "packages": [
+    "./internal/names/"
+   ]
+  },
+  {
+   "id": "AC14-rename-not-cleaned",
+   "file": "internal/server/account.go",
+   "old": "name, err := names.Clean(body.Name)\n\tif err != nil {\n\t\twriteError(w, http.StatusBadRequest, nameError(err))\n\t\treturn\n\t}\n\tif !s.renames",
+   "new": "name, err := body.Name, error(nil)\n\t_ = names.Clean\n\tif err != nil {\n\t\twriteError(w, http.StatusBadRequest, nameError(err))\n\t\treturn\n\t}\n\tif !s.renames",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC14-signup-not-cleaned",
+   "file": "internal/server/auth.go",
+   "old": "name, err := names.Clean(body.Name)\n\tif err != nil {\n\t\twriteError(w, http.StatusBadRequest, nameError(err))\n\t\treturn\n\t}\n\tif s.Turnstile",
+   "new": "name, err := body.Name, error(nil)\n\tif err != nil {\n\t\twriteError(w, http.StatusBadRequest, nameError(err))\n\t\treturn\n\t}\n\tif s.Turnstile",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC14-rename-unlimited",
+   "file": "internal/server/account.go",
+   "old": "if !s.renames.Allow(ss.AccountID, s.Now()) {",
+   "new": "if false {",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC14-persona-untidied",
+   "file": "internal/names/names.go",
+   "old": "name := tidy(provided)",
+   "new": "name := provided",
+   "packages": [
+    "./internal/names/",
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC16-hostname-unchecked",
+   "file": "internal/turnstile/turnstile.go",
+   "old": "case body.Hostname != v.Hostname:",
+   "new": "case false:",
+   "packages": [
+    "./internal/turnstile/"
+   ]
+  },
+  {
+   "id": "AC16-action-unchecked",
+   "file": "internal/turnstile/turnstile.go",
+   "old": "case body.Action != action:",
+   "new": "case false:",
+   "packages": [
+    "./internal/turnstile/"
+   ]
+  },
+  {
+   "id": "AC16-success-unchecked",
+   "file": "internal/turnstile/turnstile.go",
+   "old": "case !body.Success:",
+   "new": "case false:",
+   "packages": [
+    "./internal/turnstile/"
+   ]
+  },
+  {
+   "id": "AC16-signup-skips-turnstile",
+   "file": "internal/server/auth.go",
+   "old": "if err := s.Turnstile.Verify(ctx, body.Turnstile, \"signup\"); err != nil {",
+   "new": "if err := error(nil); err != nil {",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC4-no-unmap",
+   "file": "internal/ratelimit/ratelimit.go",
+   "old": "return addr.Unmap(), true",
+   "new": "return addr, true",
+   "packages": [
+    "./internal/ratelimit/"
+   ]
+  },
+  {
+   "id": "AC4-ipv6-by-128",
+   "file": "internal/ratelimit/ratelimit.go",
+   "old": "addr.Prefix(64)",
+   "new": "addr.Prefix(128)",
+   "packages": [
+    "./internal/ratelimit/"
+   ]
+  },
+  {
+   "id": "AC15-google-callback-unlimited",
+   "file": "internal/server/auth.go",
+   "old": "func (s *Server) googleCallback(w http.ResponseWriter, r *http.Request) {\n\tif !s.allowAddress(r, s.Now(), s.signIns, s.signInsWide) {",
+   "new": "func (s *Server) googleCallback(w http.ResponseWriter, r *http.Request) {\n\tif false {",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC15-steam-callback-unlimited",
+   "file": "internal/server/auth.go",
+   "old": "func (s *Server) steamCallback(w http.ResponseWriter, r *http.Request) {\n\tif !s.allowAddress(r, s.Now(), s.signIns, s.signInsWide) {",
+   "new": "func (s *Server) steamCallback(w http.ResponseWriter, r *http.Request) {\n\tif false {",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC15-signup-unlimited",
+   "file": "internal/server/auth.go",
+   "old": "if !s.allowAddress(r, now, s.signups, s.signupsWide) {",
+   "new": "if false {",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC15-log-has-query",
+   "file": "internal/server/server.go",
+   "old": "\"path\", r.URL.Path,",
+   "new": "\"path\", r.URL.String(),",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC9-signin-ban-unchecked",
+   "file": "internal/server/auth.go",
+   "old": "} else if banned {\n\t\treturn signInBanned{end: ban.End}, nil",
+   "new": "} else if banned && false {\n\t\treturn signInBanned{end: ban.End}, nil",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC9-signup-ban-unchecked",
+   "file": "internal/store/store.go",
+   "old": "} else if banned {\n\t\t\treturn BannedError{ban}",
+   "new": "} else if banned && false {\n\t\t\treturn BannedError{ban}",
+   "packages": [
+    "./internal/server/",
+    "./internal/store/"
+   ]
+  },
+  {
+   "id": "AC10-deletion-not-recorded",
+   "file": "internal/store/store.go",
+   "old": "`INSERT INTO deletions (subject_hmac, deleted_at) VALUES ($1, $2)\n\t\t\t\tON CONFLICT (subject_hmac) DO UPDATE SET deleted_at = excluded.deleted_at`",
+   "new": "`SELECT $1::bytea, $2::timestamptz`",
+   "packages": [
+    "./internal/server/",
+    "./internal/store/"
+   ]
+  },
+  {
+   "id": "AC10-signin-block-unchecked",
+   "file": "internal/server/auth.go",
+   "old": "} else if blocked {\n\t\treturn signInBlocked",
+   "new": "} else if blocked && false {\n\t\treturn signInBlocked",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AC10-signup-block-unchecked",
+   "file": "internal/store/store.go",
+   "old": "} else if blocked {\n\t\t\treturn RecreateError{at}",
+   "new": "} else if blocked && false {\n\t\t\treturn RecreateError{at}",
+   "packages": [
+    "./internal/server/",
+    "./internal/store/"
+   ]
+  },
+  {
+   "id": "AC24-hmac-unkeyed",
+   "file": "internal/server/server.go",
+   "old": "hmac.New(sha256.New, s.DeletionKey)",
+   "new": "hmac.New(sha256.New, nil)",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP1-proxy-header-from-anyone",
+   "file": "internal/ratelimit/ratelimit.go",
+   "old": "err == nil && trustedAddr(addr, trusted) {",
+   "new": "err == nil {",
+   "packages": [
+    "./internal/ratelimit/",
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP2-full-table-refuses",
+   "file": "internal/ratelimit/ratelimit.go",
+   "old": "if oldest := l.recent.Back(); oldest != nil {\n\t\t\te, _ := l.recent.Remove(oldest).(*entry)\n\t\t\tdelete(l.keys, e.key)\n\t\t}",
+   "new": "return false",
+   "packages": [
+    "./internal/ratelimit/"
+   ]
+  },
+  {
+   "id": "AP2-wide-limit-ignored",
+   "file": "internal/server/server.go",
+   "old": "return wide.Allow(ratelimit.WideKey(key), now) && ok",
+   "new": "return ok",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP2-flow-ceiling-ignored",
+   "file": "internal/server/auth.go",
+   "old": "err != nil || open >= s.limits.OpenFlows {",
+   "new": "err != nil || open >= 1<<30 {",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP2-signup-ceiling-ignored",
+   "file": "internal/server/auth.go",
+   "old": "err != nil || open >= s.limits.OpenSignups {",
+   "new": "err != nil || open >= 1<<30 {",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP3-banned-session-kept",
+   "file": "internal/store/store.go",
+   "old": "AND NOT EXISTS (SELECT 1 FROM identities i JOIN bans b",
+   "new": "AND NOT EXISTS (SELECT 1 WHERE false) AND NOT EXISTS (SELECT 1 FROM identities i JOIN bans b ON false AND",
+   "packages": [
+    "./internal/server/",
+    "./internal/store/"
+   ]
+  },
+  {
+   "id": "AP4-same-role-allowed",
+   "file": "internal/store/store.go",
+   "old": "if appRole == cfg.User && !sameRole {",
+   "new": "if false {",
+   "packages": [
+    "./internal/store/"
+   ]
+  },
+  {
+   "id": "AP7-dev-any-origin",
+   "file": "internal/config/config.go",
+   "old": "case dev && !local:",
+   "new": "case dev && !local && false:",
+   "packages": [
+    "./internal/config/"
+   ]
+  },
+  {
+   "id": "TK-unguarded",
+   "file": "internal/server/server.go",
+   "old": "s.write(s.ticket)",
+   "new": "s.ticket",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "TK-unlimited",
+   "file": "internal/server/account.go",
+   "old": "if !s.tickets.Allow(ss.AccountID, now) {",
+   "new": "if false {",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "TK-no-context",
+   "file": "internal/ticket/ticket.go",
+   "old": "signed := append([]byte(Context), body...)",
+   "new": "signed := body",
+   "packages": [
+    "./internal/ticket/",
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "TK-time-unchecked",
+   "file": "internal/ticket/ticket.go",
+   "old": "if now.Add(skew).Before(t.Issued) || !now.Add(-skew).Before(t.Expires) {",
+   "new": "if false {",
+   "packages": [
+    "./internal/ticket/"
+   ]
+  },
+  {
+   "id": "TK-lifetime-x100",
+   "file": "internal/ticket/ticket.go",
+   "old": "t.Expires = t.Issued.Add(Lifetime)",
+   "new": "t.Expires = t.Issued.Add(100 * Lifetime)",
+   "packages": [
+    "./internal/ticket/",
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "TK-nonce-fixed",
+   "file": "internal/ticket/ticket.go",
+   "old": "if _, err := rand.Read(t.Nonce[:]); err != nil {",
+   "new": "if _, err := error(nil), error(nil); err != nil {",
+   "packages": [
+    "./internal/ticket/"
+   ]
+  },
+  {
+   "id": "AP2-body-cap-maxbytes-only",
+   "file": "internal/server/server.go",
+   "old": "r.Body = http.MaxBytesReader(w, r.Body, maxBody)\n\t\tnext(w, r)\n\t}\n}\n\nfunc writeJSON",
+   "new": "next(w, r)\n\t}\n}\n\nfunc writeJSON",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP2-lifetime-x10",
+   "file": "internal/ticket/ticket.go",
+   "old": "const Lifetime = 2 * time.Minute",
+   "new": "const Lifetime = 20 * time.Minute",
+   "packages": [
+    "./internal/ticket/",
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP2-context-changed",
+   "file": "internal/ticket/ticket.go",
+   "old": "const Context = \"carball-search\\x00\"",
+   "new": "const Context = \"carball-search\\x01\"",
+   "packages": [
+    "./internal/ticket/",
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP2-cancreate-ignored",
+   "file": "cmd/carball-api/main.go",
+   "old": "if canCreate && !dev {",
+   "new": "if false {",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "AP2-discovery-not-cached",
+   "file": "internal/google/google.go",
+   "old": "if c.failed != nil && now().Sub(c.failedAt) < discoveryRetry {",
+   "new": "if false {",
+   "packages": [
+    "./internal/google/"
+   ]
+  }
+ ]
+}

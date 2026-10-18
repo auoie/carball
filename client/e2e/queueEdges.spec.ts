@@ -72,3 +72,42 @@ test("Free Play during Joining in keeps the page; the match's map is the server'
   await a.context().close();
   await b.context().close();
 });
+
+test("a ranked match left by accident is offered back for 900 s; a rejoin of a match that's over says so and forgets it (LV1)", async ({ browser }) => {
+  const errors: string[] = [];
+  const seat = (joinedAt: number) => JSON.stringify({ matchId: "1311768467294899695", teamSize: 2, joinedAt });
+  // (joined 20 minutes ago: past the 900 s, no offer)
+  const stale = await menuPage(browser, errors, async (p) => {
+    await p.addInitScript(
+      (s) => {
+        localStorage.setItem("carball.rankedSeat", s);
+      },
+      seat(Date.now() - 20 * 60_000),
+    );
+  });
+  await expect(stale.locator("#main-menu")).toBeVisible();
+  await expect(stale.locator("#modal")).toBeHidden();
+  await stale.context().close();
+  // (joined a minute ago: offered; Yes tries it, the server has no such match: back, told, the offer gone)
+  const page = await menuPage(browser, errors, async (p) => {
+    await p.addInitScript(
+      (s) => {
+        if (!sessionStorage.getItem("seeded")) {
+          localStorage.setItem("carball.rankedSeat", s);
+          sessionStorage.setItem("seeded", "1");
+        }
+      },
+      seat(Date.now() - 60_000),
+    );
+  });
+  const modal = page.locator("#modal");
+  await expect(modal.locator(".modal-title")).toHaveText("REJOIN MATCH");
+  await modal.getByRole("button", { name: /^yes$/i }).click();
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
+  await expect(modal.locator(".modal-title")).toHaveText("MATCH OVER", { timeout: 30_000 });
+  await expect(modal).toContainText("That match has ended.");
+  expect(await page.evaluate(() => localStorage.getItem("carball.rankedSeat"))).toBeNull();
+  expect(new URL(page.url()).searchParams.has("match")).toBe(false);
+  expect(errors).toEqual([]);
+  await page.context().close();
+});

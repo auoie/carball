@@ -618,7 +618,7 @@ export class Online {
       const car = this.#world.car(id);
       // (a Blender model's wheels as live: RV-581)
       const wheels = this.#cars.get(id)?.view.posesWheels === true ? this.#world.carWheels(id) : null;
-      cars.set(id, { ...recordCar(car, wheels), demoed: this.#drawnDemoed(id, car) });
+      cars.set(id, { ...recordCar(car, wheels, this.#world.carLastBallTouchTick(id)), demoed: this.#drawnDemoed(id, car) });
     }
     this.#recorder.record(frame, { cars, ball: this.#world.ball(), ballExploded: this.#world.ballExploded(), lastTouchTeam: lastTouchTeam(this.#world) });
   }

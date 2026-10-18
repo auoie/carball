@@ -46,6 +46,12 @@ type Config struct {
 	// outside development
 	TicketKeyID string
 	TicketSeed  string
+	// TicketPreviousKeys are earlier keys' public lines ("KID BASE64", comma-separated): a result's or a quitter's
+	// tickets signed before a rotation still check, for the acceptance window
+	TicketPreviousKeys string
+	// GameServerToken is the game server's credential on /api/results and /api/quitters (compared in constant time, behind
+	// the tunnel's Access service token: notes/accounts.md §3); none: those calls answer 503
+	GameServerToken string
 	// Dev is development mode (`--dev`): a localhost origin only (http or https), Turnstile optional (AP-7)
 	Dev bool
 }
@@ -56,7 +62,7 @@ type Env func(string) string
 // Load reads the configuration from env, reading `*_FILE` secrets from disk
 func Load(env Env, dev bool) (Config, error) {
 	c := Config{
-		ListenAddr:         or(env("LISTEN_ADDR"), ":8080"),
+		ListenAddr:         or(env("LISTEN_ADDR"), listenDefault(dev)),
 		HealthAddr:         or(env("HEALTH_ADDR"), "127.0.0.1:8081"),
 		PublicOrigin:       strings.TrimSuffix(env("PUBLIC_ORIGIN"), "/"),
 		DatabaseURL:        env("DATABASE_URL"),
@@ -64,6 +70,7 @@ func Load(env Env, dev bool) (Config, error) {
 		GoogleClientID:     env("GOOGLE_CLIENT_ID"),
 		TurnstileSiteKey:   env("TURNSTILE_SITE_KEY"),
 		TicketKeyID:        env("TICKET_KEY_ID"),
+		TicketPreviousKeys: env("TICKET_PREVIOUS_KEYS"),
 		Dev:                dev,
 
 		DatabasePasswordFile:        env("DATABASE_PASSWORD_FILE"),
@@ -89,6 +96,10 @@ func Load(env Env, dev bool) (Config, error) {
 	c.TurnstileSecret = read("TURNSTILE_SECRET_FILE", !dev)
 	c.DeletionKey = []byte(read("DELETION_HMAC_KEY_FILE", true))
 	c.TicketSeed = read("TICKET_SIGNING_KEY_FILE", !dev)
+	c.GameServerToken = read("GAME_SERVER_TOKEN_FILE", false)
+	if c.GameServerToken != "" && len(c.GameServerToken) < 32 {
+		errs = append(errs, errors.New("GAME_SERVER_TOKEN_FILE: 32 characters or more of random text"))
+	}
 	if (c.TicketKeyID == "") != (c.TicketSeed == "") {
 		errs = append(errs, errors.New("TICKET_KEY_ID and TICKET_SIGNING_KEY_FILE go together"))
 	}
@@ -170,7 +181,18 @@ func hasPassword(dsn string) bool {
 	return passwordKey.MatchString(dsn)
 }
 
-// parsePrefixes: comma-separated CIDRs or single addresses
+// listenDefault: the container's port on every interface (the tunnel reaches it on its docker network); a development
+// server's on loopback alone, unless LISTEN_ADDR says otherwise (AP2-7)
+func listenDefault(dev bool) string {
+	if dev {
+		return "127.0.0.1:8080"
+	}
+	return ":8080"
+}
+
+// parsePrefixes: comma-separated CIDRs or single addresses. An IPv4-mapped one as IPv4 (the peer's address is unmapped
+// before it's matched); none covering everything, or reaching outside loopback, private and link-local addresses: the
+// tunnel's connector is on the box or its docker network, never the internet (AP2-6)
 func parsePrefixes(list string) ([]netip.Prefix, error) {
 	var out []netip.Prefix
 	for item := range strings.SplitSeq(list, ",") {
@@ -178,21 +200,49 @@ func parsePrefixes(list string) ([]netip.Prefix, error) {
 		if item == "" {
 			continue
 		}
+		var p netip.Prefix
 		if !strings.Contains(item, "/") {
 			addr, err := netip.ParseAddr(item)
 			if err != nil {
 				return nil, err
 			}
-			out = append(out, netip.PrefixFrom(addr, addr.BitLen()))
-			continue
+			addr = addr.Unmap()
+			p = netip.PrefixFrom(addr, addr.BitLen())
+		} else {
+			parsed, err := netip.ParsePrefix(item)
+			if err != nil {
+				return nil, err
+			}
+			if a := parsed.Addr(); a.Is4In6() {
+				bits := parsed.Bits() - 96
+				if bits < 0 {
+					return nil, fmt.Errorf("%s: an IPv4-mapped prefix wider than IPv4", item)
+				}
+				parsed = netip.PrefixFrom(a.Unmap(), bits)
+			}
+			p = parsed.Masked()
 		}
-		p, err := netip.ParsePrefix(item)
-		if err != nil {
-			return nil, err
+		if p.Bits() == 0 || !localAddr(p.Addr()) || !local(p) {
+			return nil, fmt.Errorf("%s: not the connector's (loopback, private or link-local addresses only)", item)
 		}
-		out = append(out, p.Masked())
+		out = append(out, p)
 	}
 	return out, nil
+}
+
+// local: a prefix's last address is as local as its first (a prefix that starts private and runs past it: refused)
+func local(p netip.Prefix) bool {
+	b := p.Addr().AsSlice()
+	for i := p.Bits(); i < len(b)*8; i++ {
+		b[i/8] |= 1 << (7 - i%8)
+	}
+	end, ok := netip.AddrFromSlice(b)
+	return ok && localAddr(end)
+}
+
+// localAddr: loopback, private or link-local
+func localAddr(a netip.Addr) bool {
+	return a.IsLoopback() || a.IsPrivate() || a.IsLinkLocalUnicast()
 }
 
 // Hostname is an origin's host, no port: Turnstile's hostname check (siteverify names the page's: AC-16)

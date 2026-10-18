@@ -52,3 +52,13 @@ func TestTarget(t *testing.T) {
 		}
 	}
 }
+
+// serve refuses a role that may create in the schema, but in development (AP-4, AP2-10)
+func TestRoleRefusal(t *testing.T) {
+	if roleRefusal(true, false) == nil {
+		t.Error("a schema-creating role accepted outside development")
+	}
+	if roleRefusal(true, true) != nil || roleRefusal(false, false) != nil {
+		t.Error("refused when it may run")
+	}
+}

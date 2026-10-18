@@ -10,13 +10,25 @@ const ID = "0f0e0d0c-0b0a-4908-8706-050403020100";
 /** The fake service's state, and the writes it saw (each with its X-Carball header) */
 interface Fake {
   name: string | null;
+  banned?: boolean;
   writes: { method: string; path: string; guarded: boolean; body: string | null }[];
 }
 
 async function fakeDeployment(page: Page, fake: Fake): Promise<void> {
   const json = (route: Route, status: number, body?: unknown): Promise<void> =>
     route.fulfill({ status, contentType: "application/json", body: body === undefined ? "" : JSON.stringify(body) });
-  const account = (): object => ({ id: ID, name: fake.name, providers: ["steam"], createdAt: "2026-01-02T03:04:05Z" });
+  const account = (): object => ({
+    id: ID,
+    name: fake.name,
+    providers: ["steam"],
+    createdAt: "2026-01-02T03:04:05Z",
+    ratings: [
+      { playlist: 1, rating: 1523, deviation: 80, provisional: false, games: 12 },
+      { playlist: 2, rating: 1500, deviation: 500, provisional: true, games: 0 },
+      { playlist: 3, rating: 1500, deviation: 500, provisional: true, games: 0 },
+    ],
+    ...(fake.banned ? { queueBanUntil: new Date(Date.now() + 9.5 * 60_000).toISOString() } : {}),
+  });
   const wrote = (r: Request): void => {
     fake.writes.push({ method: r.method(), path: new URL(r.url()).pathname, guarded: r.headers()["x-carball"] === "1", body: r.postData() });
   };
@@ -122,6 +134,28 @@ test("a sign-in's notice (a ban's end) and a development page with no accounts; 
   await page.goto("/privacy.html");
   await expect(page.locator("h1")).toHaveText("Privacy");
   await expect(page).toHaveTitle("Carball: privacy");
+  expect(errors).toEqual([]);
+  await context.close();
+});
+
+test("the account's ratings beside the playlists (\"?\" while provisional) and a leaver's queue ban under Find Match (LV1)", async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  await hideGamepads(context);
+  const page = await context.newPage();
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await fakeDeployment(page, { name: "Ziggy", banned: true, writes: [] });
+  await page.goto("/?render=off");
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
+  const menu = page.locator("#main-menu");
+  await expect(menu.locator(".main-menu-account")).toHaveText("Ziggy");
+  await menu.getByRole("button", { name: /^play$/i }).click();
+  await expect(menu.locator('.main-menu-playlist[data-playlist="1"] .main-menu-rating')).toHaveText("1523");
+  await expect(menu.locator('.main-menu-playlist[data-playlist="2"] .main-menu-rating')).toHaveText("1500?");
+  await expect(menu.locator(".main-menu-ban")).toHaveText("you left a ranked match: you can search again in 10 minutes");
+  await menu.getByRole("button", { name: /^back$/i }).click();
+  await menu.locator(".main-menu-account").click();
+  await expect(menu.locator(".account-ratings")).toHaveText(/1v1 1523\s+2v2 1500\?\s+3v3 1500\?/);
   expect(errors).toEqual([]);
   await context.close();
 });
