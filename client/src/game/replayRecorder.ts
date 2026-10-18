@@ -2,7 +2,7 @@
 // client frame drew, kept for the longest replay (10 s before the goal + 3 s after, and the replay's own lead).
 // Frames are recorded as the prediction settles them: a server correction that replays older frames records them
 // again, so the recording ends up with the corrected history.
-import type { BodyState, CarState } from "../engine/world";
+import type { BodyState, CarState, CarWheels } from "../engine/world";
 
 export interface RecordedCar extends BodyState {
   readonly team: CarState["team"];
@@ -12,6 +12,9 @@ export interface RecordedCar extends BodyState {
   readonly wheelContact: CarState["wheelContact"];
   /** The engine's flip-reset count (the game's DodgesRefreshedCounter): a replay plays the effect where it goes up */
   readonly flipResets: number;
+  /** Its wheels as the vehicle had them (their suspension and steering), for a car drawn with its Blender model: its
+   *  replay's wheels as live (RV-581); none for the others */
+  readonly wheels?: CarWheels;
 }
 
 export interface RecordedFrame {
@@ -84,7 +87,9 @@ export function freeplayTouchTeam(world: Parameters<typeof lastTouchTeam>[0], te
   return lastTouchTeam(world) === null ? null : team;
 }
 
-export function recordCar(car: CarState): RecordedCar {
+/** A car as a replay keeps it (`wheels`: its vehicle's, for a car whose drawn wheels follow them) */
+export function recordCar(car: CarState, wheels: CarWheels | null = null): RecordedCar {
   const { pos, vel, angVel, rot, team, boosting, demoed, supersonic, wheelContact, flipResets } = car;
-  return { pos, vel, angVel, rot, team, boosting, demoed, supersonic, wheelContact, flipResets };
+  const recorded = { pos, vel, angVel, rot, team, boosting, demoed, supersonic, wheelContact, flipResets };
+  return wheels ? { ...recorded, wheels } : recorded;
 }

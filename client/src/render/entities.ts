@@ -7,7 +7,8 @@ import { BallTrail, SIDE_TRAIL, type TrailPoints } from "./ballTrail";
 import { drawnAt, sceneDetail } from "./detail";
 import { TEAM_PRIMARY_LINEAR, fullBright } from "./teamColors";
 import { buildCarModel, carExhausts } from "./carModel";
-import { type CarModelParts, carModelParts, wheelPose, wheelSpin } from "./carGlb";
+import { type CarModelParts, UU_PER_METRE, carModelParts, easeWheel, wheelDropTarget, wheelPose, wheelSpin } from "./carGlb";
+import { ChassisSpring } from "./chassisSpring";
 import { Trail, trailingRearWheels } from "./supersonic";
 import { BOOST_TRAIL, IDLE_EXHAUST } from "./effects";
 import { Emitter, type Particles } from "./particles";
@@ -52,6 +53,21 @@ export const TEAM_CAR_COLORS = [
  *  frame */
 export const EXHAUSTS: readonly [Vector3, Vector3] = [new Vector3(-57, 10.25 + 2.6115, -20.43), new Vector3(-57, 10.25 + 2.6115, 20.43)];
 
+/** A car's wheels from the physics for its drawing (CarView.wheels): the vehicle's (World.carWheels) and each wheel's
+ *  contact (CarState.wheelContact), the engine's order */
+/** The body sway's axes (three's car frame), its scratch */
+const PITCH_AXIS = new Vector3(0, 0, 1);
+const ROLL_AXIS = new Vector3(1, 0, 0);
+const SWAY_ROLL = new Quaternion();
+const SWAY_PIVOT = new Vector3();
+const IDENTITY = new Quaternion();
+
+export interface DrawnWheels extends CarWheels {
+  readonly contact: readonly boolean[];
+  /** no physics, a replay's: a touching wheel drawn at rest (its least drop, where the game draws a wheel at rest) */
+  readonly resting?: boolean;
+}
+
 export class CarView {
   /** Add this to the scene: the car and its effects */
   readonly root = new Group();
@@ -73,11 +89,21 @@ export class CarView {
    *  generated car, its wheels fixed */
   readonly #parts: CarModelParts | null;
   readonly #config: CarConfig;
-  /** The physics' wheels for this frame (their suspension and steering: a Blender model's wheels follow them); null: as
-   *  the model has them */
-  wheels: CarWheels | null = null;
-  /** Each wheel's turn so far (rad), and where the car was last frame (its travel turns them) */
+  /** The physics' wheels for this frame (their suspension, steering and contact: a Blender model's wheels are drawn from
+   *  them); null: none (a replay's car), its wheels held as they are */
+  wheels: DrawnWheels | null = null;
+  /** Each wheel's drawn drop (uu below the model's, negative) and steer (rad), eased; its turn so far (rad); where the car
+   *  was last frame (its travel turns them) */
+  readonly #drops = [0, 0, 0, 0];
+  readonly #steers = [0, 0, 0, 0];
+  #wheelsSet = false;
+  readonly #up = new Vector3();
   readonly #spins = [0, 0, 0, 0];
+  /** A Blender model's body sway (its spring; this frame's turn and the point it turns about, car frame, uu) */
+  readonly #spring: ChassisSpring | null;
+  readonly #swayTurn = new Quaternion();
+  readonly #swayAt = new Vector3();
+  readonly #swayed = new Vector3();
   readonly #last = new Vector3();
   readonly #forward = new Vector3();
   #placed = false;
@@ -89,6 +115,7 @@ export class CarView {
     this.#model = model;
     this.#config = config;
     this.#parts = carModelParts(model);
+    this.#spring = this.#parts ? new ChassisSpring(this.#parts.spring) : null;
     // (the game's sockets on its Fennec, where it's loaded; a Blender model's own where it has them; else our bodies' at
     // their backs, found before it's posed: RV-470)
     const exhausts = model.userData["gameMesh"] === true ? EXHAUSTS.map((at) => ({ at, turn: null })) : (this.#parts?.exhausts ?? carExhausts(model, config, car).map((at) => ({ at, turn: null })));
@@ -97,11 +124,23 @@ export class CarView {
       ? exhausts.map(({ at, turn }) => ({ at, turn, trail: new Emitter(particles, BOOST_TRAIL), idle: new Emitter(particles, IDLE_EXHAUST) }))
       : [];
     this.root.add(this.#body, ...this.#trails.map((t) => t.mesh));
-    // The rear tyres' contact points at rest (car frame: the bottom of each, as the model draws them)
+    // The rear tyres' contact points at rest (car frame: the bottom of each, as the model draws them; a Blender model's
+    // its own rear wheels', where it has them, RV-590)
     const back = config.backWheel;
     const height = back.offset.z - (back.suspensionRest - WHEEL_TRAVEL) - back.radius;
     const side = config.hitboxSize.y / 2 - 8;
-    this.#trailFrom = [new Vector3(back.offset.x, height, -side), new Vector3(back.offset.x, height, side)];
+    const rearLeft = this.#parts?.wheels[3];
+    const rearRight = this.#parts?.wheels[2];
+    const contact = (w: NonNullable<typeof rearLeft>): Vector3 => new Vector3(w.rest.x * UU_PER_METRE, w.rest.y * UU_PER_METRE - w.radius, w.rest.z * UU_PER_METRE);
+    this.#trailFrom =
+      rearLeft && rearRight ? [contact(rearLeft), contact(rearRight)] : [new Vector3(back.offset.x, height, -side), new Vector3(back.offset.x, height, side)];
+  }
+
+  /** A replay's frame for a Blender model's wheels (no physics recorded: its wheels' contact alone): the touching ones at
+   *  rest, the others hanging by the car's tilt, no steer (RX26) */
+  replayWheels(contact: readonly boolean[]): void {
+    if (!this.#parts) return;
+    this.wheels = { suspension: [0, 0, 0, 0], steer: [0, 0, 0, 0], contact, resting: true };
   }
 
   /** Whether its wheels follow the physics' (a Blender model's: `wheels` wanted each frame) */
@@ -128,7 +167,10 @@ export class CarView {
   ): void {
     this.#body.position.copy(position);
     this.#body.quaternion.copy(rotation);
-    if (this.#parts) this.#poseWheels(this.#parts, position, rotation);
+    if (this.#parts) {
+      this.#sway(this.#parts, position, rotation, seconds, demoed);
+      this.#poseWheels(this.#parts, position, rotation, seconds);
+    }
     // The boost trail while boosting, the idle exhaust while throttling and not boosting (Drive_PS), from each exhaust
     if (this.#exhausts.length > 0) {
       const axis = (x: number, y: number, z: number, turn: Quaternion): Vec3 => {
@@ -139,9 +181,12 @@ export class CarView {
       const frame = frameOf(rotation);
       // (demolished: its trail and exhaust gone at once, StopAllEffects + KillParticlesForced: RV-52f)
       const killed = demoed && !this.#wasDemoed;
-      for (const { at, turn, trail, idle } of this.#exhausts) {
+      const swaying = this.#spring !== null;
+      for (const { at: socket, turn, trail, idle } of this.#exhausts) {
+        // (a Blender model's sockets sway with its body, as the game's on its chassis bone)
+        const at = swaying ? this.#swayed.copy(socket).sub(this.#swayAt).applyQuaternion(this.#swayTurn).add(this.#swayAt) : socket;
         // (a turned empty's own frame: it blows along its -X)
-        const own = turn ? frameOf(this.#turned.copy(rotation).multiply(turn)) : frame;
+        const own = turn || swaying ? frameOf(this.#turned.copy(rotation).multiply(this.#swayTurn).multiply(turn ?? IDENTITY)) : frame;
         if (killed) {
           trail.kill();
           idle.kill();
@@ -166,21 +211,62 @@ export class CarView {
     });
   }
 
-  /** A Blender model's wheels this frame: their height and steering the physics', turned by the car's travel along itself
-   *  since the last frame (none for a jump of 400 uu or more: a respawn, a reset) */
-  #poseWheels(parts: CarModelParts, position: Vector3, rotation: Quaternion): void {
+  /** A Blender model's body sway this frame (src/render/chassisSpring.ts: the drawn car's pose, the game's frame; reset
+   *  by a demolition or a jump of 400 uu or more): its Body turned about its chassis bone and lowered or raised, the
+   *  wheels left; the turn and point kept for the exhausts */
+  #sway(parts: CarModelParts, position: Vector3, rotation: Quaternion, seconds: number, demoed: boolean): void {
+    const spring = this.#spring;
+    if (!spring) return;
+    const game = (x: number, y: number, z: number): Vec3 => {
+      const a = this.#axis.set(x, y, z).applyQuaternion(rotation);
+      return vec3(a.x, a.z, a.y);
+    };
+    if (demoed || (this.#placed && this.#last.distanceTo(position) >= 400)) spring.reset();
+    const sway = spring.step(vec3(position.x, position.z, position.y), { forward: game(1, 0, 0), right: game(0, 0, 1), up: game(0, 1, 0) }, seconds);
+    // (pitch nose up about the car's right, three's +z; roll right side down about its forward, +x: roll first)
+    this.#swayTurn.setFromAxisAngle(PITCH_AXIS, sway.pitch).multiply(SWAY_ROLL.setFromAxisAngle(ROLL_AXIS, sway.roll));
+    this.#swayAt.set(0, parts.spring.pivotZ, 0);
+    const { node, rest, turn } = parts.body;
+    // (the Body in the model's frame, metres: turned about the bone, then lowered or raised)
+    const pivot = SWAY_PIVOT.set(0, parts.spring.pivotZ / UU_PER_METRE, 0);
+    node.position.copy(rest).sub(pivot).applyQuaternion(this.#swayTurn).add(pivot);
+    node.position.y += sway.z / UU_PER_METRE;
+    node.quaternion.copy(this.#swayTurn).multiply(turn);
+    this.#swayAt.y += sway.z;
+  }
+
+  /** A Blender model's wheels this frame (`seconds` of it): each dropped and steered as the game draws them (SU1: its
+   *  tyre on the physics' contact within the body's drawn travel, else its hang by the car's tilt; eased at 10/s, snapped
+   *  up by the ground; set at once the first time), turned by the car's travel along itself since the last frame (none for
+   *  a jump of 400 uu or more: a respawn, a reset) */
+  #poseWheels(parts: CarModelParts, position: Vector3, rotation: Quaternion, seconds: number): void {
     const forward = this.#forward.set(1, 0, 0).applyQuaternion(rotation);
     const moved = this.#placed ? this.#last.sub(position).negate().dot(forward) : 0;
     this.#last.copy(position);
     this.#placed = true;
     const travelled = Math.abs(moved) < 400 ? moved : 0;
+    // (the car's up's world height: three's y)
+    const upZ = this.#up.set(0, 1, 0).applyQuaternion(rotation).y;
+    const physics = this.wheels;
     parts.wheels.forEach((wheel, i) => {
+      if (physics) {
+        const contact = physics.contact[i] ?? false;
+        const length = contact ? (physics.suspension[i] ?? null) : null;
+        const target =
+          contact && physics.resting === true
+            ? -parts.travel.min
+            : wheelDropTarget(wheel.rest.y * UU_PER_METRE, wheel.radius, i < 2 ? this.#config.frontWheel : this.#config.backWheel, length, upZ, parts.travel);
+        const steer = physics.steer[i] ?? 0;
+        this.#drops[i] = this.#wheelsSet ? easeWheel(this.#drops[i] ?? 0, target, seconds, contact) : target;
+        this.#steers[i] = this.#wheelsSet ? easeWheel(this.#steers[i] ?? 0, steer, seconds) : steer;
+      }
       const spin = ((this.#spins[i] ?? 0) + wheelSpin(travelled, wheel.radius)) % (2 * Math.PI);
       this.#spins[i] = spin;
-      const pose = wheelPose(wheel.rest, wheel.turn, i, this.#config, this.wheels, spin);
+      const pose = wheelPose(wheel.rest, wheel.turn, this.#drops[i] ?? 0, this.#steers[i] ?? 0, spin);
       wheel.node.position.copy(pose.position);
       wheel.node.quaternion.copy(pose.quaternion);
     });
+    if (physics) this.#wheelsSet = true;
   }
 
   /** A car replaced or gone (RV-467): its model's and trails' geometries and materials freed, its exhausts' particles

@@ -18,7 +18,7 @@ import { InputDevices, readGamepad } from "./input/devices";
 import { ArenaView } from "./render/arena";
 import { loadDemolitionHusks } from "./render/demolition";
 import { loadFennec } from "./render/fennec";
-import { loadCarModels } from "./render/carGlb";
+import { hasCarModel, loadCarModels } from "./render/carGlb";
 import { TEAM_CAR_COLORS } from "./render/entities";
 import { MAP_NAMES, type ThemeName, createTheme, themeOfMap } from "./render/themes";
 import { CARS, carChoice, storedCar, storedTeam } from "./game/cars";
@@ -111,6 +111,8 @@ async function main(): Promise<void> {
   if (claim?.map !== undefined) loading.place(MAP_NAMES[themeOfMap(claim.map)], playlistName(claim.playlist));
 
   loading.step("engine");
+  // (the cars' Blender models fetched beside the engine and the arena, not after them: RV-583; each with its timeout)
+  const carModels = loadCarModels();
   const [engine, arenaMeshes] = await Promise.all([
     createEngine(),
     Promise.all(
@@ -126,8 +128,9 @@ async function main(): Promise<void> {
   loading.step("arena");
   initEngine(engine, arenaMeshes);
   // (the game's Fennec and demolition husks, where the dev server has them: src/render/fennec.ts, src/render/demolition.ts)
-  // (and the cars' Blender models, where client/cars has them: src/render/carGlb.ts)
-  await Promise.all([loadFennec(), loadDemolitionHusks(), loadCarModels()]);
+  // (and the cars' Blender models, where client/cars has them: src/render/carGlb.ts; the Fennec only where Sport has none,
+  // its model winning over it: RX26)
+  await Promise.all([carModels.then(async () => (hasCarModel(0) ? false : loadFennec())), loadDemolitionHusks()]);
   const world = World.create(engine);
 
   // Warm up: the first ticks after loading are slow while the browser compiles the module

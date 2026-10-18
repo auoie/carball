@@ -1,6 +1,6 @@
 // Shared test fixture: the page never sees real gamepads. The system Chrome running the tests reads any
 // controller plugged into the machine, and someone playing with it would press buttons in the test.
-import { type BrowserContext, test as base } from "@playwright/test";
+import { type BrowserContext, type Page, test as base } from "@playwright/test";
 
 export async function hideGamepads(context: BrowserContext): Promise<void> {
   await context.addInitScript(() => {
@@ -44,4 +44,23 @@ export async function fakeGamepad(context: BrowserContext): Promise<void> {
     const gamepad = (): unknown => ({ id: "test pad", index: 0, connected: true, mapping: "standard", timestamp: performance.now(), buttons: pad.buttons, axes: pad.axes });
     Object.defineProperty(navigator, "getGamepads", { value: () => [gamepad()], configurable: true });
   });
+}
+
+/** The pad held for one of the page's frames, then let go for two (as e2e/padmenus.spec.ts's tap: never a fixed time; the scripted pad's: fakeGamepad) */
+export async function padTap(page: Page, buttons: number[]): Promise<void> {
+  await page.evaluate(async (b) => {
+    const w = window as unknown as { carballSetPad: (down: number[]) => void };
+    const frames = (n: number): Promise<void> =>
+      new Promise((resolve) => {
+        const step = (k: number): void => {
+          if (k === 0) resolve();
+          else requestAnimationFrame(() => { step(k - 1); });
+        };
+        step(n);
+      });
+    w.carballSetPad(b);
+    await frames(1);
+    w.carballSetPad([]);
+    await frames(2);
+  }, buttons);
 }

@@ -278,19 +278,23 @@ starter packs (`training/starterPacks.ts`, checked against the engine), the edit
 packs in the browser, export/import, playtest). The user's 20 packs: converted from TP1's dumps by
 `out/bsim/assets_local/training/tools/convert_tp1.py` into `out/bsim/assets_local/training/packs/` (git-ignored, other
 creators' work, account ids dropped), listed by the dev server alone; a guard check keeps any /local-assets/ path out of
-builds. **The editor's free-camera mode, 2026-10-18** (the user's request; notes/training-editor.md TE1): a Panel / Free
+builds.
+**The editor's free-camera mode, 2026-10-18** (the user's request; notes/training-editor.md TE1): a Panel / Free
 camera toggle (kept in `carball.training.editorMode`); `ui/flyEditor.ts` (shot list, SEQUENCE SETTINGS, the shot editor's
 HUD and strength meter, keys and pad per TE1 §2.1) over `training/editorControls.ts` (flight, clamps, look, steps, the
 bumpers' repeat, tap/hold, undo); Test Shot / Test Sequence are `TrainingRun` tests (`test`: no variance, no grounding,
 nothing kept, the HUD's Edit Shot), free play holding the edited car where placed and predicting its path at most every
-0.1 s while it moves. Ctrl (Move Down) with W can close the browser tab: the game's binding kept, a browser limit. **Car models, 2026-10-18** (the user's: Blender cars as the main look; client/cars/README.md): `render/carGlb.ts`
+0.1 s while it moves. Ctrl (Move Down) with W can close the browser tab: the game's binding kept, a browser limit.
+**Car models, 2026-10-18** (the user's: Blender cars as the main look; client/cars/README.md): `render/carGlb.ts`
 loads `client/cars/<type>.glb` (bundled by an import.meta.glob where present), the generated car the fallback; Paint
 recoloured with the generated cars' Glossy finish; wheels keep the model's x/y, their height (connection point less the
 suspension) and steer angle from the WASM binding `carWheels` (bindings-only engine change), spin from the travel;
 exhausts at every Exhaust… empty (each along its own −X: the Sport's and Flat's _L/_R pairs, the Tall's
 _Top/_Bottom), else the body raycast; the garage shows it; guards: carGlb.test.ts (15k triangles,
 parts, no maker/model/game names) and shippedData (only client/cars' files ship). Checked on the user's demo sport.glb in
-a scratch mirror; then CB1's sport.glb and flat.glb (approved 2026-10-18) went into client/cars, Tall still generated. **RX25 (437863a, RV-561..579) fixed in the tree:**
+a scratch mirror; then CB1's sport.glb, flat.glb and tall.glb (approved 2026-10-18) went into client/cars. Their wheels and body are drawn as the game's (SU1, notes/visual-timing.md VT-32:
+`render/carGlb.ts` wheelDropTarget/easeWheel, `render/chassisSpring.ts`); replays record each Blender car's wheels.
+**RX25 (437863a, RV-561..579) fixed in the tree:**
 - RV-561: the pack test's fixture was a user-pack shot; now synthetic numbers, plus a local guard
   (training/localPacks.test.ts). History kept, the user's call.
 - RV-562: progress is now under carball.training.progress.<id>; imports take a fresh id.

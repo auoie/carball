@@ -156,6 +156,11 @@ export class ReplayPlayback {
       }
       const between = new Interpolated<RecordedCar>(from);
       between.push(to);
+      // (a Blender model's wheels: as recorded with the vehicle's, else at rest by the recorded contact: RV-581)
+      if (view.posesWheels) {
+        if (to.wheels) view.wheels = { ...to.wheels, contact: to.wheelContact };
+        else view.replayWheels(to.wheelContact);
+      }
       view.update(between.position(alpha, this.#pos), between.rotation(alpha, this.#rot), to.boosting, to.demoed, to.supersonic, seconds, trailGround(to));
       // (a flip reset in the replayed window: its effect on that car, as live, and its sound, by the setting: HUD-19)
       if (resets.has(id)) {

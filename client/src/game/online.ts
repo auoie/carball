@@ -593,7 +593,9 @@ export class Online {
     // (each car demolished as drawn: the server's, RV-112)
     for (const id of this.#world.carIds()) {
       const car = this.#world.car(id);
-      cars.set(id, { ...recordCar(car), demoed: this.#drawnDemoed(id, car) });
+      // (a Blender model's wheels as live: RV-581)
+      const wheels = this.#cars.get(id)?.view.posesWheels === true ? this.#world.carWheels(id) : null;
+      cars.set(id, { ...recordCar(car, wheels), demoed: this.#drawnDemoed(id, car) });
     }
     this.#recorder.record(frame, { cars, ball: this.#world.ball(), ballExploded: this.#world.ballExploded(), lastTouchTeam: lastTouchTeam(this.#world) });
   }
@@ -816,7 +818,7 @@ export class Online {
       if (id === this.#localCar && !demoed) localDrawn = fromThreeVector(pos);
       const throttling = (id === this.#localCar ? this.#throttle : Math.abs(this.#world.carControls(id).throttle)) > 0;
       // (a Blender model's wheels: the vehicle's suspension and steering, as this page's world has them)
-      if (view.posesWheels) view.wheels = demoed ? null : this.#world.carWheels(id);
+      if (view.posesWheels) view.wheels = demoed ? null : { ...this.#world.carWheels(id), contact: state.current.wheelContact };
       view.update(pos, error.applyRotation(state.rotation(alpha, this.#rot)), boosting, demoed, supersonic, frameSeconds, trailGround(state.current), throttling);
     }
     this.#ballError.decay(frameSeconds);

@@ -399,7 +399,8 @@ export class Freeplay {
       this.#world.setBall({ pos: this.#ballSpawn, vel: ZERO, angVel: ZERO });
     }
     this.#recorder.record(tick, {
-      cars: new Map([[this.#playerId, recordCar(car)]]),
+      // (a Blender model's wheels as live: RV-581)
+      cars: new Map([[this.#playerId, recordCar(car, this.#carView.posesWheels ? this.#world.carWheels(this.#playerId) : null)]]),
       ball: this.#world.ball(),
       ballExploded: this.#world.ballExploded(),
       lastTouchTeam: freeplayTouchTeam(this.#world, this.#team),
@@ -885,7 +886,7 @@ export class Freeplay {
     const car = this.#car.current;
     const carDrawn = fromThreeVector(this.#car.position(alpha, this.#pos));
     // (a Blender model's wheels: the vehicle's suspension and steering)
-    if (this.#carView.posesWheels) this.#carView.wheels = this.#world.carWheels(this.#playerId);
+    if (this.#carView.posesWheels) this.#carView.wheels = { ...this.#world.carWheels(this.#playerId), contact: car.wheelContact };
     this.#carView.update(
       this.#car.position(alpha, this.#pos),
       this.#car.rotation(alpha, this.#rot),

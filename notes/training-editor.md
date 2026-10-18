@@ -195,6 +195,28 @@ so Test Shot works in play) [S `OnActiveBindingsChanged`].
 - Per-actor JSON snapshots, `MaxUndoHistory` 1000; identical consecutive entries are dropped; undo re-selects the
   actor and restores it. **History is cleared on every shot switch** (`SwitchToRoundNumber` → `ClearAllHistory`).
 
+### 2.7 Pad navigation in the editor's menus [S N] (TE2, 2026-10-18)
+- The editor screen is part of the same UI movie as every other menu (`TAGameShell.validateUIState` opens `TrainingEditorMenu`),
+  so MENU-12 (notes/hud-menus.md) applies unchanged: the D-pad and the left stick both arrive as arrow keys
+  ([Scaleform.KeyMap]: `XboxTypeS_DPad_*` and `Gamepad_LeftStick_*` → Left/Right/Up/Down), and the movie can't tell them apart.
+  - Stick: pressed at |axis| ≥ 0.8 (no deadzone), released below; the first axis to reach 0.8 owns the direction; repeat
+    after 0.3 s, then every 0.1 s.
+  - D-pad: repeat after 0.2 s, then every 0.1 s.
+  - The stick-to-arrow switch is on for every player (0x140cd5780), in game too.
+- **Shot list (ShotSelection):** `ShotSelectionMenu` sets receiveInput and captureAllInput (→ SetMovieCanReceiveInput,
+  SetCaptureAllInput, FlushPlayerInput).
+  - Up/Down moves the selected shot, and each move loads it (INDEX_CHANGE → SetActiveRound).
+  - Left/Right moves across the row: SHOT n → duplicate → delete.
+  - A held direction keeps scrolling (KEY_HOLD).
+  - While the list is up, no pad input reaches the game: no camera move or look; the right stick and triggers are consumed
+    (0x140ce7630).
+- **Sequence Settings (§5.1):** focus opens on the name field. There Left/Right move the caret while it can move, and Up/Down
+  leave the field. Elsewhere both axes move focus; an open dropdown takes Up/Down; B closes.
+- **SAVE AND EXIT, DELETE SEQUENCE, the pause menu:** the first direction focuses the default button, the next ones move
+  between buttons.
+- **EditorMode:** the list is closed and the movie takes no input, so there is no menu navigation. The pad goes to
+  PlayerInput: left stick = move (§2.1), D-pad Up/Down = time ±1 (§2.5), D-pad Left/Right = undo/redo (§2.6).
+
 ## 3. Limits and clamps
 
 ### 3.1 Placement bounds [S A]

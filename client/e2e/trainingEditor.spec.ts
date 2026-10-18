@@ -1,7 +1,7 @@
 // Carball's training editor (src/ui/trainingEditor.ts): Create Training opens it on a new pack of one default shot; a
 // shot added, the pack named and a speed changed; saved, then listed as the player's own with Edit; edited again;
 // playtested in training, and back to the editor from the pause menu. Nothing of the 3D drawn (`?render=off`).
-import { expect, test } from "./fixtures";
+import { expect, fakeGamepad, padTap, test } from "./fixtures";
 
 test("the editor: a new pack made, saved and listed as the player's own, edited again, playtested, back to the editor", async ({ page, context }) => {
   const errors: string[] = [];
@@ -254,4 +254,60 @@ test("unsaved edits: closing or reloading the page asks first (beforeunload: RV-
   });
   await page.close({ runBeforeUnload: true });
   expect(await asked).toBe("beforeunload");
+});
+
+test("the free-camera editor with a pad (the user's report): the shot list's buttons in reach, SEQUENCE SETTINGS, the shot editor's own controls", async ({ page, context }) => {
+  const [A, B, X, UP, DOWN] = [0, 1, 2, 12, 13];
+  await fakeGamepad(context);
+  await context.addInitScript(() => {
+    if (!sessionStorage.getItem("e2e-fly-pad")) {
+      localStorage.removeItem("carball.training.mine");
+      localStorage.setItem("carball.training.editorMode", "fly");
+      sessionStorage.setItem("e2e-fly-pad", "1");
+    }
+  });
+  await page.goto("/?render=off");
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+  const menu = page.locator("#main-menu");
+  await menu.getByRole("button", { name: /^play$/i }).click();
+  await menu.getByRole("button", { name: /^custom training$/i }).click();
+  await menu.getByRole("button", { name: /^create training$/i }).click();
+  const list = page.locator("#fly-editor .fly-list");
+  await expect(list).toBeVisible();
+  const focused = list.locator(":focus");
+  // (opened afresh: the selected shot focused; down, CREATE NEW SHOT; A presses it)
+  await padTap(page, [DOWN]);
+  await padTap(page, [UP]);
+  await expect(focused).toContainText("SHOT 1");
+  await padTap(page, [DOWN]);
+  await expect(focused).toHaveText("CREATE NEW SHOT");
+  await padTap(page, [A]);
+  await expect(list.locator(".fly-shot-button")).toHaveCount(2);
+  // (down again: the legend's buttons, SEQUENCE SETTINGS first)
+  await padTap(page, [DOWN]);
+  await expect(focused).toContainText("SEQUENCE SETTINGS");
+  // (X: SEQUENCE SETTINGS, the pad's menu; B closes it)
+  await padTap(page, [X]);
+  const settings = page.locator("#fly-editor .fly-settings");
+  await expect(settings).toBeVisible();
+  await padTap(page, [B]);
+  await expect(settings).toBeHidden();
+  // (the list's focus back on the selected shot, the second; A edits it: the shot editor, its own controls: A the ball,
+  // B the list again)
+  await expect(focused).toContainText("SHOT 2");
+  await padTap(page, [A]);
+  const hud = page.locator("#fly-editor .fly-hud");
+  await expect(hud).toBeVisible();
+  await expect(hud.locator(".fly-shot-count")).toHaveText("2/2");
+  await padTap(page, [A]);
+  await expect(hud.locator(".fly-row").nth(1)).toHaveText(/Edit Car$/);
+  await padTap(page, [B]);
+  await expect(list).toBeVisible();
+  // (B on the list: the editor left, its unsaved question first; B answers it for staying)
+  await padTap(page, [B]);
+  const modal = page.locator("#modal");
+  await expect(modal.locator(".modal-title")).toHaveText("SAVE AND EXIT");
+  await padTap(page, [B]);
+  await expect(modal).toBeHidden();
+  await expect(list).toBeVisible();
 });

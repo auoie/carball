@@ -41,12 +41,13 @@ the speeds on the wheel or the bumpers, the strength meter, Test Shot and Test S
 Car models (`cars/README.md`): a garage car wears `cars/<type>.glb` (sport, flat, tall) where it's there, made in
 Blender to that folder's contract, else its generated model; its paint the team's, its wheels where the model has them
 along and across the car, their height and steering the physics' (`World.carWheels`), turning as it moves
-(`src/render/carGlb.ts`). Sport and Flat wear theirs (approved 2026-10-18); Tall keeps its generated model for now.
+(`src/render/carGlb.ts`). Sport, Flat and Tall wear theirs (approved 2026-10-18).
 
 The game's Fennec (testing only): with the static session's local export in `out/bsim/assets_local/fennec/`
 (Psyonix assets: git-ignored, never copied into client/, never shipped), `npm run dev` serves it at `/local-assets/`
-and cars of the Octane hitbox wear it, painted in the team's colour (`src/render/fennec.ts`). Builds, `vite preview`
-and the e2e tests never see it; without it cars keep the generated model. Likewise a demolition's husks: the game's meshes (`out/bsim/assets_local/fx/demolition/meshes/`)
+and cars of the Octane hitbox wear it, painted in the team's colour (`src/render/fennec.ts`), but only while Sport has no
+model of its own: with `cars/sport.glb` there (as now) it isn't even loaded. Builds, `vite preview` and the e2e tests never
+see it. Likewise a demolition's husks: the game's meshes (`out/bsim/assets_local/fx/demolition/meshes/`)
 on the dev server, boxes and wheels of their size in builds (`src/render/demolition.ts`).
 
 ## Correctness checks

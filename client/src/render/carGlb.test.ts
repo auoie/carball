@@ -1,13 +1,14 @@
 // The cars' Blender models (src/render/carGlb.ts; client/cars/README.md): each in client/cars within the budget (15,000
-// triangles, a texture at most), holding its parts, naming no car maker, model or game; and the wheels posed as the game
-// does (where the model has them along and across the car, the physics' height and steering, turned by the travel)
+// triangles, a texture at most), holding its parts, naming no car maker, model or game; and the wheels drawn as the game
+// draws them (SU1: where the model has them, dropped to the physics' contact within the body's travel or hanging by the
+// car's tilt, eased at 10/s and snapped up by the ground, steered, turned by the travel)
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { Quaternion, Vector3 } from "three";
+import { Color, Mesh, MeshStandardMaterial, Quaternion, Vector3 } from "three";
 import { describe, expect, it } from "vitest";
 import { vec3 } from "../math/vec";
-import type { CarConfig } from "../engine/world";
-import { CAR_FILES, EXHAUST_PREFIX, UU_PER_METRE, WHEEL_NODES, missingParts, wheelPose, wheelSpin } from "./carGlb";
+import { CAR_FILES, DRAWN_TRAVEL, EXHAUST_PREFIX, UU_PER_METRE, WHEEL_NODES, carModelParts, easeWheel, glbCarModel, hasCarModel, loadCarModels, missingParts, wheelDropTarget, wheelPose, wheelSpin } from "./carGlb";
+import { CHASSIS_SPRINGS } from "./chassisSpring";
 
 const CARS = new URL("../../cars", import.meta.url).pathname;
 
@@ -36,7 +37,8 @@ const NAMES = [
   "honda", "mclaren", "bugatti", "aston martin", "jaguar", "dodge", "tesla", "volkswagen", "subaru", "mazda", "mitsubishi",
   "lotus", "koenigsegg", "pagani", "delorean", "maserati", "alfa romeo", "bentley", "rolls royce", "cadillac", "jeep",
   "hyundai", "peugeot", "renault", "citroen", "fiat", "volvo", "lexus", "corvette", "mustang", "camaro", "skyline", "supra",
-  "countach", "octane", "fennec", "dominus", "breakout", "batmobile", "takumi", "psyonix", "rocket league",
+  "countach", "octane", "fennec", "dominus", "breakout", "batmobile", "takumi", "plank", "hybrid", "merc", "psyonix",
+  "rocket league",
 ];
 const NAMED = new RegExp(`(?<![a-z])(${NAMES.map((n) => n.replace(/ /g, "[ _-]?")).join("|")})(?![a-z])`, "i");
 
@@ -95,33 +97,100 @@ describe("the cars' models (client/cars)", () => {
       expect(words(json).match(NAMED)?.[0] ?? null, name).toBeNull();
     }
   });
+
+  it.skipIf(models.length === 0)("loaded through three's loader: each wheel's tyre radius its own (12-16 uu, not its box's diagonal: RX26), the body's travel and spring, its exhausts", async () => {
+    const { GLTFLoader } = await import("three/addons/loaders/GLTFLoader.js");
+    const loader = new GLTFLoader();
+    const count = await loadCarModels(async (url) => {
+      const bytes = readFileSync(join(CARS, url.slice(url.lastIndexOf("/") + 1)));
+      return (await loader.parseAsync(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength), "")).scene;
+    });
+    expect(count).toBe(models.length);
+    for (const [id, file] of Object.entries(CAR_FILES)) {
+      if (!models.includes(`${file}.glb`)) continue;
+      const car = Number(id);
+      expect(hasCarModel(car), file).toBe(true);
+      const model = glbCarModel(car, new Color(0x2050ff));
+      const parts = model ? carModelParts(model) : null;
+      if (!parts) throw new Error(`${file}: no parts`);
+      const radii = parts.wheels.map((w) => w.radius);
+      for (const r of radii) {
+        expect(r, file).toBeGreaterThan(11.5);
+        expect(r, file).toBeLessThan(16.5);
+      }
+      // (the back wheels the bigger or the same, as the bodies' are)
+      expect(Math.min(radii[2] ?? 0, radii[3] ?? 0) + 0.01, file).toBeGreaterThanOrEqual(Math.max(radii[0] ?? 0, radii[1] ?? 0) - 1.5);
+      expect(parts.travel, file).toEqual(DRAWN_TRAVEL[car]);
+      expect(parts.spring, file).toBe(CHASSIS_SPRINGS[car]);
+      expect(parts.exhausts?.length ?? 0, file).toBeGreaterThanOrEqual(1);
+      // (its lamps the generated cars': clipped at an emissive of 1, not the file's bright ones that bloomed: RX26)
+      const lamps = new Map<string, MeshStandardMaterial>();
+      model?.traverse((o) => {
+        if (o instanceof Mesh && o.material instanceof MeshStandardMaterial && o.material.name.startsWith("Light_")) lamps.set(o.material.name, o.material);
+      });
+      expect([...lamps.keys()].sort(), file).toEqual(["Light_Head", "Light_Tail"]);
+      for (const lamp of lamps.values()) {
+        expect(lamp.emissiveIntensity, file).toBe(1);
+        expect(lamp.color.getHex(), file).toBe(0);
+      }
+      expect(lamps.get("Light_Tail")?.emissive.g, file).toBeCloseTo(0.0103, 4);
+    }
+  });
 });
 
-describe("the wheels as the game poses them", () => {
-  const wheel = { offset: vec3(51.25, 25.9, 20.755), radius: 12.5, suspensionRest: 38.755 };
-  const config: CarConfig = { hitboxSize: vec3(120.5, 86.7, 38.66), hitboxOffset: vec3(13.88, 0, 20.75), frontWheel: wheel, backWheel: { ...wheel, offset: vec3(-33.75, 29.5, 20.755), radius: 15 } };
-  const rest = new Vector3(0.4875, -0.03, 0.259);
+describe("the wheels as the game draws them (SU1)", () => {
+  // (a front wheel of the physics: connection 20.755 up, radius 12.5; the model's wheel 3.5 under the origin, its tyre's
+  // radius 12.75; the ground 17 under the origin: the suspension's length then puts the contact on it)
+  const physics = { offset: vec3(51.25, 25.9, 20.755), radius: 12.5 };
+  const resting = 20.755 + 17 - 12.5;
+  const flat = DRAWN_TRAVEL[2] ?? { min: 0, max: 4 };
+  const sport = DRAWN_TRAVEL[0] ?? { min: 2, max: 6 };
 
-  it("along and across the car where the model has it; its centre's height the physics' (connection less suspension); else the model's", () => {
-    const wheels = { suspension: [24, 24, 26, 26], steer: [0, 0, 0, 0] } as const;
-    const posed = wheelPose(rest, new Quaternion(), 1, config, wheels, 0);
-    expect([posed.position.x, posed.position.z]).toEqual([rest.x, rest.z]);
-    expect(posed.position.y * UU_PER_METRE).toBeCloseTo(20.755 - 24, 9);
-    expect(wheelPose(rest, new Quaternion(), 3, config, wheels, 0).position.y * UU_PER_METRE).toBeCloseTo(20.755 - 26, 9);
-    expect(wheelPose(rest, new Quaternion(), 1, config, null, 0).position.y).toBe(rest.y);
+  it("touching: dropped for its tyre to sit on the contact (at rest on flat ground, its bottom on it), within the body's travel", () => {
+    const target = wheelDropTarget(-3.5, 12.75, physics, resting, 1, flat);
+    expect(-3.5 + target - 12.75).toBeCloseTo(-17, 9);
+    // (pressed up past the travel's least: drawn no higher than it; hanging past its most: no lower)
+    expect(wheelDropTarget(-3.5, 12.75, physics, resting - 10, 1, sport)).toBe(-sport.min);
+    expect(wheelDropTarget(-3.5, 12.75, physics, resting + 20, 1, sport)).toBe(-sport.max);
   });
 
-  it("steered to the car's right by a positive angle (the engine's sign); turned about its axle, its top forward as the car goes forward", () => {
-    const steered = wheelPose(rest, new Quaternion(), 0, config, { suspension: [24, 24, 26, 26], steer: [0.4, 0.4, 0, 0] }, 0);
-    const ahead = new Vector3(1, 0, 0).applyQuaternion(steered.quaternion);
+  it("touching nothing: its full hang upright, the middle on its side, its least upside down (6/4/8 uu: Sport, Flat, Tall)", () => {
+    expect([0, 2, 3].map((car) => wheelDropTarget(-3.5, 12.75, physics, null, 1, DRAWN_TRAVEL[car] ?? sport))).toEqual([-6, -4, -8]);
+    expect(wheelDropTarget(-3.5, 12.75, physics, null, 0, sport)).toBe(-4);
+    expect(wheelDropTarget(-3.5, 12.75, physics, null, -1, sport)).toBe(-2);
+  });
+
+  it("eased at 10/s, 90% in about 0.22 s whatever the frame rate; snapped up when the ground pushes a touching wheel", () => {
+    for (const fps of [60, 144]) {
+      let v = 0;
+      let t = 0;
+      while (v > -0.9 * 6) {
+        v = easeWheel(v, -6, 1 / fps);
+        t += 1 / fps;
+      }
+      expect(t).toBeGreaterThan(0.19);
+      expect(t).toBeLessThan(0.24);
+    }
+    expect(easeWheel(-6, -2, 1 / 60, true)).toBe(-2);
+    expect(easeWheel(-6, -2, 1 / 60, false)).toBeCloseTo(-6 + 4 / 6, 9);
+    expect(easeWheel(-2, -6, 1 / 60, true)).toBeCloseTo(-2 - 4 / 6, 9);
+    expect(easeWheel(0, 1, 0.5)).toBe(1);
+  });
+
+  it("posed where the model has it, dropped by the drop; steered to the car's right by a positive angle (the engine's sign); turned about its axle, its top forward as the car goes forward", () => {
+    const rest = new Vector3(0.4875, -0.03, 0.259);
+    const dropped = wheelPose(rest, new Quaternion(), -4, 0, 0).position;
+    expect([dropped.x, dropped.z]).toEqual([rest.x, rest.z]);
+    expect(dropped.y * UU_PER_METRE).toBeCloseTo(-3 - 4, 9);
+    const ahead = new Vector3(1, 0, 0).applyQuaternion(wheelPose(rest, new Quaternion(), 0, 0.4, 0).quaternion);
     expect(ahead.z).toBeCloseTo(Math.sin(0.4), 9);
     expect(ahead.x).toBeCloseTo(Math.cos(0.4), 9);
     const spin = wheelSpin(10, 12.5);
     expect(spin).toBeCloseTo(-0.8, 12);
-    const top = new Vector3(0, 1, 0).applyQuaternion(wheelPose(rest, new Quaternion(), 2, config, null, spin).quaternion);
+    const top = new Vector3(0, 1, 0).applyQuaternion(wheelPose(rest, new Quaternion(), 0, 0, spin).quaternion);
     expect(top.x).toBeGreaterThan(0.5);
     // (the model's own turn kept under them)
     const turned = new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), Math.PI);
-    expect(new Vector3(0, 1, 0).applyQuaternion(wheelPose(rest, turned, 2, config, null, 0).quaternion).y).toBeCloseTo(-1, 9);
+    expect(new Vector3(0, 1, 0).applyQuaternion(wheelPose(rest, turned, 0, 0, 0).quaternion).y).toBeCloseTo(-1, 9);
   });
 });

@@ -3,7 +3,7 @@
 // completion; next, previous, mirror and shuffle; a striker's goal after a touch completing the shot; Carball's starter
 // packs offered in a build. Nothing of the 3D drawn (`?render=off`).
 import type { Page } from "@playwright/test";
-import { expect, fakeGamepad, test } from "./fixtures";
+import { expect, fakeGamepad, padTap, test } from "./fixtures";
 
 interface TrainingState {
   readonly state: string;
@@ -93,6 +93,9 @@ test("a reset during a shot asks first, the first time ever: No keeps the shot, 
   await page.evaluate(() => {
     localStorage.removeItem("carball.training.resetWarned");
   });
+  // (on the 20 s shot: the first's 2 s, still running while the question is up, could run out under load)
+  await page.keyboard.press("ArrowRight");
+  await expect.poll(async () => state(page)).toMatchObject({ shot: 1, state: "countdown" });
   await page.keyboard.press("KeyW");
   await expect.poll(async () => (await state(page))?.state, { timeout: 10_000 }).toBe("active");
   const modal = page.locator("#modal");
@@ -143,25 +146,6 @@ test("a build offers Carball's starter packs: Custom Training lists them, one st
   // (no timer on the goalie's HUD: §6)
   await expect(page.locator(".training-timer")).toBeHidden();
 });
-
-/** The pad held for one of the page's frames, then let go for two (as e2e/padmenus.spec.ts's tap: never a fixed time) */
-async function padTap(page: Page, buttons: number[]): Promise<void> {
-  await page.evaluate(async (b) => {
-    const w = window as unknown as { carballSetPad: (down: number[]) => void };
-    const frames = (n: number): Promise<void> =>
-      new Promise((resolve) => {
-        const step = (k: number): void => {
-          if (k === 0) resolve();
-          else requestAnimationFrame(() => { step(k - 1); });
-        };
-        step(n);
-      });
-    w.carballSetPad(b);
-    await frames(1);
-    w.carballSetPad([]);
-    await frames(2);
-  }, buttons);
-}
 
 test("Select Shot with a pad: View opens it on the current shot, the D-pad moves, A picks one, B closes it (RV-564)", async ({ page, context }) => {
   const [A, B, VIEW, RIGHT] = [0, 1, 8, 15];

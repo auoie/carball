@@ -43,6 +43,8 @@ export const CLAMPS = {
 
 /** A goal's mouth (half width, height: the game's) and its back (|y|), the ball allowed inside (TE1 §3.1, §9) */
 const GOAL = { halfWidth: 892.755, height: 642.775, back: 6000 } as const;
+/** How far along the field a ball may be (|y|: inside a goal, at its back) */
+export const GOAL_BACK = GOAL.back - BALL_RADIUS;
 
 export type Selection = "free" | "ball" | "car";
 

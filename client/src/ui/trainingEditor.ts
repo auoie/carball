@@ -9,7 +9,7 @@ import type { Vec3 } from "../math/vec";
 import { vec3 } from "../math/vec";
 import { PACK_LIMITS, type Difficulty, type Shot, TRAINING_TAGS, type TrainingPack, type TrainingType, parsePack, wrapYaw } from "../training/pack";
 import { defaultShot, deletePack, newPackId, packFile, storePack } from "../training/myPacks";
-import { editorPack } from "../training/editorControls";
+import { CLAMPS, GOAL_BACK, clampTo, editorPack } from "../training/editorControls";
 import type { TestKind } from "../training/run";
 import { cycler, slider } from "./controls";
 import { FLY_TEXT, FlyEditor, type PackDetails } from "./flyEditor";
@@ -234,10 +234,10 @@ export class TrainingEditor {
     return !this.#root.hidden || this.#fly.isOpen;
   }
 
-  /** The editor's menu a pad drives while it's shown (SEQUENCE SETTINGS, else the panel: its rows, sliders and cyclers;
-   *  B leaving as Escape does, RX25), else null */
+  /** The editor's menu a pad drives while it's shown (the free camera's SEQUENCE SETTINGS or shot list, else the panel:
+   *  its rows, sliders and cyclers; B backing out as Escape does, RX25), else null (the shot editor: its own controls) */
   get padMenu(): HTMLElement | null {
-    return this.#fly.dialog ?? (this.#root.hidden ? null : this.#root);
+    return this.#fly.padMenu ?? (this.#root.hidden ? null : this.#root);
   }
 
   /** The free-camera mode's test playing (the editor back when it ends) */
@@ -543,11 +543,12 @@ export class TrainingEditor {
     };
     const b = shot.ball;
     const c = shot.car;
+    // (the sliders span the clamps, each change kept within them: the goal's inside for the ball, RV-594)
     const ballAt = (v: Partial<Record<"x" | "y" | "z", number>>): void => {
-      this.#edit((s) => ({ ...s, ball: { ...s.ball, location: vec3(v.x ?? s.ball.location.x, v.y ?? s.ball.location.y, v.z ?? s.ball.location.z) } }));
+      this.#edit((s) => ({ ...s, ball: { ...s.ball, location: clampTo("ball", vec3(v.x ?? s.ball.location.x, v.y ?? s.ball.location.y, v.z ?? s.ball.location.z)) } }));
     };
     const carAt = (v: Partial<Record<"x" | "y", number>>): void => {
-      this.#edit((s) => ({ ...s, car: { ...s.car, location: vec3(v.x ?? s.car.location.x, v.y ?? s.car.location.y, s.car.location.z) } }));
+      this.#edit((s) => ({ ...s, car: { ...s.car, location: clampTo("car", vec3(v.x ?? s.car.location.x, v.y ?? s.car.location.y, s.car.location.z)) } }));
     };
     const status = document.createElement("div");
     status.className = "editor-status";
@@ -581,15 +582,15 @@ export class TrainingEditor {
       section(T.place),
       row(place("ball", T.ball), place("car", T.car)),
       section(T.ball),
-      number(T.x, b.location.x, -4000, 4000, 10, "", (v) => { ballAt({ x: v }); }, "ballX"),
-      number(T.y, b.location.y, -5000, 5000, 10, "", (v) => { ballAt({ y: v }); }, "ballY"),
-      number(T.height, b.location.z, 100, 1950, 10, "", (v) => { ballAt({ z: v }); }, "ballZ"),
+      number(T.x, b.location.x, -CLAMPS.ball.x, CLAMPS.ball.x, 10, "", (v) => { ballAt({ x: v }); }, "ballX"),
+      number(T.y, b.location.y, -GOAL_BACK, GOAL_BACK, 10, "", (v) => { ballAt({ y: v }); }, "ballY"),
+      number(T.height, b.location.z, CLAMPS.ball.zMin, CLAMPS.ball.zMax, 10, "", (v) => { ballAt({ z: v }); }, "ballZ"),
       number(T.pitch, (b.launch.pitch / 16384) * 90, -90, 90, 1, "°", (v) => { this.#edit((s) => ({ ...s, ball: { ...s.ball, launch: { ...s.ball.launch, pitch: Math.round((v * 16384) / 90) } } })); }, "pitch"),
       number(T.yaw, wrapYaw(b.launch.yaw) / UNITS, 0, 359, 1, "°", (v) => { this.#edit((s) => ({ ...s, ball: { ...s.ball, launch: { ...s.ball.launch, yaw: wrapYaw(Math.round(v * UNITS)) } } })); }, "yaw"),
       number(T.speed, b.speed, 0, PACK_LIMITS.ballSpeed, 50, "", (v) => { this.#edit((s) => ({ ...s, ball: { ...s.ball, speed: v } })); }, "speed"),
       section(T.car),
-      number(T.x, c.location.x, -4000, 4000, 10, "", (v) => { carAt({ x: v }); }, "carX"),
-      number(T.y, c.location.y, -5000, 5000, 10, "", (v) => { carAt({ y: v }); }, "carY"),
+      number(T.x, c.location.x, -CLAMPS.car.x, CLAMPS.car.x, 10, "", (v) => { carAt({ x: v }); }, "carX"),
+      number(T.y, c.location.y, -CLAMPS.car.y, CLAMPS.car.y, 10, "", (v) => { carAt({ y: v }); }, "carY"),
       number(T.carYaw, wrapYaw(c.rotation.yaw) / UNITS, 0, 359, 1, "°", (v) => { this.#edit((s) => ({ ...s, car: { ...s.car, rotation: { ...s.car.rotation, yaw: wrapYaw(Math.round(v * UNITS)) } } })); }, "carYaw"),
       number(T.startSpeed, c.startSpeed, 0, PACK_LIMITS.carSpeed, 50, "", (v) => { this.#edit((s) => ({ ...s, car: { ...s.car, startSpeed: v } })); }, "startSpeed"),
       number(T.timeLimit, shot.timeLimit, 1, PACK_LIMITS.timeLimit, 1, " s", (v) => { this.#edit((s) => ({ ...s, timeLimit: v })); }, "timeLimit"),

@@ -326,6 +326,12 @@ export class FlyEditor {
     return this.#dialog.hidden ? null : this.#dialog;
   }
 
+  /** The screen a pad drives as a menu (src/ui/padNav.ts: the D-pad's focus over its buttons, A pressing, B backing
+   *  out): SEQUENCE SETTINGS while open, else the shot list while it shows; the shot editor's its own controls (null) */
+  get padMenu(): HTMLElement | null {
+    return this.dialog ?? (this.#view === "list" ? this.#list : null);
+  }
+
   /** The editor's test playing (the editor hidden meanwhile) */
   get testing(): boolean {
     return this.#view === "test";
@@ -418,14 +424,9 @@ export class FlyEditor {
     this.#draw();
   }
 
-  /** The shot list's input: Up/Down (the D-pad) the selection, Enter (A) edits it, Tab tests it (the pad's View the
-   *  sequence), the pad's Y a new shot and X the details */
+  /** The shot list's input: the pad's D-pad, A and B are its menu's (padMenu: a row focused is the shot selected, A
+   *  presses); Tab tests the selected shot (the pad's View the sequence), the pad's Y a new shot and X the details (TE1 §4) */
   #listFrame(pressed: ReadonlySet<string>, released: ReadonlySet<string>, padPressed: (i: number) => boolean, padReleased: (i: number) => boolean): void {
-    const index = this.#host.index();
-    const count = this.#host.pack().shots.length;
-    if (padPressed(PAD.up)) this.#select((index - 1 + count) % count);
-    if (padPressed(PAD.down)) this.#select((index + 1) % count);
-    if (padPressed(PAD.a)) this.#edit();
     if (padPressed(PAD.y)) this.#add();
     if (padPressed(PAD.x)) this.#openSettings();
     const now = this.#clock;
@@ -745,7 +746,13 @@ export class FlyEditor {
     for (const row of this.#shots.querySelectorAll<HTMLElement>(".fly-shot-row")) {
       const on = row.dataset["index"] === String(index);
       row.classList.toggle("selected", on);
-      row.querySelector(".fly-shot-button")?.setAttribute("aria-current", String(on));
+      const button = row.querySelector<HTMLElement>(".fly-shot-button");
+      button?.setAttribute("aria-current", String(on));
+      // (a pad's focus starts on the selected shot when the list opens afresh)
+      if (button) {
+        if (on) button.dataset["padDefault"] = "";
+        else delete button.dataset["padDefault"];
+      }
     }
   }
 
