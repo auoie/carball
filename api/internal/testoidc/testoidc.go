@@ -26,7 +26,8 @@ type Provider struct {
 	ClientID, ClientSecret string
 
 	// Knobs: the next ID tokens' audience (default the client), azp (default none), nonce (default the request's),
-	// issued how long ago (default now); Exchanges counts the token calls
+	// issued how long ago (default now), issuer (default its own URL); Exchanges counts the token calls
+	Issuer    string
 	Audience  []string
 	AZP       string
 	Nonce     *string
@@ -130,8 +131,12 @@ func (p *Provider) token(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	issued := time.Now().Add(-p.IssuedAgo)
+	iss := p.URL
+	if p.Issuer != "" {
+		iss = p.Issuer
+	}
 	claims := map[string]any{
-		"iss": p.URL, "sub": g.sub, "aud": aud, "nonce": nonce,
+		"iss": iss, "sub": g.sub, "aud": aud, "nonce": nonce,
 		"iat": issued.Unix(), "exp": issued.Add(time.Hour).Unix(),
 	}
 	if p.AZP != "" {

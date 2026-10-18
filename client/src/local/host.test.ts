@@ -34,6 +34,7 @@ const hello = (team: number, name: string): Uint8Array =>
     intent: "join",
     playlist: 0,
     token: 0n,
+    ticket: "",
   });
 
 /** A drained control message's body decoded (its frame's two length bytes off) */

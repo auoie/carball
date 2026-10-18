@@ -25,7 +25,7 @@ func setup(t *testing.T) (*Client, *testoidc.Provider) {
 func signIn(t *testing.T, c *Client, p *testoidc.Provider, sub string) (string, error) {
 	t.Helper()
 	nonce, verifier := "the-flows-nonce", oauth2.GenerateVerifier()
-	authURL, err := c.AuthURL(context.Background(), "the-state", nonce, verifier)
+	authURL, err := c.AuthURL("the-state", nonce, verifier)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,11 +79,17 @@ func TestExchangeRefusals(t *testing.T) {
 	if _, err := signIn(t, c, p, "sub-1"); err == nil {
 		t.Error("an expired ID token accepted")
 	}
+	// (signed by the issuer's keys but naming another issuer: refused, the issuer checked)
+	c, p = setup(t)
+	p.Issuer = "https://accounts.example"
+	if _, err := signIn(t, c, p, "sub-1"); err == nil {
+		t.Error("an ID token from another issuer accepted")
+	}
 }
 
 func TestExchangePKCE(t *testing.T) {
 	c, p := setup(t)
-	authURL, err := c.AuthURL(context.Background(), "s", "n", oauth2.GenerateVerifier())
+	authURL, err := c.AuthURL("s", "n", oauth2.GenerateVerifier())
 	if err != nil {
 		t.Fatal(err)
 	}

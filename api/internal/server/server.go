@@ -16,13 +16,16 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"net/netip"
 	"net/url"
+	"sync"
 	"time"
 
 	"carball/api/internal/google"
 	"carball/api/internal/ratelimit"
 	"carball/api/internal/steam"
 	"carball/api/internal/store"
+	"carball/api/internal/ticket"
 )
 
 // The lifetimes (notes/accounts.md §1, §3)
@@ -65,6 +68,8 @@ type Store interface {
 	CreateAccount(ctx context.Context, p store.Pending, name string, subjectHMAC []byte, now, blockAfter time.Time) (string, error)
 	CreateSession(ctx context.Context, tokenHash []byte, accountID string, now, expires time.Time) error
 	SessionByToken(ctx context.Context, tokenHash []byte, now time.Time) (store.Session, bool, error)
+	OpenFlows(ctx context.Context, now time.Time) (int, error)
+	OpenSignups(ctx context.Context, now time.Time) (int, error)
 	RotateSession(ctx context.Context, oldHash, newHash []byte, now, graceUntil time.Time) (bool, error)
 	DeleteSession(ctx context.Context, tokenHash []byte) error
 	DeleteSessions(ctx context.Context, accountID string) error
@@ -91,44 +96,77 @@ type Server struct {
 	Turnstile        Turnstile
 	TurnstileSiteKey string
 	DeletionKey      []byte
-	Now              func() time.Time
-	Log              *slog.Logger
+	// Tickets signs the search tickets (nil: none issued, a development server without a key)
+	Tickets *ticket.Signer
+	// TrustedProxies are the connections whose CF-Connecting-IP is believed (cloudflared's: AP-1)
+	TrustedProxies []netip.Prefix
+	Now            func() time.Time
+	Log            *slog.Logger
 
-	// the limits (AC-26): per client address for sign-in and sign-up, per account for renames
-	signIns *ratelimit.Limiter
-	signups *ratelimit.Limiter
-	renames *ratelimit.Limiter
+	limits Limits
+	// the limits (AC-26): per client address (an IPv6 /64) and per its wider network (/48, IPv4 /24: AP-2) for sign-in
+	// and sign-up, per account for renames
+	signIns, signInsWide *ratelimit.Limiter
+	signups, signupsWide *ratelimit.Limiter
+	renames, tickets     *ratelimit.Limiter
+
+	// (the kinds of peer whose CF-Connecting-IP was ignored, each warned of once)
+	forwardMu     sync.Mutex
+	forwardWarned map[string]bool
 }
 
-// Limits sets the rate limits (New's defaults; the tests' tighter)
+// Limit is one rate limit: Burst requests at once, Burst more each Window
+type Limit struct {
+	Burst  int
+	Window time.Duration
+}
+
+// Limits sets the rate limits and ceilings (DefaultLimits; the tests' tighter)
 type Limits struct {
-	SignIns, Signups, Renames struct {
-		Burst  int
-		Window time.Duration
-	}
+	SignIns, SignInsWide, Signups, SignupsWide, Renames, Tickets Limit
+	// Keys is each limit's most keys at once (past it the longest idle is forgotten)
+	Keys int
+	// OpenFlows and OpenSignups are the ceilings on sign-ins in progress and sign-ups waiting, everyone's (AP-2)
+	OpenFlows, OpenSignups int
 }
 
-// DefaultLimits: generous for a household or a NAT, tight for a script
+// DefaultLimits: generous for a household or a NAT, tight for a script; a network's wider limit a few households'
 func DefaultLimits() Limits {
-	var l Limits
-	l.SignIns.Burst, l.SignIns.Window = 30, 10*time.Minute
-	l.Signups.Burst, l.Signups.Window = 5, time.Hour
-	l.Renames.Burst, l.Renames.Window = 5, 24*time.Hour
-	return l
+	return Limits{
+		SignIns:     Limit{30, 10 * time.Minute},
+		SignInsWide: Limit{150, 10 * time.Minute},
+		Signups:     Limit{5, time.Hour},
+		SignupsWide: Limit{25, time.Hour},
+		Renames:     Limit{5, 24 * time.Hour},
+		Tickets:     Limit{20, 10 * time.Minute},
+		Keys:        200_000,
+		OpenFlows:   20_000,
+		OpenSignups: 5_000,
+	}
 }
 
 // SetLimits installs the limits (before Handler)
 func (s *Server) SetLimits(l Limits) {
-	s.signIns = ratelimit.New(l.SignIns.Burst, l.SignIns.Window)
-	s.signups = ratelimit.New(l.Signups.Burst, l.Signups.Window)
-	s.renames = ratelimit.New(l.Renames.Burst, l.Renames.Window)
+	s.limits = l
+	limiter := func(x Limit) *ratelimit.Limiter { return ratelimit.NewSized(x.Burst, x.Window, l.Keys) }
+	s.signIns, s.signInsWide = limiter(l.SignIns), limiter(l.SignInsWide)
+	s.signups, s.signupsWide = limiter(l.Signups), limiter(l.SignupsWide)
+	s.renames, s.tickets = limiter(l.Renames), limiter(l.Tickets)
 }
 
-// Sweep forgets the limits' idle keys (the service's housekeeping)
+// Sweep forgets the limits' keys idle for their window (the service's housekeeping, every minute)
 func (s *Server) Sweep(now time.Time) {
-	for _, l := range []*ratelimit.Limiter{s.signIns, s.signups, s.renames} {
-		l.Sweep(now.Add(-24 * time.Hour))
+	for _, l := range []*ratelimit.Limiter{s.signIns, s.signInsWide, s.signups, s.signupsWide, s.renames, s.tickets} {
+		l.Sweep(now)
 	}
+}
+
+// allowAddress takes one request of the client's address and of its wider network
+func (s *Server) allowAddress(r *http.Request, now time.Time, narrow, wide *ratelimit.Limiter) bool {
+	key := ratelimit.ClientKey(r, s.TrustedProxies)
+	// (both counted: a block's addresses can't each take a fresh key past the network's)
+	ok := narrow.Allow(key, now)
+	return wide.Allow(ratelimit.WideKey(key), now) && ok
 }
 
 // Handler routes /api/
@@ -137,7 +175,6 @@ func (s *Server) Handler() http.Handler {
 		s.SetLimits(DefaultLimits())
 	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/healthz", s.health)
 	mux.HandleFunc("GET /api/auth/{provider}/start", s.start)
 	mux.HandleFunc("GET /api/auth/google/callback", s.googleCallback)
 	mux.HandleFunc("GET /api/auth/steam/callback", s.steamCallback)
@@ -148,7 +185,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/me", s.write(s.deleteAccount))
 	mux.HandleFunc("POST /api/signout", s.write(s.signOut))
 	mux.HandleFunc("POST /api/signout-everywhere", s.write(s.signOutEverywhere))
+	mux.HandleFunc("POST /api/ticket", s.write(s.ticket))
 	return s.logged(headers(mux))
+}
+
+// HealthHandler is the health check's own listener's (loopback only: not reachable through the tunnel, AP-6): GET
+// /healthz, 200 while the database answers, else 503
+func (s *Server) HealthHandler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", s.health)
+	return mux
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
@@ -201,17 +247,38 @@ func (w *statusWriter) Write(b []byte) (int, error) {
 func (s *Server) logged(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
+		s.noteForward(r)
 		sw := &statusWriter{ResponseWriter: w}
 		next.ServeHTTP(sw, r)
-		if r.URL.Path == "/api/healthz" && sw.status == http.StatusOK {
-			return
-		}
 		s.Log.Info("request", "method", r.Method, "path", r.URL.Path, "status", sw.status,
 			"ms", time.Since(start).Milliseconds())
 	})
 }
 
-// write guards a write (AC-7): Origin the site's, a JSON body (or none), the custom header; then the body capped
+// noteForward warns, once for each kind of peer, of a CF-Connecting-IP from outside TRUSTED_PROXIES: ignored, so its
+// connection's address is the limits' key, and behind the tunnel that's the connector's, every user's at once
+func (s *Server) noteForward(r *http.Request) {
+	kind, ignored := ratelimit.ForwardIgnored(r, s.TrustedProxies)
+	if !ignored {
+		return
+	}
+	s.forwardMu.Lock()
+	defer s.forwardMu.Unlock()
+	if s.forwardWarned[kind] {
+		return
+	}
+	if s.forwardWarned == nil {
+		s.forwardWarned = map[string]bool{}
+	}
+	s.forwardWarned[kind] = true
+	s.Log.Warn("CF-Connecting-IP from a peer outside TRUSTED_PROXIES, ignored: the connection's address is the rate limits' key "+
+		"(behind the tunnel, every user's): set TRUSTED_PROXIES to the connector's address as the API sees it", "peer", kind)
+}
+
+// maxBody: a write's largest body (bytes)
+const maxBody = 16 << 10
+
+// write guards a write (AC-7): Origin the site's, JSON when there's a body, the custom header; the body capped
 func (s *Server) write(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Origin") != s.Origin || r.Header.Get(WriteHeader) != "1" {
@@ -224,7 +291,11 @@ func (s *Server) write(next http.HandlerFunc) http.HandlerFunc {
 				return
 			}
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+		if r.ContentLength > maxBody {
+			writeError(w, http.StatusRequestEntityTooLarge, "too-large")
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 		next(w, r)
 	}
 }
@@ -240,16 +311,27 @@ func writeError(w http.ResponseWriter, status int, code string) {
 	writeJSON(w, status, map[string]string{"error": code})
 }
 
+// readJSON reads one JSON value into v, no field it doesn't know and nothing after it (a stray `}` too: AP-16)
 func readJSON(r *http.Request, v any) error {
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
 	if err := d.Decode(v); err != nil {
 		return err
 	}
-	if d.More() {
+	if err := d.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return errors.New("one JSON value only")
 	}
 	return nil
+}
+
+// badBody answers a body readJSON refused: too large (past maxBody, a stream without its length) or not the call's
+func badBody(w http.ResponseWriter, err error) {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		writeError(w, http.StatusRequestEntityTooLarge, "too-large")
+		return
+	}
+	writeError(w, http.StatusBadRequest, "bad-request")
 }
 
 // --- Tokens and cookies ---

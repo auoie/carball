@@ -10,6 +10,7 @@ FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d
 RUN useradd --uid 10002 --no-create-home --shell /usr/sbin/nologin carball
 COPY carball-api /app/carball-api
 ENV LISTEN_ADDR=:8080 \
+    HEALTH_ADDR=127.0.0.1:8081 \
     PUBLIC_ORIGIN=https://carball.zolt.top
 USER carball
 LABEL org.opencontainers.image.title="carball-api" \

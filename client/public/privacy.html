@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Carball: privacy</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      body {
+        margin: 0 auto;
+        max-width: 44rem;
+        padding: 2rem 1rem 4rem;
+        background: #0b1020;
+        color: #dfe6f3;
+        font: 16px/1.55 system-ui, sans-serif;
+      }
+      h1,
+      h2 {
+        color: #fff;
+        line-height: 1.2;
+      }
+      h2 {
+        margin-top: 2rem;
+        font-size: 1.15rem;
+      }
+      a {
+        color: #8cc8ff;
+      }
+      li {
+        margin: 0.3rem 0;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Privacy</h1>
+    <p>
+      Carball's offline modes (Free Play, Custom Training, Play vs Bots) need no account and send nothing about you anywhere. Your settings and training
+      packs stay in this browser's storage.
+    </p>
+    <p>Online play needs an account. This page says what an account stores and how to delete it.</p>
+
+    <h2>What an account stores</h2>
+    <ul>
+      <li>
+        The account number of the sign-in you used: Google's or Steam's id for you. Never your e-mail address or your name from Google; we never ask
+        Google for them.
+      </li>
+      <li>The display name you choose, which other players see.</li>
+      <li>Your ratings, and the results of your ranked matches, each kept for one year.</li>
+      <li>Your sessions: a cookie that keeps you signed in, for up to 90 days, and a short-lived cookie while a sign-in or sign-up is under way.</li>
+      <li>A ban, if one is ever given, with its reason and end.</li>
+    </ul>
+
+    <h2>What it doesn't store</h2>
+    <ul>
+      <li>E-mail addresses, or the access tokens Google and Steam hand us at sign-in (used once, then dropped).</li>
+      <li>
+        IP addresses. The service holds them in memory only, to limit how many sign-ins and sign-ups one network can make, and forgets each once it's
+        been idle for that limit's window (an hour at most). Its logs leave them out.
+      </li>
+    </ul>
+
+    <h2>Others involved</h2>
+    <ul>
+      <li>Google or Steam, whichever you sign in with, under their own privacy policies.</li>
+      <li>Cloudflare: its Turnstile check runs when you make an account, and its network carries the site's traffic, under Cloudflare's privacy policy.</li>
+    </ul>
+
+    <h2>Deleting your account</h2>
+    <p>
+      Account → Delete Account removes the account at once: its sign-ins, sessions and ratings. Ranked results you played in stay for the other players,
+      without your account in them. A keyed hash of the sign-in's id is kept for 30 days, so that the same sign-in can't make a new account in that time,
+      then removed; a ban stays with the sign-in it was given to.
+    </p>
+
+    <p><a href="/">Back to Carball</a></p>
+  </body>
+</html>

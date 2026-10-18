@@ -75,6 +75,7 @@ describe("the pages' handoffs", () => {
     expect(await queueAddress(new URLSearchParams(""), "carball.zolt.top", deployed)).toEqual({
       url: "https://game.carball.zolt.top:4433/play",
       certHash: null,
+      ticket: expect.any(Function) as unknown,
     });
     // ?queue= wins: the development server's info, its certificate by hash, config.json not even read (RX13's C7)
     const info = vi.fn(() => Promise.resolve(new Response(JSON.stringify({ port: 14439, certHash: "ab".repeat(32) }))));
@@ -85,6 +86,12 @@ describe("the pages' handoffs", () => {
     expect(address.certHash?.length).toBe(32);
     expect(info).toHaveBeenCalledWith("http://127.0.0.1:14440/info", { cache: "no-store" });
     expect(notRead).not.toHaveBeenCalled();
+    // (its tickets the development server's own: from its info server, for this browser's key and the settings' name)
+    info.mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ ticket: "AbC-_9" }))));
+    expect(await address.ticket?.()).toBe("AbC-_9");
+    expect(info).toHaveBeenLastCalledWith(expect.stringMatching(/^http:\/\/127\.0\.0\.1:14440\/dev-ticket\?name=[^&]*&id=[0-9a-f]{32}$/), {
+      cache: "no-store",
+    });
   });
 
   afterEach(() => {

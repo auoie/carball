@@ -21,6 +21,8 @@ func TestClean(t *testing.T) {
 		// (accents piled: two a letter at most, a precomposed letter's own counted; none at the start; composed after)
 		{"\u0301e\u0301\u0302\u0303\u0304x", "\u00E9\u0302x", nil},
 		{"\u00E9\u0302\u0303\u0304x", "\u00E9\u0302x", nil},
+		// (private-use and unassigned characters: gone, AP-19)
+		{"a\uE000b\U0010FFFDc\U000E0FFFd", "abcd", nil},
 		// (nothing but invisible fillers: empty)
 		{"\u3164\u2800\u115F", "", ErrEmpty},
 		{"", "", ErrEmpty},

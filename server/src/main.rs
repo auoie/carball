@@ -35,13 +35,17 @@ struct Args {
     public_host: Option<String>,
     health_port: u16,
     limits: NetLimits,
+    /// The search tickets' public keys (`TICKET_PUBLIC_KEYS`: "KID BASE64", comma- or line-separated; notes/accounts.md
+    /// §3): a queue server's, required unless --dev (which makes a key of its own as well)
+    ticket_keys: Option<String>,
 }
 
 const USAGE: &str = "usage: carball-server [--mode direct|queue] [--dev] [--port 4433] [--info-port 4434] [--dev-info on|off] [--info-bind 127.0.0.1] \
 [--meshes DIR] [--team-size 3] [--match-type casual|ranked|private] [--forfeit-vote-wait SECONDS] [--test-goal-after SECONDS] \
 [--cert FULLCHAIN.pem --key KEY.pem] [--allowed-origin ORIGIN[,ORIGIN...]] [--public-host HOST] [--health-port 8081] \
 [--max-sessions N] [--max-per-address N] [--max-per-address-per-minute N] | --healthcheck
-environment (each the flag's default): SERVER_MODE, GAME_PORT, MESHES_DIR, CERT_PATH, KEY_PATH, ALLOWED_ORIGIN, PUBLIC_HOST, HEALTH_PORT";
+environment (each the flag's default): SERVER_MODE, GAME_PORT, MESHES_DIR, CERT_PATH, KEY_PATH, ALLOWED_ORIGIN, PUBLIC_HOST, HEALTH_PORT;
+TICKET_PUBLIC_KEYS (a queue server's: the search tickets' public keys, \"KID BASE64\" each)";
 
 /// A variable's or flag's number, the error naming it (RV-399: an empty GAME_PORT said only "cannot parse integer")
 fn number<T: std::str::FromStr>(name: &str, value: &str) -> anyhow::Result<T>
@@ -115,6 +119,7 @@ fn parse_args(mut it: impl Iterator<Item = String>, env: impl Fn(&str) -> Option
         public_host: None,
         health_port: 8081,
         limits: NetLimits::default(),
+        ticket_keys: None,
     };
     if let Some(mode) = env("SERVER_MODE") {
         args.queue = parse_mode(&mode)?;
@@ -186,6 +191,11 @@ fn parse_args(mut it: impl Iterator<Item = String>, env: impl Fn(&str) -> Option
     if args.meshes.as_os_str().is_empty() {
         args.meshes = default_meshes();
     }
+    args.ticket_keys = env("TICKET_PUBLIC_KEYS").filter(|k| !k.trim().is_empty());
+    anyhow::ensure!(
+        !args.queue || args.dev || args.ticket_keys.is_some(),
+        "the queue's searches are accounts': it needs TICKET_PUBLIC_KEYS (the accounts service's ticket keys), or --dev for a development server"
+    );
     if args.dev {
         return Ok(args); // (self-signed, whatever the certificate's variables say)
     }
@@ -286,6 +296,15 @@ async fn main() -> anyhow::Result<()> {
         }
     };
     let server = Arc::new(net::endpoint(identity, args.port)?);
+    // (a queue server's searches and claims are accounts': their tickets checked with these keys; a development server's
+    // own key too, its info server signing tickets for the pages that ask)
+    let mut tickets = carball_server::ticket::Tickets::from_list(args.ticket_keys.as_deref().unwrap_or(""))?;
+    if args.dev && args.queue {
+        tickets = tickets.with_dev_key()?;
+    }
+    let tickets = args.queue.then(|| Arc::new(tickets));
+    let mut args = args;
+    args.limits.tickets = tickets.clone();
 
     // (bounded: a flood of messages waits in its session instead of growing the game's queue, RV-248)
     let (to_game, messages) = tokio::sync::mpsc::channel(game_loop::TO_GAME_QUEUE);
@@ -329,7 +348,13 @@ async fn main() -> anyhow::Result<()> {
     );
     match (dev_info, dev_hash) {
         (true, Some(hash)) => {
-            tokio::spawn(net::serve_info(args.info_bind, args.info_port, args.port, hash));
+            tokio::spawn(net::serve_info(
+                args.info_bind,
+                args.info_port,
+                args.port,
+                hash,
+                tickets.filter(|_| args.dev),
+            ));
             println!("dev info on http://{}:{}/info (self-signed certificate)", args.info_bind, args.info_port);
             let query = if args.info_port == 4434 {
                 "server".to_string()
@@ -382,6 +407,7 @@ mod tests {
                 "ALLOWED_ORIGIN" => Some("https://carball.zolt.top/, https://other.example"),
                 "PUBLIC_HOST" => Some("game.carball.zolt.top"),
                 "HEALTH_PORT" => Some("9000"),
+                "TICKET_PUBLIC_KEYS" => Some("k1 AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="),
                 _ => None,
             }
             .map(str::to_string)
@@ -395,6 +421,7 @@ mod tests {
             Some(vec!["https://carball.zolt.top".to_string(), "https://other.example".to_string()])
         );
         assert_eq!(args.public_host.as_deref(), Some("game.carball.zolt.top"));
+        assert!(args.ticket_keys.is_some());
         let args = parse_args(["--port", "6000", "--mode", "direct"].map(String::from).into_iter(), env).unwrap();
         assert_eq!((args.port, args.queue), (6000, false));
         assert!(parse(&["--cert", "/a.pem"]).is_err(), "a certificate needs its key");
@@ -440,11 +467,31 @@ mod tests {
             with(&[("SERVER_MODE", "queue"), CERT[0], CERT[1], ("ALLOWED_ORIGIN", "https://a.example")], &["--dev"])
                 .unwrap();
         assert!(dev.queue && dev.cert.is_none(), "--dev: self-signed whatever the variables say");
+        const KEYS: (&str, &str) = ("TICKET_PUBLIC_KEYS", "k1 AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=");
         assert!(
-            with(&[("SERVER_MODE", "queue"), CERT[0], CERT[1], ("ALLOWED_ORIGIN", "https://a.example")], &[])
+            with(&[("SERVER_MODE", "queue"), CERT[0], CERT[1], ("ALLOWED_ORIGIN", "https://a.example"), KEYS], &[])
                 .unwrap()
                 .cert
                 .is_some()
+        );
+        // (a public queue server's searches are accounts': without the tickets' keys it won't start; --dev makes its own)
+        assert!(
+            with(&[("SERVER_MODE", "queue"), CERT[0], CERT[1], ("ALLOWED_ORIGIN", "https://a.example")], &[]).is_err(),
+            "no TICKET_PUBLIC_KEYS"
+        );
+        assert!(
+            with(
+                &[
+                    ("SERVER_MODE", "queue"),
+                    CERT[0],
+                    CERT[1],
+                    ("ALLOWED_ORIGIN", "https://a.example"),
+                    ("TICKET_PUBLIC_KEYS", " ")
+                ],
+                &[]
+            )
+            .is_err(),
+            "a blank TICKET_PUBLIC_KEYS"
         );
     }
 

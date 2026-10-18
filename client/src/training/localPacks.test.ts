@@ -1,6 +1,6 @@
 // The user's own packs (other creators' work, converted locally: out/bsim/assets_local/training/packs/, git-ignored)
-// never end up in what's committed: no three numbers in a row in any of the repository's text files (committed or
-// would be) near a shot's ball or car position or its car's rotator (RX25, RV-586):
+// never end up in what's committed: no three numbers in a row (a list, a table's row or keyed: RV-604) in any of the
+// repository's text files (committed or would be) near a shot's ball or car position or its car's rotator (RX25, RV-586):
 // - within 0.01 with one of them telling (decimals, or past 200 and no multiple of 50 nor of 1024, a rotator's
 //   sixty-fourth of a turn: a copied value's; round ones like 0, 0, 30, -1500, 2000, 100 or 0, 16384, 0 are anyone's);
 // - within 0.5 with two telling (a copy rounded to a decimal).
@@ -52,8 +52,12 @@ function packTriples(): number[][] {
  *  turns) */
 export const telling = (v: string): boolean => v.includes(".") || (Math.abs(Number(v)) > 200 && Number(v) % 50 !== 0 && Number(v) % 1024 !== 0);
 
-/** Every run of three numbers in a text (overlapping: a lookahead's captures) */
-const TRIPLE = /(?=(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?))/g;
+/** Every run of three numbers in a text (overlapping: a lookahead's captures), however they're written: a list
+ *  (1, 2, 3), a table's row (spaces, semicolons, bars), or keyed ({ x: 1, y: 2, z: 3 }, JSON's "pitch": …, a = …: RV-604);
+ *  each number whole (never a longer one's piece) */
+const NUM = String.raw`(-?\d+(?:\.\d+)?)`;
+const SEP = String.raw`(?:\s*[,;|]\s*|\s+)(?:["']?[A-Za-z_]\w{0,11}["']?\s*[:=]\s*)?`;
+export const TRIPLE = new RegExp(String.raw`(?<![\w.-])(?=${NUM}(?![\d.])${SEP}${NUM}(?![\d.])${SEP}${NUM}(?!\d|\.\d))`, "g");
 
 /** A matcher of written triples against the packs' (bucketed by the first number, whole) */
 export function copiedFrom(triples: readonly (readonly number[])[]): (written: readonly string[]) => boolean {
@@ -91,6 +95,20 @@ describe("the user's packs stay local", () => {
     expect(copied(["-1500", "2000", "100"])).toBe(false);
     expect(copied(["-611", "1734", "413"])).toBe(true);
     expect(copied(["-600", "1750", "400"])).toBe(false);
+  });
+
+  it("the reader: three numbers in a list, a table's row or keyed, each whole (RV-604)", () => {
+    const read = (text: string): string[][] => [...text.matchAll(TRIPLE)].map((m) => [m[1] ?? "", m[2] ?? "", m[3] ?? ""]);
+    expect(read("[-611.24, 1733.55, 412.88]")).toEqual([["-611.24", "1733.55", "412.88"]]);
+    expect(read("{ x: -611.24, y: 1733.55, z: 412.88 }")).toEqual([["-611.24", "1733.55", "412.88"]]);
+    expect(read('{"pitch": -611.24, "yaw": 1733.55, "roll": 412.88}')).toEqual([["-611.24", "1733.55", "412.88"]]);
+    expect(read("| -611.24 | 1733.55 | 412.88 |")).toEqual([["-611.24", "1733.55", "412.88"]]);
+    expect(read("-611.24 1733.55 412.88\n")).toEqual([["-611.24", "1733.55", "412.88"]]);
+    expect(read("-611.24; 1733.55; 412.88")).toEqual([["-611.24", "1733.55", "412.88"]]);
+    // (no number split into pieces, none read from inside a name)
+    expect(read("4128806")).toEqual([]);
+    expect(read("v2 3 4")).toEqual([]);
+    expect(read("1, 2, 3, 4").length).toBe(2);
   });
 
   it.skipIf(!existsSync(PACKS))(

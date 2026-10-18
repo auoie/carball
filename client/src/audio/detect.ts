@@ -20,7 +20,7 @@ export type SoundEvent =
   | { readonly kind: "land"; readonly car: number; readonly at: Vec3; readonly strength: number } // on its wheels
   | { readonly kind: "impact"; readonly car: number; readonly at: Vec3; readonly strength: number } // its body hit the arena
   | { readonly kind: "pad"; readonly big: boolean; readonly at: Vec3 }
-  | { readonly kind: "bump"; readonly at: Vec3; readonly strength: number }
+  | { readonly kind: "bump"; readonly car: number; readonly at: Vec3; readonly strength: number } // the car that sounds it
   | { readonly kind: "demo"; readonly at: Vec3 };
 
 /** Moving further than this between frames is a teleport (a reset, a car placed), not a jump. */
@@ -62,4 +62,23 @@ export class SoundDetector {
     if (flipped) events.push({ kind: "flip", car: id, at: now.pos });
     else if (doubleJumped) events.push({ kind: "doubleJump", car: id, at: now.pos });
   }
+}
+
+/** What a replay's detection reads of a car (src/game/replayRecorder.ts records it) */
+export type ReplayMoves = Pick<CarState, "pos" | "demoed" | "hasJumped" | "hasFlipped" | "doubleJumped">;
+
+/** A goal replay's jumps, double jumps and dodges between its last frame (`previous`, each car's: updated) and this one, as
+ *  live (the flags that hold until the car lands rising; none across a jump of the drawn car, nor for one demolished): the
+ *  game replays a car's movement events, heard from the replay's camera (SND-9: a remote car's, 3D) */
+export function replayMoveEvents(previous: Map<number, ReplayMoves>, cars: ReadonlyMap<number, ReplayMoves>): SoundEvent[] {
+  const events: SoundEvent[] = [];
+  for (const [id, now] of cars) {
+    const before = previous.get(id);
+    previous.set(id, now);
+    if (!before || now.demoed || length(sub(now.pos, before.pos)) > TELEPORT) continue;
+    if (now.hasJumped && !before.hasJumped) events.push({ kind: "jump", car: id, at: now.pos });
+    if (now.hasFlipped && !before.hasFlipped) events.push({ kind: "flip", car: id, at: now.pos });
+    else if (now.doubleJumped && !before.doubleJumped) events.push({ kind: "doubleJump", car: id, at: now.pos });
+  }
+  return events;
 }

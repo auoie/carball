@@ -460,6 +460,15 @@ export class PadMenuNav {
       return;
     }
     const by = direction === "right" ? 1 : -1;
+    // A text field's caret moves while it can, as the game's (TE2 §2.7, RV-611)
+    if (current instanceof HTMLInputElement && current.type === "text" && document.activeElement === current) {
+      const at = (current.selectionDirection === "backward" ? current.selectionStart : current.selectionEnd) ?? current.value.length;
+      const next = at + by;
+      if (next >= 0 && next <= current.value.length) {
+        current.setSelectionRange(next, next);
+        return;
+      }
+    }
     // A value changes in place (never leaving its row): a slider by the held steps (the move cue), a list by one (the
     // select cue); a checkbox only by A (RV-481)
     const role = current.getAttribute("role");

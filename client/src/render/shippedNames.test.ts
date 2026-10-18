@@ -146,10 +146,12 @@ const OLD_KEYS_MODULE = "settings/storageKeys.ts";
  *  hybrid's `hybrid_component()`) */
 const THIRD_PARTY = /\bhybrid_component\b/g;
 /** The same in the accounts service's binary: Go's crypto/tls and crypto/hpke (the post-quantum "hybrid" key exchange's
- *  type and function names, its error texts, run on into the next string: no boundary after them), x/text's ISO 15924
+ *  type and function names, each by its exact name: a game's name glued after one still found (RX28C); its error texts,
+ *  run on into the next string: no boundary after them), x/text's ISO 15924
  *  script codes (Meroitic Cursive's "Merc" in its packed table, through pgx's password normalisation), and a root
  *  certificate's subject in the bundle built in (Izenpe's "R. Merc." registry entry) */
-const THIRD_PARTY_GO = /(?:tls|hpke)\.(?:\(\*)?(?:New)?[Hh]ybrid[A-Za-z]*|PQ KEM for \S+ hybrid|\bhybrid key exchange|MendMercMero|RMerc\.Vitoria-Gasteiz/g;
+const THIRD_PARTY_GO =
+  /(?:tls|hpke)\.(?:\(\*)?(?:hybridKeyExchange|hybridKEM|hybridPublicKey|NewHybridPublicKey)(?![A-Za-z])|PQ KEM for \S+ hybrid|\bhybrid key exchange|MendMercMero|RMerc\.Vitoria-Gasteiz/g;
 
 /** Encoded data, base64 (a run of 64 or more with capitals, lowercase letters and digits: a MIME or PEM line at least):
  *  random letters that spell anything, left out (RV-435) */

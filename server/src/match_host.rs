@@ -42,13 +42,16 @@ pub struct Created {
 
 /// What the queue asks of a host: a match for this many players in this playlist
 pub trait MatchHosting {
-    fn create_match(&mut self, playlist: Playlist, players: usize, now: f64) -> Created;
+    /// A match for these players (their keys, in seat order: a verified claim must be from the same account)
+    fn create_match(&mut self, playlist: Playlist, players: &[u64], now: f64) -> Created;
 }
 
-/// A reserved slot: its token, its team, who claimed it, and whether they left before the start
+/// A reserved slot: its token, its team, the searcher's key (an account's, with tickets), who claimed it, and whether they
+/// left before the start
 struct Reservation {
     token: u64,
     team: u8,
+    key: u64,
     claimed: Option<PlayerId>,
     left: bool,
 }
@@ -171,13 +174,18 @@ impl MatchHost {
     }
 
     /// A player claims their reserved slot with its token: they join its match on its team; false if no reservation
-    /// has the token (never given, claimed already, or its match gone)
+    /// has the token (never given, claimed already, or its match gone), or a verified claim isn't the searcher's account
+    /// (its token not spent: notes/accounts.md §3, a seat is the account's)
     pub fn claim(&mut self, token: u64, id: PlayerId, request: JoinRequest, out: Sender<Outgoing>) -> bool {
-        let Some(match_id) = self.tokens.remove(&token) else { return false };
+        let Some(&match_id) = self.tokens.get(&token) else { return false };
         let Some(hosted) = self.matches.get_mut(&match_id) else { return false };
         let Some(slot) = hosted.reservations.iter_mut().find(|r| r.token == token && r.claimed.is_none()) else {
             return false;
         };
+        if request.verified && slot.key != request.key {
+            return false;
+        }
+        self.tokens.remove(&token);
         slot.claimed = Some(id);
         let team = slot.team;
         if hosted.game.is_none() {
@@ -315,16 +323,17 @@ impl MatchHost {
 
 impl MatchHosting for MatchHost {
     /// The players' slots, teams alternating (blue, orange, ...), each with a token none other has
-    fn create_match(&mut self, playlist: Playlist, players: usize, now: f64) -> Created {
+    fn create_match(&mut self, playlist: Playlist, keys: &[u64], now: f64) -> Created {
+        let players = keys.len();
         let mut reservations = Vec::with_capacity(players);
-        for i in 0..players {
+        for (i, &key) in keys.iter().enumerate() {
             let token = loop {
                 let t = random_u64();
                 if t != 0 && !self.tokens.contains_key(&t) && reservations.iter().all(|r: &Reservation| r.token != t) {
                     break t;
                 }
             };
-            reservations.push(Reservation { token, team: (i % 2) as u8, claimed: None, left: false });
+            reservations.push(Reservation { token, team: (i % 2) as u8, key, claimed: None, left: false });
         }
         let tokens = reservations.iter().map(|r| r.token).collect();
         let match_id = self.add(playlist, reservations, false, now);
@@ -367,6 +376,7 @@ mod tests {
             name: String::new(),
             quick_chat: 0,
             block_non_tactical: false,
+            verified: false,
         }
     }
 
@@ -394,7 +404,7 @@ mod tests {
     fn a_match_starts_only_when_every_reserved_player_has_claimed() {
         init_engine();
         let mut host = MatchHost::new(1, None);
-        let tokens = host.create_match(TWOS, 4, 0.0).tokens;
+        let tokens = host.create_match(TWOS, &[0; 4], 0.0).tokens;
         assert_eq!(tokens.len(), 4);
         assert!(tokens.iter().all(|&t| t != 0) && tokens.iter().collect::<std::collections::BTreeSet<_>>().len() == 4);
         let mut rxs = Vec::new();
@@ -434,10 +444,23 @@ mod tests {
     }
 
     #[test]
+    fn a_verified_claim_must_be_the_searchers_account_its_token_kept_otherwise() {
+        // (notes/accounts.md §3: a seat is the account's; an unverified claim (no tickets: development) isn't held to it)
+        init_engine();
+        let mut host = MatchHost::new(1, None);
+        let tokens = host.create_match(ONES, &[11, 22], 0.0).tokens;
+        let (tx, _rx) = channel(OUT_QUEUE);
+        let verified = |key: u64| JoinRequest { key, verified: true, ..request() };
+        assert!(!host.claim(tokens[0], 1, verified(22), tx.clone()), "another account's ticket");
+        assert!(host.claim(tokens[0], 1, verified(11), tx.clone()), "the searcher's: the token still good");
+        assert!(host.claim(tokens[1], 2, request(), tx), "unverified");
+    }
+
+    #[test]
     fn a_token_claims_once_and_only_its_own_slot() {
         init_engine();
         let mut host = MatchHost::new(1, None);
-        let tokens = host.create_match(ONES, 2, 0.0).tokens;
+        let tokens = host.create_match(ONES, &[0; 2], 0.0).tokens;
         let (tx, _rx) = channel(OUT_QUEUE);
         assert!(host.claim(tokens[0], 1, request(), tx.clone()));
         assert!(!host.claim(tokens[0], 2, request(), tx.clone()), "used");
@@ -451,7 +474,7 @@ mod tests {
     fn a_match_whose_players_dont_all_claim_in_time_is_cancelled_and_its_players_told() {
         init_engine();
         let mut host = MatchHost::new(1, None);
-        let tokens = host.create_match(ONES, 2, 0.0).tokens;
+        let tokens = host.create_match(ONES, &[0; 2], 0.0).tokens;
         let (tx, mut rx) = channel(OUT_QUEUE);
         assert!(host.claim(tokens[0], 1, request(), tx));
         run(&mut host, 0.0, RESERVATION_SECONDS - 0.5);
@@ -550,10 +573,10 @@ mod tests {
         };
         // (Night, every match's: the user's decision of 2026-10-17)
         let mut host = MatchHost::new(1, None);
-        assert!((0..20).all(|_| host.create_match(ONES, 2, 0.0).map == protocol::NIGHT_MAP));
+        assert!((0..20).all(|_| host.create_match(ONES, &[0; 2], 0.0).map == protocol::NIGHT_MAP));
         // (a queue match's players, each welcomed with its map)
         let mut host = MatchHost::new(1, None);
-        let created = host.create_match(TWOS, 4, 0.0);
+        let created = host.create_match(TWOS, &[0; 4], 0.0);
         for (i, &token) in created.tokens.iter().enumerate() {
             let (tx, mut rx) = channel(OUT_QUEUE);
             assert!(host.claim(token, 10 + i as PlayerId, request(), tx));
@@ -573,7 +596,7 @@ mod tests {
     fn a_leave_before_the_start_cancels_and_after_it_leaves_the_slot_empty() {
         init_engine();
         let mut host = MatchHost::new(1, None);
-        let tokens = host.create_match(ONES, 2, 0.0).tokens;
+        let tokens = host.create_match(ONES, &[0; 2], 0.0).tokens;
         let (tx1, _rx1) = channel(OUT_QUEUE);
         let (tx2, _rx2) = channel(OUT_QUEUE);
         assert!(host.claim(tokens[0], 1, request(), tx1));
@@ -581,7 +604,7 @@ mod tests {
         assert_eq!(host.match_count(), 0, "cancelled: player 1 alone, then gone");
         assert!(!host.claim(tokens[1], 2, request(), tx2));
         // (in a 2v2 with two claimed, one leaving before the start: the other is told, and their session ends: RV-360)
-        let tokens = host.create_match(TWOS, 4, 0.0).tokens;
+        let tokens = host.create_match(TWOS, &[0; 4], 0.0).tokens;
         let (tx5, mut rx5) = channel(OUT_QUEUE);
         let (tx6, _rx6) = channel(OUT_QUEUE);
         assert!(host.claim(tokens[0], 5, request(), tx5) && host.claim(tokens[1], 6, request(), tx6));
@@ -590,7 +613,7 @@ mod tests {
         assert!(controls(&mut rx5).contains(&Control::Kicked { reason: protocol::KICK_NOT_ALL_JOINED }));
         assert!(rx5.is_closed());
 
-        let tokens = host.create_match(TWOS, 4, 0.0).tokens;
+        let tokens = host.create_match(TWOS, &[0; 4], 0.0).tokens;
         let mut rxs = Vec::new();
         for (i, &token) in tokens.iter().enumerate() {
             let (tx, rx) = channel(OUT_QUEUE);
@@ -612,7 +635,7 @@ mod tests {
     fn matches_tick_on_their_own_and_a_finished_one_is_let_go() {
         init_engine();
         let mut host = MatchHost::new(1, None);
-        let a = host.create_match(ONES, 2, 0.0).tokens;
+        let a = host.create_match(ONES, &[0; 2], 0.0).tokens;
         let mut rxs = Vec::new();
         for (i, &token) in a.iter().enumerate() {
             let (tx, rx) = channel(OUT_QUEUE);
@@ -620,7 +643,7 @@ mod tests {
             rxs.push(rx);
         }
         let t = run(&mut host, 0.0, 2.0);
-        let b = host.create_match(ONES, 2, t).tokens;
+        let b = host.create_match(ONES, &[0; 2], t).tokens;
         for (i, &token) in b.iter().enumerate() {
             let (tx, rx) = channel(OUT_QUEUE);
             assert!(host.claim(token, 3 + i as PlayerId, request(), tx));
@@ -648,7 +671,7 @@ mod tests {
         let mut host = MatchHost::new(1, None);
         let mut rxs = Vec::new();
         for first in [1, 3] {
-            let tokens = host.create_match(ONES, 2, 0.0).tokens;
+            let tokens = host.create_match(ONES, &[0; 2], 0.0).tokens;
             for (i, &token) in tokens.iter().enumerate() {
                 let (tx, rx) = channel(OUT_QUEUE);
                 assert!(host.claim(token, first + i as PlayerId, request(), tx));
@@ -679,7 +702,7 @@ mod tests {
         // (RV-357: no arena and no ticks for a match no one claimed; RV-360: the catch-up bound)
         init_engine();
         let mut host = MatchHost::new(1, None);
-        let tokens = host.create_match(ONES, 2, 0.0).tokens;
+        let tokens = host.create_match(ONES, &[0; 2], 0.0).tokens;
         run(&mut host, 0.0, 1.0);
         assert!(host.matches.values().all(|m| m.game.is_none()), "not built before a claim");
         let (tx, _rx) = channel(OUT_QUEUE);

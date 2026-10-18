@@ -34,6 +34,7 @@ import {
 } from "../training/editorControls";
 import { type Difficulty, PACK_LIMITS, type Shot, TRAINING_TAGS, type TrainingPack, type TrainingType } from "../training/pack";
 import type { TestKind } from "../training/run";
+import { cyclerControl } from "./controls";
 import { type KeyGlyph, glyphElement, keyGlyph } from "./keyGlyph";
 import { trainingClock } from "./trainingHud";
 
@@ -291,6 +292,8 @@ export class FlyEditor {
     div("fly-meter-label", this.#meter).textContent = FLY_TEXT.strength;
     // The shot list (§4, §6.2)
     this.#list = div("fly-list", this.#root);
+    // (the list and SEQUENCE SETTINGS pages of their own to the pad: the dialog never opens on the list's row, RV-600)
+    this.#list.id = "fly-list";
     const modes = div("fly-modes", this.#list);
     const mode = (label: string, on: boolean, click: () => void): void => {
       const b = document.createElement("button");
@@ -317,6 +320,7 @@ export class FlyEditor {
     this.#context = div("fly-context", this.#list);
     this.#legend = div("fly-legend", this.#list);
     this.#dialog = div("fly-settings", this.#root);
+    this.#dialog.id = "fly-settings";
     this.#dialog.hidden = true;
     host.append(this.#root);
     this.#listen();
@@ -800,18 +804,23 @@ export class FlyEditor {
     name.maxLength = 30;
     name.placeholder = FLY_TEXT.name;
     name.setAttribute("aria-label", FLY_TEXT.name);
-    const select = <T extends string>(label: string, options: readonly (readonly [T, string])[], value: T): HTMLSelectElement => {
-      const s = document.createElement("select");
-      s.className = "fly-settings-select";
-      s.setAttribute("aria-label", label);
-      for (const [v, text] of options) {
-        const o = document.createElement("option");
-        o.value = v;
-        o.textContent = text;
-        o.selected = v === value;
-        s.append(o);
-      }
-      return s;
+    // (a cycler, not a native select: the pad steps it with left and right as the game's option does, RV-599)
+    const select = <T extends string>(
+      label: string,
+      options: readonly (readonly [T, string])[],
+      value: T,
+    ): { readonly control: HTMLDivElement; readonly value: () => T } => {
+      let chosen = value;
+      const control = cyclerControl<T>({
+        label,
+        options,
+        value,
+        onChange: (v) => {
+          chosen = v;
+        },
+      });
+      control.classList.add("fly-settings-select");
+      return { control, value: () => chosen };
     };
     // (Striker and Goalie, the game's; a pack's Aerial kept as it is)
     const types: TrainingType[] = pack.type === "aerial" ? ["striker", "goalie", "aerial"] : ["striker", "goalie"];
@@ -860,7 +869,7 @@ export class FlyEditor {
     accept.className = "fly-settings-accept";
     accept.textContent = FLY_TEXT.accept;
     accept.addEventListener("click", () => {
-      const details: PackDetails = { name: name.value.trim(), type: type.value as TrainingType, difficulty: difficulty.value as Difficulty, tags };
+      const details: PackDetails = { name: name.value.trim(), type: type.value(), difficulty: difficulty.value(), tags };
       if (!this.#host.details(details)) return;
       this.#dialog.hidden = true;
       this.#renderList();
@@ -874,7 +883,10 @@ export class FlyEditor {
     buttons.append(accept, cancel);
     const box = document.createElement("div");
     box.className = "fly-settings-box";
-    box.append(title, name, type, difficulty, tagsButton, tagList, buttons);
+    // (opened on the name each time, as the game's (TE2): its place not kept between openings)
+    box.dataset["padPage"] = "settings";
+    box.dataset["padForget"] = "";
+    box.append(title, name, type.control, difficulty.control, tagsButton, tagList, buttons);
     this.#dialog.replaceChildren(box);
     this.#dialog.hidden = false;
     name.focus();

@@ -38,6 +38,8 @@ Builds are offline: the modules go.sum pins, from the module cache (`GOPROXY=off
 
 ## Running it locally
 
-`carball-api serve --dev` allows `PUBLIC_ORIGIN=http://localhost:PORT` and sign-ups without Turnstile; it still needs
-Postgres, `DATABASE_URL` (plus `MIGRATE_DATABASE_URL` to migrate) and a `DELETION_HMAC_KEY_FILE`. Google sign-in needs a
-client of its own registered for that origin; Steam's works on any origin.
+Postgres first, then `carball-api migrate --dev` (MIGRATE_DATABASE_URL and DATABASE_URL; `--dev` allows one role for
+both), then `carball-api serve --dev`: a localhost `PUBLIC_ORIGIN` only (http allowed), sign-ups without Turnstile, a
+role that may create in the schema allowed; it still needs `DATABASE_URL` and a `DELETION_HMAC_KEY_FILE` (random text).
+Google sign-in needs a client of its own registered for that origin; Steam's works on any origin. The health check
+answers on `HEALTH_ADDR` (127.0.0.1:8081), not under `/api/`.

@@ -82,6 +82,50 @@ describe.skipIf(!existsSync(join(CARS, "tall.glb")))("a car wearing its model (T
     car.dispose();
   });
 
+  it("put somewhere new (a reset, a respawn, a replay's start: teleport), its sway starts fresh: a 300 uu jump at speed doesn't swing it (RV-597)", () => {
+    const upright = new Quaternion();
+    const drive = (car: CarView): number => {
+      car.wheels = { suspension: four(30), steer: four(0), contact: four(true) };
+      // (from rest, speeding up along the car to 1400 uu/s, then holding it: the spring settled to its lag)
+      let x = 0;
+      for (let i = 0; i < 90; i++) {
+        x += Math.min(1400, 1000 * (i + 1) * FRAME) * FRAME;
+        car.update(new Vector3(x, 30, 0), upright, false, false, false, FRAME);
+      }
+      return x;
+    };
+    const flagged = new CarView(CONFIG, 0, null, TALL);
+    const body = named(flagged.root, "Body");
+    const rest = body.quaternion.clone();
+    const x = drive(flagged);
+    flagged.teleport();
+    flagged.update(new Vector3(x - 300, 30, 0), upright, false, false, false, FRAME);
+    expect(body.quaternion.angleTo(rest)).toBeLessThan(1e-9);
+    // (unflagged, under the 400 uu fallback: the same jump swings it)
+    const plain = new CarView(CONFIG, 0, null, TALL);
+    const plainBody = named(plain.root, "Body");
+    const before = drive(plain);
+    plain.update(new Vector3(before - 300, 30, 0), upright, false, false, false, FRAME);
+    expect(plainBody.quaternion.angleTo(rest)).toBeGreaterThan(0.01);
+    flagged.dispose();
+    plain.dispose();
+  });
+
+  it("its supersonic trails from its own rear tyres' contact, not the physics' wheels (RV-590)", () => {
+    const car = new CarView(CONFIG, 0, null, TALL);
+    const wheels = [named(car.root, "Wheel_RL"), named(car.root, "Wheel_RR")];
+    const sources = car.trailSources.map((v) => [v.x, v.y, v.z].map((n) => Math.round(n * 100) / 100));
+    expect(sources).toHaveLength(2);
+    for (const [i, wheel] of wheels.entries()) {
+      // (along and across the car the wheel's own; below its centre by about its tyre's radius: not the physics' rear x)
+      expect(sources[i]?.[0]).toBeCloseTo(wheel.position.x * UU_PER_METRE, 1);
+      expect(sources[i]?.[2]).toBeCloseTo(wheel.position.z * UU_PER_METRE, 1);
+      expect(sources[i]?.[1]).toBeLessThan(wheel.position.y * UU_PER_METRE - 10);
+    }
+    expect(Math.abs((sources[0]?.[0] ?? 0) - CONFIG.backWheel.offset.x)).toBeGreaterThan(1);
+    car.dispose();
+  });
+
   it("its exhausts at its empties (Sport's Exhaust_L/R: x -57, 12.86 up, 20.43 to each side), its Paint the team's (not metallic, one per colour)", () => {
     const sport = glbCarModel(0, new Color(0x2050ff));
     const parts = sport ? carModelParts(sport) : null;

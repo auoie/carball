@@ -6,7 +6,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { type BodyState, type BoostPadState, type CarControls, type CarState, NO_CONTROLS, World, initEngine } from "../engine/world";
 import { IDENTITY_ROT, type Rot3, type Vec3, ZERO, vec3 } from "../math/vec";
 import { ImpactTriggers, triggerSounds } from "../game/impactTriggers";
-import { type SoundEvent, SoundDetector, type SoundWorld } from "./detect";
+import { type ReplayMoves, type SoundEvent, SoundDetector, type SoundWorld, replayMoveEvents } from "./detect";
 import { arenaMeshes } from "../testing/arena";
 
 let engine: Awaited<ReturnType<typeof createEngine>>;
@@ -243,5 +243,35 @@ describe("sound events from made-up states", () => {
       d.update(world([[1, car(vec3(3000, 3000, 300), vec3(1500, 0, -500), { wheelContact: [false, false, false, false] })]]), 1 / 60);
     }
     expect(d.update(world([[1, car(vec3(0, -2000, 17), ZERO)]]), 1 / 60)).toEqual([]);
+  });
+});
+
+describe("a goal replay's jumps, double jumps and dodges (the user's report, 2026-10-18: heard from the replay's camera)", () => {
+  const moves = (x: number, flags: Partial<ReplayMoves> = {}): ReplayMoves => ({
+    pos: vec3(x, 0, 17),
+    demoed: false,
+    hasJumped: false,
+    hasFlipped: false,
+    doubleJumped: false,
+    ...flags,
+  });
+  it("found where the recorded flags rise, at the car: a jump, then a dodge; a double jump without one", () => {
+    const previous = new Map<number, ReplayMoves>();
+    const at = (x: number, flags: Partial<ReplayMoves>): SoundEvent[] => replayMoveEvents(previous, new Map([[3, moves(x, flags)]]));
+    expect(at(0, {})).toEqual([]);
+    expect(at(10, { hasJumped: true })).toEqual([{ kind: "jump", car: 3, at: vec3(10, 0, 17) }]);
+    expect(at(20, { hasJumped: true })).toEqual([]);
+    expect(at(30, { hasJumped: true, hasFlipped: true, doubleJumped: true })).toEqual([{ kind: "flip", car: 3, at: vec3(30, 0, 17) }]);
+    // (landed: the flags down; a second jump and its double jump)
+    expect(at(40, {})).toEqual([]);
+    expect(at(50, { hasJumped: true })).toHaveLength(1);
+    expect(at(60, { hasJumped: true, doubleJumped: true })).toEqual([{ kind: "doubleJump", car: 3, at: vec3(60, 0, 17) }]);
+  });
+  it("none for a car that jumped a long way (the replay's first frame, a respawn) or is demolished", () => {
+    const previous = new Map<number, ReplayMoves>([[3, moves(0)]]);
+    expect(replayMoveEvents(previous, new Map([[3, moves(5000, { hasJumped: true })]]))).toEqual([]);
+    expect(replayMoveEvents(previous, new Map([[3, moves(5000, { demoed: true, hasFlipped: true })]]))).toEqual([]);
+    // (a car first seen: nothing to compare with)
+    expect(replayMoveEvents(new Map(), new Map([[4, moves(0, { hasJumped: true })]]))).toEqual([]);
   });
 });

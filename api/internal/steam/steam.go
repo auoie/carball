@@ -125,15 +125,17 @@ func (v *Verifier) Verify(ctx context.Context, rawQuery, returnTo string) (strin
 	if err != nil || at.Before(now.Add(-NonceWindow)) || at.After(now.Add(nonceSkew)) {
 		return "", ErrNonce
 	}
-	if err := v.checkAuthentication(ctx, params); err != nil {
-		return "", err
-	}
+	// (the nonce taken before Steam's asked: a replay costs no call of ours, AP-18; one Steam refuses stays taken, as it
+	// can't pass anyway)
 	fresh, err := v.Nonces.UseNonce(ctx, nonce, at.Add(NonceWindow+nonceSkew))
 	if err != nil {
 		return "", err
 	}
 	if !fresh {
 		return "", ErrNonceReused
+	}
+	if err := v.checkAuthentication(ctx, params); err != nil {
+		return "", err
 	}
 	return m[1], nil
 }

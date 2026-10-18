@@ -12,7 +12,6 @@ import (
 	"golang.org/x/oauth2"
 
 	"carball/api/internal/names"
-	"carball/api/internal/ratelimit"
 	"carball/api/internal/steam"
 	"carball/api/internal/store"
 )
@@ -30,7 +29,7 @@ const (
 // start begins a sign-in: a flow bound to this browser by the pre-auth cookie (AC-1), then the provider
 func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 	now := s.Now()
-	if !s.signIns.Allow(ratelimit.ClientKey(r), now) {
+	if !s.allowAddress(r, now, s.signIns, s.signInsWide) {
 		s.redirectPage(w, r, url.Values{"signin": {signinBusy}})
 		return
 	}
@@ -50,13 +49,21 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 		}
 		f.Nonce, f.Verifier = token(), oauth2.GenerateVerifier()
 		var err error
-		if target, err = s.Google.AuthURL(r.Context(), state, f.Nonce, f.Verifier); err != nil {
+		if target, err = s.Google.AuthURL(state, f.Nonce, f.Verifier); err != nil {
 			s.Log.Error("google sign-in unavailable", "err", err)
 			s.redirectPage(w, r, url.Values{"signin": {signinOff}})
 			return
 		}
 	case store.Steam:
 		target = steam.LoginURL(s.Steam.Endpoint, s.steamReturnTo(state), s.Origin)
+	}
+	// (everyone's sign-ins in progress at most so many: a flood can't fill the table, AP-2)
+	if open, err := s.Store.OpenFlows(r.Context(), now); err != nil || open >= s.limits.OpenFlows {
+		if err != nil {
+			s.Log.Error("counting sign-ins", "err", err)
+		}
+		s.redirectPage(w, r, url.Values{"signin": {signinBusy}})
+		return
 	}
 	if err := s.Store.CreateFlow(r.Context(), f); err != nil {
 		s.fail(w, r, "storing a sign-in", err)
@@ -90,7 +97,7 @@ func (s *Server) takeFlow(w http.ResponseWriter, r *http.Request, provider store
 func equal(a, b string) bool { return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1 }
 
 func (s *Server) googleCallback(w http.ResponseWriter, r *http.Request) {
-	if !s.signIns.Allow(ratelimit.ClientKey(r), s.Now()) {
+	if !s.allowAddress(r, s.Now(), s.signIns, s.signInsWide) {
 		s.redirectPage(w, r, url.Values{"signin": {signinBusy}})
 		return
 	}
@@ -114,7 +121,7 @@ func (s *Server) googleCallback(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) steamCallback(w http.ResponseWriter, r *http.Request) {
-	if !s.signIns.Allow(ratelimit.ClientKey(r), s.Now()) {
+	if !s.allowAddress(r, s.Now(), s.signIns, s.signInsWide) {
 		s.redirectPage(w, r, url.Values{"signin": {signinBusy}})
 		return
 	}
@@ -207,6 +214,13 @@ func (s *Server) signedIn(w http.ResponseWriter, r *http.Request, i store.Identi
 		}
 		s.redirectPage(w, r, nil)
 	case signInNew:
+		if open, err := s.Store.OpenSignups(ctx, now); err != nil || open >= s.limits.OpenSignups {
+			if err != nil {
+				s.Log.Error("counting sign-ups", "err", err)
+			}
+			s.redirectPage(w, r, url.Values{"signin": {signinBusy}})
+			return
+		}
 		tok := token()
 		p := store.Pending{
 			TokenHash: digest(tok), Provider: i.Provider, Subject: i.Subject,
@@ -288,7 +302,7 @@ func (s *Server) signupInfo(w http.ResponseWriter, r *http.Request) {
 // signup makes the account: the name checked, Turnstile passed (AC-16), then the store's checks again in one transaction
 func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 	ctx, now := r.Context(), s.Now()
-	if !s.signups.Allow(ratelimit.ClientKey(r), now) {
+	if !s.allowAddress(r, now, s.signups, s.signupsWide) {
 		writeError(w, http.StatusTooManyRequests, "busy")
 		return
 	}
@@ -307,7 +321,7 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 		Turnstile string `json:"turnstile"`
 	}
 	if err := readJSON(r, &body); err != nil {
-		writeError(w, http.StatusBadRequest, "bad-request")
+		badBody(w, err)
 		return
 	}
 	name, err := names.Clean(body.Name)

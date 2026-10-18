@@ -8,6 +8,7 @@ import {
   type InputFrame,
   PROTOCOL_VERSION,
   REFUSED_MODE,
+  REFUSED_TICKET,
   REFUSED_TOKEN,
   REFUSED_VERSION,
   type Update,
@@ -24,6 +25,9 @@ export interface ServerAddress {
   /** The offline match against bots: its session, a stand-in for WebTransport talking to the local host
    *  (local/localTransport.ts), instead of the network */
   readonly open?: () => WebTransport;
+  /** A search's and a claim's ticket, who the player is (src/net/tickets.ts: the accounts service's, a development
+   *  server's own); none for the local host and a development server's open match */
+  readonly ticket?: () => Promise<string>;
 }
 
 /** A development server publishes its port and certificate hash at http://host:infoPort/info. */
@@ -115,6 +119,8 @@ export function refusalText(reason: number): string {
       return "the match is no longer there";
     case REFUSED_MODE:
       return "the server doesn't host that kind of match";
+    case REFUSED_TICKET:
+      return "sign in again to play online";
     default:
       return "the server is full";
   }
@@ -196,7 +202,11 @@ export class Connection {
     const stream = await transport.createBidirectionalStream();
     const writer = stream.writable.getWriter();
     const token = match.intent === "claim" ? match.token : 0n;
-    await writer.write(encodeControl({ type: "hello", version: PROTOCOL_VERSION, ...preferences, key: storedKey(), intent: match.intent, playlist: 0, token }));
+    // (a claim's ticket: the account that searched, notes/accounts.md §3; a join's none)
+    const ticket = match.intent === "claim" && address.ticket ? await address.ticket() : "";
+    await writer.write(
+      encodeControl({ type: "hello", version: PROTOCOL_VERSION, ...preferences, key: storedKey(), intent: match.intent, playlist: 0, token, ticket }),
+    );
     connection.#control = writer;
 
     const welcome = await new Promise<Welcome>((resolve, reject) => {

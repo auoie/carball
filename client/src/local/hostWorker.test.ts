@@ -36,6 +36,7 @@ const hello = encodeControl({
   intent: "join",
   playlist: 0,
   token: 0n,
+  ticket: "",
 });
 const outs = (): number => posted.filter((m) => m.type === "out").length;
 

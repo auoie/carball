@@ -7,7 +7,7 @@ import { type Server, startServers } from "../src/testing/serverProcesses";
 // (every page from one address: no per-address session limits; the health ports apart; every match on Night, the one map)
 const GAME = ["run", "--quiet", "--manifest-path", "../server/Cargo.toml", "--", "--max-per-address", "1000", "--max-per-address-per-minute", "100000"];
 const SERVERS: readonly Server[] = [
-  { name: "preview", command: "npx", args: ["vite", "preview", "--port", "4173", "--strictPort"], url: "http://localhost:4173/", reuse: true },
+  { name: "preview", command: "node_modules/.bin/vite", args: ["preview", "--port", "4173", "--strictPort"], url: "http://localhost:4173/", reuse: true },
   // The game server for the online tests (the first run builds it)
   {
     name: "game",

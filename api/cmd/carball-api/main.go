@@ -1,13 +1,15 @@
 // carball-api: Carball's accounts service (notes/accounts.md, APP-CONTRACT.md "carball-api"). The server by default;
 // the admin's commands against the same database (bans: notes/accounts.md §4, question 13), run on the box:
 //
-//	carball-api [serve] [--dev]                 the HTTP server (migrations first, when MIGRATE_DATABASE_URL is set)
-//	carball-api migrate                         the migrations alone (MIGRATE_DATABASE_URL)
+//	carball-api [serve] [--dev]                 the HTTP server (and its health check's, on HEALTH_ADDR)
+//	carball-api migrate [--dev]                 the migrations, a one-shot run as the schema's owner (MIGRATE_DATABASE_URL)
 //	carball-api accounts NAME                   the accounts whose name contains NAME, with their identities
 //	carball-api ban (--account ID | --identity PROVIDER:SUBJECT) --reason TEXT --by NAME [--for DURATION | --until DATE]
 //	carball-api unban (--account ID | --identity PROVIDER:SUBJECT)
 //	carball-api bans                            the bans in force
-//	carball-api healthcheck                     the container's check: GET /api/healthz on LISTEN_ADDR
+//	carball-api healthcheck                     the container's check: GET /healthz on HEALTH_ADDR
+//	carball-api ticket-key KID                  a new ticket key: its seed (TICKET_SIGNING_KEY_FILE's) on stdout, its
+//	                                            public line (the game server's TICKET_PUBLIC_KEYS) on stderr
 package main
 
 import (
@@ -17,11 +19,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -35,6 +36,7 @@ import (
 	"carball/api/internal/server"
 	"carball/api/internal/steam"
 	"carball/api/internal/store"
+	"carball/api/internal/ticket"
 	"carball/api/internal/turnstile"
 )
 
@@ -49,7 +51,7 @@ func main() {
 	case "serve":
 		err = serve(args)
 	case "migrate":
-		err = migrate()
+		err = migrate(args)
 	case "accounts":
 		err = accounts(args)
 	case "ban":
@@ -60,8 +62,10 @@ func main() {
 		err = bans()
 	case "healthcheck":
 		err = healthcheck()
+	case "ticket-key":
+		err = ticketKey(args)
 	default:
-		err = fmt.Errorf("unknown command %q (serve, migrate, accounts, ban, unban, bans, healthcheck)", command)
+		err = fmt.Errorf("unknown command %q (serve, migrate, accounts, ban, unban, bans, healthcheck, ticket-key)", command)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "carball-api:", err)
@@ -71,7 +75,7 @@ func main() {
 
 func serve(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
-	dev := fs.Bool("dev", false, "development: an http origin on localhost allowed, Turnstile optional")
+	dev := fs.Bool("dev", false, "development: a localhost origin only, Turnstile optional")
 	_ = fs.Parse(args)
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	cfg, err := config.Load(os.Getenv, *dev)
@@ -80,16 +84,25 @@ func serve(args []string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	if cfg.MigrateDatabaseURL != "" {
-		if err := runMigrations(ctx, cfg); err != nil {
-			return err
-		}
-	}
-	db, err := store.Open(ctx, cfg.DatabaseURL, cfg.DatabasePasswordFile)
+	db, err := openWithRetry(ctx, cfg, log)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
+	// (the service's role rows only: one that could change the schema is a deployment's mistake, AP-4)
+	if can, err := db.CanCreate(ctx); err != nil {
+		return fmt.Errorf("checking the service's role: %w", err)
+	} else if can && !cfg.Dev {
+		return errors.New("DATABASE_URL's role may create in the schema: give the service a role of its own, rows only (carball-api migrate grants it)")
+	} else if can {
+		log.Warn("development: the service's role may create in the schema")
+	}
+	// (whose CF-Connecting-IP is believed: the tunnel's connector; a wrong one shows as noteForward's warning)
+	proxies := make([]string, len(cfg.TrustedProxies))
+	for i, p := range cfg.TrustedProxies {
+		proxies[i] = p.String()
+	}
+	log.Info("trusted proxies (CF-Connecting-IP believed from)", "proxies", strings.Join(proxies, ","))
 
 	// (every outbound call bounded: AC-15)
 	client := &http.Client{Timeout: 10 * time.Second}
@@ -99,6 +112,7 @@ func serve(args []string) error {
 		Steam:            &steam.Verifier{Endpoint: steam.Endpoint, Client: client, Nonces: db, Now: time.Now},
 		TurnstileSiteKey: cfg.TurnstileSiteKey,
 		DeletionKey:      cfg.DeletionKey,
+		TrustedProxies:   cfg.TrustedProxies,
 		Now:              time.Now,
 		Log:              log,
 	}
@@ -113,12 +127,16 @@ func serve(args []string) error {
 	if cfg.SteamWebAPIKey != "" {
 		s.SteamNames = &steam.Names{Key: cfg.SteamWebAPIKey, Client: client, URL: steam.SummariesURL}
 	}
-	if cfg.TurnstileSecret != "" {
-		host := strings.TrimPrefix(strings.TrimPrefix(cfg.PublicOrigin, "https://"), "http://")
-		if h, _, err := net.SplitHostPort(host); err == nil {
-			host = h
+	if cfg.TicketKeyID != "" {
+		if s.Tickets, err = ticket.NewSigner(cfg.TicketKeyID, cfg.TicketSeed); err != nil {
+			return fmt.Errorf("TICKET_SIGNING_KEY_FILE: %w", err)
 		}
-		s.Turnstile = &turnstile.Verifier{Secret: cfg.TurnstileSecret, Hostname: host, Client: client, URL: turnstile.SiteverifyURL}
+		log.Info("search tickets signed", "key", s.Tickets.Public())
+	} else {
+		log.Warn("development: no ticket key, no search tickets")
+	}
+	if cfg.TurnstileSecret != "" {
+		s.Turnstile = &turnstile.Verifier{Secret: cfg.TurnstileSecret, Hostname: config.Hostname(cfg.PublicOrigin), Client: client, URL: turnstile.SiteverifyURL}
 	} else {
 		log.Warn("development: sign-ups without Turnstile")
 	}
@@ -132,10 +150,13 @@ func serve(args []string) error {
 		MaxHeaderBytes:    16 << 10,
 		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelWarn),
 	}
+	// (the health check on its own loopback listener: not reachable through the tunnel, AP-6)
+	healthServer := &http.Server{Addr: cfg.HealthAddr, Handler: s.HealthHandler(), ReadHeaderTimeout: 2 * time.Second}
 	go housekeeping(ctx, db, s, log)
-	errs := make(chan error, 1)
+	errs := make(chan error, 2)
 	go func() { errs <- httpServer.ListenAndServe() }()
-	log.Info("carball-api listening", "addr", cfg.ListenAddr, "origin", cfg.PublicOrigin, "dev", cfg.Dev)
+	go func() { errs <- healthServer.ListenAndServe() }()
+	log.Info("carball-api listening", "addr", cfg.ListenAddr, "health", cfg.HealthAddr, "origin", cfg.PublicOrigin, "dev", cfg.Dev)
 	select {
 	case err := <-errs:
 		return err
@@ -143,18 +164,42 @@ func serve(args []string) error {
 	}
 	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	_ = healthServer.Shutdown(shutdown)
 	return httpServer.Shutdown(shutdown)
 }
 
-// housekeeping: what's run out purged (expired sessions daily at least: notes/accounts.md, question 7), the limits'
-// idle keys forgotten; hourly
+// openWithRetry connects the database, trying again for a minute while it isn't up yet (a container started beside it:
+// AP-24), then giving up
+func openWithRetry(ctx context.Context, cfg config.Config, log *slog.Logger) (*store.Store, error) {
+	deadline := time.Now().Add(time.Minute)
+	for wait := time.Second; ; wait = min(2*wait, 8*time.Second) {
+		db, err := store.Open(ctx, cfg.DatabaseURL, cfg.DatabasePasswordFile)
+		if err == nil || time.Now().Add(wait).After(deadline) {
+			return db, err
+		}
+		log.Warn("the database isn't answering yet; trying again", "in", wait.String())
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(wait):
+		}
+	}
+}
+
+// housekeeping: the limits' idle keys forgotten every minute; what's run out purged hourly (expired sessions daily at
+// least: notes/accounts.md, question 7)
 func housekeeping(ctx context.Context, db *store.Store, s *server.Server, log *slog.Logger) {
-	tick := time.NewTicker(time.Hour)
+	tick := time.NewTicker(time.Minute)
 	defer tick.Stop()
+	var purged time.Time
 	for {
 		now := time.Now()
-		if err := db.Purge(ctx, now, now.Add(-server.RecreateBlock)); err != nil && ctx.Err() == nil {
-			log.Error("purging", "err", err)
+		if now.Sub(purged) >= time.Hour {
+			if err := db.Purge(ctx, now, now.Add(-server.RecreateBlock)); err != nil && ctx.Err() == nil {
+				log.Error("purging", "err", err)
+			} else {
+				purged = now
+			}
 		}
 		s.Sweep(now)
 		select {
@@ -165,24 +210,22 @@ func housekeeping(ctx context.Context, db *store.Store, s *server.Server, log *s
 	}
 }
 
-func runMigrations(ctx context.Context, cfg config.Config) error {
-	role, err := store.AppRole(cfg.DatabaseURL)
-	if err != nil {
-		return fmt.Errorf("DATABASE_URL: %w", err)
-	}
-	return store.Migrate(ctx, cfg.MigrateDatabaseURL, cfg.MigrateDatabasePasswordFile, role)
-}
-
-func migrate() error {
-	cfg := config.Config{
-		DatabaseURL:                 os.Getenv("DATABASE_URL"),
-		MigrateDatabaseURL:          os.Getenv("MIGRATE_DATABASE_URL"),
-		MigrateDatabasePasswordFile: os.Getenv("MIGRATE_DATABASE_PASSWORD_FILE"),
-	}
-	if cfg.MigrateDatabaseURL == "" {
+// migrate: the schema brought up to date, a one-shot run as its owner (MIGRATE_DATABASE_URL), the service's role
+// (DATABASE_URL's) granted its rows; the serving container never holds the owner's password (AP-4). `--dev` allows one
+// role for both (a development database)
+func migrate(args []string) error {
+	fs := flag.NewFlagSet("migrate", flag.ExitOnError)
+	dev := fs.Bool("dev", false, "development: one role for both URLs")
+	_ = fs.Parse(args)
+	owner := os.Getenv("MIGRATE_DATABASE_URL")
+	if owner == "" {
 		return errors.New("MIGRATE_DATABASE_URL is required")
 	}
-	return runMigrations(context.Background(), cfg)
+	role, err := store.AppRole(os.Getenv("DATABASE_URL"))
+	if err != nil || role == "" {
+		return errors.New("DATABASE_URL (the service's role, granted its rows) is required")
+	}
+	return store.Migrate(context.Background(), owner, os.Getenv("MIGRATE_DATABASE_PASSWORD_FILE"), role, *dev)
 }
 
 // --- The admin's commands ---
@@ -362,24 +405,20 @@ func bans() error {
 	return w.Flush()
 }
 
-// healthcheck: the image's HEALTHCHECK (no curl or wget in it): the server's /api/healthz on its own port
+// healthcheck: the image's HEALTHCHECK (no curl or wget in it): the health listener's GET /healthz (HEALTH_ADDR)
 func healthcheck() error {
-	addr := os.Getenv("LISTEN_ADDR")
+	addr := os.Getenv("HEALTH_ADDR")
 	if addr == "" {
-		addr = ":8080"
+		addr = "127.0.0.1:8081"
 	}
-	_, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return fmt.Errorf("LISTEN_ADDR: %w", err)
-	}
-	n, err := strconv.ParseUint(port, 10, 16)
-	if err != nil {
-		return fmt.Errorf("LISTEN_ADDR's port: %w", err)
+	ap, err := netip.ParseAddrPort(addr)
+	if err != nil || !ap.Addr().IsLoopback() {
+		return fmt.Errorf("HEALTH_ADDR must be a loopback HOST:PORT, got %q", addr)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	// (G704 below: the request goes to 127.0.0.1 alone, the port a number from the service's own setting)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/api/healthz", n), nil) //nolint:gosec
+	// (G704 below: a loopback address, checked above, the service's own)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+ap.String()+"/healthz", nil) //nolint:gosec
 	if err != nil {
 		return err
 	}
@@ -392,5 +431,21 @@ func healthcheck() error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("status %d", resp.StatusCode)
 	}
+	return nil
+}
+
+// ticketKey makes a ticket key (notes/accounts.md §6: its rotation, a new id added to the game server's list first, then
+// the API switched, the old id dropped once its tickets have run out): the seed alone on stdout (to a file kept secret),
+// the public line for TICKET_PUBLIC_KEYS on stderr
+func ticketKey(args []string) error {
+	if len(args) != 1 {
+		return errors.New("ticket-key KID (an id of 1-32 characters, no spaces)")
+	}
+	seed, public, err := ticket.NewKey(args[0])
+	if err != nil {
+		return err
+	}
+	fmt.Println(seed)
+	fmt.Fprintln(os.Stderr, public)
 	return nil
 }

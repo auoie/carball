@@ -2,8 +2,13 @@
 
 Status: **step 1 built (2026-10-18): `api/`**, the service itself (schema and migrations, Google and Steam sign-in, the
 pre-auth cookie, sign-up with Turnstile, sessions, rate limits, names, deletion with the 30-day block, the admin's ban
-commands, its image); step 2 (tickets, the game server's check, the client's sign-in) next; ratings, results, queue bans
-and rejoin with the ranked rules. Reviewed by the static session as AC1, findings AC-1..27, all folded in below;
+commands, its image); **step 2 built (2026-10-18)**: the tickets (`POST /api/ticket`, `api/internal/ticket`), the game
+server's check (`server/src/ticket.rs`: protocol 26's Hello ticket, `TICKET_PUBLIC_KEYS`, `--dev`'s own key and
+`/dev-ticket`, a claim bound to the searching account), the client's ticket sources (`client/src/net/tickets.ts`) and
+its account page (`client/src/ui/accountPages.ts`: sign in with Google or Steam, the sign-up with Turnstile, rename,
+sign out, sign out everywhere, delete; Find Match signed out asks to sign in; the deployment's page only), the CSP for
+Turnstile and the privacy page (`client/public/privacy.html`). Next: ratings, results, queue bans and rejoin with the
+ranked rules. Reviewed by the static session as AC1, findings AC-1..27, all folded in below;
 its full review is out/bsim/review/AC1-accounts-review.md, local. Written 2026-10-18 for the user's request: ranked play
 (and later shared custom maps) behind accounts, mass account creation made hard.
 
@@ -90,7 +95,8 @@ With our Steam Web API key, `ISteamUser/GetPlayerSummaries` gives the persona na
 **Not stored:**
 - e-mail addresses;
 - provider access tokens (used once at sign-in, then dropped);
-- IP addresses: the rate limiter keeps them in memory only, for a short window. That covers the logs too (AC-15):
+- IP addresses: the rate limiter keeps them in memory only, each forgotten once idle for its limit's window (10 minutes
+  to an hour; at most 200,000 at once, the longest idle forgotten past that: AP-2). That covers the logs too (AC-15):
   - the API's access log drops the address;
   - nginx and cloudflared logs are configured without it, or kept briefly (§8).
 
@@ -103,7 +109,9 @@ With our Steam Web API key, `ISteamUser/GetPlayerSummaries` gives the persona na
 
 **Database access** (AC-18):
 - the API connects with a least-privilege role (rows only);
-- migrations run with a separate role at start-up;
+- migrations run with a separate role, a one-shot `carball-api migrate` (the serving container never holds the owner's
+  password; the same role for both refused; `serve` refuses a role that may create in the schema: AP-4); Postgres 15 or
+  later (the grant step also revokes CREATE on `public` from everyone, Postgres 15's default: AP-5);
 - the database is never exposed off its docker network;
 - backups are encrypted and kept off the box.
 
@@ -117,7 +125,8 @@ With our Steam Web API key, `ISteamUser/GetPlayerSummaries` gives the persona na
   would let two tabs sign each other out. They have an absolute lifetime of about 90 days.
 - Every session is revoked on deletion, a ban and "sign out everywhere".
 - `SameSite=Lax` counts every `*.zolt.top` site as the same site. So every POST, PUT and DELETE (sign-out, link, unlink,
-  rename, delete, ticket) also requires `Origin` to equal `PUBLIC_ORIGIN`, and a JSON body with a custom header.
+  rename, delete, ticket) also requires `Origin` to equal `PUBLIC_ORIGIN`, the custom header, and JSON when there's a
+  body (16 KiB at most, one value and nothing after it).
 
 **Tickets: how the game server knows a player (AC-6).** Before a search, a signed-in page asks for a ticket.
 
@@ -177,10 +186,15 @@ With no ranked gate, it rests on:
 - **Rate limits:**
   - on sign-in and account creation, per IPv4 address and per IPv6 /64, as the queue's own (RV-385, RV-407);
   - on the ticket endpoint (per account) and the results endpoint (per game server) (AC-26);
-  - in memory, with a short window, generous enough for a household or a NAT;
+  - in memory, each key forgotten once idle for its window, generous enough for a household or a NAT;
+  - a wider limit per network too (an IPv6 /48, an IPv4 /24), so a block of addresses can't take a fresh key each; and
+    ceilings on the sign-ins in progress and the sign-ups waiting, everyone's (AP-2);
   - applied before any outbound call (no amplification);
-  - the address is `CF-Connecting-IP`, which is trustworthy only because nothing but cloudflared can reach the API (it
-    listens on its docker network alone, AC-4).
+  - the address is `CF-Connecting-IP` only from `TRUSTED_PROXIES` (cloudflared's: AC-4, AP-1); from anything else the
+    header is ignored and the connection's address counts. `TRUSTED_PROXIES` is required outside `--dev`, logged at
+    start, and a header ignored from an untrusted peer is warned of (its kind, never its address), so a wrong value
+    behind the tunnel shows instead of every user sharing the connector's key. The API also listens on its docker
+    network alone.
   Every outbound call has a timeout: Google's token endpoint, Steam's `check_authentication` and GetPlayerSummaries,
   Turnstile.
 - **Provisional ratings (Glicko-2, AC-13):**
@@ -275,8 +289,11 @@ With no ranked gate, it rests on:
 
 Order: each step's image comes from this repository, its configuration from the user's servers repository.
 1. **Postgres** on the main box: a volume, both roles (§2), encrypted off-box backups, one restore tried.
-2. **carball-api:** migrations at start; on its docker network, reachable only by cloudflared, as `/api/` on the site;
-   access logs without addresses.
+2. **carball-api:** `carball-api migrate` as a one-shot run (the owner's password there only), then the service; on
+   its docker network, reachable only by cloudflared (`TRUSTED_PROXIES` its address), the tunnel routing
+   `https://carball.zolt.top/api/*` to it and the rest to the web container (APP-CONTRACT.md); access
+   logs without addresses; its health check on loopback, not routed. Before going live, govulncheck over `api/` where
+   the network is allowed (AC-19, AP-12).
 3. **Registrations and secrets:**
    - the Google OAuth client, with its redirect URI on `/api/` and the consent screen's home and privacy links;
    - Steam's realm and return URL, and a Web API key;

@@ -11,6 +11,7 @@ use carball_server::engine::{self, Arena};
 use carball_server::game::Outgoing;
 use carball_server::net::NetLimits;
 use carball_server::protocol::{self, Control, Datagram, InputFrame};
+use carball_server::ticket::{Tickets, unix_now};
 use carball_server::{game_loop, net};
 use wtransport::{ClientConfig, Endpoint};
 
@@ -74,6 +75,7 @@ async fn a_client_connects_drives_and_follows_the_world() {
         intent: protocol::INTENT_JOIN,
         playlist: 0,
         token: 0,
+        ticket: String::new(),
     };
     send.write_all(&hello.encode()).await.unwrap();
     let Control::Welcome { car_id, snapshot, tick_rate, .. } = read_control(&mut recv).await else {
@@ -203,6 +205,7 @@ async fn a_vanished_client_is_a_lost_connection_and_a_closed_one_left() {
         intent: protocol::INTENT_JOIN,
         playlist: 0,
         token: 0,
+        ticket: String::new(),
     }
     .encode();
     let mut keep = Vec::new(); // (the game's ends of the sessions' queues)
@@ -283,6 +286,7 @@ fn versioned_hello(version: u16, intent: u8, playlist: u8, token: u64, key: u64)
         intent,
         playlist,
         token,
+        ticket: String::new(),
     }
     .encode()
 }
@@ -401,6 +405,93 @@ async fn two_searches_make_a_match_their_tokens_claim() {
     }
     teams.sort_unstable();
     assert_eq!(teams, vec![0, 1]);
+}
+
+/// A hello with a ticket (a search's or a claim's: who the player is, notes/accounts.md §3)
+fn ticketed_hello(intent: u8, playlist: u8, token: u64, ticket: String) -> Vec<u8> {
+    Control::Hello {
+        version: protocol::VERSION,
+        team: 255,
+        model: 0,
+        dodge_deadzone: 0.5,
+        steering_sensitivity: 1.0,
+        air_control_sensitivity: 1.0,
+        auto_skip_replay: false,
+        key: 0,
+        name: "Hello's own".into(),
+        quick_chat: protocol::CHAT_EVERYONE,
+        block_non_tactical: false,
+        intent,
+        playlist,
+        token,
+        ticket,
+    }
+    .encode()
+}
+
+/// A queue server with tickets: a search or claim without a good one is refused with the ticket reason (the session
+/// closed); a claim is the searching account's alone (another's ticket refused, the token still good); a ticket is used
+/// once; the roster names the account as its ticket does, not the hello's name
+#[tokio::test(flavor = "multi_thread")]
+async fn a_queue_with_tickets_takes_only_good_ones_and_binds_each_seat_to_its_account() {
+    engine::init(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../out/arena/collision_meshes"))).unwrap();
+    let (identity, cert_hash) = net::dev_identity().unwrap();
+    let server = net::endpoint(identity, 0).unwrap();
+    let port = server.local_addr().unwrap().port();
+    let (to_game, messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
+    let playlists = [1, 2, 3]
+        .map(|team_size| carball_server::match_host::Playlist {
+            team_size,
+            match_type: carball_server::game::MatchType::Ranked,
+            forfeit_vote_wait: None,
+        })
+        .to_vec();
+    std::thread::spawn(move || {
+        game_loop::run(messages, game_loop::Mode::Queue(playlists), None, heartbeat(), Instant::now())
+    });
+    let tickets = Arc::new(Tickets::from_list("").unwrap().with_dev_key().unwrap());
+    let limits = NetLimits { tickets: Some(tickets.clone()), ..open_limits() };
+    tokio::spawn(net::accept_loop(Arc::new(server), to_game, limits));
+    let ticket = |account: u8, name: &str| tickets.dev_ticket([account; 16], name, unix_now()).unwrap();
+    let refused = Control::Refused { reason: protocol::REFUSED_TICKET };
+
+    let (none, ..) = first_reply(port, cert_hash, queue_hello(protocol::INTENT_SEARCH, 1, 0)).await;
+    assert_eq!(none, refused, "a search without a ticket");
+    let (junk, ..) = first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_SEARCH, 1, 0, "AAAA".into())).await;
+    assert_eq!(junk, refused, "a malformed ticket");
+    let foreign = Tickets::from_list("").unwrap().with_dev_key().unwrap().dev_ticket([9; 16], "Elsewhere", unix_now());
+    let (other_key, ..) =
+        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_SEARCH, 1, 0, foreign.unwrap())).await;
+    assert_eq!(other_key, refused, "another signer's ticket");
+
+    let used = ticket(1, "Ada");
+    let (a, b) = tokio::join!(
+        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_SEARCH, 1, 0, used.clone())),
+        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_SEARCH, 1, 0, ticket(2, "Bea"))),
+    );
+    let (Control::MatchFound { token: ta, .. }, ..) = a else { panic!("{:?}", a.0) };
+    let (Control::MatchFound { token: tb, .. }, ..) = b else { panic!("{:?}", b.0) };
+    // (each search's own token: A's seat is ta)
+    let (wrong, ..) =
+        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_CLAIM, 0, ta, ticket(2, "Bea"))).await;
+    assert_eq!(wrong, Control::Refused { reason: protocol::REFUSED_TOKEN }, "another account's claim");
+    let (reused, ..) = first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_CLAIM, 0, ta, used)).await;
+    assert_eq!(reused, refused, "a ticket used once");
+    let (claim, _conn_a, mut recv_a) =
+        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_CLAIM, 0, ta, ticket(1, "Ada"))).await;
+    assert!(matches!(claim, Control::Welcome { .. }), "the searcher's account, its token still good: {claim:?}");
+    let (cb, _conn_b, _recv_b) =
+        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_CLAIM, 0, tb, ticket(2, "Bea"))).await;
+    assert!(matches!(cb, Control::Welcome { .. }), "{cb:?}");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut names = Vec::new();
+    while names.len() < 2 && Instant::now() < deadline {
+        if let Ok(Control::Roster(r)) = tokio::time::timeout(Duration::from_secs(1), read_control(&mut recv_a)).await {
+            names = r.iter().map(|p| p.name.clone()).collect();
+        }
+    }
+    names.sort_unstable();
+    assert_eq!(names, vec!["Ada".to_string(), "Bea".to_string()], "the tickets' names");
 }
 
 /// A search's session, its control stream kept for the test to close (as the page's `finish`)

@@ -1,11 +1,11 @@
 {
-  "protocolVersion": 25,
+  "protocolVersion": 26,
   "vectors": [
     {
       "channel": "control",
       "message": {
         "type": "hello",
-        "version": 25,
+        "version": 26,
         "team": 0,
         "model": 0,
         "dodgeDeadzone": 0.8,
@@ -18,15 +18,16 @@
         "blockNonTactical": true,
         "intent": "claim",
         "playlist": 0,
-        "token": "81985529216486895"
+        "token": "81985529216486895",
+        "ticket": "AbC-_9xyz"
       },
-      "hex": "32000119000000cdcc4c3f0000803f0000a03f010df0fecaefbeadde0b4d65726375727920e29aa101010200efcdab8967452301"
+      "hex": "3d00011a000000cdcc4c3f0000803f0000a03f010df0fecaefbeadde0b4d65726375727920e29aa101010200efcdab896745230109004162432d5f3978797a"
     },
     {
       "channel": "control",
       "message": {
         "type": "hello",
-        "version": 25,
+        "version": 26,
         "team": 255,
         "model": 0,
         "dodgeDeadzone": 0.8,
@@ -39,9 +40,10 @@
         "blockNonTactical": false,
         "intent": "search",
         "playlist": 2,
-        "token": "0"
+        "token": "0",
+        "ticket": ""
       },
-      "hex": "2700011900ff00cdcc4c3f0000803f0000a03f00000000000000000000000001020000000000000000"
+      "hex": "2900011a00ff00cdcc4c3f0000803f0000a03f000000000000000000000000010200000000000000000000"
     },
     {
       "channel": "control",
@@ -112,7 +114,7 @@
       "channel": "control",
       "message": {
         "type": "welcome",
-        "version": 25,
+        "version": 26,
         "carId": 3,
         "tickRate": 120,
         "frame": 0,
@@ -126,7 +128,7 @@
           3
         ]
       },
-      "hex": "1e008119000300000078000000000102071032547698badcfe03000000010203"
+      "hex": "1e00811a000300000078000000000102071032547698badcfe03000000010203"
     },
     {
       "channel": "control",

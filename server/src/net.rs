@@ -170,6 +170,10 @@ pub struct NetLimits {
     pub handshake: Duration,
     /// Its QUIC part, through the session's request (a browser sends it at once), this soon (RV-366)
     pub quic_handshake: Duration,
+    /// The search tickets checked (notes/accounts.md §3): a queue server's always (`main` requires its keys, or --dev's
+    /// own); None, a search's and a claim's key and name taken as their hello sends them (a direct development server,
+    /// the tests')
+    pub tickets: Option<Arc<crate::ticket::Tickets>>,
 }
 
 impl Default for NetLimits {
@@ -181,6 +185,7 @@ impl Default for NetLimits {
             allowed_origins: None,
             handshake: Duration::from_secs(10),
             quic_handshake: Duration::from_secs(4),
+            tickets: None,
         }
     }
 }
@@ -414,9 +419,29 @@ async fn session(
             bail!("protocol version {version}, server speaks {}", protocol::VERSION);
         }
     };
-    let Some((request, intent, playlist, token)) = JoinRequest::from_hello(hello) else {
+    let ticket = if let Control::Hello { ticket, .. } = &hello { ticket.clone() } else { String::new() };
+    let Some((mut request, intent, playlist, token)) = JoinRequest::from_hello(hello) else {
         bail!("expected hello");
     };
+    // (a search and a claim are an account's: its ticket checked here alone, never in the match code the browser's local
+    // host shares; the account's key and name in place of the hello's)
+    if let Some(tickets) = &limits.tickets
+        && (intent == protocol::INTENT_SEARCH || intent == protocol::INTENT_CLAIM)
+    {
+        match tickets.check(&ticket, crate::ticket::unix_now()) {
+            Ok(checked) => {
+                request.key = crate::ticket::account_key(&checked.account);
+                request.name = checked.name;
+                request.verified = true;
+            }
+            Err(why) => {
+                let _ = send.write_all(&Control::Refused { reason: protocol::REFUSED_TICKET }.encode()).await;
+                let _ = send.finish().await;
+                let _ = tokio::time::timeout(Duration::from_secs(2), connection.closed()).await;
+                bail!("ticket refused: {why:?}");
+            }
+        }
+    }
     let searching = intent == protocol::INTENT_SEARCH;
     let intent = match intent {
         protocol::INTENT_SEARCH => Intent::Search { team_size: playlist, token },
@@ -557,14 +582,16 @@ async fn session(
 /// Development helper: `GET /info` on plain HTTP returns the WebTransport port and the certificate hash, so a browser
 /// on this machine can connect to the self-signed server. A development server's only (SEC-6): on `bind` (127.0.0.1
 /// unless asked), 64 connections at once, a 2 s read
-pub async fn serve_info(bind: IpAddr, port: u16, webtransport_port: u16, cert_hash: [u8; 32]) -> anyhow::Result<()> {
+pub async fn serve_info(
+    bind: IpAddr,
+    port: u16,
+    webtransport_port: u16,
+    cert_hash: [u8; 32],
+    dev_tickets: Option<Arc<crate::ticket::Tickets>>,
+) -> anyhow::Result<()> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let hex: String = cert_hash.iter().map(|b| format!("{b:02x}")).collect();
-    let body = format!("{{\"port\":{webtransport_port},\"certHash\":\"{hex}\"}}");
-    let response = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    );
+    let info = format!("{{\"port\":{webtransport_port},\"certHash\":\"{hex}\"}}");
     let listener = tokio::net::TcpListener::bind((bind, port)).await?;
     let open = Arc::new(tokio::sync::Semaphore::new(64));
     loop {
@@ -574,15 +601,86 @@ pub async fn serve_info(bind: IpAddr, port: u16, webtransport_port: u16, cert_ha
             continue;
         };
         let Ok(permit) = open.clone().try_acquire_owned() else { continue };
-        let response = response.clone();
+        let info = info.clone();
+        let dev_tickets = dev_tickets.clone();
         tokio::spawn(async move {
             let _permit = permit;
             let mut request = [0u8; 1024];
-            if tokio::time::timeout(Duration::from_secs(2), stream.read(&mut request)).await.is_ok() {
-                let _ = stream.write_all(response.as_bytes()).await;
-            }
+            let Ok(Ok(n)) = tokio::time::timeout(Duration::from_secs(2), stream.read(&mut request)).await else {
+                return;
+            };
+            let path = std::str::from_utf8(&request[..n]).ok().and_then(|r| r.split_whitespace().nth(1)).unwrap_or("/");
+            // (`/dev-ticket?name=…&id=…`: a development queue server's ticket for the page that asks, signed with its own
+            // key, notes/accounts.md §5; everything else the info)
+            let body = match (path.strip_prefix("/dev-ticket"), &dev_tickets) {
+                (Some(query), Some(tickets)) => dev_ticket(tickets, query.trim_start_matches('?')),
+                _ => Some(info),
+            };
+            let response = match body {
+                Some(body) => format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                ),
+                None => "HTTP/1.1 400 Bad Request\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    .to_string(),
+            };
+            let _ = stream.write_all(response.as_bytes()).await;
         });
     }
+}
+
+/// A development ticket's JSON for a query's `name` (percent-encoded; "Dev " and the account's first 4 hex digits when
+/// none, so two nameless players aren't one name) and `id` (the account's 16 bytes as 32 hex digits, kept by the page
+/// so its searches are one account's; random when none)
+fn dev_ticket(tickets: &crate::ticket::Tickets, query: &str) -> Option<String> {
+    let mut name = None;
+    let mut account = [0u8; 16];
+    getrandom::fill(&mut account).ok()?;
+    for pair in query.split('&') {
+        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+        match key {
+            "name" => {
+                let decoded = percent_decode(value)?;
+                let trimmed = decoded.trim();
+                if !trimmed.is_empty() && trimmed.len() <= crate::protocol::MAX_NAME_BYTES {
+                    name = Some(trimmed.to_string());
+                }
+            }
+            "id" if value.len() == 32 => {
+                for (i, byte) in account.iter_mut().enumerate() {
+                    *byte = u8::from_str_radix(value.get(2 * i..2 * i + 2)?, 16).ok()?;
+                }
+            }
+            _ => {}
+        }
+    }
+    let name = name.unwrap_or_else(|| format!("Dev {:02x}{:02x}", account[0], account[1]));
+    let ticket = tickets.dev_ticket(account, &name, crate::ticket::unix_now())?;
+    Some(format!("{{\"ticket\":\"{ticket}\"}}"))
+}
+
+/// A query value's percent-encoding (and `+` as a space) undone; None for a malformed one or not UTF-8
+fn percent_decode(value: &str) -> Option<String> {
+    let mut out = Vec::with_capacity(value.len());
+    let bytes = value.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'%' => {
+                out.push(u8::from_str_radix(value.get(i + 1..i + 3)?, 16).ok()?);
+                i += 3;
+            }
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            b => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8(out).ok()
 }
 
 /// The container's health check (APP-CONTRACT.md): `GET /healthz` on `127.0.0.1:port` answers 200 while the game thread
@@ -636,6 +734,24 @@ pub fn health_check(port: u16) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_development_ticket_is_for_the_asked_account_and_name() {
+        let tickets = crate::ticket::Tickets::from_list("").unwrap().with_dev_key().unwrap();
+        let ticket_of = |query: &str| {
+            let body = dev_ticket(&tickets, query)?;
+            let ticket = body.strip_prefix("{\"ticket\":\"")?.strip_suffix("\"}")?;
+            tickets.check(ticket, crate::ticket::unix_now()).ok()
+        };
+        let id = "0123456789abcdef".repeat(2);
+        let t = ticket_of(&format!("name=Caf%C3%A9+Ada&id={id}")).unwrap();
+        assert_eq!((t.name.as_str(), t.account[0], t.account[15]), ("Café Ada", 0x01, 0xef));
+        assert!(ticket_of("").unwrap().name.starts_with("Dev "), "no name: Dev and the random account's digits");
+        assert_eq!(ticket_of(&format!("name=%20%20&id={id}")).unwrap().name, "Dev 0123");
+        assert!(ticket_of("name=%zz").is_none(), "a malformed escape");
+        assert!(ticket_of(&format!("id={}", "zz".repeat(16))).is_none(), "a malformed id");
+        assert_eq!(ticket_of(&format!("name={}&id={id}", "x".repeat(40))).unwrap().name, "Dev 0123", "too long");
+    }
 
     #[test]
     fn a_bucket_lets_its_burst_through_then_its_rate() {

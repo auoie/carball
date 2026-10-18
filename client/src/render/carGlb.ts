@@ -85,18 +85,19 @@ export function missingParts(names: ReadonlySet<string>): string[] {
   return ["Body", ...WHEEL_NODES].filter((name) => !names.has(name));
 }
 
-/** A model's longest wait (ms): one that never answers left to the generated car, the loading screen not held (RX26) */
-export const CAR_LOAD_TIMEOUT = 10_000;
+/** A model's longest stall (ms): nothing arriving for this long (an answer that never comes too) and it's left to the
+ *  generated car, the loading screen not held (RX26); a slow download that keeps coming still loads (RV-596) */
+export const CAR_LOAD_STALL = 10_000;
 
 /** Whether garage car `car` has its model loaded */
 export function hasCarModel(car: number): boolean {
   return loaded.has(car);
 }
 
-/** Loads the models there are (each one that fails, lacks a part or takes longer than CAR_LOAD_TIMEOUT, left to the
- *  generated car: said in the console); how many loaded. `load`: a model's scene from its URL (the tests'; else three's
- *  GLTFLoader) */
-export async function loadCarModels(load: ((url: string) => Promise<Object3D>) | null = null): Promise<number> {
+/** Loads the models there are (each one that fails, lacks a part or stalls for CAR_LOAD_STALL, left to the generated
+ *  car: said in the console); how many loaded. `load`: a model's scene from its URL, calling `progress` as its bytes
+ *  arrive (the tests'; else three's GLTFLoader) */
+export async function loadCarModels(load: ((url: string, progress: () => void) => Promise<Object3D>) | null = null): Promise<number> {
   const wanted = Object.entries(CAR_FILES).flatMap(([id, name]) => {
     const url = FILES[`../../cars/${name}.glb`];
     return url ? [{ id: Number(id), name, url }] : [];
@@ -107,13 +108,24 @@ export async function loadCarModels(load: ((url: string) => Promise<Object3D>) |
     await Promise.all(
       wanted.map(async ({ id, name, url }) => {
         try {
+          // (the stall's timer, started again by each piece that arrives)
           let timer: ReturnType<typeof setTimeout> | undefined;
-          const late = new Promise<never>((_, reject) => {
-            timer = setTimeout(() => {
-              reject(new Error(`no answer in ${String(CAR_LOAD_TIMEOUT / 1000)} s`));
-            }, CAR_LOAD_TIMEOUT);
+          let arm = (): void => undefined;
+          const stalled = new Promise<never>((_, reject) => {
+            arm = () => {
+              clearTimeout(timer);
+              timer = setTimeout(() => {
+                reject(new Error(`nothing for ${String(CAR_LOAD_STALL / 1000)} s`));
+              }, CAR_LOAD_STALL);
+            };
+            arm();
           });
-          const scene = await Promise.race([fetchScene(url), late]).finally(() => {
+          const scene = await Promise.race([
+            fetchScene(url, () => {
+              arm();
+            }),
+            stalled,
+          ]).finally(() => {
             clearTimeout(timer);
           });
           const names = new Set<string>();
@@ -136,10 +148,10 @@ export async function loadCarModels(load: ((url: string) => Promise<Object3D>) |
 }
 
 /** three's GLTFLoader, loaded when first wanted (its own chunk) */
-async function gltfLoad(): Promise<(url: string) => Promise<Object3D>> {
+async function gltfLoad(): Promise<(url: string, progress: () => void) => Promise<Object3D>> {
   const { GLTFLoader } = await import("three/addons/loaders/GLTFLoader.js");
   const loader = new GLTFLoader();
-  return async (url) => (await loader.loadAsync(url)).scene;
+  return async (url, progress) => (await loader.loadAsync(url, progress)).scene;
 }
 
 /** The Paint in the team's colour (the generated cars' finish on it: not metallic, PNT-6, RV-584; the file's roughness
@@ -234,20 +246,20 @@ const SPIN_AXIS = new Vector3(0, 0, 1);
 const steering = new Quaternion();
 const spinning = new Quaternion();
 
-/** A drawn wheel's target (uu below where the model has it, as a negative offset), SU1: how far it must drop for its tyre
- *  (`radius`, its centre `modelZ` uu up in the car's frame) to sit on the physics' contact (the physics wheel's centre,
- *  its connection point less its suspension `length`, one physics radius above it), or with no contact (`length` null)
- *  its hang by the car's tilt (`upZ`, its up's world z: full upright, its least upside down); kept within `travel` */
+/** A drawn wheel's target (uu below where the model has it, as a negative offset), SU1: how far it must drop for its
+ *  centre (`modelZ` uu up in the car's frame) to sit where the physics wheel's is, one physics radius above the contact
+ *  (its connection point less its suspension `length`: the game subtracts the physics' WheelRadius, not the model's tyre,
+ *  RV-602), or with no contact (`length` null) its hang by the car's tilt (`upZ`, its up's world z: full upright, its
+ *  least upside down); kept within `travel` */
 export function wheelDropTarget(
   modelZ: number,
-  radius: number,
   physics: Pick<WheelConfig, "offset" | "radius">,
   length: number | null,
   upZ: number,
   travel: { readonly min: number; readonly max: number },
 ): number {
   const contactZ = length === null ? 0 : physics.offset.z - length - physics.radius;
-  const drop = length === null ? travel.min + ((travel.max - travel.min) * (upZ + 1)) / 2 : modelZ - contactZ - radius;
+  const drop = length === null ? travel.min + ((travel.max - travel.min) * (upZ + 1)) / 2 : modelZ - contactZ - physics.radius;
   return -Math.max(travel.min, Math.min(travel.max, drop));
 }
 

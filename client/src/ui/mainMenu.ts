@@ -7,7 +7,6 @@
 import { PLAYLISTS, SEARCH_TEXT } from "../game/matchmaking";
 import type { Team } from "../engine/world";
 import { CARS, storeCar, storeTeam, storedCar, storedTeam } from "../game/cars";
-import type { GaragePreview } from "./garagePreview";
 import type { BotChoices } from "../local/botMatch";
 import { BOT_MATCH_TEXT } from "../local/botText";
 import type { BotsPage } from "./botsPage";
@@ -27,11 +26,12 @@ export const GARAGE_TEXT = { blue: "Blue", orange: "Orange" } as const;
 const BACK_TEXT = "Back";
 
 const PLAYLIST_KEY = "carball.playlist";
-/** The menu's pages: the top (Play, Garage, Settings), Play's, the bots' setup, custom training's packs, the garage */
-export type MenuView = "top" | "play" | "bots" | "training" | "garage";
+/** The menu's pages: the top (Play, Garage, Settings, the account's entry), Play's, the bots' setup, custom training's
+ *  packs, the garage, the account (ui/accountPages.ts) */
+export type MenuView = "top" | "play" | "bots" | "training" | "garage" | "account";
 
-/** Where Escape (the pad's B) goes from a page: the bots' setup and the training packs back to Play, Play and the garage
- *  to the top; the top stays */
+/** Where Escape (the pad's B) goes from a page: the bots' setup and the training packs back to Play, Play, the garage and
+ *  the account to the top; the top stays */
 export function backFrom(view: MenuView): MenuView {
   return view === "bots" || view === "training" ? "play" : "top";
 }
@@ -53,14 +53,19 @@ export interface MainMenuActions {
   readonly settings: () => void;
   /** The garage's choice changed (it's kept already): its car and team colour */
   readonly garage?: (choice: { readonly car: number; readonly team: Team }) => void;
-  /** The garage's preview of a car (none: no preview) */
-  readonly preview?: GaragePreview;
+  /** The garage's page shown or left: the scene stands the car for it, the game's garage (the user's request,
+   *  2026-10-18: the big car swapped in place, no preview of its own) */
+  readonly garageShown?: (shown: boolean) => void;
   /** Play vs Bots' Start: the match with these bots */
   readonly botMatch?: (choices: BotChoices) => void;
   /** Custom training: this pack */
   readonly training?: (pack: PackListing) => void;
   /** The training editor: this pack of the player's own, or a new one (null) */
   readonly editTraining?: (pack: PackListing | null) => void;
+  /** The account's entry pressed (the deployment's page: setAccountEntry shows it) */
+  readonly account?: () => void;
+  /** The account's page left (its Turnstile widget let go) */
+  readonly accountLeft?: () => void;
 }
 
 export class MainMenu {
@@ -71,7 +76,9 @@ export class MainMenu {
   readonly #garage: HTMLDivElement;
   readonly #carButtons: HTMLButtonElement[] = [];
   readonly #teamButtons: HTMLButtonElement[] = [];
-  readonly #preview: GaragePreview | null;
+  readonly #garageShown: ((shown: boolean) => void) | null;
+  /** The garage's page shows (garageShown told) */
+  #garageOn = false;
   #car = storedCar();
   #team: Team = storedTeam();
   readonly #playlists: HTMLButtonElement[] = [];
@@ -92,6 +99,12 @@ export class MainMenu {
   /** The bots' page body (ui/botsPage.ts, a chunk of its own): none until the packages are listed */
   #botsPage: BotsPage | null = null;
   #playlist = storedPlaylist();
+  /** The account's entry on the top page (hidden without accounts: a development page) and its page's column */
+  readonly #accountEntry: HTMLButtonElement;
+  readonly #account: HTMLDivElement;
+  readonly #accountLeft: (() => void) | undefined;
+  /** The account's page, its body filled by ui/accountPages.ts */
+  readonly accountBody: HTMLDivElement;
 
   constructor(host: HTMLElement, actions: MainMenuActions) {
     this.#root = document.createElement("div");
@@ -121,9 +134,13 @@ export class MainMenu {
       this.#show("garage");
     });
     button(this.#top, MAIN_MENU_TEXT.settings, actions.settings);
+    this.#accountEntry = button(this.#top, "", () => {
+      actions.account?.();
+    });
+    this.#accountEntry.classList.add("main-menu-account");
+    this.#accountEntry.hidden = true;
     this.#play = column();
     this.#play.dataset["padPage"] = "play";
-    this.#play.dataset["padBack"] = ""; // (B Back in the pad's hints: a page under the top)
     this.#playFreePlay = button(this.#play, MAIN_MENU_TEXT.freePlay, actions.freePlay);
     // (hidden until a bot package is there to play: setBots)
     const playBots = __CARBALL_BOTS__
@@ -156,6 +173,8 @@ export class MainMenu {
     button(this.#play, SEARCH_TEXT.findMatch, () => {
       actions.findMatch(this.#playlist);
     }).classList.add("main-menu-find");
+    // (each page's own Back row: no B Back hint under it as well, one Back, the user's call (2026-10-18); B and Escape
+    // still go back)
     button(this.#play, BACK_TEXT, () => {
       this.#show("top");
     });
@@ -163,7 +182,6 @@ export class MainMenu {
     if (playBots) {
       const page = column();
       page.dataset["padPage"] = "bots";
-      page.dataset["padBack"] = "";
       page.classList.add("main-menu-bots-view");
       const botsHeading = document.createElement("div");
       botsHeading.className = "main-menu-heading";
@@ -184,7 +202,6 @@ export class MainMenu {
     // (custom training's packs: one button each, its name, shots and difficulty)
     this.#training = column();
     this.#training.dataset["padPage"] = "training";
-    this.#training.dataset["padBack"] = "";
     this.#training.classList.add("main-menu-training-view");
     const trainingHeading = document.createElement("div");
     trainingHeading.className = "main-menu-heading";
@@ -197,15 +214,14 @@ export class MainMenu {
     button(this.#training, BACK_TEXT, () => {
       this.#show("play");
     });
-    // (the garage: the cars and the team colours, each kept as chosen, the car shown turning in its colour)
+    // (the garage: the cars and the team colours, each kept as chosen, the car shown standing in its colour)
     this.#garage = column();
     this.#garage.dataset["padPage"] = "garage";
-    this.#garage.dataset["padBack"] = "";
     this.#garage.classList.add("main-menu-garage-view");
     const garageHeading = document.createElement("div");
     garageHeading.className = "main-menu-heading";
     garageHeading.textContent = MAIN_MENU_TEXT.garage;
-    this.#preview = actions.preview ?? null;
+    this.#garageShown = actions.garageShown ?? null;
     const group = (className: string): HTMLDivElement => {
       const g = document.createElement("div");
       g.className = `main-menu-choices ${className}`;
@@ -238,14 +254,39 @@ export class MainMenu {
       b.dataset["team"] = String(team);
       this.#teamButtons.push(b);
     }
-    this.#garage.append(garageHeading, ...(this.#preview ? [this.#preview.element] : []), cars, teams);
+    this.#garage.append(garageHeading, cars, teams);
     this.#chooseCar(this.#car);
     this.#chooseTeam(this.#team);
     button(this.#garage, BACK_TEXT, () => {
       this.#show("top");
     });
+    // (the account's page: its body drawn by ui/accountPages.ts, its own Back among it)
+    this.#account = column();
+    this.#account.dataset["padPage"] = "account";
+    this.#account.classList.add("main-menu-account-view");
+    this.accountBody = document.createElement("div");
+    this.accountBody.className = "main-menu-account-body";
+    this.#account.append(this.accountBody);
+    this.#accountLeft = actions.accountLeft;
     this.#show("top");
     host.append(this.#root);
+  }
+
+  /** The account's entry on the top page: the account's name, or Sign In; null hides it (no accounts here) */
+  setAccountEntry(label: string | null): void {
+    this.#accountEntry.hidden = label === null;
+    this.#accountEntry.textContent = label ?? "";
+  }
+
+  /** The account's page shown (its body drawn first), the menu open */
+  showAccount(): void {
+    if (this.#root.hidden) this.open();
+    this.#show("account");
+  }
+
+  /** Back to the top page (the account's page left) */
+  showTop(): void {
+    this.#show("top");
   }
 
   /** The bots' page body, once the bot packages are listed (`draw`: ui/botsPage.ts's, into the page): Play vs Bots shown
@@ -317,8 +358,9 @@ export class MainMenu {
   }
 
   close(): void {
+    if (!this.#account.hidden) this.#accountLeft?.();
     this.#root.hidden = true;
-    this.#preview?.stop();
+    this.#setGarage(false);
   }
 
   /** The Play page's Free Play focused (the pad's highlight follows): Find Match's search started, free play next (the
@@ -338,23 +380,29 @@ export class MainMenu {
             ? "play"
             : !this.#garage.hidden
               ? "garage"
-              : "top";
+              : !this.#account.hidden
+                ? "account"
+                : "top";
     this.#show(backFrom(view));
     return view !== "top";
+  }
+
+  #setGarage(on: boolean): void {
+    if (on === this.#garageOn) return;
+    this.#garageOn = on;
+    this.#garageShown?.(on);
   }
 
   #chooseCar(car: number): void {
     this.#car = car;
     storeCar(car);
     for (const b of this.#carButtons) b.setAttribute("aria-checked", String(b.dataset["car"] === String(car)));
-    this.#preview?.show(this.#car, this.#team);
   }
 
   #chooseTeam(team: Team): void {
     this.#team = team;
     storeTeam(team);
     for (const b of this.#teamButtons) b.setAttribute("aria-checked", String(b.dataset["team"] === String(team)));
-    this.#preview?.show(this.#car, this.#team);
   }
 
   #select(playlist: number): void {
@@ -364,16 +412,16 @@ export class MainMenu {
   }
 
   #show(view: MenuView): void {
+    if (view !== "account" && !this.#account.hidden) this.#accountLeft?.();
+    this.#account.hidden = view !== "account";
     this.#top.hidden = view !== "top";
     this.#play.hidden = view !== "play";
     if (this.#botsView) this.#botsView.page.hidden = view !== "bots";
     this.#training.hidden = view !== "training";
     this.#garage.hidden = view !== "garage";
-    // (the preview turning only while the garage shows; the car chosen focused)
-    if (view === "garage") {
-      this.#preview?.start();
-      this.#carButtons.find((b) => b.dataset["car"] === String(this.#car))?.focus();
-    } else this.#preview?.stop();
+    // (the scene's garage while its page shows; the car chosen focused)
+    this.#setGarage(view === "garage");
+    if (view === "garage") this.#carButtons.find((b) => b.dataset["car"] === String(this.#car))?.focus();
     // (the bots' Start focused: Enter, or the pad's A, starts it at once)
     if (view === "bots") this.#botsView?.start.focus();
     // (the first pack focused)

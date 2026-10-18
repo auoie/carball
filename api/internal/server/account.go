@@ -1,29 +1,36 @@
 package server
 
 import (
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"carball/api/internal/names"
 	"carball/api/internal/store"
 )
 
-// session is the browser's signed-in session, its token rotated when due (the old one honoured for RotateGrace: AC-8);
-// a cookie that opens none is cleared
+// session is the browser's signed-in session, its token rotated when due (the old one honoured for RotateGrace: AC-8).
+// None: answered here (401 signed out, the cookie cleared if it opened none; 503 when the database doesn't answer, never
+// taken for signed out: AP-22)
 func (s *Server) session(w http.ResponseWriter, r *http.Request) (store.Session, bool) {
 	tok := cookie(r, sessionCookie)
 	if tok == "" {
+		signedOut(w)
 		return store.Session{}, false
 	}
 	now := s.Now()
 	ss, ok, err := s.Store.SessionByToken(r.Context(), digest(tok), now)
 	if err != nil {
 		s.Log.Error("reading a session", "err", err)
+		writeError(w, http.StatusServiceUnavailable, "unavailable")
 		return store.Session{}, false
 	}
 	if !ok {
 		clearCookie(w, sessionCookie)
+		signedOut(w)
 		return store.Session{}, false
 	}
 	if !ss.Previous && now.Sub(ss.RotatedAt) >= RotateEvery {
@@ -60,7 +67,6 @@ func (s *Server) writeAccount(w http.ResponseWriter, r *http.Request, status int
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	ss, ok := s.session(w, r)
 	if !ok {
-		signedOut(w)
 		return
 	}
 	s.writeAccount(w, r, http.StatusOK, ss.AccountID)
@@ -70,14 +76,13 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 func (s *Server) rename(w http.ResponseWriter, r *http.Request) {
 	ss, ok := s.session(w, r)
 	if !ok {
-		signedOut(w)
 		return
 	}
 	var body struct {
 		Name string `json:"name"`
 	}
 	if err := readJSON(r, &body); err != nil {
-		writeError(w, http.StatusBadRequest, "bad-request")
+		badBody(w, err)
 		return
 	}
 	name, err := names.Clean(body.Name)
@@ -102,13 +107,16 @@ func (s *Server) rename(w http.ResponseWriter, r *http.Request) {
 func (s *Server) deleteAccount(w http.ResponseWriter, r *http.Request) {
 	ss, ok := s.session(w, r)
 	if !ok {
-		signedOut(w)
 		return
 	}
 	var body struct {
 		Confirm bool `json:"confirm"`
 	}
-	if err := readJSON(r, &body); err != nil || !body.Confirm {
+	if err := readJSON(r, &body); err != nil {
+		badBody(w, err)
+		return
+	}
+	if !body.Confirm {
 		writeError(w, http.StatusBadRequest, "bad-request")
 		return
 	}
@@ -140,7 +148,6 @@ func (s *Server) signOut(w http.ResponseWriter, r *http.Request) {
 func (s *Server) signOutEverywhere(w http.ResponseWriter, r *http.Request) {
 	ss, ok := s.session(w, r)
 	if !ok {
-		signedOut(w)
 		return
 	}
 	if err := s.Store.DeleteSessions(r.Context(), ss.AccountID); err != nil {
@@ -150,4 +157,52 @@ func (s *Server) signOutEverywhere(w http.ResponseWriter, r *http.Request) {
 	}
 	clearCookie(w, sessionCookie)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ticket: a search ticket for the signed-in account (AC-6): its id and display name, two minutes, a fresh nonce, signed
+// for the game server to check offline; a few a minute per account (AC-26). A banned account has no session to ask with
+func (s *Server) ticket(w http.ResponseWriter, r *http.Request) {
+	ss, ok := s.session(w, r)
+	if !ok {
+		return
+	}
+	if s.Tickets == nil {
+		writeError(w, http.StatusServiceUnavailable, "unavailable")
+		return
+	}
+	now := s.Now()
+	if !s.tickets.Allow(ss.AccountID, now) {
+		writeError(w, http.StatusTooManyRequests, "busy")
+		return
+	}
+	a, err := s.Store.Account(r.Context(), ss.AccountID)
+	if err != nil {
+		s.Log.Error("reading an account", "err", err)
+		writeError(w, http.StatusServiceUnavailable, "unavailable")
+		return
+	}
+	id, err := accountBytes(a.ID)
+	if err != nil {
+		s.Log.Error("an account's id", "err", err)
+		writeError(w, http.StatusInternalServerError, "server")
+		return
+	}
+	encoded, t, err := s.Tickets.Issue(id, a.Name, now)
+	if err != nil {
+		s.Log.Error("signing a ticket", "err", err)
+		writeError(w, http.StatusInternalServerError, "server")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ticket": encoded, "expiresAt": t.Expires.UTC().Format(time.RFC3339)})
+}
+
+// accountBytes: an account's id (a UUID's text) as its 16 bytes
+func accountBytes(id string) ([16]byte, error) {
+	var out [16]byte
+	raw, err := hex.DecodeString(strings.ReplaceAll(id, "-", ""))
+	if err != nil || len(raw) != 16 {
+		return out, fmt.Errorf("not a UUID: %q", id)
+	}
+	copy(out[:], raw)
+	return out, nil
 }

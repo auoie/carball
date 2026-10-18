@@ -148,17 +148,20 @@ export interface SliderOptions extends Common {
   readonly min: number;
   readonly max: number;
   readonly step: number;
+  /** Where its grid of steps starts (default: min; the training editor's positions: 0, their ends the clamps, RV-601) */
+  readonly origin?: number;
   readonly value: number;
   /** Its value as shown (beside it, and its aria-valuetext) */
   readonly format: (value: number) => string;
   readonly onChange: (value: number) => void;
 }
 
-/** `v` on a slider's grid: clamped to [min, max], at a whole number of steps from min, without a float's tail */
-export function onGrid(v: number, min: number, max: number, step: number): number {
+/** `v` on a slider's grid: a whole number of steps from `origin` (default min), then clamped to [min, max] (the ends
+ *  reachable even off the grid), without a float's tail */
+export function onGrid(v: number, min: number, max: number, step: number, origin = min): number {
   const decimals = Math.max(0, -Math.floor(Math.log10(step) + 1e-9));
-  const clamped = Math.min(max, Math.max(min, v));
-  return Number((Math.round((clamped - min) / step) * step + min).toFixed(decimals + 2));
+  const stepped = Math.round((v - origin) / step) * step + origin;
+  return Number(Math.min(max, Math.max(min, stepped)).toFixed(decimals + 2));
 }
 
 /** The thumb's width (CSS px: style.css's .control-thumb), its travel the track less this */
@@ -180,7 +183,7 @@ export function slider(o: SliderOptions): HTMLDivElement {
   const output = element("output", "control-output");
   // (the slider's own value text speaks its value: the readout no live region too, said twice: RV-482)
   output.setAttribute("aria-hidden", "true");
-  const snap = (v: number): number => onGrid(v, o.min, o.max, o.step);
+  const snap = (v: number): number => onGrid(v, o.min, o.max, o.step, o.origin);
   let value = snap(o.value);
   const show = (): void => {
     const text = o.format(value);

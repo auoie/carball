@@ -306,7 +306,8 @@ impl Matchmaker {
             queue.retain(|s| !s.out.is_closed());
             while queue.len() >= players {
                 let found: Vec<Searcher> = queue.drain(..players).collect();
-                let created = host.create_match(self.playlists[&team_size], players, now);
+                let keys: Vec<u64> = found.iter().map(|s| s.from.key).collect();
+                let created = host.create_match(self.playlists[&team_size], &keys, now);
                 for (searcher, token) in found.into_iter().zip(created.tokens) {
                     self.searching.remove(&searcher.id);
                     // (kept past the reservation's end: a cancel's report comes with the tick after it)
@@ -343,7 +344,8 @@ mod tests {
     }
 
     impl MatchHosting for Recorder {
-        fn create_match(&mut self, playlist: Playlist, players: usize, _now: f64) -> Created {
+        fn create_match(&mut self, playlist: Playlist, keys: &[u64], _now: f64) -> Created {
+            let players = keys.len();
             self.asked.push((playlist.team_size, players));
             let tokens = (0..players)
                 .map(|_| {

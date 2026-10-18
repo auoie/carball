@@ -4,8 +4,8 @@
 // car's tilt, eased at 10/s and snapped up by the ground, steered, turned by the travel)
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { Color, Mesh, MeshStandardMaterial, Quaternion, Vector3 } from "three";
-import { describe, expect, it } from "vitest";
+import { Color, Group, Mesh, MeshStandardMaterial, Quaternion, Vector3 } from "three";
+import { describe, expect, it, vi } from "vitest";
 import { vec3 } from "../math/vec";
 import {
   CAR_FILES,
@@ -227,18 +227,18 @@ describe("the wheels as the game draws them (SU1)", () => {
   const flat = DRAWN_TRAVEL[2] ?? { min: 0, max: 4 };
   const sport = DRAWN_TRAVEL[0] ?? { min: 2, max: 6 };
 
-  it("touching: dropped for its tyre to sit on the contact (at rest on flat ground, its bottom on it), within the body's travel", () => {
-    const target = wheelDropTarget(-3.5, 12.75, physics, resting, 1, flat);
-    expect(-3.5 + target - 12.75).toBeCloseTo(-17, 9);
+  it("touching: dropped for its centre to sit one physics radius above the contact (the game's WheelRadius, not the tyre's: RV-602), within the body's travel", () => {
+    const target = wheelDropTarget(-3.5, physics, resting, 1, flat);
+    expect(-3.5 + target - physics.radius).toBeCloseTo(-17, 9);
     // (pressed up past the travel's least: drawn no higher than it; hanging past its most: no lower)
-    expect(wheelDropTarget(-3.5, 12.75, physics, resting - 10, 1, sport)).toBe(-sport.min);
-    expect(wheelDropTarget(-3.5, 12.75, physics, resting + 20, 1, sport)).toBe(-sport.max);
+    expect(wheelDropTarget(-3.5, physics, resting - 10, 1, sport)).toBe(-sport.min);
+    expect(wheelDropTarget(-3.5, physics, resting + 20, 1, sport)).toBe(-sport.max);
   });
 
   it("touching nothing: its full hang upright, the middle on its side, its least upside down (6/4/8 uu: Sport, Flat, Tall)", () => {
-    expect([0, 2, 3].map((car) => wheelDropTarget(-3.5, 12.75, physics, null, 1, DRAWN_TRAVEL[car] ?? sport))).toEqual([-6, -4, -8]);
-    expect(wheelDropTarget(-3.5, 12.75, physics, null, 0, sport)).toBe(-4);
-    expect(wheelDropTarget(-3.5, 12.75, physics, null, -1, sport)).toBe(-2);
+    expect([0, 2, 3].map((car) => wheelDropTarget(-3.5, physics, null, 1, DRAWN_TRAVEL[car] ?? sport))).toEqual([-6, -4, -8]);
+    expect(wheelDropTarget(-3.5, physics, null, 0, sport)).toBe(-4);
+    expect(wheelDropTarget(-3.5, physics, null, -1, sport)).toBe(-2);
   });
 
   it("eased at 10/s, 90% in about 0.22 s whatever the frame rate; snapped up when the ground pushes a touching wheel", () => {
@@ -273,5 +273,47 @@ describe("the wheels as the game draws them (SU1)", () => {
     // (the model's own turn kept under them)
     const turned = new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), Math.PI);
     expect(new Vector3(0, 1, 0).applyQuaternion(wheelPose(rest, turned, 0, 0, 0).quaternion).y).toBeCloseTo(-1, 9);
+  });
+});
+
+describe("a slow or silent model (RV-596)", () => {
+  it("keeps loading while its bytes keep coming (a slow line: 30 s, a piece every 5 s); a silent one given up after CAR_LOAD_STALL", async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      // (a module of its own: its loaded models none yet)
+      vi.resetModules();
+      const fresh = await import("./carGlb");
+      const scene = (): Group => {
+        const g = new Group();
+        for (const name of ["Body", ...fresh.WHEEL_NODES]) g.add(Object.assign(new Group(), { name }));
+        return g;
+      };
+      let asked = 0;
+      const done = fresh.loadCarModels(
+        (_url, progress) =>
+          new Promise((resolve) => {
+            // (the first model the slow one; the others never answer)
+            if (asked++ > 0) return;
+            let at = 0;
+            const piece = (): void => {
+              at += 5000;
+              progress();
+              if (at >= 30_000) resolve(scene());
+              else setTimeout(piece, 5000);
+            };
+            setTimeout(piece, 5000);
+          }),
+      );
+      await vi.advanceTimersByTimeAsync(31_000);
+      expect(await done).toBe(1);
+      expect(asked).toBeGreaterThan(1);
+      expect(warn.mock.calls.map((c) => String(c[0])).filter((m) => m.includes(`nothing for ${String(fresh.CAR_LOAD_STALL / 1000)} s`))).toHaveLength(
+        asked - 1,
+      );
+    } finally {
+      warn.mockRestore();
+      vi.useRealTimers();
+    }
   });
 });

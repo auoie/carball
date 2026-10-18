@@ -82,10 +82,18 @@ export interface EditorActions {
   readonly exit: () => void;
   /** A notice (OK), or a choice of buttons (the default `focus`): the page's modal */
   readonly notice: (title: string, body: string) => void;
-  readonly choose: (title: string, body: string, choices: readonly { readonly label: string; readonly act?: () => void }[], focus: number) => void;
+  readonly choose: (
+    title: string,
+    body: string,
+    choices: readonly { readonly label: string; readonly act?: () => void }[],
+    focus: number,
+    dismiss?: number,
+  ) => void;
   /** The free-camera mode's test of this pack from this shot, and whether it still plays */
   readonly test: (pack: TrainingPack, shot: number, kind: TestKind) => void;
   readonly testing: () => boolean;
+  /** A playtest of the pack plays (Playtest: the editor closed under it, its unsaved changes kept for Back to Editor) */
+  readonly playtesting: () => boolean;
   /** A world point on the page (CSS px), null behind the camera */
   readonly project: (p: Vec3) => { readonly x: number; readonly y: number } | null;
   /** A menu over the editor: the free-camera mode takes no input */
@@ -194,7 +202,7 @@ export class TrainingEditor {
     // (unsaved changes asked about before the page goes: a reload, the tab closed, Ctrl+W among the free camera's keys:
     // RX25)
     window.addEventListener("beforeunload", (e) => {
-      if (!this.#dirty || (!this.isOpen && !this.testing)) return;
+      if (!this.#dirty || (!this.isOpen && !this.testing && !this.#actions.playtesting())) return;
       e.preventDefault();
     });
     canvas.addEventListener("pointerdown", (e) => {
@@ -257,12 +265,13 @@ export class TrainingEditor {
   }
 
   /** Editing this pack, from this shot */
-  open(pack: TrainingPack, shot = 0): void {
+  open(pack: TrainingPack, shot = 0, resume = false): void {
     this.#pack = { ...pack };
     this.#shots = [...pack.shots];
     this.#shot = Math.min(Math.max(0, shot), this.#shots.length - 1);
     this.#status = "";
-    this.#dirty = false;
+    // (back from a playtest of it (`resume`): its unsaved changes still unsaved, asked about on leaving: RX28C)
+    if (!resume) this.#dirty = false;
     this.#enter();
   }
 
@@ -307,10 +316,15 @@ export class TrainingEditor {
     });
   }
 
+  /** Unsaved changes (the pause menu's entry reads Save and Exit: TE1 §6.3) */
+  get dirty(): boolean {
+    return this.#dirty;
+  }
+
   /** Left whatever is open in it, as Escape leaves it (the pause menu's Exit to Main Menu over the editor, its test or a
-   *  playtest of its pack): the details' dialog closed, the unsaved changes asked about first; `then` once it's left
-   *  (CANCEL stays) */
-  leave(then: () => void): void {
+   *  playtest of its pack): the details' dialog closed, the unsaved changes asked about first; `then` once it's left;
+   *  `cancelled` on CANCEL (the pause menu's: back to it, TE1 §5.3) */
+  leave(then: () => void, cancelled?: () => void): void {
     this.#fly.escape();
     const leave = (): void => {
       this.close();
@@ -332,9 +346,10 @@ export class TrainingEditor {
           },
         },
         { label: T.no, act: leave },
-        { label: T.cancel },
+        cancelled ? { label: T.cancel, act: cancelled } : { label: T.cancel },
       ],
       2,
+      2, // (B and Escape: CANCEL)
     );
   }
 
@@ -471,7 +486,8 @@ export class TrainingEditor {
       set: (v: number) => void,
       key: string,
     ): HTMLDivElement =>
-      slider({ label, min, max, step, value, format: (v) => `${String(Math.round(v * 100) / 100)}${unit}`, data: { editor: key }, onChange: set });
+      // (the steps from 0, not from the clamp: a ball at x 0 reads 0, RV-601)
+      slider({ label, min, max, step, origin: 0, value, format: (v) => `${String(Math.round(v * 100) / 100)}${unit}`, data: { editor: key }, onChange: set });
     const heading = document.createElement("div");
     heading.className = "editor-title";
     heading.textContent = T.title;

@@ -22,6 +22,14 @@ test("the editor: a new pack made, saved and listed as the player's own, edited 
   await expect(editor).toBeVisible();
   await expect(menu).toBeHidden();
   await expect(editor.locator(".editor-shot")).toHaveCount(1);
+  // (the ball's x spans its clamps, its steps from 0: at 0 it reads 0, a step right 10: RV-594, RV-601)
+  const ballX = editor.locator('[data-editor="ballX"]');
+  await expect(ballX).toHaveAttribute("aria-valuemin", "-4003.25");
+  await expect(ballX).toHaveAttribute("aria-valuemax", "4003.25");
+  await expect(ballX).toHaveAttribute("aria-valuenow", "0");
+  await ballX.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(ballX).toHaveAttribute("aria-valuenow", "10");
   // A second shot, the pack named, the ball's speed a step up
   await editor.getByRole("button", { name: /^add$/i }).click();
   await expect(editor.locator(".editor-shot")).toHaveCount(2);
@@ -165,7 +173,11 @@ test("the free-camera mode (notes/training-editor.md TE1): chosen and kept, a sh
   const settings = fly.locator(".fly-settings");
   await expect(settings.locator(".fly-settings-name")).toBeFocused();
   await settings.locator(".fly-settings-name").fill("Fly Pack");
-  await settings.getByRole("combobox", { name: "Difficulty" }).selectOption("medium");
+  // (the difficulty a cycler: Right from Rookie, Pro)
+  const difficulty = settings.getByRole("spinbutton", { name: "Difficulty" });
+  await difficulty.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(difficulty).toHaveAttribute("data-value", "medium");
   await settings.getByRole("button", { name: "ACCEPT" }).click();
   await expect(settings).toBeHidden();
   await expect(list.locator(".fly-heading")).toHaveText("PRO STRIKER");
@@ -274,7 +286,7 @@ test("the free-camera editor with a pad (the user's report): the shot list's but
   page,
   context,
 }) => {
-  const [A, B, X, UP, DOWN] = [0, 1, 2, 12, 13];
+  const [A, B, X, UP, DOWN, RIGHT] = [0, 1, 2, 12, 13, 15];
   await fakeGamepad(context);
   await context.addInitScript(() => {
     if (!sessionStorage.getItem("e2e-fly-pad")) {
@@ -303,10 +315,17 @@ test("the free-camera editor with a pad (the user's report): the shot list's but
   // (down again: the legend's buttons, SEQUENCE SETTINGS first)
   await padTap(page, [DOWN]);
   await expect(focused).toContainText("SEQUENCE SETTINGS");
-  // (X: SEQUENCE SETTINGS, the pad's menu; B closes it)
+  // (X: SEQUENCE SETTINGS, the pad's menu, opened on its name whatever row the list had (RV-600); down to Type, right:
+  // Goalie (a cycler: RV-599); B closes it)
   await padTap(page, [X]);
   const settings = page.locator("#fly-editor .fly-settings");
   await expect(settings).toBeVisible();
+  await expect(settings.locator(".fly-settings-name")).toHaveClass(/pad-focus/);
+  await padTap(page, [DOWN]);
+  const type = settings.getByRole("spinbutton", { name: "Type" });
+  await expect(type).toHaveClass(/pad-focus/);
+  await padTap(page, [RIGHT]);
+  await expect(type).toHaveAttribute("data-value", "goalie");
   await padTap(page, [B]);
   await expect(settings).toBeHidden();
   // (the list's focus back on the selected shot, the second; A edits it: the shot editor, its own controls: A the ball,
@@ -333,7 +352,7 @@ test("Exit to Main Menu over the editor with a pad (the user's report): the edit
   page,
   context,
 }) => {
-  test.setTimeout(240_000); // (four editors left, each to free play and back, and a reload)
+  test.setTimeout(480_000); // (eight editors left, each to free play and back, and a reload)
   const [A, B, START, VIEW, DOWN, LEFT] = [0, 1, 9, 8, 13, 14];
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
@@ -366,23 +385,23 @@ test("Exit to Main Menu over the editor with a pad (the user's report): the edit
     await menu.getByRole("button", { name: /^create training$/i }).click();
     await expect(menu).toBeHidden();
   };
-  // (Start, the focus down to Exit to Main Menu, A; its question's YES: left from NO, A)
-  const exitToMainMenu = async (): Promise<void> => {
+  // (Start, the focus down to Exit to Main Menu, A: over the editor no question of its own, the editor's SAVE AND EXIT
+  // the one (TE1 §6.3, RX28C); the entry reads Save and Exit over unsaved changes)
+  const exitToMainMenu = async (saves = false): Promise<void> => {
     await padTap(page, [START]);
     await expect(pause).toBeVisible();
-    const exit = pause.getByRole("button", { name: /^exit to main menu$/i });
+    const exit = pause.getByRole("button", { name: saves ? /^save and exit$/i : /^exit to main menu$/i });
     for (let i = 0; i < 8 && !(await padFocused(exit)); i++) await padTap(page, [DOWN]);
     await expect(exit).toHaveClass(/pad-focus/);
     await padTap(page, [A]);
-    const yes = pause.locator(".pause-question").getByRole("button", { name: /^yes$/i });
-    await padTap(page, [LEFT]);
-    await expect(yes).toHaveClass(/pad-focus/);
-    await padTap(page, [A]);
     await expect(pause).toBeHidden();
+    await expect(pause.locator(".pause-question")).toBeHidden();
   };
   // (the main menu's Play, then Free Play: free play, the editor gone, the car driven by W; then back to the menu)
   const freePlayDrives = async (): Promise<void> => {
     await expect(menu).toBeVisible();
+    // (no training run left going under the menu: RX28C's BM11)
+    expect(await page.evaluate(() => (window as unknown as { carballFreeplay: { training: () => unknown } }).carballFreeplay.training())).toBeNull();
     await expect(page.locator("#training-editor")).toBeHidden();
     await expect(page.locator("#fly-editor")).toBeHidden();
     expect(await editorState()).toMatchObject({ open: false, testing: false });
@@ -414,20 +433,24 @@ test("Exit to Main Menu over the editor with a pad (the user's report): the edit
   await expect(modal).toBeHidden();
   await freePlayDrives();
 
-  // A shot added (unsaved): the editor's SAVE AND EXIT first; CANCEL (B) stays in the editor, NO leaves it
+  // A shot added (unsaved): the entry reads Save and Exit, the editor's SAVE AND EXIT its one question; CANCEL (B) back to
+  // the pause menu (TE1 §5.3), B again the editor; NO leaves it
   await createTraining();
   await expect(list).toBeVisible();
   await padTap(page, [DOWN]);
   await expect(list.locator(":focus")).toHaveText("CREATE NEW SHOT");
   await padTap(page, [A]);
   await expect(list.locator(".fly-shot-button")).toHaveCount(2);
-  await exitToMainMenu();
+  await exitToMainMenu(true);
   await expect(modal.locator(".modal-title")).toHaveText("SAVE AND EXIT");
   await padTap(page, [B]);
   await expect(modal).toBeHidden();
+  await expect(pause).toBeVisible();
+  await padTap(page, [B]);
+  await expect(pause).toBeHidden();
   await expect(list).toBeVisible();
   expect(await editorState()).toMatchObject({ open: true });
-  await exitToMainMenu();
+  await exitToMainMenu(true);
   await expect(modal.locator(".modal-title")).toHaveText("SAVE AND EXIT");
   const no = modal.getByRole("button", { name: /^no$/i });
   for (let i = 0; i < 3 && !(await padFocused(no)); i++) await padTap(page, [LEFT]);
@@ -443,6 +466,32 @@ test("Exit to Main Menu over the editor with a pad (the user's report): the edit
   await exitToMainMenu();
   await freePlayDrives();
 
+  // A shot added, then tested: Exit to Main Menu from the test asks SAVE AND EXIT first (RX28C's BM3); NO leaves
+  await createTraining();
+  await expect(list).toBeVisible();
+  await padTap(page, [DOWN]);
+  await padTap(page, [A]);
+  await expect(list.locator(".fly-shot-button")).toHaveCount(2);
+  await padTap(page, [VIEW]);
+  await expect.poll(async () => (await editorState())?.testing).toBe(true);
+  await exitToMainMenu(true);
+  await expect(modal.locator(".modal-title")).toHaveText("SAVE AND EXIT");
+  await modal.getByRole("button", { name: /^cancel$/i }).click();
+  await expect(pause).toBeVisible(); // (CANCEL clicked: the pause menu again)
+  await padTap(page, [B]);
+  await exitToMainMenu(true);
+  await modal.getByRole("button", { name: /^no$/i }).click();
+  await freePlayDrives();
+
+  // The pause menu over the free-camera editor's list, drawn on top: its Exit to Main Menu clicked with the mouse (RX28C)
+  await createTraining();
+  await expect(list).toBeVisible();
+  await padTap(page, [START]);
+  await expect(pause).toBeVisible();
+  await pause.getByRole("button", { name: /^exit to main menu$/i }).click();
+  await expect(pause).toBeHidden();
+  await freePlayDrives();
+
   // The panel editor: the same
   await page.evaluate(() => {
     localStorage.setItem("carball.training.editorMode", "panel");
@@ -450,8 +499,48 @@ test("Exit to Main Menu over the editor with a pad (the user's report): the edit
   await page.reload();
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
   await createTraining();
-  await expect(page.locator("#training-editor")).toBeVisible();
+  const panel = page.locator("#training-editor");
+  await expect(panel).toBeVisible();
   await exitToMainMenu();
+  await freePlayDrives();
+
+  // A shot added (unsaved), playtested, Back to Editor: still unsaved, Exit to Main Menu asks (RX28C); NO leaves
+  await createTraining();
+  await panel.getByRole("button", { name: /^add$/i }).click();
+  await panel.getByRole("button", { name: /^playtest$/i }).click();
+  await expect(panel).toBeHidden();
+  await page.keyboard.press("Escape");
+  await pause.getByRole("button", { name: /^back to editor$/i }).click();
+  await expect(panel).toBeVisible();
+  await expect(panel).toContainText("Unsaved changes");
+  await exitToMainMenu(true);
+  await expect(modal.locator(".modal-title")).toHaveText("SAVE AND EXIT");
+  await modal.getByRole("button", { name: /^no$/i }).click();
+  await freePlayDrives();
+
+  // The same named, Exit to Main Menu from the playtest itself (RX28C's BM4: the playtest left too): YES saves the pack
+  // and leaves
+  await createTraining();
+  await panel.locator(".editor-name").fill("Pause Pack");
+  await panel.locator(".editor-name").press("Enter");
+  await panel.getByRole("button", { name: /^add$/i }).click();
+  await panel.getByRole("button", { name: /^playtest$/i }).click();
+  await expect(panel).toBeHidden();
+  await expect(page.locator("#training")).toBeVisible();
+  // (the page's leaving asked about mid-playtest too: RX28C's RV-645)
+  const unloadAsks = async (): Promise<boolean> =>
+    page.evaluate(() => {
+      const e = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(e);
+      return e.defaultPrevented;
+    });
+  expect(await unloadAsks()).toBe(true);
+  await exitToMainMenu(true);
+  await expect(modal.locator(".modal-title")).toHaveText("SAVE AND EXIT");
+  await modal.getByRole("button", { name: /^yes$/i }).click();
+  await expect(page.locator("#training")).toBeHidden();
+  expect(await page.evaluate(() => localStorage.getItem("carball.training.mine") ?? "")).toContain("Pause Pack");
+  expect(await unloadAsks()).toBe(false);
   await freePlayDrives();
   expect(errors).toEqual([]);
 });

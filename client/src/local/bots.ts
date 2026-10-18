@@ -113,6 +113,7 @@ export function botHello(slot: BotSlot): Uint8Array {
     intent: "join",
     playlist: 0,
     token: 0n,
+    ticket: "",
   });
 }
 

@@ -22,7 +22,8 @@ import {
 } from "../input/mapping";
 import type { ControllerSettings, Options, Settings } from "../settings/settings";
 import { FixedStep, TICK_SECONDS, frameTimes } from "../loop/fixedStep";
-import { type Vec3, ZERO, add, scale, vec3 } from "../math/vec";
+import { type Vec3, ZERO, add, scale, sub, vec3 } from "../math/vec";
+import { rotationAxes, vectorToRotator } from "../camera/unreal";
 import { BallView, CarView, trailGround } from "../render/entities";
 import type { PadsView } from "../render/tokenPads";
 import { SceneEffects } from "../render/effects";
@@ -39,7 +40,7 @@ import type { ReplayPlan } from "../net/protocol";
 import { Fade } from "../render/fade";
 import { LOAD_FADE_IN } from "./matchSequence";
 import { TouchLog, planReplay } from "./replayPlan";
-import { ReplayPlayback, explosionTeam } from "./replayPlayback";
+import { ReplayPlayback } from "./replayPlayback";
 import { ReplayRecorder, freeplayTouchTeam, recordCar } from "./replayRecorder";
 import { BallArrow, ballArrowShown } from "../render/ballArrow";
 import { FlipResetFx } from "../render/flipResetFx";
@@ -59,6 +60,23 @@ import {
   FREEPLAY_RESET_COOLDOWN,
   PostGoalClock,
 } from "./goalSequence";
+
+/** The garage's stand (showGarage): the car's spot (on the field's floor, off the ball's kickoff and the pads' rows) and
+ *  its facing (rad: toward the orange goal), the camera off its front left by `angle` (rad), `distance` and `height`
+ *  away (uu, the least), looking at `lookAt` uu up beside the car, its horizontal field of view (°) */
+const GARAGE = {
+  at: vec3(-1200, -1600, 17.01),
+  yaw: Math.PI / 2,
+  angle: (40 * Math.PI) / 180,
+  distance: 430,
+  height: 95,
+  lookAt: 30,
+  fov: 55,
+  /** (the car's width on screen at `distance`, a share of the view's: past `fill` of the space beside the menu's page,
+   *  the camera backs off) */
+  width: 0.33,
+  fill: 0.8,
+} as const;
 
 /** Custom training: the countdown's hold (ticks: until the shot starts), the car's rest height on the floor (uu), the
  *  ball on the ground at or under this height (uu: the timer's run-out fails the shot then), the path preview's span (game
@@ -93,6 +111,8 @@ export class Freeplay {
   readonly #ballView = new BallView();
   /** The garage's team: the car's colour, the ball trail's after its touch (the engine's car is team 0 whatever it is) */
   #team: Team = 0;
+  /** The garage's car (src/game/cars.ts) */
+  #carId: number;
   /** The ball arrow by the car (HUD-17) */
   readonly #ballArrow = new BallArrow();
   /** The flip reset's effect on the car (HUD-19) */
@@ -158,6 +178,8 @@ export class Freeplay {
   #sincePath = Infinity;
   #pathDue = false;
   editorCamera: CameraView | null = null;
+  /** The garage's camera while its page shows (showGarage), else null */
+  #garageCamera: CameraView | null = null;
   /** The goal that doesn't count, shown so (the striker's own, the goalie's opponent's: CTR-4) */
   readonly #disabledGoal = new DisabledGoalView();
   #predictor: World | null = null;
@@ -192,6 +214,7 @@ export class Freeplay {
     this.#hud = hud;
     this.#audio = audio;
     this.#playerId = world.addCar(0, carChoice(garage.car).body);
+    this.#carId = garage.car;
     this.#team = garage.team;
     // (Unlimited boost in free play: on by default, as the game's; off, 33 each round, used up, and pads taken)
     this.#unlimitedBoost = settings().options.unlimitedBoost;
@@ -255,7 +278,8 @@ export class Freeplay {
     this.#arena.newBall();
     this.#fade.fromBlack();
     this.#skipHeld = true; // (a key already down doesn't skip it)
-    return new ReplayPlayback(plan, this.#recorder, undefined, FREEPLAY_NET_TEAM);
+    this.#carView.teleport(); // (the replay's first frame: the car back where it was, its sway fresh: RV-597)
+    return new ReplayPlayback(plan, this.#recorder, undefined, FREEPLAY_NET_TEAM, this.#team);
   }
 
   /** A frame of the goal replay: skipped by Space or the pad's A (ReadyUp), else to its end; then the new round, its
@@ -288,7 +312,7 @@ export class Freeplay {
     // (SkipInstructions, as online; the scorer is the player, no clock)
     const name = this.settings().chat.name;
     const goal: ReplayGoal = {
-      scorer: { name: name === "" ? "Player" : name, team: 0 },
+      scorer: { name: name === "" ? "Player" : name, team: this.#team },
       assister: null,
       time: this.#goalTime === null ? null : replayTime(this.#goalTime),
       speed: this.#goalSpeed === null ? null : replaySpeed(this.#goalSpeed, this.settings().interface.metric),
@@ -441,7 +465,7 @@ export class Freeplay {
         const vel = this.#recorder.before(this.#world.tick - 1)?.ball.vel;
         this.#goalSpeed = vel ? Math.hypot(vel.x, vel.y, vel.z) : null;
         this.#goalTime = this.#roundAge;
-        this.#effects.goal(this.#world.ball().pos, explosionTeam(FREEPLAY_NET_TEAM)); // (the player's colour at either net)
+        this.#effects.goal(this.#world.ball().pos, this.#team); // (the player's colour at either net: the garage's team)
         this.#arena.explode();
         this.#camera.shakes.play(EXPLOSION_LARGE, this.#world.ball().pos);
         // (training: the striker's goal a success, a goal against the goalie a failure)
@@ -482,21 +506,59 @@ export class Freeplay {
     this.#replayPlan = null;
   }
 
-  /** The garage's car and colour (its choice changed): the car made anew with its preset, its look, the round started
-   *  over */
+  /** The garage shown, framed, or left (the menu's page; the user's request, 2026-10-18: the game's garage). Shown: the
+   *  car standing still on the garage's spot, at rest, the camera on it from three-quarters front (its nose to the
+   *  screen's left), the car centred in the space beside the menu's page (`frame`: that space's left edge and width, shares
+   *  of the view's; framed again as the window changes); its changes swapped in place there (setCar). Left (null): the
+   *  camera behind it again (Free Play starts its own session) */
+  showGarage(frame: { readonly left: number; readonly width: number } | null): void {
+    if (!frame) {
+      if (this.#garageCamera === null) return;
+      this.#garageCamera = null;
+      this.#snapViews();
+      return;
+    }
+    const { at, yaw, angle, height, lookAt, fov } = GARAGE;
+    const forward = vec3(Math.cos(yaw), Math.sin(yaw), 0);
+    if (this.#garageCamera === null) {
+      const rot = { forward, right: vec3(-forward.y, forward.x, 0), up: vec3(0, 0, 1) };
+      this.#world.setCar(this.#playerId, { pos: at, vel: ZERO, angVel: ZERO, rot, boost: this.#world.car(this.#playerId).boost });
+      this.#snapViews();
+    }
+    // (far enough for the car to fit the space; aimed beside it so it stands at the space's middle: the view's centre
+    // `aside` off is tan(half fov)·distance away at the view's edge)
+    const distance = GARAGE.distance * Math.max(1, GARAGE.width / (GARAGE.fill * Math.max(0.05, frame.width)));
+    const centre = frame.left + frame.width / 2;
+    const aside = distance * Math.tan((fov * Math.PI) / 360) * (2 * centre - 1);
+    // (off the car's front left, `angle` from straight on)
+    const left = vec3(forward.y, -forward.x, 0);
+    const toCamera = add(scale(forward, Math.cos(angle)), scale(left, Math.sin(angle)));
+    const position = vec3(at.x + toCamera.x * distance, at.y + toCamera.y * distance, height * (distance / GARAGE.distance));
+    const across = vec3(-toCamera.y, toCamera.x, 0);
+    const axes = rotationAxes(vectorToRotator(sub(vec3(at.x + across.x * aside, at.y + across.y * aside, lookAt), position)));
+    this.#garageCamera = { position, forward: axes.forward, up: axes.up, horizontalFov: fov };
+  }
+
+  /** The garage's car and colour (its choice changed, in the menu): swapped in place, as the game's garage swaps its
+   *  model (the user's report, 2026-10-18): another body made where the car stands, at rest, its boost kept, the round
+   *  and the kickoff spots' order untouched (Free Play starts its own session); a colour alone only repainted */
   setCar(garage: { readonly car: number; readonly team: Team }): void {
     const scene = this.#renderer.scene;
     scene.remove(this.#carView.root);
     this.#carView.dispose();
-    this.#world.removeCar(this.#playerId);
-    this.#playerId = this.#world.addCar(0, carChoice(garage.car).body);
+    if (garage.car !== this.#carId) {
+      const was = this.#world.car(this.#playerId);
+      this.#world.removeCar(this.#playerId);
+      this.#playerId = this.#world.addCar(0, carChoice(garage.car).body);
+      this.#world.setUnlimitedBoost(this.#unlimitedBoost);
+      this.#world.setCar(this.#playerId, { pos: was.pos, vel: ZERO, angVel: ZERO, rot: was.rot, boost: was.boost });
+      this.#carConfigs = new Map([[this.#playerId, this.#world.carConfig(this.#playerId)]]);
+      this.#car = new Interpolated(this.#world.car(this.#playerId));
+    }
+    this.#carId = garage.car;
     this.#team = garage.team;
-    this.#world.setUnlimitedBoost(this.#unlimitedBoost);
     this.#carView = new CarView(this.#world.carConfig(this.#playerId), garage.team, this.#effects.particles, garage.car);
-    this.#carConfigs = new Map([[this.#playerId, this.#world.carConfig(this.#playerId)]]);
     scene.add(this.#carView.root);
-    this.#car = new Interpolated(this.#world.car(this.#playerId));
-    this.restart();
   }
 
   /** The session over again (Exit to Main Menu, then Free Play: MENU-1, RV-284): any goal replay and its banner gone, a
@@ -902,6 +964,7 @@ export class Freeplay {
 
   #snapViews(): void {
     this.#rear = newCar({ ballCam: this.#ballCam, rear: this.#rear }).rear; // (a reset: a new car)
+    this.#carView.teleport(); // (its sway and wheels a new car's: RV-597)
     this.#car.push(this.#world.car(this.#playerId));
     this.#car.push(this.#world.car(this.#playerId));
     this.#pushBall();
@@ -939,8 +1002,9 @@ export class Freeplay {
     // The impacts and landings: the local car's Impact_Medium restarts, the sounds
     const triggers = this.#impactTriggers.frame(frameSeconds, this.#world.takeImpacts(), new Map([[this.#playerId, own]]), this.#carConfigs, this.#playerId);
     for (const t of triggers) if (t.kind === "shake") this.#camera.shakes.play(IMPACT_MEDIUM, null, t.scale, `impact:${String(t.car)}`);
-    // The ball arrow (HUD-17): the setting on, the ball cam off, the car alive (free play's round always runs)
-    const arrow = ballArrowShown(this.settings().interface.ballArrow, this.#ballCam, !car.demoed, true);
+    // The ball arrow (HUD-17): the setting on, the ball cam off, the car alive (free play's round always runs); none in
+    // the garage
+    const arrow = this.#garageCamera === null && ballArrowShown(this.settings().interface.ballArrow, this.#ballCam, !car.demoed, true);
     this.#ballArrow.update(arrow ? carDrawn : null, fromThreeVector(ball), frameSeconds, this.#world.ballExploded());
     this.#carView.attach(this.#flipFx.root);
     this.#flipFx.update(frameSeconds);
@@ -953,13 +1017,15 @@ export class Freeplay {
 
     const controls = { ballCam: this.#ballCam, rear: this.#rear, lookUp: this.#look.up, lookRight: this.#look.right, freeLook: this.#freeLook };
     const view =
-      this.#editing && this.editorCamera
+      this.#garageCamera ??
+      (this.#editing && this.editorCamera
         ? this.editorCamera
-        : this.#camera.update(frameSeconds, this.#car.blended(alpha), this.#ball.blended(alpha).pos, controls, null, realSeconds);
+        : this.#camera.update(frameSeconds, this.#car.blended(alpha), this.#ball.blended(alpha).pos, controls, null, realSeconds));
     if (this.#camera.takeBallCamExit()) this.#ballCam = false; // (free look left the toggled ball cam)
     this.#renderer.render(view);
     this.#effects.camera = view.position; // (the husks collide near it)
-    this.#audio.frame({
+    // (its sounds kept for a goal replay to hear again: RA1 §1)
+    const played = this.#audio.frame({
       world: { cars: new Map([[this.#playerId, car]]), ball: this.#ball.current, pads },
       localCar: this.#playerId,
       throttle: this.#throttle,
@@ -967,6 +1033,7 @@ export class Freeplay {
       camera: view,
       triggered: triggerSounds(triggers),
     });
+    this.#recorder.sounds(played);
 
     this.#updateHud(car, realSeconds);
   }

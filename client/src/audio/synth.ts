@@ -15,6 +15,8 @@ export type MenuCue = "move" | "select" | "confirm" | "back" | "tab";
 
 export class Synth {
   readonly #noise: AudioBuffer;
+  /** The pitch (cents) of the sounds made while it's set: a replay's Slomo state on the ball's (RA1 §4); 0 otherwise */
+  detune = 0;
 
   constructor(readonly ctx: BaseAudioContext) {
     // Two seconds of white noise, shared by every noisy sound
@@ -33,14 +35,14 @@ export class Synth {
   }
 
   filter(type: BiquadFilterType, frequency: number, q: number, to: AudioNode): BiquadFilterNode {
-    const f = new BiquadFilterNode(this.ctx, { type, frequency, Q: q });
+    const f = new BiquadFilterNode(this.ctx, { type, frequency, Q: q, detune: this.detune });
     f.connect(to);
     return f;
   }
 
   /** An oscillator into `to`, from `when` for `duration` seconds. */
   tone(type: OscillatorType, frequency: number, to: AudioNode, when: number, duration: number): OscillatorNode {
-    const o = new OscillatorNode(this.ctx, { type, frequency });
+    const o = new OscillatorNode(this.ctx, { type, frequency, detune: this.detune });
     o.connect(to);
     o.start(when);
     o.stop(when + duration);
@@ -49,7 +51,7 @@ export class Synth {
 
   /** Noise into `to`, from `when` (for `duration` seconds, or looping until stopped). */
   noise(to: AudioNode, when: number, duration?: number): AudioBufferSourceNode {
-    const s = new AudioBufferSourceNode(this.ctx, { buffer: this.#noise, loop: duration === undefined });
+    const s = new AudioBufferSourceNode(this.ctx, { buffer: this.#noise, loop: duration === undefined, detune: this.detune });
     s.connect(to);
     s.start(when, Math.random() * 1.4);
     if (duration !== undefined) s.stop(when + duration);
@@ -171,10 +173,45 @@ export class Synth {
     for (const [f, start, length] of notes) this.#brass(out, when + start, f, length);
   }
 
-  /** A demolition: a smaller explosion and a crunch. */
-  demo(out: AudioNode, when: number): void {
+  /** A demolition: a smaller explosion and a crunch (`crunch` false: the explosion alone, a replay's: RA1 §9). */
+  demo(out: AudioNode, when: number, crunch = true): void {
     this.explosion(out, when, 0.65);
-    this.bump(out, when, 0.5);
+    if (crunch) this.bump(out, when, 0.5);
+  }
+
+  /** A goal replay's start (SwoopOut's place, RA1 §6: our own sound): a rising whoosh of air, filtered noise alone (no
+   *  tone: a pitched glide reads as a "ploop", the user's report 2026-10-18) */
+  swoopOut(out: AudioNode, when: number): void {
+    this.#whoosh(out, when, 700, 4200, 0.18, 0.32, 0.16);
+  }
+
+  /** Slow motion starting (SloMo_Start's place): a whoosh falling away, as time slows */
+  sloMoStart(out: AudioNode, when: number): void {
+    this.#whoosh(out, when, 4200, 900, 0.1, 0.55, 0.13);
+  }
+
+  /** Slow motion ending, and a replay's end (SloMo_End's place): a whoosh rising back */
+  sloMoEnd(out: AudioNode, when: number): void {
+    this.#whoosh(out, when, 900, 4200, 0.14, 0.3, 0.12);
+  }
+
+  /** Air rushing past: noise through two broad band-passes an octave apart, their centre sliding from `from` to `to` Hz,
+   *  above a high-pass that keeps it off the low end (nothing tonal: a wide band, Q under 1) */
+  #whoosh(out: AudioNode, when: number, from: number, to: number, attack: number, decay: number, peak: number): void {
+    const g = this.gain(0, this.filter("highpass", 350, 0.7, out));
+    g.gain.setValueAtTime(0.0001, when);
+    g.gain.linearRampToValueAtTime(peak, when + attack);
+    g.gain.exponentialRampToValueAtTime(0.0001, when + attack + decay);
+    const length = attack + decay;
+    for (const [scale, level] of [
+      [1, 1],
+      [2, 0.45],
+    ] as const) {
+      const f = this.filter("bandpass", from * scale, 0.8, this.gain(level, g));
+      f.frequency.setValueAtTime(from * scale, when);
+      f.frequency.exponentialRampToValueAtTime(to * scale, when + length);
+      this.noise(f, when, length + 0.05);
+    }
   }
 
   /** A flip reset: two quick, bright bell notes rising, with a sparkle. */
@@ -278,6 +315,13 @@ function softClip(drive: number): Float32Array<ArrayBuffer> {
   return curve;
 }
 
+/** A replay's mix on a car's voice (RA1 §3, §4: its Replay_InCameraView and the LiveReplay state's engine and boost
+ *  offsets): each part's gain and low-pass cutoff (null: none), the boost's pitch */
+export interface VoiceMix {
+  readonly engine: { readonly gain: number; readonly cutoff: number | null };
+  readonly boost: { readonly gain: number; readonly cutoff: number | null; readonly cents: number };
+}
+
 /** A car's continuous sounds: engine, boost and the supersonic wind, steered every frame; into `output`. */
 export class CarVoice {
   readonly output: GainNode;
@@ -288,13 +332,24 @@ export class CarVoice {
   readonly #boost: GainNode;
   readonly #wind: GainNode;
   readonly #sources: AudioScheduledSourceNode[];
+  // (a replay's mix: each part's gain and low-pass after it, the boost's pitch on its noise and filters)
+  readonly #engineMix: GainNode;
+  readonly #engineLpf: BiquadFilterNode;
+  readonly #boostMix: GainNode;
+  readonly #boostLpf: BiquadFilterNode;
+  readonly #boostPitch: AudioParam[];
 
   constructor(readonly synth: Synth) {
     const ctx = synth.ctx;
     const now = ctx.currentTime;
+    const open = ctx.sampleRate / 2;
     this.output = synth.gain(1);
+    this.#engineLpf = synth.filter("lowpass", open, 0.707, this.output);
+    this.#engineMix = synth.gain(1, this.#engineLpf);
+    this.#boostLpf = synth.filter("lowpass", open, 0.707, this.output);
+    this.#boostMix = synth.gain(1, this.#boostLpf);
     // Engine: two detuned saws and a sub, pulsing like cylinders firing, through a filter that opens with throttle
-    this.#engine = synth.gain(0, this.output);
+    this.#engine = synth.gain(0, this.#engineMix);
     // (two filters in a row: a saw's buzz falls away steeply above the cutoff, a hum rather than a rasp)
     this.#engineFilter = synth.filter("lowpass", 400, 2, synth.filter("lowpass", 1200, 0.7, this.#engine));
     const pulsing = synth.gain(0.7, this.#engineFilter);
@@ -307,7 +362,7 @@ export class CarVoice {
     depth.connect(pulsing.gain);
     this.#pulse = synth.tone("sine", 25, depth, now, 1e6);
     // Boost: a roaring hiss, fluttering, over a low rumble
-    this.#boost = synth.gain(0, this.output);
+    this.#boost = synth.gain(0, this.#boostMix);
     const hiss = synth.filter("bandpass", 1150, 0.8, this.#boost);
     const flutter = synth.gain(260);
     flutter.connect(hiss.frequency);
@@ -315,14 +370,21 @@ export class CarVoice {
     // Supersonic: rushing wind
     this.#wind = synth.gain(0, this.output);
     const wind = synth.filter("highpass", 2400, 0.7, this.#wind);
-    this.#sources = [
-      ...this.#oscillators,
-      this.#pulse,
-      synth.tone("sine", 9, flutter, now, 1e6),
-      synth.noise(hiss, now),
-      synth.noise(rumble, now),
-      synth.noise(wind, now),
-    ];
+    const hissNoise = synth.noise(hiss, now);
+    const rumbleNoise = synth.noise(rumble, now);
+    this.#boostPitch = [hissNoise.detune, rumbleNoise.detune, hiss.detune, rumble.detune];
+    this.#sources = [...this.#oscillators, this.#pulse, synth.tone("sine", 9, flutter, now, 1e6), hissNoise, rumbleNoise, synth.noise(wind, now)];
+  }
+
+  /** A replay's mix (live: none, as made) */
+  mix(m: VoiceMix): void {
+    const now = this.synth.ctx.currentTime;
+    const open = this.synth.ctx.sampleRate / 2;
+    this.#engineMix.gain.setTargetAtTime(m.engine.gain, now, 0.03);
+    this.#engineLpf.frequency.setTargetAtTime(m.engine.cutoff ?? open, now, 0.03);
+    this.#boostMix.gain.setTargetAtTime(m.boost.gain, now, 0.03);
+    this.#boostLpf.frequency.setTargetAtTime(m.boost.cutoff ?? open, now, 0.03);
+    for (const p of this.#boostPitch) p.setTargetAtTime(m.boost.cents, now, 0.03);
   }
 
   /** Speed (uu/s), throttle (0..1), boosting, supersonic; `level` scales the engine (the local car is louder). */

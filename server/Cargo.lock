@@ -100,9 +100,11 @@ name = "carball-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64",
  "cmake",
  "getrandom 0.4.3",
  "libc",
+ "ring",
  "serde_json",
  "tokio",
  "wtransport",

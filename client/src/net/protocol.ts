@@ -12,8 +12,11 @@
 // bodies' broadphase boxes (FP2); 19: a search's browser key and returning token, SearchCooldown; 20: SearchCooldown's
 // network flag; 21: the match's map (MatchFound, Welcome); 22: the garage's car (Hello's and the roster's model); 23:
 // Kicked's reason 2, a newer search from the same browser took this one's place (RV-460); 24: the stat graphs' network
-// rows (HUD-21: Inputs' sequence, each Update's input-buffer window and the inputs lost)
-export const PROTOCOL_VERSION = 25;
+// rows (HUD-21: Inputs' sequence, each Update's input-buffer window and the inputs lost); 25: one map, Night; 26: Hello's
+// search ticket, an account's (notes/accounts.md §3), and Refused's reason 4
+export const PROTOCOL_VERSION = 26;
+/** A Hello's ticket's bytes at most (the accounts service's encoded ticket) */
+export const MAX_TICKET_BYTES = 256;
 /** A name's bytes at most (UTF-8) */
 export const MAX_NAME_BYTES = 32;
 export const MAX_INPUT_FRAMES = 10;
@@ -127,6 +130,9 @@ export type ControlMessage =
       readonly playlist: number;
       /** A claim's token (a search's matchFound); 0 otherwise */
       readonly token: bigint;
+      /** A search's and a claim's signed ticket: who the player is (notes/accounts.md §3: the accounts service's, or a
+       *  development server's own); empty for a join and the local host */
+      readonly ticket: string;
     }
   /** Mute or unmute a player's chat for this player (ClientMutePlayer: the server stops relaying their lines here) */
   | { readonly type: "mute"; readonly car: number; readonly on: boolean }
@@ -227,6 +233,9 @@ export const REFUSED_FULL = 0;
 export const REFUSED_VERSION = 1;
 export const REFUSED_TOKEN = 2;
 export const REFUSED_MODE = 3;
+/** Refused's reason: the search's or claim's ticket missing, not the server's, out of its time, used before, or not the
+ *  account that searched (sign in again) */
+export const REFUSED_TICKET = 4;
 /** Kicked's reasons: idle past 30 s of play (MM-37); the match was cancelled before it started (MM-18) */
 export const KICK_IDLE = 0;
 export const KICK_NOT_ALL_JOINED = 1;
@@ -355,6 +364,12 @@ class Writer {
     this.u8(b.byteLength);
     this.bytes(b);
   }
+  /** A ticket: its u16 byte count, then its bytes (ASCII: base64url; one past MAX_TICKET_BYTES sent empty) */
+  ticket(s: string): void {
+    const b = s.length <= MAX_TICKET_BYTES ? new TextEncoder().encode(s) : new Uint8Array();
+    this.u16(b.byteLength);
+    this.bytes(b);
+  }
   #push(n: number): void {
     for (let i = 0; i < n; i++) this.#bytes.push(this.#view.getUint8(i));
   }
@@ -403,6 +418,11 @@ class Reader {
   name(): string {
     return new TextDecoder().decode(this.take(this.u8()));
   }
+  ticket(): string {
+    const n = this.u16();
+    if (n > MAX_TICKET_BYTES) throw new DecodeError("ticket too long");
+    return new TextDecoder().decode(this.take(n));
+  }
 }
 
 /** A control message with its u16 length prefix, ready for the control stream. */
@@ -425,6 +445,7 @@ export function encodeControl(m: ControlMessage): Uint8Array {
       w.u8(INTENTS.indexOf(m.intent));
       w.u8(m.playlist);
       w.u64(m.token);
+      w.ticket(m.ticket);
       break;
     case "matchFound":
       w.u8(0x8f);
@@ -631,6 +652,7 @@ export function decodeControl(body: Uint8Array): ControlMessage {
         intent: intent(r.u8()),
         playlist: r.u8(),
         token: r.u64(),
+        ticket: r.ticket(),
       };
     case 0x8f:
       return { type: "matchFound", token: r.u64(), map: r.u8() };

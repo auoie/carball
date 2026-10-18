@@ -636,6 +636,7 @@ export class Online {
           this.#replay.dispose();
           this.#replay = null;
           this.#fade.fromBlack();
+          for (const { view } of this.#cars.values()) view.teleport(); // (live again: RV-597)
         }
         if (m.phase !== this.#match?.phase) {
           this.#phases.push({ phase: m.phase, at: performance.now(), frame: this.#predictor.frame, winner: m.winner, forfeit: m.forfeit });
@@ -731,6 +732,7 @@ export class Online {
         // (the cut in from black: LiveReplay's Begin)
         this.#replay?.dispose();
         this.#replay = new ReplayPlayback(m, this.#recorder, (tick) => this.#session.frameAt(tick));
+        for (const { view } of this.#cars.values()) view.teleport(); // (the replay's first frame: RV-597)
         this.#ballView.spawn();
         this.#arena.newBall();
         this.#skipped = false;
@@ -805,7 +807,9 @@ export class Online {
     for (const [id, entry] of this.#cars) {
       // (a respawn or reset predicted here is drawn at once, not interpolated across the field for a tick: NR-8)
       const car = this.#world.car(id);
-      entry.state.push(car, car.spawnCount !== entry.state.current.spawnCount);
+      const spawned = car.spawnCount !== entry.state.current.spawnCount;
+      entry.state.push(car, spawned);
+      if (spawned) entry.view.teleport(); // (a new car: its sway and wheels fresh, RV-597)
     }
     const ballSpawns = this.#world.ballSpawnCount();
     this.#ball.push(this.#world.ball(), ballSpawns !== this.#session.ballSpawns);
@@ -937,7 +941,8 @@ export class Online {
       const phase = this.#match?.phase;
       const frozen = phase === "prePodium" || phase === "finished";
       const still = { vel: { x: 0, y: 0, z: 0 }, boosting: false, supersonic: false };
-      this.#audio.frame({
+      // (its sounds kept for a goal replay to hear again: RA1 §1)
+      const played = this.#audio.frame({
         // (the demolitions as drawn, the server's: the explosion's sound with its effect, RV-84)
         world: {
           cars: new Map(
@@ -955,6 +960,7 @@ export class Online {
         camera: listener,
         triggered: triggerSounds(triggers),
       });
+      this.#recorder.sounds(played);
     }
 
     this.#updateHud(realSeconds);

@@ -1,8 +1,10 @@
 // The goal replay's cars for their nameplates (HT-8, RV-279): where the replay draws them, between its recorded frames
 import { describe, expect, it } from "vitest";
+import type { CarWheels } from "../engine/world";
+import type { SoundEvent } from "../audio/detect";
 import { vec3 } from "../math/vec";
 import { ReplayPlayback, type ReplayScene, flipResetCars, replayCarPositions } from "./replayPlayback";
-import { type RecordedCar, type RecordedFrame, ReplayRecorder } from "./replayRecorder";
+import { type RecordedCar, type RecordedFrame, ReplayRecorder, recordCar } from "./replayRecorder";
 
 const ZERO = vec3(0, 0, 0);
 const UPRIGHT = { forward: vec3(1, 0, 0), right: vec3(0, 1, 0), up: vec3(0, 0, 1) };
@@ -17,6 +19,9 @@ const car = (x: number, team: 0 | 1, demoed = false, flipResets = 0): RecordedCa
   supersonic: false,
   wheelContact: [true, true, true, true],
   flipResets,
+  hasJumped: false,
+  hasFlipped: false,
+  doubleJumped: false,
 });
 const frame = (cars: [number, RecordedCar][]): RecordedFrame => ({
   cars: new Map(cars),
@@ -101,5 +106,111 @@ describe("a goal replay beginning before this page's recording (its page still l
     expect(playback.tick).toBeLessThan(100);
     // (the car at its first recorded place, x 100: the recording's first frame held)
     expect([...playback.cars.entries()].map(([id, c]) => [id, c.pos.x])).toEqual([[7, 100]]);
+  });
+});
+
+describe("a Blender car's wheels in a replay (RV-581)", () => {
+  it("recorded with the car's vehicle, and drawn from the recording, else at rest by its contact", () => {
+    const wheels: CarWheels = { suspension: [1, 2, 3, 4], steer: [0.1, 0.1, 0, 0] };
+    const live = { ...car(0, 0), spawnCount: 0, boost: 33 } as unknown as Parameters<typeof recordCar>[0];
+    expect(recordCar(live, wheels).wheels).toBe(wheels);
+    expect("wheels" in recordCar(live)).toBe(false);
+    // (a replay of two frames, one car whose view poses its wheels)
+    const recorder = new ReplayRecorder();
+    for (let f = 0; f <= 10; f++) recorder.record(f, frame([[7, f < 5 ? { ...car(f, 0), wheels } : car(f, 0)]]));
+    const drawn: unknown[] = [];
+    const rested: unknown[] = [];
+    const view = {
+      root: { visible: true },
+      posesWheels: true,
+      set wheels(w: unknown) {
+        drawn.push(w);
+      },
+      replayWheels: (contact: unknown) => rested.push(contact),
+      update: () => undefined,
+    };
+    const stub = (): object => new Proxy({}, { get: () => () => undefined });
+    const scene = {
+      renderer: stub(),
+      arena: stub(),
+      effects: stub(),
+      audio: stub(),
+      ballView: stub(),
+      cars: [[7, view]],
+      flipReset: { visual: false, audio: false },
+    } as unknown as ReplayScene;
+    const playback = new ReplayPlayback({ startTick: 0, goalTick: 8, endTick: 10, scoringTeam: 0, slomo: [], focus: [] }, recorder);
+    playback.frame(0.001, scene);
+    expect(drawn).toEqual([{ ...wheels, contact: [true, true, true, true] }]);
+    // (past the frames recorded with them: at rest by the recorded contact)
+    for (let i = 0; i < 20 && rested.length === 0; i++) playback.frame(0.05, scene);
+    expect(rested[0]).toEqual([true, true, true, true]);
+  });
+});
+
+describe("a replayed flip reset's chime (the user's report, 2026-10-18)", () => {
+  it("plays at the car's place, heard from the replay's camera (SND-9), not up close", () => {
+    const recorder = new ReplayRecorder();
+    // (car 7's flip resets go up between frames 4 and 5, at x 5)
+    for (let f = 0; f <= 10; f++) recorder.record(f, frame([[7, car(f, 0, false, f < 5 ? 0 : 1)]]));
+    const chimes: unknown[] = [];
+    const view = { root: { visible: true }, posesWheels: false, update: () => undefined, attach: () => undefined };
+    const stub = (): object => new Proxy({}, { get: () => () => undefined });
+    const scene = {
+      renderer: stub(),
+      arena: stub(),
+      effects: stub(),
+      audio: {
+        flipReset: (at?: unknown) => {
+          chimes.push(at);
+        },
+        replayFrame: () => undefined,
+      },
+      ballView: stub(),
+      cars: [[7, view]],
+      flipReset: { visual: false, audio: true },
+    } as unknown as ReplayScene;
+    const playback = new ReplayPlayback({ startTick: 0, goalTick: 8, endTick: 10, scoringTeam: 0, slomo: [], focus: [] }, recorder);
+    for (let i = 0; i < 40 && chimes.length === 0; i++) playback.frame(0.02, scene);
+    expect(chimes).toHaveLength(1);
+    expect(chimes[0]).toEqual(vec3(5, 0, 17));
+  });
+});
+
+describe("a goal replay's sounds (RA1)", () => {
+  it("hears the live sounds of the frames it moves past once each, in order, with its LiveReplay state; the goal's explosion again", () => {
+    const recorder = new ReplayRecorder();
+    for (let f = 0; f <= 40; f++) {
+      recorder.record(f, frame([[7, car(f, 0)]]));
+      recorder.sounds([{ kind: "ballBounce", at: vec3(f, 0, 0), strength: 0.5 }]);
+    }
+    const heard: { sounds: readonly SoundEvent[]; state: string }[] = [];
+    let goals = 0;
+    const view = { root: { visible: true }, posesWheels: false, update: () => undefined, attach: () => undefined };
+    const stub = (): object => new Proxy({}, { get: () => () => undefined });
+    const scene = {
+      renderer: stub(),
+      arena: stub(),
+      effects: stub(),
+      audio: {
+        flipReset: () => undefined,
+        replayGoal: () => {
+          goals++;
+        },
+        replayFrame: (_cars: unknown, _camera: unknown, replay: { sounds: readonly SoundEvent[]; state: string }) => {
+          heard.push({ sounds: replay.sounds, state: replay.state });
+        },
+      },
+      ballView: stub(),
+      cars: [[7, view]],
+      flipReset: { visual: false, audio: false },
+    } as unknown as ReplayScene;
+    const playback = new ReplayPlayback({ startTick: 10, goalTick: 30, endTick: 40, scoringTeam: 0, slomo: [[20, 24]], focus: [] }, recorder);
+    for (let i = 0; i < 400 && !playback.done; i++) playback.frame(1 / 240, scene);
+    const xs = heard.flatMap((h) => h.sounds.map((e) => e.at.x));
+    expect(xs).toEqual(Array.from({ length: 30 }, (_, i) => 11 + i)); // (after the first frame shown, to the end)
+    expect(goals).toBe(1);
+    const states = heard.map((h) => h.state).filter((s, i, all) => s !== all[i - 1]);
+    expect(states).toEqual(["preScore", "slomo", "preScore", "postGoal"]);
   });
 });

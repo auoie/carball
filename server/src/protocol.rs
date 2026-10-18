@@ -13,7 +13,7 @@ use crate::engine::Controls;
 // car (Hello's model, the roster's); 23: Kicked's KICK_REPLACED (RV-460); 24: the stat graphs' network rows (HUD-21: the
 // input datagrams' sequence, each update's input-buffer window and the inputs lost); 25: one map, Night (map 0, its
 // arena the glasshouse: an older client would draw another)
-pub const VERSION: u16 = 25;
+pub const VERSION: u16 = 26;
 /// The maps a match can be on (the client's THEMES: protocol/README.md): one, Night (the user's decision of 2026-10-17); a
 /// map on the wire is its index
 pub const MAP_COUNT: u8 = 1;
@@ -29,6 +29,8 @@ pub const CHAT_FRIENDS: u8 = 2;
 pub const CHAT_OFF: u8 = 3;
 /// A name's bytes at most (UTF-8)
 pub const MAX_NAME_BYTES: usize = 32;
+/// A Hello's search ticket's bytes at most (notes/accounts.md §3: the accounts service's encoded ticket)
+pub const MAX_TICKET_BYTES: usize = 256;
 /// Why a join was refused
 pub const REFUSED_FULL: u8 = 0;
 /// `Refused`'s reason: the client speaks another protocol version (RV-262; a client of version 12 on can read it)
@@ -37,6 +39,9 @@ pub const REFUSED_VERSION: u8 = 1;
 pub const REFUSED_TOKEN: u8 = 2;
 /// `Refused`'s reason: this server doesn't serve the hello's intent (a direct join on a queue server, a search on a direct one)
 pub const REFUSED_MODE: u8 = 3;
+/// `Refused`'s reason: a search's or a claim's ticket missing, not ours, out of its time, used before, or not the
+/// account that searched (notes/accounts.md §3: sign in again)
+pub const REFUSED_TICKET: u8 = 4;
 /// Hello's intent: join this server's match (development servers), search a playlist's queue, claim a reserved slot
 pub const INTENT_JOIN: u8 = 0;
 pub const INTENT_SEARCH: u8 = 1;
@@ -153,6 +158,9 @@ pub enum Control {
         /// A claim's token (from `MatchFound`). A search's: the token of the slot it claimed in a match cancelled for
         /// someone else (`KICK_NOT_ALL_JOINED`): it searches again at the front of the queue (RV-367). 0 otherwise
         token: u64,
+        /// A search's and a claim's signed ticket (notes/accounts.md §3: the accounts service's, or a development
+        /// server's own): who the player is, their name; empty for a join (development) and the local host
+        ticket: String,
     },
     /// Mute or unmute a player's chat for this player (`ClientMutePlayer`: the server stops relaying their lines to them)
     Mute {
@@ -546,6 +554,12 @@ impl Writer {
         self.u32(b.len() as u32);
         self.0.extend_from_slice(b);
     }
+    /// A ticket: a u16 byte count, then its bytes (ASCII: base64url; `MAX_TICKET_BYTES` at most, a longer one sent empty)
+    fn ticket(&mut self, s: &str) {
+        let b = if s.len() <= MAX_TICKET_BYTES { s.as_bytes() } else { &[] };
+        self.u16(b.len() as u16);
+        self.0.extend_from_slice(b);
+    }
     /// A short UTF-8 string: a byte count, then its bytes (`MAX_NAME_BYTES` at most, cut at a character boundary)
     fn name(&mut self, s: &str) {
         let mut end = s.len().min(MAX_NAME_BYTES);
@@ -609,6 +623,14 @@ impl<'a> Reader<'a> {
         let n = self.u32()? as usize;
         Ok(self.take(n)?.to_vec())
     }
+    /// A ticket (u16 count, `MAX_TICKET_BYTES` at most: a longer one is malformed)
+    fn ticket(&mut self) -> Result<String, DecodeError> {
+        let n = usize::from(self.u16()?);
+        if n > MAX_TICKET_BYTES {
+            return Err(DecodeError::Truncated);
+        }
+        Ok(String::from_utf8_lossy(self.take(n)?).into_owned())
+    }
     fn name(&mut self) -> Result<String, DecodeError> {
         let n = usize::from(self.u8()?);
         Ok(String::from_utf8_lossy(self.take(n)?).into_owned())
@@ -638,6 +660,7 @@ impl Control {
                 intent,
                 playlist,
                 token,
+                ticket,
             } => {
                 w.u8(0x01);
                 w.u16(*version);
@@ -654,6 +677,7 @@ impl Control {
                 w.u8(*intent);
                 w.u8(*playlist);
                 w.u64(*token);
+                w.ticket(ticket);
             }
             Self::MatchFound { token, map } => {
                 w.u8(0x8F);
@@ -860,6 +884,7 @@ impl Control {
                 intent: r.u8()?,
                 playlist: r.u8()?,
                 token: r.u64()?,
+                ticket: r.ticket()?,
             },
             0x8F => Self::MatchFound { token: r.u64()?, map: r.u8()? },
             0x90 => Self::IdleWarning { on: r.u8()? != 0 },
@@ -1129,6 +1154,7 @@ mod tests {
                 intent: ["join", "search", "claim"].iter().position(|&i| i == m["intent"]).unwrap() as u8,
                 playlist: u(&m["playlist"]) as u8,
                 token: big(&m["token"]),
+                ticket: m["ticket"].as_str().unwrap().to_string(),
             },
             "matchFound" => Control::MatchFound { token: big(&m["token"]), map: u(&m["map"]) as u8 },
             "idleWarning" => Control::IdleWarning { on: m["on"].as_bool().unwrap() },
@@ -1341,6 +1367,7 @@ mod tests {
             intent: INTENT_JOIN,
             playlist: 0,
             token: 0,
+            ticket: String::new(),
         }
         .encode();
         assert_eq!(hello_version(&ours[2..]), Some(VERSION));

@@ -1,7 +1,8 @@
 #!/bin/sh
 # Writes the page's config.json from GAME_SERVER_URL at the container's start (nginx's entrypoint runs it): the game
 # server's WebTransport URL, https and a path (APP-CONTRACT.md); and the Content-Security-Policy, whose connect-src is
-# that server's origin (RV-395), plus EXTRA_CONNECT_SRC's sources if set (testing: e.g. a development server's info)
+# that server's origin (RV-395), plus EXTRA_CONNECT_SRC's sources if set (testing: e.g. a development server's info);
+# Cloudflare Turnstile's script and frame for the sign-up's check (notes/accounts.md §6, AC-16, RV-639)
 set -euf # (-f: no globbing, a source's * port stays a *)
 # (allowlists, not denylists: a newline would add a header line, a tab or $ nginx syntax, RV-410; a value with a control
 # character can't pass: grep checks every line, and the line count must be one)
@@ -33,6 +34,7 @@ for source in ${EXTRA_CONNECT_SRC:-}; do
 done
 origin=$(printf '%s' "$url" | sed -E 's#^(https://[^/]+)/.*#\1#')
 printf '{"gameServer":"%s"}\n' "$url" > "${CONFIG_DIR:-/usr/share/nginx/html}/config.json"
-csp="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' data: $origin${extra:+ $extra}; media-src 'self' blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+turnstile=https://challenges.cloudflare.com
+csp="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' $turnstile; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' data: $origin${extra:+ $extra}; media-src 'self' blob:; worker-src 'self' blob:; frame-src $turnstile; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 printf 'add_header Content-Security-Policy "%s" always;\n' "$csp" > "${CSP_FILE:-/etc/nginx/carball-csp.conf}"
 echo "40-carball-config: the game server is $url"

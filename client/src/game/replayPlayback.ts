@@ -3,6 +3,8 @@
 // Online plays the server's plan over its own recording (frames mapped from server ticks), freeplay its own.
 import { Quaternion, Vector3 } from "three";
 import type { GameAudio } from "../audio/audio";
+import type { SoundEvent } from "../audio/detect";
+import { replayState } from "../audio/replayMix";
 import { ReplayCamera } from "../camera/replayCamera";
 import type { BodyState } from "../engine/world";
 import { TICK_RATE } from "../loop/fixedStep";
@@ -15,7 +17,7 @@ import { FlipResetFx } from "../render/flipResetFx";
 import type { Renderer } from "../render/renderer";
 import { replayDilation } from "./goalSequence";
 import { Interpolated } from "./interpolated";
-import type { RecordedCar, RecordedFrame, ReplayRecorder } from "./replayRecorder";
+import { RECORDED_FRAMES, type RecordedCar, type RecordedFrame, type ReplayRecorder } from "./replayRecorder";
 
 /** Camera_TA.ClipToField: the camera stays this far above the floor */
 const GROUND_CLAMP_Z = 10;
@@ -73,6 +75,8 @@ export class ReplayPlayback {
   /** The explosion's colour: Ball_TA.SetExplosionFXActor, the team other than the net's TeamNum */
   readonly #explosionTeam: number;
   #goalShown = false;
+  /** The last recorded frame whose live sounds were played again (null: none yet) */
+  #soundFrame: number | null = null;
   /** Each car's flip-reset count as last drawn, and its effect (made at its first reset in the replay) */
   readonly #flipCounts = new Map<number, number>();
   readonly #flipFx = new Map<number, FlipResetFx>();
@@ -80,14 +84,21 @@ export class ReplayPlayback {
   readonly #rot = new Quaternion();
 
   /** `frameAt`: the recorded frame of a plan tick (online: the client frame consumed at that server tick);
-   *  `netTeamNum`: the TeamNum of the net scored into (a match's: its team's; freeplay's: 1 for both) */
-  constructor(plan: ReplayPlan, recorder: ReplayRecorder, frameAt: (tick: number) => number = (tick) => tick, netTeamNum = plan.scoringTeam === 0 ? 1 : 0) {
+   *  `netTeamNum`: the TeamNum of the net scored into (a match's: its team's; freeplay's: 1 for both); `explosion`: the
+   *  explosion's colour (the net's other team; freeplay's: the player's, the garage's team) */
+  constructor(
+    plan: ReplayPlan,
+    recorder: ReplayRecorder,
+    frameAt: (tick: number) => number = (tick) => tick,
+    netTeamNum = plan.scoringTeam === 0 ? 1 : 0,
+    explosion = explosionTeam(netTeamNum),
+  ) {
     this.plan = plan;
     this.tick = plan.startTick;
     this.#recorder = recorder;
     this.#frameAt = frameAt;
     this.#camera = new ReplayCamera(plan.scoringTeam, netTeamNum);
-    this.#explosionTeam = explosionTeam(netTeamNum);
+    this.#explosionTeam = explosion;
   }
 
   /** Played to its end (the goal + PostGoalTime) */
@@ -107,8 +118,8 @@ export class ReplayPlayback {
     const dilation = replayDilation(plan, this.tick);
     this.tick = Math.min(plan.endTick, this.tick + realSeconds * TICK_RATE * dilation);
     if (!this.#goalShown && this.tick >= plan.goalTick) {
-      this.#goalShown = true; // (TriggerGoalScoreEvent: the goal's effects again)
-      scene.audio.goal();
+      this.#goalShown = true; // (TriggerGoalScoreEvent: the goal's effects again; its explosion's sound, not the horn: RA1 §7)
+      scene.audio.replayGoal();
       const at = this.#recorder.before(Math.floor(this.#frameAt(plan.goalTick)));
       if (at) scene.effects.goal(at.ball.pos, this.#explosionTeam);
       scene.arena.explode();
@@ -131,8 +142,21 @@ export class ReplayPlayback {
     const view = this.#camera.update(realSeconds, { car, ball, carId: car ? (next?.car ?? null) : null }, dilation);
     const clipped = { ...view, position: { ...view.position, z: Math.max(view.position.z, GROUND_CLAMP_Z) } };
     scene.renderer.render(clipped);
-    // (the cars' engines and boosts as replayed, heard from the replay's camera: not the live state the replay began in)
-    if (b) scene.audio.replayFrame(b.cars, clipped);
+    // (the cars' engines and boosts as replayed, heard from the replay's camera: not the live state the replay began in;
+    // the live sounds of the frames it moved past again, and its LiveReplay state: RA1)
+    const sounds = this.#sounds(Math.floor(at));
+    if (b) scene.audio.replayFrame(b.cars, clipped, { sounds, state: replayState(plan, this.tick), seconds: realSeconds });
+  }
+
+  /** The live sounds kept at the recorded frames after the last played, up to `upTo` (from the replay's first frame: what
+   *  sounded before it isn't heard) */
+  #sounds(upTo: number): SoundEvent[] {
+    const from = this.#soundFrame ?? Math.floor(this.#frameAt(this.plan.startTick));
+    this.#soundFrame = Math.max(from, upTo);
+    const out: SoundEvent[] = [];
+    // (a long stall at most the recording's length)
+    for (let f = Math.max(from + 1, upTo - RECORDED_FRAMES); f <= upTo; f++) out.push(...this.#recorder.soundsAt(f));
+    return out;
   }
 
   /** The cars as this frame draws them (replayCarPositions): their nameplates (HT-8, RV-279) */
@@ -159,7 +183,7 @@ export class ReplayPlayback {
       view.update(between.position(alpha, this.#pos), between.rotation(alpha, this.#rot), to.boosting, to.demoed, to.supersonic, seconds, trailGround(to));
       // (a flip reset in the replayed window: its effect on that car, as live, and its sound, by the setting: HUD-19)
       if (resets.has(id)) {
-        if (scene.flipReset.audio) scene.audio.flipReset();
+        if (scene.flipReset.audio) scene.audio.flipReset(to.pos); // (at the car, from the replay's camera: SND-9)
         if (scene.flipReset.visual) {
           let fx = this.#flipFx.get(id);
           if (!fx) {

@@ -57,7 +57,7 @@ echo "== the client's production build, the shipped-data check on it"
 # guard's: the working tree's must stay its own build's)
 mkdir "$SRC/client/node_modules"
 for entry in "$R/client/node_modules"/* "$R/client/node_modules/.bin"; do ln -s "$entry" "$SRC/client/node_modules/"; done
-(cd "$SRC/client" && npm run build && npx vitest run src/render/shippedData.test.ts src/render/shippedNames.test.ts)
+(cd "$SRC/client" && npm run build && node_modules/.bin/vitest run src/render/shippedData.test.ts src/render/shippedNames.test.ts)
 cp -a "$SRC/client/dist" "$STAGE/web/dist"
 cp "$SRC/client/docker/Dockerfile" "$SRC/client/docker/nginx.conf" "$SRC/client/docker/security-headers.conf" "$SRC/client/docker/40-carball-config.sh" "$STAGE/web/"
 
@@ -78,7 +78,7 @@ paths=$(grep -a -c -E "$HOME|$R|/mnt/" "$STAGE/game/carball-server" || true)
 echo "build machine paths in the binary: $paths"
 [ "$paths" = 0 ] || { echo "the binary names the build machine's paths: not built"; exit 1; }
 # (the game image's files through the names guard too: its binary, meshes and Dockerfile, RV-423)
-(cd "$SRC/client" && SHIPPED_GAME_DIR="$STAGE/game" npx vitest run src/render/shippedNames.test.ts)
+(cd "$SRC/client" && SHIPPED_GAME_DIR="$STAGE/game" node_modules/.bin/vitest run src/render/shippedNames.test.ts)
 
 echo "== the accounts service's release binary"
 # (static, no cgo: the image has no C library to match; the build machine's paths trimmed, no build id; offline, the
@@ -89,7 +89,7 @@ cp "$SRC/api/docker/Dockerfile" "$STAGE/api/"
 paths=$(grep -a -c -E "$HOME|$R|/mnt/" "$STAGE/api/carball-api" || true)
 echo "build machine paths in the accounts binary: $paths"
 [ "$paths" = 0 ] || { echo "the accounts binary names the build machine's paths: not built"; exit 1; }
-(cd "$SRC/client" && SHIPPED_API_DIR="$STAGE/api" npx vitest run src/render/shippedNames.test.ts)
+(cd "$SRC/client" && SHIPPED_API_DIR="$STAGE/api" node_modules/.bin/vitest run src/render/shippedNames.test.ts)
 
 echo "== the images"
 # (what each image was built from: the commit, or the working tree on it, RV-398)

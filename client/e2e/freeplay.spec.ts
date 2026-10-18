@@ -233,6 +233,17 @@ test("the map's ambience: no sound sticks out far above the rest, and none is to
   }
 });
 
+test("the replay's swoops are air, not tones: no pitched glide in them (the user's ploop report, 2026-10-18)", async ({ page }) => {
+  await page.goto("/?render=off");
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
+  const tonality = async (sound: string): Promise<number> =>
+    page.evaluate(async (s) => (window as unknown as { carballSoundTonality: (s: string) => Promise<number> }).carballSoundTonality(s), sound);
+  // (each swoop's strongest ridge under 18 dB over its neighbours: band-passed noise reads about 10, a sine glide 40 and
+  // more; a ball hit, with its pitched body, shows the measure finds one)
+  for (const swoop of ["swoopOut", "sloMoStart", "sloMoEnd"]) expect(await tonality(swoop), swoop).toBeLessThan(18);
+  expect(await tonality("ballHit")).toBeGreaterThan(30);
+});
+
 async function playMap(page: Page): Promise<void> {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
@@ -292,12 +303,27 @@ test("a goal in freeplay with goal replays on: the replay plays, Space skips it,
   // (the car's voice follows the replayed car, not the live state the replay began in: user finding 7)
   const audioMode = async (): Promise<string> => page.evaluate(() => (window as unknown as { carballAudio: () => { mode: string } }).carballAudio().mode);
   await expect.poll(audioMode, { timeout: 5_000 }).toBe("replay");
+  // (its sounds, RA1: SwoopOut as it starts, its LiveReplay state, the goal's explosion again without the horn)
+  interface ReplaySounds {
+    played: Record<string, number>;
+    replayState: string;
+  }
+  const replaySounds = async (): Promise<ReplaySounds> => page.evaluate(() => (window as unknown as { carballAudio: () => ReplaySounds }).carballAudio());
+  expect((await replaySounds()).played.swoopOut).toBe(1);
+  expect(["preScore", "slomo", "postGoal"]).toContain((await replaySounds()).replayState);
+  const goalsBefore = (await replaySounds()).played.goal;
+  await expect.poll(async () => (await replaySounds()).played.replayGoal ?? 0, { timeout: 15_000 }).toBe(1);
+  expect((await replaySounds()).replayState).toBe("postGoal");
+  expect((await replaySounds()).played.goal).toBe(goalsBefore);
   // (its key: the Skip Replay binding's, a word for a keyboard key: HT-3, RV-282)
   await expect(page.locator("#replay-prompt .key-glyph.key-word")).toHaveText("Space");
   await page.locator("#game").click({ position: { x: 640, y: 360 }, button: "right" });
   await page.keyboard.press("Space");
   await expect(page.locator("#replay-banner")).toBeHidden({ timeout: 10_000 });
   await expect.poll(audioMode, { timeout: 5_000 }).toBe("live");
+  // (SloMo_End at the skip, the state None again)
+  expect((await replaySounds()).replayState).toBe("none");
+  expect((await replaySounds()).played.sloMoEnd ?? 0).toBeGreaterThanOrEqual(1);
   // The new round straight after, the car at rest on its spot: the skip's Space doesn't make it jump
   await expect.poll(async () => Math.abs((await hook()).pos.y), { timeout: 10_000 }).toBeGreaterThan(2000);
   await page.waitForTimeout(500);

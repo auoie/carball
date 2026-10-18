@@ -2,6 +2,7 @@
 // client frame drew, kept for the longest replay (10 s before the goal + 3 s after, and the replay's own lead).
 // Frames are recorded as the prediction settles them: a server correction that replays older frames records them
 // again, so the recording ends up with the corrected history.
+import type { SoundEvent } from "../audio/detect";
 import type { BodyState, CarState, CarWheels } from "../engine/world";
 
 export interface RecordedCar extends BodyState {
@@ -12,6 +13,10 @@ export interface RecordedCar extends BodyState {
   readonly wheelContact: CarState["wheelContact"];
   /** The engine's flip-reset count (the game's DodgesRefreshedCounter): a replay plays the effect where it goes up */
   readonly flipResets: number;
+  /** The flags that hold until it lands: a replay hears its jumps, double jumps and dodges where they rise (SND-9) */
+  readonly hasJumped: boolean;
+  readonly hasFlipped: boolean;
+  readonly doubleJumped: boolean;
   /** Its wheels as the vehicle had them (their suspension and steering), for a car drawn with its Blender model: its
    *  replay's wheels as live (RV-581); none for the others */
   readonly wheels?: CarWheels;
@@ -28,15 +33,50 @@ export interface RecordedFrame {
 /** 16 s of frames */
 export const RECORDED_FRAMES = 16 * 120;
 
+/** The live sounds a replay hears again at their frames (RA1 §1: the game's replay bodies collide again, so its impacts
+ *  sound again; §8, §9: the pickups and demolitions): the ball's hits and bounces, the cars' landings, impacts and bumps,
+ *  pickups, demolitions. Not the jumps and dodges: the replay finds those in its cars' flags (SND-9) */
+export function replayedSound(event: SoundEvent): boolean {
+  return event.kind !== "jump" && event.kind !== "doubleJump" && event.kind !== "flip";
+}
+
 export class ReplayRecorder {
   readonly #frames: ({ readonly frame: number; readonly state: RecordedFrame } | undefined)[];
+  /** The sounds heard live at each frame (kept apart from the frames: a correction recording a frame again keeps them) */
+  readonly #sounds: ({ readonly frame: number; readonly events: SoundEvent[] } | undefined)[];
+  #newest: number | null = null;
 
   constructor(readonly capacity = RECORDED_FRAMES) {
     this.#frames = new Array<{ frame: number; state: RecordedFrame } | undefined>(capacity);
+    this.#sounds = new Array<{ frame: number; events: SoundEvent[] } | undefined>(capacity);
+  }
+
+  #slot(frame: number): number {
+    return ((frame % this.capacity) + this.capacity) % this.capacity;
   }
 
   record(frame: number, state: RecordedFrame): void {
-    this.#frames[((frame % this.capacity) + this.capacity) % this.capacity] = { frame, state };
+    const slot = this.#slot(frame);
+    this.#frames[slot] = { frame, state };
+    if (this.#sounds[slot]?.frame !== frame) this.#sounds[slot] = undefined; // (a lap on: the old frame's sounds gone)
+    this.#newest = this.#newest === null ? frame : Math.max(this.#newest, frame);
+  }
+
+  /** The sounds a live frame played, kept at the newest frame recorded (those a replay hears again: replayedSound) */
+  sounds(events: readonly SoundEvent[]): void {
+    const frame = this.#newest;
+    const kept = events.filter(replayedSound);
+    if (frame === null || kept.length === 0) return;
+    const slot = this.#slot(frame);
+    const entry = this.#sounds[slot];
+    if (entry?.frame === frame) entry.events.push(...kept);
+    else this.#sounds[slot] = { frame, events: kept };
+  }
+
+  /** The sounds kept at a frame (none: never, or overwritten) */
+  soundsAt(frame: number): readonly SoundEvent[] {
+    const entry = this.#sounds[this.#slot(frame)];
+    return entry?.frame === frame ? entry.events : [];
   }
 
   /** The recorded frame, or undefined (never recorded, or overwritten) */
@@ -93,7 +133,7 @@ export function freeplayTouchTeam(world: Parameters<typeof lastTouchTeam>[0], te
 
 /** A car as a replay keeps it (`wheels`: its vehicle's, for a car whose drawn wheels follow them) */
 export function recordCar(car: CarState, wheels: CarWheels | null = null): RecordedCar {
-  const { pos, vel, angVel, rot, team, boosting, demoed, supersonic, wheelContact, flipResets } = car;
-  const recorded = { pos, vel, angVel, rot, team, boosting, demoed, supersonic, wheelContact, flipResets };
+  const { pos, vel, angVel, rot, team, boosting, demoed, supersonic, wheelContact, flipResets, hasJumped, hasFlipped, doubleJumped } = car;
+  const recorded = { pos, vel, angVel, rot, team, boosting, demoed, supersonic, wheelContact, flipResets, hasJumped, hasFlipped, doubleJumped };
   return wheels ? { ...recorded, wheels } : recorded;
 }

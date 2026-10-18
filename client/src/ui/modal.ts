@@ -93,11 +93,17 @@ export class Modal {
   }
 
   /** A choice: its buttons in order, each closing it and running its own; `focus` the default's index (the pad's and
-   *  Enter's) */
-  choose(title: string, body: string, choices: readonly { readonly label: string; readonly act?: () => void }[], focus = choices.length - 1): void {
+   *  Enter's); `dismiss` the one B and Escape answer (its act run as they close it; none: they only close it) */
+  choose(
+    title: string,
+    body: string,
+    choices: readonly { readonly label: string; readonly act?: () => void }[],
+    focus = choices.length - 1,
+    dismiss?: number,
+  ): void {
     this.#title.textContent = title;
     this.#body.textContent = body;
-    this.#onClose = null;
+    this.#onClose = (dismiss === undefined ? undefined : choices[dismiss]?.act) ?? null;
     this.#onYes = null;
     this.#ok.hidden = this.#yes.hidden = this.#no.hidden = true;
     delete this.#ok.dataset["padDefault"];
@@ -108,6 +114,7 @@ export class Modal {
       b.textContent = c.label;
       if (i === focus) b.dataset["padDefault"] = "";
       b.addEventListener("click", () => {
+        this.#onClose = null; // (its own act alone, not the dismissal's too)
         this.close();
         c.act?.();
       });

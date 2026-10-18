@@ -37,22 +37,33 @@ type Client struct {
 
 	mu       sync.Mutex
 	provider *oidc.Provider
+	// (the last discovery's failure and when: others fail at once for a while, not each waiting on Google: AP-17)
+	failed   error
+	failedAt time.Time
 }
 
-// (the issuer's discovery document, read once it's first needed: a start-up never waits on Google)
-func (c *Client) discover(ctx context.Context) (*oidc.Provider, error) {
+// discoveryRetry: how long a failed discovery answers for itself before Google's asked again
+const discoveryRetry = 30 * time.Second
+
+// (the issuer's discovery document, read once it's first needed: a start-up never waits on Google; on its own context,
+// not a request's, so a client leaving doesn't fail it for everyone)
+func (c *Client) discover() (*oidc.Provider, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.provider != nil {
 		return c.provider, nil
 	}
-	ctx, cancel := context.WithTimeout(oidc.ClientContext(ctx, c.HTTP), 10*time.Second)
+	if c.failed != nil && time.Since(c.failedAt) < discoveryRetry {
+		return nil, c.failed
+	}
+	ctx, cancel := context.WithTimeout(oidc.ClientContext(context.Background(), c.HTTP), 10*time.Second)
 	defer cancel()
 	p, err := oidc.NewProvider(ctx, c.Issuer)
 	if err != nil {
-		return nil, fmt.Errorf("google: discovery: %w", err)
+		c.failed, c.failedAt = fmt.Errorf("google: discovery: %w", err), time.Now()
+		return nil, c.failed
 	}
-	c.provider = p
+	c.provider, c.failed = p, nil
 	return p, nil
 }
 
@@ -67,8 +78,8 @@ func (c *Client) config(p *oidc.Provider) *oauth2.Config {
 }
 
 // AuthURL is where a sign-in sends the browser, bound to this flow's state, nonce and PKCE verifier
-func (c *Client) AuthURL(ctx context.Context, state, nonce, verifier string) (string, error) {
-	p, err := c.discover(ctx)
+func (c *Client) AuthURL(state, nonce, verifier string) (string, error) {
+	p, err := c.discover()
 	if err != nil {
 		return "", err
 	}
@@ -77,7 +88,7 @@ func (c *Client) AuthURL(ctx context.Context, state, nonce, verifier string) (st
 
 // Exchange trades the callback's code for the ID token, verifies it, and returns its subject
 func (c *Client) Exchange(ctx context.Context, code, verifier, nonce string) (string, error) {
-	p, err := c.discover(ctx)
+	p, err := c.discover()
 	if err != nil {
 		return "", err
 	}

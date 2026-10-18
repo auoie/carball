@@ -36,19 +36,23 @@ or git-ignored gets in; with `--worktree`, the working tree's files that are com
 There it builds the engine's WebAssembly (Emscripten), the client (`npm run build`, then the shipped-data check on what it
 built) and the server (`cargo build --release --offline` in `out/images/target`, whatever `CARGO_TARGET_DIR` says: a
 development server's binary is left alone; no debug info, symbols stripped, the build machine's paths remapped), stages
-each image's files alone under `out/images/<TAG>-<time>/{web,game}` (the repo's `out/` holds local-only data and is never
+each image's files alone under `out/images/<TAG>-<time>/{web,game,api}` (the repo's `out/` holds local-only data and is never
 a build context), and runs `docker build -t carball-web:TAG …/web`, `docker build -t carball-game:TAG …/game` and
 `docker build -t carball-api:TAG …/api` (the accounts service: `go build` offline from the module cache, static,
-`-trimpath`, stripped; its staged files through the same names check). Both
+`-trimpath`, stripped; its staged files through the same names check). The
 bases are pinned by digest (update a base's tag and digest together). Then:
 ```sh
 docker save carball-web:TAG | gzip > carball-web-TAG.tar.gz       # on the host: docker load < carball-web-TAG.tar.gz
 docker save carball-game:TAG | gzip > carball-game-TAG.tar.gz
+docker save carball-api:TAG | gzip > carball-api-TAG.tar.gz
 docker tag carball-web:TAG REGISTRY/carball-web:TAG && docker push REGISTRY/carball-web:TAG    # or a registry
 docker tag carball-game:TAG REGISTRY/carball-game:TAG && docker push REGISTRY/carball-game:TAG
+docker tag carball-api:TAG REGISTRY/carball-api:TAG && docker push REGISTRY/carball-api:TAG
 ```
 Client and server must come from the same commit (the protocol version is checked at the handshake: an older page is
-refused with a message to reload). **Deploy the game image first, then the web image right after:** with the web image
+refused with a message to reload). **Deploy in this order (notes/accounts.md §8): the database, the API (its migrations,
+then the service: the game server's `TICKET_PUBLIC_KEYS` names its ticket key), the game image, then the web image right
+after.** For the last two: with the web image
 first, an open page from before whose search finds a match in the gap loads the newer match page, which the older server
 refuses, recording a no-show and cancelling its players' match; with the game image first, the older pages' searches and
 claims are refused cleanly with the reload message until they reload (RV-442). Rolling the web image back to before 48388aa (the browser storage's keys renamed, moved over
@@ -67,7 +71,8 @@ they change there is lost when the newer page returns (RV-425; `client/src/setti
   or `/config.json` is a 404 (one under `/bots/` `no-cache` too, RV-553); any other unknown path serves `index.html`
   (RV-537). Every response carries
   `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY` and a
-  Content-Security-Policy (this origin only, but the game server's origin from `GAME_SERVER_URL`; `frame-ancestors
+  Content-Security-Policy (this origin only, but the game server's origin from `GAME_SERVER_URL` and Cloudflare
+  Turnstile's `https://challenges.cloudflare.com` in `script-src` and `frame-src`, the sign-up's check; `frame-ancestors
   'none'`; no eval; WebAssembly compiled, `'wasm-unsafe-eval'`: the engine, the bots' match host and onnxruntime; workers
   from this origin: a match against bots runs in one, onnxruntime on one thread, so no cross-origin isolation is needed).
   Redirects are relative (a directory's trailing slash), so nothing names the container's port behind the tunnel. The
@@ -80,7 +85,7 @@ they change there is lost when the newer page returns (RV-425; `client/src/setti
   buffers under `/tmp` and `/var/cache/nginx`. The root filesystem must be writable (`--read-only` stops it: the start
   can't write those two files). (The base image's `EXPOSE 8080` stays in its metadata: the server listens on 3000 only.)
 - **Labels:** `org.opencontainers.image.title`, `.revision` (the commit) and `.version` (the tag), and `carball.source`:
-  `commit`, or `worktree` for an image built with `--worktree` (both images).
+  `commit`, or `worktree` for an image built with `--worktree` (every image).
 - **Volumes:** none.
 - **Health:** `GET /healthz` → `200 ok` (the image's `HEALTHCHECK` uses it).
 - **Resources:** ~10 MB RAM, negligible CPU; a first visit loads ~2.1 MB of files (~0.75 MB gzipped). The site is ~26 MB:
@@ -101,6 +106,7 @@ they change there is lost when the newer page returns (RV-425; `client/src/setti
 | `KEY_PATH` | `/certs/privkey.pem` | its private key (PEM); a key that isn't the certificate's is refused (the old pair stays, tried again) |
 | `SERVER_MODE` | `queue` | `queue`: the 1v1 / 2v2 / 3v3 queue (searches and claims only); `direct`: one open match (development) |
 | `HEALTH_PORT` | `8081` | the health endpoint, on 127.0.0.1 inside the container only |
+| `TICKET_PUBLIC_KEYS` | (none) | the search tickets' public keys (notes/accounts.md §3): `KID BASE64` each (the line `carball-api ticket-key KID` prints), comma- or newline-separated, the API's current key among them (two while it rotates). Required in queue mode (empty or blank, the server refuses to start; `--dev` makes a key of its own); a search or claim without a ticket signed by one of them, in its time and not used before, is refused (`Refused` 4) |
 | `MESHES_DIR` | `/app/collision_meshes` | the arena's collision meshes (in the image; keep the default: the image's own): a folder whose `arena/` holds the arena's 16 meshes in this image's format, the 4 goal halves placed by their offset. Anything else (empty, the old `soccar/` layout, a partial copy, meshes from before 8f78a1a, a truncated file) stops the server at start, saying what's wrong (RV-421, RV-434) |
 
 A development run of the image takes `--dev`: a self-signed certificate made at start whatever `CERT_PATH` and `KEY_PATH`
@@ -109,7 +115,8 @@ the same port): `docker run --rm -e GAME_PORT=14502 -p 127.0.0.1:14502:14502/udp
 -e ALLOWED_ORIGIN=http://localhost:13000 carball-game:TAG --dev --info-bind 0.0.0.0`, the page opened with
 `?queue=localhost:14503` (a web container for it run with `-e GAME_SERVER_URL=https://localhost:14502/play
 -e "EXTRA_CONNECT_SRC=http://127.0.0.1:14503 https://127.0.0.1:14502"`: the page reaches a development server on
-`localhost` at 127.0.0.1).
+`localhost` at 127.0.0.1). Its searches' tickets are its own: `--dev` makes a signing key at start (beside any
+`TICKET_PUBLIC_KEYS`) and the info endpoint signs a ticket for a page that asks (`/dev-ticket`), with no sign-in.
 
 - **Ports:** 4433/udp only. Nothing listens on TCP outside the container (the health endpoint is 127.0.0.1; the
   development info server is off with a certificate).
@@ -150,55 +157,92 @@ The accounts service (notes/accounts.md). **Nothing is deployed yet: the first d
 | Env | Default in the image | |
 |---|---|---|
 | `LISTEN_ADDR` | `:8080` | the HTTP listener (plain HTTP: TLS is the tunnel's) |
-| `PUBLIC_ORIGIN` | `https://carball.zolt.top` | the site's origin: every write's `Origin` must be it; the redirect URIs and Steam's realm are under it. https only (`http://localhost…` with `--dev` alone) |
+| `HEALTH_ADDR` | `127.0.0.1:8081` | the health check's own listener, loopback only (a non-loopback one is refused): never reachable through the tunnel |
+| `TRUSTED_PROXIES` | (required; `--dev`: optional) | the tunnel connector's address as the API sees it (CIDRs or single addresses, comma-separated), whose `CF-Connecting-IP` is believed: `127.0.0.1/32,::1/128` when cloudflared and the API share the host's network (`--network host`); the Docker network's subnet, e.g. `172.18.0.0/16`, when cloudflared is a container on the API's network. (cloudflared on the host and the API's port published on `127.0.0.1`: the API sees the Docker network's gateway, e.g. `172.18.0.1/32`, `docker network inspect` shows it.) From anyone else the header is ignored and the connection's address is the rate limits' key. Unset, the service refuses to start (behind the tunnel every user would share the connector's key); it logs the list at start, and a header ignored from an untrusted peer is warned of once per kind of peer (loopback, private, public; never the address): that warning behind the tunnel means the value is wrong |
+| `PUBLIC_ORIGIN` | `https://carball.zolt.top` | the site's origin: every write's `Origin` must be it; the redirect URIs and Steam's realm are under it. https only; `--dev` takes a localhost origin and no other (http allowed) |
 | `DATABASE_URL` | (required) | the service's role, rows only (e.g. `postgres://carball_app@db:5432/carball`); **no password in it** (refused) |
 | `DATABASE_PASSWORD_FILE` | | that role's password |
-| `MIGRATE_DATABASE_URL` | (none) | the schema owner's role: when set, the migrations run at start (one process at a time), then grant `DATABASE_URL`'s role its tables' rows and nothing else. No password in it |
-| `MIGRATE_DATABASE_PASSWORD_FILE` | | the owner's password |
+| `MIGRATE_DATABASE_URL` | (none) | `carball-api migrate` alone: the schema owner's role, the migrations run as it (one process at a time), then `DATABASE_URL`'s role granted its tables' rows and nothing else (the same role for both refused). `serve` never migrates: the serving container never holds the owner's password. No password in it |
+| `MIGRATE_DATABASE_PASSWORD_FILE` | | the owner's password (`migrate`'s run only) |
 | `GOOGLE_CLIENT_ID` | (none) | Google sign-in, with `GOOGLE_CLIENT_SECRET_FILE`; neither: Google sign-in off (logged). Redirect URI to register: `PUBLIC_ORIGIN/api/auth/google/callback` |
 | `GOOGLE_CLIENT_SECRET_FILE` | | its secret |
 | `STEAM_WEB_API_KEY_FILE` | (none) | optional: a Steam sign-up's suggested name from the persona (else a guest-style one). Steam sign-in itself needs no key: realm `PUBLIC_ORIGIN`, return URL `PUBLIC_ORIGIN/api/auth/steam/callback` |
 | `TURNSTILE_SITE_KEY` | (required) | Turnstile's site key (public: the page's sign-up widget gets it from `GET /api/signup`) |
 | `TURNSTILE_SECRET_FILE` | (required) | its secret (sign-up's siteverify, its hostname `PUBLIC_ORIGIN`'s, action `signup`) |
-| `DELETION_HMAC_KEY_FILE` | (required) | 32 bytes or more of random: keys the delete/re-create rule's records (30 days). Changing it forgets them |
+| `TICKET_KEY_ID` | (required) | the search tickets' key's id (1-32 characters, no spaces): the game server finds the public key by it |
+| `TICKET_SIGNING_KEY_FILE` | (required) | that key's seed (32 bytes, base64: `carball-api ticket-key KID` prints a new one, its public line for the game server's `TICKET_PUBLIC_KEYS` on stderr) |
+| `DELETION_HMAC_KEY_FILE` | (required) | 32 characters or more of random text (e.g. `openssl rand -base64 48`: a trailing newline is dropped, so not raw bytes): keys the delete/re-create rule's records (30 days). Changing it forgets them |
 
-- **Ports:** 8080/tcp, plain HTTP, **never published**: only cloudflared reaches it, on their shared docker network. The
-  service trusts `CF-Connecting-IP` for its rate limits because nothing else can reach it; a published port would let
-  anyone set that header.
-- **Routes:** everything under `/api/` (the tunnel's path rule `^/api/` to `http://carball-api:8080`, or the web
-  container proxying it; the path kept as it is). Same origin as the page: its cookies are `__Host-` (Secure, Path=/, no
-  Domain), so the page must be https (http on localhost in development).
-- **Database:** Postgres (13 or later: `gen_random_uuid()`; tested with 18), on the same private network, never exposed. Two roles: the
-  schema's owner (migrations) and the service's (rows only). Encrypted backups off the box (notes/accounts.md §2).
+- **Ports:** 8080/tcp, plain HTTP, **never published to the internet**: only cloudflared reaches it (with cloudflared a
+  container on the API's network, not published at all; with cloudflared on the host, published on loopback only,
+  `-p 127.0.0.1:8080:8080`). `CF-Connecting-IP` counts only from `TRUSTED_PROXIES`; the health check listens on
+  `HEALTH_ADDR`, loopback inside the container.
+- **Routes:** the tunnel routes `https://carball.zolt.top/api/*` to the API (its path rule `^/api/` to
+  `http://carball-api:8080`, or `http://127.0.0.1:8080` from the host; the path kept as it is) and everything else to
+  the web container. Not through the web container's nginx: it stays static, and the API trusts one hop (cloudflared's)
+  for the client's address instead of two. The web image answers `/api/` with a 404 (`no-store`), so a missing tunnel
+  rule shows as a 404 there, never the page as JSON. Same origin as the page: its cookies are `__Host-` (Secure, Path=/,
+  no Domain), so the page must be https (http on localhost in development).
+- **Database:** Postgres 15 or later (tested with 18), on the same private network, never exposed. Two roles: the
+  schema's owner (`carball-api migrate`, a one-shot run before each new image) and the service's (rows only: `serve`
+  refuses to start if its role may create in the schema). Encrypted backups off the box (notes/accounts.md §2). Start
+  the database first: `serve` waits up to a minute for it, then exits (restarted by the policy).
 - **Outbound:** https to Google (`accounts.google.com`, `oauth2.googleapis.com`, `www.googleapis.com`), Steam
   (`steamcommunity.com`, `api.steampowered.com`) and Cloudflare (`challenges.cloudflare.com`), each call with a 10 s
   limit. The root certificates are built into the binary (the image has no bundle).
 - **User:** uid 10002. **Volumes:** none (the secrets' files mounted read-only). Its root filesystem can be read-only
   (`--read-only`: it writes nothing).
-- **Health:** `carball-api healthcheck` (the image's `HEALTHCHECK`, every 15 s): `GET /api/healthz` on its own port, 200
-  while the database answers, else 503.
+- **Health:** `carball-api healthcheck` (the image's `HEALTHCHECK`, every 15 s): `GET /healthz` on `HEALTH_ADDR` (loopback,
+  not under `/api/`), 200 while the database answers, else 503.
 - **Logs:** stderr, one line a request: method, path, status, time. **Never the query string** (a sign-in's callback
   carries its code and assertion) **nor the client's address** (notes/accounts.md AC-15). Configure cloudflared's and any
   proxy's access logs likewise.
-- **Housekeeping:** hourly, in the process: expired sessions, sign-in flows, sign-ups and Steam nonces purged; the
-  delete/re-create rule's records after their 30 days.
+- **Housekeeping:** in the process: hourly, expired sessions, sign-in flows, sign-ups and Steam nonces purged, the
+  delete/re-create rule's records after their 30 days; every minute, the rate limits' idle keys forgotten (each limit
+  holds 200,000 keys at most, the longest idle forgotten past that). Open sign-ins and sign-ups have ceilings (20,000 and
+  5,000, everyone's): past them new ones are refused as busy.
 - **The admin's commands** (bans: notes/accounts.md §4), with the same `DATABASE_URL` and password file:
   `docker exec carball-api /app/carball-api accounts NAME` (accounts whose name holds NAME, with their identities),
   `… ban --account ID --reason TEXT --by NAME [--for 72h | --until 2026-12-01]` (or `--identity steam:<SteamID64>`;
   every identity of the account, signed out everywhere), `… unban --account ID`, `… bans`.
 - **Stop:** SIGTERM or SIGINT: requests in flight finish (10 s at most).
+- **Search tickets** (`POST /api/ticket`, notes/accounts.md §3): a signed-in account's, two minutes long, a nonce each;
+  the game server checks them offline with `TICKET_PUBLIC_KEYS`. **Rotating the key:** make a new one
+  (`carball-api ticket-key k2`), add its public line to the game server's `TICKET_PUBLIC_KEYS` beside the old and
+  restart it, then switch the API to the new id and seed, and drop the old line once its last tickets have run out (two
+  minutes on).
 
 ```sh
+# the migrations, once per new image, as the schema's owner (its password in this run only)
+docker run --rm --network carball \
+  -e MIGRATE_DATABASE_URL=postgres://carball_owner@carball-db:5432/carball \
+  -e MIGRATE_DATABASE_PASSWORD_FILE=/run/secrets/db_owner_password -e DATABASE_URL=postgres://carball_app@carball-db:5432/carball \
+  -v /path/to/owner-secret:/run/secrets:ro carball-api:TAG migrate
+# the service, as its rows-only role; cloudflared a container on the carball network (172.18.0.0/16 here), so no port
+# published (cloudflared on the host instead: -p 127.0.0.1:8080:8080 and TRUSTED_PROXIES the network's gateway, /32)
 docker run -d --name carball-api --restart unless-stopped --network carball --read-only \
   -e DATABASE_URL=postgres://carball_app@carball-db:5432/carball -e DATABASE_PASSWORD_FILE=/run/secrets/db_password \
-  -e MIGRATE_DATABASE_URL=postgres://carball_owner@carball-db:5432/carball \
-  -e MIGRATE_DATABASE_PASSWORD_FILE=/run/secrets/db_owner_password \
+  -e TRUSTED_PROXIES=172.18.0.0/16 \
   -e GOOGLE_CLIENT_ID=… -e GOOGLE_CLIENT_SECRET_FILE=/run/secrets/google_client_secret \
   -e TURNSTILE_SITE_KEY=… -e TURNSTILE_SECRET_FILE=/run/secrets/turnstile_secret \
+  -e TICKET_KEY_ID=k1 -e TICKET_SIGNING_KEY_FILE=/run/secrets/ticket_key \
   -e DELETION_HMAC_KEY_FILE=/run/secrets/deletion_key -v /path/to/secrets:/run/secrets:ro carball-api:TAG
 ```
 
 ## Checked (2026-10-15, Docker 29.9 on the development VM; again for every change to the images or this contract)
+
+2026-10-18 (the working tree on ee08521, protocol 26, accounts step 2: `scripts/build_images.sh --worktree step2c`):
+the three images built, no build machine's paths in either binary, the names guard over each image's files. Run on a
+throwaway network, 27 checks passed:
+- web: the policy's `script-src` and `frame-src` with Turnstile's origin, `connect-src` the game server's;
+  `/api/me`, `/api/healthz`, `/api/auth/google/start` a 404 with `no-store` and the security headers; `/privacy.html`,
+  `/config.json` and a route the page's.
+- game: refused without `TICKET_PUBLIC_KEYS` or with it blank (queue mode, no `--dev`); healthy with it and a
+  certificate mounted; `--dev` starting without keys.
+- api:
+  - `migrate` as the owner's role; refused without `TRUSTED_PROXIES`;
+  - healthy with the network's subnet, its list logged; `/api/me` a 401 from a container on the network, no warning;
+  - with a wrong list, the one warning naming the peer's kind (private), no address in the log; `healthcheck` exit 0.
 
 2026-10-17 (3c8622b, protocol 25; the static session's review RX23): both images built from `scripts/build_images.sh`
 (the pinned base images by digest, built offline) and run on 127.0.0.1: the game container healthy, a 1v1 through it
@@ -225,6 +269,6 @@ locally, see `CERT_PATH`).
 docker run -d --name carball-web --restart unless-stopped -p 127.0.0.1:3000:3000 \
   -e GAME_SERVER_URL=https://game.carball.zolt.top:4433/play carball-web:TAG
 docker run -d --name carball-game --restart unless-stopped -p 0.0.0.0:4433:4433/udp \
-  -v /path/to/certs:/certs:ro carball-game:TAG
+  -e "TICKET_PUBLIC_KEYS=k1 BASE64PUBLICKEY" -v /path/to/certs:/certs:ro carball-game:TAG
 # the server's flags go after the image name, e.g. carball-game:TAG --max-per-address 16
 ```

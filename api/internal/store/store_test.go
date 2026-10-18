@@ -22,7 +22,7 @@ func open(t *testing.T) (*store.Store, string, string) {
 	t.Helper()
 	owner, app := testdb.New(t)
 	ctx := context.Background()
-	if err := store.Migrate(ctx, owner, "", testdb.AppRole); err != nil {
+	if err := store.Migrate(ctx, owner, "", testdb.AppRole, false); err != nil {
 		t.Fatal(err)
 	}
 	s, err := store.Open(ctx, app, "")
@@ -37,7 +37,7 @@ func TestMigrateAndGrants(t *testing.T) {
 	_, owner, app := open(t)
 	ctx := context.Background()
 	// (again: nothing to do)
-	if err := store.Migrate(ctx, owner, "", testdb.AppRole); err != nil {
+	if err := store.Migrate(ctx, owner, "", testdb.AppRole, false); err != nil {
 		t.Fatalf("migrating again: %v", err)
 	}
 	conn, err := pgx.Connect(ctx, app)
@@ -61,6 +61,26 @@ func TestMigrateAndGrants(t *testing.T) {
 	}
 	if role, err := store.AppRole(app); err != nil || role != testdb.AppRole {
 		t.Errorf("AppRole = %q, %v", role, err)
+	}
+	// (the same role for both: refused, unless development's; the service's may create nothing, the owner may: AP-4, AP-5)
+	if err := store.Migrate(ctx, owner, "", testdb.OwnerRole, false); !errors.Is(err, store.ErrSameRole) {
+		t.Errorf("one role for both: %v", err)
+	}
+	if err := store.Migrate(ctx, owner, "", testdb.OwnerRole, true); err != nil {
+		t.Errorf("one role for both, development's: %v", err)
+	}
+	for _, c := range []struct {
+		url  string
+		want bool
+	}{{app, false}, {owner, true}} {
+		s, err := store.Open(ctx, c.url, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if can, err := s.CanCreate(ctx); err != nil || can != c.want {
+			t.Errorf("CanCreate (%s) = %v, %v; want %v", c.url, can, err, c.want)
+		}
+		s.Close()
 	}
 }
 
@@ -212,6 +232,19 @@ func TestSessions(t *testing.T) {
 	if _, found, _ := s.SessionByToken(ctx, []byte("b"), day); found {
 		t.Error("signing out by the previous token left the session")
 	}
+	// (a ban in force on the account: no session of it opens, even one made after the ban (a sign-in racing it: AP-3))
+	if _, err := s.BanIdentity(ctx, store.Identity{Provider: store.Google, Subject: "sub-s"}, "x", "admin", store.Until{At: day.Add(time.Hour)}, day); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateSession(ctx, []byte("late"), id, day, end); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, _ := s.SessionByToken(ctx, []byte("late"), day); found {
+		t.Error("a banned account's session opened")
+	}
+	if _, found, _ := s.SessionByToken(ctx, []byte("late"), day.Add(2*time.Hour)); !found {
+		t.Error("the session refused after the ban's end")
+	}
 }
 
 func TestBans(t *testing.T) {
@@ -288,10 +321,31 @@ func TestFlowsNoncesAndPurge(t *testing.T) {
 	if fresh, _ := s.UseNonce(ctx, "nonce", t0.Add(6*time.Minute)); fresh {
 		t.Error("a nonce used twice")
 	}
+	// (kept until its time: a purge before it leaves it, the replay still refused; after it, gone)
+	if err := s.Purge(ctx, t0.Add(5*time.Minute), t0); err != nil {
+		t.Fatal(err)
+	}
+	if fresh, _ := s.UseNonce(ctx, "nonce", t0.Add(6*time.Minute)); fresh {
+		t.Error("a nonce purged before its time: replayable")
+	}
 	if err := s.Purge(ctx, t0.Add(7*time.Minute), t0); err != nil {
 		t.Fatal(err)
 	}
 	if fresh, _ := s.UseNonce(ctx, "nonce", t0.Add(20*time.Minute)); !fresh {
 		t.Error("an expired nonce not purged")
+	}
+	// (the open flows and sign-ups counted, the expired ones not: the ceilings', AP-2)
+	if err := s.CreateFlow(ctx, store.Flow{IDHash: []byte("open"), Provider: store.Steam, State: "s", ExpiresAt: t0.Add(10 * time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.OpenFlows(ctx, t0); err != nil || n != 1 {
+		t.Errorf("OpenFlows = %d, %v", n, err)
+	}
+	if n, _ := s.OpenFlows(ctx, t0.Add(11*time.Minute)); n != 0 {
+		t.Errorf("OpenFlows past the end = %d", n)
+	}
+	pending(t, s, store.Google, "sub-count", t0)
+	if n, err := s.OpenSignups(ctx, t0); err != nil || n != 1 {
+		t.Errorf("OpenSignups = %d, %v", n, err)
 	}
 }

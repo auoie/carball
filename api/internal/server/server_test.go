@@ -3,6 +3,11 @@ package server_test
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +15,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"os"
 	"regexp"
@@ -18,12 +24,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"carball/api/internal/google"
 	"carball/api/internal/server"
 	"carball/api/internal/steam"
 	"carball/api/internal/store"
 	"carball/api/internal/testdb"
 	"carball/api/internal/testoidc"
+	"carball/api/internal/ticket"
 	"carball/api/internal/turnstile"
 )
 
@@ -63,6 +72,8 @@ type env struct {
 	steamURL string
 	clock    *clock
 	logs     *bytes.Buffer
+	// owner is the database's owner's URL (the tests' look at the rows themselves)
+	owner string
 }
 
 // (a made-up SteamID64)
@@ -72,7 +83,7 @@ func setup(t *testing.T, limits *server.Limits) *env {
 	t.Helper()
 	owner, app := testdb.New(t)
 	ctx := context.Background()
-	if err := store.Migrate(ctx, owner, "", testdb.AppRole); err != nil {
+	if err := store.Migrate(ctx, owner, "", testdb.AppRole, false); err != nil {
 		t.Fatal(err)
 	}
 	db, err := store.Open(ctx, app, "")
@@ -80,7 +91,7 @@ func setup(t *testing.T, limits *server.Limits) *env {
 		t.Fatal(err)
 	}
 	t.Cleanup(db.Close)
-	e := &env{t: t, db: db, google: testoidc.New(t, "our-client", "our-secret"), steam: &fakeSteam{},
+	e := &env{t: t, db: db, owner: owner, google: testoidc.New(t, "our-client", "our-secret"), steam: &fakeSteam{},
 		clock: &clock{at: time.Now().UTC().Truncate(time.Second)}, logs: &bytes.Buffer{}}
 
 	steamSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -102,11 +113,18 @@ func setup(t *testing.T, limits *server.Limits) *env {
 	}))
 	t.Cleanup(turnstileSrv.Close)
 
+	// (the tests' connections come from loopback: trusted as cloudflared, so their CF-Connecting-IP counts)
 	e.s = &server.Server{Store: db, DeletionKey: bytes.Repeat([]byte("k"), 32), Now: e.clock.Now,
-		Log: slog.New(slog.NewTextHandler(&lockedWriter{w: e.logs}, nil)), TurnstileSiteKey: "site-key"}
+		TrustedProxies: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")},
+		Log:            slog.New(slog.NewTextHandler(&lockedWriter{w: e.logs}, nil)), TurnstileSiteKey: "site-key"}
 	if limits != nil {
 		e.s.SetLimits(*limits)
 	}
+	signer, err := ticket.NewSigner("test", "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.s.Tickets = signer
 	e.srv = httptest.NewTLSServer(e.s.Handler())
 	t.Cleanup(e.srv.Close)
 	e.s.Origin = e.srv.URL
@@ -350,6 +368,23 @@ func TestCallbacksBoundToTheBrowser(t *testing.T) {
 	if got := e.page(e.get(attacker, e.steamAssertion(login, "n3"))); got.Get("signin") != "failed" {
 		t.Errorf("an assertion for another flow: %v", got)
 	}
+	// (the right browser, its own Steam flow, the assertion's return_to right but the callback's flow another: refused
+	// (AP1's AC1-steam-flow-unchecked))
+	login = e.get(attacker, "/api/auth/steam/start").Header.Get("Location")
+	if got := e.page(e.get(attacker, strings.Replace(e.steamAssertion(login, "n4"), "?flow=", "?flow=other&was=", 1))); got.Get("signin") != "failed" {
+		t.Errorf("a callback's flow not its cookie's: %v", got)
+	}
+	// (a Google flow's state at Steam's callback, its return_to made for it: the flow's provider checked (AP1's
+	// AC1-flow-provider-unchecked))
+	googleStart, err := url.Parse(e.get(attacker, "/api/auth/google/start").Header.Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := googleStart.Query().Get("state")
+	forged := "https://steam.example/login?openid.return_to=" + url.QueryEscape(e.srv.URL+"/api/auth/steam/callback?flow="+state)
+	if got := e.page(e.get(attacker, e.steamAssertion(forged, "n5"))); got.Get("signin") != "failed" {
+		t.Errorf("a Google flow at Steam's callback: %v", got)
+	}
 	if e.steam.called != 0 {
 		t.Errorf("Steam asked %d times for callbacks refused here", e.steam.called)
 	}
@@ -393,7 +428,7 @@ func TestSessionRotation(t *testing.T) {
 	e.googleSignIn(b, "sub-r")
 	e.signUp(b, "Rotating")
 	u, _ := url.Parse(e.srv.URL)
-	first := b.Jar.Cookies(u)[0].Value
+	first := sessionToken(b, u)
 	with := func(token string) int {
 		c := &http.Client{Transport: b.Transport, Timeout: 5 * time.Second}
 		return e.get(c, "/api/me", "Cookie", "__Host-cb_session="+token).StatusCode
@@ -404,7 +439,7 @@ func TestSessionRotation(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("a day later: %d", resp.StatusCode)
 	}
-	second := b.Jar.Cookies(u)[0].Value
+	second := sessionToken(b, u)
 	if second == first {
 		t.Fatal("no rotation after a day")
 	}
@@ -455,6 +490,8 @@ func TestBannedIdentity(t *testing.T) {
 	b := e.browser()
 	e.googleSignIn(b, "sub-b")
 	account := e.signUp(b, "Banned")
+	u, _ := url.Parse(e.srv.URL)
+	old := sessionToken(b, u)
 	until := e.clock.Now().Add(72 * time.Hour)
 	if _, err := e.db.BanAccount(context.Background(), account["id"].(string), "abuse", "admin", store.Until{At: until}, e.clock.Now()); err != nil {
 		t.Fatal(err)
@@ -466,6 +503,11 @@ func TestBannedIdentity(t *testing.T) {
 		t.Errorf("a banned identity's sign-in: %v", q)
 	}
 	e.clock.Add(73 * time.Hour)
+	// (the ban over: the sessions it ended stay ended, the old token too (AP1's AC8-ban-keeps-sessions))
+	c := &http.Client{Transport: b.Transport, Timeout: 5 * time.Second}
+	if e.get(c, "/api/me", "Cookie", "__Host-cb_session="+old).StatusCode != http.StatusUnauthorized {
+		t.Error("the ban's end brought its account's old session back")
+	}
 	if q := e.googleSignIn(b, "sub-b"); len(q) != 0 {
 		t.Errorf("after the ban: %v", q)
 	}
@@ -559,26 +601,371 @@ func TestLogsKeepNoQueryOrAddress(t *testing.T) {
 	}
 }
 
+// A CF-Connecting-IP from a peer outside TRUSTED_PROXIES (the tunnel's connector left out): warned of once for each kind
+// of peer, never its address; from the trusted peer, nothing
+func TestUntrustedForwardWarned(t *testing.T) {
+	e := setup(t, nil)
+	h := e.s.Handler()
+	call := func(remote string) {
+		r := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/me", nil)
+		r.RemoteAddr = remote
+		r.Header.Set("CF-Connecting-IP", "203.0.113.50")
+		h.ServeHTTP(httptest.NewRecorder(), r)
+	}
+	call("127.0.0.1:5000")
+	call("172.18.0.9:5000")
+	call("172.18.0.10:5000")
+	call("198.51.100.9:5000")
+	logs := e.logs.String()
+	if n := strings.Count(logs, "outside TRUSTED_PROXIES"); n != 2 {
+		t.Errorf("%d warnings, want 2 (private once, public once): %s", n, logs)
+	}
+	if !strings.Contains(logs, "peer=private") || !strings.Contains(logs, "peer=public") {
+		t.Errorf("the peers' kinds not named: %s", logs)
+	}
+	for _, addr := range []string{"172.18.0.9", "198.51.100.9", "203.0.113.50"} {
+		if strings.Contains(logs, addr) {
+			t.Errorf("an address in the log: %s", addr)
+		}
+	}
+}
+
 func TestHealthAndHeaders(t *testing.T) {
 	e := setup(t, nil)
-	resp := e.get(e.browser(), "/api/healthz")
-	if resp.StatusCode != http.StatusOK || string(resp.Body) != "ok\n" {
-		t.Errorf("healthz: %d %q", resp.StatusCode, resp.Body)
+	// (the health check on its own handler, the loopback listener's; not under /api/: AP-6)
+	rec := httptest.NewRecorder()
+	e.s.HealthHandler().ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/healthz", nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "ok\n" {
+		t.Errorf("healthz: %d %q", rec.Code, rec.Body.String())
 	}
+	if resp := e.get(e.browser(), "/api/healthz"); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("/api/healthz through the tunnel: %d", resp.StatusCode)
+	}
+	resp := e.get(e.browser(), "/api/me")
 	for k, v := range map[string]string{"Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Frame-Options": "DENY"} {
 		if resp.Header.Get(k) != v {
 			t.Errorf("%s: %q", k, resp.Header.Get(k))
 		}
 	}
-	// (the cookies: __Host-, Secure, HttpOnly, Lax, Path=/, no Domain)
-	start := e.get(e.browser(), "/api/auth/google/start")
-	c := start.Header.Get("Set-Cookie")
-	for _, part := range []string{"__Host-cb_auth=", "Path=/", "HttpOnly", "Secure", "SameSite=Lax"} {
-		if !strings.Contains(c, part) {
-			t.Errorf("the pre-auth cookie %q lacks %s", c, part)
+}
+
+// sessionToken is the browser's session cookie's value (by its name: AP-11)
+func sessionToken(b *http.Client, u *url.URL) string {
+	for _, c := range b.Jar.Cookies(u) {
+		if c.Name == "__Host-cb_session" {
+			return c.Value
 		}
 	}
-	if strings.Contains(strings.ToLower(c), "domain=") {
-		t.Errorf("the pre-auth cookie names a domain: %q", c)
+	return ""
+}
+
+// rows: a count from the database as its owner sees it
+func (e *env) rows(query string, args ...any) int {
+	e.t.Helper()
+	conn, err := pgx.Connect(context.Background(), e.owner)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	defer func() { _ = conn.Close(context.Background()) }()
+	var n int
+	if err := conn.QueryRow(context.Background(), query, args...).Scan(&n); err != nil {
+		e.t.Fatal(err)
+	}
+	return n
+}
+
+// cookieAttrs: a Set-Cookie of `name` in a reply, and whether it's __Host-'s (Secure, HttpOnly, Lax, Path=/, no Domain)
+// with this Max-Age
+func cookieAttrs(t *testing.T, resp reply, name string, maxAge int) {
+	t.Helper()
+	for _, c := range resp.Header.Values("Set-Cookie") {
+		if !strings.HasPrefix(c, name+"=") {
+			continue
+		}
+		for _, part := range []string{"Path=/", "HttpOnly", "Secure", "SameSite=Lax", fmt.Sprintf("Max-Age=%d", maxAge)} {
+			if !strings.Contains(c, part) {
+				t.Errorf("%s lacks %s: %q", name, part, c)
+			}
+		}
+		if strings.Contains(strings.ToLower(c), "domain=") {
+			t.Errorf("%s names a domain: %q", name, c)
+		}
+		return
+	}
+	t.Errorf("no %s set", name)
+}
+
+// The cookies: each __Host-'s, the pre-auth one living FlowTTL, the sign-up's SignupTTL, the session's SessionTTL; the
+// pre-auth one cleared by its callback; only a token's hash kept (AP-11)
+func TestCookiesAndTokens(t *testing.T) {
+	e := setup(t, nil)
+	b := e.browser()
+	start := e.get(b, "/api/auth/google/start")
+	cookieAttrs(t, start, "__Host-cb_auth", int(server.FlowTTL.Seconds()))
+	q := e.google.Authorize(t, start.Header.Get("Location"), "sub-c")
+	callback := e.get(b, "/api/auth/google/callback?"+q.Encode())
+	cookieAttrs(t, callback, "__Host-cb_signup", int(server.SignupTTL.Seconds()))
+	u, _ := url.Parse(e.srv.URL)
+	for _, c := range b.Jar.Cookies(u) {
+		if c.Name == "__Host-cb_auth" {
+			t.Error("the pre-auth cookie outlived its callback")
+		}
+	}
+	resp := e.write(b, http.MethodPost, "/api/signup", map[string]string{"name": "Cookie", "turnstile": "good-token"})
+	cookieAttrs(t, resp, "__Host-cb_session", int(server.SessionTTL.Seconds()))
+	tok := sessionToken(b, u)
+	sum := sha256.Sum256([]byte(tok))
+	if e.rows("SELECT count(*) FROM sessions WHERE token_hash = $1", []byte(tok)) != 0 ||
+		e.rows("SELECT count(*) FROM sessions WHERE token_hash = $1", sum[:]) != 1 {
+		t.Error("the session's token kept as it is, or its hash not kept")
+	}
+}
+
+// A flow lives FlowTTL: its callback after it fails, Google never asked (AP-11)
+func TestFlowExpires(t *testing.T) {
+	e := setup(t, nil)
+	b := e.browser()
+	start := e.get(b, "/api/auth/google/start")
+	q := e.google.Authorize(t, start.Header.Get("Location"), "sub-x")
+	e.clock.Add(server.FlowTTL + time.Second)
+	if got := e.page(e.get(b, "/api/auth/google/callback?"+q.Encode())); got.Get("signin") != "failed" {
+		t.Errorf("a callback after the flow's end: %v", got)
+	}
+	if e.google.Exchanges != 0 {
+		t.Error("an expired flow's code exchanged")
+	}
+}
+
+// Signing out deletes the session itself (its token refused after, not just the cookie dropped); a new sign-in in the
+// same browser ends the session it had (AP-11)
+func TestSessionsEnd(t *testing.T) {
+	e := setup(t, nil)
+	b := e.browser()
+	u, _ := url.Parse(e.srv.URL)
+	e.googleSignIn(b, "sub-o")
+	e.signUp(b, "Out")
+	with := func(token string) int {
+		c := &http.Client{Transport: b.Transport, Timeout: 5 * time.Second}
+		return e.get(c, "/api/me", "Cookie", "__Host-cb_session="+token).StatusCode
+	}
+	first := sessionToken(b, u)
+	e.googleSignIn(b, "sub-o")
+	second := sessionToken(b, u)
+	if second == first || with(first) != http.StatusUnauthorized || with(second) != http.StatusOK {
+		t.Error("a new sign-in kept the browser's old session")
+	}
+	if resp := e.write(b, http.MethodPost, "/api/signout", nil); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("sign-out: %d", resp.StatusCode)
+	}
+	if with(second) != http.StatusUnauthorized {
+		t.Error("the signed-out session's token still opens it")
+	}
+}
+
+// The delete/re-create rule's record is keyed (AP-24, AP-11): not the identity's plain hash, and another key's differs
+func TestDeletionRecordKeyed(t *testing.T) {
+	e := setup(t, nil)
+	b := e.browser()
+	e.googleSignIn(b, "sub-k")
+	e.signUp(b, "Keyed")
+	if resp := e.write(b, http.MethodDelete, "/api/me", map[string]bool{"confirm": true}); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete: %d", resp.StatusCode)
+	}
+	plain := sha256.Sum256([]byte("google:sub-k"))
+	m := hmac.New(sha256.New, bytes.Repeat([]byte("k"), 32))
+	_, _ = m.Write([]byte("google:sub-k"))
+	if e.rows("SELECT count(*) FROM deletions WHERE subject_hmac = $1", plain[:]) != 0 ||
+		e.rows("SELECT count(*) FROM deletions WHERE subject_hmac = $1", m.Sum(nil)) != 1 {
+		t.Error("the deletion's record not the identity's keyed hash")
+	}
+}
+
+// Every write guarded (AC-7, AP-9): each route refuses a call without the page's Origin, its header, or JSON; a body past
+// 16 KiB; a JSON value with anything after it
+func TestEveryWriteGuarded(t *testing.T) {
+	e := setup(t, nil)
+	b := e.browser()
+	e.googleSignIn(b, "sub-w")
+	e.signUp(b, "Writes")
+	call := func(method, path, body string, edit func(*http.Request)) int {
+		req, _ := http.NewRequestWithContext(context.Background(), method, e.srv.URL+path, strings.NewReader(body))
+		req.Header.Set("Origin", e.srv.URL)
+		req.Header.Set("X-Carball", "1")
+		req.Header.Set("Content-Type", "application/json")
+		edit(req)
+		return e.do(b, req).StatusCode
+	}
+	routes := [][2]string{
+		{http.MethodPost, "/api/signup"}, {http.MethodPut, "/api/me/name"}, {http.MethodDelete, "/api/me"},
+		{http.MethodPost, "/api/signout"}, {http.MethodPost, "/api/signout-everywhere"}, {http.MethodPost, "/api/ticket"},
+	}
+	for _, r := range routes {
+		for name, c := range map[string]struct {
+			body string
+			edit func(*http.Request)
+			want int
+		}{
+			"no Origin":          {"{}", func(r *http.Request) { r.Header.Del("Origin") }, http.StatusForbidden},
+			"a sibling's Origin": {"{}", func(r *http.Request) { r.Header.Set("Origin", "https://other.example") }, http.StatusForbidden},
+			"no custom header":   {"{}", func(r *http.Request) { r.Header.Del("X-Carball") }, http.StatusForbidden},
+			"a form's body":      {"a=b", func(r *http.Request) { r.Header.Set("Content-Type", "application/x-www-form-urlencoded") }, http.StatusUnsupportedMediaType},
+			"17 KiB":             {`{"name":"` + strings.Repeat("x", 17<<10) + `"}`, func(*http.Request) {}, http.StatusRequestEntityTooLarge},
+		} {
+			if got := call(r[0], r[1], c.body, c.edit); got != c.want {
+				t.Errorf("%s %s, %s: %d, want %d", r[0], r[1], name, got, c.want)
+			}
+		}
+	}
+	// (one JSON value and nothing after: a stray brace, a second value, AP-16)
+	for _, body := range []string{`{"name":"A"}}`, `{"name":"A"} {"name":"B"}`} {
+		if got := call(http.MethodPut, "/api/me/name", body, func(*http.Request) {}); got != http.StatusBadRequest {
+			t.Errorf("rename with %q: %d", body, got)
+		}
+	}
+}
+
+// A rename passes the name rules too (AC-14, AP-10)
+func TestRenameChecksTheName(t *testing.T) {
+	e := setup(t, nil)
+	b := e.browser()
+	e.googleSignIn(b, "sub-r2")
+	e.signUp(b, "Before")
+	for body, code := range map[string]string{"\u200B\u202E": "name-empty", strings.Repeat("n", 33): "name-too-long"} {
+		resp := e.write(b, http.MethodPut, "/api/me/name", map[string]string{"name": body})
+		if v := decode(t, resp); resp.StatusCode != http.StatusBadRequest || v["error"] != code {
+			t.Errorf("rename to %q: %d %v", body, resp.StatusCode, v)
+		}
+	}
+	resp := e.write(b, http.MethodPut, "/api/me/name", map[string]string{"name": "A\u202Eb"})
+	if v := decode(t, resp); resp.StatusCode != http.StatusOK || v["name"] != "Ab" {
+		t.Errorf("rename with a bidi control: %d %v", resp.StatusCode, v)
+	}
+}
+
+// The callbacks' and the sign-up's address limits, and the ceilings on open flows (AP-2, AP-11)
+func TestCallbackSignupLimitsAndCeilings(t *testing.T) {
+	limits := server.DefaultLimits()
+	limits.SignIns.Burst = 2
+	limits.Signups.Burst = 1
+	limits.OpenFlows = 3
+	e := setup(t, &limits)
+	b := e.browser()
+	ip := []string{"CF-Connecting-IP", "198.51.100.40"}
+	// (a start and its callback: two; a third request from the address, a callback, refused)
+	start := e.get(b, "/api/auth/google/start", ip...)
+	q := e.google.Authorize(t, start.Header.Get("Location"), "sub-l")
+	e.get(b, "/api/auth/google/callback?"+q.Encode(), ip...)
+	if got := e.page(e.get(b, "/api/auth/steam/callback?flow=x", ip...)); got.Get("signin") != "busy" {
+		t.Errorf("a callback past the limit: %v", got)
+	}
+	// (the sign-up: one, then refused from the address)
+	call := func() int {
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, e.srv.URL+"/api/signup", strings.NewReader(`{"name":"N","turnstile":"good"}`))
+		req.Header.Set("Origin", e.srv.URL)
+		req.Header.Set("X-Carball", "1")
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("CF-Connecting-IP", "198.51.100.41")
+		return e.do(b, req).StatusCode
+	}
+	call()
+	if got := call(); got != http.StatusTooManyRequests {
+		t.Errorf("a second sign-up from the address: %d", got)
+	}
+	// (everyone's open flows at most 3: from fresh addresses, the 4th start refused)
+	busy := 0
+	for i := range 4 {
+		resp := e.get(e.browser(), "/api/auth/steam/start", "CF-Connecting-IP", fmt.Sprintf("203.0.113.%d", 10+i))
+		if strings.Contains(resp.Header.Get("Location"), "signin=busy") {
+			busy++
+		}
+	}
+	if busy != 1 {
+		t.Errorf("%d starts refused past the open flows' ceiling, want 1 (one flow open already)", busy)
+	}
+}
+
+// The wide limits: a block's addresses share their network's (/24, /48) count, so fresh addresses can't each take a
+// new one past it (AP-2)
+func TestWideLimits(t *testing.T) {
+	limits := server.DefaultLimits()
+	limits.SignIns.Burst = 100
+	limits.SignInsWide.Burst = 2
+	e := setup(t, &limits)
+	start := func(ip string) bool {
+		return !strings.Contains(e.get(e.browser(), "/api/auth/steam/start", "CF-Connecting-IP", ip).Header.Get("Location"), "signin=busy")
+	}
+	if !start("198.51.100.1") || !start("198.51.100.2") {
+		t.Fatal("the first two of a /24 refused")
+	}
+	if start("198.51.100.3") {
+		t.Error("a third address of the same /24 past its wide limit")
+	}
+	if !start("198.51.101.3") {
+		t.Error("another /24 refused")
+	}
+}
+
+// The sign-ups' ceiling: everyone's waiting sign-ups at most OpenSignups, a new identity's sign-in refused past it
+func TestSignupCeiling(t *testing.T) {
+	limits := server.DefaultLimits()
+	limits.OpenSignups = 1
+	e := setup(t, &limits)
+	if q := e.googleSignIn(e.browser(), "sub-c1"); !q.Has("signup") {
+		t.Fatalf("the first sign-up: %v", q)
+	}
+	if q := e.googleSignIn(e.browser(), "sub-c2"); q.Get("signin") != "busy" {
+		t.Errorf("a second sign-up past the ceiling: %v", q)
+	}
+}
+
+// The database not answering: 503, never taken for signed out (AP-22)
+func TestDatabaseDown(t *testing.T) {
+	e := setup(t, nil)
+	b := e.browser()
+	e.googleSignIn(b, "sub-d2")
+	e.signUp(b, "Down")
+	e.db.Close()
+	resp := e.get(b, "/api/me")
+	if v := decode(t, resp); resp.StatusCode != http.StatusServiceUnavailable || v["error"] != "unavailable" {
+		t.Errorf("/api/me with the database closed: %d %v", resp.StatusCode, v)
+	}
+}
+
+// The search ticket (AC-6): for a signed-in account only, its id and name in it, signed with the service's key, two
+// minutes long; a few a minute per account; none without a key
+func TestTicket(t *testing.T) {
+	limits := server.DefaultLimits()
+	limits.Tickets.Burst = 2
+	e := setup(t, &limits)
+	b := e.browser()
+	if resp := e.write(b, http.MethodPost, "/api/ticket", nil); resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("signed out: %d", resp.StatusCode)
+	}
+	e.googleSignIn(b, "sub-t")
+	account := e.signUp(b, "Ticketed")
+	resp := e.write(b, http.MethodPost, "/api/ticket", nil)
+	v := decode(t, resp)
+	encoded, _ := v["ticket"].(string)
+	if resp.StatusCode != http.StatusOK || encoded == "" {
+		t.Fatalf("a ticket: %d %v", resp.StatusCode, v)
+	}
+	kid, b64, _ := strings.Cut(e.s.Tickets.Public(), " ")
+	pub, _ := base64.StdEncoding.DecodeString(b64)
+	got, err := ticket.Verify(encoded, map[string]ed25519.PublicKey{kid: pub}, e.clock.Now(), 0)
+	if err != nil || got.Name != "Ticketed" || !got.Expires.Equal(e.clock.Now().Add(ticket.Lifetime)) {
+		t.Fatalf("Verify = %+v, %v", got, err)
+	}
+	id := strings.ReplaceAll(account["id"].(string), "-", "")
+	if hex.EncodeToString(got.Account[:]) != id {
+		t.Errorf("the ticket's account %x, the account %s", got.Account, id)
+	}
+	e.write(b, http.MethodPost, "/api/ticket", nil)
+	if resp := e.write(b, http.MethodPost, "/api/ticket", nil); resp.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("a third ticket at once: %d", resp.StatusCode)
+	}
+	e.s.Tickets = nil
+	e.clock.Add(time.Hour)
+	if resp := e.write(b, http.MethodPost, "/api/ticket", nil); resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("no key: %d", resp.StatusCode)
 	}
 }

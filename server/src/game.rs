@@ -145,6 +145,10 @@ pub struct JoinRequest {
     /// Its chat filters from the start (`protocol::CHAT_*`; RV-259)
     pub quick_chat: u8,
     pub block_non_tactical: bool,
+    /// The key and name are an account's, from a checked ticket (notes/accounts.md §3: the network server's sessions):
+    /// the name kept as the accounts service checked it (no automatic "Player N" put for it), the claim bound to the
+    /// account that searched
+    pub verified: bool,
 }
 
 impl JoinRequest {
@@ -181,6 +185,7 @@ impl JoinRequest {
             name,
             quick_chat,
             block_non_tactical,
+            verified: false,
         };
         Some((request, intent, playlist, token))
     }
@@ -764,7 +769,7 @@ impl Game {
             key,
             vote_start_disabled: self.initiators.contains(&key),
             vote_sent: None,
-            name: player_name(&request.name, id),
+            name: if request.verified { request.name.clone() } else { player_name(&request.name, id) },
             chat: ChatBucket::default(),
             chat_filter: request.quick_chat.min(protocol::CHAT_OFF),
             block_non_tactical: request.block_non_tactical,
@@ -1933,6 +1938,7 @@ mod tests {
         name: String::new(),
         quick_chat: protocol::CHAT_EVERYONE,
         block_non_tactical: false,
+        verified: false,
     };
     const WANTS_REPLAYS: JoinRequest = JoinRequest {
         team: 255,
@@ -1945,6 +1951,7 @@ mod tests {
         name: String::new(),
         quick_chat: protocol::CHAT_EVERYONE,
         block_non_tactical: false,
+        verified: false,
     };
 
     fn drain(rx: &mut Receiver<Outgoing>) -> Vec<Outgoing> {

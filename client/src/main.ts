@@ -10,7 +10,9 @@ import { Matchmaking, OWN_SEARCH_TEXT, PLAYLISTS } from "./game/matchmaking";
 import { Connection, type MatchSession, RefusedError, devServerAddress } from "./net/connection";
 import { joinPreferences } from "./net/joinPreferences";
 import { REFUSED_TOKEN } from "./net/protocol";
-import { type MenuNotice, pageUrl, queueAddress, storeClaim, storeNotice, takeClaim, takeNotice } from "./net/pages";
+import { type MenuNotice, deployedGameServer, pageUrl, queueAddress, storeClaim, storeNotice, takeClaim, takeNotice } from "./net/pages";
+import { type Account, AccountsApi, signInReturn, withoutSignInReturn } from "./account/api";
+import { ACCOUNT_TEXT, AccountPages, accountErrorText, signInNotice } from "./ui/accountPages";
 import { Search } from "./net/search";
 import { GameAudio } from "./audio/audio";
 import { Hud } from "./hud";
@@ -21,10 +23,10 @@ import { loadFennec } from "./render/fennec";
 import { hasCarModel, loadCarModels } from "./render/carGlb";
 import { TEAM_CAR_COLORS } from "./render/entities";
 import { MAP_NAMES, type ThemeName, createTheme, themeOfMap } from "./render/themes";
-import { CARS, carChoice, storedCar, storedTeam } from "./game/cars";
+import type { MeasuredSound } from "./audio/levels";
+import { carChoice, storedCar, storedTeam } from "./game/cars";
 import type { BotListing } from "./bots/listing";
 import { BOT_MATCH_TEXT } from "./local/botText";
-import { GaragePreview } from "./ui/garagePreview";
 import type { Theme } from "./render/themes/theme";
 import { STAT_GRAPHS, type Settings, loadSettings, resolveSettings } from "./settings/settings";
 import type { Vec3 } from "./math/vec";
@@ -292,9 +294,13 @@ async function main(): Promise<void> {
   let mainMenu: MainMenu | null = null;
   // (freeplay's session over again: leaving it for the main menu, RV-284)
   let freeplayRestart: (() => void) | null = null;
-  // (the training editor left as its Escape leaves it, `then` once it has (its unsaved question answered): false when
-  // there's no editor to leave, nor its test or a playtest of its pack; set once the editor's made)
-  let leaveEditor: (then: () => void) => boolean = () => false;
+  // (the training editor left as its Escape leaves it, `then` once it has (its unsaved question answered), `cancelled` on
+  // its CANCEL: false when there's no editor to leave, nor its test or a playtest of its pack; set once the editor's made)
+  let leaveEditor: (then: () => void, cancelled?: () => void) => boolean = () => false;
+  // (the editor, its test or a playtest of its pack under the pause menu: its Exit to Main Menu the editor's own question)
+  let editorHolds = (): boolean => false;
+  // (and its unsaved changes: the pause menu's entry reads Save and Exit, TE1 §6.3)
+  let editorDirty = (): boolean => false;
   const pause: PauseMenu = new PauseMenu(document.body, {
     resume: () => {
       pause.close();
@@ -312,8 +318,14 @@ async function main(): Promise<void> {
               freeplayRestart?.();
               mainMenu?.open();
             };
-            if (!leaveEditor(toMenu)) toMenu();
+            // (CANCEL: back to the pause menu, TE1 §5.3)
+            const backToPause = (): void => {
+              pause.open();
+            };
+            if (!leaveEditor(toMenu, backToPause)) toMenu();
           },
+          exitDirect: () => editorHolds(),
+          exitSaves: () => editorHolds() && editorDirty(),
         }
       : {}),
   });
@@ -419,6 +431,8 @@ async function main(): Promise<void> {
   (window as unknown as { carballAudio?: () => unknown }).carballAudio = () => audio.stats;
   (window as unknown as { carballAmbienceLevels?: (theme: ThemeName, seconds: number) => Promise<unknown> }).carballAmbienceLevels = async (t, seconds) =>
     (await import("./audio/levels")).ambienceLevels(t, seconds);
+  (window as unknown as { carballSoundTonality?: (sound: MeasuredSound) => Promise<number> }).carballSoundTonality = async (sound) =>
+    (await import("./audio/levels")).soundTonality(sound);
   (window as unknown as { carballMap?: () => ThemeName }).carballMap = () => name;
   let game: {
     frame(dt: number): void;
@@ -485,9 +499,6 @@ async function main(): Promise<void> {
       matchmaking.cancel();
       return true;
     };
-    // (the garage's preview: the cars' hitboxes from a world of its own, one car each)
-    const garageWorld = World.create(engine);
-    const garageConfigs = new Map(CARS.map((c) => [c.id, garageWorld.carConfig(garageWorld.addCar(0, c.body))]));
     // (the training editor: its panel over the arena, the shot held in free play's world, the camera orbiting it; a
     // playtest plays the pack in training, the pause menu's Back to Editor returning)
     let playtesting: { readonly pack: TrainingPack; readonly shot: number } | null = null;
@@ -498,7 +509,7 @@ async function main(): Promise<void> {
     };
     // (the editor's code a chunk of its own, loaded when it first opens)
     let editor: TrainingEditor | null = null;
-    const openEditor = async (pack: TrainingPack, shot = 0): Promise<void> => {
+    const openEditor = async (pack: TrainingPack, shot = 0, resume = false): Promise<void> => {
       if (!editor) {
         const { TrainingEditor: Editor } = await import("./ui/trainingEditor");
         editor = new Editor(document.body, canvas, {
@@ -521,8 +532,8 @@ async function main(): Promise<void> {
           notice: (title, body) => {
             modal.show(title, body);
           },
-          choose: (title, body, choices, focus) => {
-            modal.choose(title, body, choices, focus);
+          choose: (title, body, choices, focus, dismiss) => {
+            modal.choose(title, body, choices, focus, dismiss);
           },
           // (the free-camera mode's tests: Test Shot and Test Sequence, back to the editor on its key)
           test: (tested, from, kind) => {
@@ -530,11 +541,12 @@ async function main(): Promise<void> {
             freeplay.startTraining(tested, from, kind);
           },
           testing: () => (freeplay.training?.test ?? null) !== null,
+          playtesting: () => playtesting !== null,
           project: (p) => renderer.project(p),
           blocked: () => menusOpen(),
         });
       }
-      editor.open(pack, shot);
+      editor.open(pack, shot, resume);
     };
     editorEscape = () => {
       if (!editor?.isOpen) return false;
@@ -542,22 +554,58 @@ async function main(): Promise<void> {
       return true;
     };
     editorPadMenu = () => editor?.padMenu ?? null;
-    leaveEditor = (then) => {
-      if (!editor || (!editor.isOpen && !editor.testing && playtesting === null)) return false;
+    editorHolds = () => editor !== null && (editor.isOpen || editor.testing || playtesting !== null);
+    editorDirty = () => editor?.dirty ?? false;
+    leaveEditor = (then, cancelled) => {
+      if (!editorHolds() || !editor) return false;
       editor.leave(() => {
         playtesting = null;
         then();
-      });
+      }, cancelled);
       return true;
+    };
+    // (the garage's car in the space beside the menu's page: its left edge and width as shares of the view's, framed
+    // again as the window changes)
+    let garageOn = false;
+    const garageFrame = (): { readonly left: number; readonly width: number } => {
+      const page = document.querySelector("#main-menu .main-menu-garage-view")?.getBoundingClientRect();
+      const width = Math.max(1, window.innerWidth);
+      const left = page ? Math.min(1, page.right / width) : 0.5;
+      return { left, width: 1 - left };
+    };
+    window.addEventListener("resize", () => {
+      if (garageOn) freeplay.showGarage(garageFrame());
+    });
+    // The accounts (notes/accounts.md §5): the deployment's page only (its game server from config.json, no ?queue), where
+    // online play needs a signed-in account; a development page plays on its server's own tickets, with no entry
+    const accountsApi = new AccountsApi();
+    let accountsOn = false;
+    let account: Account | null = null;
+    let accountPages: AccountPages | null = null;
+    const setAccount = (a: Account | null): void => {
+      account = a;
+      mainMenu?.setAccountEntry(accountsOn ? (a?.name ?? ACCOUNT_TEXT.entrySignedOut) : null);
+    };
+    const showAccountPage = (note: string | null = null): void => {
+      if (!accountPages || !mainMenu) return;
+      if (account) accountPages.showAccount(account);
+      else accountPages.showSignIn(note);
+      mainMenu.showAccount();
     };
     mainMenu = new MainMenu(document.body, {
       garage: (choice) => {
         freeplay.setCar(choice);
       },
-      preview: new GaragePreview(
-        (car) => garageConfigs.get(car) ?? null,
-        (team) => TEAM_CAR_COLORS[team],
-      ),
+      account: () => {
+        showAccountPage();
+      },
+      accountLeft: () => {
+        accountPages?.left();
+      },
+      garageShown: (shown) => {
+        garageOn = shown;
+        freeplay.showGarage(shown ? garageFrame() : null);
+      },
       freePlay: () => {
         mainMenu?.close();
         freeplay.restart(); // (a fresh session, not the one left: RV-284)
@@ -565,6 +613,11 @@ async function main(): Promise<void> {
       // (the banner at once, no panel (MS1's in-game path); the Play page kept, its Free Play focused: free play next while
       // searching, the user's decision; while a search runs, Find Match only shows it: MM-2's SearchInProgress)
       findMatch: (playlist) => {
+        // (signed out on the deployment's page: Sign In first, online play needs an account)
+        if (accountsOn && account === null) {
+          showAccountPage(ACCOUNT_TEXT.findMatchNeedsAccount);
+          return;
+        }
         matchmaking.start(playlist);
         mainMenu?.focusFreePlay();
       },
@@ -608,6 +661,40 @@ async function main(): Promise<void> {
         });
       },
     });
+    const pages = new AccountPages(mainMenu.accountBody, accountsApi, {
+      ask: (title, body, yes) => {
+        modal.ask(title, body, yes);
+      },
+      changed: setAccount,
+      back: () => {
+        mainMenu?.showTop();
+      },
+      go: (url) => {
+        location.assign(url);
+      },
+      turnstile: async (container, siteKey, token) => (await import("./account/turnstile")).turnstileWidget(container, siteKey, token),
+    });
+    accountPages = pages;
+    // (a sign-in's return, `/?signin=…` or `/?signup`: read, then out of the address; the account read, the entry shown)
+    const returned = signInReturn(params);
+    if (returned) history.replaceState(history.state, "", withoutSignInReturn(new URL(location.href)));
+    if (params.get("queue") === null) {
+      void deployedGameServer().then(async (url) => {
+        if (url === null) return;
+        accountsOn = true;
+        setAccount(await accountsApi.me().catch(() => null));
+        if (returned?.kind === "signup") {
+          const signup = await accountsApi.signup().catch(() => null);
+          if (signup) {
+            pages.showSignUp(signup);
+            mainMenu?.showAccount();
+          } else modal.show(ACCOUNT_TEXT.signUpTitle.toUpperCase(), accountErrorText("no-signup"));
+        } else if (returned?.kind === "notice") {
+          const [title, body] = signInNotice(returned.reason, returned.until);
+          modal.show(title, body);
+        }
+      });
+    }
     // (the training packs there are: Custom Training with one to play)
     refreshPacks();
     // (the bot packages there are: Play vs Bots with one to play, its page's code and the listing in chunks of their own,
@@ -738,7 +825,7 @@ async function main(): Promise<void> {
                   ? [
                       button(TRAINING_PAUSE_TEXT.backToEditor, () => {
                         playtesting = null;
-                        void openEditor(back.pack, back.shot);
+                        void openEditor(back.pack, back.shot, true);
                       }),
                     ]
                   : []),

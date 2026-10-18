@@ -2574,22 +2574,90 @@ body {
   white-space: nowrap;
 }
 
-/* The garage: the car turning in its colour, the cars three a row (Sport, Flat, Tall), the team colours two (each kept
-   as chosen) */
-.main-menu-column.main-menu-garage-view {
-  width: min(560px, 84vw);
+/* The account's page (ours: notes/accounts.md §5): sign in, the sign-up's name and check, the account */
+.main-menu-column.main-menu-account-view {
+  width: min(420px, 84vw);
 }
 
-.garage-preview {
-  display: block;
-  width: min(360px, 100%);
-  height: auto;
-  aspect-ratio: 360 / 210;
-  margin: 0 auto;
-  /* (a panel as the buttons': the car on it, not floating over the arena) */
-  background: rgba(10, 14, 22, 0.85);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+.main-menu-account-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.account-line,
+.account-note,
+.account-status {
+  font: 15px/1.4 var(--hud-small);
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.account-note {
+  color: #7bfcff;
+}
+
+.account-status:empty {
+  display: none;
+}
+
+.account-status {
+  color: #ffb36b;
+}
+
+.account-name {
+  font: 22px var(--hud-header);
+  color: #fff;
+}
+
+.account-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.account-input {
+  font: 16px var(--hud-header);
+  padding: 6px 8px;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 3px;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.account-rename {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.account-rename .account-field {
+  flex: 1;
+}
+
+.account-turnstile:empty {
+  display: none;
+}
+
+.main-menu-button.account-danger {
+  border-color: rgba(255, 110, 90, 0.5);
+}
+
+.account-privacy {
+  align-self: flex-start;
+  font-size: 13px;
+  color: #8cc8ff;
+}
+
+/* The garage: the cars three a row (Sport, Flat, Tall), the team colours two (each kept as chosen); the car itself the
+   scene's, standing beside the page (showGarage) */
+.main-menu-column.main-menu-garage-view {
+  width: min(560px, 84vw);
 }
 
 .main-menu-choices {
@@ -3592,7 +3660,7 @@ body.pad-mode .settings-tab-glyph {
   font-family: var(--hud-header);
   background: rgba(6, 10, 18, 0.92);
   border-left: 1px solid rgba(123, 252, 255, 0.25);
-  z-index: 5;
+  z-index: 4; /* (under the pause menu it opens over: RX28C) */
 }
 
 #training-editor .control-row {
@@ -3705,7 +3773,7 @@ body.pad-mode .settings-tab-glyph {
   font-family: var(--hud-header);
   background: rgba(6, 10, 18, 0.94);
   border: 1px solid rgba(123, 252, 255, 0.35);
-  z-index: 5;
+  z-index: 4; /* (under the pause menu it opens over: RX28C) */
 }
 
 .shot-select-title {
@@ -3761,7 +3829,7 @@ body.pad-mode .settings-tab-glyph {
 #fly-editor {
   position: fixed;
   inset: 0;
-  z-index: 5;
+  z-index: 4; /* (under the pause menu it opens over: RX28C) */
   color: #fff;
   font-family: var(--hud-header);
   pointer-events: none;

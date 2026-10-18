@@ -75,6 +75,12 @@ export class Search {
         transport.close();
         return;
       }
+      // (who the player is: the account's ticket, before the session opens, notes/accounts.md §3)
+      const ticket = address.ticket ? await address.ticket() : "";
+      if (this.#cancelled()) {
+        transport.close();
+        return;
+      }
       await transport.ready;
       const stream = await transport.createBidirectionalStream();
       const writer = stream.writable.getWriter();
@@ -95,6 +101,7 @@ export class Search {
           intent: "search",
           playlist,
           token,
+          ticket,
         }),
       );
       if (this.#cancelled()) return;

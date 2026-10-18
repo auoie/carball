@@ -85,9 +85,9 @@ func tidy(asked string) string {
 
 // hidden: the characters a name may not have (game.rs `hidden_char`, RV-249): controls, format characters (bidi
 // controls, zero-width ones, the BOM), the line and paragraph separators, the invisible fillers a name could be made of
-// alone, the replacement character
+// alone, the replacement character; and here also private-use and unassigned ones (no font draws them alike: AP-19)
 func hidden(c rune) bool {
-	if unicode.IsControl(c) || unicode.Is(unicode.Cf, c) {
+	if unicode.IsControl(c) || unicode.Is(unicode.Cf, c) || unicode.Is(unicode.Co, c) || unassigned(c) {
 		return true
 	}
 	for _, r := range hiddenRanges {
@@ -108,6 +108,11 @@ var hiddenRanges = [][2]rune{
 	{0x034F, 0x034F}, {0x115F, 0x1160}, {0x17B4, 0x17B5}, {0x180B, 0x180D}, {0x180F, 0x180F}, {0x2028, 0x2029},
 	{0x2065, 0x2065}, {0x2800, 0x2800}, {0x3164, 0x3164}, {0xFE00, 0xFE0F}, {0xFFA0, 0xFFA0}, {0xFFFC, 0xFFFD},
 	{0xE0000, 0xE0FFF},
+}
+
+// unassigned: in none of Unicode's categories (as Go's tables know them)
+func unassigned(c rune) bool {
+	return !unicode.In(c, unicode.L, unicode.M, unicode.N, unicode.P, unicode.S, unicode.Z, unicode.C)
 }
 
 // combining: a mark of the blocks that stack (accents piled on a letter: game.rs `combining_mark`)

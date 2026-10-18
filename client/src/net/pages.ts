@@ -1,7 +1,8 @@
 // The pages' handoffs (the queue: notes/matchmaking.md v1 checklist): the menu page searches and hands the match page its
 // claim (the slot's one-time token); the match page hands the menu page back a notice when it ends (a modal to show, a
 // search to start: Play Again, a cancelled match). Kept in sessionStorage, this tab's alone and out of the URL's history.
-import { type ServerAddress, devServerAddress } from "./connection";
+import { type ServerAddress, devServerAddress, serverHost } from "./connection";
+import { accountTicket, devTicket } from "./tickets";
 
 const CLAIM_KEY = "carball.claim";
 const NOTICE_KEY = "carball.menuNotice";
@@ -129,13 +130,14 @@ export async function deployedGameServer(
 }
 
 /** Where the queue is: `?queue=host:infoPort` (a development server, its /info giving its port and certificate hash);
- *  else the deployment's game server (`config.json`: its real certificate, no hash); else this page's host, info port 4434 */
+ *  else the deployment's game server (`config.json`: its real certificate, no hash); else this page's host, info port 4434.
+ *  Its searches' and claims' tickets: the accounts service's for the deployment's, the development server's own else */
 export async function queueAddress(params: URLSearchParams, host: string, deployed = deployedGameServer): Promise<ServerAddress> {
   const queue = params.get("queue");
   if (queue === null) {
     const url = await deployed();
-    if (url !== null) return { url, certHash: null };
+    if (url !== null) return { url, certHash: null, ticket: () => accountTicket() };
   }
   const [name = host, port = "4434"] = queue === null || queue === "" ? [] : queue.split(":");
-  return devServerAddress(name, Number(port));
+  return { ...(await devServerAddress(name, Number(port))), ticket: devTicket(serverHost(name), Number(port)) };
 }

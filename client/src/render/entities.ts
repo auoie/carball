@@ -73,8 +73,6 @@ export const TEAM_CAR_COLORS = [
  *  frame */
 export const EXHAUSTS: readonly [Vector3, Vector3] = [new Vector3(-57, 10.25 + 2.6115, -20.43), new Vector3(-57, 10.25 + 2.6115, 20.43)];
 
-/** A car's wheels from the physics for its drawing (CarView.wheels): the vehicle's (World.carWheels) and each wheel's
- *  contact (CarState.wheelContact), the engine's order */
 /** The body sway's axes (three's car frame), its scratch */
 const PITCH_AXIS = new Vector3(0, 0, 1);
 const ROLL_AXIS = new Vector3(1, 0, 0);
@@ -82,6 +80,8 @@ const SWAY_ROLL = new Quaternion();
 const SWAY_PIVOT = new Vector3();
 const IDENTITY = new Quaternion();
 
+/** A car's wheels from the physics for its drawing (CarView.wheels): the vehicle's (World.carWheels) and each wheel's
+ *  contact (CarState.wheelContact), the engine's order */
 export interface DrawnWheels extends CarWheels {
   readonly contact: readonly boolean[];
   /** no physics, a replay's: a touching wheel drawn at rest (its least drop, where the game draws a wheel at rest) */
@@ -167,6 +167,11 @@ export class CarView {
     this.wheels = { suspension: [0, 0, 0, 0], steer: [0, 0, 0, 0], contact, resting: true };
   }
 
+  /** For the tests: where the supersonic trails start (car frame, uu: a Blender model's rear tyres' contact, RV-590) */
+  get trailSources(): readonly Vector3[] {
+    return this.#trailFrom;
+  }
+
   /** Whether its wheels follow the physics' (a Blender model's: `wheels` wanted each frame) */
   get posesWheels(): boolean {
     return this.#parts !== null;
@@ -247,9 +252,18 @@ export class CarView {
     });
   }
 
+  /** The car put somewhere new: a kickoff or a reset, a respawn, a training shot, a replay's start or end, a placement.
+   *  The game spawns a new car there, its spring fresh (SU1, RV-597): the next frame seeds the sway at rest, sets the
+   *  wheels at once and doesn't turn them for the jump */
+  teleport(): void {
+    this.#spring?.reset();
+    this.#placed = false;
+    this.#wheelsSet = false;
+  }
+
   /** A Blender model's body sway this frame (src/render/chassisSpring.ts: the drawn car's pose, the game's frame; reset
-   *  by a demolition or a jump of 400 uu or more): its Body turned about its chassis bone and lowered or raised, the
-   *  wheels left; the turn and point kept for the exhausts */
+   *  by `teleport`, a demolition, or else a jump of 400 uu or more): its Body turned about its chassis bone and lowered
+   *  or raised, the wheels left; the turn and point kept for the exhausts */
   #sway(parts: CarModelParts, position: Vector3, rotation: Quaternion, seconds: number, demoed: boolean): void {
     const spring = this.#spring;
     if (!spring) return;
@@ -291,7 +305,7 @@ export class CarView {
         const target =
           contact && physics.resting === true
             ? -parts.travel.min
-            : wheelDropTarget(wheel.rest.y * UU_PER_METRE, wheel.radius, i < 2 ? this.#config.frontWheel : this.#config.backWheel, length, upZ, parts.travel);
+            : wheelDropTarget(wheel.rest.y * UU_PER_METRE, i < 2 ? this.#config.frontWheel : this.#config.backWheel, length, upZ, parts.travel);
         const steer = physics.steer[i] ?? 0;
         this.#drops[i] = this.#wheelsSet ? easeWheel(this.#drops[i] ?? 0, target, seconds, contact) : target;
         this.#steers[i] = this.#wheelsSet ? easeWheel(this.#steers[i] ?? 0, steer, seconds) : steer;

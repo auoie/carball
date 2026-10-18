@@ -16,6 +16,8 @@ export const TRAINING_PAUSE_TEXT = {
   restart: "Restart Training",
   resetProgress: "Reset Progress",
   backToEditor: "Back to Editor",
+  /** Exit to Main Menu's label over an editor with unsaved changes (TE1 §6.3) */
+  saveAndExit: "Save and Exit",
   /** A test's restart, asked first (notes/training-editor.md §5.3: a created sequence's, verbatim) */
   restartTitle: "RESTART TRAINING",
   restartBody: "Restarting a created sequence will also reset any training progress made.\n\nAre you sure you want to restart this training session?",
@@ -26,6 +28,12 @@ export interface PauseActions {
   readonly settings: () => void;
   /** Freeplay: back to the main menu, once its question is answered (absent online: the match's buttons leave) */
   readonly exit?: () => void;
+  /** Whether Exit to Main Menu goes without its own question (the training editor asks its own, SAVE AND EXIT: TE1
+   *  §6.3, one question, RX28C) */
+  readonly exitDirect?: () => boolean;
+  /** Whether the entry reads Save and Exit as the menu opens (over an editor with unsaved changes: TE1 §6.3), else Exit
+   *  to Main Menu */
+  readonly exitSaves?: () => boolean;
 }
 
 export class PauseMenu {
@@ -35,8 +43,11 @@ export class PauseMenu {
   /** Online: the other players with mute and block (src/ui/playersMenu.ts) */
   readonly players: HTMLDivElement;
   #question: HTMLElement | null = null;
+  #exitButton: HTMLButtonElement | null = null;
+  readonly #exitSaves: (() => boolean) | undefined;
 
   constructor(host: HTMLElement, actions: PauseActions) {
+    this.#exitSaves = actions.exitSaves;
     this.#root = document.createElement("div");
     this.#root.id = "pause-menu";
     this.#root.className = "pause-menu";
@@ -76,7 +87,11 @@ export class PauseMenu {
       no.dataset["padDefault"] = ""; // (a confirm's NO focused: MENU-15)
       question.append(ask, yes, no);
       question.hidden = true;
-      button(END_TEXT.exit, () => {
+      this.#exitButton = button(END_TEXT.exit, () => {
+        if (actions.exitDirect?.() === true) {
+          exit();
+          return;
+        }
         question.hidden = false;
         no.focus();
       });
@@ -99,6 +114,7 @@ export class PauseMenu {
   open(): void {
     // (the free look's captured mouse is let go: the menu needs the pointer)
     if (document.pointerLockElement) document.exitPointerLock();
+    if (this.#exitButton) this.#exitButton.textContent = this.#exitSaves?.() === true ? TRAINING_PAUSE_TEXT.saveAndExit : END_TEXT.exit;
     this.#root.hidden = false;
   }
 

@@ -113,12 +113,26 @@ func (s *Store) Close() { s.pool.Close() }
 // Ping checks the database answers (the health check)
 func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
 
+// CanCreate: the connected role may create in the schema (the service's must not: rows only, AP-4)
+func (s *Store) CanCreate(ctx context.Context) (bool, error) {
+	var can bool
+	err := s.pool.QueryRow(ctx, `SELECT has_schema_privilege('public', 'CREATE')`).Scan(&can)
+	return can, err
+}
+
+// ErrSameRole: the migrations' role and the service's are one (the service's would own the schema: AP-4)
+var ErrSameRole = errors.New("MIGRATE_DATABASE_URL and DATABASE_URL name the same role: the service's must be its own, rows only")
+
 // Migrate brings the schema up to date as its owner (dsn, its password from a file), one process at a time (an advisory
-// lock), then grants appRole (the service's: DATABASE_URL's user) its tables' rows and nothing else
-func Migrate(ctx context.Context, dsn, passwordFile, appRole string) error {
+// lock), then grants appRole (the service's: DATABASE_URL's user) its tables' rows and nothing else. A role of its own:
+// the same one is refused, unless `sameRole` allows it (development's single role)
+func Migrate(ctx context.Context, dsn, passwordFile, appRole string, sameRole bool) error {
 	cfg, err := pgx.ParseConfig(dsn)
 	if err != nil {
 		return fmt.Errorf("MIGRATE_DATABASE_URL: %w", err)
+	}
+	if appRole == cfg.User && !sameRole {
+		return ErrSameRole
 	}
 	if passwordFile != "" {
 		if cfg.Password, err = config.ReadSecret(passwordFile); err != nil {
@@ -148,10 +162,12 @@ func Migrate(ctx context.Context, dsn, passwordFile, appRole string) error {
 	return grant(ctx, db, appRole)
 }
 
-// (rows of every table but the migrations' own record; the schema used, never changed)
+// (rows of every table but the migrations' own record; the schema used, never changed: no CREATE for anyone but its
+// owner, as Postgres 15's default, said for 13 and 14 too: AP-5)
 func grant(ctx context.Context, db *sql.DB, role string) error {
 	r := pgx.Identifier{role}.Sanitize()
 	for _, q := range []string{
+		"REVOKE CREATE ON SCHEMA public FROM PUBLIC",
 		"GRANT USAGE ON SCHEMA public TO " + r,
 		"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO " + r,
 		"REVOKE ALL ON goose_db_version FROM " + r,
@@ -188,6 +204,20 @@ func (s *Store) CreateFlow(ctx context.Context, f Flow) error {
 	_, err := s.pool.Exec(ctx, `INSERT INTO auth_flows (id_hash, provider, state, nonce, verifier, expires_at)
 		VALUES ($1, $2, $3, $4, $5, $6)`, f.IDHash, f.Provider, f.State, f.Nonce, f.Verifier, f.ExpiresAt)
 	return err
+}
+
+// OpenFlows counts the sign-ins in progress at now (a ceiling on them: AP-2)
+func (s *Store) OpenFlows(ctx context.Context, now time.Time) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `SELECT count(*) FROM auth_flows WHERE expires_at > $1`, now).Scan(&n)
+	return n, err
+}
+
+// OpenSignups counts the sign-ups waiting at now (a ceiling on them: AP-2)
+func (s *Store) OpenSignups(ctx context.Context, now time.Time) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `SELECT count(*) FROM pending_signups WHERE expires_at > $1`, now).Scan(&n)
+	return n, err
 }
 
 // TakeFlow removes the flow and returns it, if it's there and not expired: a flow is used once
@@ -377,11 +407,14 @@ func (s *Store) CreateSession(ctx context.Context, tokenHash []byte, accountID s
 	return err
 }
 
-// SessionByToken is the session a token opens at now: its current token, or the previous one within its grace
+// SessionByToken is the session a token opens at now: its current token, or the previous one within its grace; none for
+// an account with a ban in force on any of its identities (a ban racing a sign-in still shuts it: AP-3)
 func (s *Store) SessionByToken(ctx context.Context, tokenHash []byte, now time.Time) (Session, bool, error) {
 	var ss Session
-	err := s.pool.QueryRow(ctx, `SELECT token_hash, account_id::text, rotated_at, expires_at, token_hash <> $1
-		FROM sessions WHERE (token_hash = $1 OR (previous_hash = $1 AND previous_until > $2)) AND expires_at > $2`,
+	err := s.pool.QueryRow(ctx, `SELECT s.token_hash, s.account_id::text, s.rotated_at, s.expires_at, s.token_hash <> $1
+		FROM sessions s WHERE (s.token_hash = $1 OR (s.previous_hash = $1 AND s.previous_until > $2)) AND s.expires_at > $2
+		AND NOT EXISTS (SELECT 1 FROM identities i JOIN bans b ON b.provider = i.provider AND b.subject = i.subject
+			WHERE i.account_id = s.account_id AND (b.until IS NULL OR b.until > $2))`,
 		tokenHash, now).Scan(&ss.TokenHash, &ss.AccountID, &ss.RotatedAt, &ss.ExpiresAt, &ss.Previous)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Session{}, false, nil

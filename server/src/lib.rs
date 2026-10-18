@@ -19,3 +19,5 @@ pub mod protocol;
 #[cfg(feature = "net")]
 pub mod queue;
 pub mod replication;
+#[cfg(feature = "net")]
+pub mod ticket;
