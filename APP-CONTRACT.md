@@ -1,12 +1,13 @@
 # App contract
 
-What the two images need from the host and what they give it. Provisioning, DNS, firewalls and certificate renewal are
+What the three images need from the host and what they give it. Provisioning, DNS, firewalls and certificate renewal are
 the hosting side's (not here).
 
 | Image | What | Port | Reached at |
 |---|---|---|---|
 | `carball-web` | the web client: static files (nginx) | **3000/tcp** (plain HTTP; TLS in front, e.g. the tunnel) | `https://carball.zolt.top` |
 | `carball-game` | the game server: matches over WebTransport (HTTP/3, QUIC) | **4433/udp** (`GAME_PORT`), public, nothing else published | `game.carball.zolt.top` (DNS only, no proxy: it's UDP; **an A record only, no AAAA**: see below) |
+| `carball-api` | the accounts service: sign-in (Google, Steam), sessions, accounts (Go; Postgres beside it) | **8080/tcp** (`LISTEN_ADDR`, plain HTTP), on its docker network only: **never published** | `https://carball.zolt.top/api/` (the tunnel routes `/api/` to it, the rest to `carball-web`: same origin) |
 
 **IPv4 only (the user's decision, RV-406).** `game.carball.zolt.top` has an A record and **no AAAA record**. Behind
 Docker's default bridge (`-p 4433:4433/udp`), IPv6 clients reach the server through Docker's userland proxy, so the
@@ -36,7 +37,9 @@ There it builds the engine's WebAssembly (Emscripten), the client (`npm run buil
 built) and the server (`cargo build --release --offline` in `out/images/target`, whatever `CARGO_TARGET_DIR` says: a
 development server's binary is left alone; no debug info, symbols stripped, the build machine's paths remapped), stages
 each image's files alone under `out/images/<TAG>-<time>/{web,game}` (the repo's `out/` holds local-only data and is never
-a build context), and runs `docker build -t carball-web:TAG …/web` and `docker build -t carball-game:TAG …/game`. Both
+a build context), and runs `docker build -t carball-web:TAG …/web`, `docker build -t carball-game:TAG …/game` and
+`docker build -t carball-api:TAG …/api` (the accounts service: `go build` offline from the module cache, static,
+`-trimpath`, stripped; its staged files through the same names check). Both
 bases are pinned by digest (update a base's tag and digest together). Then:
 ```sh
 docker save carball-web:TAG | gzip > carball-web-TAG.tar.gz       # on the host: docker load < carball-web-TAG.tar.gz
@@ -138,6 +141,62 @@ the same port): `docker run --rm -e GAME_PORT=14502 -p 127.0.0.1:14502:14502/udp
   (all threads ~2.1 % / ~5.5 %), so the game thread caps a server near 55 3v3 matches. Memory ~8 MB idle, ~1.4 MB a 1v1
   and ~1.8 MB a 3v3. Bandwidth per player: ~3.4 KB/s down in a 1v1, ~5.6 KB/s in a 3v3; ~5–13 KB/s up (inputs).
 - **Logs:** stdout (start-up) and stderr (joins, leaves, matches, refusals, reloads), one line each.
+
+## carball-api
+
+The accounts service (notes/accounts.md). **Nothing is deployed yet: the first deploy ships with it** (notes/accounts.md
+§8). Settings are variables; **secrets are files** (`*_FILE`, a read-only mount: a variable shows in `docker inspect`).
+
+| Env | Default in the image | |
+|---|---|---|
+| `LISTEN_ADDR` | `:8080` | the HTTP listener (plain HTTP: TLS is the tunnel's) |
+| `PUBLIC_ORIGIN` | `https://carball.zolt.top` | the site's origin: every write's `Origin` must be it; the redirect URIs and Steam's realm are under it. https only (`http://localhost…` with `--dev` alone) |
+| `DATABASE_URL` | (required) | the service's role, rows only (e.g. `postgres://carball_app@db:5432/carball`); **no password in it** (refused) |
+| `DATABASE_PASSWORD_FILE` | | that role's password |
+| `MIGRATE_DATABASE_URL` | (none) | the schema owner's role: when set, the migrations run at start (one process at a time), then grant `DATABASE_URL`'s role its tables' rows and nothing else. No password in it |
+| `MIGRATE_DATABASE_PASSWORD_FILE` | | the owner's password |
+| `GOOGLE_CLIENT_ID` | (none) | Google sign-in, with `GOOGLE_CLIENT_SECRET_FILE`; neither: Google sign-in off (logged). Redirect URI to register: `PUBLIC_ORIGIN/api/auth/google/callback` |
+| `GOOGLE_CLIENT_SECRET_FILE` | | its secret |
+| `STEAM_WEB_API_KEY_FILE` | (none) | optional: a Steam sign-up's suggested name from the persona (else a guest-style one). Steam sign-in itself needs no key: realm `PUBLIC_ORIGIN`, return URL `PUBLIC_ORIGIN/api/auth/steam/callback` |
+| `TURNSTILE_SITE_KEY` | (required) | Turnstile's site key (public: the page's sign-up widget gets it from `GET /api/signup`) |
+| `TURNSTILE_SECRET_FILE` | (required) | its secret (sign-up's siteverify, its hostname `PUBLIC_ORIGIN`'s, action `signup`) |
+| `DELETION_HMAC_KEY_FILE` | (required) | 32 bytes or more of random: keys the delete/re-create rule's records (30 days). Changing it forgets them |
+
+- **Ports:** 8080/tcp, plain HTTP, **never published**: only cloudflared reaches it, on their shared docker network. The
+  service trusts `CF-Connecting-IP` for its rate limits because nothing else can reach it; a published port would let
+  anyone set that header.
+- **Routes:** everything under `/api/` (the tunnel's path rule `^/api/` to `http://carball-api:8080`, or the web
+  container proxying it; the path kept as it is). Same origin as the page: its cookies are `__Host-` (Secure, Path=/, no
+  Domain), so the page must be https (http on localhost in development).
+- **Database:** Postgres (13 or later: `gen_random_uuid()`; tested with 18), on the same private network, never exposed. Two roles: the
+  schema's owner (migrations) and the service's (rows only). Encrypted backups off the box (notes/accounts.md §2).
+- **Outbound:** https to Google (`accounts.google.com`, `oauth2.googleapis.com`, `www.googleapis.com`), Steam
+  (`steamcommunity.com`, `api.steampowered.com`) and Cloudflare (`challenges.cloudflare.com`), each call with a 10 s
+  limit. The root certificates are built into the binary (the image has no bundle).
+- **User:** uid 10002. **Volumes:** none (the secrets' files mounted read-only). Its root filesystem can be read-only
+  (`--read-only`: it writes nothing).
+- **Health:** `carball-api healthcheck` (the image's `HEALTHCHECK`, every 15 s): `GET /api/healthz` on its own port, 200
+  while the database answers, else 503.
+- **Logs:** stderr, one line a request: method, path, status, time. **Never the query string** (a sign-in's callback
+  carries its code and assertion) **nor the client's address** (notes/accounts.md AC-15). Configure cloudflared's and any
+  proxy's access logs likewise.
+- **Housekeeping:** hourly, in the process: expired sessions, sign-in flows, sign-ups and Steam nonces purged; the
+  delete/re-create rule's records after their 30 days.
+- **The admin's commands** (bans: notes/accounts.md §4), with the same `DATABASE_URL` and password file:
+  `docker exec carball-api /app/carball-api accounts NAME` (accounts whose name holds NAME, with their identities),
+  `… ban --account ID --reason TEXT --by NAME [--for 72h | --until 2026-12-01]` (or `--identity steam:<SteamID64>`;
+  every identity of the account, signed out everywhere), `… unban --account ID`, `… bans`.
+- **Stop:** SIGTERM or SIGINT: requests in flight finish (10 s at most).
+
+```sh
+docker run -d --name carball-api --restart unless-stopped --network carball --read-only \
+  -e DATABASE_URL=postgres://carball_app@carball-db:5432/carball -e DATABASE_PASSWORD_FILE=/run/secrets/db_password \
+  -e MIGRATE_DATABASE_URL=postgres://carball_owner@carball-db:5432/carball \
+  -e MIGRATE_DATABASE_PASSWORD_FILE=/run/secrets/db_owner_password \
+  -e GOOGLE_CLIENT_ID=… -e GOOGLE_CLIENT_SECRET_FILE=/run/secrets/google_client_secret \
+  -e TURNSTILE_SITE_KEY=… -e TURNSTILE_SECRET_FILE=/run/secrets/turnstile_secret \
+  -e DELETION_HMAC_KEY_FILE=/run/secrets/deletion_key -v /path/to/secrets:/run/secrets:ro carball-api:TAG
+```
 
 ## Checked (2026-10-15, Docker 29.9 on the development VM; again for every change to the images or this contract)
 

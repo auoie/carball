@@ -1,0 +1,645 @@
+// Package store keeps the accounts in Postgres (notes/accounts.md §2): the service connects as a role that reads and
+// writes rows only, and the migrations run as the schema's owner, who grants that role its rows (AC-18). Every time is
+// the caller's (a test moves its clock), never the database's now().
+package store
+
+import (
+	"context"
+	"database/sql"
+	"embed"
+	"errors"
+	"fmt"
+	"io/fs"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/pressly/goose/v3"
+	"github.com/pressly/goose/v3/lock"
+
+	"carball/api/internal/config"
+)
+
+//go:embed migrations/*.sql
+var migrations embed.FS
+
+// Store is the service's connection pool
+type Store struct {
+	pool *pgxpool.Pool
+}
+
+// Open connects the service's role (DATABASE_URL, its password from a file)
+func Open(ctx context.Context, dsn, passwordFile string) (*Store, error) {
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("DATABASE_URL: %w", err)
+	}
+	if passwordFile != "" {
+		if cfg.ConnConfig.Password, err = config.ReadSecret(passwordFile); err != nil {
+			return nil, fmt.Errorf("DATABASE_PASSWORD_FILE: %w", err)
+		}
+	}
+	cfg.MaxConns = 10
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("the database: %w", err)
+	}
+	return &Store{pool: pool}, nil
+}
+
+// Provider is a sign-in provider (the identities' `provider` column): an enum, every switch over it whole (the
+// exhaustive linter)
+type Provider string
+
+// The providers (notes/accounts.md §1)
+const (
+	Google Provider = "google"
+	Steam  Provider = "steam"
+)
+
+// ParseProvider is the provider by its name, if it is one
+func ParseProvider(name string) (Provider, bool) {
+	switch p := Provider(name); p {
+	case Google, Steam:
+		return p, true
+	}
+	return "", false
+}
+
+// BanEnd is when a ban ends: Permanent or Until (sealed: gochecksumtype keeps every type switch over it whole)
+//
+//sumtype:decl
+type BanEnd interface{ banEnd() }
+
+// Permanent is a ban with no end
+type Permanent struct{}
+
+// Until is a ban that ends at a time
+type Until struct{ At time.Time }
+
+func (Permanent) banEnd() {}
+func (Until) banEnd()     {}
+
+// endColumn is the bans' `until` column for an end (NULL: none)
+func endColumn(e BanEnd) *time.Time {
+	switch e := e.(type) {
+	case Permanent:
+		return nil
+	case Until:
+		return &e.At
+	}
+	panic(fmt.Sprintf("a ban's end %T", e))
+}
+
+// endOf is the end the bans' `until` column holds
+func endOf(until *time.Time) BanEnd {
+	if until == nil {
+		return Permanent{}
+	}
+	return Until{At: *until}
+}
+
+// Close ends the pool
+func (s *Store) Close() { s.pool.Close() }
+
+// Ping checks the database answers (the health check)
+func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
+
+// Migrate brings the schema up to date as its owner (dsn, its password from a file), one process at a time (an advisory
+// lock), then grants appRole (the service's: DATABASE_URL's user) its tables' rows and nothing else
+func Migrate(ctx context.Context, dsn, passwordFile, appRole string) error {
+	cfg, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		return fmt.Errorf("MIGRATE_DATABASE_URL: %w", err)
+	}
+	if passwordFile != "" {
+		if cfg.Password, err = config.ReadSecret(passwordFile); err != nil {
+			return fmt.Errorf("MIGRATE_DATABASE_PASSWORD_FILE: %w", err)
+		}
+	}
+	db := stdlib.OpenDB(*cfg)
+	defer func() { _ = db.Close() }()
+	dir, err := fs.Sub(migrations, "migrations")
+	if err != nil {
+		return err
+	}
+	locker, err := lock.NewPostgresSessionLocker()
+	if err != nil {
+		return err
+	}
+	p, err := goose.NewProvider(goose.DialectPostgres, db, dir, goose.WithSessionLocker(locker))
+	if err != nil {
+		return err
+	}
+	if _, err := p.Up(ctx); err != nil {
+		return fmt.Errorf("the migrations: %w", err)
+	}
+	if appRole == "" || appRole == cfg.User {
+		return nil
+	}
+	return grant(ctx, db, appRole)
+}
+
+// (rows of every table but the migrations' own record; the schema used, never changed)
+func grant(ctx context.Context, db *sql.DB, role string) error {
+	r := pgx.Identifier{role}.Sanitize()
+	for _, q := range []string{
+		"GRANT USAGE ON SCHEMA public TO " + r,
+		"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO " + r,
+		"REVOKE ALL ON goose_db_version FROM " + r,
+	} {
+		if _, err := db.ExecContext(ctx, q); err != nil {
+			return fmt.Errorf("granting %s its rows: %w", role, err)
+		}
+	}
+	return nil
+}
+
+// AppRole is DATABASE_URL's user: the role the migrations grant
+func AppRole(dsn string) (string, error) {
+	cfg, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		return "", err
+	}
+	return cfg.User, nil
+}
+
+// --- Sign-in flows ---
+
+// Flow is a sign-in in progress
+type Flow struct {
+	IDHash    []byte
+	Provider  Provider
+	State     string
+	Nonce     string
+	Verifier  string
+	ExpiresAt time.Time
+}
+
+func (s *Store) CreateFlow(ctx context.Context, f Flow) error {
+	_, err := s.pool.Exec(ctx, `INSERT INTO auth_flows (id_hash, provider, state, nonce, verifier, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6)`, f.IDHash, f.Provider, f.State, f.Nonce, f.Verifier, f.ExpiresAt)
+	return err
+}
+
+// TakeFlow removes the flow and returns it, if it's there and not expired: a flow is used once
+func (s *Store) TakeFlow(ctx context.Context, idHash []byte, now time.Time) (Flow, bool, error) {
+	f := Flow{IDHash: idHash}
+	err := s.pool.QueryRow(ctx, `DELETE FROM auth_flows WHERE id_hash = $1
+		RETURNING provider, state, nonce, verifier, expires_at`, idHash).
+		Scan(&f.Provider, &f.State, &f.Nonce, &f.Verifier, &f.ExpiresAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Flow{}, false, nil
+	}
+	if err != nil {
+		return Flow{}, false, err
+	}
+	return f, f.ExpiresAt.After(now), nil
+}
+
+// UseNonce records a Steam response nonce (steam.NonceStore)
+func (s *Store) UseNonce(ctx context.Context, nonce string, until time.Time) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `INSERT INTO steam_nonces (nonce, expires_at) VALUES ($1, $2)
+		ON CONFLICT (nonce) DO NOTHING`, nonce, until)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// --- Identities, bans, the delete/re-create rule ---
+
+// AccountByIdentity is the account an identity signs in to, if any
+func (s *Store) AccountByIdentity(ctx context.Context, provider Provider, subject string) (string, bool, error) {
+	var id string
+	err := s.pool.QueryRow(ctx, `SELECT account_id::text FROM identities WHERE provider = $1 AND subject = $2`,
+		provider, subject).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	return id, err == nil, err
+}
+
+// Ban is a ban in force on an identity
+type Ban struct {
+	Provider   Provider
+	Subject    string
+	Reason, By string
+	End        BanEnd
+	Created    time.Time
+}
+
+// BanOn is the ban in force on an identity at now, if any
+func (s *Store) BanOn(ctx context.Context, provider Provider, subject string, now time.Time) (Ban, bool, error) {
+	return banOn(ctx, s.pool, provider, subject, now)
+}
+
+type querier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+func banOn(ctx context.Context, q querier, provider Provider, subject string, now time.Time) (Ban, bool, error) {
+	b := Ban{Provider: provider, Subject: subject}
+	var until *time.Time
+	err := q.QueryRow(ctx, `SELECT reason, until, banned_by, created_at FROM bans
+		WHERE provider = $1 AND subject = $2 AND (until IS NULL OR until > $3)`, provider, subject, now).
+		Scan(&b.Reason, &until, &b.By, &b.Created)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Ban{}, false, nil
+	}
+	if err != nil {
+		return Ban{}, false, err
+	}
+	b.End = endOf(until)
+	return b, true, nil
+}
+
+// DeletedAfter: when an identity (its keyed hash) last deleted an account, if after `after`
+func (s *Store) DeletedAfter(ctx context.Context, subjectHMAC []byte, after time.Time) (time.Time, bool, error) {
+	return deletedAfter(ctx, s.pool, subjectHMAC, after)
+}
+
+func deletedAfter(ctx context.Context, q querier, subjectHMAC []byte, after time.Time) (time.Time, bool, error) {
+	var at time.Time
+	err := q.QueryRow(ctx, `SELECT deleted_at FROM deletions WHERE subject_hmac = $1 AND deleted_at > $2`,
+		subjectHMAC, after).Scan(&at)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, false, nil
+	}
+	return at, err == nil, err
+}
+
+// --- Sign-ups ---
+
+// Pending is a new identity's sign-up waiting for its name and the Turnstile check
+type Pending struct {
+	TokenHash  []byte
+	Provider   Provider
+	Subject    string
+	Suggestion string
+	ExpiresAt  time.Time
+}
+
+func (s *Store) CreatePending(ctx context.Context, p Pending) error {
+	_, err := s.pool.Exec(ctx, `INSERT INTO pending_signups (token_hash, provider, subject, suggestion, expires_at)
+		VALUES ($1, $2, $3, $4, $5)`, p.TokenHash, p.Provider, p.Subject, p.Suggestion, p.ExpiresAt)
+	return err
+}
+
+// PendingSignup is the sign-up a cookie names, if it's there and not expired
+func (s *Store) PendingSignup(ctx context.Context, tokenHash []byte, now time.Time) (Pending, bool, error) {
+	p := Pending{TokenHash: tokenHash}
+	err := s.pool.QueryRow(ctx, `SELECT provider, subject, suggestion, expires_at FROM pending_signups
+		WHERE token_hash = $1 AND expires_at > $2`, tokenHash, now).
+		Scan(&p.Provider, &p.Subject, &p.Suggestion, &p.ExpiresAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Pending{}, false, nil
+	}
+	return p, err == nil, err
+}
+
+// Sign-up refusals (CreateAccount)
+var (
+	ErrPendingGone   = errors.New("the sign-up is gone or expired")
+	ErrIdentityTaken = errors.New("the identity has an account already")
+)
+
+// BannedError: the identity is banned
+type BannedError struct{ Ban Ban }
+
+func (e BannedError) Error() string { return "the identity is banned" }
+
+// RecreateError: the identity deleted an account within the block
+type RecreateError struct{ DeletedAt time.Time }
+
+func (e RecreateError) Error() string { return "the identity deleted an account recently" }
+
+// CreateAccount turns a pending sign-up into an account, in one transaction that checks again what may have changed
+// since the sign-in: the sign-up still there (and taken), no ban, no deletion after blockAfter, the identity free
+func (s *Store) CreateAccount(ctx context.Context, p Pending, name string, subjectHMAC []byte, now, blockAfter time.Time) (string, error) {
+	var id string
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `DELETE FROM pending_signups WHERE token_hash = $1 AND provider = $2 AND subject = $3
+			AND expires_at > $4`, p.TokenHash, p.Provider, p.Subject, now)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() != 1 {
+			return ErrPendingGone
+		}
+		if ban, banned, err := banOn(ctx, tx, p.Provider, p.Subject, now); err != nil {
+			return err
+		} else if banned {
+			return BannedError{ban}
+		}
+		if at, blocked, err := deletedAfter(ctx, tx, subjectHMAC, blockAfter); err != nil {
+			return err
+		} else if blocked {
+			return RecreateError{at}
+		}
+		if err := tx.QueryRow(ctx, `INSERT INTO accounts (created_at, name) VALUES ($1, $2) RETURNING id::text`,
+			now, name).Scan(&id); err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `INSERT INTO identities (provider, subject, account_id, linked_at) VALUES ($1, $2, $3, $4)`,
+			p.Provider, p.Subject, id, now)
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" { // (unique_violation: signed up meanwhile)
+			return ErrIdentityTaken
+		}
+		return err
+	})
+	return id, err
+}
+
+// --- Sessions ---
+
+// Session is a signed-in browser's; Previous: the token given was the one rotated out (in its grace)
+type Session struct {
+	TokenHash []byte
+	AccountID string
+	RotatedAt time.Time
+	ExpiresAt time.Time
+	Previous  bool
+}
+
+func (s *Store) CreateSession(ctx context.Context, tokenHash []byte, accountID string, now, expires time.Time) error {
+	_, err := s.pool.Exec(ctx, `INSERT INTO sessions (token_hash, account_id, created_at, rotated_at, expires_at)
+		VALUES ($1, $2, $3, $3, $4)`, tokenHash, accountID, now, expires)
+	return err
+}
+
+// SessionByToken is the session a token opens at now: its current token, or the previous one within its grace
+func (s *Store) SessionByToken(ctx context.Context, tokenHash []byte, now time.Time) (Session, bool, error) {
+	var ss Session
+	err := s.pool.QueryRow(ctx, `SELECT token_hash, account_id::text, rotated_at, expires_at, token_hash <> $1
+		FROM sessions WHERE (token_hash = $1 OR (previous_hash = $1 AND previous_until > $2)) AND expires_at > $2`,
+		tokenHash, now).Scan(&ss.TokenHash, &ss.AccountID, &ss.RotatedAt, &ss.ExpiresAt, &ss.Previous)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Session{}, false, nil
+	}
+	return ss, err == nil, err
+}
+
+// RotateSession replaces a session's token, the old one honoured until graceUntil; false if another request rotated
+// it first
+func (s *Store) RotateSession(ctx context.Context, oldHash, newHash []byte, now, graceUntil time.Time) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `UPDATE sessions SET token_hash = $2, previous_hash = $1, previous_until = $4,
+		rotated_at = $3 WHERE token_hash = $1`, oldHash, newHash, now, graceUntil)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// DeleteSession signs a browser out (by either of its tokens)
+func (s *Store) DeleteSession(ctx context.Context, tokenHash []byte) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM sessions WHERE token_hash = $1 OR previous_hash = $1`, tokenHash)
+	return err
+}
+
+// DeleteSessions signs an account out everywhere
+func (s *Store) DeleteSessions(ctx context.Context, accountID string) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM sessions WHERE account_id = $1`, accountID)
+	return err
+}
+
+// --- Accounts ---
+
+// Account is what the account page shows
+type Account struct {
+	ID        string
+	Name      string
+	CreatedAt time.Time
+	Providers []Provider
+}
+
+// ErrNoAccount: no account by that id
+var ErrNoAccount = errors.New("no such account")
+
+func (s *Store) Account(ctx context.Context, id string) (Account, error) {
+	a := Account{ID: id}
+	err := s.pool.QueryRow(ctx, `SELECT a.name, a.created_at,
+		coalesce(array_agg(i.provider ORDER BY i.provider) FILTER (WHERE i.provider IS NOT NULL), '{}')
+		FROM accounts a LEFT JOIN identities i ON i.account_id = a.id WHERE a.id = $1 GROUP BY a.id`, id).
+		Scan(&a.Name, &a.CreatedAt, &a.Providers)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Account{}, ErrNoAccount
+	}
+	return a, err
+}
+
+func (s *Store) Rename(ctx context.Context, id, name string) error {
+	tag, err := s.pool.Exec(ctx, `UPDATE accounts SET name = $2 WHERE id = $1`, id, name)
+	if err == nil && tag.RowsAffected() != 1 {
+		return ErrNoAccount
+	}
+	return err
+}
+
+// Identity is one sign-in of an account
+type Identity struct {
+	Provider Provider
+	Subject  string
+}
+
+// DeleteAccount deletes an account at once (AC-10): each identity's keyed hash recorded for the delete/re-create rule,
+// then the account, its identities and sessions; bans on its identities stay
+func (s *Store) DeleteAccount(ctx context.Context, id string, hmacOf func(Identity) []byte, now time.Time) error {
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		ids, err := identitiesOf(ctx, tx, id, true)
+		if err != nil {
+			return err
+		}
+		for _, i := range ids {
+			if _, err := tx.Exec(ctx, `INSERT INTO deletions (subject_hmac, deleted_at) VALUES ($1, $2)
+				ON CONFLICT (subject_hmac) DO UPDATE SET deleted_at = excluded.deleted_at`, hmacOf(i), now); err != nil {
+				return err
+			}
+		}
+		tag, err := tx.Exec(ctx, `DELETE FROM accounts WHERE id = $1`, id)
+		if err == nil && tag.RowsAffected() != 1 {
+			return ErrNoAccount
+		}
+		return err
+	})
+}
+
+func identitiesOf(ctx context.Context, tx pgx.Tx, accountID string, lock bool) ([]Identity, error) {
+	q := `SELECT provider, subject FROM identities WHERE account_id = $1 ORDER BY provider`
+	if lock {
+		q += ` FOR UPDATE`
+	}
+	rows, err := tx.Query(ctx, q, accountID)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (Identity, error) {
+		var i Identity
+		err := r.Scan(&i.Provider, &i.Subject)
+		return i, err
+	})
+}
+
+// --- Bans (the admin command: notes/accounts.md §4) ---
+
+// BanAccount bans every identity of an account and signs it out everywhere; the identities banned
+func (s *Store) BanAccount(ctx context.Context, accountID, reason, by string, end BanEnd, now time.Time) ([]Identity, error) {
+	var ids []Identity
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		var err error
+		if ids, err = identitiesOf(ctx, tx, accountID, true); err != nil {
+			return err
+		}
+		if len(ids) == 0 {
+			return ErrNoAccount
+		}
+		return banIdentities(ctx, tx, ids, accountID, reason, by, end, now)
+	})
+	return ids, err
+}
+
+// BanIdentity bans an identity, and with it every identity of its account if it has one (signed out everywhere)
+func (s *Store) BanIdentity(ctx context.Context, i Identity, reason, by string, end BanEnd, now time.Time) ([]Identity, error) {
+	ids := []Identity{i}
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		var account string
+		err := tx.QueryRow(ctx, `SELECT account_id::text FROM identities WHERE provider = $1 AND subject = $2`,
+			i.Provider, i.Subject).Scan(&account)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		if account != "" {
+			if ids, err = identitiesOf(ctx, tx, account, true); err != nil {
+				return err
+			}
+		}
+		return banIdentities(ctx, tx, ids, account, reason, by, end, now)
+	})
+	return ids, err
+}
+
+func banIdentities(ctx context.Context, tx pgx.Tx, ids []Identity, accountID, reason, by string, end BanEnd, now time.Time) error {
+	until := endColumn(end)
+	for _, i := range ids {
+		if _, err := tx.Exec(ctx, `INSERT INTO bans (provider, subject, reason, until, banned_by, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (provider, subject) DO UPDATE
+			SET reason = excluded.reason, until = excluded.until, banned_by = excluded.banned_by,
+			created_at = excluded.created_at`, i.Provider, i.Subject, reason, until, by, now); err != nil {
+			return err
+		}
+	}
+	if accountID == "" {
+		return nil
+	}
+	_, err := tx.Exec(ctx, `DELETE FROM sessions WHERE account_id = $1`, accountID)
+	return err
+}
+
+// Unban lifts the bans on an identity and on every identity of its account; how many were lifted
+func (s *Store) Unban(ctx context.Context, i Identity) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM bans b WHERE (b.provider = $1 AND b.subject = $2)
+		OR (b.provider, b.subject) IN (SELECT o.provider, o.subject FROM identities o JOIN identities m
+			ON m.account_id = o.account_id WHERE m.provider = $1 AND m.subject = $2)`, i.Provider, i.Subject)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// UnbanAccount lifts the bans on every identity of an account
+func (s *Store) UnbanAccount(ctx context.Context, accountID string) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM bans b USING identities i
+		WHERE i.account_id = $1 AND b.provider = i.provider AND b.subject = i.subject`, accountID)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// Bans lists the bans in force at now, newest first
+func (s *Store) Bans(ctx context.Context, now time.Time) ([]Ban, error) {
+	rows, err := s.pool.Query(ctx, `SELECT provider, subject, reason, until, banned_by, created_at FROM bans
+		WHERE until IS NULL OR until > $1 ORDER BY created_at DESC`, now)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (Ban, error) {
+		var b Ban
+		var until *time.Time
+		err := r.Scan(&b.Provider, &b.Subject, &b.Reason, &until, &b.By, &b.Created)
+		b.End = endOf(until)
+		return b, err
+	})
+}
+
+// Found is an account the admin command lists
+type Found struct {
+	Account
+	Identities []Identity
+}
+
+// FindAccounts lists the accounts whose name contains `name` (any case), newest first, at most 50
+func (s *Store) FindAccounts(ctx context.Context, name string) ([]Found, error) {
+	rows, err := s.pool.Query(ctx, `SELECT a.id::text, a.name, a.created_at,
+		coalesce(array_agg(i.provider || ':' || i.subject ORDER BY i.provider)
+			FILTER (WHERE i.provider IS NOT NULL), '{}')
+		FROM accounts a LEFT JOIN identities i ON i.account_id = a.id
+		WHERE strpos(lower(a.name), lower($1)) > 0 GROUP BY a.id ORDER BY a.created_at DESC LIMIT 50`, name)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (Found, error) {
+		var f Found
+		var ids []string
+		if err := r.Scan(&f.ID, &f.Name, &f.CreatedAt, &ids); err != nil {
+			return f, err
+		}
+		for _, id := range ids {
+			provider, subject, _ := cutColon(id)
+			f.Identities = append(f.Identities, Identity{Provider(provider), subject})
+			f.Providers = append(f.Providers, Provider(provider))
+		}
+		return f, nil
+	})
+}
+
+func cutColon(s string) (string, string, bool) {
+	for i := range len(s) {
+		if s[i] == ':' {
+			return s[:i], s[i+1:], true
+		}
+	}
+	return s, "", false
+}
+
+// --- Retention (notes/accounts.md §2) ---
+
+// Purge removes what has run out by now: sessions past their end, flows, sign-ups and Steam nonces past theirs, and the
+// delete/re-create rule's records from before deletionsBefore (their 30 days over)
+func (s *Store) Purge(ctx context.Context, now, deletionsBefore time.Time) error {
+	for _, q := range []struct {
+		sql string
+		at  time.Time
+	}{
+		{`DELETE FROM sessions WHERE expires_at <= $1`, now},
+		{`UPDATE sessions SET previous_hash = NULL, previous_until = NULL WHERE previous_until <= $1`, now},
+		{`DELETE FROM auth_flows WHERE expires_at <= $1`, now},
+		{`DELETE FROM pending_signups WHERE expires_at <= $1`, now},
+		{`DELETE FROM steam_nonces WHERE expires_at <= $1`, now},
+		{`DELETE FROM deletions WHERE deleted_at <= $1`, deletionsBefore},
+	} {
+		if _, err := s.pool.Exec(ctx, q.sql, q.at); err != nil {
+			return err
+		}
+	}
+	return nil
+}

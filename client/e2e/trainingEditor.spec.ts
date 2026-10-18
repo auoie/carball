@@ -311,3 +311,127 @@ test("the free-camera editor with a pad (the user's report): the shot list's but
   await expect(modal).toBeHidden();
   await expect(list).toBeVisible();
 });
+
+test("Exit to Main Menu over the editor with a pad (the user's report): the editor left as B leaves it, its unsaved question first; Free Play then free play, not the editor", async ({ page, context }) => {
+  test.setTimeout(240_000); // (four editors left, each to free play and back, and a reload)
+  const [A, B, START, VIEW, DOWN, LEFT] = [0, 1, 9, 8, 13, 14];
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await fakeGamepad(context);
+  await context.addInitScript(() => {
+    if (!sessionStorage.getItem("e2e-editor-exit")) {
+      localStorage.removeItem("carball.training.mine");
+      localStorage.setItem("carball.training.editorMode", "fly");
+      sessionStorage.setItem("e2e-editor-exit", "1");
+    }
+  });
+  interface EditorState {
+    open: boolean;
+    testing: boolean;
+  }
+  const editorState = async (): Promise<EditorState | null> =>
+    page.evaluate(() => (window as unknown as { carballFreeplay: { editor: () => EditorState | null } }).carballFreeplay.editor());
+  const speed = async (): Promise<number> =>
+    page.evaluate(() => (window as unknown as { carballFreeplay: { car: () => { speed: number } } }).carballFreeplay.car().speed);
+  await page.goto("/?render=off");
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+  const menu = page.locator("#main-menu");
+  const pause = page.locator("#pause-menu");
+  const modal = page.locator("#modal");
+  const list = page.locator("#fly-editor .fly-list");
+  const padFocused = async (button: ReturnType<typeof page.locator>): Promise<boolean> => button.evaluate((b) => b.classList.contains("pad-focus"));
+  const createTraining = async (): Promise<void> => {
+    await menu.getByRole("button", { name: /^play$/i }).click();
+    await menu.getByRole("button", { name: /^custom training$/i }).click();
+    await menu.getByRole("button", { name: /^create training$/i }).click();
+    await expect(menu).toBeHidden();
+  };
+  // (Start, the focus down to Exit to Main Menu, A; its question's YES: left from NO, A)
+  const exitToMainMenu = async (): Promise<void> => {
+    await padTap(page, [START]);
+    await expect(pause).toBeVisible();
+    const exit = pause.getByRole("button", { name: /^exit to main menu$/i });
+    for (let i = 0; i < 8 && !(await padFocused(exit)); i++) await padTap(page, [DOWN]);
+    await expect(exit).toHaveClass(/pad-focus/);
+    await padTap(page, [A]);
+    const yes = pause.locator(".pause-question").getByRole("button", { name: /^yes$/i });
+    await padTap(page, [LEFT]);
+    await expect(yes).toHaveClass(/pad-focus/);
+    await padTap(page, [A]);
+    await expect(pause).toBeHidden();
+  };
+  // (the main menu's Play, then Free Play: free play, the editor gone, the car driven by W; then back to the menu)
+  const freePlayDrives = async (): Promise<void> => {
+    await expect(menu).toBeVisible();
+    await expect(page.locator("#training-editor")).toBeHidden();
+    await expect(page.locator("#fly-editor")).toBeHidden();
+    expect(await editorState()).toMatchObject({ open: false, testing: false });
+    await expect(menu.getByRole("button", { name: /^play$/i })).toHaveClass(/pad-focus/);
+    await padTap(page, [A]);
+    const freePlay = menu.getByRole("button", { name: /^free play$/i });
+    for (let i = 0; i < 4 && !(await padFocused(freePlay)); i++) await padTap(page, [DOWN]);
+    await padTap(page, [A]);
+    await expect(menu).toBeHidden();
+    await expect(page.locator("#fly-editor")).toBeHidden();
+    await expect(page.locator("#training-editor")).toBeHidden();
+    await expect(page.locator("#training")).toBeHidden();
+    await page.keyboard.down("KeyW");
+    await expect.poll(speed, { timeout: 6_000 }).toBeGreaterThan(300);
+    await page.keyboard.up("KeyW");
+    // (the test's View pressed in free play: no editor back)
+    await padTap(page, [VIEW]);
+    await expect(page.locator("#fly-editor")).toBeHidden();
+    await page.keyboard.press("Escape");
+    await pause.getByRole("button", { name: /^exit to main menu$/i }).click();
+    await pause.locator(".pause-question").getByRole("button", { name: /^yes$/i }).click();
+    await expect(menu).toBeVisible();
+  };
+
+  // The free-camera editor, nothing changed: Exit to Main Menu leaves it, no question
+  await createTraining();
+  await expect(list).toBeVisible();
+  await exitToMainMenu();
+  await expect(modal).toBeHidden();
+  await freePlayDrives();
+
+  // A shot added (unsaved): the editor's SAVE AND EXIT first; CANCEL (B) stays in the editor, NO leaves it
+  await createTraining();
+  await expect(list).toBeVisible();
+  await padTap(page, [DOWN]);
+  await expect(list.locator(":focus")).toHaveText("CREATE NEW SHOT");
+  await padTap(page, [A]);
+  await expect(list.locator(".fly-shot-button")).toHaveCount(2);
+  await exitToMainMenu();
+  await expect(modal.locator(".modal-title")).toHaveText("SAVE AND EXIT");
+  await padTap(page, [B]);
+  await expect(modal).toBeHidden();
+  await expect(list).toBeVisible();
+  expect(await editorState()).toMatchObject({ open: true });
+  await exitToMainMenu();
+  await expect(modal.locator(".modal-title")).toHaveText("SAVE AND EXIT");
+  const no = modal.getByRole("button", { name: /^no$/i });
+  for (let i = 0; i < 3 && !(await padFocused(no)); i++) await padTap(page, [LEFT]);
+  await padTap(page, [A]);
+  await expect(modal).toBeHidden();
+  await freePlayDrives();
+
+  // The free-camera editor's test (View): its pause menu's Exit to Main Menu leaves the test and the editor
+  await createTraining();
+  await expect(list).toBeVisible();
+  await padTap(page, [VIEW]);
+  await expect.poll(async () => (await editorState())?.testing).toBe(true);
+  await exitToMainMenu();
+  await freePlayDrives();
+
+  // The panel editor: the same
+  await page.evaluate(() => {
+    localStorage.setItem("carball.training.editorMode", "panel");
+  });
+  await page.reload();
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+  await createTraining();
+  await expect(page.locator("#training-editor")).toBeVisible();
+  await exitToMainMenu();
+  await freePlayDrives();
+  expect(errors).toEqual([]);
+});

@@ -1,8 +1,8 @@
 // What ships names no game (the user's decision, 2026-10-15: notes/hitboxes.md): the built page (dist, its
 // WebAssembly engine among it), public/, the strings our modules hold (comments may name the game: they don't ship) and,
-// in the image build, the game server's staged files (its binary, its meshes, its image's Dockerfile: SHIPPED_GAME_DIR,
-// scripts/build_images.sh) carry none of the game's, its maker's, its cars', its arenas' or its modes' names, nor its
-// abbreviation, file names included (RV-388, RV-423). Needs nothing local: it runs in CI and in the image build too.
+// in the image build, the game server's and the accounts service's staged files (their binaries, the meshes, their
+// images' Dockerfiles: SHIPPED_GAME_DIR, SHIPPED_API_DIR, scripts/build_images.sh) carry none of the game's, its maker's,
+// its cars', its arenas' or its modes' names, nor its abbreviation, file names included (RV-388, RV-423). Needs nothing local: it runs in CI and in the image build too.
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,6 +13,7 @@ const DIST = join(SRC, "../dist");
 const PUBLIC = join(SRC, "../public");
 const INDEX = join(SRC, "../index.html");
 const GAME = process.env["SHIPPED_GAME_DIR"];
+const API = process.env["SHIPPED_API_DIR"];
 
 /** Whole words, any case: the game, its maker, its car bodies and hitbox presets, its arenas, its modes */
 const NAMES = [
@@ -124,6 +125,11 @@ const OLD_KEYS_MODULE = "settings/storageKeys.ts";
 /** Third-party words that hold a name by chance, in the game server's binary: rustls's key exchange API (a post-quantum
  *  hybrid's `hybrid_component()`) */
 const THIRD_PARTY = /\bhybrid_component\b/g;
+/** The same in the accounts service's binary: Go's crypto/tls and crypto/hpke (the post-quantum "hybrid" key exchange's
+ *  type and function names, its error texts, run on into the next string: no boundary after them), x/text's ISO 15924
+ *  script codes (Meroitic Cursive's "Merc" in its packed table, through pgx's password normalisation), and a root
+ *  certificate's subject in the bundle built in (Izenpe's "R. Merc." registry entry) */
+const THIRD_PARTY_GO = /(?:tls|hpke)\.(?:\(\*)?(?:New)?[Hh]ybrid[A-Za-z]*|PQ KEM for \S+ hybrid|\bhybrid key exchange|MendMercMero|RMerc\.Vitoria-Gasteiz/g;
 
 /** Encoded data, base64 (a run of 64 or more with capitals, lowercase letters and digits: a MIME or PEM line at least):
  *  random letters that spell anything, left out (RV-435) */
@@ -296,6 +302,17 @@ describe("what ships names no game (RV-388)", () => {
       expect(found(name), "file name").toBeNull();
       const { text, binary } = shipped(path);
       expect(found(text.replace(THIRD_PARTY, ""), binary), name).toBeNull();
+    }
+  });
+
+  it.skipIf(!API)("the accounts service's image files (its binary and Dockerfile: the image build)", () => {
+    const staged = files(API ?? "");
+    expect(staged.some((p) => p.endsWith("carball-api"))).toBe(true);
+    for (const path of staged) {
+      const name = posix(relative(API ?? "", path));
+      expect(found(name), "file name").toBeNull();
+      const { text, binary } = shipped(path);
+      expect(found(text.replace(THIRD_PARTY_GO, ""), binary), name).toBeNull();
     }
   });
 });

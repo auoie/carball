@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
-# Builds the two images of APP-CONTRACT.md from the commit (HEAD), never the working tree (RV-370): `git archive` stages
-# the sources under out/images/<TAG>-<time>/src, so nothing uncommitted or git-ignored (local-only data, a stray file
-# next to the meshes) gets in. There the engine's WebAssembly is built, then the client's production build and its
+# Builds the three images of APP-CONTRACT.md from the commit (HEAD), never the working tree (RV-370): `git archive`
+# stages the sources under out/images/<TAG>-<time>/src, so nothing uncommitted or git-ignored (local-only data, a stray
+# file next to the meshes) gets in. There the engine's WebAssembly is built, then the client's production build and its
 # shipped-data check on what it built, then the server's release binary (no debug info, no build machine's paths:
-# RV-380, no game's names: RV-423); each image is built from a staging directory holding only what it ships. Needs docker (or podman as
-# `docker`), Emscripten (/usr/lib/emscripten, or EMSCRIPTEN_ROOT), cargo (offline: its registry cached) and the client's
-# installed packages (client/node_modules).
+# RV-380, no game's names: RV-423), then the accounts service's (the same checks); each image is built from a staging
+# directory holding only what it ships. Needs docker (or podman as `docker`), Emscripten (/usr/lib/emscripten, or
+# EMSCRIPTEN_ROOT), cargo (offline: its registry cached), Go (offline: the modules go.sum pins in its module cache) and
+# the client's installed packages (client/node_modules).
 #   scripts/build_images.sh [TAG]              (default: the commit's short hash)
 #   scripts/build_images.sh --worktree TAG     (testing a change before its commit: the working tree's files that are
 #                                               committed or would be, never git-ignored ones)
 # Then export or push, e.g.:
 #   docker save carball-web:TAG | gzip > carball-web-TAG.tar.gz      (docker load < carball-web-TAG.tar.gz on the host)
-#   docker tag carball-web:TAG REGISTRY/carball-web:TAG && docker push REGISTRY/carball-web:TAG    (the same for carball-game)
+#   docker tag carball-web:TAG REGISTRY/carball-web:TAG && docker push REGISTRY/carball-web:TAG    (the same for carball-game
+#                                                                                                    and carball-api)
 set -euo pipefail
 R=$(cd "$(dirname "$0")/.." && pwd)
 COMMIT=$(git -C "$R" rev-parse --short HEAD)
@@ -23,10 +25,10 @@ if [ "${1:-}" = "--worktree" ]; then
 	if [[ "$1" =~ ^[0-9a-f]{7,40}$ ]]; then echo "--worktree: $1 looks like a commit's hash, which this build isn't: another TAG"; exit 1; fi
 fi
 TAG=${1:-$COMMIT}
-PATHS=(client engine server protocol scripts out/arena/collision_meshes) # (scripts: build_host.sh, the local host's build)
+PATHS=(client engine server protocol scripts api out/arena/collision_meshes) # (scripts: build_host.sh, the local host's build)
 STAGE="$R/out/images/$TAG-$(date +%Y%m%d%H%M%S)"
 SRC="$STAGE/src"
-mkdir -p "$SRC" "$STAGE/web" "$STAGE/game"
+mkdir -p "$SRC" "$STAGE/web" "$STAGE/game" "$STAGE/api"
 
 if [ $WORKTREE = 1 ]; then
 	echo "note: built from the working tree (on $COMMIT), not a commit"
@@ -78,10 +80,22 @@ echo "build machine paths in the binary: $paths"
 # (the game image's files through the names guard too: its binary, meshes and Dockerfile, RV-423)
 (cd "$SRC/client" && SHIPPED_GAME_DIR="$STAGE/game" npx vitest run src/render/shippedNames.test.ts)
 
+echo "== the accounts service's release binary"
+# (static, no cgo: the image has no C library to match; the build machine's paths trimmed, no build id; offline, the
+# modules from the cache as go.sum pins them; the installed Go, never a downloaded toolchain)
+(cd "$SRC/api" && CGO_ENABLED=0 GOFLAGS=-mod=readonly GOPROXY=off GOWORK=off GOTOOLCHAIN=local \
+	go build -trimpath -ldflags="-s -w -buildid=" -o "$STAGE/api/carball-api" ./cmd/carball-api)
+cp "$SRC/api/docker/Dockerfile" "$STAGE/api/"
+paths=$(grep -a -c -E "$HOME|$R|/mnt/" "$STAGE/api/carball-api" || true)
+echo "build machine paths in the accounts binary: $paths"
+[ "$paths" = 0 ] || { echo "the accounts binary names the build machine's paths: not built"; exit 1; }
+(cd "$SRC/client" && SHIPPED_API_DIR="$STAGE/api" npx vitest run src/render/shippedNames.test.ts)
+
 echo "== the images"
 # (what each image was built from: the commit, or the working tree on it, RV-398)
 KIND=$([ $WORKTREE = 1 ] && echo worktree || echo commit)
 LABELS=(--label "org.opencontainers.image.revision=$COMMIT" --label "carball.source=$KIND" --label "org.opencontainers.image.version=$TAG")
 docker build "${LABELS[@]}" -t "carball-web:$TAG" "$STAGE/web"
 docker build "${LABELS[@]}" -t "carball-game:$TAG" "$STAGE/game"
-echo "built carball-web:$TAG and carball-game:$TAG from $SOURCE (staged in $STAGE)"
+docker build "${LABELS[@]}" -t "carball-api:$TAG" "$STAGE/api"
+echo "built carball-web:$TAG, carball-game:$TAG and carball-api:$TAG from $SOURCE (staged in $STAGE)"

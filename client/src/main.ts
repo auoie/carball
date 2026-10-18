@@ -292,6 +292,9 @@ async function main(): Promise<void> {
   let mainMenu: MainMenu | null = null;
   // (freeplay's session over again: leaving it for the main menu, RV-284)
   let freeplayRestart: (() => void) | null = null;
+  // (the training editor left as its Escape leaves it, `then` once it has (its unsaved question answered): false when
+  // there's no editor to leave, nor its test or a playtest of its pack; set once the editor's made)
+  let leaveEditor: (then: () => void) => boolean = () => false;
   const pause: PauseMenu = new PauseMenu(document.body, {
     resume: () => {
       pause.close();
@@ -301,10 +304,15 @@ async function main(): Promise<void> {
     },
     ...(!onlinePage
       ? {
+          // (over the editor, its test or a playtest: the editor left first, as B leaves it; then free play's session
+          // over again)
           exit: () => {
             pause.close();
-            freeplayRestart?.();
-            mainMenu?.open();
+            const toMenu = (): void => {
+              freeplayRestart?.();
+              mainMenu?.open();
+            };
+            if (!leaveEditor(toMenu)) toMenu();
           },
         }
       : {}),
@@ -534,6 +542,14 @@ async function main(): Promise<void> {
       return true;
     };
     editorPadMenu = () => editor?.padMenu ?? null;
+    leaveEditor = (then) => {
+      if (!editor || (!editor.isOpen && !editor.testing && playtesting === null)) return false;
+      editor.leave(() => {
+        playtesting = null;
+        then();
+      });
+      return true;
+    };
     mainMenu = new MainMenu(document.body, {
       garage: (choice) => {
         freeplay.setCar(choice);

@@ -4,6 +4,67 @@ Static session, sub-agent MM1, 2026-10-14; live build 2026-10-06. Scope (user de
 matchmaking, playlists 1v1 / 2v2 / 3v3, no ranks, guest names, no accounts. Psyonix's matchmaker (PsyNet) is not in
 the exe: rows say what the client shows and enforces, and mark the rest **[PsyNet]** (server-side, unknowable).
 
+**Scope, REVISED 2026-10-18 (the user, via tmp-7f): ranked only, sign-in required.**
+- Online play is **ranked only**: 1v1, 2v2 and 3v3, every match rated (Glicko-2, provisional for new accounts). There
+  is no casual playlist, and no ranked gate.
+- **Sign-in (Google or Steam) is required for any online match**: no guest names, and the browser key is no identity
+  online (notes/accounts.md).
+- The offline modes (free play, custom training, Play vs Bots) stay without sign-in.
+- The rows below were researched for casual and stay as reference: where they say casual, guests or "no accounts",
+  this supersedes them.
+- Ranked matchmaking itself (pairing searchers by rating, placements, ranks shown) is its own design, after
+  notes/accounts.md.
+
+**Leavers, rejoining and ratings: the game's (LV1, 2026-10-18; the user's rule "ranked follows the game"; supersedes
+2026-10-16's items 1 and 2 below and this note's earlier 2026-10-18 answers where they differ).** The static session's
+lookup of the live build (out/bsim/agents/LV1/, local). The game server decides *when* a penalty applies; the ladder and
+anything rating-side beyond what's submitted is PsyNet's, unknowable, so Carball picks its own (marked **ours**).
+- **Ratings at the end** (`SubmitMatch`, only with a winner): every player whose last team won is a winner, the rest
+  losers, each flagged if they quit (`bQuitter`), with their time played.
+  - A leaver gets **their team's result**, flagged a quitter; an **idle kick is a leave**.
+  - A teammate left behind: an ordinary result, no protection. When the other team leaves, everyone on the winning team
+    gains.
+  - **Forfeit:** the other team wins; the forfeiters are ordinary losers, not quitters, and get no ban (a vote or a 1v1
+    Forfeit removes nobody). A team left with no humans forfeits at once (0.01 s); a lone human can forfeit with one
+    press once votes are allowed (ranked: after 90 s of clock).
+  - **No contest** (the match ends with no winner: everyone left, cancelled before the start, ended by the server):
+    nothing is submitted, nobody's rating changes. This replaces the earlier "both teams kicked, or nobody still active":
+    the game has no activity condition.
+  - Whether being a quitter dampens the rating change: unknown in the game. **Ours: no** (the user: "if a team wins,
+    everyone gains mmr regardless of everything").
+- **The leave penalty:**
+  - **When:** a penalty is armed only while the lobby is full of humans and the match has no winner yet (re-checked as
+    players come and go, the state changes, a goal is scored, a team forfeits). The **first** player to leave while it's
+    armed is banned from matchmaking; then it drops lobby-wide: later leavers on either team get no ban (the game's
+    Abandon Match turns into Leave Match, running forfeit votes end). It re-arms when the lobby is full again.
+  - **What counts:** leaving from the menu, a disconnect or timeout, an idle kick (also a map-load failure, an
+    anti-cheat kick). At most one ban per player per match.
+  - **Leniency:** no ban when every connected player has received nothing for 20 s or more (a server outage); one
+    player's bad connection gets none.
+  - **Issued at the leave** (the game's `RPC_AddQuitter`), not at the match's end; **cleared by a rejoin that fills the
+    lobby again** (`RPC_RemoveQuitter`, the latch re-armed); if someone else is still missing, or the match ends first,
+    it stands. So the game server reports a quitter to the API when they leave, and the removal when the lobby refills
+    (notes/accounts.md §3). This replaces "the ban starts when the result arrives": in the game a rejoin doesn't go
+    through the queue, so the ban doesn't stop it.
+  - **The ladder, its cap and decay: ours** (not in the client; public recall unreliable). **The user's choice
+    (2026-10-18), LV1's suggestion:** 5 min → 15 min → 1 h → 6 h → 24 h (the cap: every later leave 24 h), and one step
+    forgiven for every 24 h without a leave.
+  - **The page:** a search refused while banned shows the minutes left (max(⌈s/60⌉, 1)) and cancels; the Play menu shows
+    the ban; the game's strings (LeavePenaltyMessage, MatchmakingBanMessage, the warning before leaving) by key until the
+    user clears them.
+- **Rejoining** (corrects MM-44/MM-45):
+  - **Who:** ranked **2v2 and 3v3 only**; **no rejoin in 1v1**.
+  - **The slot is held** until the match ends: no bot, no backfill; the car's demolished, the team plays short.
+  - **The route is a prompt, not the queue:** "It appears you accidentally left a ranked match. Would you like to
+    rejoin?" (Yes/No; by key until cleared), shown once, when the menu opens or after OK on a connection-error modal,
+    if the match was joined **less than 900 s ago** (saved at the join's loading screen). The server takes the player back
+    only while the match runs and their slot is listed (else "Match has concluded"). A rejoin skips the ban check.
+  - **Not after a deliberate leave:** Exit to Main Menu clears the saved match, so no prompt; a disconnect or a kick
+    (an idle kick too) keeps it.
+  - **Back in:** the same team, their stats restored, spawned at once, no longer a quitter.
+- The no-show search ban (2 minutes) stays as it is, now by account.
+- Ratings are shown as numbers, lichess-style, with "?" while provisional (deviation above 110, lichess's).
+
 ## v1 queue checklist (user scope 2026-10-14: ship v1; simple queue, no rating or ranks)
 Only what the v1 queue needs, distilled from the rows below. **V** = cleared to ship verbatim (user decisions); **K** =
 by key / our own wording. Dropped for v1: ranks/MMR, backfill and join-in-progress, bots, parties, regions, leave
@@ -60,8 +121,8 @@ slot at once (no backfill); send reasons for server-ended matches.
   "backfill limits" (lead ≥ 3 goals / < 1:00) are **superseded**. Rank names, division text etc. are by key until the user
   clears them per case; rank icons are art (described only).
 
-**Ratings: idle kicks and leavers (user decision, 2026-10-16, via tmp-42; for the future ranks/MMR work, nothing to build
-now):**
+**Ratings: idle kicks and leavers (user decision, 2026-10-16, via tmp-42; items 1 and 2 superseded by 2026-10-18's
+leavers rule above; item 3, the no contest, stands):**
 1. A player idle-kicked or leaving while the other side is still active takes a **loss**, as if they had lost the match
    (the game's abandonment treatment).
 2. The team left standing **gains rating only if it is still active**: someone on it gave input within a recent window
@@ -180,8 +241,8 @@ Nothing ships verbatim until the user clears it; the candidates are listed at th
 | MM-41 | **The disconnected client:** main menu, then a modal: `DefaultDisconnectionTitle`, body the engine reason (normally `[Errors] ConnectionFailed`, TAGame's override), OK. The client timeout is UE3 NetDriver config, not in the shipped packages (O-3). | TA:63184-63220 | [S]; timeout [N] |
 | MM-42 | **In-match network warnings** are the connection-quality widget (`[ConnectionQuality]` Disconnected / HighLatency / LatencyVariation / PacketLoss / ServerHealth, HUD (1010, 220)); not specified here. | HUD.tree d88 | [M] |
 | MM-43 | **Server side of a leave:** the car is demolished and the player removed from the team (MR-7.9); the PRI goes to `RemovedPRIs` and stays on the scoreboard at α 0.4 (public play, SB-8); with bot fill a bot takes the slot 0.1 s later at the leaver's pose (MR-7.12); the forfeit check runs (MR-7.10). | TA:2125-2135, 67577 | [S] |
-| MM-44 | **The slot is not held in casual:** a disconnected reservation is removed unless `ShouldAllowRankedReconnect` (`bRanked && PlayerCount > 2 && !bDisableRankedReconnect`). | PX:12742-12750, 12853-12866, 6801-6803 | [S] |
-| MM-45 | **No "Reconnect?" prompt in casual** (ranked team playlists only: `[GFxShell_TA] RankedReconnectTitle/Body`, within `ReconnectTimeoutSeconds` 900, PsyNet-overridable). | TA:66388-66420, 63472-63480, 62575-62610; [A] RankedConfig_X | [S][A] |
+| MM-44 | **The slot is not held in casual:** a disconnected reservation is removed unless `ShouldAllowRankedReconnect` (`bRanked && PlayerCount > 2 && !bDisableRankedReconnect`): ranked 2v2 and 3v3 hold it until the match ends; **ranked 1v1 doesn't** (LV1). | PX:12742-12750, 12853-12866, 6801-6803 | [S] |
+| MM-45 | **No "Reconnect?" prompt in casual** (ranked team playlists only, 2v2 and 3v3, **not 1v1**: `[GFxShell_TA] RankedReconnectTitle/Body`, within `ReconnectTimeoutSeconds` 900, PsyNet-overridable). **LV1 corrections:** the 900 s count from the **match join** (the reservation saved at the join's loading screen), not from the leave; Exit to Main Menu clears it (no prompt after a deliberate leave); a rejoin that fills the lobby again **clears the leaver's ban**. | TA:66388-66420, 63472-63480, 62575-62610; [A] RankedConfig_X | [S][A] |
 | MM-46 | **Back into a casual match** only by searching again and being backfilled into it (PsyNet's choice); then MM-24. | – | [I]; [PsyNet] |
 | MM-47 | **Server-ended match** (forfeit / no contest, or a kick on game-event destroy): `[OnlineServerConnectionErrors] MatchKick`. A join without a reservation: `NoReservation`; before the match started: `MatchNotStarted`. | TA:71744-71748; PX:12833-12840, 77150 | [S] |
 | MM-48 | **Network-issue leniency:** a leave while every player has network issues gives no ban (`AllPlayersHaveNetworkIssues`). Server-side only. | TA:1031-1045 | [S] |

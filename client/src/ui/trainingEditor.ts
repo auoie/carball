@@ -301,9 +301,19 @@ export class TrainingEditor {
    *  CANCEL stays) */
   escape(): void {
     if (this.#fly.escape()) return;
+    this.leave(() => {
+      this.#actions.exit();
+    });
+  }
+
+  /** Left whatever is open in it, as Escape leaves it (the pause menu's Exit to Main Menu over the editor, its test or a
+   *  playtest of its pack): the details' dialog closed, the unsaved changes asked about first; `then` once it's left
+   *  (CANCEL stays) */
+  leave(then: () => void): void {
+    this.#fly.escape();
     const leave = (): void => {
       this.close();
-      this.#actions.exit();
+      then();
     };
     if (!this.#dirty) {
       leave();
