@@ -51,6 +51,12 @@ export interface HeldActions {
   readonly scoreboard: boolean;
   /** The goal replay's skip (ReadyUp) */
   readonly readyUp: boolean;
+  /** Custom training's commands: the previous and next shot, shuffle, mirror */
+  readonly trainingPrevious: boolean;
+  readonly trainingNext: boolean;
+  readonly trainingShuffle: boolean;
+  readonly trainingMirror: boolean;
+  readonly trainingSelect: boolean;
   /** The quick-chat keys (ChatPreset1-4): a key's press since the last frame (each tap, in back-to-back frames too: a
    *  press is a command, not a state), and the pad button held now (its press is its edge) */
   readonly chat: readonly ChatKey[];
@@ -75,6 +81,11 @@ export const NO_HELD_ACTIONS: HeldActions = {
   ballOnCar: false,
   scoreboard: false,
   readyUp: false,
+  trainingPrevious: false,
+  trainingNext: false,
+  trainingShuffle: false,
+  trainingMirror: false,
+  trainingSelect: false,
   chat: [NO_CHAT_KEY, NO_CHAT_KEY, NO_CHAT_KEY, NO_CHAT_KEY],
 };
 
@@ -264,6 +275,11 @@ export function readHeldActions(input: InputSnapshot, bindings: Bindings, stickD
     ballOnCar: held("ballOnCar"),
     scoreboard: held("scoreboard"),
     readyUp: held("readyUp"),
+    trainingPrevious: held("trainingPrevious"),
+    trainingNext: held("trainingNext"),
+    trainingShuffle: held("trainingShuffle"),
+    trainingMirror: held("trainingMirror"),
+    trainingSelect: held("trainingSelect"),
     chat: (["chatPreset1", "chatPreset2", "chatPreset3", "chatPreset4"] as const).map((a) => {
       const [key, pad] = buttonInputs(input, bindings, stickDeadzone, a);
       return { keyPressed: key?.pressed ?? false, padDown: pad?.down ?? false };

@@ -24,6 +24,20 @@ Map: Night, the only one (the user's decision of 2026-10-17): our glasshouse are
 sky (`src/render/themes/night.ts`, `src/render/greenhouse.ts`). Play → Free Play starts free play on it; every online
 match is on it (map 0 on the wire: protocol/README.md "Maps"). The other maps are in the history (3cb78f8).
 
+Custom training (offline; notes/custom-training.md): Play → Custom Training lists the player's own packs, Carball's
+starter packs (`src/training/starterPacks.ts`, ours) and, on the dev server alone, the user's own packs converted locally
+(other creators' work: `out/bsim/assets_local/training/packs/`, git-ignored, never in a build). A pack is Carball's JSON
+format (`src/training/pack.ts`: metadata and 1-50 shots, each the ball's start, launch rotator and speed, the car's start,
+the time limit). Played as the game's rules (`src/training/run.ts`, wired into free play's session): the countdown until
+input with the ball frozen and its path previewed, the timer, the striker's goal after a touch or the goalie's save, then
+the next shot; reset, previous/next, shuffle and mirror; per-shot progress kept by pack; the Training settings tab (game
+speed, input delay, the variance's modifiers, boost, Skip Goal Replay). Create Training opens the editor
+(`src/ui/trainingEditor.ts`): the shots' ball, launch, car and time limit, placed by clicking the field under an orbiting
+camera, saved in the browser, exported and imported as pack files, playtested. Its other mode, Free camera (the player's
+choice, kept), is the game's (`src/ui/flyEditor.ts`, rules in `src/training/editorControls.ts`; notes/training-editor.md):
+the shot list, a fly camera, the ball and car selected in turn and moved and aimed with the movement keys and the look,
+the speeds on the wheel or the bumpers, the strength meter, Test Shot and Test Sequence on Tab or the pad's View.
+
 The game's Fennec (testing only): with the static session's local export in `out/bsim/assets_local/fennec/`
 (Psyonix assets: git-ignored, never copied into client/, never shipped), `npm run dev` serves it at `/local-assets/`
 and cars of the Octane hitbox wear it, painted in the team's colour (`src/render/fennec.ts`). Builds, `vite preview`

@@ -11,6 +11,7 @@ import type { GaragePreview } from "./garagePreview";
 import type { BotChoices } from "../local/botMatch";
 import { BOT_MATCH_TEXT } from "../local/botText";
 import type { BotsPage } from "./botsPage";
+import type { PackListing } from "../training/packs";
 
 export const MAIN_MENU_TEXT = {
   play: "Play",
@@ -26,14 +27,23 @@ export const GARAGE_TEXT = { blue: "Blue", orange: "Orange" } as const;
 const BACK_TEXT = "Back";
 
 const PLAYLIST_KEY = "carball.playlist";
-/** The menu's pages: the top (Play, Garage, Settings), Play's, the bots' setup, the garage */
-export type MenuView = "top" | "play" | "bots" | "garage";
+/** The menu's pages: the top (Play, Garage, Settings), Play's, the bots' setup, custom training's packs, the garage */
+export type MenuView = "top" | "play" | "bots" | "training" | "garage";
 
-/** Where Escape (the pad's B) goes from a page: the bots' setup back to Play, Play and the garage to the top; the top
- *  stays */
+/** Where Escape (the pad's B) goes from a page: the bots' setup and the training packs back to Play, Play and the garage
+ *  to the top; the top stays */
 export function backFrom(view: MenuView): MenuView {
-  return view === "bots" ? "play" : "top";
+  return view === "bots" || view === "training" ? "play" : "top";
 }
+
+/** Custom training's words (the game's menu: Custom Training; a pack's line ours) */
+export const TRAINING_MENU_TEXT = {
+  customTraining: "Custom Training",
+  create: "Create Training",
+  edit: "Edit",
+  shots: (n: number): string => `${String(n)} ${n === 1 ? "shot" : "shots"}`,
+  difficulties: { easy: "Easy", medium: "Medium", hard: "Hard" },
+} as const;
 
 export interface MainMenuActions {
   /** Free Play (on Night, the one map) */
@@ -47,6 +57,10 @@ export interface MainMenuActions {
   readonly preview?: GaragePreview;
   /** Play vs Bots' Start: the match with these bots */
   readonly botMatch?: (choices: BotChoices) => void;
+  /** Custom training: this pack */
+  readonly training?: (pack: PackListing) => void;
+  /** The training editor: this pack of the player's own, or a new one (null) */
+  readonly editTraining?: (pack: PackListing | null) => void;
 }
 
 export class MainMenu {
@@ -64,6 +78,12 @@ export class MainMenu {
   /** Play vs Bots: its button on Play's page, its own page, the page's body and Start (none in a build without bots:
    *  RV-541) */
   readonly #botsView: { readonly entry: HTMLButtonElement; readonly page: HTMLDivElement; readonly body: HTMLDivElement; readonly start: HTMLButtonElement } | null;
+  /** Custom Training: its button on Play's page (hidden until there are packs) and its page of packs */
+  readonly #playTraining: HTMLButtonElement;
+  readonly #training: HTMLDivElement;
+  readonly #trainingList: HTMLDivElement;
+  readonly #trainingAction: ((pack: PackListing) => void) | undefined;
+  readonly #editAction: ((pack: PackListing | null) => void) | undefined;
   /** The bots' page body (ui/botsPage.ts, a chunk of its own): none until the packages are listed */
   #botsPage: BotsPage | null = null;
   #playlist = storedPlaylist();
@@ -107,6 +127,11 @@ export class MainMenu {
         })
       : null;
     if (playBots) playBots.hidden = true;
+    // (hidden until a pack is there to play: setTrainingPacks)
+    this.#playTraining = button(this.#play, TRAINING_MENU_TEXT.customTraining, () => {
+      this.#show("training");
+    });
+    this.#playTraining.hidden = true;
     // (the playlists: one selected at a time; Find Match searches it)
     const playlists = document.createElement("div");
     playlists.className = "main-menu-playlists";
@@ -151,6 +176,22 @@ export class MainMenu {
       });
       this.#botsView = { entry: playBots, page, body, start };
     } else this.#botsView = null;
+    // (custom training's packs: one button each, its name, shots and difficulty)
+    this.#training = column();
+    this.#training.dataset["padPage"] = "training";
+    this.#training.dataset["padBack"] = "";
+    this.#training.classList.add("main-menu-training-view");
+    const trainingHeading = document.createElement("div");
+    trainingHeading.className = "main-menu-heading";
+    trainingHeading.textContent = TRAINING_MENU_TEXT.customTraining;
+    this.#trainingList = document.createElement("div");
+    this.#trainingList.className = "main-menu-training";
+    this.#training.append(trainingHeading, this.#trainingList);
+    this.#trainingAction = actions.training;
+    this.#editAction = actions.editTraining;
+    button(this.#training, BACK_TEXT, () => {
+      this.#show("play");
+    });
     // (the garage: the cars and the team colours, each kept as chosen, the car shown turning in its colour)
     this.#garage = column();
     this.#garage.dataset["padPage"] = "garage";
@@ -210,6 +251,56 @@ export class MainMenu {
     this.#botsView.entry.hidden = !this.#botsPage.playable;
   }
 
+  /** The training packs there are: Custom Training shown with one to play (or the editor to make one), each a button on
+   *  its page, the player's own with Edit beside it; Create Training first */
+  setTrainingPacks(packs: readonly PackListing[]): void {
+    const edit = this.#editAction;
+    this.#playTraining.hidden = packs.length === 0 && !edit;
+    const create = document.createElement("button");
+    create.className = "main-menu-button main-menu-create";
+    create.textContent = TRAINING_MENU_TEXT.create;
+    create.addEventListener("click", () => {
+      edit?.(null);
+    });
+    create.hidden = !edit;
+    this.#trainingList.replaceChildren(
+      create,
+      ...packs.map((pack) => {
+        const b = document.createElement("button");
+        b.className = "main-menu-button main-menu-pack";
+        b.dataset["pack"] = pack.id;
+        const name = document.createElement("span");
+        name.className = "main-menu-pack-name";
+        name.textContent = pack.name;
+        const about = document.createElement("span");
+        about.className = "main-menu-pack-about";
+        about.textContent = `${TRAINING_MENU_TEXT.shots(pack.shots)} · ${TRAINING_MENU_TEXT.difficulties[pack.difficulty]}`;
+        b.append(name, about);
+        b.addEventListener("click", () => {
+          this.#trainingAction?.(pack);
+        });
+        if (!pack.mine || !edit) return b;
+        const editButton = document.createElement("button");
+        editButton.className = "main-menu-button main-menu-pack-edit";
+        editButton.textContent = TRAINING_MENU_TEXT.edit;
+        editButton.dataset["edit"] = pack.id;
+        editButton.addEventListener("click", () => {
+          edit(pack);
+        });
+        const row = document.createElement("div");
+        row.className = "main-menu-pack-row";
+        row.append(b, editButton);
+        return row;
+      }),
+    );
+  }
+
+  /** Back on the training packs' page (from the editor) */
+  showTraining(): void {
+    this.open();
+    this.#show("training");
+  }
+
   get isOpen(): boolean {
     return !this.#root.hidden;
   }
@@ -233,7 +324,8 @@ export class MainMenu {
 
   /** Back a page (Escape's, a pad's B); whether there was one to go back from (none at the top: nothing, silently) */
   back(): boolean {
-    const view: MenuView = this.#botsView && !this.#botsView.page.hidden ? "bots" : !this.#play.hidden ? "play" : !this.#garage.hidden ? "garage" : "top";
+    const view: MenuView =
+      this.#botsView && !this.#botsView.page.hidden ? "bots" : !this.#training.hidden ? "training" : !this.#play.hidden ? "play" : !this.#garage.hidden ? "garage" : "top";
     this.#show(backFrom(view));
     return view !== "top";
   }
@@ -262,6 +354,7 @@ export class MainMenu {
     this.#top.hidden = view !== "top";
     this.#play.hidden = view !== "play";
     if (this.#botsView) this.#botsView.page.hidden = view !== "bots";
+    this.#training.hidden = view !== "training";
     this.#garage.hidden = view !== "garage";
     // (the preview turning only while the garage shows; the car chosen focused)
     if (view === "garage") {
@@ -270,6 +363,8 @@ export class MainMenu {
     } else this.#preview?.stop();
     // (the bots' Start focused: Enter, or the pad's A, starts it at once)
     if (view === "bots") this.#botsView?.start.focus();
+    // (the first pack focused)
+    if (view === "training") this.#trainingList.querySelector("button")?.focus();
   }
 }
 

@@ -381,3 +381,39 @@ describe("a network state laid over the world (RV-503's PM7)", () => {
   });
 });
 
+describe("custom training's engine calls (sibling, setGoalScoring, hideBall)", () => {
+  it("a sibling arena plays on its own: the same ball's flight as this world's, this world untouched", () => {
+    const world = World.create(engine);
+    const sibling = world.sibling();
+    const launch = { pos: vec3(0, 0, 500), vel: vec3(500, 1000, 800), angVel: vec3(0, 0, 0) };
+    world.setBall(launch);
+    sibling.setBall(launch);
+    world.step(120);
+    sibling.step(120);
+    expect(sibling.ball()).toEqual(world.ball());
+    const before = world.ball();
+    sibling.step(60);
+    expect(world.ball()).toEqual(before);
+    sibling.dispose();
+    world.dispose();
+  });
+
+  it("scores no goal while scoring is off (the ball plays on in the net), one once it's on; hideBall explodes the ball", () => {
+    const world = World.create(engine);
+    world.setGoalScoring(false);
+    world.setBall({ pos: vec3(0, 4900, 200), vel: vec3(0, 2000, 0), angVel: vec3(0, 0, 0) });
+    world.step(120);
+    expect(world.takeEvents().filter((e) => e.type === "goal")).toEqual([]);
+    expect(world.ballExploded()).toBe(false);
+    world.setGoalScoring(true);
+    world.setBall({ pos: vec3(0, 4900, 200), vel: vec3(0, 2000, 0), angVel: vec3(0, 0, 0) });
+    world.step(120);
+    expect(world.takeEvents().filter((e) => e.type === "goal")).toEqual([{ type: "goal", scoringTeam: 0 }]);
+    world.setBall({ pos: vec3(0, 0, 300), vel: vec3(0, 0, 500), angVel: vec3(0, 0, 0) });
+    world.hideBall();
+    expect(world.ballExploded()).toBe(true);
+    world.step(30);
+    expect(world.ball().pos).toEqual(vec3(0, 0, 300));
+    world.dispose();
+  });
+});

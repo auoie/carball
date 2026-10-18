@@ -46,18 +46,25 @@ export const ACTIONS = [
   { id: "chatPreset2", label: "Quick Chat - Compliments", group: "Quick Chat" },
   { id: "chatPreset3", label: "Quick Chat - Reactions", group: "Quick Chat" },
   { id: "chatPreset4", label: "Quick Chat - Apologies", group: "Quick Chat" },
+  // (custom training's playtest commands, DefaultInput.ini: the arrows and the D-pad; notes/custom-training.md §2.9)
+  { id: "trainingPrevious", label: "Previous shot", group: "Training" },
+  { id: "trainingNext", label: "Next shot", group: "Training" },
+  { id: "trainingShuffle", label: "Shuffle shots", group: "Training" },
+  { id: "trainingMirror", label: "Mirror shot", group: "Training" },
+  { id: "trainingSelect", label: "Select shot", group: "Training" },
   // (ToggleScoreboard: held, online only)
   { id: "scoreboard", label: "Scoreboard (hold)", group: "Match" },
   // (Controls.int [ReadyUp] Label, verbatim: the goal replay's skip, when no car drives, so it shares its keys)
   { id: "readyUp", label: "Skip Replay", group: "Replay" },
 ] as const;
 
-/** Action groups never active together (freeplay's offline, quick chat's online): their bindings may share inputs */
+/** Action groups never active together (freeplay's offline, quick chat's online, custom training's in its own mode):
+ *  their bindings may share inputs */
 export function exclusiveGroups(a: Action, b: Action): boolean {
   const group = (id: Action): string => ACTIONS.find((x) => x.id === id)?.group ?? "";
   const pair = [group(a), group(b)].sort().join("|");
   // (the replay's skip: no car is driven in a goal replay, so it shares any key: Space with jump, the pad's A)
-  return pair === "Freeplay|Quick Chat" || (pair.includes("Replay") && group(a) !== group(b));
+  return pair === "Freeplay|Quick Chat" || pair === "Freeplay|Training" || pair === "Quick Chat|Training" || (pair.includes("Replay") && group(a) !== group(b));
 }
 
 export type Action = (typeof ACTIONS)[number]["id"];
@@ -105,6 +112,13 @@ export const DEFAULT_BINDINGS: Bindings = {
   chatPreset2: bind(key("Digit2"), button(14)),
   chatPreset3: bind(key("Digit3"), button(15)),
   chatPreset4: bind(key("Digit4"), button(13)),
+  // (TrainingNavigationCommand Previous/Next, ToggleShuffle, MirrorShot: the arrows, the D-pad)
+  trainingPrevious: bind(key("ArrowLeft"), button(14)),
+  trainingNext: bind(key("ArrowRight"), button(15)),
+  trainingShuffle: bind(key("ArrowUp"), button(12)),
+  trainingMirror: bind(key("ArrowDown"), button(13)),
+  // (OpenShotSelectionMenu: Enter, the pad's Back/View)
+  trainingSelect: bind(key("Enter"), button(8)),
   // (DefaultInput.ini, ControlPreset_X: Tab and the left bumper, SB-10)
   scoreboard: bind(key("Tab"), button(4)),
   // (ReadyUp: Modern's SpaceBar, the pad's A: notes/hud-menus.md HT-3)

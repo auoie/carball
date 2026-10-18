@@ -25,6 +25,8 @@ export interface BotListing {
   readonly teamSizes: readonly number[];
   readonly credit: string;
   readonly licence: string;
+  /** the licence's text, beside bot.json (the manifest's licenceFile, else LICENSE.txt: FORMAT.md) */
+  readonly licenceFile: string;
   readonly playable: boolean;
   readonly why?: string;
   readonly levels: readonly BotLevel[];
@@ -59,6 +61,9 @@ export function unplayable(manifest: BotManifest): string | null {
   return null;
 }
 
+/** A package's licence text when its manifest names none (FORMAT.md) */
+const LICENCE_FILE = "LICENSE.txt";
+
 /** The packages there are (none: an empty list; a broken one listed as not playable) */
 export async function listBots(base = BOTS_BASE, fetcher: typeof fetch = fetch): Promise<BotListing[]> {
   let index: unknown;
@@ -72,12 +77,22 @@ export async function listBots(base = BOTS_BASE, fetcher: typeof fetch = fetch):
     ids.filter((id): id is string => typeof id === "string").map(async (id): Promise<BotListing> => {
       try {
         const manifest = parseManifest(await json(`${base}${id}/bot.json`, fetcher));
-        if (typeof manifest === "string") return { id, name: id, teamSizes: [], credit: "", licence: "", playable: false, why: `bot.json: ${manifest}`, levels: [] };
+        if (typeof manifest === "string") return { id, name: id, teamSizes: [], credit: "", licence: "", licenceFile: LICENCE_FILE, playable: false, why: `bot.json: ${manifest}`, levels: [] };
         const why = unplayable(manifest);
         const levels = botLevels(manifest);
-        return { id, name: manifest.name, teamSizes: manifest.teamSizes, credit: manifest.credit ?? manifest.authors ?? "", licence: manifest.licence, playable: why === null, ...(why === null ? {} : { why }), levels };
+        return {
+          id,
+          name: manifest.name,
+          teamSizes: manifest.teamSizes,
+          credit: manifest.credit ?? manifest.authors ?? "",
+          licence: manifest.licence,
+          licenceFile: manifest.licenceFile ?? LICENCE_FILE,
+          playable: why === null,
+          ...(why === null ? {} : { why }),
+          levels,
+        };
       } catch (e) {
-        return { id, name: id, teamSizes: [], credit: "", licence: "", playable: false, why: e instanceof Error ? e.message : String(e), levels: [] };
+        return { id, name: id, teamSizes: [], credit: "", licence: "", licenceFile: LICENCE_FILE, playable: false, why: e instanceof Error ? e.message : String(e), levels: [] };
       }
     }),
   );

@@ -269,6 +269,24 @@ are gone (git history at 3cb78f8). The wire keeps the map byte, always 0 (`MAP_C
 `scripts/build_host.sh`) runs the match in a worker (`client/src/local/`), the page its online client; bots are the
 built-in chaser or the shipped Nexto/Necto packages (`client/bots/`, CC BY-NC-SA 4.0, onnxruntime-web on one thread;
 `CARBALL_BOTS=0` builds without them). RX23 (RV-532..547) fixed in the tree after 3c8622b.
+**Custom training, 2026-10-17** (the user's next feature after be5653a; spec notes/custom-training.md, CTR-1..21):
+Carball's own JSON pack format (`client/src/training/pack.ts`), the run's rules (`training/run.ts`) wired into free play's
+session (`game/freeplay.ts`: the engine's kickoff hold as the countdown's, the ball held frozen, goals scored only when an
+entry counts via the WASM binding `setGoalScoring`, `hideBall` for saves and timeouts, a sibling arena predicting the ball's
+path), the HUD (`ui/trainingHud.ts`), the Training settings tab with the variance (`training/variance.ts`), Carball's
+starter packs (`training/starterPacks.ts`, checked against the engine), the editor (`ui/trainingEditor.ts`: the player's
+packs in the browser, export/import, playtest). The user's 20 packs: converted from TP1's dumps by
+`out/bsim/assets_local/training/tools/convert_tp1.py` into `out/bsim/assets_local/training/packs/` (git-ignored, other
+creators' work, account ids dropped), listed by the dev server alone; a guard check keeps any /local-assets/ path out of
+builds. **The editor's free-camera mode, 2026-10-18** (the user's request; notes/training-editor.md TE1): a Panel / Free
+camera toggle (kept in `carball.training.editorMode`); `ui/flyEditor.ts` (shot list, SEQUENCE SETTINGS, the shot editor's
+HUD and strength meter, keys and pad per TE1 §2.1) over `training/editorControls.ts` (flight, clamps, look, steps, the
+bumpers' repeat, tap/hold, undo); Test Shot / Test Sequence are `TrainingRun` tests (`test`: no variance, no grounding,
+nothing kept, the HUD's Edit Shot), free play holding the edited car where placed and predicting its path at most every
+0.1 s while it moves. Ctrl (Move Down) with W can close the browser tab: the game's binding kept, a browser limit.
+**Custom maps** (Phase 1 and four map modes, built after be5653a on 2026-10-17) were removed before any commit, on the
+user's scope cut that night ("just custom training packs for now"): the engine is be5653a's again but for custom
+training's three WASM bindings (`setGoalScoring`, `hideBall`, `sibling`). notes/workshop-maps.md stays as research.
 **The browser tests' servers** start from `client/e2e/servers.ts` (Playwright's globalSetup), not its webServer: here a
 connection to a closed 127.0.0.1 port is dropped, not refused, and Playwright's pre-check of each server's URL waited
 2 min 14 s per server (9 of the suite's 12 minutes).
@@ -1040,6 +1058,7 @@ PATH=/usr/lib/emscripten:$PATH emmake make -C ../engine/build-wasm -j && node ..
 ../engine/build/rollback ../out/arena/collision_meshes 300   # restored snapshots continue bit for bit
 cd ../client && npm run check && npm run build && npm run e2e   # web client: types, lint, tests, browser tests
 cd ../server && cargo test && cargo clippy --all-targets -- -D warnings   # game server (cargo run --release to play)
+cargo clippy --no-default-features --features host --lib --bins -- -D warnings   # the local host's configuration (RV-552)
 python3 replay_pull.py ../out/replays && replay_extract/target/release/replay_extract ../out/replays/states.csv ../out/replays/*.replay
 ../engine/build/replay_validate ../out/replays/states.csv --cases ../out/replays/cases.csv && python3 validation_report.py ../out/replays/cases.csv
 ```

@@ -339,6 +339,11 @@ describe("what ships carries no game data (RV-99)", () => {
     expect(existsSync(join(DIST, "THIRD_PARTY_NOTICES-onnxruntime.txt"))).toBe(withBots);
   });
 
+  it("no dev-only local asset ships: the bundle names no /local-assets/ path (the game's models, the user's training packs)", () => {
+    const local = files(DIST, (n) => /\.(js|html|css|json)$/.test(n)).filter((path) => readFileSync(path, "utf8").includes("/local-assets/"));
+    expect(local.map((path) => relative(DIST, path))).toEqual([]);
+  });
+
   it("the arena's collision meshes that ship are our generated ones: imported from out/arena, the bundle's (files or inlined) the same bytes (RV-167f)", () => {
     const cmf = shippedImports().filter((p) => kind(p) === "cmf");
     expect(cmf.length).toBeGreaterThan(0);

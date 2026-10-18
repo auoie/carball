@@ -62,13 +62,13 @@ export function respawnLate(pct: number): boolean {
   return pct <= RESPAWN_LATE_PCT;
 }
 
-/** The boost meter's number (GFxHUD_TA.GetBoostAmountForUI): floor(pct · 100), at least 1 while any is left
- *  (notes/visual-timing.md VT-21) */
 /** The meter's "low" cue: its shown number at 15 or under */
 export function boostLow(shown: number): boolean {
   return shown <= 15;
 }
 
+/** The boost meter's number (GFxHUD_TA.GetBoostAmountForUI): floor(pct · 100), at least 1 while any is left
+ *  (notes/visual-timing.md VT-21) */
 export function boostShown(boost: number): number {
   return boost <= 0 ? 0 : Math.min(100, Math.max(1, Math.floor(boost)));
 }

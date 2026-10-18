@@ -199,7 +199,7 @@ export class BallView {
   readonly #sideHead = new Vector3();
 
   constructor() {
-    // (transparent throughout: it dissolves on a goal and fades in at a kickoff)
+    // (transparent throughout: it dissolves on a goal)
     this.#material = new MeshStandardMaterial({ vertexColors: true, roughness: 0.5, metalness: 0.1, flatShading: true, transparent: true });
     addGoalLineEffect(this.#material, this.#goalLine);
     this.#ball = new Mesh(patchedBallGeometry(), this.#material);
@@ -291,10 +291,10 @@ export class BallView {
     } else this.#goalLine.planeN.value.set(0, 0, 0);
   }
 
-  /** A new ball (a kickoff, a goal's reset): it fades in over 1 s (VT-30); `instant`: shown at once (a replay's,
-   *  freeplay's placements) */
-  spawn(instant = false): void {
-    this.#opacity = instant ? 1 : 0;
+  /** A new ball (a kickoff, a goal's reset, a replay's, a map's feed): solid at once (the game's 1 s fade-in, VT-30,
+   *  removed by the user, 2026-10-17); its FX actor's pieces come again, its trails begun again */
+  spawn(): void {
+    this.#opacity = 1;
     this.#sinceSpawn = 0; // (a new FX actor: its beam, ring and sphere come again, VT-30a)
     // (its trail too: begun again unseen, its opacity 0)
     for (const trail of [this.#trail, ...this.#sideTrails]) trail.clear();
@@ -302,14 +302,14 @@ export class BallView {
     this.#show(false);
   }
 
-  /** This frame's look: exploded, the ball's Dissolve falls at 3/s (Ball_TA's BallFadeOutSpeed -3: 0.333 s, VT-15),
-   *  its marker gone at once; else it rises at 1/s (after a spawn); the frame time capped at 1/30 either way (RV-30) */
+  /** This frame's look: exploded, the ball's Dissolve falls at 3/s (Ball_TA's BallFadeOutSpeed -3: 0.333 s, VT-15), the
+   *  frame time capped at 1/30 (RV-30), its marker gone at once; else solid (no fade-in: VT-30 removed by the user) */
   fade(exploded: boolean, seconds: number, dilation = 1): void {
     // (the trail gone at once at the explosion: VT-10a, VT-15)
     if (exploded) for (const trail of [this.#trail, ...this.#sideTrails]) trail.clear();
     this.#trailFrame = { seconds: exploded ? 0 : Math.max(0, seconds), dilation };
     const dt = Math.min(Math.max(0, seconds), 1 / 30);
-    this.#opacity = exploded ? Math.max(0, this.#opacity - 3 * dt) : Math.min(1, this.#opacity + dt);
+    this.#opacity = exploded ? Math.max(0, this.#opacity - 3 * dt) : 1;
     this.#sinceSpawn += Math.max(0, seconds);
     this.#goalLine.time.value += Math.max(0, seconds);
     this.#show(exploded);

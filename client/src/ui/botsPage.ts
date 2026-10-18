@@ -97,7 +97,7 @@ export function botsPage(body: HTMLElement, listings: readonly BotListing[]): Bo
         if (part.startsWith("https://")) line.append(creditLink(part, part));
         else if (part !== "") line.append(part);
       }
-      line.append(" ", creditLink(BOT_MATCH_TEXT.licenceText, `${BOTS_BASE}${l.id}/LICENSE.txt`));
+      line.append(" ", creditLink(BOT_MATCH_TEXT.licenceText, `${BOTS_BASE}${l.id}/${l.licenceFile}`));
       credits.append(line);
     }
     body.append(credits);

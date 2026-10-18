@@ -225,6 +225,11 @@ export class World {
     this.#sim.delete();
   }
 
+  /** Another arena of the same engine (its own state; custom training's ball path, predicted without touching this one) */
+  sibling(): World {
+    return new World(this.#m, this.#sim.sibling() ?? new this.#m.Sim());
+  }
+
   get tick(): number {
     return this.#sim.tickCount();
   }
@@ -282,6 +287,18 @@ export class World {
   resetBoostPads(): void {
     this.#changed();
     this.#sim.resetBoostPads();
+  }
+
+  /** Goals scored or not (custom training: on only for the ticks an entry would count; off, the ball plays on in a net) */
+  setGoalScoring(on: boolean): void {
+    this.#changed();
+    this.#sim.setGoalScoring(on);
+  }
+
+  /** The ball destroyed (custom training's save and timeout): exploded, still and not colliding until it's placed */
+  hideBall(): void {
+    this.#changed();
+    this.#sim.hideBall();
   }
 
   /** Freeplay's Unlimited boost: never used up, 100 at every spawn (every car at 100 now); off: the game's rates. */

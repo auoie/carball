@@ -124,6 +124,17 @@ export class Renderer {
     this.#beforeNextFrame.push(work);
   }
 
+  /** The ray through a page point (CSS px) as the last frame's camera sees it: its origin (the camera) and direction,
+   *  RL frame (the training editor's placing) */
+  rayAt(x: number, y: number): { readonly origin: Vec3; readonly dir: Vec3 } {
+    const rect = this.#rect;
+    const ndc = new Vector3(((x - rect.left) / rect.width) * 2 - 1, 1 - ((y - rect.top) / rect.height) * 2, 0.5).unproject(this.#camera);
+    const origin = this.#camera.position;
+    const d = ndc.sub(origin).normalize();
+    // (Three's x, y up, z: the RL frame's x, z, y)
+    return { origin: { x: origin.x, y: origin.z, z: origin.y }, dir: { x: d.x, y: d.z, z: d.y } };
+  }
+
   /** A world point (RL frame) on the page as the last frame's camera sees it, CSS px; null behind the camera */
   project(p: Vec3): { readonly x: number; readonly y: number } | null {
     const v = toThreeVector(p, this.#projected).project(this.#camera);

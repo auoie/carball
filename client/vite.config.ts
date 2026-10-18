@@ -28,14 +28,15 @@ function serveFolder(server: ViteDevServer, prefix: string, root: string, types:
 }
 
 /** The dev server only: /local-assets/ serves out/bsim/assets_local/ (the game's own models, exported locally for
- *  testing: Psyonix assets, never part of a build; src/render/fennec.ts). */
+ *  testing: Psyonix assets, never part of a build; src/render/fennec.ts; the user's training packs, other creators'
+ *  work converted locally: src/training/packs.ts). */
 function localAssets(): Plugin {
   const root = here("../out/bsim/assets_local");
   return {
     name: "local-assets",
     apply: "serve",
     configureServer(server) {
-      serveFolder(server, "/local-assets", root, { ".glb": "model/gltf-binary", ".png": "image/png" });
+      serveFolder(server, "/local-assets", root, { ".glb": "model/gltf-binary", ".png": "image/png", ".json": "application/json" });
     },
   };
 }

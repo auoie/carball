@@ -5,7 +5,7 @@ import { type BotPick, botMatchSetup, botTeamSizes, fitChoices, readBotMatch, st
 
 const FULL = { id: "full", name: "Full", strength: 1 } as const;
 const EZ = { id: "ez", name: "EZ", strength: 0.8 } as const;
-const listing = (id: string, name: string, teamSizes: number[], playable = true, levels: BotListing["levels"] = [FULL]): BotListing => ({ id, name, teamSizes, credit: "", licence: "CC BY-NC-SA 4.0", playable, levels });
+const listing = (id: string, name: string, teamSizes: number[], playable = true, levels: BotListing["levels"] = [FULL]): BotListing => ({ id, name, teamSizes, credit: "", licence: "CC BY-NC-SA 4.0", licenceFile: "LICENSE.txt", playable, levels });
 const LISTINGS = [listing("nexto", "Nexto", [1, 2, 3], true, [FULL, EZ]), listing("necto", "Necto", [1, 2]), listing("broken", "Broken", [1, 2, 3], false)];
 const pick = (bot: string, level = "full"): BotPick => ({ bot, level });
 

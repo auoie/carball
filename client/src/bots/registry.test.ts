@@ -63,6 +63,10 @@ describe("the bot packages", () => {
     expect(parseManifest({ ...MANIFEST, id: "../x" })).toBe("its id");
     expect(parseManifest({ ...MANIFEST, tickSkip: 0 })).toBe("its tick skip");
     expect(parseManifest({ ...MANIFEST, policy: { file: 3 } })).toBe("its policy");
+    // (its licence file: one file beside bot.json, RV-558)
+    expect(parseManifest({ ...MANIFEST, licenceFile: "../LICENSE" })).toBe("its licence file");
+    expect(parseManifest({ ...MANIFEST, licenceFile: "a/LICENSE" })).toBe("its licence file");
+    expect(parseManifest({ ...MANIFEST, licenceFile: "COPYING.md" })).toMatchObject({ licenceFile: "COPYING.md" });
   });
 
   it("lists none without an index; a package playable with our builder and parser for it, else not, with why", async () => {
@@ -70,6 +74,10 @@ describe("the bot packages", () => {
     const seer = { ...MANIFEST, id: "seer", name: "Seer", observation: { builder: "seer-v1" } };
     const listed = await listBots("/bots/", files({ "/bots/index.json": { format: 1, bots: ["nexto", "seer", "gone"] }, "/bots/nexto/bot.json": MANIFEST, "/bots/seer/bot.json": seer }));
     expect(listed[0]).toMatchObject({ id: "nexto", name: "Nexto", teamSizes: [1, 2], playable: true, credit: MANIFEST.credit, licence: "CC BY-NC-SA 4.0" });
+    // (the licence's text: LICENSE.txt unless the manifest names its own, RV-558)
+    expect(listed[0]?.licenceFile).toBe("LICENSE.txt");
+    const named = await listBots("/bots/", files({ "/bots/index.json": { format: 1, bots: ["nexto"] }, "/bots/nexto/bot.json": { ...MANIFEST, licenceFile: "COPYING.md" } }));
+    expect(named[0]?.licenceFile).toBe("COPYING.md");
     expect(listed[1]).toMatchObject({ id: "seer", playable: false, why: "its observation builder seer-v1 isn't written yet" });
     expect(listed[2]).toMatchObject({ id: "gone", playable: false });
     // (a recurrent policy's state: refused, not run without it, RV-546; null as the packages write none)

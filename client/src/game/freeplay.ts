@@ -34,6 +34,13 @@ import { ReplayRecorder, freeplayTouchTeam, recordCar } from "./replayRecorder";
 import { BallArrow, ballArrowShown } from "../render/ballArrow";
 import { FlipResetFx } from "../render/flipResetFx";
 import { fromThreeVector } from "../render/coords";
+import { BALL_PATH, BallPathView, EDITOR_PATH } from "../render/ballPath";
+import type { CameraView } from "../camera/carballCamera";
+import { DisabledGoalView } from "../render/disabledGoal";
+import { type Shot, type TrainingPack, rotatorAxes } from "../training/pack";
+import { type ShotResult, type TestKind, TrainingRun, launchVelocity } from "../training/run";
+import { resetWarned, startingBoost, storeProgress, storeResetWarned, storedProgress } from "../training/settings";
+import { applyVariance, rollVariance } from "../training/variance";
 import {
   FREEPLAY_BALL_HOLD_TICKS,
   FREEPLAY_COUNTDOWN_TICKS,
@@ -42,6 +49,16 @@ import {
   FREEPLAY_RESET_COOLDOWN,
   PostGoalClock,
 } from "./goalSequence";
+
+/** Custom training: the countdown's hold (ticks: until the shot starts), the car's rest height on the floor (uu), the
+ *  ball on the ground at or under this height (uu: the timer's run-out fails the shot then), the path preview's span (game
+ *  s: a tenth of its 8) */
+const TRAINING_HOLD = 1_000_000_000;
+const CAR_REST_Z = 17.01;
+const BALL_GROUND_Z = 95;
+const TRAINING_PATH_SECONDS = 0.8;
+/** The editor's path predicted at most this often (real s) while its shot keeps changing (the last change's always) */
+const EDITOR_PATH_EVERY = 0.1;
 
 export class Freeplay {
   readonly #world: World;
@@ -112,6 +129,34 @@ export class Freeplay {
   readonly #fade = new Fade();
   #skipHeld = true;
   #fps = 60;
+  /** Custom training (null: free play): the pack's run and its settings; the ball-path preview, the prediction's own
+   *  arena and points; the car's last touch seen; whether goals score now (only while an entry would count) */
+  #training: TrainingRun | null = null;
+  /** The shot as placed (mirrored and varied: its launch, its start speed) */
+  #shot: Shot | null = null;
+  readonly #ballPath = new BallPathView();
+  /** The training editor's shot (null: not editing): the world holds it as placed, its whole path shown; the editor's
+   *  camera (null: the car's) */
+  #editing: Shot | null = null;
+  /** The edited car held where it's placed, in the air too (the free-camera editor's), not put on the ground */
+  #editAsPlaced = false;
+  readonly #editorPath = new BallPathView(EDITOR_PATH.points);
+  #editorPoints: { readonly pos: Vec3; readonly speed: number }[] | null = null;
+  /** Real s since the editor's path was last predicted; whether the shot changed since */
+  #sincePath = Infinity;
+  #pathDue = false;
+  editorCamera: CameraView | null = null;
+  /** The goal that doesn't count, shown so (the striker's own, the goalie's opponent's: CTR-4) */
+  readonly #disabledGoal = new DisabledGoalView();
+  #predictor: World | null = null;
+  #pathPoints: { readonly pos: Vec3; readonly speed: number }[] | null = null;
+  #touchTick: number | null = null;
+  #goalScoring = true;
+  /** Select Shot asked for since the page last took it */
+  #selectRequested = false;
+  /** The reset's first-time warning during or after a shot (§2.7: RoundResetBody), asked by the page: `retry` once
+   *  answered Yes; null: none asked (the shot retried at once) */
+  onResetWarning: ((retry: () => void) => void) | null = null;
   readonly #pos = new Vector3();
   readonly #rot = new Quaternion();
 
@@ -146,11 +191,10 @@ export class Freeplay {
     this.#carView = new CarView(world.carConfig(this.#playerId), garage.team, this.#effects.particles, garage.car);
     this.#carConfigs = new Map([[this.#playerId, world.carConfig(this.#playerId)]]);
     this.#padsView = arena.createPads(world.boostPads());
-    renderer.scene.add(this.#carView.root, this.#ballView.root, this.#padsView.root, this.#ballArrow.root);
+    renderer.scene.add(this.#carView.root, this.#ballView.root, this.#padsView.root, this.#ballArrow.root, this.#ballPath.root, this.#disabledGoal.root, this.#editorPath.root);
     this.#car = new Interpolated(world.car(this.#playerId));
     this.#ball = new Interpolated(world.ball());
     this.#ballSpawns = world.ballSpawnCount();
-    this.#ballView.spawn(); // (the first ball fades in too: RV-37)
   }
 
   /** One animation frame. `rawSeconds`: time since the previous frame, unclamped. */
@@ -167,7 +211,8 @@ export class Freeplay {
       const { world, real, done } = this.#postGoal.frame(rawSeconds);
       if (done) replay = this.#replay = this.#endPostGoal();
       if (!replay) {
-        this.#play(world, real);
+        // (training's Game Speed: the world slowed, its timer with it; real time as it is)
+        this.#play(this.#training ? world * this.settings().training.gameSpeed : world, real);
         return;
       }
     }
@@ -179,12 +224,14 @@ export class Freeplay {
   #endPostGoal(): ReplayPlayback | null {
     const plan = this.#replayPlan;
     this.#replayPlan = null;
-    if (!plan || this.settings().options.autoSkipReplay) {
-      this.#resetKickoff();
+    // (training: its own Skip Goal Replay, then the next shot: CTR-10)
+    const skip = this.#training ? this.settings().training.skipReplay : this.settings().options.autoSkipReplay;
+    if (!plan || skip) {
+      this.#nextRound();
       return null;
     }
     this.#postGoal.stop();
-    this.#ballView.spawn(true);
+    this.#ballView.spawn();
     this.#arena.newBall();
     this.#fade.fromBlack();
     this.#skipHeld = true; // (a key already down doesn't skip it)
@@ -199,9 +246,16 @@ export class Freeplay {
     this.#fade.update(real);
     this.#renderer.cameraFade = this.#fade.opacity;
     const snapshot = this.inputEnabled() ? this.#input.snapshot() : EMPTY_INPUT;
-    const held = readHeldActions(snapshot, this.settings().bindings, this.settings().controller.deadzone).readyUp;
+    const actions = readHeldActions(snapshot, this.settings().bindings, this.settings().controller.deadzone);
+    const held = actions.readyUp;
     const skipped = held && !this.#skipHeld;
     this.#skipHeld = held;
+    // (training's commands in the replay too: reset retries the shot, the others move on at once: §2.7, §2.8)
+    if (this.#training) {
+      const acted = this.#trainingCommands(actions);
+      this.#held = actions;
+      if (acted) return;
+    }
     replay.frame(real, {
       renderer: this.#renderer,
       arena: this.#arena,
@@ -226,7 +280,13 @@ export class Freeplay {
     replay.dispose();
     this.#replay = null;
     this.#fade.fromBlack();
-    this.#resetKickoff(); // (the skip's jump press, held into the countdown, doesn't jump: the engine, RV-55)
+    this.#nextRound(); // (the skip's jump press, held into the countdown, doesn't jump: the engine, RV-55)
+  }
+
+  /** After a goal's wait or replay: free play's next kickoff, or training's next shot (OnCurrentShotCompleted) */
+  #nextRound(): void {
+    this.#training?.advance();
+    this.#resetKickoff();
   }
 
   /** A frame of play: `world` its world time (slowed after a goal), `real` its real time */
@@ -238,9 +298,13 @@ export class Freeplay {
     const settings = this.settings();
     this.#applyPreferences(settings.controller);
     const polled = this.#input.snapshot();
-    const snapshot = this.inputEnabled() ? polled : EMPTY_INPUT;
+    // (the editor's: nothing driven; its path again once due)
+    const snapshot = this.inputEnabled() && !this.#editing ? polled : EMPTY_INPUT;
+    this.#sincePath += real;
+    if (this.#editing && this.#pathDue && this.#sincePath >= EDITOR_PATH_EVERY) this.#predictEditorPath(this.#editing);
     const { bindings, controller, options } = settings;
     const camera = cameraInputs(settings, snapshot, this.#input, this.#camera.fov);
+    if (this.#editing) this.#input.capturePointer = false; // (the editor's clicks place things: the pointer free)
     this.#handleActions(readHeldActions(snapshot, bindings, controller.deadzone), options, camera.device.ballCamToggle);
     const raw = readControls(snapshot, bindings, controller.deadzone, this.#buttons);
     this.#jump.frame(this.#buttons);
@@ -254,12 +318,16 @@ export class Freeplay {
 
     this.#throttle = Math.abs(controls.throttle);
 
+    // (training's shot starts on throttle, steer, jump or boost: CTR-5)
+    const inputActive = controls.throttle !== 0 || controls.steer !== 0 || controls.jump || controls.boost;
+    const wantsStart = this.#training?.state === "countdown" && inputActive;
     const ticks = this.#clock.advance(world);
     for (let i = 0; i < ticks; i++) {
       const held = this.#world.kickoffCountdown() > 0;
       this.#world.setControls(this.#playerId, { ...controls, jump: this.#jump.tick(controls.jump) });
+      this.#updateGoalScoring();
       this.#world.step();
-      this.#roundTick(held);
+      this.#roundTick(held, wantsStart);
       const car = this.#world.car(this.#playerId);
       const placed = car.spawnCount !== this.#car.current.spawnCount;
       if (placed) this.#rear = newCar({ ballCam: this.#ballCam, rear: this.#rear }).rear;
@@ -292,6 +360,12 @@ export class Freeplay {
     });
     this.#ballCam = next.ballCam;
     this.#rear = next.rear;
+    // (training: its own commands, no ball helpers or kickoff reset)
+    if (this.#training) {
+      this.#trainingCommands(held);
+      this.#held = held;
+      return;
+    }
     if (pressed("reset") && this.#sinceReset >= FREEPLAY_RESET_COOLDOWN) {
       this.#sinceReset = 0;
       this.#resetKickoff();
@@ -303,10 +377,14 @@ export class Freeplay {
 
   /** After a tick: the round's countdown ending (the spot index steps), the second pad reset, the new ball's hold; the
    *  ball's touches and the frame recorded for a replay */
-  #roundTick(heldBefore: boolean): void {
+  #roundTick(heldBefore: boolean, wantsStart = false): void {
     const tick = this.#world.tick;
     const car = this.#world.car(this.#playerId);
     this.#touches.update(this.#playerId, car.team, this.#world.carLastBallTouchTick(this.#playerId));
+    // (training's tick first: a touch lets the frozen ball go before its hold would place it again)
+    if (this.#training) this.#trainingTick(this.#training, wantsStart);
+    // (the free-camera editor's car held where it's placed, in the air too)
+    if (this.#editing && this.#editAsPlaced) this.#placeCar(this.#editing, true);
     // (the new ball held first, so the frame recorded is the one drawn: RV-92)
     if (this.#ballHold > 0) {
       this.#ballHold -= 1;
@@ -318,7 +396,7 @@ export class Freeplay {
       ballExploded: this.#world.ballExploded(),
       lastTouchTeam: freeplayTouchTeam(this.#world, this.#team),
     });
-    if (heldBefore && this.#world.kickoffCountdown() === 0) this.#spawnIndex += 1;
+    if (heldBefore && this.#world.kickoffCountdown() === 0 && !this.#training) this.#spawnIndex += 1;
     if (this.#padResetTicks > 0) {
       this.#padResetTicks -= 1;
       if (this.#padResetTicks === 0) this.#world.resetBoostPads();
@@ -339,6 +417,8 @@ export class Freeplay {
         this.#effects.goal(this.#world.ball().pos, explosionTeam(FREEPLAY_NET_TEAM)); // (the player's colour at either net)
         this.#arena.explode();
         this.#camera.shakes.play(EXPLOSION_LARGE, this.#world.ball().pos);
+        // (training: the striker's goal a success, a goal against the goalie a failure)
+        if (this.#training) this.#trainingEnded(this.#training.pack.type === "goalie" ? "failure" : "success");
       }
     }
   }
@@ -349,7 +429,7 @@ export class Freeplay {
     this.#startRound();
     this.#roundAge = 0;
     this.#postGoal.stop(); // (a reset ends the goal's wait)
-    this.#ballView.spawn(); // (a new ball fades in)
+    this.#ballView.spawn(); // (a new ball: solid at once, its trail begun again)
     this.#arena.newBall();
     this.#snapViews();
   }
@@ -357,6 +437,14 @@ export class Freeplay {
   /** The new round in the world (notes/camera-respawn-goal.md "Freeplay after a goal"): the car at S[k mod 10], the
    *  ball at its spawn to fall, the pads back now and again 0.1 s later, the countdown */
   #startRound(): void {
+    if (this.#editing) {
+      this.#placeWorld(this.#editing, this.#editAsPlaced);
+      return;
+    }
+    if (this.#training) {
+      this.#placeShot(this.#training);
+      return;
+    }
     this.#world.resetFreeplay(this.#sessionSeed, this.#spawnIndex);
     this.#world.setKickoffCountdown(FREEPLAY_COUNTDOWN_TICKS);
     this.#padResetTicks = FREEPLAY_PAD_RESET_TICKS;
@@ -387,6 +475,7 @@ export class Freeplay {
   /** The session over again (Exit to Main Menu, then Free Play: MENU-1, RV-284): any goal replay and its banner gone, a
    *  new round from the kickoff, the goals back to 0-0 (a new free play: RV-287) */
   restart(): void {
+    this.#stopTraining();
     this.#replay?.dispose();
     this.#replay = null;
     this.#score[0] = 0;
@@ -394,6 +483,297 @@ export class Freeplay {
     this.#hud.say("");
     this.#resetKickoff();
     this.#updateHud(this.#car.current, 0, null);
+  }
+
+  /** Custom training: this pack from this shot (the first by default; its kept progress, short of Completed started
+   *  over), until free play again (`restart`); `test`: the editor's test of it (no variance, the car as placed, nothing
+   *  kept) */
+  startTraining(pack: TrainingPack, shot = 0, test: TestKind | null = null): void {
+    this.#editing = null;
+    this.#editorPoints = null;
+    this.editorCamera = null;
+    this.#replay?.dispose();
+    this.#replay = null;
+    this.#hud.say("");
+    this.#training = new TrainingRun(pack, test ? [] : storedProgress(pack.id), test);
+    if (shot > 0) this.#training.select(shot);
+    this.#disabledGoal.show(pack.type === "goalie" ? 1 : -1);
+    this.#resetKickoff();
+  }
+
+  /** The shot again (Reset during or after it), its variance kept */
+  retryShot(): void {
+    const run = this.#training;
+    if (!run) return;
+    run.retry();
+    this.#replay?.dispose();
+    this.#replay = null;
+    this.#resetKickoff();
+  }
+
+  /** Whether Select Shot was asked for (its binding pressed) since the last call */
+  takeSelectRequest(): boolean {
+    const asked = this.#selectRequested;
+    this.#selectRequested = false;
+    return asked;
+  }
+
+  /** The shot at this place in the pack, at once (Select Shot) */
+  selectShot(index: number): void {
+    const run = this.#training;
+    if (!run || run.state === "finished") return;
+    run.select(index);
+    this.#replay?.dispose();
+    this.#replay = null;
+    this.#resetKickoff();
+  }
+
+  /** The pack from its first shot again (Restart Training), its progress cleared too (Reset Progress) */
+  restartTraining(clearProgress: boolean): void {
+    const run = this.#training;
+    if (!run) return;
+    run.restart(clearProgress);
+    if (!run.test) storeProgress(run.pack.id, run.status);
+    this.#replay?.dispose();
+    this.#replay = null;
+    this.#resetKickoff();
+  }
+
+  /** The training's run (its HUD's: the shot, the timer, the progress); null in free play */
+  get training(): TrainingRun | null {
+    return this.#training;
+  }
+
+  /** The training editor: this shot shown as placed (the car on its spawn, the ball at its start, its whole path), the
+   *  car held and not driven; null: the editor closed, free play again. `asPlaced`: the car where it is, in the air too
+   *  (the free-camera editor's; else on the ground with the setting). The path predicted at once the first time, then at
+   *  most every EDITOR_PATH_EVERY while the shot keeps changing */
+  showEditing(shot: Shot | null, asPlaced = false): void {
+    if (!shot) {
+      if (!this.#editing) return;
+      this.#editing = null;
+      this.#editorPoints = null;
+      this.editorCamera = null;
+      // (free play's goals and boost again)
+      this.#setGoalScoring(true);
+      this.#world.setUnlimitedBoost(this.#unlimitedBoost);
+      this.restart();
+      return;
+    }
+    this.#stopTraining();
+    this.#replay?.dispose();
+    this.#replay = null;
+    this.#postGoal.stop();
+    const first = this.#editing === null;
+    this.#editing = shot;
+    this.#editAsPlaced = asPlaced;
+    this.#setGoalScoring(false);
+    this.#world.setKickoffCountdown(TRAINING_HOLD);
+    this.#placeWorld(shot, asPlaced);
+    if (first || this.#sincePath >= EDITOR_PATH_EVERY) this.#predictEditorPath(shot);
+    else this.#pathDue = true;
+    if (first) this.#ballView.spawn();
+    this.#snapViews();
+  }
+
+  #predictEditorPath(shot: Shot): void {
+    this.#editorPoints = this.#predictPath(shot, EDITOR_PATH.seconds, EDITOR_PATH.points);
+    this.#sincePath = 0;
+    this.#pathDue = false;
+  }
+
+  /** Training over: free play's goals and boost again */
+  #stopTraining(): void {
+    if (!this.#training) return;
+    this.#training = null;
+    this.#pathPoints = null;
+    this.#disabledGoal.show(null);
+    this.#setGoalScoring(true);
+    this.#world.setUnlimitedBoost(this.#unlimitedBoost);
+  }
+
+  /** The shot's start (StartNewRound, notes/custom-training.md §2.3): the car on its spawn (on the ground by default,
+   *  its pitch 0), held and not driving through the countdown (the engine's kickoff hold: X and Y locked); the ball
+   *  frozen at its start; the pads back; no goal until an entry would count; the path's preview. Finished: the ball
+   *  gone, the car held */
+  #placeShot(run: TrainingRun): void {
+    this.#touches.clear();
+    this.#replayPlan = null;
+    this.#padResetTicks = 0;
+    this.#setGoalScoring(false);
+    this.#world.setKickoffCountdown(TRAINING_HOLD);
+    if (run.state === "finished") {
+      this.#ballHold = 0;
+      this.#pathPoints = null;
+      this.#world.hideBall();
+      return;
+    }
+    const settings = this.settings().training;
+    // (its variance as drawn for it, else drawn now: kept through a retry and the mirror; an editor's test none, the car as
+    // placed: §1.4)
+    const shot = (this.#shot = run.test ? run.shot : applyVariance(run.shot, run.variance(() => rollVariance(settings, Math.random))));
+    this.#placeWorld(shot, run.test !== null);
+    this.#pathPoints = this.#predictPath(shot, TRAINING_PATH_SECONDS, BALL_PATH.points);
+  }
+
+  /** A shot in the world, held: the car on its spawn (on the ground with the setting, unless `asPlaced`), the ball frozen
+   *  at its start, the pads back */
+  #placeWorld(shot: Shot, asPlaced = false): void {
+    const settings = this.settings().training;
+    this.#world.setUnlimitedBoost(settings.unlimitedBoost);
+    this.#placeCar(shot, asPlaced);
+    this.#world.resetBoostPads();
+    this.#ballSpawn = shot.ball.location;
+    this.#ballHold = TRAINING_HOLD;
+    this.#world.setBall({ pos: shot.ball.location, vel: ZERO, angVel: ZERO });
+    this.#ballSpawnTick = this.#world.tick;
+    this.#touchTick = this.#world.carLastBallTouchTick(this.#playerId);
+  }
+
+  /** The car on the shot's spawn, still (on the ground with the setting, unless `asPlaced`) */
+  #placeCar(shot: Shot, asPlaced: boolean): void {
+    const settings = this.settings().training;
+    const ground = settings.spawnOnGround && !asPlaced;
+    const { location, rotation } = shot.car;
+    this.#world.setCar(this.#playerId, {
+      pos: ground ? vec3(location.x, location.y, CAR_REST_Z) : location,
+      vel: ZERO,
+      angVel: ZERO,
+      rot: rotatorAxes(ground ? { ...rotation, pitch: 0 } : rotation),
+      boost: settings.unlimitedBoost ? 100 : startingBoost(settings),
+    });
+  }
+
+  /** The launch's path over `seconds` (the engine's own prediction in its own arena: training's first tenth of its 8 s,
+   *  the editor's longer), `count` points along it; none for a ball that floats until touched */
+  #predictPath(shot: Shot, seconds: number, count: number): { readonly pos: Vec3; readonly speed: number }[] | null {
+    if (shot.ball.speed <= 0) return null;
+    const predictor = (this.#predictor ??= this.#world.sibling());
+    predictor.setBall({ pos: shot.ball.location, vel: launchVelocity(shot), angVel: ZERO });
+    const every = Math.max(1, Math.round(seconds / count / TICK_SECONDS));
+    const points: { pos: Vec3; speed: number }[] = [];
+    for (let k = 1; k <= count * every && !predictor.ballExploded(); k++) {
+      predictor.step();
+      if (k % every !== 0) continue;
+      const ball = predictor.ball();
+      points.push({ pos: ball.pos, speed: Math.hypot(ball.vel.x, ball.vel.y, ball.vel.z) });
+    }
+    return points;
+  }
+
+  /** A tick of the shot (after the physics step): the car's touch (in the countdown it starts the shot, the ball back
+   *  to its start; later it lets a frozen ball go), input starting it, its timer, the goalie's save, the timer's run-out
+   *  (the shot fails now if the ball is still frozen, else at its next ground contact: CTR-7) */
+  #trainingTick(run: TrainingRun, wantsStart: boolean): void {
+    const touchTick = this.#world.carLastBallTouchTick(this.#playerId);
+    const touched = touchTick !== this.#touchTick;
+    this.#touchTick = touchTick;
+    if (touched && run.state === "countdown") this.#beginShot(run, true);
+    else if (touched) {
+      run.touch();
+      this.#ballHold = 0;
+    } else if (wantsStart && run.canStart(this.settings().training.inputDelay)) this.#beginShot(run, false);
+    run.tick(TICK_SECONDS);
+    if (run.state !== "active") return;
+    const ball = this.#world.ball();
+    if (run.saved(ball)) this.#destroyBall("success");
+    else if (run.timedOut && (this.#ballHold > 0 || ball.pos.z <= BALL_GROUND_Z)) this.#destroyBall("failure");
+  }
+
+  /** The shot started (Active: §2.4): the car driving from the next tick, its start speed a velocity change along its
+   *  facing; the ball launched at its speed, or left frozen (a speed of 0, or touched in the countdown: Fire resets an
+   *  awake ball) until touched */
+  #beginShot(run: TrainingRun, byTouch: boolean): void {
+    run.begin();
+    this.#world.setKickoffCountdown(0);
+    const shot = this.#shot ?? run.shot;
+    if (shot.car.startSpeed > 0) {
+      const car = this.#world.car(this.#playerId);
+      this.#world.setCar(this.#playerId, { ...car, vel: add(car.vel, scale(car.rot.forward, shot.car.startSpeed)) });
+    }
+    if (shot.ball.speed > 0 && !byTouch) {
+      this.#ballHold = 0;
+      this.#world.setBall({ pos: shot.ball.location, vel: launchVelocity(shot), angVel: ZERO });
+    }
+    this.#pathPoints = null;
+  }
+
+  /** The ball destroyed (DestroyBall: the goalie's save, the timer's run-out): its burst, the shot's end */
+  #destroyBall(result: ShotResult): void {
+    const pos = this.#world.ball().pos;
+    this.#world.hideBall();
+    // (the game's red "no goal" burst: the orange team's explosion stands in)
+    this.#effects.goal(pos, 1);
+    this.#postGoal.start();
+    this.#replayPlan = planReplay(this.#touches.touches, this.#world.tick, 0, this.#ballSpawnTick, false);
+    this.#goalSpeed = null;
+    this.#goalTime = this.#roundAge;
+    this.#trainingEnded(result);
+  }
+
+  /** The shot's end (its goal's or its destruction's): the run told, its progress kept, goals off */
+  #trainingEnded(result: ShotResult): void {
+    const run = this.#training;
+    if (!run) return;
+    run.end(result);
+    if (!run.test) storeProgress(run.pack.id, run.status);
+    this.#setGoalScoring(false);
+  }
+
+  /** Goals score only for the ticks an entry would count (before each step): into the target goal (the ball in its
+   *  half), the striker's once touched, any into the goalie's own (CTR-8, CTR-9) */
+  #updateGoalScoring(): void {
+    const run = this.#training;
+    if (!run) return;
+    const goal = run.state === "active" ? run.scoringGoal() : null;
+    this.#setGoalScoring(goal !== null && this.#world.ball().pos.y * goal > 0);
+  }
+
+  #setGoalScoring(on: boolean): void {
+    if (on === this.#goalScoring) return;
+    this.#goalScoring = on;
+    this.#world.setGoalScoring(on);
+  }
+
+  /** Training's commands (any state, §2.7-2.8): reset retries the shot (re-rolls in the countdown; the pack again once
+   *  finished), next and previous move on at once, shuffle reorders the playlist (the shot kept), mirror flips the shot;
+   *  an editor's test the reset alone, never asked first (§1.4); whether one acted */
+  #trainingCommands(held: HeldActions): boolean {
+    const run = this.#training;
+    if (!run) return false;
+    const pressed = (key: keyof HeldActions): boolean => held[key] === true && this.#held[key] !== true;
+    if (run.test) {
+      if (!pressed("reset")) return false;
+      run.retry();
+      this.#replay?.dispose();
+      this.#replay = null;
+      this.#fade.update(Infinity);
+      this.#resetKickoff();
+      return true;
+    }
+    if (pressed("trainingShuffle")) run.toggleShuffle();
+    if (pressed("trainingSelect")) this.#selectRequested = true;
+    let restart = true;
+    if (pressed("reset") && (run.state === "active" || run.state === "ended") && this.onResetWarning && !resetWarned()) {
+      // (the first time ever: asked first, the shot retried on Yes)
+      this.onResetWarning(() => {
+        storeResetWarned();
+        this.retryShot();
+      });
+      return false;
+    } else if (pressed("reset")) {
+      if (run.state === "finished") run.restart();
+      else run.retry();
+    } else if (pressed("trainingNext")) run.navigate(1);
+    else if (pressed("trainingPrevious")) run.navigate(-1);
+    else if (pressed("trainingMirror")) run.toggleMirror();
+    else restart = false;
+    if (!restart) return false;
+    this.#replay?.dispose();
+    this.#replay = null;
+    this.#fade.update(Infinity); // (a replay's fade cut off: the new shot at once)
+    this.#resetKickoff();
+    return true;
   }
 
   /** For screenshots and browser tests: the car on the floor at (x, y) facing `yaw` (rad, the game's), at rest, and
@@ -441,6 +821,7 @@ export class Freeplay {
 
   /** The Unlimited boost setting changed: on fills the tank (the engine's), off leaves it as a new round would */
   #applyBoostSetting(): void {
+    if (this.#training) return; // (training's own Unlimited Boost)
     const unlimited = this.settings().options.unlimitedBoost;
     if (unlimited === this.#unlimitedBoost) return;
     this.#unlimitedBoost = unlimited;
@@ -520,12 +901,14 @@ export class Freeplay {
     this.#carView.attach(this.#flipFx.root);
     this.#flipFx.update(frameSeconds);
     this.#ballView.update(ball, this.#ball.rotation(alpha, this.#rot));
+    this.#ballPath.update(this.#training?.state === "countdown" ? this.#pathPoints : null);
+    this.#editorPath.update(this.#editing ? this.#editorPoints : null);
     this.#arena.update(ball, frameSeconds);
     const pads = this.#world.boostPads();
     this.#padsView.update(pads, frameSeconds);
 
     const controls = { ballCam: this.#ballCam, rear: this.#rear, lookUp: this.#look.up, lookRight: this.#look.right, freeLook: this.#freeLook };
-    const view = this.#camera.update(frameSeconds, this.#car.blended(alpha), this.#ball.blended(alpha).pos, controls, null, realSeconds);
+    const view = this.#editing && this.editorCamera ? this.editorCamera : this.#camera.update(frameSeconds, this.#car.blended(alpha), this.#ball.blended(alpha).pos, controls, null, realSeconds);
     if (this.#camera.takeBallCamExit()) this.#ballCam = false; // (free look left the toggled ball cam)
     this.#renderer.render(view);
     this.#effects.camera = view.position; // (the husks collide near it)
@@ -561,7 +944,7 @@ export class Freeplay {
       replay,
       // (training: no scoreboard, HUD-4)
       // (demolished: no car's HUD, the boost meter and the ball cam indicator gone: HUD-16's bShowCarHUD, RV-513)
-      parts: { scoreboard: false, boost: !car.demoed, ballCamIndicator: !car.demoed },
+      parts: { scoreboard: false, boost: !car.demoed && !this.#editing, ballCamIndicator: !car.demoed && !this.#editing },
       fps: this.#fps,
       net: null,
       flip: flipVisual(this.settings().gameplay.flipResetIndicator) ? this.#dodge : null,

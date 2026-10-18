@@ -294,7 +294,6 @@ export class Online {
     this.#ballError = this.#session.ballError;
     this.#drawnBallSpawns = this.#session.ballSpawns;
     this.#serverExploded = world.ballExploded(); // (joining after a goal: already gone)
-    if (!this.#serverExploded) this.#ballView.spawn(); // (the ball fades in for a joining player too: RV-37)
     this.#autoSkipSent = settings().options.autoSkipReplay;
     // (the chat filters went in the Hello: RV-259)
     this.#chatFilterSent = `${settings().chat.quickChatFilter}|${String(settings().chat.blockNonTactical)}`;
@@ -704,7 +703,7 @@ export class Online {
         // (the cut in from black: LiveReplay's Begin)
         this.#replay?.dispose();
         this.#replay = new ReplayPlayback(m, this.#recorder, (tick) => this.#session.frameAt(tick));
-        this.#ballView.spawn(true);
+        this.#ballView.spawn();
         this.#arena.newBall();
         this.#skipped = false;
         this.#skipHeld = true;
@@ -820,8 +819,8 @@ export class Online {
     }
     this.#ballError.decay(frameSeconds);
     const ball = this.#ballError.applyPosition(this.#ball.position(alpha, this.#pos));
-    // (a goal explodes it, as the server says, until the reset: it dissolves; a kickoff's new ball fades in. Not the
-    // prediction's explosion: a mispredicted goal would dissolve it for a round trip, RV-32)
+    // (a goal explodes it, as the server says, until the reset: it dissolves; a kickoff's new ball is solid at once. Not
+    // the prediction's explosion: a mispredicted goal would dissolve it for a round trip, RV-32)
     if (this.#world.ballSpawnCount() !== this.#drawnBallSpawns) {
       this.#drawnBallSpawns = this.#world.ballSpawnCount();
       this.#serverExploded = false;

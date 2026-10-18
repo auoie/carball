@@ -41,6 +41,9 @@ players the world once a tick at most.
 ```sh
 cargo test                              # protocol vectors, input buffer, game logic, a real WebTransport client
 cargo clippy --all-targets -- -D warnings
+# the local host's configuration (the client's in-browser server: scripts/build_host.sh); its tests need `net`, so
+# no --all-targets (RV-547, RV-552)
+cargo clippy --no-default-features --features host --lib --bins -- -D warnings
 ```
 
 ## Layout

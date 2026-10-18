@@ -37,8 +37,9 @@ import {
 } from "../settings/settings";
 import { presetText } from "../game/quickChat";
 import { SCOREBOARD_COLUMNS } from "../game/matchStats";
+import { TRAINING_DEFAULTS, TRAINING_LIMITS, TRAINING_SETTINGS_TEXT, type TrainingNumbers, type TrainingSettings } from "../training/settings";
 
-type Tab = "controls" | "camera" | "controller" | "gameplay" | "interface" | "scoreboard" | "chat" | "video" | "audio";
+type Tab = "controls" | "camera" | "controller" | "gameplay" | "training" | "interface" | "scoreboard" | "chat" | "video" | "audio";
 
 /** The Gameplay tab's lists (verbatim, the game's settings labels: MENU-9) */
 const GAMEPLAY_TEXT = {
@@ -173,6 +174,7 @@ export class SettingsPanel {
       this.#tabButton("camera", "Camera"),
       this.#tabButton("controller", "Controller"),
       this.#tabButton("gameplay", "Gameplay"),
+      this.#tabButton("training", "Training"),
       this.#tabButton("interface", "Interface"),
       this.#tabButton("scoreboard", "Scoreboard"),
       this.#tabButton("chat", "Chat"),
@@ -323,6 +325,8 @@ export class SettingsPanel {
             ? this.#controllerTab()
             : this.#tab === "gameplay"
               ? this.#gameplayTab()
+              : this.#tab === "training"
+              ? this.#trainingTab()
               : this.#tab === "interface"
                 ? this.#interfaceTab()
                 : this.#tab === "scoreboard"
@@ -606,6 +610,27 @@ export class SettingsPanel {
     return box;
   }
 
+  /** Training (custom training's: notes/custom-training.md §5): the game speed, the round start's input delay, the
+   *  variance's modifiers, the starting boost; the replay's skip, the car on the ground, unlimited boost */
+  #trainingTab(): HTMLElement {
+    const T = TRAINING_SETTINGS_TEXT;
+    const training = this.#settings.training;
+    const apply = (next: Partial<TrainingSettings>): void => {
+      this.#update({ ...this.#settings, training: { ...this.#settings.training, ...next } });
+    };
+    const numbers = Object.fromEntries(Object.keys(TRAINING_LIMITS).map((k) => [k, training[k as keyof TrainingNumbers]])) as unknown as TrainingNumbers;
+    const box = this.#sliders(numbers, TRAINING_LIMITS, T, (next) => { apply(next); }, TRAINING_DEFAULTS);
+    box.classList.add("caps-labels");
+    const options = el("div", { className: "options" });
+    for (const key of ["skipReplay", "spawnOnGround", "unlimitedBoost"] as const) {
+      options.append(checkbox({ label: T[key], checked: training[key], data: { setting: key }, onChange: (checked) => { apply({ [key]: checked }); } }));
+    }
+    const reset = box.lastElementChild;
+    if (reset) reset.before(options);
+    else box.append(options);
+    return box;
+  }
+
   /** Interface: the HUD's scales, the nameplates, which messages show, the boost meter's colours, units, the ball-cam
    *  indicator, hiding the HUD */
   #interfaceTab(): HTMLElement {
@@ -859,6 +884,8 @@ export function pageDefaults(tab: Tab, s: Settings): Settings {
       return { ...s, controller: d.controller, options: options(["airPitchSafety"]) };
     case "gameplay":
       return { ...s, gameplay: d.gameplay, options: options(["unlimitedBoost", "autoSkipReplay"]) };
+    case "training":
+      return { ...s, training: d.training };
     case "interface":
       return { ...s, interface: d.interface };
     case "scoreboard":

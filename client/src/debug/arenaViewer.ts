@@ -47,7 +47,7 @@ export function showArenaViewer(renderer: Renderer, theme: Theme, config: CarCon
     if (shot.trail && shot.ball) {
       const { from, seconds, team } = shot.trail;
       const frames = Math.max(1, Math.round(seconds * 60));
-      ball.spawn(true);
+      ball.spawn();
       ball.trailTeam = team;
       for (let k = 0; k <= frames; k++) {
         const f = k / frames;

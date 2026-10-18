@@ -61,14 +61,16 @@ they change there is lost when the newer page returns (RV-425; `client/src/setti
 
 - **Port:** 3000/tcp, plain HTTP. `/assets/*` (hashed names) cached for a year, the rest `no-cache` (`/bots/*`, Play vs
   Bots' packages under their own names, among them), `/config.json` `no-store`. A missing file under `/assets/`, `/bots/`
-  or `/config.json` is a 404; any other unknown path serves `index.html` (RV-537). Every response carries
+  or `/config.json` is a 404 (one under `/bots/` `no-cache` too, RV-553); any other unknown path serves `index.html`
+  (RV-537). Every response carries
   `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY` and a
   Content-Security-Policy (this origin only, but the game server's origin from `GAME_SERVER_URL`; `frame-ancestors
   'none'`; no eval; WebAssembly compiled, `'wasm-unsafe-eval'`: the engine, the bots' match host and onnxruntime; workers
   from this origin: a match against bots runs in one, onnxruntime on one thread, so no cross-origin isolation is needed).
   Redirects are relative (a directory's trailing slash), so nothing names the container's port behind the tunnel. The
   third-party notices are at `/THIRD_PARTY_NOTICES.txt` (the bots' section included) and
-  `/THIRD_PARTY_NOTICES-onnxruntime.txt`; each bot's licence at `/bots/<bot>/LICENSE.txt`.
+  `/THIRD_PARTY_NOTICES-onnxruntime.txt`; each bot's licence at `/bots/<bot>/LICENSE.txt` (or the file its bot.json
+  names, `licenceFile`).
 - **User:** nginx runs unprivileged (uid 101, nginx 1.30, the stable line). The site and all of `/etc/nginx` are root's,
   read-only to it; it writes `/config.json` and the policy (`/etc/nginx/carball-csp.conf`; both baked in at build for the
   default `GAME_SERVER_URL`, so a container started without the entrypoint still has them) at start, and its pid and
@@ -142,8 +144,9 @@ the same port): `docker run --rm -e GAME_PORT=14502 -p 127.0.0.1:14502:14502/udp
 2026-10-17 (3c8622b, protocol 25; the static session's review RX23): both images built from `scripts/build_images.sh`
 (the pinned base images by digest, built offline) and run on 127.0.0.1: the game container healthy, a 1v1 through it
 (map 0), the web container serving the bots with no Content-Security-Policy violation, onnxruntime on one thread
-without cross-origin isolation. The `/bots/` 404 (RV-537) came after it: checked from the configuration
-(`client/src/testing/webImage.test.ts`), not yet in a container.
+without cross-origin isolation. The `/bots/` 404 (RV-537) came after it, checked from the configuration
+(`client/src/testing/webImage.test.ts`), then in a container by the review RX24 (be5653a's images: 40 paths against
+RX23's, only `/bots/*` changed).
 
 2026-10-15:
 

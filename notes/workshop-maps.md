@@ -9,8 +9,9 @@ Tags: **[A]** package data (the maps' headers and tagged properties; the game's 
 (decoded from the live TAGame/ProjectX/OnlineSubsystemSteamworks packages), **[N]** native (live exe addresses),
 **[I]** inferred.
 
-Maps are named by workshop item ID. Representative set: rings course 2104185189, dribble challenge 964271505
-(814218628 alike), obstacle course 814207936, aim training 1906378036; class census over all 24.
+Maps are named by neutral labels (the label-to-item list stays local, in the git-ignored lookup workspace).
+Representative set: map A (a rings course), map B (a dribble challenge; map C alike), map D (an obstacle course),
+map E (aim training); class census over all 24.
 
 ---------------------------------------------------------------------------------------------------------------------
 
@@ -100,9 +101,9 @@ Maps are named by workshop item ID. Representative set: rings course 2104185189,
   - Multi-event hubs: 2 maps with 9k+ Kismet objects and GFx UIs. One other map streams sublevels by Kismet.
 
 ### 2.2 Collision geometry
-- **BSP** [A]: the BSP-only obstacle course (814207936) drives entirely on the level Model plus BlockingVolumes.
+- **BSP** [A]: the BSP-only obstacle course (map D) drives entirely on the level Model plus BlockingVolumes.
   - Obstacle course: 20,557 BSP nodes, 891 surfaces, 213 brushes, 26 BlockingVolumes.
-  - Dribble course 814218628: 7,317 nodes, 1,184 surfaces, 84 BlockingVolumes.
+  - Dribble course (map C): 7,317 nodes, 1,184 surfaces, 84 BlockingVolumes.
   - Brush CsgOper is CSG_Add or CSG_Subtract.
   - The game cooks BSP physics at load (§4.2).
 - **Static meshes** [A]:

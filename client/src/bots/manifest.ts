@@ -76,6 +76,9 @@ const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "obj
 const isFiles = (v: unknown): boolean => isRecord(v) && Object.entries(v).every(([k, f]) => ["1", "2", "3"].includes(k) && isRecord(f) && typeof f["file"] === "string");
 const isPick = (v: unknown): boolean => v === "argmax" || v === "sample" || (isRecord(v) && v["mode"] === "beta" && typeof v["beta"] === "number" && Array.isArray(v["overrides"]));
 
+/** A licence file's name: one file beside bot.json (no folders) */
+const LICENCE_FILE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
 /** A manifest checked for what the client reads (else what's wrong) */
 export function parseManifest(json: unknown): BotManifest | string {
   if (!isRecord(json)) return "not an object";
@@ -83,6 +86,8 @@ export function parseManifest(json: unknown): BotManifest | string {
   if (typeof id !== "string" || !BOT_ID.test(id)) return "its id";
   if (typeof name !== "string" || name.length === 0 || name.length > 32) return "its name";
   if (typeof licence !== "string") return "its licence";
+  const { licenceFile } = json;
+  if (licenceFile !== undefined && (typeof licenceFile !== "string" || !LICENCE_FILE.test(licenceFile))) return "its licence file";
   if (!isRecord(policy) || !(typeof policy["file"] === "string" || isFiles(policy["files"])) || !Array.isArray(policy["inputs"]) || !Array.isArray(policy["outputs"]) || !isPick(policy["pick"])) return "its policy";
   if (!isRecord(observation) || typeof observation["builder"] !== "string") return "its observation builder";
   if (!isRecord(action) || typeof action["parser"] !== "string") return "its action parser";

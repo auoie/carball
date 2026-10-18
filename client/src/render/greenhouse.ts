@@ -342,17 +342,18 @@ export class GreenhouseGlassMaterial extends ShaderMaterial {
 /** The boards' lettering (the user's, 2026-10-17: our site's address), its words between the dots */
 export const BOARD_TEXT = ["CARBALL", "ZOLT", "TOP"] as const;
 
-/** The lettering's dots (px on the canvas): squares on the baseline, larger than the face's own (under 5 px at this
- *  size), so they still read at a distance */
-const BOARD_DOT = 8;
+/** The lettering's canvas (px): its size, two phrases a canvas each centred in a cell of 864 px (the 675 px phrase and
+ *  the 191 px gap CARBALL's 512 px cell left), its repeat along the wall at 1.5625 uu a pixel; the dots squares on the
+ *  baseline, larger than the face's own (under 5 px at this size), so they still read at a distance */
+export const BOARD_CANVAS = { width: 1728, height: 64, centres: [432, 1296], uuPerPixel: 1.5625, dot: 8 } as const;
+const BOARD_DOT = BOARD_CANVAS.dot;
 
-/** The boards' lettering (ours: our site's address, repeated), a canvas where the page has one (none in the unit tests):
- *  two phrases a canvas, each in a cell of 864 px (the 675 px phrase and the 191 px gap CARBALL's 512 px cell left) */
+/** The boards' lettering (ours: our site's address, repeated), a canvas where the page has one (none in the unit tests) */
 function boardsTexture(): CanvasTexture | null {
   if (typeof document === "undefined") return null;
   const canvas = document.createElement("canvas");
-  canvas.width = 1728;
-  canvas.height = 64;
+  canvas.width = BOARD_CANVAS.width;
+  canvas.height = BOARD_CANVAS.height;
   const ctx = canvas.getContext("2d");
   if (!ctx) return null;
   const texture = new CanvasTexture(canvas);
@@ -370,7 +371,7 @@ function boardsTexture(): CanvasTexture | null {
     const dotGap = BOARD_DOT + 10;
     const total = widths.reduce((a, b) => a + b, 0) + dotGap * (BOARD_TEXT.length - 1) - 10;
     const baseline = middle + ctx.measureText("L").actualBoundingBoxDescent;
-    for (const centre of [432, 1296]) {
+    for (const centre of BOARD_CANVAS.centres) {
       let x = centre - total / 2;
       BOARD_TEXT.forEach((word, i) => {
         ctx.fillText(word, x, middle);

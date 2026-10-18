@@ -6,7 +6,7 @@ import { ArenaView } from "./arena";
 import { fullBright, linear } from "./teamColors";
 import { applyShaderQuality } from "./shaderQuality";
 import { H, floorOutline } from "./arenaSurface";
-import { GREENHOUSE, GreenhouseGlassMaterial, WALL_CHART_TOP, glassChart, goalOutline, pitchLayout, wallChart } from "./greenhouse";
+import { BOARD_CANVAS, BOARD_TEXT, GREENHOUSE, GreenhouseGlassMaterial, WALL_CHART_TOP, glassChart, goalOutline, pitchLayout, wallChart } from "./greenhouse";
 import { nightTheme } from "./themes/night";
 import { wallParam } from "./wallFoot";
 
@@ -161,6 +161,15 @@ describe("the greenhouse arena", () => {
     }
     const glassLow = Math.min(...points("greenhouse glass").map(([, , z]) => z));
     expect(glassLow).toBeGreaterThanOrEqual(top - 1e-3);
+  });
+
+  it("its boards' measures and lettering as the user set them (RV-559: CM34, CM36, CM37)", () => {
+    expect(GREENHOUSE.boards).toEqual({ top: 140, textFrom: 0.1, textTo: 0.66, band: 0.8, repeat: 2700 });
+    expect(BOARD_TEXT).toEqual(["CARBALL", "ZOLT", "TOP"]);
+    // (the repeat the canvas's width along the wall; its two phrases centred in its halves; the dots 8 px)
+    expect(BOARD_CANVAS.width * BOARD_CANVAS.uuPerPixel).toBe(GREENHOUSE.boards.repeat);
+    expect(BOARD_CANVAS.centres).toEqual([BOARD_CANVAS.width / 4, (3 * BOARD_CANVAS.width) / 4]);
+    expect([BOARD_CANVAS.height, BOARD_CANVAS.dot]).toEqual([64, 8]);
   });
 });
 

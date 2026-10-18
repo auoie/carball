@@ -10,6 +10,14 @@ export const PAUSE_TEXT = {
   settings: "Settings",
 } as const;
 
+/** Custom training's buttons (the game's MidGameMenu in training: Restart Training, Reset Progress; Back to Editor ours,
+ *  the playtest's way back) */
+export const TRAINING_PAUSE_TEXT = {
+  restart: "Restart Training",
+  resetProgress: "Reset Progress",
+  backToEditor: "Back to Editor",
+} as const;
+
 export interface PauseActions {
   readonly resume: () => void;
   readonly settings: () => void;

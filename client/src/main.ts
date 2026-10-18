@@ -41,6 +41,15 @@ import { PlayersMenu, Toast } from "./ui/playersMenu";
 import { EndScreen, PodiumTags, ScreenDimming, WinnerBanner } from "./ui/endOfMatch";
 import { Nameplates } from "./ui/nameplates";
 import { LoadingScreen, showLoadingFailure } from "./ui/loadingScreen";
+import { TRAINING_TEXT, type TrainingKeys, TrainingHud } from "./ui/trainingHud";
+import { type KeyGlyph, keyGlyph } from "./ui/keyGlyph";
+import type { GamepadInput, KeyboardInput } from "./input/bindings";
+import { type PackListing, listPacks, loadPack } from "./training/packs";
+import { type TrainingPack, parsePack } from "./training/pack";
+import { newPack } from "./training/myPacks";
+import type { TrainingEditor } from "./ui/trainingEditor";
+import { ShotSelect } from "./ui/shotSelect";
+import { hasModifiers } from "./training/settings";
 import { StatGraphsView } from "./ui/statGraphsView";
 import { type StatContext, StatGraphData, levelView, speedUnit } from "./game/statGraphs";
 import { RefreshMeter } from "./game/refreshRate";
@@ -49,7 +58,7 @@ import { MainMenu } from "./ui/mainMenu";
 import { MODAL_TEXT, Modal } from "./ui/modal";
 import { SearchView, cancelShown } from "./ui/searchView";
 import { IdleTip } from "./ui/idleTip";
-import { PauseMenu } from "./ui/pauseMenu";
+import { PauseMenu, TRAINING_PAUSE_TEXT } from "./ui/pauseMenu";
 import { PadMenuNav } from "./ui/padNav";
 import { PadReadout } from "./ui/padReadout";
 import { Renderer } from "./render/renderer";
@@ -297,10 +306,16 @@ async function main(): Promise<void> {
   });
   // The error modal (a lost connection, an idle kick) and the search's panel and banner (the menu page's)
   const modal = new Modal(document.body);
-  const menusOpen = (): boolean => panel.isOpen || pause.isOpen || (mainMenu?.isOpen ?? false) || modal.isOpen;
+  // (custom training's Select Shot over the game: set once it's made)
+  let shotSelectOpen = (): boolean => false;
+  const menusOpen = (): boolean => panel.isOpen || pause.isOpen || (mainMenu?.isOpen ?? false) || modal.isOpen || shotSelectOpen();
   // (the pad's Y releasing over the main or pause menu, no modal or settings over it: the search's cancel, MM-10; set by the
   // menu page's search)
   let cancelSearchByPad = (): boolean => false;
+  // (the training editor open: Escape leaves it; set once it's made)
+  let editorEscape = (): boolean => false;
+  // (Select Shot open: Escape closes it)
+  let shotSelectEscape = (): boolean => false;
   // (the online match menu's question, answered NO by B or Escape: set once that menu's made)
   let dismissMatchQuestion = (): boolean => false;
   // Escape: the modal's OK; back out of the settings or the main menu's page; a pause menu's question answered NO
@@ -308,6 +323,8 @@ async function main(): Promise<void> {
   const escape = (): void => {
     if (modal.isOpen) modal.close();
     else if (panel.isOpen) panel.escape();
+    else if (editorEscape()) return;
+    else if (shotSelectEscape()) return;
     else if (mainMenu?.isOpen) mainMenu.back();
     else if (pause.isOpen && (pause.dismissQuestion() || dismissMatchQuestion())) return;
     else pause.toggle();
@@ -451,6 +468,59 @@ async function main(): Promise<void> {
     // (the garage's preview: the cars' hitboxes from a world of its own, one car each)
     const garageWorld = World.create(engine);
     const garageConfigs = new Map(CARS.map((c) => [c.id, garageWorld.carConfig(garageWorld.addCar(0, c.body))]));
+    // (the training editor: its panel over the arena, the shot held in free play's world, the camera orbiting it; a
+    // playtest plays the pack in training, the pause menu's Back to Editor returning)
+    let playtesting: { readonly pack: TrainingPack; readonly shot: number } | null = null;
+    const refreshPacks = (): void => {
+      void listPacks().then((packs) => {
+        mainMenu?.setTrainingPacks(packs);
+      });
+    };
+    // (the editor's code a chunk of its own, loaded when it first opens)
+    let editor: TrainingEditor | null = null;
+    const openEditor = async (pack: TrainingPack, shot = 0): Promise<void> => {
+      if (!editor) {
+        const { TrainingEditor: Editor } = await import("./ui/trainingEditor");
+        editor = new Editor(document.body, canvas, {
+          show: (editing, asPlaced) => {
+            freeplay.showEditing(editing, asPlaced);
+          },
+          camera: (editorView) => {
+            freeplay.editorCamera = editorView;
+          },
+          rayAt: (x, y) => renderer.rayAt(x, y),
+          playtest: (tested, from) => {
+            editor?.close();
+            playtesting = { pack: tested, shot: from };
+            freeplay.startTraining(tested, from);
+          },
+          exit: () => {
+            refreshPacks();
+            mainMenu?.showTraining();
+          },
+          notice: (title, body) => {
+            modal.show(title, body);
+          },
+          choose: (title, body, choices, focus) => {
+            modal.choose(title, body, choices, focus);
+          },
+          // (the free-camera mode's tests: Test Shot and Test Sequence, back to the editor on its key)
+          test: (tested, from, kind) => {
+            playtesting = null;
+            freeplay.startTraining(tested, from, kind);
+          },
+          testing: () => (freeplay.training?.test ?? null) !== null,
+          project: (p) => renderer.project(p),
+          blocked: () => menusOpen(),
+        });
+      }
+      editor.open(pack, shot);
+    };
+    editorEscape = () => {
+      if (!editor?.isOpen) return false;
+      editor.escape();
+      return true;
+    };
     mainMenu = new MainMenu(document.body, {
       garage: (choice) => {
         freeplay.setCar(choice);
@@ -485,7 +555,29 @@ async function main(): Promise<void> {
       settings: () => {
         panel.open();
       },
+      // (custom training: the pack read and checked, then played here at once, free play's session its stage)
+      training: (listing: PackListing) => {
+        void loadPack(listing).then((pack) => {
+          if (typeof pack === "string") {
+            console.error(`training pack ${listing.id}: ${pack}`);
+            return;
+          }
+          mainMenu?.close();
+          playtesting = null;
+          freeplay.startTraining(pack);
+        });
+      },
+      // (the editor: a pack of the player's own, or a new one)
+      editTraining: (listing: PackListing | null) => {
+        void (listing ? loadPack(listing) : Promise.resolve(newPack())).then(async (pack) => {
+          if (typeof pack === "string") return;
+          mainMenu?.close();
+          await openEditor(pack);
+        });
+      },
     });
+    // (the training packs there are: Custom Training with one to play)
+    refreshPacks();
     // (the bot packages there are: Play vs Bots with one to play, its page's code and the listing in chunks of their own,
     // loaded once the menu is up; none in a build without bots)
     let botListings: readonly BotListing[] = [];
@@ -519,6 +611,19 @@ async function main(): Promise<void> {
       },
       particles: () => freeplay.debugParticles(),
       pads: () => freeplay.debugPads(),
+      // (custom training with a pack given as JSON, and its state: the browser tests')
+      startTraining: (json: unknown) => {
+        const pack = parsePack(json);
+        if (typeof pack === "string") throw new Error(pack);
+        mainMenu?.close();
+        freeplay.startTraining(pack);
+      },
+      training: () => {
+        const run = freeplay.training;
+        return run && { state: run.state, shot: run.shotIndex, timeLeft: run.timeLeft, completion: run.completion, status: [...run.status], shuffle: run.shuffle, mirror: run.mirror, result: run.result, test: run.test };
+      },
+      // (the training editor: open or not, its mode and the free-camera mode's state, the pack as it stands)
+      editor: () => editor && { open: editor.isOpen, testing: editor.testing, ...editor.state, pack: editor.pack },
       // (the camera's fade as the post-processing draws it: RV-159, RV-175)
       cameraFade: () => renderer.cameraFade,
     };
@@ -527,10 +632,89 @@ async function main(): Promise<void> {
     const guard = guardWanted(settings.video, renderer.draws, videoAuto?.guard) ? new AutoVideoGuard() : null;
     // (offline: the network and input-buffer rows read 0)
     NetGraphFeed.offline(statData);
+    // (Select Shot: its binding opens it over the game, a shot chosen starts at once)
+    const shotSelect = new ShotSelect(document.body, (index) => {
+      freeplay.selectShot(index);
+    });
+    shotSelectOpen = () => shotSelect.isOpen;
+    // (the reset's first-time warning during or after a shot: §2.7, TutorialMessage.RoundResetBody)
+    freeplay.onResetWarning = (retry) => {
+      modal.ask(TRAINING_TEXT.resetWarningTitle, TRAINING_TEXT.resetWarning, retry);
+    };
+    shotSelectEscape = () => {
+      if (!shotSelect.isOpen) return false;
+      shotSelect.close();
+      return true;
+    };
+    // (the pause menu's training buttons while a pack plays: Restart Training, Reset Progress, Back to Editor in a
+    // playtest)
+    let trainingPauseShown = "";
+    const trainingPause = (): void => {
+      const run = freeplay.training;
+      const shown = run ? `${run.pack.id}|${String(playtesting !== null)}|${String(run.test)}` : "";
+      if (shown === trainingPauseShown) return;
+      trainingPauseShown = shown;
+      const button = (label: string, click: () => void): HTMLButtonElement => {
+        const b = document.createElement("button");
+        b.className = "pause-button";
+        b.textContent = label;
+        b.addEventListener("click", () => {
+          if (pause.isOpen) pause.toggle();
+          click();
+        });
+        return b;
+      };
+      const back = playtesting;
+      pause.match.replaceChildren(
+        ...(run?.test
+          ? [
+              // (the free-camera mode's test: the game's Restart Training, our Back to Editor as its key)
+              button(TRAINING_PAUSE_TEXT.restart, () => { freeplay.restartTraining(false); }),
+              button(TRAINING_PAUSE_TEXT.backToEditor, () => { editor?.endTest(); }),
+            ]
+          : run
+          ? [
+              button(TRAINING_PAUSE_TEXT.restart, () => { freeplay.restartTraining(false); }),
+              button(TRAINING_PAUSE_TEXT.resetProgress, () => { freeplay.restartTraining(true); }),
+              ...(back
+                ? [
+                    button(TRAINING_PAUSE_TEXT.backToEditor, () => {
+                      playtesting = null;
+                      void openEditor(back.pack, back.shot);
+                    }),
+                  ]
+                : []),
+            ]
+          : []),
+      );
+    };
+    // (custom training's HUD, its keys the device's in use)
+    const trainingHud = new TrainingHud(required("#hud-stage", HTMLElement));
+    const trainingKeys = (): TrainingKeys => {
+      const pad = input.usingGamepad;
+      const glyph = (b: { readonly keyboard: KeyboardInput | null; readonly gamepad: GamepadInput | null }): KeyGlyph => keyGlyph(pad ? b.gamepad : b.keyboard);
+      const { bindings } = settings;
+      return {
+        reset: glyph(bindings.reset),
+        previous: glyph(bindings.trainingPrevious),
+        next: glyph(bindings.trainingNext),
+        shuffle: glyph(bindings.trainingShuffle),
+        mirror: glyph(bindings.trainingMirror),
+        select: glyph(bindings.trainingSelect),
+        // (the editor's Test Shot key: Tab, the pad's View)
+        editShot: keyGlyph(pad ? { kind: "padButton", button: 8 } : { kind: "key", code: "Tab" }),
+      };
+    };
     game = {
       speeds: () => freeplay.speeds(),
       frame(dt) {
+        // (the editor first: its camera and shot for this frame's drawing)
+        editor?.frame(dt);
         freeplay.frame(dt);
+        trainingHud.update(freeplay.training, trainingKeys(), hasModifiers(settings.training));
+        trainingPause();
+        if (freeplay.takeSelectRequest()) shotSelect.toggle(freeplay.training);
+        if (!freeplay.training) shotSelect.close();
         matchmaking.frame(performance.now() / 1000);
         view.update(matchmaking.state, { menuUp: cancelHere(), padMode: padNav.padMode, now: performance.now() / 1000 });
         // (a hidden tab's or a hitch's time not counted: AutoVideoGuard; the player's choice since wins: guardStep)

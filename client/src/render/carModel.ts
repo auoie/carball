@@ -91,7 +91,8 @@ export function carExhausts(model: Object3D, config: CarConfig, car = 0): readon
 
 /** The model as one mesh per material (seven draw calls), named after the material: body, trim, glass, headlight,
  *  taillight, tyre, rim. `car` the garage's (src/game/cars.ts): Sport this Fennec-like hatchback (or the game's Fennec
- *  where it is loaded, src/render/fennec.ts), Standard, Flat and Tall their own bodies (src/render/carBodies.ts) */
+ *  where it is loaded, src/render/fennec.ts; the retired Standard, 1, too), Flat and Tall their own bodies
+ *  (src/render/carBodies.ts) */
 export function buildCarModel(config: CarConfig, paint: Color, team = 0, car = 0): Group {
   const look = carBody(car);
   if (look) return buildCarBody(look, config, paint);

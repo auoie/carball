@@ -47,7 +47,7 @@ describe("the ball's FX actor's other pieces (VT-30a)", () => {
     view.fade(true, 1 / 60);
     expect(view.fxShown).toEqual({ beam: false, ring: false, sphere: false });
     // (a reset makes a new FX actor: its timer from 0)
-    view.spawn(true);
+    view.spawn();
     view.fade(false, 1 / 60);
     expect(view.fxShown).toEqual({ beam: false, ring: false, sphere: false });
   });
@@ -83,12 +83,10 @@ describe("the goal line's effect on the ball (VT-31)", () => {
     expect(goalLine(0, 5120 - 1024, 312).proximity).toBeCloseTo(0.5, 9);
   });
 
-  it("on with the ball, off while it dissolves (a spawn's fade-in, the explosion)", () => {
+  it("on with the ball (a new one at once), off while it dissolves (the explosion)", () => {
     const view = new BallView();
     view.spawn();
     view.fade(false, 1 / 60);
-    expect(view.goalLineState.on).toBe(false);
-    for (let i = 0; i < 70; i++) view.fade(false, 1 / 60);
     expect(view.goalLineState.on).toBe(true);
     view.update(new Vector3(0, 300, 5120 - 50), new Quaternion());
     expect(view.goalLineState.normalZ).toBe(-1);
@@ -97,7 +95,7 @@ describe("the goal line's effect on the ball (VT-31)", () => {
   });
 });
 
-describe("the ball's look on a goal and at a kickoff (VT-15, VT-30)", () => {
+describe("the ball's look on a goal and at a kickoff (VT-15; VT-30's fade-in removed by the user)", () => {
   it("dissolves in 0.333 s once exploded (each frame's time capped at 1/30), its marker gone at once", () => {
     const view = new BallView();
     view.fade(true, 1 / 60);
@@ -114,19 +112,15 @@ describe("the ball's look on a goal and at a kickoff (VT-15, VT-30)", () => {
     expect(slow.opacity).toBeCloseTo(0.9, 9);
   });
 
-  it("a new ball fades in over a second; a replay's is shown at once", () => {
+  it("a new ball is solid at once: at a spawn, and back after a dissolve without one (a map's next ball, a server's reset)", () => {
     const view = new BallView();
     view.spawn();
-    expect(view.opacity).toBe(0);
-    view.fade(false, 0.5); // (a long frame counts 1/30: RV-30)
-    expect(view.opacity).toBeCloseTo(1 / 30, 9);
-    for (let i = 0; i < 57; i++) view.fade(false, 1 / 60);
-    expect(view.opacity).toBeCloseTo(1 / 30 + 57 / 60, 9);
     view.fade(false, 1 / 60);
+    expect([view.opacity, view.alpha]).toEqual([1, 1]);
+    for (let i = 0; i < 30; i++) view.fade(true, 1 / 60);
+    expect(view.alpha).toBe(0);
     view.fade(false, 1 / 60);
-    expect(view.opacity).toBe(1);
-    view.spawn(true);
-    expect(view.opacity).toBe(1);
+    expect([view.opacity, view.alpha]).toEqual([1, 1]);
   });
 });
 
@@ -165,6 +159,19 @@ describe("the ball's speed trail (VT-10, VT-10a)", () => {
     expect(ball.trail.points).toHaveLength(0);
   });
 
+  it("its side ribbons go with it: cleared at the explosion, none while not shown (the podium) (RV-550: CM9b, CM29b)", () => {
+    const ball = new BallView();
+    run(ball, 30);
+    expect(ball.sideTrails.every((s) => s.points.points.length > 0)).toBe(true);
+    // (not left frozen on screen through the 3 s explosion while the main trail is gone)
+    ball.fade(true, 1 / 60);
+    expect(ball.sideTrails.map((s) => s.points.points.length)).toEqual([0, 0, 0, 0]);
+    run(ball, 30);
+    ball.trailShown = false;
+    run(ball, 5);
+    expect(ball.sideTrails.every((s) => !s.drawn && s.points.points.length === 0)).toBe(true);
+  });
+
   it("its four side ribbons at World Detail High alone, from 72 uu off the ball's centre along its own y and z, turning with it (RV-536)", () => {
     const ball = new BallView();
     run(ball, 30);
@@ -186,11 +193,16 @@ describe("the ball's speed trail (VT-10, VT-10a)", () => {
     ]);
     // (a quarter turn about the vertical: the game's y offset now along Three's x)
     expect(hold(new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), Math.PI / 2))[0]?.toArray().map(Math.round)).toEqual([72, 0, 0]);
-    // (World Detail Quality or Performance: none)
-    sceneDetail.world = "performance";
+    // (World Detail Quality or Performance: none; RV-550: CM28, Quality too)
     try {
-      run(ball, 10);
-      expect(ball.sideTrails.every((s) => !s.drawn && s.points.points.length === 0)).toBe(true);
+      for (const world of ["quality", "performance"] as const) {
+        sceneDetail.world = "highQuality";
+        run(ball, 10);
+        expect(ball.sideTrails.every((s) => s.drawn), world).toBe(true);
+        sceneDetail.world = world;
+        run(ball, 10);
+        expect(ball.sideTrails.every((s) => !s.drawn && s.points.points.length === 0), world).toBe(true);
+      }
     } finally {
       sceneDetail.world = "highQuality";
     }

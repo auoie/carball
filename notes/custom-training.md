@@ -142,13 +142,13 @@ files (decode → encode, and plain values → file). Little-endian throughout. 
 | 0 | u32 | `PayloadSize` = file size − 8, a multiple of 16 |
 | 4 | u32 | `Crc` = `appMemCrc(Payload, seed 0xEFCBF201)`: MSB-first CRC-32, poly 0x04C11DB7, inverted in and out (the keys/ report's `MemCrc`), over the **encrypted** payload |
 | 8 | `PayloadSize` bytes | `Payload` = AES-256-**ECB**(plaintext + zero padding) |
-- **Key**: the same key as `Coalesced_*.bin`: `Deobf(8 obfuscated dwords inline in 0x1402d85a0, seed 0xC1832A9E,
-  salt "TA")` (06-16 build: `FUN_1402d45b0`). Derivation: `out/bsim/agents/keys/coalesced.py` (key never written
-  out). It is neither the package key nor a content-key table entry. ECB, no IV (the first cipher block is identical
+- **Key**: the same key the game uses for its `Coalesced_*.bin` files, derived from the exe. The recipe stays local
+  (`out/bsim/agents/keys/coalesced.py`, git-ignored; the key is never written out) and is kept out of the notes
+  (RV-560, 2026-10-17). It is neither the package key nor a content-key table entry. ECB, no IV (the first cipher block is identical
   in every file with the same header).
 - **Padding**: zeros up to a multiple of 16 (0–15 bytes; 0 in 4 files), not PKCS#7.
 - **Load** `0x140edc0e0`: `0x140e05e40` reads Size + Crc, fails if Size > the bytes left or the CRC
-  (`0x1403a0a90`) differs; zero-pad (`0x1402e53c0`); decrypt (`0x1402dbe50`, key from `0x1402d85a0`); check the two
+  (`0x1403a0a90`) differs; zero-pad (`0x1402e53c0`); decrypt (`0x1402dbe50`); check the two
   magic words (wrong first word → load error 3); set the archive versions; deserialize the objects (`0x140e50810`).
 - **Save** `0x140f33750`: serialize (`0x140f33800`; header writer at `0x140f339b5`), zero-pad, encrypt
   (`0x1402dc0b0`), prepend Size + Crc (`0x140e44450`, seed 0xEFCBF201). `0x140edf9b0` has the same tail behind a
@@ -487,6 +487,10 @@ clone-only invention; I have not specified one. Decision for the user (open ques
 - Car spawn: move/rotate (yaw from the camera; pitch only after "Toggle Lock Car Pitch" R / X; hold R / X resets the
   rotation); start speed ±50 uu/s up to 2300. [S A]
 - Time limit ±1 s (Up/Down, D-pad Up/Down), clamp 1–59. [S A]
+- **Full editor spec: notes/training-editor.md** (TE1, 2026-10-17). Correction there (§7): the aim is the look input
+  applied to the selected ball (`UpdateRotatedActorOrientation` → `AddVelocityStartRotation`), not
+  `EditorSetRotationFromInput` (unbound grab mode); RB/LB repeat is gamepad-only (PC: wheel); "T / L3" fires the ball
+  as a physics preview (the path preview is always on).
 
 ### 4.2 Training variance ("Actor Modifiers"; `CustomTrainingSave_TA`)
 Applied during Countdown only, when playtesting, to the shot's spawned actors. `U(a, b) = a + (b − a)·FRand()`,

@@ -14,6 +14,7 @@ import {
 } from "../input/bindings";
 import { DEFAULT_SLOTS, POOLS } from "../game/quickChat";
 import { type ChatFilter, MAX_NAME_BYTES } from "../net/protocol";
+import { TRAINING_DEFAULTS, TRAINING_LIMITS, type TrainingNumbers, type TrainingSettings } from "../training/settings";
 
 /** The game's Controls menu (ProfileGamepadSave_TA). The engine applies everything but the deadzone. */
 export interface ControllerSettings {
@@ -191,6 +192,8 @@ export interface Settings {
   readonly gameplay: GameplaySettings;
   /** The Video tab's (settings/video.ts; Bloom and Depth of Field in the options) */
   readonly video: VideoSettings;
+  /** Custom training's (training/settings.ts) */
+  readonly training: TrainingSettings;
 }
 
 /** The scoreboard's four columns after SCORE (ProfileScoreboardSave_TA, Soccar's group: SB-17), by column id */
@@ -311,6 +314,7 @@ export const DEFAULT_SETTINGS: Settings = {
   interface: DEFAULT_INTERFACE_SETTINGS,
   gameplay: DEFAULT_GAMEPLAY_SETTINGS,
   video: DEFAULT_VIDEO_SETTINGS,
+  training: TRAINING_DEFAULTS,
 };
 
 /** The settings as they apply: the video settings' automatic default resolved (settings/video.ts resolveVideo: the
@@ -478,7 +482,14 @@ export function parseSettings(v: unknown): Settings {
     interface: readInterface(src["interface"]),
     gameplay: readGameplay(src["gameplay"], old),
     video,
+    training: readTraining(src["training"]),
   };
+}
+
+/** Custom training's settings: its numbers within their ranges, its switches */
+function readTraining(v: unknown): TrainingSettings {
+  const flags = readBooleans(v, TRAINING_DEFAULTS);
+  return { ...readNumbers<TrainingNumbers>(v, TRAINING_DEFAULTS, TRAINING_LIMITS), skipReplay: flags.skipReplay, spawnOnGround: flags.spawnOnGround, unlimitedBoost: flags.unlimitedBoost };
 }
 
 export function loadSettings(storage: Pick<Storage, "getItem"> | null = safeStorage()): Settings {

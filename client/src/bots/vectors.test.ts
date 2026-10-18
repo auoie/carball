@@ -159,6 +159,47 @@ describe.skipIf(!PRESENT)("the bot packages' vectors, replayed", () => {
     expect(moved).toBeGreaterThan(200);
   }, 300_000);
 
+  it("two bots of one package through one cache keep their own state: in lockstep on the vectors, each decides as a lone one (RV-549)", async () => {
+    const files: typeof fetch = (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const path = `${ROOT}${url.replace(/^\/bots\//, "")}`;
+      return Promise.resolve(existsSync(path) ? new Response(readFileSync(path)) : new Response(null, { status: 404 }));
+    };
+    // (each brain its own random stream, the same seed: a sampled pick the same for all three)
+    const seeded = (seed: number): (() => number) => {
+      let a = seed;
+      return () => {
+        a = (a + 0x6d2b79f5) | 0;
+        let t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    };
+    const differ: string[] = [];
+    for (const id of ["nexto", "necto"]) {
+      for (const sequence of (json(`${id}/vectors.json`) as { sequences: Sequence[] }).sequences) {
+        const view = (frame: Frame): BotView => ({ state: state(frame.state), self: sequence.self, tick: frame.tick });
+        // (the lone bot's run first, through the whole sequence: nothing it holds is touched by the pair's after)
+        const lone = await loadBrain("/bots/", id, sequence.teamSize, files, seeded(7), ort);
+        const expected: string[] = [];
+        for (const frame of sequence.frames) expected.push(JSON.stringify(await lone.tick(view(frame))));
+        const packages: PackageCache = new Map();
+        const pair = [
+          await loadBrain("/bots/", id, sequence.teamSize, files, seeded(7), ort, undefined, packages),
+          await loadBrain("/bots/", id, sequence.teamSize, files, seeded(7), ort, undefined, packages),
+        ];
+        expect(packages.size).toBe(1);
+        for (const [i, frame] of sequence.frames.entries()) {
+          for (const [k, brain] of pair.entries()) {
+            const got = JSON.stringify(await brain.tick(view(frame)));
+            if (got !== expected[i]) differ.push(`${id} ${sequence.name} bot ${String(k)} tick ${String(frame.tick)}: ${got} vs ${String(expected[i])}`);
+          }
+        }
+      }
+    }
+    expect(differ.slice(0, 6)).toEqual([]);
+  }, 300_000);
+
   it("a 2v2 of package bots (Nexto and Necto on each side, teammates too): every brain runs, none fails, each package fetched once (RV-540)", async () => {
     const fetched: string[] = [];
     const files: typeof fetch = (input) => {

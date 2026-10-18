@@ -151,6 +151,10 @@ public:
 		_SetCallbacks();
 	}
 
+	// A new soccar arena, its own state: no cars, the ball at its spawn (custom training's ball path, predicted without
+	// touching this one)
+	Sim* Sibling() const { return new Sim(); }
+
 	~Sim() { delete _arena; }
 
 	int AddCar(int team, int carType) {
@@ -278,6 +282,25 @@ public:
 	double TickCount() const { return (double)_arena->tickCount; }
 
 	bool IsBallScored() const { return _arena->IsBallScored(); }
+
+	// Goals scored or not (custom training: an entry counts only into the target goal, a striker's after a touch, so the
+	// page turns scoring on for the ticks it would count): off moves the score line out of reach (goalBaseThresholdY,
+	// read by IsBallScored alone); the arena's other rules unchanged
+	void SetGoalScoring(bool on) {
+		MutatorConfig config = _arena->GetMutatorConfig();
+		config.goalBaseThresholdY = on ? RLConst::SOCCAR_GOAL_SCORE_BASE_THRESHOLD_Y : 1e9f;
+		_arena->SetMutatorConfig(config);
+	}
+
+	// The ball destroyed (custom training's save and timeout: DestroyBall): exploded, still, no collision, until the next
+	// placement
+	void HideBall() {
+		RocketSim::BallState s = _arena->ball->GetState();
+		s.vel = Vec();
+		s.angVel = Vec();
+		s.isExploded = true;
+		_arena->ball->SetState(s);
+	}
 
 	Float32ArrayVal BallState() {
 		RocketSim::BallState s = _arena->ball->GetState();
@@ -585,6 +608,8 @@ EMSCRIPTEN_BINDINGS(rlengine) {
 		.function("setKickoffCountdown", &Sim::SetKickoffCountdown)
 		.function("tickCount", &Sim::TickCount)
 		.function("isBallScored", &Sim::IsBallScored)
+		.function("setGoalScoring", &Sim::SetGoalScoring)
+		.function("hideBall", &Sim::HideBall)
 		.function("ballState", &Sim::BallState)
 		.function("setBallState", &Sim::SetBallState)
 		.function("carState", &Sim::CarState)
@@ -594,6 +619,7 @@ EMSCRIPTEN_BINDINGS(rlengine) {
 		.function("respawnSpots", &Sim::RespawnSpots)
 		.function("takeEvents", &Sim::TakeEvents)
 		.function("takeImpacts", &Sim::TakeImpacts)
+		.function("sibling", &Sim::Sibling, return_value_policy::take_ownership())
 		.function("saveState", &Sim::SaveState)
 		.function("saveStateView", &Sim::SaveStateView)
 		.function("loadState", &Sim::LoadState)
