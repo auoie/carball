@@ -4,7 +4,7 @@
 // speeds in steps of 50 (the pad's bumpers repeating), the clamps, the camera snapped behind the selection, the strength
 // meter's needle, the tap and the hold, undo and redo. No engine, no page: src/ui/flyEditor.ts is its page side.
 import { type Vec3, vec3 } from "../math/vec";
-import { PACK_LIMITS, type Shot, wrapYaw } from "./pack";
+import { PACK_LIMITS, type Shot, type TrainingPack, wrapYaw } from "./pack";
 
 /** Rotator units a radian (65536 a turn) */
 export const UNITS_PER_RAD = 32768 / Math.PI;
@@ -29,8 +29,8 @@ export const TAP_SECONDS = 0.5;
  *  launch's with half its pitch; the car's 300 behind and 25 up, its yaw alone), how fast it follows (RInterpTo 3) */
 export const BEHIND = { ball: { back: 550, side: 200, pitchShare: 0.5 }, car: { back: 300, up: 25 }, follow: 3 } as const;
 
-/** Where things may go (the panel's clamps, TE1 §3.1 simplified: inside the arena, the ball 100 up at least; the fly
- *  camera the stadium's field box, 1000 past the field) */
+/** Where things may go (the panel's clamps, TE1 §3.1 simplified: inside the arena, the ball 100 up at least and in a
+ *  goal too, TE1 §9; the fly camera the stadium's field box, 1000 past the field) */
 const BALL_RADIUS = 92.75;
 const CAR_REACH = 60;
 /** The car's origin resting on the floor (uu) */
@@ -40,6 +40,9 @@ export const CLAMPS = {
   ball: { x: PACK_LIMITS.halfX - BALL_RADIUS, y: 5120 - BALL_RADIUS, zMin: 100, zMax: PACK_LIMITS.top - BALL_RADIUS },
   car: { x: PACK_LIMITS.halfX - CAR_REACH, y: 5120 - CAR_REACH, zMin: CAR_FLOOR_Z, zMax: PACK_LIMITS.top - 50 },
 } as const;
+
+/** A goal's mouth (half width, height: the game's) and its back (|y|), the ball allowed inside (TE1 §3.1, §9) */
+const GOAL = { halfWidth: 892.755, height: 642.775, back: 6000 } as const;
 
 export type Selection = "free" | "ball" | "car";
 
@@ -96,10 +99,29 @@ export function flyVelocity(vel: Vec3, move: Move, yaw: number, dt: number): Vec
   return vec3(vx, vy, vz);
 }
 
-/** A point kept inside a box (`kind`'s clamp) */
+/** A point kept inside a box (`kind`'s clamp); the ball past a goal line only within its mouth, up to its back */
 export function clampTo(kind: keyof typeof CLAMPS, p: Vec3): Vec3 {
   const c = CLAMPS[kind];
-  return vec3(clamp(p.x, -c.x, c.x), clamp(p.y, -c.y, c.y), clamp(p.z, c.zMin, c.zMax));
+  const [x, z] = [clamp(p.x, -c.x, c.x), clamp(p.z, c.zMin, c.zMax)];
+  const inGoal = kind === "ball" && Math.abs(x) <= GOAL.halfWidth - BALL_RADIUS && z <= GOAL.height - BALL_RADIUS;
+  const y = inGoal ? GOAL.back - BALL_RADIUS : c.y;
+  return vec3(x, clamp(p.y, -y, y), z);
+}
+
+/** A pack as the editor takes it (an import: TE1 §3.2's limits, which a pack file can exceed): its name 30 characters at
+ *  most, its tags 4 at most without repeats, each shot's time limit 1-59 and its ball and car within the clamps */
+export function editorPack(pack: TrainingPack): TrainingPack {
+  return {
+    ...pack,
+    name: pack.name.trim().slice(0, 30),
+    tags: [...new Set(pack.tags)].slice(0, 4),
+    shots: pack.shots.map((s) => ({
+      ...s,
+      timeLimit: clamp(Math.round(s.timeLimit), EDITOR_STEPS.timeMin, EDITOR_STEPS.timeMax),
+      ball: { ...s.ball, location: clampTo("ball", s.ball.location) },
+      car: { ...s.car, location: clampTo("car", s.car.location) },
+    })),
+  };
 }
 
 /** The look's turn applied to a camera's pose (pitch within ±90°, no roll) */
@@ -146,8 +168,14 @@ export function cycle(selection: Selection): "ball" | "car" {
   return selection === "ball" ? "car" : "ball";
 }
 
-/** The camera behind the selection: its pose (the ball's to `side`, -1 left or 1 right) */
+/** The camera behind the selection: its pose (the ball's to `side`, -1 left or 1 right), kept in the camera's box (TE1
+ *  §3.1: a low ball launched upward would put it under the floor, RX25) */
 export function behind(shot: Shot, selection: "ball" | "car", side: 1 | -1): Pose {
+  const pose = behindUnclamped(shot, selection, side);
+  return { ...pose, pos: clampTo("camera", pose.pos) };
+}
+
+function behindUnclamped(shot: Shot, selection: "ball" | "car", side: 1 | -1): Pose {
   if (selection === "ball") {
     const yaw = shot.ball.launch.yaw / UNITS_PER_RAD;
     const pitch = (shot.ball.launch.pitch / UNITS_PER_RAD) * BEHIND.ball.pitchShare;

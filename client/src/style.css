@@ -2980,6 +2980,7 @@ body {
   font-size: 15px;
   line-height: 20px;
   color: #ddd;
+  white-space: pre-line; /* (a question's paragraphs: RESTART TRAINING's) */
 }
 
 .modal-ok {
@@ -3447,7 +3448,7 @@ body.pad-mode .settings-tab-glyph {
 
 .training-head {
   position: absolute;
-  left: 560px;
+  left: 50%; /* (the stage's centre, whatever its width: RX25) */
   top: 14px;
   transform: translateX(-50%);
   display: flex;
@@ -3545,7 +3546,7 @@ body.pad-mode .settings-tab-glyph {
 
 .training-finished {
   position: absolute;
-  left: 560px;
+  left: 50%;
   top: 300px;
   transform: translateX(-50%);
   padding: 14px 28px;

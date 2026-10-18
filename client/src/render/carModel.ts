@@ -7,6 +7,7 @@
 // Local frame (Three.js): x forward, y up, z right; the origin is the car's (the physics body's).
 import { BoxGeometry, type Color, Group, type Material, Mesh, type Object3D, Raycaster, Shape, ShapeGeometry, Vector2, Vector3 } from "three";
 import { fennecModel } from "./fennec";
+import { glbCarModel } from "./carGlb";
 import type { CarConfig } from "../engine/world";
 import { mergeByMaterial } from "./merge";
 import { type BodyFrame, type CarSpec, HITBOXES, type Point, type WheelSpec, addWheels, bodyFrame, carMaterials, densify, extrudeAcross, paneAlong, warp, xAt } from "./carParts";
@@ -90,10 +91,12 @@ export function carExhausts(model: Object3D, config: CarConfig, car = 0): readon
 }
 
 /** The model as one mesh per material (seven draw calls), named after the material: body, trim, glass, headlight,
- *  taillight, tyre, rim. `car` the garage's (src/game/cars.ts): Sport this Fennec-like hatchback (or the game's Fennec
- *  where it is loaded, src/render/fennec.ts; the retired Standard, 1, too), Flat and Tall their own bodies
- *  (src/render/carBodies.ts) */
+ *  taillight, tyre, rim. `car` the garage's (src/game/cars.ts): its Blender model where client/cars has one
+ *  (src/render/carGlb.ts); else Sport this Fennec-like hatchback (or the game's Fennec where it is loaded,
+ *  src/render/fennec.ts; the retired Standard, 1, too), Flat and Tall their own bodies (src/render/carBodies.ts) */
 export function buildCarModel(config: CarConfig, paint: Color, team = 0, car = 0): Group {
+  const made = glbCarModel(car, paint);
+  if (made) return made;
   const look = carBody(car);
   if (look) return buildCarBody(look, config, paint);
   const fennec = car === 0 ? fennecModel(config, paint, team) : null;

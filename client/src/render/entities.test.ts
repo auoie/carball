@@ -112,7 +112,7 @@ describe("the ball's look on a goal and at a kickoff (VT-15; VT-30's fade-in rem
     expect(slow.opacity).toBeCloseTo(0.9, 9);
   });
 
-  it("a new ball is solid at once: at a spawn, and back after a dissolve without one (a map's next ball, a server's reset)", () => {
+  it("a new ball is solid at once: at a spawn, and back after a dissolve without one (a training shot's ball, a server's reset)", () => {
     const view = new BallView();
     view.spawn();
     view.fade(false, 1 / 60);

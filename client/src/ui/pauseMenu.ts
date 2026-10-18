@@ -16,6 +16,9 @@ export const TRAINING_PAUSE_TEXT = {
   restart: "Restart Training",
   resetProgress: "Reset Progress",
   backToEditor: "Back to Editor",
+  /** A test's restart, asked first (notes/training-editor.md §5.3: a created sequence's, verbatim) */
+  restartTitle: "RESTART TRAINING",
+  restartBody: "Restarting a created sequence will also reset any training progress made.\n\nAre you sure you want to restart this training session?",
 } as const;
 
 export interface PauseActions {

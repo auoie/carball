@@ -815,6 +815,8 @@ export class Online {
       const pos = error.applyPosition(state.position(alpha, this.#pos));
       if (id === this.#localCar && !demoed) localDrawn = fromThreeVector(pos);
       const throttling = (id === this.#localCar ? this.#throttle : Math.abs(this.#world.carControls(id).throttle)) > 0;
+      // (a Blender model's wheels: the vehicle's suspension and steering, as this page's world has them)
+      if (view.posesWheels) view.wheels = demoed ? null : this.#world.carWheels(id);
       view.update(pos, error.applyRotation(state.rotation(alpha, this.#rot)), boosting, demoed, supersonic, frameSeconds, trailGround(state.current), throttling);
     }
     this.#ballError.decay(frameSeconds);

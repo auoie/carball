@@ -140,6 +140,14 @@ export interface CarConfig {
   readonly backWheel: WheelConfig;
 }
 
+/** A car's wheels as its vehicle has them now (the drawn wheels' height and steering), each in the engine's order
+ *  (front right, front left, back right, back left): its suspension's length (uu, from its connection point down to its
+ *  centre) and its steering angle (radians; the front wheels') */
+export interface CarWheels {
+  readonly suspension: readonly [number, number, number, number];
+  readonly steer: readonly [number, number, number, number];
+}
+
 /** What a car touched (takeImpacts) */
 export type ImpactPartner = "world" | "ball" | "car";
 
@@ -489,6 +497,13 @@ export class World {
         suspensionRest: at(a, m.CFG_BACK_SUSPENSION_REST),
       },
     };
+  }
+
+  carWheels(id: number): CarWheels {
+    const m = this.#m;
+    const a = this.#sim.carWheels(id);
+    const four = (from: number): [number, number, number, number] => [at(a, from), at(a, from + 1), at(a, from + 2), at(a, from + 3)];
+    return { suspension: four(m.WHEELS_SUSPENSION), steer: four(m.WHEELS_STEER) };
   }
 
   boostPads(): BoostPadState[] {

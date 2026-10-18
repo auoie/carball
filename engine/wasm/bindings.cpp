@@ -62,6 +62,11 @@ namespace Layout {
 		CAR_SIZE = 71;
 	constexpr int SPOT_POS = 0, SPOT_YAW = 3, SPOT_SIZE = 4;
 
+	// A car's wheels as the vehicle has them now (carWheels: the drawn wheels' height and steering), each in the engine's
+	// order (front right, front left, back right, back left): its suspension's length (uu, from its connection point
+	// down to the wheel's centre) and its steering angle (radians)
+	constexpr int WHEELS_SUSPENSION = 0, WHEELS_STEER = 4, WHEELS_SIZE = 8;
+
 	// Boost pad: position, isBig, isActive, cooldown
 	constexpr int PAD_POS = 0, PAD_BIG = 3, PAD_ACTIVE = 4, PAD_COOLDOWN = 5, PAD_SIZE = 6;
 
@@ -416,6 +421,19 @@ public:
 		car->SetState(s);
 	}
 
+	Float32ArrayVal CarWheels(int id) {
+		_floats.assign(Layout::WHEELS_SIZE, 0);
+		Car* car = _arena->GetCar((uint32_t)id);
+		if (car) {
+			for (int i = 0; i < car->_bulletVehicle.getNumWheels() && i < 4; i++) {
+				const btWheelInfoCarball& w = car->_bulletVehicle.m_wheelInfo[i];
+				_floats[Layout::WHEELS_SUSPENSION + i] = w.m_raycastInfo.m_suspensionLength * BT_TO_UU;
+				_floats[Layout::WHEELS_STEER + i] = w.m_steerAngle;
+			}
+		}
+		return CopyToJS<Float32ArrayVal>("Float32Array", _floats);
+	}
+
 	Float32ArrayVal CarConfig(int id) {
 		_floats.assign(Layout::CFG_SIZE, 0);
 		Car* car = _arena->GetCar((uint32_t)id);
@@ -615,6 +633,7 @@ EMSCRIPTEN_BINDINGS(rlengine) {
 		.function("carState", &Sim::CarState)
 		.function("setCarState", &Sim::SetCarState)
 		.function("carConfig", &Sim::CarConfig)
+		.function("carWheels", &Sim::CarWheels)
 		.function("boostPads", &Sim::BoostPads)
 		.function("respawnSpots", &Sim::RespawnSpots)
 		.function("takeEvents", &Sim::TakeEvents)
@@ -639,6 +658,7 @@ EMSCRIPTEN_BINDINGS(rlengine) {
 	LAYOUT(CAR_DEMO_SPAWN_SIDE); LAYOUT(CAR_DEMO_SPAWN_INDEX); LAYOUT(CAR_PRESPAWN_SET); LAYOUT(CAR_PRESPAWN_POS);
 	LAYOUT(CAR_PRESPAWN_YAW); LAYOUT(CAR_FLIP_RESETS); LAYOUT(CAR_SPAWN_COUNT); LAYOUT(CAR_WHEEL_NORMALS); LAYOUT(CAR_SIZE);
 	LAYOUT(SPOT_POS); LAYOUT(SPOT_YAW); LAYOUT(SPOT_SIZE);
+	LAYOUT(WHEELS_SUSPENSION); LAYOUT(WHEELS_STEER); LAYOUT(WHEELS_SIZE);
 	LAYOUT(PAD_POS); LAYOUT(PAD_BIG); LAYOUT(PAD_ACTIVE); LAYOUT(PAD_COOLDOWN); LAYOUT(PAD_SIZE);
 	LAYOUT(IMPACT_TICK); LAYOUT(IMPACT_CAR); LAYOUT(IMPACT_KIND); LAYOUT(IMPACT_PARTNER); LAYOUT(IMPACT_SPEED);
 	LAYOUT(IMPACT_SLIDE); LAYOUT(IMPACT_POS); LAYOUT(IMPACT_NORMAL); LAYOUT(IMPACT_SIZE);

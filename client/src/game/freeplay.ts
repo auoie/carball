@@ -93,6 +93,8 @@ export class Freeplay {
   #ballSpawns = 0; // the ball's spawn counter last tick (a reset places it: not interpolated)
   readonly #score: [number, number] = [0, 0];
   #held: HeldActions = NO_HELD_ACTIONS;
+  /** Whether the game took input last frame (back from a menu: what's held then is no press) */
+  #inputOn = false;
   #ballCam = false;
   #rear = false;
   #look: LookInput = { up: 0, right: 0 };
@@ -305,7 +307,13 @@ export class Freeplay {
     const { bindings, controller, options } = settings;
     const camera = cameraInputs(settings, snapshot, this.#input, this.#camera.fov);
     if (this.#editing) this.#input.capturePointer = false; // (the editor's clicks place things: the pointer free)
-    this.#handleActions(readHeldActions(snapshot, bindings, controller.deadzone), options, camera.device.ballCamToggle);
+    // (input back after a menu or a question: a key still down from it (Enter that picked the pack or answered Yes) is no
+    // press, no Select Shot opened by it: RX25)
+    const actions = readHeldActions(snapshot, bindings, controller.deadzone);
+    const on = snapshot !== EMPTY_INPUT;
+    if (on && !this.#inputOn) this.#held = actions;
+    this.#inputOn = on;
+    this.#handleActions(actions, options, camera.device.ballCamToggle);
     const raw = readControls(snapshot, bindings, controller.deadzone, this.#buttons);
     this.#jump.frame(this.#buttons);
     const onGround = this.#car.current.onGround;
@@ -658,6 +666,9 @@ export class Freeplay {
       const ball = predictor.ball();
       points.push({ pos: ball.pos, speed: Math.hypot(ball.vel.x, ball.vel.y, ball.vel.z) });
     }
+    // (its events and impacts never read: let go, not kept piling up, RX25)
+    predictor.takeEvents();
+    predictor.takeImpacts();
     return points;
   }
 
@@ -873,6 +884,8 @@ export class Freeplay {
     const alpha = this.#clock.alpha;
     const car = this.#car.current;
     const carDrawn = fromThreeVector(this.#car.position(alpha, this.#pos));
+    // (a Blender model's wheels: the vehicle's suspension and steering)
+    if (this.#carView.posesWheels) this.#carView.wheels = this.#world.carWheels(this.#playerId);
     this.#carView.update(
       this.#car.position(alpha, this.#pos),
       this.#car.rotation(alpha, this.#rot),

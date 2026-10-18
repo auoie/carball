@@ -89,12 +89,16 @@ const local = (): Store | null => {
     return null;
   }
 };
-const KEY = (id: string): string => `carball.training.${id}`;
+/** A pack's progress, under its own prefix (no pack id can name another key: the player's packs', the warning's; RV
+ *  RX25), and where 437863a kept it (read while the new key has none; never a key of the training's own) */
+const KEY = (id: string): string => `carball.training.progress.${id}`;
+const OLD_KEY = (id: string): string | null => (["mine", "resetWarned", "editorMode", "progress"].includes(id) ? null : `carball.training.${id}`);
 
 /** A pack's kept progress (none: an empty list) */
 export function storedProgress(id: string, storage: Store | null = local()): ShotStatus[] {
   try {
-    const v: unknown = JSON.parse(storage?.getItem(KEY(id)) ?? "[]");
+    const old = OLD_KEY(id);
+    const v: unknown = JSON.parse(storage?.getItem(KEY(id)) ?? (old === null ? null : storage?.getItem(old)) ?? "[]");
     return Array.isArray(v) ? v.map((s) => (s === ShotStatus.Completed ? ShotStatus.Completed : s === ShotStatus.Attempted ? ShotStatus.Attempted : ShotStatus.NotAttempted)) : [];
   } catch {
     return [];

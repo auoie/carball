@@ -4,6 +4,7 @@
 import { AmbientLight, type BufferGeometry, type Color, DirectionalLight, Group, type Material, Mesh, PerspectiveCamera, Scene, WebGLRenderer } from "three";
 import type { CarConfig, Team } from "../engine/world";
 import { buildCarModel } from "../render/carModel";
+import { carModelParts } from "../render/carGlb";
 import { toThreeVector } from "../render/coords";
 import { vec3 } from "../math/vec";
 
@@ -57,6 +58,8 @@ export class GaragePreview {
     this.#shown = { car, team };
     for (const child of [...this.#turntable.children]) {
       this.#turntable.remove(child);
+      // (a Blender model's geometry and materials are shared with the cars in play: left)
+      if (carModelParts(child)) continue;
       child.traverse((o) => {
         if (!(o instanceof Mesh)) return;
         (o.geometry as BufferGeometry).dispose();

@@ -258,11 +258,12 @@ export class TrainingRun {
     this.#startCountdown();
   }
 
-  /** The pack from its first shot, its progress kept (Restart Training) or cleared (Reset Progress) */
+  /** The pack from its first shot, its progress kept (Restart Training) or cleared (Reset Progress); Test Shot's the same
+   *  shot again (RestartPlayTest: only Test Sequence starts over at shot 1) */
   restart(clearProgress = false): void {
     if (clearProgress) this.status.fill(ShotStatus.NotAttempted);
     this.#endPending = false;
-    this.#position = 0;
+    if (this.test !== "shot") this.#position = 0;
     this.#mirror = false;
     this.#variance = null;
     this.#startCountdown();

@@ -169,6 +169,13 @@ describe("the editor's tests (notes/training-editor.md §1.2, §1.4, TE-2)", () 
     }
     expect(run.status).toEqual([0, 0, 0]);
     expect(run.completion).toBe(0);
+    // (Restart Training: Test Shot's the same shot again, Test Sequence's from shot 1: RestartPlayTest)
+    run.restart();
+    expect([run.state, run.shotIndex]).toEqual(["countdown", 1]);
+    const sequence = new TrainingRun(pack(3), [], "sequence");
+    sequence.select(2);
+    sequence.restart();
+    expect(sequence.shotIndex).toBe(0);
   });
 
   it("Test Sequence: the pack from its first shot, looping forever, every shot a success or not", () => {

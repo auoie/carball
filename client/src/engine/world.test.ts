@@ -417,3 +417,32 @@ describe("custom training's engine calls (sibling, setGoalScoring, hideBall)", (
     world.dispose();
   });
 });
+
+describe("a car's wheels as its vehicle has them (carWheels: the drawn wheels)", () => {
+  it("at rest on the floor each suspension a little shorter than its rest length; the front wheels steer with the input, the back ones never", () => {
+    const world = World.create(engine);
+    const car = world.addCar(0, CarBody.Standard);
+    world.setCar(car, { ...world.car(car), pos: vec3(0, 0, 17), vel: vec3(0, 0, 0), angVel: vec3(0, 0, 0) });
+    world.step(120);
+    const config = world.carConfig(car);
+    const rest = world.carWheels(car);
+    rest.suspension.forEach((s, i) => {
+      const wheel = i < 2 ? config.frontWheel : config.backWheel;
+      expect(s, `wheel ${String(i)}`).toBeLessThan(wheel.suspensionRest);
+      expect(s, `wheel ${String(i)}`).toBeGreaterThan(wheel.suspensionRest - 20);
+      // (its centre one radius above the floor, the floor 17 under the car's origin, near enough)
+      expect(world.car(car).pos.z + wheel.offset.z - s - wheel.radius).toBeCloseTo(0, -1);
+    });
+    expect(rest.steer).toEqual([0, 0, 0, 0]);
+    world.setControls(car, { ...NO_CONTROLS, steer: 1 });
+    world.step(30);
+    const steered = world.carWheels(car).steer;
+    expect(steered[0]).not.toBe(0);
+    expect(steered[1]).toBe(steered[0]);
+    expect([steered[2], steered[3]]).toEqual([0, 0]);
+    // (steering right, from rest: well under half a turn either way; its sign the engine's, the drawn wheels turn by it)
+    expect(Math.abs(steered[0])).toBeGreaterThan(0.3);
+    expect(Math.abs(steered[0])).toBeLessThan(0.7);
+    world.dispose();
+  });
+});

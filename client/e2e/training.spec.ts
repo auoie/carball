@@ -3,7 +3,7 @@
 // completion; next, previous, mirror and shuffle; a striker's goal after a touch completing the shot; Carball's starter
 // packs offered in a build. Nothing of the 3D drawn (`?render=off`).
 import type { Page } from "@playwright/test";
-import { expect, test } from "./fixtures";
+import { expect, fakeGamepad, test } from "./fixtures";
 
 interface TrainingState {
   readonly state: string;
@@ -36,7 +36,7 @@ async function start(page: Page): Promise<void> {
   await page.goto("/?render=off");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
   await page.evaluate((pack) => {
-    localStorage.removeItem("carball.training.e2e-pack");
+    localStorage.removeItem("carball.training.progress.e2e-pack");
     (window as unknown as { carballFreeplay: { startTraining: (p: unknown) => void } }).carballFreeplay.startTraining(pack);
   }, PACK);
   await page.locator("#game").click({ position: { x: 640, y: 360 }, button: "right" }); // (focus; right: powerslide)
@@ -142,4 +142,44 @@ test("a build offers Carball's starter packs: Custom Training lists them, one st
   await expect(page.locator(".training-shot")).toHaveText(/^shot 1 \/ 8$/i);
   // (no timer on the goalie's HUD: §6)
   await expect(page.locator(".training-timer")).toBeHidden();
+});
+
+/** The pad held for one of the page's frames, then let go for two (as e2e/padmenus.spec.ts's tap: never a fixed time) */
+async function padTap(page: Page, buttons: number[]): Promise<void> {
+  await page.evaluate(async (b) => {
+    const w = window as unknown as { carballSetPad: (down: number[]) => void };
+    const frames = (n: number): Promise<void> =>
+      new Promise((resolve) => {
+        const step = (k: number): void => {
+          if (k === 0) resolve();
+          else requestAnimationFrame(() => { step(k - 1); });
+        };
+        step(n);
+      });
+    w.carballSetPad(b);
+    await frames(1);
+    w.carballSetPad([]);
+    await frames(2);
+  }, buttons);
+}
+
+test("Select Shot with a pad: View opens it on the current shot, the D-pad moves, A picks one, B closes it (RV-564)", async ({ page, context }) => {
+  const [A, B, VIEW, RIGHT] = [0, 1, 8, 15];
+  await fakeGamepad(context);
+  await start(page);
+  const select = page.locator("#shot-select");
+  const focused = select.locator(".shot-select-shot:focus");
+  await padTap(page, [VIEW]);
+  await expect(select).toBeVisible();
+  await expect(focused).toHaveText("1");
+  await padTap(page, [RIGHT]);
+  await expect(focused).toHaveText("2");
+  await padTap(page, [A]);
+  await expect(select).toBeHidden();
+  await expect.poll(async () => (await state(page))?.shot).toBe(1);
+  await padTap(page, [VIEW]);
+  await expect(select).toBeVisible();
+  await padTap(page, [B]);
+  await expect(select).toBeHidden();
+  expect((await state(page))?.shot).toBe(1);
 });

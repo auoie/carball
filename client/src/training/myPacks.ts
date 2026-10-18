@@ -17,10 +17,14 @@ export function defaultShot(type: TrainingType): Shot {
 
 /** A new pack of one default shot, its id ours (mine-…) */
 export function newPack(random: () => number = Math.random): TrainingPack {
-  const id = `mine-${Math.floor(random() * 36 ** 8)
+  return { id: newPackId(random), name: "My Training", type: "striker", difficulty: "easy", tags: [], description: "", creator: "", shots: [defaultShot("striker")] };
+}
+
+/** A new pack id of the player's own (mine-…: an imported pack takes one, so it never replaces a pack kept: RX25) */
+export function newPackId(random: () => number = Math.random): string {
+  return `mine-${Math.floor(random() * 36 ** 8)
     .toString(36)
     .padStart(8, "0")}`;
-  return { id, name: "My Training", type: "striker", difficulty: "easy", tags: [], description: "", creator: "", shots: [defaultShot("striker")] };
 }
 
 const xyz = (v: Vec3): [number, number, number] => [v.x, v.y, v.z];
@@ -64,21 +68,24 @@ export function storedPacks(storage: Store | null = local()): TrainingPack[] {
   }
 }
 
-export function storePacks(packs: readonly TrainingPack[], storage: Store | null = local()): void {
+/** The player's packs kept; whether they were (not: the browser's storage full or blocked) */
+export function storePacks(packs: readonly TrainingPack[], storage: Store | null = local()): boolean {
   try {
-    storage?.setItem(KEY, JSON.stringify(packs.map(packFile)));
+    if (!storage) return false;
+    storage.setItem(KEY, JSON.stringify(packs.map(packFile)));
+    return true;
   } catch {
-    // (not kept: the browser's storage full or blocked)
+    return false;
   }
 }
 
-/** One pack kept (replacing the one with its id, else added) */
-export function storePack(pack: TrainingPack, storage: Store | null = local()): void {
+/** One pack kept (replacing the one with its id, else added); whether it was */
+export function storePack(pack: TrainingPack, storage: Store | null = local()): boolean {
   const packs = storedPacks(storage);
   const at = packs.findIndex((p) => p.id === pack.id);
   if (at >= 0) packs[at] = pack;
   else packs.push(pack);
-  storePacks(packs, storage);
+  return storePacks(packs, storage);
 }
 
 export function deletePack(id: string, storage: Store | null = local()): void {

@@ -18,6 +18,8 @@ const REFERENCE = join(ROOT, "out/arena_local/reference");
 /** The surroundings' per-azimuth statistics and crowd tiers (local: the static session's SUR-1 exports) */
 const SUR1 = join(ROOT, "out/bsim/agents/SUR1");
 const DIST = join(SRC, "../dist");
+/** The cars' Blender models (src/render/carGlb.ts: client/cars/*.glb, bundled where they are) */
+const CARS = join(SRC, "../cars");
 /** The bot packages, tracked (vite.config.ts copies their runtime files into a build with bots) */
 const BOTS = join(SRC, "../bots");
 /** The build's output files and the modules in each (vite.config.ts's chunkModules) */
@@ -132,9 +134,10 @@ function shippedImports(): string[] {
 }
 /** What ships as text (scanned as the modules are), and what as binary (each kind pinned or allowed by name) */
 const TEXT = /\.(json|css|js|mjs|html|txt|markdown|glsl|svg|csv|map|webmanifest)$/;
-type Kind = "text" | "cmf" | "wasm" | "font" | "onnx" | "unknown";
+type Kind = "text" | "cmf" | "wasm" | "font" | "onnx" | "glb" | "unknown";
 /** cmf: the arena's collision meshes (pinned to our generated ones); wasm: the engine, our build (engine/build-wasm);
- *  font: the HUD's bundled fonts (pinned: FONTS) */
+ *  font: the HUD's bundled fonts (pinned: FONTS); glb: the cars' models (client/cars' alone, checked by
+ *  src/render/carGlb.test.ts) */
 const kind = (path: string): Kind =>
   TEXT.test(path)
     ? "text"
@@ -146,7 +149,9 @@ const kind = (path: string): Kind =>
           ? "font"
           : path.endsWith(".onnx")
             ? "onnx"
-            : "unknown";
+            : path.endsWith(".glb")
+              ? "glb"
+              : "unknown";
 /** The fonts that ship (style.css, public/fonts/; the user's pick, 2026-10-14), by their path under public/ and their
  *  content: the files as they were taken, SIL OFL each, its licence beside it (LICENCES). Orbitron's is the font
  *  project's own static Medium as published (github.com/theleagueof/orbitron, 2011-05-25: the user's decision, RV-489),
@@ -233,7 +238,7 @@ function bundleBinaries(): { kind: Kind; base64: string; where: string }[] {
   for (const path of files(DIST, () => true)) {
     const k = kind(path);
     if (k === "cmf" || k === "wasm" || k === "unknown") out.push({ kind: k, base64: readFileSync(path).toString("base64"), where: path.slice(ROOT.length) });
-    else if (k === "onnx") continue; // (the bots' policies: their packages', checked above)
+    else if (k === "onnx" || k === "glb") continue; // (the bots' policies, the cars' models: each checked on its own)
     else {
       for (const m of readFileSync(path, "utf8").matchAll(/data:application\/octet-stream;base64,([A-Za-z0-9+/=]+)/g)) {
         const base64 = m[1] ?? "";
@@ -337,6 +342,13 @@ describe("what ships carries no game data (RV-99)", () => {
     expect(existsSync(join(DIST, "bots"))).toBe(withBots);
     expect(page.split(section).length - 1).toBe(withBots ? 1 : 0);
     expect(existsSync(join(DIST, "THIRD_PARTY_NOTICES-onnxruntime.txt"))).toBe(withBots);
+  });
+
+  it("the cars' models that ship are client/cars' own, byte for byte (never the game's, nor a model converted locally)", () => {
+    const ours = new Set(existsSync(CARS) ? files(CARS, (n) => n.endsWith(".glb")).map((p) => readFileSync(p).toString("base64")) : []);
+    const shipped = existsSync(DIST) ? files(DIST, (n) => n.endsWith(".glb")) : [];
+    for (const path of shipped) expect(ours.has(readFileSync(path).toString("base64")), relative(DIST, path)).toBe(true);
+    for (const p of shippedImports().filter((i) => kind(i) === "glb")) expect(p.startsWith(`${CARS}/`), p).toBe(true);
   });
 
   it("no dev-only local asset ships: the bundle names no /local-assets/ path (the game's models, the user's training packs)", () => {

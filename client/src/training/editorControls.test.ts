@@ -17,6 +17,7 @@ import {
   behind,
   clampTo,
   cycle,
+  editorPack,
   editBall,
   editCar,
   firstCamera,
@@ -133,6 +134,8 @@ describe("the camera behind the selection (TE1 §2.3)", () => {
     expect(car.pos.y).toBeCloseTo(-300, 9);
     expect(car.pos.z).toBe(42);
     expect([car.yaw, car.pitch]).toEqual([Math.PI / 2, 0]);
+    // (a new shot's ball, low and launched at 45°: the camera kept over the floor, not 110 under it: RX25)
+    expect(behind({ ...shot, ball: { ...shot.ball, location: vec3(0, 4120, 100) } }, "ball", -1).pos.z).toBe(CLAMPS.camera.zMin);
   });
 
   it("follows at a share of min(3 dt, 1), the yaw the short way round", () => {
@@ -208,5 +211,30 @@ describe("undo and redo (TE1 §2.6)", () => {
     expect(h.redo(d)).toBeNull();
     h.clear();
     expect(h.undo(d)).toBeNull();
+  });
+});
+
+describe("a goal's inside, and an import's limits (RX25)", () => {
+  it("the ball past a goal line only in its mouth, up to its back; elsewhere at the wall", () => {
+    expect(clampTo("ball", vec3(0, 5600, 300)).y).toBe(5600);
+    expect(clampTo("ball", vec3(0, 9000, 300)).y).toBeCloseTo(6000 - 92.75, 9);
+    expect(clampTo("ball", vec3(0, -9000, 300)).y).toBeCloseTo(-(6000 - 92.75), 9);
+    expect(clampTo("ball", vec3(1500, 5600, 300)).y).toBeCloseTo(5120 - 92.75, 9);
+    expect(clampTo("ball", vec3(0, 5600, 900)).y).toBeCloseTo(5120 - 92.75, 9);
+    expect(clampTo("car", vec3(0, 5600, 17)).y).toBe(CLAMPS.car.y);
+  });
+
+  it("an imported pack: its name 30 characters, 4 tags without repeats, time limits 1-59, ball and car within the clamps", () => {
+    const pack = {
+      id: "p", name: `  ${"x".repeat(40)}  `, type: "striker" as const, difficulty: "easy" as const, description: "", creator: "",
+      tags: ["Aerials", "Aerials", "Shots", "Saves", "Clears", "Bounces"],
+      shots: [{ ...shot, timeLimit: 0, ball: { ...shot.ball, location: vec3(0, 0, 20) }, car: { ...shot.car, location: vec3(5000, 0, 5) } }],
+    };
+    const taken = editorPack(pack);
+    expect(taken.name).toHaveLength(30);
+    expect(taken.tags).toEqual(["Aerials", "Shots", "Saves", "Clears"]);
+    expect(taken.shots[0]?.timeLimit).toBe(1);
+    expect(taken.shots[0]?.ball.location.z).toBe(100);
+    expect(taken.shots[0]?.car.location).toEqual(vec3(CLAMPS.car.x, 0, 17));
   });
 });

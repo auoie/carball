@@ -321,6 +321,11 @@ export class FlyEditor {
     return this.#view === "list" || this.#view === "edit";
   }
 
+  /** SEQUENCE SETTINGS while it's open (the pad's menu then: src/ui/padNav.ts), else null */
+  get dialog(): HTMLElement | null {
+    return this.#dialog.hidden ? null : this.#dialog;
+  }
+
   /** The editor's test playing (the editor hidden meanwhile) */
   get testing(): boolean {
     return this.#view === "test";
@@ -863,8 +868,11 @@ export class FlyEditor {
     const editable = (t: EventTarget | null): boolean => t instanceof HTMLInputElement || t instanceof HTMLSelectElement || t instanceof HTMLTextAreaElement;
     window.addEventListener("keydown", (e) => {
       if (this.#view === "closed" || editable(e.target) || !this.#dialog.hidden || this.#host.blocked()) return;
-      // (Tab the editor's Test Shot, not the focus's; Space and the arrows its, not a button's or the page's)
-      if (e.code === "Tab" || (this.#view === "edit" && ["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.code))) e.preventDefault();
+      // (on the list, Tab moves the focus while one of its buttons has it: the keyboard's way through them, RX25)
+      if (this.#view === "list" && e.code === "Tab" && e.target instanceof HTMLElement && this.#root.contains(e.target)) return;
+      // (Tab the editor's Test Shot, not the focus's; Space and the arrows its, not a button's or the page's; with Ctrl down
+      // (Move Down) no browser shortcut but those a page can't stop (Ctrl+W): Ctrl+R's reload among them, RX25)
+      if (e.code === "Tab" || (this.#view === "edit" && (e.ctrlKey || ["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.code)))) e.preventDefault();
       this.#usingPad = false;
       this.#keys.add(e.code);
       if (!e.repeat) this.#pressed.add(e.code);

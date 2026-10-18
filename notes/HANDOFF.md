@@ -283,7 +283,31 @@ camera toggle (kept in `carball.training.editorMode`); `ui/flyEditor.ts` (shot l
 HUD and strength meter, keys and pad per TE1 §2.1) over `training/editorControls.ts` (flight, clamps, look, steps, the
 bumpers' repeat, tap/hold, undo); Test Shot / Test Sequence are `TrainingRun` tests (`test`: no variance, no grounding,
 nothing kept, the HUD's Edit Shot), free play holding the edited car where placed and predicting its path at most every
-0.1 s while it moves. Ctrl (Move Down) with W can close the browser tab: the game's binding kept, a browser limit.
+0.1 s while it moves. Ctrl (Move Down) with W can close the browser tab: the game's binding kept, a browser limit. **Car models, 2026-10-18** (the user's: Blender cars as the main look; client/cars/README.md): `render/carGlb.ts`
+loads `client/cars/<type>.glb` (bundled by an import.meta.glob where present), the generated car the fallback; Paint
+recoloured with the generated cars' Glossy finish; wheels keep the model's x/y, their height (connection point less the
+suspension) and steer angle from the WASM binding `carWheels` (bindings-only engine change), spin from the travel;
+exhausts at every Exhaust… empty (each along its own −X: the Sport's and Flat's _L/_R pairs, the Tall's
+_Top/_Bottom), else the body raycast; the garage shows it; guards: carGlb.test.ts (15k triangles,
+parts, no maker/model/game names) and shippedData (only client/cars' files ship). Checked on the user's demo sport.glb in
+a scratch mirror; then CB1's sport.glb and flat.glb (approved 2026-10-18) went into client/cars, Tall still generated. **RX25 (437863a, RV-561..579) fixed in the tree:**
+- RV-561: the pack test's fixture was a user-pack shot; now synthetic numbers, plus a local guard
+  (training/localPacks.test.ts). History kept, the user's call.
+- RV-562: progress is now under carball.training.progress.<id>; imports take a fresh id.
+- RV-563: a beforeunload prompt and Ctrl shortcuts blocked in the fly view; Move Down stays on Left Ctrl, the user's call.
+- RV-564: Select Shot, SEQUENCE SETTINGS and the panel editor are pad menus.
+- RV-565: the follow camera is clamped (z ≥ 15).
+- LOWs:
+  - 566: keys held from a menu are no press.
+  - 567: a refused save says so.
+  - 568: Test Shot's restart keeps the shot, behind the RESTART TRAINING question.
+  - 569/570: the training HUD is centred and its controls hidden under menus.
+  - 571: slider focus is kept; Tab reaches the fly list's buttons.
+  - 572: imports are brought within TE1's limits; the ball is allowed inside a goal.
+  - 573: the predictor's events are drained.
+  - 574: imports are capped at 1 MB.
+- Left as notes: the modal's focus trap, the car box against the rounded corners, variance by the box, the training
+  test survivors (575), and the fidelity INFO items (578).
 **Custom maps** (Phase 1 and four map modes, built after be5653a on 2026-10-17) were removed before any commit, on the
 user's scope cut that night ("just custom training packs for now"): the engine is be5653a's again but for custom
 training's three WASM bindings (`setGoalScoring`, `hideBall`, `sibling`). notes/workshop-maps.md stays as research.

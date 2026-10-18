@@ -38,6 +38,11 @@ choice, kept), is the game's (`src/ui/flyEditor.ts`, rules in `src/training/edit
 the shot list, a fly camera, the ball and car selected in turn and moved and aimed with the movement keys and the look,
 the speeds on the wheel or the bumpers, the strength meter, Test Shot and Test Sequence on Tab or the pad's View.
 
+Car models (`cars/README.md`): a garage car wears `cars/<type>.glb` (sport, flat, tall) where it's there, made in
+Blender to that folder's contract, else its generated model; its paint the team's, its wheels where the model has them
+along and across the car, their height and steering the physics' (`World.carWheels`), turning as it moves
+(`src/render/carGlb.ts`). Sport and Flat wear theirs (approved 2026-10-18); Tall keeps its generated model for now.
+
 The game's Fennec (testing only): with the static session's local export in `out/bsim/assets_local/fennec/`
 (Psyonix assets: git-ignored, never copied into client/, never shipped), `npm run dev` serves it at `/local-assets/`
 and cars of the Octane hitbox wear it, painted in the team's colour (`src/render/fennec.ts`). Builds, `vite preview`

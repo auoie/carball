@@ -50,7 +50,7 @@ export const DOMINUS = { // hitbox Flat
 export const MERC = { // hitbox Tall
   front: 72.7, rear: -63.0, ground: -22.4, halfWidth: 34.5, halfWidthBelt: 29.3, halfWidthRoof: 25.0, halfWidthNose: 29.9,
   halfWidthTail: 32.5, clearance: 15.1, noseTop: 30.7, hood: 49.4, belt: 47.9, roof: 67.8, windscreenBase: 48.0,
-  windscreenDeg: 46.9, roofFront: 37.9, roofBack: -57.8, rearWindowBase: [-57.8, 60.0] as const, bumperTop: 43.2,
+  windscreenDeg: 46.9, roofFront: 37.9, roofBack: -57.8, rearWindowBase: [-57.8, 60.0] as const, bumperTop: 32.1,
   frontWheel: { x: 38.2, h: 14.8, z: 31.7, radius: 15.3, width: 14.0 },
   backWheel: { x: -39.8, h: 16.8, z: 31.7, radius: 16.3, width: 14.5 },
 } as const;
@@ -70,7 +70,9 @@ non-side glass behind the side glass; bumperTop = the shell's max h below the be
 - rearWindowBase on cars with no rear glass (Octane, Merc) is the foot of the cabin's back: Octane (−2.2, 38.5), the
   upright cabin back meeting the engine deck; Merc (−57.8, 60.0), the back panel's top under the roof lip.
 - bumperTop: Octane 20.1 is the diffuser between open rear fenders (silhouette tail top 43.2); Dominus 22.0 is the valance
-  (ducktail lip 38.6, trunk lid 35.3: use 38.6); Merc 43.2 is on the upright back panel. carModel's `hatchAtBelt` divides by
+  (ducktail lip 38.6, trunk lid 35.3: use 38.6); Merc 32.1 (z 9.8 in the car's frame, each rounded to 0.1, measured off-centre
+  at |y| 15.4, ending at x −63.0: CB1's measures.json, 2026-10-18; the 43.2 first given was the centreline at x −60.5, the
+  joint between its stacked twin exhaust pipes, z 20.8). carModel's `hatchAtBelt` divides by
   (rearWindowBase.h − bumperTop): with the Octane's tail top (43.2 > 38.5) that formula breaks, so the Octane's rear needs
   its own handling.
 - noseTop: Merc 30.7 is the bumper/grille top (x 72.2); the bonnet's front edge is at x ≈ 66.7, h 42.2 (a stepped nose).
@@ -86,7 +88,7 @@ non-side glass behind the side glass; bumperTop = the shell's max h below the be
 |---|---|---|---|---|
 | length = front − rear | 140.4 | 129.7 | 150.8 | 135.7 |
 | lengthOverall (add-ons, wing) | 140.4 | 140.0 | 151.3 | 145.9 |
-| frontOverall / rearOverall | 78.0 / −62.4 | 79.6 tow hook / −60.4 wing | 89.7 / −61.6 | 77.5 light bar / −68.4 spare wheel |
+| frontOverall / rearOverall | 78.0 / −62.4 | 79.6 tow hook / −60.4 wing | 89.7 / −61.6 | 77.5 light bar / −68.4 twin exhaust pipes |
 | width | 71.4 | 72.6 | 72.5 | 69.1 |
 | top: max h (at x) | 52.3 lip (−52.3) | 62.7 wing (−59.8) | 42.8 (−4.1) | 72.0 lip (−57.6) |
 | shellFront / shellRear (below belt) | 78.0 / −62.4 | 74.5 / −27.6 | 89.7 / −58.6 | 72.7 / −58.7 |
@@ -126,7 +128,7 @@ Tall (123.2202, 79.2103, 44.1591) / (11.37566, 0, 21.504988) (= engine CarConfig
 clearance under the hitbox bottom / ground under the hitbox bottom, the last being what fennecFrame's y mapping needs):
 Fennec 3.9 / 16.0 / 7.64 / 4.77 under / 4.06 under / 10.9 / 17.70; Octane 3.92 (tow hook 5.49) / 5.28 (wing 13.98) / 7.07 / 7.25
 under / 3.46 over / 10.77 / 20.57; Dominus 15.47 / 4.88 (5.39 overall) / 6.63 / 9.21 under / 9.21 under / 14.87 / 18.24; Merc
-−0.33 (light bar 4.49) / 12.76 (spare wheel 18.18) / 5.07 / 1.84 over / 6.03 over / 6.65 / 21.78.
+−0.33 (light bar 4.49) / 12.76 (twin exhaust pipes 18.18) / 5.07 / 1.84 over / 6.03 over / 6.65 / 21.78.
 
 **Spawn** (notes only): Z = 36.00 + Tz: Fennec 38.61, Octane 36.02, Dominus 36.01, Merc 35.05 (= engine SPAWN_Z for the last
 three); no X offsets. By the user's decision (2026-10-16) the garage's Sport car (Fennec-like) spawns at the Octane's 36.02.

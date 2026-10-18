@@ -1,8 +1,10 @@
 // The player's own packs (src/training/myPacks.ts): a new pack's default shot (CTR-3), the pack file read back as written,
 // kept, replaced and deleted in the browser's storage
 import { describe, expect, it } from "vitest";
-import { defaultShot, deletePack, newPack, packFile, storePack, storedPacks } from "./myPacks";
+import { defaultShot, deletePack, newPack, packFile, storePack, storePacks, storedPacks } from "./myPacks";
 import { parsePack } from "./pack";
+import { ShotStatus } from "./run";
+import { storeProgress, storedProgress } from "./settings";
 
 const memory = (): Pick<Storage, "getItem" | "setItem"> => {
   const map = new Map<string, string>();
@@ -38,5 +40,23 @@ describe("the player's packs", () => {
     ]);
     deletePack(a.id, store);
     expect(storedPacks(store).map((p) => p.id)).toEqual([b.id]);
+  });
+
+  it("a pack's progress under its own prefix: a pack with the id \"mine\" can't overwrite the player's packs (RX25); 437863a's key still read", () => {
+    const store = memory();
+    for (let i = 0; i < 3; i++) storePack(newPack(() => i / 10), store);
+    storeProgress("mine", [ShotStatus.Completed], store);
+    expect(storedPacks(store)).toHaveLength(3);
+    expect(storedProgress("mine", store)).toEqual([ShotStatus.Completed]);
+    store.setItem("carball.training.starter-a", "[2,1]");
+    expect(storedProgress("starter-a", store)).toEqual([ShotStatus.Completed, ShotStatus.Attempted]);
+    storeProgress("starter-a", [ShotStatus.Attempted], store);
+    expect(storedProgress("starter-a", store)).toEqual([ShotStatus.Attempted]);
+  });
+
+  it("a save the browser refuses (its storage full) says so", () => {
+    const full = { getItem: () => null, setItem: () => { throw new Error("quota"); } };
+    expect(storePack(newPack(), full)).toBe(false);
+    expect(storePacks([], memory())).toBe(true);
   });
 });

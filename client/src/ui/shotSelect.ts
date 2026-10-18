@@ -42,6 +42,8 @@ export class ShotSelect {
         b.textContent = String(i + 1);
         b.classList.toggle("done", status === ShotStatus.Completed);
         b.setAttribute("aria-current", String(i === run.shotIndex));
+        // (a pad's focus starts on the current shot: src/ui/padNav.ts)
+        if (i === run.shotIndex) b.dataset["padDefault"] = "";
         b.addEventListener("click", () => {
           this.close();
           this.#onSelect(i);

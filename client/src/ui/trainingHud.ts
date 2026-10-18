@@ -83,9 +83,11 @@ export class TrainingHud {
   }
 
   /** The run's state now (null: not training), the keys' glyphs; `modifiers`: the settings vary the shots (the reset
-   *  then randomizes in the countdown: Training.RandomizeShotInstructions) */
-  update(run: TrainingRun | null, keys: TrainingKeys, modifiers = false): void {
+   *  then randomizes in the countdown: Training.RandomizeShotInstructions); `menuUp`: a menu over the game (the controls
+   *  panel hidden under it, not across its buttons: RX25) */
+  update(run: TrainingRun | null, keys: TrainingKeys, modifiers = false, menuUp = false): void {
     this.root.hidden = run === null;
+    this.#controls.hidden = menuUp;
     if (!run) return;
     const time = run.timeLeft;
     const goalie = run.pack.type === "goalie";

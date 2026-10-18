@@ -1,12 +1,13 @@
 // Visuals built from the physics shapes: the car is a body around its hitbox (src/render/carModel.ts), the ball is
 // its collision sphere. Real models come later (roadmap §10).
-import { AdditiveBlending, BackSide, BufferAttribute, type BufferGeometry, Color, FrontSide, Group, IcosahedronGeometry, LinearSRGBColorSpace, type Material, Mesh, MeshStandardMaterial, type Object3D, PlaneGeometry, type Quaternion, ShaderMaterial, type Side, SphereGeometry, Vector3 } from "three";
-import type { CarConfig, Team } from "../engine/world";
+import { AdditiveBlending, BackSide, BufferAttribute, type BufferGeometry, Color, FrontSide, Group, IcosahedronGeometry, LinearSRGBColorSpace, type Material, Mesh, MeshStandardMaterial, type Object3D, PlaneGeometry, Quaternion, ShaderMaterial, type Side, SphereGeometry, Vector3 } from "three";
+import type { CarConfig, CarWheels, Team } from "../engine/world";
 import { RETICLE, RETICLE_GLSL_FN } from "./ballShadow";
 import { BallTrail, SIDE_TRAIL, type TrailPoints } from "./ballTrail";
 import { drawnAt, sceneDetail } from "./detail";
 import { TEAM_PRIMARY_LINEAR, fullBright } from "./teamColors";
 import { buildCarModel, carExhausts } from "./carModel";
+import { type CarModelParts, carModelParts, wheelPose, wheelSpin } from "./carGlb";
 import { Trail, trailingRearWheels } from "./supersonic";
 import { BOOST_TRAIL, IDLE_EXHAUST } from "./effects";
 import { Emitter, type Particles } from "./particles";
@@ -62,21 +63,38 @@ export class CarView {
   readonly #trailFrom: readonly [Vector3, Vector3];
 
   readonly #point = new Vector3();
-  /** Each exhaust's boost trail and idle exhaust (with a scene's particles) */
-  readonly #exhausts: readonly { readonly at: Vector3; readonly trail: Emitter; readonly idle: Emitter }[];
+  /** Each exhaust's boost trail and idle exhaust (with a scene's particles), its turn from the car's (a Blender model's
+   *  empties; null: straight back) */
+  readonly #exhausts: readonly { readonly at: Vector3; readonly turn: Quaternion | null; readonly trail: Emitter; readonly idle: Emitter }[];
+  readonly #turned = new Quaternion();
   readonly #axis = new Vector3();
   #wasDemoed = false;
+  /** A Blender model's parts (src/render/carGlb.ts: its wheels posed each frame), and the car's physics; null: a
+   *  generated car, its wheels fixed */
+  readonly #parts: CarModelParts | null;
+  readonly #config: CarConfig;
+  /** The physics' wheels for this frame (their suspension and steering: a Blender model's wheels follow them); null: as
+   *  the model has them */
+  wheels: CarWheels | null = null;
+  /** Each wheel's turn so far (rad), and where the car was last frame (its travel turns them) */
+  readonly #spins = [0, 0, 0, 0];
+  readonly #last = new Vector3();
+  readonly #forward = new Vector3();
+  #placed = false;
 
   /** `particles`: the scene's, for the boost trail and the idle exhaust (none: no particles); `car`: the garage's car
    *  (its look: src/game/cars.ts), painted in `team`'s colour */
   constructor(config: CarConfig, team: Team, particles: Particles | null = null, car = 0) {
     const model = buildCarModel(config, TEAM_CAR_COLORS[team], team, car);
     this.#model = model;
-    // (the game's sockets on its Fennec, where it's loaded; our bodies' at their backs, found before it's posed: RV-470)
-    const exhausts = model.userData["gameMesh"] === true ? EXHAUSTS : carExhausts(model, config, car);
+    this.#config = config;
+    this.#parts = carModelParts(model);
+    // (the game's sockets on its Fennec, where it's loaded; a Blender model's own where it has them; else our bodies' at
+    // their backs, found before it's posed: RV-470)
+    const exhausts = model.userData["gameMesh"] === true ? EXHAUSTS.map((at) => ({ at, turn: null })) : (this.#parts?.exhausts ?? carExhausts(model, config, car).map((at) => ({ at, turn: null })));
     this.#body.add(model);
     this.#exhausts = particles
-      ? exhausts.map((at) => ({ at, trail: new Emitter(particles, BOOST_TRAIL), idle: new Emitter(particles, IDLE_EXHAUST) }))
+      ? exhausts.map(({ at, turn }) => ({ at, turn, trail: new Emitter(particles, BOOST_TRAIL), idle: new Emitter(particles, IDLE_EXHAUST) }))
       : [];
     this.root.add(this.#body, ...this.#trails.map((t) => t.mesh));
     // The rear tyres' contact points at rest (car frame: the bottom of each, as the model draws them)
@@ -84,6 +102,11 @@ export class CarView {
     const height = back.offset.z - (back.suspensionRest - WHEEL_TRAVEL) - back.radius;
     const side = config.hitboxSize.y / 2 - 8;
     this.#trailFrom = [new Vector3(back.offset.x, height, -side), new Vector3(back.offset.x, height, side)];
+  }
+
+  /** Whether its wheels follow the physics' (a Blender model's: `wheels` wanted each frame) */
+  get posesWheels(): boolean {
+    return this.#parts !== null;
   }
 
   /** Puts `object` on the car, in its frame (x forward, y up, z right): it moves and turns with it (once) */
@@ -105,16 +128,20 @@ export class CarView {
   ): void {
     this.#body.position.copy(position);
     this.#body.quaternion.copy(rotation);
+    if (this.#parts) this.#poseWheels(this.#parts, position, rotation);
     // The boost trail while boosting, the idle exhaust while throttling and not boosting (Drive_PS), from each exhaust
     if (this.#exhausts.length > 0) {
-      const axis = (x: number, y: number, z: number): Vec3 => {
-        const a = this.#axis.set(x, y, z).applyQuaternion(rotation);
+      const axis = (x: number, y: number, z: number, turn: Quaternion): Vec3 => {
+        const a = this.#axis.set(x, y, z).applyQuaternion(turn);
         return vec3(a.x, a.z, a.y);
       };
-      const frame = { forward: axis(1, 0, 0), right: axis(0, 0, 1), up: axis(0, 1, 0) };
+      const frameOf = (turn: Quaternion): { forward: Vec3; right: Vec3; up: Vec3 } => ({ forward: axis(1, 0, 0, turn), right: axis(0, 0, 1, turn), up: axis(0, 1, 0, turn) });
+      const frame = frameOf(rotation);
       // (demolished: its trail and exhaust gone at once, StopAllEffects + KillParticlesForced: RV-52f)
       const killed = demoed && !this.#wasDemoed;
-      for (const { at, trail, idle } of this.#exhausts) {
+      for (const { at, turn, trail, idle } of this.#exhausts) {
+        // (a turned empty's own frame: it blows along its -X)
+        const own = turn ? frameOf(this.#turned.copy(rotation).multiply(turn)) : frame;
         if (killed) {
           trail.kill();
           idle.kill();
@@ -122,9 +149,9 @@ export class CarView {
         const p = this.#point.copy(at).applyQuaternion(rotation).add(position);
         const game = vec3(p.x, p.z, p.y);
         trail.active = boosting && !demoed;
-        trail.update(seconds, game, frame);
+        trail.update(seconds, game, own);
         idle.active = throttling && !boosting && !demoed;
-        idle.update(seconds, game, frame);
+        idle.update(seconds, game, own);
       }
     }
     this.#wasDemoed = demoed;
@@ -136,6 +163,23 @@ export class CarView {
       const from = this.#trailFrom[i];
       const active = trailing[i] ?? false;
       if (from) trail.update(this.#point.copy(from).applyQuaternion(rotation).add(position), active, seconds);
+    });
+  }
+
+  /** A Blender model's wheels this frame: their height and steering the physics', turned by the car's travel along itself
+   *  since the last frame (none for a jump of 400 uu or more: a respawn, a reset) */
+  #poseWheels(parts: CarModelParts, position: Vector3, rotation: Quaternion): void {
+    const forward = this.#forward.set(1, 0, 0).applyQuaternion(rotation);
+    const moved = this.#placed ? this.#last.sub(position).negate().dot(forward) : 0;
+    this.#last.copy(position);
+    this.#placed = true;
+    const travelled = Math.abs(moved) < 400 ? moved : 0;
+    parts.wheels.forEach((wheel, i) => {
+      const spin = ((this.#spins[i] ?? 0) + wheelSpin(travelled, wheel.radius)) % (2 * Math.PI);
+      this.#spins[i] = spin;
+      const pose = wheelPose(wheel.rest, wheel.turn, i, this.#config, this.wheels, spin);
+      wheel.node.position.copy(pose.position);
+      wheel.node.quaternion.copy(pose.quaternion);
     });
   }
 
@@ -152,8 +196,8 @@ export class CarView {
       const material = o.material as Material | Material[];
       for (const m of Array.isArray(material) ? material : [material]) m.dispose();
     };
-    // (the loaded game mesh's geometry and paint are shared by every car showing it: left)
-    if (this.#model.userData["gameMesh"] !== true) this.#model.traverse(free);
+    // (the loaded game mesh's geometry and paint are shared by every car showing it, a Blender model's too: left)
+    if (this.#model.userData["gameMesh"] !== true && !this.#parts) this.#model.traverse(free);
     for (const t of this.#trails) free(t.mesh);
   }
 
@@ -291,7 +335,7 @@ export class BallView {
     } else this.#goalLine.planeN.value.set(0, 0, 0);
   }
 
-  /** A new ball (a kickoff, a goal's reset, a replay's, a map's feed): solid at once (the game's 1 s fade-in, VT-30,
+  /** A new ball (a kickoff, a goal's reset, a replay's, a training shot's): solid at once (the game's 1 s fade-in, VT-30,
    *  removed by the user, 2026-10-17); its FX actor's pieces come again, its trails begun again */
   spawn(): void {
     this.#opacity = 1;

@@ -18,6 +18,7 @@ import { InputDevices, readGamepad } from "./input/devices";
 import { ArenaView } from "./render/arena";
 import { loadDemolitionHusks } from "./render/demolition";
 import { loadFennec } from "./render/fennec";
+import { loadCarModels } from "./render/carGlb";
 import { TEAM_CAR_COLORS } from "./render/entities";
 import { MAP_NAMES, type ThemeName, createTheme, themeOfMap } from "./render/themes";
 import { CARS, carChoice, storedCar, storedTeam } from "./game/cars";
@@ -125,7 +126,8 @@ async function main(): Promise<void> {
   loading.step("arena");
   initEngine(engine, arenaMeshes);
   // (the game's Fennec and demolition husks, where the dev server has them: src/render/fennec.ts, src/render/demolition.ts)
-  await Promise.all([loadFennec(), loadDemolitionHusks()]);
+  // (and the cars' Blender models, where client/cars has them: src/render/carGlb.ts)
+  await Promise.all([loadFennec(), loadDemolitionHusks(), loadCarModels()]);
   const world = World.create(engine);
 
   // Warm up: the first ticks after loading are slow while the browser compiles the module
@@ -316,6 +318,9 @@ async function main(): Promise<void> {
   let editorEscape = (): boolean => false;
   // (Select Shot open: Escape closes it)
   let shotSelectEscape = (): boolean => false;
+  // (the training editor's menu while it's shown (its panel, SEQUENCE SETTINGS): the pad's, B backing out of it; set once
+  // the editor's made)
+  let editorPadMenu = (): HTMLElement | null => null;
   // (the online match menu's question, answered NO by B or Escape: set once that menu's made)
   let dismissMatchQuestion = (): boolean => false;
   // Escape: the modal's OK; back out of the settings or the main menu's page; a pause menu's question answered NO
@@ -357,7 +362,9 @@ async function main(): Promise<void> {
           ? visibleMenu("#main-menu")
           : pause.isOpen
             ? visibleMenu("#pause-menu")
-            : document.querySelector("#end-screen .end-buttons button") && visibleMenu("#end-screen .end-menu"),
+            : shotSelectOpen()
+              ? visibleMenu("#shot-select")
+              : (editorPadMenu() ?? (document.querySelector("#end-screen .end-buttons button") && visibleMenu("#end-screen .end-menu"))),
     // (B backs out of an open menu, a level at a time: never opens the pause menu; at the main menu's top, nothing)
     back: () => {
       if (modal.isOpen) modal.close();
@@ -366,7 +373,9 @@ async function main(): Promise<void> {
       else if (pause.isOpen) {
         // (a question up answered NO, the menu kept: RV-478)
         if (!pause.dismissQuestion() && !dismissMatchQuestion()) pause.close();
-      } else return false;
+      }
+      // (under them, Select Shot and the training editor's menus: B closes or leaves them as Escape does, RX25)
+      else if (!shotSelectEscape() && !(editorPadMenu() !== null && editorEscape())) return false;
       return true;
     },
     // (Start toggles the pause menu only, closing the settings over it with it: it never backs out of a page; on the main
@@ -521,6 +530,7 @@ async function main(): Promise<void> {
       editor.escape();
       return true;
     };
+    editorPadMenu = () => editor?.padMenu ?? null;
     mainMenu = new MainMenu(document.body, {
       garage: (choice) => {
         freeplay.setCar(choice);
@@ -669,7 +679,9 @@ async function main(): Promise<void> {
         ...(run?.test
           ? [
               // (the free-camera mode's test: the game's Restart Training, our Back to Editor as its key)
-              button(TRAINING_PAUSE_TEXT.restart, () => { freeplay.restartTraining(false); }),
+              button(TRAINING_PAUSE_TEXT.restart, () => {
+                modal.ask(TRAINING_PAUSE_TEXT.restartTitle, TRAINING_PAUSE_TEXT.restartBody, () => { freeplay.restartTraining(false); });
+              }),
               button(TRAINING_PAUSE_TEXT.backToEditor, () => { editor?.endTest(); }),
             ]
           : run
@@ -711,7 +723,7 @@ async function main(): Promise<void> {
         // (the editor first: its camera and shot for this frame's drawing)
         editor?.frame(dt);
         freeplay.frame(dt);
-        trainingHud.update(freeplay.training, trainingKeys(), hasModifiers(settings.training));
+        trainingHud.update(freeplay.training, trainingKeys(), hasModifiers(settings.training), menusOpen());
         trainingPause();
         if (freeplay.takeSelectRequest()) shotSelect.toggle(freeplay.training);
         if (!freeplay.training) shotSelect.close();

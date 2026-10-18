@@ -8,7 +8,8 @@ import type { CameraView } from "../camera/carballCamera";
 import type { Vec3 } from "../math/vec";
 import { vec3 } from "../math/vec";
 import { PACK_LIMITS, type Difficulty, type Shot, TRAINING_TAGS, type TrainingPack, type TrainingType, parsePack, wrapYaw } from "../training/pack";
-import { defaultShot, deletePack, packFile, storePack } from "../training/myPacks";
+import { defaultShot, deletePack, newPackId, packFile, storePack } from "../training/myPacks";
+import { editorPack } from "../training/editorControls";
 import type { TestKind } from "../training/run";
 import { cycler, slider } from "./controls";
 import { FLY_TEXT, FlyEditor, type PackDetails } from "./flyEditor";
@@ -43,6 +44,9 @@ export const EDITOR_TEXT = {
   playtest: "Playtest",
   save: "Save",
   saved: "Saved",
+  notSavedTitle: "Not Saved",
+  notSaved: "Not saved: the browser's storage is full or blocked",
+  tooBig: "the file is over 1 MB",
   exportPack: "Export",
   importPack: "Import",
   exit: "Exit",
@@ -62,8 +66,8 @@ export const EDITOR_TEXT = {
   confirmDelete: "DELETE",
 } as const;
 
-/** A pack's name, its tags (the game's: notes/training-editor.md §3) */
-export const EDITOR_LIMITS = { nameMin: 3, nameMax: 30, tags: 4 } as const;
+/** A pack's name, its tags (the game's: notes/training-editor.md §3), an imported file's size (bytes, ours) */
+export const EDITOR_LIMITS = { nameMin: 3, nameMax: 30, tags: 4, fileBytes: 1_000_000 } as const;
 
 export interface EditorActions {
   /** Show this shot in the arena (null: the editor closed; `asPlaced`: the car where it is, in the air too) */
@@ -186,6 +190,12 @@ export class TrainingEditor {
       project: (p) => this.#actions.project(p),
       blocked: () => this.#actions.blocked(),
     });
+    // (unsaved changes asked about before the page goes: a reload, the tab closed, Ctrl+W among the free camera's keys:
+    // RX25)
+    window.addEventListener("beforeunload", (e) => {
+      if (!this.#dirty || (!this.isOpen && !this.testing)) return;
+      e.preventDefault();
+    });
     canvas.addEventListener("pointerdown", (e) => {
       if (this.#root.hidden) return;
       this.#drag = { x: e.clientX, y: e.clientY, moved: false };
@@ -222,6 +232,12 @@ export class TrainingEditor {
   /** Open (the panel or the free-camera mode shown; not while the free-camera mode's test plays) */
   get isOpen(): boolean {
     return !this.#root.hidden || this.#fly.isOpen;
+  }
+
+  /** The editor's menu a pad drives while it's shown (SEQUENCE SETTINGS, else the panel: its rows, sliders and cyclers;
+   *  B leaving as Escape does, RX25), else null */
+  get padMenu(): HTMLElement | null {
+    return this.#fly.dialog ?? (this.#root.hidden ? null : this.#root);
   }
 
   /** The free-camera mode's test playing (the editor back when it ends) */
@@ -314,7 +330,12 @@ export class TrainingEditor {
       this.#actions.notice(EDITOR_TEXT.invalidName, EDITOR_TEXT.invalidNameBody);
       return false;
     }
-    storePack(p);
+    if (!storePack(p)) {
+      this.#status = EDITOR_TEXT.notSaved;
+      this.#actions.notice(EDITOR_TEXT.notSavedTitle, EDITOR_TEXT.notSaved);
+      this.#render();
+      return false;
+    }
     this.#dirty = false;
     this.#status = EDITOR_TEXT.saved;
     this.#render();
@@ -542,6 +563,9 @@ export class TrainingEditor {
     const hint = document.createElement("div");
     hint.className = "editor-hint";
     hint.textContent = T.hint;
+    // (the control in use kept focused through the rebuild: a slider's arrow keys step on, RX25)
+    const active = document.activeElement;
+    const focused = active instanceof HTMLElement && this.#root.contains(active) ? active.dataset["editor"] : undefined;
     this.#root.replaceChildren(
       heading,
       row(mode(FLY_TEXT.panel, "panel"), mode(FLY_TEXT.freeCamera, "fly")),
@@ -603,6 +627,7 @@ export class TrainingEditor {
       hint,
       file,
     );
+    if (focused !== undefined) this.#root.querySelector<HTMLElement>(`[data-editor="${focused}"]`)?.focus();
   }
 
   /** An edit: unsaved now */
@@ -623,16 +648,22 @@ export class TrainingEditor {
     URL.revokeObjectURL(a.href);
   }
 
-  /** A pack file opened: edited here if it's a pack, else why not */
+  /** A pack file opened: edited here if it's a pack (a new pack of the player's own, its own id: it never replaces one
+   *  kept; within the editor's limits: RX25), else why not */
   async #import(file: File): Promise<void> {
     try {
+      if (file.size > EDITOR_LIMITS.fileBytes) {
+        this.#status = `${EDITOR_TEXT.importPack}: ${EDITOR_TEXT.tooBig}`;
+        this.#render();
+        return;
+      }
       const pack = parsePack(JSON.parse(await file.text()));
       if (typeof pack === "string") {
         this.#status = `${EDITOR_TEXT.importPack}: ${pack}`;
         this.#render();
         return;
       }
-      this.open(pack);
+      this.open({ ...editorPack(pack), id: newPackId() });
       // (an imported pack not kept until saved)
       this.#dirty = true;
       this.#render();

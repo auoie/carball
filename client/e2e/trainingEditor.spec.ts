@@ -200,6 +200,15 @@ test("the free-camera mode (notes/training-editor.md TE1): chosen and kept, a sh
   await expect(training.locator(".training-controls")).toContainText(/edit shot/i);
   const run = await page.evaluate(() => (window as unknown as { carballFreeplay: { training: () => { test: string; shot: number; timeLeft: number } } }).carballFreeplay.training());
   expect(run).toMatchObject({ test: "shot", shot: 1, timeLeft: 11 });
+  // (the pause menu's Restart Training in a test: the game's question first, NO keeps the test: §5.3)
+  const modal = page.locator("#modal");
+  await page.keyboard.press("Escape");
+  await page.locator("#pause-menu").getByRole("button", { name: /^restart training$/i }).click();
+  await expect(modal.locator(".modal-title")).toHaveText("RESTART TRAINING");
+  await expect(modal).toContainText("Restarting a created sequence will also reset any training progress made.");
+  await modal.getByRole("button", { name: /^no$/i }).click();
+  await expect(modal).toBeHidden();
+  await expect(training).toBeVisible();
   await page.keyboard.press("Tab");
   await expect(training).toBeHidden();
   await expect(hud).toBeVisible();
@@ -209,7 +218,6 @@ test("the free-camera mode (notes/training-editor.md TE1): chosen and kept, a sh
   await expect(list).toBeVisible();
   await expect(list.locator(".fly-shot-time").nth(1)).toHaveText("0:11");
   await list.getByRole("button", { name: /OPEN MENU$/ }).click();
-  const modal = page.locator("#modal");
   await expect(modal.locator(".modal-title")).toHaveText("SAVE AND EXIT");
   await modal.getByRole("button", { name: /^yes$/i }).click();
   await expect(fly).toBeHidden();
@@ -223,4 +231,27 @@ test("the free-camera mode (notes/training-editor.md TE1): chosen and kept, a sh
   await page.keyboard.press("Escape");
   await expect(fly).toBeHidden();
   expect(errors).toEqual([]);
+});
+
+test("unsaved edits: closing or reloading the page asks first (beforeunload: RV-563, Ctrl+W among the free camera's keys)", async ({ page, context }) => {
+  await context.addInitScript(() => {
+    localStorage.removeItem("carball.training.mine");
+  });
+  await page.goto("/?render=off");
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+  const menu = page.locator("#main-menu");
+  await menu.getByRole("button", { name: /^play$/i }).click();
+  await menu.getByRole("button", { name: /^custom training$/i }).click();
+  await menu.getByRole("button", { name: /^create training$/i }).click();
+  const editor = page.locator("#training-editor");
+  await editor.getByRole("button", { name: /^add$/i }).click();
+  await expect(editor.locator(".editor-status")).toHaveText(/unsaved changes/i);
+  const asked = new Promise<string>((resolve) => {
+    page.once("dialog", (dialog) => {
+      resolve(dialog.type());
+      void dialog.dismiss();
+    });
+  });
+  await page.close({ runBeforeUnload: true });
+  expect(await asked).toBe("beforeunload");
 });
