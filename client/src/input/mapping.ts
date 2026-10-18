@@ -29,8 +29,7 @@ export interface InputSnapshot {
 }
 
 export type InputEvent =
-  | { readonly kind: "key"; readonly code: string; readonly down: boolean }
-  | { readonly kind: "mouse"; readonly button: number; readonly down: boolean };
+  { readonly kind: "key"; readonly code: string; readonly down: boolean } | { readonly kind: "mouse"; readonly button: number; readonly down: boolean };
 
 export const EMPTY_INPUT: InputSnapshot = { keys: new Set(), mouseButtons: new Set(), gamepad: null };
 
@@ -199,7 +198,8 @@ export class ButtonLatch {
       const was = this.#inputs.get(key) ?? false;
       this.#inputs.set(key, input.down);
       if (keyEvents && input.keyboard) continue; // (in the ordered list)
-      if (input.pressed && !input.down) events.push(true, false); // (a tap)
+      if (input.pressed && !input.down)
+        events.push(true, false); // (a tap)
       else if (input.down && (!was || input.pressed)) events.push(true);
       else if (!input.down && was) events.push(false);
     }

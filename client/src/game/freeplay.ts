@@ -9,7 +9,17 @@ import { DEFAULT_CAR, carChoice } from "./cars";
 import { type Hud, type ReplayGoal, type ReplayHud, replaySpeed, replayTime, respawnView } from "../hud";
 import { keyGlyph } from "../ui/keyGlyph";
 import type { InputDevices } from "../input/devices";
-import { AirPitchSafety, ButtonLatch, EMPTY_INPUT, type HeldActions, JumpLatch, type LookInput, NO_HELD_ACTIONS, readControls, readHeldActions } from "../input/mapping";
+import {
+  AirPitchSafety,
+  ButtonLatch,
+  EMPTY_INPUT,
+  type HeldActions,
+  JumpLatch,
+  type LookInput,
+  NO_HELD_ACTIONS,
+  readControls,
+  readHeldActions,
+} from "../input/mapping";
 import type { ControllerSettings, Options, Settings } from "../settings/settings";
 import { FixedStep, TICK_SECONDS, frameTimes } from "../loop/fixedStep";
 import { type Vec3, ZERO, add, scale, vec3 } from "../math/vec";
@@ -193,7 +203,15 @@ export class Freeplay {
     this.#carView = new CarView(world.carConfig(this.#playerId), garage.team, this.#effects.particles, garage.car);
     this.#carConfigs = new Map([[this.#playerId, world.carConfig(this.#playerId)]]);
     this.#padsView = arena.createPads(world.boostPads());
-    renderer.scene.add(this.#carView.root, this.#ballView.root, this.#padsView.root, this.#ballArrow.root, this.#ballPath.root, this.#disabledGoal.root, this.#editorPath.root);
+    renderer.scene.add(
+      this.#carView.root,
+      this.#ballView.root,
+      this.#padsView.root,
+      this.#ballArrow.root,
+      this.#ballPath.root,
+      this.#disabledGoal.root,
+      this.#editorPath.root,
+    );
     this.#car = new Interpolated(world.car(this.#playerId));
     this.#ball = new Interpolated(world.ball());
     this.#ballSpawns = world.ballSpawnCount();
@@ -620,7 +638,12 @@ export class Freeplay {
     const settings = this.settings().training;
     // (its variance as drawn for it, else drawn now: kept through a retry and the mirror; an editor's test none, the car as
     // placed: §1.4)
-    const shot = (this.#shot = run.test ? run.shot : applyVariance(run.shot, run.variance(() => rollVariance(settings, Math.random))));
+    const shot = (this.#shot = run.test
+      ? run.shot
+      : applyVariance(
+          run.shot,
+          run.variance(() => rollVariance(settings, Math.random)),
+        ));
     this.#placeWorld(shot, run.test !== null);
     this.#pathPoints = this.#predictPath(shot, TRAINING_PATH_SECONDS, BALL_PATH.points);
   }
@@ -794,7 +817,13 @@ export class Freeplay {
     const forward = vec3(Math.cos(car.yaw), Math.sin(car.yaw), 0);
     const rot = { forward, right: vec3(-forward.y, forward.x, 0), up: vec3(0, 0, 1) };
     // (100 with Unlimited boost, at which a car takes no pads (CanPickup: !IsFull); else a round's 33; or as given)
-    this.#world.setCar(this.#playerId, { pos: vec3(car.x, car.y, 17.01), vel: ZERO, angVel: ZERO, rot, boost: car.boost ?? (this.#unlimitedBoost ? 100 : BOOST_SPAWN_AMOUNT) });
+    this.#world.setCar(this.#playerId, {
+      pos: vec3(car.x, car.y, 17.01),
+      vel: ZERO,
+      angVel: ZERO,
+      rot,
+      boost: car.boost ?? (this.#unlimitedBoost ? 100 : BOOST_SPAWN_AMOUNT),
+    });
     if (ball) {
       this.#ballHold = 0;
       this.#world.setBall({ pos: ball, vel: ballVelocity, angVel: ZERO });
@@ -824,7 +853,10 @@ export class Freeplay {
   }
 
   /** For the browser tests: the pads (taken or not) and the car's boost */
-  debugPads(): { readonly pads: readonly { readonly x: number; readonly y: number; readonly big: boolean; readonly active: boolean }[]; readonly boost: number } {
+  debugPads(): {
+    readonly pads: readonly { readonly x: number; readonly y: number; readonly big: boolean; readonly active: boolean }[];
+    readonly boost: number;
+  } {
     return {
       pads: this.#world.boostPads().map((p) => ({ x: p.pos.x, y: p.pos.y, big: p.big, active: p.active })),
       boost: this.#world.car(this.#playerId).boost,
@@ -848,9 +880,7 @@ export class Freeplay {
   #placeBall(onCar: boolean): void {
     const car = this.#world.car(this.#playerId);
     const flatForward = vec3(car.rot.forward.x, car.rot.forward.y, 0);
-    const pos = onCar
-      ? add(car.pos, vec3(0, 0, 200))
-      : add(add(car.pos, scale(flatForward, 600)), vec3(0, 0, 300));
+    const pos = onCar ? add(car.pos, vec3(0, 0, 200)) : add(add(car.pos, scale(flatForward, 600)), vec3(0, 0, 300));
     this.#ballHold = 0;
     this.#world.setBall({ pos, vel: onCar ? car.vel : ZERO, angVel: ZERO });
     this.#pushBall();
@@ -922,7 +952,10 @@ export class Freeplay {
     this.#padsView.update(pads, frameSeconds);
 
     const controls = { ballCam: this.#ballCam, rear: this.#rear, lookUp: this.#look.up, lookRight: this.#look.right, freeLook: this.#freeLook };
-    const view = this.#editing && this.editorCamera ? this.editorCamera : this.#camera.update(frameSeconds, this.#car.blended(alpha), this.#ball.blended(alpha).pos, controls, null, realSeconds);
+    const view =
+      this.#editing && this.editorCamera
+        ? this.editorCamera
+        : this.#camera.update(frameSeconds, this.#car.blended(alpha), this.#ball.blended(alpha).pos, controls, null, realSeconds);
     if (this.#camera.takeBallCamExit()) this.#ballCam = false; // (free look left the toggled ball cam)
     this.#renderer.render(view);
     this.#effects.camera = view.position; // (the husks collide near it)

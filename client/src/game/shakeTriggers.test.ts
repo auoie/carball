@@ -15,7 +15,16 @@ describe("shake triggers", () => {
     const triggers = new ShakeTriggers();
     const demolished: CarState[] = [];
     const frame = (own: CarState, other: CarState, pads: BoostPadState[]): void => {
-      triggers.frame(shakes, own, new Map([[1, own], [2, other]]), pads, (c) => demolished.push(c));
+      triggers.frame(
+        shakes,
+        own,
+        new Map([
+          [1, own],
+          [2, other],
+        ]),
+        pads,
+        (c) => demolished.push(c),
+      );
     };
     frame(car(), car(), [pad(true)]);
     expect(shakes.count).toBe(0);
@@ -39,7 +48,16 @@ describe("shake triggers", () => {
     const triggers = new ShakeTriggers({ demolitions: false });
     const demolished: CarState[] = [];
     const frame = (other: CarState): void => {
-      triggers.frame(shakes, car(), new Map([[1, car()], [2, other]]), [], (c) => demolished.push(c));
+      triggers.frame(
+        shakes,
+        car(),
+        new Map([
+          [1, car()],
+          [2, other],
+        ]),
+        [],
+        (c) => demolished.push(c),
+      );
     };
     frame(car());
     frame(car({ demoed: true })); // (predicted)
@@ -49,4 +67,3 @@ describe("shake triggers", () => {
     expect(shakes.count).toBe(0);
   });
 });
-

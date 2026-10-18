@@ -77,10 +77,14 @@ describe("camera shakes", () => {
   });
 
   it("the game's parameters: Explosion_Medium, BoostOrb_Used, Jump, Dodge (notes/camera-shakes.md)", () => {
-    expect([EXPLOSION_MEDIUM.duration, EXPLOSION_MEDIUM.blendIn, EXPLOSION_MEDIUM.blendOut, EXPLOSION_MEDIUM.outer, EXPLOSION_MEDIUM.falloff]).toEqual([0.25, 0.1, 0.1, 4096, 1]);
+    expect([EXPLOSION_MEDIUM.duration, EXPLOSION_MEDIUM.blendIn, EXPLOSION_MEDIUM.blendOut, EXPLOSION_MEDIUM.outer, EXPLOSION_MEDIUM.falloff]).toEqual([
+      0.25, 0.1, 0.1, 4096, 1,
+    ]);
     expect(EXPLOSION_MEDIUM.rot?.pitch).toEqual({ amp: 500, freq: 50, random: true });
     expect(EXPLOSION_MEDIUM.attenuate).toBe(true);
-    expect([BOOST_ORB_USED.duration, BOOST_ORB_USED.inner, BOOST_ORB_USED.outer, BOOST_ORB_USED.amplitudeScale, BOOST_ORB_USED.frequencyScale]).toEqual([0.2, 512, 1024, 0.5, 0.5]);
+    expect([BOOST_ORB_USED.duration, BOOST_ORB_USED.inner, BOOST_ORB_USED.outer, BOOST_ORB_USED.amplitudeScale, BOOST_ORB_USED.frequencyScale]).toEqual([
+      0.2, 512, 1024, 0.5, 0.5,
+    ]);
     expect(BOOST_ORB_USED.rot?.pitch).toEqual({ amp: 128, freq: 32 });
     expect(JUMP.loc?.z).toEqual({ amp: 5, freq: 30 });
     expect([DODGE.duration, DODGE.blendIn, DODGE.blendOut]).toEqual([0.1, 0.1, 0.05]);

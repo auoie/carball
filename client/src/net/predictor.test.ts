@@ -115,8 +115,7 @@ function run(ticks: number, lossEvery = 0, stall: readonly [number, number] = [0
       if (firstAck === 0) {
         firstAck = d.value.ackFrame;
         syncedAt = t;
-      }
-      else largestCorrectionMove = Math.max(largestCorrectionMove, Math.hypot(after.x - before.x, after.y - before.y, after.z - before.z));
+      } else largestCorrectionMove = Math.max(largestCorrectionMove, Math.hypot(after.x - before.x, after.y - before.y, after.z - before.z));
       largestBotCorrection = Math.max(largestBotCorrection, Math.hypot(botAfter.x - botBefore.x, botAfter.y - botBefore.y));
     }
   }

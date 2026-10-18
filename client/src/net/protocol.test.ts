@@ -70,8 +70,7 @@ function toMessage(m: Record<string, unknown>): ControlMessage | DatagramMessage
           yaw: quantizeAxis(f.yaw),
           roll: quantizeAxis(f.roll),
           dodgeForward: quantizeAxis(f.dodgeForward),
-          bits:
-            (f.jump ? BIT_JUMP : 0) | (f.boost ? BIT_BOOST : 0) | (f.handbrake ? BIT_HANDBRAKE : 0) | (f.airPitchSafety ? BIT_AIR_PITCH_SAFETY : 0),
+          bits: (f.jump ? BIT_JUMP : 0) | (f.boost ? BIT_BOOST : 0) | (f.handbrake ? BIT_HANDBRAKE : 0) | (f.airPitchSafety ? BIT_AIR_PITCH_SAFETY : 0),
         })),
       };
     default:

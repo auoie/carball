@@ -68,7 +68,10 @@ export function titleText(title: PodiumTitle, metric = false): { readonly title:
 }
 
 /** The titles a player shows: the primary, then the secondary only with a primary */
-export function shownTitles(titles: readonly [PodiumTitle | null, PodiumTitle | null] | undefined, metric = false): { readonly title: string; readonly line: string }[] {
+export function shownTitles(
+  titles: readonly [PodiumTitle | null, PodiumTitle | null] | undefined,
+  metric = false,
+): { readonly title: string; readonly line: string }[] {
   const primary = titles?.[0] ? titleText(titles[0], metric) : null;
   if (!primary) return [];
   const secondary = titles?.[1] ? titleText(titles[1], metric) : null;

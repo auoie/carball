@@ -190,7 +190,9 @@ describe("matchmaking (notes/matchmaking.md MM-4..14)", () => {
     searches[0]?.handlers.cooldown(112, false);
     expect(mm.state?.status).toBe("failed");
     expect(mm.state?.lines).toEqual([{ text: OWN_SEARCH_TEXT.cooldown(112), kind: "warning" }]);
-    expect(OWN_SEARCH_TEXT.cooldown(112)).toBe("Your last match was cancelled because you didn't join it in time or left before it started. You can search again in 1:52.");
+    expect(OWN_SEARCH_TEXT.cooldown(112)).toBe(
+      "Your last match was cancelled because you didn't join it in time or left before it started. You can search again in 1:52.",
+    );
     expect(OWN_SEARCH_TEXT.cooldown(59.2)).toMatch(/in 1:00\.$/);
     mm.frame(60);
     expect(mm.state?.status).toBe("failed");

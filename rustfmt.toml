@@ -1,0 +1,5 @@
+# rustfmt's options for the Rust here (the server, the replay extractor; the user's decision, 2026-10-18: static analysis
+# everywhere): its defaults, but the width the code and its comments were written to, 120, and as much on one line as
+# fits it. The C++ engine isn't formatted (a RocketSim/Bullet fork: its diff against upstream stays our patches alone).
+max_width = 120
+use_small_heuristics = "Max"

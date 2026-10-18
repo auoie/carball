@@ -480,7 +480,14 @@ const PITCH_GLSL = /* glsl */ `
 
 /** The pitch: the floor's grass, mown in wide stripes, with its chalk markings; lit as any floor */
 export function pitchMaterial(layout: PitchLayout, grassA: Color, grassB: Color, chalk: Color): MeshStandardMaterial {
-  const material = new MeshStandardMaterial({ color: 0xffffff, roughness: 0.92, side: FrontSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 4 });
+  const material = new MeshStandardMaterial({
+    color: 0xffffff,
+    roughness: 0.92,
+    side: FrontSide,
+    polygonOffset: true,
+    polygonOffsetFactor: 1,
+    polygonOffsetUnits: 4,
+  });
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, {
       pitchHalf: { value: new Vector2(...layout.half) },

@@ -19,7 +19,9 @@ interface Summary {
   readonly name: string;
   readonly render?: string;
   readonly lifetime?: number | { readonly min: number; readonly max: number };
-  readonly start_size?: readonly (readonly number[] | { readonly min: readonly number[]; readonly max: readonly number[] } | { readonly default: readonly number[] })[];
+  readonly start_size?: readonly (
+    readonly number[] | { readonly min: readonly number[]; readonly max: readonly number[] } | { readonly default: readonly number[] }
+  )[];
   readonly start_color?: readonly number[] | { readonly default: readonly number[] };
   readonly start_alpha?: number;
   readonly alpha_scale_over_life?: DataCurve;
@@ -42,7 +44,8 @@ function find(list: Summary[], name: string, render = "sprite"): Summary {
 }
 
 const range = (r: Range): [number, number] => (typeof r === "number" ? [r, r] : [Math.min(r.min, r.max), Math.max(r.min, r.max)]);
-const dataRange = (l: Summary["lifetime"]): [number, number] => (typeof l === "number" ? [l, l] : l ? [Math.min(l.min, l.max), Math.max(l.min, l.max)] : [0, 0]);
+const dataRange = (l: Summary["lifetime"]): [number, number] =>
+  typeof l === "number" ? [l, l] : l ? [Math.min(l.min, l.max), Math.max(l.min, l.max)] : [0, 0];
 
 /** The data's curve (one channel) against ours (a curve per channel: that channel's): every knot of the data on ours
  *  within `eps` */
@@ -138,11 +141,13 @@ interface Full extends Summary {
   readonly duration?: number;
   readonly delay?: number;
   readonly spawn?: { readonly rate: number; readonly rate_scale: number; readonly bursts: readonly { readonly time: number; readonly count: number }[] };
-  readonly location?: readonly {
-    readonly sphere_radius?: number | DataCurve;
-    readonly surface_only?: boolean;
-    readonly velocity_scale?: number | { readonly min: number; readonly max: number };
-  }[] | null;
+  readonly location?:
+    | readonly {
+        readonly sphere_radius?: number | DataCurve;
+        readonly surface_only?: boolean;
+        readonly velocity_scale?: number | { readonly min: number; readonly max: number };
+      }[]
+    | null;
   readonly color_scale_over_life?: DataCurve;
   readonly dynamic_params?: readonly { readonly name: string; readonly value: DataCurve }[];
 }
@@ -167,7 +172,8 @@ function sameEmitter(ours: EmitterSpec, data: Full, label: string): void {
   if (size && !("default" in size)) {
     const [lo, hi] = "min" in size ? [size.min, size.max] : [size, size];
     expect(asRange(ours.size), `${label}: start size`).toEqual([Math.min(lo[0] ?? 0, hi[0] ?? 0), Math.max(lo[0] ?? 0, hi[0] ?? 0)]);
-    if (ours.length !== undefined) expect(asRange(ours.length), `${label}: start length`).toEqual([Math.min(lo[1] ?? 0, hi[1] ?? 0), Math.max(lo[1] ?? 0, hi[1] ?? 0)]);
+    if (ours.length !== undefined)
+      expect(asRange(ours.length), `${label}: start length`).toEqual([Math.min(lo[1] ?? 0, hi[1] ?? 0), Math.max(lo[1] ?? 0, hi[1] ?? 0)]);
   }
   const sphere = data.location?.[0];
   if (sphere?.sphere_radius !== undefined) {
@@ -184,7 +190,14 @@ function sameEmitter(ours: EmitterSpec, data: Full, label: string): void {
   if (cso?.type === "constant") {
     const v = cso.value;
     const ourScale = ours.colorOverLife;
-    const constant = ourScale === undefined ? [1, 1, 1] : typeof ourScale === "number" ? [ourScale, ourScale, ourScale] : "times" in ourScale && ourScale.times.length === 1 ? ourScale.values[0] : null;
+    const constant =
+      ourScale === undefined
+        ? [1, 1, 1]
+        : typeof ourScale === "number"
+          ? [ourScale, ourScale, ourScale]
+          : "times" in ourScale && ourScale.times.length === 1
+            ? ourScale.values[0]
+            : null;
     expect(constant, `${label}: a constant colour scale`).not.toBeNull();
     const want = typeof v === "number" ? [v, v, v] : v;
     want?.forEach((c, i) => {

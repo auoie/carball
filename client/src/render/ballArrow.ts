@@ -5,19 +5,7 @@
 // ball with the ball 100 uu away or nearer, 120 uu at 10000 or farther (linear between), 20 uu up; it turns in 3D to
 // the ball. Its materials, from the compiled shaders (ARW1): the sphere a black haze, alpha (N.V)^4 on its far inner
 // side (inward normals): a soft dark disc; the arrow neutral grey, unlit, a flash sweeping tail to tip twice a second.
-import {
-  BackSide,
-  ConeGeometry,
-  CylinderGeometry,
-  FrontSide,
-  Group,
-  Mesh,
-  Quaternion,
-  ShaderMaterial,
-  type Side,
-  SphereGeometry,
-  Vector3,
-} from "three";
+import { BackSide, ConeGeometry, CylinderGeometry, FrontSide, Group, Mesh, Quaternion, ShaderMaterial, type Side, SphereGeometry, Vector3 } from "three";
 import { type Vec3, length, scale, sub } from "../math/vec";
 import { toThreeVector } from "./coords";
 

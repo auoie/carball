@@ -23,7 +23,10 @@ describe("High Quality Shaders off: the materials' low-quality branches (QG-5..2
     expect(changed).toBeGreaterThan(0);
     const names = [...low()];
     for (const part of ["GreenhouseGlassMaterial", "HexGlassMaterial"]) {
-      expect(names.some((n) => n.includes(part)), `${part}: ${names.join(", ")}`).toBe(true);
+      expect(
+        names.some((n) => n.includes(part)),
+        `${part}: ${names.join(", ")}`,
+      ).toBe(true);
     }
     expect(applyShaderQuality(arena.root, false)).toBe(0);
     expect(applyShaderQuality(arena.root, true)).toBe(changed);

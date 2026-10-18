@@ -341,7 +341,6 @@ describe("freeplay's new round (notes/camera-respawn-goal.md, RV-26, RV-39)", ()
     world.dispose();
   });
 
-
   it("unlimited boost: 100 at the spawn and never used up", () => {
     const world = World.create(engine);
     const id = world.addCar(0);

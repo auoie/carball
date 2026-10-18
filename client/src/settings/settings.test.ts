@@ -166,17 +166,44 @@ describe("chat settings (CHAT-5, 18)", () => {
   });
 
   it("saved bindings from before quick chat: its keys 1-4 though freeplay's use 1 and 2 (never active together)", () => {
-    const saved = { bindings: { ballInFront: DEFAULT_BINDINGS.ballInFront, ballOnCar: DEFAULT_BINDINGS.ballOnCar, jump: { keyboard: { kind: "key", code: "Digit3" }, gamepad: null } } };
+    const saved = {
+      bindings: {
+        ballInFront: DEFAULT_BINDINGS.ballInFront,
+        ballOnCar: DEFAULT_BINDINGS.ballOnCar,
+        jump: { keyboard: { kind: "key", code: "Digit3" }, gamepad: null },
+      },
+    };
     const b = parseSettings(saved).bindings;
-    expect([b.chatPreset1.keyboard, b.chatPreset2.keyboard]).toEqual([{ kind: "key", code: "Digit1" }, { kind: "key", code: "Digit2" }]);
+    expect([b.chatPreset1.keyboard, b.chatPreset2.keyboard]).toEqual([
+      { kind: "key", code: "Digit1" },
+      { kind: "key", code: "Digit2" },
+    ]);
     expect(b.chatPreset3.keyboard).toBeNull(); // (a saved binding that drives the car keeps the key)
     expect(b.chatPreset4.keyboard).toEqual({ kind: "key", code: "Digit4" });
   });
 
   it("the Interface and Gameplay tabs: defaults, limits, unknown values back to the default (MENU-6/9)", () => {
-    expect(DEFAULT_SETTINGS.interface).toMatchObject({ scale: 1, displayScale: 1, nameplateMode: "default", matchNotifications: "all", teamColoredBoost: true, metric: true });
-    const parsed = parseSettings({ interface: { scale: 0.2, displayScale: 0.95, nameplateMode: "huge", matchNotifications: "kickoff", hideHud: true }, gameplay: { statDisplayLevel: "all" } });
-    expect(parsed.interface).toMatchObject({ scale: 0.5, displayScale: 0.95, nameplateMode: "default", matchNotifications: "kickoff", hideHud: true, ballCamIndicator: true, ballArrow: true });
+    expect(DEFAULT_SETTINGS.interface).toMatchObject({
+      scale: 1,
+      displayScale: 1,
+      nameplateMode: "default",
+      matchNotifications: "all",
+      teamColoredBoost: true,
+      metric: true,
+    });
+    const parsed = parseSettings({
+      interface: { scale: 0.2, displayScale: 0.95, nameplateMode: "huge", matchNotifications: "kickoff", hideHud: true },
+      gameplay: { statDisplayLevel: "all" },
+    });
+    expect(parsed.interface).toMatchObject({
+      scale: 0.5,
+      displayScale: 0.95,
+      nameplateMode: "default",
+      matchNotifications: "kickoff",
+      hideHud: true,
+      ballCamIndicator: true,
+      ballArrow: true,
+    });
     expect(parsed.gameplay).toEqual({ statDisplayLevel: "all", flipResetIndicator: "on" });
     // (Stat Graphs: None by default, the game's ten options kept, anything else None)
     expect(DEFAULT_SETTINGS.interface.statGraphs).toBe("none");
@@ -206,4 +233,3 @@ describe("a save from before the video group (RV-495)", () => {
     expect(saved.video).toMatchObject({ renderDetail: "performance", chosen: false });
   });
 });
-

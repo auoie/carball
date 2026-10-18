@@ -1,0 +1,13 @@
+# Not Prettier's: built and test output; the bots' packages (generated, their model data and vectors among them); the
+# cars' models; public/ (fonts, notices and data as their sources ship them); the server-generated test vectors;
+# Markdown (hand-wrapped prose); npm's lockfile. node_modules/ and what .gitignore lists are skipped already.
+dist/
+test-results/
+playwright-report/
+bots/
+cars/
+public/
+src/testing/*.vectors.json
+*.md
+*.markdown
+package-lock.json

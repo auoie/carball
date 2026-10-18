@@ -29,7 +29,19 @@ test("Stat Graphs: None by default and no strip; F10 cycles the levels unsaved; 
   for (let i = 0; i < 3; i++) await page.keyboard.press("F10");
   await expect.poll(async () => (await stats(page)).level).toBe("networkSummary");
   const net = await stats(page);
-  expect(net.rows.map((r) => r.title)).toEqual(["Out Pkt", "In Pkt", "Out Loss", "In Loss", "Out Bytes", "In Bytes", "Latency", "IBuf", "IBuf Target", "IBuf Miss", "Phys Rate"]);
+  expect(net.rows.map((r) => r.title)).toEqual([
+    "Out Pkt",
+    "In Pkt",
+    "Out Loss",
+    "In Loss",
+    "Out Bytes",
+    "In Bytes",
+    "Latency",
+    "IBuf",
+    "IBuf Target",
+    "IBuf Miss",
+    "Phys Rate",
+  ]);
   expect(net.rows.find((r) => r.title === "Out Pkt")?.summaries[0]?.value).toBe(0);
   // Not saved: the page loaded again, None
   await page.reload();

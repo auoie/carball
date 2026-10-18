@@ -88,7 +88,10 @@ describe("the map's scenery (Night)", () => {
               v.copy(a)
                 .addScaledVector(b.clone().sub(a), i / n)
                 .addScaledVector(c.clone().sub(a), j / n);
-              if (inCage(v, margin)) expect.fail(`${name}: triangle ${String(k / 3)} of ${mesh.name || `${mesh.type} in ${mesh.parent?.name ?? "?"}`} at ${v.toArray().map(Math.round).join(", ")}`);
+              if (inCage(v, margin))
+                expect.fail(
+                  `${name}: triangle ${String(k / 3)} of ${mesh.name || `${mesh.type} in ${mesh.parent?.name ?? "?"}`} at ${v.toArray().map(Math.round).join(", ")}`,
+                );
             }
           }
         }
@@ -96,36 +99,39 @@ describe("the map's scenery (Night)", () => {
     }
   });
 
-  it.each(THEMES)("%s: its sky and everything unfogged within the camera's far plane from anywhere in the arena, all through its animation (RV-58, RV-90, RV-113)", (name) => {
-    const t = theme(name);
-    // (the camera within the playing volume: its farthest corner from the centre)
-    const reach = Math.hypot(PLAYING_VOLUME.halfX, PLAYING_VOLUME.height, PLAYING_VOLUME.halfZ);
-    const v = new Vector3();
-    let farthest = 0;
-    let farthestMesh = "";
-    const matrix = new Matrix4();
-    // (every 1.5 s over 5 minutes: the searchlights' sweeps and the like reach farthest at some moment, not at any one)
-    for (let seconds = 0; seconds <= 300; seconds += 1.5) {
-      t.update(seconds, new Vector3(0, 93, 0));
-      // The sky domes (drawn from inside: their back faces) and everything else unfogged (RV-90); fogged ground and
-      // terrain may reach past it, fogged out
-      const sky = meshes(t.root).filter((m) => {
-        const material = m.material as Material & { fog?: boolean };
-        return material.side === BackSide || material.fog === false;
-      });
-      for (const mesh of sky) {
-        const position = mesh.geometry.getAttribute("position");
-        const instances = mesh instanceof InstancedMesh ? mesh.count : 1;
-        for (let k = 0; k < instances; k++) {
-          if (mesh instanceof InstancedMesh) mesh.getMatrixAt(k, matrix);
-          else matrix.identity();
-          for (let i = 0; i < position.count; i++) {
-            const d = v.fromBufferAttribute(position, i).applyMatrix4(matrix).applyMatrix4(mesh.matrixWorld).length();
-            if (d > farthest) [farthest, farthestMesh] = [d, `${mesh.name || mesh.type} at ${String(seconds)} s`];
+  it.each(THEMES)(
+    "%s: its sky and everything unfogged within the camera's far plane from anywhere in the arena, all through its animation (RV-58, RV-90, RV-113)",
+    (name) => {
+      const t = theme(name);
+      // (the camera within the playing volume: its farthest corner from the centre)
+      const reach = Math.hypot(PLAYING_VOLUME.halfX, PLAYING_VOLUME.height, PLAYING_VOLUME.halfZ);
+      const v = new Vector3();
+      let farthest = 0;
+      let farthestMesh = "";
+      const matrix = new Matrix4();
+      // (every 1.5 s over 5 minutes: the searchlights' sweeps and the like reach farthest at some moment, not at any one)
+      for (let seconds = 0; seconds <= 300; seconds += 1.5) {
+        t.update(seconds, new Vector3(0, 93, 0));
+        // The sky domes (drawn from inside: their back faces) and everything else unfogged (RV-90); fogged ground and
+        // terrain may reach past it, fogged out
+        const sky = meshes(t.root).filter((m) => {
+          const material = m.material as Material & { fog?: boolean };
+          return material.side === BackSide || material.fog === false;
+        });
+        for (const mesh of sky) {
+          const position = mesh.geometry.getAttribute("position");
+          const instances = mesh instanceof InstancedMesh ? mesh.count : 1;
+          for (let k = 0; k < instances; k++) {
+            if (mesh instanceof InstancedMesh) mesh.getMatrixAt(k, matrix);
+            else matrix.identity();
+            for (let i = 0; i < position.count; i++) {
+              const d = v.fromBufferAttribute(position, i).applyMatrix4(matrix).applyMatrix4(mesh.matrixWorld).length();
+              if (d > farthest) [farthest, farthestMesh] = [d, `${mesh.name || mesh.type} at ${String(seconds)} s`];
+            }
           }
         }
       }
-    }
-    expect(farthest + reach, farthestMesh).toBeLessThan(CAMERA_FAR);
-  });
+      expect(farthest + reach, farthestMesh).toBeLessThan(CAMERA_FAR);
+    },
+  );
 });

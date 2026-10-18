@@ -468,7 +468,12 @@ export class World {
       flipping: flag(m.CAR_IS_FLIPPING),
       wheelContact: [flag(wheel), flag(wheel + 1), flag(wheel + 2), flag(wheel + 3)],
       groundNormal: readVec(a, m.CAR_GROUND_NORMAL),
-      wheelNormals: [readVec(a, m.CAR_WHEEL_NORMALS), readVec(a, m.CAR_WHEEL_NORMALS + 3), readVec(a, m.CAR_WHEEL_NORMALS + 6), readVec(a, m.CAR_WHEEL_NORMALS + 9)],
+      wheelNormals: [
+        readVec(a, m.CAR_WHEEL_NORMALS),
+        readVec(a, m.CAR_WHEEL_NORMALS + 3),
+        readVec(a, m.CAR_WHEEL_NORMALS + 6),
+        readVec(a, m.CAR_WHEEL_NORMALS + 9),
+      ],
       demoRespawnTimer: at(a, m.CAR_DEMO_RESPAWN_TIMER),
       spawnSelection: {
         side: SPAWN_SIDES[at(a, m.CAR_DEMO_SPAWN_SIDE)] ?? null,

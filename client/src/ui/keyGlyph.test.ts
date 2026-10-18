@@ -13,7 +13,13 @@ describe("the prompts' {key} token (HT-3, RV-282)", () => {
   });
 
   it("draws a PlayStation pad's own symbols (the game's glyph set per pad type), told by the pad's id", () => {
-    expect([0, 1, 2, 3, 4, 7, 10].map((b) => keyGlyph({ kind: "padButton", button: b }, "playstation").kind === "pad" && (keyGlyph({ kind: "padButton", button: b }, "playstation") as { text: string }).text)).toEqual(["✕", "○", "□", "△", "L1", "R2", "L3"]);
+    expect(
+      [0, 1, 2, 3, 4, 7, 10].map(
+        (b) =>
+          keyGlyph({ kind: "padButton", button: b }, "playstation").kind === "pad" &&
+          (keyGlyph({ kind: "padButton", button: b }, "playstation") as { text: string }).text,
+      ),
+    ).toEqual(["✕", "○", "□", "△", "L1", "R2", "L3"]);
     expect(padStyleOf("Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 09cc)")).toBe("playstation");
     expect(padStyleOf("DualSense Wireless Controller")).toBe("playstation");
     expect(padStyleOf("Xbox 360 Controller (XInput STANDARD GAMEPAD)")).toBe("xbox");
@@ -23,7 +29,12 @@ describe("the prompts' {key} token (HT-3, RV-282)", () => {
 
 describe("a stick's direction as a badge (RV-512: the axis's long name made the respawn prompts collide)", () => {
   it("the standard layout's sticks: L or R with the direction, its name kept for the title", () => {
-    expect(keyGlyph({ kind: "padAxis", axis: 0, sign: -1 })).toEqual({ kind: "stick", stick: "L", direction: "left", text: inputName({ kind: "padAxis", axis: 0, sign: -1 }) });
+    expect(keyGlyph({ kind: "padAxis", axis: 0, sign: -1 })).toEqual({
+      kind: "stick",
+      stick: "L",
+      direction: "left",
+      text: inputName({ kind: "padAxis", axis: 0, sign: -1 }),
+    });
     expect(keyGlyph({ kind: "padAxis", axis: 0, sign: 1 })).toMatchObject({ stick: "L", direction: "right" });
     expect(keyGlyph({ kind: "padAxis", axis: 1, sign: 1 })).toMatchObject({ stick: "L", direction: "down" });
     expect(keyGlyph({ kind: "padAxis", axis: 3, sign: -1 })).toMatchObject({ stick: "R", direction: "up" });
@@ -31,4 +42,3 @@ describe("a stick's direction as a badge (RV-512: the axis's long name made the 
     expect(keyGlyph({ kind: "padAxis", axis: 5, sign: 1 }).kind).toBe("word");
   });
 });
-

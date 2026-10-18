@@ -226,7 +226,12 @@ describe("a goal's inside, and an import's limits (RX25)", () => {
 
   it("an imported pack: its name 30 characters, 4 tags without repeats, time limits 1-59, ball and car within the clamps", () => {
     const pack = {
-      id: "p", name: `  ${"x".repeat(40)}  `, type: "striker" as const, difficulty: "easy" as const, description: "", creator: "",
+      id: "p",
+      name: `  ${"x".repeat(40)}  `,
+      type: "striker" as const,
+      difficulty: "easy" as const,
+      description: "",
+      creator: "",
       tags: ["Aerials", "Aerials", "Shots", "Saves", "Clears", "Bounces"],
       shots: [{ ...shot, timeLimit: 0, ball: { ...shot.ball, location: vec3(0, 0, 20) }, car: { ...shot.car, location: vec3(5000, 0, 5) } }],
     };

@@ -5,7 +5,10 @@ import { readIndex } from "./packs";
 
 describe("the training packs' index", () => {
   it("lists each pack by id, name, type, difficulty and shots, read from its folder; a broken entry left out", () => {
-    const index = { format: 1, packs: [{ id: "abc123", name: "Air", type: "aerial", difficulty: "hard", shots: 12, creator: "Someone" }, { id: "../x" }, { id: "plain" }] };
+    const index = {
+      format: 1,
+      packs: [{ id: "abc123", name: "Air", type: "aerial", difficulty: "hard", shots: 12, creator: "Someone" }, { id: "../x" }, { id: "plain" }],
+    };
     expect(readIndex(index, "/p/")).toEqual([
       { id: "abc123", name: "Air", type: "aerial", difficulty: "hard", shots: 12, creator: "Someone", url: "/p/abc123.json" },
       { id: "plain", name: "plain", type: "striker", difficulty: "easy", shots: 0, creator: "", url: "/p/plain.json" },

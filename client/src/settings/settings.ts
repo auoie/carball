@@ -2,16 +2,7 @@
 import { DEFAULT_VIDEO_SETTINGS, type VideoSettings, readVideo, resolveVideo } from "./video";
 import { DEFAULT_COLUMNS, SCOREBOARD_COLUMNS } from "../game/matchStats";
 import { DEFAULT_CAMERA_SETTINGS, type CameraSettings } from "../camera/carballCamera";
-import {
-  ACTIONS,
-  type Action,
-  type Binding,
-  type Bindings,
-  DEFAULT_BINDINGS,
-  type GamepadInput,
-  type KeyboardInput,
-  exclusiveGroups,
-} from "../input/bindings";
+import { ACTIONS, type Action, type Binding, type Bindings, DEFAULT_BINDINGS, type GamepadInput, type KeyboardInput, exclusiveGroups } from "../input/bindings";
 import { DEFAULT_SLOTS, POOLS } from "../game/quickChat";
 import { type ChatFilter, MAX_NAME_BYTES } from "../net/protocol";
 import { TRAINING_DEFAULTS, TRAINING_LIMITS, type TrainingNumbers, type TrainingSettings } from "../training/settings";
@@ -321,7 +312,9 @@ export const DEFAULT_SETTINGS: Settings = {
  *  player's own once chosen) */
 export function resolveSettings(s: Settings, weakGpu: boolean): Settings {
   const r = resolveVideo({ video: s.video, bloom: s.options.bloom, depthOfField: s.options.depthOfField }, weakGpu);
-  return r.video === s.video && r.bloom === s.options.bloom && r.depthOfField === s.options.depthOfField ? s : { ...s, video: r.video, options: { ...s.options, bloom: r.bloom, depthOfField: r.depthOfField } };
+  return r.video === s.video && r.bloom === s.options.bloom && r.depthOfField === s.options.depthOfField
+    ? s
+    : { ...s, video: r.video, options: { ...s.options, bloom: r.bloom, depthOfField: r.depthOfField } };
 }
 
 const STORAGE_KEY = "carball.settings.v1";
@@ -420,7 +413,10 @@ const hiddenMark = (c: string): boolean => {
 /** A name as the wire takes it: hidden characters out, trimmed, MAX_NAME_BYTES of UTF-8 at most (whole characters) */
 export function tidyName(v: unknown): string {
   if (typeof v !== "string") return "";
-  const name = v.replace(HIDDEN, "").replace(/./gsu, (c) => (hiddenMark(c) ? "" : c)).trim();
+  const name = v
+    .replace(HIDDEN, "")
+    .replace(/./gsu, (c) => (hiddenMark(c) ? "" : c))
+    .trim();
   const encoder = new TextEncoder();
   if (encoder.encode(name).byteLength <= MAX_NAME_BYTES) return name;
   let kept = "";
@@ -468,7 +464,10 @@ export function parseSettings(v: unknown): Settings {
   const options = readBooleans(src["options"], DEFAULT_OPTIONS);
   // (a save from before the video group with Bloom or Depth of Field turned off: the player's choice, kept as a Custom
   // Render Detail, not the automatic default's preset over it: RV-495, the user's lost settings)
-  const video = !("video" in src) && (!options.bloom || !options.depthOfField) ? { ...readVideo(undefined), renderDetail: "custom" as const, chosen: true } : readVideo(src["video"]);
+  const video =
+    !("video" in src) && (!options.bloom || !options.depthOfField)
+      ? { ...readVideo(undefined), renderDetail: "custom" as const, chosen: true }
+      : readVideo(src["video"]);
   return {
     bindings: readBindings(src["bindings"]),
     camera: readNumbers(src["camera"], saved ? DEFAULT_CAMERA_SETTINGS : MODERN_CAMERA, CAMERA_LIMITS),
@@ -489,7 +488,12 @@ export function parseSettings(v: unknown): Settings {
 /** Custom training's settings: its numbers within their ranges, its switches */
 function readTraining(v: unknown): TrainingSettings {
   const flags = readBooleans(v, TRAINING_DEFAULTS);
-  return { ...readNumbers<TrainingNumbers>(v, TRAINING_DEFAULTS, TRAINING_LIMITS), skipReplay: flags.skipReplay, spawnOnGround: flags.spawnOnGround, unlimitedBoost: flags.unlimitedBoost };
+  return {
+    ...readNumbers<TrainingNumbers>(v, TRAINING_DEFAULTS, TRAINING_LIMITS),
+    skipReplay: flags.skipReplay,
+    spawnOnGround: flags.spawnOnGround,
+    unlimitedBoost: flags.unlimitedBoost,
+  };
 }
 
 export function loadSettings(storage: Pick<Storage, "getItem"> | null = safeStorage()): Settings {

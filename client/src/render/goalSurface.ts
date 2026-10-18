@@ -26,7 +26,10 @@ import {
 } from "./arenaSurface";
 
 const BACK_Y = 5120;
-const RAMP: readonly [Pt, Pt] = [[234.67, 0], [640, 16]];
+const RAMP: readonly [Pt, Pt] = [
+  [234.67, 0],
+  [640, 16],
+];
 const BACK_C: Pt = [640, 256];
 const BACK_R = 240;
 const BACK_TOP_DEG = 67.5;
@@ -102,7 +105,12 @@ function goalOffsets(P: readonly Pt[]): Pt[] {
   const arm = BEZIER_K * BACK_R;
   const arcs: readonly (readonly [Pt, Pt, Pt, Pt])[] = [
     [RAMP[1], [1, 0], [BACK_C[0] + BACK_R, BACK_C[1]], [0, 1]],
-    [[BACK_C[0] + BACK_R, BACK_C[1]], [0, 1], [BACK_C[0], BACK_C[1] + BACK_R], [-1, 0]],
+    [
+      [BACK_C[0] + BACK_R, BACK_C[1]],
+      [0, 1],
+      [BACK_C[0], BACK_C[1] + BACK_R],
+      [-1, 0],
+    ],
   ];
   const lastArc = P.length - 3;
   for (let i = 3; i <= lastArc; i++) {
@@ -255,14 +263,8 @@ export function buildGoalSurface(hexTarget: number): GoalSurface {
     (p, s, t) => vertex(GOAL_X, p[0], p[1], t, s),
   );
   // The chamfer round the mouth: the wall's face outline (y 0) to the inside's (y CHAMFER), the post's edge first
-  const outer = [
-    ...POST_LEVELS.slice(0, -1).map((z): Pt3 => [GOAL_X + CHAMFER, 0, z]),
-    ...mouthOutline().map(([x, z]): Pt3 => [x, 0, z]),
-  ];
-  const inner = [
-    ...POST_LEVELS.slice(0, -1).map((z): Pt3 => [GOAL_X, CHAMFER, z]),
-    ...mouthOutline(0).map(([x, z]): Pt3 => [x, CHAMFER, z]),
-  ];
+  const outer = [...POST_LEVELS.slice(0, -1).map((z): Pt3 => [GOAL_X + CHAMFER, 0, z]), ...mouthOutline().map(([x, z]): Pt3 => [x, 0, z])];
+  const inner = [...POST_LEVELS.slice(0, -1).map((z): Pt3 => [GOAL_X, CHAMFER, z]), ...mouthOutline(0).map(([x, z]): Pt3 => [x, CHAMFER, z])];
   const lipInward = (c: Pt3): Pt3 => (c[2] > GOAL_TOP - R_GOAL ? [-1, -1, -1] : [-1, -1, 0]);
   for (let k = 0; k + 1 < outer.length; k++) {
     const o0 = outer[k];
@@ -281,7 +283,7 @@ export function buildGoalSurface(hexTarget: number): GoalSurface {
     const o = R_GOAL - R_GOAL * s;
     const z = R_GOAL - R_GOAL * c;
     const rho = CHAMFER + o;
-    return Array.from({ length: SEG90 + 1 }, (_unused, j): Pt3 => [axis[0] - rho * (qc(j)[1]), axis[1] - rho * (qc(j)[0]), z]);
+    return Array.from({ length: SEG90 + 1 }, (_unused, j): Pt3 => [axis[0] - rho * qc(j)[1], axis[1] - rho * qc(j)[0], z]);
   });
   wrapRings.push([
     [GOAL_X + CHAMFER, 0, R_GOAL],
@@ -363,4 +365,3 @@ export function buildGoalSurface(hexTarget: number): GoalSurface {
     hexSize,
   };
 }
-

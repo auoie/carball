@@ -44,7 +44,11 @@ describe("the player's packs", () => {
 
   it("a pack's progress under its own prefix: a pack with the id \"mine\" can't overwrite the player's packs (RX25); 437863a's key still read", () => {
     const store = memory();
-    for (let i = 0; i < 3; i++) storePack(newPack(() => i / 10), store);
+    for (let i = 0; i < 3; i++)
+      storePack(
+        newPack(() => i / 10),
+        store,
+      );
     storeProgress("mine", [ShotStatus.Completed], store);
     expect(storedPacks(store)).toHaveLength(3);
     expect(storedProgress("mine", store)).toEqual([ShotStatus.Completed]);
@@ -55,7 +59,12 @@ describe("the player's packs", () => {
   });
 
   it("a save the browser refuses (its storage full) says so", () => {
-    const full = { getItem: () => null, setItem: () => { throw new Error("quota"); } };
+    const full = {
+      getItem: () => null,
+      setItem: () => {
+        throw new Error("quota");
+      },
+    };
     expect(storePack(newPack(), full)).toBe(false);
     expect(storePacks([], memory())).toBe(true);
   });

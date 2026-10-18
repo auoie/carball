@@ -118,7 +118,10 @@ export function withRenderDetail(s: VideoState, detail: RenderDetail, chosen = t
 
 /** An advanced switch or Render Quality changed by the player: Render Detail becomes Custom (as the game's: any of these,
  *  Render Quality too, TA:55148-55199) */
-export function withVideoChange(s: VideoState, change: Partial<Omit<VideoSettings, "chosen" | "autoLevel" | "renderDetail">> & { readonly bloom?: boolean; readonly depthOfField?: boolean }): VideoState {
+export function withVideoChange(
+  s: VideoState,
+  change: Partial<Omit<VideoSettings, "chosen" | "autoLevel" | "renderDetail">> & { readonly bloom?: boolean; readonly depthOfField?: boolean },
+): VideoState {
   const { bloom = s.bloom, depthOfField = s.depthOfField, ...video } = change;
   return { video: { ...s.video, ...video, renderDetail: "custom", chosen: true }, bloom, depthOfField };
 }
@@ -149,7 +152,10 @@ export function resolveVideo(s: VideoState, weakGpu: boolean): VideoState {
 export const AUTO_GUARD = { warmUp: 3, measure: 4, slowFrame: 1 / 45, trim: 0.05, capMargin: 1.1, capSpread: 1.08, hitch: 0.25 } as const;
 
 /** The step's decision from the measured intervals (s) and the display's refresh (Hz; null: not measured) */
-export function guardDecision(frames: readonly number[], refreshHz: number | null = null): { readonly slow: boolean; readonly capped: boolean; readonly step: boolean } {
+export function guardDecision(
+  frames: readonly number[],
+  refreshHz: number | null = null,
+): { readonly slow: boolean; readonly capped: boolean; readonly step: boolean } {
   const sorted = [...frames].sort((a, b) => a - b);
   const kept = sorted.slice(0, Math.max(1, Math.floor(sorted.length * (1 - AUTO_GUARD.trim))));
   const mean = kept.reduce((s, v) => s + v, 0) / kept.length;

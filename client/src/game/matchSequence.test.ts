@@ -13,7 +13,11 @@ describe("the match's start and end", () => {
 
   it("frames the podium from the field side toward the winners' goal, easing from 600 to 400 uu (CAM-36's numbers)", () => {
     // Three blue cars, their mean (−30, −1761.7): the camera at (−30, −1162, 80.9) at once, (−30, −1361.9, 74.0) settled
-    const cars = [{ x: -40, y: -1670, z: 17 }, { x: -200, y: -1795, z: 17 }, { x: 150, y: -1820, z: 17 }];
+    const cars = [
+      { x: -40, y: -1670, z: 17 },
+      { x: -200, y: -1795, z: 17 },
+      { x: 150, y: -1820, z: 17 },
+    ];
     const start = podiumView(cars, 0, 0);
     expect(near(start.position.x, -30) && near(start.position.y, -1162, 0.5) && near(start.position.z, 80.9)).toBe(true);
     const settled = podiumView(cars, 0, 5.3);
@@ -68,4 +72,3 @@ describe("the respawn view's phases (HUD-20, RH1; the user's finding at a match'
     expect(phases.filter((phase) => respawnShown({ phase }))).toEqual(["active", "timeUp"]);
   });
 });
-

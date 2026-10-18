@@ -63,7 +63,9 @@ test("two players: one drives, the other sees it through the server", async ({ p
   const tall = (await stats(other)).localCar;
   const sport = (await stats(page)).localCar;
   for (const p of [page, other]) {
-    await expect.poll(async () => Object.fromEntries((await stats(p)).cars.map((c) => [c.id, c.model])), { timeout: 10_000 }).toEqual({ [tall]: 3, [sport]: 0 });
+    await expect
+      .poll(async () => Object.fromEntries((await stats(p)).cars.map((c) => [c.id, c.model])), { timeout: 10_000 })
+      .toEqual({ [tall]: 3, [sport]: 0 });
   }
   // The match clock, from the server: full until the ball is first hit or 5 s after go, then counting down (how far
   // depends on how long the test took to get here: not the point; a fresh match, so within its first minute)
@@ -77,7 +79,9 @@ test("two players: one drives, the other sees it through the server", async ({ p
   await expect(page.locator("#score")).not.toHaveClass(/swapped/);
   await expect(other.locator("#score")).toHaveClass(/swapped/);
   // (drawn in the world, depth-tested: HT-12)
-  await expect.poll(() => page.evaluate(() => (window as unknown as { carballNameplates: () => { name: string }[] }).carballNameplates().length), { timeout: 10_000 }).toBe(1);
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { carballNameplates: () => { name: string }[] }).carballNameplates().length), { timeout: 10_000 })
+    .toBe(1);
   await page.screenshot({ path: "test-results/hud-online.png" });
 
   // Holding Tab shows the scoreboard: a row per player under its team's headers; released, it fades away (SB-10)
@@ -127,9 +131,7 @@ test("two players: one drives, the other sees it through the server", async ({ p
         return s !== undefined && Math.hypot(c.pos.x - s.pos.x, c.pos.y - s.pos.y) > 500;
       })
       .map((c) => c.id);
-  await expect
-    .poll(movedCars, { timeout: 5_000, message: `other player's view: ${JSON.stringify(await stats(other))}` })
-    .toHaveLength(1);
+  await expect.poll(movedCars, { timeout: 5_000, message: `other player's view: ${JSON.stringify(await stats(other))}` }).toHaveLength(1);
   expect(ids).toContain((await movedCars())[0]);
 
   // (both leave at once: the next test starts alone on this server)
@@ -212,7 +214,8 @@ test("a goal: the game slows down for 3.53 s, the goal replay plays, Space skips
   // failed under load though the mapping wasn't late: RV-379)
   expect(Math.abs((slowed.frame ?? 0) - (slowed.explodedFrame ?? 0)), JSON.stringify(slowed)).toBeLessThanOrEqual(slowed.offsetSpread + 1);
   // (the replay draws every car's plate where the replay has it, this player's own saying YOU: RV-279, RV-288, RV-292)
-  const plates = (): Promise<string[]> => page.evaluate(() => (window as unknown as { carballNameplates: () => { name: string }[] }).carballNameplates().map((p) => p.name));
+  const plates = (): Promise<string[]> =>
+    page.evaluate(() => (window as unknown as { carballNameplates: () => { name: string }[] }).carballNameplates().map((p) => p.name));
   await expect.poll(plates, { timeout: 5_000 }).toEqual(["YOU"]);
   await page.waitForTimeout(1000);
   await page.screenshot({ path: "test-results/replay.png" });

@@ -203,4 +203,3 @@ test("the match's end: the winner banner, the podium with the winner's tag, the 
 async function phases(page: Page): Promise<string[]> {
   return page.evaluate(() => (window as unknown as { carballOnline: () => { phases: { phase: string }[] } }).carballOnline().phases.map((p) => p.phase));
 }
-

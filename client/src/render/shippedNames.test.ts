@@ -51,7 +51,24 @@ const NAMES = [
 ];
 /** The names no common word holds: found inside any word too, any case ("OCTANEBODY", "octanebody": RV-423); the game's
  *  bot projects', named after it, among them (rlbotpack, rlgym-compat in the bots' ids: RV-533) */
-const DISTINCT = ["rocket league", "psyonix", "octane", "dominus", "fennec", "batmobile", "takumi", "mannfield", "soccar", "dropshot", "heatseeker", "snow day", "gridiron", "spike rush", "rlbot", "rlgym"];
+const DISTINCT = [
+  "rocket league",
+  "psyonix",
+  "octane",
+  "dominus",
+  "fennec",
+  "batmobile",
+  "takumi",
+  "mannfield",
+  "soccar",
+  "dropshot",
+  "heatseeker",
+  "snow day",
+  "gridiron",
+  "spike rush",
+  "rlbot",
+  "rlgym",
+];
 /** The game's abbreviation (renamed carball: the user's decision of 2026-10-15), case-sensitive: "rl" alone is a
  *  minifier's name (`var rl=`, `of rl)`) and random bytes spell it (RV-424). Anywhere: a separated compound or a phrase
  *  (rl-clone, rl_mode, RL_MODE, .rl-hud, "RL PATCH"), our old joined names in any case (rlengine, RLengine, rl.clone),
@@ -83,7 +100,10 @@ const INSIDE = new RegExp(`(${DISTINCT.map(escape).join("|")})`, "i");
 /** The text with its compounds split (camelCase, letters and digits: "carOctane", "MannfieldNight", "octane2"), so a
  *  name inside one counts as a word (RV-413) */
 function words(text: string): string {
-  return text.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/([A-Za-z])([0-9])/g, "$1 $2").replace(/([0-9])([A-Za-z])/g, "$1 $2");
+  return text
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/([A-Za-z])([0-9])/g, "$1 $2")
+    .replace(/([0-9])([A-Za-z])/g, "$1 $2");
 }
 
 function files(dir: string): string[] {
@@ -154,7 +174,8 @@ function mangledRL(text: string): Hit | null {
     const length = Number(m[1]);
     const at = m.index + m[0].length;
     const name = text.slice(at, at + length);
-    if (length >= 4 && name.length === length && /^(?:[A-Za-z_][A-Za-z0-9_]*[a-z]RL|RL[A-Z][a-z][A-Za-z0-9_]*)$/.test(name)) return { source: text, index: at, length };
+    if (length >= 4 && name.length === length && /^(?:[A-Za-z_][A-Za-z0-9_]*[a-z]RL|RL[A-Z][a-z][A-Za-z0-9_]*)$/.test(name))
+      return { source: text, index: at, length };
   }
   return null;
 }
@@ -219,24 +240,73 @@ describe("what ships names no game (RV-388)", () => {
   it("the gaps RX16 found are closed (RV-423), a minifier's names and other abbreviations aside (RV-424)", () => {
     for (const mode of ["Rumble", "Gridiron", "Knockout", "Spike Rush", "spikeRush", "SPIKE_RUSH"]) expect(found(mode), mode).not.toBeNull();
     for (const all of ["OCTANEBODY", "octanebody", "CARCONFIGDOMINUS"]) expect(found(all), all).not.toBeNull();
-    for (const short of ["window.rlUI = x", "window.rl = x", "env.RL_MODE", "rl_mode", 'class="rl-hud"', ".rl-hud{color:red}", '"RL_ARENA"', "RLOF\0\0", "// RL PATCH: x", "RL physics", '"RLStats"', "rlserver", "N9RocketSim11btVehicleRLE", "btWheelInfoRL&"]) {
+    for (const short of [
+      "window.rlUI = x",
+      "window.rl = x",
+      "env.RL_MODE",
+      "rl_mode",
+      'class="rl-hud"',
+      ".rl-hud{color:red}",
+      '"RL_ARENA"',
+      "RLOF\0\0",
+      "// RL PATCH: x",
+      "RL physics",
+      '"RLStats"',
+      "rlserver",
+      "N9RocketSim11btVehicleRLE",
+      "btWheelInfoRL&",
+    ]) {
       expect(found(short), short).not.toBeNull();
     }
     expect(found("hoops.txt")).not.toBeNull();
-    for (const fine of ["var rl=[1];for(let e of rl){}", "return rl.some(t=>t)", "rlA=1", "x.rlx", "RLIMIT_NOFILE", "RLEDecoder", "url,curl", "/rlAb", "TEXTURL_A", "CertificateURL", "CRLShutdown", "N9RocketSim16btVehicleCarballE"]) {
+    for (const fine of [
+      "var rl=[1];for(let e of rl){}",
+      "return rl.some(t=>t)",
+      "rlA=1",
+      "x.rlx",
+      "RLIMIT_NOFILE",
+      "RLEDecoder",
+      "url,curl",
+      "/rlAb",
+      "TEXTURL_A",
+      "CertificateURL",
+      "CRLShutdown",
+      "N9RocketSim16btVehicleCarballE",
+    ]) {
       expect(found(fine), fine).toBeNull();
     }
   });
 
   it("RX17's gaps closed (RV-436), and no false alarms on encoded or random data, hashed names, RLE (RV-435)", () => {
-    for (const text of ["CarRL", "RLengine", "RLENGINE", "rl.clone", "xRLOF", "breakoutCar", "isPlankLike", "rumbleMode"]) expect(found(text), text).not.toBeNull();
+    for (const text of ["CarRL", "RLengine", "RLENGINE", "rl.clone", "xRLOF", "breakoutCar", "isPlankLike", "rumbleMode"])
+      expect(found(text), text).not.toBeNull();
     for (const bin of ["ARLOF", "N9RocketSim11btVehicleRLE", "N9RocketSim10CarModelRLE", "breakoutCar"]) expect(found(bin, true), bin).not.toBeNull();
     // (RV-533: the bot projects' names in ids and versions, any case; an abbreviation-first type in a lambda's mangled name)
-    for (const both of ['"version": "rlbotpack-2022-05', '"schedule":"rlgym-compat-v1"', "RLGym", "rlgymcompat", "myrlbotpack", "ZL12SetCallbacksP7RLArenaE3$_0"]) {
+    for (const both of [
+      '"version": "rlbotpack-2022-05',
+      '"schedule":"rlgym-compat-v1"',
+      "RLGym",
+      "rlgymcompat",
+      "myrlbotpack",
+      "ZL12SetCallbacksP7RLArenaE3$_0",
+    ]) {
       expect(found(both), both).not.toBeNull();
       expect(found(both, true), both).not.toBeNull();
     }
-    for (const fine of ["decodeRLE", "encodeRLE", "readRLE", "tgaRLE", "RLE_8", "gokRLL", "for(let e of rl){}", "toURL", "CRL", "10RLEDecoder", "ZL12SetCallbacksP12CarballArenaE3$_0", "x12RLArena"]) {
+    for (const fine of [
+      "decodeRLE",
+      "encodeRLE",
+      "readRLE",
+      "tgaRLE",
+      "RLE_8",
+      "gokRLL",
+      "for(let e of rl){}",
+      "toURL",
+      "CRL",
+      "10RLEDecoder",
+      "ZL12SetCallbacksP12CarballArenaE3$_0",
+      "x12RLArena",
+    ]) {
       expect(found(fine), fine).toBeNull();
       expect(found(fine, true), fine).toBeNull();
     }
@@ -249,7 +319,11 @@ describe("what ships names no game (RV-388)", () => {
     expect(found(withoutHashes('import("./three-Rl_kQ2FM.js")', viteHashes(["assets/three-Rl_kQ2FM.js", "assets/three-rlengine.js"])))).toBeNull();
     expect(viteHashes(["assets/carball-rlengine.js"]), "a lowercase word isn't a hash").toEqual([]);
     // (seeded random data: 4 MB of bytes read as a binary, 1 MB of base64 as one run and as 76-character lines)
-    const runs = (randomBytes(4_000_000, 20261015).toString("latin1").match(/[\x20-\x7e]{4,}/g) ?? []).join("\n");
+    const runs = (
+      randomBytes(4_000_000, 20261015)
+        .toString("latin1")
+        .match(/[\x20-\x7e]{4,}/g) ?? []
+    ).join("\n");
     expect(found(runs, true), "random bytes").toBeNull();
     const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     const base64 = Array.from(randomBytes(1_000_000, 7), (b) => alphabet[b & 63]).join("");
@@ -287,7 +361,10 @@ describe("what ships names no game (RV-388)", () => {
     expect(hashes.length).toBeGreaterThan(5);
     const texts = built.map((path) => [posix(relative(DIST, path)), shipped(path)] as const);
     // (the old keys' prefix once, in the migration's code)
-    expect(texts.flatMap(([, { text }]) => text.match(OLD_KEYS) ?? []), "the old keys' prefix").toHaveLength(1);
+    expect(
+      texts.flatMap(([, { text }]) => text.match(OLD_KEYS) ?? []),
+      "the old keys' prefix",
+    ).toHaveLength(1);
     for (const [name, { text, binary }] of texts) {
       expect(found(withoutHashes(name, hashes)), "file name").toBeNull();
       expect(found(withoutHashes(text.replace(OLD_KEYS, '""'), hashes), binary), name).toBeNull();

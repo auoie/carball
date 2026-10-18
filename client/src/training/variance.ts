@@ -53,7 +53,11 @@ export function applyVariance(shot: Shot, v: Variance): Shot {
     ...shot,
     ball: {
       ...shot.ball,
-      location: vec3(capped(b.x, v.ball.x, HALF_X - BALL_RADIUS), capped(b.y, v.ball.y, HALF_Y - BALL_RADIUS), Math.max(BALL_RADIUS, Math.min(Math.max(top, b.z), b.z + v.ball.z))),
+      location: vec3(
+        capped(b.x, v.ball.x, HALF_X - BALL_RADIUS),
+        capped(b.y, v.ball.y, HALF_Y - BALL_RADIUS),
+        Math.max(BALL_RADIUS, Math.min(Math.max(top, b.z), b.z + v.ball.z)),
+      ),
       speed: Math.max(0, Math.min(PACK_LIMITS.ballSpeed, shot.ball.speed * v.speed)),
     },
     car: {

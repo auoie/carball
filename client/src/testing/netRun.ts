@@ -58,7 +58,15 @@ export interface NetRunResult {
   /** The client's smoothed round trip at the end (ms) */
   readonly ping: number | null;
   /** The server's input buffer: its target at the end, and per tick of the measured span */
-  readonly buffer: { readonly target: number; readonly under: number; readonly over: number; readonly repeated: number; readonly zeroed: number; readonly neverConsumed: number; readonly ticks: number };
+  readonly buffer: {
+    readonly target: number;
+    readonly under: number;
+    readonly over: number;
+    readonly repeated: number;
+    readonly zeroed: number;
+    readonly neverConsumed: number;
+    readonly ticks: number;
+  };
   /** Downstream, what the client received a second (KB, the update datagrams) */
   readonly downKBps: number;
   /** The server's input buffer target each second (from the start) and the resets it got */
@@ -163,7 +171,10 @@ class Schedule {
       }
       this.#spawns.set(id, spawns);
     }
-    const padState = world.boostPads().map((p) => (p.active ? "1" : "0")).join("");
+    const padState = world
+      .boostPads()
+      .map((p) => (p.active ? "1" : "0"))
+      .join("");
     const pads = padState !== this.#pads || t >= this.#padsNext;
     if (pads) {
       this.#pads = padState;
@@ -231,7 +242,13 @@ export function netRun(engine: Engine, options: NetRunOptions): NetRunResult {
   let explodedAt = -1;
   const warmUp = options.warmUp ?? 3;
   let downBytes = 0;
-  let measuredFrom: { readonly under: number; readonly over: number; readonly repeated: number; readonly zeroed: number; readonly neverConsumed: number } | null = null;
+  let measuredFrom: {
+    readonly under: number;
+    readonly over: number;
+    readonly repeated: number;
+    readonly zeroed: number;
+    readonly neverConsumed: number;
+  } | null = null;
   let measuredTicks = 0;
   let mispredictionsFrom = 0;
   let correctionsFrom = 0;

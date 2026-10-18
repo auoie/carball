@@ -38,7 +38,19 @@ const TEXTS: readonly (readonly string[])[] = [
     "Oops, wrong quick chat!",
     "Rotating!",
   ],
-  ["Nice shot!", "Great pass!", "Thanks!", "What a save!", "Nice one!", "What a play!", "Great clear!", "Nice block!", "Nice bump!", "Nice demo!", "We got this."],
+  [
+    "Nice shot!",
+    "Great pass!",
+    "Thanks!",
+    "What a save!",
+    "Nice one!",
+    "What a play!",
+    "Great clear!",
+    "Nice block!",
+    "Nice bump!",
+    "Nice demo!",
+    "We got this.",
+  ],
   [
     "OMG!",
     "Noooo!",
@@ -65,7 +77,9 @@ const TEXTS: readonly (readonly string[])[] = [
 ];
 
 /** The 76 presets (CHAT-1), in the table's order: a preset's index there is its number on our wire */
-export const CHAT_PRESETS: readonly ChatPreset[] = TEXTS.flatMap((texts, g) => texts.map((text, m) => ({ key: `Group${String(g + 1)}Message${String(m + 1)}`, group: g + 1, text })));
+export const CHAT_PRESETS: readonly ChatPreset[] = TEXTS.flatMap((texts, g) =>
+  texts.map((text, m) => ({ key: `Group${String(g + 1)}Message${String(m + 1)}`, group: g + 1, text })),
+);
 
 /** A preset's index by its key (undefined for none) */
 export function presetIndex(key: string): number | undefined {
@@ -104,7 +118,8 @@ export interface ChatGroup {
  *  team flag is the slot's group's, not the message's */
 export function visibleGroups(slots: readonly string[], context: ChatContext): ChatGroup[] {
   return [0, 1, 2, 3].map((g) => {
-    const override = g === 0 && context !== "match" ? (context === "ended" ? { label: GROUP_LABELS[4], offset: 16 } : { label: GROUP_LABELS[5], offset: 20 }) : null;
+    const override =
+      g === 0 && context !== "match" ? (context === "ended" ? { label: GROUP_LABELS[4], offset: 16 } : { label: GROUP_LABELS[5], offset: 20 }) : null;
     const offset = override?.offset ?? 4 * g;
     return {
       label: override?.label ?? GROUP_LABELS[g] ?? "",
@@ -119,7 +134,8 @@ export function visibleGroups(slots: readonly string[], context: ChatContext): C
 export const QUICK_CHAT_TIMING = { fadeIn: 0.25, window: 1.5, fadeTimeout: 0.2, fadePicked: 0.8 } as const;
 
 /** What a press did */
-export type QuickChatPress = { readonly kind: "open"; readonly group: number } | { readonly kind: "send"; readonly key: string; readonly team: boolean } | { readonly kind: "none" };
+export type QuickChatPress =
+  { readonly kind: "open"; readonly group: number } | { readonly kind: "send"; readonly key: string; readonly team: boolean } | { readonly kind: "none" };
 
 /** The two-press menu (CHAT-7, 8): the first press opens category i, the second (the same four keys) sends message i
  *  of it; the menu closes 1.75 s after the first press untouched. Real time (seconds); `available` gates both presses
@@ -212,7 +228,14 @@ export function chatTimestamp(seconds: number, overtime: boolean, ended: boolean
  *  font colour (0-255) */
 export function chatNameColour(c: readonly [number, number, number]): string {
   const add = [0x55, 0x22, 0x55];
-  return `#${c.map((v, k) => Math.min(255, Math.min(255, 2 * v) + (add[k] ?? 0)).toString(16).padStart(2, "0")).join("").toUpperCase()}`;
+  return `#${c
+    .map((v, k) =>
+      Math.min(255, Math.min(255, 2 * v) + (add[k] ?? 0))
+        .toString(16)
+        .padStart(2, "0"),
+    )
+    .join("")
+    .toUpperCase()}`;
 }
 
 /** The teams' font colours (HUD-1: blue #002DBF, orange #B23D00), which chatNameColour lightens to #557CFF / #FF9C55 */

@@ -246,7 +246,12 @@ export class TokenPadsView implements PadsView {
   constructor(pads: readonly BoostPadState[]) {
     const count = (big: boolean): number => Math.max(1, pads.filter((p) => p.big === big).length);
     const fog = (): Record<string, { value: unknown }> => UniformsUtils.clone(UniformsLib.fog);
-    const colours = { glow: { value: TOKEN_COLOURS.glow }, rim: { value: TOKEN_COLOURS.rim }, dark: { value: TOKEN_COLOURS.dark }, keyLight: { value: KEY_LIGHT } };
+    const colours = {
+      glow: { value: TOKEN_COLOURS.glow },
+      rim: { value: TOKEN_COLOURS.rim },
+      dark: { value: TOKEN_COLOURS.dark },
+      keyLight: { value: KEY_LIGHT },
+    };
     const base = (shape: typeof TOKENS.puck | typeof TOKENS.pedestal, pedestal: boolean, n: number): InstancedMesh =>
       new InstancedMesh(
         roundBase(shape.radius, shape.height, shape.bevel, shape.segments),
@@ -263,18 +268,40 @@ export class TokenPadsView implements PadsView {
     this.#pedestals = base(TOKENS.pedestal, true, count(true));
     this.#balls = new InstancedMesh(
       new IcosahedronGeometry(1, 1),
-      new ShaderMaterial({ vertexShader: ballVertex, fragmentShader: ballFragment, uniforms: { ...fog(), ...colours }, transparent: true, depthWrite: false, blending: AdditiveBlending, fog: true }),
+      new ShaderMaterial({
+        vertexShader: ballVertex,
+        fragmentShader: ballFragment,
+        uniforms: { ...fog(), ...colours },
+        transparent: true,
+        depthWrite: false,
+        blending: AdditiveBlending,
+        fog: true,
+      }),
       count(true),
     );
     this.#halos = new InstancedMesh(
       new PlaneGeometry(2, 2),
-      new ShaderMaterial({ vertexShader: haloVertex, fragmentShader: haloFragment, uniforms: { glow: { value: TOKEN_COLOURS.glow } }, transparent: true, depthWrite: false, blending: AdditiveBlending }),
+      new ShaderMaterial({
+        vertexShader: haloVertex,
+        fragmentShader: haloFragment,
+        uniforms: { glow: { value: TOKEN_COLOURS.glow } },
+        transparent: true,
+        depthWrite: false,
+        blending: AdditiveBlending,
+      }),
       count(true),
     );
     for (const mesh of [this.#pucks, this.#pedestals, this.#balls, this.#halos]) mesh.frustumCulled = false;
     this.#halos.renderOrder = 3;
     const slots = { big: 0, small: 0 };
-    this.#slots = pads.map((pad) => ({ big: pad.big, slot: pad.big ? slots.big++ : slots.small++, at: new Vector3(pad.pos.x, 0, pad.pos.y), active: null, since: 0, cooldown: 0 }));
+    this.#slots = pads.map((pad) => ({
+      big: pad.big,
+      slot: pad.big ? slots.big++ : slots.small++,
+      at: new Vector3(pad.pos.x, 0, pad.pos.y),
+      active: null,
+      since: 0,
+      cooldown: 0,
+    }));
     for (const s of this.#slots) {
       const mesh = s.big ? this.#pedestals : this.#pucks;
       mesh.setMatrixAt(s.slot, this.#m.makeTranslation(s.at.x, 0, s.at.z));
@@ -314,7 +341,11 @@ export class TokenPadsView implements PadsView {
 
   /** A big pad's ball: popped back in on a return, swollen and faded out on a pickup with its halo bursting, else gone */
   #ball(s: PadSlot, active: boolean, age: number): void {
-    const pop = active ? { scale: age < TOKENS.pop.in ? popIn(age / TOKENS.pop.in) : 1, fade: 1 } : age < TOKENS.pop.out ? popOut(age / TOKENS.pop.out) : { scale: 0, fade: 0 };
+    const pop = active
+      ? { scale: age < TOKENS.pop.in ? popIn(age / TOKENS.pop.in) : 1, fade: 1 }
+      : age < TOKENS.pop.out
+        ? popOut(age / TOKENS.pop.out)
+        : { scale: 0, fade: 0 };
     const r = TOKENS.ball.radius * Math.max(0, pop.scale);
     this.#balls.setMatrixAt(s.slot, r > 0 && pop.fade > 0 ? this.#m.makeScale(r, r, r).setPosition(s.at.x, TOKENS.ball.z, s.at.z) : HIDDEN);
     this.#balls.setColorAt(s.slot, this.#c.setRGB(pop.fade, 0, 0));

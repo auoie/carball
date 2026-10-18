@@ -335,7 +335,10 @@ describe("free look (notes/camera-respawn-goal.md CAM-10..15)", () => {
 
 describe("review fixes (RV-6..8, 11, 13)", () => {
   const SETTINGS = { smoothing: true, accelRate: 5.8, decelRate: 10.8, freeLookSpeed: 2.5 };
-  const look = (yaw: number): CameraControls => ({ ...CAR_CAM, freeLook: { axes: { pitch: 0, yaw, source: "stick" }, settings: SETTINGS, ballCamHold: false } });
+  const look = (yaw: number): CameraControls => ({
+    ...CAR_CAM,
+    freeLook: { axes: { pitch: 0, yaw, source: "stick" }, settings: SETTINGS, ballCamHold: false },
+  });
   const yawDeg = (v: Vec3) => (Math.atan2(v.y, v.x) * 180) / Math.PI;
   const ball = vec3(0, 3000, 93);
   const spot = (x: number, yaw: number) => ({ pos: vec3(x, -4608, 17), yaw });
@@ -407,7 +410,10 @@ describe("leaving the free-look ball cam (RV-19)", () => {
     const ball = vec3(0, 3000, 93);
     // (on a slope: the classic camera would roll a tenth of the car's roll)
     const s = Math.sin(Math.PI / 6);
-    const sloped = car({ rot: { forward: vec3(1, 0, 0), right: vec3(0, Math.cos(Math.PI / 6), -s), up: vec3(0, s, Math.cos(Math.PI / 6)) }, groundNormal: vec3(0, s, Math.cos(Math.PI / 6)) });
+    const sloped = car({
+      rot: { forward: vec3(1, 0, 0), right: vec3(0, Math.cos(Math.PI / 6), -s), up: vec3(0, s, Math.cos(Math.PI / 6)) },
+      groundNormal: vec3(0, s, Math.cos(Math.PI / 6)),
+    });
     const camera = new PlayerCamera();
     settle(camera, sloped, ball, look, 1);
     const inBallCam = settle(camera, sloped, ball, { ...look, ballCam: true }, 1);
@@ -416,7 +422,11 @@ describe("leaving the free-look ball cam (RV-19)", () => {
     expect(yaw(back.forward)).toBeCloseTo(yaw(inBallCam.forward), 0);
     expect(Math.abs(yaw(back.forward) - yaw(inBallCam.forward))).toBeLessThan(0.5);
     // No roll: the view's up stays in the vertical plane through its forward
-    const right = { x: back.forward.y * back.up.z - back.forward.z * back.up.y, y: back.forward.z * back.up.x - back.forward.x * back.up.z, z: back.forward.x * back.up.y - back.forward.y * back.up.x };
+    const right = {
+      x: back.forward.y * back.up.z - back.forward.z * back.up.y,
+      y: back.forward.z * back.up.x - back.forward.x * back.up.z,
+      z: back.forward.x * back.up.y - back.forward.y * back.up.x,
+    };
     expect(Math.abs(right.z)).toBeLessThan(1e-6);
   });
 });
@@ -424,7 +434,10 @@ describe("leaving the free-look ball cam (RV-19)", () => {
 describe("back from the free-look ball cam with the look held (RV-27, RV-54)", () => {
   it("the car cam takes the look at once, its rate built up from 0 again (the car cam's end reset it): ~8700 units", () => {
     const SETTINGS = { smoothing: true, accelRate: 5.8, decelRate: 10.8, freeLookSpeed: 2.5 };
-    const look = (yaw: number): CameraControls => ({ ...CAR_CAM, freeLook: { axes: { pitch: 0, yaw, source: "stick" }, settings: SETTINGS, ballCamHold: false } });
+    const look = (yaw: number): CameraControls => ({
+      ...CAR_CAM,
+      freeLook: { axes: { pitch: 0, yaw, source: "stick" }, settings: SETTINGS, ballCamHold: false },
+    });
     const ball = vec3(0, 3000, 93);
     const yaw = (v: Vec3) => Math.atan2(v.y, v.x) * (32768 / Math.PI);
     const turnedAfter = (lookBefore: number): number => {

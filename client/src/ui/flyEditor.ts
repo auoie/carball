@@ -161,7 +161,12 @@ export const tagLabel = (tag: string): string => tag.replace(/([a-z])([A-Z])/g, 
 
 /** The move and look from what's held (TE1 §2.1): W/S/A/D or the left stick, Space and Left Ctrl or the triggers; the
  *  look the mouse's motion (px) or the right stick over `dt` s (radians: yaw to the right, pitch up) */
-export function readMove(held: (code: string) => boolean, pad: { readonly axes: readonly number[]; readonly buttons: readonly number[] } | null, mouse: { readonly x: number; readonly y: number }, dt: number): { readonly move: Move; readonly yaw: number; readonly pitch: number } {
+export function readMove(
+  held: (code: string) => boolean,
+  pad: { readonly axes: readonly number[]; readonly buttons: readonly number[] } | null,
+  mouse: { readonly x: number; readonly y: number },
+  dt: number,
+): { readonly move: Move; readonly yaw: number; readonly pitch: number } {
   const key = (code: string): number => (held(code) ? 1 : 0);
   const stick = (i: number): number => {
     const v = pad?.axes[i] ?? 0;
@@ -469,7 +474,8 @@ export class FlyEditor {
       this.#pitchLocked = true;
       this.#change(resetPitch(this.#shot()));
     }
-    if ((released.has("KeyR") || padReleased(PAD.x)) && this.#pitchKey.release(now) === "tap" && this.#selection === "car") this.#pitchLocked = !this.#pitchLocked;
+    if ((released.has("KeyR") || padReleased(PAD.x)) && this.#pitchKey.release(now) === "tap" && this.#selection === "car")
+      this.#pitchLocked = !this.#pitchLocked;
     // (the speed: a step a wheel notch; the bumpers a step at once, then repeating)
     const bumper = (pad?.buttons[PAD.rb] ?? 0) > 0.5 ? 1 : (pad?.buttons[PAD.lb] ?? 0) > 0.5 ? -1 : 0;
     const steps = wheel + this.#repeat.set(bumper) + this.#repeat.tick(dt);
@@ -809,8 +815,16 @@ export class FlyEditor {
     };
     // (Striker and Goalie, the game's; a pack's Aerial kept as it is)
     const types: TrainingType[] = pack.type === "aerial" ? ["striker", "goalie", "aerial"] : ["striker", "goalie"];
-    const type = select<TrainingType>("Type", types.map((t) => [t, FLY_TEXT.types[t]] as const), pack.type);
-    const difficulty = select<Difficulty>("Difficulty", (Object.keys(FLY_TEXT.difficulties) as Difficulty[]).map((d) => [d, FLY_TEXT.difficulties[d]] as const), pack.difficulty);
+    const type = select<TrainingType>(
+      "Type",
+      types.map((t) => [t, FLY_TEXT.types[t]] as const),
+      pack.type,
+    );
+    const difficulty = select<Difficulty>(
+      "Difficulty",
+      (Object.keys(FLY_TEXT.difficulties) as Difficulty[]).map((d) => [d, FLY_TEXT.difficulties[d]] as const),
+      pack.difficulty,
+    );
     const tagsButton = document.createElement("button");
     tagsButton.className = "fly-settings-tags-button";
     const tagList = document.createElement("div");
@@ -879,7 +893,8 @@ export class FlyEditor {
       if (this.#view === "list" && e.code === "Tab" && e.target instanceof HTMLElement && this.#root.contains(e.target)) return;
       // (Tab the editor's Test Shot, not the focus's; Space and the arrows its, not a button's or the page's; with Ctrl down
       // (Move Down) no browser shortcut but those a page can't stop (Ctrl+W): Ctrl+R's reload among them, RX25)
-      if (e.code === "Tab" || (this.#view === "edit" && (e.ctrlKey || ["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.code)))) e.preventDefault();
+      if (e.code === "Tab" || (this.#view === "edit" && (e.ctrlKey || ["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.code))))
+        e.preventDefault();
       this.#usingPad = false;
       this.#keys.add(e.code);
       if (!e.repeat) this.#pressed.add(e.code);

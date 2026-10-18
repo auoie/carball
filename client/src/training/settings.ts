@@ -99,7 +99,9 @@ export function storedProgress(id: string, storage: Store | null = local()): Sho
   try {
     const old = OLD_KEY(id);
     const v: unknown = JSON.parse(storage?.getItem(KEY(id)) ?? (old === null ? null : storage?.getItem(old)) ?? "[]");
-    return Array.isArray(v) ? v.map((s) => (s === ShotStatus.Completed ? ShotStatus.Completed : s === ShotStatus.Attempted ? ShotStatus.Attempted : ShotStatus.NotAttempted)) : [];
+    return Array.isArray(v)
+      ? v.map((s) => (s === ShotStatus.Completed ? ShotStatus.Completed : s === ShotStatus.Attempted ? ShotStatus.Attempted : ShotStatus.NotAttempted))
+      : [];
   } catch {
     return [];
   }

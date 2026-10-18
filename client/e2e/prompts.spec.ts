@@ -14,7 +14,10 @@ async function tap(page: Page, buttons: number[], axes: number[]): Promise<void>
         new Promise((resolve) => {
           const step = (k: number): void => {
             if (k === 0) resolve();
-            else requestAnimationFrame(() => { step(k - 1); });
+            else
+              requestAnimationFrame(() => {
+                step(k - 1);
+              });
           };
           step(n);
         });
@@ -80,7 +83,10 @@ test("the ball-cam label holds its place whether its prompt shows the mouse, a p
   await expect(toggle.locator(".key-glyph.key-word")).toHaveText("B");
   const word = await boxes(page);
   // (the same boxes, to a hundredth of a pixel: the head and the hint's row)
-  for (const [name, other] of [["pad", pad], ["word", word]] as const) {
+  for (const [name, other] of [
+    ["pad", pad],
+    ["word", word],
+  ] as const) {
     for (const part of ["label", "dot", "hint"] as const) {
       for (const edge of ["left", "top", "bottom"] as const) {
         expect(Math.abs((other[part]?.[edge] ?? Number.NaN) - (mouse[part]?.[edge] ?? Number.NaN)), `${name}: ${part} ${edge}`).toBeLessThan(0.01);

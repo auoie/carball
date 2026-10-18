@@ -208,10 +208,16 @@ export class SearchView {
       easing: "cubic-bezier(0.215, 0.61, 0.355, 1)",
     });
     const from = status === "joining" ? 1.87 : 2.73;
-    this.#clip.animate([{ transform: `scale(${String(from)})`, filter: "brightness(3)" }, { transform: "scale(1)", filter: "brightness(1)" }], {
-      duration: 370,
-      easing: "cubic-bezier(0.215, 0.61, 0.355, 1)",
-    });
+    this.#clip.animate(
+      [
+        { transform: `scale(${String(from)})`, filter: "brightness(3)" },
+        { transform: "scale(1)", filter: "brightness(1)" },
+      ],
+      {
+        duration: 370,
+        easing: "cubic-bezier(0.215, 0.61, 0.355, 1)",
+      },
+    );
     this.#glow.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 370 });
   }
 }

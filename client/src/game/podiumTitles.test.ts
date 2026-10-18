@@ -35,7 +35,12 @@ describe("podium titles (notes/match-stats.md §5.4a)", () => {
   it("shows the secondary only with a primary", () => {
     expect(shownTitles([null, { title: 15, count: 1 }])).toEqual([]);
     expect(shownTitles([{ title: 16, count: 2 }, null]).map((x) => x.title)).toEqual(["GOALKEEPER"]);
-    expect(shownTitles([{ title: 16, count: 2 }, { title: 15, count: 1 }]).map((x) => x.line)).toEqual(["2 Saves", "1 Goal"]);
+    expect(
+      shownTitles([
+        { title: 16, count: 2 },
+        { title: 15, count: 1 },
+      ]).map((x) => x.line),
+    ).toEqual(["2 Saves", "1 Goal"]);
     expect(titleText({ title: 99, count: 1 })).toBeNull();
   });
 });

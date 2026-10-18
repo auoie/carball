@@ -97,7 +97,11 @@ describe("particle emitters", () => {
       for (let k = 0; k < 3; k++) expect(Math.abs((a[k] ?? 0) - (b[k] ?? 0))).toBeLessThan(eps);
     };
     close(particleColor(BOOST_TRAIL, BOOST_TRAIL.color, 0.5), [0.5, 0.5, 0.5], 1e-9);
-    close(particleColor(BOOST_TRAIL, BOOST_TRAIL.color, 0), BOOST_TRAIL.color.map((c) => 0.9951 * c + 0.0049 * 0.5), 1e-3);
+    close(
+      particleColor(BOOST_TRAIL, BOOST_TRAIL.color, 0),
+      BOOST_TRAIL.color.map((c) => 0.9951 * c + 0.0049 * 0.5),
+      1e-3,
+    );
     // (blue's smoke at 0.3 of its life: P1 0.102, P2 0.472 -> (0.246, 0.258, 0.272))
     close(particleColor(emitterSpec("smoke puffs"), [0.098, 0.451, 1], 0.3), [0.246, 0.258, 0.272], 0.01);
   });
@@ -295,4 +299,3 @@ describe("the particles' drawing (RV-503's PM5)", () => {
     expect(counts()).toEqual([0, 0]);
   });
 });
-

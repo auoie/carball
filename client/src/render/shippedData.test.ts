@@ -44,7 +44,8 @@ const modules = (): string[] => files(SRC, (n) => n.endsWith(".ts") && !n.endsWi
  *  store: RV-240), so a folder of ours named node_modules/three isn't it (RV-261) */
 function installedPackage(name: string, entry = name): string {
   let dir = dirname(createRequire(join(SRC, "../package.json")).resolve(entry));
-  const named = (d: string): boolean => existsSync(join(d, "package.json")) && (JSON.parse(readFileSync(join(d, "package.json"), "utf8")) as { name?: string }).name === name;
+  const named = (d: string): boolean =>
+    existsSync(join(d, "package.json")) && (JSON.parse(readFileSync(join(d, "package.json"), "utf8")) as { name?: string }).name === name;
   while (!named(dir)) {
     if (dirname(dir) === dir) throw new Error(`${name}'s package.json not found`);
     dir = dirname(dir);
@@ -213,8 +214,19 @@ interface Num {
 function numbers(text: string): Num[] {
   return [...text.matchAll(/(?<![A-Za-z_$\d.])-?(?:0[xX]([\da-fA-F_]+)|\d[\d_]*(\.[\d_]*)?|(\.\d[\d_]*))(?:[eE]([-+]?\d+))?/g)].map((m) => {
     // (a hex literal an integer: RV-183)
-    if (m[1] !== undefined) return { value: parseInt(m[1].replace(/_/g, ""), 16) * (m[0].startsWith("-") ? -1 : 1), decimals: 0, written: 0, integer: true, at: m.index, end: m.index + m[0].length };
-    const mantissa = m[0].replace(/_/g, "").replace(/^-/, "").replace(/[eE].*$/, "");
+    if (m[1] !== undefined)
+      return {
+        value: parseInt(m[1].replace(/_/g, ""), 16) * (m[0].startsWith("-") ? -1 : 1),
+        decimals: 0,
+        written: 0,
+        integer: true,
+        at: m.index,
+        end: m.index + m[0].length,
+      };
+    const mantissa = m[0]
+      .replace(/_/g, "")
+      .replace(/^-/, "")
+      .replace(/[eE].*$/, "");
     const point = mantissa.indexOf(".");
     const digits = mantissa.replace(".", "");
     const before = point < 0 ? digits.length : point;
@@ -238,7 +250,8 @@ function bundleBinaries(): { kind: Kind; base64: string; where: string }[] {
   for (const path of files(DIST, () => true)) {
     const k = kind(path);
     if (k === "cmf" || k === "wasm" || k === "unknown") out.push({ kind: k, base64: readFileSync(path).toString("base64"), where: path.slice(ROOT.length) });
-    else if (k === "onnx" || k === "glb") continue; // (the bots' policies, the cars' models: each checked on its own)
+    else if (k === "onnx" || k === "glb")
+      continue; // (the bots' policies, the cars' models: each checked on its own)
     else {
       for (const m of readFileSync(path, "utf8").matchAll(/data:application\/octet-stream;base64,([A-Za-z0-9+/=]+)/g)) {
         const base64 = m[1] ?? "";
@@ -250,7 +263,9 @@ function bundleBinaries(): { kind: Kind; base64: string; where: string }[] {
 }
 
 /** The arena's and its surroundings' modules, by name (a new one can't be left out: RV-229) */
-const FIELD_AND_GOAL = files(join(SRC, "render"), (n) => /^(greenhouse|gameSurfaces|wallFoot|goalSurface|arenaSurface|tokenPads)\.ts$/.test(n)).map((p) => p.slice(SRC.length));
+const FIELD_AND_GOAL = files(join(SRC, "render"), (n) => /^(greenhouse|gameSurfaces|wallFoot|goalSurface|arenaSurface|tokenPads)\.ts$/.test(n)).map((p) =>
+  p.slice(SRC.length),
+);
 
 describe("what ships carries no game data (RV-99)", () => {
   it("the arena's modules (the glasshouse, its wall foot, surfaces, materials and pads) hold rules, not traced shapes: each under a thousand numbers", () => {
@@ -264,8 +279,12 @@ describe("what ships carries no game data (RV-99)", () => {
   });
 
   it("the comment stripper keeps strings and shaders, the number reader every form (RV-114, RV-139, RV-140, RV-167a, c)", () => {
-    expect(stripComments('const u = "http://x"; // gone\nconst s = `// kept in a shader`;')).toBe('const u = "http://x";        \nconst s = `// kept in a shader`;');
-    expect(numbers("a(.6558, 6.558E-1, -12, 0.5, 1_234.5, 0.65580, 6.5580e-1, 6558e-4)").map((n) => n.value)).toEqual([0.6558, 0.6558, -12, 0.5, 1234.5, 0.6558, 0.6558, 0.6558]);
+    expect(stripComments('const u = "http://x"; // gone\nconst s = `// kept in a shader`;')).toBe(
+      'const u = "http://x";        \nconst s = `// kept in a shader`;',
+    );
+    expect(numbers("a(.6558, 6.558E-1, -12, 0.5, 1_234.5, 0.65580, 6.5580e-1, 6558e-4)").map((n) => n.value)).toEqual([
+      0.6558, 0.6558, -12, 0.5, 1234.5, 0.6558, 0.6558, 0.6558,
+    ]);
     expect(numbers("0.65580, 1_234.50, 2., 6.5580e-1, 6558e-4, 1200, 1e3").map((n) => n.decimals)).toEqual([4, 1, 0, 4, 4, 0, 0]);
     expect(numbers("0.65580, 1_234.50, 2., 6.5580e-1, 0.6500").map((n) => n.written)).toEqual([5, 2, 0, 5, 4]);
     expect(numbers("12, 1.0, 1e3").map((n) => n.integer)).toEqual([true, false, false]);
@@ -313,7 +332,10 @@ describe("what ships carries no game data (RV-99)", () => {
         const at = relative(dir, path).split("\\").join("/");
         expect(FONTS[at], `${at}: not a font we ship`).toBeDefined();
         expect(sha(path), at).toBe(FONTS[at]);
-        expect(LICENCES.some((name) => existsSync(join(dirname(path), name))), `${at}: its licence`).toBe(true);
+        expect(
+          LICENCES.some((name) => existsSync(join(dirname(path), name))),
+          `${at}: its licence`,
+        ).toBe(true);
       }
     }
     for (const at of Object.keys(FONTS)) expect(existsSync(join(PUBLIC, at)), at).toBe(true);
@@ -539,17 +561,62 @@ interface TextureForm {
 const TIE = 1.01;
 const TEXTURE_FORMS: readonly TextureForm[] = [
   // (0 to 1, 3 decimals or more, as stored or decoded)
-  { window: TEXTURE_WINDOW, value: (x) => (!x.integer && x.written >= 3 && x.value >= 0 && x.value <= 1 ? x.value : null), decimals: true, tolerance: 0, span: 0 },
+  {
+    window: TEXTURE_WINDOW,
+    value: (x) => (!x.integer && x.written >= 3 && x.value >= 0 && x.value <= 1 ? x.value : null),
+    decimals: true,
+    tolerance: 0,
+    span: 0,
+  },
   // (8-bit levels: four or more of them off black and white)
-  { window: TEXTURE_LEVELS_WINDOW, value: (x) => (x.integer && x.value >= 0 && x.value <= 255 ? x.value / 255 : null), decimals: false, tolerance: (TIE * 0.5) / 255, span: TEXTURE_LEVELS_SPAN, interior: 4 },
+  {
+    window: TEXTURE_LEVELS_WINDOW,
+    value: (x) => (x.integer && x.value >= 0 && x.value <= 255 ? x.value / 255 : null),
+    decimals: false,
+    tolerance: (TIE * 0.5) / 255,
+    span: TEXTURE_LEVELS_SPAN,
+    interior: 4,
+  },
   // (percent)
-  { window: 8, value: (x) => (x.integer && x.value >= 0 && x.value <= 100 ? x.value / 100 : null), decimals: false, tolerance: (TIE * 0.5) / 100, span: 0.25, interior: 3, wiggle: true },
+  {
+    window: 8,
+    value: (x) => (x.integer && x.value >= 0 && x.value <= 100 ? x.value / 100 : null),
+    decimals: false,
+    tolerance: (TIE * 0.5) / 100,
+    span: 0.25,
+    interior: 3,
+    wiggle: true,
+  },
   // (fractions to 2 decimals, percent's twin: RV-213)
-  { window: 8, value: (x) => (!x.integer && x.written === 2 && x.value >= 0 && x.value <= 1 ? x.value : null), decimals: false, tolerance: TIE * 0.005, span: 0.25, interior: 3, wiggle: true },
+  {
+    window: 8,
+    value: (x) => (!x.integer && x.written === 2 && x.value >= 0 && x.value <= 1 ? x.value : null),
+    decimals: false,
+    tolerance: TIE * 0.005,
+    span: 0.25,
+    interior: 3,
+    wiggle: true,
+  },
   // (the box's means unrounded, 0-255 with a decimal or two: the 8-bit levels' twin, RV-213)
-  { window: 8, value: (x) => (!x.integer && x.written >= 1 && x.written <= 2 && x.value >= 0 && x.value <= 255 ? x.value / 255 : null), decimals: false, tolerance: (TIE * 0.05) / 255, span: TEXTURE_LEVELS_SPAN, interior: 4, wiggle: true },
+  {
+    window: 8,
+    value: (x) => (!x.integer && x.written >= 1 && x.written <= 2 && x.value >= 0 && x.value <= 255 ? x.value / 255 : null),
+    decimals: false,
+    tolerance: (TIE * 0.05) / 255,
+    span: TEXTURE_LEVELS_SPAN,
+    interior: 4,
+    wiggle: true,
+  },
   // (4-bit levels: a longer run, a 16-level space being denser still)
-  { window: 12, value: (x) => (x.integer && x.value >= 0 && x.value <= 15 ? x.value / 15 : null), decimals: false, tolerance: (TIE * 0.5) / 15, span: 0.2, interior: 3, wiggle: true },
+  {
+    window: 12,
+    value: (x) => (x.integer && x.value >= 0 && x.value <= 15 ? x.value / 15 : null),
+    decimals: false,
+    tolerance: (TIE * 0.5) / 15,
+    span: 0.2,
+    interior: 3,
+    wiggle: true,
+  },
 ];
 
 /** Whether a window's values are spread: half of them distinct or more, none taking more than 40 % (a tiled row
@@ -562,7 +629,10 @@ function spread(w: readonly number[]): boolean {
 
 /** Whether a window turns (its steps change sign somewhere) and its values are spread */
 function wiggles(w: readonly number[]): boolean {
-  const steps = w.slice(1).map((x, j) => x - (w[j] ?? 0)).filter((d) => d !== 0);
+  const steps = w
+    .slice(1)
+    .map((x, j) => x - (w[j] ?? 0))
+    .filter((d) => d !== 0);
   const turns = steps.some((d, j) => j > 0 && Math.sign(d) !== Math.sign(steps[j - 1] ?? 0));
   return turns && spread(w);
 }
@@ -626,8 +696,11 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
   // (where the game's meshes are, the rest of the local reference must be too: a guard that skips its own data is no
   // guard, RV-140)
   it("has its local reference (scripts/reference_vertices.py; the static session's SUR-1 exports)", () => {
-    const needed = ["vertices.f32", "uvs.f32", "rz.f32", "az.f32", "columns.f32", "index.json", "textures.f32", "texture_controls.json"].map((n) => join(REFERENCE, n));
-    for (const path of [...needed, join(SUR1, "outline_az.json"), join(SUR1, "surroundings_geometry.json"), PLAN]) expect(existsSync(path), path.slice(ROOT.length)).toBe(true);
+    const needed = ["vertices.f32", "uvs.f32", "rz.f32", "az.f32", "columns.f32", "index.json", "textures.f32", "texture_controls.json"].map((n) =>
+      join(REFERENCE, n),
+    );
+    for (const path of [...needed, join(SUR1, "outline_az.json"), join(SUR1, "surroundings_geometry.json"), PLAN])
+      expect(existsSync(path), path.slice(ROOT.length)).toBe(true);
   });
 
   // Every vertex as its axis pairs, both ways round, and as itself; every UV, as a pair and its components
@@ -782,17 +855,35 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
     };
     const pairAt = once((i) => i + 1 < n.length && traced(value(i), value(i + 1)) && coords.near(value(i), value(i + 1), 0.6));
     const pairSmall = (i: number): boolean => small(integers(i, 2), value(i), value(i + 1));
-    report("coordinate pairs", longestRun(text, n, (i) => pairAt(i) && !pairSmall(i)), 3);
-    report("small integer coordinate pairs", longestRun(text, n, (i) => pairAt(i) && pairSmall(i)), SMALL_RUN);
+    report(
+      "coordinate pairs",
+      longestRun(text, n, (i) => pairAt(i) && !pairSmall(i)),
+      3,
+    );
+    report(
+      "small integer coordinate pairs",
+      longestRun(text, n, (i) => pairAt(i) && pairSmall(i)),
+      SMALL_RUN,
+    );
     const tripleAt = once((i) => i + 2 < n.length && traced(value(i), value(i + 1), value(i + 2)) && points.near(value(i), value(i + 1), value(i + 2), 0.6));
     const tripleSmall = (i: number): boolean => small(integers(i, 3), value(i), value(i + 1), value(i + 2));
-    report("(x, y, z) triples", longestRun(text, n, (i) => tripleAt(i) && !tripleSmall(i)), 3);
-    report("small integer (x, y, z) triples", longestRun(text, n, (i) => tripleAt(i) && tripleSmall(i)), SMALL_RUN);
+    report(
+      "(x, y, z) triples",
+      longestRun(text, n, (i) => tripleAt(i) && !tripleSmall(i)),
+      3,
+    );
+    report(
+      "small integer (x, y, z) triples",
+      longestRun(text, n, (i) => tripleAt(i) && tripleSmall(i)),
+      SMALL_RUN,
+    );
     // (UV pairs written to 3 decimals or more, each within half its last decimal (RV-139), u and v apart, signed as the
     // meshes' (RV-167b): a run of the same pair is one point)
     const uvPair = once((i) => {
       const t = tolerance(n[i], n[i + 1]);
-      return large(n[i], 3) && large(n[i + 1], 3) && Math.abs(signed(i) - signed(i + 1)) > 2 * t && uvPairs.near(signed(i) * 10000, signed(i + 1) * 10000, 10000 * t);
+      return (
+        large(n[i], 3) && large(n[i + 1], 3) && Math.abs(signed(i) - signed(i + 1)) > 2 * t && uvPairs.near(signed(i) * 10000, signed(i + 1) * 10000, 10000 * t)
+      );
     });
     report("UV pairs", longestRun(text, n, uvPair, { key: (i) => `${String(signed(i))},${String(signed(i + 1))}` }), 3);
     // (each within half its last written decimal of a UV component: the old goal-side glass chart's V row, RV-99; in a
@@ -836,19 +927,20 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
       }
       return true;
     };
-    const textureRow = (i: number, s: number): boolean => TEXTURE_FORMS.some((form) => {
-      // (a coarse form's rows written row by row, channels interleaved at most four: wider strides pick code's
-      // integers apart; and as a list, data: small integers run through code's expressions everywhere)
-      if (form.wiggle === true && s > 4) return false;
-      if (i + (form.window - 1) * s >= n.length) return false;
-      if (form.wiggle === true && !listed(i, i + (form.window - 1) * s)) return false;
-      const m = Array.from({ length: form.window }, (_, j) => n[i + j * s]);
-      const w = m.map((x) => (x ? form.value(x) : null));
-      if (w.some((x) => x === null)) return false;
-      // (levels touching black or white: as risky, so rows and four channels at most)
-      if (!form.decimals && s > 4 && (w as number[]).some((x) => x * 255 < 2 || x * 255 > 253)) return false;
-      return textureWindow(w as number[], form, form.decimals ? tolerance(...m) : form.tolerance, Math.min(...m.map((x) => x?.written ?? 0)));
-    });
+    const textureRow = (i: number, s: number): boolean =>
+      TEXTURE_FORMS.some((form) => {
+        // (a coarse form's rows written row by row, channels interleaved at most four: wider strides pick code's
+        // integers apart; and as a list, data: small integers run through code's expressions everywhere)
+        if (form.wiggle === true && s > 4) return false;
+        if (i + (form.window - 1) * s >= n.length) return false;
+        if (form.wiggle === true && !listed(i, i + (form.window - 1) * s)) return false;
+        const m = Array.from({ length: form.window }, (_, j) => n[i + j * s]);
+        const w = m.map((x) => (x ? form.value(x) : null));
+        if (w.some((x) => x === null)) return false;
+        // (levels touching black or white: as risky, so rows and four channels at most)
+        if (!form.decimals && s > 4 && (w as number[]).some((x) => x * 255 < 2 || x * 255 > 253)) return false;
+        return textureWindow(w as number[], form, form.decimals ? tolerance(...m) : form.tolerance, Math.min(...m.map((x) => x?.written ?? 0)));
+      });
     if (textureStreams.length > 0) {
       const run = longestRun(text, n, textureRow);
       report("texture rows", { ...run, at: `${run.at} [${textureMatch}]` }, 1);
@@ -912,14 +1004,18 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
     const negative = sparse.filter((q) => Math.min(q[0] ?? 0, q[1] ?? 0) <= -0.05 && Math.abs((q[0] ?? 0) - (q[1] ?? 0)) > 0.01).slice(0, 8);
     expect(negative.length).toBe(8);
     // (V values 0.1 to 1 in exponent form, their mantissa to 3 places: 4 decimal places in all, RV-167c)
-    const exponents = [...new Set(sparse.map((q) => (q[1] ?? 0).toFixed(4)))].map(Number).filter((x) => x >= 0.1 && x < 1).slice(0, 8);
+    const exponents = [...new Set(sparse.map((q) => (q[1] ?? 0).toFixed(4)))]
+      .map(Number)
+      .filter((x) => x >= 0.1 && x < 1)
+      .slice(0, 8);
     expect(exponents.length).toBe(8);
     const zeros = OBJS.flatMap((path) => obj(path.replace(/^.*\//, "").replace(/\.obj$/, "")).vt.map((q) => q[1] ?? 0))
       .filter((x) => Math.abs(x) >= 0.05 && x.toFixed(4).endsWith("0") && !x.toFixed(4).endsWith("00"))
       .slice(0, 8);
     expect(zeros.length).toBe(8);
     // (a vertex record of 9, 12 and 16 floats: its position, then the rest: RV-167d)
-    const record = (extra: number): string => `[${v.map((p) => `${xyz(p)}, ${Array.from({ length: extra }, (_, k) => (k % 3 === 2 ? "1" : "0")).join(", ")}`).join(", ")}]`;
+    const record = (extra: number): string =>
+      `[${v.map((p) => `${xyz(p)}, ${Array.from({ length: extra }, (_, k) => (k % 3 === 2 ? "1" : "0")).join(", ")}`).join(", ")}]`;
     // (a downsampled texture's row, the first 8 values of its streams varying by 0.1 and stepping by 0.005 or more:
     // RV-157)
     const textureRow = ((): number[] => {
@@ -928,7 +1024,8 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
         if (w.some(Number.isNaN)) continue;
         // (off black and white, each step two levels or more, turning: a plain picture's row, not a ramp)
         const turns = w.some((x, j) => j >= 2 && Math.abs((w[j - 2] ?? 0) - 2 * (w[j - 1] ?? 0) + x) >= 0.03);
-        if (turns && Math.max(...w) - Math.min(...w) >= 0.1 && w.every((x, j) => x > 0.01 && x < 0.99 && (j === 0 || Math.abs(x - (w[j - 1] ?? 0)) >= 0.008))) return w;
+        if (turns && Math.max(...w) - Math.min(...w) >= 0.1 && w.every((x, j) => x > 0.01 && x < 0.99 && (j === 0 || Math.abs(x - (w[j - 1] ?? 0)) >= 0.008)))
+          return w;
       }
       return [];
     })();
@@ -938,7 +1035,13 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
       ["vertices in records of 9", record(6)],
       ["vertices in records of 12", record(9)],
       ["vertices in records of 16", record(13)],
-      ["the vent's (x, y) pairs as integers", `[${vent.slice(0, 8).map(([x = 0, y = 0]) => `[${String(Math.round(x))}, ${String(Math.round(y))}]`).join(", ")}]`],
+      [
+        "the vent's (x, y) pairs as integers",
+        `[${vent
+          .slice(0, 8)
+          .map(([x = 0, y = 0]) => `[${String(Math.round(x))}, ${String(Math.round(y))}]`)
+          .join(", ")}]`,
+      ],
       ["UV pairs with a negative component", `[${negative.map(([a = 0, b = 0]) => `${a.toFixed(3)}, ${b.toFixed(3)}`).join(", ")}]`],
       ["UV values with a trailing zero", `[${zeros.map((x) => x.toFixed(4)).join(", ")}]`],
       ["UV values in exponent form", `[${exponents.map((x) => x.toExponential(3)).join(", ")}]`],
@@ -952,7 +1055,13 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
       ["vertices as {i, x, y, z}", v.map(([x = 0, y = 0, z = 0], i) => `{ i: ${String(i)}, x: ${f2(x)}, y: ${f2(y)}, z: ${f2(z)} }`).join(", ")],
       ["vertices rounded", `[${v.map((p) => p.map(Math.round).join(", ")).join(", ")}]`],
       ["vertices with separators", `[${v.map((p) => p.map((c) => f2(c).replace(/^(-?\d)(\d{3})/, "$1_$2")).join(", ")).join(", ")}]`],
-      ["the vent's (x, y) pairs", `[${vent.slice(0, 8).map(([x = 0, y = 0]) => `[${f2(x)}, ${f2(y)}]`).join(", ")}]`],
+      [
+        "the vent's (x, y) pairs",
+        `[${vent
+          .slice(0, 8)
+          .map(([x = 0, y = 0]) => `[${f2(x)}, ${f2(y)}]`)
+          .join(", ")}]`,
+      ],
       ["a UV row with leading dots", vt.map((_, k) => uvAt(k, 1).replace(/^0/, "")).join(", ")],
       ["UV pairs", `[${vt.map((_, k) => `${uvAt(k, 0)}, ${uvAt(k, 1)}`).join(", ")}]`],
       ["UV pairs to 3 decimals", `[${vt.map((_, k) => `${uvAt(k, 0, 3)}, ${uvAt(k, 1, 3)}`).join(", ")}]`],
@@ -964,7 +1073,10 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
     // RV-182, RV-183), each in the forms a row might be written in, and each found as a texture's (not by another check
     // by chance: a low-contrast row's 4 decimals meet the UVs)
     const textureControls: [string, string][] = [];
-    const picks = JSON.parse(readFileSync(join(REFERENCE, "texture_controls.json"), "utf8")) as Record<"logo" | "mask" | "lightmap" | "twelve" | "low" | "ties", number[] | null>;
+    const picks = JSON.parse(readFileSync(join(REFERENCE, "texture_controls.json"), "utf8")) as Record<
+      "logo" | "mask" | "lightmap" | "twelve" | "low" | "ties",
+      number[] | null
+    >;
     const { logo, mask, lightmap, twelve, low, ties } = picks;
     expect([logo, mask, lightmap, twelve, low, ties].every((row) => row !== null)).toBe(true);
     if (logo && mask && lightmap && twelve && low && ties) {
@@ -1013,10 +1125,17 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
       // (its V row from there, the first 8 that vary and carry 3 decimals or more at 4: a constant row is one number,
       // City_OOB_A's tiling halves and eighths none)
       const rowAt = (from: number): number[] => Array.from({ length: 8 }, (_, k) => referenceUv[2 * (from + k) + 1] ?? 0);
-      const plain = (x: number): boolean => Math.abs(x) < 0.05 || x.toFixed(4).replace(/0+$/, "").split(".")[1]?.length !== undefined && (x.toFixed(4).replace(/0+$/, "").split(".")[1]?.length ?? 0) < 3;
+      const plain = (x: number): boolean =>
+        Math.abs(x) < 0.05 ||
+        (x.toFixed(4).replace(/0+$/, "").split(".")[1]?.length !== undefined && (x.toFixed(4).replace(/0+$/, "").split(".")[1]?.length ?? 0) < 3);
       let from = s;
       while (from + 8 < u0 + un && rowAt(from).some((x, k, r) => plain(x) || (k > 0 && Math.abs(x - (r[k - 1] ?? 0)) < 0.01))) from++;
-      controls.push([`${name}'s UV row`, `[${rowAt(from).map((x) => x.toFixed(4)).join(", ")}]`]);
+      controls.push([
+        `${name}'s UV row`,
+        `[${rowAt(from)
+          .map((x) => x.toFixed(4))
+          .join(", ")}]`,
+      ]);
       const pairs = Array.from({ length: 8 }, (_, k) => `${(referenceUv[2 * (s + k)] ?? 0).toFixed(4)}, ${(referenceUv[2 * (s + k) + 1] ?? 0).toFixed(4)}`);
       controls.push([`${name}'s UV pairs`, `[${pairs.join(", ")}]`]);
     }
@@ -1026,7 +1145,10 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
       const top = outline[piece] ?? [];
       expect(top.length, piece).toBeGreaterThan(8);
       controls.push(
-        [`${piece}: a per-azimuth table`, top.map((row) => `[${String(row.az)}, ${String(row.r[0])}, ${String(row.r[2])}, ${String(row.z[0])}, ${String(row.z[2])}]`).join(", ")],
+        [
+          `${piece}: a per-azimuth table`,
+          top.map((row) => `[${String(row.az)}, ${String(row.r[0])}, ${String(row.r[2])}, ${String(row.z[0])}, ${String(row.z[2])}]`).join(", "),
+        ],
         [`${piece}: [az, r] pairs`, top.map((row) => `[${String(row.az)}, ${String(row.r[1])}]`).join(", ")],
         [`${piece}: its r50 column`, `[${top.map((row) => String(row.r[1])).join(", ")}]`],
         [`${piece}: its z99 column`, `[${top.map((row) => String(row.z[2])).join(", ")}]`],
@@ -1038,7 +1160,10 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
     };
     for (const [tier, t] of Object.entries(geometry.crowd_tiers)) {
       if (t.sections.length < 2) continue;
-      controls.push([`crowd tier ${tier}'s rows`, t.sections.map((s) => `[${s.r_first_row.toFixed(0)}, ${s.z_first_row.toFixed(0)}, ${s.r_last_row.toFixed(0)}, ${s.z_last_row.toFixed(0)}]`).join(", ")]);
+      controls.push([
+        `crowd tier ${tier}'s rows`,
+        t.sections.map((s) => `[${s.r_first_row.toFixed(0)}, ${s.z_first_row.toFixed(0)}, ${s.r_last_row.toFixed(0)}, ${s.z_last_row.toFixed(0)}]`).join(", "),
+      ]);
     }
     const missed = [
       ...controls.filter(([, text]) => findings(text).length === 0),
@@ -1060,10 +1185,18 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
     60000,
   );
 
-  it.each(shippedImports().filter((p) => kind(p) === "text").map((p) => p.slice(ROOT.length)))("%s (imported): no run of the game's vertices, UVs or traced points", (path) => {
-    const text = readFileSync(join(ROOT, path), "utf8");
-    check(path, text);
-  }, 60000);
+  it.each(
+    shippedImports()
+      .filter((p) => kind(p) === "text")
+      .map((p) => p.slice(ROOT.length)),
+  )(
+    "%s (imported): no run of the game's vertices, UVs or traced points",
+    (path) => {
+      const text = readFileSync(join(ROOT, path), "utf8");
+      check(path, text);
+    },
+    60000,
+  );
 
   it("our generated arena's collision meshes are none of the game's cooked ones (RV-167f)", () => {
     const game = new Set(files(ARENA_LOCAL, (n) => n.endsWith(".cmf")).map((p) => readFileSync(p).toString("base64")));
@@ -1081,9 +1214,12 @@ describe.skipIf(OBJS.length === 0)("against the game's meshes, the traced plan a
     expect(written.filter((p) => !(p in built))).toEqual([]);
     expect(library.size, "three.js's chunk").toBe(1);
   });
-  it.each(files(PUBLIC, (n) => kind(n) === "text").map((p) => p.slice(ROOT.length)))("%s (public/, shipped as it is): no run of the game's data (RV-225)", (path) => {
-    check(path, readFileSync(join(ROOT, path), "utf8"));
-  });
+  it.each(files(PUBLIC, (n) => kind(n) === "text").map((p) => p.slice(ROOT.length)))(
+    "%s (public/, shipped as it is): no run of the game's data (RV-225)",
+    (path) => {
+      check(path, readFileSync(join(ROOT, path), "utf8"));
+    },
+  );
   it.skipIf(bundle.length === 0)(
     "the built bundle (dist, as it ships: its shaders' comments too)",
     () => {
@@ -1151,7 +1287,14 @@ function decodePngBytes(b: Buffer): { width: number; height: number; rgba: Uint8
   const rgba = new Uint8Array(width * height * 4);
   for (let i = 0; i < width * height; i++) {
     const q = px.subarray(i * channels, i * channels + channels);
-    const [r, g, bl, al] = channels === 1 ? [q[0], q[0], q[0], 255] : channels === 2 ? [q[0], q[0], q[0], q[1]] : channels === 3 ? [q[0], q[1], q[2], 255] : [q[0], q[1], q[2], q[3]];
+    const [r, g, bl, al] =
+      channels === 1
+        ? [q[0], q[0], q[0], 255]
+        : channels === 2
+          ? [q[0], q[0], q[0], q[1]]
+          : channels === 3
+            ? [q[0], q[1], q[2], 255]
+            : [q[0], q[1], q[2], q[3]];
     rgba.set([r ?? 0, g ?? 0, bl ?? 0, al ?? 0], i * 4);
   }
   return { width, height, rgba };
@@ -1180,7 +1323,12 @@ function encodePng(width: number, height: number, rgba: Uint8Array): Buffer {
   ihdr.set([8, 6, 0, 0, 0], 8);
   const rows = Buffer.alloc(height * (width * 4 + 1));
   for (let y = 0; y < height; y++) rows.set(rgba.subarray(y * width * 4, (y + 1) * width * 4), y * (width * 4 + 1) + 1);
-  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ihdr), chunk("IDAT", deflateSync(rows)), chunk("IEND", Buffer.alloc(0))]);
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", ihdr),
+    chunk("IDAT", deflateSync(rows)),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
 }
 
 /** A window's key (exact values, as integers) */
@@ -1188,7 +1336,12 @@ const windowKey = (w: readonly number[]): string => w.join(",");
 
 /** An image's rows and columns (alpha, luminance; at 1, 1/2 and 1/4 its size, box means), every wiggling window of
  *  ROW_WINDOW as 8-bit levels and as thousandths, into the sets */
-function imageWindows(image: { width: number; height: number; rgba: Uint8Array }, levels: Set<string>, thousandths: Set<string> | null, scales = [1, 2, 4]): void {
+function imageWindows(
+  image: { width: number; height: number; rgba: Uint8Array },
+  levels: Set<string>,
+  thousandths: Set<string> | null,
+  scales = [1, 2, 4],
+): void {
   const { width, height, rgba } = image;
   for (const channel of ["alpha", "luma"] as const) {
     const at = (x: number, y: number): number => {
@@ -1303,7 +1456,11 @@ function refs(): HudRefs {
       rgb.set(rgba.subarray(i * 4, i * 4 + 3), i * 3);
       alpha[i] = rgba[i * 4 + 3] ?? 0;
     }
-    for (const [plane, size] of [[rgba, 4], [rgb, 3], [alpha, 1]] as const) {
+    for (const [plane, size] of [
+      [rgba, 4],
+      [rgb, 3],
+      [alpha, 1],
+    ] as const) {
       const stride = width * size;
       for (let y = 0; y < height; y++) {
         for (let x = 0; x + BYTE_WINDOW <= stride; x += size) {
@@ -1358,13 +1515,23 @@ function findHudText(text: string): string | null {
   for (let i = 0; i + MESH_RUN <= n.length; i++) {
     const w = n.slice(i, i + MESH_RUN);
     if (w.some((x) => x.written < 3) || w.every((x) => x.value === w[0]?.value)) continue;
-    if (runsAlong(w.map((x) => x.value), (k) => 0.5 * 10 ** -(w[k]?.written ?? 0) + 1e-6)) return `a run of the arrow mesh's arrays at ${text.slice(w[0]?.at ?? 0, (w[0]?.at ?? 0) + 80).replace(/\s+/g, " ")}`;
+    if (
+      runsAlong(
+        w.map((x) => x.value),
+        (k) => 0.5 * 10 ** -(w[k]?.written ?? 0) + 1e-6,
+      )
+    )
+      return `a run of the arrow mesh's arrays at ${text.slice(w[0]?.at ?? 0, (w[0]?.at ?? 0) + 80).replace(/\s+/g, " ")}`;
   }
   // (a bitmap's row: 8-bit levels, or thousandths written to 3 places)
   for (let i = 0; i + ROW_WINDOW <= n.length; i++) {
     const w = n.slice(i, i + ROW_WINDOW);
-    if (w.every((x) => x.integer && x.value >= 0 && x.value <= 255) && windows.levels.has(windowKey(w.map((x) => x.value)))) return `a boost meter bitmap's row (levels) at ${String(w[0]?.at)}`;
-    if (w.every((x) => !x.integer && x.written === 3 && x.value >= 0 && x.value <= 1) && windows.thousandths.has(windowKey(w.map((x) => Math.round(x.value * 1000))))) {
+    if (w.every((x) => x.integer && x.value >= 0 && x.value <= 255) && windows.levels.has(windowKey(w.map((x) => x.value))))
+      return `a boost meter bitmap's row (levels) at ${String(w[0]?.at)}`;
+    if (
+      w.every((x) => !x.integer && x.written === 3 && x.value >= 0 && x.value <= 1) &&
+      windows.thousandths.has(windowKey(w.map((x) => Math.round(x.value * 1000))))
+    ) {
       return `a boost meter bitmap's row (thousandths) at ${String(w[0]?.at)}`;
     }
   }
@@ -1397,7 +1564,8 @@ function findHudBytes(bytes: Uint8Array): string | null {
   }
   for (let at = 0; at + BYTE_WINDOW <= b.length; at++) {
     const ref = pixelWindows.get(windowHash(b, at, BYTE_WINDOW));
-    if (ref && Buffer.compare(b.subarray(at, at + BYTE_WINDOW), Buffer.from(ref.from.subarray(ref.at, ref.at + BYTE_WINDOW))) === 0) return `a boost meter bitmap's pixels at byte ${String(at)}`;
+    if (ref && Buffer.compare(b.subarray(at, at + BYTE_WINDOW), Buffer.from(ref.from.subarray(ref.at, ref.at + BYTE_WINDOW))) === 0)
+      return `a boost meter bitmap's pixels at byte ${String(at)}`;
   }
   // (float arrays: five of the profile's numbers among 16, a run of the mesh's arrays; each to its format's precision:
   // float32's against the references' 5 places, float16's 11 bits)
@@ -1429,8 +1597,24 @@ describe.skipIf(!existsSync(ARROW_MESH))("against the game's Ball Arrow mesh and
     const fmt = (v: number, places: number): string => v.toFixed(places);
     // (the profile as a table; the mesh's positions and UVs as arrays; as float32 and float16 bytes)
     expect(findHudText(`const PROFILE = [[-6.813, 0], [-6.733, 1.184], [-6.687, 1.88], [-6.25, 2.25]];`)).toMatch(/profile/);
-    expect(findHudText(`const P = [${mesh.positions.slice(200, 204).flat().map((v) => fmt(v, 3)).join(", ")}];`)).toMatch(/mesh/);
-    expect(findHudText(`const UV = [${mesh.uv0.slice(200, 206).flat().map((v) => fmt(v, 4)).join(", ")}];`)).toMatch(/mesh/);
+    expect(
+      findHudText(
+        `const P = [${mesh.positions
+          .slice(200, 204)
+          .flat()
+          .map((v) => fmt(v, 3))
+          .join(", ")}];`,
+      ),
+    ).toMatch(/mesh/);
+    expect(
+      findHudText(
+        `const UV = [${mesh.uv0
+          .slice(200, 206)
+          .flat()
+          .map((v) => fmt(v, 4))
+          .join(", ")}];`,
+      ),
+    ).toMatch(/mesh/);
     const f32 = Buffer.from(new Float32Array(mesh.positions.slice(200, 206).flat()).buffer);
     expect(findHudText(`const B = "${f32.toString("base64")}";`)).toMatch(/mesh/);
     expect(findHudText(`const B = "${Buffer.from(new Float32Array(ARROW_PROFILE).buffer).toString("hex")}";`)).toMatch(/profile/);
@@ -1443,7 +1627,8 @@ describe.skipIf(!existsSync(ARROW_MESH))("against the game's Ball Arrow mesh and
     const fill = images[1] ?? { width: 0, height: 0, rgba: new Uint8Array(0) };
     const row = (y: number, x0: number, x1: number): Uint8Array => fill.rgba.subarray((y * fill.width + x0) * 4, (y * fill.width + x1) * 4);
     // (a busy spot: its first pixels' bytes and its alpha varied, as a copy worth catching is)
-    const alphaAt = (y: number, x: number, n: number): Buffer => Buffer.from(Array.from({ length: n }, (_, i) => fill.rgba[(y * fill.width + x + i) * 4 + 3] ?? 0));
+    const alphaAt = (y: number, x: number, n: number): Buffer =>
+      Buffer.from(Array.from({ length: n }, (_, i) => fill.rgba[(y * fill.width + x + i) * 4 + 3] ?? 0));
     let spot: [number, number] | null = null;
     for (let y = 0; y < fill.height - 4 && !spot; y++) {
       for (let x = 1; x + 40 < fill.width && !spot; x++) {
@@ -1490,11 +1675,15 @@ describe.skipIf(!existsSync(ARROW_MESH))("against the game's Ball Arrow mesh and
     ...files(PUBLIC, (n) => kind(n) === "text").map((p) => ({ path: p, strip: false })),
     ...files(DIST, (n) => kind(n) === "text").map((p) => ({ path: p, strip: false })),
   ];
-  it.each(texts.map((t) => t.path.slice(ROOT.length)))("%s: none of the arrow's or the meter's data", (where) => {
-    const t = texts.find((x) => x.path.slice(ROOT.length) === where);
-    const text = t ? readFileSync(t.path, "utf8") : "";
-    expect(findHudText(t?.strip ? stripComments(text) : text)).toBeNull();
-  }, 60000);
+  it.each(texts.map((t) => t.path.slice(ROOT.length)))(
+    "%s: none of the arrow's or the meter's data",
+    (where) => {
+      const t = texts.find((x) => x.path.slice(ROOT.length) === where);
+      const text = t ? readFileSync(t.path, "utf8") : "";
+      expect(findHudText(t?.strip ? stripComments(text) : text)).toBeNull();
+    },
+    60000,
+  );
   // (onnxruntime's WebAssembly, the bots' policies' runtime: the library's own binary, told by the file it came from as
   // three.js's chunk by its modules; 14 MB of compiled code meeting the bitmap rule by chance. The bots' policies too:
   // their packages' own weights, held to them byte for byte above)

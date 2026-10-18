@@ -189,11 +189,7 @@ export class EndScreen {
   /** A queue match's end screen: Play Again (a new search) for Ready, "Leaving In" for "Next Match In" */
   readonly #queue: boolean;
 
-  constructor(
-    parent: HTMLElement,
-    actions: { readonly ready: () => void; readonly exit: () => void; readonly options: () => void },
-    queue = false,
-  ) {
+  constructor(parent: HTMLElement, actions: { readonly ready: () => void; readonly exit: () => void; readonly options: () => void }, queue = false) {
     this.#queue = queue;
     this.#stage = new Stage(parent, "end-screen");
     this.#accolades = div("end-accolades", this.#stage.root);

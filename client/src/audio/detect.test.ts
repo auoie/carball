@@ -17,13 +17,7 @@ beforeAll(async () => {
 
 /** Runs the world at 120 / `perFrame` frames a second (`perFrame` ticks each; 60 by default), with `controls(tick)` for
  *  its one car, collecting sounds. */
-function play(
-  world: World,
-  car: number | null,
-  ticks: number,
-  controls: (tick: number) => CarControls = () => NO_CONTROLS,
-  perFrame = 2,
-): SoundEvent[] {
+function play(world: World, car: number | null, ticks: number, controls: (tick: number) => CarControls = () => NO_CONTROLS, perFrame = 2): SoundEvent[] {
   const detector = new SoundDetector();
   const triggers = new ImpactTriggers();
   const configs = new Map(car === null ? [] : [[car, world.carConfig(car)]]);
@@ -125,7 +119,8 @@ describe("the car hitting the ground", () => {
 
   // (a pogo: the nose's impact, then the wheels touching down as they come, each wheel's edge a landing: IT-5, no
   // cooldown)
-  const pogo = (events: readonly SoundEvent[]): boolean => events[0]?.kind === "impact" && events.slice(1).every((e) => e.kind === "land") && events.length >= 2;
+  const pogo = (events: readonly SoundEvent[]): boolean =>
+    events[0]?.kind === "impact" && events.slice(1).every((e) => e.kind === "land") && events.length >= 2;
 
   it("nose first into the floor (as in a pogo): one impact, a firm one, then the wheels landing", () => {
     const events = drop(pitched(-1.05), 400, -900);

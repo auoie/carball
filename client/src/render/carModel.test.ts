@@ -44,7 +44,13 @@ function bounds(config: CarConfig, withWheels: boolean, car = 0): Box3 {
  *  one plane shade the same: nothing shows) */
 function coplanarOverlaps(model: Object3D, tolerance = 0.35): string[] {
   model.updateMatrixWorld(true);
-  interface Tri { readonly p: Vector3[]; readonly n: Vector3; readonly d: number; readonly mesh: string; readonly twoSided: boolean }
+  interface Tri {
+    readonly p: Vector3[];
+    readonly n: Vector3;
+    readonly d: number;
+    readonly mesh: string;
+    readonly twoSided: boolean;
+  }
   const tris: Tri[] = [];
   model.traverse((o) => {
     if (!(o instanceof Mesh)) return;
@@ -94,16 +100,20 @@ function coplanarOverlaps(model: Object3D, tolerance = 0.35): string[] {
   tris.forEach((a, i) => {
     const [nx, ny, nz] = q(a.n);
     for (const sign of a.twoSided ? [1, -1] : [1]) {
-      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
-        for (const j of byNormal.get(key(sign * nx + dx, sign * ny + dy, sign * nz + dz)) ?? []) {
-          const b = tris[j];
-          if (!b || j <= i || a.mesh === b.mesh || a.n.dot(b.n) * sign < 0.9999 || Math.abs(a.d - sign * b.d) > tolerance) continue;
-          if (overlap(a, b)) {
-            const at = a.p[0] ?? new Vector3();
-            found.add(`${a.mesh}/${b.mesh} ${Math.abs(a.d - sign * b.d).toFixed(2)} apart at (${at.x.toFixed(1)}, ${at.y.toFixed(1)}, ${at.z.toFixed(1)}) facing (${a.n.x.toFixed(2)}, ${a.n.y.toFixed(2)}, ${a.n.z.toFixed(2)})`);
+      for (let dx = -1; dx <= 1; dx++)
+        for (let dy = -1; dy <= 1; dy++)
+          for (let dz = -1; dz <= 1; dz++) {
+            for (const j of byNormal.get(key(sign * nx + dx, sign * ny + dy, sign * nz + dz)) ?? []) {
+              const b = tris[j];
+              if (!b || j <= i || a.mesh === b.mesh || a.n.dot(b.n) * sign < 0.9999 || Math.abs(a.d - sign * b.d) > tolerance) continue;
+              if (overlap(a, b)) {
+                const at = a.p[0] ?? new Vector3();
+                found.add(
+                  `${a.mesh}/${b.mesh} ${Math.abs(a.d - sign * b.d).toFixed(2)} apart at (${at.x.toFixed(1)}, ${at.y.toFixed(1)}, ${at.z.toFixed(1)}) facing (${a.n.x.toFixed(2)}, ${a.n.y.toFixed(2)}, ${a.n.z.toFixed(2)})`,
+                );
+              }
+            }
           }
-        }
-      }
     }
   });
   return [...found];

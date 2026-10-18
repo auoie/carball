@@ -40,7 +40,11 @@ describe("match stats on the HUD", () => {
 
   it("feeds everyone's primary awards with the names upper-cased, 'YOU' for the player, the victim's too", () => {
     expect(tickerRow({ event: 0, receiver: 2, victim: 0 }, roster, 1)).toEqual({ receiver: { text: "VENUS", team: 0 }, victim: null, icon: "goal" });
-    expect(tickerRow({ event: 23, receiver: 1, victim: 3 }, roster, 1)).toEqual({ receiver: { text: "YOU", team: 0 }, victim: { text: "MARS", team: 1 }, icon: "demolish" });
+    expect(tickerRow({ event: 23, receiver: 1, victim: 3 }, roster, 1)).toEqual({
+      receiver: { text: "YOU", team: 0 },
+      victim: { text: "MARS", team: 1 },
+      icon: "demolish",
+    });
     expect(tickerRow({ event: 15, receiver: 1, victim: 0 }, roster, 1, "all")).toBeNull(); // (Clear: no ticker)
     expect(tickerRow({ event: 21, receiver: 1, victim: 0 }, roster, 1)).toBeNull(); // (Bicycle Hit: at All only)
   });

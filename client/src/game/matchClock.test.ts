@@ -55,7 +55,12 @@ describe("the kickoff countdown's announcements (VT-24, RV-36)", () => {
       }
     };
     run(480);
-    expect(said).toEqual([[120, "3"], [240, "2"], [360, "1"], [480, "Go!"]]);
+    expect(said).toEqual([
+      [120, "3"],
+      [240, "2"],
+      [360, "1"],
+      [480, "Go!"],
+    ]);
     said.length = 0;
     run(480);
     expect(said[0]).toEqual([120, "3"]);

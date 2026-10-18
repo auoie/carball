@@ -52,7 +52,9 @@ const ICONS: Record<StatIcon, string> = {
       const dx = 22 - Math.sin(t * Math.PI) * 14;
       return `<ellipse cx="${(dx + 2).toFixed(1)}" cy="${y.toFixed(1)}" rx="9" ry="4" transform="rotate(-50 ${(dx + 2).toFixed(1)} ${y.toFixed(1)})" fill="#fff"/><ellipse cx="${(126 - dx).toFixed(1)}" cy="${y.toFixed(1)}" rx="9" ry="4" transform="rotate(50 ${(126 - dx).toFixed(1)} ${y.toFixed(1)})" fill="#fff"/>`;
     })
-    .join("")}<path d="M48 114h32" stroke="#fff" stroke-width="6"/><polygon points="${star(64, 64, 5, 34, 14)}" fill="#fff" stroke="${DARK}" stroke-width="2"/>`,
+    .join(
+      "",
+    )}<path d="M48 114h32" stroke="#fff" stroke-width="6"/><polygon points="${star(64, 64, 5, 34, 14)}" fill="#fff" stroke="${DARK}" stroke-width="2"/>`,
   // A trophy: a round cup with a star cut out, side handles, a short stem and a stepped base
   win: `<path d="M36 14h56v26c0 22-12 36-28 36S36 62 36 40z" fill="#fff" stroke="${DARK}" stroke-width="2"/><path d="M36 22H18c0 18 8 28 22 30M92 22h18c0 18-8 28-22 30" fill="none" stroke="#fff" stroke-width="6"/><path d="M58 76h12v18H58z" fill="#fff"/><path d="M42 94h44v10H42zM34 104h60v12H34z" fill="#fff" stroke="${DARK}" stroke-width="2"/><polygon points="${star(64, 40, 5, 14, 6)}" fill="${DARK}"/>`,
   generic: `<polygon points="${star(64, 64, 5, 52, 22)}" fill="#fff" stroke="${DARK}" stroke-width="2"/>`,

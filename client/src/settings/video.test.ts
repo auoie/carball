@@ -25,7 +25,19 @@ describe("the video settings", () => {
 
   it("Render Detail's presets set the switches as the game's (SetRenderDetailValue), Render Quality kept", () => {
     const quality = withRenderDetail({ ...fresh, video: { ...fresh.video, renderQuality: "quality" } }, "quality");
-    expect(quality).toEqual({ video: { ...fresh.video, renderQuality: "quality", renderDetail: "quality", worldDetail: "quality", particleDetail: "highQuality", highQualityShaders: true, chosen: true }, bloom: false, depthOfField: false });
+    expect(quality).toEqual({
+      video: {
+        ...fresh.video,
+        renderQuality: "quality",
+        renderDetail: "quality",
+        worldDetail: "quality",
+        particleDetail: "highQuality",
+        highQualityShaders: true,
+        chosen: true,
+      },
+      bloom: false,
+      depthOfField: false,
+    });
     const performance = withRenderDetail(fresh, "performance");
     expect(performance.video).toMatchObject({ worldDetail: "performance", particleDetail: "performance", highQualityShaders: false });
     expect([performance.bloom, performance.depthOfField]).toEqual([false, false]);
@@ -35,21 +47,27 @@ describe("the video settings", () => {
   });
 
   it("any advanced switch, Render Quality too, makes Render Detail Custom", () => {
-    expect(withVideoChange(fresh, { bloom: false })).toEqual({ video: { ...fresh.video, renderDetail: "custom", chosen: true }, bloom: false, depthOfField: true });
+    expect(withVideoChange(fresh, { bloom: false })).toEqual({
+      video: { ...fresh.video, renderDetail: "custom", chosen: true },
+      bloom: false,
+      depthOfField: true,
+    });
     expect(withVideoChange(fresh, { renderQuality: "performance" }).video).toMatchObject({ renderQuality: "performance", renderDetail: "custom" });
     expect(withVideoChange(fresh, { worldDetail: "quality" }).video).toMatchObject({ worldDetail: "quality", renderDetail: "custom" });
   });
 
   it("a saved group read field by field, anything unexpected its default", () => {
     expect(readVideo(undefined)).toEqual(DEFAULT_VIDEO_SETTINGS);
-    expect(readVideo({ renderQuality: "performance", renderDetail: "nonsense", highQualityShaders: false, chosen: true, autoLevel: 9, stepped: true })).toEqual({
-      ...DEFAULT_VIDEO_SETTINGS,
-      renderQuality: "performance",
-      highQualityShaders: false,
-      chosen: true,
-      autoLevel: 2,
-      stepped: true,
-    });
+    expect(readVideo({ renderQuality: "performance", renderDetail: "nonsense", highQualityShaders: false, chosen: true, autoLevel: 9, stepped: true })).toEqual(
+      {
+        ...DEFAULT_VIDEO_SETTINGS,
+        renderQuality: "performance",
+        highQualityShaders: false,
+        chosen: true,
+        autoLevel: 2,
+        stepped: true,
+      },
+    );
   });
 });
 
@@ -57,12 +75,22 @@ describe("the automatic default", () => {
   it("the game's maximum on a capable GPU; Performance (70 %) and Quality on a weak one; one step down to 55 % and Performance; the player's choice always", () => {
     expect(resolveVideo(fresh, false)).toEqual({ video: fresh.video, bloom: true, depthOfField: true });
     const weak = resolveVideo(fresh, true);
-    expect(weak.video).toMatchObject({ renderQuality: "performance", renderDetail: "quality", worldDetail: "quality", highQualityShaders: true, chosen: false, autoLevel: 1 });
+    expect(weak.video).toMatchObject({
+      renderQuality: "performance",
+      renderDetail: "quality",
+      worldDetail: "quality",
+      highQualityShaders: true,
+      chosen: false,
+      autoLevel: 1,
+    });
     expect([weak.bloom, weak.depthOfField]).toEqual([false, false]);
     const stepped = resolveVideo({ ...weak, video: { ...weak.video, autoLevel: 2 } }, true);
     expect(stepped.video).toMatchObject({ renderQuality: "highPerformance", renderDetail: "performance", highQualityShaders: false, autoLevel: 2 });
     // (a capable GPU's step down: the weak one's start)
-    expect(resolveVideo({ ...fresh, video: { ...fresh.video, autoLevel: 1 } }, false).video).toMatchObject({ renderQuality: "performance", renderDetail: "quality" });
+    expect(resolveVideo({ ...fresh, video: { ...fresh.video, autoLevel: 1 } }, false).video).toMatchObject({
+      renderQuality: "performance",
+      renderDetail: "quality",
+    });
     const mine = withVideoChange(weak, { renderQuality: "highQuality" });
     expect(resolveVideo(mine, true)).toBe(mine);
   });
@@ -181,7 +209,8 @@ describe("the automatic default", () => {
       "AMD Radeon R5 Graphics",
       // (RV-525: Lunar Lake's integrated Arc)
       "ANGLE (Intel, Intel(R) Arc(TM) 140V GPU (16GB) (0x000064A0) Direct3D11 vs_5_0 ps_5_0, D3D11)",
-    ]) expect(isWeakGpu(name), name).toBe(true);
+    ])
+      expect(isWeakGpu(name), name).toBe(true);
     for (const name of [
       "ANGLE (NVIDIA, NVIDIA GeForce RTX 3090 (0x00002204) Direct3D11 vs_5_0 ps_5_0, D3D11)",
       "ANGLE (AMD, AMD Radeon RX 6800 XT (0x000073BF) Direct3D11 vs_5_0 ps_5_0, D3D11)",
@@ -192,6 +221,7 @@ describe("the automatic default", () => {
       "Apple GPU",
       "Apple M2",
       "",
-    ]) expect(isWeakGpu(name), name).toBe(false);
+    ])
+      expect(isWeakGpu(name), name).toBe(false);
   });
 });

@@ -124,10 +124,14 @@ export class Synth {
   /** Picking up boost: a bright two-note blip for a small pad, a rising arpeggio with a shimmer for a big one. */
   pad(out: AudioNode, when: number, big: boolean): void {
     if (!big) {
-      [1046.5, 1568].forEach((f, i) => { this.#sweep("sine", f, f, 0.01, out, when + i * 0.05, 0.13, 0.16); });
+      [1046.5, 1568].forEach((f, i) => {
+        this.#sweep("sine", f, f, 0.01, out, when + i * 0.05, 0.13, 0.16);
+      });
       return;
     }
-    [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => { this.#sweep("triangle", f, f, 0.01, out, when + i * 0.055, 0.17, 0.42); });
+    [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => {
+      this.#sweep("triangle", f, f, 0.01, out, when + i * 0.055, 0.17, 0.42);
+    });
     this.#burst("highpass", 6000, 9000, 0.7, out, when, 0.05, 0.05, 0.35);
   }
 
@@ -216,8 +220,7 @@ export class Synth {
     else if (cue === "confirm") {
       this.#sweep("sine", 880, 880, 0.035, out, when, 0.06, 0.08);
       this.#sweep("sine", 1320, 1320, 0.035, out, when + 0.07, 0.09, 0.12);
-    }
-    else if (cue === "back") this.#sweep("sine", 990, 620, 0.05, out, when, 0.07, 0.1);
+    } else if (cue === "back") this.#sweep("sine", 990, 620, 0.05, out, when, 0.07, 0.1);
     else {
       this.#sweep("triangle", 1500, 1300, 0.01, out, when, 0.05, 0.04);
       this.#burst("bandpass", 3000, 1800, 1.5, out, when + 0.02, 0.005, 0.03, 0.06);

@@ -26,7 +26,11 @@ export function glyphKey(c: string): string | null {
 /** How a stand-in glyph is fitted to the game's ink: its horizontal scale, and its shift (em of the game's size) that
  *  puts its ink's left edge at the game's. `ink`: the stand-in's ink from its origin at 1 em (left, right: x), `size`:
  *  its font size over the game's (the digit-height scale) */
-export function inkFit(game: { readonly xMin: number; readonly xMax: number }, ink: { readonly left: number; readonly right: number }, size: number): { readonly scale: number; readonly shift: number } {
+export function inkFit(
+  game: { readonly xMin: number; readonly xMax: number },
+  ink: { readonly left: number; readonly right: number },
+  size: number,
+): { readonly scale: number; readonly shift: number } {
   const width = (ink.right - ink.left) * size;
   if (!(width > 0)) return { scale: 1, shift: 0 };
   const scale = (game.xMax - game.xMin) / width;

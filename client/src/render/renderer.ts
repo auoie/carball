@@ -90,7 +90,9 @@ export class Renderer {
     // updates its own, the arena's still pieces never: src/render/arena.ts freeze)
     this.scene.matrixAutoUpdate = false;
 
-    this.#observer = new ResizeObserver(() => { this.#resize(); });
+    this.#observer = new ResizeObserver(() => {
+      this.#resize();
+    });
     this.#observer.observe(canvas);
     window.addEventListener("resize", this.#readRect);
     this.#resize();
@@ -200,7 +202,10 @@ export class Renderer {
   #gpuTimer(): GpuTimer | null {
     if (this.#timer === undefined) {
       const gl = this.#gl.getContext();
-      const ext = gl instanceof WebGL2RenderingContext ? (gl.getExtension("EXT_disjoint_timer_query_webgl2") as { TIME_ELAPSED_EXT: number; GPU_DISJOINT_EXT: number } | null) : null;
+      const ext =
+        gl instanceof WebGL2RenderingContext
+          ? (gl.getExtension("EXT_disjoint_timer_query_webgl2") as { TIME_ELAPSED_EXT: number; GPU_DISJOINT_EXT: number } | null)
+          : null;
       this.#timer = gl instanceof WebGL2RenderingContext && ext ? { gl, ext, pending: [] } : null;
     }
     return this.#timer;

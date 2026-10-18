@@ -1,0 +1,3 @@
+# Prettier's options for the client (the user's decision, 2026-10-18: static analysis everywhere): its defaults, but the
+# width the code was written to, 160 (comments keep their own wrapping at 120: Prettier doesn't reflow them)
+printWidth: 160

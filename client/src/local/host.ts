@@ -91,7 +91,7 @@ export class LocalHost {
     const bytes = this.#m.HEAPU8.slice(this.#m._host_drained(), this.#m._host_drained() + length);
     const view = new DataView(bytes.buffer);
     const messages: HostMessage[] = [];
-    for (let at = 0; at + 9 <= length; ) {
+    for (let at = 0; at + 9 <= length;) {
       const id = view.getUint32(at, true);
       const kind = KINDS[view.getUint8(at + 4)];
       const size = view.getUint32(at + 5, true);

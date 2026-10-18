@@ -126,13 +126,43 @@ export const DEFAULT_BINDINGS: Bindings = {
 };
 
 const PAD_BUTTON_NAMES = [
-  "A", "B", "X", "Y", "LB", "RB", "LT", "RT", "View", "Menu", "Left stick click", "Right stick click",
-  "D-pad up", "D-pad down", "D-pad left", "D-pad right", "Home",
+  "A",
+  "B",
+  "X",
+  "Y",
+  "LB",
+  "RB",
+  "LT",
+  "RT",
+  "View",
+  "Menu",
+  "Left stick click",
+  "Right stick click",
+  "D-pad up",
+  "D-pad down",
+  "D-pad left",
+  "D-pad right",
+  "Home",
 ];
 /** A PlayStation pad's names for the same buttons (the standard layout: Cross is button 0) */
 const PS_BUTTON_NAMES = [
-  "Cross", "Circle", "Square", "Triangle", "L1", "R1", "L2", "R2", "Share", "Options", "L3", "R3",
-  "D-pad up", "D-pad down", "D-pad left", "D-pad right", "PS",
+  "Cross",
+  "Circle",
+  "Square",
+  "Triangle",
+  "L1",
+  "R1",
+  "L2",
+  "R2",
+  "Share",
+  "Options",
+  "L3",
+  "R3",
+  "D-pad up",
+  "D-pad down",
+  "D-pad left",
+  "D-pad right",
+  "PS",
 ];
 
 /** The pad's kind, for its buttons' names and glyphs (the game's glyph set per pad type: HT-3) */
@@ -186,9 +216,39 @@ export function keyName(code: string): string {
 }
 
 /** The pad's buttons as short glyphs (the quick-chat panel's 30 x 28 key boxes: RV-255) */
-const PAD_BUTTON_GLYPHS: Readonly<Record<number, string>> = { 4: "LB", 5: "RB", 6: "LT", 7: "RT", 8: "⧉", 9: "≡", 10: "LS", 11: "RS", 12: "▲", 13: "▼", 14: "◀", 15: "▶" };
+const PAD_BUTTON_GLYPHS: Readonly<Record<number, string>> = {
+  4: "LB",
+  5: "RB",
+  6: "LT",
+  7: "RT",
+  8: "⧉",
+  9: "≡",
+  10: "LS",
+  11: "RS",
+  12: "▲",
+  13: "▼",
+  14: "◀",
+  15: "▶",
+};
 /** A PlayStation pad's: the face buttons' symbols (our own drawing), L1/R1/L2/R2, L3/R3 */
-const PS_BUTTON_GLYPHS: Readonly<Record<number, string>> = { 0: "✕", 1: "○", 2: "□", 3: "△", 4: "L1", 5: "R1", 6: "L2", 7: "R2", 8: "⧉", 9: "≡", 10: "L3", 11: "R3", 12: "▲", 13: "▼", 14: "◀", 15: "▶" };
+const PS_BUTTON_GLYPHS: Readonly<Record<number, string>> = {
+  0: "✕",
+  1: "○",
+  2: "□",
+  3: "△",
+  4: "L1",
+  5: "R1",
+  6: "L2",
+  7: "R2",
+  8: "⧉",
+  9: "≡",
+  10: "L3",
+  11: "R3",
+  12: "▲",
+  13: "▼",
+  14: "◀",
+  15: "▶",
+};
 
 /** An input's name short enough for a key box: the D-pad as arrows, the sticks' clicks LS / RS (L3 / R3) */
 export function inputGlyph(input: KeyboardInput | GamepadInput | null, style: PadStyle = padStyle): string {

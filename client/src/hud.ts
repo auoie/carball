@@ -136,7 +136,8 @@ export interface ReplayGoal {
 const ICONS = {
   assist: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 15l6-6 4 4 6-6v4h2V3h-8v2h4l-4 4-4-4-8 8z"/></svg>',
   time: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm1 5h-2v6l5 3 1-1.7-4-2.3z"/></svg>',
-  speed: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4a10 10 0 00-10 10h3a7 7 0 0114 0h3A10 10 0 0012 4zm4.2 4.4L11 13.6a2 2 0 102.8 2.8l5.2-5.2z"/></svg>',
+  speed:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4a10 10 0 00-10 10h3a7 7 0 0114 0h3A10 10 0 0012 4zm4.2 4.4L11 13.6a2 2 0 102.8 2.8l5.2-5.2z"/></svg>',
 } as const;
 
 export interface HudState {
@@ -453,7 +454,8 @@ export class Hud {
       el.textContent = text;
       el.style.fontSize = "";
       // (too wide: smaller, from its size as set, the stand-in font's scale in it)
-      if (text !== "" && el.scrollWidth > width - 80) el.style.fontSize = `${String((parseFloat(getComputedStyle(el).fontSize) * (width - 80)) / el.scrollWidth)}px`;
+      if (text !== "" && el.scrollWidth > width - 80)
+        el.style.fontSize = `${String((parseFloat(getComputedStyle(el).fontSize) * (width - 80)) / el.scrollWidth)}px`;
     }
     if (this.#popMessage && text !== "") {
       el.animate(
@@ -580,5 +582,4 @@ export class Hud {
     // text: render/flipResetFx.ts, HUD-19)
     if (reset) this.#flipLamp.flicker();
   }
-
 }

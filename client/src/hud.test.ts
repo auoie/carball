@@ -40,7 +40,11 @@ describe("the replay's goal speed and time (HUD-11, HT-6)", () => {
 });
 
 describe("the respawn view (HUD-20, RH1)", () => {
-  const car = (demoRespawnTimer: number, side: "left" | "right" | null = null, index = 0): Parameters<typeof respawnHud>[0] => ({ demoed: true, demoRespawnTimer, spawnSelection: { side, index } });
+  const car = (demoRespawnTimer: number, side: "left" | "right" | null = null, index = 0): Parameters<typeof respawnHud>[0] => ({
+    demoed: true,
+    demoRespawnTimer,
+    spawnSelection: { side, index },
+  });
   it("the pick's share in 1 % steps over the 2.5 s before the prespawn; gone at the prespawn and when not demolished; no seconds", () => {
     expect(respawnHud(car(3))?.pct).toBe(100);
     expect(respawnHud(car(2.0))?.pct).toBe(60);
@@ -61,7 +65,8 @@ describe("the respawn view (HUD-20, RH1)", () => {
     expect(respawnView(car(2), null, keys)?.pct).toBe(60);
     expect(respawnView(car(2), { phase: "active" }, keys)?.pct).toBe(60);
     expect(respawnView(car(2), { phase: "timeUp" }, keys)?.pct).toBe(60);
-    for (const phase of ["countdown", "postGoal", "replay", "prePodium", "waiting", "podium", "finished"] as const) expect(respawnView(car(2), { phase }, keys), phase).toBeNull();
+    for (const phase of ["countdown", "postGoal", "replay", "prePodium", "waiting", "podium", "finished"] as const)
+      expect(respawnView(car(2), { phase }, keys), phase).toBeNull();
     expect(respawnView(null, { phase: "active" }, keys)).toBeNull();
   });
 
@@ -72,4 +77,3 @@ describe("the respawn view (HUD-20, RH1)", () => {
     expect(RESPAWN_TEXT).toEqual({ left: "Respawn Left", right: "Respawn Right" });
   });
 });
-

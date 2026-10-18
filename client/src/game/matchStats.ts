@@ -45,7 +45,13 @@ export interface StatEventInfo {
   readonly icon: StatIcon;
 }
 
-const ev = (label: string, primary: boolean, popup: boolean, ticker: boolean, icon: StatIcon = "generic"): StatEventInfo => ({ label, primary, popup, ticker, icon });
+const ev = (label: string, primary: boolean, popup: boolean, ticker: boolean, icon: StatIcon = "generic"): StatEventInfo => ({
+  label,
+  primary,
+  popup,
+  ticker,
+  icon,
+});
 
 /** By the protocol's ids (protocol/README.md, the server's `stat` ids): match-stats.md §2 and "Stat text" */
 export const STAT_EVENTS: readonly StatEventInfo[] = [
@@ -215,7 +221,15 @@ export function scoreboardTeams(
     const p = roster.get(e.car);
     if (!p) continue;
     const c = (i: number): number => e.counters[i] ?? 0;
-    const row = { car: e.car, name: p.name, local: e.car === localCar, mvp: e.mvp, ready: e.ready, values: [c(COUNTERS.score), ...counters.map(c)], ping: e.ping };
+    const row = {
+      car: e.car,
+      name: p.name,
+      local: e.car === localCar,
+      mvp: e.mvp,
+      ready: e.ready,
+      values: [c(COUNTERS.score), ...counters.map(c)],
+      ping: e.ping,
+    };
     teams[p.team === 1 ? 1 : 0].push({ row, key: [c(COUNTERS.score), c(COUNTERS.goals), c(COUNTERS.assists), c(COUNTERS.saves)] });
   }
   const order = (a: { key: readonly number[] }, b: { key: readonly number[] }): number => {
@@ -237,7 +251,11 @@ export function pingBars(ms: number): { readonly text: string; readonly bars: 1 
 /** The scoreboard's text colour for a row (multiplyColor(team, 2, 80); the local player's white: SB-6) */
 export function rowColour(team: number, local: boolean): string {
   if (local) return "#FFFFFF";
-  const hex = (TEAM_FONT_COLOURS[team === 1 ? 1 : 0] as readonly number[]).map((c) => Math.min(255, (c + 80) * 2).toString(16).padStart(2, "0"));
+  const hex = (TEAM_FONT_COLOURS[team === 1 ? 1 : 0] as readonly number[]).map((c) =>
+    Math.min(255, (c + 80) * 2)
+      .toString(16)
+      .padStart(2, "0"),
+  );
   return `#${hex.join("").toUpperCase()}`;
 }
 

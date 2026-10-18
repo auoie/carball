@@ -45,7 +45,14 @@ describe("the greenhouse's pitch", () => {
     }
     for (let x = 0; x <= bx - r; x += 100) points.push([x, by]);
     for (let y = 0; y <= by - r; y += 100) points.push([bx, y]);
-    for (const [x, y] of points) for (const [sx, sy] of [[1, 1], [-1, 1], [-1, -1], [1, -1]] as const) expect(inside(outline, sx * x, sy * y), `${String(x)}, ${String(y)}`).toBeGreaterThan(50);
+    for (const [x, y] of points)
+      for (const [sx, sy] of [
+        [1, 1],
+        [-1, 1],
+        [-1, -1],
+        [1, -1],
+      ] as const)
+        expect(inside(outline, sx * x, sy * y), `${String(x)}, ${String(y)}`).toBeGreaterThan(50);
   });
 
   it("a football pitch's lines in their order: the goal area inside the penalty area, the spot inside it, its arc out past it; the centre circle clear of both; the stripes whole across the length", () => {
@@ -155,9 +162,20 @@ describe("the greenhouse arena", () => {
     expect(Math.max(...boards.map(([, , z]) => z))).toBeCloseTo(top, 3);
     // (their top edge at that height beside each post (the game's frame fell to 57 there) and along the side walls)
     const edge = boards.filter(([, , z]) => Math.abs(z - top) < 1e-3);
-    for (const [sx, sy] of [[1, 1], [-1, 1], [1, -1], [-1, -1]] as const) {
-      expect(edge.some(([x, y]) => sx * x > 893 && sx * x < 1100 && sy * y > 5000), `post ${String(sx)}, ${String(sy)}`).toBe(true);
-      expect(edge.some(([x, y]) => sx * x > 3900 && Math.abs(y) < 2000 && sy * y >= 0), `side ${String(sx)}`).toBe(true);
+    for (const [sx, sy] of [
+      [1, 1],
+      [-1, 1],
+      [1, -1],
+      [-1, -1],
+    ] as const) {
+      expect(
+        edge.some(([x, y]) => sx * x > 893 && sx * x < 1100 && sy * y > 5000),
+        `post ${String(sx)}, ${String(sy)}`,
+      ).toBe(true);
+      expect(
+        edge.some(([x, y]) => sx * x > 3900 && Math.abs(y) < 2000 && sy * y >= 0),
+        `side ${String(sx)}`,
+      ).toBe(true);
     }
     const glassLow = Math.min(...points("greenhouse glass").map(([, , z]) => z));
     expect(glassLow).toBeGreaterThanOrEqual(top - 1e-3);
@@ -195,4 +213,3 @@ describe("the greenhouse's goal light (the user's \"just a normal light wrapper\
     }
   });
 });
-

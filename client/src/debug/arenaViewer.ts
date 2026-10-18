@@ -52,7 +52,10 @@ export function showArenaViewer(renderer: Renderer, theme: Theme, config: CarCon
       for (let k = 0; k <= frames; k++) {
         const f = k / frames;
         ball.fade(false, 1 / 60);
-        ball.update(toThreeVector(vec3(from.x + (shot.ball.x - from.x) * f, from.y + (shot.ball.y - from.y) * f, from.z + (shot.ball.z - from.z) * f)), new Quaternion());
+        ball.update(
+          toThreeVector(vec3(from.x + (shot.ball.x - from.x) * f, from.y + (shot.ball.y - from.y) * f, from.z + (shot.ball.z - from.z) * f)),
+          new Quaternion(),
+        );
       }
     }
     ball.update(ballAt, new Quaternion());

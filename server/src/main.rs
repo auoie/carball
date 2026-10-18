@@ -72,7 +72,11 @@ fn parse_mode(value: &str) -> anyhow::Result<bool> {
 /// The page origins allowed, as browsers send them (lowercase, no trailing slash); none named is an error, not "any"
 /// (RV-372: a blank ALLOWED_ORIGIN mustn't open the server to every page)
 fn origins(value: &str) -> anyhow::Result<Vec<String>> {
-    let list: Vec<String> = value.split(',').map(|o| o.trim().trim_end_matches('/').to_ascii_lowercase()).filter(|o| !o.is_empty()).collect();
+    let list: Vec<String> = value
+        .split(',')
+        .map(|o| o.trim().trim_end_matches('/').to_ascii_lowercase())
+        .filter(|o| !o.is_empty())
+        .collect();
     anyhow::ensure!(!list.is_empty(), "ALLOWED_ORIGIN (--allowed-origin) names no origin: {value:?}");
     Ok(list)
 }
@@ -81,7 +85,9 @@ fn origins(value: &str) -> anyhow::Result<Vec<String>> {
 /// (`out/arena/collision_meshes`) in a directory above the binary, a development build's (no build machine's path
 /// compiled in: RV-380)
 fn default_meshes() -> PathBuf {
-    let found = std::env::current_exe().ok().and_then(|exe| exe.ancestors().map(|d| d.join("out/arena/collision_meshes")).find(|d| d.is_dir()));
+    let found = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.ancestors().map(|d| d.join("out/arena/collision_meshes")).find(|d| d.is_dir()));
     found.unwrap_or_else(|| PathBuf::from("collision_meshes"))
 }
 
@@ -145,7 +151,11 @@ fn parse_args(mut it: impl Iterator<Item = String>, env: impl Fn(&str) -> Option
             "--team-size" => {
                 // (two teams of it within the match's most players: RV-329)
                 args.team_size = value()?.parse()?;
-                anyhow::ensure!((1..=(carball_server::game::MAX_PLAYERS / 2) as u8).contains(&args.team_size), "--team-size: 1 to {}", carball_server::game::MAX_PLAYERS / 2);
+                anyhow::ensure!(
+                    (1..=(carball_server::game::MAX_PLAYERS / 2) as u8).contains(&args.team_size),
+                    "--team-size: 1 to {}",
+                    carball_server::game::MAX_PLAYERS / 2
+                );
             }
             "--match-type" => {
                 args.match_type = match value()?.as_str() {
@@ -166,7 +176,9 @@ fn parse_args(mut it: impl Iterator<Item = String>, env: impl Fn(&str) -> Option
             "--health-port" => args.health_port = number("--health-port", &value()?)?,
             "--max-sessions" => args.limits.max_sessions = number("--max-sessions", &value()?)?,
             "--max-per-address" => args.limits.per_address = number("--max-per-address", &value()?)?,
-            "--max-per-address-per-minute" => args.limits.per_address_per_minute = number("--max-per-address-per-minute", &value()?)?,
+            "--max-per-address-per-minute" => {
+                args.limits.per_address_per_minute = number("--max-per-address-per-minute", &value()?)?
+            }
             "--healthcheck" => {} // (main's, before the rest is read: health_port)
             _ => anyhow::bail!("{USAGE}"),
         }
@@ -179,7 +191,10 @@ fn parse_args(mut it: impl Iterator<Item = String>, env: impl Fn(&str) -> Option
     }
     args.cert = match (cert, key) {
         (Some(c), Some(k)) => {
-            anyhow::ensure!(!c.as_os_str().is_empty() && !k.as_os_str().is_empty(), "CERT_PATH and KEY_PATH are empty (a development server: --dev)");
+            anyhow::ensure!(
+                !c.as_os_str().is_empty() && !k.as_os_str().is_empty(),
+                "CERT_PATH and KEY_PATH are empty (a development server: --dev)"
+            );
             Some((c, k))
         }
         (None, None) => None,
@@ -233,13 +248,15 @@ async fn reload_certificates(server: Arc<net::ServerEndpoint>, cert: PathBuf, ke
             continue;
         }
         match net::load_identity(&cert, &key).await {
-            Ok(identity) => match net::server_config(identity, port).and_then(|config| Ok(server.reload_config(config, false)?)) {
-                Ok(()) => {
-                    seen = now;
-                    eprintln!("certificate reloaded ({})", if asked { "SIGHUP" } else { "its files changed" });
+            Ok(identity) => {
+                match net::server_config(identity, port).and_then(|config| Ok(server.reload_config(config, false)?)) {
+                    Ok(()) => {
+                        seen = now;
+                        eprintln!("certificate reloaded ({})", if asked { "SIGHUP" } else { "its files changed" });
+                    }
+                    Err(e) => eprintln!("certificate reload failed, the old one stays: {e:#}"),
                 }
-                Err(e) => eprintln!("certificate reload failed, the old one stays: {e:#}"),
-            },
+            }
             // (a renewal written in two steps can be read between them, a key that isn't the certificate's yet: tried
             // again at the next check, RV-368)
             Err(e) => eprintln!("certificate not read, the old one stays: {e:#}"),
@@ -272,14 +289,21 @@ async fn main() -> anyhow::Result<()> {
 
     // (bounded: a flood of messages waits in its session instead of growing the game's queue, RV-248)
     let (to_game, messages) = tokio::sync::mpsc::channel(game_loop::TO_GAME_QUEUE);
-    let playlist = |team_size| Playlist { team_size, match_type: args.match_type, forfeit_vote_wait: args.forfeit_vote_wait };
+    let playlist =
+        |team_size| Playlist { team_size, match_type: args.match_type, forfeit_vote_wait: args.forfeit_vote_wait };
     // (direct: one open match of --team-size; queue: the 1v1, 2v2 and 3v3 playlists)
-    let mode = if args.queue { game_loop::Mode::Queue([1, 2, 3].map(playlist).to_vec()) } else { game_loop::Mode::Direct(playlist(args.team_size)) };
+    let mode = if args.queue {
+        game_loop::Mode::Queue([1, 2, 3].map(playlist).to_vec())
+    } else {
+        game_loop::Mode::Direct(playlist(args.team_size))
+    };
     let test_goal_after = args.test_goal_after;
     let start = Instant::now();
     let heartbeat = Arc::new(AtomicU64::new(0));
     let game_heartbeat = heartbeat.clone();
-    let game = std::thread::Builder::new().name("game".into()).spawn(move || game_loop::run(messages, mode, test_goal_after, game_heartbeat, start))?;
+    let game = std::thread::Builder::new()
+        .name("game".into())
+        .spawn(move || game_loop::run(messages, mode, test_goal_after, game_heartbeat, start))?;
     // (the game thread gone, by a panic outside a match's tick: the process ends, for its supervisor to restart it, SEC-7)
     tokio::spawn(async move {
         let mut every = tokio::time::interval(Duration::from_secs(1));
@@ -299,15 +323,24 @@ async fn main() -> anyhow::Result<()> {
     let mode = if args.queue { "the queue's matches" } else { "one open match" };
     let origins = args.limits.allowed_origins.as_ref().map_or("any origin (development)".to_string(), |o| o.join(", "));
     let host = args.public_host.as_deref().unwrap_or("this machine");
-    println!("carball-server: {mode}, WebTransport on UDP port {} at {host}, pages from {origins}, health on 127.0.0.1:{}", args.port, args.health_port);
+    println!(
+        "carball-server: {mode}, WebTransport on UDP port {} at {host}, pages from {origins}, health on 127.0.0.1:{}",
+        args.port, args.health_port
+    );
     match (dev_info, dev_hash) {
         (true, Some(hash)) => {
             tokio::spawn(net::serve_info(args.info_bind, args.info_port, args.port, hash));
             println!("dev info on http://{}:{}/info (self-signed certificate)", args.info_bind, args.info_port);
-            let query = if args.info_port == 4434 { "server".to_string() } else { format!("server=localhost:{}", args.info_port) };
+            let query = if args.info_port == 4434 {
+                "server".to_string()
+            } else {
+                format!("server=localhost:{}", args.info_port)
+            };
             println!("To play: run the web client (cd client && npm run dev) and open http://localhost:5173/?{query}");
         }
-        (true, None) => eprintln!("--dev-info: no development info with a real certificate (the client connects by name)"),
+        (true, None) => {
+            eprintln!("--dev-info: no development info with a real certificate (the client connects by name)")
+        }
         _ => {}
     }
     net::accept_loop(server, to_game, args.limits).await;
@@ -357,7 +390,10 @@ mod tests {
         assert!(args.queue);
         assert_eq!((args.port, args.health_port), (5000, 9000));
         assert_eq!(args.cert, Some(("/certs/fullchain.pem".into(), "/certs/privkey.pem".into())));
-        assert_eq!(args.limits.allowed_origins, Some(vec!["https://carball.zolt.top".to_string(), "https://other.example".to_string()]));
+        assert_eq!(
+            args.limits.allowed_origins,
+            Some(vec!["https://carball.zolt.top".to_string(), "https://other.example".to_string()])
+        );
         assert_eq!(args.public_host.as_deref(), Some("game.carball.zolt.top"));
         let args = parse_args(["--port", "6000", "--mode", "direct"].map(String::from).into_iter(), env).unwrap();
         assert_eq!((args.port, args.queue), (6000, false));
@@ -371,26 +407,53 @@ mod tests {
     fn a_public_server_needs_its_origins_and_a_queue_server_a_certificate_or_dev() {
         // (RV-372, RV-381: a blank or missing setting fails closed, not open)
         let with = |vars: &'static [(&'static str, &'static str)], flags: &[&str]| {
-            parse_args(flags.iter().map(|f| (*f).to_string()), move |name: &str| vars.iter().find(|(n, _)| *n == name).map(|(_, v)| (*v).to_string()))
+            parse_args(flags.iter().map(|f| (*f).to_string()), move |name: &str| {
+                vars.iter().find(|(n, _)| *n == name).map(|(_, v)| (*v).to_string())
+            })
         };
         const CERT: [(&str, &str); 2] = [("CERT_PATH", "/certs/fullchain.pem"), ("KEY_PATH", "/certs/privkey.pem")];
         assert!(with(&CERT, &[]).is_err(), "a certificate without ALLOWED_ORIGIN");
         assert!(with(&[CERT[0], CERT[1], ("ALLOWED_ORIGIN", "")], &[]).is_err(), "a blank ALLOWED_ORIGIN");
         assert!(with(&[CERT[0], CERT[1], ("ALLOWED_ORIGIN", " , ")], &[]).is_err(), "no origin named");
         let args = with(&[CERT[0], CERT[1], ("ALLOWED_ORIGIN", "HTTPS://Carball.Zolt.Top/")], &[]).unwrap();
-        assert_eq!(args.limits.allowed_origins, Some(vec!["https://carball.zolt.top".to_string()]), "as browsers send it");
+        assert_eq!(
+            args.limits.allowed_origins,
+            Some(vec!["https://carball.zolt.top".to_string()]),
+            "as browsers send it"
+        );
         // A queue server: a certificate, or --dev
         assert!(with(&[("SERVER_MODE", "queue")], &[]).is_err());
-        assert!(with(&[("SERVER_MODE", "queue"), ("CERT_PATH", ""), ("KEY_PATH", ""), ("ALLOWED_ORIGIN", "https://a.example")], &[]).is_err(), "empty paths");
-        let dev = with(&[("SERVER_MODE", "queue"), CERT[0], CERT[1], ("ALLOWED_ORIGIN", "https://a.example")], &["--dev"]).unwrap();
+        assert!(
+            with(
+                &[
+                    ("SERVER_MODE", "queue"),
+                    ("CERT_PATH", ""),
+                    ("KEY_PATH", ""),
+                    ("ALLOWED_ORIGIN", "https://a.example")
+                ],
+                &[]
+            )
+            .is_err(),
+            "empty paths"
+        );
+        let dev =
+            with(&[("SERVER_MODE", "queue"), CERT[0], CERT[1], ("ALLOWED_ORIGIN", "https://a.example")], &["--dev"])
+                .unwrap();
         assert!(dev.queue && dev.cert.is_none(), "--dev: self-signed whatever the variables say");
-        assert!(with(&[("SERVER_MODE", "queue"), CERT[0], CERT[1], ("ALLOWED_ORIGIN", "https://a.example")], &[]).unwrap().cert.is_some());
+        assert!(
+            with(&[("SERVER_MODE", "queue"), CERT[0], CERT[1], ("ALLOWED_ORIGIN", "https://a.example")], &[])
+                .unwrap()
+                .cert
+                .is_some()
+        );
     }
 
     #[test]
     fn a_bad_number_names_its_setting_and_the_health_check_reads_only_its_port() {
         // (RV-399)
-        let env = |vars: &'static [(&'static str, &'static str)]| move |name: &str| vars.iter().find(|(n, _)| *n == name).map(|(_, v)| (*v).to_string());
+        let env = |vars: &'static [(&'static str, &'static str)]| {
+            move |name: &str| vars.iter().find(|(n, _)| *n == name).map(|(_, v)| (*v).to_string())
+        };
         let e = parse_args(std::iter::empty(), env(&[("GAME_PORT", "")])).err().expect("an empty GAME_PORT");
         assert!(e.to_string().contains("GAME_PORT"), "{e}");
         let e = parse(&["--port", "x"]).err().expect("--port x");
@@ -398,7 +461,11 @@ mod tests {
         // (a --dev run's empty certificate variables, an origin left blank: none of the health check's business)
         let messy = env(&[("CERT_PATH", ""), ("KEY_PATH", ""), ("ALLOWED_ORIGIN", ""), ("HEALTH_PORT", "9000")]);
         assert_eq!(health_port(&["--healthcheck".to_string()], messy).unwrap(), 9000);
-        assert_eq!(health_port(&["--healthcheck".to_string(), "--health-port".to_string(), "9100".to_string()], messy).unwrap(), 9100);
+        assert_eq!(
+            health_port(&["--healthcheck".to_string(), "--health-port".to_string(), "9100".to_string()], messy)
+                .unwrap(),
+            9100
+        );
         assert_eq!(health_port(&[], env(&[])).unwrap(), 8081);
         assert!(health_port(&[], env(&[("HEALTH_PORT", "")])).is_err());
     }

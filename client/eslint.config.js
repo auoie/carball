@@ -1,5 +1,7 @@
-// Type-aware linting: typescript-eslint's strictest presets on top of ESLint's recommended rules.
+// Type-aware linting: typescript-eslint's strictest presets on top of ESLint's recommended rules; the layout is
+// Prettier's (eslint-config-prettier last: no rule of ESLint's disputes it).
 import js from "@eslint/js";
+import eslintConfigPrettier from "eslint-config-prettier/flat";
 import { defineConfig } from "eslint/config";
 import globals from "globals";
 import tseslint from "typescript-eslint";
@@ -31,4 +33,5 @@ export default defineConfig(
     files: ["eslint.config.js"],
     extends: [tseslint.configs.disableTypeChecked],
   },
+  eslintConfigPrettier,
 );

@@ -202,7 +202,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     (Attribute::Boolean(b), "TAGame.Vehicle_TA:bReplicatedHandbrake") => {
                         inputs.entry(actor).or_default().handbrake = *b
                     }
-                    (Attribute::TeamPaint(p), "TAGame.Car_TA:TeamPaint") => inputs.entry(actor).or_default().team = p.team,
+                    (Attribute::TeamPaint(p), "TAGame.Car_TA:TeamPaint") => {
+                        inputs.entry(actor).or_default().team = p.team
+                    }
                     (Attribute::ActiveActor(aa), "Engine.Pawn:PlayerReplicationInfo") => {
                         car_pri.insert(actor, aa.actor.0);
                         if let Some(p) = pri.as_mut() {
@@ -296,12 +298,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             inputs.entry(car).or_default().boost_amount = *b;
                         }
                     }
-                    (Attribute::Demolish(_), _) | (Attribute::DemolishFx(_), _) | (Attribute::DemolishExtended(_), _)
+                    (Attribute::Demolish(_), _)
+                    | (Attribute::DemolishFx(_), _)
+                    | (Attribute::DemolishExtended(_), _)
                         if demos.is_some() =>
                     {
                         let (attacker, victim, av, vv) = match &ua.attribute {
                             Attribute::Demolish(d) => (d.attacker.0, d.victim.0, d.attack_velocity, d.victim_velocity),
-                            Attribute::DemolishFx(d) => (d.attacker.0, d.victim.0, d.attack_velocity, d.victim_velocity),
+                            Attribute::DemolishFx(d) => {
+                                (d.attacker.0, d.victim.0, d.attack_velocity, d.victim_velocity)
+                            }
                             Attribute::DemolishExtended(d) => {
                                 (d.attacker.actor.0, d.victim.actor.0, d.attacker_velocity, d.victim_velocity)
                             }
@@ -310,7 +316,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         writeln!(
                             demos.as_mut().unwrap(),
                             "{name},{fi},{},{attacker},{victim},{},{},{},{},{},{}",
-                            frame.time, av.x, av.y, av.z, vv.x, vv.y, vv.z
+                            frame.time,
+                            av.x,
+                            av.y,
+                            av.z,
+                            vv.x,
+                            vv.y,
+                            vv.z
                         )?;
                     }
                     (Attribute::Pickup(_), _) | (Attribute::PickupNew(_), _) if pickups.is_some() => {
@@ -338,39 +350,62 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 i.handbrake_ramp = (i.handbrake_ramp + rate * (frame.time - mid)).clamp(0.0, 1.0);
             }
             prev_time = frame.time;
-            let since = |active: bool, start: f32| if active { format!("{:.4}", frame.time - start) } else { String::new() };
+            let since =
+                |active: bool, start: f32| if active { format!("{:.4}", frame.time - start) } else { String::new() };
             for (actor, kind, rb) in &bodies {
                 let (actor, kind) = (*actor, *kind);
                 {
-                        let lv = rb.linear_velocity.unwrap_or(boxcars::Vector3f { x: 0.0, y: 0.0, z: 0.0 });
-                        let av = rb.angular_velocity.unwrap_or(boxcars::Vector3f { x: 0.0, y: 0.0, z: 0.0 });
-                        let inp = inputs.get(&actor).copied().unwrap_or_default();
-                        let player = car_pri.get(&actor).and_then(|p| players.get(p)).copied().unwrap_or_default();
-                        let body = match (player.bodies, inp.team) {
-                            (Some((blue, _)), 0) => blue.to_string(),
-                            (Some((_, orange)), 1) => orange.to_string(),
-                            _ => String::new(),
-                        };
-                        let sens = player.steer_sensitivity.map(|s| s.to_string()).unwrap_or_default();
-                        writeln!(
-                            out,
-                            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{:.4},{},{},{},{},{},{}",
-                            name,
-                            fi,
-                            frame.time,
-                            if kind == Kind::Ball { "ball" } else { "car" },
-                            actor,
-                            rb.location.x, rb.location.y, rb.location.z,
-                            rb.rotation.x, rb.rotation.y, rb.rotation.z, rb.rotation.w,
-                            lv.x, lv.y, lv.z, av.x, av.y, av.z,
-                            rb.sleeping as u8,
-                            inp.throttle, inp.steer, inp.handbrake as u8, inp.boosting as u8,
-                            inp.jump as u8, inp.double_jump as u8, inp.dodge as u8, inp.boost_amount,
-                            body, sens, inp.team, inp.handbrake_ramp,
-                            inp.dodge_torque[0], inp.dodge_torque[1], inp.dodge_torque[2],
-                            since(inp.jump, inp.jump_start), since(inp.double_jump, inp.double_jump_start),
-                            since(inp.dodge, inp.dodge_start)
-                        )?;
+                    let lv = rb.linear_velocity.unwrap_or(boxcars::Vector3f { x: 0.0, y: 0.0, z: 0.0 });
+                    let av = rb.angular_velocity.unwrap_or(boxcars::Vector3f { x: 0.0, y: 0.0, z: 0.0 });
+                    let inp = inputs.get(&actor).copied().unwrap_or_default();
+                    let player = car_pri.get(&actor).and_then(|p| players.get(p)).copied().unwrap_or_default();
+                    let body = match (player.bodies, inp.team) {
+                        (Some((blue, _)), 0) => blue.to_string(),
+                        (Some((_, orange)), 1) => orange.to_string(),
+                        _ => String::new(),
+                    };
+                    let sens = player.steer_sensitivity.map(|s| s.to_string()).unwrap_or_default();
+                    writeln!(
+                        out,
+                        "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{:.4},{},{},{},{},{},{}",
+                        name,
+                        fi,
+                        frame.time,
+                        if kind == Kind::Ball { "ball" } else { "car" },
+                        actor,
+                        rb.location.x,
+                        rb.location.y,
+                        rb.location.z,
+                        rb.rotation.x,
+                        rb.rotation.y,
+                        rb.rotation.z,
+                        rb.rotation.w,
+                        lv.x,
+                        lv.y,
+                        lv.z,
+                        av.x,
+                        av.y,
+                        av.z,
+                        rb.sleeping as u8,
+                        inp.throttle,
+                        inp.steer,
+                        inp.handbrake as u8,
+                        inp.boosting as u8,
+                        inp.jump as u8,
+                        inp.double_jump as u8,
+                        inp.dodge as u8,
+                        inp.boost_amount,
+                        body,
+                        sens,
+                        inp.team,
+                        inp.handbrake_ramp,
+                        inp.dodge_torque[0],
+                        inp.dodge_torque[1],
+                        inp.dodge_torque[2],
+                        since(inp.jump, inp.jump_start),
+                        since(inp.double_jump, inp.double_jump_start),
+                        since(inp.dodge, inp.dodge_start)
+                    )?;
                 }
             }
         }
@@ -383,7 +418,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 for goal in list {
                     let field = |n: &str| goal.iter().find(|(k, _)| k == n).map(|(_, v)| v);
-                    if let (Some(HeaderProp::Int(frame)), Some(HeaderProp::Int(team))) = (field("frame"), field("PlayerTeam")) {
+                    if let (Some(HeaderProp::Int(frame)), Some(HeaderProp::Int(team))) =
+                        (field("frame"), field("PlayerTeam"))
+                    {
                         let time = frames.get(*frame as usize).map_or(0.0, |f| f.time);
                         writeln!(p, "{name},{frame},{time},goal,{team},,")?;
                     }

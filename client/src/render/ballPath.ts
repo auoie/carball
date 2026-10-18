@@ -20,7 +20,11 @@ export class BallPathView {
 
   constructor(points: number = BALL_PATH.points) {
     this.#points = points;
-    this.root = new InstancedMesh(new SphereGeometry(BALL_PATH.radius, 12, 8), new MeshBasicMaterial({ transparent: true, opacity: 0.85, depthWrite: false }), points);
+    this.root = new InstancedMesh(
+      new SphereGeometry(BALL_PATH.radius, 12, 8),
+      new MeshBasicMaterial({ transparent: true, opacity: 0.85, depthWrite: false }),
+      points,
+    );
     this.root.name = "training ball path";
     this.root.count = 0;
     this.root.frustumCulled = false;

@@ -12,9 +12,12 @@ export async function hideGamepads(context: BrowserContext): Promise<void> {
 /** The video settings' automatic default off (src/settings/video.ts): software WebGL reads as a weak GPU, and its frames
  *  are slow; the tests draw at the maximum unless one asks for the default (`videoAuto`) */
 export async function videoAuto(context: BrowserContext, weak: boolean, guard: boolean): Promise<void> {
-  await context.addInitScript(([w, g]) => {
-    (window as unknown as { carballVideoAuto: { weak: boolean; guard: boolean } }).carballVideoAuto = { weak: w, guard: g };
-  }, [weak, guard] as const);
+  await context.addInitScript(
+    ([w, g]) => {
+      (window as unknown as { carballVideoAuto: { weak: boolean; guard: boolean } }).carballVideoAuto = { weak: w, guard: g };
+    },
+    [weak, guard] as const,
+  );
 }
 
 export const test = base.extend({
@@ -41,7 +44,15 @@ export async function fakeGamepad(context: BrowserContext): Promise<void> {
       });
       pad.axes = axes;
     };
-    const gamepad = (): unknown => ({ id: "test pad", index: 0, connected: true, mapping: "standard", timestamp: performance.now(), buttons: pad.buttons, axes: pad.axes });
+    const gamepad = (): unknown => ({
+      id: "test pad",
+      index: 0,
+      connected: true,
+      mapping: "standard",
+      timestamp: performance.now(),
+      buttons: pad.buttons,
+      axes: pad.axes,
+    });
     Object.defineProperty(navigator, "getGamepads", { value: () => [gamepad()], configurable: true });
   });
 }
@@ -54,7 +65,10 @@ export async function padTap(page: Page, buttons: number[]): Promise<void> {
       new Promise((resolve) => {
         const step = (k: number): void => {
           if (k === 0) resolve();
-          else requestAnimationFrame(() => { step(k - 1); });
+          else
+            requestAnimationFrame(() => {
+              step(k - 1);
+            });
         };
         step(n);
       });

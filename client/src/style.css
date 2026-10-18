@@ -17,7 +17,11 @@ body {
   overflow: hidden;
   background: #0d1117;
   color: var(--text);
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
   user-select: none;
 }
 
@@ -1005,7 +1009,9 @@ body {
 .sb-backdrop {
   /* dark navy, about α 0.47 in the middle, soft edges (150 px sides, 95 top, 210 bottom: its 9-slice) */
   background: rgba(0, 13, 24, 0.47);
-  mask-image: linear-gradient(to right, transparent, #000 150px, #000 calc(100% - 150px), transparent), linear-gradient(to bottom, transparent, #000 95px, #000 calc(100% - 210px), transparent);
+  mask-image:
+    linear-gradient(to right, transparent, #000 150px, #000 calc(100% - 150px), transparent),
+    linear-gradient(to bottom, transparent, #000 95px, #000 calc(100% - 210px), transparent);
   mask-composite: intersect;
 }
 
@@ -1039,7 +1045,9 @@ body {
   letter-spacing: calc(var(--hud-numbers-track, 0) * 1em);
   text-align: center;
   color: #fff;
-  text-shadow: 0 0 16px #444, 0 0 16px #444;
+  text-shadow:
+    0 0 16px #444,
+    0 0 16px #444;
 }
 
 .sb-team-name {
@@ -1209,7 +1217,9 @@ body {
   white-space: nowrap;
   font: calc(32px * var(--hud-header-scale, 1))/0 var(--hud-header);
   color: #fff;
-  text-shadow: 0 0 8px #ff7f00, 0 0 3px #ff7f00;
+  text-shadow:
+    0 0 8px #ff7f00,
+    0 0 3px #ff7f00;
   animation: stat-popup-label 2.633s linear forwards;
 }
 
@@ -1957,7 +1967,9 @@ body {
   font: calc(72px * var(--hud-thin-scale, 1))/0 var(--hud-thin);
   color: #ffed83;
   text-transform: uppercase;
-  text-shadow: 0 0 10px #ff7f00, 0 0 4px #ff7f00;
+  text-shadow:
+    0 0 10px #ff7f00,
+    0 0 4px #ff7f00;
   white-space: nowrap;
   transition: opacity 0.3s;
 }
@@ -2183,7 +2195,9 @@ body {
   bottom: calc(48px + var(--rec-origin-y) - var(--rec-dot) - (var(--rec-hint-baseline) - var(--rec-label-baseline)));
   opacity: 0;
   transform: translateX(0);
-  transition: opacity 0.3s, transform 0.3s;
+  transition:
+    opacity 0.3s,
+    transform 0.3s;
 }
 
 #ballcam.shown {
@@ -2386,7 +2400,6 @@ body {
   color: #fff;
   text-shadow: 0 0 8px #000;
 }
-
 
 /* MENU-4: the pause menu, a column of buttons at the left (MidGameMenu), the match's buttons and the players with it */
 .pause-menu {
@@ -3385,7 +3398,6 @@ body.pad-mode .settings-tab-glyph {
     transform: none;
   }
 }
-
 
 .main-menu-column:not([hidden]) {
   animation: menu-page-in 0.2s ease-out;

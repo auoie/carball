@@ -19,18 +19,25 @@ const cross = (a: V, b: V): V => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] 
 
 /** Distance from p to the triangle abc (Ericson, Real-Time Collision Detection 5.1.5). */
 function pointTriangle(p: V, a: V, b: V, c: V): number {
-  const ab = sub(b, a), ac = sub(c, a), ap = sub(p, a);
-  const d1 = dot(ab, ap), d2 = dot(ac, ap);
+  const ab = sub(b, a),
+    ac = sub(c, a),
+    ap = sub(p, a);
+  const d1 = dot(ab, ap),
+    d2 = dot(ac, ap);
   const closest = (q: V): number => Math.hypot(...sub(p, q));
   if (d1 <= 0 && d2 <= 0) return closest(a);
-  const bp = sub(p, b), d3 = dot(ab, bp), d4 = dot(ac, bp);
+  const bp = sub(p, b),
+    d3 = dot(ab, bp),
+    d4 = dot(ac, bp);
   if (d3 >= 0 && d4 <= d3) return closest(b);
   const vc = d1 * d4 - d3 * d2;
   if (vc <= 0 && d1 >= 0 && d3 <= 0) {
     const v = d1 / (d1 - d3);
     return closest([a[0] + ab[0] * v, a[1] + ab[1] * v, a[2] + ab[2] * v]);
   }
-  const cp = sub(p, c), d5 = dot(ab, cp), d6 = dot(ac, cp);
+  const cp = sub(p, c),
+    d5 = dot(ab, cp),
+    d6 = dot(ac, cp);
   if (d6 >= 0 && d5 <= d6) return closest(c);
   const vb = d5 * d2 - d1 * d6;
   if (vb <= 0 && d2 >= 0 && d6 <= 0) {
@@ -43,7 +50,8 @@ function pointTriangle(p: V, a: V, b: V, c: V): number {
     return closest([b[0] + (c[0] - b[0]) * w, b[1] + (c[1] - b[1]) * w, b[2] + (c[2] - b[2]) * w]);
   }
   const denom = 1 / (va + vb + vc);
-  const v = vb * denom, w = vc * denom;
+  const v = vb * denom,
+    w = vc * denom;
   return closest([a[0] + ab[0] * v + ac[0] * w, a[1] + ab[1] * v + ac[1] * w, a[2] + ab[2] * v + ac[2] * w]);
 }
 
@@ -166,8 +174,7 @@ describe("the drawn arena walls", () => {
       .map((i): P2 => [at(surface.positions, i)[0], at(surface.positions, i)[1]])
       .sort((a, b) => Math.atan2(a[1], a[0]) - Math.atan2(b[1], b[0]));
     const points: P2[] = [];
-    for (let x = -4096 + 13.7; x < 4096; x += 61.3)
-      for (let y = -5120 + 7.9; y < 5120; y += 59.1) if (insidePolygon([x, y], outline)) points.push([x, y]);
+    for (let x = -4096 + 13.7; x < 4096; x += 61.3) for (let y = -5120 + 7.9; y < 5120; y += 59.1) if (insidePolygon([x, y], outline)) points.push([x, y]);
     const counts = coverage(ceiling, points);
     expect(points.length).toBeGreaterThan(15000);
     expect(counts.filter((c) => c === 0).length, "gaps").toBe(0);
@@ -184,7 +191,8 @@ describe("the floor's outline", () => {
     for (const [x, y] of outline) {
       const nearest = Math.min(...foot.map((p) => Math.hypot(p[0] - x, p[1] - y)));
       // (round the posts and across the mouths: the post bases' foot and the goals' floors' edge, y 5128)
-      if (Math.abs(x) <= 904 && Math.abs(y) > 5000) expect.soft(Math.hypot(Math.abs(x) - 904, Math.abs(y) - 5128) <= 104.1 || Math.abs(Math.abs(y) - 5128) < 1e-6, `${String(x)},${String(y)}`).toBe(true);
+      if (Math.abs(x) <= 904 && Math.abs(y) > 5000)
+        expect.soft(Math.hypot(Math.abs(x) - 904, Math.abs(y) - 5128) <= 104.1 || Math.abs(Math.abs(y) - 5128) < 1e-6, `${String(x)},${String(y)}`).toBe(true);
       else expect.soft(nearest, `${String(x)},${String(y)}`).toBeLessThan(0.5);
     }
   });
@@ -249,8 +257,7 @@ describe("the drawn goals", () => {
       .map((k): P2 => k.split(",").map(Number) as unknown as P2)
       .sort((a, b) => Math.atan2(a[1] - centre[1], a[0] - centre[0]) - Math.atan2(b[1] - centre[1], b[0] - centre[0]));
     const points: P2[] = [];
-    for (let y = 5120 + 3.3; y < 6100; y += 9.7)
-      for (let z = 1.9; z < 650; z += 9.1) if (insidePolygon([y, z], outline)) points.push([y, z]);
+    for (let y = 5120 + 3.3; y < 6100; y += 9.7) for (let z = 1.9; z < 650; z += 9.1) if (insidePolygon([y, z], outline)) points.push([y, z]);
     const counts = coverage(side, points);
     expect(points.length).toBeGreaterThan(2500);
     expect(counts.filter((c) => c === 0).length, "gaps").toBe(0);

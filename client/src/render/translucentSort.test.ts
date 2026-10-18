@@ -15,7 +15,11 @@ const boxAt = (at: [number, number, number], renderOrder = 0): Mesh => {
   return mesh;
 };
 const item = (mesh: Mesh, id: number): SortItem => ({ id, object: mesh, groupOrder: 0, renderOrder: mesh.renderOrder });
-const order = (meshes: Mesh[]): number[] => meshes.map(item).sort(gameTranslucentSort).map((i) => i.id);
+const order = (meshes: Mesh[]): number[] =>
+  meshes
+    .map(item)
+    .sort(gameTranslucentSort)
+    .map((i) => i.id);
 
 describe("the game's translucent order (TRN1)", () => {
   it("the priorities as the game's: the big hotspots first, then the FogCylinder, the fog sheets, the canopy, the fog bowl ... the team hotspots last", () => {
@@ -73,8 +77,14 @@ describe("the game's translucent order (TRN1)", () => {
   });
 
   it("a sprite drawn nearer than it is: its fragments' depth as at its true place, scaled back out from the point it's placed toward, past the far plane just short of it", () => {
-    const material = withTrueDepth(new ShaderMaterial({ vertexShader: "void main() { gl_Position = vec4(0.0); }", fragmentShader: "void main() { gl_FragColor = vec4(1.0); }" }), 3.5, [0, 928, 0]);
-    expect(material.vertexShader).toContain("vTrueClip = projectionMatrix * viewMatrix * vec4(vec3(0.000, 928.000, 0.000) + (carballWorld - vec3(0.000, 928.000, 0.000)) * 3.500000, 1.0);");
+    const material = withTrueDepth(
+      new ShaderMaterial({ vertexShader: "void main() { gl_Position = vec4(0.0); }", fragmentShader: "void main() { gl_FragColor = vec4(1.0); }" }),
+      3.5,
+      [0, 928, 0],
+    );
+    expect(material.vertexShader).toContain(
+      "vTrueClip = projectionMatrix * viewMatrix * vec4(vec3(0.000, 928.000, 0.000) + (carballWorld - vec3(0.000, 928.000, 0.000)) * 3.500000, 1.0);",
+    );
     expect(material.fragmentShader).toContain("gl_FragDepth = min(0.5 * vTrueClip.z / vTrueClip.w + 0.5, 0.999999762);");
     // (the old mains still run first)
     expect(material.fragmentShader.indexOf("void carballTrueDepthMain()")).toBeLessThan(material.fragmentShader.indexOf("void main()"));

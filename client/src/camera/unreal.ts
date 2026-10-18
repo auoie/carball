@@ -23,8 +23,7 @@ export function normalizeAxis(a: number): number {
   return r;
 }
 
-export const normalizeRotator = (r: Rotator): Rotator =>
-  rotator(normalizeAxis(r.pitch), normalizeAxis(r.yaw), normalizeAxis(r.roll));
+export const normalizeRotator = (r: Rotator): Rotator => rotator(normalizeAxis(r.pitch), normalizeAxis(r.yaw), normalizeAxis(r.roll));
 
 export const addRotators = (a: Rotator, b: Rotator): Rotator => rotator(a.pitch + b.pitch, a.yaw + b.yaw, a.roll + b.roll);
 export const subRotators = (a: Rotator, b: Rotator): Rotator => rotator(a.pitch - b.pitch, a.yaw - b.yaw, a.roll - b.roll);
@@ -77,15 +76,12 @@ export const lerp = (a: number, b: number, t: number): number => a + (b - a) * t
 export const vlerp = (a: Vec3, b: Vec3, t: number): Vec3 => add(a, scale(sub(b, a), t));
 
 /** RLerp(A, B, Alpha, bShortestPath = true). */
-export const rlerp = (a: Rotator, b: Rotator, alpha: number): Rotator =>
-  addRotators(a, scaleRotator(normalizeRotator(subRotators(b, a)), alpha));
+export const rlerp = (a: Rotator, b: Rotator, alpha: number): Rotator => addRotators(a, scaleRotator(normalizeRotator(subRotators(b, a)), alpha));
 
 /** Object.GetSmoothInterpLerpValue: 1 - e^(-lambda * dt), frame-rate independent. */
 export const smoothInterpLerpValue = (lambda: number, dt: number): number => 1 - Math.pow(2.71828, -lambda * dt);
-export const vSmoothInterpTo = (from: Vec3, to: Vec3, lambda: number, dt: number): Vec3 =>
-  vlerp(from, to, smoothInterpLerpValue(lambda, dt));
-export const rSmoothInterpTo = (from: Rotator, to: Rotator, lambda: number, dt: number): Rotator =>
-  rlerp(from, to, smoothInterpLerpValue(lambda, dt));
+export const vSmoothInterpTo = (from: Vec3, to: Vec3, lambda: number, dt: number): Vec3 => vlerp(from, to, smoothInterpLerpValue(lambda, dt));
+export const rSmoothInterpTo = (from: Rotator, to: Rotator, lambda: number, dt: number): Rotator => rlerp(from, to, smoothInterpLerpValue(lambda, dt));
 
 export function normal(v: Vec3): Vec3 {
   const len = length(v);

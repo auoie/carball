@@ -8,9 +8,9 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
 use carball_server::engine::{self, Arena};
+use carball_server::game::Outgoing;
 use carball_server::net::NetLimits;
 use carball_server::protocol::{self, Control, Datagram, InputFrame};
-use carball_server::game::Outgoing;
 use carball_server::{game_loop, net};
 use wtransport::{ClientConfig, Endpoint};
 
@@ -38,17 +38,19 @@ async fn a_client_connects_drives_and_follows_the_world() {
     let server = net::endpoint(identity, 0).unwrap();
     let port = server.local_addr().unwrap().port();
     let (to_game, messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
-    std::thread::spawn(move || game_loop::run(
-        messages,
-        game_loop::Mode::Direct(carball_server::match_host::Playlist {
-            team_size: carball_server::game::TEAM_SIZE,
-            match_type: carball_server::game::MatchType::Casual,
-            forfeit_vote_wait: None,
-        }),
-        None,
-        heartbeat(),
-        Instant::now(),
-    ));
+    std::thread::spawn(move || {
+        game_loop::run(
+            messages,
+            game_loop::Mode::Direct(carball_server::match_host::Playlist {
+                team_size: carball_server::game::TEAM_SIZE,
+                match_type: carball_server::game::MatchType::Casual,
+                forfeit_vote_wait: None,
+            }),
+            None,
+            heartbeat(),
+            Instant::now(),
+        )
+    });
     tokio::spawn(net::accept_loop(Arc::new(server), to_game, open_limits()));
 
     let config = ClientConfig::builder()
@@ -74,7 +76,9 @@ async fn a_client_connects_drives_and_follows_the_world() {
         token: 0,
     };
     send.write_all(&hello.encode()).await.unwrap();
-    let Control::Welcome { car_id, snapshot, tick_rate, .. } = read_control(&mut recv).await else { panic!("expected welcome") };
+    let Control::Welcome { car_id, snapshot, tick_rate, .. } = read_control(&mut recv).await else {
+        panic!("expected welcome")
+    };
     assert_eq!(tick_rate, 120);
 
     let mut world = Arena::new();
@@ -130,7 +134,10 @@ async fn a_client_connects_drives_and_follows_the_world() {
     }
     let end = world.car_position(car_id).unwrap();
     let driven = (end[0] - start[0]).hypot(end[1] - start[1]);
-    println!("updates {updates}, last ack {last_ack} of {frame} frames sent, driven {driven:.0} uu, pings {:?}", &pings[pings.len().saturating_sub(5)..]);
+    println!(
+        "updates {updates}, last ack {last_ack} of {frame} frames sent, driven {driven:.0} uu, pings {:?}",
+        &pings[pings.len().saturating_sub(5)..]
+    );
     assert!(updates > 300, "{updates} updates in {:?} (60 Hz expected)", countdown + Duration::from_millis(1500));
     assert!(driven > 500.0, "client view of the car drove {driven} uu");
     assert!(last_ack + 30 > frame, "the server consumed our inputs (ack {last_ack}, sent {frame})");
@@ -146,7 +153,12 @@ async fn a_client_connects_drives_and_follows_the_world() {
             frame += 1;
             sent.push(InputFrame { throttle: 127, ..InputFrame::default() });
             let keep = sent.len().min(protocol::MAX_INPUT_FRAMES);
-            let packet = Datagram::Inputs { timestamp: begin.elapsed().as_millis() as u32, sequence: datagrams, first_frame: frame + 1 - keep as u32, frames: sent[sent.len() - keep..].to_vec() };
+            let packet = Datagram::Inputs {
+                timestamp: begin.elapsed().as_millis() as u32,
+                sequence: datagrams,
+                first_frame: frame + 1 - keep as u32,
+                frames: sent[sent.len() - keep..].to_vec(),
+            };
             datagrams = datagrams.wrapping_add(1);
             connection.send_datagram(packet.encode()).unwrap();
         }
@@ -201,8 +213,12 @@ async fn a_vanished_client_is_a_lost_connection_and_a_closed_one_left() {
         let client = std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap();
             rt.block_on(async {
-                let config = ClientConfig::builder().with_bind_default().with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(cert_hash)]).build();
-                let connection = Endpoint::client(config).unwrap().connect(format!("https://localhost:{port}/play")).await.unwrap();
+                let config = ClientConfig::builder()
+                    .with_bind_default()
+                    .with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(cert_hash)])
+                    .build();
+                let connection =
+                    Endpoint::client(config).unwrap().connect(format!("https://localhost:{port}/play")).await.unwrap();
                 let (mut send, recv) = connection.open_bi().await.unwrap().await.unwrap();
                 send.write_all(&bytes).await.unwrap();
                 ready_tx.send(()).unwrap();
@@ -272,13 +288,25 @@ fn versioned_hello(version: u16, intent: u8, playlist: u8, token: u64, key: u64)
 }
 
 /// A session's first control message after its hello
-async fn first_reply(port: u16, cert_hash: [u8; 32], hello: Vec<u8>) -> (Control, wtransport::Connection, wtransport::RecvStream) {
+async fn first_reply(
+    port: u16,
+    cert_hash: [u8; 32],
+    hello: Vec<u8>,
+) -> (Control, wtransport::Connection, wtransport::RecvStream) {
     first_reply_at("localhost", port, cert_hash, hello).await
 }
 
 /// The same to a host by name or address (127.0.0.1: an IPv4 client; localhost can be ::1)
-async fn first_reply_at(host: &str, port: u16, cert_hash: [u8; 32], hello: Vec<u8>) -> (Control, wtransport::Connection, wtransport::RecvStream) {
-    let config = ClientConfig::builder().with_bind_default().with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(cert_hash)]).build();
+async fn first_reply_at(
+    host: &str,
+    port: u16,
+    cert_hash: [u8; 32],
+    hello: Vec<u8>,
+) -> (Control, wtransport::Connection, wtransport::RecvStream) {
+    let config = ClientConfig::builder()
+        .with_bind_default()
+        .with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(cert_hash)])
+        .build();
     let connection = Endpoint::client(config).unwrap().connect(format!("https://{host}:{port}/play")).await.unwrap();
     let (mut send, mut recv) = connection.open_bi().await.unwrap().await.unwrap();
     send.write_all(&hello).await.unwrap();
@@ -297,8 +325,14 @@ async fn another_versions_hello_is_refused_with_the_version_reason_this_ones_let
     let server = net::endpoint(identity, 0).unwrap();
     let port = server.local_addr().unwrap().port();
     let (to_game, messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
-    let playlist = carball_server::match_host::Playlist { team_size: 1, match_type: carball_server::game::MatchType::Casual, forfeit_vote_wait: None };
-    std::thread::spawn(move || game_loop::run(messages, game_loop::Mode::Direct(playlist), None, heartbeat(), Instant::now()));
+    let playlist = carball_server::match_host::Playlist {
+        team_size: 1,
+        match_type: carball_server::game::MatchType::Casual,
+        forfeit_vote_wait: None,
+    };
+    std::thread::spawn(move || {
+        game_loop::run(messages, game_loop::Mode::Direct(playlist), None, heartbeat(), Instant::now())
+    });
     tokio::spawn(net::accept_loop(Arc::new(server), to_game, open_limits()));
 
     let refused = Control::Refused { reason: protocol::REFUSED_VERSION };
@@ -306,7 +340,8 @@ async fn another_versions_hello_is_refused_with_the_version_reason_this_ones_let
     let [lo, hi] = (protocol::VERSION - 1).to_le_bytes();
     let (older, ..) = first_reply(port, cert_hash, vec![3, 0, 0x01, lo, hi]).await;
     assert_eq!(older, refused, "an older version's hello");
-    let (newer, ..) = first_reply(port, cert_hash, versioned_hello(protocol::VERSION + 1, protocol::INTENT_JOIN, 0, 0, 0)).await;
+    let (newer, ..) =
+        first_reply(port, cert_hash, versioned_hello(protocol::VERSION + 1, protocol::INTENT_JOIN, 0, 0, 0)).await;
     assert_eq!(newer, refused, "a newer version's hello");
     let (current, ..) = first_reply(port, cert_hash, queue_hello(protocol::INTENT_JOIN, 0, 0)).await;
     assert!(!matches!(current, Control::Refused { .. }), "this version's hello let in: {current:?}");
@@ -322,9 +357,15 @@ async fn two_searches_make_a_match_their_tokens_claim() {
     let port = server.local_addr().unwrap().port();
     let (to_game, messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
     let playlists = [1, 2, 3]
-        .map(|team_size| carball_server::match_host::Playlist { team_size, match_type: carball_server::game::MatchType::Casual, forfeit_vote_wait: None })
+        .map(|team_size| carball_server::match_host::Playlist {
+            team_size,
+            match_type: carball_server::game::MatchType::Casual,
+            forfeit_vote_wait: None,
+        })
         .to_vec();
-    std::thread::spawn(move || game_loop::run(messages, game_loop::Mode::Queue(playlists), None, heartbeat(), Instant::now()));
+    std::thread::spawn(move || {
+        game_loop::run(messages, game_loop::Mode::Queue(playlists), None, heartbeat(), Instant::now())
+    });
     tokio::spawn(net::accept_loop(Arc::new(server), to_game, open_limits()));
 
     let (direct, ..) = first_reply(port, cert_hash, queue_hello(protocol::INTENT_JOIN, 0, 0)).await;
@@ -363,8 +404,16 @@ async fn two_searches_make_a_match_their_tokens_claim() {
 }
 
 /// A search's session, its control stream kept for the test to close (as the page's `finish`)
-async fn search_session(port: u16, cert_hash: [u8; 32], playlist: u8, key: u64) -> (wtransport::Connection, wtransport::SendStream, wtransport::RecvStream) {
-    let config = ClientConfig::builder().with_bind_default().with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(cert_hash)]).build();
+async fn search_session(
+    port: u16,
+    cert_hash: [u8; 32],
+    playlist: u8,
+    key: u64,
+) -> (wtransport::Connection, wtransport::SendStream, wtransport::RecvStream) {
+    let config = ClientConfig::builder()
+        .with_bind_default()
+        .with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(cert_hash)])
+        .build();
     let connection = Endpoint::client(config).unwrap().connect(format!("https://localhost:{port}/play")).await.unwrap();
     let (mut send, recv) = connection.open_bi().await.unwrap().await.unwrap();
     send.write_all(&keyed_hello(protocol::INTENT_SEARCH, playlist, 0, key)).await.unwrap();
@@ -396,9 +445,15 @@ async fn a_closed_search_leaves_the_queue_a_match_formed_as_it_closed_reaches_it
     let port = server.local_addr().unwrap().port();
     let (to_game, messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
     let playlists = [1, 2, 3]
-        .map(|team_size| carball_server::match_host::Playlist { team_size, match_type: carball_server::game::MatchType::Casual, forfeit_vote_wait: None })
+        .map(|team_size| carball_server::match_host::Playlist {
+            team_size,
+            match_type: carball_server::game::MatchType::Casual,
+            forfeit_vote_wait: None,
+        })
         .to_vec();
-    std::thread::spawn(move || game_loop::run(messages, game_loop::Mode::Queue(playlists), None, heartbeat(), Instant::now()));
+    std::thread::spawn(move || {
+        game_loop::run(messages, game_loop::Mode::Queue(playlists), None, heartbeat(), Instant::now())
+    });
     tokio::spawn(net::accept_loop(Arc::new(server), to_game, open_limits()));
     let found = |c: &Option<Control>| matches!(c, Some(Control::MatchFound { .. }));
 
@@ -422,8 +477,12 @@ async fn a_closed_search_leaves_the_queue_a_match_formed_as_it_closed_reaches_it
         let key = 200 + 10 * round as u64;
         let (_d, mut d_send, mut d_recv) = search_session(port, cert_hash, 1, key).await;
         let (_e, mut e_send, mut e_recv) = {
-            let config = ClientConfig::builder().with_bind_default().with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(cert_hash)]).build();
-            let connection = Endpoint::client(config).unwrap().connect(format!("https://localhost:{port}/play")).await.unwrap();
+            let config = ClientConfig::builder()
+                .with_bind_default()
+                .with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(cert_hash)])
+                .build();
+            let connection =
+                Endpoint::client(config).unwrap().connect(format!("https://localhost:{port}/play")).await.unwrap();
             let (send, recv) = connection.open_bi().await.unwrap().await.unwrap();
             (connection, send, recv)
         };
@@ -454,7 +513,10 @@ async fn a_closed_search_leaves_the_queue_a_match_formed_as_it_closed_reaches_it
     let (_old, _old_send, mut old_recv) = search_session(port, cert_hash, 3, 300).await;
     tokio::time::sleep(Duration::from_millis(300)).await;
     let (_new, _new_send, mut new_recv) = search_session(port, cert_hash, 3, 300).await;
-    assert_eq!(next_control(&mut old_recv, Duration::from_secs(5)).await, Some(Control::Kicked { reason: protocol::KICK_REPLACED }));
+    assert_eq!(
+        next_control(&mut old_recv, Duration::from_secs(5)).await,
+        Some(Control::Kicked { reason: protocol::KICK_REPLACED })
+    );
     assert_eq!(next_control(&mut old_recv, Duration::from_secs(5)).await, None, "then its session ends");
     assert_eq!(next_control(&mut new_recv, Duration::from_millis(500)).await, None, "the new search waits");
 }
@@ -506,13 +568,26 @@ async fn other_origins_and_an_addresss_extra_sessions_are_refused() {
     let server = net::endpoint(identity, 0).unwrap();
     let port = server.local_addr().unwrap().port();
     let (to_game, messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
-    let playlist = carball_server::match_host::Playlist { team_size: 2, match_type: carball_server::game::MatchType::Casual, forfeit_vote_wait: None };
-    std::thread::spawn(move || game_loop::run(messages, game_loop::Mode::Direct(playlist), None, heartbeat(), Instant::now()));
-    let limits = NetLimits { per_address: 2, allowed_origins: Some(vec!["https://carball.zolt.top".into()]), ..NetLimits::default() };
+    let playlist = carball_server::match_host::Playlist {
+        team_size: 2,
+        match_type: carball_server::game::MatchType::Casual,
+        forfeit_vote_wait: None,
+    };
+    std::thread::spawn(move || {
+        game_loop::run(messages, game_loop::Mode::Direct(playlist), None, heartbeat(), Instant::now())
+    });
+    let limits = NetLimits {
+        per_address: 2,
+        allowed_origins: Some(vec!["https://carball.zolt.top".into()]),
+        ..NetLimits::default()
+    };
     let to_game_capped = to_game.clone();
     tokio::spawn(net::accept_loop(Arc::new(server), to_game, limits));
     let connect = |origin: Option<&'static str>| async move {
-        let config = ClientConfig::builder().with_bind_default().with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(cert_hash)]).build();
+        let config = ClientConfig::builder()
+            .with_bind_default()
+            .with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(cert_hash)])
+            .build();
         let mut options = wtransport::endpoint::ConnectOptions::builder(format!("https://localhost:{port}/play"));
         if let Some(origin) = origin {
             options = options.add_header("origin", origin);
@@ -531,9 +606,21 @@ async fn other_origins_and_an_addresss_extra_sessions_are_refused() {
     let capped = net::endpoint(identity, 0).unwrap();
     let capped_port = capped.local_addr().unwrap().port();
     tokio::spawn(net::accept_loop(Arc::new(capped), to_game_capped, NetLimits { max_sessions: 1, ..open_limits() }));
-    let config = || ClientConfig::builder().with_bind_default().with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(capped_hash)]).build();
-    let only = Endpoint::client(config()).unwrap().connect(format!("https://localhost:{capped_port}/play")).await.expect("the one session");
-    assert!(Endpoint::client(config()).unwrap().connect(format!("https://localhost:{capped_port}/play")).await.is_err(), "past the most sessions");
+    let config = || {
+        ClientConfig::builder()
+            .with_bind_default()
+            .with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(capped_hash)])
+            .build()
+    };
+    let only = Endpoint::client(config())
+        .unwrap()
+        .connect(format!("https://localhost:{capped_port}/play"))
+        .await
+        .expect("the one session");
+    assert!(
+        Endpoint::client(config()).unwrap().connect(format!("https://localhost:{capped_port}/play")).await.is_err(),
+        "past the most sessions"
+    );
     drop(only);
 }
 
@@ -546,11 +633,22 @@ async fn a_silent_session_times_out_and_a_flooding_one_is_closed() {
     let server = net::endpoint(identity, 0).unwrap();
     let port = server.local_addr().unwrap().port();
     let (to_game, messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
-    let playlist = carball_server::match_host::Playlist { team_size: 2, match_type: carball_server::game::MatchType::Casual, forfeit_vote_wait: None };
-    std::thread::spawn(move || game_loop::run(messages, game_loop::Mode::Direct(playlist), None, heartbeat(), Instant::now()));
+    let playlist = carball_server::match_host::Playlist {
+        team_size: 2,
+        match_type: carball_server::game::MatchType::Casual,
+        forfeit_vote_wait: None,
+    };
+    std::thread::spawn(move || {
+        game_loop::run(messages, game_loop::Mode::Direct(playlist), None, heartbeat(), Instant::now())
+    });
     let limits = NetLimits { handshake: Duration::from_secs(1), ..open_limits() };
     tokio::spawn(net::accept_loop(Arc::new(server), to_game, limits));
-    let config = || ClientConfig::builder().with_bind_default().with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(cert_hash)]).build();
+    let config = || {
+        ClientConfig::builder()
+            .with_bind_default()
+            .with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(cert_hash)])
+            .build()
+    };
 
     let silent = Endpoint::client(config()).unwrap().connect(format!("https://localhost:{port}/play")).await.unwrap();
     let start = Instant::now();
@@ -576,7 +674,8 @@ async fn a_silent_session_times_out_and_a_flooding_one_is_closed() {
     let (mut send, mut recv) = flooder.open_bi().await.unwrap().await.unwrap();
     send.write_all(&queue_hello(protocol::INTENT_JOIN, 0, 0)).await.unwrap();
     assert!(matches!(read_control(&mut recv).await, Control::Welcome { .. }));
-    let inputs = Datagram::Inputs { timestamp: 0, sequence: 0, first_frame: 0, frames: vec![InputFrame::default()] }.encode();
+    let inputs =
+        Datagram::Inputs { timestamp: 0, sequence: 0, first_frame: 0, frames: vec![InputFrame::default()] }.encode();
     let flooding = async {
         loop {
             for _ in 0..200 {
@@ -611,12 +710,24 @@ async fn a_certificate_reload_keeps_open_sessions_and_serves_the_new_one() {
     let server = Arc::new(net::endpoint(identity, 0).unwrap());
     let port = server.local_addr().unwrap().port();
     let (to_game, messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
-    let playlist = carball_server::match_host::Playlist { team_size: 2, match_type: carball_server::game::MatchType::Casual, forfeit_vote_wait: None };
-    std::thread::spawn(move || game_loop::run(messages, game_loop::Mode::Direct(playlist), None, heartbeat(), Instant::now()));
+    let playlist = carball_server::match_host::Playlist {
+        team_size: 2,
+        match_type: carball_server::game::MatchType::Casual,
+        forfeit_vote_wait: None,
+    };
+    std::thread::spawn(move || {
+        game_loop::run(messages, game_loop::Mode::Direct(playlist), None, heartbeat(), Instant::now())
+    });
     tokio::spawn(net::accept_loop(server.clone(), to_game, open_limits()));
-    let client = |hash: [u8; 32]| ClientConfig::builder().with_bind_default().with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(hash)]).build();
+    let client = |hash: [u8; 32]| {
+        ClientConfig::builder()
+            .with_bind_default()
+            .with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(hash)])
+            .build()
+    };
 
-    let connection = Endpoint::client(client(old_hash)).unwrap().connect(format!("https://localhost:{port}/play")).await.unwrap();
+    let connection =
+        Endpoint::client(client(old_hash)).unwrap().connect(format!("https://localhost:{port}/play")).await.unwrap();
     let (mut send, mut recv) = connection.open_bi().await.unwrap().await.unwrap();
     send.write_all(&queue_hello(protocol::INTENT_JOIN, 0, 0)).await.unwrap();
     assert!(matches!(read_control(&mut recv).await, Control::Welcome { .. }));
@@ -636,8 +747,12 @@ async fn a_certificate_reload_keeps_open_sessions_and_serves_the_new_one() {
     }
     assert!(updates > 30, "{updates} updates after the reload");
     // New sessions: the new certificate, not the old one
-    assert!(Endpoint::client(client(new_hash)).unwrap().connect(format!("https://localhost:{port}/play")).await.is_ok());
-    assert!(Endpoint::client(client(old_hash)).unwrap().connect(format!("https://localhost:{port}/play")).await.is_err());
+    assert!(
+        Endpoint::client(client(new_hash)).unwrap().connect(format!("https://localhost:{port}/play")).await.is_ok()
+    );
+    assert!(
+        Endpoint::client(client(old_hash)).unwrap().connect(format!("https://localhost:{port}/play")).await.is_err()
+    );
     drop(send);
 }
 
@@ -664,10 +779,19 @@ async fn a_certificate_and_a_key_that_dont_match_are_refused_and_the_pair_then_s
     let port = server.local_addr().unwrap().port();
     server.reload_config(net::server_config(identity, port).unwrap(), false).unwrap();
     let (to_game, messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
-    let playlist = carball_server::match_host::Playlist { team_size: 1, match_type: carball_server::game::MatchType::Casual, forfeit_vote_wait: None };
-    std::thread::spawn(move || game_loop::run(messages, game_loop::Mode::Direct(playlist), None, heartbeat(), Instant::now()));
+    let playlist = carball_server::match_host::Playlist {
+        team_size: 1,
+        match_type: carball_server::game::MatchType::Casual,
+        forfeit_vote_wait: None,
+    };
+    std::thread::spawn(move || {
+        game_loop::run(messages, game_loop::Mode::Direct(playlist), None, heartbeat(), Instant::now())
+    });
     tokio::spawn(net::accept_loop(server, to_game, open_limits()));
-    let config = ClientConfig::builder().with_bind_default().with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(new_hash)]).build();
+    let config = ClientConfig::builder()
+        .with_bind_default()
+        .with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(new_hash)])
+        .build();
     assert!(Endpoint::client(config).unwrap().connect(format!("https://localhost:{port}/play")).await.is_ok());
 }
 
@@ -682,9 +806,16 @@ async fn a_quic_connection_that_never_asks_for_a_session_is_closed_at_the_quic_d
     let server = net::endpoint(identity, 0).unwrap();
     let port = server.local_addr().unwrap().port();
     let (to_game, messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
-    let playlist = carball_server::match_host::Playlist { team_size: 1, match_type: carball_server::game::MatchType::Casual, forfeit_vote_wait: None };
-    std::thread::spawn(move || game_loop::run(messages, game_loop::Mode::Direct(playlist), None, heartbeat(), Instant::now()));
-    let limits = NetLimits { quic_handshake: Duration::from_secs(1), handshake: Duration::from_secs(10), ..open_limits() };
+    let playlist = carball_server::match_host::Playlist {
+        team_size: 1,
+        match_type: carball_server::game::MatchType::Casual,
+        forfeit_vote_wait: None,
+    };
+    std::thread::spawn(move || {
+        game_loop::run(messages, game_loop::Mode::Direct(playlist), None, heartbeat(), Instant::now())
+    });
+    let limits =
+        NetLimits { quic_handshake: Duration::from_secs(1), handshake: Duration::from_secs(10), ..open_limits() };
     tokio::spawn(net::accept_loop(Arc::new(server), to_game, limits));
     // (QUIC with WebTransport's ALPN, and nothing after: no HTTP/3 settings, no session request)
     let tls = wtransport::tls::client::build_default_tls_config(
@@ -694,7 +825,8 @@ async fn a_quic_connection_that_never_asks_for_a_session_is_closed_at_the_quic_d
     let config = quinn::ClientConfig::new(Arc::new(quinn::crypto::rustls::QuicClientConfig::try_from(tls).unwrap()));
     let mut endpoint = quinn::Endpoint::client("0.0.0.0:0".parse().unwrap()).unwrap();
     endpoint.set_default_client_config(config);
-    let connection = endpoint.connect(([127, 0, 0, 1], port).into(), "localhost").unwrap().await.expect("the QUIC handshake");
+    let connection =
+        endpoint.connect(([127, 0, 0, 1], port).into(), "localhost").unwrap().await.expect("the QUIC handshake");
     let start = Instant::now();
     let closed = tokio::time::timeout(Duration::from_secs(5), connection.closed()).await;
     assert!(closed.is_ok(), "still open after 5 s");
@@ -709,7 +841,8 @@ async fn stalled_match(host: &str, port: u16, cert_hash: [u8; 32], a: u64, b: u6
     );
     let (Control::MatchFound { token: ta, .. }, ..) = ra else { panic!("{:?}", ra.0) };
     let (Control::MatchFound { .. }, ..) = rb else { panic!("{:?}", rb.0) };
-    let (welcome, _conn, mut recv) = first_reply_at(host, port, cert_hash, queue_hello(protocol::INTENT_CLAIM, 0, ta)).await;
+    let (welcome, _conn, mut recv) =
+        first_reply_at(host, port, cert_hash, queue_hello(protocol::INTENT_CLAIM, 0, ta)).await;
     assert!(matches!(welcome, Control::Welcome { .. }), "{welcome:?}");
     let start = Instant::now();
     let kicked = tokio::time::timeout(Duration::from_secs(20), async {
@@ -736,18 +869,30 @@ async fn no_shows_from(host: &'static str) {
     let port = server.local_addr().unwrap().port();
     let (to_game, messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
     let playlists = [1, 2, 3]
-        .map(|team_size| carball_server::match_host::Playlist { team_size, match_type: carball_server::game::MatchType::Casual, forfeit_vote_wait: None })
+        .map(|team_size| carball_server::match_host::Playlist {
+            team_size,
+            match_type: carball_server::game::MatchType::Casual,
+            forfeit_vote_wait: None,
+        })
         .to_vec();
-    std::thread::spawn(move || game_loop::run(messages, game_loop::Mode::Queue(playlists), None, heartbeat(), Instant::now()));
+    std::thread::spawn(move || {
+        game_loop::run(messages, game_loop::Mode::Queue(playlists), None, heartbeat(), Instant::now())
+    });
     tokio::spawn(net::accept_loop(Arc::new(server), to_game, open_limits()));
 
     stalled_match(host, port, cert_hash, 11, 22).await;
     let (refused, ..) = first_reply_at(host, port, cert_hash, keyed_hello(protocol::INTENT_SEARCH, 1, 0, 22)).await;
-    assert!(matches!(refused, Control::SearchCooldown { seconds, network: false } if (100..=120).contains(&seconds)), "{host}: {refused:?}");
+    assert!(
+        matches!(refused, Control::SearchCooldown { seconds, network: false } if (100..=120).contains(&seconds)),
+        "{host}: {refused:?}"
+    );
     // Two other browsers there: matched, and one of them doesn't claim either: the address is blocked
     stalled_match(host, port, cert_hash, 33, 44).await;
     let (blocked, ..) = first_reply_at(host, port, cert_hash, keyed_hello(protocol::INTENT_SEARCH, 1, 0, 55)).await;
-    assert!(matches!(blocked, Control::SearchCooldown { seconds, network: true } if (100..=120).contains(&seconds)), "{host}: {blocked:?}");
+    assert!(
+        matches!(blocked, Control::SearchCooldown { seconds, network: true } if (100..=120).contains(&seconds)),
+        "{host}: {blocked:?}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -760,7 +905,6 @@ async fn no_shows_over_ipv4_block_their_browser_then_after_two_their_address() {
 async fn no_shows_over_ipv6_block_their_browser_then_after_two_their_64() {
     no_shows_from("[::1]").await;
 }
-
 
 /// The binary's `--healthcheck` (the image's HEALTHCHECK): 0 against a live health endpoint, 1 against none, quickly
 /// (RX15's C16: its wiring in main)
@@ -797,7 +941,11 @@ async fn the_binarys_healthcheck_answers_by_the_health_endpoint() {
 #[test]
 fn the_binary_refuses_a_meshes_folder_that_isnt_the_arenas() {
     let meshes = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../out/arena/collision_meshes/arena"));
-    let mut files: Vec<_> = std::fs::read_dir(meshes).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|x| x == "cmf")).collect();
+    let mut files: Vec<_> = std::fs::read_dir(meshes)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|x| x == "cmf"))
+        .collect();
     files.sort();
     assert_eq!(files.len(), 16);
     let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join("meshes_layouts");
@@ -829,8 +977,14 @@ fn the_binary_refuses_a_meshes_folder_that_isnt_the_arenas() {
             }),
             "16 bytes after the vertices that aren't a body offset",
         ),
-        (copy("unplaced", "arena", &|_, b| Some(if goal(&b) { b[..b.len() - 16].to_vec() } else { b })), "0 meshes placed by a body offset"),
-        (copy("truncated", "arena", &|i, b| Some(if i == 3 { b[..b.len() - 5].to_vec() } else { b })), "not a whole mesh (truncated"),
+        (
+            copy("unplaced", "arena", &|_, b| Some(if goal(&b) { b[..b.len() - 16].to_vec() } else { b })),
+            "0 meshes placed by a body offset",
+        ),
+        (
+            copy("truncated", "arena", &|i, b| Some(if i == 3 { b[..b.len() - 5].to_vec() } else { b })),
+            "not a whole mesh (truncated",
+        ),
         (
             copy("bad_index", "arena", &|i, mut b| {
                 if i == 5 {

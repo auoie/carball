@@ -7,12 +7,32 @@ import { StageLayer } from "./stage";
 
 /** The log (ChatLogViewMovie in its container at (10, 10)): its text at (22, 20), 350 x 185, 18 px with 23 px lines (8
  *  of them: RV-253); fades 0.3 s; hidden 6 s after the last line, 4 s after the scoreboard closes */
-export const CHAT_LOG = { at: [32, 30] as const, size: [350, 185] as const, font: 18, line: 23, lines: 8, fade: 0.3, hideAfter: 6, afterScoreboard: 4 } as const;
+export const CHAT_LOG = {
+  at: [32, 30] as const,
+  size: [350, 185] as const,
+  font: 18,
+  line: 23,
+  lines: 8,
+  fade: 0.3,
+  hideAfter: 6,
+  afterScoreboard: 4,
+} as const;
 
 /** The panel (QuickChatViewMovie): x 24, centred vertically, about 140 tall; the title at (7, 10) 16 px #43AFFF, the
  *  category at (7, 25) 20 px white glowing #43AFFF, the rows from y 48, 24 apart: a 30 x 28 key box, the message 16 px
  *  #43AFFF in 200 x 22 at x + 33 (bold white when picked); its background at alpha 0.8 */
-export const QUICK_CHAT_PANEL = { x: 24, height: 140, title: [7, 10, 16] as const, category: [7, 25, 20] as const, rows: 48, row: 24, key: [30, 28] as const, message: [33, 200, 22, 16] as const, accent: "#43AFFF", background: 0.8 } as const;
+export const QUICK_CHAT_PANEL = {
+  x: 24,
+  height: 140,
+  title: [7, 10, 16] as const,
+  category: [7, 25, 20] as const,
+  rows: 48,
+  row: 24,
+  key: [30, 28] as const,
+  message: [33, 200, 22, 16] as const,
+  accent: "#43AFFF",
+  background: 0.8,
+} as const;
 
 /** A line of the log: who said it and how it reads */
 export interface ChatLine {
@@ -178,14 +198,36 @@ export class QuickChatPanel {
     Object.assign(title.style, { color: P.accent, fontSize: `${String(P.title[2])}px`, textTransform: "uppercase", lineHeight: "1" });
     title.textContent = CHAT_TEXT.title;
     this.#category = at(document.createElement("div"), P.category[0], P.category[1]);
-    Object.assign(this.#category.style, { color: "#fff", fontSize: `${String(P.category[2])}px`, textTransform: "uppercase", textShadow: `0 0 4px ${P.accent}`, lineHeight: "1" });
+    Object.assign(this.#category.style, {
+      color: "#fff",
+      fontSize: `${String(P.category[2])}px`,
+      textTransform: "uppercase",
+      textShadow: `0 0 4px ${P.accent}`,
+      lineHeight: "1",
+    });
     this.#box.append(title, this.#category);
     for (let k = 0; k < 4; k++) {
       const y = P.rows + P.row * k;
       const key = at(document.createElement("div"), 7, y - 3);
-      Object.assign(key.style, { width: `${String(P.key[0])}px`, height: `${String(P.key[1])}px`, lineHeight: `${String(P.key[1])}px`, textAlign: "center", color: "#fff", border: `1px solid ${P.accent}`, borderRadius: "3px", boxSizing: "border-box" });
+      Object.assign(key.style, {
+        width: `${String(P.key[0])}px`,
+        height: `${String(P.key[1])}px`,
+        lineHeight: `${String(P.key[1])}px`,
+        textAlign: "center",
+        color: "#fff",
+        border: `1px solid ${P.accent}`,
+        borderRadius: "3px",
+        boxSizing: "border-box",
+      });
       const text = at(document.createElement("div"), 7 + P.message[0], y);
-      Object.assign(text.style, { width: `${String(P.message[1])}px`, height: `${String(P.message[2])}px`, color: P.accent, fontSize: `${String(P.message[3])}px`, whiteSpace: "nowrap", overflow: "hidden" });
+      Object.assign(text.style, {
+        width: `${String(P.message[1])}px`,
+        height: `${String(P.message[2])}px`,
+        color: P.accent,
+        fontSize: `${String(P.message[3])}px`,
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+      });
       this.#box.append(key, text);
       this.#rows.push({ key, text });
     }
@@ -194,7 +236,12 @@ export class QuickChatPanel {
   }
 
   /** Drawn: the menu's view, the categories, each preset's text by key, the four keys' labels (1-4, or the pad's) */
-  draw(view: { shown: number | null; selected: number | null; alpha: number }, groups: readonly ChatGroup[], text: (key: string) => string, keys: readonly string[]): void {
+  draw(
+    view: { shown: number | null; selected: number | null; alpha: number },
+    groups: readonly ChatGroup[],
+    text: (key: string) => string,
+    keys: readonly string[],
+  ): void {
     this.#layer.fit();
     this.#box.style.opacity = String(view.alpha);
     const group = view.shown === null ? undefined : groups[view.shown];

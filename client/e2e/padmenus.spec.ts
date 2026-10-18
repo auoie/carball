@@ -24,7 +24,10 @@ async function tap(page: Page, buttons: number[], axes = [0, 0, 0, 0]): Promise<
         new Promise((resolve) => {
           const step = (k: number): void => {
             if (k === 0) resolve();
-            else requestAnimationFrame(() => { step(k - 1); });
+            else
+              requestAnimationFrame(() => {
+                step(k - 1);
+              });
           };
           step(n);
         });
@@ -54,7 +57,8 @@ test("menus with a pad: Start, the D-pad's focus, A, B (MENU-1/4)", async ({ pag
   await expect(menu.getByRole("button", { name: /^free play$/i })).toBeVisible();
   await expect(page.locator("#pause-menu")).toBeHidden();
   // (focus Free Play: down from the top until it holds it, then A)
-  for (let i = 0; i < 4 && !(await menu.getByRole("button", { name: /^free play$/i }).evaluate((b) => b.classList.contains("pad-focus"))); i++) await tap(page, [DOWN]);
+  for (let i = 0; i < 4 && !(await menu.getByRole("button", { name: /^free play$/i }).evaluate((b) => b.classList.contains("pad-focus"))); i++)
+    await tap(page, [DOWN]);
   // (A on Free Play: free play at once, on the one map offered)
   await tap(page, [A]);
   await expect(menu).toBeHidden();
@@ -64,7 +68,8 @@ test("menus with a pad: Start, the D-pad's focus, A, B (MENU-1/4)", async ({ pag
   await expect(pause).toBeVisible();
   await tap(page, [DOWN]);
   await expect(pause.locator(".pad-focus")).toHaveCount(1);
-  for (let i = 0; i < 4 && !(await pause.getByRole("button", { name: /^settings$/i }).evaluate((b) => b.classList.contains("pad-focus"))); i++) await tap(page, [DOWN]);
+  for (let i = 0; i < 4 && !(await pause.getByRole("button", { name: /^settings$/i }).evaluate((b) => b.classList.contains("pad-focus"))); i++)
+    await tap(page, [DOWN]);
   await tap(page, [A]);
   await expect(page.locator("#settings")).toBeVisible();
   await tap(page, [B]);
@@ -85,7 +90,8 @@ test("menus with a pad: Start, the D-pad's focus, A, B (MENU-1/4)", async ({ pag
   // The user's path (finding 15): the pause menu opened with Escape, the left stick down to Settings, A opens them
   await page.keyboard.press("Escape");
   await expect(pause).toBeVisible();
-  for (let i = 0; i < 4 && !(await pause.getByRole("button", { name: /^settings$/i }).evaluate((el) => el.classList.contains("pad-focus"))); i++) await tap(page, [], [0, 1, 0, 0]);
+  for (let i = 0; i < 4 && !(await pause.getByRole("button", { name: /^settings$/i }).evaluate((el) => el.classList.contains("pad-focus"))); i++)
+    await tap(page, [], [0, 1, 0, 0]);
   await tap(page, [A]);
   await expect(page.locator("#settings")).toBeVisible();
   // (Start with the settings open: the pause menu closed, the settings with it, no page backed out of: RV-475)
@@ -101,7 +107,10 @@ test("a pad input bound in the settings: Circle (B) and Start bind, they don't b
   await fakeGamepad(context);
   await page.goto("/?render=off");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
-  await page.locator("#main-menu").getByRole("button", { name: /^settings$/i }).click();
+  await page
+    .locator("#main-menu")
+    .getByRole("button", { name: /^settings$/i })
+    .click();
   const settings = page.locator("#settings");
   await expect(settings).toBeVisible();
   const slot = settings.locator('.binding-slot[data-device="gamepad"]').first();
@@ -115,7 +124,16 @@ test("a pad input bound in the settings: Circle (B) and Start bind, they don't b
     await expect(same).toHaveText("Press or move a gamepad input…");
     // (two of the page's frames first: the capture waits to see the pad released, so a press before its first poll is
     // rightly not taken, RV-448)
-    await page.evaluate(() => new Promise<void>((resolve) => { requestAnimationFrame(() => { requestAnimationFrame(() => { resolve(); }); }); }));
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              resolve();
+            });
+          });
+        }),
+    );
     await tap(page, [button]);
     await expect(settings).toBeVisible();
     await expect(same).toHaveText(name);
@@ -128,13 +146,19 @@ test("a pad input bound in the settings: Circle (B) and Start bind, they don't b
   expect(errors).toEqual([]);
 });
 
-test("the settings with a pad: the bumpers step the tabs (stopping at the ends), right steps a slider in place, its row kept and highlighted, the hints (MENU-12..17)", async ({ page, context }) => {
+test("the settings with a pad: the bumpers step the tabs (stopping at the ends), right steps a slider in place, its row kept and highlighted, the hints (MENU-12..17)", async ({
+  page,
+  context,
+}) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await fakeGamepad(context);
   await page.goto("/?render=off");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
-  await page.locator("#main-menu").getByRole("button", { name: /^settings$/i }).click();
+  await page
+    .locator("#main-menu")
+    .getByRole("button", { name: /^settings$/i })
+    .click();
   const settings = page.locator("#settings");
   await expect(settings).toBeVisible();
   const tabs = settings.locator(".settings-tab");

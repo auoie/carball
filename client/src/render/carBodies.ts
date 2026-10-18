@@ -16,16 +16,48 @@ import { type CarSpec, HITBOXES, type Hitbox, type Point, addWheels, bodyFrame, 
 /** CM1's proportions in FENNEC's field set (notes/hitboxes.md; for cars without rear glass rearWindowBase is the foot of
  *  the cabin's back; the wheels the visual ones) */
 export const DOMINUS = {
-  front: 89.7, rear: -61.1, ground: -19.4, halfWidth: 36.3, halfWidthBelt: 27.6, halfWidthRoof: 16.8, halfWidthNose: 18.9,
-  halfWidthTail: 33.9, clearance: 3.4, noseTop: 21.5, hood: 31.4, belt: 31.5, roof: 42.8, windscreenBase: 27.0,
-  windscreenDeg: 29.4, roofFront: 7.9, roofBack: -34.5, rearWindowBase: [-46.2, 36.5] as const, bumperTop: 22.0,
+  front: 89.7,
+  rear: -61.1,
+  ground: -19.4,
+  halfWidth: 36.3,
+  halfWidthBelt: 27.6,
+  halfWidthRoof: 16.8,
+  halfWidthNose: 18.9,
+  halfWidthTail: 33.9,
+  clearance: 3.4,
+  noseTop: 21.5,
+  hood: 31.4,
+  belt: 31.5,
+  roof: 42.8,
+  windscreenBase: 27.0,
+  windscreenDeg: 29.4,
+  roofFront: 7.9,
+  roofBack: -34.5,
+  rearWindowBase: [-46.2, 36.5] as const,
+  bumperTop: 22.0,
   frontWheel: { x: 50.4, h: 13.2, z: 31.1, radius: 12.2, width: 14.5 },
   backWheel: { x: -35.2, h: 13.3, z: 32.9, radius: 14.3, width: 14.5 },
 } as const satisfies CarSpec;
 export const MERC = {
-  front: 72.7, rear: -63.0, ground: -22.4, halfWidth: 34.5, halfWidthBelt: 29.3, halfWidthRoof: 25.0, halfWidthNose: 29.9,
-  halfWidthTail: 32.5, clearance: 15.1, noseTop: 30.7, hood: 49.4, belt: 47.9, roof: 67.8, windscreenBase: 48.0,
-  windscreenDeg: 46.9, roofFront: 37.9, roofBack: -57.8, rearWindowBase: [-57.8, 60.0] as const, bumperTop: 43.2,
+  front: 72.7,
+  rear: -63.0,
+  ground: -22.4,
+  halfWidth: 34.5,
+  halfWidthBelt: 29.3,
+  halfWidthRoof: 25.0,
+  halfWidthNose: 29.9,
+  halfWidthTail: 32.5,
+  clearance: 15.1,
+  noseTop: 30.7,
+  hood: 49.4,
+  belt: 47.9,
+  roof: 67.8,
+  windscreenBase: 48.0,
+  windscreenDeg: 46.9,
+  roofFront: 37.9,
+  roofBack: -57.8,
+  rearWindowBase: [-57.8, 60.0] as const,
+  bumperTop: 43.2,
   frontWheel: { x: 38.2, h: 14.8, z: 31.7, radius: 15.3, width: 14.0 },
   backWheel: { x: -39.8, h: 16.8, z: 31.7, radius: 16.3, width: 14.5 },
 } as const satisfies CarSpec;
@@ -143,7 +175,18 @@ export function buildCarBody(look: CarBodySpec, config: CarConfig, paint: Color)
   const bonnetMid: Point = [(bonnetFront[0] + cowl[0]) / 2, Y(look.bonnet.midH)];
   const tailTop = Y(look.tailTopH);
   const deck: Point[] = look.rearDeck[0] < F.rearWindowBase[0] - 0.5 ? [[X(look.rearDeck[0]), Y(look.rearDeck[1])]] : [];
-  const top: Point[] = [[front, Y(F.noseTop) - 2], [front - 2, Y(F.noseTop)], bonnetFront, bonnetMid, cowl, beltFront, beltBack, rearWindowBase, ...deck, [rear + 1.5, tailTop]];
+  const top: Point[] = [
+    [front, Y(F.noseTop) - 2],
+    [front - 2, Y(F.noseTop)],
+    bonnetFront,
+    bonnetMid,
+    cowl,
+    beltFront,
+    beltBack,
+    rearWindowBase,
+    ...deck,
+    [rear + 1.5, tailTop],
+  ];
   /** The top's height at x (between its points) */
   const topAt = (x: number): number => {
     for (let i = 1; i < top.length; i++) {
@@ -170,7 +213,15 @@ export function buildCarBody(look: CarBodySpec, config: CarConfig, paint: Color)
     ];
     return points.filter(([x]) => x > rear + 1 && x < front - 1);
   };
-  const outline: Point[] = [[rear + 2, bottom], ...wheels.flatMap(arch), [front - 2, bottom], [front, bottom + 4], ...top, [rear, tailTop - 2], [rear, bottom + 5]];
+  const outline: Point[] = [
+    [rear + 2, bottom],
+    ...wheels.flatMap(arch),
+    [front - 2, bottom],
+    [front, bottom + 4],
+    ...top,
+    [rear, tailTop - 2],
+    [rear, bottom + 5],
+  ];
 
   // The plan: the body's half width through the nose, the waist and the tail, the fenders over the wheels wider
   const lerp = (points: readonly Point[], x: number): number => {

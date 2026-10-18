@@ -82,7 +82,10 @@ export async function cycleTo(page: Page, selector: string, value: string): Prom
 /** The pause menu (Escape: MENU-4), then its Settings */
 export async function openSettings(page: Page): Promise<void> {
   await page.keyboard.press("Escape");
-  await page.locator("#pause-menu").getByRole("button", { name: /^settings$/i }).click();
+  await page
+    .locator("#pause-menu")
+    .getByRole("button", { name: /^settings$/i })
+    .click();
   await expect(page.locator("#settings")).toBeVisible();
 }
 
@@ -93,4 +96,3 @@ export async function closeMenus(page: Page): Promise<void> {
   if (await page.locator("#pause-menu").isVisible()) await page.keyboard.press("Escape");
   await expect(page.locator("#pause-menu")).toBeHidden();
 }
-

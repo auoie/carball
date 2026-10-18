@@ -10,7 +10,14 @@
 import { SAMPLE_RATE, type StatRowView, SUMMARY_LABELS, standing } from "../game/statGraphs";
 
 export const STAT_LAYOUT = { line: 16, w: 13, values: 6, labels: 9, summaryTile: 15, firstRow: 16, cells: 5, tileAlpha: 0.333 } as const;
-export const STAT_COLOURS = { good: "rgb(64, 255, 64)", mid: "rgb(255, 255, 64)", bad: "rgb(255, 64, 64)", title: "#fff", label: "rgb(192, 192, 192)", grid: "#000" } as const;
+export const STAT_COLOURS = {
+  good: "rgb(64, 255, 64)",
+  mid: "rgb(255, 255, 64)",
+  bad: "rgb(255, 64, 64)",
+  title: "#fff",
+  label: "rgb(192, 192, 192)",
+  grid: "#000",
+} as const;
 
 /** The overlay's scale for a `width` x `height` CSS px screen (SG2's YScale) */
 export function statScale(height: number, interfaceScale: number): number {
@@ -115,7 +122,18 @@ export class StatGraphsView {
   }
 
   /** A row's graph: the grid, then the polyline of each slot's worse side, coloured by its standing */
-  #graph(ctx: CanvasRenderingContext2D, row: StatRowView, seconds: number, now: number, x: number, y: number, width: number, height: number, newest: number, k: number): void {
+  #graph(
+    ctx: CanvasRenderingContext2D,
+    row: StatRowView,
+    seconds: number,
+    now: number,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    newest: number,
+    k: number,
+  ): void {
     ctx.strokeStyle = STAT_COLOURS.grid;
     ctx.beginPath();
     for (let gx = 0; gx <= width + 0.5; gx += SAMPLE_RATE * k) {

@@ -3,15 +3,7 @@
 import { describe, expect, it } from "vitest";
 import type { ReplayPlan } from "../net/protocol";
 import { FixedStep } from "../loop/fixedStep";
-import {
-  POST_GOAL_TICKS,
-  PostGoalClock,
-  postGoalDilation,
-  postGoalTickSeconds,
-  replayDilation,
-  replaySeconds,
-  scoreSlomo,
-} from "./goalSequence";
+import { POST_GOAL_TICKS, PostGoalClock, postGoalDilation, postGoalTickSeconds, replayDilation, replaySeconds, scoreSlomo } from "./goalSequence";
 
 describe("the slow motion after a goal", () => {
   it("follows ScoreSlomoCurve: 1 until 0.125 s, down to 0.1875 at 0.225 s, back to 1 at 0.625 s, clamped", () => {
@@ -61,7 +53,14 @@ describe("the goal replay's length", () => {
 
   it("with the defender's stretch too: 10.8 s", () => {
     const hit = 120 * 99;
-    expect(replaySeconds(plan([[hit - 30, hit + 12], [120 * 100 - 30, 120 * 100]]))).toBeCloseTo(10.8, 10);
+    expect(
+      replaySeconds(
+        plan([
+          [hit - 30, hit + 12],
+          [120 * 100 - 30, 120 * 100],
+        ]),
+      ),
+    ).toBeCloseTo(10.8, 10);
   });
 });
 
@@ -96,5 +95,3 @@ describe("freeplay's goal clock on game time (RV-1)", () => {
     expect(run((i) => (i === 9 ? 1 : 1 / 60)).slowed).toBeLessThan(20);
   });
 });
-
-

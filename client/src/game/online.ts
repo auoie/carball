@@ -13,7 +13,20 @@ import { type Vec3, add } from "../math/vec";
 import { type NetGraphFeed, rawRoundTrip } from "../net/netStats";
 import { ESSENTIAL, GAME_UPDATE, type Hud, type ReplayHud, replaySpeed, replayTime, respawnView } from "../hud";
 import type { InputDevices } from "../input/devices";
-import { AirPitchSafety, ButtonLatch, type ChatKey, EMPTY_INPUT, chatPresses, type HeldActions, type InputSnapshot, JumpLatch, type LookInput, NO_HELD_ACTIONS, readControls, readHeldActions } from "../input/mapping";
+import {
+  AirPitchSafety,
+  ButtonLatch,
+  type ChatKey,
+  EMPTY_INPUT,
+  chatPresses,
+  type HeldActions,
+  type InputSnapshot,
+  JumpLatch,
+  type LookInput,
+  NO_HELD_ACTIONS,
+  readControls,
+  readHeldActions,
+} from "../input/mapping";
 import { FixedStep, TICK_SECONDS, frameTimes } from "../loop/fixedStep";
 import type { Connection } from "../net/connection";
 import { NO_INPUT, type Predictor } from "../net/predictor";
@@ -88,7 +101,6 @@ import { inputGlyph } from "../input/bindings";
 import { keyGlyph } from "../ui/keyGlyph";
 import { BallArrow, ballArrowShown } from "../render/ballArrow";
 import { FlipResetFx } from "../render/flipResetFx";
-
 
 /** The key that opens the menu, which has the vote button (VoteInstructions' {0?KeyBinding}) */
 const MENU_KEY = "Esc";
@@ -263,7 +275,13 @@ export class Online {
     private readonly settings: () => Settings,
     private readonly inputEnabled: () => boolean,
     private readonly chat: { readonly log: ChatLog; readonly panel: QuickChatPanel },
-    private readonly statsUi: { readonly scoreboard: HeldScoreboard; readonly popups: StatPopups; readonly ticker: StatTicker; readonly toast: Toast; readonly nameplates: Nameplates },
+    private readonly statsUi: {
+      readonly scoreboard: HeldScoreboard;
+      readonly popups: StatPopups;
+      readonly ticker: StatTicker;
+      readonly toast: Toast;
+      readonly nameplates: Nameplates;
+    },
     private readonly endUi: { readonly banner: WinnerBanner; readonly dimming: ScreenDimming; readonly tags: PodiumTags; readonly endScreen: EndScreen },
   ) {
     this.#world = world;
@@ -498,20 +516,25 @@ export class Online {
     const phase = match?.phase;
     const since = now - this.#phaseSince;
     const winner = match?.winner ?? 0;
-    this.endUi.banner.update(phase === "prePodium" || phase === "podium" ? winnerBanner(match?.winner ?? null, match?.forfeit ?? false) : null, phase === "podium");
+    this.endUi.banner.update(
+      phase === "prePodium" || phase === "podium" ? winnerBanner(match?.winner ?? null, match?.forfeit ?? false) : null,
+      phase === "podium",
+    );
     this.#dim = dimming(phase, since, this.#dimFrom);
     this.endUi.dimming.update(this.#dim, winner);
     // (the podium's panels: the WinnerMenu's, gone with it on the end screen)
-    const titlesOf = (car: number): ReturnType<typeof shownTitles> => shownTitles(this.#board.find((e) => e.car === car)?.titles, this.settings().interface.metric);
-    const tags = phase === "podium"
-      ? [...this.#podiumCars.keys()].flatMap((car) => {
-          const entry = this.#cars.get(car);
-          const name = this.#roster?.get(car)?.name;
-          if (!entry || name === undefined || this.#drawnDemoed(car, entry.state.current)) return [];
-          const p = entry.state.current.pos;
-          return [{ car, name, side: winner, titles: titlesOf(car), at: this.#renderer.project({ x: p.x, y: p.y, z: -20 }) }];
-        })
-      : [];
+    const titlesOf = (car: number): ReturnType<typeof shownTitles> =>
+      shownTitles(this.#board.find((e) => e.car === car)?.titles, this.settings().interface.metric);
+    const tags =
+      phase === "podium"
+        ? [...this.#podiumCars.keys()].flatMap((car) => {
+            const entry = this.#cars.get(car);
+            const name = this.#roster?.get(car)?.name;
+            if (!entry || name === undefined || this.#drawnDemoed(car, entry.state.current)) return [];
+            const p = entry.state.current.pos;
+            return [{ car, name, side: winner, titles: titlesOf(car), at: this.#renderer.project({ x: p.x, y: p.y, z: -20 }) }];
+          })
+        : [];
     this.endUi.tags.update(tags);
     const mine = this.#board.find((e) => e.car === this.#localCar);
     const roster = [...(this.#roster?.values() ?? [])];
@@ -686,7 +709,10 @@ export class Online {
         this.#audio.chatMessage();
       } else if (m.type === "chatBlocked") {
         // (the spam filter's notice: a system line, silent)
-        this.chat.log.add({ timestamp: "", channel: null, name: null, text: CHAT_TEXT.disabled(m.seconds), colour: CHAT_COLOURS.system }, performance.now() / 1000);
+        this.chat.log.add(
+          { timestamp: "", channel: null, name: null, text: CHAT_TEXT.disabled(m.seconds), colour: CHAT_COLOURS.system },
+          performance.now() / 1000,
+        );
       } else if (m.type === "scoreboard") {
         this.#board = m.players;
       } else if (m.type === "statEvent") {
@@ -798,7 +824,11 @@ export class Online {
   #handleActions(held: HeldActions, options: Options, ballCamToggle: boolean): void {
     const phase = this.#match?.phase;
     const blocked = phase === "replay" || matchOver(phase);
-    const next = updateSwitches({ ballCam: this.#ballCam, rear: this.#rear }, held, this.#held, { ballCamToggle, rearCameraToggle: options.rearCameraToggle, blocked });
+    const next = updateSwitches({ ballCam: this.#ballCam, rear: this.#rear }, held, this.#held, {
+      ballCamToggle,
+      rearCameraToggle: options.rearCameraToggle,
+      blocked,
+    });
     this.#ballCam = next.ballCam;
     this.#rear = next.rear;
     this.#held = held; // (freeplay's reset and ball placement do nothing online)
@@ -819,7 +849,16 @@ export class Online {
       const throttling = (id === this.#localCar ? this.#throttle : Math.abs(this.#world.carControls(id).throttle)) > 0;
       // (a Blender model's wheels: the vehicle's suspension and steering, as this page's world has them)
       if (view.posesWheels) view.wheels = demoed ? null : { ...this.#world.carWheels(id), contact: state.current.wheelContact };
-      view.update(pos, error.applyRotation(state.rotation(alpha, this.#rot)), boosting, demoed, supersonic, frameSeconds, trailGround(state.current), throttling);
+      view.update(
+        pos,
+        error.applyRotation(state.rotation(alpha, this.#rot)),
+        boosting,
+        demoed,
+        supersonic,
+        frameSeconds,
+        trailGround(state.current),
+        throttling,
+      );
     }
     this.#ballError.decay(frameSeconds);
     const ball = this.#ballError.applyPosition(this.#ball.position(alpha, this.#pos));
@@ -902,7 +941,10 @@ export class Online {
         // (the demolitions as drawn, the server's: the explosion's sound with its effect, RV-84)
         world: {
           cars: new Map(
-            [...this.#cars].map(([id, entry]) => [id, { ...entry.state.current, ...(frozen ? still : {}), demoed: this.#drawnDemoed(id, entry.state.current) }]),
+            [...this.#cars].map(([id, entry]) => [
+              id,
+              { ...entry.state.current, ...(frozen ? still : {}), demoed: this.#drawnDemoed(id, entry.state.current) },
+            ]),
           ),
           ball: this.#ball.current,
           pads,
@@ -930,15 +972,17 @@ export class Online {
       return at && scale ? { ...at, ...scale } : null;
     };
     // (live: the others' cars as drawn; the replay: every car, the player's own saying YOU)
-    const cars = replayCars ?? new Map(
-      live
-        ? [...this.#cars].flatMap(([id, entry]) =>
-            id === this.#localCar || this.#drawnDemoed(id, entry.state.current)
-              ? []
-              : [[id, { pos: add(entry.state.blended(alpha).pos, entry.error.location), team: entry.state.current.team }] as const],
-          )
-        : [],
-    );
+    const cars =
+      replayCars ??
+      new Map(
+        live
+          ? [...this.#cars].flatMap(([id, entry]) =>
+              id === this.#localCar || this.#drawnDemoed(id, entry.state.current)
+                ? []
+                : [[id, { pos: add(entry.state.blended(alpha).pos, entry.error.location), team: entry.state.current.team }] as const],
+            )
+          : [],
+      );
     const plates = platesAt(cars, this.#localCar, (id) => this.#roster?.get(id)?.name ?? "", project);
     this.statsUi.nameplates.update(plates, ui.nameplateMode, ui.nameplateScale, ui.hideHud);
   }

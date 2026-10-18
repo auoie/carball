@@ -122,7 +122,7 @@ describe("the spam bucket (CHAT-10..12)", () => {
     const b = new SpamBucket();
     const sent: number[] = [];
     // (each retry when the notice says)
-    for (let t = 0; t <= 20; ) {
+    for (let t = 0; t <= 20;) {
       const wait = b.apply(t);
       if (wait === null) sent.push(t);
       else t += wait + 1e-9;

@@ -66,9 +66,7 @@ import { Renderer } from "./render/renderer";
 import "./style.css";
 
 // Every arena collision mesh: scripts/arena_gen.py writes one file per piece (each its own static body, as in the game)
-const arenaUrls = Object.values(
-  import.meta.glob<string>("@arena/collision_meshes/arena/*.cmf", { query: "?url", import: "default", eager: true }),
-);
+const arenaUrls = Object.values(import.meta.glob<string>("@arena/collision_meshes/arena/*.cmf", { query: "?url", import: "default", eager: true }));
 
 function required<T extends Element>(selector: string, type: new () => T): T {
   const el = document.querySelector(selector);
@@ -202,7 +200,9 @@ async function main(): Promise<void> {
       opened.catch((e: unknown) => {
         // (refused while still in its time: a match cancelled for someone else, so back to the queue's front, RV-367)
         const back = { token: claim.token, searchedAt: claim.searchedAt };
-        storeNotice(e instanceof RefusedError && e.reason === REFUSED_TOKEN ? { search: claim.playlist, warning: OWN_SEARCH_TEXT.matchGone, back } : { modal: "lost" });
+        storeNotice(
+          e instanceof RefusedError && e.reason === REFUSED_TOKEN ? { search: claim.playlist, warning: OWN_SEARCH_TEXT.matchGone, back } : { modal: "lost" },
+        );
         location.replace(pageUrl("menu", location));
       });
     }
@@ -366,16 +366,16 @@ async function main(): Promise<void> {
       modal.isOpen
         ? visibleMenu("#modal")
         : panel.isOpen
-        ? panel.confirming
-          ? visibleMenu("#settings-confirm")
-          : visibleMenu("#settings")
-        : mainMenu?.isOpen
-          ? visibleMenu("#main-menu")
-          : pause.isOpen
-            ? visibleMenu("#pause-menu")
-            : shotSelectOpen()
-              ? visibleMenu("#shot-select")
-              : (editorPadMenu() ?? (document.querySelector("#end-screen .end-buttons button") && visibleMenu("#end-screen .end-menu"))),
+          ? panel.confirming
+            ? visibleMenu("#settings-confirm")
+            : visibleMenu("#settings")
+          : mainMenu?.isOpen
+            ? visibleMenu("#main-menu")
+            : pause.isOpen
+              ? visibleMenu("#pause-menu")
+              : shotSelectOpen()
+                ? visibleMenu("#shot-select")
+                : (editorPadMenu() ?? (document.querySelector("#end-screen .end-buttons button") && visibleMenu("#end-screen .end-menu"))),
     // (B backs out of an open menu, a level at a time: never opens the pause menu; at the main menu's top, nothing)
     back: () => {
       if (modal.isOpen) modal.close();
@@ -554,7 +554,10 @@ async function main(): Promise<void> {
       garage: (choice) => {
         freeplay.setCar(choice);
       },
-      preview: new GaragePreview((car) => garageConfigs.get(car) ?? null, (team) => TEAM_CAR_COLORS[team]),
+      preview: new GaragePreview(
+        (car) => garageConfigs.get(car) ?? null,
+        (team) => TEAM_CAR_COLORS[team],
+      ),
       freePlay: () => {
         mainMenu?.close();
         freeplay.restart(); // (a fresh session, not the one left: RV-284)
@@ -628,7 +631,11 @@ async function main(): Promise<void> {
     (window as unknown as { carballMatchmaking?: unknown }).carballMatchmaking = () => ({ state: matchmaking.state });
     // For screenshots and the browser tests
     (window as unknown as { carballFreeplay?: unknown }).carballFreeplay = {
-      place: (car: { x: number; y: number; yaw: number; boost?: number }, ball?: { x: number; y: number; z: number }, ballVelocity?: { x: number; y: number; z: number }) => {
+      place: (
+        car: { x: number; y: number; yaw: number; boost?: number },
+        ball?: { x: number; y: number; z: number },
+        ballVelocity?: { x: number; y: number; z: number },
+      ) => {
         freeplay.debugPlace(car, ball, ballVelocity);
       },
       car: () => freeplay.debugCar(),
@@ -649,7 +656,19 @@ async function main(): Promise<void> {
       },
       training: () => {
         const run = freeplay.training;
-        return run && { state: run.state, shot: run.shotIndex, timeLeft: run.timeLeft, completion: run.completion, status: [...run.status], shuffle: run.shuffle, mirror: run.mirror, result: run.result, test: run.test };
+        return (
+          run && {
+            state: run.state,
+            shot: run.shotIndex,
+            timeLeft: run.timeLeft,
+            completion: run.completion,
+            status: [...run.status],
+            shuffle: run.shuffle,
+            mirror: run.mirror,
+            result: run.result,
+            test: run.test,
+          }
+        );
       },
       // (the training editor: open or not, its mode and the free-camera mode's state, the pack as it stands)
       editor: () => editor && { open: editor.isOpen, testing: editor.testing, ...editor.state, pack: editor.pack },
@@ -699,24 +718,32 @@ async function main(): Promise<void> {
           ? [
               // (the free-camera mode's test: the game's Restart Training, our Back to Editor as its key)
               button(TRAINING_PAUSE_TEXT.restart, () => {
-                modal.ask(TRAINING_PAUSE_TEXT.restartTitle, TRAINING_PAUSE_TEXT.restartBody, () => { freeplay.restartTraining(false); });
+                modal.ask(TRAINING_PAUSE_TEXT.restartTitle, TRAINING_PAUSE_TEXT.restartBody, () => {
+                  freeplay.restartTraining(false);
+                });
               }),
-              button(TRAINING_PAUSE_TEXT.backToEditor, () => { editor?.endTest(); }),
+              button(TRAINING_PAUSE_TEXT.backToEditor, () => {
+                editor?.endTest();
+              }),
             ]
           : run
-          ? [
-              button(TRAINING_PAUSE_TEXT.restart, () => { freeplay.restartTraining(false); }),
-              button(TRAINING_PAUSE_TEXT.resetProgress, () => { freeplay.restartTraining(true); }),
-              ...(back
-                ? [
-                    button(TRAINING_PAUSE_TEXT.backToEditor, () => {
-                      playtesting = null;
-                      void openEditor(back.pack, back.shot);
-                    }),
-                  ]
-                : []),
-            ]
-          : []),
+            ? [
+                button(TRAINING_PAUSE_TEXT.restart, () => {
+                  freeplay.restartTraining(false);
+                }),
+                button(TRAINING_PAUSE_TEXT.resetProgress, () => {
+                  freeplay.restartTraining(true);
+                }),
+                ...(back
+                  ? [
+                      button(TRAINING_PAUSE_TEXT.backToEditor, () => {
+                        playtesting = null;
+                        void openEditor(back.pack, back.shot);
+                      }),
+                    ]
+                  : []),
+              ]
+            : []),
       );
     };
     // (custom training's HUD, its keys the device's in use)
@@ -895,7 +922,10 @@ async function main(): Promise<void> {
     if (renderer.lastGpuMs !== null) statData.set("GPU", renderer.lastGpuMs);
     const { car, ball } = game.speeds();
     const unit = speedUnit(settings.interface.metric);
-    for (const [body, v] of [["Car", car], ["Ball", ball]] as const) {
+    for (const [body, v] of [
+      ["Car", car],
+      ["Ball", ball],
+    ] as const) {
       if (!v) continue;
       statData.set(`${body} Speed`, Math.hypot(v.x, v.y, v.z) * unit);
       statData.set(`${body} Speed (XY)`, Math.hypot(v.x, v.y) * unit);
@@ -907,7 +937,8 @@ async function main(): Promise<void> {
     // (drawn again as a new slot starts, the samples' rate, not every frame: RV-517)
     const key = `${statLevel}|${String(settings.interface.scale)}|${String(settings.interface.displayScale)}`;
     if (!view) statView.hide();
-    else if (statView.due(t, key)) statView.draw(statData.view(statLevel, t, statContext()), view.window, t, settings.interface.scale, settings.interface.displayScale, key);
+    else if (statView.due(t, key))
+      statView.draw(statData.view(statLevel, t, statContext()), view.window, t, settings.interface.scale, settings.interface.displayScale, key);
   };
   const frame = (now: number): void => {
     // (raw: the games take their clamped real and world times from it, LT-3)
@@ -931,6 +962,14 @@ main().catch((err: unknown) => {
   // (a match's or the bots' page: Back to the menu; the menu's own has nowhere else to go)
   const query = new URLSearchParams(location.search);
   const away = query.has("bots") || query.has("match") || query.has("server");
-  showLoadingFailure(document.querySelector("#loading"), err instanceof Error ? err.message : String(err), away ? () => { location.assign(pageUrl("menu", location)); } : undefined);
+  showLoadingFailure(
+    document.querySelector("#loading"),
+    err instanceof Error ? err.message : String(err),
+    away
+      ? () => {
+          location.assign(pageUrl("menu", location));
+        }
+      : undefined,
+  );
   console.error(err);
 });

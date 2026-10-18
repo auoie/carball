@@ -32,7 +32,10 @@ export function gaugePoint(r: number, a: number): readonly [number, number] {
   return [GAUGE.pivot[0] + r * Math.sin(t), GAUGE.pivot[1] - r * Math.cos(t)];
 }
 
-const pt = (r: number, a: number): string => gaugePoint(r, a).map((v) => v.toFixed(2)).join(" ");
+const pt = (r: number, a: number): string =>
+  gaugePoint(r, a)
+    .map((v) => v.toFixed(2))
+    .join(" ");
 
 /** An arc along radius r from angle a0 to a1 (clockwise) */
 export function arcPath(r: number, a0: number, a1: number): string {
@@ -120,9 +123,16 @@ export class FuelGaugeArt {
       svg("path", { d: `M ${pt(inner, t.a)} L ${pt(GAUGE.ticks.outer, t.a)}`, class: t.major ? "gauge-tick major" : "gauge-tick" }, art);
     }
     // E and F, just inside the arc's ends
-    for (const [text, a, cls] of [["E", needleAngle(0), "gauge-e"], ["F", needleAngle(100), "gauge-f"]] as const) {
+    for (const [text, a, cls] of [
+      ["E", needleAngle(0), "gauge-e"],
+      ["F", needleAngle(100), "gauge-f"],
+    ] as const) {
       const [x, y] = gaugePoint(GAUGE.arc - 24, a + (a < 0 ? 10 : -10));
-      const label = svg("text", { x: x.toFixed(2), y: y.toFixed(2), class: `gauge-letter ${cls}`, "text-anchor": "middle", "dominant-baseline": "middle" }, art);
+      const label = svg(
+        "text",
+        { x: x.toFixed(2), y: y.toFixed(2), class: `gauge-letter ${cls}`, "text-anchor": "middle", "dominant-baseline": "middle" },
+        art,
+      );
       label.textContent = text;
     }
     // The fuel pump (ours: a pump with its window, its foot, the hose up to the nozzle; 18 x 21 about its centre)
@@ -137,7 +147,11 @@ export class FuelGaugeArt {
     // The needle: pointing up when unturned, turned about the pivot
     this.#needle = svg("g", { class: "gauge-needle" }, art);
     const [px, py] = GAUGE.pivot;
-    svg("path", { d: `M ${String(px)} ${String(py + GAUGE.needle.tail)} L ${String(px)} ${String(py - GAUGE.needle.reach)}`, class: "gauge-needle-line" }, this.#needle);
+    svg(
+      "path",
+      { d: `M ${String(px)} ${String(py + GAUGE.needle.tail)} L ${String(px)} ${String(py - GAUGE.needle.reach)}`, class: "gauge-needle-line" },
+      this.#needle,
+    );
     svg("circle", { cx: String(px), cy: String(py), r: "6.5", class: "gauge-hub" }, art);
     this.#needle.setAttribute("transform", `rotate(${needleAngle(0).toFixed(2)} ${String(px)} ${String(py)})`);
   }

@@ -24,7 +24,14 @@ const now = (): number => (performance.now() - start) / 1000;
 
 async function open(message: Extract<ToHost, { type: "open" }>): Promise<void> {
   // (the host's log lines, the server's stderr, as the page's debug messages: not errors)
-  const [hostModule, engine] = await Promise.all([createHost({ printErr: (text) => { console.debug(`local host: ${text}`); } }), createEngine()]);
+  const [hostModule, engine] = await Promise.all([
+    createHost({
+      printErr: (text) => {
+        console.debug(`local host: ${text}`);
+      },
+    }),
+    createEngine(),
+  ]);
   initEngine(engine, message.meshes);
   const h = LocalHost.create(hostModule, message.meshes);
   h.open(message.setup.teamSize, message.setup.seed);
@@ -32,7 +39,13 @@ async function open(message: Extract<ToHost, { type: "open" }>): Promise<void> {
   // (each bot's brain: its package's policy, or the built-in chaser)
   // (a package's files fetched and its policy's session made once, however many of its bots play: RV-540)
   const packages: PackageCache = new Map();
-  const brains: BotBrain[] = await Promise.all(message.setup.bots.map(async (slot) => (slot.brain === "chaser" ? chaser() : loadBrain(message.botsBase, slot.brain, message.setup.teamSize, fetch, Math.random, undefined, slot.strength, packages))));
+  const brains: BotBrain[] = await Promise.all(
+    message.setup.bots.map(async (slot) =>
+      slot.brain === "chaser"
+        ? chaser()
+        : loadBrain(message.botsBase, slot.brain, message.setup.teamSize, fetch, Math.random, undefined, slot.strength, packages),
+    ),
+  );
   message.setup.bots.forEach((slot, i) => {
     const brain = brains[i];
     if (brain) b.join(h, PAGE_PLAYER + 1 + i, slot, brain, now());

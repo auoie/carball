@@ -29,9 +29,7 @@ export type ToHost =
   | { readonly type: "leave" };
 
 export type FromHost =
-  | { readonly type: "ready" }
-  | { readonly type: "failed"; readonly reason: string }
-  | { readonly type: "out"; readonly messages: readonly PageMessage[] };
+  { readonly type: "ready" } | { readonly type: "failed"; readonly reason: string } | { readonly type: "out"; readonly messages: readonly PageMessage[] };
 
 /** What the host sent the page's player: a control message (framed), a datagram, or its stream's end */
 export type PageMessage = { readonly kind: "control" | "datagram"; readonly bytes: Uint8Array } | { readonly kind: "end" };

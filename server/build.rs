@@ -1,8 +1,23 @@
 // Builds the engine's C API (engine/capi) with CMake and links it statically.
 /// The browser's local host's exports (src/bin/host.rs), its module's runtime calls
 const HOST_EXPORTS: &[&str] = &[
-    "host_init", "host_open", "host_connect", "host_control", "host_datagram", "host_leave", "host_tick", "host_next_tick", "host_drain", "host_drained",
-    "host_bot", "host_car", "host_phase", "host_state", "host_state_bytes", "malloc", "free",
+    "host_init",
+    "host_open",
+    "host_connect",
+    "host_control",
+    "host_datagram",
+    "host_leave",
+    "host_tick",
+    "host_next_tick",
+    "host_drain",
+    "host_drained",
+    "host_bot",
+    "host_car",
+    "host_phase",
+    "host_state",
+    "host_state_bytes",
+    "malloc",
+    "free",
 ];
 
 fn main() {
@@ -10,10 +25,7 @@ fn main() {
         local_host();
         return;
     }
-    let dst = cmake::Config::new("../engine")
-        .build_target("rlengine_capi")
-        .profile("Release")
-        .build();
+    let dst = cmake::Config::new("../engine").build_target("rlengine_capi").profile("Release").build();
     let build = dst.join("build");
     println!("cargo:rustc-link-search=native={}", build.display());
     println!("cargo:rustc-link-search=native={}", build.join("rocketsim").display());
@@ -36,7 +48,15 @@ fn main() {
         }
         None => println!("cargo:rustc-link-lib=dylib=stdc++"),
     }
-    for dir in ["../engine/capi", "../engine/net", "../engine/stats", "../engine/rocketsim/src", "../engine/rocketsim/libsrc", "../engine/detmath", "../engine/CMakeLists.txt"] {
+    for dir in [
+        "../engine/capi",
+        "../engine/net",
+        "../engine/stats",
+        "../engine/rocketsim/src",
+        "../engine/rocketsim/libsrc",
+        "../engine/detmath",
+        "../engine/CMakeLists.txt",
+    ] {
         println!("cargo:rerun-if-changed={dir}");
     }
 }
@@ -45,7 +65,8 @@ fn main() {
 /// (scripts/build_host.sh: CARBALL_ENGINE_WASM, else engine/build-wasm-host), the module an ES module whose calls are
 /// the host's exports (client/src/local/)
 fn local_host() {
-    let dir = std::env::var("CARBALL_ENGINE_WASM").unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/../engine/build-wasm-host").to_string());
+    let dir = std::env::var("CARBALL_ENGINE_WASM")
+        .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/../engine/build-wasm-host").to_string());
     println!("cargo:rerun-if-env-changed=CARBALL_ENGINE_WASM");
     println!("cargo:rustc-link-search=native={dir}");
     println!("cargo:rustc-link-search=native={dir}/rocketsim");

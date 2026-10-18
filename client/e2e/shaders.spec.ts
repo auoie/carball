@@ -36,7 +36,10 @@ test("the post-processing chain (PP-1..10): a uniform grey at its display value,
   await page.waitForFunction(() => "carballShaderProbe" in window, null, { timeout: 30_000 });
   for (const grey of [0.05, 0.18, 0.5]) {
     const r = await page.evaluate(
-      (g) => (window as unknown as { carballShaderProbe: { post: (grey: number) => { grey: number; expected: number; ringBloom: number; ringNoBloom: number } } }).carballShaderProbe.post(g),
+      (g) =>
+        (
+          window as unknown as { carballShaderProbe: { post: (grey: number) => { grey: number; expected: number; ringBloom: number; ringNoBloom: number } } }
+        ).carballShaderProbe.post(g),
       grey,
     );
     // (8-bit output: within 2/255 of the tone map and remap's value; the depth of field leaves a uniform area as it is)
@@ -46,7 +49,9 @@ test("the post-processing chain (PP-1..10): a uniform grey at its display value,
   }
 });
 
-test("the bloom's soft knee (PP-7, RV-161): nothing under linear 2; at 3 against 4 the colour times its weight, 0.375 (0.5 if it subtracted)", async ({ page }) => {
+test("the bloom's soft knee (PP-7, RV-161): nothing under linear 2; at 3 against 4 the colour times its weight, 0.375 (0.5 if it subtracted)", async ({
+  page,
+}) => {
   await page.goto("/?viewer=shaders");
   await page.waitForFunction(() => "carballShaderProbe" in window, null, { timeout: 30_000 });
   const sum = async (level: number): Promise<number> =>

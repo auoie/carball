@@ -67,7 +67,13 @@ export class ImpactTriggers {
 
   /** This frame's triggers: `seconds` of game time since the last frame, the engine's new impacts, the cars now (with
    *  their configs), the local car */
-  frame(seconds: number, impacts: readonly Impact[], cars: ReadonlyMap<number, TriggerCar>, configs: ReadonlyMap<number, CarConfig>, local: number | null): Trigger[] {
+  frame(
+    seconds: number,
+    impacts: readonly Impact[],
+    cars: ReadonlyMap<number, TriggerCar>,
+    configs: ReadonlyMap<number, CarConfig>,
+    local: number | null,
+  ): Trigger[] {
     this.#time += Math.max(0, seconds);
     const out: Trigger[] = [];
     const fresh = impacts.filter((i) => i.tick > this.#lastTick).sort((a, b) => a.tick - b.tick);
@@ -141,7 +147,11 @@ export function triggerSounds(triggers: readonly Trigger[]): SoundEvent[] {
       const s = strength(t.speed, IMPACT_SCALES.body);
       out.push(t.partner === "car" ? { kind: "bump", at: t.at, strength: s } : { kind: "impact", car: t.car, at: t.at, strength: s });
     } else if (t.kind === "ballImpact") {
-      out.push(t.partner === "car" ? { kind: "ballHit", at: t.at, strength: strength(t.speed, IMPACT_SCALES.ball) } : { kind: "ballBounce", at: t.at, strength: strength(t.speed, IMPACT_SCALES.ballBounce) });
+      out.push(
+        t.partner === "car"
+          ? { kind: "ballHit", at: t.at, strength: strength(t.speed, IMPACT_SCALES.ball) }
+          : { kind: "ballBounce", at: t.at, strength: strength(t.speed, IMPACT_SCALES.ballBounce) },
+      );
     } else if (t.kind === "landing") {
       out.push({ kind: "land", car: t.car, at: t.at, strength: strength(t.speed, IMPACT_SCALES.wheel) });
     }

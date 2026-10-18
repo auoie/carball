@@ -48,7 +48,10 @@ test("the editor: a new pack made, saved and listed as the player's own, edited 
   await expect(editor).toBeHidden();
   await expect(page.locator(".training-shot")).toHaveText(/^shot 1 \/ 2$/i);
   await page.keyboard.press("Escape");
-  await page.locator("#pause-menu").getByRole("button", { name: /^back to editor$/i }).click();
+  await page
+    .locator("#pause-menu")
+    .getByRole("button", { name: /^back to editor$/i })
+    .click();
   await expect(editor).toBeVisible();
   await expect(page.locator("#training")).toBeHidden();
   // Escape leaves the editor for the packs' page
@@ -58,7 +61,10 @@ test("the editor: a new pack made, saved and listed as the player's own, edited 
   expect(errors).toEqual([]);
 });
 
-test("the editor's rules as the game's (notes/training-editor.md): 4 tags at most, a name of 3+ characters, unsaved changes asked about on leaving, Delete Sequence confirmed", async ({ page, context }) => {
+test("the editor's rules as the game's (notes/training-editor.md): 4 tags at most, a name of 3+ characters, unsaved changes asked about on leaving, Delete Sequence confirmed", async ({
+  page,
+  context,
+}) => {
   await context.addInitScript(() => {
     if (!sessionStorage.getItem("e2e-editor-rules")) {
       localStorage.removeItem("carball.training.mine");
@@ -110,7 +116,10 @@ test("the editor's rules as the game's (notes/training-editor.md): 4 tags at mos
   await expect(menu.locator(".main-menu-pack-name", { hasText: "Rules Pack" })).toHaveCount(0);
 });
 
-test("the free-camera mode (notes/training-editor.md TE1): chosen and kept, a shot placed with the keys, Tab tests it and Tab comes back", async ({ page, context }) => {
+test("the free-camera mode (notes/training-editor.md TE1): chosen and kept, a shot placed with the keys, Tab tests it and Tab comes back", async ({
+  page,
+  context,
+}) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await context.addInitScript(() => {
@@ -198,12 +207,17 @@ test("the free-camera mode (notes/training-editor.md TE1): chosen and kept, a sh
   await expect(training.locator(".training-shot")).toHaveText(/^shot 2 \/ 2$/i);
   await expect(training.locator(".training-type")).toHaveText(/^fly pack$/i);
   await expect(training.locator(".training-controls")).toContainText(/edit shot/i);
-  const run = await page.evaluate(() => (window as unknown as { carballFreeplay: { training: () => { test: string; shot: number; timeLeft: number } } }).carballFreeplay.training());
+  const run = await page.evaluate(() =>
+    (window as unknown as { carballFreeplay: { training: () => { test: string; shot: number; timeLeft: number } } }).carballFreeplay.training(),
+  );
   expect(run).toMatchObject({ test: "shot", shot: 1, timeLeft: 11 });
   // (the pause menu's Restart Training in a test: the game's question first, NO keeps the test: §5.3)
   const modal = page.locator("#modal");
   await page.keyboard.press("Escape");
-  await page.locator("#pause-menu").getByRole("button", { name: /^restart training$/i }).click();
+  await page
+    .locator("#pause-menu")
+    .getByRole("button", { name: /^restart training$/i })
+    .click();
   await expect(modal.locator(".modal-title")).toHaveText("RESTART TRAINING");
   await expect(modal).toContainText("Restarting a created sequence will also reset any training progress made.");
   await modal.getByRole("button", { name: /^no$/i }).click();
@@ -256,7 +270,10 @@ test("unsaved edits: closing or reloading the page asks first (beforeunload: RV-
   expect(await asked).toBe("beforeunload");
 });
 
-test("the free-camera editor with a pad (the user's report): the shot list's buttons in reach, SEQUENCE SETTINGS, the shot editor's own controls", async ({ page, context }) => {
+test("the free-camera editor with a pad (the user's report): the shot list's buttons in reach, SEQUENCE SETTINGS, the shot editor's own controls", async ({
+  page,
+  context,
+}) => {
   const [A, B, X, UP, DOWN] = [0, 1, 2, 12, 13];
   await fakeGamepad(context);
   await context.addInitScript(() => {
@@ -312,7 +329,10 @@ test("the free-camera editor with a pad (the user's report): the shot list's but
   await expect(list).toBeVisible();
 });
 
-test("Exit to Main Menu over the editor with a pad (the user's report): the editor left as B leaves it, its unsaved question first; Free Play then free play, not the editor", async ({ page, context }) => {
+test("Exit to Main Menu over the editor with a pad (the user's report): the editor left as B leaves it, its unsaved question first; Free Play then free play, not the editor", async ({
+  page,
+  context,
+}) => {
   test.setTimeout(240_000); // (four editors left, each to free play and back, and a reload)
   const [A, B, START, VIEW, DOWN, LEFT] = [0, 1, 9, 8, 13, 14];
   const errors: string[] = [];

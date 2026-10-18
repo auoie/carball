@@ -77,7 +77,15 @@ unsafe extern "C" {
     fn rl_vehicle_order(arena: *mut CarballArena, out: *mut u32, max_ids: usize) -> usize;
     fn rl_pads_active(arena: *mut CarballArena) -> u64;
     fn rl_take_events(arena: *mut CarballArena, out: *mut i32, max_ints: usize) -> usize;
-    fn rl_write_net_state(arena: *mut CarballArena, ball: c_int, car_ids: *const u32, num_cars: usize, pads: c_int, out: *mut u8, capacity: usize) -> usize;
+    fn rl_write_net_state(
+        arena: *mut CarballArena,
+        ball: c_int,
+        car_ids: *const u32,
+        num_cars: usize,
+        pads: c_int,
+        out: *mut u8,
+        capacity: usize,
+    ) -> usize;
     fn rl_save_state(arena: *mut CarballArena, out: *mut u8, capacity: usize) -> usize;
     fn rl_load_state(arena: *mut CarballArena, data: *const u8, size: usize) -> c_int;
     fn rl_apply_net_state(arena: *mut CarballArena, data: *const u8, size: usize) -> c_int;
@@ -194,9 +202,17 @@ impl Arena {
         unsafe { rl_car_repress_jump(self.ptr(), car_id) }
     }
 
-    pub fn set_car_preferences(&mut self, car_id: u32, dodge_deadzone: f32, steering_sensitivity: f32, air_control_sensitivity: f32) {
+    pub fn set_car_preferences(
+        &mut self,
+        car_id: u32,
+        dodge_deadzone: f32,
+        steering_sensitivity: f32,
+        air_control_sensitivity: f32,
+    ) {
         // SAFETY: valid arena
-        unsafe { rl_set_car_preferences(self.ptr(), car_id, dodge_deadzone, steering_sensitivity, air_control_sensitivity) }
+        unsafe {
+            rl_set_car_preferences(self.ptr(), car_id, dodge_deadzone, steering_sensitivity, air_control_sensitivity)
+        }
     }
 
     pub fn step(&mut self, ticks: i32) {
@@ -405,12 +421,18 @@ impl Arena {
     pub fn match_ended(&mut self, have_winner: bool, members: &[u32]) -> Vec<[Option<PodiumTitle>; 2]> {
         let mut out = vec![0i32; members.len() * 6];
         // SAFETY: valid arena; `out` has 6 ints per member
-        unsafe { rl_match_ended(self.ptr(), c_int::from(have_winner), members.as_ptr(), members.len(), out.as_mut_ptr()) };
+        unsafe {
+            rl_match_ended(self.ptr(), c_int::from(have_winner), members.as_ptr(), members.len(), out.as_mut_ptr())
+        };
         out.as_chunks::<6>()
             .0
             .iter()
             .map(|c| {
-                let title = |t: i32, count: i32| (0..255).contains(&t).then(|| PodiumTitle { title: t as u8, count: count.clamp(0, i32::from(u16::MAX)) as u16 });
+                let title = |t: i32, count: i32| {
+                    (0..255)
+                        .contains(&t)
+                        .then(|| PodiumTitle { title: t as u8, count: count.clamp(0, i32::from(u16::MAX)) as u16 })
+                };
                 [title(c[0], c[2]), title(c[3], c[5])]
             })
             .collect()
@@ -458,7 +480,17 @@ impl Arena {
     pub fn write_net_state(&mut self, ball: bool, car_ids: &[u32], pads: bool) -> Vec<u8> {
         let call = |out: *mut u8, capacity: usize| {
             // SAFETY: valid arena; car_ids is a valid slice; out has `capacity` bytes (or is null with 0)
-            unsafe { rl_write_net_state(self.ptr(), c_int::from(ball), car_ids.as_ptr(), car_ids.len(), c_int::from(pads), out, capacity) }
+            unsafe {
+                rl_write_net_state(
+                    self.ptr(),
+                    c_int::from(ball),
+                    car_ids.as_ptr(),
+                    car_ids.len(),
+                    c_int::from(pads),
+                    out,
+                    capacity,
+                )
+            }
         };
         read_sized(call)
     }
@@ -525,7 +557,9 @@ pub(crate) mod tests {
     static INIT: Once = Once::new();
 
     pub fn init_engine() {
-        INIT.call_once(|| init(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../out/arena/collision_meshes"))).unwrap());
+        INIT.call_once(|| {
+            init(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../out/arena/collision_meshes"))).unwrap()
+        });
     }
 
     #[test]
@@ -590,10 +624,12 @@ pub(crate) mod tests {
         let mut arena = Arena::new();
         let mut on_ground = |pos: [f32; 3], vel: [f32; 3]| {
             arena.set_ball(pos, vel);
-            (0..20).map(|_| {
-                arena.step(1);
-                arena.ball_on_ground()
-            }).collect::<Vec<bool>>()
+            (0..20)
+                .map(|_| {
+                    arena.step(1);
+                    arena.ball_on_ground()
+                })
+                .collect::<Vec<bool>>()
         };
         assert!(on_ground([0.0, -2000.0, 93.15], [0.0, 600.0, 0.0]).iter().skip(2).all(|&g| g), "rolling on the floor");
         assert!(on_ground([0.0, 0.0, 800.0], [0.0, 0.0, 0.0]).iter().all(|&g| !g), "falling from 800");
@@ -760,9 +796,18 @@ pub(crate) mod tests {
                 arena.step(40);
             }
             let what = if podium { "podium" } else { "countdown" };
-            assert!(across(server.car_position(car).unwrap(), spot) < 1.0, "{what}: the server's car left its new spot");
-            assert!(across(restored.car_position(car).unwrap(), spot) < 1.0, "{what}: the snapshot's car pulled back to its old pin");
-            assert!(across(updated.car_position(car).unwrap(), spot) < 1.0, "{what}: the updated client's car pulled back to its old pin");
+            assert!(
+                across(server.car_position(car).unwrap(), spot) < 1.0,
+                "{what}: the server's car left its new spot"
+            );
+            assert!(
+                across(restored.car_position(car).unwrap(), spot) < 1.0,
+                "{what}: the snapshot's car pulled back to its old pin"
+            );
+            assert!(
+                across(updated.car_position(car).unwrap(), spot) < 1.0,
+                "{what}: the updated client's car pulled back to its old pin"
+            );
         }
     }
 
@@ -788,7 +833,10 @@ pub(crate) mod tests {
             top - floor
         };
         let (normal, podium) = (top(false), top(true));
-        assert!(podium > 20.0 && podium < normal - 20.0, "a held jump: {podium} uu on the podium, {normal} uu otherwise");
+        assert!(
+            podium > 20.0 && podium < normal - 20.0,
+            "a held jump: {podium} uu on the podium, {normal} uu otherwise"
+        );
     }
 
     #[test]

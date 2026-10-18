@@ -18,7 +18,23 @@ beforeAll(async () => {
 });
 
 const hello = (team: number, name: string): Uint8Array =>
-  encodeControl({ type: "hello", version: PROTOCOL_VERSION, team, model: 0, dodgeDeadzone: 0.5, steeringSensitivity: 1, airControlSensitivity: 1, autoSkipReplay: true, key: 0n, name, quickChat: "everyone", blockNonTactical: false, intent: "join", playlist: 0, token: 0n });
+  encodeControl({
+    type: "hello",
+    version: PROTOCOL_VERSION,
+    team,
+    model: 0,
+    dodgeDeadzone: 0.5,
+    steeringSensitivity: 1,
+    airControlSensitivity: 1,
+    autoSkipReplay: true,
+    key: 0n,
+    name,
+    quickChat: "everyone",
+    blockNonTactical: false,
+    intent: "join",
+    playlist: 0,
+    token: 0n,
+  });
 
 /** A drained control message's body decoded (its frame's two length bytes off) */
 const controls = (messages: readonly HostMessage[], id: number): ControlMessage[] =>

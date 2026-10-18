@@ -92,7 +92,18 @@ export class TrainingHud {
     const time = run.timeLeft;
     const goalie = run.pack.type === "goalie";
     const randomize = modifiers && run.state === "countdown";
-    const view = JSON.stringify([run.pack.id, run.test, run.shotIndex, run.state, time === null ? null : trainingClock(time), run.status, run.shuffle, run.mirror, keys, randomize]);
+    const view = JSON.stringify([
+      run.pack.id,
+      run.test,
+      run.shotIndex,
+      run.state,
+      time === null ? null : trainingClock(time),
+      run.status,
+      run.shuffle,
+      run.mirror,
+      keys,
+      randomize,
+    ]);
     if (view === this.#shown) return;
     this.#shown = view;
     const test = run.test !== null;

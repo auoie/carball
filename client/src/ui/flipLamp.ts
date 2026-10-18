@@ -62,7 +62,15 @@ export class FlipLamp {
   /** A flip reset: the lamp flickers bright, then holds (its gold the state's) */
   flicker(): void {
     this.lamp.animate(
-      [{ filter: "brightness(1)" }, { filter: "brightness(2.2)" }, { filter: "brightness(0.6)" }, { filter: "brightness(1.9)" }, { filter: "brightness(0.85)" }, { filter: "brightness(1.5)" }, { filter: "brightness(1)" }],
+      [
+        { filter: "brightness(1)" },
+        { filter: "brightness(2.2)" },
+        { filter: "brightness(0.6)" },
+        { filter: "brightness(1.9)" },
+        { filter: "brightness(0.85)" },
+        { filter: "brightness(1.5)" },
+        { filter: "brightness(1)" },
+      ],
       { duration: 600, easing: "linear" },
     );
   }

@@ -12,12 +12,25 @@ export function defaultShot(type: TrainingType): Shot {
   const car = goalie ? vec3(0, -5000, 17) : vec3(0, 0, 17);
   // (the launch toward -y both ways: to the centre from the orange goal's front, or to the blue goal; the car facing +y,
   // at the ball)
-  return { timeLimit: 10, ball: { location: ball, launch: { pitch: 8192, yaw: 49152, roll: 0 }, speed: 1500 }, car: { location: car, rotation: { pitch: 0, yaw: 16384, roll: 0 }, startSpeed: 0 } };
+  return {
+    timeLimit: 10,
+    ball: { location: ball, launch: { pitch: 8192, yaw: 49152, roll: 0 }, speed: 1500 },
+    car: { location: car, rotation: { pitch: 0, yaw: 16384, roll: 0 }, startSpeed: 0 },
+  };
 }
 
 /** A new pack of one default shot, its id ours (mine-…) */
 export function newPack(random: () => number = Math.random): TrainingPack {
-  return { id: newPackId(random), name: "My Training", type: "striker", difficulty: "easy", tags: [], description: "", creator: "", shots: [defaultShot("striker")] };
+  return {
+    id: newPackId(random),
+    name: "My Training",
+    type: "striker",
+    difficulty: "easy",
+    tags: [],
+    description: "",
+    creator: "",
+    shots: [defaultShot("striker")],
+  };
 }
 
 /** A new pack id of the player's own (mine-…: an imported pack takes one, so it never replaces a pack kept: RX25) */

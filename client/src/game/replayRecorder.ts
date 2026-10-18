@@ -68,7 +68,11 @@ export class ReplayRecorder {
 /** A car as recorded */
 /** The team of the car that last touched the ball (the newest touch tick of any car's: HitTeamNum, VT-10), null before
  *  any since the kickoff */
-export function lastTouchTeam(world: { carIds(): number[]; car(id: number): Pick<CarState, "team">; carLastBallTouchTick(id: number): number | null }): CarState["team"] | null {
+export function lastTouchTeam(world: {
+  carIds(): number[];
+  car(id: number): Pick<CarState, "team">;
+  carLastBallTouchTick(id: number): number | null;
+}): CarState["team"] | null {
   let newest = -Infinity;
   let team: CarState["team"] | null = null;
   for (const id of world.carIds()) {

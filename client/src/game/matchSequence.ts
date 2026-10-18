@@ -82,7 +82,11 @@ export function winnerBanner(winner: number | null, forfeit: boolean): { readonl
  * MIO-20's two layers' alphas `t` real seconds into a phase: the screen filter (darkening, 0.8 at the pre-podium and
  * the end screen) and the team-tinted vignette (0.75 on the podium). Each tween runs from where the last left off
  */
-export function dimming(phase: MatchPhase | undefined, t: number, from: { readonly filter: number; readonly vignette: number }): { readonly filter: number; readonly vignette: number } {
+export function dimming(
+  phase: MatchPhase | undefined,
+  t: number,
+  from: { readonly filter: number; readonly vignette: number },
+): { readonly filter: number; readonly vignette: number } {
   const tween = (a: number, b: number, length: number): number => a + (b - a) * Math.min(1, Math.max(0, t) / length);
   if (phase === "prePodium" || phase === "finished") return { filter: tween(from.filter, 0.8, 1), vignette: tween(from.vignette, 0, 1) };
   if (phase === "podium") return { filter: tween(from.filter, 0, 0.5), vignette: tween(from.vignette, 0.75, 0.5) };
@@ -106,7 +110,10 @@ export function hudParts(phase: MatchPhase | undefined): { readonly scoreboard: 
 
 /** The online HUD's parts: the phase's, the car's own (the boost meter, the ball cam indicator) gone while it's
  *  demolished (HUD-16's bShowCarHUD, RV-513) and the indicator at the match's end */
-export function onlineHudParts(phase: MatchPhase | undefined, demoed: boolean): { readonly scoreboard: boolean; readonly boost: boolean; readonly heldScoreboard: boolean; readonly ballCamIndicator: boolean } {
+export function onlineHudParts(
+  phase: MatchPhase | undefined,
+  demoed: boolean,
+): { readonly scoreboard: boolean; readonly boost: boolean; readonly heldScoreboard: boolean; readonly ballCamIndicator: boolean } {
   const parts = hudParts(phase);
   return { ...parts, boost: parts.boost && !demoed, ballCamIndicator: phase !== "finished" && !demoed };
 }

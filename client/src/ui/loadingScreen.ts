@@ -56,9 +56,12 @@ export class LoadingScreen {
     this.#done = true;
     this.#root.style.setProperty("--loading-progress", "1");
     this.#root.classList.add("loading-done");
-    window.setTimeout(() => {
-      this.#root.hidden = true;
-    }, LOADING_FADE * 1000 + 50);
+    window.setTimeout(
+      () => {
+        this.#root.hidden = true;
+      },
+      LOADING_FADE * 1000 + 50,
+    );
   }
 
   /** Gone at once (the viewers: no game frame to fade into) */

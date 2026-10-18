@@ -27,7 +27,12 @@ describe("nameplates (HUD-13)", () => {
       [1, { pos: { x: 0, y: 0, z: 17 }, team: 0 }],
       [2, { pos: { x: 500, y: 100, z: 17 }, team: 1 }],
     ]);
-    const plates = platesAt(cars, 1, (car) => `P${String(car)}`, (top) => ({ x: top.x, y: top.z, pxPerUnit: 1, distance: 1000, horizontalFov: 90 }));
+    const plates = platesAt(
+      cars,
+      1,
+      (car) => `P${String(car)}`,
+      (top) => ({ x: top.x, y: top.z, pxPerUnit: 1, distance: 1000, horizontalFov: 90 }),
+    );
     expect(plates.map((p) => [p.name, p.team, p.at?.x, p.at?.y, p.top.z])).toEqual([
       [NAMEPLATE_YOU, 0, 0, 77, 77],
       ["P2", 1, 500, 77, 77],

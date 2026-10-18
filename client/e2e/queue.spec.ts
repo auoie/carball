@@ -54,9 +54,16 @@ test("two players find a 1v1, count down and land in the match together", async 
     expect(await page.evaluate(() => (window as unknown as { carballMap: () => string }).carballMap())).toBe("night");
   }
   // One a side: each page's own team on the left
-  const phases = await a.evaluate(() => (window as unknown as { carballOnline: () => { phases: { phase: string }[] } }).carballOnline().phases.map((p) => p.phase));
+  const phases = await a.evaluate(() =>
+    (window as unknown as { carballOnline: () => { phases: { phase: string }[] } }).carballOnline().phases.map((p) => p.phase),
+  );
   expect(phases[0]).toBe("waiting");
-  await expect.poll(async () => a.evaluate(() => (window as unknown as { carballOnline: () => { phases: { phase: string }[] } }).carballOnline().phases.map((p) => p.phase)), { timeout: 20_000 }).toContain("countdown");
+  await expect
+    .poll(
+      async () => a.evaluate(() => (window as unknown as { carballOnline: () => { phases: { phase: string }[] } }).carballOnline().phases.map((p) => p.phase)),
+      { timeout: 20_000 },
+    )
+    .toContain("countdown");
   expect(errors).toEqual([]);
   await a.context().close();
   await b.context().close();
@@ -104,16 +111,17 @@ test("the pad's Y cancels the search from the menus, its hint on the banner; in 
   const tap = async (button: number): Promise<void> => {
     await page.evaluate(async (b) => {
       const w = window as unknown as { carballSetPad: (down: number[]) => void };
-      const frames = async (n: number): Promise<void> => new Promise((r) => {
-        const step = (k: number): void => {
-          if (k === 0) r();
-          else
-            requestAnimationFrame(() => {
-              step(k - 1);
-            });
-        };
-        step(n);
-      });
+      const frames = async (n: number): Promise<void> =>
+        new Promise((r) => {
+          const step = (k: number): void => {
+            if (k === 0) r();
+            else
+              requestAnimationFrame(() => {
+                step(k - 1);
+              });
+          };
+          step(n);
+        });
       w.carballSetPad([b]);
       await frames(2);
       w.carballSetPad([]);
@@ -141,7 +149,10 @@ test("the pad's Y cancels the search from the menus, its hint on the banner; in 
   await expect(banner.locator(".search-cancel-pad")).toBeVisible();
   await expect(banner.locator(".search-cancel-pad")).toContainText("Cancel Search");
   // The settings over the menu: Y theirs, the search kept
-  await page.locator("#main-menu").getByRole("button", { name: /^settings$/i }).click();
+  await page
+    .locator("#main-menu")
+    .getByRole("button", { name: /^settings$/i })
+    .click();
   await expect(page.locator("#settings")).toBeVisible();
   await tap(3);
   await expect(banner).toBeVisible();
@@ -154,4 +165,3 @@ test("the pad's Y cancels the search from the menus, its hint on the banner; in 
   expect(errors).toEqual([]);
   await context.close();
 });
-

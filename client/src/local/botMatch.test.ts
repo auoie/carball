@@ -5,7 +5,16 @@ import { type BotPick, botMatchSetup, botTeamSizes, fitChoices, readBotMatch, st
 
 const FULL = { id: "full", name: "Full", strength: 1 } as const;
 const EZ = { id: "ez", name: "EZ", strength: 0.8 } as const;
-const listing = (id: string, name: string, teamSizes: number[], playable = true, levels: BotListing["levels"] = [FULL]): BotListing => ({ id, name, teamSizes, credit: "", licence: "CC BY-NC-SA 4.0", licenceFile: "LICENSE.txt", playable, levels });
+const listing = (id: string, name: string, teamSizes: number[], playable = true, levels: BotListing["levels"] = [FULL]): BotListing => ({
+  id,
+  name,
+  teamSizes,
+  credit: "",
+  licence: "CC BY-NC-SA 4.0",
+  licenceFile: "LICENSE.txt",
+  playable,
+  levels,
+});
 const LISTINGS = [listing("nexto", "Nexto", [1, 2, 3], true, [FULL, EZ]), listing("necto", "Necto", [1, 2]), listing("broken", "Broken", [1, 2, 3], false)];
 const pick = (bot: string, level = "full"): BotPick => ({ bot, level });
 
@@ -23,12 +32,21 @@ describe("Play vs Bots' setup", () => {
 
   it("fits the kept choices: a team size bots play, each slot a bot that plays it (else the first), at a level it offers (else full)", () => {
     expect(fitChoices(null, LISTINGS)).toEqual({ teamSize: 1, teammates: [], opponents: [pick("nexto")] });
-    expect(fitChoices({ teamSize: 3, teammates: [pick("necto", "ez"), pick("nexto", "ez")], opponents: [pick("necto"), pick("broken"), pick("nexto", "hard")] }, LISTINGS)).toEqual({
+    expect(
+      fitChoices(
+        { teamSize: 3, teammates: [pick("necto", "ez"), pick("nexto", "ez")], opponents: [pick("necto"), pick("broken"), pick("nexto", "hard")] },
+        LISTINGS,
+      ),
+    ).toEqual({
       teamSize: 3,
       teammates: [pick("nexto"), pick("nexto", "ez")],
       opponents: [pick("nexto"), pick("nexto"), pick("nexto")],
     });
-    expect(fitChoices({ teamSize: 3, teammates: [], opponents: [] }, [listing("necto", "Necto", [1, 2])])).toEqual({ teamSize: 2, teammates: [pick("necto")], opponents: [pick("necto"), pick("necto")] });
+    expect(fitChoices({ teamSize: 3, teammates: [], opponents: [] }, [listing("necto", "Necto", [1, 2])])).toEqual({
+      teamSize: 2,
+      teammates: [pick("necto")],
+      opponents: [pick("necto"), pick("necto")],
+    });
   });
 
   it("puts the teammates on the player's team and the opponents on the other: named by bot and level (numbered when used twice), at the level's strength", () => {

@@ -4,7 +4,13 @@ import { StatGraphData, type StatContext } from "../game/statGraphs";
 import { EXPECTED_PACKETS, NetGraphFeed, UPDATE_HEADER_BYTES, rawRoundTrip } from "./netStats";
 import type { Update } from "./protocol";
 
-const CONTEXT: StatContext = { targetFps: 60, maxBytesRate: 150_000, expectedOutPackets: EXPECTED_PACKETS.out, expectedInPackets: EXPECTED_PACKETS.in, metric: true };
+const CONTEXT: StatContext = {
+  targetFps: 60,
+  maxBytesRate: 150_000,
+  expectedOutPackets: EXPECTED_PACKETS.out,
+  expectedInPackets: EXPECTED_PACKETS.in,
+  metric: true,
+};
 
 const update = (serverTick: number, more: Partial<Update> = {}): Update => ({
   serverTick,
@@ -26,7 +32,11 @@ const update = (serverTick: number, more: Partial<Update> = {}): Update => ({
 });
 
 /** A row's summaries at `now` on the Network graph (long) */
-const row = (data: StatGraphData, title: string, now: number): (number | null)[] => data.view("networkLong", now, CONTEXT).find((r) => r.title === title)?.summaries.map((s) => s.value) ?? [];
+const row = (data: StatGraphData, title: string, now: number): (number | null)[] =>
+  data
+    .view("networkLong", now, CONTEXT)
+    .find((r) => r.title === title)
+    ?.summaries.map((s) => s.value) ?? [];
 
 describe("the network rows fed (HUD-21, SG2)", () => {
   it("counts per 1-second period, stepping once a second: packets and bytes each way, the updates the server skipped (In Loss), its inputs lost (Out Loss)", () => {
@@ -119,4 +129,3 @@ describe("the network rows' edges (RV-516, RV-522)", () => {
     expect(row(data, "IBuf", 0.1).slice(1)).toEqual([9, 4]);
   });
 });
-

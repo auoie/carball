@@ -1,6 +1,26 @@
 // Visuals built from the physics shapes: the car is a body around its hitbox (src/render/carModel.ts), the ball is
 // its collision sphere. Real models come later (roadmap §10).
-import { AdditiveBlending, BackSide, BufferAttribute, type BufferGeometry, Color, FrontSide, Group, IcosahedronGeometry, LinearSRGBColorSpace, type Material, Mesh, MeshStandardMaterial, type Object3D, PlaneGeometry, Quaternion, ShaderMaterial, type Side, SphereGeometry, Vector3 } from "three";
+import {
+  AdditiveBlending,
+  BackSide,
+  BufferAttribute,
+  type BufferGeometry,
+  Color,
+  FrontSide,
+  Group,
+  IcosahedronGeometry,
+  LinearSRGBColorSpace,
+  type Material,
+  Mesh,
+  MeshStandardMaterial,
+  type Object3D,
+  PlaneGeometry,
+  Quaternion,
+  ShaderMaterial,
+  type Side,
+  SphereGeometry,
+  Vector3,
+} from "three";
 import type { CarConfig, CarWheels, Team } from "../engine/world";
 import { RETICLE, RETICLE_GLSL_FN } from "./ballShadow";
 import { BallTrail, SIDE_TRAIL, type TrailPoints } from "./ballTrail";
@@ -118,7 +138,10 @@ export class CarView {
     this.#spring = this.#parts ? new ChassisSpring(this.#parts.spring) : null;
     // (the game's sockets on its Fennec, where it's loaded; a Blender model's own where it has them; else our bodies' at
     // their backs, found before it's posed: RV-470)
-    const exhausts = model.userData["gameMesh"] === true ? EXHAUSTS.map((at) => ({ at, turn: null })) : (this.#parts?.exhausts ?? carExhausts(model, config, car).map((at) => ({ at, turn: null })));
+    const exhausts =
+      model.userData["gameMesh"] === true
+        ? EXHAUSTS.map((at) => ({ at, turn: null }))
+        : (this.#parts?.exhausts ?? carExhausts(model, config, car).map((at) => ({ at, turn: null })));
     this.#body.add(model);
     this.#exhausts = particles
       ? exhausts.map(({ at, turn }) => ({ at, turn, trail: new Emitter(particles, BOOST_TRAIL), idle: new Emitter(particles, IDLE_EXHAUST) }))
@@ -131,7 +154,8 @@ export class CarView {
     const side = config.hitboxSize.y / 2 - 8;
     const rearLeft = this.#parts?.wheels[3];
     const rearRight = this.#parts?.wheels[2];
-    const contact = (w: NonNullable<typeof rearLeft>): Vector3 => new Vector3(w.rest.x * UU_PER_METRE, w.rest.y * UU_PER_METRE - w.radius, w.rest.z * UU_PER_METRE);
+    const contact = (w: NonNullable<typeof rearLeft>): Vector3 =>
+      new Vector3(w.rest.x * UU_PER_METRE, w.rest.y * UU_PER_METRE - w.radius, w.rest.z * UU_PER_METRE);
     this.#trailFrom =
       rearLeft && rearRight ? [contact(rearLeft), contact(rearRight)] : [new Vector3(back.offset.x, height, -side), new Vector3(back.offset.x, height, side)];
   }
@@ -177,7 +201,11 @@ export class CarView {
         const a = this.#axis.set(x, y, z).applyQuaternion(turn);
         return vec3(a.x, a.z, a.y);
       };
-      const frameOf = (turn: Quaternion): { forward: Vec3; right: Vec3; up: Vec3 } => ({ forward: axis(1, 0, 0, turn), right: axis(0, 0, 1, turn), up: axis(0, 1, 0, turn) });
+      const frameOf = (turn: Quaternion): { forward: Vec3; right: Vec3; up: Vec3 } => ({
+        forward: axis(1, 0, 0, turn),
+        right: axis(0, 0, 1, turn),
+        up: axis(0, 1, 0, turn),
+      });
       const frame = frameOf(rotation);
       // (demolished: its trail and exhaust gone at once, StopAllEffects + KillParticlesForced: RV-52f)
       const killed = demoed && !this.#wasDemoed;
@@ -186,7 +214,15 @@ export class CarView {
         // (a Blender model's sockets sway with its body, as the game's on its chassis bone)
         const at = swaying ? this.#swayed.copy(socket).sub(this.#swayAt).applyQuaternion(this.#swayTurn).add(this.#swayAt) : socket;
         // (a turned empty's own frame: it blows along its -X)
-        const own = turn || swaying ? frameOf(this.#turned.copy(rotation).multiply(this.#swayTurn).multiply(turn ?? IDENTITY)) : frame;
+        const own =
+          turn || swaying
+            ? frameOf(
+                this.#turned
+                  .copy(rotation)
+                  .multiply(this.#swayTurn)
+                  .multiply(turn ?? IDENTITY),
+              )
+            : frame;
         if (killed) {
           trail.kill();
           idle.kill();
@@ -527,11 +563,9 @@ function addGoalLineEffect(
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, { glPlaneLoc: u.planeLoc, glPlaneN: u.planeN, glProximity: u.proximity, glTime: u.time, glOn: u.on });
     const common = `uniform vec3 glPlaneLoc;\nuniform vec3 glPlaneN;\nuniform float glProximity;\nuniform float glTime;\nuniform float glOn;\nvarying vec3 glWorld;\nvarying vec3 glLocal;`;
-    shader.vertexShader = shader.vertexShader
-      .replace("#include <common>", `#include <common>\n${common}`)
-      .replace(
-        "#include <project_vertex>",
-        `vec4 glW = modelMatrix * vec4(transformed, 1.0);
+    shader.vertexShader = shader.vertexShader.replace("#include <common>", `#include <common>\n${common}`).replace(
+      "#include <project_vertex>",
+      `vec4 glW = modelMatrix * vec4(transformed, 1.0);
         float glG = clamp(dot(glPlaneLoc - glW.xyz, glPlaneN), 0.0, 1.0);
         // (the shake, in the world's uu: the game's (x, y, z) as Three's (x, z, y))
         glW.xyz += glOn * (${G.shake.base.toFixed(1)} + ${G.shake.inside.toFixed(1)} * glG) * glProximity * vec3(sin(${r0} * glTime), cos(${r2} * glTime), sin(${r1} * glTime));
@@ -539,9 +573,11 @@ function addGoalLineEffect(
         glLocal = transformed;
         vec4 mvPosition = viewMatrix * glW;
         gl_Position = projectionMatrix * mvPosition;`,
-      );
+    );
     shader.fragmentShader = shader.fragmentShader
-      .replace("#include <common>", `#include <common>\n${common}
+      .replace(
+        "#include <common>",
+        `#include <common>\n${common}
 // (the game's ball texture's honeycomb, by rule: its cells' distance to their edges on the ball's surface, three ways)
 float glHexEdge(vec2 p) {
   vec2 s = vec2(1.0, 1.7320508);
@@ -558,9 +594,10 @@ vec3 glHoneycomb(vec3 p, vec3 n) {
   float aa = fwidth(e);
   float line = 1.0 - smoothstep(halfLine - aa, halfLine + aa, e);
   // (cells under a pixel or so: their average)
-  float mean = ${(((G.honeycomb.line / G.honeycomb.spacing) * 2) * lineAlbedo + (1 - (G.honeycomb.line / G.honeycomb.spacing) * 2) * cellAlbedo).toFixed(4)};
+  float mean = ${((G.honeycomb.line / G.honeycomb.spacing) * 2 * lineAlbedo + (1 - (G.honeycomb.line / G.honeycomb.spacing) * 2) * cellAlbedo).toFixed(4)};
   return vec3(mix(mix(${cellAlbedo.toFixed(3)}, ${lineAlbedo.toFixed(3)}, line), mean, smoothstep(0.1, 0.3, aa * 4.0)));
-}`)
+}`,
+      )
       .replace(
         "#include <color_fragment>",
         `#include <color_fragment>
@@ -704,9 +741,18 @@ export function patchedBallGeometry(): BufferGeometry {
   const geometry = new IcosahedronGeometry(BALL_RADIUS, 2); // non-indexed: three vertices per triangle
   const t = (1 + Math.sqrt(5)) / 2;
   const corners = [
-    [-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0],
-    [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t],
-    [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1],
+    [-1, t, 0],
+    [1, t, 0],
+    [-1, -t, 0],
+    [1, -t, 0],
+    [0, -1, t],
+    [0, 1, t],
+    [0, -1, -t],
+    [0, 1, -t],
+    [t, 0, -1],
+    [t, 0, 1],
+    [-t, 0, -1],
+    [-t, 0, 1],
   ].map(([x = 0, y = 0, z = 0]) => new Vector3(x, y, z).normalize());
   const position = geometry.getAttribute("position");
   const colors = new Float32Array(position.count * 3);
@@ -726,4 +772,3 @@ export function patchedBallGeometry(): BufferGeometry {
   geometry.setAttribute("color", new BufferAttribute(colors, 3));
   return geometry;
 }
-

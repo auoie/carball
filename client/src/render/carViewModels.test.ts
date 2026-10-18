@@ -35,7 +35,7 @@ const named = (root: Object3D, name: string): Object3D => {
   if (!found) throw new Error(`no ${name}`);
   return found;
 };
-const four = <T,>(v: T): [T, T, T, T] => [v, v, v, v];
+const four = <T>(v: T): [T, T, T, T] => [v, v, v, v];
 
 describe.skipIf(!existsSync(join(CARS, "tall.glb")))("a car wearing its model (Tall)", () => {
   it("its wheels: hanging 8 uu in the air (set at once the first time), snapped up by the ground, eased down again at 10/s; a replay's touching wheels at rest", () => {
@@ -118,7 +118,10 @@ describe.skipIf(!existsSync(join(CARS, "tall.glb")))("a car wearing its model (T
     expect(wheel.quaternion.angleTo(before)).toBeCloseTo(1, 2);
     let freed = 0;
     wheel.traverse((o) => {
-      if (o instanceof Mesh) (o.geometry as BufferGeometry).addEventListener("dispose", () => { freed += 1; });
+      if (o instanceof Mesh)
+        (o.geometry as BufferGeometry).addEventListener("dispose", () => {
+          freed += 1;
+        });
     });
     car.dispose();
     expect(freed).toBe(0);

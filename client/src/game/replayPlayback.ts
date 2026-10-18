@@ -81,12 +81,7 @@ export class ReplayPlayback {
 
   /** `frameAt`: the recorded frame of a plan tick (online: the client frame consumed at that server tick);
    *  `netTeamNum`: the TeamNum of the net scored into (a match's: its team's; freeplay's: 1 for both) */
-  constructor(
-    plan: ReplayPlan,
-    recorder: ReplayRecorder,
-    frameAt: (tick: number) => number = (tick) => tick,
-    netTeamNum = plan.scoringTeam === 0 ? 1 : 0,
-  ) {
+  constructor(plan: ReplayPlan, recorder: ReplayRecorder, frameAt: (tick: number) => number = (tick) => tick, netTeamNum = plan.scoringTeam === 0 ? 1 : 0) {
     this.plan = plan;
     this.tick = plan.startTick;
     this.#recorder = recorder;

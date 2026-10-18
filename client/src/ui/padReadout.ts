@@ -29,7 +29,15 @@ export class PadReadout {
   update(): void {
     const pads = [...gamepads()].flatMap((pad) =>
       pad?.connected
-        ? [{ index: pad.index, id: pad.id, mapping: pad.mapping, pressed: pad.buttons.flatMap((b, i) => (b.pressed || b.value > 0.5 ? [i] : [])), axes: pad.axes }]
+        ? [
+            {
+              index: pad.index,
+              id: pad.id,
+              mapping: pad.mapping,
+              pressed: pad.buttons.flatMap((b, i) => (b.pressed || b.value > 0.5 ? [i] : [])),
+              axes: pad.axes,
+            },
+          ]
         : [],
     );
     const text = pads.length > 0 ? pads.map(padLine).join("\n") : "no pad (press a button on it)";

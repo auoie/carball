@@ -187,7 +187,10 @@ function goalGlows(style: ArenaStyle, ribbons: readonly GlowRibbon[]): Mesh[] {
       const n = Math.min(ribbon.attached.length, ribbon.free.length) / 3;
       const base = pos.length / 3;
       for (let i = 0; i < n; i++) {
-        for (const [edge, value] of [[ribbon.attached, ribbon.glow ?? 1], [ribbon.free, 0]] as const) {
+        for (const [edge, value] of [
+          [ribbon.attached, ribbon.glow ?? 1],
+          [ribbon.free, 0],
+        ] as const) {
           // (Three's frame: x, z up, y)
           pos.push(edge[3 * i] ?? 0, edge[3 * i + 2] ?? 0, sy * (edge[3 * i + 1] ?? 0));
           glow.push(value);

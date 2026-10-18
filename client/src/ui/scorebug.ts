@@ -116,12 +116,28 @@ export function viewOutline(side: Side, step = 10): P2[] {
 /** The clock box's outline in its box */
 export function clockOutline(): P2[] {
   const { width: w, height: h } = CLOCK_BOX;
-  return [[0, 0], [w, 0], [w, h], [89.5, h], [87.5, h - 2], [47.5, h - 2], [45.5, h], [0, h]];
+  return [
+    [0, 0],
+    [w, 0],
+    [w, h],
+    [89.5, h],
+    [87.5, h - 2],
+    [47.5, h - 2],
+    [45.5, h],
+    [0, h],
+  ];
 }
 
 /** A closed path through these points of a frame's box, projected */
 export function projectedPath(frame: ScoreFrame, points: readonly P2[], pose: ScorebugPose): string {
-  return `${points.map(([x, y], i) => `${i === 0 ? "M" : "L"} ${project(frame, x, y, pose).map((v) => v.toFixed(3)).join(" ")}`).join(" ")} Z`;
+  return `${points
+    .map(
+      ([x, y], i) =>
+        `${i === 0 ? "M" : "L"} ${project(frame, x, y, pose)
+          .map((v) => v.toFixed(3))
+          .join(" ")}`,
+    )
+    .join(" ")} Z`;
 }
 
 /** A CSS cubic-bezier timing function */
@@ -248,7 +264,17 @@ export class ScorebugArt {
     const id = `scorebug${String(nextId++)}`;
     // (a box round the board and its intro: the style sheet's .score-art)
     const { x, y, width, height } = ART_BOX;
-    this.root = svg("svg", { class: "score-art", viewBox: `${String(x)} ${String(y)} ${String(width)} ${String(height)}`, width: String(width), height: String(height), "aria-hidden": "true" }, parent);
+    this.root = svg(
+      "svg",
+      {
+        class: "score-art",
+        viewBox: `${String(x)} ${String(y)} ${String(width)} ${String(height)}`,
+        width: String(width),
+        height: String(height),
+        "aria-hidden": "true",
+      },
+      parent,
+    );
     parent.prepend(this.root);
     const defs = svg("defs", {}, this.root);
     const team = (t: 0 | 1): TeamArt => {
@@ -258,7 +284,10 @@ export class ScorebugArt {
       // the tint's own colour, as CSS's premultiplied gradient)
       const glowGradient = svg("radialGradient", { id: `${id}-glow${String(t)}`, gradientUnits: "userSpaceOnUse" }, defs);
       svg("stop", { offset: "0", "stop-color": "#fff", "stop-opacity": "0.9" }, glowGradient);
-      for (const [offset, opacity] of [["0.6", "0.6"], ["0.75", "0"]] as const) {
+      for (const [offset, opacity] of [
+        ["0.6", "0.6"],
+        ["0.75", "0"],
+      ] as const) {
         const stop = svg("stop", { offset, "stop-opacity": opacity }, glowGradient);
         stop.style.setProperty("stop-color", `rgb(var(--tint-${String(t)}))`);
       }

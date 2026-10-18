@@ -20,7 +20,12 @@ describe("the ball arrow (HUD-17)", () => {
 
   it("shows with the setting on and the ball cam off, the car alive, in the round", () => {
     expect(ballArrowShown(true, false, true, true)).toBe(true);
-    expect([ballArrowShown(false, false, true, true), ballArrowShown(true, true, true, true), ballArrowShown(true, false, false, true), ballArrowShown(true, false, true, false)]).toEqual([false, false, false, false]);
+    expect([
+      ballArrowShown(false, false, true, true),
+      ballArrowShown(true, true, true, true),
+      ballArrowShown(true, false, false, true),
+      ballArrowShown(true, false, true, false),
+    ]).toEqual([false, false, false, false]);
   });
 
   it("flashes twice a second, a 125 ms pulse sweeping tail to tip, and hazes a soft dark disc (ARW1)", () => {

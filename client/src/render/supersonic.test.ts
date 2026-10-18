@@ -63,7 +63,11 @@ describe("supersonic trail", () => {
   });
 
   it("reads RocketSim's wheel order (front right, front left, back right, back left: RV-28)", () => {
-    const rolledRightSideDown = { vel: { x: 2300, y: 0, z: 0 }, rot: { forward: { x: 1, y: 0, z: 0 }, right: { x: 0, y: 1, z: 0 }, up: { x: 0, y: 0, z: 1 } }, wheelContact: [false, false, true, false] };
+    const rolledRightSideDown = {
+      vel: { x: 2300, y: 0, z: 0 },
+      rot: { forward: { x: 1, y: 0, z: 0 }, right: { x: 0, y: 1, z: 0 }, up: { x: 0, y: 0, z: 1 } },
+      wheelContact: [false, false, true, false],
+    };
     expect(trailGround(rolledRightSideDown).rearContact).toEqual([false, true]); // (back right touching)
   });
 });

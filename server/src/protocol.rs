@@ -155,16 +155,27 @@ pub enum Control {
         token: u64,
     },
     /// Mute or unmute a player's chat for this player (`ClientMutePlayer`: the server stops relaying their lines to them)
-    Mute { car: u32, on: bool },
+    Mute {
+        car: u32,
+        on: bool,
+    },
     /// A quick-chat preset (`ServerSay_TA` with bPreset): to the player's team or to all
-    QuickChat { preset: u8, team: bool },
+    QuickChat {
+        preset: u8,
+        team: bool,
+    },
     /// The player's chat filters (`ServerSetQuickChatFilter`, `ServerSetTacticalChatFilter`): `CHAT_*`, and whether
     /// other players' non-tactical presets are blocked during the match
-    ChatFilter { quick_chat: u8, block_non_tactical: bool },
+    ChatFilter {
+        quick_chat: u8,
+        block_non_tactical: bool,
+    },
     /// Skip the goal replay (`ReadyUp`: Space / pad A); counts only during one
     ReadyUp,
     /// The auto-skip setting changed (`ServerSetAutoSkipGoalReplay`: turned on during a replay, it readies the player)
-    AutoSkipReplay { on: bool },
+    AutoSkipReplay {
+        on: bool,
+    },
     /// The client had a hitch (over 0.1 s between its ticks) 2 s ago: the server resets its jitter buffer
     /// (`NetworkInputBuffer_TA.ClientTick` → `ServerResetInputBuffer`)
     ResetInputBuffer,
@@ -173,45 +184,90 @@ pub enum Control {
     /// `match_type`: 0 casual, 1 ranked, 2 private (who may vote to forfeit, after how long, its label); `team_size`: the
     /// playlist's; `map`: the match's (`MAP_COUNT`), the arena every player sees; `key`: the player's (Hello's again, if
     /// it was this server's and no one here has it; else a new one)
-    Welcome { version: u16, car_id: u32, tick_rate: u8, frame: u32, match_type: u8, team_size: u8, map: u8, key: u64, snapshot: Vec<u8> },
-    World { frame: u32, snapshot: Vec<u8> },
-    Event { server_tick: u32, event: GameEvent },
+    Welcome {
+        version: u16,
+        car_id: u32,
+        tick_rate: u8,
+        frame: u32,
+        match_type: u8,
+        team_size: u8,
+        map: u8,
+        key: u64,
+        snapshot: Vec<u8>,
+    },
+    World {
+        frame: u32,
+        snapshot: Vec<u8>,
+    },
+    Event {
+        server_tick: u32,
+        event: GameEvent,
+    },
     /// The match's state: sent when it changes and each second while the clock runs
     Match(MatchState),
     /// The goal replay starts (`StartReplay` → `ReplayPlayback`): what the clients play from their own recording
     Replay(ReplayPlan),
     /// How many players are ready to skip the goal replay, of how many (sent when it changes during one)
-    ReplayReady { ready: u8, total: u8 },
+    ReplayReady {
+        ready: u8,
+        total: u8,
+    },
     /// The player's team's forfeit vote, sent to each of its players when it changes (`Team_TA.ForfeitVote`)
     ForfeitVote(ForfeitVoteState),
     /// The players: each one's car, team and name, sent to everyone when it changes
     Roster(Vec<RosterEntry>),
     /// A quick-chat line (`ChatMessage_TA`): the sender's car, the preset, to the team or all, and the clock's shown
     /// seconds as the server relayed it (`SecondsRemaining`)
-    Chat { car: u32, preset: u8, team: bool, seconds: u16 },
+    Chat {
+        car: u32,
+        preset: u8,
+        team: bool,
+        seconds: u16,
+    },
     /// The sender's chat is blocked by the spam filter for this long (`ClientNotifyChatDisabled`)
-    ChatBlocked { seconds: f32 },
+    ChatBlocked {
+        seconds: f32,
+    },
     /// The join was refused (`REFUSED_FULL`: the match has its most players), instead of a `Welcome`; the session ends
-    Refused { reason: u8 },
+    Refused {
+        reason: u8,
+    },
     /// Every player's scoreboard line (`PRI_TA`'s replicated match counters, ping, MVP), sent when it changes and every
     /// two seconds for the pings
     Scoreboard(Vec<ScoreboardEntry>),
     /// A stat this player gained (`ClientNotifyGainedStat`: their popup), with its points
-    StatEvent { event: u8, points: u16 },
+    StatEvent {
+        event: u8,
+        points: u16,
+    },
     /// A stat someone gained, for every player's feed (`ClientNotifyStatTickerMessage`): the receiver's car and a
     /// demolition's victim (0: none)
-    Ticker { event: u8, receiver: u32, victim: u32 },
+    Ticker {
+        event: u8,
+        receiver: u32,
+        victim: u32,
+    },
     /// A search found a match: the slot's one-time token, to claim with a new session's hello, and the match's map (its
     /// arena loads during the join's countdown); the search session ends
-    MatchFound { token: u64, map: u8 },
+    MatchFound {
+        token: u64,
+        map: u8,
+    },
     /// The idle warning shows (`IdleWarning_TA`: idle over 25 s of play) or hides (the player acted)
-    IdleWarning { on: bool },
+    IdleWarning {
+        on: bool,
+    },
     /// The server ends this player's session (`KICK_*`), closing it a second later (`CloseConnectionWithReason`)
-    Kicked { reason: u8 },
+    Kicked {
+        reason: u8,
+    },
     /// A search refused: its browser (`network` false) or its address (true: a network shared with someone who did)
     /// stalled a match (didn't claim its slot, or left before the start) and may search again in this many seconds
     /// (RV-367, RV-385); the session ends
-    SearchCooldown { seconds: u16, network: bool },
+    SearchCooldown {
+        seconds: u16,
+        network: bool,
+    },
 }
 
 /// One player's scoreboard line
@@ -359,18 +415,34 @@ pub struct MatchState {
 pub enum GameEvent {
     /// `team` scored; `scorer` and `assister`: the cars credited with the goal and the assist (0: none; no scorer when
     /// only the defending team touched the ball)
-    Goal { team: u8, scorer: u32, assister: u32 },
-    Demo { attacker: u32, victim: u32 },
+    Goal {
+        team: u8,
+        scorer: u32,
+        assister: u32,
+    },
+    Demo {
+        attacker: u32,
+        victim: u32,
+    },
     /// A player left; `lost`: their connection timed out (the chat log's "lost connection"); `explode`: their car explodes
     /// where it is (`Car.Demolish(None)`: no demolition counted), not when already demolished or in the goal replay
-    Left { car: u32, lost: bool, explode: bool },
+    Left {
+        car: u32,
+        lost: bool,
+        explode: bool,
+    },
 }
 
 /// Datagram (unreliable) messages
 #[derive(Clone, Debug, PartialEq)]
 pub enum Datagram {
     /// `sequence`: the client's count of its input datagrams (wrapping: the server counts the gaps, Out Loss)
-    Inputs { timestamp: u32, sequence: u16, first_frame: u32, frames: Vec<InputFrame> },
+    Inputs {
+        timestamp: u32,
+        sequence: u16,
+        first_frame: u32,
+        frames: Vec<InputFrame>,
+    },
     Update(Update),
 }
 
@@ -452,12 +524,24 @@ impl InputFrame {
 struct Writer(Vec<u8>);
 
 impl Writer {
-    fn u8(&mut self, v: u8) { self.0.push(v); }
-    fn i8(&mut self, v: i8) { self.0.push(v as u8); }
-    fn u16(&mut self, v: u16) { self.0.extend_from_slice(&v.to_le_bytes()); }
-    fn u32(&mut self, v: u32) { self.0.extend_from_slice(&v.to_le_bytes()); }
-    fn u64(&mut self, v: u64) { self.0.extend_from_slice(&v.to_le_bytes()); }
-    fn f32(&mut self, v: f32) { self.0.extend_from_slice(&v.to_le_bytes()); }
+    fn u8(&mut self, v: u8) {
+        self.0.push(v);
+    }
+    fn i8(&mut self, v: i8) {
+        self.0.push(v as u8);
+    }
+    fn u16(&mut self, v: u16) {
+        self.0.extend_from_slice(&v.to_le_bytes());
+    }
+    fn u32(&mut self, v: u32) {
+        self.0.extend_from_slice(&v.to_le_bytes());
+    }
+    fn u64(&mut self, v: u64) {
+        self.0.extend_from_slice(&v.to_le_bytes());
+    }
+    fn f32(&mut self, v: f32) {
+        self.0.extend_from_slice(&v.to_le_bytes());
+    }
     fn bytes_with_len(&mut self, b: &[u8]) {
         self.u32(b.len() as u32);
         self.0.extend_from_slice(b);
@@ -503,12 +587,24 @@ impl<'a> Reader<'a> {
         self.0 = tail;
         Ok(head)
     }
-    fn u8(&mut self) -> Result<u8, DecodeError> { Ok(self.take(1)?[0]) }
-    fn i8(&mut self) -> Result<i8, DecodeError> { Ok(self.take(1)?[0] as i8) }
-    fn u16(&mut self) -> Result<u16, DecodeError> { Ok(u16::from_le_bytes(self.take(2)?.try_into().unwrap())) }
-    fn u32(&mut self) -> Result<u32, DecodeError> { Ok(u32::from_le_bytes(self.take(4)?.try_into().unwrap())) }
-    fn u64(&mut self) -> Result<u64, DecodeError> { Ok(u64::from_le_bytes(self.take(8)?.try_into().unwrap())) }
-    fn f32(&mut self) -> Result<f32, DecodeError> { Ok(f32::from_le_bytes(self.take(4)?.try_into().unwrap())) }
+    fn u8(&mut self) -> Result<u8, DecodeError> {
+        Ok(self.take(1)?[0])
+    }
+    fn i8(&mut self) -> Result<i8, DecodeError> {
+        Ok(self.take(1)?[0] as i8)
+    }
+    fn u16(&mut self) -> Result<u16, DecodeError> {
+        Ok(u16::from_le_bytes(self.take(2)?.try_into().unwrap()))
+    }
+    fn u32(&mut self) -> Result<u32, DecodeError> {
+        Ok(u32::from_le_bytes(self.take(4)?.try_into().unwrap()))
+    }
+    fn u64(&mut self) -> Result<u64, DecodeError> {
+        Ok(u64::from_le_bytes(self.take(8)?.try_into().unwrap()))
+    }
+    fn f32(&mut self) -> Result<f32, DecodeError> {
+        Ok(f32::from_le_bytes(self.take(4)?.try_into().unwrap()))
+    }
     fn bytes_with_len(&mut self) -> Result<Vec<u8>, DecodeError> {
         let n = self.u32()? as usize;
         Ok(self.take(n)?.to_vec())
@@ -703,13 +799,11 @@ impl Control {
                 w.u8(0x84);
                 w.u32(m.server_tick);
                 w.u8(m.phase as u8);
-                w.u8(
-                    u8::from(m.overtime)
-                        | (u8::from(m.clock_running) << 1)
-                        | (u8::from(m.forfeit) << 2)
-                        | (u8::from(m.can_vote_forfeit) << 3)
-                        | (u8::from(m.no_contest) << 4),
-                );
+                w.u8(u8::from(m.overtime)
+                    | (u8::from(m.clock_running) << 1)
+                    | (u8::from(m.forfeit) << 2)
+                    | (u8::from(m.can_vote_forfeit) << 3)
+                    | (u8::from(m.no_contest) << 4));
                 w.u32(m.clock_ticks);
                 w.u8(m.score[0]);
                 w.u8(m.score[1]);
@@ -795,7 +889,14 @@ impl Control {
                         Ok((title != NO_TITLE).then_some(PodiumTitle { title, count }))
                     };
                     let titles = [title()?, title()?];
-                    entries.push(ScoreboardEntry { car, ping, mvp: flags & 1 != 0, ready: flags & 2 != 0, counters, titles });
+                    entries.push(ScoreboardEntry {
+                        car,
+                        ping,
+                        mvp: flags & 1 != 0,
+                        ready: flags & 2 != 0,
+                        counters,
+                        titles,
+                    });
                 }
                 Self::Scoreboard(entries)
             }
@@ -805,7 +906,14 @@ impl Control {
             0x05 => Self::VoteForfeit,
             0x87 => {
                 let (state, yes, required, seconds_left, flags) = (r.u8()?, r.u8()?, r.u8()?, r.u8()?, r.u8()?);
-                Self::ForfeitVote(ForfeitVoteState { state, yes, required, seconds_left, voted: flags & 1 != 0, can_start: flags & 2 != 0 })
+                Self::ForfeitVote(ForfeitVoteState {
+                    state,
+                    yes,
+                    required,
+                    seconds_left,
+                    voted: flags & 1 != 0,
+                    can_start: flags & 2 != 0,
+                })
             }
             0x03 => Self::ReadyUp,
             0x04 => Self::AutoSkipReplay { on: r.u8()? != 0 },
@@ -976,19 +1084,32 @@ mod tests {
     #[test]
     fn the_vectors_are_this_versions() {
         assert_eq!(vectors()["protocolVersion"].as_u64(), Some(u64::from(VERSION)));
-        let hello = vectors()["vectors"].as_array().unwrap().iter().find(|v| v["message"]["type"] == "hello").cloned().unwrap();
-        assert_eq!(hello["message"]["version"].as_u64(), Some(u64::from(VERSION)), "the Hello vector carries this version (RV-257)");
+        let hello =
+            vectors()["vectors"].as_array().unwrap().iter().find(|v| v["message"]["type"] == "hello").cloned().unwrap();
+        assert_eq!(
+            hello["message"]["version"].as_u64(),
+            Some(u64::from(VERSION)),
+            "the Hello vector carries this version (RV-257)"
+        );
     }
 
     fn hex(s: &str) -> Vec<u8> {
         (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
     }
 
-    fn f(v: &Value) -> f32 { v.as_f64().unwrap() as f32 }
-    fn u(v: &Value) -> u32 { v.as_u64().unwrap() as u32 }
+    fn f(v: &Value) -> f32 {
+        v.as_f64().unwrap() as f32
+    }
+    fn u(v: &Value) -> u32 {
+        v.as_u64().unwrap() as u32
+    }
     /// A 64-bit value (a decimal string in the JSON: a JS number can't hold it)
-    fn big(v: &Value) -> u64 { v.as_str().unwrap().parse().unwrap() }
-    fn bytes(v: &Value) -> Vec<u8> { v.as_array().unwrap().iter().map(|b| b.as_u64().unwrap() as u8).collect() }
+    fn big(v: &Value) -> u64 {
+        v.as_str().unwrap().parse().unwrap()
+    }
+    fn bytes(v: &Value) -> Vec<u8> {
+        v.as_array().unwrap().iter().map(|b| b.as_u64().unwrap() as u8).collect()
+    }
 
     fn control_from_json(m: &Value) -> Control {
         match m["type"].as_str().unwrap() {
@@ -1002,7 +1123,8 @@ mod tests {
                 auto_skip_replay: m["autoSkipReplay"].as_bool().unwrap(),
                 key: big(&m["key"]),
                 name: m["name"].as_str().unwrap().to_string(),
-                quick_chat: ["everyone", "team", "friends", "off"].iter().position(|&f| f == m["quickChat"]).unwrap() as u8,
+                quick_chat: ["everyone", "team", "friends", "off"].iter().position(|&f| f == m["quickChat"]).unwrap()
+                    as u8,
                 block_non_tactical: m["blockNonTactical"].as_bool().unwrap(),
                 intent: ["join", "search", "claim"].iter().position(|&i| i == m["intent"]).unwrap() as u8,
                 playlist: u(&m["playlist"]) as u8,
@@ -1011,7 +1133,9 @@ mod tests {
             "matchFound" => Control::MatchFound { token: big(&m["token"]), map: u(&m["map"]) as u8 },
             "idleWarning" => Control::IdleWarning { on: m["on"].as_bool().unwrap() },
             "kicked" => Control::Kicked { reason: u(&m["reason"]) as u8 },
-            "searchCooldown" => Control::SearchCooldown { seconds: u(&m["seconds"]) as u16, network: m["network"].as_bool().unwrap() },
+            "searchCooldown" => {
+                Control::SearchCooldown { seconds: u(&m["seconds"]) as u16, network: m["network"].as_bool().unwrap() }
+            }
             "mute" => Control::Mute { car: u(&m["car"]), on: m["on"].as_bool().unwrap() },
             "scoreboard" => Control::Scoreboard(
                 m["players"]
@@ -1026,16 +1150,20 @@ mod tests {
                         counters: p["counters"].as_array().unwrap().iter().map(|c| u(c) as u16).collect(),
                         titles: [0, 1].map(|i| {
                             let t = &p["titles"][i];
-                            (!t.is_null()).then(|| PodiumTitle { title: u(&t["title"]) as u8, count: u(&t["count"]) as u16 })
+                            (!t.is_null())
+                                .then(|| PodiumTitle { title: u(&t["title"]) as u8, count: u(&t["count"]) as u16 })
                         }),
                     })
                     .collect(),
             ),
             "statEvent" => Control::StatEvent { event: u(&m["event"]) as u8, points: u(&m["points"]) as u16 },
-            "ticker" => Control::Ticker { event: u(&m["event"]) as u8, receiver: u(&m["receiver"]), victim: u(&m["victim"]) },
+            "ticker" => {
+                Control::Ticker { event: u(&m["event"]) as u8, receiver: u(&m["receiver"]), victim: u(&m["victim"]) }
+            }
             "quickChat" => Control::QuickChat { preset: u(&m["preset"]) as u8, team: m["team"].as_bool().unwrap() },
             "chatFilter" => Control::ChatFilter {
-                quick_chat: ["everyone", "team", "friends", "off"].iter().position(|&f| f == m["quickChat"]).unwrap() as u8,
+                quick_chat: ["everyone", "team", "friends", "off"].iter().position(|&f| f == m["quickChat"]).unwrap()
+                    as u8,
                 block_non_tactical: m["blockNonTactical"].as_bool().unwrap(),
             },
             "roster" => Control::Roster(
@@ -1043,10 +1171,20 @@ mod tests {
                     .as_array()
                     .unwrap()
                     .iter()
-                    .map(|p| RosterEntry { car: u(&p["car"]), team: u(&p["team"]) as u8, model: u(&p["model"]) as u8, name: p["name"].as_str().unwrap().to_string() })
+                    .map(|p| RosterEntry {
+                        car: u(&p["car"]),
+                        team: u(&p["team"]) as u8,
+                        model: u(&p["model"]) as u8,
+                        name: p["name"].as_str().unwrap().to_string(),
+                    })
                     .collect(),
             ),
-            "chat" => Control::Chat { car: u(&m["car"]), preset: u(&m["preset"]) as u8, team: m["team"].as_bool().unwrap(), seconds: u(&m["seconds"]) as u16 },
+            "chat" => Control::Chat {
+                car: u(&m["car"]),
+                preset: u(&m["preset"]) as u8,
+                team: m["team"].as_bool().unwrap(),
+                seconds: u(&m["seconds"]) as u16,
+            },
             "chatBlocked" => Control::ChatBlocked { seconds: f(&m["seconds"]) },
             "refused" => Control::Refused { reason: u(&m["reason"]) as u8 },
             "readyUp" => Control::ReadyUp,
@@ -1147,7 +1285,10 @@ mod tests {
                             yaw: quantize_axis(f(&fr["yaw"])),
                             roll: quantize_axis(f(&fr["roll"])),
                             dodge_forward: quantize_axis(f(&fr["dodgeForward"])),
-                            bits: bit("jump", BIT_JUMP) | bit("boost", BIT_BOOST) | bit("handbrake", BIT_HANDBRAKE) | bit("airPitchSafety", BIT_AIR_PITCH_SAFETY),
+                            bits: bit("jump", BIT_JUMP)
+                                | bit("boost", BIT_BOOST)
+                                | bit("handbrake", BIT_HANDBRAKE)
+                                | bit("airPitchSafety", BIT_AIR_PITCH_SAFETY),
                         }
                     })
                     .collect(),

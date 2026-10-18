@@ -39,7 +39,18 @@ pub struct Run {
 
 impl Run {
     pub fn new(fps: f64, seconds: f64, up: Profile) -> Self {
-        Self { fps, seconds, up, down: Profile::constant(50.0), hitches: Vec::new(), outage: None, taps_every: None, hitch_reset: true, seed: 1, trace: false }
+        Self {
+            fps,
+            seconds,
+            up,
+            down: Profile::constant(50.0),
+            hitches: Vec::new(),
+            outage: None,
+            taps_every: None,
+            hitch_reset: true,
+            seed: 1,
+            trace: false,
+        }
     }
 }
 
@@ -166,7 +177,11 @@ pub fn simulate(run: &Run) -> Outcome {
         let t = event.t;
         match event.kind {
             Kind::ClientFrame => {
-                let dt = run.hitches.iter().find(|(at, _)| (*at - t).abs() < 0.5 / run.fps).map_or(1.0 / run.fps, |&(_, len)| len);
+                let dt = run
+                    .hitches
+                    .iter()
+                    .find(|(at, _)| (*at - t).abs() < 0.5 / run.fps)
+                    .map_or(1.0 / run.fps, |&(_, len)| len);
                 let since = t - frame_time;
                 frame_time = t;
                 // (the hitch watch, as the client's)
@@ -188,7 +203,8 @@ pub fn simulate(run: &Run) -> Outcome {
                     tick_clock -= TICK;
                     newest_frame += 1;
                     // (a throttle that varies, for the traces' checks)
-                    let mut frame = InputFrame { throttle: ((newest_frame % 200) as i32 - 100) as i8, ..InputFrame::default() };
+                    let mut frame =
+                        InputFrame { throttle: ((newest_frame % 200) as i32 - 100) as i8, ..InputFrame::default() };
                     if let Some(at) = next_tap
                         && t >= at
                     {
@@ -207,7 +223,11 @@ pub fn simulate(run: &Run) -> Outcome {
                         let frames = inputs[first as usize..=newest_frame as usize].to_vec();
                         let lost = run.outage.is_some_and(|(at, len)| t >= at && t < at + len);
                         for arrive in if lost { Vec::new() } else { up.send(t) } {
-                            push(&mut events, arrive, Kind::Packet { timestamp: (t * 1000.0).round() as u32, first, frames: frames.clone() });
+                            push(
+                                &mut events,
+                                arrive,
+                                Kind::Packet { timestamp: (t * 1000.0).round() as u32, first, frames: frames.clone() },
+                            );
                         }
                     }
                 }
@@ -309,7 +329,13 @@ mod tests {
         let mut run = Run::new(
             60.0,
             13.0,
-            Profile { jitter: Jitter::Normal { sigma_ms: 20.0 }, loss: Loss::Iid { p: 0.05 }, duplicate: 0.05, stalls: vec![Stall { at_s: 3.0, ms: 150.0, every_s: 0.0 }], ..Profile::constant(50.0) },
+            Profile {
+                jitter: Jitter::Normal { sigma_ms: 20.0 },
+                loss: Loss::Iid { p: 0.05 },
+                duplicate: 0.05,
+                stalls: vec![Stall { at_s: 3.0, ms: 150.0, every_s: 0.0 }],
+                ..Profile::constant(50.0)
+            },
         );
         run.outage = Some((6.0, 1.2));
         run.hitches = vec![(9.0, 0.3)];
@@ -412,7 +438,10 @@ mod tests {
             run.seed = 9;
             let out = simulate(&run);
             let lost = per_minute(out.delta(2.0, 602.0).never_consumed, 600.0);
-            assert!((lost - expected).abs() <= expected.max(0.5) * 0.6, "30 fps, {p}: {lost} a minute, expected ≈ {expected}");
+            assert!(
+                (lost - expected).abs() <= expected.max(0.5) * 0.6,
+                "30 fps, {p}: {lost} a minute, expected ≈ {expected}"
+            );
         }
     }
 
@@ -420,7 +449,11 @@ mod tests {
     fn t2f_reordering_and_duplicates_change_nothing_consumed() {
         // (f) reordering (from jitter) and 5 % duplicates: frames consumed in order, none twice or passed over; the jitter
         // buffer sampled on newer timestamps only
-        let mut run = Run::new(60.0, 62.0, Profile { jitter: Jitter::Normal { sigma_ms: 12.0 }, duplicate: 0.05, ..Profile::constant(50.0) });
+        let mut run = Run::new(
+            60.0,
+            62.0,
+            Profile { jitter: Jitter::Normal { sigma_ms: 12.0 }, duplicate: 0.05, ..Profile::constant(50.0) },
+        );
         run.seed = 3;
         let out = simulate(&run);
         assert!(out.consumed.windows(2).all(|w| w[1] > w[0]), "consumed out of order");
@@ -484,4 +517,3 @@ mod tests {
         assert_eq!(jumps, taps, "{jumps} jumps for {taps} taps");
     }
 }
-

@@ -5,16 +5,7 @@
 // materials' colour over life where the data gives the formula). Positions in the game's frame (x, y, z up); HDR
 // colours, tone-mapped in the shader (1 - e^-c) as there is no bloom: additive ones as I = colour x alpha x shape,
 // unclamped (the game's rgb = I C.rgb C.a). One instanced quad per particle, two draw calls (additive, translucent).
-import {
-  AdditiveBlending,
-  Group,
-  InstancedBufferAttribute,
-  InstancedBufferGeometry,
-  Mesh,
-  NormalBlending,
-  PlaneGeometry,
-  ShaderMaterial,
-} from "three";
+import { AdditiveBlending, Group, InstancedBufferAttribute, InstancedBufferGeometry, Mesh, NormalBlending, PlaneGeometry, ShaderMaterial } from "three";
 import type { Vec3 } from "../math/vec";
 
 /** A value or a uniform range */
@@ -352,7 +343,7 @@ class Pool {
 
   update(dt: number): void {
     let n = this.count;
-    for (let i = 0; i < n; ) {
+    for (let i = 0; i < n;) {
       const age = (this.age[i] ?? 0) + dt;
       const life = this.life[i] ?? 1;
       if (age >= life) {
@@ -381,7 +372,7 @@ class Pool {
   /** Every particle of `owner` gone at once (KillParticlesForced) */
   kill(owner: object): void {
     let n = this.count;
-    for (let i = 0; i < n; ) {
+    for (let i = 0; i < n;) {
       if (this.owner[i] === owner) {
         this.#move(n - 1, i);
         n--;
@@ -440,7 +431,13 @@ class Pool {
       if (length > 0) {
         const f = this.frame[i];
         const [vx, vy, vz] = [this.vel[k] ?? 0, this.vel[k + 1] ?? 0, this.vel[k + 2] ?? 0];
-        const v = f ? { x: f.forward.x * vx + f.right.x * vy + f.up.x * vz, y: f.forward.y * vx + f.right.y * vy + f.up.y * vz, z: f.forward.z * vx + f.right.z * vy + f.up.z * vz } : { x: vx, y: vy, z: vz };
+        const v = f
+          ? {
+              x: f.forward.x * vx + f.right.x * vy + f.up.x * vz,
+              y: f.forward.y * vx + f.right.y * vy + f.up.y * vz,
+              z: f.forward.z * vx + f.right.z * vy + f.up.z * vz,
+            }
+          : { x: vx, y: vy, z: vz };
         axis[k] = v.x;
         axis[k + 1] = v.z;
         axis[k + 2] = v.y;

@@ -28,7 +28,17 @@ export function readIndex(json: unknown, base: string): PackListing[] {
     const type = p["type"] === "goalie" || p["type"] === "aerial" ? p["type"] : "striker";
     const difficulty = p["difficulty"] === "medium" || p["difficulty"] === "hard" ? p["difficulty"] : "easy";
     const str = (v: unknown): string => (typeof v === "string" ? v.slice(0, 64) : "");
-    return [{ id: p["id"], name: str(p["name"]) || p["id"], type, difficulty, shots: typeof p["shots"] === "number" ? p["shots"] : 0, creator: str(p["creator"]), url: `${base}${p["id"]}.json` }];
+    return [
+      {
+        id: p["id"],
+        name: str(p["name"]) || p["id"],
+        type,
+        difficulty,
+        shots: typeof p["shots"] === "number" ? p["shots"] : 0,
+        creator: str(p["creator"]),
+        url: `${base}${p["id"]}.json`,
+      },
+    ];
   });
 }
 

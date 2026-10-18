@@ -62,7 +62,11 @@ describe("the goal line's effect on the ball (VT-31)", () => {
     });
     const ball = materials[0];
     if (!ball) throw new Error("no ball material");
-    const shader = { vertexShader: ShaderLib.standard.vertexShader, fragmentShader: ShaderLib.standard.fragmentShader, uniforms: {} } as unknown as WebGLProgramParametersWithUniforms;
+    const shader = {
+      vertexShader: ShaderLib.standard.vertexShader,
+      fragmentShader: ShaderLib.standard.fragmentShader,
+      uniforms: {},
+    } as unknown as WebGLProgramParametersWithUniforms;
     ball.onBeforeCompile(shader, {} as WebGLRenderer);
     expect(shader.vertexShader).toContain("glW.xyz += glOn * (1.0 + 4.0 * glG) * glProximity");
     expect(shader.fragmentShader).toContain("totalEmissiveRadiance += glD3 * (96.0 * glLine + glFlicker)");
@@ -192,20 +196,29 @@ describe("the ball's speed trail (VT-10, VT-10a)", () => {
       [0, -72, 0],
     ]);
     // (a quarter turn about the vertical: the game's y offset now along Three's x)
-    expect(hold(new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), Math.PI / 2))[0]?.toArray().map(Math.round)).toEqual([72, 0, 0]);
+    expect(
+      hold(new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), Math.PI / 2))[0]
+        ?.toArray()
+        .map(Math.round),
+    ).toEqual([72, 0, 0]);
     // (World Detail Quality or Performance: none; RV-550: CM28, Quality too)
     try {
       for (const world of ["quality", "performance"] as const) {
         sceneDetail.world = "highQuality";
         run(ball, 10);
-        expect(ball.sideTrails.every((s) => s.drawn), world).toBe(true);
+        expect(
+          ball.sideTrails.every((s) => s.drawn),
+          world,
+        ).toBe(true);
         sceneDetail.world = world;
         run(ball, 10);
-        expect(ball.sideTrails.every((s) => !s.drawn && s.points.points.length === 0), world).toBe(true);
+        expect(
+          ball.sideTrails.every((s) => !s.drawn && s.points.points.length === 0),
+          world,
+        ).toBe(true);
       }
     } finally {
       sceneDetail.world = "highQuality";
     }
   });
 });
-

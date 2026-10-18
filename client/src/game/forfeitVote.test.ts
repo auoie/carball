@@ -38,7 +38,14 @@ describe("the midgame menu's match buttons", () => {
 
 describe("the vote widget", () => {
   it("shows the tally, the bar as the votes of those needed, the time and the hint until the player votes (RV-237)", () => {
-    expect(voteHud(RUNNING, "casual", "Esc")).toEqual({ tally: "Vote to Concede 1/3", yes: 1, fill: 1 / 3, time: "0:17", instructions: "Press Esc to Vote", running: true });
+    expect(voteHud(RUNNING, "casual", "Esc")).toEqual({
+      tally: "Vote to Concede 1/3",
+      yes: 1,
+      fill: 1 / 3,
+      time: "0:17",
+      instructions: "Press Esc to Vote",
+      running: true,
+    });
     expect(voteHud({ ...RUNNING, voted: true, yes: 2, secondsLeft: 20 }, "ranked", "Esc")).toEqual({
       tally: "Vote to Forfeit 2/3",
       yes: 2,

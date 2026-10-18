@@ -20,7 +20,23 @@ afterAll(() => {
 const send = (data: ToHost): void => {
   worker.onmessage?.({ data });
 };
-const hello = encodeControl({ type: "hello", version: PROTOCOL_VERSION, team: 0, model: 0, dodgeDeadzone: 0.5, steeringSensitivity: 1, airControlSensitivity: 1, autoSkipReplay: true, key: 0n, name: "Player", quickChat: "everyone", blockNonTactical: false, intent: "join", playlist: 0, token: 0n });
+const hello = encodeControl({
+  type: "hello",
+  version: PROTOCOL_VERSION,
+  team: 0,
+  model: 0,
+  dodgeDeadzone: 0.5,
+  steeringSensitivity: 1,
+  airControlSensitivity: 1,
+  autoSkipReplay: true,
+  key: 0n,
+  name: "Player",
+  quickChat: "everyone",
+  blockNonTactical: false,
+  intent: "join",
+  playlist: 0,
+  token: 0n,
+});
 const outs = (): number => posted.filter((m) => m.type === "out").length;
 
 describe("the match's worker", () => {

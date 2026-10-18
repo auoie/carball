@@ -70,7 +70,11 @@ export class PlayersMenu {
           name.className = "player-name";
           name.textContent = p.name;
           row.append(name);
-          if (!p.bot) row.append(this.#button(p.muted ? PLAYER_TEXT.unmute : PLAYER_TEXT.mute, "mute", p.car), this.#button(p.blocked ? PLAYER_TEXT.unblock : PLAYER_TEXT.block, "block", p.car, p.blocked));
+          if (!p.bot)
+            row.append(
+              this.#button(p.muted ? PLAYER_TEXT.unmute : PLAYER_TEXT.mute, "mute", p.car),
+              this.#button(p.blocked ? PLAYER_TEXT.unblock : PLAYER_TEXT.block, "block", p.car, p.blocked),
+            );
           return row;
         })
       : [];

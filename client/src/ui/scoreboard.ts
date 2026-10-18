@@ -32,7 +32,11 @@ const MVP_DELAY = 1.75;
 
 /** Where the view goes on the stage, and its parts (SB-2, SB-5); on the end screen 0.3 down the free height (at least
  *  30 px), sliding right to make room for the menu (MIO-26) */
-export function scoreboardLayout(stage: { readonly width: number; readonly height: number }, rows: readonly [number, number], end: EndPlacement | null = null): {
+export function scoreboardLayout(
+  stage: { readonly width: number; readonly height: number },
+  rows: readonly [number, number],
+  end: EndPlacement | null = null,
+): {
   readonly x: number;
   readonly y: number;
   readonly team1Y: number;

@@ -24,7 +24,14 @@ export const NO_INPUT: InputFrame = { throttle: 0, steer: 0, pitch: 0, yaw: 0, r
 /** The game's history compare (0x140f64bf0): the handbrake, and each axis to 1e-8 */
 function sameInputs(a: CarControls, b: CarControls): boolean {
   const near = (x: number, y: number): boolean => Math.abs(x - y) < 1e-8;
-  return a.handbrake === b.handbrake && near(a.throttle, b.throttle) && near(a.steer, b.steer) && near(a.pitch, b.pitch) && near(a.yaw, b.yaw) && near(a.roll, b.roll);
+  return (
+    a.handbrake === b.handbrake &&
+    near(a.throttle, b.throttle) &&
+    near(a.steer, b.steer) &&
+    near(a.pitch, b.pitch) &&
+    near(a.yaw, b.yaw) &&
+    near(a.roll, b.roll)
+  );
 }
 
 /** The controls the server applies for an input frame (dequantized exactly as on the server). */
@@ -119,7 +126,12 @@ export class Predictor {
 
   /** Each other car's controls as the world holds them now */
   #presentRemote(): Map<number, CarControls> {
-    return new Map(this.#world.carIds().filter((car) => car !== this.#localCar).map((car) => [car, this.#world.carControls(car)]));
+    return new Map(
+      this.#world
+        .carIds()
+        .filter((car) => car !== this.#localCar)
+        .map((car) => [car, this.#world.carControls(car)]),
+    );
   }
 
   /** The last simulated frame */

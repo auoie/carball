@@ -22,7 +22,6 @@ export interface FlipTick {
   readonly reset: RbActor | null;
 }
 
-
 export class FlipTracker {
   #airborne = false; // in the air last tick
   #fromReset = false; // this time in the air started with a flip reset

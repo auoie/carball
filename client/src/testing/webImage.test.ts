@@ -7,7 +7,9 @@ const CONF = readFileSync(new URL("../../docker/nginx.conf", import.meta.url), "
 
 /** Each location's path and its Cache-Control header (as written: value and flags), or none */
 function cacheControl(): Map<string, string | undefined> {
-  return new Map([...CONF.matchAll(/location\s+(=\s*)?(\S+)\s*\{([^}]*)\}/g)].map((m) => [m[2] ?? "", /add_header\s+Cache-Control\s+([^;]+);/.exec(m[3] ?? "")?.[1]]));
+  return new Map(
+    [...CONF.matchAll(/location\s+(=\s*)?(\S+)\s*\{([^}]*)\}/g)].map((m) => [m[2] ?? "", /add_header\s+Cache-Control\s+([^;]+);/.exec(m[3] ?? "")?.[1]]),
+  );
 }
 
 /** Each location's path and its try_files */

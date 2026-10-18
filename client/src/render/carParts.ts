@@ -136,7 +136,12 @@ export function carMaterials(paint: Color): CarMaterials {
 }
 
 /** The wheels placed (the car's frame): tyre and rim each side, the axle along the car's right axis (Three z) */
-export function addWheels(group: Group, wheels: readonly { readonly x: number; readonly y: number; readonly z: number; readonly radius: number; readonly width: number }[], tyre: Material, rim: Material): void {
+export function addWheels(
+  group: Group,
+  wheels: readonly { readonly x: number; readonly y: number; readonly z: number; readonly radius: number; readonly width: number }[],
+  tyre: Material,
+  rim: Material,
+): void {
   for (const wheel of wheels) {
     for (const side of [-1, 1]) {
       for (const [radius, width, material] of [
@@ -207,10 +212,7 @@ export function paneAlong([a, b]: readonly [Point, Point], halfA: number, halfB:
   const [ax, ay] = [a[0] + dx * t + nx, a[1] + dy * t + ny];
   const [bx, by] = [b[0] - dx * t + nx, b[1] - dy * t + ny];
   const geometry = new BufferGeometry();
-  geometry.setAttribute(
-    "position",
-    new Float32BufferAttribute([ax, ay, -halfA, ax, ay, halfA, bx, by, halfB, bx, by, -halfB], 3),
-  );
+  geometry.setAttribute("position", new Float32BufferAttribute([ax, ay, -halfA, ax, ay, halfA, bx, by, halfB, bx, by, -halfB], 3));
   geometry.setIndex([0, 1, 2, 0, 2, 3]);
   geometry.computeVertexNormals();
   return new Mesh(geometry, material);

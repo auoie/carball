@@ -86,7 +86,10 @@ export function addBallReticle(material: MeshStandardMaterial, ballPosition: Vec
       .replace("#include <beginnormal_vertex>", "#include <beginnormal_vertex>\nvReticleNormal = mat3(modelMatrix) * objectNormal;")
       .replace("#include <project_vertex>", "#include <project_vertex>\nvReticleWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;");
     shader.fragmentShader = shader.fragmentShader
-      .replace("#include <common>", `#include <common>\nvarying vec3 vReticleWorld;\nvarying vec3 vReticleNormal;\nuniform vec3 reticleBall;\n${RETICLE_GLSL_FN}`)
+      .replace(
+        "#include <common>",
+        `#include <common>\nvarying vec3 vReticleWorld;\nvarying vec3 vReticleNormal;\nuniform vec3 reticleBall;\n${RETICLE_GLSL_FN}`,
+      )
       .replace("#include <opaque_fragment>", `#include <opaque_fragment>\n${BALL_RETICLE_GLSL}`);
   };
   material.customProgramCacheKey = () => "ballReticle";

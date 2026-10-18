@@ -50,7 +50,15 @@ export function sweep(path: readonly PathPoint[], profile: Profile | ((p: PathPo
 }
 
 /** A quad (a0, a1, b0, b1: two edges across), its triangles wound to face `out` (game frame) */
-export function quad(positions: number[], indices: number[], a0: readonly number[], a1: readonly number[], b0: readonly number[], b1: readonly number[], out: Vector3): void {
+export function quad(
+  positions: number[],
+  indices: number[],
+  a0: readonly number[],
+  a1: readonly number[],
+  b0: readonly number[],
+  b1: readonly number[],
+  out: Vector3,
+): void {
   const base = positions.length / 3;
   positions.push(...a0, ...a1, ...b0, ...b1);
   const v = (p: readonly number[]): Vector3 => new Vector3(p[0], p[1], p[2]);
@@ -170,18 +178,35 @@ export function framePieces(): { positions: number[]; indices: number[] } {
     const [o0, x0] = f.post[j] ?? [0, 0];
     const [o1, x1] = f.post[j + 1] ?? [0, 0];
     if (x0 === x1) continue;
-    if (o0 !== -f.face) quad(ends, endIdx, at(wallUp, o0, x0), at(wallUp, o1, x1), at(wallUp, -f.face, x0), at(wallUp, -f.face, x1), new Vector3(0, 0, o0 < -f.face ? 1 : -1));
-    if (o0 !== -f.channel.proud) quad(ends, endIdx, at(foot, o0, x0), at(foot, o1, x1), at(foot, 0, x0), at(foot, 0, x1), new Vector3(0, -Math.cos(tFrom), -Math.sin(tFrom)));
+    if (o0 !== -f.face)
+      quad(ends, endIdx, at(wallUp, o0, x0), at(wallUp, o1, x1), at(wallUp, -f.face, x0), at(wallUp, -f.face, x1), new Vector3(0, 0, o0 < -f.face ? 1 : -1));
+    if (o0 !== -f.channel.proud)
+      quad(ends, endIdx, at(foot, o0, x0), at(foot, o1, x1), at(foot, 0, x0), at(foot, 0, x1), new Vector3(0, -Math.cos(tFrom), -Math.sin(tFrom)));
   }
   add({ positions: ends, indices: endIdx });
   // (the channel alone down the rest of the fillet to the floor)
   const [c0, c1] = f.channel.x;
-  add(sweep(filletPath(0, tFrom), [[0, c0], [-f.channel.proud, c0], [-f.channel.proud, c1], [0, c1]]));
+  add(
+    sweep(filletPath(0, tFrom), [
+      [0, c0],
+      [-f.channel.proud, c0],
+      [-f.channel.proud, c1],
+      [0, c1],
+    ]),
+  );
   // The face's plain above: inside, the opening's corner and over it; outside, the outer edge, the 45 degree line, the
   // band's top
   const inner = mouthOutline(0);
   const slantTop = f.slant - f.top;
-  const outline: Pt[] = [[GOAL_X, cornerZ], ...inner.slice(1, SEG90 + 1), [0, GOAL_TOP], [0, f.top], [slantTop, f.top], [f.outer, f.corner], [f.outer, cornerZ]];
+  const outline: Pt[] = [
+    [GOAL_X, cornerZ],
+    ...inner.slice(1, SEG90 + 1),
+    [0, GOAL_TOP],
+    [0, f.top],
+    [slantTop, f.top],
+    [f.outer, f.corner],
+    [f.outer, cornerZ],
+  ];
   const contour = outline.map(([x, z]) => new Vector2(x, z));
   const faceBase = positions.length / 3;
   for (const [x, z] of outline) positions.push(x, 5120 - f.face, z);
@@ -199,7 +224,12 @@ export function framePieces(): { positions: number[]; indices: number[] } {
     return { x, y: 5120, z, behind: [0, 1, 0], up: n };
   });
   const [jambBack] = f.post[0] ?? [0, 0];
-  add(sweep(opening, [[-f.face, 0], [jambBack, 0]]));
+  add(
+    sweep(opening, [
+      [-f.face, 0],
+      [jambBack, 0],
+    ]),
+  );
   const [outerBack] = f.post[f.post.length - 1] ?? [0, 0];
   add(
     sweep(
@@ -207,11 +237,17 @@ export function framePieces(): { positions: number[]; indices: number[] } {
         { x: f.outer, y: 5120, z: cornerZ, behind: [0, 1, 0], up: [1, 0, 0] },
         { x: f.outer, y: 5120, z: f.corner, behind: [0, 1, 0], up: [1, 0, 0] },
       ],
-      [[-f.face, 0], [outerBack, 0]],
+      [
+        [-f.face, 0],
+        [outerBack, 0],
+      ],
     ),
   );
   // The deck along the outer top: up the 45 degree line, across the band's top
-  const deck: Profile = [[-f.face, 0], [WALL_FOOT.cap.deck, 0]];
+  const deck: Profile = [
+    [-f.face, 0],
+    [WALL_FOOT.cap.deck, 0],
+  ];
   const up45: V3 = [Math.SQRT1_2, 0, Math.SQRT1_2];
   add(
     sweep(

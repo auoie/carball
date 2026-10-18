@@ -97,7 +97,8 @@ pub struct MatchHost {
 impl Hosted {
     /// The match's game, built at its first player
     fn game(&mut self, test_goal_after: Option<u64>) -> &mut Game {
-        let (seed, playlist, open, hold_for, map) = (self.seed, self.playlist, self.open, self.reservations.len(), self.map);
+        let (seed, playlist, open, hold_for, map) =
+            (self.seed, self.playlist, self.open, self.reservations.len(), self.map);
         self.game.get_or_insert_with(|| {
             let mut game = Game::with_options(seed, playlist.team_size);
             game.match_type = playlist.match_type;
@@ -123,7 +124,16 @@ impl Hosted {
 
 impl MatchHost {
     pub fn new(seed: i32, test_goal_after: Option<u64>) -> Self {
-        Self { matches: BTreeMap::new(), players: HashMap::new(), tokens: HashMap::new(), next_id: 1, seed, test_goal_after, now: 0.0, cancelled: Vec::new() }
+        Self {
+            matches: BTreeMap::new(),
+            players: HashMap::new(),
+            tokens: HashMap::new(),
+            next_id: 1,
+            seed,
+            test_goal_after,
+            now: 0.0,
+            cancelled: Vec::new(),
+        }
     }
 
     fn add(&mut self, playlist: Playlist, reservations: Vec<Reservation>, open: bool, now: f64) -> MatchId {
@@ -135,7 +145,8 @@ impl MatchHost {
         }
         // (Night, the one map: the user's decision of 2026-10-17)
         let map = protocol::NIGHT_MAP;
-        let mut hosted = Hosted { game: None, seed: self.seed, playlist, reservations, created: now, next_tick: now, open, map };
+        let mut hosted =
+            Hosted { game: None, seed: self.seed, playlist, reservations, created: now, next_tick: now, open, map };
         if open {
             hosted.game(self.test_goal_after); // (anyone may join it: built at once)
         }
@@ -164,7 +175,9 @@ impl MatchHost {
     pub fn claim(&mut self, token: u64, id: PlayerId, request: JoinRequest, out: Sender<Outgoing>) -> bool {
         let Some(match_id) = self.tokens.remove(&token) else { return false };
         let Some(hosted) = self.matches.get_mut(&match_id) else { return false };
-        let Some(slot) = hosted.reservations.iter_mut().find(|r| r.token == token && r.claimed.is_none()) else { return false };
+        let Some(slot) = hosted.reservations.iter_mut().find(|r| r.token == token && r.claimed.is_none()) else {
+            return false;
+        };
         slot.claimed = Some(id);
         let team = slot.team;
         if hosted.game.is_none() {
@@ -275,7 +288,10 @@ impl MatchHost {
             let by_leave = hosted.reservations.iter().any(|r| r.left);
             let (stalled, stayed): (Vec<&Reservation>, Vec<&Reservation>) =
                 hosted.reservations.iter().partition(|r| if by_leave { r.left } else { r.claimed.is_none() });
-            self.cancelled.push(Cancelled { stayed: stayed.iter().map(|r| r.token).collect(), stalled: stalled.iter().map(|r| r.token).collect() });
+            self.cancelled.push(Cancelled {
+                stayed: stayed.iter().map(|r| r.token).collect(),
+                stalled: stalled.iter().map(|r| r.token).collect(),
+            });
         }
         self.drop_match(match_id);
     }
@@ -313,7 +329,10 @@ impl MatchHosting for MatchHost {
         let tokens = reservations.iter().map(|r| r.token).collect();
         let match_id = self.add(playlist, reservations, false, now);
         let map = self.matches[&match_id].map;
-        eprintln!("match {match_id}: {players} players reserved ({} v {}, map {map})", playlist.team_size, playlist.team_size);
+        eprintln!(
+            "match {match_id}: {players} players reserved ({} v {}, map {map})",
+            playlist.team_size, playlist.team_size
+        );
         Created { tokens, map }
     }
 }
@@ -326,7 +345,11 @@ mod tests {
     use tokio::sync::mpsc::{Receiver, channel};
 
     fn init_engine() {
-        crate::engine::init(std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../out/arena/collision_meshes"))).unwrap();
+        crate::engine::init(std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../out/arena/collision_meshes"
+        )))
+        .unwrap();
     }
 
     const ONES: Playlist = Playlist { team_size: 1, match_type: MatchType::Casual, forfeit_vote_wait: None };
@@ -439,10 +462,17 @@ mod tests {
         assert!(controls(&mut rx).contains(&Control::Kicked { reason: protocol::KICK_NOT_ALL_JOINED }));
         assert!(rx.try_recv().is_err() && rx.is_closed(), "the session's queue closed: it ends");
         // (before any late claim, which would take its token out itself: RX13's S22)
-        assert!(host.tokens.is_empty() && host.players.is_empty(), "a let-go match keeps no tokens or players (RV-360)");
+        assert!(
+            host.tokens.is_empty() && host.players.is_empty(),
+            "a let-go match keeps no tokens or players (RV-360)"
+        );
         let (tx, _rx) = channel(OUT_QUEUE);
         assert!(!host.claim(tokens[1], 2, request(), tx), "the late token is dead");
-        assert_eq!(host.take_cancelled(), vec![Cancelled { stayed: vec![tokens[0]], stalled: vec![tokens[1]] }], "by time: the unclaimed slot stalled it");
+        assert_eq!(
+            host.take_cancelled(),
+            vec![Cancelled { stayed: vec![tokens[0]], stalled: vec![tokens[1]] }],
+            "by time: the unclaimed slot stalled it"
+        );
         assert!(host.take_cancelled().is_empty());
     }
 
@@ -460,7 +490,11 @@ mod tests {
             assert_eq!(queue.search(id, 1, tx, SearchFrom { token, ..from(who) }, now), Searched::Queued);
             rx
         };
-        let token_of = |rx: &mut Receiver<Outgoing>| controls(rx).into_iter().find_map(|m| if let Control::MatchFound { token, .. } = m { Some(token) } else { None });
+        let token_of = |rx: &mut Receiver<Outgoing>| {
+            controls(rx)
+                .into_iter()
+                .find_map(|m| if let Control::MatchFound { token, .. } = m { Some(token) } else { None })
+        };
         let step = |host: &mut MatchHost, queue: &mut Matchmaker, t: f64| {
             queue.form(host, t);
             host.tick(t);
@@ -484,7 +518,9 @@ mod tests {
         assert!(t < 1.0 + RESERVATION_SECONDS + 0.1, "cancelled at {t}");
         assert!(controls(&mut m2).contains(&Control::Kicked { reason: protocol::KICK_NOT_ALL_JOINED }));
         let (tx, _r) = channel(OUT_QUEUE);
-        assert!(matches!(queue.search(30, 1, tx, from(1), t), Searched::Cooldown { seconds, network: false } if f64::from(seconds) > NO_SHOW_COOLDOWN - 1.0));
+        assert!(
+            matches!(queue.search(30, 1, tx, from(1), t), Searched::Cooldown { seconds, network: false } if f64::from(seconds) > NO_SHOW_COOLDOWN - 1.0)
+        );
         // 2 searches again with its token: matched with 3 ahead of 4, who searched before 2's return
         let mut s4 = search(&mut queue, 4, 4, 0, t);
         let mut s2 = search(&mut queue, 21, 2, t2, t);
@@ -509,7 +545,9 @@ mod tests {
     #[test]
     fn each_match_is_on_night_the_one_map_every_player_welcomed_with_it() {
         init_engine();
-        let welcomed = |rx: &mut Receiver<Outgoing>| controls(rx).into_iter().find_map(|c| if let Control::Welcome { map, .. } = c { Some(map) } else { None });
+        let welcomed = |rx: &mut Receiver<Outgoing>| {
+            controls(rx).into_iter().find_map(|c| if let Control::Welcome { map, .. } = c { Some(map) } else { None })
+        };
         // (Night, every match's: the user's decision of 2026-10-17)
         let mut host = MatchHost::new(1, None);
         assert!((0..20).all(|_| host.create_match(ONES, 2, 0.0).map == protocol::NIGHT_MAP));
@@ -651,7 +689,10 @@ mod tests {
         host.tick(11.0); // (a 10 s stall)
         assert_eq!(host.game_of(1).unwrap().tick_count() - before, 5, "five ticks to catch up, the rest dropped");
         host.tick(11.0 + 1.0 / 120.0);
-        assert!(host.game_of(1).unwrap().tick_count() - before <= 7, "then on time: the dropped time doesn't come back");
+        assert!(
+            host.game_of(1).unwrap().tick_count() - before <= 7,
+            "then on time: the dropped time doesn't come back"
+        );
     }
 
     #[test]

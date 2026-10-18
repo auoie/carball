@@ -363,8 +363,7 @@ export class CarCameraState implements CameraState {
       return;
     }
     // On the ground the focus sits `height` above the car along the car's own up axis
-    const offset =
-      this.#airGroundBlend >= 1 ? scale(car.rot.up, this.#viewOffset.focusZ) : vec3(0, 0, this.#viewOffset.focusZ);
+    const offset = this.#airGroundBlend >= 1 ? scale(car.rot.up, this.#viewOffset.focusZ) : vec3(0, 0, this.#viewOffset.focusZ);
     this.#focusOffsetInterp.update(offset, dt);
   }
 
@@ -430,8 +429,7 @@ export class CarCameraState implements CameraState {
     // (free look: each from its own last value, toward the car's forward and the angle, no roll; else from the view's)
     const fromGround = freeLook ? this.#interpGround : pov.rotation;
     const fromWall = freeLook ? this.#interpWall : pov.rotation;
-    const ground =
-      s.stiffness < 1 ? rSmoothInterpTo(fromGround, newRot, CAR.groundRotationInterpRate * rateScale, dt) : newRot;
+    const ground = s.stiffness < 1 ? rSmoothInterpTo(fromGround, newRot, CAR.groundRotationInterpRate * rateScale, dt) : newRot;
     const wall = rSmoothInterpTo(fromWall, newRot, CAR.groundRotationInterpRateWall * rateScale, dt);
     this.#interpGround = ground;
     this.#interpWall = wall;
@@ -465,19 +463,14 @@ export class CarCameraState implements CameraState {
     let toBall = vectorToRotator(sub(ballLocation, pov.focus));
     pov.focus = add(pov.focus, vec3(0, 0, Math.abs(toBall.pitch) * BALL.pitchFocusZFactor));
     toBall = vectorToRotator(sub(ballLocation, pov.focus));
-    const strength = Math.min(
-      1,
-      Math.max(0, (Math.abs(toBall.pitch) - BALL.pitchExtentMin) / (BALL.pitchExtentMax - BALL.pitchExtentMin)),
-    );
+    const strength = Math.min(1, Math.max(0, (Math.abs(toBall.pitch) - BALL.pitchExtentMin) / (BALL.pitchExtentMax - BALL.pitchExtentMin)));
     toBall = rotator(lerp(this.#viewOffset.pitch, toBall.pitch, BALL.pitchScale * strength), toBall.yaw, toBall.roll);
     pov.rotation = this.#firstExecution ? toBall : rSmoothInterpTo(pov.rotation, toBall, BALL.rotationRate, dt);
   }
 
   #updateDistance(dt: number, car: CarState, s: CameraSettings, pov: Pov, freeLook: boolean): void {
     const viewDir = rotatorToVector(freeLook ? this.#carFacing() : pov.rotation);
-    const newDistance =
-      this.#viewOffset.distance +
-      Math.max(dot(car.vel, viewDir) * CAR.distanceSpeedScale * (1 - s.stiffness), CAR.distanceOffsetMin);
+    const newDistance = this.#viewOffset.distance + Math.max(dot(car.vel, viewDir) * CAR.distanceSpeedScale * (1 - s.stiffness), CAR.distanceOffsetMin);
     this.#distanceInterp.update(vec3(newDistance, 0, 0), dt);
     pov.distance = this.#distanceInterp.location.x;
   }
@@ -702,7 +695,6 @@ export interface RespawnState {
   /** The spot picked so far (respawnSpots(team, side)[index]), null before the first pick */
   readonly selected: RespawnSpot | null;
 }
-
 
 /** Camera_X.UpdateCamera with the game's states (Camera_Default.States, in order: Prespawn, Demolished,
  *  DemoSpawnSelect, the ball cam, the car cam): the current one runs while it ShouldKeepExecuting, else the first that

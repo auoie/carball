@@ -15,7 +15,11 @@ describe("the HUD's numbers at Dashboard Numbers Wide's advances (HT-12, the use
     const spacing = 2 / 31; // (letterSpacing 2 at 31 px)
     const at = (text: string): readonly number[] => cellOffsets(numberCells(text, true), spacing);
     expect(numberCells("1:11", true).map((cell) => cell.c)).toEqual(["1", ":", "1", "1", "\u00a0"]);
-    expect(at("1:11").slice(0, 4)).toEqual(at("1:10").slice(0, 4).map((x) => expect.closeTo(x, 9) as unknown as number));
+    expect(at("1:11").slice(0, 4)).toEqual(
+      at("1:10")
+        .slice(0, 4)
+        .map((x) => expect.closeTo(x, 9) as unknown as number),
+    );
     // (a 1 in the tens moves it, as the game's: 0.486 em narrower)
     expect(at("1:19")[0]).not.toBeCloseTo(at("1:20")[0] ?? 0, 3);
     // (no padding for the scores and boost)

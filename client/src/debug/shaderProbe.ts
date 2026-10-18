@@ -41,14 +41,26 @@ export const PROBES: Readonly<Record<string, Probe>> = {
     uniforms: { constTables: tablesUniform() },
     call: "vec4(envG(i.xy), 0.0, 0.0, 0.0)",
     twin: (i) => [envG(i[0] ?? 0, i[1] ?? 0), 0, 0, 0],
-    inputs: () => grid(-1.1, 1.1, 40).flatMap((u) => grid(-1.1, 1.1, 40).map((v): [number[], number[]] => [[u, v, 0, 0], [0, 0, 0, 0]])),
+    inputs: () =>
+      grid(-1.1, 1.1, 40).flatMap((u) =>
+        grid(-1.1, 1.1, 40).map((v): [number[], number[]] => [
+          [u, v, 0, 0],
+          [0, 0, 0, 0],
+        ]),
+      ),
     tolerance: 2e-4,
   },
   netSideUv: {
     glsl: NET_SIDE_GLSL,
     call: "vec4(netSideUv(i.x, i.y), 0.0, 0.0)",
     twin: (i) => [...netSideUv(i[0] ?? 0, i[1] ?? 0), 0, 0],
-    inputs: () => grid(5120, 6000, 22).flatMap((ay) => grid(0, 640, 16).map((z): [number[], number[]] => [[ay, z, 0, 0], [0, 0, 0, 0]])),
+    inputs: () =>
+      grid(5120, 6000, 22).flatMap((ay) =>
+        grid(0, 640, 16).map((z): [number[], number[]] => [
+          [ay, z, 0, 0],
+          [0, 0, 0, 0],
+        ]),
+      ),
     tolerance: 2e-5,
   },
   display: {
@@ -60,7 +72,10 @@ export const PROBES: Readonly<Record<string, Probe>> = {
     inputs: () =>
       [0, 0.5, 0.9].flatMap((fade) =>
         grid(-4, 1, 60)
-          .map((e): [number[], number[]] => [[10 ** e, 0.7 * 10 ** e, 1.3 * 10 ** e, fade], [0, 0, 0, 0]])
+          .map((e): [number[], number[]] => [
+            [10 ** e, 0.7 * 10 ** e, 1.3 * 10 ** e, fade],
+            [0, 0, 0, 0],
+          ])
           .filter(([i]) => i.slice(0, 3).every((x) => Math.abs(x - 0.255447) > 2e-4)),
       ),
     tolerance: 2e-4,
@@ -139,7 +154,8 @@ export function shaderProbe(canvas: HTMLCanvasElement): {
       ctx.readPixels(0, 0, w, h, ctx.RGBA, ctx.UNSIGNED_BYTE, px);
       return px;
     };
-    const lum = (px: Uint8Array, i: number, j: number): number => (0.2126 * (px[4 * (j * w + i)] ?? 0) + 0.7152 * (px[4 * (j * w + i) + 1] ?? 0) + 0.0722 * (px[4 * (j * w + i) + 2] ?? 0)) / 255;
+    const lum = (px: Uint8Array, i: number, j: number): number =>
+      (0.2126 * (px[4 * (j * w + i)] ?? 0) + 0.7152 * (px[4 * (j * w + i) + 1] ?? 0) + 0.0722 * (px[4 * (j * w + i) + 2] ?? 0)) / 255;
     // A wall of linear grey (unlit) filling the view
     const uniform = new Scene();
     uniform.background = new Color(0, 0, 0);

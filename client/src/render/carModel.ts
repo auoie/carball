@@ -10,7 +10,21 @@ import { fennecModel } from "./fennec";
 import { glbCarModel } from "./carGlb";
 import type { CarConfig } from "../engine/world";
 import { mergeByMaterial } from "./merge";
-import { type BodyFrame, type CarSpec, HITBOXES, type Point, type WheelSpec, addWheels, bodyFrame, carMaterials, densify, extrudeAcross, paneAlong, warp, xAt } from "./carParts";
+import {
+  type BodyFrame,
+  type CarSpec,
+  HITBOXES,
+  type Point,
+  type WheelSpec,
+  addWheels,
+  bodyFrame,
+  carMaterials,
+  densify,
+  extrudeAcross,
+  paneAlong,
+  warp,
+  xAt,
+} from "./carParts";
 import { buildCarBody, carBody } from "./carBodies";
 
 /** The Fennec's proportions (uu, from the local export of the game's body_grain, rounded to 0.1; the Octane car's
@@ -61,7 +75,6 @@ const VENT_GAP = 3;
 /** The plan's taper at the ends: over this far from the nose and the tail (uu) */
 const NOSE_TAPER = 30;
 const TAIL_TAPER = 14;
-
 
 /** The Fennec's proportions set on a hitbox (measured on the Octane's) */
 export function fennecFrame(config: CarConfig): BodyFrame {
@@ -145,7 +158,10 @@ export function buildCarModel(config: CarConfig, paint: Color, team = 0, car = 0
   // end down to its base
   const slope = (deg: number): number => Math.tan((deg * Math.PI) / 180);
   const roofFront = Math.max(X(F.roofFront), cowl - (roof - hood) / slope(F.windscreenDeg));
-  const windscreen: [Point, Point] = [[cowl, hood], [roofFront, roof]];
+  const windscreen: [Point, Point] = [
+    [cowl, hood],
+    [roofFront, roof],
+  ];
   const [rwx, rwh] = F.rearWindowBase;
   const rearBase: Point = [X(rwx), Y(rwh)];
   const rearTop: Point = [X(F.roofBack), roof - 1.5];

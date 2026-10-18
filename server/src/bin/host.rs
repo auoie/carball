@@ -78,7 +78,9 @@ pub unsafe extern "C" fn host_init(dir: *const c_char) -> i32 {
 pub extern "C" fn host_open(team_size: u8, seed: i32) {
     let mut matches = MatchHost::new(seed, None);
     matches.open_match(Playlist { team_size, match_type: MatchType::Casual, forfeit_vote_wait: None }, 0.0);
-    HOST.with_borrow_mut(|host| *host = Some(Host { matches, sessions: BTreeMap::new(), drained: Vec::new(), state: Vec::new() }));
+    HOST.with_borrow_mut(|host| {
+        *host = Some(Host { matches, sessions: BTreeMap::new(), drained: Vec::new(), state: Vec::new() })
+    });
 }
 
 /// A player's session opened: its hello comes on its control stream (`host_control`)
@@ -121,7 +123,9 @@ pub unsafe extern "C" fn host_control(id: u32, bytes: *const u8, len: usize, now
                 Ok(Control::AutoSkipReplay { on }) => game.set_auto_skip_replay(id, on),
                 Ok(Control::VoteForfeit) => game.vote_forfeit(id),
                 Ok(Control::QuickChat { preset, team }) => game.quick_chat(id, preset, team, now),
-                Ok(Control::ChatFilter { quick_chat, block_non_tactical }) => game.set_chat_filter(id, quick_chat, block_non_tactical),
+                Ok(Control::ChatFilter { quick_chat, block_non_tactical }) => {
+                    game.set_chat_filter(id, quick_chat, block_non_tactical)
+                }
                 Ok(Control::Mute { car, on }) => game.set_mute(id, car, on),
                 Ok(_) | Err(_) => {}
             }
@@ -159,7 +163,9 @@ pub unsafe extern "C" fn host_datagram(id: u32, bytes: *const u8, len: usize, no
     let id = PlayerId::from(id);
     let bytes = unsafe { slice(bytes, len) };
     with(|h| {
-        if let (Ok(Datagram::Inputs { timestamp, sequence, first_frame, frames }), Some(game)) = (Datagram::decode(bytes), h.matches.game_of(id)) {
+        if let (Ok(Datagram::Inputs { timestamp, sequence, first_frame, frames }), Some(game)) =
+            (Datagram::decode(bytes), h.matches.game_of(id))
+        {
             game.note_input_sequence(id, sequence);
             game.receive_inputs(id, timestamp, first_frame, &frames, now);
         }
@@ -230,11 +236,24 @@ pub extern "C" fn host_drained() -> *const u8 {
 /// A bot's controls from the next tick on (its first call makes the player a bot: no input buffer, never idle)
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
-pub extern "C" fn host_bot(id: u32, throttle: f32, steer: f32, pitch: f32, yaw: f32, roll: f32, jump: u8, boost: u8, handbrake: u8) {
+pub extern "C" fn host_bot(
+    id: u32,
+    throttle: f32,
+    steer: f32,
+    pitch: f32,
+    yaw: f32,
+    roll: f32,
+    jump: u8,
+    boost: u8,
+    handbrake: u8,
+) {
     let id = PlayerId::from(id);
     with(|h| {
         if let Some(game) = h.matches.game_of(id) {
-            game.set_bot_controls(id, Controls { throttle, steer, pitch, yaw, roll, jump, boost, handbrake, ..Controls::default() });
+            game.set_bot_controls(
+                id,
+                Controls { throttle, steer, pitch, yaw, roll, jump, boost, handbrake, ..Controls::default() },
+            );
         }
     });
 }

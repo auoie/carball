@@ -82,9 +82,15 @@ const INTERFACE_TEXT = {
 const CHAT_SETTINGS_TEXT = {
   quickChat: "Quick Chat",
   quickChatDescription: "Controls what types of Quick Chat messages from other players are visible.",
-  filters: { everyone: "Allow Quick Chat with Everyone", team: "Allow Quick Chat with Teammates Only", friends: "Allow Quick Chat with Friends Only", off: "Off" },
+  filters: {
+    everyone: "Allow Quick Chat with Everyone",
+    team: "Allow Quick Chat with Teammates Only",
+    friends: "Allow Quick Chat with Friends Only",
+    off: "Off",
+  },
   blockNonTactical: "Block Non-Tactical Quick Chat",
-  blockNonTacticalDescription: "Hides incoming non-tactical Quick Chat messages from other players during a match. Does not filter out Pre-game or Post-game Quick Chat.",
+  blockNonTacticalDescription:
+    "Hides incoming non-tactical Quick Chat messages from other players during a match. Does not filter out Pre-game or Post-game Quick Chat.",
   rows: ["Information (Team)", "Compliments", "Reactions", "Apologies", "Post Game", "Pre Game"],
 } as const;
 type Device = "keyboard" | "gamepad";
@@ -187,12 +193,19 @@ export class SettingsPanel {
     tabs.dataset["padSkip"] = "";
     const close = el("button", { className: "settings-close", textContent: "Close (Esc)" });
     close.dataset["padSkip"] = "";
-    close.addEventListener("click", () => { this.close(); });
+    close.addEventListener("click", () => {
+      this.close();
+    });
     // (the pad's X Default asks first: YES runs the page's own reset, NO (focused) leaves it)
     const yes = el("button", { textContent: END_TEXT.yes });
     const no = el("button", { textContent: END_TEXT.no });
     no.dataset["padDefault"] = "";
-    this.#confirm = el("div", { className: "settings-confirm" }, [el("div", { className: "settings-confirm-box" }, [el("p", { textContent: DEFAULT_QUESTION }), el("div", { className: "settings-confirm-buttons" }, [yes, no])])]);
+    this.#confirm = el("div", { className: "settings-confirm" }, [
+      el("div", { className: "settings-confirm-box" }, [
+        el("p", { textContent: DEFAULT_QUESTION }),
+        el("div", { className: "settings-confirm-buttons" }, [yes, no]),
+      ]),
+    ]);
     this.#confirm.id = "settings-confirm";
     this.#confirm.hidden = true;
     yes.addEventListener("click", () => {
@@ -215,7 +228,9 @@ export class SettingsPanel {
     this.#root.setAttribute("aria-label", "Settings");
     this.#root.addEventListener("keydown", (e) => {
       if (e.key !== "Tab") return;
-      const focusable = [...this.#root.querySelectorAll<HTMLElement>("button, [tabindex='0'], input")].filter((f) => !f.closest("[hidden]") && f.getClientRects().length > 0);
+      const focusable = [...this.#root.querySelectorAll<HTMLElement>("button, [tabindex='0'], input")].filter(
+        (f) => !f.closest("[hidden]") && f.getClientRects().length > 0,
+      );
       const [first, last] = [focusable[0], focusable.at(-1)];
       if (!first || !last) return;
       if (e.shiftKey && document.activeElement === first) {
@@ -326,16 +341,16 @@ export class SettingsPanel {
             : this.#tab === "gameplay"
               ? this.#gameplayTab()
               : this.#tab === "training"
-              ? this.#trainingTab()
-              : this.#tab === "interface"
-                ? this.#interfaceTab()
-                : this.#tab === "scoreboard"
-                ? this.#scoreboardTab()
-                : this.#tab === "chat"
-                  ? this.#chatTab()
-                  : this.#tab === "video"
-                    ? this.#videoTab()
-                    : this.#audioTab();
+                ? this.#trainingTab()
+                : this.#tab === "interface"
+                  ? this.#interfaceTab()
+                  : this.#tab === "scoreboard"
+                    ? this.#scoreboardTab()
+                    : this.#tab === "chat"
+                      ? this.#chatTab()
+                      : this.#tab === "video"
+                        ? this.#videoTab()
+                        : this.#audioTab();
     // (each tab a page of the pad's: its focus kept while the settings are open; its reset the pad's X Default, its
     // bindings' slots cleared by Y)
     content.dataset["padPage"] = this.#tab;
@@ -350,7 +365,11 @@ export class SettingsPanel {
     const selector = focused ? sameControl(focused) : null;
     this.#body.replaceChildren(content);
     // (by its data attributes, else (a reset button) the same kind of control with the same text: RV-482)
-    const again = selector ? content.querySelector<HTMLElement>(selector) : focused ? [...content.querySelectorAll<HTMLElement>(focused.tagName)].find((e) => e.textContent === focused.textContent) : null;
+    const again = selector
+      ? content.querySelector<HTMLElement>(selector)
+      : focused
+        ? [...content.querySelectorAll<HTMLElement>(focused.tagName)].find((e) => e.textContent === focused.textContent)
+        : null;
     again?.focus({ preventScroll: true });
   }
 
@@ -416,10 +435,7 @@ export class SettingsPanel {
 
   #setBinding(action: Action, device: Device, input: KeyboardInput | GamepadInput | null): void {
     const current = this.#settings.bindings[action];
-    const binding =
-      device === "keyboard"
-        ? { ...current, keyboard: input as KeyboardInput | null }
-        : { ...current, gamepad: input as GamepadInput | null };
+    const binding = device === "keyboard" ? { ...current, keyboard: input as KeyboardInput | null } : { ...current, gamepad: input as GamepadInput | null };
     this.#update({ ...this.#settings, bindings: { ...this.#settings.bindings, [action]: binding } });
   }
 
@@ -454,7 +470,13 @@ export class SettingsPanel {
           },
           { capture: true, signal: abort.signal },
         );
-        window.addEventListener("contextmenu", (e) => { e.preventDefault(); }, { capture: true, signal: abort.signal });
+        window.addEventListener(
+          "contextmenu",
+          (e) => {
+            e.preventDefault();
+          },
+          { capture: true, signal: abort.signal },
+        );
       });
     } else {
       // Gamepad: wait until everything is released, then take the first button or stick direction
@@ -504,12 +526,17 @@ export class SettingsPanel {
       this.#settings.camera,
       CAMERA_LIMITS,
       CAMERA_LABELS,
-      (camera) => { this.#update({ ...this.#settings, camera }); },
+      (camera) => {
+        this.#update({ ...this.#settings, camera });
+      },
       DEFAULT_SETTINGS.camera,
     );
     sliders.append(this.#checkboxes(["rearCameraToggle", "cameraShake"]));
     const presets = el("div", { className: "options" });
-    for (const [name, preset] of [["Modern", MODERN_PRESET], ["Default", DEFAULT_PRESET]] as const) {
+    for (const [name, preset] of [
+      ["Modern", MODERN_PRESET],
+      ["Default", DEFAULT_PRESET],
+    ] as const) {
       const button = el("button", { textContent: `${name} preset` });
       button.dataset["preset"] = name.toLowerCase();
       const shake = name === "Modern" ? PRESET_CAMERA_SHAKE.modern : PRESET_CAMERA_SHAKE.default;
@@ -534,7 +561,9 @@ export class SettingsPanel {
   /** One input's camera settings (ProfileCameraInputSettings) */
   #inputCamera(key: "cameraKbm" | "cameraPad", title: string): HTMLElement {
     const current = this.#settings[key];
-    const apply = (next: InputCameraSettings): void => { this.#update({ ...this.#settings, [key]: next }); };
+    const apply = (next: InputCameraSettings): void => {
+      this.#update({ ...this.#settings, [key]: next });
+    };
     const box = el("div", { className: "options" });
     for (const option of ["freeLook", "ballCamToggle", "invertPitch", "smoothing"] as const) {
       box.append(
@@ -542,7 +571,9 @@ export class SettingsPanel {
           label: INPUT_CAMERA_LABELS[option],
           checked: current[option],
           data: { camera: key, option },
-          onChange: (checked) => { apply({ ...current, [option]: checked }); },
+          onChange: (checked) => {
+            apply({ ...current, [option]: checked });
+          },
         }),
       );
     }
@@ -551,7 +582,9 @@ export class SettingsPanel {
       numbers(current),
       INPUT_CAMERA_LIMITS,
       INPUT_CAMERA_LABELS,
-      (next) => { apply({ ...current, ...next }); },
+      (next) => {
+        apply({ ...current, ...next });
+      },
       numbers(DEFAULT_SETTINGS[key]),
     );
     // (a group named by its heading: its controls' names repeat in the other input's, RV-482)
@@ -568,7 +601,9 @@ export class SettingsPanel {
       this.#settings.controller,
       CONTROLLER_LIMITS,
       CONTROLLER_LABELS,
-      (controller) => { this.#update({ ...this.#settings, controller }); },
+      (controller) => {
+        this.#update({ ...this.#settings, controller });
+      },
       DEFAULT_SETTINGS.controller,
     );
     sliders.prepend(
@@ -598,7 +633,9 @@ export class SettingsPanel {
         options: Object.entries(options) as [GameplaySettings[K], string][],
         value: gameplay[key],
         data: { setting: key },
-        onChange: (value) => { apply({ [key]: value }); },
+        onChange: (value) => {
+          apply({ [key]: value });
+        },
       });
     // (the game's creation order: free play's unlimited boost first, the goal replay's skip last: HT-5, RV-281)
     box.append(
@@ -619,11 +656,28 @@ export class SettingsPanel {
       this.#update({ ...this.#settings, training: { ...this.#settings.training, ...next } });
     };
     const numbers = Object.fromEntries(Object.keys(TRAINING_LIMITS).map((k) => [k, training[k as keyof TrainingNumbers]])) as unknown as TrainingNumbers;
-    const box = this.#sliders(numbers, TRAINING_LIMITS, T, (next) => { apply(next); }, TRAINING_DEFAULTS);
+    const box = this.#sliders(
+      numbers,
+      TRAINING_LIMITS,
+      T,
+      (next) => {
+        apply(next);
+      },
+      TRAINING_DEFAULTS,
+    );
     box.classList.add("caps-labels");
     const options = el("div", { className: "options" });
     for (const key of ["skipReplay", "spawnOnGround", "unlimitedBoost"] as const) {
-      options.append(checkbox({ label: T[key], checked: training[key], data: { setting: key }, onChange: (checked) => { apply({ [key]: checked }); } }));
+      options.append(
+        checkbox({
+          label: T[key],
+          checked: training[key],
+          data: { setting: key },
+          onChange: (checked) => {
+            apply({ [key]: checked });
+          },
+        }),
+      );
     }
     const reset = box.lastElementChild;
     if (reset) reset.before(options);
@@ -644,23 +698,40 @@ export class SettingsPanel {
       { scale: ui.scale, displayScale: ui.displayScale, nameplateScale: ui.nameplateScale },
       INTERFACE_LIMITS,
       { scale: T.scale, displayScale: T.displayScale, nameplateScale: T.nameplateScale },
-      (next) => { apply(next); },
+      (next) => {
+        apply(next);
+      },
       { scale: d.scale, displayScale: d.displayScale, nameplateScale: d.nameplateScale },
       true,
     );
     box.classList.add("caps-labels"); // (HT-5, RV-281)
     const reset = box.lastElementChild;
-    const select = <K extends "nameplateMode" | "matchNotifications" | "statGraphs">(key: K, label: string, options: Readonly<Record<InterfaceSettings[K], string>>): HTMLElement =>
+    const select = <K extends "nameplateMode" | "matchNotifications" | "statGraphs">(
+      key: K,
+      label: string,
+      options: Readonly<Record<InterfaceSettings[K], string>>,
+    ): HTMLElement =>
       cycler({
         label,
         options: Object.entries(options) as [InterfaceSettings[K], string][],
         value: ui[key],
         data: { setting: key },
-        onChange: (value) => { apply({ [key]: value }); },
+        onChange: (value) => {
+          apply({ [key]: value });
+        },
       });
     const options = el("div", { className: "options" });
     for (const key of ["teamColoredBoost", "metric", "ballCamIndicator", "ballArrow", "hideHud"] as const) {
-      options.append(checkbox({ label: T[key], checked: ui[key], data: { setting: key }, onChange: (checked) => { apply({ [key]: checked }); } }));
+      options.append(
+        checkbox({
+          label: T[key],
+          checked: ui[key],
+          data: { setting: key },
+          onChange: (checked) => {
+            apply({ [key]: checked });
+          },
+        }),
+      );
     }
     const extra = [
       select("nameplateMode", T.nameplateMode, T.nameplateModes),
@@ -694,14 +765,18 @@ export class SettingsPanel {
         options: Object.entries(T.filters) as [ChatSettings["quickChatFilter"], string][],
         value: chat.quickChatFilter,
         data: { setting: "quickChatFilter" },
-        onChange: (quickChatFilter) => { apply({ quickChatFilter }); },
+        onChange: (quickChatFilter) => {
+          apply({ quickChatFilter });
+        },
       }),
       checkbox({
         label: T.blockNonTactical,
         title: T.blockNonTacticalDescription,
         checked: chat.blockNonTactical,
         data: { setting: "blockNonTactical" },
-        onChange: (blockNonTactical) => { apply({ blockNonTactical }); },
+        onChange: (blockNonTactical) => {
+          apply({ blockNonTactical });
+        },
       }),
     );
     const slots = el("table", { className: "chat-slots" });
@@ -715,7 +790,9 @@ export class SettingsPanel {
           options: keys.map((key) => [key, presetText(key)] as const),
           value: chat.slots[slot] ?? "",
           data: { slot: String(slot) },
-          onChange: (value) => { apply({ slots: this.#settings.chat.slots.map((s, i) => (i === slot ? value : s)) }); },
+          onChange: (value) => {
+            apply({ slots: this.#settings.chat.slots.map((s, i) => (i === slot ? value : s)) });
+          },
         });
         return el("td", {}, [select]);
       });
@@ -796,9 +873,30 @@ export class SettingsPanel {
     ]);
     const options = el("div", { className: "options" });
     options.append(
-      checkbox({ label: T.highQualityShaders, checked: s.video.highQualityShaders, data: { setting: "highQualityShaders" }, onChange: (on) => { apply(withVideoChange(state, { highQualityShaders: on })); } }),
-      checkbox({ label: T.depthOfField, checked: s.options.depthOfField, data: { option: "depthOfField" }, onChange: (on) => { apply(withVideoChange(state, { depthOfField: on })); } }),
-      checkbox({ label: T.bloom, checked: s.options.bloom, data: { option: "bloom" }, onChange: (on) => { apply(withVideoChange(state, { bloom: on })); } }),
+      checkbox({
+        label: T.highQualityShaders,
+        checked: s.video.highQualityShaders,
+        data: { setting: "highQualityShaders" },
+        onChange: (on) => {
+          apply(withVideoChange(state, { highQualityShaders: on }));
+        },
+      }),
+      checkbox({
+        label: T.depthOfField,
+        checked: s.options.depthOfField,
+        data: { option: "depthOfField" },
+        onChange: (on) => {
+          apply(withVideoChange(state, { depthOfField: on }));
+        },
+      }),
+      checkbox({
+        label: T.bloom,
+        checked: s.options.bloom,
+        data: { option: "bloom" },
+        onChange: (on) => {
+          apply(withVideoChange(state, { bloom: on }));
+        },
+      }),
     );
     box.append(options);
     box.classList.add("caps-labels");
@@ -810,7 +908,9 @@ export class SettingsPanel {
       this.#settings.audio,
       AUDIO_LIMITS,
       AUDIO_LABELS,
-      (audio) => { this.#update({ ...this.#settings, audio }); },
+      (audio) => {
+        this.#update({ ...this.#settings, audio });
+      },
       DEFAULT_SETTINGS.audio,
     );
     sliders.prepend(
@@ -831,7 +931,9 @@ export class SettingsPanel {
           label: OPTION_LABELS[key],
           checked: this.#settings.options[key],
           data: { option: key },
-          onChange: (checked) => { this.#update({ ...this.#settings, options: { ...this.#settings.options, [key]: checked } }); },
+          onChange: (checked) => {
+            this.#update({ ...this.#settings, options: { ...this.#settings.options, [key]: checked } });
+          },
         }),
       );
     }
@@ -859,12 +961,16 @@ export class SettingsPanel {
           // (the game's percentage readout: round(v x 100) "%", HT-5)
           format: (v) => (percent ? `${String(Math.round(v * 100))}%` : formatNumber(v, range.step)),
           data: { setting: key },
-          onChange: (value) => { apply({ ...values, [key]: value }); },
+          onChange: (value) => {
+            apply({ ...values, [key]: value });
+          },
         }),
       );
     }
     const reset = el("button", { textContent: "Reset to defaults" });
-    reset.addEventListener("click", () => { apply(defaults); });
+    reset.addEventListener("click", () => {
+      apply(defaults);
+    });
     rows.append(reset);
     return rows;
   }

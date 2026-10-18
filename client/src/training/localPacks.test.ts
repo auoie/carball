@@ -18,7 +18,10 @@ const MAX_BYTES = 4_000_000;
 
 /** The repository's files (committed or would be: git's own list, nothing ignored), text ones only */
 function textFiles(): string[] {
-  const listed = execSync("git ls-files -co --exclude-standard -z", { cwd: ROOT, maxBuffer: 64 * 1024 * 1024 }).toString("utf8").split("\0").filter(Boolean);
+  const listed = execSync("git ls-files -co --exclude-standard -z", { cwd: ROOT, maxBuffer: 64 * 1024 * 1024 })
+    .toString("utf8")
+    .split("\0")
+    .filter(Boolean);
   return listed
     .map((name) => join(ROOT, name))
     .filter((path) => {
@@ -65,8 +68,7 @@ export function copiedFrom(triples: readonly (readonly number[])[]): (written: r
     if (count === 0) return false;
     const tolerance = count >= 2 ? 0.5 : 0.01;
     const key = Math.round(n[0] ?? 0);
-    for (const k of [key - 1, key, key + 1])
-      for (const t of buckets.get(k) ?? []) if (t.every((v, i) => Math.abs(v - (n[i] ?? NaN)) <= tolerance)) return true;
+    for (const k of [key - 1, key, key + 1]) for (const t of buckets.get(k) ?? []) if (t.every((v, i) => Math.abs(v - (n[i] ?? NaN)) <= tolerance)) return true;
     return false;
   };
 }
@@ -74,7 +76,13 @@ export function copiedFrom(triples: readonly (readonly number[])[]): (written: r
 describe("the user's packs stay local", () => {
   it("the matcher: a copy exact or rounded to 0.01 with a telling number, rounded to 0.5 with two; round numbers anyone's", () => {
     // (invented numbers, none of anyone's pack)
-    const copied = copiedFrom([[-611.2371, 1733.5482, 412.8806], [0, 0, 63.371], [-1337, 2741.2, 25], [-1500, 2000, 100], [0, 16384, 0]]);
+    const copied = copiedFrom([
+      [-611.2371, 1733.5482, 412.8806],
+      [0, 0, 63.371],
+      [-1337, 2741.2, 25],
+      [-1500, 2000, 100],
+      [0, 16384, 0],
+    ]);
     expect(copied(["-611.24", "1733.55", "412.88"])).toBe(true);
     expect(copied(["-611.2", "1733.5", "413"])).toBe(true);
     expect(copied(["-1337", "2741", "25"])).toBe(true);
@@ -85,11 +93,15 @@ describe("the user's packs stay local", () => {
     expect(copied(["-600", "1750", "400"])).toBe(false);
   });
 
-  it.skipIf(!existsSync(PACKS))("no shot position or rotator of theirs in the repository's text files", () => {
-    const triples = packTriples();
-    expect(triples.length).toBeGreaterThan(0);
-    const copied = copiedFrom(triples);
-    const hits = textFiles().filter((path) => [...readFileSync(path, "utf8").matchAll(TRIPLE)].some((m) => copied([m[1] ?? "", m[2] ?? "", m[3] ?? ""])));
-    expect(hits.map((path) => path.slice(ROOT.length))).toEqual([]);
-  }, 60_000); // (every text file of the repository: a few seconds alone, longer beside the other tests)
+  it.skipIf(!existsSync(PACKS))(
+    "no shot position or rotator of theirs in the repository's text files",
+    () => {
+      const triples = packTriples();
+      expect(triples.length).toBeGreaterThan(0);
+      const copied = copiedFrom(triples);
+      const hits = textFiles().filter((path) => [...readFileSync(path, "utf8").matchAll(TRIPLE)].some((m) => copied([m[1] ?? "", m[2] ?? "", m[3] ?? ""])));
+      expect(hits.map((path) => path.slice(ROOT.length))).toEqual([]);
+    },
+    60_000,
+  ); // (every text file of the repository: a few seconds alone, longer beside the other tests)
 });

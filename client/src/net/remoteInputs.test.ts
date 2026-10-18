@@ -44,7 +44,15 @@ function compare(sources: readonly { readonly drive?: Driver; readonly seed: num
       const remote: number[] = [];
       const ball: number[] = [];
       for (const source of sources) {
-        const r = netRun(engine, { seconds: SECONDS, up: constantProfile(rtt / 2), down: constantProfile(rtt / 2), seed: source.seed, players: 4, model, ...(source.drive ? { drive: source.drive } : {}) });
+        const r = netRun(engine, {
+          seconds: SECONDS,
+          up: constantProfile(rtt / 2),
+          down: constantProfile(rtt / 2),
+          seed: source.seed,
+          players: 4,
+          model,
+          ...(source.drive ? { drive: source.drive } : {}),
+        });
         remote.push(...r.errors.remote);
         ball.push(...r.errors.ball);
       }
@@ -85,18 +93,22 @@ describe("T5: predicting other players' cars", () => {
   }, 600_000);
 
   const streams = replayInputStreams(fileURLToPath(STATES), (name) => name.startsWith("2v2_"));
-  it.skipIf(streams === null)("real players' inputs (replays, local data): the game's model, not beaten by half", () => {
-    const replays = [...(streams ?? new Map<string, InputFrame[][]>()).entries()].filter(([, s]) => s.length >= 4).slice(0, 2);
-    expect(replays.length).toBe(2);
-    const sources = replays.map(([, players], i) => ({
-      seed: 11 + i,
-      drive: ((player, frame) => {
-        const stream = players[player] ?? [];
-        return stream[(SKIP_TICKS + frame) % Math.max(1, stream.length)] ?? { throttle: 0, steer: 0, pitch: 0, yaw: 0, roll: 0, dodgeForward: 0, bits: 0 };
-      }) satisfies Driver,
-    }));
-    const cells = compare(sources);
-    table("replay inputs", cells);
-    expect(componentsWin(cells)).toBe(false);
-  }, 900_000);
+  it.skipIf(streams === null)(
+    "real players' inputs (replays, local data): the game's model, not beaten by half",
+    () => {
+      const replays = [...(streams ?? new Map<string, InputFrame[][]>()).entries()].filter(([, s]) => s.length >= 4).slice(0, 2);
+      expect(replays.length).toBe(2);
+      const sources = replays.map(([, players], i) => ({
+        seed: 11 + i,
+        drive: ((player, frame) => {
+          const stream = players[player] ?? [];
+          return stream[(SKIP_TICKS + frame) % Math.max(1, stream.length)] ?? { throttle: 0, steer: 0, pitch: 0, yaw: 0, roll: 0, dodgeForward: 0, bits: 0 };
+        }) satisfies Driver,
+      }));
+      const cells = compare(sources);
+      table("replay inputs", cells);
+      expect(componentsWin(cells)).toBe(false);
+    },
+    900_000,
+  );
 });

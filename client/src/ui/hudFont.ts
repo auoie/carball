@@ -35,7 +35,12 @@ function measured(stack: string, glyph: string): { readonly height: number; read
   ctx.textAlign = "left";
   const metrics = ctx.measureText(glyph);
   return metrics.actualBoundingBoxAscent > 0
-    ? { height: metrics.actualBoundingBoxAscent / 100, advance: metrics.width / 100, left: -metrics.actualBoundingBoxLeft / 100, right: metrics.actualBoundingBoxRight / 100 }
+    ? {
+        height: metrics.actualBoundingBoxAscent / 100,
+        advance: metrics.width / 100,
+        left: -metrics.actualBoundingBoxLeft / 100,
+        right: metrics.actualBoundingBoxRight / 100,
+      }
     : null;
 }
 

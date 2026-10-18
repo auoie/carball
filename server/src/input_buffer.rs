@@ -232,7 +232,8 @@ impl InputBuffer {
     fn consume_one(&mut self) {
         if let Some((number, frame)) = self.frames.pop_front() {
             if self.stats.consumed > 0 && number > self.last_consumed_frame.wrapping_add(1) {
-                self.stats.never_consumed = self.stats.never_consumed.saturating_add(number - self.last_consumed_frame - 1);
+                self.stats.never_consumed =
+                    self.stats.never_consumed.saturating_add(number - self.last_consumed_frame - 1);
             }
             self.stats.consumed = self.stats.consumed.saturating_add(1);
             self.controls = frame.controls();
@@ -433,7 +434,8 @@ mod tests {
         // (G10: the first frame pressed jump with a forward dodge, the second holds it pushing sideways; the car drives
         // with the second, its dodge goes forward)
         let mut b = InputBuffer::default();
-        let a = InputFrame { dodge_forward: 127, pitch: -127, bits: crate::protocol::BIT_JUMP, ..InputFrame::default() };
+        let a =
+            InputFrame { dodge_forward: 127, pitch: -127, bits: crate::protocol::BIT_JUMP, ..InputFrame::default() };
         let held = InputFrame { yaw: 127, bits: crate::protocol::BIT_JUMP, ..InputFrame::default() };
         let mut frames = vec![a, held];
         frames.extend(vec![InputFrame::default(); 7]);

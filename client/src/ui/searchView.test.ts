@@ -60,4 +60,3 @@ describe("where the search's cancel shows and the pad's Y cancels (MM-10)", () =
     expect(open({ pause: true, modal: true })).toBe(false);
   });
 });
-

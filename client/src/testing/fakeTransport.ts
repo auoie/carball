@@ -11,7 +11,12 @@ export interface FakeTransportRecord {
 /** A WebTransport class whose sessions answer with `replies` (each message framed as the server's); `closed`: each
  *  session closed by the server at once (else never); `onFinish`: the stream kept open after the replies till the client
  *  closes its side, then these written (what a server sent before it saw the close) and the stream ended */
-export function fakeTransport(replies: readonly ControlMessage[], record: FakeTransportRecord = { sessions: [] }, closed = false, onFinish?: readonly ControlMessage[]): typeof WebTransport {
+export function fakeTransport(
+  replies: readonly ControlMessage[],
+  record: FakeTransportRecord = { sessions: [] },
+  closed = false,
+  onFinish?: readonly ControlMessage[],
+): typeof WebTransport {
   class Fake {
     readonly ready = Promise.resolve();
     readonly closed = closed ? Promise.resolve() : new Promise<void>(() => undefined);

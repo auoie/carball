@@ -58,7 +58,10 @@ pub struct Replication {
 /// Whether a car's change over a tick forces it into the next update (`go`: the countdown ended)
 fn forces(was: &CarNetInfo, now: &CarNetInfo, near_ball: bool, go: bool) -> bool {
     let impulse = now.jumped > was.jumped || now.double_jumped > was.double_jumped || now.flipped > was.flipped;
-    go || now.spawn_count != was.spawn_count || now.flip_resets != was.flip_resets || now.demoed != was.demoed || (impulse && near_ball)
+    go || now.spawn_count != was.spawn_count
+        || now.flip_resets != was.flip_resets
+        || now.demoed != was.demoed
+        || (impulse && near_ball)
 }
 
 impl Replication {
@@ -161,7 +164,8 @@ impl Replication {
 mod tests {
     use super::*;
 
-    const STILL: CarNetInfo = CarNetInfo { spawn_count: 1, flip_resets: 0, jumped: 0, double_jumped: 0, flipped: 0, demoed: 0 };
+    const STILL: CarNetInfo =
+        CarNetInfo { spawn_count: 1, flip_resets: 0, jumped: 0, double_jumped: 0, flipped: 0, demoed: 0 };
 
     #[test]
     fn what_forces_a_car() {
@@ -172,18 +176,27 @@ mod tests {
         assert!(forces(&STILL, &CarNetInfo { flip_resets: 1, ..STILL }, false, false), "a flip reset");
         assert!(forces(&STILL, &CarNetInfo { demoed: 1, ..STILL }, false, false), "a demolition");
         assert!(forces(&CarNetInfo { demoed: 1, ..STILL }, &STILL, false, false), "the respawn's end of it");
-        for (what, now) in [("a jump", CarNetInfo { jumped: 1, ..STILL }), ("a double jump", CarNetInfo { double_jumped: 1, ..STILL }), ("a dodge", CarNetInfo { flipped: 1, ..STILL })] {
+        for (what, now) in [
+            ("a jump", CarNetInfo { jumped: 1, ..STILL }),
+            ("a double jump", CarNetInfo { double_jumped: 1, ..STILL }),
+            ("a dodge", CarNetInfo { flipped: 1, ..STILL }),
+        ] {
             assert!(forces(&STILL, &now, true, false), "{what} near the ball");
             assert!(!forces(&STILL, &now, false, false), "{what} away from the ball");
         }
-        assert!(!forces(&CarNetInfo { jumped: 1, ..STILL }, &STILL, true, false), "a landing (the jump flag going down)");
+        assert!(
+            !forces(&CarNetInfo { jumped: 1, ..STILL }, &STILL, true, false),
+            "a landing (the jump flag going down)"
+        );
     }
 
     #[test]
     fn forced_actors_go_in_the_next_update_and_due_ones_at_the_game_s_rates() {
         let mut r = Replication::new(7);
         let cars = [1, 2];
-        let watched = |near: bool, info: CarNetInfo| [Watched { id: 1, info, near_ball: near }, Watched { id: 2, info: STILL, near_ball: false }];
+        let watched = |near: bool, info: CarNetInfo| {
+            [Watched { id: 1, info, near_ball: near }, Watched { id: 2, info: STILL, near_ball: false }]
+        };
         r.observe(None, 0, &watched(false, STILL));
         let first = r.choose_at(2, &cars, 0b11);
         assert_eq!(first, Chosen { ball: true, cars: vec![1, 2], pads: true }, "everything at first");

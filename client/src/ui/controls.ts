@@ -105,7 +105,10 @@ export function cyclerControl<V extends string>(o: CyclerOptions<V>): HTMLDivEle
   const n = o.options.length;
   control.setAttribute("aria-valuemin", "0");
   control.setAttribute("aria-valuemax", String(Math.max(0, n - 1)));
-  let index = Math.max(0, o.options.findIndex(([v]) => v === o.value));
+  let index = Math.max(
+    0,
+    o.options.findIndex(([v]) => v === o.value),
+  );
   const show = (): void => {
     const [v, text] = o.options[index] ?? ["", ""];
     control.dataset["value"] = v;

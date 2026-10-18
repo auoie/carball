@@ -11,7 +11,18 @@
 // tyre must go to sit on the physics' contact, within its body's drawn travel (none touching: its full hang upright,
 // less as the car tilts, tucked up upside down), eased there at 10/s but snapped up when the ground pushes it; steered
 // toward the physics' angle at the same rate; turning as the car moves.
-import { type Color, Group, LinearSRGBColorSpace, type Material, Mesh, MeshPhysicalMaterial, MeshStandardMaterial, type Object3D, Quaternion, Vector3 } from "three";
+import {
+  type Color,
+  Group,
+  LinearSRGBColorSpace,
+  type Material,
+  Mesh,
+  MeshPhysicalMaterial,
+  MeshStandardMaterial,
+  type Object3D,
+  Quaternion,
+  Vector3,
+} from "three";
 import type { WheelConfig } from "../engine/world";
 import { CHASSIS_SPRINGS, DEFAULT_SPRING, type SpringSpec } from "./chassisSpring";
 import { HEADLIGHT, TAILLIGHT } from "./carParts";
@@ -250,7 +261,13 @@ export function easeWheel(current: number, target: number, dt: number, snapUp = 
 /** A wheel's pose (the model's frame, metres): where the model has it, dropped `drop` uu (negative: down), steered by
  *  `steer` (a positive one to the car's right, about the car's up: three's -y), turned `spin` radians about its axle (the
  *  car's right); the model's own turn under them */
-export function wheelPose(rest: Vector3, turn: Quaternion, drop: number, steer: number, spin: number): { readonly position: Vector3; readonly quaternion: Quaternion } {
+export function wheelPose(
+  rest: Vector3,
+  turn: Quaternion,
+  drop: number,
+  steer: number,
+  spin: number,
+): { readonly position: Vector3; readonly quaternion: Quaternion } {
   const position = rest.clone();
   position.y += drop / UU_PER_METRE;
   steering.setFromAxisAngle(STEER_AXIS, -steer);

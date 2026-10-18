@@ -18,11 +18,21 @@ describe("free look", () => {
   });
 
   it("without smoothing a full stick turns 24960 units a second", () => {
-    expect(sum(run(Array.from({ length: 120 }, () => stick(1)), { ...PAD, smoothing: false }))).toBe(24960);
+    expect(
+      sum(
+        run(
+          Array.from({ length: 120 }, () => stick(1)),
+          { ...PAD, smoothing: false },
+        ),
+      ),
+    ).toBe(24960);
   });
 
   it("100 mouse counts in one frame (sensitivity 10, FOV 90, Modern accel 10.8) turn 2036 units: 178, 163, 149, …", () => {
-    const frames: FreeLookAxes[] = [{ pitch: 0, yaw: 1000, source: "mouse" }, ...Array.from({ length: 239 }, () => ({ pitch: 0, yaw: 0, source: "mouse" as const }))];
+    const frames: FreeLookAxes[] = [
+      { pitch: 0, yaw: 1000, source: "mouse" },
+      ...Array.from({ length: 239 }, () => ({ pitch: 0, yaw: 0, source: "mouse" as const })),
+    ];
     const offsets = run(frames, { ...PAD, accelRate: 10.8 });
     expect(offsets.slice(0, 3)).toEqual([178, 163, 149]);
     expect(sum(offsets)).toBe(2036);

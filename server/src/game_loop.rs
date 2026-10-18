@@ -32,10 +32,17 @@ fn refuse(out: Sender<Outgoing>, reason: u8) {
 
 /// `test_goal_after`: browser tests only (`Game::test_goal_after`, s). `heartbeat`: the loop's last pass, in ms from
 /// `start` (the health check's)
-pub fn run(mut messages: Receiver<ToGame>, mode: Mode, test_goal_after: Option<f32>, heartbeat: Arc<AtomicU64>, start: Instant) {
+pub fn run(
+    mut messages: Receiver<ToGame>,
+    mode: Mode,
+    test_goal_after: Option<f32>,
+    heartbeat: Arc<AtomicU64>,
+    start: Instant,
+) {
     let seconds = |at: Instant| at.saturating_duration_since(start).as_secs_f64();
     // (each server run its own kickoff orders, as the game's are random)
-    let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.subsec_nanos() as i32);
+    let seed =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.subsec_nanos() as i32);
     let mut host = MatchHost::new(seed, test_goal_after.map(|s| (s * crate::game::TICK_RATE as f32) as u64));
     let mut queue = Matchmaker::new(match &mode {
         Mode::Direct(_) => &[],
@@ -62,7 +69,8 @@ pub fn run(mut messages: Receiver<ToGame>, mode: Mode, test_goal_after: Option<f
                             Searched::NoPlaylist => refuse(out, protocol::REFUSED_MODE),
                             // (its browser or address stalled a match: refused with the time left, RV-367)
                             Searched::Cooldown { seconds, network } => {
-                                let _ = out.try_send(Outgoing::Control(Control::SearchCooldown { seconds, network }.encode()));
+                                let _ = out
+                                    .try_send(Outgoing::Control(Control::SearchCooldown { seconds, network }.encode()));
                             }
                         }
                     }
@@ -92,7 +100,9 @@ pub fn run(mut messages: Receiver<ToGame>, mode: Mode, test_goal_after: Option<f
                     }
                 }
                 Ok(ToGame::ReadyUp { id }) => host.game_of(id).into_iter().for_each(|g| g.ready_up(id)),
-                Ok(ToGame::AutoSkipReplay { id, on }) => host.game_of(id).into_iter().for_each(|g| g.set_auto_skip_replay(id, on)),
+                Ok(ToGame::AutoSkipReplay { id, on }) => {
+                    host.game_of(id).into_iter().for_each(|g| g.set_auto_skip_replay(id, on))
+                }
                 Ok(ToGame::VoteForfeit { id }) => host.game_of(id).into_iter().for_each(|g| g.vote_forfeit(id)),
                 Ok(ToGame::QuickChat { id, preset, team }) => {
                     let now = seconds(Instant::now());

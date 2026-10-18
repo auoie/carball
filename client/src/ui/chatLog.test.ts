@@ -5,17 +5,29 @@ import { CHAT_COLOURS, CHAT_TEXT } from "../game/quickChat";
 import type { RosterEntry } from "../net/protocol";
 import { chatLineHtml, chatMessageLine, rosterLines } from "./chatLog";
 
-const text = (html: string): string => html.replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&amp;/g, "&");
+const text = (html: string): string =>
+  html
+    .replace(/<[^>]+>/g, "")
+    .replace(/&lt;/g, "<")
+    .replace(/&amp;/g, "&");
 
 describe("the chat log's lines (CHAT-15)", () => {
   it("[M:SS] [TEAM] NAME: message; the name upper-case", () => {
-    const html = chatLineHtml({ timestamp: "[4:12]", channel: "team", name: { text: "Merc", colour: "#557CFF" }, text: "Need boost!", colour: CHAT_COLOURS.others });
+    const html = chatLineHtml({
+      timestamp: "[4:12]",
+      channel: "team",
+      name: { text: "Merc", colour: "#557CFF" },
+      text: "Need boost!",
+      colour: CHAT_COLOURS.others,
+    });
     expect(text(html)).toBe("[4:12] [TEAM] MERC: Need boost!");
     expect(html).toContain('color:#557CFF"><bdi>MERC</bdi>:');
   });
 
   it("all-chat has no tag; once ended no timestamp; a system line no name; text escaped", () => {
-    expect(text(chatLineHtml({ timestamp: "", channel: null, name: { text: CHAT_TEXT.you, colour: "#FFFFFF" }, text: "gg", colour: CHAT_COLOURS.own }))).toBe("YOU: gg");
+    expect(text(chatLineHtml({ timestamp: "", channel: null, name: { text: CHAT_TEXT.you, colour: "#FFFFFF" }, text: "gg", colour: CHAT_COLOURS.own }))).toBe(
+      "YOU: gg",
+    );
     const notice = chatLineHtml({ timestamp: "", channel: null, name: null, text: CHAT_TEXT.disabled(2.2), colour: CHAT_COLOURS.system });
     expect(text(notice)).toBe("Chat disabled for 3 second(s).");
     expect(notice).toContain(CHAT_COLOURS.system);
@@ -41,7 +53,17 @@ describe("the chat log's lines (CHAT-15)", () => {
     const a: RosterEntry = { car: 1, team: 0, model: 0, name: "Merc" };
     const b: RosterEntry = { car: 2, team: 1, model: 0, name: "Ziggy" };
     const c: RosterEntry = { car: 3, team: 1, model: 0, name: "Bo" };
-    const lines = rosterLines(new Map([[1, a], [2, b]]), new Map([[1, a], [3, c]]), new Set());
+    const lines = rosterLines(
+      new Map([
+        [1, a],
+        [2, b],
+      ]),
+      new Map([
+        [1, a],
+        [3, c],
+      ]),
+      new Set(),
+    );
     expect(lines.map((l) => text(chatLineHtml(l)))).toEqual(["Ziggy left the match", "Bo joined the match"]);
     expect(lines.every((l) => l.colour === CHAT_COLOURS.system && l.name === null)).toBe(true);
     expect(rosterLines(new Map([[2, b]]), new Map(), new Set([2])).map((l) => text(chatLineHtml(l)))).toEqual(["Ziggy lost connection"]);
@@ -50,7 +72,15 @@ describe("the chat log's lines (CHAT-15)", () => {
   it("escapes names and keeps them in <bdi>, so markup stays text and a name's direction controls stay inside (RV-249, RV-251)", () => {
     const html = chatLineHtml({ timestamp: "", channel: null, name: { text: "<b>x</b>&", colour: "#fff" }, text: "gg", colour: "#fff" });
     expect(html).toContain("<bdi>&lt;B&gt;X&lt;/B&gt;&amp;</bdi>");
-    const joined = chatLineHtml(rosterLines(new Map(), new Map([[4, { car: 4, team: 0, model: 0, name: "\u202Eziggy" }]]), new Set())[0] ?? { timestamp: "", channel: null, name: null, text: "", colour: "" });
+    const joined = chatLineHtml(
+      rosterLines(new Map(), new Map([[4, { car: 4, team: 0, model: 0, name: "\u202Eziggy" }]]), new Set())[0] ?? {
+        timestamp: "",
+        channel: null,
+        name: null,
+        text: "",
+        colour: "",
+      },
+    );
     expect(joined).toContain("<bdi>\u202Eziggy</bdi> joined the match");
   });
 });

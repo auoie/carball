@@ -26,7 +26,13 @@ export interface ContentStage {
 export function contentStage(width: number, height: number, scale = interfaceScale, display = displayScale): ContentStage {
   const s = width / height >= 1.5556 ? height / 720 : width / 1120;
   const content = Math.max(0.5, s * scale * display);
-  return { scale: content, width: (width * display) / content, height: (height * display) / content, left: (width * (1 - display)) / 2, top: (height * (1 - display)) / 2 };
+  return {
+    scale: content,
+    width: (width * display) / content,
+    height: (height * display) / content,
+    left: (width * (1 - display)) / 2,
+    top: (height * (1 - display)) / 2,
+  };
 }
 
 /** The CSS transform that puts a stage-sized element (origin top left) where the stage is */
@@ -65,4 +71,3 @@ export class StageLayer {
     return fitStage(this.root, this.#fitted);
   }
 }
-

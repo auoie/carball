@@ -45,17 +45,29 @@ impl Pcg32 {
 pub enum Jitter {
     None,
     /// Independent normal delays around the base, `sigma` ms
-    Normal { sigma_ms: f64 },
+    Normal {
+        sigma_ms: f64,
+    },
     /// AR(1): each packet's jitter `rho` of the last's plus fresh noise, `sigma` ms overall
-    Ar1 { sigma_ms: f64, rho: f64 },
+    Ar1 {
+        sigma_ms: f64,
+        rho: f64,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Loss {
     None,
-    Iid { p: f64 },
+    Iid {
+        p: f64,
+    },
     /// Two states: good to bad with `p_gb` a packet, back with `p_bg`; each its own loss rate
-    GilbertElliott { p_gb: f64, p_bg: f64, loss_good: f64, loss_bad: f64 },
+    GilbertElliott {
+        p_gb: f64,
+        p_bg: f64,
+        loss_good: f64,
+        loss_bad: f64,
+    },
 }
 
 /// The path stalls from `at_s` for `ms`, then every `every_s` (0: once): what is sent then arrives when it ends
@@ -191,7 +203,13 @@ mod tests {
 
     #[test]
     fn delivers_with_the_profile_s_loss_delay_and_duplicates() {
-        let profile = Profile { base_ms: 50.0, jitter: Jitter::Normal { sigma_ms: 10.0 }, loss: Loss::Iid { p: 0.05 }, duplicate: 0.05, stalls: Vec::new() };
+        let profile = Profile {
+            base_ms: 50.0,
+            jitter: Jitter::Normal { sigma_ms: 10.0 },
+            loss: Loss::Iid { p: 0.05 },
+            duplicate: 0.05,
+            stalls: Vec::new(),
+        };
         let mut sim = NetSim::new(profile, 7);
         let (mut lost, mut dup, mut delay) = (0, 0, Vec::new());
         for i in 0..100_000 {
@@ -225,7 +243,10 @@ mod tests {
 
     #[test]
     fn gilbert_elliott_loses_in_bursts() {
-        let profile = Profile { loss: Loss::GilbertElliott { p_gb: 0.01, p_bg: 0.2, loss_good: 0.0, loss_bad: 0.5 }, ..Profile::constant(20.0) };
+        let profile = Profile {
+            loss: Loss::GilbertElliott { p_gb: 0.01, p_bg: 0.2, loss_good: 0.0, loss_bad: 0.5 },
+            ..Profile::constant(20.0)
+        };
         let mut sim = NetSim::new(profile, 3);
         let mut runs = Vec::new();
         let mut run = 0;
@@ -248,9 +269,33 @@ mod tests {
     #[test]
     fn writes_the_twin_s_vectors() {
         let profiles = [
-            ("jitter", Profile { base_ms: 50.0, jitter: Jitter::Normal { sigma_ms: 10.0 }, loss: Loss::Iid { p: 0.05 }, duplicate: 0.05, stalls: Vec::new() }),
-            ("ar1", Profile { base_ms: 100.0, jitter: Jitter::Ar1 { sigma_ms: 8.0, rho: 0.9 }, loss: Loss::None, duplicate: 0.0, stalls: vec![Stall { at_s: 0.5, ms: 150.0, every_s: 2.0 }] }),
-            ("burst", Profile { loss: Loss::GilbertElliott { p_gb: 0.05, p_bg: 0.3, loss_good: 0.01, loss_bad: 0.6 }, ..Profile::constant(30.0) }),
+            (
+                "jitter",
+                Profile {
+                    base_ms: 50.0,
+                    jitter: Jitter::Normal { sigma_ms: 10.0 },
+                    loss: Loss::Iid { p: 0.05 },
+                    duplicate: 0.05,
+                    stalls: Vec::new(),
+                },
+            ),
+            (
+                "ar1",
+                Profile {
+                    base_ms: 100.0,
+                    jitter: Jitter::Ar1 { sigma_ms: 8.0, rho: 0.9 },
+                    loss: Loss::None,
+                    duplicate: 0.0,
+                    stalls: vec![Stall { at_s: 0.5, ms: 150.0, every_s: 2.0 }],
+                },
+            ),
+            (
+                "burst",
+                Profile {
+                    loss: Loss::GilbertElliott { p_gb: 0.05, p_bg: 0.3, loss_good: 0.01, loss_bad: 0.6 },
+                    ..Profile::constant(30.0)
+                },
+            ),
         ];
         let mut out = String::from("{\n");
         for (k, (name, profile)) in profiles.iter().enumerate() {
@@ -261,7 +306,8 @@ mod tests {
                     format!("[{}]", got.iter().map(|a| format!("{a:.9}")).collect::<Vec<_>>().join(","))
                 })
                 .collect();
-            out += &format!("  \"{name}\": [{}]{}\n", deliveries.join(","), if k + 1 < profiles.len() { "," } else { "" });
+            out +=
+                &format!("  \"{name}\": [{}]{}\n", deliveries.join(","), if k + 1 < profiles.len() { "," } else { "" });
         }
         out += "}\n";
         check_vectors(concat!(env!("CARGO_MANIFEST_DIR"), "/../client/src/testing/netsim.vectors.json"), &out);

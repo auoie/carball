@@ -43,7 +43,13 @@ describe("free play's last touch's team (the user's report: an orange car's touc
       world.setKickoffCountdown(0);
       // (the car 1000 uu short of the ball, facing it, driven at it: a real touch, no staging)
       const forward = vec3(0, 1, 0);
-      world.setCar(car, { pos: vec3(0, -1000, 17), vel: ZERO, angVel: ZERO, rot: { forward, right: vec3(-forward.y, forward.x, 0), up: vec3(0, 0, 1) }, boost: 100 });
+      world.setCar(car, {
+        pos: vec3(0, -1000, 17),
+        vel: ZERO,
+        angVel: ZERO,
+        rot: { forward, right: vec3(-forward.y, forward.x, 0), up: vec3(0, 0, 1) },
+        boost: 100,
+      });
       world.setBall({ pos: vec3(0, 0, 93), vel: ZERO, angVel: ZERO });
       expect(freeplayTouchTeam(world, garage)).toBeNull();
       for (let tick = 0; tick < 240 && world.carLastBallTouchTick(car) === null; tick++) {
@@ -57,4 +63,3 @@ describe("free play's last touch's team (the user's report: an orange car's touc
     }
   });
 });
-

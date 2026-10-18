@@ -54,8 +54,16 @@ export function botsPage(body: HTMLElement, listings: readonly BotListing[]): Bo
       }
       return group;
     };
-    const sizes = botTeamSizes(listings).map((n) => ({ value: n, label: PLAYLISTS.find((p) => p.teamSize === n)?.name ?? `${String(n)}v${String(n)}`, checked: n === choices.teamSize }));
-    body.append(radios<TeamSize>("main-menu-bot-sizes", sizes, (teamSize) => { choose({ ...choices, teamSize }); }));
+    const sizes = botTeamSizes(listings).map((n) => ({
+      value: n,
+      label: PLAYLISTS.find((p) => p.teamSize === n)?.name ?? `${String(n)}v${String(n)}`,
+      checked: n === choices.teamSize,
+    }));
+    body.append(
+      radios<TeamSize>("main-menu-bot-sizes", sizes, (teamSize) => {
+        choose({ ...choices, teamSize });
+      }),
+    );
     const bots = listings.filter((l) => l.playable && l.teamSizes.includes(choices.teamSize));
     const slots = (label: string, side: "teammates" | "opponents"): void => {
       if (choices[side].length === 0) return;

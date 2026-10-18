@@ -91,7 +91,13 @@ export class InputDevices {
       },
       { signal },
     );
-    surface.addEventListener("contextmenu", (e) => { e.preventDefault(); }, { signal }); // right button = jump
+    surface.addEventListener(
+      "contextmenu",
+      (e) => {
+        e.preventDefault();
+      },
+      { signal },
+    ); // right button = jump
     window.addEventListener(
       "mousemove",
       (e) => {

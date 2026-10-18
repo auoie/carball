@@ -34,27 +34,69 @@ pub enum Intent {
 #[derive(Debug)]
 pub enum ToGame {
     /// `address`: the session's (`address_key`: the queue's no-show cooldown counts it too, RV-367)
-    Join { id: PlayerId, intent: Intent, request: JoinRequest, address: IpAddr, out: Sender<Outgoing> },
+    Join {
+        id: PlayerId,
+        intent: Intent,
+        request: JoinRequest,
+        address: IpAddr,
+        out: Sender<Outgoing>,
+    },
     /// The session ended; `lost`: its connection timed out
-    Leave { id: PlayerId, lost: bool },
+    Leave {
+        id: PlayerId,
+        lost: bool,
+    },
     /// A search's page closed its control stream (Cancel Search, another map): the search out of the queue now, so its
     /// session can write out what the game sent before (a match found) and end
-    CancelSearch { id: PlayerId },
-    Inputs { id: PlayerId, timestamp: u32, sequence: u16, first_frame: u32, frames: Vec<InputFrame>, at: std::time::Instant },
-    ResetInputBuffer { id: PlayerId },
+    CancelSearch {
+        id: PlayerId,
+    },
+    Inputs {
+        id: PlayerId,
+        timestamp: u32,
+        sequence: u16,
+        first_frame: u32,
+        frames: Vec<InputFrame>,
+        at: std::time::Instant,
+    },
+    ResetInputBuffer {
+        id: PlayerId,
+    },
     /// Skip the goal replay
-    ReadyUp { id: PlayerId },
-    AutoSkipReplay { id: PlayerId, on: bool },
+    ReadyUp {
+        id: PlayerId,
+    },
+    AutoSkipReplay {
+        id: PlayerId,
+        on: bool,
+    },
     /// Vote to forfeit (starts or joins the team's vote)
-    VoteForfeit { id: PlayerId },
+    VoteForfeit {
+        id: PlayerId,
+    },
     /// A quick-chat preset
-    QuickChat { id: PlayerId, preset: u8, team: bool },
+    QuickChat {
+        id: PlayerId,
+        preset: u8,
+        team: bool,
+    },
     /// The player's chat filters
-    ChatFilter { id: PlayerId, quick_chat: u8, block_non_tactical: bool },
+    ChatFilter {
+        id: PlayerId,
+        quick_chat: u8,
+        block_non_tactical: bool,
+    },
     /// The player muted or unmuted another player's chat
-    Mute { id: PlayerId, car: u32, on: bool },
+    Mute {
+        id: PlayerId,
+        car: u32,
+        on: bool,
+    },
     /// The connection's round-trip time (ms)
-    Ping { id: PlayerId, ms: u32 },
+    Ping {
+        id: PlayerId,
+        ms: u32,
+    },
 }
 
 /// Development identity: self-signed for localhost, valid 14 days (the browser limit for certificate hashes)
@@ -100,11 +142,13 @@ pub async fn load_identity(cert: &Path, key: &Path) -> anyhow::Result<Identity> 
 
 /// The identity as wtransport's server configuration takes it (the same calls), an error where they'd panic
 fn check_pair(identity: &Identity) -> anyhow::Result<()> {
-    use wtransport::tls::rustls;
     use rustls::pki_types::pem::PemObject;
     use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-    let chain = identity.certificate_chain().as_slice().iter().map(|c| CertificateDer::from(c.der().to_vec())).collect();
-    let key = PrivateKeyDer::from_pem_slice(identity.private_key().to_secret_pem().as_bytes()).context("the private key")?;
+    use wtransport::tls::rustls;
+    let chain =
+        identity.certificate_chain().as_slice().iter().map(|c| CertificateDer::from(c.der().to_vec())).collect();
+    let key =
+        PrivateKeyDer::from_pem_slice(identity.private_key().to_secret_pem().as_bytes()).context("the private key")?;
     rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
         .with_protocol_versions(&[&rustls::version::TLS13])?
         .with_no_client_auth()
@@ -262,17 +306,18 @@ pub async fn accept_loop(server: Arc<ServerEndpoint>, to_game: Sender<ToGame>, l
     loop {
         let incoming = server.accept().await;
         let address = address_key(incoming.remote_address().ip());
-        let permit = match admit(incoming.remote_address_validated(), address, &sessions, &admission, &limits, Instant::now()) {
-            Admit::Retry => {
-                incoming.retry();
-                continue;
-            }
-            Admit::Refuse => {
-                incoming.refuse();
-                continue;
-            }
-            Admit::Admit(permit) => permit,
-        };
+        let permit =
+            match admit(incoming.remote_address_validated(), address, &sessions, &admission, &limits, Instant::now()) {
+                Admit::Retry => {
+                    incoming.retry();
+                    continue;
+                }
+                Admit::Refuse => {
+                    incoming.refuse();
+                    continue;
+                }
+                Admit::Admit(permit) => permit,
+            };
         let id = next_id;
         next_id += 1;
         let to_game = to_game.clone();
@@ -284,7 +329,10 @@ pub async fn accept_loop(server: Arc<ServerEndpoint>, to_game: Sender<ToGame>, l
                 Ok(lost) => lost,
                 Err(e) => {
                     eprintln!("player {id}: {e:#}");
-                    matches!(e.downcast_ref::<wtransport::error::ConnectionError>(), Some(wtransport::error::ConnectionError::TimedOut))
+                    matches!(
+                        e.downcast_ref::<wtransport::error::ConnectionError>(),
+                        Some(wtransport::error::ConnectionError::TimedOut)
+                    )
                 }
             };
             let _ = to_game.send(ToGame::Leave { id, lost }).await;
@@ -320,8 +368,11 @@ async fn read_hello(recv: &mut wtransport::RecvStream) -> anyhow::Result<Result<
 async fn handshake(
     incoming: IncomingSession,
     limits: &NetLimits,
-) -> anyhow::Result<Option<(wtransport::Connection, wtransport::SendStream, wtransport::RecvStream, Result<Control, u16>)>> {
-    let request = tokio::time::timeout(limits.quic_handshake, incoming).await.context("no QUIC handshake in time")??;
+) -> anyhow::Result<
+    Option<(wtransport::Connection, wtransport::SendStream, wtransport::RecvStream, Result<Control, u16>)>,
+> {
+    let request =
+        tokio::time::timeout(limits.quic_handshake, incoming).await.context("no QUIC handshake in time")??;
     if request.path() != "/play" {
         request.not_found().await;
         return Ok(None);
@@ -340,9 +391,16 @@ async fn handshake(
 }
 
 /// One player's session; `Ok(lost)`: whether it ended by its connection timing out (the chat log's "lost connection")
-async fn session(incoming: IncomingSession, id: PlayerId, address: IpAddr, to_game: &Sender<ToGame>, limits: &NetLimits) -> anyhow::Result<bool> {
+async fn session(
+    incoming: IncomingSession,
+    id: PlayerId,
+    address: IpAddr,
+    to_game: &Sender<ToGame>,
+    limits: &NetLimits,
+) -> anyhow::Result<bool> {
     // (the whole handshake within its deadline: a session that never opens its control stream is gone, SEC-2)
-    let Some((connection, mut send, mut recv, hello)) = tokio::time::timeout(limits.handshake, handshake(incoming, limits)).await.context("no hello in time")??
+    let Some((connection, mut send, mut recv, hello)) =
+        tokio::time::timeout(limits.handshake, handshake(incoming, limits)).await.context("no hello in time")??
     else {
         return Ok(false);
     };
@@ -419,7 +477,9 @@ async fn session(incoming: IncomingSession, id: PlayerId, address: IpAddr, to_ga
                 Ok(Control::AutoSkipReplay { on }) => ToGame::AutoSkipReplay { id, on },
                 Ok(Control::VoteForfeit) => ToGame::VoteForfeit { id },
                 Ok(Control::QuickChat { preset, team }) => ToGame::QuickChat { id, preset, team },
-                Ok(Control::ChatFilter { quick_chat, block_non_tactical }) => ToGame::ChatFilter { id, quick_chat, block_non_tactical },
+                Ok(Control::ChatFilter { quick_chat, block_non_tactical }) => {
+                    ToGame::ChatFilter { id, quick_chat, block_non_tactical }
+                }
                 Ok(Control::Mute { car, on }) => ToGame::Mute { id, car, on },
                 Ok(_) => continue, // (nothing else is expected from a client)
                 Err(e) => {
@@ -527,7 +587,11 @@ pub async fn serve_info(bind: IpAddr, port: u16, webtransport_port: u16, cert_ha
 
 /// The container's health check (APP-CONTRACT.md): `GET /healthz` on `127.0.0.1:port` answers 200 while the game thread
 /// runs (its heartbeat, each loop, within 2 s), else 503
-pub async fn serve_health(port: u16, heartbeat: Arc<std::sync::atomic::AtomicU64>, start: Instant) -> anyhow::Result<()> {
+pub async fn serve_health(
+    port: u16,
+    heartbeat: Arc<std::sync::atomic::AtomicU64>,
+    start: Instant,
+) -> anyhow::Result<()> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
     loop {
@@ -542,8 +606,12 @@ pub async fn serve_health(port: u16, heartbeat: Arc<std::sync::atomic::AtomicU64
             let beat = heartbeat.load(std::sync::atomic::Ordering::Relaxed);
             let now = start.elapsed().as_millis() as u64;
             let ok = now.saturating_sub(beat) < 2000;
-            let (status, body) = if ok { ("200 OK", "ok") } else { ("503 Service Unavailable", "the game thread is stuck") };
-            let response = format!("HTTP/1.1 {status}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+            let (status, body) =
+                if ok { ("200 OK", "ok") } else { ("503 Service Unavailable", "the game thread is stuck") };
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
             let _ = stream.write_all(response.as_bytes()).await;
         });
     }
@@ -552,7 +620,10 @@ pub async fn serve_health(port: u16, heartbeat: Arc<std::sync::atomic::AtomicU64
 /// `carball-server --healthcheck`: asks the health endpoint; true if it answered 200
 pub fn health_check(port: u16) -> bool {
     use std::io::{Read, Write};
-    let Ok(mut stream) = std::net::TcpStream::connect_timeout(&([127, 0, 0, 1], port).into(), Duration::from_secs(2)) else { return false };
+    let Ok(mut stream) = std::net::TcpStream::connect_timeout(&([127, 0, 0, 1], port).into(), Duration::from_secs(2))
+    else {
+        return false;
+    };
     let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
     if stream.write_all(b"GET /healthz HTTP/1.1\r\nHost: localhost\r\n\r\n").is_err() {
         return false;
@@ -631,8 +702,13 @@ mod tests {
         }
         assert_eq!(sessions.available_permits(), 1);
         assert!(admission.lock().unwrap().active.is_empty());
-        let Admit::Admit(permit) = admit(true, a, &sessions, &admission, &limits, t0) else { panic!("a proven address admitted") };
-        assert!(matches!(admit(true, [10, 0, 0, 2].into(), &sessions, &admission, &limits, t0), Admit::Refuse), "the global cap");
+        let Admit::Admit(permit) = admit(true, a, &sessions, &admission, &limits, t0) else {
+            panic!("a proven address admitted")
+        };
+        assert!(
+            matches!(admit(true, [10, 0, 0, 2].into(), &sessions, &admission, &limits, t0), Admit::Refuse),
+            "the global cap"
+        );
         drop(permit);
     }
 

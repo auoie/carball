@@ -4,7 +4,11 @@ import { describe, expect, it } from "vitest";
 import { direction, mirrorShot, parsePack, rotatorAxes, type TrainingPack } from "./pack";
 
 // (synthetic numbers, ours: no shot of anyone's pack, RX25)
-const SHOT = { timeLimit: 10, ball: { location: [200, 2400, 800], launch: { pitch: 1600, yaw: -17000 }, speed: 1500 }, car: { location: [1100, 1000, 30], rotation: { pitch: 0, yaw: 45000, roll: 0 }, startSpeed: 0 } };
+const SHOT = {
+  timeLimit: 10,
+  ball: { location: [200, 2400, 800], launch: { pitch: 1600, yaw: -17000 }, speed: 1500 },
+  car: { location: [1100, 1000, 30], rotation: { pitch: 0, yaw: 45000, roll: 0 }, startSpeed: 0 },
+};
 const PACK = { format: 1, id: "test-pack", name: "Test", type: "striker", difficulty: "hard", tags: ["Aerials", "NotATag"], creator: "us", shots: [SHOT] };
 
 const parsed = (json: unknown): TrainingPack => {
@@ -18,14 +22,19 @@ describe("a training pack", () => {
     const p = parsed(PACK);
     expect(p).toMatchObject({ id: "test-pack", name: "Test", type: "striker", difficulty: "hard", tags: ["Aerials"], creator: "us" });
     expect(p.shots[0]?.ball.launch).toEqual({ pitch: 1600, yaw: 65536 - 17000, roll: 0 });
-    expect(parsed({ ...PACK, shots: [{ ...SHOT, ball: { ...SHOT.ball, launch: { pitch: 20000, yaw: 4 * 65536 + 342 } } }] }).shots[0]?.ball.launch).toEqual({ pitch: 16384, yaw: 342, roll: 0 });
+    expect(parsed({ ...PACK, shots: [{ ...SHOT, ball: { ...SHOT.ball, launch: { pitch: 20000, yaw: 4 * 65536 + 342 } } }] }).shots[0]?.ball.launch).toEqual({
+      pitch: 16384,
+      yaw: 342,
+      roll: 0,
+    });
     // (the car's start speed optional: 0; the difficulty easy when absent)
     const car = { location: SHOT.car.location, rotation: SHOT.car.rotation };
     expect(parsed({ ...PACK, difficulty: undefined, shots: [{ ...SHOT, car }] })).toMatchObject({ difficulty: "easy", shots: [{ car: { startSpeed: 0 } }] });
   });
 
   it("is refused outside the format: its format, id, type, 1 to 50 shots, speeds, time limit, the arena's box", () => {
-    const bad = (over: Record<string, unknown>, shot: Record<string, unknown> = {}): string | TrainingPack => parsePack({ ...PACK, ...over, shots: [{ ...SHOT, ...shot }] });
+    const bad = (over: Record<string, unknown>, shot: Record<string, unknown> = {}): string | TrainingPack =>
+      parsePack({ ...PACK, ...over, shots: [{ ...SHOT, ...shot }] });
     expect(bad({ format: 2 })).toBe("its format");
     expect(bad({ id: "../x" })).toBe("its id");
     expect(bad({ type: "keeper" })).toBe("its type");
@@ -55,7 +64,12 @@ describe("the rotators (UE's)", () => {
     expect(yawOnly.right.y).toBeCloseTo(Math.cos(a), 9);
     const r = rotatorAxes({ pitch: 1000, yaw: 45000, roll: 500 });
     const dot = (p: { x: number; y: number; z: number }, q: { x: number; y: number; z: number }): number => p.x * q.x + p.y * q.y + p.z * q.z;
-    for (const [p, q] of [[r.forward, r.right], [r.forward, r.up], [r.right, r.up]] as const) expect(dot(p, q)).toBeCloseTo(0, 9);
+    for (const [p, q] of [
+      [r.forward, r.right],
+      [r.forward, r.up],
+      [r.right, r.up],
+    ] as const)
+      expect(dot(p, q)).toBeCloseTo(0, 9);
     for (const v of [r.forward, r.right, r.up]) expect(dot(v, v)).toBeCloseTo(1, 9);
     expect(r.forward).toEqual(direction({ pitch: 1000, yaw: 45000 }));
   });

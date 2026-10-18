@@ -137,7 +137,16 @@ export function parsePack(json: unknown): TrainingPack | string {
     if (typeof checked === "string") return `shot ${String(i + 1)}: ${checked}`;
     parsed.push(checked);
   }
-  return { id, name: text(json["name"], 64) || id, type, difficulty, tags, description: text(json["description"], 500), creator: text(json["creator"], 64), shots: parsed };
+  return {
+    id,
+    name: text(json["name"], 64) || id,
+    type,
+    difficulty,
+    tags,
+    description: text(json["description"], 500),
+    creator: text(json["creator"], 64),
+    shots: parsed,
+  };
 }
 
 const RADIANS = Math.PI / 32768;
@@ -164,5 +173,9 @@ export function mirrorShot(s: Shot): Shot {
   const flip = (v: Vec3): Vec3 => vec3(-v.x, v.y, v.z);
   // (the yaw alone, as MirrorUtils_X: pitch and roll kept)
   const yaw = (r: Rotator): Rotator => ({ ...r, yaw: wrapYaw(32768 - r.yaw) });
-  return { ...s, ball: { ...s.ball, location: flip(s.ball.location), launch: yaw(s.ball.launch) }, car: { ...s.car, location: flip(s.car.location), rotation: yaw(s.car.rotation) } };
+  return {
+    ...s,
+    ball: { ...s.ball, location: flip(s.ball.location), launch: yaw(s.ball.launch) },
+    car: { ...s.car, location: flip(s.car.location), rotation: yaw(s.car.rotation) },
+  };
 }

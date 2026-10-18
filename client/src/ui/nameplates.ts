@@ -29,7 +29,7 @@ const MASK_CLIP = 0.667;
 export const NAMEPLATE_HEIGHT = 60;
 const FADE_DISTANCE = 7000;
 
-const curve = (x: number, x0: number, y0: number, x1: number, y1: number): number => y0 + ((y1 - y0) * Math.min(1, Math.max(0, (x - x0) / (x1 - x0))));
+const curve = (x: number, x0: number, y0: number, x1: number, y1: number): number => y0 + (y1 - y0) * Math.min(1, Math.max(0, (x - x0) / (x1 - x0)));
 
 /** The plate's scale: the distance curve times the FOV curve times the setting [I: the combination is native
  *  (TickNameplate), a product assumed: HT-8] */

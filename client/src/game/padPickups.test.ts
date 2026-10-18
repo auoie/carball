@@ -59,7 +59,11 @@ describe("the pickup's feedback keyed on the pickup itself", () => {
 
   it("the pickup's sound, free play's and online's (both feed the detector the world's pads): for a pad taken again the tick it returned", () => {
     const detector = new SoundDetector();
-    const world = (pad: BoostPadState): Parameters<SoundDetector["update"]>[0] => ({ cars: new Map(), ball: { pos: vec3(0, 0, 93), vel: ZERO, angVel: ZERO, rot: { forward: vec3(1, 0, 0), right: vec3(0, 1, 0), up: vec3(0, 0, 1) } }, pads: [pad] });
+    const world = (pad: BoostPadState): Parameters<SoundDetector["update"]>[0] => ({
+      cars: new Map(),
+      ball: { pos: vec3(0, 0, 93), vel: ZERO, angVel: ZERO, rot: { forward: vec3(1, 0, 0), right: vec3(0, 1, 0), up: vec3(0, 0, 1) } },
+      pads: [pad],
+    });
     detector.update(world(big(false, 0.03)), 1 / 60);
     expect(detector.update(world(big(false, 10)), 1 / 60)).toEqual([{ kind: "pad", big: true, at: { x: 3584, y: 0, z: 73 } }]);
     expect(detector.update(world(big(false, 9.98)), 1 / 60)).toEqual([]);
@@ -68,11 +72,11 @@ describe("the pickup's feedback keyed on the pickup itself", () => {
   it("the pad's ball pops for it", () => {
     const tokens = new TokenPadsView([big(false, 0.03)]);
     const balls = tokens.root.children[2] as InstancedMesh;
-    const scale = (): number => new Vector3(balls.instanceMatrix.array[0] ?? 0, balls.instanceMatrix.array[1] ?? 0, balls.instanceMatrix.array[2] ?? 0).length();
+    const scale = (): number =>
+      new Vector3(balls.instanceMatrix.array[0] ?? 0, balls.instanceMatrix.array[1] ?? 0, balls.instanceMatrix.array[2] ?? 0).length();
     tokens.update([big(false, 0.01)], 1 / 60);
     expect(scale()).toBe(0);
     tokens.update([big(false, 10)], 1 / 60);
     expect(scale()).toBeGreaterThan(TOKENS.ball.radius * 0.9);
   });
 });
-

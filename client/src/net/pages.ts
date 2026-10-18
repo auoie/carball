@@ -115,7 +115,9 @@ export function pageUrl(page: "menu" | "match" | "bots", at: { readonly pathname
 
 /** The deployment's `config.json` (APP-CONTRACT.md: the web image writes it from its environment): the game server's
  *  WebTransport URL, e.g. https://game.carball.zolt.top:4433/play; null without one (a development page) */
-export async function deployedGameServer(fetchConfig: () => Promise<Response> = async () => fetch("/config.json", { cache: "no-store" })): Promise<string | null> {
+export async function deployedGameServer(
+  fetchConfig: () => Promise<Response> = async () => fetch("/config.json", { cache: "no-store" }),
+): Promise<string | null> {
   try {
     const response = await fetchConfig();
     if (!response.ok) return null;

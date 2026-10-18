@@ -21,8 +21,7 @@ const part = (serverTick: number, index: number, parts: number): Update => ({
 });
 
 /** [server tick, part numbers] of each yielded update */
-const summary = (us: readonly CompleteUpdate[]): [number, number[]][] =>
-  us.map((u) => [u.update.serverTick, u.states.map((s) => s[1] ?? -1)]);
+const summary = (us: readonly CompleteUpdate[]): [number, number[]][] => us.map((u) => [u.update.serverTick, u.states.map((s) => s[1] ?? -1)]);
 
 describe("UpdateAssembler", () => {
   it("yields an update once all parts are in, in any order; a part is yielded once", () => {
@@ -36,7 +35,10 @@ describe("UpdateAssembler", () => {
   it("an older update missing a part is yielded before a newer complete one (its bodies may have nothing newer)", () => {
     const a = new UpdateAssembler();
     expect(a.add(part(10, 0, 2))).toEqual([]); // its second part is late
-    expect(summary(a.add(part(12, 0, 1)))).toEqual([[10, [0]], [12, [0]]]);
+    expect(summary(a.add(part(12, 0, 1)))).toEqual([
+      [10, [0]],
+      [12, [0]],
+    ]);
   });
 
   it("a late part, or a reordered update, is yielded on its own", () => {
@@ -53,7 +55,10 @@ describe("UpdateAssembler", () => {
     const a = new UpdateAssembler();
     expect(a.add(part(10, 0, 2))).toEqual([]);
     expect(a.add(part(12, 1, 3))).toEqual([]);
-    expect(summary(a.flush())).toEqual([[10, [0]], [12, [1]]]);
+    expect(summary(a.flush())).toEqual([
+      [10, [0]],
+      [12, [1]],
+    ]);
     expect(a.flush()).toEqual([]);
     // A part arriving after its update was flushed still applies, once
     expect(summary(a.add(part(12, 0, 3)))).toEqual([[12, [0]]]);

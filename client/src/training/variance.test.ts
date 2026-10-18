@@ -13,7 +13,14 @@ const SHOT: Shot = {
   ball: { location: vec3(0, 3000, 500), launch: { pitch: 0, yaw: 16384, roll: 0 }, speed: 2000 },
   car: { location: vec3(0, 0, 17), rotation: { pitch: 0, yaw: 16384, roll: 0 }, startSpeed: 0 },
 };
-const MODIFIERS = { ...TRAINING_DEFAULTS, ballLocationModifier: 500, ballHeightModifier: 200, ballSpeedModifier: 25, carLocationModifier: 300, carRotationModifier: 30 };
+const MODIFIERS = {
+  ...TRAINING_DEFAULTS,
+  ballLocationModifier: 500,
+  ballHeightModifier: 200,
+  ballSpeedModifier: 25,
+  carLocationModifier: 300,
+  carRotationModifier: 30,
+};
 
 describe("the variance", () => {
   it("each axis within its modifier: the ball's place and height, its speed's share, the car's place and yaw", () => {

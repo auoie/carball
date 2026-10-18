@@ -72,7 +72,13 @@ describe("the scoreboard's projection", () => {
     for (const pose of POSES) {
       for (const frame of ["left", "right", "clock"] as const) {
         const [w, h] = frame === "clock" ? [CLOCK_BOX.width, CLOCK_BOX.height] : [VIEW_BOX.width, VIEW_BOX.height];
-        for (const [x, y] of [[0, 0], [w, 0], [w, h], [0, h], [w / 3, h / 2]] as const) {
+        for (const [x, y] of [
+          [0, 0],
+          [w, 0],
+          [w, h],
+          [0, h],
+          [w / 3, h / 2],
+        ] as const) {
           const [ex, ey] = apply(css(frame, pose), x, y);
           const [X, Y] = project(frame, x, y, pose);
           expect(X, `${frame} ${String(x)},${String(y)}`).toBeCloseTo(ex, 9);

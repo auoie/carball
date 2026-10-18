@@ -1,7 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { NO_CONTROLS } from "../engine/world";
 import { type Bindings, DEFAULT_BINDINGS, inputName, keyName } from "./bindings";
-import { AirPitchSafety, ButtonLatch, type InputEvent, type InputSnapshot, JumpLatch, axisDeadzone, readControls, readHeldActions, readLook, chatPresses } from "./mapping";
+import {
+  AirPitchSafety,
+  ButtonLatch,
+  type InputEvent,
+  type InputSnapshot,
+  JumpLatch,
+  axisDeadzone,
+  readControls,
+  readHeldActions,
+  readLook,
+  chatPresses,
+} from "./mapping";
 
 const DZ = 0.2; // the game's default controller deadzone
 const keys = (...codes: string[]): InputSnapshot => ({ keys: new Set(codes), mouseButtons: new Set(), gamepad: null });
@@ -13,8 +24,7 @@ function pad(axes: number[], pressed: Record<number, number> = {}): InputSnapsho
   return { keys: new Set(), mouseButtons: new Set(), gamepad: { axes, buttons } };
 }
 
-const controls = (input: InputSnapshot, bindings: Bindings = DEFAULT_BINDINGS, deadzone = DZ) =>
-  readControls(input, bindings, deadzone);
+const controls = (input: InputSnapshot, bindings: Bindings = DEFAULT_BINDINGS, deadzone = DZ) => readControls(input, bindings, deadzone);
 
 describe("default keyboard and mouse (the live game's Modern preset)", () => {
   it("W drives forward and pitches the nose down", () => {
@@ -269,7 +279,6 @@ describe("the controller default: the left trigger is reverse and air roll (the 
   });
 });
 
-
 describe("inputs between frames (notes/client-loop-timing.md LT-4..6)", () => {
   /** A frame's snapshot: held keys, and keys pressed and let go since the last one */
   const frame = (held: string[], pressed: string[] = [], released: string[] = []): InputSnapshot => ({
@@ -341,10 +350,14 @@ describe("events in the order they came (RV-3)", () => {
   it("hold Space, then in one frame press the left mouse (the alternative jump) and let go of Space: jump released", () => {
     const latch = new ButtonLatch();
     expect(readControls(frame(["Space"], [], [{ kind: "key", code: "Space", down: true }]), DEFAULT_BINDINGS, DZ, latch).jump).toBe(true);
-    const next = frame([], [0], [
-      { kind: "mouse", button: 0, down: true },
-      { kind: "key", code: "Space", down: false },
-    ]);
+    const next = frame(
+      [],
+      [0],
+      [
+        { kind: "mouse", button: 0, down: true },
+        { kind: "key", code: "Space", down: false },
+      ],
+    );
     expect(readControls(next, DEFAULT_BINDINGS, DZ, latch).jump).toBe(false);
     expect(readControls(frame([], [0], []), DEFAULT_BINDINGS, DZ, latch).jump).toBe(false);
   });
@@ -352,10 +365,14 @@ describe("events in the order they came (RV-3)", () => {
   it("the other way round (let go of Space, then press the left mouse): jump held", () => {
     const latch = new ButtonLatch();
     readControls(frame(["Space"], [], [{ kind: "key", code: "Space", down: true }]), DEFAULT_BINDINGS, DZ, latch);
-    const next = frame([], [0], [
-      { kind: "key", code: "Space", down: false },
-      { kind: "mouse", button: 0, down: true },
-    ]);
+    const next = frame(
+      [],
+      [0],
+      [
+        { kind: "key", code: "Space", down: false },
+        { kind: "mouse", button: 0, down: true },
+      ],
+    );
     expect(readControls(next, DEFAULT_BINDINGS, DZ, latch).jump).toBe(true);
     expect(readControls(frame([], [0], []), DEFAULT_BINDINGS, DZ, latch).jump).toBe(true);
   });

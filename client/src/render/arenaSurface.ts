@@ -11,8 +11,14 @@ export const BACK_Y = 5120;
 const R_SIDE_FLOOR = 256;
 export const R_CEIL = 512;
 const R_BACK_FLOOR = 160;
-export const CORNER_SIDE: readonly [Pt, Pt] = [[SIDE_X, 3584], [3840.471, 4223.529]];
-export const CORNER_BACK: readonly [Pt, Pt] = [[3200, 4864], [2560, BACK_Y]];
+export const CORNER_SIDE: readonly [Pt, Pt] = [
+  [SIDE_X, 3584],
+  [3840.471, 4223.529],
+];
+export const CORNER_BACK: readonly [Pt, Pt] = [
+  [3200, 4864],
+  [2560, BACK_Y],
+];
 export const CORNER_ARM = 245.85;
 const CORNER_BACK_FLOOR_R = [256.0, 251.668, 240.628, 225.399, 208.13, 190.816, 175.483, 164.355, 160.0];
 const BACK_TAPER: Pt = [960, 1344];
@@ -436,8 +442,7 @@ export function foldInward(
     let meet: Pt | null = null;
     if (from && to && before && curve) {
       // (which side of the column before the curve a point is on)
-      const side = (q: Pt): number =>
-        (from[0] - before.p[0]) * (q[1] - before.p[1]) - (from[1] - before.p[1]) * (q[0] - before.p[0]);
+      const side = (q: Pt): number => (from[0] - before.p[0]) * (q[1] - before.p[1]) - (from[1] - before.p[1]) * (q[0] - before.p[0]);
       meet = side(to) * side(curve.p) > 0 ? to : from;
     }
     for (let k = i; k < j; k++) {

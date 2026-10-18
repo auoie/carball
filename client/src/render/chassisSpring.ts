@@ -50,16 +50,18 @@ const RAD_PER_UNIT = Math.PI / 32768;
 const add = (a: Vec3, b: Vec3): Vec3 => vec3(a.x + b.x, a.y + b.y, a.z + b.z);
 const sub = (a: Vec3, b: Vec3): Vec3 => vec3(a.x - b.x, a.y - b.y, a.z - b.z);
 /** A world vector in the car's axes, and back */
-const toLocal = (r: Rot3, v: Vec3): Vec3 => vec3(
-  v.x * r.forward.x + v.y * r.forward.y + v.z * r.forward.z,
-  v.x * r.right.x + v.y * r.right.y + v.z * r.right.z,
-  v.x * r.up.x + v.y * r.up.y + v.z * r.up.z,
-);
-const toWorld = (r: Rot3, v: Vec3): Vec3 => vec3(
-  r.forward.x * v.x + r.right.x * v.y + r.up.x * v.z,
-  r.forward.y * v.x + r.right.y * v.y + r.up.y * v.z,
-  r.forward.z * v.x + r.right.z * v.y + r.up.z * v.z,
-);
+const toLocal = (r: Rot3, v: Vec3): Vec3 =>
+  vec3(
+    v.x * r.forward.x + v.y * r.forward.y + v.z * r.forward.z,
+    v.x * r.right.x + v.y * r.right.y + v.z * r.right.z,
+    v.x * r.up.x + v.y * r.up.y + v.z * r.up.z,
+  );
+const toWorld = (r: Rot3, v: Vec3): Vec3 =>
+  vec3(
+    r.forward.x * v.x + r.right.x * v.y + r.up.x * v.z,
+    r.forward.y * v.x + r.right.y * v.y + r.up.y * v.z,
+    r.forward.z * v.x + r.right.z * v.y + r.up.z * v.z,
+  );
 
 export class ChassisSpring {
   readonly #spec: SpringSpec;

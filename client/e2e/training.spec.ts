@@ -30,7 +30,8 @@ const PACK = {
   shots: [shot(2, [1500, 0, 900], 0, [0, -2000, 17]), shot(20, [0, 4300, 93], 0, [0, 3900, 17])],
 };
 
-const state = (page: Page): Promise<TrainingState | null> => page.evaluate(() => (window as unknown as { carballFreeplay: { training: () => TrainingState | null } }).carballFreeplay.training());
+const state = (page: Page): Promise<TrainingState | null> =>
+  page.evaluate(() => (window as unknown as { carballFreeplay: { training: () => TrainingState | null } }).carballFreeplay.training());
 
 async function start(page: Page): Promise<void> {
   await page.goto("/?render=off");

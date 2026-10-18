@@ -141,7 +141,8 @@ export class TrainingEditor {
     this.#root.hidden = true;
     host.append(this.#root);
     this.#fly = new FlyEditor(host, canvas, {
-      pack: () => this.pack ?? { id: "none", name: "", type: "striker", difficulty: "easy", tags: [], description: "", creator: "", shots: [defaultShot("striker")] },
+      pack: () =>
+        this.pack ?? { id: "none", name: "", type: "striker", difficulty: "easy", tags: [], description: "", creator: "", shots: [defaultShot("striker")] },
       index: () => this.#shot,
       select: (index) => {
         this.#shot = Math.min(Math.max(0, index), this.#shots.length - 1);
@@ -320,16 +321,21 @@ export class TrainingEditor {
       return;
     }
     const T = EDITOR_TEXT;
-    this.#actions.choose(T.saveAndExit, T.saveAndExitBody, [
-      {
-        label: T.yes,
-        act: () => {
-          if (this.#save()) leave();
+    this.#actions.choose(
+      T.saveAndExit,
+      T.saveAndExitBody,
+      [
+        {
+          label: T.yes,
+          act: () => {
+            if (this.#save()) leave();
+          },
         },
-      },
-      { label: T.no, act: leave },
-      { label: T.cancel },
-    ], 2);
+        { label: T.no, act: leave },
+        { label: T.cancel },
+      ],
+      2,
+    );
   }
 
   /** Saved (the name 3 characters at least, else the game's refusal); whether it was */
@@ -391,9 +397,18 @@ export class TrainingEditor {
     const c = shot.car.location;
     const target = vec3((b.x + c.x) / 2, (b.y + c.y) / 2, Math.max(100, (b.z + c.z) / 2));
     const { yaw, pitch, distance } = this.#orbit;
-    const eye = vec3(target.x + distance * Math.cos(pitch) * Math.cos(yaw), target.y + distance * Math.cos(pitch) * Math.sin(yaw), target.z + distance * Math.sin(pitch));
+    const eye = vec3(
+      target.x + distance * Math.cos(pitch) * Math.cos(yaw),
+      target.y + distance * Math.cos(pitch) * Math.sin(yaw),
+      target.z + distance * Math.sin(pitch),
+    );
     const d = Math.hypot(target.x - eye.x, target.y - eye.y, target.z - eye.z) || 1;
-    this.#actions.camera({ position: eye, forward: vec3((target.x - eye.x) / d, (target.y - eye.y) / d, (target.z - eye.z) / d), up: vec3(0, 0, 1), horizontalFov: 90 });
+    this.#actions.camera({
+      position: eye,
+      forward: vec3((target.x - eye.x) / d, (target.y - eye.y) / d, (target.z - eye.z) / d),
+      up: vec3(0, 0, 1),
+      horizontalFov: 90,
+    });
   }
 
   /** A click on the field: the ball (at its height) or the car (on the floor) placed where the ray meets it */
@@ -409,7 +424,9 @@ export class TrainingEditor {
     const px = Math.max(-(PACK_LIMITS.halfX - reach), Math.min(PACK_LIMITS.halfX - reach, origin.x + dir.x * t));
     const py = Math.max(-(5120 - reach), Math.min(5120 - reach, origin.y + dir.y * t));
     this.#edit((s) =>
-      this.#placing === "ball" ? { ...s, ball: { ...s.ball, location: vec3(px, py, s.ball.location.z) } } : { ...s, car: { ...s.car, location: vec3(px, py, s.car.location.z) } },
+      this.#placing === "ball"
+        ? { ...s, ball: { ...s.ball, location: vec3(px, py, s.ball.location.z) } }
+        : { ...s, car: { ...s.car, location: vec3(px, py, s.car.location.z) } },
     );
   }
 
@@ -444,16 +461,29 @@ export class TrainingEditor {
       d.append(...items);
       return d;
     };
-    const number = (label: string, value: number, min: number, max: number, step: number, unit: string, set: (v: number) => void, key: string): HTMLDivElement =>
+    const number = (
+      label: string,
+      value: number,
+      min: number,
+      max: number,
+      step: number,
+      unit: string,
+      set: (v: number) => void,
+      key: string,
+    ): HTMLDivElement =>
       slider({ label, min, max, step, value, format: (v) => `${String(Math.round(v * 100) / 100)}${unit}`, data: { editor: key }, onChange: set });
     const heading = document.createElement("div");
     heading.className = "editor-title";
     heading.textContent = T.title;
     // (the modes: the panel, or the free camera)
     const mode = (label: string, to: EditorMode): HTMLButtonElement => {
-      const b = button(label, () => {
-        if (to !== this.#mode) this.#setMode(to);
-      }, "editor-mode");
+      const b = button(
+        label,
+        () => {
+          if (to !== this.#mode) this.#setMode(to);
+        },
+        "editor-mode",
+      );
       b.setAttribute("aria-pressed", String(to === this.#mode));
       return b;
     };
@@ -494,11 +524,15 @@ export class TrainingEditor {
     tags.className = "editor-tags";
     for (const tag of TRAINING_TAGS) {
       const on = pack.tags.includes(tag);
-      const t = button(tag.replace(/([a-z])([A-Z])/g, "$1 $2"), () => {
-        pack.tags = on ? pack.tags.filter((x) => x !== tag) : [...pack.tags, tag];
-        this.#edited();
-        this.#render();
-      }, "editor-tag");
+      const t = button(
+        tag.replace(/([a-z])([A-Z])/g, "$1 $2"),
+        () => {
+          pack.tags = on ? pack.tags.filter((x) => x !== tag) : [...pack.tags, tag];
+          this.#edited();
+          this.#render();
+        },
+        "editor-tag",
+      );
       t.setAttribute("aria-pressed", String(on));
       // (4 at most, as the game's)
       t.disabled = !on && pack.tags.length >= EDITOR_LIMITS.tags;
@@ -507,10 +541,14 @@ export class TrainingEditor {
     const shots = document.createElement("div");
     shots.className = "editor-shots";
     this.#shots.forEach((_, i) => {
-      const b = button(String(i + 1), () => {
-        this.#shot = i;
-        this.#changed(false);
-      }, "editor-shot");
+      const b = button(
+        String(i + 1),
+        () => {
+          this.#shot = i;
+          this.#changed(false);
+        },
+        "editor-shot",
+      );
       b.setAttribute("aria-pressed", String(i === this.#shot));
       shots.append(b);
     });
@@ -539,15 +577,23 @@ export class TrainingEditor {
       this.#shot = to;
       this.#changed();
     };
-    const earlier = button(T.earlier, () => { move(-1); });
+    const earlier = button(T.earlier, () => {
+      move(-1);
+    });
     earlier.disabled = this.#shot === 0;
-    const later = button(T.later, () => { move(1); });
+    const later = button(T.later, () => {
+      move(1);
+    });
     later.disabled = this.#shot === this.#shots.length - 1;
     const place = (what: "ball" | "car", label: string): HTMLButtonElement => {
-      const b = button(label, () => {
-        this.#placing = what;
-        this.#render();
-      }, "editor-place");
+      const b = button(
+        label,
+        () => {
+          this.#placing = what;
+          this.#render();
+        },
+        "editor-place",
+      );
       b.setAttribute("aria-pressed", String(this.#placing === what));
       return b;
     };
@@ -555,7 +601,10 @@ export class TrainingEditor {
     const c = shot.car;
     // (the sliders span the clamps, each change kept within them: the goal's inside for the ball, RV-594)
     const ballAt = (v: Partial<Record<"x" | "y" | "z", number>>): void => {
-      this.#edit((s) => ({ ...s, ball: { ...s.ball, location: clampTo("ball", vec3(v.x ?? s.ball.location.x, v.y ?? s.ball.location.y, v.z ?? s.ball.location.z)) } }));
+      this.#edit((s) => ({
+        ...s,
+        ball: { ...s.ball, location: clampTo("ball", vec3(v.x ?? s.ball.location.x, v.y ?? s.ball.location.y, v.z ?? s.ball.location.z)) },
+      }));
     };
     const carAt = (v: Partial<Record<"x" | "y", number>>): void => {
       this.#edit((s) => ({ ...s, car: { ...s.car, location: clampTo("car", vec3(v.x ?? s.car.location.x, v.y ?? s.car.location.y, s.car.location.z)) } }));
@@ -592,47 +641,187 @@ export class TrainingEditor {
       section(T.place),
       row(place("ball", T.ball), place("car", T.car)),
       section(T.ball),
-      number(T.x, b.location.x, -CLAMPS.ball.x, CLAMPS.ball.x, 10, "", (v) => { ballAt({ x: v }); }, "ballX"),
-      number(T.y, b.location.y, -GOAL_BACK, GOAL_BACK, 10, "", (v) => { ballAt({ y: v }); }, "ballY"),
-      number(T.height, b.location.z, CLAMPS.ball.zMin, CLAMPS.ball.zMax, 10, "", (v) => { ballAt({ z: v }); }, "ballZ"),
-      number(T.pitch, (b.launch.pitch / 16384) * 90, -90, 90, 1, "°", (v) => { this.#edit((s) => ({ ...s, ball: { ...s.ball, launch: { ...s.ball.launch, pitch: Math.round((v * 16384) / 90) } } })); }, "pitch"),
-      number(T.yaw, wrapYaw(b.launch.yaw) / UNITS, 0, 359, 1, "°", (v) => { this.#edit((s) => ({ ...s, ball: { ...s.ball, launch: { ...s.ball.launch, yaw: wrapYaw(Math.round(v * UNITS)) } } })); }, "yaw"),
-      number(T.speed, b.speed, 0, PACK_LIMITS.ballSpeed, 50, "", (v) => { this.#edit((s) => ({ ...s, ball: { ...s.ball, speed: v } })); }, "speed"),
+      number(
+        T.x,
+        b.location.x,
+        -CLAMPS.ball.x,
+        CLAMPS.ball.x,
+        10,
+        "",
+        (v) => {
+          ballAt({ x: v });
+        },
+        "ballX",
+      ),
+      number(
+        T.y,
+        b.location.y,
+        -GOAL_BACK,
+        GOAL_BACK,
+        10,
+        "",
+        (v) => {
+          ballAt({ y: v });
+        },
+        "ballY",
+      ),
+      number(
+        T.height,
+        b.location.z,
+        CLAMPS.ball.zMin,
+        CLAMPS.ball.zMax,
+        10,
+        "",
+        (v) => {
+          ballAt({ z: v });
+        },
+        "ballZ",
+      ),
+      number(
+        T.pitch,
+        (b.launch.pitch / 16384) * 90,
+        -90,
+        90,
+        1,
+        "°",
+        (v) => {
+          this.#edit((s) => ({ ...s, ball: { ...s.ball, launch: { ...s.ball.launch, pitch: Math.round((v * 16384) / 90) } } }));
+        },
+        "pitch",
+      ),
+      number(
+        T.yaw,
+        wrapYaw(b.launch.yaw) / UNITS,
+        0,
+        359,
+        1,
+        "°",
+        (v) => {
+          this.#edit((s) => ({ ...s, ball: { ...s.ball, launch: { ...s.ball.launch, yaw: wrapYaw(Math.round(v * UNITS)) } } }));
+        },
+        "yaw",
+      ),
+      number(
+        T.speed,
+        b.speed,
+        0,
+        PACK_LIMITS.ballSpeed,
+        50,
+        "",
+        (v) => {
+          this.#edit((s) => ({ ...s, ball: { ...s.ball, speed: v } }));
+        },
+        "speed",
+      ),
       section(T.car),
-      number(T.x, c.location.x, -CLAMPS.car.x, CLAMPS.car.x, 10, "", (v) => { carAt({ x: v }); }, "carX"),
-      number(T.y, c.location.y, -CLAMPS.car.y, CLAMPS.car.y, 10, "", (v) => { carAt({ y: v }); }, "carY"),
-      number(T.carYaw, wrapYaw(c.rotation.yaw) / UNITS, 0, 359, 1, "°", (v) => { this.#edit((s) => ({ ...s, car: { ...s.car, rotation: { ...s.car.rotation, yaw: wrapYaw(Math.round(v * UNITS)) } } })); }, "carYaw"),
-      number(T.startSpeed, c.startSpeed, 0, PACK_LIMITS.carSpeed, 50, "", (v) => { this.#edit((s) => ({ ...s, car: { ...s.car, startSpeed: v } })); }, "startSpeed"),
-      number(T.timeLimit, shot.timeLimit, 1, PACK_LIMITS.timeLimit, 1, " s", (v) => { this.#edit((s) => ({ ...s, timeLimit: v })); }, "timeLimit"),
+      number(
+        T.x,
+        c.location.x,
+        -CLAMPS.car.x,
+        CLAMPS.car.x,
+        10,
+        "",
+        (v) => {
+          carAt({ x: v });
+        },
+        "carX",
+      ),
+      number(
+        T.y,
+        c.location.y,
+        -CLAMPS.car.y,
+        CLAMPS.car.y,
+        10,
+        "",
+        (v) => {
+          carAt({ y: v });
+        },
+        "carY",
+      ),
+      number(
+        T.carYaw,
+        wrapYaw(c.rotation.yaw) / UNITS,
+        0,
+        359,
+        1,
+        "°",
+        (v) => {
+          this.#edit((s) => ({ ...s, car: { ...s.car, rotation: { ...s.car.rotation, yaw: wrapYaw(Math.round(v * UNITS)) } } }));
+        },
+        "carYaw",
+      ),
+      number(
+        T.startSpeed,
+        c.startSpeed,
+        0,
+        PACK_LIMITS.carSpeed,
+        50,
+        "",
+        (v) => {
+          this.#edit((s) => ({ ...s, car: { ...s.car, startSpeed: v } }));
+        },
+        "startSpeed",
+      ),
+      number(
+        T.timeLimit,
+        shot.timeLimit,
+        1,
+        PACK_LIMITS.timeLimit,
+        1,
+        " s",
+        (v) => {
+          this.#edit((s) => ({ ...s, timeLimit: v }));
+        },
+        "timeLimit",
+      ),
       row(
-        button(T.playtest, () => {
-          const p = this.pack;
-          if (p) this.#actions.playtest(p, this.#shot);
-        }, "editor-primary"),
+        button(
+          T.playtest,
+          () => {
+            const p = this.pack;
+            if (p) this.#actions.playtest(p, this.#shot);
+          },
+          "editor-primary",
+        ),
         button(T.save, () => {
           this.#save();
         }),
       ),
       row(
-        button(T.exportPack, () => { this.#export(); }),
-        button(T.importPack, () => { file.click(); }),
-        button(T.exit, () => { this.escape(); }),
+        button(T.exportPack, () => {
+          this.#export();
+        }),
+        button(T.importPack, () => {
+          file.click();
+        }),
+        button(T.exit, () => {
+          this.escape();
+        }),
       ),
       row(
-        button(T.deleteSequence, () => {
-          const id = pack.id;
-          this.#actions.choose(T.deleteTitle, T.deleteBody, [
-            {
-              label: T.confirmDelete,
-              act: () => {
-                deletePack(id);
-                this.close();
-                this.#actions.exit();
-              },
-            },
-            { label: T.cancel },
-          ], 1);
-        }, "editor-delete"),
+        button(
+          T.deleteSequence,
+          () => {
+            const id = pack.id;
+            this.#actions.choose(
+              T.deleteTitle,
+              T.deleteBody,
+              [
+                {
+                  label: T.confirmDelete,
+                  act: () => {
+                    deletePack(id);
+                    this.close();
+                    this.#actions.exit();
+                  },
+                },
+                { label: T.cancel },
+              ],
+              1,
+            );
+          },
+          "editor-delete",
+        ),
       ),
       status,
       hint,

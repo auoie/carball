@@ -44,9 +44,15 @@ describe("the colour remap (PP-5, §5.6)", () => {
   it("has the spec's 16 nodes, red and green, and blue's", () => {
     const rg = [0, 0.03954, 0.09737, 0.16494, 0.23974, 0.32042, 0.40613, 0.49624, 0.59031, 0.68799, 0.78898, 0.89305, 1, 1, 1, 1];
     const b = [0.0007, 0.04187, 0.10022, 0.16816, 0.24325, 0.32418, 0.41009, 0.50039, 0.59463, 0.69246, 0.7936, 0.8978, 1, 1, 1, 1];
-    remapNodes(0).forEach((v, i) => { expect(v).toBeCloseTo(rg[i] ?? 0, 4); });
-    remapNodes(1).forEach((v, i) => { expect(v).toBeCloseTo(rg[i] ?? 0, 4); });
-    remapNodes(2).forEach((v, i) => { expect(v).toBeCloseTo(b[i] ?? 0, 4); });
+    remapNodes(0).forEach((v, i) => {
+      expect(v).toBeCloseTo(rg[i] ?? 0, 4);
+    });
+    remapNodes(1).forEach((v, i) => {
+      expect(v).toBeCloseTo(rg[i] ?? 0, 4);
+    });
+    remapNodes(2).forEach((v, i) => {
+      expect(v).toBeCloseTo(b[i] ?? 0, 4);
+    });
   });
 
   it("the full display mapping as the table's float LUT columns: grey 0.18 at 0.4879 (blue 0.4921), white from linear 0.774", () => {
@@ -76,7 +82,11 @@ describe("the colour remap (PP-5, §5.6)", () => {
 
   it("the sample colours (0-255): grey (124, 124, 125), orange (255, 153, 24), blue (23, 133, 255)", () => {
     const bytes = (rgb: [number, number, number]): number[] => display(rgb).map((v) => Math.round(v * 255));
-    const near = (got: number[], want: number[]): void => { got.forEach((v, i) => { expect(Math.abs(v - (want[i] ?? 0))).toBeLessThanOrEqual(1); }); };
+    const near = (got: number[], want: number[]): void => {
+      got.forEach((v, i) => {
+        expect(Math.abs(v - (want[i] ?? 0))).toBeLessThanOrEqual(1);
+      });
+    };
     near(bytes([0.18, 0.18, 0.18]), [124, 124, 125]);
     near(bytes([1, 0.25, 0.02]), [255, 153, 24]);
     near(bytes([0.02, 0.2, 1]), [23, 133, 255]);
@@ -86,15 +96,21 @@ describe("the colour remap (PP-5, §5.6)", () => {
 describe("the bloom and depth of field's rules (PP-7..10)", () => {
   it("the bloom's sizes 8, 64, 128 and weights 0.0833, 0.25, 0.6667", () => {
     expect(BLOOM.sizes).toEqual([8, 64, 128]);
-    BLOOM.weights.forEach((w, i) => { expect(w).toBeCloseTo([1 / 12, 0.25, 2 / 3][i] ?? 0, 9); });
+    BLOOM.weights.forEach((w, i) => {
+      expect(w).toBeCloseTo([1 / 12, 0.25, 2 / 3][i] ?? 0, 9);
+    });
   });
 
   it("the Gaussian's taps as the game's (§5.4): at 1920 the small blur's (r 4.5, K 5)", () => {
     const { offsets, weights } = gaussTaps(4.5);
     const want = { offsets: [-4.2689, -2.3646, -0.4723, 1.4174, 3.3148, 5.0], weights: [0.04387, 0.19147, 0.35954, 0.29145, 0.10187, 0.0118] };
     expect(offsets).toHaveLength(6);
-    offsets.forEach((o, i) => { expect(o).toBeCloseTo(want.offsets[i] ?? 0, 3); });
-    weights.forEach((w, i) => { expect(w).toBeCloseTo(want.weights[i] ?? 0, 4); });
+    offsets.forEach((o, i) => {
+      expect(o).toBeCloseTo(want.offsets[i] ?? 0, 3);
+    });
+    weights.forEach((w, i) => {
+      expect(w).toBeCloseTo(want.weights[i] ?? 0, 4);
+    });
     expect(gaussTaps(0.1).offsets).toEqual([]);
     // (clamped to 15: K never past it)
     expect(Math.max(...gaussTaps(100).offsets.map(Math.abs))).toBeLessThanOrEqual(15);

@@ -243,7 +243,10 @@ describe("the menus' repeats (MENU-12)", () => {
       menu.controls = column("b", 40);
       const { nav } = harness(() => menu);
       nav.frame(pad(), 0);
-      expect(run(nav, menu, () => pad([BTN.down]), 1, 1, hz), `${String(hz)} Hz`).toEqual(repeats(1, hz, 1, 0.2, 0.1));
+      expect(
+        run(nav, menu, () => pad([BTN.down]), 1, 1, hz),
+        `${String(hz)} Hz`,
+      ).toEqual(repeats(1, hz, 1, 0.2, 0.1));
     }
   });
 
@@ -264,7 +267,10 @@ describe("the menus' repeats (MENU-12)", () => {
   it("the stick's direction the first axis to reach 0.8's till it falls back; a flick a release, then the press", () => {
     // (rows of three: left and right along a row, up and down between them)
     const menu = new Menu("m");
-    menu.controls = Array.from({ length: 30 }, (_, i) => new Control(`g${String(Math.floor(i / 3))}.${String(i % 3)}`, box(130 * (i % 3), 40 * Math.floor(i / 3))));
+    menu.controls = Array.from(
+      { length: 30 },
+      (_, i) => new Control(`g${String(Math.floor(i / 3))}.${String(i % 3)}`, box(130 * (i % 3), 40 * Math.floor(i / 3))),
+    );
     const { nav } = harness(() => menu);
     nav.frame(pad(), 0);
     nav.frame(pad([], [0.85, 0]), 0.1);
@@ -296,7 +302,10 @@ describe("the menus' buttons (MENU-13)", () => {
     const menu = new Menu("m");
     menu.controls = column("b", 3);
     let top = false;
-    const { nav, sounds, backs } = harness(() => menu, () => !top);
+    const { nav, sounds, backs } = harness(
+      () => menu,
+      () => !top,
+    );
     nav.frame(pad(), 0);
     for (let k = 1; k <= 30; k++) nav.frame(pad([BTN.a]), k / 60);
     expect(menu.controls[0]?.clicks).toBe(0);
@@ -412,7 +421,9 @@ describe("the pad's Y over the search (MM-10, RV-529)", () => {
 describe("the menus' focus (MENU-15)", () => {
   it("no wrap: not up and down, not along a row, not in a radio group (RV-477); silent at the ends", () => {
     const menu = new Menu("main-menu");
-    const radios = ["1v1", "2v2", "3v3"].map((name, i) => new Control(name, box(130 * i, 40), { role: "radio", "aria-checked": i === 0 ? "true" : "false" }, ["[data-pad-choose]"]));
+    const radios = ["1v1", "2v2", "3v3"].map(
+      (name, i) => new Control(name, box(130 * i, 40), { role: "radio", "aria-checked": i === 0 ? "true" : "false" }, ["[data-pad-choose]"]),
+    );
     menu.controls = [new Control("free", box(0, 0)), ...radios, new Control("find", box(0, 80))];
     const { nav, sounds } = harness(() => menu);
     const tap = tapper(nav);
@@ -622,4 +633,3 @@ describe("a click's cue (MENU-18, RV-501)", () => {
     expect(clickCue(null)).toBe("select");
   });
 });
-

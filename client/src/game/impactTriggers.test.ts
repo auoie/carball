@@ -14,7 +14,15 @@ const CONFIG: CarConfig = {
 };
 const UP = vec3(0, 0, 1);
 
-const impact = (tick: number, car: number, partner: Impact["partner"], speed: number, partnerId = 0): Impact => ({ tick, car, partner, partnerId, speed, pos: vec3(0, 0, 0), normal: UP });
+const impact = (tick: number, car: number, partner: Impact["partner"], speed: number, partnerId = 0): Impact => ({
+  tick,
+  car,
+  partner,
+  partnerId,
+  speed,
+  pos: vec3(0, 0, 0),
+  normal: UP,
+});
 const kinds = (out: readonly Trigger[]): string[] => out.map((t) => t.kind);
 
 describe("the impact triggers (IT-1..4)", () => {
@@ -29,7 +37,12 @@ describe("the impact triggers (IT-1..4)", () => {
     const t = new ImpactTriggers();
     expect(kinds(t.frame(0.01, [impact(1, 7, "world", 1000)], new Map(), new Map(), 7))).toEqual(["shake", "sparks", "carImpact"]);
     const u = new ImpactTriggers();
-    expect(kinds(u.frame(0.01, [impact(1, 7, "world", 150), impact(1, 8, "world", 1000)], new Map(), new Map(), 7))).toEqual(["sparks", "carImpact", "sparks", "carImpact"]);
+    expect(kinds(u.frame(0.01, [impact(1, 7, "world", 150), impact(1, 8, "world", 1000)], new Map(), new Map(), 7))).toEqual([
+      "sparks",
+      "carImpact",
+      "sparks",
+      "carImpact",
+    ]);
     expect(kinds(new ImpactTriggers().frame(0.01, [impact(1, 7, "world", 40)], new Map(), new Map(), 7))).toEqual([]);
   });
 
@@ -37,7 +50,12 @@ describe("the impact triggers (IT-1..4)", () => {
     const t = new ImpactTriggers();
     t.frame(0.01, [impact(1, 7, "world", 1000)], new Map(), new Map(), 7);
     // (0.1 s later: the world slot still cooling, the actor slot free; the shake restarts regardless)
-    expect(kinds(t.frame(0.1, [impact(13, 7, "world", 1000), impact(13, 7, "car", 1000, 3)], new Map(), new Map(), 7))).toEqual(["shake", "shake", "sparks", "carImpact"]);
+    expect(kinds(t.frame(0.1, [impact(13, 7, "world", 1000), impact(13, 7, "car", 1000, 3)], new Map(), new Map(), 7))).toEqual([
+      "shake",
+      "shake",
+      "sparks",
+      "carImpact",
+    ]);
     expect(kinds(t.frame(0.06, [impact(20, 7, "world", 1000)], new Map(), new Map(), 7))).toEqual(["shake", "sparks", "carImpact"]);
   });
 
@@ -47,7 +65,11 @@ describe("the impact triggers (IT-1..4)", () => {
     // (another car on the ball 0.05 s later: its sparks, the ball still cooling)
     expect(kinds(t.frame(0.05, [impact(7, 8, "ball", 800)], new Map(), new Map(), null))).toEqual(["sparks"]);
     const u = new ImpactTriggers();
-    expect(kinds(u.frame(0.01, [impact(1, 3, "car", 900, 5), impact(1, 5, "car", 900, 3)], new Map(), new Map(), null))).toEqual(["sparks", "sparks", "carImpact"]);
+    expect(kinds(u.frame(0.01, [impact(1, 3, "car", 900, 5), impact(1, 5, "car", 900, 3)], new Map(), new Map(), null))).toEqual([
+      "sparks",
+      "sparks",
+      "carImpact",
+    ]);
   });
 
   it("the ball's own off the arena (RV-172): Impact_Ball from 50 uu/s on its world slot (0.15 s), its car slot apart; a bounce sound", () => {
@@ -59,8 +81,12 @@ describe("the impact triggers (IT-1..4)", () => {
     expect(kinds(t.frame(0.06, [own(20, 40)], new Map(), new Map(), null))).toEqual([]);
     expect(kinds(t.frame(0.01, [own(21, 600)], new Map(), new Map(), null))).toEqual(["ballImpact"]);
     // (a bounce full at 1200, its base curve; a car's hit at 1300, the Car material's: RV-205)
-    expect(triggerSounds([{ kind: "ballImpact", at: vec3(0, 0, 0), speed: 600, partner: "world" }])).toEqual([{ kind: "ballBounce", at: vec3(0, 0, 0), strength: 0.5 }]);
-    expect(triggerSounds([{ kind: "ballImpact", at: vec3(0, 0, 0), speed: 650, partner: "car" }])).toEqual([{ kind: "ballHit", at: vec3(0, 0, 0), strength: 0.5 }]);
+    expect(triggerSounds([{ kind: "ballImpact", at: vec3(0, 0, 0), speed: 600, partner: "world" }])).toEqual([
+      { kind: "ballBounce", at: vec3(0, 0, 0), strength: 0.5 },
+    ]);
+    expect(triggerSounds([{ kind: "ballImpact", at: vec3(0, 0, 0), speed: 650, partner: "car" }])).toEqual([
+      { kind: "ballHit", at: vec3(0, 0, 0), strength: 0.5 },
+    ]);
   });
 
   it("skips ticks already handled (a prediction's re-simulation)", () => {

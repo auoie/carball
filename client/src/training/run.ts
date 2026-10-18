@@ -49,7 +49,7 @@ export function movingTowardGoal(pos: Vec3, vel: Vec3, goalSign: 1 | -1): boolea
 /** The pack's order shuffled (ArrayFuncs.ShuffleArray: Fisher-Yates from the end, j = Rand(i)) */
 export function shuffled(order: readonly number[], random: () => number): number[] {
   const a = [...order];
-  for (let i = a.length; i > 0; ) {
+  for (let i = a.length; i > 0;) {
     const j = Math.floor(random() * i);
     i -= 1;
     [a[i], a[j]] = [a[j] ?? 0, a[i] ?? 0];

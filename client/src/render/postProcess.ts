@@ -363,7 +363,13 @@ export class PostProcess {
     composite: this.#material(halfCompositeFragment, { tHalf: null, tDof: null }),
     gather: this.#material(bloomGatherFragment, { tHalf: null, halfTexel: new Vector2() }),
     box: this.#material(boxFragment, { tSource: null, texel: new Vector2() }),
-    blur: this.#material(blurFragment, { tSource: null, direction: new Vector2(), offsets: new Array<number>(16).fill(0), weights: new Array<number>(16).fill(0), count: 0 }),
+    blur: this.#material(blurFragment, {
+      tSource: null,
+      direction: new Vector2(),
+      offsets: new Array<number>(16).fill(0),
+      weights: new Array<number>(16).fill(0),
+      count: 0,
+    }),
     combine: this.#material(bloomCombineFragment, { tSmall: null, tMedium: null, tLarge: null }),
     blend: this.#material(blendFragment, {
       tScene: null,
@@ -489,7 +495,11 @@ export class PostProcess {
     gl.autoClear = false;
     const radii = blurRadii(t.width);
     // The half-res scene with its depth; the depth of field's layer
-    this.#pass(this.#materials.downsample, { tColor: t.scene.texture, tDepth: t.scene.depthTexture, texel: new Vector2(1 / t.width, 1 / t.height), cameraNear: camera.near, cameraFar: camera.far }, t.half);
+    this.#pass(
+      this.#materials.downsample,
+      { tColor: t.scene.texture, tDepth: t.scene.depthTexture, texel: new Vector2(1 / t.width, 1 / t.height), cameraNear: camera.near, cameraFar: camera.far },
+      t.half,
+    );
     let layer: Texture = t.half.texture;
     if (options.depthOfField) {
       this.#pass(this.#materials.dofGather, { tHalf: t.half.texture, texel: new Vector2(1 / t.half.width, 1 / t.half.height) }, t.dof[0]);

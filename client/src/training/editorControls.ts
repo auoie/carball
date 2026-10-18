@@ -135,7 +135,11 @@ export function lookPose(pose: Pose, yaw: number, pitch: number): Pose {
 export function editBall(shot: Shot, move: Vec3, yaw: number, pitch: number): Shot {
   const b = shot.ball;
   const at = clampTo("ball", vec3(b.location.x + move.x, b.location.y + move.y, b.location.z + move.z));
-  const launch = { ...b.launch, yaw: wrapYaw(b.launch.yaw + yaw * UNITS_PER_RAD), pitch: Math.round(clamp(b.launch.pitch + pitch * UNITS_PER_RAD, -PACK_LIMITS.pitch, PACK_LIMITS.pitch)) };
+  const launch = {
+    ...b.launch,
+    yaw: wrapYaw(b.launch.yaw + yaw * UNITS_PER_RAD),
+    pitch: Math.round(clamp(b.launch.pitch + pitch * UNITS_PER_RAD, -PACK_LIMITS.pitch, PACK_LIMITS.pitch)),
+  };
   return { ...shot, ball: { ...b, location: at, launch } };
 }
 
@@ -151,7 +155,8 @@ export function editCar(shot: Shot, move: Vec3, yaw: number, pitch: number, pitc
 /** The selection's speed `steps` steps of 50 on (the ball's 0-6000, the car's start 0-2300) */
 export function stepSpeed(shot: Shot, selection: Selection, steps: number): Shot {
   if (selection === "ball") return { ...shot, ball: { ...shot.ball, speed: clamp(shot.ball.speed + steps * EDITOR_STEPS.speed, 0, PACK_LIMITS.ballSpeed) } };
-  if (selection === "car") return { ...shot, car: { ...shot.car, startSpeed: clamp(shot.car.startSpeed + steps * EDITOR_STEPS.speed, 0, PACK_LIMITS.carSpeed) } };
+  if (selection === "car")
+    return { ...shot, car: { ...shot.car, startSpeed: clamp(shot.car.startSpeed + steps * EDITOR_STEPS.speed, 0, PACK_LIMITS.carSpeed) } };
   return shot;
 }
 
@@ -184,7 +189,11 @@ function behindUnclamped(shot: Shot, selection: "ball" | "car", side: 1 | -1): P
     const { forward, right } = axes(yaw, pitch);
     const b = shot.ball.location;
     const [back, aside] = [BEHIND.ball.back, side * BEHIND.ball.side];
-    return { pos: vec3(b.x - forward.x * back + right.x * aside, b.y - forward.y * back + right.y * aside, b.z - forward.z * back + right.z * aside), yaw, pitch };
+    return {
+      pos: vec3(b.x - forward.x * back + right.x * aside, b.y - forward.y * back + right.y * aside, b.z - forward.z * back + right.z * aside),
+      yaw,
+      pitch,
+    };
   }
   const yaw = shot.car.rotation.yaw / UNITS_PER_RAD;
   const { forward } = axes(yaw, 0);
@@ -197,7 +206,11 @@ export function follow(from: Pose, to: Pose, dt: number): Pose {
   const t = Math.min(1, dt * BEHIND.follow);
   const turn = Math.atan2(Math.sin(to.yaw - from.yaw), Math.cos(to.yaw - from.yaw));
   const p = from.pos;
-  return { pos: vec3(p.x + (to.pos.x - p.x) * t, p.y + (to.pos.y - p.y) * t, p.z + (to.pos.z - p.z) * t), yaw: from.yaw + turn * t, pitch: from.pitch + (to.pitch - from.pitch) * t };
+  return {
+    pos: vec3(p.x + (to.pos.x - p.x) * t, p.y + (to.pos.y - p.y) * t, p.z + (to.pos.z - p.z) * t),
+    yaw: from.yaw + turn * t,
+    pitch: from.pitch + (to.pitch - from.pitch) * t,
+  };
 }
 
 /** A new pack's first free camera (SetupInitialPawnOrientation): 700 behind the car's spawn, 600 to its right and 500

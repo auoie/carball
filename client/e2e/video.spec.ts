@@ -52,7 +52,10 @@ test("Render Detail's presets set the switches, a switch changed makes it Custom
   expect(errors).toEqual([]);
 });
 
-test("on a weak GPU the default is Performance (70 %) and Quality until the player chooses; Default goes back to it (MENU-21, the user's decision)", async ({ page, context }) => {
+test("on a weak GPU the default is Performance (70 %) and Quality until the player chooses; Default goes back to it (MENU-21, the user's decision)", async ({
+  page,
+  context,
+}) => {
   await videoAuto(context, true, false);
   await page.goto("/?render=off");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
@@ -103,7 +106,8 @@ test("the frame-rate guard on a slow page: one step down after its warm-up and m
   expect(await drawnShare(page)).toBeCloseTo(1, 2);
   // (3 s of warm-up and 4 of measure on the synthetic clock: Performance 70 % and Quality)
   await expect.poll(async () => drawnShare(page), { timeout: 90_000 }).toBeCloseTo(0.7, 2);
-  const saved = await page.evaluate(() => (JSON.parse(localStorage.getItem("carball.settings.v1") ?? "{}") as { video?: { autoLevel?: number; stepped?: boolean } }).video);
+  const saved = await page.evaluate(
+    () => (JSON.parse(localStorage.getItem("carball.settings.v1") ?? "{}") as { video?: { autoLevel?: number; stepped?: boolean } }).video,
+  );
   expect(saved).toMatchObject({ autoLevel: 1, stepped: true });
 });
-

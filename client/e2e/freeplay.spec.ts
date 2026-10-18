@@ -70,7 +70,11 @@ test("freeplay loads, drives and resets", async ({ page }) => {
   // (the flip circle beside the boost meter, both scaled with the HUD's stage: never overlapping, at any window size)
   // (both boxes read at once, once the stage has been fitted to the new size: a frame between two reads put them on
   // different stages)
-  for (const size of [{ width: 1280, height: 720 }, { width: 1920, height: 1080 }, { width: 900, height: 900 }]) {
+  for (const size of [
+    { width: 1280, height: 720 },
+    { width: 1920, height: 1080 },
+    { width: 900, height: 900 },
+  ]) {
     await page.setViewportSize(size);
     const gap = (): Promise<number | null> =>
       page.evaluate(() => {
@@ -104,9 +108,14 @@ test("freeplay loads, drives and resets", async ({ page }) => {
   // The flip indicator can be turned off (the Gameplay tab's Flip Reset Indicator: MENU-9, RV-169)
   await page.locator(".settings-tab", { hasText: "Gameplay" }).click();
   // (its rows in the game's order, their labels upper-cased, the values as written: HT-5, RV-281)
-  const order = await page.locator(".caps-labels > *").evaluateAll((rows) =>
-    rows.map((r) => r.querySelector("[data-setting], [data-option]")?.getAttribute("data-setting") ?? r.querySelector("[data-option]")?.getAttribute("data-option") ?? ""),
-  );
+  const order = await page
+    .locator(".caps-labels > *")
+    .evaluateAll((rows) =>
+      rows.map(
+        (r) =>
+          r.querySelector("[data-setting], [data-option]")?.getAttribute("data-setting") ?? r.querySelector("[data-option]")?.getAttribute("data-option") ?? "",
+      ),
+    );
   expect(order.filter((k) => k !== "")).toEqual(["unlimitedBoost", "statDisplayLevel", "flipResetIndicator", "autoSkipReplay"]);
   await expect(page.locator(".caps-labels .option > span").first()).toHaveCSS("text-transform", "uppercase");
   await cycleTo(page, '[data-setting="flipResetIndicator"]', "off");
@@ -119,7 +128,10 @@ test("freeplay loads, drives and resets", async ({ page }) => {
 test("the settings' name field takes Space and Backspace like any text field (RV-482)", async ({ page }) => {
   await page.goto("/?render=off");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
-  await page.locator("#main-menu").getByRole("button", { name: /^settings$/i }).click();
+  await page
+    .locator("#main-menu")
+    .getByRole("button", { name: /^settings$/i })
+    .click();
   await page.locator(".settings-tab", { hasText: "Chat" }).click();
   const name = page.locator('[data-setting="name"]');
   await name.click();
@@ -273,7 +285,9 @@ test("a goal in freeplay with goal replays on: the replay plays, Space skips it,
   await expect(page.locator("#replay-banner")).toBeVisible({ timeout: 20_000 });
   await expect(page.locator("#replay-label")).toHaveText("REPLAY");
   await expect(page.locator("#replay-info .replay-scorer")).toBeVisible();
-  await expect.poll(async () => page.evaluate(() => (window as unknown as { carballFadeMax: number }).carballFadeMax), { timeout: 10_000 }).toBeGreaterThan(0.5);
+  await expect
+    .poll(async () => page.evaluate(() => (window as unknown as { carballFadeMax: number }).carballFadeMax), { timeout: 10_000 })
+    .toBeGreaterThan(0.5);
   await expect(page.locator("#replay-prompt")).toContainText(/skip/i);
   // (the car's voice follows the replayed car, not the live state the replay began in: user finding 7)
   const audioMode = async (): Promise<string> => page.evaluate(() => (window as unknown as { carballAudio: () => { mode: string } }).carballAudio().mode);
@@ -363,7 +377,9 @@ interface PadsHook {
   pads: () => { pads: { x: number; y: number; big: boolean; active: boolean }[]; boost: number };
 }
 
-test("Unlimited boost in free play: on (the default) a full car takes no pad; off (the settings) 33 boost, a small pad is taken and drawn dim", async ({ page }) => {
+test("Unlimited boost in free play: on (the default) a full car takes no pad; off (the settings) 33 boost, a small pad is taken and drawn dim", async ({
+  page,
+}) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto("/");
@@ -404,13 +420,19 @@ test("Unlimited boost in free play: on (the default) a full car takes no pad; of
   // (a look after the placement's frames: 0.8 s and at least 4 frames drawn, as under load a frame can take 0.4 s: RV-494)
   const settled = async (): Promise<void> => {
     await page.waitForTimeout(800);
-    await page.evaluate(() => new Promise<void>((resolve) => {
-      const step = (k: number): void => {
-        if (k === 0) resolve();
-        else requestAnimationFrame(() => { step(k - 1); });
-      };
-      step(4);
-    }));
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          const step = (k: number): void => {
+            if (k === 0) resolve();
+            else
+              requestAnimationFrame(() => {
+                step(k - 1);
+              });
+          };
+          step(4);
+        }),
+    );
   };
   await place(behind);
   await settled();
@@ -477,7 +499,8 @@ test("the engine's contacts as the game's impact triggers: driving into the ball
 test("the garage's car is the one free play drives, with its preset (CM28), kept for the next page", async ({ page }) => {
   await page.goto("/?render=off");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
-  const hitbox = (): Promise<{ x: number; y: number; z: number }> => page.evaluate(() => (window as unknown as { carballFreeplay: Hook }).carballFreeplay.car().hitbox);
+  const hitbox = (): Promise<{ x: number; y: number; z: number }> =>
+    page.evaluate(() => (window as unknown as { carballFreeplay: Hook }).carballFreeplay.car().hitbox);
   const sport = await hitbox();
   const menu = page.locator("#main-menu");
   await menu.getByRole("button", { name: /^garage$/i }).click();
@@ -522,7 +545,10 @@ test("the main menu, the pause menu, the HUD and its Interface options (MENU-1/4
   expect(cap / 32).toBeCloseTo(0.5679, 1);
   // (the bundled fonts in: Rajdhani SemiBold and Light, Orbitron; each number glyph's ink fitted to the game's)
   const fonts = await page.evaluate(() => ({
-    loaded: [...document.fonts].filter((f) => f.status === "loaded").map((f) => f.family.replace(/"/g, "")).sort(),
+    loaded: [...document.fonts]
+      .filter((f) => f.status === "loaded")
+      .map((f) => f.family.replace(/"/g, ""))
+      .sort(),
     zero: Number(getComputedStyle(document.documentElement).getPropertyValue("--num-s-0")),
   }));
   expect(fonts.loaded).toEqual(expect.arrayContaining(["Orbitron", "Rajdhani Light", "Rajdhani SemiBold"]));
@@ -554,7 +580,10 @@ test("the main menu, the pause menu, the HUD and its Interface options (MENU-1/4
   await expect(page.locator("#boost")).toBeHidden();
   await expect(page.locator("#pause-menu").getByRole("button", { name: /^show controls$/i })).toHaveCount(0);
   await page.screenshot({ path: "test-results/pause-menu.png" });
-  await page.locator("#pause-menu").getByRole("button", { name: /^resume game$/i }).click();
+  await page
+    .locator("#pause-menu")
+    .getByRole("button", { name: /^resume game$/i })
+    .click();
   await expect(page.locator("#pause-menu")).toBeHidden();
   await expect(page.locator("#boost")).toBeVisible();
   // The Interface tab: the plain boost meter, then the HUD hidden
@@ -568,7 +597,10 @@ test("the main menu, the pause menu, the HUD and its Interface options (MENU-1/4
   await expect(page.locator("#hud-stage")).toBeHidden();
   // Exit to Main Menu, its question answered (HT-4)
   await page.keyboard.press("Escape");
-  await page.locator("#pause-menu").getByRole("button", { name: /^exit to main menu$/i }).click();
+  await page
+    .locator("#pause-menu")
+    .getByRole("button", { name: /^exit to main menu$/i })
+    .click();
   await expect(page.locator("#pause-menu")).toContainText("Are you sure you want to exit to the main menu?");
   await page.locator("#pause-menu").getByRole("button", { name: /^yes$/i }).click();
   await expect(page.locator("#main-menu")).toBeVisible();

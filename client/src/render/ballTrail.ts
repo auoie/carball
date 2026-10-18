@@ -298,7 +298,10 @@ export class BallTrail {
       const rgb = [0, 1, 2].map((c) => (sample.colour[c] ?? 1) * (scale[c] ?? 1) * (1 - white) + white);
       const alpha = sample.alpha * alphaOverLife(t);
       const u = length > 0 ? (along[k] ?? 0) / length : 0;
-      for (const [j, across] of [[0, -1], [1, 1]] as const) {
+      for (const [j, across] of [
+        [0, -1],
+        [1, 1],
+      ] as const) {
         const v = 2 * k + j;
         this.#position.setXYZ(v, sample.at.x, sample.at.y, sample.at.z);
         this.#tangent.setXYZ(v, sample.tangent.x, sample.tangent.y, sample.tangent.z);

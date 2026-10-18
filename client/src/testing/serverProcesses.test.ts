@@ -25,17 +25,17 @@ afterAll(async () => {
 describe("the browser tests' servers (RV-320)", () => {
   it("fails at once when a server is killed on its way up (a signal: no exit code)", async () => {
     const start = Date.now();
-    await expect(startServers([{ name: "killed", command: "sh", args: ["-c", "kill -9 $$"], url: "http://127.0.0.1:9/never", reuse: false }], 60_000, LOGS)).rejects.toThrow(
-      /killed server didn't start/,
-    );
+    await expect(
+      startServers([{ name: "killed", command: "sh", args: ["-c", "kill -9 $$"], url: "http://127.0.0.1:9/never", reuse: false }], 60_000, LOGS),
+    ).rejects.toThrow(/killed server didn't start/);
     expect(Date.now() - start).toBeLessThan(5000);
   });
 
   it("fails at once when a server's command doesn't exist (an error, no exit)", async () => {
     const start = Date.now();
-    await expect(startServers([{ name: "missing", command: "/nonexistent/carball-server", args: [], url: "http://127.0.0.1:9/never", reuse: false }], 60_000, LOGS)).rejects.toThrow(
-      /missing server didn't start/,
-    );
+    await expect(
+      startServers([{ name: "missing", command: "/nonexistent/carball-server", args: [], url: "http://127.0.0.1:9/never", reuse: false }], 60_000, LOGS),
+    ).rejects.toThrow(/missing server didn't start/);
     expect(Date.now() - start).toBeLessThan(5000);
   });
 

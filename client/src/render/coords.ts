@@ -38,4 +38,3 @@ export function fromThreeQuaternion(q: Quaternion): Rot3 {
 export function rotateRl(v: Vec3, q: Quaternion): Vec3 {
   return fromThreeVector(toThreeVector(v, axis).applyQuaternion(q));
 }
-

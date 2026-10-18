@@ -85,7 +85,8 @@ export function botMatchSetup(choices: BotChoices, listings: readonly BotListing
   return { teamSize: choices.teamSize, seed, bots };
 }
 
-const isPick = (v: unknown): v is BotPick => typeof v === "object" && v !== null && "bot" in v && typeof v.bot === "string" && "level" in v && typeof v.level === "string";
+const isPick = (v: unknown): v is BotPick =>
+  typeof v === "object" && v !== null && "bot" in v && typeof v.bot === "string" && "level" in v && typeof v.level === "string";
 
 /** The kept choices (their slots' picks checked; fitChoices fits them to the bots there are), or null */
 export function storedChoices(storage: Store | null = typeof localStorage === "undefined" ? null : localStorage): BotChoices | null {
@@ -131,7 +132,10 @@ export function readBotMatch(storage: Store | null = session()): LocalMatchSetup
     const slots = v.bots as readonly Partial<Record<keyof BotSlot, unknown>>[];
     const strength = (s: unknown): boolean => s === undefined || (typeof s === "number" && s >= 0 && s <= 1);
     // (a brain a bot's id, before the worker fetches its package by it: RV-546)
-    const bots = slots.filter((b): b is BotSlot => (b.team === 0 || b.team === 1) && typeof b.name === "string" && typeof b.brain === "string" && BOT_ID.test(b.brain) && strength(b.strength));
+    const bots = slots.filter(
+      (b): b is BotSlot =>
+        (b.team === 0 || b.team === 1) && typeof b.name === "string" && typeof b.brain === "string" && BOT_ID.test(b.brain) && strength(b.strength),
+    );
     if (bots.length !== v.teamSize * 2 - 1) return null;
     return { teamSize: v.teamSize, seed: v.seed, bots };
   } catch {

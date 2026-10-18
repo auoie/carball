@@ -39,7 +39,8 @@ export class Pcg32 {
   }
 }
 
-export type Jitter = { readonly kind: "none" } | { readonly kind: "normal"; readonly sigmaMs: number } | { readonly kind: "ar1"; readonly sigmaMs: number; readonly rho: number };
+export type Jitter =
+  { readonly kind: "none" } | { readonly kind: "normal"; readonly sigmaMs: number } | { readonly kind: "ar1"; readonly sigmaMs: number; readonly rho: number };
 export type Loss =
   | { readonly kind: "none" }
   | { readonly kind: "iid"; readonly p: number }

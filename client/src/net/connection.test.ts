@@ -67,7 +67,17 @@ describe("a refused hello", () => {
 
   it("is a RefusedError with the server's reason (a claim's dead token: back to the queue, RV-363; RX13's C11)", async () => {
     vi.stubGlobal("WebTransport", fakeTransport([{ type: "refused", reason: REFUSED_TOKEN }]));
-    const preferences = { team: 255, model: 0, dodgeDeadzone: 0.5, steeringSensitivity: 1, airControlSensitivity: 1, autoSkipReplay: false, name: "", quickChat: "everyone", blockNonTactical: false } as const;
+    const preferences = {
+      team: 255,
+      model: 0,
+      dodgeDeadzone: 0.5,
+      steeringSensitivity: 1,
+      airControlSensitivity: 1,
+      autoSkipReplay: false,
+      name: "",
+      quickChat: "everyone",
+      blockNonTactical: false,
+    } as const;
     const opened = Connection.open({ url: "https://game.example:4433/play", certHash: null }, preferences, { intent: "claim", token: 9n });
     await expect(opened).rejects.toBeInstanceOf(RefusedError);
     await expect(opened).rejects.toMatchObject({ reason: REFUSED_TOKEN });
@@ -80,7 +90,18 @@ describe("a match session's hello", () => {
   });
 
   it("asks for the garage's car, the one last chosen (its model: CM29), with the player's settings", async () => {
-    const welcome = { type: "welcome", version: PROTOCOL_VERSION, carId: 1, tickRate: 120, frame: 0, matchType: "casual", teamSize: 1, map: 0, key: 5n, snapshot: new Uint8Array() } as const;
+    const welcome = {
+      type: "welcome",
+      version: PROTOCOL_VERSION,
+      carId: 1,
+      tickRate: 120,
+      frame: 0,
+      matchType: "casual",
+      teamSize: 1,
+      map: 0,
+      key: 5n,
+      snapshot: new Uint8Array(),
+    } as const;
     const record: FakeTransportRecord = { sessions: [] };
     vi.stubGlobal("WebTransport", fakeTransport([welcome], record));
     const stored = new Map([["carball.car", "3"]]);
@@ -101,11 +122,25 @@ describe("the input datagrams' count (protocol 24)", () => {
   });
 
   it("each one's sequence one on from the last, from 0, wrapping at 65536 (RV-529's CM19: the server counts its gaps as lost)", async () => {
-    const welcome = { type: "welcome", version: PROTOCOL_VERSION, carId: 1, tickRate: 120, frame: 0, matchType: "casual", teamSize: 1, map: 0, key: 5n, snapshot: new Uint8Array() } as const;
+    const welcome = {
+      type: "welcome",
+      version: PROTOCOL_VERSION,
+      carId: 1,
+      tickRate: 120,
+      frame: 0,
+      matchType: "casual",
+      teamSize: 1,
+      map: 0,
+      key: 5n,
+      snapshot: new Uint8Array(),
+    } as const;
     const record: FakeTransportRecord = { sessions: [] };
     vi.stubGlobal("WebTransport", fakeTransport([welcome], record));
     vi.stubGlobal("localStorage", { getItem: () => null, setItem: () => undefined });
-    const { connection } = await Connection.open({ url: "https://game.example:4433/play", certHash: null }, joinPreferences(DEFAULT_SETTINGS), { intent: "claim", token: 9n });
+    const { connection } = await Connection.open({ url: "https://game.example:4433/play", certHash: null }, joinPreferences(DEFAULT_SETTINGS), {
+      intent: "claim",
+      token: 9n,
+    });
     const sends = 65_538;
     for (let i = 0; i < sends; i++) connection.sendInputs(i, i + 1, []);
     await new Promise((r) => setTimeout(r, 0));
@@ -125,9 +160,30 @@ describe("a session closed before the game listens", () => {
   });
 
   it("is told when the game sets its handler (RV-444: a cancel while the match page builds its arena)", async () => {
-    const welcome = { type: "welcome", version: PROTOCOL_VERSION, carId: 1, tickRate: 120, frame: 0, matchType: "casual", teamSize: 1, map: 0, key: 5n, snapshot: new Uint8Array() } as const;
+    const welcome = {
+      type: "welcome",
+      version: PROTOCOL_VERSION,
+      carId: 1,
+      tickRate: 120,
+      frame: 0,
+      matchType: "casual",
+      teamSize: 1,
+      map: 0,
+      key: 5n,
+      snapshot: new Uint8Array(),
+    } as const;
     vi.stubGlobal("WebTransport", fakeTransport([welcome], { sessions: [] }, true));
-    const preferences = { team: 255, model: 0, dodgeDeadzone: 0.5, steeringSensitivity: 1, airControlSensitivity: 1, autoSkipReplay: false, name: "", quickChat: "everyone", blockNonTactical: false } as const;
+    const preferences = {
+      team: 255,
+      model: 0,
+      dodgeDeadzone: 0.5,
+      steeringSensitivity: 1,
+      airControlSensitivity: 1,
+      autoSkipReplay: false,
+      name: "",
+      quickChat: "everyone",
+      blockNonTactical: false,
+    } as const;
     const { connection } = await Connection.open({ url: "https://game.example:4433/play", certHash: null }, preferences, { intent: "claim", token: 9n });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(connection.closed).toBe(true);

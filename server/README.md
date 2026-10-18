@@ -39,6 +39,7 @@ players the world once a tick at most.
 
 ## Checks
 ```sh
+cargo fmt --check                       # the layout (rustfmt.toml at the repo's root: 120 columns); `cargo fmt` applies it
 cargo test                              # protocol vectors, input buffer, game logic, a real WebTransport client
 cargo clippy --all-targets -- -D warnings
 # the local host's configuration (the client's in-browser server: scripts/build_host.sh); its tests need `net`, so

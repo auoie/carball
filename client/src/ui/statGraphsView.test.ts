@@ -54,7 +54,15 @@ let ctx: RecordingContext;
 
 beforeEach(() => {
   ctx = new RecordingContext();
-  const canvas = { className: "", hidden: true, width: 0, height: 0, style: {} as Record<string, string>, setAttribute: () => undefined, getContext: () => ctx };
+  const canvas = {
+    className: "",
+    hidden: true,
+    width: 0,
+    height: 0,
+    style: {} as Record<string, string>,
+    setAttribute: () => undefined,
+    getContext: () => ctx,
+  };
   vi.stubGlobal("document", { createElement: () => canvas });
   vi.stubGlobal("window", { innerWidth: 1280, innerHeight: 720, devicePixelRatio: 1 });
 });

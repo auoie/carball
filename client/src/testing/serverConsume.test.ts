@@ -5,7 +5,27 @@ import { ServerConsume } from "./serverConsume";
 
 type Step =
   | { readonly r: readonly [number, number, readonly (readonly [number, number])[], number, boolean] }
-  | { readonly t: readonly [number, boolean, number, number, boolean, number, number, number, boolean, number, number, number, number, number, number, number, number] }
+  | {
+      readonly t: readonly [
+        number,
+        boolean,
+        number,
+        number,
+        boolean,
+        number,
+        number,
+        number,
+        boolean,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+      ];
+    }
   | { readonly reset: number };
 
 /** Rust's f32 round: halves away from zero */
@@ -22,11 +42,28 @@ describe("the server's input buffer, ported (server/src/input_buffer.rs: its tra
         const [timestamp, first, frames, now, newest] = step.r;
         expect(buffer.receive(timestamp, first, frames.map(frame), now), `step ${String(i)}: newest`).toBe(newest);
       } else if ("t" in step) {
-        const [now, odd, throttle, jump, repress, ack, len, target, filling, under, over, repeated, zeroed, fillSkips, consumed, neverConsumed, dropped] = step.t;
+        const [now, odd, throttle, jump, repress, ack, len, target, filling, under, over, repeated, zeroed, fillSkips, consumed, neverConsumed, dropped] =
+          step.t;
         const out = buffer.tick(now, odd);
         const s = buffer.stats;
         expect(
-          [roundAway(Math.fround(Math.fround(dequantizeAxis(out.frame.throttle)) * 127)), out.jump ? 1 : 0, buffer.repressJump, buffer.ackFrame, buffer.length, buffer.jitter.bufferSize, buffer.filling, s.under, s.over, s.repeated, s.zeroed, s.fillSkips, s.consumed, s.neverConsumed, s.dropped],
+          [
+            roundAway(Math.fround(Math.fround(dequantizeAxis(out.frame.throttle)) * 127)),
+            out.jump ? 1 : 0,
+            buffer.repressJump,
+            buffer.ackFrame,
+            buffer.length,
+            buffer.jitter.bufferSize,
+            buffer.filling,
+            s.under,
+            s.over,
+            s.repeated,
+            s.zeroed,
+            s.fillSkips,
+            s.consumed,
+            s.neverConsumed,
+            s.dropped,
+          ],
           `step ${String(i)} at ${String(now)}`,
         ).toEqual([throttle, jump, repress, ack, len, target, filling, under, over, repeated, zeroed, fillSkips, consumed, neverConsumed, dropped]);
       } else buffer.jitter.reset();

@@ -18,7 +18,19 @@ const PAUSE_TICKS = 180;
  *  target, size and window, the part and parts: 28, RV-520) */
 export const UPDATE_HEADER_BYTES = 28;
 
-const NET_ROWS: readonly StatTitle[] = ["Out Pkt", "In Pkt", "Out Loss", "In Loss", "Out Bytes", "In Bytes", "Latency", "IBuf", "IBuf Target", "IBuf Miss", "Phys Rate"];
+const NET_ROWS: readonly StatTitle[] = [
+  "Out Pkt",
+  "In Pkt",
+  "Out Loss",
+  "In Loss",
+  "Out Bytes",
+  "In Bytes",
+  "Latency",
+  "IBuf",
+  "IBuf Target",
+  "IBuf Miss",
+  "Phys Rate",
+];
 
 export class NetGraphFeed {
   #periodStart: number | null = null;

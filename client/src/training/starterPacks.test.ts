@@ -33,9 +33,25 @@ function flight(shot: (typeof STARTER_PACKS)[number]["shots"][number], seconds: 
 
 describe("the starter packs", () => {
   it("are five, ours, each within the format (as JSON, as a pack file would hold them)", () => {
-    expect(STARTER_PACKS.map((p) => p.id)).toEqual(["carball-first-touches", "carball-open-net", "carball-bounce-shots", "carball-air-starters", "carball-keeper-basics"]);
+    expect(STARTER_PACKS.map((p) => p.id)).toEqual([
+      "carball-first-touches",
+      "carball-open-net",
+      "carball-bounce-shots",
+      "carball-air-starters",
+      "carball-keeper-basics",
+    ]);
     for (const p of STARTER_PACKS) {
-      const json = JSON.parse(JSON.stringify({ format: 1, ...p, shots: p.shots.map((s) => ({ ...s, ball: { ...s.ball, location: [s.ball.location.x, s.ball.location.y, s.ball.location.z] }, car: { ...s.car, location: [s.car.location.x, s.car.location.y, s.car.location.z] } })) })) as unknown;
+      const json = JSON.parse(
+        JSON.stringify({
+          format: 1,
+          ...p,
+          shots: p.shots.map((s) => ({
+            ...s,
+            ball: { ...s.ball, location: [s.ball.location.x, s.ball.location.y, s.ball.location.z] },
+            car: { ...s.car, location: [s.car.location.x, s.car.location.y, s.car.location.z] },
+          })),
+        }),
+      ) as unknown;
       expect(typeof parsePack(json), p.id).toBe("object");
       expect(p.creator).toBe("Carball");
     }

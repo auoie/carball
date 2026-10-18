@@ -216,8 +216,12 @@ export class Connection {
     storeKey(welcome.key);
     void connection.#readDatagrams();
     transport.closed
-      .then(() => { connection.#close("closed by the server"); })
-      .catch((e: unknown) => { connection.#close(e instanceof Error ? e.message : String(e)); });
+      .then(() => {
+        connection.#close("closed by the server");
+      })
+      .catch((e: unknown) => {
+        connection.#close(e instanceof Error ? e.message : String(e));
+      });
     return { connection, welcome };
   }
 

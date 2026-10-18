@@ -77,7 +77,12 @@ export class MainMenu {
   readonly #playlists: HTMLButtonElement[] = [];
   /** Play vs Bots: its button on Play's page, its own page, the page's body and Start (none in a build without bots:
    *  RV-541) */
-  readonly #botsView: { readonly entry: HTMLButtonElement; readonly page: HTMLDivElement; readonly body: HTMLDivElement; readonly start: HTMLButtonElement } | null;
+  readonly #botsView: {
+    readonly entry: HTMLButtonElement;
+    readonly page: HTMLDivElement;
+    readonly body: HTMLDivElement;
+    readonly start: HTMLButtonElement;
+  } | null;
   /** Custom Training: its button on Play's page (hidden until there are packs) and its page of packs */
   readonly #playTraining: HTMLButtonElement;
   readonly #training: HTMLDivElement;
@@ -325,7 +330,15 @@ export class MainMenu {
   /** Back a page (Escape's, a pad's B); whether there was one to go back from (none at the top: nothing, silently) */
   back(): boolean {
     const view: MenuView =
-      this.#botsView && !this.#botsView.page.hidden ? "bots" : !this.#training.hidden ? "training" : !this.#play.hidden ? "play" : !this.#garage.hidden ? "garage" : "top";
+      this.#botsView && !this.#botsView.page.hidden
+        ? "bots"
+        : !this.#training.hidden
+          ? "training"
+          : !this.#play.hidden
+            ? "play"
+            : !this.#garage.hidden
+              ? "garage"
+              : "top";
     this.#show(backFrom(view));
     return view !== "top";
   }

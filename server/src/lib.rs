@@ -12,10 +12,10 @@ pub mod match_host;
 #[cfg(feature = "net")]
 pub mod net;
 #[cfg(all(test, feature = "net"))]
-mod netsim;
-pub mod replication;
-#[cfg(all(test, feature = "net"))]
 mod net_tests;
+#[cfg(all(test, feature = "net"))]
+mod netsim;
 pub mod protocol;
 #[cfg(feature = "net")]
 pub mod queue;
+pub mod replication;

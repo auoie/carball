@@ -39,7 +39,13 @@ export const MENU_INPUT = {
   stickDelay: 0.3,
   stickEvery: 0.1,
   modeAxis: 0.5,
-  sliderSteps: [[1, 1], [8, 2], [14, 3], [20, 6], [26, 11]] as readonly (readonly [number, number])[],
+  sliderSteps: [
+    [1, 1],
+    [8, 2],
+    [14, 3],
+    [20, 6],
+    [26, 11],
+  ] as readonly (readonly [number, number])[],
   modeCooldown: 0.2,
 } as const;
 
@@ -57,7 +63,12 @@ type Axis = 0 | 1;
 /** The left stick's direction: the axis that reached 0.8 first (`owner`, the last frame's) keeps it while it's at 0.8
  *  or past it, its side as it is (to the other side at once: let go this frame, `held` the last direction); else the
  *  axis at 0.8 now (both: the further); the new owner */
-export function stickDirection(x: number, y: number, owner: Axis | null, held: NavDirection | null = null): { readonly direction: NavDirection | null; readonly owner: Axis | null } {
+export function stickDirection(
+  x: number,
+  y: number,
+  owner: Axis | null,
+  held: NavDirection | null = null,
+): { readonly direction: NavDirection | null; readonly owner: Axis | null } {
   const axes = [x, y] as const;
   const way = (axis: Axis, v: number): NavDirection => (axis === 0 ? (v > 0 ? "right" : "left") : v > 0 ? "down" : "up");
   if (owner !== null && Math.abs(axes[owner]) >= MENU_INPUT.stick) {
@@ -71,7 +82,11 @@ export function stickDirection(x: number, y: number, owner: Axis | null, held: N
 }
 
 /** The pad's menu direction now and whether it's the stick's: the D-pad's, else the left stick's (stickDirection) */
-export function padInput(pad: GamepadSnapshot, owner: Axis | null = null, held: NavDirection | null = null): { readonly direction: NavDirection; readonly stick: boolean; readonly owner: Axis | null } | null {
+export function padInput(
+  pad: GamepadSnapshot,
+  owner: Axis | null = null,
+  held: NavDirection | null = null,
+): { readonly direction: NavDirection; readonly stick: boolean; readonly owner: Axis | null } | null {
   const down = (i: number): boolean => (pad.buttons[i] ?? 0) > 0.5;
   if (down(PAD.up)) return { direction: "up", stick: false, owner: null };
   if (down(PAD.down)) return { direction: "down", stick: false, owner: null };
@@ -99,7 +114,8 @@ export function menuRows(items: readonly { readonly rect: NavRect; readonly valu
   items.forEach((item, i) => {
     const last = rows.at(-1);
     const prev = last ? items[last[last.length - 1] ?? -1] : undefined;
-    const sameLine = (a: NavRect, b: NavRect): boolean => Math.min(a.top + a.height, b.top + b.height) - Math.max(a.top, b.top) > Math.min(a.height, b.height) / 2;
+    const sameLine = (a: NavRect, b: NavRect): boolean =>
+      Math.min(a.top + a.height, b.top + b.height) - Math.max(a.top, b.top) > Math.min(a.height, b.height) / 2;
     if (last && prev && !item.value && !prev.value && sameLine(prev.rect, item.rect)) last.push(i);
     else rows.push([i]);
   });
@@ -211,23 +227,35 @@ export class PadMenuNav {
     this.#actions = actions;
     if (typeof window !== "undefined" && "addEventListener" in window) {
       for (const type of ["keydown", "pointerdown", "pointermove"]) {
-        window.addEventListener(type, () => {
-          this.#setMode(false, performance.now() / 1000);
-        }, { capture: true, passive: true });
+        window.addEventListener(
+          type,
+          () => {
+            this.#setMode(false, performance.now() / 1000);
+          },
+          { capture: true, passive: true },
+        );
       }
       // The mouse's and the keyboard's cues too (MENU-18, RV-481): a control of the open menu clicked (not the pad's own
       // presses: those cue themselves; a slider's drag silent), the pointer onto another of its controls
-      window.addEventListener("click", (e: Event) => {
-        const control = e.isTrusted ? this.#menuControl(e.target) : null;
-        if (!control || control.getAttribute("role") === "slider") return;
-        this.#actions.sound?.(clickCue(this.#actions.menu()));
-      }, { capture: true, passive: true });
-      window.addEventListener("pointerover", (e: Event) => {
-        const control = this.#padMode ? null : this.#menuControl(e.target);
-        if (control === this.#hovered) return;
-        this.#hovered = control;
-        if (control) this.#actions.sound?.("move");
-      }, { passive: true });
+      window.addEventListener(
+        "click",
+        (e: Event) => {
+          const control = e.isTrusted ? this.#menuControl(e.target) : null;
+          if (!control || control.getAttribute("role") === "slider") return;
+          this.#actions.sound?.(clickCue(this.#actions.menu()));
+        },
+        { capture: true, passive: true },
+      );
+      window.addEventListener(
+        "pointerover",
+        (e: Event) => {
+          const control = this.#padMode ? null : this.#menuControl(e.target);
+          if (control === this.#hovered) return;
+          this.#hovered = control;
+          if (control) this.#actions.sound?.("move");
+        },
+        { passive: true },
+      );
     }
   }
 
@@ -300,7 +328,9 @@ export class PadMenuNav {
     this.#bumpers(menu, buttons, now);
     const controls = [...menu.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(shown);
     if (controls.length === 0) return;
-    const rows = menuRows(controls.map((c) => ({ rect: c.getBoundingClientRect(), value: isValue(c) }))).map((r) => r.map((i) => controls[i]).filter((c): c is HTMLElement => c !== undefined));
+    const rows = menuRows(controls.map((c) => ({ rect: c.getBoundingClientRect(), value: isValue(c) }))).map((r) =>
+      r.map((i) => controls[i]).filter((c): c is HTMLElement => c !== undefined),
+    );
     const current = this.#current(menu, controls, rows);
     if (!current) return;
     // (A held: its control looks pressed till A's let go, not a frame more, RV-478)
@@ -313,7 +343,10 @@ export class PadMenuNav {
     }
     if (releasedA) {
       // (a question's answer, or a notice's OK, its own cue: a page with a default control, MENU-18)
-      this.#press(current, controls.some((c) => c.hasAttribute("data-pad-default")));
+      this.#press(
+        current,
+        controls.some((c) => c.hasAttribute("data-pad-default")),
+      );
       return;
     }
     if (released(PAD.x) && this.#armed.delete(PAD.x)) {
@@ -552,7 +585,8 @@ export class PadMenuNav {
   #showHints(menu: HTMLElement | null): void {
     if (typeof document === "undefined" || !("createElement" in document)) return;
     const page = menu ? ([...menu.querySelectorAll<HTMLElement>("[data-pad-page]")].find((p) => !p.closest("[hidden]")) ?? menu) : null;
-    const has = (attr: string): boolean => menu !== null && (menu.hasAttribute(attr) || page?.hasAttribute(attr) === true || page?.querySelector(`[${attr}]`) !== null);
+    const has = (attr: string): boolean =>
+      menu !== null && (menu.hasAttribute(attr) || page?.hasAttribute(attr) === true || page?.querySelector(`[${attr}]`) !== null);
     const pad = this.#padMode;
     const shownHints = menu ? HINTS.filter(([b]) => (b === PAD.b ? has("data-pad-back") : b === PAD.x ? has("data-pad-x") : pad && has("data-pad-y"))) : [];
     // (under the open panel, centred on it, where the eye is: the user's finding, 2026-10-16)

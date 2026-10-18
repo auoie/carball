@@ -158,4 +158,3 @@ describe("every row's summaries as SG1's table (RV-515)", () => {
     });
   });
 });
-

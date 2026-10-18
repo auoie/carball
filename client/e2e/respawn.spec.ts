@@ -85,4 +85,3 @@ for (const [width, height] of [
     await context.close();
   });
 }
-

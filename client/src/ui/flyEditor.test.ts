@@ -8,13 +8,38 @@ describe("the shot editor's HUD rows (TE1 §6.1)", () => {
     const labels = (s: Parameters<typeof hudRows>[0]): string[] => hudRows(s).map((r) => r.label);
     expect(labels("free")).toEqual(["Test Shot", "Edit Ball", "Shot List", "Increase Timer", "Decrease Timer"]);
     expect(labels("ball")).toEqual(["Test Shot", "Edit Car", "Free Cam", "Shot List", "Increase Timer", "Decrease Timer"]);
-    expect(labels("car")).toEqual(["Test Shot", "Edit Ball", "Toggle Pitch Lock", "Reset Pitch (Hold)", "Free Cam", "Shot List", "Increase Timer", "Decrease Timer"]);
+    expect(labels("car")).toEqual([
+      "Test Shot",
+      "Edit Ball",
+      "Toggle Pitch Lock",
+      "Reset Pitch (Hold)",
+      "Free Cam",
+      "Shot List",
+      "Increase Timer",
+      "Decrease Timer",
+    ]);
   });
 
   it("the game's words elsewhere: the list's, the dialog's, the difficulties as Rookie, Pro and All-Star", () => {
-    expect([FLY_TEXT.shot, FLY_TEXT.timeLimit, FLY_TEXT.strength, FLY_TEXT.shotRow(3), FLY_TEXT.create]).toEqual(["SHOT", "TIME LIMIT", "STRENGTH", "SHOT 3", "CREATE NEW SHOT"]);
-    expect([FLY_TEXT.modify, FLY_TEXT.duplicate, FLY_TEXT.delete]).toEqual(["Modify the selected shot.", "Duplicate the selected shot.", "Delete the selected shot."]);
-    expect([FLY_TEXT.sequenceSettings, FLY_TEXT.testSequence, FLY_TEXT.openMenu, FLY_TEXT.accept, FLY_TEXT.cancel]).toEqual(["SEQUENCE SETTINGS", "TEST SEQUENCE", "OPEN MENU", "ACCEPT", "CANCEL"]);
+    expect([FLY_TEXT.shot, FLY_TEXT.timeLimit, FLY_TEXT.strength, FLY_TEXT.shotRow(3), FLY_TEXT.create]).toEqual([
+      "SHOT",
+      "TIME LIMIT",
+      "STRENGTH",
+      "SHOT 3",
+      "CREATE NEW SHOT",
+    ]);
+    expect([FLY_TEXT.modify, FLY_TEXT.duplicate, FLY_TEXT.delete]).toEqual([
+      "Modify the selected shot.",
+      "Duplicate the selected shot.",
+      "Delete the selected shot.",
+    ]);
+    expect([FLY_TEXT.sequenceSettings, FLY_TEXT.testSequence, FLY_TEXT.openMenu, FLY_TEXT.accept, FLY_TEXT.cancel]).toEqual([
+      "SEQUENCE SETTINGS",
+      "TEST SEQUENCE",
+      "OPEN MENU",
+      "ACCEPT",
+      "CANCEL",
+    ]);
     expect(packHeading({ type: "striker", difficulty: "easy" })).toBe("ROOKIE STRIKER");
     expect(packHeading({ type: "goalie", difficulty: "hard" })).toBe("ALL-STAR GOALIE");
     expect(tagLabel("AirDribbles")).toBe("Air Dribbles");

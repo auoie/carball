@@ -1,18 +1,7 @@
 // Night, the one map (the user's decision of 2026-10-17): a dark sky and dark ground, cool light from above, round our
 // glasshouse arena and football pitch (src/render/greenhouse.ts); Night's team colours on the goals, the bars and the
 // boards.
-import {
-  AmbientLight,
-  Color,
-  DirectionalLight,
-  Fog,
-  FrontSide,
-  Group,
-  HemisphereLight,
-  Mesh,
-  MeshStandardMaterial,
-  PlaneGeometry,
-} from "three";
+import { AmbientLight, Color, DirectionalLight, Fog, FrontSide, Group, HemisphereLight, Mesh, MeshStandardMaterial, PlaneGeometry } from "three";
 import { floorOutline } from "../arenaSurface";
 import { goalOutline, greenhouseWalls, pitchLayout, pitchMaterial } from "../greenhouse";
 import { TokenPadsView } from "../tokenPads";
