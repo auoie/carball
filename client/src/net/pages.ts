@@ -2,7 +2,7 @@
 // claim (the slot's one-time token); the match page hands the menu page back a notice when it ends (a modal to show, a
 // search to start: Play Again, a cancelled match). Kept in sessionStorage, this tab's alone and out of the URL's history.
 import { type ServerAddress, devServerAddress, serverHost } from "./connection";
-import { accountTicket, devTicket } from "./tickets";
+import { QueueBannedError, SignedOutError, accountTicket, devTicket } from "./tickets";
 
 const CLAIM_KEY = "carball.claim";
 const NOTICE_KEY = "carball.menuNotice";
@@ -27,6 +27,8 @@ export interface Claim {
   readonly map?: number;
   /** A rejoin of the ranked match left by accident (LV1): `token` its match id, `playlist` its team size */
   readonly rejoin?: true;
+  /** The signed-in account that claims it (its saved seat its own: RX30C); none on a development page */
+  readonly account?: string;
 }
 
 /** A search back from a match cancelled for someone else: the token claimed (the queue's front again) and when its first
@@ -40,8 +42,11 @@ const TOKEN = /^[1-9][0-9]{0,19}$/;
 
 /** What the menu page does as it opens after a match page */
 export interface MenuNotice {
-  /** The error modal: kicked for being idle, the connection lost, a rejoin too late (the match over), the sign-in gone */
-  readonly modal?: "idle" | "lost" | "concluded" | "signedOut" | "elsewhere";
+  /** The error modal: kicked for being idle, the connection lost, a rejoin too late (the match over), the sign-in gone, a
+   *  rejoin's ticket refused for a ban from another match (until `until`) */
+  readonly modal?: "idle" | "lost" | "concluded" | "signedOut" | "elsewhere" | "banned";
+  /** The ban's end ("banned": ms, wall clock) */
+  readonly until?: number;
   /** A search of this playlist to start */
   readonly search?: number;
   /** A warning line to start its log with */
@@ -54,7 +59,14 @@ export function storeClaim(claim: Claim, storage = session()): void {
   try {
     storage?.setItem(
       CLAIM_KEY,
-      JSON.stringify({ token: claim.token.toString(), playlist: claim.playlist, searchedAt: claim.searchedAt, map: claim.map, rejoin: claim.rejoin }),
+      JSON.stringify({
+        token: claim.token.toString(),
+        playlist: claim.playlist,
+        searchedAt: claim.searchedAt,
+        map: claim.map,
+        rejoin: claim.rejoin,
+        account: claim.account,
+      }),
     );
   } catch {
     // (not kept: the match page goes back to the menu)
@@ -67,11 +79,18 @@ export function takeClaim(storage = session()): Claim | null {
     const text = storage?.getItem(CLAIM_KEY) ?? null;
     storage?.removeItem(CLAIM_KEY);
     if (text === null) return null;
-    const value = JSON.parse(text) as { token?: unknown; playlist?: unknown; searchedAt?: unknown; map?: unknown; rejoin?: unknown };
+    const value = JSON.parse(text) as { token?: unknown; playlist?: unknown; searchedAt?: unknown; map?: unknown; rejoin?: unknown; account?: unknown };
     if (typeof value.token !== "string" || !TOKEN.test(value.token) || typeof value.playlist !== "number") return null;
     const searchedAt = typeof value.searchedAt === "number" && Number.isFinite(value.searchedAt) ? value.searchedAt : Date.now();
     const map = typeof value.map === "number" && Number.isInteger(value.map) && value.map >= 0 && value.map < 256 ? { map: value.map } : {};
-    return { token: BigInt(value.token), playlist: value.playlist, searchedAt, ...map, ...(value.rejoin === true ? { rejoin: true as const } : {}) };
+    return {
+      token: BigInt(value.token),
+      playlist: value.playlist,
+      searchedAt,
+      ...map,
+      ...(value.rejoin === true ? { rejoin: true as const } : {}),
+      ...(typeof value.account === "string" ? { account: value.account } : {}),
+    };
   } catch {
     return null;
   }
@@ -92,12 +111,19 @@ export function takeNotice(storage = session()): MenuNotice | null {
     const text = storage?.getItem(NOTICE_KEY) ?? null;
     storage?.removeItem(NOTICE_KEY);
     if (text === null) return null;
-    const value = JSON.parse(text) as { modal?: unknown; search?: unknown; warning?: unknown; back?: { token?: unknown; searchedAt?: unknown } };
+    const value = JSON.parse(text) as {
+      modal?: unknown;
+      until?: unknown;
+      search?: unknown;
+      warning?: unknown;
+      back?: { token?: unknown; searchedAt?: unknown };
+    };
     const back = value.back;
     return {
       ...(value.modal === "idle" || value.modal === "lost" || value.modal === "concluded" || value.modal === "signedOut" || value.modal === "elsewhere"
         ? { modal: value.modal }
         : {}),
+      ...(value.modal === "banned" && typeof value.until === "number" && Number.isFinite(value.until) ? { modal: "banned" as const, until: value.until } : {}),
       ...(typeof value.search === "number" ? { search: value.search } : {}),
       ...(typeof value.warning === "string" ? { warning: value.warning } : {}),
       ...(typeof back?.token === "string" && TOKEN.test(back.token) && typeof back.searchedAt === "number" && Number.isFinite(back.searchedAt)
@@ -174,6 +200,46 @@ export async function queueAddress(params: URLSearchParams, host: string, deploy
   return { ...(await devServerAddress(name, Number(port))), ticket: devTicket(serverHost(name), Number(port)) };
 }
 
+/** How often a claim's page tries its config.json and its ticket, and the pause between (ms): a passing fault (a
+ *  restart, a dropped request) inside the claim's 12 s isn't a no-show (RX31) */
+export const CLAIM_TRIES = 3;
+export const CLAIM_RETRY_MS = 1000;
+
+/** A claim's address: `queueAddress`, its config.json and its ticket each tried up to `CLAIM_TRIES` times; the sign-in
+ *  gone and a ban are answers, not tried again */
+export async function claimAddress(
+  params: URLSearchParams,
+  host: string,
+  deployed = deployedGameServer,
+  pause: (ms: number) => Promise<void> = async (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+): Promise<ServerAddress> {
+  const tried = async <T>(attempt: () => Promise<T>, again: (e: unknown) => boolean): Promise<T> => {
+    for (let i = 1; ; i++) {
+      try {
+        return await attempt();
+      } catch (e) {
+        if (i >= CLAIM_TRIES || !again(e)) throw e;
+        await pause(CLAIM_RETRY_MS);
+      }
+    }
+  };
+  const address = await tried(
+    async () => queueAddress(params, host, deployed),
+    () => true,
+  );
+  const ticket = address.ticket;
+  if (!ticket) return address;
+  const answer = (e: unknown): boolean => e instanceof SignedOutError || e instanceof QueueBannedError;
+  return {
+    ...address,
+    ticket: async (rejoin) =>
+      tried(
+        async () => ticket(rejoin),
+        (e) => !answer(e),
+      ),
+  };
+}
+
 /** The Web Lock a match page holds while it plays its match (`navigator.locks`): another tab of this browser offers no
  *  rejoin of a match one of its tabs plays (RX30C) */
 export function matchLock(matchId: bigint): string {
@@ -209,7 +275,10 @@ export const REJOIN_SECONDS = 900;
 export interface RankedSeat {
   readonly matchId: bigint;
   readonly teamSize: number;
+  /** When its match page joined (ms): the latest join, a rejoin's too (RJ1: the game saves the record at every join) */
   readonly joinedAt: number;
+  /** The account that played it (offered to that account alone: RX30C); null on a development page */
+  readonly account: string | null;
 }
 
 const SEAT_KEY = "carball.rankedSeat";
@@ -222,12 +291,15 @@ function local(): Pick<Storage, "getItem" | "setItem" | "removeItem"> | null {
   }
 }
 
-/** Kept as the match page joins (a ranked 2v2 or 3v3: no rejoin in 1v1), in local storage (a crash or a closed tab
- *  still offers it) */
+/** Kept as the match page joins, at every join (a rejoin's too, RJ1), in local storage (a crash or a closed tab still
+ *  offers it); a join with no rejoin (a 1v1) clears it (the game's record: saved for a ranked 2v2 or 3v3, cleared else) */
 export function storeRankedSeat(seat: RankedSeat, storage = local()): void {
-  if (seat.teamSize < 2 || seat.matchId === 0n) return;
+  if (seat.teamSize < 2 || seat.matchId === 0n) {
+    clearRankedSeat(storage);
+    return;
+  }
   try {
-    storage?.setItem(SEAT_KEY, JSON.stringify({ matchId: seat.matchId.toString(), teamSize: seat.teamSize, joinedAt: seat.joinedAt }));
+    storage?.setItem(SEAT_KEY, JSON.stringify({ matchId: seat.matchId.toString(), teamSize: seat.teamSize, joinedAt: seat.joinedAt, account: seat.account }));
   } catch {
     // (not kept: no offer)
   }
@@ -236,16 +308,22 @@ export function storeRankedSeat(seat: RankedSeat, storage = local()): void {
 /** The ranked match to offer back at `now` (ms): joined less than REJOIN_SECONDS ago; none otherwise */
 export function rankedSeat(now = Date.now(), storage = local()): RankedSeat | null {
   try {
-    const value = JSON.parse(storage?.getItem(SEAT_KEY) ?? "null") as { matchId?: unknown; teamSize?: unknown; joinedAt?: unknown } | null;
+    const value = JSON.parse(storage?.getItem(SEAT_KEY) ?? "null") as {
+      matchId?: unknown;
+      teamSize?: unknown;
+      joinedAt?: unknown;
+      account?: unknown;
+    } | null;
     if (!value || typeof value.matchId !== "string" || !TOKEN.test(value.matchId) || typeof value.teamSize !== "number") return null;
     if (typeof value.joinedAt !== "number" || !(now - value.joinedAt < REJOIN_SECONDS * 1000) || value.teamSize < 2) return null;
-    return { matchId: BigInt(value.matchId), teamSize: value.teamSize, joinedAt: value.joinedAt };
+    const account = typeof value.account === "string" ? value.account : null;
+    return { matchId: BigInt(value.matchId), teamSize: value.teamSize, joinedAt: value.joinedAt, account };
   } catch {
     return null;
   }
 }
 
-/** No offer: the match left on purpose (Exit to Main Menu), over, declined or taken back */
+/** No offer: the match left on purpose (Exit to Main Menu), over, or offered once already (one prompt per record, RJ1) */
 export function clearRankedSeat(storage = local()): void {
   try {
     storage?.removeItem(SEAT_KEY);

@@ -114,7 +114,7 @@ they change there is lost when the newer page returns (RV-425; `client/src/setti
 | `API_URL` | (none) | the accounts service's origin, `https://HOST[:PORT]` (e.g. `https://carball.zolt.top`, through the tunnel): each queue match's result, each armed leave and each refill are posted to it (notes/accounts.md §3). Required in queue mode (with `GAME_SERVER_TOKEN_FILE`; refused at start without, unless `--dev`, which logs the calls only) |
 | `GAME_SERVER_TOKEN_FILE` | (none) | the game server's token for those calls (a file: the API's `GAME_SERVER_TOKEN_FILE` holds the same, 32 characters or more of random text), sent as a bearer token |
 | `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET_FILE` | (none) | the tunnel's Access service token on `/api/results`, `/api/quitters` and `/api/refills` (its id; its secret as a file), both or neither (without: a warning, the calls go without it) |
-| `OUTBOX_DIR` | `/var/lib/carball-game/outbox` | where the calls wait until the service takes them (the image's volume `/var/lib/carball-game`, uid 10001's): a call that fails for a reason that may pass is tried again, in order, with a growing wait (5 s to 5 min), for up to 24 h (the service's acceptance window), and a restart sends what's left: no answer, a 5xx, 429, and an answer that isn't the service's own (a redirect, 401 or 403 from Access or a challenge, 404 or 405 from a wrong route: logged loudly, check `API_URL`, the token and the Access token); a call refused otherwise (another 4xx) is logged and dropped |
+| `OUTBOX_DIR` | `/var/lib/carball-game/outbox` | where the calls wait until the service takes them (the image's volume `/var/lib/carball-game`, uid 10001's): a call that fails for a reason that may pass is tried again, in order, with a growing wait (5 s to 5 min), for up to 24 h (the service's acceptance window), and a restart sends what's left: no answer, a 5xx, 429, and an answer that isn't the service's own (a redirect, 401 or 403 from Access or a challenge, 404 or 405 from a wrong route: logged loudly, check `API_URL`, the token and the Access token); a call refused otherwise (another 4xx, or the service's own 403 `{"error":"ticket"}` for a call's ticket: RX31) is logged and dropped. Required for a queue server outside `--dev`: without it, or with a blank one, the server won't start (RX31) |
 | `MESHES_DIR` | `/app/collision_meshes` | the arena's collision meshes (in the image; keep the default: the image's own): a folder whose `arena/` holds the arena's 16 meshes in this image's format, the 4 goal halves placed by their offset. Anything else (empty, the old `soccar/` layout, a partial copy, meshes from before 8f78a1a, a truncated file) stops the server at start, saying what's wrong (RV-421, RV-434) |
 
 A development run of the image takes `--dev` (refused beside production keys, `TICKET_PUBLIC_KEYS` or its file, and when a
@@ -267,12 +267,12 @@ docker run -d --name carball-api --restart unless-stopped --network carball --re
 2026-10-22 (the working tree on a88691e, protocol 27 and ticket format 3, ranked step 3 with the AP3, RX29C and RX30C
 fixes: `scripts/build_images.sh --worktree ranked3`; the database a host Postgres from initdb/pg_ctl on the throwaway
 network's gateway, no Postgres container): the three images built, no build machine's paths in either binary, the
-names guard over each image's files. Run on a throwaway network, 43 checks passed:
+names guard over each image's files. Run on a throwaway network, 44 checks passed:
 - web: the policy's Turnstile sources and `frame-ancestors 'none'`; `/api/me`, `/api/results`, `/api/auth/google/start`
   a 404 with `no-store` and the security headers; `/privacy.html` naming the game server's addresses; `/config.json`.
 - game: refused without ticket keys, with a list naming no key, with both a list and a file, without `API_URL`, with
   an http `API_URL`, with `--dev` beside production keys or a certificate, for the open match with a certificate, and
-  with an `OUTBOX_DIR` it can't write; healthy with a keys file, `API_URL` and a certificate, naming its outbox, which
+  with an `OUTBOX_DIR` it can't write or a blank one; healthy with a keys file, `API_URL` and a certificate, naming its outbox, which
   its user can write; the keys file reloaded on SIGHUP (a second key added), kept when the new file names none;
   `--dev` starting alone, its calls logged only.
 - api: `migrate` as the owner's role, the ranked tables made; refused without `TRUSTED_PROXIES`, with a short game

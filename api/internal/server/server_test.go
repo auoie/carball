@@ -1207,6 +1207,10 @@ func TestQuitters(t *testing.T) {
 	if got := call("/api/refills", q1, rejoin); got != http.StatusNoContent {
 		t.Fatalf("a refill: %d", got)
 	}
+	// (its ticket refills once: replayed, refused, so a later ban from the same match can't be lifted by it, RX31)
+	if got := call("/api/refills", q1, rejoin); got != http.StatusConflict {
+		t.Errorf("the same refill again: %d", got)
+	}
 	if code, _, _ := ticketFor(""); code != http.StatusOK {
 		t.Errorf("after the rejoin refilled the lobby: %d", code)
 	}
@@ -1246,6 +1250,15 @@ func TestQuitters(t *testing.T) {
 	resp = e.write(late, http.MethodPost, "/api/ticket", nil)
 	if until, _ := decode(t, resp)["until"].(string); until != e.clock.Now().Add(15*time.Minute).UTC().Format(time.RFC3339) {
 		t.Errorf("a leave dated ahead: banned until %q, want 15 minutes from now", until)
+	}
+	// (one dated before the window: held at the window's start, the ban's leave there, RX31)
+	_, oldID, oldSeat := e.player("sub-q-old")
+	if got := report("00000000000000c3", oldSeat, e.clock.Now().Add(-10*24*time.Hour)); got != http.StatusNoContent {
+		t.Fatalf("a report dated before the window: %d", got)
+	}
+	ban, ok, err := e.db.QueueBanOf(context.Background(), oldID)
+	if want := e.clock.Now().Add(-server.AcceptWindow); err != nil || !ok || ban.LastLeave.Sub(want).Abs() > time.Second {
+		t.Errorf("its ban: %+v %v %v, want its leave at %v", ban, ok, err, want)
 	}
 }
 

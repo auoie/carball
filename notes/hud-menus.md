@@ -239,13 +239,13 @@ and options in HT-5. **Replay HUD**: HT-6. **Stat/scoreboard**: HT-9.
 | VOTE TO FORFEIT / VOTE TO CONCEDE | team playlists, forfeit vote allowed (MR-7.8) | none: votes at once | – | – |
 | EXIT TO MAIN MENU | replay viewer, training | EXIT TO MAIN MENU | `[ModalPopups] ExitMainMenuInquiry`: "Are you sure you want to exit to the main menu?" | YES / NO |
 | by key: RestartMatch | offline, primary player | `RestartMatch` | `RestartMatchInquiry` | YES / NO |
-| by key: AbandonMatch | lobbies with a leave penalty | `Warning` (ranked) or `AbandonMatch` | `LeaverPenaltyInquiry` (ranked) or `ConcedeMatchLow/Med/HighInquiry` by quit severity | YES / NO |
+| ABANDON MATCH (ranked, built: RV-715) | lobbies with a leave penalty and no vote the player may take part in (`shouldDisplayAbandon`: a team playlist's first, a 1v1's after FORFEIT MATCH) | WARNING (ranked; casual's `AbandonMatch` by key) | `[ModalPopups] LeaverPenaltyInquiry`: "Abandoning a ranked game will temporarily ban you from matchmaking. ARE YOU SURE?" (casual's `ConcedeMatchLow/Med/HighInquiry` by key) | YES / NO, red (`WarningModalPopup`) |
 
 - YES / NO: `[Global] Yes` / `No` (INT:26734 / 26381), upper-cased (MGM:59020-59021).
 - YES on Leave/Forfeit runs `checkForReplay` (MGM m#9123). If a replay auto-save applies, a second modal asks first
   (by key: `[ModalPopups] SaveReplay`, `AutoSaveReplayInquiry`; then a name prompt).
 - By key, not needed: Season (`LeaveMatchLoseProgressInquiry`), tournaments (`LeaveTournament*`), the replay viewer's
-  `SaveReplayInquiry`. The abandon / leave-penalty texts stay out until leave penalties exist (match-rules-audit).
+  `SaveReplayInquiry`. The ranked leave-penalty texts ship since ranked leave penalties do (RV-715); casual's concede inquiries stay by key.
 - The settings reset-to-defaults confirmation: `[SettingsMenu] ResetDefault` / `ResetDefaultDesc`, YES / NO, by key.
 
 ### HT-5 Settings tabs, rows and options [M][S][A]

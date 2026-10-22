@@ -319,6 +319,25 @@ impl Matchmaker {
     }
 
     /// The searcher's session ended (cancelled, or the connection lost)
+    /// An account reported as a quitter: its searches waiting let go, their sessions handed back to be refused (RX31)
+    pub fn drop_account(&mut self, key: u64) -> Vec<Sender<Outgoing>> {
+        let mut dropped = Vec::new();
+        if key == 0 {
+            return dropped;
+        }
+        for queue in self.waiting.values_mut() {
+            queue.retain(|s| {
+                let keep = s.from.key != key;
+                if !keep {
+                    self.searching.remove(&s.id);
+                    dropped.push(s.out.clone());
+                }
+                keep
+            });
+        }
+        dropped
+    }
+
     pub fn cancel(&mut self, id: PlayerId) {
         if let Some(team_size) = self.searching.remove(&id)
             && let Some(queue) = self.waiting.get_mut(&team_size)
@@ -440,6 +459,48 @@ mod tests {
             }
         }
         None
+    }
+
+    /// AP3, RX31: a returning searcher at the front keeps its own first search's time; paired with an older searcher behind
+    /// it, the wider window of the two counts (the older one's), not the front one's alone
+    #[test]
+    fn the_wider_window_of_the_two_counts_when_a_returning_searcher_is_in_front() {
+        let mut queue = Matchmaker::new(&playlists());
+        let mut host = Recorder::default();
+        let (tx, mut far) = channel(OUT_QUEUE);
+        assert_eq!(queue.search(3, 1, tx, SearchFrom { rating: 1500, ..from(3) }, 0.0), Searched::Queued);
+        let mut rxs = Vec::new();
+        for id in 1..=2 {
+            let (tx, rx) = channel(OUT_QUEUE);
+            assert_eq!(queue.search(id, 1, tx, SearchFrom { rating: 1000, ..from(id) }, 50.0), Searched::Queued);
+            rxs.push(rx);
+        }
+        queue.form(&mut host, 50.0);
+        let tokens: Vec<u64> = rxs.iter_mut().map(|rx| found(rx).unwrap()).collect();
+        assert!(found(&mut far).is_none(), "500 apart, its window 350: not yet");
+        // (player 1 back at the front, its first search's time kept: 50 s)
+        queue.cancelled(&Cancelled { stayed: vec![tokens[0]], stalled: vec![tokens[1]] }, 55.0);
+        let (tx, mut back) = channel(OUT_QUEUE);
+        let returning = SearchFrom { token: tokens[0], rating: 1000, ..from(1) };
+        assert_eq!(queue.search(1, 1, tx, returning, 56.0), Searched::Queued);
+        assert_eq!(queue.waiting[&1].front().map(|s| s.id), Some(1));
+        // (at 80 s: the front one's window 250, the older one's 500; 500 apart, so the older one's makes the match)
+        queue.form(&mut host, 80.0);
+        assert!(found(&mut back).is_some() && found(&mut far).is_some());
+    }
+
+    /// RX31: an account reported as a quitter has its waiting searches let go (refused by the caller), the others kept
+    #[test]
+    fn a_reported_quitters_waiting_search_is_let_go() {
+        let mut queue = Matchmaker::new(&playlists());
+        let (tx, _rx) = channel(8);
+        assert!(queued(&mut queue, 1, 2, tx.clone()));
+        assert!(queued(&mut queue, 2, 2, tx.clone()));
+        assert_eq!(queue.drop_account(1000 + 1).len(), 1);
+        assert_eq!(queue.searching(2), 1, "the other search kept");
+        assert!(queue.drop_account(0).is_empty(), "no account: nothing");
+        assert!(queue.drop_account(1000 + 1).is_empty(), "let go already");
+        assert!(queued(&mut queue, 1, 2, tx), "searching again is the gate's to refuse, not the queue's");
     }
 
     #[test]

@@ -254,11 +254,13 @@ export class AccountPages {
       }).join("   "),
       "account-ratings",
     );
-    ratings.title = T.provisionalNote;
+    // (what "?" means, shown under the ratings when one has it: a tooltip a pad or a touch screen never shows, RV-709)
+    const provisional = account.ratings.some((r) => r.provisional) ? [this.#line(T.provisionalNote, "account-note")] : [];
     this.#draw(T.accountTitle, [
       this.#line(account.name, "account-name"),
       this.#line(T.signedInWith(account.providers)),
       ratings,
+      ...provisional,
       rename,
       status,
       signOut,

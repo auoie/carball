@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { QueueBannedError } from "./tickets";
 import {
   type GameServerConfig,
+  CLAIM_RETRY_MS,
+  CLAIM_TRIES,
   SERVERS_UNREACHABLE,
+  claimAddress,
   deployedGameServer,
   holdMatchLock,
   localPage,
@@ -9,8 +13,12 @@ import {
   matchPlayedElsewhere,
   pageUrl,
   queueAddress,
+  REJOIN_SECONDS,
+  clearRankedSeat,
+  rankedSeat,
   storeClaim,
   storeNotice,
+  storeRankedSeat,
   takeClaim,
   takeNotice,
 } from "./pages";
@@ -47,6 +55,29 @@ describe("the pages' handoffs", () => {
     }
   });
 
+  it("keeps a ranked team match's seat for its account, re-saved at each join, offered within 900 s of the latest; a 1v1 join clears it (RJ1)", () => {
+    const storage = memory();
+    const seat = { matchId: 0x8000000000000007n, teamSize: 2, joinedAt: 1_000_000, account: "0f0e0d0c-0b0a-4908-8706-050403020100" };
+    storeRankedSeat(seat, storage);
+    expect(rankedSeat(1_000_000 + 899_000, storage)).toEqual(seat);
+    expect(rankedSeat(1_000_000 + REJOIN_SECONDS * 1000, storage)).toBeNull();
+    // (a rejoin's join saves it anew: the window from it)
+    storeRankedSeat({ ...seat, joinedAt: 1_800_000 }, storage);
+    expect(rankedSeat(1_800_000 + 899_000, storage)?.joinedAt).toBe(1_800_000);
+    // (a development page's: no account)
+    storeRankedSeat({ ...seat, account: null }, storage);
+    expect(rankedSeat(1_000_000, storage)?.account).toBeNull();
+    // (a 1v1 joined: no rejoin there, the record cleared; cleared outright too)
+    storeRankedSeat({ ...seat, teamSize: 1 }, storage);
+    expect(rankedSeat(1_000_000, storage)).toBeNull();
+    storeRankedSeat(seat, storage);
+    clearRankedSeat(storage);
+    expect(rankedSeat(1_000_000, storage)).toBeNull();
+    // (a rejoin's claim: its match, its team size, the account)
+    storeClaim({ token: seat.matchId, playlist: 2, searchedAt: 5, rejoin: true, account: seat.account }, storage);
+    expect(takeClaim(storage)).toEqual({ token: seat.matchId, playlist: 2, searchedAt: 5, rejoin: true, account: seat.account });
+  });
+
   it("hands the menu page its notice once, unknown fields dropped", () => {
     const storage = memory();
     storeNotice({ search: 3, warning: "again" }, storage);
@@ -61,6 +92,44 @@ describe("the pages' handoffs", () => {
     expect(takeNotice(storage)).toEqual({ search: 1, warning: "w", back: { token: 0xffffffffffffffffn, searchedAt: 42 } });
     storage.setItem("carball.menuNotice", '{"search":1,"back":{"token":"0","searchedAt":1}}');
     expect(takeNotice(storage)).toEqual({ search: 1 });
+    // (a rejoin refused for a ban from another match: the ban's end with it, none without, RX31)
+    storeNotice({ modal: "banned", until: 1234 }, storage);
+    expect(takeNotice(storage)).toEqual({ modal: "banned", until: 1234 });
+    storage.setItem("carball.menuNotice", '{"modal":"banned"}');
+    expect(takeNotice(storage)).toEqual({});
+  });
+
+  it("tries a claim's config.json and its ticket again inside its window, not a sign-in gone or a ban (RX31)", async () => {
+    const pauses: number[] = [];
+    const pause = (ms: number): Promise<void> => {
+      pauses.push(ms);
+      return Promise.resolve();
+    };
+    const deployedConfig: GameServerConfig = { kind: "deployed", url: "https://game.example:4433/play" };
+    // (config.json unreadable twice, then read: the claim goes on)
+    const flaky = vi.fn<() => Promise<GameServerConfig>>();
+    flaky.mockResolvedValueOnce({ kind: "unreachable" }).mockResolvedValueOnce({ kind: "unreachable" }).mockResolvedValue(deployedConfig);
+    const address = await claimAddress(new URLSearchParams(""), "carball.zolt.top", flaky, pause);
+    expect(address.url).toBe("https://game.example:4433/play");
+    expect(flaky).toHaveBeenCalledTimes(3);
+    expect(pauses).toEqual([CLAIM_RETRY_MS, CLAIM_RETRY_MS]);
+    // (unreadable every time: CLAIM_TRIES tries, then the failure)
+    const down = vi.fn(() => Promise.resolve<GameServerConfig>({ kind: "unreachable" }));
+    await expect(claimAddress(new URLSearchParams(""), "carball.zolt.top", down, pause)).rejects.toThrow(SERVERS_UNREACHABLE);
+    expect(down).toHaveBeenCalledTimes(CLAIM_TRIES);
+    // (the ticket: the service down once, then given)
+    const post = vi.fn<typeof fetch>();
+    post
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "unavailable" }), { status: 503 }))
+      .mockResolvedValue(new Response(JSON.stringify({ ticket: "VGlja2V0" })));
+    vi.stubGlobal("fetch", post);
+    expect(await address.ticket?.()).toBe("VGlja2V0");
+    expect(post).toHaveBeenCalledTimes(2);
+    // (a ban is an answer: asked once)
+    post.mockReset();
+    post.mockResolvedValue(new Response(JSON.stringify({ error: "queue-banned", until: new Date(Date.now() + 60_000).toISOString() }), { status: 403 }));
+    await expect(address.ticket?.(5n)).rejects.toBeInstanceOf(QueueBannedError);
+    expect(post).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the page's other parameters across the pages, without a development server's or the match page's", () => {

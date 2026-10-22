@@ -2478,6 +2478,15 @@ body {
   border-color: #b3261e;
 }
 
+/* (the leave penalty's question: its WARNING title over it, RV-715) */
+.pause-match .match-menu-warning {
+  padding: 6px 12px 0;
+  font: calc(20px * var(--hud-header-scale, 1))/24px var(--hud-header);
+  text-transform: uppercase;
+  color: #ffb02e;
+  background: rgba(10, 14, 22, 0.95);
+}
+
 /* (no panel of its own: Players a pause button as the others, the same width and spacing, its rows under it) */
 .pause-players {
   gap: 6px;

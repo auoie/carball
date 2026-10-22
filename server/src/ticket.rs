@@ -115,7 +115,8 @@ pub enum Refusal {
 
 /// The keys tickets are checked with (reloadable: a rotation without a restart, AP2-4), the nonces taken (until their
 /// tickets expire), and when this process started (a ticket issued before it may have been used with the one before:
-/// refused)
+/// refused, with no clock skew allowed, deliberately: a skew would let a ticket spent on the last process through again;
+/// a game box clock ahead of the service's only costs a fresh ticket for the first seconds after a restart, RX31 F7)
 pub struct Tickets {
     keys: RwLock<HashMap<String, Vec<u8>>>,
     nonces: Mutex<HashMap<[u8; 16], i64>>,

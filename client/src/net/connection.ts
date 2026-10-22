@@ -204,18 +204,36 @@ export class Connection {
     preferences: JoinPreferences,
     match: MatchSession = { intent: "join" },
   ): Promise<{ connection: Connection; welcome: Welcome }> {
+    const token = match.intent === "join" ? 0n : match.token;
+    // (a claim's and a rejoin's ticket: the seat's account, notes/accounts.md §3, and no key of this browser's beside it
+    // (the server keys the seat by the account: RX29C); a join's none. Fetched before the session opens: a refused ticket
+    // leaves no session behind, RX30C)
+    const ticket = match.intent !== "join" && address.ticket ? await address.ticket(match.intent === "rejoin" ? match.token : undefined) : "";
+    const key = ticket === "" ? storedKey() : 0n;
     const transport =
       address.open?.() ??
       new WebTransport(address.url, address.certHash ? { serverCertificateHashes: [{ algorithm: "sha-256", value: address.certHash }] } : undefined);
+    try {
+      return await Connection.#hello(transport, preferences, match, token, ticket, key);
+    } catch (e) {
+      transport.close(); // (refused, or failed on the way: the session closed from this side too)
+      throw e;
+    }
+  }
+
+  /** The session's control stream opened, the hello sent, the welcome awaited: the connection */
+  static async #hello(
+    transport: WebTransport,
+    preferences: JoinPreferences,
+    match: MatchSession,
+    token: bigint,
+    ticket: string,
+    key: bigint,
+  ): Promise<{ connection: Connection; welcome: Welcome }> {
     await transport.ready;
     const connection = new Connection(transport);
     const stream = await transport.createBidirectionalStream();
     const writer = stream.writable.getWriter();
-    const token = match.intent === "join" ? 0n : match.token;
-    // (a claim's and a rejoin's ticket: the seat's account, notes/accounts.md §3, and no key of this browser's beside it
-    // (the server keys the seat by the account: RX29C); a join's none)
-    const ticket = match.intent !== "join" && address.ticket ? await address.ticket(match.intent === "rejoin" ? match.token : undefined) : "";
-    const key = ticket === "" ? storedKey() : 0n;
     await writer.write(encodeControl({ type: "hello", version: PROTOCOL_VERSION, ...preferences, key, intent: match.intent, playlist: 0, token, ticket }));
     connection.#control = writer;
 

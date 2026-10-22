@@ -516,10 +516,31 @@ async fn a_queue_with_tickets_takes_only_good_ones_and_binds_each_seat_to_its_ac
     let (other_match, ..) =
         first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_REJOIN, 0, 1, rejoin_ticket(2))).await;
     assert_eq!(other_match, refused, "another match's rejoin ticket");
-    // (a 1v1 has no rejoin: refused as concluded)
+    // (a 1v1 has no rejoin: refused as concluded, asked of this match with its own ticket, RX31)
+    let Control::Welcome { match_id, .. } = claim else { unreachable!() };
     let (rejoin, ..) =
-        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_REJOIN, 0, 1, rejoin_ticket(1))).await;
+        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_REJOIN, 0, match_id, rejoin_ticket(match_id)))
+            .await;
     assert_eq!(rejoin, Control::Refused { reason: protocol::REFUSED_CONCLUDED });
+    // (Ada leaves the started 1v1, its penalty armed: reported at once, so her next search is refused as a quitter's,
+    // Refused 7, a fresh ticket notwithstanding: AP3, RX31)
+    drop(recv_a);
+    _conn_a.close(0u32.into(), b"left");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let (reply, ..) =
+            first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_SEARCH, 1, 0, ticket(1, "Ada"))).await;
+        if reply == (Control::Refused { reason: protocol::REFUSED_QUEUE_BANNED }) {
+            break;
+        }
+        assert_eq!(
+            reply,
+            Control::Refused { reason: protocol::REFUSED_IN_MATCH },
+            "her leave not yet seen, else banned"
+        );
+        assert!(Instant::now() < deadline, "no Refused 7 after the leave");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
 }
 
 /// A search's session, its control stream kept for the test to close (as the page's `finish`)

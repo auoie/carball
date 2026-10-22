@@ -9,7 +9,7 @@ const labels = (s: MatchMenuState): string[] => matchMenuItems(s).map((i) => i.l
 
 describe("the midgame menu's match buttons", () => {
   it("offers a 1v1 forfeit with its confirm while votes are allowed, else leaving", () => {
-    const state = { matchType: "ranked", teamSize: 1, canVoteForfeit: true, vote: NONE } as const;
+    const state = { matchType: "ranked", teamSize: 1, canVoteForfeit: true, vote: NONE, leavePenalty: false } as const;
     expect(matchMenuItems(state)).toEqual([
       { action: "forfeit", label: "Forfeit Match", confirm: "Are you sure you want to forfeit the match?", danger: true },
     ]);
@@ -19,7 +19,7 @@ describe("the midgame menu's match buttons", () => {
   });
 
   it("one slot (RV-236): a team vote labelled by the match type while the player can start or join one, else leaving", () => {
-    const state = { matchType: "casual", teamSize: 3, canVoteForfeit: true, vote: NONE } as const;
+    const state = { matchType: "casual", teamSize: 3, canVoteForfeit: true, vote: NONE, leavePenalty: false } as const;
     expect(labels(state)).toEqual(["Vote to Concede"]);
     expect(labels({ ...state, matchType: "ranked" })).toEqual(["Vote to Forfeit"]);
     expect(matchMenuItems(state)[0]).toMatchObject({ confirm: null, danger: false });
@@ -33,6 +33,29 @@ describe("the midgame menu's match buttons", () => {
     expect(labels({ ...state, vote: { ...RUNNING, canStart: false } })).toEqual(["Vote to Concede"]);
     expect(labels({ ...state, vote: { ...RUNNING, canStart: false, voted: true } })).toEqual(["Leave Match"]);
     expect(labels({ ...state, vote: null })).toEqual(["Leave Match"]);
+  });
+
+  it("a ranked lobby with the leave penalty: Abandon Match, its warning and red buttons, unless a vote is theirs to take part in (RV-715)", () => {
+    const abandon = {
+      action: "leave",
+      label: "Abandon Match",
+      confirm: "Abandoning a ranked game will temporarily ban you from matchmaking. ARE YOU SURE?",
+      danger: false,
+      warning: "Warning",
+    };
+    const team = { matchType: "ranked", teamSize: 2, canVoteForfeit: false, vote: NONE, leavePenalty: true } as const;
+    expect(matchMenuItems(team)).toEqual([abandon]); // (no votes allowed yet: checked first)
+    expect(labels({ ...team, canVoteForfeit: true })).toEqual(["Vote to Forfeit"]); // (a vote they may start)
+    expect(labels({ ...team, canVoteForfeit: true, vote: RUNNING })).toEqual(["Vote to Forfeit"]); // (one to vote in)
+    expect(labels({ ...team, canVoteForfeit: true, vote: { ...RUNNING, voted: true } })).toEqual(["Abandon Match"]);
+    expect(labels({ ...team, canVoteForfeit: true, vote: { ...NONE, canStart: false } })).toEqual(["Abandon Match"]);
+    // (no penalty: a lobby short of a player, or a winner; a casual or private match: Leave Match)
+    expect(labels({ ...team, leavePenalty: false })).toEqual(["Leave Match"]);
+    expect(labels({ ...team, matchType: "casual" })).toEqual(["Leave Match"]);
+    // (a 1v1: its forfeit first while allowed, then the penalty's)
+    const duel = { ...team, teamSize: 1 } as const;
+    expect(labels({ ...duel, canVoteForfeit: true })).toEqual(["Forfeit Match"]);
+    expect(matchMenuItems(duel)).toEqual([abandon]);
   });
 });
 

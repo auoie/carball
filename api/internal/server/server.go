@@ -79,7 +79,7 @@ type Store interface {
 	DeleteAccount(ctx context.Context, id string, hmacOf func(store.Identity) []byte, now time.Time) error
 	RatingsOf(ctx context.Context, accountID string) (map[int]store.Rating, error)
 	QueueBanOf(ctx context.Context, accountID string) (store.QueueBan, bool, error)
-	ChangeQueueBan(ctx context.Context, accountID string, spend *store.SpentTicket, change func(cur store.QueueBan, exists bool) (*store.QueueBan, bool)) error
+	ChangeQueueBan(ctx context.Context, accountID string, spend *store.SpentTicket, now time.Time, change func(cur store.QueueBan, exists bool) (*store.QueueBan, bool)) error
 	RecordResult(ctx context.Context, r store.Result, rate func(current map[string]*store.Rating) map[string]store.Rating, now time.Time) (bool, error)
 }
 

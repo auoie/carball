@@ -369,7 +369,16 @@ export class Online {
 
   /** The menu's match buttons now */
   menuItems(): MatchMenuItem[] {
-    return matchMenuItems({ matchType: this.#matchType, teamSize: this.#teamSize, canVoteForfeit: this.#match?.canVoteForfeit ?? false, vote: this.#vote });
+    // (the lobby's leave penalty: every seat's player here, no winner yet, as the server arms it: LV1)
+    const seated = this.#roster?.size ?? 0;
+    const leavePenalty = seated >= 2 * this.#teamSize && (this.#match?.winner ?? null) === null;
+    return matchMenuItems({
+      matchType: this.#matchType,
+      teamSize: this.#teamSize,
+      canVoteForfeit: this.#match?.canVoteForfeit ?? false,
+      vote: this.#vote,
+      leavePenalty,
+    });
   }
 
   /** The menu's forfeit or vote button: both a vote (in a 1v1 the lone player's passes on the press) */

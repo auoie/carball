@@ -108,7 +108,7 @@ test("no rejoin offer while another tab of this browser plays that match (its lo
   await playing.close();
   await second.reload();
   await expect(second.locator("#loading")).toBeHidden({ timeout: 60_000 });
-  await expect(second.locator("#modal .modal-title")).toHaveText("REJOIN MATCH", { timeout: 10_000 });
+  await expect(second.locator("#modal .modal-title")).toHaveText("Reconnect", { timeout: 10_000 });
   expect(errors).toEqual([]);
   await context.close();
 });
@@ -141,11 +141,11 @@ test("a ranked match left by accident is offered back for 900 s; a rejoin of a m
     );
   });
   const modal = page.locator("#modal");
-  await expect(modal.locator(".modal-title")).toHaveText("REJOIN MATCH");
+  await expect(modal.locator(".modal-title")).toHaveText("Reconnect");
+  await expect(modal).toContainText("It appears you accidentally left a ranked match. Would you like to rejoin?");
   await modal.getByRole("button", { name: /^yes$/i }).click();
   await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
-  await expect(modal.locator(".modal-title")).toHaveText("MATCH OVER", { timeout: 30_000 });
-  await expect(modal).toContainText("That match has ended.");
+  await expect(modal).toContainText("Match has concluded.", { timeout: 30_000 });
   expect(await page.evaluate(() => localStorage.getItem("carball.rankedSeat"))).toBeNull();
   expect(new URL(page.url()).searchParams.has("match")).toBe(false);
   expect(errors).toEqual([]);

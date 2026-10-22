@@ -13,6 +13,7 @@ import { REFUSED_CONCLUDED, REFUSED_IN_MATCH, REFUSED_TICKET, REFUSED_TOKEN } fr
 import {
   type MenuNotice,
   type RankedSeat,
+  claimAddress,
   clearRankedSeat,
   deployedGameServer,
   holdMatchLock,
@@ -26,7 +27,7 @@ import {
   takeClaim,
   takeNotice,
 } from "./net/pages";
-import { QueueBannedError, SignedOutError } from "./net/tickets";
+import { QueueBannedError, SignedOutError, queueBanText } from "./net/tickets";
 import { type Account, AccountsApi, signInReturn, withoutSignInReturn } from "./account/api";
 import { ACCOUNT_TEXT, AccountPages, accountErrorText, signInNotice } from "./ui/accountPages";
 import { Search } from "./net/search";
@@ -199,8 +200,38 @@ async function main(): Promise<void> {
     // (a development server's open match, ?server=host:infoPort; or the queue's match, its claim)
     let address;
     let match: MatchSession = { intent: "join" };
+    // (a claim that fails: back to the menu; the match gone, a search again with a warning line, MM-18; the server not
+    // reached, the connection-lost modal. Its config.json and its ticket tried again inside its window (RX31), and a
+    // ticket the server refuses (a server restarted, a key rotated, the clocks apart) once more with a fresh one: the
+    // claim's token isn't spent by it, RX30C)
+    const claimFailed = (e: unknown): void => {
+      if (!claim) return;
+      // (refused while still in its time: a match cancelled for someone else, so back to the queue's front, RV-367; a
+      // rejoin of a match over: its offer gone; a rejoin's ticket refused for a ban from another match: the ban, RX31; the
+      // sign-in gone: the menu's sign-in, RX29C; anything else (the server not reached, a ticket refused twice): told, a
+      // rejoin still offered, RX30C)
+      const back = { token: claim.token, searchedAt: claim.searchedAt };
+      const refused = e instanceof RefusedError ? e.reason : null;
+      storeNotice(
+        refused === REFUSED_TOKEN && !claim.rejoin
+          ? { search: claim.playlist, warning: OWN_SEARCH_TEXT.matchGone, back }
+          : refused === REFUSED_IN_MATCH && claim.rejoin
+            ? { modal: "elsewhere" } // (its seat's session live: another tab plays it, the seat kept, RX30C)
+            : refused === REFUSED_CONCLUDED
+              ? { modal: "concluded" }
+              : e instanceof QueueBannedError && claim.rejoin
+                ? { modal: "banned", until: e.until }
+                : e instanceof SignedOutError
+                  ? { modal: "signedOut" }
+                  : { modal: "lost" },
+      );
+      location.replace(pageUrl("menu", location));
+    };
     if (claim) {
-      address = await queueAddress(params, location.hostname);
+      address = await claimAddress(params, location.hostname).catch((e: unknown) => {
+        claimFailed(e);
+        throw e;
+      });
       match = { intent: claim.rejoin ? "rejoin" : "claim", token: claim.token };
     } else if (__CARBALL_BOTS__ && botMatch) {
       // (the worker, its host and the bots' runtime in their own chunks, none in a build without bots)
@@ -210,40 +241,22 @@ async function main(): Promise<void> {
       const [host = location.hostname, port = "4434"] = server === "" || server === null ? [] : server.split(":");
       address = await devServerAddress(host, Number(port));
     }
-    // (a claim that fails: back to the menu; the match gone, a search again with a warning line, MM-18; the server not
-    // reached, the connection-lost modal. A ticket refused (a server restarted, a key rotated, the clocks apart) tried
-    // once more with a fresh one: the claim's token isn't spent by it, RX30C)
     const open = (): ReturnType<typeof Connection.open> => Connection.open(address, joinPreferences(settings), match);
     const opened = open().catch((e: unknown) => {
       if (claim && e instanceof RefusedError && e.reason === REFUSED_TICKET) return open();
       throw e;
     });
-    if (claim) {
-      opened.catch((e: unknown) => {
-        // (refused while still in its time: a match cancelled for someone else, so back to the queue's front, RV-367; a
-        // rejoin of a match over, or a ban from another match: its offer gone; the sign-in gone: the menu's sign-in,
-        // RX29C; anything else (the server not reached, a ticket refused twice): told, a rejoin still offered, RX30C)
-        const back = { token: claim.token, searchedAt: claim.searchedAt };
-        const refused = e instanceof RefusedError ? e.reason : null;
-        if (refused === REFUSED_CONCLUDED || e instanceof QueueBannedError) clearRankedSeat();
-        storeNotice(
-          refused === REFUSED_TOKEN && !claim.rejoin
-            ? { search: claim.playlist, warning: OWN_SEARCH_TEXT.matchGone, back }
-            : refused === REFUSED_IN_MATCH && claim.rejoin
-              ? { modal: "elsewhere" } // (its seat's session live: another tab plays it, the seat kept, RX30C)
-              : refused === REFUSED_CONCLUDED
-                ? { modal: "concluded" }
-                : e instanceof SignedOutError
-                  ? { modal: "signedOut" }
-                  : { modal: "lost" },
-        );
-        location.replace(pageUrl("menu", location));
-      });
-    }
+    opened.catch(claimFailed);
     const session = await opened;
-    // (a ranked 2v2 or 3v3 joined: offered back for 900 s if it's left by accident, LV1; a rejoin keeps its first join's time)
-    if (claim && !claim.rejoin) {
-      storeRankedSeat({ matchId: session.welcome.matchId, teamSize: session.welcome.teamSize, joinedAt: Date.now() });
+    // (every join saves the record anew, a rejoin's too: a ranked 2v2 or 3v3 offered back for 900 s from this join if it's
+    // left by accident, a 1v1 clearing it; the claiming account's alone: LV1, RJ1, RX30C)
+    if (claim) {
+      storeRankedSeat({
+        matchId: session.welcome.matchId,
+        teamSize: session.welcome.teamSize,
+        joinedAt: Date.now(),
+        account: claim.account ?? null,
+      });
     }
     // (the match's lock held while this page plays it: another tab offers no rejoin of it, RX30C; let go with the page)
     if (claim) holdMatchLock(session.welcome.matchId);
@@ -532,7 +545,7 @@ async function main(): Promise<void> {
         else audio.countdown(1);
       },
       join: (token, playlist, searchedFor, map) => {
-        storeClaim({ token, playlist, searchedAt: Date.now() - searchedFor * 1000, map });
+        storeClaim({ token, playlist, searchedAt: Date.now() - searchedFor * 1000, map, ...(account ? { account: account.id } : {}) });
         location.assign(pageUrl("match", location));
       },
       // (the slot claimed and left at once: the match is cancelled now for its other players, RV-355)
@@ -804,16 +817,20 @@ async function main(): Promise<void> {
         mainMenu?.setBots((body) => page.botsPage(body, listings));
       });
     }
-    // (a ranked 2v2 or 3v3 left by accident in the last 900 s: offered back, once (LV1); Yes to its match page, No forgets it)
+    // (a ranked 2v2 or 3v3 left by accident in the last 900 s: offered back to the account that played it, once per saved
+    // record, the record cleared as it's offered, whatever the answer (LV1, RJ1: a failed Yes isn't offered again; a
+    // rejoin that joins saves a new one); Yes to its match page)
     const offerRejoin = (): void => {
       const seat = rankedSeat();
       if (!seat) return;
-      // (not while another tab of this browser plays it: RX30C)
-      void matchPlayedElsewhere(seat.matchId).then((elsewhere) => {
-        if (!elsewhere) offerSeat(seat);
+      void accountsReady.then(async () => {
+        if (seat.account !== (account?.id ?? null)) return; // (another account's, in this browser: RX30C)
+        if (await matchPlayedElsewhere(seat.matchId)) return; // (another tab of this browser plays it: RX30C)
+        offerSeat(seat);
       });
     };
     const offerSeat = (seat: RankedSeat): void => {
+      clearRankedSeat();
       modal.choose(
         REJOIN_TEXT.title,
         REJOIN_TEXT.body,
@@ -821,13 +838,19 @@ async function main(): Promise<void> {
           {
             label: MODAL_TEXT.yes,
             act: () => {
-              storeClaim({ token: seat.matchId, playlist: seat.teamSize, searchedAt: Date.now(), rejoin: true });
+              storeClaim({
+                token: seat.matchId,
+                playlist: seat.teamSize,
+                searchedAt: Date.now(),
+                rejoin: true,
+                ...(seat.account === null ? {} : { account: seat.account }),
+              });
               location.assign(pageUrl("match", location));
             },
           },
-          { label: MODAL_TEXT.no, act: clearRankedSeat },
+          { label: MODAL_TEXT.no },
         ],
-        1,
+        0, // (Yes focused, the game's SetDefaultSelectedButtonIndex(0); a dismissal No)
         1,
       );
     };
@@ -836,9 +859,13 @@ async function main(): Promise<void> {
     if (notice?.modal === "idle" || notice?.modal === "lost") {
       modal.show(MODAL_TEXT.title, notice.modal === "idle" ? MODAL_TEXT.idleKicked : MODAL_TEXT.connectionLost, offerRejoin);
     } else if (notice?.modal === "concluded") {
-      modal.show(REJOIN_TEXT.concludedTitle, REJOIN_TEXT.concluded);
+      modal.show(REJOIN_TEXT.title, REJOIN_TEXT.concluded);
     } else if (notice?.modal === "elsewhere") {
       modal.show(REJOIN_TEXT.title, REJOIN_TEXT.elsewhere);
+    } else if (notice?.modal === "banned" && notice.until !== undefined) {
+      // (a rejoin refused for a ban from another match: the ban as a search says it, its seat gone, RX31)
+      const text = queueBanText(notice.until, Date.now());
+      modal.show(REJOIN_TEXT.title, `${text.charAt(0).toUpperCase()}${text.slice(1)}.`);
     } else if (notice?.modal === "signedOut") {
       // (once the account's read: still signed out, the sign-in's page with why; signed in again meanwhile, its own)
       void accountsReady.then(() => {

@@ -5,7 +5,10 @@
 //! with a growing wait, in order, for up to the acceptance window (24 h): no answer, a 5xx, 429, and the answers that
 //! aren't the service's own (a redirect, 401 or 403 from Access, a challenge or a wrong token, 404 or 405 from a wrong
 //! route), those logged loudly; each is kept on disk meanwhile (`OUTBOX_DIR`, a small volume), so a restart sends it
-//! later. A call the service refuses (another 4xx) is logged and dropped. Without `API_URL` (a development server, the
+//! later. A call the service refuses (another 4xx, or its own 403 for a call's ticket) is logged and dropped. One
+//! queue, strictly in order (a refill never ahead of its quitter): what's retried fails every call alike (the network,
+//! an outage's 5xx, 429, the edge), since the service answers a call's own fault with a 4xx (its ticket 403, data its
+//! database refuses 400: RX31), so no call blocks the rest by itself. Without `API_URL` (a development server, the
 //! tests) the calls are only logged.
 
 use std::collections::VecDeque;
@@ -93,13 +96,22 @@ pub enum Sent {
     Later,
 }
 
-/// What an answer's status makes of a call
-fn sent(status: u16) -> Sent {
-    match status {
-        200..=299 => Sent::Done,
-        300..=399 | 401 | 403 | 404 | 405 | 429 | 500..=599 => Sent::Later,
+/// What an answer makes of a call: its status, and the accounts service's own refusal when the body is one (its JSON
+/// `{"error": …}`). Its 403 "ticket" (a ticket out of its window, used on another match, not ours) is for good: dropped,
+/// not tried for 24 h ahead of every call after it (AP4); any other 403, an edge's (Access, a challenge), tried again
+fn sent(status: u16, api_error: Option<&str>) -> Sent {
+    match (status, api_error) {
+        (200..=299, _) => Sent::Done,
+        (403, Some("ticket")) => Sent::Refused(status),
+        (300..=399 | 401 | 403 | 404 | 405 | 429 | 500..=599, _) => Sent::Later,
         _ => Sent::Refused(status),
     }
+}
+
+/// The accounts service's refusal in a body, if it's one: `{"error": "…"}` (an edge's page isn't)
+fn api_error(body: &str) -> Option<String> {
+    let v: Value = serde_json::from_str(body).ok()?;
+    v.get("error")?.as_str().map(str::to_string)
 }
 
 /// The calls in order, each with its file (if kept on disk)
@@ -233,10 +245,19 @@ async fn send(client: &reqwest::Client, config: &OutboxConfig, api: &str, call: 
     match request.send().await {
         Ok(response) => {
             let status = response.status().as_u16();
-            let result = sent(status);
-            match status {
-                429 | 500..=599 => eprintln!("outbox: {} {}: {status}, later", call.method, call.path),
-                300..=399 | 401 | 403 | 404 | 405 => eprintln!(
+            // (a 403's body read: the service's own refusal, or an edge's page)
+            let error = if status == 403 { response.text().await.ok().and_then(|body| api_error(&body)) } else { None };
+            let result = sent(status, error.as_deref());
+            match (status, &result) {
+                (_, Sent::Refused(_)) if error.is_some() => eprintln!(
+                    "outbox: {} {}: {status} {:?} from the accounts service: refused for good, dropped (its ticket isn't \
+                     accepted for this match)",
+                    call.method,
+                    call.path,
+                    error.as_deref().unwrap_or("")
+                ),
+                (429 | 500..=599, _) => eprintln!("outbox: {} {}: {status}, later", call.method, call.path),
+                (300..=399 | 401 | 403 | 404 | 405, _) => eprintln!(
                     "outbox: {} {}: {status}, not the accounts service's answer (a redirect, Access or a challenge, a wrong \
                      route or token): kept and tried again; check API_URL, GAME_SERVER_TOKEN_FILE and the Access token",
                     call.method, call.path
@@ -277,11 +298,15 @@ pub async fn run(config: OutboxConfig, mut reports: UnboundedReceiver<Report>) {
     };
     let mut wait = config.first_wait;
     let mut retry_at: Option<tokio::time::Instant> = None;
+    let mut open = true;
     loop {
         // (new reports first; the front call sent when it's due)
         let due = retry_at.is_none_or(|at| tokio::time::Instant::now() >= at);
         if queue.calls.is_empty() || !due {
             let sleep = retry_at.map(tokio::time::sleep_until);
+            if !open {
+                return;
+            }
             tokio::select! {
                 report = reports.recv() => match report {
                     Some(r) => queue.push(call_of(&r, &config.server, crate::ticket::unix_now())),
@@ -310,7 +335,19 @@ pub async fn run(config: OutboxConfig, mut reports: UnboundedReceiver<Report>) {
             queue.pop();
             continue;
         }
-        match send(&client, &config, api, &call).await {
+        // (the reports that come while it's in flight, up to its 10 s, kept on disk as they come, not after: RX31)
+        let sending = send(&client, &config, api, &call);
+        tokio::pin!(sending);
+        let sent = loop {
+            tokio::select! {
+                sent = &mut sending => break sent,
+                report = reports.recv(), if open => match report {
+                    Some(r) => queue.push(call_of(&r, &config.server, crate::ticket::unix_now())),
+                    None => open = false,
+                },
+            }
+        };
+        match sent {
             Sent::Done => {
                 queue.pop();
                 wait = config.first_wait;
@@ -375,14 +412,20 @@ mod tests {
     #[test]
     fn each_status_is_taken_retried_or_dropped() {
         for status in [200, 201, 204] {
-            assert_eq!(sent(status), Sent::Done, "{status}");
+            assert_eq!(sent(status, None), Sent::Done, "{status}");
         }
         for status in [301, 302, 303, 307, 308, 401, 403, 404, 405, 429, 500, 502, 503, 504] {
-            assert_eq!(sent(status), Sent::Later, "{status}");
+            assert_eq!(sent(status, None), Sent::Later, "{status}");
         }
         for status in [400, 409, 410, 413, 422] {
-            assert_eq!(sent(status), Sent::Refused(status), "{status}");
+            assert_eq!(sent(status, None), Sent::Refused(status), "{status}");
         }
+        // (the service's own refusal of a ticket: for good; its 401 for the token, an edge's 403: tried again, AP4)
+        assert_eq!(sent(403, Some("ticket")), Sent::Refused(403));
+        assert_eq!(sent(401, Some("unauthorized")), Sent::Later);
+        assert_eq!(sent(403, Some("forbidden")), Sent::Later);
+        assert_eq!(api_error(r#"{"error":"ticket"}"#).as_deref(), Some("ticket"));
+        assert_eq!(api_error("<html>Access denied</html>"), None);
     }
 
     /// A stand-in accounts service: answers each request with the next status (the last again after), recording each
@@ -411,6 +454,66 @@ mod tests {
             }
         });
         (url, seen)
+    }
+
+    /// A stand-in answering each request with the next status and body (the last again after)
+    async fn service_bodies(answers: Vec<(u16, &'static str)>) -> (String, Arc<Mutex<Vec<String>>>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let log = seen.clone();
+        tokio::spawn(async move {
+            let mut i = 0;
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let mut buf = vec![0u8; 8192];
+                let n = stream.read(&mut buf).await.unwrap_or(0);
+                log.lock().unwrap().push(String::from_utf8_lossy(&buf[..n]).to_string());
+                let (status, body) = answers[i.min(answers.len() - 1)];
+                i += 1;
+                let reply = format!(
+                    "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(reply.as_bytes()).await;
+            }
+        });
+        (url, seen)
+    }
+
+    /// AP4: the service's own refusal of a call's ticket (403, its JSON) is for good: dropped, the calls after it sent; an
+    /// edge's 403 (a page, not the service's) is tried again
+    #[tokio::test]
+    async fn the_services_own_ticket_refusal_is_dropped_an_edges_403_retried() {
+        let (url, seen) =
+            service_bodies(vec![(403, r#"{"error":"ticket"}"#), (204, ""), (403, "<html>Access</html>"), (204, "")])
+                .await;
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let task = tokio::spawn(run(config(Some(url), None), rx));
+        for m in ["m1", "m2", "m3"] {
+            tx.send(Report::Quitter { match_id: m.into(), ticket: "t".into() }).unwrap();
+        }
+        until(|| seen.lock().unwrap().len() == 4).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let seen = seen.lock().unwrap().clone();
+        let matches: Vec<&str> = seen
+            .iter()
+            .map(|r| {
+                if r.contains(r#""match":"m1""#) {
+                    "m1"
+                } else if r.contains(r#""match":"m2""#) {
+                    "m2"
+                } else {
+                    "m3"
+                }
+            })
+            .collect();
+        assert_eq!(
+            matches,
+            ["m1", "m2", "m3", "m3"],
+            "m1 refused for good, m2 sent; m3's edge 403 retried, then taken"
+        );
+        drop(tx);
+        task.await.unwrap();
     }
 
     fn config(api_url: Option<String>, dir: Option<PathBuf>) -> OutboxConfig {
@@ -546,6 +649,38 @@ mod tests {
         assert!(check_dir(&fine).is_ok());
         assert_eq!(std::fs::read_dir(&fine).unwrap().count(), 0, "its probe gone");
         let _ = std::fs::remove_dir(&fine);
+    }
+
+    #[tokio::test]
+    async fn a_report_during_a_send_is_on_disk_before_the_send_ends() {
+        let dir = scratch_dir();
+        // (a service slow to answer: 600 ms)
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let seen = Arc::new(Mutex::new(0));
+        let log = seen.clone();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let mut buf = vec![0u8; 8192];
+                let _ = stream.read(&mut buf).await;
+                *log.lock().unwrap() += 1;
+                tokio::time::sleep(Duration::from_millis(600)).await;
+                let _ = stream.write_all(b"HTTP/1.1 204 X\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
+            }
+        });
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let task = tokio::spawn(run(config(Some(url), Some(dir.clone())), rx));
+        tx.send(Report::Quitter { match_id: "m1".into(), ticket: "t1".into() }).unwrap();
+        until(|| *seen.lock().unwrap() == 1).await;
+        // (the first in flight: the second written now)
+        tx.send(Report::Quitter { match_id: "m2".into(), ticket: "t2".into() }).unwrap();
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert_eq!(*seen.lock().unwrap(), 1, "the first still in flight");
+        assert_eq!(std::fs::read_dir(&dir).map_or(0, |d| d.count()), 2, "both on disk");
+        until(|| std::fs::read_dir(&dir).map_or(0, |d| d.count()) == 0).await;
+        drop(tx);
+        task.await.unwrap();
+        let _ = std::fs::remove_dir(&dir);
     }
 
     #[tokio::test]

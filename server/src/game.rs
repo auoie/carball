@@ -973,24 +973,27 @@ impl Game {
 
     /// A player left the match (their connection closed)
     pub fn leave(&mut self, id: PlayerId) {
-        self.remove_player(id, false);
+        self.remove_player(id, false, false);
     }
 
     /// A player's seat taken over by the same account's new session (a rejoin before this one timed out): told so
-    /// (`KICK_REPLACED`), then gone as a leave
+    /// (`KICK_REPLACED`), then gone as a leave, except that the lobby stays full to the votes: its seat is back at once, so
+    /// no vote ends for it (the old session's own vote goes with it, RX31)
     pub fn replaced(&mut self, id: PlayerId) {
         if let Some(p) = self.players.get(&id) {
             let _ = p.out.try_send(Outgoing::Control(Control::Kicked { reason: protocol::KICK_REPLACED }.encode()));
         }
-        self.remove_player(id, false);
+        self.remove_player(id, false, true);
     }
 
     /// A player's connection timed out (the chat log's "lost connection")
     pub fn connection_lost(&mut self, id: PlayerId) {
-        self.remove_player(id, true);
+        self.remove_player(id, true, false);
     }
 
-    fn remove_player(&mut self, id: PlayerId, lost: bool) {
+    /// A player gone (`lost`: their connection timed out); `replaced`: their seat taken over at once by their account's
+    /// new session (`replaced`), which ends no vote
+    fn remove_player(&mut self, id: PlayerId, lost: bool, replaced: bool) {
         if let Some(player) = self.players.remove(&id) {
             let stats = player.input.stats;
             eprintln!(
@@ -1000,7 +1003,7 @@ impl Game {
             let team = player.team;
             // (a full public lobby loses its leave penalty: every team's vote ends, `OnPenaltyChanged`, MR-7.15)
             let full = self.players.len() + 1 >= 2 * usize::from(self.team_size);
-            if self.match_type.auto_forfeit() && full && !self.has_winner() {
+            if self.match_type.auto_forfeit() && full && !self.has_winner() && !replaced {
                 self.votes = [None, None];
                 self.reenable_vote_starters(1 - team);
             }
@@ -1695,7 +1698,7 @@ impl Game {
         for id in stuck {
             eprintln!("player {id}: outgoing queue full ({OUT_QUEUE}), dropped");
             self.dropped.push(Dropped { id, decided: self.has_winner() || self.is_over(), lost: true });
-            self.remove_player(id, true);
+            self.remove_player(id, true, false);
         }
         if self.players.is_empty() {
             return;
@@ -1804,7 +1807,7 @@ impl Game {
         for id in kicked {
             eprintln!("player {id}: kicked for being idle");
             self.dropped.push(Dropped { id, decided: self.has_winner() || self.is_over(), lost: false });
-            self.remove_player(id, false);
+            self.remove_player(id, false, false);
         }
         let Some(since) = self
             .active_since
@@ -3589,6 +3592,13 @@ mod tests {
         game.vote_forfeit(1);
         assert_eq!(last_vote(&mut rxs[1]).map(|v| v.state), Some(protocol::VOTE_RUNNING));
         // (the leave penalty lifts: `OnPenaltyChanged`)
+        // (a seat taken over by its account's new session isn't a leave from the lobby: the vote goes on, RX31)
+        game.replaced(3);
+        let (tx, rx) = channel(TEST_QUEUE);
+        game.join(5, JoinRequest { team: 1, ..REQUEST }, tx);
+        rxs.push(rx);
+        assert_ne!(last_vote(&mut rxs[1]).map(|v| v.state), Some(protocol::VOTE_NONE), "not ended");
+        assert!(game.votes[0].as_ref().is_some_and(|v| v.finished.is_none()), "still running");
         game.leave(4);
         assert_eq!(last_vote(&mut rxs[1]).map(|v| v.state), Some(protocol::VOTE_NONE));
         // Without a full lobby, a leave from the voting team takes the leaver's vote out: the rest still need to vote

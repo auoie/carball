@@ -160,6 +160,12 @@ pub fn run_with_reports(
             queue.cancelled(&cancelled, now);
         }
         // (the accounts service's: results, quitters, refills, sent by the outbox)
+        // (a quitter reported since: its searches already waiting refused as a later one would be, RX31)
+        for key in host.take_newly_quit() {
+            for out in queue.drop_account(key) {
+                refuse(out, protocol::REFUSED_QUEUE_BANNED);
+            }
+        }
         for report in host.take_reports() {
             match &reports {
                 Some(tx) => {

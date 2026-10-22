@@ -66,17 +66,15 @@ export class Search {
 
   async #run(address: ServerAddress, playlist: number, token: bigint): Promise<void> {
     try {
+      // (who the player is: the account's ticket, before the session opens (a refused ticket opens none: RX30C),
+      // notes/accounts.md §3)
+      const ticket = address.ticket ? await address.ticket() : "";
+      if (this.#cancelled()) return;
       const transport = new WebTransport(
         address.url,
         address.certHash ? { serverCertificateHashes: [{ algorithm: "sha-256", value: address.certHash }] } : undefined,
       );
       this.#transport = transport;
-      if (this.#cancelled()) {
-        transport.close();
-        return;
-      }
-      // (who the player is: the account's ticket, before the session opens, notes/accounts.md §3)
-      const ticket = address.ticket ? await address.ticket() : "";
       if (this.#cancelled()) {
         transport.close();
         return;

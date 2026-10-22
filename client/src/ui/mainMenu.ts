@@ -27,6 +27,9 @@ export const GARAGE_TEXT = { blue: "Blue", orange: "Orange" } as const;
 /** Our own word for leaving the Play page */
 const BACK_TEXT = "Back";
 
+/** Our own names for the menus' choices, read out with them (RV-709) */
+const CHOICE_NAMES = { playlist: "Playlist", car: "Car", team: "Team" } as const;
+
 const PLAYLIST_KEY = "carball.playlist";
 /** The menu's pages: the top (Play, Garage, Settings, the account's entry), Play's, the bots' setup, custom training's
  *  packs, the garage, the account (ui/accountPages.ts) */
@@ -167,6 +170,7 @@ export class MainMenu {
     const playlists = document.createElement("div");
     playlists.className = "main-menu-playlists";
     playlists.setAttribute("role", "radiogroup");
+    playlists.setAttribute("aria-label", CHOICE_NAMES.playlist);
     playlists.dataset["padChoose"] = ""; // (a pad's left and right choose as they move: src/ui/padNav.ts)
     for (const p of PLAYLISTS) {
       const b = button(playlists, p.name, () => {
@@ -178,6 +182,9 @@ export class MainMenu {
       this.#ratingTags.set(p.teamSize, tag);
       b.classList.add("main-menu-playlist");
       b.setAttribute("role", "radio");
+      // (its name the playlist's alone, its rating read as its description: not "1v11523", RV-709)
+      b.setAttribute("aria-label", p.name);
+      tag.setAttribute("aria-hidden", "true");
       b.dataset["playlist"] = String(p.teamSize);
       this.#playlists.push(b);
     }
@@ -239,14 +246,15 @@ export class MainMenu {
     garageHeading.className = "main-menu-heading";
     garageHeading.textContent = MAIN_MENU_TEXT.garage;
     this.#garageShown = actions.garageShown ?? null;
-    const group = (className: string): HTMLDivElement => {
+    const group = (className: string, name: string): HTMLDivElement => {
       const g = document.createElement("div");
       g.className = `main-menu-choices ${className}`;
       g.setAttribute("role", "radiogroup");
+      g.setAttribute("aria-label", name);
       g.dataset["padChoose"] = "";
       return g;
     };
-    const cars = group("main-menu-cars");
+    const cars = group("main-menu-cars", CHOICE_NAMES.car);
     for (const car of CARS) {
       const b = button(cars, car.name, () => {
         this.#chooseCar(car.id);
@@ -257,7 +265,7 @@ export class MainMenu {
       b.dataset["car"] = String(car.id);
       this.#carButtons.push(b);
     }
-    const teams = group("main-menu-teams");
+    const teams = group("main-menu-teams", CHOICE_NAMES.team);
     for (const [team, label] of [
       [0, GARAGE_TEXT.blue],
       [1, GARAGE_TEXT.orange],
@@ -300,6 +308,9 @@ export class MainMenu {
     for (const [teamSize, tag] of this.#ratingTags) {
       const r = ratings?.find((x) => x.playlist === teamSize);
       tag.textContent = r ? ratingText(r) : "";
+      const radio = tag.parentElement;
+      if (r) radio?.setAttribute("aria-description", `Rating ${String(r.rating)}${r.provisional ? ", provisional" : ""}`);
+      else radio?.removeAttribute("aria-description");
     }
   }
 

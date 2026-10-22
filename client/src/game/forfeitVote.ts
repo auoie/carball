@@ -13,6 +13,10 @@ export const VOTE_TEXT = {
   leaveMatch: "Leave Match",
   forfeitMatchInquiry: "Are you sure you want to forfeit the match?",
   leaveMatchInquiry: "Are you sure you want to quit the match?",
+  // (the leave penalty's: [Global] AbandonMatch, Warning, [ModalPopups] LeaverPenaltyInquiry, RV-715)
+  abandonMatch: "Abandon Match",
+  warning: "Warning",
+  leaverPenaltyInquiry: "Abandoning a ranked game will temporarily ban you from matchmaking. ARE YOU SURE?",
 } as const;
 
 /** VoteToForfeitCount / VoteToConcedeCount: "Vote to Forfeit {0?Number}/{1?Total}" */
@@ -39,6 +43,8 @@ export interface MatchMenuItem {
   readonly confirm: string | null;
   /** Drawn red (the 1v1 forfeit) */
   readonly danger: boolean;
+  /** Its question's title and warning style (WarningModalPopup: red YES and NO), the leave penalty's (none: a plain one) */
+  readonly warning?: string;
 }
 
 export interface MatchMenuState {
@@ -49,6 +55,9 @@ export interface MatchMenuState {
   readonly canVoteForfeit: boolean;
   /** The player's team's vote (null: none heard yet) */
   readonly vote: ForfeitVote | null;
+  /** The lobby's leave penalty (bHasLeaveMatchPenalty: every seat's player here, no winner yet; LV1: the first leaver
+   *  banned) */
+  readonly leavePenalty: boolean;
 }
 
 /**
@@ -56,16 +65,27 @@ export interface MatchMenuState {
  * playlist (MaxPlayers ≤ 2): "Forfeit Match", red, with a confirm, while votes are allowed (one human: the vote passes on
  * the press), else "Leave Match". A team playlist: "Vote to Forfeit" (ranked) or "Vote to Concede" with no confirm, red
  * while a vote runs, when the playlist allows votes (bForfeitVoteAllowed: casual and ranked), they're allowed now, and
- * the player may start one or one runs they haven't voted in; else "Leave Match" with its confirm (the leave-penalty
- * variant, "Abandon Match", comes with leave penalties)
+ * the player may start one or one runs they haven't voted in; else "Leave Match" with its confirm. In a ranked lobby with
+ * the leave penalty, "Abandon Match" with the penalty's warning instead (shouldDisplayAbandon, m#9114: no vote they may
+ * still take part in): a team playlist's first, a 1v1's after its forfeit (RV-715)
  */
 export function matchMenuItems(s: MatchMenuState): MatchMenuItem[] {
   const leave: MatchMenuItem = { action: "leave", label: VOTE_TEXT.leaveMatch, confirm: VOTE_TEXT.leaveMatchInquiry, danger: false };
-  if (s.teamSize <= 1) {
-    return [s.canVoteForfeit ? { action: "forfeit", label: VOTE_TEXT.forfeitMatch, confirm: VOTE_TEXT.forfeitMatchInquiry, danger: true } : leave];
-  }
   const vote = s.vote;
   const running = vote?.state === "running";
+  const abandon = s.leavePenalty && s.matchType === "ranked" && ((running && vote.voted) || (!running && !(vote?.canStart ?? false)) || !s.canVoteForfeit);
+  const abandonItem: MatchMenuItem = {
+    action: "leave",
+    label: VOTE_TEXT.abandonMatch,
+    confirm: VOTE_TEXT.leaverPenaltyInquiry,
+    danger: false,
+    warning: VOTE_TEXT.warning,
+  };
+  if (s.teamSize <= 1) {
+    if (s.canVoteForfeit) return [{ action: "forfeit", label: VOTE_TEXT.forfeitMatch, confirm: VOTE_TEXT.forfeitMatchInquiry, danger: true }];
+    return [abandon ? abandonItem : leave];
+  }
+  if (abandon) return [abandonItem];
   const mayVote = vote !== null && (vote.canStart || (running && !vote.voted));
   if (s.matchType !== "private" && s.canVoteForfeit && mayVote) return [{ action: "vote", label: voteLabel(s.matchType), confirm: null, danger: running }];
   return [leave];

@@ -12,7 +12,9 @@ internal/steam/        Steam's OpenID 2.0: the assertion checked rule by rule, t
 internal/turnstile/    Cloudflare Turnstile's siteverify
 internal/ratelimit/    per address (an IPv6 /64) and per account, in memory
 internal/names/        display names: the game server's rules, NFKC, 32 bytes
-internal/store/        Postgres (pgx), the migrations (goose, embedded)
+internal/store/        Postgres (pgx), the migrations (goose, embedded: append-only from the first real deploy on, a
+                       change a new numbered file, never an edit of one a database may have run; until then, with no
+                       database anywhere, 00001 and 00002 were edited in place)
 internal/testdb/       the tests' throwaway Postgres; internal/testoidc/: the tests' stand-in OIDC provider
 ```
 

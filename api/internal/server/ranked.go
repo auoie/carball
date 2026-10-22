@@ -145,6 +145,10 @@ func (s *Server) result(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, store.ErrTicketUsed):
 		writeError(w, http.StatusConflict, "ticket-used")
 		return
+	case store.IsDataError(err): // (data its checks let through and the database refused: wrong, not transient)
+		s.Log.Warn("a result refused by the database's constraints", "match", res.Match, "err", err)
+		writeError(w, http.StatusBadRequest, "bad-request")
+		return
 	case err != nil:
 		s.Log.Error("recording a result", "err", err)
 		writeError(w, http.StatusServiceUnavailable, "unavailable")
@@ -190,7 +194,7 @@ func (s *Server) quitter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	spent := &store.SpentTicket{Nonce: t.Nonce, IssuedAt: t.Issued, Match: body.Match}
-	err = s.Store.ChangeQueueBan(r.Context(), accountID(t.Account), spent, func(cur store.QueueBan, exists bool) (*store.QueueBan, bool) {
+	err = s.Store.ChangeQueueBan(r.Context(), accountID(t.Account), spent, now, func(cur store.QueueBan, exists bool) (*store.QueueBan, bool) {
 		return ranked.Leave(cur, exists, body.Match, leftAt)
 	})
 	s.queueBanDone(w, err)
@@ -211,13 +215,15 @@ func (s *Server) refill(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad-request")
 		return
 	}
-	t, err := s.playerTicket(body.Ticket, ticket.PurposeRejoin, body.Match, s.Now())
+	now := s.Now()
+	t, err := s.playerTicket(body.Ticket, ticket.PurposeRejoin, body.Match, now)
 	if err != nil {
 		writeError(w, http.StatusForbidden, "ticket")
 		return
 	}
-	spent := &store.SpentTicket{Nonce: t.Nonce, IssuedAt: t.Issued, Match: body.Match}
-	err = s.Store.ChangeQueueBan(r.Context(), accountID(t.Account), spent, func(cur store.QueueBan, exists bool) (*store.QueueBan, bool) {
+	// (one refill a ticket: a replayed one can't lift a later ban from the same match, RX31)
+	spent := &store.SpentTicket{Nonce: t.Nonce, IssuedAt: t.Issued, Match: body.Match, Once: true}
+	err = s.Store.ChangeQueueBan(r.Context(), accountID(t.Account), spent, now, func(cur store.QueueBan, exists bool) (*store.QueueBan, bool) {
 		return ranked.Refilled(cur, exists, body.Match)
 	})
 	s.queueBanDone(w, err)
@@ -229,6 +235,9 @@ func (s *Server) queueBanDone(w http.ResponseWriter, err error) {
 		w.WriteHeader(http.StatusNoContent)
 	case errors.Is(err, store.ErrTicketUsed): // (its ticket spent on another match)
 		writeError(w, http.StatusConflict, "ticket-used")
+	case store.IsDataError(err): // (refused by the database's constraints: wrong, not transient)
+		s.Log.Warn("a queue ban change refused by the database's constraints", "err", err)
+		writeError(w, http.StatusBadRequest, "bad-request")
 	default:
 		s.Log.Error("changing a queue ban", "err", err)
 		writeError(w, http.StatusServiceUnavailable, "unavailable")

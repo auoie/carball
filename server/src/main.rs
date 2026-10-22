@@ -232,6 +232,11 @@ fn parse_args(mut it: impl Iterator<Item = String>, env: impl Fn(&str) -> Option
         !args.queue || args.dev || args.api.is_some(),
         "the queue's matches are rated: it needs API_URL and GAME_SERVER_TOKEN_FILE (the accounts service and the game server's token), or --dev for a development server"
     );
+    // (a blank one too: its calls kept in memory alone would go with a restart, RX31)
+    anyhow::ensure!(
+        !args.queue || args.dev || args.outbox_dir.is_some(),
+        "the queue's ranked calls are kept on disk until sent: it needs OUTBOX_DIR (a small volume), or --dev for a development server"
+    );
     if args.dev {
         // (a certificate there is a public server's: --dev on it would hand out its own tickets to the internet, AP2-7)
         let mounted = |p: &Option<PathBuf>| p.as_ref().is_some_and(|p| !p.as_os_str().is_empty() && p.is_file());
@@ -641,6 +646,7 @@ mod tests {
                 ("TICKET_PUBLIC_KEYS", "k1 AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="),
                 ("API_URL", "https://carball.zolt.top"),
                 ("GAME_SERVER_TOKEN_FILE", "/run/t"),
+                ("OUTBOX_DIR", "/o"),
             ],
             &[],
         )
@@ -670,7 +676,8 @@ mod tests {
                 .unwrap();
         assert!(dev.queue && dev.cert.is_none(), "--dev: self-signed whatever the variables say");
         const KEYS: (&str, &str) = ("TICKET_PUBLIC_KEYS", "k1 AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=");
-        const API: [(&str, &str); 2] = [("API_URL", "https://carball.zolt.top"), ("GAME_SERVER_TOKEN_FILE", "/run/t")];
+        const API: [(&str, &str); 3] =
+            [("API_URL", "https://carball.zolt.top"), ("GAME_SERVER_TOKEN_FILE", "/run/t"), ("OUTBOX_DIR", "/o")];
         assert!(
             with(
                 &[
@@ -680,7 +687,8 @@ mod tests {
                     ("ALLOWED_ORIGIN", "https://a.example"),
                     KEYS,
                     API[0],
-                    API[1]
+                    API[1],
+                    API[2]
                 ],
                 &[]
             )
@@ -689,7 +697,14 @@ mod tests {
             .is_some()
         );
         // (a public queue server's matches are rated: without the accounts service it won't start; --dev logs the calls)
-        let public = [("SERVER_MODE", "queue"), CERT[0], CERT[1], ("ALLOWED_ORIGIN", "https://a.example"), KEYS];
+        let public = [
+            ("SERVER_MODE", "queue"),
+            CERT[0],
+            CERT[1],
+            ("ALLOWED_ORIGIN", "https://a.example"),
+            KEYS,
+            ("OUTBOX_DIR", "/o"),
+        ];
         let refused = |extra: &'static [(&'static str, &'static str)], why: &str| {
             let vars: Vec<(&'static str, &'static str)> = public.iter().chain(extra).copied().collect();
             let vars: &'static [(&'static str, &'static str)] = Box::leak(vars.into_boxed_slice());
@@ -704,6 +719,23 @@ mod tests {
             "the Access id without its secret",
         );
         assert!(dev.api.is_none(), "--dev without API_URL: calls logged only");
+        // (its calls kept on disk until sent: without OUTBOX_DIR, or a blank one, it won't start; --dev keeps none, RX31)
+        let without = |outbox: Option<&'static str>| {
+            let mut vars =
+                vec![("SERVER_MODE", "queue"), CERT[0], CERT[1], ("ALLOWED_ORIGIN", "https://a.example"), KEYS];
+            vars.extend([API[0], API[1]]);
+            vars.extend(outbox.map(|o| ("OUTBOX_DIR", o)));
+            let vars: &'static [(&'static str, &'static str)] = Box::leak(vars.into_boxed_slice());
+            with(vars, &[])
+        };
+        let e = without(None).err().expect("no OUTBOX_DIR");
+        assert!(e.to_string().contains("OUTBOX_DIR"), "{e}");
+        assert!(without(Some(" ")).is_err(), "a blank OUTBOX_DIR");
+        assert!(without(Some("/o")).is_ok());
+        // (one it can't write: the start refused, before any secret is read)
+        let unwritable = without(Some("/proc/carball-outbox-test")).unwrap();
+        let e = outbox_config(&unwritable).expect_err("an unwritable OUTBOX_DIR");
+        assert!(e.to_string().contains("OUTBOX_DIR /proc/carball-outbox-test"), "{e}");
         // (a public queue server's searches are accounts': without the tickets' keys it won't start; --dev makes its own)
         assert!(
             with(&[("SERVER_MODE", "queue"), CERT[0], CERT[1], ("ALLOWED_ORIGIN", "https://a.example")], &[]).is_err(),
@@ -787,6 +819,7 @@ mod tests {
             "TICKET_PUBLIC_KEYS" => Some("k1 AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=".to_string()),
             "API_URL" => Some("https://a.example".to_string()),
             "GAME_SERVER_TOKEN_FILE" => Some("/run/t".to_string()),
+            "OUTBOX_DIR" => Some("/o".to_string()),
             _ => None,
         };
         assert!(!dev_info_on(&parse_args(std::iter::empty(), env).unwrap()), "SEC-6: off with a certificate");

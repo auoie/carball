@@ -12,13 +12,12 @@ export const MODAL_TEXT = {
   no: "No",
 } as const;
 
-/** The rejoin offer and its refusal (LV1: the game's "It appears you accidentally left a ranked match…" and "Match has
- *  concluded" by key until the user clears them; our words meanwhile) */
+/** The rejoin offer and its refusal, the game's (TAGame.int [GFxShell_TA] RankedReconnectTitle/Body, TAErrors.int
+ *  [Errors] MatchHasConcluded: RV-716, the titles upper-cased as its modals do); another tab's, ours (the game has none) */
 export const REJOIN_TEXT = {
-  title: "REJOIN MATCH",
-  body: "You left a ranked match that is still going. Rejoin it?",
-  concludedTitle: "MATCH OVER",
-  concluded: "That match has ended.",
+  title: "Reconnect",
+  body: "It appears you accidentally left a ranked match. Would you like to rejoin?",
+  concluded: "Match has concluded.",
   elsewhere: "You're playing that match in another tab or window.",
 } as const;
 

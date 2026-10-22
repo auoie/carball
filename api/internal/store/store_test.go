@@ -487,6 +487,21 @@ func TestConcurrentResultsCountEach(t *testing.T) {
 	}
 }
 
+// A result the database's constraints refuse is a data error (the handler answers 400, which the game server's outbox
+// drops), a fault that may pass isn't (RX31)
+func TestConstraintRefusalIsADataError(t *testing.T) {
+	s, _, _ := open(t)
+	ctx := context.Background()
+	bad := store.Result{Match: "dx1", Server: "game", Playlist: 4, WinningTeam: 0}
+	_, err := s.RecordResult(ctx, bad, func(map[string]*store.Rating) map[string]store.Rating { return nil }, t0)
+	if err == nil || !store.IsDataError(err) {
+		t.Errorf("a playlist outside 1-3: %v, want a data error", err)
+	}
+	if store.IsDataError(errors.New("connection reset")) || store.IsDataError(nil) {
+		t.Error("not data errors")
+	}
+}
+
 func TestQueueBans(t *testing.T) {
 	s, _, _ := open(t)
 	ctx := context.Background()
@@ -496,20 +511,20 @@ func TestQueueBans(t *testing.T) {
 	}
 	before := t0.Add(-time.Hour)
 	ban := store.QueueBan{Step: 2, Until: t0.Add(15 * time.Minute), LastLeave: t0, Match: "m", PreviousStep: 1, PreviousUntil: &t0, PreviousLeave: &before}
-	if err := s.ChangeQueueBan(ctx, a, nil, func(_ store.QueueBan, exists bool) (*store.QueueBan, bool) { return &ban, !exists }); err != nil {
+	if err := s.ChangeQueueBan(ctx, a, nil, t0, func(_ store.QueueBan, exists bool) (*store.QueueBan, bool) { return &ban, !exists }); err != nil {
 		t.Fatal(err)
 	}
 	got, found, err := s.QueueBanOf(ctx, a)
 	if err != nil || !found || got.Step != 2 || !got.Until.Equal(ban.Until) || got.Match != "m" || !got.PreviousLeave.Equal(before) {
 		t.Fatalf("QueueBanOf = %+v, %v, %v", got, found, err)
 	}
-	if err := s.ChangeQueueBan(ctx, a, nil, func(store.QueueBan, bool) (*store.QueueBan, bool) { return nil, true }); err != nil {
+	if err := s.ChangeQueueBan(ctx, a, nil, t0, func(store.QueueBan, bool) (*store.QueueBan, bool) { return nil, true }); err != nil {
 		t.Fatal(err)
 	}
 	if _, found, _ := s.QueueBanOf(ctx, a); found {
 		t.Error("not removed")
 	}
-	if err := s.ChangeQueueBan(ctx, "00000000-0000-4000-8000-000000000009", nil, func(store.QueueBan, bool) (*store.QueueBan, bool) { return &ban, true }); !errors.Is(err, store.ErrNoAccount) {
+	if err := s.ChangeQueueBan(ctx, "00000000-0000-4000-8000-000000000009", nil, t0, func(store.QueueBan, bool) (*store.QueueBan, bool) { return &ban, true }); !errors.Is(err, store.ErrNoAccount) {
 		t.Errorf("an unknown account: %v", err)
 	}
 	// (a ticket spent with the change: again on its match, fine; on another, refused and nothing changed)
@@ -521,15 +536,15 @@ func TestQueueBans(t *testing.T) {
 			return &b, true
 		}
 	}
-	if err := s.ChangeQueueBan(ctx, a, spent, write("m1")); err != nil {
+	if err := s.ChangeQueueBan(ctx, a, spent, t0, write("m1")); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ChangeQueueBan(ctx, a, spent, write("m1")); err != nil {
+	if err := s.ChangeQueueBan(ctx, a, spent, t0, write("m1")); err != nil {
 		t.Errorf("its own match again: %v", err)
 	}
 	other := *spent
 	other.Match = "m2"
-	if err := s.ChangeQueueBan(ctx, a, &other, write("m2")); !errors.Is(err, store.ErrTicketUsed) {
+	if err := s.ChangeQueueBan(ctx, a, &other, t0, write("m2")); !errors.Is(err, store.ErrTicketUsed) {
 		t.Errorf("another match's: %v", err)
 	}
 	if got, _, _ := s.QueueBanOf(ctx, a); got.Match != "m1" {

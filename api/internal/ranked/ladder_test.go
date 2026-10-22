@@ -67,6 +67,10 @@ func TestOneBanAMatchAndARejoinUndoesIt(t *testing.T) {
 	if _, write := Refilled(*second, true, "c"); write {
 		t.Error("another match's rejoin changed the ban")
 	}
+	// (b's ban undone, b left again (back in, then gone): a new ban, the restored one not b's any more, RX31)
+	if again, write := Leave(*back, true, "b", t0.Add(2*time.Hour)); !write || again == nil || again.Match != "b" || again.Step != 2 {
+		t.Errorf("b left again after its refill: %v %+v", write, again)
+	}
 	if none, write := Refilled(*first, true, "a"); !write || none != nil {
 		t.Errorf("the only ban undone: %v %+v", write, none)
 	}

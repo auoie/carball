@@ -171,7 +171,10 @@ protocol simply changes, since no older client exists. The `u64` key stays in th
   the game server's calls rate-limited together (300 a minute, AC-26: 429, which its outbox retries). The game server
   sends them to `API_URL` alone: no redirect followed, no proxy, https only, a User-Agent of its own; an answer that
   isn't the service's (a redirect, 401 or 403 from Access or a challenge, 404 or 405 from a wrong route) is retried and
-  logged loudly, not dropped (AP3).
+  logged loudly, not dropped (AP3). The service answers a call's own fault with a 4xx the outbox drops, so one bad call
+  never holds the in-order queue for a day (RX31): a refused ticket is its JSON 403 `{"error":"ticket"}` (told apart from
+  an edge's 403 by that body), and data the handler's checks let through but the database's constraints refuse
+  (SQLSTATE class 23) is 400, not 503.
 - **Leavers, as the game rates them** (LV1; notes/matchmaking.md "Leavers, rejoining and ratings"): a result comes only
   with a winner. Every player whose last team won is a winner, the rest losers, a leaver (an idle kick counts) flagged a
   quitter but rated by their team's result, with no dampening (ours). Forfeiters are ordinary losers. A match that
@@ -188,8 +191,8 @@ protocol simply changes, since no older client exists. The `u64` key stays in th
   (`POST /api/ticket?rejoin=MATCH`, the ticket's purpose 1 and that match's id), which the ban doesn't stop when it came
   from that same match, and which the game server takes for that match's rejoin alone (a search's ticket only for a
   search or a claim). A rejoin that fills the lobby again removes the ban: `POST /api/refills` with the match and the
-  rejoin's own ticket (spent), so the game server's token alone lifts no ban (AP3). Both calls go through the same
-  credential and retry queue as results.
+  rejoin's own ticket (spent, and once only: a replayed refill can't lift a later ban from the same match, RX31), so the
+  game server's token alone lifts no ban (AP3). Both calls go through the same credential and retry queue as results.
 
 **Ratings: Glicko-2 (built 2026-10-18, `api/internal/ranked`).** Implemented from Glickman's paper ("Example of the
 Glicko-2 system", revised 2022-03-22; its worked example is a test), with lichess's choices where they fit (the user's direction:

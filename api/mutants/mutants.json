@@ -1119,8 +1119,8 @@
   {
    "id": "AP3-quitter-unspent",
    "file": "internal/server/ranked.go",
-   "old": "spent := &store.SpentTicket{Nonce: t.Nonce, IssuedAt: t.Issued, Match: body.Match}\n\terr = s.Store.ChangeQueueBan(r.Context(), accountID(t.Account), spent, func(cur store.QueueBan, exists bool) (*store.QueueBan, bool) {\n\t\treturn ranked.Leave(",
-   "new": "spent := (*store.SpentTicket)(nil)\n\terr = s.Store.ChangeQueueBan(r.Context(), accountID(t.Account), spent, func(cur store.QueueBan, exists bool) (*store.QueueBan, bool) {\n\t\treturn ranked.Leave(",
+   "old": "spent := &store.SpentTicket{Nonce: t.Nonce, IssuedAt: t.Issued, Match: body.Match}\n\terr = s.Store.ChangeQueueBan(r.Context(), accountID(t.Account), spent, now, func(cur store.QueueBan, exists bool) (*store.QueueBan, bool) {\n\t\treturn ranked.Leave(",
+   "new": "spent := (*store.SpentTicket)(nil)\n\terr = s.Store.ChangeQueueBan(r.Context(), accountID(t.Account), spent, now, func(cur store.QueueBan, exists bool) (*store.QueueBan, bool) {\n\t\treturn ranked.Leave(",
    "packages": [
     "./internal/server/"
    ]
@@ -1371,6 +1371,64 @@
    "packages": [
     "./internal/store/",
     "./internal/server/"
+   ]
+  },
+  {
+   "id": "RX31-data-error-503",
+   "file": "internal/store/store.go",
+   "old": "return errors.As(err, &pgErr) && strings.HasPrefix(pgErr.Code, \"23\")",
+   "new": "return errors.As(err, &pgErr) && strings.HasPrefix(pgErr.Code, \"99\")",
+   "packages": [
+    "./internal/store/",
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "RX31-refill-not-once",
+   "file": "internal/server/ranked.go",
+   "old": "spent := &store.SpentTicket{Nonce: t.Nonce, IssuedAt: t.Issued, Match: body.Match, Once: true}",
+   "new": "spent := &store.SpentTicket{Nonce: t.Nonce, IssuedAt: t.Issued, Match: body.Match}",
+   "packages": [
+    "./internal/store/",
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "RX31-at-no-floor",
+   "file": "internal/server/ranked.go",
+   "old": "\t\tif earliest := now.Add(-AcceptWindow); leftAt.Before(earliest) {\n\t\t\tleftAt = earliest\n\t\t}\n",
+   "new": "",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "RX31-refilled-keeps-match",
+   "file": "internal/ranked/ladder.go",
+   "old": "LastLeave: *cur.PreviousLeave, Match: \"\"}",
+   "new": "LastLeave: *cur.PreviousLeave, Match: match}",
+   "packages": [
+    "./internal/ranked/",
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "RX31-trim-space",
+   "file": "internal/config/config.go",
+   "old": "v := strings.TrimRight(string(b), \"\\r\\n\")",
+   "new": "v := strings.TrimSpace(string(b))",
+   "packages": [
+    "./internal/config/",
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "RX31-no-conflict-retry",
+   "file": "internal/store/store.go",
+   "old": "return errors.As(err, &pgErr) && (pgErr.Code == \"40P01\" || pgErr.Code == \"40001\")",
+   "new": "return errors.As(err, &pgErr) && pgErr.Code == \"40P01\"",
+   "packages": [
+    "./internal/store/"
    ]
   }
  ]

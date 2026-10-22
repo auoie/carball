@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -745,13 +746,18 @@ type SpentTicket struct {
 	Nonce    [16]byte
 	IssuedAt time.Time
 	Match    string
+	// Once: spent once only, its own match again too (a refill's rejoin ticket: one refill each, RX31)
+	Once bool
 }
 
-// spendTicket spends a ticket on its match: again on the same match, fine (a quitter's ticket then its result's); on
-// another, ErrTicketUsed
+// spendTicket spends a ticket on its match: again on the same match, fine (a quitter's ticket then its result's), unless
+// it's spent once only; on another, ErrTicketUsed
 func spendTicket(ctx context.Context, tx pgx.Tx, t SpentTicket, now time.Time) error {
-	tag, err := tx.Exec(ctx, `INSERT INTO used_tickets (nonce, issued_at, used_at, match_id) VALUES ($1, $2, $3, $4)
-		ON CONFLICT (nonce) DO UPDATE SET used_at = used_tickets.used_at WHERE used_tickets.match_id = excluded.match_id`,
+	conflict := `ON CONFLICT (nonce) DO UPDATE SET used_at = used_tickets.used_at WHERE used_tickets.match_id = excluded.match_id`
+	if t.Once {
+		conflict = `ON CONFLICT (nonce) DO NOTHING`
+	}
+	tag, err := tx.Exec(ctx, `INSERT INTO used_tickets (nonce, issued_at, used_at, match_id) VALUES ($1, $2, $3, $4) `+conflict,
 		t.Nonce[:], t.IssuedAt, now, t.Match)
 	if err != nil {
 		return err
@@ -765,8 +771,8 @@ func spendTicket(ctx context.Context, tx pgx.Tx, t SpentTicket, now time.Time) e
 // ChangeQueueBan changes an account's queue ban in one transaction: `spend` (if any) spent first (ErrTicketUsed), then
 // `change` gets its row (and whether there is one) and returns the new one (nil: none), or write false to leave it. No
 // such account: ErrNoAccount
-func (s *Store) ChangeQueueBan(ctx context.Context, accountID string, spend *SpentTicket, change func(cur QueueBan, exists bool) (next *QueueBan, write bool)) error {
-	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+func (s *Store) ChangeQueueBan(ctx context.Context, accountID string, spend *SpentTicket, now time.Time, change func(cur QueueBan, exists bool) (next *QueueBan, write bool)) error {
+	return s.inTx(ctx, func(tx pgx.Tx) error {
 		var one int
 		if err := tx.QueryRow(ctx, `SELECT 1 FROM accounts WHERE id = $1 FOR UPDATE`, accountID).Scan(&one); errors.Is(err, pgx.ErrNoRows) {
 			return ErrNoAccount
@@ -774,7 +780,7 @@ func (s *Store) ChangeQueueBan(ctx context.Context, accountID string, spend *Spe
 			return err
 		}
 		if spend != nil {
-			if err := spendTicket(ctx, tx, *spend, time.Now()); err != nil {
+			if err := spendTicket(ctx, tx, *spend, now); err != nil {
 				return err
 			}
 		}
@@ -824,13 +830,42 @@ type ResultPlayer struct {
 // ErrTicketUsed: a ticket spent on another match already (AC-5)
 var ErrTicketUsed = errors.New("a ticket spent on another match")
 
+// inTx runs fn in a transaction, again (3 tries in all) when Postgres broke it off for a conflict with another one
+// (SQLSTATE 40P01 a deadlock, 40001 a serialization failure: a quitter's report and a result spending one ticket at the
+// same moment, RX31): the request's fault it isn't, and a second try goes through, where a 503 would wait on the game
+// server's outbox
+func (s *Store) inTx(ctx context.Context, fn func(pgx.Tx) error) error {
+	var err error
+	for range 3 {
+		if err = pgx.BeginFunc(ctx, s.pool, fn); !conflicted(err) {
+			return err
+		}
+	}
+	return err
+}
+
+// conflicted: a transaction Postgres broke off for another one's sake (a deadlock, a serialization failure)
+func conflicted(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && (pgErr.Code == "40P01" || pgErr.Code == "40001")
+}
+
+// IsDataError: the database refused the data itself (SQLSTATE class 23: a check, unique, not-null or foreign key
+// constraint), not a fault that may pass: the caller's request is wrong, and trying it again changes nothing (the game
+// server's outbox drops a 400, where it retries a 503 for a day: RX31)
+func IsDataError(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && strings.HasPrefix(pgErr.Code, "23")
+}
+
 // RecordResult records a result once, in one transaction: false if its match is recorded already (a retry: nothing
 // changes). Its tickets spent on its match (ErrTicketUsed: one spent on another); the players' accounts that still
 // exist and their ratings in the playlist locked, `rate` given them (an account without one: absent) to return each
 // one's new rating; written, with the players' rows (a deleted account's: a placeholder, not rated)
 func (s *Store) RecordResult(ctx context.Context, r Result, rate func(current map[string]*Rating) map[string]Rating, now time.Time) (bool, error) {
 	recorded := false
-	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+	err := s.inTx(ctx, func(tx pgx.Tx) error {
+		recorded = false // (a try broken off by a conflict: the next one's own)
 		tag, err := tx.Exec(ctx, `INSERT INTO ranked_results (match_id, server, playlist, winning_team, received_at)
 			VALUES ($1, $2, $3, $4, $5) ON CONFLICT (match_id) DO NOTHING`, r.Match, r.Server, r.Playlist, r.WinningTeam, now)
 		if err != nil || tag.RowsAffected() == 0 {

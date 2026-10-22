@@ -51,18 +51,30 @@ anything rating-side beyond what's submitted is PsyNet's, unknowable, so Carball
     (2026-10-18), LV1's suggestion:** 5 min → 15 min → 1 h → 6 h → 24 h (the cap: every later leave 24 h), and one step
     forgiven for every 24 h without a leave.
   - **The page:** a search refused while banned shows the minutes left (max(⌈s/60⌉, 1)) and cancels; the Play menu shows
-    the ban; the game's strings (LeavePenaltyMessage, MatchmakingBanMessage, the warning before leaving) by key until the
-    user clears them.
+    the ban (LeavePenaltyMessage, MatchmakingBanMessage by key). **The warning before leaving (RV-715, the game's
+    strings):** while a ranked lobby has the leave penalty (every seat's player here, no winner yet) and no vote is the
+    player's to take part in (shouldDisplayAbandon), the pause menu's button is ABANDON MATCH, asking WARNING, "Abandoning
+    a ranked game will temporarily ban you from matchmaking. ARE YOU SURE?" with red YES / NO (WarningModalPopup); a team
+    playlist's first, a 1v1's after its Forfeit Match.
 - **Rejoining** (corrects MM-44/MM-45):
   - **Who:** ranked **2v2 and 3v3 only**; **no rejoin in 1v1**.
   - **The slot is held** until the match ends: no bot, no backfill; the car's demolished, the team plays short.
-  - **The route is a prompt, not the queue:** "It appears you accidentally left a ranked match. Would you like to
-    rejoin?" (Yes/No; by key until cleared), shown once, when the menu opens or after OK on a connection-error modal,
-    if the match was joined **less than 900 s ago** (saved at the join's loading screen). The server takes the player back
-    only while the match runs and their slot is listed (else "Match has concluded"). A rejoin skips the ban check (ours:
+  - **The route is a prompt, not the queue:** RECONNECT, "It appears you accidentally left a ranked match. Would you like
+    to rejoin?" (YES, focused by default, / NO; the game's strings, shipped: RV-716), shown when the menu opens or after OK
+    on a connection-error modal, if the match was joined **less than 900 s ago**. The game's record (RJ1: lookup of the
+    live 2026-10-06 bytecode, out/bsim/agents/RJ1/): **saved at every ranked 2v2/3v3 join's loading screen, a rejoin's
+    too**, so the 900 s run from the latest join; a join of any other match (a 1v1 here) clears it; **cleared as the prompt
+    is shown**, whatever the answer, so one prompt per record: a failed Yes isn't offered again, a successful rejoin
+    saves a new one; also cleared by Exit to Main Menu and by the match ending while connected, not by a new search.
+    Ours keeps it per account (the signed-in account that joined: another account in the browser isn't offered it,
+    RV-711). The server takes the player back only while the match runs and their slot is listed (else "Match has
+    concluded.", the game's TAErrors text). A rejoin's ticket refused for a ban from another match shows the ban as a
+    search does, under RECONNECT (ours, RX31). A claim's page tries its config.json and its ticket up to 3 times, a second
+    apart, inside the claim's window, so a passing fault isn't a no-show; a failure goes back to the menu's modal (RX31). A rejoin skips the ban check (ours:
     a rejoin's ticket for that match, which the ban doesn't stop). A rejoin before the server has seen the old session go
-    (it times out after 10 s) takes the seat over once that session has been silent 3 s, the old session told it was
-    replaced (AP3); a live one (another tab of the account playing it) refuses the rejoin and keeps its seat (Refused 5),
+    (it times out after 10 s) takes the seat over once that session has been silent 3 s (and joined at least 3 s ago, so a
+    just-rejoined session not heard from yet isn't taken over at once: RX31), the old session told it was replaced (AP3)
+    and no vote ended for it (the lobby stays full: RX31); a live one (another tab of the account playing it) refuses the rejoin and keeps its seat (Refused 5),
     and a tab playing the match holds a Web Lock on it, so the browser's other tabs don't offer the rejoin (RX30C).
   - **An idle kick is a leave:** the game server counts it as it happens (the quitter flag, the latch, the ban if first
     and armed), as it does a player it drops for not reading its messages; the forfeit the kick itself causes is no
@@ -72,7 +84,9 @@ anything rating-side beyond what's submitted is PsyNet's, unknowable, so Carball
     running, a ban or no connection: MM-2): the held, empty seat doesn't stop it, and the new search gives it up (no
     rejoin of it after). Only a seat with a session (two tabs or devices at once) refuses a search (Refused 5).
     A reported quitter's searches are also refused by the game server for 5 minutes (Refused 7), so a ticket fetched
-    before the ban doesn't dodge it (AP3).
+    before the ban doesn't dodge it (AP3); a search already waiting when the report is made (a lost connection's leaver
+    searching inside its 5 s) is refused then too, and a refill forgets the account at once, as the API lifts its ban
+    (RX31).
   - **Back in:** the same team, their stats restored, spawned at once, no longer a quitter.
 - The no-show search ban (2 minutes) stays as it is, now by account.
 - Ratings are shown as numbers, lichess-style, with "?" while provisional (a deviation of 110 or more: scalachess's
@@ -264,7 +278,7 @@ Nothing ships verbatim until the user clears it; the candidates are listed at th
 | MM-42 | **In-match network warnings** are the connection-quality widget (`[ConnectionQuality]` Disconnected / HighLatency / LatencyVariation / PacketLoss / ServerHealth, HUD (1010, 220)); not specified here. | HUD.tree d88 | [M] |
 | MM-43 | **Server side of a leave:** the car is demolished and the player removed from the team (MR-7.9); the PRI goes to `RemovedPRIs` and stays on the scoreboard at α 0.4 (public play, SB-8); with bot fill a bot takes the slot 0.1 s later at the leaver's pose (MR-7.12); the forfeit check runs (MR-7.10). | TA:2125-2135, 67577 | [S] |
 | MM-44 | **The slot is not held in casual:** a disconnected reservation is removed unless `ShouldAllowRankedReconnect` (`bRanked && PlayerCount > 2 && !bDisableRankedReconnect`): ranked 2v2 and 3v3 hold it until the match ends; **ranked 1v1 doesn't** (LV1). | PX:12742-12750, 12853-12866, 6801-6803 | [S] |
-| MM-45 | **No "Reconnect?" prompt in casual** (ranked team playlists only, 2v2 and 3v3, **not 1v1**: `[GFxShell_TA] RankedReconnectTitle/Body`, within `ReconnectTimeoutSeconds` 900, PsyNet-overridable). **LV1 corrections:** the 900 s count from the **match join** (the reservation saved at the join's loading screen), not from the leave; Exit to Main Menu clears it (no prompt after a deliberate leave); a rejoin that fills the lobby again **clears the leaver's ban**. | TA:66388-66420, 63472-63480, 62575-62610; [A] RankedConfig_X | [S][A] |
+| MM-45 | **No "Reconnect?" prompt in casual** (ranked team playlists only, 2v2 and 3v3, **not 1v1**: `[GFxShell_TA] RankedReconnectTitle/Body`, within `ReconnectTimeoutSeconds` 900, PsyNet-overridable). **LV1 corrections:** the 900 s count from the **match join** (the reservation saved at the join's loading screen, **at every join, a rejoin's too, and cleared as the prompt shows: one prompt per record**, RJ1), not from the leave; Exit to Main Menu clears it (no prompt after a deliberate leave); a rejoin that fills the lobby again **clears the leaver's ban**. | TA:66388-66420, 63472-63480, 62575-62610; [A] RankedConfig_X | [S][A] |
 | MM-46 | **Back into a casual match** only by searching again and being backfilled into it (PsyNet's choice); then MM-24. | – | [I]; [PsyNet] |
 | MM-47 | **Server-ended match** (forfeit / no contest, or a kick on game-event destroy): `[OnlineServerConnectionErrors] MatchKick`. A join without a reservation: `NoReservation`; before the match started: `MatchNotStarted`. | TA:71744-71748; PX:12833-12840, 77150 | [S] |
 | MM-48 | **Network-issue leniency:** a leave while every player has network issues gives no ban (`AllPlayersHaveNetworkIssues`). Server-side only. | TA:1031-1045 | [S] |

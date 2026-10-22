@@ -18,6 +18,18 @@ func secret(t *testing.T, value string) string {
 
 func env(vars map[string]string) Env { return func(k string) string { return vars[k] } }
 
+// A secret's file loses its line end alone (as `echo` writes one), its other spaces kept: the game server's rule too (RX31)
+func TestReadSecretDropsOnlyTheLineEnd(t *testing.T) {
+	for in, want := range map[string]string{"tok\n": "tok", "tok\r\n": "tok", " tok \n": " tok ", "tok\t": "tok\t"} {
+		if got, err := ReadSecret(secret(t, in)); err != nil || got != want {
+			t.Errorf("%q: %q %v, want %q", in, got, err, want)
+		}
+	}
+	if _, err := ReadSecret(secret(t, "\r\n")); err == nil {
+		t.Error("a line end alone: empty, refused")
+	}
+}
+
 func good(t *testing.T) map[string]string {
 	return map[string]string{
 		"PUBLIC_ORIGIN":             "https://carball.example",

@@ -116,6 +116,9 @@ struct Reservation {
     rejoin_ticket: Option<String>,
     /// Given up: its account searched for another match while away (no rejoin of it then)
     forfeited: bool,
+    /// When its session (the claim's or the last rejoin's) joined: one that young is live though not heard from yet,
+    /// no rejoin takes it over (RX31)
+    session_since: f64,
 }
 
 impl Reservation {
@@ -134,6 +137,7 @@ impl Reservation {
             lost_at: None,
             rejoin_ticket: None,
             forfeited: false,
+            session_since: 0.0,
         }
     }
 
@@ -212,6 +216,9 @@ pub struct MatchHost {
     reports: Vec<Report>,
     /// The accounts reported as quitters lately (their keys), until when their searches are refused (`QUITTER_MEMORY`)
     quitters: HashMap<u64, f64>,
+    /// The accounts reported since the last call (`take_newly_quit`): their searches already waiting refused too (a lost
+    /// connection's leaver may search inside its window, before its report: RX31)
+    newly_quit: Vec<u64>,
 }
 
 impl Hosted {
@@ -256,6 +263,7 @@ impl MatchHost {
             cancelled: Vec::new(),
             reports: Vec::new(),
             quitters: HashMap::new(),
+            newly_quit: Vec::new(),
         }
     }
 
@@ -327,6 +335,7 @@ impl MatchHost {
         self.tokens.remove(&token);
         slot.claimed = Some(id);
         slot.here_since = Some(self.now);
+        slot.session_since = self.now;
         if slot.ticket.is_none() {
             slot.ticket = request.ticket.clone(); // (the seat's first: its result's and its quitter's)
         }
@@ -355,6 +364,7 @@ impl MatchHost {
                 && let Some(ticket) = r.rejoin_ticket.clone()
             {
                 self.reports.push(Report::Refilled { match_id: ranked.clone(), ticket });
+                self.quitters.remove(&r.key); // (its ban undone: its searches no longer refused here, RX31)
             }
         }
     }
@@ -398,6 +408,7 @@ impl MatchHost {
                 slot.reported = true;
                 let ticket = slot.ticket.as_ref().map(|t| t.encoded.clone()).unwrap_or_default();
                 self.quitters.insert(slot.key, now + QUITTER_MEMORY);
+                self.newly_quit.push(slot.key);
                 self.reports.push(Report::Quitter { match_id: ranked_id, ticket });
             }
         }
@@ -434,8 +445,14 @@ impl MatchHost {
         {
             slot.reported = true;
             self.quitters.insert(slot.key, now + QUITTER_MEMORY);
+            self.newly_quit.push(slot.key);
             self.reports.push(Report::Quitter { match_id: ranked_id, ticket: t.encoded.clone() });
         }
+    }
+
+    /// The accounts reported as quitters since the last call (their keys): the queue refuses their waiting searches
+    pub fn take_newly_quit(&mut self) -> Vec<u64> {
+        std::mem::take(&mut self.newly_quit)
     }
 
     /// Whether an account (its key) was reported as a quitter in the last `QUITTER_MEMORY` (its searches refused here)
@@ -496,14 +513,17 @@ impl MatchHost {
             return concluded;
         };
         let stale = slot.here_since.is_some().then_some(slot.claimed).flatten();
+        // (live: heard within TAKEOVER_SILENCE, or joined within it and not heard from yet, RX31)
         if let Some(old) = stale
-            && hosted.game.as_ref().is_some_and(|g| g.heard_within(old, now, TAKEOVER_SILENCE))
+            && (now - slot.session_since < TAKEOVER_SILENCE
+                || hosted.game.as_ref().is_some_and(|g| g.heard_within(old, now, TAKEOVER_SILENCE)))
         {
             eprintln!("match {mid}: player {id}'s rejoin refused: the seat's session (player {old}) is live");
             return Err(protocol::REFUSED_IN_MATCH);
         }
         slot.claimed = Some(id);
         slot.here_since = slot.here_since.or(Some(now));
+        slot.session_since = now;
         slot.lost_at = None;
         slot.rejoin_ticket = request.ticket.as_ref().map(|t| t.encoded.clone());
         let team = slot.team;
@@ -975,6 +995,7 @@ mod tests {
         assert!(host.rejoin(match_id, 10, rejoining(1), tx.clone()).is_ok());
         let reports = host.take_reports();
         assert!(matches!(reports.as_slice(), [Report::Refilled { ticket, .. }] if ticket == "r1"), "{reports:?}");
+        assert!(!host.recently_quit(1), "the ban undone: its searches no longer refused here (RX31)");
         let hosted = host.matches.values().next().unwrap();
         let slot = hosted.reservations.iter().find(|r| r.key == 1).unwrap();
         assert!(
@@ -1005,6 +1026,7 @@ mod tests {
         host.leave(1, false); // (the first: reported at once)
         host.leave(2, false); // (a later leaver: no ban)
         assert!(matches!(host.take_reports().as_slice(), [Report::Quitter { ticket, .. }] if ticket == "t1"));
+        assert_eq!(host.take_newly_quit(), [1], "the queue told: its waiting searches refused (RX31)");
         assert!(!host.recently_quit(2), "a later leaver isn't banned");
         // (player 1 back, player 2 still away: the lobby not full, no refill yet)
         assert!(host.rejoin(match_id, 10, rejoining(1), tx.clone()).is_ok());
@@ -1059,6 +1081,99 @@ mod tests {
         assert!(!host.take_reports().iter().any(|r| matches!(r, Report::Quitter { .. })));
     }
 
+    /// RX31 (AP4): a 1v1's idle kick is the kicked player's leave though the forfeit it causes lands in the same host step
+    /// (the game's "decided" from before the kick counts, not the host's after it), whichever tick of a step it falls on
+    #[test]
+    fn an_idle_kick_whose_forfeit_lands_in_the_same_step_is_still_a_leave() {
+        init_engine();
+        for offset in 0..5 {
+            let mut host = MatchHost::new(1, None);
+            let tokens = host.create_match(ONES, &[1, 2], 0.0).tokens;
+            let (tx, mut rx) = channel(OUT_QUEUE);
+            for (i, &token) in tokens.iter().enumerate() {
+                let n = i as u8 + 1;
+                assert!(host.claim(token, u64::from(n), seat(n), tx.clone()));
+            }
+            // (player 2 chats every 5 s, player 1 never acts; the host steps 5 ticks at a time, as when it catches up)
+            let mut t = f64::from(offset) / 120.0;
+            host.tick(t);
+            let mut next_chat = 0.0;
+            let mut reports = Vec::new();
+            while t < 60.0 && !reports.iter().any(|r| matches!(r, Report::Quitter { .. })) {
+                t += 5.0 / 120.0;
+                host.tick(t);
+                if t >= next_chat {
+                    if let Some(game) = host.game_of(2) {
+                        game.quick_chat(2, 0, false, t);
+                    }
+                    next_chat = t + 5.0;
+                }
+                while rx.try_recv().is_ok() {}
+                reports.extend(host.take_reports());
+            }
+            assert!(
+                matches!(reports.as_slice(), [Report::Quitter { ticket, .. }] if ticket == "t1"),
+                "offset {offset}: {reports:?}"
+            );
+        }
+    }
+
+    /// RX31 (AP4): a player let go for not reading its messages (its queue full) is a lost connection: the 5 s window
+    /// waited out before the report, as for a timeout
+    #[test]
+    fn a_full_queue_drop_is_a_lost_connection_reported_after_the_window() {
+        init_engine();
+        let mut host = MatchHost::new(1, None);
+        let tokens = host.create_match(TWOS, &[1, 2, 3, 4], 0.0).tokens;
+        let (stuck, _never_read) = channel(64);
+        let (tx, mut rx) = channel(OUT_QUEUE);
+        assert!(host.claim(tokens[0], 1, seat(1), stuck));
+        for (i, &token) in tokens.iter().enumerate().skip(1) {
+            let n = i as u8 + 1;
+            assert!(host.claim(token, u64::from(n), seat(n), tx.clone()));
+        }
+        let mut t = 0.0;
+        while host.players.contains_key(&1) {
+            assert!(t < 20.0, "never let go");
+            run_to(&mut host, t, t + 0.1);
+            t += 0.1;
+            while rx.try_recv().is_ok() {}
+        }
+        assert!(!host.take_reports().iter().any(|r| matches!(r, Report::Quitter { .. })), "lost: not reported at once");
+        run_to(&mut host, t, t + OUTAGE_WINDOW + 0.2);
+        let reports = host.take_reports();
+        assert!(matches!(reports.as_slice(), [Report::Quitter { ticket, .. }] if ticket == "t1"), "{reports:?}");
+    }
+
+    /// AP3, RX31: an unverified session never rejoins (a seat is an account's); a seat reported once isn't reported again
+    /// when an earlier lost connection's window ends after its later leave
+    #[test]
+    fn an_unverified_rejoin_is_refused_and_a_seat_is_reported_once() {
+        init_engine();
+        let mut host = MatchHost::new(1, None);
+        let tokens = host.create_match(TWOS, &[1, 2, 3, 4], 0.0).tokens;
+        let (tx, _rx) = channel(OUT_QUEUE);
+        for (i, &token) in tokens.iter().enumerate() {
+            let n = i as u8 + 1;
+            assert!(host.claim(token, u64::from(n), seat(n), tx.clone()));
+        }
+        let match_id = host.matches.values().next().unwrap().ranked;
+        run_to(&mut host, 0.0, 3.0);
+        host.leave(1, true); // (a lost connection: its report waits out the window)
+        let unverified = JoinRequest { verified: false, ..rejoining(1) };
+        assert_eq!(host.rejoin(match_id, 9, unverified, tx.clone()), Err(protocol::REFUSED_CONCLUDED));
+        run_to(&mut host, 3.0, 4.0);
+        // (back within the window: the lobby full, the penalty armed again; then left again, reported at once)
+        assert!(host.rejoin(match_id, 10, rejoining(1), tx.clone()).is_ok());
+        run_to(&mut host, 4.0, 5.0);
+        host.leave(10, false);
+        let reports = host.take_reports();
+        assert!(matches!(reports.as_slice(), [Report::Quitter { ticket, .. }] if ticket == "t1"), "{reports:?}");
+        // (the first leave's window ends after it: that seat reported already, nothing more)
+        run_to(&mut host, 5.0, 3.0 + OUTAGE_WINDOW + 1.0);
+        assert!(!host.take_reports().iter().any(|r| matches!(r, Report::Quitter { .. })));
+    }
+
     /// AP3: a rejoin while the server still holds the seat's old session (gone, not yet timed out) takes the seat over:
     /// the old session told it was replaced and let go, no leave counted, the time played kept
     #[test]
@@ -1087,6 +1202,8 @@ mod tests {
         assert!(host.rejoin(match_id, 10, rejoining(1), tx.clone()).is_ok());
         assert!(controls(&mut old_rx).contains(&Control::Kicked { reason: protocol::KICK_REPLACED }));
         assert!(old_rx.try_recv().is_err() && old_rx.is_closed(), "the old session's queue closed: it ends");
+        // (the rejoined session just joined, not heard from yet: a second rejoin doesn't take it over, RX31)
+        assert_eq!(host.rejoin(match_id, 11, rejoining(1), tx.clone()), Err(protocol::REFUSED_IN_MATCH));
         host.leave(1, true); // (its session closing later: not this seat's any more)
         run_to(&mut host, 3.0 + TAKEOVER_SILENCE + 0.1, 3.0 + TAKEOVER_SILENCE + OUTAGE_WINDOW + 0.2);
         assert!(host.take_reports().is_empty(), "no leave, no refill: {:?}", host.take_reports());

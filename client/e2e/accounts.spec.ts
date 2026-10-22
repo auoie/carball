@@ -170,10 +170,17 @@ test("the account's ratings beside the playlists (\"?\" while provisional) and a
   await menu.getByRole("button", { name: /^play$/i }).click();
   await expect(menu.locator('.main-menu-playlist[data-playlist="1"] .main-menu-rating')).toHaveText("1523");
   await expect(menu.locator('.main-menu-playlist[data-playlist="2"] .main-menu-rating')).toHaveText("1500?");
+  // (each radio named by its playlist alone, its rating its description; the group named: RV-709)
+  await expect(menu.getByRole("radiogroup", { name: "Playlist" }).getByRole("radio", { name: "1v1", exact: true })).toHaveAttribute(
+    "aria-description",
+    "Rating 1523",
+  );
+  await expect(menu.getByRole("radio", { name: "2v2", exact: true })).toHaveAttribute("aria-description", "Rating 1500, provisional");
   await expect(menu.locator(".main-menu-ban")).toHaveText("you left a ranked match: you can search again in 10 minutes");
   await menu.getByRole("button", { name: /^back$/i }).click();
   await menu.locator(".main-menu-account").click();
   await expect(menu.locator(".account-ratings")).toHaveText(/1v1 1523\s+2v2 1500\?\s+3v3 1500\?/);
+  await expect(menu.locator(".main-menu-account-view .account-note")).toHaveText("? while provisional: a few more matches settle it");
   expect(errors).toEqual([]);
   await context.close();
 });

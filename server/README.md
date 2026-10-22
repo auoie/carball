@@ -61,8 +61,8 @@ cargo clippy --no-default-features --features host --lib --bins -- -D warnings
 | `src/game_loop.rs` | the game thread: the sessions' messages, the queue, every match at 120 Hz on its own clock |
 | `src/queue.rs` | who plays together: each playlist's searchers, the oldest with those within a rating window (wider as they wait), teams by a snake draft |
 | `src/match_host.rs` | the matches: reserved slots with one-time tokens, full start, cancelled on a no-show, let go when over; the ranked bookkeeping (each seat's first ticket, the leave penalty's latch, results; a seat held for a rejoin) |
-| `src/net.rs` | WebTransport sessions (a search's and a claim's ticket checked), development identity and info endpoint |
-| `src/ticket.rs` | the search tickets: Ed25519 over the accounts service's format (version 2: the ratings), keys by id, each nonce once; `--dev`'s own key |
+| `src/net.rs` | WebTransport sessions (a search's, a claim's and a rejoin's ticket checked), development identity and info endpoint |
+| `src/ticket.rs` | the search tickets: Ed25519 over the accounts service's format (version 3: the ratings, the purpose and a rejoin's match), keys by id, each nonce once; `--dev`'s own key |
 | `src/outbox.rs` | the ranked calls to the accounts service (results, quitters, refills), kept on disk and retried for up to 24 h (`API_URL`) |
 | `tests/end_to_end.rs` | a client connects over WebTransport, drives, and checks acks, ping and the updates; two searches make a match |
 
@@ -102,7 +102,9 @@ search; a claim refused for a cancelled match does the same). Whoever stalled it
 browser key their search sent, their other waiting searches let go with it (RV-386); their address too when it's theirs
 (an IPv6 /64, or no key sent) or after two different keys stalled from it within 10 minutes (RV-385: an IPv4 address is
 often shared), told then that the network's searches are paused (`SearchCooldown`'s `network`; RV-367, the user's
-decision; leaving a started match isn't penalized). No backfill, no bots: a leaver's slot stays empty. A player idle for 30 s of play
+decision). Leaving a started ranked match is penalized (LV1, notes/matchmaking.md): the first armed leaver is
+reported to the accounts service (a queue ban), and a ranked 2v2 or 3v3 seat is held for its player's rejoin. No
+backfill, no bots: a leaver's slot stays empty. A player idle for 30 s of play
 is kicked (warned past 25 s: the game's `IdleKick`, MM-32..38). A queue match doesn't rematch: when the end screen's
 60 s are up the host lets it go and its sessions end.
 `--team-size N` (default 3) is the open match's team size (1 to 8): the uneven-teams kickoff adjustment uses it.
