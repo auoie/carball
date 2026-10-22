@@ -319,8 +319,9 @@ impl Matchmaker {
     }
 
     /// The searcher's session ended (cancelled, or the connection lost)
-    /// An account reported as a quitter: its searches waiting let go, their sessions handed back to be refused (RX31)
-    pub fn drop_account(&mut self, key: u64) -> Vec<Sender<Outgoing>> {
+    /// An account reported as a quitter: its searches waiting let go, their sessions handed back to be refused, each
+    /// with when it began (the seats it gave up given back: RX31, RX33)
+    pub fn drop_account(&mut self, key: u64) -> Vec<(Sender<Outgoing>, f64)> {
         let mut dropped = Vec::new();
         if key == 0 {
             return dropped;
@@ -330,7 +331,7 @@ impl Matchmaker {
                 let keep = s.from.key != key;
                 if !keep {
                     self.searching.remove(&s.id);
-                    dropped.push(s.out.clone());
+                    dropped.push((s.out.clone(), s.since));
                 }
                 keep
             });

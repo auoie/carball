@@ -15,6 +15,7 @@ import {
   claimAddress,
   claimNotice,
   clearRankedSeat,
+  clearRankedSeatOf,
   deployedGameServer,
   holdMatchLock,
   matchPlayedElsewhere,
@@ -1093,7 +1094,7 @@ async function main(): Promise<void> {
       };
       // (the match ended while this page played it: no rejoin of it offered later, RJ1, RX32)
       online.onMatchOver = () => {
-        clearRankedSeat();
+        clearRankedSeatOf(welcome.matchId);
       };
     } else if (botMatch) {
       // (the local host gone, its worker failing: the menu, with the lost connection's modal)
@@ -1108,14 +1109,20 @@ async function main(): Promise<void> {
     (window as unknown as { carballOnline?: () => unknown }).carballOnline = () => online.stats;
     (window as unknown as { carballNameplates?: () => unknown }).carballNameplates = () => statsUi.nameplates.shown;
     // The pause menu's match buttons: forfeit or vote (the server's), leave (back to the main menu)
-    const menu = new MatchMenu(pause.match, (action) => {
-      if (action === "leave") {
-        leave();
-        return;
-      }
-      online.voteForfeit();
-      pause.close();
-    });
+    const menu = new MatchMenu(
+      pause.match,
+      (action) => {
+        if (action === "leave") {
+          leave();
+          return;
+        }
+        online.voteForfeit();
+        pause.close();
+      },
+      (title, question, yes) => {
+        modal.ask(title, question, yes, true);
+      },
+    );
     dismissMatchQuestion = () => menu.dismissQuestion();
     const netFeed = new NetGraphFeed(statData);
     online.statFeed = netFeed;

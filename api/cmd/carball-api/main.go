@@ -1,6 +1,7 @@
 // carball-api: Carball's accounts service (notes/accounts.md, APP-CONTRACT.md "carball-api"). The server by default;
 // the admin's commands against the same database (bans: notes/accounts.md §4, question 13), run on the box:
 //
+//	carball-api help (or -h, --help)            these commands; carball-api COMMAND -h: a command's flags
 //	carball-api [serve] [--dev]                 the HTTP server (and its health check's, on HEALTH_ADDR)
 //	carball-api migrate [--dev]                 the migrations, a one-shot run as the schema's owner (MIGRATE_DATABASE_URL)
 //	carball-api accounts NAME                   the accounts whose name contains NAME, with their identities
@@ -42,42 +43,101 @@ import (
 )
 
 func main() {
-	args := os.Args[1:]
-	command := "serve"
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		command, args = args[0], args[1:]
-	}
-	var err error
-	switch command {
-	case "serve":
-		err = serve(args)
-	case "migrate":
-		err = migrate(args)
-	case "accounts":
-		err = accounts(args)
-	case "ban":
-		err = ban(args)
-	case "unban":
-		err = unban(args)
-	case "bans":
-		err = bans()
-	case "healthcheck":
-		err = healthcheck()
-	case "ticket-key":
-		err = ticketKey(args)
-	default:
-		err = fmt.Errorf("unknown command %q (serve, migrate, accounts, ban, unban, bans, healthcheck, ticket-key)", command)
-	}
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "carball-api:", err)
-		os.Exit(1)
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// command is one of the CLI's commands: its name, its arguments and what it does (its help line), and its run (`out`
+// where its -h prints its flags)
+type command struct {
+	name, args, about string
+	run               func(args []string, out io.Writer) error
+}
+
+// commands: the CLI's, in the help's order (serve when none is named)
+func commands() []command {
+	return []command{
+		{"serve", "[--dev]", "the HTTP server (and its health check's, on HEALTH_ADDR); the default", serve},
+		{"migrate", "[--dev]", "the migrations, a one-shot run as the schema's owner (MIGRATE_DATABASE_URL)", migrate},
+		{"accounts", "NAME", "the accounts whose name contains NAME, with their identities", accounts},
+		{"ban", "(--account ID | --identity PROVIDER:SUBJECT) --reason TEXT --by NAME [--for DURATION | --until DATE]",
+			"a ban: an account's every identity, or one identity and its account; signed out everywhere", ban},
+		{"unban", "(--account ID | --identity PROVIDER:SUBJECT)", "the bans lifted", unban},
+		{"bans", "", "the bans in force", bans},
+		{"healthcheck", "", "the container's check: GET /healthz on HEALTH_ADDR", healthcheck},
+		{"ticket-key", "KID", "a new ticket key: its seed (TICKET_SIGNING_KEY_FILE's) on stdout, its public line (the game " +
+			"server's TICKET_PUBLIC_KEYS) on stderr", ticketKey},
 	}
 }
 
-func serve(args []string) error {
-	fs := flag.NewFlagSet("serve", flag.ExitOnError)
+// usage: the commands, one line each with its arguments (each one's -h: what it does), and where the admin runs them
+func usage(out io.Writer) {
+	_, _ = fmt.Fprintln(out, "usage: carball-api COMMAND [ARGUMENTS]   (serve when none)")
+	_, _ = fmt.Fprintln(out)
+	for _, c := range commands() {
+		_, _ = fmt.Fprintf(out, "  carball-api %s\n", strings.TrimSpace(c.name+" "+c.args))
+	}
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out, "carball-api COMMAND -h: what it does and its flags.")
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out, "The admin's commands run in the service's container, with its environment and database, e.g.:")
+	_, _ = fmt.Fprintln(out, "  docker exec carball-api /app/carball-api bans")
+}
+
+// helpWord: an argument asking for the help
+func helpWord(arg string) bool {
+	return arg == "help" || arg == "-h" || arg == "-help" || arg == "--help"
+}
+
+// run runs the command the arguments name (serve when the first is a flag or none); its exit status
+func run(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && helpWord(args[0]) {
+		usage(stdout)
+		return 0
+	}
+	name := "serve"
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		name, args = args[0], args[1:]
+	}
+	for _, c := range commands() {
+		if c.name != name {
+			continue
+		}
+		err := c.run(args, stdout)
+		switch {
+		case errors.Is(err, flag.ErrHelp):
+			return 0
+		case err != nil:
+			_, _ = fmt.Fprintln(stderr, "carball-api:", err)
+			return 1
+		}
+		return 0
+	}
+	_, _ = fmt.Fprintf(stderr, "carball-api: unknown command %q\n\n", name)
+	usage(stderr)
+	return 1
+}
+
+// flagsFor: a command's flag set; -h prints its line and its flags (to out), a bad flag is an error
+func flagsFor(name string, out io.Writer) *flag.FlagSet {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(out)
+	fs.Usage = func() {
+		for _, c := range commands() {
+			if c.name == name {
+				_, _ = fmt.Fprintf(out, "usage: carball-api %s\n  %s\n", strings.TrimSpace(c.name+" "+c.args), c.about)
+			}
+		}
+		fs.PrintDefaults()
+	}
+	return fs
+}
+
+func serve(args []string, out io.Writer) error {
+	fs := flagsFor("serve", out)
 	dev := fs.Bool("dev", false, "development: a localhost origin only, Turnstile optional")
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	cfg, err := config.Load(os.Getenv, *dev)
 	if err != nil {
@@ -249,10 +309,12 @@ func housekeeping(ctx context.Context, db *store.Store, s *server.Server, log *s
 // migrate: the schema brought up to date, a one-shot run as its owner (MIGRATE_DATABASE_URL), the service's role
 // (DATABASE_URL's) granted its rows; the serving container never holds the owner's password (AP-4). `--dev` allows one
 // role for both (a development database)
-func migrate(args []string) error {
-	fs := flag.NewFlagSet("migrate", flag.ExitOnError)
+func migrate(args []string, out io.Writer) error {
+	fs := flagsFor("migrate", out)
 	dev := fs.Bool("dev", false, "development: one role for both URLs")
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 	owner := os.Getenv("MIGRATE_DATABASE_URL")
 	if owner == "" {
 		return errors.New("MIGRATE_DATABASE_URL is required")
@@ -274,16 +336,20 @@ func openStore() (*store.Store, error) {
 	return store.Open(context.Background(), dsn, os.Getenv("DATABASE_PASSWORD_FILE"))
 }
 
-func accounts(args []string) error {
-	if len(args) != 1 {
-		return errors.New("accounts NAME")
+func accounts(args []string, out io.Writer) error {
+	fs := flagsFor("accounts", out)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("accounts NAME (a part of the name; carball-api accounts -h)")
 	}
 	db, err := openStore()
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	found, err := db.FindAccounts(context.Background(), args[0])
+	found, err := db.FindAccounts(context.Background(), fs.Arg(0))
 	if err != nil {
 		return err
 	}
@@ -324,15 +390,17 @@ func (t *target) parse() (store.Identity, error) {
 	return store.Identity{Provider: provider, Subject: subject}, nil
 }
 
-func ban(args []string) error {
-	fs := flag.NewFlagSet("ban", flag.ExitOnError)
+func ban(args []string, out io.Writer) error {
+	fs := flagsFor("ban", out)
 	var t target
 	t.flags(fs)
 	reason := fs.String("reason", "", "why (kept with the ban)")
 	by := fs.String("by", "", "who bans (kept with the ban)")
 	length := fs.Duration("for", 0, "how long (e.g. 72h); none: no end")
 	untilDate := fs.String("until", "", "the end, a date (YYYY-MM-DD, UTC) or RFC 3339 time")
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 	identity, err := t.parse()
 	if err != nil {
 		return err
@@ -396,11 +464,13 @@ func describe(end store.BanEnd) string {
 	return "?"
 }
 
-func unban(args []string) error {
-	fs := flag.NewFlagSet("unban", flag.ExitOnError)
+func unban(args []string, out io.Writer) error {
+	fs := flagsFor("unban", out)
 	var t target
 	t.flags(fs)
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 	identity, err := t.parse()
 	if err != nil {
 		return err
@@ -423,7 +493,11 @@ func unban(args []string) error {
 	return nil
 }
 
-func bans() error {
+func bans(args []string, out io.Writer) error {
+	fs := flagsFor("bans", out)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 	db, err := openStore()
 	if err != nil {
 		return err
@@ -442,7 +516,11 @@ func bans() error {
 }
 
 // healthcheck: the image's HEALTHCHECK (no curl or wget in it): the health listener's GET /healthz (HEALTH_ADDR)
-func healthcheck() error {
+func healthcheck(args []string, out io.Writer) error {
+	fs := flagsFor("healthcheck", out)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 	addr := os.Getenv("HEALTH_ADDR")
 	if addr == "" {
 		addr = "127.0.0.1:8081"
@@ -473,11 +551,15 @@ func healthcheck() error {
 // ticketKey makes a ticket key (notes/accounts.md §6: its rotation, a new id added to the game server's list first, then
 // the API switched, the old id dropped once its tickets have run out): the seed alone on stdout (to a file kept secret),
 // the public line for TICKET_PUBLIC_KEYS on stderr
-func ticketKey(args []string) error {
-	if len(args) != 1 {
+func ticketKey(args []string, out io.Writer) error {
+	fs := flagsFor("ticket-key", out)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
 		return errors.New("ticket-key KID (an id of 1-32 characters, no spaces)")
 	}
-	seed, public, err := ticket.NewKey(args[0])
+	seed, public, err := ticket.NewKey(fs.Arg(0))
 	if err != nil {
 		return err
 	}

@@ -390,6 +390,12 @@ export function seatSearch(
   };
 }
 
+/** The saved seat forgotten if it's this match's (its end seen on its page: RJ1); another match's, kept (another tab's
+ *  account's, this browser's storage being shared: RX33) */
+export function clearRankedSeatOf(matchId: bigint, storage = local()): void {
+  if (rankedSeat(Date.now(), storage)?.matchId === matchId) clearRankedSeat(storage);
+}
+
 export function clearRankedSeat(storage = local()): void {
   try {
     storage?.removeItem(SEAT_KEY);

@@ -19,6 +19,7 @@ import {
   queueAddress,
   REJOIN_SECONDS,
   clearRankedSeat,
+  clearRankedSeatOf,
   rankedSeat,
   searchGaveUpSeat,
   seatSearch,
@@ -241,6 +242,24 @@ describe("the pages' handoffs", () => {
       expect(rankedSeat(Date.now(), storage)?.joinedAt ?? null, String(reason)).toBe(back ? seat.joinedAt : null);
       clearRankedSeat(storage);
     }
+    // (a newer record stored meanwhile, a join's: not overwritten by the put-back)
+    storeRankedSeat(seat, storage);
+    const search = seatSearch("acct-1", storage, undefined);
+    search.sent();
+    await settle();
+    storeRankedSeat({ ...seat, matchId: 9n, joinedAt: Date.now() }, storage);
+    search.refused(REFUSED_QUEUE_BANNED);
+    await settle();
+    expect(rankedSeat(Date.now(), storage)?.matchId).toBe(9n);
+  });
+
+  it("forgets the saved seat at its match's end, not another match's (RX33)", () => {
+    const storage = memory();
+    storeRankedSeat({ matchId: 5n, teamSize: 2, joinedAt: Date.now(), account: null }, storage);
+    clearRankedSeatOf(6n, storage);
+    expect(rankedSeat(Date.now(), storage)?.matchId).toBe(5n);
+    clearRankedSeatOf(5n, storage);
+    expect(rankedSeat(Date.now(), storage)).toBeNull();
   });
 
   it("finds the deployment's game server in config.json; none, a development server's; one that can't be read fails closed", async () => {

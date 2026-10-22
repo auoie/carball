@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"strings"
 	"testing"
 	"time"
 
@@ -74,5 +76,48 @@ func TestRoleRefusal(t *testing.T) {
 	}
 	if roleRefusal(true, true) != nil || roleRefusal(false, false) != nil {
 		t.Error("refused when it may run")
+	}
+}
+
+// help, -h and --help list every command with its arguments and where the admin runs them; a command's -h its flags;
+// an unknown command the same list, as an error (the user's report: --help showed serve's flag alone)
+func TestHelp(t *testing.T) {
+	for _, args := range [][]string{{"help"}, {"-h"}, {"--help"}} {
+		var out, errs bytes.Buffer
+		if code := run(args, &out, &errs); code != 0 || errs.Len() != 0 {
+			t.Errorf("%v: exit %d, stderr %q", args, code, errs.String())
+		}
+		for _, want := range []string{"serve [--dev]", "migrate [--dev]", "accounts NAME", "ban (--account ID | --identity PROVIDER:SUBJECT)",
+			"unban (--account ID", "bans", "healthcheck", "ticket-key KID", "docker exec carball-api /app/carball-api"} {
+			if !strings.Contains(out.String(), want) {
+				t.Errorf("%v: no %q in\n%s", args, want, out.String())
+			}
+		}
+	}
+	for command, wants := range map[string][]string{
+		"ban":        {"usage: carball-api ban", "-account", "-identity", "-reason", "-by", "-for", "-until"},
+		"unban":      {"usage: carball-api unban", "-account", "-identity"},
+		"accounts":   {"usage: carball-api accounts NAME"},
+		"serve":      {"usage: carball-api serve [--dev]", "-dev"},
+		"migrate":    {"-dev"},
+		"ticket-key": {"usage: carball-api ticket-key KID"},
+		"bans":       {"usage: carball-api bans"},
+	} {
+		var out bytes.Buffer
+		if code := run([]string{command, "-h"}, &out, &out); code != 0 {
+			t.Errorf("%s -h: exit %d", command, code)
+		}
+		for _, want := range wants {
+			if !strings.Contains(out.String(), want) {
+				t.Errorf("%s -h: no %q in\n%s", command, want, out.String())
+			}
+		}
+	}
+	var out, errs bytes.Buffer
+	if code := run([]string{"bnas"}, &out, &errs); code != 1 || !strings.Contains(errs.String(), `unknown command "bnas"`) || !strings.Contains(errs.String(), "ticket-key KID") {
+		t.Errorf("an unknown command: exit %d, stderr %q", code, errs.String())
+	}
+	if code := run([]string{"ban", "--nope"}, &out, &errs); code != 1 {
+		t.Errorf("a bad flag: exit %d", code)
 	}
 }

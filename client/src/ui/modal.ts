@@ -23,6 +23,9 @@ export const REJOIN_TEXT = {
 
 export class Modal {
   readonly #root: HTMLDivElement;
+  readonly #box: HTMLDivElement;
+  /** A warning's icon (WarningModalPopup's), shown with its title */
+  readonly #icon: SVGSVGElement;
   readonly #title: HTMLDivElement;
   readonly #body: HTMLDivElement;
   readonly #ok: HTMLButtonElement;
@@ -39,6 +42,8 @@ export class Modal {
     this.#root.className = "modal";
     const box = document.createElement("div");
     box.className = "modal-box";
+    this.#box = box;
+    this.#icon = warningIcon();
     this.#title = document.createElement("div");
     this.#title.className = "modal-title";
     this.#body = document.createElement("div");
@@ -71,7 +76,10 @@ export class Modal {
     this.#choices = document.createElement("div");
     this.#choices.className = "modal-choices";
     this.#choices.hidden = true;
-    box.append(this.#title, this.#body, ok, this.#yes, this.#no, this.#choices);
+    const head = document.createElement("div");
+    head.className = "modal-head";
+    head.append(this.#icon, this.#title);
+    box.append(head, this.#body, ok, this.#yes, this.#no, this.#choices);
     this.#root.append(box);
     this.#root.hidden = true;
     host.append(this.#root);
@@ -82,6 +90,7 @@ export class Modal {
   }
 
   show(title: string, body: string, onClose?: () => void): void {
+    this.#warning(false);
     this.#title.textContent = title;
     this.#body.textContent = body;
     this.#onClose = onClose ?? null;
@@ -90,8 +99,10 @@ export class Modal {
     this.#open();
   }
 
-  /** A question: Yes runs `yes`; No (the default, Escape's) leaves it */
-  ask(title: string, body: string, yes: () => void): void {
+  /** A question: Yes runs `yes`; No (the default, Escape's) leaves it. `warning`: the game's WarningModalPopup, its
+   *  icon by the title and YES and NO red (the leave penalty's question: RV-715, RV-753) */
+  ask(title: string, body: string, yes: () => void, warning = false): void {
+    this.#warning(warning);
     this.#title.textContent = title;
     this.#body.textContent = body;
     this.#onClose = null;
@@ -110,6 +121,7 @@ export class Modal {
     focus = choices.length - 1,
     dismiss?: number,
   ): void {
+    this.#warning(false);
     this.#title.textContent = title;
     this.#body.textContent = body;
     this.#onClose = (dismiss === undefined ? undefined : choices[dismiss]?.act) ?? null;
@@ -133,6 +145,11 @@ export class Modal {
     this.#choices.hidden = false;
     this.#open();
     buttons[focus]?.focus();
+  }
+
+  #warning(on: boolean): void {
+    this.#box.classList.toggle("modal-warning", on);
+    this.#icon.style.display = on ? "" : "none";
   }
 
   /** Shown, the pointer let go (a question asked over the game, where it's locked to the canvas) */
@@ -162,4 +179,22 @@ export class Modal {
     this.#onClose = null;
     done?.();
   }
+}
+
+/** The warning's icon: a triangle with its exclamation mark (our drawing of the popup's) */
+function warningIcon(): SVGSVGElement {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("class", "modal-icon");
+  svg.setAttribute("aria-hidden", "true");
+  const triangle = document.createElementNS(ns, "path");
+  triangle.setAttribute("d", "M12 2 23 21H1Z");
+  triangle.setAttribute("class", "modal-icon-triangle");
+  const mark = document.createElementNS(ns, "path");
+  mark.setAttribute("d", "M11 8h2v7h-2zM11 17h2v2h-2z");
+  mark.setAttribute("class", "modal-icon-mark");
+  svg.append(triangle, mark);
+  svg.style.display = "none";
+  return svg;
 }

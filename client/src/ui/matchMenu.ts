@@ -16,6 +16,8 @@ export class MatchMenu {
   constructor(
     root: HTMLElement,
     private readonly onAction: (action: MatchAction) => void,
+    /** A warned button's question, asked as the game asks it: a warning popup over the menu (the modal: RV-753) */
+    private readonly warn: (title: string, question: string, yes: () => void) => void,
   ) {
     this.#root = root;
   }
@@ -44,18 +46,15 @@ export class MatchMenu {
     if (asking?.confirm) {
       const question = document.createElement("span");
       question.textContent = asking.confirm;
-      // (the leave penalty's: its title over the question, YES and NO red: WarningModalPopup, RV-715)
-      const title = asking.warning ? [Object.assign(document.createElement("strong"), { className: "match-menu-warning", textContent: asking.warning })] : [];
-      const no = this.#button(NO, asking.warning !== undefined, () => {
+      const no = this.#button(NO, false, () => {
         this.#asking = null;
         this.update(this.#items, true);
       });
       // (NO focused, the pad's default: a second A doesn't leave or forfeit the match, MENU-15, RV-472)
       no.dataset["padDefault"] = "";
       this.#root.replaceChildren(
-        ...title,
         question,
-        this.#button(YES, asking.danger || asking.warning !== undefined, () => {
+        this.#button(YES, asking.danger, () => {
           this.#asking = null;
           this.onAction(asking.action);
         }),
@@ -69,6 +68,11 @@ export class MatchMenu {
         this.#button(item.label, item.danger, () => {
           if (item.confirm === null) {
             this.onAction(item.action);
+          } else if (item.warning !== undefined) {
+            // (the leave penalty's: WARNING, its question, red YES and NO, NO focused: RV-715, RV-753)
+            this.warn(item.warning, item.confirm, () => {
+              this.onAction(item.action);
+            });
           } else {
             this.#asking = item;
             this.update(this.#items, true);

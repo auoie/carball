@@ -55,7 +55,8 @@ anything rating-side beyond what's submitted is PsyNet's, unknowable, so Carball
     strings):** while a ranked lobby has the leave penalty (the server's, sent as the Match message's flag 32: every
     seat's player here, no winner yet, a pending forfeit or the clock out with the scores apart counting as one: RX32)
     and no vote is the player's to take part in (shouldDisplayAbandon), the pause menu's button is ABANDON MATCH, asking WARNING, "Abandoning
-    a ranked game will temporarily ban you from matchmaking. ARE YOU SURE?" with red YES / NO (WarningModalPopup); a team
+    a ranked game will temporarily ban you from matchmaking. ARE YOU SURE?" with red YES / NO, NO focused, in a popup
+    over the menu with its warning icon (WarningModalPopup; our modal, RV-753); a team
     playlist's first, a 1v1's after its Forfeit Match.
 - **Rejoining** (corrects MM-44/MM-45):
   - **Who:** ranked **2v2 and 3v3 only**; **no rejoin in 1v1**.

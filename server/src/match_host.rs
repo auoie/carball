@@ -114,8 +114,9 @@ struct Reservation {
     reported: bool,
     lost_at: Option<f64>,
     rejoin_ticket: Option<String>,
-    /// Given up: its account searched for another match while away (no rejoin of it then)
+    /// Given up: its account searched for another match while away (no rejoin of it then), and when (s)
     forfeited: bool,
+    forfeited_at: f64,
     /// When its session (the claim's or the last rejoin's) joined: one that young is live though not heard from yet,
     /// no rejoin takes it over (RX31)
     session_since: f64,
@@ -137,6 +138,7 @@ impl Reservation {
             lost_at: None,
             rejoin_ticket: None,
             forfeited: false,
+            forfeited_at: 0.0,
             session_since: 0.0,
         }
     }
@@ -463,11 +465,25 @@ impl MatchHost {
     }
 
     /// An account's search for another match gives up the seats it left (their rejoins), whatever the page offered
-    pub fn forfeit_seats(&mut self, key: u64) {
+    pub fn forfeit_seats(&mut self, key: u64, at: f64) {
         for m in self.matches.values_mut() {
-            for r in m.reservations.iter_mut().filter(|r| r.key == key && r.claimed.is_some() && r.here_since.is_none())
+            for r in m
+                .reservations
+                .iter_mut()
+                .filter(|r| r.key == key && r.claimed.is_some() && r.here_since.is_none() && !r.forfeited)
             {
                 r.forfeited = true;
+                r.forfeited_at = at;
+            }
+        }
+    }
+
+    /// A search the server refused after it had taken it (a quitter's, reported while it waited: Refused 7) never ran:
+    /// the seats it gave up (at or after `since`, its start) given back, a quitter's rejoin allowed (RJ1, RX33)
+    pub fn unforfeit_seats(&mut self, key: u64, since: f64) {
+        for m in self.matches.values_mut() {
+            for r in m.reservations.iter_mut().filter(|r| r.key == key && r.forfeited && r.forfeited_at >= since) {
+                r.forfeited = false;
             }
         }
     }
@@ -1032,8 +1048,14 @@ mod tests {
         assert!(host.rejoin(match_id, 10, rejoining(1), tx.clone()).is_ok());
         assert!(host.take_reports().is_empty(), "a seat still empty: no refill");
         // (player 2 searches for another match instead: their seat given up, no rejoin of it now)
-        host.forfeit_seats(2);
+        host.forfeit_seats(2, 3.0);
         assert!(host.rejoin(match_id, 11, rejoining(2), tx.clone()).is_err(), "given up");
+        // (a search started before then doesn't give it back; one refused after taking it, started then, does: RX33)
+        host.unforfeit_seats(2, 3.5);
+        assert!(host.rejoin(match_id, 11, rejoining(2), tx.clone()).is_err(), "given up by an earlier search");
+        host.unforfeit_seats(2, 3.0);
+        assert!(host.rejoin(match_id, 11, rejoining(2), tx.clone()).is_ok(), "given back");
+        host.leave(11, false);
         // (the memory forgets after QUITTER_MEMORY)
         run_to(&mut host, 3.0, 4.0);
         host.observe(3.0 + QUITTER_MEMORY + 1.0);

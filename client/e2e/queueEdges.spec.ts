@@ -198,14 +198,20 @@ test("a 2v2 left by accident: a rejoin into the running match, its lock and reco
     });
   const firstJoin = await savedAt(c);
   expect(firstJoin).not.toBeNull();
-  // (a queue's match is ranked: with every seat filled, the pause menu's leave is ABANDON MATCH, asking WARNING and the
-  // ban's question, RV-715, RX32)
+  // (a queue's match is ranked: with every seat filled, the pause menu's leave is ABANDON MATCH, asking in the game's
+  // warning popup: WARNING with its icon, the ban's question, NO focused; NO back to the pause menu: RV-715, RX32, RV-753)
   await b.keyboard.press("Escape");
   const pause = b.locator("#pause-menu");
   await pause.getByRole("button", { name: /^abandon match$/i }).click({ timeout: 15_000 });
-  await expect(pause.locator(".match-menu-warning")).toHaveText("Warning");
-  await expect(pause).toContainText("Abandoning a ranked game will temporarily ban you from matchmaking. ARE YOU SURE?");
-  await pause.getByRole("button", { name: /^no$/i }).click();
+  const warning = b.locator("#modal");
+  await expect(warning.locator(".modal-title")).toHaveText("Warning");
+  await expect(warning.locator(".modal-icon")).toBeVisible();
+  await expect(warning).toContainText("Abandoning a ranked game will temporarily ban you from matchmaking. ARE YOU SURE?");
+  await expect(warning.getByRole("button", { name: /^no$/i })).toBeFocused();
+  for (const answer of [/^yes$/i, /^no$/i]) await expect(warning.getByRole("button", { name: answer })).toHaveCSS("background-color", "rgb(179, 38, 30)");
+  await warning.getByRole("button", { name: /^no$/i }).click();
+  await expect(warning).toBeHidden();
+  await expect(pause).toBeVisible();
   await b.keyboard.press("Escape");
   // A leaves first (reported: a quitter), then C (a later leaver: not)
   await a.close();

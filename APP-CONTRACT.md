@@ -230,7 +230,8 @@ The accounts service (notes/accounts.md). **Nothing is deployed yet: the first d
 - **The admin's commands** (bans: notes/accounts.md §4), with the same `DATABASE_URL` and password file:
   `docker exec carball-api /app/carball-api accounts NAME` (accounts whose name holds NAME, with their identities),
   `… ban --account ID --reason TEXT --by NAME [--for 72h | --until 2026-12-01]` (or `--identity steam:<SteamID64>`;
-  every identity of the account, signed out everywhere), `… unban --account ID`, `… bans`.
+  every identity of the account, signed out everywhere), `… unban --account ID`, `… bans`; `… help` lists the commands,
+  `… COMMAND -h` one's flags.
 - **Stop:** SIGTERM or SIGINT: requests in flight finish (10 s at most).
 - **Search tickets** (`POST /api/ticket`, notes/accounts.md §3): a signed-in account's, two minutes long, a nonce each,
   its ratings in each playlist (format 3); refused (403, `queue-banned` and until when) while a leaver's queue ban runs,

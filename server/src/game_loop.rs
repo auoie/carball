@@ -84,15 +84,17 @@ pub fn run_with_reports(
                         refuse(out, protocol::REFUSED_QUEUE_BANNED);
                     }
                     Intent::Search { team_size, token } => {
-                        // (a seat it left, held for a rejoin, given up: it plays another match, RX30C)
+                        // (a seat it left, held for a rejoin, given up: it plays another match, RX30C; at the search's
+                        // own start, which a refusal after taking it gives back from, RX33)
+                        let at = seconds(Instant::now());
                         if request.verified {
-                            host.forfeit_seats(request.key);
+                            host.forfeit_seats(request.key, at);
                         }
                         // (its account's rating in the playlist, from its ticket: the queue pairs by it)
                         let rating =
                             crate::queue::search_rating(request.ticket.as_ref().map(|t| &t.ratings), team_size);
                         let from = SearchFrom { address, key: request.key, token, rating };
-                        match queue.search(id, team_size, out.clone(), from, seconds(Instant::now())) {
+                        match queue.search(id, team_size, out.clone(), from, at) {
                             Searched::Queued => {}
                             Searched::NoPlaylist => refuse(out, protocol::REFUSED_MODE),
                             // (its browser or address stalled a match: refused with the time left, RV-367)
@@ -162,7 +164,8 @@ pub fn run_with_reports(
         // (the accounts service's: results, quitters, refills, sent by the outbox)
         // (a quitter reported since: its searches already waiting refused as a later one would be, RX31)
         for key in host.take_newly_quit() {
-            for out in queue.drop_account(key) {
+            for (out, since) in queue.drop_account(key) {
+                host.unforfeit_seats(key, since); // (the search never ran: its seats back, RX33)
                 refuse(out, protocol::REFUSED_QUEUE_BANNED);
             }
         }

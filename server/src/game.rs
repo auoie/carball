@@ -731,7 +731,11 @@ impl Game {
     /// The leave penalty is in force (`bHasLeaveMatchPenalty`, LV1): a public match whose lobby is full, no winner yet
     /// (a forfeit pending, or the clock out with the scores apart, counts: `has_winner`), as the match host arms it
     fn leave_penalty(&self) -> bool {
-        self.match_type.auto_forfeit() && self.players.len() >= 2 * usize::from(self.team_size) && !self.has_winner()
+        // (a queue's match alone: an open match (the local host's, a development server's) has none to arm, RX33)
+        self.match_id != 0
+            && self.match_type.auto_forfeit()
+            && self.players.len() >= 2 * usize::from(self.team_size)
+            && !self.has_winner()
     }
 
     /// Forfeit votes are allowed (`bCanVoteToForfeit`, MR-7.6): the playlist allows them, no winner yet, and the clock
@@ -871,8 +875,10 @@ impl Game {
         // (a frame's length is a u16: 16 cars' world is ~12.4 KB, a fifth of it, RV-242/272)
         debug_assert!(welcome.len() - 2 <= usize::from(u16::MAX), "a welcome of {} bytes", welcome.len());
         let _ = player.out.try_send(Outgoing::Control(welcome));
-        let _ = player.out.try_send(Outgoing::Control(Control::Match(self.match_state()).encode()));
+        let out = player.out.clone();
         self.players.insert(id, player);
+        // (the match's state with them counted: the lobby's last joiner told its leave penalty at once, RX33)
+        let _ = out.try_send(Outgoing::Control(Control::Match(self.match_state()).encode()));
         self.world_changed(Some(id));
         self.send_votes();
         self.send_roster();
@@ -3661,12 +3667,25 @@ mod tests {
         assert!(!game.players[&6].vote_start_disabled, "another account isn't");
     }
 
-    /// RX32: the leave penalty the client is told: a public match's lobby full and no winner yet (a pending forfeit, or
-    /// the clock out with the scores apart, counting as one), as the match host arms it
+    /// RX32: the leave penalty the client is told: a queue match's lobby full and no winner yet (a pending forfeit, or
+    /// the clock out with the scores apart, counting as one), as the match host arms it; an open match never (RX33)
     #[test]
     fn the_leave_penalty_is_a_full_public_lobby_with_no_winner() {
-        let (mut game, _rxs) = match_with(MatchType::Ranked, 1, &[(1, 0, 11), (2, 1, 12)]);
+        let (game, _rxs) = match_with(MatchType::Ranked, 1, &[(1, 0, 11), (2, 1, 12)]);
+        assert!(!game.match_state().leave_penalty, "an open match (no match id): none");
+        init_engine();
+        let mut game = Game::with_options(1, 1);
+        (game.match_type, game.match_id) = (MatchType::Ranked, 7);
+        let mut rxs = Vec::new();
+        for (id, team) in [(1, 0), (2, 1)] {
+            let (tx, rx) = channel(TEST_QUEUE);
+            game.join(id, JoinRequest { team, ..REQUEST }, tx);
+            rxs.push(rx);
+        }
         assert!(game.match_state().leave_penalty);
+        // (the last joiner's first match state has it: computed with them counted)
+        let joined_last = match_states(&mut rxs[1]);
+        assert_eq!(joined_last.first().map(|m| m.leave_penalty), Some(true));
         (game.score, game.clock_ticks) = ([1, 0], 0);
         assert!(!game.match_state().leave_penalty, "the clock out, the scores apart");
         game.score = [1, 1];
@@ -3676,7 +3695,8 @@ mod tests {
         game.forfeiting = None;
         game.leave(2);
         assert!(!game.match_state().leave_penalty, "a seat empty");
-        let (game, _rxs) = match_with(MatchType::Private, 1, &[(1, 0, 11), (2, 1, 12)]);
+        let (mut game, _rxs) = match_with(MatchType::Private, 1, &[(1, 0, 11), (2, 1, 12)]);
+        game.match_id = 8;
         assert!(!game.match_state().leave_penalty, "a private match has none");
     }
 
