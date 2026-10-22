@@ -43,14 +43,56 @@ else
 	SOURCE=$COMMIT
 fi
 
-echo "== the engine's WebAssembly (the client bundles it)"
 EM=${EMSCRIPTEN_ROOT:-/usr/lib/emscripten}
-PATH="$EM:$PATH" emcmake cmake -S "$SRC/engine" -B "$SRC/engine/build-wasm" -DCMAKE_BUILD_TYPE=Release > /dev/null
-PATH="$EM:$PATH" emmake make -C "$SRC/engine/build-wasm" -j8 rlengine rlengine_web
+# The two WebAssembly builds kept by their inputs' content (out/images/cache/<name>-<key>: the staged sources' files and
+# the tools' versions hashed), so an image built with the engine unchanged (an API-only update) reuses the last outputs
+# instead of starting from scratch; the sources still staged clean, and a key changes with any input
+CACHE="$R/out/images/cache"
+mkdir -p "$CACHE"
+inputs_key() { # the staged files under each path, then the tools' versions
+	{
+		for path in "$@"; do (cd "$SRC" && find "$path" -type f -print0 | sort -z | xargs -0 sha256sum); done
+		PATH="$EM:$PATH" emcc --version | head -1
+		rustc --version
+	} | sha256sum | cut -c1-24
+}
+# cached NAME KEY DIR FILE... -- COMMAND...: DIR's FILEs from the cache when it holds KEY's, else the command run and its
+# FILEs kept (put in place whole, so a stopped build leaves no half entry)
+cached() {
+	local name=$1 key=$2 dir=$3
+	shift 3
+	local files=()
+	while [ "$1" != "--" ]; do files+=("$1"); shift; done
+	shift
+	local entry="$CACHE/$name-$key"
+	if [ -d "$entry" ]; then
+		echo "(cached: $name's inputs unchanged, $key)"
+		mkdir -p "$dir"
+		for f in "${files[@]}"; do cp -a "$entry/$f" "$dir/"; done
+		return
+	fi
+	"$@"
+	mkdir -p "$entry.partial"
+	for f in "${files[@]}"; do cp -a "$dir/$f" "$entry.partial/"; done
+	mv "$entry.partial" "$entry"
+}
+ENGINE_KEY=$(inputs_key engine)
+HOST_KEY=$(inputs_key engine server scripts/build_host.sh)
+
+echo "== the engine's WebAssembly (the client bundles it)"
+build_engine() {
+	PATH="$EM:$PATH" emcmake cmake -S "$SRC/engine" -B "$SRC/engine/build-wasm" -DCMAKE_BUILD_TYPE=Release > /dev/null
+	PATH="$EM:$PATH" emmake make -C "$SRC/engine/build-wasm" -j8 rlengine rlengine_web
+}
+cached engine "$ENGINE_KEY" "$SRC/engine/build-wasm" carball_engine.mjs carball_engine.wasm carball_engine.d.mts \
+	carball_engine_web.mjs carball_engine_web.wasm carball_engine_web.d.mts -- build_engine
 
 echo "== the local host's WebAssembly (the client bundles it: the offline match against bots, scripts/build_host.sh)"
 # (its own target directory; the build machine's paths remapped by the script itself: the module ships)
-PATH="$EM:$PATH" CARGO_TARGET_DIR="$R/out/images/target-host" CARBALL_ENGINE_WASM="$SRC/engine/build-wasm-host" bash "$SRC/scripts/build_host.sh"
+build_local_host() {
+	PATH="$EM:$PATH" CARGO_TARGET_DIR="$R/out/images/target-host" CARBALL_ENGINE_WASM="$SRC/engine/build-wasm-host" bash "$SRC/scripts/build_host.sh"
+}
+cached host "$HOST_KEY" "$SRC/engine/build-wasm-host" carball_host.mjs carball_host.wasm -- build_local_host
 
 echo "== the client's production build, the shipped-data check on it"
 # (the installed packages, each linked: not node_modules itself, whose .cache holds the build's chunk record, the

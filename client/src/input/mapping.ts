@@ -46,6 +46,9 @@ export interface HeldActions {
   readonly reset: boolean;
   readonly ballInFront: boolean;
   readonly ballOnCar: boolean;
+  readonly passBall: boolean;
+  readonly launchBall: boolean;
+  readonly defendShot: boolean;
   /** The scoreboard's binding held (OpenScoreboard | OnRelease CloseScoreboard) */
   readonly scoreboard: boolean;
   /** The goal replay's skip (ReadyUp) */
@@ -78,6 +81,9 @@ export const NO_HELD_ACTIONS: HeldActions = {
   reset: false,
   ballInFront: false,
   ballOnCar: false,
+  passBall: false,
+  launchBall: false,
+  defendShot: false,
   scoreboard: false,
   readyUp: false,
   trainingPrevious: false,
@@ -273,6 +279,9 @@ export function readHeldActions(input: InputSnapshot, bindings: Bindings, stickD
     reset: held("reset"),
     ballInFront: held("ballInFront"),
     ballOnCar: held("ballOnCar"),
+    passBall: held("passBall"),
+    launchBall: held("launchBall"),
+    defendShot: held("defendShot"),
     scoreboard: held("scoreboard"),
     readyUp: held("readyUp"),
     trainingPrevious: held("trainingPrevious"),

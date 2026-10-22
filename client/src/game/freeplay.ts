@@ -23,6 +23,7 @@ import {
 import type { ControllerSettings, Options, Settings } from "../settings/settings";
 import { FixedStep, TICK_SECONDS, frameTimes } from "../loop/fixedStep";
 import { type Vec3, ZERO, add, scale, sub, vec3 } from "../math/vec";
+import { type CommandCar, defendVelocity, passVelocity, poppedUp, teleportAllowed, teleportTarget, teleportedBall } from "./freeplayCommands";
 import { rotationAxes, vectorToRotator } from "../camera/unreal";
 import { BallView, CarView, trailGround } from "../render/entities";
 import type { PadsView } from "../render/tokenPads";
@@ -420,8 +421,12 @@ export class Freeplay {
       this.#sinceReset = 0;
       this.#resetKickoff();
     }
-    if (pressed("ballInFront")) this.#placeBall(false);
-    if (pressed("ballOnCar")) this.#placeBall(true);
+    // (the game's free-play ball commands, each once a press, the ball moving or not: FP3)
+    if (pressed("ballInFront")) this.#teleportBall("possession");
+    if (pressed("ballOnCar")) this.#teleportBall("dribble");
+    if (pressed("passBall")) this.#launchBall("pass");
+    if (pressed("launchBall")) this.#launchBall("pop");
+    if (pressed("defendShot")) this.#launchBall("defend");
     this.#held = held;
   }
 
@@ -899,6 +904,12 @@ export class Freeplay {
     this.#world.demolishCar(this.#playerId);
   }
 
+  /** For the browser tests: the ball's position and velocity now */
+  debugBall(): { readonly pos: Vec3; readonly vel: Vec3 } {
+    const ball = this.#world.ball();
+    return { pos: ball.pos, vel: ball.vel };
+  }
+
   debugCar(): { readonly pos: Vec3; readonly speed: number; readonly hitbox: Vec3 } {
     const car = this.#world.car(this.#playerId);
     return { pos: car.pos, speed: Math.hypot(car.vel.x, car.vel.y, car.vel.z), hitbox: this.#world.carConfig(this.#playerId).hitboxSize };
@@ -943,13 +954,41 @@ export class Freeplay {
     }
   }
 
-  /** Freeplay helpers: ball in front of the car, or dropped onto its roof. */
-  #placeBall(onCar: boolean): void {
+  /** The free-play commands' view of the player's car (its hitbox, the last tick's velocity), or none while it's
+   *  demolished (FP3: each command needs a car) */
+  #commandCar(): CommandCar | null {
     const car = this.#world.car(this.#playerId);
-    const flatForward = vec3(car.rot.forward.x, car.rot.forward.y, 0);
-    const pos = onCar ? add(car.pos, vec3(0, 0, 200)) : add(add(car.pos, scale(flatForward, 600)), vec3(0, 0, 300));
+    if (car.demoed) return null;
+    const config = this.#world.carConfig(this.#playerId);
+    return { ...car, hitboxSize: config.hitboxSize, hitboxOffset: config.hitboxOffset, lastVel: this.#car.previous.vel };
+  }
+
+  /** Take Possession and Start Dribble: the ball teleported to its spot, moving with the car, half its spin, its
+   *  rotation kept; refused where it can't go (a goal, through the static world), the ball unchanged (FP3; our own
+   *  sounds for UI_Training_Teleport and its refusal) */
+  #teleportBall(kind: "possession" | "dribble"): void {
+    const car = this.#commandCar();
+    if (!car) return;
+    const ray = (from: Vec3, to: Vec3): number | null => this.#world.rayToStatic(from, to);
+    const spot = teleportTarget(kind, car, ray);
+    if (!teleportAllowed(spot, car, ray)) {
+      this.#audio.menu("back");
+      return;
+    }
     this.#ballHold = 0;
-    this.#world.setBall({ pos, vel: onCar ? car.vel : ZERO, angVel: ZERO });
+    this.#world.setBall(teleportedBall(this.#world.ball(), car, spot));
+    this.#pushBall();
+    this.#audio.menu("confirm");
+  }
+
+  /** Launch Ball, Pass Ball and Defend Shot: the ball's velocity set, where it is, its spin kept (FP3) */
+  #launchBall(kind: "pop" | "pass" | "defend"): void {
+    const car = this.#commandCar();
+    if (!car) return;
+    const ball = this.#world.ball();
+    const vel = kind === "pop" ? poppedUp(ball.vel) : kind === "pass" ? passVelocity(ball.pos, car) : defendVelocity(ball.pos, car.pos, Math.random);
+    this.#ballHold = 0;
+    this.#world.setBall({ ...ball, vel });
     this.#pushBall();
   }
 

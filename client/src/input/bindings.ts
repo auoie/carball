@@ -39,8 +39,12 @@ export const ACTIONS = [
   { id: "swivelLeft", label: "Swivel left", group: "Camera" },
   { id: "swivelRight", label: "Swivel right", group: "Camera" },
   { id: "reset", label: "Reset to kickoff", group: "Freeplay" },
-  { id: "ballInFront", label: "Ball in front", group: "Freeplay" },
-  { id: "ballOnCar", label: "Ball on car", group: "Freeplay" },
+  // (FreeplayCommand_X, the game's labels and order: FP3)
+  { id: "ballInFront", label: "Take Possession", group: "Freeplay" },
+  { id: "ballOnCar", label: "Start Dribble", group: "Freeplay" },
+  { id: "passBall", label: "Pass Ball", group: "Freeplay" },
+  { id: "launchBall", label: "Launch Ball", group: "Freeplay" },
+  { id: "defendShot", label: "Defend Shot", group: "Freeplay" },
   // (Controls.int [ChatPreset1-4] Label, verbatim: online only, so the same keys as freeplay's, as the game binds them)
   { id: "chatPreset1", label: "Quick Chat - Information/Post Game", group: "Quick Chat" },
   { id: "chatPreset2", label: "Quick Chat - Compliments", group: "Quick Chat" },
@@ -64,7 +68,14 @@ export function exclusiveGroups(a: Action, b: Action): boolean {
   const group = (id: Action): string => ACTIONS.find((x) => x.id === id)?.group ?? "";
   const pair = [group(a), group(b)].sort().join("|");
   // (the replay's skip: no car is driven in a goal replay, so it shares any key: Space with jump, the pad's A)
-  return pair === "Freeplay|Quick Chat" || pair === "Freeplay|Training" || pair === "Quick Chat|Training" || (pair.includes("Replay") && group(a) !== group(b));
+  // (free play has no scoreboard: Defend Shot's LB, the game's, beside the scoreboard's, FP3)
+  return (
+    pair === "Freeplay|Quick Chat" ||
+    pair === "Freeplay|Training" ||
+    pair === "Freeplay|Match" ||
+    pair === "Quick Chat|Training" ||
+    (pair.includes("Replay") && group(a) !== group(b))
+  );
 }
 
 export type Action = (typeof ACTIONS)[number]["id"];
@@ -105,8 +116,12 @@ export const DEFAULT_BINDINGS: Bindings = {
   swivelLeft: bind(null, axis(2, -1)),
   swivelRight: bind(null, axis(2, 1)),
   reset: bind(key("Backspace"), button(5)),
+  // (the game's defaults in every preset: 1-5, the D-pad's down, up, left, right, LB: FP3)
   ballInFront: bind(key("Digit1"), button(13)),
   ballOnCar: bind(key("Digit2"), button(12)),
+  passBall: bind(key("Digit3"), button(14)),
+  launchBall: bind(key("Digit4"), button(15)),
+  defendShot: bind(key("Digit5"), button(4)),
   // (ControlPreset_X: keys 1-4, the D-pad's up, left, right, down)
   chatPreset1: bind(key("Digit1"), button(12)),
   chatPreset2: bind(key("Digit2"), button(14)),

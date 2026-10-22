@@ -380,6 +380,33 @@ describe("a network state laid over the world (RV-503's PM7)", () => {
   });
 });
 
+describe("free play's ball commands' engine calls (FP3)", () => {
+  it("a ray meets the arena's static collision alone: the floor under it, a wall in its way, not the ball", () => {
+    const world = World.create(engine);
+    // (straight down from 200 uu up onto the floor: halfway along 400)
+    expect(world.rayToStatic(vec3(0, 0, 200), vec3(0, 0, -200))).toBeCloseTo(0.5, 2);
+    // (through the side wall at |x| 4096: from 3000 to 5000, about 0.55 of the way)
+    const wall = world.rayToStatic(vec3(3000, 0, 500), vec3(5000, 0, 500));
+    expect(wall).not.toBeNull();
+    expect(3000 + (wall ?? 0) * 2000).toBeCloseTo(4096, -1);
+    // (through the ball at the centre: nothing static)
+    world.setBall({ pos: vec3(0, 0, 500), vel: vec3(0, 0, 0), angVel: vec3(0, 0, 0) });
+    expect(world.rayToStatic(vec3(-500, 0, 500), vec3(500, 0, 500))).toBeNull();
+  });
+
+  it("a placed ball keeps the rotation it's given (a teleport's is the ball's own), upright by default", () => {
+    const world = World.create(engine);
+    const rot = { forward: vec3(0, 1, 0), right: vec3(-1, 0, 0), up: vec3(0, 0, 1) };
+    world.setBall({ pos: vec3(0, 0, 500), vel: vec3(0, 0, 0), angVel: vec3(0, 0, 0), rot });
+    const placed = world.ball().rot;
+    for (const axis of ["forward", "right", "up"] as const) {
+      for (const k of ["x", "y", "z"] as const) expect(placed[axis][k]).toBeCloseTo(rot[axis][k], 5);
+    }
+    world.setBall({ pos: vec3(0, 0, 500), vel: vec3(0, 0, 0), angVel: vec3(0, 0, 0) });
+    expect(world.ball().rot.forward.x).toBeCloseTo(1, 5);
+  });
+});
+
 describe("custom training's engine calls (sibling, setGoalScoring, hideBall)", () => {
   it("a sibling arena plays on its own: the same ball's flight as this world's, this world untouched", () => {
     const world = World.create(engine);

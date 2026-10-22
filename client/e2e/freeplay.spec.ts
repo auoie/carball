@@ -125,6 +125,39 @@ test("freeplay loads, drives and resets", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
+test("free play's ball commands from their keys: 4 launches the ball, 1 takes possession, 5 defends a shot (FP3)", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto("/?render=off");
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+  await freePlay(page);
+  await page.locator("#game").click({ position: { x: 640, y: 360 }, button: "right" }); // (focus)
+  interface Ball {
+    pos: { x: number; y: number; z: number };
+    vel: { x: number; y: number; z: number };
+  }
+  const hook = (): Promise<Ball> => page.evaluate(() => (window as unknown as { carballFreeplay: { ball: () => Ball } }).carballFreeplay.ball());
+  // (the car at the centre facing +x, the ball resting off to its side)
+  await page.evaluate(() => {
+    (window as unknown as { carballFreeplay: { place: (car: object, ball: object) => void } }).carballFreeplay.place(
+      { x: 0, y: 0, yaw: 0 },
+      { x: 0, y: 1500, z: 93 },
+    );
+  });
+  // Launch Ball: 750 up from a resting ball
+  await page.keyboard.press("Digit4");
+  await expect.poll(async () => (await hook()).vel.z, { timeout: 10_000 }).toBeGreaterThan(400);
+  // Take Possession: in front of the car (about 230 ahead, the ball's bounds radius over the floor)
+  await page.keyboard.press("Digit1");
+  await expect.poll(async () => (await hook()).pos.x, { timeout: 10_000 }).toBeGreaterThan(150);
+  const held = await hook();
+  expect(Math.abs(held.pos.y)).toBeLessThan(60);
+  // Defend Shot: launched at a goal (the nearer, orange or blue: |y| velocity a goal's way), 2778 sideways
+  await page.keyboard.press("Digit5");
+  await expect.poll(async () => Math.hypot((await hook()).vel.x, (await hook()).vel.y), { timeout: 10_000 }).toBeGreaterThan(2000);
+  expect(errors).toEqual([]);
+});
+
 test("the settings' name field takes Space and Backspace like any text field (RV-482)", async ({ page }) => {
   await page.goto("/?render=off");
   await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });

@@ -209,6 +209,17 @@ test("a 2v2 left by accident: a rejoin into the running match, its lock and reco
   await expect(warning).toContainText("Abandoning a ranked game will temporarily ban you from matchmaking. ARE YOU SURE?");
   await expect(warning.getByRole("button", { name: /^no$/i })).toBeFocused();
   for (const answer of [/^yes$/i, /^no$/i]) await expect(warning.getByRole("button", { name: answer })).toHaveCSS("background-color", "rgb(179, 38, 30)");
+  // (Tab kept to the popup's own buttons, round and round (YES, NO), never the pause menu behind it, RX34)
+  const focusedInModal = (): Promise<string | null> =>
+    b.evaluate(() => (document.activeElement?.closest("#modal") ? document.activeElement.textContent : null));
+  await b.keyboard.press("Tab");
+  expect(await focusedInModal()).toMatch(/^yes$/i);
+  await b.keyboard.press("Tab");
+  expect(await focusedInModal()).toMatch(/^no$/i);
+  await b.keyboard.press("Shift+Tab");
+  expect(await focusedInModal()).toMatch(/^yes$/i);
+  await b.keyboard.press("Shift+Tab");
+  expect(await focusedInModal()).toMatch(/^no$/i);
   await warning.getByRole("button", { name: /^no$/i }).click();
   await expect(warning).toBeHidden();
   await expect(pause).toBeVisible();

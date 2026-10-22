@@ -877,8 +877,10 @@ impl Game {
         let _ = player.out.try_send(Outgoing::Control(welcome));
         let out = player.out.clone();
         self.players.insert(id, player);
-        // (the match's state with them counted: the lobby's last joiner told its leave penalty at once, RX33)
+        // (the match's state with them counted: the lobby's last joiner told its leave penalty at once, RX33; and the
+        // others told if it changed with them, as with a takeover's seat back: RX34)
         let _ = out.try_send(Outgoing::Control(Control::Match(self.match_state()).encode()));
+        self.send_match_state();
         self.world_changed(Some(id));
         self.send_votes();
         self.send_roster();
@@ -1078,7 +1080,11 @@ impl Game {
                 self.forfeit_check_at = Some(tick + FORFEIT_CHECK_TICKS);
             }
             self.world_changed(None);
-            self.send_match_state();
+            // (a seat taken over is back at once, its new session joining next: the state sent then, not a lobby one
+            // short for a tick, RX34)
+            if !replaced {
+                self.send_match_state();
+            }
             self.send_votes();
             self.send_roster();
         }
@@ -3665,6 +3671,35 @@ mod tests {
         let (tx, _rx) = channel(TEST_QUEUE);
         game.join(6, JoinRequest { team: 1, key: 109, verified: true, ..REQUEST }, tx);
         assert!(!game.players[&6].vote_start_disabled, "another account isn't");
+    }
+
+    /// RX34: a takeover isn't a lobby one short, even for a tick: the others never told the leave penalty is off
+    #[test]
+    fn a_takeover_never_shows_the_others_the_penalty_off() {
+        init_engine();
+        let mut game = Game::with_options(1, 2);
+        (game.match_type, game.match_id) = (MatchType::Ranked, 9);
+        let mut rxs = Vec::new();
+        for (id, team) in [(1, 0), (2, 0), (3, 1), (4, 1)] {
+            let (tx, rx) = channel(TEST_QUEUE);
+            game.join(id, JoinRequest { team, key: 10 + id, ..REQUEST }, tx);
+            rxs.push(rx);
+        }
+        assert!(game.match_state().leave_penalty);
+        let _ = match_states(&mut rxs[0]);
+        game.replaced(3);
+        let (tx, _rx) = channel(TEST_QUEUE);
+        game.join(5, JoinRequest { team: 1, key: 13, ..REQUEST }, tx);
+        game.tick(0.0);
+        let seen = match_states(&mut rxs[0]);
+        assert!(
+            seen.iter().all(|m| m.leave_penalty),
+            "player 1 told: {:?}",
+            seen.iter().map(|m| m.leave_penalty).collect::<Vec<_>>()
+        );
+        // (a real leave still drops it, and says so)
+        game.leave(4);
+        assert!(match_states(&mut rxs[0]).last().is_some_and(|m| !m.leave_penalty));
     }
 
     /// RX32: the leave penalty the client is told: a queue match's lobby full and no winner yet (a pending forfeit, or

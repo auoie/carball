@@ -148,6 +148,15 @@ static RotMat ReadRot(const NumberArrayVal& arr, int offset) {
 	return RotMat(ReadVec(arr, offset), ReadVec(arr, offset + 3), ReadVec(arr, offset + 6));
 }
 
+// A ray that meets the arena's static collision alone (its meshes: the floor, walls, goals), never a car or the ball
+struct StaticRay : btCollisionWorld::ClosestRayResultCallback {
+	StaticRay(const btVector3& from, const btVector3& to) : btCollisionWorld::ClosestRayResultCallback(from, to, nullptr) {}
+	bool needsCollision(btBroadphaseProxy* proxy) const override {
+		const auto* object = static_cast<const btCollisionObject*>(proxy->m_clientObject);
+		return object->isStaticObject() && btCollisionWorld::ClosestRayResultCallback::needsCollision(proxy);
+	}
+};
+
 class Sim {
 public:
 	Sim() {
@@ -327,6 +336,16 @@ public:
 		s.rotMat = ReadRot(arr, Layout::BALL_ROT);
 		s.spawnCount = _arena->ball->_internalState.spawnCount + 1; // (a placement)
 		_arena->ball->SetState(s);
+	}
+
+	// Where the segment from (fx, fy, fz) to (tx, ty, tz) (uu) first meets the arena's static collision, as a fraction of
+	// it; -1 for nowhere (free play's ball commands: the ground under the car, a placement through a wall, FP3)
+	double RayToStatic(float fx, float fy, float fz, float tx, float ty, float tz) {
+		const btVector3 from(fx * UU_TO_BT, fy * UU_TO_BT, fz * UU_TO_BT);
+		const btVector3 to(tx * UU_TO_BT, ty * UU_TO_BT, tz * UU_TO_BT);
+		StaticRay ray(from, to);
+		_arena->_bulletWorld.rayTest(from, to, ray);
+		return ray.hasHit() ? ray.m_closestHitFraction : -1.0;
 	}
 
 	Float32ArrayVal CarState(int id) {
@@ -630,6 +649,7 @@ EMSCRIPTEN_BINDINGS(rlengine) {
 		.function("hideBall", &Sim::HideBall)
 		.function("ballState", &Sim::BallState)
 		.function("setBallState", &Sim::SetBallState)
+		.function("rayToStatic", &Sim::RayToStatic)
 		.function("carState", &Sim::CarState)
 		.function("setCarState", &Sim::SetCarState)
 		.function("carConfig", &Sim::CarConfig)

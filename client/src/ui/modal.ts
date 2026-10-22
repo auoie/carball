@@ -83,6 +83,20 @@ export class Modal {
     this.#root.append(box);
     this.#root.hidden = true;
     host.append(this.#root);
+    // (Tab kept to its own buttons while it's up: nothing behind it reached, the pause menu's either, RX34)
+    document.addEventListener(
+      "keydown",
+      (e) => {
+        if (e.key !== "Tab" || !this.isOpen) return;
+        const buttons = [...this.#root.querySelectorAll("button")].filter((b) => !b.hidden && b.closest("[hidden]") === null);
+        if (buttons.length === 0) return;
+        e.preventDefault();
+        const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
+        const next = at < 0 ? (e.shiftKey ? buttons.length - 1 : 0) : (at + (e.shiftKey ? -1 : 1) + buttons.length) % buttons.length;
+        buttons[next]?.focus();
+      },
+      true,
+    );
   }
 
   get isOpen(): boolean {

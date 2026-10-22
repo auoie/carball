@@ -1,7 +1,7 @@
 // Typed wrapper around the WebAssembly engine (engine/wasm/bindings.cpp).
 // The module itself is passed in, so the same code runs in the browser and in Node tests.
 import type { MainModule, Sim } from "@engine/carball_engine_web.mjs";
-import { type Rot3, type Vec3, vec3 } from "../math/vec";
+import { IDENTITY_ROT, type Rot3, type Vec3, vec3 } from "../math/vec";
 
 export type Team = 0 | 1; // 0 blue (defends -y), 1 orange (defends +y)
 
@@ -404,15 +404,24 @@ export class World {
     return at(this.#sim.ballState(), this.#m.BALL_EXPLODED) !== 0;
   }
 
-  setBall(state: Pick<BodyState, "pos" | "vel" | "angVel">): void {
+  /** Places the ball: its position, velocity and spin, and its rotation (none: upright, a fresh ball's) */
+  setBall(state: Pick<BodyState, "pos" | "vel" | "angVel"> & { readonly rot?: Rot3 }): void {
     this.#changed();
     const m = this.#m;
     const a = new Float32Array(m.BALL_SIZE);
     a.set([state.pos.x, state.pos.y, state.pos.z], m.BALL_POS);
     a.set([state.vel.x, state.vel.y, state.vel.z], m.BALL_VEL);
     a.set([state.angVel.x, state.angVel.y, state.angVel.z], m.BALL_ANG_VEL);
-    a.set([1, 0, 0, 0, 1, 0, 0, 0, 1], m.BALL_ROT);
+    const { forward: f, right: r, up: u } = state.rot ?? IDENTITY_ROT;
+    a.set([f.x, f.y, f.z, r.x, r.y, r.z, u.x, u.y, u.z], m.BALL_ROT);
     this.#sim.setBallState(a);
+  }
+
+  /** Where the segment from `from` to `to` first meets the arena's static collision (its floor, walls and goals, never a
+   *  car or the ball), as a fraction of it; null for nowhere (free play's ball commands, FP3) */
+  rayToStatic(from: Vec3, to: Vec3): number | null {
+    const hit = this.#sim.rayToStatic(from.x, from.y, from.z, to.x, to.y, to.z);
+    return hit < 0 ? null : hit;
   }
 
   /** Places a car: position, velocity, rotation and boost; its jump and dodge state go back to the defaults. */

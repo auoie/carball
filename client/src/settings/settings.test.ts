@@ -122,6 +122,16 @@ describe("settings", () => {
     expect(parseSettings({}).bindings.jumpAlternative).toEqual(DEFAULT_BINDINGS.jumpAlternative);
   });
 
+  it("bindings saved before free play's last three commands take their defaults beside the scoreboard and quick chats (FP3)", () => {
+    const saved = Object.fromEntries(Object.entries(DEFAULT_BINDINGS).filter(([id]) => !["passBall", "launchBall", "defendShot"].includes(id)));
+    const s = parseSettings({ bindings: saved });
+    // (LB the scoreboard's online, Defend Shot's in free play; 3 and 4 the quick chats' too)
+    expect(s.bindings.defendShot).toEqual({ keyboard: { kind: "key", code: "Digit5" }, gamepad: { kind: "padButton", button: 4 } });
+    expect(s.bindings.passBall).toEqual(DEFAULT_BINDINGS.passBall);
+    expect(s.bindings.launchBall).toEqual(DEFAULT_BINDINGS.launchBall);
+    expect(s.bindings.scoreboard.gamepad).toEqual({ kind: "padButton", button: 4 });
+  });
+
   it("bindings saved before the Modern controller layout keep air roll where they had it (X)", () => {
     const saved = { ...DEFAULT_BINDINGS, airRoll: { keyboard: { kind: "mouse", button: 2 }, gamepad: { kind: "padButton", button: 2 } } };
     const s = parseSettings({ bindings: saved });
