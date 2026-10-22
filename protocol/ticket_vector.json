@@ -1,26 +1,59 @@
 {
-  "seed": "yMfGxcTDwsHAv769vLu6ubi3trW0s7KxsK+urayrqqk=",
-  "keyId": "vector",
-  "publicKey": "J07WsmgF0v6NBgUp7povKHY7aXbZxf0d7jj/NrO3aTk=",
-  "account": "0f0e0d0c0b0a49088706050403020100",
-  "name": "Made Up é",
-  "issued": 1792300000,
-  "expires": 1792300120,
-  "nonce": "0102030405060708090a0b0c0d0e0f10",
-  "ratings": [
-    [
-      1500,
-      500
-    ],
-    [
-      1723,
-      64
-    ],
-    [
-      1312,
-      110
-    ]
-  ],
-  "encoded": "AgZ2ZWN0b3IPDg0MCwpJCIcGBQQDAgEAAAAAAGrUU-AAAAAAatRUWAECAwQFBgcICQoLDA0ODxAKTWFkZSBVcCDDqQXcAfQGuwBABSAAbts1B7-als-yoqxcjtOWAGrp6wF99J62o_rM7vbVJu_CoS_cWyFmMX-GSNNZhyPaRIGSoAzQQiAsUApAAPhmggY",
-  "comment": "A search ticket (version 2) made by api/internal/ticket and checked by server/src/ticket.rs: made-up values"
+  "comment": "A search's ticket and a rejoin's (version 3) made by api/internal/ticket and checked by server/src/ticket.rs: made-up values",
+  "vectors": [
+    {
+      "seed": "yMfGxcTDwsHAv769vLu6ubi3trW0s7KxsK+urayrqqk=",
+      "keyId": "vector",
+      "publicKey": "J07WsmgF0v6NBgUp7povKHY7aXbZxf0d7jj/NrO3aTk=",
+      "account": "0f0e0d0c0b0a49088706050403020100",
+      "name": "Made Up é",
+      "issued": 1792300000,
+      "expires": 1792300120,
+      "nonce": "0102030405060708090a0b0c0d0e0f10",
+      "ratings": [
+        [
+          1500,
+          500
+        ],
+        [
+          1723,
+          64
+        ],
+        [
+          1312,
+          110
+        ]
+      ],
+      "purpose": 0,
+      "match": "0",
+      "encoded": "AwZ2ZWN0b3IPDg0MCwpJCIcGBQQDAgEAAAAAAGrUU-AAAAAAatRUWAECAwQFBgcICQoLDA0ODxAKTWFkZSBVcCDDqQXcAfQGuwBABSAAbgAAAAAAAAAAAFUJM6LxF0IBQV2Ah3KxdnWeWTBX5KKv-SQvUoNY7TOELIZLhP7Oednsxcp-0GHau5lCFQKB9EUEMKazPd5RBwA"
+    },
+    {
+      "seed": "yMfGxcTDwsHAv769vLu6ubi3trW0s7KxsK+urayrqqk=",
+      "keyId": "vector",
+      "publicKey": "J07WsmgF0v6NBgUp7povKHY7aXbZxf0d7jj/NrO3aTk=",
+      "account": "0f0e0d0c0b0a49088706050403020100",
+      "name": "Made Up é",
+      "issued": 1792300000,
+      "expires": 1792300120,
+      "nonce": "9902030405060708090a0b0c0d0e0f10",
+      "ratings": [
+        [
+          1500,
+          500
+        ],
+        [
+          1723,
+          64
+        ],
+        [
+          1312,
+          110
+        ]
+      ],
+      "purpose": 1,
+      "match": "18364758544493064720",
+      "encoded": "AwZ2ZWN0b3IPDg0MCwpJCIcGBQQDAgEAAAAAAGrUU-AAAAAAatRUWJkCAwQFBgcICQoLDA0ODxAKTWFkZSBVcCDDqQXcAfQGuwBABSAAbgH-3LqYdlQyEDRtilmuZIvodVFh9bMITd49a2E2ExhjMggq5vOZIAG348mZKhgBuMDeM6vm373u01dlRWfiJB3dqkBGGanOLQ0"
+    }
+  ]
 }

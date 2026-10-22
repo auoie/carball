@@ -9,11 +9,14 @@ import type { SessionEnd } from "./game/sessionEnd";
 import { Matchmaking, OWN_SEARCH_TEXT, PLAYLISTS } from "./game/matchmaking";
 import { Connection, type MatchSession, RefusedError, devServerAddress } from "./net/connection";
 import { joinPreferences } from "./net/joinPreferences";
-import { REFUSED_CONCLUDED, REFUSED_TICKET, REFUSED_TOKEN } from "./net/protocol";
+import { REFUSED_CONCLUDED, REFUSED_IN_MATCH, REFUSED_TICKET, REFUSED_TOKEN } from "./net/protocol";
 import {
   type MenuNotice,
+  type RankedSeat,
   clearRankedSeat,
   deployedGameServer,
+  holdMatchLock,
+  matchPlayedElsewhere,
   pageUrl,
   queueAddress,
   rankedSeat,
@@ -36,7 +39,6 @@ import { loadFennec } from "./render/fennec";
 import { hasCarModel, loadCarModels } from "./render/carGlb";
 import { TEAM_CAR_COLORS } from "./render/entities";
 import { MAP_NAMES, type ThemeName, createTheme, themeOfMap } from "./render/themes";
-import type { MeasuredSound } from "./audio/levels";
 import { carChoice, storedCar, storedTeam } from "./game/cars";
 import type { BotListing } from "./bots/listing";
 import { BOT_MATCH_TEXT } from "./local/botText";
@@ -209,23 +211,31 @@ async function main(): Promise<void> {
       address = await devServerAddress(host, Number(port));
     }
     // (a claim that fails: back to the menu; the match gone, a search again with a warning line, MM-18; the server not
-    // reached, the connection-lost modal)
-    const opened = Connection.open(address, joinPreferences(settings), match);
+    // reached, the connection-lost modal. A ticket refused (a server restarted, a key rotated, the clocks apart) tried
+    // once more with a fresh one: the claim's token isn't spent by it, RX30C)
+    const open = (): ReturnType<typeof Connection.open> => Connection.open(address, joinPreferences(settings), match);
+    const opened = open().catch((e: unknown) => {
+      if (claim && e instanceof RefusedError && e.reason === REFUSED_TICKET) return open();
+      throw e;
+    });
     if (claim) {
       opened.catch((e: unknown) => {
         // (refused while still in its time: a match cancelled for someone else, so back to the queue's front, RV-367; a
-        // rejoin too late: the match over, its offer gone; the sign-in gone: the menu's sign-in, RX29C)
+        // rejoin of a match over, or a ban from another match: its offer gone; the sign-in gone: the menu's sign-in,
+        // RX29C; anything else (the server not reached, a ticket refused twice): told, a rejoin still offered, RX30C)
         const back = { token: claim.token, searchedAt: claim.searchedAt };
         const refused = e instanceof RefusedError ? e.reason : null;
-        if (refused === REFUSED_CONCLUDED || claim.rejoin) clearRankedSeat();
+        if (refused === REFUSED_CONCLUDED || e instanceof QueueBannedError) clearRankedSeat();
         storeNotice(
           refused === REFUSED_TOKEN && !claim.rejoin
             ? { search: claim.playlist, warning: OWN_SEARCH_TEXT.matchGone, back }
-            : refused === REFUSED_CONCLUDED
-              ? { modal: "concluded" }
-              : refused === REFUSED_TICKET || e instanceof SignedOutError
-                ? { modal: "signedOut" }
-                : { modal: "lost" },
+            : refused === REFUSED_IN_MATCH && claim.rejoin
+              ? { modal: "elsewhere" } // (its seat's session live: another tab plays it, the seat kept, RX30C)
+              : refused === REFUSED_CONCLUDED
+                ? { modal: "concluded" }
+                : e instanceof SignedOutError
+                  ? { modal: "signedOut" }
+                  : { modal: "lost" },
         );
         location.replace(pageUrl("menu", location));
       });
@@ -235,6 +245,8 @@ async function main(): Promise<void> {
     if (claim && !claim.rejoin) {
       storeRankedSeat({ matchId: session.welcome.matchId, teamSize: session.welcome.teamSize, joinedAt: Date.now() });
     }
+    // (the match's lock held while this page plays it: another tab offers no rejoin of it, RX30C; let go with the page)
+    if (claim) holdMatchLock(session.welcome.matchId);
     startedConnection = session.connection;
     const name = themeOfMap(session.welcome.map);
     loading.place(MAP_NAMES[name], claim ? playlistName(claim.playlist) : botMatch ? BOT_MATCH_TEXT.play : null);
@@ -459,8 +471,6 @@ async function main(): Promise<void> {
   (window as unknown as { carballAudio?: () => unknown }).carballAudio = () => audio.stats;
   (window as unknown as { carballAmbienceLevels?: (theme: ThemeName, seconds: number) => Promise<unknown> }).carballAmbienceLevels = async (t, seconds) =>
     (await import("./audio/levels")).ambienceLevels(t, seconds);
-  (window as unknown as { carballSoundTonality?: (sound: MeasuredSound) => Promise<number> }).carballSoundTonality = async (sound) =>
-    (await import("./audio/levels")).soundTonality(sound);
   (window as unknown as { carballMap?: () => ThemeName }).carballMap = () => name;
   let game: {
     frame(dt: number): void;
@@ -629,6 +639,11 @@ async function main(): Promise<void> {
     let accountsOn = false;
     let account: Account | null = null;
     let accountPages: AccountPages | null = null;
+    // (not known until config.json and /api/me answer: Find Match waits for both; a deployment's config that can't be
+    // read, or an account service not answering, is said so, not taken for a development page or a signed-out one: RX29C)
+    let accountsReady: Promise<void> = Promise.resolve();
+    let deploymentDown = false;
+    let accountUnknown = false;
     const setAccount = (a: Account | null): void => {
       account = a;
       mainMenu?.setAccountEntry(accountsOn ? (a?.name ?? ACCOUNT_TEXT.entrySignedOut) : null);
@@ -640,6 +655,14 @@ async function main(): Promise<void> {
       if (account) accountPages.showAccount(account);
       else accountPages.showSignIn(note);
       mainMenu.showAccount();
+    };
+    const readAccount = async (): Promise<void> => {
+      try {
+        setAccount(await accountsApi.me());
+        accountUnknown = false;
+      } catch {
+        accountUnknown = true;
+      }
     };
     mainMenu = new MainMenu(document.body, {
       garage: (choice) => {
@@ -662,13 +685,24 @@ async function main(): Promise<void> {
       // (the banner at once, no panel (MS1's in-game path); the Play page kept, its Free Play focused: free play next while
       // searching, the user's decision; while a search runs, Find Match only shows it: MM-2's SearchInProgress)
       findMatch: (playlist) => {
-        // (signed out on the deployment's page: Sign In first, online play needs an account)
-        if (accountsOn && account === null) {
-          showAccountPage(ACCOUNT_TEXT.findMatchNeedsAccount);
-          return;
-        }
-        matchmaking.start(playlist);
-        mainMenu?.focusFreePlay();
+        void accountsReady.then(async () => {
+          if (deploymentDown) {
+            modal.show(ACCOUNT_TEXT.unavailableTitle, ACCOUNT_TEXT.serversUnreachable);
+            return;
+          }
+          if (accountsOn && accountUnknown) await readAccount();
+          if (accountsOn && accountUnknown) {
+            modal.show(ACCOUNT_TEXT.unavailableTitle, accountErrorText("unavailable"));
+            return;
+          }
+          // (signed out on the deployment's page: Sign In first, online play needs an account)
+          if (accountsOn && account === null) {
+            showAccountPage(ACCOUNT_TEXT.findMatchNeedsAccount);
+            return;
+          }
+          matchmaking.start(playlist);
+          mainMenu?.focusFreePlay();
+        });
       },
       // (Play vs Bots' Start: its own page, the player on the garage's team; a search closed first)
       // (none in a build without bots: its setup's chunk left out, RV-541)
@@ -728,10 +762,24 @@ async function main(): Promise<void> {
     const returned = signInReturn(params);
     if (returned) history.replaceState(history.state, "", withoutSignInReturn(new URL(location.href)));
     if (params.get("queue") === null) {
-      void deployedGameServer().then(async (url) => {
-        if (url === null) return;
+      accountsReady = deployedGameServer().then(async (config) => {
+        deploymentDown = config.kind === "unreachable";
+        if (config.kind !== "deployed") return;
         accountsOn = true;
-        setAccount(await accountsApi.me().catch(() => null));
+        await readAccount();
+      });
+      // (a match's result reaches the accounts service after the page that played it went: the ratings and the ban read
+      // again a little later, RX30C)
+      void accountsReady.then(() => {
+        if (!accountsOn || account === null) return;
+        for (const later of [8_000, 30_000]) {
+          setTimeout(() => {
+            void readAccount();
+          }, later);
+        }
+      });
+      void accountsReady.then(async () => {
+        if (!accountsOn) return;
         if (returned?.kind === "signup") {
           const signup = await accountsApi.signup().catch(() => null);
           if (signup) {
@@ -760,6 +808,12 @@ async function main(): Promise<void> {
     const offerRejoin = (): void => {
       const seat = rankedSeat();
       if (!seat) return;
+      // (not while another tab of this browser plays it: RX30C)
+      void matchPlayedElsewhere(seat.matchId).then((elsewhere) => {
+        if (!elsewhere) offerSeat(seat);
+      });
+    };
+    const offerSeat = (seat: RankedSeat): void => {
       modal.choose(
         REJOIN_TEXT.title,
         REJOIN_TEXT.body,
@@ -783,10 +837,13 @@ async function main(): Promise<void> {
       modal.show(MODAL_TEXT.title, notice.modal === "idle" ? MODAL_TEXT.idleKicked : MODAL_TEXT.connectionLost, offerRejoin);
     } else if (notice?.modal === "concluded") {
       modal.show(REJOIN_TEXT.concludedTitle, REJOIN_TEXT.concluded);
+    } else if (notice?.modal === "elsewhere") {
+      modal.show(REJOIN_TEXT.title, REJOIN_TEXT.elsewhere);
     } else if (notice?.modal === "signedOut") {
-      setTimeout(() => {
-        showAccountPage(ACCOUNT_TEXT.sessionEnded);
-      }, 0);
+      // (once the account's read: still signed out, the sign-in's page with why; signed in again meanwhile, its own)
+      void accountsReady.then(() => {
+        showAccountPage(account ? null : ACCOUNT_TEXT.sessionEnded);
+      });
     } else offerRejoin();
     if (notice?.search !== undefined) {
       // (back from a match cancelled for someone else: its token, the queue's front again, and its search's clock: RV-367)
@@ -811,6 +868,7 @@ async function main(): Promise<void> {
         freeplay.debugDemolition(at);
       },
       particles: () => freeplay.debugParticles(),
+      goalColours: () => freeplay.debugGoalColours(),
       pads: () => freeplay.debugPads(),
       // (custom training with a pack given as JSON, and its state: the browser tests')
       startTraining: (json: unknown) => {

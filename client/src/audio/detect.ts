@@ -20,7 +20,7 @@ export type SoundEvent =
   | { readonly kind: "land"; readonly car: number; readonly at: Vec3; readonly strength: number } // on its wheels
   | { readonly kind: "impact"; readonly car: number; readonly at: Vec3; readonly strength: number } // its body hit the arena
   | { readonly kind: "pad"; readonly big: boolean; readonly at: Vec3 }
-  | { readonly kind: "bump"; readonly car: number; readonly at: Vec3; readonly strength: number } // the car that sounds it
+  | { readonly kind: "bump"; readonly at: Vec3; readonly strength: number }
   | { readonly kind: "demo"; readonly at: Vec3 };
 
 /** Moving further than this between frames is a teleport (a reset, a car placed), not a jump. */

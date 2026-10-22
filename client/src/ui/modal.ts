@@ -19,6 +19,7 @@ export const REJOIN_TEXT = {
   body: "You left a ranked match that is still going. Rejoin it?",
   concludedTitle: "MATCH OVER",
   concluded: "That match has ended.",
+  elsewhere: "You're playing that match in another tab or window.",
 } as const;
 
 export class Modal {

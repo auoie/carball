@@ -17,7 +17,7 @@
 // "rejoin" intent, Welcome's match id, Refused's reasons 5 and 6)
 export const PROTOCOL_VERSION = 27;
 /** A Hello's ticket's bytes at most (the accounts service's encoded ticket) */
-export const MAX_TICKET_BYTES = 256;
+export const MAX_TICKET_BYTES = 320;
 /** A name's bytes at most (UTF-8) */
 export const MAX_NAME_BYTES = 32;
 export const MAX_INPUT_FRAMES = 10;
@@ -239,11 +239,13 @@ export const REFUSED_MODE = 3;
 /** Refused's reason: the search's or claim's ticket missing, not the server's, out of its time, used before, or not the
  *  account that searched (sign in again) */
 export const REFUSED_TICKET = 4;
-/** Refused's reason: a search from an account that holds a seat already, in a match found or running (one search or match
- *  per account; a ranked 2v2 or 3v3 left by accident is rejoined instead) */
+/** Refused's reason: a search from an account that plays in a match found or running (one search or match per account
+ *  at once; a seat left and held empty doesn't count, and the search gives it up) */
 export const REFUSED_IN_MATCH = 5;
-/** Refused's reason: a rejoin whose match is over, or has no seat of the account's to take back */
+/** Refused's reason: a rejoin whose match is over or decided, or has no seat of the account's to take back */
 export const REFUSED_CONCLUDED = 6;
+/** Refused's reason: a search from an account the server reported as a quitter in the last few minutes (its queue ban) */
+export const REFUSED_QUEUE_BANNED = 7;
 /** Kicked's reasons: idle past 30 s of play (MM-37); the match was cancelled before it started (MM-18) */
 export const KICK_IDLE = 0;
 export const KICK_NOT_ALL_JOINED = 1;

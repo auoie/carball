@@ -3,6 +3,8 @@ package main
 import (
 	"testing"
 	"time"
+
+	"carball/api/internal/server"
 )
 
 func TestBanEnd(t *testing.T) {
@@ -50,6 +52,18 @@ func TestTarget(t *testing.T) {
 		if _, err := c.t.parse(); (err != nil) != c.fails {
 			t.Errorf("%+v: %v", c.t, err)
 		}
+	}
+}
+
+// The used tickets kept past the acceptance window (a younger one purged could count twice: AC-22), the results a year
+func TestRankedCutoffs(t *testing.T) {
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	results, tickets := rankedCutoffs(now)
+	if now.Sub(tickets) <= server.AcceptWindow || now.Sub(tickets) > server.AcceptWindow+2*time.Hour {
+		t.Errorf("used tickets purged from %v before now: within the window, or kept far past it", now.Sub(tickets))
+	}
+	if now.Sub(results) != server.ResultsKept {
+		t.Errorf("results purged from %v before now", now.Sub(results))
 	}
 }
 

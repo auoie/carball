@@ -73,6 +73,46 @@ test("Free Play during Joining in keeps the page; the match's map is the server'
   await b.context().close();
 });
 
+test("no rejoin offer while another tab of this browser plays that match (its lock held), offered once it's let go (RX30C)", async ({ browser }) => {
+  const errors: string[] = [];
+  const matchId = "1311768467294899695";
+  const context = await browser.newContext({ viewport: { width: 640, height: 360 } });
+  await hideGamepads(context);
+  await context.addInitScript(
+    (s) => {
+      localStorage.setItem("carball.rankedSeat", s);
+    },
+    JSON.stringify({ matchId, teamSize: 2, joinedAt: Date.now() - 60_000 }),
+  );
+  // (a tab playing the match: its lock held, as the match page holds it)
+  const playing = await context.newPage();
+  playing.on("pageerror", (e) => errors.push(e.message));
+  await playing.goto(`/?queue=${QUEUE}&render=off`);
+  await expect(playing.locator("#loading")).toBeHidden({ timeout: 60_000 });
+  await playing.evaluate(async (name) => {
+    await new Promise<void>((held) => {
+      void navigator.locks.request(name, () => {
+        held();
+        return new Promise<void>(() => undefined);
+      });
+    });
+  }, `carball.match.${matchId}`);
+  // (a second tab: no offer while the first plays it)
+  const second = await context.newPage();
+  second.on("pageerror", (e) => errors.push(e.message));
+  await second.goto(`/?queue=${QUEUE}&render=off`);
+  await expect(second.locator("#loading")).toBeHidden({ timeout: 60_000 });
+  await second.waitForTimeout(1500);
+  await expect(second.locator("#modal")).toBeHidden();
+  // (the first tab gone, its lock with it: the offer)
+  await playing.close();
+  await second.reload();
+  await expect(second.locator("#loading")).toBeHidden({ timeout: 60_000 });
+  await expect(second.locator("#modal .modal-title")).toHaveText("REJOIN MATCH", { timeout: 10_000 });
+  expect(errors).toEqual([]);
+  await context.close();
+});
+
 test("a ranked match left by accident is offered back for 900 s; a rejoin of a match that's over says so and forgets it (LV1)", async ({ browser }) => {
   const errors: string[] = [];
   const seat = (joinedAt: number) => JSON.stringify({ matchId: "1311768467294899695", teamSize: 2, joinedAt });

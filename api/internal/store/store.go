@@ -739,15 +739,44 @@ func queueBanOf(ctx context.Context, q querier, accountID string, lock bool) (Qu
 	return b, err == nil, err
 }
 
-// ChangeQueueBan changes an account's queue ban in one transaction: `change` gets its row (and whether there is one) and
-// returns the new one (nil: none), or write false to leave it. No such account: ErrNoAccount
-func (s *Store) ChangeQueueBan(ctx context.Context, accountID string, change func(cur QueueBan, exists bool) (next *QueueBan, write bool)) error {
+// SpentTicket is a ticket spent on a match: its nonce, its issue time (kept as long as the acceptance window) and the
+// match (one ticket counts in one match alone: a result's, a quitter's and a refill's, AC-5, AP3)
+type SpentTicket struct {
+	Nonce    [16]byte
+	IssuedAt time.Time
+	Match    string
+}
+
+// spendTicket spends a ticket on its match: again on the same match, fine (a quitter's ticket then its result's); on
+// another, ErrTicketUsed
+func spendTicket(ctx context.Context, tx pgx.Tx, t SpentTicket, now time.Time) error {
+	tag, err := tx.Exec(ctx, `INSERT INTO used_tickets (nonce, issued_at, used_at, match_id) VALUES ($1, $2, $3, $4)
+		ON CONFLICT (nonce) DO UPDATE SET used_at = used_tickets.used_at WHERE used_tickets.match_id = excluded.match_id`,
+		t.Nonce[:], t.IssuedAt, now, t.Match)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrTicketUsed
+	}
+	return nil
+}
+
+// ChangeQueueBan changes an account's queue ban in one transaction: `spend` (if any) spent first (ErrTicketUsed), then
+// `change` gets its row (and whether there is one) and returns the new one (nil: none), or write false to leave it. No
+// such account: ErrNoAccount
+func (s *Store) ChangeQueueBan(ctx context.Context, accountID string, spend *SpentTicket, change func(cur QueueBan, exists bool) (next *QueueBan, write bool)) error {
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		var one int
 		if err := tx.QueryRow(ctx, `SELECT 1 FROM accounts WHERE id = $1 FOR UPDATE`, accountID).Scan(&one); errors.Is(err, pgx.ErrNoRows) {
 			return ErrNoAccount
 		} else if err != nil {
 			return err
+		}
+		if spend != nil {
+			if err := spendTicket(ctx, tx, *spend, time.Now()); err != nil {
+				return err
+			}
 		}
 		cur, exists, err := queueBanOf(ctx, tx, accountID, true)
 		if err != nil {
@@ -792,13 +821,13 @@ type ResultPlayer struct {
 	IssuedAt time.Time
 }
 
-// ErrTicketUsed: a result's ticket counted in another result already (AC-5)
-var ErrTicketUsed = errors.New("a ticket counted already")
+// ErrTicketUsed: a ticket spent on another match already (AC-5)
+var ErrTicketUsed = errors.New("a ticket spent on another match")
 
 // RecordResult records a result once, in one transaction: false if its match is recorded already (a retry: nothing
-// changes). Its tickets once each (ErrTicketUsed); the players' accounts that still exist and their ratings in the
-// playlist locked, `rate` given them (an account without one: absent) to return each one's new rating; written, with the
-// players' rows (a deleted account's: a placeholder, not rated)
+// changes). Its tickets spent on its match (ErrTicketUsed: one spent on another); the players' accounts that still
+// exist and their ratings in the playlist locked, `rate` given them (an account without one: absent) to return each
+// one's new rating; written, with the players' rows (a deleted account's: a placeholder, not rated)
 func (s *Store) RecordResult(ctx context.Context, r Result, rate func(current map[string]*Rating) map[string]Rating, now time.Time) (bool, error) {
 	recorded := false
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
@@ -810,13 +839,8 @@ func (s *Store) RecordResult(ctx context.Context, r Result, rate func(current ma
 		accounts := make([]string, len(r.Players))
 		for i, p := range r.Players {
 			accounts[i] = p.Account
-			tag, err := tx.Exec(ctx, `INSERT INTO used_tickets (nonce, issued_at, used_at) VALUES ($1, $2, $3)
-				ON CONFLICT (nonce) DO NOTHING`, p.Nonce[:], p.IssuedAt, now)
-			if err != nil {
+			if err := spendTicket(ctx, tx, SpentTicket{Nonce: p.Nonce, IssuedAt: p.IssuedAt, Match: r.Match}, now); err != nil {
 				return err
-			}
-			if tag.RowsAffected() == 0 {
-				return ErrTicketUsed
 			}
 		}
 		rows, err := tx.Query(ctx, `SELECT id::text FROM accounts WHERE id = ANY($1::uuid[]) ORDER BY id FOR UPDATE`, accounts)

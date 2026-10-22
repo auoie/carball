@@ -41,7 +41,7 @@ const TOKEN = /^[1-9][0-9]{0,19}$/;
 /** What the menu page does as it opens after a match page */
 export interface MenuNotice {
   /** The error modal: kicked for being idle, the connection lost, a rejoin too late (the match over), the sign-in gone */
-  readonly modal?: "idle" | "lost" | "concluded" | "signedOut";
+  readonly modal?: "idle" | "lost" | "concluded" | "signedOut" | "elsewhere";
   /** A search of this playlist to start */
   readonly search?: number;
   /** A warning line to start its log with */
@@ -95,7 +95,9 @@ export function takeNotice(storage = session()): MenuNotice | null {
     const value = JSON.parse(text) as { modal?: unknown; search?: unknown; warning?: unknown; back?: { token?: unknown; searchedAt?: unknown } };
     const back = value.back;
     return {
-      ...(value.modal === "idle" || value.modal === "lost" || value.modal === "concluded" || value.modal === "signedOut" ? { modal: value.modal } : {}),
+      ...(value.modal === "idle" || value.modal === "lost" || value.modal === "concluded" || value.modal === "signedOut" || value.modal === "elsewhere"
+        ? { modal: value.modal }
+        : {}),
       ...(typeof value.search === "number" ? { search: value.search } : {}),
       ...(typeof value.warning === "string" ? { warning: value.warning } : {}),
       ...(typeof back?.token === "string" && TOKEN.test(back.token) && typeof back.searchedAt === "number" && Number.isFinite(back.searchedAt)
@@ -119,32 +121,84 @@ export function pageUrl(page: "menu" | "match" | "bots", at: { readonly pathname
   return `${at.pathname}${text === "" ? "" : `?${text}`}`;
 }
 
-/** The deployment's `config.json` (APP-CONTRACT.md: the web image writes it from its environment): the game server's
- *  WebTransport URL, e.g. https://game.carball.zolt.top:4433/play; null without one (a development page) */
+/** Where online play is: the deployment's game server, a development page's own, or a deployment's that can't be read */
+export type GameServerConfig = { readonly kind: "deployed"; readonly url: string } | { readonly kind: "development" } | { readonly kind: "unreachable" };
+
+/** A deployment's page whose config.json can't be read: no search (no development server's in its place, RX29C) */
+export const SERVERS_UNREACHABLE = "the game's servers can't be reached right now: try again later";
+
+/** A page a development server may serve: a development build, or one on this machine (localhost, a loopback address) */
+export function localPage(dev: boolean = import.meta.env.DEV, host: string = typeof location === "undefined" ? "" : location.hostname): boolean {
+  return dev || host === "localhost" || host === "[::1]" || host === "::1" || /^127\.\d+\.\d+\.\d+$/.test(host);
+}
+
+/** The deployment's `config.json` (APP-CONTRACT.md: the web image writes it from its environment, so a deployment always
+ *  has one): the game server's WebTransport URL, e.g. https://game.carball.zolt.top:4433/play. None on a local page
+ *  (404, or a development server's page in its place): a development page. Anything else, and none on any other page (a
+ *  deployment's config missing answers 404, or its site's page): unreachable, which fails closed (RX29C) */
 export async function deployedGameServer(
   fetchConfig: () => Promise<Response> = async () => fetch("/config.json", { cache: "no-store" }),
-): Promise<string | null> {
+  onLocalPage: boolean = localPage(),
+): Promise<GameServerConfig> {
+  const unreachable = { kind: "unreachable" } as const;
+  let response: Response;
   try {
-    const response = await fetchConfig();
-    if (!response.ok) return null;
-    const config = (await response.json()) as { gameServer?: unknown };
-    return typeof config.gameServer === "string" && /^https:\/\/[^/\s]+\/\S*$/.test(config.gameServer) ? config.gameServer : null;
+    response = await fetchConfig();
   } catch {
-    return null;
+    return unreachable;
   }
+  const none = response.status === 404 || (response.ok && (response.headers.get("content-type") ?? "").startsWith("text/html"));
+  if (none) return onLocalPage ? { kind: "development" } : unreachable;
+  if (!response.ok) return unreachable;
+  try {
+    const config = (await response.json()) as { gameServer?: unknown };
+    if (typeof config.gameServer === "string" && /^https:\/\/[^/\s]+\/\S*$/.test(config.gameServer)) return { kind: "deployed", url: config.gameServer };
+  } catch {
+    // (not JSON: unreachable, below)
+  }
+  return unreachable;
 }
 
 /** Where the queue is: `?queue=host:infoPort` (a development server, its /info giving its port and certificate hash);
- *  else the deployment's game server (`config.json`: its real certificate, no hash); else this page's host, info port 4434.
- *  Its searches' and claims' tickets: the accounts service's for the deployment's, the development server's own else */
+ *  else the deployment's game server (`config.json`: its real certificate, no hash); else, a development page, this page's
+ *  host, info port 4434; a deployment's config that can't be read, an error. Its searches' and claims' tickets: the
+ *  accounts service's for the deployment's, the development server's own else */
 export async function queueAddress(params: URLSearchParams, host: string, deployed = deployedGameServer): Promise<ServerAddress> {
   const queue = params.get("queue");
   if (queue === null) {
-    const url = await deployed();
-    if (url !== null) return { url, certHash: null, ticket: () => accountTicket() };
+    const config = await deployed();
+    if (config.kind === "deployed") return { url: config.url, certHash: null, ticket: (rejoin) => accountTicket(fetch, rejoin) };
+    if (config.kind === "unreachable") throw new Error(SERVERS_UNREACHABLE);
   }
   const [name = host, port = "4434"] = queue === null || queue === "" ? [] : queue.split(":");
   return { ...(await devServerAddress(name, Number(port))), ticket: devTicket(serverHost(name), Number(port)) };
+}
+
+/** The Web Lock a match page holds while it plays its match (`navigator.locks`): another tab of this browser offers no
+ *  rejoin of a match one of its tabs plays (RX30C) */
+export function matchLock(matchId: bigint): string {
+  return `carball.match.${matchId.toString()}`;
+}
+
+/** This browser's Web Locks, where there are (a secure page's) */
+function webLocks(): LockManager | undefined {
+  return typeof navigator !== "undefined" && "locks" in navigator ? navigator.locks : undefined;
+}
+
+/** The match's lock held for as long as this page lives (its match page's) */
+export function holdMatchLock(matchId: bigint, locks: LockManager | undefined = webLocks()): void {
+  void locks?.request(matchLock(matchId), () => new Promise<void>(() => undefined));
+}
+
+/** Whether another tab of this browser plays the match (holds its lock); false where Web Locks aren't */
+export async function matchPlayedElsewhere(matchId: bigint, locks: LockManager | undefined = webLocks()): Promise<boolean> {
+  if (!locks) return false;
+  try {
+    const state = await locks.query();
+    return (state.held ?? []).some((l) => l.name === matchLock(matchId));
+  } catch {
+    return false;
+  }
 }
 
 /** How long after its join a ranked match left by accident is offered back (LV1: 900 s, saved at the join's loading

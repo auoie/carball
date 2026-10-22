@@ -430,7 +430,14 @@ async fn session(
     if let Some(tickets) = &limits.tickets
         && matches!(intent, protocol::INTENT_SEARCH | protocol::INTENT_CLAIM | protocol::INTENT_REJOIN)
     {
-        match tickets.check(&ticket, crate::ticket::unix_now()) {
+        // (each ticket for its own: a search's for a search and its claim, a rejoin's for that match's rejoin alone, AP3)
+        let purpose_fits = |purpose: crate::ticket::Purpose| match purpose {
+            crate::ticket::Purpose::Search => intent != protocol::INTENT_REJOIN,
+            crate::ticket::Purpose::Rejoin(m) => intent == protocol::INTENT_REJOIN && m == token,
+        };
+        match tickets.check(&ticket, crate::ticket::unix_now()).and_then(|checked| {
+            if purpose_fits(checked.purpose) { Ok(checked) } else { Err(crate::ticket::Refusal::NotForThis) }
+        }) {
             Ok(checked) => {
                 request.key = crate::ticket::account_key(&checked.account);
                 request.name = checked.name;
@@ -639,11 +646,12 @@ pub async fn serve_info(
 
 /// A development ticket's JSON for a query's `name` (percent-encoded; "Dev " and the account's first 4 hex digits when
 /// none, so two nameless players aren't one name), `id` (the account's 16 bytes as 32 hex digits, kept by the page so
-/// its searches are one account's; random when none) and `r1`, `r2`, `r3` (the playlists' ratings, the tests' pairing:
-/// a new account's when none)
+/// its searches are one account's; random when none), `r1`, `r2`, `r3` (the playlists' ratings, the tests' pairing:
+/// a new account's when none) and `rejoin` (a rejoin's ticket for that match: 16 hex digits, as the API's)
 fn dev_ticket(tickets: &crate::ticket::Tickets, query: &str) -> Option<String> {
     let mut name = None;
     let mut ratings = [crate::ticket::DEFAULT_RATING; 3];
+    let mut purpose = crate::ticket::Purpose::Search;
     let mut account = [0u8; 16];
     getrandom::fill(&mut account).ok()?;
     for pair in query.split('&') {
@@ -665,11 +673,15 @@ fn dev_ticket(tickets: &crate::ticket::Tickets, query: &str) -> Option<String> {
                 let playlist = usize::from(key.as_bytes()[1] - b'1');
                 ratings[playlist].rating = value.parse().ok()?;
             }
+            "rejoin" => {
+                let match_id = u64::from_str_radix(value, 16).ok().filter(|&m| m != 0 && value.len() == 16)?;
+                purpose = crate::ticket::Purpose::Rejoin(match_id);
+            }
             _ => {}
         }
     }
     let name = name.unwrap_or_else(|| format!("Dev {:02x}{:02x}", account[0], account[1]));
-    let ticket = tickets.dev_ticket(account, &name, ratings, crate::ticket::unix_now())?;
+    let ticket = tickets.dev_ticket(account, &name, ratings, purpose, crate::ticket::unix_now())?;
     Some(format!("{{\"ticket\":\"{ticket}\"}}"))
 }
 
@@ -765,6 +777,12 @@ mod tests {
         assert!(ticket_of("name=%zz").is_none(), "a malformed escape");
         assert!(ticket_of(&format!("id={}", "zz".repeat(16))).is_none(), "a malformed id");
         assert_eq!(ticket_of(&format!("name={}&id={id}", "x".repeat(40))).unwrap().name, "Dev 0123", "too long");
+        assert_eq!(t.purpose, crate::ticket::Purpose::Search);
+        let rejoin = ticket_of(&format!("id={id}&rejoin=00000000000000a1")).unwrap();
+        assert_eq!(rejoin.purpose, crate::ticket::Purpose::Rejoin(0xa1), "a rejoin's, for its match");
+        for bad in ["a1", "0000000000000000", "zz000000000000a1"] {
+            assert!(ticket_of(&format!("id={id}&rejoin={bad}")).is_none(), "a malformed match {bad}");
+        }
     }
 
     #[test]

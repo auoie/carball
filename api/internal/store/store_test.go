@@ -3,7 +3,9 @@ package store_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -424,6 +426,67 @@ func TestRecordResultAndPurge(t *testing.T) {
 }
 
 // A queue ban written, changed and removed in one transaction; an unknown account refused
+// Results recorded at once for one account, new to the playlist: each counted (the account's row locked, so no two
+// read "no rating" and write over each other; AP3)
+func TestConcurrentResultsCountEach(t *testing.T) {
+	s, _, _ := open(t)
+	ctx := context.Background()
+	a, err := s.CreateAccount(ctx, pending(t, s, "google", "sub-cc", t0), "C", []byte("hc"), t0, t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const n = 8
+	// (each rating step waits a moment for the others: locked, they come one at a time and each waits it out; unlocked,
+	// all would read "no rating" together and write over each other)
+	var mu sync.Mutex
+	arrived, all := 0, make(chan struct{})
+	rate := func(current map[string]*store.Rating) map[string]store.Rating {
+		mu.Lock()
+		if arrived++; arrived == n {
+			close(all)
+		}
+		mu.Unlock()
+		select {
+		case <-all:
+		case <-time.After(150 * time.Millisecond):
+		}
+		out := map[string]store.Rating{}
+		for id, r := range current {
+			next := store.Rating{Rating: 1500, Deviation: 300, Volatility: 0.06, LastPlayed: t0}
+			if r != nil {
+				next.Games = r.Games
+			}
+			next.Games++
+			out[id] = next
+		}
+		return out
+	}
+	errs := make(chan error, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r := store.Result{Match: fmt.Sprintf("cc%d", i), Server: "game", Playlist: 1, WinningTeam: 0, Players: []store.ResultPlayer{
+				{Account: a, Team: 0, Seconds: 60, Nonce: [16]byte{0xcc, byte(i)}, IssuedAt: t0},
+				{Account: "00000000-0000-4000-8000-0000000000cc", Team: 1, Seconds: 60, Nonce: [16]byte{0xcd, byte(i)}, IssuedAt: t0},
+			}}
+			_, err := s.RecordResult(ctx, r, rate, t0)
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, _ := s.RatingsOf(ctx, a); got[1].Games != n {
+		t.Errorf("%d games counted of %d recorded at once", got[1].Games, n)
+	}
+}
+
 func TestQueueBans(t *testing.T) {
 	s, _, _ := open(t)
 	ctx := context.Background()
@@ -433,20 +496,43 @@ func TestQueueBans(t *testing.T) {
 	}
 	before := t0.Add(-time.Hour)
 	ban := store.QueueBan{Step: 2, Until: t0.Add(15 * time.Minute), LastLeave: t0, Match: "m", PreviousStep: 1, PreviousUntil: &t0, PreviousLeave: &before}
-	if err := s.ChangeQueueBan(ctx, a, func(_ store.QueueBan, exists bool) (*store.QueueBan, bool) { return &ban, !exists }); err != nil {
+	if err := s.ChangeQueueBan(ctx, a, nil, func(_ store.QueueBan, exists bool) (*store.QueueBan, bool) { return &ban, !exists }); err != nil {
 		t.Fatal(err)
 	}
 	got, found, err := s.QueueBanOf(ctx, a)
 	if err != nil || !found || got.Step != 2 || !got.Until.Equal(ban.Until) || got.Match != "m" || !got.PreviousLeave.Equal(before) {
 		t.Fatalf("QueueBanOf = %+v, %v, %v", got, found, err)
 	}
-	if err := s.ChangeQueueBan(ctx, a, func(store.QueueBan, bool) (*store.QueueBan, bool) { return nil, true }); err != nil {
+	if err := s.ChangeQueueBan(ctx, a, nil, func(store.QueueBan, bool) (*store.QueueBan, bool) { return nil, true }); err != nil {
 		t.Fatal(err)
 	}
 	if _, found, _ := s.QueueBanOf(ctx, a); found {
 		t.Error("not removed")
 	}
-	if err := s.ChangeQueueBan(ctx, "00000000-0000-4000-8000-000000000009", func(store.QueueBan, bool) (*store.QueueBan, bool) { return &ban, true }); !errors.Is(err, store.ErrNoAccount) {
+	if err := s.ChangeQueueBan(ctx, "00000000-0000-4000-8000-000000000009", nil, func(store.QueueBan, bool) (*store.QueueBan, bool) { return &ban, true }); !errors.Is(err, store.ErrNoAccount) {
 		t.Errorf("an unknown account: %v", err)
+	}
+	// (a ticket spent with the change: again on its match, fine; on another, refused and nothing changed)
+	spent := &store.SpentTicket{Nonce: [16]byte{7, 7}, IssuedAt: t0, Match: "m1"}
+	write := func(match string) func(store.QueueBan, bool) (*store.QueueBan, bool) {
+		return func(store.QueueBan, bool) (*store.QueueBan, bool) {
+			b := ban
+			b.Match = match
+			return &b, true
+		}
+	}
+	if err := s.ChangeQueueBan(ctx, a, spent, write("m1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ChangeQueueBan(ctx, a, spent, write("m1")); err != nil {
+		t.Errorf("its own match again: %v", err)
+	}
+	other := *spent
+	other.Match = "m2"
+	if err := s.ChangeQueueBan(ctx, a, &other, write("m2")); !errors.Is(err, store.ErrTicketUsed) {
+		t.Errorf("another match's: %v", err)
+	}
+	if got, _, _ := s.QueueBanOf(ctx, a); got.Match != "m1" {
+		t.Errorf("changed by a refused spend: %+v", got)
 	}
 }

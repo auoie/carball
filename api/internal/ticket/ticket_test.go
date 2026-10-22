@@ -3,6 +3,7 @@ package ticket
 import (
 	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/binary"
 	"strings"
 	"testing"
 	"time"
@@ -65,10 +66,75 @@ func TestIssueAndVerify(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	long, _, err := longKey.Issue(account, strings.Repeat("é", 16), ratings, now)
+	long, _, err := longKey.IssueFor(account, strings.Repeat("é", 16), ratings, PurposeRejoin, 1<<63, now)
 	if err != nil || len(long) > MaxBytes {
-		t.Errorf("a 32-byte name's ticket: %d bytes, %v", len(long), err)
+		t.Errorf("a 32-byte name's rejoin ticket: %d bytes, %v", len(long), err)
 	}
+}
+
+// A ticket's purpose: a search's has no match, a rejoin's its match; nothing else is made or read
+func TestPurpose(t *testing.T) {
+	seed, _, _ := NewKey("k1")
+	s, _ := NewSigner("k1", seed)
+	encoded, _, err := s.IssueFor([16]byte{9}, "Name", [3]Shown{}, PurposeRejoin, 0x0123456789abcdef, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Verify(encoded, keys(t, s), now, 0)
+	if err != nil || got.Purpose != PurposeRejoin || got.Match != 0x0123456789abcdef {
+		t.Fatalf("a rejoin's ticket read back: %+v, %v", got, err)
+	}
+	if got, _ := Verify(mustIssue(t, s), keys(t, s), now, 0); got.Purpose != PurposeSearch || got.Match != 0 {
+		t.Errorf("a search's ticket read back: %+v", got)
+	}
+	for _, c := range []struct {
+		purpose byte
+		match   uint64
+	}{{PurposeSearch, 9}, {PurposeRejoin, 0}, {2, 0}, {2, 9}} {
+		if _, _, err := s.IssueFor([16]byte{9}, "Name", [3]Shown{}, c.purpose, c.match, now); err == nil {
+			t.Errorf("purpose %d, match %d: issued", c.purpose, c.match)
+		}
+		// (signed by hand: refused on reading too)
+		tk := Ticket{KeyID: "k1", Name: "Name", Issued: now, Expires: now.Add(Lifetime)}
+		body, _ := Encode(tk)
+		body[len(body)-9] = c.purpose
+		binary.BigEndian.PutUint64(body[len(body)-8:], c.match)
+		forged := base64.RawURLEncoding.EncodeToString(append(body, ed25519.Sign(s.key, append([]byte(Context), body...))...))
+		if _, err := Verify(forged, keys(t, s), now, 0); err == nil {
+			t.Errorf("purpose %d, match %d: read", c.purpose, c.match)
+		}
+	}
+}
+
+// Verify (the tests' and Rust's mirror): a ticket's life the API's at most, and begun before it ends
+func TestVerifyChecksTheLife(t *testing.T) {
+	seed, _, _ := NewKey("k1")
+	s, _ := NewSigner("k1", seed)
+	sign := func(tk Ticket) string {
+		body, _ := Encode(tk)
+		return base64.RawURLEncoding.EncodeToString(append(body, ed25519.Sign(s.key, append([]byte(Context), body...))...))
+	}
+	base := Ticket{KeyID: "k1", Name: "Name", Issued: now}
+	for name, expires := range map[string]time.Time{"a day long": now.Add(24 * time.Hour), "ending before it begins": now.Add(-time.Second)} {
+		tk := base
+		tk.Expires = expires
+		if _, err := Verify(sign(tk), keys(t, s), now, 30*time.Second); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	base.Expires = now.Add(Lifetime)
+	if _, err := Verify(sign(base), keys(t, s), now, 30*time.Second); err != nil {
+		t.Errorf("its lifetime: %v", err)
+	}
+}
+
+func mustIssue(t *testing.T, s *Signer) string {
+	t.Helper()
+	encoded, _, err := s.Issue([16]byte{9}, "Name", [3]Shown{}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
 }
 
 func TestVerifyRefusals(t *testing.T) {

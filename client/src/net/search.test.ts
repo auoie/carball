@@ -74,6 +74,14 @@ describe("a search", () => {
     const hello = decodeControl(written.subarray(2));
     expect(hello).toMatchObject({ type: "hello", intent: "search", playlist: 2, token: 77n });
     expect(hello.type === "hello" && hello.key).toBe(browserKey());
+    expect(hello.type === "hello" && hello.ticket).toBe("");
+    // (the account's ticket, asked for each search, in its hello)
+    vi.stubGlobal("WebTransport", fakeTransport([{ type: "searchCooldown", seconds: 1, network: false }], record));
+    const second = answers();
+    Search.start({ url: "https://game.example:4433/play", certHash: null, ticket: () => Promise.resolve("Zm9v-_") }, 1, 0n, second.handlers);
+    await second.done;
+    const ticketed = decodeControl(record.sessions[1]?.written[0]?.subarray(2) ?? new Uint8Array());
+    expect(ticketed).toMatchObject({ type: "hello", intent: "search", playlist: 1, ticket: "Zm9v-_", key: 0n });
   });
 
   it("says another tab's search took its place (Kicked, KICK_REPLACED: RV-460), not that the connection was lost", async () => {

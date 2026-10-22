@@ -3,9 +3,18 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "../settings/settings";
 import { type FakeTransportRecord, fakeTransport } from "../testing/fakeTransport";
-import { Connection, ControlQueue, RefusedError, serverHost, storeKey, storedKey } from "./connection";
+import { Connection, ControlQueue, RefusedError, refusalText, serverHost, storeKey, storedKey } from "./connection";
 import { joinPreferences } from "./joinPreferences";
-import { PROTOCOL_VERSION, REFUSED_TOKEN, decodeControl, decodeDatagram } from "./protocol";
+import {
+  PROTOCOL_VERSION,
+  REFUSED_CONCLUDED,
+  REFUSED_IN_MATCH,
+  REFUSED_QUEUE_BANNED,
+  REFUSED_TICKET,
+  REFUSED_TOKEN,
+  decodeControl,
+  decodeDatagram,
+} from "./protocol";
 
 const memory = (): Pick<Storage, "getItem" | "setItem"> => {
   const map = new Map<string, string>();
@@ -81,6 +90,14 @@ describe("a refused hello", () => {
     const opened = Connection.open({ url: "https://game.example:4433/play", certHash: null }, preferences, { intent: "claim", token: 9n });
     await expect(opened).rejects.toBeInstanceOf(RefusedError);
     await expect(opened).rejects.toMatchObject({ reason: REFUSED_TOKEN });
+    // (each reason in words: the ticket's, a sign-in gone; anything unknown, full)
+    expect([REFUSED_TICKET, REFUSED_IN_MATCH, REFUSED_CONCLUDED, REFUSED_QUEUE_BANNED, 99].map(refusalText)).toEqual([
+      "sign in again to play online",
+      "you're in a match already",
+      "that match has ended",
+      "you left a ranked match: you can search again in a few minutes",
+      "the server is full",
+    ]);
   });
 });
 
@@ -114,6 +131,47 @@ describe("a match session's hello", () => {
     const hello = decodeControl(record.sessions[0]?.written[0]?.subarray(2) ?? new Uint8Array());
     expect(hello).toMatchObject({ type: "hello", model: 3, team: 255, intent: "claim", token: 9n });
     expect(hello.type === "hello" && hello.dodgeDeadzone).toBeCloseTo(DEFAULT_SETTINGS.controller.dodgeDeadzone, 6);
+  });
+
+  it("carries the account's ticket for a claim and a rejoin, none for a development server's open match", async () => {
+    const welcome = {
+      type: "welcome",
+      version: PROTOCOL_VERSION,
+      carId: 1,
+      tickRate: 120,
+      frame: 0,
+      matchType: "casual",
+      teamSize: 2,
+      map: 0,
+      key: 5n,
+      matchId: 3n,
+      snapshot: new Uint8Array(),
+    } as const;
+    const record: FakeTransportRecord = { sessions: [] };
+    vi.stubGlobal("WebTransport", fakeTransport([welcome], record));
+    vi.stubGlobal("localStorage", { getItem: () => null, setItem: () => undefined });
+    vi.stubGlobal("sessionStorage", memory()); // (the welcome's key kept for the next join)
+    const asked: (bigint | undefined)[] = [];
+    const address = {
+      url: "https://game.example:4433/play",
+      certHash: null,
+      ticket: (rejoin?: bigint) => {
+        asked.push(rejoin);
+        return Promise.resolve(`AbC${String(asked.length)}`);
+      },
+    };
+    const preferences = joinPreferences(DEFAULT_SETTINGS);
+    await Connection.open(address, preferences, { intent: "claim", token: 9n });
+    await Connection.open(address, preferences, { intent: "rejoin", token: 3n });
+    await Connection.open(address, preferences, { intent: "join" });
+    const hellos = record.sessions.map((s) => decodeControl(s.written[0]?.subarray(2) ?? new Uint8Array()));
+    // (with a ticket, no key of this browser's: the server keys the seat by the account)
+    expect(hellos.map((h) => (h.type === "hello" ? [h.intent, h.ticket, h.key] : null))).toEqual([
+      ["claim", "AbC1", 0n],
+      ["rejoin", "AbC2", 0n],
+      ["join", "", 5n],
+    ]);
+    expect(asked).toEqual([undefined, 3n]); // (the claim's a search's ticket, the rejoin's for its match)
   });
 });
 

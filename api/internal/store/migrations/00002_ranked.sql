@@ -39,11 +39,13 @@ CREATE TABLE ranked_result_players (
 CREATE INDEX ranked_result_players_match ON ranked_result_players (match_id);
 CREATE INDEX ranked_result_players_account ON ranked_result_players (account_id);
 
--- Each ticket counts in one result (AC-5): kept for the acceptance window at least (AC-22)
+-- Each ticket counts in one match (AC-5): its result, its quitter report, a refill's rejoin (AP3); kept for the
+-- acceptance window at least (AC-22)
 CREATE TABLE used_tickets (
     nonce bytea PRIMARY KEY CHECK (octet_length(nonce) = 16),
     issued_at timestamptz NOT NULL,
-    used_at timestamptz NOT NULL
+    used_at timestamptz NOT NULL,
+    match_id text NOT NULL CHECK (octet_length(match_id) BETWEEN 1 AND 64)
 );
 CREATE INDEX used_tickets_issued ON used_tickets (issued_at);
 

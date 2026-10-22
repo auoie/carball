@@ -1,5 +1,19 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { deployedGameServer, pageUrl, queueAddress, storeClaim, storeNotice, takeClaim, takeNotice } from "./pages";
+import {
+  type GameServerConfig,
+  SERVERS_UNREACHABLE,
+  deployedGameServer,
+  holdMatchLock,
+  localPage,
+  matchLock,
+  matchPlayedElsewhere,
+  pageUrl,
+  queueAddress,
+  storeClaim,
+  storeNotice,
+  takeClaim,
+  takeNotice,
+} from "./pages";
 
 const memory = (): Pick<Storage, "getItem" | "setItem" | "removeItem"> => {
   const map = new Map<string, string>();
@@ -59,19 +73,56 @@ describe("the pages' handoffs", () => {
     expect(pageUrl("menu", { pathname: "/", search: "?bots" })).toBe("/");
   });
 
-  it("finds the deployment's game server in config.json, else a development server's", async () => {
+  it("a match played in another tab is one whose lock is held (Web Locks); none where they aren't (RX30C)", async () => {
+    const request = vi.fn(() => Promise.resolve());
+    const locks = {
+      query: () => Promise.resolve({ held: [{ name: matchLock(5n), mode: "exclusive" as const, clientId: "a" }], pending: [] }),
+      request,
+    } as unknown as LockManager;
+    expect(await matchPlayedElsewhere(5n, locks)).toBe(true);
+    expect(await matchPlayedElsewhere(6n, locks)).toBe(false);
+    expect(await matchPlayedElsewhere(5n, undefined)).toBe(false);
+    holdMatchLock(7n, locks);
+    expect(request).toHaveBeenCalledWith("carball.match.7", expect.any(Function));
+  });
+
+  it("finds the deployment's game server in config.json; none, a development server's; one that can't be read fails closed", async () => {
     const json =
-      (body: unknown, ok = true) =>
+      (body: unknown, status = 200) =>
       () =>
-        Promise.resolve(new Response(JSON.stringify(body), { status: ok ? 200 : 404 }));
-    expect(await deployedGameServer(json({ gameServer: "https://game.carball.zolt.top:4433/play" }))).toBe("https://game.carball.zolt.top:4433/play");
-    expect(await deployedGameServer(json({ gameServer: "http://insecure:4433/play" }))).toBeNull();
-    expect(await deployedGameServer(json({}))).toBeNull();
-    expect(await deployedGameServer(json({ gameServer: "https://x/play" }, false))).toBeNull();
-    expect(await deployedGameServer(() => Promise.resolve(new Response("not json")))).toBeNull();
-    expect(await deployedGameServer(() => Promise.reject(new Error("offline")))).toBeNull();
+        Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }));
+    const unreachable = { kind: "unreachable" } as const;
+    expect(await deployedGameServer(json({ gameServer: "https://game.carball.zolt.top:4433/play" }))).toEqual({
+      kind: "deployed",
+      url: "https://game.carball.zolt.top:4433/play",
+    });
+    // (no config on a local page: a development page, 404 or a development server's own page in its place; on any other,
+    // a deployment's config missing (404, or its site's page): closed)
+    const page = (): Promise<Response> => Promise.resolve(new Response("<!doctype html>", { headers: { "content-type": "text/html" } }));
+    expect(await deployedGameServer(json({ gameServer: "https://x/play" }, 404), true)).toEqual({ kind: "development" });
+    expect(await deployedGameServer(page, true)).toEqual({ kind: "development" });
+    expect(await deployedGameServer(json({ gameServer: "https://x/play" }, 404), false)).toEqual(unreachable);
+    expect(await deployedGameServer(page, false)).toEqual(unreachable);
+    expect(await deployedGameServer(json({ gameServer: "https://game.carball.zolt.top:4433/play" }), false)).toEqual({
+      kind: "deployed",
+      url: "https://game.carball.zolt.top:4433/play",
+    });
+    expect([localPage(false, "localhost"), localPage(false, "127.0.0.1"), localPage(false, "[::1]"), localPage(true, "carball.zolt.top")]).toEqual([
+      true,
+      true,
+      true,
+      true,
+    ]);
+    expect([localPage(false, "carball.zolt.top"), localPage(false, "192.168.1.2"), localPage(false, "127.example")]).toEqual([false, false, false]);
+    // (a deployment's that can't be read: closed, RX29C)
+    expect(await deployedGameServer(json({ gameServer: "http://insecure:4433/play" }))).toEqual(unreachable);
+    expect(await deployedGameServer(json({}))).toEqual(unreachable);
+    expect(await deployedGameServer(json({ gameServer: "https://x/play" }, 503))).toEqual(unreachable);
+    expect(await deployedGameServer(() => Promise.resolve(new Response("not json")))).toEqual(unreachable);
+    expect(await deployedGameServer(() => Promise.reject(new Error("offline")))).toEqual(unreachable);
+    await expect(queueAddress(new URLSearchParams(""), "carball.zolt.top", () => Promise.resolve(unreachable))).rejects.toThrow(SERVERS_UNREACHABLE);
     // (the deployment's: by name, its real certificate; a development page's ?queue wins over it)
-    const deployed = (): Promise<string | null> => Promise.resolve("https://game.carball.zolt.top:4433/play");
+    const deployed = (): Promise<GameServerConfig> => Promise.resolve({ kind: "deployed", url: "https://game.carball.zolt.top:4433/play" });
     expect(await queueAddress(new URLSearchParams(""), "carball.zolt.top", deployed)).toEqual({
       url: "https://game.carball.zolt.top:4433/play",
       certHash: null,

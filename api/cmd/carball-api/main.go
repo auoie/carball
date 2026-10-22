@@ -212,6 +212,12 @@ func openWithRetry(ctx context.Context, cfg config.Config, log *slog.Logger) (*s
 	}
 }
 
+// rankedCutoffs: the results received before the first are a year old; the used tickets issued before the second are
+// past the acceptance window, and an hour more (one older is refused anyway, so it can't count twice: AC-22)
+func rankedCutoffs(now time.Time) (resultsBefore, ticketsBefore time.Time) {
+	return now.Add(-server.ResultsKept), now.Add(-server.AcceptWindow - time.Hour)
+}
+
 // housekeeping: the limits' idle keys forgotten every minute; what's run out purged hourly (expired sessions daily at
 // least: notes/accounts.md, question 7)
 func housekeeping(ctx context.Context, db *store.Store, s *server.Server, log *slog.Logger) {
@@ -221,7 +227,8 @@ func housekeeping(ctx context.Context, db *store.Store, s *server.Server, log *s
 	for {
 		now := time.Now()
 		if now.Sub(purged) >= time.Hour {
-			if err := db.PurgeRanked(ctx, now.Add(-server.ResultsKept), now.Add(-server.AcceptWindow-time.Hour)); err != nil && ctx.Err() == nil {
+			results, tickets := rankedCutoffs(now)
+			if err := db.PurgeRanked(ctx, results, tickets); err != nil && ctx.Err() == nil {
 				log.Error("purging results and used tickets", "err", err)
 			}
 			if err := db.Purge(ctx, now, now.Add(-server.RecreateBlock)); err != nil && ctx.Err() == nil {

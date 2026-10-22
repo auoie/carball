@@ -9,15 +9,25 @@ describe("search tickets", () => {
     expect(await accountTicket(post)).toBe("AQIDBAUG-_");
     expect(post).toHaveBeenCalledWith("/api/ticket", { method: "POST", headers: { "X-Carball": "1" }, credentials: "same-origin", cache: "no-store" });
     await expect(accountTicket(answer({ error: "signed out" }, 401))).rejects.toBeInstanceOf(SignedOutError);
-    await expect(accountTicket(answer({ error: "busy" }, 503))).rejects.toThrow(/503/);
+    // (its other refusals in words: the per-account limit, the service down, anything else with its code)
+    await expect(accountTicket(answer({ error: "busy" }, 429))).rejects.toThrow("too many searches: wait a minute and try again");
+    await expect(accountTicket(answer({ error: "unavailable" }, 503))).rejects.toThrow("accounts aren't reachable right now: try again later");
+    await expect(accountTicket(answer({ error: "server" }, 500))).rejects.toThrow(/^accounts aren't reachable/);
+    await expect(accountTicket(answer({ error: "nope" }, 400))).rejects.toThrow("the accounts service refused the search (HTTP 400)");
+    await expect(accountTicket(answer({ error: "nope" }, 403))).rejects.toThrow(/\(HTTP 403\)$/);
     // (a leaver's queue ban: its end, the minutes left said (LV1: at least 1))
     const banned = accountTicket(answer({ error: "queue-banned", until: new Date(Date.now() + 14.5 * 60_000).toISOString() }, 403));
     await expect(banned).rejects.toBeInstanceOf(QueueBannedError);
     await expect(banned).rejects.toThrow(/search again in 15 minutes/);
     expect(queueBanText(1000, 990)).toMatch(/in 1 minute$/);
-    // (a ticket is base64url, 256 characters at most: anything else isn't sent on)
+    // (a rejoin's: for its match, 16 hex digits)
+    const rejoin = answer({ ticket: "UmVqb2lu" });
+    expect(await accountTicket(rejoin, 0xa1n)).toBe("UmVqb2lu");
+    expect(String((rejoin.mock.calls[0] as unknown[])[0])).toBe("/api/ticket?rejoin=00000000000000a1");
+    // (a ticket is base64url, 320 characters at most: anything else isn't sent on)
     await expect(accountTicket(answer({ ticket: "has space" }))).rejects.toThrow(/malformed/);
-    await expect(accountTicket(answer({ ticket: "A".repeat(257) }))).rejects.toThrow(/malformed/);
+    expect(await accountTicket(answer({ ticket: "A".repeat(320) }))).toHaveLength(320);
+    await expect(accountTicket(answer({ ticket: "A".repeat(321) }))).rejects.toThrow(/malformed/);
     await expect(accountTicket(answer({}))).rejects.toThrow(/malformed/);
   });
 
@@ -31,6 +41,8 @@ describe("search tickets", () => {
     expect(id.slice(0, 16)).toBe(id.slice(16)); // (the browser's key, twice: one account per browser)
     await source();
     expect(String((get.mock.calls[1] as unknown[])[0])).toBe(url);
+    await source(0xfedcba9876543210n);
+    expect(String((get.mock.calls[2] as unknown[])[0])).toBe(`${url}&rejoin=fedcba9876543210`);
     await expect(devTicket("127.0.0.1", 4434, answer({}, 404))()).rejects.toThrow(/404/);
   });
 });

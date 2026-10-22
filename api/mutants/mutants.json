@@ -1,5 +1,5 @@
 {
- "comment": "carball-api's mutants: one exact replacement each (old must occur once), then `go test` of the packages; a test must fail. AP1's (the static session's review of step 1), re-anchored where the code moved, and those added after (step 2, AP2's survivors). Run: python3 api/mutants/run.py --out DIR",
+ "comment": "carball-api's mutants: one exact replacement each (old must occur once), then `go test` of the packages; a test must fail. AP1's (the static session's review of step 1), re-anchored where the code moved, and those added after (step 2, AP2's survivors). Run: python3 api/mutants/run.py --out DIR Left out as equivalent (AP3's survivors, 2026-10-22): GL-illinois-strict (fC*fB < 0: a product of exactly 0 never comes), GL-bracket-B and GL-bracket-k-step (another bracket round the same single root: the result the same), ST-no-ratings-lock (the account's row lock already serializes a result's accounts).",
  "mutants": [
   {
    "id": "AC1-flow-not-single-use",
@@ -1060,6 +1060,317 @@
    "new": "if false {",
    "packages": [
     "./internal/google/"
+   ]
+  },
+  {
+   "id": "AP3-rejoin-banned",
+   "file": "internal/server/account.go",
+   "old": "on && (purpose != ticket.PurposeRejoin || ban.Match != matchText(match))",
+   "new": "on",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP3-rejoin-any-match",
+   "file": "internal/server/account.go",
+   "old": "on && (purpose != ticket.PurposeRejoin || ban.Match != matchText(match))",
+   "new": "on && purpose != ticket.PurposeRejoin",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP3-rejoin-len",
+   "file": "internal/server/account.go",
+   "old": "|| len(q.Get(\"rejoin\")) != 16",
+   "new": "",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP3-rejoin-zero",
+   "file": "internal/server/account.go",
+   "old": "if err != nil || m == 0 ||",
+   "new": "if err != nil ||",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP3-purpose-unchecked",
+   "file": "internal/server/ranked.go",
+   "old": "if t.Purpose != purpose || (purpose == ticket.PurposeRejoin && matchText(t.Match) != match) {",
+   "new": "if false {",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP3-rejoin-match-unchecked",
+   "file": "internal/server/ranked.go",
+   "old": "if t.Purpose != purpose || (purpose == ticket.PurposeRejoin && matchText(t.Match) != match) {",
+   "new": "if t.Purpose != purpose {",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP3-quitter-unspent",
+   "file": "internal/server/ranked.go",
+   "old": "spent := &store.SpentTicket{Nonce: t.Nonce, IssuedAt: t.Issued, Match: body.Match}\n\terr = s.Store.ChangeQueueBan(r.Context(), accountID(t.Account), spent, func(cur store.QueueBan, exists bool) (*store.QueueBan, bool) {\n\t\treturn ranked.Leave(",
+   "new": "spent := (*store.SpentTicket)(nil)\n\terr = s.Store.ChangeQueueBan(r.Context(), accountID(t.Account), spent, func(cur store.QueueBan, exists bool) (*store.QueueBan, bool) {\n\t\treturn ranked.Leave(",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP3-ticket-used-204",
+   "file": "internal/server/ranked.go",
+   "old": "\tcase errors.Is(err, store.ErrTicketUsed): // (its ticket spent on another match)\n\t\twriteError(w, http.StatusConflict, \"ticket-used\")",
+   "new": "\tcase errors.Is(err, store.ErrTicketUsed): // (its ticket spent on another match)\n\t\tw.WriteHeader(http.StatusNoContent)",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP3-no-rate-limit",
+   "file": "internal/server/ranked.go",
+   "old": "if !s.gameServerCalls.Allow(\"game-server\", s.Now()) {",
+   "new": "if false {",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP3-spend-any-match",
+   "file": "internal/store/store.go",
+   "old": "DO UPDATE SET used_at = used_tickets.used_at WHERE used_tickets.match_id = excluded.match_id",
+   "new": "DO UPDATE SET used_at = used_tickets.used_at",
+   "packages": [
+    "./internal/store/",
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP3-spend-never-same",
+   "file": "internal/store/store.go",
+   "old": "DO UPDATE SET used_at = used_tickets.used_at WHERE used_tickets.match_id = excluded.match_id",
+   "new": "DO NOTHING",
+   "packages": [
+    "./internal/store/",
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP3-ticket-purpose-decode",
+   "file": "internal/ticket/ticket.go",
+   "old": "\tt.Purpose, t.Match = b[12], binary.BigEndian.Uint64(b[13:21])\n\tif (t.Purpose != PurposeSearch || t.Match != 0) && (t.Purpose != PurposeRejoin || t.Match == 0) {",
+   "new": "\tt.Purpose, t.Match = b[12], binary.BigEndian.Uint64(b[13:21])\n\tif false {",
+   "packages": [
+    "./internal/ticket/"
+   ]
+  },
+  {
+   "id": "AP3-ticket-purpose-encode",
+   "file": "internal/ticket/ticket.go",
+   "old": "\tif (t.Purpose != PurposeSearch || t.Match != 0) && (t.Purpose != PurposeRejoin || t.Match == 0) {\n\t\treturn nil, errors.New",
+   "new": "\tif false {\n\t\treturn nil, errors.New",
+   "packages": [
+    "./internal/ticket/"
+   ]
+  },
+  {
+   "id": "AP3-RK-window-no-future",
+   "file": "internal/server/ranked.go",
+   "old": "if t.Issued.After(now.Add(30*time.Second)) || now.Sub(t.Issued) > AcceptWindow {",
+   "new": "if now.Sub(t.Issued) > AcceptWindow {",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP3-RK-purge-at-ticket-life",
+   "file": "cmd/carball-api/main.go",
+   "old": "now.Add(-server.AcceptWindow - time.Hour)",
+   "new": "now.Add(-3 * time.Minute)",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "AP3-RK-team-count",
+   "file": "internal/server/ranked.go",
+   "old": "if bad || perTeam[0] != body.Playlist || perTeam[1] != body.Playlist {",
+   "new": "if bad {",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP3-RK-players-count",
+   "file": "internal/server/ranked.go",
+   "old": "len(body.Players) != 2*body.Playlist",
+   "new": "len(body.Players) == 0",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP3-RK-seconds-unbounded",
+   "file": "internal/server/ranked.go",
+   "old": "p.Seconds < 0 || p.Seconds > MaxMatchSeconds",
+   "new": "p.Seconds < 0",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP3-RK-winner-any",
+   "file": "internal/server/ranked.go",
+   "old": "(body.WinningTeam != 0 && body.WinningTeam != 1)",
+   "new": "body.WinningTeam < 0",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP3-RK-playlist-any",
+   "file": "internal/server/ranked.go",
+   "old": "body.Playlist < 1 || body.Playlist > 3",
+   "new": "body.Playlist < 1",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP3-RK-match-id-any",
+   "file": "internal/server/ranked.go",
+   "old": "var matchID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)",
+   "new": "var matchID = regexp.MustCompile(`.`)",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP3-LD-forgive-from-ban-end",
+   "file": "internal/ranked/ladder.go",
+   "old": "if since := now.Sub(cur.LastLeave); since > 0 {",
+   "new": "if since := now.Sub(cur.Until); since > 0 {",
+   "packages": [
+    "./internal/ranked/",
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP3-GL-illinois-sign",
+   "file": "internal/ranked/glicko.go",
+   "old": "if fC*fB <= 0 {",
+   "new": "if fC*fB >= 0 {",
+   "packages": [
+    "./internal/ranked/",
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP3-GL-illinois-no-halving",
+   "file": "internal/ranked/glicko.go",
+   "old": "fA /= 2",
+   "new": "fA /= 1",
+   "packages": [
+    "./internal/ranked/",
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP3-GL-epsilon-0.1",
+   "file": "internal/ranked/glicko.go",
+   "old": "epsilon = 0.000001",
+   "new": "epsilon = 0.1",
+   "packages": [
+    "./internal/ranked/",
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP3-GL-one-iteration",
+   "file": "internal/ranked/glicko.go",
+   "old": "math.Abs(B-A) > epsilon && i < 100",
+   "new": "math.Abs(B-A) > epsilon && i < 1",
+   "packages": [
+    "./internal/ranked/",
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP3-GL-phistar-old-sigma",
+   "file": "internal/ranked/glicko.go",
+   "old": "phiStar := math.Sqrt(phi*phi + periods*sigma2*sigma2)",
+   "new": "phiStar := math.Sqrt(phi*phi + periods*sigma*sigma)",
+   "packages": [
+    "./internal/ranked/",
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP3-GL-tau-0.5",
+   "file": "internal/ranked/glicko.go",
+   "old": "Tau               = 0.75",
+   "new": "Tau               = 0.5",
+   "packages": [
+    "./internal/ranked/",
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP3-GL-rd-floor-off",
+   "file": "internal/ranked/glicko.go",
+   "old": "out.Deviation = clamp(scale*phi2, MinDeviation, MaxDeviation)",
+   "new": "out.Deviation = clamp(scale*phi2, 1, MaxDeviation)",
+   "packages": [
+    "./internal/ranked/",
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP3-GL-vol-cap-off",
+   "file": "internal/ranked/glicko.go",
+   "old": "out.Volatility = math.Min(sigma2, MaxVolatility)",
+   "new": "out.Volatility = sigma2",
+   "packages": [
+    "./internal/ranked/",
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP3-GL-rating-bounds-off",
+   "file": "internal/ranked/glicko.go",
+   "old": "out.Rating = clamp(r.Rating+change, MinRating, MaxRating)",
+   "new": "out.Rating = r.Rating + change",
+   "packages": [
+    "./internal/ranked/",
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP3-GL-idle-ignored",
+   "file": "internal/ranked/glicko.go",
+   "old": "Tau, Periods(own.LastPlayed, now))",
+   "new": "Tau, 0)",
+   "packages": [
+    "./internal/ranked/",
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "AP3-ST-no-account-lock",
+   "file": "internal/store/store.go",
+   "old": "ORDER BY id FOR UPDATE",
+   "new": "ORDER BY id",
+   "packages": [
+    "./internal/store/",
+    "./internal/server/"
    ]
   }
  ]

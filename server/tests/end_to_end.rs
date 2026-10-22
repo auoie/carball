@@ -11,7 +11,7 @@ use carball_server::engine::{self, Arena};
 use carball_server::game::Outgoing;
 use carball_server::net::NetLimits;
 use carball_server::protocol::{self, Control, Datagram, InputFrame};
-use carball_server::ticket::{DEFAULT_RATING, Tickets, unix_now};
+use carball_server::ticket::{DEFAULT_RATING, Purpose, Tickets, unix_now};
 use carball_server::{game_loop, net};
 use wtransport::{ClientConfig, Endpoint};
 
@@ -452,8 +452,10 @@ async fn a_queue_with_tickets_takes_only_good_ones_and_binds_each_seat_to_its_ac
     let tickets = Arc::new(Tickets::from_list("").unwrap().with_dev_key().unwrap());
     let limits = NetLimits { tickets: Some(tickets.clone()), ..open_limits() };
     tokio::spawn(net::accept_loop(Arc::new(server), to_game, limits));
-    let ticket =
-        |account: u8, name: &str| tickets.dev_ticket([account; 16], name, [DEFAULT_RATING; 3], unix_now()).unwrap();
+    let ticket_for = |account: u8, name: &str, purpose: Purpose| {
+        tickets.dev_ticket([account; 16], name, [DEFAULT_RATING; 3], purpose, unix_now()).unwrap()
+    };
+    let ticket = |account: u8, name: &str| ticket_for(account, name, Purpose::Search);
     let refused = Control::Refused { reason: protocol::REFUSED_TICKET };
 
     let (none, ..) = first_reply(port, cert_hash, queue_hello(protocol::INTENT_SEARCH, 1, 0)).await;
@@ -464,6 +466,7 @@ async fn a_queue_with_tickets_takes_only_good_ones_and_binds_each_seat_to_its_ac
         [9; 16],
         "Elsewhere",
         [DEFAULT_RATING; 3],
+        Purpose::Search,
         unix_now(),
     );
     let (other_key, ..) =
@@ -502,9 +505,20 @@ async fn a_queue_with_tickets_takes_only_good_ones_and_binds_each_seat_to_its_ac
     let (again, ..) =
         first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_SEARCH, 1, 0, ticket(1, "Ada"))).await;
     assert_eq!(again, Control::Refused { reason: protocol::REFUSED_IN_MATCH }, "a second match for Ada");
+    // (each ticket for its own: a search's isn't a rejoin's, a rejoin's isn't a search's nor another match's, AP3)
+    let (search_for_rejoin, ..) =
+        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_REJOIN, 0, 1, ticket(1, "Ada"))).await;
+    assert_eq!(search_for_rejoin, refused, "a search's ticket for a rejoin");
+    let rejoin_ticket = |m: u64| ticket_for(1, "Ada", Purpose::Rejoin(m));
+    let (rejoin_for_search, ..) =
+        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_SEARCH, 1, 0, rejoin_ticket(1))).await;
+    assert_eq!(rejoin_for_search, refused, "a rejoin's ticket for a search");
+    let (other_match, ..) =
+        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_REJOIN, 0, 1, rejoin_ticket(2))).await;
+    assert_eq!(other_match, refused, "another match's rejoin ticket");
     // (a 1v1 has no rejoin: refused as concluded)
     let (rejoin, ..) =
-        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_REJOIN, 0, 1, ticket(1, "Ada"))).await;
+        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_REJOIN, 0, 1, rejoin_ticket(1))).await;
     assert_eq!(rejoin, Control::Refused { reason: protocol::REFUSED_CONCLUDED });
 }
 

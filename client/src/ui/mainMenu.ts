@@ -112,6 +112,8 @@ export class MainMenu {
   /** A leaver's queue ban under Find Match (LV1: the Play menu shows it), until when (ms) */
   readonly #banLine: HTMLDivElement;
   #banUntil: number | null = null;
+  /** The ban line's countdown, each second while the ban runs (RX30C) */
+  #banTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(host: HTMLElement, actions: MainMenuActions) {
     this.#root = document.createElement("div");
@@ -305,13 +307,23 @@ export class MainMenu {
   setQueueBan(until: number | null): void {
     this.#banUntil = until;
     this.#drawBan();
+    if (this.#banTimer === null && !this.#banLine.hidden) {
+      this.#banTimer = setInterval(() => {
+        this.#drawBan();
+      }, 1000);
+    }
   }
 
+  /** The line as the ban stands now: its minutes left, gone (its countdown stopped) once it's over */
   #drawBan(): void {
     const now = Date.now();
     const on = this.#banUntil !== null && this.#banUntil > now;
     this.#banLine.hidden = !on;
     if (on && this.#banUntil !== null) this.#banLine.textContent = queueBanText(this.#banUntil, now);
+    if (!on && this.#banTimer !== null) {
+      clearInterval(this.#banTimer);
+      this.#banTimer = null;
+    }
   }
 
   /** The account's page shown (its body drawn first), the menu open */

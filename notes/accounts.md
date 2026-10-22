@@ -153,19 +153,25 @@ API. It:
 A seat belongs to the account: a reconnect needs a fresh ticket for that account, not the browser key.
 
 The ticket rides in the search's `Hello`, and the game server refuses any online `Hello` without a valid one. The
-protocol simply changes, since no older client exists; the `u64` browser key leaves the protocol.
+protocol simply changes, since no older client exists. The `u64` key stays in the `Hello` for development servers
+(no tickets), but a page sends 0 beside a ticket and the game server keys a ticketed player by the account (RX29C).
 
 **Results: server to server (AC-5, AC-22, AC-25).**
 - At every match's end (every online match is rated) the game server posts the result to `POST /api/results`.
 - Each result carries one ticket per player: the one from that player's first `Hello` in the match (a reconnect's fresh
   ticket is checked by the game server but not sent on).
-- The API accepts a result only for players whose tickets it issued, each ticket once (`used_tickets`). A leaked server
-  credential then can't rate players who never played.
+- The API accepts a result only for players whose tickets it issued, each ticket spent on one match (`used_tickets`,
+  its match id: the same match's quitter report and result may both carry it, another match's may not; AP3). A leaked
+  server credential then can't rate players who never played, nor ban an account more than once per ticket.
 - **The acceptance window W** (about 24 hours): a result's tickets must have `iat` within W of when the result arrives.
   That spans the match, overtime and the retry queue. `used_tickets` keeps every nonce for at least W, so no pruned
   ticket can count twice; a ticket older than W is refused.
 - Transport (question 6, decided): a **Cloudflare Access service token** on `/api/results` (it also exempts the route
-  from bot challenges), plus the game server's own token compared in constant time, plus the players' tickets above.
+  from bot challenges), plus the game server's own token compared in constant time, plus the players' tickets above;
+  the game server's calls rate-limited together (300 a minute, AC-26: 429, which its outbox retries). The game server
+  sends them to `API_URL` alone: no redirect followed, no proxy, https only, a User-Agent of its own; an answer that
+  isn't the service's (a redirect, 401 or 403 from Access or a challenge, 404 or 405 from a wrong route) is retried and
+  logged loudly, not dropped (AP3).
 - **Leavers, as the game rates them** (LV1; notes/matchmaking.md "Leavers, rejoining and ratings"): a result comes only
   with a winner. Every player whose last team won is a winner, the rest losers, a leaver (an idle kick counts) flagged a
   quitter but rated by their team's result, with no dampening (ours). Forfeiters are ordinary losers. A match that
@@ -173,14 +179,20 @@ protocol simply changes, since no older client exists; the `u64` browser key lea
   rating changes.
 - **The leavers' queue ban** (LV1): the game server reports a quitter to the API **when they leave**, if the penalty
   was armed (the lobby full of humans, no winner yet; the first leaver only; none in a server outage), with that
-  player's ticket: `POST /api/quitters`. The API raises the account's `queue_bans` row by the ladder (ours, the user's
-  choice of LV1's: 5 min → 15 min → 1 h → 6 h → 24 h cap, one step forgiven for every 24 h without a leave); the ticket endpoint
-  refuses a search ticket while it runs, and the page shows until when. A rejoin that fills the lobby again removes it
-  (`DELETE /api/quitters/{match}/{account}`); a rejoin itself needs no search, so the ban never blocks it. Both calls go
-  through the same credential and retry queue as results.
+  player's ticket (spent on that match): `POST /api/quitters`. A leave by a lost connection waits 5 s first: if most of
+  the match's seats lose theirs within 5 s of it, it's the server's network outage and no one is banned (AP3). The report
+  carries the leave's time, and the ban runs from it (held within the acceptance window: a report that gets through late
+  bans for what's left). The API raises the account's `queue_bans` row by the ladder (ours, the user's choice of LV1's: 5 min → 15 min → 1 h → 6 h →
+  24 h cap, one step forgiven for every 24 h without a leave); the ticket endpoint refuses a search ticket while it runs,
+  and the page shows until when. A rejoin needs no search, so the ban never blocks it: its ticket is a **rejoin's**
+  (`POST /api/ticket?rejoin=MATCH`, the ticket's purpose 1 and that match's id), which the ban doesn't stop when it came
+  from that same match, and which the game server takes for that match's rejoin alone (a search's ticket only for a
+  search or a claim). A rejoin that fills the lobby again removes the ban: `POST /api/refills` with the match and the
+  rejoin's own ticket (spent), so the game server's token alone lifts no ban (AP3). Both calls go through the same
+  credential and retry queue as results.
 
 **Ratings: Glicko-2 (built 2026-10-18, `api/internal/ranked`).** Implemented from Glickman's paper ("Example of the
-Glicko-2 system", 2012; its worked example is a test), with lichess's choices where they fit (the user's direction:
+Glicko-2 system", revised 2022-03-22; its worked example is a test), with lichess's choices where they fit (the user's direction:
 lichess's lila, `modules/rating` Glicko settings, and scalachess's `rating/glicko`, read for the approach and the numbers
 only: lila is AGPL-3.0, none of its code is ours; and lichess's rating FAQ):
 - **Taken from lichess:** a new rating 1500, deviation 500 (also the ceiling: lichess's "1500 ± 1000"), volatility 0.09

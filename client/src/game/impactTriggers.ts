@@ -145,7 +145,7 @@ export function triggerSounds(triggers: readonly Trigger[]): SoundEvent[] {
   for (const t of triggers) {
     if (t.kind === "carImpact") {
       const s = strength(t.speed, IMPACT_SCALES.body);
-      out.push(t.partner === "car" ? { kind: "bump", car: t.car, at: t.at, strength: s } : { kind: "impact", car: t.car, at: t.at, strength: s });
+      out.push(t.partner === "car" ? { kind: "bump", at: t.at, strength: s } : { kind: "impact", car: t.car, at: t.at, strength: s });
     } else if (t.kind === "ballImpact") {
       out.push(
         t.partner === "car"

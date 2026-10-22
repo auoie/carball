@@ -79,7 +79,7 @@ type Store interface {
 	DeleteAccount(ctx context.Context, id string, hmacOf func(store.Identity) []byte, now time.Time) error
 	RatingsOf(ctx context.Context, accountID string) (map[int]store.Rating, error)
 	QueueBanOf(ctx context.Context, accountID string) (store.QueueBan, bool, error)
-	ChangeQueueBan(ctx context.Context, accountID string, change func(cur store.QueueBan, exists bool) (*store.QueueBan, bool)) error
+	ChangeQueueBan(ctx context.Context, accountID string, spend *store.SpentTicket, change func(cur store.QueueBan, exists bool) (*store.QueueBan, bool)) error
 	RecordResult(ctx context.Context, r store.Result, rate func(current map[string]*store.Rating) map[string]store.Rating, now time.Time) (bool, error)
 }
 
@@ -118,6 +118,7 @@ type Server struct {
 	signIns, signInsWide *ratelimit.Limiter
 	signups, signupsWide *ratelimit.Limiter
 	renames, tickets     *ratelimit.Limiter
+	gameServerCalls      *ratelimit.Limiter
 
 	// (the kinds of peer whose CF-Connecting-IP was ignored, each warned of once)
 	forwardMu     sync.Mutex
@@ -133,6 +134,8 @@ type Limit struct {
 // Limits sets the rate limits and ceilings (DefaultLimits; the tests' tighter)
 type Limits struct {
 	SignIns, SignInsWide, Signups, SignupsWide, Renames, Tickets Limit
+	// GameServer is the game server's calls' (results, quitters, refills: AC-26), all of them together
+	GameServer Limit
 	// Keys is each limit's most keys at once (past it the longest idle is forgotten)
 	Keys int
 	// OpenFlows and OpenSignups are the ceilings on sign-ins in progress and sign-ups waiting, everyone's (AP-2)
@@ -148,6 +151,7 @@ func DefaultLimits() Limits {
 		SignupsWide: Limit{25, time.Hour},
 		Renames:     Limit{5, 24 * time.Hour},
 		Tickets:     Limit{20, 10 * time.Minute},
+		GameServer:  Limit{300, time.Minute},
 		Keys:        200_000,
 		OpenFlows:   20_000,
 		OpenSignups: 5_000,
@@ -161,11 +165,12 @@ func (s *Server) SetLimits(l Limits) {
 	s.signIns, s.signInsWide = limiter(l.SignIns), limiter(l.SignInsWide)
 	s.signups, s.signupsWide = limiter(l.Signups), limiter(l.SignupsWide)
 	s.renames, s.tickets = limiter(l.Renames), limiter(l.Tickets)
+	s.gameServerCalls = limiter(l.GameServer)
 }
 
 // Sweep forgets the limits' keys idle for their window (the service's housekeeping, every minute)
 func (s *Server) Sweep(now time.Time) {
-	for _, l := range []*ratelimit.Limiter{s.signIns, s.signInsWide, s.signups, s.signupsWide, s.renames, s.tickets} {
+	for _, l := range []*ratelimit.Limiter{s.signIns, s.signInsWide, s.signups, s.signupsWide, s.renames, s.tickets, s.gameServerCalls} {
 		l.Sweep(now)
 	}
 }
@@ -197,7 +202,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/ticket", s.write(s.ticket))
 	mux.HandleFunc("POST /api/results", s.gameServer(s.result))
 	mux.HandleFunc("POST /api/quitters", s.gameServer(s.quitter))
-	mux.HandleFunc("DELETE /api/quitters/{match}/{account}", s.gameServer(s.quitterRefilled))
+	mux.HandleFunc("POST /api/refills", s.gameServer(s.refill))
 	return s.logged(headers(mux))
 }
 

@@ -442,12 +442,7 @@ export class Freeplay {
     }
     this.#recorder.record(tick, {
       // (a Blender model's wheels as live: RV-581)
-      cars: new Map([
-        [
-          this.#playerId,
-          recordCar(car, this.#carView.posesWheels ? this.#world.carWheels(this.#playerId) : null, this.#world.carLastBallTouchTick(this.#playerId)),
-        ],
-      ]),
+      cars: new Map([[this.#playerId, recordCar(car, this.#carView.posesWheels ? this.#world.carWheels(this.#playerId) : null)]]),
       ball: this.#world.ball(),
       ballExploded: this.#world.ballExploded(),
       lastTouchTeam: freeplayTouchTeam(this.#world, this.#team),
@@ -914,6 +909,11 @@ export class Freeplay {
     this.#effects.demolition(at);
   }
 
+  /** For the browser tests: the goal explosions so far in each team's colour (blue, orange) */
+  debugGoalColours(): readonly [number, number] {
+    return [...this.#effects.goals];
+  }
+
   /** For screenshots and tests: live particles */
   debugParticles(): number {
     return this.#effects.particles.count;
@@ -1005,7 +1005,9 @@ export class Freeplay {
       this.#effects.demolition(c.pos);
     });
     // The impacts and landings: the local car's Impact_Medium restarts, the sounds
-    const triggers = this.#impactTriggers.frame(frameSeconds, this.#world.takeImpacts(), new Map([[this.#playerId, own]]), this.#carConfigs, this.#playerId);
+    const impacts = this.#world.takeImpacts();
+    this.#recorder.ballImpacts(impacts); // (the goal replay's ball hits: the recording's frames are the world's ticks after each step, RX30C)
+    const triggers = this.#impactTriggers.frame(frameSeconds, impacts, new Map([[this.#playerId, own]]), this.#carConfigs, this.#playerId);
     for (const t of triggers) if (t.kind === "shake") this.#camera.shakes.play(IMPACT_MEDIUM, null, t.scale, `impact:${String(t.car)}`);
     // The ball arrow (HUD-17): the setting on, the ball cam off, the car alive (free play's round always runs); none in
     // the garage

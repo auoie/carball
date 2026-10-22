@@ -11,10 +11,20 @@ const ID = "0f0e0d0c-0b0a-4908-8706-050403020100";
 interface Fake {
   name: string | null;
   banned?: boolean;
+  /** The ban's length from the page's load (ms; 9.5 minutes when only `banned`) */
+  banFor?: number;
+  /** A sign-up with Turnstile's check (a made-up site key): its next `refuse` sign-ups answered "turnstile" */
+  turnstile?: { refuse: number };
+  /** config.json's status (200 when unset); /api/me's status when not 200, and its delay (ms) */
+  configStatus?: number;
+  meStatus?: number;
+  meDelay?: number;
   writes: { method: string; path: string; guarded: boolean; body: string | null }[];
 }
 
 async function fakeDeployment(page: Page, fake: Fake): Promise<void> {
+  // (the ban's end fixed when the fake starts: the page reads /api/me again later, RX30C)
+  const banUntil = fake.banned || fake.banFor ? new Date(Date.now() + (fake.banFor ?? 9.5 * 60_000)).toISOString() : null;
   const json = (route: Route, status: number, body?: unknown): Promise<void> =>
     route.fulfill({ status, contentType: "application/json", body: body === undefined ? "" : JSON.stringify(body) });
   const account = (): object => ({
@@ -27,20 +37,28 @@ async function fakeDeployment(page: Page, fake: Fake): Promise<void> {
       { playlist: 2, rating: 1500, deviation: 500, provisional: true, games: 0 },
       { playlist: 3, rating: 1500, deviation: 500, provisional: true, games: 0 },
     ],
-    ...(fake.banned ? { queueBanUntil: new Date(Date.now() + 9.5 * 60_000).toISOString() } : {}),
+    ...(banUntil === null ? {} : { queueBanUntil: banUntil }),
   });
   const wrote = (r: Request): void => {
     fake.writes.push({ method: r.method(), path: new URL(r.url()).pathname, guarded: r.headers()["x-carball"] === "1", body: r.postData() });
   };
-  await page.route("**/config.json", (route) => json(route, 200, { gameServer: "https://game.carball.example:4433/play" }));
+  await page.route("**/config.json", (route) => json(route, fake.configStatus ?? 200, { gameServer: "https://game.carball.example:4433/play" }));
   await page.route("**/api/**", async (route) => {
     const r = route.request();
     const path = new URL(r.url()).pathname;
     if (r.method() !== "GET") wrote(r);
     if (path === "/api/auth/steam/start") return route.fulfill({ status: 303, headers: { location: "/?signup=&render=off" } });
-    if (path === "/api/me" && r.method() === "GET") return fake.name === null ? json(route, 401, { error: "signed-out" }) : json(route, 200, account());
+    if (path === "/api/me" && r.method() === "GET") {
+      if (fake.meDelay) await new Promise((resolve) => setTimeout(resolve, fake.meDelay));
+      if (fake.meStatus) return json(route, fake.meStatus, { error: "unavailable" });
+      return fake.name === null ? json(route, 401, { error: "signed-out" }) : json(route, 200, account());
+    }
     if (path === "/api/signup" && r.method() === "GET")
-      return json(route, 200, { provider: "steam", suggestion: "Made Up", turnstileSiteKey: "", nameMaxBytes: 32 });
+      return json(route, 200, { provider: "steam", suggestion: "Made Up", turnstileSiteKey: fake.turnstile ? "0x-made-up" : "", nameMaxBytes: 32 });
+    if (path === "/api/signup" && fake.turnstile && fake.turnstile.refuse > 0) {
+      fake.turnstile.refuse -= 1;
+      return json(route, 400, { error: "turnstile" });
+    }
     if (path === "/api/signup") {
       fake.name = (JSON.parse(r.postData() ?? "{}") as { name: string }).name;
       return json(route, 201, account());
@@ -158,4 +176,145 @@ test("the account's ratings beside the playlists (\"?\" while provisional) and a
   await expect(menu.locator(".account-ratings")).toHaveText(/1v1 1523\s+2v2 1500\?\s+3v3 1500\?/);
   expect(errors).toEqual([]);
   await context.close();
+});
+
+/** Turnstile's script as a fake: a render, its check passed by the test (window.carballTurnstile.pass), resets counted */
+const FAKE_TURNSTILE = `(() => {
+  const widgets = new Map();
+  const seen = { renders: 0, resets: 0, removes: 0, pass: (token) => { for (const o of widgets.values()) o.callback(token); } };
+  window.carballTurnstile = seen;
+  window.turnstile = {
+    render(container, options) { seen.renders += 1; const id = "w" + String(seen.renders); widgets.set(id, options); return id; },
+    reset() { seen.resets += 1; },
+    remove(id) { seen.removes += 1; widgets.delete(id); },
+  };
+})();`;
+
+test("the sign-up's check: its script not loading said so and tried again by Create Account, a refused check reset (RX29C)", async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  await hideGamepads(context);
+  const page = await context.newPage();
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  const fake: Fake = { name: null, turnstile: { refuse: 1 }, writes: [] };
+  await fakeDeployment(page, fake);
+  let scripts = 0;
+  await page.route("https://challenges.cloudflare.com/**", (route) => {
+    scripts += 1;
+    return scripts === 1 ? route.abort() : route.fulfill({ status: 200, contentType: "text/javascript", body: FAKE_TURNSTILE });
+  });
+  await page.goto("/?signup=&render=off");
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
+  const account = page.locator("#main-menu .main-menu-account-view");
+  await expect(account.locator(".main-menu-heading")).toHaveText("Create Account");
+  const status = account.locator(".account-status");
+  const create = account.getByRole("button", { name: "Create Account" });
+  await expect(status).toHaveText("The check didn't load. Create Account tries again.");
+
+  // Create Account: the script loaded this time, the widget drawn, waiting for its check
+  await create.click();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { carballTurnstile?: { renders: number } }).carballTurnstile?.renders)).toBe(1);
+  await expect(status).toHaveText("Waiting for the check…");
+  const pass = (token: string): Promise<void> =>
+    page.evaluate((t) => {
+      (window as unknown as { carballTurnstile: { pass: (t: string) => void } }).carballTurnstile.pass(t);
+    }, token);
+  await pass("made-up-1");
+  await expect(status).toHaveText("");
+
+  // The check refused: its token spent, so the widget reset and Create waits for a new one
+  await create.click();
+  await expect(status).toHaveText("The check didn't pass. Try again.");
+  expect(await page.evaluate(() => (window as unknown as { carballTurnstile: { resets: number } }).carballTurnstile.resets)).toBe(1);
+  await create.click();
+  await expect(status).toHaveText("Waiting for the check…");
+  await pass("made-up-2");
+  await create.click();
+  await expect(account.locator(".account-name")).toHaveText("Made Up");
+  expect(fake.writes.map((w) => w.body)).toEqual([
+    JSON.stringify({ name: "Made Up", turnstile: "made-up-1" }),
+    JSON.stringify({ name: "Made Up", turnstile: "made-up-2" }),
+  ]);
+  // (the account's page drawn: the widget removed with the sign-up)
+  expect(await page.evaluate(() => (window as unknown as { carballTurnstile: { removes: number } }).carballTurnstile.removes)).toBe(1);
+  expect(scripts).toBe(2);
+  expect(errors).toEqual([]);
+  await context.close();
+});
+
+test("Find Match waits for the account; a deployment's config or accounts that can't be read are said so, not taken for signed out (RX29C)", async ({
+  browser,
+}) => {
+  const errors: string[] = [];
+  const open = async (fake: Fake): Promise<Page> => {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+    await hideGamepads(context);
+    const page = await context.newPage();
+    page.on("pageerror", (e) => errors.push(e.message));
+    await fakeDeployment(page, fake);
+    await page.goto("/?render=off");
+    await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
+    return page;
+  };
+  const findMatch = async (page: Page): Promise<void> => {
+    const menu = page.locator("#main-menu");
+    await menu.getByRole("button", { name: /^play$/i }).click();
+    await menu.getByRole("button", { name: /^find match$/i }).click();
+  };
+  // (config.json failing: no search, no development server's in its place, no account entry)
+  const down = await open({ name: "Ziggy", configStatus: 503, writes: [] });
+  await findMatch(down);
+  await expect(down.locator("#modal")).toContainText("The game's servers can't be reached right now. Try again later.");
+  await expect(down.locator("#search-banner")).toBeHidden();
+  await expect(down.locator("#main-menu .main-menu-account")).toBeHidden();
+  await down.context().close();
+  // (/api/me failing: the accounts unreachable, not the sign-in page)
+  const unknown = await open({ name: "Ziggy", meStatus: 503, writes: [] });
+  await findMatch(unknown);
+  await expect(unknown.locator("#modal")).toContainText("Accounts aren't reachable right now. Try again later.");
+  await expect(unknown.locator(".main-menu-account-view")).toBeHidden();
+  await unknown.context().close();
+  // (/api/me slow: a signed-in player's Find Match waits for it, then searches; never the sign-in page)
+  const slow = await open({ name: "Ziggy", meDelay: 4000, writes: [] });
+  await findMatch(slow);
+  await expect(slow.locator("#search-banner")).toBeVisible({ timeout: 15_000 });
+  await expect(slow.locator(".main-menu-account-view")).toBeHidden();
+  await expect(slow.locator("#main-menu .main-menu-account")).toHaveText("Ziggy");
+  await slow.context().close();
+  expect(errors).toEqual([]);
+});
+
+test("the ban line under Find Match counts down, and goes when the ban's over (RX30C)", async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  await hideGamepads(context);
+  const page = await context.newPage();
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  // (just over a minute: "2 minutes", then "1 minute" a second or two on; /api/me read late as a fresh page's)
+  const fake: Fake = { name: "Ziggy", banFor: 61_500, writes: [] };
+  await fakeDeployment(page, fake);
+  await page.goto("/?render=off");
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
+  const menu = page.locator("#main-menu");
+  await menu.getByRole("button", { name: /^play$/i }).click();
+  const line = menu.locator(".main-menu-ban");
+  await expect(line).toHaveText(/search again in (2 minutes|1 minute)$/);
+  await expect(line).toHaveText(/search again in 1 minute$/, { timeout: 10_000 });
+  await context.close();
+  // (a ban of a few seconds: shown, then gone at its end)
+  const short = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  await hideGamepads(short);
+  const next = await short.newPage();
+  next.on("pageerror", (e) => errors.push(e.message));
+  await fakeDeployment(next, { name: "Ziggy", banFor: 8_000, writes: [] });
+  await next.goto("/?render=off");
+  await expect(next.locator("#loading")).toBeHidden({ timeout: 60_000 });
+  await next
+    .locator("#main-menu")
+    .getByRole("button", { name: /^play$/i })
+    .click();
+  const shortLine = next.locator("#main-menu .main-menu-ban");
+  await expect(shortLine).toBeHidden({ timeout: 15_000 });
+  await short.close();
+  expect(errors).toEqual([]);
 });

@@ -96,7 +96,8 @@ func Load(env Env, dev bool) (Config, error) {
 	c.TurnstileSecret = read("TURNSTILE_SECRET_FILE", !dev)
 	c.DeletionKey = []byte(read("DELETION_HMAC_KEY_FILE", true))
 	c.TicketSeed = read("TICKET_SIGNING_KEY_FILE", !dev)
-	c.GameServerToken = read("GAME_SERVER_TOKEN_FILE", false)
+	// (required outside development: without it every result answers 503, and is lost after the game server's retries, AP3)
+	c.GameServerToken = read("GAME_SERVER_TOKEN_FILE", !dev)
 	if c.GameServerToken != "" && len(c.GameServerToken) < 32 {
 		errs = append(errs, errors.New("GAME_SERVER_TOKEN_FILE: 32 characters or more of random text"))
 	}

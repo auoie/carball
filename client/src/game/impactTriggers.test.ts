@@ -156,7 +156,6 @@ describe("the triggers' sounds (SND-5, 6)", () => {
     ]);
     const strength = (s: unknown): number => (s as { strength: number }).strength;
     expect(strength(wall)).toBe(strength(bump));
-    expect(bump).toMatchObject({ kind: "bump", car: 1 }); // (the car that sounds it: a replay's InCameraView, RA1 §3)
     expect(strength(wall)).toBe(1);
     expect(strength(ball)).toBe(1);
     expect(IMPACT_SCALES.body).toBe(2000);

@@ -48,6 +48,11 @@ pub struct SearchFrom {
 /// A rating unknown (a search without a ticket: a development server's): a new account's
 pub const DEFAULT_RATING: u16 = 1500;
 
+/// A search's rating in its playlist: its ticket's for that team size (1v1, 2v2, 3v3), else a new account's
+pub fn search_rating(ratings: Option<&[u16; 3]>, team_size: u8) -> u16 {
+    ratings.and_then(|r| r.get(usize::from(team_size.max(1)) - 1).copied()).unwrap_or(DEFAULT_RATING)
+}
+
 /// The ratings a searcher who has waited `waited` seconds is matched within (±): 100, wider by 50 every 10 s, 600 at most;
 /// past that (100 s), anyone
 pub fn rating_window(waited: f64) -> f64 {
@@ -435,6 +440,13 @@ mod tests {
             }
         }
         None
+    }
+
+    #[test]
+    fn a_search_is_paired_by_its_playlists_rating() {
+        let ratings = [1100, 1200, 1300];
+        assert_eq!([1, 2, 3].map(|size| search_rating(Some(&ratings), size)), [1100, 1200, 1300]);
+        assert_eq!(search_rating(None, 2), DEFAULT_RATING, "no ticket: a new account's");
     }
 
     #[test]

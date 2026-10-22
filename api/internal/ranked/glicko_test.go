@@ -16,7 +16,7 @@ func near(t *testing.T, name string, got, want, tolerance float64) {
 	}
 }
 
-// Glickman's worked example (2012): 1500/200/0.06, τ 0.5; a win over 1400/30, losses to 1550/100 and 1700/300
+// Glickman's worked example (the paper's 2022 revision): 1500/200/0.06, τ 0.5; a win over 1400/30, losses to 1550/100 and 1700/300
 func TestGlickmansExample(t *testing.T) {
 	r := Update(store.Rating{Rating: 1500, Deviation: 200, Volatility: 0.06}, []Opponent{
 		{Rating: 1400, Deviation: 30, Score: 1},
@@ -107,5 +107,114 @@ func TestBounds(t *testing.T) {
 	}
 	if big.Volatility > MaxVolatility {
 		t.Errorf("volatility %v", big.Volatility)
+	}
+}
+
+// paperUpdate is Glickman's steps 2-8 solved here independently (step 5 by bisection over the whole line, not the
+// Illinois algorithm in its bracket; the equation's root checked to be its only one), no bounds or caps: what Update
+// must agree with where its bounds don't bite
+func paperUpdate(t *testing.T, r store.Rating, games []Opponent, tau float64) (rating, deviation, volatility float64) {
+	t.Helper()
+	const s = 173.7178
+	mu, phi, sigma := (r.Rating-1500)/s, r.Deviation/s, r.Volatility
+	var vInv, sum float64
+	for _, o := range games {
+		phiJ := o.Deviation / s
+		g := 1 / math.Sqrt(1+3*phiJ*phiJ/(math.Pi*math.Pi))
+		e := 1 / (1 + math.Exp(-g*(mu-(o.Rating-1500)/s)))
+		vInv += g * g * e * (1 - e)
+		sum += g * (o.Score - e)
+	}
+	v, delta, a := 1/vInv, sum/vInv, math.Log(sigma*sigma)
+	f := func(x float64) float64 {
+		ex := math.Exp(x)
+		return ex*(delta*delta-phi*phi-v-ex)/(2*(phi*phi+v+ex)*(phi*phi+v+ex)) - (x-a)/(tau*tau)
+	}
+	signs := 0
+	for x := -60.0; x < 10; x += 0.01 {
+		if (f(x) > 0) != (f(x+0.01) > 0) {
+			signs++
+		}
+	}
+	if signs != 1 {
+		t.Fatalf("step 5's equation has %d roots here: pick another case", signs)
+	}
+	lo, hi := -60.0, 10.0 // (f falls from + to -)
+	for range 200 {
+		if mid := (lo + hi) / 2; f(mid) > 0 {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	sigma2 := math.Exp(lo / 2)
+	phiStar := math.Sqrt(phi*phi + sigma2*sigma2)
+	phi2 := 1 / math.Sqrt(1/(phiStar*phiStar)+1/v)
+	return 1500 + s*(mu+phi2*phi2*sum), s * phi2, sigma2
+}
+
+// Step 5 (the volatility) as the paper's equation solves it, in both of its starting brackets (an upset: Δ² > φ² + v;
+// as expected: the k loop), and the deviation and rating after it. Glickman's own example moves the volatility by
+// 0.00001, the size of its check: it can't tell a broken step 5 (AP3); each case here moves it ten times its tolerance
+func TestStepFiveSolvesThePapersEquation(t *testing.T) {
+	cases := []struct {
+		name  string
+		tau   float64
+		r     store.Rating
+		games []Opponent
+	}{
+		{"an upset", 0.5, store.Rating{Rating: 1500, Deviation: 50, Volatility: 0.06}, []Opponent{{2300, 40, 1}, {2250, 40, 1}}},
+		{"three upsets", Tau, store.Rating{Rating: 1400, Deviation: 80, Volatility: 0.09}, []Opponent{{1900, 50, 1}, {1950, 50, 1}, {2000, 50, 1}}},
+		{"as expected", 0.5, store.Rating{Rating: 1700, Deviation: 120, Volatility: 0.05}, []Opponent{{1300, 60, 1}, {1650, 80, 0.5}}},
+	}
+	for _, c := range cases {
+		wantR, wantD, wantV := paperUpdate(t, c.r, c.games, c.tau)
+		got := Update(c.r, c.games, c.tau, 1)
+		if math.Abs(wantV-c.r.Volatility) < 1e-6 {
+			t.Errorf("%s: the volatility barely moves (%v): not a test of step 5", c.name, wantV)
+		}
+		near(t, c.name+" volatility", got.Volatility, wantV, 1e-7)
+		near(t, c.name+" deviation", got.Deviation, wantD, 1e-4)
+		near(t, c.name+" rating", got.Rating, wantR, 1e-4)
+	}
+}
+
+// lichess's τ (its Glicko settings: 0.75), and its bounds: the deviation's floor, the volatility's cap, the rating's
+// range, each where it bites
+func TestTauAndTheBoundsBite(t *testing.T) {
+	if Tau != 0.75 {
+		t.Errorf("τ %v, lichess's 0.75", Tau)
+	}
+	many := make([]Opponent, 20)
+	for i := range many {
+		many[i] = Opponent{Rating: 1500, Deviation: 45, Score: 0.5}
+	}
+	if r := Update(store.Rating{Rating: 1500, Deviation: 45, Volatility: 0.01}, many, Tau, 0); r.Deviation != MinDeviation {
+		t.Errorf("twenty games at the floor: deviation %v, want the floor %v", r.Deviation, MinDeviation)
+	}
+	if r := Update(store.Rating{Rating: 1500, Deviation: 200, Volatility: 0.3}, many[:1], Tau, 0); r.Volatility != MaxVolatility {
+		t.Errorf("a volatility over the cap: %v, want %v", r.Volatility, MaxVolatility)
+	}
+	if r := Update(store.Rating{Rating: 420, Deviation: 500, Volatility: 0.09}, []Opponent{{Rating: 420, Deviation: 45, Score: 0}}, Tau, 0); r.Rating != MinRating {
+		t.Errorf("a loss near the floor: %v, want %v", r.Rating, MinRating)
+	}
+	if r := Update(store.Rating{Rating: 3980, Deviation: 500, Volatility: 0.09}, []Opponent{{Rating: 3980, Deviation: 45, Score: 1}}, Tau, 0); r.Rating != MaxRating {
+		t.Errorf("a win near the ceiling: %v, want %v", r.Rating, MaxRating)
+	}
+}
+
+// A team's result rates each player with their deviation grown first by their own time since their last game
+func TestATeamsResultGrowsEachDeviationByItsIdleTime(t *testing.T) {
+	recent := store.Rating{Rating: 1600, Deviation: 70, Volatility: 0.06, Games: 40, LastPlayed: t0.Add(-time.Hour)}
+	idle := recent
+	idle.LastPlayed = t0.AddDate(-1, 0, 0)
+	result := store.Result{Playlist: 1, WinningTeam: 0, Players: []store.ResultPlayer{{Account: "a", Team: 0}, {Account: "b", Team: 1}}}
+	after := func(own store.Rating) store.Rating {
+		other := store.Rating{Rating: 1600, Deviation: 70, Volatility: 0.06, Games: 40, LastPlayed: t0}
+		return Rate(result, map[string]*store.Rating{"a": &own, "b": &other}, t0)["a"]
+	}
+	soon, late := after(recent), after(idle)
+	if late.Rating-recent.Rating <= soon.Rating-recent.Rating || late.Deviation <= soon.Deviation {
+		t.Errorf("a year idle %+v, an hour %+v: the year should widen the deviation and move the rating more", late, soon)
 	}
 }

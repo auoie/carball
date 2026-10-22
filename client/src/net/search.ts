@@ -94,7 +94,7 @@ export class Search {
           steeringSensitivity: 0,
           airControlSensitivity: 0,
           autoSkipReplay: false,
-          key: browserKey(),
+          key: ticket === "" ? browserKey() : 0n, // (an account's search: the account its key, not this browser, RX29C)
           name: "",
           quickChat: "everyone",
           blockNonTactical: false,

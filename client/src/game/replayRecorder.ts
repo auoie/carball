@@ -3,7 +3,8 @@
 // Frames are recorded as the prediction settles them: a server correction that replays older frames records them
 // again, so the recording ends up with the corrected history.
 import type { SoundEvent } from "../audio/detect";
-import type { BodyState, CarState, CarWheels } from "../engine/world";
+import type { BodyState, CarState, CarWheels, Impact } from "../engine/world";
+import type { Vec3 } from "../math/vec";
 
 export interface RecordedCar extends BodyState {
   readonly team: CarState["team"];
@@ -20,9 +21,13 @@ export interface RecordedCar extends BodyState {
   /** Its wheels as the vehicle had them (their suspension and steering), for a car drawn with its Blender model: its
    *  replay's wheels as live (RV-581); none for the others */
   readonly wheels?: CarWheels;
-  /** Its last touch of the ball (the engine's tick; null none): a replay hears a ball hit where it moves on, from the
-   *  frames as corrected (a touch the client learns only from a correction has no live sound: RX29C) */
-  readonly lastTouch?: number | null;
+}
+
+/** A frame's strongest car–ball impact, as the engine reported it: its speed along the contact's normal (uu/s, the
+ *  game's ImpactIntensity) and where */
+export interface BallImpact {
+  readonly speed: number;
+  readonly at: Vec3;
 }
 
 export interface RecordedFrame {
@@ -39,7 +44,7 @@ export const RECORDED_FRAMES = 16 * 120;
 /** The live sounds a replay hears again at their frames (RA1 §1: the game's replay bodies collide again, so its impacts
  *  sound again; §8, §9: the pickups and demolitions): the ball's bounces, the cars' landings, impacts and bumps,
  *  pickups, demolitions. Not the jumps and dodges, nor the ball's hits: the replay finds those in its frames (the cars'
- *  flags, SND-9; their last touches, from the corrected history: RX29C) */
+ *  flags, SND-9; the engine's car–ball impacts recorded with them, corrected ones too: RX29C, RX30C) */
 export function replayedSound(event: SoundEvent): boolean {
   return event.kind !== "jump" && event.kind !== "doubleJump" && event.kind !== "flip" && event.kind !== "ballHit";
 }
@@ -48,11 +53,15 @@ export class ReplayRecorder {
   readonly #frames: ({ readonly frame: number; readonly state: RecordedFrame } | undefined)[];
   /** The sounds heard live at each frame (kept apart from the frames: a correction recording a frame again keeps them) */
   readonly #sounds: ({ readonly frame: number; readonly events: SoundEvent[] } | undefined)[];
+  /** Each frame's strongest car–ball impact (a frame recorded again drops its own: a correction's impacts come again
+   *  with it) */
+  readonly #ballImpacts: ({ readonly frame: number; readonly impact: BallImpact } | undefined)[];
   #newest: number | null = null;
 
   constructor(readonly capacity = RECORDED_FRAMES) {
     this.#frames = new Array<{ frame: number; state: RecordedFrame } | undefined>(capacity);
     this.#sounds = new Array<{ frame: number; events: SoundEvent[] } | undefined>(capacity);
+    this.#ballImpacts = new Array<{ frame: number; impact: BallImpact } | undefined>(capacity);
   }
 
   #slot(frame: number): number {
@@ -63,6 +72,7 @@ export class ReplayRecorder {
     const slot = this.#slot(frame);
     this.#frames[slot] = { frame, state };
     if (this.#sounds[slot]?.frame !== frame) this.#sounds[slot] = undefined; // (a lap on: the old frame's sounds gone)
+    this.#ballImpacts[slot] = undefined;
     this.#newest = this.#newest === null ? frame : Math.max(this.#newest, frame);
   }
 
@@ -75,6 +85,26 @@ export class ReplayRecorder {
     const entry = this.#sounds[slot];
     if (entry?.frame === frame) entry.events.push(...kept);
     else this.#sounds[slot] = { frame, events: kept };
+  }
+
+  /** The engine's impacts since the last call: each at the frame recorded after its step (its tick the step's start:
+   *  `frameOf`, the world's tick after it, tick + 1, unless the frames are numbered apart from the world's ticks, as
+   *  online's), each recorded frame keeping its strongest car–ball one */
+  ballImpacts(impacts: readonly Impact[], frameOf: (tick: number) => number = (tick) => tick + 1): void {
+    for (const impact of impacts) {
+      if (impact.partner !== "ball") continue;
+      const frame = frameOf(impact.tick);
+      const slot = this.#slot(frame);
+      if (this.#frames[slot]?.frame !== frame) continue;
+      const kept = this.#ballImpacts[slot];
+      if (kept?.frame !== frame || impact.speed > kept.impact.speed) this.#ballImpacts[slot] = { frame, impact: { speed: impact.speed, at: impact.pos } };
+    }
+  }
+
+  /** A frame's strongest car–ball impact (none: none, or overwritten) */
+  ballImpactAt(frame: number): BallImpact | null {
+    const entry = this.#ballImpacts[this.#slot(frame)];
+    return entry?.frame === frame ? entry.impact : null;
   }
 
   /** The sounds kept at a frame (none: never, or overwritten) */
@@ -136,8 +166,8 @@ export function freeplayTouchTeam(world: Parameters<typeof lastTouchTeam>[0], te
 }
 
 /** A car as a replay keeps it (`wheels`: its vehicle's, for a car whose drawn wheels follow them) */
-export function recordCar(car: CarState, wheels: CarWheels | null = null, lastTouch: number | null = null): RecordedCar {
+export function recordCar(car: CarState, wheels: CarWheels | null = null): RecordedCar {
   const { pos, vel, angVel, rot, team, boosting, demoed, supersonic, wheelContact, flipResets, hasJumped, hasFlipped, doubleJumped } = car;
-  const recorded = { pos, vel, angVel, rot, team, boosting, demoed, supersonic, wheelContact, flipResets, hasJumped, hasFlipped, doubleJumped, lastTouch };
+  const recorded = { pos, vel, angVel, rot, team, boosting, demoed, supersonic, wheelContact, flipResets, hasJumped, hasFlipped, doubleJumped };
   return wheels ? { ...recorded, wheels } : recorded;
 }

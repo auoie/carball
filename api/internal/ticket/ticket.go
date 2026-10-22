@@ -3,12 +3,15 @@
 // server checks it offline with the public keys it's given (by key id: keys rotate). The format is small and binary, so
 // the game server reads it without a JSON parser:
 //
-//	version (1) = 2 | kid length (1) | kid | account id (16) | issued (8, Unix s) | expires (8) | nonce (16) |
-//	name length (1) | name | the ratings, 1v1, 2v2, 3v3: rating (2) and deviation (2) each, rounded
+//	version (1) = 3 | kid length (1) | kid | account id (16) | issued (8, Unix s) | expires (8) | nonce (16) |
+//	name length (1) | name | the ratings, 1v1, 2v2, 3v3: rating (2) and deviation (2) each, rounded |
+//	purpose (1): 0 a search (and its claim), 1 a rejoin | match (8): a rejoin's match id, 0 for a search
 //
 // then the signature (64) over "carball-search\x00" and those bytes (the audience: a ticket signs nothing else), all as
 // unpadded base64url. Integers big-endian. The ratings are the account's at the ticket's issue (the queue pairs by them:
-// notes/matchmaking.md, ranked pairing), the defaults where it hasn't played.
+// notes/matchmaking.md, ranked pairing), the defaults where it hasn't played. A rejoin's ticket is for that match alone
+// (the game server takes it for a rejoin of it, nothing else): a leaver's queue ban doesn't stop it, so the banned
+// leaver can still come back and refill the lobby (LV1, AP3).
 package ticket
 
 import (
@@ -23,8 +26,16 @@ import (
 	"unicode/utf8"
 )
 
-// Version is the format's (2: the ratings)
-const Version = 2
+// Version is the format's (2: the ratings; 3: the purpose and match)
+const Version = 3
+
+// A ticket's purposes
+const (
+	// PurposeSearch is a search's ticket, and its claim's
+	PurposeSearch = 0
+	// PurposeRejoin is a rejoin's, for its match alone
+	PurposeRejoin = 1
+)
 
 // Context is what a ticket's signature covers before its bytes (the audience)
 const Context = "carball-search\x00"
@@ -32,8 +43,9 @@ const Context = "carball-search\x00"
 // Lifetime is a ticket's (AC-6: about 2 minutes)
 const Lifetime = 2 * time.Minute
 
-// MaxBytes is a ticket's longest encoded length (the game server caps its Hello's ticket at it)
-const MaxBytes = 256
+// MaxBytes is a ticket's longest encoded length (the game server caps its Hello's ticket at it; the longest ticket, a
+// 32-byte key id and name, is 267)
+const MaxBytes = 320
 
 // Ticket is what a ticket says
 type Ticket struct {
@@ -45,6 +57,9 @@ type Ticket struct {
 	Name    string
 	// Ratings in the playlists 1v1, 2v2, 3v3 (index 0, 1, 2)
 	Ratings [3]Shown
+	// Purpose is PurposeSearch or PurposeRejoin; Match a rejoin's match id (0 for a search)
+	Purpose byte
+	Match   uint64
 }
 
 // Shown is a rating as a ticket carries it, rounded
@@ -89,9 +104,14 @@ func NewKey(keyID string) (seed, public string, err error) {
 	return base64.StdEncoding.EncodeToString(raw), s.Public(), nil
 }
 
-// Issue signs a ticket for the account, its name and ratings at now (a fresh nonce, Lifetime long)
+// Issue signs a search's ticket for the account, its name and ratings at now (a fresh nonce, Lifetime long)
 func (s *Signer) Issue(account [16]byte, name string, ratings [3]Shown, now time.Time) (string, Ticket, error) {
-	t := Ticket{KeyID: s.KeyID, Account: account, Issued: now.Truncate(time.Second), Name: name, Ratings: ratings}
+	return s.IssueFor(account, name, ratings, PurposeSearch, 0, now)
+}
+
+// IssueFor signs a ticket for a purpose: a search's (match 0), or a rejoin's of match
+func (s *Signer) IssueFor(account [16]byte, name string, ratings [3]Shown, purpose byte, match uint64, now time.Time) (string, Ticket, error) {
+	t := Ticket{KeyID: s.KeyID, Account: account, Issued: now.Truncate(time.Second), Name: name, Ratings: ratings, Purpose: purpose, Match: match}
 	t.Expires = t.Issued.Add(Lifetime)
 	if _, err := rand.Read(t.Nonce[:]); err != nil {
 		return "", Ticket{}, err
@@ -110,6 +130,9 @@ func Encode(t Ticket) ([]byte, error) {
 	if len(t.KeyID) == 0 || len(t.KeyID) > 32 || len(t.Name) == 0 || len(t.Name) > 32 {
 		return nil, errors.New("a ticket's key id and name are 1-32 bytes")
 	}
+	if (t.Purpose != PurposeSearch || t.Match != 0) && (t.Purpose != PurposeRejoin || t.Match == 0) {
+		return nil, errors.New("a ticket is a search's (no match) or a rejoin's (its match)")
+	}
 	b := []byte{Version, byte(len(t.KeyID))} //nolint:gosec // (G115: checked above, 32 at most)
 	b = append(b, t.KeyID...)
 	b = append(b, t.Account[:]...)
@@ -122,7 +145,8 @@ func Encode(t Ticket) ([]byte, error) {
 		b = binary.BigEndian.AppendUint16(b, r.Rating)
 		b = binary.BigEndian.AppendUint16(b, r.Deviation)
 	}
-	return b, nil
+	b = append(b, t.Purpose)
+	return binary.BigEndian.AppendUint64(b, t.Match), nil
 }
 
 // Verify reads and checks a ticket against public keys by id, at now with `skew` either way (the tests'; the game
@@ -131,6 +155,10 @@ func Verify(encoded string, keys map[string]ed25519.PublicKey, now time.Time, sk
 	t, err := VerifySigned(encoded, keys)
 	if err != nil {
 		return Ticket{}, err
+	}
+	// (a life of Lifetime at most, begun before it ends: as the game server's check, AP2-3)
+	if t.Expires.Before(t.Issued) || t.Expires.Sub(t.Issued) > Lifetime+skew {
+		return Ticket{}, errors.New("ticket: not a ticket's life")
 	}
 	if now.Add(skew).Before(t.Issued) || !now.Add(-skew).Before(t.Expires) {
 		return Ticket{}, errors.New("ticket: not in its time")
@@ -213,7 +241,7 @@ func decode(b []byte) (Ticket, error) {
 	copy(t.Nonce[:], b[16:32])
 	b = b[32:]
 	m := int(b[0])
-	if m == 0 || m > 32 || len(b) != 1+m+3*4 {
+	if m == 0 || m > 32 || len(b) != 1+m+3*4+1+8 {
 		return t, bad
 	}
 	if !utf8.Valid(b[1 : 1+m]) {
@@ -223,6 +251,10 @@ func decode(b []byte) (Ticket, error) {
 	b = b[1+m:]
 	for i := range t.Ratings {
 		t.Ratings[i] = Shown{Rating: binary.BigEndian.Uint16(b[4*i:]), Deviation: binary.BigEndian.Uint16(b[4*i+2:])}
+	}
+	t.Purpose, t.Match = b[12], binary.BigEndian.Uint64(b[13:21])
+	if (t.Purpose != PurposeSearch || t.Match != 0) && (t.Purpose != PurposeRejoin || t.Match == 0) {
+		return t, bad
 	}
 	return t, nil
 }

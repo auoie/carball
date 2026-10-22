@@ -964,7 +964,16 @@ func TestTicket(t *testing.T) {
 	if hex.EncodeToString(got.Account[:]) != id {
 		t.Errorf("the ticket's account %x, the account %s", got.Account, id)
 	}
-	e.write(b, http.MethodPost, "/api/ticket", nil)
+	if got.Purpose != ticket.PurposeSearch || got.Match != 0 {
+		t.Errorf("a search's ticket: purpose %d, match %d", got.Purpose, got.Match)
+	}
+	// (a rejoin's: for its match)
+	resp = e.write(b, http.MethodPost, "/api/ticket?rejoin=0123456789abcdef", nil)
+	rejoin, _ := decode(t, resp)["ticket"].(string)
+	if got, err := ticket.Verify(rejoin, map[string]ed25519.PublicKey{kid: pub}, e.clock.Now(), 0); err != nil ||
+		got.Purpose != ticket.PurposeRejoin || got.Match != 0x0123456789abcdef {
+		t.Errorf("a rejoin's ticket: %+v, %v", got, err)
+	}
 	if resp := e.write(b, http.MethodPost, "/api/ticket", nil); resp.StatusCode != http.StatusTooManyRequests {
 		t.Errorf("a third ticket at once: %d", resp.StatusCode)
 	}
@@ -1046,6 +1055,9 @@ func TestResults(t *testing.T) {
 	if resp := e.gameCall(http.MethodPost, "/api/results", gameToken+"x", result("m1", ta, tb)); resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("a wrong credential: %d", resp.StatusCode)
 	}
+	if resp := e.gameCall(http.MethodPost, "/api/results", gameToken[:len(gameToken)-1], result("m1", ta, tb)); resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("the credential's prefix: %d", resp.StatusCode)
+	}
 	resp := e.gameCall(http.MethodPost, "/api/results", gameToken, result("m1", ta, tb))
 	if resp.StatusCode != http.StatusOK || decode(t, resp)["recorded"] != true {
 		t.Fatalf("the result: %d %v", resp.StatusCode, decode(t, resp))
@@ -1085,6 +1097,40 @@ func TestResults(t *testing.T) {
 	if resp := e.gameCall(http.MethodPost, "/api/results", gameToken, result("m3", tc, forged)); resp.StatusCode != http.StatusForbidden {
 		t.Errorf("a foreign ticket: %d", resp.StatusCode)
 	}
+	// (a result's shape checked before its tickets: each team its playlist's size, the playlist 1-3, the winner a team,
+	// the time played at most MaxMatchSeconds; a ticket issued ahead of now past the skew refused; AP3)
+	body := result("m3", tc, td)
+	body["players"].([]map[string]any)[1]["team"] = 0
+	if resp := e.gameCall(http.MethodPost, "/api/results", gameToken, body); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("both on one team: %d", resp.StatusCode)
+	}
+	for name, change := range map[string]func(map[string]any){
+		"three players": func(b map[string]any) {
+			b["players"] = append(b["players"].([]map[string]any), map[string]any{"ticket": forged, "team": 1})
+		},
+		"playlist 4": func(b map[string]any) {
+			b["playlist"] = 4
+			for i := range 6 {
+				b["players"] = append(b["players"].([]map[string]any), map[string]any{"ticket": forged, "team": i % 2})
+			}
+		},
+		"winning team 2": func(b map[string]any) { b["winningTeam"] = 2 },
+	} {
+		b := result("m3", forged, forged)
+		change(b)
+		if resp := e.gameCall(http.MethodPost, "/api/results", gameToken, b); resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("%s: %d (the shape refused before the tickets are read)", name, resp.StatusCode)
+		}
+	}
+	long := result("m3", tc, td)
+	long["players"].([]map[string]any)[0]["seconds"] = server.MaxMatchSeconds + 1
+	if resp := e.gameCall(http.MethodPost, "/api/results", gameToken, long); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("a time played past MaxMatchSeconds: %d", resp.StatusCode)
+	}
+	ahead, _, _ := e.s.Tickets.Issue([16]byte{8}, "Ahead", [3]ticket.Shown{}, e.clock.Now().Add(time.Hour))
+	if resp := e.gameCall(http.MethodPost, "/api/results", gameToken, result("m3", tc, ahead)); resp.StatusCode != http.StatusForbidden {
+		t.Errorf("a ticket issued an hour ahead: %d", resp.StatusCode)
+	}
 	e.clock.Add(server.AcceptWindow + time.Minute)
 	if resp := e.gameCall(http.MethodPost, "/api/results", gameToken, result("m3", tc, td)); resp.StatusCode != http.StatusForbidden {
 		t.Errorf("tickets past the window: %d", resp.StatusCode)
@@ -1096,55 +1142,135 @@ func TestResults(t *testing.T) {
 	}
 }
 
-// An armed leave reported at the leave: the account's queue ban up the ladder, its tickets refused while it runs (the
-// page told until when); the same match once; a rejoin that refills the lobby undoes it (LV1)
+// An armed leave reported at the leave with the seat's ticket, spent on that match (AP3): the account's queue ban up the
+// ladder, its search tickets refused while it runs (the page told until when) but not a rejoin's of that match; the same
+// match once, the ticket on no other; a rejoin that refills the lobby, shown by the rejoin's own ticket, undoes it (LV1)
 func TestQuitters(t *testing.T) {
 	e := setup(t, nil)
-	b, id, tk := e.player("sub-q")
-	leave := func(match string) int {
-		return e.gameCall(http.MethodPost, "/api/quitters", gameToken, map[string]string{"match": match, "ticket": tk}).StatusCode
+	const q1, q2, q3 = "00000000000000a1", "00000000000000a2", "00000000000000a3"
+	b, _, seat1 := e.player("sub-q")
+	ticketFor := func(query string) (int, string, string) {
+		resp := e.write(b, http.MethodPost, "/api/ticket"+query, nil)
+		v := decode(t, resp)
+		tk, _ := v["ticket"].(string)
+		until, _ := v["until"].(string)
+		return resp.StatusCode, tk, until
 	}
-	banned := func() (int, string) {
-		resp := e.write(b, http.MethodPost, "/api/ticket", nil)
-		until, _ := decode(t, resp)["until"].(string)
-		return resp.StatusCode, until
+	call := func(path, match, tk string) int {
+		return e.gameCall(http.MethodPost, path, gameToken, map[string]string{"match": match, "ticket": tk}).StatusCode
 	}
-	if got := leave("q1"); got != http.StatusNoContent {
+	if got := call("/api/quitters", q1, seat1); got != http.StatusNoContent {
 		t.Fatalf("a quitter: %d", got)
 	}
 	want := e.clock.Now().Add(5 * time.Minute).UTC().Format(time.RFC3339)
-	if code, until := banned(); code != http.StatusForbidden || until != want {
-		t.Errorf("a ticket while banned: %d until %q, want 403 until %q", code, until, want)
+	if code, _, until := ticketFor(""); code != http.StatusForbidden || until != want {
+		t.Errorf("a search ticket while banned: %d until %q, want 403 until %q", code, until, want)
 	}
 	if me := decode(t, e.get(b, "/api/me")); me["queueBanUntil"] != want {
 		t.Errorf("the page's ban: %v", me["queueBanUntil"])
 	}
 	e.clock.Add(time.Minute)
-	leave("q1") // (the same match again: one ban per match)
-	if _, until := banned(); until != want {
+	call("/api/quitters", q1, seat1) // (the same match again: one ban per match)
+	if _, _, until := ticketFor(""); until != want {
 		t.Errorf("a retried report moved the ban to %q", until)
 	}
-	if got := e.gameCall(http.MethodDelete, "/api/quitters/q1/"+id, gameToken, nil).StatusCode; got != http.StatusNoContent {
+	// (the seat's ticket on another match: refused, no second ban from one ticket)
+	if got := call("/api/quitters", q2, seat1); got != http.StatusConflict {
+		t.Errorf("one ticket, another match: %d", got)
+	}
+	if _, _, until := ticketFor(""); until != want {
+		t.Errorf("a refused report moved the ban to %q", until)
+	}
+	// (banned, a rejoin's ticket of the ban's match, not of another; a malformed match refused)
+	if code, _, _ := ticketFor("?rejoin=" + q2); code != http.StatusForbidden {
+		t.Errorf("a rejoin ticket of another match while banned: %d", code)
+	}
+	for _, bad := range []string{"xyz", "0000000000000000", "a1"} {
+		if code, _, _ := ticketFor("?rejoin=" + bad); code != http.StatusBadRequest {
+			t.Errorf("a rejoin ticket of %q: %d", bad, code)
+		}
+	}
+	code, rejoin, _ := ticketFor("?rejoin=" + q1)
+	if code != http.StatusOK {
+		t.Fatalf("the banned leaver's rejoin ticket: %d", code)
+	}
+	// (each ticket for its own call: a rejoin's isn't a seat's, a search's isn't a refill's, a rejoin's of q1 not q2's)
+	if got := call("/api/quitters", q1, rejoin); got != http.StatusForbidden {
+		t.Errorf("a rejoin's ticket as a quitter's: %d", got)
+	}
+	if got := call("/api/refills", q1, seat1); got != http.StatusForbidden {
+		t.Errorf("a seat's ticket as a refill's: %d", got)
+	}
+	if got := call("/api/refills", q2, rejoin); got != http.StatusForbidden {
+		t.Errorf("another match's rejoin ticket: %d", got)
+	}
+	if got := call("/api/refills", q1, rejoin); got != http.StatusNoContent {
 		t.Fatalf("a refill: %d", got)
 	}
-	if code, _ := banned(); code != http.StatusOK {
+	if code, _, _ := ticketFor(""); code != http.StatusOK {
 		t.Errorf("after the rejoin refilled the lobby: %d", code)
 	}
 	// (two leaves: 5 minutes, then 15; over at its end)
-	leave("q2")
+	_, seat2, _ := ticketFor("")
+	call("/api/quitters", q2, seat2)
 	e.clock.Add(6 * time.Minute)
-	if code, _ := banned(); code != http.StatusOK {
-		t.Errorf("after the 5 minutes: %d", code)
+	_, seat3, _ := ticketFor("")
+	if seat3 == "" {
+		t.Error("after the 5 minutes: no ticket")
 	}
-	leave("q3")
-	if _, until := banned(); until != e.clock.Now().Add(15*time.Minute).UTC().Format(time.RFC3339) {
+	call("/api/quitters", q3, seat3)
+	if _, _, until := ticketFor(""); until != e.clock.Now().Add(15*time.Minute).UTC().Format(time.RFC3339) {
 		t.Errorf("the second leave's ban until %q, want 15 minutes", until)
 	}
-	if got := e.gameCall(http.MethodPost, "/api/quitters", "", map[string]string{"match": "q4", "ticket": tk}).StatusCode; got != http.StatusUnauthorized {
+	if got := e.gameCall(http.MethodPost, "/api/quitters", "", map[string]string{"match": q3, "ticket": seat3}).StatusCode; got != http.StatusUnauthorized {
 		t.Errorf("without the game server's credential: %d", got)
 	}
-	if got := e.gameCall(http.MethodDelete, "/api/quitters/q3/not-an-id", gameToken, nil).StatusCode; got != http.StatusBadRequest {
-		t.Errorf("a malformed account: %d", got)
+	if got := call("/api/refills", "not a match!", rejoin); got != http.StatusBadRequest {
+		t.Errorf("a malformed match: %d", got)
+	}
+	// (the ban runs from the leave's time the report carries, held within the window: a report that got through late
+	// bans for what's left, one dated ahead from now; AP3)
+	late, _, lateSeat := e.player("sub-q-late")
+	report := func(match, tk string, at time.Time) int {
+		return e.gameCall(http.MethodPost, "/api/quitters", gameToken, map[string]any{"match": match, "ticket": tk, "at": at.Unix()}).StatusCode
+	}
+	if got := report("00000000000000c1", lateSeat, e.clock.Now().Add(-10*time.Minute)); got != http.StatusNoContent {
+		t.Fatalf("a late report: %d", got)
+	}
+	resp := e.write(late, http.MethodPost, "/api/ticket", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("a 5-minute ban from a leave 10 minutes ago: %d (over)", resp.StatusCode)
+	}
+	nextSeat, _ := decode(t, resp)["ticket"].(string)
+	report("00000000000000c2", nextSeat, e.clock.Now().Add(time.Hour))
+	resp = e.write(late, http.MethodPost, "/api/ticket", nil)
+	if until, _ := decode(t, resp)["until"].(string); until != e.clock.Now().Add(15*time.Minute).UTC().Format(time.RFC3339) {
+		t.Errorf("a leave dated ahead: banned until %q, want 15 minutes from now", until)
+	}
+}
+
+// The game server's calls, all of them together, at most Limits.GameServer (AC-26): past it 429, which its outbox tries
+// again; a window later, taken again
+func TestGameServerCallsLimited(t *testing.T) {
+	limits := server.DefaultLimits()
+	limits.GameServer = server.Limit{Burst: 2, Window: time.Minute}
+	e := setup(t, &limits)
+	empty := map[string]string{"match": "00000000000000b1", "ticket": "x"}
+	for i, want := range []int{http.StatusForbidden, http.StatusForbidden, http.StatusTooManyRequests} {
+		if got := e.gameCall(http.MethodPost, "/api/quitters", gameToken, empty).StatusCode; got != want {
+			t.Errorf("call %d: %d, want %d", i, got, want)
+		}
+	}
+	if got := e.gameCall(http.MethodPost, "/api/refills", gameToken, empty).StatusCode; got != http.StatusTooManyRequests {
+		t.Errorf("a refill past the limit: %d", got)
+	}
+	// (a wrong credential isn't counted: refused before)
+	if got := e.gameCall(http.MethodPost, "/api/results", "wrong", empty).StatusCode; got != http.StatusUnauthorized {
+		t.Errorf("a wrong credential: %d", got)
+	}
+	e.clock.Add(time.Minute)
+	if got := e.gameCall(http.MethodPost, "/api/quitters", gameToken, empty).StatusCode; got != http.StatusForbidden {
+		t.Errorf("a minute later: %d", got)
 	}
 }
 

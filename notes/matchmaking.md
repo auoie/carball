@@ -40,7 +40,8 @@ anything rating-side beyond what's submitted is PsyNet's, unknowable, so Carball
   - **What counts:** leaving from the menu, a disconnect or timeout, an idle kick (also a map-load failure, an
     anti-cheat kick). At most one ban per player per match.
   - **Leniency:** no ban when every connected player has received nothing for 20 s or more (a server outage); one
-    player's bad connection gets none.
+    player's bad connection gets none. Ours as well (AP3): a leave by a lost connection is held 5 s, and no ban when most
+    of the match's seats lose their connection within 5 s of it (the server's network: every session times out together).
   - **Issued at the leave** (the game's `RPC_AddQuitter`), not at the match's end; **cleared by a rejoin that fills the
     lobby again** (`RPC_RemoveQuitter`, the latch re-armed); if someone else is still missing, or the match ends first,
     it stands. So the game server reports a quitter to the API when they leave, and the removal when the lobby refills
@@ -58,15 +59,28 @@ anything rating-side beyond what's submitted is PsyNet's, unknowable, so Carball
   - **The route is a prompt, not the queue:** "It appears you accidentally left a ranked match. Would you like to
     rejoin?" (Yes/No; by key until cleared), shown once, when the menu opens or after OK on a connection-error modal,
     if the match was joined **less than 900 s ago** (saved at the join's loading screen). The server takes the player back
-    only while the match runs and their slot is listed (else "Match has concluded"). A rejoin skips the ban check.
+    only while the match runs and their slot is listed (else "Match has concluded"). A rejoin skips the ban check (ours:
+    a rejoin's ticket for that match, which the ban doesn't stop). A rejoin before the server has seen the old session go
+    (it times out after 10 s) takes the seat over once that session has been silent 3 s, the old session told it was
+    replaced (AP3); a live one (another tab of the account playing it) refuses the rejoin and keeps its seat (Refused 5),
+    and a tab playing the match holds a Web Lock on it, so the browser's other tabs don't offer the rejoin (RX30C).
+  - **An idle kick is a leave:** the game server counts it as it happens (the quitter flag, the latch, the ban if first
+    and armed), as it does a player it drops for not reading its messages; the forfeit the kick itself causes is no
+    excuse (RX30C).
   - **Not after a deliberate leave:** Exit to Main Menu clears the saved match, so no prompt; a disconnect or a kick
-    (an idle kick too) keeps it.
+    (an idle kick too) keeps it. A leaver may search again at once (the game's start gate refuses only a search already
+    running, a ban or no connection: MM-2): the held, empty seat doesn't stop it, and the new search gives it up (no
+    rejoin of it after). Only a seat with a session (two tabs or devices at once) refuses a search (Refused 5).
+    A reported quitter's searches are also refused by the game server for 5 minutes (Refused 7), so a ticket fetched
+    before the ban doesn't dodge it (AP3).
   - **Back in:** the same team, their stats restored, spawned at once, no longer a quitter.
 - The no-show search ban (2 minutes) stays as it is, now by account.
-- Ratings are shown as numbers, lichess-style, with "?" while provisional (deviation above 110, lichess's).
+- Ratings are shown as numbers, lichess-style, with "?" while provisional (a deviation of 110 or more: scalachess's
+  `provisionalDeviation`, "at least"; lichess's FAQ says "greater than"; the API's rule).
 - **Built 2026-10-18 (ranked step 3):** the results and the leave penalty's latch in the game server's match host (each
-  seat's first ticket; the first armed leaver reported at the leave; a refill undoes it; no contest sends nothing; no ban
-  after a 20 s server silence), the ladder and Glicko-2 in the API (notes/accounts.md §3), the rejoin (protocol 27:
+  seat's first ticket; the first armed leaver reported at the leave, after 5 s for a lost connection; a refill, shown by
+  the rejoin's ticket, undoes it; no contest sends nothing; no ban after a 20 s server silence or when most seats drop at
+  once), the ladder and Glicko-2 in the API (notes/accounts.md §3), the rejoin (protocol 27:
   Hello's intent 3, Welcome's match id; the page's offer within 900 s, cleared by Exit to Main Menu), one search or match
   per account (Refused 5), and **ranked pairing (ours)**: each search carries its account's rating (the ticket's), the
   oldest searcher matched with those within ±100, wider by 50 every 10 s either has waited, ±600 at most, then anyone;

@@ -69,7 +69,8 @@ they change there is lost when the newer page returns (RV-425; `client/src/setti
 - **Port:** 3000/tcp, plain HTTP. `/assets/*` (hashed names) cached for a year, the rest `no-cache` (`/bots/*`, Play vs
   Bots' packages under their own names, among them), `/config.json` `no-store`. A missing file under `/assets/`, `/bots/`
   or `/config.json` is a 404 (one under `/bots/` `no-cache` too, RV-553); any other unknown path serves `index.html`
-  (RV-537). Every response carries
+  (RV-537). A page off localhost whose `/config.json` can't be read (missing, an error, not a config) offers no online
+  play ("can't be reached"): it never falls back to a development server (RX29C). Every response carries
   `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY` and a
   Content-Security-Policy (this origin only, but the game server's origin from `GAME_SERVER_URL` and Cloudflare
   Turnstile's `https://challenges.cloudflare.com` in `script-src` and `frame-src`, the sign-up's check; `frame-ancestors
@@ -88,7 +89,9 @@ they change there is lost when the newer page returns (RV-425; `client/src/setti
   `commit`, or `worktree` for an image built with `--worktree` (every image).
 - **Volumes:** none.
 - **Health:** `GET /healthz` → `200 ok` (the image's `HEALTHCHECK` uses it).
-- **Resources:** ~10 MB RAM, negligible CPU; a first visit loads ~2.1 MB of files (~0.75 MB gzipped). The site is ~26 MB:
+- **Resources:** ~10 MB RAM, negligible CPU; a first visit loads ~3.4 MB of files (~1.2 MB gzipped: the page, its script
+  and three's, the engine's WebAssembly, the arena's meshes, the three cars' models and the HUD's fonts; measured
+  2026-10-22). The site is ~27 MB:
   Play vs Bots alone fetches its part, the match host (1.2 MB), onnxruntime (14.2 MB of WebAssembly, 3.7 MB gzipped) and
   a bot's package for the team size (its policy 1–2 MB), cached by the browser after.
 - **Logs:** nginx's access and error logs on stdout/stderr.
@@ -110,8 +113,8 @@ they change there is lost when the newer page returns (RV-425; `client/src/setti
 | `TICKET_PUBLIC_KEYS_FILE` | (none) | the same list in a file (not both): read at start and again on **SIGHUP**, so a rotation needs no restart (a bad file keeps the keys there were; the new ids logged) |
 | `API_URL` | (none) | the accounts service's origin, `https://HOST[:PORT]` (e.g. `https://carball.zolt.top`, through the tunnel): each queue match's result, each armed leave and each refill are posted to it (notes/accounts.md §3). Required in queue mode (with `GAME_SERVER_TOKEN_FILE`; refused at start without, unless `--dev`, which logs the calls only) |
 | `GAME_SERVER_TOKEN_FILE` | (none) | the game server's token for those calls (a file: the API's `GAME_SERVER_TOKEN_FILE` holds the same, 32 characters or more of random text), sent as a bearer token |
-| `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET_FILE` | (none) | the tunnel's Access service token on `/api/results` and `/api/quitters` (its id; its secret as a file), both or neither (without: a warning, the calls go without it) |
-| `OUTBOX_DIR` | `/var/lib/carball-game/outbox` | where the calls wait until the service takes them (the image's volume `/var/lib/carball-game`, uid 10001's): a call that fails for a reason that may pass (no answer, a 5xx, 429) is tried again, in order, with a growing wait (5 s to 5 min), for up to 24 h (the service's acceptance window), and a restart sends what's left; a call refused otherwise (a 4xx) is logged and dropped |
+| `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET_FILE` | (none) | the tunnel's Access service token on `/api/results`, `/api/quitters` and `/api/refills` (its id; its secret as a file), both or neither (without: a warning, the calls go without it) |
+| `OUTBOX_DIR` | `/var/lib/carball-game/outbox` | where the calls wait until the service takes them (the image's volume `/var/lib/carball-game`, uid 10001's): a call that fails for a reason that may pass is tried again, in order, with a growing wait (5 s to 5 min), for up to 24 h (the service's acceptance window), and a restart sends what's left: no answer, a 5xx, 429, and an answer that isn't the service's own (a redirect, 401 or 403 from Access or a challenge, 404 or 405 from a wrong route: logged loudly, check `API_URL`, the token and the Access token); a call refused otherwise (another 4xx) is logged and dropped |
 | `MESHES_DIR` | `/app/collision_meshes` | the arena's collision meshes (in the image; keep the default: the image's own): a folder whose `arena/` holds the arena's 16 meshes in this image's format, the 4 goal halves placed by their offset. Anything else (empty, the old `soccar/` layout, a partial copy, meshes from before 8f78a1a, a truncated file) stops the server at start, saying what's wrong (RV-421, RV-434) |
 
 A development run of the image takes `--dev` (refused beside production keys, `TICKET_PUBLIC_KEYS` or its file, and when a
@@ -129,13 +132,17 @@ the same port): `docker run --rm -e GAME_PORT=14502 -p 127.0.0.1:14502:14502/udp
   development info server is off with a certificate).
 - **Outbound:** https to `API_URL` only (reqwest over rustls; the root certificates are Mozilla's, built into the binary
   through the `webpki-roots` crate, so the image needs no CA bundle: they update when the crate does, with a rebuild).
+  No redirect is followed and no proxy used (`HTTPS_PROXY` and the like are ignored); the calls' User-Agent is
+  `carball-server/VERSION` (allow it through any bot rule on `/api/`).
 - **The ranked rules** (notes/accounts.md §3, notes/matchmaking.md LV1): every queue match is rated: its result (the
   winning team; each seat's first ticket, team, quitter flag and time played) goes to `POST /api/results` when it ends
   with a winner; a match with none (everyone left, cancelled before the start) is a no contest and sends nothing. The
   first player to leave while the lobby is full and there's no winner yet is reported at the leave (`POST
-  /api/quitters`, their queue ban); a rejoin that fills the lobby again undoes it (`DELETE /api/quitters/{match}/{account}`).
-  No ban when the match hadn't ticked for 20 s (the server's own outage). A ranked 2v2 or 3v3 seat left by accident is
-  held for a rejoin until the match ends. One search or match per account; the queue pairs by rating (ours: ±100,
+  /api/quitters`, their queue ban; a lost connection after 5 s); a rejoin that fills the lobby again undoes it (`POST
+  /api/refills`, with the rejoin's ticket). No ban when the match hadn't ticked for 20 s, or when most of its seats lost
+  their connection within 5 s of each other (the server's own outage). A ranked 2v2 or 3v3 seat left by accident is
+  held for a rejoin until the match ends (a rejoin's ticket, for that match; a rejoin before the old session timed out
+  takes the seat over). One search or match per account; the queue pairs by rating (ours: ±100,
   wider by 50 every 10 s waited, ±600 at most, then anyone; teams by a snake draft).
 - **Volumes:** `/var/lib/carball-game` (the outbox: a few KB, keep it across restarts). The certificate directory, read-only, at `/certs` (e.g. `-v /etc/letsencrypt/live/game.carball.zolt.top:/certs:ro`
   with the archive files it links to reachable). The process runs as **uid 10001**: the key must be readable by it (a
@@ -189,7 +196,7 @@ The accounts service (notes/accounts.md). **Nothing is deployed yet: the first d
 | `TICKET_KEY_ID` | (required) | the search tickets' key's id (1-32 characters, no spaces): the game server finds the public key by it |
 | `TICKET_SIGNING_KEY_FILE` | (required) | that key's seed (32 bytes, base64: `carball-api ticket-key KID` prints a new one, its public line for the game server's `TICKET_PUBLIC_KEYS` on stderr) |
 | `TICKET_PREVIOUS_KEYS` | (none) | earlier ticket keys' public lines (`KID BASE64`, comma-separated) after a rotation: a result's or a quitter's tickets signed before it still check, for the acceptance window (24 h) |
-| `GAME_SERVER_TOKEN_FILE` | (none) | the game server's token on `POST /api/results`, `POST /api/quitters` and `DELETE /api/quitters/{match}/{account}` (bearer, compared in constant time; 32 characters or more), behind the tunnel's Access service token on those paths. Unset: those calls answer 503 (a deployment needs it) |
+| `GAME_SERVER_TOKEN_FILE` | (none) | the game server's token on `POST /api/results`, `POST /api/quitters` and `POST /api/refills` (bearer, compared in constant time; 32 characters or more), behind the tunnel's Access service token on those paths; 300 calls a minute at most, all together (429 past it). Unset: those calls answer 503 (a deployment needs it) |
 | `DELETION_HMAC_KEY_FILE` | (required) | 32 characters or more of random text (e.g. `openssl rand -base64 48`: a trailing newline is dropped, so not raw bytes): keys the delete/re-create rule's records (30 days). Changing it forgets them |
 
 - **Ports:** 8080/tcp, plain HTTP, **never published to the internet**: only cloudflared reaches it (with cloudflared a
@@ -226,12 +233,13 @@ The accounts service (notes/accounts.md). **Nothing is deployed yet: the first d
   every identity of the account, signed out everywhere), `… unban --account ID`, `… bans`.
 - **Stop:** SIGTERM or SIGINT: requests in flight finish (10 s at most).
 - **Search tickets** (`POST /api/ticket`, notes/accounts.md §3): a signed-in account's, two minutes long, a nonce each,
-  its ratings in each playlist (format 2); refused (403, `queue-banned` and until when) while a leaver's queue ban runs;
-  the game server checks them offline with `TICKET_PUBLIC_KEYS`.
+  its ratings in each playlist (format 3); refused (403, `queue-banned` and until when) while a leaver's queue ban runs,
+  except a rejoin's (`?rejoin=MATCH`, 16 hex digits) for the match the ban came from; the game server checks them
+  offline with `TICKET_PUBLIC_KEYS`, a search's for a search or claim, a rejoin's for that match's rejoin alone.
 - **The game server's calls** (behind the Access service token and `GAME_SERVER_TOKEN_FILE`): results (recorded once by
-  their match id; each ticket ours, issued within 24 h and counted once; the ratings changed: Glicko-2), quitters (the
-  account's queue ban up the ladder 5 min, 15 min, 1 h, 6 h, 24 h, a step forgiven per 24 h without a leave) and refills
-  (that ban undone). Results are kept a year; used tickets past the window are purged hourly. **Rotating the key:** make a new one
+  their match id; each ticket ours, issued within 24 h and spent on that match alone; the ratings changed: Glicko-2),
+  quitters (the seat's ticket, spent on its match; the account's queue ban up the ladder 5 min, 15 min, 1 h, 6 h, 24 h,
+  a step forgiven per 24 h without a leave) and refills (the rejoin's ticket for that match, spent: that ban undone). Results are kept a year; used tickets past the window are purged hourly. **Rotating the key:** make a new one
   (`carball-api ticket-key k2`), add its public line to the game server's `TICKET_PUBLIC_KEYS` beside the old and
   restart it, then switch the API to the new id and seed, and drop the old line once its last tickets have run out (two
   minutes on).
@@ -250,10 +258,27 @@ docker run -d --name carball-api --restart unless-stopped --network carball --re
   -e GOOGLE_CLIENT_ID=… -e GOOGLE_CLIENT_SECRET_FILE=/run/secrets/google_client_secret \
   -e TURNSTILE_SITE_KEY=… -e TURNSTILE_SECRET_FILE=/run/secrets/turnstile_secret \
   -e TICKET_KEY_ID=k1 -e TICKET_SIGNING_KEY_FILE=/run/secrets/ticket_key \
+  -e GAME_SERVER_TOKEN_FILE=/run/secrets/game_server_token \
   -e DELETION_HMAC_KEY_FILE=/run/secrets/deletion_key -v /path/to/secrets:/run/secrets:ro carball-api:TAG
 ```
 
 ## Checked (2026-10-15, Docker 29.9 on the development VM; again for every change to the images or this contract)
+
+2026-10-22 (the working tree on a88691e, protocol 27 and ticket format 3, ranked step 3 with the AP3, RX29C and RX30C
+fixes: `scripts/build_images.sh --worktree ranked3`; the database a host Postgres from initdb/pg_ctl on the throwaway
+network's gateway, no Postgres container): the three images built, no build machine's paths in either binary, the
+names guard over each image's files. Run on a throwaway network, 43 checks passed:
+- web: the policy's Turnstile sources and `frame-ancestors 'none'`; `/api/me`, `/api/results`, `/api/auth/google/start`
+  a 404 with `no-store` and the security headers; `/privacy.html` naming the game server's addresses; `/config.json`.
+- game: refused without ticket keys, with a list naming no key, with both a list and a file, without `API_URL`, with
+  an http `API_URL`, with `--dev` beside production keys or a certificate, for the open match with a certificate, and
+  with an `OUTBOX_DIR` it can't write; healthy with a keys file, `API_URL` and a certificate, naming its outbox, which
+  its user can write; the keys file reloaded on SIGHUP (a second key added), kept when the new file names none;
+  `--dev` starting alone, its calls logged only.
+- api: `migrate` as the owner's role, the ranked tables made; refused without `TRUSTED_PROXIES`, with a short game
+  server token, or without one; healthy with the network's subnet, its list logged; `/api/me` 401;
+  `/api/results` 401 without or with a wrong token, 400 for an empty result; `/api/quitters` and `/api/refills` 400 for
+  an empty report; with a wrong list, the one warning naming the peer's kind, no address in the log; `healthcheck` 0.
 
 2026-10-18 (the working tree on ee08521, protocol 26, accounts step 2: `scripts/build_images.sh --worktree step2c`):
 the three images built, no build machine's paths in either binary, the names guard over each image's files. Run on a
@@ -292,7 +317,12 @@ locally, see `CERT_PATH`).
 ```sh
 docker run -d --name carball-web --restart unless-stopped -p 127.0.0.1:3000:3000 \
   -e GAME_SERVER_URL=https://game.carball.zolt.top:4433/play carball-web:TAG
+# (the outbox on a named volume: an anonymous one is lost when the container is made anew, and the calls waiting in it)
 docker run -d --name carball-game --restart unless-stopped -p 0.0.0.0:4433:4433/udp \
-  -e "TICKET_PUBLIC_KEYS=k1 BASE64PUBLICKEY" -v /path/to/certs:/certs:ro carball-game:TAG
+  -e "TICKET_PUBLIC_KEYS=k1 BASE64PUBLICKEY" -e API_URL=https://carball.zolt.top \
+  -e GAME_SERVER_TOKEN_FILE=/run/secrets/game_server_token \
+  -e CF_ACCESS_CLIENT_ID=… -e CF_ACCESS_CLIENT_SECRET_FILE=/run/secrets/access_secret \
+  -v /path/to/game-secrets:/run/secrets:ro -v carball-game-outbox:/var/lib/carball-game \
+  -v /path/to/certs:/certs:ro carball-game:TAG
 # the server's flags go after the image name, e.g. carball-game:TAG --max-per-address 16
 ```

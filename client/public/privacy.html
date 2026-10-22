@@ -45,10 +45,11 @@
     <ul>
       <li>
         The account number of the sign-in you used: Google's or Steam's id for you. Never your e-mail address or your name from Google; we never ask
-        Google for them.
+        Google for them. A Steam sign-up reads your public Steam name once, only to suggest a display name; it isn't stored.
       </li>
       <li>The display name you choose, which other players see.</li>
-      <li>Your ratings, and the results of your ranked matches, each kept for one year.</li>
+      <li>Your ratings, for as long as the account exists, and the results of your ranked matches (who played on which team, who won, who left, how long each played, the ratings before and after), each kept for one year.</li>
+      <li>A queue ban after leaving ranked matches, with its end: each step forgiven after a day without leaving.</li>
       <li>Your sessions: a cookie that keeps you signed in, for up to 90 days, and a short-lived cookie while a sign-in or sign-up is under way.</li>
       <li>A ban, if one is ever given, with its reason and end.</li>
     </ul>
@@ -59,6 +60,11 @@
       <li>
         IP addresses. The service holds them in memory only, to limit how many sign-ins and sign-ups one network can make, and forgets each once it's
         been idle for that limit's window (an hour at most). Its logs leave them out.
+      </li>
+      <li>
+        The game server sees your IP address while you search and play, as any server you connect to does. It holds it in memory only, to limit how many
+        connections one network can open and, after a match nobody from it joined, to pause that network's searches for two minutes. Nothing is written
+        down.
       </li>
     </ul>
 

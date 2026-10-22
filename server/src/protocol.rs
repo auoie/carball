@@ -31,7 +31,7 @@ pub const CHAT_OFF: u8 = 3;
 /// A name's bytes at most (UTF-8)
 pub const MAX_NAME_BYTES: usize = 32;
 /// A Hello's search ticket's bytes at most (notes/accounts.md §3: the accounts service's encoded ticket)
-pub const MAX_TICKET_BYTES: usize = 256;
+pub const MAX_TICKET_BYTES: usize = 320;
 /// Why a join was refused
 pub const REFUSED_FULL: u8 = 0;
 /// `Refused`'s reason: the client speaks another protocol version (RV-262; a client of version 12 on can read it)
@@ -49,6 +49,8 @@ pub const REFUSED_IN_MATCH: u8 = 5;
 /// `Refused`'s reason: a rejoin whose match is over, or has no seat of the account's to take back (LV1: "Match has
 /// concluded")
 pub const REFUSED_CONCLUDED: u8 = 6;
+/// A search from an account the server reported as a quitter in the last few minutes (its queue ban, AP3)
+pub const REFUSED_QUEUE_BANNED: u8 = 7;
 /// Hello's intent: join this server's match (development servers), search a playlist's queue, claim a reserved slot
 pub const INTENT_JOIN: u8 = 0;
 pub const INTENT_SEARCH: u8 = 1;

@@ -272,10 +272,12 @@ test("unsaved edits: closing or reloading the page asks first (beforeunload: RV-
   const editor = page.locator("#training-editor");
   await editor.getByRole("button", { name: /^add$/i }).click();
   await expect(editor.locator(".editor-status")).toHaveText(/unsaved changes/i);
+  // (the page asks; leaving is then accepted, so it closes: a dismissed one stays open, and Chrome 156's headless
+  // teardown of it fails the test whatever the page did, at fd23414 too)
   const asked = new Promise<string>((resolve) => {
     page.once("dialog", (dialog) => {
       resolve(dialog.type());
-      void dialog.dismiss();
+      void dialog.accept();
     });
   });
   await page.close({ runBeforeUnload: true });

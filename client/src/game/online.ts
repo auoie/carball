@@ -618,7 +618,7 @@ export class Online {
       const car = this.#world.car(id);
       // (a Blender model's wheels as live: RV-581)
       const wheels = this.#cars.get(id)?.view.posesWheels === true ? this.#world.carWheels(id) : null;
-      cars.set(id, { ...recordCar(car, wheels, this.#world.carLastBallTouchTick(id)), demoed: this.#drawnDemoed(id, car) });
+      cars.set(id, { ...recordCar(car, wheels), demoed: this.#drawnDemoed(id, car) });
     }
     this.#recorder.record(frame, { cars, ball: this.#world.ball(), ballExploded: this.#world.ballExploded(), lastTouchTeam: lastTouchTeam(this.#world) });
   }
@@ -892,7 +892,14 @@ export class Online {
     const states = new Map([...this.#cars].map(([id, entry]) => [id, entry.state.current]));
     this.#shakeTriggers.frame(this.#camera.shakes, this.#cars.get(this.#localCar)?.state.current, states, pads, () => undefined);
     for (const id of states.keys()) if (!this.#carConfigs.has(id)) this.#carConfigs.set(id, this.#world.carConfig(id));
-    const triggers = this.#impactTriggers.frame(frameSeconds, this.#world.takeImpacts(), states, this.#carConfigs, this.#localCar);
+    const impacts = this.#world.takeImpacts();
+    // (the goal replay's ball hits: the engine's car–ball impacts, a correction's re-simulated ones too, at their frames:
+    // the world's ticks and the client's frames step together; none kept while a replay plays, RX30C)
+    if (!this.#replay) {
+      const offset = this.#world.tick - this.#predictor.frame;
+      this.#recorder.ballImpacts(impacts, (tick) => tick + 1 - offset);
+    }
+    const triggers = this.#impactTriggers.frame(frameSeconds, impacts, states, this.#carConfigs, this.#localCar);
     for (const t of triggers) if (t.kind === "shake") this.#camera.shakes.play(IMPACT_MEDIUM, null, t.scale, `impact:${String(t.car)}`);
     this.#padsView.update(pads, frameSeconds);
 

@@ -8,12 +8,12 @@ import (
 	"carball/api/internal/ticket"
 )
 
-// Glicko-2, implemented from Glickman's paper ("Example of the Glicko-2 system", 2012), with lichess's choices where they
-// fit (notes/accounts.md §3 has which, and which not: the game's MMR is PsyNet's, unknowable): a new rating 1500,
-// deviation 500 (also its ceiling) and volatility 0.09 (capped at 0.1), τ 0.75, the deviation's floor 45; each game its
-// own rating period, the deviation first grown by the time since the account's last game (PeriodsPerDay rating periods
-// a day: a typical deviation of 60 back to 110 after a year idle); a game's change at most MaxChange; the rating held
-// within MinRating and MaxRating; shown with "?" from Provisional up.
+// Glicko-2, implemented from Glickman's paper ("Example of the Glicko-2 system", its revision of March 22, 2022), with
+// lichess's choices where they fit (notes/accounts.md §3 has which, and which not: the game's MMR is PsyNet's,
+// unknowable): a new rating 1500, deviation 500 (also its ceiling) and volatility 0.09 (capped at 0.1), τ 0.75, the
+// deviation's floor 45; each game its own rating period, the deviation first grown by the time since the account's last
+// game (PeriodsPerDay rating periods a day: a typical deviation of 60 back to 110 after a year idle); a game's change at
+// most MaxChange; the rating held within MinRating and MaxRating; shown with "?" from Provisional up.
 const (
 	DefaultRating     = 1500.0
 	DefaultDeviation  = 500.0

@@ -35,6 +35,19 @@ const MAX_CATCH_UP_TICKS: u32 = 5;
 /// every connected player received nothing for 20 s)
 const OUTAGE_SECONDS: f64 = 20.0;
 
+/// How long (s) a reported quitter's searches are refused here, whatever tickets they hold: the accounts service bans
+/// them, but a ticket fetched before the leave would still search for its two minutes (AP3)
+pub const QUITTER_MEMORY: f64 = 300.0;
+
+/// A seat's session heard from within this long (s) is live: a rejoin never takes it over (another tab of the account,
+/// RX30C); one silent longer (its page gone, not yet timed out at 10 s) is taken over
+const TAKEOVER_SILENCE: f64 = 3.0;
+
+/// An armed leave by a lost connection waits this long (s) before it's reported: if most of the match's seats lose
+/// theirs within it either side, it's the server's network outage (each session timing out together), not the
+/// player's: no ban (LV1's leniency, AP3). A leave the player chose is reported at once
+const OUTAGE_WINDOW: f64 = 5.0;
+
 /// What the ranked rules tell the accounts service, as it happens (notes/accounts.md §3; LV1): taken by the network
 /// server (`take_reports`), sent by its outbox. Only for seats with tickets (the queue's: never the local host's)
 #[derive(Clone, Debug, PartialEq)]
@@ -42,8 +55,9 @@ pub enum Report {
     /// An armed leave (the lobby full of humans, no winner yet, the first leaver): the leaver's first ticket, its account
     /// checked again by the service
     Quitter { match_id: String, ticket: String },
-    /// A rejoin filled the lobby again: that match's ban on the account undone
-    Refilled { match_id: String, account: [u8; 16] },
+    /// A rejoin filled the lobby again: that match's ban on the account undone, shown by the rejoin's own ticket (for
+    /// that match: the service lifts no ban on the game server's word alone, AP3)
+    Refilled { match_id: String, ticket: String },
     /// A match ended with a winner (a no contest has no result)
     Result(MatchResult),
 }
@@ -85,7 +99,8 @@ pub trait MatchHosting {
 
 /// A reserved slot: its token, its team, the searcher's key (an account's, with tickets), who claimed it, and whether they
 /// left before the start; its seat's ranked state: its first ticket, since when its player is here (none: not here) and
-/// their time before, whether they left the started match (a quitter unless back) and whether that leave was reported
+/// their time before, whether they left the started match (a quitter unless back) and whether that leave was reported;
+/// when its player's connection was last lost (an outage's count), and the last rejoin's ticket (a refill's)
 struct Reservation {
     token: u64,
     team: u8,
@@ -97,6 +112,10 @@ struct Reservation {
     played: f64,
     quit: bool,
     reported: bool,
+    lost_at: Option<f64>,
+    rejoin_ticket: Option<String>,
+    /// Given up: its account searched for another match while away (no rejoin of it then)
+    forfeited: bool,
 }
 
 impl Reservation {
@@ -112,6 +131,9 @@ impl Reservation {
             played: 0.0,
             quit: false,
             reported: false,
+            lost_at: None,
+            rejoin_ticket: None,
+            forfeited: false,
         }
     }
 
@@ -150,6 +172,8 @@ struct Hosted {
     armed: bool,
     /// When it last ticked (s): a leave after a long silence is the server's outage
     ticked_at: f64,
+    /// An armed leave by a lost connection waiting out `OUTAGE_WINDOW`: its seat and when
+    pending_quit: Option<(usize, f64)>,
 }
 
 impl Hosted {
@@ -186,6 +210,8 @@ pub struct MatchHost {
     cancelled: Vec<Cancelled>,
     /// For the accounts service, since the network server last asked (`take_reports`)
     reports: Vec<Report>,
+    /// The accounts reported as quitters lately (their keys), until when their searches are refused (`QUITTER_MEMORY`)
+    quitters: HashMap<u64, f64>,
 }
 
 impl Hosted {
@@ -229,6 +255,7 @@ impl MatchHost {
             now: 0.0,
             cancelled: Vec::new(),
             reports: Vec::new(),
+            quitters: HashMap::new(),
         }
     }
 
@@ -259,6 +286,7 @@ impl MatchHost {
             ranked,
             armed: false,
             ticked_at: now,
+            pending_quit: None,
         };
         if open {
             hosted.game(self.test_goal_after); // (anyone may join it: built at once)
@@ -324,25 +352,36 @@ impl MatchHost {
         for r in &mut hosted.reservations {
             r.quit = false;
             if std::mem::take(&mut r.reported)
-                && let Some(t) = &r.ticket
+                && let Some(ticket) = r.rejoin_ticket.clone()
             {
-                self.reports.push(Report::Refilled { match_id: ranked.clone(), account: t.account });
+                self.reports.push(Report::Refilled { match_id: ranked.clone(), ticket });
             }
         }
     }
 
     /// A seat's player left the started match: a quitter (unless back by its end); the first while the penalty is armed
-    /// reported, and the penalty dropped lobby-wide (LV1), unless it's the server's outage
-    fn seat_left(&mut self, match_id: MatchId, id: PlayerId, started: bool) {
+    /// reported, and the penalty dropped lobby-wide (LV1), unless it's the server's outage: its silence, or (for a lost
+    /// connection, waiting out `OUTAGE_WINDOW`) most seats lost at once
+    fn seat_left(&mut self, match_id: MatchId, id: PlayerId, started: bool, lost: bool) {
+        self.seat_left_decided(match_id, id, started, lost, None);
+    }
+
+    /// The same, `decided` whether a team had won before the leave when the game knew first (an idle kick: the game's
+    /// own forfeit after it mustn't excuse it)
+    fn seat_left_decided(&mut self, match_id: MatchId, id: PlayerId, started: bool, lost: bool, decided: Option<bool>) {
         let now = self.now;
         let Some(hosted) = self.matches.get_mut(&match_id) else { return };
-        let decided = hosted.decided();
+        let decided = decided.unwrap_or_else(|| hosted.decided());
         let outage = now - hosted.ticked_at > OUTAGE_SECONDS;
         let armed = std::mem::take(&mut hosted.armed);
         let ranked_id = hosted.ranked_text();
-        let Some(slot) = hosted.reservations.iter_mut().find(|r| r.claimed == Some(id)) else { return };
+        let Some(seat) = hosted.reservations.iter().position(|r| r.claimed == Some(id)) else { return };
+        let slot = &mut hosted.reservations[seat];
         slot.played = slot.seconds(now);
         slot.here_since = None;
+        if lost {
+            slot.lost_at = Some(now);
+        }
         if !started || decided {
             return;
         }
@@ -352,55 +391,134 @@ impl MatchHost {
         }
         if outage {
             eprintln!("match {match_id}: player {id} left during the server's silence: no ban");
-        } else if let Some(t) = &slot.ticket
+        } else if slot.ticket.is_some() && !slot.reported {
+            if lost {
+                hosted.pending_quit = Some((seat, now)); // (reported after the window, unless an outage)
+            } else {
+                slot.reported = true;
+                let ticket = slot.ticket.as_ref().map(|t| t.encoded.clone()).unwrap_or_default();
+                self.quitters.insert(slot.key, now + QUITTER_MEMORY);
+                self.reports.push(Report::Quitter { match_id: ranked_id, ticket });
+            }
+        }
+    }
+
+    /// A match's armed leave by a lost connection decided once its window is over (or at once, `now_or_never`: the
+    /// match let go): an outage if more than half its seats lost their connection within `OUTAGE_WINDOW` of it (no
+    /// ban); else reported, unless its player is back
+    fn decide_pending_quit(&mut self, match_id: MatchId, now_or_never: bool) {
+        let now = self.now;
+        let Some(hosted) = self.matches.get_mut(&match_id) else { return };
+        let Some((seat, since)) = hosted.pending_quit else { return };
+        if !now_or_never && now - since < OUTAGE_WINDOW {
+            return;
+        }
+        hosted.pending_quit = None;
+        let lost_together = hosted
+            .reservations
+            .iter()
+            .filter(|r| r.lost_at.is_some_and(|at| (at - since).abs() <= OUTAGE_WINDOW))
+            .count();
+        let ranked_id = hosted.ranked_text();
+        if 2 * lost_together > hosted.reservations.len() {
+            eprintln!(
+                "match {match_id}: {lost_together} of {} connections lost at once: an outage, no ban",
+                hosted.reservations.len()
+            );
+            return;
+        }
+        let slot = &mut hosted.reservations[seat];
+        if slot.here_since.is_none()
             && !slot.reported
+            && let Some(t) = &slot.ticket
         {
             slot.reported = true;
+            self.quitters.insert(slot.key, now + QUITTER_MEMORY);
             self.reports.push(Report::Quitter { match_id: ranked_id, ticket: t.encoded.clone() });
         }
     }
 
-    /// Whether an account (its key) holds a seat: in a match found and not yet started, or one running that it's in or
-    /// left without a winner yet (its seat held for a rejoin). One search or match per account (notes/accounts.md §3,
-    /// AP2-1)
+    /// Whether an account (its key) was reported as a quitter in the last `QUITTER_MEMORY` (its searches refused here)
+    pub fn recently_quit(&mut self, key: u64) -> bool {
+        let now = self.now;
+        self.quitters.retain(|_, until| *until > now);
+        key != 0 && self.quitters.contains_key(&key)
+    }
+
+    /// An account's search for another match gives up the seats it left (their rejoins), whatever the page offered
+    pub fn forfeit_seats(&mut self, key: u64) {
+        for m in self.matches.values_mut() {
+            for r in m.reservations.iter_mut().filter(|r| r.key == key && r.claimed.is_some() && r.here_since.is_none())
+            {
+                r.forfeited = true;
+            }
+        }
+    }
+
+    /// Whether an account (its key) holds a seat with a session: in a match found and not yet started, or one running
+    /// that it's in. One search or match per account at once (notes/accounts.md §3, AP2-1); a seat it left, held empty
+    /// for a rejoin, doesn't stop a search (the game's start gate doesn't: MM-2), which gives it up (`forfeit_seats`,
+    /// RX30C)
     pub fn account_busy(&self, key: u64) -> bool {
         key != 0
             && self.matches.values().any(|m| {
                 !m.open
                     && !m.game.as_ref().is_some_and(Game::is_over)
-                    && m.reservations.iter().any(|r| {
-                        r.key == key && (r.claimed.is_none() || r.here_since.is_some() || (r.quit && !m.decided()))
-                    })
+                    && m.reservations.iter().any(|r| r.key == key && (r.claimed.is_none() || r.here_since.is_some()))
             })
     }
 
     /// A rejoin (LV1): the ranked 2v2 or 3v3 match `match_id` takes the account back into its seat, its team, while it
-    /// runs (no winner yet) and the seat's player is away; false otherwise ("Match has concluded"). The seat's first
-    /// ticket stays its result's (a reconnect's fresh one checked, not sent on: notes/accounts.md §3)
-    pub fn rejoin(&mut self, match_id: u64, id: PlayerId, request: JoinRequest, out: Sender<Outgoing>) -> bool {
+    /// runs (no winner yet); else refused with why: `REFUSED_CONCLUDED` ("Match has concluded"), or `REFUSED_IN_MATCH`
+    /// while the seat's session is live (another tab of the account: the seat left as it is, RX30C). A seat whose old
+    /// session the server still holds but hasn't heard from in `TAKEOVER_SILENCE` (gone, not yet timed out) is taken
+    /// over: that session told it was replaced and let go (AP3). The seat's first ticket stays its result's; the rejoin's
+    /// own is kept for a refill (notes/accounts.md §3)
+    pub fn rejoin(
+        &mut self,
+        match_id: u64,
+        id: PlayerId,
+        request: JoinRequest,
+        out: Sender<Outgoing>,
+    ) -> Result<(), u8> {
         let now = self.now;
+        let concluded = Err(protocol::REFUSED_CONCLUDED);
         let Some((&mid, hosted)) = self.matches.iter_mut().find(|(_, m)| m.ranked == match_id && !m.open) else {
-            return false;
+            return concluded;
         };
         let running = hosted.game.as_ref().is_some_and(|g| !g.is_over() && !g.has_winner() && !g.holding());
         if !request.verified || hosted.playlist.team_size < 2 || !running {
-            return false;
+            return concluded;
         }
-        let Some(slot) = hosted
-            .reservations
-            .iter_mut()
-            .find(|r| r.key == request.key && r.claimed.is_some() && r.here_since.is_none())
+        let Some(slot) =
+            hosted.reservations.iter_mut().find(|r| r.key == request.key && r.claimed.is_some() && !r.forfeited)
         else {
-            return false;
+            return concluded;
         };
+        let stale = slot.here_since.is_some().then_some(slot.claimed).flatten();
+        if let Some(old) = stale
+            && hosted.game.as_ref().is_some_and(|g| g.heard_within(old, now, TAKEOVER_SILENCE))
+        {
+            eprintln!("match {mid}: player {id}'s rejoin refused: the seat's session (player {old}) is live");
+            return Err(protocol::REFUSED_IN_MATCH);
+        }
         slot.claimed = Some(id);
-        slot.here_since = Some(now);
+        slot.here_since = slot.here_since.or(Some(now));
+        slot.lost_at = None;
+        slot.rejoin_ticket = request.ticket.as_ref().map(|t| t.encoded.clone());
         let team = slot.team;
-        eprintln!("match {mid}: player {id} rejoined team {team}");
-        hosted.game(self.test_goal_after).join(id, JoinRequest { team, ..request }, out);
+        let game = hosted.game(self.test_goal_after);
+        if let Some(old) = stale {
+            eprintln!("match {mid}: player {id} took over player {old}'s seat (its session not yet timed out)");
+            game.replaced(old);
+            self.players.remove(&old);
+        } else {
+            eprintln!("match {mid}: player {id} rejoined team {team}");
+        }
+        game.join(id, JoinRequest { team, ..request }, out);
         self.players.insert(id, mid);
         self.lobby_filled(mid);
-        true
+        Ok(())
     }
 
     /// The time now (s), before the messages that came since the last tick are handled: a leave after a stall of the
@@ -455,7 +573,7 @@ impl MatchHost {
     pub fn leave(&mut self, id: PlayerId, lost: bool) {
         let Some(match_id) = self.players.remove(&id) else { return };
         let Some(started) = self.matches.get(&match_id).map(|m| !m.holding()) else { return };
-        self.seat_left(match_id, id, started);
+        self.seat_left(match_id, id, started, lost);
         let Some(hosted) = self.matches.get_mut(&match_id) else { return };
         if let Some(game) = hosted.game.as_mut() {
             if lost {
@@ -535,6 +653,26 @@ impl MatchHost {
                 done.push((match_id, false));
             }
         }
+        // (the players the games let go of themselves, kicked for idling or not reading: leaves, counted as they happen
+        // (LV1), the game's own forfeit after them no excuse; their sessions' closes later find no seat)
+        let dropped: Vec<(MatchId, crate::game::Dropped)> = self
+            .matches
+            .iter_mut()
+            .flat_map(|(&match_id, m)| {
+                m.game.as_mut().map(Game::take_dropped).unwrap_or_default().into_iter().map(move |d| (match_id, d))
+            })
+            .collect();
+        for (match_id, d) in dropped {
+            if self.players.remove(&d.id).is_some() {
+                self.seat_left_decided(match_id, d.id, true, d.lost, Some(d.decided));
+            }
+        }
+        // (the armed leaves by a lost connection whose window is over: an outage, or reported)
+        let waiting: Vec<MatchId> =
+            self.matches.iter().filter(|(_, m)| m.pending_quit.is_some()).map(|(&id, _)| id).collect();
+        for match_id in waiting {
+            self.decide_pending_quit(match_id, false);
+        }
         for (match_id, cancelled) in done {
             if cancelled {
                 self.cancel(match_id);
@@ -573,6 +711,7 @@ impl MatchHost {
 
     /// Lets the match go: its players' sessions end (their queues closed once what was sent goes out), its tokens die
     fn drop_match(&mut self, match_id: MatchId) {
+        self.decide_pending_quit(match_id, true); // (a leave waiting out its window: decided with what's known)
         if let Some(hosted) = self.matches.remove(&match_id) {
             for r in &hosted.reservations {
                 self.tokens.remove(&r.token);
@@ -716,6 +855,14 @@ mod tests {
         }
     }
 
+    /// A rejoin's request (its own ticket, made up)
+    fn rejoining(n: u8) -> JoinRequest {
+        JoinRequest {
+            ticket: Some(SeatTicket { encoded: format!("r{n}"), account: [n; 16], ratings: [1500; 3] }),
+            ..seat(n)
+        }
+    }
+
     /// The host run on to `until` (s), ticking each 1/120 s
     fn run_to(host: &mut MatchHost, from: f64, until: f64) {
         let mut t = from;
@@ -813,24 +960,209 @@ mod tests {
         }
         let match_id = host.matches.values().next().unwrap().ranked;
         run_to(&mut host, 0.0, 3.0);
+        host.observe(3.0);
         host.leave(1, true);
-        assert!(matches!(host.take_reports().as_slice(), [Report::Quitter { .. }]));
-        assert!(host.account_busy(1), "a running match's seat, held");
-        // (another account can't take it; the match's own player back on their team)
-        assert!(!host.rejoin(match_id, 10, seat(9), tx.clone()), "not the seat's account");
-        assert!(!host.rejoin(match_id + 1, 10, seat(1), tx.clone()), "no such match");
-        assert!(host.rejoin(match_id, 10, seat(1), tx.clone()));
+        // (a lost connection: reported once its outage window is over, one seat of four)
+        assert!(host.take_reports().is_empty(), "waiting out the outage window");
+        run_to(&mut host, 3.0, 3.0 + OUTAGE_WINDOW + 0.1);
+        assert!(matches!(host.take_reports().as_slice(), [Report::Quitter { ticket, .. }] if ticket == "t1"));
+        assert!(!host.account_busy(1), "its seat held empty: no bar to a search (RX30C)");
+        assert!(host.recently_quit(1), "reported: its searches refused here a while (AP3)");
+        assert!(!host.recently_quit(2));
+        // (another account can't take it; the match's own player back on their team, the refill shown by its ticket)
+        assert!(host.rejoin(match_id, 10, rejoining(9), tx.clone()).is_err(), "not the seat's account");
+        assert!(host.rejoin(match_id + 1, 10, rejoining(1), tx.clone()).is_err(), "no such match");
+        assert!(host.rejoin(match_id, 10, rejoining(1), tx.clone()).is_ok());
         let reports = host.take_reports();
-        assert!(matches!(reports.as_slice(), [Report::Refilled { account, .. }] if *account == [1; 16]), "{reports:?}");
+        assert!(matches!(reports.as_slice(), [Report::Refilled { ticket, .. }] if ticket == "r1"), "{reports:?}");
         let hosted = host.matches.values().next().unwrap();
         let slot = hosted.reservations.iter().find(|r| r.key == 1).unwrap();
         assert!(
             !slot.quit && slot.claimed == Some(10) && hosted.armed,
             "back, no longer a quitter, the penalty re-armed"
         );
+        // (the result keeps each seat's first ticket, not the rejoin's)
+        assert_eq!(slot.ticket.as_ref().map(|t| t.encoded.as_str()), Some("t1"));
         assert_eq!(host.game_of(10).map(|g| g.player_count()), Some(4));
-        // (the next armed leave reported again; a second rejoin of a seat that's here: refused)
-        assert!(!host.rejoin(match_id, 11, seat(2), tx), "their player is here");
+    }
+
+    /// RX30C: an account searching for another match gives up the seats it left (no rejoin of them); AP3: a reported
+    /// quitter's searches refused here for `QUITTER_MEMORY`; the refill only once every seat is back, and no rejoin
+    /// once a team has won
+    #[test]
+    fn a_search_gives_up_a_left_seat_and_a_refill_waits_for_the_whole_lobby() {
+        init_engine();
+        let mut host = MatchHost::new(1, None);
+        let tokens = host.create_match(TWOS, &[1, 2, 3, 4], 0.0).tokens;
+        let (tx, _rx) = channel(OUT_QUEUE);
+        for (i, &token) in tokens.iter().enumerate() {
+            let n = i as u8 + 1;
+            assert!(host.claim(token, u64::from(n), seat(n), tx.clone()));
+        }
+        let match_id = host.matches.values().next().unwrap().ranked;
+        run_to(&mut host, 0.0, 3.0);
+        host.observe(3.0);
+        host.leave(1, false); // (the first: reported at once)
+        host.leave(2, false); // (a later leaver: no ban)
+        assert!(matches!(host.take_reports().as_slice(), [Report::Quitter { ticket, .. }] if ticket == "t1"));
+        assert!(!host.recently_quit(2), "a later leaver isn't banned");
+        // (player 1 back, player 2 still away: the lobby not full, no refill yet)
+        assert!(host.rejoin(match_id, 10, rejoining(1), tx.clone()).is_ok());
+        assert!(host.take_reports().is_empty(), "a seat still empty: no refill");
+        // (player 2 searches for another match instead: their seat given up, no rejoin of it now)
+        host.forfeit_seats(2);
+        assert!(host.rejoin(match_id, 11, rejoining(2), tx.clone()).is_err(), "given up");
+        // (the memory forgets after QUITTER_MEMORY)
+        run_to(&mut host, 3.0, 4.0);
+        host.observe(3.0 + QUITTER_MEMORY + 1.0);
+        assert!(!host.recently_quit(1));
+        // (a 2v2 whose team 0 both left: team 1 wins by forfeit; no rejoin once there's a winner)
+        let mut host = MatchHost::new(1, None);
+        let tokens = host.create_match(TWOS, &[1, 2, 3, 4], 0.0).tokens;
+        for (i, &token) in tokens.iter().enumerate() {
+            let n = i as u8 + 1;
+            assert!(host.claim(token, u64::from(n), seat(n), tx.clone()));
+        }
+        let match_id = host.matches.values().next().unwrap().ranked;
+        run_to(&mut host, 0.0, 3.0);
+        host.leave(1, false);
+        host.leave(3, false);
+        run_to(&mut host, 3.0, 3.5);
+        assert!(host.matches.values().next().is_some_and(Hosted::decided), "team 1 won by forfeit");
+        assert!(host.rejoin(match_id, 12, rejoining(1), tx).is_err(), "a winner: concluded");
+    }
+
+    /// RX30C (LV1): an idle kick is a leave: the first while the penalty's armed reported as it happens, the game's own
+    /// forfeit after the kicks no excuse; the kicked sessions' closes later find no seat
+    #[test]
+    fn an_idle_kick_is_a_leave() {
+        init_engine();
+        let mut host = MatchHost::new(1, None);
+        let tokens = host.create_match(TWOS, &[1, 2, 3, 4], 0.0).tokens;
+        let (tx, mut rx) = channel(OUT_QUEUE);
+        for (i, &token) in tokens.iter().enumerate() {
+            let n = i as u8 + 1;
+            assert!(host.claim(token, u64::from(n), seat(n), tx.clone()));
+        }
+        // (nobody sends an input: every player idles out and is kicked; their messages read, so none is dropped for a
+        // full queue)
+        for second in 0..50 {
+            run_to(&mut host, f64::from(second), f64::from(second + 1));
+            while rx.try_recv().is_ok() {}
+        }
+        let reports = host.take_reports();
+        let quitters: Vec<&Report> = reports.iter().filter(|r| matches!(r, Report::Quitter { .. })).collect();
+        assert_eq!(quitters.len(), 1, "the first kicked, armed: {reports:?}");
+        for id in 1..=4 {
+            host.leave(id, false); // (the sessions' closes: nothing more)
+        }
+        assert!(!host.take_reports().iter().any(|r| matches!(r, Report::Quitter { .. })));
+    }
+
+    /// AP3: a rejoin while the server still holds the seat's old session (gone, not yet timed out) takes the seat over:
+    /// the old session told it was replaced and let go, no leave counted, the time played kept
+    #[test]
+    fn a_rejoin_takes_over_a_seat_whose_old_session_lingers() {
+        init_engine();
+        let mut host = MatchHost::new(1, None);
+        let tokens = host.create_match(TWOS, &[1, 2, 3, 4], 0.0).tokens;
+        let (tx, mut rx) = channel(OUT_QUEUE);
+        let (old_tx, mut old_rx) = channel(OUT_QUEUE);
+        assert!(host.claim(tokens[0], 1, seat(1), old_tx));
+        for (i, &token) in tokens.iter().enumerate().skip(1) {
+            let n = i as u8 + 1;
+            assert!(host.claim(token, u64::from(n), seat(n), tx.clone()));
+        }
+        let match_id = host.matches.values().next().unwrap().ranked;
+        run_to(&mut host, 0.0, 3.0);
+        // (its session live, heard just now: another tab's rejoin refused, the seat and its session left as they are,
+        // RX30C)
+        host.game_of(1).unwrap().receive_inputs(1, 0, 0, &[], 3.0);
+        assert_eq!(host.rejoin(match_id, 9, rejoining(1), tx.clone()), Err(protocol::REFUSED_IN_MATCH));
+        assert!(!controls(&mut old_rx).contains(&Control::Kicked { reason: protocol::KICK_REPLACED }));
+        assert_eq!(host.matches.values().next().unwrap().reservations[0].claimed, Some(1));
+        // (silent past TAKEOVER_SILENCE, gone but not yet timed out: taken over)
+        run_to(&mut host, 3.0, 3.0 + TAKEOVER_SILENCE + 0.1);
+        while old_rx.try_recv().is_ok() || rx.try_recv().is_ok() {}
+        assert!(host.rejoin(match_id, 10, rejoining(1), tx.clone()).is_ok());
+        assert!(controls(&mut old_rx).contains(&Control::Kicked { reason: protocol::KICK_REPLACED }));
+        assert!(old_rx.try_recv().is_err() && old_rx.is_closed(), "the old session's queue closed: it ends");
+        host.leave(1, true); // (its session closing later: not this seat's any more)
+        run_to(&mut host, 3.0 + TAKEOVER_SILENCE + 0.1, 3.0 + TAKEOVER_SILENCE + OUTAGE_WINDOW + 0.2);
+        assert!(host.take_reports().is_empty(), "no leave, no refill: {:?}", host.take_reports());
+        let hosted = host.matches.values().next().unwrap();
+        let slot = hosted.reservations.iter().find(|r| r.key == 1).unwrap();
+        assert!(
+            slot.claimed == Some(10) && !slot.quit && slot.seconds(3.0 + OUTAGE_WINDOW) > 7.9,
+            "the seat's, its time kept"
+        );
+        assert_eq!(host.game_of(10).map(|g| g.player_count()), Some(4));
+    }
+
+    /// AP3: most of a match's connections lost together (each session timing out at once: the server's network) is an
+    /// outage, no ban; one lost alone is the player's, reported after the window; a player back within it isn't
+    #[test]
+    fn an_outage_of_most_connections_bans_no_one() {
+        init_engine();
+        let start = |host: &mut MatchHost, at: f64| {
+            let tokens = host.create_match(TWOS, &[1, 2, 3, 4], at).tokens; // (the seats' keys)
+            let (tx, _rx) = channel(OUT_QUEUE);
+            for (i, &token) in tokens.iter().enumerate() {
+                let n = i as u8 + 1;
+                assert!(host.claim(token, 100 * u64::from(n), seat(n), tx.clone())); // (players 100-400: seats 1-4)
+            }
+            run_to(host, at, at + 3.0);
+            host.matches.values().last().unwrap().ranked
+        };
+        // (three of four within the window: an outage)
+        let mut host = MatchHost::new(1, None);
+        start(&mut host, 0.0);
+        host.observe(3.0);
+        host.leave(100, true);
+        run_to(&mut host, 3.0, 4.0);
+        host.leave(200, true);
+        host.leave(300, true);
+        run_to(&mut host, 4.0, 3.0 + OUTAGE_WINDOW + 1.0);
+        assert!(!host.take_reports().iter().any(|r| matches!(r, Report::Quitter { .. })), "an outage: no ban");
+        // (two of four: a household's network, not the server's; the first reported after the window, not before)
+        let mut host = MatchHost::new(1, None);
+        start(&mut host, 0.0);
+        host.observe(3.0);
+        host.leave(100, true);
+        host.leave(200, true);
+        run_to(&mut host, 3.0, 3.0 + OUTAGE_WINDOW - 0.5);
+        assert!(host.take_reports().is_empty(), "within the window");
+        run_to(&mut host, 3.0 + OUTAGE_WINDOW - 0.5, 3.0 + OUTAGE_WINDOW + 0.5);
+        assert!(matches!(host.take_reports().as_slice(), [Report::Quitter { ticket, .. }] if ticket == "t1"));
+        // (back within the window: nothing reported, nothing to undo)
+        let mut host = MatchHost::new(1, None);
+        let match_id = start(&mut host, 0.0);
+        host.observe(3.0);
+        host.leave(100, true);
+        let (tx, _rx) = channel(OUT_QUEUE);
+        assert!(host.rejoin(match_id, 10, rejoining(1), tx).is_ok());
+        run_to(&mut host, 3.0, 3.0 + OUTAGE_WINDOW + 1.0);
+        assert!(host.take_reports().is_empty(), "back in time");
+    }
+
+    /// AP3: a leave waiting out its window when the match is let go is decided then, with what's known
+    #[test]
+    fn a_leave_waiting_out_its_window_is_decided_when_the_match_goes() {
+        init_engine();
+        let mut host = MatchHost::new(1, None);
+        let tokens = host.create_match(ONES, &[1, 2], 0.0).tokens;
+        let (tx, _rx) = channel(OUT_QUEUE);
+        assert!(host.claim(tokens[0], 1, seat(1), tx.clone()));
+        assert!(host.claim(tokens[1], 2, seat(2), tx));
+        run_to(&mut host, 0.0, 3.0);
+        host.observe(3.0);
+        host.leave(1, true);
+        run_to(&mut host, 3.0, 4.0);
+        host.leave(2, false); // (the forfeit's winner goes: the match let go within the window)
+        let reports = host.take_reports();
+        assert!(reports.iter().any(|r| matches!(r, Report::Quitter { ticket, .. } if ticket == "t1")), "{reports:?}");
+        assert!(reports.iter().any(|r| matches!(r, Report::Result(_))), "{reports:?}");
+        assert_eq!(host.match_count(), 0);
     }
 
     #[test]
@@ -844,7 +1176,7 @@ mod tests {
         let match_id = host.matches.values().next().unwrap().ranked;
         run_to(&mut host, 0.0, 3.0);
         host.leave(1, true);
-        assert!(!host.rejoin(match_id, 10, seat(1), tx.clone()), "1v1: no rejoin");
+        assert!(host.rejoin(match_id, 10, seat(1), tx.clone()).is_err(), "1v1: no rejoin");
         run_to(&mut host, 3.0, 4.0);
         assert!(!host.account_busy(1), "the forfeit's winner decided: the seat no longer held");
     }

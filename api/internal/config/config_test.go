@@ -31,6 +31,7 @@ func good(t *testing.T) map[string]string {
 		"TICKET_KEY_ID":             "k1",
 		"TICKET_SIGNING_KEY_FILE":   secret(t, "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=\n"),
 		"TRUSTED_PROXIES":           "127.0.0.1/32,::1/128",
+		"GAME_SERVER_TOKEN_FILE":    secret(t, strings.Repeat("g", 32)+"\n"),
 	}
 }
 
@@ -71,6 +72,8 @@ func TestLoadRefusals(t *testing.T) {
 		"a health address off loopback":      func(v map[string]string) { v["HEALTH_ADDR"] = "0.0.0.0:8081" },
 		"no ticket key":                      func(v map[string]string) { delete(v, "TICKET_SIGNING_KEY_FILE") },
 		"a ticket key without its id":        func(v map[string]string) { delete(v, "TICKET_KEY_ID") },
+		"no game server token (AP3)":         func(v map[string]string) { delete(v, "GAME_SERVER_TOKEN_FILE") },
+		"a short game server token":          func(v map[string]string) { v["GAME_SERVER_TOKEN_FILE"] = secret(t, strings.Repeat("g", 31)) },
 	} {
 		vars := good(t)
 		edit(vars)
@@ -88,8 +91,9 @@ func TestLoadDev(t *testing.T) {
 	delete(vars, "TRUSTED_PROXIES") // (development: no tunnel in front)
 	delete(vars, "TICKET_KEY_ID")
 	delete(vars, "TICKET_SIGNING_KEY_FILE")
+	delete(vars, "GAME_SERVER_TOKEN_FILE")
 	if _, err := Load(env(vars), true); err != nil {
-		t.Errorf("development on localhost without Turnstile or a ticket key: %v", err)
+		t.Errorf("development on localhost without Turnstile, a ticket key or a game server token: %v", err)
 	}
 	// (--dev never serves a public origin, https or not: its Turnstile is optional, AP-7)
 	for _, origin := range []string{"http://carball.example", "https://carball.example"} {

@@ -1,10 +1,10 @@
 // The web image's nginx (docker/nginx.conf, APP-CONTRACT.md): the page's fallback for its own routes alone; the files the
 // page fetches by name a 404 when missing (RV-537: a missing bot policy served the page, read as a broken model)
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 
 const CONF = readFileSync(new URL("../../docker/nginx.conf", import.meta.url), "utf8");
 
@@ -52,9 +52,15 @@ describe("the web image's nginx", () => {
 });
 
 describe("the web image's Content-Security-Policy (docker/40-carball-config.sh)", () => {
+  // (the start script's output in a directory of the test's own, gone after: RX29C)
+  const dirs: string[] = [];
+  afterAll(() => {
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+  });
   /** The policy the start script writes for a game server URL */
   const policy = (gameServer: string): Map<string, string> => {
     const dir = mkdtempSync(join(tmpdir(), "carball-csp-"));
+    dirs.push(dir);
     execFileSync("sh", [new URL("../../docker/40-carball-config.sh", import.meta.url).pathname], {
       env: { PATH: process.env["PATH"] ?? "/usr/bin:/bin", GAME_SERVER_URL: gameServer, CONFIG_DIR: dir, CSP_FILE: join(dir, "csp.conf") },
       stdio: "pipe",

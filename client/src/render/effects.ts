@@ -454,6 +454,8 @@ export class SceneEffects {
   readonly particles = new Particles();
   readonly #scene: Object3D;
   readonly #explosions: GoalExplosion[] = [];
+  /** For the browser tests: the goal explosions so far in each team's colour (blue, orange) */
+  readonly goals: [number, number] = [0, 0];
   readonly #demolitions: Demolition[] = [];
 
   constructor(scene: Object3D) {
@@ -463,6 +465,7 @@ export class SceneEffects {
 
   /** A goal: the explosion at the ball (`at`, game frame), in the scoring team's colour */
   goal(at: Vec3, scoringTeam: number): void {
+    this.goals[scoringTeam === 1 ? 1 : 0] += 1;
     this.#explosions.push(new GoalExplosion(this.particles, this.#scene, at, TEAM_PRIMARY[scoringTeam === 1 ? 1 : 0] ?? [1, 1, 1]));
   }
 

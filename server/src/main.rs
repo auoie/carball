@@ -292,13 +292,18 @@ fn api_args(env: &impl Fn(&str) -> Option<String>) -> anyhow::Result<Option<ApiA
 /// A secret's file: its text, trimmed; refused when empty
 fn read_secret(name: &str, path: &Path) -> anyhow::Result<String> {
     let text = std::fs::read_to_string(path).map_err(|e| anyhow::anyhow!("{name} {}: {e}", path.display()))?;
-    let text = text.trim().to_string();
+    // (its trailing line ends dropped, nothing else: the accounts service reads the same file the same way, AP3)
+    let text = text.trim_end_matches(['\r', '\n']).to_string();
     anyhow::ensure!(!text.is_empty(), "{name} {}: empty", path.display());
     Ok(text)
 }
 
-/// The outbox's settings, its secrets read now (a missing or empty file stops the start)
+/// The outbox's settings, its secrets read now (a missing or empty file stops the start, and so does an `OUTBOX_DIR` it
+/// can't write when its calls go to the accounts service)
 fn outbox_config(args: &Args) -> anyhow::Result<carball_server::outbox::OutboxConfig> {
+    if let (Some(_), Some(dir)) = (&args.api, &args.outbox_dir) {
+        carball_server::outbox::check_dir(dir)?;
+    }
     let (api_url, token, access) = match &args.api {
         Some(api) => {
             let token = read_secret("GAME_SERVER_TOKEN_FILE", &api.token_file)?;
@@ -321,6 +326,7 @@ fn outbox_config(args: &Args) -> anyhow::Result<carball_server::outbox::OutboxCo
         server: args.public_host.clone().unwrap_or_else(|| "carball-server".into()),
         first_wait: Duration::from_secs(5),
         max_wait: Duration::from_secs(300),
+        https_only: true,
     })
 }
 
@@ -531,6 +537,17 @@ async fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A secret's file read as the accounts service reads it: its trailing line ends dropped, nothing else (AP3)
+    #[test]
+    fn a_secret_loses_its_line_ends_only() {
+        let path = std::env::temp_dir().join(format!("carball-secret-{:016x}", carball_server::game::random_u64()));
+        std::fs::write(&path, " tok en \r\n").unwrap();
+        assert_eq!(read_secret("T", &path).unwrap(), " tok en ");
+        std::fs::write(&path, "\n").unwrap();
+        assert!(read_secret("T", &path).is_err(), "empty");
+        let _ = std::fs::remove_file(&path);
+    }
 
     fn parse(args: &[&str]) -> anyhow::Result<Args> {
         parse_args(args.iter().map(|a| (*a).to_string()), |_| None)

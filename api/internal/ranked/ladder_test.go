@@ -42,6 +42,11 @@ func TestLadderForgivesAStepADay(t *testing.T) {
 	if next.Step != 4 {
 		t.Errorf("after 23 hours: step %d", next.Step)
 	}
+	// (the day counted from the last leave, not the ban's end an hour later: 24.5 hours, one step off)
+	next, _ = Leave(cur, true, "b", t0.Add(24*time.Hour+30*time.Minute))
+	if next.Step != 3 {
+		t.Errorf("24.5 hours after the leave: step %d, want 3", next.Step)
+	}
 }
 
 func TestOneBanAMatchAndARejoinUndoesIt(t *testing.T) {

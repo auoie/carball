@@ -15,6 +15,7 @@ import {
   dequantizeAxis,
   encodeControl,
   encodeDatagram,
+  MAX_TICKET_BYTES,
   PROTOCOL_VERSION,
   quantizeAxis,
 } from "./protocol";
@@ -144,5 +145,19 @@ describe("protocol", () => {
     expect(() => decodeDatagram(new Uint8Array([0x01, 1, 2]))).toThrow(DecodeError);
     expect(() => decodeDatagram(new Uint8Array([0x7f]))).toThrow(DecodeError);
     expect(() => decodeControl(new Uint8Array([0x81, 1]))).toThrow(DecodeError);
+  });
+
+  it("caps a hello's ticket at MAX_TICKET_BYTES both ways: a longer one sent empty, read as an error", () => {
+    const vector = vectors.vectors.find((v) => v.message["type"] === "hello");
+    const hello = { ...(toMessage(vector?.message ?? {}) as ControlMessage & { type: "hello" }), ticket: "A".repeat(MAX_TICKET_BYTES) };
+    const whole = encodeControl(hello).subarray(2);
+    expect(decodeControl(whole)).toMatchObject({ ticket: hello.ticket });
+    expect(decodeControl(encodeControl({ ...hello, ticket: "A".repeat(MAX_TICKET_BYTES + 1) }).subarray(2))).toMatchObject({ ticket: "" });
+    // (one byte more, written by hand: its count little-endian, then its bytes)
+    const long = new Uint8Array(whole.byteLength + 1);
+    long.set(whole.subarray(0, whole.byteLength - MAX_TICKET_BYTES - 2));
+    long.set([(MAX_TICKET_BYTES + 1) & 0xff, (MAX_TICKET_BYTES + 1) >> 8], whole.byteLength - MAX_TICKET_BYTES - 2);
+    long.fill(0x41, whole.byteLength - MAX_TICKET_BYTES);
+    expect(() => decodeControl(long)).toThrow(/ticket too long/);
   });
 });

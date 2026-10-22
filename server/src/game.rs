@@ -128,6 +128,15 @@ pub enum Outgoing {
     Datagram(Vec<u8>),
 }
 
+/// A player the game let go of itself (an idle kick, a queue full): whether a team had won before, and whether it counts
+/// as a lost connection
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Dropped {
+    pub id: PlayerId,
+    pub decided: bool,
+    pub lost: bool,
+}
+
 /// What a joining player asked for (their `Hello`)
 #[derive(Clone, Debug)]
 pub struct JoinRequest {
@@ -551,6 +560,10 @@ pub struct Game {
     pub hold_for: usize,
     /// Idle players are warned and kicked (MM-32: the queue's matches)
     pub idle_kick: bool,
+    /// The players this game let go of itself since the host last asked (kicked for idling, or not reading: their queue
+    /// full), each with whether a team had won before and whether it's a lost connection (a leave either way: LV1; the
+    /// host counts it as it happens, `take_dropped`)
+    dropped: Vec<Dropped>,
     /// The network state's bytes a datagram carries (its parts split past it; the tests make it small to split one)
     pub(crate) part_budget: usize,
     /// The end screen's time up (or every player ready) starts the next match with the players here (development
@@ -649,6 +662,7 @@ impl Game {
             replication: Replication::new(seed as u64),
             hold_for: 0,
             idle_kick: false,
+            dropped: Vec::new(),
             part_budget: MAX_DATAGRAM - UPDATE_HEADER,
             rematch: true,
             map: 0,
@@ -947,8 +961,27 @@ impl Game {
         }
     }
 
+    /// Whether a player's input packets came within the last `seconds` (s, server time): a live session's do
+    pub fn heard_within(&self, id: PlayerId, now: f64, seconds: f64) -> bool {
+        self.players.get(&id).and_then(|p| p.last_heard).is_some_and(|heard| now - heard < seconds)
+    }
+
+    /// The players this game let go of itself since the last call
+    pub fn take_dropped(&mut self) -> Vec<Dropped> {
+        std::mem::take(&mut self.dropped)
+    }
+
     /// A player left the match (their connection closed)
     pub fn leave(&mut self, id: PlayerId) {
+        self.remove_player(id, false);
+    }
+
+    /// A player's seat taken over by the same account's new session (a rejoin before this one timed out): told so
+    /// (`KICK_REPLACED`), then gone as a leave
+    pub fn replaced(&mut self, id: PlayerId) {
+        if let Some(p) = self.players.get(&id) {
+            let _ = p.out.try_send(Outgoing::Control(Control::Kicked { reason: protocol::KICK_REPLACED }.encode()));
+        }
         self.remove_player(id, false);
     }
 
@@ -1661,6 +1694,7 @@ impl Game {
             self.players.iter().filter(|(_, p)| p.out.capacity() == 0).map(|(&id, _)| id).collect();
         for id in stuck {
             eprintln!("player {id}: outgoing queue full ({OUT_QUEUE}), dropped");
+            self.dropped.push(Dropped { id, decided: self.has_winner() || self.is_over(), lost: true });
             self.remove_player(id, true);
         }
         if self.players.is_empty() {
@@ -1769,6 +1803,7 @@ impl Game {
             self.players.iter().filter(|(_, p)| p.kick_at.is_some_and(|at| tick >= at)).map(|(&id, _)| id).collect();
         for id in kicked {
             eprintln!("player {id}: kicked for being idle");
+            self.dropped.push(Dropped { id, decided: self.has_winner() || self.is_over(), lost: false });
             self.remove_player(id, false);
         }
         let Some(since) = self

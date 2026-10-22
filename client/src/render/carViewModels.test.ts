@@ -111,6 +111,27 @@ describe.skipIf(!existsSync(join(CARS, "tall.glb")))("a car wearing its model (T
     plain.dispose();
   });
 
+  it("teleported, its next frame sets the wheels at once and doesn't turn them for the jump (RV-597)", () => {
+    const upright = new Quaternion();
+    const car = new CarView(CONFIG, 0, null, TALL);
+    const wheel = named(car.root, "Wheel_FL");
+    car.wheels = { suspension: four(30), steer: four(0), contact: four(true) };
+    for (let i = 0; i < 60; i++) car.update(new Vector3(0, 30, 0), upright, false, false, false, FRAME);
+    const turned = wheel.quaternion.clone();
+    // (300 uu on along the car, under the 400 uu fallback: no roll for it)
+    car.teleport();
+    car.update(new Vector3(300, 30, 0), upright, false, false, false, FRAME);
+    expect(wheel.quaternion.angleTo(turned)).toBeLessThan(1e-6);
+    // (lifted off, then teleported: its hang at once, where easing would take a while)
+    car.wheels = { suspension: four(30), steer: four(0), contact: four(false) };
+    car.teleport();
+    car.update(new Vector3(300, 30, 0), upright, false, false, false, FRAME);
+    const first = wheel.position.clone();
+    for (let i = 0; i < 120; i++) car.update(new Vector3(300, 30, 0), upright, false, false, false, FRAME);
+    expect(first.distanceTo(wheel.position)).toBeLessThan(1e-6);
+    car.dispose();
+  });
+
   it("its supersonic trails from its own rear tyres' contact, not the physics' wheels (RV-590)", () => {
     const car = new CarView(CONFIG, 0, null, TALL);
     const wheels = [named(car.root, "Wheel_RL"), named(car.root, "Wheel_RR")];

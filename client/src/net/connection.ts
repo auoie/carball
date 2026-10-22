@@ -9,6 +9,7 @@ import {
   PROTOCOL_VERSION,
   REFUSED_CONCLUDED,
   REFUSED_IN_MATCH,
+  REFUSED_QUEUE_BANNED,
   REFUSED_MODE,
   REFUSED_TICKET,
   REFUSED_TOKEN,
@@ -28,8 +29,8 @@ export interface ServerAddress {
    *  (local/localTransport.ts), instead of the network */
   readonly open?: () => WebTransport;
   /** A search's and a claim's ticket, who the player is (src/net/tickets.ts: the accounts service's, a development
-   *  server's own); none for the local host and a development server's open match */
-  readonly ticket?: () => Promise<string>;
+   *  server's own), or a rejoin's of the match `rejoin`; none for the local host and a development server's open match */
+  readonly ticket?: (rejoin?: bigint) => Promise<string>;
 }
 
 /** A development server publishes its port and certificate hash at http://host:infoPort/info. */
@@ -128,6 +129,8 @@ export function refusalText(reason: number): string {
       return "you're in a match already";
     case REFUSED_CONCLUDED:
       return "that match has ended";
+    case REFUSED_QUEUE_BANNED:
+      return "you left a ranked match: you can search again in a few minutes";
     default:
       return "the server is full";
   }
@@ -209,11 +212,11 @@ export class Connection {
     const stream = await transport.createBidirectionalStream();
     const writer = stream.writable.getWriter();
     const token = match.intent === "join" ? 0n : match.token;
-    // (a claim's and a rejoin's ticket: the seat's account, notes/accounts.md §3; a join's none)
-    const ticket = match.intent !== "join" && address.ticket ? await address.ticket() : "";
-    await writer.write(
-      encodeControl({ type: "hello", version: PROTOCOL_VERSION, ...preferences, key: storedKey(), intent: match.intent, playlist: 0, token, ticket }),
-    );
+    // (a claim's and a rejoin's ticket: the seat's account, notes/accounts.md §3, and no key of this browser's beside it
+    // (the server keys the seat by the account: RX29C); a join's none)
+    const ticket = match.intent !== "join" && address.ticket ? await address.ticket(match.intent === "rejoin" ? match.token : undefined) : "";
+    const key = ticket === "" ? storedKey() : 0n;
+    await writer.write(encodeControl({ type: "hello", version: PROTOCOL_VERSION, ...preferences, key, intent: match.intent, playlist: 0, token, ticket }));
     connection.#control = writer;
 
     const welcome = await new Promise<Welcome>((resolve, reject) => {

@@ -79,13 +79,18 @@ pub fn run_with_reports(
                     Intent::Search { .. } if request.verified && host.account_busy(request.key) => {
                         refuse(out, protocol::REFUSED_IN_MATCH);
                     }
+                    // (reported as a quitter lately: a ticket from before the ban doesn't search, AP3)
+                    Intent::Search { .. } if request.verified && host.recently_quit(request.key) => {
+                        refuse(out, protocol::REFUSED_QUEUE_BANNED);
+                    }
                     Intent::Search { team_size, token } => {
+                        // (a seat it left, held for a rejoin, given up: it plays another match, RX30C)
+                        if request.verified {
+                            host.forfeit_seats(request.key);
+                        }
                         // (its account's rating in the playlist, from its ticket: the queue pairs by it)
-                        let rating = request
-                            .ticket
-                            .as_ref()
-                            .and_then(|t| t.ratings.get(usize::from(team_size.max(1)) - 1).copied())
-                            .unwrap_or(crate::queue::DEFAULT_RATING);
+                        let rating =
+                            crate::queue::search_rating(request.ticket.as_ref().map(|t| &t.ratings), team_size);
                         let from = SearchFrom { address, key: request.key, token, rating };
                         match queue.search(id, team_size, out.clone(), from, seconds(Instant::now())) {
                             Searched::Queued => {}
@@ -107,8 +112,8 @@ pub fn run_with_reports(
                     }
                     Intent::Rejoin { .. } if !queue_mode => refuse(out, protocol::REFUSED_MODE),
                     Intent::Rejoin { match_id } => {
-                        if !host.rejoin(match_id, id, request, out.clone()) {
-                            refuse(out, protocol::REFUSED_CONCLUDED);
+                        if let Err(reason) = host.rejoin(match_id, id, request, out.clone()) {
+                            refuse(out, reason);
                         }
                     }
                 },

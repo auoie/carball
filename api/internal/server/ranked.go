@@ -32,7 +32,8 @@ const MaxMatchSeconds = 3 * 60 * 60
 var matchID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 // gameServer guards the game server's calls: its credential (GAME_SERVER_TOKEN_FILE) as a bearer token, compared in
-// constant time, behind the tunnel's Access service token; JSON bodies as the browser's writes. None configured: 503
+// constant time, behind the tunnel's Access service token; at most Limits.GameServer of them (AC-26: 429, the game
+// server's outbox tries again later); JSON bodies as the browser's writes. None configured: 503
 func (s *Server) gameServer(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if len(s.GameServerToken) == 0 {
@@ -44,6 +45,10 @@ func (s *Server) gameServer(next http.HandlerFunc) http.HandlerFunc {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
+		if !s.gameServerCalls.Allow("game-server", s.Now()) {
+			writeError(w, http.StatusTooManyRequests, "busy")
+			return
+		}
 		if r.ContentLength > maxBody {
 			writeError(w, http.StatusRequestEntityTooLarge, "too-large")
 			return
@@ -53,9 +58,10 @@ func (s *Server) gameServer(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// playerTicket checks a player's ticket as a result or quitter carries it: our signature (a key from before a rotation
-// too), issued within the acceptance window (and not ahead of now past the skew)
-func (s *Server) playerTicket(encoded string, now time.Time) (ticket.Ticket, error) {
+// playerTicket checks a player's ticket as a result, a quitter or a refill carries it: our signature (a key from before
+// a rotation too), issued within the acceptance window (and not ahead of now past the skew), for that purpose (a
+// result's and a quitter's: the seat's first, its search's; a refill's: the rejoin's, of that match)
+func (s *Server) playerTicket(encoded string, purpose byte, match string, now time.Time) (ticket.Ticket, error) {
 	t, err := ticket.VerifySigned(encoded, s.TicketKeys)
 	if err != nil {
 		return ticket.Ticket{}, err
@@ -63,7 +69,15 @@ func (s *Server) playerTicket(encoded string, now time.Time) (ticket.Ticket, err
 	if t.Issued.After(now.Add(30*time.Second)) || now.Sub(t.Issued) > AcceptWindow {
 		return ticket.Ticket{}, errors.New("ticket: outside the acceptance window")
 	}
+	if t.Purpose != purpose || (purpose == ticket.PurposeRejoin && matchText(t.Match) != match) {
+		return ticket.Ticket{}, errors.New("ticket: not for this")
+	}
 	return t, nil
+}
+
+// matchText is a match's id as the game server names it (16 hex digits)
+func matchText(id uint64) string {
+	return fmt.Sprintf("%016x", id)
 }
 
 // accountID is a ticket's account as the store names it (a UUID's text)
@@ -103,7 +117,7 @@ func (s *Server) result(w http.ResponseWriter, r *http.Request) {
 			bad = true
 			break
 		}
-		t, err := s.playerTicket(p.Ticket, now)
+		t, err := s.playerTicket(p.Ticket, ticket.PurposeSearch, body.Match, now)
 		if err != nil {
 			s.Log.Warn("a result's ticket refused", "match", body.Match, "err", err)
 			writeError(w, http.StatusForbidden, "ticket")
@@ -143,9 +157,48 @@ func (s *Server) result(w http.ResponseWriter, r *http.Request) {
 }
 
 // quitter: an armed leave (LV1: the lobby full of humans, no winner yet, the first leaver; the game server decides),
-// reported at the leave with the player's ticket: the account's queue ban one step up the ladder. The same match again
-// changes nothing
+// reported at the leave with the player's ticket, spent for that match (one ticket, one match: AP3): the account's queue
+// ban one step up the ladder. The same match again changes nothing
 func (s *Server) quitter(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Match  string `json:"match"`
+		Ticket string `json:"ticket"`
+		At     int64  `json:"at"` // (the leave's time, Unix s: the ban runs from it, held within the window; none: now)
+	}
+	if err := readJSON(r, &body); err != nil {
+		badBody(w, err)
+		return
+	}
+	if !matchID.MatchString(body.Match) {
+		writeError(w, http.StatusBadRequest, "bad-request")
+		return
+	}
+	now := s.Now()
+	leftAt := now
+	if body.At != 0 {
+		leftAt = time.Unix(body.At, 0)
+		if earliest := now.Add(-AcceptWindow); leftAt.Before(earliest) {
+			leftAt = earliest
+		}
+		if leftAt.After(now) {
+			leftAt = now
+		}
+	}
+	t, err := s.playerTicket(body.Ticket, ticket.PurposeSearch, body.Match, now)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "ticket")
+		return
+	}
+	spent := &store.SpentTicket{Nonce: t.Nonce, IssuedAt: t.Issued, Match: body.Match}
+	err = s.Store.ChangeQueueBan(r.Context(), accountID(t.Account), spent, func(cur store.QueueBan, exists bool) (*store.QueueBan, bool) {
+		return ranked.Leave(cur, exists, body.Match, leftAt)
+	})
+	s.queueBanDone(w, err)
+}
+
+// refill: a rejoin filled the lobby again (the game's RPC_RemoveQuitter), shown by the rejoin's own ticket (for that
+// match, the player's: the token alone lifts no ban, AP3), spent: that match's ban undone
+func (s *Server) refill(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Match  string `json:"match"`
 		Ticket string `json:"ticket"`
@@ -158,37 +211,24 @@ func (s *Server) quitter(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad-request")
 		return
 	}
-	now := s.Now()
-	t, err := s.playerTicket(body.Ticket, now)
+	t, err := s.playerTicket(body.Ticket, ticket.PurposeRejoin, body.Match, s.Now())
 	if err != nil {
 		writeError(w, http.StatusForbidden, "ticket")
 		return
 	}
-	err = s.Store.ChangeQueueBan(r.Context(), accountID(t.Account), func(cur store.QueueBan, exists bool) (*store.QueueBan, bool) {
-		return ranked.Leave(cur, exists, body.Match, now)
+	spent := &store.SpentTicket{Nonce: t.Nonce, IssuedAt: t.Issued, Match: body.Match}
+	err = s.Store.ChangeQueueBan(r.Context(), accountID(t.Account), spent, func(cur store.QueueBan, exists bool) (*store.QueueBan, bool) {
+		return ranked.Refilled(cur, exists, body.Match)
 	})
 	s.queueBanDone(w, err)
 }
-
-// quitterRefilled: a rejoin filled the lobby again (the game's RPC_RemoveQuitter): that match's ban undone
-func (s *Server) quitterRefilled(w http.ResponseWriter, r *http.Request) {
-	match, account := r.PathValue("match"), r.PathValue("account")
-	if !matchID.MatchString(match) || !uuidText.MatchString(account) {
-		writeError(w, http.StatusBadRequest, "bad-request")
-		return
-	}
-	err := s.Store.ChangeQueueBan(r.Context(), account, func(cur store.QueueBan, exists bool) (*store.QueueBan, bool) {
-		return ranked.Refilled(cur, exists, match)
-	})
-	s.queueBanDone(w, err)
-}
-
-var uuidText = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 func (s *Server) queueBanDone(w http.ResponseWriter, err error) {
 	switch {
 	case err == nil, errors.Is(err, store.ErrNoAccount): // (an account deleted since: nothing to ban)
 		w.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, store.ErrTicketUsed): // (its ticket spent on another match)
+		writeError(w, http.StatusConflict, "ticket-used")
 	default:
 		s.Log.Error("changing a queue ban", "err", err)
 		writeError(w, http.StatusServiceUnavailable, "unavailable")

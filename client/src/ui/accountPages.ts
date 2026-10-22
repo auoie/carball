@@ -21,6 +21,7 @@ export const ACCOUNT_TEXT = {
   create: "Create Account",
   cancel: "Cancel",
   checking: "Waiting for the check…",
+  checkNotLoaded: "The check didn't load. Create Account tries again.",
   accountTitle: "Account",
   signedInWith: (providers: readonly Provider[]): string => `Signed in with ${providers.map((p) => PROVIDER_NAMES[p]).join(" and ")}`,
   ratings: "Ratings",
@@ -34,9 +35,14 @@ export const ACCOUNT_TEXT = {
   deleteBody: "Your account, its sign-ins and its ratings go at once. This sign-in can't make a new account for 30 days. Delete it?",
   signedOutEverywhere: "Signed out on every device.",
   sessionEnded: "Your sign-in has ended. Sign in again to play online.",
+  unavailableTitle: "ONLINE PLAY",
+  serversUnreachable: "The game's servers can't be reached right now. Try again later.",
 } as const;
 
 const PROVIDER_NAMES: Readonly<Record<Provider, string>> = { google: "Google", steam: "Steam" };
+
+/** A display name's longest (the API's 32 bytes: the field counts characters, the API says if a name is too long) */
+const NAME_MAX_BYTES = 32;
 
 /** A refusal in our words */
 export function accountErrorText(code: ApiError): string {
@@ -137,9 +143,29 @@ export class AccountPages {
     widget.className = "account-turnstile";
     const status = this.#line("", "account-status");
     let token = signup.turnstileSiteKey === "" ? "" : null;
+    // (Turnstile's script not loaded (offline, an ad blocker): said so, and Create Account loads it again, RX29C)
+    let notLoaded = false;
+    const check = (): void => {
+      notLoaded = false;
+      this.#actions
+        .turnstile(widget, signup.turnstileSiteKey, (value) => {
+          token = value;
+          if (value !== null && status.textContent === T.checking) status.textContent = "";
+        })
+        .then((rendered) => {
+          // (the page left meanwhile: its widget gone with it)
+          if (widget.isConnected) this.#widget = rendered;
+          else rendered.remove();
+        })
+        .catch(() => {
+          notLoaded = true;
+          status.textContent = T.checkNotLoaded;
+        });
+    };
     const create = this.#button(T.create, () => {
       if (token === null) {
         status.textContent = T.checking;
+        if (notLoaded) check();
         return;
       }
       create.disabled = true;
@@ -162,19 +188,7 @@ export class AccountPages {
     });
     create.classList.add("main-menu-find");
     this.#draw(T.signUpTitle, [this.#line(T.signUpBody(signup.provider)), this.#label(T.name, name), widget, status, create, this.#backButton(T.cancel)]);
-    if (signup.turnstileSiteKey !== "") {
-      this.#actions
-        .turnstile(widget, signup.turnstileSiteKey, (value) => {
-          token = value;
-          if (value !== null && status.textContent === T.checking) status.textContent = "";
-        })
-        .then((rendered) => {
-          this.#widget = rendered;
-        })
-        .catch(() => {
-          status.textContent = accountErrorText("unavailable");
-        });
-    }
+    if (signup.turnstileSiteKey !== "") check();
     name.focus({ preventScroll: true });
   }
 
@@ -184,9 +198,13 @@ export class AccountPages {
     const status = this.#line("", "account-status");
     const fail = (e: unknown): void => {
       status.textContent = accountErrorText(e instanceof AccountError ? e.code : "server");
-      if (e instanceof AccountError && e.code === "signed-out") this.#actions.changed(null);
+      // (the session gone: the sign-in's page, not the account's controls, RX29C)
+      if (e instanceof AccountError && e.code === "signed-out") {
+        this.#actions.changed(null);
+        this.showSignIn(ACCOUNT_TEXT.sessionEnded);
+      }
     };
-    const name = this.#input(account.name, 64);
+    const name = this.#input(account.name, NAME_MAX_BYTES); // (as the sign-up's: RX29C)
     const save = this.#button(T.save, () => {
       this.#api
         .rename(name.value)
