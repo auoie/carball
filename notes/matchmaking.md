@@ -66,6 +66,9 @@ anything rating-side beyond what's submitted is PsyNet's, unknowable, so Carball
     too**, so the 900 s run from the latest join; a join of any other match (a 1v1 here) clears it; **cleared as the prompt
     is shown**, whatever the answer, so one prompt per record: a failed Yes isn't offered again, a successful rejoin
     saves a new one; also cleared by Exit to Main Menu and by the match ending while connected, not by a new search.
+    Ours differs there: a search gives the held seat up at our server (RX30C), so the page clears the record when a
+    search starts, and it doesn't offer a rejoin while the deployment's config can't be read (its Yes couldn't start;
+    the record kept for a later visit: RX31).
     Ours keeps it per account (the signed-in account that joined: another account in the browser isn't offered it,
     RV-711). The server takes the player back only while the match runs and their slot is listed (else "Match has
     concluded.", the game's TAErrors text). A rejoin's ticket refused for a ban from another match shows the ban as a

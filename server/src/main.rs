@@ -57,7 +57,7 @@ struct ApiArgs {
 }
 
 const USAGE: &str = "usage: carball-server [--mode direct|queue] [--dev] [--port 4433] [--info-port 4434] [--dev-info on|off] [--info-bind 127.0.0.1] \
-[--meshes DIR] [--team-size 3] [--match-type casual|ranked|private] [--forfeit-vote-wait SECONDS] [--test-goal-after SECONDS] \
+[--meshes DIR] [--team-size 3] [--match-type casual|ranked|private (the open match's; a queue's are ranked)] [--forfeit-vote-wait SECONDS] [--test-goal-after SECONDS] \
 [--cert FULLCHAIN.pem --key KEY.pem] [--allowed-origin ORIGIN[,ORIGIN...]] [--public-host HOST] [--health-port 8081] \
 [--max-sessions N] [--max-per-address N] [--max-per-address-per-minute N] | --healthcheck
 environment (each the flag's default): SERVER_MODE, GAME_PORT, MESHES_DIR, CERT_PATH, KEY_PATH, ALLOWED_ORIGIN, PUBLIC_HOST, HEALTH_PORT;
@@ -120,6 +120,7 @@ fn dev_info_on(args: &Args) -> bool {
 /// The arguments, each flag's default from the environment (`env`: the image's interface, APP-CONTRACT.md). A public
 /// server (a certificate) needs its page origins; a queue server needs a certificate, or `--dev`
 fn parse_args(mut it: impl Iterator<Item = String>, env: impl Fn(&str) -> Option<String>) -> anyhow::Result<Args> {
+    let mut match_type = None;
     let mut args = Args {
         port: 4433,
         info_port: 4434,
@@ -183,12 +184,12 @@ fn parse_args(mut it: impl Iterator<Item = String>, env: impl Fn(&str) -> Option
                 );
             }
             "--match-type" => {
-                args.match_type = match value()?.as_str() {
+                match_type = Some(match value()?.as_str() {
                     "casual" => MatchType::Casual,
                     "ranked" => MatchType::Ranked,
                     "private" => MatchType::Private,
                     other => anyhow::bail!("--match-type {other}: casual, ranked or private"),
-                }
+                });
             }
             "--forfeit-vote-wait" => args.forfeit_vote_wait = Some(value()?.parse()?),
             "--test-goal-after" => args.test_goal_after = Some(value()?.parse()?),
@@ -211,6 +212,13 @@ fn parse_args(mut it: impl Iterator<Item = String>, env: impl Fn(&str) -> Option
     if args.meshes.as_os_str().is_empty() {
         args.meshes = default_meshes();
     }
+    // (the queue's matches are ranked: online play is ranked only, the user's decision; --match-type the open match's,
+    // casual by default, RX32)
+    args.match_type = match (args.queue, match_type) {
+        (true, None | Some(MatchType::Ranked)) => MatchType::Ranked,
+        (true, Some(other)) => anyhow::bail!("--match-type {other:?}: the queue's matches are ranked"),
+        (false, chosen) => chosen.unwrap_or(MatchType::Casual),
+    };
     args.ticket_keys = env("TICKET_PUBLIC_KEYS").filter(|k| !k.trim().is_empty());
     args.ticket_keys_file = env("TICKET_PUBLIC_KEYS_FILE").filter(|k| !k.trim().is_empty()).map(PathBuf::from);
     anyhow::ensure!(
@@ -568,6 +576,15 @@ mod tests {
             assert_eq!(parse(&["--team-size", &good.to_string()]).unwrap().team_size, good);
         }
         assert!(parse(&["--mode", "queue", "--dev"]).unwrap().queue);
+        // (the queue's matches ranked, whatever else asked; the open match casual unless --match-type says, RX32)
+        assert_eq!(parse(&["--mode", "queue", "--dev"]).unwrap().match_type, MatchType::Ranked);
+        assert_eq!(
+            parse(&["--mode", "queue", "--dev", "--match-type", "ranked"]).unwrap().match_type,
+            MatchType::Ranked
+        );
+        assert!(parse(&["--mode", "queue", "--dev", "--match-type", "casual"]).is_err());
+        assert_eq!(parse(&[]).unwrap().match_type, MatchType::Casual);
+        assert_eq!(parse(&["--match-type", "private"]).unwrap().match_type, MatchType::Private);
         assert!(!parse(&["--mode", "direct"]).unwrap().queue);
         assert!(!parse(&[]).unwrap().queue, "direct by default");
         assert!(parse(&["--mode", "ranked"]).is_err());

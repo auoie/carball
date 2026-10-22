@@ -48,6 +48,28 @@
     {
       "channel": "control",
       "message": {
+        "type": "hello",
+        "version": 27,
+        "team": 0,
+        "model": 0,
+        "dodgeDeadzone": 0.8,
+        "steeringSensitivity": 1.0,
+        "airControlSensitivity": 1.25,
+        "autoSkipReplay": false,
+        "key": "0",
+        "name": "",
+        "quickChat": "everyone",
+        "blockNonTactical": false,
+        "intent": "rejoin",
+        "playlist": 0,
+        "token": "1311768467294899695",
+        "ticket": "UmVqb2lu"
+      },
+      "hex": "3100011b000000cdcc4c3f0000803f0000a03f0000000000000000000000000300efcdab90785634120800556d567162326c75"
+    },
+    {
+      "channel": "control",
+      "message": {
         "type": "mute",
         "car": 6,
         "on": true
@@ -446,6 +468,38 @@
         "reason": 3
       },
       "hex": "02008b03"
+    },
+    {
+      "channel": "control",
+      "message": {
+        "type": "refused",
+        "reason": 4
+      },
+      "hex": "02008b04"
+    },
+    {
+      "channel": "control",
+      "message": {
+        "type": "refused",
+        "reason": 5
+      },
+      "hex": "02008b05"
+    },
+    {
+      "channel": "control",
+      "message": {
+        "type": "refused",
+        "reason": 6
+      },
+      "hex": "02008b06"
+    },
+    {
+      "channel": "control",
+      "message": {
+        "type": "refused",
+        "reason": 7
+      },
+      "hex": "02008b07"
     },
     {
       "channel": "control",

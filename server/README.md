@@ -108,5 +108,8 @@ backfill, no bots: a leaver's slot stays empty. A player idle for 30 s of play
 is kicked (warned past 25 s: the game's `IdleKick`, MM-32..38). A queue match doesn't rematch: when the end screen's
 60 s are up the host lets it go and its sessions end.
 `--team-size N` (default 3) is the open match's team size (1 to 8): the uneven-teams kickoff adjustment uses it.
+A queue's matches are ranked (online play is ranked only: the vote's 90 s wait and its "Forfeit" label, the leave
+penalty's warning); `--match-type casual|ranked|private` is the open match's (casual by default), and a queue server
+refuses any other than ranked (RX32).
 `--test-goal-after SECONDS` (browser tests only): each round, the ball is knocked into a goal that long after "go".
 

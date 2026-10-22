@@ -89,7 +89,7 @@ they change there is lost when the newer page returns (RV-425; `client/src/setti
   `commit`, or `worktree` for an image built with `--worktree` (every image).
 - **Volumes:** none.
 - **Health:** `GET /healthz` → `200 ok` (the image's `HEALTHCHECK` uses it).
-- **Resources:** ~10 MB RAM, negligible CPU; a first visit loads ~3.4 MB of files (~1.2 MB gzipped: the page, its script
+- **Resources:** ~14 MB RAM (13.9 MiB measured, RX31), negligible CPU; a first visit loads ~3.4 MB of files (~1.2 MB gzipped: the page, its script
   and three's, the engine's WebAssembly, the arena's meshes, the three cars' models and the HUD's fonts; measured
   2026-10-22). The site is ~27 MB:
   Play vs Bots alone fetches its part, the match host (1.2 MB), onnxruntime (14.2 MB of WebAssembly, 3.7 MB gzipped) and

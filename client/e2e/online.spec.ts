@@ -201,13 +201,12 @@ test("a goal: the game slows down for 3.53 s, the goal replay plays, Space skips
   // 360 ticks after the goal, slowed at first: 3.53 s of real time (the server's clock)
   expect((replay.at - goal.at) / 1000).toBeGreaterThan(3.25);
   expect((replay.at - goal.at) / 1000).toBeLessThan(3.85);
-  // This client's clock slowed with it, down to the curve's 0.1875, keyed to the server's goal tick: the frame its
+  // This client's clock slowed with it, through the curve's 0.1875, keyed to the server's goal tick: the frame its
   // corrected history has the goal in (how many frames it ran depends on its frame rate: under 24 fps, the game's 5
-  // ticks a frame fall behind real time, as software rendering here does)
+  // ticks a frame fall behind real time, as software rendering here does; the curve read at each tick it ran, which a
+  // slow page's frames don't step past, RX31)
   const { goal: slowed } = await stats(page);
-  // (sampled once a frame: a slow page may step past the curve's lowest point)
-  expect(slowed.minDilation).toBeGreaterThanOrEqual(0.1875);
-  expect(slowed.minDilation).toBeLessThan(0.3);
+  expect(slowed.minDilation).toBeCloseTo(0.1875, 3);
   expect(slowed.frame).not.toBeNull();
   // (within the frames the server tick to client frame mapping moved by around the goal: a frame each time the server
   // repeated or skipped an input, which a stalling software-rendered page makes it do often; not a fixed bound, which

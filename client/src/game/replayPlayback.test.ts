@@ -265,6 +265,34 @@ describe("a goal replay's ball hits, the engine's impacts recorded at their fram
     normal: vec3(1, 0, 0),
   });
 
+  it("share one gate across the replay's frames: a dribble's touch at every frame heard 0.15 s apart (RX31)", () => {
+    const recorder = new ReplayRecorder();
+    for (let f = 0; f <= 50; f++) recorder.record(f, frame([[1, car(0, 0)]]));
+    // (a touch into the ball at every tick from 10 to 49: frames 11 to 50)
+    recorder.ballImpacts(Array.from({ length: 40 }, (_, i) => impact(10 + i, 650)));
+    let hits = 0;
+    const view = { root: { visible: true }, posesWheels: false, update: () => undefined, attach: () => undefined };
+    const stub = (): object => new Proxy({}, { get: () => () => undefined });
+    const scene = {
+      renderer: stub(),
+      arena: stub(),
+      effects: stub(),
+      audio: {
+        flipReset: () => undefined,
+        goal: () => undefined,
+        replayFrame: (_cars: unknown, _camera: unknown, replay: { sounds: readonly SoundEvent[] }) => {
+          hits += replay.sounds.filter((e) => e.kind === "ballHit").length;
+        },
+      },
+      ballView: stub(),
+      cars: [[1, view]],
+      flipReset: { visual: false, audio: false },
+    } as unknown as ReplayScene;
+    const playback = new ReplayPlayback({ startTick: 10, goalTick: 30, endTick: 50, scoringTeam: 0, slomo: [], focus: [] }, recorder);
+    for (let i = 0; i < 400 && !playback.done; i++) playback.frame(1 / 240, scene);
+    expect(hits).toBe(3); // (frames 11, 29 and 47: 18 frames apart, as live)
+  });
+
   it("are heard though no live sound was kept: a touch a correction put in the recording, as hard as its impact", () => {
     const recorder = new ReplayRecorder();
     for (let f = 0; f <= 50; f++) recorder.record(f, frame([[1, car(0, 0)]]));

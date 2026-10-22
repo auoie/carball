@@ -1,7 +1,7 @@
 // The queue's edge cases against their own queue server (e2e/servers.ts "queue-edges", ports 14441/14442; its matches on
 // Night, the one map): Free Play during "Joining in" and a claim naming another map than the server's (RV-446). Nothing
 // drawn (`?render=off`).
-import type { Browser, Page } from "@playwright/test";
+import type { Browser, BrowserContext, Page } from "@playwright/test";
 import { expect, hideGamepads, test } from "./fixtures";
 
 const QUEUE = "127.0.0.1:14442";
@@ -150,4 +150,86 @@ test("a ranked match left by accident is offered back for 900 s; a rejoin of a m
   expect(new URL(page.url()).searchParams.has("match")).toBe(false);
   expect(errors).toEqual([]);
   await page.context().close();
+});
+
+test("a 2v2 left by accident: a rejoin into the running match, its lock and record; the first leaver's search refused, a later one's searching (RX31)", async ({
+  browser,
+}) => {
+  test.setTimeout(240_000);
+  const errors: string[] = [];
+  const menu = async (context: BrowserContext): Promise<Page> => {
+    const page = await context.newPage();
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.goto(`/?queue=${QUEUE}&render=off`);
+    await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
+    return page;
+  };
+  const search = async (page: Page): Promise<void> => {
+    const main = page.locator("#main-menu");
+    await main.getByRole("button", { name: /^play$/i }).click({ timeout: 30_000 });
+    await main.getByRole("radio", { name: "2v2", exact: true }).click();
+    await main.getByRole("button", { name: /^find match$/i }).click();
+  };
+  const cars = async (page: Page, n: number): Promise<void> => {
+    await page.waitForURL(/[?&]match(&|$)/, { timeout: 30_000 });
+    await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
+    await expect(page.locator("#net")).toContainText(`${String(n)} cars`, { timeout: 30_000 });
+  };
+  const contexts: BrowserContext[] = [];
+  const pages: Page[] = [];
+  for (let i = 0; i < 4; i++) {
+    const context = await browser.newContext({ viewport: { width: 640, height: 360 } });
+    await hideGamepads(context);
+    contexts.push(context);
+    pages.push(await menu(context));
+  }
+  for (const page of pages) await search(page);
+  for (const page of pages) await cars(page, 4);
+  const [a, b, c, d] = pages as [Page, Page, Page, Page];
+  const [aContext, , cContext, dContext] = contexts as [BrowserContext, BrowserContext, BrowserContext, BrowserContext];
+  // (each match page holds its match's lock, and its ranked seat saved: RX30C, RJ1)
+  const locked = (page: Page): Promise<boolean> =>
+    page.evaluate(async () => ((await navigator.locks.query()).held ?? []).some((l) => l.name?.startsWith("carball.match.") === true));
+  expect(await locked(a)).toBe(true);
+  const savedAt = (page: Page): Promise<number | null> =>
+    page.evaluate(() => {
+      const s = localStorage.getItem("carball.rankedSeat");
+      return s === null ? null : (JSON.parse(s) as { joinedAt: number }).joinedAt;
+    });
+  const firstJoin = await savedAt(c);
+  expect(firstJoin).not.toBeNull();
+  // (a queue's match is ranked: with every seat filled, the pause menu's leave is ABANDON MATCH, asking WARNING and the
+  // ban's question, RV-715, RX32)
+  await b.keyboard.press("Escape");
+  const pause = b.locator("#pause-menu");
+  await pause.getByRole("button", { name: /^abandon match$/i }).click({ timeout: 15_000 });
+  await expect(pause.locator(".match-menu-warning")).toHaveText("Warning");
+  await expect(pause).toContainText("Abandoning a ranked game will temporarily ban you from matchmaking. ARE YOU SURE?");
+  await pause.getByRole("button", { name: /^no$/i }).click();
+  await b.keyboard.press("Escape");
+  // A leaves first (reported: a quitter), then C (a later leaver: not)
+  await a.close();
+  await c.close();
+  // C back: the offer, Yes, into the running match (the three still there), its lock held, its record saved anew
+  const cBack = await menu(cContext);
+  await expect(cBack.locator("#modal .modal-title")).toHaveText("Reconnect", { timeout: 10_000 });
+  await cBack.locator("#modal").getByRole("button", { name: /^yes$/i }).click();
+  await cars(cBack, 3);
+  expect(await locked(cBack)).toBe(true);
+  await expect.poll(() => savedAt(cBack)).toBeGreaterThan(firstJoin ?? 0);
+  // A back: the offer declined; its search refused as the reported quitter's (Refused 7)
+  const aBack = await menu(aContext);
+  await expect(aBack.locator("#modal .modal-title")).toHaveText("Reconnect", { timeout: 10_000 });
+  await aBack.locator("#modal").getByRole("button", { name: /^no$/i }).click();
+  await search(aBack);
+  await expect(aBack.locator("#search-banner")).toContainText("you left a ranked match", { timeout: 30_000 });
+  // D leaves after the first leaver: no quitter; its search goes on, giving its seat up (its record gone with it)
+  await d.close();
+  const dBack = await menu(dContext);
+  await expect(dBack.locator("#modal .modal-title")).toHaveText("Reconnect", { timeout: 10_000 });
+  await dBack.locator("#modal").getByRole("button", { name: /^no$/i }).click();
+  await search(dBack);
+  await expect(dBack.locator("#search-banner .search-summary")).toHaveText("Searching", { timeout: 30_000 });
+  expect(errors).toEqual([]);
+  for (const context of contexts) await context.close();
 });

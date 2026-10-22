@@ -62,7 +62,7 @@ import { SyncError } from "./syncError";
 import { HUD_TEXT, TICK_RATE, clockCue, clockWarning, countdownStep, formatClock, overtimeLabel, shownSeconds } from "./matchClock";
 import { fromThreeVector, rotateRl } from "../render/coords";
 import { postGoalDilation } from "./goalSequence";
-import { type RecordedCar, ReplayRecorder, lastTouchTeam, recordCar } from "./replayRecorder";
+import { type RecordedCar, ReplayRecorder, lastTouchTeam, onlineImpactFrame, recordCar } from "./replayRecorder";
 import { ReplayPlayback } from "./replayPlayback";
 import { Fade } from "../render/fade";
 import { SceneEffects } from "../render/effects";
@@ -140,7 +140,8 @@ export interface OnlineStats {
   /** A goal replay is playing */
   readonly replaying: boolean;
   /** The last goal: the client frame its slow motion is keyed to (the server's goal tick), the first frame its recorded
-   *  history has the ball exploded in, and the slowest dilation its clock has run at since */
+   *  history has the ball exploded in, and the slowest point of the curve its ticks have run through since (each tick's,
+   *  not each drawn frame's: a slow page's frames step past the lowest point, RX31) */
   /** `offsetSpread`: how far the tick to frame mapping moved around the goal (the frames the two may differ by) */
   readonly goal: { readonly frame: number | null; readonly explodedFrame: number | null; readonly minDilation: number; readonly offsetSpread: number };
 }
@@ -430,8 +431,12 @@ export class Online {
     // value from the frame after)
     const dilation = this.#goalFrameNow === null ? 1 : postGoalDilation(this.#predictor.frame + 1 - this.#goalFrameNow);
     const { world, real } = frameTimes(rawSeconds, dilation);
-    this.#minDilation = Math.min(this.#minDilation, dilation);
     const ticks = this.#clock.advance(world);
+    if (this.#goalFrameNow !== null) {
+      for (let k = 1; k <= ticks; k++) {
+        this.#minDilation = Math.min(this.#minDilation, postGoalDilation(this.#predictor.frame + k - this.#goalFrameNow));
+      }
+    }
     for (let i = 0; i < ticks; i++) {
       // (after the match the server freezes every car, and in the goal replay the cars are gone: send it nothing then,
       // so the prediction agrees)
@@ -904,10 +909,7 @@ export class Online {
     const impacts = this.#world.takeImpacts();
     // (the goal replay's ball hits: the engine's car–ball impacts, a correction's re-simulated ones too, at their frames:
     // the world's ticks and the client's frames step together; none kept while a replay plays, RX30C)
-    if (!this.#replay) {
-      const offset = this.#world.tick - this.#predictor.frame;
-      this.#recorder.ballImpacts(impacts, (tick) => tick + 1 - offset);
-    }
+    if (!this.#replay) this.#recorder.ballImpacts(impacts, onlineImpactFrame(this.#world.tick, this.#predictor.frame));
     const triggers = this.#impactTriggers.frame(frameSeconds, impacts, states, this.#carConfigs, this.#localCar);
     for (const t of triggers) if (t.kind === "shake") this.#camera.shakes.play(IMPACT_MEDIUM, null, t.scale, `impact:${String(t.car)}`);
     this.#padsView.update(pads, frameSeconds);

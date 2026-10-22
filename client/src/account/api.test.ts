@@ -33,17 +33,26 @@ describe("the accounts service's calls", () => {
       queueBanUntil: Date.parse("2026-10-18T12:05:00Z"),
     });
     expect(await a.me()).toBeNull();
-    expect(call).toHaveBeenNthCalledWith(1, "/api/me", { method: "GET", headers: {}, credentials: "same-origin", cache: "no-store" });
+    // (each with its time limit's signal, RX31)
+    const signal = expect.any(AbortSignal) as unknown;
+    expect(call).toHaveBeenNthCalledWith(1, "/api/me", { method: "GET", headers: {}, credentials: "same-origin", cache: "no-store", signal });
     await a.rename("Stardust");
     expect(call).toHaveBeenNthCalledWith(3, "/api/me/name", {
       method: "PUT",
       headers: { "X-Carball": "1", "Content-Type": "application/json" },
       credentials: "same-origin",
       cache: "no-store",
+      signal,
       body: JSON.stringify({ name: "Stardust" }),
     });
     await a.signOut();
-    expect(call).toHaveBeenNthCalledWith(4, "/api/signout", { method: "POST", headers: { "X-Carball": "1" }, credentials: "same-origin", cache: "no-store" });
+    expect(call).toHaveBeenNthCalledWith(4, "/api/signout", {
+      method: "POST",
+      headers: { "X-Carball": "1" },
+      credentials: "same-origin",
+      cache: "no-store",
+      signal,
+    });
   });
 
   it("asks deletion in so many words, and makes the account with the name and the Turnstile token", async () => {
@@ -84,6 +93,18 @@ describe("the accounts service's calls", () => {
     expect(await code(reply(403, { error: "forbidden" }))).toBe("server");
     expect(await code(new Response("<html>bad gateway</html>", { status: 502 }))).toBe("unavailable");
     expect(await code(new TypeError("offline"))).toBe("unavailable");
+  });
+
+  it("gives up a call with no answer in its time: unavailable, not a page waiting for ever (RX31)", async () => {
+    const hangs = vi.fn<typeof fetch>(
+      (_input, init) =>
+        new Promise((_, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            reject(init.signal?.reason as Error);
+          });
+        }),
+    );
+    await expect(new AccountsApi(hangs, 10).me()).rejects.toMatchObject({ code: "unavailable" });
   });
 });
 

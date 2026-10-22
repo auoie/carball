@@ -1,16 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { QueueBannedError } from "./tickets";
+import { RefusedError } from "./connection";
+import { REFUSED_CONCLUDED, REFUSED_IN_MATCH, REFUSED_MODE, REFUSED_QUEUE_BANNED, REFUSED_TICKET, REFUSED_TOKEN } from "./protocol";
+import { QueueBannedError, SignedOutError } from "./tickets";
 import {
   type GameServerConfig,
   CLAIM_RETRY_MS,
   CLAIM_TRIES,
   SERVERS_UNREACHABLE,
   claimAddress,
+  claimNotice,
   deployedGameServer,
   holdMatchLock,
   localPage,
   matchLock,
   matchPlayedElsewhere,
+  openClaim,
   pageUrl,
   queueAddress,
   REJOIN_SECONDS,
@@ -97,6 +101,43 @@ describe("the pages' handoffs", () => {
     expect(takeNotice(storage)).toEqual({ modal: "banned", until: 1234 });
     storage.setItem("carball.menuNotice", '{"modal":"banned"}');
     expect(takeNotice(storage)).toEqual({});
+    // (each modal kept as stored: another tab's, a match over, the sign-in gone, RX31)
+    for (const modal of ["elsewhere", "concluded", "signedOut", "lost", "idle"] as const) {
+      storeNotice({ modal }, storage);
+      expect(takeNotice(storage)).toEqual({ modal });
+    }
+  });
+
+  it("says why a claim failed: the match gone, another tab, a match over, a ban, the sign-in gone, else the connection (RX31)", () => {
+    const claim = { token: 7n, playlist: 2, searchedAt: 40 };
+    const rejoin = { ...claim, rejoin: true as const };
+    const refused = (reason: number): RefusedError => new RefusedError(reason);
+    // (a claim's token refused: a match cancelled for someone else, its search again at the queue's front; a rejoin's: lost)
+    expect(claimNotice(refused(REFUSED_TOKEN), claim, "gone")).toEqual({ search: 2, warning: "gone", back: { token: 7n, searchedAt: 40 } });
+    expect(claimNotice(refused(REFUSED_TOKEN), rejoin, "gone")).toEqual({ modal: "lost" });
+    // (a rejoin's seat live in another tab: said so; a claim's Refused 5 is no such thing)
+    expect(claimNotice(refused(REFUSED_IN_MATCH), rejoin, "gone")).toEqual({ modal: "elsewhere" });
+    expect(claimNotice(refused(REFUSED_IN_MATCH), claim, "gone")).toEqual({ modal: "lost" });
+    expect(claimNotice(refused(REFUSED_CONCLUDED), rejoin, "gone")).toEqual({ modal: "concluded" });
+    // (a rejoin's ticket refused for another match's ban: the ban)
+    expect(claimNotice(new QueueBannedError(99_000), rejoin, "gone")).toEqual({ modal: "banned", until: 99_000 });
+    expect(claimNotice(new QueueBannedError(99_000), claim, "gone")).toEqual({ modal: "lost" });
+    expect(claimNotice(new SignedOutError(), rejoin, "gone")).toEqual({ modal: "signedOut" });
+    for (const other of [refused(REFUSED_TICKET), refused(REFUSED_MODE), refused(REFUSED_QUEUE_BANNED), new Error("unreachable")]) {
+      expect(claimNotice(other, rejoin, "gone")).toEqual({ modal: "lost" });
+    }
+  });
+
+  it("opens a claim's session once more after its ticket is refused, not after any other refusal (RX30C)", async () => {
+    const once = vi.fn<() => Promise<string>>().mockRejectedValueOnce(new RefusedError(REFUSED_TICKET)).mockResolvedValue("in");
+    expect(await openClaim(once)).toBe("in");
+    expect(once).toHaveBeenCalledTimes(2);
+    const twice = vi.fn<() => Promise<string>>().mockRejectedValue(new RefusedError(REFUSED_TICKET));
+    await expect(openClaim(twice)).rejects.toBeInstanceOf(RefusedError);
+    expect(twice).toHaveBeenCalledTimes(2);
+    const gone = vi.fn<() => Promise<string>>().mockRejectedValue(new RefusedError(REFUSED_TOKEN));
+    await expect(openClaim(gone)).rejects.toBeInstanceOf(RefusedError);
+    expect(gone).toHaveBeenCalledTimes(1);
   });
 
   it("tries a claim's config.json and its ticket again inside its window, not a sign-in gone or a ban (RX31)", async () => {
@@ -183,6 +224,20 @@ describe("the pages' handoffs", () => {
       true,
     ]);
     expect([localPage(false, "carball.zolt.top"), localPage(false, "192.168.1.2"), localPage(false, "127.example")]).toEqual([false, false, false]);
+    // (by default the page's own host: what keeps a deployment's page closed, RX31)
+    vi.stubGlobal("location", { hostname: "carball.zolt.top" });
+    expect(localPage(false)).toBe(false);
+    vi.stubGlobal("location", { hostname: "127.0.0.1" });
+    expect(localPage(false)).toBe(true);
+    vi.unstubAllGlobals();
+    // (config.json not answering in time: unreachable, not a page waiting for ever, RX31)
+    const hangs = (signal: AbortSignal): Promise<Response> =>
+      new Promise((_, reject) => {
+        signal.addEventListener("abort", () => {
+          reject(signal.reason as Error);
+        });
+      });
+    expect(await deployedGameServer(hangs, false, 10)).toEqual(unreachable);
     // (a deployment's that can't be read: closed, RX29C)
     expect(await deployedGameServer(json({ gameServer: "http://insecure:4433/play" }))).toEqual(unreachable);
     expect(await deployedGameServer(json({}))).toEqual(unreachable);
@@ -192,11 +247,20 @@ describe("the pages' handoffs", () => {
     await expect(queueAddress(new URLSearchParams(""), "carball.zolt.top", () => Promise.resolve(unreachable))).rejects.toThrow(SERVERS_UNREACHABLE);
     // (the deployment's: by name, its real certificate; a development page's ?queue wins over it)
     const deployed = (): Promise<GameServerConfig> => Promise.resolve({ kind: "deployed", url: "https://game.carball.zolt.top:4433/play" });
-    expect(await queueAddress(new URLSearchParams(""), "carball.zolt.top", deployed)).toEqual({
+    const deployedAddress = await queueAddress(new URLSearchParams(""), "carball.zolt.top", deployed);
+    expect(deployedAddress).toEqual({
       url: "https://game.carball.zolt.top:4433/play",
       certHash: null,
       ticket: expect.any(Function) as unknown,
     });
+    // (its tickets the accounts service's: a search's, and a rejoin's for that match, which a ban from it doesn't stop:
+    // RV-702, RX31)
+    const post = vi.fn<typeof fetch>(() => Promise.resolve(new Response(JSON.stringify({ ticket: "UmVq" }))));
+    vi.stubGlobal("fetch", post);
+    expect(await deployedAddress.ticket?.(0xabcn)).toBe("UmVq");
+    expect(String((post.mock.calls[0] as unknown[])[0])).toBe("/api/ticket?rejoin=0000000000000abc");
+    expect(await deployedAddress.ticket?.()).toBe("UmVq");
+    expect(String((post.mock.calls[1] as unknown[])[0])).toBe("/api/ticket");
     // ?queue= wins: the development server's info, its certificate by hash, config.json not even read (RX13's C7)
     const info = vi.fn(() => Promise.resolve(new Response(JSON.stringify({ port: 14439, certHash: "ab".repeat(32) }))));
     vi.stubGlobal("fetch", info);

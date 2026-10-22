@@ -529,6 +529,9 @@ pub struct Game {
     /// The keys that started a forfeit vote this match: only grows (`ForfeitInitiatorIDs`: a starter who rejoins can't
     /// start another, `CheckInitiatedForfeit`)
     initiators: BTreeSet<u64>,
+    /// A seat just taken over (`replaced`): its team and its old session's answer in that team's running vote (none: not
+    /// a voter), which the account's new session, joining next, takes over (RX32)
+    taken_over: Option<(u8, Option<bool>)>,
     /// The keys this server gave out (RV-239: the server's, so two tabs can't share one; 64 random bits, so one doesn't
     /// tell another: SEC-9); a new match keeps only those of the players here (RV-270)
     issued_keys: BTreeSet<u64>,
@@ -653,6 +656,7 @@ impl Game {
             forfeit_vote_wait: None,
             votes: [None, None],
             initiators: BTreeSet::new(),
+            taken_over: None,
             issued_keys: BTreeSet::new(),
             forfeiting: None,
             left_teams: Vec::new(),
@@ -769,11 +773,13 @@ impl Game {
         let (model, preset) = protocol::model_preset(request.model);
         let car_id = self.arena.add_car(team, preset);
         eprintln!("player {id} joined team {team} (car {car_id})");
-        // (a running vote takes the joiner as a voter: `AddToTeam`)
+        // (a running vote takes the joiner as a voter: `AddToTeam`; a seat's new session after a takeover with its old
+        // session's answer, RX32)
+        let carried = self.taken_over.take().filter(|&(t, _)| t == team).and_then(|(_, yes)| yes);
         if let Some(vote) = self.votes[usize::from(team)].as_mut()
             && vote.finished.is_none()
         {
-            vote.voters.insert(id, false);
+            vote.voters.insert(id, carried.unwrap_or(false));
         }
         self.arena.set_car_preferences(
             car_id,
@@ -1007,14 +1013,18 @@ impl Game {
                 self.votes = [None, None];
                 self.reenable_vote_starters(1 - team);
             }
-            // (the leaver leaves their team's vote, which may pass without them: `RemoveFromTeam`)
-            if let Some(vote) = self.votes[usize::from(team)].as_mut()
-                && vote.finished.is_none()
-            {
-                vote.voters.remove(&id);
+            // (the leaver leaves their team's vote, which may pass without them: `RemoveFromTeam`; a seat taken over isn't
+            // left: its answer kept for its new session, no vote decided by the swap, RX32)
+            let answer = self.votes[usize::from(team)]
+                .as_mut()
+                .filter(|vote| vote.finished.is_none())
+                .and_then(|vote| vote.voters.remove(&id));
+            if replaced {
+                self.taken_over = Some((team, answer));
+            } else {
+                self.check_vote(team);
+                self.reenable_vote_starters(team);
             }
-            self.check_vote(team);
-            self.reenable_vote_starters(team);
             // Their car explodes where it is (`RemovePlayerFromTeam` -> `Car.Demolish(None)`: no demolition counted, no
             // phase test), then goes: only a live car, not one already demolished (a podium's loser has none), and none in
             // the goal replay (`StartReplay` destroys the cars; ours stay in the arena: RV-235, RV-264)
@@ -3606,6 +3616,31 @@ mod tests {
         game.leave(2);
         let vote = last_vote(&mut rxs[0]).unwrap();
         assert_eq!((vote.state, vote.yes, vote.required), (protocol::VOTE_RUNNING, 0, 1));
+    }
+
+    /// RX32: a seat taken over mid-vote keeps its answer for the account's new session: a mate's lone yes doesn't pass
+    /// at the swap, and the starter's yes carries over
+    #[test]
+    fn a_takeover_keeps_the_seats_vote_answer() {
+        for match_type in [MatchType::Ranked, MatchType::Casual] {
+            let (mut game, _rxs) = match_with(match_type, 2, &[(1, 0, 11), (2, 0, 12), (3, 1, 13), (4, 1, 14)]);
+            game.clock_ticks = 200 * TICK_RATE;
+            game.vote_forfeit(1); // (1 starts it, its yes; 2 hasn't answered)
+            game.replaced(2);
+            let (tx, _rx) = channel(TEST_QUEUE);
+            game.join(5, JoinRequest { team: 0, key: 12, ..REQUEST }, tx);
+            assert_eq!((game.winner, game.forfeit), (None, false), "not passed at the swap");
+            let vote = game.votes[0].as_ref().unwrap();
+            assert_eq!((vote.yes(), vote.voters.len(), vote.voters.get(&5)), (1, 2, Some(&false)));
+            // (the starter's own seat taken over: its yes with its new session)
+            game.replaced(1);
+            let (tx, _rx) = channel(TEST_QUEUE);
+            game.join(6, JoinRequest { team: 0, key: 11, ..REQUEST }, tx);
+            assert_eq!(game.votes[0].as_ref().unwrap().voters.get(&6), Some(&true));
+            // (the other new session's yes: unanimous, the team forfeits)
+            game.vote_forfeit(5);
+            assert_eq!((game.winner, game.forfeit), (Some(1), true));
+        }
     }
 
     #[test]

@@ -1,7 +1,9 @@
 // The pages' handoffs (the queue: notes/matchmaking.md v1 checklist): the menu page searches and hands the match page its
 // claim (the slot's one-time token); the match page hands the menu page back a notice when it ends (a modal to show, a
 // search to start: Play Again, a cancelled match). Kept in sessionStorage, this tab's alone and out of the URL's history.
-import { type ServerAddress, devServerAddress, serverHost } from "./connection";
+import { RefusedError, type ServerAddress, devServerAddress, serverHost } from "./connection";
+import { REFUSED_CONCLUDED, REFUSED_IN_MATCH, REFUSED_TICKET, REFUSED_TOKEN } from "./protocol";
+import { REQUEST_TIMEOUT_MS } from "../account/api";
 import { QueueBannedError, SignedOutError, accountTicket, devTicket } from "./tickets";
 
 const CLAIM_KEY = "carball.claim";
@@ -163,13 +165,15 @@ export function localPage(dev: boolean = import.meta.env.DEV, host: string = typ
  *  (404, or a development server's page in its place): a development page. Anything else, and none on any other page (a
  *  deployment's config missing answers 404, or its site's page): unreachable, which fails closed (RX29C) */
 export async function deployedGameServer(
-  fetchConfig: () => Promise<Response> = async () => fetch("/config.json", { cache: "no-store" }),
+  fetchConfig: (signal: AbortSignal) => Promise<Response> = async (signal) => fetch("/config.json", { cache: "no-store", signal }),
   onLocalPage: boolean = localPage(),
+  timeoutMs = REQUEST_TIMEOUT_MS,
 ): Promise<GameServerConfig> {
   const unreachable = { kind: "unreachable" } as const;
   let response: Response;
   try {
-    response = await fetchConfig();
+    // (one that hangs given up: unreachable, not a Find Match that does nothing, RX31)
+    response = await fetchConfig(AbortSignal.timeout(timeoutMs));
   } catch {
     return unreachable;
   }
@@ -238,6 +242,34 @@ export async function claimAddress(
         (e) => !answer(e),
       ),
   };
+}
+
+/** A claim's session opened, tried once more with a fresh ticket if the server refuses its ticket (a server restarted, a
+ *  key rotated, the clocks apart): the claim's token isn't spent by it (RX30C) */
+export async function openClaim<T>(open: () => Promise<T>): Promise<T> {
+  try {
+    return await open();
+  } catch (e) {
+    if (e instanceof RefusedError && e.reason === REFUSED_TICKET) return open();
+    throw e;
+  }
+}
+
+/** What the menu does after a claim that failed (`matchGone`: the search's warning line, MM-18): refused while still in
+ *  its time, a match cancelled for someone else, so back to the queue's front (RV-367); a rejoin's seat live in another
+ *  tab: said so, the seat kept (RX30C); a match over: its offer gone; a rejoin's ticket refused for a ban from another
+ *  match: the ban (RX31); the sign-in gone: the menu's sign-in (RX29C); anything else (the server not reached, a ticket
+ *  refused twice): told, a rejoin still offered (RX30C) */
+export function claimNotice(e: unknown, claim: Claim, matchGone: string): MenuNotice {
+  const refused = e instanceof RefusedError ? e.reason : null;
+  if (refused === REFUSED_TOKEN && !claim.rejoin) {
+    return { search: claim.playlist, warning: matchGone, back: { token: claim.token, searchedAt: claim.searchedAt } };
+  }
+  if (refused === REFUSED_IN_MATCH && claim.rejoin) return { modal: "elsewhere" };
+  if (refused === REFUSED_CONCLUDED) return { modal: "concluded" };
+  if (e instanceof QueueBannedError && claim.rejoin) return { modal: "banned", until: e.until };
+  if (e instanceof SignedOutError) return { modal: "signedOut" };
+  return { modal: "lost" };
 }
 
 /** The Web Lock a match page holds while it plays its match (`navigator.locks`): another tab of this browser offers no

@@ -142,6 +142,14 @@ export class ReplayRecorder {
 /** A car as recorded */
 /** The team of the car that last touched the ball (the newest touch tick of any car's: HitTeamNum, VT-10), null before
  *  any since the kickoff */
+/** Online's frame of an engine impact: the world at tick `worldTick` stands at the client's frame `frame` (its ticks and
+ *  the frames step together, one offset apart), and an impact reported in the step from tick t is the frame after it; a
+ *  correction's re-simulated ones too (RX30C, RX31) */
+export function onlineImpactFrame(worldTick: number, frame: number): (tick: number) => number {
+  const offset = worldTick - frame;
+  return (tick) => tick + 1 - offset;
+}
+
 export function lastTouchTeam(world: {
   carIds(): number[];
   car(id: number): Pick<CarState, "team">;

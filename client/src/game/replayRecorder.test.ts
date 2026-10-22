@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { SoundEvent } from "../audio/detect";
 import type { Impact } from "../engine/world";
 import { vec3 } from "../math/vec";
-import { type RecordedFrame, ReplayRecorder, replayedSound } from "./replayRecorder";
+import { type RecordedFrame, ReplayRecorder, onlineImpactFrame, replayedSound } from "./replayRecorder";
 
 const AT = vec3(1, 2, 3);
 const FRAME: RecordedFrame = {
@@ -49,6 +49,14 @@ describe("the replay's sounds", () => {
 });
 
 describe("the replay's ball impacts", () => {
+  it("online, at the client's frames: the world's tick after each impact's step, one offset apart (RX31)", () => {
+    // (the world at tick 1005 is the client's frame 1000: the last step's impact (tick 1004) is frame 1000; one a
+    // correction re-simulated from tick 990 is frame 986)
+    const frameOf = onlineImpactFrame(1005, 1000);
+    expect([frameOf(1004), frameOf(990)]).toEqual([1000, 986]);
+    expect(onlineImpactFrame(1000, 1000)(999)).toBe(1000); // (no offset: free play's rule)
+  });
+
   it("keep each frame's strongest car–ball impact at the frame after its step; a frame recorded again drops its own", () => {
     const r = new ReplayRecorder(8);
     for (let f = 0; f < 6; f++) r.record(f, FRAME);

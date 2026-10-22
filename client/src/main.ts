@@ -7,17 +7,18 @@ import { Freeplay } from "./game/freeplay";
 import { Online } from "./game/online";
 import type { SessionEnd } from "./game/sessionEnd";
 import { Matchmaking, OWN_SEARCH_TEXT, PLAYLISTS } from "./game/matchmaking";
-import { Connection, type MatchSession, RefusedError, devServerAddress } from "./net/connection";
+import { Connection, type MatchSession, devServerAddress } from "./net/connection";
 import { joinPreferences } from "./net/joinPreferences";
-import { REFUSED_CONCLUDED, REFUSED_IN_MATCH, REFUSED_TICKET, REFUSED_TOKEN } from "./net/protocol";
 import {
   type MenuNotice,
   type RankedSeat,
   claimAddress,
+  claimNotice,
   clearRankedSeat,
   deployedGameServer,
   holdMatchLock,
   matchPlayedElsewhere,
+  openClaim,
   pageUrl,
   queueAddress,
   rankedSeat,
@@ -200,31 +201,11 @@ async function main(): Promise<void> {
     // (a development server's open match, ?server=host:infoPort; or the queue's match, its claim)
     let address;
     let match: MatchSession = { intent: "join" };
-    // (a claim that fails: back to the menu; the match gone, a search again with a warning line, MM-18; the server not
-    // reached, the connection-lost modal. Its config.json and its ticket tried again inside its window (RX31), and a
-    // ticket the server refuses (a server restarted, a key rotated, the clocks apart) once more with a fresh one: the
-    // claim's token isn't spent by it, RX30C)
+    // (a claim that fails: back to the menu with what to show (claimNotice). Its config.json and its ticket tried again
+    // inside its window (claimAddress, RX31), a ticket the server refuses once more (openClaim, RX30C))
     const claimFailed = (e: unknown): void => {
       if (!claim) return;
-      // (refused while still in its time: a match cancelled for someone else, so back to the queue's front, RV-367; a
-      // rejoin of a match over: its offer gone; a rejoin's ticket refused for a ban from another match: the ban, RX31; the
-      // sign-in gone: the menu's sign-in, RX29C; anything else (the server not reached, a ticket refused twice): told, a
-      // rejoin still offered, RX30C)
-      const back = { token: claim.token, searchedAt: claim.searchedAt };
-      const refused = e instanceof RefusedError ? e.reason : null;
-      storeNotice(
-        refused === REFUSED_TOKEN && !claim.rejoin
-          ? { search: claim.playlist, warning: OWN_SEARCH_TEXT.matchGone, back }
-          : refused === REFUSED_IN_MATCH && claim.rejoin
-            ? { modal: "elsewhere" } // (its seat's session live: another tab plays it, the seat kept, RX30C)
-            : refused === REFUSED_CONCLUDED
-              ? { modal: "concluded" }
-              : e instanceof QueueBannedError && claim.rejoin
-                ? { modal: "banned", until: e.until }
-                : e instanceof SignedOutError
-                  ? { modal: "signedOut" }
-                  : { modal: "lost" },
-      );
+      storeNotice(claimNotice(e, claim, OWN_SEARCH_TEXT.matchGone));
       location.replace(pageUrl("menu", location));
     };
     if (claim) {
@@ -242,10 +223,7 @@ async function main(): Promise<void> {
       address = await devServerAddress(host, Number(port));
     }
     const open = (): ReturnType<typeof Connection.open> => Connection.open(address, joinPreferences(settings), match);
-    const opened = open().catch((e: unknown) => {
-      if (claim && e instanceof RefusedError && e.reason === REFUSED_TICKET) return open();
-      throw e;
-    });
+    const opened = claim ? openClaim(open) : open();
     opened.catch(claimFailed);
     const session = await opened;
     // (every join saves the record anew, a rejoin's too: a ranked 2v2 or 3v3 offered back for 900 s from this join if it's
@@ -677,6 +655,12 @@ async function main(): Promise<void> {
         accountUnknown = true;
       }
     };
+    // (a search gives up the ranked seat held for a rejoin at the server (RX30C), so its saved record goes too: no offer
+    // of a seat the server let go, RX31)
+    const search = (...args: Parameters<Matchmaking["start"]>): void => {
+      clearRankedSeat();
+      matchmaking.start(...args);
+    };
     mainMenu = new MainMenu(document.body, {
       garage: (choice) => {
         freeplay.setCar(choice);
@@ -713,7 +697,7 @@ async function main(): Promise<void> {
             showAccountPage(ACCOUNT_TEXT.findMatchNeedsAccount);
             return;
           }
-          matchmaking.start(playlist);
+          search(playlist);
           mainMenu?.focusFreePlay();
         });
       },
@@ -825,7 +809,9 @@ async function main(): Promise<void> {
       if (!seat) return;
       void accountsReady.then(async () => {
         if (seat.account !== (account?.id ?? null)) return; // (another account's, in this browser: RX30C)
+        if (deploymentDown) return; // (its Yes couldn't start: kept for a later visit, RX31)
         if (await matchPlayedElsewhere(seat.matchId)) return; // (another tab of this browser plays it: RX30C)
+        if (rankedSeat()?.matchId !== seat.matchId) return; // (given up meanwhile by a search: RX31)
         offerSeat(seat);
       });
     };
@@ -875,7 +861,7 @@ async function main(): Promise<void> {
     if (notice?.search !== undefined) {
       // (back from a match cancelled for someone else: its token, the queue's front again, and its search's clock: RV-367)
       const back = notice.back ? { token: notice.back.token, searchedFor: (Date.now() - notice.back.searchedAt) / 1000 } : undefined;
-      matchmaking.start(notice.search, notice.warning, back);
+      search(notice.search, notice.warning, back);
     }
     (window as unknown as { carballMatchmaking?: unknown }).carballMatchmaking = () => ({ state: matchmaking.state });
     // For screenshots and the browser tests

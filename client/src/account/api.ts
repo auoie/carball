@@ -40,6 +40,10 @@ export interface Signup {
 export type ApiError =
   "signed-out" | "no-signup" | "name-empty" | "name-too-long" | "turnstile" | "banned" | "blocked" | "taken" | "busy" | "unavailable" | "server";
 
+/** How long the page waits for each accounts call, and for config.json (ms), before it says they can't be reached: one
+ *  that hangs isn't a button that does nothing (RX31) */
+export const REQUEST_TIMEOUT_MS = 10_000;
+
 /** A call the API refused, or couldn't answer */
 export class AccountError extends Error {
   constructor(readonly code: ApiError) {
@@ -60,7 +64,10 @@ export function signInUrl(provider: Provider): string {
 }
 
 export class AccountsApi {
-  constructor(private readonly call: typeof fetch = (input, init) => fetch(input, init)) {}
+  constructor(
+    private readonly call: typeof fetch = (input, init) => fetch(input, init),
+    private readonly timeoutMs = REQUEST_TIMEOUT_MS,
+  ) {}
 
   /** The signed-in account; null signed out */
   async me(): Promise<Account | null> {
@@ -113,10 +120,11 @@ export class AccountsApi {
         headers,
         credentials: "same-origin",
         cache: "no-store",
+        signal: AbortSignal.timeout(this.timeoutMs),
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
     } catch {
-      throw new AccountError("unavailable"); // (offline, or the API not reached)
+      throw new AccountError("unavailable"); // (offline, the API not reached, or no answer in time: RX31)
     }
   }
 
