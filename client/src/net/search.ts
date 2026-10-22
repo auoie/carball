@@ -112,6 +112,7 @@ export class Search {
           });
         else if (m.type === "refused")
           this.#end(() => {
+            this.handlers.refused?.(m.reason);
             this.handlers.failed(refusalText(m.reason));
           });
         else if (m.type === "searchCooldown")

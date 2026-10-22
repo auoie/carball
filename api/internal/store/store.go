@@ -844,6 +844,17 @@ func (s *Store) inTx(ctx context.Context, fn func(pgx.Tx) error) error {
 	return err
 }
 
+// inTxValue is inTx for a transaction with an answer: the last try's (RX32)
+func inTxValue[T any](ctx context.Context, s *Store, fn func(pgx.Tx) (T, error)) (T, error) {
+	var out T
+	err := s.inTx(ctx, func(tx pgx.Tx) error {
+		var err error
+		out, err = fn(tx)
+		return err
+	})
+	return out, err
+}
+
 // conflicted: a transaction Postgres broke off for another one's sake (a deadlock, a serialization failure)
 func conflicted(err error) bool {
 	var pgErr *pgconn.PgError
@@ -863,28 +874,27 @@ func IsDataError(err error) bool {
 // exist and their ratings in the playlist locked, `rate` given them (an account without one: absent) to return each
 // one's new rating; written, with the players' rows (a deleted account's: a placeholder, not rated)
 func (s *Store) RecordResult(ctx context.Context, r Result, rate func(current map[string]*Rating) map[string]Rating, now time.Time) (bool, error) {
-	recorded := false
-	err := s.inTx(ctx, func(tx pgx.Tx) error {
-		recorded = false // (a try broken off by a conflict: the next one's own)
+	// (each try's own answer: one broken off by a conflict leaves none behind, RX32)
+	return inTxValue(ctx, s, func(tx pgx.Tx) (bool, error) {
 		tag, err := tx.Exec(ctx, `INSERT INTO ranked_results (match_id, server, playlist, winning_team, received_at)
 			VALUES ($1, $2, $3, $4, $5) ON CONFLICT (match_id) DO NOTHING`, r.Match, r.Server, r.Playlist, r.WinningTeam, now)
 		if err != nil || tag.RowsAffected() == 0 {
-			return err
+			return false, err
 		}
 		accounts := make([]string, len(r.Players))
 		for i, p := range r.Players {
 			accounts[i] = p.Account
 			if err := spendTicket(ctx, tx, SpentTicket{Nonce: p.Nonce, IssuedAt: p.IssuedAt, Match: r.Match}, now); err != nil {
-				return err
+				return false, err
 			}
 		}
 		rows, err := tx.Query(ctx, `SELECT id::text FROM accounts WHERE id = ANY($1::uuid[]) ORDER BY id FOR UPDATE`, accounts)
 		if err != nil {
-			return err
+			return false, err
 		}
 		existing, err := pgx.CollectRows(rows, pgx.RowTo[string])
 		if err != nil {
-			return err
+			return false, err
 		}
 		current := map[string]*Rating{}
 		for _, a := range existing {
@@ -892,7 +902,7 @@ func (s *Store) RecordResult(ctx context.Context, r Result, rate func(current ma
 		}
 		held, err := ratingsByAccount(ctx, tx, existing, r.Playlist)
 		if err != nil {
-			return err
+			return false, err
 		}
 		for a, rt := range held {
 			current[a] = &rt
@@ -912,19 +922,17 @@ func (s *Store) RecordResult(ctx context.Context, r Result, rate func(current ma
 					rating = excluded.rating, deviation = excluded.deviation, volatility = excluded.volatility,
 					games = excluded.games, last_played = excluded.last_played`,
 					p.Account, r.Playlist, n.Rating, n.Deviation, n.Volatility, n.Games, n.LastPlayed); err != nil {
-					return err
+					return false, err
 				}
 			}
 			if _, err := tx.Exec(ctx, `INSERT INTO ranked_result_players (match_id, account_id, team, quitter, seconds, nonce,
 				rating_before, rating_after) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
 				r.Match, account, p.Team, p.Quitter, p.Seconds, p.Nonce[:], before, after); err != nil {
-				return err
+				return false, err
 			}
 		}
-		recorded = true
-		return nil
+		return true, nil
 	})
-	return recorded, err
 }
 
 func ratingsByAccount(ctx context.Context, tx pgx.Tx, accounts []string, playlist int) (map[string]Rating, error) {

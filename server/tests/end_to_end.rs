@@ -543,6 +543,99 @@ async fn a_queue_with_tickets_takes_only_good_ones_and_binds_each_seat_to_its_ac
     }
 }
 
+/// RX31, RX32: a lost connection's leaver who searches again inside its 5 s window is refused once the window ends and
+/// the leave is reported, as a quitter's later search would be (Refused 7): its waiting search let go by the game loop
+#[tokio::test(flavor = "multi_thread")]
+async fn a_lost_leavers_waiting_search_is_refused_when_its_leave_is_reported() {
+    engine::init(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../out/arena/collision_meshes"))).unwrap();
+    let (identity, cert_hash) = net::dev_identity().unwrap();
+    // (a short idle timeout: a vanished client is lost in 1.5 s)
+    let config = wtransport::ServerConfig::builder()
+        .with_bind_default(0)
+        .with_identity(identity)
+        .keep_alive_interval(Some(Duration::from_millis(300)))
+        .max_idle_timeout(Some(Duration::from_millis(1500)))
+        .unwrap()
+        .build();
+    let server = Endpoint::server(config).unwrap();
+    let port = server.local_addr().unwrap().port();
+    let (to_game, messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
+    let playlists = [1, 2, 3]
+        .map(|team_size| carball_server::match_host::Playlist {
+            team_size,
+            match_type: carball_server::game::MatchType::Ranked,
+            forfeit_vote_wait: None,
+        })
+        .to_vec();
+    std::thread::spawn(move || {
+        game_loop::run(messages, game_loop::Mode::Queue(playlists), None, heartbeat(), Instant::now())
+    });
+    let tickets = Arc::new(Tickets::from_list("").unwrap().with_dev_key().unwrap());
+    let limits = NetLimits { tickets: Some(tickets.clone()), ..open_limits() };
+    tokio::spawn(net::accept_loop(Arc::new(server), to_game, limits));
+    let ticket = |account: u8, name: &str| {
+        tickets.dev_ticket([account; 16], name, [DEFAULT_RATING; 3], Purpose::Search, unix_now()).unwrap()
+    };
+    let (a, b) = tokio::join!(
+        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_SEARCH, 1, 0, ticket(1, "Ada"))),
+        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_SEARCH, 1, 0, ticket(2, "Bea"))),
+    );
+    let (Control::MatchFound { token: ta, .. }, ..) = a else { panic!("{:?}", a.0) };
+    let (Control::MatchFound { token: tb, .. }, ..) = b else { panic!("{:?}", b.0) };
+    // (Ada's claim on a runtime of its own, so that its connection can vanish: no close, a lost connection)
+    let claim = ticketed_hello(protocol::INTENT_CLAIM, 0, ta, ticket(1, "Ada"));
+    let (welcomed_tx, welcomed_rx) = std::sync::mpsc::channel::<bool>();
+    let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
+    let client = std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap();
+        rt.block_on(async {
+            let config = ClientConfig::builder()
+                .with_bind_default()
+                .with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(cert_hash)])
+                .build();
+            let connection =
+                Endpoint::client(config).unwrap().connect(format!("https://localhost:{port}/play")).await.unwrap();
+            let (mut send, mut recv) = connection.open_bi().await.unwrap().await.unwrap();
+            send.write_all(&claim).await.unwrap();
+            let reply = tokio::time::timeout(Duration::from_secs(10), read_control(&mut recv)).await;
+            welcomed_tx.send(matches!(reply, Ok(Control::Welcome { .. }))).unwrap();
+            let _ = go_rx.recv();
+            std::mem::forget((connection, send, recv));
+        });
+        rt.shutdown_background();
+    });
+    let (cb, _conn_b, _recv_b) =
+        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_CLAIM, 0, tb, ticket(2, "Bea"))).await;
+    assert!(matches!(cb, Control::Welcome { .. }), "{cb:?}");
+    assert!(welcomed_rx.recv().unwrap(), "Ada in the match");
+    // (the match on, its penalty armed: Ada's connection vanishes; lost at the 1.5 s timeout, then its 5 s window)
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    go_tx.send(()).unwrap();
+    client.join().unwrap();
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    // (inside the window, not yet reported: her search waits in the queue, then is refused when the report is made)
+    let config = ClientConfig::builder()
+        .with_bind_default()
+        .with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(cert_hash)])
+        .build();
+    let connection = Endpoint::client(config).unwrap().connect(format!("https://localhost:{port}/play")).await.unwrap();
+    let (mut send, mut recv) = connection.open_bi().await.unwrap().await.unwrap();
+    send.write_all(&ticketed_hello(protocol::INTENT_SEARCH, 1, 0, ticket(1, "Ada"))).await.unwrap();
+    let started = Instant::now();
+    let refused = loop {
+        match next_control(&mut recv, Duration::from_secs(12)).await {
+            Some(Control::Refused { reason }) => break Some(reason),
+            Some(_) => continue,
+            None => break None,
+        }
+    };
+    assert_eq!(refused, Some(protocol::REFUSED_QUEUE_BANNED));
+    assert!(
+        started.elapsed() > Duration::from_millis(500),
+        "refused at the report, not at once (it waited in the queue)"
+    );
+}
+
 /// A search's session, its control stream kept for the test to close (as the page's `finish`)
 async fn search_session(
     port: u16,

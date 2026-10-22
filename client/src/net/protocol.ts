@@ -101,6 +101,9 @@ export interface MatchState {
   readonly canVoteForfeit: boolean;
   /** The match ended with no contest: every team left (ForceNoContest) */
   readonly noContest: boolean;
+  /** The leave penalty is in force (bHasLeaveMatchPenalty: a public match's lobby full, no winner yet), the server's:
+   *  the warning before leaving goes by it (flag bit 5, added within version 27, RX32) */
+  readonly leavePenalty: boolean;
   /** The end screen's countdown to the next match, whole seconds (0 in the other phases) */
   readonly secondsLeft: number;
 }
@@ -626,7 +629,9 @@ export function encodeControl(m: ControlMessage): Uint8Array {
       w.u8(0x84);
       w.u32(m.serverTick);
       w.u8(MATCH_PHASES.indexOf(m.phase));
-      w.u8((m.overtime ? 1 : 0) | (m.clockRunning ? 2 : 0) | (m.forfeit ? 4 : 0) | (m.canVoteForfeit ? 8 : 0) | (m.noContest ? 16 : 0));
+      w.u8(
+        (m.overtime ? 1 : 0) | (m.clockRunning ? 2 : 0) | (m.forfeit ? 4 : 0) | (m.canVoteForfeit ? 8 : 0) | (m.noContest ? 16 : 0) | (m.leavePenalty ? 32 : 0),
+      );
       w.u32(m.clockTicks);
       w.u8(m.score[0]);
       w.u8(m.score[1]);
@@ -796,6 +801,7 @@ export function decodeControl(body: Uint8Array): ControlMessage {
         forfeit: (flags & 4) !== 0,
         canVoteForfeit: (flags & 8) !== 0,
         noContest: (flags & 16) !== 0,
+        leavePenalty: (flags & 32) !== 0,
         secondsLeft,
       };
     }

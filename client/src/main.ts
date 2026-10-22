@@ -22,6 +22,7 @@ import {
   pageUrl,
   queueAddress,
   rankedSeat,
+  seatSearch,
   storeClaim,
   storeNotice,
   storeRankedSeat,
@@ -501,7 +502,20 @@ async function main(): Promise<void> {
                   },
                 }
               : address;
-            if (!cancelled) search = Search.start(watched, playlist, token, handlers);
+            // (its hello sent: the seat it gives up at the server, its saved record too; back if the server refused it
+            // first: seatSearch, RX31, RX32)
+            const seat = seatSearch(account?.id ?? null);
+            const reached = {
+              ...handlers,
+              searching: () => {
+                seat.sent();
+                handlers.searching();
+              },
+              refused: (reason: number) => {
+                seat.refused(reason);
+              },
+            };
+            if (!cancelled) search = Search.start(watched, playlist, token, reached);
           })
           .catch((e: unknown) => {
             if (!cancelled) handlers.failed(e instanceof Error ? e.message : String(e));
@@ -655,10 +669,7 @@ async function main(): Promise<void> {
         accountUnknown = true;
       }
     };
-    // (a search gives up the ranked seat held for a rejoin at the server (RX30C), so its saved record goes too: no offer
-    // of a seat the server let go, RX31)
     const search = (...args: Parameters<Matchmaking["start"]>): void => {
-      clearRankedSeat();
       matchmaking.start(...args);
     };
     mainMenu = new MainMenu(document.body, {
@@ -1079,6 +1090,10 @@ async function main(): Promise<void> {
       };
       online.onSessionEnd = (why) => {
         leave(notices[why]);
+      };
+      // (the match ended while this page played it: no rejoin of it offered later, RJ1, RX32)
+      online.onMatchOver = () => {
+        clearRankedSeat();
       };
     } else if (botMatch) {
       // (the local host gone, its worker failing: the menu, with the lost connection's modal)

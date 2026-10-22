@@ -217,6 +217,16 @@ test("a 2v2 left by accident: a rejoin into the running match, its lock and reco
   await cars(cBack, 3);
   expect(await locked(cBack)).toBe(true);
   await expect.poll(() => savedAt(cBack)).toBeGreaterThan(firstJoin ?? 0);
+  // (A's seat still away: the lobby not full, no leave penalty, so B's pause menu leaves plainly, RV-715)
+  await b.keyboard.press("Escape");
+  await expect(pause.getByRole("button", { name: /^leave match$/i })).toBeVisible({ timeout: 15_000 });
+  await expect(pause.getByRole("button", { name: /^abandon match$/i })).toHaveCount(0);
+  await b.keyboard.press("Escape");
+  // (C drops again: a fresh offer, its record saved again at the rejoin's join, RJ1, RV-714)
+  await cBack.close();
+  const cAgain = await menu(cContext);
+  await expect(cAgain.locator("#modal .modal-title")).toHaveText("Reconnect", { timeout: 10_000 });
+  await cAgain.locator("#modal").getByRole("button", { name: /^no$/i }).click();
   // A back: the offer declined; its search refused as the reported quitter's (Refused 7)
   const aBack = await menu(aContext);
   await expect(aBack.locator("#modal .modal-title")).toHaveText("Reconnect", { timeout: 10_000 });
@@ -230,6 +240,8 @@ test("a 2v2 left by accident: a rejoin into the running match, its lock and reco
   await dBack.locator("#modal").getByRole("button", { name: /^no$/i }).click();
   await search(dBack);
   await expect(dBack.locator("#search-banner .search-summary")).toHaveText("Searching", { timeout: 30_000 });
+  // (A's and D's team all away: it forfeits, the match over on B's page, whose saved seat goes with it: RJ1, RX32)
+  await expect.poll(() => savedAt(b), { timeout: 15_000 }).toBeNull();
   expect(errors).toEqual([]);
   for (const context of contexts) await context.close();
 });

@@ -427,6 +427,9 @@ pub struct MatchState {
     pub can_vote_forfeit: bool,
     /// The match ended with no contest: every team left (`ForceNoContest`)
     pub no_contest: bool,
+    /// The leave penalty is in force (`bHasLeaveMatchPenalty`: a public match's lobby full, no winner yet): the client's
+    /// warning before leaving goes by it (flag bit 5, added within version 27: an older page ignores it, RX32)
+    pub leave_penalty: bool,
     /// The end screen's countdown to the next match, whole seconds (0 in the other phases)
     pub seconds_left: u8,
 }
@@ -854,7 +857,8 @@ impl Control {
                     | (u8::from(m.clock_running) << 1)
                     | (u8::from(m.forfeit) << 2)
                     | (u8::from(m.can_vote_forfeit) << 3)
-                    | (u8::from(m.no_contest) << 4));
+                    | (u8::from(m.no_contest) << 4)
+                    | (u8::from(m.leave_penalty) << 5));
                 w.u32(m.clock_ticks);
                 w.u8(m.score[0]);
                 w.u8(m.score[1]);
@@ -1038,6 +1042,7 @@ impl Control {
                     forfeit: flags & 4 != 0,
                     can_vote_forfeit: flags & 8 != 0,
                     no_contest: flags & 16 != 0,
+                    leave_penalty: flags & 32 != 0,
                     seconds_left,
                 })
             }
@@ -1348,6 +1353,7 @@ mod tests {
                 forfeit: m["forfeit"].as_bool().unwrap(),
                 can_vote_forfeit: m["canVoteForfeit"].as_bool().unwrap(),
                 no_contest: m["noContest"].as_bool().unwrap(),
+                leave_penalty: m["leavePenalty"].as_bool().unwrap(),
                 seconds_left: u(&m["secondsLeft"]) as u8,
             }),
             t => panic!("unknown {t}"),

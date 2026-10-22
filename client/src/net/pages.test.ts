@@ -20,6 +20,8 @@ import {
   REJOIN_SECONDS,
   clearRankedSeat,
   rankedSeat,
+  searchGaveUpSeat,
+  seatSearch,
   storeClaim,
   storeNotice,
   storeRankedSeat,
@@ -194,6 +196,51 @@ describe("the pages' handoffs", () => {
     expect(await matchPlayedElsewhere(5n, undefined)).toBe(false);
     holdMatchLock(7n, locks);
     expect(request).toHaveBeenCalledWith("carball.match.7", expect.any(Function));
+  });
+
+  it("forgets the seat a search gave up at the server: its own account's, not one another tab plays (RX31, RX32)", async () => {
+    const storage = memory();
+    const seat = { matchId: 5n, teamSize: 2, joinedAt: Date.now(), account: "acct-1" };
+    const held = (name: string | null): LockManager => ({
+      query: () => Promise.resolve({ held: name === null ? [] : [{ name, mode: "exclusive" as const, clientId: "a" }], pending: [] }),
+      request: () => Promise.resolve(),
+    });
+    storeRankedSeat(seat, storage);
+    // (another account's search in this browser: kept)
+    await searchGaveUpSeat("acct-2", storage, held(null));
+    expect(rankedSeat(Date.now(), storage)?.matchId).toBe(5n);
+    // (another tab plays that match: the server refuses the search, the seat live: kept)
+    await searchGaveUpSeat("acct-1", storage, held(matchLock(5n)));
+    expect(rankedSeat(Date.now(), storage)?.matchId).toBe(5n);
+    // (its own account's, no tab playing it: forgotten)
+    await searchGaveUpSeat("acct-1", storage, held(matchLock(6n)));
+    expect(rankedSeat(Date.now(), storage)).toBeNull();
+    // (a development page's seat has no account: a development search forgets it)
+    storeRankedSeat({ ...seat, account: null }, storage);
+    await searchGaveUpSeat(null, storage, undefined);
+    expect(rankedSeat(Date.now(), storage)).toBeNull();
+  });
+
+  it("puts the seat back when the server refused the search before taking it, not after (RX32)", async () => {
+    const storage = memory();
+    const seat = { matchId: 5n, teamSize: 2, joinedAt: Date.now() - 60_000, account: "acct-1" };
+    const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+    for (const [reason, back] of [
+      [REFUSED_QUEUE_BANNED, true], // (a reported quitter: refused before; its seat still to rejoin)
+      [REFUSED_IN_MATCH, true],
+      [REFUSED_TICKET, true],
+      [REFUSED_MODE, false], // (refused after the server gave the seat up)
+    ] as const) {
+      storeRankedSeat(seat, storage);
+      const search = seatSearch("acct-1", storage, undefined);
+      search.sent();
+      await settle();
+      expect(rankedSeat(Date.now(), storage)).toBeNull();
+      search.refused(reason);
+      await settle();
+      expect(rankedSeat(Date.now(), storage)?.joinedAt ?? null, String(reason)).toBe(back ? seat.joinedAt : null);
+      clearRankedSeat(storage);
+    }
   });
 
   it("finds the deployment's game server in config.json; none, a development server's; one that can't be read fails closed", async () => {

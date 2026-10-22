@@ -4,8 +4,9 @@
 import { type ControlMessage, encodeControl } from "../net/protocol";
 
 export interface FakeTransportRecord {
-  /** Each session's URL, the bytes the client wrote on its control stream, its datagrams and whether it closed its side */
-  readonly sessions: { url: string; written: Uint8Array[]; datagrams: Uint8Array[]; finished?: boolean }[];
+  /** Each session's URL, the bytes the client wrote on its control stream, its datagrams, whether it closed its side
+   *  of that stream, and whether it closed the session */
+  readonly sessions: { url: string; written: Uint8Array[]; datagrams: Uint8Array[]; finished?: boolean; closed?: boolean }[];
 }
 
 /** A WebTransport class whose sessions answer with `replies` (each message framed as the server's); `closed`: each
@@ -60,7 +61,7 @@ export function fakeTransport(
       });
     }
     close(): void {
-      // (nothing to close)
+      this.#session.closed = true;
     }
   }
   return Fake as unknown as typeof WebTransport;

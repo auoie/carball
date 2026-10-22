@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -25,6 +26,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"carball/api/internal/google"
 	"carball/api/internal/server"
@@ -1259,6 +1261,45 @@ func TestQuitters(t *testing.T) {
 	ban, ok, err := e.db.QueueBanOf(context.Background(), oldID)
 	if want := e.clock.Now().Add(-server.AcceptWindow); err != nil || !ok || ban.LastLeave.Sub(want).Abs() > time.Second {
 		t.Errorf("its ban: %+v %v %v, want its leave at %v", ban, ok, err, want)
+	}
+}
+
+// refusingStore: the store with every result and queue ban change failing with err
+type refusingStore struct {
+	server.Store
+	err error
+}
+
+func (r refusingStore) RecordResult(context.Context, store.Result, func(map[string]*store.Rating) map[string]store.Rating, time.Time) (bool, error) {
+	return false, r.err
+}
+
+func (r refusingStore) ChangeQueueBan(context.Context, string, *store.SpentTicket, time.Time, func(store.QueueBan, bool) (*store.QueueBan, bool)) error {
+	return r.err
+}
+
+// Data the handlers' checks let through but the database refuses (a constraint) is the call's own fault: 400, which the
+// game server's outbox drops; any other failure 503, which it tries again (RX31, RX32)
+func TestDataErrorsAreRefusedOtherFailuresUnavailable(t *testing.T) {
+	e := setup(t, nil)
+	_, _, ta := e.player("sub-da")
+	_, _, tb := e.player("sub-db")
+	result := map[string]any{"match": "m1", "server": "game.example", "playlist": 1, "winningTeam": 0, "players": []map[string]any{
+		{"ticket": ta, "team": 0, "quitter": false, "seconds": 300},
+		{"ticket": tb, "team": 1, "quitter": false, "seconds": 300},
+	}}
+	quitter := map[string]string{"match": "00000000000000d1", "ticket": ta}
+	for _, c := range []struct {
+		err  error
+		want int
+	}{{&pgconn.PgError{Code: "23514"}, http.StatusBadRequest}, {errors.New("connection reset"), http.StatusServiceUnavailable}} {
+		e.s.Store = refusingStore{Store: e.db, err: c.err}
+		if got := e.gameCall(http.MethodPost, "/api/results", gameToken, result).StatusCode; got != c.want {
+			t.Errorf("a result, %v: %d, want %d", c.err, got, c.want)
+		}
+		if got := e.gameCall(http.MethodPost, "/api/quitters", gameToken, quitter).StatusCode; got != c.want {
+			t.Errorf("a quitter, %v: %d, want %d", c.err, got, c.want)
+		}
 	}
 }
 

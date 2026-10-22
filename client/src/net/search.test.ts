@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type SearchHandlers } from "../game/matchmaking";
 import { fakeTransport, type FakeTransportRecord } from "../testing/fakeTransport";
-import { KICK_REPLACED, decodeControl } from "./protocol";
+import { KICK_REPLACED, REFUSED_QUEUE_BANNED, decodeControl } from "./protocol";
 import { SEARCH_ENDED, Search, browserKey } from "./search";
 
 const memory = (): Pick<Storage, "getItem" | "setItem"> => {
@@ -26,6 +26,7 @@ function answers(): { handlers: SearchHandlers; got: string[]; done: Promise<voi
       got.push(`failed ${reason}`);
       finish();
     },
+    refused: (reason) => got.push(`refused ${String(reason)}`),
     cooldown: (seconds, network) => {
       got.push(`cooldown ${String(seconds)}${network ? " network" : ""}`);
       finish();
@@ -61,6 +62,14 @@ describe("a search", () => {
     const page = browserKey(failing);
     expect(page).not.toBe(0n);
     expect(browserKey(null)).toBe(page);
+  });
+
+  it("passes a refusal on with its reason, then in words (RX32: a refused search's seat put back)", async () => {
+    vi.stubGlobal("WebTransport", fakeTransport([{ type: "refused", reason: REFUSED_QUEUE_BANNED }]));
+    const { handlers, got, done } = answers();
+    Search.start({ url: "https://game.example:4433/play", certHash: null }, 2, 0n, handlers);
+    await done;
+    expect(got).toEqual(["searching", `refused ${String(REFUSED_QUEUE_BANNED)}`, "failed you left a ranked match: you can search again in a few minutes"]);
   });
 
   it("sends the browser's key and a returning token, and passes a no-show's cooldown on (RV-367)", async () => {

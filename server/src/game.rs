@@ -529,6 +529,9 @@ pub struct Game {
     /// The keys that started a forfeit vote this match: only grows (`ForfeitInitiatorIDs`: a starter who rejoins can't
     /// start another, `CheckInitiatedForfeit`)
     initiators: BTreeSet<u64>,
+    /// The same by account (a verified seat's): a starter who rejoins with a key this server didn't give it is still one
+    /// (RX32)
+    initiator_accounts: BTreeSet<u64>,
     /// A seat just taken over (`replaced`): its team and its old session's answer in that team's running vote (none: not
     /// a voter), which the account's new session, joining next, takes over (RX32)
     taken_over: Option<(u8, Option<bool>)>,
@@ -656,6 +659,7 @@ impl Game {
             forfeit_vote_wait: None,
             votes: [None, None],
             initiators: BTreeSet::new(),
+            initiator_accounts: BTreeSet::new(),
             taken_over: None,
             issued_keys: BTreeSet::new(),
             forfeiting: None,
@@ -708,6 +712,7 @@ impl Game {
             forfeit: self.forfeit,
             can_vote_forfeit: self.can_vote_forfeit(),
             no_contest: self.no_contest,
+            leave_penalty: self.leave_penalty(),
             seconds_left: if self.phase == Phase::Finished {
                 self.phase_until.saturating_sub(self.arena.tick_count()).div_ceil(u64::from(TICK_RATE)).min(255) as u8
             } else {
@@ -721,6 +726,12 @@ impl Game {
         self.winner.is_some()
             || self.forfeiting.is_some()
             || ((self.overtime || self.clock_ticks == 0) && self.score[0] != self.score[1])
+    }
+
+    /// The leave penalty is in force (`bHasLeaveMatchPenalty`, LV1): a public match whose lobby is full, no winner yet
+    /// (a forfeit pending, or the clock out with the scores apart, counts: `has_winner`), as the match host arms it
+    fn leave_penalty(&self) -> bool {
+        self.match_type.auto_forfeit() && self.players.len() >= 2 * usize::from(self.team_size) && !self.has_winner()
     }
 
     /// Forfeit votes are allowed (`bCanVoteToForfeit`, MR-7.6): the playlist allows them, no winner yet, and the clock
@@ -818,7 +829,8 @@ impl Game {
             auto_skip_replay: request.auto_skip_replay,
             ready: false,
             key,
-            vote_start_disabled: self.initiators.contains(&key),
+            vote_start_disabled: self.initiators.contains(&key)
+                || (request.verified && request.key != 0 && self.initiator_accounts.contains(&request.key)),
             vote_sent: None,
             name: if request.verified { verified_name(&request.name) } else { player_name(&request.name, id) },
             chat: ChatBucket::default(),
@@ -1111,6 +1123,9 @@ impl Game {
             self.initiators.insert(key);
             if let Some(p) = self.players.get_mut(&id) {
                 p.vote_start_disabled = true;
+                if p.account != 0 {
+                    self.initiator_accounts.insert(p.account);
+                }
             }
             let voters = self.players.iter().filter(|(_, p)| p.team == team).map(|(&id, _)| (id, false)).collect();
             self.votes[slot] = Some(ForfeitVote { voters, started: self.arena.tick_count(), finished: None });
@@ -1342,6 +1357,7 @@ impl Game {
         self.no_contest = false;
         self.votes = [None, None];
         self.initiators.clear();
+        self.initiator_accounts.clear();
         // (a leaver's key only mattered for their vote lockout, which ends with the match: RV-270)
         let here: BTreeSet<u64> = self.players.values().map(|p| p.key).collect();
         self.issued_keys.retain(|k| here.contains(k));
@@ -3618,6 +3634,52 @@ mod tests {
         assert_eq!((vote.state, vote.yes, vote.required), (protocol::VOTE_RUNNING, 0, 1));
     }
 
+    /// RX32: a vote's starter who rejoins verified with a key this server didn't give it (its account's) is still locked
+    /// out: the starters known by account too
+    #[test]
+    fn a_starter_rejoining_by_account_is_still_locked_out() {
+        init_engine();
+        let mut game = Game::with_options(1, 2);
+        game.match_type = MatchType::Ranked;
+        let mut rxs = Vec::new();
+        for (id, team) in [(1, 0), (2, 0), (3, 1), (4, 1)] {
+            let (tx, rx) = channel(TEST_QUEUE);
+            game.join(id, JoinRequest { team, key: 100 + id, verified: true, ..REQUEST }, tx);
+            rxs.push(rx);
+        }
+        run_until(&mut game, 1000, |g| g.phase == Phase::Active);
+        game.clock_ticks = 200 * TICK_RATE;
+        game.vote_forfeit(1);
+        assert!(game.votes[0].is_some(), "started");
+        game.leave(1);
+        let (tx, _rx) = channel(TEST_QUEUE);
+        game.join(5, JoinRequest { team: 0, key: 101, verified: true, ..REQUEST }, tx);
+        assert!(game.players[&5].vote_start_disabled, "the starter, known by account");
+        game.leave(4);
+        let (tx, _rx) = channel(TEST_QUEUE);
+        game.join(6, JoinRequest { team: 1, key: 109, verified: true, ..REQUEST }, tx);
+        assert!(!game.players[&6].vote_start_disabled, "another account isn't");
+    }
+
+    /// RX32: the leave penalty the client is told: a public match's lobby full and no winner yet (a pending forfeit, or
+    /// the clock out with the scores apart, counting as one), as the match host arms it
+    #[test]
+    fn the_leave_penalty_is_a_full_public_lobby_with_no_winner() {
+        let (mut game, _rxs) = match_with(MatchType::Ranked, 1, &[(1, 0, 11), (2, 1, 12)]);
+        assert!(game.match_state().leave_penalty);
+        (game.score, game.clock_ticks) = ([1, 0], 0);
+        assert!(!game.match_state().leave_penalty, "the clock out, the scores apart");
+        game.score = [1, 1];
+        assert!(game.match_state().leave_penalty, "tied: overtime to come");
+        game.forfeiting = Some(0);
+        assert!(!game.match_state().leave_penalty, "a forfeit pending");
+        game.forfeiting = None;
+        game.leave(2);
+        assert!(!game.match_state().leave_penalty, "a seat empty");
+        let (game, _rxs) = match_with(MatchType::Private, 1, &[(1, 0, 11), (2, 1, 12)]);
+        assert!(!game.match_state().leave_penalty, "a private match has none");
+    }
+
     /// RX32: a seat taken over mid-vote keeps its answer for the account's new session: a mate's lone yes doesn't pass
     /// at the swap, and the starter's yes carries over
     #[test]
@@ -3641,6 +3703,16 @@ mod tests {
             game.vote_forfeit(5);
             assert_eq!((game.winner, game.forfeit), (Some(1), true));
         }
+        // (an answer goes with its own team's seat alone: a session joining the other team after a takeover starts with no)
+        // (a 3v3 with two a side: team 1 has a free seat)
+        let (mut game, _rxs) = match_with(MatchType::Ranked, 3, &[(1, 0, 11), (2, 0, 12), (3, 1, 13), (4, 1, 14)]);
+        game.clock_ticks = 200 * TICK_RATE;
+        game.vote_forfeit(1);
+        game.vote_forfeit(3);
+        game.replaced(1);
+        let (tx, _rx) = channel(TEST_QUEUE);
+        game.join(7, JoinRequest { team: 1, key: 17, ..REQUEST }, tx);
+        assert_eq!(game.votes[1].as_ref().and_then(|v| v.voters.get(&7)), Some(&false));
     }
 
     #[test]

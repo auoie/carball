@@ -4,6 +4,7 @@
 import type { Page } from "@playwright/test";
 import { expect, hideGamepads, test } from "./fixtures";
 import { ends, join as joinServer, leave, leaveAll, newPlayer } from "./players";
+import { POST_GOAL_TICKS, postGoalDilation } from "../src/game/goalSequence";
 
 interface Stats {
   ping: number | null;
@@ -16,7 +17,7 @@ interface Stats {
   kickoffCountdown: number;
   phases: { phase: string; at: number; frame: number }[];
   replaying: boolean;
-  goal: { frame: number | null; explodedFrame: number | null; minDilation: number; offsetSpread: number };
+  goal: { frame: number | null; explodedFrame: number | null; minDilation: number; firstTick: number | null; offsetSpread: number };
 }
 
 const SERVER = "127.0.0.1:14434";
@@ -201,12 +202,16 @@ test("a goal: the game slows down for 3.53 s, the goal replay plays, Space skips
   // 360 ticks after the goal, slowed at first: 3.53 s of real time (the server's clock)
   expect((replay.at - goal.at) / 1000).toBeGreaterThan(3.25);
   expect((replay.at - goal.at) / 1000).toBeLessThan(3.85);
-  // This client's clock slowed with it, through the curve's 0.1875, keyed to the server's goal tick: the frame its
-  // corrected history has the goal in (how many frames it ran depends on its frame rate: under 24 fps, the game's 5
-  // ticks a frame fall behind real time, as software rendering here does; the curve read at each tick it ran, which a
-  // slow page's frames don't step past, RX31)
+  // This client's clock slowed with it, keyed to the server's goal tick: the frame its corrected history has the goal in
+  // (how many frames it ran depends on its frame rate: under 24 fps, the game's 5 ticks a frame fall behind real time, as
+  // software rendering here does). The curve read at each tick it ran (which a slow page's frames don't step past, RX31),
+  // from the first it ran knowing of the goal: its lowest, 0.1875 at the goal's 28th tick, if the goal's message came by
+  // then; a later one's where the curve stood (RX32)
   const { goal: slowed } = await stats(page);
-  expect(slowed.minDilation).toBeCloseTo(0.1875, 3);
+  // (its message within half a second of the goal, a loaded page's too (29 ticks seen): not one seconds late)
+  const first = slowed.firstTick ?? POST_GOAL_TICKS;
+  expect(first).toBeLessThanOrEqual(60);
+  expect(slowed.minDilation).toBeCloseTo(postGoalDilation(Math.max(first, 28)), 3);
   expect(slowed.frame).not.toBeNull();
   // (within the frames the server tick to client frame mapping moved by around the goal: a frame each time the server
   // repeated or skipped an input, which a stalling software-rendered page makes it do often; not a fixed bound, which

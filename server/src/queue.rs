@@ -498,6 +498,7 @@ mod tests {
         assert!(queued(&mut queue, 2, 2, tx.clone()));
         assert_eq!(queue.drop_account(1000 + 1).len(), 1);
         assert_eq!(queue.searching(2), 1, "the other search kept");
+        assert!(!queue.searching.contains_key(&1) && queue.searching.contains_key(&2), "its index gone too (RX32)");
         assert!(queue.drop_account(0).is_empty(), "no account: nothing");
         assert!(queue.drop_account(1000 + 1).is_empty(), "let go already");
         assert!(queued(&mut queue, 1, 2, tx), "searching again is the gate's to refuse, not the queue's");

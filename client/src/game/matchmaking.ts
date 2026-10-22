@@ -82,6 +82,8 @@ export interface SearchHandlers {
   /** A match found: its slot's token and its map (src/render/themes/index.ts THEMES) */
   found(token: bigint, map: number): void;
   failed(reason: string): void;
+  /** The server refused it (its reason), before `failed` with the words */
+  refused?(reason: number): void;
   /** Refused: this browser (network false) or this address stalled a match; it may search again in this many seconds
    *  (RV-367, RV-385) */
   cooldown(seconds: number, network: boolean): void;

@@ -101,6 +101,25 @@ describe("a refused hello", () => {
   });
 });
 
+describe("a claim's session (RX30C, RX31)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("is opened after its ticket (a refused ticket leaves no session), and closed from this side when refused", async () => {
+    const record: FakeTransportRecord = { sessions: [] };
+    vi.stubGlobal("WebTransport", fakeTransport([{ type: "refused", reason: REFUSED_TOKEN }], record));
+    const preferences = joinPreferences(DEFAULT_SETTINGS);
+    const url = "https://game.example:4433/play";
+    const noTicket = { url, certHash: null, ticket: () => Promise.reject(new Error("no ticket")) };
+    await expect(Connection.open(noTicket, preferences, { intent: "claim", token: 9n })).rejects.toThrow("no ticket");
+    expect(record.sessions).toHaveLength(0);
+    const ticketed = { url, certHash: null, ticket: () => Promise.resolve("AbC") };
+    await expect(Connection.open(ticketed, preferences, { intent: "claim", token: 9n })).rejects.toBeInstanceOf(RefusedError);
+    expect(record.sessions.map((s) => s.closed)).toEqual([true]);
+  });
+});
+
 describe("a match session's hello", () => {
   afterEach(() => {
     vi.unstubAllGlobals();

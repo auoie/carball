@@ -1430,6 +1430,33 @@
    "packages": [
     "./internal/store/"
    ]
+  },
+  {
+   "id": "RX32-GM1-one-try",
+   "file": "internal/store/store.go",
+   "old": "\tfor range 3 {\n\t\tif err = pgx.BeginFunc(ctx, s.pool, fn); !conflicted(err) {",
+   "new": "\tfor range 1 {\n\t\tif err = pgx.BeginFunc(ctx, s.pool, fn); !conflicted(err) {",
+   "packages": [
+    "./internal/store/"
+   ]
+  },
+  {
+   "id": "RX32-GM3-result-data-503",
+   "file": "internal/server/ranked.go",
+   "old": "\tcase store.IsDataError(err): // (data its checks let through and the database refused: wrong, not transient)\n",
+   "new": "\tcase false:\n",
+   "packages": [
+    "./internal/server/"
+   ]
+  },
+  {
+   "id": "RX32-GM4-ban-data-503",
+   "file": "internal/server/ranked.go",
+   "old": "\tcase store.IsDataError(err): // (refused by the database's constraints: wrong, not transient)\n",
+   "new": "\tcase false:\n",
+   "packages": [
+    "./internal/server/"
+   ]
   }
  ]
 }

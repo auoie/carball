@@ -142,8 +142,16 @@ export interface OnlineStats {
   /** The last goal: the client frame its slow motion is keyed to (the server's goal tick), the first frame its recorded
    *  history has the ball exploded in, and the slowest point of the curve its ticks have run through since (each tick's,
    *  not each drawn frame's: a slow page's frames step past the lowest point, RX31) */
-  /** `offsetSpread`: how far the tick to frame mapping moved around the goal (the frames the two may differ by) */
-  readonly goal: { readonly frame: number | null; readonly explodedFrame: number | null; readonly minDilation: number; readonly offsetSpread: number };
+  /** `firstTick`: the first tick after the goal it ran knowing of it (the slow motion from there: a late goal message
+   *  starts it past its lowest point, RX32). `offsetSpread`: how far the tick to frame mapping moved around the goal (the
+   *  frames the two may differ by) */
+  readonly goal: {
+    readonly frame: number | null;
+    readonly explodedFrame: number | null;
+    readonly minDilation: number;
+    readonly firstTick: number | null;
+    readonly offsetSpread: number;
+  };
 }
 
 export class Online {
@@ -201,6 +209,8 @@ export class Online {
   #sessionEnded = false;
   /** How the session ended, once (a queue match's page goes back to the menu with it) */
   onSessionEnd: ((why: SessionEnd) => void) | null = null;
+  /** The match is over (its winner decided, or a no contest), once a match: its saved ranked seat goes (RJ1, RX32) */
+  onMatchOver: (() => void) | null = null;
   /** The idle warning's tip (src/ui/idleTip.ts) */
   idleTip: { update(shown: boolean): void } | null = null;
   /** The network core: updates, corrections and their smoothing, the inputs sent (src/net/session.ts) */
@@ -259,6 +269,7 @@ export class Online {
   readonly #chatMenu = new QuickChatMenu();
   #chatFilterSent = "";
   #minDilation = 1;
+  #firstSlowTick: number | null = null;
   #fps = 60;
   readonly #pos = new Vector3();
   readonly #rot = new Quaternion();
@@ -363,6 +374,7 @@ export class Online {
         frame: this.#goalFrameNow,
         explodedFrame: this.#explodedFrame(),
         minDilation: this.#minDilation,
+        firstTick: this.#firstSlowTick,
         offsetSpread: this.#goalTick === null ? 0 : this.#session.offsetSpread(this.#goalTick - 120, this.#goalTick + 120),
       },
     };
@@ -371,8 +383,9 @@ export class Online {
   /** The menu's match buttons now */
   menuItems(): MatchMenuItem[] {
     // (the lobby's leave penalty: every seat's player here, no winner yet, as the server arms it: LV1)
-    const seated = this.#roster?.size ?? 0;
-    const leavePenalty = seated >= 2 * this.#teamSize && (this.#match?.winner ?? null) === null;
+    // (the server's: the lobby full, no winner yet, a forfeit pending or the clock out with the scores apart counting
+    // as one, RX32)
+    const leavePenalty = this.#match?.leavePenalty ?? false;
     return matchMenuItems({
       matchType: this.#matchType,
       teamSize: this.#teamSize,
@@ -433,6 +446,7 @@ export class Online {
     const { world, real } = frameTimes(rawSeconds, dilation);
     const ticks = this.#clock.advance(world);
     if (this.#goalFrameNow !== null) {
+      if (ticks > 0) this.#firstSlowTick ??= this.#predictor.frame + 1 - this.#goalFrameNow;
       for (let k = 1; k <= ticks; k++) {
         this.#minDilation = Math.min(this.#minDilation, postGoalDilation(this.#predictor.frame + k - this.#goalFrameNow));
       }
@@ -656,6 +670,7 @@ export class Online {
           this.#phases.push({ phase: m.phase, at: performance.now(), frame: this.#predictor.frame, winner: m.winner, forfeit: m.forfeit });
           if (this.#phases.length > 16) this.#phases.shift();
           this.#enterPhase(m.phase, this.#match === null);
+          if (matchOver(m.phase) && !matchOver(this.#match?.phase)) this.onMatchOver?.();
           if (m.phase === "countdown") this.#roundStartTick = m.serverTick; // (the replay's goal time counts from here: HT-6)
         }
         if (m.overtime && this.#match !== null && !this.#match.overtime) {
@@ -684,6 +699,7 @@ export class Online {
         this.#arena.explode();
         this.#camera.shakes.play(EXPLOSION_LARGE, at);
         this.#minDilation = 1;
+        this.#firstSlowTick = null;
       } else if (m.type === "event" && m.event.kind === "demo") {
         // A demolition as the server says (QueueDemolish from the replicated demolish): its effect and shake where the
         // victim was at that tick, as this client drew it (RV-47)

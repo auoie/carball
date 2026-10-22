@@ -2,7 +2,7 @@
 // claim (the slot's one-time token); the match page hands the menu page back a notice when it ends (a modal to show, a
 // search to start: Play Again, a cancelled match). Kept in sessionStorage, this tab's alone and out of the URL's history.
 import { RefusedError, type ServerAddress, devServerAddress, serverHost } from "./connection";
-import { REFUSED_CONCLUDED, REFUSED_IN_MATCH, REFUSED_TICKET, REFUSED_TOKEN } from "./protocol";
+import { REFUSED_CONCLUDED, REFUSED_IN_MATCH, REFUSED_MODE, REFUSED_TICKET, REFUSED_TOKEN } from "./protocol";
 import { REQUEST_TIMEOUT_MS } from "../account/api";
 import { QueueBannedError, SignedOutError, accountTicket, devTicket } from "./tickets";
 
@@ -259,7 +259,8 @@ export async function openClaim<T>(open: () => Promise<T>): Promise<T> {
  *  its time, a match cancelled for someone else, so back to the queue's front (RV-367); a rejoin's seat live in another
  *  tab: said so, the seat kept (RX30C); a match over: its offer gone; a rejoin's ticket refused for a ban from another
  *  match: the ban (RX31); the sign-in gone: the menu's sign-in (RX29C); anything else (the server not reached, a ticket
- *  refused twice): told, a rejoin still offered (RX30C) */
+ *  refused twice): the connection lost (a claim's seat a no-show; a rejoin not offered again, its record cleared as it
+ *  was offered: RJ1, RX32) */
 export function claimNotice(e: unknown, claim: Claim, matchGone: string): MenuNotice {
   const refused = e instanceof RefusedError ? e.reason : null;
   if (refused === REFUSED_TOKEN && !claim.rejoin) {
@@ -356,6 +357,39 @@ export function rankedSeat(now = Date.now(), storage = local()): RankedSeat | nu
 }
 
 /** No offer: the match left on purpose (Exit to Main Menu), over, or offered once already (one prompt per record, RJ1) */
+/** A search reached the server (its hello sent: a refusal before it, a ticket refused or a ban, never got there): the
+ *  ranked seat the server holds for this account's rejoin is given up by it (RX30C), so its saved record goes too. Not
+ *  another account's (another sign-in in this browser), nor one another tab plays (its lock held: the server refuses
+ *  that search, the seat live, RX32) */
+export async function searchGaveUpSeat(account: string | null, storage = local(), locks: LockManager | undefined = webLocks()): Promise<RankedSeat | null> {
+  const seat = rankedSeat(Date.now(), storage);
+  if (seat?.account !== account) return null; // (none, or another account's)
+  if (await matchPlayedElsewhere(seat.matchId, locks)) return null;
+  clearRankedSeat(storage);
+  return seat;
+}
+
+/** A search's hold on the saved seat: given up as its hello is sent (searchGaveUpSeat), back if the server refused the
+ *  search before taking it, for any reason but REFUSED_MODE (which comes after it gave the seat up): a reported quitter's
+ *  Refused 7 leaves the seat to rejoin (RX32) */
+export function seatSearch(
+  account: string | null,
+  storage = local(),
+  locks: LockManager | undefined = webLocks(),
+): { sent(): void; refused(reason: number): void } {
+  let given: Promise<RankedSeat | null> = Promise.resolve(null);
+  return {
+    sent: () => {
+      given = searchGaveUpSeat(account, storage, locks);
+    },
+    refused: (reason) => {
+      void given.then((seat) => {
+        if (seat && reason !== REFUSED_MODE && rankedSeat(Date.now(), storage) === null) storeRankedSeat(seat, storage);
+      });
+    },
+  };
+}
+
 export function clearRankedSeat(storage = local()): void {
   try {
     storage?.removeItem(SEAT_KEY);

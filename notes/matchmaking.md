@@ -52,8 +52,9 @@ anything rating-side beyond what's submitted is PsyNet's, unknowable, so Carball
     forgiven for every 24 h without a leave.
   - **The page:** a search refused while banned shows the minutes left (max(⌈s/60⌉, 1)) and cancels; the Play menu shows
     the ban (LeavePenaltyMessage, MatchmakingBanMessage by key). **The warning before leaving (RV-715, the game's
-    strings):** while a ranked lobby has the leave penalty (every seat's player here, no winner yet) and no vote is the
-    player's to take part in (shouldDisplayAbandon), the pause menu's button is ABANDON MATCH, asking WARNING, "Abandoning
+    strings):** while a ranked lobby has the leave penalty (the server's, sent as the Match message's flag 32: every
+    seat's player here, no winner yet, a pending forfeit or the clock out with the scores apart counting as one: RX32)
+    and no vote is the player's to take part in (shouldDisplayAbandon), the pause menu's button is ABANDON MATCH, asking WARNING, "Abandoning
     a ranked game will temporarily ban you from matchmaking. ARE YOU SURE?" with red YES / NO (WarningModalPopup); a team
     playlist's first, a 1v1's after its Forfeit Match.
 - **Rejoining** (corrects MM-44/MM-45):
@@ -66,9 +67,11 @@ anything rating-side beyond what's submitted is PsyNet's, unknowable, so Carball
     too**, so the 900 s run from the latest join; a join of any other match (a 1v1 here) clears it; **cleared as the prompt
     is shown**, whatever the answer, so one prompt per record: a failed Yes isn't offered again, a successful rejoin
     saves a new one; also cleared by Exit to Main Menu and by the match ending while connected, not by a new search.
-    Ours differs there: a search gives the held seat up at our server (RX30C), so the page clears the record when a
-    search starts, and it doesn't offer a rejoin while the deployment's config can't be read (its Yes couldn't start;
-    the record kept for a later visit: RX31).
+    Ours: the record goes when the match ends on the page that plays it (RX32, as the game's). It differs in one way: a
+    search gives the held seat up at our server (RX30C), so the record goes once a search reaches the server (its hello
+    sent: not one refused before, for its ticket or a ban), unless it's another account's or another tab plays that
+    match (the server refuses that search: RX32). No rejoin is offered while the deployment's config can't be read (its
+    Yes couldn't start; the record kept for a later visit: RX31).
     Ours keeps it per account (the signed-in account that joined: another account in the browser isn't offered it,
     RV-711). The server takes the player back only while the match runs and their slot is listed (else "Match has
     concluded.", the game's TAErrors text). A rejoin's ticket refused for a ban from another match shows the ban as a

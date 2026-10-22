@@ -251,9 +251,10 @@
         "forfeit": false,
         "canVoteForfeit": true,
         "noContest": false,
+        "leavePenalty": true,
         "secondsLeft": 0
       },
-      "hex": "0f0084e8030000010aa08c00000201ff00"
+      "hex": "0f0084e8030000012aa08c00000201ff00"
     },
     {
       "channel": "control",
@@ -272,6 +273,7 @@
         "forfeit": true,
         "canVoteForfeit": false,
         "noContest": false,
+        "leavePenalty": false,
         "secondsLeft": 0
       },
       "hex": "0f0084881300000405d204000003020000"
@@ -293,6 +295,7 @@
         "forfeit": false,
         "canVoteForfeit": false,
         "noContest": false,
+        "leavePenalty": false,
         "secondsLeft": 0
       },
       "hex": "0f0084701700000500e11000000100ff00"
@@ -314,6 +317,7 @@
         "forfeit": false,
         "canVoteForfeit": false,
         "noContest": true,
+        "leavePenalty": false,
         "secondsLeft": 0
       },
       "hex": "0f0084581b00000410204e00000000ff00"
@@ -335,6 +339,7 @@
         "forfeit": false,
         "canVoteForfeit": false,
         "noContest": true,
+        "leavePenalty": false,
         "secondsLeft": 42
       },
       "hex": "0f0084581b00000810204e00000000ff2a"
