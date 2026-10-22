@@ -296,6 +296,43 @@ func TestBans(t *testing.T) {
 	}
 }
 
+// The newest accounts, newest first, at most n; each one's last seen its latest session's sign-in or renewal, none
+// without a session (the admin's accounts --recent)
+func TestRecentAccounts(t *testing.T) {
+	s, _, _ := open(t)
+	ctx := context.Background()
+	var ids []string
+	for i, sub := range []string{"sub-r1", "sub-r2", "sub-r3"} {
+		at := t0.Add(time.Duration(i) * time.Hour)
+		id, err := s.CreateAccount(ctx, pending(t, s, "google", sub, at), fmt.Sprintf("Recent %d", i+1), []byte("hr"+sub), at, at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	// (the first's session: signed in at 3 h, renewed at 30 h)
+	if err := s.CreateSession(ctx, []byte("sr1"), ids[0], t0.Add(3*time.Hour), t0.Add(90*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RotateSession(ctx, []byte("sr1"), []byte("sr1b"), t0.Add(30*time.Hour), t0.Add(30*time.Hour+time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	two, err := s.RecentAccounts(ctx, 2)
+	if err != nil || len(two) != 2 || two[0].ID != ids[2] || two[1].ID != ids[1] {
+		t.Fatalf("the newest two: %+v, %v", two, err)
+	}
+	all, err := s.RecentAccounts(ctx, 10)
+	if err != nil || len(all) != 3 || all[2].ID != ids[0] {
+		t.Fatalf("all three: %+v, %v", all, err)
+	}
+	if seen := all[2].LastSeen; seen == nil || !seen.Equal(t0.Add(30*time.Hour)) || all[0].LastSeen != nil {
+		t.Errorf("last seen: %v and %v, want its renewal and none", all[2].LastSeen, all[0].LastSeen)
+	}
+	if found, err := s.FindAccounts(ctx, "recent 1"); err != nil || len(found) != 1 || found[0].LastSeen == nil {
+		t.Errorf("a name's search with its last seen: %+v, %v", found, err)
+	}
+}
+
 func TestFlowsNoncesAndPurge(t *testing.T) {
 	s, _, _ := open(t)
 	ctx := context.Background()

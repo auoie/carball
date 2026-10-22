@@ -1457,6 +1457,186 @@
    "packages": [
     "./internal/server/"
    ]
+  },
+  {
+   "id": "CLI-recent-oldest-first",
+   "file": "internal/store/store.go",
+   "old": "foundAccounts+` GROUP BY a.id ORDER BY a.created_at DESC LIMIT $1`",
+   "new": "foundAccounts+` GROUP BY a.id ORDER BY a.created_at LIMIT $1`",
+   "packages": [
+    "./internal/store/"
+   ]
+  },
+  {
+   "id": "CLI-last-seen-earliest",
+   "file": "internal/store/store.go",
+   "old": "(SELECT max(s.rotated_at) FROM sessions s WHERE s.account_id = a.id)",
+   "new": "(SELECT min(s.created_at) FROM sessions s WHERE s.account_id = a.id)",
+   "packages": [
+    "./internal/store/"
+   ]
+  },
+  {
+   "id": "ADMIN-today-is-week",
+   "file": "internal/store/admin.go",
+   "old": "SELECT playlist, count(*) FILTER (WHERE received_at >= $1), count(*)",
+   "new": "SELECT playlist, count(*), count(*)",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "ADMIN-week-is-all",
+   "file": "internal/store/admin.go",
+   "old": "FROM ranked_results WHERE received_at >= $2 GROUP BY playlist",
+   "new": "FROM ranked_results WHERE $2::timestamptz IS NOT NULL GROUP BY playlist",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "ADMIN-matches-oldest-first",
+   "file": "internal/store/admin.go",
+   "old": "ORDER BY received_at DESC, match_id LIMIT $1)",
+   "new": "ORDER BY received_at, match_id LIMIT $1)",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "ADMIN-account-filter-off",
+   "file": "internal/store/admin.go",
+   "old": "WHERE $2::uuid IS NULL OR match_id IN",
+   "new": "WHERE $2::uuid IS NULL OR TRUE OR match_id IN",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "ADMIN-ended-queue-bans",
+   "file": "internal/store/admin.go",
+   "old": "JOIN accounts a ON a.id = q.account_id WHERE q.until > $1 ORDER BY",
+   "new": "JOIN accounts a ON a.id = q.account_id WHERE $1::timestamptz IS NOT NULL ORDER BY",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "ADMIN-ended-bans-counted",
+   "file": "internal/store/admin.go",
+   "old": "(SELECT count(*) FROM bans WHERE until IS NULL OR until > $3)",
+   "new": "(SELECT count(*) FROM bans WHERE $3::timestamptz IS NOT NULL)",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "ADMIN-leaderboard-by-games",
+   "file": "cmd/carball-api/reports.go",
+   "old": "\t\tcase ra != rb:\n",
+   "new": "\t\tcase false && ra != rb:\n",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "ADMIN-provisional-unmarked",
+   "file": "cmd/carball-api/reports.go",
+   "old": "\tif r.Deviation >= ranked.Provisional {\n\t\ttext += \"?\"\n\t}\n",
+   "new": "",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "ADMIN-quitters-unlisted",
+   "file": "cmd/carball-api/reports.go",
+   "old": "\t\tif p.Quitter {\n\t\t\tleft = append(left, playerName(p))\n\t\t}\n",
+   "new": "",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "ADMIN-typo-reaches-db",
+   "file": "cmd/carball-api/reports.go",
+   "old": "\tif !*recent {\n\t\treturn errors.New(\"matches --recent [N] (carball-api matches -h)\")",
+   "new": "\tif false && !*recent {\n\t\treturn errors.New(\"matches --recent [N] (carball-api matches -h)\")",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "SAFE-leftovers-taken",
+   "file": "cmd/carball-api/main.go",
+   "old": "\tcase len(rest) > most:\n",
+   "new": "\tcase false && len(rest) > most:\n",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "SAFE-flag-like-values-taken",
+   "file": "cmd/carball-api/main.go",
+   "old": "\tcase flagLike != nil:\n",
+   "new": "\tcase false && flagLike != nil:\n",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "SAFE-help-word-first-only",
+   "file": "cmd/carball-api/main.go",
+   "old": "\t\tif helpWord(args[i]) {\n\t\t\treturn true\n\t\t}",
+   "new": "\t\tif i == 0 && helpWord(args[i]) {\n\t\t\treturn true\n\t\t}",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "SAFE-value-not-skipped",
+   "file": "cmd/carball-api/main.go",
+   "old": "\t\t\t\ti++ // (its value next)",
+   "new": "\t\t\t\t_ = i // (its value next)",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "SAFE-dash-serves",
+   "file": "cmd/carball-api/main.go",
+   "old": "\tif strings.HasPrefix(name, \"-\") {\n\t\t_, _ = fmt.Fprintf(stderr, \"carball-api: %q: name the command first",
+   "new": "\tif false && strings.HasPrefix(name, \"-\") {\n\t\t_, _ = fmt.Fprintf(stderr, \"carball-api: %q: name the command first",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "SAFE-no-args-not-serve",
+   "file": "cmd/carball-api/main.go",
+   "old": "\t\targs = []string{\"serve\"}",
+   "new": "\t\targs = []string{\"bans\"}",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "SAFE-errors-on-stdout",
+   "file": "cmd/carball-api/main.go",
+   "old": "\t\tif err := fs.Parse(head); err != nil {\n\t\t\treturn nil, fmt.Errorf(",
+   "new": "\t\tif err := fs.Parse(head); err != nil {\n\t\t\tprintUsage(fs, out)\n\t\t\treturn nil, fmt.Errorf(",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "SAFE-ban-silent",
+   "file": "cmd/carball-api/main.go",
+   "old": "\t\t_, _ = fmt.Fprintf(out, \"banned %s:%s: %s, reason %q, by %s; signed out everywhere\\n\", i.Provider, i.Subject, describe(end), *reason, *by)",
+   "new": "\t\t_ = i",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
   }
  ]
 }

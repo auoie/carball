@@ -228,10 +228,18 @@ The accounts service (notes/accounts.md). **Nothing is deployed yet: the first d
   holds 200,000 keys at most, the longest idle forgotten past that). Open sign-ins and sign-ups have ceilings (20,000 and
   5,000, everyone's): past them new ones are refused as busy.
 - **The admin's commands** (bans: notes/accounts.md §4), with the same `DATABASE_URL` and password file:
-  `docker exec carball-api /app/carball-api accounts NAME` (accounts whose name holds NAME, with their identities),
+  `docker exec carball-api /app/carball-api accounts NAME` (accounts whose name holds NAME, with their identities and when
+  last seen: their latest session's sign-in or daily renewal, so to a day), `… accounts --recent [N]` (the N newest, 20
+  by default, the same table),
   `… ban --account ID --reason TEXT --by NAME [--for 72h | --until 2026-12-01]` (or `--identity steam:<SteamID64>`;
   every identity of the account, signed out everywhere), `… unban --account ID`, `… bans`; `… help` lists the commands,
-  `… COMMAND -h` one's flags.
+  `… COMMAND -h` one's flags. The live app's reports, read-only from what the service keeps (times in UTC): `… stats`
+  (accounts new today, in the week and in all; ranked matches today and in the week by playlist; the bans and leave bans
+  in force), `… matches --recent [N]`, `… account ID` (its ratings as the page shows them, bans, leave ban, last 10
+  matches), `… ratings --top [N] [--playlist 2v2]`, `… queue-bans`. Each command refuses what it can't be sure of before it runs
+  (RX34): a leftover word (quote a value with spaces: `--reason "cheating and smurfing"`), a flag's value that looks like a
+  flag (`--by -h`), a first argument that's a flag (no arguments alone starts the service, as the image does); a help word
+  anywhere prints its usage and runs nothing; `ban` prints the ban it made (its end, or permanent).
 - **Stop:** SIGTERM or SIGINT: requests in flight finish (10 s at most).
 - **Search tickets** (`POST /api/ticket`, notes/accounts.md §3): a signed-in account's, two minutes long, a nonce each,
   its ratings in each playlist (format 3); refused (403, `queue-banned` and until when) while a leaver's queue ban runs,

@@ -620,22 +620,42 @@ func (s *Store) Bans(ctx context.Context, now time.Time) ([]Ban, error) {
 type Found struct {
 	Account
 	Identities []Identity
+	// LastSeen: the account's latest session sign-in or daily token renewal, so when it last used the site to within a
+	// day; none when it has no session kept (they end after 90 days). Nothing tracked for it: the sessions' own times
+	LastSeen *time.Time
 }
+
+// foundAccounts: the accounts, their identities and their latest session's time, for a WHERE / ORDER / LIMIT after it
+const foundAccounts = `SELECT a.id::text, a.name, a.created_at,
+		coalesce(array_agg(i.provider || ':' || i.subject ORDER BY i.provider)
+			FILTER (WHERE i.provider IS NOT NULL), '{}'),
+		(SELECT max(s.rotated_at) FROM sessions s WHERE s.account_id = a.id)
+		FROM accounts a LEFT JOIN identities i ON i.account_id = a.id`
 
 // FindAccounts lists the accounts whose name contains `name` (any case), newest first, at most 50
 func (s *Store) FindAccounts(ctx context.Context, name string) ([]Found, error) {
-	rows, err := s.pool.Query(ctx, `SELECT a.id::text, a.name, a.created_at,
-		coalesce(array_agg(i.provider || ':' || i.subject ORDER BY i.provider)
-			FILTER (WHERE i.provider IS NOT NULL), '{}')
-		FROM accounts a LEFT JOIN identities i ON i.account_id = a.id
+	rows, err := s.pool.Query(ctx, foundAccounts+`
 		WHERE strpos(lower(a.name), lower($1)) > 0 GROUP BY a.id ORDER BY a.created_at DESC LIMIT 50`, name)
 	if err != nil {
 		return nil, err
 	}
+	return collectFound(rows)
+}
+
+// RecentAccounts lists the newest `n` accounts, newest first
+func (s *Store) RecentAccounts(ctx context.Context, n int) ([]Found, error) {
+	rows, err := s.pool.Query(ctx, foundAccounts+` GROUP BY a.id ORDER BY a.created_at DESC LIMIT $1`, n)
+	if err != nil {
+		return nil, err
+	}
+	return collectFound(rows)
+}
+
+func collectFound(rows pgx.Rows) ([]Found, error) {
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (Found, error) {
 		var f Found
 		var ids []string
-		if err := r.Scan(&f.ID, &f.Name, &f.CreatedAt, &ids); err != nil {
+		if err := r.Scan(&f.ID, &f.Name, &f.CreatedAt, &ids, &f.LastSeen); err != nil {
 			return f, err
 		}
 		for _, id := range ids {

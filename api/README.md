@@ -5,7 +5,8 @@ as AC1; APP-CONTRACT.md "carball-api" is how it's deployed). Go, Postgres.
 
 ```
 cmd/carball-api/       the server and the admin's commands (serve, migrate, accounts, ban, unban, bans, healthcheck,
-                       ticket-key; `carball-api help` lists them, `carball-api COMMAND -h` one's flags)
+                       ticket-key; the read-only reports stats, matches, account, ratings, queue-bans in reports.go;
+                       `carball-api help` lists them, `carball-api COMMAND -h` one's flags)
 internal/config/       settings from the environment, secrets from *_FILE
 internal/server/       the HTTP side under /api/: sign-in flows, sign-up, sessions, the account page's calls
 internal/google/       Google's OpenID Connect (go-oidc, x/oauth2): PKCE, the nonce and azp checks

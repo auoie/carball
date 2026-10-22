@@ -4,10 +4,13 @@
 //	carball-api help (or -h, --help)            these commands; carball-api COMMAND -h: a command's flags
 //	carball-api [serve] [--dev]                 the HTTP server (and its health check's, on HEALTH_ADDR)
 //	carball-api migrate [--dev]                 the migrations, a one-shot run as the schema's owner (MIGRATE_DATABASE_URL)
-//	carball-api accounts NAME                   the accounts whose name contains NAME, with their identities
+//	carball-api accounts NAME | --recent [N]    the accounts whose name contains NAME, or the N newest, with their
+//	                                            identities and when last seen (their latest session: to a day)
 //	carball-api ban (--account ID | --identity PROVIDER:SUBJECT) --reason TEXT --by NAME [--for DURATION | --until DATE]
 //	carball-api unban (--account ID | --identity PROVIDER:SUBJECT)
 //	carball-api bans                            the bans in force
+//	carball-api stats | matches --recent [N] | account ID | ratings --top [N] [--playlist P] | queue-bans
+//	                                            the live app's reports (read-only; each one's -h)
 //	carball-api healthcheck                     the container's check: GET /healthz on HEALTH_ADDR
 //	carball-api ticket-key KID                  a new ticket key: its seed (TICKET_SIGNING_KEY_FILE's) on stdout, its
 //	                                            public line (the game server's TICKET_PUBLIC_KEYS) on stderr
@@ -25,6 +28,8 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
+	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -58,11 +63,22 @@ func commands() []command {
 	return []command{
 		{"serve", "[--dev]", "the HTTP server (and its health check's, on HEALTH_ADDR); the default", serve},
 		{"migrate", "[--dev]", "the migrations, a one-shot run as the schema's owner (MIGRATE_DATABASE_URL)", migrate},
-		{"accounts", "NAME", "the accounts whose name contains NAME, with their identities", accounts},
+		{"accounts", "NAME | --recent [N]", "the accounts whose name contains NAME, or the N newest (20 by default), newest " +
+			"first, with their identities and when last seen: the latest session's sign-in or daily renewal (so to within " +
+			"a day; none once its sessions have ended, after 90 days)", accounts},
 		{"ban", "(--account ID | --identity PROVIDER:SUBJECT) --reason TEXT --by NAME [--for DURATION | --until DATE]",
 			"a ban: an account's every identity, or one identity and its account; signed out everywhere", ban},
 		{"unban", "(--account ID | --identity PROVIDER:SUBJECT)", "the bans lifted", unban},
 		{"bans", "", "the bans in force", bans},
+		{"stats", "", "the live app at a glance: accounts (new today, in the last 7 days, in all), ranked matches today and in " +
+			"the week by playlist, the bans and leave bans in force", stats},
+		{"matches", "--recent [N]", "the latest ranked results (20 by default), newest first: their time, playlist, each " +
+			"team's players, the winner and who left", matches},
+		{"account", "ID", "one account: its name, created, last seen, identities, rating in each playlist (\"?\" while " +
+			"provisional, as the page shows it), any ban, its leave ban's step and end, and its last 10 matches", account},
+		{"ratings", "--top [N] [--playlist 1v1|2v2|3v3]", "a playlist's leaderboard (1v1, the top 20 by default) by the " +
+			"rating as shown, provisional ones marked \"?\"", ratingsBoard},
+		{"queue-bans", "", "the leave bans in force: account, name, ladder step, until when", queueBans},
 		{"healthcheck", "", "the container's check: GET /healthz on HEALTH_ADDR", healthcheck},
 		{"ticket-key", "KID", "a new ticket key: its seed (TICKET_SIGNING_KEY_FILE's) on stdout, its public line (the game " +
 			"server's TICKET_PUBLIC_KEYS) on stderr", ticketKey},
@@ -94,9 +110,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 		usage(stdout)
 		return 0
 	}
-	name := "serve"
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		name, args = args[0], args[1:]
+	// (no arguments: the image's own start, its ENTRYPOINT naming no command; anything else names its command first, so
+	// `--dev bans` or `-- bans` serves nothing: RX34)
+	if len(args) == 0 {
+		args = []string{"serve"}
+	}
+	name := args[0]
+	args = args[1:]
+	if strings.HasPrefix(name, "-") {
+		_, _ = fmt.Fprintf(stderr, "carball-api: %q: name the command first (carball-api serve %s; carball-api help)\n", name, name)
+		return 1
 	}
 	for _, c := range commands() {
 		if c.name != name {
@@ -117,25 +140,92 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return 1
 }
 
-// flagsFor: a command's flag set; -h prints its line and its flags (to out), a bad flag is an error
-func flagsFor(name string, out io.Writer) *flag.FlagSet {
+// flagsFor: a command's flag set, read by parseArgs (silent: its errors returned, its usage printed for help alone)
+func flagsFor(name string) *flag.FlagSet {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	fs.SetOutput(out)
-	fs.Usage = func() {
-		for _, c := range commands() {
-			if c.name == name {
-				_, _ = fmt.Fprintf(out, "usage: carball-api %s\n  %s\n", strings.TrimSpace(c.name+" "+c.args), c.about)
-			}
-		}
-		fs.PrintDefaults()
-	}
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {}
 	return fs
 }
 
+// printUsage: a command's line, what it does and its flags
+func printUsage(fs *flag.FlagSet, out io.Writer) {
+	for _, c := range commands() {
+		if c.name == fs.Name() {
+			_, _ = fmt.Fprintf(out, "usage: carball-api %s\n  %s\n", strings.TrimSpace(c.name+" "+c.args), c.about)
+		}
+	}
+	fs.SetOutput(out)
+	fs.PrintDefaults()
+	fs.SetOutput(io.Discard)
+}
+
+// helpAsked: a help word among the arguments, not as a flag's value (`--by -h` is a value, refused as one)
+func helpAsked(fs *flag.FlagSet, args []string) bool {
+	for i := 0; i < len(args); i++ {
+		if helpWord(args[i]) {
+			return true
+		}
+		name, isFlag := strings.CutPrefix(args[i], "-")
+		if !isFlag || strings.Contains(name, "=") {
+			continue
+		}
+		if f := fs.Lookup(strings.TrimPrefix(name, "-")); f != nil {
+			if b, ok := f.Value.(interface{ IsBoolFlag() bool }); !ok || !b.IsBoolFlag() {
+				i++ // (its value next)
+			}
+		}
+	}
+	return false
+}
+
+// parseArgs reads a command's arguments and refuses whatever it can't be sure of before anything runs (the admin's
+// commands run on the live database, RX34): a help word anywhere before `--` (help, -h, -help, --help) prints its usage
+// to out and runs nothing (flag.ErrHelp); its flags are read wherever they come; a flag's value that looks like a flag
+// (`--by -h`, a value forgotten) is refused; fewer than `least` or more than `most` other arguments are refused
+// (`--reason cheating and smurfing --for 72h`: quote a value with spaces). The words after `--` are arguments as they are
+func parseArgs(fs *flag.FlagSet, args []string, out io.Writer, least, most int) ([]string, error) {
+	head, tail := args, []string(nil)
+	if i := slices.Index(args, "--"); i >= 0 {
+		head, tail = args[:i], args[i+1:]
+	}
+	if helpAsked(fs, head) {
+		printUsage(fs, out)
+		return nil, flag.ErrHelp
+	}
+	var rest []string
+	for {
+		if err := fs.Parse(head); err != nil {
+			return nil, fmt.Errorf("%w (carball-api %s -h)", err, fs.Name())
+		}
+		head = fs.Args()
+		if len(head) == 0 {
+			break
+		}
+		rest, head = append(rest, head[0]), head[1:]
+	}
+	rest = append(rest, tail...)
+	var flagLike error
+	fs.Visit(func(f *flag.Flag) {
+		if v := f.Value.String(); flagLike == nil && strings.HasPrefix(v, "-") {
+			flagLike = fmt.Errorf("--%s %q looks like a flag, not its value (quote the value; carball-api %s -h)", f.Name, v, fs.Name())
+		}
+	})
+	switch {
+	case flagLike != nil:
+		return nil, flagLike
+	case len(rest) > most:
+		return nil, fmt.Errorf("unexpected argument %q (quote a value with spaces; carball-api %s -h)", rest[most], fs.Name())
+	case len(rest) < least:
+		return nil, fmt.Errorf("an argument missing (carball-api %s -h)", fs.Name())
+	}
+	return rest, nil
+}
+
 func serve(args []string, out io.Writer) error {
-	fs := flagsFor("serve", out)
+	fs := flagsFor("serve")
 	dev := fs.Bool("dev", false, "development: a localhost origin only, Turnstile optional")
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseArgs(fs, args, out, 0, 0); err != nil {
 		return err
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -310,9 +400,9 @@ func housekeeping(ctx context.Context, db *store.Store, s *server.Server, log *s
 // (DATABASE_URL's) granted its rows; the serving container never holds the owner's password (AP-4). `--dev` allows one
 // role for both (a development database)
 func migrate(args []string, out io.Writer) error {
-	fs := flagsFor("migrate", out)
+	fs := flagsFor("migrate")
 	dev := fs.Bool("dev", false, "development: one role for both URLs")
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseArgs(fs, args, out, 0, 0); err != nil {
 		return err
 	}
 	owner := os.Getenv("MIGRATE_DATABASE_URL")
@@ -337,32 +427,62 @@ func openStore() (*store.Store, error) {
 }
 
 func accounts(args []string, out io.Writer) error {
-	fs := flagsFor("accounts", out)
-	if err := fs.Parse(args); err != nil {
+	fs := flagsFor("accounts")
+	recent := fs.Bool("recent", false, "the newest accounts instead of a name: N of them after it (20 by default, 1000 at most)")
+	rest, err := parseArgs(fs, args, out, 0, 1)
+	if err != nil {
 		return err
 	}
-	if fs.NArg() != 1 {
-		return errors.New("accounts NAME (a part of the name; carball-api accounts -h)")
+	// (the arguments checked before the database is opened: a typo runs nothing)
+	var find func(*store.Store) ([]store.Found, error)
+	switch {
+	case *recent:
+		n, err := recentCount(rest)
+		if err != nil {
+			return err
+		}
+		find = func(db *store.Store) ([]store.Found, error) { return db.RecentAccounts(context.Background(), n) }
+	case len(rest) == 1:
+		find = func(db *store.Store) ([]store.Found, error) { return db.FindAccounts(context.Background(), rest[0]) }
+	default:
+		return errors.New("accounts NAME (a part of the name) or accounts --recent [N] (carball-api accounts -h)")
 	}
 	db, err := openStore()
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	found, err := db.FindAccounts(context.Background(), fs.Arg(0))
+	found, err := find(db)
 	if err != nil {
 		return err
 	}
-	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "ACCOUNT\tNAME\tCREATED\tIDENTITIES")
+	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintln(w, "ACCOUNT\tNAME\tCREATED\tLAST SEEN\tIDENTITIES")
 	for _, f := range found {
 		var ids []string
 		for _, i := range f.Identities {
 			ids = append(ids, string(i.Provider)+":"+i.Subject)
 		}
-		_, _ = fmt.Fprintf(w, "%s\t%q\t%s\t%s\n", f.ID, f.Name, f.CreatedAt.UTC().Format(time.DateOnly), strings.Join(ids, " "))
+		seen := "-"
+		if f.LastSeen != nil {
+			seen = f.LastSeen.UTC().Format(time.DateOnly)
+		}
+		_, _ = fmt.Fprintf(w, "%s\t%q\t%s\t%s\t%s\n", f.ID, f.Name, f.CreatedAt.UTC().Format(time.DateOnly), seen, strings.Join(ids, " "))
 	}
 	return w.Flush()
+}
+
+// recentCount: --recent's N (20 when none), 1 to 1000
+func recentCount(args []string) (int, error) {
+	switch len(args) {
+	case 0:
+		return 20, nil
+	case 1:
+		if n, err := strconv.Atoi(args[0]); err == nil && n >= 1 && n <= 1000 {
+			return n, nil
+		}
+	}
+	return 0, errors.New("accounts --recent [N]: N a count from 1 to 1000")
 }
 
 // target: --account ID or --identity PROVIDER:SUBJECT, one of them
@@ -391,14 +511,14 @@ func (t *target) parse() (store.Identity, error) {
 }
 
 func ban(args []string, out io.Writer) error {
-	fs := flagsFor("ban", out)
+	fs := flagsFor("ban")
 	var t target
 	t.flags(fs)
 	reason := fs.String("reason", "", "why (kept with the ban)")
 	by := fs.String("by", "", "who bans (kept with the ban)")
 	length := fs.Duration("for", 0, "how long (e.g. 72h); none: no end")
 	untilDate := fs.String("until", "", "the end, a date (YYYY-MM-DD, UTC) or RFC 3339 time")
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseArgs(fs, args, out, 0, 0); err != nil {
 		return err
 	}
 	identity, err := t.parse()
@@ -427,7 +547,7 @@ func ban(args []string, out io.Writer) error {
 		return err
 	}
 	for _, i := range banned {
-		fmt.Printf("banned %s:%s (%s); signed out everywhere\n", i.Provider, i.Subject, describe(end))
+		_, _ = fmt.Fprintf(out, "banned %s:%s: %s, reason %q, by %s; signed out everywhere\n", i.Provider, i.Subject, describe(end), *reason, *by)
 	}
 	return nil
 }
@@ -457,7 +577,7 @@ func banEnd(length time.Duration, date string, now time.Time) (store.BanEnd, err
 func describe(end store.BanEnd) string {
 	switch e := end.(type) {
 	case store.Permanent:
-		return "no end"
+		return "permanent"
 	case store.Until:
 		return "until " + e.At.UTC().Format(time.RFC3339)
 	}
@@ -465,10 +585,10 @@ func describe(end store.BanEnd) string {
 }
 
 func unban(args []string, out io.Writer) error {
-	fs := flagsFor("unban", out)
+	fs := flagsFor("unban")
 	var t target
 	t.flags(fs)
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseArgs(fs, args, out, 0, 0); err != nil {
 		return err
 	}
 	identity, err := t.parse()
@@ -489,13 +609,12 @@ func unban(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("%d ban(s) lifted\n", n)
+	_, _ = fmt.Fprintf(out, "%d ban(s) lifted\n", n)
 	return nil
 }
 
 func bans(args []string, out io.Writer) error {
-	fs := flagsFor("bans", out)
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseArgs(flagsFor("bans"), args, out, 0, 0); err != nil {
 		return err
 	}
 	db, err := openStore()
@@ -507,7 +626,7 @@ func bans(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "IDENTITY\tUNTIL\tBY\tSINCE\tREASON")
 	for _, b := range list {
 		_, _ = fmt.Fprintf(w, "%s:%s\t%s\t%s\t%s\t%q\n", b.Provider, b.Subject, describe(b.End), b.By, b.Created.UTC().Format(time.DateOnly), b.Reason)
@@ -517,8 +636,7 @@ func bans(args []string, out io.Writer) error {
 
 // healthcheck: the image's HEALTHCHECK (no curl or wget in it): the health listener's GET /healthz (HEALTH_ADDR)
 func healthcheck(args []string, out io.Writer) error {
-	fs := flagsFor("healthcheck", out)
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseArgs(flagsFor("healthcheck"), args, out, 0, 0); err != nil {
 		return err
 	}
 	addr := os.Getenv("HEALTH_ADDR")
@@ -552,14 +670,11 @@ func healthcheck(args []string, out io.Writer) error {
 // the API switched, the old id dropped once its tickets have run out): the seed alone on stdout (to a file kept secret),
 // the public line for TICKET_PUBLIC_KEYS on stderr
 func ticketKey(args []string, out io.Writer) error {
-	fs := flagsFor("ticket-key", out)
-	if err := fs.Parse(args); err != nil {
+	rest, err := parseArgs(flagsFor("ticket-key"), args, out, 1, 1)
+	if err != nil {
 		return err
 	}
-	if fs.NArg() != 1 {
-		return errors.New("ticket-key KID (an id of 1-32 characters, no spaces)")
-	}
-	seed, public, err := ticket.NewKey(fs.Arg(0))
+	seed, public, err := ticket.NewKey(rest[0])
 	if err != nil {
 		return err
 	}

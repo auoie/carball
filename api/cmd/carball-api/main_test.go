@@ -16,7 +16,7 @@ func TestBanEnd(t *testing.T) {
 		date   string
 		want   string
 	}{
-		{0, "", "no end"},
+		{0, "", "permanent"},
 		{72 * time.Hour, "", "until 2026-10-21T12:00:00Z"},
 		{0, "2026-11-01", "until 2026-11-01T00:00:00Z"},
 		{0, "2026-11-01T08:30:00Z", "until 2026-11-01T08:30:00Z"},
@@ -97,7 +97,7 @@ func TestHelp(t *testing.T) {
 	for command, wants := range map[string][]string{
 		"ban":        {"usage: carball-api ban", "-account", "-identity", "-reason", "-by", "-for", "-until"},
 		"unban":      {"usage: carball-api unban", "-account", "-identity"},
-		"accounts":   {"usage: carball-api accounts NAME"},
+		"accounts":   {"usage: carball-api accounts NAME | --recent [N]", "-recent", "last seen", "within a day"},
 		"serve":      {"usage: carball-api serve [--dev]", "-dev"},
 		"migrate":    {"-dev"},
 		"ticket-key": {"usage: carball-api ticket-key KID"},
@@ -119,5 +119,97 @@ func TestHelp(t *testing.T) {
 	}
 	if code := run([]string{"ban", "--nope"}, &out, &errs); code != 1 {
 		t.Errorf("a bad flag: exit %d", code)
+	}
+	// (accounts' arguments checked before the database is opened: a typo runs nothing)
+	t.Setenv("DATABASE_URL", "")
+	for _, args := range [][]string{{"accounts", "--recent", "x"}, {"accounts", "--recent", "0"}, {"accounts", "--recent", "1001"}, {"accounts"}, {"accounts", "a", "b"}} {
+		errs.Reset()
+		if code := run(args, &out, &errs); code != 1 || strings.Contains(errs.String(), "DATABASE_URL") {
+			t.Errorf("%v: exit %d, %q (refused before the database)", args, code, errs.String())
+		}
+	}
+	for _, args := range [][]string{{"accounts", "--recent"}, {"accounts", "--recent", "5"}, {"accounts", "Zig"}} {
+		errs.Reset()
+		if code := run(args, &out, &errs); code != 1 || !strings.Contains(errs.String(), "DATABASE_URL is required") {
+			t.Errorf("%v: exit %d, %q (good arguments: on to the database)", args, code, errs.String())
+		}
+	}
+}
+
+func TestRecentCount(t *testing.T) {
+	for _, c := range []struct {
+		args []string
+		want int
+	}{{nil, 20}, {[]string{"5"}, 5}, {[]string{"1000"}, 1000}, {[]string{"0"}, 0}, {[]string{"x"}, 0}, {[]string{"1", "2"}, 0}} {
+		if got, err := recentCount(c.args); got != c.want || (err == nil) != (c.want != 0) {
+			t.Errorf("recentCount(%v) = %d, %v", c.args, got, err)
+		}
+	}
+}
+
+// The admin's commands on the live database refuse whatever they can't be sure of before anything runs (RX34): leftover
+// words (an unquoted reason, a bare "72h"), a flag's value that looks like a flag, a help word anywhere (help, run
+// nothing), a first argument that's a flag (serve only from no arguments: the image's start); errors on stderr alone
+func TestArgumentsRefusedBeforeAnythingRuns(t *testing.T) {
+	t.Setenv("DATABASE_URL", "")
+	t.Setenv("MIGRATE_DATABASE_URL", "")
+	const id = "0f0e0d0c-0b0a-4908-8706-050403020100"
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"ban", "--account", id, "--by", "admin", "--reason", "cheating", "and", "smurfing", "--for", "72h"}, `unexpected argument "and"`},
+		{[]string{"ban", "--account", id, "--by", "admin", "--reason", "x", "72h"}, `unexpected argument "72h"`},
+		{[]string{"ban", "--account", id, "--by", "-h", "--reason", "x"}, `--by "-h" looks like a flag`},
+		{[]string{"ban", "--account", id, "--by", "admin", "--reason", "--for"}, `looks like a flag`},
+		{[]string{"unban", "--account", id, "now"}, `unexpected argument "now"`},
+		{[]string{"--dev", "bans"}, "name the command first"},
+		{[]string{"--", "bans"}, "name the command first"},
+		{[]string{"--dev"}, "name the command first"},
+		{[]string{"serve", "--dev", "bans"}, `unexpected argument "bans"`},
+		{[]string{"migrate", "now"}, `unexpected argument "now"`},
+		{[]string{"healthcheck", "extra"}, `unexpected argument "extra"`},
+		{[]string{"bans", "--all"}, "flag provided but not defined"},
+		{[]string{"ticket-key"}, "an argument missing"},
+		{[]string{"ticket-key", "k1", "k2"}, `unexpected argument "k2"`},
+		{[]string{"accounts", "a", "b"}, `unexpected argument "b"`},
+	} {
+		var out, errs bytes.Buffer
+		code := run(c.args, &out, &errs)
+		if code != 1 || !strings.Contains(errs.String(), c.want) || strings.Contains(errs.String(), "DATABASE_URL") || out.Len() != 0 {
+			t.Errorf("%v: exit %d, stdout %q, stderr %q; want exit 1 with %q, nothing run, nothing on stdout", c.args, code, out.String(), errs.String(), c.want)
+		}
+	}
+	// (a help word anywhere: the usage, nothing run: not the unban, not the migrations, not the server)
+	for _, args := range [][]string{{"unban", "--account", id, "help"}, {"migrate", "help"}, {"serve", "--dev", "help"},
+		{"ban", "--account", id, "-h"}, {"healthcheck", "-h"}, {"ticket-key", "--help"}} {
+		var out, errs bytes.Buffer
+		if code := run(args, &out, &errs); code != 0 || !strings.HasPrefix(out.String(), "usage: carball-api "+args[0]) || errs.Len() != 0 {
+			t.Errorf("%v: exit %d, stdout %q, stderr %q; want the usage alone", args, code, out.String(), errs.String())
+		}
+	}
+	// (the flags described in a command's usage)
+	var out bytes.Buffer
+	run([]string{"ban", "-h"}, &out, &out)
+	for _, want := range []string{"who bans (kept with the ban)", "how long (e.g. 72h); none: no end", "the account's id"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("ban -h: no %q in\n%s", want, out.String())
+		}
+	}
+	out.Reset()
+	run([]string{"serve", "-h"}, &out, &out)
+	if !strings.Contains(out.String(), "development: a localhost origin only") {
+		t.Errorf("serve -h:\n%s", out.String())
+	}
+	// (no arguments: the image's start, serve: its configuration read, refused here for what's missing)
+	var errs bytes.Buffer
+	out.Reset()
+	if code := run(nil, &out, &errs); code != 1 || !strings.Contains(errs.String(), "TICKET_SIGNING_KEY_FILE is required") {
+		t.Errorf("no arguments: exit %d, %q; want serve's configuration refusal", code, errs.String())
+	}
+	// (good arguments go on to the database)
+	errs.Reset()
+	if code := run([]string{"ban", "--account", id, "--by", "admin", "--reason", "cheating and smurfing", "--for", "72h"}, &out, &errs); code != 1 || !strings.Contains(errs.String(), "DATABASE_URL is required") {
+		t.Errorf("a quoted reason: exit %d, %q; want on to the database", code, errs.String())
 	}
 }
