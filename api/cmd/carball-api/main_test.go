@@ -62,6 +62,8 @@ func TestTarget(t *testing.T) {
 		{target{identity: "github:x"}, true},
 		{target{identity: "steam:"}, true},
 		{target{identity: "steam"}, true},
+		{target{identity: "google:" + strings.Repeat("1", 255)}, false},
+		{target{identity: "google:sub\t"}, true},
 	} {
 		if _, err := c.t.parse(); (err != nil) != c.fails {
 			t.Errorf("%+v: %v", c.t, err)
@@ -225,6 +227,13 @@ func TestArgumentsRefusedBeforeAnythingRuns(t *testing.T) {
 		{[]string{"ban", "--account", id, "--reason", "x"}, "--reason and --by are required"},
 		{[]string{"ban", "--account", "not-an-id", "--by", "admin", "--reason", "x"}, "--account is an account's id"},
 		{[]string{"unban", "--account", id, "--", "help"}, `unexpected argument "help"`},
+		// (RV-781: a mistyped identity: a pasted space, a newline, a Steam subject not 17 digits, longer than any)
+		{[]string{"ban", "--identity", "steam:76561190000000001 ", "--by", "admin", "--reason", "x"}, "has a space or control character"},
+		{[]string{"ban", "--identity", "google:sub\nbanned google:other", "--by", "admin", "--reason", "x"}, "has a space or control character"},
+		{[]string{"ban", "--identity", "steam:7656119000000001", "--by", "admin", "--reason", "x"}, "a Steam subject is a SteamID64, 17 digits"},
+		{[]string{"ban", "--identity", "steam:7656119000000000x", "--by", "admin", "--reason", "x"}, "a Steam subject is a SteamID64, 17 digits"},
+		{[]string{"ban", "--identity", "google:" + strings.Repeat("1", 256), "--by", "admin", "--reason", "x"}, "longer than any provider's"},
+		{[]string{"unban", "--identity", "steam:123"}, "a Steam subject is a SteamID64, 17 digits"},
 		{[]string{"matches", "--recent", "1001"}, "N a count from 1 to 1000"},
 		{[]string{"ratings", "--top", "1001"}, "N a count from 1 to 1000"},
 		{[]string{"accounts", "--recent", "1001"}, "N a count from 1 to 1000"},

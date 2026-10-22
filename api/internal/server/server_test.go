@@ -500,7 +500,7 @@ func TestBannedIdentity(t *testing.T) {
 	u, _ := url.Parse(e.srv.URL)
 	old := sessionToken(b, u)
 	until := e.clock.Now().Add(72 * time.Hour)
-	if _, err := e.db.BanAccount(context.Background(), account["id"].(string), "abuse", "admin", store.Until{At: until}, e.clock.Now()); err != nil {
+	if _, err := e.db.BanAccount(context.Background(), account["id"].(string), "abuse", "admin", store.Until{At: until}, false, e.clock.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if e.meStatus(b) != http.StatusUnauthorized {

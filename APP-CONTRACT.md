@@ -242,7 +242,10 @@ The accounts service (notes/accounts.md). **Nothing is deployed yet: the first d
   anywhere prints its usage and runs nothing; `ban` prints the ban it made (its end, or permanent). RX35: a flag given
   twice is refused, and so is a ban's `--for` that's zero or negative, an empty `--until`, or an end less than a minute
   ahead (neither: permanent); a value starting with "-" goes as `--flag=value`. The admin's connections are named
-  `carball-admin`, a statement 15 s and a lock 2 s at most; the reports', `accounts`' and `bans`' are read-only.
+  `carball-admin`, a statement 15 s and a lock 2 s at most; the reports', `accounts`' and `bans`' are read-only. A ban
+  on an identity no account has signed in with is refused (a Steam subject is 17 digits; no spaces or control
+  characters), and so is a ban in force on any of its identities unless `--replace`, which prints each ban it replaced
+  (RV-781, RV-787).
 - **Stop:** SIGTERM or SIGINT: requests in flight finish (10 s at most).
 - **Search tickets** (`POST /api/ticket`, notes/accounts.md §3): a signed-in account's, two minutes long, a nonce each,
   its ratings in each playlist (format 3); refused (403, `queue-banned` and until when) while a leaver's queue ban runs,

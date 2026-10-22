@@ -84,7 +84,7 @@ func TestAdminConnections(t *testing.T) {
 			t.Errorf("read-only %s = %q, want %q", setting, got, want)
 		}
 	}
-	_, err = ro.BanAccount(ctx, "00000000-0000-4000-8000-000000000009", "x", "admin", Permanent{}, time.Now())
+	_, err = ro.BanAccount(ctx, "00000000-0000-4000-8000-000000000009", "x", "admin", Permanent{}, false, time.Now())
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) || pgErr.Code != "25006" {
 		t.Errorf("a write on the read-only connection: %v, want 25006", err)

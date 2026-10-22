@@ -1632,8 +1632,8 @@
   {
    "id": "SAFE-ban-silent",
    "file": "cmd/carball-api/main.go",
-   "old": "\t\t_, _ = fmt.Fprintf(out, \"banned %s:%s (%s): %s, reason %q, by %q; its sessions ended\\n\", i.Provider, i.Subject, whose, describe(end), *reason, *by)",
-   "new": "\t\t_, _ = i, whose",
+   "old": "\t\t_, _ = fmt.Fprintf(out, \"banned %s:%s (account %s): %s, reason %q, by %q; its sessions ended\\n\", i.Provider, i.Subject, banned.Account, describe(end), *reason, *by)",
+   "new": "\t\t_ = i",
    "packages": [
     "./cmd/carball-api/"
    ]
@@ -1733,6 +1733,100 @@
    "file": "cmd/carball-api/main.go",
    "old": "\t\tif !accountID.MatchString(t.account) {",
    "new": "\t\tif false && !accountID.MatchString(t.account) {",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "RV787-replace-unasked",
+   "file": "internal/store/store.go",
+   "old": "\tif len(held) > 0 && !replace {",
+   "new": "\tif false && len(held) > 0 && !replace {",
+   "packages": [
+    "./internal/store/",
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "RV787-replace-refused",
+   "file": "internal/store/store.go",
+   "old": "\tif len(held) > 0 && !replace {",
+   "new": "\tif len(held) > 0 {",
+   "packages": [
+    "./internal/store/",
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "RV787-replaced-unreported",
+   "file": "internal/store/store.go",
+   "old": "\t_, err := tx.Exec(ctx, `DELETE FROM sessions WHERE account_id = $1`, accountID)\n\treturn held, err",
+   "new": "\t_, err := tx.Exec(ctx, `DELETE FROM sessions WHERE account_id = $1`, accountID)\n\treturn nil, err",
+   "packages": [
+    "./internal/store/",
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "RV787-replaced-unprinted",
+   "file": "cmd/carball-api/main.go",
+   "old": "\t\t_, _ = fmt.Fprintf(out, \"replaced %s\\n\", banLine(b))",
+   "new": "\t\t_ = b",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "RV781-unknown-banned",
+   "file": "internal/store/store.go",
+   "old": "\t\tif errors.Is(err, pgx.ErrNoRows) {\n\t\t\treturn ErrNoIdentity\n\t\t}",
+   "new": "\t\tif errors.Is(err, pgx.ErrNoRows) {\n\t\t\tb.Identities = []Identity{i}\n\t\t\t_, err = tx.Exec(ctx, `INSERT INTO bans (provider, subject, reason, until, banned_by, created_at) VALUES ($1, $2, $3, $4, $5, $6)`, i.Provider, i.Subject, reason, endColumn(end), by, now)\n\t\t\treturn err\n\t\t}",
+   "packages": [
+    "./internal/store/",
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "RV781-space-taken",
+   "file": "cmd/carball-api/main.go",
+   "old": "return unicode.IsSpace(r) || unicode.IsControl(r)",
+   "new": "return unicode.IsControl(r)",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "RV781-control-taken",
+   "file": "cmd/carball-api/main.go",
+   "old": "return unicode.IsSpace(r) || unicode.IsControl(r)",
+   "new": "return unicode.IsSpace(r) && !unicode.IsControl(r)",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "RV781-steam-length-unchecked",
+   "file": "cmd/carball-api/main.go",
+   "old": "\tif provider == store.Steam && !steamID.MatchString(subject) {",
+   "new": "\tif false && provider == store.Steam && !steamID.MatchString(subject) {",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "RV781-long-taken",
+   "file": "cmd/carball-api/main.go",
+   "old": "\tif len(subject) > 255 {",
+   "new": "\tif len(subject) > 256 {",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "RV781-ban-line-no-account",
+   "file": "cmd/carball-api/main.go",
+   "old": "i.Provider, i.Subject, banned.Account, describe(end)",
+   "new": "i.Provider, i.Subject, t.account, describe(end)",
    "packages": [
     "./cmd/carball-api/"
    ]

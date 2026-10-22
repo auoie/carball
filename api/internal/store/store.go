@@ -547,57 +547,91 @@ func identitiesOf(ctx context.Context, tx pgx.Tx, accountID string, lock bool) (
 
 // --- Bans (the admin command: notes/accounts.md §4) ---
 
-// BanAccount bans every identity of an account and signs it out everywhere; the identities banned
-func (s *Store) BanAccount(ctx context.Context, accountID, reason, by string, end BanEnd, now time.Time) ([]Identity, error) {
-	var ids []Identity
+// ErrNoIdentity: no account has signed in with that identity, so a ban on it is refused (a mistyped one would ban no
+// one: RV-781)
+var ErrNoIdentity = errors.New("no account has signed in with that identity")
+
+// AlreadyBannedError: a ban refused, nothing changed, because some of its identities are banned already and it wasn't
+// asked to replace their bans (RV-787): those bans
+type AlreadyBannedError struct{ Bans []Ban }
+
+func (e AlreadyBannedError) Error() string { return "already banned" }
+
+// Banned is what a ban did: the identities banned, their account (signed out everywhere), and the bans in force it
+// replaced
+type Banned struct {
+	Identities []Identity
+	Account    string
+	Replaced   []Ban
+}
+
+// BanAccount bans every identity of an account and signs it out everywhere; a ban in force on any of them is
+// replaced only with `replace` (else AlreadyBannedError)
+func (s *Store) BanAccount(ctx context.Context, accountID, reason, by string, end BanEnd, replace bool, now time.Time) (Banned, error) {
+	b := Banned{Account: accountID}
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		var err error
-		if ids, err = identitiesOf(ctx, tx, accountID, true); err != nil {
+		if b.Identities, err = identitiesOf(ctx, tx, accountID, true); err != nil {
 			return err
 		}
-		if len(ids) == 0 {
+		if len(b.Identities) == 0 {
 			return ErrNoAccount
 		}
-		return banIdentities(ctx, tx, ids, accountID, reason, by, end, now)
+		b.Replaced, err = banIdentities(ctx, tx, b.Identities, accountID, reason, by, end, replace, now)
+		return err
 	})
-	return ids, err
+	return b, err
 }
 
-// BanIdentity bans an identity, and with it every identity of its account if it has one (signed out everywhere)
-func (s *Store) BanIdentity(ctx context.Context, i Identity, reason, by string, end BanEnd, now time.Time) ([]Identity, error) {
-	ids := []Identity{i}
+// BanIdentity bans an identity's account, every identity of it, as BanAccount; an identity no account has is refused
+// (ErrNoIdentity)
+func (s *Store) BanIdentity(ctx context.Context, i Identity, reason, by string, end BanEnd, replace bool, now time.Time) (Banned, error) {
+	var b Banned
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		var account string
 		err := tx.QueryRow(ctx, `SELECT account_id::text FROM identities WHERE provider = $1 AND subject = $2`,
-			i.Provider, i.Subject).Scan(&account)
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			i.Provider, i.Subject).Scan(&b.Account)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNoIdentity
+		}
+		if err != nil {
 			return err
 		}
-		if account != "" {
-			if ids, err = identitiesOf(ctx, tx, account, true); err != nil {
-				return err
-			}
+		if b.Identities, err = identitiesOf(ctx, tx, b.Account, true); err != nil {
+			return err
 		}
-		return banIdentities(ctx, tx, ids, account, reason, by, end, now)
+		b.Replaced, err = banIdentities(ctx, tx, b.Identities, b.Account, reason, by, end, replace, now)
+		return err
 	})
-	return ids, err
+	return b, err
 }
 
-func banIdentities(ctx context.Context, tx pgx.Tx, ids []Identity, accountID, reason, by string, end BanEnd, now time.Time) error {
+// banIdentities: the identities banned and their account's sessions ended; the bans in force it replaced, none
+// replaced without `replace`
+func banIdentities(ctx context.Context, tx pgx.Tx, ids []Identity, accountID, reason, by string, end BanEnd, replace bool, now time.Time) ([]Ban, error) {
+	var held []Ban
+	for _, i := range ids {
+		b, banned, err := banOn(ctx, tx, i.Provider, i.Subject, now)
+		if err != nil {
+			return nil, err
+		}
+		if banned {
+			held = append(held, b)
+		}
+	}
+	if len(held) > 0 && !replace {
+		return nil, AlreadyBannedError{Bans: held}
+	}
 	until := endColumn(end)
 	for _, i := range ids {
 		if _, err := tx.Exec(ctx, `INSERT INTO bans (provider, subject, reason, until, banned_by, created_at)
 			VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (provider, subject) DO UPDATE
 			SET reason = excluded.reason, until = excluded.until, banned_by = excluded.banned_by,
 			created_at = excluded.created_at`, i.Provider, i.Subject, reason, until, by, now); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	if accountID == "" {
-		return nil
-	}
 	_, err := tx.Exec(ctx, `DELETE FROM sessions WHERE account_id = $1`, accountID)
-	return err
+	return held, err
 }
 
 // Unban lifts the bans on an identity and on every identity of its account; how many were lifted

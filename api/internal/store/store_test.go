@@ -128,15 +128,21 @@ func TestCreateAccount(t *testing.T) {
 }
 
 func TestCreateAccountRefusals(t *testing.T) {
-	s, _, _ := open(t)
+	s, owner, _ := open(t)
 	ctx := context.Background()
-	// (a banned identity: refused, the ban carried)
-	if _, err := s.BanIdentity(ctx, store.Identity{Provider: store.Steam, Subject: "76561190000000002"}, "cheating", "admin",
-		store.Permanent{}, t0); err != nil {
+	// (a banned identity with no account (its account deleted: its bans stay; a ban can't be made on one now, RV-781):
+	// refused, the ban carried)
+	conn, err := pgx.Connect(ctx, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close(ctx) }()
+	if _, err := conn.Exec(ctx, `INSERT INTO bans (provider, subject, reason, until, banned_by, created_at)
+		VALUES ('steam', '76561190000000002', 'cheating', NULL, 'admin', $1)`, t0); err != nil {
 		t.Fatal(err)
 	}
 	var banned store.BannedError
-	_, err := s.CreateAccount(ctx, pending(t, s, "steam", "76561190000000002", t0), "B", []byte("h"), t0, t0)
+	_, err = s.CreateAccount(ctx, pending(t, s, "steam", "76561190000000002", t0), "B", []byte("h"), t0, t0)
 	if !errors.As(err, &banned) || banned.Ban.Reason != "cheating" {
 		t.Errorf("a banned identity's sign-up: %v", err)
 	}
@@ -235,7 +241,7 @@ func TestSessions(t *testing.T) {
 		t.Error("signing out by the previous token left the session")
 	}
 	// (a ban in force on the account: no session of it opens, even one made after the ban (a sign-in racing it: AP-3))
-	if _, err := s.BanIdentity(ctx, store.Identity{Provider: store.Google, Subject: "sub-s"}, "x", "admin", store.Until{At: day.Add(time.Hour)}, day); err != nil {
+	if _, err := s.BanIdentity(ctx, store.Identity{Provider: store.Google, Subject: "sub-s"}, "x", "admin", store.Until{At: day.Add(time.Hour)}, false, day); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.CreateSession(ctx, []byte("late"), id, day, end); err != nil {
@@ -260,9 +266,9 @@ func TestBans(t *testing.T) {
 		t.Fatal(err)
 	}
 	until := t0.Add(72 * time.Hour)
-	ids, err := s.BanAccount(ctx, id, "abuse", "admin", store.Until{At: until}, t0)
-	if err != nil || len(ids) != 1 {
-		t.Fatalf("BanAccount = %v, %v", ids, err)
+	b0, err := s.BanAccount(ctx, id, "abuse", "admin", store.Until{At: until}, false, t0)
+	if err != nil || len(b0.Identities) != 1 || b0.Account != id || len(b0.Replaced) != 0 {
+		t.Fatalf("BanAccount = %+v, %v", b0, err)
 	}
 	if _, found, _ := s.SessionByToken(ctx, []byte("sb"), t0); found {
 		t.Error("a banned account still signed in")
@@ -277,9 +283,33 @@ func TestBans(t *testing.T) {
 	if b, banned, _ := s.BanOn(ctx, "google", "sub-b", until); banned {
 		t.Errorf("a ban in force at its end: %+v", b)
 	}
+	// (a ban in force: not replaced unasked, nothing changed, the ban in force named (RV-787); replaced when asked, the
+	// replaced one returned)
+	var held store.AlreadyBannedError
+	if _, err := s.BanIdentity(ctx, store.Identity{Provider: store.Google, Subject: "sub-b"}, "again", "mod", store.Permanent{}, false, t0); !errors.As(err, &held) ||
+		len(held.Bans) != 1 || held.Bans[0].Reason != "abuse" {
+		t.Errorf("a re-ban unasked: %v", err)
+	}
+	if b, _, _ := s.BanOn(ctx, "google", "sub-b", t0); b.Reason != "abuse" || b.By != "admin" {
+		t.Errorf("a refused re-ban changed the ban: %+v", b)
+	}
+	if _, err := s.BanAccount(ctx, id, "again", "mod", store.Permanent{}, false, t0); !errors.As(err, &held) {
+		t.Errorf("an account's re-ban unasked: %v", err)
+	}
 	// (banned by an identity: its account's every identity; then lifted)
-	if _, err := s.BanIdentity(ctx, store.Identity{Provider: store.Google, Subject: "sub-b"}, "again", "admin", store.Permanent{}, t0); err != nil {
-		t.Fatal(err)
+	b1, err := s.BanIdentity(ctx, store.Identity{Provider: store.Google, Subject: "sub-b"}, "again", "mod", store.Permanent{}, true, t0)
+	if err != nil || b1.Account != id || len(b1.Replaced) != 1 || b1.Replaced[0].Reason != "abuse" || b1.Replaced[0].By != "admin" {
+		t.Fatalf("a re-ban replacing = %+v, %v", b1, err)
+	}
+	if b, _, _ := s.BanOn(ctx, "google", "sub-b", t0); b.Reason != "again" {
+		t.Errorf("the replacing ban: %+v", b)
+	}
+	// (an identity no account has: refused, nothing stored (RV-781))
+	if _, err := s.BanIdentity(ctx, store.Identity{Provider: store.Google, Subject: "sub-nobody"}, "x", "admin", store.Permanent{}, false, t0); !errors.Is(err, store.ErrNoIdentity) {
+		t.Errorf("banning an unknown identity: %v", err)
+	}
+	if _, banned, _ := s.BanOn(ctx, "google", "sub-nobody", t0); banned {
+		t.Error("an unknown identity's ban stored")
 	}
 	if n, err := s.Unban(ctx, store.Identity{Provider: store.Google, Subject: "sub-b"}); err != nil || n != 1 {
 		t.Errorf("Unban = %d, %v", n, err)
@@ -287,7 +317,7 @@ func TestBans(t *testing.T) {
 	if _, banned, _ := s.BanOn(ctx, "google", "sub-b", t0); banned {
 		t.Error("still banned after the unban")
 	}
-	if _, err := s.BanAccount(ctx, "00000000-0000-0000-0000-000000000000", "x", "admin", store.Permanent{}, t0); !errors.Is(err, store.ErrNoAccount) {
+	if _, err := s.BanAccount(ctx, "00000000-0000-0000-0000-000000000000", "x", "admin", store.Permanent{}, false, t0); !errors.Is(err, store.ErrNoAccount) {
 		t.Errorf("banning no account: %v", err)
 	}
 	found, err := s.FindAccounts(ctx, "bann")

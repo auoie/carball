@@ -278,6 +278,9 @@ function softClip(drive: number): Float32Array<ArrayBuffer> {
   return curve;
 }
 
+/** The engine loop's share of a car's sound: half what it was (-6 dB, 2026-10-22), under the hits, goals and boost */
+const ENGINE_LEVEL = 0.5;
+
 /** A car's continuous sounds: engine, boost and the supersonic wind, steered every frame; into `output`. */
 export class CarVoice {
   readonly output: GainNode;
@@ -336,7 +339,7 @@ export class CarVoice {
     sub?.frequency.setTargetAtTime(f / 2, now, 0.06);
     this.#pulse.frequency.setTargetAtTime(f / 2, now, 0.06);
     this.#engineFilter.frequency.setTargetAtTime(320 + 1700 * (0.35 * s + 0.65 * throttle), now, 0.08);
-    this.#engine.gain.setTargetAtTime((0.04 + 0.08 * throttle + 0.05 * s) * level, now, 0.08);
+    this.#engine.gain.setTargetAtTime((0.04 + 0.08 * throttle + 0.05 * s) * ENGINE_LEVEL * level, now, 0.08);
     this.#boost.gain.setTargetAtTime(boosting ? 0.22 : 0, now, boosting ? 0.03 : 0.09);
     this.#wind.gain.setTargetAtTime(supersonic ? 0.09 : 0, now, 0.25);
   }

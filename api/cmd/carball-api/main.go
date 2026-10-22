@@ -28,12 +28,14 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"syscall"
 	"text/tabwriter"
 	"time"
+	"unicode"
 
 	// (the root certificates built in, for an image without a system bundle: Google, Steam and Cloudflare are https)
 	_ "golang.org/x/crypto/x509roots/fallback"
@@ -66,8 +68,10 @@ func commands() []command {
 		{"accounts", "NAME | --recent [N]", "the accounts whose name contains NAME, or the N newest (20 by default), newest " +
 			"first, with their identities and when last seen: the latest session's sign-in or daily renewal (so to within " +
 			"a day; none once its sessions have ended, after 90 days)", accounts},
-		{"ban", "(--account ID | --identity PROVIDER:SUBJECT) --reason TEXT --by NAME [--for DURATION | --until DATE]",
-			"a ban: an account's every identity, or one identity and its account; signed out everywhere", ban},
+		{"ban", "(--account ID | --identity PROVIDER:SUBJECT) --reason TEXT --by NAME [--for DURATION | --until DATE] [--replace]",
+			"a ban: an account's every identity, or one identity's account; signed out everywhere. An identity no account " +
+				"has signed in with is refused, and so is a ban in force on any of them unless --replace (the bans it " +
+				"replaced printed)", ban},
 		{"unban", "(--account ID | --identity PROVIDER:SUBJECT)", "the bans lifted", unban},
 		{"bans", "", "the bans in force", bans},
 		{"stats", "", "the live app at a glance: accounts (new today, in the last 7 days, in all), ranked matches today and in " +
@@ -541,8 +545,21 @@ func (t *target) parse() (store.Identity, error) {
 	if !ok || !known || subject == "" {
 		return store.Identity{}, errors.New("--identity is PROVIDER:SUBJECT, the provider google or steam")
 	}
+	// (a pasted space, a newline, a wrong length: refused before the database, RV-781)
+	if strings.IndexFunc(subject, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
+		return store.Identity{}, fmt.Errorf("--identity's subject %q has a space or control character", subject)
+	}
+	if provider == store.Steam && !steamID.MatchString(subject) {
+		return store.Identity{}, fmt.Errorf("--identity steam:%q: a Steam subject is a SteamID64, 17 digits", subject)
+	}
+	if len(subject) > 255 {
+		return store.Identity{}, errors.New("--identity's subject is longer than any provider's (255)")
+	}
 	return store.Identity{Provider: provider, Subject: subject}, nil
 }
+
+// steamID: a SteamID64, the Steam subject
+var steamID = regexp.MustCompile(`^[0-9]{17}$`)
 
 func ban(args []string, out io.Writer) error {
 	fs := flagsFor("ban")
@@ -552,6 +569,7 @@ func ban(args []string, out io.Writer) error {
 	by := fs.String("by", "", "who bans (kept with the ban)")
 	length := fs.Duration("for", 0, "how long (e.g. 72h); none: no end")
 	untilDate := fs.String("until", "", "the end, a date (YYYY-MM-DD, UTC) or RFC 3339 time")
+	replace := fs.Bool("replace", false, "replace a ban in force on any of its identities (each one replaced printed)")
 	if _, err := parseArgs(fs, args, out, 0, 0); err != nil {
 		return err
 	}
@@ -573,23 +591,37 @@ func ban(args []string, out io.Writer) error {
 		return err
 	}
 	defer db.Close()
-	var banned []store.Identity
+	var banned store.Banned
 	if t.account != "" {
-		banned, err = db.BanAccount(context.Background(), t.account, *reason, *by, end, time.Now())
+		banned, err = db.BanAccount(context.Background(), t.account, *reason, *by, end, *replace, time.Now())
 	} else {
-		banned, err = db.BanIdentity(context.Background(), identity, *reason, *by, end, time.Now())
+		banned, err = db.BanIdentity(context.Background(), identity, *reason, *by, end, *replace, time.Now())
 	}
-	if err != nil {
+	var held store.AlreadyBannedError
+	switch {
+	case errors.As(err, &held):
+		lines := make([]string, len(held.Bans))
+		for k, b := range held.Bans {
+			lines[k] = "  " + banLine(b)
+		}
+		return fmt.Errorf("already banned, nothing changed (--replace to replace it):\n%s", strings.Join(lines, "\n"))
+	case errors.Is(err, store.ErrNoIdentity):
+		return fmt.Errorf("no account has signed in with %s: nothing banned (check it: accounts NAME lists the identities)", t.identity)
+	case err != nil:
 		return err
 	}
-	whose := "identity " + t.identity
-	if t.account != "" {
-		whose = "account " + t.account
+	for _, b := range banned.Replaced {
+		_, _ = fmt.Fprintf(out, "replaced %s\n", banLine(b))
 	}
-	for _, i := range banned {
-		_, _ = fmt.Fprintf(out, "banned %s:%s (%s): %s, reason %q, by %q; its sessions ended\n", i.Provider, i.Subject, whose, describe(end), *reason, *by)
+	for _, i := range banned.Identities {
+		_, _ = fmt.Fprintf(out, "banned %s:%s (account %s): %s, reason %q, by %q; its sessions ended\n", i.Provider, i.Subject, banned.Account, describe(end), *reason, *by)
 	}
 	return nil
+}
+
+// banLine: a ban in force, as ban prints the ones it replaced or was refused by
+func banLine(b store.Ban) string {
+	return fmt.Sprintf("%s:%s's ban: %s, reason %q, by %q, since %s", b.Provider, b.Subject, describe(b.End), b.Reason, b.By, b.Created.UTC().Format(time.RFC3339))
 }
 
 // banEnd: a ban's end from --for (given: `forGiven`) or --until (`untilGiven`), neither a permanent ban. One given but

@@ -128,10 +128,10 @@ func TestReports(t *testing.T) {
 		t.Fatal(err)
 	}
 	// (Bea's ban over: not in force)
-	if _, err := db.BanIdentity(ctx, store.Identity{Provider: store.Google, Subject: "sub-Bea"}, "old", "admin", store.Until{At: now.Add(-time.Hour)}, now.Add(-48*time.Hour)); err != nil {
+	if _, err := db.BanIdentity(ctx, store.Identity{Provider: store.Google, Subject: "sub-Bea"}, "old", "admin", store.Until{At: now.Add(-time.Hour)}, false, now.Add(-48*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.BanIdentity(ctx, store.Identity{Provider: store.Google, Subject: "sub-Cy"}, "abuse", "admin", store.Until{At: now.Add(time.Hour)}, now); err != nil {
+	if _, err := db.BanIdentity(ctx, store.Identity{Provider: store.Google, Subject: "sub-Cy"}, "abuse", "admin", store.Until{At: now.Add(time.Hour)}, false, now); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.ChangeQueueBan(ctx, ids["Di"], nil, now, func(store.QueueBan, bool) (*store.QueueBan, bool) {
@@ -219,8 +219,34 @@ func TestReports(t *testing.T) {
 		`banned google:sub-Ada (account `+ids["Ada"]+`): until `) || !strings.Contains(got, `reason "cheating and smurfing", by "admin"`) {
 		t.Errorf("ban for 72h: %q", got)
 	}
-	if got := report("ban", "--identity", "google:sub-Bea", "--by", "admin", "--reason", "x"); !strings.Contains(got, "banned google:sub-Bea (identity google:sub-Bea): permanent") {
+	// (an identity's ban names its account; Bea's earlier ban was over, so nothing to replace)
+	if got := report("ban", "--identity", "google:sub-Bea", "--by", "admin", "--reason", "x"); got != "banned google:sub-Bea (account "+ids["Bea"]+
+		"): permanent, reason \"x\", by \"admin\"; its sessions ended\n" {
 		t.Errorf("a permanent ban: %q", got)
+	}
+	refused := func(want string, args ...string) {
+		t.Helper()
+		var out, errs bytes.Buffer
+		if code := run(args, &out, &errs); code != 1 || out.Len() != 0 || !strings.Contains(errs.String(), want) {
+			t.Errorf("%v: exit %d, stdout %q, stderr %q; want %q", args, code, out.String(), errs.String(), want)
+		}
+	}
+	// (RV-787: a ban in force replaced only with --replace, refused naming it, nothing changed; replaced, printed)
+	refused(`already banned, nothing changed (--replace to replace it):
+  google:sub-Bea's ban: permanent, reason "x", by "admin", since `, "ban", "--identity", "google:sub-Bea", "--by", "mod", "--reason", "y", "--for", "1h")
+	refused("google:sub-Cy's ban: until ", "ban", "--account", ids["Cy"], "--by", "mod", "--reason", "y")
+	if got := report("account", ids["Bea"]); !strings.Contains(got, `google:sub-Bea permanent, by admin: "x"`) {
+		t.Errorf("a refused re-ban changed the ban:\n%s", got)
+	}
+	if got := report("ban", "--identity", "google:sub-Bea", "--by", "mod", "--reason", "y", "--for", "1h", "--replace"); !strings.HasPrefix(got,
+		`replaced google:sub-Bea's ban: permanent, reason "x", by "admin", since `) || !strings.Contains(got, "\nbanned google:sub-Bea (account "+ids["Bea"]+`): until `) {
+		t.Errorf("a ban replaced: %q", got)
+	}
+	// (RV-781: an identity no account has, or one mistyped, refused: nothing banned)
+	refused("no account has signed in with google:sub-Nobody: nothing banned", "ban", "--identity", "google:sub-Nobody", "--by", "admin", "--reason", "x")
+	refused("no account has signed in with steam:76561190000000009", "ban", "--identity", "steam:76561190000000009", "--by", "admin", "--reason", "x")
+	if got := report("bans"); strings.Contains(got, "sub-Nobody") || strings.Contains(got, "76561190000000009") {
+		t.Errorf("a refused identity's ban stored:\n%s", got)
 	}
 	if got := report("unban", "--account", ids["Ada"]); got != "1 ban(s) lifted\n" {
 		t.Errorf("unban: %q", got)
