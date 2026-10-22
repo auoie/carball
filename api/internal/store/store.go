@@ -33,6 +33,27 @@ type Store struct {
 
 // Open connects the service's role (DATABASE_URL, its password from a file)
 func Open(ctx context.Context, dsn, passwordFile string) (*Store, error) {
+	return open(ctx, dsn, passwordFile, func(cfg *pgxpool.Config) { cfg.MaxConns = 10 })
+}
+
+// OpenAdmin connects the admin's commands (the same role and database, on the live one): named carball-admin among the
+// server's sessions, a statement given 15 s and a lock 2 s at most (a report never waits for ever, nor holds the
+// service's queries behind a migration's lock it queued for), and with `readOnly` (the reports, accounts, bans) every
+// transaction read-only, a write refused by the server itself (RX35)
+func OpenAdmin(ctx context.Context, dsn, passwordFile string, readOnly bool) (*Store, error) {
+	return open(ctx, dsn, passwordFile, func(cfg *pgxpool.Config) {
+		cfg.MaxConns = 2
+		params := cfg.ConnConfig.RuntimeParams
+		params["application_name"] = "carball-admin"
+		params["statement_timeout"] = "15000"
+		params["lock_timeout"] = "2000"
+		if readOnly {
+			params["default_transaction_read_only"] = "on"
+		}
+	})
+}
+
+func open(ctx context.Context, dsn, passwordFile string, tune func(*pgxpool.Config)) (*Store, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("DATABASE_URL: %w", err)
@@ -42,7 +63,7 @@ func Open(ctx context.Context, dsn, passwordFile string) (*Store, error) {
 			return nil, fmt.Errorf("DATABASE_PASSWORD_FILE: %w", err)
 		}
 	}
-	cfg.MaxConns = 10
+	tune(cfg)
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, err

@@ -216,10 +216,10 @@ func TestReports(t *testing.T) {
 	}
 	// (ban says the ban it made: its end, or permanent; unban what it lifted)
 	if got := report("ban", "--account", ids["Ada"], "--by", "admin", "--reason", "cheating and smurfing", "--for", "72h"); !strings.Contains(got,
-		`banned google:sub-Ada: until `) || !strings.Contains(got, `reason "cheating and smurfing", by admin`) {
+		`banned google:sub-Ada (account `+ids["Ada"]+`): until `) || !strings.Contains(got, `reason "cheating and smurfing", by "admin"`) {
 		t.Errorf("ban for 72h: %q", got)
 	}
-	if got := report("ban", "--identity", "google:sub-Bea", "--by", "admin", "--reason", "x"); !strings.Contains(got, "banned google:sub-Bea: permanent") {
+	if got := report("ban", "--identity", "google:sub-Bea", "--by", "admin", "--reason", "x"); !strings.Contains(got, "banned google:sub-Bea (identity google:sub-Bea): permanent") {
 		t.Errorf("a permanent ban: %q", got)
 	}
 	if got := report("unban", "--account", ids["Ada"]); got != "1 ban(s) lifted\n" {

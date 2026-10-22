@@ -109,7 +109,7 @@ func stats(args []string, out io.Writer) error {
 	if _, err := parseArgs(flagsFor("stats"), args, out, 0, 0); err != nil {
 		return err
 	}
-	db, err := openStore()
+	db, err := openStore(true)
 	if err != nil {
 		return err
 	}
@@ -145,7 +145,7 @@ func matches(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	db, err := openStore()
+	db, err := openStore(true)
 	if err != nil {
 		return err
 	}
@@ -170,7 +170,7 @@ func account(args []string, out io.Writer) error {
 		return errors.New("account ID (an account's id, as accounts lists it)")
 	}
 	id := strings.ToLower(rest[0])
-	db, err := openStore()
+	db, err := openStore(true)
 	if err != nil {
 		return err
 	}
@@ -284,7 +284,7 @@ func ratingsBoard(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	db, err := openStore()
+	db, err := openStore(true)
 	if err != nil {
 		return err
 	}
@@ -322,7 +322,7 @@ func queueBans(args []string, out io.Writer) error {
 	if _, err := parseArgs(flagsFor("queue-bans"), args, out, 0, 0); err != nil {
 		return err
 	}
-	db, err := openStore()
+	db, err := openStore(true)
 	if err != nil {
 		return err
 	}

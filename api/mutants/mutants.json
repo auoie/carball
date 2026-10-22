@@ -1587,8 +1587,8 @@
   {
    "id": "SAFE-help-word-first-only",
    "file": "cmd/carball-api/main.go",
-   "old": "\t\tif helpWord(args[i]) {\n\t\t\treturn true\n\t\t}",
-   "new": "\t\tif i == 0 && helpWord(args[i]) {\n\t\t\treturn true\n\t\t}",
+   "old": "\t\tif helpWord(args[i]) {\n\t\t\tscan.help = true\n\t\t\tcontinue\n\t\t}",
+   "new": "\t\tif i == 0 && helpWord(args[i]) {\n\t\t\tscan.help = true\n\t\t\tcontinue\n\t\t}",
    "packages": [
     "./cmd/carball-api/"
    ]
@@ -1596,8 +1596,8 @@
   {
    "id": "SAFE-value-not-skipped",
    "file": "cmd/carball-api/main.go",
-   "old": "\t\t\t\ti++ // (its value next)",
-   "new": "\t\t\t\t_ = i // (its value next)",
+   "old": "\t\t\ti++ // (its value next)",
+   "new": "\t\t\t_ = i // (its value next)",
    "packages": [
     "./cmd/carball-api/"
    ]
@@ -1632,8 +1632,107 @@
   {
    "id": "SAFE-ban-silent",
    "file": "cmd/carball-api/main.go",
-   "old": "\t\t_, _ = fmt.Fprintf(out, \"banned %s:%s: %s, reason %q, by %s; signed out everywhere\\n\", i.Provider, i.Subject, describe(end), *reason, *by)",
-   "new": "\t\t_ = i",
+   "old": "\t\t_, _ = fmt.Fprintf(out, \"banned %s:%s (%s): %s, reason %q, by %q; its sessions ended\\n\", i.Provider, i.Subject, whose, describe(end), *reason, *by)",
+   "new": "\t\t_, _ = i, whose",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "RX35-reports-writable",
+   "file": "internal/store/store.go",
+   "old": "\t\tif readOnly {\n\t\t\tparams[\"default_transaction_read_only\"] = \"on\"\n\t\t}",
+   "new": "\t\t_ = readOnly",
+   "packages": [
+    "./internal/store/"
+   ]
+  },
+  {
+   "id": "RX35-no-statement-timeout",
+   "file": "internal/store/store.go",
+   "old": "\t\tparams[\"statement_timeout\"] = \"15000\"\n",
+   "new": "",
+   "packages": [
+    "./internal/store/"
+   ]
+  },
+  {
+   "id": "RX35-no-lock-timeout",
+   "file": "internal/store/store.go",
+   "old": "\t\tparams[\"lock_timeout\"] = \"2000\"\n",
+   "new": "",
+   "packages": [
+    "./internal/store/"
+   ]
+  },
+  {
+   "id": "RX35-reports-on-rw",
+   "file": "cmd/carball-api/reports.go",
+   "old": "\tdb, err := openStore(true)\n\tif err != nil {\n\t\treturn err\n\t}\n\tdefer db.Close()\n\tnow := time.Now()\n\tst, err",
+   "new": "\tdb, err := openStore(false)\n\tif err != nil {\n\t\treturn err\n\t}\n\tdefer db.Close()\n\tnow := time.Now()\n\tst, err",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "RX35-zero-for-permanent",
+   "file": "cmd/carball-api/main.go",
+   "old": "\tcase forGiven && length <= 0:",
+   "new": "\tcase forGiven && length < 0:",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "RX35-empty-until-permanent",
+   "file": "cmd/carball-api/main.go",
+   "old": "\tcase !untilGiven:\n",
+   "new": "\tcase !untilGiven || date == \"\":\n",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "RX35-past-end-taken",
+   "file": "cmd/carball-api/main.go",
+   "old": "\tif !end.After(now.Add(time.Minute)) {",
+   "new": "\tif false && !end.After(now.Add(time.Minute)) {",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "RX35-repeat-taken",
+   "file": "cmd/carball-api/main.go",
+   "old": "\tif scan.repeated != \"\" {",
+   "new": "\tif false && scan.repeated != \"\" {",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "RX35-inline-refused",
+   "file": "cmd/carball-api/main.go",
+   "old": " && !scan.inline[f.Name] {",
+   "new": " {",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "RX35-seed-help-stdout",
+   "file": "cmd/carball-api/main.go",
+   "old": "\t\tif c.name == \"ticket-key\" {\n\t\t\thelp = stderr",
+   "new": "\t\tif false && c.name == \"ticket-key\" {\n\t\t\thelp = stderr",
+   "packages": [
+    "./cmd/carball-api/"
+   ]
+  },
+  {
+   "id": "RX35-account-unchecked",
+   "file": "cmd/carball-api/main.go",
+   "old": "\t\tif !accountID.MatchString(t.account) {",
+   "new": "\t\tif false && !accountID.MatchString(t.account) {",
    "packages": [
     "./cmd/carball-api/"
    ]

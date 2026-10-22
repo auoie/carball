@@ -12,27 +12,38 @@ import (
 func TestBanEnd(t *testing.T) {
 	now := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
 	for _, c := range []struct {
-		length time.Duration
-		date   string
-		want   string
+		length     time.Duration
+		forGiven   bool
+		date       string
+		untilGiven bool
+		want       string
 	}{
-		{0, "", "permanent"},
-		{72 * time.Hour, "", "until 2026-10-21T12:00:00Z"},
-		{0, "2026-11-01", "until 2026-11-01T00:00:00Z"},
-		{0, "2026-11-01T08:30:00Z", "until 2026-11-01T08:30:00Z"},
-		{time.Hour, "2026-11-01", ""},
-		{-time.Hour, "", ""},
-		{0, "next week", ""},
+		{0, false, "", false, "permanent"},
+		{72 * time.Hour, true, "", false, "until 2026-10-21T12:00:00Z"},
+		{0, false, "2026-11-01", true, "until 2026-11-01T00:00:00Z"},
+		{0, false, "2026-11-01T08:30:00Z", true, "until 2026-11-01T08:30:00Z"},
+		{time.Hour, true, "2026-11-01", true, ""},
+		{-time.Hour, true, "", false, ""},
+		{0, false, "next week", true, ""},
+		// (given but empty or zero: refused, not permanent; an end within a minute, or past: refused, RX35)
+		{0, true, "", false, ""},
+		{0, false, "", true, ""},
+		{0, false, "  ", true, ""},
+		{time.Nanosecond, true, "", false, ""},
+		{30 * time.Second, true, "", false, ""},
+		{0, false, "2026-10-01", true, ""},
+		{0, false, "2026-10-18T12:00:30Z", true, ""},
+		{2 * time.Minute, true, "", false, "until 2026-10-18T12:02:00Z"},
 	} {
-		got, err := banEnd(c.length, c.date, now)
+		got, err := banEnd(c.length, c.forGiven, c.date, c.untilGiven, now)
 		if c.want == "" {
 			if err == nil {
-				t.Errorf("banEnd(%v, %q) = %v, want an error", c.length, c.date, got)
+				t.Errorf("banEnd(%v, %v, %q, %v) = %v, want an error", c.length, c.forGiven, c.date, c.untilGiven, got)
 			}
 			continue
 		}
 		if err != nil || describe(got) != c.want {
-			t.Errorf("banEnd(%v, %q) = %v, %v; want %s", c.length, c.date, got, err, c.want)
+			t.Errorf("banEnd(%v, %v, %q, %v) = %v, %v; want %s", c.length, c.forGiven, c.date, c.untilGiven, got, err, c.want)
 		}
 	}
 }
@@ -42,7 +53,8 @@ func TestTarget(t *testing.T) {
 		t     target
 		fails bool
 	}{
-		{target{account: "a"}, false},
+		{target{account: "0f0e0d0c-0b0a-4908-8706-050403020100"}, false},
+		{target{account: "a"}, true}, // (not an account's id: refused before the database, RX35)
 		{target{identity: "steam:76561190000000001"}, false},
 		{target{identity: "google:sub"}, false},
 		{target{}, true},
@@ -182,10 +194,51 @@ func TestArgumentsRefusedBeforeAnythingRuns(t *testing.T) {
 	}
 	// (a help word anywhere: the usage, nothing run: not the unban, not the migrations, not the server)
 	for _, args := range [][]string{{"unban", "--account", id, "help"}, {"migrate", "help"}, {"serve", "--dev", "help"},
-		{"ban", "--account", id, "-h"}, {"healthcheck", "-h"}, {"ticket-key", "--help"}} {
+		{"ban", "--account", id, "-h"}, {"healthcheck", "-h"}} {
 		var out, errs bytes.Buffer
 		if code := run(args, &out, &errs); code != 0 || !strings.HasPrefix(out.String(), "usage: carball-api "+args[0]) || errs.Len() != 0 {
 			t.Errorf("%v: exit %d, stdout %q, stderr %q; want the usage alone", args, code, out.String(), errs.String())
+		}
+	}
+	// (ticket-key's usage on stderr: its stdout is the seed, kept for a file, RX35)
+	{
+		var out, errs bytes.Buffer
+		if code := run([]string{"ticket-key", "k1", "-h"}, &out, &errs); code != 0 || out.Len() != 0 || !strings.HasPrefix(errs.String(), "usage: carball-api ticket-key") {
+			t.Errorf("ticket-key k1 -h: exit %d, stdout %q, stderr %q", code, out.String(), errs.String())
+		}
+	}
+	// (RX35: a flag given twice, a ban's end given empty, zero, past or within a minute, a value after --, a missing
+	// --by, a count past 1000, a non-id account: all refused before the database; a value starting with "-" given as
+	// --flag=value taken)
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"ban", "--account", id, "--account", "1f0e0d0c-0b0a-4908-8706-050403020100", "--by", "admin", "--reason", "x"}, "--account given twice"},
+		{[]string{"ban", "--account", id, "--by", "admin", "--reason", "x", "--for", "72h", "--for=720h"}, "--for given twice"},
+		{[]string{"ban", "--account", id, "--by", "admin", "--reason", "x", "--for", "0"}, "--for must be a positive length"},
+		{[]string{"ban", "--account", id, "--by", "admin", "--reason", "x", "--for", "0s"}, "--for must be a positive length"},
+		{[]string{"ban", "--account", id, "--by", "admin", "--reason", "x", "--until", ""}, "--until is empty"},
+		{[]string{"ban", "--account", id, "--by", "admin", "--reason", "x", "--until="}, "--until is empty"},
+		{[]string{"ban", "--account", id, "--by", "admin", "--reason", "x", "--until", "2020-01-01"}, "isn't a minute ahead"},
+		{[]string{"ban", "--account", id, "--by", "admin", "--reason", "x", "--for", "1ns"}, "isn't a minute ahead"},
+		{[]string{"ban", "--account", id, "--reason", "x"}, "--reason and --by are required"},
+		{[]string{"ban", "--account", "not-an-id", "--by", "admin", "--reason", "x"}, "--account is an account's id"},
+		{[]string{"unban", "--account", id, "--", "help"}, `unexpected argument "help"`},
+		{[]string{"matches", "--recent", "1001"}, "N a count from 1 to 1000"},
+		{[]string{"ratings", "--top", "1001"}, "N a count from 1 to 1000"},
+		{[]string{"accounts", "--recent", "1001"}, "N a count from 1 to 1000"},
+	} {
+		var out, errs bytes.Buffer
+		code := run(c.args, &out, &errs)
+		if code != 1 || !strings.Contains(errs.String(), c.want) || strings.Contains(errs.String(), "DATABASE_URL") {
+			t.Errorf("%v: exit %d, %q; want %q, before the database", c.args, code, errs.String(), c.want)
+		}
+	}
+	{
+		var out, errs bytes.Buffer
+		if code := run([]string{"ban", "--account", id, "--by", "admin", "--reason=-spam", "--for", "72h"}, &out, &errs); code != 1 || !strings.Contains(errs.String(), "DATABASE_URL is required") {
+			t.Errorf("--reason=-spam: exit %d, %q; want on to the database", code, errs.String())
 		}
 	}
 	// (the flags described in a command's usage)

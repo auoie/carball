@@ -125,7 +125,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		if c.name != name {
 			continue
 		}
-		err := c.run(args, stdout)
+		// (ticket-key's stdout is its seed, kept for a file: its usage on stderr, RX35)
+		help := stdout
+		if c.name == "ticket-key" {
+			help = stderr
+		}
+		err := c.run(args, help)
 		switch {
 		case errors.Is(err, flag.ErrHelp):
 			return 0
@@ -160,23 +165,43 @@ func printUsage(fs *flag.FlagSet, out io.Writer) {
 	fs.SetOutput(io.Discard)
 }
 
-// helpAsked: a help word among the arguments, not as a flag's value (`--by -h` is a value, refused as one)
-func helpAsked(fs *flag.FlagSet, args []string) bool {
+// flagScan is what the arguments before `--` show: a help word among them (not as a flag's value: `--by -h` is a value,
+// refused as one), a flag given twice (`--account A1 … --account A2`: refused, not the last taken, RX35), and the flags
+// given as --name=value (a value that may start with "-")
+type flagScan struct {
+	help     bool
+	repeated string
+	inline   map[string]bool
+}
+
+func scanFlags(fs *flag.FlagSet, args []string) flagScan {
+	scan := flagScan{inline: map[string]bool{}}
+	seen := map[string]bool{}
 	for i := 0; i < len(args); i++ {
 		if helpWord(args[i]) {
-			return true
-		}
-		name, isFlag := strings.CutPrefix(args[i], "-")
-		if !isFlag || strings.Contains(name, "=") {
+			scan.help = true
 			continue
 		}
-		if f := fs.Lookup(strings.TrimPrefix(name, "-")); f != nil {
-			if b, ok := f.Value.(interface{ IsBoolFlag() bool }); !ok || !b.IsBoolFlag() {
-				i++ // (its value next)
-			}
+		name, isFlag := strings.CutPrefix(args[i], "-")
+		if !isFlag || name == "" {
+			continue
+		}
+		name, _, inline := strings.Cut(strings.TrimPrefix(name, "-"), "=")
+		f := fs.Lookup(name)
+		if f == nil {
+			continue
+		}
+		if seen[name] && scan.repeated == "" {
+			scan.repeated = name
+		}
+		seen[name] = true
+		if inline {
+			scan.inline[name] = true
+		} else if b, ok := f.Value.(interface{ IsBoolFlag() bool }); !ok || !b.IsBoolFlag() {
+			i++ // (its value next)
 		}
 	}
-	return false
+	return scan
 }
 
 // parseArgs reads a command's arguments and refuses whatever it can't be sure of before anything runs (the admin's
@@ -189,9 +214,13 @@ func parseArgs(fs *flag.FlagSet, args []string, out io.Writer, least, most int) 
 	if i := slices.Index(args, "--"); i >= 0 {
 		head, tail = args[:i], args[i+1:]
 	}
-	if helpAsked(fs, head) {
+	scan := scanFlags(fs, head)
+	if scan.help {
 		printUsage(fs, out)
 		return nil, flag.ErrHelp
+	}
+	if scan.repeated != "" {
+		return nil, fmt.Errorf("--%s given twice (carball-api %s -h)", scan.repeated, fs.Name())
 	}
 	var rest []string
 	for {
@@ -207,8 +236,9 @@ func parseArgs(fs *flag.FlagSet, args []string, out io.Writer, least, most int) 
 	rest = append(rest, tail...)
 	var flagLike error
 	fs.Visit(func(f *flag.Flag) {
-		if v := f.Value.String(); flagLike == nil && strings.HasPrefix(v, "-") {
-			flagLike = fmt.Errorf("--%s %q looks like a flag, not its value (quote the value; carball-api %s -h)", f.Name, v, fs.Name())
+		if v := f.Value.String(); flagLike == nil && strings.HasPrefix(v, "-") && !scan.inline[f.Name] {
+			flagLike = fmt.Errorf("--%s %q looks like a flag, not its value (a value starting with \"-\": --%s=%s; carball-api %s -h)",
+				f.Name, v, f.Name, v, fs.Name())
 		}
 	})
 	switch {
@@ -418,12 +448,13 @@ func migrate(args []string, out io.Writer) error {
 
 // --- The admin's commands ---
 
-func openStore() (*store.Store, error) {
+// openStore connects an admin's command: read-only for the reports, accounts and bans; time-limited for all (RX35)
+func openStore(readOnly bool) (*store.Store, error) {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
 		return nil, errors.New("DATABASE_URL is required")
 	}
-	return store.Open(context.Background(), dsn, os.Getenv("DATABASE_PASSWORD_FILE"))
+	return store.OpenAdmin(context.Background(), dsn, os.Getenv("DATABASE_PASSWORD_FILE"), readOnly)
 }
 
 func accounts(args []string, out io.Writer) error {
@@ -447,7 +478,7 @@ func accounts(args []string, out io.Writer) error {
 	default:
 		return errors.New("accounts NAME (a part of the name) or accounts --recent [N] (carball-api accounts -h)")
 	}
-	db, err := openStore()
+	db, err := openStore(true)
 	if err != nil {
 		return err
 	}
@@ -500,6 +531,9 @@ func (t *target) parse() (store.Identity, error) {
 		return store.Identity{}, errors.New("one of --account or --identity")
 	}
 	if t.account != "" {
+		if !accountID.MatchString(t.account) {
+			return store.Identity{}, errors.New("--account is an account's id, as accounts lists it")
+		}
 		return store.Identity{}, nil
 	}
 	name, subject, ok := strings.Cut(t.identity, ":")
@@ -528,11 +562,13 @@ func ban(args []string, out io.Writer) error {
 	if *reason == "" || *by == "" {
 		return errors.New("--reason and --by are required")
 	}
-	end, err := banEnd(*length, *untilDate, time.Now())
+	given := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
+	end, err := banEnd(*length, given["for"], *untilDate, given["until"], time.Now())
 	if err != nil {
 		return err
 	}
-	db, err := openStore()
+	db, err := openStore(false)
 	if err != nil {
 		return err
 	}
@@ -546,31 +582,45 @@ func ban(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	whose := "identity " + t.identity
+	if t.account != "" {
+		whose = "account " + t.account
+	}
 	for _, i := range banned {
-		_, _ = fmt.Fprintf(out, "banned %s:%s: %s, reason %q, by %s; signed out everywhere\n", i.Provider, i.Subject, describe(end), *reason, *by)
+		_, _ = fmt.Fprintf(out, "banned %s:%s (%s): %s, reason %q, by %q; its sessions ended\n", i.Provider, i.Subject, whose, describe(end), *reason, *by)
 	}
 	return nil
 }
 
-func banEnd(length time.Duration, date string, now time.Time) (store.BanEnd, error) {
+// banEnd: a ban's end from --for (given: `forGiven`) or --until (`untilGiven`), neither a permanent ban. One given but
+// empty, zero or negative is refused, not taken as permanent (a script's unset variable), and so is an end less than a
+// minute away (a ban over at once would still end every session): RX35
+func banEnd(length time.Duration, forGiven bool, date string, untilGiven bool, now time.Time) (store.BanEnd, error) {
+	var end time.Time
 	switch {
-	case length != 0 && date != "":
+	case forGiven && untilGiven:
 		return nil, errors.New("--for or --until, not both")
-	case length < 0:
-		return nil, errors.New("--for must be positive")
-	case length > 0:
-		return store.Until{At: now.Add(length)}, nil
-	case date == "":
+	case forGiven && length <= 0:
+		return nil, errors.New("--for must be a positive length, e.g. 72h (neither --for nor --until: a permanent ban)")
+	case forGiven:
+		end = now.Add(length)
+	case !untilGiven:
 		return store.Permanent{}, nil
+	case strings.TrimSpace(date) == "":
+		return nil, errors.New("--until is empty (neither --for nor --until: a permanent ban)")
+	default:
+		t, err := time.Parse(time.DateOnly, date)
+		if err != nil {
+			if t, err = time.Parse(time.RFC3339, date); err != nil {
+				return nil, errors.New("--until is YYYY-MM-DD (UTC) or an RFC 3339 time")
+			}
+		}
+		end = t
 	}
-	if t, err := time.Parse(time.DateOnly, date); err == nil {
-		return store.Until{At: t}, nil
+	if !end.After(now.Add(time.Minute)) {
+		return nil, fmt.Errorf("the ban's end, %s, isn't a minute ahead of now", end.UTC().Format(time.RFC3339))
 	}
-	t, err := time.Parse(time.RFC3339, date)
-	if err != nil {
-		return nil, errors.New("--until is YYYY-MM-DD or an RFC 3339 time")
-	}
-	return store.Until{At: t}, nil
+	return store.Until{At: end}, nil
 }
 
 // describe a ban's end for the admin
@@ -595,7 +645,7 @@ func unban(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	db, err := openStore()
+	db, err := openStore(false)
 	if err != nil {
 		return err
 	}
@@ -617,7 +667,7 @@ func bans(args []string, out io.Writer) error {
 	if _, err := parseArgs(flagsFor("bans"), args, out, 0, 0); err != nil {
 		return err
 	}
-	db, err := openStore()
+	db, err := openStore(true)
 	if err != nil {
 		return err
 	}
@@ -629,7 +679,7 @@ func bans(args []string, out io.Writer) error {
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "IDENTITY\tUNTIL\tBY\tSINCE\tREASON")
 	for _, b := range list {
-		_, _ = fmt.Fprintf(w, "%s:%s\t%s\t%s\t%s\t%q\n", b.Provider, b.Subject, describe(b.End), b.By, b.Created.UTC().Format(time.DateOnly), b.Reason)
+		_, _ = fmt.Fprintf(w, "%s:%s\t%s\t%q\t%s\t%q\n", b.Provider, b.Subject, describe(b.End), b.By, b.Created.UTC().Format(time.DateOnly), b.Reason)
 	}
 	return w.Flush()
 }
