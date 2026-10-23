@@ -56,6 +56,7 @@ fn main() {
         "../engine/rocketsim/libsrc",
         "../engine/detmath",
         "../engine/CMakeLists.txt",
+        "../engine/rocketsim/CMakeLists.txt", // (add_subdirectory'd: its flags and globs, RV-877)
     ] {
         println!("cargo:rerun-if-changed={dir}");
     }

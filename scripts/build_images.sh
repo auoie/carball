@@ -5,8 +5,8 @@
 # shipped-data check on what it built, then the server's release binary (no debug info, no build machine's paths:
 # RV-380, no game's names: RV-423), then the accounts service's (the same checks); each image is built from a staging
 # directory holding only what it ships. Needs docker (or podman as `docker`), Emscripten (/usr/lib/emscripten, or
-# EMSCRIPTEN_ROOT), cargo (offline: its registry cached), Go (offline: the modules go.sum pins in its module cache) and
-# the client's installed packages (client/node_modules).
+# EMSCRIPTEN_ROOT), cargo (offline: its registry cached), Go (offline: the modules go.sum pins in its module cache), the
+# client's installed packages (client/node_modules), rsync and flock (util-linux).
 #   scripts/build_images.sh [TAG]              (default: scripts/image_tag.sh's, the commit's UTC date and its hash's
 #                                               first 7 characters, YYYYMMDD-HHMM-hash: the same commit, the same tag)
 #   scripts/build_images.sh --worktree TAG     (testing a change before its commit: the working tree's files that are

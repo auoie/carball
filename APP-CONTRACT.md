@@ -108,7 +108,7 @@ they change there is lost when the newer page returns (RV-425; `client/src/setti
 |---|---|---|
 | `GAME_PORT` | `4433` | the UDP port (publish the same port: `-p 4433:4433/udp`) |
 | `PUBLIC_HOST` | `game.carball.zolt.top` | the name clients reach it at (logged; the certificate must be for it). With the port, this server's name for the matchmaker: `PUBLIC_HOST:GAME_PORT`, which its `Pong` tells the page and the page sends with its ping, so its match tickets name it exactly as it does (RV-863); a claim of another server's ticket is refused, both names logged |
-| `PUBLIC_PORT` | (none) | the port clients reach it at when it's published as another than `GAME_PORT` (the server's name then `PUBLIC_HOST:PUBLIC_PORT`: tidier logs; the name only has to be this server's own and unique) |
+| `PUBLIC_PORT` | (none) | the port clients reach it at when it's published as another than `GAME_PORT` (the server's name then `PUBLIC_HOST:PUBLIC_PORT`: tidier logs; the name only has to be this server's own and unique). A queue server whose `PUBLIC_HOST` isn't letters, digits, dots and hyphens (58 at most) refuses to start: the matchmaker would drop its name (RV-868) |
 | `ALLOWED_ORIGIN` | `https://carball.zolt.top` | the page origin(s) allowed to open sessions, comma-separated (case doesn't matter); others (and none) get 403. Required with a certificate: empty or blank, the server refuses to start |
 | `CERT_PATH` | `/certs/fullchain.pem` | the certificate chain (PEM) for `PUBLIC_HOST`, publicly trusted (browsers refuse a self-signed one; in a test, Chrome's WebTransport refused a locally trusted test CA and ignored `--ignore-certificate-errors*` too). Required in queue mode (an empty one is an error: no silent self-signed server) |
 | `KEY_PATH` | `/certs/privkey.pem` | its private key (PEM); a key that isn't the certificate's is refused (the old pair stays, tried again) |
@@ -175,7 +175,7 @@ asks (`/dev-ticket`), with no sign-in.
   match: a panic inside one ends only that match) or the engine aborts.
 - **Stop:** SIGTERM or SIGINT ends it at once; the matches in progress end with it.
 - **Limits it enforces:** a client proves its address (a QUIC Retry) before it takes a slot; 512 sessions at once; per
-  client address (an IPv6 one by its /64) 8 at once and 30 new a minute (a large carrier NAT or NAT64 exit can hold more players than that: RV-418, raise `--max-per-address` if they're refused; it is a flag, given after the image name in `docker run`); 4 s for the QUIC handshake, 10 s through the
+  client address (an IPv6 one by its /64) 8 at once and 30 new a minute (a region's ping gives its start back, RV-870) (a large carrier NAT or NAT64 exit can hold more players than that: RV-418, raise `--max-per-address` if they're refused; it is a flag, given after the image name in `docker run`); 4 s for the QUIC handshake, 10 s through the
   hello; 240 input packets and 20 control messages a second per session (more are dropped; a session that keeps
   flooding either is closed); QUIC: 4 streams each way, small receive windows.
 - **No-shows:** a match waits 10 s from its first claim for the rest (about the user's 12 s from the match found, after
@@ -269,14 +269,18 @@ The accounts service (notes/accounts.md). **Nothing is deployed yet: the first d
 - **The search** (notes/matchmaking.md, the central matchmaker; in memory, one instance): `POST /api/search
   {playlists, pings, regions}` (a signed-in account's; 30 an account in 10 minutes) starts it: refused 401 signed out,
   403 `queue-banned` (until when) or `in-match`, 429 `cooldown` (seconds) or `busy`, 503 `no-server` (no ticked region
-  answered the page's ping); else `{search, version, state}`. `GET /api/search/{id}?after=N` answers at its next
-  change or after 25 s (a newer poll answers the one before at once): `searching`, `found` (the match's id, its server,
-  the player's match ticket, the playlist), or `ended` (`replaced`, `queue-banned`, `cooldown`); 404 for one it doesn't
-  know (a restart: the page searches again once). `DELETE /api/search/{id}` is Cancel Search. A match ticket (format 4)
+  answered the page's ping; a server name that isn't host:port, one given twice or a ping out of range is dropped, not
+  the search: RV-868); else `{search, version, state}`. `GET /api/search/{id}?after=N` (the searcher's own session:
+  401 without, 404 for another account's, RV-871) answers at its next change or after 25 s (a newer poll answers the
+  one before at once): `searching`, `found` (the match's id, its server, the player's match ticket, the playlist), or
+  `ended` (`replaced`, `queue-banned`, `cooldown`); 404 for one it doesn't know (a restart: the page searches again
+  once). `DELETE /api/search/{id}` is Cancel Search (the page sends it too as it closes, RV-866). The access log names
+  each request's route pattern, never its path (a search's id: RV-871). A match ticket (format 4)
   is one seat of one match at one server, 30 s, taken once there (RV-850).
 - **Rejoin tickets** (`POST /api/ticket?rejoin=MATCH`, 16 hex digits; 60 an account in 10 minutes): two minutes long,
-  for that match's rejoin alone, refused (409 `in-match`) while the account searches or for a match other than its
-  latest; a queue ban from that match doesn't refuse it. `POST /api/ticket` with no match (a search ticket, format 3)
+  for that match's rejoin alone, refused (409 `in-match`) while the account searches, for a match other than its latest,
+  or once a later search gave that match up, whether or not it found a match (RV-869); a queue ban from that match
+  doesn't refuse it. `POST /api/ticket` with no match (a search ticket, format 3)
   stays one release, for pages from before the switch.
 - **The game server's calls** (behind the Access service token and `GAME_SERVER_TOKEN_FILE`): the matchmaker's events
   (`POST /api/fleet/events {event, server, match, seat, noShows, at}`: one about a match it didn't assign to that server,

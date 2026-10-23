@@ -132,7 +132,12 @@ played, and reported. There's one server per region.
     of the account, a quitter ban, a no-show cooldown).
   - `DELETE` is Cancel Search.
 - Each poll is sent when the last one returns, not on a timer (a hidden tab's timers are throttled).
-- A search with no poll open and none in the last 10 s is dropped.
+- A search with no poll open and none in the last 10 s is dropped. A poll needs the searcher's own session (RV-871),
+  so a search whose session ended (signed out, banned, deleted) goes within those 10 s (RV-872).
+- A page closed or reloaded while it searches sends the `DELETE` as it goes (RV-866); Cancel Search during the start
+  lets the start finish and deletes what it returns (RV-867).
+- A server name the API can't take (not host:port, too long) or given twice is dropped from the request, by the page
+  and by the API, never failing the search (RV-868); such a name stops a queue server's start.
 - A `404` (the API restarted) makes the page search again once; a `502`/`503` is retried with a backoff.
 - Cancel Search, or the page going, sends the `DELETE` (with `keepalive`). After a match is found it does nothing:
   not claiming is a no-show.
@@ -172,8 +177,8 @@ match and one seat, lives 30 s, and is taken once (RV-850): the server keeps its
 - **A rejoin** puts them back in.
 - **The match ends for its accounts** at its result, its end with no result, its server's restart, or a 45-minute
   backstop after its start.
-- **A rejoin ticket** is given for the account's latest assigned match alone, until a later search of its is
-  accepted, and never while it searches (MX1R-5). After an API restart that memory is gone, and the ban rule alone
+- **A rejoin ticket** is given for the account's latest assigned match alone, never once a later search of its was
+  accepted (even if that search ended unmatched: RV-869), and never while it searches (MX1R-5). After an API restart that memory is gone, and the ban rule alone
   decides. LV1's refill is unchanged: a ban from that match doesn't block its rejoin ticket.
 
 **Server → API, events only**, through the existing outbox (kept, retried, in order). Results, quitters and refills stay
