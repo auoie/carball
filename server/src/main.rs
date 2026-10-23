@@ -111,10 +111,12 @@ enum MatchTypeArg {
 /// The server's command line: each flag's default from its environment variable where it has one (the image's
 /// interface, APP-CONTRACT.md); the rules between them in `validate`
 #[derive(clap::Parser, Debug)]
+// (a flag given twice: its last value, as before clap, RV-935)
 #[command(
     name = "carball-server",
     about = "Carball's game server: matches over WebTransport",
-    disable_version_flag = true
+    disable_version_flag = true,
+    args_override_self = true
 )]
 struct Cli {
     /// The open match or the matchmaker's matches
@@ -136,8 +138,9 @@ struct Cli {
     #[arg(long, default_value = "127.0.0.1")]
     info_bind: IpAddr,
     /// The arena's collision meshes (default: the repository's, above the binary)
+    // (the paths as text: a blank variable reaches `validate`, which has a rule for it, RV-936)
     #[arg(long, env = "MESHES_DIR")]
-    meshes: Option<PathBuf>,
+    meshes: Option<String>,
     /// The open match's team size
     #[arg(long, default_value_t = carball_server::game::TEAM_SIZE,
           value_parser = clap::value_parser!(u8).range(1..=(carball_server::game::MAX_PLAYERS / 2) as i64))]
@@ -153,10 +156,10 @@ struct Cli {
     test_goal_after: Option<f32>,
     /// The certificate chain (PEM)
     #[arg(long, env = "CERT_PATH")]
-    cert: Option<PathBuf>,
+    cert: Option<String>,
     /// The certificate's key (PEM)
     #[arg(long, env = "KEY_PATH")]
-    key: Option<PathBuf>,
+    key: Option<String>,
     /// The page origins allowed, comma-separated
     #[arg(long, env = "ALLOWED_ORIGIN")]
     allowed_origin: Option<String>,
@@ -210,7 +213,7 @@ struct Cli {
 /// `--healthcheck`'s own arguments: the health port alone, so a setting the server would refuse doesn't make a running
 /// server unhealthy (RV-399)
 #[derive(clap::Parser, Debug)]
-#[command(name = "carball-server", disable_version_flag = true)]
+#[command(name = "carball-server", disable_version_flag = true, args_override_self = true)]
 struct HealthCheckArgs {
     #[arg(long)]
     healthcheck: bool,
@@ -266,6 +269,7 @@ impl Cli {
     fn validate(self) -> anyhow::Result<Args> {
         // (a setting given blank is no setting, where it may be left out: the image's variables)
         let set = |v: Option<String>| v.filter(|v| !v.trim().is_empty());
+        let (cert, key) = (self.cert.map(PathBuf::from), self.key.map(PathBuf::from));
         let mut limits = NetLimits {
             max_sessions: self.max_sessions,
             per_address: self.max_per_address,
@@ -284,7 +288,7 @@ impl Cli {
             info_port: self.info_port,
             dev_info: self.dev_info.map(|o| o == OnOff::On),
             info_bind: self.info_bind,
-            meshes: self.meshes.filter(|d| !d.as_os_str().is_empty()).unwrap_or_else(default_meshes),
+            meshes: self.meshes.filter(|d| !d.is_empty()).map_or_else(default_meshes, PathBuf::from),
             team_size: self.team_size,
             match_type: MatchType::Casual,
             forfeit_vote_wait: self.forfeit_vote_wait,
@@ -364,12 +368,12 @@ impl Cli {
             // AP2-7)
             let mounted = |p: &Option<PathBuf>| p.as_ref().is_some_and(|p| !p.as_os_str().is_empty() && p.is_file());
             anyhow::ensure!(
-                !mounted(&self.cert) && !mounted(&self.key),
+                !mounted(&cert) && !mounted(&key),
                 "--dev with a certificate at CERT_PATH or KEY_PATH: that's a public server's (no --dev there)"
             );
             return Ok(args); // (self-signed, whatever the certificate's variables say)
         }
-        args.cert = match (self.cert, self.key) {
+        args.cert = match (cert, key) {
             (Some(c), Some(k)) => {
                 anyhow::ensure!(
                     !c.as_os_str().is_empty() && !k.as_os_str().is_empty(),
@@ -727,6 +731,32 @@ mod tests {
 
     fn parse(args: &[&str]) -> anyhow::Result<Args> {
         parse_with(args, &[])
+    }
+
+    /// A flag given twice takes its last value, as before clap (RV-935); a blank MESHES_DIR the default meshes, blank
+    /// certificate variables a --dev run's no matter, and a public server's "empty" refusal (RV-936)
+    #[test]
+    fn a_repeated_flag_takes_its_last_value_and_blank_paths_are_as_before() {
+        let args = parse(&[
+            "--port",
+            "46520",
+            "--port",
+            "46521",
+            "--max-per-address",
+            "9",
+            "--max-per-address",
+            "10",
+            "--dev",
+            "--dev",
+        ])
+        .unwrap();
+        assert_eq!((args.port, args.limits.per_address, args.dev), (46521, 10, true));
+        let blank = parse_with(&[], &[("MESHES_DIR", "")]).unwrap();
+        assert!(blank.meshes.ends_with("collision_meshes"), "the default meshes: {}", blank.meshes.display());
+        let dev = parse_with(&["--mode", "queue", "--dev"], &[("CERT_PATH", ""), ("KEY_PATH", "")]).unwrap();
+        assert!(dev.cert.is_none(), "--dev with blank certificate variables: self-signed");
+        let e = parse_with(&["--mode", "direct"], &[("CERT_PATH", ""), ("KEY_PATH", "")]).err().expect("blank paths");
+        assert!(e.to_string().contains("CERT_PATH and KEY_PATH are empty"), "{e}");
     }
 
     /// The image's interface: each setting's environment variable, as the deploy scripts name them

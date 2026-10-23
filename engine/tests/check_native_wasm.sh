@@ -22,18 +22,21 @@ if cmp -s "$TMP/native_smoke.txt" "$TMP/wasm_smoke.txt"; then
 else
 	echo "arena smoke test: DIFFERENT"; diff "$TMP/native_smoke.txt" "$TMP/wasm_smoke.txt" | head -5; fail=1
 fi
-# The server's network state applies exactly, in both builds
-if build/netstate ../out/arena/collision_meshes 120 > "$TMP/native_ns.txt" &&
-	node build-wasm/netstate.js /collision_meshes 120 > "$TMP/wasm_ns.txt" &&
-	cmp -s "$TMP/native_ns.txt" "$TMP/wasm_ns.txt"; then
+# The server's network state applies exactly, in both builds (both run whatever the other did: a failure's tails both
+# shown, the checks after it still run, RV-933)
+native=0 wasm=0
+build/netstate ../out/arena/collision_meshes 120 > "$TMP/native_ns.txt" || native=$?
+node build-wasm/netstate.js /collision_meshes 120 > "$TMP/wasm_ns.txt" || wasm=$?
+if [ "$native$wasm" = 00 ] && cmp -s "$TMP/native_ns.txt" "$TMP/wasm_ns.txt"; then
 	echo "netstate: identical, updates exact ($(head -1 "$TMP/native_ns.txt"))"
 else
 	echo "netstate: FAILED"; tail -n 3 "$TMP/native_ns.txt" "$TMP/wasm_ns.txt"; fail=1
 fi
 # Restored snapshots continue exactly, in both builds (rollback netcode)
-if build/rollback ../out/arena/collision_meshes 120 > "$TMP/native_rb.txt" &&
-	node build-wasm/rollback.js /collision_meshes 120 > "$TMP/wasm_rb.txt" &&
-	cmp -s "$TMP/native_rb.txt" "$TMP/wasm_rb.txt"; then
+native=0 wasm=0
+build/rollback ../out/arena/collision_meshes 120 > "$TMP/native_rb.txt" || native=$?
+node build-wasm/rollback.js /collision_meshes 120 > "$TMP/wasm_rb.txt" || wasm=$?
+if [ "$native$wasm" = 00 ] && cmp -s "$TMP/native_rb.txt" "$TMP/wasm_rb.txt"; then
 	echo "rollback: identical, restores exact ($(head -1 "$TMP/native_rb.txt"))"
 else
 	echo "rollback: FAILED"; tail -n 3 "$TMP/native_rb.txt" "$TMP/wasm_rb.txt"; fail=1
