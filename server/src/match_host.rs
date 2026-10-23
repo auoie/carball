@@ -333,7 +333,7 @@ impl MatchHost {
     ) -> Result<(), u8> {
         let gone = Err(protocol::REFUSED_TOKEN);
         if request.verified && self.account_busy(request.key) {
-            eprintln!("player {id}: a claim of an account in another match here, refused");
+            tracing::warn!("player {id}: a claim of an account in another match here, refused");
             return Err(protocol::REFUSED_IN_MATCH);
         }
         let found = self.matches.iter().find(|(_, m)| m.ranked == seat.match_id && !m.open).map(|(&k, _)| k);
@@ -343,9 +343,11 @@ impl MatchHost {
             None => {
                 let seats = (0..seat.roster).map(|i| Reservation::new(i % 2, 0)).collect();
                 let match_id = self.add(playlist, seats, false, Some(seat.match_id), self.now);
-                eprintln!(
+                tracing::info!(
                     "match {match_id}: opened at its first claim ({} v {}, matchmaker's {:016x})",
-                    seat.playlist, seat.playlist, seat.match_id
+                    seat.playlist,
+                    seat.playlist,
+                    seat.match_id
                 );
                 match_id
             }
@@ -359,7 +361,7 @@ impl MatchHost {
         }
         let Some(slot) = hosted.reservations.get_mut(usize::from(seat.seat)).filter(|r| r.claimed.is_none() && !r.left)
         else {
-            eprintln!("player {id}: a claim of a seat taken, refused");
+            tracing::warn!("player {id}: a claim of a seat taken, refused");
             return gone;
         };
         slot.key = request.key;
@@ -430,7 +432,7 @@ impl MatchHost {
             return;
         }
         if outage {
-            eprintln!("match {match_id}: player {id} left during the server's silence: no ban");
+            tracing::info!("match {match_id}: player {id} left during the server's silence: no ban");
         } else if slot.ticket.is_some() && !slot.reported {
             if lost {
                 hosted.pending_quit = Some((seat, now)); // (reported after the window, unless an outage)
@@ -460,7 +462,7 @@ impl MatchHost {
             .count();
         let ranked_id = hosted.ranked_text();
         if 2 * lost_together > hosted.reservations.len() {
-            eprintln!(
+            tracing::info!(
                 "match {match_id}: {lost_together} of {} connections lost at once: an outage, no ban",
                 hosted.reservations.len()
             );
@@ -520,7 +522,7 @@ impl MatchHost {
             && (now - slot.session_since < TAKEOVER_SILENCE
                 || hosted.game.as_ref().is_some_and(|g| g.heard_within(old, now, TAKEOVER_SILENCE)))
         {
-            eprintln!("match {mid}: player {id}'s rejoin refused: the seat's session (player {old}) is live");
+            tracing::warn!("match {mid}: player {id}'s rejoin refused: the seat's session (player {old}) is live");
             return Err(protocol::REFUSED_IN_MATCH);
         }
         slot.claimed = Some(id);
@@ -531,11 +533,11 @@ impl MatchHost {
         let team = slot.team;
         let game = hosted.game(self.test_goal_after);
         if let Some(old) = stale {
-            eprintln!("match {mid}: player {id} took over player {old}'s seat (its session not yet timed out)");
+            tracing::info!("match {mid}: player {id} took over player {old}'s seat (its session not yet timed out)");
             game.replaced(old);
             self.players.remove(&old);
         } else {
-            eprintln!("match {mid}: player {id} rejoined team {team}");
+            tracing::info!("match {mid}: player {id} rejoined team {team}");
         }
         game.join(id, JoinRequest { team, ..request }, out);
         self.players.insert(id, mid);
@@ -576,7 +578,7 @@ impl MatchHost {
         }
         let state = game.match_state();
         let Some(winning_team) = state.winner.filter(|_| !state.no_contest) else {
-            eprintln!("match {match_id}: no winner, no result (a no contest)");
+            tracing::info!("match {match_id}: no winner, no result (a no contest)");
             return false;
         };
         let players: Option<Vec<ResultPlayer>> = hosted
@@ -602,7 +604,7 @@ impl MatchHost {
                 true
             }
             None => {
-                eprintln!("match {match_id}: seats without tickets, no result");
+                tracing::info!("match {match_id}: seats without tickets, no result");
                 false
             }
         }
@@ -622,7 +624,7 @@ impl MatchHost {
             }
         }
         if hosted.holding() {
-            eprintln!("match {match_id}: player {id} left before the start, cancelled");
+            tracing::info!("match {match_id}: player {id} left before the start, cancelled");
             if let Some(slot) = hosted.reservations.iter_mut().find(|r| r.claimed == Some(id)) {
                 slot.left = true;
             }
@@ -676,7 +678,7 @@ impl MatchHost {
                 }
             }));
             if ran.is_err() {
-                eprintln!("match {match_id}: its tick panicked, let go");
+                tracing::error!("match {match_id}: its tick panicked, let go");
                 done.push((match_id, false));
                 if m.open {
                     restart.push(m.playlist);
@@ -692,7 +694,7 @@ impl MatchHost {
                 started.push(Report::Started { match_id: m.ranked_text() });
             }
             if m.holding() && now - m.created > RESERVATION_SECONDS {
-                eprintln!(
+                tracing::info!(
                     "match {match_id}: not every player claimed their seat in {RESERVATION_SECONDS} s, cancelled"
                 );
                 done.push((match_id, true));
@@ -761,7 +763,7 @@ impl MatchHost {
                 self.closed.insert(hosted.ranked, self.now + CLOSED_MEMORY);
             }
             self.players.retain(|_, m| *m != match_id);
-            eprintln!("match {match_id} let go");
+            tracing::info!("match {match_id} let go");
         }
     }
 }

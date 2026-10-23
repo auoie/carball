@@ -1,27 +1,24 @@
 //! The outbox never sends through a proxy the environment names (its credentials go to `API_URL` alone, AP3): a test
 //! binary of its own, so the process's proxy variables are set before anything else runs (RX31)
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use carball_server::match_host::Report;
 use carball_server::outbox::{OutboxConfig, run};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-/// A stand-in answering every connection with `reply`, counting them
-fn answer(listener: tokio::net::TcpListener, reply: &'static [u8]) -> Arc<AtomicUsize> {
-    let count = Arc::new(AtomicUsize::new(0));
-    let counted = count.clone();
-    tokio::spawn(async move {
-        while let Ok((mut stream, _)) = listener.accept().await {
-            let mut buf = vec![0u8; 8192];
-            let _ = stream.read(&mut buf).await;
-            counted.fetch_add(1, Ordering::SeqCst);
-            let _ = stream.write_all(reply).await;
-        }
-    });
-    count
+/// A stand-in (wiremock) answering every request with `status`
+async fn answer(listener: std::net::TcpListener, status: u16) -> wiremock::MockServer {
+    let server = wiremock::MockServer::builder().listener(listener).start().await;
+    wiremock::Mock::given(wiremock::matchers::any())
+        .respond_with(wiremock::ResponseTemplate::new(status))
+        .mount(&server)
+        .await;
+    server
+}
+
+/// How many requests a stand-in got
+async fn count(server: &wiremock::MockServer) -> usize {
+    server.received_requests().await.map_or(0, |r| r.len())
 }
 
 #[test]
@@ -39,14 +36,9 @@ fn a_proxy_named_in_the_environment_is_never_used() {
     }
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     runtime.block_on(async move {
-        proxy.set_nonblocking(true).unwrap();
-        let proxied = answer(
-            tokio::net::TcpListener::from_std(proxy).unwrap(),
-            b"HTTP/1.1 502 X\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-        );
-        let service = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}", service.local_addr().unwrap());
-        let served = answer(service, b"HTTP/1.1 204 X\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        let proxied = answer(proxy, 502).await;
+        let served = answer(std::net::TcpListener::bind("127.0.0.1:0").unwrap(), 204).await;
+        let url = served.uri();
         let config = OutboxConfig {
             api_url: Some(url),
             token: "secret-token".into(),
@@ -61,11 +53,11 @@ fn a_proxy_named_in_the_environment_is_never_used() {
         let task = tokio::spawn(run(config, rx));
         tx.send(Report::Quitter { match_id: "m1".into(), ticket: "t1".into() }).unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
-        while served.load(Ordering::SeqCst) == 0 && proxied.load(Ordering::SeqCst) == 0 && Instant::now() < deadline {
+        while count(&served).await == 0 && count(&proxied).await == 0 && Instant::now() < deadline {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         assert_eq!(
-            (served.load(Ordering::SeqCst), proxied.load(Ordering::SeqCst)),
+            (count(&served).await, count(&proxied).await),
             (1, 0),
             "sent to the service itself, never to the proxy"
         );

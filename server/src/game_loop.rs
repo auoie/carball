@@ -129,7 +129,7 @@ pub fn run_with_reports(
                 Some(tx) => {
                     let _ = tx.send(report);
                 }
-                None => eprintln!("ranked report (no outbox): {report:?}"),
+                None => tracing::info!("ranked report (no outbox): {report:?}"),
             }
         }
         // (until the next tick is due, a millisecond at most: the messages are read meanwhile)

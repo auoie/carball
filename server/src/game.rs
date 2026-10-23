@@ -773,7 +773,7 @@ impl Game {
     pub fn join(&mut self, id: PlayerId, request: JoinRequest, out: Sender<Outgoing>) {
         if self.players.len() >= self.capacity() {
             // (refused: the session ends once it's sent)
-            eprintln!("player {id} refused: full ({} players)", self.capacity());
+            tracing::warn!("player {id} refused: full ({} players)", self.capacity());
             let _ = out.try_send(Outgoing::Control(Control::Refused { reason: protocol::REFUSED_FULL }.encode()));
             return;
         }
@@ -787,7 +787,7 @@ impl Game {
         // (the garage's car: one this server doesn't know plays as the first; its hitbox preset)
         let (model, preset) = protocol::model_preset(request.model);
         let car_id = self.arena.add_car(team, preset);
-        eprintln!("player {id} joined team {team} (car {car_id})");
+        tracing::info!("player {id} joined team {team} (car {car_id})");
         // (a running vote takes the joiner as a voter: `AddToTeam`; a seat's new session after a takeover with its old
         // session's answer, RX32)
         let carried = self.taken_over.take().filter(|&(t, _)| t == team).and_then(|(_, yes)| yes);
@@ -1022,9 +1022,10 @@ impl Game {
     fn remove_player(&mut self, id: PlayerId, lost: bool, replaced: bool) {
         if let Some(player) = self.players.remove(&id) {
             let stats = player.input.stats;
-            eprintln!(
+            tracing::info!(
                 "player {id} left: {} input frames repeated (buffer empty), {} skipped to catch up",
-                stats.under_buffer_frames, stats.over_buffer_frames
+                stats.under_buffer_frames,
+                stats.over_buffer_frames
             );
             let team = player.team;
             // (a full public lobby loses its leave penalty: every team's vote ends, `OnPenaltyChanged`, MR-7.15)
@@ -1102,14 +1103,14 @@ impl Game {
         }
         match left.iter().find(|&&team| !self.players.values().any(|p| p.team == team)) {
             Some(&team) => self.team_forfeits(team),
-            None => eprintln!("forfeit check: teams {left:?} still have players"),
+            None => tracing::info!("forfeit check: teams {left:?} still have players"),
         }
     }
 
     /// A team forfeits (`Team.Forfeit` → `HandleTeamForfeit`, MR-7.7): the other team wins whatever the score, at once,
     /// or after a goal at the next round (`StartNewRound`: the replay plays on)
     fn team_forfeits(&mut self, team: u8) {
-        eprintln!("team {team} forfeits ({:?})", self.phase);
+        tracing::info!("team {team} forfeits ({:?})", self.phase);
         match self.phase {
             Phase::PrePodium | Phase::Podium | Phase::Finished => {}
             Phase::PostGoal | Phase::Replay => self.forfeiting = Some(team),
@@ -1147,7 +1148,7 @@ impl Game {
             && !*yes
         {
             *yes = true; // (logged when it changes: a held or repeated press isn't a line each, RV-267)
-            eprintln!("player {id} votes to forfeit: team {team} {}/{}", vote.yes(), vote.voters.len());
+            tracing::info!("player {id} votes to forfeit: team {team} {}/{}", vote.yes(), vote.voters.len());
         }
         self.check_vote(team);
         self.send_votes();
@@ -1734,7 +1735,7 @@ impl Game {
         let stuck: Vec<PlayerId> =
             self.players.iter().filter(|(_, p)| p.out.capacity() == 0).map(|(&id, _)| id).collect();
         for id in stuck {
-            eprintln!("player {id}: outgoing queue full ({OUT_QUEUE}), dropped");
+            tracing::warn!("player {id}: outgoing queue full ({OUT_QUEUE}), dropped");
             self.dropped.push(Dropped { id, decided: self.has_winner() || self.is_over(), lost: true });
             self.remove_player(id, true, false);
         }
@@ -1843,7 +1844,7 @@ impl Game {
         let kicked: Vec<PlayerId> =
             self.players.iter().filter(|(_, p)| p.kick_at.is_some_and(|at| tick >= at)).map(|(&id, _)| id).collect();
         for id in kicked {
-            eprintln!("player {id}: kicked for being idle");
+            tracing::warn!("player {id}: kicked for being idle");
             self.dropped.push(Dropped { id, decided: self.has_winner() || self.is_over(), lost: false });
             self.remove_player(id, false, false);
         }

@@ -1,7 +1,7 @@
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 use std::time::{Duration, Instant, SystemTime};
 
 use carball_server::game::MatchType;
@@ -364,7 +364,9 @@ fn outbox_config(args: &Args) -> anyhow::Result<carball_server::outbox::OutboxCo
             let access = match &api.access {
                 Some((id, file)) => Some((id.clone(), read_secret("CF_ACCESS_CLIENT_SECRET_FILE", file)?)),
                 None => {
-                    eprintln!("no CF_ACCESS_CLIENT_ID: the ranked calls go without the tunnel's Access service token");
+                    tracing::warn!(
+                        "no CF_ACCESS_CLIENT_ID: the ranked calls go without the tunnel's Access service token"
+                    );
                     None
                 }
             };
@@ -384,40 +386,34 @@ fn outbox_config(args: &Args) -> anyhow::Result<carball_server::outbox::OutboxCo
     })
 }
 
-/// SIGHUP asks for the certificate to be read again, and the ticket keys' file
-static RELOAD: AtomicBool = AtomicBool::new(false);
-static RELOAD_KEYS: AtomicBool = AtomicBool::new(false);
-
-extern "C" fn on_sighup(_: libc::c_int) {
-    RELOAD.store(true, Ordering::SeqCst);
-    RELOAD_KEYS.store(true, Ordering::SeqCst);
+/// SIGHUP (asks for the certificate and the ticket keys' file to be read again): each reader's own stream of it
+fn hangups() -> anyhow::Result<tokio::signal::unix::Signal> {
+    Ok(tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())?)
 }
 
 /// The ticket keys' file read again on SIGHUP (a rotation: its new key added beside the old, the old dropped later), its
 /// keys logged by id; a bad file keeps the keys there were
-async fn reload_ticket_keys(tickets: Arc<carball_server::ticket::Tickets>, file: PathBuf) {
-    // SAFETY: the handler only stores to atomics
-    unsafe {
-        libc::signal(libc::SIGHUP, on_sighup as *const () as libc::sighandler_t);
-    }
-    let mut tick = tokio::time::interval(Duration::from_secs(1));
-    loop {
-        tick.tick().await;
-        if !RELOAD_KEYS.swap(false, Ordering::SeqCst) {
-            continue;
-        }
+async fn reload_ticket_keys(
+    tickets: Arc<carball_server::ticket::Tickets>,
+    file: PathBuf,
+    mut hup: tokio::signal::unix::Signal,
+) {
+    while hup.recv().await.is_some() {
         match std::fs::read_to_string(&file).map_err(anyhow::Error::from).and_then(|list| tickets.reload(&list)) {
-            Ok(()) => println!("ticket keys reloaded (SIGHUP): {}", tickets.key_ids().join(", ")),
-            Err(e) => eprintln!("ticket keys not reloaded ({}): {e}; the ones there were kept", file.display()),
+            Ok(()) => tracing::info!("ticket keys reloaded (SIGHUP): {}", tickets.key_ids().join(", ")),
+            Err(e) => tracing::warn!("ticket keys not reloaded ({}): {e}; the ones there were kept", file.display()),
         }
     }
 }
 
 /// SIGTERM or SIGINT: the process ends at once (as a container's PID 1, an unhandled SIGTERM is ignored: `docker stop`
 /// would wait out its grace period); its matches end with it
-extern "C" fn on_stop(_: libc::c_int) {
-    // SAFETY: _exit is async-signal-safe
-    unsafe { libc::_exit(0) }
+async fn exit_on_stop(mut term: tokio::signal::unix::Signal) {
+    tokio::select! {
+        _ = term.recv() => {}
+        _ = tokio::signal::ctrl_c() => {}
+    }
+    std::process::exit(0);
 }
 
 fn modified(path: &PathBuf) -> Option<SystemTime> {
@@ -426,19 +422,21 @@ fn modified(path: &PathBuf) -> Option<SystemTime> {
 
 /// The certificate read again when its files change (checked every 5 s) or on SIGHUP: new sessions get it, sessions open
 /// now keep theirs (no match dropped: `Endpoint::reload_config` without a rebind)
-async fn reload_certificates(server: Arc<net::ServerEndpoint>, cert: PathBuf, key: PathBuf, port: u16) {
-    // SAFETY: the handler only stores to an atomic
-    unsafe {
-        libc::signal(libc::SIGHUP, on_sighup as *const () as libc::sighandler_t);
-    }
+async fn reload_certificates(
+    server: Arc<net::ServerEndpoint>,
+    cert: PathBuf,
+    key: PathBuf,
+    port: u16,
+    mut hup: tokio::signal::unix::Signal,
+) {
     let mut seen = (modified(&cert), modified(&key));
-    let mut tick = tokio::time::interval(Duration::from_secs(1));
-    let mut checks = 0u32;
+    let mut tick = tokio::time::interval(Duration::from_secs(5));
     loop {
-        tick.tick().await;
-        checks += 1;
-        let asked = RELOAD.swap(false, Ordering::SeqCst);
-        let now = if asked || checks.is_multiple_of(5) { (modified(&cert), modified(&key)) } else { seen };
+        let asked = tokio::select! {
+            _ = hup.recv() => true,
+            _ = tick.tick() => false,
+        };
+        let now = (modified(&cert), modified(&key));
         if !asked && now == seen {
             continue;
         }
@@ -447,14 +445,14 @@ async fn reload_certificates(server: Arc<net::ServerEndpoint>, cert: PathBuf, ke
                 match net::server_config(identity, port).and_then(|config| Ok(server.reload_config(config, false)?)) {
                     Ok(()) => {
                         seen = now;
-                        eprintln!("certificate reloaded ({})", if asked { "SIGHUP" } else { "its files changed" });
+                        tracing::info!("certificate reloaded ({})", if asked { "SIGHUP" } else { "its files changed" });
                     }
-                    Err(e) => eprintln!("certificate reload failed, the old one stays: {e:#}"),
+                    Err(e) => tracing::error!("certificate reload failed, the old one stays: {e:#}"),
                 }
             }
             // (a renewal written in two steps can be read between them, a key that isn't the certificate's yet: tried
             // again at the next check, RV-368)
-            Err(e) => eprintln!("certificate not read, the old one stays: {e:#}"),
+            Err(e) => tracing::warn!("certificate not read, the old one stays: {e:#}"),
         }
     }
 }
@@ -464,14 +462,16 @@ async fn main() -> anyhow::Result<()> {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     if argv.iter().any(|a| a == "--healthcheck") {
         let port = health_port(&argv, |name| std::env::var(name).ok())?;
-        std::process::exit(if net::health_check(port) { 0 } else { 1 });
+        std::process::exit(if net::health_check(port).await { 0 } else { 1 });
     }
+    // (the log: one line per event, its time and level, on stderr; info and up)
+    tracing_subscriber::fmt()
+        .with_target(false)
+        .with_max_level(tracing::Level::INFO)
+        .with_writer(std::io::stderr)
+        .init();
     let args = parse_args(argv.into_iter(), |name| std::env::var(name).ok())?;
-    // SAFETY: the handler only calls _exit
-    unsafe {
-        libc::signal(libc::SIGTERM, on_stop as *const () as libc::sighandler_t);
-        libc::signal(libc::SIGINT, on_stop as *const () as libc::sighandler_t);
-    }
+    tokio::spawn(exit_on_stop(tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?));
     engine::init(&args.meshes)?;
     let (identity, dev_hash) = match &args.cert {
         Some((cert, key)) => (net::load_identity(cert, key).await?, None),
@@ -493,15 +493,15 @@ async fn main() -> anyhow::Result<()> {
     anyhow::ensure!(!args.queue || args.dev || !tickets.is_empty(), "TICKET_PUBLIC_KEYS names no key");
     if args.dev && args.queue {
         // (development only: anyone may get a ticket from its info server, any account, any name)
-        eprintln!("--dev: this server signs tickets of its own for anyone who asks: never a public server");
+        tracing::warn!("--dev: this server signs tickets of its own for anyone who asks: never a public server");
         tickets = tickets.with_dev_key()?;
     }
     if args.queue {
-        println!("ticket keys: {}", tickets.key_ids().join(", "));
+        tracing::info!("ticket keys: {}", tickets.key_ids().join(", "));
     }
     let tickets = args.queue.then(|| Arc::new(tickets));
     if let (Some(tickets), Some(file)) = (&tickets, &args.ticket_keys_file) {
-        tokio::spawn(reload_ticket_keys(tickets.clone(), file.clone()));
+        tokio::spawn(reload_ticket_keys(tickets.clone(), file.clone(), hangups()?));
     }
     let mut args = args;
     args.limits.tickets = tickets.clone();
@@ -527,16 +527,16 @@ async fn main() -> anyhow::Result<()> {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let config = outbox_config(&args)?;
         match &config.api_url {
-            Some(url) => println!(
+            Some(url) => tracing::info!(
                 "ranked calls to {url} (waiting in {})",
                 config.dir.as_ref().map_or("memory".into(), |d| d.display().to_string())
             ),
-            None => println!("ranked calls logged only (no API_URL: development)"),
+            None => tracing::info!("ranked calls logged only (no API_URL: development)"),
         }
         tokio::spawn(carball_server::outbox::run(config, rx));
         // (the matches this server had before its start are gone: the matchmaker frees their players)
         let _ = tx.send(carball_server::match_host::Report::Restarted { at: carball_server::ticket::unix_now() });
-        println!("this server's name for the matchmaker: {}", args.server_name());
+        tracing::info!("this server's name for the matchmaker: {}", args.server_name());
         Some(tx)
     } else {
         None
@@ -550,22 +550,23 @@ async fn main() -> anyhow::Result<()> {
         loop {
             every.tick().await;
             if game.is_finished() {
-                eprintln!("the game thread ended: exiting");
+                tracing::error!("the game thread ended: exiting");
                 std::process::exit(1);
             }
         }
     });
     tokio::spawn(net::serve_health(args.health_port, heartbeat, start));
     if let Some((cert, key)) = args.cert.clone() {
-        tokio::spawn(reload_certificates(server.clone(), cert, key, args.port));
+        tokio::spawn(reload_certificates(server.clone(), cert, key, args.port, hangups()?));
     }
     let dev_info = dev_info_on(&args);
     let mode = if args.queue { "the queue's matches" } else { "one open match" };
     let origins = args.limits.allowed_origins.as_ref().map_or("any origin (development)".to_string(), |o| o.join(", "));
     let host = args.public_host.as_deref().unwrap_or("this machine");
-    println!(
+    tracing::info!(
         "carball-server: {mode}, WebTransport on UDP port {} at {host}, pages from {origins}, health on 127.0.0.1:{}",
-        args.port, args.health_port
+        args.port,
+        args.health_port
     );
     match (dev_info, dev_hash) {
         (true, Some(hash)) => {
@@ -576,16 +577,18 @@ async fn main() -> anyhow::Result<()> {
                 hash,
                 tickets.filter(|_| args.dev),
             ));
-            println!("dev info on http://{}:{}/info (self-signed certificate)", args.info_bind, args.info_port);
+            tracing::info!("dev info on http://{}:{}/info (self-signed certificate)", args.info_bind, args.info_port);
             let query = if args.info_port == 4434 {
                 "server".to_string()
             } else {
                 format!("server=localhost:{}", args.info_port)
             };
-            println!("To play: run the web client (cd client && npm run dev) and open http://localhost:5173/?{query}");
+            tracing::info!(
+                "To play: run the web client (cd client && npm run dev) and open http://localhost:5173/?{query}"
+            );
         }
         (true, None) => {
-            eprintln!("--dev-info: no development info with a real certificate (the client connects by name)")
+            tracing::warn!("--dev-info: no development info with a real certificate (the client connects by name)")
         }
         _ => {}
     }

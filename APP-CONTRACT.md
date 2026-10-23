@@ -177,7 +177,7 @@ asks (`/dev-ticket`), with no sign-in.
   `--health-port`) alone. A variable that isn't a number stops the server with its name in the error.
 - **Restart policy:** `unless-stopped` (or `always`). The process exits if its game thread ends (a panic outside a
   match: a panic inside one ends only that match) or the engine aborts.
-- **Stop:** SIGTERM or SIGINT ends it at once; the matches in progress end with it.
+- **Stop:** SIGTERM or SIGINT ends it at once (`docker stop`: about 0.1 s); the matches in progress end with it.
 - **Limits it enforces:** a client proves its address (a QUIC Retry) before it takes a slot; 512 sessions at once; per
   client address (an IPv6 one by its /64) 8 at once and 30 new a minute (a region's ping gives its start back, RV-870, up to 120 a minute, RV-900) (a large carrier NAT or NAT64 exit can hold more players than that: RV-418, raise `--max-per-address` if they're refused; it is a flag, given after the image name in `docker run`); 4 s for the QUIC handshake, 10 s through the
   hello; 240 input packets and 20 control messages a second per session (more are dropped; a session that keeps
@@ -190,7 +190,11 @@ asks (`/dev-ticket`), with no sign-in.
 - **Resources** (measured, RX13): one game thread runs every match (120 Hz each): ~0.7 % of a core a 1v1, ~1.8 % a 3v3
   (all threads ~2.1 % / ~5.5 %), so the game thread caps a server near 55 3v3 matches. Memory ~8 MB idle, ~1.4 MB a 1v1
   and ~1.8 MB a 3v3. Bandwidth per player: ~3.4 KB/s down in a 1v1, ~5.6 KB/s in a 3v3; ~5–13 KB/s up (inputs).
-- **Logs:** stdout (start-up) and stderr (joins, leaves, matches, refusals, reloads), one line each.
+- **Logs:** stderr, one line an event (start-up, joins, leaves, matches, refusals, reloads, the outbox's calls): its UTC
+  time, its level (`INFO`, `WARN` for a refusal or a call kept for later, `ERROR` for a failed reload or a match's
+  panic) and the message.
+- **Development info:** a development server's `GET /info` and `GET /dev-ticket` (on `--info-port`, 127.0.0.1 unless
+  `--info-bind`): HTTP/1, 64 connections at once, 2 s for a request's headers; another path a 404, another method a 405.
 
 ## carball-api
 

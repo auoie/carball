@@ -149,7 +149,7 @@ impl Queue {
         let mut queue = Self { calls: VecDeque::new(), dir, next: 0 };
         let Some(dir) = queue.dir.clone() else { return queue };
         if let Err(e) = std::fs::create_dir_all(&dir) {
-            eprintln!("outbox: {}: {e}; calls kept in memory only", dir.display());
+            tracing::warn!("outbox: {}: {e}; calls kept in memory only", dir.display());
             queue.dir = None;
             return queue;
         }
@@ -169,12 +169,12 @@ impl Queue {
                     let bad = dir.join("bad");
                     let moved = std::fs::create_dir_all(&bad)
                         .and_then(|()| std::fs::rename(path, bad.join(path.file_name().unwrap_or_default())));
-                    eprintln!("outbox: {} unreadable, moved to {} ({moved:?})", path.display(), bad.display());
+                    tracing::warn!("outbox: {} unreadable, moved to {} ({moved:?})", path.display(), bad.display());
                 }
             }
         }
         if !queue.calls.is_empty() {
-            eprintln!("outbox: {} calls kept from before", queue.calls.len());
+            tracing::info!("outbox: {} calls kept from before", queue.calls.len());
         }
         queue
     }
@@ -194,7 +194,7 @@ impl Queue {
             {
                 Ok(()) => Some(path),
                 Err(e) => {
-                    eprintln!("outbox: writing {}: {e}; kept in memory", path.display());
+                    tracing::warn!("outbox: writing {}: {e}; kept in memory", path.display());
                     None
                 }
             }
@@ -232,7 +232,7 @@ pub fn check_dir(dir: &Path) -> anyhow::Result<()> {
 
 fn remove(path: &Path) {
     if let Err(e) = std::fs::remove_file(path) {
-        eprintln!("outbox: removing {}: {e}", path.display());
+        tracing::warn!("outbox: removing {}: {e}", path.display());
     }
 }
 
@@ -269,25 +269,26 @@ async fn send(client: &reqwest::Client, config: &OutboxConfig, api: &str, call: 
             let error = if status == 403 { response.text().await.ok().and_then(|body| api_error(&body)) } else { None };
             let result = sent(status, error.as_deref());
             match (status, &result) {
-                (_, Sent::Refused(_)) if error.is_some() => eprintln!(
+                (_, Sent::Refused(_)) if error.is_some() => tracing::warn!(
                     "outbox: {} {}: {status} {:?} from the accounts service: refused for good, dropped (its ticket isn't \
                      accepted for this match)",
                     call.method,
                     call.path,
                     error.as_deref().unwrap_or("")
                 ),
-                (429 | 500..=599, _) => eprintln!("outbox: {} {}: {status}, later", call.method, call.path),
-                (300..=399 | 401 | 403 | 404 | 405, _) => eprintln!(
+                (429 | 500..=599, _) => tracing::warn!("outbox: {} {}: {status}, later", call.method, call.path),
+                (300..=399 | 401 | 403 | 404 | 405, _) => tracing::warn!(
                     "outbox: {} {}: {status}, not the accounts service's answer (a redirect, Access or a challenge, a wrong \
                      route or token): kept and tried again; check API_URL, GAME_SERVER_TOKEN_FILE and the Access token",
-                    call.method, call.path
+                    call.method,
+                    call.path
                 ),
                 _ => {}
             }
             result
         }
         Err(e) => {
-            eprintln!("outbox: {} {}: {e}, later", call.method, call.path);
+            tracing::warn!("outbox: {} {}: {e}, later", call.method, call.path);
             Sent::Later
         }
     }
@@ -309,7 +310,7 @@ pub async fn run(config: OutboxConfig, mut reports: UnboundedReceiver<Report>) {
         Ok(c) => c,
         Err(e) => {
             // (never sent by this run: kept, for the next)
-            eprintln!("outbox: no HTTP client ({e}): the calls kept for a restart");
+            tracing::warn!("outbox: no HTTP client ({e}): the calls kept for a restart");
             while let Some(r) = reports.recv().await {
                 queue.push(call_of(&r, &config.server, crate::ticket::unix_now()));
             }
@@ -341,17 +342,17 @@ pub async fn run(config: OutboxConfig, mut reports: UnboundedReceiver<Report>) {
         }
         let Some((call, _)) = queue.calls.front().cloned() else { continue };
         let Some(api) = config.api_url.as_deref() else {
-            eprintln!(
+            tracing::info!(
                 "outbox (no API_URL): {} {} {}",
                 call.method,
                 call.path,
-                call.body.as_ref().map_or(String::new(), Value::to_string)
+                call.body.as_ref().map_or(String::new(), |body| body.to_string())
             );
             queue.pop();
             continue;
         };
         if crate::ticket::unix_now() - call.created > GIVE_UP_SECONDS {
-            eprintln!("outbox: {} {} past the acceptance window: dropped", call.method, call.path);
+            tracing::warn!("outbox: {} {} past the acceptance window: dropped", call.method, call.path);
             queue.pop();
             continue;
         }
@@ -374,7 +375,7 @@ pub async fn run(config: OutboxConfig, mut reports: UnboundedReceiver<Report>) {
                 retry_at = None;
             }
             Sent::Refused(status) => {
-                eprintln!("outbox: {} {} refused ({status}): dropped", call.method, call.path);
+                tracing::warn!("outbox: {} {} refused ({status}): dropped", call.method, call.path);
                 queue.pop();
                 retry_at = None;
             }
@@ -393,7 +394,6 @@ mod tests {
     use super::*;
     use crate::match_host::{MatchResult, ResultPlayer};
     use std::sync::{Arc, Mutex};
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[test]
     fn each_reports_call() {
@@ -483,63 +483,78 @@ mod tests {
         assert_eq!(api_error("<html>Access denied</html>"), None);
     }
 
-    /// A stand-in accounts service: answers each request with the next status (the last again after), recording each
-    /// request's first line and headers
-    async fn service(statuses: Vec<u16>) -> (String, Arc<Mutex<Vec<String>>>) {
-        service_to(statuses, None).await
+    /// A stand-in accounts service's answers (wiremock): each request answered with the next status and body (the last
+    /// again after), a `Location` on each if given, after `delay`; each request kept as its text (its line, headers and
+    /// body, as it came)
+    struct Answers {
+        answers: Vec<(u16, &'static str)>,
+        location: Option<String>,
+        delay: Duration,
+        next: std::sync::atomic::AtomicUsize,
+        seen: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl wiremock::Respond for Answers {
+        fn respond(&self, request: &wiremock::Request) -> wiremock::ResponseTemplate {
+            let headers: String =
+                request.headers.iter().map(|(k, v)| format!("{k}: {}\r\n", v.to_str().unwrap_or(""))).collect();
+            let body = String::from_utf8_lossy(&request.body);
+            self.seen.lock().unwrap().push(format!(
+                "{} {} HTTP/1.1\r\n{headers}\r\n{body}",
+                request.method,
+                request.url.path()
+            ));
+            let i = self.next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let (status, body) = self.answers[i.min(self.answers.len() - 1)];
+            let mut reply = wiremock::ResponseTemplate::new(status).set_delay(self.delay);
+            if !body.is_empty() {
+                reply = reply.set_body_raw(body, "application/json");
+            }
+            if let Some(location) = &self.location {
+                reply = reply.insert_header("Location", location.as_str());
+            }
+            reply
+        }
+    }
+
+    /// The stand-in started: its URL, the requests it got, the server (kept alive by the test: dropping it stops it)
+    async fn stand_in(
+        answers: Vec<(u16, &'static str)>,
+        location: Option<String>,
+        delay: Duration,
+    ) -> (String, Arc<Mutex<Vec<String>>>, wiremock::MockServer) {
+        let server = wiremock::MockServer::start().await;
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let answers = Answers { answers, location, delay, next: 0.into(), seen: seen.clone() };
+        wiremock::Mock::given(wiremock::matchers::any()).respond_with(answers).mount(&server).await;
+        (server.uri(), seen, server)
+    }
+
+    /// A stand-in answering each request with the next status, no body
+    async fn service(statuses: Vec<u16>) -> (String, Arc<Mutex<Vec<String>>>, wiremock::MockServer) {
+        stand_in(statuses.into_iter().map(|s| (s, "")).collect(), None, Duration::ZERO).await
     }
 
     /// The same, each answer with a `Location` (a redirect's)
-    async fn service_to(statuses: Vec<u16>, location: Option<String>) -> (String, Arc<Mutex<Vec<String>>>) {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let log = seen.clone();
-        tokio::spawn(async move {
-            let mut i = 0;
-            while let Ok((mut stream, _)) = listener.accept().await {
-                let mut buf = vec![0u8; 8192];
-                let n = stream.read(&mut buf).await.unwrap_or(0);
-                log.lock().unwrap().push(String::from_utf8_lossy(&buf[..n]).to_string());
-                let status = statuses[i.min(statuses.len() - 1)];
-                i += 1;
-                let to = location.as_ref().map_or(String::new(), |l| format!("Location: {l}\r\n"));
-                let reply = format!("HTTP/1.1 {status} X\r\n{to}Content-Length: 0\r\nConnection: close\r\n\r\n");
-                let _ = stream.write_all(reply.as_bytes()).await;
-            }
-        });
-        (url, seen)
+    async fn service_to(
+        statuses: Vec<u16>,
+        location: Option<String>,
+    ) -> (String, Arc<Mutex<Vec<String>>>, wiremock::MockServer) {
+        stand_in(statuses.into_iter().map(|s| (s, "")).collect(), location, Duration::ZERO).await
     }
 
-    /// A stand-in answering each request with the next status and body (the last again after)
-    async fn service_bodies(answers: Vec<(u16, &'static str)>) -> (String, Arc<Mutex<Vec<String>>>) {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let log = seen.clone();
-        tokio::spawn(async move {
-            let mut i = 0;
-            while let Ok((mut stream, _)) = listener.accept().await {
-                let mut buf = vec![0u8; 8192];
-                let n = stream.read(&mut buf).await.unwrap_or(0);
-                log.lock().unwrap().push(String::from_utf8_lossy(&buf[..n]).to_string());
-                let (status, body) = answers[i.min(answers.len() - 1)];
-                i += 1;
-                let reply = format!(
-                    "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
-                let _ = stream.write_all(reply.as_bytes()).await;
-            }
-        });
-        (url, seen)
+    /// A stand-in answering each request with the next status and body
+    async fn service_bodies(
+        answers: Vec<(u16, &'static str)>,
+    ) -> (String, Arc<Mutex<Vec<String>>>, wiremock::MockServer) {
+        stand_in(answers, None, Duration::ZERO).await
     }
 
     /// AP4: the service's own refusal of a call's ticket (403, its JSON) is for good: dropped, the calls after it sent; an
     /// edge's 403 (a page, not the service's) is tried again
     #[tokio::test]
     async fn the_services_own_ticket_refusal_is_dropped_an_edges_403_retried() {
-        let (url, seen) =
+        let (url, seen, _service) =
             service_bodies(vec![(403, r#"{"error":"ticket"}"#), (204, ""), (403, "<html>Access</html>"), (204, "")])
                 .await;
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
@@ -602,7 +617,7 @@ mod tests {
 
     #[tokio::test]
     async fn calls_go_out_in_order_with_the_credentials_retried_through_failures() {
-        let (url, seen) = service(vec![503, 503, 204, 409, 204]).await;
+        let (url, seen, _service) = service(vec![503, 503, 204, 409, 204]).await;
         let dir = scratch_dir();
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let task = tokio::spawn(run(config(Some(url), Some(dir.clone())), rx));
@@ -642,8 +657,8 @@ mod tests {
     /// again, as after 401 and 403 (Access, a challenge, a token not set yet), until the service takes it (AP3)
     #[tokio::test]
     async fn a_redirect_is_not_followed_and_an_answer_not_the_services_is_retried() {
-        let (elsewhere, elsewhere_seen) = service(vec![200]).await;
-        let (url, seen) = service_to(vec![302, 307, 401, 403, 204], Some(format!("{elsewhere}/login"))).await;
+        let (elsewhere, elsewhere_seen, _elsewhere) = service(vec![200]).await;
+        let (url, seen, _service) = service_to(vec![302, 307, 401, 403, 204], Some(format!("{elsewhere}/login"))).await;
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let task = tokio::spawn(run(config(Some(url), None), rx));
         tx.send(Report::Quitter { match_id: "m1".into(), ticket: "t1".into() }).unwrap();
@@ -658,7 +673,7 @@ mod tests {
     /// https alone (the service's): a plain http origin is never sent to, its call kept for later
     #[tokio::test]
     async fn plain_http_is_never_sent_to() {
-        let (url, seen) = service(vec![204]).await;
+        let (url, seen, _service) = service(vec![204]).await;
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let task = tokio::spawn(run(OutboxConfig { https_only: true, ..config(Some(url), None) }, rx));
         tx.send(Report::Quitter { match_id: "m1".into(), ticket: "t1".into() }).unwrap();
@@ -710,27 +725,16 @@ mod tests {
     async fn a_report_during_a_send_is_on_disk_before_the_send_ends() {
         let dir = scratch_dir();
         // (a service slow to answer: 600 ms)
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        let seen = Arc::new(Mutex::new(0));
-        let log = seen.clone();
-        tokio::spawn(async move {
-            while let Ok((mut stream, _)) = listener.accept().await {
-                let mut buf = vec![0u8; 8192];
-                let _ = stream.read(&mut buf).await;
-                *log.lock().unwrap() += 1;
-                tokio::time::sleep(Duration::from_millis(600)).await;
-                let _ = stream.write_all(b"HTTP/1.1 204 X\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
-            }
-        });
+        let (url, requests, _service) = stand_in(vec![(204, "")], None, Duration::from_millis(600)).await;
+        let seen_count = || requests.lock().unwrap().len();
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let task = tokio::spawn(run(config(Some(url), Some(dir.clone())), rx));
         tx.send(Report::Quitter { match_id: "m1".into(), ticket: "t1".into() }).unwrap();
-        until(|| *seen.lock().unwrap() == 1).await;
+        until(|| seen_count() == 1).await;
         // (the first in flight: the second written now)
         tx.send(Report::Quitter { match_id: "m2".into(), ticket: "t2".into() }).unwrap();
         tokio::time::sleep(Duration::from_millis(150)).await;
-        assert_eq!(*seen.lock().unwrap(), 1, "the first still in flight");
+        assert_eq!(seen_count(), 1, "the first still in flight");
         assert_eq!(std::fs::read_dir(&dir).map_or(0, |d| d.count()), 2, "both on disk");
         until(|| std::fs::read_dir(&dir).map_or(0, |d| d.count()) == 0).await;
         drop(tx);
@@ -749,7 +753,7 @@ mod tests {
         drop(tx);
         task.abort();
         // (a new run with the service back: sent from the file, the file gone)
-        let (url, seen) = service(vec![204]).await;
+        let (url, seen, _service) = service(vec![204]).await;
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let task = tokio::spawn(run(config(Some(url), Some(dir.clone())), rx));
         until(|| seen.lock().unwrap().len() == 1).await;

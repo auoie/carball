@@ -10,7 +10,7 @@ default-run = "carball-server"
 [dependencies]
 anyhow = "1"
 getrandom = "0.4"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util"], optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util", "signal"], optional = true }
 wtransport = { version = "0.7", features = ["quinn"], optional = true }
 # (the search tickets' Ed25519 and base64: already in the tree through rustls, so offline builds have them)
 ring = { version = "0.17", optional = true }
@@ -20,15 +20,35 @@ base64 = { version = "0.22", optional = true }
 reqwest = { version = "=0.12.22", default-features = false, features = ["rustls-tls-webpki-roots"], optional = true }
 # (the calls' JSON: already in the tree, the tests')
 serde_json = { version = "1", optional = true }
-libc = "0.2"
+# (the log: one line per event, the network server's and the local host's; the game's modules are both's)
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"], optional = true }
+# (the development info server, its tickets and the health endpoint: axum's routes on hyper's HTTP/1 connections,
+# their header read time and number capped)
+axum = { version = "0.8", default-features = false, features = ["query"], optional = true }
+hyper = { version = "1", features = ["server", "http1"], optional = true }
+hyper-util = { version = "0.1", features = ["tokio", "service"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
 
 [features]
 default = ["net"]
 # The network server: WebTransport, the queue, the game loop's thread (the release image's build)
-net = ["dep:tokio", "dep:wtransport", "dep:ring", "dep:base64", "dep:reqwest", "dep:serde_json"]
+net = [
+    "dep:tokio",
+    "dep:wtransport",
+    "dep:ring",
+    "dep:base64",
+    "dep:reqwest",
+    "dep:serde_json",
+    "dep:axum",
+    "dep:hyper",
+    "dep:hyper-util",
+    "dep:serde",
+    "dep:tracing-subscriber",
+]
 # The browser's local host (src/bin/host.rs: an offline match against bots, in a worker): built for
 # wasm32-unknown-emscripten with --no-default-features --features host (scripts/build_host.sh)
-host = []
+host = ["dep:tracing-subscriber"]
 
 [[bin]]
 name = "carball-server"
@@ -42,6 +62,7 @@ required-features = ["host"]
 
 [dev-dependencies]
 serde_json = "1"
+wiremock = "0.6"
 
 [build-dependencies]
 cmake = "0.1"

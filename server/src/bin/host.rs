@@ -60,13 +60,15 @@ unsafe fn slice<'a>(bytes: *const u8, len: usize) -> &'a [u8] {
 /// `dir` is a NUL-terminated string
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn host_init(dir: *const c_char) -> i32 {
+    // (the match's log to the worker's console: one line per event, no time, the browser keeps its own)
+    let _ = tracing_subscriber::fmt().with_target(false).without_time().with_writer(std::io::stderr).try_init();
     let Ok(dir) = unsafe { CStr::from_ptr(dir) }.to_str() else {
         return 0;
     };
     match engine::init(Path::new(dir)) {
         Ok(()) => 1,
         Err(e) => {
-            eprintln!("local host: {e}");
+            tracing::error!("local host: {e}");
             0
         }
     }

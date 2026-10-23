@@ -379,7 +379,7 @@ pub async fn accept_loop(server: Arc<ServerEndpoint>, to_game: Sender<ToGame>, l
             let lost = match session(incoming, id, &to_game, &limits, &refund).await {
                 Ok(lost) => lost,
                 Err(e) => {
-                    eprintln!("player {id}: {e:#}");
+                    tracing::info!("player {id}: {e:#}");
                     matches!(
                         e.downcast_ref::<wtransport::error::ConnectionError>(),
                         Some(wtransport::error::ConnectionError::TimedOut)
@@ -431,7 +431,7 @@ async fn handshake(
     if let Some(allowed) = &limits.allowed_origins
         && !request.origin().is_some_and(|origin| allowed.iter().any(|a| a.eq_ignore_ascii_case(origin)))
     {
-        eprintln!("session from origin {:?} refused", request.origin());
+        tracing::warn!("session from origin {:?} refused", request.origin());
         request.forbidden().await;
         return Ok(None);
     }
@@ -508,7 +508,7 @@ async fn session(
                 && let Some(own) = limits.server_name.as_ref().filter(|own| **own != s.server)
             {
                 // (said plainly: a server whose name isn't the one its page's ping told the matchmaker, RV-863)
-                eprintln!("a match ticket for server {:?}, this server is {own:?}: refused", s.server);
+                tracing::warn!("a match ticket for server {:?}, this server is {own:?}: refused", s.server);
             }
             if purpose_fits(&checked.purpose) { Ok(checked) } else { Err(crate::ticket::Refusal::NotForThis) }
         }) {
@@ -586,7 +586,7 @@ async fn session(
             let read = read_control(&mut recv).await;
             if read.is_ok() && !bucket.take(Instant::now()) {
                 if !overruns.take(Instant::now()) {
-                    eprintln!("player {id}: control messages over the rate, session ends");
+                    tracing::warn!("player {id}: control messages over the rate, session ends");
                     break;
                 }
                 continue;
@@ -605,7 +605,7 @@ async fn session(
                 Err(e) => {
                     // (a malformed message ends the session: say why; a closed stream is the usual end)
                     if e.downcast_ref::<protocol::DecodeError>().is_some() {
-                        eprintln!("player {id}: malformed control message ({e}), session ends");
+                        tracing::warn!("player {id}: malformed control message ({e}), session ends");
                     }
                     break;
                 }
@@ -630,7 +630,7 @@ async fn session(
                 Ok(d) => {
                     if !inputs.take(Instant::now()) {
                         if !input_overruns.take(Instant::now()) {
-                            eprintln!("player {id}: input datagrams over the rate, session ends");
+                            tracing::warn!("player {id}: input datagrams over the rate, session ends");
                             break Ok(());
                         }
                         continue;
@@ -658,7 +658,7 @@ async fn session(
     writer.abort();
     let refused = unsent.load(std::sync::atomic::Ordering::Relaxed);
     if refused > 0 {
-        eprintln!("player {id}: {refused} datagrams refused by the connection (too large or unsupported)");
+        tracing::warn!("player {id}: {refused} datagrams refused by the connection (too large or unsupported)");
     }
     result?;
     // (whichever branch noticed first, the connection's own close says why: an idle timeout is a lost connection, RV-250)
@@ -666,9 +666,50 @@ async fn session(
     Ok(matches!(reason, Ok(wtransport::error::ConnectionError::TimedOut)))
 }
 
+/// Serves `app` over plain HTTP/1 on `listener` (a development or health endpoint's: SEC-6): `open` connections at once
+/// (one more closed at once), each given `read` for its request's headers, one request each
+async fn serve_http(
+    listener: tokio::net::TcpListener,
+    app: axum::Router,
+    open: usize,
+    read: Duration,
+) -> anyhow::Result<()> {
+    let open = Arc::new(tokio::sync::Semaphore::new(open));
+    loop {
+        // (an accept error, a connection reset early, isn't the server's end)
+        let Ok((stream, _)) = listener.accept().await else {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            continue;
+        };
+        let Ok(permit) = open.clone().try_acquire_owned() else { continue };
+        let service = hyper_util::service::TowerToHyperService::new(app.clone());
+        tokio::spawn(async move {
+            let _permit = permit;
+            let _ = hyper::server::conn::http1::Builder::new()
+                .timer(hyper_util::rt::TokioTimer::new())
+                .header_read_timeout(read)
+                .keep_alive(false)
+                .serve_connection(hyper_util::rt::TokioIo::new(stream), service)
+                .await;
+        });
+    }
+}
+
+/// A development endpoint's answer: its JSON (any page may read it, never cached), or a 400 for a request it can't serve
+fn dev_answer(body: Option<String>) -> axum::response::Response {
+    use axum::http::{StatusCode, header};
+    use axum::response::IntoResponse;
+    let open = [(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"), (header::CACHE_CONTROL, "no-store")];
+    match body {
+        Some(body) => (open, [(header::CONTENT_TYPE, "application/json")], body).into_response(),
+        None => (StatusCode::BAD_REQUEST, open).into_response(),
+    }
+}
+
 /// Development helper: `GET /info` on plain HTTP returns the WebTransport port and the certificate hash, so a browser
-/// on this machine can connect to the self-signed server. A development server's only (SEC-6): on `bind` (127.0.0.1
-/// unless asked), 64 connections at once, a 2 s read
+/// on this machine can connect to the self-signed server; a development queue server's `GET /dev-ticket` its tickets
+/// (`dev_ticket`). A development server's only (SEC-6): on `bind` (127.0.0.1 unless asked), 64 connections at once, 2 s
+/// for a request's headers
 pub async fn serve_info(
     bind: IpAddr,
     port: u16,
@@ -676,109 +717,60 @@ pub async fn serve_info(
     cert_hash: [u8; 32],
     dev_tickets: Option<Arc<crate::ticket::Tickets>>,
 ) -> anyhow::Result<()> {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use axum::routing::get;
     let hex: String = cert_hash.iter().map(|b| format!("{b:02x}")).collect();
-    let info = format!("{{\"port\":{webtransport_port},\"certHash\":\"{hex}\"}}");
-    let listener = tokio::net::TcpListener::bind((bind, port)).await?;
-    let open = Arc::new(tokio::sync::Semaphore::new(64));
-    loop {
-        // (an accept error, a connection reset early, isn't the server's end)
-        let Ok((mut stream, _)) = listener.accept().await else {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            continue;
-        };
-        let Ok(permit) = open.clone().try_acquire_owned() else { continue };
-        let info = info.clone();
-        let dev_tickets = dev_tickets.clone();
-        tokio::spawn(async move {
-            let _permit = permit;
-            let mut request = [0u8; 1024];
-            let Ok(Ok(n)) = tokio::time::timeout(Duration::from_secs(2), stream.read(&mut request)).await else {
-                return;
-            };
-            let path = std::str::from_utf8(&request[..n]).ok().and_then(|r| r.split_whitespace().nth(1)).unwrap_or("/");
-            // (`/dev-ticket?name=…&id=…`: a development queue server's ticket for the page that asks, signed with its own
-            // key, notes/accounts.md §5; everything else the info)
-            let body = match (path.strip_prefix("/dev-ticket"), &dev_tickets) {
-                (Some(query), Some(tickets)) => dev_ticket(tickets, query.trim_start_matches('?')),
-                _ => Some(info),
-            };
-            let response = match body {
-                Some(body) => format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                ),
-                None => "HTTP/1.1 400 Bad Request\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-                    .to_string(),
-            };
-            let _ = stream.write_all(response.as_bytes()).await;
-        });
+    let info = serde_json::json!({ "port": webtransport_port, "certHash": hex }).to_string();
+    let mut app = axum::Router::new().route("/info", get(move || std::future::ready(dev_answer(Some(info.clone())))));
+    if let Some(tickets) = dev_tickets {
+        app = app.route(
+            "/dev-ticket",
+            get(move |axum::extract::Query(query): axum::extract::Query<DevTicketQuery>| {
+                std::future::ready(dev_answer(dev_ticket(&tickets, &query)))
+            }),
+        );
     }
+    serve_http(tokio::net::TcpListener::bind((bind, port)).await?, app, 64, Duration::from_secs(2)).await
 }
 
-/// A development ticket's JSON for a query's `name` (percent-encoded; "Dev " and the account's first 4 hex digits when
-/// none, so two nameless players aren't one name), `id` (the account's 16 bytes as 32 hex digits, kept by the page so
-/// its searches are one account's; random when none), `r1`, `r2`, `r3` (the playlists' ratings, the tests' pairing:
-/// a new account's when none) and `rejoin` (a rejoin's ticket for that match: 16 hex digits, as the API's)
-fn dev_ticket(tickets: &crate::ticket::Tickets, query: &str) -> Option<String> {
-    let mut name = None;
+/// A development ticket's query (`/dev-ticket?…`, form-decoded): `name` ("Dev " and the account's first 4 hex digits
+/// when none, so two nameless players aren't one name), `id` (the account's 16 bytes as 32 hex digits, kept by the page
+/// so its searches are one account's; random when none), `r1`, `r2`, `r3` (the playlists' ratings, the tests' pairing: a
+/// new account's when none) and `rejoin` (a rejoin's ticket for that match: 16 hex digits, as the API's)
+#[derive(Debug, Default, serde::Deserialize)]
+struct DevTicketQuery {
+    name: Option<String>,
+    id: Option<String>,
+    r1: Option<String>,
+    r2: Option<String>,
+    r3: Option<String>,
+    rejoin: Option<String>,
+}
+
+/// A development ticket's JSON for its query; None for a malformed one
+fn dev_ticket(tickets: &crate::ticket::Tickets, query: &DevTicketQuery) -> Option<String> {
     let mut ratings = [crate::ticket::DEFAULT_RATING; 3];
     let mut purpose = crate::ticket::Purpose::Search;
     let mut account = [0u8; 16];
     getrandom::fill(&mut account).ok()?;
-    for pair in query.split('&') {
-        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-        match key {
-            "name" => {
-                let decoded = percent_decode(value)?;
-                let trimmed = decoded.trim();
-                if !trimmed.is_empty() && trimmed.len() <= crate::protocol::MAX_NAME_BYTES {
-                    name = Some(trimmed.to_string());
-                }
-            }
-            "id" if value.len() == 32 => {
-                for (i, byte) in account.iter_mut().enumerate() {
-                    *byte = u8::from_str_radix(value.get(2 * i..2 * i + 2)?, 16).ok()?;
-                }
-            }
-            "r1" | "r2" | "r3" => {
-                let playlist = usize::from(key.as_bytes()[1] - b'1');
-                ratings[playlist].rating = value.parse().ok()?;
-            }
-            "rejoin" => {
-                let match_id = u64::from_str_radix(value, 16).ok().filter(|&m| m != 0 && value.len() == 16)?;
-                purpose = crate::ticket::Purpose::Rejoin(match_id);
-            }
-            _ => {}
+    let name =
+        query.name.as_deref().map(str::trim).filter(|n| !n.is_empty() && n.len() <= crate::protocol::MAX_NAME_BYTES);
+    if let Some(id) = query.id.as_deref().filter(|id| id.len() == 32) {
+        for (i, byte) in account.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(id.get(2 * i..2 * i + 2)?, 16).ok()?;
         }
     }
-    let name = name.unwrap_or_else(|| format!("Dev {:02x}{:02x}", account[0], account[1]));
+    for (rating, value) in ratings.iter_mut().zip([&query.r1, &query.r2, &query.r3]) {
+        if let Some(value) = value {
+            rating.rating = value.parse().ok()?;
+        }
+    }
+    if let Some(value) = &query.rejoin {
+        let match_id = u64::from_str_radix(value, 16).ok().filter(|&m| m != 0 && value.len() == 16)?;
+        purpose = crate::ticket::Purpose::Rejoin(match_id);
+    }
+    let name = name.map_or_else(|| format!("Dev {:02x}{:02x}", account[0], account[1]), str::to_string);
     let ticket = tickets.dev_ticket(account, &name, ratings, purpose, crate::ticket::unix_now())?;
-    Some(format!("{{\"ticket\":\"{ticket}\"}}"))
-}
-
-/// A query value's percent-encoding (and `+` as a space) undone; None for a malformed one or not UTF-8
-fn percent_decode(value: &str) -> Option<String> {
-    let mut out = Vec::with_capacity(value.len());
-    let bytes = value.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'%' => {
-                out.push(u8::from_str_radix(value.get(i + 1..i + 3)?, 16).ok()?);
-                i += 3;
-            }
-            b'+' => {
-                out.push(b' ');
-                i += 1;
-            }
-            b => {
-                out.push(b);
-                i += 1;
-            }
-        }
-    }
-    String::from_utf8(out).ok()
+    Some(serde_json::json!({ "ticket": ticket }).to_string())
 }
 
 /// The container's health check (APP-CONTRACT.md): `GET /healthz` on `127.0.0.1:port` answers 200 while the game thread
@@ -788,45 +780,33 @@ pub async fn serve_health(
     heartbeat: Arc<std::sync::atomic::AtomicU64>,
     start: Instant,
 ) -> anyhow::Result<()> {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
-    loop {
-        let Ok((mut stream, _)) = listener.accept().await else {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            continue;
-        };
-        let heartbeat = heartbeat.clone();
-        tokio::spawn(async move {
-            let mut request = [0u8; 256];
-            let _ = tokio::time::timeout(Duration::from_secs(2), stream.read(&mut request)).await;
+    use axum::http::StatusCode;
+    let app = axum::Router::new().route(
+        "/healthz",
+        axum::routing::get(move || {
             let beat = heartbeat.load(std::sync::atomic::Ordering::Relaxed);
             let now = start.elapsed().as_millis() as u64;
-            let ok = now.saturating_sub(beat) < 2000;
-            let (status, body) =
-                if ok { ("200 OK", "ok") } else { ("503 Service Unavailable", "the game thread is stuck") };
-            let response = format!(
-                "HTTP/1.1 {status}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            let _ = stream.write_all(response.as_bytes()).await;
-        });
-    }
+            std::future::ready(if now.saturating_sub(beat) < 2000 {
+                (StatusCode::OK, "ok")
+            } else {
+                (StatusCode::SERVICE_UNAVAILABLE, "the game thread is stuck")
+            })
+        }),
+    );
+    serve_http(tokio::net::TcpListener::bind(("127.0.0.1", port)).await?, app, 16, Duration::from_secs(2)).await
 }
 
-/// `carball-server --healthcheck`: asks the health endpoint; true if it answered 200
-pub fn health_check(port: u16) -> bool {
-    use std::io::{Read, Write};
-    let Ok(mut stream) = std::net::TcpStream::connect_timeout(&([127, 0, 0, 1], port).into(), Duration::from_secs(2))
-    else {
+/// `carball-server --healthcheck`: asks the health endpoint (2 s at most, never through a proxy the environment names);
+/// true if it answered 200
+pub async fn health_check(port: u16) -> bool {
+    let Ok(client) = reqwest::Client::builder().timeout(Duration::from_secs(2)).no_proxy().build() else {
         return false;
     };
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
-    if stream.write_all(b"GET /healthz HTTP/1.1\r\nHost: localhost\r\n\r\n").is_err() {
-        return false;
-    }
-    let mut response = [0u8; 64];
-    let n = stream.read(&mut response).unwrap_or(0);
-    response[..n].starts_with(b"HTTP/1.1 200")
+    client
+        .get(format!("http://127.0.0.1:{port}/healthz"))
+        .send()
+        .await
+        .is_ok_and(|r| r.status() == reqwest::StatusCode::OK)
 }
 
 #[cfg(test)]
@@ -837,7 +817,9 @@ mod tests {
     fn a_development_ticket_is_for_the_asked_account_and_name() {
         let tickets = crate::ticket::Tickets::from_list("").unwrap().with_dev_key().unwrap();
         let ticket_of = |query: &str| {
-            let body = dev_ticket(&tickets, query)?;
+            let uri: axum::http::Uri = format!("http://localhost/dev-ticket?{query}").parse().ok()?;
+            let axum::extract::Query(query) = axum::extract::Query::<DevTicketQuery>::try_from_uri(&uri).ok()?;
+            let body = dev_ticket(&tickets, &query)?;
             let ticket = body.strip_prefix("{\"ticket\":\"")?.strip_suffix("\"}")?;
             tickets.check(ticket, crate::ticket::unix_now()).ok()
         };
@@ -846,7 +828,8 @@ mod tests {
         assert_eq!((t.name.as_str(), t.account[0], t.account[15]), ("Café Ada", 0x01, 0xef));
         assert!(ticket_of("").unwrap().name.starts_with("Dev "), "no name: Dev and the random account's digits");
         assert_eq!(ticket_of(&format!("name=%20%20&id={id}")).unwrap().name, "Dev 0123");
-        assert!(ticket_of("name=%zz").is_none(), "a malformed escape");
+        // (form decoding's, as a browser's: a malformed escape kept as it is)
+        assert_eq!(ticket_of(&format!("name=%zz&id={id}")).unwrap().name, "%zz");
         assert!(ticket_of(&format!("id={}", "zz".repeat(16))).is_none(), "a malformed id");
         assert_eq!(ticket_of(&format!("name={}&id={id}", "x".repeat(40))).unwrap().name, "Dev 0123", "too long");
         assert_eq!(t.purpose, crate::ticket::Purpose::Search);
@@ -855,6 +838,49 @@ mod tests {
         for bad in ["a1", "0000000000000000", "zz000000000000a1"] {
             assert!(ticket_of(&format!("id={id}&rejoin={bad}")).is_none(), "a malformed match {bad}");
         }
+    }
+
+    /// The development info server as HTTP: its routes and methods (anything else a 404 or 405), the CORS and no-store
+    /// headers, a request split across reads read whole, a connection that sends nothing let go after 2 s
+    #[tokio::test]
+    async fn the_info_server_answers_its_routes_as_http() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let tickets = Arc::new(crate::ticket::Tickets::from_list("").unwrap().with_dev_key().unwrap());
+        tokio::spawn(serve_info([127, 0, 0, 1].into(), port, 4433, [0xab; 32], Some(tickets)));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let get = |path: &str| client.get(format!("http://127.0.0.1:{port}{path}")).send();
+        let info = get("/info").await.unwrap();
+        assert_eq!(info.status(), 200);
+        assert_eq!(info.headers()["access-control-allow-origin"], "*");
+        assert_eq!(info.headers()["cache-control"], "no-store");
+        let body: serde_json::Value = serde_json::from_str(&info.text().await.unwrap()).unwrap();
+        assert_eq!((body["port"].as_u64(), body["certHash"].as_str().map(str::len)), (Some(4433), Some(64)));
+        assert_eq!(get("/").await.unwrap().status(), 404, "not the info for any path");
+        let posted = client.post(format!("http://127.0.0.1:{port}/info")).send().await.unwrap();
+        assert_eq!(posted.status(), 405, "nor for any method");
+        let ticket = get("/dev-ticket?name=Ada").await.unwrap();
+        assert_eq!(ticket.status(), 200);
+        assert_eq!(get("/dev-ticket?rejoin=zz").await.unwrap().status(), 400);
+        // (a request in two writes, apart: read whole, answered)
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        stream.write_all(b"GET /info HTTP/1.1\r\nHo").await.unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        stream.write_all(b"st: localhost\r\n\r\n").await.unwrap();
+        let mut reply = String::new();
+        stream.read_to_string(&mut reply).await.unwrap();
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+        // (nothing sent: the connection closed within its 2 s and a little)
+        let mut idle = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        let started = Instant::now();
+        let mut rest = Vec::new();
+        let read = tokio::time::timeout(Duration::from_secs(5), idle.read_to_end(&mut rest)).await;
+        assert!(
+            read.is_ok() && started.elapsed() < Duration::from_secs(4),
+            "an idle connection held {:?}",
+            started.elapsed()
+        );
     }
 
     #[test]
