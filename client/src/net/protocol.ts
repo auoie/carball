@@ -16,10 +16,17 @@
 // search ticket, an account's (notes/accounts.md §3), and Refused's reason 4; 27: rejoining a ranked match (Hello's
 // "rejoin" intent, Welcome's match id, Refused's reasons 5 and 6); 28: the accounts service's central matchmaker
 // (notes/matchmaking.md): a claim's match ticket (Hello's ticket up to 512 bytes), no search, decline, MatchFound or
-// SearchCooldown on the game servers (a page from before told to reload)
-export const PROTOCOL_VERSION = 28;
-/** A Hello's ticket's bytes at most (the accounts service's encoded ticket) */
-export const MAX_TICKET_BYTES = 512;
+// SearchCooldown on the game servers (a page from before told to reload); 29: the tickets as JWTs (notes/accounts.md §3:
+// Hello's ticket up to 1024 bytes)
+export const PROTOCOL_VERSION = 29;
+/** A Hello's ticket's bytes at most (the accounts service's JWT) */
+export const MAX_TICKET_BYTES = 1024;
+
+/** A ticket's form as the page takes and keeps it: a JWT's base64url parts and dots, MAX_TICKET_BYTES at most (the
+ *  matchmaker's found match, the accounts service's or a development server's rejoin ticket, a stored claim's) */
+export function isTicketText(value: unknown): value is string {
+  return typeof value === "string" && value.length <= MAX_TICKET_BYTES && /^[A-Za-z0-9_.-]+$/.test(value);
+}
 /** A name's bytes at most (UTF-8) */
 export const MAX_NAME_BYTES = 32;
 /** A server's name's bytes at most (its address, host:port) */
@@ -379,7 +386,7 @@ class Writer {
     this.u8(b.byteLength);
     this.bytes(b);
   }
-  /** A ticket: its u16 byte count, then its bytes (ASCII: base64url; one past MAX_TICKET_BYTES sent empty) */
+  /** A ticket: its u16 byte count, then its bytes (ASCII: a JWT; one past MAX_TICKET_BYTES sent empty) */
   ticket(s: string): void {
     const b = s.length <= MAX_TICKET_BYTES ? new TextEncoder().encode(s) : new Uint8Array();
     this.u16(b.byteLength);

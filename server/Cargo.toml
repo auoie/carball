@@ -12,7 +12,7 @@ anyhow = "1"
 getrandom = "0.4"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util", "signal"], optional = true }
 wtransport = { version = "0.7", features = ["quinn"], optional = true }
-# (the search tickets' Ed25519 and base64: already in the tree through rustls, so offline builds have them)
+# (the tickets' keys: Ed25519 (the development key's) and base64 (the keys list, a ticket's one-time id))
 ring = { version = "0.17", optional = true }
 base64 = { version = "0.22", optional = true }
 # (the results' and quitters' HTTPS calls to the accounts service: rustls with Mozilla's roots built in (webpki-roots),
@@ -31,6 +31,8 @@ hyper-util = { version = "0.1", features = ["tokio", "service"], optional = true
 serde = { version = "1", features = ["derive"], optional = true }
 # (the network server's command line: its flags, each with its environment variable, APP-CONTRACT.md)
 clap = { version = "4", features = ["derive", "env"], optional = true }
+# (the match tickets: JWTs signed with Ed25519, the accounts service's; 9.x, on ring like the rest)
+jsonwebtoken = { version = "9.3.1", default-features = false, optional = true }
 
 [features]
 default = ["net"]
@@ -48,6 +50,7 @@ net = [
     "dep:serde",
     "dep:tracing-subscriber",
     "dep:clap",
+    "dep:jsonwebtoken",
 ]
 # The browser's local host (src/bin/host.rs: an offline match against bots, in a worker): built for
 # wasm32-unknown-emscripten with --no-default-features --features host (scripts/build_host.sh)

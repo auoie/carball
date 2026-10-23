@@ -2,7 +2,7 @@
 // claim (the seat's match ticket, the matchmaker's); the match page hands the menu page back a notice when it ends (a
 // modal to show, a search to start: Play Again, a cancelled match). Kept in sessionStorage, this tab's alone and out of the URL's history.
 import { RefusedError, type ServerAddress, devServerAddress, serverHost } from "./connection";
-import { REFUSED_CONCLUDED, REFUSED_IN_MATCH, REFUSED_TICKET, REFUSED_TOKEN, REFUSED_VERSION } from "./protocol";
+import { REFUSED_CONCLUDED, REFUSED_IN_MATCH, REFUSED_TICKET, REFUSED_TOKEN, REFUSED_VERSION, isTicketText } from "./protocol";
 import { REQUEST_TIMEOUT_MS } from "../account/api";
 import { QueueBannedError, RejoinGoneError, SignedOutError, accountTicket, devTicket } from "./tickets";
 
@@ -108,7 +108,7 @@ export function takeClaim(storage = session()): Claim | null {
     if (typeof value.token !== "string" || !TOKEN.test(value.token) || typeof value.playlist !== "number") return null;
     const searchedAt = typeof value.searchedAt === "number" && Number.isFinite(value.searchedAt) ? value.searchedAt : Date.now();
     const map = typeof value.map === "number" && Number.isInteger(value.map) && value.map >= 0 && value.map < 256 ? { map: value.map } : {};
-    const ticket = typeof value.ticket === "string" && /^[A-Za-z0-9_-]{1,512}$/.test(value.ticket) ? { ticket: value.ticket } : {};
+    const ticket = isTicketText(value.ticket) ? { ticket: value.ticket } : {};
     const playlists = playlistsOf(value.playlists);
     return {
       token: BigInt(value.token),

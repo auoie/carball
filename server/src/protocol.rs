@@ -15,8 +15,9 @@ use crate::engine::Controls;
 // arena the glasshouse: an older client would draw another); 26: Hello's search ticket, Refused's REFUSED_TICKET; 27:
 // rejoining a ranked match (Hello's INTENT_REJOIN, Welcome's match id, Refused's REFUSED_IN_MATCH and REFUSED_CONCLUDED);
 // 28: the accounts service's central matchmaker (notes/matchmaking.md): a claim's match ticket (Hello's ticket up to 512
-// bytes), no search, decline, MatchFound or SearchCooldown here (pages from before told to reload: REFUSED_VERSION)
-pub const VERSION: u16 = 28;
+// bytes), no search, decline, MatchFound or SearchCooldown here (pages from before told to reload: REFUSED_VERSION);
+// 29: the tickets as JWTs (notes/accounts.md §3: Hello's ticket up to 1024 bytes)
+pub const VERSION: u16 = 29;
 /// The maps a match can be on (the client's THEMES: protocol/README.md): one, Night (the user's decision of 2026-10-17); a
 /// map on the wire is its index
 pub const MAP_COUNT: u8 = 1;
@@ -32,8 +33,8 @@ pub const CHAT_FRIENDS: u8 = 2;
 pub const CHAT_OFF: u8 = 3;
 /// A name's bytes at most (UTF-8)
 pub const MAX_NAME_BYTES: usize = 32;
-/// A Hello's search ticket's bytes at most (notes/accounts.md §3: the accounts service's encoded ticket)
-pub const MAX_TICKET_BYTES: usize = 512;
+/// A Hello's ticket's bytes at most (notes/accounts.md §3: the accounts service's JWT, `ticket::MAX_BYTES`)
+pub const MAX_TICKET_BYTES: usize = 1024;
 /// A server's name's bytes at most (its address, host:port: a match ticket's server, the API's `ticket.MaxServer`)
 pub const MAX_SERVER_BYTES: usize = 64;
 /// Why a join was refused
@@ -573,7 +574,7 @@ impl Writer {
         self.u32(b.len() as u32);
         self.0.extend_from_slice(b);
     }
-    /// A ticket: a u16 byte count, then its bytes (ASCII: base64url; `MAX_TICKET_BYTES` at most, a longer one sent empty)
+    /// A ticket: a u16 byte count, then its bytes (ASCII: a JWT; `MAX_TICKET_BYTES` at most, a longer one sent empty)
     fn ticket(&mut self, s: &str) {
         let b = if s.len() <= MAX_TICKET_BYTES { s.as_bytes() } else { &[] };
         self.u16(b.len() as u16);

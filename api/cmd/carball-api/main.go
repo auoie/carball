@@ -336,9 +336,9 @@ func serve(args []string, out io.Writer) error {
 	}
 	s.Tickets, s.TicketKeys = signer, ticketKeys
 	if signer != nil {
-		log.Info("search tickets signed", "key", signer.Public())
+		log.Info("tickets signed", "key", signer.Public())
 	} else {
-		log.Warn("development: no ticket key, no search tickets")
+		log.Warn("development: no ticket key, no tickets")
 	}
 	if cfg.GameServerToken != "" {
 		s.GameServerToken = []byte(cfg.GameServerToken)

@@ -175,8 +175,9 @@ longest first, so a smaller playlist doesn't keep taking a several-playlist sear
 Formation and the search calls share one lock, so a search is in one match at most. There's one API instance (the
 queue is in its memory).
 
-**A match found.** Each player gets a match ticket (ticket version 4, purpose seat). It's bound to one server, one
-match and one seat, lives 30 s, and is taken once (RV-850): the server keeps its nonce, and a seat is taken once.
+**A match found.** Each player gets a match ticket (a JWT, purpose seat: notes/accounts.md §3). It's bound to one
+server (its `aud`), one match and one seat, lives 30 s, and is taken once (RV-850): the server keeps its one-time id,
+and a seat is taken once.
 - The server opens the match at the first valid claim and waits for the rest, 10 s from that first claim (about the
   user's 12 s from MatchFound, RV-367, after the 3 s countdown).
 - **A no-show:** the server cancels, kicks the others with `KICK_NOT_ALL_JOINED` and reports the cancel. The API gives
@@ -199,8 +200,8 @@ match and one seat, lives 30 s, and is taken once (RV-850): the server keeps its
   decides. LV1's refill is unchanged: a ban from that match doesn't block its rejoin ticket.
 
 **Server → API, events only**, through the existing outbox (kept, retried, in order). Results, quitters and refills stay
-as they are, and accept both the new match tickets (whose match must be the call's) and the old search tickets, for
-the matches the servers from before the switch played. One new call, `POST /api/fleet/events {event, server, match,
+as they are, and take the seats' match tickets (whose match must be the call's; the old search tickets are gone since
+protocol 29, 2026-10-23). One new call, `POST /api/fleet/events {event, server, match,
 seat, noShows, at}`, carries:
 - `started`;
 - `left` and `back` (a seat's player leaving the started match, or rejoining it);

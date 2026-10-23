@@ -439,12 +439,16 @@ describe("the search with the matchmaker", () => {
 
   it("reads a found match's fields, nothing else", () => {
     expect(foundMatch(match)).toEqual({ id: 0xabn, server: "game-eu.example:4433", ticket: "dGlja2V0", playlist: 2, map: 0 });
+    // (a match ticket is a JWT: its parts and dots, 1024 characters at most)
+    expect(foundMatch({ ...match, ticket: "eyJh.eyJz.c2ln" })?.ticket).toBe("eyJh.eyJz.c2ln");
     for (const bad of [
       { ...match, id: "zz" },
       { ...match, id: "0".repeat(16) },
       { ...match, server: "no port" },
       { ...match, playlist: 4 },
       { ...match, ticket: "" },
+      { ...match, ticket: "A".repeat(1025) },
+      { ...match, ticket: "eyJh eyJz" },
       null,
     ]) {
       expect(foundMatch(bad)).toBeNull();

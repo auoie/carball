@@ -321,6 +321,11 @@ describe("the pages' handoffs", () => {
     expect(takeClaim(storage)?.server).toBeUndefined();
     storeClaim({ token: 5n, playlist: 2, searchedAt: 1, ticket: "dGlj-_0", playlists: [2, 3] }, storage);
     expect(takeClaim(storage)).toMatchObject({ ticket: "dGlj-_0", playlists: [2, 3] });
+    // (a match ticket is a JWT: its dots kept, 1024 characters at most, the claim then made with it, not a fetched one)
+    storeClaim({ token: 5n, playlist: 2, searchedAt: 1, ticket: "eyJh.eyJz.c2ln" }, storage);
+    expect(takeClaim(storage)?.ticket).toBe("eyJh.eyJz.c2ln");
+    storeClaim({ token: 5n, playlist: 2, searchedAt: 1, ticket: "A".repeat(1025) }, storage);
+    expect(takeClaim(storage)?.ticket).toBeUndefined();
     storage.setItem("carball.claim", JSON.stringify({ token: "5", playlist: 2, searchedAt: 1, ticket: "not a ticket!", playlists: [9] }));
     expect(takeClaim(storage)).toEqual({ token: 5n, playlist: 2, searchedAt: 1 });
     // (a claim refused as gone: its playlists searched again, its clock kept; the matchmaker keeps its place)

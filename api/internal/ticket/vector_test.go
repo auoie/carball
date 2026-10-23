@@ -11,8 +11,9 @@ import (
 	"time"
 )
 
-// vectorFile is the ticket both sides check: made here (this code's encoding and signature), read by the game server's
-// tests (server/src/ticket.rs). CARBALL_WRITE_TICKET_VECTOR=1 writes it anew; else it must be what this code makes
+// vectorFile is the tickets both sides check: made here (this code's JWTs: Ed25519 signs the same bytes the same way, and
+// the claims are written in key order), read by the game server's tests (server/src/ticket.rs).
+// CARBALL_WRITE_TICKET_VECTOR=1 writes it anew; else it must be what this code makes
 const vectorFile = "../../../protocol/ticket_vector.json"
 
 type vector struct {
@@ -48,6 +49,7 @@ func TestTicketVector(t *testing.T) {
 	}
 	key := ed25519.NewKeyFromSeed(seed)
 	pub, _ := key.Public().(ed25519.PublicKey)
+	s := &Signer{KeyID: "vector", key: key}
 	base := Ticket{
 		KeyID: "vector", Account: [16]byte{0x0f, 0x0e, 0x0d, 0x0c, 0x0b, 0x0a, 0x49, 0x08, 0x87, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01, 0x00},
 		Issued: time.Unix(1792300000, 0), Expires: time.Unix(1792300120, 0),
@@ -59,19 +61,18 @@ func TestTicketVector(t *testing.T) {
 	seat := base
 	seat.Nonce[0], seat.Purpose, seat.Match, seat.Expires = 0x77, PurposeSeat, 0x0123456789abcdef, time.Unix(1792300030, 0)
 	seat.Server, seat.Playlist, seat.Seat, seat.Roster = "game-eu.example:4433", 2, 3, 4
-	made := vectors{Comment: "A search's ticket and a rejoin's (version 3) and a match ticket's seat (version 4) made by api/internal/ticket and checked by server/src/ticket.rs: made-up values"}
-	for _, tk := range []Ticket{base, rejoin, seat} {
-		body, err := Encode(tk)
+	made := vectors{Comment: "A rejoin's ticket and a match ticket's seat (JWTs, EdDSA) made by api/internal/ticket and checked by server/src/ticket.rs: made-up values"}
+	for _, tk := range []Ticket{rejoin, seat} {
+		encoded, err := s.signed(tk)
 		if err != nil {
 			t.Fatal(err)
 		}
-		signed := append([]byte(Context), body...)
 		v := vector{
 			Seed: base64.StdEncoding.EncodeToString(seed), KeyID: tk.KeyID, PublicKey: base64.StdEncoding.EncodeToString(pub),
 			Account: hex.EncodeToString(tk.Account[:]), Name: tk.Name, Issued: tk.Issued.Unix(), Expires: tk.Expires.Unix(),
 			Nonce: hex.EncodeToString(tk.Nonce[:]), Purpose: int(tk.Purpose), Match: strconv.FormatUint(tk.Match, 10),
 			Server: tk.Server, Playlist: int(tk.Playlist), Seat: int(tk.Seat), Roster: int(tk.Roster),
-			Encoded: base64.RawURLEncoding.EncodeToString(append(body, ed25519.Sign(key, signed)...)),
+			Encoded: encoded,
 		}
 		for i, r := range tk.Ratings {
 			v.Ratings[i] = [2]int{int(r.Rating), int(r.Deviation)}
@@ -100,7 +101,7 @@ func TestTicketVector(t *testing.T) {
 			t.Fatalf("protocol/ticket_vector.json isn't what this code makes (CARBALL_WRITE_TICKET_VECTOR=1 to write it):\n%+v\n%+v", stored.Vectors[i], v)
 		}
 		got, err := VerifySigned(v.Encoded, map[string]ed25519.PublicKey{v.KeyID: pub})
-		want := []Ticket{base, rejoin, seat}[i]
+		want := []Ticket{rejoin, seat}[i]
 		if err != nil || got.Name != want.Name || got.Ratings != want.Ratings || got.Nonce != want.Nonce || got.Purpose != want.Purpose ||
 			got.Match != want.Match || got.Server != want.Server || got.Playlist != want.Playlist || got.Seat != want.Seat ||
 			got.Roster != want.Roster {

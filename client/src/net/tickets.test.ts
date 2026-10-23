@@ -31,10 +31,11 @@ describe("rejoin tickets", () => {
     const rejoin = answer({ ticket: "UmVqb2lu" });
     expect(await accountTicket(0xa1n, rejoin)).toBe("UmVqb2lu");
     expect(String((rejoin.mock.calls[0] as unknown[])[0])).toBe("/api/ticket?rejoin=00000000000000a1");
-    // (a ticket is base64url, 512 characters at most (a match ticket's longest, MX1): anything else isn't sent on)
+    // (a ticket is a JWT, base64url parts and dots, 1024 characters at most (the Hello's cap): anything else isn't sent on)
     await expect(accountTicket(1n, answer({ ticket: "has space" }))).rejects.toThrow(/malformed/);
-    expect(await accountTicket(1n, answer({ ticket: "A".repeat(512) }))).toHaveLength(512);
-    await expect(accountTicket(1n, answer({ ticket: "A".repeat(513) }))).rejects.toThrow(/malformed/);
+    expect(await accountTicket(1n, answer({ ticket: "eyJh.eyJz.c2ln" }))).toBe("eyJh.eyJz.c2ln");
+    expect(await accountTicket(1n, answer({ ticket: "A".repeat(1024) }))).toHaveLength(1024);
+    await expect(accountTicket(1n, answer({ ticket: "A".repeat(1025) }))).rejects.toThrow(/malformed/);
     await expect(accountTicket(1n, answer({}))).rejects.toThrow(/malformed/);
   });
 

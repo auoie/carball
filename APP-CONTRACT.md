@@ -122,7 +122,7 @@ development matchmaker's). A setting the server can't read stops it, the error n
 | `KEY_PATH` | `/certs/privkey.pem` | its private key (PEM); a key that isn't the certificate's is refused (the old pair stays, tried again) |
 | `SERVER_MODE` | `queue` | `queue`: the accounts service's matchmaker's 1v1 / 2v2 / 3v3 matches (claims and rejoins only: a search or a decline is refused, `Refused` 3); `direct`: one open match, development only (with a certificate it's refused: anyone would join without a ticket) |
 | `HEALTH_PORT` | `8081` | the health endpoint, on 127.0.0.1 inside the container only |
-| `TICKET_PUBLIC_KEYS` | (none) | the tickets' public keys (notes/accounts.md §3): `KID BASE64` each (the line `carball-api ticket-key KID` prints), comma- or newline-separated, the API's current key among them (two while it rotates). Required in queue mode, or `TICKET_PUBLIC_KEYS_FILE` (empty, blank or naming no key, the server refuses to start; so does a key of small order, a key id twice, or the id `dev`; the key ids are logged at start); a claim without a match ticket (format 4) signed by one of them for this server, or a rejoin without a rejoin ticket for that match, in its time (a match ticket's 30 s, a rejoin's two minutes; issued since the server started) and not used before, is refused (`Refused` 4) |
+| `TICKET_PUBLIC_KEYS` | (none) | the tickets' public keys (notes/accounts.md §3): `KID BASE64` each (the line `carball-api ticket-key KID` prints), comma- or newline-separated, the API's current key among them (two while it rotates). Required in queue mode, or `TICKET_PUBLIC_KEYS_FILE` (empty, blank or naming no key, the server refuses to start; so does a key of small order, a key id twice, or the id `dev`; the key ids are logged at start); a claim without a match ticket (a JWT, EdDSA: notes/accounts.md §3) signed by one of them for this server, or a rejoin without a rejoin ticket for that match, in its time (a match ticket's 30 s, a rejoin's two minutes; issued since the server started) and not used before, is refused (`Refused` 4) |
 | `TICKET_PUBLIC_KEYS_FILE` | (none) | the same list in a file (not both): read at start and again on **SIGHUP**, so a rotation needs no restart (a bad file keeps the keys there were; the new ids logged) |
 | `API_URL` | (none) | the accounts service's origin, `https://HOST[:PORT]` (e.g. `https://carball.zolt.top`, through the tunnel): each queue match's result, each armed leave and each refill are posted to it (notes/accounts.md §3), and the matchmaker's events (`POST /api/fleet/events`: a match started, a seat left or rejoined, a match cancelled before its start with its no-shows' seats, a match over with no result, this server restarted; notes/matchmaking.md, the central matchmaker). Required in queue mode (with `GAME_SERVER_TOKEN_FILE`; refused at start without, unless `--dev`, which logs the calls only, or sends them to a development matchmaker with `--api-url http://127.0.0.1:PORT`) |
 | `GAME_SERVER_TOKEN_FILE` | (none) | the game server's token for those calls (a file: the API's `GAME_SERVER_TOKEN_FILE` holds the same, 32 characters or more of random text), sent as a bearer token |
@@ -196,7 +196,7 @@ asks (`/dev-ticket`), with no sign-in.
   and ~1.8 MB a 3v3. Bandwidth per player: ~3.4 KB/s down in a 1v1, ~5.6 KB/s in a 3v3; ~5–13 KB/s up (inputs).
 - **Logs:** stderr, one line an event (start-up, joins, leaves, matches, refusals, reloads, the outbox's calls): its UTC
   time, its level (`INFO`, `WARN` for a refusal or a call kept for later, `ERROR` for a failed reload or a match's
-  panic) and the message.
+  panic) and the message. The server's own events, and the libraries' errors alone (their warnings are noise: RV-937).
 - **Development info:** a development server's `GET /info` and `GET /dev-ticket` (on `--info-port`, 127.0.0.1 unless
   `--info-bind`): HTTP/1, 64 connections at once, 2 s for a request's headers; another path a 404, another method a 405.
 
@@ -220,7 +220,7 @@ The accounts service (notes/accounts.md). **Nothing is deployed yet: the first d
 | `STEAM_WEB_API_KEY_FILE` | (none) | optional: a Steam sign-up's suggested name from the persona (else a guest-style one). Steam sign-in itself needs no key: realm `PUBLIC_ORIGIN`, return URL `PUBLIC_ORIGIN/api/auth/steam/callback` |
 | `TURNSTILE_SITE_KEY` | (required) | Turnstile's site key (public: the page's sign-up widget gets it from `GET /api/signup`) |
 | `TURNSTILE_SECRET_FILE` | (required) | its secret (sign-up's siteverify, its hostname `PUBLIC_ORIGIN`'s, action `signup`) |
-| `TICKET_KEY_ID` | (required) | the search tickets' key's id (1-32 characters, no spaces): the game server finds the public key by it |
+| `TICKET_KEY_ID` | (required) | the tickets' key's id (1-32 characters, no spaces; the JWTs' `kid`): the game server finds the public key by it |
 | `TICKET_SIGNING_KEY_FILE` | (required) | that key's seed (32 bytes, base64: `carball-api ticket-key KID` prints a new one, its public line for the game server's `TICKET_PUBLIC_KEYS` on stderr) |
 | `TICKET_PREVIOUS_KEYS` | (none) | earlier ticket keys' public lines (`KID BASE64`, comma-separated) after a rotation: a result's or a quitter's tickets signed before it still check, for the acceptance window (24 h) |
 | `GAME_SERVER_TOKEN_FILE` | (none) | the game server's token on `POST /api/results`, `POST /api/quitters`, `POST /api/refills` and `POST /api/fleet/events` (bearer, compared in constant time; 32 characters or more), behind the tunnel's Access service token on those paths (Access must cover `/api/fleet/*`); 300 calls a minute at most, all together (429 past it). Unset: those calls answer 503 (a deployment needs it) |
@@ -290,18 +290,17 @@ The accounts service (notes/accounts.md). **Nothing is deployed yet: the first d
   `queue-banned`, `cooldown`); 404 for one it doesn't know (a restart: the page searches again once). A search is
   matched only after its first poll (RV-892). `DELETE /api/search/{id}` is Cancel Search (the page sends it too as it
   closes, RV-866; the searcher's own session, read with no rotation: RV-896, RV-889). The access log names
-  each request's route pattern, never its path (a search's id: RV-871). A match ticket (format 4)
-  is one seat of one match at one server, 30 s, taken once there (RV-850).
+  each request's route pattern, never its path (a search's id: RV-871). A match ticket (a JWT:
+  notes/accounts.md §3) is one seat of one match at one server (its `aud`), 30 s, taken once there (RV-850).
 - **Rejoin tickets** (`POST /api/ticket?rejoin=MATCH`, 16 hex digits; 60 an account in 10 minutes): two minutes long,
   for that match's rejoin alone, refused (409 `in-match`) while the account searches, for a match other than its latest,
   or once a later search gave that match up, whether or not it found a match (RV-869); a queue ban from that match
-  doesn't refuse it. `POST /api/ticket` with no match (a search ticket, format 3)
-  stays one release, for pages from before the switch.
+  doesn't refuse it. `POST /api/ticket` with no match: 400 (the search tickets are gone, protocol 29).
 - **The game server's calls** (behind the Access service token and `GAME_SERVER_TOKEN_FILE`): the matchmaker's events
   (`POST /api/fleet/events {event, server, match, seat, noShows, at}`: one about a match it didn't assign to that server,
   or doesn't know, answered 204 and ignored, so it never holds the outbox's later calls); results (recorded once by
-  their match id; each ticket ours, a match ticket for that match or a search ticket from before the switch, issued
-  within 24 h and spent on that match alone; the ratings changed: Glicko-2),
+  their match id; each ticket ours, the seat's match ticket for that match, issued within 24 h and spent on that match
+  alone; the ratings changed: Glicko-2),
   quitters (the seat's ticket, spent on its match; the account's queue ban up the ladder 5 min, 15 min, 1 h, 6 h, 24 h,
   a step forgiven per 24 h without a leave) and refills (the rejoin's ticket for that match, spent: that ban undone). Results are kept a year; used tickets past the window are purged hourly. **Rotating the key:** make a new one
   (`carball-api ticket-key k2`), add its public line to the game server's `TICKET_PUBLIC_KEYS` beside the old and

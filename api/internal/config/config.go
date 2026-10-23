@@ -42,7 +42,7 @@ type Config struct {
 	TurnstileSecret  string
 	// DeletionKey keys the delete/re-create rule's hashes (AC-24): 32 bytes or more
 	DeletionKey []byte
-	// TicketKeyID and TicketSeed sign the search tickets (AC-6: the game server checks them by the key's id); required
+	// TicketKeyID and TicketSeed sign the tickets (AC-6: the game server checks them by the key's id); required
 	// outside development
 	TicketKeyID string
 	TicketSeed  string

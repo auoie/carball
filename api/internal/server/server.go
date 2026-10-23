@@ -102,7 +102,7 @@ type Server struct {
 	Turnstile        Turnstile
 	TurnstileSiteKey string
 	DeletionKey      []byte
-	// Tickets signs the search tickets (nil: none issued, a development server without a key)
+	// Tickets signs the tickets, a seat's and a rejoin's (nil: none issued, a development server without a key)
 	Tickets *ticket.Signer
 	// TicketKeys check the tickets a result or a quitter carries: the signer's, and those from before a rotation
 	TicketKeys map[string]ed25519.PublicKey

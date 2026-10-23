@@ -166,8 +166,9 @@ describe("protocol", () => {
     long.set([(MAX_TICKET_BYTES + 1) & 0xff, (MAX_TICKET_BYTES + 1) >> 8], whole.byteLength - MAX_TICKET_BYTES - 2);
     long.fill(0x41, whole.byteLength - MAX_TICKET_BYTES);
     expect(() => decodeControl(long)).toThrow(/ticket too long/);
-    // (the cap holds a version 3 ticket with the longest name, 267 characters, with room: the server's the same, RX31)
-    const longest = "A".repeat(300);
+    // (the cap holds the longest match ticket, 885 characters (api/internal/ticket's test), with room: the server's the
+    // same, RX31)
+    const longest = "A".repeat(885);
     expect(decodeControl(encodeControl({ ...hello, ticket: longest }).subarray(2))).toMatchObject({ ticket: longest });
   });
 });

@@ -5,7 +5,7 @@
 // player's match ticket for their seat at its server. A development page searches a development matchmaker
 // (`?matchmaker=host:port`: `carball-api matchmaker --dev`), naming its player by its key and name.
 import { type FoundMatch, type SearchHandlers } from "../game/matchmaking";
-import { REFUSED_IN_MATCH, REFUSED_QUEUE_BANNED } from "./protocol";
+import { REFUSED_IN_MATCH, REFUSED_QUEUE_BANNED, isTicketText } from "./protocol";
 import { REQUEST_TIMEOUT_MS } from "../account/api";
 import { queueBanText } from "./tickets";
 
@@ -72,7 +72,7 @@ export function foundMatch(value: unknown): FoundMatch | null {
   const { id, server, ticket, playlist, map } = value as Record<string, unknown>;
   if (typeof id !== "string" || !/^[0-9a-f]{16}$/.test(id) || id === "0".repeat(16)) return null;
   if (typeof server !== "string" || !/^[A-Za-z0-9.-]{1,58}:[0-9]{1,5}$/.test(server)) return null;
-  if (typeof ticket !== "string" || !/^[A-Za-z0-9_-]{1,512}$/.test(ticket)) return null;
+  if (!isTicketText(ticket)) return null;
   if (typeof playlist !== "number" || ![1, 2, 3].includes(playlist)) return null;
   return { id: BigInt(`0x${id}`), server, ticket, playlist, map: typeof map === "number" && Number.isInteger(map) ? map : 0 };
 }

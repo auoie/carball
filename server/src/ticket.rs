@@ -1,17 +1,16 @@
-//! The search tickets (notes/accounts.md §3, AC-6): who a search or a claim is from, signed by the accounts service
+//! The tickets (notes/accounts.md §3, AC-6): who a claim or a rejoin is from, signed by the accounts service
 //! (`api/internal/ticket`, the format's other half) with Ed25519 and checked here offline, by the key's id
-//! (`TICKET_PUBLIC_KEYS`: keys rotate). A ticket is good for its two minutes (±30 s of the two boxes' clocks), once: its
-//! nonce is kept until it expires. The bytes, unpadded base64url:
+//! (`TICKET_PUBLIC_KEYS`: keys rotate). A ticket is good for its life (±30 s of the two boxes' clocks), once: its
+//! one-time id is kept until it expires. A ticket is a JWT (compact JWS, alg EdDSA alone, its key's id the `kid`), its
+//! claims:
 //!
-//! version (1) = 3 | kid length (1) | kid | account id (16) | issued (8, Unix s, big-endian) | expires (8) | nonce (16) |
-//! name length (1) | name | the ratings, 1v1, 2v2, 3v3: rating (2) and deviation (2) each, rounded | purpose (1): 0 a
-//! search (and its claim), 1 a rejoin | match (8): a rejoin's match id, 0 for a search | signature (64) over
-//! "carball-search\0" and the bytes before it
+//! iss "carball" | sub the account id (32 hex digits) | iat, exp (Unix s) | jti its one-time id (16 bytes, base64url) |
+//! name | ratings: 1v1, 2v2, 3v3, [rating, deviation] each, rounded | purpose "rejoin" or "seat" | match (16 hex digits) |
+//! a seat's: aud its server (host:port), playlist (the team size), seat, roster (its seats)
 //!
-//! A match ticket (version 4, purpose 2: a seat; notes/matchmaking.md, the central matchmaker) is the accounts service's
-//! matchmaker's for one seat of one match at one game server, 30 s long, taken once (RV-850): version 3's fields, its
-//! match the matchmaker's id, then server length (1) | server (its address, host:port) | playlist (1, the team size) |
-//! seat (1) | roster (1, its seats). Search and rejoin tickets stay version 3.
+//! A match ticket (a seat; notes/matchmaking.md, the central matchmaker) is the accounts service's matchmaker's for one
+//! seat of one match at one game server, 30 s long, taken once (RV-850); its server (`aud`) is compared with this
+//! server's name by the claim (`net.rs`), not here.
 //!
 //! The ratings are the account's when the ticket was issued (the matchmaker pairs by them: notes/matchmaking.md).
 //! A rejoin's ticket is for its match alone (the network server takes it for that rejoin, nothing else): the accounts
@@ -25,21 +24,23 @@
 
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
-use ring::signature::{ED25519, Ed25519KeyPair, KeyPair, UnparsedPublicKey};
+use jsonwebtoken::errors::ErrorKind;
+use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use ring::signature::{Ed25519KeyPair, KeyPair};
 use std::collections::HashMap;
 use std::sync::{Mutex, RwLock};
 
-/// The format's version (2: the ratings; 3: the purpose and match); a match ticket's (its seat)
-const VERSION: u8 = 3;
-const SEAT_VERSION: u8 = 4;
-/// What a signature covers before the ticket's bytes (the audience)
-const CONTEXT: &[u8] = b"carball-search\0";
+/// Every ticket's issuer (`iss`: the API's `ticket.Issuer`)
+const ISSUER: &str = "carball";
 /// A ticket's longest encoded length (the API's `ticket.MaxBytes`; the Hello's ticket capped at it)
-pub const MAX_BYTES: usize = 512;
+pub const MAX_BYTES: usize = 1024;
 /// A match ticket's server address's longest (bytes; the API's `ticket.MaxServer`)
 const MAX_SERVER: usize = 64;
 /// What the development key's seed is the SHA-256 of (the API's `ticket.DevSeedText`)
 const DEV_SEED_TEXT: &str = "carball development ticket key";
+/// An Ed25519 seed's PKCS#8 v1 (RFC 8410) before the seed: the signing key's form jsonwebtoken takes
+const PKCS8_PREFIX: [u8; 16] =
+    [0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20];
 /// The two boxes' clocks apart at most (s)
 const SKEW: i64 = 30;
 /// A development ticket's life (s; the API's `ticket.Lifetime`); a match ticket's (`ticket.SeatLifetime`)
@@ -97,8 +98,6 @@ pub const DEFAULT_RATING: Shown = Shown { rating: 1500, deviation: 500 };
 /// What a ticket is for
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Purpose {
-    /// A search, and its claim (game servers from before the central matchmaker; none here takes one now)
-    Search,
     /// A rejoin of this match (its id: Welcome's `match_id`)
     Rejoin(u64),
     /// A seat of a match the matchmaker made
@@ -135,18 +134,49 @@ pub enum Refusal {
     BadSignature,
     OutOfTime,
     Reused,
-    /// A good ticket for something else (a search's for a rejoin, a rejoin's for another match or a search)
+    /// A good ticket for something else (a rejoin's for a claim or another match, a seat's for a rejoin or another
+    /// server)
     NotForThis,
 }
 
-/// The keys tickets are checked with (reloadable: a rotation without a restart, AP2-4), the nonces taken (until their
-/// tickets expire), and when this process started (a ticket issued before it may have been used with the one before:
-/// refused, with no clock skew allowed, deliberately: a skew would let a ticket spent on the last process through again;
-/// a game box clock ahead of the service's only costs a fresh ticket for the first seconds after a restart, RX31 F7)
+/// A ticket's claims as the API writes them (a seat's `aud`, playlist, seat and roster: none in a rejoin's)
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct Claims {
+    iss: String,
+    sub: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    aud: Option<String>,
+    iat: i64,
+    exp: i64,
+    jti: String,
+    name: String,
+    ratings: [[u16; 2]; 3],
+    purpose: String,
+    #[serde(rename = "match")]
+    match_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    playlist: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    seat: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    roster: Option<u8>,
+}
+
+/// The development key: its signing key (jsonwebtoken's, PKCS#8) and its public key
+struct DevKey {
+    signing: EncodingKey,
+    public: Vec<u8>,
+}
+
+/// The keys tickets are checked with (reloadable: a rotation without a restart, AP2-4), the one-time ids taken (until
+/// their tickets expire), and when this process started (a ticket issued before it may have been used with the one
+/// before: refused, with no clock skew allowed, deliberately: a skew would let a ticket spent on the last process through
+/// again; a game box clock ahead of the service's only costs a fresh ticket for the first seconds after a restart, RX31
+/// F7)
 pub struct Tickets {
     keys: RwLock<HashMap<String, Vec<u8>>>,
     nonces: Mutex<HashMap<[u8; 16], i64>>,
-    dev: Option<Ed25519KeyPair>,
+    dev: Option<DevKey>,
     started: i64,
 }
 
@@ -193,8 +223,8 @@ impl Tickets {
     pub fn reload(&self, list: &str) -> anyhow::Result<()> {
         let mut keys = parse_keys(list)?;
         anyhow::ensure!(!keys.is_empty(), "TICKET_PUBLIC_KEYS: no key");
-        if let Some(pair) = &self.dev {
-            keys.insert(DEV_KEY_ID.to_string(), pair.public_key().as_ref().to_vec());
+        if let Some(dev) = &self.dev {
+            keys.insert(DEV_KEY_ID.to_string(), dev.public.clone());
         }
         *self.keys.write().unwrap_or_else(std::sync::PoisonError::into_inner) = keys;
         Ok(())
@@ -206,34 +236,39 @@ impl Tickets {
         let seed = ring::digest::digest(&ring::digest::SHA256, DEV_SEED_TEXT.as_bytes());
         let pair =
             Ed25519KeyPair::from_seed_unchecked(seed.as_ref()).map_err(|_| anyhow::anyhow!("a development key"))?;
+        let dev = DevKey {
+            signing: EncodingKey::from_ed_der(&[PKCS8_PREFIX.as_slice(), seed.as_ref()].concat()),
+            public: pair.public_key().as_ref().to_vec(),
+        };
         self.keys
             .get_mut()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(DEV_KEY_ID.to_string(), pair.public_key().as_ref().to_vec());
-        self.dev = Some(pair);
+            .insert(DEV_KEY_ID.to_string(), dev.public.clone());
+        self.dev = Some(dev);
         Ok(self)
     }
 
-    /// A ticket checked at `now` (Unix s): its signature by a key of ours, its time, its nonce not seen before (taken
-    /// now, kept until it expires)
+    /// A ticket checked at `now` (Unix s): its signature by a key of ours (EdDSA alone), its claims, its time, its
+    /// one-time id not seen before (taken now, kept until it expires)
     pub fn check(&self, encoded: &str, now: i64) -> Result<Ticket, Refusal> {
         if encoded.len() > MAX_BYTES {
             return Err(Refusal::Malformed);
         }
-        let raw = URL_SAFE_NO_PAD.decode(encoded).map_err(|_| Refusal::Malformed)?;
-        if raw.len() < 64 + 2 {
-            return Err(Refusal::Malformed);
-        }
-        let (body, signature) = raw.split_at(raw.len() - 64);
-        let (kid, ticket, nonce, issued) = decode(body).ok_or(Refusal::Malformed)?;
-        {
+        let kid =
+            jsonwebtoken::decode_header(encoded).map_err(|_| Refusal::Malformed)?.kid.ok_or(Refusal::Malformed)?;
+        let claims = {
             let keys = self.keys.read().unwrap_or_else(std::sync::PoisonError::into_inner);
             let key = keys.get(&kid).ok_or(Refusal::UnknownKey)?;
-            let signed = [CONTEXT, body].concat();
-            UnparsedPublicKey::new(&ED25519, key).verify(&signed, signature).map_err(|_| Refusal::BadSignature)?;
-        }
+            jsonwebtoken::decode::<Claims>(encoded, &DecodingKey::from_ed_der(key), &validation())
+                .map_err(|e| match e.kind() {
+                    ErrorKind::InvalidSignature => Refusal::BadSignature,
+                    _ => Refusal::Malformed,
+                })?
+                .claims
+        };
+        let (ticket, nonce, issued) = read(claims).ok_or(Refusal::Malformed)?;
         // (its life within the API's, and begun before it ends: AP2-3; issued since this process started, no skew allowed:
-        // its nonce may have been used with the process before, whose nonces are gone, AP2-4, AP3)
+        // its one-time id may have been used with the process before, whose ids are gone, AP2-4, AP3)
         if ticket.expires < issued || ticket.expires.saturating_sub(issued) > MAX_LIFETIME {
             return Err(Refusal::Malformed);
         }
@@ -259,30 +294,47 @@ impl Tickets {
         purpose: Purpose,
         now: i64,
     ) -> Option<String> {
-        let pair = self.dev.as_ref()?;
+        let dev = self.dev.as_ref()?;
         if name.is_empty() || name.len() > 32 {
             return None;
         }
         let mut nonce = [0u8; 16];
         getrandom::fill(&mut nonce).ok()?;
-        let seat = matches!(purpose, Purpose::Seat(_));
-        let mut body = vec![if seat { SEAT_VERSION } else { VERSION }, DEV_KEY_ID.len() as u8];
-        body.extend_from_slice(DEV_KEY_ID.as_bytes());
-        body.extend_from_slice(&account);
-        body.extend_from_slice(&now.to_be_bytes());
-        body.extend_from_slice(&(now + if seat { SEAT_LIFETIME } else { LIFETIME }).to_be_bytes());
-        body.extend_from_slice(&nonce);
-        body.push(name.len() as u8);
-        body.extend_from_slice(name.as_bytes());
-        for r in ratings {
-            body.extend_from_slice(&r.rating.to_be_bytes());
-            body.extend_from_slice(&r.deviation.to_be_bytes());
-        }
-        body.extend_from_slice(&purpose_bytes(&purpose));
-        let signature = pair.sign(&[CONTEXT, &body].concat());
-        body.extend_from_slice(signature.as_ref());
-        Some(URL_SAFE_NO_PAD.encode(body))
+        let (match_id, seat) = match &purpose {
+            Purpose::Rejoin(m) => (*m, None),
+            Purpose::Seat(s) => (s.match_id, Some(s)),
+        };
+        let claims = Claims {
+            iss: ISSUER.to_string(),
+            sub: account.iter().map(|b| format!("{b:02x}")).collect(),
+            aud: seat.map(|s| s.server.clone()),
+            iat: now,
+            exp: now + if seat.is_some() { SEAT_LIFETIME } else { LIFETIME },
+            jti: URL_SAFE_NO_PAD.encode(nonce),
+            name: name.to_string(),
+            ratings: ratings.map(|r| [r.rating, r.deviation]),
+            purpose: if seat.is_some() { "seat" } else { "rejoin" }.to_string(),
+            match_id: format!("{match_id:016x}"),
+            playlist: seat.map(|s| s.playlist),
+            seat: seat.map(|s| s.seat),
+            roster: seat.map(|s| s.roster),
+        };
+        let mut header = Header::new(Algorithm::EdDSA);
+        header.kid = Some(DEV_KEY_ID.to_string());
+        jsonwebtoken::encode(&header, &claims, &dev.signing).ok()
     }
+}
+
+/// What a ticket's signature and claims are checked for: EdDSA alone, issued by the accounts service, an account and an
+/// expiry; its time this module's own rules (the skew, this process's start), a seat's server compared with this
+/// server's name by its claim (`net.rs`)
+fn validation() -> Validation {
+    let mut validation = Validation::new(Algorithm::EdDSA);
+    validation.set_issuer(&[ISSUER]);
+    validation.set_required_spec_claims(&["exp", "iss", "sub"]);
+    validation.validate_exp = false;
+    validation.validate_aud = false;
+    validation
 }
 
 /// `TICKET_PUBLIC_KEYS`'s keys: "KID BASE64" each, separated by commas or new lines; a malformed line, a key not 32
@@ -303,69 +355,43 @@ fn parse_keys(list: &str) -> anyhow::Result<HashMap<String, Vec<u8>>> {
     Ok(keys)
 }
 
-/// A purpose's bytes: its byte and the match (0 for a search), and a seat's fields
-fn purpose_bytes(purpose: &Purpose) -> Vec<u8> {
-    let (kind, match_id) = match purpose {
-        Purpose::Search => (0u8, 0u64),
-        Purpose::Rejoin(m) => (1, *m),
-        Purpose::Seat(s) => (2, s.match_id),
-    };
-    let mut b = vec![kind];
-    b.extend_from_slice(&match_id.to_be_bytes());
-    if let Purpose::Seat(s) = purpose {
-        b.push(s.server.len() as u8);
-        b.extend_from_slice(s.server.as_bytes());
-        b.extend_from_slice(&[s.playlist, s.seat, s.roster]);
-    }
-    b
-}
-
-/// A ticket's bytes (unsigned part): its key's id, what it says, its nonce and when it was issued
-fn decode(b: &[u8]) -> Option<(String, Ticket, [u8; 16], i64)> {
-    let (&version, b) = b.split_first()?;
-    let (&n, b) = b.split_first()?;
-    let n = n as usize;
-    let seat = version == SEAT_VERSION;
-    if (version != VERSION && !seat) || n == 0 || n > 32 || b.len() < n + 16 + 8 + 8 + 16 + 1 {
+/// A verified ticket's claims, each in its form: what it says, its one-time id and when it was issued; None for a
+/// malformed one (a rejoin's has its match and no seat; a seat's its match and a seat in its playlist's roster at a
+/// named server; anything else refused)
+fn read(claims: Claims) -> Option<(Ticket, [u8; 16], i64)> {
+    let account = hex_bytes::<16>(&claims.sub)?;
+    let nonce: [u8; 16] = URL_SAFE_NO_PAD.decode(&claims.jti).ok()?.try_into().ok()?;
+    let match_id = u64::from_be_bytes(hex_bytes::<8>(&claims.match_id)?);
+    if claims.iss != ISSUER || claims.name.is_empty() || claims.name.len() > 32 || match_id == 0 {
         return None;
     }
-    let kid = std::str::from_utf8(&b[..n]).ok()?.to_string();
-    let b = &b[n..];
-    let account: [u8; 16] = b[..16].try_into().ok()?;
-    let issued = i64::from_be_bytes(b[16..24].try_into().ok()?);
-    let expires = i64::from_be_bytes(b[24..32].try_into().ok()?);
-    let nonce: [u8; 16] = b[32..48].try_into().ok()?;
-    let (&m, rest) = b[48..].split_first()?;
-    let m = m as usize;
-    if m == 0 || m > 32 || rest.len() < m + 3 * 4 + 9 || (!seat && rest.len() != m + 3 * 4 + 9) {
-        return None;
-    }
-    let name = std::str::from_utf8(&rest[..m]).ok()?.to_string();
-    let r = &rest[m..];
-    let at = |i: usize| u16::from_be_bytes([r[i], r[i + 1]]);
-    let ratings = [0, 1, 2].map(|p| Shown { rating: at(4 * p), deviation: at(4 * p + 2) });
-    let match_id = u64::from_be_bytes(r[13..21].try_into().ok()?);
-    // (a search's has no match, a rejoin's has one, a seat's its match and its seat at a server, at version 4 alone:
-    // anything else refused)
-    let purpose = match (r[12], match_id, seat) {
-        (0, 0, false) => Purpose::Search,
-        (1, m, false) if m != 0 => Purpose::Rejoin(m),
-        (2, m, true) if m != 0 => {
-            let (&len, s) = r[21..].split_first()?;
-            let len = len as usize;
-            if len == 0 || len > MAX_SERVER || s.len() != len + 3 {
-                return None;
-            }
-            let server = std::str::from_utf8(&s[..len]).ok()?.to_string();
-            let (playlist, seat, roster) = (s[len], s[len + 1], s[len + 2]);
-            if !(1..=3).contains(&playlist) || roster != 2 * playlist || seat >= roster {
-                return None;
-            }
-            Purpose::Seat(Seat { match_id: m, server, playlist, seat, roster })
+    let purpose = match (claims.purpose.as_str(), claims.aud, claims.playlist, claims.seat, claims.roster) {
+        ("rejoin", None, None, None, None) => Purpose::Rejoin(match_id),
+        ("seat", Some(server), Some(playlist), Some(seat), Some(roster))
+            if !server.is_empty()
+                && server.len() <= MAX_SERVER
+                && (1..=3).contains(&playlist)
+                && roster == 2 * playlist
+                && seat < roster =>
+        {
+            Purpose::Seat(Seat { match_id, server, playlist, seat, roster })
         }
         _ => return None,
     };
-    Some((kid, Ticket { account, name, expires, ratings, purpose }, nonce, issued))
+    let ratings = claims.ratings.map(|[rating, deviation]| Shown { rating, deviation });
+    Some((Ticket { account, name: claims.name, expires: claims.exp, ratings, purpose }, nonce, claims.iat))
+}
+
+/// `N` bytes from `2N` hex digits (either case, as the API reads them); None for anything else (a sign too)
+fn hex_bytes<const N: usize>(text: &str) -> Option<[u8; N]> {
+    if text.len() != 2 * N || !text.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let mut out = [0u8; N];
+    for (i, byte) in out.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&text[2 * i..2 * i + 2], 16).ok()?;
+    }
+    Some(out)
 }
 
 /// An account as the queue's and the match's player key (`JoinRequest::key`): its id's first 8 bytes, never 0 (0 is
@@ -388,15 +414,40 @@ mod tests {
     /// The development key's public key (the API's `ticket.DevSigner().Public()`, checked by its test too)
     const DEV_PUBLIC_KEY: &str = "1PGAXJYv9YNXDpJto+6YGra1rCGMn+EShfLPjpIiFgU=";
 
-    /// The tickets the API's code made (protocol/ticket_vector.json, api/internal/ticket's vector test: a search's and a
-    /// rejoin's): read as they say
+    /// A key of the seed `[seed; 32]`: its signing key and the tickets that check with it (key id "test", started at
+    /// NOW)
+    fn key(seed: u8) -> (EncodingKey, Tickets) {
+        let public = Ed25519KeyPair::from_seed_unchecked(&[seed; 32]).unwrap().public_key().as_ref().to_vec();
+        let tickets = Tickets::from_list(&format!("test {}", STANDARD.encode(public))).unwrap().started_at(NOW);
+        (EncodingKey::from_ed_der(&[PKCS8_PREFIX.as_slice(), &[seed; 32]].concat()), tickets)
+    }
+
+    /// A rejoin ticket's claims as the API writes them (its match 0xa1), issued and expiring as given, its one-time id
+    /// `nonce` 16 times
+    fn rejoin_claims(issued: i64, expires: i64, nonce: u8) -> serde_json::Value {
+        serde_json::json!({
+            "iss": "carball", "sub": "ab".repeat(16), "iat": issued, "exp": expires,
+            "jti": URL_SAFE_NO_PAD.encode([nonce; 16]), "name": "Name",
+            "ratings": [[1500, 500], [1723, 64], [1312, 110]], "purpose": "rejoin", "match": "00000000000000a1",
+        })
+    }
+
+    /// Claims signed by hand with `key` (EdDSA, key id "test"), whatever they say
+    fn signed(key: &EncodingKey, claims: &serde_json::Value) -> String {
+        let mut header = Header::new(Algorithm::EdDSA);
+        header.kid = Some("test".into());
+        jsonwebtoken::encode(&header, claims, key).unwrap()
+    }
+
+    /// The tickets the API's code made (protocol/ticket_vector.json, api/internal/ticket's vector test: a rejoin's and a
+    /// seat's): read as they say
     #[test]
     fn the_apis_tickets_read_as_they_were_made() {
         let text =
             std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../protocol/ticket_vector.json")).unwrap();
         let all: serde_json::Value = serde_json::from_str(&text).unwrap();
         let vectors = all["vectors"].as_array().unwrap();
-        assert_eq!(vectors.len(), 3);
+        assert_eq!(vectors.len(), 2);
         for v in vectors {
             let s = |k: &str| v[k].as_str().unwrap().to_string();
             let n = |k: &str| v[k].as_i64().unwrap();
@@ -416,7 +467,6 @@ mod tests {
                 .collect();
             assert_eq!(ratings, want);
             let purpose = match (n("purpose"), s("match").parse::<u64>().unwrap()) {
-                (0, 0) => Purpose::Search,
                 (1, m) => Purpose::Rejoin(m),
                 (2, m) => Purpose::Seat(Seat {
                     match_id: m,
@@ -432,30 +482,61 @@ mod tests {
         }
     }
 
-    /// A ticket's purpose: a search's without a match, a rejoin's with its match, read back; any other pair refused
+    /// A ticket's claims: a rejoin's with its match and no seat, read back; a search's, a rejoin's of no match or with a
+    /// seat, a seat's without one or outside its roster, another issuer, an account, one-time id or match not in their
+    /// form, a name empty or too long: refused
     #[test]
-    fn a_tickets_purpose_is_a_search_or_a_rejoin_of_one_match() {
-        let tickets = Tickets::from_list("").unwrap().with_dev_key().unwrap().started_at(NOW);
-        let rejoin =
-            tickets.dev_ticket([7; 16], "Made Up", [DEFAULT_RATING; 3], Purpose::Rejoin(0x0123_4567_89ab_cdef), NOW);
-        assert_eq!(tickets.check(&rejoin.unwrap(), NOW).unwrap().purpose, Purpose::Rejoin(0x0123_4567_89ab_cdef));
-        let pair = Ed25519KeyPair::from_seed_unchecked(&[6; 32]).unwrap();
-        let ours = Tickets::from_list(&format!("test {}", STANDARD.encode(pair.public_key().as_ref())))
-            .unwrap()
-            .started_at(NOW);
-        for (i, (kind, match_id)) in [(0u8, 9u64), (1, 0), (2, 0), (2, 9)].into_iter().enumerate() {
-            let mut purpose = [kind; 9];
-            purpose[1..].copy_from_slice(&match_id.to_be_bytes());
-            let ticket = signed_with(&pair, NOW, NOW + 120, i as u8 + 20, &purpose);
-            assert_eq!(ours.check(&ticket, NOW), Err(Refusal::Malformed), "purpose {kind}, match {match_id}");
+    fn a_tickets_claims_are_a_rejoins_or_a_seats() {
+        let (k, tickets) = key(6);
+        let rejoin = tickets.check(&signed(&k, &rejoin_claims(NOW, NOW + 120, 1)), NOW).unwrap();
+        assert_eq!((rejoin.purpose, rejoin.account), (Purpose::Rejoin(0xa1), [0xab; 16]));
+        let seat = |c: &mut serde_json::Value, playlist: u8, seat: u8, roster: u8| {
+            c["purpose"] = "seat".into();
+            c["aud"] = "game.example:4433".into();
+            (c["playlist"], c["seat"], c["roster"]) = (playlist.into(), seat.into(), roster.into());
+        };
+        type Change = fn(&mut serde_json::Value);
+        let changes: [(&str, Change); 14] = [
+            ("a search's", |c| c["purpose"] = "search".into()),
+            ("a rejoin of no match", |c| c["match"] = "0000000000000000".into()),
+            ("a rejoin with a seat", |c| c["seat"] = 1.into()),
+            ("a rejoin with a server", |c| c["aud"] = "game.example:4433".into()),
+            ("a seat without its seat", |c| {
+                c["purpose"] = "seat".into();
+                c["aud"] = "game.example:4433".into();
+                (c["playlist"], c["roster"]) = (1.into(), 2.into());
+            }),
+            ("a seat outside its roster", |c| c["seat"] = 2.into()),
+            ("a seat of two servers", |c| c["aud"] = serde_json::json!(["a.example:1", "b.example:1"])),
+            ("another issuer", |c| c["iss"] = "someone".into()),
+            ("a short account", |c| c["sub"] = "ab".into()),
+            ("a one-time id not 16 bytes", |c| c["jti"] = "AAAA".into()),
+            ("a signed match", |c| c["match"] = "+00000000000000a".into()),
+            ("no name", |c| c["name"] = "".into()),
+            ("a name past 32 bytes", |c| c["name"] = "x".repeat(33).into()),
+            ("no expiry", |c| {
+                c.as_object_mut().unwrap().remove("exp");
+            }),
+        ];
+        for (i, (what, change)) in changes.into_iter().enumerate() {
+            let mut claims = rejoin_claims(NOW, NOW + 120, 10 + i as u8);
+            if what.starts_with("a seat outside") || what.starts_with("a seat of two") {
+                seat(&mut claims, 1, 0, 2);
+            }
+            change(&mut claims);
+            assert_eq!(tickets.check(&signed(&k, &claims), NOW), Err(Refusal::Malformed), "{what}");
         }
+        let mut good_seat = rejoin_claims(NOW, NOW + 30, 40);
+        seat(&mut good_seat, 3, 5, 6);
+        assert!(tickets.check(&signed(&k, &good_seat), NOW).is_ok(), "a seat that fits");
     }
 
     #[test]
     fn a_development_ticket_checks_once_within_its_time() {
         let tickets = Tickets::from_list("").unwrap().with_dev_key().unwrap().started_at(NOW);
         let account = [7u8; 16];
-        let encoded = tickets.dev_ticket(account, "Made Up", [DEFAULT_RATING; 3], Purpose::Search, NOW).unwrap();
+        let dev = || tickets.dev_ticket(account, "Made Up", [DEFAULT_RATING; 3], Purpose::Rejoin(0xa1), NOW).unwrap();
+        let encoded = dev();
         assert!(encoded.len() <= MAX_BYTES);
         let ticket = tickets.check(&encoded, NOW + 10).unwrap();
         assert_eq!(
@@ -465,26 +546,29 @@ mod tests {
                 name: "Made Up".into(),
                 expires: NOW + LIFETIME,
                 ratings: [DEFAULT_RATING; 3],
-                purpose: Purpose::Search
+                purpose: Purpose::Rejoin(0xa1)
             }
         );
         assert_eq!(tickets.check(&encoded, NOW + 11), Err(Refusal::Reused), "used once");
-        let late = tickets.dev_ticket(account, "Made Up", [DEFAULT_RATING; 3], Purpose::Search, NOW).unwrap();
-        assert_eq!(tickets.check(&late, NOW + LIFETIME + SKEW), Err(Refusal::OutOfTime), "past its time and the skew");
-        let early = tickets.dev_ticket(account, "Made Up", [DEFAULT_RATING; 3], Purpose::Search, NOW).unwrap();
-        assert_eq!(tickets.check(&early, NOW - SKEW - 1), Err(Refusal::OutOfTime), "before it was issued");
-        let within = tickets.dev_ticket(account, "Made Up", [DEFAULT_RATING; 3], Purpose::Search, NOW).unwrap();
-        assert!(tickets.check(&within, NOW + LIFETIME + SKEW - 1).is_ok(), "within the skew");
+        assert_eq!(tickets.check(&dev(), NOW + LIFETIME + SKEW), Err(Refusal::OutOfTime), "past its time and the skew");
+        assert_eq!(tickets.check(&dev(), NOW - SKEW - 1), Err(Refusal::OutOfTime), "before it was issued");
+        assert!(tickets.check(&dev(), NOW + LIFETIME + SKEW - 1).is_ok(), "within the skew");
     }
 
-    /// A match ticket (version 4): its seat read back, at its server; the development key fixed (the API's
-    /// `ticket.DevSigner`: the development matchmaker's tickets checked by a development server)
+    /// A match ticket: its seat read back, at its server, its header the API's (EdDSA, its key's id, typ JWT); the
+    /// development key fixed (the API's `ticket.DevSigner`: the development matchmaker's tickets checked by a
+    /// development server)
     #[test]
     fn a_match_tickets_seat_reads_back_and_the_development_key_is_the_apis() {
         let tickets = Tickets::from_list("").unwrap().with_dev_key().unwrap().started_at(NOW);
         let seat = Seat { match_id: 0xfeed, server: "game-eu.example:4433".into(), playlist: 3, seat: 5, roster: 6 };
         let encoded =
             tickets.dev_ticket([7; 16], "Made Up", [DEFAULT_RATING; 3], Purpose::Seat(seat.clone()), NOW).unwrap();
+        let header = jsonwebtoken::decode_header(&encoded).unwrap();
+        assert_eq!(
+            (header.alg, header.kid.as_deref(), header.typ.as_deref()),
+            (Algorithm::EdDSA, Some("dev"), Some("JWT"))
+        );
         let ticket = tickets.check(&encoded, NOW + 1).unwrap();
         assert_eq!((ticket.purpose, ticket.expires), (Purpose::Seat(seat), NOW + SEAT_LIFETIME));
         // (the API's development key: its public key, as `carball-api matchmaker --dev` logs it)
@@ -492,29 +576,36 @@ mod tests {
         assert_eq!(STANDARD.encode(&ids[DEV_KEY_ID]), DEV_PUBLIC_KEY);
     }
 
+    /// Another key's signature, a changed payload, alg none, an HMAC keyed with the public key, not a JWT, too long, an
+    /// unknown key id: refused
     #[test]
     fn a_ticket_of_another_key_or_changed_is_refused() {
         let ours = Tickets::from_list("").unwrap().with_dev_key().unwrap().started_at(NOW);
         // (the same key id, another key: a key "test" listed, a ticket signed by another)
-        let (listed, other) = (
-            Ed25519KeyPair::from_seed_unchecked(&[3; 32]).unwrap(),
-            Ed25519KeyPair::from_seed_unchecked(&[4; 32]).unwrap(),
-        );
-        let tests = Tickets::from_list(&format!("test {}", STANDARD.encode(listed.public_key().as_ref())))
-            .unwrap()
-            .started_at(NOW);
-        let foreign = signed_with(&other, NOW, NOW + 120, 1, &[0; 9]);
+        let ((_, tests), (other, _)) = (key(3), key(4));
+        let foreign = signed(&other, &rejoin_claims(NOW, NOW + 120, 1));
         assert_eq!(tests.check(&foreign, NOW), Err(Refusal::BadSignature), "the same key id, another key");
-        let encoded = ours.dev_ticket([1; 16], "Name", [DEFAULT_RATING; 3], Purpose::Search, NOW).unwrap();
-        let mut raw = URL_SAFE_NO_PAD.decode(&encoded).unwrap();
-        raw[10] ^= 1; // (the account's bytes)
-        assert_eq!(ours.check(&URL_SAFE_NO_PAD.encode(&raw), NOW), Err(Refusal::BadSignature));
+        let encoded = ours.dev_ticket([1; 16], "Name", [DEFAULT_RATING; 3], Purpose::Rejoin(0xa1), NOW).unwrap();
+        let parts: Vec<&str> = encoded.split('.').collect();
+        let payload = String::from_utf8(URL_SAFE_NO_PAD.decode(parts[1]).unwrap()).unwrap();
+        let changed = URL_SAFE_NO_PAD.encode(payload.replace("\"name\":\"Name\"", "\"name\":\"Mame\""));
+        assert_ne!(changed, parts[1]);
+        let tampered = format!("{}.{changed}.{}", parts[0], parts[2]);
+        assert_eq!(ours.check(&tampered, NOW), Err(Refusal::BadSignature), "its payload changed");
+        let none = URL_SAFE_NO_PAD.encode(r#"{"alg":"none","kid":"dev","typ":"JWT"}"#);
+        assert_eq!(ours.check(&format!("{none}.{}.", parts[1]), NOW), Err(Refusal::Malformed), "alg none");
+        let public = ours.keys.read().unwrap()[DEV_KEY_ID].clone();
+        let mut hs = Header::new(Algorithm::HS256);
+        hs.kid = Some(DEV_KEY_ID.into());
+        let claims: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        let confused = jsonwebtoken::encode(&hs, &claims, &EncodingKey::from_secret(&public)).unwrap();
+        assert_eq!(ours.check(&confused, NOW), Err(Refusal::Malformed), "HS256 keyed with the public key");
         assert_eq!(ours.check("!!", NOW), Err(Refusal::Malformed));
         assert_eq!(ours.check(&"A".repeat(MAX_BYTES + 1), NOW), Err(Refusal::Malformed));
-        let none = Tickets::from_list("").unwrap();
-        assert_eq!(none.check(&encoded, NOW), Err(Refusal::UnknownKey), "no key of that id");
+        let nobody = Tickets::from_list("").unwrap();
+        assert_eq!(nobody.check(&encoded, NOW), Err(Refusal::UnknownKey), "no key of that id");
         assert!(
-            none.dev_ticket([1; 16], "Name", [DEFAULT_RATING; 3], Purpose::Search, NOW).is_none(),
+            nobody.dev_ticket([1; 16], "Name", [DEFAULT_RATING; 3], Purpose::Rejoin(0xa1), NOW).is_none(),
             "a server not --dev signs none"
         );
     }
@@ -533,86 +624,28 @@ mod tests {
         assert_eq!(account_key(&[0, 0, 0, 0, 0, 0, 0, 2, 9, 9, 9, 9, 9, 9, 9, 9]), 2);
     }
 
-    /// The API's tickets (api/internal/ticket): one it issued checks here, its fixed seed's key (the Go test's)
-    #[test]
-    fn a_ticket_the_api_signs_checks_here() {
-        // (the API's format by hand, with the Go tests' seed: 0..31)
-        let seed: Vec<u8> = (0u8..32).collect();
-        let pair = Ed25519KeyPair::from_seed_unchecked(&seed).unwrap();
-        let mut body = vec![VERSION, 4];
-        body.extend_from_slice(b"test");
-        body.extend_from_slice(&[0xab; 16]);
-        body.extend_from_slice(&NOW.to_be_bytes());
-        body.extend_from_slice(&(NOW + 120).to_be_bytes());
-        body.extend_from_slice(&[5; 16]);
-        body.push(4);
-        body.extend_from_slice(b"Name");
-        body.extend_from_slice(&[0x05, 0xdc, 0x01, 0xf4, 0x06, 0xbb, 0x00, 0x40, 0x05, 0x20, 0x00, 0x6e]);
-        body.extend_from_slice(&[0; 9]); // (a search's: no match)
-        let sig = pair.sign(&[CONTEXT, &body].concat());
-        body.extend_from_slice(sig.as_ref());
-        let tickets = Tickets::from_list(&format!("test {}", STANDARD.encode(pair.public_key().as_ref())))
-            .unwrap()
-            .started_at(NOW);
-        let ticket = tickets.check(&URL_SAFE_NO_PAD.encode(&body), NOW).unwrap();
-        assert_eq!((ticket.account, ticket.name.as_str()), ([0xab; 16], "Name"));
-        let shown = |rating, deviation| Shown { rating, deviation };
-        assert_eq!(ticket.ratings, [shown(1500, 500), shown(1723, 64), shown(1312, 110)]);
-    }
-
-    /// A ticket signed by hand: `issued`, `expires` as given (the API's format, a key of ours), a search's
-    fn signed(pair: &Ed25519KeyPair, issued: i64, expires: i64, nonce: u8) -> String {
-        signed_with(pair, issued, expires, nonce, &[0; 9])
-    }
-
-    /// The same with its purpose and match bytes as given
-    fn signed_with(pair: &Ed25519KeyPair, issued: i64, expires: i64, nonce: u8, purpose: &[u8; 9]) -> String {
-        let mut body = vec![VERSION, 4];
-        body.extend_from_slice(b"test");
-        body.extend_from_slice(&[0xab; 16]);
-        body.extend_from_slice(&issued.to_be_bytes());
-        body.extend_from_slice(&expires.to_be_bytes());
-        body.extend_from_slice(&[nonce; 16]);
-        body.push(4);
-        body.extend_from_slice(b"Name");
-        body.extend_from_slice(&[0; 12]);
-        body.extend_from_slice(purpose);
-        let sig = pair.sign(&[CONTEXT, &body].concat());
-        body.extend_from_slice(sig.as_ref());
-        URL_SAFE_NO_PAD.encode(&body)
-    }
-
     /// AP2-3, AP2-4: a ticket ending at the end of time, one ending before it began, or one longer than the API's: refused,
-    /// and the checks after still sound; one issued before this process started (its nonce maybe used before): refused
+    /// and the checks after still sound; one issued before this process started (its one-time id maybe used before):
+    /// refused
     #[test]
     fn a_tickets_life_is_the_apis_and_from_this_process_on() {
-        let pair = Ed25519KeyPair::from_seed_unchecked(&[5; 32]).unwrap();
-        let tickets = Tickets::from_list(&format!("test {}", STANDARD.encode(pair.public_key().as_ref())))
-            .unwrap()
-            .started_at(NOW);
+        let (k, tickets) = key(5);
+        let at = |issued: i64, expires: i64, nonce: u8| signed(&k, &rejoin_claims(issued, expires, nonce));
+        assert_eq!(tickets.check(&at(NOW, i64::MAX, 1), NOW), Err(Refusal::Malformed), "a lifetime to the end");
+        assert_eq!(tickets.check(&at(NOW, NOW - 1, 2), NOW), Err(Refusal::Malformed), "ends before it begins");
+        assert_eq!(tickets.check(&at(NOW, NOW + MAX_LIFETIME + 1, 3), NOW), Err(Refusal::Malformed));
+        assert!(tickets.check(&at(NOW, NOW + LIFETIME, 4), NOW + 1).is_ok(), "the checks after: sound");
         assert_eq!(
-            tickets.check(&signed(&pair, NOW, i64::MAX, 1), NOW),
-            Err(Refusal::Malformed),
-            "a lifetime to the end"
-        );
-        assert_eq!(
-            tickets.check(&signed(&pair, NOW, NOW - 1, 2), NOW),
-            Err(Refusal::Malformed),
-            "ends before it begins"
-        );
-        assert_eq!(tickets.check(&signed(&pair, NOW, NOW + MAX_LIFETIME + 1, 3), NOW), Err(Refusal::Malformed));
-        assert!(tickets.check(&signed(&pair, NOW, NOW + LIFETIME, 4), NOW + 1).is_ok(), "the checks after: sound");
-        assert_eq!(
-            tickets.check(&signed(&pair, NOW - SKEW - 1, NOW + 60, 5), NOW + 10),
+            tickets.check(&at(NOW - SKEW - 1, NOW + 60, 5), NOW + 10),
             Err(Refusal::OutOfTime),
             "before the start"
         );
         assert_eq!(
-            tickets.check(&signed(&pair, NOW - 1, NOW + 60, 6), NOW + 10),
+            tickets.check(&at(NOW - 1, NOW + 60, 6), NOW + 10),
             Err(Refusal::OutOfTime),
-            "a second before the start, within the skew: its nonce maybe used before (AP3)"
+            "a second before the start, within the skew: its one-time id maybe used before (AP3)"
         );
-        assert!(tickets.check(&signed(&pair, NOW, NOW + 60, 7), NOW + 10).is_ok(), "issued as it started");
+        assert!(tickets.check(&at(NOW, NOW + 60, 7), NOW + 10).is_ok(), "issued as it started");
     }
 
     /// AP2-5: a key of small order, a key id twice, the development key's id: refused; a reload replaces the listed keys,

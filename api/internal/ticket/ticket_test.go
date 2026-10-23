@@ -2,11 +2,17 @@ package ticket
 
 import (
 	"crypto/ed25519"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
-	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/go-jose/go-jose/v4"
+	"github.com/go-jose/go-jose/v4/jwt"
 )
 
 var now = time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
@@ -21,133 +27,162 @@ func keys(t *testing.T, s *Signer) map[string]ed25519.PublicKey {
 	return map[string]ed25519.PublicKey{kid: raw}
 }
 
-// Each ticket's nonce its own, random: the game server takes each once (AP1's TK-nonce-fixed)
-func TestNoncesDiffer(t *testing.T) {
-	s, err := NewSigner("k1", "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=")
-	if err != nil {
-		t.Fatal(err)
-	}
-	at := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
-	seen := map[[16]byte]bool{}
-	for range 8 {
-		_, tk, err := s.Issue([16]byte{1}, "Ada", [3]Shown{}, at)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if seen[tk.Nonce] || tk.Nonce == ([16]byte{}) {
-			t.Fatalf("a nonce again, or none: %x", tk.Nonce)
-		}
-		seen[tk.Nonce] = true
-	}
-}
-
-func TestIssueAndVerify(t *testing.T) {
-	seed, public, err := NewKey("k1")
-	if err != nil || !strings.HasPrefix(public, "k1 ") {
-		t.Fatalf("NewKey = %q, %v", public, err)
-	}
-	s, err := NewSigner("k1", seed)
-	if err != nil {
-		t.Fatal(err)
-	}
-	account := [16]byte{1, 2, 3}
-	ratings := [3]Shown{{1500, 500}, {1723, 64}, {65535, 45}}
-	encoded, issued, err := s.Issue(account, "Made Up", ratings, now)
-	if err != nil || len(encoded) > MaxBytes {
-		t.Fatalf("Issue = %d bytes, %v", len(encoded), err)
-	}
-	got, err := Verify(encoded, keys(t, s), now.Add(time.Minute), 30*time.Second)
-	if err != nil || got.Account != account || got.Name != "Made Up" || got.Nonce != issued.Nonce || !got.Expires.Equal(now.Add(Lifetime)) ||
-		got.Ratings != ratings {
-		t.Fatalf("Verify = %+v, %v", got, err)
-	}
-	// (a 32-byte key id and name: still within the cap)
-	longKey, err := NewSigner(strings.Repeat("k", 32), seed)
-	if err != nil {
-		t.Fatal(err)
-	}
-	long, _, err := longKey.IssueFor(account, strings.Repeat("é", 16), ratings, PurposeRejoin, 1<<63, now)
-	if err != nil || len(long) > MaxBytes {
-		t.Errorf("a 32-byte name's rejoin ticket: %d bytes, %v", len(long), err)
-	}
-}
-
-// A ticket's purpose: a search's has no match, a rejoin's its match; nothing else is made or read
-func TestPurpose(t *testing.T) {
-	seed, _, _ := NewKey("k1")
-	s, _ := NewSigner("k1", seed)
-	encoded, _, err := s.IssueFor([16]byte{9}, "Name", [3]Shown{}, PurposeRejoin, 0x0123456789abcdef, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, err := Verify(encoded, keys(t, s), now, 0)
-	if err != nil || got.Purpose != PurposeRejoin || got.Match != 0x0123456789abcdef {
-		t.Fatalf("a rejoin's ticket read back: %+v, %v", got, err)
-	}
-	if got, _ := Verify(mustIssue(t, s), keys(t, s), now, 0); got.Purpose != PurposeSearch || got.Match != 0 {
-		t.Errorf("a search's ticket read back: %+v", got)
-	}
-	for _, c := range []struct {
-		purpose byte
-		match   uint64
-	}{{PurposeSearch, 9}, {PurposeRejoin, 0}, {2, 0}, {2, 9}} {
-		if _, _, err := s.IssueFor([16]byte{9}, "Name", [3]Shown{}, c.purpose, c.match, now); err == nil {
-			t.Errorf("purpose %d, match %d: issued", c.purpose, c.match)
-		}
-		// (signed by hand: refused on reading too)
-		tk := Ticket{KeyID: "k1", Name: "Name", Issued: now, Expires: now.Add(Lifetime)}
-		body, _ := Encode(tk)
-		body[len(body)-9] = c.purpose
-		binary.BigEndian.PutUint64(body[len(body)-8:], c.match)
-		forged := base64.RawURLEncoding.EncodeToString(append(body, ed25519.Sign(s.key, append([]byte(Context), body...))...))
-		if _, err := Verify(forged, keys(t, s), now, 0); err == nil {
-			t.Errorf("purpose %d, match %d: read", c.purpose, c.match)
-		}
-	}
-}
-
-// Verify (the tests' and Rust's mirror): a ticket's life the API's at most, and begun before it ends
-func TestVerifyChecksTheLife(t *testing.T) {
-	seed, _, _ := NewKey("k1")
-	s, _ := NewSigner("k1", seed)
-	sign := func(tk Ticket) string {
-		body, _ := Encode(tk)
-		return base64.RawURLEncoding.EncodeToString(append(body, ed25519.Sign(s.key, append([]byte(Context), body...))...))
-	}
-	base := Ticket{KeyID: "k1", Name: "Name", Issued: now}
-	for name, expires := range map[string]time.Time{"a day long": now.Add(24 * time.Hour), "ending before it begins": now.Add(-time.Second)} {
-		tk := base
-		tk.Expires = expires
-		if _, err := Verify(sign(tk), keys(t, s), now, 30*time.Second); err == nil {
-			t.Errorf("%s: accepted", name)
-		}
-	}
-	base.Expires = now.Add(Lifetime)
-	if _, err := Verify(sign(base), keys(t, s), now, 30*time.Second); err != nil {
-		t.Errorf("its lifetime: %v", err)
-	}
-}
-
-func mustIssue(t *testing.T, s *Signer) string {
+func newSigner(t *testing.T, kid string) *Signer {
 	t.Helper()
-	encoded, _, err := s.Issue([16]byte{9}, "Name", [3]Shown{}, now)
+	seed, _, err := NewKey(kid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := NewSigner(kid, seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// handSigned is a JWT signed with the signer's key whatever its claims say (a ticket this package wouldn't make)
+func handSigned(t *testing.T, s *Signer, registered jwt.Claims, own map[string]any) string {
+	t.Helper()
+	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.EdDSA, Key: jose.JSONWebKey{Key: s.key, KeyID: s.KeyID}}, (&jose.SignerOptions{}).WithType("JWT"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := jwt.Signed(signer).Claims(registered).Claims(own).Serialize()
 	if err != nil {
 		t.Fatal(err)
 	}
 	return encoded
 }
 
-func TestVerifyRefusals(t *testing.T) {
-	seed, _, _ := NewKey("k1")
-	s, _ := NewSigner("k1", seed)
-	encoded, _, _ := s.Issue([16]byte{9}, "Name", [3]Shown{}, now)
+// a rejoin ticket's claims as this package makes them (its registered ones, its own), for hand-signed variations
+func rejoinClaims() (jwt.Claims, map[string]any) {
+	return jwt.Claims{
+		Issuer: Issuer, Subject: strings.Repeat("09", 16), IssuedAt: jwt.NewNumericDate(now), Expiry: jwt.NewNumericDate(now.Add(Lifetime)),
+		ID: base64.RawURLEncoding.EncodeToString(make([]byte, 16)),
+	}, map[string]any{
+		"name": "Name", "ratings": [3][2]uint16{{1500, 500}, {1500, 500}, {1500, 500}}, "purpose": "rejoin", "match": "00000000000000a1",
+	}
+}
+
+// Each ticket's one-time id its own, random: the game server takes each once (AP1's TK-nonce-fixed)
+func TestNoncesDiffer(t *testing.T) {
+	s := newSigner(t, "k1")
+	_, a, _ := s.IssueRejoin([16]byte{9}, "Name", [3]Shown{}, 0xa1, now)
+	_, b, _ := s.IssueRejoin([16]byte{9}, "Name", [3]Shown{}, 0xa1, now)
+	if a.Nonce == b.Nonce || a.Nonce == [16]byte{} {
+		t.Errorf("nonces %x and %x", a.Nonce, b.Nonce)
+	}
+}
+
+// A rejoin's ticket: a JWT (EdDSA, its key's id, typ JWT) whose claims read back as issued
+func TestIssueAndVerify(t *testing.T) {
+	s := newSigner(t, "k1")
+	ratings := [3]Shown{{Rating: 1500, Deviation: 500}, {Rating: 1723, Deviation: 64}, {Rating: 1312, Deviation: 110}}
+	encoded, issued, err := s.IssueRejoin([16]byte{1, 2, 3, 15: 16}, "Made Up é", ratings, 0xfedcba9876543210, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, _, _ := strings.Cut(encoded, ".")
+	raw, _ := base64.RawURLEncoding.DecodeString(head)
+	var header map[string]string
+	if err := json.Unmarshal(raw, &header); err != nil || header["alg"] != "EdDSA" || header["kid"] != "k1" || header["typ"] != "JWT" {
+		t.Errorf("the header %s: %v", raw, err)
+	}
+	got, err := Verify(encoded, keys(t, s), now, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != issued || got.Name != "Made Up é" || got.Ratings != ratings || got.Purpose != PurposeRejoin || got.Match != 0xfedcba9876543210 || !got.Expires.Equal(now.Add(Lifetime)) {
+		t.Errorf("read back %+v, issued %+v", got, issued)
+	}
+	// (the longest: a 32-byte key id, a 64-byte server, a name of 32 characters JSON writes as 6 bytes each, within the
+	// cap: 885 characters)
+	long, _ := NewSigner(strings.Repeat("k", 32), base64.StdEncoding.EncodeToString(make([]byte, 32)))
+	seat := Seat{Match: ^uint64(0), Server: strings.Repeat("h", 59) + ":4433", Playlist: 3, Seat: 5, Roster: 6}
+	most := [3]Shown{{65535, 65535}, {65535, 65535}, {65535, 65535}}
+	encoded, _, err = long.IssueSeat([16]byte{255}, strings.Repeat("<", 32), most, seat, now)
+	if err != nil || len(encoded) != 885 || len(encoded) > MaxBytes {
+		t.Errorf("the longest ticket: %d bytes, %v", len(encoded), err)
+	}
+}
+
+// What a ticket's claims must be: a rejoin's its match and no seat, a seat's its match, server and a seat in its roster;
+// iss carball, sub 32 hex digits, jti 16 bytes; anything else refused on issue or on reading
+func TestPurposeAndClaims(t *testing.T) {
+	s := newSigner(t, "k1")
+	if _, _, err := s.IssueRejoin([16]byte{9}, "Name", [3]Shown{}, 0, now); err == nil {
+		t.Error("a rejoin of no match issued")
+	}
+	if _, _, err := s.IssueRejoin([16]byte{9}, "", [3]Shown{}, 1, now); err == nil {
+		t.Error("a ticket without a name issued")
+	}
+	if _, _, err := s.IssueRejoin([16]byte{9}, "\xff\xfe", [3]Shown{}, 1, now); err == nil {
+		t.Error("a name not UTF-8 issued")
+	}
 	ks := keys(t, s)
-	otherSeed, _, _ := NewKey("k1")
-	other, _ := NewSigner("k1", otherSeed)
-	forged, _, _ := other.Issue([16]byte{9}, "Name", [3]Shown{}, now)
-	raw, _ := base64.RawURLEncoding.DecodeString(encoded)
-	flipped := append([]byte(nil), raw...)
-	flipped[20] ^= 1 // (the account's bytes changed: the signature no longer covers them)
+	registered, own := rejoinClaims()
+	if _, err := Verify(handSigned(t, s, registered, own), ks, now, 0); err != nil {
+		t.Fatalf("the hand-signed rejoin itself: %v", err)
+	}
+	for name, change := range map[string]func(r *jwt.Claims, o map[string]any){
+		"another issuer":         func(r *jwt.Claims, _ map[string]any) { r.Issuer = "someone" },
+		"a short sub":            func(r *jwt.Claims, _ map[string]any) { r.Subject = "09" },
+		"a jti not 16 bytes":     func(r *jwt.Claims, _ map[string]any) { r.ID = "abc" },
+		"no expiry":              func(r *jwt.Claims, _ map[string]any) { r.Expiry = nil },
+		"a search's purpose":     func(_ *jwt.Claims, o map[string]any) { o["purpose"] = "search" },
+		"a rejoin with a seat":   func(_ *jwt.Claims, o map[string]any) { o["seat"] = 1 },
+		"a rejoin with an aud":   func(r *jwt.Claims, _ map[string]any) { r.Audience = jwt.Audience{"game.example:4433"} },
+		"a rejoin of match zero": func(_ *jwt.Claims, o map[string]any) { o["match"] = "0000000000000000" },
+		"a match not hex":        func(_ *jwt.Claims, o map[string]any) { o["match"] = "zz000000000000a1" },
+		"a seat without a seat": func(r *jwt.Claims, o map[string]any) {
+			r.Audience, o["purpose"], o["playlist"], o["roster"] = jwt.Audience{"game.example:4433"}, "seat", 1, 2
+		},
+		"a seat outside its roster": func(r *jwt.Claims, o map[string]any) {
+			r.Audience, o["purpose"], o["playlist"], o["seat"], o["roster"] = jwt.Audience{"game.example:4433"}, "seat", 1, 2, 2
+		},
+		"a seat of two servers": func(r *jwt.Claims, o map[string]any) {
+			r.Audience, o["purpose"], o["playlist"], o["seat"], o["roster"] = jwt.Audience{"a.example:1", "b.example:1"}, "seat", 1, 0, 2
+		},
+	} {
+		r, o := rejoinClaims()
+		change(&r, o)
+		if _, err := Verify(handSigned(t, s, r, o), ks, now, 0); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+// A ticket's life: Lifetime at most (and the skew), begun before it ends (AP2-3)
+func TestVerifyChecksTheLife(t *testing.T) {
+	s := newSigner(t, "k1")
+	for name, expires := range map[string]time.Time{"a day long": now.Add(24 * time.Hour), "ending before it begins": now.Add(-time.Second)} {
+		r, o := rejoinClaims()
+		r.Expiry = jwt.NewNumericDate(expires)
+		if _, err := Verify(handSigned(t, s, r, o), keys(t, s), now, 30*time.Second); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+func TestVerifyRefusals(t *testing.T) {
+	s := newSigner(t, "k1")
+	encoded, _, _ := s.IssueRejoin([16]byte{9}, "Name", [3]Shown{}, 0xa1, now)
+	ks := keys(t, s)
+	forged, _, _ := newSigner(t, "k1").IssueRejoin([16]byte{9}, "Name", [3]Shown{}, 0xa1, now)
+	parts := strings.Split(encoded, ".")
+	// (its payload's account changed: the signature no longer covers it)
+	payload, _ := base64.RawURLEncoding.DecodeString(parts[1])
+	changed := strings.Replace(string(payload), `"sub":"09`, `"sub":"0a`, 1)
+	if changed == string(payload) {
+		t.Fatalf("no account in %s", payload)
+	}
+	tampered := parts[0] + "." + base64.RawURLEncoding.EncodeToString([]byte(changed)) + "." + parts[2]
+	// (alg none, and an HMAC keyed with the public key: refused, EdDSA alone)
+	none := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","kid":"k1","typ":"JWT"}`)) + "." + parts[1] + "."
+	hsHead := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","kid":"k1","typ":"JWT"}`))
+	mac := hmac.New(sha256.New, ks["k1"])
+	mac.Write([]byte(hsHead + "." + parts[1]))
+	confused := hsHead + "." + parts[1] + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 	for name, c := range map[string]struct {
 		ticket string
 		at     time.Time
@@ -155,12 +190,12 @@ func TestVerifyRefusals(t *testing.T) {
 		"expired":                 {encoded, now.Add(Lifetime + 31*time.Second)},
 		"not yet issued":          {encoded, now.Add(-31 * time.Second)},
 		"another key's signature": {forged, now},
-		"a byte changed":          {base64.RawURLEncoding.EncodeToString(flipped), now},
-		"not base64":              {"!!!", now},
+		"its payload changed":     {tampered, now},
+		"alg none":                {none, now},
+		"HS256 with the key":      {confused, now},
+		"not a JWT":               {"!!!", now},
 		"too long":                {strings.Repeat("A", MaxBytes+1), now},
 		"truncated":               {encoded[:40], now},
-		"a line break inside":     {encoded[:20] + "\n" + encoded[20:], now},
-		"padded":                  {encoded + "==", now},
 	} {
 		if _, err := Verify(c.ticket, ks, c.at, 30*time.Second); err == nil {
 			t.Errorf("%s: accepted", name)
@@ -192,92 +227,57 @@ func TestNewSignerRefusals(t *testing.T) {
 	}
 }
 
-// The lifetime pinned (AC-6: about two minutes; the game server's checks assume it, AP2-10)
+// The lifetimes pinned (AC-6: about two minutes; a seat's thirty seconds; the game server's checks assume them, AP2-10)
 func TestLifetime(t *testing.T) {
-	if Lifetime != 2*time.Minute {
-		t.Errorf("Lifetime = %v", Lifetime)
+	if Lifetime != 2*time.Minute || SeatLifetime != 30*time.Second {
+		t.Errorf("Lifetime = %v, SeatLifetime = %v", Lifetime, SeatLifetime)
 	}
 }
 
-// A name or key id that isn't UTF-8: refused, as the game server refuses it (AP2-11)
-func TestNotUTF8Refused(t *testing.T) {
-	seed, _, _ := NewKey("k1")
-	s, _ := NewSigner("k1", seed)
-	tk := Ticket{KeyID: "k1", Name: "\xff\xfe", Issued: now, Expires: now.Add(Lifetime)}
-	body, err := Encode(tk)
-	if err != nil {
-		t.Fatal(err)
-	}
-	signed := append([]byte(Context), body...)
-	encoded := base64.RawURLEncoding.EncodeToString(append(body, ed25519.Sign(s.key, signed)...))
-	if _, err := VerifySigned(encoded, keys(t, s)); err == nil {
-		t.Error("a name not UTF-8 accepted")
-	}
-}
-
-// A match ticket: one seat of one match at one server, SeatLifetime long, version 4; its fields read back, the longest
-// within the cap, and a seat that doesn't fit its roster, a seat's fields on another purpose or a seat at version 3
-// neither made nor read (RV-850)
+// A match ticket: its seat's fields read back, its server its aud, its life SeatLifetime; a seat that doesn't fit its
+// playlist's roster, or no server, not issued
 func TestSeat(t *testing.T) {
-	seed, _, _ := NewKey("k1")
-	s, _ := NewSigner("k1", seed)
-	seat := Seat{Match: 0xfeedface12345678, Server: "game-eu.example:4433", Playlist: 3, Seat: 5, Roster: 6}
-	encoded, issued, err := s.IssueSeat([16]byte{7}, "Made Up", [3]Shown{{1500, 500}, {1600, 80}, {1700, 90}}, seat, now)
+	s := newSigner(t, "k1")
+	seat := Seat{Match: 0x0123456789abcdef, Server: "game-eu.example:4433", Playlist: 2, Seat: 3, Roster: 4}
+	encoded, issued, err := s.IssueSeat([16]byte{7}, "Seated", [3]Shown{}, seat, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := Verify(encoded, keys(t, s), now.Add(10*time.Second), 30*time.Second)
-	if err != nil || got.Purpose != PurposeSeat || got.Match != seat.Match || got.Server != seat.Server || got.Playlist != 3 ||
-		got.Seat != 5 || got.Roster != 6 || !got.Expires.Equal(now.Add(SeatLifetime)) || got.Nonce != issued.Nonce {
-		t.Fatalf("Verify = %+v, %v", got, err)
+	got, err := Verify(encoded, keys(t, s), now, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := Verify(encoded, keys(t, s), now.Add(SeatLifetime+31*time.Second), 30*time.Second); err == nil {
-		t.Error("a match ticket past its life taken")
+	if got != issued || got.Purpose != PurposeSeat || got.Server != seat.Server || got.Seat != 3 || got.Roster != 4 || !got.Expires.Equal(now.Add(SeatLifetime)) {
+		t.Errorf("read back %+v", got)
 	}
-	longKey, _ := NewSigner(strings.Repeat("k", 32), seed)
-	long, _, err := longKey.IssueSeat([16]byte{7}, strings.Repeat("é", 16), [3]Shown{}, Seat{Match: 1, Server: strings.Repeat("s", MaxServer), Playlist: 1, Roster: 2}, now)
-	if err != nil || len(long) > MaxBytes {
-		t.Errorf("the longest match ticket: %d bytes, %v", len(long), err)
+	_, payload, _ := strings.Cut(encoded, ".")
+	payload, _, _ = strings.Cut(payload, ".")
+	raw, _ := base64.RawURLEncoding.DecodeString(payload)
+	var claims map[string]any
+	if err := json.Unmarshal(raw, &claims); err != nil || claims["aud"] != seat.Server || claims["sub"] != hex.EncodeToString([]byte{7, 15: 0}) {
+		t.Errorf("the claims %s: %v", raw, err)
 	}
-	for _, bad := range []Seat{
-		{Match: 1, Server: "a:1", Playlist: 2, Seat: 4, Roster: 4},
-		{Match: 1, Server: "a:1", Playlist: 2, Seat: 0, Roster: 6},
-		{Match: 1, Server: "a:1", Playlist: 4, Seat: 0, Roster: 8},
-		{Match: 0, Server: "a:1", Playlist: 1, Seat: 0, Roster: 2},
-		{Match: 1, Server: "", Playlist: 1, Seat: 0, Roster: 2},
-		{Match: 1, Server: strings.Repeat("s", MaxServer+1), Playlist: 1, Seat: 0, Roster: 2},
+	for name, bad := range map[string]Seat{
+		"no server":           {Match: 1, Playlist: 1, Seat: 0, Roster: 2},
+		"a roster not 2x":     {Match: 1, Server: "a:1", Playlist: 2, Seat: 0, Roster: 2},
+		"a seat past it":      {Match: 1, Server: "a:1", Playlist: 1, Seat: 2, Roster: 2},
+		"a playlist past 3":   {Match: 1, Server: "a:1", Playlist: 4, Seat: 0, Roster: 8},
+		"no match":            {Server: "a:1", Playlist: 1, Seat: 0, Roster: 2},
+		"a server past 64":    {Match: 1, Server: strings.Repeat("h", 65), Playlist: 1, Seat: 0, Roster: 2},
+		"a server not UTF-8":  {Match: 1, Server: "\xff:1", Playlist: 1, Seat: 0, Roster: 2},
+		"no playlist at all":  {Match: 1, Server: "a:1"},
+		"seat zero no roster": {Match: 1, Server: "a:1", Playlist: 1},
 	} {
-		if _, _, err := s.IssueSeat([16]byte{7}, "Name", [3]Shown{}, bad, now); err == nil {
-			t.Errorf("a seat that doesn't fit made: %+v", bad)
+		if _, _, err := s.IssueSeat([16]byte{7}, "Seated", [3]Shown{}, bad, now); err == nil {
+			t.Errorf("%s: issued", name)
 		}
 	}
-	if _, err := Encode(Ticket{KeyID: "k1", Name: "Name", Purpose: PurposeRejoin, Match: 1, Server: "a:1"}); err == nil {
-		t.Error("a rejoin's ticket with a seat's server made")
-	}
-	// (a seat's bytes marked version 3, or a rejoin's marked 4: refused, whatever the signature)
-	raw, _ := base64.RawURLEncoding.DecodeString(encoded)
-	raw[0] = Version
-	if _, err := decode(raw[:len(raw)-ed25519.SignatureSize]); err == nil {
-		t.Error("a seat at version 3 read")
-	}
-	rejoin, _, _ := s.IssueFor([16]byte{9}, "Name", [3]Shown{}, PurposeRejoin, 5, now)
-	raw, _ = base64.RawURLEncoding.DecodeString(rejoin)
-	raw[0] = SeatVersion
-	if _, err := decode(raw[:len(raw)-ed25519.SignatureSize]); err == nil {
-		t.Error("a rejoin's ticket at version 4 read")
-	}
-	// (a seat with bytes after its fields: refused)
-	raw, _ = base64.RawURLEncoding.DecodeString(encoded)
-	body := append(append([]byte{}, raw[:len(raw)-ed25519.SignatureSize]...), 0)
-	if _, err := decode(body); err == nil {
-		t.Error("a seat with a stray byte read")
-	}
 }
 
-// The development key: fixed, its public key the game server's test pins too (server/src/ticket.rs DEV_PUBLIC_KEY), so
-// the development matchmaker's tickets check on a development server
+// The development key: its id and its public key fixed (the game server's --dev takes it: server/src/ticket.rs)
 func TestDevSigner(t *testing.T) {
-	if got := DevSigner().Public(); got != "dev 1PGAXJYv9YNXDpJto+6YGra1rCGMn+EShfLPjpIiFgU=" {
-		t.Errorf("the development key: %q", got)
+	d := DevSigner()
+	if d.KeyID != DevKeyID || d.Public() != "dev 1PGAXJYv9YNXDpJto+6YGra1rCGMn+EShfLPjpIiFgU=" {
+		t.Errorf("the development key: %q", d.Public())
 	}
 }

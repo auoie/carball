@@ -1,33 +1,6 @@
 {
-  "comment": "A search's ticket and a rejoin's (version 3) and a match ticket's seat (version 4) made by api/internal/ticket and checked by server/src/ticket.rs: made-up values",
+  "comment": "A rejoin's ticket and a match ticket's seat (JWTs, EdDSA) made by api/internal/ticket and checked by server/src/ticket.rs: made-up values",
   "vectors": [
-    {
-      "seed": "yMfGxcTDwsHAv769vLu6ubi3trW0s7KxsK+urayrqqk=",
-      "keyId": "vector",
-      "publicKey": "J07WsmgF0v6NBgUp7povKHY7aXbZxf0d7jj/NrO3aTk=",
-      "account": "0f0e0d0c0b0a49088706050403020100",
-      "name": "Made Up é",
-      "issued": 1792300000,
-      "expires": 1792300120,
-      "nonce": "0102030405060708090a0b0c0d0e0f10",
-      "ratings": [
-        [
-          1500,
-          500
-        ],
-        [
-          1723,
-          64
-        ],
-        [
-          1312,
-          110
-        ]
-      ],
-      "purpose": 0,
-      "match": "0",
-      "encoded": "AwZ2ZWN0b3IPDg0MCwpJCIcGBQQDAgEAAAAAAGrUU-AAAAAAatRUWAECAwQFBgcICQoLDA0ODxAKTWFkZSBVcCDDqQXcAfQGuwBABSAAbgAAAAAAAAAAAFUJM6LxF0IBQV2Ah3KxdnWeWTBX5KKv-SQvUoNY7TOELIZLhP7Oednsxcp-0GHau5lCFQKB9EUEMKazPd5RBwA"
-    },
     {
       "seed": "yMfGxcTDwsHAv769vLu6ubi3trW0s7KxsK+urayrqqk=",
       "keyId": "vector",
@@ -53,7 +26,7 @@
       ],
       "purpose": 1,
       "match": "18364758544493064720",
-      "encoded": "AwZ2ZWN0b3IPDg0MCwpJCIcGBQQDAgEAAAAAAGrUU-AAAAAAatRUWJkCAwQFBgcICQoLDA0ODxAKTWFkZSBVcCDDqQXcAfQGuwBABSAAbgH-3LqYdlQyEDRtilmuZIvodVFh9bMITd49a2E2ExhjMggq5vOZIAG348mZKhgBuMDeM6vm373u01dlRWfiJB3dqkBGGanOLQ0"
+      "encoded": "eyJhbGciOiJFZERTQSIsImtpZCI6InZlY3RvciIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3OTIzMDAxMjAsImlhdCI6MTc5MjMwMDAwMCwiaXNzIjoiY2FyYmFsbCIsImp0aSI6Im1RSURCQVVHQndnSkNnc01EUTRQRUEiLCJtYXRjaCI6ImZlZGNiYTk4NzY1NDMyMTAiLCJuYW1lIjoiTWFkZSBVcCDDqSIsInB1cnBvc2UiOiJyZWpvaW4iLCJyYXRpbmdzIjpbWzE1MDAsNTAwXSxbMTcyMyw2NF0sWzEzMTIsMTEwXV0sInN1YiI6IjBmMGUwZDBjMGIwYTQ5MDg4NzA2MDUwNDAzMDIwMTAwIn0.ZyEV6RvhlnxZScSBUwmWBr55TldZwJPTzTGUlrqt81yWJl9zEtKTy6zLrhngNZNY6pPGn45172wapdPw3c-dCA"
     },
     {
       "seed": "yMfGxcTDwsHAv769vLu6ubi3trW0s7KxsK+urayrqqk=",
@@ -84,7 +57,7 @@
       "playlist": 2,
       "seat": 3,
       "roster": 4,
-      "encoded": "BAZ2ZWN0b3IPDg0MCwpJCIcGBQQDAgEAAAAAAGrUU-AAAAAAatRT_ncCAwQFBgcICQoLDA0ODxAKTWFkZSBVcCDDqQXcAfQGuwBABSAAbgIBI0VniavN7xRnYW1lLWV1LmV4YW1wbGU6NDQzMwIDBIu1ZQy-UYArnjo22jB2G5n_2oiaC1o77oo-fbMZY4PxSldZT7t4xMYFWURWCdoKW4kZbKke5spLuBs_D4SnpAs"
+      "encoded": "eyJhbGciOiJFZERTQSIsImtpZCI6InZlY3RvciIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJnYW1lLWV1LmV4YW1wbGU6NDQzMyIsImV4cCI6MTc5MjMwMDAzMCwiaWF0IjoxNzkyMzAwMDAwLCJpc3MiOiJjYXJiYWxsIiwianRpIjoiZHdJREJBVUdCd2dKQ2dzTURRNFBFQSIsIm1hdGNoIjoiMDEyMzQ1Njc4OWFiY2RlZiIsIm5hbWUiOiJNYWRlIFVwIMOpIiwicGxheWxpc3QiOjIsInB1cnBvc2UiOiJzZWF0IiwicmF0aW5ncyI6W1sxNTAwLDUwMF0sWzE3MjMsNjRdLFsxMzEyLDExMF1dLCJyb3N0ZXIiOjQsInNlYXQiOjMsInN1YiI6IjBmMGUwZDBjMGIwYTQ5MDg4NzA2MDUwNDAzMDIwMTAwIn0.nZimkEC7DcYra6tCNIw6XDODofTthLJkwjSJiEKLVsNhTxvgf85iLM8-y0z2xepuvGQHjykTWT0qmEHB5ZL4Dw"
     }
   ]
 }

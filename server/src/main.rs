@@ -37,7 +37,7 @@ struct Args {
     public_port: Option<u16>,
     health_port: u16,
     limits: NetLimits,
-    /// The search tickets' public keys (`TICKET_PUBLIC_KEYS`: "KID BASE64", comma- or line-separated; notes/accounts.md
+    /// The tickets' public keys (`TICKET_PUBLIC_KEYS`: "KID BASE64", comma- or line-separated; notes/accounts.md
     /// §3): a queue server's, required unless --dev (which makes a key of its own as well)
     ticket_keys: Option<String>,
     /// Or their file (`TICKET_PUBLIC_KEYS_FILE`): read at the start and again on SIGHUP (a rotation without a restart,
@@ -549,12 +549,18 @@ async fn main() -> anyhow::Result<()> {
             .unwrap_or_else(|e| e.exit());
         std::process::exit(if net::health_check(check.health_port).await { 0 } else { 1 });
     }
-    // (the log: one line per event, its time and level, on stderr; info and up)
-    tracing_subscriber::fmt()
-        .with_target(false)
-        .with_max_level(tracing::Level::INFO)
-        .with_writer(std::io::stderr)
-        .init();
+    // (the log: one line per event, its time and level, on stderr; ours info and up, the other crates' errors alone)
+    {
+        use tracing_subscriber::layer::SubscriberExt;
+        use tracing_subscriber::util::SubscriberInitExt;
+        tracing_subscriber::fmt()
+            .with_target(false)
+            .with_max_level(tracing::Level::INFO)
+            .with_writer(std::io::stderr)
+            .finish()
+            .with(carball_server::log_filter(tracing::Level::INFO))
+            .init();
+    }
     let args = parse_args(argv)?;
     tokio::spawn(exit_on_stop(tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?));
     engine::init(&args.meshes)?;

@@ -478,9 +478,6 @@ async fn match_tickets_open_their_match_here_once_each_seat_its_own() {
     assert_eq!(none, refused, "a claim without a ticket");
     let (junk, ..) = first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_CLAIM, 0, 0, "AAAA".into())).await;
     assert_eq!(junk, refused, "a malformed ticket");
-    let search = tickets.dev_ticket([1; 16], "Ada", [DEFAULT_RATING; 3], Purpose::Search, unix_now()).unwrap();
-    let (old, ..) = first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_CLAIM, 0, 0, search)).await;
-    assert_eq!(old, refused, "a search's ticket (from before the central matchmaker)");
     let elsewhere = seat_ticket(&tickets, 1, "Ada", 0xa1, 0, 2, "game-eu.example:4433");
     let (other_server, ..) =
         first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_CLAIM, 0, 0, elsewhere)).await;

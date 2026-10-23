@@ -60,9 +60,8 @@ func (s *Server) gameServer(next http.HandlerFunc) http.HandlerFunc {
 }
 
 // playerTicket checks a player's ticket as a result, a quitter or a refill carries it: our signature (a key from before
-// a rotation too), issued within the acceptance window (and not ahead of now past the skew), for that purpose (a
-// result's and a quitter's: the seat's first, its match ticket's for that match, or a search's from a match a game
-// server from before the central matchmaker made; a refill's: the rejoin's, of that match)
+// a rotation too), issued within the acceptance window (and not ahead of now past the skew), for that purpose and match
+// (a result's and a quitter's: the seat's match ticket; a refill's: the rejoin's)
 func (s *Server) playerTicket(encoded string, purpose byte, match string, now time.Time) (ticket.Ticket, error) {
 	t, err := ticket.VerifySigned(encoded, s.TicketKeys)
 	if err != nil {
@@ -71,8 +70,7 @@ func (s *Server) playerTicket(encoded string, purpose byte, match string, now ti
 	if t.Issued.After(now.Add(30*time.Second)) || now.Sub(t.Issued) > AcceptWindow {
 		return ticket.Ticket{}, errors.New("ticket: outside the acceptance window")
 	}
-	seat := purpose == ticket.PurposeSearch && t.Purpose == ticket.PurposeSeat
-	if (t.Purpose != purpose && !seat) || ((purpose == ticket.PurposeRejoin || seat) && matchText(t.Match) != match) {
+	if t.Purpose != purpose || matchText(t.Match) != match {
 		return ticket.Ticket{}, errors.New("ticket: not for this")
 	}
 	return t, nil
@@ -120,7 +118,7 @@ func (s *Server) result(w http.ResponseWriter, r *http.Request) {
 			bad = true
 			break
 		}
-		t, err := s.playerTicket(p.Ticket, ticket.PurposeSearch, body.Match, now)
+		t, err := s.playerTicket(p.Ticket, ticket.PurposeSeat, body.Match, now)
 		if err != nil {
 			s.Log.Warn("a result's ticket refused", "match", body.Match, "err", err)
 			writeError(w, http.StatusForbidden, "ticket")
@@ -194,7 +192,7 @@ func (s *Server) quitter(w http.ResponseWriter, r *http.Request) {
 			leftAt = now
 		}
 	}
-	t, err := s.playerTicket(body.Ticket, ticket.PurposeSearch, body.Match, now)
+	t, err := s.playerTicket(body.Ticket, ticket.PurposeSeat, body.Match, now)
 	if err != nil {
 		writeError(w, http.StatusForbidden, "ticket")
 		return

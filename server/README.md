@@ -22,10 +22,10 @@ start-up. The info endpoint (127.0.0.1 unless `--info-bind`, e.g. 0.0.0.0 for an
 the browser can connect with `serverCertificateHashes`. A public server runs with a real certificate (`CERT_PATH` and
 `KEY_PATH`, or `--cert` and `--key`; a key that isn't the certificate's is refused): no info endpoint, reloaded when its
 files change or on SIGHUP; it needs `ALLOWED_ORIGIN` (empty or blank is an error, not "any"). A queue server needs a
-certificate or `--dev` (a self-signed one, whatever the certificate's variables say: RV-381), and the search tickets'
-public keys, `TICKET_PUBLIC_KEYS` (notes/accounts.md §3: a search and a claim are a signed-in account's, its ticket
-checked offline in the session's hello; `--dev` makes a key of its own and its info endpoint signs tickets at
-`/dev-ticket?name=…&id=…` with no sign-in), and the accounts service for the rated matches' calls, `API_URL` and
+certificate or `--dev` (a self-signed one, whatever the certificate's variables say: RV-381), and the tickets' public
+keys, `TICKET_PUBLIC_KEYS` (notes/accounts.md §3: a claim and a rejoin are a signed-in account's, its ticket, a JWT,
+checked offline in the session's hello; `--dev` makes a key of its own and its info endpoint signs rejoin tickets at
+`/dev-ticket?name=…&id=…&rejoin=…` with no sign-in), and the accounts service for the rated matches' calls, `API_URL` and
 `GAME_SERVER_TOKEN_FILE` (`--dev` logs them instead: APP-CONTRACT.md). Without `--meshes` or
 `MESHES_DIR` the meshes are the repository's `out/arena/collision_meshes` above the binary. The deployment's interface
 (its environment variables, ports, health check, limits) is `APP-CONTRACT.md`; its images come from
@@ -61,8 +61,8 @@ cargo clippy --no-default-features --features host --lib --bins -- -D warnings
 | `src/game_loop.rs` | the game thread: the sessions' messages, the queue, every match at 120 Hz on its own clock |
 | `src/queue.rs` | who plays together: each playlist's searchers, the oldest with those within a rating window (wider as they wait), teams by a snake draft |
 | `src/match_host.rs` | the matches: reserved slots with one-time tokens, full start, cancelled on a no-show, let go when over; the ranked bookkeeping (each seat's first ticket, the leave penalty's latch, results; a seat held for a rejoin) |
-| `src/net.rs` | WebTransport sessions (a search's, a claim's and a rejoin's ticket checked), development identity and info endpoint |
-| `src/ticket.rs` | the search tickets: Ed25519 over the accounts service's format (version 3: the ratings, the purpose and a rejoin's match), keys by id, each nonce once; `--dev`'s own key |
+| `src/net.rs` | WebTransport sessions (a claim's and a rejoin's ticket checked), development identity and info endpoint |
+| `src/ticket.rs` | the tickets: the accounts service's JWTs (EdDSA alone, jsonwebtoken), keys by id, each one-time id once, the time rules; `--dev`'s own key |
 | `src/outbox.rs` | the ranked calls to the accounts service (results, quitters, refills), kept on disk and retried for up to 24 h (`API_URL`) |
 | `tests/end_to_end.rs` | a client connects over WebTransport, drives, and checks acks, ping and the updates; two searches make a match |
 

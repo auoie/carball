@@ -1,4 +1,4 @@
-# Game protocol (version 28)
+# Game protocol (version 29)
 
 Client ↔ server over **WebTransport** (HTTP/3, QUIC). All integers little-endian. Implemented in
 `server/src/protocol.rs` (Rust) and `client/src/net/protocol.ts` (TypeScript); `vectors.json` holds byte-exact
@@ -23,25 +23,22 @@ screen's time is up the server ends the sessions. A search (intent 1) or a decli
 open match, which rematches; a queue server refuses a join, and a development server a claim (`Refused` 3).
 
 **Tickets** (notes/accounts.md §3): on a queue server, a claim and a rejoin carry a ticket from the accounts service, so
-the player is an account: `version (1) = 3 | u8 k | k bytes key id | 16 bytes account
-id | u64 issued | u64 expires (big-endian Unix seconds) | 16 bytes nonce | u8 n | n bytes name (the account's display
-name, 1-32 bytes)`, then a 64-byte Ed25519 signature over `carball-search\0` and those bytes, the whole as unpadded
-base64url. The server checks it offline with the public keys it's given by id (`TICKET_PUBLIC_KEYS`: keys rotate),
-within its time (±30 s), and takes each nonce once; the account's id (its first 8 bytes, big-endian) is then the
-session's key and the ticket's name its name, in place of the `Hello`'s. A development queue server (`--dev`) takes
-the development key's tickets (id `dev`, a fixed key: a development matchmaker's match tickets) and signs rejoin
-tickets for the pages that ask at
-`http://host:infoPort/dev-ticket?name=…&id=…` (32 hex digits; `r1`, `r2`, `r3` the playlists' ratings, a new account's
-1500 when none; `rejoin`, a rejoin's ticket for that match: 16 hex digits); the open match (intent 0) and the browser's
-local host take no ticket. After the name come the account's ratings: 1v1, 2v2, 3v3, each `u16 rating`, `u16 deviation`
-(big-endian, rounded); then `u8 purpose` (0 a search's, from before the matchmaker; 1 a rejoin's; 2 a seat's) and `u64
-match` (a rejoin's or a seat's match id; 0 for a search). A match ticket (format 4, purpose 2) adds `u8 n | n bytes
-server (its address, host:port) | u8 playlist (the team size) | u8 seat | u8 roster`; it lives 30 s. A claim takes a
-match ticket for this server alone, a rejoin a rejoin's ticket for that match alone (`POST /api/ticket?rejoin=MATCH`;
-else `Refused` 4); a leaver's queue ban doesn't stop a rejoin's ticket of the ban's own match, so they can come back
-and refill the lobby. The longest ticket is 358 characters; the `Hello` takes 512 at most.
-`protocol/ticket_vector.json` holds a search's, a rejoin's and a seat's ticket made by the API's code, which both sides'
-tests read.
+the player is an account: a JWT (compact JWS, `alg` EdDSA alone, the key's id its `kid`) whose claims are `iss`
+`carball`, `sub` the account id (32 hex digits), `iat` and `exp` (Unix seconds), `jti` its one-time id (16 bytes,
+base64url), `name` (the account's display name, 1-32 bytes), `ratings` (1v1, 2v2, 3v3: `[rating, deviation]` each,
+rounded), `purpose` (`rejoin` or `seat`) and `match` (its match id, 16 hex digits); a match ticket (`seat`, 30 s) adds
+`aud` (its server's address, host:port), `playlist` (the team size), `seat` and `roster`. The server checks it offline
+with the public keys it's given by id (`TICKET_PUBLIC_KEYS`: keys rotate), within its time (±30 s), and takes each
+one-time id once; the account's id (its first 8 bytes, big-endian) is then the session's key and the ticket's name its
+name, in place of the `Hello`'s. A claim takes a match ticket for this server alone, a rejoin a rejoin's ticket for that
+match alone (`POST /api/ticket?rejoin=MATCH`; else `Refused` 4); a leaver's queue ban doesn't stop a rejoin's ticket of
+the ban's own match, so they can come back and refill the lobby. A development queue server (`--dev`) takes the
+development key's tickets (id `dev`, a fixed key: a development matchmaker's match tickets) and signs rejoin tickets for
+the pages that ask at `http://host:infoPort/dev-ticket?name=…&id=…&rejoin=…` (`id` 32 hex digits; `r1`, `r2`, `r3` the
+playlists' ratings, a new account's 1500 when none; `rejoin` the match, 16 hex digits, required); the open match
+(intent 0) and the browser's local host take no ticket. The longest ticket is 885 characters; the `Hello` takes 1024 at
+most. `protocol/ticket_vector.json` holds a rejoin's and a seat's ticket made by the API's code, which both sides' tests
+read.
 
 **Rejoining** (LV1): a ranked 2v2 or 3v3 seat left by accident (a lost connection, a kick) is held until the match ends.
 The page keeps the match's id from its `Welcome` and offers it back for 900 s from the join; a `Hello` with intent 3, the
@@ -54,7 +51,7 @@ Framed as `u16 length` + message (`length` counts the message, which starts with
 
 | Type | Direction | Fields |
 |---|---|---|
-| `0x01 Hello` | C→S | `u16 version`, `u8 team` (0 blue, 1 orange, 255 any), `u8 model` (the garage's car: 0 Sport, 1 retired (2026-10-17: taken as 0; ids are never reused), 2 Flat, 3 Tall, only ever appended to; the server plays it with its hitbox preset, Standard for Sport, and takes one it doesn't know as 0), `f32 dodgeDeadzone`, `f32 steeringSensitivity`, `f32 airControlSensitivity`, `u8 autoSkipReplay` (1: always ready to skip goal replays, `bAutoSkipGoalReplay`), `u64 key` (the key the server gave this client before, in its `Welcome`, kept for reconnects; 0 for none; a search's: the browser's own random key, kept in its storage; 0 beside a ticket, whose account is the key), `u8 n`, `n` bytes the player's name (UTF-8, 32 at most; the server drops control, format and invisible characters, makes every run of spaces one space, keeps two combining marks on a character at most and trims it, and names a nameless player, or one asking for another's automatic name in any case, spacing, digits or lookalike letters, "Player N"), `u8 quickChat`, `u8 blockNonTactical` (the chat filters from the start, as `ChatFilter`), `u8 intent` (0 join the open match, 2 claim: a seat with its match ticket, 3 rejoin: the ranked match the token names, 4 ping: a region's, answered with `Pong` (the server's name) and the session closed at once, no ticket; 1 search and 5 decline no longer served: `Refused` 3), `u8 playlist` (0), `u64 token` (a rejoin's: the match's id from its `Welcome`; else 0, a claim's match named by its ticket), `u16 n`, `n` bytes the ticket (a claim's and a rejoin's, ASCII, 512 at most: see Tickets; empty for a join) |
+| `0x01 Hello` | C→S | `u16 version`, `u8 team` (0 blue, 1 orange, 255 any), `u8 model` (the garage's car: 0 Sport, 1 retired (2026-10-17: taken as 0; ids are never reused), 2 Flat, 3 Tall, only ever appended to; the server plays it with its hitbox preset, Standard for Sport, and takes one it doesn't know as 0), `f32 dodgeDeadzone`, `f32 steeringSensitivity`, `f32 airControlSensitivity`, `u8 autoSkipReplay` (1: always ready to skip goal replays, `bAutoSkipGoalReplay`), `u64 key` (the key the server gave this client before, in its `Welcome`, kept for reconnects; 0 for none; a search's: the browser's own random key, kept in its storage; 0 beside a ticket, whose account is the key), `u8 n`, `n` bytes the player's name (UTF-8, 32 at most; the server drops control, format and invisible characters, makes every run of spaces one space, keeps two combining marks on a character at most and trims it, and names a nameless player, or one asking for another's automatic name in any case, spacing, digits or lookalike letters, "Player N"), `u8 quickChat`, `u8 blockNonTactical` (the chat filters from the start, as `ChatFilter`), `u8 intent` (0 join the open match, 2 claim: a seat with its match ticket, 3 rejoin: the ranked match the token names, 4 ping: a region's, answered with `Pong` (the server's name) and the session closed at once, no ticket; 1 search and 5 decline no longer served: `Refused` 3), `u8 playlist` (0), `u64 token` (a rejoin's: the match's id from its `Welcome`; else 0, a claim's match named by its ticket), `u16 n`, `n` bytes the ticket (a claim's and a rejoin's, ASCII, 1024 at most: see Tickets; empty for a join) |
 | `0x08 Mute` | C→S | `u32 car`, `u8 on`: mute or unmute that player's chat for this player (`ClientMutePlayer`: the server stops relaying their lines here; a block is the client's own) |
 | `0x02 ResetInputBuffer` | C→S | nothing: the client had a hitch (over 0.1 s between its frames) 2 s ago; the server resets its jitter buffer to the initial estimate (as the game's `ServerResetInputBuffer`) |
 | `0x03 ReadyUp` | C→S | nothing: skip the goal replay (the game's `ReadyUp`, Space / pad A); counts only during one |
@@ -72,7 +69,7 @@ Framed as `u16 length` + message (`length` counts the message, which starts with
 | `0x88 Roster` | S→C | `u8 n`, `n` × (`u32 carId`, `u8 team`, `u8 model` (the garage's car they drive, as Hello's, checked: a retired or unknown one sent as 0), `u8 m`, `m` bytes name): the players, sent to everyone when it changes (a client's log says who joined and who left) |
 | `0x89 Chat` | S→C | `u32 carId` (the sender's), `u8 preset`, `u8 team`, `u16 seconds` (the clock's shown seconds at relay: `[M:SS]`, `+` in overtime, none once the match has ended) |
 | `0x8A ChatBlocked` | S→C | `f32 seconds`: the sender's chat is blocked for this long (the log's "Chat disabled for N second(s).") |
-| `0x8B Refused` | S→C | `u8 reason` (0: the match has its most players, 16; 1: the client's `Hello` has another protocol version, read before its fields (a page from before: "reload the page"); 2: the claim's match is cancelled or over (its id remembered a minute), no longer waiting for its players, or its seat is taken or doesn't fit the match; 3: this server doesn't serve the intent (a search, a decline, a claim on a development server's open match), or no such playlist; 4: the claim's or rejoin's ticket is missing, malformed, not signed by a key the server has, out of its time, used before, or for something else (a match ticket for another server or for a rejoin, a rejoin's for a claim or another match, a search's); 5: a claim from an account whose player is in another match here, or a rejoin of a seat whose session is live (heard within 3 s: another tab), the seat untouched; 6: a rejoin whose match is over or decided, isn't a ranked 2v2 or 3v3, or has no seat of the account's; 7: no longer sent (a quitter's search: the matchmaker's now)): instead of a `Welcome`; the session ends |
+| `0x8B Refused` | S→C | `u8 reason` (0: the match has its most players, 16; 1: the client's `Hello` has another protocol version, read before its fields (a page from before: "reload the page"); 2: the claim's match is cancelled or over (its id remembered a minute), no longer waiting for its players, or its seat is taken or doesn't fit the match; 3: this server doesn't serve the intent (a search, a decline, a claim on a development server's open match), or no such playlist; 4: the claim's or rejoin's ticket is missing, malformed, not signed by a key the server has, out of its time, used before, or for something else (a match ticket for another server or for a rejoin, a rejoin's for a claim or another match); 5: a claim from an account whose player is in another match here, or a rejoin of a seat whose session is live (heard within 3 s: another tab), the seat untouched; 6: a rejoin whose match is over or decided, isn't a ranked 2v2 or 3v3, or has no seat of the account's; 7: no longer sent (a quitter's search: the matchmaker's now)): instead of a `Welcome`; the session ends |
 | `0x8C Scoreboard` | S→C | `u8 n`, `n` × (`u32 car`, `u16 ping` (ms, 999 at most), `u8 flags` (1 the match's MVP, 2 ready for the next match on the end screen), `u8 k`, `k` × `u16` the match counters, 2 × (`u8 title`, `u16 count`) the podium titles, primary then secondary (title 255: none; the ids are `engine/stats/PodiumTitles.cpp` `STAT_TITLES`'s, the count is the stat shown under it: `notes/match-stats.md` §5.4a)): every player's scoreboard line, when one changes and every 2 s (the pings). Counters, in order: MatchScore, Goals, Assists, Saves, Shots, Demolishes, EpicSaves, Centers, Clears, AerialHits, BicycleHits, JuggleHits, FirstTouches, PoolShots, LowFives, HighFives, TimesDemolished, CrossbarHits, OwnGoals, BallTouches (`engine/stats/StatFactory.h`) |
 | `0x8D StatEvent` | S→C | `u8 event`, `u16 points`: a stat this player gained (`ClientNotifyGainedStat`: their popup); not BallHit or CrossbarHits (`bSkipReplication`) |
 | `0x8E Ticker` | S→C | `u8 event`, `u32 receiver`, `u32 victim` (cars; victim 0: none): a stat someone gained, to every player for their feed (`bNotifyTicker` events) |
@@ -172,7 +169,8 @@ carries the account's ratings and its purpose (above), the `Hello`'s ticket up t
 before, which refuses them (`Refused` 3) if it does. Version 28 (2026-10-23): the accounts service's central matchmaker (notes/matchmaking.md):
 a claim's match ticket (format 4, a seat's) and the `Hello`'s ticket up to 512 bytes; no search (intent 1) or decline
 (intent 5) on a game server, and no `0x8F MatchFound` or `0x92 SearchCooldown`; a ping's session closed right after its
-`Pong`, which then carries the server's name (RV-863).
+`Pong`, which then carries the server's name (RV-863). Version 29 (2026-10-23): the tickets as JWTs (above, notes/accounts.md §3), the `Hello`'s ticket
+up to 1024 bytes; the binary format (versions 3 and 4) and the search's tickets gone.
 
 Podium title ids (`notes/match-stats.md` §5.4a; the client's `game/podiumTitles.ts`): 0 OvertimeGoal, 1 Goals_10,
 2 Goals_6_9, 3 Goals_3_5, 4 Saves_10, 5 Saves_6_9, 6 Saves_3_5, 7 EpicSaves, 8 PoolShots, 9 BackwardsGoal, 10 BicycleGoal,

@@ -4,6 +4,7 @@
 // server's from its own info server (`/dev-ticket`: signed with the development key, the browser's key standing for an
 // account, the settings' name its name).
 import { loadSettings } from "../settings/settings";
+import { isTicketText } from "./protocol";
 import { browserKey } from "./search";
 
 /** The page has no signed-in session, or it ended: sign in to play online */
@@ -88,6 +89,6 @@ export function devTicket(host: string, infoPort: number, get: typeof fetch = fe
 
 function ticketOf(body: unknown): string {
   const ticket = (body as { ticket?: unknown } | null)?.ticket;
-  if (typeof ticket !== "string" || !/^[A-Za-z0-9_-]{1,512}$/.test(ticket)) throw new Error("a malformed ticket");
+  if (!isTicketText(ticket)) throw new Error("a malformed ticket");
   return ticket;
 }

@@ -128,47 +128,48 @@ With our Steam Web API key, `ISteamUser/GetPlayerSummaries` gives the persona na
   rename, delete, ticket) also requires `Origin` to equal `PUBLIC_ORIGIN`, the custom header, and JSON when there's a
   body (16 KiB at most, one value and nothing after it).
 
-**The central matchmaker (2026-10-23, notes/matchmaking.md, MX1) supersedes the search tickets below.** The page
-searches with the API itself (its session cookie), and a found match gives each player a match ticket (format 4: one
-seat of one match at one game server, 30 s, used once there: RV-850), which the game server checks offline as below. The
-API holds one search and one match per account across the servers (AC-27 done). The rejoin ticket stays, given only for
-the account's latest match until a later search is accepted. "A ticket isn't bound to a server" and the shared search
-ticket (RX43) are gone; search tickets stay one release, for pages from before the switch.
+**The central matchmaker (2026-10-23, notes/matchmaking.md, MX1).** The page searches with the API itself (its session
+cookie), and a found match gives each player a match ticket (one seat of one match at one game server, 30 s, used once
+there: RV-850), which the game server checks offline as below. The API holds one search and one match per account
+across the servers (AC-27 done). The rejoin ticket (`POST /api/ticket?rejoin=MATCH`) is given only for the account's
+latest match until a later search is accepted. The search tickets and the shared search ticket (RX43) are gone
+(protocol 29: `POST /api/ticket` without a match is a 400).
 
-**Tickets: how the game server knows a player (AC-6).** Before a search, a signed-in page asks for a ticket.
+**Tickets: how the game server knows a player (AC-6; JWTs since protocol 29, 2026-10-23).** A ticket is a JWT (compact
+JWS) signed with Ed25519 (`alg` EdDSA, the key's id its `kid`, `typ` JWT): the API signs with go-jose v4
+(`api/internal/ticket`), the game server checks with jsonwebtoken 9 on ring (`server/src/ticket.rs`). Its claims:
+- `iss` `carball`; `sub` the account id (32 hex digits);
+- `iat` and `exp` (Unix seconds: a rejoin's two minutes, a match ticket's 30 s);
+- `jti`, its one-time id (16 random bytes, base64url);
+- `name`, the display name (the name other players see: no guest names online);
+- `ratings`: 1v1, 2v2, 3v3, `[rating, deviation]` each, rounded (the matchmaker pairs by them);
+- `purpose` (`rejoin` or `seat`) and `match`, its match id (16 hex digits);
+- a seat's: `aud`, its server (host:port), `playlist` (the team size), `seat` and `roster` (its seats).
 
-A ticket is Ed25519-signed and holds:
-- `aud` (`carball-search`);
-- the account id and display name (the name other players see: no guest names online);
-- `iat` and `exp` (about 2 minutes);
-- a nonce;
-- a `kid`;
-- the protocol version.
+The longest is 885 characters (a 32-byte key id, a 64-byte server, a 32-byte name of characters JSON escapes to 6 bytes
+each); the `Hello` takes 1024. `protocol/ticket_vector.json` holds a rejoin's and a seat's made by the API's code, which
+both sides' tests check.
 
 The game server checks it offline, with `TICKET_PUBLIC_KEYS` (a list, so keys can rotate), so a match never waits on the
 API. It:
+- takes EdDSA alone (`none`, or an HMAC keyed with the public key, refused), the key named by the `kid`, `iss`
+  `carball`, and each claim in its form (a rejoin's with no seat, a seat's in its playlist's roster);
 - allows ±30 s of clock skew (both boxes on NTP);
 - caps the ticket's size in `Hello`;
-- keeps used nonces until `exp`, so a ticket is used once; refuses a ticket issued before the process started (its
-  nonce may have been used with the one before), one longer than the API's lifetime or ending before it began (AP2-3,
+- keeps used one-time ids until `exp`, so a ticket is used once; refuses a ticket issued before the process started (its
+  id may have been used with the one before), one longer than the API's lifetime or ending before it began (AP2-3,
   AP2-4);
 - takes its keys from `TICKET_PUBLIC_KEYS` or `TICKET_PUBLIC_KEYS_FILE`, the file read again on SIGHUP (a rotation
   without a restart), refusing a list with no key, a key id twice, a key of small order or the id `dev` (AP2-5);
-- allows one active search or match per account (two tabs, two devices). That holds per game server: with regions
-  (2026-10-22, notes/matchmaking.md, Regions) an account searches every region it ticks at once, on purpose, and the page
-  takes the first match found, ending or declining the rest; it can't play two matches at once from one page. The API
-  holding it across servers (AC-27) stays open, not needed for that.
-- **A ticket isn't bound to a server, on purpose** (RX43): a search across regions sends one search ticket to every
-  region's server (one search, several servers), each server taking it once (its nonce kept per server), so a search
-  costs one ticket from the account's 60 in 10 minutes however many regions it searches, and the claim's and a
-  decline's tickets (fetched apart) aren't squeezed out by it (RX43C-2). A stolen ticket could likewise be used once on
-  each server within its two minutes, as its account, which the account's one search per server bounds.
+- takes a match ticket for a claim of its seat at this server alone (its `aud` this server's name, RV-863), a rejoin's
+  for that match's rejoin alone (`Refused` 4 otherwise).
 
 A seat belongs to the account: a reconnect needs a fresh ticket for that account, not the browser key.
 
-The ticket rides in the search's `Hello`, and the game server refuses any online `Hello` without a valid one. The
-protocol simply changes, since no older client exists. The `u64` key stays in the `Hello` for development servers
-(no tickets), but a page sends 0 beside a ticket and the game server keys a ticketed player by the account (RX29C).
+The ticket rides in the claim's or the rejoin's `Hello`, and the game server refuses any online `Hello` without a valid
+one. The protocol simply changes (a page from before is told to reload: `Refused` 1). The `u64` key stays in the
+`Hello` for development servers (no tickets), but a page sends 0 beside a ticket and the game server keys a ticketed
+player by the account (RX29C).
 
 **Results: server to server (AC-5, AC-22, AC-25).**
 - At every match's end (every online match is rated) the game server posts the result to `POST /api/results`.
@@ -178,7 +179,7 @@ protocol simply changes, since no older client exists. The `u64` key stays in th
   its match id: the same match's quitter report and result may both carry it, another match's may not; AP3). A leaked
   server credential then can't rate players who never played, nor ban an account more than once per ticket.
 - **The acceptance window W** (about 24 hours): a result's tickets must have `iat` within W of when the result arrives.
-  That spans the match, overtime and the retry queue. `used_tickets` keeps every nonce for at least W, so no pruned
+  That spans the match, overtime and the retry queue. `used_tickets` keeps every one-time id for at least W, so no pruned
   ticket can count twice; a ticket older than W is refused.
 - Transport (question 6, decided): a **Cloudflare Access service token** on `/api/results` (it also exempts the route
   from bot challenges), plus the game server's own token compared in constant time, plus the players' tickets above;
@@ -200,11 +201,11 @@ protocol simply changes, since no older client exists. The `u64` key stays in th
   the match's seats lose theirs within 5 s of it, it's the server's network outage and no one is banned (AP3). The report
   carries the leave's time, and the ban runs from it (held within the acceptance window: a report that gets through late
   bans for what's left). The API raises the account's `queue_bans` row by the ladder (ours, the user's choice of LV1's: 5 min → 15 min → 1 h → 6 h →
-  24 h cap, one step forgiven for every 24 h without a leave); the ticket endpoint refuses a search ticket while it runs,
-  and the page shows until when. A rejoin needs no search, so the ban never blocks it: its ticket is a **rejoin's**
-  (`POST /api/ticket?rejoin=MATCH`, the ticket's purpose 1 and that match's id), which the ban doesn't stop when it came
-  from that same match, and which the game server takes for that match's rejoin alone (a search's ticket only for a
-  search or a claim). A rejoin that fills the lobby again removes the ban: `POST /api/refills` with the match and the
+  24 h cap, one step forgiven for every 24 h without a leave); the matchmaker refuses a search while it runs, and the
+  page shows until when (`/api/me`'s `queueBanUntil`). A rejoin needs no search, so the ban never blocks it: its ticket
+  is a **rejoin's** (`POST /api/ticket?rejoin=MATCH`, purpose `rejoin` and that match's id), which the ban doesn't stop
+  when it came from that same match, and which the game server takes for that match's rejoin alone (a match ticket only
+  for a claim of its seat). A rejoin that fills the lobby again removes the ban: `POST /api/refills` with the match and the
   rejoin's own ticket (spent, and once only: a replayed refill can't lift a later ban from the same match, RX31), so the
   game server's token alone lifts no ban (AP3). Both calls go through the same credential and retry queue as results.
 

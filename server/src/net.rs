@@ -501,7 +501,6 @@ async fn session(
                 intent == protocol::INTENT_CLAIM && limits.server_name.as_ref().is_none_or(|own| *own == s.server)
             }
             crate::ticket::Purpose::Rejoin(m) => intent == protocol::INTENT_REJOIN && *m == token,
-            crate::ticket::Purpose::Search => false,
         };
         match tickets.check(&ticket, crate::ticket::unix_now()).and_then(|checked| {
             if let crate::ticket::Purpose::Seat(s) = &checked.purpose
@@ -735,7 +734,7 @@ pub async fn serve_info(
 /// A development ticket's query (`/dev-ticket?…`, form-decoded): `name` ("Dev " and the account's first 4 hex digits
 /// when none, so two nameless players aren't one name), `id` (the account's 16 bytes as 32 hex digits, kept by the page
 /// so its searches are one account's; random when none), `r1`, `r2`, `r3` (the playlists' ratings, the tests' pairing: a
-/// new account's when none) and `rejoin` (a rejoin's ticket for that match: 16 hex digits, as the API's)
+/// new account's when none) and `rejoin` (the match the rejoin's ticket is for: 16 hex digits, as the API's; required)
 #[derive(Debug, Default, serde::Deserialize)]
 struct DevTicketQuery {
     name: Option<String>,
@@ -749,7 +748,8 @@ struct DevTicketQuery {
 /// A development ticket's JSON for its query; None for a malformed one
 fn dev_ticket(tickets: &crate::ticket::Tickets, query: &DevTicketQuery) -> Option<String> {
     let mut ratings = [crate::ticket::DEFAULT_RATING; 3];
-    let mut purpose = crate::ticket::Purpose::Search;
+    let rejoin = query.rejoin.as_deref()?;
+    let match_id = u64::from_str_radix(rejoin, 16).ok().filter(|&m| m != 0 && rejoin.len() == 16)?;
     let mut account = [0u8; 16];
     getrandom::fill(&mut account).ok()?;
     let name =
@@ -764,11 +764,8 @@ fn dev_ticket(tickets: &crate::ticket::Tickets, query: &DevTicketQuery) -> Optio
             rating.rating = value.parse().ok()?;
         }
     }
-    if let Some(value) = &query.rejoin {
-        let match_id = u64::from_str_radix(value, 16).ok().filter(|&m| m != 0 && value.len() == 16)?;
-        purpose = crate::ticket::Purpose::Rejoin(match_id);
-    }
     let name = name.map_or_else(|| format!("Dev {:02x}{:02x}", account[0], account[1]), str::to_string);
+    let purpose = crate::ticket::Purpose::Rejoin(match_id);
     let ticket = tickets.dev_ticket(account, &name, ratings, purpose, crate::ticket::unix_now())?;
     Some(serde_json::json!({ "ticket": ticket }).to_string())
 }
@@ -824,17 +821,20 @@ mod tests {
             tickets.check(ticket, crate::ticket::unix_now()).ok()
         };
         let id = "0123456789abcdef".repeat(2);
-        let t = ticket_of(&format!("name=Caf%C3%A9+Ada&id={id}")).unwrap();
+        let t = ticket_of(&format!("name=Caf%C3%A9+Ada&id={id}&rejoin=00000000000000a1")).unwrap();
         assert_eq!((t.name.as_str(), t.account[0], t.account[15]), ("Café Ada", 0x01, 0xef));
-        assert!(ticket_of("").unwrap().name.starts_with("Dev "), "no name: Dev and the random account's digits");
-        assert_eq!(ticket_of(&format!("name=%20%20&id={id}")).unwrap().name, "Dev 0123");
+        assert_eq!(t.purpose, crate::ticket::Purpose::Rejoin(0xa1), "a rejoin's, for its match");
+        assert!(ticket_of("rejoin=00000000000000a1").unwrap().name.starts_with("Dev "), "no name: Dev and the digits");
+        assert_eq!(ticket_of(&format!("name=%20%20&id={id}&rejoin=00000000000000a1")).unwrap().name, "Dev 0123");
         // (form decoding's, as a browser's: a malformed escape kept as it is)
-        assert_eq!(ticket_of(&format!("name=%zz&id={id}")).unwrap().name, "%zz");
-        assert!(ticket_of(&format!("id={}", "zz".repeat(16))).is_none(), "a malformed id");
-        assert_eq!(ticket_of(&format!("name={}&id={id}", "x".repeat(40))).unwrap().name, "Dev 0123", "too long");
-        assert_eq!(t.purpose, crate::ticket::Purpose::Search);
-        let rejoin = ticket_of(&format!("id={id}&rejoin=00000000000000a1")).unwrap();
-        assert_eq!(rejoin.purpose, crate::ticket::Purpose::Rejoin(0xa1), "a rejoin's, for its match");
+        assert_eq!(ticket_of(&format!("name=%zz&id={id}&rejoin=00000000000000a1")).unwrap().name, "%zz");
+        assert!(ticket_of(&format!("id={}&rejoin=00000000000000a1", "zz".repeat(16))).is_none(), "a malformed id");
+        let long = ticket_of(&format!("name={}&id={id}&rejoin=00000000000000a1", "x".repeat(40)));
+        assert_eq!(long.unwrap().name, "Dev 0123", "too long");
+        assert!(
+            ticket_of(&format!("name=Ada&id={id}")).is_none(),
+            "no match: no ticket (a search's are the matchmaker's)"
+        );
         for bad in ["a1", "0000000000000000", "zz000000000000a1"] {
             assert!(ticket_of(&format!("id={id}&rejoin={bad}")).is_none(), "a malformed match {bad}");
         }
@@ -860,8 +860,9 @@ mod tests {
         assert_eq!(get("/").await.unwrap().status(), 404, "not the info for any path");
         let posted = client.post(format!("http://127.0.0.1:{port}/info")).send().await.unwrap();
         assert_eq!(posted.status(), 405, "nor for any method");
-        let ticket = get("/dev-ticket?name=Ada").await.unwrap();
+        let ticket = get("/dev-ticket?name=Ada&rejoin=00000000000000a1").await.unwrap();
         assert_eq!(ticket.status(), 200);
+        assert_eq!(get("/dev-ticket?name=Ada").await.unwrap().status(), 400, "no match");
         assert_eq!(get("/dev-ticket?rejoin=zz").await.unwrap().status(), 400);
         // (a request in two writes, apart: read whole, answered)
         let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();

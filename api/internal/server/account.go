@@ -12,7 +12,6 @@ import (
 	"carball/api/internal/names"
 	"carball/api/internal/ranked"
 	"carball/api/internal/store"
-	"carball/api/internal/ticket"
 )
 
 // session is the browser's signed-in session, its token rotated when due (the old one honoured for RotateGrace: AC-8).
@@ -186,10 +185,11 @@ func (s *Server) signOutEverywhere(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// ticket: a search ticket for the signed-in account (AC-6): its id and display name, two minutes, a fresh nonce, signed
-// for the game server to check offline; a few a minute per account (AC-26). A banned account has no session to ask with.
-// `?rejoin=MATCH` (16 hex digits): a rejoin's ticket, for that match alone, which a queue ban from that same match
-// doesn't stop (LV1: the leaver may come back and refill the lobby, which undoes the ban; AP3)
+// ticket: a rejoin's ticket for the signed-in account (AC-6), `?rejoin=MATCH` (16 hex digits): its id and display name,
+// for that match alone, two minutes, a fresh nonce, signed for the game server to check offline; a few a minute per
+// account (AC-26). A banned account has no session to ask with; a queue ban from that same match doesn't stop it (LV1:
+// the leaver may come back and refill the lobby, which undoes the ban; AP3). A match's own tickets are the matchmaker's
+// (a seat each: internal/matchmaker)
 func (s *Server) ticket(w http.ResponseWriter, r *http.Request) {
 	ss, ok := s.session(w, r)
 	if !ok {
@@ -199,14 +199,12 @@ func (s *Server) ticket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "unavailable")
 		return
 	}
-	purpose, match := byte(ticket.PurposeSearch), uint64(0)
-	if q := r.URL.Query(); q.Has("rejoin") {
-		m, err := strconv.ParseUint(q.Get("rejoin"), 16, 64)
-		if err != nil || m == 0 || len(q.Get("rejoin")) != 16 {
-			writeError(w, http.StatusBadRequest, "bad-request")
-			return
-		}
-		purpose, match = ticket.PurposeRejoin, m
+	// (a rejoin's ticket, for its match: the search's own tickets are the matchmaker's now)
+	q := r.URL.Query()
+	match, err := strconv.ParseUint(q.Get("rejoin"), 16, 64)
+	if err != nil || match == 0 || len(q.Get("rejoin")) != 16 {
+		writeError(w, http.StatusBadRequest, "bad-request")
+		return
 	}
 	now := s.Now()
 	if !s.tickets.Allow(ss.AccountID, now) {
@@ -226,12 +224,12 @@ func (s *Server) ticket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "unavailable")
 		return
 	}
-	if until, on := ranked.BannedUntil(ban, banned, now); on && (purpose != ticket.PurposeRejoin || ban.Match != matchText(match)) {
+	if until, on := ranked.BannedUntil(ban, banned, now); on && ban.Match != matchText(match) {
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": "queue-banned", "until": until.UTC().Format(time.RFC3339)})
 		return
 	}
 	// (a rejoin of its own match alone: not while it searches or is in another, one at a time)
-	if purpose == ticket.PurposeRejoin && s.Matchmaker != nil && !s.Matchmaker.RejoinAllowed(ss.AccountID, match) {
+	if s.Matchmaker != nil && !s.Matchmaker.RejoinAllowed(ss.AccountID, match) {
 		writeError(w, http.StatusConflict, "in-match")
 		return
 	}
@@ -247,7 +245,7 @@ func (s *Server) ticket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "server")
 		return
 	}
-	encoded, t, err := s.Tickets.IssueFor(id, a.Name, ranked.TicketRatings(ratings, now), purpose, match, now)
+	encoded, t, err := s.Tickets.IssueRejoin(id, a.Name, ranked.TicketRatings(ratings, now), match, now)
 	if err != nil {
 		s.Log.Error("signing a ticket", "err", err)
 		writeError(w, http.StatusInternalServerError, "server")

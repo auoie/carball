@@ -343,7 +343,7 @@ func TestQuitterEndsSearch(t *testing.T) {
 	e := setup(t, nil)
 	b, _, encoded := e.player("sub-q")
 	id := decode(t, e.searchAs(b, []int{3}, map[string]int{euServer: 30}))["search"].(string)
-	if resp := e.gameCall(http.MethodPost, "/api/quitters", gameToken, map[string]any{"match": "00000000000000ab", "ticket": encoded}); resp.StatusCode != http.StatusNoContent {
+	if resp := e.gameCall(http.MethodPost, "/api/quitters", gameToken, map[string]any{"match": testMatch, "ticket": encoded}); resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("the report: %d", resp.StatusCode)
 	}
 	_, st := e.poll(b, id, 1)
@@ -447,7 +447,7 @@ func TestDevMatchmaker(t *testing.T) {
 	if resp := call(http.MethodPost, "/api/search", "http://localhost:4173", search2); resp.StatusCode != http.StatusForbidden {
 		t.Errorf("a development quitter's search: %d", resp.StatusCode)
 	}
-	rejoin, _, _ := ticket.DevSigner().IssueFor(account, "Dev", [3]ticket.Shown{}, ticket.PurposeRejoin, 5, now)
+	rejoin, _, _ := ticket.DevSigner().IssueRejoin(account, "Dev", [3]ticket.Shown{}, 5, now)
 	if resp := call(http.MethodPost, "/api/refills", "", `{"match":"0000000000000005","ticket":"`+rejoin+`"}`); resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("a development refill: %d", resp.StatusCode)
 	}
