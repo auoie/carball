@@ -259,6 +259,8 @@ func headers(next http.Handler) http.Handler {
 type statusWriter struct {
 	http.ResponseWriter
 	status int
+	// refusal: the error code a refusal answered with (writeJSON's `error`)
+	refusal string
 }
 
 func (w *statusWriter) WriteHeader(code int) {
@@ -276,19 +278,27 @@ func (w *statusWriter) Write(b []byte) (int, error) {
 }
 
 // logged: one line a request, its method, route (its pattern, never its path: a search's holds its id, RV-871; never
-// the query: a callback's holds its code and assertion), status and time; never the address (AC-15)
+// the query: a callback's holds its code and assertion), status, a refusal's error code and time, and who (`who`: the
+// client's address, and its account and name when signed in; the user's decision of 2026-10-23, in place of AC-15's
+// "never the address")
 func (s *Server) logged(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		s.noteForward(r)
+		client := &who{ip: ratelimit.ClientAddr(r, s.TrustedProxies)}
+		r = withWho(r, client)
 		sw := &statusWriter{ResponseWriter: w}
 		next.ServeHTTP(sw, r)
 		route := r.Pattern
 		if route == "" {
 			route = "(no route)"
 		}
-		s.Log.Info("request", "method", r.Method, "route", route, "status", sw.status,
-			"ms", time.Since(start).Milliseconds())
+		attrs := []any{"method", r.Method, "route", route, "status", sw.status}
+		if sw.refusal != "" {
+			attrs = append(attrs, "error", sw.refusal)
+		}
+		attrs = append(attrs, "ms", time.Since(start).Milliseconds())
+		s.Log.Info("request", append(attrs, client.attrs()...)...)
 	})
 }
 
@@ -338,6 +348,14 @@ func (s *Server) write(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
+	if sw, ok := w.(*statusWriter); ok && status >= http.StatusBadRequest {
+		switch body := v.(type) {
+		case map[string]string:
+			sw.refusal = body["error"]
+		case map[string]any:
+			sw.refusal, _ = body["error"].(string)
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)

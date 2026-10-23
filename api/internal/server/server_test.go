@@ -582,33 +582,51 @@ func TestSignOutEverywhere(t *testing.T) {
 	}
 }
 
-// AC-15: the access log has neither the query (a callback's code) nor the address; RV-871: nor a path's values (a
-// search's id), its route's pattern instead
-func TestLogsKeepNoQueryOrAddress(t *testing.T) {
+// The log says who and where (the user's decision of 2026-10-23, in place of AC-15's "never the address"): each request
+// line its client's address (CF-Connecting-IP from a trusted connection), its account's id and name once signed in, and
+// a refusal's error code; the sign-up its own line. Never a credential: the query (a callback's code and state), a
+// search's id (RV-871), a cookie, a ticket
+func TestLogsSayWhoNeverCredentials(t *testing.T) {
 	e := setup(t, nil)
 	b := e.browser()
 	start := e.get(b, "/api/auth/google/start", "CF-Connecting-IP", "198.51.100.23")
 	q := e.google.Authorize(t, start.Header.Get("Location"), "sub-l")
 	e.get(b, "/api/auth/google/callback?"+q.Encode(), "CF-Connecting-IP", "198.51.100.23")
 	logs := e.logs.String()
-	if !strings.Contains(logs, `route="GET /api/auth/google/callback"`) {
-		t.Fatalf("no request logged: %s", logs)
+	if !strings.Contains(logs, `route="GET /api/auth/google/callback"`) || !strings.Contains(logs, "ip=198.51.100.23") {
+		t.Fatalf("no request logged with its client's address: %s", logs)
 	}
+	id, _ := e.signUp(b, "Logged Name")["id"].(string)
+	rejoin, _ := decode(t, e.write(b, http.MethodPost, "/api/ticket?rejoin=00000000000000a1", nil))["ticket"].(string)
+	e.get(b, "/api/me")
 	searchID := strings.Repeat("cd", 16)
 	e.get(e.browser(), "/api/search/"+searchID+"?after=0")
 	logs = e.logs.String()
-	if !strings.Contains(logs, `route="GET /api/search/{id}"`) || strings.Contains(logs, searchID) {
-		t.Errorf("a search's poll logged by its id, or not at all:\n%s", logs)
+	if !strings.Contains(logs, `msg="signed up: account made"`) || !strings.Contains(logs, `route="GET /api/me" status=200`) ||
+		!strings.Contains(logs, "account="+id+` name="Logged Name"`) {
+		t.Errorf("the sign-up and a signed-in request not named by their account:\n%s", logs)
 	}
-	for _, secret := range []string{q.Get("code"), q.Get("state"), "198.51.100.23", "127.0.0.1"} {
-		if strings.Contains(logs, secret) {
+	if !strings.Contains(logs, `route="GET /api/search/{id}" status=401 error=signed-out`) || strings.Contains(logs, searchID) {
+		t.Errorf("a search's poll logged by its id, or without its refusal:\n%s", logs)
+	}
+	site, _ := url.Parse(e.srv.URL)
+	secrets := []string{q.Get("code"), q.Get("state"), rejoin}
+	for _, c := range b.Jar.Cookies(site) {
+		secrets = append(secrets, c.Value)
+	}
+	for _, secret := range secrets {
+		if secret != "" && strings.Contains(logs, secret) {
 			t.Errorf("the log holds %q:\n%s", secret, logs)
 		}
+	}
+	if rejoin == "" || len(secrets) < 4 {
+		t.Errorf("no ticket or cookie to look for: %d", len(secrets))
 	}
 }
 
 // A CF-Connecting-IP from a peer outside TRUSTED_PROXIES (the tunnel's connector left out): warned of once for each kind
-// of peer, never its address; from the trusted peer, nothing
+// of peer, the warning never its address; from the trusted peer, nothing. The request lines name each connection's own
+// address, never the untrusted header's
 func TestUntrustedForwardWarned(t *testing.T) {
 	e := setup(t, nil)
 	h := e.s.Handler()
@@ -629,9 +647,13 @@ func TestUntrustedForwardWarned(t *testing.T) {
 	if !strings.Contains(logs, "peer=private") || !strings.Contains(logs, "peer=public") {
 		t.Errorf("the peers' kinds not named: %s", logs)
 	}
-	for _, addr := range []string{"172.18.0.9", "198.51.100.9", "203.0.113.50"} {
-		if strings.Contains(logs, addr) {
-			t.Errorf("an address in the log: %s", addr)
+	// (the trusted peer's header believed, once; the others' connections named by their own address)
+	if strings.Count(logs, "ip=203.0.113.50") != 1 || !strings.Contains(logs, "ip=172.18.0.9") || !strings.Contains(logs, "ip=198.51.100.9") {
+		t.Errorf("an untrusted header's address believed, or a connection's own not named: %s", logs)
+	}
+	for _, line := range strings.Split(logs, "\n") {
+		if strings.Contains(line, "outside TRUSTED_PROXIES") && strings.Contains(line, "ip=") {
+			t.Errorf("the warning names an address: %s", line)
 		}
 	}
 }

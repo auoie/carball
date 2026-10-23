@@ -162,18 +162,56 @@ pub struct JoinRequest {
     /// first, for the result and a quitter's report: notes/accounts.md §3); none for the local host and a development
     /// server's open match
     pub ticket: Option<SeatTicket>,
+    /// The client's address (the network server's sessions; none for the local host): named in the log's lines
+    pub peer: Option<std::net::SocketAddr>,
 }
 
 /// A seat's ticket: as sent (the accounts service checks it again in the result), the account it names, and its ratings
 /// in the playlists 1v1, 2v2, 3v3 (the queue pairs by them)
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct SeatTicket {
     pub encoded: String,
     pub account: [u8; 16],
     pub ratings: [u16; 3],
 }
 
+impl std::fmt::Debug for SeatTicket {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // (never the ticket itself: a credential, kept out of every log)
+        f.debug_struct("SeatTicket")
+            .field("account", &account_text(&self.account))
+            .field("ratings", &self.ratings)
+            .finish_non_exhaustive()
+    }
+}
+
+/// An account's id as the accounts service writes it (a UUID's text), so a game server's lines and the service's name it
+/// alike
+pub fn account_text(account: &[u8; 16]) -> String {
+    let hex: String = account.iter().map(|b| format!("{b:02x}")).collect();
+    format!("{}-{}-{}-{}-{}", &hex[..8], &hex[8..12], &hex[12..16], &hex[16..20], &hex[20..])
+}
+
 impl JoinRequest {
+    /// Who the player is in the log's lines (the user's decision of 2026-10-23: a join's, a leave's, a kick's and a
+    /// refusal's say who and where): the client's address, the account once its ticket is checked, and `name` (quoted:
+    /// any character escaped); the local host's the name alone. Never the ticket
+    pub fn who_named(&self, name: &str) -> String {
+        let mut who = String::new();
+        if let Some(peer) = self.peer {
+            who += &format!("{peer} ");
+        }
+        if let Some(t) = &self.ticket {
+            who += &format!("account {} ", account_text(&t.account));
+        }
+        who + &format!("{name:?}")
+    }
+
+    /// The same with the name it asked for (or its account's)
+    pub fn who(&self) -> String {
+        self.who_named(&self.name)
+    }
+
     /// A hello's request, with its intent (`protocol::INTENT_*`), playlist and token; `None` for any other message (the
     /// network server's sessions and the browser's local host read hellos alike)
     pub fn from_hello(hello: Control) -> Option<(Self, u8, u8, u64)> {
@@ -209,6 +247,7 @@ impl JoinRequest {
             block_non_tactical,
             verified: false,
             ticket: None,
+            peer: None,
         };
         Some((request, intent, playlist, token))
     }
@@ -427,6 +466,8 @@ struct Player {
     /// Their team's forfeit vote as last sent to them
     vote_sent: Option<ForfeitVoteState>,
     name: String,
+    /// Who they are in the log's lines (`JoinRequest::who_named`)
+    who: String,
     chat: ChatBucket,
     /// Their quick-chat filter (`protocol::CHAT_*`) and whether they block others' non-tactical presets
     chat_filter: u8,
@@ -721,6 +762,11 @@ impl Game {
         }
     }
 
+    /// The match's winning team, once it has ended with one (`EndGame`: the final result, a forfeit, a team emptied)
+    pub fn winner(&self) -> Option<u8> {
+        self.winner
+    }
+
     /// A team has won (`HasWinner`: the match ended, a team forfeited, or the clock ran out with the scores apart)
     pub fn has_winner(&self) -> bool {
         self.winner.is_some()
@@ -757,6 +803,19 @@ impl Game {
         self.players.len()
     }
 
+    /// " in match …" for a queue match's lines (the matchmaker's id, as the accounts service names it); else nothing
+    fn in_match(&self) -> String {
+        if self.match_id == 0 { String::new() } else { format!(" in match {:016x}", self.match_id) }
+    }
+
+    /// A player as the log's lines name them: their id, who they are (`JoinRequest::who_named`) and the match
+    pub fn label(&self, id: PlayerId) -> String {
+        match self.players.get(&id) {
+            Some(p) => format!("player {id} ({}){}", p.who, self.in_match()),
+            None => format!("player {id}{}", self.in_match()),
+        }
+    }
+
     pub fn tick_count(&self) -> u64 {
         self.arena.tick_count()
     }
@@ -773,7 +832,12 @@ impl Game {
     pub fn join(&mut self, id: PlayerId, request: JoinRequest, out: Sender<Outgoing>) {
         if self.players.len() >= self.capacity() {
             // (refused: the session ends once it's sent)
-            tracing::warn!("player {id} refused: full ({} players)", self.capacity());
+            tracing::warn!(
+                "player {id} ({}){} refused: full ({} players)",
+                request.who(),
+                self.in_match(),
+                self.capacity()
+            );
             let _ = out.try_send(Outgoing::Control(Control::Refused { reason: protocol::REFUSED_FULL }.encode()));
             return;
         }
@@ -787,7 +851,9 @@ impl Game {
         // (the garage's car: one this server doesn't know plays as the first; its hitbox preset)
         let (model, preset) = protocol::model_preset(request.model);
         let car_id = self.arena.add_car(team, preset);
-        tracing::info!("player {id} joined team {team} (car {car_id})");
+        let name = if request.verified { verified_name(&request.name) } else { player_name(&request.name, id) };
+        let who = request.who_named(&name);
+        tracing::info!("player {id} ({who}){} joined team {team} (car {car_id})", self.in_match());
         // (a running vote takes the joiner as a voter: `AddToTeam`; a seat's new session after a takeover with its old
         // session's answer, RX32)
         let carried = self.taken_over.take().filter(|&(t, _)| t == team).and_then(|(_, yes)| yes);
@@ -836,7 +902,8 @@ impl Game {
             vote_start_disabled: self.initiators.contains(&key)
                 || (request.verified && request.key != 0 && self.initiator_accounts.contains(&request.key)),
             vote_sent: None,
-            name: if request.verified { verified_name(&request.name) } else { player_name(&request.name, id) },
+            name,
+            who,
             chat: ChatBucket::default(),
             chat_filter: request.quick_chat.min(protocol::CHAT_OFF),
             block_non_tactical: request.block_non_tactical,
@@ -1022,8 +1089,17 @@ impl Game {
     fn remove_player(&mut self, id: PlayerId, lost: bool, replaced: bool) {
         if let Some(player) = self.players.remove(&id) {
             let stats = player.input.stats;
+            let how = if replaced {
+                " (their seat taken over by their account's new session)"
+            } else if lost {
+                " (connection lost)"
+            } else {
+                ""
+            };
             tracing::info!(
-                "player {id} left: {} input frames repeated (buffer empty), {} skipped to catch up",
+                "player {id} ({}){} left{how}: {} input frames repeated (buffer empty), {} skipped to catch up",
+                player.who,
+                self.in_match(),
                 stats.under_buffer_frames,
                 stats.over_buffer_frames
             );
@@ -1735,7 +1811,7 @@ impl Game {
         let stuck: Vec<PlayerId> =
             self.players.iter().filter(|(_, p)| p.out.capacity() == 0).map(|(&id, _)| id).collect();
         for id in stuck {
-            tracing::warn!("player {id}: outgoing queue full ({OUT_QUEUE}), dropped");
+            tracing::warn!("{}: outgoing queue full ({OUT_QUEUE}), dropped", self.label(id));
             self.dropped.push(Dropped { id, decided: self.has_winner() || self.is_over(), lost: true });
             self.remove_player(id, true, false);
         }
@@ -1844,7 +1920,7 @@ impl Game {
         let kicked: Vec<PlayerId> =
             self.players.iter().filter(|(_, p)| p.kick_at.is_some_and(|at| tick >= at)).map(|(&id, _)| id).collect();
         for id in kicked {
-            tracing::warn!("player {id}: kicked for being idle");
+            tracing::warn!("{}: kicked for being idle", self.label(id));
             self.dropped.push(Dropped { id, decided: self.has_winner() || self.is_over(), lost: false });
             self.remove_player(id, false, false);
         }
@@ -2056,6 +2132,7 @@ mod tests {
         block_non_tactical: false,
         verified: false,
         ticket: None,
+        peer: None,
     };
     const WANTS_REPLAYS: JoinRequest = JoinRequest {
         team: 255,
@@ -2070,7 +2147,24 @@ mod tests {
         block_non_tactical: false,
         verified: false,
         ticket: None,
+        peer: None,
     };
+
+    /// Who a player is in the log: the network server's address, account (as the accounts service writes it) and name,
+    /// quoted; the local host's the name alone; never the ticket, not even in a request's Debug
+    #[test]
+    fn a_players_log_label_says_who_and_where_never_the_ticket() {
+        let ticket = SeatTicket { encoded: "eyJh.secret.sig".into(), account: [0xab; 16], ratings: [1500; 3] };
+        let request = JoinRequest {
+            name: "Ada \"Q\"".into(),
+            ticket: Some(ticket),
+            peer: Some("203.0.113.9:51234".parse().unwrap()),
+            ..REQUEST
+        };
+        assert_eq!(request.who(), r#"203.0.113.9:51234 account abababab-abab-abab-abab-abababababab "Ada \"Q\"""#);
+        assert_eq!(JoinRequest { name: "Bo".into(), ..REQUEST }.who(), r#""Bo""#, "the local host's: the name");
+        assert!(!format!("{request:?}").contains("secret"), "the ticket in a Debug: {request:?}");
+    }
 
     fn drain(rx: &mut Receiver<Outgoing>) -> Vec<Outgoing> {
         let mut out = Vec::new();

@@ -113,6 +113,7 @@ func (s *Server) result(w http.ResponseWriter, r *http.Request) {
 		len(body.Players) != 2*body.Playlist
 	perTeam := [2]int{}
 	seen := map[string]bool{}
+	var players []string // (the log's: each its account, name, team, a quitter)
 	for _, p := range body.Players {
 		if bad || (p.Team != 0 && p.Team != 1) || p.Seconds < 0 || p.Seconds > MaxMatchSeconds {
 			bad = true
@@ -120,7 +121,7 @@ func (s *Server) result(w http.ResponseWriter, r *http.Request) {
 		}
 		t, err := s.playerTicket(p.Ticket, ticket.PurposeSeat, body.Match, now)
 		if err != nil {
-			s.Log.Warn("a result's ticket refused", "match", body.Match, "err", err)
+			s.log(r).Warn("a result's ticket refused", "match", body.Match, "err", err)
 			writeError(w, http.StatusForbidden, "ticket")
 			return
 		}
@@ -131,6 +132,11 @@ func (s *Server) result(w http.ResponseWriter, r *http.Request) {
 		}
 		seen[account] = true
 		perTeam[p.Team]++
+		quit := ""
+		if p.Quitter {
+			quit = " quitter"
+		}
+		players = append(players, fmt.Sprintf("%s %q team %d%s", account, t.Name, p.Team, quit))
 		res.Players = append(res.Players, store.ResultPlayer{
 			Account: account, Team: p.Team, Quitter: p.Quitter, Seconds: p.Seconds, Nonce: t.Nonce, IssuedAt: t.Issued,
 		})
@@ -147,16 +153,17 @@ func (s *Server) result(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "ticket-used")
 		return
 	case store.IsDataError(err): // (data its checks let through and the database refused: wrong, not transient)
-		s.Log.Warn("a result refused by the database's constraints", "match", res.Match, "err", err)
+		s.log(r).Warn("a result refused by the database's constraints", "match", res.Match, "err", err)
 		writeError(w, http.StatusBadRequest, "bad-request")
 		return
 	case err != nil:
-		s.Log.Error("recording a result", "err", err)
+		s.log(r).Error("recording a result", "err", err)
 		writeError(w, http.StatusServiceUnavailable, "unavailable")
 		return
 	}
 	if recorded {
-		s.Log.Info("result recorded", "match", res.Match, "playlist", res.Playlist)
+		s.log(r).Info("result recorded", "match", res.Match, "playlist", res.Playlist, "winningTeam", res.WinningTeam,
+			"players", strings.Join(players, ", "))
 	}
 	if id, err := strconv.ParseUint(body.Match, 16, 64); err == nil {
 		s.Matchmaker.Ended("", id) // (its accounts free to search; its tickets the match's own, whatever server it names)
@@ -194,6 +201,7 @@ func (s *Server) quitter(w http.ResponseWriter, r *http.Request) {
 	}
 	t, err := s.playerTicket(body.Ticket, ticket.PurposeSeat, body.Match, now)
 	if err != nil {
+		s.log(r).Warn("a quitter's ticket refused", "match", body.Match, "err", err)
 		writeError(w, http.StatusForbidden, "ticket")
 		return
 	}
@@ -209,9 +217,11 @@ func (s *Server) quitter(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			until = now
 		}
+		s.log(r).Info("a quitter reported: queue-banned", "match", body.Match, "account", account, "name", t.Name,
+			"until", until.UTC().Format(time.RFC3339))
 		s.Matchmaker.Quitter(account, until, now)
 	}
-	s.queueBanDone(w, err)
+	s.queueBanDone(w, r, err)
 }
 
 // refill: a rejoin filled the lobby again (the game's RPC_RemoveQuitter), shown by the rejoin's own ticket (for that
@@ -232,6 +242,7 @@ func (s *Server) refill(w http.ResponseWriter, r *http.Request) {
 	now := s.Now()
 	t, err := s.playerTicket(body.Ticket, ticket.PurposeRejoin, body.Match, now)
 	if err != nil {
+		s.log(r).Warn("a refill's ticket refused", "match", body.Match, "err", err)
 		writeError(w, http.StatusForbidden, "ticket")
 		return
 	}
@@ -240,20 +251,23 @@ func (s *Server) refill(w http.ResponseWriter, r *http.Request) {
 	err = s.Store.ChangeQueueBan(r.Context(), accountID(t.Account), spent, now, func(cur store.QueueBan, exists bool) (*store.QueueBan, bool) {
 		return ranked.Refilled(cur, exists, body.Match)
 	})
-	s.queueBanDone(w, err)
+	if err == nil {
+		s.log(r).Info("a refill: that match's queue ban undone", "match", body.Match, "account", accountID(t.Account), "name", t.Name)
+	}
+	s.queueBanDone(w, r, err)
 }
 
-func (s *Server) queueBanDone(w http.ResponseWriter, err error) {
+func (s *Server) queueBanDone(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case err == nil, errors.Is(err, store.ErrNoAccount): // (an account deleted since: nothing to ban)
 		w.WriteHeader(http.StatusNoContent)
 	case errors.Is(err, store.ErrTicketUsed): // (its ticket spent on another match)
 		writeError(w, http.StatusConflict, "ticket-used")
 	case store.IsDataError(err): // (refused by the database's constraints: wrong, not transient)
-		s.Log.Warn("a queue ban change refused by the database's constraints", "err", err)
+		s.log(r).Warn("a queue ban change refused by the database's constraints", "err", err)
 		writeError(w, http.StatusBadRequest, "bad-request")
 	default:
-		s.Log.Error("changing a queue ban", "err", err)
+		s.log(r).Error("changing a queue ban", "err", err)
 		writeError(w, http.StatusServiceUnavailable, "unavailable")
 	}
 }

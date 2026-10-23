@@ -1,12 +1,14 @@
 package matchmaker
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -96,6 +98,33 @@ func (h *harness) at(d time.Duration) {
 		h.m.Poll(context.Background(), id, "", 0, 0)
 	}
 	h.m.Tick(h.now)
+}
+
+// The log's lines (the user's decision of 2026-10-23: who and where): a match found names each seat's account and name,
+// a cancelled one its no-shows, an ended search its account and why; never a ticket or a search's id
+func TestLogLinesNameTheAccountsNeverTheirTickets(t *testing.T) {
+	h := newHarness()
+	var logs bytes.Buffer
+	h.m.log = slog.New(slog.NewTextHandler(&logs, nil))
+	h.search(t, player("a1", 1500), []byte{1}, near)
+	h.search(t, player("a2", 1500), []byte{1}, near)
+	h.at(time.Second)
+	m := h.found(t, "a1")
+	if m == nil {
+		t.Fatal("no match")
+	}
+	h.m.Cancelled("eu:4433", m.ID, []int{1}, h.now)
+	line := logs.String()
+	for _, want := range []string{`msg="a match found"`, `seat 0 a`, `\"Name a1\"`, `\"Name a2\"`, `msg="a match cancelled before its start"`} {
+		if !strings.Contains(line, want) {
+			t.Errorf("no %s in:\n%s", want, line)
+		}
+	}
+	for _, secret := range []string{"ticket:", h.ids["a1"], h.ids["a2"]} {
+		if strings.Contains(line, secret) {
+			t.Errorf("the log holds %q:\n%s", secret, line)
+		}
+	}
 }
 
 func TestRatingWindowAndSnakeSeats(t *testing.T) {

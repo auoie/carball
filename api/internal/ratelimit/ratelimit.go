@@ -98,18 +98,36 @@ func (l *Limiter) Len() int {
 // connection comes from one of `trusted` (cloudflared: AP-1; from anyone else the header is a client's to forge); an
 // IPv6 address by its /64
 func ClientKey(r *http.Request, trusted []netip.Prefix) string {
-	addr, ok := Peer(r)
+	addr, ok := client(r, trusted)
 	if !ok {
 		return "unknown"
-	}
-	if forwarded, err := netip.ParseAddr(r.Header.Get("CF-Connecting-IP")); err == nil && trustedAddr(addr, trusted) {
-		addr = forwarded.Unmap()
 	}
 	if addr.Is6() {
 		prefix, _ := addr.Prefix(64)
 		return prefix.String()
 	}
 	return addr.String()
+}
+
+// ClientAddr is a request's client address as the log names it: ClientKey's, whole
+func ClientAddr(r *http.Request, trusted []netip.Prefix) string {
+	addr, ok := client(r, trusted)
+	if !ok {
+		return "unknown"
+	}
+	return addr.String()
+}
+
+// client: the connection's address, or CF-Connecting-IP's from a trusted connection
+func client(r *http.Request, trusted []netip.Prefix) (netip.Addr, bool) {
+	addr, ok := Peer(r)
+	if !ok {
+		return netip.Addr{}, false
+	}
+	if forwarded, err := netip.ParseAddr(r.Header.Get("CF-Connecting-IP")); err == nil && trustedAddr(addr, trusted) {
+		addr = forwarded.Unmap()
+	}
+	return addr, true
 }
 
 // WideKey is a client address's wider network (an IPv6 /48, an IPv4 /24): an aggregate limit's key, so a block of

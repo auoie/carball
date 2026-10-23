@@ -95,10 +95,12 @@ With our Steam Web API key, `ISteamUser/GetPlayerSummaries` gives the persona na
 **Not stored:**
 - e-mail addresses;
 - provider access tokens (used once at sign-in, then dropped);
-- IP addresses: the rate limiter keeps them in memory only, each forgotten once idle for its limit's window (10 minutes
-  to an hour; at most 200,000 at once, the longest idle forgotten past that: AP-2). That covers the logs too (AC-15):
-  - the API's access log drops the address;
-  - nginx and cloudflared logs are configured without it, or kept briefly (§8).
+- IP addresses in the database: the rate limiter keeps them in memory only, each forgotten once idle for its limit's
+  window (10 minutes to an hour; at most 200,000 at once, the longest idle forgotten past that: AP-2). The logs keep
+  them (the user's decision of 2026-10-23, in place of AC-15's "never the address"): each request line and event line
+  names its client's address and, signed in, the account's id and name, for abuse prevention and debugging, kept until
+  Docker's log rotation overwrites them (APP-CONTRACT.md, Logs); never a credential (cookies, tickets, search ids, OAuth
+  codes or tokens, secrets, e-mail). The privacy page says so.
 
 **Deletion** is a hard delete, effective at once (AC-10):
 - the account, its identities, sessions and ratings go;
@@ -172,7 +174,11 @@ one. The protocol simply changes (a page from before is told to reload: `Refused
 player by the account (RX29C).
 
 **Results: server to server (AC-5, AC-22, AC-25).**
-- At every match's end (every online match is rated) the game server posts the result to `POST /api/results`.
+- At every match's end (every online match is rated) the game server posts the result to `POST /api/results`, the
+  moment the match has its winner (the final result, a forfeit, a team emptied: 2026-10-23, the user's report; before,
+  at its teardown after the end screen, so the menu's first read missed it): each seat's quitter flag and time played as
+  they stand then, a leave after the winner no quitter's, and nothing told again at the teardown. The menu's first read
+  after the match shows the new rating.
 - Each result carries one ticket per player: the one from that player's first `Hello` in the match (a reconnect's fresh
   ticket is checked by the game server but not sent on).
 - The API accepts a result only for players whose tickets it issued, each ticket spent on one match (`used_tickets`,
@@ -349,7 +355,7 @@ Order: each step's image comes from this repository, its configuration from the 
 2. **carball-api:** `carball-api migrate` as a one-shot run (the owner's password there only), then the service; on
    its docker network, reachable only by cloudflared (`TRUSTED_PROXIES` its address), the tunnel routing
    `https://carball.zolt.top/api/*` to it and the rest to the web container (APP-CONTRACT.md); access
-   logs without addresses; its health check on loopback, not routed. Before going live, govulncheck over `api/` where
+   logs naming who and where (2026-10-23); its health check on loopback, not routed. Before going live, govulncheck over `api/` where
    the network is allowed (AC-19, AP-12).
 3. **Registrations and secrets:**
    - the Google OAuth client, with its redirect URI on `/api/` and the consent screen's home and privacy links;

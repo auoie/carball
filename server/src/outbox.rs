@@ -52,6 +52,19 @@ pub struct Call {
     pub created: i64,
 }
 
+/// A call's body as the log shows it: every ticket left out (a credential: never in a log, RV-949)
+fn logged_body(body: &Value) -> Value {
+    match body {
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(k, v)| (k.clone(), if k == "ticket" { Value::from("(ticket)") } else { logged_body(v) }))
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.iter().map(logged_body).collect()),
+        other => other.clone(),
+    }
+}
+
 /// A report's call
 pub fn call_of(report: &Report, server: &str, created: i64) -> Call {
     match report {
@@ -346,7 +359,7 @@ pub async fn run(config: OutboxConfig, mut reports: UnboundedReceiver<Report>) {
                 "outbox (no API_URL): {} {} {}",
                 call.method,
                 call.path,
-                call.body.as_ref().map_or(String::new(), |body| body.to_string())
+                call.body.as_ref().map_or(String::new(), |body| logged_body(body).to_string())
             );
             queue.pop();
             continue;
@@ -394,6 +407,28 @@ mod tests {
     use super::*;
     use crate::match_host::{MatchResult, ResultPlayer};
     use std::sync::{Arc, Mutex};
+
+    /// The development log's line (no API_URL): a call's body without its tickets (RV-949)
+    #[test]
+    fn a_logged_body_leaves_its_tickets_out() {
+        let result = MatchResult {
+            match_id: "00000000000000a1".into(),
+            playlist: 1,
+            winning_team: 0,
+            players: vec![ResultPlayer { ticket: "eyJh.secret.sig".into(), team: 0, quitter: false, seconds: 300 }],
+        };
+        for report in [
+            Report::Quitter { match_id: "00000000000000a1".into(), ticket: "eyJh.secret.sig".into() },
+            Report::Result(result),
+        ] {
+            let call = call_of(&report, "game.example:4433", 7);
+            let line = logged_body(call.body.as_ref().unwrap()).to_string();
+            assert!(
+                line.contains("00000000000000a1") && line.contains("(ticket)") && !line.contains("secret"),
+                "{line}"
+            );
+        }
+    }
 
     #[test]
     fn each_reports_call() {

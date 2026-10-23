@@ -86,13 +86,13 @@ func (s *Server) startSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	a, err := s.Store.Account(r.Context(), ss.AccountID)
 	if err != nil {
-		s.Log.Error("reading an account", "err", err)
+		s.log(r).Error("reading an account", "err", err)
 		writeError(w, http.StatusServiceUnavailable, "unavailable")
 		return
 	}
 	ban, banned, err := s.Store.QueueBanOf(r.Context(), ss.AccountID)
 	if err != nil {
-		s.Log.Error("reading a queue ban", "err", err)
+		s.log(r).Error("reading a queue ban", "err", err)
 		writeError(w, http.StatusServiceUnavailable, "unavailable")
 		return
 	}
@@ -102,15 +102,15 @@ func (s *Server) startSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	ratings, err := s.Store.RatingsOf(r.Context(), ss.AccountID)
 	if err != nil {
-		s.Log.Error("reading ratings", "err", err)
+		s.log(r).Error("reading ratings", "err", err)
 		writeError(w, http.StatusServiceUnavailable, "unavailable")
 		return
 	}
-	s.openSearch(w, matchmaker.Player{Account: a.ID, Name: a.Name, Ratings: ranked.TicketRatings(ratings, now)}, req, now)
+	s.openSearch(w, r, matchmaker.Player{Account: a.ID, Name: a.Name, Ratings: ranked.TicketRatings(ratings, now)}, req, now)
 }
 
 // openSearch opens the player's search and answers it, or why not
-func (s *Server) openSearch(w http.ResponseWriter, p matchmaker.Player, req matchmaker.Request, now time.Time) {
+func (s *Server) openSearch(w http.ResponseWriter, r *http.Request, p matchmaker.Player, req matchmaker.Request, now time.Time) {
 	id, state, err := s.Matchmaker.Start(p, req, now)
 	var cooldown matchmaker.CooldownError
 	switch {
@@ -121,9 +121,14 @@ func (s *Server) openSearch(w http.ResponseWriter, p matchmaker.Player, req matc
 	case errors.As(err, &cooldown):
 		writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": "cooldown", "seconds": secondsUntil(cooldown.Until, now)})
 	case err != nil:
-		s.Log.Error("starting a search", "err", err)
+		s.log(r).Error("starting a search", "err", err)
 		writeError(w, http.StatusInternalServerError, "server")
 	default:
+		playlists := make([]int, len(req.Playlists))
+		for i, p := range req.Playlists {
+			playlists[i] = int(p)
+		}
+		s.log(r).Info("search started", "playlists", playlists, "regions", req.Ticked)
 		writeJSON(w, http.StatusOK, stateJSON(id, state, now))
 	}
 }

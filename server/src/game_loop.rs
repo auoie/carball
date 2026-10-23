@@ -30,6 +30,12 @@ fn refuse(out: Sender<Outgoing>, reason: u8) {
     let _ = out.try_send(Outgoing::Control(Control::Refused { reason }.encode()));
 }
 
+/// The same, logged with who asked and for what (the user's decision of 2026-10-23: every refusal says who and where)
+fn refuse_logged(out: Sender<Outgoing>, reason: u8, id: crate::game::PlayerId, who: &str, asked: &str) {
+    tracing::warn!("player {id} ({who}): {asked} refused: {}", protocol::refused_text(reason));
+    refuse(out, reason);
+}
+
 /// `test_goal_after`: browser tests only (`Game::test_goal_after`, s). `heartbeat`: the loop's last pass, in ms from
 /// `start` (the health check's)
 pub fn run(
@@ -69,29 +75,40 @@ pub fn run_with_reports(
         host.observe(seconds(Instant::now()));
         for _ in 0..MESSAGES_PER_LOOP {
             match messages.try_recv() {
-                Ok(ToGame::Join { id, intent, request, out }) => match intent {
-                    Intent::Join => {
-                        if !host.join_open(id, request, out.clone()) {
-                            refuse(out, protocol::REFUSED_MODE);
-                        }
-                    }
-                    // (a development server has no matchmaker's matches: a claim isn't its, RV-363)
-                    Intent::Claim { .. } if !queue_mode => refuse(out, protocol::REFUSED_MODE),
-                    Intent::Claim { seat } => match playlists.iter().find(|p| p.team_size == seat.playlist) {
-                        Some(&playlist) => {
-                            if let Err(reason) = host.claim_seat(&seat, playlist, id, request, out.clone()) {
-                                refuse(out, reason);
+                Ok(ToGame::Join { id, intent, request, out }) => {
+                    let who = request.who();
+                    match intent {
+                        Intent::Join => {
+                            if !host.join_open(id, request, out.clone()) {
+                                refuse_logged(out, protocol::REFUSED_MODE, id, &who, "a join");
                             }
                         }
-                        None => refuse(out, protocol::REFUSED_MODE),
-                    },
-                    Intent::Rejoin { .. } if !queue_mode => refuse(out, protocol::REFUSED_MODE),
-                    Intent::Rejoin { match_id } => {
-                        if let Err(reason) = host.rejoin(match_id, id, request, out.clone()) {
-                            refuse(out, reason);
+                        // (a development server has no matchmaker's matches: a claim isn't its, RV-363)
+                        Intent::Claim { seat } if !queue_mode => {
+                            let asked = format!("a claim of match {:016x}", seat.match_id);
+                            refuse_logged(out, protocol::REFUSED_MODE, id, &who, &asked);
+                        }
+                        Intent::Claim { seat } => {
+                            let asked = format!("a claim of match {:016x} seat {}", seat.match_id, seat.seat);
+                            match playlists.iter().find(|p| p.team_size == seat.playlist) {
+                                Some(&playlist) => {
+                                    if let Err(reason) = host.claim_seat(&seat, playlist, id, request, out.clone()) {
+                                        refuse_logged(out, reason, id, &who, &asked);
+                                    }
+                                }
+                                None => refuse_logged(out, protocol::REFUSED_MODE, id, &who, &asked),
+                            }
+                        }
+                        Intent::Rejoin { match_id } => {
+                            let asked = format!("a rejoin of match {match_id:016x}");
+                            if !queue_mode {
+                                refuse_logged(out, protocol::REFUSED_MODE, id, &who, &asked);
+                            } else if let Err(reason) = host.rejoin(match_id, id, request, out.clone()) {
+                                refuse_logged(out, reason, id, &who, &asked);
+                            }
                         }
                     }
-                },
+                }
                 Ok(ToGame::Leave { id, lost }) => host.leave(id, lost),
                 Ok(ToGame::Inputs { id, timestamp, sequence, first_frame, frames, at }) => {
                     if let Some(game) = host.game_of(id) {
@@ -129,7 +146,7 @@ pub fn run_with_reports(
                 Some(tx) => {
                     let _ = tx.send(report);
                 }
-                None => tracing::info!("ranked report (no outbox): {report:?}"),
+                None => tracing::info!("ranked report (no outbox): {}", report.summary()),
             }
         }
         // (until the next tick is due, a millisecond at most: the messages are read meanwhile)

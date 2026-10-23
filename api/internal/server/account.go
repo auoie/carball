@@ -33,7 +33,7 @@ func (s *Server) sessionOf(w http.ResponseWriter, r *http.Request, rotate bool) 
 	now := s.Now()
 	ss, ok, err := s.Store.SessionByToken(r.Context(), digest(tok), now)
 	if err != nil {
-		s.Log.Error("reading a session", "err", err)
+		s.log(r).Error("reading a session", "err", err)
 		writeError(w, http.StatusServiceUnavailable, "unavailable")
 		return store.Session{}, false
 	}
@@ -46,12 +46,13 @@ func (s *Server) sessionOf(w http.ResponseWriter, r *http.Request, rotate bool) 
 		next := token()
 		rotated, err := s.Store.RotateSession(r.Context(), ss.TokenHash, digest(next), now, now.Add(RotateGrace))
 		if err != nil {
-			s.Log.Error("rotating a session", "err", err)
+			s.log(r).Error("rotating a session", "err", err)
 		} else if rotated {
 			setCookie(w, sessionCookie, next, ss.ExpiresAt.Sub(now))
 			ss.TokenHash = digest(next)
 		}
 	}
+	whoOf(r).signedIn(ss.AccountID, ss.AccountName)
 	return ss, true
 }
 
@@ -63,13 +64,13 @@ func signedOut(w http.ResponseWriter) {
 func (s *Server) writeAccount(w http.ResponseWriter, r *http.Request, status int, id string) {
 	a, err := s.Store.Account(r.Context(), id)
 	if err != nil {
-		s.Log.Error("reading an account", "err", err)
+		s.log(r).Error("reading an account", "err", err)
 		writeError(w, http.StatusInternalServerError, "server")
 		return
 	}
 	ratings, err := s.Store.RatingsOf(r.Context(), id)
 	if err != nil {
-		s.Log.Error("reading ratings", "err", err)
+		s.log(r).Error("reading ratings", "err", err)
 		writeError(w, http.StatusInternalServerError, "server")
 		return
 	}
@@ -79,7 +80,7 @@ func (s *Server) writeAccount(w http.ResponseWriter, r *http.Request, status int
 	}
 	ban, banned, err := s.Store.QueueBanOf(r.Context(), id)
 	if err != nil {
-		s.Log.Error("reading a queue ban", "err", err)
+		s.log(r).Error("reading a queue ban", "err", err)
 		writeError(w, http.StatusInternalServerError, "server")
 		return
 	}
@@ -121,10 +122,11 @@ func (s *Server) rename(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Store.Rename(r.Context(), ss.AccountID, name); err != nil {
-		s.Log.Error("renaming", "err", err)
+		s.log(r).Error("renaming", "err", err)
 		writeError(w, http.StatusInternalServerError, "server")
 		return
 	}
+	s.log(r).Info("renamed", "to", name)
 	s.writeAccount(w, r, http.StatusOK, ss.AccountID)
 }
 
@@ -148,12 +150,12 @@ func (s *Server) deleteAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	err := s.Store.DeleteAccount(r.Context(), ss.AccountID, s.subjectHMAC, s.Now())
 	if err != nil && !errors.Is(err, store.ErrNoAccount) {
-		s.Log.Error("deleting an account", "err", err)
+		s.log(r).Error("deleting an account", "err", err)
 		writeError(w, http.StatusInternalServerError, "server")
 		return
 	}
 	clearCookie(w, sessionCookie)
-	s.Log.Info("account deleted")
+	s.log(r).Info("account deleted")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -161,7 +163,7 @@ func (s *Server) deleteAccount(w http.ResponseWriter, r *http.Request) {
 func (s *Server) signOut(w http.ResponseWriter, r *http.Request) {
 	if tok := cookie(r, sessionCookie); tok != "" {
 		if err := s.Store.DeleteSession(r.Context(), digest(tok)); err != nil {
-			s.Log.Error("signing out", "err", err)
+			s.log(r).Error("signing out", "err", err)
 			writeError(w, http.StatusInternalServerError, "server")
 			return
 		}
@@ -177,7 +179,7 @@ func (s *Server) signOutEverywhere(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Store.DeleteSessions(r.Context(), ss.AccountID); err != nil {
-		s.Log.Error("signing out everywhere", "err", err)
+		s.log(r).Error("signing out everywhere", "err", err)
 		writeError(w, http.StatusInternalServerError, "server")
 		return
 	}
@@ -213,14 +215,14 @@ func (s *Server) ticket(w http.ResponseWriter, r *http.Request) {
 	}
 	a, err := s.Store.Account(r.Context(), ss.AccountID)
 	if err != nil {
-		s.Log.Error("reading an account", "err", err)
+		s.log(r).Error("reading an account", "err", err)
 		writeError(w, http.StatusServiceUnavailable, "unavailable")
 		return
 	}
 	// (a leaver's queue ban in force: no search, the page told until when, LV1)
 	ban, banned, err := s.Store.QueueBanOf(r.Context(), ss.AccountID)
 	if err != nil {
-		s.Log.Error("reading a queue ban", "err", err)
+		s.log(r).Error("reading a queue ban", "err", err)
 		writeError(w, http.StatusServiceUnavailable, "unavailable")
 		return
 	}
@@ -235,19 +237,19 @@ func (s *Server) ticket(w http.ResponseWriter, r *http.Request) {
 	}
 	ratings, err := s.Store.RatingsOf(r.Context(), ss.AccountID)
 	if err != nil {
-		s.Log.Error("reading ratings", "err", err)
+		s.log(r).Error("reading ratings", "err", err)
 		writeError(w, http.StatusServiceUnavailable, "unavailable")
 		return
 	}
 	id, err := accountBytes(a.ID)
 	if err != nil {
-		s.Log.Error("an account's id", "err", err)
+		s.log(r).Error("an account's id", "err", err)
 		writeError(w, http.StatusInternalServerError, "server")
 		return
 	}
 	encoded, t, err := s.Tickets.IssueRejoin(id, a.Name, ranked.TicketRatings(ratings, now), match, now)
 	if err != nil {
-		s.Log.Error("signing a ticket", "err", err)
+		s.log(r).Error("signing a ticket", "err", err)
 		writeError(w, http.StatusInternalServerError, "server")
 		return
 	}

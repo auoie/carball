@@ -425,9 +425,11 @@ func (s *Store) CreateAccount(ctx context.Context, p Pending, name string, subje
 type Session struct {
 	TokenHash []byte
 	AccountID string
-	RotatedAt time.Time
-	ExpiresAt time.Time
-	Previous  bool
+	// AccountName: its account's display name (the log's)
+	AccountName string
+	RotatedAt   time.Time
+	ExpiresAt   time.Time
+	Previous    bool
 }
 
 func (s *Store) CreateSession(ctx context.Context, tokenHash []byte, accountID string, now, expires time.Time) error {
@@ -440,11 +442,12 @@ func (s *Store) CreateSession(ctx context.Context, tokenHash []byte, accountID s
 // an account with a ban in force on any of its identities (a ban racing a sign-in still shuts it: AP-3)
 func (s *Store) SessionByToken(ctx context.Context, tokenHash []byte, now time.Time) (Session, bool, error) {
 	var ss Session
-	err := s.pool.QueryRow(ctx, `SELECT s.token_hash, s.account_id::text, s.rotated_at, s.expires_at, s.token_hash <> $1
-		FROM sessions s WHERE (s.token_hash = $1 OR (s.previous_hash = $1 AND s.previous_until > $2)) AND s.expires_at > $2
+	err := s.pool.QueryRow(ctx, `SELECT s.token_hash, s.account_id::text, a.name, s.rotated_at, s.expires_at, s.token_hash <> $1
+		FROM sessions s JOIN accounts a ON a.id = s.account_id
+		WHERE (s.token_hash = $1 OR (s.previous_hash = $1 AND s.previous_until > $2)) AND s.expires_at > $2
 		AND NOT EXISTS (SELECT 1 FROM identities i JOIN bans b ON b.provider = i.provider AND b.subject = i.subject
 			WHERE i.account_id = s.account_id AND (b.until IS NULL OR b.until > $2))`,
-		tokenHash, now).Scan(&ss.TokenHash, &ss.AccountID, &ss.RotatedAt, &ss.ExpiresAt, &ss.Previous)
+		tokenHash, now).Scan(&ss.TokenHash, &ss.AccountID, &ss.AccountName, &ss.RotatedAt, &ss.ExpiresAt, &ss.Previous)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Session{}, false, nil
 	}

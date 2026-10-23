@@ -248,7 +248,8 @@ pub fn address_key(ip: IpAddr) -> IpAddr {
 #[derive(Debug)]
 pub enum Admit {
     Retry,
-    Refuse,
+    /// Past a limit: which (the log's)
+    Refuse(&'static str),
     Admit(tokio::sync::OwnedSemaphorePermit),
 }
 
@@ -263,9 +264,9 @@ pub fn admit(
     if !validated {
         return Admit::Retry;
     }
-    let Ok(permit) = sessions.clone().try_acquire_owned() else { return Admit::Refuse };
+    let Ok(permit) = sessions.clone().try_acquire_owned() else { return Admit::Refuse("the server's most sessions") };
     if !admission.lock().unwrap().admit(address, now, limits) {
-        return Admit::Refuse;
+        return Admit::Refuse("its address's sessions at once or this minute");
     }
     Admit::Admit(permit)
 }
@@ -279,6 +280,8 @@ pub struct Admission {
     pings: HashMap<IpAddr, VecDeque<Instant>>,
     /// When the addresses last ended were let go: once a minute at most (RV-909)
     swept: Option<Instant>,
+    /// When each address's refusal was last logged: a line a minute at most (a flood's refusals don't fill the log)
+    refusals_logged: HashMap<IpAddr, Instant>,
 }
 
 /// Drops the times a minute or more before `now`
@@ -314,6 +317,19 @@ impl Admission {
                 last_minute(t, now);
                 !t.is_empty()
             });
+        }
+        self.refusals_logged.retain(|_, &mut at| now.saturating_duration_since(at) < Duration::from_secs(60));
+    }
+
+    /// Whether a refusal of `address` is logged: its first in a minute (a flood of refusals writes a line a minute, not
+    /// one each)
+    pub fn log_refusal(&mut self, address: IpAddr, now: Instant) -> bool {
+        match self.refusals_logged.get(&address) {
+            Some(&at) if now.saturating_duration_since(at) < Duration::from_secs(60) => false,
+            _ => {
+                self.refusals_logged.insert(address, now);
+                true
+            }
         }
     }
 
@@ -355,14 +371,18 @@ pub async fn accept_loop(server: Arc<ServerEndpoint>, to_game: Sender<ToGame>, l
     let limits = Arc::new(limits);
     loop {
         let incoming = server.accept().await;
-        let address = address_key(incoming.remote_address().ip());
+        let peer = incoming.remote_address();
+        let address = address_key(peer.ip());
         let permit =
             match admit(incoming.remote_address_validated(), address, &sessions, &admission, &limits, Instant::now()) {
                 Admit::Retry => {
                     incoming.retry();
                     continue;
                 }
-                Admit::Refuse => {
+                Admit::Refuse(why) => {
+                    if admission.lock().unwrap().log_refusal(address, Instant::now()) {
+                        tracing::warn!("session from {peer} refused: {why} (its address's next this minute unlogged)");
+                    }
                     incoming.refuse();
                     continue;
                 }
@@ -376,10 +396,10 @@ pub async fn accept_loop(server: Arc<ServerEndpoint>, to_game: Sender<ToGame>, l
         tokio::spawn(async move {
             let _permit = permit;
             let refund = || admission.lock().unwrap().refund(address, Instant::now(), &limits);
-            let lost = match session(incoming, id, &to_game, &limits, &refund).await {
+            let lost = match session(incoming, peer, id, &to_game, &limits, &refund).await {
                 Ok(lost) => lost,
                 Err(e) => {
-                    tracing::info!("player {id}: {e:#}");
+                    tracing::info!("player {id} ({peer}): {e:#}");
                     matches!(
                         e.downcast_ref::<wtransport::error::ConnectionError>(),
                         Some(wtransport::error::ConnectionError::TimedOut)
@@ -431,7 +451,7 @@ async fn handshake(
     if let Some(allowed) = &limits.allowed_origins
         && !request.origin().is_some_and(|origin| allowed.iter().any(|a| a.eq_ignore_ascii_case(origin)))
     {
-        tracing::warn!("session from origin {:?} refused", request.origin());
+        tracing::warn!("session from {} refused: its page's origin {:?}", request.remote_address(), request.origin());
         request.forbidden().await;
         return Ok(None);
     }
@@ -444,6 +464,7 @@ async fn handshake(
 /// One player's session; `Ok(lost)`: whether it ended by its connection timing out (the chat log's "lost connection")
 async fn session(
     incoming: IncomingSession,
+    peer: std::net::SocketAddr,
     id: PlayerId,
     to_game: &Sender<ToGame>,
     limits: &NetLimits,
@@ -479,6 +500,7 @@ async fn session(
     let Some((mut request, intent, _playlist, token)) = JoinRequest::from_hello(hello) else {
         bail!("expected hello");
     };
+    request.peer = Some(peer);
     // (no search or decline here: the accounts service's matchmaker has the one queue; a claim or a rejoin needs its
     // ticket, so a server without tickets takes neither)
     let ticketed = matches!(intent, protocol::INTENT_CLAIM | protocol::INTENT_REJOIN);
@@ -486,7 +508,7 @@ async fn session(
         let _ = send.write_all(&Control::Refused { reason: protocol::REFUSED_MODE }.encode()).await;
         let _ = send.finish().await;
         let _ = tokio::time::timeout(Duration::from_secs(2), connection.closed()).await;
-        bail!("intent {intent} not served here");
+        bail!("a hello named {:?} with intent {intent}: not served here", request.name);
     }
     // (a claim and a rejoin are an account's: its ticket checked here alone, never in the match code the browser's local
     // host shares; the account's key and name in place of the hello's)
@@ -507,7 +529,10 @@ async fn session(
                 && let Some(own) = limits.server_name.as_ref().filter(|own| **own != s.server)
             {
                 // (said plainly: a server whose name isn't the one its page's ping told the matchmaker, RV-863)
-                tracing::warn!("a match ticket for server {:?}, this server is {own:?}: refused", s.server);
+                tracing::warn!(
+                    "session from {peer}: a match ticket for server {:?}, this server is {own:?}: refused",
+                    s.server
+                );
             }
             if purpose_fits(&checked.purpose) { Ok(checked) } else { Err(crate::ticket::Refusal::NotForThis) }
         }) {
@@ -533,7 +558,12 @@ async fn session(
                 let _ = send.write_all(&Control::Refused { reason: protocol::REFUSED_TICKET }.encode()).await;
                 let _ = send.finish().await;
                 let _ = tokio::time::timeout(Duration::from_secs(2), connection.closed()).await;
-                bail!("ticket refused: {why:?}");
+                let rejoin = if intent == protocol::INTENT_REJOIN {
+                    format!(", a rejoin of match {token:016x}")
+                } else {
+                    String::new()
+                };
+                bail!("ticket refused: {why:?} (a hello named {:?}{rejoin})", request.name);
             }
         }
     }
@@ -541,6 +571,12 @@ async fn session(
         (protocol::INTENT_CLAIM, Some(seat)) => Intent::Claim { seat },
         (protocol::INTENT_REJOIN, _) => Intent::Rejoin { match_id: token },
         _ => Intent::Join,
+    };
+    // (the session as its lines name it: who (its address, account and name) and its match)
+    let label = match &intent {
+        Intent::Claim { seat } => format!("player {id} ({}) in match {:016x}", request.who(), seat.match_id),
+        Intent::Rejoin { match_id } => format!("player {id} ({}) in match {match_id:016x}", request.who()),
+        Intent::Join => format!("player {id} ({})", request.who()),
     };
 
     let (out_tx, mut out_rx) = channel(OUT_QUEUE);
@@ -577,6 +613,7 @@ async fn session(
     // Client -> game: control messages (in their own task: a framed read mustn't be cancelled halfway); the control
     // stream closing ends the session
     let control_to_game = to_game.clone();
+    let reader_label = label.clone();
     let mut control_reader = tokio::spawn(async move {
         // (at most CONTROL_RATE: more are dropped, and a session that keeps on is closed, SEC-3)
         let mut bucket = TokenBucket::new(CONTROL_RATE, Instant::now());
@@ -585,7 +622,7 @@ async fn session(
             let read = read_control(&mut recv).await;
             if read.is_ok() && !bucket.take(Instant::now()) {
                 if !overruns.take(Instant::now()) {
-                    tracing::warn!("player {id}: control messages over the rate, session ends");
+                    tracing::warn!("{reader_label}: control messages over the rate, session ends");
                     break;
                 }
                 continue;
@@ -604,7 +641,7 @@ async fn session(
                 Err(e) => {
                     // (a malformed message ends the session: say why; a closed stream is the usual end)
                     if e.downcast_ref::<protocol::DecodeError>().is_some() {
-                        tracing::warn!("player {id}: malformed control message ({e}), session ends");
+                        tracing::warn!("{reader_label}: malformed control message ({e}), session ends");
                     }
                     break;
                 }
@@ -629,7 +666,7 @@ async fn session(
                 Ok(d) => {
                     if !inputs.take(Instant::now()) {
                         if !input_overruns.take(Instant::now()) {
-                            tracing::warn!("player {id}: input datagrams over the rate, session ends");
+                            tracing::warn!("{label}: input datagrams over the rate, session ends");
                             break Ok(());
                         }
                         continue;
@@ -657,7 +694,7 @@ async fn session(
     writer.abort();
     let refused = unsent.load(std::sync::atomic::Ordering::Relaxed);
     if refused > 0 {
-        tracing::warn!("player {id}: {refused} datagrams refused by the connection (too large or unsupported)");
+        tracing::warn!("{label}: {refused} datagrams refused by the connection (too large or unsupported)");
     }
     result?;
     // (whichever branch noticed first, the connection's own close says why: an idle timeout is a lost connection, RV-250)
@@ -1046,10 +1083,16 @@ mod tests {
             panic!("a proven address admitted")
         };
         assert!(
-            matches!(admit(true, [10, 0, 0, 2].into(), &sessions, &admission, &limits, t0), Admit::Refuse),
+            matches!(admit(true, [10, 0, 0, 2].into(), &sessions, &admission, &limits, t0), Admit::Refuse(_)),
             "the global cap"
         );
         drop(permit);
+        // (a refusal logged once a minute an address: a flood of them a line a minute)
+        let mut admission = admission.lock().unwrap();
+        assert!(admission.log_refusal(a, t0));
+        assert!(!admission.log_refusal(a, t0 + Duration::from_secs(30)), "again within the minute");
+        assert!(admission.log_refusal([10, 0, 0, 2].into(), t0), "another address's");
+        assert!(admission.log_refusal(a, t0 + Duration::from_secs(61)), "a minute on");
     }
 
     #[test]

@@ -197,6 +197,10 @@ asks (`/dev-ticket`), with no sign-in.
 - **Logs:** stderr, one line an event (start-up, joins, leaves, matches, refusals, reloads, the outbox's calls): its UTC
   time, its level (`INFO`, `WARN` for a refusal or a call kept for later, `ERROR` for a failed reload or a match's
   panic) and the message. The server's own events, and the libraries' errors alone (their warnings are noise: RV-937).
+  Each join, leave, kick and refusal names who and where: the client's address (IP:port), the account's id and display
+  name once its ticket is checked (else the hello's name), and the match (the matchmaker's id): refused origins,
+  addresses past their sessions (a line a minute an address), refused tickets and claims, rate and malformed kicks,
+  oversized datagrams, the idle kick, quitters reported. Never a ticket.
 - **Development info:** a development server's `GET /info` and `GET /dev-ticket` (on `--info-port`, 127.0.0.1 unless
   `--info-bind`): HTTP/1, 64 connections at once, 2 s for a request's headers; another path a 404, another method a 405.
 
@@ -247,9 +251,15 @@ The accounts service (notes/accounts.md). **Nothing is deployed yet: the first d
   (`--read-only`: it writes nothing).
 - **Health:** `carball-api healthcheck` (the image's `HEALTHCHECK`, every 15 s): `GET /healthz` on `HEALTH_ADDR` (loopback,
   not under `/api/`), 200 while the database answers, else 503.
-- **Logs:** stderr, one line a request: method, path, status, time. **Never the query string** (a sign-in's callback
-  carries its code and assertion) **nor the client's address** (notes/accounts.md AC-15). Configure cloudflared's and any
-  proxy's access logs likewise.
+- **Logs:** stderr, one line a request: method, route (its pattern, never its path), status, a refusal's error code
+  (`busy`, `queue-banned`, `cooldown`, `in-match`, …), time, and who: the client's address (`CF-Connecting-IP` from
+  `TRUSTED_PROXIES`, else the connection's) and, signed in, the account's id and display name. Event lines name the same:
+  sign-ins (and their refusals: banned, blocked, busy), sign-ups, renames, deletions, search starts, matches found (each
+  seat's account and name), matches cancelled (their no-shows), searches ended (why), results (each player), quitters
+  (their ban) and refills, and every ticket refused. **Never a credential:** the query string (a sign-in's callback
+  carries its code and assertion), cookies, tickets, a search's id, OAuth codes or tokens, secrets, e-mail (the user's
+  decision of 2026-10-23: logs say who and where, for abuse and debugging; kept until Docker's log rotation overwrites
+  them).
 - **Housekeeping:** in the process: hourly, expired sessions, sign-in flows, sign-ups and Steam nonces purged, the
   delete/re-create rule's records after their 30 days; every minute, the rate limits' idle keys forgotten (each limit
   holds 200,000 keys at most, the longest idle forgotten past that). Open sign-ins and sign-ups have ceilings (20,000 and

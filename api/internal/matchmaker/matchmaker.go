@@ -6,8 +6,10 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -132,14 +134,26 @@ type search struct {
 
 type match struct {
 	server string
-	// its accounts in seat order
+	// its accounts in seat order, and their names (the log's)
 	accounts []string
+	names    []string
 	// each account's wait (kept for its next search if the match is cancelled)
 	since    map[string]time.Time
 	assigned time.Time
 	// when it started (zero: not yet), and whose players are in it (all at its start; a leave out, a rejoin back)
 	started time.Time
 	present map[string]bool
+}
+
+// seats: the match's seats as the log names them (each its account and name), these alone if `only` isn't nil
+func (mt *match) seats(only []int) string {
+	var out []string
+	for seat, a := range mt.accounts {
+		if (only == nil || slices.Contains(only, seat)) && seat < len(mt.names) {
+			out = append(out, fmt.Sprintf("seat %d %s %q", seat, a, mt.names[seat]))
+		}
+	}
+	return strings.Join(out, ", ")
 }
 
 type kept struct{ since, until time.Time }
@@ -311,6 +325,11 @@ func (m *Matchmaker) end(s *search, reason string, until, now time.Time) {
 	if m.open[s.player.Account] == s {
 		delete(m.open, s.player.Account)
 	}
+	attrs := []any{"reason", reason, "account", s.player.Account, "name", s.player.Name}
+	if !until.IsZero() {
+		attrs = append(attrs, "until", until.UTC().Format(time.RFC3339))
+	}
+	m.log.Info("a search ended", attrs...)
 	s.change(State{Kind: Ended, Reason: reason, Until: until}, now)
 }
 
@@ -457,6 +476,7 @@ func (m *Matchmaker) assign(members []*search, seats []int, server string, playl
 		}
 		tickets[seat] = t
 		mt.accounts = append(mt.accounts, s.player.Account)
+		mt.names = append(mt.names, s.player.Name)
 		mt.since[s.player.Account] = s.since
 	}
 	m.matches[id] = mt
@@ -467,7 +487,7 @@ func (m *Matchmaker) assign(members []*search, seats []int, server string, playl
 		m.latest[s.player.Account] = id
 		s.change(State{Kind: Found, Match: &Match{ID: id, Server: server, Ticket: tickets[seat], Playlist: playlist}}, now)
 	}
-	m.log.Info("a match found", "match", matchText(id), "server", server, "playlist", playlist)
+	m.log.Info("a match found", "match", matchText(id), "server", server, "playlist", playlist, "players", mt.seats(nil))
 }
 
 // event finds a match an event names, if this matchmaker assigned it to that server (an event about another, or one
@@ -537,6 +557,8 @@ func (m *Matchmaker) Cancelled(server string, id uint64, noShows []int, now time
 	if mt == nil {
 		return
 	}
+	m.log.Info("a match cancelled before its start", "match", matchText(id), "server", server, "noShows", mt.seats(noShows),
+		"cooldownUntil", now.Add(NoShowCooldown).UTC().Format(time.RFC3339))
 	for seat, a := range mt.accounts {
 		if slices.Contains(noShows, seat) {
 			until := now.Add(NoShowCooldown)

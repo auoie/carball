@@ -51,8 +51,9 @@ const TAKEOVER_SILENCE: f64 = 3.0;
 const OUTAGE_WINDOW: f64 = 5.0;
 
 /// What the ranked rules tell the accounts service, as it happens (notes/accounts.md §3; LV1): taken by the network
-/// server (`take_reports`), sent by its outbox. Only for seats with tickets (the queue's: never the local host's)
-#[derive(Clone, Debug, PartialEq)]
+/// server (`take_reports`), sent by its outbox. Only for seats with tickets (the queue's: never the local host's). Its
+/// Debug is its summary: never a ticket (RV-949)
+#[derive(Clone, PartialEq)]
 pub enum Report {
     /// An armed leave (the lobby full of humans, no winner yet, the first leaver): the leaver's first ticket, its account
     /// checked again by the service
@@ -76,6 +77,36 @@ pub enum Report {
     Restarted { at: i64 },
 }
 
+impl std::fmt::Debug for Report {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.summary())
+    }
+}
+
+impl Report {
+    /// The report in words, its tickets left out (credentials: never in a log)
+    pub fn summary(&self) -> String {
+        match self {
+            Report::Quitter { match_id, .. } => format!("match {match_id}: a quitter"),
+            Report::Refilled { match_id, .. } => format!("match {match_id}: refilled by a rejoin"),
+            Report::Result(r) => {
+                let players: Vec<String> = r
+                    .players
+                    .iter()
+                    .map(|p| format!("team {}{} {} s", p.team, if p.quitter { " (quitter)" } else { "" }, p.seconds))
+                    .collect();
+                format!("match {}: won by team {} ({})", r.match_id, r.winning_team, players.join(", "))
+            }
+            Report::Started { match_id } => format!("match {match_id}: started"),
+            Report::Left { match_id, seat } => format!("match {match_id}: seat {seat} left"),
+            Report::Back { match_id, seat } => format!("match {match_id}: seat {seat} back"),
+            Report::Cancelled { match_id, no_shows } => format!("match {match_id}: cancelled (no-shows {no_shows:?})"),
+            Report::Over { match_id } => format!("match {match_id}: over, no result"),
+            Report::Restarted { at } => format!("restarted at {at}"),
+        }
+    }
+}
+
 /// A match's result for the accounts service
 #[derive(Clone, Debug, PartialEq)]
 pub struct MatchResult {
@@ -88,12 +119,23 @@ pub struct MatchResult {
 
 /// One seat's part of a result: its first ticket, its team, whether its player left and didn't come back, their time in
 /// the match (s)
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct ResultPlayer {
     pub ticket: String,
     pub team: u8,
     pub quitter: bool,
     pub seconds: u32,
+}
+
+impl std::fmt::Debug for ResultPlayer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // (never the ticket itself, RV-949)
+        f.debug_struct("ResultPlayer")
+            .field("team", &self.team)
+            .field("quitter", &self.quitter)
+            .field("seconds", &self.seconds)
+            .finish_non_exhaustive()
+    }
 }
 
 pub type MatchId = u32;
@@ -128,6 +170,8 @@ struct Reservation {
     /// When its session (the claim's or the last rejoin's) joined: one that young is live though not heard from yet,
     /// no rejoin takes it over (RX31)
     session_since: f64,
+    /// Who holds it in the log's lines (`JoinRequest::who`: the claim's or the last rejoin's)
+    who: String,
 }
 
 impl Reservation {
@@ -145,6 +189,7 @@ impl Reservation {
             lost_at: None,
             rejoin_ticket: None,
             session_since: 0.0,
+            who: String::new(),
         }
     }
 
@@ -178,6 +223,8 @@ struct Hosted {
     pending_quit: Option<(usize, f64)>,
     /// Its start told (`Report::Started`)
     started_told: bool,
+    /// Its end told (`Report::Result`, or `Over` without one): once, at its winner or its teardown
+    result_told: bool,
 }
 
 impl Hosted {
@@ -194,6 +241,12 @@ impl Hosted {
     /// Its id as the accounts service has it
     fn ranked_text(&self) -> String {
         format!("{:016x}", self.ranked)
+    }
+
+    /// The match as the log's lines name it: a queue match by the matchmaker's id (the accounts service's lines name it
+    /// alike), the open match by its number here
+    fn label(&self, local: MatchId) -> String {
+        if self.open { format!("match {local}") } else { format!("match {}", self.ranked_text()) }
     }
 }
 
@@ -294,6 +347,7 @@ impl MatchHost {
             ticked_at: now,
             pending_quit: None,
             started_told: false,
+            result_told: false,
         };
         if open {
             hosted.game(self.test_goal_after); // (anyone may join it: built at once)
@@ -333,7 +387,6 @@ impl MatchHost {
     ) -> Result<(), u8> {
         let gone = Err(protocol::REFUSED_TOKEN);
         if request.verified && self.account_busy(request.key) {
-            tracing::warn!("player {id}: a claim of an account in another match here, refused");
             return Err(protocol::REFUSED_IN_MATCH);
         }
         let found = self.matches.iter().find(|(_, m)| m.ranked == seat.match_id && !m.open).map(|(&k, _)| k);
@@ -344,10 +397,10 @@ impl MatchHost {
                 let seats = (0..seat.roster).map(|i| Reservation::new(i % 2, 0)).collect();
                 let match_id = self.add(playlist, seats, false, Some(seat.match_id), self.now);
                 tracing::info!(
-                    "match {match_id}: opened at its first claim ({} v {}, matchmaker's {:016x})",
+                    "match {:016x}: opened at its first claim ({} v {}, here match {match_id})",
+                    seat.match_id,
                     seat.playlist,
-                    seat.playlist,
-                    seat.match_id
+                    seat.playlist
                 );
                 match_id
             }
@@ -361,11 +414,11 @@ impl MatchHost {
         }
         let Some(slot) = hosted.reservations.get_mut(usize::from(seat.seat)).filter(|r| r.claimed.is_none() && !r.left)
         else {
-            tracing::warn!("player {id}: a claim of a seat taken, refused");
             return gone;
         };
         slot.key = request.key;
         slot.claimed = Some(id);
+        slot.who = request.who();
         slot.here_since = Some(self.now);
         slot.session_since = self.now;
         slot.ticket = request.ticket.clone(); // (the seat's first: its result's and its quitter's)
@@ -431,13 +484,15 @@ impl MatchHost {
         if !armed {
             return;
         }
+        let label = format!("match {ranked_id}: player {id} ({})", slot.who);
         if outage {
-            tracing::info!("match {match_id}: player {id} left during the server's silence: no ban");
+            tracing::info!("{label} left during the server's silence: no ban");
         } else if slot.ticket.is_some() && !slot.reported {
             if lost {
                 hosted.pending_quit = Some((seat, now)); // (reported after the window, unless an outage)
             } else {
                 slot.reported = true;
+                tracing::info!("{label} left: reported as a quitter");
                 let ticket = slot.ticket.as_ref().map(|t| t.encoded.clone()).unwrap_or_default();
                 self.reports.push(Report::Quitter { match_id: ranked_id, ticket });
             }
@@ -463,7 +518,8 @@ impl MatchHost {
         let ranked_id = hosted.ranked_text();
         if 2 * lost_together > hosted.reservations.len() {
             tracing::info!(
-                "match {match_id}: {lost_together} of {} connections lost at once: an outage, no ban",
+                "{}: {lost_together} of {} connections lost at once: an outage, no ban",
+                hosted.label(match_id),
                 hosted.reservations.len()
             );
             return;
@@ -474,6 +530,10 @@ impl MatchHost {
             && let Some(t) = &slot.ticket
         {
             slot.reported = true;
+            tracing::info!(
+                "match {ranked_id}: seat {seat} ({}) lost its connection and didn't come back: reported as a quitter",
+                slot.who
+            );
             self.reports.push(Report::Quitter { match_id: ranked_id, ticket: t.encoded.clone() });
         }
     }
@@ -515,6 +575,7 @@ impl MatchHost {
             return concluded;
         };
         let back = Report::Back { match_id: hosted.ranked_text(), seat: seat as u8 };
+        let match_label = hosted.label(mid);
         let slot = &mut hosted.reservations[seat];
         let stale = slot.here_since.is_some().then_some(slot.claimed).flatten();
         // (live: heard within TAKEOVER_SILENCE, or joined within it and not heard from yet, RX31)
@@ -522,22 +583,23 @@ impl MatchHost {
             && (now - slot.session_since < TAKEOVER_SILENCE
                 || hosted.game.as_ref().is_some_and(|g| g.heard_within(old, now, TAKEOVER_SILENCE)))
         {
-            tracing::warn!("match {mid}: player {id}'s rejoin refused: the seat's session (player {old}) is live");
             return Err(protocol::REFUSED_IN_MATCH);
         }
         slot.claimed = Some(id);
+        slot.who = request.who();
         slot.here_since = slot.here_since.or(Some(now));
         slot.session_since = now;
         slot.lost_at = None;
         slot.rejoin_ticket = request.ticket.as_ref().map(|t| t.encoded.clone());
         let team = slot.team;
+        let label = format!("{match_label}: player {id} ({})", slot.who);
         let game = hosted.game(self.test_goal_after);
         if let Some(old) = stale {
-            tracing::info!("match {mid}: player {id} took over player {old}'s seat (its session not yet timed out)");
+            tracing::info!("{label} took over player {old}'s seat (its session not yet timed out)");
             game.replaced(old);
             self.players.remove(&old);
         } else {
-            tracing::info!("match {mid}: player {id} rejoined team {team}");
+            tracing::info!("{label} rejoined team {team}");
         }
         game.join(id, JoinRequest { team, ..request }, out);
         self.players.insert(id, mid);
@@ -557,14 +619,19 @@ impl MatchHost {
         std::mem::take(&mut self.reports)
     }
 
-    /// A match over: its result, if it has a winner and every seat a ticket (a no contest, the local host's or an
-    /// unverified match has none: then, for a matchmaker's match that started, its end with no result)
+    /// A match's end told, once: its result, if it has a winner and every seat a ticket (a no contest, the local host's or
+    /// an unverified match has none: then, for a matchmaker's match that started, its end with no result). Told at its
+    /// winner (`tick`), else at its teardown; a match told already tells nothing more
     fn report_result(&mut self, match_id: MatchId) {
-        if !self.result(match_id)
-            && let Some(hosted) = self.matches.get(&match_id)
-            && hosted.started_told
-        {
-            self.reports.push(Report::Over { match_id: hosted.ranked_text() });
+        if self.matches.get(&match_id).is_none_or(|m| m.result_told) {
+            return;
+        }
+        let reported = self.result(match_id);
+        let Some(hosted) = self.matches.get_mut(&match_id) else { return };
+        hosted.result_told = true;
+        if !reported && hosted.started_told {
+            let match_id = hosted.ranked_text();
+            self.reports.push(Report::Over { match_id });
         }
     }
 
@@ -578,7 +645,7 @@ impl MatchHost {
         }
         let state = game.match_state();
         let Some(winning_team) = state.winner.filter(|_| !state.no_contest) else {
-            tracing::info!("match {match_id}: no winner, no result (a no contest)");
+            tracing::info!("{}: no winner, no result (a no contest)", hosted.label(match_id));
             return false;
         };
         let players: Option<Vec<ResultPlayer>> = hosted
@@ -604,7 +671,7 @@ impl MatchHost {
                 true
             }
             None => {
-                tracing::info!("match {match_id}: seats without tickets, no result");
+                tracing::info!("{}: seats without tickets, no result", hosted.label(match_id));
                 false
             }
         }
@@ -624,8 +691,9 @@ impl MatchHost {
             }
         }
         if hosted.holding() {
-            tracing::info!("match {match_id}: player {id} left before the start, cancelled");
+            let label = hosted.label(match_id);
             if let Some(slot) = hosted.reservations.iter_mut().find(|r| r.claimed == Some(id)) {
+                tracing::info!("{label}: player {id} ({}) left before the start, cancelled", slot.who);
                 slot.left = true;
             }
             self.cancel(match_id);
@@ -678,7 +746,7 @@ impl MatchHost {
                 }
             }));
             if ran.is_err() {
-                tracing::error!("match {match_id}: its tick panicked, let go");
+                tracing::error!("{}: its tick panicked, let go", m.label(match_id));
                 done.push((match_id, false));
                 if m.open {
                     restart.push(m.playlist);
@@ -695,7 +763,8 @@ impl MatchHost {
             }
             if m.holding() && now - m.created > RESERVATION_SECONDS {
                 tracing::info!(
-                    "match {match_id}: not every player claimed their seat in {RESERVATION_SECONDS} s, cancelled"
+                    "{}: not every player claimed their seat in {RESERVATION_SECONDS} s, cancelled",
+                    m.label(match_id)
                 );
                 done.push((match_id, true));
             } else if m.game.as_ref().is_some_and(Game::is_over) || (!m.holding() && m.player_count() == 0) {
@@ -721,6 +790,18 @@ impl MatchHost {
             self.matches.iter().filter(|(_, m)| m.pending_quit.is_some()).map(|(&id, _)| id).collect();
         for match_id in waiting {
             self.decide_pending_quit(match_id, false);
+        }
+        // (a match's result told the moment it has its winner (the final result, a forfeit, a team emptied), its
+        // quitters and times played as they stand then, after this step's kicks: the menu's first read after the match
+        // shows the new rating, not one after the end screen, the user's report; a leave after it is no quitter)
+        let won: Vec<MatchId> = self
+            .matches
+            .iter()
+            .filter(|(_, m)| !m.open && !m.result_told && m.game.as_ref().is_some_and(|g| g.winner().is_some()))
+            .map(|(&id, _)| id)
+            .collect();
+        for match_id in won {
+            self.report_result(match_id);
         }
         for (match_id, cancelled) in done {
             if cancelled {
@@ -763,7 +844,7 @@ impl MatchHost {
                 self.closed.insert(hosted.ranked, self.now + CLOSED_MEMORY);
             }
             self.players.retain(|_, m| *m != match_id);
-            tracing::info!("match {match_id} let go");
+            tracing::info!("{} let go", hosted.label(match_id));
         }
     }
 }
@@ -800,6 +881,7 @@ mod tests {
             block_non_tactical: false,
             verified: false,
             ticket: None,
+            peer: None,
         }
     }
 
@@ -868,6 +950,27 @@ mod tests {
             t += 1.0 / 120.0;
         }
         t
+    }
+
+    /// The development server's report line (no outbox): what happened, never a ticket
+    #[test]
+    fn a_reports_summary_leaves_its_tickets_out() {
+        let player = |team, quitter| ResultPlayer { ticket: "eyJh.secret.sig".into(), team, quitter, seconds: 300 };
+        let result = MatchResult {
+            match_id: "00000000000000a1".into(),
+            playlist: 1,
+            winning_team: 0,
+            players: vec![player(0, false), player(1, true)],
+        };
+        for report in [
+            Report::Result(result),
+            Report::Quitter { match_id: "00000000000000a1".into(), ticket: "eyJh.secret.sig".into() },
+            Report::Refilled { match_id: "00000000000000a1".into(), ticket: "eyJh.secret.sig".into() },
+        ] {
+            let line = report.summary();
+            assert!(line.contains("match 00000000000000a1") && !line.contains("secret"), "{line}");
+            assert!(!format!("{report:?}").contains("secret"), "its Debug");
+        }
     }
 
     #[test]
@@ -958,15 +1061,50 @@ mod tests {
         assert_eq!((reports.len(), ticket.as_str()), (1, "t1"));
         let match_id = match_id.clone();
         run_to(&mut host, 5.0, 6.0);
-        // (the winner leaves after the forfeit: no ban, the result sent as the match goes)
-        host.leave(2, false);
+        // (the forfeit: the result told at once, not at the match's teardown, the time played as it stood then)
         let reports = ranked(host.take_reports());
         let [Report::Result(result)] = reports.as_slice() else { panic!("{reports:?}") };
         assert_eq!((result.match_id.as_str(), result.playlist, result.winning_team), (match_id.as_str(), 1, 1));
         let by_ticket = |t: &str| result.players.iter().find(|p| p.ticket == t).unwrap().clone();
         assert_eq!((by_ticket("t1").team, by_ticket("t1").quitter, by_ticket("t1").seconds), (0, true, 5));
-        assert_eq!((by_ticket("t2").team, by_ticket("t2").quitter, by_ticket("t2").seconds), (1, false, 6));
+        assert_eq!((by_ticket("t2").team, by_ticket("t2").quitter, by_ticket("t2").seconds), (1, false, 5));
+        // (the winner leaves during the end screen: no ban, nothing more told as the match goes)
+        host.leave(2, false);
+        let after = host.take_reports();
+        assert!(
+            !after.iter().any(|r| matches!(r, Report::Result(_) | Report::Over { .. } | Report::Quitter { .. })),
+            "{after:?}"
+        );
         assert_eq!(host.match_count(), 0);
+    }
+
+    /// A match's end screen run out with its winner still there: its result told once, at the winner, nothing at its
+    /// teardown
+    #[test]
+    fn a_result_is_told_once_at_the_winner_never_again_at_the_teardown() {
+        init_engine();
+        let mut host = MatchHost::new(1, None);
+        let tokens = host.create_match(ONES, &[1, 2], 0.0).tokens;
+        let (tx, mut rx) = channel(OUT_QUEUE);
+        assert!(host.claim(tokens[0], 1, seat(1), tx.clone()));
+        assert!(host.claim(tokens[1], 2, seat(2), tx));
+        run_to(&mut host, 0.0, 5.0);
+        host.observe(5.0);
+        host.leave(1, false);
+        let mut results = 0;
+        let mut t = 5.0;
+        while host.match_count() > 0 && t < 120.0 {
+            run_to(&mut host, t, t + 1.0);
+            t += 1.0;
+            while rx.try_recv().is_ok() {}
+            for r in host.take_reports() {
+                if matches!(r, Report::Result(_) | Report::Over { .. }) {
+                    results += 1;
+                    assert!(t <= 7.0, "told at {t} s, not at the forfeit: {r:?}");
+                }
+            }
+        }
+        assert_eq!((host.match_count(), results), (0, 1), "let go after its end screen, its result told once");
     }
 
     #[test]
@@ -1011,7 +1149,12 @@ mod tests {
         host.leave(3, false);
         run_to(&mut host, 32.0, 33.0);
         host.leave(4, false);
-        assert!(ranked(host.take_reports()).is_empty());
+        // (the first match's result alone, its forfeit's: none from the seats without tickets)
+        let reports = ranked(host.take_reports());
+        assert!(
+            matches!(reports.as_slice(), [Report::Result(r)] if r.players.iter().any(|p| p.ticket == "t2")),
+            "{reports:?}"
+        );
     }
 
     #[test]
@@ -1148,10 +1291,16 @@ mod tests {
                 while rx.try_recv().is_ok() {}
                 reports.extend(ranked(host.take_reports()));
             }
+            let quitters: Vec<&Report> = reports.iter().filter(|r| matches!(r, Report::Quitter { .. })).collect();
             assert!(
-                matches!(reports.as_slice(), [Report::Quitter { ticket, .. }] if ticket == "t1"),
+                matches!(quitters.as_slice(), [Report::Quitter { ticket, .. }] if ticket == "t1"),
                 "offset {offset}: {reports:?}"
             );
+            // (the forfeit's result, when told in the same step, after the kicked player's leave)
+            let at = |kind: fn(&Report) -> bool| reports.iter().position(kind);
+            if let Some(result) = at(|r| matches!(r, Report::Result(_))) {
+                assert!(at(|r| matches!(r, Report::Quitter { .. })) < Some(result), "offset {offset}: {reports:?}");
+            }
         }
     }
 

@@ -50,7 +50,7 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 		f.Nonce, f.Verifier = token(), oauth2.GenerateVerifier()
 		var err error
 		if target, err = s.Google.AuthURL(state, f.Nonce, f.Verifier); err != nil {
-			s.Log.Error("google sign-in unavailable", "err", err)
+			s.log(r).Error("google sign-in unavailable", "err", err)
 			s.redirectPage(w, r, url.Values{"signin": {signinOff}})
 			return
 		}
@@ -60,7 +60,7 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 	// (everyone's sign-ins in progress at most so many: a flood can't fill the table, AP-2)
 	if open, err := s.Store.OpenFlows(r.Context(), now); err != nil || open >= s.limits.OpenFlows {
 		if err != nil {
-			s.Log.Error("counting sign-ins", "err", err)
+			s.log(r).Error("counting sign-ins", "err", err)
 		}
 		s.redirectPage(w, r, url.Values{"signin": {signinBusy}})
 		return
@@ -88,7 +88,7 @@ func (s *Server) takeFlow(w http.ResponseWriter, r *http.Request, provider store
 	}
 	f, ok, err := s.Store.TakeFlow(r.Context(), digest(id), s.Now())
 	if err != nil {
-		s.Log.Error("taking a sign-in", "err", err)
+		s.log(r).Error("taking a sign-in", "err", err)
 		return store.Flow{}, false
 	}
 	return f, ok && f.Provider == provider
@@ -113,7 +113,7 @@ func (s *Server) googleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	sub, err := s.Google.Exchange(r.Context(), q.Get("code"), f.Verifier, f.Nonce)
 	if err != nil {
-		s.Log.Warn("google sign-in refused", "err", err)
+		s.log(r).Warn("google sign-in refused", "err", err)
 		s.redirectPage(w, r, url.Values{"signin": {signinFailed}})
 		return
 	}
@@ -137,7 +137,7 @@ func (s *Server) steamCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := s.Steam.Verify(r.Context(), r.URL.RawQuery, s.steamReturnTo(f.State))
 	if err != nil {
-		s.Log.Warn("steam sign-in refused", "err", err)
+		s.log(r).Warn("steam sign-in refused", "err", err)
 		s.redirectPage(w, r, url.Values{"signin": {signinFailed}})
 		return
 	}
@@ -198,6 +198,7 @@ func (s *Server) signedIn(w http.ResponseWriter, r *http.Request, i store.Identi
 	}
 	switch o := outcome.(type) {
 	case signInBanned:
+		s.log(r).Warn("sign-in refused: banned", "provider", i.Provider, "account", s.accountOf(r, i))
 		q := url.Values{"signin": {signinBanned}}
 		switch end := o.end.(type) {
 		case store.Permanent:
@@ -206,18 +207,26 @@ func (s *Server) signedIn(w http.ResponseWriter, r *http.Request, i store.Identi
 		}
 		s.redirectPage(w, r, q)
 	case signInBlocked:
+		s.log(r).Warn("sign-in refused: its account deleted within the block", "provider", i.Provider)
 		s.redirectPage(w, r, url.Values{"signin": {signinBlocked}, "until": {o.free.UTC().Format(time.DateOnly)}})
 	case signInKnown:
 		if err := s.newSession(w, r, o.account, now); err != nil {
 			s.fail(w, r, "starting a session", err)
 			return
 		}
+		name := ""
+		if a, err := s.Store.Account(ctx, o.account); err == nil {
+			name = a.Name
+		}
+		whoOf(r).signedIn(o.account, name)
+		s.log(r).Info("signed in", "provider", i.Provider)
 		s.redirectPage(w, r, nil)
 	case signInNew:
 		if open, err := s.Store.OpenSignups(ctx, now); err != nil || open >= s.limits.OpenSignups {
 			if err != nil {
-				s.Log.Error("counting sign-ups", "err", err)
+				s.log(r).Error("counting sign-ups", "err", err)
 			}
+			s.log(r).Warn("sign-in refused: too many sign-ups under way", "provider", i.Provider)
 			s.redirectPage(w, r, url.Values{"signin": {signinBusy}})
 			return
 		}
@@ -231,8 +240,18 @@ func (s *Server) signedIn(w http.ResponseWriter, r *http.Request, i store.Identi
 			return
 		}
 		setCookie(w, signupCookie, tok, SignupTTL)
+		s.log(r).Info("a new sign-in: its sign-up next", "provider", i.Provider)
 		s.redirectPage(w, r, url.Values{"signup": {""}})
 	}
+}
+
+// accountOf: the identity's account id for the log ("" for none, or unread)
+func (s *Server) accountOf(r *http.Request, i store.Identity) string {
+	account, _, err := s.Store.AccountByIdentity(r.Context(), i.Provider, i.Subject)
+	if err != nil {
+		return ""
+	}
+	return account
 }
 
 // persona: a Steam identity's persona name (a suggestion only, untrusted), "" for Google's (we never ask for a name)
@@ -253,7 +272,7 @@ func (s *Server) persona(ctx context.Context, i store.Identity) string {
 
 // fail: the server's own trouble, logged; the page told only that it failed
 func (s *Server) fail(w http.ResponseWriter, r *http.Request, doing string, err error) {
-	s.Log.Error(doing, "err", err)
+	s.log(r).Error(doing, "err", err)
 	s.redirectPage(w, r, url.Values{"signin": {signinFailed}})
 }
 
@@ -285,7 +304,7 @@ func (s *Server) pending(r *http.Request) (store.Pending, bool, error) {
 func (s *Server) signupInfo(w http.ResponseWriter, r *http.Request) {
 	p, ok, err := s.pending(r)
 	if err != nil {
-		s.Log.Error("reading a sign-up", "err", err)
+		s.log(r).Error("reading a sign-up", "err", err)
 		writeError(w, http.StatusInternalServerError, "server")
 		return
 	}
@@ -308,7 +327,7 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 	}
 	p, ok, err := s.pending(r)
 	if err != nil {
-		s.Log.Error("reading a sign-up", "err", err)
+		s.log(r).Error("reading a sign-up", "err", err)
 		writeError(w, http.StatusInternalServerError, "server")
 		return
 	}
@@ -331,7 +350,7 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.Turnstile != nil {
 		if err := s.Turnstile.Verify(ctx, body.Turnstile, "signup"); err != nil {
-			s.Log.Warn("sign-up's turnstile refused", "err", err)
+			s.log(r).Warn("sign-up's turnstile refused", "err", err)
 			writeError(w, http.StatusForbidden, "turnstile")
 			return
 		}
@@ -354,17 +373,18 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "taken")
 		return
 	case err != nil:
-		s.Log.Error("making an account", "err", err)
+		s.log(r).Error("making an account", "err", err)
 		writeError(w, http.StatusInternalServerError, "server")
 		return
 	}
 	clearCookie(w, signupCookie)
 	if err := s.newSession(w, r, account, now); err != nil {
-		s.Log.Error("starting a session", "err", err)
+		s.log(r).Error("starting a session", "err", err)
 		writeError(w, http.StatusInternalServerError, "server")
 		return
 	}
-	s.Log.Info("account made", "provider", p.Provider)
+	whoOf(r).signedIn(account, name)
+	s.log(r).Info("signed up: account made", "provider", p.Provider)
 	s.writeAccount(w, r, http.StatusCreated, account)
 }
 

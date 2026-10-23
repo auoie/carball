@@ -56,6 +56,20 @@ pub const REFUSED_IN_MATCH: u8 = 5;
 pub const REFUSED_CONCLUDED: u8 = 6;
 /// A search from an account the server reported as a quitter in the last few minutes (its queue ban, AP3)
 pub const REFUSED_QUEUE_BANNED: u8 = 7;
+
+/// A refusal's reason in words (the log's)
+pub fn refused_text(reason: u8) -> &'static str {
+    match reason {
+        REFUSED_FULL => "the match is full",
+        REFUSED_VERSION => "another protocol version",
+        REFUSED_TOKEN => "the match is gone, no longer waiting, or the seat taken or not the match's",
+        REFUSED_MODE => "not served here",
+        REFUSED_TICKET => "its ticket",
+        REFUSED_IN_MATCH => "the account plays in another match here, or its seat's session is live",
+        REFUSED_CONCLUDED => "the match has concluded, or has no seat of the account's",
+        _ => "another reason",
+    }
+}
 /// Hello's intent: join this server's match (development servers), search a playlist's queue, claim a reserved slot
 pub const INTENT_JOIN: u8 = 0;
 pub const INTENT_SEARCH: u8 = 1;

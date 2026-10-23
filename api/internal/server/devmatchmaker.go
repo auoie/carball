@@ -92,13 +92,14 @@ func (s *Server) devStartSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	k := body.Key + body.Key
 	account := k[:8] + "-" + k[8:12] + "-" + k[12:16] + "-" + k[16:20] + "-" + k[20:]
+	whoOf(r).signedIn(account, body.Name)
 	now := s.Now()
 	if until, banned := s.devBanOf(account, now); banned {
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": "queue-banned", "until": until.UTC().Format(time.RFC3339)})
 		return
 	}
 	fresh := ticket.Shown{Rating: 1500, Deviation: 500}
-	s.openSearch(w, matchmaker.Player{Account: account, Name: body.Name, Ratings: [3]ticket.Shown{fresh, fresh, fresh}}, req, now)
+	s.openSearch(w, r, matchmaker.Player{Account: account, Name: body.Name, Ratings: [3]ticket.Shown{fresh, fresh, fresh}}, req, now)
 }
 
 // DevBan is a development quitter's ban (the ladder's first step)

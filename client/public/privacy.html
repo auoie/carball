@@ -57,16 +57,15 @@
     <h2>What it doesn't store</h2>
     <ul>
       <li>E-mail addresses, or the access tokens Google and Steam hand us at sign-in (used once, then dropped).</li>
-      <li>
-        IP addresses. The service holds them in memory only, to limit how many sign-ins and sign-ups one network can make, and forgets each once it's
-        been idle for that limit's window (an hour at most). Its logs leave them out.
-      </li>
-      <li>
-        The game server sees your IP address while you search and play, as any server you connect to does. It holds it in memory only, to limit how many
-        connections one network can open and, after a match nobody from it joined, to pause that network's searches for two minutes. Nothing is written
-        down.
-      </li>
+      <li>IP addresses, in the account's records. The service holds them in memory to limit how many sign-ins and sign-ups one network can make, and the game server to limit how many connections one network can open.</li>
     </ul>
+
+    <h2>Logs</h2>
+    <p>
+      The services log IP addresses, account ids and display names, with what each connection did (signing in, searching, joining and leaving a match,
+      and anything refused), for security, abuse prevention and debugging. The logs are kept until the servers' log rotation overwrites them (about
+      100 MB for each service) and are never shared. They never hold your cookies, sign-in codes or tokens.
+    </p>
 
     <h2>Others involved</h2>
     <ul>
