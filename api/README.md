@@ -38,7 +38,8 @@ Variants are closed: a sealed interface (an unexported marker method, `//sumtype
 when a ban ends, so gochecksumtype fails a type switch that misses one; the providers are an enum the exhaustive linter
 holds every switch to.
 
-Builds are offline: the modules go.sum pins, from the module cache (`GOPROXY=off` in scripts/build_images.sh).
+Development builds are offline: the modules go.sum pins, from the module cache (`GOPROXY=off`). The image build
+(the root `Dockerfile`) downloads them, checked against go.sum and the checksum database, into its own cache.
 
 ## Running it locally
 

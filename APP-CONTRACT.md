@@ -34,16 +34,19 @@ scripts/build_images.sh --worktree TAG     # testing a change before its commit
 ```
 The default tag is the commit's own date in UTC and the first 7 characters of its hash, `YYYYMMDD-HHMM-hash` (the
 committer date and a fixed-length hash: the same commit always gets the same tag, a rebuild changes nothing; tags sort
-by that date); the build prints it last (`tag: …`), and `TAG=$(scripts/image_tag.sh)` gives it beforehand. It builds from the commit only: `git archive` stages its sources under `out/images/<TAG>-<time>/src` (nothing uncommitted
+by that date); the build prints it last (`tag: …`), and `TAG=$(scripts/image_tag.sh)` gives it beforehand. It builds from the commit only: `git archive`'s files are the build's context (nothing uncommitted
 or git-ignored gets in; with `--worktree`, the working tree's files that are committed or would be, never ignored ones).
-There it builds the engine's WebAssembly (Emscripten), the client (`npm run build`, then the shipped-data check on what it
-built) and the server (`cargo build --release --offline` in `out/images/target`, whatever `CARGO_TARGET_DIR` says: a
-development server's binary is left alone; no debug info, symbols stripped, the build machine's paths remapped), stages
-each image's files alone under `out/images/<TAG>-<time>/{web,game,api}` (the repo's `out/` holds local-only data and is never
-a build context), and runs `docker build -t carball-web:TAG …/web`, `docker build -t carball-game:TAG …/game` and
-`docker build -t carball-api:TAG …/api` (the accounts service: `go build` offline from the module cache, static,
-`-trimpath`, stripped; its staged files through the same names check). The
-bases are pinned by digest (update a base's tag and digest together). Then:
+Everything compiles in the root `Dockerfile`'s stages (BuildKit), from official toolchain images pinned by digest:
+the engine's WebAssembly and the local host's (`emscripten/emsdk`, the host with Rust beside it), the server
+(`rust`: the engine's libraries in their own stage, then `cargo build --release`; no debug info, symbols stripped, the
+registry's and home directory's paths remapped), the client (`node`: `npm ci`, `npm run build`, then the shipped-data and
+names checks on what it built) and the accounts service (`golang`: static, `-trimpath`, stripped). The script first
+builds `--target checks` (the names check over the game and API images' files too, and no build paths in either binary),
+then `--target web`, `game` and `api` as `carball-web:TAG`, `carball-game:TAG` and `carball-api:TAG`. Each stage is
+cached by its inputs, so a release that doesn't touch the engine builds no C++; cargo's registry and target, npm's and
+Go's caches are BuildKit cache mounts (the server's own crate always built again). The first build downloads the
+toolchain images and the crates, npm packages and Go modules (`--locked`, `npm ci`, the Go checksum database); later
+builds only what changed. Every base is pinned by digest (update a tag and its digest together). Then:
 ```sh
 docker save carball-web:TAG | gzip > carball-web-TAG.tar.gz       # on the host: docker load < carball-web-TAG.tar.gz
 docker save carball-game:TAG | gzip > carball-game-TAG.tar.gz
@@ -315,6 +318,19 @@ docker run -d --name carball-api --restart unless-stopped --network carball --re
 ```
 
 ## Checked (2026-10-15, Docker 29.9 on the development VM; again for every change to the images or this contract)
+
+2026-10-23 (the working tree on b524503, the build moved into the root `Dockerfile`: `scripts/build_images.sh --worktree
+dockertest`): the checks stage passed (the engine's native and WebAssembly builds simulating bit-identically, the
+same 300 s determinism hash as the previous toolchains' builds; the names guards; no build paths in either binary). The
+web image's files equal the previous build's (b524503's) except the two WebAssembly modules (the official Emscripten
+image's LLVM, not the development machine's: the same physics, above) and the chunk names that follow them. On
+127.0.0.1, 16 container checks: web `/healthz`, `config.json` from `GAME_SERVER_URL` with `no-store`, the engine as
+`application/wasm`, the policy naming the game server, an unknown route the page, uid 101, a non-https URL exiting it;
+game uid 10001, a `MESHES_DIR` without the arena's meshes exiting it (the folder named), `--dev` starting and
+`--healthcheck` 0; api uid 10002, refused without its settings (the development matchmaker listens on loopback only,
+so it ran in the browser tests instead). The browser tests against the images, 80/80: the web image's files as the
+page, the game image's binary as every game server and the API image's as every development matchmaker
+(`CARBALL_E2E_GAME_BIN`, `CARBALL_E2E_API_BIN`).
 
 2026-10-22 (the working tree on 0297a88, regions: `scripts/build_images.sh --worktree ranked3b`): the checks below again,
 and five more for the web image's `GAME_SERVERS`, 49 in all: three servers in `/config.json` in order (the first its

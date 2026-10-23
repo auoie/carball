@@ -25,12 +25,22 @@ fn main() {
         local_host();
         return;
     }
-    let dst = cmake::Config::new("../engine").build_target("rlengine_capi").profile("Release").build();
-    let build = dst.join("build");
+    // (the image build's: the engine's libraries built in their own stage of the Dockerfile, cached while the engine is
+    // unchanged, given as CARBALL_ENGINE_NATIVE; else built here with CMake)
+    println!("cargo:rerun-if-env-changed=CARBALL_ENGINE_NATIVE");
+    let prebuilt = std::env::var("CARBALL_ENGINE_NATIVE").ok();
+    let build = match &prebuilt {
+        Some(dir) => std::path::PathBuf::from(dir),
+        None => cmake::Config::new("../engine").build_target("rlengine_capi").profile("Release").build().join("build"),
+    };
     println!("cargo:rustc-link-search=native={}", build.display());
     println!("cargo:rustc-link-search=native={}", build.join("rocketsim").display());
     for lib in ["rlengine_capi", "rlnet", "rlstats", "RocketSim", "detmath"] {
         println!("cargo:rustc-link-lib=static={lib}");
+        if prebuilt.is_some() {
+            let sub = if lib == "RocketSim" { "rocketsim/" } else { "" };
+            println!("cargo:rerun-if-changed={}/{sub}lib{lib}.a", build.display());
+        }
     }
     // libstdc++ linked in (the release image runs on an older distribution's runtime than the toolchain's: APP-CONTRACT.md),
     // where the toolchain has its archive; else the shared one
@@ -47,6 +57,9 @@ fn main() {
             println!("cargo:rustc-link-lib=static=stdc++");
         }
         None => println!("cargo:rustc-link-lib=dylib=stdc++"),
+    }
+    if prebuilt.is_some() {
+        return;
     }
     for dir in [
         "../engine/capi",
@@ -73,7 +86,10 @@ fn local_host() {
     println!("cargo:rustc-link-search=native={dir}/rocketsim");
     for lib in ["rlengine_capi", "rlnet", "rlstats", "RocketSim", "detmath"] {
         println!("cargo:rustc-link-lib=static={lib}");
-        println!("cargo:rerun-if-changed={dir}/lib{lib}.a");
+        // (each library where CMake builds it, RocketSim's in its subdirectory: a path that's never there would rerun
+        // this script, and rebuild the host's crate, on every build)
+        let sub = if lib == "RocketSim" { "/rocketsim" } else { "" };
+        println!("cargo:rerun-if-changed={dir}{sub}/lib{lib}.a");
     }
     let exports = HOST_EXPORTS.iter().map(|e| format!("_{e}")).collect::<Vec<_>>().join(",");
     for arg in [

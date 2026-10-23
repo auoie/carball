@@ -131,9 +131,9 @@ open sessions kept: `Endpoint::reload_config`; the dev info server only without 
 64 connections), SEC-7 (`catch_unwind` per match tick: that match let go, an open match restarted; the process exits if
 the game thread ends; SIGTERM exits at once), SEC-8 (one World a tick to the others). A health endpoint on 127.0.0.1
 (`--healthcheck`, the image's HEALTHCHECK) reports the game thread's heartbeat. The images: `scripts/build_images.sh`
-stages `client/dist` (nginx on :3000, `config.json` from `GAME_SERVER_URL` at start: `client/docker/`) and the release
-binary with the meshes (`debian:trixie-slim`; libstdc++ is linked in, so glibc 2.38+ is enough: `server/build.rs`;
-`server/docker/`). The client reads `config.json` for the game server (no certificate hash: a real certificate) unless
+builds the root `Dockerfile`: `client/dist` (nginx on :3000, `config.json` from `GAME_SERVER_URL` at start:
+`client/docker/`) and the release binary with the meshes (`debian:trixie-slim`; libstdc++ is linked in, so glibc 2.38+
+is enough: `server/build.rs`). The client reads `config.json` for the game server (no certificate hash: a real certificate) unless
 `?queue=` names a development server. No container runtime on this machine: the Dockerfiles aren't built here; the
 binary's production mode (a PEM certificate, reloads, the health check, SIGTERM) was run by hand and the reload is in
 `tests/end_to_end.rs`. If a Windows browser can't reach a WSL development server's info endpoint on 127.0.0.1, run it

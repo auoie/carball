@@ -1,8 +1,9 @@
 //! The build script's rerun list (server/build.rs) covers everything the engine's C API is built from (RV-877): each
 //! CMakeLists.txt the top one reaches by add_subdirectory, each file it include()s, and each directory the libraries'
-//! sources, globs and include directories name. Cargo's own fingerprints are the native build's only guard
-//! (scripts/build_images.sh: one fixed folder), so a path missing here would leave an image's server on an old engine
-//! while the client's WebAssembly has the new one. The CMake files are read as CMake reads them (RV-899): commands in any
+//! sources, globs and include directories name. Cargo's own fingerprints decide when a development build rebuilds the
+//! engine, so a path missing here would leave a server on an old engine while the client's WebAssembly has the new one.
+//! (The image build doesn't depend on it: its server links the engine's libraries from their own Dockerfile stage,
+//! rebuilt whenever the engine's files change, CARBALL_ENGINE_NATIVE.) The CMake files are read as CMake reads them (RV-899): commands in any
 //! case, a space before the parenthesis, arguments over several lines, `#` comments, `set` variables.
 
 use std::collections::HashMap;

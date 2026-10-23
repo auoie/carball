@@ -1,7 +1,7 @@
 // What ships names no game (the user's decision, 2026-10-15: notes/hitboxes.md): the built page (dist, its
 // WebAssembly engine among it), public/, the strings our modules hold (comments may name the game: they don't ship) and,
 // in the image build, the game server's and the accounts service's staged files (their binaries, the meshes, their
-// images' Dockerfiles: SHIPPED_GAME_DIR, SHIPPED_API_DIR, scripts/build_images.sh) carry none of the game's, its maker's,
+// images' Dockerfile: SHIPPED_GAME_DIR, SHIPPED_API_DIR, the Dockerfile's checks) carry none of the game's, its maker's,
 // its cars', its arenas' or its modes' names, nor its abbreviation, file names included (RV-388, RV-423). Needs nothing local: it runs in CI and in the image build too.
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";

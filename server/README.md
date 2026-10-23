@@ -29,7 +29,7 @@ checked offline in the session's hello; `--dev` makes a key of its own and its i
 `GAME_SERVER_TOKEN_FILE` (`--dev` logs them instead: APP-CONTRACT.md). Without `--meshes` or
 `MESHES_DIR` the meshes are the repository's `out/arena/collision_meshes` above the binary. The deployment's interface
 (its environment variables, ports, health check, limits) is `APP-CONTRACT.md`; its images come from
-`scripts/build_images.sh` (`client/docker/`, `server/docker/`).
+`scripts/build_images.sh` (the root `Dockerfile`; the web image's nginx files in `client/docker/`).
 
 What a session may do (the security review's SEC-2/3/5/7/8, RX13's RV-366/373): its address proven first (a QUIC
 Retry: a spoofed packet takes no slot), 512 sessions at once, 8 at once and 30 new a minute per address, an IPv6 one by
