@@ -151,6 +151,11 @@ API. It:
   (2026-10-22, notes/matchmaking.md, Regions) an account searches every region it ticks at once, on purpose, and the page
   takes the first match found, ending or declining the rest; it can't play two matches at once from one page. The API
   holding it across servers (AC-27) stays open, not needed for that.
+- **A ticket isn't bound to a server, on purpose** (RX43): a search across regions sends one search ticket to every
+  region's server (one search, several servers), each server taking it once (its nonce kept per server), so a search
+  costs one ticket from the account's 60 in 10 minutes however many regions it searches, and the claim's and a
+  decline's tickets (fetched apart) aren't squeezed out by it (RX43C-2). A stolen ticket could likewise be used once on
+  each server within its two minutes, as its account, which the account's one search per server bounds.
 
 A seat belongs to the account: a reconnect needs a fresh ticket for that account, not the browser key.
 
@@ -326,7 +331,8 @@ With no ranked gate, it rests on:
 - **Forged or replayed sign-ins:** AC-1 flow binding, the Steam checks, the OIDC nonce.
 - **Forged results:** the server's credential plus fresh, single-use player tickets.
 - **CSRF from a sibling *.zolt.top site:** `__Host-` cookies, the Origin check, JSON with a custom header.
-- **A stolen ticket:** 2 minutes, single use, one active search per account.
+- **A stolen ticket:** 2 minutes, single use on each server (not bound to one: a search across regions sends it to each,
+  RX43), one active search per account on each.
 
 ## 8. The first deploy (auth in place)
 

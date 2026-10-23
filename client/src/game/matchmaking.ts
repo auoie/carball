@@ -208,11 +208,11 @@ export class Matchmaking {
         this.#failedAt = this.#now;
         this.#set("failed");
       },
-      // (a region dropped while another searches: its line, the search going on)
+      // (a region dropped while another searches: its line as given, not "Search failed": the search goes on, RX43C)
       warning: (text) => {
         const status = this.#state?.status;
         if (this.#finishing || (status !== "connecting" && status !== "searching")) return;
-        this.#extra.push({ text: `${OWN_SEARCH_TEXT.failedPrefix} ${text}`, kind: "warning" });
+        this.#extra.push({ text, kind: "warning" });
         this.#set(status);
       },
       // (another tab's search took this one's place: said plainly, the search over here; the line stays till Cancel

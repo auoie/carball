@@ -123,3 +123,38 @@ test("two regions matching one searcher at once: one match joined, the other giv
   for (const page of [waitingA, waitingB]) if (!inMatch(page)) await cancelSearch(page);
   expect(errors).toEqual([]);
 });
+
+test("a search the page starts by itself (Play Again) waits for the pings and goes to the lowest; that pick kept (RX43C-1)", async ({ browser }) => {
+  test.setTimeout(120_000);
+  const errors: string[] = [];
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  opened.push(context);
+  await hideGamepads(context);
+  // (back from a match's end with Play Again: the menu searches the playlist again as it opens; nothing chosen yet)
+  await context.addInitScript(() => {
+    if (sessionStorage.getItem("carball.played") === null) {
+      sessionStorage.setItem("carball.played", "1");
+      sessionStorage.setItem("carball.menuNotice", JSON.stringify({ search: 1 }));
+    }
+  });
+  const page = await context.newPage();
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto(`/?queue=${A},${B}&render=off`);
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
+  interface Regions {
+    pings: Record<string, number | null>;
+    chosen: string[];
+    searched: string[];
+  }
+  const regions = (): Promise<Regions> => page.evaluate(() => (window as unknown as { carballRegions: () => Regions }).carballRegions());
+  await expect.poll(async () => (await regions()).searched.length, { timeout: 15_000 }).toBe(1);
+  const { pings, searched } = await regions();
+  // (both measured before it searched: the lowest, the list's first of equals)
+  const [pa, pb] = [pings[A], pings[B]];
+  expect(typeof pa === "number" && typeof pb === "number").toBe(true);
+  expect(searched).toEqual([(pb ?? 0) < (pa ?? 0) ? B : A]);
+  expect(await page.evaluate(() => localStorage.getItem("carball.regions"))).toBe(JSON.stringify(searched));
+  await expect.poll(async () => status(page), { timeout: 15_000 }).toBe("searching");
+  await cancelSearch(page);
+  expect(errors).toEqual([]);
+});

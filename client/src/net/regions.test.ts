@@ -1,6 +1,6 @@
 // The regions a search goes to (notes/matchmaking.md, Regions), with made-up regions and pings
 import { describe, expect, it } from "vitest";
-import { chooseRegions, storeRegions, storedRegions, toggleRegion } from "./regions";
+import { chooseRegions, regionsToSearch, shareSearchTickets, storeRegions, storedRegions, toggleRegion } from "./regions";
 
 const memory = (): Pick<Storage, "getItem" | "setItem"> => {
   const map = new Map<string, string>();
@@ -41,5 +41,36 @@ describe("the regions searched", () => {
     expect(storedRegions(storage)).toBeNull();
     storage.setItem("carball.regions", JSON.stringify([3, "eu"]));
     expect(storedRegions(storage)).toEqual(["eu"]);
+  });
+
+  it("searches the chosen regions and a returning token's own; a page of one region, that one (RX43C-1)", () => {
+    expect(regionsToSearch(regions, ["eu"])).toEqual(["eu"]);
+    expect(regionsToSearch(regions, ["eu"], "asia")).toEqual(["eu", "asia"]);
+    expect(regionsToSearch(regions, ["asia", "us-east"])).toEqual(["us-east", "asia"]);
+    expect(regionsToSearch([{ id: "default" }], [])).toEqual(["default"]);
+  });
+
+  it("shares one search ticket among the regions of one source; a rejoin's and another source's apart (RX43C-2)", async () => {
+    let issued = 0;
+    const ticket = (rejoin?: bigint): Promise<string> => {
+      issued++;
+      return Promise.resolve(rejoin === undefined ? `t${String(issued)}` : `rejoin${String(issued)}`);
+    };
+    const share = shareSearchTickets();
+    const [a, b, c] = [share(ticket, "account"), share(ticket, "account"), share(ticket, "dev:127.0.0.1:14448")];
+    expect(await Promise.all([a(), b(), a()])).toEqual(["t1", "t1", "t1"]);
+    expect(await c()).toBe("t2");
+    expect(await a(5n)).toBe("rejoin3");
+    // (a refusal shared as one: asked for once)
+    let asked = 0;
+    const refusing = (): Promise<string> => {
+      asked++;
+      return Promise.reject(new Error("429"));
+    };
+    const again = shareSearchTickets();
+    const [x, y] = [again(refusing, "account"), again(refusing, "account")];
+    await expect(x()).rejects.toThrow("429");
+    await expect(y()).rejects.toThrow("429");
+    expect(asked).toBe(1);
   });
 });

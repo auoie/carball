@@ -80,6 +80,14 @@ describe("a search across regions", () => {
     expect(told.length).toBe(3);
   });
 
+  it("a reason every region fails for alike (a ticket refused) said once, not once a region (RX43C)", () => {
+    const { region, told } = harness(["US-East", "Europe", "Asia"]);
+    region(0).handlers.failed("too many requests");
+    region(1).handlers.failed("too many requests");
+    region(2).handlers.failed("too many requests");
+    expect(told).toEqual(["warning US-East: too many requests", "failed too many requests"]);
+  });
+
   it("a cooldown's words first at the end; a region's cooldown while another searches, a line", () => {
     const { region, told } = harness(["US-East", "Europe"]);
     region(0).handlers.cooldown(90, false);

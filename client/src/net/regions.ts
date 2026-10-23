@@ -55,3 +55,27 @@ export function toggleRegion(chosen: readonly string[], id: string, order: reado
   if (next.length === 0) return [...chosen];
   return order.filter((o) => next.includes(o));
 }
+
+/** The regions a search goes to: the chosen ones (a page with one region: that one), and a returning token's own region
+ *  (the token is that server's alone), in the list's order */
+export function regionsToSearch(listed: readonly { readonly id: string }[], chosen: readonly string[], tokenRegion?: string): string[] {
+  const ids = listed.length > 1 ? chosen : listed.map((r) => r.id);
+  return listed.filter((r) => ids.includes(r.id) || r.id === tokenRegion).map((r) => r.id);
+}
+
+/** One search ticket for every region a search goes to that takes tickets from the same place (the accounts service's,
+ *  for a deployment's regions; a development server's are its own): its nonce is kept per server, so each server takes
+ *  it once, and a search costs one ticket however many regions it searches (RX43C-2: the claim's ticket then not refused
+ *  by the account's allowance). A rejoin's tickets aren't shared */
+export function shareSearchTickets(): (ticket: (rejoin?: bigint) => Promise<string>, source: string) => (rejoin?: bigint) => Promise<string> {
+  const shared = new Map<string, Promise<string>>();
+  return (ticket, source) => async (rejoin) => {
+    if (rejoin !== undefined) return ticket(rejoin);
+    let one = shared.get(source);
+    if (!one) {
+      one = ticket();
+      shared.set(source, one);
+    }
+    return one;
+  };
+}

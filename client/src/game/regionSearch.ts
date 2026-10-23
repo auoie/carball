@@ -30,13 +30,16 @@ export function searchRegions(regions: readonly RegionSearch[], handlers: Search
   const refusals: number[] = [];
   let lastFailure = "";
   let cooldown: { seconds: number; network: boolean } | null = null;
+  /** The reasons a dropped region's line has said (a ticket refused fails every region alike: said once, RX43C) */
+  const said = new Set<string>();
   const live = (): boolean => !won && !over;
   const named = (region: RegionSearch, text: string): string => (region.name === "" ? text : `${region.name}: ${text}`);
   /** A region over without a match: dropped with a line while another goes on, else the search's end */
   const end = (region: RegionSearch, line: string): void => {
     ended.add(region.id);
     if (ended.size < regions.length) {
-      handlers.warning?.(named(region, line));
+      if (!said.has(line)) handlers.warning?.(named(region, line));
+      said.add(line);
       return;
     }
     over = true;

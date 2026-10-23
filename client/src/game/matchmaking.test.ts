@@ -250,13 +250,9 @@ describe("matchmaking (notes/matchmaking.md MM-4..14)", () => {
     expect(backRegion).toBe("eu");
     h().searching();
     h().warning?.("Asia: the server can't be reached");
-    expect(mm.state?.lines).toEqual([{ text: `${OWN_SEARCH_TEXT.failedPrefix} Asia: the server can't be reached`, kind: "warning" }]);
+    expect(mm.state?.lines).toEqual([{ text: "Asia: the server can't be reached", kind: "warning" }]);
     mm.frame(31);
-    expect(mm.state?.lines.map((l) => l.text)).toEqual([
-      SEARCH_TEXT.findingBestMatch,
-      SEARCH_TEXT.moreRegions,
-      `${OWN_SEARCH_TEXT.failedPrefix} Asia: the server can't be reached`,
-    ]);
+    expect(mm.state?.lines.map((l) => l.text)).toEqual([SEARCH_TEXT.findingBestMatch, SEARCH_TEXT.moreRegions, "Asia: the server can't be reached"]);
     h().found(9n, 0, "us-east");
     vi.advanceTimersByTime(JOIN_COUNTDOWN * 1000);
     expect(joins).toEqual(["us-east"]);

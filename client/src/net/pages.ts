@@ -253,6 +253,9 @@ export interface Region {
   readonly id: string;
   readonly name: string;
   readonly address: ServerAddress;
+  /** Where its tickets come from (regions of one source share a search's ticket: net/regions.ts shareSearchTickets):
+   *  "account", the accounts service's; a development server's own, "dev:host:port" */
+  readonly ticketSource: string;
 }
 
 /** The regions: `?queue=host:infoPort[,host:infoPort…]` (development servers, each its /info giving its port and
@@ -265,7 +268,12 @@ export async function queueRegions(params: URLSearchParams, host: string, deploy
   if (queue === null) {
     const config = await deployed();
     if (config.kind === "deployed") {
-      return config.servers.map((s) => ({ id: s.id, name: s.name, address: { url: s.url, certHash: null, ticket: (rejoin) => accountTicket(fetch, rejoin) } }));
+      return config.servers.map((s) => ({
+        id: s.id,
+        name: s.name,
+        address: { url: s.url, certHash: null, ticket: (rejoin) => accountTicket(fetch, rejoin) },
+        ticketSource: "account",
+      }));
     }
     if (config.kind === "unreachable") throw new Error(SERVERS_UNREACHABLE);
   }
@@ -275,7 +283,7 @@ export async function queueRegions(params: URLSearchParams, host: string, deploy
     (entries.length === 0 ? [""] : entries).map(async (entry) => {
       const [name = host, port = "4434"] = entry === "" ? [] : entry.split(":");
       const address = { ...(await devServerAddress(name, Number(port))), ticket: devTicket(serverHost(name), Number(port)) };
-      return { id: entry === "" ? "default" : entry, name: named ? entry : "", address };
+      return { id: entry === "" ? "default" : entry, name: named ? entry : "", address, ticketSource: `dev:${entry}` };
     }),
   );
 }

@@ -70,6 +70,50 @@
     {
       "channel": "control",
       "message": {
+        "type": "hello",
+        "version": 27,
+        "team": 255,
+        "model": 0,
+        "dodgeDeadzone": 0.8,
+        "steeringSensitivity": 1.0,
+        "airControlSensitivity": 1.25,
+        "autoSkipReplay": false,
+        "key": "0",
+        "name": "",
+        "quickChat": "everyone",
+        "blockNonTactical": false,
+        "intent": "ping",
+        "playlist": 0,
+        "token": "0",
+        "ticket": ""
+      },
+      "hex": "2900011b00ff00cdcc4c3f0000803f0000a03f000000000000000000000000040000000000000000000000"
+    },
+    {
+      "channel": "control",
+      "message": {
+        "type": "hello",
+        "version": 27,
+        "team": 255,
+        "model": 0,
+        "dodgeDeadzone": 0.8,
+        "steeringSensitivity": 1.0,
+        "airControlSensitivity": 1.25,
+        "autoSkipReplay": false,
+        "key": "0",
+        "name": "",
+        "quickChat": "everyone",
+        "blockNonTactical": false,
+        "intent": "decline",
+        "playlist": 0,
+        "token": "1311768467294899695",
+        "ticket": "dGlj"
+      },
+      "hex": "2d00011b00ff00cdcc4c3f0000803f0000a03f0000000000000000000000000500efcdab9078563412040064476c6a"
+    },
+    {
+      "channel": "control",
+      "message": {
         "type": "mute",
         "car": 6,
         "on": true

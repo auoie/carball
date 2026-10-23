@@ -123,10 +123,13 @@ Design (ours; the game's PsyNet matchmaker is unknowable: MM-3 sends regions wit
   timed (one round trip on an open connection; the better of two). A server from before the change refuses the intent:
   its refusal is timed instead. Measured when the Play page opens (again after a minute).
 - **The picker (Play page):** the game's word **Regions** ([Global] Regions) over a checkbox per region, its name and ping;
-  at least one stays ticked. The first visit ticks the lowest-ping region; the choice is kept in local storage. Shown only
+  at least one stays ticked. The first visit ticks the lowest-ping region, kept once the pings are in; the player's choice
+  is kept in local storage. A search with nothing kept (the page's own: Play Again, the way back from a cancelled match)
+  waits for the pings, 3 s at most, then takes the lowest so far, else the first (RX43C-1). Shown only
   with two or more regions. One region ticked while more exist: the log's **MoreRegions** tip at 30 s (cleared verbatim).
-- **Multi-region search:** Find Match opens one search per ticked region in parallel, each with its own ticket (the API's
-  ticket limit rises to 60 per 10 minutes: three regions' worth of the old 20). The panel says Searching once any region
+- **Multi-region search:** Find Match opens one search per ticked region in parallel, all with one search ticket (its
+  nonce kept per server, so each server takes it once: a search costs one ticket, the claim's never squeezed out,
+  RX43C-2; the API's limit 60 per 10 minutes). The panel says Searching once any region
   searches; a region that fails while another searches is dropped (a warning line); the search fails only when every
   region has. **The first match found wins:** the other regions' searches are finished (their stream closed: the server
   takes them out of its queue, then writes out anything it had sent), so a region that wasn't matched just ends (no

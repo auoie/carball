@@ -259,8 +259,8 @@ The accounts service (notes/accounts.md). **Nothing is deployed yet: the first d
   providers'); the commands print any other stored one quoted, typed back as the shell's `$'...'` (RV-809, RV-810).
   Such a ban and its identity's sign-up take turns on the identity, so neither misses the other (RV-807).
 - **Stop:** SIGTERM or SIGINT: requests in flight finish (10 s at most).
-- **Search tickets** (`POST /api/ticket`, notes/accounts.md §3; 60 an account in 10 minutes, a search asking one per
-  region it searches): a signed-in account's, two minutes long, a nonce each,
+- **Search tickets** (`POST /api/ticket`, notes/accounts.md §3; 60 an account in 10 minutes, a search across regions
+  asking one, which every region's server takes once): a signed-in account's, two minutes long, a nonce each,
   its ratings in each playlist (format 3); refused (403, `queue-banned` and until when) while a leaver's queue ban runs,
   except a rejoin's (`?rejoin=MATCH`, 16 hex digits) for the match the ban came from; the game server checks them
   offline with `TICKET_PUBLIC_KEYS`, a search's for a search or claim, a rejoin's for that match's rejoin alone.

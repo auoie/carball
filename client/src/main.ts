@@ -38,7 +38,7 @@ import {
 import { QueueBannedError, SignedOutError, queueBanText } from "./net/tickets";
 import { type Account, AccountsApi, signInReturn, withoutSignInReturn } from "./account/api";
 import { ACCOUNT_TEXT, AccountPages, accountErrorText, signInNotice } from "./ui/accountPages";
-import { chooseRegions, storeRegions, storedRegions, toggleRegion } from "./net/regions";
+import { chooseRegions, regionsToSearch, shareSearchTickets, storeRegions, storedRegions, toggleRegion } from "./net/regions";
 import { Search, declineSlot, pingServer } from "./net/search";
 import { GameAudio } from "./audio/audio";
 import { Hud } from "./hud";
@@ -487,12 +487,16 @@ async function main(): Promise<void> {
       freeplay.restart();
     };
     // The regions (notes/matchmaking.md, Regions): listed early only where there can be two or more (a deployment's list,
-    // a development page's ?queue=a,b); their pings measured as Play's page opens (again after a minute); the ones
-    // searched the player's choice, kept, else the lowest ping, else the first
+    // a development page's ?queue=a,b); their pings measured as Play's page opens (again after a minute), or by a search
+    // with no choice kept; the ones searched the player's choice, kept, else the lowest ping (kept once measured), else
+    // the first
     let regions: readonly Region[] = [];
     const pings = new Map<string, number | null>();
     let pingedAt = -Infinity;
+    let pinging: Promise<void> = Promise.resolve();
     let chosen: string[] = [];
+    /** The last search's regions (the browser tests') */
+    let searchedRegions: readonly string[] = [];
     const showRegions = (): void => {
       mainMenu?.setRegions(
         regions.map((r) => ({ id: r.id, name: r.name, ping: pings.has(r.id) ? pings.get(r.id) : undefined, selected: chosen.includes(r.id) })),
@@ -514,6 +518,25 @@ async function main(): Promise<void> {
         showRegions();
         return listed;
       });
+    /** The regions' pings, a minute apart at most (the same measuring shared meanwhile); until a choice is kept, the
+     *  lowest ticked as each comes, and once they're in, that pick kept (a later search that starts by itself, Play Again
+     *  or the way back from a cancelled match, then needn't wait: RX43C-1) */
+    const measurePings = (listed: readonly Region[]): Promise<void> => {
+      if (listed.length < 2 || performance.now() - pingedAt < 60_000) return pinging;
+      pingedAt = performance.now();
+      pinging = Promise.all(
+        listed.map(async (r) => {
+          pings.set(r.id, await pingServer(r.address));
+          if (storedRegions() === null) chosen = chooseRegions(listed, null, pings);
+          showRegions();
+        }),
+      ).then(() => {
+        if (storedRegions() === null && [...pings.values()].some((ms) => typeof ms === "number")) storeRegions(chosen);
+      });
+      return pinging;
+    };
+    /** How long a search with no choice kept waits for the regions' pings (ms): then the lowest so far, else the first */
+    const PING_WAIT_MS = 3000;
     // (a region's ticket's refusals: the sign-in gone, the account's page with why (RX29C); a leaver's ban, its line on the
     // Play page, LV1)
     const watched = (address: ServerAddress): ServerAddress => {
@@ -555,18 +578,32 @@ async function main(): Promise<void> {
           },
         };
         regionsListed
-          .then(async (listed) => (listed.length > 0 ? listed : queueRegions(params, location.hostname)))
+          .then(async (listed) => {
+            // (no choice kept: the regions' pings first, a few seconds at most, so a search the page starts by itself goes
+            // to the lowest, not the first: RX43C-1)
+            if (listed.length > 1 && storedRegions() === null) {
+              await Promise.race([measurePings(listed), new Promise((waited) => setTimeout(waited, PING_WAIT_MS))]);
+            }
+            return listed.length > 0 ? listed : queueRegions(params, location.hostname);
+          })
           .then((listed) => {
             if (cancelled) return;
             // (a returning token: its region's alone, the first's for one from before the regions)
             const tokenRegion = token === 0n ? undefined : (backRegion ?? listed[0]?.id);
-            const ids = regions.length > 0 ? chosen : listed.map((r) => r.id);
-            const searched = listed.filter((r) => ids.includes(r.id) || r.id === tokenRegion);
+            const ids = regionsToSearch(listed, chosen, tokenRegion);
+            const searched = listed.filter((r) => ids.includes(r.id));
+            searchedRegions = ids;
+            // (one search ticket for the regions of one source: a search costs one, whatever it searches, RX43C-2)
+            const share = shareSearchTickets();
+            const ticketed = (r: Region): ServerAddress => {
+              const address = watched(r.address);
+              return address.ticket ? { ...address, ticket: share(address.ticket, r.ticketSource) } : address;
+            };
             regionsSearch = searchRegions(
               searched.map((r) => ({
                 id: r.id,
                 name: searched.length > 1 ? r.name : "",
-                search: (h) => Search.start(watched(r.address), playlist, r.id === tokenRegion ? token : 0n, h),
+                search: (h) => Search.start(ticketed(r), playlist, r.id === tokenRegion ? token : 0n, h),
                 decline: (declined) => {
                   void declineSlot(watched(r.address), declined);
                 },
@@ -749,17 +786,7 @@ async function main(): Promise<void> {
       },
       // (the regions' pings as Play's page opens, a minute apart at most; until a choice is kept, the lowest ticked)
       playShown: () => {
-        void regionsListed.then((listed) => {
-          if (listed.length < 2 || performance.now() - pingedAt < 60_000) return;
-          pingedAt = performance.now();
-          for (const r of listed) {
-            void pingServer(r.address).then((ms) => {
-              pings.set(r.id, ms);
-              if (storedRegions() === null) chosen = chooseRegions(listed, null, pings);
-              showRegions();
-            });
-          }
-        });
+        void regionsListed.then(measurePings);
       },
       region: (id) => {
         chosen = toggleRegion(
@@ -911,6 +938,12 @@ async function main(): Promise<void> {
         if (deploymentDown) return; // (its Yes couldn't start: kept for a later visit, RX31)
         if (await matchPlayedElsewhere(seat.matchId)) return; // (another tab of this browser plays it: RX30C)
         if (rankedSeat()?.matchId !== seat.matchId) return; // (given up meanwhile by a search: RX31)
+        // (its region no longer listed: no rejoin there could work, the record dropped, RX43C)
+        const listed = await regionsListed;
+        if (seat.server !== undefined && listed.length > 0 && !listed.some((r) => r.id === seat.server)) {
+          clearRankedSeat();
+          return;
+        }
         offerSeat(seat);
       });
     };
@@ -970,6 +1003,12 @@ async function main(): Promise<void> {
       search(notice.search, notice.warning, back);
     }
     (window as unknown as { carballMatchmaking?: unknown }).carballMatchmaking = () => ({ state: matchmaking.state });
+    // (the regions' pings, the ticked ones and the last search's: the browser tests')
+    (window as unknown as { carballRegions?: unknown }).carballRegions = () => ({
+      pings: Object.fromEntries(pings),
+      chosen,
+      searched: searchedRegions,
+    });
     // For screenshots and the browser tests
     (window as unknown as { carballFreeplay?: unknown }).carballFreeplay = {
       place: (
