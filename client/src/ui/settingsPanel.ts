@@ -414,12 +414,11 @@ export class SettingsPanel {
     });
     b.dataset["action"] = action;
     b.dataset["device"] = device;
-    // (waiting for an input: the prompt drawn over the slot's own content, kept but hidden, so the slot and its column
-    // keep their size; read out as its name)
+    // (waiting for an input: a short prompt drawn over the slot's own content, kept but hidden, so the slot and its column
+    // keep their size and the prompt fits it (RV-830); the whole sentence read out as its name)
     if (capturing) {
-      const prompt = device === "keyboard" ? "Press a key or mouse button…" : "Press or move a gamepad input…";
-      b.dataset["prompt"] = prompt;
-      b.setAttribute("aria-label", prompt);
+      b.setAttribute("aria-label", device === "keyboard" ? "Press a key or mouse button…" : "Press or move a gamepad input…");
+      b.dataset["prompt"] = device === "keyboard" ? "Press a key…" : "Press a button…";
     }
     // (a pad's face button with its glyph, in the connected pad's family: PlayStation's ✕ ○ □ △ before its name; an Xbox
     // pad's letter, its name too, alone)
@@ -428,6 +427,7 @@ export class SettingsPanel {
       if (glyph.kind === "pad" && glyph.text === inputName(input)) b.replaceChildren(glyphElement(glyph));
       else b.prepend(glyphElement(glyph), " ");
     }
+    if (capturing) b.append(el("span", { className: "slot-prompt", textContent: b.dataset["prompt"] ?? "" }));
     b.addEventListener("click", (e) => {
       if (capturing) return; // the click itself is not the binding
       e.stopPropagation();

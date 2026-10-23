@@ -31,6 +31,8 @@ export interface Claim {
   readonly rejoin?: true;
   /** The signed-in account that claims it (its saved seat its own: RX30C); none on a development page */
   readonly account?: string;
+  /** The region whose server found the match (`Region`'s id); none: the first (a claim from before the regions) */
+  readonly server?: string;
 }
 
 /** A search back from a match cancelled for someone else: the token claimed (the queue's front again) and when its first
@@ -38,9 +40,16 @@ export interface Claim {
 export interface Back {
   readonly token: bigint;
   readonly searchedAt: number;
+  /** Its region (the token is that server's alone) */
+  readonly server?: string;
 }
 
 const TOKEN = /^[1-9][0-9]{0,19}$/;
+/** A region's id as kept: config.json's (lower-case letters, digits, hyphens) or a development server's host:port */
+const SERVER_ID = /^[A-Za-z0-9.:[\]-]{1,64}$/;
+/** A kept record's region, if it's one */
+const keptServer = (value: unknown): { server: string } | Record<string, never> =>
+  typeof value === "string" && SERVER_ID.test(value) ? { server: value } : {};
 
 /** What the menu page does as it opens after a match page */
 export interface MenuNotice {
@@ -68,6 +77,7 @@ export function storeClaim(claim: Claim, storage = session()): void {
         map: claim.map,
         rejoin: claim.rejoin,
         account: claim.account,
+        server: claim.server,
       }),
     );
   } catch {
@@ -81,7 +91,15 @@ export function takeClaim(storage = session()): Claim | null {
     const text = storage?.getItem(CLAIM_KEY) ?? null;
     storage?.removeItem(CLAIM_KEY);
     if (text === null) return null;
-    const value = JSON.parse(text) as { token?: unknown; playlist?: unknown; searchedAt?: unknown; map?: unknown; rejoin?: unknown; account?: unknown };
+    const value = JSON.parse(text) as {
+      token?: unknown;
+      playlist?: unknown;
+      searchedAt?: unknown;
+      map?: unknown;
+      rejoin?: unknown;
+      account?: unknown;
+      server?: unknown;
+    };
     if (typeof value.token !== "string" || !TOKEN.test(value.token) || typeof value.playlist !== "number") return null;
     const searchedAt = typeof value.searchedAt === "number" && Number.isFinite(value.searchedAt) ? value.searchedAt : Date.now();
     const map = typeof value.map === "number" && Number.isInteger(value.map) && value.map >= 0 && value.map < 256 ? { map: value.map } : {};
@@ -92,6 +110,7 @@ export function takeClaim(storage = session()): Claim | null {
       ...map,
       ...(value.rejoin === true ? { rejoin: true as const } : {}),
       ...(typeof value.account === "string" ? { account: value.account } : {}),
+      ...keptServer(value.server),
     };
   } catch {
     return null;
@@ -101,7 +120,10 @@ export function takeClaim(storage = session()): Claim | null {
 export function storeNotice(notice: MenuNotice, storage = session()): void {
   try {
     const { back, ...rest } = notice;
-    storage?.setItem(NOTICE_KEY, JSON.stringify(back ? { ...rest, back: { token: back.token.toString(), searchedAt: back.searchedAt } } : rest));
+    storage?.setItem(
+      NOTICE_KEY,
+      JSON.stringify(back ? { ...rest, back: { token: back.token.toString(), searchedAt: back.searchedAt, server: back.server } } : rest),
+    );
   } catch {
     // (not kept)
   }
@@ -118,7 +140,7 @@ export function takeNotice(storage = session()): MenuNotice | null {
       until?: unknown;
       search?: unknown;
       warning?: unknown;
-      back?: { token?: unknown; searchedAt?: unknown };
+      back?: { token?: unknown; searchedAt?: unknown; server?: unknown };
     };
     const back = value.back;
     return {
@@ -129,7 +151,7 @@ export function takeNotice(storage = session()): MenuNotice | null {
       ...(typeof value.search === "number" ? { search: value.search } : {}),
       ...(typeof value.warning === "string" ? { warning: value.warning } : {}),
       ...(typeof back?.token === "string" && TOKEN.test(back.token) && typeof back.searchedAt === "number" && Number.isFinite(back.searchedAt)
-        ? { back: { token: BigInt(back.token), searchedAt: back.searchedAt } }
+        ? { back: { token: BigInt(back.token), searchedAt: back.searchedAt, ...keptServer(back.server) } }
         : {}),
     };
   } catch {
@@ -149,8 +171,42 @@ export function pageUrl(page: "menu" | "match" | "bots", at: { readonly pathname
   return `${at.pathname}${text === "" ? "" : `?${text}`}`;
 }
 
-/** Where online play is: the deployment's game server, a development page's own, or a deployment's that can't be read */
-export type GameServerConfig = { readonly kind: "deployed"; readonly url: string } | { readonly kind: "development" } | { readonly kind: "unreachable" };
+/** One game server, a region's (config.json's `gameServers`: notes/matchmaking.md, Regions): its id, its name as the region
+ *  picker shows it (empty: one server, no picker), its WebTransport URL */
+export interface GameServerEntry {
+  readonly id: string;
+  readonly name: string;
+  readonly url: string;
+}
+
+/** Where online play is: the deployment's game servers (`url` the first's), a development page's own, or a deployment's
+ *  that can't be read */
+export type GameServerConfig =
+  | { readonly kind: "deployed"; readonly url: string; readonly servers: readonly GameServerEntry[] }
+  | { readonly kind: "development" }
+  | { readonly kind: "unreachable" };
+
+const SERVER_URL = /^https:\/\/[^/\s]+\/\S*$/;
+
+/** config.json's servers: `gameServers`' good entries (an id each once, a name of 40 printable characters at most, an
+ *  https URL), else its `gameServer` alone (a deployment from before the regions); none, none */
+export function configServers(config: { readonly gameServer?: unknown; readonly gameServers?: unknown }): GameServerEntry[] {
+  const servers: GameServerEntry[] = [];
+  if (Array.isArray(config.gameServers)) {
+    for (const entry of config.gameServers as unknown[]) {
+      if (typeof entry !== "object" || entry === null) continue;
+      const { id, name, url } = entry as { id?: unknown; name?: unknown; url?: unknown };
+      if (typeof id !== "string" || !/^[a-z0-9][a-z0-9-]{0,31}$/.test(id) || servers.some((s) => s.id === id)) continue;
+      if (typeof name !== "string" || name.length > 40 || !/^[\x20-\x7e]*$/.test(name)) continue;
+      if (typeof url !== "string" || !SERVER_URL.test(url)) continue;
+      servers.push({ id, name, url });
+    }
+  }
+  if (servers.length === 0 && typeof config.gameServer === "string" && SERVER_URL.test(config.gameServer)) {
+    servers.push({ id: "default", name: "", url: config.gameServer });
+  }
+  return servers;
+}
 
 /** A deployment's page whose config.json can't be read: no search (no development server's in its place, RX29C) */
 export const SERVERS_UNREACHABLE = "the game's servers can't be reached right now: try again later";
@@ -181,27 +237,56 @@ export async function deployedGameServer(
   if (none) return onLocalPage ? { kind: "development" } : unreachable;
   if (!response.ok) return unreachable;
   try {
-    const config = (await response.json()) as { gameServer?: unknown };
-    if (typeof config.gameServer === "string" && /^https:\/\/[^/\s]+\/\S*$/.test(config.gameServer)) return { kind: "deployed", url: config.gameServer };
+    const servers = configServers((await response.json()) as { gameServer?: unknown; gameServers?: unknown });
+    const first = servers[0];
+    if (first) return { kind: "deployed", url: first.url, servers };
   } catch {
     // (not JSON: unreachable, below)
   }
   return unreachable;
 }
 
-/** Where the queue is: `?queue=host:infoPort` (a development server, its /info giving its port and certificate hash);
- *  else the deployment's game server (`config.json`: its real certificate, no hash); else, a development page, this page's
- *  host, info port 4434; a deployment's config that can't be read, an error. Its searches' and claims' tickets: the
- *  accounts service's for the deployment's, the development server's own else */
-export async function queueAddress(params: URLSearchParams, host: string, deployed = deployedGameServer): Promise<ServerAddress> {
+/** A region the queue's searches go to (notes/matchmaking.md, Regions): its id (kept with a claim, a saved seat and a
+ *  returning token: the server's alone), its name as the region picker shows it (empty: a lone server, no picker), its
+ *  address */
+export interface Region {
+  readonly id: string;
+  readonly name: string;
+  readonly address: ServerAddress;
+}
+
+/** The regions: `?queue=host:infoPort[,host:infoPort…]` (development servers, each its /info giving its port and
+ *  certificate hash, named by itself when there are two or more); else the deployment's game servers (`config.json`: their
+ *  real certificates, no hash); else, a development page, this page's host, info port 4434; a deployment's config that
+ *  can't be read, an error. Their searches' and claims' tickets: the accounts service's for the deployment's, each
+ *  development server's own else */
+export async function queueRegions(params: URLSearchParams, host: string, deployed = deployedGameServer): Promise<readonly Region[]> {
   const queue = params.get("queue");
   if (queue === null) {
     const config = await deployed();
-    if (config.kind === "deployed") return { url: config.url, certHash: null, ticket: (rejoin) => accountTicket(fetch, rejoin) };
+    if (config.kind === "deployed") {
+      return config.servers.map((s) => ({ id: s.id, name: s.name, address: { url: s.url, certHash: null, ticket: (rejoin) => accountTicket(fetch, rejoin) } }));
+    }
     if (config.kind === "unreachable") throw new Error(SERVERS_UNREACHABLE);
   }
-  const [name = host, port = "4434"] = queue === null || queue === "" ? [] : queue.split(":");
-  return { ...(await devServerAddress(name, Number(port))), ticket: devTicket(serverHost(name), Number(port)) };
+  const entries = (queue ?? "").split(",").filter((e) => e !== "");
+  const named = entries.length > 1;
+  return Promise.all(
+    (entries.length === 0 ? [""] : entries).map(async (entry) => {
+      const [name = host, port = "4434"] = entry === "" ? [] : entry.split(":");
+      const address = { ...(await devServerAddress(name, Number(port))), ticket: devTicket(serverHost(name), Number(port)) };
+      return { id: entry === "" ? "default" : entry, name: named ? entry : "", address };
+    }),
+  );
+}
+
+/** A region's address: the one `server` names (a claim's, a saved seat's), else the first's (a record from before the
+ *  regions, or of a region no longer listed: its claim then refused, the match gone) */
+export async function queueAddress(params: URLSearchParams, host: string, deployed = deployedGameServer, server?: string): Promise<ServerAddress> {
+  const regions = await queueRegions(params, host, deployed);
+  const region = regions.find((r) => r.id === server) ?? regions[0];
+  if (!region) throw new Error(SERVERS_UNREACHABLE);
+  return region.address;
 }
 
 /** How often a claim's page tries its config.json and its ticket, and the pause between (ms): a passing fault (a
@@ -216,6 +301,7 @@ export async function claimAddress(
   host: string,
   deployed = deployedGameServer,
   pause: (ms: number) => Promise<void> = async (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  server?: string,
 ): Promise<ServerAddress> {
   const tried = async <T>(attempt: () => Promise<T>, again: (e: unknown) => boolean): Promise<T> => {
     for (let i = 1; ; i++) {
@@ -228,7 +314,7 @@ export async function claimAddress(
     }
   };
   const address = await tried(
-    async () => queueAddress(params, host, deployed),
+    async () => queueAddress(params, host, deployed, server),
     () => true,
   );
   const ticket = address.ticket;
@@ -264,7 +350,11 @@ export async function openClaim<T>(open: () => Promise<T>): Promise<T> {
 export function claimNotice(e: unknown, claim: Claim, matchGone: string): MenuNotice {
   const refused = e instanceof RefusedError ? e.reason : null;
   if (refused === REFUSED_TOKEN && !claim.rejoin) {
-    return { search: claim.playlist, warning: matchGone, back: { token: claim.token, searchedAt: claim.searchedAt } };
+    return {
+      search: claim.playlist,
+      warning: matchGone,
+      back: { token: claim.token, searchedAt: claim.searchedAt, ...(claim.server ? { server: claim.server } : {}) },
+    };
   }
   if (refused === REFUSED_IN_MATCH && claim.rejoin) return { modal: "elsewhere" };
   if (refused === REFUSED_CONCLUDED) return { modal: "concluded" };
@@ -312,6 +402,8 @@ export interface RankedSeat {
   readonly joinedAt: number;
   /** The account that played it (offered to that account alone: RX30C); null on a development page */
   readonly account: string | null;
+  /** Its region (its rejoin connects there); none: the first (a record from before the regions) */
+  readonly server?: string;
 }
 
 const SEAT_KEY = "carball.rankedSeat";
@@ -332,7 +424,10 @@ export function storeRankedSeat(seat: RankedSeat, storage = local()): void {
     return;
   }
   try {
-    storage?.setItem(SEAT_KEY, JSON.stringify({ matchId: seat.matchId.toString(), teamSize: seat.teamSize, joinedAt: seat.joinedAt, account: seat.account }));
+    storage?.setItem(
+      SEAT_KEY,
+      JSON.stringify({ matchId: seat.matchId.toString(), teamSize: seat.teamSize, joinedAt: seat.joinedAt, account: seat.account, server: seat.server }),
+    );
   } catch {
     // (not kept: no offer)
   }
@@ -346,11 +441,12 @@ export function rankedSeat(now = Date.now(), storage = local()): RankedSeat | nu
       teamSize?: unknown;
       joinedAt?: unknown;
       account?: unknown;
+      server?: unknown;
     } | null;
     if (!value || typeof value.matchId !== "string" || !TOKEN.test(value.matchId) || typeof value.teamSize !== "number") return null;
     if (typeof value.joinedAt !== "number" || !(now - value.joinedAt < REJOIN_SECONDS * 1000) || value.teamSize < 2) return null;
     const account = typeof value.account === "string" ? value.account : null;
-    return { matchId: BigInt(value.matchId), teamSize: value.teamSize, joinedAt: value.joinedAt, account };
+    return { matchId: BigInt(value.matchId), teamSize: value.teamSize, joinedAt: value.joinedAt, account, ...keptServer(value.server) };
   } catch {
     return null;
   }

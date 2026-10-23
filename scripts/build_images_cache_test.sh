@@ -45,6 +45,9 @@ check "$([ "$(cd "$H/cwd-$run/above/deep" && inputs_key fake engine)" != "$k1" ]
 home_key() { env CARGO_HOME="$H/home-$run" bash -c "$(declare -f build_env cargo_config toolchain inputs_key fake); SRC='$SRC' EM='$EM' inputs_key fake engine"; }
 before=$(home_key)
 printf '[build]\nincremental = true\n' > "$H/home-$run/config.toml"
+# (a directory reached through a symlink: the config above the physical one counts, as cargo reads it, RV-824)
+ln -s "$H/cwd-$run/above/deep" "$H/link-$run"
+check "$([ "$(cd "$H/link-$run" && inputs_key fake engine)" != "$k1" ] && echo changed)" changed "a config above a symlinked directory's physical one: a new key"
 check "$([ "$(home_key)" != "$before" ] && echo changed)" changed "a config in CARGO_HOME: a new key"
 echo "int y;" > "$SRC/engine/a.cpp"
 check "$([ "$(inputs_key fake engine)" != "$k1" ] && echo changed)" changed "a changed source: a new key"

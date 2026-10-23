@@ -121,7 +121,8 @@ test("a pad input bound in the settings: Circle (B) and Start bind, they don't b
     [START, /^(Menu|Options)$/],
   ] as const) {
     await same.click();
-    await expect(same).toHaveAttribute("data-prompt", "Press or move a gamepad input…");
+    await expect(same.locator(".slot-prompt")).toHaveText("Press a button…");
+    await expect(same).toHaveAttribute("aria-label", "Press or move a gamepad input…");
     // (two of the page's frames first: the capture waits to see the pad released, so a press before its first poll is
     // rightly not taken, RV-448)
     await page.evaluate(

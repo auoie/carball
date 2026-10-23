@@ -58,6 +58,11 @@ for (const [width, height, scale] of [
     const settings = await menuBoxes(page);
     expect(settings.find((b) => b.sel === "#settings")?.width).toBeCloseTo(Math.min(760 * scale, 0.94 * width), 0);
     expect(settings.every((b) => b.inside)).toBe(true);
+    // (the button hints under it at the same scale, inside the window, RV-833)
+    const panel = await page.locator("#settings").boundingBox();
+    const hints = await page.locator("#menu-hints").boundingBox();
+    expect(hints?.height).toBeCloseTo(48 * scale, 0);
+    expect(panel && hints && panel.y + panel.height <= hints.y + 1 && hints.y + hints.height <= height + 1).toBe(true);
     await page.keyboard.press("Escape");
     await freePlay(page);
     await page.keyboard.press("Escape");
@@ -100,10 +105,40 @@ test("a binding slot waiting for an input keeps its size and the table its layou
       const before = await layout();
       await slot.click();
       await expect(slot).toHaveClass(/capturing/);
-      await expect(slot).toHaveAttribute("data-prompt", device === "keyboard" ? "Press a key or mouse button…" : "Press or move a gamepad input…");
+      // (a short prompt that fits its slot, RV-830; the whole sentence its name)
+      const prompt = slot.locator(".slot-prompt");
+      await expect(prompt).toHaveText(device === "keyboard" ? "Press a key…" : "Press a button…");
+      await expect(slot).toHaveAttribute("aria-label", device === "keyboard" ? "Press a key or mouse button…" : "Press or move a gamepad input…");
+      // (shown whole, never cut short: where the slot is narrower than it, drawn past it, inside the panel)
+      const fit = await prompt.evaluate((e) => {
+        const r = e.getBoundingClientRect();
+        const panel = document.querySelector("#settings")?.getBoundingClientRect();
+        return { whole: e.scrollWidth <= e.clientWidth + 1, inside: !!panel && r.left >= panel.left - 1 && r.right <= panel.right + 1 };
+      });
+      expect(fit, `the prompt at ${String(size.width)}`).toEqual({ whole: true, inside: true });
       expect(await layout(), `${action} ${device} at ${String(size.width)} x ${String(size.height)}`).toEqual(before);
       await page.keyboard.press("Escape");
       await expect(page.locator(".binding-slot.capturing")).toHaveCount(0);
     }
   }
+});
+
+test("a slider at 3840 x 2160 (the menus at 2.5): a click on its thumb's drawn ends gives its ends (RV-831)", async ({ page }) => {
+  await page.setViewportSize({ width: 3840, height: 2160 });
+  await page.goto("/?render=off");
+  await expect(page.locator("#loading")).toBeHidden({ timeout: 30_000 });
+  await page
+    .locator("#main-menu")
+    .getByRole("button", { name: /^settings$/i })
+    .click();
+  await page.locator(".settings-tab", { hasText: "Camera" }).click();
+  const slider = page.locator("#settings .control-slider").first();
+  const [min, max] = [Number(await slider.getAttribute("aria-valuemin")), Number(await slider.getAttribute("aria-valuemax"))];
+  const box = await slider.boundingBox();
+  if (!box) throw new Error("no slider");
+  const thumb = 16 * 2.5;
+  await page.mouse.click(box.x + thumb / 2, box.y + box.height / 2);
+  await expect(slider).toHaveAttribute("aria-valuenow", String(min));
+  await page.mouse.click(box.x + box.width - thumb / 2, box.y + box.height / 2);
+  await expect(slider).toHaveAttribute("aria-valuenow", String(max));
 });

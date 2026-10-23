@@ -79,7 +79,8 @@ func TestAdminConnections(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ro.Close()
-	for setting, want := range map[string]string{"default_transaction_read_only": "on", "statement_timeout": "15s", "lock_timeout": "2s", "application_name": "carball-admin"} {
+	for setting, want := range map[string]string{"default_transaction_read_only": "on", "statement_timeout": "15s", "lock_timeout": "2s",
+		"application_name": "carball-admin", "idle_in_transaction_session_timeout": "5s"} {
 		if got := show(ro, setting); got != want {
 			t.Errorf("read-only %s = %q, want %q", setting, got, want)
 		}
@@ -99,6 +100,9 @@ func TestAdminConnections(t *testing.T) {
 	}
 	if got := show(rw, "lock_timeout"); got != "2s" {
 		t.Errorf("the ban's connection's lock timeout: %q", got)
+	}
+	if got := show(rw, "idle_in_transaction_session_timeout"); got != "5s" {
+		t.Errorf("the ban's connection's idle transaction limit: %q", got)
 	}
 }
 
@@ -219,5 +223,46 @@ func TestBanNoAccountTakesTurns(t *testing.T) {
 	}
 	if _, found, _ := s.SessionByToken(ctx, []byte("s-k"), now); !found {
 		t.Error("a ban with no account ended another account's session")
+	}
+}
+
+// An admin's transaction left open and idle (a ban stopped mid-way, Ctrl-Z) holding an identity's lock is ended by the
+// server within its 5 s, and the sign-up waiting on that lock goes through (RV-823)
+func TestAdminIdleTransactionEnded(t *testing.T) {
+	owner, app := testdb.New(t)
+	ctx := context.Background()
+	if err := Migrate(ctx, owner, "", testdb.AppRole, false); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(ctx, app, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	admin, err := OpenAdmin(ctx, app, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(admin.Close)
+	now := time.Now()
+	p := Pending{TokenHash: []byte("p-idle"), Provider: Steam, Subject: "76561190000000009", Suggestion: "I", ExpiresAt: now.Add(time.Hour)}
+	if err := s.CreatePending(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := admin.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = tx.Rollback(ctx) })
+	if err := lockIdentity(ctx, tx, Identity{Provider: p.Provider, Subject: p.Subject}); err != nil {
+		t.Fatal(err)
+	}
+	// (then nothing: the admin's command stopped with its transaction open)
+	start := time.Now()
+	if _, err := s.CreateAccount(ctx, p, "I", []byte("h-idle"), now, now.Add(-time.Hour)); err != nil {
+		t.Fatalf("the sign-up behind an idle admin transaction: %v", err)
+	}
+	if waited := time.Since(start); waited < 3*time.Second || waited > 10*time.Second {
+		t.Errorf("the sign-up waited %v, want about the 5 s limit", waited)
 	}
 }

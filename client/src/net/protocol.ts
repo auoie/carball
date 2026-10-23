@@ -203,10 +203,13 @@ export type ControlMessage =
   /** A search refused: this browser (network false) or this address (true: maybe someone else on it) stalled a match
    *  (didn't claim its slot, or left before the start); it may search again in this many seconds (RV-367, RV-385); the
    *  session ends */
-  | { readonly type: "searchCooldown"; readonly seconds: number; readonly network: boolean };
+  | { readonly type: "searchCooldown"; readonly seconds: number; readonly network: boolean }
+  /** A region's ping answered (Hello's "ping" intent); the session ends (notes/matchmaking.md, Regions) */
+  | { readonly type: "pong" };
 
-/** Hello's intents (the wire's byte is the index) */
-const INTENTS = ["join", "search", "claim", "rejoin"] as const;
+/** Hello's intents (the wire's byte is the index): "ping" a region's (no ticket), "decline" the unclaimed slot its token
+ *  names for a match found in another region at the same moment (notes/matchmaking.md, Regions) */
+const INTENTS = ["join", "search", "claim", "rejoin", "ping", "decline"] as const;
 export type Intent = (typeof INTENTS)[number];
 
 /** One player's scoreboard line */
@@ -478,6 +481,9 @@ export function encodeControl(m: ControlMessage): Uint8Array {
       w.u16(m.seconds);
       w.u8(m.network ? 1 : 0);
       break;
+    case "pong":
+      w.u8(0x93);
+      break;
     case "mute":
       w.u8(0x08);
       w.u32(m.car);
@@ -678,6 +684,8 @@ export function decodeControl(body: Uint8Array): ControlMessage {
       return { type: "kicked", reason: r.u8() };
     case 0x92:
       return { type: "searchCooldown", seconds: r.u16(), network: r.u8() !== 0 };
+    case 0x93:
+      return { type: "pong" };
     case 0x08:
       return { type: "mute", car: r.u32(), on: r.u8() !== 0 };
     case 0x06:

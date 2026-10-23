@@ -108,6 +108,42 @@ anything rating-side beyond what's submitted is PsyNet's, unknowable, so Carball
   the teams split by a snake draft. The game's strings (the rejoin prompt, "Match has concluded", the ban messages) are
   our words by key until the user clears them.
 
+## Regions and multi-region search (the user's decision, 2026-10-22: Newark, Frankfurt, Singapore)
+
+Design (ours; the game's PsyNet matchmaker is unknowable: MM-3 sends regions with pings, the rest is PsyNet's):
+- **One game server per region, nothing shared between them.** Each runs its own queue and matches; a region is just
+  another `carball-game` with its own `PUBLIC_HOST` and certificate (`game`, `game-eu`, `game-asia` .carball.zolt.top).
+  Everything else is the same everywhere: `ALLOWED_ORIGIN` (the one page), the ticket keys, `API_URL` and the results
+  token (the API's 300 calls a minute are shared by all of them). Match ids are random 64-bit, so results never clash.
+- **The page's list:** `carball-web` takes `GAME_SERVERS` (`id|Name|URL`, comma-separated, in order); `config.json` carries
+  them as `gameServers` and still carries `gameServer` (the first), so pages loaded before the change keep searching
+  the first region. The CSP's `connect-src` names every server's origin. Without `GAME_SERVERS`, `GAME_SERVER_URL` alone is
+  a one-region list (no picker shown). A development page lists `?queue=host:port,host:port`.
+- **Ping:** each region measured from the page: a session opened, a hello with intent `PING` (4), the server's `Pong`
+  timed (one round trip on an open connection; the better of two). A server from before the change refuses the intent:
+  its refusal is timed instead. Measured when the Play page opens (again after a minute).
+- **The picker (Play page):** the game's word **Regions** ([Global] Regions) over a checkbox per region, its name and ping;
+  at least one stays ticked. The first visit ticks the lowest-ping region; the choice is kept in local storage. Shown only
+  with two or more regions. One region ticked while more exist: the log's **MoreRegions** tip at 30 s (cleared verbatim).
+- **Multi-region search:** Find Match opens one search per ticked region in parallel, each with its own ticket (the API's
+  ticket limit rises to 60 per 10 minutes: three regions' worth of the old 20). The panel says Searching once any region
+  searches; a region that fails while another searches is dropped (a warning line); the search fails only when every
+  region has. **The first match found wins:** the other regions' searches are finished (their stream closed: the server
+  takes them out of its queue, then writes out anything it had sent), so a region that wasn't matched just ends (no
+  no-show: no match, no penalty).
+- **The race** (another region matched in the same moment: its `MatchFound` arrives during that finish): that slot is
+  given up with a hello of intent `DECLINE` (5) and its token, ticketed like a claim. Its server cancels that match at once
+  (its other players back to the front of its queue, as for any cancelled match) and **doesn't count it a no-show, once
+  per 10 minutes per account**; a second decline on that server within 10 minutes counts as a stall (its cooldown). It
+  can't dodge a match: a decline comes before the claim, when nothing about the match (its players) is known; the most it
+  could do is cancel someone's match now and then, which the once-per-10-minutes limit bounds, and they're first in line
+  again. A Cancel Search during "Joining in" stays a claim and leave, a stall (unchanged).
+- **The match's server is remembered:** the claim (the match page connects to that region), the saved seat (the rejoin
+  offer connects there; an older record without one is the first region's) and a cancelled match's returning token (its
+  search goes back to the front of that region's queue only).
+- **Protocol:** intents 4 and 5 and the `Pong` control are additions, not a version change: pages already loaded never send
+  them, and servers from before refuse them harmlessly (deploy the servers first).
+
 ## v1 queue checklist (user scope 2026-10-14: ship v1; simple queue, no rating or ranks)
 Only what the v1 queue needs, distilled from the rows below. **V** = cleared to ship verbatim (user decisions); **K** =
 by key / our own wording. Dropped for v1: ranks/MMR, backfill and join-in-progress, bots, parties, regions, leave

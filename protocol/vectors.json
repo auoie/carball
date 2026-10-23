@@ -559,6 +559,13 @@
     {
       "channel": "control",
       "message": {
+        "type": "pong"
+      },
+      "hex": "010093"
+    },
+    {
+      "channel": "control",
+      "message": {
         "type": "scoreboard",
         "players": [
           {

@@ -205,7 +205,9 @@ export function slider(o: SliderOptions): HTMLDivElement {
   // The mouse: pressed on it, the value under the pointer; dragged, it follows; let go, applied
   const at = (clientX: number): number => {
     const r = control.getBoundingClientRect();
-    const f = (clientX - r.left - THUMB / 2) / Math.max(1, r.width - THUMB);
+    // (the thumb as drawn: the menus' scale, src/ui/menuScale.ts, draws the box larger than its layout, RV-831)
+    const drawnThumb = THUMB * (control.offsetWidth > 0 ? r.width / control.offsetWidth : 1);
+    const f = (clientX - r.left - drawnThumb / 2) / Math.max(1, r.width - drawnThumb);
     return o.min + Math.min(1, Math.max(0, f)) * (o.max - o.min);
   };
   let dragFrom: number | null = null;

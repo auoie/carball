@@ -58,6 +58,21 @@ const SERVERS: readonly Server[] = [
     url: "http://127.0.0.1:14442/info",
     reuse: false,
   },
+  // Two regions' servers (e2e/regions.spec.ts: a search of both, notes/matchmaking.md, Regions)
+  {
+    name: "region-a",
+    command: "cargo",
+    args: [...GAME, "--port", "14445", "--health-port", "18087", "--info-port", "14446", "--mode", "queue", "--dev"],
+    url: "http://127.0.0.1:14446/info",
+    reuse: false,
+  },
+  {
+    name: "region-b",
+    command: "cargo",
+    args: [...GAME, "--port", "14447", "--health-port", "18088", "--info-port", "14448", "--mode", "queue", "--dev"],
+    url: "http://127.0.0.1:14448/info",
+    reuse: false,
+  },
 ];
 
 /** The first run builds the game server */

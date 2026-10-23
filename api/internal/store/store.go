@@ -39,7 +39,9 @@ func Open(ctx context.Context, dsn, passwordFile string) (*Store, error) {
 // OpenAdmin connects the admin's commands (the same role and database, on the live one): named carball-admin among the
 // server's sessions, a statement given 15 s and a lock 2 s at most (a report never waits for ever, nor holds the
 // service's queries behind a migration's lock it queued for), and with `readOnly` (the reports, accounts, bans) every
-// transaction read-only, a write refused by the server itself (RX35)
+// transaction read-only, a write refused by the server itself (RX35). A transaction left open and idle 5 s (a command
+// stopped mid-ban: Ctrl-Z) is ended by the server, so it can't hold a sign-up's identity lock or the service's
+// connections behind it (RV-823)
 func OpenAdmin(ctx context.Context, dsn, passwordFile string, readOnly bool) (*Store, error) {
 	return open(ctx, dsn, passwordFile, func(cfg *pgxpool.Config) {
 		cfg.MaxConns = 2
@@ -47,6 +49,7 @@ func OpenAdmin(ctx context.Context, dsn, passwordFile string, readOnly bool) (*S
 		params["application_name"] = "carball-admin"
 		params["statement_timeout"] = "15000"
 		params["lock_timeout"] = "2000"
+		params["idle_in_transaction_session_timeout"] = "5000"
 		if readOnly {
 			params["default_transaction_read_only"] = "on"
 		}

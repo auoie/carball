@@ -580,7 +580,8 @@ export class PadMenuNav {
     if (!hints) return;
     const panel = (menu.closest<HTMLElement>("[data-pad-hints-under]") ?? page ?? menu).getBoundingClientRect();
     const gap = 12;
-    const top = Math.max(gap, Math.min(panel.bottom + gap, window.innerHeight - hints.offsetHeight - gap));
+    // (its height as drawn, at the menus' scale: RV-833)
+    const top = Math.max(gap, Math.min(panel.bottom + gap, window.innerHeight - hints.getBoundingClientRect().height - gap));
     const at = `${(panel.left + panel.width / 2).toFixed(0)}px ${top.toFixed(0)}px`;
     if (at === this.#hintsAt) return;
     this.#hintsAt = at;

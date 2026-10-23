@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { type SearchHandlers } from "../game/matchmaking";
 import { fakeTransport, type FakeTransportRecord } from "../testing/fakeTransport";
 import { KICK_REPLACED, REFUSED_QUEUE_BANNED, decodeControl } from "./protocol";
-import { SEARCH_ENDED, Search, browserKey } from "./search";
+import { SEARCH_ENDED, Search, browserKey, declineSlot, pingServer } from "./search";
 
 const memory = (): Pick<Storage, "getItem" | "setItem"> => {
   const map = new Map<string, string>();
@@ -130,5 +130,37 @@ describe("a search", () => {
     Search.start({ url: "https://game.example:4433/play", certHash: null }, 1, 0n, handlers);
     await done;
     expect(got).toEqual(["searching", "found 5 on map 4"]);
+  });
+
+  it("a region's ping: a hello with intent ping, no ticket, timed to the server's answer, the better of two; none, null (Regions)", async () => {
+    const record: FakeTransportRecord = { sessions: [] };
+    vi.stubGlobal("WebTransport", fakeTransport([{ type: "pong" }], record));
+    const ms = await pingServer({ url: "https://game-eu.example:4433/play", certHash: null, ticket: () => Promise.reject(new Error("not asked")) });
+    expect(typeof ms === "number" && ms >= 0).toBe(true);
+    expect(record.sessions.length).toBe(2);
+    for (const session of record.sessions) {
+      const hello = decodeControl((session.written[0] ?? new Uint8Array()).subarray(2));
+      expect(hello).toMatchObject({ type: "hello", intent: "ping", token: 0n, ticket: "", key: 0n });
+      expect(session.closed).toBe(true);
+    }
+    // (no answer: the stream ended without one)
+    vi.stubGlobal("WebTransport", fakeTransport([]));
+    expect(await pingServer({ url: "https://game-eu.example:4433/play", certHash: null })).toBeNull();
+  });
+
+  it("gives up a slot found in another region: a hello with intent decline, its token and a ticket; the session closed (Regions)", async () => {
+    const record: FakeTransportRecord = { sessions: [] };
+    vi.stubGlobal("WebTransport", fakeTransport([], record));
+    await declineSlot({ url: "https://game-asia.example:4433/play", certHash: null, ticket: () => Promise.resolve("dGlj") }, 41n);
+    const session = record.sessions[0];
+    expect(session?.url).toBe("https://game-asia.example:4433/play");
+    const hello = decodeControl((session?.written[0] ?? new Uint8Array()).subarray(2));
+    expect(hello).toMatchObject({ type: "hello", intent: "decline", token: 41n, ticket: "dGlj", key: 0n });
+    expect(session?.closed).toBe(true);
+    // (a ticket refused: nothing sent, nothing thrown)
+    const none: FakeTransportRecord = { sessions: [] };
+    vi.stubGlobal("WebTransport", fakeTransport([], none));
+    await declineSlot({ url: "https://game-asia.example:4433/play", certHash: null, ticket: () => Promise.reject(new Error("signed out")) }, 41n);
+    expect(none.sessions).toEqual([]);
   });
 });

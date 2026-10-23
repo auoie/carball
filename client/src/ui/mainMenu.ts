@@ -19,7 +19,23 @@ export const MAIN_MENU_TEXT = {
   garage: "Garage",
   settings: "Settings",
   freePlay: "Free Play",
+  /** The region picker's heading ([Global] Regions: notes/matchmaking.md, Regions) */
+  regions: "Regions",
 } as const;
+
+/** A region as the Play page's picker shows it: its ping (ms; null: not reached; undefined: being measured), ticked */
+export interface RegionShown {
+  readonly id: string;
+  readonly name: string;
+  readonly ping: number | null | undefined;
+  readonly selected: boolean;
+}
+
+/** A region's ping as the picker shows it (our words) */
+export function pingText(ping: number | null | undefined): string {
+  if (ping === undefined) return "…";
+  return ping === null ? "—" : `${String(ping)} ms`;
+}
 
 /** Our own words for the garage's team colours (Free Play's car colour; online, the queue's team) */
 export const GARAGE_TEXT = { blue: "Blue", orange: "Orange" } as const;
@@ -71,6 +87,10 @@ export interface MainMenuActions {
   readonly account?: () => void;
   /** The account's page left (its Turnstile widget let go) */
   readonly accountLeft?: () => void;
+  /** Play's page shown (the regions' pings measured: notes/matchmaking.md, Regions) */
+  readonly playShown?: () => void;
+  /** A region's box pressed on Play's page: its id */
+  readonly region?: (id: string) => void;
 }
 
 export class MainMenu {
@@ -112,6 +132,11 @@ export class MainMenu {
   readonly accountBody: HTMLDivElement;
   /** Each playlist's rating beside its name (the account's: none signed out or on a development page) */
   readonly #ratingTags = new Map<number, HTMLSpanElement>();
+  /** The region picker on Play's page (shown with two regions or more) and its boxes, by region */
+  readonly #regions: HTMLDivElement;
+  readonly #regionBoxes = new Map<string, { readonly box: HTMLButtonElement; readonly ping: HTMLSpanElement }>();
+  readonly #regionAction: ((id: string) => void) | undefined;
+  readonly #playShown: (() => void) | undefined;
   /** A leaver's queue ban under Find Match (LV1: the Play menu shows it), until when (ms) */
   readonly #banLine: HTMLDivElement;
   #banUntil: number | null = null;
@@ -190,6 +215,19 @@ export class MainMenu {
     }
     this.#play.append(playlists);
     this.#select(this.#playlist);
+    // (the regions searched: a box each, its ping beside it; hidden until two or more are set: setRegions)
+    this.#regions = document.createElement("div");
+    this.#regions.className = "main-menu-regions";
+    this.#regions.setAttribute("role", "group");
+    this.#regions.setAttribute("aria-label", MAIN_MENU_TEXT.regions);
+    this.#regions.hidden = true;
+    const regionsHeading = document.createElement("div");
+    regionsHeading.className = "main-menu-regions-heading";
+    regionsHeading.textContent = MAIN_MENU_TEXT.regions;
+    this.#regions.append(regionsHeading);
+    this.#play.append(this.#regions);
+    this.#regionAction = actions.region;
+    this.#playShown = actions.playShown;
     button(this.#play, SEARCH_TEXT.findMatch, () => {
       actions.findMatch(this.#playlist);
     }).classList.add("main-menu-find");
@@ -311,6 +349,40 @@ export class MainMenu {
       const radio = tag.parentElement;
       if (r) radio?.setAttribute("aria-description", `Rating ${String(r.rating)}${r.provisional ? ", provisional" : ""}`);
       else radio?.removeAttribute("aria-description");
+    }
+  }
+
+  /** The regions on Play's page (notes/matchmaking.md, Regions): a box each, ticked or not, its ping; shown with two or
+   *  more. The boxes kept while the regions are the same (a focused one keeps its focus as pings come) */
+  setRegions(regions: readonly RegionShown[]): void {
+    this.#regions.hidden = regions.length < 2;
+    const same = regions.length === this.#regionBoxes.size && regions.every((r) => this.#regionBoxes.has(r.id));
+    if (!same) {
+      for (const { box } of this.#regionBoxes.values()) box.remove();
+      this.#regionBoxes.clear();
+      for (const r of regions) {
+        const box = document.createElement("button");
+        box.className = "main-menu-button main-menu-region";
+        box.setAttribute("role", "checkbox");
+        box.dataset["region"] = r.id;
+        const name = document.createElement("span");
+        name.className = "main-menu-region-name";
+        name.textContent = r.name;
+        const ping = document.createElement("span");
+        ping.className = "main-menu-ping";
+        box.append(name, ping);
+        box.addEventListener("click", () => {
+          this.#regionAction?.(r.id);
+        });
+        this.#regions.append(box);
+        this.#regionBoxes.set(r.id, { box, ping });
+      }
+    }
+    for (const r of regions) {
+      const shown = this.#regionBoxes.get(r.id);
+      if (!shown) continue;
+      shown.box.setAttribute("aria-checked", String(r.selected));
+      shown.ping.textContent = pingText(r.ping);
     }
   }
 
@@ -475,7 +547,10 @@ export class MainMenu {
     this.#account.hidden = view !== "account";
     this.#top.hidden = view !== "top";
     this.#play.hidden = view !== "play";
-    if (view === "play") this.#drawBan();
+    if (view === "play") {
+      this.#drawBan();
+      this.#playShown?.();
+    }
     if (this.#botsView) this.#botsView.page.hidden = view !== "bots";
     this.#training.hidden = view !== "training";
     this.#garage.hidden = view !== "garage";

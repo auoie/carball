@@ -30,6 +30,9 @@ pub enum Intent {
     Claim { token: u64 },
     /// Rejoin the ranked match left by accident (its id: Welcome's `match_id`; LV1)
     Rejoin { match_id: u64 },
+    /// Give up the unclaimed slot the token names: a match found in another region at the same moment (notes/
+    /// matchmaking.md, Regions)
+    Decline { token: u64 },
 }
 
 /// Messages from the network tasks to the game loop
@@ -421,6 +424,13 @@ async fn session(
             bail!("protocol version {version}, server speaks {}", protocol::VERSION);
         }
     };
+    // (a region's ping: answered at once, no ticket, nothing for the game thread; the page times the round trip)
+    if matches!(&hello, Control::Hello { intent, .. } if *intent == protocol::INTENT_PING) {
+        let _ = send.write_all(&Control::Pong.encode()).await;
+        let _ = send.finish().await;
+        let _ = tokio::time::timeout(Duration::from_secs(2), connection.closed()).await;
+        return Ok(false);
+    }
     let ticket = if let Control::Hello { ticket, .. } = &hello { ticket.clone() } else { String::new() };
     let Some((mut request, intent, playlist, token)) = JoinRequest::from_hello(hello) else {
         bail!("expected hello");
@@ -428,7 +438,10 @@ async fn session(
     // (a search and a claim are an account's: its ticket checked here alone, never in the match code the browser's local
     // host shares; the account's key and name in place of the hello's)
     if let Some(tickets) = &limits.tickets
-        && matches!(intent, protocol::INTENT_SEARCH | protocol::INTENT_CLAIM | protocol::INTENT_REJOIN)
+        && matches!(
+            intent,
+            protocol::INTENT_SEARCH | protocol::INTENT_CLAIM | protocol::INTENT_REJOIN | protocol::INTENT_DECLINE
+        )
     {
         // (each ticket for its own: a search's for a search and its claim, a rejoin's for that match's rejoin alone, AP3)
         let purpose_fits = |purpose: crate::ticket::Purpose| match purpose {
@@ -461,6 +474,7 @@ async fn session(
         protocol::INTENT_SEARCH => Intent::Search { team_size: playlist, token },
         protocol::INTENT_CLAIM => Intent::Claim { token },
         protocol::INTENT_REJOIN => Intent::Rejoin { match_id: token },
+        protocol::INTENT_DECLINE => Intent::Decline { token },
         _ => Intent::Join,
     };
 

@@ -64,6 +64,7 @@ they change there is lost when the newer page returns (RV-425; `client/src/setti
 | Env | Default | |
 |---|---|---|
 | `GAME_SERVER_URL` | `https://game.carball.zolt.top:4433/play` | the game server's WebTransport URL; written into `/config.json` at start (`https://HOST[:PORT]/PATH`, else the container exits: set but empty too, RV-441), and its origin is the page's only `connect-src` besides its own |
+| `GAME_SERVERS` | (none) | the game servers, one a region (notes/matchmaking.md, Regions), in the order the page lists them: `ID\|Name\|URL` entries, comma-separated, e.g. `us-east\|US-East\|https://game.carball.zolt.top:4433/play,eu\|Europe\|https://game-eu.carball.zolt.top:4433/play,asia\|Asia\|https://game-asia.carball.zolt.top:4433/play`. The id lower-case letters, digits and inner hyphens (32 at most, each id once); the name the region's as the Play page's picker shows it (letters, digits, spaces and `. - ( )`, 40 at most); the URL as `GAME_SERVER_URL`'s; 8 entries at most; one line. Set, it takes `GAME_SERVER_URL`'s place: `/config.json` carries them as `gameServers` and the first as `gameServer` (what pages from before the regions read), and `connect-src` names each server's origin. Set but empty, or with a bad entry, the container exits. Unset: `GAME_SERVER_URL` alone, one server and no picker |
 | `EXTRA_CONNECT_SRC` | (none) | testing only: more `connect-src` sources (e.g. `http://127.0.0.1:14503 https://127.0.0.1:14502` for a development server's info and port); space-separated `SCHEME://HOST[:PORT]` (http, https, ws, wss; the port 1–65535 or `*`), else the container exits. `GAME_SERVER_URL` likewise allows only letters, digits and `. - _ ~ /` after `https://`, one line |
 
 - **Port:** 3000/tcp, plain HTTP. `/assets/*` (hashed names) cached for a year, the rest `no-cache` (`/bots/*`, Play vs
@@ -72,7 +73,7 @@ they change there is lost when the newer page returns (RV-425; `client/src/setti
   (RV-537). A page off localhost whose `/config.json` can't be read (missing, an error, not a config) offers no online
   play ("can't be reached"): it never falls back to a development server (RX29C). Every response carries
   `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY` and a
-  Content-Security-Policy (this origin only, but the game server's origin from `GAME_SERVER_URL` and Cloudflare
+  Content-Security-Policy (this origin only, but the game servers' origins from `GAME_SERVERS` or `GAME_SERVER_URL` and Cloudflare
   Turnstile's `https://challenges.cloudflare.com` in `script-src` and `frame-src`, the sign-up's check; `frame-ancestors
   'none'`; no eval; WebAssembly compiled, `'wasm-unsafe-eval'`: the engine, the bots' match host and onnxruntime; workers
   from this origin: a match against bots runs in one, onnxruntime on one thread, so no cross-origin isolation is needed).
@@ -142,8 +143,15 @@ the same port): `docker run --rm -e GAME_PORT=14502 -p 127.0.0.1:14502:14502/udp
   /api/refills`, with the rejoin's ticket). No ban when the match hadn't ticked for 20 s, or when most of its seats lost
   their connection within 5 s of each other (the server's own outage). A ranked 2v2 or 3v3 seat left by accident is
   held for a rejoin until the match ends (a rejoin's ticket, for that match; a rejoin before the old session timed out
-  takes the seat over). One search or match per account; the queue pairs by rating (ours: ±100,
+  takes the seat over). One search or match per account on each server; the queue pairs by rating (ours: ±100,
   wider by 50 every 10 s waited, ±600 at most, then anyone; teams by a snake draft).
+- **Regions** (notes/matchmaking.md, Regions): one server per region, nothing shared between them; each is this image
+  with its own `PUBLIC_HOST` and certificate (`game`, `game-eu`, `game-asia` .carball.zolt.top), everything else the same
+  (`ALLOWED_ORIGIN`, the ticket keys, `API_URL`, the token: the API's 300 calls a minute shared by all). A page searching
+  several regions sends each a search; a match found in one ends the others' searches (no no-show: no match there), and a
+  slot found at the same moment in another is given up with a hello of intent 5 (decline), its match cancelled at once,
+  not counted a no-show once per 10 minutes per account (a second within them is). A region's ping is a hello of intent
+  4, answered with `Pong`, no ticket. Both added without a protocol version: deploy the game servers before the page.
 - **Volumes:** `/var/lib/carball-game` (the outbox: a few KB, keep it across restarts). The certificate directory, read-only, at `/certs` (e.g. `-v /etc/letsencrypt/live/game.carball.zolt.top:/certs:ro`
   with the archive files it links to reachable). The process runs as **uid 10001**: the key must be readable by it (a
   copy owned by or readable to 10001, or `--user` set to the files' owner).
@@ -251,7 +259,8 @@ The accounts service (notes/accounts.md). **Nothing is deployed yet: the first d
   providers'); the commands print any other stored one quoted, typed back as the shell's `$'...'` (RV-809, RV-810).
   Such a ban and its identity's sign-up take turns on the identity, so neither misses the other (RV-807).
 - **Stop:** SIGTERM or SIGINT: requests in flight finish (10 s at most).
-- **Search tickets** (`POST /api/ticket`, notes/accounts.md §3): a signed-in account's, two minutes long, a nonce each,
+- **Search tickets** (`POST /api/ticket`, notes/accounts.md §3; 60 an account in 10 minutes, a search asking one per
+  region it searches): a signed-in account's, two minutes long, a nonce each,
   its ratings in each playlist (format 3); refused (403, `queue-banned` and until when) while a leaver's queue ban runs,
   except a rejoin's (`?rejoin=MATCH`, 16 hex digits) for the match the ban came from; the game server checks them
   offline with `TICKET_PUBLIC_KEYS`, a search's for a search or claim, a rejoin's for that match's rejoin alone.
@@ -282,6 +291,11 @@ docker run -d --name carball-api --restart unless-stopped --network carball --re
 ```
 
 ## Checked (2026-10-15, Docker 29.9 on the development VM; again for every change to the images or this contract)
+
+2026-10-22 (the working tree on 0297a88, regions: `scripts/build_images.sh --worktree ranked3b`): the checks below again,
+and five more for the web image's `GAME_SERVERS`, 49 in all: three servers in `/config.json` in order (the first its
+`gameServer`) and each one's origin in `connect-src`; set but empty, an entry with a bad name, and an id given twice,
+each refused at start.
 
 2026-10-22 (the working tree on a88691e, protocol 27 and ticket format 3, ranked step 3 with the AP3, RX29C and RX30C
 fixes: `scripts/build_images.sh --worktree ranked3`; the database a host Postgres from initdb/pg_ctl on the throwaway

@@ -147,8 +147,10 @@ API. It:
   AP2-4);
 - takes its keys from `TICKET_PUBLIC_KEYS` or `TICKET_PUBLIC_KEYS_FILE`, the file read again on SIGHUP (a rotation
   without a restart), refusing a list with no key, a key id twice, a key of small order or the id `dev` (AP2-5);
-- allows one active search or match per account (two tabs, two devices). That holds per game server, which is enough
-  while there is one; a second server would need the API to hold it (AC-27).
+- allows one active search or match per account (two tabs, two devices). That holds per game server: with regions
+  (2026-10-22, notes/matchmaking.md, Regions) an account searches every region it ticks at once, on purpose, and the page
+  takes the first match found, ending or declining the rest; it can't play two matches at once from one page. The API
+  holding it across servers (AC-27) stays open, not needed for that.
 
 A seat belongs to the account: a reconnect needs a fresh ticket for that account, not the browser key.
 

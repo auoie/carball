@@ -223,4 +223,56 @@ describe("matchmaking (notes/matchmaking.md MM-4..14)", () => {
     mm.frame(104);
     expect(mm.state?.lines).toEqual([]);
   });
+
+  it("a region's match: the join and a decline go to its server; a dropped region's line; the MoreRegions tip (Regions)", () => {
+    const joins: (string | undefined)[] = [];
+    const declines: (string | undefined)[] = [];
+    let handlers: SearchHandlers | null = null;
+    let backRegion: string | undefined;
+    let regions = 1;
+    const mm = new Matchmaking({
+      search: (_playlist, _token, h, region) => {
+        handlers = h;
+        backRegion = region;
+        return { cancel: () => undefined, finish: () => Promise.resolve() };
+      },
+      sound: () => undefined,
+      join: (_token, _playlist, _seconds, _map, region) => joins.push(region),
+      decline: (_token, region) => declines.push(region),
+      moreRegions: () => regions === 1,
+    });
+    const h = (): SearchHandlers => {
+      if (!handlers) throw new Error("no search");
+      return handlers;
+    };
+    mm.frame(0);
+    mm.start(1, undefined, { token: 3n, searchedFor: 0, region: "eu" });
+    expect(backRegion).toBe("eu");
+    h().searching();
+    h().warning?.("Asia: the server can't be reached");
+    expect(mm.state?.lines).toEqual([{ text: `${OWN_SEARCH_TEXT.failedPrefix} Asia: the server can't be reached`, kind: "warning" }]);
+    mm.frame(31);
+    expect(mm.state?.lines.map((l) => l.text)).toEqual([
+      SEARCH_TEXT.findingBestMatch,
+      SEARCH_TEXT.moreRegions,
+      `${OWN_SEARCH_TEXT.failedPrefix} Asia: the server can't be reached`,
+    ]);
+    h().found(9n, 0, "us-east");
+    vi.advanceTimersByTime(JOIN_COUNTDOWN * 1000);
+    expect(joins).toEqual(["us-east"]);
+    // (Cancel Search in "Joining in": the slot given up at that region's server)
+    mm.start(1);
+    h().searching();
+    h().found(10n, 0, "eu");
+    mm.cancel();
+    expect(declines).toEqual(["eu"]);
+    // (several regions searched: no tip)
+    regions = 2;
+    mm.start(1);
+    h().searching();
+    mm.frame(100);
+    expect(mm.state?.lines.map((l) => l.text)).toEqual([SEARCH_TEXT.findingBestMatch]);
+    expect(timelineLines(31, true).map((l) => l.text)).toEqual([SEARCH_TEXT.findingBestMatch, SEARCH_TEXT.moreRegions]);
+    expect(timelineLines(29, true).map((l) => l.text)).toEqual([SEARCH_TEXT.findingBestMatch]);
+  });
 });

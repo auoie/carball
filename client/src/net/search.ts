@@ -43,6 +43,106 @@ function local(): Pick<Storage, "getItem" | "setItem"> | null {
  *  within 2 s (RV-443) */
 const FINISH_WAIT_MS = 3000;
 
+/** A region's ping waits this long at most (ms): its connection and the answer (notes/matchmaking.md, Regions) */
+const PING_TIMEOUT_MS = 4000;
+
+/** A hello for a session that isn't a player's: a region's ping, or a decline */
+function plainHello(intent: "ping" | "decline", token: bigint, ticket: string, key: bigint): Uint8Array {
+  return encodeControl({
+    type: "hello",
+    version: PROTOCOL_VERSION,
+    team: 255,
+    model: 0,
+    dodgeDeadzone: 0,
+    steeringSensitivity: 0,
+    airControlSensitivity: 0,
+    autoSkipReplay: false,
+    key,
+    name: "",
+    quickChat: "everyone",
+    blockNonTactical: false,
+    intent,
+    playlist: 0,
+    token,
+    ticket,
+  });
+}
+
+function transportTo(address: ServerAddress): WebTransport {
+  return new WebTransport(address.url, address.certHash ? { serverCertificateHashes: [{ algorithm: "sha-256", value: address.certHash }] } : undefined);
+}
+
+/** A region's ping (notes/matchmaking.md, Regions): the round trip in ms on an open session, from a hello with intent
+ *  "ping" to the server's first answer (its Pong; a server from before the intent refuses it, as quickly), the better of
+ *  `tries`; null if it can't be reached in time */
+export async function pingServer(address: ServerAddress, tries = 2): Promise<number | null> {
+  let best: number | null = null;
+  for (let i = 0; i < tries; i++) {
+    const ms = await pingOnce(address).catch(() => null);
+    if (ms !== null && (best === null || ms < best)) best = ms;
+  }
+  return best === null ? null : Math.round(best);
+}
+
+async function pingOnce(address: ServerAddress): Promise<number> {
+  const transport = transportTo(address);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error("no answer in time"));
+      }, PING_TIMEOUT_MS);
+    });
+    const timed = async (): Promise<number> => {
+      await transport.ready;
+      const stream = await transport.createBidirectionalStream();
+      const writer = stream.writable.getWriter();
+      const reader = (stream.readable as ReadableStream<Uint8Array>).getReader();
+      const start = performance.now();
+      await writer.write(plainHello("ping", 0n, "", 0n));
+      const { done } = await reader.read();
+      if (done) throw new Error("no answer");
+      return performance.now() - start;
+    };
+    return await Promise.race([timeout, timed()]);
+  } finally {
+    clearTimeout(timer);
+    try {
+      transport.close();
+    } catch {
+      // (already closed)
+    }
+  }
+}
+
+/** Gives up a slot a region's server found when another region's match came first (the race: notes/matchmaking.md,
+ *  Regions): a hello with intent "decline" and its token, ticketed as a claim; the server cancels that match. Its end
+ *  awaited a few seconds at most; a failure dropped (the reservation runs out on its own, then a stall) */
+export async function declineSlot(address: ServerAddress, token: bigint): Promise<void> {
+  let transport: WebTransport | null = null;
+  try {
+    const ticket = address.ticket ? await address.ticket() : "";
+    transport = transportTo(address);
+    await transport.ready;
+    const stream = await transport.createBidirectionalStream();
+    const writer = stream.writable.getWriter();
+    await writer.write(plainHello("decline", token, ticket, ticket === "" ? browserKey() : 0n));
+    // (the server takes it and ends the session: its end awaited, a few seconds at most)
+    await Promise.race([
+      readControlMessages(stream.readable as ReadableStream<Uint8Array>, () => undefined),
+      new Promise((resolve) => setTimeout(resolve, FINISH_WAIT_MS)),
+    ]);
+  } catch {
+    // (given up: the reservation runs out)
+  } finally {
+    try {
+      transport?.close();
+    } catch {
+      // (already closed)
+    }
+  }
+}
+
 /** A search the server ended for a reason this page doesn't know (our words: neutral) */
 export const SEARCH_ENDED = "the server ended the search";
 

@@ -112,6 +112,14 @@ pub fn run_with_reports(
                             refuse(out, protocol::REFUSED_TOKEN);
                         }
                     }
+                    // (a slot given up for a match found in another region: its match cancelled now, the decliner not
+                    // counted a no-show once per window, notes/matchmaking.md, Regions)
+                    Intent::Decline { .. } if !queue_mode => refuse(out, protocol::REFUSED_MODE),
+                    Intent::Decline { token } => {
+                        if !host.decline(token, &request) {
+                            refuse(out, protocol::REFUSED_TOKEN);
+                        }
+                    }
                     Intent::Rejoin { .. } if !queue_mode => refuse(out, protocol::REFUSED_MODE),
                     Intent::Rejoin { match_id } => {
                         if let Err(reason) = host.rejoin(match_id, id, request, out.clone()) {

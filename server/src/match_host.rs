@@ -151,11 +151,13 @@ impl Reservation {
 
 /// A match cancelled before its start, for the queue (RV-367): the tokens of the slots that stalled it (cancelled by time:
 /// those not claimed; by a leave before the start: the leaver's, the others' still in their time), and of the rest (back
-/// to the front when they search again: a claimed player told so, one still loading refused their claim)
+/// to the front when they search again: a claimed player told so, one still loading refused their claim); and the slot
+/// given up for a match found in another region (`decline`), the queue's to judge: no no-show once per window
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Cancelled {
     pub stayed: Vec<u64>,
     pub stalled: Vec<u64>,
+    pub declined: Vec<u64>,
 }
 
 struct Hosted {
@@ -725,19 +727,49 @@ impl MatchHost {
     /// The match is cancelled before it started: its players are told, then their sessions end; the queue is told who
     /// stayed and who stalled it
     fn cancel(&mut self, match_id: MatchId) {
+        self.cancel_for(match_id, None);
+    }
+
+    /// `cancel`, or for the slot declined (`decline`): every other slot stayed, none stalled
+    fn cancel_for(&mut self, match_id: MatchId, declined: Option<u64>) {
         if let Some(hosted) = self.matches.get(&match_id) {
             if let Some(game) = hosted.game.as_ref() {
                 game.broadcast(&Control::Kicked { reason: protocol::KICK_NOT_ALL_JOINED });
             }
-            let by_leave = hosted.reservations.iter().any(|r| r.left);
-            let (stalled, stayed): (Vec<&Reservation>, Vec<&Reservation>) =
-                hosted.reservations.iter().partition(|r| if by_leave { r.left } else { r.claimed.is_none() });
-            self.cancelled.push(Cancelled {
-                stayed: stayed.iter().map(|r| r.token).collect(),
-                stalled: stalled.iter().map(|r| r.token).collect(),
+            let tokens = |slots: &[&Reservation]| slots.iter().map(|r| r.token).collect();
+            self.cancelled.push(match declined {
+                Some(token) => {
+                    let others: Vec<&Reservation> = hosted.reservations.iter().filter(|r| r.token != token).collect();
+                    Cancelled { stayed: tokens(&others), stalled: Vec::new(), declined: vec![token] }
+                }
+                None => {
+                    let by_leave = hosted.reservations.iter().any(|r| r.left);
+                    let (stalled, stayed): (Vec<&Reservation>, Vec<&Reservation>) =
+                        hosted.reservations.iter().partition(|r| if by_leave { r.left } else { r.claimed.is_none() });
+                    Cancelled { stayed: tokens(&stayed), stalled: tokens(&stalled), declined: Vec::new() }
+                }
             });
         }
         self.drop_match(match_id);
+    }
+
+    /// A reserved slot given up unclaimed by its searcher's account, for a match found in another region at the same
+    /// moment (notes/matchmaking.md, Regions): its match cancelled now (its claimed players told, every other slot back to
+    /// the front), the decliner the queue's to judge (`Cancelled::declined`). False if no unclaimed reservation has the
+    /// token, or a verified decline isn't the searcher's account (its token stays good)
+    pub fn decline(&mut self, token: u64, request: &JoinRequest) -> bool {
+        let Some(&match_id) = self.tokens.get(&token) else { return false };
+        let Some(hosted) = self.matches.get(&match_id) else { return false };
+        let Some(slot) = hosted.reservations.iter().find(|r| r.token == token && r.claimed.is_none()) else {
+            return false;
+        };
+        if request.verified && slot.key != request.key {
+            eprintln!("a decline of another account's seat, refused");
+            return false;
+        }
+        eprintln!("match {match_id}: a slot given up for a match found in another region, cancelled");
+        self.cancel_for(match_id, Some(token));
+        true
     }
 
     /// The matches cancelled before their start since the last call (the queue's: RV-367)
@@ -1370,10 +1402,36 @@ mod tests {
         assert!(!host.claim(tokens[1], 2, request(), tx), "the late token is dead");
         assert_eq!(
             host.take_cancelled(),
-            vec![Cancelled { stayed: vec![tokens[0]], stalled: vec![tokens[1]] }],
+            vec![Cancelled { stayed: vec![tokens[0]], stalled: vec![tokens[1]], ..Default::default() }],
             "by time: the unclaimed slot stalled it"
         );
         assert!(host.take_cancelled().is_empty());
+    }
+
+    #[test]
+    fn a_slot_declined_for_another_regions_match_cancels_it_at_once_with_no_one_stalled() {
+        // (notes/matchmaking.md, Regions: the decliner was matched in another region at the same moment)
+        init_engine();
+        let mut host = MatchHost::new(1, None);
+        let verified = |key: u64| JoinRequest { key, verified: true, ..request() };
+        let tokens = host.create_match(ONES, &[71, 72], 0.0).tokens;
+        let (tx, mut rx) = channel(OUT_QUEUE);
+        assert!(host.claim(tokens[0], 1, verified(71), tx));
+        // (refused: a claimed slot, another account's, a token never given; the match untouched)
+        assert!(!host.decline(tokens[0], &verified(71)), "claimed already");
+        assert!(!host.decline(tokens[1], &verified(71)), "another account's slot");
+        assert!(!host.decline(12345, &verified(72)), "never given");
+        assert_eq!(host.match_count(), 1);
+        assert!(host.take_cancelled().is_empty());
+        // (its own: the match cancelled now, its claimed player told, no one stalled)
+        assert!(host.decline(tokens[1], &verified(72)));
+        assert_eq!(host.match_count(), 0);
+        assert!(controls(&mut rx).contains(&Control::Kicked { reason: protocol::KICK_NOT_ALL_JOINED }));
+        assert_eq!(
+            host.take_cancelled(),
+            vec![Cancelled { stayed: vec![tokens[0]], stalled: vec![], declined: vec![tokens[1]] }]
+        );
+        assert!(host.tokens.is_empty() && host.players.is_empty());
     }
 
     #[test]

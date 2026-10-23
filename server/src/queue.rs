@@ -31,6 +31,10 @@ const RETURN_SECONDS: f64 = 60.0;
 /// An IPv4 address is blocked after this many different browser keys stalled from it within `STALL_WINDOW` (s)
 const ADDRESS_STALLS: usize = 2;
 const STALL_WINDOW: f64 = 600.0;
+/// A slot given up for a match found in another region (`Cancelled::declined`) isn't a no-show once per this many
+/// seconds per account (an address without one); a second within it is (notes/matchmaking.md, Regions: the race of two
+/// regions matching at once is rare, and a decline comes before anything about its match is known)
+pub const DECLINE_WINDOW: f64 = 600.0;
 /// The addresses whose recent stalls are kept, at most (the one whose last stall is oldest let go first: memory stays
 /// bounded, RV-407. Filling it to let a staller's record go takes ~100k addresses stalling within the window, RV-428)
 const MAX_STALL_ADDRESSES: usize = 100_000;
@@ -123,6 +127,8 @@ pub struct Matchmaker {
     returning: HashMap<u64, (u8, f64, f64, u64)>,
     /// Who stalled a match: until when they can't search
     cooldowns: HashMap<Who, f64>,
+    /// Who gave up a slot for another region's match without a no-show, and when (once per `DECLINE_WINDOW`)
+    declines: HashMap<Who, f64>,
     /// Each address's recent stalls (an IPv6 one by its /64): the browser keys and when
     stalls: HashMap<IpAddr, Vec<(u64, f64)>>,
     /// Every stall within the window in the order they came (times never go back), so the oldest address is found
@@ -145,6 +151,7 @@ impl Matchmaker {
             handed: HashMap::new(),
             returning: HashMap::new(),
             cooldowns: HashMap::new(),
+            declines: HashMap::new(),
             stalls: HashMap::new(),
             stall_order: VecDeque::new(),
             stall_cap: MAX_STALL_ADDRESSES,
@@ -224,9 +231,22 @@ impl Matchmaker {
 
     /// A match was cancelled before its start: who claimed goes back to the front when they search again, who stalled it
     /// can't search for a while (`NO_SHOW_COOLDOWN`: their browser key; their address as the module says), and their other
-    /// searches waiting now are let go with the refusal (RV-386: a staller's other sessions can't stall more matches)
+    /// searches waiting now are let go with the refusal (RV-386: a staller's other sessions can't stall more matches). A
+    /// slot declined for another region's match is no stall once per `DECLINE_WINDOW`, then one
     pub fn cancelled(&mut self, cancelled: &Cancelled, now: f64) {
-        for token in &cancelled.stalled {
+        let mut stalled = cancelled.stalled.clone();
+        for token in &cancelled.declined {
+            let Some(h) = self.handed.get(token) else { continue };
+            let who = if h.from.key != 0 { Who::Key(h.from.key) } else { Who::Address(h.from.address) };
+            if self.declines.get(&who).is_some_and(|&at| now - at < DECLINE_WINDOW) {
+                stalled.push(*token); // (a second within the window: a stall, as any)
+            } else {
+                self.declines.insert(who, now);
+                self.handed.remove(token);
+                eprintln!("a match's slot given up for another region's match: no no-show counted");
+            }
+        }
+        for token in &stalled {
             if let Some(h) = self.handed.remove(token) {
                 let until = now + NO_SHOW_COOLDOWN;
                 if h.from.key != 0 {
@@ -309,6 +329,7 @@ impl Matchmaker {
         self.handed.retain(|_, h| h.until > now);
         self.returning.retain(|_, r| r.2 > now);
         self.cooldowns.retain(|_, until| *until > now);
+        self.declines.retain(|_, at| now - *at < DECLINE_WINDOW);
         self.stalls.retain(|_, stalls| {
             stalls.retain(|&(_, at)| now - at < STALL_WINDOW);
             !stalls.is_empty()
@@ -480,7 +501,7 @@ mod tests {
         let tokens: Vec<u64> = rxs.iter_mut().map(|rx| found(rx).unwrap()).collect();
         assert!(found(&mut far).is_none(), "500 apart, its window 350: not yet");
         // (player 1 back at the front, its first search's time kept: 50 s)
-        queue.cancelled(&Cancelled { stayed: vec![tokens[0]], stalled: vec![tokens[1]] }, 55.0);
+        queue.cancelled(&Cancelled { stayed: vec![tokens[0]], stalled: vec![tokens[1]], ..Default::default() }, 55.0);
         let (tx, mut back) = channel(OUT_QUEUE);
         let returning = SearchFrom { token: tokens[0], rating: 1000, ..from(1) };
         assert_eq!(queue.search(1, 1, tx, returning, 56.0), Searched::Queued);
@@ -570,7 +591,7 @@ mod tests {
         queue.form(&mut host, 0.0);
         let tokens: Vec<u64> = rxs.iter_mut().map(|rx| found(rx).unwrap()).collect();
         // (the match cancelled for player 2's stall: player 1's token returns them to the front)
-        queue.cancelled(&Cancelled { stayed: vec![tokens[0]], stalled: vec![tokens[1]] }, 13.0);
+        queue.cancelled(&Cancelled { stayed: vec![tokens[0]], stalled: vec![tokens[1]], ..Default::default() }, 13.0);
         // (another account's search with it: an ordinary search, at the back; the token still the owner's)
         let (tx, _rx) = channel(OUT_QUEUE);
         assert_eq!(queue.search(7, 1, tx, SearchFrom { token: tokens[0], ..from(7) }, 14.0), Searched::Queued);
@@ -706,7 +727,7 @@ mod tests {
         let mut c = search(&mut queue, 3, 0, 5.0);
         let mut d = search(&mut queue, 4, 0, 6.0);
         // b claimed, a didn't: b back at the front with their token, ahead of c and d
-        queue.cancelled(&Cancelled { stayed: vec![tb], stalled: vec![ta] }, 13.0);
+        queue.cancelled(&Cancelled { stayed: vec![tb], stalled: vec![ta], ..Default::default() }, 13.0);
         let mut b = search(&mut queue, 2, tb, 14.0);
         queue.form(&mut host, 14.0);
         assert!(found(&mut b).is_some() && found(&mut c).is_some(), "b first, then the oldest new searcher");
@@ -735,7 +756,10 @@ mod tests {
         let tokens: Vec<u64> = rxs.iter_mut().map(|rx| found(rx).unwrap()).collect();
         let (tx, _new) = channel(OUT_QUEUE);
         assert_eq!(queue.search(9, 2, tx, from(9), 5.0), Searched::Queued);
-        queue.cancelled(&Cancelled { stayed: tokens[..3].to_vec(), stalled: vec![tokens[3]] }, 16.0);
+        queue.cancelled(
+            &Cancelled { stayed: tokens[..3].to_vec(), stalled: vec![tokens[3]], ..Default::default() },
+            16.0,
+        );
         // They search again in another order: the queue has them in their first searches' (1, 2, 3), then 9
         let mut again = Vec::new();
         for id in [3, 1, 2] {
@@ -766,7 +790,7 @@ mod tests {
         queue.form(&mut host, now);
         let (ka, kb) = (found(&mut ra).unwrap(), found(&mut rb).unwrap());
         let (stayed, stalled) = if a_stalls { (kb, ka) } else { (ka, kb) };
-        queue.cancelled(&Cancelled { stayed: vec![stayed], stalled: vec![stalled] }, now + 12.0);
+        queue.cancelled(&Cancelled { stayed: vec![stayed], stalled: vec![stalled], ..Default::default() }, now + 12.0);
         vec![ra, rb]
     }
 
@@ -775,6 +799,47 @@ mod tests {
         let searched = queue.search(id, 1, tx, from, now);
         queue.cancel(id);
         searched
+    }
+
+    /// A match found for `a` and `b` at `now`, then cancelled for `a`'s decline (another region's match found at the same
+    /// moment): `b`'s token (back to the front)
+    fn declined(queue: &mut Matchmaker, a: SearchFrom, b: SearchFrom, now: f64) -> u64 {
+        let mut host = Recorder::default();
+        let (ta, mut ra) = channel(OUT_QUEUE);
+        assert_eq!(queue.search(901, 1, ta, a, now), Searched::Queued);
+        let (tb, mut rb) = channel(OUT_QUEUE);
+        assert_eq!(queue.search(902, 1, tb, b, now), Searched::Queued);
+        queue.form(&mut host, now);
+        let (ka, kb) = (found(&mut ra).unwrap(), found(&mut rb).unwrap());
+        queue.cancelled(&Cancelled { stayed: vec![kb], declined: vec![ka], ..Default::default() }, now + 1.0);
+        kb
+    }
+
+    #[test]
+    fn a_slot_declined_for_another_regions_match_is_no_stall_once_per_ten_minutes() {
+        // (notes/matchmaking.md, Regions: two regions matched one searcher at the same moment; the second given up)
+        let mut queue = Matchmaker::new(&playlists());
+        let kept = declined(&mut queue, from(1), from(2), 0.0);
+        assert_eq!(try_search(&mut queue, 10, from(1), 2.0), Searched::Queued, "the decliner searches at once");
+        assert!(queue.returning.contains_key(&kept), "the other back to the front");
+        assert!(queue.handed.is_empty());
+        // (a second within ten minutes: a stall, its cooldown; its address not blocked for one key's stall)
+        declined(&mut queue, from(1), from(3), 300.0);
+        assert_eq!(try_search(&mut queue, 11, from(1), 302.0), Searched::Cooldown { seconds: 119, network: false });
+        assert_eq!(try_search(&mut queue, 12, from(4), 302.0), Searched::Queued, "someone else");
+        // (ten minutes after the free one: free again)
+        declined(&mut queue, from(1), from(5), 601.0);
+        assert_eq!(try_search(&mut queue, 13, from(1), 603.0), Searched::Queued, "a new window");
+        // (without a key, by its address)
+        let keyless = SearchFrom { key: 0, ..from(6) };
+        declined(&mut queue, keyless, from(7), 700.0);
+        assert_eq!(try_search(&mut queue, 14, keyless, 702.0), Searched::Queued);
+        declined(&mut queue, keyless, from(8), 710.0);
+        assert_eq!(try_search(&mut queue, 15, keyless, 712.0), Searched::Cooldown { seconds: 119, network: true });
+        // (expired, they're let go)
+        let mut host = Recorder::default();
+        queue.form(&mut host, 2000.0);
+        assert!(queue.declines.is_empty());
     }
 
     #[test]
@@ -954,7 +1019,7 @@ mod tests {
         let (tx, mut other) = channel(OUT_QUEUE);
         assert_eq!(queue.search(30, 2, tx, from(1), 1.0), Searched::Queued);
         assert_eq!(queue.searching(2), 1);
-        queue.cancelled(&Cancelled { stayed: vec![kb], stalled: vec![ka] }, 13.0);
+        queue.cancelled(&Cancelled { stayed: vec![kb], stalled: vec![ka], ..Default::default() }, 13.0);
         assert_eq!(queue.searching(2), 0);
         let mut refused = None;
         while let Ok(Outgoing::Control(bytes)) = other.try_recv() {

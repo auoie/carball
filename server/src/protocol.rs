@@ -57,6 +57,13 @@ pub const INTENT_SEARCH: u8 = 1;
 pub const INTENT_CLAIM: u8 = 2;
 /// Hello's intent: rejoin the ranked match its token names (Welcome's match id: LV1, 2v2 and 3v3 only)
 pub const INTENT_REJOIN: u8 = 3;
+/// Hello's intent: a region's ping (notes/matchmaking.md, Regions): answered with `Pong` at once, then the session ends;
+/// no ticket. An addition, not a version: a server from before refuses it (REFUSED_MODE), which a page times the same
+pub const INTENT_PING: u8 = 4;
+/// Hello's intent: give up the reserved slot its token names, unclaimed, for a match found in another region at the same
+/// moment (ticketed as a claim): its match cancelled now, the others back to the front, no no-show counted once per
+/// `queue::DECLINE_WINDOW` per account (notes/matchmaking.md, Regions). An addition, as `INTENT_PING`
+pub const INTENT_DECLINE: u8 = 5;
 /// `Kicked`'s reason: idle too long (MM-37)
 pub const KICK_IDLE: u8 = 0;
 /// `Kicked`'s reason: the match was cancelled before it started, not every reserved player joined (MM-18)
@@ -288,6 +295,8 @@ pub enum Control {
         seconds: u16,
         network: bool,
     },
+    /// A ping's answer (`INTENT_PING`); the session ends
+    Pong,
 }
 
 /// One player's scoreboard line
@@ -715,6 +724,7 @@ impl Control {
                 w.u16(*seconds);
                 w.u8(u8::from(*network));
             }
+            Self::Pong => w.u8(0x93),
             Self::Mute { car, on } => {
                 w.u8(0x08);
                 w.u32(*car);
@@ -927,6 +937,7 @@ impl Control {
             0x90 => Self::IdleWarning { on: r.u8()? != 0 },
             0x91 => Self::Kicked { reason: r.u8()? },
             0x92 => Self::SearchCooldown { seconds: r.u16()?, network: r.u8()? != 0 },
+            0x93 => Self::Pong,
             0x08 => Self::Mute { car: r.u32()?, on: r.u8()? != 0 },
             0x06 => Self::QuickChat { preset: r.u8()?, team: r.u8()? != 0 },
             0x07 => Self::ChatFilter { quick_chat: r.u8()?, block_non_tactical: r.u8()? != 0 },
@@ -1217,7 +1228,10 @@ mod tests {
                 quick_chat: ["everyone", "team", "friends", "off"].iter().position(|&f| f == m["quickChat"]).unwrap()
                     as u8,
                 block_non_tactical: m["blockNonTactical"].as_bool().unwrap(),
-                intent: ["join", "search", "claim", "rejoin"].iter().position(|&i| i == m["intent"]).unwrap() as u8,
+                intent: ["join", "search", "claim", "rejoin", "ping", "decline"]
+                    .iter()
+                    .position(|&i| i == m["intent"])
+                    .unwrap() as u8,
                 playlist: u(&m["playlist"]) as u8,
                 token: big(&m["token"]),
                 ticket: m["ticket"].as_str().unwrap().to_string(),
@@ -1228,6 +1242,7 @@ mod tests {
             "searchCooldown" => {
                 Control::SearchCooldown { seconds: u(&m["seconds"]) as u16, network: m["network"].as_bool().unwrap() }
             }
+            "pong" => Control::Pong,
             "mute" => Control::Mute { car: u(&m["car"]), on: m["on"].as_bool().unwrap() },
             "scoreboard" => Control::Scoreboard(
                 m["players"]

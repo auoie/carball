@@ -150,7 +150,7 @@ func DefaultLimits() Limits {
 		Signups:     Limit{5, time.Hour},
 		SignupsWide: Limit{25, time.Hour},
 		Renames:     Limit{5, 24 * time.Hour},
-		Tickets:     Limit{20, 10 * time.Minute},
+		Tickets:     Limit{60, 10 * time.Minute}, // (a search asks one per region, three at once: notes/matchmaking.md, Regions)
 		GameServer:  Limit{300, time.Minute},
 		Keys:        200_000,
 		OpenFlows:   20_000,

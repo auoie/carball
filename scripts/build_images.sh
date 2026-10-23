@@ -15,7 +15,7 @@
 #   docker tag carball-web:TAG REGISTRY/carball-web:TAG && docker push REGISTRY/carball-web:TAG    (the same for carball-game
 #                                                                                                    and carball-api)
 set -euo pipefail
-R=$(cd "$(dirname "$0")/.." && pwd)
+R=$(cd "$(dirname "$0")/.." && pwd -P)
 COMMIT=$(git -C "$R" rev-parse --short HEAD)
 WORKTREE=0
 if [ "${1:-}" = "--worktree" ]; then
@@ -69,7 +69,8 @@ build_env() {
 # cargo's config files it would read, named and in full: in the directory the build runs in and each one above it, and
 # in CARGO_HOME (a profile there changes the host's build: RV-815)
 cargo_config() {
-	local d=$PWD f
+	local d f
+	d=$(pwd -P) # (the physical directory, as cargo reads it: a symlinked one's config above isn't missed, RV-824)
 	while :; do
 		for f in "$d/.cargo/config" "$d/.cargo/config.toml"; do
 			if [ -f "$f" ]; then echo "$f"; cat "$f"; fi
