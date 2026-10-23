@@ -1,10 +1,13 @@
-// The queue's edge cases against their own queue server (e2e/servers.ts "queue-edges", ports 14441/14442; its matches on
+// The queue's edge cases against their own game server and development matchmaker (e2e/servers.ts "queue-edges", ports
+// 14441/14442, and "matchmaker-edges", 14451; its matches on
 // Night, the one map): Free Play during "Joining in" and a claim naming another map than the server's (RV-446). Nothing
 // drawn (`?render=off`).
 import type { Browser, BrowserContext, Page } from "@playwright/test";
-import { expect, hideGamepads, test } from "./fixtures";
+import { expect, hideGamepads, test, tickPlaylists } from "./fixtures";
 
 const QUEUE = "127.0.0.1:14442";
+/** The page's query: the server, its development matchmaker */
+const SEARCH = `queue=${QUEUE}&matchmaker=127.0.0.1:14451`;
 
 test.describe.configure({ mode: "serial" });
 
@@ -14,7 +17,7 @@ async function menuPage(browser: Browser, errors: string[], setup?: (page: Page)
   const page = await context.newPage();
   page.on("pageerror", (e) => errors.push(e.message));
   await setup?.(page);
-  await page.goto(`/?queue=${QUEUE}&render=off`);
+  await page.goto(`/?${SEARCH}&render=off`);
   await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
   return page;
 }
@@ -24,7 +27,7 @@ async function menuPage(browser: Browser, errors: string[], setup?: (page: Page)
 async function findMatch(page: Page): Promise<void> {
   const menu = page.locator("#main-menu");
   await menu.getByRole("button", { name: /^play$/i }).click({ timeout: 30_000 });
-  await menu.getByRole("radio", { name: "1v1" }).click();
+  await tickPlaylists(menu, ["1v1"]);
   await menu.getByRole("button", { name: /^find match$/i }).click();
   await expect(page.locator("#search-banner .search-summary")).toHaveText(/^(Searching|Joining)$/, { timeout: 30_000 });
 }
@@ -87,7 +90,7 @@ test("no rejoin offer while another tab of this browser plays that match (its lo
   // (a tab playing the match: its lock held, as the match page holds it)
   const playing = await context.newPage();
   playing.on("pageerror", (e) => errors.push(e.message));
-  await playing.goto(`/?queue=${QUEUE}&render=off`);
+  await playing.goto(`/?${SEARCH}&render=off`);
   await expect(playing.locator("#loading")).toBeHidden({ timeout: 60_000 });
   await playing.evaluate(async (name) => {
     await new Promise<void>((held) => {
@@ -100,7 +103,7 @@ test("no rejoin offer while another tab of this browser plays that match (its lo
   // (a second tab: no offer while the first plays it)
   const second = await context.newPage();
   second.on("pageerror", (e) => errors.push(e.message));
-  await second.goto(`/?queue=${QUEUE}&render=off`);
+  await second.goto(`/?${SEARCH}&render=off`);
   await expect(second.locator("#loading")).toBeHidden({ timeout: 60_000 });
   await second.waitForTimeout(1500);
   await expect(second.locator("#modal")).toBeHidden();
@@ -160,14 +163,14 @@ test("a 2v2 left by accident: a rejoin into the running match, its lock and reco
   const menu = async (context: BrowserContext): Promise<Page> => {
     const page = await context.newPage();
     page.on("pageerror", (e) => errors.push(e.message));
-    await page.goto(`/?queue=${QUEUE}&render=off`);
+    await page.goto(`/?${SEARCH}&render=off`);
     await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
     return page;
   };
   const search = async (page: Page): Promise<void> => {
     const main = page.locator("#main-menu");
     await main.getByRole("button", { name: /^play$/i }).click({ timeout: 30_000 });
-    await main.getByRole("radio", { name: "2v2", exact: true }).click();
+    await tickPlaylists(main, ["2v2"]);
     await main.getByRole("button", { name: /^find match$/i }).click();
   };
   const cars = async (page: Page, n: number): Promise<void> => {
@@ -244,7 +247,7 @@ test("a 2v2 left by accident: a rejoin into the running match, its lock and reco
   const cAgain = await menu(cContext);
   await expect(cAgain.locator("#modal .modal-title")).toHaveText("Reconnect", { timeout: 10_000 });
   await cAgain.locator("#modal").getByRole("button", { name: /^no$/i }).click();
-  // A back: the offer declined; its search refused as the reported quitter's (Refused 7)
+  // A back: the offer declined; its search refused as the reported quitter's (the matchmaker's ban)
   const aBack = await menu(aContext);
   await expect(aBack.locator("#modal .modal-title")).toHaveText("Reconnect", { timeout: 10_000 });
   await aBack.locator("#modal").getByRole("button", { name: /^no$/i }).click();
@@ -261,4 +264,36 @@ test("a 2v2 left by accident: a rejoin into the running match, its lock and reco
   await expect.poll(() => savedAt(b), { timeout: 15_000 }).toBeNull();
   expect(errors).toEqual([]);
   for (const context of contexts) await context.close();
+});
+
+test("a no-show: the player who came is told and searches again, the no-show can't search for two minutes (RV-367, MX1)", async ({ browser }) => {
+  test.setTimeout(180_000);
+  const errors: string[] = [];
+  const a = await menuPage(browser, errors);
+  const b = await menuPage(browser, errors);
+  await findMatch(a);
+  await findMatch(b);
+  // (B's page gone during "Joining in": its seat never claimed)
+  await expect(b.locator("#search-banner .search-summary")).toHaveText("Joining", { timeout: 15_000 });
+  const bContext = b.context();
+  await b.close();
+  // A claims, waits for B, is told, and is back searching (first in line: the matchmaker keeps its wait)
+  await a.waitForURL(/[?&]match(&|$)/, { timeout: 30_000 });
+  await a.waitForURL((url) => !/[?&]match(&|$)/.test(url.search), { timeout: 60_000 });
+  await expect(a.locator("#search-banner")).toContainText("Not every player joined the match. Searching again.", { timeout: 30_000 });
+  await expect(a.locator("#search-banner .search-summary")).toHaveText("Searching", { timeout: 30_000 });
+  // B's next search: refused with its cooldown's words
+  const bAgain = await bContext.newPage();
+  bAgain.on("pageerror", (e) => errors.push(e.message));
+  await bAgain.goto(`/?${SEARCH}&render=off`);
+  await expect(bAgain.locator("#loading")).toBeHidden({ timeout: 60_000 });
+  const menu = bAgain.locator("#main-menu");
+  await menu.getByRole("button", { name: /^play$/i }).click({ timeout: 30_000 });
+  await tickPlaylists(menu, ["1v1"]);
+  await menu.getByRole("button", { name: /^find match$/i }).click();
+  await expect(bAgain.locator("#search-banner")).toContainText("You can search again in", { timeout: 30_000 });
+  await a.locator("#search-banner .search-cancel").click();
+  expect(errors).toEqual([]);
+  await a.context().close();
+  await bContext.close();
 });

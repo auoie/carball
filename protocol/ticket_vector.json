@@ -1,5 +1,5 @@
 {
-  "comment": "A search's ticket and a rejoin's (version 3) made by api/internal/ticket and checked by server/src/ticket.rs: made-up values",
+  "comment": "A search's ticket and a rejoin's (version 3) and a match ticket's seat (version 4) made by api/internal/ticket and checked by server/src/ticket.rs: made-up values",
   "vectors": [
     {
       "seed": "yMfGxcTDwsHAv769vLu6ubi3trW0s7KxsK+urayrqqk=",
@@ -54,6 +54,37 @@
       "purpose": 1,
       "match": "18364758544493064720",
       "encoded": "AwZ2ZWN0b3IPDg0MCwpJCIcGBQQDAgEAAAAAAGrUU-AAAAAAatRUWJkCAwQFBgcICQoLDA0ODxAKTWFkZSBVcCDDqQXcAfQGuwBABSAAbgH-3LqYdlQyEDRtilmuZIvodVFh9bMITd49a2E2ExhjMggq5vOZIAG348mZKhgBuMDeM6vm373u01dlRWfiJB3dqkBGGanOLQ0"
+    },
+    {
+      "seed": "yMfGxcTDwsHAv769vLu6ubi3trW0s7KxsK+urayrqqk=",
+      "keyId": "vector",
+      "publicKey": "J07WsmgF0v6NBgUp7povKHY7aXbZxf0d7jj/NrO3aTk=",
+      "account": "0f0e0d0c0b0a49088706050403020100",
+      "name": "Made Up é",
+      "issued": 1792300000,
+      "expires": 1792300030,
+      "nonce": "7702030405060708090a0b0c0d0e0f10",
+      "ratings": [
+        [
+          1500,
+          500
+        ],
+        [
+          1723,
+          64
+        ],
+        [
+          1312,
+          110
+        ]
+      ],
+      "purpose": 2,
+      "match": "81985529216486895",
+      "server": "game-eu.example:4433",
+      "playlist": 2,
+      "seat": 3,
+      "roster": 4,
+      "encoded": "BAZ2ZWN0b3IPDg0MCwpJCIcGBQQDAgEAAAAAAGrUU-AAAAAAatRT_ncCAwQFBgcICQoLDA0ODxAKTWFkZSBVcCDDqQXcAfQGuwBABSAAbgIBI0VniavN7xRnYW1lLWV1LmV4YW1wbGU6NDQzMwIDBIu1ZQy-UYArnjo22jB2G5n_2oiaC1o77oo-fbMZY4PxSldZT7t4xMYFWURWCdoKW4kZbKke5spLuBs_D4SnpAs"
     }
   ]
 }

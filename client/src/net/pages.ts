@@ -1,6 +1,6 @@
 // The pages' handoffs (the queue: notes/matchmaking.md v1 checklist): the menu page searches and hands the match page its
-// claim (the slot's one-time token); the match page hands the menu page back a notice when it ends (a modal to show, a
-// search to start: Play Again, a cancelled match). Kept in sessionStorage, this tab's alone and out of the URL's history.
+// claim (the seat's match ticket, the matchmaker's); the match page hands the menu page back a notice when it ends (a
+// modal to show, a search to start: Play Again, a cancelled match). Kept in sessionStorage, this tab's alone and out of the URL's history.
 import { RefusedError, type ServerAddress, devServerAddress, serverHost } from "./connection";
 import { REFUSED_CONCLUDED, REFUSED_IN_MATCH, REFUSED_MODE, REFUSED_TICKET, REFUSED_TOKEN } from "./protocol";
 import { REQUEST_TIMEOUT_MS } from "../account/api";
@@ -19,29 +19,30 @@ function session(): SessionStore | null {
   }
 }
 
-/** A match found: the token that claims the slot, the playlist searched (Play Again searches it again), and when its
- *  search began (ms, wall clock: a cancelled match's search goes on from there, RV-367) */
+/** A match found: its id, the playlist that matched, and when its search began (ms, wall clock: a cancelled match's
+ *  search goes on from there, RV-367) */
 export interface Claim {
   readonly token: bigint;
   readonly playlist: number;
   readonly searchedAt: number;
+  /** Its seat's match ticket (the matchmaker's: notes/matchmaking.md, the central matchmaker) */
+  readonly ticket?: string;
+  /** The playlists searched (Play Again searches them again); none: `playlist` alone */
+  readonly playlists?: readonly number[];
   /** The match's map, from its MatchFound (its arena loads while the claim connects); the welcome's decides */
   readonly map?: number;
-  /** A rejoin of the ranked match left by accident (LV1): `token` its match id, `playlist` its team size */
+  /** A rejoin of the ranked match left by accident (LV1): `playlist` its team size */
   readonly rejoin?: true;
   /** The signed-in account that claims it (its saved seat its own: RX30C); none on a development page */
   readonly account?: string;
-  /** The region whose server found the match (`Region`'s id); none: the first (a claim from before the regions) */
+  /** The region whose server hosts the match (`Region`'s id); none: the first (a claim from before the regions) */
   readonly server?: string;
 }
 
-/** A search back from a match cancelled for someone else: the token claimed (the queue's front again) and when its first
- *  search began (ms, wall clock) */
+/** A search back from a match cancelled for someone else: when its first search began (ms, wall clock; the matchmaker
+ *  keeps its place itself) */
 export interface Back {
-  readonly token: bigint;
   readonly searchedAt: number;
-  /** Its region (the token is that server's alone) */
-  readonly server?: string;
 }
 
 const TOKEN = /^[1-9][0-9]{0,19}$/;
@@ -58,8 +59,8 @@ export interface MenuNotice {
   readonly modal?: "idle" | "lost" | "concluded" | "signedOut" | "elsewhere" | "banned";
   /** The ban's end ("banned": ms, wall clock) */
   readonly until?: number;
-  /** A search of this playlist to start */
-  readonly search?: number;
+  /** A search of these playlists to start */
+  readonly search?: readonly number[];
   /** A warning line to start its log with */
   readonly warning?: string;
   /** The search is back from a match cancelled for someone else (RV-367) */
@@ -74,6 +75,8 @@ export function storeClaim(claim: Claim, storage = session()): void {
         token: claim.token.toString(),
         playlist: claim.playlist,
         searchedAt: claim.searchedAt,
+        ticket: claim.ticket,
+        playlists: claim.playlists,
         map: claim.map,
         rejoin: claim.rejoin,
         account: claim.account,
@@ -95,6 +98,8 @@ export function takeClaim(storage = session()): Claim | null {
       token?: unknown;
       playlist?: unknown;
       searchedAt?: unknown;
+      ticket?: unknown;
+      playlists?: unknown;
       map?: unknown;
       rejoin?: unknown;
       account?: unknown;
@@ -103,10 +108,14 @@ export function takeClaim(storage = session()): Claim | null {
     if (typeof value.token !== "string" || !TOKEN.test(value.token) || typeof value.playlist !== "number") return null;
     const searchedAt = typeof value.searchedAt === "number" && Number.isFinite(value.searchedAt) ? value.searchedAt : Date.now();
     const map = typeof value.map === "number" && Number.isInteger(value.map) && value.map >= 0 && value.map < 256 ? { map: value.map } : {};
+    const ticket = typeof value.ticket === "string" && /^[A-Za-z0-9_-]{1,512}$/.test(value.ticket) ? { ticket: value.ticket } : {};
+    const playlists = playlistsOf(value.playlists);
     return {
       token: BigInt(value.token),
       playlist: value.playlist,
       searchedAt,
+      ...ticket,
+      ...(playlists ? { playlists } : {}),
       ...map,
       ...(value.rejoin === true ? { rejoin: true as const } : {}),
       ...(typeof value.account === "string" ? { account: value.account } : {}),
@@ -117,13 +126,16 @@ export function takeClaim(storage = session()): Claim | null {
   }
 }
 
+/** Playlists as kept: one to three team sizes, each once; else none */
+export function playlistsOf(value: unknown): number[] | null {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 3) return null;
+  const sizes = value.filter((v): v is number => v === 1 || v === 2 || v === 3);
+  return sizes.length === value.length && new Set(sizes).size === sizes.length ? sizes : null;
+}
+
 export function storeNotice(notice: MenuNotice, storage = session()): void {
   try {
-    const { back, ...rest } = notice;
-    storage?.setItem(
-      NOTICE_KEY,
-      JSON.stringify(back ? { ...rest, back: { token: back.token.toString(), searchedAt: back.searchedAt, server: back.server } } : rest),
-    );
+    storage?.setItem(NOTICE_KEY, JSON.stringify(notice));
   } catch {
     // (not kept)
   }
@@ -140,19 +152,18 @@ export function takeNotice(storage = session()): MenuNotice | null {
       until?: unknown;
       search?: unknown;
       warning?: unknown;
-      back?: { token?: unknown; searchedAt?: unknown; server?: unknown };
+      back?: { searchedAt?: unknown };
     };
     const back = value.back;
+    const search = playlistsOf(value.search);
     return {
       ...(value.modal === "idle" || value.modal === "lost" || value.modal === "concluded" || value.modal === "signedOut" || value.modal === "elsewhere"
         ? { modal: value.modal }
         : {}),
       ...(value.modal === "banned" && typeof value.until === "number" && Number.isFinite(value.until) ? { modal: "banned" as const, until: value.until } : {}),
-      ...(typeof value.search === "number" ? { search: value.search } : {}),
+      ...(search ? { search } : {}),
       ...(typeof value.warning === "string" ? { warning: value.warning } : {}),
-      ...(typeof back?.token === "string" && TOKEN.test(back.token) && typeof back.searchedAt === "number" && Number.isFinite(back.searchedAt)
-        ? { back: { token: BigInt(back.token), searchedAt: back.searchedAt, ...keptServer(back.server) } }
-        : {}),
+      ...(typeof back?.searchedAt === "number" && Number.isFinite(back.searchedAt) ? { back: { searchedAt: back.searchedAt } } : {}),
     };
   } catch {
     return null;
@@ -246,16 +257,24 @@ export async function deployedGameServer(
   return unreachable;
 }
 
-/** A region the queue's searches go to (notes/matchmaking.md, Regions): its id (kept with a claim, a saved seat and a
- *  returning token: the server's alone), its name as the region picker shows it (empty: a lone server, no picker), its
- *  address */
+/** A region (notes/matchmaking.md, Regions): its id (kept with a claim and a saved seat), its name as the region picker
+ *  shows it (empty: a lone server, no picker), its address, and its server's name as the matchmaker knows it (its
+ *  address's host:port: the pings and a found match name it) */
 export interface Region {
   readonly id: string;
   readonly name: string;
   readonly address: ServerAddress;
-  /** Where its tickets come from (regions of one source share a search's ticket: net/regions.ts shareSearchTickets):
-   *  "account", the accounts service's; a development server's own, "dev:host:port" */
-  readonly ticketSource: string;
+  readonly server: string;
+}
+
+/** A WebTransport URL's server as the matchmaker names it: host:port (443 when the URL names none) */
+export function serverOfUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.hostname}:${u.port === "" ? "443" : u.port}`;
+  } catch {
+    return "";
+  }
 }
 
 /** The regions: `?queue=host:infoPort[,host:infoPort…]` (development servers, each its /info giving its port and
@@ -272,7 +291,7 @@ export async function queueRegions(params: URLSearchParams, host: string, deploy
         id: s.id,
         name: s.name,
         address: { url: s.url, certHash: null, ticket: (rejoin) => accountTicket(fetch, rejoin) },
-        ticketSource: "account",
+        server: serverOfUrl(s.url),
       }));
     }
     if (config.kind === "unreachable") throw new Error(SERVERS_UNREACHABLE);
@@ -283,7 +302,7 @@ export async function queueRegions(params: URLSearchParams, host: string, deploy
     (entries.length === 0 ? [""] : entries).map(async (entry) => {
       const [name = host, port = "4434"] = entry === "" ? [] : entry.split(":");
       const address = { ...(await devServerAddress(name, Number(port))), ticket: devTicket(serverHost(name), Number(port)) };
-      return { id: entry === "" ? "default" : entry, name: named ? entry : "", address, ticketSource: `dev:${entry}` };
+      return { id: entry === "" ? "default" : entry, name: named ? entry : "", address, server: serverOfUrl(address.url) };
     }),
   );
 }
@@ -302,14 +321,16 @@ export async function queueAddress(params: URLSearchParams, host: string, deploy
 export const CLAIM_TRIES = 3;
 export const CLAIM_RETRY_MS = 1000;
 
-/** A claim's address: `queueAddress`, its config.json and its ticket each tried up to `CLAIM_TRIES` times; the sign-in
- *  gone and a ban are answers, not tried again */
+/** A claim's address: `queueAddress`, its config.json tried up to `CLAIM_TRIES` times; its ticket the claim's match
+ *  ticket (`matchTicket`), else (a rejoin) the ticket fetched, tried as often; the sign-in gone and a ban are answers,
+ *  not tried again */
 export async function claimAddress(
   params: URLSearchParams,
   host: string,
   deployed = deployedGameServer,
   pause: (ms: number) => Promise<void> = async (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   server?: string,
+  matchTicket?: string,
 ): Promise<ServerAddress> {
   const tried = async <T>(attempt: () => Promise<T>, again: (e: unknown) => boolean): Promise<T> => {
     for (let i = 1; ; i++) {
@@ -325,6 +346,7 @@ export async function claimAddress(
     async () => queueAddress(params, host, deployed, server),
     () => true,
   );
+  if (matchTicket !== undefined) return { ...address, ticket: async () => Promise.resolve(matchTicket) };
   const ticket = address.ticket;
   if (!ticket) return address;
   const answer = (e: unknown): boolean => e instanceof SignedOutError || e instanceof QueueBannedError;
@@ -358,11 +380,7 @@ export async function openClaim<T>(open: () => Promise<T>): Promise<T> {
 export function claimNotice(e: unknown, claim: Claim, matchGone: string): MenuNotice {
   const refused = e instanceof RefusedError ? e.reason : null;
   if (refused === REFUSED_TOKEN && !claim.rejoin) {
-    return {
-      search: claim.playlist,
-      warning: matchGone,
-      back: { token: claim.token, searchedAt: claim.searchedAt, ...(claim.server ? { server: claim.server } : {}) },
-    };
+    return { search: claim.playlists ?? [claim.playlist], warning: matchGone, back: { searchedAt: claim.searchedAt } };
   }
   if (refused === REFUSED_IN_MATCH && claim.rejoin) return { modal: "elsewhere" };
   if (refused === REFUSED_CONCLUDED) return { modal: "concluded" };

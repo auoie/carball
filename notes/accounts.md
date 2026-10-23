@@ -128,6 +128,13 @@ With our Steam Web API key, `ISteamUser/GetPlayerSummaries` gives the persona na
   rename, delete, ticket) also requires `Origin` to equal `PUBLIC_ORIGIN`, the custom header, and JSON when there's a
   body (16 KiB at most, one value and nothing after it).
 
+**The central matchmaker (2026-10-23, notes/matchmaking.md, MX1) supersedes the search tickets below.** The page
+searches with the API itself (its session cookie), and a found match gives each player a match ticket (format 4: one
+seat of one match at one game server, 30 s, used once there: RV-850), which the game server checks offline as below. The
+API holds one search and one match per account across the servers (AC-27 done). The rejoin ticket stays, given only for
+the account's latest match until a later search is accepted. "A ticket isn't bound to a server" and the shared search
+ticket (RX43) are gone; search tickets stay one release, for pages from before the switch.
+
 **Tickets: how the game server knows a player (AC-6).** Before a search, a signed-in page asks for a ticket.
 
 A ticket is Ed25519-signed and holds:

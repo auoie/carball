@@ -1,11 +1,14 @@
-// The queue against a local queue server (e2e/servers.ts, ports 14439/14440): two players find a 1v1 from the main menu,
+// The queue against a local game server and its development matchmaker (e2e/servers.ts, ports 14439/14440 and 14450):
+// two players find a 1v1 from the main menu,
 // count "Joining in 3, 2, 1" under the banner, land in the match on its page and see each other; a search under the banner
 // alone (no panel: MS1, the user's decision) into free play and cancelled; the pad's Y cancelling it from the menus
 // (notes/matchmaking.md v1 queue checklist, MM-5, MM-10). Nothing drawn (`?render=off`).
 import type { Browser, Page } from "@playwright/test";
-import { expect, fakeGamepad, hideGamepads, test } from "./fixtures";
+import { expect, fakeGamepad, hideGamepads, test, tickPlaylists } from "./fixtures";
 
 const QUEUE = "127.0.0.1:14440";
+/** The page's query: the server, its development matchmaker */
+const SEARCH = `queue=${QUEUE}&matchmaker=127.0.0.1:14450`;
 
 async function menuPage(browser: Browser, errors: string[]): Promise<Page> {
   const context = await browser.newContext({ viewport: { width: 640, height: 360 } });
@@ -15,7 +18,7 @@ async function menuPage(browser: Browser, errors: string[]): Promise<Page> {
   page.on("console", (m) => {
     if (m.type() === "error") errors.push(m.text());
   });
-  await page.goto(`/?queue=${QUEUE}&render=off`);
+  await page.goto(`/?${SEARCH}&render=off`);
   await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
   return page;
 }
@@ -24,8 +27,7 @@ async function menuPage(browser: Browser, errors: string[]): Promise<Page> {
 async function findMatch(page: Page, playlist: string): Promise<void> {
   const menu = page.locator("#main-menu");
   await menu.getByRole("button", { name: /^play$/i }).click({ timeout: 30_000 });
-  await menu.getByRole("radio", { name: playlist }).click();
-  await expect(menu.getByRole("radio", { name: playlist })).toHaveAttribute("aria-checked", "true");
+  await tickPlaylists(menu, [playlist]);
   await menu.getByRole("button", { name: /^find match$/i }).click();
 }
 
@@ -106,7 +108,7 @@ test("the pad's Y cancels the search from the menus, its hint on the banner; in 
   await fakeGamepad(context);
   const page = await context.newPage();
   page.on("pageerror", (e) => errors.push(e.message));
-  await page.goto(`/?queue=${QUEUE}&render=off`);
+  await page.goto(`/?${SEARCH}&render=off`);
   await expect(page.locator("#loading")).toBeHidden({ timeout: 60_000 });
   const tap = async (button: number): Promise<void> => {
     await page.evaluate(async (b) => {

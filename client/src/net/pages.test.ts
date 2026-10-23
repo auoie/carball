@@ -90,18 +90,23 @@ describe("the pages' handoffs", () => {
 
   it("hands the menu page its notice once, unknown fields dropped", () => {
     const storage = memory();
-    storeNotice({ search: 3, warning: "again" }, storage);
-    expect(takeNotice(storage)).toEqual({ search: 3, warning: "again" });
+    storeNotice({ search: [1, 3], warning: "again" }, storage);
+    expect(takeNotice(storage)).toEqual({ search: [1, 3], warning: "again" });
     expect(takeNotice(storage)).toBeNull();
     storage.setItem("carball.menuNotice", '{"modal":"idle","search":"2","other":1}');
     expect(takeNotice(storage)).toEqual({ modal: "idle" });
     storage.setItem("carball.menuNotice", '{"modal":"boom"}');
     expect(takeNotice(storage)).toEqual({});
-    // A search back from a cancelled match: its token and its first search's time (RV-367), a bad one dropped
-    storeNotice({ search: 1, warning: "w", back: { token: 0xffffffffffffffffn, searchedAt: 42 } }, storage);
-    expect(takeNotice(storage)).toEqual({ search: 1, warning: "w", back: { token: 0xffffffffffffffffn, searchedAt: 42 } });
-    storage.setItem("carball.menuNotice", '{"search":1,"back":{"token":"0","searchedAt":1}}');
-    expect(takeNotice(storage)).toEqual({ search: 1 });
+    // A search back from a cancelled match: its first search's time (RV-367), a bad one dropped; playlists from before
+    // (one number) or not team sizes, none
+    storeNotice({ search: [2], warning: "w", back: { searchedAt: 42 } }, storage);
+    expect(takeNotice(storage)).toEqual({ search: [2], warning: "w", back: { searchedAt: 42 } });
+    storage.setItem("carball.menuNotice", '{"search":[1],"back":{"searchedAt":"1"}}');
+    expect(takeNotice(storage)).toEqual({ search: [1] });
+    storage.setItem("carball.menuNotice", '{"search":1}');
+    expect(takeNotice(storage)).toEqual({});
+    storage.setItem("carball.menuNotice", '{"search":[1,1,4]}');
+    expect(takeNotice(storage)).toEqual({});
     // (a rejoin refused for a ban from another match: the ban's end with it, none without, RX31)
     storeNotice({ modal: "banned", until: 1234 }, storage);
     expect(takeNotice(storage)).toEqual({ modal: "banned", until: 1234 });
@@ -118,8 +123,9 @@ describe("the pages' handoffs", () => {
     const claim = { token: 7n, playlist: 2, searchedAt: 40 };
     const rejoin = { ...claim, rejoin: true as const };
     const refused = (reason: number): RefusedError => new RefusedError(reason);
-    // (a claim's token refused: a match cancelled for someone else, its search again at the queue's front; a rejoin's: lost)
-    expect(claimNotice(refused(REFUSED_TOKEN), claim, "gone")).toEqual({ search: 2, warning: "gone", back: { token: 7n, searchedAt: 40 } });
+    // (a claim refused as gone: a match cancelled for someone else, its search again (its place the matchmaker's); a
+    // rejoin's: lost)
+    expect(claimNotice(refused(REFUSED_TOKEN), claim, "gone")).toEqual({ search: [2], warning: "gone", back: { searchedAt: 40 } });
     expect(claimNotice(refused(REFUSED_TOKEN), rejoin, "gone")).toEqual({ modal: "lost" });
     // (a rejoin's seat live in another tab: said so; a claim's Refused 5 is no such thing)
     expect(claimNotice(refused(REFUSED_IN_MATCH), rejoin, "gone")).toEqual({ modal: "elsewhere" });
@@ -313,7 +319,7 @@ describe("the pages' handoffs", () => {
     expect(lone.map((r) => [r.id, r.name])).toEqual([["127.0.0.1:14446", ""]]);
   });
 
-  it("keeps the match's region with a claim, a returning token and a saved seat; a bad one dropped", () => {
+  it("keeps the match's region and match ticket with a claim, and the region with a saved seat; a bad one dropped", () => {
     const storage = memory();
     storeClaim({ token: 5n, playlist: 2, searchedAt: 1, server: "eu" }, storage);
     expect(takeClaim(storage)?.server).toBe("eu");
@@ -321,11 +327,13 @@ describe("the pages' handoffs", () => {
     expect(takeClaim(storage)?.server).toBeUndefined();
     storage.setItem("carball.claim", JSON.stringify({ token: "5", playlist: 2, searchedAt: 1, server: "eu <script>" }));
     expect(takeClaim(storage)?.server).toBeUndefined();
-    // (a claim refused for its token: searched again, the token back at that region's front)
-    const notice = claimNotice(new RefusedError(REFUSED_TOKEN), { token: 9n, playlist: 1, searchedAt: 3, server: "asia" }, "gone");
-    expect(notice.back).toEqual({ token: 9n, searchedAt: 3, server: "asia" });
-    storeNotice(notice, storage);
-    expect(takeNotice(storage)?.back?.server).toBe("asia");
+    storeClaim({ token: 5n, playlist: 2, searchedAt: 1, ticket: "dGlj-_0", playlists: [2, 3] }, storage);
+    expect(takeClaim(storage)).toMatchObject({ ticket: "dGlj-_0", playlists: [2, 3] });
+    storage.setItem("carball.claim", JSON.stringify({ token: "5", playlist: 2, searchedAt: 1, ticket: "not a ticket!", playlists: [9] }));
+    expect(takeClaim(storage)).toEqual({ token: 5n, playlist: 2, searchedAt: 1 });
+    // (a claim refused as gone: its playlists searched again, its clock kept; the matchmaker keeps its place)
+    const notice = claimNotice(new RefusedError(REFUSED_TOKEN), { token: 9n, playlist: 1, searchedAt: 3, server: "asia", playlists: [1, 2] }, "gone");
+    expect(notice).toEqual({ search: [1, 2], warning: "gone", back: { searchedAt: 3 } });
     storeRankedSeat({ matchId: 7n, teamSize: 2, joinedAt: Date.now(), account: null, server: "eu" }, storage);
     expect(rankedSeat(Date.now(), storage)?.server).toBe("eu");
   });

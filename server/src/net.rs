@@ -23,38 +23,26 @@ use crate::protocol::{self, Control, Datagram, InputFrame};
 pub enum Intent {
     /// Join the server's open match (development servers)
     Join,
-    /// Search the queue of the playlist with this team size; `token`: the slot it claimed in a match cancelled for someone
-    /// else (back to the front of the queue, RV-367), else 0
-    Search { team_size: u8, token: u64 },
-    /// Claim a reserved slot (the token a search's `MatchFound` gave)
-    Claim { token: u64 },
+    /// Claim a seat with its match ticket (the matchmaker's, for this server: notes/matchmaking.md, the central
+    /// matchmaker)
+    Claim { seat: crate::match_host::SeatClaim },
     /// Rejoin the ranked match left by accident (its id: Welcome's `match_id`; LV1)
     Rejoin { match_id: u64 },
-    /// Give up the unclaimed slot the token names: a match found in another region at the same moment (notes/
-    /// matchmaking.md, Regions)
-    Decline { token: u64 },
 }
 
 /// Messages from the network tasks to the game loop
 #[derive(Debug)]
 pub enum ToGame {
-    /// `address`: the session's (`address_key`: the queue's no-show cooldown counts it too, RV-367)
     Join {
         id: PlayerId,
         intent: Intent,
         request: JoinRequest,
-        address: IpAddr,
         out: Sender<Outgoing>,
     },
     /// The session ended; `lost`: its connection timed out
     Leave {
         id: PlayerId,
         lost: bool,
-    },
-    /// A search's page closed its control stream (Cancel Search, another map): the search out of the queue now, so its
-    /// session can write out what the game sent before (a match found) and end
-    CancelSearch {
-        id: PlayerId,
     },
     Inputs {
         id: PlayerId,
@@ -175,10 +163,12 @@ pub struct NetLimits {
     pub handshake: Duration,
     /// Its QUIC part, through the session's request (a browser sends it at once), this soon (RV-366)
     pub quic_handshake: Duration,
-    /// The search tickets checked (notes/accounts.md §3): a queue server's always (`main` requires its keys, or --dev's
-    /// own); None, a search's and a claim's key and name taken as their hello sends them (a direct development server,
-    /// the tests')
+    /// The match and rejoin tickets checked (notes/accounts.md §3): a queue server's always (`main` requires its keys, or
+    /// --dev's); None, no claim or rejoin taken (a direct development server, the tests')
     pub tickets: Option<Arc<crate::ticket::Tickets>>,
+    /// This server's name as a match ticket names it (its address, host:port: `PUBLIC_HOST` and its port); None, any (the
+    /// tests')
+    pub server_name: Option<String>,
 }
 
 impl Default for NetLimits {
@@ -191,9 +181,13 @@ impl Default for NetLimits {
             handshake: Duration::from_secs(10),
             quic_handshake: Duration::from_secs(4),
             tickets: None,
+            server_name: None,
         }
     }
 }
+/// How long a ping's session waits for its Pong to go out before it closes (RV-856: its slot free at once)
+const PING_FLUSH: Duration = Duration::from_millis(100);
+
 /// Each session's rates (SEC-3), a second and a burst: input datagrams (a client sends one a frame; more are dropped, as
 /// lost packets) and control messages (more are dropped)
 const INPUT_RATE: (f64, f64) = (240.0, 120.0);
@@ -335,7 +329,7 @@ pub async fn accept_loop(server: Arc<ServerEndpoint>, to_game: Sender<ToGame>, l
         let limits = limits.clone();
         tokio::spawn(async move {
             let _permit = permit;
-            let lost = match session(incoming, id, address, &to_game, &limits).await {
+            let lost = match session(incoming, id, &to_game, &limits).await {
                 Ok(lost) => lost,
                 Err(e) => {
                     eprintln!("player {id}: {e:#}");
@@ -404,7 +398,6 @@ async fn handshake(
 async fn session(
     incoming: IncomingSession,
     id: PlayerId,
-    address: IpAddr,
     to_game: &Sender<ToGame>,
     limits: &NetLimits,
 ) -> anyhow::Result<bool> {
@@ -424,34 +417,54 @@ async fn session(
             bail!("protocol version {version}, server speaks {}", protocol::VERSION);
         }
     };
-    // (a region's ping: answered at once, no ticket, nothing for the game thread; the page times the round trip)
+    // (a region's ping: answered at once, no ticket, nothing for the game thread; the page times the round trip; its
+    // session closed after a moment's flush, its slot free at once, not after the page's close: RV-856)
     if matches!(&hello, Control::Hello { intent, .. } if *intent == protocol::INTENT_PING) {
         let _ = send.write_all(&Control::Pong.encode()).await;
         let _ = send.finish().await;
-        let _ = tokio::time::timeout(Duration::from_secs(2), connection.closed()).await;
+        let _ = tokio::time::timeout(PING_FLUSH, connection.closed()).await;
         return Ok(false);
     }
     let ticket = if let Control::Hello { ticket, .. } = &hello { ticket.clone() } else { String::new() };
-    let Some((mut request, intent, playlist, token)) = JoinRequest::from_hello(hello) else {
+    let Some((mut request, intent, _playlist, token)) = JoinRequest::from_hello(hello) else {
         bail!("expected hello");
     };
-    // (a search and a claim are an account's: its ticket checked here alone, never in the match code the browser's local
+    // (no search or decline here: the accounts service's matchmaker has the one queue; a claim or a rejoin needs its
+    // ticket, so a server without tickets takes neither)
+    let ticketed = matches!(intent, protocol::INTENT_CLAIM | protocol::INTENT_REJOIN);
+    if matches!(intent, protocol::INTENT_SEARCH | protocol::INTENT_DECLINE) || (ticketed && limits.tickets.is_none()) {
+        let _ = send.write_all(&Control::Refused { reason: protocol::REFUSED_MODE }.encode()).await;
+        let _ = send.finish().await;
+        let _ = tokio::time::timeout(Duration::from_secs(2), connection.closed()).await;
+        bail!("intent {intent} not served here");
+    }
+    // (a claim and a rejoin are an account's: its ticket checked here alone, never in the match code the browser's local
     // host shares; the account's key and name in place of the hello's)
+    let mut seat = None;
     if let Some(tickets) = &limits.tickets
-        && matches!(
-            intent,
-            protocol::INTENT_SEARCH | protocol::INTENT_CLAIM | protocol::INTENT_REJOIN | protocol::INTENT_DECLINE
-        )
+        && ticketed
     {
-        // (each ticket for its own: a search's for a search and its claim, a rejoin's for that match's rejoin alone, AP3)
-        let purpose_fits = |purpose: crate::ticket::Purpose| match purpose {
-            crate::ticket::Purpose::Search => intent != protocol::INTENT_REJOIN,
-            crate::ticket::Purpose::Rejoin(m) => intent == protocol::INTENT_REJOIN && m == token,
+        // (each ticket for its own: a match ticket for a claim of its seat at this server, a rejoin's for that match's
+        // rejoin alone, AP3, RV-850)
+        let purpose_fits = |purpose: &crate::ticket::Purpose| match purpose {
+            crate::ticket::Purpose::Seat(s) => {
+                intent == protocol::INTENT_CLAIM && limits.server_name.as_ref().is_none_or(|own| *own == s.server)
+            }
+            crate::ticket::Purpose::Rejoin(m) => intent == protocol::INTENT_REJOIN && *m == token,
+            crate::ticket::Purpose::Search => false,
         };
         match tickets.check(&ticket, crate::ticket::unix_now()).and_then(|checked| {
-            if purpose_fits(checked.purpose) { Ok(checked) } else { Err(crate::ticket::Refusal::NotForThis) }
+            if purpose_fits(&checked.purpose) { Ok(checked) } else { Err(crate::ticket::Refusal::NotForThis) }
         }) {
             Ok(checked) => {
+                if let crate::ticket::Purpose::Seat(s) = &checked.purpose {
+                    seat = Some(crate::match_host::SeatClaim {
+                        match_id: s.match_id,
+                        playlist: s.playlist,
+                        seat: s.seat,
+                        roster: s.roster,
+                    });
+                }
                 request.key = crate::ticket::account_key(&checked.account);
                 request.name = checked.name;
                 request.verified = true;
@@ -469,17 +482,14 @@ async fn session(
             }
         }
     }
-    let searching = intent == protocol::INTENT_SEARCH;
-    let intent = match intent {
-        protocol::INTENT_SEARCH => Intent::Search { team_size: playlist, token },
-        protocol::INTENT_CLAIM => Intent::Claim { token },
-        protocol::INTENT_REJOIN => Intent::Rejoin { match_id: token },
-        protocol::INTENT_DECLINE => Intent::Decline { token },
+    let intent = match (intent, seat) {
+        (protocol::INTENT_CLAIM, Some(seat)) => Intent::Claim { seat },
+        (protocol::INTENT_REJOIN, _) => Intent::Rejoin { match_id: token },
         _ => Intent::Join,
     };
 
     let (out_tx, mut out_rx) = channel(OUT_QUEUE);
-    to_game.send(ToGame::Join { id, intent, request, address, out: out_tx }).await?;
+    to_game.send(ToGame::Join { id, intent, request, out: out_tx }).await?;
 
     // Game -> client
     let writer_connection = connection.clone();
@@ -580,15 +590,7 @@ async fn session(
                 }
                 Err(e) => break Err(e.into()),
             },
-            // (a search's page closed it: the search out of the queue first, then what the game sent before that (a match
-            // found) written out before the session ends: a match formed as the page went isn't lost, a no-show, RV-443)
-            _ = &mut control_reader => {
-                if searching {
-                    let _ = to_game.send(ToGame::CancelSearch { id }).await;
-                    let _ = tokio::time::timeout(Duration::from_secs(2), &mut writer).await;
-                }
-                break Ok(());
-            }
+            _ = &mut control_reader => break Ok(()),
             // (the game let go of this player: give the client a moment to read why and close)
             _ = &mut writer => {
                 let _ = tokio::time::timeout(Duration::from_secs(2), &mut control_reader).await;

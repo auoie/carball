@@ -69,8 +69,8 @@ export const TRAINING_MENU_TEXT = {
 export interface MainMenuActions {
   /** Free Play (on Night, the one map) */
   readonly freePlay: () => void;
-  /** Find Match: search the playlist with this team size */
-  readonly findMatch: (playlist: number) => void;
+  /** Find Match: search the ticked playlists (their team sizes) */
+  readonly findMatch: (playlists: readonly number[]) => void;
   readonly settings: () => void;
   /** The garage's choice changed (it's kept already): its car and team colour */
   readonly garage?: (choice: { readonly car: number; readonly team: Team }) => void;
@@ -106,7 +106,7 @@ export class MainMenu {
   #garageOn = false;
   #car = storedCar();
   #team: Team = storedTeam();
-  readonly #playlists: HTMLButtonElement[] = [];
+  readonly #playlistBoxes: HTMLButtonElement[] = [];
   /** Play vs Bots: its button on Play's page, its own page, the page's body and Start (none in a build without bots:
    *  RV-541) */
   readonly #botsView: {
@@ -123,7 +123,7 @@ export class MainMenu {
   readonly #editAction: ((pack: PackListing | null) => void) | undefined;
   /** The bots' page body (ui/botsPage.ts, a chunk of its own): none until the packages are listed */
   #botsPage: BotsPage | null = null;
-  #playlist = storedPlaylist();
+  #ticked = storedPlaylists();
   /** The account's entry on the top page (hidden without accounts: a development page) and its page's column */
   readonly #accountEntry: HTMLButtonElement;
   readonly #account: HTMLDivElement;
@@ -191,30 +191,30 @@ export class MainMenu {
       this.#show("training");
     });
     this.#playTraining.hidden = true;
-    // (the playlists: one selected at a time; Find Match searches it)
+    // (the playlists: a box each, several ticked at once as the game's Multiple Selection (MM-1), one at least; Find
+    // Match searches them all: notes/matchmaking.md, the central matchmaker)
     const playlists = document.createElement("div");
     playlists.className = "main-menu-playlists";
-    playlists.setAttribute("role", "radiogroup");
+    playlists.setAttribute("role", "group");
     playlists.setAttribute("aria-label", CHOICE_NAMES.playlist);
-    playlists.dataset["padChoose"] = ""; // (a pad's left and right choose as they move: src/ui/padNav.ts)
     for (const p of PLAYLISTS) {
       const b = button(playlists, p.name, () => {
-        this.#select(p.teamSize);
+        this.#toggle(p.teamSize);
       });
       const tag = document.createElement("span");
       tag.className = "main-menu-rating";
       b.append(tag);
       this.#ratingTags.set(p.teamSize, tag);
       b.classList.add("main-menu-playlist");
-      b.setAttribute("role", "radio");
+      b.setAttribute("role", "checkbox");
       // (its name the playlist's alone, its rating read as its description: not "1v11523", RV-709)
       b.setAttribute("aria-label", p.name);
       tag.setAttribute("aria-hidden", "true");
       b.dataset["playlist"] = String(p.teamSize);
-      this.#playlists.push(b);
+      this.#playlistBoxes.push(b);
     }
     this.#play.append(playlists);
-    this.#select(this.#playlist);
+    this.#tick(this.#ticked);
     // (the regions searched: a box each, its ping beside it; hidden until two or more are set: setRegions)
     this.#regions = document.createElement("div");
     this.#regions.className = "main-menu-regions";
@@ -229,7 +229,7 @@ export class MainMenu {
     this.#regionAction = actions.region;
     this.#playShown = actions.playShown;
     button(this.#play, SEARCH_TEXT.findMatch, () => {
-      actions.findMatch(this.#playlist);
+      actions.findMatch(this.#ticked);
     }).classList.add("main-menu-find");
     this.#banLine = document.createElement("div");
     this.#banLine.className = "main-menu-ban";
@@ -536,10 +536,16 @@ export class MainMenu {
     for (const b of this.#teamButtons) b.setAttribute("aria-checked", String(b.dataset["team"] === String(team)));
   }
 
-  #select(playlist: number): void {
-    this.#playlist = playlist;
-    storePlaylist(playlist);
-    for (const b of this.#playlists) b.setAttribute("aria-checked", String(b.dataset["playlist"] === String(playlist)));
+  /** A playlist's box pressed: toggled, the last one never unticked */
+  #toggle(playlist: number): void {
+    const next = this.#ticked.includes(playlist) ? this.#ticked.filter((p) => p !== playlist) : [...this.#ticked, playlist];
+    if (next.length > 0) this.#tick(next);
+  }
+
+  #tick(playlists: readonly number[]): void {
+    this.#ticked = PLAYLISTS.map((p) => p.teamSize).filter((p) => playlists.includes(p));
+    storePlaylists(this.#ticked);
+    for (const b of this.#playlistBoxes) b.setAttribute("aria-checked", String(this.#ticked.includes(Number(b.dataset["playlist"]))));
   }
 
   #show(view: MenuView): void {
@@ -564,19 +570,29 @@ export class MainMenu {
   }
 }
 
-function storedPlaylist(): number {
+/** The ticked playlists as kept ("1,3"; one from before the boxes, "3", that one); none kept or none good, 1v1 */
+export function storedPlaylists(storage: Pick<Storage, "getItem"> | null = localStore()): number[] {
   try {
-    const stored = Number(localStorage.getItem(PLAYLIST_KEY));
-    return PLAYLISTS.some((p) => p.teamSize === stored) ? stored : 1;
+    const kept = (storage?.getItem(PLAYLIST_KEY) ?? "").split(",").map(Number);
+    const good = PLAYLISTS.map((p) => p.teamSize as number).filter((p) => kept.includes(p));
+    return good.length > 0 ? good : [1];
   } catch {
-    return 1;
+    return [1];
   }
 }
 
-function storePlaylist(playlist: number): void {
+function storePlaylists(playlists: readonly number[]): void {
   try {
-    localStorage.setItem(PLAYLIST_KEY, String(playlist));
+    localStore()?.setItem(PLAYLIST_KEY, playlists.join(","));
   } catch {
     // (not kept)
+  }
+}
+
+function localStore(): Pick<Storage, "getItem" | "setItem"> | null {
+  try {
+    return typeof localStorage === "undefined" ? null : localStorage;
+  } catch {
+    return null;
   }
 }

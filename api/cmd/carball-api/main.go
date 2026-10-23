@@ -4,6 +4,7 @@
 //	carball-api help (or -h, --help)            these commands; carball-api COMMAND -h: a command's flags
 //	carball-api [serve] [--dev]                 the HTTP server (and its health check's, on HEALTH_ADDR)
 //	carball-api migrate [--dev]                 the migrations, a one-shot run as the schema's owner (MIGRATE_DATABASE_URL)
+//	carball-api matchmaker --dev [--listen A]   development: the matchmaker alone, no database (the browser tests')
 //	carball-api accounts NAME | --recent [N]    the accounts whose name contains NAME, or the N newest, with their
 //	                                            identities and when last seen (their latest session: to a day)
 //	carball-api ban (--account ID | --identity PROVIDER:SUBJECT) --reason TEXT --by NAME [--for DURATION | --until DATE]
@@ -24,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/netip"
 	"os"
@@ -65,6 +67,9 @@ func commands() []command {
 	return []command{
 		{"serve", "[--dev]", "the HTTP server (and its health check's, on HEALTH_ADDR); the default", serve},
 		{"migrate", "[--dev]", "the migrations, a one-shot run as the schema's owner (MIGRATE_DATABASE_URL)", migrate},
+		{"matchmaker", "--dev [--listen 127.0.0.1:8090]", "development: the matchmaker alone, no database or sign-in, on " +
+			"loopback, its match tickets signed with the development key (only a --dev game server takes them; the browser " +
+			"tests' and a development page's)", matchmakerDev},
 		{"accounts", "NAME | --recent [N]", "the accounts whose name contains NAME, or the N newest (20 by default), newest " +
 			"first, with their identities and when last seen: the latest session's sign-in or daily renewal (so to within " +
 			"a day; none once its sessions have ended, after 90 days)", accounts},
@@ -345,6 +350,7 @@ func serve(args []string, out io.Writer) error {
 	} else {
 		log.Warn("development: sign-ups without Turnstile")
 	}
+	go s.NewMatchmaker().Run(ctx)
 	httpServer := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           s.Handler(),
@@ -370,6 +376,41 @@ func serve(args []string, out io.Writer) error {
 	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = healthServer.Shutdown(shutdown)
+	return httpServer.Shutdown(shutdown)
+}
+
+// matchmakerDev: the development matchmaker (notes/matchmaking.md, the central matchmaker), on a loopback address alone
+func matchmakerDev(args []string, out io.Writer) error {
+	fs := flagsFor("matchmaker")
+	dev := fs.Bool("dev", false, "development (required: the only way it runs)")
+	listen := fs.String("listen", "127.0.0.1:8090", "the loopback address it listens on")
+	if _, err := parseArgs(fs, args, out, 0, 0); err != nil {
+		return err
+	}
+	if !*dev {
+		return errors.New("the matchmaker alone is development only: carball-api matchmaker --dev")
+	}
+	host, _, err := net.SplitHostPort(*listen)
+	if ip, perr := netip.ParseAddr(host); err != nil || perr != nil || !ip.IsLoopback() {
+		return fmt.Errorf("--listen %q: a loopback address and port (127.0.0.1:PORT)", *listen)
+	}
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	s := &server.Server{Tickets: ticket.DevSigner(), Now: time.Now, Log: log}
+	s.SetLimits(server.DefaultLimits())
+	go s.NewMatchmaker().Run(ctx)
+	httpServer := &http.Server{Addr: *listen, Handler: s.DevHandler(), ReadHeaderTimeout: 5 * time.Second, WriteTimeout: 30 * time.Second}
+	errs := make(chan error, 1)
+	go func() { errs <- httpServer.ListenAndServe() }()
+	log.Info("development matchmaker listening", "addr", *listen, "key", s.Tickets.Public())
+	select {
+	case err := <-errs:
+		return err
+	case <-ctx.Done():
+	}
+	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	return httpServer.Shutdown(shutdown)
 }
 

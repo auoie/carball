@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"carball/api/internal/google"
+	"carball/api/internal/matchmaker"
 	"carball/api/internal/ratelimit"
 	"carball/api/internal/steam"
 	"carball/api/internal/store"
@@ -107,6 +108,8 @@ type Server struct {
 	TicketKeys map[string]ed25519.PublicKey
 	// GameServerToken is the game server's credential on its calls (none: they answer 503)
 	GameServerToken []byte
+	// Matchmaker is the one queue (NewMatchmaker; notes/matchmaking.md, the central matchmaker)
+	Matchmaker *matchmaker.Matchmaker
 	// TrustedProxies are the connections whose CF-Connecting-IP is believed (cloudflared's: AP-1)
 	TrustedProxies []netip.Prefix
 	Now            func() time.Time
@@ -118,7 +121,12 @@ type Server struct {
 	signIns, signInsWide *ratelimit.Limiter
 	signups, signupsWide *ratelimit.Limiter
 	renames, tickets     *ratelimit.Limiter
+	searchStarts         *ratelimit.Limiter
 	gameServerCalls      *ratelimit.Limiter
+
+	// (the development matchmaker's quitters' bans: devmatchmaker.go)
+	devMu   sync.Mutex
+	devBans map[string]time.Time
 
 	// (the kinds of peer whose CF-Connecting-IP was ignored, each warned of once)
 	forwardMu     sync.Mutex
@@ -134,6 +142,8 @@ type Limit struct {
 // Limits sets the rate limits and ceilings (DefaultLimits; the tests' tighter)
 type Limits struct {
 	SignIns, SignInsWide, Signups, SignupsWide, Renames, Tickets Limit
+	// Searches is each account's searches started (a found match's next search, a cancel and again, another tab)
+	Searches Limit
 	// GameServer is the game server's calls' (results, quitters, refills: AC-26), all of them together
 	GameServer Limit
 	// Keys is each limit's most keys at once (past it the longest idle is forgotten)
@@ -150,7 +160,8 @@ func DefaultLimits() Limits {
 		Signups:     Limit{5, time.Hour},
 		SignupsWide: Limit{25, time.Hour},
 		Renames:     Limit{5, 24 * time.Hour},
-		Tickets:     Limit{60, 10 * time.Minute}, // (a search asks one per region, three at once: notes/matchmaking.md, Regions)
+		Tickets:     Limit{60, 10 * time.Minute},
+		Searches:    Limit{30, 10 * time.Minute},
 		GameServer:  Limit{300, time.Minute},
 		Keys:        200_000,
 		OpenFlows:   20_000,
@@ -165,12 +176,13 @@ func (s *Server) SetLimits(l Limits) {
 	s.signIns, s.signInsWide = limiter(l.SignIns), limiter(l.SignInsWide)
 	s.signups, s.signupsWide = limiter(l.Signups), limiter(l.SignupsWide)
 	s.renames, s.tickets = limiter(l.Renames), limiter(l.Tickets)
+	s.searchStarts = limiter(l.Searches)
 	s.gameServerCalls = limiter(l.GameServer)
 }
 
 // Sweep forgets the limits' keys idle for their window (the service's housekeeping, every minute)
 func (s *Server) Sweep(now time.Time) {
-	for _, l := range []*ratelimit.Limiter{s.signIns, s.signInsWide, s.signups, s.signupsWide, s.renames, s.tickets, s.gameServerCalls} {
+	for _, l := range []*ratelimit.Limiter{s.signIns, s.signInsWide, s.signups, s.signupsWide, s.renames, s.tickets, s.searchStarts, s.gameServerCalls} {
 		l.Sweep(now)
 	}
 }
@@ -203,6 +215,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/results", s.gameServer(s.result))
 	mux.HandleFunc("POST /api/quitters", s.gameServer(s.quitter))
 	mux.HandleFunc("POST /api/refills", s.gameServer(s.refill))
+	mux.HandleFunc("POST /api/search", s.write(s.startSearch))
+	mux.HandleFunc("GET /api/search/{id}", s.pollSearch)
+	mux.HandleFunc("DELETE /api/search/{id}", s.write(s.cancelSearch))
+	mux.HandleFunc("POST /api/fleet/events", s.gameServer(s.fleetEvent))
 	return s.logged(headers(mux))
 }
 

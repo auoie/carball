@@ -223,6 +223,11 @@ func (s *Server) ticket(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": "queue-banned", "until": until.UTC().Format(time.RFC3339)})
 		return
 	}
+	// (a rejoin of its own match alone: not while it searches or is in another, one at a time)
+	if purpose == ticket.PurposeRejoin && s.Matchmaker != nil && !s.Matchmaker.RejoinAllowed(ss.AccountID, match) {
+		writeError(w, http.StatusConflict, "in-match")
+		return
+	}
 	ratings, err := s.Store.RatingsOf(r.Context(), ss.AccountID)
 	if err != nil {
 		s.Log.Error("reading ratings", "err", err)

@@ -214,3 +214,70 @@ func TestNotUTF8Refused(t *testing.T) {
 		t.Error("a name not UTF-8 accepted")
 	}
 }
+
+// A match ticket: one seat of one match at one server, SeatLifetime long, version 4; its fields read back, the longest
+// within the cap, and a seat that doesn't fit its roster, a seat's fields on another purpose or a seat at version 3
+// neither made nor read (RV-850)
+func TestSeat(t *testing.T) {
+	seed, _, _ := NewKey("k1")
+	s, _ := NewSigner("k1", seed)
+	seat := Seat{Match: 0xfeedface12345678, Server: "game-eu.example:4433", Playlist: 3, Seat: 5, Roster: 6}
+	encoded, issued, err := s.IssueSeat([16]byte{7}, "Made Up", [3]Shown{{1500, 500}, {1600, 80}, {1700, 90}}, seat, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Verify(encoded, keys(t, s), now.Add(10*time.Second), 30*time.Second)
+	if err != nil || got.Purpose != PurposeSeat || got.Match != seat.Match || got.Server != seat.Server || got.Playlist != 3 ||
+		got.Seat != 5 || got.Roster != 6 || !got.Expires.Equal(now.Add(SeatLifetime)) || got.Nonce != issued.Nonce {
+		t.Fatalf("Verify = %+v, %v", got, err)
+	}
+	if _, err := Verify(encoded, keys(t, s), now.Add(SeatLifetime+31*time.Second), 30*time.Second); err == nil {
+		t.Error("a match ticket past its life taken")
+	}
+	longKey, _ := NewSigner(strings.Repeat("k", 32), seed)
+	long, _, err := longKey.IssueSeat([16]byte{7}, strings.Repeat("é", 16), [3]Shown{}, Seat{Match: 1, Server: strings.Repeat("s", MaxServer), Playlist: 1, Roster: 2}, now)
+	if err != nil || len(long) > MaxBytes {
+		t.Errorf("the longest match ticket: %d bytes, %v", len(long), err)
+	}
+	for _, bad := range []Seat{
+		{Match: 1, Server: "a:1", Playlist: 2, Seat: 4, Roster: 4},
+		{Match: 1, Server: "a:1", Playlist: 2, Seat: 0, Roster: 6},
+		{Match: 1, Server: "a:1", Playlist: 4, Seat: 0, Roster: 8},
+		{Match: 0, Server: "a:1", Playlist: 1, Seat: 0, Roster: 2},
+		{Match: 1, Server: "", Playlist: 1, Seat: 0, Roster: 2},
+		{Match: 1, Server: strings.Repeat("s", MaxServer+1), Playlist: 1, Seat: 0, Roster: 2},
+	} {
+		if _, _, err := s.IssueSeat([16]byte{7}, "Name", [3]Shown{}, bad, now); err == nil {
+			t.Errorf("a seat that doesn't fit made: %+v", bad)
+		}
+	}
+	if _, err := Encode(Ticket{KeyID: "k1", Name: "Name", Purpose: PurposeRejoin, Match: 1, Server: "a:1"}); err == nil {
+		t.Error("a rejoin's ticket with a seat's server made")
+	}
+	// (a seat's bytes marked version 3, or a rejoin's marked 4: refused, whatever the signature)
+	raw, _ := base64.RawURLEncoding.DecodeString(encoded)
+	raw[0] = Version
+	if _, err := decode(raw[:len(raw)-ed25519.SignatureSize]); err == nil {
+		t.Error("a seat at version 3 read")
+	}
+	rejoin, _, _ := s.IssueFor([16]byte{9}, "Name", [3]Shown{}, PurposeRejoin, 5, now)
+	raw, _ = base64.RawURLEncoding.DecodeString(rejoin)
+	raw[0] = SeatVersion
+	if _, err := decode(raw[:len(raw)-ed25519.SignatureSize]); err == nil {
+		t.Error("a rejoin's ticket at version 4 read")
+	}
+	// (a seat with bytes after its fields: refused)
+	raw, _ = base64.RawURLEncoding.DecodeString(encoded)
+	body := append(append([]byte{}, raw[:len(raw)-ed25519.SignatureSize]...), 0)
+	if _, err := decode(body); err == nil {
+		t.Error("a seat with a stray byte read")
+	}
+}
+
+// The development key: fixed, its public key the game server's test pins too (server/src/ticket.rs DEV_PUBLIC_KEY), so
+// the development matchmaker's tickets check on a development server
+func TestDevSigner(t *testing.T) {
+	if got := DevSigner().Public(); got != "dev 1PGAXJYv9YNXDpJto+6YGra1rCGMn+EShfLPjpIiFgU=" {
+		t.Errorf("the development key: %q", got)
+	}
+}

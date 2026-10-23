@@ -8,10 +8,9 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
 use carball_server::engine::{self, Arena};
-use carball_server::game::Outgoing;
 use carball_server::net::NetLimits;
 use carball_server::protocol::{self, Control, Datagram, InputFrame};
-use carball_server::ticket::{DEFAULT_RATING, Purpose, Tickets, unix_now};
+use carball_server::ticket::{DEFAULT_RATING, Purpose, Seat, Tickets, unix_now};
 use carball_server::{game_loop, net};
 use wtransport::{ClientConfig, Endpoint};
 
@@ -259,7 +258,7 @@ async fn a_vanished_client_is_a_lost_connection_and_a_closed_one_left() {
     }
 }
 
-/// A hello for the queue: a search of a playlist, a claim of a token, or a direct join
+/// A hello: its intent (a direct join, a ping, a refused search), playlist and token
 fn queue_hello(intent: u8, playlist: u8, token: u64) -> Vec<u8> {
     keyed_hello(intent, playlist, token, 0)
 }
@@ -351,121 +350,7 @@ async fn another_versions_hello_is_refused_with_the_version_reason_this_ones_let
     assert!(!matches!(current, Control::Refused { .. }), "this version's hello let in: {current:?}");
 }
 
-/// Two players search 1v1 on a queue server: each gets a token, claims it with a new session and joins the match on
-/// opposite teams; a token claims once; a direct join and an unknown playlist are refused
-/// A region's ping is answered at once (no ticket); a slot declined for another region's match cancels its match now,
-/// its claimed player told, and the decliner searches again at once, no no-show counted (notes/matchmaking.md, Regions)
-#[tokio::test(flavor = "multi_thread")]
-async fn a_ping_is_answered_and_a_declined_slot_cancels_its_match_with_no_cooldown() {
-    engine::init(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../out/arena/collision_meshes"))).unwrap();
-    let (identity, cert_hash) = net::dev_identity().unwrap();
-    let server = net::endpoint(identity, 0).unwrap();
-    let port = server.local_addr().unwrap().port();
-    let (to_game, messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
-    let playlists = vec![carball_server::match_host::Playlist {
-        team_size: 1,
-        match_type: carball_server::game::MatchType::Casual,
-        forfeit_vote_wait: None,
-    }];
-    std::thread::spawn(move || {
-        game_loop::run(messages, game_loop::Mode::Queue(playlists), None, heartbeat(), Instant::now())
-    });
-    tokio::spawn(net::accept_loop(Arc::new(server), to_game, open_limits()));
-    let session = || async {
-        let config = ClientConfig::builder()
-            .with_bind_default()
-            .with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(cert_hash)])
-            .build();
-        Endpoint::client(config).unwrap().connect(format!("https://localhost:{port}/play")).await.unwrap()
-    };
-
-    let (pong, ..) = first_reply(port, cert_hash, queue_hello(protocol::INTENT_PING, 0, 0)).await;
-    assert_eq!(pong, Control::Pong);
-
-    let (a, b) = tokio::join!(
-        first_reply(port, cert_hash, keyed_hello(protocol::INTENT_SEARCH, 1, 0, 41)),
-        first_reply(port, cert_hash, keyed_hello(protocol::INTENT_SEARCH, 1, 0, 42)),
-    );
-    let (Control::MatchFound { token: ta, .. }, ..) = a else { panic!("{:?}", a.0) };
-    let (Control::MatchFound { token: tb, .. }, ..) = b else { panic!("{:?}", b.0) };
-    let (ca, _conn_a, mut recv_a) = first_reply(port, cert_hash, queue_hello(protocol::INTENT_CLAIM, 0, ta)).await;
-    assert!(matches!(ca, Control::Welcome { .. }), "{ca:?}");
-    // (b's slot given up: a's match cancelled, a told)
-    let decliner = session().await;
-    let (mut send, _recv) = decliner.open_bi().await.unwrap().await.unwrap();
-    send.write_all(&keyed_hello(protocol::INTENT_DECLINE, 0, tb, 42)).await.unwrap();
-    let mut told = false;
-    while let Some(control) = next_control(&mut recv_a, Duration::from_secs(10)).await {
-        if control == (Control::Kicked { reason: protocol::KICK_NOT_ALL_JOINED }) {
-            told = true;
-            break;
-        }
-    }
-    assert!(told, "the claimed player told the match was cancelled");
-    let (again, ..) = first_reply(port, cert_hash, queue_hello(protocol::INTENT_CLAIM, 0, tb)).await;
-    assert_eq!(again, Control::Refused { reason: protocol::REFUSED_TOKEN }, "the declined token is dead");
-    // (the decliner searches at once: no cooldown; it waits, alone in the queue)
-    let searcher = session().await;
-    let (mut send, mut recv) = searcher.open_bi().await.unwrap().await.unwrap();
-    send.write_all(&keyed_hello(protocol::INTENT_SEARCH, 1, 0, 42)).await.unwrap();
-    assert_eq!(next_control(&mut recv, Duration::from_secs(2)).await, None, "searching, not refused with a cooldown");
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn two_searches_make_a_match_their_tokens_claim() {
-    engine::init(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../out/arena/collision_meshes"))).unwrap();
-    let (identity, cert_hash) = net::dev_identity().unwrap();
-    let server = net::endpoint(identity, 0).unwrap();
-    let port = server.local_addr().unwrap().port();
-    let (to_game, messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
-    let playlists = [1, 2, 3]
-        .map(|team_size| carball_server::match_host::Playlist {
-            team_size,
-            match_type: carball_server::game::MatchType::Casual,
-            forfeit_vote_wait: None,
-        })
-        .to_vec();
-    std::thread::spawn(move || {
-        game_loop::run(messages, game_loop::Mode::Queue(playlists), None, heartbeat(), Instant::now())
-    });
-    tokio::spawn(net::accept_loop(Arc::new(server), to_game, open_limits()));
-
-    let (direct, ..) = first_reply(port, cert_hash, queue_hello(protocol::INTENT_JOIN, 0, 0)).await;
-    assert_eq!(direct, Control::Refused { reason: protocol::REFUSED_MODE });
-    let (unknown, ..) = first_reply(port, cert_hash, queue_hello(protocol::INTENT_SEARCH, 4, 0)).await;
-    assert_eq!(unknown, Control::Refused { reason: protocol::REFUSED_MODE });
-
-    let (a, b) = tokio::join!(
-        first_reply(port, cert_hash, queue_hello(protocol::INTENT_SEARCH, 1, 0)),
-        first_reply(port, cert_hash, queue_hello(protocol::INTENT_SEARCH, 1, 0)),
-    );
-    let (Control::MatchFound { token: ta, map: ma }, ..) = a else { panic!("{:?}", a.0) };
-    let (Control::MatchFound { token: tb, map: mb }, ..) = b else { panic!("{:?}", b.0) };
-    assert!(ta != tb && ta != 0 && tb != 0);
-    // (the match's map, Night, the same for both: in their MatchFound and their welcomes)
-    assert!(ma == mb && ma == protocol::NIGHT_MAP, "{ma} {mb}");
-
-    let (ca, _conn_a, mut recv_a) = first_reply(port, cert_hash, queue_hello(protocol::INTENT_CLAIM, 0, ta)).await;
-    let Control::Welcome { team_size, key, map, .. } = ca else { panic!("{ca:?}") };
-    assert_eq!((team_size, map), (1, ma));
-    assert_ne!(key, 0);
-    let (again, ..) = first_reply(port, cert_hash, queue_hello(protocol::INTENT_CLAIM, 0, ta)).await;
-    assert_eq!(again, Control::Refused { reason: protocol::REFUSED_TOKEN }, "claimed once");
-    let (cb, _conn_b, _recv_b) = first_reply(port, cert_hash, queue_hello(protocol::INTENT_CLAIM, 0, tb)).await;
-    assert!(matches!(cb, Control::Welcome { map, .. } if map == ma), "{cb:?}");
-    // Both here: a roster of two, one a side, and the warm-up running (no longer held)
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let mut teams = Vec::new();
-    while teams.len() < 2 && Instant::now() < deadline {
-        if let Ok(Control::Roster(r)) = tokio::time::timeout(Duration::from_secs(1), read_control(&mut recv_a)).await {
-            teams = r.iter().map(|p| p.team).collect();
-        }
-    }
-    teams.sort_unstable();
-    assert_eq!(teams, vec![0, 1]);
-}
-
-/// A hello with a ticket (a search's or a claim's: who the player is, notes/accounts.md §3)
+/// A hello with a ticket (a claim's match ticket or a rejoin's: who the player is, notes/accounts.md §3)
 fn ticketed_hello(intent: u8, playlist: u8, token: u64, ticket: String) -> Vec<u8> {
     Control::Hello {
         version: protocol::VERSION,
@@ -487,14 +372,24 @@ fn ticketed_hello(intent: u8, playlist: u8, token: u64, ticket: String) -> Vec<u
     .encode()
 }
 
-/// A queue server with tickets: a search or claim without a good one is refused with the ticket reason (the session
-/// closed); a claim is the searching account's alone (another's ticket refused, the token still good); a ticket is used
-/// once; the roster names the account as its ticket does, not the hello's name
-#[tokio::test(flavor = "multi_thread")]
-async fn a_queue_with_tickets_takes_only_good_ones_and_binds_each_seat_to_its_account() {
+/// A queue server (the matchmaker's matches) with the development key's tickets, its name `localhost:PORT`; its port
+/// and certificate hash, its tickets (for the tests' match tickets), and the short idle timeout's server when `quick`
+async fn ticketed_server(quick: bool) -> (u16, [u8; 32], Arc<Tickets>) {
     engine::init(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../out/arena/collision_meshes"))).unwrap();
     let (identity, cert_hash) = net::dev_identity().unwrap();
-    let server = net::endpoint(identity, 0).unwrap();
+    let server = if quick {
+        // (a short idle timeout: a vanished client is lost in 1.5 s)
+        let config = wtransport::ServerConfig::builder()
+            .with_bind_default(0)
+            .with_identity(identity)
+            .keep_alive_interval(Some(Duration::from_millis(300)))
+            .max_idle_timeout(Some(Duration::from_millis(1500)))
+            .unwrap()
+            .build();
+        Endpoint::server(config).unwrap()
+    } else {
+        net::endpoint(identity, 0).unwrap()
+    };
     let port = server.local_addr().unwrap().port();
     let (to_game, messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
     let playlists = [1, 2, 3]
@@ -508,48 +403,79 @@ async fn a_queue_with_tickets_takes_only_good_ones_and_binds_each_seat_to_its_ac
         game_loop::run(messages, game_loop::Mode::Queue(playlists), None, heartbeat(), Instant::now())
     });
     let tickets = Arc::new(Tickets::from_list("").unwrap().with_dev_key().unwrap());
-    let limits = NetLimits { tickets: Some(tickets.clone()), ..open_limits() };
+    let limits =
+        NetLimits { tickets: Some(tickets.clone()), server_name: Some(format!("localhost:{port}")), ..open_limits() };
     tokio::spawn(net::accept_loop(Arc::new(server), to_game, limits));
-    let ticket_for = |account: u8, name: &str, purpose: Purpose| {
-        tickets.dev_ticket([account; 16], name, [DEFAULT_RATING; 3], purpose, unix_now()).unwrap()
+    (port, cert_hash, tickets)
+}
+
+/// A match ticket for `account`'s seat of match `match_id` (`roster` seats, a 1v1's 2) at `server`
+fn seat_ticket(
+    tickets: &Tickets,
+    account: u8,
+    name: &str,
+    match_id: u64,
+    seat: u8,
+    roster: u8,
+    server: &str,
+) -> String {
+    let seat = Seat { match_id, server: server.into(), playlist: roster / 2, seat, roster };
+    tickets.dev_ticket([account; 16], name, [DEFAULT_RATING; 3], Purpose::Seat(seat), unix_now()).unwrap()
+}
+
+/// A region's ping is answered at once, its session closed right after (its slot free, not held for the page's close:
+/// RV-856); a search or a decline isn't served here (the accounts service's matchmaker has the one queue)
+#[tokio::test(flavor = "multi_thread")]
+async fn a_ping_is_answered_and_closed_at_once_and_a_search_or_a_decline_is_refused() {
+    let (port, cert_hash, _tickets) = ticketed_server(false).await;
+    let (pong, connection, _recv) = first_reply(port, cert_hash, queue_hello(protocol::INTENT_PING, 0, 0)).await;
+    assert_eq!(pong, Control::Pong);
+    let start = Instant::now();
+    let closed = tokio::time::timeout(Duration::from_secs(2), connection.closed()).await;
+    assert!(closed.is_ok() && start.elapsed() < Duration::from_millis(600), "closed after {:?}", start.elapsed());
+    for intent in [protocol::INTENT_SEARCH, protocol::INTENT_DECLINE] {
+        let (reply, ..) = first_reply(port, cert_hash, queue_hello(intent, 1, 0)).await;
+        assert_eq!(reply, Control::Refused { reason: protocol::REFUSED_MODE }, "intent {intent}");
+    }
+}
+
+/// Match tickets (notes/matchmaking.md, the central matchmaker; RV-850): a claim needs one, for this server, used once;
+/// the first claim opens the match (its id the matchmaker's), each seat taken once, the roster named as the tickets
+/// name the players; an account in a match here can't claim another; each ticket for its own (a match ticket isn't a
+/// rejoin's, a rejoin's not another match's); a 1v1 has no rejoin
+#[tokio::test(flavor = "multi_thread")]
+async fn match_tickets_open_their_match_here_once_each_seat_its_own() {
+    let (port, cert_hash, tickets) = ticketed_server(false).await;
+    let here = format!("localhost:{port}");
+    let ticket = |account: u8, name: &str, match_id: u64, seat: u8| {
+        seat_ticket(&tickets, account, name, match_id, seat, 2, &here)
     };
-    let ticket = |account: u8, name: &str| ticket_for(account, name, Purpose::Search);
     let refused = Control::Refused { reason: protocol::REFUSED_TICKET };
-
-    let (none, ..) = first_reply(port, cert_hash, queue_hello(protocol::INTENT_SEARCH, 1, 0)).await;
-    assert_eq!(none, refused, "a search without a ticket");
-    let (junk, ..) = first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_SEARCH, 1, 0, "AAAA".into())).await;
+    let (none, ..) = first_reply(port, cert_hash, queue_hello(protocol::INTENT_CLAIM, 0, 0)).await;
+    assert_eq!(none, refused, "a claim without a ticket");
+    let (junk, ..) = first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_CLAIM, 0, 0, "AAAA".into())).await;
     assert_eq!(junk, refused, "a malformed ticket");
-    let foreign = Tickets::from_list("").unwrap().with_dev_key().unwrap().dev_ticket(
-        [9; 16],
-        "Elsewhere",
-        [DEFAULT_RATING; 3],
-        Purpose::Search,
-        unix_now(),
-    );
-    let (other_key, ..) =
-        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_SEARCH, 1, 0, foreign.unwrap())).await;
-    assert_eq!(other_key, refused, "another signer's ticket");
+    let search = tickets.dev_ticket([1; 16], "Ada", [DEFAULT_RATING; 3], Purpose::Search, unix_now()).unwrap();
+    let (old, ..) = first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_CLAIM, 0, 0, search)).await;
+    assert_eq!(old, refused, "a search's ticket (from before the central matchmaker)");
+    let elsewhere = seat_ticket(&tickets, 1, "Ada", 0xa1, 0, 2, "game-eu.example:4433");
+    let (other_server, ..) =
+        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_CLAIM, 0, 0, elsewhere)).await;
+    assert_eq!(other_server, refused, "another server's match ticket");
 
-    let used = ticket(1, "Ada");
-    let (a, b) = tokio::join!(
-        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_SEARCH, 1, 0, used.clone())),
-        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_SEARCH, 1, 0, ticket(2, "Bea"))),
-    );
-    let (Control::MatchFound { token: ta, .. }, ..) = a else { panic!("{:?}", a.0) };
-    let (Control::MatchFound { token: tb, .. }, ..) = b else { panic!("{:?}", b.0) };
-    // (each search's own token: A's seat is ta)
-    let (wrong, ..) =
-        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_CLAIM, 0, ta, ticket(2, "Bea"))).await;
-    assert_eq!(wrong, Control::Refused { reason: protocol::REFUSED_TOKEN }, "another account's claim");
-    let (reused, ..) = first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_CLAIM, 0, ta, used)).await;
-    assert_eq!(reused, refused, "a ticket used once");
+    let first = ticket(1, "Ada", 0xa1, 0);
     let (claim, _conn_a, mut recv_a) =
-        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_CLAIM, 0, ta, ticket(1, "Ada"))).await;
-    assert!(matches!(claim, Control::Welcome { .. }), "the searcher's account, its token still good: {claim:?}");
+        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_CLAIM, 0, 0, first.clone())).await;
+    let Control::Welcome { match_id, team_size, .. } = claim else { panic!("{claim:?}") };
+    assert_eq!((match_id, team_size), (0xa1, 1), "opened at its first claim, the matchmaker's id");
+    let (reused, ..) = first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_CLAIM, 0, 0, first)).await;
+    assert_eq!(reused, refused, "a ticket used once");
+    let (taken, ..) =
+        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_CLAIM, 0, 0, ticket(2, "Bea", 0xa1, 0))).await;
+    assert_eq!(taken, Control::Refused { reason: protocol::REFUSED_TOKEN }, "a seat taken");
     let (cb, _conn_b, _recv_b) =
-        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_CLAIM, 0, tb, ticket(2, "Bea"))).await;
-    assert!(matches!(cb, Control::Welcome { .. }), "{cb:?}");
+        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_CLAIM, 0, 0, ticket(2, "Bea", 0xa1, 1))).await;
+    assert!(matches!(cb, Control::Welcome { match_id: 0xa1, .. }), "{cb:?}");
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut names = Vec::new();
     while names.len() < 2 && Instant::now() < deadline {
@@ -559,186 +485,35 @@ async fn a_queue_with_tickets_takes_only_good_ones_and_binds_each_seat_to_its_ac
     }
     names.sort_unstable();
     assert_eq!(names, vec!["Ada".to_string(), "Bea".to_string()], "the tickets' names");
-    // (an account seated in a running match can't search for another: one search or match per account, AP2-1)
-    let (again, ..) =
-        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_SEARCH, 1, 0, ticket(1, "Ada"))).await;
-    assert_eq!(again, Control::Refused { reason: protocol::REFUSED_IN_MATCH }, "a second match for Ada");
-    // (each ticket for its own: a search's isn't a rejoin's, a rejoin's isn't a search's nor another match's, AP3)
-    let (search_for_rejoin, ..) =
-        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_REJOIN, 0, 1, ticket(1, "Ada"))).await;
-    assert_eq!(search_for_rejoin, refused, "a search's ticket for a rejoin");
-    let rejoin_ticket = |m: u64| ticket_for(1, "Ada", Purpose::Rejoin(m));
-    let (rejoin_for_search, ..) =
-        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_SEARCH, 1, 0, rejoin_ticket(1))).await;
-    assert_eq!(rejoin_for_search, refused, "a rejoin's ticket for a search");
+    let (busy, ..) =
+        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_CLAIM, 0, 0, ticket(1, "Ada", 0xb2, 0))).await;
+    assert_eq!(busy, Control::Refused { reason: protocol::REFUSED_IN_MATCH }, "a second match for Ada here");
+    // (each ticket for its own, AP3)
+    let rejoin_ticket =
+        |m: u64| tickets.dev_ticket([1; 16], "Ada", [DEFAULT_RATING; 3], Purpose::Rejoin(m), unix_now()).unwrap();
+    let (seat_for_rejoin, ..) =
+        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_REJOIN, 0, 0xa1, ticket(1, "Ada", 0xa1, 0))).await;
+    assert_eq!(seat_for_rejoin, refused, "a match ticket for a rejoin");
+    let (rejoin_for_claim, ..) =
+        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_CLAIM, 0, 0, rejoin_ticket(0xa1))).await;
+    assert_eq!(rejoin_for_claim, refused, "a rejoin's ticket for a claim");
     let (other_match, ..) =
-        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_REJOIN, 0, 1, rejoin_ticket(2))).await;
+        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_REJOIN, 0, 0xa1, rejoin_ticket(2))).await;
     assert_eq!(other_match, refused, "another match's rejoin ticket");
-    // (a 1v1 has no rejoin: refused as concluded, asked of this match with its own ticket, RX31)
-    let Control::Welcome { match_id, .. } = claim else { unreachable!() };
     let (rejoin, ..) =
-        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_REJOIN, 0, match_id, rejoin_ticket(match_id)))
-            .await;
-    assert_eq!(rejoin, Control::Refused { reason: protocol::REFUSED_CONCLUDED });
-    // (Ada leaves the started 1v1, its penalty armed: reported at once, so her next search is refused as a quitter's,
-    // Refused 7, a fresh ticket notwithstanding: AP3, RX31)
-    drop(recv_a);
-    _conn_a.close(0u32.into(), b"left");
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        let (reply, ..) =
-            first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_SEARCH, 1, 0, ticket(1, "Ada"))).await;
-        if reply == (Control::Refused { reason: protocol::REFUSED_QUEUE_BANNED }) {
-            break;
-        }
-        assert_eq!(
-            reply,
-            Control::Refused { reason: protocol::REFUSED_IN_MATCH },
-            "her leave not yet seen, else banned"
-        );
-        assert!(Instant::now() < deadline, "no Refused 7 after the leave");
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
+        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_REJOIN, 0, 0xa1, rejoin_ticket(0xa1))).await;
+    assert_eq!(rejoin, Control::Refused { reason: protocol::REFUSED_CONCLUDED }, "a 1v1 has no rejoin");
 }
 
-/// RX31, RX32: a lost connection's leaver who searches again inside its 5 s window is refused once the window ends and
-/// the leave is reported, as a quitter's later search would be (Refused 7): its waiting search let go by the game loop
+/// A ranked 2v2 whose Ada loses her connection (no close: lost at the 1.5 s timeout, reported after its window), then
+/// her rejoin of the match with a rejoin ticket for it (what a saved record's RECONNECT asks): back in her seat
 #[tokio::test(flavor = "multi_thread")]
-async fn a_lost_leavers_waiting_search_is_refused_when_its_leave_is_reported() {
-    engine::init(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../out/arena/collision_meshes"))).unwrap();
-    let (identity, cert_hash) = net::dev_identity().unwrap();
-    // (a short idle timeout: a vanished client is lost in 1.5 s)
-    let config = wtransport::ServerConfig::builder()
-        .with_bind_default(0)
-        .with_identity(identity)
-        .keep_alive_interval(Some(Duration::from_millis(300)))
-        .max_idle_timeout(Some(Duration::from_millis(1500)))
-        .unwrap()
-        .build();
-    let server = Endpoint::server(config).unwrap();
-    let port = server.local_addr().unwrap().port();
-    let (to_game, messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
-    let playlists = [1, 2, 3]
-        .map(|team_size| carball_server::match_host::Playlist {
-            team_size,
-            match_type: carball_server::game::MatchType::Ranked,
-            forfeit_vote_wait: None,
-        })
-        .to_vec();
-    std::thread::spawn(move || {
-        game_loop::run(messages, game_loop::Mode::Queue(playlists), None, heartbeat(), Instant::now())
-    });
-    let tickets = Arc::new(Tickets::from_list("").unwrap().with_dev_key().unwrap());
-    let limits = NetLimits { tickets: Some(tickets.clone()), ..open_limits() };
-    tokio::spawn(net::accept_loop(Arc::new(server), to_game, limits));
-    let ticket = |account: u8, name: &str| {
-        tickets.dev_ticket([account; 16], name, [DEFAULT_RATING; 3], Purpose::Search, unix_now()).unwrap()
-    };
-    let (a, b) = tokio::join!(
-        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_SEARCH, 1, 0, ticket(1, "Ada"))),
-        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_SEARCH, 1, 0, ticket(2, "Bea"))),
-    );
-    let (Control::MatchFound { token: ta, .. }, ..) = a else { panic!("{:?}", a.0) };
-    let (Control::MatchFound { token: tb, .. }, ..) = b else { panic!("{:?}", b.0) };
-    // (Ada's claim on a runtime of its own, so that its connection can vanish: no close, a lost connection)
-    let claim = ticketed_hello(protocol::INTENT_CLAIM, 0, ta, ticket(1, "Ada"));
-    let (welcomed_tx, welcomed_rx) = std::sync::mpsc::channel::<bool>();
-    let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
-    let client = std::thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap();
-        rt.block_on(async {
-            let config = ClientConfig::builder()
-                .with_bind_default()
-                .with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(cert_hash)])
-                .build();
-            let connection =
-                Endpoint::client(config).unwrap().connect(format!("https://localhost:{port}/play")).await.unwrap();
-            let (mut send, mut recv) = connection.open_bi().await.unwrap().await.unwrap();
-            send.write_all(&claim).await.unwrap();
-            let reply = tokio::time::timeout(Duration::from_secs(10), read_control(&mut recv)).await;
-            welcomed_tx.send(matches!(reply, Ok(Control::Welcome { .. }))).unwrap();
-            let _ = go_rx.recv();
-            std::mem::forget((connection, send, recv));
-        });
-        rt.shutdown_background();
-    });
-    let (cb, _conn_b, _recv_b) =
-        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_CLAIM, 0, tb, ticket(2, "Bea"))).await;
-    assert!(matches!(cb, Control::Welcome { .. }), "{cb:?}");
-    assert!(welcomed_rx.recv().unwrap(), "Ada in the match");
-    // (the match on, its penalty armed: Ada's connection vanishes; lost at the 1.5 s timeout, then its 5 s window)
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    go_tx.send(()).unwrap();
-    client.join().unwrap();
-    tokio::time::sleep(Duration::from_millis(2500)).await;
-    // (inside the window, not yet reported: her search waits in the queue, then is refused when the report is made)
-    let config = ClientConfig::builder()
-        .with_bind_default()
-        .with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(cert_hash)])
-        .build();
-    let connection = Endpoint::client(config).unwrap().connect(format!("https://localhost:{port}/play")).await.unwrap();
-    let (mut send, mut recv) = connection.open_bi().await.unwrap().await.unwrap();
-    send.write_all(&ticketed_hello(protocol::INTENT_SEARCH, 1, 0, ticket(1, "Ada"))).await.unwrap();
-    let started = Instant::now();
-    let refused = loop {
-        match next_control(&mut recv, Duration::from_secs(12)).await {
-            Some(Control::Refused { reason }) => break Some(reason),
-            Some(_) => continue,
-            None => break None,
-        }
-    };
-    assert_eq!(refused, Some(protocol::REFUSED_QUEUE_BANNED));
-    assert!(
-        started.elapsed() > Duration::from_millis(500),
-        "refused at the report, not at once (it waited in the queue)"
-    );
-}
-
-/// A ranked 2v2 whose Ada loses her connection (no close: lost at the 1.5 s timeout, reported after its window); with
-/// `search_in_window` she searches 2.5 s after it vanished (inside the window: queued, then Refused 7 at the report);
-/// then her rejoin of the match with a rejoin ticket for it (what a saved record's RECONNECT asks): its answer
-async fn lost_leaver_then_rejoin(search_in_window: bool) -> Control {
-    engine::init(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../out/arena/collision_meshes"))).unwrap();
-    let (identity, cert_hash) = net::dev_identity().unwrap();
-    let config = wtransport::ServerConfig::builder()
-        .with_bind_default(0)
-        .with_identity(identity)
-        .keep_alive_interval(Some(Duration::from_millis(300)))
-        .max_idle_timeout(Some(Duration::from_millis(1500)))
-        .unwrap()
-        .build();
-    let server = Endpoint::server(config).unwrap();
-    let port = server.local_addr().unwrap().port();
-    let (to_game, messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
-    let playlists = [1, 2, 3]
-        .map(|team_size| carball_server::match_host::Playlist {
-            team_size,
-            match_type: carball_server::game::MatchType::Ranked,
-            forfeit_vote_wait: None,
-        })
-        .to_vec();
-    std::thread::spawn(move || {
-        game_loop::run(messages, game_loop::Mode::Queue(playlists), None, heartbeat(), Instant::now())
-    });
-    let tickets = Arc::new(Tickets::from_list("").unwrap().with_dev_key().unwrap());
-    let limits = NetLimits { tickets: Some(tickets.clone()), ..open_limits() };
-    tokio::spawn(net::accept_loop(Arc::new(server), to_game, limits));
-    let ticket = |account: u8, name: &str, purpose: Purpose| {
-        tickets.dev_ticket([account; 16], name, [DEFAULT_RATING; 3], purpose, unix_now()).unwrap()
-    };
-    let (a, b, c, d) = tokio::join!(
-        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_SEARCH, 2, 0, ticket(1, "Ada", Purpose::Search))),
-        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_SEARCH, 2, 0, ticket(2, "Bea", Purpose::Search))),
-        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_SEARCH, 2, 0, ticket(3, "Cy", Purpose::Search))),
-        first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_SEARCH, 2, 0, ticket(4, "Di", Purpose::Search))),
-    );
-    let token = |r: &Control| match r {
-        Control::MatchFound { token, .. } => *token,
-        other => panic!("{other:?}"),
-    };
-    let (ta, tb, tc, td) = (token(&a.0), token(&b.0), token(&c.0), token(&d.0));
+async fn a_lost_leaver_reported_can_rejoin() {
+    let (port, cert_hash, tickets) = ticketed_server(true).await;
+    let here = format!("localhost:{port}");
+    let ticket = |account: u8, name: &str, seat: u8| seat_ticket(&tickets, account, name, 0xc3, seat, 4, &here);
     // (Ada's claim on a runtime of its own, so that its connection can vanish)
-    let claim = ticketed_hello(protocol::INTENT_CLAIM, 0, ta, ticket(1, "Ada", Purpose::Search));
+    let claim = ticketed_hello(protocol::INTENT_CLAIM, 0, 0, ticket(1, "Ada", 0));
     let (welcomed_tx, welcomed_rx) = std::sync::mpsc::channel::<Option<u64>>();
     let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
     let client = std::thread::spawn(move || {
@@ -764,222 +539,24 @@ async fn lost_leaver_then_rejoin(search_in_window: bool) -> Control {
         });
         rt.shutdown_background();
     });
+    let match_id = welcomed_rx.recv().unwrap().expect("Ada in the match");
     let mut kept = Vec::new();
-    for (t, account, name) in [(tb, 2u8, "Bea"), (tc, 3, "Cy"), (td, 4, "Di")] {
-        let (reply, conn, recv) = first_reply(
-            port,
-            cert_hash,
-            ticketed_hello(protocol::INTENT_CLAIM, 0, t, ticket(account, name, Purpose::Search)),
-        )
-        .await;
+    for (account, name, seat) in [(2u8, "Bea", 1u8), (3, "Cy", 2), (4, "Di", 3)] {
+        let (reply, conn, recv) =
+            first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_CLAIM, 0, 0, ticket(account, name, seat)))
+                .await;
         assert!(matches!(reply, Control::Welcome { .. }), "{reply:?}");
         kept.push((conn, recv));
     }
-    let match_id = welcomed_rx.recv().unwrap().expect("Ada in the match");
     tokio::time::sleep(Duration::from_millis(500)).await;
     go_tx.send(()).unwrap();
     client.join().unwrap();
-    tokio::time::sleep(Duration::from_millis(2500)).await;
-    if search_in_window {
-        let config = ClientConfig::builder()
-            .with_bind_default()
-            .with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(cert_hash)])
-            .build();
-        let connection =
-            Endpoint::client(config).unwrap().connect(format!("https://localhost:{port}/play")).await.unwrap();
-        let (mut send, mut recv) = connection.open_bi().await.unwrap().await.unwrap();
-        send.write_all(&ticketed_hello(protocol::INTENT_SEARCH, 2, 0, ticket(1, "Ada", Purpose::Search)))
-            .await
-            .unwrap();
-        let refused = loop {
-            match next_control(&mut recv, Duration::from_secs(12)).await {
-                Some(Control::Refused { reason }) => break Some(reason),
-                Some(_) => continue,
-                None => break None,
-            }
-        };
-        assert_eq!(refused, Some(protocol::REFUSED_QUEUE_BANNED));
-    } else {
-        tokio::time::sleep(Duration::from_millis(6000)).await;
-    }
-    let (rejoin, ..) = first_reply(
-        port,
-        cert_hash,
-        ticketed_hello(protocol::INTENT_REJOIN, 0, match_id, ticket(1, "Ada", Purpose::Rejoin(match_id))),
-    )
-    .await;
+    tokio::time::sleep(Duration::from_millis(8500)).await;
+    let rejoin =
+        tickets.dev_ticket([1; 16], "Ada", [DEFAULT_RATING; 3], Purpose::Rejoin(match_id), unix_now()).unwrap();
+    let (reply, ..) = first_reply(port, cert_hash, ticketed_hello(protocol::INTENT_REJOIN, 0, match_id, rejoin)).await;
     drop(kept);
-    rejoin
-}
-
-/// RX33: the search the server took, then refused when her leave was reported (Refused 7), never ran: the seat it gave
-/// up is given back, so her saved seat's rejoin still works (the page puts the record back on that refusal: seatSearch)
-#[tokio::test(flavor = "multi_thread")]
-async fn a_lost_leavers_search_refused_in_the_queue_gives_her_seat_back() {
-    let rejoin = lost_leaver_then_rejoin(true).await;
-    assert!(matches!(rejoin, Control::Welcome { .. }), "the seat given back: {rejoin:?}");
-}
-
-/// RX33: the same lost leave, reported, without a search: its seat there to rejoin (no ban check, RJ1)
-#[tokio::test(flavor = "multi_thread")]
-async fn a_lost_leaver_reported_without_a_search_can_rejoin() {
-    let rejoin = lost_leaver_then_rejoin(false).await;
-    assert!(matches!(rejoin, Control::Welcome { .. }), "the seat to rejoin");
-}
-
-/// A search's session, its control stream kept for the test to close (as the page's `finish`)
-async fn search_session(
-    port: u16,
-    cert_hash: [u8; 32],
-    playlist: u8,
-    key: u64,
-) -> (wtransport::Connection, wtransport::SendStream, wtransport::RecvStream) {
-    let config = ClientConfig::builder()
-        .with_bind_default()
-        .with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(cert_hash)])
-        .build();
-    let connection = Endpoint::client(config).unwrap().connect(format!("https://localhost:{port}/play")).await.unwrap();
-    let (mut send, recv) = connection.open_bi().await.unwrap().await.unwrap();
-    send.write_all(&keyed_hello(protocol::INTENT_SEARCH, playlist, 0, key)).await.unwrap();
-    (connection, send, recv)
-}
-
-/// The session's next control message within `wait`; None if its stream ended first (or nothing came)
-async fn next_control(recv: &mut wtransport::RecvStream, wait: Duration) -> Option<Control> {
-    tokio::time::timeout(wait, async {
-        let mut len = [0u8; 2];
-        recv.read_exact(&mut len).await.ok()?;
-        let mut body = vec![0u8; usize::from(u16::from_le_bytes(len))];
-        recv.read_exact(&mut body).await.ok()?;
-        Control::decode(&body).ok()
-    })
-    .await
-    .ok()
-    .flatten()
-}
-
-/// A search's page closing its stream takes it out of the queue at once (CancelSearch, SM5: a search after that isn't
-/// matched with it); a match formed as it closed still reaches it (the flush on close, SM6: its MatchFound if and only if
-/// its rival's); a newer search from its browser key tells it why (KICK_REPLACED, RV-460). RV-461
-#[tokio::test(flavor = "multi_thread")]
-async fn a_closed_search_leaves_the_queue_a_match_formed_as_it_closed_reaches_it_and_a_replaced_one_is_told() {
-    engine::init(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../out/arena/collision_meshes"))).unwrap();
-    let (identity, cert_hash) = net::dev_identity().unwrap();
-    let server = net::endpoint(identity, 0).unwrap();
-    let port = server.local_addr().unwrap().port();
-    let (to_game, messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
-    let playlists = [1, 2, 3]
-        .map(|team_size| carball_server::match_host::Playlist {
-            team_size,
-            match_type: carball_server::game::MatchType::Casual,
-            forfeit_vote_wait: None,
-        })
-        .to_vec();
-    std::thread::spawn(move || {
-        game_loop::run(messages, game_loop::Mode::Queue(playlists), None, heartbeat(), Instant::now())
-    });
-    tokio::spawn(net::accept_loop(Arc::new(server), to_game, open_limits()));
-    let found = |c: &Option<Control>| matches!(c, Some(Control::MatchFound { .. }));
-
-    // CancelSearch: closed, its session ends with no answer; the next searcher waits, matched with the one after
-    let (_a, mut a_send, mut a_recv) = search_session(port, cert_hash, 1, 101).await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    a_send.finish().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    let (_b, _b_send, mut b_recv) = search_session(port, cert_hash, 1, 102).await;
-    assert_eq!(next_control(&mut a_recv, Duration::from_secs(3)).await, None, "the closed search isn't matched");
-    assert_eq!(next_control(&mut b_recv, Duration::from_millis(500)).await, None, "nobody to play yet");
-    let (_c, _c_send, mut c_recv) = search_session(port, cert_hash, 1, 103).await;
-    assert!(found(&next_control(&mut b_recv, Duration::from_secs(5)).await));
-    assert!(found(&next_control(&mut c_recv, Duration::from_secs(5)).await));
-
-    // The flush: a page closing as its rival's search lands, whichever comes first, both or neither get the match (the
-    // rival's hello `offset` ms after the close, before it if negative: around the game loop's 8 ms tick, so some rounds
-    // form the match just before the close is seen)
-    let mut rounds_found = 0;
-    for (round, offset) in [-10i64, -8, -6, -5, -4, -3, -2, -1, 0, 2].into_iter().enumerate() {
-        let key = 200 + 10 * round as u64;
-        let (_d, mut d_send, mut d_recv) = search_session(port, cert_hash, 1, key).await;
-        let (_e, mut e_send, mut e_recv) = {
-            let config = ClientConfig::builder()
-                .with_bind_default()
-                .with_server_certificate_hashes([wtransport::tls::Sha256Digest::new(cert_hash)])
-                .build();
-            let connection =
-                Endpoint::client(config).unwrap().connect(format!("https://localhost:{port}/play")).await.unwrap();
-            let (send, recv) = connection.open_bi().await.unwrap().await.unwrap();
-            (connection, send, recv)
-        };
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        let rival = async {
-            tokio::time::sleep(Duration::from_millis(offset.max(0).unsigned_abs())).await;
-            e_send.write_all(&keyed_hello(protocol::INTENT_SEARCH, 1, 0, key + 1)).await.unwrap();
-        };
-        let close = async {
-            tokio::time::sleep(Duration::from_millis(offset.min(0).unsigned_abs())).await;
-            d_send.finish().await.unwrap();
-        };
-        tokio::join!(close, rival);
-        let d = next_control(&mut d_recv, Duration::from_secs(3)).await;
-        let e = next_control(&mut e_recv, Duration::from_secs(1)).await;
-        assert_eq!(found(&d), found(&e), "round {round}: the closed page's answer {d:?}, its rival's {e:?}");
-        if !found(&d) {
-            // (the rival still waits: another searcher makes its match, the queue left clean for the next round)
-            let (_f, _f_send, mut f_recv) = search_session(port, cert_hash, 1, key + 2).await;
-            assert!(found(&next_control(&mut e_recv, Duration::from_secs(5)).await), "round {round}");
-            assert!(found(&next_control(&mut f_recv, Duration::from_secs(5)).await), "round {round}");
-        }
-        rounds_found += usize::from(found(&d));
-    }
-    println!("the flush: {rounds_found} of 10 rounds matched the closing page");
-
-    // RV-460: a second tab of the browser searching: the first told why, its session ended; the second waits
-    let (_old, _old_send, mut old_recv) = search_session(port, cert_hash, 3, 300).await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    let (_new, _new_send, mut new_recv) = search_session(port, cert_hash, 3, 300).await;
-    assert_eq!(
-        next_control(&mut old_recv, Duration::from_secs(5)).await,
-        Some(Control::Kicked { reason: protocol::KICK_REPLACED })
-    );
-    assert_eq!(next_control(&mut old_recv, Duration::from_secs(5)).await, None, "then its session ends");
-    assert_eq!(next_control(&mut new_recv, Duration::from_millis(500)).await, None, "the new search waits");
-}
-
-/// The flush on close made certain (SM9, RV-486): a stand-in game answers the closing search's CancelSearch with a
-/// match found (one formed just before the cancel was seen, the race above's rare case): the page still reads it, so the
-/// search is out of the queue before the session ends and what the game sent before that goes out
-#[tokio::test(flavor = "multi_thread")]
-async fn a_closing_search_writes_out_what_the_game_sent_before_its_cancel() {
-    let (identity, cert_hash) = net::dev_identity().unwrap();
-    let server = net::endpoint(identity, 0).unwrap();
-    let port = server.local_addr().unwrap().port();
-    let (to_game, mut messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
-    tokio::spawn(net::accept_loop(Arc::new(server), to_game, open_limits()));
-    // (the game: the search's Join kept; its CancelSearch answered with a match, then let go; true if the cancel came
-    // before the session's Leave)
-    let game = tokio::spawn(async move {
-        let mut searcher = None;
-        while let Some(message) = messages.recv().await {
-            match message {
-                net::ToGame::Join { out, .. } => searcher = Some(out),
-                net::ToGame::CancelSearch { .. } => {
-                    if let Some(out) = searcher.take() {
-                        let _ = out.send(Outgoing::Control(Control::MatchFound { token: 7, map: 3 }.encode())).await;
-                    }
-                    return true;
-                }
-                net::ToGame::Leave { .. } => return false,
-                _ => {}
-            }
-        }
-        false
-    });
-    let (_d, mut d_send, mut d_recv) = search_session(port, cert_hash, 1, 900).await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    d_send.finish().await.unwrap();
-    assert_eq!(next_control(&mut d_recv, Duration::from_secs(3)).await, Some(Control::MatchFound { token: 7, map: 3 }));
-    assert_eq!(next_control(&mut d_recv, Duration::from_secs(3)).await, None, "then its stream ends");
-    assert!(game.await.unwrap(), "the search cancelled before its session ended");
+    assert!(matches!(reply, Control::Welcome { .. }), "the seat to rejoin: {reply:?}");
 }
 
 /// A server that takes pages from one origin only, and few sessions from an address: another origin, or none, is
@@ -1255,79 +832,6 @@ async fn a_quic_connection_that_never_asks_for_a_session_is_closed_at_the_quic_d
     let closed = tokio::time::timeout(Duration::from_secs(5), connection.closed()).await;
     assert!(closed.is_ok(), "still open after 5 s");
     assert!(start.elapsed() < Duration::from_secs(3), "closed after {:?}", start.elapsed());
-}
-
-/// A 1v1 found for the keys `a` and `b` from `host`; `a` claims, `b` never does: `a`'s session told at the window's end
-async fn stalled_match(host: &str, port: u16, cert_hash: [u8; 32], a: u64, b: u64) {
-    let (ra, rb) = tokio::join!(
-        first_reply_at(host, port, cert_hash, keyed_hello(protocol::INTENT_SEARCH, 1, 0, a)),
-        first_reply_at(host, port, cert_hash, keyed_hello(protocol::INTENT_SEARCH, 1, 0, b)),
-    );
-    let (Control::MatchFound { token: ta, .. }, ..) = ra else { panic!("{:?}", ra.0) };
-    let (Control::MatchFound { .. }, ..) = rb else { panic!("{:?}", rb.0) };
-    let (welcome, _conn, mut recv) =
-        first_reply_at(host, port, cert_hash, queue_hello(protocol::INTENT_CLAIM, 0, ta)).await;
-    assert!(matches!(welcome, Control::Welcome { .. }), "{welcome:?}");
-    let start = Instant::now();
-    let kicked = tokio::time::timeout(Duration::from_secs(20), async {
-        loop {
-            if let Control::Kicked { reason } = read_control(&mut recv).await {
-                return reason;
-            }
-        }
-    })
-    .await
-    .expect("told the match was cancelled");
-    assert_eq!(kicked, protocol::KICK_NOT_ALL_JOINED);
-    assert!(start.elapsed() < Duration::from_secs(14), "cancelled after {:?}", start.elapsed());
-    tokio::time::sleep(Duration::from_millis(100)).await;
-}
-
-/// No-shows over the wire from one address (RV-367, RV-385, RV-407; RX14's N21, N22, RX15's C13): a no-show's browser
-/// can't search (its own refusal) while other browsers there still find matches; a second browser's no-show there blocks
-/// the address, told as the network's
-async fn no_shows_from(host: &'static str) {
-    engine::init(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../out/arena/collision_meshes"))).unwrap();
-    let (identity, cert_hash) = net::dev_identity().unwrap();
-    let server = net::endpoint(identity, 0).unwrap();
-    let port = server.local_addr().unwrap().port();
-    let (to_game, messages) = tokio::sync::mpsc::channel(carball_server::game_loop::TO_GAME_QUEUE);
-    let playlists = [1, 2, 3]
-        .map(|team_size| carball_server::match_host::Playlist {
-            team_size,
-            match_type: carball_server::game::MatchType::Casual,
-            forfeit_vote_wait: None,
-        })
-        .to_vec();
-    std::thread::spawn(move || {
-        game_loop::run(messages, game_loop::Mode::Queue(playlists), None, heartbeat(), Instant::now())
-    });
-    tokio::spawn(net::accept_loop(Arc::new(server), to_game, open_limits()));
-
-    stalled_match(host, port, cert_hash, 11, 22).await;
-    let (refused, ..) = first_reply_at(host, port, cert_hash, keyed_hello(protocol::INTENT_SEARCH, 1, 0, 22)).await;
-    assert!(
-        matches!(refused, Control::SearchCooldown { seconds, network: false } if (100..=120).contains(&seconds)),
-        "{host}: {refused:?}"
-    );
-    // Two other browsers there: matched, and one of them doesn't claim either: the address is blocked
-    stalled_match(host, port, cert_hash, 33, 44).await;
-    let (blocked, ..) = first_reply_at(host, port, cert_hash, keyed_hello(protocol::INTENT_SEARCH, 1, 0, 55)).await;
-    assert!(
-        matches!(blocked, Control::SearchCooldown { seconds, network: true } if (100..=120).contains(&seconds)),
-        "{host}: {blocked:?}"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn no_shows_over_ipv4_block_their_browser_then_after_two_their_address() {
-    no_shows_from("127.0.0.1").await;
-}
-
-/// The same over IPv6: its /64 is blocked only after two browsers' no-shows too (RX15's RV-407)
-#[tokio::test(flavor = "multi_thread")]
-async fn no_shows_over_ipv6_block_their_browser_then_after_two_their_64() {
-    no_shows_from("[::1]").await;
 }
 
 /// The binary's `--healthcheck` (the image's HEALTHCHECK): 0 against a live health endpoint, 1 against none, quickly

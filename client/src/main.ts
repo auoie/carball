@@ -7,9 +7,8 @@ import { CarBody, World, initEngine } from "./engine/world";
 import { Freeplay } from "./game/freeplay";
 import { Online } from "./game/online";
 import type { SessionEnd } from "./game/sessionEnd";
-import { Matchmaking, OWN_SEARCH_TEXT, PLAYLISTS, type SearchHandlers, type SearchSession } from "./game/matchmaking";
-import { searchRegions } from "./game/regionSearch";
-import { Connection, type MatchSession, type ServerAddress, devServerAddress } from "./net/connection";
+import { type FoundMatch, Matchmaking, OWN_SEARCH_TEXT, PLAYLISTS, type SearchHandlers } from "./game/matchmaking";
+import { Connection, type MatchSession, devServerAddress } from "./net/connection";
 import { joinPreferences } from "./net/joinPreferences";
 import {
   type MenuNotice,
@@ -25,7 +24,6 @@ import {
   openClaim,
   pageUrl,
   type Region,
-  queueAddress,
   queueRegions,
   rankedSeat,
   seatSearch,
@@ -35,11 +33,12 @@ import {
   takeClaim,
   takeNotice,
 } from "./net/pages";
-import { QueueBannedError, SignedOutError, queueBanText } from "./net/tickets";
+import { queueBanText } from "./net/tickets";
 import { type Account, AccountsApi, signInReturn, withoutSignInReturn } from "./account/api";
 import { ACCOUNT_TEXT, AccountPages, accountErrorText, signInNotice } from "./ui/accountPages";
-import { chooseRegions, regionsToSearch, shareSearchTickets, storePings, storeRegions, storedPings, storedRegions, toggleRegion } from "./net/regions";
-import { Search, declineSlot, pingServer } from "./net/search";
+import { chooseRegions, searchRequest, storePings, storeRegions, storedPings, storedRegions, toggleRegion } from "./net/regions";
+import { browserKey, pingServer } from "./net/search";
+import { MATCHMAKER_TEXT, type MatchmakerEndpoint, type MatchmakerSearch, MatchmakerSearchSession } from "./net/matchmaker";
 import { GameAudio } from "./audio/audio";
 import { Hud } from "./hud";
 import { InputDevices, readGamepad } from "./input/devices";
@@ -217,10 +216,13 @@ async function main(): Promise<void> {
       location.replace(pageUrl("menu", location));
     };
     if (claim) {
-      address = await claimAddress(params, location.hostname, undefined, undefined, claim.server).catch((e: unknown) => {
-        claimFailed(e);
-        throw e;
-      });
+      // (a claim's ticket its match ticket, the matchmaker's; a rejoin's fetched)
+      address = await claimAddress(params, location.hostname, undefined, undefined, claim.server, claim.rejoin ? undefined : claim.ticket).catch(
+        (e: unknown) => {
+          claimFailed(e);
+          throw e;
+        },
+      );
       match = { intent: claim.rejoin ? "rejoin" : "claim", token: claim.token };
     } else if (__CARBALL_BOTS__ && botMatch) {
       // (the worker, its host and the bots' runtime in their own chunks, none in a build without bots)
@@ -231,7 +233,8 @@ async function main(): Promise<void> {
       address = await devServerAddress(host, Number(port));
     }
     const open = (): ReturnType<typeof Connection.open> => Connection.open(address, joinPreferences(settings), match);
-    const opened = claim ? openClaim(open) : open();
+    // (a rejoin's ticket refused once tried again with a fresh one; a match ticket is the one there is)
+    const opened = claim?.rejoin ? openClaim(open) : open();
     opened.catch(claimFailed);
     const session = await opened;
     // (every join saves the record anew, a rejoin's too: a ranked 2v2 or 3v3 offered back for 900 s from this join if it's
@@ -539,81 +542,84 @@ async function main(): Promise<void> {
       });
       return pinging;
     };
-    /** How long a search with no choice kept waits for the regions' pings (ms): then the lowest so far, else the first */
-    const PING_WAIT_MS = 3000;
-    // (a region's ticket's refusals: the sign-in gone, the account's page with why (RX29C); a leaver's ban, its line on the
-    // Play page, LV1)
-    const watched = (address: ServerAddress): ServerAddress => {
-      const ticket = address.ticket;
-      return ticket
-        ? {
-            ...address,
-            ticket: async () => {
-              try {
-                return await ticket();
-              } catch (e) {
-                if (e instanceof SignedOutError) {
-                  setAccount(null);
-                  showAccountPage(ACCOUNT_TEXT.sessionEnded);
-                } else if (e instanceof QueueBannedError) mainMenu?.setQueueBan(e.until);
-                throw e;
-              }
-            },
-          }
-        : address;
+    /** How long a search waits for the regions' pings measured just before it (ms): a server that hasn't answered by then
+     *  isn't sent (MX1R-7: one down since the last measure is no one's) */
+    const PING_WAIT_MS = 2000;
+    /** The regions' pings measured now, one try each, `wait` at most: those that answered in time (the shown pings
+     *  updated) */
+    const freshPings = async (listed: readonly Region[], wait: number): Promise<Map<string, number | null>> => {
+      const fresh = new Map<string, number | null>();
+      const timer = new Promise((done) => setTimeout(done, wait));
+      await Promise.race([
+        timer,
+        Promise.all(
+          listed.map(async (r) => {
+            const ms = await pingServer(r.address, 1);
+            fresh.set(r.id, ms);
+            pings.set(r.id, ms);
+            showRegions();
+          }),
+        ),
+      ]);
+      return new Map(fresh);
     };
-    // The queue (notes/matchmaking.md): a search from the menu or free play, in each region ticked (and a returning
-    // token's own); a match found, its claim to the match page
+    // (the account's refusals: the sign-in gone, the account's page with why (RX29C); a leaver's ban, its line on the
+    // Play page, LV1)
+    const searchNotes = {
+      signedOut: () => {
+        setAccount(null);
+        showAccountPage(ACCOUNT_TEXT.sessionEnded);
+      },
+      banned: (until: number) => mainMenu?.setQueueBan(until),
+    };
+    /** Where the matchmaker is: the deployment's (this page's origin); a development page's `?matchmaker=host:port`, its
+     *  player named by this browser's key and the settings' name; none for a development page without one */
+    const matchmakerEndpoint = async (): Promise<MatchmakerEndpoint | null> => {
+      const dev = params.get("matchmaker");
+      if (dev !== null && /^[A-Za-z0-9.[\]:-]{1,64}$/.test(dev)) {
+        const key = browserKey().toString(16).padStart(16, "0");
+        return { base: `http://${dev}`, dev: { name: settings.chat.name.trim() || `Dev ${key.slice(0, 4)}`, key } };
+      }
+      return params.get("queue") === null && (await deployedGameServer()).kind === "deployed" ? { base: "" } : null;
+    };
+    /** The regions the last search had: a found match's server is one of theirs */
+    let searchable: readonly Region[] = [];
+    const regionOf = (match: FoundMatch): Region | undefined => searchable.find((r) => r.server === match.server);
+    // The search (notes/matchmaking.md, the central matchmaker): from the menu or free play, of the ticked playlists, at
+    // the ticked regions' servers (the pings measured first); a match found, its claim to the match page
     const matchmaking = new Matchmaking({
-      search: (playlist, token, handlers, backRegion) => {
-        let regionsSearch: SearchSession | null = null;
+      search: (playlists, handlers) => {
+        let running: MatchmakerSearch | null = null;
         let cancelled = false;
-        // (its hello sent: the seat it gives up at the server, its saved record too; back if every region refused it first:
-        // seatSearch, RX31, RX32)
+        // (accepted: the seat left for a rejoin given up, its saved record too, RV-846)
         const seat = seatSearch(account?.id ?? null);
-        const reached: SearchHandlers = {
+        const accepted: SearchHandlers = {
           ...handlers,
           searching: () => {
             seat.sent();
             handlers.searching();
           },
-          refused: (reason: number) => {
-            seat.refused(reason);
-          },
         };
         regionsListed
           .then(async (listed) => {
-            // (no choice kept: the regions' pings first, a few seconds at most, so a search the page starts by itself goes
-            // to the lowest, not the first: RX43C-1)
-            if (listed.length > 1 && storedRegions() === null && pings.size === 0) {
-              await Promise.race([measurePings(listed), new Promise((waited) => setTimeout(waited, PING_WAIT_MS))]);
+            const all = listed.length > 0 ? listed : await queueRegions(params, location.hostname);
+            const measured = await freshPings(all, PING_WAIT_MS);
+            // (no choice of the player's: the lowest ping's, chosen now from these pings and kept: RX43C-1, RV-862)
+            if (all.length > 1 && storedRegions()?.manual !== true) {
+              chosen = chooseRegions(all, storedRegions(), pings);
+              storeRegions(chosen, false);
+              storePings(pings);
+              showRegions();
             }
-            return listed.length > 0 ? listed : queueRegions(params, location.hostname);
-          })
-          .then((listed) => {
+            const endpoint = await matchmakerEndpoint();
             if (cancelled) return;
-            // (a returning token: its region's alone, the first's for one from before the regions)
-            const tokenRegion = token === 0n ? undefined : (backRegion ?? listed[0]?.id);
-            const ids = regionsToSearch(listed, chosen, tokenRegion);
-            const searched = listed.filter((r) => ids.includes(r.id));
-            searchedRegions = ids;
-            // (one search ticket for the regions of one source: a search costs one, whatever it searches, RX43C-2)
-            const share = shareSearchTickets();
-            const ticketed = (r: Region): ServerAddress => {
-              const address = watched(r.address);
-              return address.ticket ? { ...address, ticket: share(address.ticket, r.ticketSource) } : address;
-            };
-            regionsSearch = searchRegions(
-              searched.map((r) => ({
-                id: r.id,
-                name: searched.length > 1 ? r.name : "",
-                search: (h) => Search.start(ticketed(r), playlist, r.id === tokenRegion ? token : 0n, h),
-                decline: (declined) => {
-                  void declineSlot(watched(r.address), declined);
-                },
-              })),
-              reached,
-            );
+            if (endpoint === null) {
+              handlers.failed(MATCHMAKER_TEXT.noMatchmaker);
+              return;
+            }
+            searchable = all;
+            searchedRegions = all.length > 1 ? chosen : all.map((r) => r.id);
+            running = MatchmakerSearchSession.start(endpoint, searchRequest(all, chosen, measured, playlists), accepted, searchNotes);
           })
           .catch((e: unknown) => {
             if (!cancelled) handlers.failed(e instanceof Error ? e.message : String(e));
@@ -621,11 +627,11 @@ async function main(): Promise<void> {
         return {
           cancel: () => {
             cancelled = true;
-            regionsSearch?.cancel();
+            running?.cancel();
           },
           finish: async () => {
             cancelled = true;
-            await regionsSearch?.finish();
+            await running?.finish();
           },
         };
       },
@@ -635,22 +641,25 @@ async function main(): Promise<void> {
         else if (cue === "cancel") audio.searchCancel();
         else audio.countdown(1);
       },
-      join: (token, playlist, searchedFor, map, region) => {
+      join: (found, playlists, searchedFor) => {
+        const region = regionOf(found);
         storeClaim({
-          token,
-          playlist,
+          token: found.id,
+          ticket: found.ticket,
+          playlist: found.playlist,
+          playlists,
           searchedAt: Date.now() - searchedFor * 1000,
-          map,
+          map: found.map,
           ...(account ? { account: account.id } : {}),
-          ...(region ? { server: region } : {}),
+          ...(region ? { server: region.id } : {}),
         });
         location.assign(pageUrl("match", location));
       },
-      // (the slot claimed and left at once: the match is cancelled now for its other players, RV-355)
-      decline: (token, region) => {
-        queueAddress(params, location.hostname, undefined, region)
+      // (the seat claimed and left at once: the match is cancelled now for its other players, RV-355)
+      decline: (found) => {
+        claimAddress(params, location.hostname, undefined, undefined, regionOf(found)?.id, found.ticket)
           .then(async (address) => {
-            const { connection } = await Connection.open(address, joinPreferences(settings), { intent: "claim", token });
+            const { connection } = await Connection.open(address, joinPreferences(settings), { intent: "claim", token: found.id });
             connection.close();
           })
           .catch(() => undefined);
@@ -811,7 +820,7 @@ async function main(): Promise<void> {
       },
       // (the banner at once, no panel (MS1's in-game path); the Play page kept, its Free Play focused: free play next while
       // searching, the user's decision; while a search runs, Find Match only shows it: MM-2's SearchInProgress)
-      findMatch: (playlist) => {
+      findMatch: (playlists) => {
         void accountsReady.then(async () => {
           if (deploymentDown) {
             modal.show(ACCOUNT_TEXT.unavailableTitle, ACCOUNT_TEXT.serversUnreachable);
@@ -827,7 +836,7 @@ async function main(): Promise<void> {
             showAccountPage(ACCOUNT_TEXT.findMatchNeedsAccount);
             return;
           }
-          search(playlist);
+          search(playlists);
           mainMenu?.focusFreePlay();
         });
       },
@@ -996,14 +1005,8 @@ async function main(): Promise<void> {
       });
     } else offerRejoin();
     if (notice?.search !== undefined) {
-      // (back from a match cancelled for someone else: its token, the queue's front again, and its search's clock: RV-367)
-      const back = notice.back
-        ? {
-            token: notice.back.token,
-            searchedFor: (Date.now() - notice.back.searchedAt) / 1000,
-            ...(notice.back.server ? { region: notice.back.server } : {}),
-          }
-        : undefined;
+      // (back from a match cancelled for someone else: its search's clock; the matchmaker keeps its place: RV-367)
+      const back = notice.back ? { searchedFor: (Date.now() - notice.back.searchedAt) / 1000 } : undefined;
       search(notice.search, notice.warning, back);
     }
     (window as unknown as { carballMatchmaking?: unknown }).carballMatchmaking = () => ({ state: matchmaking.state });
@@ -1203,7 +1206,7 @@ async function main(): Promise<void> {
       {
         // (a queue match: Play Again searches its playlist again from the menu)
         ready: () => {
-          if (claim) leave({ search: claim.playlist });
+          if (claim) leave({ search: claim.playlists ?? [claim.playlist] });
           else online.readyForNextMatch();
         },
         exit: () => {
@@ -1222,11 +1225,7 @@ async function main(): Promise<void> {
       // (a queue match's session ending: back to the menu, with the kick's modal, a search again, or the lost connection's)
       const notices: Record<SessionEnd, MenuNotice | undefined> = {
         idle: { modal: "idle" },
-        notAllJoined: {
-          search: claim.playlist,
-          warning: OWN_SEARCH_TEXT.notAllJoined,
-          back: { token: claim.token, searchedAt: claim.searchedAt, ...(claim.server ? { server: claim.server } : {}) },
-        },
+        notAllJoined: { search: claim.playlists ?? [claim.playlist], warning: OWN_SEARCH_TEXT.notAllJoined, back: { searchedAt: claim.searchedAt } },
         lost: { modal: "lost" },
         ended: undefined,
       };

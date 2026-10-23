@@ -1,15 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { JOIN_COUNTDOWN, Matchmaking, OWN_SEARCH_TEXT, SEARCH_TEXT, type SearchHandlers, timelineLines } from "./matchmaking";
+import { type FoundMatch, JOIN_COUNTDOWN, Matchmaking, OWN_SEARCH_TEXT, SEARCH_TEXT, type SearchHandlers, timelineLines } from "./matchmaking";
+
+/** A match found (made up): its id, map and playlist */
+function match(id: bigint, map = 0, playlist = 1): FoundMatch {
+  return { id, server: "game-eu.example:4433", ticket: `t${id.toString()}`, playlist, map };
+}
 
 function harness() {
   const sounds: string[] = [];
-  const joined: { token: bigint; playlist: number; map: number }[] = [];
+  const joined: { token: bigint; playlists: readonly number[]; map: number }[] = [];
   const searchedFor: number[] = [];
-  const searches: { playlist: number; token: bigint; handlers: SearchHandlers; cancelled: boolean; finished: (() => void) | null }[] = [];
+  const searches: { playlists: readonly number[]; handlers: SearchHandlers; cancelled: boolean; finished: (() => void) | null }[] = [];
   const declined: bigint[] = [];
   const mm = new Matchmaking({
-    search: (playlist, token, handlers) => {
-      const s: (typeof searches)[number] = { playlist, token, handlers, cancelled: false, finished: null };
+    search: (playlists, handlers) => {
+      const s: (typeof searches)[number] = { playlists, handlers, cancelled: false, finished: null };
       searches.push(s);
       return {
         cancel: () => {
@@ -22,11 +27,11 @@ function harness() {
       };
     },
     sound: (cue) => sounds.push(cue),
-    join: (token, playlist, seconds, map) => {
-      joined.push({ token, playlist, map });
+    join: (found, playlists, seconds) => {
+      joined.push({ token: found.id, playlists, map: found.map });
       searchedFor.push(seconds);
     },
-    decline: (token) => declined.push(token),
+    decline: (found) => declined.push(found.id),
   });
   return { mm, sounds, joined, searchedFor, searches, declined };
 }
@@ -49,15 +54,15 @@ describe("matchmaking (notes/matchmaking.md MM-4..14)", () => {
   it("connects, searches, then counts Joining in 3, 2, 1 with a beep each and claims at 0", () => {
     const { mm, sounds, joined, searches } = harness();
     mm.frame(10);
-    mm.start(2);
+    mm.start([2]);
     expect(mm.state?.status).toBe("connecting");
-    expect(searches[0]?.playlist).toBe(2);
+    expect(searches[0]?.playlists).toEqual([2]);
     expect(sounds).toEqual(["start"]);
     searches[0]?.handlers.searching();
     expect(mm.state?.status).toBe("searching");
     mm.frame(16);
     expect(mm.state?.lines.map((l) => l.text)).toEqual([SEARCH_TEXT.findingBestMatch]);
-    searches[0]?.handlers.found(77n, 6);
+    searches[0]?.handlers.found(match(77n, 6));
     expect(mm.state?.status).toBe("joining");
     const countdown = (): string[] => (mm.state?.lines ?? []).filter((l) => l.kind === "countdown").map((l) => l.text);
     expect(countdown()).toEqual(["Joining in 3"]);
@@ -68,20 +73,20 @@ describe("matchmaking (notes/matchmaking.md MM-4..14)", () => {
     expect(countdown()).toEqual(["Joining in 3", "Joining in 2", "Joining in 1"]);
     expect(joined).toEqual([]);
     vi.advanceTimersByTime(JOIN_COUNTDOWN * 1000 - 2000);
-    expect(joined).toEqual([{ token: 77n, playlist: 2, map: 6 }]);
+    expect(joined).toEqual([{ token: 77n, playlists: [2], map: 6 }]);
     expect(sounds).toEqual(["start", "countdown", "countdown", "countdown"]);
     expect(mm.state).toBeNull();
   });
 
   it("Cancel Search closes the session with the cancel sound; a late answer is ignored", () => {
     const { mm, sounds, joined, searches } = harness();
-    mm.start(1);
+    mm.start([1]);
     searches[0]?.handlers.searching();
     mm.cancel();
     expect(searches[0]?.cancelled).toBe(true);
     expect(mm.state).toBeNull();
     expect(sounds).toEqual(["start", "cancel"]);
-    searches[0]?.handlers.found(5n, 0);
+    searches[0]?.handlers.found(match(5n, 0));
     mm.frame(100);
     expect(joined).toEqual([]);
     expect(mm.state).toBeNull();
@@ -90,34 +95,34 @@ describe("matchmaking (notes/matchmaking.md MM-4..14)", () => {
   it("a failed search shows Failed and its warning line, then goes; a new search starts with a warning line", () => {
     const { mm, searches } = harness();
     mm.frame(0);
-    mm.start(3);
+    mm.start([3]);
     searches[0]?.handlers.failed("the connection to the server was lost");
     expect(mm.state?.status).toBe("failed");
     expect(mm.searching).toBe(false);
     expect(mm.state?.lines).toEqual([{ text: `${OWN_SEARCH_TEXT.failedPrefix} the connection to the server was lost`, kind: "warning" }]);
     mm.frame(5.5);
     expect(mm.state).toBeNull();
-    mm.start(3, OWN_SEARCH_TEXT.notAllJoined);
+    mm.start([3], OWN_SEARCH_TEXT.notAllJoined);
     expect(mm.state?.lines).toEqual([{ text: OWN_SEARCH_TEXT.notAllJoined, kind: "warning" }]);
     expect(searches).toHaveLength(2);
   });
 
   it("Find Match while a search runs keeps it (MM-2: SearchInProgress); after it ends, a new one starts", () => {
     const { mm, searches } = harness();
-    expect(mm.start(1)).toBe(true);
-    expect(mm.start(2)).toBe(false);
-    expect(searches.map((s) => [s.playlist, s.cancelled])).toEqual([[1, false]]);
-    expect(mm.playlist).toBe(1);
+    expect(mm.start([1])).toBe(true);
+    expect(mm.start([2])).toBe(false);
+    expect(searches.map((s) => [s.playlists, s.cancelled])).toEqual([[[1], false]]);
+    expect(mm.playlists).toEqual([1]);
     searches[0]?.handlers.failed("lost");
-    expect(mm.start(2)).toBe(true);
-    expect(searches.map((s) => s.playlist)).toEqual([1, 2]);
+    expect(mm.start([2])).toBe(true);
+    expect(searches.map((s) => s.playlists)).toEqual([[1], [2]]);
   });
 
   it("Cancel Search during Joining in gives the slot up at once and doesn't claim (RV-355)", () => {
     const { mm, joined, searches, declined, sounds } = harness();
-    mm.start(1);
+    mm.start([1]);
     searches[0]?.handlers.searching();
-    searches[0]?.handlers.found(9n, 0);
+    searches[0]?.handlers.found(match(9n, 0));
     vi.advanceTimersByTime(1500);
     const beeps = sounds.filter((c) => c === "countdown").length;
     mm.cancel();
@@ -133,20 +138,20 @@ describe("matchmaking (notes/matchmaking.md MM-4..14)", () => {
 
   it("a failure after the match was found doesn't fail the search: the join goes on (RX13's C12)", () => {
     const { mm, joined, searches } = harness();
-    mm.start(1);
+    mm.start([1]);
     searches[0]?.handlers.searching();
-    searches[0]?.handlers.found(4n, 0);
+    searches[0]?.handlers.found(match(4n, 0));
     searches[0]?.handlers.failed("the connection to the server was lost");
     searches[0]?.handlers.cooldown(100, false);
     expect(mm.state?.status).toBe("joining");
     vi.advanceTimersByTime(JOIN_COUNTDOWN * 1000);
-    expect(joined).toEqual([{ token: 4n, playlist: 1, map: 0 }]);
+    expect(joined).toEqual([{ token: 4n, playlists: [1], map: 0 }]);
   });
 
   it("a search finished as the page goes: a match found meanwhile is followed, else it ends quietly (RV-443)", async () => {
     const { mm, joined, searches, sounds } = harness();
     // (no match: the session's end is no failure, no cancel sound, no search left)
-    mm.start(1);
+    mm.start([1]);
     searches[0]?.handlers.searching();
     const quiet = mm.finish();
     expect(mm.finish()).toBe(quiet);
@@ -157,15 +162,15 @@ describe("matchmaking (notes/matchmaking.md MM-4..14)", () => {
     expect(mm.state).toBeNull();
     expect(sounds).toEqual(["start"]);
     // (a match found before the end: the join goes on, the page follows it)
-    mm.start(1);
+    mm.start([1]);
     searches[1]?.handlers.searching();
     const followed = mm.finish();
-    searches[1]?.handlers.found(9n, 3);
+    searches[1]?.handlers.found(match(9n, 3));
     searches[1]?.finished?.();
     expect(await followed).toBe(true);
     expect(mm.state?.status).toBe("joining");
     vi.advanceTimersByTime(JOIN_COUNTDOWN * 1000);
-    expect(joined).toEqual([{ token: 9n, playlist: 1, map: 3 }]);
+    expect(joined).toEqual([{ token: 9n, playlists: [1], map: 3 }]);
     // (nothing running, or already joining: answered at once)
     expect(await mm.finish()).toBe(false);
   });
@@ -173,7 +178,7 @@ describe("matchmaking (notes/matchmaking.md MM-4..14)", () => {
   it("a search another tab of this browser took the place of says so plainly, not as a failure (RV-460)", () => {
     const { mm, searches } = harness();
     mm.frame(0);
-    mm.start(2);
+    mm.start([2]);
     searches[0]?.handlers.replaced();
     // (its summary "Ended", not the game's "Failed": RV-491; no longer searching, and it stays till Cancel Search)
     expect(mm.state?.status).toBe("ended");
@@ -186,7 +191,7 @@ describe("matchmaking (notes/matchmaking.md MM-4..14)", () => {
   it("a search refused for a no-show says why and how long, and stays until Cancel Search or a new search (RV-367)", () => {
     const { mm, searches, sounds } = harness();
     mm.frame(0);
-    mm.start(2);
+    mm.start([2]);
     searches[0]?.handlers.cooldown(112, false);
     expect(mm.state?.status).toBe("failed");
     expect(mm.state?.lines).toEqual([{ text: OWN_SEARCH_TEXT.cooldown(112), kind: "warning" }]);
@@ -200,74 +205,57 @@ describe("matchmaking (notes/matchmaking.md MM-4..14)", () => {
     expect(mm.state).toBeNull();
     expect(sounds).toEqual(["start"]);
     // The address's block (maybe a neighbour's no-show): words that blame no one (RV-385)
-    mm.start(2);
+    mm.start([2]);
     searches[1]?.handlers.cooldown(75, true);
     expect(mm.state?.lines).toEqual([{ text: "Searches from your network are paused after a recent no-show. You can search again in 1:15.", kind: "warning" }]);
   });
 
-  it("a search back from a cancelled match sends its token and its clock goes on from the first search (RV-367)", () => {
+  it("a search back from a cancelled match: its clock goes on from the first search (RV-367; its place the matchmaker's)", () => {
     const { mm, searches, searchedFor } = harness();
     mm.frame(100);
-    mm.start(3, OWN_SEARCH_TEXT.notAllJoined, { token: 31n, searchedFor: 4 });
-    expect(searches[0]?.token).toBe(31n);
+    mm.start([3], OWN_SEARCH_TEXT.notAllJoined, { searchedFor: 4 });
     searches[0]?.handlers.searching();
     mm.frame(101.5);
     expect(mm.state?.lines.map((l) => l.text)).toEqual([SEARCH_TEXT.findingBestMatch, OWN_SEARCH_TEXT.notAllJoined]);
-    searches[0]?.handlers.found(32n, 0);
+    searches[0]?.handlers.found(match(32n, 0));
     vi.advanceTimersByTime(JOIN_COUNTDOWN * 1000);
     expect(searchedFor).toEqual([5.5]);
-    // A new search: token 0, its own clock
-    mm.start(3);
-    expect(searches[1]?.token).toBe(0n);
+    // A new search: its own clock
+    mm.start([3]);
     searches[1]?.handlers.searching();
     mm.frame(104);
     expect(mm.state?.lines).toEqual([]);
   });
 
-  it("a region's match: the join and a decline go to its server; a dropped region's line; the MoreRegions tip (Regions)", () => {
-    const joins: (string | undefined)[] = [];
-    const declines: (string | undefined)[] = [];
-    let handlers: SearchHandlers | null = null;
-    let backRegion: string | undefined;
+  it("searches several playlists at once; the match found's own joined; a line during the search; the MoreRegions tip", () => {
+    const { mm, searches, joined, declined } = harness();
     let regions = 1;
-    const mm = new Matchmaking({
-      search: (_playlist, _token, h, region) => {
-        handlers = h;
-        backRegion = region;
-        return { cancel: () => undefined, finish: () => Promise.resolve() };
-      },
+    mm.frame(0);
+    mm.start([1, 3]);
+    expect(searches[0]?.playlists).toEqual([1, 3]);
+    searches[0]?.handlers.searching();
+    searches[0]?.handlers.warning?.("a line");
+    expect(mm.state?.lines).toEqual([{ text: "a line", kind: "warning" }]);
+    searches[0]?.handlers.found(match(9n, 0, 3));
+    vi.advanceTimersByTime(JOIN_COUNTDOWN * 1000);
+    expect(joined).toEqual([{ token: 9n, playlists: [1, 3], map: 0 }]);
+    // (Cancel Search in "Joining in": that match's seat given up)
+    mm.start([1]);
+    searches[1]?.handlers.searching();
+    searches[1]?.handlers.found(match(10n));
+    mm.cancel();
+    expect(declined).toEqual([10n]);
+    // (the tip with one region ticked of several)
+    const tipped = new Matchmaking({
+      search: () => ({ cancel: () => undefined, finish: () => Promise.resolve() }),
       sound: () => undefined,
-      join: (_token, _playlist, _seconds, _map, region) => joins.push(region),
-      decline: (_token, region) => declines.push(region),
+      join: () => undefined,
+      decline: () => undefined,
       moreRegions: () => regions === 1,
     });
-    const h = (): SearchHandlers => {
-      if (!handlers) throw new Error("no search");
-      return handlers;
-    };
-    mm.frame(0);
-    mm.start(1, undefined, { token: 3n, searchedFor: 0, region: "eu" });
-    expect(backRegion).toBe("eu");
-    h().searching();
-    h().warning?.("Asia: the server can't be reached");
-    expect(mm.state?.lines).toEqual([{ text: "Asia: the server can't be reached", kind: "warning" }]);
-    mm.frame(31);
-    expect(mm.state?.lines.map((l) => l.text)).toEqual([SEARCH_TEXT.findingBestMatch, SEARCH_TEXT.moreRegions, "Asia: the server can't be reached"]);
-    h().found(9n, 0, "us-east");
-    vi.advanceTimersByTime(JOIN_COUNTDOWN * 1000);
-    expect(joins).toEqual(["us-east"]);
-    // (Cancel Search in "Joining in": the slot given up at that region's server)
-    mm.start(1);
-    h().searching();
-    h().found(10n, 0, "eu");
-    mm.cancel();
-    expect(declines).toEqual(["eu"]);
-    // (several regions searched: no tip)
+    tipped.frame(0);
+    tipped.start([1]);
     regions = 2;
-    mm.start(1);
-    h().searching();
-    mm.frame(100);
-    expect(mm.state?.lines.map((l) => l.text)).toEqual([SEARCH_TEXT.findingBestMatch]);
     expect(timelineLines(31, true).map((l) => l.text)).toEqual([SEARCH_TEXT.findingBestMatch, SEARCH_TEXT.moreRegions]);
     expect(timelineLines(29, true).map((l) => l.text)).toEqual([SEARCH_TEXT.findingBestMatch]);
   });

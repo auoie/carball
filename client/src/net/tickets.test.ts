@@ -24,10 +24,10 @@ describe("search tickets", () => {
     const rejoin = answer({ ticket: "UmVqb2lu" });
     expect(await accountTicket(rejoin, 0xa1n)).toBe("UmVqb2lu");
     expect(String((rejoin.mock.calls[0] as unknown[])[0])).toBe("/api/ticket?rejoin=00000000000000a1");
-    // (a ticket is base64url, 320 characters at most: anything else isn't sent on)
+    // (a ticket is base64url, 512 characters at most (a match ticket's longest, MX1): anything else isn't sent on)
     await expect(accountTicket(answer({ ticket: "has space" }))).rejects.toThrow(/malformed/);
-    expect(await accountTicket(answer({ ticket: "A".repeat(320) }))).toHaveLength(320);
-    await expect(accountTicket(answer({ ticket: "A".repeat(321) }))).rejects.toThrow(/malformed/);
+    expect(await accountTicket(answer({ ticket: "A".repeat(512) }))).toHaveLength(512);
+    await expect(accountTicket(answer({ ticket: "A".repeat(513) }))).rejects.toThrow(/malformed/);
     await expect(accountTicket(answer({}))).rejects.toThrow(/malformed/);
   });
 

@@ -1,6 +1,6 @@
 // Shared test fixture: the page never sees real gamepads. The system Chrome running the tests reads any
 // controller plugged into the machine, and someone playing with it would press buttons in the test.
-import { type BrowserContext, type Page, test as base } from "@playwright/test";
+import { type BrowserContext, type Locator, type Page, expect, test as base } from "@playwright/test";
 
 export async function hideGamepads(context: BrowserContext): Promise<void> {
   await context.addInitScript(() => {
@@ -77,4 +77,21 @@ export async function padTap(page: Page, buttons: number[]): Promise<void> {
     w.carballSetPad([]);
     await frames(2);
   }, buttons);
+}
+
+/** The Play page's playlists ticked as named, the others unticked (its boxes: one at least stays ticked, so the named
+ *  ones are ticked first) */
+export async function tickPlaylists(menu: Locator, names: readonly string[]): Promise<void> {
+  for (const name of names) {
+    const box = menu.getByRole("checkbox", { name, exact: true });
+    if ((await box.getAttribute("aria-checked")) !== "true") await box.click();
+  }
+  for (const box of await menu.locator(".main-menu-playlist").all()) {
+    const name = (await box.getAttribute("aria-label")) ?? "";
+    if (!names.includes(name) && (await box.getAttribute("aria-checked")) === "true") await box.click();
+  }
+  for (const box of await menu.locator(".main-menu-playlist").all()) {
+    const name = (await box.getAttribute("aria-label")) ?? "";
+    await expect(box).toHaveAttribute("aria-checked", String(names.includes(name)));
+  }
 }

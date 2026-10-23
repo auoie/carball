@@ -3,6 +3,8 @@
 // session's cookie); a development server's from its own info server (`/dev-ticket`: signed with a key it made at its
 // start, the browser's key standing for an account, the settings' name its name).
 import { loadSettings } from "../settings/settings";
+import { RefusedError } from "./connection";
+import { REFUSED_IN_MATCH } from "./protocol";
 import { browserKey } from "./search";
 
 /** The page has no signed-in session, or it ended: sign in to play online */
@@ -38,6 +40,9 @@ export async function accountTicket(post: typeof fetch = fetch, rejoin?: bigint)
     const until = typeof body?.until === "string" ? Date.parse(body.until) : NaN;
     if (body?.error === "queue-banned" && Number.isFinite(until)) throw new QueueBannedError(until);
   }
+  // (a rejoin while the account searches or plays another match: refused as the server refuses a rejoin of a seat
+  // played elsewhere, MX1R-5)
+  if (response.status === 409) throw new RefusedError(REFUSED_IN_MATCH);
   if (!response.ok) throw new Error(ticketRefusalText(response.status));
   return ticketOf(await response.json());
 }
@@ -69,6 +74,6 @@ export function devTicket(host: string, infoPort: number, get: typeof fetch = fe
 
 function ticketOf(body: unknown): string {
   const ticket = (body as { ticket?: unknown } | null)?.ticket;
-  if (typeof ticket !== "string" || !/^[A-Za-z0-9_-]{1,320}$/.test(ticket)) throw new Error("a malformed ticket");
+  if (typeof ticket !== "string" || !/^[A-Za-z0-9_-]{1,512}$/.test(ticket)) throw new Error("a malformed ticket");
   return ticket;
 }

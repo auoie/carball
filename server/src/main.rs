@@ -31,8 +31,10 @@ struct Args {
     /// A development server (`--dev`): a self-signed certificate whatever CERT_PATH and KEY_PATH say. A queue server
     /// without a certificate must be asked for it (RV-381: an empty variable in a deployment is no silent outage)
     dev: bool,
-    /// The host name the server is reached at (logged: its certificate must be for it)
+    /// The host name the server is reached at (logged: its certificate must be for it), and the port when it's published
+    /// as another than `--port` (`PUBLIC_PORT`): together this server's name, as its match tickets name it
     public_host: Option<String>,
+    public_port: Option<u16>,
     health_port: u16,
     limits: NetLimits,
     /// The search tickets' public keys (`TICKET_PUBLIC_KEYS`: "KID BASE64", comma- or line-separated; notes/accounts.md
@@ -46,6 +48,17 @@ struct Args {
     /// (`OUTBOX_DIR`). A queue server's, required unless --dev (which logs the calls only)
     api: Option<ApiArgs>,
     outbox_dir: Option<PathBuf>,
+    /// A development server's matchmaker (`--api-url http://127.0.0.1:PORT`: `carball-api matchmaker --dev`), its calls
+    /// sent there, no token
+    dev_api: Option<String>,
+}
+
+impl Args {
+    /// This server's name as the matchmaker and its match tickets name it: its address, `PUBLIC_HOST` (127.0.0.1 for a
+    /// development server without one) and its port (`PUBLIC_PORT`, else `--port`)
+    fn server_name(&self) -> String {
+        format!("{}:{}", self.public_host.as_deref().unwrap_or("127.0.0.1"), self.public_port.unwrap_or(self.port))
+    }
 }
 
 /// `API_URL` and its credentials' files
@@ -135,12 +148,14 @@ fn parse_args(mut it: impl Iterator<Item = String>, env: impl Fn(&str) -> Option
         cert: None,
         dev: false,
         public_host: None,
+        public_port: None,
         health_port: 8081,
         limits: NetLimits::default(),
         ticket_keys: None,
         ticket_keys_file: None,
         api: None,
         outbox_dir: None,
+        dev_api: None,
     };
     if let Some(mode) = env("SERVER_MODE") {
         args.queue = parse_mode(&mode)?;
@@ -157,6 +172,9 @@ fn parse_args(mut it: impl Iterator<Item = String>, env: impl Fn(&str) -> Option
         args.limits.allowed_origins = Some(origins(&list)?);
     }
     args.public_host = env("PUBLIC_HOST").filter(|h| !h.is_empty());
+    if let Some(port) = env("PUBLIC_PORT").filter(|p| !p.is_empty()) {
+        args.public_port = Some(number("PUBLIC_PORT", &port)?);
+    }
     if let Some(port) = env("HEALTH_PORT") {
         args.health_port = number("HEALTH_PORT", &port)?;
     }
@@ -199,6 +217,8 @@ fn parse_args(mut it: impl Iterator<Item = String>, env: impl Fn(&str) -> Option
             "--key" => key = Some(value()?.into()),
             "--allowed-origin" => args.limits.allowed_origins = Some(origins(&value()?)?),
             "--public-host" => args.public_host = Some(value()?),
+            "--public-port" => args.public_port = Some(number("--public-port", &value()?)?),
+            "--api-url" => args.dev_api = Some(value()?.trim_end_matches('/').to_string()),
             "--health-port" => args.health_port = number("--health-port", &value()?)?,
             "--max-sessions" => args.limits.max_sessions = number("--max-sessions", &value()?)?,
             "--max-per-address" => args.limits.per_address = number("--max-per-address", &value()?)?,
@@ -211,6 +231,14 @@ fn parse_args(mut it: impl Iterator<Item = String>, env: impl Fn(&str) -> Option
     }
     if args.meshes.as_os_str().is_empty() {
         args.meshes = default_meshes();
+    }
+    // (a development matchmaker's: plain http on this machine, a development server's alone)
+    if let Some(url) = &args.dev_api {
+        let host = url.strip_prefix("http://").and_then(|h| h.rsplit_once(':')).map(|(h, _)| h);
+        anyhow::ensure!(
+            args.dev && matches!(host, Some("127.0.0.1" | "localhost" | "[::1]")),
+            "--api-url is a development matchmaker's (http://127.0.0.1:PORT), with --dev alone"
+        );
     }
     // (the queue's matches are ranked: online play is ranked only, the user's decision; --match-type the open match's,
     // casual by default, RX32)
@@ -329,17 +357,17 @@ fn outbox_config(args: &Args) -> anyhow::Result<carball_server::outbox::OutboxCo
             };
             (Some(api.url.clone()), token, access)
         }
-        None => (None, String::new(), None),
+        None => (args.dev_api.clone(), String::new(), None),
     };
     Ok(carball_server::outbox::OutboxConfig {
         api_url,
         token,
         access,
         dir: args.outbox_dir.clone(),
-        server: args.public_host.clone().unwrap_or_else(|| "carball-server".into()),
+        server: args.server_name(),
         first_wait: Duration::from_secs(5),
         max_wait: Duration::from_secs(300),
-        https_only: true,
+        https_only: args.dev_api.is_none(),
     })
 }
 
@@ -464,6 +492,8 @@ async fn main() -> anyhow::Result<()> {
     }
     let mut args = args;
     args.limits.tickets = tickets.clone();
+    // (a match ticket is for one server: this one's name, its address, RV-850)
+    args.limits.server_name = args.queue.then(|| args.server_name());
 
     // (bounded: a flood of messages waits in its session instead of growing the game's queue, RV-248)
     let (to_game, messages) = tokio::sync::mpsc::channel(game_loop::TO_GAME_QUEUE);
@@ -491,6 +521,9 @@ async fn main() -> anyhow::Result<()> {
             None => println!("ranked calls logged only (no API_URL: development)"),
         }
         tokio::spawn(carball_server::outbox::run(config, rx));
+        // (the matches this server had before its start are gone: the matchmaker frees their players)
+        let _ = tx.send(carball_server::match_host::Report::Restarted { at: carball_server::ticket::unix_now() });
+        println!("this server's name for the matchmaker: {}", args.server_name());
         Some(tx)
     } else {
         None
@@ -564,6 +597,25 @@ mod tests {
 
     fn parse(args: &[&str]) -> anyhow::Result<Args> {
         parse_args(args.iter().map(|a| (*a).to_string()), |_| None)
+    }
+
+    /// This server's name for the matchmaker: PUBLIC_HOST and its port (PUBLIC_PORT, else --port; 127.0.0.1 for a
+    /// development server); a development matchmaker's URL (--api-url) loopback http, with --dev alone
+    #[test]
+    fn the_servers_name_and_a_development_matchmakers_url() {
+        let env = |name: &str| match name {
+            "PUBLIC_HOST" => Some("game-eu.example".to_string()),
+            "PUBLIC_PORT" => Some("443".to_string()),
+            _ => None,
+        };
+        let named = parse_args(["--port", "4433"].iter().map(|a| (*a).to_string()), env).unwrap();
+        assert_eq!(named.server_name(), "game-eu.example:443");
+        assert_eq!(parse(&["--port", "5000"]).unwrap().server_name(), "127.0.0.1:5000");
+        let dev = parse(&["--mode", "queue", "--dev", "--api-url", "http://127.0.0.1:8090/"]).unwrap();
+        assert_eq!(dev.dev_api.as_deref(), Some("http://127.0.0.1:8090"));
+        assert!(parse(&["--mode", "queue", "--api-url", "http://127.0.0.1:8090"]).is_err(), "without --dev");
+        assert!(parse(&["--mode", "queue", "--dev", "--api-url", "http://example.com:8090"]).is_err(), "not loopback");
+        assert!(parse(&["--mode", "queue", "--dev", "--api-url", "https://127.0.0.1:8090"]).is_err(), "not plain http");
     }
 
     #[test]

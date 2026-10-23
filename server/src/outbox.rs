@@ -82,7 +82,27 @@ pub fn call_of(report: &Report, server: &str, created: i64) -> Call {
             body: Some(json!({ "match": match_id, "ticket": ticket })),
             created,
         },
+        // (the matchmaker's events: notes/matchmaking.md, the central matchmaker)
+        Report::Started { match_id } => {
+            event(json!({ "event": "started", "server": server, "match": match_id }), created)
+        }
+        Report::Left { match_id, seat } => {
+            event(json!({ "event": "left", "server": server, "match": match_id, "seat": seat }), created)
+        }
+        Report::Back { match_id, seat } => {
+            event(json!({ "event": "back", "server": server, "match": match_id, "seat": seat }), created)
+        }
+        Report::Cancelled { match_id, no_shows } => {
+            event(json!({ "event": "cancelled", "server": server, "match": match_id, "noShows": no_shows }), created)
+        }
+        Report::Over { match_id } => event(json!({ "event": "over", "server": server, "match": match_id }), created),
+        Report::Restarted { at } => event(json!({ "event": "restarted", "server": server, "at": at }), created),
     }
+}
+
+/// A matchmaker's event's call
+fn event(body: Value, created: i64) -> Call {
+    Call { method: "POST".into(), path: "/api/fleet/events".into(), body: Some(body), created }
 }
 
 /// What became of a call
@@ -404,6 +424,41 @@ mod tests {
         assert_eq!(
             (refill.method.as_str(), refill.path.as_str(), refill.body.unwrap()),
             ("POST", "/api/refills", json!({"match": "abc", "ticket": "r0"}))
+        );
+    }
+
+    /// The matchmaker's events: one call each to /api/fleet/events, naming this server (notes/matchmaking.md)
+    #[test]
+    fn the_matchmakers_events_call_its_events_path_naming_the_server() {
+        let m = || "00000000000000ab".to_string();
+        let body = |r: Report| {
+            let call = call_of(&r, "game-eu.example:4433", 9);
+            assert_eq!((call.method.as_str(), call.path.as_str(), call.created), ("POST", "/api/fleet/events", 9));
+            call.body.unwrap()
+        };
+        assert_eq!(
+            body(Report::Started { match_id: m() }),
+            json!({"event": "started", "server": "game-eu.example:4433", "match": m()})
+        );
+        assert_eq!(
+            body(Report::Left { match_id: m(), seat: 3 }),
+            json!({"event": "left", "server": "game-eu.example:4433", "match": m(), "seat": 3})
+        );
+        assert_eq!(
+            body(Report::Back { match_id: m(), seat: 3 }),
+            json!({"event": "back", "server": "game-eu.example:4433", "match": m(), "seat": 3})
+        );
+        assert_eq!(
+            body(Report::Cancelled { match_id: m(), no_shows: vec![1] }),
+            json!({"event": "cancelled", "server": "game-eu.example:4433", "match": m(), "noShows": [1]})
+        );
+        assert_eq!(
+            body(Report::Over { match_id: m() }),
+            json!({"event": "over", "server": "game-eu.example:4433", "match": m()})
+        );
+        assert_eq!(
+            body(Report::Restarted { at: 1_792_300_000 }),
+            json!({"event": "restarted", "server": "game-eu.example:4433", "at": 1_792_300_000})
         );
     }
 

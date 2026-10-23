@@ -14,10 +14,12 @@
 // Kicked's reason 2, a newer search from the same browser took this one's place (RV-460); 24: the stat graphs' network
 // rows (HUD-21: Inputs' sequence, each Update's input-buffer window and the inputs lost); 25: one map, Night; 26: Hello's
 // search ticket, an account's (notes/accounts.md §3), and Refused's reason 4; 27: rejoining a ranked match (Hello's
-// "rejoin" intent, Welcome's match id, Refused's reasons 5 and 6)
-export const PROTOCOL_VERSION = 27;
+// "rejoin" intent, Welcome's match id, Refused's reasons 5 and 6); 28: the accounts service's central matchmaker
+// (notes/matchmaking.md): a claim's match ticket (Hello's ticket up to 512 bytes), no search, decline, MatchFound or
+// SearchCooldown on the game servers (a page from before told to reload)
+export const PROTOCOL_VERSION = 28;
 /** A Hello's ticket's bytes at most (the accounts service's encoded ticket) */
-export const MAX_TICKET_BYTES = 320;
+export const MAX_TICKET_BYTES = 512;
 /** A name's bytes at most (UTF-8) */
 export const MAX_NAME_BYTES = 32;
 export const MAX_INPUT_FRAMES = 10;
@@ -132,7 +134,7 @@ export type ControlMessage =
       readonly intent: Intent;
       /** A search's playlist: its team size (1, 2, 3); 0 otherwise */
       readonly playlist: number;
-      /** A claim's token (a search's matchFound); 0 otherwise */
+      /** A rejoin's match id; 0 otherwise (a claim's match ticket says its match) */
       readonly token: bigint;
       /** A search's and a claim's signed ticket: who the player is (notes/accounts.md §3: the accounts service's, or a
        *  development server's own); empty for a join and the local host */
@@ -193,21 +195,15 @@ export type ControlMessage =
   | { readonly type: "statEvent"; readonly event: number; readonly points: number }
   /** A stat someone gained, for the feed (ClientNotifyStatTickerMessage): the receiver's car, a demolition's victim (0) */
   | { readonly type: "ticker"; readonly event: number; readonly receiver: number; readonly victim: number }
-  /** A search found a match: the slot's one-time token, to claim in a new session, and the match's map (its arena loads
-   *  during the join's countdown); the search session ends */
-  | { readonly type: "matchFound"; readonly token: bigint; readonly map: number }
   /** The idle warning shows (idle past 25 s of play) or hides (MM-33..36) */
   | { readonly type: "idleWarning"; readonly on: boolean }
   /** The server ends this session a second later (KICK_*: MM-37) */
   | { readonly type: "kicked"; readonly reason: number }
-  /** A search refused: this browser (network false) or this address (true: maybe someone else on it) stalled a match
-   *  (didn't claim its slot, or left before the start); it may search again in this many seconds (RV-367, RV-385); the
-   *  session ends */
-  | { readonly type: "searchCooldown"; readonly seconds: number; readonly network: boolean }
   /** A region's ping answered (Hello's "ping" intent); the session ends (notes/matchmaking.md, Regions) */
   | { readonly type: "pong" };
 
-/** Hello's intents (the wire's byte is the index): "ping" a region's (no ticket), "decline" the unclaimed slot its token
+/** Hello's intents (the wire's byte is the index; "search" and "decline" no longer served: the matchmaker's, notes/
+ *  matchmaking.md): "ping" a region's (no ticket), "decline" the unclaimed slot its token
  *  names for a match found in another region at the same moment (notes/matchmaking.md, Regions) */
 const INTENTS = ["join", "search", "claim", "rejoin", "ping", "decline"] as const;
 export type Intent = (typeof INTENTS)[number];
@@ -463,11 +459,6 @@ export function encodeControl(m: ControlMessage): Uint8Array {
       w.u64(m.token);
       w.ticket(m.ticket);
       break;
-    case "matchFound":
-      w.u8(0x8f);
-      w.u64(m.token);
-      w.u8(m.map);
-      break;
     case "idleWarning":
       w.u8(0x90);
       w.u8(m.on ? 1 : 0);
@@ -475,11 +466,6 @@ export function encodeControl(m: ControlMessage): Uint8Array {
     case "kicked":
       w.u8(0x91);
       w.u8(m.reason);
-      break;
-    case "searchCooldown":
-      w.u8(0x92);
-      w.u16(m.seconds);
-      w.u8(m.network ? 1 : 0);
       break;
     case "pong":
       w.u8(0x93);
@@ -676,14 +662,10 @@ export function decodeControl(body: Uint8Array): ControlMessage {
         token: r.u64(),
         ticket: r.ticket(),
       };
-    case 0x8f:
-      return { type: "matchFound", token: r.u64(), map: r.u8() };
     case 0x90:
       return { type: "idleWarning", on: r.u8() !== 0 };
     case 0x91:
       return { type: "kicked", reason: r.u8() };
-    case 0x92:
-      return { type: "searchCooldown", seconds: r.u16(), network: r.u8() !== 0 };
     case 0x93:
       return { type: "pong" };
     case 0x08:

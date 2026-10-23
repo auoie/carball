@@ -6,6 +6,17 @@ import { type Server, startServers } from "../src/testing/serverProcesses";
 
 // (every page from one address: no per-address session limits; the health ports apart; every match on Night, the one map)
 const GAME = ["run", "--quiet", "--manifest-path", "../server/Cargo.toml", "--", "--max-per-address", "1000", "--max-per-address-per-minute", "100000"];
+/** A development matchmaker (`carball-api matchmaker --dev`: notes/matchmaking.md, the central matchmaker) on `port`,
+ *  built from the API's module offline */
+const matchmaker = (name: string, port: number): Server => ({
+  name,
+  command: "go",
+  args: ["-C", "../api", "run", "./cmd/carball-api", "matchmaker", "--dev", "--listen", `127.0.0.1:${String(port)}`],
+  url: `http://127.0.0.1:${String(port)}/healthz`,
+  reuse: false,
+  env: { GOFLAGS: "-mod=readonly", GOPROXY: "off" },
+});
+
 const SERVERS: readonly Server[] = [
   { name: "preview", command: "node_modules/.bin/vite", args: ["preview", "--port", "4173", "--strictPort"], url: "http://localhost:4173/", reuse: true },
   // The game server for the online tests (the first run builds it)
@@ -41,11 +52,16 @@ const SERVERS: readonly Server[] = [
     url: "http://127.0.0.1:14438/info",
     reuse: false,
   },
-  // The queue's matches (1v1, 2v2, 3v3: searches and claims; the queue test)
+  // The development matchmakers, one for each group of the specs that search (their matches apart): the queue test's,
+  // the queue's edge cases', the regions'
+  matchmaker("matchmaker-queue", 14450),
+  matchmaker("matchmaker-edges", 14451),
+  matchmaker("matchmaker-regions", 14452),
+  // The matchmaker's matches (1v1, 2v2, 3v3: claims; the queue test)
   {
     name: "queue",
     command: "cargo",
-    args: [...GAME, "--port", "14439", "--health-port", "18084", "--info-port", "14440", "--mode", "queue", "--dev"],
+    args: [...GAME, "--port", "14439", "--health-port", "18084", "--info-port", "14440", "--mode", "queue", "--dev", "--api-url", "http://127.0.0.1:14450"],
     url: "http://127.0.0.1:14440/info",
     reuse: false,
   },
@@ -54,7 +70,7 @@ const SERVERS: readonly Server[] = [
   {
     name: "queue-edges",
     command: "cargo",
-    args: [...GAME, "--port", "14441", "--health-port", "18085", "--info-port", "14442", "--mode", "queue", "--dev"],
+    args: [...GAME, "--port", "14441", "--health-port", "18085", "--info-port", "14442", "--mode", "queue", "--dev", "--api-url", "http://127.0.0.1:14451"],
     url: "http://127.0.0.1:14442/info",
     reuse: false,
   },
@@ -62,14 +78,14 @@ const SERVERS: readonly Server[] = [
   {
     name: "region-a",
     command: "cargo",
-    args: [...GAME, "--port", "14445", "--health-port", "18087", "--info-port", "14446", "--mode", "queue", "--dev"],
+    args: [...GAME, "--port", "14445", "--health-port", "18087", "--info-port", "14446", "--mode", "queue", "--dev", "--api-url", "http://127.0.0.1:14452"],
     url: "http://127.0.0.1:14446/info",
     reuse: false,
   },
   {
     name: "region-b",
     command: "cargo",
-    args: [...GAME, "--port", "14447", "--health-port", "18088", "--info-port", "14448", "--mode", "queue", "--dev"],
+    args: [...GAME, "--port", "14447", "--health-port", "18088", "--info-port", "14448", "--mode", "queue", "--dev", "--api-url", "http://127.0.0.1:14452"],
     url: "http://127.0.0.1:14448/info",
     reuse: false,
   },

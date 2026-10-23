@@ -12,11 +12,28 @@
 // notes/matchmaking.md, ranked pairing), the defaults where it hasn't played. A rejoin's ticket is for that match alone
 // (the game server takes it for a rejoin of it, nothing else): a leaver's queue ban doesn't stop it, so the banned
 // leaver can still come back and refill the lobby (LV1, AP3).
+//
+// A match ticket (version 4, purpose 2: a seat; notes/matchmaking.md, the central matchmaker) is the matchmaker's for
+// one seat of one match at one game server, SeatLifetime long, taken once (RV-850): version 3's fields, its match the
+// matchmaker's id, then
+//
+//	server length (1) | server (its address, host:port) | playlist (1, the team size) | seat (1) | roster (1, its seats)
+//
+// Search and rejoin tickets stay version 3 (the game servers from before read them).
+//
+// A match ticket (version 4, purpose 2: a seat; notes/matchmaking.md, the central matchmaker) is the matchmaker's for
+// one seat of one match at one game server, SeatLifetime long, taken once (RV-850): version 3's fields, its match the
+// matchmaker's id, then
+//
+//	server length (1) | server (its address, host:port) | playlist (1, the team size) | seat (1) | roster (1, its seats)
+//
+// Search and rejoin tickets stay version 3 (the game servers from before read them).
 package ticket
 
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
@@ -26,8 +43,11 @@ import (
 	"unicode/utf8"
 )
 
-// Version is the format's (2: the ratings; 3: the purpose and match)
-const Version = 3
+// Version is the format's (2: the ratings; 3: the purpose and match); SeatVersion a match ticket's (its seat)
+const (
+	Version     = 3
+	SeatVersion = 4
+)
 
 // A ticket's purposes
 const (
@@ -35,17 +55,25 @@ const (
 	PurposeSearch = 0
 	// PurposeRejoin is a rejoin's, for its match alone
 	PurposeRejoin = 1
+	// PurposeSeat is a match ticket's: one seat of its match, at its server
+	PurposeSeat = 2
 )
 
 // Context is what a ticket's signature covers before its bytes (the audience)
 const Context = "carball-search\x00"
 
-// Lifetime is a ticket's (AC-6: about 2 minutes)
-const Lifetime = 2 * time.Minute
+// Lifetime is a ticket's (AC-6: about 2 minutes); SeatLifetime a match ticket's (claimed within seconds of its match)
+const (
+	Lifetime     = 2 * time.Minute
+	SeatLifetime = 30 * time.Second
+)
 
 // MaxBytes is a ticket's longest encoded length (the game server caps its Hello's ticket at it; the longest ticket, a
-// 32-byte key id and name, is 267)
-const MaxBytes = 320
+// match ticket with a 32-byte key id and name and a 64-byte server, is 358)
+const MaxBytes = 512
+
+// MaxServer is a match ticket's server address's longest (bytes)
+const MaxServer = 64
 
 // Ticket is what a ticket says
 type Ticket struct {
@@ -57,9 +85,14 @@ type Ticket struct {
 	Name    string
 	// Ratings in the playlists 1v1, 2v2, 3v3 (index 0, 1, 2)
 	Ratings [3]Shown
-	// Purpose is PurposeSearch or PurposeRejoin; Match a rejoin's match id (0 for a search)
+	// Purpose is PurposeSearch, PurposeRejoin or PurposeSeat; Match a rejoin's or a seat's match id (0 for a search)
 	Purpose byte
 	Match   uint64
+	// A seat's (PurposeSeat alone): its server's address, its playlist (the team size), its seat and its roster's size
+	Server   string
+	Playlist byte
+	Seat     byte
+	Roster   byte
 }
 
 // Shown is a rating as a ticket carries it, rounded
@@ -111,8 +144,31 @@ func (s *Signer) Issue(account [16]byte, name string, ratings [3]Shown, now time
 
 // IssueFor signs a ticket for a purpose: a search's (match 0), or a rejoin's of match
 func (s *Signer) IssueFor(account [16]byte, name string, ratings [3]Shown, purpose byte, match uint64, now time.Time) (string, Ticket, error) {
-	t := Ticket{KeyID: s.KeyID, Account: account, Issued: now.Truncate(time.Second), Name: name, Ratings: ratings, Purpose: purpose, Match: match}
+	return s.sign(Ticket{KeyID: s.KeyID, Account: account, Issued: now.Truncate(time.Second), Name: name, Ratings: ratings, Purpose: purpose, Match: match})
+}
+
+// Seat is a match ticket's seat: its match, server, playlist (team size), seat and roster size
+type Seat struct {
+	Match    uint64
+	Server   string
+	Playlist byte
+	Seat     byte
+	Roster   byte
+}
+
+// IssueSeat signs a match ticket for the account's seat (SeatLifetime long)
+func (s *Signer) IssueSeat(account [16]byte, name string, ratings [3]Shown, seat Seat, now time.Time) (string, Ticket, error) {
+	return s.sign(Ticket{
+		KeyID: s.KeyID, Account: account, Issued: now.Truncate(time.Second), Name: name, Ratings: ratings, Purpose: PurposeSeat,
+		Match: seat.Match, Server: seat.Server, Playlist: seat.Playlist, Seat: seat.Seat, Roster: seat.Roster,
+	})
+}
+
+func (s *Signer) sign(t Ticket) (string, Ticket, error) {
 	t.Expires = t.Issued.Add(Lifetime)
+	if t.Purpose == PurposeSeat {
+		t.Expires = t.Issued.Add(SeatLifetime)
+	}
 	if _, err := rand.Read(t.Nonce[:]); err != nil {
 		return "", Ticket{}, err
 	}
@@ -130,10 +186,14 @@ func Encode(t Ticket) ([]byte, error) {
 	if len(t.KeyID) == 0 || len(t.KeyID) > 32 || len(t.Name) == 0 || len(t.Name) > 32 {
 		return nil, errors.New("a ticket's key id and name are 1-32 bytes")
 	}
-	if (t.Purpose != PurposeSearch || t.Match != 0) && (t.Purpose != PurposeRejoin || t.Match == 0) {
-		return nil, errors.New("a ticket is a search's (no match) or a rejoin's (its match)")
+	if err := purposeFits(t); err != nil {
+		return nil, err
 	}
-	b := []byte{Version, byte(len(t.KeyID))} //nolint:gosec // (G115: checked above, 32 at most)
+	version := byte(Version)
+	if t.Purpose == PurposeSeat {
+		version = SeatVersion
+	}
+	b := []byte{version, byte(len(t.KeyID))} //nolint:gosec // (G115: checked above, 32 at most)
 	b = append(b, t.KeyID...)
 	b = append(b, t.Account[:]...)
 	b = binary.BigEndian.AppendUint64(b, uint64(t.Issued.Unix()))  //nolint:gosec // (G115: a time after 1970)
@@ -146,7 +206,27 @@ func Encode(t Ticket) ([]byte, error) {
 		b = binary.BigEndian.AppendUint16(b, r.Deviation)
 	}
 	b = append(b, t.Purpose)
-	return binary.BigEndian.AppendUint64(b, t.Match), nil
+	b = binary.BigEndian.AppendUint64(b, t.Match)
+	if t.Purpose == PurposeSeat {
+		b = append(b, byte(len(t.Server))) //nolint:gosec // (G115: checked by purposeFits, MaxServer at most)
+		b = append(b, t.Server...)
+		b = append(b, t.Playlist, t.Seat, t.Roster)
+	}
+	return b, nil
+}
+
+// purposeFits: a search's ticket has no match, a rejoin's its match, a seat's its match and a seat that fits its
+// playlist's roster at a named server; only a seat's has the seat's fields
+func purposeFits(t Ticket) error {
+	seatless := t.Server == "" && t.Playlist == 0 && t.Seat == 0 && t.Roster == 0
+	switch {
+	case t.Purpose == PurposeSearch && t.Match == 0 && seatless, t.Purpose == PurposeRejoin && t.Match != 0 && seatless:
+		return nil
+	case t.Purpose == PurposeSeat && t.Match != 0 && len(t.Server) > 0 && len(t.Server) <= MaxServer && utf8.ValidString(t.Server) &&
+		t.Playlist >= 1 && t.Playlist <= 3 && t.Roster == 2*t.Playlist && t.Seat < t.Roster:
+		return nil
+	}
+	return errors.New("ticket: a search's (no match), a rejoin's (its match) or a seat's (its match, server and seat)")
 }
 
 // Verify reads and checks a ticket against public keys by id, at now with `skew` either way (the tests'; the game
@@ -222,9 +302,10 @@ func ParsePublic(list string) (map[string]ed25519.PublicKey, error) {
 func decode(b []byte) (Ticket, error) {
 	var t Ticket
 	bad := errors.New("ticket: malformed")
-	if len(b) < 2 || b[0] != Version {
+	if len(b) < 2 || (b[0] != Version && b[0] != SeatVersion) {
 		return t, bad
 	}
+	seat := b[0] == SeatVersion
 	n := int(b[1])
 	b = b[2:]
 	if n == 0 || n > 32 || len(b) < n+16+8+8+16+1 {
@@ -241,7 +322,7 @@ func decode(b []byte) (Ticket, error) {
 	copy(t.Nonce[:], b[16:32])
 	b = b[32:]
 	m := int(b[0])
-	if m == 0 || m > 32 || len(b) != 1+m+3*4+1+8 {
+	if m == 0 || m > 32 || len(b) < 1+m+3*4+1+8 || (!seat && len(b) != 1+m+3*4+1+8) {
 		return t, bad
 	}
 	if !utf8.Valid(b[1 : 1+m]) {
@@ -253,8 +334,31 @@ func decode(b []byte) (Ticket, error) {
 		t.Ratings[i] = Shown{Rating: binary.BigEndian.Uint16(b[4*i:]), Deviation: binary.BigEndian.Uint16(b[4*i+2:])}
 	}
 	t.Purpose, t.Match = b[12], binary.BigEndian.Uint64(b[13:21])
-	if (t.Purpose != PurposeSearch || t.Match != 0) && (t.Purpose != PurposeRejoin || t.Match == 0) {
+	if b = b[21:]; seat {
+		// (a seat's fields: its server, playlist, seat and roster, and nothing after)
+		if len(b) < 1 || len(b) != 1+int(b[0])+3 {
+			return t, bad
+		}
+		t.Server = string(b[1 : 1+b[0]])
+		t.Playlist, t.Seat, t.Roster = b[1+b[0]], b[2+b[0]], b[3+b[0]]
+	}
+	// (each version its purposes: a seat's version 4 alone)
+	if purposeFits(t) != nil || seat != (t.Purpose == PurposeSeat) {
 		return t, bad
 	}
 	return t, nil
+}
+
+// DevKeyID is the development key's id; DevSeedText what its seed is the SHA-256 of. Published on purpose: only a
+// development game server (--dev) takes this key's tickets (the id is reserved: a listed key can't take it), and one
+// hands a ticket to anyone who asks anyway; the development matchmaker (`carball-api matchmaker --dev`) signs with it
+const (
+	DevKeyID    = "dev"
+	DevSeedText = "carball development ticket key"
+)
+
+// DevSigner signs with the development key
+func DevSigner() *Signer {
+	seed := sha256.Sum256([]byte(DevSeedText))
+	return &Signer{KeyID: DevKeyID, key: ed25519.NewKeyFromSeed(seed[:])}
 }

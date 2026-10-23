@@ -1,0 +1,414 @@
+package server_test
+
+import (
+	"crypto/ed25519"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"carball/api/internal/server"
+	"carball/api/internal/ticket"
+)
+
+// (made-up accounts, servers and pings throughout)
+
+const euServer = "game-eu.example:4433"
+
+// searchAs starts a search as the page does; its reply
+func (e *env) searchAs(b *http.Client, playlists []int, pings map[string]int) reply {
+	e.t.Helper()
+	regions := []string{}
+	for server := range pings {
+		regions = append(regions, server)
+	}
+	return e.write(b, http.MethodPost, "/api/search", map[string]any{"playlists": playlists, "pings": pings, "regions": regions})
+}
+
+// poll: a search's state past version `after` (no wait: the change already made)
+func (e *env) poll(id string, after int) (int, map[string]any) {
+	e.t.Helper()
+	resp := e.get(e.browser(), fmt.Sprintf("/api/search/%s?after=%d", id, after))
+	if resp.StatusCode != http.StatusOK {
+		return resp.StatusCode, nil
+	}
+	return resp.StatusCode, decode(e.t, resp)
+}
+
+// The page's search: started signed in (a session's account, its ratings), found with a match ticket for its seat at
+// the server both ticked, the account then in that match (a search refused, a rejoin of it alone) until its result
+func TestSearch(t *testing.T) {
+	e := setup(t, nil)
+	ba, _, _ := e.player("sub-sa")
+	bb, _, _ := e.player("sub-sb")
+	pings := map[string]int{euServer: 30}
+	if resp := e.searchAs(e.browser(), []int{1}, pings); resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("signed out: %d", resp.StatusCode)
+	}
+	for _, bad := range []map[string]any{
+		{"playlists": []int{}, "pings": pings},
+		{"playlists": []int{4}, "pings": pings},
+		{"playlists": []int{1, 1}, "pings": pings},
+		{"playlists": []int{1}, "pings": map[string]int{"no port": 30}},
+		{"playlists": []int{1}, "pings": map[string]int{euServer: -1}},
+	} {
+		if resp := e.write(ba, http.MethodPost, "/api/search", bad); resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("%v: %d", bad, resp.StatusCode)
+		}
+	}
+	if resp := e.searchAs(ba, []int{1}, map[string]int{}); resp.StatusCode != http.StatusServiceUnavailable || decode(t, resp)["error"] != "no-server" {
+		t.Errorf("no server answered: %d", resp.StatusCode)
+	}
+	ra := decode(t, e.searchAs(ba, []int{1, 2}, map[string]int{euServer: 30, "game-us.example:4433": 90}))
+	rb := decode(t, e.searchAs(bb, []int{1}, map[string]int{euServer: 80}))
+	if ra["state"] != "searching" || ra["version"].(float64) != 1 {
+		t.Fatalf("a search's start: %v", ra)
+	}
+	idA, idB := ra["search"].(string), rb["search"].(string)
+	e.s.Matchmaker.Tick(e.clock.Now())
+	_, fa := e.poll(idA, 1)
+	_, fb := e.poll(idB, 1)
+	ma, _ := fa["match"].(map[string]any)
+	mb, _ := fb["match"].(map[string]any)
+	if fa["state"] != "found" || ma == nil || mb == nil || ma["id"] != mb["id"] || ma["server"] != euServer || ma["playlist"].(float64) != 1 {
+		t.Fatalf("found: %v / %v", fa, fb)
+	}
+	// (each one's ticket: their seat of that match at that server, signed by the service)
+	seats := map[byte]bool{}
+	for _, m := range []map[string]any{ma, mb} {
+		tk, err := ticket.Verify(m["ticket"].(string), map[string]ed25519.PublicKey{e.s.Tickets.KeyID: e.s.Tickets.PublicKey()}, e.clock.Now(), 30*time.Second)
+		if err != nil || tk.Purpose != ticket.PurposeSeat || fmt.Sprintf("%016x", tk.Match) != m["id"] || tk.Server != euServer || tk.Roster != 2 {
+			t.Fatalf("a match ticket: %+v, %v", tk, err)
+		}
+		seats[tk.Seat] = true
+	}
+	if !seats[0] || !seats[1] {
+		t.Errorf("the seats: %v", seats)
+	}
+	// (started: in that match, a search refused, a rejoin ticket of it alone)
+	if resp := e.gameCall(http.MethodPost, "/api/fleet/events", gameToken, map[string]any{"event": "started", "match": ma["id"], "server": euServer}); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("started: %d", resp.StatusCode)
+	}
+	if resp := e.searchAs(ba, []int{1}, pings); resp.StatusCode != http.StatusForbidden || decode(t, resp)["error"] != "in-match" {
+		t.Errorf("a search in a match: %d", resp.StatusCode)
+	}
+	if resp := e.write(ba, http.MethodPost, "/api/ticket?rejoin="+ma["id"].(string), nil); resp.StatusCode != http.StatusOK {
+		t.Errorf("its match's rejoin: %d", resp.StatusCode)
+	}
+	if resp := e.write(ba, http.MethodPost, "/api/ticket?rejoin=00000000000000ff", nil); resp.StatusCode != http.StatusConflict || decode(t, resp)["error"] != "in-match" {
+		t.Errorf("another match's rejoin: %d", resp.StatusCode)
+	}
+	// (its result, with the match tickets: recorded, and the accounts free)
+	result := map[string]any{"match": ma["id"], "server": euServer, "playlist": 1, "winningTeam": 0, "players": []map[string]any{
+		{"ticket": ma["ticket"], "team": 0, "quitter": false, "seconds": 300}, {"ticket": mb["ticket"], "team": 1, "quitter": false, "seconds": 300},
+	}}
+	if seatOf(t, e, ma) != 0 {
+		result["players"].([]map[string]any)[0]["team"], result["players"].([]map[string]any)[1]["team"] = 1, 0
+	}
+	if resp := e.gameCall(http.MethodPost, "/api/results", gameToken, result); resp.StatusCode != http.StatusOK || decode(t, resp)["recorded"] != true {
+		t.Fatalf("the result with match tickets: %d %s", resp.StatusCode, resp.Body)
+	}
+	if resp := e.searchAs(ba, []int{1}, pings); resp.StatusCode != http.StatusOK {
+		t.Errorf("a search after the result: %d", resp.StatusCode)
+	}
+	// (a match ticket for another match's result: refused)
+	other := result
+	other["match"] = "00000000000000aa"
+	if resp := e.gameCall(http.MethodPost, "/api/results", gameToken, other); resp.StatusCode != http.StatusForbidden {
+		t.Errorf("a match ticket in another match's result: %d", resp.StatusCode)
+	}
+}
+
+// seatOf: a found match's seat (its ticket's)
+func seatOf(t *testing.T, e *env, m map[string]any) byte {
+	t.Helper()
+	tk, err := ticket.VerifySigned(m["ticket"].(string), map[string]ed25519.PublicKey{e.s.Tickets.KeyID: e.s.Tickets.PublicKey()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tk.Seat
+}
+
+// The polls: an unknown search 404 (the page searches again), a newer search of the account replaces the open one,
+// Cancel Search ends it, a long poll answers at the change
+func TestSearchPolls(t *testing.T) {
+	e := setup(t, nil)
+	b, _, _ := e.player("sub-sp")
+	if code, _ := e.poll(strings.Repeat("ab", 16), 0); code != http.StatusNotFound {
+		t.Errorf("an unknown search: %d", code)
+	}
+	if code, _ := e.poll("short", 0); code != http.StatusBadRequest {
+		t.Errorf("a malformed id: %d", code)
+	}
+	first := decode(t, e.searchAs(b, []int{2}, map[string]int{euServer: 40}))["search"].(string)
+	second := decode(t, e.searchAs(b, []int{2}, map[string]int{euServer: 40}))["search"].(string)
+	if _, st := e.poll(first, 1); st["state"] != "ended" || st["reason"] != "replaced" {
+		t.Errorf("the replaced search: %v", st)
+	}
+	if resp := e.write(b, http.MethodDelete, "/api/search/"+second, nil); resp.StatusCode != http.StatusNoContent {
+		t.Errorf("Cancel Search: %d", resp.StatusCode)
+	}
+	if _, st := e.poll(second, 1); st["reason"] != "cancelled" {
+		t.Errorf("a cancelled search: %v", st)
+	}
+	// (a poll waiting: answered when the match forms)
+	bc, _, _ := e.player("sub-sc")
+	bd, _, _ := e.player("sub-sd")
+	c := decode(t, e.searchAs(bc, []int{1}, map[string]int{euServer: 40}))["search"].(string)
+	answered := make(chan map[string]any, 1)
+	go func() {
+		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, e.srv.URL+"/api/search/"+c+"?after=1", nil)
+		resp, err := e.browser().Do(req)
+		if err != nil {
+			answered <- nil
+			return
+		}
+		defer func() { _ = resp.Body.Close() }()
+		read, _ := io.ReadAll(resp.Body)
+		answered <- decode(t, reply{StatusCode: resp.StatusCode, Body: read})
+	}()
+	time.Sleep(100 * time.Millisecond)
+	e.searchAs(bd, []int{1}, map[string]int{euServer: 50})
+	e.s.Matchmaker.Tick(e.clock.Now())
+	select {
+	case st := <-answered:
+		if st["state"] != "found" {
+			t.Errorf("the waiting poll's answer: %v", st)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the waiting poll wasn't answered at the match")
+	}
+}
+
+// The game servers' events, each naming its server: started holds the players (a search refused), a leave lets the
+// leaver search, over frees them, a cancel gives the no-show its cooldown (the other free), a restart frees the
+// server's matches; an event about a match it doesn't know is taken and ignored (MX1R-2); bad events refused
+func TestFleetEvents(t *testing.T) {
+	e := setup(t, nil)
+	b1, _, _ := e.player("sub-f1")
+	b2, _, _ := e.player("sub-f2")
+	pings := map[string]int{euServer: 30}
+	match := func() (map[string]any, map[string]any) {
+		s1 := decode(t, e.searchAs(b1, []int{1}, pings))["search"].(string)
+		s2 := decode(t, e.searchAs(b2, []int{1}, pings))["search"].(string)
+		e.s.Matchmaker.Tick(e.clock.Now())
+		_, f1 := e.poll(s1, 1)
+		_, f2 := e.poll(s2, 1)
+		m1, _ := f1["match"].(map[string]any)
+		m2, _ := f2["match"].(map[string]any)
+		if m1 == nil || m2 == nil {
+			t.Fatalf("not matched: %v %v", f1, f2)
+		}
+		return m1, m2
+	}
+	event := func(body map[string]any) int {
+		if _, ok := body["server"]; !ok {
+			body["server"] = euServer
+		}
+		return e.gameCall(http.MethodPost, "/api/fleet/events", gameToken, body).StatusCode
+	}
+	searchCode := func(b *http.Client) int {
+		resp := e.searchAs(b, []int{1}, pings)
+		if resp.StatusCode == http.StatusOK {
+			e.write(b, http.MethodDelete, "/api/search/"+decode(t, resp)["search"].(string), nil)
+		}
+		return resp.StatusCode
+	}
+	m1, _ := match()
+	if code := e.gameCall(http.MethodPost, "/api/fleet/events", "", map[string]any{"event": "started", "match": m1["id"], "server": euServer}).StatusCode; code != http.StatusUnauthorized {
+		t.Errorf("no credential: %d", code)
+	}
+	if code := event(map[string]any{"event": "started", "match": m1["id"]}); code != http.StatusNoContent {
+		t.Fatalf("started: %d", code)
+	}
+	if code := searchCode(b1); code != http.StatusForbidden {
+		t.Errorf("a started match's player searching: %d", code)
+	}
+	if code := event(map[string]any{"event": "left", "match": m1["id"], "seat": int(seatOf(t, e, m1))}); code != http.StatusNoContent {
+		t.Fatalf("left: %d", code)
+	}
+	if code := searchCode(b1); code != http.StatusOK {
+		t.Errorf("a leaver searching: %d", code)
+	}
+	if code := searchCode(b2); code != http.StatusForbidden {
+		t.Errorf("the one still playing: %d", code)
+	}
+	if code := event(map[string]any{"event": "over", "match": m1["id"]}); code != http.StatusNoContent {
+		t.Fatalf("over: %d", code)
+	}
+	if code := searchCode(b2); code != http.StatusOK {
+		t.Errorf("after over: %d", code)
+	}
+	// (events about a match it doesn't know, or another server's: taken, nothing changes)
+	for _, ev := range []map[string]any{
+		{"event": "started", "match": "00000000000000ab"},
+		{"event": "cancelled", "match": "00000000000000ab", "noShows": []int{0}},
+		{"event": "over", "match": m1["id"], "server": "game-us.example:4433"},
+	} {
+		if code := event(ev); code != http.StatusNoContent {
+			t.Errorf("%v: %d", ev, code)
+		}
+	}
+	// (a cancel: player 2's seat a no-show; its cooldown, player 1 free)
+	e.clock.Add(time.Minute)
+	m1, m2 := match()
+	if code := event(map[string]any{"event": "cancelled", "match": m1["id"], "noShows": []int{int(seatOf(t, e, m2))}}); code != http.StatusNoContent {
+		t.Fatalf("cancelled: %d", code)
+	}
+	resp := e.searchAs(b2, []int{1}, pings)
+	if resp.StatusCode != http.StatusTooManyRequests || decode(t, resp)["error"] != "cooldown" || decode(t, resp)["seconds"].(float64) != 120 {
+		t.Errorf("the no-show's search: %d %s", resp.StatusCode, resp.Body)
+	}
+	if code := searchCode(b1); code != http.StatusOK {
+		t.Errorf("the one who came: %d", code)
+	}
+	// (a restart of the server: its matches before it freed)
+	e.clock.Add(3 * time.Minute)
+	m1, _ = match()
+	event(map[string]any{"event": "started", "match": m1["id"]})
+	if code := searchCode(b1); code != http.StatusForbidden {
+		t.Fatalf("matched again and started, then a search: %d", code)
+	}
+	if code := event(map[string]any{"event": "restarted", "at": e.clock.Now().Add(time.Hour).Unix()}); code != http.StatusNoContent {
+		t.Fatalf("restarted: %d", code)
+	}
+	if code := searchCode(b1); code != http.StatusOK {
+		t.Errorf("after the server's restart: %d", code)
+	}
+	for _, bad := range []map[string]any{
+		{"event": "started", "match": "xyz"},
+		{"event": "begun", "match": m1["id"]},
+		{"event": "cancelled", "match": m1["id"], "noShows": []int{6}},
+		{"event": "left", "match": m1["id"]},
+		{"event": "left", "match": m1["id"], "seat": 9},
+		{"event": "started", "match": m1["id"], "server": "no port"},
+		{"event": "restarted"},
+	} {
+		if code := event(bad); code != http.StatusBadRequest {
+			t.Errorf("%v: %d", bad, code)
+		}
+	}
+}
+
+// A quitter's report: the account's running search ended with its ban, its next one refused till the ban's end
+func TestQuitterEndsSearch(t *testing.T) {
+	e := setup(t, nil)
+	b, _, encoded := e.player("sub-q")
+	id := decode(t, e.searchAs(b, []int{3}, map[string]int{euServer: 30}))["search"].(string)
+	if resp := e.gameCall(http.MethodPost, "/api/quitters", gameToken, map[string]any{"match": "00000000000000ab", "ticket": encoded}); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("the report: %d", resp.StatusCode)
+	}
+	_, st := e.poll(id, 1)
+	if st["state"] != "ended" || st["reason"] != "queue-banned" || st["until"] == nil {
+		t.Errorf("the quitter's search: %v", st)
+	}
+	if resp := e.searchAs(b, []int{3}, map[string]int{euServer: 30}); resp.StatusCode != http.StatusForbidden || decode(t, resp)["error"] != "queue-banned" {
+		t.Errorf("the quitter's next search: %d", resp.StatusCode)
+	}
+}
+
+// The searches' own limit per account
+func TestSearchLimit(t *testing.T) {
+	limits := server.DefaultLimits()
+	limits.Searches = server.Limit{Burst: 2, Window: 10 * time.Minute}
+	e := setup(t, &limits)
+	b, _, _ := e.player("sub-sl")
+	codes := []int{}
+	for range 3 {
+		codes = append(codes, e.searchAs(b, []int{1}, map[string]int{euServer: 30}).StatusCode)
+	}
+	if codes[0] != http.StatusOK || codes[1] != http.StatusOK || codes[2] != http.StatusTooManyRequests {
+		t.Errorf("the searches' limit: %v", codes)
+	}
+}
+
+// The development matchmaker: a page on this machine searches by its key and name (CORS), others refused; tickets
+// signed with the development key
+func TestDevMatchmaker(t *testing.T) {
+	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
+	s := &server.Server{Tickets: ticket.DevSigner(), Now: func() time.Time { return now }, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	s.SetLimits(server.DefaultLimits())
+	s.NewMatchmaker()
+	srv := httptest.NewServer(s.DevHandler())
+	defer srv.Close()
+	call := func(method, path, origin, body string) reply {
+		req, _ := http.NewRequestWithContext(t.Context(), method, srv.URL+path, strings.NewReader(body))
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		read, _ := io.ReadAll(resp.Body)
+		return reply{StatusCode: resp.StatusCode, Header: resp.Header, Body: read}
+	}
+	pre := call(http.MethodOptions, "/api/search", "http://localhost:4173", "")
+	if pre.StatusCode != http.StatusNoContent || pre.Header.Get("Access-Control-Allow-Origin") != "http://localhost:4173" ||
+		!strings.Contains(pre.Header.Get("Access-Control-Allow-Headers"), "X-Carball") {
+		t.Errorf("the preflight: %d %v", pre.StatusCode, pre.Header)
+	}
+	if resp := call(http.MethodPost, "/api/search", "https://carball.example", `{}`); resp.StatusCode != http.StatusForbidden {
+		t.Errorf("another site's page: %d", resp.StatusCode)
+	}
+	search := func(key string) string {
+		body := `{"playlists":[1],"pings":{"127.0.0.1:14446":3},"regions":["127.0.0.1:14446"],"name":"Dev ` + key[:2] + `","key":"` + key + `"}`
+		resp := call(http.MethodPost, "/api/search", "http://localhost:4173", body)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("a development search: %d", resp.StatusCode)
+		}
+		return decode(t, resp)["search"].(string)
+	}
+	a, b := search("0123456789abcdef"), search("fedcba9876543210")
+	if resp := call(http.MethodPost, "/api/search", "http://localhost:4173", `{"playlists":[1],"pings":{},"name":"N","key":"short"}`); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("a malformed key: %d", resp.StatusCode)
+	}
+	s.Matchmaker.Tick(now)
+	resp := call(http.MethodGet, "/api/search/"+a+"?after=1", "http://127.0.0.1:4173", "")
+	st := decode(t, resp)
+	m, _ := st["match"].(map[string]any)
+	if m == nil {
+		t.Fatalf("not found: %v", st)
+	}
+	tk, err := ticket.Verify(m["ticket"].(string), map[string]ed25519.PublicKey{ticket.DevKeyID: ticket.DevSigner().PublicKey()}, now, 30*time.Second)
+	if err != nil || tk.Server != "127.0.0.1:14446" || fmt.Sprintf("%x", tk.Account) != "0123456789abcdef0123456789abcdef" || tk.Name != "Dev 01" {
+		t.Errorf("a development match ticket: %+v, %v", tk, err)
+	}
+	// (a development server's events and result, with no credential)
+	if resp := call(http.MethodPost, "/api/fleet/events", "", `{"event":"started","match":"`+m["id"].(string)+`","server":"127.0.0.1:14446"}`); resp.StatusCode != http.StatusNoContent {
+		t.Errorf("a development server's event: %d", resp.StatusCode)
+	}
+	if resp := call(http.MethodPost, "/api/results", "", `{"match":"`+m["id"].(string)+`","players":[]}`); resp.StatusCode != http.StatusOK {
+		t.Errorf("a development server's result: %d", resp.StatusCode)
+	}
+	if resp := call(http.MethodPost, "/api/search", "http://localhost:4173", `{"playlists":[1],"pings":{"127.0.0.1:14446":3},"regions":["127.0.0.1:14446"],"name":"Dev","key":"0123456789abcdef"}`); resp.StatusCode != http.StatusOK {
+		t.Errorf("after the result: %d", resp.StatusCode)
+	}
+	// (a development quitter: banned, its search refused; a refill lifts it)
+	var account [16]byte
+	copy(account[:], []byte{0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef})
+	seatTicket, _, _ := ticket.DevSigner().IssueSeat(account, "Dev", [3]ticket.Shown{}, ticket.Seat{Match: 5, Server: "127.0.0.1:14445", Playlist: 1, Roster: 2}, now)
+	if resp := call(http.MethodPost, "/api/quitters", "", `{"match":"0000000000000005","ticket":"`+seatTicket+`"}`); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("a development quitter: %d", resp.StatusCode)
+	}
+	search2 := `{"playlists":[1],"pings":{"127.0.0.1:14446":3},"regions":["127.0.0.1:14446"],"name":"Dev","key":"0123456789abcdef"}`
+	if resp := call(http.MethodPost, "/api/search", "http://localhost:4173", search2); resp.StatusCode != http.StatusForbidden {
+		t.Errorf("a development quitter's search: %d", resp.StatusCode)
+	}
+	rejoin, _, _ := ticket.DevSigner().IssueFor(account, "Dev", [3]ticket.Shown{}, ticket.PurposeRejoin, 5, now)
+	if resp := call(http.MethodPost, "/api/refills", "", `{"match":"0000000000000005","ticket":"`+rejoin+`"}`); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("a development refill: %d", resp.StatusCode)
+	}
+	if resp := call(http.MethodPost, "/api/search", "http://localhost:4173", search2); resp.StatusCode != http.StatusOK {
+		t.Errorf("after the refill: %d", resp.StatusCode)
+	}
+	if _, ok := s.Matchmaker.Poll(t.Context(), b, 0, 0); !ok {
+		t.Error("the other search gone")
+	}
+}

@@ -1,7 +1,8 @@
 // Matchmaking as the player sees it (notes/matchmaking.md, v1 queue checklist; MM-4..14): a search's state and its
 // summary (Connecting, Searching, Joining, Failed), the message log's timeline, "Joining in 3, 2, 1" with a beep each,
-// then the claim: the token kept for the match page, which the page is sent to. The search session itself is
-// src/net/search.ts; the panel and banner src/ui/searchView.ts. The words are the game's (cleared verbatim: the user's
+// then the claim: the match ticket kept for the match page, which the page is sent to. The search itself is
+// src/net/matchmaker.ts (the accounts service's matchmaker: notes/matchmaking.md, the central matchmaker); the panel
+// and banner src/ui/searchView.ts. The words are the game's (cleared verbatim: the user's
 // decisions, 2026-10-14), but for the playlists' names and our own lines, which are ours.
 
 export const SEARCH_TEXT = {
@@ -74,28 +75,35 @@ export interface SearchViewState {
   readonly lines: readonly LogLine[];
 }
 
-/** A search back from a match cancelled for someone else (RV-367): the token it claimed (the queue's front again), and
- *  how long it had searched (its clock goes on); its region (the token that server's alone: notes/matchmaking.md, Regions) */
+/** A search back from a match cancelled for someone else (RV-367): how long it had searched (its clock goes on; the
+ *  matchmaker keeps its place itself) */
 export interface SearchBack {
-  readonly token: bigint;
   readonly searchedFor: number;
-  readonly region?: string;
+}
+
+/** A match the matchmaker found: its id, its server (its address, host:port), this player's match ticket for their
+ *  seat, the playlist that matched (team size) and its map (src/render/themes/index.ts THEMES) */
+export interface FoundMatch {
+  readonly id: bigint;
+  readonly server: string;
+  readonly ticket: string;
+  readonly playlist: number;
+  readonly map: number;
 }
 
 export interface SearchHandlers {
   searching(): void;
-  /** A match found: its slot's token and its map (src/render/themes/index.ts THEMES); the region whose server found it
-   *  (a search of several regions: game/regionSearch.ts) */
-  found(token: bigint, map: number, region?: string): void;
+  /** A match found */
+  found(match: FoundMatch): void;
   failed(reason: string): void;
   /** A line for the log while the search goes on (a region dropped, another still searching) */
   warning?(text: string): void;
   /** The server refused it (its reason), before `failed` with the words */
   refused?(reason: number): void;
-  /** Refused: this browser (network false) or this address stalled a match; it may search again in this many seconds
-   *  (RV-367, RV-385) */
+  /** Refused: this account (network false; true, an address's block, from before the central matchmaker) stalled a
+   *  match; it may search again in this many seconds (RV-367) */
   cooldown(seconds: number, network: boolean): void;
-  /** A newer search from this browser (another tab) took this one's place (RV-460) */
+  /** A newer search of this account (another tab) took this one's place (RV-460) */
   replaced(): void;
 }
 
@@ -106,16 +114,16 @@ export interface SearchSession {
 }
 
 export interface MatchmakingPorts {
-  /** Opens a search session (with a returning search's token, else 0, and that token's region) */
-  readonly search: (playlist: number, token: bigint, handlers: SearchHandlers, region?: string) => SearchSession;
+  /** Opens a search of these playlists (team sizes) */
+  readonly search: (playlists: readonly number[], handlers: SearchHandlers) => SearchSession;
   /** The start, cancel and countdown sounds (MM-12) */
   readonly sound: (cue: "start" | "cancel" | "countdown") => void;
-  /** The join's end: the token claimed in the match page; how long the search had run (s: a cancelled match's search
-   *  goes on from there); the match's map */
-  readonly join: (token: bigint, playlist: number, searchedFor: number, map: number, region?: string) => void;
-  /** Cancel Search during "Joining in": the slot given up at once (claimed and left: the match is cancelled now, its
-   *  other players search again, not after the 30 s wait: RV-355), at its region's server */
-  readonly decline: (token: bigint, region?: string) => void;
+  /** The join's end: the match claimed in the match page; the playlists searched (Play Again's); how long the search had
+   *  run (s: a cancelled match's search goes on from there) */
+  readonly join: (match: FoundMatch, playlists: readonly number[], searchedFor: number) => void;
+  /** Cancel Search during "Joining in": the seat given up at once (claimed and left: the match is cancelled now, its
+   *  other players search again, not after the wait: RV-355) */
+  readonly decline: (match: FoundMatch) => void;
   /** Whether a search now searches one region of several (the log's MoreRegions tip) */
   readonly moreRegions?: () => boolean;
 }
@@ -124,17 +132,15 @@ export interface MatchmakingPorts {
  *  (s); the join's countdown runs on timers, so a hidden tab (no frames) still claims on time (RV-354) */
 export class Matchmaking {
   #state: SearchViewState | null = null;
-  #playlist = 0;
+  #playlists: readonly number[] = [];
   #session: SearchSession | null = null;
   /** The page going: the search finishing (RV-443), whether a match was found meanwhile */
   #finishing: Promise<boolean> | null = null;
   #searchingSince: number | null = null;
   /** A returning search's time before (s) */
   #searchedBefore = 0;
-  #token: bigint | null = null;
-  /** The found match's map and region */
-  #map = 0;
-  #region: string | undefined;
+  /** The match found, till its join */
+  #found: FoundMatch | null = null;
   /** One region of several searched (the MoreRegions tip) */
   #moreRegions = false;
   #timers: ReturnType<typeof setTimeout>[] = [];
@@ -154,22 +160,21 @@ export class Matchmaking {
     return this.#state !== null && this.#state.status !== "failed" && this.#state.status !== "ended";
   }
 
-  get playlist(): number {
-    return this.#playlist;
+  get playlists(): readonly number[] {
+    return this.#playlists;
   }
 
-  /** Find Match (or Play Again): a new search of the playlist; `warning`: a line to start the log with; `back`: a search
+  /** Find Match (or Play Again): a new search of the playlists; `warning`: a line to start the log with; `back`: a search
    *  back from a match cancelled for someone else (RV-367). Ignored while a search runs (MM-2: SearchInProgress; its
    *  place in the queue stays): false then */
-  start(playlist: number, warning?: string, back?: SearchBack): boolean {
+  start(playlists: readonly number[], warning?: string, back?: SearchBack): boolean {
     if (this.searching) return false;
     this.#stop();
-    this.#playlist = playlist;
+    this.#playlists = [...playlists];
     this.#extra = warning === undefined ? [] : [{ text: warning, kind: "warning" }];
     this.#searchingSince = null;
     this.#searchedBefore = Math.max(0, back?.searchedFor ?? 0);
-    this.#token = null;
-    this.#region = undefined;
+    this.#found = null;
     this.#failedAt = null;
     this.#moreRegions = this.ports.moreRegions?.() ?? false;
     this.#set("connecting");
@@ -180,12 +185,10 @@ export class Matchmaking {
         this.#searchingSince = this.#now - this.#searchedBefore;
         this.#set("searching");
       },
-      found: (token, map, region) => {
+      found: (match) => {
         if (!this.searching) return;
         this.#session = null;
-        this.#token = token;
-        this.#map = map;
-        this.#region = region;
+        this.#found = match;
         this.#set("joining");
         this.#countdown(JOIN_COUNTDOWN);
         for (let n = JOIN_COUNTDOWN - 1; n >= 0; n--) {
@@ -233,7 +236,7 @@ export class Matchmaking {
         this.#set("failed");
       },
     };
-    this.#session = this.ports.search(playlist, back?.token ?? 0n, handlers, back?.region);
+    this.#session = this.ports.search(this.#playlists, handlers);
     return true;
   }
 
@@ -242,11 +245,10 @@ export class Matchmaking {
   cancel(): void {
     if (this.#state === null) return;
     const searching = this.searching;
-    const token = this.#state.status === "joining" ? this.#token : null;
-    const region = this.#region;
+    const found = this.#state.status === "joining" ? this.#found : null;
     this.#stop();
     this.#state = null;
-    if (token !== null) this.ports.decline(token, region);
+    if (found !== null) this.ports.decline(found);
     if (searching) this.ports.sound("cancel");
   }
 
@@ -273,7 +275,7 @@ export class Matchmaking {
     this.#session?.cancel();
     this.#session = null;
     for (const t of this.#timers.splice(0)) clearTimeout(t);
-    this.#token = null;
+    this.#found = null;
   }
 
   #countdown(n: number): void {
@@ -283,12 +285,12 @@ export class Matchmaking {
   }
 
   #join(): void {
-    const token = this.#token;
+    const found = this.#found;
     const searchedFor = this.#searchingSince === null ? this.#searchedBefore : this.#now - this.#searchingSince;
     this.#timers = [];
-    this.#token = null;
+    this.#found = null;
     this.#state = null;
-    if (token !== null) this.ports.join(token, this.#playlist, searchedFor, this.#map, this.#region);
+    if (found !== null) this.ports.join(found, this.#playlists, searchedFor);
   }
 
   #set(status: SearchStatus): void {

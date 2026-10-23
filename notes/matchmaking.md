@@ -105,10 +105,126 @@ anything rating-side beyond what's submitted is PsyNet's, unknowable, so Carball
   Hello's intent 3, Welcome's match id; the page's offer within 900 s, cleared by Exit to Main Menu), one search or match
   per account (Refused 5), and **ranked pairing (ours)**: each search carries its account's rating (the ticket's), the
   oldest searcher matched with those within ±100, wider by 50 every 10 s either has waited, ±600 at most, then anyone;
-  the teams split by a snake draft. The game's strings (the rejoin prompt, "Match has concluded", the ban messages) are
+  the teams split by a snake draft. (The central matchmaker, below, changed the window to 100 + 50 every 10 s the
+  oldest has waited, uncapped.) The game's strings (the rejoin prompt, "Match has concluded", the ban messages) are
   our words by key until the user clears them.
 
+## The central matchmaker (the user's decision, 2026-10-23: "way way simpler")
+
+Design (ours, MX1: deliberately the smallest thing that works for a handful of players). It replaces the per-server
+queues and the multi-region search below. That section and §3 of notes/accounts.md are superseded where they differ.
+
+**The split.** The accounts service (API) is the one matchmaker. It keeps an in-memory list per playlist, picks the
+region, signs each player's match ticket, and holds one match per account, the no-show cooldowns and (from the
+database) the leave bans. The game servers only host: a match opens at its first valid ticket, waits for the rest, is
+played, and reported. There's one server per region.
+
+**The page.**
+- The Play page keeps its Regions picker: the boxes with their pings, the automatic first pick, the manual flag
+  (RV-862) and the MoreRegions tip.
+- Its playlists become checkboxes (the game's Multiple Selection), one at least, kept in this browser.
+- **Searching is a long poll:**
+  - `POST /api/search {playlists, pings}` starts it. `pings` holds the ticked regions' servers (`host:port`) that
+    answered a ping measured just before it (2 s at most), in ms. If none answered: "no ticked region answered".
+    Starts are limited to 30 an account in 10 minutes.
+  - `GET /api/search/{id}?after=N` answers at a change or after 25 s, under Cloudflare's 100 s limit. The answer is
+    one of: `searching`; `found` (with the match id, server, ticket and playlist); `ended` (replaced by a newer search
+    of the account, a quitter ban, a no-show cooldown).
+  - `DELETE` is Cancel Search.
+- Each poll is sent when the last one returns, not on a timer (a hidden tab's timers are throttled).
+- A search with no poll open and none in the last 10 s is dropped.
+- A `404` (the API restarted) makes the page search again once; a `502`/`503` is retried with a backoff.
+- Cancel Search, or the page going, sends the `DELETE` (with `keepalive`). After a match is found it does nothing:
+  not claiming is a no-show.
+
+**The queue.** A search joins every ticked playlist's list, and leaves them all when matched or cancelled. A newer
+search of the same account replaces it. Every second, playlist by playlist (the one whose oldest searcher has waited
+longest first, so a smaller playlist doesn't keep taking a several-playlist search from a fuller one):
+- the oldest searcher is taken;
+- for each region it accepts, the match is filled with the next-oldest searchers who accept that region too and are
+  within the rating window (100 + 50 for every 10 s the oldest has waited, with no cap: it reaches anyone, replacing
+  queue.rs's ±600-then-anyone);
+- a region is acceptable to a player if they ticked it and it answered the ping before their search, so a server
+  that's down is no one's;
+- of the regions that fill a match, the one with the lowest worst ping is chosen;
+- the teams are balanced by rating (the snake draft);
+- if no region fills, the next-oldest searcher is tried.
+
+Formation and the search calls share one lock, so a search is in one match at most. There's one API instance (the
+queue is in its memory).
+
+**A match found.** Each player gets a match ticket (ticket version 4, purpose seat). It's bound to one server, one
+match and one seat, lives 30 s, and is taken once (RV-850): the server keeps its nonce, and a seat is taken once.
+- The server opens the match at the first valid claim and waits for the rest, 10 s from that first claim (about the
+  user's 12 s from MatchFound, RV-367, after the 3 s countdown).
+- **A no-show:** the server cancels, kicks the others with `KICK_NOT_ALL_JOINED` and reports the cancel. The API gives
+  the no-show the 2-minute cooldown. The others go back into the lists with their original wait, which puts them first.
+
+**One match per account** (MX1R-1).
+- **Before its start, a match holds no one.** A search then is the player's to make: if the match goes on without
+  them, its cancel names them a no-show. That covers a claim that failed because the server went down.
+- **From its start, its players are in it.** A search is refused while their page still reaches the match's server:
+  the page sends every listed server that answered its ping, ticked or not (MX1R-19). A page that no longer reaches it
+  has lost the match with the server. The gate trusts the page; a page that dodges it only harms itself, since the
+  match it leaves reports that leave.
+- **A leave of a started match** (any leave: the quitter is one) lets the leaver search at once, as the game does
+  (MM-2). That search gives up the rejoin (RV-846).
+- **A rejoin** puts them back in.
+- **The match ends for its accounts** at its result, its end with no result, its server's restart, or a 45-minute
+  backstop after its start.
+- **A rejoin ticket** is given for the account's latest assigned match alone, until a later search of its is
+  accepted, and never while it searches (MX1R-5). After an API restart that memory is gone, and the ban rule alone
+  decides. LV1's refill is unchanged: a ban from that match doesn't block its rejoin ticket.
+
+**Server → API, events only**, through the existing outbox (kept, retried, in order). Results, quitters and refills stay
+as they are, and accept both the new match tickets (whose match must be the call's) and the old search tickets, for
+the matches the servers from before the switch played. One new call, `POST /api/fleet/events {event, server, match,
+seat, noShows, at}`, carries:
+- `started`;
+- `left` and `back` (a seat's player leaving the started match, or rejoining it);
+- `cancelled` (the seats that stalled it: unclaimed, or left before the start);
+- `over` (ended with no result);
+- `restarted` (this server's earlier matches are gone; `at` is never taken as later than now).
+
+Every event names its server. With one game server token shared by all, that name is the server's own word: it stops
+accidents and cross-wired settings, not a leaked token, and a leaked token can now send events about matches whose ids
+it knows (per-server tokens would be the cheap upgrade: MX1R-20). An event about a match the API didn't assign to that
+server (another server's, one from
+before an API restart, one already over) is answered 204 and ignored. A refusal or a 404 would make the outbox retry it
+for a day ahead of every later call (MX1R-2). Each event is applied once in effect.
+
+A server's name is `PUBLIC_HOST:GAME_PORT`, the address its `GAME_SERVERS` URL has. A ping key the API doesn't know
+can only match players who all named it, and its ticket opens nothing anywhere, so there's no server list in the API
+(MX1R-9). There's no heartbeat and no state push. An event waits behind a result in the outbox after an API blip; that's
+accepted (MX1R-13).
+
+**Kept from before:** leave bans checked at search start (a quitter report also ends a running search); the rejoin of
+a saved seat; PING (RV-856: the session closes right after the Pong); the shared nonces for match and rejoin tickets.
+
+**Removed:** the game server's queue (`queue.rs`); the page's multi-region search (`game/regionSearch.ts`); DECLINE;
+`MatchFound` and `SearchCooldown`; the shared search ticket; the address-based stall rule (online play needs an account).
+`/api/ticket`'s search purpose stays one release, for pages loaded before.
+
+**Old pages:** protocol 28, so the new servers answer `REFUSED_VERSION` ("reload the page").
+
+**Development and tests:** `carball-api matchmaker --dev` serves the search and `/api/fleet` with no database or
+sign-in. A search names its player by the page's key and name. Tickets are signed with a fixed development key (id
+`dev`) that only `--dev` game servers accept, as now. Each e2e group gets its own development matchmaker and dev game
+servers. The e2e covers:
+- a match found;
+- a no-show requeued;
+- a quiet region (a player who ticked it alone never matched elsewhere);
+- the region with the lowest worst ping;
+- two playlists searched, matched in one;
+- a search refused while in a match.
+
+**Deploy:** api, then game, then web, back to back (between game and web the old pages are told to reload). Access
+must cover `/api/fleet/*`. No migration.
+
 ## Regions and multi-region search (the user's decision, 2026-10-22: Newark, Frankfurt, Singapore)
+
+**Superseded in part by the central matchmaker above (2026-10-23):** the picker, the pings and the automatic pick
+stay; the per-server queues, the multi-region search, the race and DECLINE, and the shared ticket are gone.
 
 Design (ours; the game's PsyNet matchmaker is unknowable: MM-3 sends regions with pings, the rest is PsyNet's):
 - **One game server per region, nothing shared between them.** Each runs its own queue and matches; a region is just

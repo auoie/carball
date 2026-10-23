@@ -27,7 +27,12 @@ type vector struct {
 	Ratings   [3][2]int `json:"ratings"`
 	Purpose   int       `json:"purpose"`
 	Match     string    `json:"match"` // (a decimal u64: JSON's numbers aren't)
-	Encoded   string    `json:"encoded"`
+	// A seat's (a match ticket's) alone
+	Server   string `json:"server,omitempty"`
+	Playlist int    `json:"playlist,omitempty"`
+	Seat     int    `json:"seat,omitempty"`
+	Roster   int    `json:"roster,omitempty"`
+	Encoded  string `json:"encoded"`
 }
 
 type vectors struct {
@@ -51,8 +56,11 @@ func TestTicketVector(t *testing.T) {
 	}
 	rejoin := base
 	rejoin.Nonce[0], rejoin.Purpose, rejoin.Match = 0x99, PurposeRejoin, 0xfedcba9876543210
-	made := vectors{Comment: "A search's ticket and a rejoin's (version 3) made by api/internal/ticket and checked by server/src/ticket.rs: made-up values"}
-	for _, tk := range []Ticket{base, rejoin} {
+	seat := base
+	seat.Nonce[0], seat.Purpose, seat.Match, seat.Expires = 0x77, PurposeSeat, 0x0123456789abcdef, time.Unix(1792300030, 0)
+	seat.Server, seat.Playlist, seat.Seat, seat.Roster = "game-eu.example:4433", 2, 3, 4
+	made := vectors{Comment: "A search's ticket and a rejoin's (version 3) and a match ticket's seat (version 4) made by api/internal/ticket and checked by server/src/ticket.rs: made-up values"}
+	for _, tk := range []Ticket{base, rejoin, seat} {
 		body, err := Encode(tk)
 		if err != nil {
 			t.Fatal(err)
@@ -62,6 +70,7 @@ func TestTicketVector(t *testing.T) {
 			Seed: base64.StdEncoding.EncodeToString(seed), KeyID: tk.KeyID, PublicKey: base64.StdEncoding.EncodeToString(pub),
 			Account: hex.EncodeToString(tk.Account[:]), Name: tk.Name, Issued: tk.Issued.Unix(), Expires: tk.Expires.Unix(),
 			Nonce: hex.EncodeToString(tk.Nonce[:]), Purpose: int(tk.Purpose), Match: strconv.FormatUint(tk.Match, 10),
+			Server: tk.Server, Playlist: int(tk.Playlist), Seat: int(tk.Seat), Roster: int(tk.Roster),
 			Encoded: base64.RawURLEncoding.EncodeToString(append(body, ed25519.Sign(key, signed)...)),
 		}
 		for i, r := range tk.Ratings {
@@ -91,9 +100,10 @@ func TestTicketVector(t *testing.T) {
 			t.Fatalf("protocol/ticket_vector.json isn't what this code makes (CARBALL_WRITE_TICKET_VECTOR=1 to write it):\n%+v\n%+v", stored.Vectors[i], v)
 		}
 		got, err := VerifySigned(v.Encoded, map[string]ed25519.PublicKey{v.KeyID: pub})
-		want := []Ticket{base, rejoin}[i]
+		want := []Ticket{base, rejoin, seat}[i]
 		if err != nil || got.Name != want.Name || got.Ratings != want.Ratings || got.Nonce != want.Nonce || got.Purpose != want.Purpose ||
-			got.Match != want.Match {
+			got.Match != want.Match || got.Server != want.Server || got.Playlist != want.Playlist || got.Seat != want.Seat ||
+			got.Roster != want.Roster {
 			t.Fatalf("ticket %d read back: %+v, %v", i, got, err)
 		}
 	}

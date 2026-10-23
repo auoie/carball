@@ -14,6 +14,8 @@ export interface Server {
   readonly url: string;
   /** Already running: used as it is (the preview), else the port is taken: an error */
   readonly reuse: boolean;
+  /** Its environment's additions */
+  readonly env?: Readonly<Record<string, string>>;
 }
 
 async function answers(url: string): Promise<boolean> {
@@ -60,7 +62,7 @@ export async function startServers(servers: readonly Server[], timeoutMs: number
         throw new Error(`${server.url} already answers: another ${server.name} server is running`);
       }
       const log = createWriteStream(`${logDir}/${server.name}.log`);
-      const child = spawn(server.command, server.args, { detached: true, stdio: ["ignore", "pipe", "pipe"] });
+      const child = spawn(server.command, server.args, { detached: true, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ...server.env } });
       child.stdout.pipe(log);
       child.stderr.pipe(log);
       const entry = { name: server.name, child, exited: Promise.resolve(), done: false };

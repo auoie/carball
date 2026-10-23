@@ -1,16 +1,6 @@
 // The regions a search goes to (notes/matchmaking.md, Regions), with made-up regions and pings
 import { describe, expect, it } from "vitest";
-import {
-  PINGS_KEPT_MS,
-  chooseRegions,
-  regionsToSearch,
-  shareSearchTickets,
-  storePings,
-  storeRegions,
-  storedPings,
-  storedRegions,
-  toggleRegion,
-} from "./regions";
+import { PINGS_KEPT_MS, chooseRegions, searchRequest, storePings, storeRegions, storedPings, storedRegions, toggleRegion } from "./regions";
 
 const memory = (): Pick<Storage, "getItem" | "setItem"> => {
   const map = new Map<string, string>();
@@ -81,34 +71,23 @@ describe("the regions searched", () => {
     expect(storedPings(1_000_000, storage)).toBeNull();
   });
 
-  it("searches the chosen regions and a returning token's own; a page of one region, that one (RX43C-1)", () => {
-    expect(regionsToSearch(regions, ["eu"])).toEqual(["eu"]);
-    expect(regionsToSearch(regions, ["eu"], "asia")).toEqual(["eu", "asia"]);
-    expect(regionsToSearch(regions, ["asia", "us-east"])).toEqual(["us-east", "asia"]);
-    expect(regionsToSearch([{ id: "default" }], [])).toEqual(["default"]);
-  });
-
-  it("shares one search ticket among the regions of one source; a rejoin's and another source's apart (RX43C-2)", async () => {
-    let issued = 0;
-    const ticket = (rejoin?: bigint): Promise<string> => {
-      issued++;
-      return Promise.resolve(rejoin === undefined ? `t${String(issued)}` : `rejoin${String(issued)}`);
-    };
-    const share = shareSearchTickets();
-    const [a, b, c] = [share(ticket, "account"), share(ticket, "account"), share(ticket, "dev:127.0.0.1:14448")];
-    expect(await Promise.all([a(), b(), a()])).toEqual(["t1", "t1", "t1"]);
-    expect(await c()).toBe("t2");
-    expect(await a(5n)).toBe("rejoin3");
-    // (a refusal shared as one: asked for once)
-    let asked = 0;
-    const refusing = (): Promise<string> => {
-      asked++;
-      return Promise.reject(new Error("429"));
-    };
-    const again = shareSearchTickets();
-    const [x, y] = [again(refusing, "account"), again(refusing, "account")];
-    await expect(x()).rejects.toThrow("429");
-    await expect(y()).rejects.toThrow("429");
-    expect(asked).toBe(1);
+  it("asks for the ticked regions' servers with every server that answered its ping, ticked or not (MX1R-19)", () => {
+    const listed = [
+      { id: "us-east", server: "game-us.example:4433" },
+      { id: "eu", server: "game-eu.example:4433" },
+      { id: "asia", server: "game-asia.example:4433" },
+    ];
+    const pings = new Map<string, number | null>([
+      ["us-east", 90.4],
+      ["eu", 31],
+      ["asia", null],
+    ]);
+    expect(searchRequest(listed, ["eu", "asia"], pings, [1, 3])).toEqual({
+      playlists: [1, 3],
+      pings: { "game-us.example:4433": 90, "game-eu.example:4433": 31 },
+      regions: ["game-eu.example:4433", "game-asia.example:4433"],
+    });
+    // (a page of one region: that one, ticked or not)
+    expect(searchRequest([{ id: "default", server: "localhost:4433" }], [], new Map([["default", 5]]), [2]).regions).toEqual(["localhost:4433"]);
   });
 });

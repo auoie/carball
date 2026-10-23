@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -60,7 +61,8 @@ func (s *Server) gameServer(next http.HandlerFunc) http.HandlerFunc {
 
 // playerTicket checks a player's ticket as a result, a quitter or a refill carries it: our signature (a key from before
 // a rotation too), issued within the acceptance window (and not ahead of now past the skew), for that purpose (a
-// result's and a quitter's: the seat's first, its search's; a refill's: the rejoin's, of that match)
+// result's and a quitter's: the seat's first, its match ticket's for that match, or a search's from a match a game
+// server from before the central matchmaker made; a refill's: the rejoin's, of that match)
 func (s *Server) playerTicket(encoded string, purpose byte, match string, now time.Time) (ticket.Ticket, error) {
 	t, err := ticket.VerifySigned(encoded, s.TicketKeys)
 	if err != nil {
@@ -69,7 +71,8 @@ func (s *Server) playerTicket(encoded string, purpose byte, match string, now ti
 	if t.Issued.After(now.Add(30*time.Second)) || now.Sub(t.Issued) > AcceptWindow {
 		return ticket.Ticket{}, errors.New("ticket: outside the acceptance window")
 	}
-	if t.Purpose != purpose || (purpose == ticket.PurposeRejoin && matchText(t.Match) != match) {
+	seat := purpose == ticket.PurposeSearch && t.Purpose == ticket.PurposeSeat
+	if (t.Purpose != purpose && !seat) || ((purpose == ticket.PurposeRejoin || seat) && matchText(t.Match) != match) {
 		return ticket.Ticket{}, errors.New("ticket: not for this")
 	}
 	return t, nil
@@ -157,6 +160,9 @@ func (s *Server) result(w http.ResponseWriter, r *http.Request) {
 	if recorded {
 		s.Log.Info("result recorded", "match", res.Match, "playlist", res.Playlist)
 	}
+	if id, err := strconv.ParseUint(body.Match, 16, 64); err == nil {
+		s.Matchmaker.Ended("", id) // (its accounts free to search; its tickets the match's own, whatever server it names)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"recorded": recorded})
 }
 
@@ -194,9 +200,19 @@ func (s *Server) quitter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	spent := &store.SpentTicket{Nonce: t.Nonce, IssuedAt: t.Issued, Match: body.Match}
-	err = s.Store.ChangeQueueBan(r.Context(), accountID(t.Account), spent, now, func(cur store.QueueBan, exists bool) (*store.QueueBan, bool) {
+	account := accountID(t.Account)
+	err = s.Store.ChangeQueueBan(r.Context(), account, spent, now, func(cur store.QueueBan, exists bool) (*store.QueueBan, bool) {
 		return ranked.Leave(cur, exists, body.Match, leftAt)
 	})
+	if err == nil {
+		// (out of its match, and a search of its running now ended with the ban: RV-849)
+		ban, banned, err := s.Store.QueueBanOf(r.Context(), account)
+		until, _ := ranked.BannedUntil(ban, banned, now)
+		if err != nil {
+			until = now
+		}
+		s.Matchmaker.Quitter(account, until, now)
+	}
 	s.queueBanDone(w, err)
 }
 

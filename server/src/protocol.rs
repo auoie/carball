@@ -13,8 +13,10 @@ use crate::engine::Controls;
 // car (Hello's model, the roster's); 23: Kicked's KICK_REPLACED (RV-460); 24: the stat graphs' network rows (HUD-21: the
 // input datagrams' sequence, each update's input-buffer window and the inputs lost); 25: one map, Night (map 0, its
 // arena the glasshouse: an older client would draw another); 26: Hello's search ticket, Refused's REFUSED_TICKET; 27:
-// rejoining a ranked match (Hello's INTENT_REJOIN, Welcome's match id, Refused's REFUSED_IN_MATCH and REFUSED_CONCLUDED)
-pub const VERSION: u16 = 27;
+// rejoining a ranked match (Hello's INTENT_REJOIN, Welcome's match id, Refused's REFUSED_IN_MATCH and REFUSED_CONCLUDED);
+// 28: the accounts service's central matchmaker (notes/matchmaking.md): a claim's match ticket (Hello's ticket up to 512
+// bytes), no search, decline, MatchFound or SearchCooldown here (pages from before told to reload: REFUSED_VERSION)
+pub const VERSION: u16 = 28;
 /// The maps a match can be on (the client's THEMES: protocol/README.md): one, Night (the user's decision of 2026-10-17); a
 /// map on the wire is its index
 pub const MAP_COUNT: u8 = 1;
@@ -31,7 +33,7 @@ pub const CHAT_OFF: u8 = 3;
 /// A name's bytes at most (UTF-8)
 pub const MAX_NAME_BYTES: usize = 32;
 /// A Hello's search ticket's bytes at most (notes/accounts.md §3: the accounts service's encoded ticket)
-pub const MAX_TICKET_BYTES: usize = 320;
+pub const MAX_TICKET_BYTES: usize = 512;
 /// Why a join was refused
 pub const REFUSED_FULL: u8 = 0;
 /// `Refused`'s reason: the client speaks another protocol version (RV-262; a client of version 12 on can read it)
@@ -274,12 +276,6 @@ pub enum Control {
         receiver: u32,
         victim: u32,
     },
-    /// A search found a match: the slot's one-time token, to claim with a new session's hello, and the match's map (its
-    /// arena loads during the join's countdown); the search session ends
-    MatchFound {
-        token: u64,
-        map: u8,
-    },
     /// The idle warning shows (`IdleWarning_TA`: idle over 25 s of play) or hides (the player acted)
     IdleWarning {
         on: bool,
@@ -287,13 +283,6 @@ pub enum Control {
     /// The server ends this player's session (`KICK_*`), closing it a second later (`CloseConnectionWithReason`)
     Kicked {
         reason: u8,
-    },
-    /// A search refused: its browser (`network` false) or its address (true: a network shared with someone who did)
-    /// stalled a match (didn't claim its slot, or left before the start) and may search again in this many seconds
-    /// (RV-367, RV-385); the session ends
-    SearchCooldown {
-        seconds: u16,
-        network: bool,
     },
     /// A ping's answer (`INTENT_PING`); the session ends
     Pong,
@@ -706,11 +695,6 @@ impl Control {
                 w.u64(*token);
                 w.ticket(ticket);
             }
-            Self::MatchFound { token, map } => {
-                w.u8(0x8F);
-                w.u64(*token);
-                w.u8(*map);
-            }
             Self::IdleWarning { on } => {
                 w.u8(0x90);
                 w.u8(u8::from(*on));
@@ -718,11 +702,6 @@ impl Control {
             Self::Kicked { reason } => {
                 w.u8(0x91);
                 w.u8(*reason);
-            }
-            Self::SearchCooldown { seconds, network } => {
-                w.u8(0x92);
-                w.u16(*seconds);
-                w.u8(u8::from(*network));
             }
             Self::Pong => w.u8(0x93),
             Self::Mute { car, on } => {
@@ -933,10 +912,8 @@ impl Control {
                     ticket
                 },
             },
-            0x8F => Self::MatchFound { token: r.u64()?, map: r.u8()? },
             0x90 => Self::IdleWarning { on: r.u8()? != 0 },
             0x91 => Self::Kicked { reason: r.u8()? },
-            0x92 => Self::SearchCooldown { seconds: r.u16()?, network: r.u8()? != 0 },
             0x93 => Self::Pong,
             0x08 => Self::Mute { car: r.u32()?, on: r.u8()? != 0 },
             0x06 => Self::QuickChat { preset: r.u8()?, team: r.u8()? != 0 },
@@ -1236,12 +1213,8 @@ mod tests {
                 token: big(&m["token"]),
                 ticket: m["ticket"].as_str().unwrap().to_string(),
             },
-            "matchFound" => Control::MatchFound { token: big(&m["token"]), map: u(&m["map"]) as u8 },
             "idleWarning" => Control::IdleWarning { on: m["on"].as_bool().unwrap() },
             "kicked" => Control::Kicked { reason: u(&m["reason"]) as u8 },
-            "searchCooldown" => {
-                Control::SearchCooldown { seconds: u(&m["seconds"]) as u16, network: m["network"].as_bool().unwrap() }
-            }
             "pong" => Control::Pong,
             "mute" => Control::Mute { car: u(&m["car"]), on: m["on"].as_bool().unwrap() },
             "scoreboard" => Control::Scoreboard(

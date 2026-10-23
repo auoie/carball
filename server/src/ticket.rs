@@ -8,13 +8,20 @@
 //! search (and its claim), 1 a rejoin | match (8): a rejoin's match id, 0 for a search | signature (64) over
 //! "carball-search\0" and the bytes before it
 //!
-//! The ratings are the account's when the ticket was issued: the queue pairs searchers by them (notes/matchmaking.md).
+//! A match ticket (version 4, purpose 2: a seat; notes/matchmaking.md, the central matchmaker) is the accounts service's
+//! matchmaker's for one seat of one match at one game server, 30 s long, taken once (RV-850): version 3's fields, its
+//! match the matchmaker's id, then server length (1) | server (its address, host:port) | playlist (1, the team size) |
+//! seat (1) | roster (1, its seats). Search and rejoin tickets stay version 3.
+//!
+//! The ratings are the account's when the ticket was issued (the matchmaker pairs by them: notes/matchmaking.md).
 //! A rejoin's ticket is for its match alone (the network server takes it for that rejoin, nothing else): the accounts
 //! service issues one to a leaver its queue ban holds, so they can come back and refill the lobby (LV1, AP3).
 //! protocol/ticket_vector.json holds tickets the API's code makes, checked by both sides' tests.
 //!
-//! A development server (`--dev`) also takes tickets of a key it makes at its start (id "dev"), which its info server
-//! hands to the pages that ask (`dev_ticket`): the browser tests and a development page sign in without the service.
+//! A development server (`--dev`) also takes tickets of the development key (id "dev": a fixed key, published, the seed
+//! the SHA-256 of `DEV_SEED_TEXT`, the API's `ticket.DevSigner` too): the development matchmaker's match tickets, and
+//! the rejoin tickets its info server hands to the pages that ask (`dev_ticket`), so the browser tests and a development
+//! page play without the service. Only `--dev` takes that key (its id reserved), and it hands a ticket to anyone anyway.
 
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
@@ -22,16 +29,22 @@ use ring::signature::{ED25519, Ed25519KeyPair, KeyPair, UnparsedPublicKey};
 use std::collections::HashMap;
 use std::sync::{Mutex, RwLock};
 
-/// The format's version (2: the ratings; 3: the purpose and match)
+/// The format's version (2: the ratings; 3: the purpose and match); a match ticket's (its seat)
 const VERSION: u8 = 3;
+const SEAT_VERSION: u8 = 4;
 /// What a signature covers before the ticket's bytes (the audience)
 const CONTEXT: &[u8] = b"carball-search\0";
 /// A ticket's longest encoded length (the API's `ticket.MaxBytes`; the Hello's ticket capped at it)
-pub const MAX_BYTES: usize = 320;
+pub const MAX_BYTES: usize = 512;
+/// A match ticket's server address's longest (bytes; the API's `ticket.MaxServer`)
+const MAX_SERVER: usize = 64;
+/// What the development key's seed is the SHA-256 of (the API's `ticket.DevSeedText`)
+const DEV_SEED_TEXT: &str = "carball development ticket key";
 /// The two boxes' clocks apart at most (s)
 const SKEW: i64 = 30;
-/// A development ticket's life (s; the API's `ticket.Lifetime`)
+/// A development ticket's life (s; the API's `ticket.Lifetime`); a match ticket's (`ticket.SeatLifetime`)
 const LIFETIME: i64 = 120;
+const SEAT_LIFETIME: i64 = 30;
 /// The development key's id (reserved: a listed key can't take it)
 pub const DEV_KEY_ID: &str = "dev";
 /// A ticket's longest life (s): the API's two minutes and the skew; a ticket longer, or ending before it began, refused
@@ -82,12 +95,25 @@ pub struct Shown {
 pub const DEFAULT_RATING: Shown = Shown { rating: 1500, deviation: 500 };
 
 /// What a ticket is for
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Purpose {
-    /// A search, and its claim
+    /// A search, and its claim (game servers from before the central matchmaker; none here takes one now)
     Search,
     /// A rejoin of this match (its id: Welcome's `match_id`)
     Rejoin(u64),
+    /// A seat of a match the matchmaker made
+    Seat(Seat),
+}
+
+/// A match ticket's seat: its match (the matchmaker's id), the server it's for (its address), the playlist (team size),
+/// the seat (even blue, odd orange) and the roster's size
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Seat {
+    pub match_id: u64,
+    pub server: String,
+    pub playlist: u8,
+    pub seat: u8,
+    pub roster: u8,
 }
 
 /// What a good ticket says
@@ -174,11 +200,12 @@ impl Tickets {
         Ok(())
     }
 
-    /// A development server's: its own key besides (made now, gone with the process), whose tickets `dev_ticket` signs
+    /// A development server's: the development key besides (fixed: the development matchmaker's), whose tickets
+    /// `dev_ticket` signs too
     pub fn with_dev_key(mut self) -> anyhow::Result<Self> {
-        let mut seed = [0u8; 32];
-        getrandom::fill(&mut seed).map_err(|e| anyhow::anyhow!("the system's random source: {e}"))?;
-        let pair = Ed25519KeyPair::from_seed_unchecked(&seed).map_err(|_| anyhow::anyhow!("a development key"))?;
+        let seed = ring::digest::digest(&ring::digest::SHA256, DEV_SEED_TEXT.as_bytes());
+        let pair =
+            Ed25519KeyPair::from_seed_unchecked(seed.as_ref()).map_err(|_| anyhow::anyhow!("a development key"))?;
         self.keys
             .get_mut()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -238,11 +265,12 @@ impl Tickets {
         }
         let mut nonce = [0u8; 16];
         getrandom::fill(&mut nonce).ok()?;
-        let mut body = vec![VERSION, DEV_KEY_ID.len() as u8];
+        let seat = matches!(purpose, Purpose::Seat(_));
+        let mut body = vec![if seat { SEAT_VERSION } else { VERSION }, DEV_KEY_ID.len() as u8];
         body.extend_from_slice(DEV_KEY_ID.as_bytes());
         body.extend_from_slice(&account);
         body.extend_from_slice(&now.to_be_bytes());
-        body.extend_from_slice(&(now + LIFETIME).to_be_bytes());
+        body.extend_from_slice(&(now + if seat { SEAT_LIFETIME } else { LIFETIME }).to_be_bytes());
         body.extend_from_slice(&nonce);
         body.push(name.len() as u8);
         body.extend_from_slice(name.as_bytes());
@@ -250,7 +278,7 @@ impl Tickets {
             body.extend_from_slice(&r.rating.to_be_bytes());
             body.extend_from_slice(&r.deviation.to_be_bytes());
         }
-        body.extend_from_slice(&purpose_bytes(purpose));
+        body.extend_from_slice(&purpose_bytes(&purpose));
         let signature = pair.sign(&[CONTEXT, &body].concat());
         body.extend_from_slice(signature.as_ref());
         Some(URL_SAFE_NO_PAD.encode(body))
@@ -275,14 +303,20 @@ fn parse_keys(list: &str) -> anyhow::Result<HashMap<String, Vec<u8>>> {
     Ok(keys)
 }
 
-/// A purpose's bytes: its byte and the match (0 for a search)
-fn purpose_bytes(purpose: Purpose) -> [u8; 9] {
+/// A purpose's bytes: its byte and the match (0 for a search), and a seat's fields
+fn purpose_bytes(purpose: &Purpose) -> Vec<u8> {
     let (kind, match_id) = match purpose {
         Purpose::Search => (0u8, 0u64),
-        Purpose::Rejoin(m) => (1, m),
+        Purpose::Rejoin(m) => (1, *m),
+        Purpose::Seat(s) => (2, s.match_id),
     };
-    let mut b = [kind; 9];
-    b[1..].copy_from_slice(&match_id.to_be_bytes());
+    let mut b = vec![kind];
+    b.extend_from_slice(&match_id.to_be_bytes());
+    if let Purpose::Seat(s) = purpose {
+        b.push(s.server.len() as u8);
+        b.extend_from_slice(s.server.as_bytes());
+        b.extend_from_slice(&[s.playlist, s.seat, s.roster]);
+    }
     b
 }
 
@@ -291,7 +325,8 @@ fn decode(b: &[u8]) -> Option<(String, Ticket, [u8; 16], i64)> {
     let (&version, b) = b.split_first()?;
     let (&n, b) = b.split_first()?;
     let n = n as usize;
-    if version != VERSION || n == 0 || n > 32 || b.len() < n + 16 + 8 + 8 + 16 + 1 {
+    let seat = version == SEAT_VERSION;
+    if (version != VERSION && !seat) || n == 0 || n > 32 || b.len() < n + 16 + 8 + 8 + 16 + 1 {
         return None;
     }
     let kid = std::str::from_utf8(&b[..n]).ok()?.to_string();
@@ -302,7 +337,7 @@ fn decode(b: &[u8]) -> Option<(String, Ticket, [u8; 16], i64)> {
     let nonce: [u8; 16] = b[32..48].try_into().ok()?;
     let (&m, rest) = b[48..].split_first()?;
     let m = m as usize;
-    if m == 0 || m > 32 || rest.len() != m + 3 * 4 + 9 {
+    if m == 0 || m > 32 || rest.len() < m + 3 * 4 + 9 || (!seat && rest.len() != m + 3 * 4 + 9) {
         return None;
     }
     let name = std::str::from_utf8(&rest[..m]).ok()?.to_string();
@@ -310,10 +345,24 @@ fn decode(b: &[u8]) -> Option<(String, Ticket, [u8; 16], i64)> {
     let at = |i: usize| u16::from_be_bytes([r[i], r[i + 1]]);
     let ratings = [0, 1, 2].map(|p| Shown { rating: at(4 * p), deviation: at(4 * p + 2) });
     let match_id = u64::from_be_bytes(r[13..21].try_into().ok()?);
-    // (a search's has no match, a rejoin's has one: anything else refused)
-    let purpose = match (r[12], match_id) {
-        (0, 0) => Purpose::Search,
-        (1, m) if m != 0 => Purpose::Rejoin(m),
+    // (a search's has no match, a rejoin's has one, a seat's its match and its seat at a server, at version 4 alone:
+    // anything else refused)
+    let purpose = match (r[12], match_id, seat) {
+        (0, 0, false) => Purpose::Search,
+        (1, m, false) if m != 0 => Purpose::Rejoin(m),
+        (2, m, true) if m != 0 => {
+            let (&len, s) = r[21..].split_first()?;
+            let len = len as usize;
+            if len == 0 || len > MAX_SERVER || s.len() != len + 3 {
+                return None;
+            }
+            let server = std::str::from_utf8(&s[..len]).ok()?.to_string();
+            let (playlist, seat, roster) = (s[len], s[len + 1], s[len + 2]);
+            if !(1..=3).contains(&playlist) || roster != 2 * playlist || seat >= roster {
+                return None;
+            }
+            Purpose::Seat(Seat { match_id: m, server, playlist, seat, roster })
+        }
         _ => return None,
     };
     Some((kid, Ticket { account, name, expires, ratings, purpose }, nonce, issued))
@@ -336,6 +385,8 @@ mod tests {
     use super::*;
 
     const NOW: i64 = 1_792_300_000;
+    /// The development key's public key (the API's `ticket.DevSigner().Public()`, checked by its test too)
+    const DEV_PUBLIC_KEY: &str = "1PGAXJYv9YNXDpJto+6YGra1rCGMn+EShfLPjpIiFgU=";
 
     /// The tickets the API's code made (protocol/ticket_vector.json, api/internal/ticket's vector test: a search's and a
     /// rejoin's): read as they say
@@ -345,7 +396,7 @@ mod tests {
             std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../protocol/ticket_vector.json")).unwrap();
         let all: serde_json::Value = serde_json::from_str(&text).unwrap();
         let vectors = all["vectors"].as_array().unwrap();
-        assert_eq!(vectors.len(), 2);
+        assert_eq!(vectors.len(), 3);
         for v in vectors {
             let s = |k: &str| v[k].as_str().unwrap().to_string();
             let n = |k: &str| v[k].as_i64().unwrap();
@@ -367,6 +418,13 @@ mod tests {
             let purpose = match (n("purpose"), s("match").parse::<u64>().unwrap()) {
                 (0, 0) => Purpose::Search,
                 (1, m) => Purpose::Rejoin(m),
+                (2, m) => Purpose::Seat(Seat {
+                    match_id: m,
+                    server: s("server"),
+                    playlist: n("playlist") as u8,
+                    seat: n("seat") as u8,
+                    roster: n("roster") as u8,
+                }),
                 other => panic!("{other:?}"),
             };
             assert_eq!(ticket.purpose, purpose);
@@ -419,12 +477,34 @@ mod tests {
         assert!(tickets.check(&within, NOW + LIFETIME + SKEW - 1).is_ok(), "within the skew");
     }
 
+    /// A match ticket (version 4): its seat read back, at its server; the development key fixed (the API's
+    /// `ticket.DevSigner`: the development matchmaker's tickets checked by a development server)
+    #[test]
+    fn a_match_tickets_seat_reads_back_and_the_development_key_is_the_apis() {
+        let tickets = Tickets::from_list("").unwrap().with_dev_key().unwrap().started_at(NOW);
+        let seat = Seat { match_id: 0xfeed, server: "game-eu.example:4433".into(), playlist: 3, seat: 5, roster: 6 };
+        let encoded =
+            tickets.dev_ticket([7; 16], "Made Up", [DEFAULT_RATING; 3], Purpose::Seat(seat.clone()), NOW).unwrap();
+        let ticket = tickets.check(&encoded, NOW + 1).unwrap();
+        assert_eq!((ticket.purpose, ticket.expires), (Purpose::Seat(seat), NOW + SEAT_LIFETIME));
+        // (the API's development key: its public key, as `carball-api matchmaker --dev` logs it)
+        let ids = tickets.keys.read().unwrap();
+        assert_eq!(STANDARD.encode(&ids[DEV_KEY_ID]), DEV_PUBLIC_KEY);
+    }
+
     #[test]
     fn a_ticket_of_another_key_or_changed_is_refused() {
         let ours = Tickets::from_list("").unwrap().with_dev_key().unwrap().started_at(NOW);
-        let theirs = Tickets::from_list("").unwrap().with_dev_key().unwrap().started_at(NOW);
-        let foreign = theirs.dev_ticket([1; 16], "Name", [DEFAULT_RATING; 3], Purpose::Search, NOW).unwrap();
-        assert_eq!(ours.check(&foreign, NOW), Err(Refusal::BadSignature), "the same key id, another key");
+        // (the same key id, another key: a key "test" listed, a ticket signed by another)
+        let (listed, other) = (
+            Ed25519KeyPair::from_seed_unchecked(&[3; 32]).unwrap(),
+            Ed25519KeyPair::from_seed_unchecked(&[4; 32]).unwrap(),
+        );
+        let tests = Tickets::from_list(&format!("test {}", STANDARD.encode(listed.public_key().as_ref())))
+            .unwrap()
+            .started_at(NOW);
+        let foreign = signed_with(&other, NOW, NOW + 120, 1, &[0; 9]);
+        assert_eq!(tests.check(&foreign, NOW), Err(Refusal::BadSignature), "the same key id, another key");
         let encoded = ours.dev_ticket([1; 16], "Name", [DEFAULT_RATING; 3], Purpose::Search, NOW).unwrap();
         let mut raw = URL_SAFE_NO_PAD.decode(&encoded).unwrap();
         raw[10] ^= 1; // (the account's bytes)

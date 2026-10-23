@@ -107,17 +107,18 @@ they change there is lost when the newer page returns (RV-425; `client/src/setti
 | Env | Default in the image | |
 |---|---|---|
 | `GAME_PORT` | `4433` | the UDP port (publish the same port: `-p 4433:4433/udp`) |
-| `PUBLIC_HOST` | `game.carball.zolt.top` | the name clients reach it at (logged; the certificate must be for it) |
+| `PUBLIC_HOST` | `game.carball.zolt.top` | the name clients reach it at (logged; the certificate must be for it). With the port, this server's name for the matchmaker: `PUBLIC_HOST:GAME_PORT`, which must be the host and port of its `GAME_SERVERS` URL (its match tickets name it; a claim of another server's ticket is refused) |
+| `PUBLIC_PORT` | (none) | the port clients reach it at when it's published as another than `GAME_PORT` (the server's name then `PUBLIC_HOST:PUBLIC_PORT`) |
 | `ALLOWED_ORIGIN` | `https://carball.zolt.top` | the page origin(s) allowed to open sessions, comma-separated (case doesn't matter); others (and none) get 403. Required with a certificate: empty or blank, the server refuses to start |
 | `CERT_PATH` | `/certs/fullchain.pem` | the certificate chain (PEM) for `PUBLIC_HOST`, publicly trusted (browsers refuse a self-signed one; in a test, Chrome's WebTransport refused a locally trusted test CA and ignored `--ignore-certificate-errors*` too). Required in queue mode (an empty one is an error: no silent self-signed server) |
 | `KEY_PATH` | `/certs/privkey.pem` | its private key (PEM); a key that isn't the certificate's is refused (the old pair stays, tried again) |
-| `SERVER_MODE` | `queue` | `queue`: the 1v1 / 2v2 / 3v3 queue (searches, claims and rejoins only); `direct`: one open match, development only (with a certificate it's refused: anyone would join without a ticket) |
+| `SERVER_MODE` | `queue` | `queue`: the accounts service's matchmaker's 1v1 / 2v2 / 3v3 matches (claims and rejoins only: a search or a decline is refused, `Refused` 3); `direct`: one open match, development only (with a certificate it's refused: anyone would join without a ticket) |
 | `HEALTH_PORT` | `8081` | the health endpoint, on 127.0.0.1 inside the container only |
-| `TICKET_PUBLIC_KEYS` | (none) | the search tickets' public keys (notes/accounts.md §3): `KID BASE64` each (the line `carball-api ticket-key KID` prints), comma- or newline-separated, the API's current key among them (two while it rotates). Required in queue mode, or `TICKET_PUBLIC_KEYS_FILE` (empty, blank or naming no key, the server refuses to start; so does a key of small order, a key id twice, or the id `dev`; the key ids are logged at start); a search, claim or rejoin without a ticket signed by one of them, in its time (two minutes; issued since the server started) and not used before, is refused (`Refused` 4) |
+| `TICKET_PUBLIC_KEYS` | (none) | the tickets' public keys (notes/accounts.md §3): `KID BASE64` each (the line `carball-api ticket-key KID` prints), comma- or newline-separated, the API's current key among them (two while it rotates). Required in queue mode, or `TICKET_PUBLIC_KEYS_FILE` (empty, blank or naming no key, the server refuses to start; so does a key of small order, a key id twice, or the id `dev`; the key ids are logged at start); a claim without a match ticket (format 4) signed by one of them for this server, or a rejoin without a rejoin ticket for that match, in its time (a match ticket's 30 s, a rejoin's two minutes; issued since the server started) and not used before, is refused (`Refused` 4) |
 | `TICKET_PUBLIC_KEYS_FILE` | (none) | the same list in a file (not both): read at start and again on **SIGHUP**, so a rotation needs no restart (a bad file keeps the keys there were; the new ids logged) |
-| `API_URL` | (none) | the accounts service's origin, `https://HOST[:PORT]` (e.g. `https://carball.zolt.top`, through the tunnel): each queue match's result, each armed leave and each refill are posted to it (notes/accounts.md §3). Required in queue mode (with `GAME_SERVER_TOKEN_FILE`; refused at start without, unless `--dev`, which logs the calls only) |
+| `API_URL` | (none) | the accounts service's origin, `https://HOST[:PORT]` (e.g. `https://carball.zolt.top`, through the tunnel): each queue match's result, each armed leave and each refill are posted to it (notes/accounts.md §3), and the matchmaker's events (`POST /api/fleet/events`: a match started, a seat left or rejoined, a match cancelled before its start with its no-shows' seats, a match over with no result, this server restarted; notes/matchmaking.md, the central matchmaker). Required in queue mode (with `GAME_SERVER_TOKEN_FILE`; refused at start without, unless `--dev`, which logs the calls only, or sends them to a development matchmaker with `--api-url http://127.0.0.1:PORT`) |
 | `GAME_SERVER_TOKEN_FILE` | (none) | the game server's token for those calls (a file: the API's `GAME_SERVER_TOKEN_FILE` holds the same, 32 characters or more of random text), sent as a bearer token |
-| `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET_FILE` | (none) | the tunnel's Access service token on `/api/results`, `/api/quitters` and `/api/refills` (its id; its secret as a file), both or neither (without: a warning, the calls go without it) |
+| `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET_FILE` | (none) | the tunnel's Access service token on `/api/results`, `/api/quitters`, `/api/refills` and `/api/fleet/*` (its id; its secret as a file), both or neither (without: a warning, the calls go without it) |
 | `OUTBOX_DIR` | `/var/lib/carball-game/outbox` | where the calls wait until the service takes them (the image's volume `/var/lib/carball-game`, uid 10001's): a call that fails for a reason that may pass is tried again, in order, with a growing wait (5 s to 5 min), for up to 24 h (the service's acceptance window), and a restart sends what's left: no answer, a 5xx, 429, and an answer that isn't the service's own (a redirect, 401 or 403 from Access or a challenge, 404 or 405 from a wrong route: logged loudly, check `API_URL`, the token and the Access token); a call refused otherwise (another 4xx, or the service's own 403 `{"error":"ticket"}` for a call's ticket: RX31) is logged and dropped. Required for a queue server outside `--dev`: without it, or with a blank one, the server won't start (RX31) |
 | `MESHES_DIR` | `/app/collision_meshes` | the arena's collision meshes (in the image; keep the default: the image's own): a folder whose `arena/` holds the arena's 16 meshes in this image's format, the 4 goal halves placed by their offset. Anything else (empty, the old `soccar/` layout, a partial copy, meshes from before 8f78a1a, a truncated file) stops the server at start, saying what's wrong (RV-421, RV-434) |
 
@@ -129,8 +130,10 @@ the same port): `docker run --rm -e GAME_PORT=14502 -p 127.0.0.1:14502:14502/udp
 -e ALLOWED_ORIGIN=http://localhost:13000 carball-game:TAG --dev --info-bind 0.0.0.0`, the page opened with
 `?queue=localhost:14503` (a web container for it run with `-e GAME_SERVER_URL=https://localhost:14502/play
 -e "EXTRA_CONNECT_SRC=http://127.0.0.1:14503 https://127.0.0.1:14502"`: the page reaches a development server on
-`localhost` at 127.0.0.1). Its searches' tickets are its own: `--dev` makes a signing key at start (beside any
-`TICKET_PUBLIC_KEYS`) and the info endpoint signs a ticket for a page that asks (`/dev-ticket`), with no sign-in.
+`localhost` at 127.0.0.1). Its tickets are the development key's (id `dev`, a fixed key, published: only `--dev` takes
+it): a development matchmaker's match tickets (`carball-api matchmaker --dev`, the page's `?matchmaker=host:port`, the
+server's `--api-url http://127.0.0.1:PORT` for its events), and the rejoin tickets its info endpoint signs for a page that
+asks (`/dev-ticket`), with no sign-in.
 
 - **Ports:** 4433/udp only. Nothing listens on TCP outside the container (the health endpoint is 127.0.0.1; the
   development info server is off with a certificate).
@@ -146,15 +149,16 @@ the same port): `docker run --rm -e GAME_PORT=14502 -p 127.0.0.1:14502:14502/udp
   /api/refills`, with the rejoin's ticket). No ban when the match hadn't ticked for 20 s, or when most of its seats lost
   their connection within 5 s of each other (the server's own outage). A ranked 2v2 or 3v3 seat left by accident is
   held for a rejoin until the match ends (a rejoin's ticket, for that match; a rejoin before the old session timed out
-  takes the seat over). One search or match per account on each server; the queue pairs by rating (ours: ±100,
-  wider by 50 every 10 s waited, ±600 at most, then anyone; teams by a snake draft).
-- **Regions** (notes/matchmaking.md, Regions): one server per region, nothing shared between them; each is this image
-  with its own `PUBLIC_HOST` and certificate (`game`, `game-eu`, `game-asia` .carball.zolt.top), everything else the same
-  (`ALLOWED_ORIGIN`, the ticket keys, `API_URL`, the token: the API's 300 calls a minute shared by all). A page searching
-  several regions sends each a search; a match found in one ends the others' searches (no no-show: no match there), and a
-  slot found at the same moment in another is given up with a hello of intent 5 (decline), its match cancelled at once,
-  not counted a no-show once per 10 minutes per account (a second within them is). A region's ping is a hello of intent
-  4, answered with `Pong`, no ticket. Both added without a protocol version: deploy the game servers before the page.
+  takes the seat over). The matches are the accounts service's matchmaker's (notes/matchmaking.md, the central
+  matchmaker): it pairs by rating (ours: ±100, wider by 50 every 10 s the oldest searcher has waited, uncapped; teams by
+  a snake draft), at a server every player ticked (the lowest worst ping of those), and holds one search or match per
+  account. A match opens here at its first claim; an account with a player in a match here can't claim another.
+- **Regions** (notes/matchmaking.md, Regions): one server per region; each is this image with its own `PUBLIC_HOST` and
+  certificate (`game`, `game-eu`, `game-asia` .carball.zolt.top), everything else the same (`ALLOWED_ORIGIN`, the ticket
+  keys, `API_URL`, the token). The page sends the matchmaker its ticked regions with each server's ping; a region's ping
+  is a hello of intent 4, answered with `Pong` and the session closed at once (RV-856), no ticket.
+- **Protocol 28** (the central matchmaker): a page from before gets `Refused` 1 ("reload the page") on every intent,
+  its ping and its rejoin too. Deploy the API, then the game servers, then the page, back to back.
 - **Volumes:** `/var/lib/carball-game` (the outbox: a few KB, keep it across restarts). The certificate directory, read-only, at `/certs` (e.g. `-v /etc/letsencrypt/live/game.carball.zolt.top:/certs:ro`
   with the archive files it links to reachable). The process runs as **uid 10001**: the key must be readable by it (a
   copy owned by or readable to 10001, or `--user` set to the files' owner).
@@ -173,12 +177,11 @@ the same port): `docker run --rm -e GAME_PORT=14502 -p 127.0.0.1:14502:14502/udp
   client address (an IPv6 one by its /64) 8 at once and 30 new a minute (a large carrier NAT or NAT64 exit can hold more players than that: RV-418, raise `--max-per-address` if they're refused; it is a flag, given after the image name in `docker run`); 4 s for the QUIC handshake, 10 s through the
   hello; 240 input packets and 20 control messages a second per session (more are dropped; a session that keeps
   flooding either is closed); QUIC: 4 streams each way, small receive windows.
-- **The queue's no-shows:** a found match waits 12 s for its players to claim their slots; cancelled for someone (a
-  slot not claimed, or a player leaving before the start), the others search again at the front of the queue, and whoever
-  stalled it can't search for 2 minutes by their browser's key, their other waiting searches let go too. Their address
-  (IPv4, or an IPv6 /64) is blocked as well after two different keys stalled from it within 10 minutes, or at once for a
-  search without a key (either is often shared: a carrier's NAT, a dorm, a household, public Wi-Fi: RV-385, RV-407), and
-  then the page says the network's searches are paused, blaming no one.
+- **No-shows:** a match waits 10 s from its first claim for the rest (about the user's 12 s from the match found, after
+  the 3 s countdown); cancelled for someone (a seat not claimed, or a player leaving before the start), its claimed
+  players are told and search again, and the cancel goes to the matchmaker with the stalled seats: those accounts can't
+  search for 2 minutes, the others keep their wait (first in line). A cancelled or finished match's id is remembered a
+  minute, so a late claim can't open it again.
 - **Resources** (measured, RX13): one game thread runs every match (120 Hz each): ~0.7 % of a core a 1v1, ~1.8 % a 3v3
   (all threads ~2.1 % / ~5.5 %), so the game thread caps a server near 55 3v3 matches. Memory ~8 MB idle, ~1.4 MB a 1v1
   and ~1.8 MB a 3v3. Bandwidth per player: ~3.4 KB/s down in a 1v1, ~5.6 KB/s in a 3v3; ~5–13 KB/s up (inputs).
@@ -207,7 +210,7 @@ The accounts service (notes/accounts.md). **Nothing is deployed yet: the first d
 | `TICKET_KEY_ID` | (required) | the search tickets' key's id (1-32 characters, no spaces): the game server finds the public key by it |
 | `TICKET_SIGNING_KEY_FILE` | (required) | that key's seed (32 bytes, base64: `carball-api ticket-key KID` prints a new one, its public line for the game server's `TICKET_PUBLIC_KEYS` on stderr) |
 | `TICKET_PREVIOUS_KEYS` | (none) | earlier ticket keys' public lines (`KID BASE64`, comma-separated) after a rotation: a result's or a quitter's tickets signed before it still check, for the acceptance window (24 h) |
-| `GAME_SERVER_TOKEN_FILE` | (none) | the game server's token on `POST /api/results`, `POST /api/quitters` and `POST /api/refills` (bearer, compared in constant time; 32 characters or more), behind the tunnel's Access service token on those paths; 300 calls a minute at most, all together (429 past it). Unset: those calls answer 503 (a deployment needs it) |
+| `GAME_SERVER_TOKEN_FILE` | (none) | the game server's token on `POST /api/results`, `POST /api/quitters`, `POST /api/refills` and `POST /api/fleet/events` (bearer, compared in constant time; 32 characters or more), behind the tunnel's Access service token on those paths (Access must cover `/api/fleet/*`); 300 calls a minute at most, all together (429 past it). Unset: those calls answer 503 (a deployment needs it) |
 | `DELETION_HMAC_KEY_FILE` | (required) | 32 characters or more of random text (e.g. `openssl rand -base64 48`: a trailing newline is dropped, so not raw bytes): keys the delete/re-create rule's records (30 days). Changing it forgets them |
 
 - **Ports:** 8080/tcp, plain HTTP, **never published to the internet**: only cloudflared reaches it (with cloudflared a
@@ -262,13 +265,23 @@ The accounts service (notes/accounts.md). **Nothing is deployed yet: the first d
   providers'); the commands print any other stored one quoted, typed back as the shell's `$'...'` (RV-809, RV-810).
   Such a ban and its identity's sign-up take turns on the identity, so neither misses the other (RV-807).
 - **Stop:** SIGTERM or SIGINT: requests in flight finish (10 s at most).
-- **Search tickets** (`POST /api/ticket`, notes/accounts.md §3; 60 an account in 10 minutes, a search across regions
-  asking one, which every region's server takes once): a signed-in account's, two minutes long, a nonce each,
-  its ratings in each playlist (format 3); refused (403, `queue-banned` and until when) while a leaver's queue ban runs,
-  except a rejoin's (`?rejoin=MATCH`, 16 hex digits) for the match the ban came from; the game server checks them
-  offline with `TICKET_PUBLIC_KEYS`, a search's for a search or claim, a rejoin's for that match's rejoin alone.
-- **The game server's calls** (behind the Access service token and `GAME_SERVER_TOKEN_FILE`): results (recorded once by
-  their match id; each ticket ours, issued within 24 h and spent on that match alone; the ratings changed: Glicko-2),
+- **The search** (notes/matchmaking.md, the central matchmaker; in memory, one instance): `POST /api/search
+  {playlists, pings, regions}` (a signed-in account's; 30 an account in 10 minutes) starts it: refused 401 signed out,
+  403 `queue-banned` (until when) or `in-match`, 429 `cooldown` (seconds) or `busy`, 503 `no-server` (no ticked region
+  answered the page's ping); else `{search, version, state}`. `GET /api/search/{id}?after=N` answers at its next
+  change or after 25 s (a newer poll answers the one before at once): `searching`, `found` (the match's id, its server,
+  the player's match ticket, the playlist), or `ended` (`replaced`, `queue-banned`, `cooldown`); 404 for one it doesn't
+  know (a restart: the page searches again once). `DELETE /api/search/{id}` is Cancel Search. A match ticket (format 4)
+  is one seat of one match at one server, 30 s, taken once there (RV-850).
+- **Rejoin tickets** (`POST /api/ticket?rejoin=MATCH`, 16 hex digits; 60 an account in 10 minutes): two minutes long,
+  for that match's rejoin alone, refused (409 `in-match`) while the account searches or for a match other than its
+  latest; a queue ban from that match doesn't refuse it. `POST /api/ticket` with no match (a search ticket, format 3)
+  stays one release, for pages from before the switch.
+- **The game server's calls** (behind the Access service token and `GAME_SERVER_TOKEN_FILE`): the matchmaker's events
+  (`POST /api/fleet/events {event, server, match, seat, noShows, at}`: one about a match it didn't assign to that server,
+  or doesn't know, answered 204 and ignored, so it never holds the outbox's later calls); results (recorded once by
+  their match id; each ticket ours, a match ticket for that match or a search ticket from before the switch, issued
+  within 24 h and spent on that match alone; the ratings changed: Glicko-2),
   quitters (the seat's ticket, spent on its match; the account's queue ban up the ladder 5 min, 15 min, 1 h, 6 h, 24 h,
   a step forgiven per 24 h without a leave) and refills (the rejoin's ticket for that match, spent: that ban undone). Results are kept a year; used tickets past the window are purged hourly. **Rotating the key:** make a new one
   (`carball-api ticket-key k2`), add its public line to the game server's `TICKET_PUBLIC_KEYS` beside the old and

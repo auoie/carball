@@ -132,6 +132,7 @@ func setup(t *testing.T, limits *server.Limits) *env {
 	e.s.Tickets = signer
 	e.s.TicketKeys = map[string]ed25519.PublicKey{signer.KeyID: signer.PublicKey()}
 	e.s.GameServerToken = []byte(gameToken)
+	e.s.NewMatchmaker()
 	e.srv = httptest.NewTLSServer(e.s.Handler())
 	t.Cleanup(e.srv.Close)
 	e.s.Origin = e.srv.URL
