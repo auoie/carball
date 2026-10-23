@@ -7,7 +7,8 @@
 # directory holding only what it ships. Needs docker (or podman as `docker`), Emscripten (/usr/lib/emscripten, or
 # EMSCRIPTEN_ROOT), cargo (offline: its registry cached), Go (offline: the modules go.sum pins in its module cache) and
 # the client's installed packages (client/node_modules).
-#   scripts/build_images.sh [TAG]              (default: the commit's short hash)
+#   scripts/build_images.sh [TAG]              (default: scripts/image_tag.sh's, the commit's UTC date and short hash,
+#                                               YYYYMMDD-HHMM-shorthash: the same commit, the same tag)
 #   scripts/build_images.sh --worktree TAG     (testing a change before its commit: the working tree's files that are
 #                                               committed or would be, never git-ignored ones)
 # Then export or push, e.g.:
@@ -24,7 +25,7 @@ if [ "${1:-}" = "--worktree" ]; then
 	[ -n "${1:-}" ] || { echo "--worktree needs a TAG (not the commit's: it isn't what's built)"; exit 1; }
 	if [[ "$1" =~ ^[0-9a-f]{7,40}$ ]]; then echo "--worktree: $1 looks like a commit's hash, which this build isn't: another TAG"; exit 1; fi
 fi
-TAG=${1:-$COMMIT}
+TAG=${1:-$("$R/scripts/image_tag.sh")}
 PATHS=(client engine server protocol scripts api out/arena/collision_meshes) # (scripts: build_host.sh, the local host's build)
 STAGE="$R/out/images/$TAG-$(date +%Y%m%d%H%M%S)"
 SRC="$STAGE/src"
@@ -193,3 +194,4 @@ docker build "${LABELS[@]}" -t "carball-web:$TAG" "$STAGE/web"
 docker build "${LABELS[@]}" -t "carball-game:$TAG" "$STAGE/game"
 docker build "${LABELS[@]}" -t "carball-api:$TAG" "$STAGE/api"
 echo "built carball-web:$TAG, carball-game:$TAG and carball-api:$TAG from $SOURCE (staged in $STAGE)"
+echo "tag: $TAG"
