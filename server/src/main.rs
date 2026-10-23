@@ -69,15 +69,17 @@ struct ApiArgs {
     access: Option<(String, PathBuf)>,
 }
 
-const USAGE: &str = "usage: carball-server [--mode direct|queue] [--dev] [--port 4433] [--info-port 4434] [--dev-info on|off] [--info-bind 127.0.0.1] \
-[--meshes DIR] [--team-size 3] [--match-type casual|ranked|private (the open match's; a queue's are ranked)] [--forfeit-vote-wait SECONDS] [--test-goal-after SECONDS] \
-[--cert FULLCHAIN.pem --key KEY.pem] [--allowed-origin ORIGIN[,ORIGIN...]] [--public-host HOST] [--health-port 8081] \
-[--max-sessions N] [--max-per-address N] [--max-per-address-per-minute N] | --healthcheck
-environment (each the flag's default): SERVER_MODE, GAME_PORT, MESHES_DIR, CERT_PATH, KEY_PATH, ALLOWED_ORIGIN, PUBLIC_HOST, HEALTH_PORT;
-TICKET_PUBLIC_KEYS (a queue server's: the search tickets' public keys, \"KID BASE64\" each); API_URL, GAME_SERVER_TOKEN_FILE,
-CF_ACCESS_CLIENT_ID, CF_ACCESS_CLIENT_SECRET_FILE, OUTBOX_DIR (a queue server's ranked calls to the accounts service)";
+/// A number's parser, its error naming the setting both ways (RV-399: an empty GAME_PORT said only "cannot parse
+/// integer")
+fn number_of<T>(name: &'static str) -> impl Fn(&str) -> Result<T, String> + Clone + Send + Sync + 'static
+where
+    T: std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
+    move |value: &str| value.trim().parse().map_err(|e| format!("{name} {value:?}: {e}"))
+}
 
-/// A variable's or flag's number, the error naming it (RV-399: an empty GAME_PORT said only "cannot parse integer")
+/// A variable's or flag's number, the error naming it
 fn number<T: std::str::FromStr>(name: &str, value: &str) -> anyhow::Result<T>
 where
     T::Err: std::error::Error + Send + Sync + 'static,
@@ -85,22 +87,150 @@ where
     value.trim().parse().map_err(|e| anyhow::anyhow!("{name} {value:?}: {e}"))
 }
 
-/// `--healthcheck`'s port alone (--health-port, else HEALTH_PORT, else 8081): the check reads nothing else, so a
-/// setting the server would refuse doesn't make a running server unhealthy (RV-399)
-fn health_port(args: &[String], env: impl Fn(&str) -> Option<String>) -> anyhow::Result<u16> {
-    if let Some(at) = args.iter().position(|a| a == "--health-port") {
-        let value = args.get(at + 1).ok_or_else(|| anyhow::anyhow!("--health-port needs a value"))?;
-        return number("--health-port", value);
-    }
-    env("HEALTH_PORT").map_or(Ok(8081), |p| number("HEALTH_PORT", &p))
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+enum Mode {
+    /// One open match: anyone joins, no tickets (a development server's)
+    Direct,
+    /// The matchmaker's matches (1v1, 2v2, 3v3: claims and rejoins with tickets)
+    Queue,
 }
 
-fn parse_mode(value: &str) -> anyhow::Result<bool> {
-    match value {
-        "direct" => Ok(false),
-        "queue" => Ok(true),
-        other => anyhow::bail!("mode {other}: direct or queue"),
-    }
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+enum OnOff {
+    On,
+    Off,
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+enum MatchTypeArg {
+    Casual,
+    Ranked,
+    Private,
+}
+
+/// The server's command line: each flag's default from its environment variable where it has one (the image's
+/// interface, APP-CONTRACT.md); the rules between them in `validate`
+#[derive(clap::Parser, Debug)]
+#[command(
+    name = "carball-server",
+    about = "Carball's game server: matches over WebTransport",
+    disable_version_flag = true
+)]
+struct Cli {
+    /// The open match or the matchmaker's matches
+    #[arg(long, env = "SERVER_MODE", value_enum, default_value = "direct")]
+    mode: Mode,
+    /// A development server: a self-signed certificate (whatever CERT_PATH and KEY_PATH say), tickets of its own
+    #[arg(long)]
+    dev: bool,
+    /// WebTransport's UDP port
+    #[arg(long, env = "GAME_PORT", default_value_t = 4433, value_parser = number_of::<u16>("GAME_PORT (--port)"))]
+    port: u16,
+    /// The development info server's port (`/info`, `/dev-ticket`)
+    #[arg(long, default_value_t = 4434, value_parser = number_of::<u16>("--info-port"))]
+    info_port: u16,
+    /// The development info server: on without a certificate, off with one, unless asked
+    #[arg(long, value_enum)]
+    dev_info: Option<OnOff>,
+    /// The development info server's address
+    #[arg(long, default_value = "127.0.0.1")]
+    info_bind: IpAddr,
+    /// The arena's collision meshes (default: the repository's, above the binary)
+    #[arg(long, env = "MESHES_DIR")]
+    meshes: Option<PathBuf>,
+    /// The open match's team size
+    #[arg(long, default_value_t = carball_server::game::TEAM_SIZE,
+          value_parser = clap::value_parser!(u8).range(1..=(carball_server::game::MAX_PLAYERS / 2) as i64))]
+    team_size: u8,
+    /// The open match's type (a queue's are ranked)
+    #[arg(long, value_enum)]
+    match_type: Option<MatchTypeArg>,
+    /// The clock time before forfeit votes, s (default: the match type's)
+    #[arg(long)]
+    forfeit_vote_wait: Option<f32>,
+    /// Browser tests: each round, the ball knocked into a goal this long after "go", s
+    #[arg(long)]
+    test_goal_after: Option<f32>,
+    /// The certificate chain (PEM)
+    #[arg(long, env = "CERT_PATH")]
+    cert: Option<PathBuf>,
+    /// The certificate's key (PEM)
+    #[arg(long, env = "KEY_PATH")]
+    key: Option<PathBuf>,
+    /// The page origins allowed, comma-separated
+    #[arg(long, env = "ALLOWED_ORIGIN")]
+    allowed_origin: Option<String>,
+    /// The host name the server is reached at
+    #[arg(long, env = "PUBLIC_HOST")]
+    public_host: Option<String>,
+    /// The port it's published at, when not --port
+    #[arg(long, env = "PUBLIC_PORT")]
+    public_port: Option<String>,
+    /// A development matchmaker's URL (http://127.0.0.1:PORT, with --dev)
+    #[arg(long)]
+    api_url: Option<String>,
+    /// The health endpoint's port (127.0.0.1)
+    #[arg(long, env = "HEALTH_PORT", default_value_t = 8081, value_parser = number_of::<u16>("HEALTH_PORT (--health-port)"))]
+    health_port: u16,
+    /// Sessions at once
+    #[arg(long, default_value_t = 512, value_parser = number_of::<usize>("--max-sessions"))]
+    max_sessions: usize,
+    /// Sessions at once per client address (an IPv6 one by its /64)
+    #[arg(long, default_value_t = 8, value_parser = number_of::<usize>("--max-per-address"))]
+    max_per_address: usize,
+    /// New sessions a minute per client address
+    #[arg(long, default_value_t = 30, value_parser = number_of::<usize>("--max-per-address-per-minute"))]
+    max_per_address_per_minute: usize,
+    /// The match tickets' public keys ("KID BASE64", comma- or line-separated)
+    #[arg(long, env = "TICKET_PUBLIC_KEYS")]
+    ticket_public_keys: Option<String>,
+    /// Or their file, read again on SIGHUP
+    #[arg(long, env = "TICKET_PUBLIC_KEYS_FILE")]
+    ticket_public_keys_file: Option<String>,
+    /// The accounts service's origin for the ranked calls (https://HOST[:PORT])
+    #[arg(long = "accounts-url", env = "API_URL")]
+    accounts_url: Option<String>,
+    /// The game server's token for the accounts service, its file
+    #[arg(long, env = "GAME_SERVER_TOKEN_FILE")]
+    game_server_token_file: Option<String>,
+    /// The tunnel's Access service token: its id
+    #[arg(long, env = "CF_ACCESS_CLIENT_ID")]
+    cf_access_client_id: Option<String>,
+    /// And its secret's file
+    #[arg(long, env = "CF_ACCESS_CLIENT_SECRET_FILE")]
+    cf_access_client_secret_file: Option<String>,
+    /// Where the ranked calls wait until sent (a small volume)
+    #[arg(long, env = "OUTBOX_DIR")]
+    outbox_dir: Option<String>,
+    /// Ask the health endpoint and exit 0 if the game thread runs (the image's HEALTHCHECK)
+    #[arg(long)]
+    healthcheck: bool,
+}
+
+/// `--healthcheck`'s own arguments: the health port alone, so a setting the server would refuse doesn't make a running
+/// server unhealthy (RV-399)
+#[derive(clap::Parser, Debug)]
+#[command(name = "carball-server", disable_version_flag = true)]
+struct HealthCheckArgs {
+    #[arg(long)]
+    healthcheck: bool,
+    #[arg(long, env = "HEALTH_PORT", default_value_t = 8081, value_parser = number_of::<u16>("HEALTH_PORT (--health-port)"))]
+    health_port: u16,
+}
+
+/// The arguments: clap's, then the rules between them (`Cli::validate`); --help said, the process done
+fn parse_args(argv: impl IntoIterator<Item = String>) -> anyhow::Result<Args> {
+    use clap::Parser;
+    let cli = match Cli::try_parse_from(std::iter::once("carball-server".to_string()).chain(argv)) {
+        Ok(cli) => cli,
+        Err(e) if e.kind() == clap::error::ErrorKind::DisplayHelp => e.exit(),
+        Err(e) => {
+            // (clap's message without its own "error: ": main's error prints its own)
+            let text = e.render().to_string();
+            anyhow::bail!("{}", text.trim_end().strip_prefix("error: ").unwrap_or(text.trim_end()))
+        }
+    };
+    cli.validate()
 }
 
 /// The page origins allowed, as browsers send them (lowercase, no trailing slash); none named is an error, not "any"
@@ -130,213 +260,162 @@ fn dev_info_on(args: &Args) -> bool {
     args.dev_info.unwrap_or(args.cert.is_none())
 }
 
-/// The arguments, each flag's default from the environment (`env`: the image's interface, APP-CONTRACT.md). A public
-/// server (a certificate) needs its page origins; a queue server needs a certificate, or `--dev`
-fn parse_args(mut it: impl Iterator<Item = String>, env: impl Fn(&str) -> Option<String>) -> anyhow::Result<Args> {
-    let mut match_type = None;
-    let mut args = Args {
-        port: 4433,
-        info_port: 4434,
-        dev_info: None,
-        info_bind: [127, 0, 0, 1].into(),
-        meshes: PathBuf::new(),
-        team_size: carball_server::game::TEAM_SIZE,
-        match_type: MatchType::Casual,
-        forfeit_vote_wait: None,
-        test_goal_after: None,
-        queue: false,
-        cert: None,
-        dev: false,
-        public_host: None,
-        public_port: None,
-        health_port: 8081,
-        limits: NetLimits::default(),
-        ticket_keys: None,
-        ticket_keys_file: None,
-        api: None,
-        outbox_dir: None,
-        dev_api: None,
-    };
-    if let Some(mode) = env("SERVER_MODE") {
-        args.queue = parse_mode(&mode)?;
-    }
-    if let Some(port) = env("GAME_PORT") {
-        args.port = number("GAME_PORT", &port)?;
-    }
-    if let Some(dir) = env("MESHES_DIR").filter(|d| !d.is_empty()) {
-        args.meshes = dir.into();
-    }
-    let mut cert = env("CERT_PATH").map(PathBuf::from);
-    let mut key = env("KEY_PATH").map(PathBuf::from);
-    if let Some(list) = env("ALLOWED_ORIGIN") {
-        args.limits.allowed_origins = Some(origins(&list)?);
-    }
-    args.public_host = env("PUBLIC_HOST").filter(|h| !h.is_empty());
-    if let Some(port) = env("PUBLIC_PORT").filter(|p| !p.is_empty()) {
-        args.public_port = Some(number("PUBLIC_PORT", &port)?);
-    }
-    if let Some(port) = env("HEALTH_PORT") {
-        args.health_port = number("HEALTH_PORT", &port)?;
-    }
-    while let Some(arg) = it.next() {
-        let mut value = || it.next().ok_or_else(|| anyhow::anyhow!("{arg} needs a value"));
-        match arg.as_str() {
-            "--port" => args.port = number("--port", &value()?)?,
-            "--info-port" => args.info_port = number("--info-port", &value()?)?,
-            "--dev-info" => {
-                args.dev_info = Some(match value()?.as_str() {
-                    "on" => true,
-                    "off" => false,
-                    other => anyhow::bail!("--dev-info {other}: on or off"),
-                })
-            }
-            "--info-bind" => args.info_bind = value()?.parse()?,
-            "--meshes" => args.meshes = value()?.into(),
-            "--team-size" => {
-                // (two teams of it within the match's most players: RV-329)
-                args.team_size = value()?.parse()?;
-                anyhow::ensure!(
-                    (1..=(carball_server::game::MAX_PLAYERS / 2) as u8).contains(&args.team_size),
-                    "--team-size: 1 to {}",
-                    carball_server::game::MAX_PLAYERS / 2
-                );
-            }
-            "--match-type" => {
-                match_type = Some(match value()?.as_str() {
-                    "casual" => MatchType::Casual,
-                    "ranked" => MatchType::Ranked,
-                    "private" => MatchType::Private,
-                    other => anyhow::bail!("--match-type {other}: casual, ranked or private"),
-                });
-            }
-            "--forfeit-vote-wait" => args.forfeit_vote_wait = Some(value()?.parse()?),
-            "--test-goal-after" => args.test_goal_after = Some(value()?.parse()?),
-            "--mode" => args.queue = parse_mode(&value()?)?,
-            "--dev" => args.dev = true,
-            "--cert" => cert = Some(value()?.into()),
-            "--key" => key = Some(value()?.into()),
-            "--allowed-origin" => args.limits.allowed_origins = Some(origins(&value()?)?),
-            "--public-host" => args.public_host = Some(value()?),
-            "--public-port" => args.public_port = Some(number("--public-port", &value()?)?),
-            "--api-url" => args.dev_api = Some(value()?.trim_end_matches('/').to_string()),
-            "--health-port" => args.health_port = number("--health-port", &value()?)?,
-            "--max-sessions" => args.limits.max_sessions = number("--max-sessions", &value()?)?,
-            "--max-per-address" => args.limits.per_address = number("--max-per-address", &value()?)?,
-            "--max-per-address-per-minute" => {
-                args.limits.per_address_per_minute = number("--max-per-address-per-minute", &value()?)?
-            }
-            "--healthcheck" => {} // (main's, before the rest is read: health_port)
-            _ => anyhow::bail!("{USAGE}"),
+impl Cli {
+    /// The arguments with the rules between them: a public server (a certificate) needs its page origins; a queue server
+    /// needs a certificate, its tickets' keys, the accounts service and an outbox, or `--dev`
+    fn validate(self) -> anyhow::Result<Args> {
+        // (a setting given blank is no setting, where it may be left out: the image's variables)
+        let set = |v: Option<String>| v.filter(|v| !v.trim().is_empty());
+        let mut limits = NetLimits {
+            max_sessions: self.max_sessions,
+            per_address: self.max_per_address,
+            per_address_per_minute: self.max_per_address_per_minute,
+            ..NetLimits::default()
+        };
+        if let Some(list) = &self.allowed_origin {
+            limits.allowed_origins = Some(origins(list)?);
         }
-    }
-    if args.meshes.as_os_str().is_empty() {
-        args.meshes = default_meshes();
-    }
-    // (a name the matchmaker takes, host:port: one it would drop never matches anyone here, RV-868)
-    let name = args.server_name();
-    let (host, port) = name.rsplit_once(':').unwrap_or(("", ""));
-    anyhow::ensure!(
-        !args.queue
-            || (!host.is_empty()
-                && host.len() <= 58
-                && host.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
-                && !port.is_empty()
-                && port.len() <= 5),
-        "PUBLIC_HOST {host:?}: this server's name for the matchmaker is PUBLIC_HOST:port, a host of letters, digits, dots \
-         and hyphens (58 at most)"
-    );
-    // (a development matchmaker's: plain http on this machine, a development server's alone)
-    if let Some(url) = &args.dev_api {
-        let host = url.strip_prefix("http://").and_then(|h| h.rsplit_once(':')).map(|(h, _)| h);
+        let public_port = match set(self.public_port) {
+            Some(port) => Some(number("PUBLIC_PORT (--public-port)", &port)?),
+            None => None,
+        };
+        let mut args = Args {
+            port: self.port,
+            info_port: self.info_port,
+            dev_info: self.dev_info.map(|o| o == OnOff::On),
+            info_bind: self.info_bind,
+            meshes: self.meshes.filter(|d| !d.as_os_str().is_empty()).unwrap_or_else(default_meshes),
+            team_size: self.team_size,
+            match_type: MatchType::Casual,
+            forfeit_vote_wait: self.forfeit_vote_wait,
+            test_goal_after: self.test_goal_after,
+            queue: self.mode == Mode::Queue,
+            cert: None,
+            dev: self.dev,
+            public_host: self.public_host.filter(|h| !h.is_empty()),
+            public_port,
+            health_port: self.health_port,
+            limits,
+            ticket_keys: set(self.ticket_public_keys),
+            ticket_keys_file: set(self.ticket_public_keys_file).map(PathBuf::from),
+            api: api_args(
+                set(self.accounts_url),
+                set(self.game_server_token_file),
+                set(self.cf_access_client_id),
+                set(self.cf_access_client_secret_file),
+            )?,
+            outbox_dir: set(self.outbox_dir).map(PathBuf::from),
+            dev_api: self.api_url.map(|u| u.trim_end_matches('/').to_string()),
+        };
+        // (a name the matchmaker takes, host:port: one it would drop never matches anyone here, RV-868)
+        let name = args.server_name();
+        let (host, port) = name.rsplit_once(':').unwrap_or(("", ""));
         anyhow::ensure!(
-            args.dev && matches!(host, Some("127.0.0.1" | "localhost" | "[::1]")),
-            "--api-url is a development matchmaker's (http://127.0.0.1:PORT), with --dev alone"
+            !args.queue
+                || (!host.is_empty()
+                    && host.len() <= 58
+                    && host.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+                    && !port.is_empty()
+                    && port.len() <= 5),
+            "PUBLIC_HOST {host:?}: this server's name for the matchmaker is PUBLIC_HOST:port, a host of letters, digits, \
+             dots and hyphens (58 at most)"
         );
-    }
-    // (the queue's matches are ranked: online play is ranked only, the user's decision; --match-type the open match's,
-    // casual by default, RX32)
-    args.match_type = match (args.queue, match_type) {
-        (true, None | Some(MatchType::Ranked)) => MatchType::Ranked,
-        (true, Some(other)) => anyhow::bail!("--match-type {other:?}: the queue's matches are ranked"),
-        (false, chosen) => chosen.unwrap_or(MatchType::Casual),
-    };
-    args.ticket_keys = env("TICKET_PUBLIC_KEYS").filter(|k| !k.trim().is_empty());
-    args.ticket_keys_file = env("TICKET_PUBLIC_KEYS_FILE").filter(|k| !k.trim().is_empty()).map(PathBuf::from);
-    anyhow::ensure!(
-        args.ticket_keys.is_none() || args.ticket_keys_file.is_none(),
-        "TICKET_PUBLIC_KEYS or TICKET_PUBLIC_KEYS_FILE, not both"
-    );
-    anyhow::ensure!(
-        !args.queue || args.dev || args.ticket_keys.is_some() || args.ticket_keys_file.is_some(),
-        "the queue's searches are accounts': it needs TICKET_PUBLIC_KEYS or TICKET_PUBLIC_KEYS_FILE (the accounts service's ticket keys), or --dev for a development server"
-    );
-    // (--dev signs its own tickets: never beside production keys, AP2-7)
-    anyhow::ensure!(
-        !args.dev || (args.ticket_keys.is_none() && args.ticket_keys_file.is_none()),
-        "--dev signs tickets of its own: it refuses production keys (TICKET_PUBLIC_KEYS, TICKET_PUBLIC_KEYS_FILE)"
-    );
-    args.api = api_args(&env)?;
-    args.outbox_dir = env("OUTBOX_DIR").filter(|d| !d.trim().is_empty()).map(PathBuf::from);
-    anyhow::ensure!(
-        !args.queue || args.dev || args.api.is_some(),
-        "the queue's matches are rated: it needs API_URL and GAME_SERVER_TOKEN_FILE (the accounts service and the game server's token), or --dev for a development server"
-    );
-    // (a blank one too: its calls kept in memory alone would go with a restart, RX31)
-    anyhow::ensure!(
-        !args.queue || args.dev || args.outbox_dir.is_some(),
-        "the queue's ranked calls are kept on disk until sent: it needs OUTBOX_DIR (a small volume), or --dev for a development server"
-    );
-    if args.dev {
-        // (a certificate there is a public server's: --dev on it would hand out its own tickets to the internet, AP2-7)
-        let mounted = |p: &Option<PathBuf>| p.as_ref().is_some_and(|p| !p.as_os_str().is_empty() && p.is_file());
-        anyhow::ensure!(
-            !mounted(&cert) && !mounted(&key),
-            "--dev with a certificate at CERT_PATH or KEY_PATH: that's a public server's (no --dev there)"
-        );
-        return Ok(args); // (self-signed, whatever the certificate's variables say)
-    }
-    args.cert = match (cert, key) {
-        (Some(c), Some(k)) => {
+        // (a development matchmaker's: plain http on this machine, a development server's alone)
+        if let Some(url) = &args.dev_api {
+            let host = url.strip_prefix("http://").and_then(|h| h.rsplit_once(':')).map(|(h, _)| h);
             anyhow::ensure!(
-                !c.as_os_str().is_empty() && !k.as_os_str().is_empty(),
-                "CERT_PATH and KEY_PATH are empty (a development server: --dev)"
+                args.dev && matches!(host, Some("127.0.0.1" | "localhost" | "[::1]")),
+                "--api-url is a development matchmaker's (http://127.0.0.1:PORT), with --dev alone"
             );
-            Some((c, k))
         }
-        (None, None) => None,
-        _ => anyhow::bail!("a certificate needs both CERT_PATH and KEY_PATH (--cert and --key)"),
-    };
-    anyhow::ensure!(
-        !args.queue || args.cert.is_some(),
-        "the queue serves the public: it needs a certificate (CERT_PATH and KEY_PATH, or --cert and --key), or --dev for a development server"
-    );
-    // (a certificate is a public server's, and online play needs a ticket: no open match without one, AP2-9)
-    anyhow::ensure!(
-        args.queue || args.cert.is_none(),
-        "the open match (--mode direct) takes anyone without a ticket: a development server's, not a public one (no certificate; --dev)"
-    );
-    anyhow::ensure!(
-        args.cert.is_none() || args.limits.allowed_origins.is_some(),
-        "a server with a certificate needs ALLOWED_ORIGIN (--allowed-origin): the pages it serves"
-    );
-    Ok(args)
+        // (the queue's matches are ranked: online play is ranked only, the user's decision; --match-type the open
+        // match's, casual by default, RX32)
+        args.match_type = match (args.queue, self.match_type) {
+            (true, None | Some(MatchTypeArg::Ranked)) => MatchType::Ranked,
+            (true, Some(other)) => anyhow::bail!("--match-type {other:?}: the queue's matches are ranked"),
+            (false, None | Some(MatchTypeArg::Casual)) => MatchType::Casual,
+            (false, Some(MatchTypeArg::Ranked)) => MatchType::Ranked,
+            (false, Some(MatchTypeArg::Private)) => MatchType::Private,
+        };
+        anyhow::ensure!(
+            args.ticket_keys.is_none() || args.ticket_keys_file.is_none(),
+            "TICKET_PUBLIC_KEYS or TICKET_PUBLIC_KEYS_FILE, not both"
+        );
+        anyhow::ensure!(
+            !args.queue || args.dev || args.ticket_keys.is_some() || args.ticket_keys_file.is_some(),
+            "the queue's searches are accounts': it needs TICKET_PUBLIC_KEYS or TICKET_PUBLIC_KEYS_FILE (the accounts service's ticket keys), or --dev for a development server"
+        );
+        // (--dev signs its own tickets: never beside production keys, AP2-7)
+        anyhow::ensure!(
+            !args.dev || (args.ticket_keys.is_none() && args.ticket_keys_file.is_none()),
+            "--dev signs tickets of its own: it refuses production keys (TICKET_PUBLIC_KEYS, TICKET_PUBLIC_KEYS_FILE)"
+        );
+        anyhow::ensure!(
+            !args.queue || args.dev || args.api.is_some(),
+            "the queue's matches are rated: it needs API_URL and GAME_SERVER_TOKEN_FILE (the accounts service and the game server's token), or --dev for a development server"
+        );
+        // (a blank one too: its calls kept in memory alone would go with a restart, RX31)
+        anyhow::ensure!(
+            !args.queue || args.dev || args.outbox_dir.is_some(),
+            "the queue's ranked calls are kept on disk until sent: it needs OUTBOX_DIR (a small volume), or --dev for a development server"
+        );
+        if args.dev {
+            // (a certificate there is a public server's: --dev on it would hand out its own tickets to the internet,
+            // AP2-7)
+            let mounted = |p: &Option<PathBuf>| p.as_ref().is_some_and(|p| !p.as_os_str().is_empty() && p.is_file());
+            anyhow::ensure!(
+                !mounted(&self.cert) && !mounted(&self.key),
+                "--dev with a certificate at CERT_PATH or KEY_PATH: that's a public server's (no --dev there)"
+            );
+            return Ok(args); // (self-signed, whatever the certificate's variables say)
+        }
+        args.cert = match (self.cert, self.key) {
+            (Some(c), Some(k)) => {
+                anyhow::ensure!(
+                    !c.as_os_str().is_empty() && !k.as_os_str().is_empty(),
+                    "CERT_PATH and KEY_PATH are empty (a development server: --dev)"
+                );
+                Some((c, k))
+            }
+            (None, None) => None,
+            _ => anyhow::bail!("a certificate needs both CERT_PATH and KEY_PATH (--cert and --key)"),
+        };
+        anyhow::ensure!(
+            !args.queue || args.cert.is_some(),
+            "the queue serves the public: it needs a certificate (CERT_PATH and KEY_PATH, or --cert and --key), or --dev for a development server"
+        );
+        // (a certificate is a public server's, and online play needs a ticket: no open match without one, AP2-9)
+        anyhow::ensure!(
+            args.queue || args.cert.is_none(),
+            "the open match (--mode direct) takes anyone without a ticket: a development server's, not a public one (no certificate; --dev)"
+        );
+        anyhow::ensure!(
+            args.cert.is_none() || args.limits.allowed_origins.is_some(),
+            "a server with a certificate needs ALLOWED_ORIGIN (--allowed-origin): the pages it serves"
+        );
+        Ok(args)
+    }
 }
 
 /// The accounts service's settings: none without `API_URL`; with it, `https://HOST[:PORT]` (no path), the token's file,
 /// and the Access service token's id and secret file together or neither
-fn api_args(env: &impl Fn(&str) -> Option<String>) -> anyhow::Result<Option<ApiArgs>> {
-    let set = |name: &str| env(name).filter(|v| !v.trim().is_empty()).map(|v| v.trim().to_string());
-    let Some(url) = set("API_URL") else { return Ok(None) };
-    let url = url.trim_end_matches('/').to_string();
+fn api_args(
+    url: Option<String>,
+    token_file: Option<String>,
+    access_id: Option<String>,
+    access_secret_file: Option<String>,
+) -> anyhow::Result<Option<ApiArgs>> {
+    let Some(url) = url else { return Ok(None) };
+    let url = url.trim().trim_end_matches('/').to_string();
     let host = url.strip_prefix("https://").unwrap_or("");
     anyhow::ensure!(
         !host.is_empty() && !host.contains('/') && !host.contains(char::is_whitespace),
         "API_URL must be https://HOST[:PORT] (the accounts service's origin), got {url:?}"
     );
-    let token_file = set("GAME_SERVER_TOKEN_FILE").map(PathBuf::from);
+    let token_file = token_file.map(|f| PathBuf::from(f.trim()));
     let token_file = token_file.ok_or_else(|| anyhow::anyhow!("API_URL needs GAME_SERVER_TOKEN_FILE"))?;
-    let access = match (set("CF_ACCESS_CLIENT_ID"), set("CF_ACCESS_CLIENT_SECRET_FILE")) {
-        (Some(id), Some(secret)) => Some((id, PathBuf::from(secret))),
+    let access = match (access_id, access_secret_file) {
+        (Some(id), Some(secret)) => Some((id.trim().to_string(), PathBuf::from(secret.trim()))),
         (None, None) => None,
         _ => anyhow::bail!("CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET_FILE go together"),
     };
@@ -461,8 +540,10 @@ async fn reload_certificates(
 async fn main() -> anyhow::Result<()> {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     if argv.iter().any(|a| a == "--healthcheck") {
-        let port = health_port(&argv, |name| std::env::var(name).ok())?;
-        std::process::exit(if net::health_check(port).await { 0 } else { 1 });
+        use clap::Parser;
+        let check = HealthCheckArgs::try_parse_from(std::iter::once("carball-server".to_string()).chain(argv))
+            .unwrap_or_else(|e| e.exit());
+        std::process::exit(if net::health_check(check.health_port).await { 0 } else { 1 });
     }
     // (the log: one line per event, its time and level, on stderr; info and up)
     tracing_subscriber::fmt()
@@ -470,7 +551,7 @@ async fn main() -> anyhow::Result<()> {
         .with_max_level(tracing::Level::INFO)
         .with_writer(std::io::stderr)
         .init();
-    let args = parse_args(argv.into_iter(), |name| std::env::var(name).ok())?;
+    let args = parse_args(argv)?;
     tokio::spawn(exit_on_stop(tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?));
     engine::init(&args.meshes)?;
     let (identity, dev_hash) = match &args.cert {
@@ -611,19 +692,80 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
+    /// The environment as clap reads it, for one parse at a time: the server's variables unset, these set (the
+    /// tests' lock)
+    static ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn with_env<T>(vars: &[(&str, &str)], f: impl FnOnce() -> T) -> T {
+        use clap::CommandFactory;
+        let _held = ENV.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let names: Vec<std::ffi::OsString> =
+            Cli::command().get_arguments().filter_map(|a| a.get_env().map(ToOwned::to_owned)).collect();
+        // SAFETY: this binary's tests touch the environment here alone, under the lock
+        unsafe {
+            for name in &names {
+                std::env::remove_var(name);
+            }
+            for (name, value) in vars {
+                std::env::set_var(name, value);
+            }
+        }
+        let result = f();
+        // SAFETY: as above
+        unsafe {
+            for (name, _) in vars {
+                std::env::remove_var(name);
+            }
+        }
+        result
+    }
+
+    /// The arguments with these flags and environment variables alone
+    fn parse_with(flags: &[&str], vars: &[(&str, &str)]) -> anyhow::Result<Args> {
+        with_env(vars, || parse_args(flags.iter().map(|f| (*f).to_string())))
+    }
+
     fn parse(args: &[&str]) -> anyhow::Result<Args> {
-        parse_args(args.iter().map(|a| (*a).to_string()), |_| None)
+        parse_with(args, &[])
+    }
+
+    /// The image's interface: each setting's environment variable, as the deploy scripts name them
+    #[test]
+    fn each_setting_keeps_its_variable() {
+        use clap::CommandFactory;
+        let command = Cli::command();
+        let env = |flag: &str| {
+            let arg = command.get_arguments().find(|a| a.get_long() == Some(flag)).unwrap();
+            arg.get_env().map(|e| e.to_string_lossy().into_owned())
+        };
+        for (flag, var) in [
+            ("mode", "SERVER_MODE"),
+            ("port", "GAME_PORT"),
+            ("meshes", "MESHES_DIR"),
+            ("cert", "CERT_PATH"),
+            ("key", "KEY_PATH"),
+            ("allowed-origin", "ALLOWED_ORIGIN"),
+            ("public-host", "PUBLIC_HOST"),
+            ("public-port", "PUBLIC_PORT"),
+            ("health-port", "HEALTH_PORT"),
+            ("ticket-public-keys", "TICKET_PUBLIC_KEYS"),
+            ("ticket-public-keys-file", "TICKET_PUBLIC_KEYS_FILE"),
+            ("accounts-url", "API_URL"),
+            ("game-server-token-file", "GAME_SERVER_TOKEN_FILE"),
+            ("cf-access-client-id", "CF_ACCESS_CLIENT_ID"),
+            ("cf-access-client-secret-file", "CF_ACCESS_CLIENT_SECRET_FILE"),
+            ("outbox-dir", "OUTBOX_DIR"),
+        ] {
+            assert_eq!(env(flag).as_deref(), Some(var), "--{flag}");
+        }
+        assert_eq!(env("api-url"), None, "--api-url is a development matchmaker's: never API_URL");
+        command.debug_assert();
     }
 
     /// RV-868: a queue server whose name the matchmaker wouldn't take refuses to start
     #[test]
     fn a_queue_server_with_a_name_the_matchmaker_wont_take_refuses_to_start() {
-        let named = |host: &str| {
-            let host = host.to_string();
-            parse_args(["--mode", "queue", "--dev"].iter().map(|a| (*a).to_string()), move |name: &str| {
-                (name == "PUBLIC_HOST").then(|| host.clone())
-            })
-        };
+        let named = |host: &str| parse_with(&["--mode", "queue", "--dev"], &[("PUBLIC_HOST", host)]);
         assert!(named("game-eu.example").is_ok());
         for bad in ["bad_name", "ünïcode.example", &"h".repeat(59), "::1"] {
             assert!(named(bad).is_err(), "{bad:?}");
@@ -634,12 +776,8 @@ mod tests {
     /// development server); a development matchmaker's URL (--api-url) loopback http, with --dev alone
     #[test]
     fn the_servers_name_and_a_development_matchmakers_url() {
-        let env = |name: &str| match name {
-            "PUBLIC_HOST" => Some("game-eu.example".to_string()),
-            "PUBLIC_PORT" => Some("443".to_string()),
-            _ => None,
-        };
-        let named = parse_args(["--port", "4433"].iter().map(|a| (*a).to_string()), env).unwrap();
+        let named =
+            parse_with(&["--port", "4433"], &[("PUBLIC_HOST", "game-eu.example"), ("PUBLIC_PORT", "443")]).unwrap();
         assert_eq!(named.server_name(), "game-eu.example:443");
         assert_eq!(parse(&["--port", "5000"]).unwrap().server_name(), "127.0.0.1:5000");
         let dev = parse(&["--mode", "queue", "--dev", "--api-url", "http://127.0.0.1:8090/"]).unwrap();
@@ -676,26 +814,22 @@ mod tests {
 
     #[test]
     fn the_environment_gives_the_defaults_and_flags_override_it() {
-        let env = |name: &str| {
-            match name {
-                "SERVER_MODE" => Some("queue"),
-                "GAME_PORT" => Some("5000"),
-                "CERT_PATH" => Some("/certs/fullchain.pem"),
-                "KEY_PATH" => Some("/certs/privkey.pem"),
-                "ALLOWED_ORIGIN" => Some("https://carball.zolt.top/, https://other.example"),
-                "PUBLIC_HOST" => Some("game.carball.zolt.top"),
-                "HEALTH_PORT" => Some("9000"),
-                "TICKET_PUBLIC_KEYS" => Some("k1 AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="),
-                "API_URL" => Some("https://carball.zolt.top/"),
-                "GAME_SERVER_TOKEN_FILE" => Some("/run/secrets/game_token"),
-                "CF_ACCESS_CLIENT_ID" => Some("access-id.access"),
-                "CF_ACCESS_CLIENT_SECRET_FILE" => Some("/run/secrets/access_secret"),
-                "OUTBOX_DIR" => Some("/var/lib/carball-game/outbox"),
-                _ => None,
-            }
-            .map(str::to_string)
-        };
-        let args = parse_args(std::iter::empty(), env).unwrap();
+        let env = [
+            ("SERVER_MODE", "queue"),
+            ("GAME_PORT", "5000"),
+            ("CERT_PATH", "/certs/fullchain.pem"),
+            ("KEY_PATH", "/certs/privkey.pem"),
+            ("ALLOWED_ORIGIN", "https://carball.zolt.top/, https://other.example"),
+            ("PUBLIC_HOST", "game.carball.zolt.top"),
+            ("HEALTH_PORT", "9000"),
+            ("TICKET_PUBLIC_KEYS", "k1 AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="),
+            ("API_URL", "https://carball.zolt.top/"),
+            ("GAME_SERVER_TOKEN_FILE", "/run/secrets/game_token"),
+            ("CF_ACCESS_CLIENT_ID", "access-id.access"),
+            ("CF_ACCESS_CLIENT_SECRET_FILE", "/run/secrets/access_secret"),
+            ("OUTBOX_DIR", "/var/lib/carball-game/outbox"),
+        ];
+        let args = parse_with(&[], &env).unwrap();
         assert!(args.queue);
         assert_eq!((args.port, args.health_port), (5000, 9000));
         assert_eq!(
@@ -715,7 +849,7 @@ mod tests {
         assert_eq!(args.public_host.as_deref(), Some("game.carball.zolt.top"));
         assert!(args.ticket_keys.is_some());
         // (the open match with a certificate: a public server without tickets, refused: AP2-9)
-        let e = parse_args(["--port", "6000", "--mode", "direct"].map(String::from).into_iter(), env).err().unwrap();
+        let e = parse_with(&["--port", "6000", "--mode", "direct"], &env).err().unwrap();
         assert!(e.to_string().contains("--mode direct"), "{e}");
         let args = parse(&["--port", "6000", "--mode", "direct"]).unwrap();
         assert_eq!((args.port, args.queue), (6000, false));
@@ -728,11 +862,7 @@ mod tests {
     #[test]
     fn a_public_server_needs_its_origins_and_a_queue_server_a_certificate_or_dev() {
         // (RV-372, RV-381: a blank or missing setting fails closed, not open)
-        let with = |vars: &'static [(&'static str, &'static str)], flags: &[&str]| {
-            parse_args(flags.iter().map(|f| (*f).to_string()), move |name: &str| {
-                vars.iter().find(|(n, _)| *n == name).map(|(_, v)| (*v).to_string())
-            })
-        };
+        let with = |vars: &[(&str, &str)], flags: &[&str]| parse_with(flags, vars);
         const CERT: [(&str, &str); 2] = [("CERT_PATH", "/certs/fullchain.pem"), ("KEY_PATH", "/certs/privkey.pem")];
         assert!(with(&CERT, &[]).is_err(), "a certificate without ALLOWED_ORIGIN");
         assert!(with(&[CERT[0], CERT[1], ("ALLOWED_ORIGIN", "")], &[]).is_err(), "a blank ALLOWED_ORIGIN");
@@ -860,33 +990,30 @@ mod tests {
     #[test]
     fn a_bad_number_names_its_setting_and_the_health_check_reads_only_its_port() {
         // (RV-399)
-        let env = |vars: &'static [(&'static str, &'static str)]| {
-            move |name: &str| vars.iter().find(|(n, _)| *n == name).map(|(_, v)| (*v).to_string())
-        };
-        let e = parse_args(std::iter::empty(), env(&[("GAME_PORT", "")])).err().expect("an empty GAME_PORT");
+        let e = parse_with(&[], &[("GAME_PORT", "")]).err().expect("an empty GAME_PORT");
         assert!(e.to_string().contains("GAME_PORT"), "{e}");
         let e = parse(&["--port", "x"]).err().expect("--port x");
         assert!(e.to_string().contains("--port"), "{e}");
-        // (a --dev run's empty certificate variables, an origin left blank: none of the health check's business)
-        let messy = env(&[("CERT_PATH", ""), ("KEY_PATH", ""), ("ALLOWED_ORIGIN", ""), ("HEALTH_PORT", "9000")]);
-        assert_eq!(health_port(&["--healthcheck".to_string()], messy).unwrap(), 9000);
-        assert_eq!(
-            health_port(&["--healthcheck".to_string(), "--health-port".to_string(), "9100".to_string()], messy)
-                .unwrap(),
-            9100
-        );
-        assert_eq!(health_port(&[], env(&[])).unwrap(), 8081);
-        assert!(health_port(&[], env(&[("HEALTH_PORT", "")])).is_err());
+        // (a --dev run's empty certificate variables, an origin left blank, a bad GAME_PORT: none of the health check's
+        // business)
+        let health = |flags: &[&str], vars: &[(&str, &str)]| {
+            use clap::Parser;
+            let argv = std::iter::once("carball-server").chain(flags.iter().copied());
+            with_env(vars, || HealthCheckArgs::try_parse_from(argv).map(|a| a.health_port))
+        };
+        let messy =
+            [("CERT_PATH", ""), ("KEY_PATH", ""), ("ALLOWED_ORIGIN", ""), ("GAME_PORT", "x"), ("HEALTH_PORT", "9000")];
+        assert_eq!(health(&["--healthcheck"], &messy).unwrap(), 9000);
+        assert_eq!(health(&["--healthcheck", "--health-port", "9100"], &messy).unwrap(), 9100);
+        assert_eq!(health(&["--healthcheck"], &[]).unwrap(), 8081);
+        let e = health(&["--healthcheck"], &[("HEALTH_PORT", "")]).expect_err("an empty HEALTH_PORT");
+        assert!(e.to_string().contains("HEALTH_PORT"), "{e}");
     }
 
     #[test]
     fn dev_refuses_production_keys_and_a_mounted_certificate() {
         // (AP2-7: --dev's own tickets never beside production keys or a public server's certificate)
-        let with = |vars: &'static [(&'static str, &'static str)]| {
-            parse_args(["--mode", "queue", "--dev"].map(String::from).into_iter(), move |name: &str| {
-                vars.iter().find(|(n, _)| *n == name).map(|(_, v)| (*v).to_string())
-            })
-        };
+        let with = |vars: &[(&str, &str)]| parse_with(&["--mode", "queue", "--dev"], vars);
         assert!(with(&[]).is_ok());
         assert!(with(&[("TICKET_PUBLIC_KEYS", "k1 AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=")]).is_err());
         assert!(with(&[("TICKET_PUBLIC_KEYS_FILE", "/run/keys")]).is_err());
@@ -898,31 +1025,22 @@ mod tests {
             with(&[("CERT_PATH", "/no/such/file.pem"), ("KEY_PATH", "/k.pem")]).is_ok(),
             "the image's defaults, nothing there"
         );
-        assert!(
-            parse_args(std::iter::empty(), |n: &str| match n {
-                "TICKET_PUBLIC_KEYS" => Some("k".into()),
-                "TICKET_PUBLIC_KEYS_FILE" => Some("/f".into()),
-                _ => None,
-            })
-            .is_err(),
-            "both"
-        );
+        assert!(parse_with(&[], &[("TICKET_PUBLIC_KEYS", "k"), ("TICKET_PUBLIC_KEYS_FILE", "/f")]).is_err(), "both");
     }
 
     #[test]
     fn the_development_info_server_is_on_without_a_certificate_only_unless_asked() {
-        let env = |name: &str| match name {
-            "SERVER_MODE" => Some("queue".to_string()),
-            "CERT_PATH" => Some("/c.pem".to_string()),
-            "KEY_PATH" => Some("/k.pem".to_string()),
-            "ALLOWED_ORIGIN" => Some("https://a.example".to_string()),
-            "TICKET_PUBLIC_KEYS" => Some("k1 AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=".to_string()),
-            "API_URL" => Some("https://a.example".to_string()),
-            "GAME_SERVER_TOKEN_FILE" => Some("/run/t".to_string()),
-            "OUTBOX_DIR" => Some("/o".to_string()),
-            _ => None,
-        };
-        assert!(!dev_info_on(&parse_args(std::iter::empty(), env).unwrap()), "SEC-6: off with a certificate");
+        let env = [
+            ("SERVER_MODE", "queue"),
+            ("CERT_PATH", "/c.pem"),
+            ("KEY_PATH", "/k.pem"),
+            ("ALLOWED_ORIGIN", "https://a.example"),
+            ("TICKET_PUBLIC_KEYS", "k1 AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="),
+            ("API_URL", "https://a.example"),
+            ("GAME_SERVER_TOKEN_FILE", "/run/t"),
+            ("OUTBOX_DIR", "/o"),
+        ];
+        assert!(!dev_info_on(&parse_with(&[], &env).unwrap()), "SEC-6: off with a certificate");
         assert!(dev_info_on(&parse(&[]).unwrap()));
         assert!(!dev_info_on(&parse(&["--dev-info", "off"]).unwrap()));
         assert!(dev_info_on(&parse(&["--mode", "queue", "--dev"]).unwrap()));

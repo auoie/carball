@@ -108,6 +108,10 @@ they change there is lost when the newer page returns (RV-425; `client/src/setti
 
 ## carball-game
 
+Each variable below is also a flag (given after the image name in `docker run`, it wins over the variable):
+`carball-server --help` lists them with their variables and defaults (`API_URL`'s is `--accounts-url`: `--api-url` is a
+development matchmaker's). A setting the server can't read stops it, the error naming the setting.
+
 | Env | Default in the image | |
 |---|---|---|
 | `GAME_PORT` | `4433` | the UDP port (publish the same port: `-p 4433:4433/udp`) |

@@ -29,6 +29,8 @@ axum = { version = "0.8", default-features = false, features = ["query"], option
 hyper = { version = "1", features = ["server", "http1"], optional = true }
 hyper-util = { version = "0.1", features = ["tokio", "service"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
+# (the network server's command line: its flags, each with its environment variable, APP-CONTRACT.md)
+clap = { version = "4", features = ["derive", "env"], optional = true }
 
 [features]
 default = ["net"]
@@ -45,6 +47,7 @@ net = [
     "dep:hyper-util",
     "dep:serde",
     "dep:tracing-subscriber",
+    "dep:clap",
 ]
 # The browser's local host (src/bin/host.rs: an offline match against bots, in a worker): built for
 # wasm32-unknown-emscripten with --no-default-features --features host (scripts/build_host.sh)
